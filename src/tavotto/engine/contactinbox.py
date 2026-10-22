@@ -132,13 +132,15 @@ def _prune_locked(data: dict) -> None:
     data["messages"] = keep[-MAX_MESSAGES:]
 
 
-def _save_locked(data: dict) -> None:
+def _save_locked(data: dict) -> bool:
     payload = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     try:
         atomicio.write_bytes(path(), payload, mode=0o600)
     except OSError:
         # 写不下去不影响这次发送的结果：最坏是这封信没法在应用里收回信（邮箱那条路仍然通）。日志不带路径与异常文本。
         LOG.warning("联系作者: 本机收件记录写入失败")
+        return False
+    return True
 
 
 def _load_pruned_locked() -> dict:
@@ -153,8 +155,9 @@ def _load_pruned_locked() -> dict:
 # ---------------------------------------------------------------------------
 # 写
 # ---------------------------------------------------------------------------
-def add(message_id: str, reply_token: str, route: str, *, delivered: bool) -> None:
-    """登记一封信（幂等：同编号已有则只升级 `delivered`、不覆盖令牌与已取回的回信）。"""
+def add(message_id: str, reply_token: str, route: str, *, delivered: bool) -> bool:
+    """登记一封信（幂等：同编号已有则只升级 `delivered`、不覆盖令牌与已取回的回信）。
+    返回令牌此刻是否已在本机落盘；写不下去（目录不可写 / 盘满）返回 False，调用方据此告诉用户「应用里收不到回信」。"""
     rec = {
         "message_id": message_id,
         "reply_token": reply_token,
@@ -162,17 +165,17 @@ def add(message_id: str, reply_token: str, route: str, *, delivered: bool) -> No
         "sent_at": _now(),
     }
     if not _valid_record(rec):
-        return
+        return False
     with _LOCK:
         data = _load_pruned_locked()
         for cur in data["messages"]:
             if cur["message_id"] == message_id:
                 if delivered and not cur["delivered"]:
                     cur["delivered"] = True
-                    _save_locked(data)
-                return
+                    return _save_locked(data)
+                return True
         data["messages"].append(_normalize({**rec, "delivered": delivered}))
-        _save_locked(data)
+        return _save_locked(data)
 
 
 def mark_delivered(message_id: str) -> None:

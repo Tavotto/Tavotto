@@ -413,6 +413,8 @@ export default interface Resources {
       "send": "发送",
       "sentAnother": "再写一封",
       "sentCopyNumber": "复制编号",
+      "sentNoInboxEmail": "已送达。这台电脑存不下回信，作者会回到你的邮箱。",
+      "sentNoInboxNoEmail": "已送达，但这台电脑存不下回信，应用里收不到回复。想收到回复请留邮箱再发一次。",
       "sentNumber": "编号 {{id}}，请留着它。",
       "sentReplyHere": "回信会出现在这里的「我的来信」；有新回信时 Tavotto 会提醒你。",
       "sentTitle": "已发送",

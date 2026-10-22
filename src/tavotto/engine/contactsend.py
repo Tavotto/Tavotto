@@ -478,6 +478,8 @@ class Session:
     message_id: str = ""
     route: str = ""
     gen: int = 0
+    #: 回信令牌是否已存进本机收件记录；False = 信已送达但应用里收不到回信（数据目录不可写 / 盘满）
+    inbox_saved: bool = True
     # ---- 私有 ----
     client_message_id: str = field(default="", repr=False)
     reply_token: str = field(default="", repr=False)
@@ -502,6 +504,7 @@ class Session:
             out["message_id"] = self.message_id
         if self.state == "done":
             out["route"] = self.route
+            out["inbox_saved"] = self.inbox_saved
         if self.state == "failed":
             out["code"] = self.failure
             out["retryable"] = FAILURES.get(self.failure, False)
@@ -637,7 +640,10 @@ def _settle(sess: Session, targets, code, retry_after, cancelled) -> None:
                 _REUSE = (sess.fingerprint, sess.client_message_id)
         else:
             sess.state = "done"
-            contactinbox.add(sess.message_id, sess.reply_token, sess.route, delivered=True)
+            # 信已送达的事实不能撤回；令牌存不下就如实标出来，界面换一句话，不再承诺「回信出现在这里」
+            sess.inbox_saved = contactinbox.add(
+                sess.message_id, sess.reply_token, sess.route, delivered=True
+            )
         # 附件字节与令牌到此为止：重试由前端重新带稿、重新 init 拿回同一个 reply_token
         sess.draft = None
         sess.complete_token, sess.reply_token, sess.specs = "", "", []

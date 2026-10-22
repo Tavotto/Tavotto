@@ -196,3 +196,49 @@ def test_inbox_endpoints_do_not_touch_the_network(on, client):
     contactinbox.add("TVM-AAAA-BBBB-CCCC-DDDD", "c" * 64, "cn", delivered=True)
     assert client.get("/api/contact/messages").get_json()["messages"][0]["unread"] == 0
     assert on.calls == []
+
+
+def test_large_attachment_never_touches_a_disk_spool_and_arrives_intact(on, client, monkeypatch):
+    """Werkzeug 默认 500 KiB 以上会把附件滚进磁盘临时文件；本端点必须全程在内存里解析（ADR 0145）。"""
+    import tempfile
+
+    def boom(*_a, **_k):
+        raise AssertionError("附件不许落到磁盘临时文件")
+
+    monkeypatch.setattr(tempfile, "SpooledTemporaryFile", boom)
+    monkeypatch.setattr(tempfile, "TemporaryFile", boom)
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", boom)
+    big = PNG + b"\x00" * (700 * 1024)
+    resp = _send(client, files=[("big.png", big)])
+    assert resp.status_code == 202
+    assert _wait(client, {"done", "failed"})["state"] == "done"
+    assert list(on.only_message().uploads.values()) == [big]
+
+
+def test_request_without_content_length_is_refused(on, client):
+    resp = client.post(
+        "/api/contact/send",
+        data=b"--x--",
+        content_type="multipart/form-data; boundary=x",
+        headers={"Content-Length": ""},
+    )
+    assert resp.status_code in (400, 413)
+
+
+def test_inbox_write_failure_still_delivers_but_says_inbox_not_saved(on, client, monkeypatch):
+    from tavotto.engine import atomicio
+
+    def deny(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(atomicio, "write_bytes", deny)
+    assert _send(client).status_code == 202
+    st = _wait(client, {"done", "failed"})
+    assert st["state"] == "done" and st["inbox_saved"] is False
+    assert on.only_message() is not None  # 信确实送达了
+    assert client.get("/api/contact/messages").get_json()["messages"] == []
+
+
+def test_inbox_saved_is_true_on_the_normal_path(on, client):
+    assert _send(client).status_code == 202
+    assert _wait(client, {"done", "failed"})["inbox_saved"] is True

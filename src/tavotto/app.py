@@ -17,6 +17,7 @@ import contextlib
 import errno
 import functools
 import hashlib
+import io
 import json
 import logging
 import math
@@ -55,6 +56,7 @@ from flask import (
 )
 from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException
+from werkzeug.formparser import FormDataParser
 
 from . import pdfbackend, tiffprobe
 from .engine import (
@@ -4721,15 +4723,29 @@ def api_contact_send():
     if not engine_contactsend.enabled():
         return _contact_error(engine_contactsend.ContactError("disabled", 404))
     limit = engine_contactsend.MAX_TOTAL_BYTES + 1024 * 1024
-    if (request.content_length or 0) > limit:
+    # 没有 Content-Length（分块传输）就不收：否则请求体大小无界地进内存
+    if request.content_length is None or request.content_length > limit:
         return _contact_error(engine_contactsend.ContactError("attachments_too_large", 413))
+    # 附件只许在内存里（ADR 0145 §秘密不落地）：不碰 `request.files` / `request.form`——Werkzeug 默认的
+    # stream_factory 超过 500 KiB 会把附件滚进磁盘 SpooledTemporaryFile。这里自己解析，流工厂恒给 BytesIO。
+    # 本端点之前没有任何代码触碰 `request.form / files / values`（含 before_request）。
     try:
-        meta = json.loads(request.form.get("meta", ""))
+        _stream, form, uploads = FormDataParser(
+            stream_factory=lambda *_a, **_k: io.BytesIO(),
+            max_content_length=limit,
+            silent=False,
+        ).parse(request.stream, request.mimetype, request.content_length, request.mimetype_params)
+    except HTTPException:
+        return _contact_error(engine_contactsend.ContactError("attachments_too_large", 413))
+    except ValueError:
+        return _contact_error(engine_contactsend.ContactError("meta_invalid", 400))
+    try:
+        meta = json.loads(form.get("meta", ""))
     except ValueError:
         return _contact_error(engine_contactsend.ContactError("meta_invalid", 400))
     files: list[tuple[str, bytes]] = []
     total = 0
-    for f in request.files.getlist("file")[: engine_contactsend.MAX_ATTACHMENTS + 1]:
+    for f in uploads.getlist("file")[: engine_contactsend.MAX_ATTACHMENTS + 1]:
         data = f.read(engine_contactsend.MAX_TOTAL_BYTES + 1)
         total += len(data)
         if total > engine_contactsend.MAX_TOTAL_BYTES:

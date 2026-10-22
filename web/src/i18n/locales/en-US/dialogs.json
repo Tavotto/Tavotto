@@ -57,6 +57,8 @@
     "sentNumber": "Message {{id}} - keep this number.",
     "sentCopyNumber": "Copy number",
     "sentReplyHere": "Replies show up here under My letters, and Tavotto will tell you when there is a new one.",
+    "sentNoInboxEmail": "Delivered. This computer could not save replies, so the maker will answer to your email.",
+    "sentNoInboxNoEmail": "Delivered, but this computer could not save replies, so you will not see an answer in the app. To get one, add your email and send again.",
     "sentAnother": "Write another",
     "failedTitle": "It wasn't sent",
     "failedKept": "What you wrote is still here. You can try again.",

@@ -106,6 +106,8 @@ interface ContactState {
   /** 附件被挡下的原因（`contact.fileError.*` 的键尾） */
   fileError: string | null
   messageId: string | null
+  /** 信已送达但回信令牌没能存进本机（引擎 `inbox_saved: false`）：应用里收不到回信 */
+  inboxMissing: boolean
   diag: { state: DiagAttachState; prepared: DiagSendPrepared | null }
   messages: ContactMessage[]
   messagesLoaded: boolean
@@ -140,6 +142,8 @@ interface ContactState {
 let runToken = 0
 let diagToken = 0
 let diagPj: string | null = null
+/** 诊断包已传完时记下 (备好的包 id → report_id)：之后信发失败再重试，不能再 `startDiagSend`（引擎对已完成的会话回 not_found） */
+let diagDone: { id: string; reportId: string } | null = null
 let unreadTimer: number | undefined
 
 const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms))
@@ -148,6 +152,7 @@ export const useContactStore = create<ContactState>((set, get) => {
   /** 丢弃引擎里备好的诊断包（关窗 / 取消勾选 / 发完）。 */
   const discardDiag = () => {
     diagToken++
+    diagDone = null
     const id = get().diag.prepared?.id
     if (id) void discardDiagSend(id, diagPj).catch(() => {})
     set({ diag: { state: 'off', prepared: null } })
@@ -155,6 +160,7 @@ export const useContactStore = create<ContactState>((set, get) => {
 
   const prepareDiag = async () => {
     const mine = ++diagToken
+    diagDone = null
     const pj = currentProjectId()
     diagPj = pj
     set({ diag: { state: 'preparing', prepared: null } })
@@ -203,6 +209,8 @@ export const useContactStore = create<ContactState>((set, get) => {
       if (runToken === mine) fail({ source: 'diag', code: 'prepare_failed', retryable: true, retryAfter: null })
       return null
     }
+    // 诊断包上一趟已经传完（信发失败后重试）：直接带原编号去发信
+    if (diagDone && diagDone.id === id) return diagDone.reportId
     try {
       await startDiagSend(id, { category: 'other', note: '', gen: prepared?.gen })
     } catch (e) {
@@ -218,7 +226,10 @@ export const useContactStore = create<ContactState>((set, get) => {
       try {
         const s = await fetchDiagSendStatus(id)
         if (runToken !== mine) return null
-        if (s.state === 'done' && s.report_id) return s.report_id
+        if (s.state === 'done' && s.report_id) {
+          diagDone = { id, reportId: s.report_id }
+          return s.report_id
+        }
         if (s.state === 'unknown') {
           fail({ source: 'diag', code: 'unknown', retryable: false, retryAfter: null })
           return null
@@ -253,6 +264,7 @@ export const useContactStore = create<ContactState>((set, get) => {
     formError: null,
     fileError: null,
     messageId: null,
+    inboxMissing: false,
     diag: { state: 'off', prepared: null },
     messages: [],
     messagesLoaded: false,
@@ -388,7 +400,7 @@ export const useContactStore = create<ContactState>((set, get) => {
           set({ rememberedEmail: email })
         }
         discardDiag()
-        set({ phase: 'done', messageId: final.message_id ?? null, status: final })
+        set({ phase: 'done', messageId: final.message_id ?? null, inboxMissing: final.inbox_saved === false, status: final })
         void get().load()
         void get().loadMessages()
       } else if (final.state === 'failed') {
@@ -432,6 +444,7 @@ export const useContactStore = create<ContactState>((set, get) => {
         formError: null,
         fileError: null,
         messageId: null,
+        inboxMissing: false,
       })
       void dismissContact().catch(() => {})
     },

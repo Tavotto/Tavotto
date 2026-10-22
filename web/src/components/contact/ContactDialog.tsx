@@ -157,7 +157,9 @@ export function ContactDialog() {
             <span data-contact-message-id>{cs('sentNumber', { id: s.messageId ?? '' })}</span>
             {s.messageId && <CopyButton text={s.messageId} label={cs('sentCopyNumber')} appearance="icon" />}
           </span>
-          <span>{cs('sentReplyHere')}</span>
+          <span data-contact-inbox-missing={s.inboxMissing ? '' : undefined}>
+            {cs(s.inboxMissing ? (draft.replyEmail.trim() ? 'sentNoInboxEmail' : 'sentNoInboxNoEmail') : 'sentReplyHere')}
+          </span>
         </span>
       </Notice>
     )

@@ -156,6 +156,7 @@ function resetStore(over: Partial<ReturnType<typeof useContactStore.getState>> =
     formError: null,
     fileError: null,
     messageId: null,
+    inboxMissing: false,
     diag: { state: 'off', prepared: null },
     messages: [],
     messagesLoaded: false,
@@ -346,6 +347,32 @@ describe('对话框的四个状态', () => {
     expect(localStorage.getItem('tavotto.contact.email')).toBe('me@example.org')
   })
 
+  async function noInboxCase(email: string, key: string) {
+    vi.mocked(sendContact).mockResolvedValue(st({}))
+    vi.mocked(fetchContactStatus).mockResolvedValue(
+      st({ state: 'done', stage: null, message_id: MSG, route: 'cn', inbox_saved: false }),
+    )
+    localStorage.clear()
+    await openDialog()
+    await typeInto(q<HTMLTextAreaElement>('[data-contact-text]'), 'hi')
+    if (email) await typeInto(q<HTMLInputElement>('[data-contact-email]'), email)
+    await click(q('[data-contact-send]'))
+    await settle(800)
+    const done = q('[data-contact-status="done"]')!
+    expect(done.textContent).toContain(t(key, { ns: 'dialogs' }))
+    expect(done.textContent).not.toContain(t('contact.sentReplyHere', { ns: 'dialogs' }))
+    expect(done.textContent).toContain(MSG)
+    expect(q('[data-contact-inbox-missing]')).not.toBeNull()
+  }
+
+  it('已送达但本机存不下回信（inbox_saved=false），留了邮箱：说作者会回到邮箱', async () => {
+    await noInboxCase('me@example.org', 'contact.sentNoInboxEmail')
+  })
+
+  it('已送达但本机存不下回信（inbox_saved=false），没留邮箱：说收不到回复、请留邮箱再发', async () => {
+    await noInboxCase('', 'contact.sentNoInboxNoEmail')
+  })
+
   it('发送中点取消：调用引擎取消，回到可编辑的草稿并说「没有发送」，内容还在', async () => {
     vi.mocked(sendContact).mockResolvedValue(st({}))
     vi.mocked(cancelContact).mockResolvedValue(st({ state: 'cancelling' }))
@@ -511,6 +538,36 @@ describe('附上诊断信息：prepare → 预览 → start → 带编号发信'
       t('contact.diagFailure', { ns: 'dialogs', reason: t('settings.diagnostics.send.failure.network', { ns: 'dialogs' }) }),
     )
     expect(useContactStore.getState().draft.attachDiag).toBe(true)
+  })
+
+  it('诊断包已传完、信发失败：重试不再 start 诊断，带原编号直接发信', async () => {
+    resetStore()
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true))
+    await typeInto(q<HTMLTextAreaElement>('[data-contact-text]'), '重试')
+    await click(q('input[data-contact-diag]'))
+    await settle(10)
+    vi.mocked(startDiagSend).mockResolvedValue({} as never)
+    vi.mocked(fetchDiagSendStatus).mockResolvedValue({
+      id: 'pid-1', state: 'done', stage: null, size: 1, sha256: 'a', sent: 1, total: 1,
+      report_id: 'TVD-AAAA-BBBB-CCCC-DDDD',
+    })
+    vi.mocked(sendContact).mockResolvedValue(st({}))
+    vi.mocked(fetchContactStatus).mockResolvedValue(
+      st({ state: 'failed', stage: null, code: 'network', retryable: true, retry_after: null }),
+    )
+    await click(q('[data-contact-send]'))
+    await settle(1500)
+    expect(q('[data-contact-status="failed"]')).not.toBeNull()
+    expect(startDiagSend).toHaveBeenCalledTimes(1)
+
+    vi.mocked(fetchContactStatus).mockResolvedValue(st({ state: 'done', stage: null, message_id: MSG, route: 'cn' }))
+    await click(q('[data-contact-send]'))
+    await settle(1500)
+    expect(startDiagSend).toHaveBeenCalledTimes(1)
+    expect(sendContact).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(sendContact).mock.calls[1][0].report_id).toBe('TVD-AAAA-BBBB-CCCC-DDDD')
+    expect(q('[data-contact-status="done"]')).not.toBeNull()
   })
 
   it('取消勾选就丢掉备好的包', async () => {

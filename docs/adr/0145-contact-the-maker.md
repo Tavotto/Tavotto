@@ -20,7 +20,7 @@
 `POST /v1/messages/complete`（没有附件也要调，通知只在 complete 时发）；取消 `POST /v1/messages/cancel`；回信 `GET /v1/messages/{id}/replies`（`Authorization: Bearer <reply_token>`）。
 
 沿用 0118 的全部笼子：**逐次授权**（只有一次用户点击 `start()` 才联网，没有记住选择 / 后台补发，取消 / 关窗 / 失败之后什么都不自己继续）；**本机引擎直传**（WebView 不碰远程，只有本机 `/api/contact/*`）；
-**目的地由代码钉死**（见三）；**不跟随任何重定向**、证书只经 `tlstrust`（出站复用 `diagsend._send`）；**秘密不落地**（`reply_token` / `complete_token` / 上传表单 / 主题 / 正文 / 邮箱只在内存会话私有字段里，状态对象与日志里没有；日志模板字面量、参数只有闭集里的阶段名与结果码）；
+**目的地由代码钉死**（见三）；**不跟随任何重定向**、证书只经 `tlstrust`（出站复用 `diagsend._send`）；**秘密不落地**（附件在 `POST /api/contact/send` 里用自带的内存流工厂解析、不碰 `request.files`，超过 Werkzeug 500 KiB 阈值也不会滚进磁盘临时文件，且无 Content-Length 的请求不收；`reply_token` / `complete_token` / 上传表单 / 主题 / 正文 / 邮箱只在内存会话私有字段里，状态对象与日志里没有；日志模板字面量、参数只有闭集里的阶段名与结果码）；
 失败码闭集翻译（`contactsend.FAILURES`，前端 `contact.failure.*` 对拍）。与 0118 不同之处：附件字节只在发送那一次的内存里（结束即丢，重试由前端重新带稿）、同内容失败后重发复用 `client_message_id`（服务端幂等回同一个 `reply_token`，不会变成两封信）。
 
 ### 二、用户不需要登录或配置邮箱：全产品没有邮件协议链接
@@ -46,7 +46,7 @@ COS 上传地址复用 `diagsend.validate_upload_url`（同一条 `_COS_HOST` �
 
 ### 四、应用内回信
 
-发送成功（或 complete 已发出）后 `contactinbox` 把 (message_id, reply_token, route, sent_at) 存进 `config.data_dir()/contact_messages.json`（原子写、权限 0600 尽力而为），连同取回的回信与已读状态；**用户写的内容一样都不存**。
+发送成功（或 complete 已发出）后 `contactinbox` 把 (message_id, reply_token, route, sent_at) 存进 `config.data_dir()/contact_messages.json`（原子写、权限 0600 尽力而为），连同取回的回信与已读状态；**用户写的内容一样都不存**。若这份记录写不下去（数据目录不可写 / 盘满），信已送达的事实不撤回，但发送结果带 `inbox_saved: false`，成功态换一句话如实说「应用里收不到回信」（留了邮箱则说作者会回到邮箱；没留则请留邮箱再发一次），不再承诺回信出现在「我的来信」。
 引擎启动时与每 6 小时问一次服务器（`start_poller`；**没有任何已发的信就一次网络都不发**）；有未读回信时：入口按钮上一个小圆点 + 通知轨里一枚胶囊（`StatusBar.NotificationRail` 的 Toast 形式，× 收起后只有未读数增加才重现）——
 **不加挤页面的横条 / BannerStack**。对话框里「我的来信」列出信与回信，进页即已读。365 天后本机记录也删（与服务端同期）；没完成投递的记录只留 2 小时，轮询证实后才转正。
 用户填的回信邮箱「上次填写」只记在前端 localStorage（可在窗里忘记），不进引擎、诊断、遥测。

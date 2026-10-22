@@ -5690,6 +5690,8 @@ export interface ContactStatus {
   message_id?: string
   /** 成功的那条线路：cn / global（只用于说明，不是可操作项） */
   route?: 'cn' | 'global'
+  /** 成功时：false = 信已送达但回信令牌没能存进本机，应用里收不到回信 */
+  inbox_saved?: boolean
   /** 失败码（引擎 `contactsend.FAILURES` 的键，或本机输入校验码 `contact_*`） */
   code?: string
   retryable?: boolean
