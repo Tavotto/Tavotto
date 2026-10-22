@@ -63,20 +63,37 @@ def _readlink(p: Path) -> str | None:
         return None
 
 
+def is_python_env_dir(p: Path) -> bool:
+    """`p` 是不是 Python 环境目录：有 `pyvenv.cfg`（venv / virtualenv / uv 的标准标记）或 `conda-meta/`（conda 的标记，
+    同 `launcher.conda_prefix_of`）。**不按目录名猜**：叫 `.venv` 但没有这两个标记的目录照常计入指纹。
+    自动装依赖会合法地写进项目自己的环境，所以指纹不含这类目录（盲区见 ADR 0143 修订二）。"""
+    try:
+        return (p / "pyvenv.cfg").is_file() or (p / "conda-meta").is_dir()
+    except OSError:
+        return False
+
+
 def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) -> dict:
     """原项目目录的有界文件指纹：`{"status": "ok", "files": {相对路径: [size, mtime_ns, sha256 | None, 链接目标?]}}`，
     超出文件数上限回 `{"status": "over_budget"}`。`exclude` 是 posix 相对路径。
 
     不跟随符号链接，链接本身按 lstat + `readlink` 目标记：文件链接是 `[size, mtime_ns, None, 目标]`（被换指向会变，
     即使 lstat 的 size / mtime 碰巧相同）；目录链接（`os.walk` 把它放进 `dirnames`）是 `["link", 目标, mtime_ns]`，
-    不进入。命中 `_SKIP_DIRS` / `tavottofile` 的名字照旧跳过（即使它是链接）。
+    不进入。命中 `_SKIP_DIRS` / `tavottofile` 的名字照旧跳过（即使它是链接）；Python 环境目录（`pyvenv.cfg` / `conda-meta/`
+    标记，非链接）整棵跳过、不计数。
 
     边界：经链接写进**链接目标**（在项目外）的内容不在指纹里——cwd 之外的写入由 CLI 沙盒负责，指纹只兜项目内。"""
     root = Path(root)
     skip_names = _SKIP_DIRS | {config.PROJECT_STORE_DIRNAME}
     files: dict[str, list] = {}
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = sorted(d for d in dirnames if d not in skip_names)
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if d not in skip_names
+            # 环境目录整棵跳过（链接目录不在此列：它走下面的链接记录，不进入）
+            and ((Path(dirpath) / d).is_symlink() or not is_python_env_dir(Path(dirpath) / d))
+        )
         for d in list(dirnames):
             p = Path(dirpath) / d
             if not p.is_symlink():

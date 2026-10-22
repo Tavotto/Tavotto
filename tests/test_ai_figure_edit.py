@@ -710,3 +710,55 @@ def test_a_stem_whose_baseline_replay_failed_is_unknown_not_silently_dropped(env
     assert checks["render.Fig2"] == ("unknown", "no_baseline")
     assert checks["Fig1.data.axes_0.lines_0"] == ("verified", None), "有基线的 stem 照常比较"
     assert sess["task"]["outcome"] == "partial", sess["task"]
+
+
+# --------------------------------------------------------------------------- 指纹不含 Python 环境目录（#1330 P1）
+def _pfp(root: Path) -> dict:
+    return ai_figure_edit.project_fingerprint(root)
+
+
+def test_fingerprint_ignores_venv_dirs_marked_by_pyvenv_cfg(tmp_path):
+    (tmp_path / "fig1.py").write_text("x = 1\n", encoding="utf-8")
+    venv = tmp_path / ".venv"
+    (venv / "lib").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /x\n", encoding="utf-8")
+    before = _pfp(tmp_path)
+    assert not any(k.startswith(".venv") for k in before["files"])
+    (venv / "lib" / "new.py").write_text("n\n", encoding="utf-8")
+    (venv / "pyvenv.cfg").write_text("home = /y\n", encoding="utf-8")
+    assert ai_figure_edit.fingerprint_changes(before, _pfp(tmp_path)) == []
+
+
+def test_fingerprint_still_counts_a_dot_venv_dir_without_the_marker(tmp_path):
+    fake = tmp_path / ".venv"
+    fake.mkdir()
+    (fake / "a.txt").write_text("1\n", encoding="utf-8")
+    before = _pfp(tmp_path)
+    (fake / "a.txt").write_text("2\n", encoding="utf-8")
+    assert ai_figure_edit.fingerprint_changes(before, _pfp(tmp_path)) == [".venv/a.txt"]
+
+
+def test_fingerprint_ignores_conda_env_dirs_but_not_lookalikes(tmp_path):
+    env = tmp_path / "envs" / "myenv"
+    (env / "conda-meta").mkdir(parents=True)
+    (env / "lib").mkdir()
+    other = tmp_path / "envs" / "plain"
+    other.mkdir()
+    (other / "x.txt").write_text("1\n", encoding="utf-8")
+    before = _pfp(tmp_path)
+    (env / "lib" / "pkg.py").write_text("p\n", encoding="utf-8")
+    (env / "conda-meta" / "pkg.json").write_text("{}", encoding="utf-8")
+    assert ai_figure_edit.fingerprint_changes(before, _pfp(tmp_path)) == []
+    (other / "x.txt").write_text("2\n", encoding="utf-8")
+    assert ai_figure_edit.fingerprint_changes(before, _pfp(tmp_path)) == ["envs/plain/x.txt"]
+
+
+def test_fingerprint_env_dirs_do_not_count_toward_the_file_budget(tmp_path, monkeypatch):
+    venv = tmp_path / "venv"
+    venv.mkdir()
+    (venv / "pyvenv.cfg").write_text("", encoding="utf-8")
+    for i in range(5):
+        (venv / f"f{i}.py").write_text("", encoding="utf-8")
+    (tmp_path / "fig1.py").write_text("", encoding="utf-8")
+    monkeypatch.setattr(ai_figure_edit, "FINGERPRINT_MAX_FILES", 2)
+    assert _pfp(tmp_path)["status"] == "ok"

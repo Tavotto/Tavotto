@@ -118,6 +118,10 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 - **孤儿续跑持久化回滚（Codex #1330 P2）**：`meta.json` 说 `resuming` 而本进程 `_RESUMES` 里没有该 sid（后端重启 / 续跑线程意外死掉）是同一个判据、同一处处理（`_reconcile_orphan_resume`，状态读口与 `prepare_resume` 共用）：
   持 `_RESUMES_LOCK` 重读 meta 后原子写回——有 installed 记录 → `deps_installed`（等「继续」），否则 → `awaiting_dependencies`（卡片字段保留；环境若已被改动由下一次 install 的摘要校验兜住），没卡可回 → `failed`（`resume_interrupted`）。
   于是卡片再点 install / replan 能续跑同一个候选；正在真实续跑的（已登记）不回滚。候选没有启动期扫描（`prune_expired` 只在新建候选时调用），故只在读路径与 `prepare_resume` 做。
+- **指纹不含 Python 环境目录（Codex #1330 P1）**：项目自己的 `.venv` 是自动装依赖的合法写入目标（`deprepair.prepare` 在校验前后写它），若指纹把它算进去，装包成功的候选会被
+  `project.untouched` 误拒（首跑与续跑同理）。`ai_figure_edit.project_fingerprint` 因此整棵跳过 Python 环境目录：判据是目录里有 `pyvenv.cfg`（venv / virtualenv / uv）或 `conda-meta/`
+  （conda，同 `launcher.conda_prefix_of`），**不按目录名猜**——叫 `.venv` 却没有这两个标记的目录照常计入；链接目录仍按原规则记链接目标。这同时影响 TAF figure_edit 的指纹（环境目录不是用户内容）。
+  **盲区（如实）**：Agent 或任何进程往项目环境目录里写东西，指纹发现不了；兜底是 CLI 沙盒 / 内置执行器的路径判据仍把 Agent 限制在候选目录（候选目录里本来没有项目的 `.venv`）。
 - **授权口径（两种，需要维护者知悉）**：`deprepair._check_confirmed` 要求调用方回显给用户看过的影响摘要，服务端自己持有的摘要不得代替回显。
   ① 问过一次 / 点过卡片：确认来自用户这次真实点击——前端把卡片带着的 `impact_digest` 原样回传，服务端重算计划，对不上就不装、回新的卡片，**不自回显**；
   ② 已记过常驻同意的环境（含 `project_venv` / 受管环境这两类上一轮就直接装的目标）：由服务端回显**同一次调用里刚算出的**摘要，依据是维护者 2026-10-23 的常驻同意裁决，

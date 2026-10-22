@@ -890,3 +890,56 @@ def test_resume_baseline_is_the_one_taken_at_start_and_a_missing_one_fails_close
     t.start()
     t.join(20)
     assert out["state"] == "failed" and out["reason"] == "convert_project_changed", out
+
+
+# --------------------------------------------------------------------------- 自动装依赖写项目自己的 .venv 不算改了项目（Codex #1330 P1）
+def _project_venv(env):
+    venv = env["figs"] / ".venv"
+    (venv / "lib").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text("home = /x\n", encoding="utf-8")
+    return venv
+
+
+def test_installing_into_the_project_venv_does_not_reject_a_valid_candidate(env):
+    venv = _project_venv(env)
+
+    def hook(project, rel, cancel=None):
+        (venv / "lib" / "pandas.py").write_text("installed\n", encoding="utf-8")
+        (venv / "pyvenv.cfg").write_text("home = /y\n", encoding="utf-8")
+        return {"status": "installed", "installed": ["pandas"]}
+
+    sid = _run(env, hooks={"deps": hook})
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "completed", sess["task"]
+    assert not any(u["constraint_id"] == "project.untouched" for u in sess["task"]["unmet"])
+
+
+def test_resume_after_installing_into_the_project_venv_is_not_rejected(env, monkeypatch):
+    venv = _project_venv(env)
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+
+    def resolve(project, rel, *, confirmed_impact, cancel=None):
+        (venv / "lib" / "pandas.py").write_text("installed\n", encoding="utf-8")
+        return {"status": "installed", "installed": ["pandas"]}
+
+    monkeypatch.setattr(convertdeps, "resolve", resolve)
+    t, out, _cancel = _await_resume(env, sid, runner=ok_runner, resolve=resolve)
+    t.start()
+    t.join(20)
+    assert out["state"] == "ready", out
+
+
+def test_a_dot_venv_without_pyvenv_cfg_is_still_a_project_change(env):
+    fake = env["figs"] / ".venv"
+    fake.mkdir()
+
+    def hook(project, rel, cancel=None):
+        (fake / "x.txt").write_text("changed\n", encoding="utf-8")
+        return {"status": "installed", "installed": ["pandas"]}
+
+    sid = _run(env, hooks={"deps": hook})
+    sess = _wait(sid)
+    assert any(u["constraint_id"] == "project.untouched" for u in sess["task"]["unmet"]), sess[
+        "task"
+    ]["unmet"]
