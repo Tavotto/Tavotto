@@ -69,9 +69,11 @@ def test_catalog_rows_are_complete_unique_and_wired():
             assert r["base_url"].startswith("https://"), r["id"]
             assert r["key_url"].startswith("https://"), r["id"]
         if r["agent"] == "codex":
-            assert r["id"] in ("openai", "custom-codex", "deepseek-codex"), (
-                "Codex 只认 Responses：国产厂商不许挂在它下面"
-            )
+            # Codex 只认 Responses：只有官方文档写明原生支持 Responses 的厂商才许挂在它下面
+            assert r["id"] in ("openai", "custom-codex", "deepseek-codex", "kimi-code-codex"), r[
+                "id"
+            ]
+            assert r.get("wire_api") == "responses", r["id"]
         # 界面文案：label_key / key_hint_key 在中英 locale 都有
         for key in [r["label_key"], r.get("key_hint_key")]:
             if not key:

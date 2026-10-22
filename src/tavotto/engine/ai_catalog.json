@@ -67,6 +67,24 @@
       "icon_key": "kimi"
     },
     {
+      "id": "kimi-code-codex",
+      "label_key": "vendor.kimiCodeCodex",
+      "brand": "Kimi Code (Codex)",
+      "region": "cn",
+      "agent": "codex",
+      "base_url": "https://api.kimi.com/coding/v1",
+      "wire_api": "responses",
+      "key_url": "https://www.kimi.com/code/console",
+      "key_hint_key": "vendorKey.kimiCode",
+      "models_hint": [
+        "k3-256k",
+        "k3"
+      ],
+      "oauth": null,
+      "source": "https://www.kimi.com/code/docs/en/third-party-tools/codex",
+      "icon_key": "kimi"
+    },
+    {
       "id": "zhipu",
       "label_key": "vendor.zhipu",
       "brand": "Zhipu GLM",

@@ -1621,6 +1621,7 @@ export default interface Resources {
           "deepseek": "DeepSeek",
           "deepseekCodex": "DeepSeek（Codex）",
           "kimiCode": "Kimi Code 会员",
+          "kimiCodeCodex": "Kimi Code 会员（Codex）",
           "minimax": "MiniMax（国内）",
           "minimaxGlobal": "MiniMax（海外）",
           "moonshot": "Kimi 开放平台",
