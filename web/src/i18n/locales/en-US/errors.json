@@ -513,6 +513,7 @@
     "workdirChooseRootEvidence": "The data {{script}} reads is only found under the project root. Pick a working directory; this project is asked once.",
     "workdirChooseConfirm": "Use this folder",
     "workdirChooseScriptDirEvidence": "{{script}} looks for its data files in the current directory, which finds nothing in the sandbox; it needs to run in its own directory. Pick a working directory; this project is asked once.",
+    "workdirHintRuntime": "{{script}} is looking for data that isn't in the sandbox but is in the script's own directory.",
     "workdirChooseSuggest": "This figure hasn't been assigned a working directory yet.",
     "workdirChooseTitle": "Which directory should the script run in?",
     "workdirChooseWrites": "In a real directory, files the script writes by relative path land in the project directory and overwrite same-name files; calls to savefig in the script do not write image files, and deleting, renaming and moving files inside the project are blocked.",

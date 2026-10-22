@@ -513,6 +513,7 @@
     "workdirChooseRootEvidence": "{{script}} 读的数据只有在项目根目录下才找得到。选一个运行目录，这个项目只问这一次。",
     "workdirChooseConfirm": "用这个目录",
     "workdirChooseScriptDirEvidence": "{{script}} 要在当前目录里找数据文件，沙盒里找不到，需要在它自己的目录里运行。选一个运行目录，这个项目只问这一次。",
+    "workdirHintRuntime": "{{script}} 要找的数据在沙盒里找不到，但在脚本所在的目录里找得到。",
     "workdirChooseSuggest": "这张图还没决定在哪个目录里运行。",
     "workdirChooseTitle": "脚本在哪个目录里运行？",
     "workdirChooseWrites": "在真实目录里运行时，脚本用相对路径写出的文件会落进项目目录，并改写同名文件；脚本里的 savefig 不会写出图片文件，项目里的文件被删除、改名和移动会被拦下。",

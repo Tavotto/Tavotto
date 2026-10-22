@@ -142,10 +142,16 @@ export function DependencyPrepareButton({ offer }: { offer: DependencyPreparatio
 export function WorkdirChooseButton({ confirmation }: { confirmation: WorkdirConfirmation | null }) {
   useTranslation('errors')
   const request = useEnvStore((s) => s.requestWorkdirConfirmation)
+  // 运行时引导（#1254）出现在已经选过「继续沙盒」的项目里时，「还没决定」不成立：说清为什么
+  const decided = useEnvStore((s) => s.env?.project?.workdir?.decided)
   if (!confirmation) return null
+  const reason =
+    confirmation.source === 'runtime' && decided === true
+      ? en('workdirHintRuntime', { script: confirmation.script })
+      : en('workdirChooseSuggest')
   return (
     <div className="mt-1.5 flex flex-col gap-1">
-      <p className="text-xs leading-relaxed text-ink-2">{en('workdirChooseSuggest')}</p>
+      <p className="text-xs leading-relaxed text-ink-2">{reason}</p>
       <Button className="self-start" onClick={() => request(confirmation)}>
         {en('workdirChooseButton')}
       </Button>

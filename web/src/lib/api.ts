@@ -4157,6 +4157,8 @@ export interface WorkdirConfirmation {
   reads: string[]
   /** 探路调用的目标（glob 模式 / 列的目录 / 问的路径，ADR 0084）；老后端没有这个字段 */
   probes?: string[]
+  /** `runtime` = 运行时证据（#1254，`workdir_hint`）；首开的确认框载荷没有这个字段 */
+  source?: 'runtime'
 }
 
 /**

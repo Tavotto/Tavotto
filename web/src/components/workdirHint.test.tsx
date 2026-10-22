@@ -100,6 +100,40 @@ describe('渲染错误块', () => {
   })
 })
 
+describe('提示这一句说的是事实', () => {
+  const envDecided = (decided: boolean) =>
+    ({
+      ok: true,
+      project: {
+        open: true,
+        workdir: { mode: 'sandbox', modes: ['sandbox', 'project', 'project_root'], decided },
+      },
+    }) as unknown as EngineEnvironment
+  const runtimeSentence = () => t('engine.workdirHintRuntime', { ns: 'errors', script: 'fig.py' })
+
+  it('已经选过「继续沙盒」（decided 为真）：说为什么，不说「还没决定」', async () => {
+    useEnvStore.setState({ env: envDecided(true) })
+    await render(<ErrorBlock error={error} traceback="" code="script_error" workdirHint={hint} />)
+    expect(text()).toContain(runtimeSentence())
+    expect(text()).not.toContain(en('workdirChooseSuggest'))
+    expect(text()).toContain(en('workdirChooseButton'))
+  })
+
+  it('还没决定过（decided 为假）：保留原来那句', async () => {
+    useEnvStore.setState({ env: envDecided(false) })
+    await render(<ErrorBlock error={error} traceback="" code="script_error" workdirHint={hint} />)
+    expect(text()).toContain(en('workdirChooseSuggest'))
+    expect(text()).not.toContain(runtimeSentence())
+  })
+
+  it('首开的确认载荷（没有 source）即使 decided 为真也不换句子', async () => {
+    useEnvStore.setState({ env: envDecided(true) })
+    const first = { ...hint, source: undefined } as WorkdirConfirmation
+    await render(<ErrorBlock error={error} traceback="" code="script_error" workdirHint={first} />)
+    expect(text()).toContain(en('workdirChooseSuggest'))
+  })
+})
+
 describe('素材库试运行的这一行', () => {
   const run = (workdir_hint?: WorkdirConfirmation): ScriptRunState =>
     ({
