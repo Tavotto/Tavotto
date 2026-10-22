@@ -486,7 +486,7 @@ describe('输出范围', () => {
     expect(text()).not.toContain('在下方选一张')
   })
 
-  it('源文件不见了：主按钮灰 + **说的是源文件不见了**，不是"先选中一张图"', async () => {
+  it('源文件不见了：单图档静默改按画布导，按钮亮着、预览换成页面', async () => {
     await setup(9)
     // 面板还在，素材清单里没有了（掉线 / 被删）
     useAssetStore.setState({ byId: {} } as never)
@@ -497,12 +497,15 @@ describe('输出范围', () => {
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
-    // 单图编辑没有范围按钮；灰的是「开始导出」
+    // 单图编辑没有范围按钮；原图口径不可用时静默改按画布导（不报错、不灰按钮），左栏预览如实显示导出的页面
     expect(scopeRadios()).toHaveLength(0)
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
-    expect(text()).toContain('源文件现在找不到了')
-    // 三个原因折成两句的话会说成这一句，用户照做之后按钮还是灰的
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     expect(text()).not.toContain('先选中一张图')
+    expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览显示页面').toBeTruthy()
+    expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm')
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope, '内部改按画布导').toBe('canvas')
   })
 })
 
@@ -539,7 +542,7 @@ describe('像素预览按范围算', () => {
 })
 
 describe('对话框开着时素材没了', () => {
-  it('可用性跟着素材清单变，不是只挂在 figureId 上', async () => {
+  it('可用性跟着素材清单变，不是只挂在 figureId 上：单图档跟着改按画布', async () => {
     await setup(9)
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await act(async () => {
@@ -548,15 +551,16 @@ describe('对话框开着时素材没了', () => {
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
-    const start = () => button('开始导出')!
-    expect(start().hasAttribute('disabled')).toBe(false)
+    expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '原图口径：预览是图').toBeNull()
 
-    // 对话框开着，素材被删 / 掉线：「开始导出」必须当场灰掉，并说出原因
+    // 对话框开着，素材被删 / 掉线：单图档当场改按画布导（预览换成页面）；memo 只挂 figureId 的话这里还是原图
     await act(async () => {
       useAssetStore.setState({ byId: {} } as never)
     })
-    expect(start().hasAttribute('disabled'), 'memo 只挂 figureId 的话这里还是亮的').toBe(true)
-    expect(text()).toContain('源文件现在找不到了')
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览跟着换成页面').toBeTruthy()
+    await click(button('开始导出')!)
+    expect(exportBodies[0].scope).toBe('canvas')
   })
 })
 
@@ -1067,30 +1071,22 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
 })
 
 describe('「能不能导」只有一份判断', () => {
-  it('原图不可用时，「重试」这条路也发不出请求', async () => {
-    jobStatus = 'conflict'
+  it('原图不可用时，「每张图单独导出」那一张发不出请求，如实记失败（单图档则改按画布导，见上）', async () => {
     await setup(9)
-    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
-    await act(async () => {
-      useUiStore.getState().setExportOpen(false)
-    })
-    await act(async () => {
-      useUiStore.getState().setExportOpen(true)
-    })
+    useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
+    await act(async () => useUiStore.getState().setExportOpen(false))
+    await act(async () => useUiStore.getState().setExportOpen(true))
+    await click(originalRadio())
+    useAssetStore.setState({ byId: {} } as never)
     await click(button('开始导出')!)
-    expect(exportBodies).toHaveLength(1)
-    expect(exportBodies[0].scope).toBe('original')
-
-    // 停在冲突条上时源没了：主按钮会变灰，而「覆盖」不经过它
-    await act(async () => {
-      useAssetStore.setState({ byId: {} } as never)
-    })
-    expect(text()).toContain('源文件现在找不到了')
-    await click(button('覆盖')!)
+    await batchDone()
     expect(
       exportBodies,
       '咽喉闸少了「原图可不可用」这一条 = 起一个界面刚说不可用的导出',
-    ).toHaveLength(1)
+    ).toHaveLength(0)
+    const b = useExportStore.getState().batch!
+    expect(b.failedStarts).toHaveLength(1)
+    expect(b.failedStarts[0].reason).not.toBe('')
   })
 })
 
@@ -1770,19 +1766,18 @@ describe('P02 · 对象头说清「写出哪些文件」与「检查的是哪份
     expect(checkScope()).not.toMatch(/mm/)
   })
 
-  it('原图不可用（源文件不见了）：头部不报文件名，也不拿画布的名字冒充', async () => {
+  it('原图不可用（源文件不见了）：单图档静默改按画布导，头部仍点名将写出的文件、范围句说画布', async () => {
     await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) } })
     useAssetStore.setState({ byId: {} } as never)
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
     await openDialog()
-    expect(radios(), '单图编辑固定原图').toHaveLength(0)
-    expect(files()).toBeNull()
-    expect(document.body.querySelector('[data-export-target]')?.textContent ?? '').not.toContain(
-      useDocumentStore.getState().doc.name,
-    )
-    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
-    expect(exportBodies).toHaveLength(0)
+    expect(radios(), '单图编辑没有范围可选').toHaveLength(0)
+    // 原图口径不可用：静默改按画布导；头部仍点名将写出的文件（默认名是这张图的名字，如「spectrum」，不是画布名），
+    // 范围句如实说的是画布（不再是「没有可导出的文件名」）
+    expect(files()).toBe('Fig1.pdf · Fig1.png')
+    expect(document.body.querySelector('[data-export-target]')?.textContent).toContain('当前画布')
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
   })
 })
 

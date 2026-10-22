@@ -317,7 +317,6 @@ export function ExportDialog() {
    * 只换这一行）。单图编辑**没有「输出范围」**：固定按原图尺寸导（标注 / 序号照常带入）。
    */
   const single = mode === "fast_edit";
-  const scope: ExportScope = single ? "original" : scopeState;
   /** 多图时左栏预览挑的那一项（"page" = 整版，否则是 figureId）；null = 跟着导出内容走。只换预览，不改导出内容 */
   const [previewId, setPreviewId] = useState<string | null>(null);
   const parked = useRef<ParkedState | null>(null);
@@ -433,6 +432,13 @@ export function ExportDialog() {
    * 对话框与预检不再各自推算。键对不上当前输入（改了编辑 / 范围 / 格式）就当没有，走
    * `lib/exportRoute` 的退路；请求在输入稳定 250ms 后发，失败不打扰用户。
    */
+  /**
+   * 单图档没有「输出范围」：默认固定按原图尺寸导。**原图口径不可用时**（这张图没有磁盘原件——例如脚本现跑出来后
+   * 重开、素材清单里还没有它——或根本没有可选的图）静默改按画布导（内部 canvas scope，界面上不出现范围选择、
+   * 不报错）；左栏预览如实显示导出的页面与页面尺寸（`ExportPreviewPane` 的 `fallbackPage`）。多图档由用户选。
+   */
+  const scope: ExportScope = single ? (availability.ok ? "original" : "canvas") : scopeState;
+  const singleFallback = single && scope === "canvas";
   const routeKey = routeKeyOf({ scope, formats, doc, panel, figureId });
   const route = useExportRouteStore((s) => (s.key === routeKey ? s.route : null));
   const refreshRoute = useExportRouteStore((s) => s.refresh);
@@ -1482,6 +1488,7 @@ export function ExportDialog() {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
       <ExportPreviewPane
         single={single}
+        fallbackPage={singleFallback}
         doc={doc}
         figures={single ? figures : canvasFigures}
         figureId={figureId}
@@ -1909,6 +1916,7 @@ function FigureThumbArt({
  */
 function ExportPreviewPane({
   single,
+  fallbackPage,
   doc,
   figures,
   figureId,
@@ -1920,6 +1928,8 @@ function ExportPreviewPane({
   onShow,
 }: {
   single: boolean;
+  /** 单图档原图口径不可用、改按画布导：预览显示导出的页面 */
+  fallbackPage: boolean;
   doc: FigureDocument;
   figures: readonly ExportableFigure[];
   /** 此刻要导的那张 */
@@ -1936,7 +1946,7 @@ function ExportPreviewPane({
   useTranslation("dialogs");
   const shownFigure =
     shownId && shownId !== "page" ? (figures.find((f) => f.figureId === shownId) ?? null) : null;
-  const showPage = !single && !shownFigure;
+  const showPage = fallbackPage || (!single && !shownFigure);
   const specMm =
     shownFigure && shownFigure.figureId === figureId && spec && !spec.fallback
       ? ([spec.widthMm, spec.heightMm] as const)
