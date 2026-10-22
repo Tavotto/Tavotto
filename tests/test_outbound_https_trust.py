@@ -274,6 +274,7 @@ class TestUpdater:
 #: PR 里的枚举表是同一份事实——多一处少一处这里都红，逼着清单跟着改。
 OUTBOUND = {
     "engine/agent_runner/wires.py": "_opener",
+    "engine/ai_catalog.py": "_opener",
     "engine/codexinstall.py": "_fetch",
     "engine/diagsend.py": "_opener",
     "engine/privatepython.py": "_fetch",
