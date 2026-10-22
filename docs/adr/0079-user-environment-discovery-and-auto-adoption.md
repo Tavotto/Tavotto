@@ -218,6 +218,8 @@ import，就不该排在确认能跑的环境前面。`best()` 本来只在 `sat
 
 默认链条能跑、没有候选可比时没有体检，`rejected` 为空。这一版只产出字段，不做前端卡片与诊断包接线（后续 PR 读它）。
 
+**前端接线（2026-10-22）。** 准备报告的 `environment.not_used[]`（`envadvice.adoption_fact(rejected=)`，至多 6 条，字段 `source / label / reason / missing / import_failed / root_version?`，不带路径与不透明 `id`）把 `decision.rejected` 送到前端；准备卡的「详情」里按稳定码各说一句（`web/src/lib/envRejectionText.ts`，`outranked` / `not_checked` 不说），并给一个复用既有「选择渲染环境」的入口。默认可见区不变。诊断包接线仍未做。
+
 **不变。** 绝不安装、不执行 CLI、公开载荷不带路径、用户显式决定过的一个不碰、`TAVOTTO_USER_ENV_DISCOVERY=0` 总开关。
 
 **看护。** `tests/test_user_environment_windows_discovery.py`：`.condarc` 解析 / 有界 / `envs_dirs` 发现，PATH 反推（含

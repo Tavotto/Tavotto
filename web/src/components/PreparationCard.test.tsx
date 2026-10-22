@@ -834,6 +834,68 @@ describe('主按钮就是后端给的那件事', () => {
     })
   }
 
+  // 落选原因（ADR 0079 修订）：详情里每个没被采用的候选一句话 + 一个「选择渲染环境」入口；默认可见区不多一个字
+  const NOT_USED_COPY: Record<string, Record<string, [Record<string, unknown>, string]>> = {
+    'zh-CN': {
+      root_needs_msvc: [{ label: 'Python 3.14 + ROOT 6.38', root_version: '6.38' }, 'ROOT 6.38 在 Windows 上要装 Visual Studio 的 C++ 工具才能运行'],
+      root_python_mismatch: [{ label: 'ROOT 6.38', root_version: '6.38' }, '这份 ROOT 6.38 是为另一个 Python 版本编译的，和这个环境的 Python 版本不一致'],
+      missing_imports: [{ label: 'Python 3.12', missing: ['ROOT', 'uproot'] }, 'Python 3.12 里没有这份脚本要用的 ROOT 和 uproot'],
+    },
+    'en-US': {
+      root_needs_msvc: [{ label: 'Python 3.14 + ROOT 6.38', root_version: '6.38' }, 'ROOT 6.38 needs the Visual Studio C++ tools to run on Windows'],
+      root_python_mismatch: [{ label: 'ROOT 6.38', root_version: '6.38' }, 'This ROOT 6.38 was built for a different Python version than this environment'],
+      missing_imports: [{ label: 'Python 3.12', missing: ['ROOT', 'uproot'] }, 'Python 3.12 is missing ROOT and uproot, which this script needs'],
+    },
+  }
+  for (const lng of Object.keys(NOT_USED_COPY)) {
+    for (const [reason, [extra, sentence]] of Object.entries(NOT_USED_COPY[lng])) {
+      it(`${lng} · 没被采用的环境（${reason}）：详情里说一句为什么 + 「选择渲染环境」入口；默认区不多一句`, async () => {
+        await i18n.changeLanguage(lng)
+        await mount()
+        const withNotUsed = envFact({ not_used: [{ source: 'system', reason, ...extra }] })
+        await openWith(report({ environment: withNotUsed }))
+        const lineBefore = panel().querySelector('[data-prep-line]')?.textContent
+        expect(panel().querySelector('[data-prep-env-not-used]')).toBeNull() // 收起时不可见
+        await toggleDetails()
+        const row = details()?.querySelector(`[data-prep-env-not-used-reason="${reason}"]`)
+        expect(row?.textContent).toContain(sentence)
+        const open = details()?.querySelector<HTMLButtonElement>('[data-prep-open-environment]')
+        expect(open).not.toBeNull()
+        await act(async () => open!.click())
+        expect(useUiStore.getState().engineEnvOpen).toBe(true)
+        useUiStore.getState().setEngineEnvOpen(false)
+        expect(panel().querySelector('[data-prep-line]')?.textContent).toBe(lineBefore)
+      })
+    }
+  }
+
+  it('落选原因里「能跑只是排后面」「运行前没量」不说；没有落选原因就没有这一块', async () => {
+    await mount()
+    await openWith(
+      report({
+        environment: envFact({
+          not_used: [
+            { source: 'conda', label: 'Python 3.11', reason: 'outranked' },
+            { source: 'pyenv', label: 'Python 3.10', reason: 'not_checked' },
+          ],
+        }),
+      }),
+    )
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-env-not-used]')).toBeNull()
+  })
+
+  it('已采用带 ROOT 叠加的环境：「用的是」一行带上 ROOT 标签', async () => {
+    await mount()
+    useEnvStore.setState({
+      env: { project: { open: true, env_overlay: { kind: 'root', version: '6.38.02', label: 'ROOT 6.38' } } },
+    } as never)
+    await openWith(report({ environment: envFact({ kind: 'user' }) }))
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-row="environment"]')?.textContent).toContain('ROOT 6.38')
+    useEnvStore.setState({ env: null } as never)
+  })
+
   it('缺组件：主按钮「安装」认领 prepare_dependencies 并回显影响摘要；一行说装什么、装到哪，详情里列全', async () => {
     await mount()
     await openWith(report(STATES.deps))

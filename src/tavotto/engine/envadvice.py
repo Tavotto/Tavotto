@@ -560,6 +560,7 @@ def adoption_fact(
     adopted: dict | None,
     invalidated: dict | None,
     effective: str = "",
+    rejected: Iterable[dict] = (),
 ) -> dict:
     """准备报告里关于环境**唯一**要给用户看的事实（ADR 0114 §六）：这次用的是哪一类、谁定的、这次检查是不是
     刚换了一个（`switched`）、换之前那个为什么不能用（`replaced`）。**不要求用户做任何事**——要用户动手的只有
@@ -574,13 +575,39 @@ def adoption_fact(
             projectenv.CONSENT_AUTO_DETECTED: DECIDED_AUTO,
             projectenv.CONSENT_LEGACY_AUTO: DECIDED_AUTO,
         }.get(consent, DECIDED_DEFAULT)
-    return {
+    out = {
         "mode": projectenv.adoption_mode(),
         "kind": kind,
         "decided_by": decided,
         "switched": _switched(adopted, invalidated, effective),
         "replaced": {"reason": str(invalidated.get("reason") or "")} if invalidated else None,
     }
+    # 这一轮检测里评估过而没采用的候选各自为什么落选（ADR 0079 修订）：只在有时才出现这个键，老形状不变；
+    # 条目就是 `userenvs.rejection_reason` 的形状（稳定码，不带路径，ADR 0053 §二），界面按码说一句人话
+    not_used = [_public_rejection(r) for r in list(rejected)[:NOT_USED_LIMIT]]
+    if not_used:
+        out["not_used"] = not_used
+    return out
+
+
+#: 报告里最多带几条落选原因（界面至多折叠展示几条；候选很多时不让报告膨胀）
+NOT_USED_LIMIT = 6
+#: 每条里 `missing` / `import_failed` 最多带几个名字
+_NOT_USED_NAMES = 8
+
+
+def _public_rejection(r: dict) -> dict:
+    """`userenvs.rejection_reason` → 报告里的一条：只留界面要读的字段并截断名单（不透明 `id` 不进报告，没有路径）。"""
+    out = {
+        "source": str(r.get("source") or ""),
+        "label": str(r.get("label") or ""),
+        "reason": str(r.get("reason") or ""),
+        "missing": [str(n) for n in (r.get("missing") or [])[:_NOT_USED_NAMES]],
+        "import_failed": [str(n) for n in (r.get("import_failed") or [])[:_NOT_USED_NAMES]],
+    }
+    if r.get("root_version"):
+        out["root_version"] = str(r["root_version"])
+    return out
 
 
 def _python_requirement(rows: list[dict]) -> dict:

@@ -1154,7 +1154,8 @@
         }
       },
       "nativeFallback": "Safe mode blocked the script's file operations, so it was run on your real files instead.",
-      "nativeFallbackNoWriteback": "Safe mode blocked the script's file operations, so it was run on your real files instead. Changes to a figure made this way aren't written back to the script."
+      "nativeFallbackNoWriteback": "Safe mode blocked the script's file operations, so it was run on your real files instead. Changes to a figure made this way aren't written back to the script.",
+      "notUsedTitle": "Environments not used"
     },
     "fact": {
       "finished": "The script finished",
@@ -1272,6 +1273,23 @@
         "discard": "Discard",
         "retry": "Try again"
       }
+    },
+    "envNotUsed": {
+      "fallbackLabel": "This environment",
+      "missing_imports": "{{label}} is missing {{names}}, which this script needs, so it was not used.",
+      "missing_imports_unnamed": "{{label}} is missing packages this script needs, so it was not used.",
+      "import_failed": "{{label}} has {{names}} installed, but it failed to load, so it was not used.",
+      "import_failed_unnamed": "{{label}} has the packages this script needs, but they failed to load, so it was not used.",
+      "python_out_of_range": "The Python version in {{label}} is outside what {{product}} supports, so it was not used.",
+      "no_matplotlib": "{{label}} has no matplotlib, so it cannot draw figures and was not used.",
+      "worker_chain_failed": "{{product}}'s rendering component would not start in {{label}}, so it was not used.",
+      "activation_failed": "{{label}} is a Conda environment, but activating it failed, so it was not used.",
+      "probe_timeout": "Checking {{label}} took too long, so it was not used this time.",
+      "unusable": "{{label}} would not start, so it was not used.",
+      "not_checked": "{{label}} can only be confirmed when the script runs, so it was not used this time.",
+      "outranked": "{{label}} works too, but a better environment came first.",
+      "root_python_mismatch": "This {{root}} was built for a different Python version than this environment, so it was not used.",
+      "root_needs_msvc": "{{root}} needs the Visual Studio C++ tools to run on Windows, and they are not installed on this computer, so it was not used."
     }
   },
   "canvasMenu": {

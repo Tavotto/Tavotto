@@ -506,7 +506,12 @@ def plan_for(
         "error": env_error,
         # 给用户看的那一个事实（ADR 0114 §六）：用的是哪一类、谁定的、这次是不是刚自动换了一个——不要求用户动作
         "adoption": envadvice.adoption_fact(
-            root, source, adopted=adopted, invalidated=invalidated, effective=python
+            root,
+            source,
+            adopted=adopted,
+            invalidated=invalidated,
+            effective=python,
+            rejected=decision.rejected,
         ),
     }
     grant = workdir.grant_for(root)

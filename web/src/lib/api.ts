@@ -4325,6 +4325,8 @@ export interface ProjectEnvironment {
   python?: string
   /** true = 自动接手的结果，而不是用户挑的 */
   automatic?: boolean
+  /** 解释器带着的叠加环境（ROOT，ADR 0079 修订）：只读事实，只有种类 / 版本 / 标签，不带安装路径；没有叠加 = 没这个键 */
+  env_overlay?: { kind: string; version: string; label: string }
   /** 自动接手的触发原因（目前只有 `missing_dependency`） */
   trigger?: string
   /** 因为缺哪个包才切的 */
@@ -6077,6 +6079,22 @@ export interface PreparationResultError {
  * 准备报告里关于环境的那一个事实（后端 `envadvice.adoption_fact`）。界面按 `kind` 说一句人话（不出现「环境 /
  * 解释器 / venv / Python 版本」这类词），不据此自算「能不能跑」——要用户动手的只有依赖检查项与 `prepare_dependencies`。
  */
+/**
+ * 一个没被采用的候选环境的落选原因（后端 `userenvs.rejection_reason` 的公开形状）：稳定码 + 标签 + 缺的包名，
+ * **不带路径**（ADR 0053 §二）。码是闭集 `userenvs.REJECT_CODES`，界面只翻译（`lib/envRejectionText.ts`）。
+ */
+export interface EnvironmentNotUsed {
+  source: string
+  label: string
+  reason: string
+  /** `missing_imports`：缺的分发名 / import 名（如 `ROOT`） */
+  missing?: string[]
+  /** `import_failed`：装了但载入出错的名字 */
+  import_failed?: string[]
+  /** 叠加候选（ROOT）才有：ROOT 的版本，只有版本 */
+  root_version?: string
+}
+
 export interface PreparationEnvironmentFact {
   mode: 'detect' | 'confirm' | 'legacy'
   /** 用的是哪一类：Tavotto 自带 / 项目自己带的 / 这台电脑上已有的 / Tavotto 为这个项目装好的 / 全局指定；null = 还没有可用的 */
@@ -6085,6 +6103,8 @@ export interface PreparationEnvironmentFact {
   decided_by: 'user' | 'auto' | 'default' | 'locked'
   /** 这次检查是不是刚自动换了一个 */
   switched: boolean
+  /** 这一轮检测里评估过、没被采用的候选各自为什么落选（后端 `envadvice.adoption_fact`；没有就没这个键 / 老后端没有） */
+  not_used?: EnvironmentNotUsed[]
   /** 换之前用的那个为什么不能用了（被删 / 被重建 / 起不来 / 跑不了这个脚本）；没换 = null */
   replaced: { reason: string } | null
 }

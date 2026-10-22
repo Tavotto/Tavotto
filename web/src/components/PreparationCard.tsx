@@ -31,6 +31,7 @@ import {
 } from '@/lib/api'
 import { formatMessage, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
+import { envNotUsedSentence, visibleNotUsed } from '@/lib/envRejectionText'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
@@ -1321,6 +1322,8 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const originFacts = originFactsOf(report)
   const fallbackNote = nativeFallbackNote(report ?? null)
   const env = report?.environment
+  const overlayLabel = useEnvStore((s) => s.env?.project?.env_overlay?.label ?? '')
+  const notUsed = visibleNotUsed(env?.not_used)
   const primaryAction = view.primary?.kind === 'action' ? view.primary.action : null
   const recheck = primaryAction !== 'recheck' && report?.actions.some((a) => a.kind === 'recheck')
   const target = entry.target
@@ -1396,9 +1399,32 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       {env?.kind && (
         <Row
           k={pt('detail.usedBy')}
-          v={pt(`env.${env.kind}`) + (env.switched && env.replaced ? ` ${pt('env.switched')}` : '')}
+          v={
+            pt(`env.${env.kind}`) +
+            (overlayLabel ? ` + ${overlayLabel}` : '') +
+            (env.switched && env.replaced ? ` ${pt('env.switched')}` : '')
+          }
           attr="environment"
         />
+      )}
+      {notUsed.length > 0 && (
+        <div className="flex flex-col gap-1" data-prep-env-not-used>
+          <span className="text-ink-3">{pt('detail.notUsedTitle')}</span>
+          {notUsed.map((r) => (
+            <p key={`${r.reason}|${r.label}|${r.root_version ?? ''}`} data-prep-env-not-used-reason={r.reason}>
+              {envNotUsedSentence(r)}
+            </p>
+          ))}
+          <Button
+            variant="secondary"
+            size="sm"
+            className="self-start"
+            data-prep-open-environment
+            onClick={() => useUiStore.getState().setEngineEnvOpen(true)}
+          >
+            {translate('scripts.openEnvSettings', { ns: 'workspace' })}
+          </Button>
+        </div>
       )}
       {mode && !wdReq && <Row k={pt('detail.workdir')} v={pt(WORKDIR_LABEL[mode as WorkdirMode] ?? 'workdir.project_root')} attr="workdir" />}
       {report?.target.kind === 'script' && (

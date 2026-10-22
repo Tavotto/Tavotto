@@ -5346,6 +5346,7 @@ export default interface Resources {
         "nativeFallback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。",
         "nativeFallbackNoWriteback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。这样出的图，改动不会写回脚本。",
         "noFigureWhy": "没有调用 savefig，也没留下 Figure。",
+        "notUsedTitle": "没用到的环境",
         "parseKind": "参数问题",
         "parseKinds": {
           "invalid_value": "有参数的值不合法",
@@ -5371,6 +5372,23 @@ export default interface Resources {
         "project": "项目自带的那套",
         "switched": "（原来那套不能用了，已自动换好）",
         "user": "你电脑上已有的"
+      },
+      "envNotUsed": {
+        "activation_failed": "{{label}} 是 Conda 环境，但激活它时出错了，所以没用它。",
+        "fallbackLabel": "这个环境",
+        "import_failed": "{{label}} 里装了脚本要用的 {{names}}，但载入时出错了，所以没用它。",
+        "import_failed_unnamed": "{{label}} 里装了脚本要用的包，但载入时出错了，所以没用它。",
+        "missing_imports": "{{label}} 里没有这份脚本要用的 {{names}}，所以没用它。",
+        "missing_imports_unnamed": "{{label}} 里缺这份脚本要用的包，所以没用它。",
+        "no_matplotlib": "{{label}} 里没有 matplotlib，画不了图，所以没用它。",
+        "not_checked": "{{label}} 要等到运行时才能确认，这次没用它。",
+        "outranked": "{{label}} 也能用，只是有更合适的环境排在前面。",
+        "probe_timeout": "检查 {{label}} 花的时间太长了，这次没用它。",
+        "python_out_of_range": "{{label}} 的 Python 版本不在 {{product}} 支持的范围内，所以没用它。",
+        "root_needs_msvc": "{{root}} 在 Windows 上要装 Visual Studio 的 C++ 工具才能运行，这台电脑还没装，所以没用它。",
+        "root_python_mismatch": "这份 {{root}} 是为另一个 Python 版本编译的，和这个环境的 Python 版本不一致，所以没用它。",
+        "unusable": "{{label}} 起不来，所以没用它。",
+        "worker_chain_failed": "{{product}} 的渲染组件在 {{label}} 里启动不了，所以没用它。"
       },
       "fact": {
         "captured": "捕获到了图",
