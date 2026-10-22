@@ -339,7 +339,7 @@ def decision_for(figures_dir: str | Path, script: str) -> dict:
     }
 
 
-def probe_hint(figures_dir: str | Path, script: str, observed) -> dict | None:
+def probe_hint(figures_dir: str | Path, script: str, observed, *, kinds=None) -> dict | None:
     """沙盒 cwd 下**运行时**落空的相对探路调用（worker 的 `ProbeMisses`）→ 「在脚本目录里运行」的引导载荷，没有回 None。
 
     ADR 0084 的运行时证据：首开的静态探测（`databinding.probe_literals`）只认写在调用里的字符串常量；
@@ -363,12 +363,14 @@ def probe_hint(figures_dir: str | Path, script: str, observed) -> dict | None:
     if real is None:
         return None
     parent = Path(real).parent
-    kinds = {"glob", "dir", "path"}
+    known = {"glob", "dir", "path"}
     found: list[str] = []
     budget = [databinding.MAX_GLOB_SCAN]
     for item in observed[: figcapture.MAX_PROBE_MISSES]:
-        if not isinstance(item, dict) or item.get("kind") not in kinds:
+        if not isinstance(item, dict) or item.get("kind") not in known:
             continue
+        if kinds is not None and item["kind"] not in kinds:
+            continue  # 调用方只认其中几种（build 成功时只认 glob）
         target = item.get("target")
         if not isinstance(target, str) or not target or len(target) > 512:
             continue

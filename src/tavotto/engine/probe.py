@@ -284,6 +284,11 @@ def _error_from_worker(
     return out
 
 
+def _success_workdir_hint(worker) -> dict:
+    hint = pool.workdir_hint_of_build(worker)
+    return {"workdir_hint": hint} if hint is not None else {}
+
+
 def _attach_workdir_hint(out: dict, exc: pool.WorkerError) -> None:
     """沙盒里落空的探路调用、脚本目录里找得到（#1254）：把「在脚本目录里运行」的引导原样带出，素材库的试运行失败
     与渲染端点是同一份载荷。码、文案一字不变。"""
@@ -514,6 +519,8 @@ def _probe(
                 "remap_generation": getattr(_worker, "remap_generation", None),
                 # T03：这次执行绑定的运行配置引用（不透明 id；argv 原文不出现在结果里）
                 **({"run_config": run.config_id} if run is not None else {}),
+                # 跑通了有图，但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254）
+                **_success_workdir_hint(_worker),
             }
         # 跑通了但一张图都没产出：这个 entry 大概率不是出图入口，换下一个
         if first_error is None:

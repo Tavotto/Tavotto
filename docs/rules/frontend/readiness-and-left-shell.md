@@ -60,7 +60,9 @@
   同一个相对目标在脚本目录里找得到时，错误体带 `workdir_hint`（与确认框同形，**不是** `confirmation`、码不变）；
   `EngineError.workdirHint` → `PanelRender.workdirHint` → 错误块，素材库走 `run.error.workdir_hint`（`WorkdirHintRecovery`），
   **不论错误码**都给既有的 `WorkdirChooseButton`（同一个确认框，不新造组件和文案）；`WORKDIR_CODES` 的老行为不变。
-  看护 `components/workdirHint.test.tsx`。
+  **成功但图是空的**：成功渲染 / 试运行带 `workdir_hint` 时 `lib/workdirHintNotice.noticeWorkdirHint` 往通知轨挂一条胶囊（`uiStore.setStatus`，
+  一句话 + 「选择运行目录…」；owner 前缀 `workdir.hint:`，换项目撤掉）——不是横条；同面板同证据只提醒一次，`decided` 后不提醒，之后不再带 hint 就撤。
+  看护 `components/workdirHint.test.tsx`、`store/workdirHintSuccess.test.tsx`。
 - **跑前的那一次授权（U04，ADR 0061 §六）**：渲染以 `dependency_preparation_required` 回来时同样不是
   错误块，是缺一次授权——`renderStore` 把 `EngineError.dependencyPreparation`（整份联合计划 + 可选目标）
   交给 `depRepairStore.requestPreparation`（动态 import，避免 store 环），`DependencyPrepareDialog` 列出

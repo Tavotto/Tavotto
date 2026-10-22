@@ -7158,6 +7158,11 @@ def api_engine_render():
         "timings": timings,
         **_svg_execution_result(worker),
     }
+    # build 成功、但沙盒里 glob 回空而脚本目录里有文件（图可能是空的，#1254）：同形的引导随成功响应走，
+    # 出图结果与状态码不变；没有就不加这个字段
+    hint = engine_pool.workdir_hint_of_build(worker)
+    if hint is not None:
+        out["workdir_hint"] = hint
     # 没要就不加这个字段（响应形状对老调用方一字不变）
     if inline_svg and "svg" in resp:
         out["svg"] = resp["svg"]

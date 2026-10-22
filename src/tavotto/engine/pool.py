@@ -942,7 +942,9 @@ def _enoent_probe(enoent) -> dict | None:
     return probe.items[0] if probe.items else None
 
 
-def workdir_hint_for(script_name: str, figures_dir, probe_misses, enoent=None) -> dict | None:
+def workdir_hint_for(
+    script_name: str, figures_dir, probe_misses, enoent=None, *, kinds=None
+) -> dict | None:
     """worker 记下的沙盒里落空的相对探路调用（外加 C++ 读取器点名的那条相对路径，`enoent`）→ `workdir.probe_hint`；
     任何读不出来的情形都回 None（只是少一条引导）。码与 ADR 0110 的 `native_miss` 候选都不动。"""
     observed = list(probe_misses) if isinstance(probe_misses, list) else []
@@ -952,10 +954,26 @@ def workdir_hint_for(script_name: str, figures_dir, probe_misses, enoent=None) -
     if not script_name or not figures_dir or not observed:
         return None
     try:
-        return workdir.probe_hint(figures_dir, script_name, observed)
+        return workdir.probe_hint(figures_dir, script_name, observed, kinds=kinds)
     except (OSError, ValueError) as exc:
         LOG.info("脚本目录引导拼不出来（%s）: %s", type(exc).__name__, script_name)
         return None
+
+
+#: build **成功**时只有 glob 回空算「图可能缺数据」的证据：`exists("out")` / `isdir("cache")` 这类先判再建的
+#: 常规写法在沙盒里为假、脚本目录里却有同名目录，成功的图不该因此被提示（错误上才放开全部种类）。
+SUCCESS_HINT_KINDS = frozenset({figcapture.PROBE_GLOB})
+
+
+def workdir_hint_of_build(worker) -> dict | None:
+    """build 成功之后的引导：脚本在沙盒里 glob 回空却没报错（`ax.plot([])` 画出一条空线），脚本目录里同一个模式
+    有文件 → 同形的 `workdir_hint`（`source = "runtime"`）。出图结果、状态码都不改（#1254）。"""
+    return workdir_hint_for(
+        getattr(worker, "script_name", ""),
+        getattr(worker, "figures_dir", None),
+        getattr(worker, "last_build_probe_misses", None),
+        kinds=SUCCESS_HINT_KINDS,
+    )
 
 
 def _offer_workdir_hint(err: "WorkerError", script_name: str, figures_dir) -> "WorkerError":
@@ -2543,6 +2561,8 @@ class EngineWorker:
     last_build_source_sha256: str | None = None
     #: 最近一次 build 每一问的去向计数（`inputbroker.InputFacts`）与它绑定的执行转录（只有 id 与计数）。
     last_input_facts: dict | None = None
+    #: 最近一次 build 响应里沙盒落空的探路调用（#1254）：build 成功但图可能是空的时，渲染 / 试运行据此挂 `workdir_hint`
+    last_build_probe_misses: list | None = None
     last_input_transcript: dict | None = None
 
     def alive(self) -> bool:
@@ -2918,6 +2938,8 @@ class EngineWorker:
             figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
+        misses = resp.get("probe_misses")
+        self.last_build_probe_misses = misses if isinstance(misses, list) else None
         self.last_build_execution_id = resp.get("execution_id")
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)
@@ -3259,6 +3281,8 @@ class WorkerdWorker:
     #: 没 build / build 失败 / 老 worker 没带 = None。TAF 改图验证比的是它，不是 spawn 时采样的 `script_sha1`。
     last_build_source_sha256: str | None = None
     last_input_facts: dict | None = None
+    #: 最近一次 build 响应里沙盒落空的探路调用（#1254）：build 成功但图可能是空的时，渲染 / 试运行据此挂 `workdir_hint`
+    last_build_probe_misses: list | None = None
     last_input_transcript: dict | None = None
 
     def __init__(
@@ -3635,6 +3659,8 @@ class WorkerdWorker:
             figcapture.clear_preview_poison(self.out_dir)
         self.last_build_descriptors = list(resp.get("descriptors") or [])
         self.last_build_runtime = _runtime_of(resp)
+        misses = resp.get("probe_misses")
+        self.last_build_probe_misses = misses if isinstance(misses, list) else None
         self.last_build_execution_id = resp.get("execution_id")
         self.last_build_artifact_probe = resp.get("artifact_probe")
         self.last_build_script_inputs = _script_inputs_of(resp)

@@ -89,7 +89,11 @@
 若是相对路径（cwd 之内的绝对路径换回相对），`pool.workdir_hint_for` 把它当一条 `path` 证据并进同一次判定——脚本目录里找得到就出引导；
 **不放宽 ADR 0110 的 `native_miss` 候选**，码与 `missing_input` 不动。前端（`ApiError.workdirHint` / `PanelRender.workdirHint` /
 素材库 `run.error.workdir_hint`）不论错误码都把它交给既有的 `WorkdirChooseButton`（同一个确认框，不新造组件和文案）。
-看护 `tests/test_runtime_probe_hint.py`、`web/src/components/workdirHint.test.tsx`（观察层返回值逐项不变 / 只记沙盒里的相对落空 / 判据 /
+**build 成功但图是空的**（`ax.plot(glob(...))` 回空，一条空线、不报错——静默的错误结果）：build 响应的 `probe_misses` 存在
+`worker.last_build_probe_misses`，渲染成功响应（`/api/engine/render`）与试运行成功结果各挂同形 `workdir_hint`（`pool.workdir_hint_of_build`）；
+**成功路径只认 `glob`**（`exists("out")` / `isdir("cache")` 这类先判再建的常规写法在沙盒里为假、脚本目录里却有同名目录，成功的图不该被提示），
+出图结果、状态码不变。前端走通知轨（`lib/workdirHintNotice`：胶囊、同面板同证据只提醒一次、`decided` 后不再提醒），不是横条。
+看护 `tests/test_runtime_probe_hint.py`、`web/src/components/workdirHint.test.tsx`、`web/src/store/workdirHintSuccess.test.tsx`（观察层返回值逐项不变 / 只记沙盒里的相对落空 / 判据 /
     真 worker 沙盒带引导、脚本目录模式出图、两种试运行形状）。
     结论只看**找得到**（`found`）：glob 预算用完的 `unjudged` 只记在候选里、**不驱动结论、不会问**。
     别名按 import 认（`import glob as g` / `from glob import glob as gg` / `Path as P`）；名字在别处

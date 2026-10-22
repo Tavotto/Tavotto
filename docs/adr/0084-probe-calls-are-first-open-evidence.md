@@ -91,6 +91,9 @@ C++ 读取器（pyarrow 的 `read_table` 等，打开不经 Python 层）失败�
 在脚本目录里找得到就出同一份引导（#1253 的真实场景：数据就在脚本目录，沙盒 cwd 下读不到）。不放宽 ADR 0110 的 `native_miss`。
 前端不论错误码，凡有 `workdir_hint` 都复用既有的 `WorkdirChooseButton`（确认框 = 首开那一个）。
 
+build **成功**但图是空的（沙盒里 glob 回空，`plot([])` 不报错）是这一类里最糟的形态——静默的错误结果。同一份证据随成功的渲染响应与试运行结果
+挂 `workdir_hint`（成功路径只认 `glob` 一类，不认 `exists` / `isdir`，避免先判再建的常规脚本被误提示）；界面走通知轨的胶囊。出图结果与状态码不变。
+
 不变：不扩回退、不自动切换；`listdir()` / `iterdir()` 列 cwd 本身不记（脚本目录里恒有东西，说明不了什么）；
 `os.scandir` 的迭代器不包（只记目录不存在）；项目外不看。看护 `tests/test_runtime_probe_hint.py`。
 

@@ -513,3 +513,120 @@ def test_pyarrow_reading_a_parquet_that_exists_nowhere_gets_no_hint(figs):
     with pytest.raises(engine_pool.WorkerError) as err:
         engine_pool.build("fig.py", str(figs), "__main__")
     assert err.value.code == "script_error" and err.value.workdir_hint is None
+
+
+# --------------------------------------------------------------- build 成功、图却是空的（#1254）
+#: 沙盒里 glob 回空，`ax.plot([])` 画出一条空线，脚本不报错、Tavotto 照常出图——静默的错误结果
+EMPTY_PLOT_SCRIPT = """\
+import glob
+import matplotlib.pyplot as plt
+
+
+def _read_parts(pattern):
+    out = []
+    for p in sorted(glob.glob(pattern)):
+        with open(p, encoding="utf-8") as f:
+            out.extend(float(x) for x in f.read().split())
+    return out
+
+
+fig, ax = plt.subplots()
+ax.plot(_read_parts("data/run_*.txt"), color="#B4473C")
+ax.set_title("custom entry")
+fig.savefig("p.png")
+"""
+
+
+@needs_worker
+def test_a_successful_build_with_an_empty_glob_carries_the_hint_and_the_same_figure(figs):
+    (figs / "fig.py").write_text(EMPTY_PLOT_SCRIPT, encoding="utf-8")
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp["stems"]) == ["p"]  # 出图结果不变
+    hint = engine_pool.workdir_hint_of_build(worker)
+    assert hint is not None and hint["source"] == "runtime"
+    assert hint["reason"] == workdir.REASON_SCRIPT_DIR_EVIDENCE
+    assert hint["probes"] == ["data/run_*.txt"]
+    # 同一个会话还能照常渲染
+    assert worker.override("p", [])["manifest"]
+
+    # 切到脚本目录：有数据，不再有记录，也就不带 hint
+    workdir.set_mode(figs, workdir.MODE_PROJECT)
+    engine_pool.shutdown_all(str(figs), wait=True)
+    worker, resp = engine_pool.build("fig.py", str(figs), "__main__")
+    assert sorted(resp["stems"]) == ["p"] and "probe_misses" not in resp
+    assert engine_pool.workdir_hint_of_build(worker) is None
+
+
+@needs_worker
+def test_a_successful_probe_carries_the_hint_too(figs):
+    (figs / "fig.py").write_text(EMPTY_PLOT_SCRIPT, encoding="utf-8")
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    result = engine_probe.probe(str(figs), "fig.py")
+    assert result["error"] is None and result["stems"] == ["p"]
+    assert result["workdir_hint"]["probes"] == ["data/run_*.txt"]
+    workdir.set_mode(figs, workdir.MODE_PROJECT)
+    engine_pool.shutdown_all(str(figs), wait=True)
+    assert "workdir_hint" not in engine_probe.probe(str(figs), "fig.py")
+
+
+def test_on_success_only_glob_counts_not_the_exists_checks_of_ordinary_scripts(project):
+    (project / "sub" / "cache").mkdir()
+    worker = type(
+        "W",
+        (),
+        {
+            "script_name": "sub/fig.py",
+            "figures_dir": str(project),
+            "last_build_probe_misses": [{"kind": "dir", "target": "cache"}],
+        },
+    )()
+    assert engine_pool.workdir_hint_of_build(worker) is None  # 先判再建的常规写法，不提示
+    worker.last_build_probe_misses = [_glob("data/run_*.txt")]
+    assert engine_pool.workdir_hint_of_build(worker)["probes"] == ["data/run_*.txt"]
+    worker.last_build_probe_misses = None
+    assert engine_pool.workdir_hint_of_build(worker) is None
+    assert engine_pool.workdir_hint_of_build(object()) is None  # native / 测试替身
+
+
+def test_the_render_response_carries_the_hint_without_touching_anything_else(
+    project, tmp_path, monkeypatch
+):
+    from tavotto import app as tavotto_app
+
+    (project / "p1.pdf").write_bytes(b"%PDF-1.4\n")
+    tavotto_app.app.config["TESTING"] = True
+    tavotto_app.reset_projects()
+    client = tavotto_app.app.test_client()
+    client.post("/api/projects/open", json={"path": str(project)})
+
+    class _Worker:
+        built = True
+        rev = 3
+        script_name = "sub/fig.py"
+        figures_dir = str(project)
+        last_build_probe_misses = [_glob("data/run_*.txt")]
+
+        def override(self, stem, patches, preview_dpi=None, inline_svg=False):
+            return {"manifest": {"elements": []}, "warnings": []}
+
+    monkeypatch.setattr(
+        tavotto_app.engine_registry.Registry,
+        "for_stem",
+        lambda self, s: {"script": "sub/fig.py", "entry": "main", "cost": "light"},
+    )
+    monkeypatch.setattr(tavotto_app.engine_pool, "get", lambda *a, **kw: _Worker())
+    try:
+        res = client.post("/api/engine/render", json={"id": "p1.pdf", "patches": []})
+        assert res.status_code == 200
+        body = res.get_json()
+        assert body["workdir_hint"]["source"] == "runtime" and body["manifest"] == {"elements": []}
+        _Worker.last_build_probe_misses = None
+        assert (
+            "workdir_hint"
+            not in client.post(
+                "/api/engine/render", json={"id": "p1.pdf", "patches": []}
+            ).get_json()
+        )
+    finally:
+        tavotto_app.reset_projects()
