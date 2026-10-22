@@ -1575,12 +1575,13 @@ def rejection_reason(entry: dict) -> dict:
 
 def _mismatch_versions(entry: dict, reason: str) -> dict:
     """`root_python_mismatch` 且两边小版本都读得出时：ROOT 为哪个 Python 编译（`root_python`）、这个环境是哪个
-    （`env_python`），都只到 `主.次`。读不出（体检后才判定的那条路）就不带，界面退回不点版本的那句。"""
+    （`env_python`），都只到 `主.次`。读不出、或两边其实一样（版本对得上而 `import ROOT` 因别的原因失败，也被归到这个码）
+    就不带，界面退回不点版本的那句——不说「为 3.14 编译、环境是 3.14」这种自相矛盾的话。"""
     if reason != REJECT_ROOT_PYTHON_MISMATCH:
         return {}
     built = entry.get("root_build_python") or ""
     env = ".".join((entry.get("python_version") or "").split(".")[:2])
-    if _minor_of(built) is None or _minor_of(env) is None:
+    if _minor_of(built) is None or _minor_of(env) is None or _minor_of(built) == _minor_of(env):
         return {}
     return {"root_python": built, "env_python": env}
 

@@ -84,6 +84,9 @@ def test_mismatch_names_both_python_versions_only_when_both_are_known():
     # 读不出构建版本（体检后才判定的那条路）：不带这两个键，界面退回不点版本的那句
     bare = userenvs.rejection_reason({**entry, "root_build_python": ""})
     assert "root_python" not in bare and "env_python" not in bare
+    # 两边一样（版本对得上、import ROOT 因别的原因失败也归到这个码）：不说自相矛盾的一对
+    same = userenvs.rejection_reason({**entry, "root_build_python": "3.12"})
+    assert "root_python" not in same and "env_python" not in same
     # 别的落选原因不带
     other = userenvs.rejection_reason({**entry, "overlay_reject": userenvs.REJECT_ROOT_NEEDS_MSVC})
     assert "root_python" not in other
