@@ -81,7 +81,7 @@ PRESETS: list[dict] = [
     },
     {
         "id": DEEPSEEK_CODEX_ID,
-        "label": "DeepSeek（Codex）",
+        "label": "DeepSeek",
         "agent": "codex",
         "base_url": "https://api.deepseek.com",
         "wire_api": "responses",
@@ -106,7 +106,7 @@ PRESETS: list[dict] = [
     # 只有 Codex 的会员用户不必装 Claude Code。国内地址；同一把会员 Key。
     {
         "id": "kimi-code-codex",
-        "label": "Kimi Code 会员（Codex）",
+        "label": "Kimi Code 会员",
         "agent": "codex",
         "base_url": "https://api.kimi.com/coding/v1",
         "wire_api": "responses",
