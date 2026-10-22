@@ -1967,3 +1967,50 @@ class TestReviewRound12:
         }
         _, res, events = http_run(cand, serve, "openai-chat", [(200, {}, body)])
         assert res.ok and res.usage_estimated is False and res.ledger.total_in == 3
+
+
+class TestReviewRound13:
+    """Codex #1328 第十三轮：null / 非字符串工具调用 ID 不执行；思考模式只许 anthropic 协议。"""
+
+    @pytest.mark.parametrize("bad_id", [None, 7, {"x": 1}])
+    def test_non_string_tool_call_id_is_not_executed(self, cand, serve, bad_id):
+        before = _tree(cand)
+        call = {
+            "id": bad_id,
+            "type": "function",
+            "function": {"name": "write_file", "arguments": json.dumps({"content": "x\n"})},
+        }
+        body = {
+            "choices": [
+                {"finish_reason": "tool_calls", "message": {"content": None, "tool_calls": [call]}}
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+        _, res, events = http_run(cand, serve, "openai-chat", [(200, {}, body)])
+        assert (res.ok, res.reason, res.detail) == (False, "network", "tool_call_without_id")
+        assert not any(e["type"] == "tool" for e in events) and _tree(cand) == before
+
+    @pytest.mark.parametrize(
+        ("wire", "extra"),
+        [
+            ("openai-chat", ["--thinking", "adaptive"]),
+            ("openai-chat", ["--thinking", "budget", "--effort", "high"]),
+            ("openai-responses", ["--thinking", "adaptive"]),
+        ],
+    )
+    def test_thinking_mode_on_a_non_anthropic_wire_is_rejected(self, cand, serve, wire, extra):
+        srv = serve(_final_text_turn("anthropic", "hi"))
+        p = run_cli(
+            cand,
+            wire,
+            "--base-url",
+            srv.url,
+            "--model",
+            "m",
+            *extra,
+            key=KEY_CANARY,
+            stdin="make it blue",
+        )
+        last = json.loads(p.stdout.splitlines()[-1])
+        assert (last["type"], last["reason"], last["detail"]) == ("done", "internal", "bad_args")
+        assert srv.requests == [] and p.returncode == 1

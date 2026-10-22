@@ -163,6 +163,12 @@ def _int(v: Any) -> int:
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
 
 
+def _str_id(v: Any) -> str:
+    """工具调用的对应 ID：只认非空字符串；null / 数字 / 其他类型一律当缺失（""），由 loop 拒绝执行。
+    不能 `str(None)`——那会得到看似有效的 "None"。"""
+    return v if isinstance(v, str) else ""
+
+
 def _loads_args(raw: Any) -> dict | None:
     if isinstance(raw, dict):
         return raw
@@ -324,7 +330,7 @@ class AnthropicWire:
             elif kind == "tool_use":
                 turn.tool_calls.append(
                     ToolCall(
-                        id=str(blk.get("id", "")),
+                        id=_str_id(blk.get("id")),
                         name=str(blk.get("name", "")),
                         args=_loads_args(blk.get("input")),
                     )
@@ -445,7 +451,7 @@ class OpenAIChatWire:
             if isinstance(fn, dict):
                 turn.tool_calls.append(
                     ToolCall(
-                        id=str(c.get("id", "")),
+                        id=_str_id(c.get("id")),
                         name=str(fn.get("name", "")),
                         args=_loads_args(fn.get("arguments")),
                     )
@@ -574,7 +580,7 @@ class OpenAIResponsesWire:
             elif kind == "function_call":
                 turn.tool_calls.append(
                     ToolCall(
-                        id=str(it.get("call_id", "")),
+                        id=_str_id(it.get("call_id")),
                         name=str(it.get("name", "")),
                         args=_loads_args(it.get("arguments")),
                     )
