@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import filecmp
 import io
+import json
 import os
 from pathlib import Path
 from unittest import mock
@@ -434,6 +435,7 @@ def _patch_serialiser(monkeypatch, fig, where, *, raise_after=True):
 @pytest.mark.parametrize("where", ["line", "figure"])
 def test_patched_class_level_serialisers_are_never_called(monkeypatch, where):
     """纵深层：类级钩子被 patch 成用户函数（类型名仍是 matplotlib）——拍快照一次都不调它。"""
+    monkeypatch.setattr(figcapture, "trusted_surface_intact", lambda: True)  # 只验这一层
     fig = _figure()
     fig.axes[0].set_title("kept")
     figcapture.mark_saved(fig)
@@ -454,6 +456,7 @@ def test_a_mutation_during_the_snapshot_stays_reported_as_modified_after_save(
     """结构层：即使纵深层被绕过（这里直接让它放行），拍摄期间的任何改动都留在脏标记里、快照作废——
     不被清掉，最终如实报 `modified_after_save`。成功（不抛）的钩子同样作废。"""
     monkeypatch.setattr(figcapture, "_class_hooks_trusted", lambda t: True)
+    monkeypatch.setattr(figcapture, "trusted_surface_intact", lambda: True)  # 只验结构层
     fig = _figure()
     figcapture.mark_saved(fig)
     calls = _patch_serialiser(monkeypatch, fig, where, raise_after=raise_after)
@@ -471,6 +474,131 @@ def test_a_clean_snapshot_leaves_the_dirty_flag_false():
     ledger.take(fig, 1)
     assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is False
     assert ledger.restore(fig)[1] is None
+
+
+# ---- 可信方法面指纹（Codex #1314 P1-d）：检测到 matplotlib 被 patch 就放弃快照 ----
+
+
+@pytest.fixture
+def fresh_surface():
+    figcapture._reset_trusted_surface_for_tests()
+    figcapture.freeze_trusted_surface()
+    yield
+    figcapture._reset_trusted_surface_for_tests()
+
+
+def test_surface_patch_after_the_snapshot_blocks_the_restore_and_the_hook_never_runs(
+    monkeypatch, fresh_surface
+):
+    """拍摄时一切正常，脚本随后 patch `Figure.__setstate__`：还原前的那次比对放弃快照，钩子调用 0 次。"""
+    import matplotlib.figure as mfigure
+
+    fig = _figure()
+    fig.axes[0].set_title("kept")
+    figcapture.mark_saved(fig)
+    ledger = figcapture.SaveMomentLedger()
+    ledger.take(fig, 1)
+    calls = []
+    orig = mfigure.Figure.__setstate__
+
+    def hook(self, state):
+        calls.append(1)
+        orig(self, state)
+        self.axes[0].set_title("HOOK")
+
+    monkeypatch.setattr(mfigure.Figure, "__setstate__", hook)
+    assert ledger.restore(fig) == (None, "matplotlib_patched")
+    assert calls == []
+
+
+@pytest.mark.parametrize("where", ["Text.set_text", "Axes.draw", "Line2D.__reduce__"])
+def test_any_patched_matplotlib_method_blocks_taking_the_snapshot(
+    monkeypatch, fresh_surface, where
+):
+    import matplotlib.axes as maxes
+    import matplotlib.lines as mlines
+    import matplotlib.text as mtext
+
+    cls = {"Text": mtext.Text, "Axes": maxes.Axes, "Line2D": mlines.Line2D}[where.split(".")[0]]
+    name = where.split(".")[1]
+    orig = getattr(cls, name)
+    monkeypatch.setattr(cls, name, lambda self, *a, **k: orig(self, *a, **k))
+    fig = _figure()
+    figcapture.mark_saved(fig)
+    ledger = figcapture.SaveMomentLedger()
+    ledger.take(fig, 1)
+    assert ledger.restore(fig) == (None, "matplotlib_patched")
+
+
+def test_unpatched_surface_stays_intact_and_restores(fresh_surface):
+    fig = _figure()
+    figcapture.mark_saved(fig)
+    ledger = figcapture.SaveMomentLedger()
+    ledger.take(fig, 1)
+    assert figcapture.trusted_surface_intact()
+    assert ledger.restore(fig)[1] is None
+
+
+def test_first_seen_module_with_a_user_function_is_refused():
+    """脚本运行期间才导入、没有启动基线的模块：从严，类里出现来源在库目录之外的 Python 函数就判被改过。"""
+    import types as _t
+
+    figcapture._reset_trusted_surface_for_tests()
+    figcapture.freeze_trusted_surface()
+    mod = _t.ModuleType("mpl_toolkits.fake_late")
+
+    class Late:
+        def __setstate__(
+            self, state
+        ):  # 定义在本测试文件里：来源不在 matplotlib / 标准库 / numpy 目录
+            pass
+
+    Late.__module__ = mod.__name__
+    mod.Late = Late
+    assert figcapture._module_origin_ok(mod, mod.__name__, figcapture._surface_roots) is False
+    figcapture._reset_trusted_surface_for_tests()
+
+
+PATCH_AFTER_SAVE = {
+    "setstate": (
+        "import matplotlib.figure as _mf\n"
+        "_orig = _mf.Figure.__setstate__\n"
+        "def _hook(self, state):\n"
+        "    _orig(self, state)\n"
+        "    self.axes[0].set_title('HOOK RAN')\n"
+        "_mf.Figure.__setstate__ = _hook\n"
+    ),
+    "set_text": (
+        "import matplotlib.text as _mt\n"
+        "_o = _mt.Text.set_text\n"
+        "_mt.Text.set_text = lambda self, s: _o(self, s)\n"
+    ),
+    "axes_draw": (
+        "import matplotlib.axes as _ma\n_o = _ma.Axes.draw\n"
+        "_ma.Axes.draw = lambda self, r: _o(self, r)\n"
+    ),
+}
+
+
+@needs_worker
+@pytest.mark.parametrize("which", sorted(PATCH_AFTER_SAVE))
+def test_script_that_patches_matplotlib_after_the_save_keeps_the_final_state_and_says_so(
+    tmp_path, which
+):
+    """存盘之后脚本 patch 了 matplotlib：快照放弃，编辑基础是最终态，`modified_after_save` 照常报，被 patch 的钩子没跑过。"""
+    patch = "".join("    " + line + "\n" for line in PATCH_AFTER_SAVE[which].splitlines())
+    src = REFERENCE + patch + MUTATIONS["title_and_color"]
+    man, _ = _run(tmp_path, src, f"patched_{which}")
+    assert man["modified_after_save"] is True
+    assert man["save_moment_unavailable"] == "matplotlib_patched"
+    assert "save_moment" not in man
+    assert "HOOK RAN" not in json.dumps(man, ensure_ascii=False)
+
+
+@needs_worker
+def test_unpatched_script_still_restores_with_the_fingerprint_on(tmp_path):
+    man, _ = _run(tmp_path, REFERENCE + MUTATIONS["title_and_color"], "unpatched")
+    assert man.get("save_moment") == "restored"
 
 
 @needs_worker

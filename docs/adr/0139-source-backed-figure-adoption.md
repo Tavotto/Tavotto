@@ -248,6 +248,23 @@ manifest / overrides / 撤销重做不分叉）。
   `reducer_override` 对 None / bool / int / float / str / bytes 与精确的 list / tuple / dict / set / frozenset / bytearray 不调用
   （它们没有用户代码，容器元素仍逐个经过）；这些的**子类**会被调用，因此用户的 dict / list 子类被拒。matplotlib 自己的
   `Figure.__getstate__` / `CallbackRegistry.__getstate__` 只做纯数据整理，不回调用户代码；回调函数本身要被序列化时同样过白名单。
+  **第三层：可信方法面指纹（Codex #1314 P1-d；用户 2026-10-22 裁决：检测到 matplotlib 被 patch 就放弃快照，不再逐个封堵）**：
+  脚本能 patch 的不止拍摄时的 `__reduce__`，还有还原时走的 `Figure.__setstate__`，以及任何被拍摄 / 还原间接调用的方法。
+  逐个堵是无底洞，所以直接问「matplotlib 此刻还是不是启动时那个样子」：
+  - **范围**：`matplotlib` / `mpl_toolkits` 已导入模块里每个类 `__dict__` 中的可调用与描述符（函数、staticmethod、classmethod、property、
+    内建）加模块级类 / 函数，外加还原路径上实测会解析到的几个入口模块（`copyreg` / `enum` / `collections` / `functools` / `numpy.ma.core` /
+    `numpy` 的重建函数所在模块）。值记 `id` 并握住对象本身（防地址复用漏报）。
+  - **时刻**：`figcapture.freeze_trusted_surface()` 在 worker 里**用户代码（含 paper_style）跑之前**、Tavotto 自己的 patch 装完之后拍一次，
+    进程内只拍一次（同 worker 重试不重拍，否则上一轮脚本的 patch 会被当成基线）。**拍摄前（`take`）、还原前（`restore`）各比对一次**，
+    每次都重算真实值，不缓存；不一致 → 原因 `matplotlib_patched`（进闭集 `SAVE_MOMENT_REASONS`；前端只透传该字段，无按原因分支的文案），
+    退回只告知，`modified_after_save` 照常如实报。
+  - **运行期才导入的模块**（`mpl_toolkits.mplot3d`、`matplotlib.pyplot` 常常在启动时还没导入）：没有启动基线，所以**从严**——首次见到时
+    要求它的 Python 函数的定义文件都在 matplotlib / mpl_toolkits / 标准库 / numpy 目录里（被用户函数顶替当场判被改过），通过才补登记，
+    此后靠 `id` 比对。已知边界：用户用「库来源」的可调用对象去顶替，不在检测范围（那不是用户代码）。
+  - **实测耗时**：启动指纹约 3 ms（107 个模块、约 7500 个条目），每次比对约 1.8 ms。
+  - **与纵深层的关系**：指纹覆盖 matplotlib 与上述入口模块；`_class_hooks_trusted` 另外覆盖没进指纹的类型（其它 numpy 类型等）的类级钩子，
+    且只在 dump 内读一次、很便宜，所以两者保留，不删。结构层（拍摄期间置脏即作废）同样保留。
+  - **代价**：脚本自己 patch 了 matplotlib（哪怕是无害的包装）就拿不到保存瞬间的快照，退回只告知。CompatBench 语料里没有这类脚本，可还原数不变（131）。
   语义代价：语料里 `al_ticks`（用户 lambda 的 FuncFormatter）与 `ca_collection_alpha`（用户 HandlerBase 子类）原本在还原阶段才
   `restore_failed`，现在拍摄阶段就是 `unpicklable`——都是退回最终态，数量不变。
 - 拍快照临时摘掉 `canvas.manager`（matplotlib 据此写 `_restore_to_pylab`，否则还原会把复制品登记进 pyplot），`finally` 放回。

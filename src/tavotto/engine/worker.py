@@ -1293,6 +1293,8 @@ class Worker(wireproto.V1Handler):
         self._input_channel = channel
         scriptinput.install(channel)
 
+        # 可信方法面指纹：用户代码（含 paper_style）跑之前、Tavotto 自己的 patch 都装完之后拍一次（进程内只拍一次）
+        figcapture.freeze_trusted_surface()
         capture_threads = set(threading.enumerate())
         t_script = time.perf_counter()
         # `source_sha256`（TAF 改图验证的判据：这次 build 执行的是哪一版源码）。两条路径各自成立的理由不同：

@@ -552,7 +552,7 @@ _poison_lock = threading.Lock()
 
 
 def _dir_key(out_dir) -> str:
-    return os.path.normcase(os.path.abspath(os.fspath(out_dir)))
+    return os.path.normcase(os.path.realpath(os.fspath(out_dir)))
 
 
 def poison_preview_dir(out_dir) -> None:
@@ -1895,6 +1895,7 @@ SAVE_MOMENT_REASONS = frozenset(
         "structure_mismatch",  # 还原出的 Figure 与拍快照时的结构签名对不上
         "multi_stem",  # 同一张图以多个 stem 被捕获：快照只对应它最后一次保存，说不清是哪个 stem 的
         "not_selected_save",  # 选定原件对应的那次保存不是这张图的最后一次保存（快照取的是最后一次）
+        "matplotlib_patched",  # 脚本改了 matplotlib 的方法面（patch 过类 / 函数）：拍摄与还原都会走被改过的代码，一律放弃
     }
 )
 #: 单张快照 / 本次执行累计的字节上限。**只用字节数当预算，不用墙钟**：热会话与写回的一次性重放必须在同一处同样地
@@ -1971,6 +1972,150 @@ def _snapshot_type_allowed(t) -> bool:
     return save_moment_module_allowed(
         getattr(t, "__module__", None), getattr(t, "__qualname__", None)
     )
+
+
+# ---- 可信方法面指纹（Codex #1314 P1-d；用户裁决：检测到 matplotlib 被 patch 就放弃快照，不逐个封堵） ----
+#: 指纹范围：matplotlib / mpl_toolkits 已导入模块里每个类 `__dict__` 中的可调用 / 描述符（函数、staticmethod、classmethod、
+#: property、内建……）和模块级的类 / 函数，再加还原路径实测会解析到的标准库与 numpy 入口（见 `_SURFACE_EXTRA_MODULES`）。
+#: 值记 `id`，同时握住对象本身（防止原对象释放后地址被复用而漏报）。
+_SURFACE_PACKAGES = ("matplotlib", "mpl_toolkits")
+_SURFACE_EXTRA_MODULES = (
+    "copyreg",
+    "enum",
+    "collections",
+    "functools",
+    "numpy.ma.core",
+    "numpy._core.multiarray",
+    "numpy._core.numeric",
+    "numpy.core.multiarray",
+    "numpy.core.numeric",
+)
+_DESCRIPTOR_TYPES = (
+    staticmethod,
+    classmethod,
+    property,
+    types.FunctionType,
+    types.BuiltinFunctionType,
+)
+_surface_lock = threading.Lock()
+_surface_base: dict[str, tuple[dict, list]] | None = None
+_surface_roots: tuple[str, ...] = ()
+
+
+def _surface_module_map(name: str, mod) -> tuple[dict, list]:
+    out: dict = {}
+    refs: list = []
+    for attr, val in list(vars(mod).items()):
+        if isinstance(val, type):
+            out[(attr, None)] = id(val)
+            refs.append(val)
+            if getattr(val, "__module__", None) != name:
+                continue  # 别的模块定义的类由它自己的模块登记
+            for k, v in list(val.__dict__.items()):
+                if callable(v) or isinstance(v, _DESCRIPTOR_TYPES):
+                    out[(attr, k)] = id(v)
+                    refs.append(v)
+        elif isinstance(val, (types.FunctionType, types.BuiltinFunctionType)):
+            out[(attr, None)] = id(val)
+            refs.append(val)
+    return out, refs
+
+
+def _surface_modules() -> dict:
+    return {
+        k: m
+        for k, m in list(sys.modules.items())
+        if m is not None
+        and (k.split(".", 1)[0] in _SURFACE_PACKAGES or k in _SURFACE_EXTRA_MODULES)
+    }
+
+
+def _function_origin_ok(fn, roots) -> bool:
+    code = getattr(fn, "__code__", None)
+    return code is None or os.path.normcase(os.path.realpath(code.co_filename)).startswith(roots)
+
+
+def _module_origin_ok(mod, name: str, roots) -> bool:
+    """首次才见到的模块（脚本运行期间才导入，如 `mpl_toolkits.mplot3d`）：没有「启动时」的基线可比，
+    所以从严——它的 Python 函数必须定义在 matplotlib / mpl_toolkits 自己的目录里。被用户函数顶替的当场判为被改过。"""
+    for val in list(vars(mod).values()):
+        if isinstance(val, type) and getattr(val, "__module__", None) == name:
+            for v in list(val.__dict__.values()):
+                inner = getattr(v, "__func__", v)
+                if isinstance(v, property):
+                    parts = (v.fget, v.fset, v.fdel)
+                else:
+                    parts = (inner,)
+                for fn in parts:
+                    if isinstance(fn, types.FunctionType) and not _function_origin_ok(fn, roots):
+                        return False
+        elif isinstance(val, types.FunctionType) and getattr(val, "__module__", None) == name:
+            if not _function_origin_ok(val, roots):
+                return False
+    return True
+
+
+def freeze_trusted_surface() -> None:
+    """进程内只拍一次（同 worker 重试不重拍——否则脚本上一轮的 patch 会被当成基线）。safe worker 在跑用户脚本之前调。"""
+    global _surface_base, _surface_roots
+    with _surface_lock:
+        if _surface_base is not None:
+            return
+        roots: list[str] = []
+        for pkg in _SURFACE_PACKAGES:
+            mod = sys.modules.get(pkg)
+            for path in list(getattr(mod, "__path__", None) or []):
+                roots.append(os.path.normcase(os.path.realpath(path)))
+        # 标准库（`enum` / `contextlib` 生成的方法）与 numpy 自己的目录也算「库来源」：被用户函数顶替才是 patch
+        import sysconfig  # noqa: PLC0415
+
+        roots.append(os.path.normcase(os.path.realpath(sysconfig.get_paths()["stdlib"])))
+        np_mod = sys.modules.get("numpy")
+        for path in list(getattr(np_mod, "__path__", None) or []):
+            roots.append(os.path.normcase(os.path.realpath(path)))
+        _surface_roots = tuple(roots)
+        _surface_base = {k: _surface_module_map(k, m) for k, m in _surface_modules().items()}
+
+
+def _reset_trusted_surface_for_tests() -> None:
+    global _surface_base
+    with _surface_lock:
+        _surface_base = None
+
+
+def trusted_surface_diff() -> list:
+    """诊断用：与基线不一致的条目（不补登记新模块）。"""
+    base = _surface_base or {}
+    out = []
+    for name, mod in _surface_modules().items():
+        known = base.get(name)
+        if known is None:
+            continue
+        cur = _surface_module_map(name, mod)[0]
+        out += [(name, k) for k in set(cur) | set(known[0]) if cur.get(k) != known[0].get(k)]
+    return out
+
+
+def trusted_surface_intact() -> bool:
+    """此刻 matplotlib（及还原路径上的几个入口）的方法面与基线一致吗？每次都按真实值重算，不缓存。
+    基线里有的模块逐项比对；基线之后才导入的模块首次见到时按来源目录从严检查、通过则补登记（之后的 patch 靠 id 比对发现）。"""
+    if _surface_base is None:
+        freeze_trusted_surface()
+    base = _surface_base
+    assert base is not None
+    with _surface_lock:
+        for name, mod in _surface_modules().items():
+            known = base.get(name)
+            if known is None:
+                if name.split(".", 1)[0] in _SURFACE_PACKAGES and not _module_origin_ok(
+                    mod, name, _surface_roots
+                ):
+                    return False
+                base[name] = _surface_module_map(name, mod)
+                continue
+            if _surface_module_map(name, mod)[0] != known[0]:
+                return False
+    return True
 
 
 _SERIALISATION_HOOKS = ("__reduce_ex__", "__reduce__", "__getstate__", "__setstate__")
@@ -2117,6 +2262,9 @@ class SaveMomentLedger:
             return
         # 结构层（Codex #1314 P1-c）：拍摄期间 Figure 若被置脏（任何途径改了图，含被 patch 过的类级钩子），
         # 这次改动必须留在 `DIRTY_SINCE_SAVE` 里如实报成 `modified_after_save`——这里绝不清标记，快照作废。
+        if not trusted_surface_intact():
+            row["reason"] = "matplotlib_patched"
+            return
         dirty_before = bool(getattr(fig, DIRTY_SINCE_SAVE, False))
         try:
             self._take_into(row, fig)
@@ -2168,6 +2316,9 @@ class SaveMomentLedger:
             return None, row["reason"]
         if selected_occurrence is not None and selected_occurrence != row["occurrence"]:
             return None, "not_selected_save"
+        # 还原会走 `__setstate__` 等类级钩子：脚本在拍摄之后才 patch 的也要拦住（拍摄前的那次比对管不到）
+        if not trusted_surface_intact():
+            return None, "matplotlib_patched"
         try:
             restored = _RestrictedUnpickler(io.BytesIO(row["blob"])).load()
             if _structure_signature(restored) != row["signature"]:
