@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { useTranslation } from 'react-i18next'
-import { Ban, Copy, CornerDownLeft, Play, SearchX, Settings, Square } from '@/components/ui/icons'
+import { Ban, Copy, CornerDownLeft, ImageOff, Play, SearchX, Settings, Square } from '@/components/ui/icons'
 import { listRowClass } from '@/components/ui/listRow'
 import { cn } from '@/lib/utils'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { backendCodeMsg, type CapturedFigureDescriptor, type ScriptInventoryEntry } from '@/lib/api'
+import {
+  backendCodeMsg,
+  runtimePreviewUrl,
+  type CapturedFigureDescriptor,
+  type ScriptInventoryEntry,
+} from '@/lib/api'
 import { splitNoticeText } from '@/lib/noticeText'
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
@@ -39,6 +44,7 @@ import { Notice } from '../ui/Notice'
 import { RowMenu } from '../ui/RowMenu'
 import { useRowMenu } from '../ui/useRowMenu'
 import { useAssetStore } from '@/store/assetStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useProjectStore } from '@/store/projectStore'
 import { DependencyRepairCard } from '../DependencyRepairCard'
 import { useDepRepairStore, type ScriptRepairOffer } from '@/store/depRepairStore'
@@ -741,6 +747,76 @@ function FailureRecovery({ script, run }: { script: string; run: ScriptRunState 
   )
 }
 
+/** 缩略图槽：64×48，图按真实图幅比例在槽里 contain（白底细边的是图自己那一块纸，不是槽） */
+const THUMB_W = 64
+const THUMB_H = 48
+
+/**
+ * 捕获结果行首的缩略图。数据来源与素材库 runtime 卡片是同一条：`/api/runtime/preview?id=<asset_id>`
+ * （materialized cache 的预览 SVG，`runtimePreviewUrl`），不新起渲染、不新开 worker 协议。
+ *
+ * - 加载中：骨架占位；加载失败（cache 被清 / 404）：中性图标——都不挡右边的「添加到画布」；
+ * - `loading="lazy"`：浏览器只取滚进视口的那几张，几十张图的对话框不会一次并发几十个请求；
+ * - 项目代际：挂载时取 `captureProjectEpoch()`，切项目后（对话框还没卸载的空窗）既不再渲染 `<img>`、
+ *   也丢弃迟到的 load / error 回调——A 项目的 id 绝不拿去 B 项目里取图。
+ */
+export function CaptureThumb({ d }: { d: CapturedFigureDescriptor }) {
+  const nonce = useRuntimeAssetStore((s) => s.previewNonce[d.asset_id])
+  const guard = useRef<ProjectEpochGuard | null>(null)
+  if (guard.current === null) guard.current = captureProjectEpoch()
+  const src = runtimePreviewUrl(d.asset_id, nonce)
+  // 状态按 src 记：重跑后 nonce 换了，src 变了就回到「加载中」
+  const [state, setState] = useState<{ src: string; status: 'loading' | 'ready' | 'failed' }>({
+    src,
+    status: 'loading',
+  })
+  const status = state.src === src ? state.status : 'loading'
+  const live = guard.current.still()
+  const settle = (next: 'ready' | 'failed') => {
+    if (!guard.current!.still()) return // 迟到的响应：项目已换，丢弃
+    setState({ src, status: next })
+  }
+  const [w, h] = d.size_mm
+  const scale = w > 0 && h > 0 ? Math.min(THUMB_W / w, THUMB_H / h) : 0
+  const fw = scale ? Math.max(1, Math.round(w * scale)) : THUMB_W
+  const fh = scale ? Math.max(1, Math.round(h * scale)) : THUMB_H
+  return (
+    <span
+      data-capture-thumb={!live ? 'failed' : status}
+      className="flex shrink-0 items-center justify-center"
+      style={{ width: THUMB_W, height: THUMB_H }}
+    >
+      {live && status !== 'failed' ? (
+        <span
+          className={cn(
+            'relative block overflow-hidden rounded-xs bg-paper ring-1 ring-inset ring-border',
+            status === 'loading' && 'bg-surface-hover opacity-65',
+          )}
+          style={{ width: fw, height: fh }}
+        >
+          <img
+            loading="lazy"
+            decoding="async"
+            src={src}
+            alt={d.stem}
+            draggable={false}
+            onLoad={() => settle('ready')}
+            onError={() => settle('failed')}
+            className={cn('absolute inset-0 h-full w-full object-contain', status === 'loading' && 'opacity-0')}
+          />
+        </span>
+      ) : (
+        <span
+          data-capture-thumb-fallback
+          className="flex size-full items-center justify-center rounded-xs bg-surface-2 text-ink-faint ring-1 ring-inset ring-border"
+        >
+          <ImageOff size={ICON_SIZE.md} aria-hidden />
+        </span>
+      )}
+    </span>
+  )
+}
+
 /**
  * 捕获结果弹层：一次运行发现的**每一张**图都在这里（多 Figure 绝不只显示
  * 第一张——负向反证 #4 的看护对象），各自可添加到画布。Dialog 自带
@@ -779,19 +855,23 @@ export function ProbeResultsDialog({
     >
       <ul className="flex flex-col divide-y divide-border" aria-label={sc('resultsListAria')}>
         {descriptors.map((d) => (
-          <li key={d.asset_id} className="flex items-center gap-2 py-1">
-            <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink" title={d.stem}>
-              {d.stem}
-            </span>
-            <span className="shrink-0 type-meta tabular-nums">
-              {translate('measure.cmSize', {
-                w: formatCm(d.size_mm[0]),
-                h: formatCm(d.size_mm[1]),
-              })}
-            </span>
+          <li key={d.asset_id} data-capture-row={d.stem} className="flex items-center gap-3 py-1.5">
+            <CaptureThumb d={d} />
+            <div className="min-w-0 flex-1">
+              <span className="block truncate font-mono text-xs text-ink" title={d.stem}>
+                {d.stem}
+              </span>
+              <span className="mt-0.5 block type-meta tabular-nums">
+                {translate('measure.cmSize', {
+                  w: formatCm(d.size_mm[0]),
+                  h: formatCm(d.size_mm[1]),
+                })}
+              </span>
+            </div>
             <Button
               variant="secondary"
               size="sm"
+              className="shrink-0"
               onClick={() => {
                 if (guard.current && !guard.current.still()) return
                 const added = addRuntimePanelToCanvas(d)
