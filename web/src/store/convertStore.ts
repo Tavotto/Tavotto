@@ -65,6 +65,8 @@ export interface ConvertEntry {
   lost: ResumeKind | null
   /** 续跑期间点了「停止」、正在等后端对账（`resuming` 里显示“正在停止…”）：停止可能来得太晚（依赖已过提交点），不能先清卡 */
   stopping?: boolean
+  /** `running`（AI 任务阶段）里点了「停止」却被拒 / 只是转交给别的进程，结果任务仍然做完了：`ready` 卡改说「转换已经完成，停止来得太晚」 */
+  stoppedLate?: boolean
 }
 
 interface ConvertState {
@@ -142,7 +144,15 @@ function applyConvertStatus(script: string, pj: string | null, status: ConvertSt
     return false
   }
   if (status.state === 'ready') {
-    set1(script, { phase: 'ready', status, card: null, replanning: false, lost: null, stopping: false })
+    set1(script, {
+      phase: 'ready',
+      status,
+      card: null,
+      replanning: false,
+      lost: null,
+      stopping: false,
+      stoppedLate: !!useConvertStore.getState().entries[script]?.stopping,
+    })
   } else if (status.state === 'awaiting_dependencies' && status.dependency_card) {
     set1(script, { phase: 'deps', card: status.dependency_card, replanning: false, lost: null, stopping: false })
   } else if (status.state === 'deps_installed') {
@@ -351,29 +361,54 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
         if (!guard.still()) return
         const cur = get().entries[script]
         if (!cur || cur.session !== session || cur.phase !== 'running') return // 被放弃 / 重试覆盖
-        const sess = await fetchAiSession(session, pj)
+        let sess: Awaited<ReturnType<typeof fetchAiSession>>
+        try {
+          sess = await fetchAiSession(session, pj)
+        } catch (e) {
+          if (!guard.still()) return
+          // 停止已发出、会话已不存在：没有可对账的了，清卡（与「最终 cancelled」同一结局）
+          if (e instanceof ApiError && e.status === 404 && get().entries[script]?.stopping) {
+            get().clear(script)
+            return
+          }
+          throw e
+        }
         if (!guard.still()) return
         if (!sess.final && sess.status === 'running') continue
+        const wasStopping = !!get().entries[script]?.stopping
         if (sess.task?.outcome === 'completed' && sess.status === 'done') {
-          const status = await fetchConvert(session, pj)
+          let status: ConvertStatus
+          try {
+            status = await fetchConvert(session, pj)
+          } catch (e) {
+            if (!guard.still()) return
+            if (e instanceof ApiError && e.status === 404 && wasStopping) {
+              get().clear(script) // 停止期间候选已不存在：这才清
+              return
+            }
+            throw e
+          }
           if (!guard.still()) return
-          set1(script, { phase: 'ready', status })
+          // 与续跑阶段的「正在停止」对账是同一套：ready → 可采用（stoppedLate 说明），discarded → 清，其余如实展示
+          if (wasStopping) applyConvertStatus(script, pj, status)
+          else set1(script, { phase: 'ready', status })
         } else if (sess.status === 'cancelled') {
           get().clear(script)
         } else if (sess.task?.outcome === 'needs_input' && dependencyCardOf(sess.task.unmet)) {
           // 新脚本缺包、要用户先决定：候选留在后端等着（不删），卡片的按钮接着走同一个候选
-          set1(script, { phase: 'deps', card: dependencyCardOf(sess.task.unmet) })
+          set1(script, { phase: 'deps', card: dependencyCardOf(sess.task.unmet), stopping: false })
         } else if (sess.task?.outcome === 'needs_input') {
           // Agent 停下说明：Python 里没有可靠的逐一对应。再试一次也是同样的结论，卡片只说原因
           acceptedSessions.delete(key)
           const unmet = sess.task.unmet ?? []
           const why = unmet.find((u) => typeof u.detail === 'string' && u.detail)?.detail ?? null
-          set1(script, { phase: 'failed', reason: 'needs_input', detail: why })
+          set1(script, { phase: 'failed', reason: 'needs_input', detail: why, stopping: false })
         } else {
           acceptedSessions.delete(key) // 任务明确终局失败：重试起新会话
           set1(script, {
             phase: 'failed',
             reason: failureCode(sess.task?.unmet as { constraint_id: string; reason_code: string }[] | undefined),
+            stopping: false,
           })
         }
         return
@@ -476,6 +511,28 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           else set1(script, { stopping: false })
         }
       }
+      return
+    }
+    if (cur?.session && cur.phase === 'running') {
+      // AI 任务阶段：先发取消、**看回复**再决定清不清。`ok:true, mode:"local"` = 本进程已终止 → 照旧清；
+      // `ok:false`（refused_committing 等：任务已进提交闸门）或 `mode:"owner"`（只是转交给别的进程、结局未定）→ 条目留着，
+      // 丢了会话号，候选一旦 ready 就找不回、Retry 还会再起一次付费 Agent。留下的条目由 start() 的轮询按会话 `final` + 转换状态对账。
+      const session = cur.session
+      const guard = captureProjectEpoch()
+      let res: { ok: boolean; mode?: string } | null = null
+      set1(script, { stopping: true }) // 先进「正在停止…」：回复到之前不知道结局，不能先清
+      try {
+        res = await aiCancel(session, currentProjectId())
+      } catch {
+        res = null // 请求本身失败：不知道取消到没到——不清，也不进「正在停止」，用户可再点
+      }
+      if (!guard.still() || get().entries[script]?.session !== session) return
+      if (res === null) {
+        set1(script, { stopping: false })
+        return
+      }
+      if (res.ok && res.mode !== 'owner') get().clear(script)
+      // 否则保持 stopping：start() 的轮询按会话 final + 转换状态对账
       return
     }
     get().clear(script)

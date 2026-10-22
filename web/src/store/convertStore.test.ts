@@ -574,3 +574,82 @@ describe('convertStore：续跑遇到传输错误先对账（Codex #1330 P1，GE
     expect(entry()).toMatchObject({ phase: 'ready' })
   })
 })
+
+describe('convertStore：AI 任务阶段点停止先看取消回复（Codex #1330 P1）', () => {
+  const readyStatus = { state: 'ready', session: 's1', script: 'plot.py', has_preview: false } as never
+  const runningSession = { status: 'running', final: false } as never
+  const startRunning = async () => {
+    vi.mocked(startConvert).mockResolvedValue({ session: 's1', script: 'plot.py' })
+    const p = useConvertStore.getState().start('plot.py', 'pillow', 'out.png')
+    await vi.advanceTimersByTimeAsync(0)
+    return { p }
+  }
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    setCurrentProjectId('A')
+    useConvertStore.setState({ entries: {} })
+    useAiStore.setState({ caps: { agents: [] } as never })
+    vi.mocked(startConvert).mockReset()
+    vi.mocked(aiCancel).mockReset()
+    vi.mocked(fetchConvert).mockReset()
+    vi.mocked(fetchAiSession).mockReset().mockResolvedValue(runningSession)
+  })
+  afterEach(() => {
+    useConvertStore.getState().clear('plot.py')
+    vi.useRealTimers()
+  })
+
+  it('local ok：已在本进程终止，立刻清', async () => {
+    vi.mocked(aiCancel).mockResolvedValue({ ok: true, mode: 'local' } as never)
+    const { p } = await startRunning()
+    await useConvertStore.getState().stop('plot.py')
+    expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+  })
+
+  it('refused_committing：保留条目「正在停止」，任务做完后对账为 ready 可采用，不重跑 Agent', async () => {
+    vi.mocked(aiCancel).mockResolvedValue({ ok: false, reason: 'refused_committing' } as never)
+    const { p } = await startRunning()
+    await useConvertStore.getState().stop('plot.py')
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'running', session: 's1', stopping: true })
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'done', final: true, task: { outcome: 'completed' } } as never)
+    vi.mocked(fetchConvert).mockResolvedValue(readyStatus)
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'ready', session: 's1', stopping: false, stoppedLate: true })
+    expect(startConvert).toHaveBeenCalledTimes(1)
+  })
+
+  it('owner 模式：结局未定，条目保留；会话 final 为 cancelled 才清', async () => {
+    vi.mocked(aiCancel).mockResolvedValue({ ok: true, mode: 'owner' } as never)
+    const { p } = await startRunning()
+    await useConvertStore.getState().stop('plot.py')
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'running', stopping: true })
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'cancelled', final: true } as never)
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+    expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
+  })
+
+  it('owner 模式：属主拒绝后任务做完 → ready 可采用', async () => {
+    vi.mocked(aiCancel).mockResolvedValue({ ok: true, mode: 'owner' } as never)
+    const { p } = await startRunning()
+    await useConvertStore.getState().stop('plot.py')
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'done', final: true, task: { outcome: 'completed' } } as never)
+    vi.mocked(fetchConvert).mockResolvedValue(readyStatus)
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'ready', stoppedLate: true })
+  })
+
+  it('取消请求本身失败：不清条目，退回可再点停止', async () => {
+    vi.mocked(aiCancel).mockRejectedValue(new Error('network down'))
+    const { p } = await startRunning()
+    await useConvertStore.getState().stop('plot.py')
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'running', stopping: false })
+    useConvertStore.getState().clear('plot.py')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+  })
+})

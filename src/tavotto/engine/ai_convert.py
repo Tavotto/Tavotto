@@ -1057,6 +1057,10 @@ def _cancel_resume(sid: str) -> bool:
     return True
 
 
+def _before_ready_stage(sid: str) -> None:
+    """续跑落 ready 之前的空钩子（测试用它把续跑停在“校验通过、落 ready 之前”）。"""
+
+
 def _rebuild(cdir: Path, meta: dict, project: Path) -> ConvertCandidate:
     """从留存的候选目录 + meta.json 还原一个能再跑校验的候选。原脚本字节必须仍是起跑基线、候选脚本字节必须仍是停住时的摘要
     ——续跑校验的就是对照时看到的那份。项目指纹基线是**起跑时**存进 meta 的那份（Codex #1330 P1：不许用此刻的项目重建，
@@ -1075,9 +1079,11 @@ def _rebuild(cdir: Path, meta: dict, project: Path) -> ConvertCandidate:
     baseline = meta.get("project_before")
     if not isinstance(baseline, dict):
         raise ConvertError("convert_project_changed", 409)
-    if ai_figure_edit.fingerprint_changes(
+    changed = ai_figure_edit.fingerprint_changes(
         baseline, ai_figure_edit.project_fingerprint(project, exclude=_own_files(script_rel))
-    ):
+    )
+    # None = 测不出（任一侧超限 / 读不了，例如停住后项目长过文件数上限）：fail-closed，按「已变化」拒，不当成没变
+    if changed is None or changed:
         raise ConvertError("convert_project_changed", 409)
     return ConvertCandidate(
         sid=str(meta["sid"]),
@@ -1193,7 +1199,19 @@ def run_resume(
                 cand.preview_svg = (
                     svg if isinstance(svg, str) and len(svg) <= PREVIEW_MAX_BYTES else None
                 )
-                stage(cand)
+                _before_ready_stage(sid)  # 测试钩子：停在「校验通过、落 ready 之前」
+                # 「查取消标记 → 落 ready → 摘登记」在 _RESUMES_LOCK 里一气做完，与 `_cancel_resume` 同一把锁：
+                # 其后到达的 discard 看到的是已 ready 的候选（照常删），之前到达的取消在这里被看见（删候选、不 ready）
+                with _RESUMES_LOCK:
+                    if cancel.is_set():
+                        cancelled = True
+                    else:
+                        cancelled = False
+                        stage(cand)
+                        _RESUMES.pop(sid, None)
+                if cancelled:
+                    remove_dir(cdir)
+                    return {"state": "cancelled"}
                 return {"state": "ready"}
             failure = {"reason": "project_files_changed"}
             _drop_candidate_files(cdir, meta)

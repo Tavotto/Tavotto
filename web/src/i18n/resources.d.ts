@@ -2418,9 +2418,9 @@ export default interface Resources {
       "convert_not_found": "找不到这份待采用的新版本（可能已放弃、已过期，或属于别的项目）。",
       "convert_not_ready": "新版本还没生成好，或没有通过检查。",
       "convert_outside_project": "新版本的位置不在项目里，已拒绝写入。",
+      "convert_project_changed": "项目里的文件在生成之后被改动过，已拒绝继续。请重新生成。",
       "convert_resume_busy": "正在装包并接着生成，请稍等。",
       "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
-      "convert_project_changed": "项目里的文件在生成之后被改动过，已拒绝继续。请重新生成。",
       "convert_source_language_mismatch": "{{script}} 的内容看起来不是 R 或 MATLAB 脚本，没有生成。",
       "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",
       "data_decode_error": "这份数据不是 UTF-8 编码，读不出来。",
@@ -5315,8 +5315,8 @@ export default interface Resources {
         "fail": {
           "budget_exhausted": "尝试次数用完了",
           "convert_candidate_changed": "待采用的新版本文件被改动过，请重新生成",
-          "convert_source_changed": "原脚本在这期间被改过，这份新版本是按旧版本写的，请重新生成",
           "convert_project_changed": "项目里的文件在这期间被改动过，请重新生成",
+          "convert_source_changed": "原脚本在这期间被改过，这份新版本是按旧版本写的，请重新生成",
           "dependency_install_failed": "新版本要用的 Python 包没装成功，请稍后重试",
           "missing_dependency": "新版本要用的 Python 包没装上（自动安装已关闭，或这些包没法自动装），请手动装好后重试",
           "needs_input": "这份脚本里有一步在 Python 里没有可靠的对应，没有生成新版本",
@@ -5343,6 +5343,7 @@ export default interface Resources {
         "ready": "新版本生成好了，对照一下再决定",
         "redrawn": "重画的新版本",
         "running": "正在生成可编辑版本…",
+        "stoppedLate": "转换已经完成，停止来得太晚。对照一下，要用就采用",
         "unverified": "{{product}} 没有运行 R / MATLAB，请并排看一眼再采用"
       },
       "detail": {

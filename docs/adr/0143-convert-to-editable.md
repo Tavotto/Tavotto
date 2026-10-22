@@ -110,6 +110,16 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
   发 `discard` 后由续跑轮询按后端真实状态收尾：候选已删（404 / `discarded`）→ 才清卡；`deps_installed`（停止来得太晚）→ 落 `installed`，出上面那张「依赖已经装好了……」+「继续」；
   `ready` / `awaiting_dependencies` / `failed` 如实展示。`discard` 请求本身失败 → 立刻 `GET` 对账再按结果展示（仍在续跑 = 取消没送到，退回可再点停止）。后端不改：
   `discard` 对续跑作业只置取消标记并立即回 `{ok:true}`（作业异步收尾，回复里本来就不可能知道结局），结局以状态读口为准。非续跑阶段（`deps` / `installed` / `ready` / `running`）的停止 / 关闭行为不变。
+- **AI 任务阶段点停止先看取消回复（Codex #1330 P1）**：`running` 里点「停止」/ 关闭不再先清条目。条目先标 `stopping`（卡片只一句「正在停止…」、无按钮），发 `POST /api/ai/sessions/<sid>/cancel` 后**看回复**：
+  `ok:true, mode:"local"`（本进程已终止）→ 清；`ok:false`（`refused_committing` 等，任务已进提交闸门）或 `mode:"owner"`（只转交给别的进程、结局未定）→ 条目与会话号保留，
+  由 `start()` 的轮询按会话 `final` + `GET /api/ai/convert/<sid>` 对账——与续跑阶段的 `stopping` 是同一套 `applyConvertStatus`，不写第二份：最终 `cancelled` / 会话或候选 404 / `discarded` → 清；
+  候选已 ready → 落 `ready` 并标 `stoppedLate`，卡片一句「转换已经完成，停止来得太晚。对照一下，要用就采用」+ 主按钮「采用」/ 次按钮「放弃」，不重跑 Agent；`needs_input` 等其余结局如实展示。
+  取消请求本身失败（传输错误）：不清、`stopping` 复位，用户可再点。
+- **续跑的指纹基线测不出按「已变化」拒（Codex #1330 P2）**：`_rebuild` 在 install / replan / continue 的**任何动作之前**比对起跑基线；`fingerprint_changes()` 回 `None`（任一侧超限 / 读不了，
+  例如停住后项目长过 `FINGERPRINT_MAX_FILES`）一律 fail-closed，按 `convert_project_changed` 拒：不装包、不跑候选、删候选。首跑与续跑落 ready 前的 `project.untouched` 对 `None` 本就记 `unknown`（非 `verified`，不放行）；
+  TAF figure_edit 的 `None` = unknown = 不提交语义不变。
+- **续跑落 ready 前原子地再查一次取消（Codex #1330 P2）**：「查取消标记 → `stage` 落 ready → 摘续跑登记」在 `_RESUMES_LOCK`（与 `_cancel_resume` 同一把锁）里一气做完。之前到达的 discard 在此被看见：删候选、结局 `cancelled`，绝不 ready；
+  之后到达的 discard 因登记已摘，按「已 ready 的候选」照常删。
 - **续跑遇到传输错误先对账（Codex #1330 P1）**：前端续跑（install / replan / 继续）的 POST 或轮询遇到网络 / 超时 / 5xx / 响应丢失，或 409 `convert_not_awaiting_dependencies`，不直接判失败：
   先 `GET /api/ai/convert/<sid>`（转换自己的状态，**不是**已终结的 AI 会话，后者永远是 `needs_input`，会把已 ready 的候选盖回旧依赖卡），按后端真实状态展示
   （`resuming` 继续等 / `ready` 可采用 / `awaiting_dependencies` 换新卡 / `deps_installed` / `failed` / 404 已不存在）。对账也连不上 → 「暂时连不上，请稍后重试」（`failed` + `resume_unreachable`，保留动作）；

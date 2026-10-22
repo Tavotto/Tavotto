@@ -892,6 +892,84 @@ def test_resume_baseline_is_the_one_taken_at_start_and_a_missing_one_fails_close
     assert out["state"] == "failed" and out["reason"] == "convert_project_changed", out
 
 
+def test_resume_fails_closed_when_the_project_outgrows_the_fingerprint_limit_after_the_hold(
+    env, monkeypatch
+):
+    """Codex #1330 P2：停住时测得出、续跑时超限 → `fingerprint_changes` 回 None，按“已变化”拒：不装、不跑候选、删候选。"""
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    monkeypatch.setattr(ai_figure_edit, "FINGERPRINT_MAX_FILES", 1)  # 项目此刻“长过上限”
+    installed = []
+
+    def resolve(project, rel, *, confirmed_impact, cancel=None):
+        installed.append(rel)
+        return {"status": "installed", "installed": ["pandas"]}
+
+    monkeypatch.setattr(convertdeps, "resolve", resolve)
+    ran = []
+
+    def runner(figures_dir, rel, write_roots=None):
+        ran.append(rel)
+        return ok_runner(figures_dir, rel, write_roots)
+
+    t, out, _c = _await_resume(env, sid, runner=runner, resolve=resolve)
+    t.start()
+    t.join(20)
+    assert out["state"] == "failed" and out["reason"] == "convert_project_changed", out
+    assert not installed and not ran, "任何动作之前就拒"
+    assert not (ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py").exists(), "候选已删"
+    with pytest.raises(ai_convert.ConvertError):
+        ai_convert.adopt(sid, _project(env))
+
+
+def _stall_before_ready(monkeypatch):
+    reached, go = threading.Event(), threading.Event()
+
+    def hook(sid):
+        reached.set()
+        assert go.wait(10)
+
+    monkeypatch.setattr(ai_convert, "_before_ready_stage", hook)
+    return reached, go
+
+
+def test_a_discard_arriving_just_before_ready_wins_and_the_candidate_never_becomes_ready(
+    env, monkeypatch
+):
+    """Codex #1330 P2：校验通过、落 ready 之前到达的 discard → 结局 cancelled、候选删、绝不 ready。"""
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    monkeypatch.setattr(convertdeps, "resolve", lambda *a, **k: {"status": "none"})
+    reached, go = _stall_before_ready(monkeypatch)
+    t, out, _c = _await_resume(env, sid, runner=ok_runner, resolve=None)
+    t.start()
+    assert reached.wait(10)
+    assert ai_convert.discard(sid, _project(env)) == {"ok": True}
+    go.set()
+    t.join(20)
+    assert out["state"] == "cancelled", out
+    assert not (ai_convert.CONVERT_DIR / sid).exists()
+    assert not ai_convert.resuming(sid)
+
+
+def test_without_a_discard_the_stalled_resume_becomes_ready_and_a_later_discard_deletes_it(
+    env, monkeypatch
+):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    monkeypatch.setattr(convertdeps, "resolve", lambda *a, **k: {"status": "none"})
+    reached, go = _stall_before_ready(monkeypatch)
+    t, out, _c = _await_resume(env, sid, runner=ok_runner, resolve=None)
+    t.start()
+    assert reached.wait(10)
+    go.set()
+    t.join(20)
+    assert out["state"] == "ready", out
+    assert ai_convert.status(sid, _project(env))["state"] == "ready"
+    assert ai_convert.discard(sid, _project(env)) == {"ok": True}  # 已 ready 的候选：照常删
+    assert not (ai_convert.CONVERT_DIR / sid).exists()
+
+
 # --------------------------------------------------------------------------- 自动装依赖写项目自己的 .venv 不算改了项目（Codex #1330 P1）
 def _project_venv(env):
     venv = env["figs"] / ".venv"

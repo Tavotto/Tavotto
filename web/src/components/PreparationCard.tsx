@@ -810,6 +810,10 @@ function convertFlow(
   const retry = () => void store.start(p.script, p.library, p.path, p.language)
   switch (c.phase) {
     case 'running':
+      if (c.stopping) {
+        // 停止被拒 / 只转交给别的进程：结局未定，等对账——只有一句话、没有按钮（候选可能马上 ready）
+        return { title: pt('convert.deps.stopping'), slot: <Progress /> }
+      }
       return {
         title: pt('convert.running'),
         slot: <Progress />,
@@ -911,7 +915,7 @@ function convertFlow(
     case 'ready':
     case 'adopting':
       return {
-        title: pt('convert.ready'),
+        title: pt(c.stoppedLate ? 'convert.stoppedLate' : 'convert.ready'),
         slot: <ConvertCompare entry={c} />,
         primary: (
           <Button
@@ -1036,7 +1040,7 @@ export function ForeignScriptCard() {
           )
         }
         onClose={() => {
-          if (convert?.phase === 'resuming') {
+          if (convert?.phase === 'resuming' || (convert?.phase === 'running' && convert.session)) {
             // 对账期间不清提议：由上面的 effect 在条目消失时清（见 closing）
             if (!convert.stopping) {
               setClosing(true)
