@@ -114,7 +114,15 @@ export function WorkspaceContextBar() {
         <div className="flex min-w-0 flex-wrap items-center gap-1">
           {/* `flex-auto`（基准 = 内容宽）而不是 `flex-1`：基准为 0 的一项永远「装得下」，行不会折。
               面包屑是唯一可伸缩项，出口钮不参与压缩 */}
-          <div className="flex min-w-0 flex-auto items-center gap-1">
+          {/* 左右对称：左端是 px-3 的出口钮（文字离浮条边 4+12），右端面包屑同样留 pe-3；
+              没有出口钮时（单图编辑、没在图内编辑）左端也补 ps-3。`min-w-0` + 面包屑 truncate，
+              名字被截断时右侧留白仍在 */}
+          <div
+            className={cn(
+              'flex min-w-0 flex-auto items-center gap-1 pe-3',
+              !(editingHere || !fastEdit) && 'ps-3',
+            )}
+          >
             {/* `data-exit-element-edit`：图内编辑态的**唯一**退出入口——e2e 拿它判「进了
                 图内编辑」，属性页的「编辑图内元素」按钮进编辑后把焦点交到这里。单图编辑且不在图内编辑时没有它 */}
             {(editingHere || !fastEdit) && (
