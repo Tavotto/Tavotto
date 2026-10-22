@@ -575,20 +575,35 @@ def _parent_snapshot_request(request: dict, work: Path) -> dict:
 
 
 def select(candidates: list[dict], limit: int | None) -> list[dict]:
-    """Deterministic, family-balanced selection so a small limit still spans every axis."""
+    """Deterministic, family-balanced selection so a small limit still spans every family.
+
+    Round-robin over families (by the first transform's family), and inside a family over its
+    transforms; inside one transform the candidates are ordered by a hash of (seed, id) so a
+    small limit does not always land on the alphabetically first parent.
+    """
     if limit is not None and limit < 1:
         raise cg.EvidenceError(f"--limit must be a positive integer, got {limit}")
     if limit is None or limit >= len(candidates):
         return candidates
-    buckets: dict[str, list[dict]] = {}
-    for c in candidates:
-        buckets.setdefault(c["axis_vector"][0], []).append(c)
+    tree: dict[str, dict[str, list[dict]]] = {}
+    for c in sorted(
+        candidates, key=lambda c: cg.digest(f"{c['seed']}|{c['candidate_id']}".encode())
+    ):
+        family = c["chain"][0]["family"]
+        tree.setdefault(family, {}).setdefault(c["axis_vector"][0], []).append(c)
     chosen: list[dict] = []
-    keys = sorted(buckets)
-    while len(chosen) < limit and any(buckets.values()):
-        for key in keys:
-            if buckets[key] and len(chosen) < limit:
-                chosen.append(buckets[key].pop(0))
+    turn = {family: 0 for family in tree}
+    while len(chosen) < limit:
+        for family in sorted(tree):
+            keys = sorted(tree[family])
+            for _ in keys:
+                key = keys[turn[family] % len(keys)]
+                turn[family] += 1
+                if tree[family][key]:
+                    chosen.append(tree[family][key].pop(0))
+                    break
+            if len(chosen) >= limit:
+                break
     return sorted(chosen, key=lambda c: candidates.index(c))
 
 
