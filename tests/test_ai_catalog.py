@@ -311,7 +311,7 @@ class _CountingOpener:
 @pytest.fixture
 def counting(monkeypatch):
     _CountingOpener.calls = 0
-    monkeypatch.setattr(ai_catalog, "_opener", lambda: _CountingOpener())
+    monkeypatch.setattr(ai_catalog, "_opener", lambda **_kw: _CountingOpener())
     return _CountingOpener
 
 
@@ -368,6 +368,19 @@ def test_plain_http_to_non_loopback_never_sends_the_key(counting, url):
 def test_plain_http_to_loopback_is_allowed(counting, url):
     ai_catalog.live_models("e1", url, KEY)
     assert counting.calls == 1
+
+
+def test_loopback_http_never_goes_through_an_env_proxy(gateway, monkeypatch):
+    """回环 http 例外核的是 URL；设了 HTTP_PROXY 时请求不许被交给代理（密钥会明文出去）。"""
+    proxy = gateway()
+    target = gateway()
+    for name in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(name, proxy.url)
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    out = ai_catalog.live_models("e1", target.url, KEY, refresh=True)
+    assert out["source"] == "live", out
+    assert len(target.hits) == 1 and proxy.hits == []
 
 
 def test_redirects_are_still_not_followed(gateway):

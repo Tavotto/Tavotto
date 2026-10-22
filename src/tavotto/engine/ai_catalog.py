@@ -202,8 +202,14 @@ def models_url(base_url: str) -> str:
     return base + ("/models" if base.endswith("/v1") else "/v1/models")
 
 
-def _opener() -> urllib.request.OpenerDirector:
-    opener = urllib.request.build_opener(tlstrust.https_handler(tlstrust.client_context()))
+def _opener(*, direct: bool = False) -> urllib.request.OpenerDirector:
+    """`direct=True`：不经任何代理（回环 http 用）。`build_opener` 默认装环境变量里的
+    `ProxyHandler`——回环例外只核了 URL 的 host，真正的网络目的地却可能是 HTTP_PROXY，
+    密钥会以明文交给代理。https 照旧可走代理（隧道里是 TLS）。"""
+    handlers: list[urllib.request.BaseHandler] = [tlstrust.https_handler(tlstrust.client_context())]
+    if direct:
+        handlers.append(urllib.request.ProxyHandler({}))
+    opener = urllib.request.build_opener(*handlers)
     opener.add_handler(_NoRedirect())
     return opener
 
@@ -245,7 +251,8 @@ def fetch_models(base_url: str, api_key: str) -> tuple[list[str] | None, str | N
         },
     )
     try:
-        with _opener().open(req, timeout=TIMEOUT_S) as resp:
+        direct = urllib.parse.urlsplit(base_url).scheme.lower() == "http"
+        with _opener(direct=direct).open(req, timeout=TIMEOUT_S) as resp:
             body = resp.read(_MAX_BODY + 1)
         if len(body) > _MAX_BODY:
             return None, "bad_response"
