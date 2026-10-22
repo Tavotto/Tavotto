@@ -1973,6 +1973,40 @@ def _snapshot_type_allowed(t) -> bool:
     )
 
 
+_SERIALISATION_HOOKS = ("__reduce_ex__", "__reduce__", "__getstate__", "__setstate__")
+_C_HOOK_TYPES = (
+    types.WrapperDescriptorType,
+    types.MethodDescriptorType,
+    types.BuiltinFunctionType,
+    types.ClassMethodDescriptorType,
+)
+
+
+#: 标准库里自带 Python 级序列化钩子的模块（`enum.Enum.__reduce_ex__` 等；matplotlib 的枚举 / 集合类型会用到）
+_TRUSTED_HOOK_MODULES = frozenset({"enum", "copyreg", "collections", "functools"})
+
+
+def _class_hooks_trusted(t) -> bool:
+    """纵深层（Codex #1314 P1-c）：`t` 沿 MRO 解析出的类级序列化钩子必须出自白名单包或是 C 实现（`object` 自带的槽）。
+    脚本可以 patch `Line2D.__reduce__` / `Figure.__getstate__`——类型名仍是 matplotlib，只看模块拦不住。
+    只读 `__dict__`，不调用、不触发描述符；每次 dump 重新判，不跨快照缓存。"""
+    for name in _SERIALISATION_HOOKS:
+        for klass in t.__mro__:
+            if name not in klass.__dict__:
+                continue
+            attr = klass.__dict__[name]
+            attr = getattr(attr, "__func__", attr)  # staticmethod / classmethod 包装
+            if isinstance(attr, _C_HOOK_TYPES):
+                break
+            if isinstance(attr, types.FunctionType) and (
+                attr.__module__ in _TRUSTED_HOOK_MODULES
+                or save_moment_module_allowed(attr.__module__, attr.__qualname__)
+            ):
+                break
+            return False
+    return True
+
+
 class _SnapshotPickler(pickle.Pickler):
     """拍摄侧的守门：**任何用户的 `__reduce__` / `__reduce_ex__` / `__getstate__` 被调用之前**先按类型把关。
 
@@ -1981,6 +2015,17 @@ class _SnapshotPickler(pickle.Pickler):
     不在白名单里的类型（用户类、用户继承 matplotlib 的子类、函数、lambda、绑定方法……）立刻抛 `PicklingError`，
     所以拍快照绝不执行用户的序列化代码，也就不可能借它改活 Figure。允许的返回 `NotImplemented`，交给默认机制。
     """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        #: 类型 -> 类级序列化钩子是否都出自白名单。只活在这一次 dump 里：脚本在两次快照之间 patch 类方法，下一次重新判
+        self._hooks_ok: dict[type, bool] = {}
+
+    def _class_hooks_ok(self, t) -> bool:
+        ok = self._hooks_ok.get(t)
+        if ok is None:
+            ok = self._hooks_ok[t] = _class_hooks_trusted(t)
+        return ok
 
     def reducer_override(self, obj):
         t = type(obj)
@@ -1999,7 +2044,7 @@ class _SnapshotPickler(pickle.Pickler):
             # 绑定方法存成 `getattr(self, 名字)`：`__reduce__` 是 C 实现、不跑用户代码；`self` 之后仍逐个经过这里
             ok = True
         else:
-            ok = _snapshot_type_allowed(t)
+            ok = _snapshot_type_allowed(t) and self._class_hooks_ok(t)
             if ok:
                 # 实例上挂着的序列化钩子（`obj.__reduce_ex__ = ...`）也是用户代码
                 inst = getattr(obj, "__dict__", None)
@@ -2070,6 +2115,29 @@ class SaveMomentLedger:
         if extra_artists:
             row["reason"] = "bbox_extra_artists"
             return
+        # 结构层（Codex #1314 P1-c）：拍摄期间 Figure 若被置脏（任何途径改了图，含被 patch 过的类级钩子），
+        # 这次改动必须留在 `DIRTY_SINCE_SAVE` 里如实报成 `modified_after_save`——这里绝不清标记，快照作废。
+        dirty_before = bool(getattr(fig, DIRTY_SINCE_SAVE, False))
+        try:
+            self._take_into(row, fig)
+        finally:
+            if not dirty_before and getattr(fig, DIRTY_SINCE_SAVE, False):
+                row["blob"], row["signature"], row["reason"] = None, None, "unpicklable"
+        if row["blob"] is None:
+            return
+        blob = row["blob"]
+        row["blob"] = None
+        if len(blob) > SAVE_MOMENT_MAX_BYTES:
+            row["reason"] = "too_large"
+        elif self._total + len(blob) > SAVE_MOMENT_TOTAL_BYTES:
+            row["reason"] = "budget_exceeded"
+        else:
+            row["blob"] = blob
+            self._total += len(blob)
+
+    @staticmethod
+    def _take_into(row, fig) -> None:
+        """序列化 `fig` 进 `row["blob"]`；失败写 `row["reason"]`。绝不抛。"""
         canvas = manager = None
         try:
             # 先看类型再碰对象：Figure / canvas 若是用户子类，读它们的属性（`fig.axes`、`canvas.manager = None`）就可能是用户代码
@@ -2082,22 +2150,14 @@ class SaveMomentLedger:
             # 复制品不能带「还原时挂回 pyplot」：临时摘掉 canvas.manager（matplotlib 据此写 `_restore_to_pylab`），用完放回
             manager = getattr(canvas, "manager", None)
             canvas.manager = None
-            blob = _snapshot_dumps(fig)
+            row["blob"] = _snapshot_dumps(fig)
             # 签名最后算：序列化通过 = 图里全是库类型，读 `ax.lines` 之类不会落到用户重写的属性上
             row["signature"] = _structure_signature(fig)
         except Exception:  # noqa: BLE001 —— 快照尽力而为：失败只是退回「告知」
-            row["reason"] = "unpicklable"
-            return
+            row["blob"], row["reason"] = None, "unpicklable"
         finally:
             if manager is not None:
                 canvas.manager = manager
-        if len(blob) > SAVE_MOMENT_MAX_BYTES:
-            row["reason"] = "too_large"
-        elif self._total + len(blob) > SAVE_MOMENT_TOTAL_BYTES:
-            row["reason"] = "budget_exceeded"
-        else:
-            row["blob"] = blob
-            self._total += len(blob)
 
     def restore(self, fig, selected_occurrence=None):
         """还原 `fig` 最近一次保存时的复制品；返回 `(restored, None)` 或 `(None, 原因)`。绝不抛。"""

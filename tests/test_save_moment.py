@@ -409,6 +409,70 @@ def test_taking_a_snapshot_never_runs_user_serialisation_code(where):
     assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is False
 
 
+def _patch_serialiser(monkeypatch, fig, where, *, raise_after=True):
+    """脚本 monkey-patch 白名单类上的序列化方法：钩子改标题（可再抛）。返回调用计数器。"""
+    import matplotlib.figure as mfigure
+    import matplotlib.lines as mlines
+
+    calls = []
+    ax = fig.axes[0]
+
+    def hook(self, *a, **k):
+        calls.append(1)
+        ax.set_title("MUTATED BY PATCHED HOOK")
+        if raise_after:
+            raise RuntimeError("boom")
+        return NotImplemented
+
+    cls, name = (
+        (mlines.Line2D, "__reduce__") if where == "line" else (mfigure.Figure, "__getstate__")
+    )
+    monkeypatch.setattr(cls, name, hook)
+    return calls
+
+
+@pytest.mark.parametrize("where", ["line", "figure"])
+def test_patched_class_level_serialisers_are_never_called(monkeypatch, where):
+    """纵深层：类级钩子被 patch 成用户函数（类型名仍是 matplotlib）——拍快照一次都不调它。"""
+    fig = _figure()
+    fig.axes[0].set_title("kept")
+    figcapture.mark_saved(fig)
+    calls = _patch_serialiser(monkeypatch, fig, where)
+    ledger = figcapture.SaveMomentLedger()
+    ledger.take(fig, 1)
+    assert calls == [], "被 patch 的序列化钩子被执行了"
+    assert fig.axes[0].get_title() == "kept"
+    assert ledger.restore(fig) == (None, "unpicklable")
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is False
+
+
+@pytest.mark.parametrize("raise_after", [True, False])
+@pytest.mark.parametrize("where", ["line", "figure"])
+def test_a_mutation_during_the_snapshot_stays_reported_as_modified_after_save(
+    monkeypatch, where, raise_after
+):
+    """结构层：即使纵深层被绕过（这里直接让它放行），拍摄期间的任何改动都留在脏标记里、快照作废——
+    不被清掉，最终如实报 `modified_after_save`。成功（不抛）的钩子同样作废。"""
+    monkeypatch.setattr(figcapture, "_class_hooks_trusted", lambda t: True)
+    fig = _figure()
+    figcapture.mark_saved(fig)
+    calls = _patch_serialiser(monkeypatch, fig, where, raise_after=raise_after)
+    ledger = figcapture.SaveMomentLedger()
+    ledger.take(fig, 1)
+    assert calls, "前提：被 patch 的钩子确实在拍摄中跑了（否则这条用例没有验证结构层）"
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is True, "拍摄期间的改动被清掉了"
+    assert ledger.restore(fig) == (None, "unpicklable")
+
+
+def test_a_clean_snapshot_leaves_the_dirty_flag_false():
+    fig = _figure()
+    figcapture.mark_saved(fig)
+    ledger = figcapture.SaveMomentLedger()
+    ledger.take(fig, 1)
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is False
+    assert ledger.restore(fig)[1] is None
+
+
 @needs_worker
 def test_unpicklable_user_hook_does_not_hide_modified_after_save(tmp_path):
     """端到端：存一次、之后没改图——有用户对象挂在 Figure 上也不得被快照搅出 modified_after_save，且钩子从未被调用。"""

@@ -978,9 +978,7 @@ class LiveFigureSession:
         if self._save_moments is not None:
             row = self.savefig_observations.observation(observation)
             self._save_moments.take(fig, row["occurrence"] if row else None, extra_artists)
-            # 拍快照不是脚本改图：万一序列化触发了 stale 传播，标记仍停在「刚存完」
-            if hasattr(fig, figcapture.DIRTY_SINCE_SAVE):
-                setattr(fig, figcapture.DIRTY_SINCE_SAVE, False)
+            # 不在这里清脏标记：拍摄期间若有任何改动，`take` 作废快照、标记留真，最终如实报 `modified_after_save`
 
     @staticmethod
     def _new_save_moments():
