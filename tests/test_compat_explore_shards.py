@@ -688,18 +688,15 @@ class TimeBudget(unittest.TestCase):
         self.assertIsNone(row["confirmation"], "unconfirmed, so it can never raise an alert")
 
     def test_max_seconds_must_be_a_finite_positive_number(self):
-        for bad in ("0", "-1", "nan", "inf", "x", ""):
-            code, _, _ = run_cli(
-                "explore",
-                "--seed",
-                "1",
-                "--static-only",
-                "--out",
-                "/nonexistent-cg09",
-                "--max-seconds",
-                bad,
-            )
-            self.assertEqual(code, 2, bad)
+        with tempfile.TemporaryDirectory() as tmp:
+            for bad in ("0", "-1", "nan", "inf", "x", ""):
+                code, _, err = run_cli(
+                    "explore", "--seed", "1", "--static-only", "--out", tmp, "--max-seconds", bad
+                )
+                self.assertEqual(code, 2, bad)
+                self.assertIn(
+                    "--max-seconds", err, f"must be rejected by the argument parser: {bad!r}"
+                )
 
     def test_a_spent_budget_is_visible_in_the_merged_sweep_and_never_a_finding(self):
         reports = shard_reports()
