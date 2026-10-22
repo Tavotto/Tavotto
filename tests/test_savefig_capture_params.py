@@ -304,8 +304,13 @@ class TestRecordedOnEveryEntry:
     def test_desktop_records_the_effective_arguments(self, tmp_path):
         figs = tmp_path / "figs"
         write(figs, "tight.py", TIGHT)
-        (d,) = desktop_build(figs, "tight.py")["descriptors"]
+        descriptors = desktop_build(figs, "tight.py")["descriptors"]
+        (d,) = [x for x in descriptors if x["stem"] == "tight"]
         assert d["savefig_calls"] == TIGHT_EXPECTED
+        # 同名 stem 的另一张图是 `tight.svg` 的最近写入者：补认领成 `tight-2`，带它自己的调用，不混进 `tight`
+        (other,) = [x for x in descriptors if x["stem"] != "tight"]
+        assert other["stem"] == "tight-2"
+        assert [c["format"] for c in other["savefig_calls"]] == ["svg"]
 
     def test_browser_records_the_same(self, tmp_path):
         figs = tmp_path / "figs"

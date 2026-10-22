@@ -102,7 +102,7 @@ def patched_environ(etc, monkeypatch):
     (root / "paths.d" / "TeX").write_text(f"{texbin}\n")
     monkeypatch.setattr(loginpath, "_ETC", str(root))
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("PATH", SEP.join(["/usr/bin", "/bin"]))  # Windows 的分隔符是 `;`
     return texbin
 
 
