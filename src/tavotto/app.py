@@ -506,10 +506,10 @@ def _disk_panel_rel(rel: str) -> tuple[str, dict | None]:
     stem 是 `panel-2`）时，打开 `panel.pdf` 得到的是乙。凡是主语为「磁盘上的这个文件」的解析都走这里，
     不再各自 `for_stem(path.stem)`；主语为 stem 的（runtime 素材、worker 返回的 stem）才直接 `for_stem`。
     """
-    info = current_registry().for_artifact(rel)
-    if info is None:
-        return Path(rel).stem, None
-    return info["stem"], info
+    reg = current_registry()
+    info = reg.for_artifact(rel)
+    # stem 由 `artifact_stem` 给（CLI 的 `handoff.resolve_target` 用同一个函数，交接回执两边的键因此一致）
+    return reg.artifact_stem(rel), info
 
 
 def _disk_panel(path: Path) -> tuple[str, dict | None]:
@@ -6975,14 +6975,17 @@ def _note_handoff_failure(stem: str, exc: BaseException) -> None:
 
 
 def _handoff_target_stem(rel_id: str) -> str:
-    """面板 id → 结论表匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板取文件名主干）。"""
+    """面板 id → 结论表匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板经 `Registry.artifact_stem`，CLI 的 `handoff.resolve_target` 同一个函数）。"""
     try:
         if engine_runtimeasset.is_runtime_id(rel_id):
             info = engine_runtimeasset.resolve(rel_id, current_registry())
             return info["stem"] if info else ""
     except Exception:  # noqa: BLE001 —— 结论表是旁路
         return ""
-    return _disk_panel_rel(rel_id)[0]
+    try:
+        return _disk_panel_rel(rel_id)[0]
+    except Exception:  # noqa: BLE001 —— 同上：读注册表失败不许盖掉真正的渲染错误，退回文件名 stem（与改动前一致）
+        return Path(rel_id).stem
 
 
 @app.get(security.HANDOFF_STATUS_PATH)

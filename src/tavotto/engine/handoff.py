@@ -152,6 +152,17 @@ def _first_on_disk(stems: list[str], project: str, *, isfile=os.path.isfile) -> 
     return stems[0] if stems else None
 
 
+def _artifact_stem(project: str, rel: str, fallback: str) -> str:
+    """产物文件 → 注册表认的 stem（#1251）：同脚本里 `panel.png` 甲 / `panel.pdf` 乙（`panel-2`）时，
+    `tavotto open panel.pdf` 的目标是 `panel-2`。判据是 `Registry.artifact_stem`——app 记交接回执
+    （`app._handoff_target_stem`）用的是同一个函数，所以 CLI 轮询的键 == app 记账的键。
+    注册表不存在 / 读不了（损坏的报错留给后面的 `ensure_registered`）= 文件名 stem，行为与此前一致。"""
+    try:
+        return engine_registry.open_registry(project).artifact_stem(rel)
+    except (OSError, RuntimeError, ValueError):
+        return fallback
+
+
 def resolve_target(raw: str, *, isdir=os.path.isdir, isfile=os.path.isfile) -> Target:
     """`<路径>` → (项目目录, stem)。路径可以是产物、脚本或目录。"""
     if not raw or not raw.strip():
@@ -172,7 +183,8 @@ def resolve_target(raw: str, *, isdir=os.path.isdir, isfile=os.path.isfile) -> T
         stems = _script_stems(path, project)
         return Target(project, _first_on_disk(stems, project, isfile=isfile))
     if ext.lower() in OUT_EXTS:
-        return Target(project, stem)
+        rel = os.path.relpath(path, project).replace(os.sep, "/")
+        return Target(project, _artifact_stem(project, rel, stem))
     raise HandoffError(
         f"不认识的文件类型: {name}"
         f"（要一张图 {'/'.join(e.lstrip('.') for e in OUT_EXTS[:3])}…、"

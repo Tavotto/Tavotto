@@ -81,11 +81,13 @@ def test_one_file_belongs_to_one_script():
 
 
 def test_reader_ignores_unknown_script_keys():
-    """旧 reader 能读带 `artifacts` 的新文件，靠的是对未知键的宽容：未知键不报错、也不进 entries()。"""
+    """旧 reader 能读带 `artifacts` 的新文件，靠的是对未知键的宽容：未知键不报错、也不进 entries()。
+    `artifacts` 是已知键：有才进 entries()，与磁盘条目同形（`project_refresh` 比相等判执行是否仍有效）。"""
     data = _cfg({"panel.pdf": "panel-2"})
     data["scripts"][SCRIPT]["some_future_field"] = {"x": 1}
     reg = _reg(data)
-    assert set(reg.entries()[SCRIPT]) == {"entry", "cost", "notes", "stems"}
+    assert set(reg.entries()[SCRIPT]) == {"entry", "cost", "notes", "stems", "artifacts"}
+    assert set(_reg(_cfg(None)).entries()[SCRIPT]) == {"entry", "cost", "notes", "stems"}
 
 
 # --------------------------------------------------------------------------- discover.register
@@ -174,6 +176,76 @@ def test_descriptor_artifacts_only_takes_figures_with_an_original():
     assert probe.descriptor_artifacts(descs) == {"panel.png": "panel", "panel.pdf": "panel-2"}
     assert probe.descriptor_artifacts([]) == {}
     assert probe.descriptor_artifacts(None) is None  # 没有执行证据
+
+
+def test_descriptor_artifacts_takes_every_file_a_figure_wrote():
+    """P1：乙存 pdf + svg 时两个文件都记到乙；只有 `original_artifact` 的旧描述符照旧。"""
+    descs = [
+        {"stem": "panel", "original_artifact": "panel.png", "artifacts": ["panel.png"]},
+        {
+            "stem": "panel-2",
+            "original_artifact": "panel.pdf",
+            "artifacts": ["panel.pdf", "panel.svg"],
+        },
+        {"stem": "old", "original_artifact": "old.png"},
+    ]
+    assert probe.descriptor_artifacts(descs) == {
+        "panel.png": "panel",
+        "panel.pdf": "panel-2",
+        "panel.svg": "panel-2",
+        "old.png": "old",
+    }
+
+
+def test_descriptor_artifacts_drops_a_path_two_figures_both_claim():
+    """同一路径两张图都声称：这里没有「谁最后写」的证据，不记（退回按文件名 stem），而不是猜一个。"""
+    descs = [
+        {"stem": "panel", "artifacts": ["panel.png", "panel.pdf"]},
+        {"stem": "panel-2", "artifacts": ["panel.pdf", "panel.svg"]},
+    ]
+    assert probe.descriptor_artifacts(descs) == {"panel.png": "panel", "panel.svg": "panel-2"}
+
+
+def test_descriptor_factory_carries_artifacts_and_stays_byte_identical_without_them():
+    from tavotto.engine import figcapture
+
+    kw = dict(
+        script="a.py",
+        entry="main",
+        stem="panel-2",
+        capture_source=figcapture.SOURCE_SAVEFIG,
+        execution_profile=figcapture.PROFILE_SAFE,
+        size_mm=(10, 10),
+        source_fingerprint="sha256:x",
+    )
+    plain = figcapture.build_descriptor(**kw).to_payload()
+    assert "artifacts" not in plain  # 旧描述符一个字节不变
+    d = figcapture.build_descriptor(
+        original_artifact="panel.pdf",
+        artifacts=["panel.pdf", "panel.svg"],
+        **kw,
+    )
+    assert d.to_payload()["artifacts"] == ["panel.pdf", "panel.svg"]
+    assert figcapture.descriptor_from_payload(d.to_payload()) == d
+    with pytest.raises(ValueError):
+        figcapture.build_descriptor(
+            **{**kw, "capture_source": figcapture.SOURCE_PYPLOT}, artifacts=["x.pdf"]
+        )
+
+
+def test_find_artifacts_all_own_formats_but_one_when_formats_unknown(tmp_path):
+    from tavotto.engine import figcapture
+
+    for n in ("panel.png", "panel.pdf", "panel.svg"):
+        (tmp_path / n).write_bytes(b"x")
+    root = str(tmp_path)
+    assert figcapture.find_artifacts(root, "panel", formats=["pdf", "svg"]) == [
+        "panel.pdf",
+        "panel.svg",
+    ]
+    assert figcapture.find_artifacts(root, "panel", formats=["png"]) == ["panel.png"]
+    assert len(figcapture.find_artifacts(root, "panel")) == 1  # 不知道格式：旧判据，只取首个
+    assert figcapture.find_artifacts(root, "../panel", formats=["pdf"]) == []
 
 
 # --------------------------------------------------------------------------- app：打开 panel.pdf 得到乙
@@ -319,3 +391,93 @@ def test_real_run_registers_the_map_and_resolves_the_pdf_to_the_second_figure(tm
     reg = registry.open_registry(tmp_path)
     assert reg.for_artifact("panel.pdf")["stem"] == "panel-2"
     assert reg.for_artifact("panel.png")["stem"] == "panel"
+
+
+TWO_FORMATS_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+
+def first():
+    fig, ax = plt.subplots(figsize=(2.0, 1.6))
+    ax.plot([0, 1], [0, 1])
+    fig.savefig("panel.png", dpi=100)
+
+
+def second():
+    fig, ax = plt.subplots(figsize=(2.4, 1.6))
+    ax.plot([0, 1], [1, 0])
+    fig.savefig("panel.pdf")
+    fig.savefig("panel.svg")
+    plt.close(fig)
+
+
+def main():
+    first()
+    second()
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+def test_real_run_second_figure_saving_two_formats_owns_both_files(tmp_path):
+    """P1 真 worker：甲存 panel.png，乙存 panel.pdf + panel.svg。乙登记为 `panel-2`，打开 svg / pdf 都得到乙，
+    不是默默落到甲。"""
+    from tavotto.engine import pool
+    from test_same_stem_other_figure import WORKER_PY
+
+    if WORKER_PY is None:
+        pytest.skip("not_run：找不到装有 matplotlib 的解释器")
+    (tmp_path / "panels.py").write_text(TWO_FORMATS_SCRIPT, encoding="utf-8")
+    for name in ("panel.png", "panel.pdf", "panel.svg"):
+        (tmp_path / name).write_bytes(b"x")
+    w = pool.one_shot("panels.py", str(tmp_path), "main")
+    try:
+        w.ensure_built()
+        descriptors = list(w.last_build_descriptors)
+    finally:
+        pool.discard(w)
+    assert [d["stem"] for d in descriptors] == ["panel", "panel-2"]
+    by_stem = {d["stem"]: d for d in descriptors}
+    assert sorted(by_stem["panel-2"]["artifacts"]) == ["panel.pdf", "panel.svg"]
+    assert by_stem["panel"]["artifacts"] == ["panel.png"]
+    out = probe.register_probed(
+        tmp_path,
+        "panels.py",
+        {
+            "stems": [d["stem"] for d in descriptors],
+            "entry": "main",
+            "descriptors": descriptors,
+            "remap_generation": None,
+        },
+    )
+    assert out["registered"], out
+    reg = registry.open_registry(tmp_path)
+    assert reg.for_artifact("panel.png")["stem"] == "panel"
+    assert reg.for_artifact("panel.pdf")["stem"] == "panel-2"
+    assert reg.for_artifact("panel.svg")["stem"] == "panel-2"
+
+
+# --------------------------------------------------------------------------- P2：CLI 等的键 == app 记回执的键
+def test_cli_target_stem_equals_the_stem_the_app_records_receipts_under(
+    client, tmp_path, monkeypatch
+):
+    """同 stem 情形下 `tavotto open panel.pdf`：CLI 轮询的 stem 必须等于 app 记交接回执的 stem（两边是同一个
+    `Registry.artifact_stem`）。老注册表（没有 artifacts）两边都按文件名 stem。"""
+    from tavotto.engine import handoff
+
+    for with_map, pdf_stem in ((True, "Fig1-2"), (False, "Fig1")):
+        figs, _, _, m = _open_same_stem_project(tmp_path, monkeypatch, with_map=with_map)
+        (figs / "Fig1.pdf").write_bytes(b"%PDF")
+        cli = handoff.resolve_target(str(figs / "Fig1.pdf"))
+        assert cli.stem == pdf_stem == m._handoff_target_stem("Fig1.pdf")
+        png = handoff.resolve_target(str(figs / "Fig1.png"))
+        assert png.stem == "Fig1" == m._handoff_target_stem("Fig1.png")
+    # 注册表读不了 / 不存在：文件名 stem，行为与此前一致
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    (bare / "x.pdf").write_bytes(b"%PDF")
+    assert handoff.resolve_target(str(bare / "x.pdf")).stem == "x"

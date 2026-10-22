@@ -196,9 +196,18 @@
   `_has_runnable_script`、交接结论表的 stem）都走它，不再各自 `for_stem(path.stem)`。主语是 stem 的（runtime 素材、worker 返回的 stem、
   `_stem_known`）才直接 `for_stem`。新增消费点照此判断，别回到 `for_stem(path.stem)`。
 - **兼容**：新版本读没有该字段的老文件 = 行为与按 stem 完全一致；旧版本读新文件，`load_data` 只取已知键，未知键忽略（旧版本整条重登记该脚本时会丢掉
-  映射，回落按 stem，不崩）。表是派生数据，坏条目（非字符串 / stem 不在本脚本 stems 里 / 同一路径被两个脚本认领）静默丢弃，不让注册表打不开。
+  映射，回落按 stem，不崩）。
+  `Registry.entries()` 在该脚本有映射时带 `artifacts` 键（与磁盘条目同形）：`project_refresh` 用「登记时的条目 == 此刻 `entries()`」判一次执行是否仍有效，少这个键会让刚跑完的活 worker 被当成过期收掉（`tests/test_export_svg.py` 的 EPS 同基准用例钉着）。表是派生数据，坏条目（非字符串 / stem 不在本脚本 stems 里 / 同一路径被两个脚本认领）静默丢弃，不让注册表打不开。
 - **写回**：打开 `panel.pdf` 得到乙（`panel-2`），编辑与基线归乙；`_write_source_files(stem=…)` 的目标仍是 `src` 同名的 `WRITE_BACK_EXT` 文件，
   经 `_own_write_back_targets` 去掉别的图的原件（`panel.png`），只写 `panel.pdf`。`write_back_foreign_file` 守卫不变（`src` 本身是别的图的原件才拒）。
-- **已知未覆盖**：`tavotto open <panel.pdf>`（handoff）仍按 stem 工作——CLI 取的是文件名 stem、再按 stem 找原件，不读 `artifacts`；
-  素材库清单里乙仍同时以 FileAsset（`panel.pdf`）与 runtime 素材（`runtime:…#panel-2`）出现。
+- **一张图的全部文件**：描述符新增可选字段 `artifacts`（该图写过的**所有**磁盘文件，含 `original_artifact`；`original_artifact` 语义不变，仍是首选原件与写回目标）。
+  捕获层 `figsession.artifacts_of` 与 `original_artifact` 同源（`figcapture.find_artifacts`：它写文件时的 stem、只认它存过的格式、每个存在的都收；
+  不知道格式时只取首个，不把别的图的文件算进来）。乙存 `panel.pdf` + `panel.svg` 时两个都记到 `panel-2`。空时 payload 里没有这个键（旧描述符字节不变）；
+  worker ↔ 主进程协议是加字段，旧一侧忽略，没有严格同源对。`probe.descriptor_artifacts` 汇总各图的文件：**同一路径被两张不同的图都声称（都存过 `panel.pdf`）时不记**
+  ——那里没有「谁最后写」的证据（该判据在捕获层 `note_savefig_writer`，#1250 的原件归属只按「自己存过的格式」绑定），不记 = 退回按文件名 stem，不猜。
+- **CLI 与 app 的回执键**：`tavotto open <panel.pdf>` 的目标 stem 由 `handoff.resolve_target` 经 `Registry.artifact_stem` 解出（同脚本另一张图写的 `panel.pdf` → `panel-2`），
+  app 记交接回执（`_handoff_target_stem` / display-ack）用的是 `_disk_panel_rel` → 同一个 `Registry.artifact_stem`。**CLI 轮询的键 == app 记账的键，由这一个函数算出，不许各写一份。**
+  CLI 打开 `?open=panel-2` 时前端按 stem 没有磁盘面板（`panel-2` 不是文件名），落到 runtime 素材 `panel-2`，这就是乙。注册表不存在 / 读不了 = 文件名 stem（与此前一致，损坏的报错仍由 `ensure_registered` 给）。
+- **已知未覆盖**：素材库清单里乙仍同时以 FileAsset（`panel.pdf`）与 runtime 素材（`runtime:…#panel-2`）出现；
+  同一路径被两张图都写过时（见上）退回按文件名 stem，不论谁最后写。
 看护 `tests/test_artifact_stem_map.py`（注册表 / register 语义 / 假 worker 端点 / 真 worker 同 stem 夹具登记→解析）。

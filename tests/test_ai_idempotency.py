@@ -23,6 +23,7 @@ import time
 import pymupdf
 import pytest
 
+from support.registrystub import stem_registry
 from tavotto import app as m
 from tavotto.engine import ai_bridge, ai_history, project_watch as engine_watch
 
@@ -822,11 +823,8 @@ def test_resend_is_deduped_before_the_panel_and_registry_are_revalidated(
     assert first.status_code == 200
     _wait_idle()
 
-    class _Gone:  # 注册表里这个面板的映射没了
-        def for_stem(self, _stem):
-            return None
-
-    monkeypatch.setattr(m, "current_registry", lambda: _Gone())
+    # 注册表里这个面板的映射没了
+    monkeypatch.setattr(m, "current_registry", lambda: stem_registry(None))
     again = _post(client)  # 同一个 id
     assert again.status_code == 200, (
         again.get_json()

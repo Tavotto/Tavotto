@@ -133,13 +133,17 @@ class Registry:
                 if stem in index:
                     raise RuntimeError(f"stem 重复注册: {stem} ({index[stem]} vs {script})")
                 index[stem] = script
-            for art, art_stem in clean_artifacts(cfg.get("artifacts"), stems).items():
+            mine = clean_artifacts(cfg.get("artifacts"), stems)
+            for art, art_stem in mine.items():
                 artifacts.setdefault(art, art_stem)
             cleaned[script] = {
                 "entry": entry,
                 "cost": cost,
                 "notes": str(cfg.get("notes", "")),
                 "stems": list(stems),
+                # 有才带：`entries()` 要与磁盘上的脚本条目同形——`project_refresh` 拿「登记时的条目」和
+                # 「此刻的 entries()」比相等来判这次执行是否仍有效，少一个键会让活 worker 被当成过期收掉
+                **({"artifacts": dict(mine)} if mine else {}),
             }
         self._scripts, self._index, self._source = cleaned, index, source
         self._artifacts = artifacts
@@ -172,6 +176,15 @@ class Registry:
             stem = Path(key).stem
         info = self.for_stem(stem)
         return None if info is None else {**info, "stem": stem}
+
+    def artifact_stem(self, rel: str) -> str:
+        """磁盘文件 → 它属于哪个 stem：`for_artifact` 认得就用登记的，认不得退回文件名 stem。
+
+        app 的 `_disk_panel_rel` 与 CLI 的 `handoff.resolve_target` **共用这一个函数**：app 记交接回执的键
+        与 CLI 轮询回执的键必须逐字相同，两边各算一份迟早分叉（#1251）。
+        """
+        info = self.for_artifact(rel)
+        return info["stem"] if info is not None else Path(str(rel).replace("\\", "/")).stem
 
     def artifacts_of(self, script: str) -> dict[str, str]:
         """某脚本登记的 `{文件: stem}`（只读副本）。"""

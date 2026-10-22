@@ -932,6 +932,15 @@ class LiveFigureSession:
             formats=figcapture.saved_formats(self.savefig_calls.get(stem)),
         )
 
+    def artifacts_of(self, project_root: str, stem: str) -> list[str]:
+        """这张 savefig 图写过的**所有**文件（#1251）：判据与 `original_artifact` 同源（它写文件时的 stem、
+        只认它存过的格式），只是不止取首个——`panel.pdf` 与 `panel.svg` 都是它的。"""
+        return figcapture.find_artifacts(
+            project_root,
+            self.savefig_file_stem.get(stem, stem),
+            formats=figcapture.saved_formats(self.savefig_calls.get(stem)),
+        )
+
     def add_figure(self, stem: str, fig, source: str) -> bool:
         """把一张 Figure 记进捕获表。已有同名 stem 时**不覆盖**，返回 False。
 
@@ -1497,9 +1506,10 @@ class LiveFigureSession:
         out = []
         for stem in self.states:  # 捕获顺序（dict 保序）
             source = self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG)
-            artifact = None
+            artifact, artifacts = None, []
             if source == figcapture.SOURCE_SAVEFIG and project_root is not None:
                 artifact = self.original_artifact(project_root, stem)
+                artifacts = self.artifacts_of(project_root, stem)
             out.append(
                 figcapture.build_descriptor(
                     script=script,
@@ -1512,6 +1522,7 @@ class LiveFigureSession:
                     original_artifact=artifact,
                     savefig_calls=figcapture.savefig_calls_of(self.savefig_calls, stem, source),
                     run_config=run_config,
+                    artifacts=artifacts,
                 ).to_payload()
             )
         return out

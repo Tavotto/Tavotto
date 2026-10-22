@@ -1,10 +1,10 @@
 """组图↔子图 override 同步的纯函数与请求边界测试。"""
 
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
+from support.registrystub import stem_registry
 from tavotto import app as m
 
 
@@ -85,8 +85,9 @@ def test_sync_keeps_patch_dimensions_local_but_maps_style_and_position(monkeypat
             {"gid": gid, "editable": []},
         ]
     }
-    registry = SimpleNamespace(for_stem=lambda stem: {"script": "flow.py", "entry": "main"})
+    registry = stem_registry({"script": "flow.py", "entry": "main"})
     monkeypatch.setattr(m, "safe_resolve", Path)
+    monkeypatch.setattr(m, "require_project", lambda: Path("."))
     monkeypatch.setattr(m, "current_registry", lambda: registry)
     monkeypatch.setattr(m, "_safe_worker", lambda *args: object())
     monkeypatch.setattr(m, "_manifest_of", lambda worker, stem: manifest)
