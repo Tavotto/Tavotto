@@ -1676,3 +1676,93 @@ class TestReviewRound6:
         r = ts["write_file"].handler({"content": "print(1)\n"})
         assert r.is_error and r.code == "not_text"
         assert _tree(cand) == before
+
+
+class TestReviewRound7:
+    """Codex #1328 第七轮：写后过大、坏 2xx 的用量、截断优先于预算、409 不重试 / 408 重试。"""
+
+    def test_edit_file_result_over_limit_via_crlf_expansion_is_refused(self, cand):
+        # 20 万字节以内的 \n 文本，恢复成 \r\n 后超过上限：写入前拒绝，零改动
+        # 行各不相同：difflib.ndiff 对大量相同行是二次方的，旧实现会卡在那里而不是干净地红
+        body = "".join(f"x{i:05d} = 1\r\n" for i in range(tools.READ_LIMIT_BYTES // 12 - 20))
+        raw = b"head = 0\r\n" + body.encode()
+        assert tools.READ_LIMIT_BYTES - 400 <= len(raw) <= tools.READ_LIMIT_BYTES
+        (cand / "fig.py").write_bytes(raw)
+        ts = tool_set(cand)
+        assert not ts["read_file"].handler({"path": "fig.py"}).is_error
+        before = _tree(cand)
+        r = ts["edit_file"].handler({"old": "head = 0", "new": "head = 0  # " + "y" * 300})
+        assert (r.is_error, r.code) == (True, "too_large")
+        unchanged = _tree(cand) == before  # 不直接 assert 两个 200 KB 字节串：失败时 diff 极慢
+        assert unchanged
+
+    def test_write_file_result_over_limit_after_crlf_expansion_is_refused(self, cand):
+        (cand / "fig.py").write_bytes(b"a = 1\r\n")
+        ts = tool_set(cand)
+        assert not ts["read_file"].handler({"path": "fig.py"}).is_error
+        before = _tree(cand)
+        content = "".join(
+            f"x{i:05d} = 1\n" for i in range(tools.READ_LIMIT_BYTES // 11)
+        )  # LF 下不超限，CRLF 写回超限
+        assert len(content.encode()) <= tools.READ_LIMIT_BYTES
+        r = ts["write_file"].handler({"content": content})
+        assert (r.is_error, r.code) == (True, "too_large")
+        unchanged = _tree(cand) == before  # 不直接 assert 两个 200 KB 字节串：失败时 diff 极慢
+        assert unchanged
+
+    @pytest.mark.parametrize(
+        ("wire", "body"),
+        [
+            ("openai-chat", {"usage": {"prompt_tokens": 70, "completion_tokens": 3}}),
+            (
+                "openai-chat",
+                {"choices": [{}], "usage": {"prompt_tokens": 70, "completion_tokens": 3}},
+            ),
+            ("anthropic", {"content": "oops", "usage": {"input_tokens": 70, "output_tokens": 3}}),
+            (
+                "openai-responses",
+                {"output": "oops", "usage": {"input_tokens": 70, "output_tokens": 3}},
+            ),
+        ],
+    )
+    def test_malformed_2xx_with_usage_is_accounted(self, cand, serve, wire, body):
+        _, res, events = http_run(cand, serve, wire, [(200, {}, body)])
+        assert (res.ok, res.reason, res.detail) == (False, "network", "bad_response")
+        usage = [e for e in events if e["type"] == "usage"]
+        assert len(usage) == 1 and usage[0]["input_tokens"] == 70 and usage[0]["output_tokens"] == 3
+        assert res.turns == 1
+
+    @pytest.mark.parametrize("total", [10, 5])
+    def test_truncated_turn_over_budget_is_output_truncated_and_runs_no_tool(
+        self, cand, serve, total
+    ):
+        before = _tree(cand)
+        body = {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "edit_file",
+                    "input": {"old": 'color="red"', "new": 'color="blue"'},
+                }
+            ],
+            "stop_reason": "max_tokens",
+            "usage": {"input_tokens": 6, "output_tokens": 4},
+        }
+        _, res, events = http_run(
+            cand, serve, "anthropic", [(200, {}, body)], limits=tools.Limits(max_total_tokens=total)
+        )
+        assert (res.reason, res.detail) == ("budget", "output_truncated")
+        assert not any(e["type"] == "tool" for e in events) and _tree(cand) == before
+
+    def test_http_409_is_not_retried(self, cand, serve):
+        srv, res, _ = http_run(cand, serve, "anthropic", [(409, {}, {})])
+        assert len(srv.requests) == 1
+        assert (res.ok, res.reason, res.detail) == (False, "network", "http_409")
+
+    def test_http_408_is_retried_then_succeeds(self, cand, serve):
+        srv, res, _ = http_run(
+            cand, serve, "anthropic", [(408, {}, {}), *_final_text_turn("anthropic", "hi")]
+        )
+        assert len(srv.requests) == 2
+        assert (res.ok, res.reason) == (True, "completed")

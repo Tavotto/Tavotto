@@ -295,8 +295,8 @@
 - **事件**（stdout 每行一条 JSON，ASCII 转义）：`thinking`（只有字符数）、`tool`（工具名、成败、一句话摘要，**不带文件内容 / 提示词 / 密钥**）、
   `text`（模型对用户说的话）、`usage`（每轮用量）、`done`（最后一条，恰好一条）。stderr 只写诊断级错误码。
 - **结束条件与结局**：`done{ok, reason, detail}`，`reason` ∈ `completed | max_turns | budget | tool_error_loop | auth | quota | refused | network | cancelled`，
-  外加兜底 `internal`（本模块自己的缺陷，`detail` 只有异常类型名）。失败**不抛**。429 / 5xx / 传输失败指数退避重试（有上限），401 / 403 → `auth`，
-  402 或额度类 429 → `quota`，429 重试用尽 → `quota`，其余 4xx 不重试 → `network`。服务端过滤 / 拒答 → `refused`（chat `finish_reason=content_filter`、
+  外加兜底 `internal`（本模块自己的缺陷，`detail` 只有异常类型名）。失败**不抛**。429、5xx、408 与传输失败指数退避重试（有上限），401 / 403 → `auth`，
+  402 或额度类 429 → `quota`，429 重试用尽 → `quota`，其余 4xx（含 409）不重试 → `network`。服务端过滤 / 拒答 → `refused`（chat `finish_reason=content_filter`、
   anthropic `stop_reason=refusal`、responses `status:incomplete` 且原因不是 `max_output_tokens`，`detail` 如 `incomplete_content_filter`）；
   responses 顶层 `status` 为 `failed`（`detail=failed_<error.code>`）或 `cancelled / queued / in_progress`（`status_<名>`）→ `network`，不再当作空的 end 轮。
   重试等待 = min(退避, Retry-After, 30 s, 距总时限的剩余)，剩余 ≤ 0 不再发请求 → `budget`（`detail=time`）；单次请求超时也不超过剩余时间。**等响应时也看总时限**：服务端以小于 socket 超时的间隔慢慢吐字节时每次 read 都成功，所以等待循环（与取消同一处、每 50 ms）同时判 deadline，到点即 `budget/time`，在途请求丢弃、回复不接受。

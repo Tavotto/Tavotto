@@ -190,6 +190,17 @@ def _chat_usage(body: dict) -> Usage:
     )
 
 
+def _anthropic_usage(body: dict) -> Usage:
+    u = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+    cache_read = _int(u.get("cache_read_input_tokens"))
+    cache_write = _int(u.get("cache_creation_input_tokens"))
+    return Usage(
+        input_tokens=_int(u.get("input_tokens")) + cache_read + cache_write,
+        output_tokens=_int(u.get("output_tokens")),
+        cached_input_tokens=cache_read,
+    )
+
+
 def _responses_usage(body: dict) -> Usage:
     u = body.get("usage") if isinstance(body.get("usage"), dict) else {}
     details = u.get("input_tokens_details")
@@ -290,7 +301,7 @@ class AnthropicWire:
     def parse(self, body: dict) -> Turn:
         content = body.get("content")
         if not isinstance(content, list):
-            raise _bad("bad_response")
+            raise _bad("bad_response", _anthropic_usage(body))
         turn = Turn(native=content)
         texts: list[str] = []
         for blk in content:
@@ -310,14 +321,7 @@ class AnthropicWire:
             elif kind == "thinking" and isinstance(blk.get("thinking"), str):
                 turn.thinking_chars += len(blk["thinking"])
         turn.text = "".join(texts)
-        u = body.get("usage") if isinstance(body.get("usage"), dict) else {}
-        cache_read = _int(u.get("cache_read_input_tokens"))
-        cache_write = _int(u.get("cache_creation_input_tokens"))
-        turn.usage = Usage(
-            input_tokens=_int(u.get("input_tokens")) + cache_read + cache_write,
-            output_tokens=_int(u.get("output_tokens")),
-            cached_input_tokens=cache_read,
-        )
+        turn.usage = _anthropic_usage(body)
         stop = body.get("stop_reason")
         if stop == "refusal":
             raise _refused("refusal", turn.usage)
@@ -404,10 +408,10 @@ class OpenAIChatWire:
     def parse(self, body: dict) -> Turn:
         choices = body.get("choices")
         if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
-            raise _bad("bad_response")
+            raise _bad("bad_response", _chat_usage(body))
         msg = choices[0].get("message")
         if not isinstance(msg, dict):
-            raise _bad("bad_response")
+            raise _bad("bad_response", _chat_usage(body))
         rf = msg.get("refusal")
         if (
             isinstance(rf, str) and rf.strip()
@@ -528,7 +532,7 @@ class OpenAIResponsesWire:
             )  # cancelled / queued / in_progress 等意外状态
         out = body.get("output")
         if not isinstance(out, list):
-            raise _bad("bad_response")
+            raise _bad("bad_response", usage)
         turn = Turn(native=out)
         texts: list[str] = []
         for it in out:

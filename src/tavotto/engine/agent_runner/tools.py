@@ -204,6 +204,9 @@ class FigureEditSession:
         文本不含，才拒（`secret_in_content`，文件零改动）；原文件本来就含密钥（用户自己写的）
         时不因此拒绝普通编辑。拒绝返回 ToolResult，成功返回 None。
         """
+        if len(after.replace("\n", eol).encode("utf-8")) > READ_LIMIT_BYTES:
+            # 按写回时的真实编码长度判（\n 恢复成 \r\n 会膨胀）：写出去读不回来的文件不写
+            return _err(name, call_id, "too_large", "Result is larger than the allowed size.")
         if self.redactor.contains(after) and not self.redactor.contains(before):
             return _secret_err(name, call_id)
         self._write_text(real, after, eol)

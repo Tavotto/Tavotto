@@ -189,7 +189,7 @@ def classify_status(status: int, body: bytes) -> RunnerFailure:
         if any(k in low for k in (b"insufficient_quota", b"billing", b"credit balance", b"quota")):
             return RunnerFailure("quota", "insufficient_quota")
         return RunnerFailure("network", "http_429", retryable=True)
-    if status in (408, 409) or status >= 500:
+    if status == 408 or status >= 500:  # 408 = 请求超时，可重试；409 是冲突，重发不会变
         return RunnerFailure("network", f"http_{status}", retryable=True)
     if 300 <= status < 400:
         return RunnerFailure("network", "redirect")
@@ -442,7 +442,10 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
         # 仍算完成（`>` 才拒）；要开下一轮 / 要执行工具的回复等于上限也拦（`>=`）。
         terminal = not turn.tool_calls and turn.stop == "end"
         used = led.total_in + led.total_out
-        if used > limits.max_total_tokens or (not terminal and used >= limits.max_total_tokens):
+        # 被截断的一轮先判截断（结局 output_truncated），不被累计用量盖成 tokens
+        if turn.stop != "max_tokens" and (
+            used > limits.max_total_tokens or (not terminal and used >= limits.max_total_tokens)
+        ):
             return _finish(res, False, "budget", "tokens")
         if cancel.is_set():  # 请求期间被取消，或上面的 usage 输出遇到 BrokenPipe
             return _finish(res, False, "cancelled")
