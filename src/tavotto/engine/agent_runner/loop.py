@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import email.utils
 import json
 import threading
 import time
@@ -195,12 +196,23 @@ def classify_status(status: int, body: bytes) -> RunnerFailure:
     return RunnerFailure("network", f"http_{status}")
 
 
-def _retry_after(headers: dict[str, str]) -> float | None:
-    try:
-        v = float(headers.get("retry-after", ""))
-    except ValueError:
+def _retry_after(headers: dict[str, str], now: float | None = None) -> float | None:
+    """Retry-After 的两种标准写法（RFC 9110 §10.2.3）：秒数，或 HTTP-date。→ 还要等多少秒；看不懂 → None。
+    合法的大值照常返回；调用方统一 min(…, 30, 剩余时间) 封顶。"""
+    raw = (headers.get("retry-after") or "").strip()
+    if not raw:
         return None
-    # 合法的大值照常返回；调用方统一 min(…, 30, 剩余时间) 封顶
+    try:
+        v = float(raw)
+    except ValueError:
+        try:
+            when = email.utils.parsedate_to_datetime(raw)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if when is None or when.tzinfo is None:
+            return None
+        v = when.timestamp() - (time.time() if now is None else now)
+        v = max(v, 0.0)
     return v if 0 <= v < float("inf") else None
 
 

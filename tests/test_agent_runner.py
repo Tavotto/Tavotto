@@ -1587,3 +1587,17 @@ class TestReviewRound3:
         )
         assert (res.ok, res.reason, res.detail, res.turns) == (False, "budget", "tokens", 1)
         assert not any(e["type"] == "tool" for e in events) and _tree(cand) == before
+
+
+def test_retry_after_http_date_form_is_parsed():
+    """RFC 9110：Retry-After 也可以是 HTTP-date（Codex #1328 第五轮）；过去的时刻按 0，看不懂的按 None。"""
+    now = 1_800_000_000.0
+    import email.utils as eu
+
+    future = eu.formatdate(now + 45, usegmt=True)
+    past = eu.formatdate(now - 10, usegmt=True)
+    assert loop._retry_after({"retry-after": future}, now=now) == 45.0
+    assert loop._retry_after({"retry-after": past}, now=now) == 0.0
+    assert loop._retry_after({"retry-after": "Funday, 99 Foo 2026"}, now=now) is None
+    assert loop._retry_after({"retry-after": "60"}, now=now) == 60.0
+    assert loop._retry_after({}, now=now) is None
