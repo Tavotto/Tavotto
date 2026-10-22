@@ -133,6 +133,8 @@ export interface PanelRender {
   dependencyPreparation: DependencyPreparationOffer | null
   /** 数据找不到（ADR 0106）时「指认数据位置」的载荷（同上：留着，关了对话框还能从错误块再开） */
   missingInput: MissingInputOffer | null
+  /** 沙盒里落空、脚本目录里找得到时的「在脚本目录里运行」引导（#1254）；码不变，错误块据此多给一个入口 */
+  workdirHint: WorkdirConfirmation | null
   traceback: string
   warnings: string[]
   /** 最近一次成功渲染的阶段计时（毫秒，键见 api.ts）；暂不做 UI */
@@ -169,6 +171,7 @@ const EMPTY: PanelRender = {
   confirmation: null,
   dependencyPreparation: null,
   missingInput: null,
+  workdirHint: null,
   traceback: '',
   warnings: [],
   timings: {},
@@ -737,6 +740,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             confirmation: null,
             dependencyPreparation: null,
             missingInput: null,
+            workdirHint: null,
             traceback: '',
             warnings: res.warnings ?? [],
             timings: res.timings ?? {},
@@ -884,6 +888,7 @@ export const useRenderStore = create<RenderState>((set, get) => ({
             confirmation,
             dependencyPreparation,
             missingInput,
+            workdirHint: err instanceof EngineError ? (err.workdirHint ?? null) : null,
             error: watchdog.timedOut()
               ? msg('render.timeout', { minutes: watchdog.minutes() }, 'errors')
               // code 有文案时按当前语言包装（worker 的 error 原文是中文，
@@ -932,7 +937,9 @@ export const useRenderStore = create<RenderState>((set, get) => ({
           // 指认了数据位置 / 改写了脚本里的路径之后（ADR 0106 / 0110）：「找不到数据」那些面板重排——
           // 带载荷的都算（C++ 读取器是 script_error、先判空再 exit 是 script_exited）
           v.code === MISSING_INPUT_CODE ||
-          v.missingInput != null)
+          v.missingInput != null ||
+          // 沙盒里落空、脚本目录里找得到的引导（#1254）：换了运行目录之后这些面板同样值得重排
+          v.workdirHint != null)
       ) {
         ids.add(v.fileId)
       }

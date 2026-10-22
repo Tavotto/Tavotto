@@ -54,6 +54,7 @@ const ready = (overrides: unknown[]): PanelRender =>
     confirmation: null,
     dependencyPreparation: null,
     missingInput: null,
+    workdirHint: null,
     traceback: '',
     warnings: [],
     timings: {},

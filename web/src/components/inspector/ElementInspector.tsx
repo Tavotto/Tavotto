@@ -408,6 +408,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
             confirmation={render.confirmation}
             dependencyPreparation={render.dependencyPreparation}
             missingInput={render.missingInput}
+            workdirHint={render.workdirHint}
             onRetry={() => requestRender(panel, true)}
           />
         )
@@ -669,13 +670,14 @@ export function BackgroundChoice({ panel }: { panel: PanelObject }) {
   </>
 }
 
-function ErrorBlock({
+export function ErrorBlock({
   error,
   traceback,
   code,
   confirmation,
   dependencyPreparation,
   missingInput,
+  workdirHint,
   onRetry,
 }: {
   error: UiMessage
@@ -684,6 +686,7 @@ function ErrorBlock({
   confirmation?: WorkdirConfirmation | null
   dependencyPreparation?: DependencyPreparationOffer | null
   missingInput?: MissingInputOffer | null
+  workdirHint?: WorkdirConfirmation | null
   onRetry?: () => void
 }) {
   return (
@@ -715,6 +718,8 @@ function ErrorBlock({
         )}
         {/* 数据找不到（ADR 0106）：指认对话框被关掉之后从这里再开 */}
         <MissingInputButton offer={missingInput ?? null} />
+        {/* 沙盒里落空、脚本目录里找得到（#1254）：不论错误码都给「在脚本目录里运行」的入口 */}
+        {code !== WORKDIR_CONFIRMATION_CODE && <WorkdirChooseButton confirmation={workdirHint ?? null} />}
         <p className="text-xs">{el('keptPrevious')}</p>
       </Notice>
     </Section>

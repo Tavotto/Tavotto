@@ -386,6 +386,7 @@ function ScriptRow({
       <GateReopen run={run} />
       <FailureRecovery script={entry.script} run={run} />
       <MissingInputRecovery run={run} />
+      <WorkdirHintRecovery run={run} />
 
       {run && run.descriptors.length > 0 && (
         <ProbeResultsDialog
@@ -628,6 +629,20 @@ function StatusLine({
     >
       {body}
     </span>
+  )
+}
+
+/**
+ * 沙盒里 glob / listdir / exists 落空、脚本目录里找得到（#1254）：试运行失败 / 没出图的这一行多一个
+ * 「在脚本目录里运行」入口，载荷就是这次运行留下的 `workdir_hint`（与首开确认框同形）。
+ */
+export function WorkdirHintRecovery({ run }: { run: ScriptRunState | undefined }) {
+  const hint = run?.error?.workdir_hint
+  if (!hint || isBusyPhase(run!.phase)) return null
+  return (
+    <SecondRow data-script-workdir-hint>
+      <WorkdirChooseButton confirmation={hint} />
+    </SecondRow>
   )
 }
 
