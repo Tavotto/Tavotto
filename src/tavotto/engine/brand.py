@@ -24,7 +24,7 @@ REPO_URL = f"https://github.com/{REPO_OWNER}/{REPO_NAME}"
 RELEASES_API = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
 RELEASES_URL = f"{REPO_URL}/releases"
 
-#: 「联系作者」的收件地址（ADR 0143）。只用于**展示**与失败时「复制地址」——产品里任何地方都没有 邮件协议链接，
+#: 「联系作者」的收件地址（ADR 0145）。只用于**展示**与失败时「复制地址」——产品里任何地方都没有 邮件协议链接，
 #: 也不唤起系统邮件程序；真正的投递由 Tavotto 服务器代发。↔ `web/src/lib/brand.ts` 同名常量（严格同源对）。
 CONTACT_EMAIL = "contact@tavotto.com"
 

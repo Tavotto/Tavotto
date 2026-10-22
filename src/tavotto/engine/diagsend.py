@@ -249,7 +249,7 @@ def parse_endpoint(
     raw: str, *, dev_loopback: bool, hosts: frozenset[str] | None = None
 ) -> Target | None:
     """`TAVOTTO_DIAG_ENDPOINT` → `Target`；任何一处不合规一律 None（不抛、不猜、不修正）。
-    `hosts` 是主机白名单，默认诊断接收端的；「联系作者」（`contactsend.py`，ADR 0143）传它自己的两主机白名单，
+    `hosts` 是主机白名单，默认诊断接收端的；「联系作者」（`contactsend.py`，ADR 0145）传它自己的两主机白名单，
     其余校验（https、无用户信息 / 路径 / 查询串、回环仅开发模式）同一份实现。"""
     try:
         parts = urllib.parse.urlsplit((raw or "").strip())
@@ -390,7 +390,7 @@ class _MultipartBody:
         filename: str = "tavotto-diagnostics.zip",
         content_type: str = "application/zip",
     ) -> None:
-        # `filename` / `content_type` 的默认值就是诊断包的老值；「联系作者」的附件（ADR 0143）复用同一个流式、可取消的
+        # `filename` / `content_type` 的默认值就是诊断包的老值；「联系作者」的附件（ADR 0145）复用同一个流式、可取消的
         # 实现，只换这两项（调用方保证是 ASCII、无引号与换行）
         self.boundary = "----tavotto" + secrets.token_hex(16)
         head = io.BytesIO()

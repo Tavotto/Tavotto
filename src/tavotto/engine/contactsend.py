@@ -1,4 +1,4 @@
-"""「联系作者」：用户在应用里写一封信，由本机引擎经 Tavotto 服务器代发（ADR 0143）。
+"""「联系作者」：用户在应用里写一封信，由本机引擎经 Tavotto 服务器代发（ADR 0145）。
 
 服务端是 `Tavotto/infra` 的 diagnostics-api 同一进程里的 `/v1/messages/*`（契约 v1：init → 附件直传 COS → complete；
 取回回信 `GET /v1/messages/{id}/replies`）。**用户不需要登录、不需要配置自己的邮箱**：全产品没有 邮件协议链接，
@@ -23,7 +23,7 @@
 * **秘密不落地**：`reply_token` / `complete_token` / 上传表单、用户写的主题 / 正文 / 邮箱只活在内存里的会话私有字段
   （`reply_token` 另落 `contactinbox` 的 0600 文件，那是契约要求）；`public()` 状态、日志里都没有。日志模板是字面量，
   参数只有闭集里的阶段名与结果码；异常文本不进日志。
-* **遥测这次不加事件**（ADR 0143）：本模块不 import `telemetry` 的 `capture`，只借 `_platform/_arch/_distribution` 三个
+* **遥测这次不加事件**（ADR 0145）：本模块不 import `telemetry` 的 `capture`，只借 `_platform/_arch/_distribution` 三个
   枚举探测函数；范围攒齐后一次升同意版本，不在这里先加。
 
 回信：发送成功后 `contactinbox` 存 (message_id, reply_token, route, sent_at)；后台线程在启动时与每 6 小时问一次服务端
@@ -344,7 +344,7 @@ def build_draft(meta: object, files: list[tuple[str, bytes]]) -> Draft:
     if report_id and not diagsend._REPORT_ID.match(report_id):
         raise ContactError("report_invalid", 422)
     if len(files) > MAX_ATTACHMENTS:
-        raise ContactError("attachments_too_many", 422)
+        raise ContactError("attachments_limit", 422)
     atts = tuple(clean_attachment(n, d) for n, d in files)
     if sum(a.size for a in atts) > MAX_TOTAL_BYTES:
         raise ContactError("attachments_too_large", 422)

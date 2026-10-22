@@ -1,4 +1,4 @@
-"""「联系作者」客户端（`engine/contactsend.py` + `engine/contactinbox.py`，ADR 0143）对契约 v1 的验收。
+"""「联系作者」客户端（`engine/contactsend.py` + `engine/contactinbox.py`，ADR 0145）对契约 v1 的验收。
 
 对端是 `tests/support/contact_fakes.py` 的本地模拟（HTTPS 回环 + 每会话现造的私有 CA）；真服务器、真 COS、真机
 WebView 联调不在这里（NOT_RUN）。
@@ -220,7 +220,7 @@ def test_local_validation_rejects_before_any_network(on, over, code):
         ([("a.png", b"not a png at all")], "attachment_mismatch"),
         ([("a.pdf", PNG)], "attachment_mismatch"),  # 扩展名说 pdf，魔数是 png
         ([("a.png", b"")], "attachment_empty"),
-        ([(f"{i}.png", PNG) for i in range(6)], "attachments_too_many"),
+        ([(f"{i}.png", PNG) for i in range(6)], "attachments_limit"),
         ([("a.png", PNG + b"\0" * (21 * 1024 * 1024))], "attachments_too_large"),
         (
             [(f"{i}.png", PNG + b"\0" * (5 * 1024 * 1024)) for i in range(5)],
@@ -746,3 +746,15 @@ def test_the_shell_hands_its_region_verdict_to_the_engine():
     assert f'.env("{contactsend.ENV_REGION}", region)' in sidecar
     assert "crate::app_update::detect_order(None)" in sidecar
     assert '=> "cn"' in sidecar and '_ => "global"' in sidecar
+
+
+def test_contact_email_is_one_constant_on_both_sides():
+    """`engine/brand.py` 与 `web/src/lib/brand.ts` 的 `CONTACT_EMAIL` 是同一个地址（严格同源对，ADR 0145）。"""
+    import re
+    from pathlib import Path
+
+    brand_ts = (Path(__file__).resolve().parent.parent / "web/src/lib/brand.ts").read_text(
+        encoding="utf-8"
+    )
+    (ts,) = re.findall(r"^export const CONTACT_EMAIL = '([^']+)'$", brand_ts, re.M)
+    assert ts == brand.CONTACT_EMAIL == "contact@tavotto.com"

@@ -1,4 +1,4 @@
-"""`/api/contact*`（本机 HTTP 面，ADR 0143）：关闭时不存在、打开后端到端、状态对象里没有令牌 / 邮箱 / 正文。
+"""`/api/contact*`（本机 HTTP 面，ADR 0145）：关闭时不存在、打开后端到端、状态对象里没有令牌 / 邮箱 / 正文。
 
 引擎侧的契约对账在 `test_contact_send.py`；会话认证对每条路由的默认拒绝由 `test_browser_auth.py` 从 url_map 枚举
 （这里再钉“这些路由确实在 url_map 里”，免得枚举悄悄漏掉它们）。

@@ -68,7 +68,7 @@ os.environ["TAVOTTO_NO_TELEMETRY"] = "1"
 # 诊断发送自己的用例（tests/test_diag_send*.py）在 fixture 里摘掉它，再用下面的会话级探针兜底。
 os.environ["TAVOTTO_NO_DIAG_UPLOAD"] = "1"
 
-# 「联系作者」（ADR 0143）同理：线路是内置的两个生产主机，测试进程里硬关；它的用例（tests/test_contact_send*.py）自己摘掉
+# 「联系作者」（ADR 0145）同理：线路是内置的两个生产主机，测试进程里硬关；它的用例（tests/test_contact_send*.py）自己摘掉
 # 开关并指向回环模拟端，生产主机由下面的会话级探针兜底。
 os.environ["TAVOTTO_NO_CONTACT"] = "1"
 

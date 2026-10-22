@@ -4679,7 +4679,7 @@ def api_diagnostics_send_discard(pid: str):
     return _diag_send_json(engine_diagsend.discard(pid, scope=_diag_send_scope()))
 
 
-# --------------------- 联系作者（ADR 0143）---------------------
+# --------------------- 联系作者（ADR 0145）---------------------
 # 全部在会话认证之内（ADR 0008，全局 before_request guard，没有旁路）。逻辑在 `engine/contactsend.py`（发信 / 轮询）与
 # `engine/contactinbox.py`（本机收件记录）；这里只做 HTTP 形状。**只有 `POST /api/contact/send` 与 `POST /api/contact/refresh`
 # 会引出远程请求**（后台轮询回信另在 `engine_contactsend.start_poller`，且没有任何已发的信时一次网络都不发）；
