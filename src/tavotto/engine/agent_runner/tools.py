@@ -753,7 +753,9 @@ class ConvertToEditableToolset:
             ),
             Tool(
                 "create_file",
-                f"Create the new Matplotlib script {envelope.output} with `content` (the complete file). This is the "
+                # 不插值文件名：工具定义要跨次运行逐字稳定（提示缓存前缀），文件名由首条用户消息给出
+                "Create the new Matplotlib script named in the first message, with `content` (the complete file). "
+                "This is the "
                 "only file you can write; any other path, and the original script, is refused. Call it once with the "
                 "whole script; to fix details use edit_file. Calling it again replaces the whole new file, so only do "
                 "that for a rewrite. Never put keys or tokens into the content.",

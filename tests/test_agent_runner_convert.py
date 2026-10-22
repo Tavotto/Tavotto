@@ -500,3 +500,21 @@ class TestCli:
 
         a = _parser().parse_args(["--cwd", "x", "--target", "t", "--wire", "demo"])
         assert a.task == "figure_edit" and a.output == ""
+
+
+def test_tool_definitions_and_system_prompt_are_stable_across_output_names(tmp_path):
+    """提示缓存的前缀（系统提示 + 工具定义）不许随脚本名变；文件名只走首条用户消息（Codex #1329 P2）。"""
+
+    def prefix(target: str, output: str):
+        cand = tmp_path / target.replace(".", "_")
+        cand.mkdir()
+        (cand / target).write_text(ORIG, encoding="utf-8")
+        env = envelope(cand, target=target, output=output)
+        specs = [(t.name, t.description, t.schema) for t in TASK.tools(env)]
+        return TASK.system_prompt(env), specs, TASK.first_message(env)
+
+    sys_a, tools_a, first_a = prefix("fig.py", "fig_matplotlib.py")
+    sys_b, tools_b, first_b = prefix("panel_b.py", "panel_b_matplotlib.py")
+    assert sys_a == sys_b
+    assert tools_a == tools_b
+    assert "fig_matplotlib.py" in first_a and "panel_b_matplotlib.py" in first_b
