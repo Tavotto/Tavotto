@@ -23,7 +23,7 @@ pip 不受影响：新版 pip 经 truststore 走平台校验。
 **产品里的出站 HTTPS 只有五处，全经这里**（`tests/test_outbound_https_trust.py` 按 AST 钉）：私有 Python
 下载（`privatepython._fetch`）、匿名遥测投递（`telemetry._post`）、检查更新（`updater._fetch_latest_release`）、
 没有 git 时下载 Codex 插件发行分支压缩包（`codexinstall._fetch`）、用户逐次确认后发送诊断包
-（`diagsend._opener`，ADR 0118；它另加一个不跟随重定向的处理器）。五处都是 `urllib.request.build_opener(tlstrust.https_handler(tlstrust.client_context()))`；别的 `urlopen`
+（`diagsend._opener`，ADR 0118；它另加一个不跟随重定向的处理器）。五处都是 `urllib.request.build_opener(tlstrust.https_handler(tlstrust.client_context()))`；另有内置执行器的模型请求（`wires._opener`，ADR 0147，不跟随重定向）。别的 `urlopen`
 全是 `http://127.0.0.1` 上的本机回环（会话凭据 / 交接 / 已在运行的实例），不经 TLS。
 
 纯标准库 + 延后 import 的 truststore（`pyproject.toml` 的运行时依赖；冻结产物由 `packaging/tavotto.spec`
