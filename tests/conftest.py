@@ -18,7 +18,12 @@ import urllib.request
 
 import pytest
 
-from support import hang_watchdog as _hang, shard as _shard, system_fonts_shim as _system_fonts_shim
+from support import (
+    hang_watchdog as _hang,
+    render_children as _render_children,
+    shard as _shard,
+    system_fonts_shim as _system_fonts_shim,
+)
 
 # 模块级设置：app / engine 的路径常量在 import 时求值，必须先于用例模块被
 # import 就位，否则测试会写到真实的用户数据目录。单个用例仍各自 monkeypatch
@@ -268,6 +273,26 @@ def _stop_project_watchers_started_by_this_test():
         if t.is_alive():
             stuck.append(t.name)
     assert not stuck, f"本用例起的 project watcher 线程停不下来：{stuck}"
+
+
+@pytest.fixture(autouse=True)
+def _render_children_reaped():
+    """每条用例结束时，**这条用例起的** render child（`python -m tavotto.rendercore.renderchild`）必须已经退出。
+
+    #1285：CI 上 `describe_children()` 在同片里撞见存活数分钟的 renderchild——某条用例经应用 / facade 用了进程级
+    共享的 `renderhost.shared()`，用例结束没人关，child 就一直活到整个 pytest 进程退出，之后同片里
+    「此刻没有子进程」之类的断言随分片组成随机红。
+
+    判据的主语：**本用例期间** `RenderHost._start` 起的 child（不是「机器上所有 renderchild」，也不碰进来之前已在的）；
+    时刻是用例 teardown。进程级共享实例（`shared()` 与旧代）是**合法的会话级资源**，但它的生命周期归用例：这里
+    替它 `close()`（下一次 `shared()` 懒重建），用例本人不必各写 `shutdown_shared()`。自己 `RenderHost(...)`
+    却没 `close()` 的用例没有这个豁免——child 仍在就失败，并打出用例名与完整命令行；随后杀掉（只杀登记过的 PID），
+    不让它连累后面的用例。
+    """
+    _render_children.install()
+    mark = _render_children.mark()
+    yield
+    _render_children.reap(mark)
 
 
 @pytest.fixture(autouse=True)

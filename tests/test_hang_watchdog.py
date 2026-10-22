@@ -204,3 +204,16 @@ def test_real_child_is_listed():
     finally:
         child.kill()
         child.wait()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="ps 只在 POSIX")
+def test_child_command_line_is_not_truncated():
+    """#1285：Linux 的 ps 在 stdout 不是终端时把命令行截在 80 列，CI 报告只剩 `python -m`。"""
+    tail = "x" * 300 + "-END"
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", tail])
+    try:
+        out = hw.describe_children()
+        assert f"pid={child.pid} " in out and tail in out, out
+    finally:
+        child.kill()
+        child.wait()

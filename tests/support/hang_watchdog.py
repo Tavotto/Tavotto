@@ -53,12 +53,15 @@ def slow_note_seconds(environ=os.environ) -> float | None:
 
 
 def describe_children() -> str:
-    """本进程的后代进程（POSIX 用 ps）；拿不到就说拿不到，不影响退出。"""
+    """本进程的后代进程（POSIX 用 ps）；拿不到就说拿不到，不影响退出。
+
+    `-ww`：Linux procps 在 stdout 不是终端时把 command 截在 80 列（CI 报告里只剩 `python -m`，#1285），
+    `-ww` 不限宽；macOS 的 ps 同样认。"""
     if os.name == "nt":
         return "  （Windows：未枚举子进程）"
     try:
         proc = subprocess.Popen(
-            ["ps", "-axo", "pid=,ppid=,etime=,command="],
+            ["ps", "-ww", "-axo", "pid=,ppid=,etime=,command="],
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
@@ -91,7 +94,7 @@ def describe_children() -> str:
     if not kids:
         return "  （没有子进程）"
     return "\n".join(
-        f"  pid={pid} ppid={ppid} 已运行={etime} {cmd[:200]}" for pid, ppid, etime, cmd in kids
+        f"  pid={pid} ppid={ppid} 已运行={etime} {cmd[:600]}" for pid, ppid, etime, cmd in kids
     )
 
 
