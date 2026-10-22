@@ -9,6 +9,7 @@ import {
   deleteAiEndpoint,
   fetchAiInstallStatus,
   patchAiAgent,
+  migrateAiEndpoint,
   saveAiEndpoint,
   setAiEndpointActive,
   startAiInstall,
@@ -185,6 +186,7 @@ export function AgentDetailView({
                 onSelect={() => void run(() => setAiEndpointActive(agent.id, e.id))}
                 onEdit={() => setEditing({ id: e.id })}
                 onDelete={() => void remove(e.id, e.label)}
+                onMigrate={() => void run(() => migrateAiEndpoint(e.id))}
               />
             ))}
           </FieldGroup>
@@ -269,6 +271,7 @@ function EndpointRow({
   onSelect,
   onEdit,
   onDelete,
+  onMigrate,
 }: {
   endpoint: AiCapabilities['endpoints'][number]
   radioName: string
@@ -276,6 +279,7 @@ function EndpointRow({
   onSelect: () => void
   onEdit: () => void
   onDelete: () => void
+  onMigrate: () => void
 }) {
   const menu = useRowMenu()
   return (
@@ -290,8 +294,24 @@ function EndpointRow({
             </span>
             {!e.has_key && <span className="shrink-0 text-warn-content">{ag('detail.noKeySuffix')}</span>}
           </span>
+          {/* 一句话 + 一个主按钮：旧协议的接口能对上已知厂商就给「改由 Claude Code 接入」，否则只给「编辑」 */}
+          {e.incompatible && (
+            <span data-endpoint-incompatible={e.incompatible} className="mt-0.5 block text-xs text-warn-content">
+              {e.migratable ? ag('detail.incompatible') : ag('detail.incompatibleEdit')}
+            </span>
+          )}
         </span>
       </label>
+      {e.incompatible && (
+        <Button
+          data-endpoint-fix={e.id}
+          variant="primary"
+          size="sm"
+          onClick={e.migratable ? onMigrate : onEdit}
+        >
+          {e.migratable ? ag('detail.migrateToClaude') : ag('detail.edit')}
+        </Button>
+      )}
       <RowMenu state={menu} label={ag('detail.endpointActions', { label: e.label })} data-endpoint-menu={e.id}>
         <MenuItem icon={Pencil} onSelect={onEdit}>
           {ag('detail.edit')}

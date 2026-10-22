@@ -3014,7 +3014,7 @@ export interface AiAgentCaps {
     third_party_endpoints: boolean
     model_selection: boolean
     effort_selection: boolean
-    /** 第三方接口要不要选 wire api（OpenAI 兼容那一族才有 responses/chat） */
+    /** 第三方接口属 OpenAI 族（Codex，只认 Responses 协议，界面不再让选协议） */
     wire_api_selection: boolean
     readiness_probe: boolean
   }
@@ -3040,9 +3040,13 @@ export interface AiEndpoint {
   base_url: string
   models: string[]
   default_model: string | null
-  wire_api: 'responses' | 'chat'
+  wire_api: 'responses'
   has_key: boolean
   key_hint: string
+  /** 后端判定这条记录现在不能用（唯一判据在 `ai_providers.incompatibility`）；null = 可用 */
+  incompatible: 'codex_chat_removed' | null
+  /** 不能用、且能对上已知厂商 → 可一步改由 Claude Code 接入 */
+  migratable: boolean
 }
 
 export interface AiEndpointPreset {
@@ -3051,7 +3055,7 @@ export interface AiEndpointPreset {
   agent: AiAgentId
   base_url: string
   models: string[]
-  wire_api?: 'responses' | 'chat'
+  wire_api?: 'responses'
   note?: string
 }
 
@@ -3113,13 +3117,17 @@ export const saveAiEndpoint = (rec: {
   api_key?: string
   models?: string[]
   default_model?: string | null
-  wire_api?: 'responses' | 'chat'
+  wire_api?: 'responses'
 }) =>
   jsonFetch<AiCapabilities>('/api/ai/endpoints', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(rec),
   })
+
+/** 旧的不兼容 codex 接口 → 改由 Claude Code 接入（保留密钥；不替用户切换当前接口） */
+export const migrateAiEndpoint = (id: string) =>
+  jsonFetch<AiCapabilities>(`/api/ai/endpoints/${encodeURIComponent(id)}/migrate`, { method: 'POST' })
 
 export const deleteAiEndpoint = (id: string) =>
   jsonFetch<AiCapabilities>(`/api/ai/endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' })

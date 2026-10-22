@@ -269,16 +269,16 @@ def test_cmd_injects_third_party_endpoint(monkeypatch):
 
     codex_ep = {
         "agent": "codex",
-        "label": "DeepSeek",
+        "label": "OpenAI 兼容网关",
         "api_key": "sk-d",
-        "base_url": "https://api.deepseek.com/v1",
-        "wire_api": "chat",
+        "base_url": "https://gw.example/v1",
+        "wire_api": "responses",
     }
     cmd, env = ai_bridge._cmd("codex", "p", "/cwd", endpoint=codex_ep)
     joined = " ".join(cmd)
     assert 'model_provider="tavotto"' in joined
-    assert 'model_providers.tavotto.base_url="https://api.deepseek.com/v1"' in joined
-    assert 'model_providers.tavotto.wire_api="chat"' in joined
+    assert 'model_providers.tavotto.base_url="https://gw.example/v1"' in joined
+    assert 'model_providers.tavotto.wire_api="responses"' in joined
     # 密钥走环境变量，命令行里只出现变量名
     assert env == {"TAVOTTO_CODEX_API_KEY": "sk-d"}
     assert "sk-d" not in joined

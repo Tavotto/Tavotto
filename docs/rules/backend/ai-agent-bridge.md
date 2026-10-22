@@ -104,6 +104,18 @@
   `~/.codex/config.toml`**（cc-switch 是改文件的，那对它合理，对我们是越权：
   用户在别的终端里跑 claude/codex 必须还是他自己那套）。密钥存用户配置
   （目录权限收到 0700），接口一律只回「有没有 + 尾四位」。
+  **协议：Codex 只认 `wire_api = "responses"`**（新版 codex 读到 `"chat"` 直接整个启动失败）。
+  `WIRE_APIS` 只剩 responses，`_clean` 默认 responses，`spawn_overrides` 结构上永远不产出 chat，
+  预设里没有任何 chat 条目。**国产厂商（DeepSeek / Kimi / Kimi Code / 智谱 / MiniMax / 百炼按量 /
+  百炼 Coding Plan）基本只有 Anthropic 兼容端点，一律经 Claude Code 接入**；codex 侧只留官方与
+  「自定义（OpenAI Responses 兼容）」。预设的模型名会过时，界面可编辑，预设只是省查文档。
+  **已存的旧 codex + `wire_api="chat"` 记录既不静默坏、也不静默改执行器**：判据只在
+  `ai_providers.incompatibility()`（`public()` 回 `incompatible: "codex_chat_removed"` + `migratable`），
+  它被选为当前接口时 `ai_bridge.run` 在 spawn 之前以 409 `ai_endpoint_incompatible` 拒绝；前端只消费这两个字段，
+  行内一句话 + 一个主按钮。主机名精确等于 `dashscope.aliyuncs.com` / `api.deepseek.com` 的可一步
+  `POST /api/ai/endpoints/<id>/migrate`（`migrate_to_claude`）：新建 claude 记录（Anthropic 端点、**保留原密钥**、
+  模型换成新预设，id 撞车则加 `-2`，绝不覆盖用户已有记录）、删旧记录（codex 当前接口随之清回官方登录），
+  **不替用户激活 claude 那边**；对不上的自定义记录只给「编辑」。看护：`tests/test_ai_endpoint_presets.py`。
 - **codex 模型清单读 `$CODEX_HOME/config.toml`（默认 `~/.codex`）的 `model` +
   `[profiles.*].model`，绝不在源码里写模型名**——OpenAI 换代后旧名会被服务端
   直接拒收（400 `The 'gpt-5' model is not supported when using Codex with a

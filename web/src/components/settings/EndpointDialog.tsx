@@ -96,7 +96,7 @@ export function EndpointDialog({
 }: {
   agent: AiAgentId
   agentLabel: string
-  /** 该 Agent 是否需要选择 wire api（OpenAI 兼容那一族才有） */
+  /** OpenAI 族（Codex）：只认 Responses 协议，保存时固定带 responses；界面不提供协议选择 */
   wireApi: boolean
   existing: AiEndpoint | null
   presets: AiEndpointPreset[]
@@ -109,7 +109,6 @@ export function EndpointDialog({
   const [apiKey, setApiKey] = useState('')
   const [models, setModels] = useState<string[]>(existing?.models ?? [])
   const [modelDraft, setModelDraft] = useState('')
-  const [wire, setWire] = useState<'responses' | 'chat'>(existing?.wire_api ?? 'chat')
   const [nameError, setNameError] = useState<string | null>(null)
 
   // 选中的预设留在本地态：`ui/Select` 是受控的，不留住这一格触发器会一直显示
@@ -132,7 +131,6 @@ export function EndpointDialog({
     setLabel(p.label)
     setBaseUrl(p.base_url)
     setModels([...p.models])
-    if (p.wire_api) setWire(p.wire_api)
   }
 
   const addModel = () => {
@@ -159,7 +157,7 @@ export function EndpointDialog({
       base_url: baseUrl.trim(),
       api_key: apiKey.trim() || undefined,
       models,
-      wire_api: wire,
+      ...(wireApi ? { wire_api: 'responses' as const } : {}),
     })
   }
 
@@ -233,20 +231,6 @@ export function EndpointDialog({
           )}
         </span>
       </Field>
-      {wireApi && (
-        <Field label={ag('endpoint.wire')}>
-          <Select
-            value={wire}
-            onChange={(v) => setWire(v as 'responses' | 'chat')}
-            options={[
-              { value: 'chat', label: ag('endpoint.wireChat') },
-              { value: 'responses', label: ag('endpoint.wireResponses') },
-            ]}
-            ariaLabel={ag('endpoint.wireAria')}
-            className="w-full"
-          />
-        </Field>
-      )}
     </>
   )
 

@@ -35,7 +35,7 @@ const PRESETS: AiEndpointPreset[] = [
     agent: 'codex',
     base_url: 'https://open.bigmodel.cn/api/paas/v4',
     models: ['glm-4.6', 'glm-4.5-air'],
-    wire_api: 'chat',
+    wire_api: 'responses',
   },
   { id: 'kimi', label: 'Kimi', agent: 'codex', base_url: 'https://api.moonshot.cn/v1', models: [] },
 ]
@@ -47,9 +47,11 @@ const EXISTING: AiEndpoint = {
   base_url: 'https://gw.example/v1',
   models: ['a-model', 'b-model'],
   default_model: 'a-model',
-  wire_api: 'chat',
+  wire_api: 'responses',
   has_key: true,
   key_hint: '…7f2a',
+  incompatible: null,
+  migratable: false,
 }
 
 let host: HTMLDivElement
@@ -122,7 +124,6 @@ describe('先选预设，再只填所需的（审计 T45）', () => {
     expect(step()).toBe('preset')
     expect(byAria(ag('endpoint.apiKey'))).toBeNull()
     expect(byAria(ag('endpoint.baseUrl'))).toBeNull()
-    expect(text()).not.toContain(ag('endpoint.wireChat'))
     expect(byText(t('actions.save', { ns: 'common' }))).toBeUndefined()
   })
 
@@ -166,6 +167,22 @@ describe('先选预设，再只填所需的（审计 T45）', () => {
     expect(text()).toContain('b-model')
     // 密钥只写不读：留空即保留，占位文案说清这件事
     expect(input(ag('endpoint.apiKey')).placeholder).toContain('…7f2a')
+  })
+})
+
+describe('Codex 只认 Responses 协议：界面不再让选协议', () => {
+  it('编辑 codex 接口时没有协议选择器，保存固定带 responses', async () => {
+    await mount({ existing: EXISTING })
+    expect(document.body.querySelector('[role="combobox"]')).toBeNull()
+    await act(async () => byText(t('actions.save', { ns: 'common' }))!.click())
+    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(onSave.mock.calls[0][0].wire_api).toBe('responses')
+  })
+
+  it('Claude 接口保存时不带 wire_api', async () => {
+    await mount({ agent: 'claude', wireApi: false, existing: { ...EXISTING, agent: 'claude' } })
+    await act(async () => byText(t('actions.save', { ns: 'common' }))!.click())
+    expect(onSave.mock.calls[0][0].wire_api).toBeUndefined()
   })
 })
 

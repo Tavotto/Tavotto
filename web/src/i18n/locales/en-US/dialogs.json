@@ -1025,12 +1025,17 @@
         "customExecutable": "Custom executable",
         "customPath": "Custom path",
         "delete": "Delete",
+        "deleteBody": "Keys are never shown again; you’ll have to enter it anew.",
         "deleteConfirm": "Delete “{{label}}”?",
         "diagnostics": "Diagnostics",
         "edit": "Edit",
+        "endpointActions": "More actions for {{label}}",
         "executable": "Executable",
+        "incompatible": "Codex no longer supports this endpoint protocol.",
+        "incompatibleEdit": "Codex no longer supports this endpoint protocol. Edit it to use a Responses-protocol address.",
         "install": "Install",
         "loginAndModels": "Sign-in and models",
+        "migrateToClaude": "Switch to Claude Code",
         "modelService": "Model service",
         "noKeySuffix": " (no key set)",
         "none": "—",
@@ -1048,9 +1053,7 @@
         "useCustomExecutable": "Use a custom executable",
         "useCustomService": "A custom or third-party model service",
         "validateAndSave": "Check and save",
-        "version": "Version",
-        "deleteBody": "Keys are never shown again; you’ll have to enter it anew.",
-        "endpointActions": "More actions for {{label}}"
+        "version": "Version"
       },
       "endpoint": {
         "addTitle": "Add a model service for {{name}}",
@@ -1074,13 +1077,9 @@
         "nameRequired": "Give this service a name.",
         "preset": "Preset",
         "presetAria": "Model service preset",
-        "presetFilled": "Filled in by the preset: address, models, protocol",
+        "presetFilled": "Filled in by the preset: address, models",
         "presetPlaceholder": "Pick a preset to fill in the address…",
-        "requiredAria": "required",
-        "wire": "Protocol",
-        "wireAria": "Wire protocol",
-        "wireChat": "chat (OpenAI Chat Completions compatible — most gateways)",
-        "wireResponses": "responses (native OpenAI Responses)"
+        "requiredAria": "required"
       },
       "install": {
         "action": "Install {{name}} with npm",

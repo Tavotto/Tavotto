@@ -1013,12 +1013,17 @@
         "customExecutable": "自定义可执行文件",
         "customPath": "自定义路径",
         "delete": "删除",
+        "deleteBody": "密钥不会回显，删除后需要重新填写。",
         "deleteConfirm": "删除「{{label}}」？",
         "diagnostics": "诊断信息",
         "edit": "编辑",
+        "endpointActions": "{{label}}的更多操作",
         "executable": "可执行文件",
+        "incompatible": "Codex 已不再支持这种接口协议。",
+        "incompatibleEdit": "Codex 已不再支持这种接口协议，请改用 Responses 协议的地址。",
         "install": "安装",
         "loginAndModels": "登录与模型",
+        "migrateToClaude": "改由 Claude Code 接入",
         "modelService": "模型服务",
         "noKeySuffix": "（未填密钥）",
         "none": "—",
@@ -1036,9 +1041,7 @@
         "useCustomExecutable": "使用自定义可执行文件",
         "useCustomService": "自定义或第三方模型服务",
         "validateAndSave": "验证并保存",
-        "version": "版本",
-        "deleteBody": "密钥不会回显，删除后需要重新填写。",
-        "endpointActions": "{{label}}的更多操作"
+        "version": "版本"
       },
       "endpoint": {
         "addTitle": "为 {{name}} 添加模型服务",
@@ -1062,13 +1065,9 @@
         "nameRequired": "给这个服务起个名字。",
         "preset": "预设",
         "presetAria": "模型服务预设",
-        "presetFilled": "预设已填好：地址、模型、协议",
+        "presetFilled": "预设已填好：地址、模型",
         "presetPlaceholder": "选一个预设填好地址…",
-        "requiredAria": "必填",
-        "wire": "协议",
-        "wireAria": "接口协议",
-        "wireChat": "chat（OpenAI Chat Completions 兼容，多数网关）",
-        "wireResponses": "responses（OpenAI Responses 原生）"
+        "requiredAria": "必填"
       },
       "install": {
         "action": "用 npm 安装 {{name}}",

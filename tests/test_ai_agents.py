@@ -542,15 +542,15 @@ def test_endpoint_backed_agent_stays_usable_without_cli_login(monkeypatch):
 
     ai_providers.save(
         {
-            "id": "deepseek-oai",
-            "label": "DeepSeek",
+            "id": "oai-gw",
+            "label": "OpenAI 兼容网关",
             "agent": "codex",
-            "base_url": "https://api.deepseek.com/v1",
+            "base_url": "https://gw.example/v1",
             "api_key": "sk-x",
-            "wire_api": "chat",
+            "wire_api": "responses",
         }
     )
-    ai_providers.set_active("codex", "deepseek-oai")
+    ai_providers.set_active("codex", "oai-gw")
     ai_bridge.invalidate_capabilities()
     entry = _codex(ai_bridge.capabilities(refresh=True))
     assert entry["state"] == "installed"  # 不再是 needs_auth

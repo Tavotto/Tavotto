@@ -16,6 +16,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   patchAiAgent: vi.fn(),
   setAiEndpointActive: vi.fn(),
   deleteAiEndpoint: vi.fn(),
+  migrateAiEndpoint: vi.fn(),
   startAiInstall: vi.fn(),
   fetchAiInstallStatus: vi.fn(),
 }))
@@ -23,6 +24,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 import {
   deleteAiEndpoint,
   fetchAiCapabilities,
+  migrateAiEndpoint,
   patchAiAgent,
   setAiEndpointActive,
   startAiInstall,
@@ -252,7 +254,7 @@ describe('Agent 详情', () => {
       endpoints: [{
         id: 'kimi', label: 'Kimi', agent: 'codex',
         base_url: 'https://api.moonshot.cn/anthropic', models: ['k2'],
-        default_model: 'k2', wire_api: 'chat', has_key: true, key_hint: '…cdef',
+        default_model: 'k2', wire_api: 'responses', has_key: true, key_hint: '…cdef', incompatible: null, migratable: false,
       }],
     })
     await openDetail(caps)
@@ -262,11 +264,45 @@ describe('Agent 详情', () => {
     expect(text()).not.toContain('sk-')
   })
 
+  it('旧协议的接口：一句话 + 一个主按钮；能对上厂商给「改由 Claude Code 接入」并真的发迁移请求', async () => {
+    vi.mocked(migrateAiEndpoint).mockResolvedValue(capsOf([agentCaps()]))
+    await openDetail(capsOf([agentCaps()], {
+      endpoints: [{
+        id: 'old', label: '百炼', agent: 'codex',
+        base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['m'],
+        default_model: null, wire_api: 'responses', has_key: true, key_hint: '…abcd',
+        incompatible: 'codex_chat_removed', migratable: true,
+      }],
+    }))
+    const row = document.querySelector('[data-endpoint-row="old"]')!
+    expect(row.textContent).toContain(ag('detail.incompatible'))
+    const fix = document.querySelector<HTMLButtonElement>('[data-endpoint-fix="old"]')!
+    expect(fix.textContent).toBe(ag('detail.migrateToClaude'))
+    await act(async () => fix.click())
+    expect(vi.mocked(migrateAiEndpoint)).toHaveBeenCalledWith('old')
+  })
+
+  it('旧协议且对不上已知厂商：只给「编辑」，不给迁移', async () => {
+    await openDetail(capsOf([agentCaps()], {
+      endpoints: [{
+        id: 'mine', label: '我的网关', agent: 'codex',
+        base_url: 'https://gw.example/v1', models: [],
+        default_model: null, wire_api: 'responses', has_key: true, key_hint: '…abcd',
+        incompatible: 'codex_chat_removed', migratable: false,
+      }],
+    }))
+    const row = document.querySelector('[data-endpoint-row="mine"]')!
+    expect(row.textContent).toContain(ag('detail.incompatibleEdit'))
+    const fix = document.querySelector<HTMLButtonElement>('[data-endpoint-fix="mine"]')!
+    expect(fix.textContent).toBe(ag('detail.edit'))
+    expect(document.body.textContent).not.toContain(ag('detail.migrateToClaude'))
+  })
+
   it('模型服务是一组单选：点另一条就真的切过去', async () => {
     const ep = (id: string, label: string) => ({
       id, label, agent: 'codex' as const,
       base_url: 'https://example.test', models: ['m'],
-      default_model: 'm', wire_api: 'chat' as const, has_key: true, key_hint: '…abcd',
+      default_model: 'm', wire_api: 'responses' as const, has_key: true, key_hint: '…abcd', incompatible: null, migratable: false,
     })
     await openDetail(capsOf([agentCaps({ active_endpoint_id: 'kimi' })], {
       endpoints: [ep('kimi', 'Kimi'), ep('glm', 'GLM')],
@@ -286,7 +322,7 @@ describe('Agent 详情', () => {
       endpoints: [{
         id: 'kimi', label: 'Kimi', agent: 'codex',
         base_url: 'https://example.test', models: ['m'],
-        default_model: 'm', wire_api: 'chat', has_key: true, key_hint: '…abcd',
+        default_model: 'm', wire_api: 'responses', has_key: true, key_hint: '…abcd', incompatible: null, migratable: false,
       }],
     }))
     // 行上不再常驻「编辑 / 删除」两颗钮
@@ -337,7 +373,7 @@ describe('Agent 详情', () => {
     const caps = capsOf([agentCaps({ active_endpoint_id: 'kimi' })], {
       endpoints: [{
         id: 'kimi', label: 'Kimi', agent: 'codex', base_url: 'https://x/v1',
-        models: [], default_model: null, wire_api: 'chat', has_key: true, key_hint: '…cdef',
+        models: [], default_model: null, wire_api: 'responses', has_key: true, key_hint: '…cdef', incompatible: null, migratable: false,
       }],
     })
     await openDetail(caps)

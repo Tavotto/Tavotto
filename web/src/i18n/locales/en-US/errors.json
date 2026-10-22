@@ -80,6 +80,7 @@
     "desktop_updater_disabled": "The desktop app doesn’t self-upgrade via pip. Update the desktop app instead.",
     "dir_fsync_failed": "Content was written, but the system couldn’t confirm it’s on disk. Save once more before closing: {{reason}}",
     "dir_missing": "Folder doesn’t exist: {{path}}",
+    "ai_endpoint_incompatible": "The “{{endpoint}}” endpoint uses a protocol Codex no longer supports. In settings, switch it to Claude Code, or use an address that supports the Responses protocol.",
     "endpoint_invalid": "Invalid endpoint configuration: {{reason}}",
     "endpoint_save_failed": "Couldn’t save the endpoint: {{reason}}",
     "environment_in_use_by_native_session": "This Python environment is in use by Tavotto Run. Stop the running script before installing dependencies.",

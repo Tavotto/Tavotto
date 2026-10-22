@@ -80,6 +80,7 @@
     "desktop_updater_disabled": "桌面版不支持 pip 自升级，请更新桌面应用。",
     "dir_fsync_failed": "内容已写入，但系统无法确认已落盘。关闭前请再保存一次：{{reason}}",
     "dir_missing": "目录不存在：{{path}}",
+    "ai_endpoint_incompatible": "“{{endpoint}}”用的接口协议，Codex 已不再支持。到设置里改由 Claude Code 接入，或把地址换成支持 Responses 协议的。",
     "endpoint_invalid": "接口配置无效：{{reason}}",
     "endpoint_save_failed": "无法保存接口：{{reason}}",
     "environment_in_use_by_native_session": "该 Python 环境正被 Tavotto Run 使用。请先结束正在运行的脚本，再安装依赖。",

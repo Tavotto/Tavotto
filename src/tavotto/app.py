@@ -11357,6 +11357,18 @@ def api_ai_endpoint_delete(pid):
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
+@app.post("/api/ai/endpoints/<pid>/migrate")
+def api_ai_endpoint_migrate(pid):
+    """已存的旧 codex(chat) 接口 → 改由 Claude Code 接入（保留密钥；不替用户激活新接口）。"""
+    try:
+        engine_ai_providers.migrate_to_claude(pid)
+    except (ValueError, OSError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "endpoint_invalid", "params": {"reason": str(exc)}}
+        ), 400
+    return jsonify(engine_ai.capabilities(refresh=True))
+
+
 @app.post("/api/ai/endpoints/active")
 def api_ai_endpoint_active():
     """选中某个 agent 当前使用的接口；id 为空字符串 = 回到 CLI 自带登录态。"""

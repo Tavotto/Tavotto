@@ -275,6 +275,7 @@ USER_VISIBLE_CODES = {
     "name_missing": set(),
     "endpoint_save_failed": {"reason"},
     "endpoint_invalid": {"reason"},
+    "ai_endpoint_incompatible": {"endpoint"},
     "ai_start_failed": {"reason"},
     "ai_revert_failed": {"reason"},
     # QA STATE-09：脚本在这次 AI 修改之后又变过，回滚被拒（409，AgentError 漏斗）
