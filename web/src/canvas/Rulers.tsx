@@ -9,6 +9,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { renderedSelection } from '@/store/zoomToSelection'
 import { mmToPx, mmToViewX, mmToViewY, useViewportStore, type ViewTransform } from '@/store/viewportStore'
 import { startGuideDrag } from './interactions'
+import { PageEdgeRulerDim } from './PageEdgeRulerDim'
 
 export const RULER_SIZE = 20
 /** 横向标尺上离起点（单位角）不到这么远的刻度数字不写，免得与角里的单位连成一串 */
@@ -279,6 +280,9 @@ export function Rulers({ viewW, viewH }: { viewW: number; viewH: number }) {
         style={{ top: RULER_SIZE, width: RULER_SIZE, height: viewH }}
         onPointerDown={(e) => startGuideDrag(e, 'x', null)}
       />
+      {/* 拖页面边时的尺寸标注住在标尺里（无框尺寸线 + 数值），只在拖动中挂 */}
+      <PageEdgeRulerDim axis="x" size={RULER_SIZE} length={viewW} />
+      <PageEdgeRulerDim axis="y" size={RULER_SIZE} length={viewH} />
     </>
   )
 }

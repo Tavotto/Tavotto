@@ -6,7 +6,7 @@ import type { Page } from '@playwright/test'
  *
  * 只放 jsdom 量不到的：真浏览器里命中区压在纸面边缘上能不能按到、拖动后**屏幕上量到的**纸面与图的位置。
  * 逻辑（吸附 / 夹取 / 事务）在 `canvas/pageEdgeResize.test.tsx`。定位认 `data-page-edge` / `data-page-sheet` /
- * `data-page-dims` / `data-object-id`。
+ * `data-ruler-dim` / `data-object-id`。
  */
 
 async function toLayout(page: Page, baseURL: string) {
@@ -50,9 +50,9 @@ test('拖右边改宽：纸面变宽、标注出现又消失、图不动', async
   await page.mouse.move(x, y)
   await page.mouse.down()
   await page.mouse.move(x + 60, y, { steps: 6 })
-  await expect(page.locator('[data-page-dims]')).toHaveCount(1)
+  await expect(page.locator('[data-ruler-dim]')).toHaveCount(1)
   await page.mouse.up()
-  await expect(page.locator('[data-page-dims]')).toHaveCount(0)
+  await expect(page.locator('[data-ruler-dim]')).toHaveCount(0)
   const s1 = (await sheetBox(page))!
   expect(s1.width).toBeGreaterThan(s0.width + 40)
   const o1 = (await objBox(page))!
@@ -88,56 +88,64 @@ test('单图编辑里没有拖边', async ({ app, page }) => {
   await expect(page.locator('[data-page-edge]')).toHaveCount(0)
 })
 
-// 读数（无框、锚在被拖边的画布内侧）：不与标尺相交；拖动过程中锚点稳定（只跟着边走）
-for (const [edge, axis] of [['r', 'x'], ['b', 'y']] as const) {
-  test(`拖${edge === 'r' ? '右' : '下'}边：读数不压标尺、锚点不抖、没有白底框`, async ({ app, page }) => {
+// 读数住在标尺里（无框尺寸线 `|---- 157.3 mm ----|`）：拖宽在水平标尺、拖高在竖直标尺；两端对齐页面边；文字居中随线段中点走
+type Box = { x: number; y: number; width: number; height: number }
+for (const [edge, axis] of [['r', 'x'], ['l', 'x'], ['b', 'y'], ['t', 'y']] as const) {
+  test(`拖${{ r: '右', l: '左', b: '下', t: '上' }[edge]}边：读数在${axis === 'x' ? '水平' : '竖直'}标尺内、无边框、两端对齐页面边、文字居中不抖`, async ({ app, page }) => {
     const a = await app()
     await toLayout(page, a.baseURL)
     const eb = (await page.locator(`[data-page-edge="${edge}"]`).boundingBox())!
     const x = eb.x + eb.width / 2
     const y = eb.y + eb.height / 2
+    const sign = edge === 'r' || edge === 'b' ? 1 : -1
     await page.mouse.move(x, y)
     await page.mouse.down()
-    const rulers = async () => ({
-      top: (await page.locator('[data-ruler="x"]').boundingBox())!,
-      left: (await page.locator('[data-ruler="y"]').boundingBox())!,
-    })
-    const samples: { rb: { x: number; y: number; width: number; height: number }; eb: { x: number; y: number; width: number; height: number } }[] = []
+    const samples: { rb: Box; line: Box; sheet: Box }[] = []
     for (let i = 1; i <= 8; i++) {
-      await page.mouse.move(axis === 'x' ? x + i * 9 : x, axis === 'y' ? y + i * 9 : y)
-      const readout = page.locator('[data-dim-readout]')
+      await page.mouse.move(axis === 'x' ? x + sign * i * 9 : x, axis === 'y' ? y + sign * i * 9 : y)
+      const dim = page.locator(`[data-ruler-dim="${axis}"]`)
+      await expect(dim).toHaveCount(1)
+      await expect(page.locator(`[data-ruler-dim="${axis === 'x' ? 'y' : 'x'}"]`)).toHaveCount(0)
+      const readout = dim.locator('[data-dim-readout]')
       await expect(readout).toHaveCount(1)
       const rb = (await readout.boundingBox())!
-      const cur = (await page.locator(`[data-page-edge="${edge}"]`).boundingBox())!
-      const r = await rulers()
-      for (const k of [r.top, r.left]) {
-        const w = Math.min(rb.x + rb.width, k.x + k.width) - Math.max(rb.x, k.x)
-        const h = Math.min(rb.y + rb.height, k.y + k.height) - Math.max(rb.y, k.y)
-        expect(w > 0 && h > 0, `读数与标尺相交 (${JSON.stringify(rb)} vs ${JSON.stringify(k)})`).toBe(false)
+      const ruler = (await page.locator(`[data-ruler="${axis}"]`).boundingBox())!
+      // 读数整个落在对应方向的标尺矩形里
+      expect(rb.x).toBeGreaterThanOrEqual(ruler.x - 0.5)
+      expect(rb.y).toBeGreaterThanOrEqual(ruler.y - 0.5)
+      expect(rb.x + rb.width).toBeLessThanOrEqual(ruler.x + ruler.width + 0.5)
+      expect(rb.y + rb.height).toBeLessThanOrEqual(ruler.y + ruler.height + 0.5)
+      const line = (await dim.locator('[data-dim-line]').boundingBox())!
+      const sheet = (await page.locator('[data-page-sheet]').first().boundingBox())!
+      samples.push({ rb, line, sheet })
+      // 线段两端 = 页面两条边（±1 px；页面边在可视区内时）
+      const [a0, a1, s0, s1] = axis === 'x' ? [line.x, line.x + line.width, sheet.x, sheet.x + sheet.width] : [line.y, line.y + line.height, sheet.y, sheet.y + sheet.height]
+      if (s0 >= (axis === 'x' ? ruler.x : ruler.y) && s1 <= (axis === 'x' ? ruler.x + ruler.width : ruler.y + ruler.height)) {
+        expect(Math.abs(a0 - s0)).toBeLessThanOrEqual(1)
+        expect(Math.abs(a1 - s1)).toBeLessThanOrEqual(1)
       }
-      samples.push({ rb, eb: cur })
+      // 文字中心 = 线段中点（沿标尺方向）
+      const c = axis === 'x' ? rb.x + rb.width / 2 : rb.y + rb.height / 2
+      expect(Math.abs(c - (a0 + a1) / 2)).toBeLessThanOrEqual(1)
     }
-    // 没有白底框：读数自己没有边框 / 底色
+    // 无边框、无胶囊：读数自己没有 border / 圆角
     const style = await page.locator('[data-dim-readout]').evaluate((el) => {
       const cs = getComputedStyle(el)
-      return { border: cs.borderTopWidth, bg: cs.backgroundColor }
+      return { b: [cs.borderTopWidth, cs.borderRightWidth, cs.borderBottomWidth, cs.borderLeftWidth], r: cs.borderTopLeftRadius }
     })
-    expect(style.border).toBe('0px')
-    expect(style.bg).toBe('rgba(0, 0, 0, 0)')
-    // 锚点稳定：读数盒的宽高恒定；读数相对被拖边的偏移恒定（页面没被夹取时）、垂直于边的另一轴坐标恒定
-    const stage = (await page.locator('[data-canvas-stage]').boundingBox())!
-    for (const s of samples) {
-      expect(s.rb.width).toBeCloseTo(samples[0].rb.width, 1)
-      expect(s.rb.height).toBeCloseTo(samples[0].rb.height, 1)
-      // 读数夹在舞台内（页面比舞台大时贴着舞台边 8px）：夹住的帧不比偏移，没夹住的帧偏移必须恒定
-      const clampedAt = (r: { x: number; y: number; width: number; height: number }) =>
-        axis === 'x' ? Math.abs(stage.x + stage.width - (r.x + r.width) - 8) < 1 : Math.abs(stage.y + stage.height - (r.y + r.height) - 8) < 1
-      const off = (q: typeof s) =>
-        axis === 'x' ? q.rb.x + q.rb.width - (q.eb.x + q.eb.width / 2) : q.rb.y + q.rb.height - (q.eb.y + q.eb.height / 2)
-      if (axis === 'x') expect(s.rb.y).toBeCloseTo(samples[0].rb.y, 1)
-      else expect(s.rb.x).toBeCloseTo(samples[0].rb.x, 1)
-      if (!clampedAt(s.rb) && !clampedAt(samples[0].rb)) expect(off(s)).toBeCloseTo(off(samples[0]), 1)
+    expect(style.b).toEqual(['0px', '0px', '0px', '0px'])
+    expect(style.r).toBe('0px')
+    // 垂直于标尺的那一轴上位置恒定；文字盒的大小只随数字（tabular-nums）几乎不变；中心的逐帧移动 = 线段中点的移动（相邻帧无额外跳动）
+    for (let i = 1; i < samples.length; i++) {
+      const p = samples[i - 1]
+      const q = samples[i]
+      if (axis === 'x') expect(q.rb.y).toBeCloseTo(p.rb.y, 1)
+      else expect(q.rb.x).toBeCloseTo(p.rb.x, 1)
+      const mid = (s: (typeof samples)[number]) => (axis === 'x' ? s.line.x + s.line.width / 2 : s.line.y + s.line.height / 2)
+      const ctr = (s: (typeof samples)[number]) => (axis === 'x' ? s.rb.x + s.rb.width / 2 : s.rb.y + s.rb.height / 2)
+      expect(Math.abs(ctr(q) - ctr(p) - (mid(q) - mid(p)))).toBeLessThanOrEqual(1)
     }
     await page.mouse.up()
+    await expect(page.locator('[data-ruler-dim]')).toHaveCount(0)
   })
 }
