@@ -2526,7 +2526,7 @@ mod tests {
                 if b.get(j) == Some(&'"') {
                     j += 1;
                     let close: Vec<char> = std::iter::once('"')
-                        .chain(std::iter::repeat('#').take(hashes))
+                        .chain(std::iter::repeat_n('#', hashes))
                         .collect();
                     while j < b.len()
                         && b[j..].len() >= close.len()
