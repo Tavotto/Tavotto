@@ -1,6 +1,6 @@
 /**
  * 顶栏的文档状态芯片与文档名（2026-10-07 设计审计 §10.1）。钉：
- *   1. 落定只剩一枚图标：那句话还在（读屏 / 悬停），但不占字宽（整格 sr-only）；
+ *   1. 落定是图标 + 一句短字（窄于 900 退成只剩图标、字进读屏 / 悬停），整枚芯片是按钮、点击 = ⌘S；
  *   2. 出事的那几件（未恢复的编辑 / 上次的排版没打开 / 冲突 / 保存失败）是一颗锚点色胶囊，点开是说明 + 出口，
  *      出口调的是与横幅同一批函数——「未恢复的编辑」不再是贴在顶栏上的一整句加两颗按钮；
  *   3. 文档名双击 / F2 进入改名；项目文件落后是**空心环**（实心点留给「有更新」）。
@@ -82,12 +82,16 @@ const openPill = async () => {
   return document.querySelector<HTMLElement>('[data-doc-status-popover]')
 }
 
-describe('落定：只有图标', () => {
-  it('那句话进读屏、不占字宽；图标在', () => {
+describe('落定：图标 + 一句短字，整枚芯片是按钮', () => {
+  it('短字常驻（窄于 900 才退进读屏）；图标在；点击等同 ⌘S', () => {
     expect(chip().dataset.saveShown).toBe('settled')
     const textEl = chip().querySelector('[data-save-text]')!
     expect(textEl.textContent).toBe('已存在本机')
-    expect(textEl.parentElement!.className, '整格只给读屏').toContain('sr-only')
+    expect(textEl.className, '宽屏可见、窄于 900 退进读屏').toContain('max-[899px]:sr-only')
+    expect(textEl.parentElement!.className).not.toContain('sr-only')
+    const btn = chip().querySelector<HTMLButtonElement>('button[data-save-button]')!
+    expect(btn, '芯片是一颗按钮').not.toBeNull()
+    expect(btn.contains(textEl)).toBe(true)
     expect(chip().querySelector('svg'), '一枚图标').not.toBeNull()
     expect(pill()).toBeNull()
   })
