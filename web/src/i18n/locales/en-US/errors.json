@@ -513,6 +513,7 @@
     "workdirChooseRootEvidence": "The data {{script}} reads is only found under the project root. Pick a working directory; this project is asked once.",
     "workdirChooseConfirm": "Use this folder",
     "workdirChooseScriptDirEvidence": "{{script}} looks for its data files in the current directory, which finds nothing in the sandbox; it needs to run in its own directory. Pick a working directory; this project is asked once.",
+    "workdirHintEmptyFigure": "This figure may be missing data: {{script}} looks for data that isn't in the sandbox but is in the script's own directory.",
     "workdirHintRuntime": "{{script}} is looking for data that isn't in the sandbox but is in the script's own directory.",
     "workdirChooseSuggest": "This figure hasn't been assigned a working directory yet.",
     "workdirChooseTitle": "Which directory should the script run in?",

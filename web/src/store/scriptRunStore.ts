@@ -17,6 +17,7 @@ import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { useAssetStore } from '@/store/assetStore'
 import '@/store/figureSnapshotInvalidation'
 import { msg, t as translate } from '@/i18n'
+import { noticeWorkdirHint, workdirHintOwner } from '@/lib/workdirHintNotice'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
@@ -316,6 +317,8 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         unlinkedStems: res.unlinked_stems ?? [],
         error: null,
       })
+      // 跑通了有图，但沙盒里 glob 回空、脚本目录里有文件（图可能缺数据，#1254）：通知轨一条胶囊（同渲染入口）
+      noticeWorkdirHint(workdirHintOwner(projectAtStart, `script:${script}`), res.workdir_hint, projectAtStart)
       // 成功的副作用：素材库立即出现新东西。
       // - runtime 清单重取（RuntimeFigureAsset 卡片，含刚物化的描述符）；
       // - 面板列表重取（脚本这次也可能 savefig 出了真文件 / ⚡ 状态变化）；

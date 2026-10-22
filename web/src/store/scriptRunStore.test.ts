@@ -211,6 +211,18 @@ describe('scriptRunStore 状态机', () => {
     expect(state().descriptors).toHaveLength(1)
   })
 
+  it('#1254：跑通有图但带 workdir_hint → 通知轨一条提醒（同渲染入口）；没有就不出现', async () => {
+    const hint = { kind: 'workdir', script: 'fig.py', probes: ['data/*.txt'], source: 'runtime' }
+    mockProbe.mockResolvedValue({ ...ok([desc('fig')]), workdir_hint: hint as never })
+    await useScriptRunStore.getState().run('fig.py')
+    expect(state().phase).toBe('captured_one')
+    expect(useUiStore.getState().statusOwner).toMatch(/^workdir\.hint:/)
+    useUiStore.getState().setStatus(null)
+    mockProbe.mockResolvedValue(ok([desc('fig')]))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(useUiStore.getState().status).toBeNull()
+  })
+
   it('T04：失败带上那一次的诊断引用，下一次成功把它清掉（旧失败的引用不挂在新结果上）', async () => {
     mockProbe.mockResolvedValue({
       ...failed('script_probe_failed'),

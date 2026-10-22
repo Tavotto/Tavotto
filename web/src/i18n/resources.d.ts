@@ -3047,6 +3047,7 @@ export default interface Resources {
       "workdirConfirmBody": "脚本会在自己的目录里运行，能直接找到相对路径的数据；它用相对路径写出的文件会落进项目目录，并改写同名文件。脚本里的 savefig 不会写出图片文件，项目里的文件被删除、改名和移动会被拦下。只对这个项目生效。",
       "workdirConfirmOk": "在脚本目录里运行",
       "workdirConfirmTitle": "改为在脚本目录里运行？",
+      "workdirHintEmptyFigure": "这张图可能缺数据：{{script}} 要找的数据在沙盒里找不到，但在脚本所在的目录里找得到。",
       "workdirHintProject": "脚本在自己的目录里运行，用相对路径写出的文件会落进项目目录并改写同名文件；项目里的文件被删除、改名仍会被拦下。",
       "workdirHintProjectNative": "正在用你自己的 Python，脚本在自己的目录里运行，用相对路径写出的文件会落进项目目录并改写同名文件；项目里的文件被删除、改名仍会被拦下。想隔离就改回沙盒。",
       "workdirHintProjectRoot": "脚本在项目根目录里运行，用相对路径写出的文件会落进项目目录并改写同名文件；项目里的文件被删除、改名仍会被拦下。",

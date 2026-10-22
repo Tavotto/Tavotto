@@ -2472,6 +2472,8 @@ export interface Manifest {
 }
 
 export interface EngineRenderResponse {
+  /** build 成功、但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254）；出图结果与状态码不变 */
+  workdir_hint?: WorkdirConfirmation
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
   artifact_source?: unknown
   /** 来源驱动策略（`script-backed-figure-v1`）的准入结论：状态、重画摘要、差异度量（ADR 0139） */
@@ -5686,6 +5688,8 @@ export interface ProbeError {
 
 export interface ProbeResult {
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
+  /** 跑通且有图，但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254） */
+  workdir_hint?: WorkdirConfirmation
   script: string
   entry: string | null
   stems: string[]
