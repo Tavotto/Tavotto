@@ -137,7 +137,14 @@ export function HomeView({
         {/* 从设置 / 菜单「切换项目」进来时后端仍有打开的项目——允许原路返回。
             这一行也是窗框的一部分：空白处可拖动窗口，Windows 的应用菜单在最左、右侧给窗口按钮让位 */}
         <div
-          className="flex h-7 shrink-0 items-center justify-end"
+          // 右上角窗口级的「联系作者」按钮（`ProjectPicker` 的 fixed 角落：右 12px、宽约 110px、高 28px，离顶 12px）会压在这一行右端的
+          // 「返回当前项目」上，当且仅当内容列的右缘（居中、最宽 768）离窗口右缘不到「按钮宽 + 12 + 返回钮自己的 24 内边距」：
+          // (W + 768) / 2 − 24 > W − 140 ⇒ W < 1000（Windows 另让出 138px 的窗口按钮：W < 1138）。取断点而不测量——
+          // 断点以上布局完全不变；以下整行下移 28px（落在按钮 40px 的底边之下），横向位置不动（「返回链接与内容列右缘对齐」仍成立）。
+          className={cn(
+            'flex h-7 shrink-0 items-center justify-end',
+            windowChrome() === 'menu-button' ? 'max-[1137px]:mt-7' : 'max-[999px]:mt-7',
+          )}
           style={windowChrome() === 'menu-button' ? { paddingRight: HOME_CONTROLS_INSET } : undefined}
           {...dragRegionProps('self')}
         >

@@ -125,3 +125,34 @@ test('编辑器顶栏：入口在撤销重做与导出之间；窄于 900 只剩
   expect(narrow.width).toBeLessThan(48) // 只剩图标
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'topbar-narrow.png') })
 })
+
+test('窄窗口：从已打开项目回到主页，「返回当前项目」与「联系作者」不相交、都点得到', async ({ app, page }) => {
+  test.setTimeout(240_000)
+  const a = await app({
+    env: {
+      TAVOTTO_NO_CONTACT: '0',
+      TAVOTTO_DIAG_DEV_LOOPBACK: '1',
+      TAVOTTO_CONTACT_ENDPOINT: 'https://127.0.0.1:9', // 不会被连：这个用例不点发送
+    },
+  })
+  await page.setViewportSize({ width: 720, height: 700 })
+  await page.goto(a.baseURL)
+  await page.locator('[data-topbar]').waitFor({ timeout: 60_000 })
+  await page.locator('[data-home-button]').first().click()
+  const back = page.locator('[data-home-back-current]')
+  const contact = page.locator('[data-contact-button="home"]')
+  await expect(back).toBeVisible({ timeout: 30_000 })
+  await expect(contact).toBeVisible()
+  const b = (await back.boundingBox())!
+  const c = (await contact.boundingBox())!
+  const disjoint = b.x + b.width <= c.x || c.x + c.width <= b.x || b.y + b.height <= c.y || c.y + c.height <= b.y
+  expect(disjoint).toBe(true)
+  for (const [loc, box] of [[back, b], [contact, c]] as const) {
+    const hit = await loc.evaluate((el, p) => el.contains(document.elementFromPoint(p.x, p.y)), {
+      x: box.x + box.width / 2,
+      y: box.y + box.height / 2,
+    })
+    expect(hit).toBe(true)
+  }
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'home-narrow.png') })
+})
