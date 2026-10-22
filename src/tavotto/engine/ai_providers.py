@@ -102,6 +102,17 @@ PRESETS: list[dict] = [
         "models": ["kimi-for-coding"],
         "note": "Kimi Code 会员专属 Key，与开放平台 Key 不通用",
     },
+    # Kimi Code 官方也原生支持 Responses（kimi.com/code/docs/en/third-party-tools/codex），
+    # 只有 Codex 的会员用户不必装 Claude Code。国内地址；同一把会员 Key。
+    {
+        "id": "kimi-code-codex",
+        "label": "Kimi Code 会员（Codex）",
+        "agent": "codex",
+        "base_url": "https://api.kimi.com/coding/v1",
+        "wire_api": "responses",
+        "models": ["k3-256k", "k3"],
+        "note": "Kimi Code 会员专属 Key，与开放平台 Key 不通用",
+    },
     {
         "id": "zhipu",
         "label": "智谱 GLM",

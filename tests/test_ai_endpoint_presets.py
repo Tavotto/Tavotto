@@ -50,7 +50,12 @@ def test_no_preset_uses_chat_and_no_domestic_vendor_is_on_codex():
             # codex 只许官方与自定义 Responses 兼容；国产厂商没有 Responses 协议
             # （DeepSeek 官方原生支持 Responses，是唯一的厂商例外；百炼的 Responses 地址带
             # 用户的 WorkspaceId，推不出来，所以不加）
-            assert p["id"] in ("openai", "custom-codex", "deepseek-codex"), p["id"]
+            assert p["id"] in (
+                "openai",
+                "custom-codex",
+                "deepseek-codex",
+                "kimi-code-codex",
+            ), p["id"]
     ids = {p["id"] for p in ai_providers.PRESETS}
     assert not ids & {"deepseek-oai"}
     assert {"kimi-code", "minimax", "dashscope", "dashscope-coding"} <= ids
@@ -58,6 +63,9 @@ def test_no_preset_uses_chat_and_no_domestic_vendor_is_on_codex():
     assert by_id["dashscope"]["agent"] == "claude"
     assert by_id["dashscope"]["base_url"] == "https://dashscope.aliyuncs.com/apps/anthropic"
     assert by_id["deepseek"]["models"] == ["deepseek-v4-pro", "deepseek-flash"]
+    kc = by_id["kimi-code-codex"]
+    assert kc["agent"] == "codex" and kc["wire_api"] == "responses"
+    assert kc["base_url"] == "https://api.kimi.com/coding/v1"
     ds = by_id["deepseek-codex"]
     assert ds["agent"] == "codex" and ds["wire_api"] == "responses"
     assert ds["base_url"] == "https://api.deepseek.com"

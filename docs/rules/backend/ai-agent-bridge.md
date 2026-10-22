@@ -107,11 +107,12 @@
   **协议：Codex 只认 `wire_api = "responses"`**（新版 codex 读到 `"chat"` 直接整个启动失败）。
   `WIRE_APIS` 只剩 responses，`_clean` 默认 responses，`spawn_overrides` 结构上永远不产出 chat，
   预设里没有任何 chat 条目。**按协议分流，不是「国产一律走 Claude Code」**：只有 Anthropic 兼容端点的
-  厂商（Kimi / Kimi Code / 智谱 / MiniMax / 百炼按量 / 百炼 Coding Plan）经 Claude Code 接入；**原生支持
-  Responses 的厂商可留在 Codex**——目前仅 DeepSeek（预设 `deepseek-codex`，base_url `https://api.deepseek.com`
+  厂商（Kimi 开放平台 / 智谱 / MiniMax / 百炼按量 / 百炼 Coding Plan）经 Claude Code 接入；**原生支持
+  Responses 的厂商可留在 Codex**——目前是 DeepSeek 与 Kimi Code 会员。DeepSeek（预设 `deepseek-codex`，base_url `https://api.deepseek.com`
   无结尾斜杠、Codex 其后拼 `/responses`，模型 `deepseek-flash` / `deepseek-v4-pro`；依据 DeepSeek 官方 Codex 集成文档，
-  Claude 版 `deepseek` 预设并存）。百炼的 Responses 地址带用户的 WorkspaceId、我们推不出，**不加 Codex 预设**。
-  codex 侧预设只有官方、DeepSeek（Codex）与「自定义（OpenAI Responses 兼容）」。预设的模型名会过时，界面可编辑。
+  Claude 版 `deepseek` 预设并存）；Kimi Code（预设 `kimi-code-codex`，`https://api.kimi.com/coding/v1`，模型 `k3-256k` / `k3`；
+  依据 Kimi Code 官方 Codex 集成文档，Claude 版 `kimi-code` 并存）。百炼的 Responses 地址带用户的 WorkspaceId、我们推不出，**不加 Codex 预设**。
+  codex 侧预设只有官方、DeepSeek（Codex）、Kimi Code 会员（Codex）与「自定义（OpenAI Responses 兼容）」。预设的模型名会过时，界面可编辑。
   **已存的旧 codex + `wire_api="chat"` 记录既不静默坏、也不静默改执行器**：判据只在
   `ai_providers.incompatibility()`（`public()` 回 `incompatible: "codex_chat_removed"` + `migratable`），
   它被选为当前接口时 `ai_bridge.run` 在 spawn 之前以 409 `ai_endpoint_incompatible` 拒绝——**这个检查放在
