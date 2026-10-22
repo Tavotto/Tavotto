@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,6 +15,13 @@ from types import SimpleNamespace
 import pytest
 
 from tavotto.engine import config, convertdeps, deprepair, pool
+
+#: 各平台「OS 自带解释器」的一个代表路径（Windows 没有 /usr/bin：那里在 Windows 上就是普通目录）
+OS_PYTHON = (
+    os.path.join(os.environ.get("SystemRoot") or r"C:\Windows", "py.exe")
+    if os.name == "nt"
+    else "/usr/bin/python3"
+)
 
 SCRIPT = "tavotto_convert_probe_x.py"
 
@@ -199,7 +207,7 @@ def test_describe_env_classifies_the_four_families(tmp_path, fake_repair):
         convertdeps.describe_env(str(homebrew / "bin" / "python3"), pool.SOURCE_SYSTEM)["kind"]
         == "system"
     )
-    assert convertdeps.describe_env("/usr/bin/python3", pool.SOURCE_SYSTEM)["kind"] == "system"
+    assert convertdeps.describe_env(OS_PYTHON, pool.SOURCE_SYSTEM)["kind"] == "system"
     assert convertdeps.describe_env("/x/py", pool.SOURCE_BUNDLED)["kind"] == "builtin"
     assert convertdeps.describe_env("/x/py", pool.SOURCE_CURRENT)["kind"] == "builtin"
     assert convertdeps.describe_env("/x/py", pool.SOURCE_PROJECT_VENV)["kind"] == "project_venv"
@@ -296,7 +304,7 @@ def test_a_bound_plan_that_grew_beyond_the_list_asks_instead_of_installing(fake_
     ("source", "kw"),
     [
         (pool.SOURCE_SYSTEM, {"ext": True}),
-        (pool.SOURCE_CONFIGURED, {"python": "/usr/bin/python3"}),
+        (pool.SOURCE_CONFIGURED, {"python": OS_PYTHON}),
         (pool.SOURCE_BUNDLED, {}),
         (pool.SOURCE_CURRENT, {}),
     ],
