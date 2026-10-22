@@ -35,7 +35,8 @@ def test_a_closed_render_host_is_not_reported():
     render_children.reap(since)
 
 
-def test_the_process_wide_shared_host_is_closed_for_the_test_not_reported(monkeypatch):
+def test_the_shared_host_is_not_judged_per_test_but_is_reaped_per_module(monkeypatch):
+    """共享实例用例级不报、不关（省掉每条用例重起 child）；模块 teardown 的 `reap_shared` 才收，收后进程里没有存活 child。"""
     render_children.install()
     renderhost.shutdown_shared()
     monkeypatch.setattr(
@@ -46,9 +47,12 @@ def test_the_process_wide_shared_host_is_closed_for_the_test_not_reported(monkey
     host._ensure()
     proc = host._proc
     assert proc is not None and proc.poll() is None
-    render_children.reap(since)
+    render_children.reap(since)  # 用例级：不报
+    assert proc.poll() is None  # 也不关
+    render_children.reap_shared()  # 模块级：收掉
+    proc.wait(timeout=10)
     assert proc.poll() is not None
-    renderhost.shutdown_shared()
+    assert renderhost._SHARED is None
 
 
 def _init_with_sleeper(cls):

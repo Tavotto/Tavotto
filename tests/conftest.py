@@ -277,22 +277,25 @@ def _stop_project_watchers_started_by_this_test():
 
 @pytest.fixture(autouse=True)
 def _render_children_reaped():
-    """每条用例结束时，**这条用例起的** render child（`python -m tavotto.rendercore.renderchild`）必须已经退出。
+    """用例 teardown：**本用例自建**的 `RenderHost`（不是进程级共享实例）起的 render child 必须已经退出。
 
-    #1285：CI 上 `describe_children()` 在同片里撞见存活数分钟的 renderchild——某条用例经应用 / facade 用了进程级
-    共享的 `renderhost.shared()`，用例结束没人关，child 就一直活到整个 pytest 进程退出，之后同片里
-    「此刻没有子进程」之类的断言随分片组成随机红。
-
-    判据的主语：**本用例期间** `RenderHost._start` 起的 child（不是「机器上所有 renderchild」，也不碰进来之前已在的）；
-    时刻是用例 teardown。进程级共享实例（`shared()` 与旧代）是**合法的会话级资源**，但它的生命周期归用例：这里
-    替它 `close()`（下一次 `shared()` 懒重建），用例本人不必各写 `shutdown_shared()`。自己 `RenderHost(...)`
-    却没 `close()` 的用例没有这个豁免——child 仍在就失败，并打出用例名与完整命令行；随后杀掉（只杀登记过的 PID），
-    不让它连累后面的用例。
-    """
+    #1285：CI 上 `describe_children()` 在同片里撞见存活数分钟的 `python -m tavotto.rendercore.renderchild`。
+    判据的主语：本用例期间新建的非共享宿主的 child；时刻是用例 teardown。没 `close()` 就失败，打出 pid 与完整
+    命令行，随后只杀登记过的 PID。进程级共享实例按模块收，见 `_render_shared_host_reaped_per_module`。"""
     _render_children.install()
     mark = _render_children.mark()
     yield
     _render_children.reap(mark)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _render_shared_host_reaped_per_module():
+    """模块 teardown：收掉进程级共享 render child（`renderhost.shared()`，懒建、合法的会话级资源）。
+    不按用例收：每条都关会让下一条重起 child，用共享宿主多的文件慢两成左右。按模块收同样保证它不跨模块
+    活下去——这就是 #1285 里看门狗那条「此刻没有子进程」用例要的：进入它的模块之前，前一个模块的共享 child 已经收掉。"""
+    yield
+    if "tavotto.rendercore.renderhost" in sys.modules:
+        _render_children.reap_shared()
 
 
 @pytest.fixture(autouse=True)

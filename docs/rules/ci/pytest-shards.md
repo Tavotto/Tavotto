@@ -62,9 +62,10 @@
   的结论评论）：所以 900 秒只管真挂死，慢的那类由 `[slow-test]` 时间线和权重重算处理。
 - **用例结束时不许留下 render child（#1285，2026-10-22）**：同一个 pytest 进程里，某条用例经应用 / facade 用了进程级共享的
   `renderhost.shared()` 而没人关，`python -m tavotto.rendercore.renderchild` 就活到整片结束，之后同片里「此刻没有子进程」
-  一类断言随分片组成随机红。`tests/conftest.py` 的 autouse `_render_children_reaped`（逻辑在
-  `tests/support/render_children.py`）在每条用例 teardown：判据主语是**本用例期间新建的 `RenderHost`** 起的 child
-  （模块 / 会话 fixture 持有的、先于用例建好的宿主归它的 fixture）；进程级共享实例替用例 `shutdown_shared()`；用例自己
-  `RenderHost(...)` 没 `close()` 的，child 仍活着就失败并打出 pid 与完整命令行，随后只杀登记过的 PID。
+  一类断言随分片组成随机红。`tests/conftest.py` 两个 autouse fixture（逻辑在 `tests/support/render_children.py`）：
+  `_render_children_reaped` 按**用例**判——本用例期间新建的**非共享** `RenderHost` 起的 child 仍活着就失败，打出 pid 与
+  完整命令行，随后只杀登记过的 PID（先于用例建好的、模块 / 会话 fixture 持有的宿主归它的 fixture）；
+  `_render_shared_host_reaped_per_module` 按**模块**收进程级共享实例（`shutdown_shared()` 连绑定一起丢）。不按用例收：
+  每条都关会让下一条重起 child，test_rendercore_app 实测慢约 20%。按模块收同样保证共享 child 不跨模块活下去。
   `describe_children()` 的 `ps` 带 `-ww`：Linux procps 在 stdout 非终端时把命令行截在 80 列。反证见
   `tests/test_render_children_guard.py`。

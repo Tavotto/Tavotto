@@ -3,7 +3,7 @@
 
 判据的主语：**本用例期间新建的 `RenderHost`** 起的 child——不是机器上所有 renderchild；进来之前就建好的宿主
 （模块 / 会话级 fixture 持有的，首次使用才起 child）归它的 fixture，不算本用例。时刻是用例 teardown。进程级共享实例（`renderhost.shared()` 与旧代）是合法的会话级资源，但生命周期归用例：
-这里替它 `close()`（下一次 `shared()` 懒重建）。自己 `RenderHost(...)` 却没 `close()` 的没有这个豁免。
+按**模块**替它收（`reap_shared`，下一次 `shared()` 懒重建）。自己 `RenderHost(...)` 却没 `close()` 的没有这个豁免。
 """
 
 from __future__ import annotations
@@ -49,23 +49,34 @@ def mark() -> int:
     return _HOSTS_CREATED
 
 
-def reap(since: int) -> None:
-    """关掉 `since` 之后登记的共享宿主；仍活着的 child 杀掉（只杀登记过的 PID）并抛 AssertionError，带完整命令行。"""
+def _shared_ids() -> set[int]:
     from tavotto.rendercore import renderhost
 
-    # 进程级共享实例（含旧代）不分先后一律由本用例收：它是懒建的会话级资源，哪条用例碰了它哪条负责关
-    # （先于用例建好的、或被上一条用例遗留的线程在 teardown 之后才建的也一样，否则它的 child 会漏过判据）。
-    # 连绑定一起丢：只 close 的话，下条用例的 `shared()` 拿回同一个旧宿主，它的新 child 又被当成「先于该用例」。
+    return {id(h) for h in (renderhost._SHARED, *renderhost._SHARED_HOSTS) if h is not None}
+
+
+def reap_shared() -> None:
+    """模块 teardown：收掉进程级共享实例（含旧代）。它是懒建的会话级资源，生命周期按**模块**收，
+    不按用例（每条用例都关会让下一条重起 child，大量用共享宿主的文件慢约两成，#1285 实测）；
+    效果相同——共享 child 不会跨模块活下去，后面模块里的「此刻没有子进程」类断言看不到它。
+    连绑定一起丢（`shutdown_shared()`）：只 close 的话，下一次 `shared()` 拿回同一个旧宿主。"""
+    from tavotto.rendercore import renderhost
+
     renderhost.shutdown_shared()
     for host in tuple(renderhost._SHARED_HOSTS):
         host.close()
-    # 其余宿主（用例自己 `RenderHost(...)`）只认本用例期间新建的；先于用例建好的归它的 fixture。
-    mine = [c for c in _CHILDREN if c[1] > since]
-    _CHILDREN[:] = [c for c in _CHILDREN if c[1] <= since and c[2].poll() is None]
+
+
+def reap(since: int) -> None:
+    """用例 teardown：本用例期间新建的**非共享** `RenderHost` 起的 child 仍活着 → 杀掉（只杀登记过的 PID）并抛
+    AssertionError，带完整命令行。共享实例不在此判（见 `reap_shared`）；先于用例建好的宿主归它的 fixture。"""
+    shared = _shared_ids()
+    mine = [c for c in _CHILDREN if c[1] > since and id(c[0]()) not in shared]
+    _CHILDREN[:] = [c for c in _CHILDREN if c not in mine and c[2].poll() is None]
     leaked = []
     for _ref, _seq, proc in mine:
         try:
-            proc.wait(timeout=5)  # 刚 close 的 child 可能还在退出中
+            proc.wait(timeout=5)
         except Exception:  # noqa: BLE001 - TimeoutExpired：真没退
             pass
         if proc.poll() is None:
@@ -75,6 +86,6 @@ def reap(since: int) -> None:
             proc.wait(timeout=10)
     assert not leaked, (
         "本用例起了 render child 却没有关（自己建的 RenderHost 要 `close()`；"
-        "进程级共享实例由 conftest 的 `_render_children_reaped` 代关，不在此列）：\n"
+        "进程级共享实例按模块由 conftest 的 `_render_shared_host_reaped_per_module` 代关，不在此列）：\n"
         + "\n".join(f"  pid={pid} {cmd}" for pid, cmd in leaked)
     )
