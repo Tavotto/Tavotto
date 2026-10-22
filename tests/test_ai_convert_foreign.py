@@ -669,6 +669,46 @@ def test_task_cancel_reaches_the_dependency_step_and_ends_cancelled(env):
     assert len(env["prompts"]) == 1
 
 
+def test_a_stop_after_the_install_commit_point_in_the_initial_task_keeps_the_candidate(
+    env, monkeypatch
+):
+    """Codex #1330 P2（首跑）：依赖步骤已过安装提交点（返回 installed）而用户的停止已置位 → 与续跑同一语义：
+    候选保留、状态 deps_installed、installed 如实记录、runner 没调用；任务结局 needs_input + dependency_installed_late
+    （带 installed 结构化字段），不是 cancelled；之后「继续」→ ready。"""
+    entered = threading.Event()
+    ran = []
+    env["runner"] = lambda *a, **k: ran.append(1) or ok_runner(*a)
+
+    def hook(project, rel, cancel=None):
+        entered.set()
+        assert cancel is not None and cancel.wait(10), "取消信号没到"
+        return {"status": "installed", "installed": ["pandas"]}  # 修复层拒绝了晚到的取消
+
+    sid = _run(env, hooks={"deps": hook})
+    assert entered.wait(15)
+    assert ai_bridge.cancel(sid)
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "needs_input", sess["task"]
+    (unmet,) = sess["task"]["unmet"]
+    assert unmet["reason_code"] == "dependency_installed_late"
+    assert unmet["data"] == {"installed": ["pandas"]}
+    assert not ran, "不违背停止意图：不跑校验"
+    assert len(env["prompts"]) == 1
+    st = ai_convert.status(sid, _project(env))
+    assert st["state"] == ai_convert.STATE_INSTALLED and st["installed"] == ["pandas"]
+    assert st["dependency_card"] is None
+    assert (ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py").is_file(), "候选保留"
+    with pytest.raises(ai_convert.ConvertError):
+        ai_convert.adopt(sid, _project(env))
+    monkeypatch.setattr(convertdeps, "ensure", lambda p, r, cancel=None: {"status": "none"})
+    cdir, meta, cancel = ai_convert.prepare_resume(sid, _project(env))
+    res = ai_convert.run_resume(
+        sid, _project(env), cdir, meta, cancel, runner=ok_runner, ensure=convertdeps.ensure
+    )
+    assert res["state"] == "ready"
+    assert ai_convert.status(sid, _project(env))["installed"] == ["pandas"]
+
+
 # --------------------------------------------------------------------------- 换环境后按新环境重新判定（Codex #1330 P1：系统卡 → 选了别的环境，不用丢候选重跑付费 Agent）
 SYSTEM_CARD = {
     **CARD,

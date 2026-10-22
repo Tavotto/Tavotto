@@ -81,13 +81,17 @@ DEPENDENCY_INSTALL_FAILED = "convert_dependency_install_failed"
 #: 依赖钩子结果的 `status`（与 `convertdeps.STATUS_*` 同值；这里不 import 它：convertdeps 经 deprepair 通向既有 import 环，引擎侧只认 app 注入的钩子）
 DEPS_INSTALLED = "installed"
 DEPS_CANCELLED = "cancelled"
-DEPS_INSTALLED_STOPPED = "installed_stopped"  # 内部：续跑里装好后发现取消已置位（晚到的停止）
+DEPS_INSTALLED_STOPPED = (
+    "installed_stopped"  # 内部：装好后发现取消已置位（晚到的停止；首跑与续跑同一语义）
+)
 DEPS_HOLD = "hold"
 DEPS_FAILED = "failed"
 #: 校验运行前发现要用户先决定一件事（装不装缺的包 / 换环境）的内部码：任务以 `needs_input` 终局、候选不删（`ConvertAdapter.hold`）
 DEPENDENCY_DECISION = "convert_dependency_decision"
 #: 任务结局 `unmet[].reason_code`：界面据此出依赖卡片；卡片事实在同一条 `unmet[].data`
 DEPENDENCY_DECISION_REASON = "dependency_decision"
+#: 首跑里停止晚于安装提交点：依赖已装好、候选保留，任务结局 needs_input 的原因码（界面出「依赖已经装好了…」+「继续 / 放弃」）
+DEPENDENCY_INSTALLED_LATE_REASON = "dependency_installed_late"
 #: 候选的待决状态：`awaiting_dependencies`（等用户点卡片）→ `resuming`（装 + 继续校验中）→ `ready` / 回 `awaiting_dependencies` / `failed`
 STATE_AWAITING = "awaiting_dependencies"
 STATE_RESUMING = "resuming"
@@ -218,6 +222,8 @@ class ConvertCandidate:
     installed: list = field(default_factory=list)
     #: 校验运行前停住等用户决定时的卡片事实（`convertdeps` 的 `card`）；非 None = 候选要留着等 `resume`
     hold: dict | None = None
+    #: 校验运行前依赖步骤返回了 installed 而取消已置位（停止晚于安装提交点）：候选要留着，停在 `deps_installed` 等用户点「继续」
+    late_installed: bool = False
     new_bytes: bytes | None = None
     #: 对桥而言“没写用户文件”：恒 False（`_settle_task` / 刷新据此不当成脚本被改）
     committed: bool = False
@@ -340,8 +346,8 @@ def _own_files(script_rel: str) -> frozenset[str]:
 
 
 def release(cand: ConvertCandidate) -> None:
-    """会话收尾：通过检查、留存待采用的候选保留；其余（失败 / 取消 / 超时）删掉。"""
-    if not cand.ready and cand.hold is None:
+    """会话收尾：通过检查、留存待采用的候选（含停住等用户决定 / 已装好等继续的）保留；其余（失败 / 取消 / 超时）删掉。"""
+    if not cand.ready and cand.hold is None and not cand.late_installed:
         remove_dir(cand.dir)
 
 
@@ -464,11 +470,12 @@ def _ensure_dependencies(cand: ConvertCandidate, rel: str) -> dict | None:
         return None
     status = got.get("status")
     if status == DEPS_INSTALLED:
-        cand.installed = list(got.get("installed") or [])
+        # 并入（不覆盖）：「继续」从 `deps_installed` 重建的候选已带着先前装的包，这一轮没装新的也不能把记录抹掉
+        cand.installed = list(dict.fromkeys([*cand.installed, *(got.get("installed") or [])]))
         cancel = cand.extras.get("cancel")
-        if cand.extras.get("resume") and cancel is not None and cancel.is_set():
-            # 续跑里装好了、而取消已置位：修复层拒绝了晚到的取消（环境已换代）。不再往下跑校验（违背用户的停止意图），
-            # 也不删候选——由 `run_resume` 停在「已装好、等你继续」
+        if cancel is not None and cancel.is_set():
+            # 装好了、而取消已置位（首跑与续跑同一语义）：修复层拒绝了晚到的取消（环境已换代）。不再往下跑校验（违背用户的停止意图），
+            # 也不删候选——续跑由 `run_resume`、首跑由适配器的 `hold` 停在「已装好、等你继续」
             return {"status": DEPS_INSTALLED_STOPPED}
         return None
     if status == DEPS_CANCELLED:
@@ -651,10 +658,11 @@ class ConvertAdapter:
         rendered = self._render(run, cand, st)
         # 校验运行会在原脚本旁真跑候选：它写相对路径输出（out.png 之类）就会改到项目文件，所以跑完要再核一遍
         after = [c for c in self._project_untouched(cand, st) if c.verdict != VERIFIED]
-        if cand.hold is not None and after:
+        if (cand.hold is not None or cand.late_installed) and after:
             # 依赖调查期间项目被动了：完整性闸门先于“停住等用户决定”。不进依赖等待、不留存候选，
             # 结局同不缺依赖时的完整性失败（“停住”那条伪失败不算证据，丢掉）
             cand.hold = None
+            cand.late_installed = False
             return out + after
         return out + rendered + after
 
@@ -706,6 +714,9 @@ class ConvertAdapter:
             cand.extras["cancel"] = cancel
         result = run_validation(cand, runner)
         cand.extras["validation"] = result
+        if result["status"] == DEPS_INSTALLED_STOPPED:
+            cand.late_installed = True  # 候选要留（`hold` / `discard` 据此）；这条检查只是占位，`hold` 紧接着以 needs_input 终局
+            return [_check("render.capture", st, "goal", UNKNOWN, DEPENDENCY_INSTALLED_LATE_REASON)]
         if result["status"] == "ok":
             cand.comparison = comparison_of(cand, result)
             svg = result.get("svg")
@@ -721,6 +732,15 @@ class ConvertAdapter:
         """提交前验证之后的“停住”口（`ai_tasks._verify_precommit`）：校验运行前发现要用户先决定装包 / 换环境时，
         把候选留存成 `awaiting_dependencies`（候选目录 + meta.json，不碰用户文件），任务以 `needs_input` 终局，
         卡片事实随结局的 `unmet[].data` 交给界面；用户点了主按钮由 `resume` 接着走**同一个候选**（不重跑 Agent）。"""
+        if cand.late_installed:
+            # 首跑里停止来得太晚（依赖步骤已过安装提交点）：环境已换代，候选留存成 `deps_installed`，任务以 needs_input 终局；
+            # 取消路径（`halted`）不会再看到它——NeedsInput 在循环前抛出。不自动校验，等用户点「继续」或「放弃」
+            stage_installed(cand)
+            return ai_tasks.NeedsInput(
+                "",
+                reason_code=DEPENDENCY_INSTALLED_LATE_REASON,
+                data={"installed": list(cand.installed)},
+            )
         if cand.hold is None:
             return None
         stage_hold(cand)
@@ -816,7 +836,7 @@ class ConvertExecutor(ai_figure_edit.BridgeExecutor):
         stage(cand)
 
     def discard(self, run, cand: ConvertCandidate) -> None:
-        if cand.hold is not None:
+        if cand.hold is not None or cand.late_installed:
             return  # 停住等用户决定的候选要留着（`resume` 接着走它）；取消 / 超时等其余结局不会设 hold
         remove_dir(cand.dir)
 
@@ -850,34 +870,47 @@ def stage(cand: ConvertCandidate) -> None:
     cand.ready = True
 
 
-def stage_hold(cand: ConvertCandidate) -> None:
-    """校验运行前停住：把候选留存成 `awaiting_dependencies`（meta.json 里带卡片事实）。**不碰用户文件。**
-    候选脚本字节的摘要一并记下：`resume` 接着走的必须就是停住时的那份。"""
-    if cand.new_bytes is None or cand.hold is None:
-        raise TaskError("candidate_missing", cand.target_name)
-    meta = {
+def _hold_meta(cand: ConvertCandidate, state: str) -> dict:
+    """停住类留存（等依赖决定 / 已装好等继续）共用的 meta：候选脚本字节的摘要一并记下，`resume` 接着走的必须就是停住时的那份。"""
+    return {
         "sid": cand.sid,
-        "state": STATE_AWAITING,
+        "state": state,
         "project": str(cand.project_root.resolve()),
         "script_rel": cand.script_rel,
         "base_sha256": cand.base_sha256,
         "base_mode": cand.base_mode,
-        "candidate_sha256": _sha256(cand.new_bytes),
+        "candidate_sha256": _sha256(cand.new_bytes or b""),
         "target_name": cand.target_name,
         "library": cand.library,
         "source_language": cand.source_language,
         "installed": list(cand.installed),
         "original_rel": cand.original_rel,
         "reference_name": cand.reference_name,
-        "dependency_card": cand.hold,
         # 起跑时拍下的项目指纹：续跑的复核基线只能是它（不能用“此刻”的项目重建，否则停住期间的改动被洗白）
         "project_before": cand.project_before,
         "created": time.time(),
     }
+
+
+def _write_hold_meta(cand: ConvertCandidate, meta: dict) -> None:
     try:
         atomicio.write_bytes(cand.dir / META_NAME, atomicio.dumps_json(meta))
     except OSError as exc:
         raise TaskError("stage_failed", type(exc).__name__) from exc
+
+
+def stage_hold(cand: ConvertCandidate) -> None:
+    """校验运行前停住：把候选留存成 `awaiting_dependencies`（meta.json 里带卡片事实）。**不碰用户文件。**"""
+    if cand.new_bytes is None or cand.hold is None:
+        raise TaskError("candidate_missing", cand.target_name)
+    _write_hold_meta(cand, {**_hold_meta(cand, STATE_AWAITING), "dependency_card": cand.hold})
+
+
+def stage_installed(cand: ConvertCandidate) -> None:
+    """首跑里依赖已装好而停止来得太晚：候选留存成 `deps_installed`（与续跑里同一情形同一状态）。**不碰用户文件。**"""
+    if cand.new_bytes is None:
+        raise TaskError("candidate_missing", cand.target_name)
+    _write_hold_meta(cand, _hold_meta(cand, STATE_INSTALLED))
 
 
 def envelope_for(
@@ -1138,6 +1171,7 @@ def _rebuild(cdir: Path, meta: dict, project: Path) -> ConvertCandidate:
         tree_before=ai_figure_edit._tree(cdir) or {},
         project_before=baseline,
         source_language=str(meta.get("source_language") or sourcelang.PYTHON),
+        installed=list(meta.get("installed") or []),
         new_bytes=new,
     )
 
@@ -1213,8 +1247,13 @@ def run_resume(
             cand.extras["deps"] = lambda proj, rel, cancel_ev: resolve(
                 proj, rel, confirmed_impact=confirmed_impact, cancel=cancel_ev
             )
+        installed_before = list(
+            cand.installed
+        )  # 先前（首跑 / 上一轮）装的；「这一轮装了东西」只看新增
         result = run_validation(cand, runner)
-        if result["status"] == "cancelled" or (cancel.is_set() and not cand.installed):
+        if result["status"] == "cancelled" or (
+            cancel.is_set() and cand.installed == installed_before
+        ):
             # 依赖步骤真的被取消（没过提交点），或根本没装过东西：用户的停止照旧生效，候选删掉
             remove_dir(cdir)
             return {"state": "cancelled"}

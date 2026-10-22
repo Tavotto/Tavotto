@@ -173,6 +173,39 @@ function applyConvertStatus(script: string, pj: string | null, status: ConvertSt
 }
 
 /**
+ * 停止已被本进程接受（或会话已取消 / 以 `dependency_installed_late` 终局）后，按转换自己的状态（`GET /api/ai/convert/<sid>`）决定清不清：
+ * 停止可能晚于依赖安装的提交点（环境已换代，后端把候选留成 `deps_installed`），这时不能清——要出「依赖已经装好了……」+「继续 / 放弃」。
+ * `deps_installed` → 如实展示；候选 404 / `discarded` / 其余 → 清；
+ * 409（任务线程还没收尾，meta 尚未落盘）→ 保持「正在停止…」稍后再问。条目被取代 / 换项目就静默退出。
+ */
+async function settleAfterStop(script: string, session: string, pj: string | null): Promise<void> {
+  const guard = captureProjectEpoch()
+  const mine = () => guard.still() && useConvertStore.getState().entries[script]?.session === session
+  for (;;) {
+    let status: ConvertStatus | null = null
+    try {
+      status = await fetchConvert(session, pj)
+    } catch (e) {
+      if (!mine()) return
+      if (e instanceof ApiError && e.status === 409) {
+        await new Promise((r) => setTimeout(r, POLL_MS))
+        if (!mine()) return
+        continue
+      }
+      // 404（候选已删）或对账连不上：本进程已终止任务，没有可展示的了
+    }
+    if (!mine()) return
+    // 停止已被接受就不会再有 ready（提交闸门之后的取消被拒，走另一条对账）；唯一要留下的是「晚于安装提交点」的 deps_installed
+    if (status?.state === 'deps_installed') {
+      applyConvertStatus(script, pj, status)
+    } else {
+      useConvertStore.getState().clear(script)
+    }
+    return
+  }
+}
+
+/**
  * 起一个「接着走同一个候选」的后端作业（装依赖 / 按新环境重新判定 / 装好后继续），再轮询它到结局。
  * 状态一律读 `GET /api/ai/convert/<sid>`（转换自己的状态），**从不**回头轮询那条已终结的 AI 会话。
  *
@@ -393,7 +426,13 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           if (wasStopping) applyConvertStatus(script, pj, status)
           else set1(script, { phase: 'ready', status })
         } else if (sess.status === 'cancelled') {
-          get().clear(script)
+          // 取消可能晚于依赖安装的提交点（候选留成 deps_installed）：先对账再清
+          await settleAfterStop(script, session, pj)
+        } else if (
+          sess.task?.outcome === 'needs_input' &&
+          (sess.task.unmet ?? []).some((u: { reason_code: string }) => u.reason_code === 'dependency_installed_late')
+        ) {
+          await settleAfterStop(script, session, pj)
         } else if (sess.task?.outcome === 'needs_input' && dependencyCardOf(sess.task.unmet)) {
           // 新脚本缺包、要用户先决定：候选留在后端等着（不删），卡片的按钮接着走同一个候选
           set1(script, { phase: 'deps', card: dependencyCardOf(sess.task.unmet), stopping: false })
@@ -531,7 +570,7 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
       return
     }
     if (cur?.session && cur.phase === 'running') {
-      // AI 任务阶段：先发取消、**看回复**再决定清不清。`ok:true, mode:"local"` = 本进程已终止 → 照旧清；
+      // AI 任务阶段：先发取消、**看回复**再决定清不清。`ok:true, mode:"local"` = 本进程已终止 → 先对账一次转换状态（停止可能晚于安装提交点，候选会留成 `deps_installed`）再清；
       // `ok:false`（refused_committing 等：任务已进提交闸门）或 `mode:"owner"`（只是转交给别的进程、结局未定）→ 条目留着，
       // 丢了会话号，候选一旦 ready 就找不回、Retry 还会再起一次付费 Agent。留下的条目由 start() 的轮询按会话 `final` + 转换状态对账。
       const session = cur.session
@@ -548,7 +587,8 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
         set1(script, { stopping: false })
         return
       }
-      if (res.ok && res.mode !== 'owner') get().clear(script)
+      // 本进程已终止任务，但终止可能晚于依赖安装的提交点（候选留成 deps_installed）：先对账再决定清不清，不立即清
+      if (res.ok && res.mode !== 'owner') await settleAfterStop(script, session, currentProjectId())
       // 否则保持 stopping：start() 的轮询按会话 final + 转换状态对账
       return
     }

@@ -106,6 +106,9 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
   **不删候选、不自动往下跑校验**（避免违背停止意图），候选停在 `meta.json` 状态 `deps_installed`（“已装好、等你继续”，`installed` 如实记录），界面一句「依赖已经装好了（停止来得太晚，没能撤回）。」
   + 主按钮「继续」（走 `{action:"replan"}` 入口：已不缺包，直接校验同一个候选）。依赖步骤真的被取消（未过提交点，结局 `cancelled`）或根本没装过东西：照旧 `cancelled`、删候选。
   取舍：停止是对“整件事”的意图，但环境写入已撤不回，保留候选让用户用已付出的安装继续，比删掉再让用户重来更不浪费；若用户在这之前已关掉卡片，候选留到 24 小时过期。
+  **首跑同一语义（Codex #1330 P2 再续）**：AI 任务阶段（首跑）里依赖步骤过了提交点返回 `installed` 而取消已置位，也不落入取消检查被 Task Core 丢弃：适配器的 `hold` 把候选留存成 `deps_installed`，
+  任务结局记 `needs_input`、`unmet[].reason_code = "dependency_installed_late"`（`data.installed` 如实带出）；本地取消仍先让会话显示 `cancelled`，前端在取消回复 `ok:true, mode:"local"` 后不再立即清条目，
+  而是等会话 `final` 后再 `GET /api/ai/convert/<sid>` 对账：`deps_installed` → 出同一张「依赖已经装好了……」+「继续 / 放弃」卡，404 / 其余 → 清。未过提交点的取消不变（`cancelled`、删候选）。
 - **续跑期间点停止先对账再清卡（Codex #1330 P2）**：`resuming` 里点「停止」/ 关闭不再先清条目——条目留在 `resuming` 并标 `stopping`（卡片只一句「正在停止…」、无按钮），
   发 `discard` 后由续跑轮询按后端真实状态收尾：候选已删（404 / `discarded`）→ 才清卡；`deps_installed`（停止来得太晚）→ 落 `installed`，出上面那张「依赖已经装好了……」+「继续」；
   `ready` / `awaiting_dependencies` / `failed` 如实展示。`discard` 请求本身失败 → 立刻 `GET` 对账再按结果展示（仍在续跑 = 取消没送到，退回可再点停止）。后端不改：

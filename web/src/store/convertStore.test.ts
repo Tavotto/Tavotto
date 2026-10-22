@@ -599,13 +599,66 @@ describe('convertStore：AI 任务阶段点停止先看取消回复（Codex #133
     vi.useRealTimers()
   })
 
-  it('local ok：已在本进程终止，立刻清', async () => {
+  it('local ok：已在本进程终止；对账得候选已不存在（404）→ 清', async () => {
     vi.mocked(aiCancel).mockResolvedValue({ ok: true, mode: 'local' } as never)
+    vi.mocked(fetchConvert).mockRejectedValue(new ApiError('convert_not_found', 404, {}))
     const { p } = await startRunning()
     await useConvertStore.getState().stop('plot.py')
+    expect(fetchConvert).toHaveBeenCalledWith('s1', 'A')
     expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
     await vi.advanceTimersByTimeAsync(POLL_MS + 10)
     await p
+  })
+
+  it('local ok：对账得 deps_installed（停止晚于安装提交点）→ 不清，出「继续」卡；点继续走 replan 入口', async () => {
+    vi.mocked(aiCancel).mockResolvedValue({ ok: true, mode: 'local' } as never)
+    vi.mocked(fetchConvert).mockResolvedValue({ state: 'deps_installed', installed: ['pandas'] } as never)
+    const { p } = await startRunning()
+    await useConvertStore.getState().stop('plot.py')
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({
+      phase: 'installed',
+      session: 's1',
+      stopping: false,
+    })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+    expect(startConvert).toHaveBeenCalledTimes(1)
+    vi.mocked(fetchConvert).mockReset().mockResolvedValue({ state: 'ready' } as never)
+    const c = useConvertStore.getState().continueAfterInstall('plot.py')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await c
+    expect(replanConvertDependencies).toHaveBeenCalledWith('s1', 'A')
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'ready' })
+  })
+
+  it('local ok：任务线程还没收尾（409 convert_not_ready）→ 保持「正在停止」，随后对账得 deps_installed', async () => {
+    vi.mocked(aiCancel).mockResolvedValue({ ok: true, mode: 'local' } as never)
+    vi.mocked(fetchConvert)
+      .mockRejectedValueOnce(new ApiError('convert_not_ready', 409, {}))
+      .mockResolvedValue({ state: 'deps_installed', installed: ['pandas'] } as never)
+    const { p } = await startRunning()
+    const stopping = useConvertStore.getState().stop('plot.py')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'running', stopping: true })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await stopping
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'installed' })
+    await p
+  })
+
+  it('会话以 needs_input + dependency_installed_late 终局：对账出「继续」卡，不显示成失败', async () => {
+    vi.mocked(startConvert).mockResolvedValue({ session: 's1', script: 'plot.py' })
+    vi.mocked(fetchAiSession).mockResolvedValue({
+      status: 'cancelled',
+      final: true,
+      task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'dependency_installed_late', data: { installed: ['pandas'] } }] },
+    } as never)
+    vi.mocked(fetchConvert).mockResolvedValue({ state: 'deps_installed', installed: ['pandas'] } as never)
+    const p = useConvertStore.getState().start('plot.py', 'pillow', 'out.png')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'installed', session: 's1' })
   })
 
   it('refused_committing：保留条目「正在停止」，任务做完后对账为 ready 可采用，不重跑 Agent', async () => {
