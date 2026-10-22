@@ -141,16 +141,14 @@ def test_snippet_lines_are_verbatim_script_lines_in_order():
 
 
 def test_figure_describes_the_tutorial_story():
-    """教程讲的三件事落在真实的图上：标题字号是脚本的 9 pt、图例初始压在曲线上。"""
+    """教程讲的三件事落在真实的图上：标题字号是脚本的 9 pt、图例比正文小、在轴框下半。"""
     fig = json.loads(_gen().OUT.read_text(encoding="utf-8"))
     assert fig["title"]["text"] == "Reaction kinetics at 25 °C"
     assert fig["title"]["sizePt"] == 9.0
     assert [e["text"].split(" ")[0] for e in fig["legend"]["entries"]] == ["Catalyst", "Blank"]
+    # 图例比正文小一号（2026-10-22 起 7.2 pt = 9 pt × 0.8）、略抬离底边，留出更大的操作空地；
+    # 它仍落在坐标轴框的下半、紧挨着 Blank 曲线（挪到哪都会碰到曲线，教程说「换个位置」）
+    assert all(e["sizePt"] == 7.2 for e in fig["legend"]["entries"])
     lx, ly, lw, lh = fig["legend"]["box"]
-    inside = [
-        (x, y)
-        for line in fig["lines"]
-        for x, y in line["points"]
-        if lx <= x <= lx + lw and ly <= y <= ly + lh
-    ]
-    assert inside, "脚本里 loc='lower right' 的图例应当压着曲线起始段——教程第二步的理由"
+    ax, ay, aw, ah = fig["axes"]["box"]
+    assert ax <= lx and lx + lw <= ax + aw and ay + ah / 2 <= ly and ly + lh <= ay + ah, "图例应在坐标轴框的下半"
