@@ -708,12 +708,6 @@ test(
     await expectInViewport(page, objects, '新建的画布文字')
     await page.keyboard.press('Escape')
     await page.keyboard.press('ControlOrMeta+e')
-    // 快捷键偶尔被焦点所在控件吞掉（本机 macOS 复现）；没开就点顶栏「导出」按钮。
-    const exportDialog = page.getByRole('dialog')
-    if (!(await exportDialog.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true, () => false))) {
-      await page.getByRole('button', { name: '导出', exact: true }).click()
-    }
-    await expect(exportDialog).toBeVisible()
 
     const svg = page.locator('[data-export-format="svg"] input')
     await svg.check()
@@ -781,7 +775,7 @@ test(
     // ADR 0142：SVG 默认保留 <text>（可编辑、可检索），不再转轮廓。
     expect(artifact.texts, '画布文字必须保留为 <text>，不能转轮廓、丢字或栅格化').toBeGreaterThan(0)
     expect(artifact.textContent.length, '<text> 里必须有实际字符').toBeGreaterThan(0)
-    expect(artifact.fontFamily, '<text> 必须带字体族').toMatch(/font-family|\w/)
+    expect(artifact.fontFamily, '<text> 的首选族必须是批准脸的真实族名').toMatch(/^\s*(font-family:\s*)?['"]?(Liberation (Serif|Sans|Mono)|Noto Sans SC)/)
     const widthPt = request.canvas.page_w_mm * 72 / 25.4
     const heightPt = request.canvas.page_h_mm * 72 / 25.4
     expect(widthPt).toBeGreaterThan(0)
