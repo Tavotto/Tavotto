@@ -1036,6 +1036,7 @@
         "install": "Install",
         "loginAndModels": "Sign-in and models",
         "migrateToClaude": "Switch to Claude Code",
+        "migrateToResponses": "Use the Responses protocol",
         "modelService": "Model service",
         "noKeySuffix": " (no key set)",
         "none": "—",

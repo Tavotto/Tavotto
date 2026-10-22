@@ -51,7 +51,7 @@ const EXISTING: AiEndpoint = {
   has_key: true,
   key_hint: '…7f2a',
   incompatible: null,
-  migratable: false,
+  migratable: null,
 }
 
 let host: HTMLDivElement

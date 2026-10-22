@@ -1024,6 +1024,7 @@
         "install": "安装",
         "loginAndModels": "登录与模型",
         "migrateToClaude": "改由 Claude Code 接入",
+        "migrateToResponses": "改用 Responses 协议",
         "modelService": "模型服务",
         "noKeySuffix": "（未填密钥）",
         "none": "—",

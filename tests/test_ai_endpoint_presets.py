@@ -46,14 +46,20 @@ def test_no_preset_uses_chat_and_no_domestic_vendor_is_on_codex():
         assert p.get("wire_api", "responses") != "chat", p["id"]
         if p["agent"] == "codex":
             # codex 只许官方与自定义 Responses 兼容；国产厂商没有 Responses 协议
-            assert p["id"] in ("openai", "custom-codex"), p["id"]
+            # （DeepSeek 官方原生支持 Responses，是唯一的厂商例外；百炼的 Responses 地址带
+            # 用户的 WorkspaceId，推不出来，所以不加）
+            assert p["id"] in ("openai", "custom-codex", "deepseek-codex"), p["id"]
     ids = {p["id"] for p in ai_providers.PRESETS}
     assert not ids & {"deepseek-oai"}
     assert {"kimi-code", "minimax", "dashscope", "dashscope-coding"} <= ids
     by_id = {p["id"]: p for p in ai_providers.PRESETS}
     assert by_id["dashscope"]["agent"] == "claude"
     assert by_id["dashscope"]["base_url"] == "https://dashscope.aliyuncs.com/apps/anthropic"
-    assert by_id["deepseek"]["models"] == ["deepseek-v4-pro", "deepseek-v4-flash"]
+    assert by_id["deepseek"]["models"] == ["deepseek-v4-pro", "deepseek-flash"]
+    ds = by_id["deepseek-codex"]
+    assert ds["agent"] == "codex" and ds["wire_api"] == "responses"
+    assert ds["base_url"] == "https://api.deepseek.com"
+    assert ds["models"] == ["deepseek-flash", "deepseek-v4-pro"]
     assert by_id["custom-codex"]["wire_api"] == "responses"
 
 
@@ -85,9 +91,11 @@ def test_public_flags_legacy_chat_record_and_migratability():
     ok = _legacy("fine", "https://gw.example/v1", wire="responses")
     claude = _legacy("c", "https://api.deepseek.com/anthropic", wire="chat", agent="claude")
     assert ai_providers.public(known)["incompatible"] == "codex_chat_removed"
-    assert ai_providers.public(known)["migratable"] is True
+    assert ai_providers.public(known)["migratable"] == "codex_responses"
+    dash = _legacy("dash0", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    assert ai_providers.public(dash)["migratable"] == "claude"
     assert ai_providers.public(custom)["incompatible"] == "codex_chat_removed"
-    assert ai_providers.public(custom)["migratable"] is False
+    assert ai_providers.public(custom)["migratable"] is None
     assert ai_providers.public(ok)["incompatible"] is None
     assert ai_providers.public(claude)["incompatible"] is None  # chat 只对 codex 是问题
     assert "api_key" not in ai_providers.public(known)
@@ -142,12 +150,12 @@ def test_migrate_keeps_key_clears_codex_active_and_leaves_claude_active():
 
 
 def test_migrate_does_not_overwrite_an_existing_record_with_the_target_id():
-    _legacy("old", "https://api.deepseek.com/v1", key="sk-old")
-    ai_providers.save({"id": "deepseek", "agent": "claude", "label": "mine", "api_key": "sk-mine"})
-    new = ai_providers.migrate_to_claude("old")
-    assert new["id"] != "deepseek"
-    assert ai_providers.get("deepseek")["api_key"] == "sk-mine"
-    assert ai_providers.get("deepseek")["label"] == "mine"
+    _legacy("old", "https://dashscope.aliyuncs.com/compatible-mode/v1", key="sk-old")
+    ai_providers.save({"id": "dashscope", "agent": "claude", "label": "mine", "api_key": "sk-mine"})
+    new = ai_providers.migrate("old")
+    assert new["id"] != "dashscope"
+    assert ai_providers.get("dashscope")["api_key"] == "sk-mine"
+    assert ai_providers.get("dashscope")["label"] == "mine"
 
 
 def test_migrate_refuses_unknown_vendor_and_compatible_records():
@@ -156,7 +164,9 @@ def test_migrate_refuses_unknown_vendor_and_compatible_records():
     _legacy("fine", "https://api.deepseek.com/v1", wire="responses")
     for pid in ("mine", "coding", "fine", "nope"):
         with pytest.raises(ValueError):
-            ai_providers.migrate_to_claude(pid)
+            ai_providers.migrate(pid)
+    with pytest.raises(ValueError):  # DeepSeek 记录不走「改由 Claude Code」入口
+        ai_providers.migrate_to_claude("mine")
     assert ai_providers.get("mine") is not None  # 失败时一个字节没动
 
 
@@ -165,9 +175,68 @@ def test_migrate_endpoint_http():
 
     m.app.config["TESTING"] = True
     client = m.app.test_client()
-    _legacy("ds", "https://api.deepseek.com/v1", key="sk-z")
+    _legacy("ds", "https://dashscope.aliyuncs.com/compatible-mode/v1", key="sk-z")
     body = client.post("/api/ai/endpoints/ds/migrate").get_json()
     assert not any(e["id"] == "ds" for e in body["endpoints"])
     assert any(e["agent"] == "claude" and e["has_key"] for e in body["endpoints"])
     bad = client.post("/api/ai/endpoints/ds/migrate")
     assert bad.status_code == 400
+
+
+# ---- DeepSeek：支持 Responses，原地迁移留在 Codex ---------------------------------
+
+
+def test_deepseek_codex_preset_injects_official_responses_url():
+    preset = next(p for p in ai_providers.PRESETS if p["id"] == "deepseek-codex")
+    saved = ai_providers.save({**preset, "api_key": "sk-ds"})
+    rec = next(p for p in saved if p["id"] == "deepseek-codex")
+    args, env = ai_providers.spawn_overrides("codex", rec)
+    joined = " ".join(args)
+    assert 'base_url="https://api.deepseek.com"' in joined  # 无结尾斜杠，Codex 拼 /responses
+    assert 'wire_api="responses"' in joined
+    assert env == {ai_providers.CODEX_KEY_ENV: "sk-ds"}
+
+
+def test_migrate_deepseek_in_place_keeps_id_key_and_codex_activation():
+    _legacy("ds", "https://api.deepseek.com/v1", key="sk-keep")
+    rec = ai_providers.get("ds")
+    rec["models"] = ["deepseek-chat", "deepseek-reasoner", "mine"]
+    rec["default_model"] = "deepseek-chat"
+    config.set_ai_settings({"providers": [rec]})
+    ai_providers.set_active("codex", "ds")
+
+    new = ai_providers.migrate("ds")
+
+    assert new["id"] == "ds" and new["agent"] == "codex"
+    assert new["api_key"] == "sk-keep"
+    assert new["base_url"] == "https://api.deepseek.com"
+    assert new["wire_api"] == "responses"
+    assert new["default_model"] == "deepseek-flash"
+    assert "deepseek-chat" not in new["models"] and "deepseek-reasoner" not in new["models"]
+    assert "mine" in new["models"] and "deepseek-v4-pro" in new["models"]
+    assert ai_providers.active_id("codex") == "ds"  # 激活状态保留
+    assert len(ai_providers.list_providers()) == 1  # 没有新建、没有删除
+    assert ai_providers.incompatibility(new) is None
+    assert ai_providers.public(new)["migratable"] is None
+
+
+def test_run_dedupes_before_endpoint_compat_check(monkeypatch, tmp_path):
+    """已受理请求的重发，即使接口事后变得不兼容也得到既有会话（ADR 0132），而不是 409。"""
+    _legacy("old", "https://api.deepseek.com/v1")
+    ai_providers.set_active("codex", "old")
+    monkeypatch.setattr(ai_bridge, "require_usable", lambda agent: {})
+    monkeypatch.setattr(
+        ai_bridge, "find_request", lambda pk, rid: {"status": "ok", "session": "S1"}
+    )
+    spawned = []
+    monkeypatch.setattr(ai_bridge.subprocess, "Popen", lambda *a, **k: spawned.append(a))
+    (tmp_path / "fig.py").write_text("x=1\n", encoding="utf-8")
+    with pytest.raises(ai_bridge.DuplicateRequest):
+        ai_bridge.run("codex", "fig.py", "p", str(tmp_path), client_request_id="rid-1")
+    assert spawned == []
+    # 没有既有记录 → 照旧 409
+    monkeypatch.setattr(ai_bridge, "find_request", lambda pk, rid: None)
+    with pytest.raises(ai_bridge.AgentError) as exc:
+        ai_bridge.run("codex", "fig.py", "p", str(tmp_path), client_request_id="rid-2")
+    assert exc.value.code == "ai_endpoint_incompatible"
+    assert spawned == []

@@ -3045,8 +3045,9 @@ export interface AiEndpoint {
   key_hint: string
   /** 后端判定这条记录现在不能用（唯一判据在 `ai_providers.incompatibility`）；null = 可用 */
   incompatible: 'codex_chat_removed' | null
-  /** 不能用、且能对上已知厂商 → 可一步改由 Claude Code 接入 */
-  migratable: boolean
+  /** 不能用、且能对上已知厂商 → 可一步迁移：`codex_responses` = 该厂商支持 Responses，原地改协议；
+   *  `claude` = 只有 Anthropic 端点，改由 Claude Code 接入；null = 对不上，只能手动编辑 */
+  migratable: 'codex_responses' | 'claude' | null
 }
 
 export interface AiEndpointPreset {
@@ -3125,7 +3126,7 @@ export const saveAiEndpoint = (rec: {
     body: JSON.stringify(rec),
   })
 
-/** 旧的不兼容 codex 接口 → 改由 Claude Code 接入（保留密钥；不替用户切换当前接口） */
+/** 旧的不兼容 codex 接口一步迁移（按厂商：原地改 Responses，或改由 Claude Code 接入；保留密钥；不替用户切换执行器） */
 export const migrateAiEndpoint = (id: string) =>
   jsonFetch<AiCapabilities>(`/api/ai/endpoints/${encodeURIComponent(id)}/migrate`, { method: 'POST' })
 

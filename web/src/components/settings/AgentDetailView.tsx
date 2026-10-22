@@ -309,7 +309,11 @@ function EndpointRow({
           size="sm"
           onClick={e.migratable ? onMigrate : onEdit}
         >
-          {e.migratable ? ag('detail.migrateToClaude') : ag('detail.edit')}
+          {e.migratable === 'codex_responses'
+            ? ag('detail.migrateToResponses')
+            : e.migratable === 'claude'
+              ? ag('detail.migrateToClaude')
+              : ag('detail.edit')}
         </Button>
       )}
       <RowMenu state={menu} label={ag('detail.endpointActions', { label: e.label })} data-endpoint-menu={e.id}>

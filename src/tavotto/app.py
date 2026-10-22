@@ -11359,9 +11359,9 @@ def api_ai_endpoint_delete(pid):
 
 @app.post("/api/ai/endpoints/<pid>/migrate")
 def api_ai_endpoint_migrate(pid):
-    """已存的旧 codex(chat) 接口 → 改由 Claude Code 接入（保留密钥；不替用户激活新接口）。"""
+    """已存的旧 codex(chat) 接口一步迁移：DeepSeek 原地改 Responses，百炼等改由 Claude Code 接入。"""
     try:
-        engine_ai_providers.migrate_to_claude(pid)
+        engine_ai_providers.migrate(pid)
     except (ValueError, OSError) as exc:
         return jsonify(
             {"error": str(exc), "code": "endpoint_invalid", "params": {"reason": str(exc)}}

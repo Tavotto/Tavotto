@@ -785,13 +785,6 @@ def run(
     则 409 `ai_script_busy`——后端不能只靠前端的 `runningHere` 挡并发。
     """
     require_usable(agent)
-    # 被选中的第三方接口是 Codex 已不再支持的旧协议：spawn 之前就拒绝（判据只在
-    # `ai_providers.incompatibility`），别把 codex 那串 toml 报错甩给用户
-    chosen = ai_providers.resolve(agent, endpoint_id)
-    if chosen is not None and ai_providers.incompatibility(chosen):
-        raise AgentError(
-            "ai_endpoint_incompatible", {"endpoint": chosen.get("label") or chosen.get("id") or ""}
-        )
     script_path = Path(figures_dir) / script
     project_key = str(Path(figures_dir).resolve())
     taf = _taf_enabled()
@@ -804,6 +797,15 @@ def run(
                 if known["status"] == REQUEST_SUPERSEDED:
                     raise AgentError("ai_request_superseded")
                 raise DuplicateRequest(known["session"])
+        # 被选中的第三方接口是 Codex 已不再支持的旧协议：spawn 之前就拒绝（判据只在
+        # `ai_providers.incompatibility`）。**放在去重之后**：已受理请求的重发得到既有会话，
+        # 不能因为事后接口变了而变成 409（ADR 0132，去重先于其他可变判断）
+        chosen = ai_providers.resolve(agent, endpoint_id)
+        if chosen is not None and ai_providers.incompatibility(chosen):
+            raise AgentError(
+                "ai_endpoint_incompatible",
+                {"endpoint": chosen.get("label") or chosen.get("id") or ""},
+            )
         if not script_path.is_file():
             raise RuntimeError(f"脚本不存在: {script}")
         if script_busy(script_path):

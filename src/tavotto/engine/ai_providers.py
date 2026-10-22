@@ -55,6 +55,8 @@ def _family(agent: str) -> str | None:
     return rec.endpoint_family if rec else None
 
 
+DEEPSEEK_CODEX_ID = "deepseek-codex"
+
 # 内置预设只提供「接口地址 + 协议 + 常见模型名」，绝不含任何密钥。
 # 模型名会过时，所以在界面上可自由编辑——预设只是省去查文档。
 PRESETS: list[dict] = [
@@ -66,14 +68,24 @@ PRESETS: list[dict] = [
         "models": ["sonnet", "opus", "haiku"],
         "note": "留空 = 用 claude CLI 自己的登录态",
     },
-    # 国产厂商基本只有 Anthropic 兼容端点（没有 OpenAI Responses 协议），所以一律经
-    # Claude Code 接入；Codex 只认 Responses 协议（见 WIRE_APIS）。
+    # 国产厂商多数只有 Anthropic 兼容端点（没有 OpenAI Responses 协议），经 Claude Code
+    # 接入；Codex 只认 Responses 协议（见 WIRE_APIS），目前只有 DeepSeek 官方明确原生支持
+    # Responses（api-docs.deepseek.com/quick_start/agent_integrations/codex/），所以它同时有
+    # 两条预设。base_url 不带结尾斜杠：`_clean` 一律 rstrip("/")，Codex 在其后拼 `/responses`。
     {
         "id": "deepseek",
         "label": "DeepSeek",
         "agent": "claude",
         "base_url": "https://api.deepseek.com/anthropic",
-        "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+        "models": ["deepseek-v4-pro", "deepseek-flash"],
+    },
+    {
+        "id": DEEPSEEK_CODEX_ID,
+        "label": "DeepSeek（Codex）",
+        "agent": "codex",
+        "base_url": "https://api.deepseek.com",
+        "wire_api": "responses",
+        "models": ["deepseek-flash", "deepseek-v4-pro"],
     },
     {
         "id": "moonshot",
@@ -147,10 +159,19 @@ PRESETS: list[dict] = [
 
 # 旧版 codex 预设（wire_api=chat）的已知厂商 → 改由 Claude Code 接入时用的预设 id。
 # 只认主机名精确相等：coding.dashscope.aliyuncs.com 等是另一套 Key，不在此列。
+# 百炼不在 Codex 侧迁移：官方 Responses 地址带用户的 WorkspaceId，我们推不出来。
 _LEGACY_CHAT_HOST_PRESET = {
     "dashscope.aliyuncs.com": "dashscope",
-    "api.deepseek.com": "deepseek",
 }
+
+# 旧版 codex 预设里 DeepSeek 已退役的模型名 → 新 Responses 预设的型号。
+_DEEPSEEK_RETIRED_MODELS = {
+    "deepseek-chat": "deepseek-flash",
+    "deepseek-reasoner": "deepseek-v4-pro",
+}
+
+MIGRATE_CODEX_RESPONSES = "codex_responses"
+MIGRATE_CLAUDE = "claude"
 
 INCOMPATIBLE_CODEX_CHAT = "codex_chat_removed"
 
@@ -212,7 +233,7 @@ def public(rec: dict) -> dict:
         "has_key": bool(key),
         "key_hint": f"…{key[-4:]}" if len(key) >= 4 else "",
         "incompatible": incompatibility(rec),
-        "migratable": migration_preset(rec) is not None,
+        "migratable": migration_kind(rec),
     }
 
 
@@ -228,24 +249,84 @@ def incompatibility(rec: dict | None) -> str | None:
     return None
 
 
-def migration_preset(rec: dict | None) -> dict | None:
-    """不兼容的旧 codex 记录能对上已知厂商时，返回「改由 Claude Code 接入」的目标预设。"""
+def _host(rec: dict | None) -> str:
+    return (urlparse(str((rec or {}).get("base_url") or "")).hostname or "").lower()
+
+
+def migration_kind(rec: dict | None) -> str | None:
+    """不兼容的旧 codex 记录能怎么一步迁移：`"codex_responses"`（该厂商支持 Responses，原地改）、
+    `"claude"`（只有 Anthropic 端点，改由 Claude Code 接入）、None（对不上已知厂商）。"""
     if incompatibility(rec) is None:
         return None
-    host = (urlparse(str(rec.get("base_url") or "")).hostname or "").lower()
-    pid = _LEGACY_CHAT_HOST_PRESET.get(host)
-    return next((p for p in PRESETS if p["id"] == pid), None) if pid else None
+    host = _host(rec)
+    if host == "api.deepseek.com":
+        return MIGRATE_CODEX_RESPONSES
+    if host in _LEGACY_CHAT_HOST_PRESET:
+        return MIGRATE_CLAUDE
+    return None
+
+
+def migration_preset(rec: dict | None) -> dict | None:
+    """迁移的目标预设（Codex Responses 预设或 Claude Code 预设）；无法迁移 → None。"""
+    kind = migration_kind(rec)
+    if kind == MIGRATE_CODEX_RESPONSES:
+        pid = DEEPSEEK_CODEX_ID
+    elif kind == MIGRATE_CLAUDE:
+        pid = _LEGACY_CHAT_HOST_PRESET.get(_host(rec))
+    else:
+        return None
+    return next((p for p in PRESETS if p["id"] == pid), None)
+
+
+def migrate(pid: str) -> dict:
+    """按厂商分派：支持 Responses 的 → 原地改 Codex Responses；只有 Anthropic 端点的 → 改由 Claude Code 接入。"""
+    kind = migration_kind(get(pid))
+    if kind == MIGRATE_CODEX_RESPONSES:
+        return _migrate_in_place(pid)
+    if kind == MIGRATE_CLAUDE:
+        return migrate_to_claude(pid)
+    raise ValueError(f"该接口无法自动迁移: {pid}")
+
+
+def _migrate_in_place(pid: str) -> dict:
+    """旧 chat 记录 → 原地改成 Codex Responses：保留 id / 密钥 / 作为 codex 当前接口的激活状态；
+    已退役的模型名换成新预设的型号，其余模型保留。"""
+    old = get(pid)
+    preset = migration_preset(old)
+    if old is None or preset is None or migration_kind(old) != MIGRATE_CODEX_RESPONSES:
+        raise ValueError(f"该接口无法自动迁移: {pid}")
+
+    def fix(m: str) -> str:
+        return _DEEPSEEK_RETIRED_MODELS.get(m, m)
+
+    models: list[str] = []
+    for m in [*(old.get("models") or []), *preset["models"]]:
+        m = fix(str(m))
+        if m not in models:
+            models.append(m)
+    default = old.get("default_model")
+    providers = save(
+        {
+            "id": pid,
+            "agent": "codex",
+            "base_url": preset["base_url"],
+            "wire_api": "responses",
+            "models": models,
+            "default_model": fix(default) if default else None,
+        }
+    )
+    return next(p for p in providers if p.get("id") == pid)
 
 
 def migrate_to_claude(pid: str) -> dict:
     """不兼容的旧 codex 接口 → 新建一条 claude 接口（保留原密钥、模型换成预设的）并删掉旧的。
 
     旧记录若是 codex 的当前接口，`delete()` 会把 codex 清回官方登录；**不替用户激活**
-    新建的 claude 接口（执行器是用户自己选的）。对不上已知厂商 → ValueError。
+    新建的 claude 接口（执行器是用户自己选的）。对不上「改由 Claude Code」的厂商 → ValueError。
     """
     old = get(pid)
     preset = migration_preset(old)
-    if old is None or preset is None:
+    if old is None or preset is None or migration_kind(old) != MIGRATE_CLAUDE:
         raise ValueError(f"该接口无法自动迁移: {pid}")
     taken = {p.get("id") for p in list_providers()}
     new_id = preset["id"]

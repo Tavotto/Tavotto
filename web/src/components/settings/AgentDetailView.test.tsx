@@ -254,7 +254,7 @@ describe('Agent 详情', () => {
       endpoints: [{
         id: 'kimi', label: 'Kimi', agent: 'codex',
         base_url: 'https://api.moonshot.cn/anthropic', models: ['k2'],
-        default_model: 'k2', wire_api: 'responses', has_key: true, key_hint: '…cdef', incompatible: null, migratable: false,
+        default_model: 'k2', wire_api: 'responses', has_key: true, key_hint: '…cdef', incompatible: null, migratable: null,
       }],
     })
     await openDetail(caps)
@@ -271,7 +271,7 @@ describe('Agent 详情', () => {
         id: 'old', label: '百炼', agent: 'codex',
         base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', models: ['m'],
         default_model: null, wire_api: 'responses', has_key: true, key_hint: '…abcd',
-        incompatible: 'codex_chat_removed', migratable: true,
+        incompatible: 'codex_chat_removed', migratable: 'claude',
       }],
     }))
     const row = document.querySelector('[data-endpoint-row="old"]')!
@@ -282,13 +282,30 @@ describe('Agent 详情', () => {
     expect(vi.mocked(migrateAiEndpoint)).toHaveBeenCalledWith('old')
   })
 
+  it('旧协议的 DeepSeek：按钮是「改用 Responses 协议」（原地改，不是改由 Claude Code）', async () => {
+    vi.mocked(migrateAiEndpoint).mockResolvedValue(capsOf([agentCaps()]))
+    await openDetail(capsOf([agentCaps()], {
+      endpoints: [{
+        id: 'ds', label: 'DeepSeek', agent: 'codex',
+        base_url: 'https://api.deepseek.com/v1', models: ['deepseek-chat'],
+        default_model: null, wire_api: 'responses', has_key: true, key_hint: '…abcd',
+        incompatible: 'codex_chat_removed', migratable: 'codex_responses',
+      }],
+    }))
+    const fix = document.querySelector<HTMLButtonElement>('[data-endpoint-fix="ds"]')!
+    expect(fix.textContent).toBe(ag('detail.migrateToResponses'))
+    expect(fix.textContent).not.toBe(ag('detail.migrateToClaude'))
+    await act(async () => fix.click())
+    expect(vi.mocked(migrateAiEndpoint)).toHaveBeenCalledWith('ds')
+  })
+
   it('旧协议且对不上已知厂商：只给「编辑」，不给迁移', async () => {
     await openDetail(capsOf([agentCaps()], {
       endpoints: [{
         id: 'mine', label: '我的网关', agent: 'codex',
         base_url: 'https://gw.example/v1', models: [],
         default_model: null, wire_api: 'responses', has_key: true, key_hint: '…abcd',
-        incompatible: 'codex_chat_removed', migratable: false,
+        incompatible: 'codex_chat_removed', migratable: null,
       }],
     }))
     const row = document.querySelector('[data-endpoint-row="mine"]')!
@@ -302,7 +319,7 @@ describe('Agent 详情', () => {
     const ep = (id: string, label: string) => ({
       id, label, agent: 'codex' as const,
       base_url: 'https://example.test', models: ['m'],
-      default_model: 'm', wire_api: 'responses' as const, has_key: true, key_hint: '…abcd', incompatible: null, migratable: false,
+      default_model: 'm', wire_api: 'responses' as const, has_key: true, key_hint: '…abcd', incompatible: null, migratable: null,
     })
     await openDetail(capsOf([agentCaps({ active_endpoint_id: 'kimi' })], {
       endpoints: [ep('kimi', 'Kimi'), ep('glm', 'GLM')],
@@ -322,7 +339,7 @@ describe('Agent 详情', () => {
       endpoints: [{
         id: 'kimi', label: 'Kimi', agent: 'codex',
         base_url: 'https://example.test', models: ['m'],
-        default_model: 'm', wire_api: 'responses', has_key: true, key_hint: '…abcd', incompatible: null, migratable: false,
+        default_model: 'm', wire_api: 'responses', has_key: true, key_hint: '…abcd', incompatible: null, migratable: null,
       }],
     }))
     // 行上不再常驻「编辑 / 删除」两颗钮
@@ -373,7 +390,7 @@ describe('Agent 详情', () => {
     const caps = capsOf([agentCaps({ active_endpoint_id: 'kimi' })], {
       endpoints: [{
         id: 'kimi', label: 'Kimi', agent: 'codex', base_url: 'https://x/v1',
-        models: [], default_model: null, wire_api: 'responses', has_key: true, key_hint: '…cdef', incompatible: null, migratable: false,
+        models: [], default_model: null, wire_api: 'responses', has_key: true, key_hint: '…cdef', incompatible: null, migratable: null,
       }],
     })
     await openDetail(caps)
