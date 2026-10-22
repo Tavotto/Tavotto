@@ -1931,3 +1931,39 @@ class TestReviewRound11:
             product.handlers, product.propagate = saved
         assert "agent_runner: log tavotto.tlstrust warning" in err
         assert KEY_CANARY not in err and "boom" not in err
+
+
+class TestReviewRound12:
+    """Codex #1328 第十二轮：服务端不报用量时按字符数保守估算记账，token 预算不失效。"""
+
+    def _reply(self, wire):
+        if wire == "openai-chat":
+            return {"choices": [{"finish_reason": "stop", "message": {"content": "ok"}}]}
+        if wire == "anthropic":
+            return {"content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn"}
+        return {
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "ok"}]}],
+        }
+
+    @pytest.mark.parametrize("wire", ["openai-chat", "anthropic", "openai-responses"])
+    def test_missing_usage_is_estimated_and_budget_still_applies(self, cand, serve, wire):
+        _, res, events = http_run(
+            cand,
+            serve,
+            wire,
+            [(200, {}, self._reply(wire))],
+            limits=tools.Limits(max_total_tokens=5),
+        )
+        assert (res.ok, res.reason, res.detail) == (False, "budget", "tokens")
+        assert res.usage_estimated is True
+        assert events[-1]["usage_estimated"] is True
+        assert res.ledger.total_in > 0
+
+    def test_reported_usage_is_not_estimated(self, cand, serve):
+        body = {
+            "choices": [{"finish_reason": "stop", "message": {"content": "ok"}}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1},
+        }
+        _, res, events = http_run(cand, serve, "openai-chat", [(200, {}, body)])
+        assert res.ok and res.usage_estimated is False and res.ledger.total_in == 3

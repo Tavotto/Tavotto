@@ -298,6 +298,8 @@ class RunResult:
     changed: bool = False
     ledger: Ledger = field(default_factory=Ledger)
     ledger_mismatch: bool = False
+    #: 至少一轮服务端没报用量、按字符数估算记账
+    usage_estimated: bool = False
     compressions: int = 0
     elapsed_ms: int = 0
 
@@ -314,6 +316,25 @@ def estimate_tokens(system: str, tools: list[ToolSpec], history: list[Msg]) -> i
                 n += len(json.dumps(m.turn.native, ensure_ascii=False, default=str))
         n += sum(len(r.content) for r in m.results)
     return n // 3
+
+
+def _accountable(usage: Usage, request_tokens: int, turn: Turn | None) -> Usage:
+    """服务端没报 / 报了非法计数时，按字符数保守估算（偏高估）记账——缺 usage 不许让预算失效。"""
+    if usage.reported:
+        return usage
+    out = 0
+    if turn is not None:
+        out = (
+            len(turn.text)
+            + turn.thinking_chars
+            + sum(len(json.dumps(c.args or {})) for c in turn.tool_calls)
+        ) // 3 + 1
+    return Usage(
+        input_tokens=max(usage.input_tokens, request_tokens),
+        output_tokens=max(usage.output_tokens, out),
+        cached_input_tokens=0,
+        reported=False,
+    )
 
 
 def compress(history: list[Msg]) -> int:
@@ -364,6 +385,7 @@ def run(
             },
             "elapsed_ms": res.elapsed_ms,
             "ledger_mismatch": res.ledger_mismatch,
+            "usage_estimated": res.usage_estimated,
             "compressions": res.compressions,
         }
     )
@@ -405,6 +427,7 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
         if estimate_tokens(system, specs, history) > limits.compress_at_tokens:
             res.compressions += compress(history)
 
+        request_tokens = estimate_tokens(system, specs, history)
         started = time.monotonic()
         try:
             turn: Turn = model.complete(
@@ -418,6 +441,8 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
         except RunnerFailure as exc:
             if exc.usage is not None:
                 # 2xx 但终止于拒答 / 失败状态：这次请求照样计费，先入账再结束
+                exc.usage = _accountable(exc.usage, request_tokens, None)
+                res.usage_estimated |= not exc.usage.reported
                 res.turns += 1
                 led.add(exc.usage, int((time.monotonic() - started) * 1000))
                 emit(
@@ -430,6 +455,8 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                     }
                 )
             return _finish(res, False, exc.reason, exc.detail)
+        turn.usage = _accountable(turn.usage, request_tokens, turn)
+        res.usage_estimated |= not turn.usage.reported
         res.turns += 1
         led.add(turn.usage, int((time.monotonic() - started) * 1000))
         emit(

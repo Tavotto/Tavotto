@@ -59,6 +59,14 @@ class Usage:
     input_tokens: int = 0  # 含缓存命中 / 写入的全部输入 token
     output_tokens: int = 0
     cached_input_tokens: int = 0
+    #: 服务端报了合法的输入 / 输出计数。False = 缺 usage 或计数非法——loop 会按字符数保守估算记账
+    reported: bool = True
+
+
+def _reported(u: dict, *keys: str) -> bool:
+    return all(
+        isinstance(u.get(k), int) and not isinstance(u.get(k), bool) and u.get(k) >= 0 for k in keys
+    )
 
 
 @dataclass
@@ -187,6 +195,7 @@ def _chat_usage(body: dict) -> Usage:
         input_tokens=_int(u.get("prompt_tokens")),
         output_tokens=_int(u.get("completion_tokens")),
         cached_input_tokens=_int(details.get("cached_tokens")) if isinstance(details, dict) else 0,
+        reported=_reported(u, "prompt_tokens", "completion_tokens"),
     )
 
 
@@ -198,6 +207,7 @@ def _anthropic_usage(body: dict) -> Usage:
         input_tokens=_int(u.get("input_tokens")) + cache_read + cache_write,
         output_tokens=_int(u.get("output_tokens")),
         cached_input_tokens=cache_read,
+        reported=_reported(u, "input_tokens", "output_tokens"),
     )
 
 
@@ -208,6 +218,7 @@ def _responses_usage(body: dict) -> Usage:
         input_tokens=_int(u.get("input_tokens")),
         output_tokens=_int(u.get("output_tokens")),
         cached_input_tokens=_int(details.get("cached_tokens")) if isinstance(details, dict) else 0,
+        reported=_reported(u, "input_tokens", "output_tokens"),
     )
 
 
