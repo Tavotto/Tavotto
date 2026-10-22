@@ -31,7 +31,6 @@ import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { toExportObjects } from './exportPayload'
-import { cropToVisibleContent } from './exportCrop'
 import type { FigureDocument, PanelObject } from '@/types/document'
 import type { WorkspaceMode } from '@/store/workspace'
 
@@ -194,11 +193,6 @@ export interface ExportRequestInput {
   figureId?: string | null
   panel?: PanelObject | null
   spec?: OriginalOutputSpec | null
-  /**
-   * 仅 `scope=canvas`：把导出区域裁成可见对象的并集包围盒（单图档退路，`lib/exportCrop`）。
-   * 只改请求（页面尺寸 = 包围盒、对象平移），不改文档、不改协议。
-   */
-  cropToContent?: boolean
   /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
   route?: ExportRoute | null
   /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
@@ -255,14 +249,11 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
     document_id: input.documentId,
   }
   if (input.scope === 'canvas') {
-    const area = input.cropToContent
-      ? cropToVisibleContent(input.doc.page, input.doc.objects)
-      : { page: input.doc.page, objects: input.doc.objects }
     request.canvas = {
-      page_w_mm: area.page.w,
-      page_h_mm: area.page.h,
+      page_w_mm: input.doc.page.w,
+      page_h_mm: input.doc.page.h,
       // 顺序即 z 序（底 → 顶），隐藏对象不发 —— 与画布预览同一条投影
-      objects: toExportObjects(area.objects) as ExportObject[],
+      objects: toExportObjects(input.doc.objects) as ExportObject[],
     }
   } else {
     const spec = input.spec ?? null

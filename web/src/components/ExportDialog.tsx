@@ -145,10 +145,11 @@ import { useDocumentStore } from "@/store/documentStore";
 import { dialogCovered, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
 import type { CanvasObject, FigureDocument, PanelObject } from "@/types/document";
-import { cropToVisibleContent } from "@/lib/exportCrop";
+import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import {
   getValidationSummary,
   originalValidationFor,
+  croppedValidationFor,
   rawIssuesFor,
   runValidation,
   useValidationStore,
@@ -445,7 +446,15 @@ export function ExportDialog() {
     () => (singleFallback ? cropToVisibleContent(doc.page, doc.objects) : null),
     [singleFallback, doc.page, doc.objects],
   );
-  const exportPage = fallbackCrop?.page ?? doc.page;
+  /**
+   * 这次导出的文档：单图退路 = 裁后的文档（只算一次），检查、proof report、请求、预览全吃它；
+   * 其余情形就是 `doc` 本身。不另设「裁切开关」——两份判据会分叉。
+   */
+  const exportDoc = useMemo(
+    () => (singleFallback ? croppedDocument(doc) : doc),
+    [singleFallback, doc],
+  );
+  const exportPage = exportDoc.page;
   const routeKey = routeKeyOf({ scope, formats, doc, panel, figureId });
   const route = useExportRouteStore((s) => (s.key === routeKey ? s.route : null));
   const refreshRoute = useExportRouteStore((s) => s.refresh);
@@ -667,18 +676,34 @@ export function ExportDialog() {
    * 「没查成」（`failed`，沿用既有的确认门禁与报告里的 checkFailed 档），不带任何画布条目。
    */
   const uncheckedOffCanvas = scope === "original" && !!figureId && !panel;
+  /** 单图退路：检查吃裁后的文档（与交付物同一份），不吃整页的画布结果 */
+  const cropped = useMemo(
+    () => (singleFallback ? croppedValidationFor(checkCanvasId, exportDoc) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [singleFallback, checkCanvasId, exportDoc, validationIssues],
+  );
   const summary = useMemo(
     () =>
-      summaryFor(uncheckedOffCanvas ? [] : (original?.result?.issues ?? validationIssues), {
+      summaryFor(
+        uncheckedOffCanvas
+          ? []
+          : (original?.result?.issues ?? cropped?.result?.issues ?? validationIssues),
+        {
         canvasId: checkCanvasId,
         objectId: targetObjectId,
         extra: exportIssues,
         ready: validationReady,
-        failed: uncheckedOffCanvas || validationFailed || !!original?.failed,
-      }),
+        failed:
+          uncheckedOffCanvas ||
+          validationFailed ||
+          !!original?.failed ||
+          !!cropped?.failed,
+        },
+      ),
     [
       uncheckedOffCanvas,
       original,
+      cropped,
       validationIssues,
       checkCanvasId,
       targetObjectId,
@@ -771,12 +796,11 @@ export function ExportDialog() {
       // 后端的 `acknowledged` 策略 = 「这些阻断项导出时仍未处理」：自动带上，不再靠勾选
       acknowledged: [...new Set(errors.map((i) => i.ruleCode))],
       documentId,
-      doc,
+      doc: exportDoc,
       figureId,
       panel,
       spec: availability.spec,
       route,
-      cropToContent: singleFallback,
       ...over,
     };
   }
@@ -928,7 +952,7 @@ export function ExportDialog() {
   const buildRequestInput = (overwrite: OverwritePolicy): ExportRequestInput => {
     const report = reportOn
       ? buildProofPayload(
-          doc,
+          exportDoc,
           assets,
           [
             // 报告里的条目集合与界面上的摘要裁同一刀（按原图 = 只有那张图的）
@@ -939,7 +963,7 @@ export function ExportDialog() {
                   original?.result?.raw ?? rawIssuesFor(checkCanvasId),
                   targetObjectId,
                 )
-              : rawIssuesFor(checkCanvasId)),
+              : (cropped?.result?.raw ?? rawIssuesFor(checkCanvasId))),
             ...exportContextRaw({ formats, dpi: Number(ppi) }, profile),
           ],
           {

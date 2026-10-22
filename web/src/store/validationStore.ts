@@ -27,7 +27,7 @@ import {
   type ValidationIssue,
   type ValidationSummary,
 } from '@/lib/validation'
-import { canvasToDoc } from '@/types/document'
+import { canvasToDoc, type FigureDocument } from '@/types/document'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { useProfileStore } from './profileStore'
@@ -329,6 +329,31 @@ export function originalValidationFor(
       useAssetStore.getState().byId,
       { byKey: render.byKey, latest: render.latest },
       target,
+    )
+    return { result, failed: false }
+  } catch {
+    return { result: null, failed: true }
+  }
+}
+
+/**
+ * **单图退路导出**（原图口径不可用、按画布导且裁到可见对象包围盒）那份产物的检查：
+ * 同一个求值器，输入是裁后的文档（页面 = 包围盒、对象平移；`lib/exportCrop.croppedDocument`），
+ * 所以页面宽 / 比例 / 边距判的是交付物本身。只读、不进 store、不推进代次；对象 id 不变，问题仍可定位。
+ */
+export function croppedValidationFor(
+  canvasId: string,
+  croppedDoc: FigureDocument,
+): { result: CanvasResult | null; failed: boolean } {
+  try {
+    const input = collectCanvases().find((c) => c.canvasId === canvasId)
+    if (!input) return { result: null, failed: false }
+    const render = useRenderStore.getState()
+    const result = validateCanvas(
+      { ...input, doc: croppedDoc },
+      useDocumentStore.getState().documentId,
+      useAssetStore.getState().byId,
+      { byKey: render.byKey, latest: render.latest },
     )
     return { result, failed: false }
   } catch {

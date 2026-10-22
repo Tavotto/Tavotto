@@ -1,8 +1,8 @@
 /** 单图退路导出按可见对象并集包围盒裁（只改请求，不改文档、不改协议） */
 import { describe, expect, it } from 'vitest'
-import { cropToVisibleContent, visibleContentBounds } from './exportCrop'
+import { cropToVisibleContent, croppedDocument, visibleContentBounds } from './exportCrop'
 import { buildExportRequest, type ExportRequestInput } from './exportRequest'
-import type { CanvasObject, FigureDocument, PanelObject, TextObject } from '@/types/document'
+import type { ArrowObject, CanvasObject, FigureDocument, PanelObject, TextObject } from '@/types/document'
 import { emptyDocument } from '@/types/document'
 
 const panel = (over: Partial<PanelObject> = {}): PanelObject => ({
@@ -16,10 +16,11 @@ function docOf(objects: CanvasObject[]): FigureDocument {
   const d = emptyDocument()
   return { ...d, page: { ...d.page, w: 180, h: 120 }, objects }
 }
-function req(doc: FigureDocument, over: Partial<ExportRequestInput> = {}) {
+function req(doc: FigureDocument, over: { crop?: boolean } = {}) {
   return buildExportRequest({
-    scope: 'canvas', formats: ['pdf'], filename: 'f', ppi: 600, documentId: 'd', doc, ...over,
-  }).request
+    scope: 'canvas', formats: ['pdf'], filename: 'f', ppi: 600, documentId: 'd',
+    doc: over.crop ? croppedDocument(doc) : doc,
+  } as ExportRequestInput).request
 }
 
 describe('visibleContentBounds', () => {
@@ -41,10 +42,10 @@ describe('visibleContentBounds', () => {
   })
 })
 
-describe('buildExportRequest cropToContent', () => {
+describe('buildExportRequest 吃裁后的文档', () => {
   it('页面尺寸 = 包围盒，对象平移 -x/-y', () => {
     const doc = docOf([panel(), text()])
-    const r = req(doc, { cropToContent: true })
+    const r = req(doc, { crop: true })
     expect(r.canvas!.page_w_mm).toBe(90)
     expect(r.canvas!.page_h_mm).toBe(85)
     const [p, t] = r.canvas!.objects
@@ -53,12 +54,12 @@ describe('buildExportRequest cropToContent', () => {
   })
   it('不改文档', () => {
     const doc = docOf([panel()])
-    req(doc, { cropToContent: true })
+    req(doc, { crop: true })
     expect(doc.page.w).toBe(180)
     expect(doc.objects[0].x).toBe(20)
   })
   it('隐藏对象不进请求也不撑大区域', () => {
-    const r = req(docOf([panel(), text({ hidden: true, x: 0, y: 0 })]), { cropToContent: true })
+    const r = req(docOf([panel(), text({ hidden: true, x: 0, y: 0 })]), { crop: true })
     expect(r.canvas!.page_w_mm).toBe(80)
     expect(r.canvas!.objects).toHaveLength(1)
   })
@@ -71,5 +72,52 @@ describe('buildExportRequest cropToContent', () => {
   it('没有可见对象时不裁', () => {
     const c = cropToVisibleContent({ w: 180, h: 120 }, [panel({ hidden: true })])
     expect(c.page).toEqual({ w: 180, h: 120 })
+  })
+})
+
+const arrow = (over: Partial<ArrowObject> = {}): ArrowObject =>
+  ({ id: 'a1', type: 'arrow', x: 10, y: 10, w: 40, h: 0, start: { rx: 0, ry: 0.5 }, end: { rx: 1, ry: 0.5 },
+    strokePt: 2, color: '#000', head: 'none', ...over }) as ArrowObject
+const MM = 25.4 / 72
+
+describe('描边 / 箭头外扩（与 RenderCore 绘制同源）', () => {
+  it('水平细线：上下各外扩半个线宽', () => {
+    const b = visibleContentBounds([
+      { id: 'l', type: 'shape', shape: 'line', x: 10, y: 10, w: 40, h: 0, strokePt: 1, color: '#000', fill: null } as CanvasObject,
+    ])!
+    expect(b.h).toBeCloseTo(1 * MM)
+    expect(b.y).toBeCloseTo(10 - 0.5 * MM)
+    expect(b.w).toBeCloseTo(40 + 1 * MM)
+  })
+  it('带边框文字：外扩半个 border_pt（缺省 0.75）', () => {
+    const b = visibleContentBounds([text({ borderColor: '#000' })])!
+    expect(b.x).toBeCloseTo(10 - 0.375 * MM)
+    expect(b.w).toBeCloseTo(20 + 0.75 * MM)
+    expect(visibleContentBounds([text()])!.w).toBeCloseTo(20)
+  })
+  it('箭头：有端型外扩 2.2×线宽，无端型 0.5×', () => {
+    const withHead = visibleContentBounds([arrow({ head: 'end' })])!
+    expect(withHead.h).toBeCloseTo(2 * 2.2 * 2 * MM)
+    const plain = visibleContentBounds([arrow()])!
+    expect(plain.h).toBeCloseTo(2 * MM)
+    const newField = visibleContentBounds([arrow({ headEnd: 'open' })])!
+    expect(newField.h).toBeCloseTo(2 * 2.2 * 2 * MM)
+  })
+  it('箭头在裁切边上：整体平移后描边仍在 [0, 页面] 内', () => {
+    const doc = docOf([arrow({ head: 'end' })])
+    const c = croppedDocument(doc)
+    const m = 2.2 * 2 * MM
+    expect(c.objects[0].x).toBeCloseTo(m)
+    expect(c.page.w).toBeCloseTo(40 + 2 * m)
+  })
+})
+
+describe('croppedDocument', () => {
+  it('页面与对象都是裁后值，原文档不变', () => {
+    const doc = docOf([panel(), text()])
+    const c = croppedDocument(doc)
+    expect([c.page.w, c.page.h]).toEqual([90, 85])
+    expect(c.objects[0].x).toBe(10)
+    expect(doc.page.w).toBe(180)
   })
 })
