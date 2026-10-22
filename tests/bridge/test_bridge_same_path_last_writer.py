@@ -276,3 +276,55 @@ def test_native_reports_a_figure_the_script_changed_after_saving(tmp_path, bridg
         sess.wait_event("barrier")
         sess.resume()
         sess.wait_event("exit")
+
+
+STALE_PROBE = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=(2, 1.5))
+fig.savefig("probe.png")
+print("stale-after-save", fig.stale)
+fig.stale = False
+ax.set_title("changed")
+print("stale-after-change", fig.stale)
+fig.savefig("probe.png")
+print("stale-after-resave", fig.stale)
+"""
+
+
+def test_native_does_not_change_what_the_script_sees_in_fig_stale(tmp_path, user_python):
+    """存盘后读 `fig.stale` 的脚本，在 native 下输出与裸 Python 完全一致（记录只挂回调，不写 `stale`）。"""
+    import subprocess
+
+    from support.bridgekit import child_env, run_runner
+    from tavotto.engine import bridge
+
+    proj = tmp_path / "proj"
+    write(proj / "probe.py", STALE_PROBE)
+    plain = subprocess.run(
+        [user_python, str(proj / "probe.py")],
+        cwd=str(proj),
+        env=child_env(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=300,
+    )
+    assert plain.returncode == 0, plain.stderr
+    r = run_runner(
+        user_python,
+        bridge.RUNNER_PY,
+        target=proj / "probe.py",
+        cwd=str(proj),
+        report=tmp_path / "report.json",
+        out_dir=tmp_path / "out",
+    )
+    assert r.returncode == 0, r.stderr
+    lines = [ln for ln in r.stdout.splitlines() if ln.startswith("stale-")]
+    assert lines == [ln for ln in plain.stdout.splitlines() if ln.startswith("stale-")]
+    assert lines == [
+        "stale-after-save True",
+        "stale-after-change True",
+        "stale-after-resave True",
+    ]

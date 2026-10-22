@@ -1699,13 +1699,16 @@ def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
             kw["format"] = ext
         # tight 量包围盒失败在原生下同样会抛、文件不会写出：与 native 同源判失败（Codex #1141 r4306180020）。
         # 这里只决定**顶替**，持有者自己的保存不经验证，ADR 0098 的 frame_unavailable 报告不受影响
-        # 验证渲染是我们的动作、不是脚本改图：`stale` 原样还回去（`mark_saved` / `note_modified_after_save` 读它）
-        stale = getattr(fig, "stale", None)
+        # 验证渲染是我们的动作、不是脚本改图：渲染前后保存 / 还原「存后被改过」的私有标记（`fig.stale` 一处不碰）
+        dirty = getattr(fig, DIRTY_SINCE_SAVE, None)
         try:
             real_savefig(fig, io.BytesIO(), *args, **kw)
         finally:
-            if stale is not None:
-                fig.stale = stale
+            if dirty is not None:
+                try:
+                    setattr(fig, DIRTY_SINCE_SAVE, dirty)
+                except Exception:  # noqa: BLE001
+                    pass
     except Exception:  # noqa: BLE001 —— 原生下这次保存会抛
         return False
     return True
@@ -1743,22 +1746,53 @@ def _content_only_failure(real_savefig, fname, args, kwargs: dict) -> bool:
         return False
 
 
-#: 「这张图被观察到存过盘」的标记；与 `fig.stale` 一起判「存完之后脚本又改过它」（ADR 0139 §八 的告知）
+#: 「这张图被观察到存过盘」的标记；与 `DIRTY_SINCE_SAVE` 一起判「存完之后脚本又改过它」（ADR 0139 §八 的告知）
 _SAVED_MARK = "_mm_saved_once"
-#: 判过一次的结论（True = 存盘后被脚本改过）；只判一次——之后 Tavotto 自己的编辑也会让 `stale` 变 True
+#: 最近一次保存之后，这张 Figure 是否被改过（私有记录，由 `_StaleRecorder` 写、`mark_saved` 清）
+DIRTY_SINCE_SAVE = "_mm_dirty_since_save"
+#: 记录包装之下的原 `stale_callback`（可能是 None，也可能是 pyplot 的 `_auto_draw_if_interactive`）
+_ORIG_STALE_CALLBACK = "_mm_orig_stale_callback"
+#: 判过一次的结论（True = 存盘后被脚本改过）；只判一次——之后 Tavotto 自己的编辑也会让标记变 True
 MODIFIED_AFTER_SAVE = "_mm_modified_after_save"
 
 
-def mark_saved(fig) -> None:
-    """一次 savefig 记完账之后调用：把 `stale` 清成 False 并打上「存过盘」的标记。
+class _StaleRecorder:
+    """`Figure.stale_callback` 的透明包装：被以真值调用时在 Figure 上记 `DIRTY_SINCE_SAVE`，然后**原样**转调原回调。
+    不碰 `fig.stale` 的值，用户脚本观察到的 stale 与原生 matplotlib 完全一致。"""
 
-    matplotlib 里任何会改变画面的 setter 都把 `stale=True` 一路回调到 Figure（实测：标题 / 颜色 / 范围 /
-    加文字 / 加轴 / `cla` / 改尺寸都会；只改 rcParams 不改已有 artist，不会）。存盘那一刻清零，脚本跑完再看：
-    仍是 False = 磁盘上的文件就是脚本跑完的样子；True = 存完又改过，Tavotto 编辑的最终态与文件不同。
-    不额外渲染、不复制 Figure（ADR 0139 §八「不声称拥有保存瞬间的快照」——这里只报一个事实）。
-    `savefig` 自己在 `print_figure` 收尾时会把 `stale` 置 True（实测 3.11），所以必须在保存**之后**清。"""
+    def __init__(self, orig):
+        self.orig = orig
+
+    def __call__(self, artist, val):
+        if val:
+            try:
+                setattr(artist, DIRTY_SINCE_SAVE, True)
+            except Exception:  # noqa: BLE001 —— 记账尽力而为
+                pass
+        if self.orig is not None:
+            return self.orig(artist, val)
+        return None
+
+
+def mark_saved(fig) -> None:
+    """一次 savefig 记完账之后调用：把 `DIRTY_SINCE_SAVE` 清成 False，打上「存过盘」的标记，并保证 Figure 的
+    `stale_callback` 外面套着一层只记录的 `_StaleRecorder`（只套一次；重复保存不叠层）。
+
+    判据来自 matplotlib 自己的 stale 传播：`Artist.stale` setter 在值为 True 时调 `stale_callback(self, val)`，子 artist
+    经 `_stale_figure_callback` / `_stale_axes_callback` 把 `figure.stale = True` 一路传到 Figure，所以 Figure 的
+    回调在每次画面相关改动时都会被调。实测（matplotlib 3.11）：savefig 之后 `ax.set_title` / `line.set_color` /
+    `fig.set_size_inches` / `fig.text` / `ax.cla` 都触发（True）；只改 rcParams、`plt.close` 不触发。
+    `bbox_inches="tight"` 保存过程中的临时改动发生在本函数**之前**，不会误报。回调调用不看 stale 原值，
+    而 `print_figure` 收尾本来就把 stale 置 True，所以不需要（也不能）去清 `fig.stale`——
+    那会让存盘后读 `fig.stale` 的用户脚本在 Tavotto 下走不同分支。
+    用户脚本若自己替换 `fig.stale_callback`：记录随之丢失（下次保存时重新套）；尽力而为、绝不抛错。
+    不额外渲染、不复制 Figure（ADR 0139 §八「不声称拥有保存瞬间的快照」——这里只报一个事实）。"""
     try:
-        fig.stale = False
+        cb = getattr(fig, "stale_callback", None)
+        if not isinstance(cb, _StaleRecorder):
+            setattr(fig, _ORIG_STALE_CALLBACK, cb)
+            fig.stale_callback = _StaleRecorder(cb)
+        setattr(fig, DIRTY_SINCE_SAVE, False)
         setattr(fig, _SAVED_MARK, True)
     except Exception:  # noqa: BLE001 —— 记账尽力而为，绝不影响用户的 savefig
         pass
@@ -1766,7 +1800,7 @@ def mark_saved(fig) -> None:
 
 def note_modified_after_save(capture: dict, capture_source: dict) -> list[str]:
     """脚本跑完（或 native 第一次把图交出去）时，给存过盘、之后又被脚本改过的 savefig 图打上
-    `MODIFIED_AFTER_SAVE`；返回这些 stem。每张图只判一次：判过之后 Tavotto 自己的编辑同样会让 `stale` 变 True，
+    `MODIFIED_AFTER_SAVE`；返回这些 stem。每张图只判一次：判过之后 Tavotto 自己的编辑同样会把标记置真，
     再判就是把我们的改动算到脚本头上。三条入口在 `adopt_displaced_writers` 之后各调一次；manifest 读这个标记。"""
     out = []
     for stem, fig in capture.items():
@@ -1774,7 +1808,7 @@ def note_modified_after_save(capture: dict, capture_source: dict) -> list[str]:
             continue
         if not hasattr(fig, MODIFIED_AFTER_SAVE):
             try:
-                setattr(fig, MODIFIED_AFTER_SAVE, bool(getattr(fig, "stale", False)))
+                setattr(fig, MODIFIED_AFTER_SAVE, bool(getattr(fig, DIRTY_SINCE_SAVE, False)))
             except Exception:  # noqa: BLE001
                 continue
         if getattr(fig, MODIFIED_AFTER_SAVE, False):

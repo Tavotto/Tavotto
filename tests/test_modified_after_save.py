@@ -3,9 +3,9 @@
 Tavotto 编辑的是脚本跑完时的最终 Figure；脚本 `savefig` 之后又改了它，磁盘上的文件与编辑基础就不同。
 系统不声称拥有保存瞬间的快照，但要让用户知道「这张图和你的文件不一样」。
 
-判据（`figcapture.mark_saved` / `note_modified_after_save`）：每次保存记完账把 `fig.stale` 清成 False，
-脚本跑完时仍为 True = 存完又被改过。matplotlib 自己的 `print_figure` 收尾会把 `stale` 置 True，所以清零在
-保存**之后**；同 stem 惰性验证那次真渲染是我们的动作，`stale` 原样还回去；每张图只判一次，之后 Tavotto
+判据（`figcapture.mark_saved` / `note_modified_after_save`）：给 Figure 的 `stale_callback` 套一层只记录的包装，
+每次保存记完账把私有标记清成 False，脚本跑完时标记为 True = 存完又被改过。**`fig.stale` 一处不写**——用户脚本读到的
+stale 与原生 matplotlib 完全一致；同 stem 惰性验证那次真渲染是我们的动作，标记原样还回去；每张图只判一次，之后 Tavotto
 自己的编辑不算。manifest 只在为真时带 `modified_after_save: true`。
 """
 
@@ -130,22 +130,109 @@ def main():
 @needs_worker
 def test_the_lazy_verify_render_of_a_holder_is_not_a_script_change(tmp_path):
     """乙写 `panel.pdf` 时要验证持有者甲在 `panel.png` 上仍是最近写入者——那次真渲染会把甲的 `stale`
-    置 True；它是我们的动作，甲不能被报成「存完又改过」。"""
+    触发 stale 回调；它是我们的动作，甲不能被报成「存完又改过」。"""
     man, _ = _manifest(tmp_path, SAME_STEM, stem="panel")
     assert "modified_after_save" not in man
 
 
-def test_mark_and_note_are_one_shot_per_figure():
-    class Fig:
-        stale = True
+def _real_figure():
+    import matplotlib
 
-    fig = Fig()
+    matplotlib.use("Agg")
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(2, 1.5))
+    ax = fig.subplots()
+    (line,) = ax.plot([0, 1], [0, 1])
+    return fig, ax, line
+
+
+def _native_stale_after_save(install):
+    import io
+
+    fig, _, _ = _real_figure()
+    fig.savefig(io.BytesIO())
+    if install:
+        figcapture.mark_saved(fig)
+    return fig.stale
+
+
+def test_mark_and_note_are_one_shot_per_figure():
+    fig, ax, _ = _real_figure()
     figcapture.mark_saved(fig)
-    assert fig.stale is False
     capture, source = {"a": fig}, {"a": figcapture.SOURCE_SAVEFIG}
     assert figcapture.note_modified_after_save(capture, source) == []
-    fig.stale = True  # 之后（比如 Tavotto 自己的编辑）再变 stale：结论不变
+    ax.set_title("later")  # 之后（比如 Tavotto 自己的编辑）再变：结论不变
     assert figcapture.note_modified_after_save(capture, source) == []
-    # pyplot 兜底的图从没存过盘：不判
-    other = Fig()
+    # 没存过盘的图（pyplot 兜底）不判
+    other, ax2, _ = _real_figure()
+    ax2.set_title("x")
     assert figcapture.note_modified_after_save({"b": other}, {"b": figcapture.SOURCE_PYPLOT}) == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda fig, ax, line: ax.set_title("t"),
+        lambda fig, ax, line: line.set_color("red"),
+        lambda fig, ax, line: fig.set_size_inches(3, 3),
+        lambda fig, ax, line: fig.text(0.5, 0.5, "x"),
+        lambda fig, ax, line: ax.cla(),
+    ],
+)
+def test_any_visual_change_after_save_is_recorded(change):
+    import io
+
+    fig, ax, line = _real_figure()
+    fig.savefig(io.BytesIO())
+    figcapture.mark_saved(fig)
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is False
+    change(fig, ax, line)
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is True
+    assert figcapture.note_modified_after_save({"a": fig}, {"a": figcapture.SOURCE_SAVEFIG}) == [
+        "a"
+    ]
+
+
+def test_mark_saved_does_not_change_public_stale_state():
+    """savefig 之后 `fig.stale` 与不装记录时完全一致（原生 matplotlib 是 True）；装多次也一样。"""
+    import io
+
+    assert _native_stale_after_save(install=True) is _native_stale_after_save(install=False)
+    fig, _, _ = _real_figure()
+    fig.savefig(io.BytesIO())
+    native = fig.stale
+    figcapture.mark_saved(fig)
+    figcapture.mark_saved(fig)
+    assert fig.stale is native
+
+
+def test_original_stale_callback_still_called_and_wrapped_once():
+    import io
+
+    fig, ax, _ = _real_figure()
+    calls = []
+    fig.stale_callback = lambda artist, val: calls.append(val)
+    fig.savefig(io.BytesIO())
+    figcapture.mark_saved(fig)
+    first = fig.stale_callback
+    figcapture.mark_saved(fig)
+    assert fig.stale_callback is first, "重复保存不叠层"
+    assert first.orig is not first and not isinstance(first.orig, type(first))
+    calls.clear()
+    ax.set_title("changed")
+    assert calls, "原回调仍被调用"
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is True
+
+
+def test_user_replacing_stale_callback_never_raises():
+    import io
+
+    fig, ax, _ = _real_figure()
+    fig.savefig(io.BytesIO())
+    figcapture.mark_saved(fig)
+    fig.stale_callback = None  # 用户自己换掉：记录丢失，但不能抛
+    ax.set_title("x")
+    figcapture.mark_saved(fig)  # 下次保存重新套上
+    ax.set_title("y")
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is True
