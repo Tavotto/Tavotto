@@ -11,7 +11,7 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { addPanelToCanvas, openFastEdit, useWorkspaceStore } from '@/store/workspace'
+import { addPanelToCanvas, useWorkspaceStore } from '@/store/workspace'
 import { clientToMm, mmToPx, mmToViewX, mmToViewY, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyStateAnchor } from '@/lib/emptyStateAnchor'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
@@ -71,7 +71,7 @@ export function CanvasStage() {
   /** 空白画布上的右键菜单落点（client 坐标）；null = 没开 */
   const [canvasMenu, setCanvasMenu] = useState<{ x: number; y: number } | null>(null)
   // 快速编辑这一屏只有那一张图，而画布菜单全是版面级动作（粘贴进版面、全选版面、适应页面、标尺 / 网格）——
-  // 与 useKeyboard 的 inFastEdit 同一条判据：快速编辑里不开。一处管两种来路：在快速编辑里右键（开了当场收掉、
+  // 单图编辑里不开（它不是版面级菜单的主场）。一处管两种来路：在快速编辑里右键（开了当场收掉、
   // 不会提交出来），与开着菜单切进快速编辑。是收起不是藏起：藏起的话回排版时它会在旧落点上重新冒出来
   if (fastEdit && canvasMenu) setCanvasMenu(null)
   /** 素材拖进来时的落点预览（mm，与松手后 `addPanelToCanvas` 落的是同一个框） */
@@ -240,13 +240,14 @@ export function CanvasStage() {
           const pid = e.dataTransfer.getData('application/x-panel-id')
           if (!pid) return
           e.preventDefault()
-          if (fastEdit) {
-            // 这条工作流里"拖进来"的意思是"改看这一张"，不是"再摆一张上去"
-            openFastEdit(pid)
-            return
-          }
           const info = useAssetStore.getState().byId[pid]
           if (!info) return
+          // 单图编辑里拖进来的是第二张图：落点是按这一屏（只画那一张）换算的，页面还没画出来，换成页面坐标没有意义——
+          // 不带点，按常规规则摆放；放下去就切到多图排版（`startWorkspaceModeSync`）
+          if (fastEdit) {
+            addPanelToCanvas(info)
+            return
+          }
           const p = clientToMm(e.clientX, e.clientY)
           addPanelToCanvas(info, p.x, p.y)
         }}
@@ -263,8 +264,10 @@ export function CanvasStage() {
             // 不继承界面的 ink（暗色里是浅色，落在白纸上看不见）
             color: 'var(--color-paper-ink)',
             transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
-            width: mmToWorld(page.w),
-            height: mmToWorld(page.h),
+            // 单图编辑不画页面：世界层不占页面那么大的盒（取景放大到图上时，页面大小的盒会伸到侧栏下面，
+            // 盖在侧栏的文字上——axe 按盒的相交算「背景被别的元素盖住」，把侧栏里的字都判成查不了）
+            width: fastEdit ? 0 : mmToWorld(page.w),
+            height: fastEdit ? 0 : mmToWorld(page.h),
             pointerEvents: spaceDown || tool !== 'select' ? 'none' : 'auto',
           }}
         >
@@ -282,7 +285,7 @@ export function CanvasStage() {
             />
           )}
           {fastEdit && <FastEditPaper panelId={activePanelId} objects={objects} />}
-          <CanvasLayers only={fastEdit ? activePanelId : null} />
+          <CanvasLayers />
         </div>
 
         {/* 页面外画淡、页面轮廓压在内容之上：在世界层之后、选框覆盖层之前 */}
@@ -390,7 +393,7 @@ function DropGhost({ box }: { box: { x: number; y: number; w: number; h: number 
  * 隐藏图层 display:none：无命中、无绘制成本；快照对象的 id 不在活跃 doc 里，
  * 任何按 id 回写（文字自适应高度这类）都会安静落空，不会误写。
  */
-function CanvasLayers({ only }: { only?: string | null }) {
+function CanvasLayers() {
   const objects = useDocumentStore((s) => s.doc.objects)
   const openTabs = useDocumentStore((s) => s.openTabs)
   const activeId = useDocumentStore((s) => s.activeCanvasId)
@@ -400,10 +403,7 @@ function CanvasLayers({ only }: { only?: string | null }) {
     <>
       {openTabs.map((id) => {
         const active = id === activeId
-        // 快速编辑只画那一个对象：其余标签整层不挂（它们是别的画布的排版）
-        if (only && !active) return null
-        const all = active ? objects : canvases.find((c) => c.id === id)?.objects
-        const objs = only ? all?.filter((o) => o.id === only) : all
+        const objs = active ? objects : canvases.find((c) => c.id === id)?.objects
         if (!objs) return null
         return (
           <div
@@ -435,7 +435,8 @@ function FastEditPaper({
   objects: ReturnType<typeof useDocumentStore.getState>['doc']['objects']
 }) {
   const o = panelId ? objects.find((x) => x.id === panelId) : undefined
-  if (!o) return null
+  // 隐藏的图不画，背纸也不画（否则画布上留一块白矩形；取消隐藏图回来、背纸跟着回来）
+  if (!o || o.hidden) return null
   // 与 ObjectView 给面板的落位同一种写法（#836）：left / top 恒 0，位置走 translate——WebKit 会把 left / top
   // 上的小数原点吸到整像素，纸与图差半像素就露边。面板没有对象级旋转（`objectRotation` 对面板恒 0）。
   return (

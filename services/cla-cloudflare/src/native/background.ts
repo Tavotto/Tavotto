@@ -10,11 +10,12 @@ async function one(s:LiveService,job:Job,p:Publication,revision:number,pr:number
   let previous:Proof;try{previous=JSON.parse(p.proof_text.split('\n').slice(1).join('\n'));}catch{throw new Rejected('stored_proof_unavailable');}
   if(previous.protocol!=='tavotto-cla-v1' || previous.repository_id!==s.c.repositoryId || previous.head_sha!==p.head_sha ||
     previous.revision!==p.revision || previous.expires_at!==p.expires || canonical(previous)!==p.proof_text.slice('tavotto-cla-v1\n'.length))throw new Rejected('stored_proof_unavailable');
-  const remote=await s.github.observe(p);
+  const remote=await s.github.observe(p,{job,revision});
   if(!remote){s.store.budget!.settlement();await s.store.recordReconciliation(job,p,'manual',null,'not_observed_no_retry',revision);return 'manual_review_required';}
   if(remote.conclusion==='failure'){
     s.store.budget!.settlement();
-    await s.store.recordReconciliation(job,p,'resolved',remote.id,'remote_failure_observed',revision);return 'remote_failure_observed';
+    await s.store.recordReconciliation(job,p,'resolved',remote.id,'remote_failure_observed',revision,null,
+      p.confirmation_slot===1?{source:s.github,witness:remote.negativeWitness!}:undefined);return 'remote_failure_observed';
   }
   let valid=p.conclusion==='success' && revision===p.revision && await s.store.databaseNow()<p.expires;
   if(valid) {
@@ -26,9 +27,10 @@ async function one(s:LiveService,job:Job,p:Publication,revision:number,pr:number
   if(!s.c.checkPublishingEnabled)throw new Rejected('withdrawal_pending_publication_disabled');
   if(!await s.store.owns(job,0) || await s.store.revision()!==revision)throw new Rejected('state_changed');
   s.store.budget!.correction();
-  await s.github.withdraw(p,remote.id,revision);
+  const witness=await s.github.withdraw(p,remote.id,revision,{job,revision});
   s.store.budget!.settlement();
-  await s.store.recordReconciliation(job,p,'resolved',remote.id,'remote_failure_verified',revision);return 'remote_failure_verified';
+  await s.store.recordReconciliation(job,p,'resolved',remote.id,'remote_failure_verified',revision,null,
+    p.confirmation_slot===1?{source:s.github,witness:witness!}:undefined);return 'remote_failure_verified';
 }
 
 // A fresh evaluation is a different invocation from withdrawal. No eligibility
@@ -36,12 +38,13 @@ async function one(s:LiveService,job:Job,p:Publication,revision:number,pr:number
 async function refreshOne(s:LiveService,job:Job,request:RefreshRequest):Promise<string> {
   const budget=s.store.budget!;let attempt:string|undefined;
   try {
+    if(request.capacity_blocked){budget.settlement();await s.store.deferRefreshCapacity(job,request);return 'refresh_waiting_for_confirmation_capacity';}
     if(!s.c.checkPublishingEnabled)throw new Rejected('publication_disabled');
     const target=await s.store.target(job.target_key);
     if(target.kind!=='pr')throw new Rejected('merge_queue_not_implemented');
-    // After evaluate: predecessor read (1), final clock (1), issued batch (4).
-    // Including initial readiness/revision, claim/task/target and evaluate: 13 + 2*N work SQL.
-    const check=await s.evaluate(target.number,6);
+    // After evaluate: predecessor read (1), final clock (1), issued batch (4; slot mode 5).
+    // Slot mode reserves one additional intent statement; qualification cost depends on mode.
+    const check=await s.evaluate(target.number,s.c.confirmationSlotEnabled===true?7:6);
     if(check.proof.revision!==request.revision)throw new Rejected('state_changed');
     if(check.conclusion!=='success') {
       budget.settlement();await s.store.completeRefresh(job,request,'qualification_not_complete');

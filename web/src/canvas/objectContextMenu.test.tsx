@@ -706,13 +706,13 @@ describe('快速编辑里的剪贴板组', () => {
     expect(item('duplicate')).not.toBeNull()
   })
 
-  it('快速编辑里：只剩复制，没有粘贴与创建副本', async () => {
+  it('单图编辑里：复制 / 粘贴 / 创建副本照常在（2026-10-21 放开：粘出图 = 第二张，进排版）', async () => {
     useWorkspaceStore.getState().enterFastEdit('p1')
     await openOn('p1')
     expect(menu()).not.toBeNull()
     expect(item('copy')).not.toBeNull()
-    expect(item('paste')).toBeNull()
-    expect(item('duplicate')).toBeNull()
+    expect(item('paste')).not.toBeNull()
+    expect(item('duplicate')).not.toBeNull()
   })
 })
 

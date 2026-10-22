@@ -28,6 +28,7 @@ import { literal, t } from '@/i18n'
 import { prepareDiagSend, setProjectEnvironment, startDiagSend } from '@/lib/api'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useUnexpectedErrorStore } from '@/store/unexpectedErrorStore'
+import { useNoticeRailStore } from '@/store/noticeRailStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { ADOPTED_NOTICE_MS, useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
@@ -285,6 +286,16 @@ describe('「已改用你的环境」', () => {
  * danger 图标 + 「这一步没有完成」+ 原因一行（截断，全文在 title）+「复制详情」图标钮；**最新的一条最靠近底边**
  * （CSS order，DOM 顺序不动）。主语：`data-toast-layout` / `data-toast-tone` / `data-copy-details`；顺序认 style.order 的大小。
  */
+describe('通知轨把最上面一条的顶边告诉浮动胶囊（避让用）', () => {
+  it('没有通知 = null；来一条状态 = 一个数；它收起走完退场 = null（退场中的不算）', () => {
+    expect(useNoticeRailStore.getState().top).toBeNull()
+    say('第一条')
+    expect(useNoticeRailStore.getState().top).not.toBeNull()
+    tick(STATUS_AUTO_DISMISS_MS + 1000)
+    expect(useNoticeRailStore.getState().top).toBeNull()
+  })
+})
+
 describe('通知轨：外形与先后', () => {
   it('普通状态与错误都是单行胶囊；错误的原因截断成一行、全文在 title，复制详情复制全文', async () => {
     say('已导出')

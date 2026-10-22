@@ -1,4 +1,4 @@
-import type { Candidate, CheckProposal, CheckReceipt, GitHubPort, Identity, Policy, Target } from '../core/types.ts';
+import type { Candidate, CheckProposal, CheckReceipt, GitHubPort, Identity, Job, Policy, Target } from '../core/types.ts';
 import { Rejected } from '../core/types.ts';
 import { appJwtWithKey, importAppSigningKey, bytes, canonical, sha256, unbase64 } from '../core/crypto.ts';
 import { identity } from '../core/identity.ts';
@@ -11,6 +11,13 @@ import { BudgetDeferred, InvocationBudget } from './budget.ts';
 type Json = Record<string, any>;
 type AppJwtCache={material:string;context:string;mintedAt:number;expiresAt:number;promise:Promise<string>};
 export type Transport = (url: string, init: RequestInit) => Promise<Response>;
+export interface NegativeWitness {readonly protocol:'cla-negative-witness-v1'}
+export interface NegativeContext {job:Job;revision:number}
+interface NegativeRelease {
+  protocol:'cla-negative-release-v1';repository_id:number;attempt:string;target_key:string;head:string;original_revision:number;
+  expires:number;proof_text:string;old_run_id:number|null;run_id:number;observed_phase:string;
+  recovery_revision:number;lease:string;generation:number;observed_at:number;valid_until:number;source:'observed_get'|'withdrawal_get';
+}
 // Production hosts are fixed. Local tests intercept fetch outside the bundle via Miniflare.
 export class GitHub implements GitHubPort {
   readonly mode = 'real' as const;
@@ -19,6 +26,9 @@ export class GitHub implements GitHubPort {
   #appSigningKey:{material:string;promise:Promise<CryptoKey>}|undefined;
   #appJwtCache:AppJwtCache|undefined;
   #jsonDecoder:TextDecoder|undefined;
+  // Invocation-local, single-use receipts. JSON or a previous adapter's object
+  // cannot manufacture a release capability, and no request state is global.
+  #negativeWitnesses=new WeakMap<NegativeWitness,{data:NegativeRelease;budget:InvocationBudget}>();
   constructor(c: LiveConfig, secrets: Secrets,
     transport: Transport = (u,i) => fetch(u,i), now = () => Math.floor(Date.now()/1000),budget?:InvocationBudget) {
     validateLive(c); this.c=c; this.secrets=secrets; this.transport=transport; this.now=now;this.budget=budget;
@@ -28,7 +38,7 @@ export class GitHub implements GitHubPort {
     const u = new URL(url);
     if (u.username || u.password || u.hash || !(u.origin === 'https://api.github.com' || oauth &&
         u.origin === 'https://github.com' && u.pathname === '/login/oauth/access_token')) throw new Rejected('api_host_rejected');
-    const headers: Record<string,string> = {Accept: oauth ? 'application/json' : 'application/vnd.github+json',
+    const headers: Record<string,string> = {'Cache-Control':'no-store',Accept: oauth ? 'application/json' : 'application/vnd.github+json',
       'User-Agent':'Tavotto-CLA-native','X-GitHub-Api-Version':'2026-03-10'};
     if (token) headers.Authorization = 'Bearer ' + token;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -47,7 +57,7 @@ export class GitHub implements GitHubPort {
     try {
     let response: Response;
     try { response = await within(this.transport(url,{method,headers,body:body === undefined ? undefined : JSON.stringify(body),
-      redirect:'manual',signal}));this.budget?.checkWork(); }
+      redirect:'manual',cache:'no-store',signal}));this.budget?.checkWork(); }
     catch(error) {if(error instanceof BudgetDeferred)throw error;this.budget?.checkWork();throw new Rejected('github_unavailable'); }
     if (!response.ok || !/application\/(?:[^;]+\+)?json/i.test(response.headers.get('content-type') ?? ''))
       throw new Rejected('github_unavailable');
@@ -275,29 +285,62 @@ export class GitHub implements GitHubPort {
       throw new Rejected('check_source_mismatch');
     if(data.conclusion==='success' && (p.conclusion!=='success' || data.output?.summary!==p.proof_text))throw new Rejected('check_source_mismatch');
   }
-  async observe(p:Publication):Promise<{id:number;conclusion:'success'|'failure'}|null> {
+  #negativeWitness(p:Publication,run:number,context:NegativeContext|undefined,began:number,source:NegativeRelease['source']):NegativeWitness {
+    const now=this.now(),job=context?.job,revision=context?.revision;
+    if(!this.budget || !job || !Number.isSafeInteger(revision) || revision!<0 || !validId(run) ||
+      p.confirmation_slot!==1 || p.conclusion!=='success' || !/^[A-Za-z0-9_-]{43}$/.test(p.id) ||
+      job.target_key!==p.target_key || !p.target_key.startsWith('pr:'+this.c.repositoryId+':') ||
+      !/^[A-Za-z0-9_-]{43}$/.test(job.lease) || !validId(job.generation) || !Number.isSafeInteger(job.lease_until) ||
+      !Number.isSafeInteger(began) || !Number.isSafeInteger(now) || now<began || now>=began+10 || now>=job.lease_until)
+      throw new Rejected('fresh_negative_witness_unavailable');
+    const witness:NegativeWitness=Object.freeze({protocol:'cla-negative-witness-v1'});
+    this.#negativeWitnesses.set(witness,{budget:this.budget,data:{protocol:'cla-negative-release-v1',repository_id:this.c.repositoryId,
+      attempt:p.id,target_key:p.target_key,head:p.head_sha,original_revision:p.revision,expires:p.expires,proof_text:p.proof_text,
+      old_run_id:p.run_id,run_id:run,observed_phase:p.phase,recovery_revision:revision!,lease:job.lease,generation:job.generation,
+      observed_at:now,valid_until:Math.min(began+10,job.lease_until),source}});return witness;
+  }
+  consumeNegativeWitness(witness:NegativeWitness,p:Publication,job:Job,revision:number):string {
+    const entry=this.#negativeWitnesses.get(witness);this.#negativeWitnesses.delete(witness);
+    const d=entry?.data,now=this.now();
+    if(!d || entry!.budget!==this.budget || !Number.isSafeInteger(now) || now<d.observed_at || now>=d.valid_until ||
+      d.repository_id!==this.c.repositoryId || d.attempt!==p.id || d.target_key!==p.target_key || d.head!==p.head_sha ||
+      d.original_revision!==p.revision || d.expires!==p.expires || d.proof_text!==p.proof_text || d.old_run_id!==p.run_id ||
+      d.observed_phase!==p.phase || d.recovery_revision!==revision || d.target_key!==job.target_key || d.lease!==job.lease ||
+      d.generation!==job.generation || p.confirmation_slot!==1)throw new Rejected('fresh_negative_witness_unavailable');
+    return canonical(d);
+  }
+  async observe(input:Publication,negativeContext?:NegativeContext):Promise<{id:number;conclusion:'success'|'failure';negativeWitness?:NegativeWitness}|null> {
+    const p=structuredClone(input),context=negativeContext?structuredClone(negativeContext):undefined;
     const token=await this.installationToken(),runs=await this.runs(p.head_sha,token);
     const own=runs.filter(x=>x.app?.id===this.c.appId && x.app?.slug===this.c.appSlug && x.name===this.c.checkName && x.head_sha===p.head_sha);
     if(own.length===0)return null;
     if(own.length!==1 || own[0]?.external_id!==p.id || p.run_id!==null && own[0]?.id!==p.run_id)throw new Rejected('ambiguous_own_check');
-    this.own(own[0]!,p);return {id:own[0]!.id,conclusion:own[0]!.conclusion};
+    this.own(own[0]!,p);
+    if(p.confirmation_slot===1 && own[0]!.conclusion==='failure'){
+      const began=this.now(),fresh=await this.api(`/repos/${this.c.repository}/check-runs/${own[0]!.id}`,token);
+      this.own(fresh,p);if(fresh.id!==own[0]!.id || fresh.conclusion!=='failure')throw new Rejected('negative_observation_changed');
+      return {id:fresh.id,conclusion:'failure',negativeWitness:this.#negativeWitness(p,fresh.id,context,began,'observed_get')};
+    }
+    return {id:own[0]!.id,conclusion:own[0]!.conclusion};
   }
   async readPublication(p:Publication):Promise<void> {
     if(!validId(p.run_id))throw new Rejected('proof_not_confirmed');
     const data=await this.api(`/repos/${this.c.repository}/check-runs/${p.run_id}`,await this.installationToken());
     this.own(data,p);if(data.id!==p.run_id || data.conclusion!=='success')throw new Rejected('qualification_changed');
   }
-  async withdraw(p:Publication,run:number,revision:number):Promise<void> {
+  async withdraw(input:Publication,run:number,revision:number,negativeContext?:NegativeContext):Promise<NegativeWitness|undefined> {
+    const p=structuredClone(input),context=negativeContext?structuredClone(negativeContext):undefined;
     if(!this.c.checkPublishingEnabled)throw new Rejected('publication_disabled');
     const token=await this.installationToken(true),path=`/repos/${this.c.repository}/check-runs/${run}`;
-    const before=await this.api(path,token);this.own(before,p);if(before.id!==run)throw new Rejected('check_source_mismatch');
-    if(before.conclusion==='failure')return;
+    let began=this.now();const before=await this.api(path,token);this.own(before,p);if(before.id!==run)throw new Rejected('check_source_mismatch');
+    if(before.conclusion==='failure')return p.confirmation_slot===1?this.#negativeWitness(p,run,context,began,'withdrawal_get'):undefined;
     const data=await this.json('https://api.github.com'+path,'PATCH',token,{name:this.c.checkName,status:'completed',conclusion:'failure',external_id:p.id,
       completed_at:new Date(this.now()*1000).toISOString(),output:{title:this.c.checkName,summary:'tavotto-cla-revocation-v1\n'+canonical({
         repository_id:this.c.repositoryId,head_sha:p.head_sha,attempt:p.id,revision,reason:'eligibility_requires_review'})}});
     this.own(data,p);if(data.id!==run || data.conclusion!=='failure')throw new Rejected('check_source_mismatch');
-    const after=await this.api(path,token);this.own(after,p);
+    began=this.now();const after=await this.api(path,token);this.own(after,p);
     if(after.id!==run || after.conclusion!=='failure')throw new Rejected('check_source_mismatch');
+    return p.confirmation_slot===1?this.#negativeWitness(p,run,context,began,'withdrawal_get'):undefined;
   }
   // Refresh only an exactly observed, durably resolved same-head predecessor.
   // Authentication and all remote pre-reads finish before the journal callback;

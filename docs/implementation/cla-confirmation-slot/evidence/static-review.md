@@ -1,0 +1,38 @@
+# Independent read-only review: confirmation slot candidate
+
+Reviewed /workspace/Tavotto-cla-confirmation-slot, base a4695f830d321ffa03184595afd895d2055db3b3, current uncommitted implementation. No workspace implementation or test files were edited or added by this reviewer. Other agents own the independent slot/budget test suites; their outcomes are not represented below as tests executed by this reviewer.
+
+Conclusion: no concrete P1/P2 fail-open or regression was established in the normal reachable application paths reviewed. No blocking finding remains from this static review. This conclusion is limited to the source fingerprints below and the explicitly executed local negative probe; it is not hosted/type/build/live acceptance.
+
+Static checks and evidence:
+
+1. Active pointer and permanent latch. schema.sql:46-70 checks global unresolved positives before issuing/enrolling, consumes the one-use marker and enrolls the pointer in the same INSERT/trigger transaction. slot_policy's identity/deletion protections are :21-45. Positive legacy inserts without a marker are refused after enrollment (:56-57), including after pointer release because the latch remains. REPLACE and held/released history are fenced at :46-55/:72-105. Flagoff positiveAdmission returns NOT EXISTS(slot_policy) (store.ts:81-83); compatible recovery still projects the active pointer regardless of the feature flag (:138-158/:241-243). Missing new schema fails closed rather than falling back.
+
+2. Exact negative witness and lease/generation/revision. GitHub.observe obtains an additional exact-run GET after a negative list observation (github.ts:312-323); own() verifies App/name/head/external attempt/run/status (:282-286). The private WeakMap capability is created only following the adapter's exact GET (:288-300), uses a strict <10-second/remaining-lease window and binds the original tuple, current recovery revision and outbox lease/generation. Consumption deletes it before returning canonical facts and rechecks the exact binding (:302-310). Store.recordReconciliation requires a same-budget GitHub instance, checks run identity, and rechecks actual DB lease/generation/revision, prior row phase/tuple/run, active-pointer ownership, fence and witness deadline in one batch (:324-348). SQL independently validates the negative facts before resolved/release (schema.sql:90-108). A missing run, plain caller observation, timeout/exception, positive confirmation or manual status does not clear capacity.
+
+3. Send fences and unknown outcomes. Automatic enrollment retains the head claim's persisted lease (:107-131); fresh same-head enrollment retains the recovery lease (:170-190). Claim and eligible prevent recovery of a live held fence in every owner phase (:234-239/:309-315); sender settlement may clear the fence only on issued->unknown/reconcile (schema.sql:87-89 and store.ts:213-222/:365-375). Uncertain issued outcomes are observed, not replayed. Resolved attempts require a negative witness while held, including old-binary paths.
+
+4. Backpressure. Automatic claim leaves pending jobs unclaimed while global admission fails (automatic.ts:38-40). A capacity race can reset only a still-live running request without a same-head journal (:78-82); an already issued/dispatched request is not replayed. Refresh capacity is checked/projected before fresh work (store.ts:145-153, background.ts:38-47). Capacity deferral preserves refresh attempt count (:195-212); admission is rechecked by journal triggers at actual insert. Genuine retry/manual boundaries are retained when capacity is available. Manual recovery/history are not automatically released.
+
+5. Withdrawal priority and bounded work. Expired/revision-stale positive rows receive claim and within-pass ordering priority (store.ts:85-88/:241-243/:309-315). Priority does not bypass a current lease, sender fence or bounded pass horizon. An earlier cursor row may wait for the next reset pass when a higher row is prioritized, but finishBatch resets the completed horizon and preserves/requeues remaining eligible work (:269-307); no unconditional fairness claim is made. Confirmation still reserves the existing two withdrawal SQL reads (automatic.ts:46; background.ts:55-57). Slot mode reserves its added enrollment statement (:42/:47). FREE_BUDGET is unchanged. Actual complete budget-path measurements are delegated to the separate budget reviewer; they were not rerun here.
+
+6. Personal signatures. The new holder-triggered positive publication refusal is explicitly in store.beginPublication (:90-94), whose path lacks the required measured background send fence. It does not gate service.intent/sign, personal holder evidence, audit/status or personal qualification; these files' personal routes remain unchanged. Existing targets receive revision-triggered re-evaluation after personal recovery. I found no new check that substitutes for or cancels personal consent. This is a static route check, not a newly executed signing test.
+
+Executed local negative probe:
+- Ran one inline Node program against an in-memory canonical SQLite fixture at a fixed synthetic time. It created only an UNSENT local issued intent, settled it unknown locally, then attempted legacy/flagoff positive admission, a plain-string resolved update and deletion of the owned recovery outbox. No publication method/HTTP/worker.fetch was called.
+- Actual process exit: 0. Results: legacy positive journal transaction rejected; plain resolution rejected; owned outbox deletion rejected; flagoff positive admission false; slot snapshot unchanged; network_calls=0 and publication_calls=0.
+- Evidence: /tmp/cla-slot-static-negative-probe.json. The probe was an inline command, not a new workspace or /tmp test suite.
+- git diff --check also returned exit 0.
+
+Explicit trust boundary considered with parent: slot_policy insert/NULL->owner transition independently checks the exact marker, issued tuple and fence. The global unresolved-positive check currently lives at the journal INSERT immediately preceding its trigger enrollment. There is no normal API concurrency gap between those steps. A privileged raw-DML caller could manually mint a prefixed marker for an already-existing issued row and invoke policy enrollment directly, bypassing that journal entry point. Such deliberate marker creation is outside the documented application/old-binary path and the full database administrator remains trusted. A duplicate policy-side global predicate would harden raw-marker misuse but was not classified as a currently reachable release blocker; the parent explicitly elected to retain the current trust boundary. This is not a claim of cryptographic protection from arbitrary database administration.
+
+Final source SHA256:
+schema.sql 0e4cc1672c78837b219eba0c1f54de89fc86169c87ffd26277085a229dfe3a08
+store.ts f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83
+github.ts 7ceb34f9872bb911c6989469a97dd9b470f5ff8c16be42b2118e8acb250993b5
+automatic.ts 13e38d5ea456a627e9f898a875b83e3be639c09d3095bbb6d8504bec5f1164b5
+background.ts cf0aec0bcfe02c8c8d51d3e2a4d512625ac9b2d9d10d1a78a92743af7949fb41
+config.ts 00f997e6a66a8d04c1d0fa189980143e0223253b7d952554fcf531cc2b7709af
+worker.ts 6b7f1b3c0a03863c99965659f0d7a3d483006dc7ddb36e853836010129731678
+
+No HTTP publication, Worker endpoint, expiry-crossing successful publication, dependency download, deployment, new external review, real credential operation or policy bypass was executed. No unexecuted test is counted as passed. Hosted type/build and live D1/provider/resource acceptance remain outside this review and are not established here.

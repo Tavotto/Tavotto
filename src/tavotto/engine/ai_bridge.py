@@ -136,9 +136,27 @@ def _drop_attempt_files(sid: str, snap: Path, cand=None) -> None:
         except OSError:
             pass
     if cand is not None:
-        from . import ai_figure_edit
+        _remove_cand(cand)
 
+
+def _remove_cand(cand) -> None:
+    """删候选目录（改图候选与转换候选各有自己的根，删除都限定在各自的根之内）。"""
+    from . import ai_convert, ai_figure_edit
+
+    if isinstance(cand, ai_convert.ConvertCandidate):
+        ai_convert.remove_dir(cand.dir)
+    else:
         ai_figure_edit.remove_candidate(cand.dir)
+
+
+def _release_cand(cand) -> None:
+    """会话收尾：转换候选通过检查则留存待采用，其余删除。"""
+    from . import ai_convert
+
+    if isinstance(cand, ai_convert.ConvertCandidate):
+        ai_convert.release(cand)
+    else:
+        _remove_cand(cand)
 
 
 def _taf_enabled() -> bool:
@@ -727,6 +745,7 @@ def run(
     on_changed=None,
     client_request_id: str | None = None,
     task_hooks: dict | None = None,
+    convert: dict | None = None,
 ) -> str:
     """启动一次 AI 修改任务，返回 session id。事件经 on_event(name, data) 回调。
 
@@ -740,6 +759,11 @@ def run(
 
     `task_hooks`（只在 TAF 开关打开时用）：`{"before": () -> {stem: manifest} | None, "retire": () -> None, "after": () -> {stem: manifest}}`，
     app 注入的渲染层事实（改前取自已经 build 的 worker、改后取自前端本来就要做的那次重渲染），同样是注入而不是回头 import。
+
+    `convert`（ADR 0143「生成可编辑版本」）：`{"library": str, "original_rel": str | None}`。给了它，这次运行是
+    `convert_to_editable` 任务：Agent 在候选工作区里**新建**一份 Matplotlib 版脚本，`script` 只读（字节不动）；过了检查的
+    候选留存待采用（`ai_convert.adopt`），本函数从不写项目文件。此时 `task_hooks` 只用 `runner`（校验运行）。**不看** TAF
+    实验开关（该任务默认开，逃生口是 `ai_convert.enabled()`）。
 
     `client_request_id`：前端点发送时生成的 UUID。同 (项目, id) 已登记过就抛 `DuplicateRequest`、
     **不 spawn**——「任何操作都不得让同一条 AI 修改被无意执行两次」。去重先于忙检查：
@@ -788,6 +812,7 @@ def run(
                     "started": time.time(),
                     "model": model,
                     "effort": effort,
+                    **({"kind": "convert"} if convert is not None else {}),
                 },
                 ensure_ascii=False,
             ),
@@ -795,7 +820,45 @@ def run(
         )
 
         cand = envelope = None
-        if taf:
+        convert_prompt = None
+        if convert is not None:
+            # 转换任务：候选 = 原脚本只读副本 + 将被新建的那一个文件；原脚本此后一个字节也不会被本会话改写
+            from . import ai_convert
+
+            try:
+                ai_convert.ensure_registered()
+                original_rel = convert.get("original_rel")
+                original_path = None
+                if original_rel:
+                    got = projectenv.contained_path(figures_dir, original_rel)
+                    original_path = Path(got) if got else None
+                    if original_path is None:
+                        original_rel = None
+                cand = ai_convert.create_candidate(
+                    sid,
+                    script_path,
+                    Path(figures_dir),
+                    script,
+                    library=str(convert.get("library") or ""),
+                    original_path=original_path,
+                    original_rel=original_rel,
+                )
+                cand.extras.update(task_hooks or {})
+                convert_prompt = ai_convert.prompt_for(cand)
+                envelope = ai_convert.envelope_for(
+                    agent=agent,
+                    project_key=project_key,
+                    cand=cand,
+                    prompt=user_prompt,
+                    rid=client_request_id,
+                )
+                problems = ai_convert.ADAPTER.validate(envelope)
+                if problems:
+                    raise RuntimeError(f"转换任务契约不合格: {','.join(problems)}")
+            except BaseException:
+                _drop_attempt_files(sid, snap, cand)
+                raise
+        elif taf:
             # TAF：Agent 在候选工作区里改副本，过了提交前检查才写回（`ai_figure_edit` 模块说明）。候选建不起来就整条
             # 拒绝（还没 spawn、没登记），不静默退回原地修改——开关打开时用户要的就是隔离
             from . import ai_figure_edit
@@ -829,11 +892,14 @@ def run(
                 _drop_attempt_files(sid, snap, cand)
                 raise
         agent_cwd = str(cand.dir) if cand is not None else figures_dir
-        prompt = _build_prompt(
-            cand.target_name if cand is not None else script, user_prompt, context, figures_dir
-        )
-        if cand is not None:
-            prompt += "\n\n" + ai_figure_edit.prompt_note(cand)
+        if convert_prompt is not None:
+            prompt = convert_prompt
+        else:
+            prompt = _build_prompt(
+                cand.target_name if cand is not None else script, user_prompt, context, figures_dir
+            )
+            if cand is not None:
+                prompt += "\n\n" + ai_figure_edit.prompt_note(cand)
         stderr_log = open(SNAP_DIR / f"{sid}.stderr.log", "wb", buffering=0)
         endpoint = ai_providers.resolve(agent, endpoint_id)
         cmd, extra_env = _cmd(
@@ -923,7 +989,7 @@ def run(
             ai_history.record_end(sid, "failed", error=str(exc))
             ai_history.record_cancel_result(sid, "failed")  # 窗口里到的取消意图随终态收尾，不悬挂
             if cand is not None:
-                ai_figure_edit.remove_candidate(cand.dir)
+                _remove_cand(cand)
             raise
         sess = {
             "id": sid,
@@ -948,6 +1014,8 @@ def run(
             #: `_pump` 收尾（changed / diff / refresh 都确定、已落库）之后才为 True；会话详情据此告诉前端「这是不是终态快照」
             "final": False,
         }
+        if convert is not None:
+            sess["kind"] = "convert"
         if task_run is not None:
             #: 对外：任务类型与结局摘要（收尾时补全）；对内：候选与 Task Core 的运行对象（`SESSION_INTERNAL_KEYS`）
             sess["task"] = {"task_type": envelope.task_type, "outcome": None}
@@ -1092,9 +1160,7 @@ def run(
             )
         finally:
             if cand is not None:
-                from . import ai_figure_edit
-
-                ai_figure_edit.remove_candidate(cand.dir)
+                _release_cand(cand)
 
     threading.Thread(target=_pump, daemon=True, name=f"ai-{sid}").start()
     return sid
@@ -1118,13 +1184,24 @@ def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str, re
         if sess["proc"].returncode != 0:
             raise ai_tasks.TaskError("agent_exit_nonzero", str(sess["proc"].returncode))
 
-    executor = ai_figure_edit.BridgeExecutor(
-        sess["agent"],
-        cand,
-        wait=wait,
-        refresh=lambda: refresh_outcome(on_changed, script, True),
-        respawn=respawn,
-    )
+    from . import ai_convert
+
+    if isinstance(cand, ai_convert.ConvertCandidate):
+        executor = ai_convert.ConvertExecutor(
+            sess["agent"],
+            cand,
+            wait=wait,
+            refresh=lambda: {"status": REFRESH_SKIPPED},  # 没写用户文件，没有可刷新的
+            respawn=respawn,
+        )
+    else:
+        executor = ai_figure_edit.BridgeExecutor(
+            sess["agent"],
+            cand,
+            wait=wait,
+            refresh=lambda: refresh_outcome(on_changed, script, True),
+            respawn=respawn,
+        )
     try:
         return ai_tasks.drive_registered(task_run, executor)
     finally:
@@ -1289,6 +1366,9 @@ def revert(sid: str) -> dict:
     sess = SESSIONS.get(sid) or _load_sidecar(sid)
     if sess is None:
         raise RuntimeError("会话不存在（快照也未找到）")
+    if sess.get("kind") == "convert":
+        # 转换会话从不改原脚本：没有可回滚的东西（回滚会重写用户脚本，哪怕字节相同也不该发生）
+        raise AgentError("ai_revert_not_applicable")
     snap = Path(sess["snapshot"])
     if not snap.is_file():
         raise RuntimeError("快照文件已丢失，无法回滚")
@@ -1429,7 +1509,9 @@ def get(sid: str) -> dict | None:
     if sess is not None:
         live = dict(sess)  # 先浅拷：pump 线程随时在改
         snap = live.get("snapshot")
-        live["revert_available"] = bool(snap) and Path(snap).is_file()
+        live["revert_available"] = (
+            bool(snap) and Path(snap).is_file() and live.get("kind") != "convert"
+        )
         return _session_dto(live)
     side = _load_sidecar(sid)
     # 后端已重启：以 SQLite 历史为准（启动时 running 已被标为 interrupted）

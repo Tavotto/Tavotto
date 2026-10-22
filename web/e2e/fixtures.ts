@@ -286,6 +286,34 @@ export async function waitForFigureEdit(page: Page): Promise<void> {
 }
 
 /**
+ * 单图编辑 → 多图排版：把素材库里另一张图加到画布（画布上有两张图才是排版，没有「回排版」按钮）。
+ *
+ * 模式由激活画布上的图数推出（`workflows-and-original-spec.md`）：只有一张图是单图编辑，第二张进来切成多图排版。
+ * 聚焦素材卡按 Shift+Enter（「添加到画布」），等页面纸（`[data-page-sheet]`，单图编辑里不画页面）出现。
+ * 调用前画布上已有一张图（刚 `dblclick` 打开过另一张）；`cardId` 默认 `Fig2_correlation.pdf`。
+ */
+export async function addSecondFigure(page: Page, cardId = 'Fig2_correlation.pdf'): Promise<void> {
+  const card = page.locator(`[data-card="${cardId}"]`)
+  // 整段放进重试：每一轮都按当时的样子重新对一遍侧栏（窄屏抽屉的遮罩与收起动画、进图内编辑后左栏换成元素树、
+  // 列表反复重挂卡片，都会让某一步落空；Windows 上两条 flaky 就是这样——遮罩正在收起时被摘掉、抽屉被我们点关后卡片不在）。
+  // 已在画布上的图再按 Shift+Enter 只是聚焦它，所以重试安全
+  await expect(async () => {
+    // 窄屏下侧栏是盖在画布上的抽屉，开着时有一层遮罩盖住左轨：只认还开着的遮罩，点遮罩左上角（右侧抽屉盖不到）
+    const scrim = page.locator('[data-scrim="true"][data-state="open"]')
+    if (await scrim.count()) await scrim.first().click({ position: { x: 4, y: 4 }, timeout: 3_000 })
+    // 素材库要先开（rail 是 toggle，已开着再点是收起，按 aria-expanded 判）
+    const rail = page.locator('[data-rail="assets"]')
+    if ((await rail.getAttribute('aria-expanded', { timeout: 3_000 })) !== 'true') await rail.click({ timeout: 3_000 })
+    // 素材卡聚焦后 Shift+Enter = 「添加到画布」（与卡上悬停出现的 `[data-card-add]` 同一个动作）。不用悬停点那颗钮：
+    // 渲染刚回来时素材列表会反复重挂卡片（元素一直「不稳定 / 被摘掉」），悬停要等稳定会一直等；聚焦不需要稳定
+    await card.focus({ timeout: 3_000 })
+    await page.keyboard.press('Shift+Enter')
+    await expect(page.locator('[data-page-sheet]')).toHaveCount(1, { timeout: 4_000 })
+  }).toPass({ timeout: 90_000 })
+  await expect(page.locator('[data-view-tweening]')).toHaveCount(0, { timeout: 30_000 })
+}
+
+/**
  * 刷新后（工作区把图恢复在画布上、没选中）点一下画布上唯一的图选中它。
  *
  * 点**画布对象容器** `[data-object-id]`，不要点里面的 `<img>`：预览刷新时同一个容器里新旧两张 `<img>` 会短暂叠放，

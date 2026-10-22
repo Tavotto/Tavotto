@@ -3,7 +3,7 @@
  * 勾上透明背景后画布范围的缩略图页面画成棋盘格。语言无关写法（chromium 与 chromium-en 各跑一遍）。
  */
 import type { Page } from '@playwright/test'
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 
 const CARD = '[data-card="Fig1_kinetics.pdf"]'
 
@@ -12,8 +12,9 @@ async function openExport(page: Page, baseURL: string) {
   await page.goto(baseURL)
   await page.locator(CARD).dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 120_000 })
-  await page.locator('[data-context-back]').click()
-  await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1)
+  // 画布范围的缩略图 / 透明背景只在多图排版里有：第二张图进来
+  await addSecondFigure(page)
+  await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(2)
   await page.keyboard.press('ControlOrMeta+e')
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()

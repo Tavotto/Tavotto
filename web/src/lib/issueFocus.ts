@@ -28,6 +28,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useViewportStore } from '@/store/viewportStore'
+import { cancelArtifactEntry } from '@/lib/artifactValidation'
 import { useWorkspaceStore } from '@/store/workspace'
 import { problemContextNow } from './problemContext'
 import {
@@ -92,6 +93,9 @@ export function focusObject(ref: ObjectRef, propertyPath?: string | null): Focus
   return outcome
 }
 
+/** 此刻的工作区模式（由图数推出，定位不去改它） */
+const workspaceModeNow = () => useWorkspaceStore.getState().mode
+
 function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOutcome {
   const s0 = useDocumentStore.getState()
   if (!s0.documentId) return { ok: false, reason: 'document_not_loaded' }
@@ -116,16 +120,17 @@ function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOu
   if (!ref.objectId) {
     // 页面级问题（页宽、比例）：没有对象可选，把属性页切到「画布」那一栏
     ui.setRightTab('canvas')
-    useWorkspaceStore.getState().exitToLayout()
-    return { ok: true, mode: 'layout', field: 'none' }
+    // 定位是一次导航：还悬着的「进入图内编辑」采纳作废（以前由 `exitToLayout` 顺带取消）
+    cancelArtifactEntry()
+    return { ok: true, mode: workspaceModeNow(), field: 'none' }
   }
   const obj = useDocumentStore.getState().doc.objects.find((o) => o.id === ref.objectId)
   if (!obj) return { ok: false, reason: 'object_deleted' }
 
   if (ref.gid) {
     if (obj.type !== 'panel' || !obj.script) return { ok: false, reason: 'not_editable' }
-    // 图内元素：快速编辑那一屏才是"看一张图"的工作流（ADR 0028）
-    useWorkspaceStore.getState().enterFastEdit(obj.id)
+    // 图内元素：图内编辑是单图 / 排版两条工作流共有的子状态；模式不在这里定（画布上只有这一张就是单图编辑，
+    // 有别的图就留在排版里进图内编辑），由图数推出（ADR 0028）
     ui.setTool('select')
     useSelectionStore.getState().set([obj.id])
     reveal(obj)
@@ -136,18 +141,18 @@ function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOu
     else if (entered) useUiStore.getState().setSelectedGid(ref.gid)
     useUiStore.getState().setRightTab('properties')
     flash(ref)
-    return { ok: true, mode: 'fast_edit', field: focusField(propertyPath) }
+    return { ok: true, mode: workspaceModeNow(), field: focusField(propertyPath) }
   }
 
-  // 画布对象：排版模式（越界、重叠、页边距这些只在版面上说得清）
-  useWorkspaceStore.getState().exitToLayout()
+  // 画布对象：越界、重叠、页边距这些只在版面上说得清；模式照图数推出，这里只收起图内编辑、选中它
+  cancelArtifactEntry()
   ui.setElementPanel(null)
   ui.setTool('select')
   useSelectionStore.getState().set([obj.id])
   reveal(obj)
   useUiStore.getState().setRightTab('properties')
   flash(ref)
-  return { ok: true, mode: 'layout', field: focusField(propertyPath) }
+  return { ok: true, mode: workspaceModeNow(), field: focusField(propertyPath) }
 }
 
 /** 定位到一条问题（面板整行点击与「定位」按钮共用）。 */
@@ -230,7 +235,6 @@ function aimProblemsAt(target: ProblemsTarget): void {
     ui.setProblemScope('canvas')
     return
   }
-  useWorkspaceStore.getState().exitToLayout()
   ui.setElementPanel(null)
   useSelectionStore.getState().set([figure.id])
   ui.setProblemScope('figure')

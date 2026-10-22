@@ -43,10 +43,10 @@ Guardian 的目标一句话：让尽可能多的科研用户的 matplotlib 脚�
 python scripts/ci/compat_guardian.py run --suite {compat_engine|compat_v2} [--case id1,id2] \
     --out DIR [--expected-sha SHA] [--timeout SEC]
 python scripts/ci/compat_guardian.py validate DIR/RUN_ID/reports/guardian.json
-python scripts/ci/compat_guardian.py summarize REPORT [REPORT ...] [--json-out F] [--markdown-out F]
+python scripts/ci/compat_guardian.py summarize REPORT [REPORT ...] [--json-out F] [--markdown-out F] [--allow-partial-shards]
 python scripts/ci/compat_guardian.py promote REPORT --case ID --out FILE     # 只出提案
-python scripts/ci/compat_guardian.py explore --seed N --out DIR [--limit N] [--parent a,b] [--static-only]
-python scripts/ci/compat_guardian.py triage REPORT [REPORT ...] --out FILE
+python scripts/ci/compat_guardian.py explore --seed N --out DIR [--limit N] [--parent a,b] [--static-only] [--shard K/N] [--max-seconds S]
+python scripts/ci/compat_guardian.py triage REPORT [REPORT ...] --out FILE [--allow-partial-shards]
 python scripts/ci/compat_guardian.py minimize --report EXPLORE_REPORT --candidate ID --out DIR [--max-runs N --max-seconds S]
 python scripts/ci/compat_guardian.py minimize --replay DIR/repro.json --out DIR2
 ```
@@ -58,6 +58,25 @@ python scripts/ci/compat_guardian.py minimize --replay DIR/repro.json --out DIR2
 - `explore` 不带 `--static-only` 时，执行前要求整个 `scripts/ci/` 与 HEAD 一致（`git status --porcelain`，含未跟踪文件）：
   生成、执行、取证的代码（变换、driver、matrix、执行观测器……）都在这里，脏工作区里改过的不会被当作评审过的模板执行。
   `minimize` 与 `minimize --replay` 执行前做同一道核对。
+- `explore --shard K/N`（CG-09，1 ≤ K ≤ N ≤ 16，写法严格：`0/4`、`5/4`、`1/17`、`01/4`、`a/b` 都是用法错误，退出码 2）只跑去重后候选池的第 K 片：
+  候选按 `candidate_id` 排序后取 `下标 % N == K-1`，所以同 seed 下 N 片的并集 == 不分片的全集、两两不相交、各片大小至多差 1，与候选在池里的顺序无关。
+  与其它参数的组合：`--parent` / `--families` **先**过滤、再切片（总数与过滤条件记进报告，N 片必须一致）；`--limit` 只作用于本片（家族均衡选取照旧）；
+  `--static-only` 照常（切片后全部只做静态检查）；与 `--candidates` 互斥（退出码 2）；片内为空则不发布报告（退出码 2）。
+  报告多一块 `shard: {k, n, candidates_in_shard, candidates_total, filters}`；不带 `--shard` 的报告与以前逐字节同形。
+- `explore --max-seconds S`（有限正数，非法值退出码 2）是整次 explore 的时间预算：预算花完后**还没开始**的可执行候选记 `outcome: not_run`
+  （note 写 `time budget exhausted`，阶段全 `not_run`，执行次数 0），已执行的照常出报告；预算花完后不再开复跑确认（未确认的差异不会触发提醒）。
+  报告多一块 `time_budget: {max_seconds, exhausted, not_run}`，没有未执行候选时退出码走原来的 0 / 1 / 3，**有 `not_run` 且无差异时退出码 4**（部分覆盖：不是通过，也不是失败）。
+  `not_run` 不算「已执行」（样本、家族覆盖、轴表都不计），也不是 triage 的发现。不带该参数时报告与以前逐字节同形。
+  预算对**每一次**子进程调用生效：父本快照、候选 adapter、复跑确认的超时都取 `min(--timeout, 剩余预算)`；剩余不足 30 s（`MIN_ATTEMPT_SECONDS`，
+  最快的真实候选约 15–18 s，再小只会被截断白费）就不再开始，该候选记 `not_run`。因预算截断而超时的候选记 `not_run`（不是 `unknown`、不是差异）；
+  候选自己的超时（没被预算限制）仍按原规则。预算截断的父本快照不进缓存，已完成的照旧缓存。
+  预算到期后到报告写完最多再耗 `OVERRUN_BOUND_SECONDS` = 清理 16 s（SIGTERM 等 10 s + 两次 3 s 的进程组确认）+ 固定开销 60 s = 76 s（预算时钟从 `explore()` 入口起算）。
+  不带该参数时行为与报告都不变。
+- `summarize` / `triage` 吃同一次周扫的 N 份分片报告时，先过合并校验：同 seed、同 HEAD、同生成器摘要与覆盖、同过滤条件与候选总数、
+  片号恰好 1..N 各一份、没有候选出现在两片里、混入不分片的报告也不行——任何一条不满足退出码 2，**不静默合并**。
+  缺片只有显式 `--allow-partial-shards` 才放行，放行后汇总 / 周报 / triage 到处标「N 片中 M 片完成」并写明「不是整个候选池」；
+  报告里的 `time_budget` 必须与候选行一致（有 `not_run` 行却无预算记录、计数对不上、声明耗尽却没有 `not_run` 行都失败）；合并信息给出 `not_run` 总数、预算耗尽的片号、`fully_executed`（片齐且无 `not_run`）；周报写「time budget exhausted in shard(s) […]: N candidate(s) NOT RUN」。
+  重复片、混 seed、混 HEAD、混生成器永远失败，`--allow-partial-shards` 也不放行。合并后的覆盖与指标按全集算（家族覆盖、候选数、结局计数取各片之和）。
 - `promote` 只写一个候选记录（`proposal_only: true, applied: false`），**拒绝**写入
   `tests/compat/`、`tests/compat_guardian/`（含期望声明）、`tests/fixtures/`、`tests/support/`，也拒绝写任何名为 `manifest.json` /
   `baseline.json` 的仓库内文件；基线与 manifest 的改动只能是人写的、过 CODEOWNERS 的普通 PR。
@@ -229,6 +248,10 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
   `s01/s04/s27` 为 `partial_coverage`；`s07/s17` 与 `s04b/s05/s06` 同属案例 13（声明为 `expected_limitation`）；`s25` 是真实产品缺口
   （#1134，G3），不声明、保持 `failed`——所以只要它未修，这个观察 workflow 每次都会红，这是有意的，不是被吞掉。
 
+- **周扫（CG-09）**：同一个 workflow 里另有三个 job，只由 `schedule`（`17 2 * * 0`，周日 02:17 UTC，与 nightly 的 03:41 错开）或
+  `workflow_dispatch` 的 `weekly: true` 触发，详见 §13。两条 cron 都会启动整个 workflow，所以每个 job 的 `if` 用
+  `github.event.schedule == '17 2 * * 0' || inputs.weekly` 分流：`guardian` / `explore` / `trend` 在周扫触发下跳过，`explore-weekly*` 在其它触发下跳过。
+
 ## 9. 评审边界（CODEOWNERS）
 
 `.github/CODEOWNERS` 为下列路径列出显式条目：`tests/compat/**`（manifest、基线、schema）、
@@ -389,6 +412,7 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 | PR smoke | `pull_request`（base 是 main，非 fork，且只在 Guardian 自己的文件变化时） | 合同测试 + 引擎 6 个登记 case + V2 全部场景 | 约 10–20 分钟，job 上限 35 |
 | Nightly | `schedule`（每日 03:41 UTC） | 上面一档 + `explore`（固定 seed 42、`--limit 24`、复现确认 3 个）→ `triage` → `trend` 汇总 | explore job 上限 60 分钟 |
 | Manual | `workflow_dispatch` | 同 Nightly，可传 `seed`、`limit`、`families`；本机另可用 `minimize` / `promote` 做深入调查 | 同上 |
+| Weekly | `schedule`（周日 02:17 UTC）或 `workflow_dispatch` 的 `weekly: true`（可传 `weekly_seed`） | 全量候选池切 4 片并行 explore → 合并校验 → triage → 周报；不跑上面三档的 job | 4 片 × 60 分钟 + 汇总 15 分钟 |
 
 **CI 上能做的**：在 GitHub 托管的临时 runner 上执行已提交夹具，和由已评审父本经确定性变换得到的派生候选（执行器自己重新推导，
 非确定性/来源不确定的只做静态检查）；上传白名单 artifact；把 triage/趋势写进 `GITHUB_STEP_SUMMARY`；对「新的、可复现、未登记家族」
@@ -397,6 +421,29 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 **CI 上不做的**：不跑用户或外部来源脚本，不进 self-hosted / `tavotto-lab`；不开 issue、不开 PR、不评论、不写任何东西
 （没有 `issues:` / `pull-requests:` / `contents: write`）；不改 baseline / manifest / 声明文件；不装依赖；不触发 merge_group，不是必需检查；
 不证明桌面（Native）路径、Windows、其它 Python / matplotlib 版本，也不产出真实用户成功率。`minimize` 不在 CI 里跑（耗时且需要人判断）。
+
+**周扫（CG-09）**：全量候选池每周扫一遍，不设 `--limit`；nightly 不变（seed 42、`--limit 24`、单例 `--timeout 240`）。
+
+| job | 做什么 | 预算 / 权限 |
+| --- | --- | --- |
+| `explore-weekly-plan` | 算一次 seed：`date -u +%G%V`（ISO 年 + 周号，如 `202643`），dispatch 可用 `weekly_seed` 覆盖；校验为纯数字后经 job output 交给各片 | 5 分钟；`contents: read` |
+| `explore-weekly`（matrix `shard: [1, 2, 3, 4]`，`fail-fast: false`） | 每片 `explore --seed <周 seed> --shard K/4 --max-seconds 2700 --confirm-differences 3 --timeout 240`；上传白名单 artifact（报告、摘要、`candidates.json`、候选入口脚本 `*.py`——triage 用它算调用位置；不含数据文件 / 证据目录 / stdout） | 每片 job 60 分钟（步骤 50）= 4 片 × 60 分钟；`contents: read` |
+| `explore-weekly-summary`（`always()`，plan 成功即跑） | 按名字取本 run 的各片 artifact（缺片不让这一步失败）→ `triage` + `summarize --previous <上一周周报>` → step summary 与 artifact（保留 30 天） | 15 分钟；`contents: read` + `actions: read`（读本 run 的分片 artifact 与上一周周报，与 `trend` 同理由） |
+
+- **每片时间预算**：步骤上限 50 分钟，`--max-seconds 2700`（45 分钟 = 步骤上限减 5 分钟）。池约 156 个候选（可执行约 137），每片约 39 个（约 33–36 个可执行），
+  本机实测约 15–18 s/候选（见 PR 回报），一片约 10–12 分钟；预算存在的理由是候选池会随新变换增长，而被步骤超时杀掉的片**没有报告**、每周重复。
+  预算花完 → 该片 `not_run` 若干、退出码 4（workflow 里 `::warning::`）、汇总标「partial coverage」，不算通过。
+- **seed 只算一次**：4 片共用 plan job 的输出，不会因为跨 ISO 周边界各算各的；就算被人为改乱，合并校验也会因混 seed 失败。
+- **缺片与失败**：某片崩了，其余片照常跑完（`fail-fast: false`），汇总照样产出，但标「N 片中 M 片完成」并发 `::warning::`，该片自己的 job 是红的；
+  一份报告都没有则汇总 job 红。重复片 / 混 seed / 混 HEAD 直接让汇总红（退出码 2）。
+- **提醒**：新报警簇（无家族记录 + 被复跑复现 + 不是 fixture / 环境问题）只发 `::warning::` 注解并写进周报（triage 小节），**不自动开 issue**，没有任何写权限。
+  周报里簇与轴的列出顺序按 `compat_guardian_summary.AXIS_WEIGHTS`（data_source 3、output_call 3、entry 2，其余 1；来源是遥测 `export_result` / 诊断包错误码的月度汇总，人工更新）：
+  **只影响列出顺序**，不改任何判定、退出码、计数或指标（`tests/test_compat_explore_shards.py::AxisWeightsOnlyReorder` 钉着：改权重后 JSON 逐字节不变）。
+  周报照旧写明「语料通过率 ≠ 用户首次成功率」。
+- **上一周周报**：最近已完成的定时运行里能下载到 `compat-guardian-weekly-summary-*` 的那次（往前最多 14 次）；手动 dispatch 的周扫不当基线。找不到则趋势 `not_computed`。
+- **不做**：不跑 `tavotto-lab` / self-hosted；不加 `issues:` / `pull-requests:` / 任何 `write`；不开 issue、不开 PR；不改 baseline / manifest / 家族记录；
+  不把周扫接进合并门禁；候选池仍是「已通过父本的派生」，全量扫完也不等于别的输入形状没问题。
+- **没在 GitHub 上真跑过**：分片、合并校验、周报排序有本机测试；矩阵并发、`gh run download` 取本 run 的 artifact、`always()` 汇总在部分分片失败时的表现，要等第一次真实周扫验证。
 
 **维护者提醒**：只有同时满足「没有家族记录（`tests/compat_guardian/families/`）」「被复跑复现」「不是 invalid_fixture / 环境问题」的 triage 簇
 才发注解（并出现在 step summary 的 “New reproducible families” 里）。已知家族（G1、G2）的差异在 summary 里列出，不再提醒。

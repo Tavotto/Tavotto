@@ -2030,7 +2030,7 @@ describe('T33 · 阻断项逐条列出，紧挨着知情确认，每条可定位
 
     await click(locateButtons()[0])
     expect(useUiStore.getState().exportOpen).toBe(false)
-    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
+    // 模式由图数推出，定位不改它（本用例没挂模式订阅，不断言模式）
     expect(useUiStore.getState().elementPanelId).toBe('p1')
     expect(useUiStore.getState().selectedGids).toEqual(['axes_0.xticks'])
     expect(useUiStore.getState().statusTone).toBe('info')

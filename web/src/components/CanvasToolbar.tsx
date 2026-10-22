@@ -18,8 +18,8 @@ import { insertShape } from '@/lib/presets'
 import { keyOf, type KeyId } from '@/lib/keymap'
 import { cn } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
-import { TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
-import { useWorkspaceStore } from '@/store/workspace'
+import { NOTICE_FIT_ROOM, TOOLBAR_FIT_CLEARANCE, useViewportStore } from '@/store/viewportStore'
+import { useWorkspaceStore } from '@/store/workspaceStore'
 import { fitStage } from '@/store/zoomToSelection'
 import { PresetsDialog } from './PresetsDialog'
 import { Button } from './ui/Button'
@@ -32,8 +32,7 @@ import { Tip } from './ui/Tooltip'
  * 它们此前住在顶栏中段与右段；搬家不改行为：快捷键（V / T / A / R / O / L / ⌘1）、`data-tool`、
  * `data-fit-canvas` 这些钩子都跟着元素走。
  *
- * **只在画布排版模式出现**（与搬家前的顶栏同一条判据，`mode !== 'fast_edit'`）：标注画的是画布
- * 对象，快速编辑那一屏只有一张图，画下去看不见。
+ * 单图编辑与多图排版都出现（2026-10-21：单图编辑的舞台也画这张画布上的标注 / 文字 / 形状，可以画、可以选）。
  */
 
 /**
@@ -41,7 +40,7 @@ import { Tip } from './ui/Tooltip'
  * 再留 12 的缝：抬到 bottom-16）
  */
 export function useCanvasToolbarVisible(): boolean {
-  return useWorkspaceStore((s) => s.mode !== 'fast_edit')
+  return true
 }
 
 /**
@@ -75,11 +74,15 @@ const INSERT_SHAPES = ['triangle', 'diamond', 'polygon', 'brace'] as const
 
 export function CanvasToolbar() {
   const visible = useCanvasToolbarVisible()
+  // 单图编辑的取景铺满舞台，底边还要给通知轨留一行（见 `NOTICE_FIT_ROOM`）；排版里页面居中，不用
+  const single = useWorkspaceStore((s) => s.mode === 'fast_edit')
   // 适应取景据此给底部让位：与显示判据是同一个值，不另判
   useEffect(() => {
-    useViewportStore.getState().setFitBottomClear(visible ? TOOLBAR_FIT_CLEARANCE : 0)
+    useViewportStore
+      .getState()
+      .setFitBottomClear(visible ? TOOLBAR_FIT_CLEARANCE + (single ? NOTICE_FIT_ROOM : 0) : 0)
     return () => useViewportStore.getState().setFitBottomClear(0)
-  }, [visible])
+  }, [visible, single])
   return visible ? <Bar /> : null
 }
 

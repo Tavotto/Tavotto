@@ -28,6 +28,7 @@ import {
   freeWidthOf,
   narrowerVariant,
   nextNarrowerVariant,
+  bottomSafeFor,
   placeToolbar,
   placeToolbarAvoiding,
   selectionScreenRect,
@@ -36,6 +37,7 @@ import {
   type Placement,
   type ScreenRect,
 } from './position'
+import { useNoticeRailStore } from '@/store/noticeRailStore'
 import { OpenInspectorButton } from './shared'
 import { qb } from './text'
 
@@ -115,6 +117,7 @@ export function ContextBar() {
   const [pos, setPos] = useState<Placement | null>(null)
   // 窗口尺寸一变就重算落位与宽窄档（断点没变时 layout 不会动，得自己听）
   const [resizeTick, setResizeTick] = useState(0)
+  const noticeTop = useNoticeRailStore((s) => s.top)
   // 量出来比两侧之间还宽（英文文案、大字号、窄窗口里的压缩档）：再降一档，最窄到
   // `minimal`。可用宽度或选区一变就清掉重量——这是「量了才知道」的第二道判据，静态
   // 阈值是第一道
@@ -355,6 +358,8 @@ export function ContextBar() {
       return
     }
     const viewport = { width: window.innerWidth, height: window.innerHeight }
+    // 通知轨最上面一条的顶边把窗口底边的禁区抬高：胶囊不许盖住通知上的按钮（单图编辑取景铺满后，下方的胶囊正好落进通知轨）
+    const bottomSafe = bottomSafeFor(noticeTop, viewport.height)
     // 图内元素：不盖住同一张图里别的文字（标题 / 轴标题 / 图例 / 刻度），
     // 贴着锚点的上下两档都盖到东西时退到图的外侧。障碍物按 manifest 的 bbox
     // 映到 SVG 容器上算——与 OverlaySvg 画选择框是同一份几何
@@ -374,8 +379,8 @@ export function ContextBar() {
               isElementHidden,
             ),
             zone,
-          })
-        : placeToolbar(anchor, { w, h }, viewport, insets)
+          }, bottomSafe)
+        : placeToolbar(anchor, { w, h }, viewport, insets, bottomSafe)
     setPos((prev) =>
       prev && prev.x === next.x && prev.y === next.y && prev.placement === next.placement
         ? prev
@@ -411,6 +416,7 @@ export function ContextBar() {
     textBarCompact,
     multiBarDocked,
     manifest,
+    noticeTop,
   ])
 
   if (!visible) return null

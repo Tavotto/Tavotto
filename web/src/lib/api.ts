@@ -3486,6 +3486,53 @@ export const aiRevert = (sid: string, pj: string | null) =>
 export const aiCancel = (sid: string, pj: string | null) =>
   jsonFetch<{ ok: boolean }>(`/api/ai/sessions/${sid}/cancel`, { method: 'POST' }, pj)
 
+/* ----------------- 生成可编辑版本（ADR 0143，`/api/ai/convert*`） ----------------- */
+
+/** 对照数据（`ai_convert.comparison_of`）：不含像素差（`pixel_diff` 恒 null——位图与矢量重画没有可辩护的逐像素差） */
+export interface ConvertComparison {
+  original: { path: string; bytes: number; sha256: string; width_px: number | null; height_px: number | null } | null
+  candidate: { figures: number; width_mm: number | null; height_mm: number | null }
+  aspect_delta: number | null
+  pixel_diff: null
+}
+
+export interface ConvertStatus {
+  session: string
+  state: 'ready' | 'adopted' | 'discarded'
+  script: string
+  target_name: string
+  library: string
+  comparison: ConvertComparison | null
+  has_preview: boolean
+  adopted_script?: string | null
+}
+
+const jsonPost = (body?: unknown): RequestInit => ({
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: body === undefined ? undefined : JSON.stringify(body),
+})
+
+export const startConvert = (
+  req: { script: string; library: string; path?: string | null; agent?: string; model?: string | null; effort?: string | null; client_request_id?: string },
+  pj: string | null,
+) => jsonFetch<{ session: string; script: string; deduped?: boolean }>('/api/ai/convert', jsonPost(req), pj)
+
+export const fetchConvert = (sid: string, pj: string | null) =>
+  jsonFetch<ConvertStatus>(`/api/ai/convert/${encodeURIComponent(sid)}`, undefined, pj)
+
+export const adoptConvert = (sid: string, pj: string | null) =>
+  jsonFetch<{ script: string; name: string }>(`/api/ai/convert/${encodeURIComponent(sid)}/adopt`, jsonPost(), pj)
+
+export const discardConvert = (sid: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(`/api/ai/convert/${encodeURIComponent(sid)}/discard`, jsonPost(), pj)
+
+/** 新版的 SVG 预览（只给 `<img>`：后端回沙盒 CSP） */
+export const convertPreviewUrl = (sid: string) => apiUrl(`/api/ai/convert/${encodeURIComponent(sid)}/preview.svg`)
+
+/** 原输出图的原字节（项目相对路径，与 `/api/file` 同一个出口） */
+export const convertOriginalUrl = (path: string) => fileUrl(path)
+
 /* ------------------------- 项目刷新（统一入口） ---------------------------- */
 
 /**

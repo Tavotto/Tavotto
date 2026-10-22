@@ -4823,6 +4823,7 @@ def build(
     allow_project_env: bool = True,
     before_build=None,
     run=None,
+    write_roots=None,
 ):
     """取会话并确保脚本已 build——**带一次项目环境自动 fallback**。
 
@@ -4845,6 +4846,8 @@ def build(
     替换会话（monkeypatch `pool.get`），改走别的入口它们会静默拿到真池。
     """
     context = {"run": run} if run is not None else {}
+    if write_roots is not None:
+        context["write_roots"] = write_roots
     worker, resp, _created = _build_with(
         lambda: (get(script_name, figures_dir, entry, **context), False),
         script_name,
@@ -5020,6 +5023,7 @@ def invalidate(
     force: bool = False,
     targets: tuple[WorkerTarget, ...] | None = None,
     preserve: tuple[WorkerTarget, ...] = (),
+    write_roots=None,
 ) -> None:
     """脚本文件变更后作废其会话（下次请求自动重建）。
 
@@ -5039,7 +5043,11 @@ def invalidate(
         if figures_dir is None:
             keys = [k for k in _workers if k[1] == script_name]
         elif run is not None or only_run:
-            keys = [k for k in _workers if k == _worker_key(figures_dir, script_name, None, run)]
+            keys = [
+                k
+                for k in _workers
+                if k == _worker_key(figures_dir, script_name, None, run, **_roots_kw(write_roots))
+            ]
         else:
             keys = [k for k in _workers if k[:2] == (_norm_dir(figures_dir), script_name)]
         if targets is not None:
@@ -5108,7 +5116,13 @@ def invalidate_project(
 
 
 def force_cancel(
-    script_name: str, figures_dir: str, *, artifact_source=None, expected_worker=None, run=None
+    script_name: str,
+    figures_dir: str,
+    *,
+    artifact_source=None,
+    expected_worker=None,
+    run=None,
+    write_roots=None,
 ) -> bool:
     """当场硬杀该脚本的在跑会话（探测取消的机制面）；返回是否真的杀了。
 
@@ -5124,7 +5138,7 @@ def force_cancel(
     占位期间 `acquire` 看到 `_closing` 直接拒绝（`session_dead`），不在池锁里阻塞；确认关闭后才摘表，
     未确认则保持围栏，下一次 `acquire` 有界重试关闭。不支持围栏的 worker（Python 池进程）维持先摘后杀。
     """
-    key = _worker_key(figures_dir, script_name, artifact_source, run)
+    key = _worker_key(figures_dir, script_name, artifact_source, run, **_roots_kw(write_roots))
     with _lock:
         w = _workers.get(key)
         if expected_worker is not None and w is not expected_worker:

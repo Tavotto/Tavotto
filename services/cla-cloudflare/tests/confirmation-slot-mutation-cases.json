@@ -1,0 +1,200 @@
+[
+  {
+    "name": "confirmation slot marker consumption",
+    "file": "src/native/schema.sql",
+    "before": " DELETE FROM _guards WHERE id='confirmation-slot:'||NEW.id;",
+    "after": " SELECT 1;",
+    "pattern": "slot first enrollment atomically consumes marker and preserves an unsent journal within seven SQL",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot automatic marker admission",
+    "file": "src/native/store.ts",
+    "before": "      ...(slot?[this.stmt('INSERT INTO _guards(id,ok) VALUES(?,1)','confirmation-slot:'+id)]:[]),\n      this.stmt(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,phase,created,updated,conclusion,proof_text,send_until)",
+    "after": "      this.stmt(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,phase,created,updated,conclusion,proof_text,send_until)",
+    "pattern": "slot first enrollment atomically consumes marker and preserves an unsent journal within seven SQL",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot legacy global blocker",
+    "file": "src/native/schema.sql",
+    "before": "  AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE conclusion='success' AND phase!='resolved')",
+    "after": "  AND 1",
+    "pattern": "slot global legacy success blocks first enrollment manual",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot marker duplicate no-op",
+    "file": "src/native/schema.sql",
+    "before": "   OR EXISTS(SELECT 1 FROM _guards WHERE id='confirmation-slot:'||NEW.id)))",
+    "after": "   ))",
+    "pattern": "slot marker duplicate legacy id cannot commit an ignored journal no-op",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot policy replacement",
+    "file": "src/native/schema.sql",
+    "before": "EXISTS(SELECT 1 FROM slot_policy) OR coalesce((NEW.active_attempt=NEW.first_attempt",
+    "after": "coalesce((NEW.active_attempt=NEW.first_attempt",
+    "pattern": "slot policy REPLACE cannot replace enrollment even with a matching marker",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot owner replacement",
+    "file": "src/native/schema.sql",
+    "before": "   p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) OR\n   CASE WHEN json_valid(p.observation)",
+    "after": "   CASE WHEN json_valid(p.observation)",
+    "pattern": "slot active journal REPLACE cannot turn its owner into a failure",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot policy transition capability",
+    "file": "src/native/schema.sql",
+    "before": " ),0)!=1 THEN RAISE(ABORT,'slot_transition_rejected') END;",
+    "after": " ),0)=99 THEN RAISE(ABORT,'slot_transition_rejected') END;",
+    "pattern": "slot policy rejects direct NULL no-op deletion and metadata transitions",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot immutable original proof",
+    "file": "src/native/schema.sql",
+    "before": " OR NEW.proof_text IS NOT OLD.proof_text",
+    "after": "",
+    "pattern": "slot immutable owner proof identity and known run survive attempted SQL edits",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot released historical observation",
+    "file": "src/native/schema.sql",
+    "before": "AND NEW.observation IS NOT OLD.observation THEN RAISE(ABORT,'slot_release_immutable') END;",
+    "after": "AND NEW.observation IS NOT OLD.observation THEN NULL END;",
+    "pattern": "slot read-only negative GET releases exact owner and preserves immutable historical evidence",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot owned outbox retention",
+    "file": "src/native/schema.sql",
+    "before": " BEGIN SELECT RAISE(ABORT,'slot_recovery_required'); END;",
+    "after": " BEGIN SELECT 1; END;",
+    "pattern": "slot owned outbox cannot be deleted while unrelated negative recovery remains usable",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot legacy NULL positive downgrade",
+    "file": "src/native/schema.sql",
+    "before": "  AND EXISTS(SELECT 1 FROM slot_policy) THEN RAISE(ABORT,'slot_required') END;",
+    "after": "  AND 0 THEN RAISE(ABORT,'slot_required') END;",
+    "pattern": "slot flag false still selects and projects its owner while blocking legacy positive insert",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot owner projection when disabled",
+    "file": "src/native/store.ts",
+    "before": "SELECT p.*,CASE WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) THEN 1 ELSE NULL END AS confirmation_slot,p.rowid AS position",
+    "after": "SELECT p.*,CASE WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) THEN 0 ELSE NULL END AS confirmation_slot,p.rowid AS position",
+    "pattern": "slot flag false still selects and projects its owner while blocking legacy positive insert",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot capability single consumption",
+    "file": "src/native/github.ts",
+    "before": "this.#negativeWitnesses.get(witness);this.#negativeWitnesses.delete(witness);",
+    "after": "this.#negativeWitnesses.get(witness);",
+    "pattern": "slot witness capability itself is consumed exactly once",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot adapter freshness boundary",
+    "file": "src/native/github.ts",
+    "before": "now>=d.valid_until ||",
+    "after": "",
+    "pattern": "slot negative witness rejects expiry at its fixed ten second boundary",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot fresh GET exact run",
+    "file": "src/native/github.ts",
+    "before": "fresh.id!==own[0]!.id || ",
+    "after": "",
+    "pattern": "slot negative GET cannot mint a witness for a changed owned run",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot fresh GET required",
+    "file": "src/native/github.ts",
+    "before": "const began=this.now(),fresh=await this.api(`/repos/${this.c.repository}/check-runs/${own[0]!.id}`,token);",
+    "after": "const began=this.now(),fresh=own[0]!;",
+    "pattern": "slot read-only negative GET releases exact owner and preserves immutable historical evidence",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot settlement phase CAS",
+    "file": "src/native/store.ts",
+    "before": "AND phase=? AND (phase!='issued' OR send_until<=${DB_NOW})\n        AND target_key=?",
+    "after": "AND ? IS NOT NULL AND (phase!='issued' OR send_until<=${DB_NOW})\n        AND target_key=?",
+    "pattern": "slot nonrelease settlement independently rejects stale phase",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot settlement exact proof snapshot",
+    "file": "src/native/store.ts",
+    "before": "AND target_key=? AND head_sha=? AND revision=? AND expires=? AND proof_text=? AND run_id IS ?",
+    "after": "AND target_key=? AND head_sha=? AND revision=? AND expires=? AND ? IS NOT NULL AND run_id IS ?",
+    "pattern": "slot nonrelease settlement independently rejects stale proof",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot settlement current generation",
+    "file": "src/native/store.ts",
+    "before": "    }else if(release)throw new Rejected('fresh_negative_release_required');\n    await this.batch([\n      ...this.guard(`EXISTS(SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND lease_until>${DB_NOW} AND generation=?)\n        AND (SELECT revision FROM state WHERE id=1)=?`,job.target_key,job.lease,job.generation,revision),",
+    "after": "    }else if(release)throw new Rejected('fresh_negative_release_required');\n    await this.batch([\n      ...this.guard(`EXISTS(SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND lease_until>${DB_NOW} AND ? IS NOT NULL)\n        AND (SELECT revision FROM state WHERE id=1)=?`,job.target_key,job.lease,job.generation,revision),",
+    "pattern": "slot nonrelease settlement independently rejects stale generation",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot settlement current revision",
+    "file": "src/native/store.ts",
+    "before": "    }else if(release)throw new Rejected('fresh_negative_release_required');\n    await this.batch([\n      ...this.guard(`EXISTS(SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND lease_until>${DB_NOW} AND generation=?)\n        AND (SELECT revision FROM state WHERE id=1)=?`,job.target_key,job.lease,job.generation,revision),",
+    "after": "    }else if(release)throw new Rejected('fresh_negative_release_required');\n    await this.batch([\n      ...this.guard(`EXISTS(SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND lease_until>${DB_NOW} AND generation=?)\n        AND ? IS NOT NULL`,job.target_key,job.lease,job.generation,revision),",
+    "pattern": "slot nonrelease settlement independently rejects stale revision",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot live sender recovery exclusion",
+    "file": "src/native/store.ts",
+    "before": "      AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.phase='issued' AND p.send_until>${DB_NOW})\n      AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.send_until>${DB_NOW})",
+    "after": "      AND 1",
+    "pattern": "slot static expired original proof and changed revision cannot bypass a live send fence",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "confirmation slot SQL observed phase binding",
+    "file": "src/native/schema.sql",
+    "before": " AND json_extract(NEW.observation,'$.observed_phase')=OLD.phase",
+    "after": "",
+    "pattern": "slot SQL rejects a negative witness describing a different observed phase",
+    "testFile": "tests/independent-confirmation-slot.test.mjs",
+    "assertionError": true
+  }
+]

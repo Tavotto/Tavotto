@@ -2383,6 +2383,7 @@ export default interface Resources {
       "ai_request_unresolved": "这条请求的状态暂时无法确认，请稍后查询结果。",
       "ai_revert_conflict": "{{script}} 在这次 AI 修改之后又改过，回滚会覆盖后来的改动，已取消。",
       "ai_revert_failed": "无法撤销 AI 修改：{{reason}}",
+      "ai_revert_not_applicable": "这次是「生成可编辑版本」，原脚本从未被改动，没有可撤销的内容。",
       "ai_script_busy": "{{script}} 上已有一个 AI 任务在运行。等它结束，或先中止它，再发新的。",
       "ai_start_failed": "无法启动 AI 任务：{{reason}}",
       "ai_supersede_conflict": "上一次的修改其实已经开始了，没有改写成新指令。请先看它的结果。",
@@ -2406,6 +2407,15 @@ export default interface Resources {
       "bad_scope": "无法识别导出范围：{{value}}。",
       "bad_validation": "检查设置格式有误，请刷新页面后重试。",
       "conda_launcher_unavailable": "Conda 环境激活失败（取不到激活后的环境变量），这次没有运行任何东西。通常是暂时的：稍后再试；如果一直这样，请检查这个环境的 conda 安装和 activate.d 脚本。",
+      "convert_candidate_changed": "待采用的新版本文件被改动过，已拒绝采用。请重新生成。",
+      "convert_disabled": "「生成可编辑版本」已被关闭。",
+      "convert_name_exhausted": "同名的新版本文件太多了（已有 99 个），请先清理再试。",
+      "convert_no_preview": "这份新版本没有预览。",
+      "convert_not_found": "找不到这份待采用的新版本（可能已放弃、已过期，或属于别的项目）。",
+      "convert_not_ready": "新版本还没生成好，或没有通过检查。",
+      "convert_outside_project": "新版本的位置不在项目里，已拒绝写入。",
+      "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
+      "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",
       "data_decode_error": "这份数据不是 UTF-8 编码，读不出来。",
       "data_empty": "这份数据是空的。",
       "data_figure_input_missing": "请选一份数据文件，并说明想画什么。",
@@ -4996,15 +5006,14 @@ export default interface Resources {
     },
     "fastEdit": {
       "added": "{{name}} 已加入画布",
-      "addedForEdit": "已为编辑加入本排版",
-      "addedForEditLive": "已为编辑加入本排版，移除即撤销。",
+      "addedForEdit": "已为编辑新建了一张画布",
+      "addedForEditLive": "已为编辑新建了一张画布，移除即撤销放进去的图。",
       "alreadyOnCanvas": "{{name}} 已经在画布上",
       "connectSource": "连接源脚本",
-      "crumbTitle": "回到排版（Esc）",
+      "enteredLayout": "已进入多图排版",
       "figureMissing": "项目里找不到 {{name}}",
       "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。",
-      "removeAdded": "移除",
-      "toLayout": "排版与出版"
+      "removeAdded": "移除"
     },
     "hints": {
       "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
@@ -5262,6 +5271,33 @@ export default interface Resources {
         },
         "steps": "进度",
         "stopScript": "停止脚本"
+      },
+      "convert": {
+        "adopted": "已采用，正在打开新版本…",
+        "aspectDiffers": "宽高比与原图相差约 {{pct}}%",
+        "btn": {
+          "adopt": "采用新版本",
+          "discard": "放弃",
+          "retry": "重试",
+          "start": "生成可编辑版本"
+        },
+        "fail": {
+          "budget_exhausted": "尝试次数用完了",
+          "no_matplotlib_figure": "生成的脚本跑完没有画出 Matplotlib 图",
+          "no_matplotlib_import": "生成的脚本没有用 Matplotlib",
+          "other_file_changed": "助手改动了不该动的文件，已丢弃",
+          "project_files_changed": "助手改动了项目文件，已丢弃",
+          "render_not_wired": "暂时无法校验新版本",
+          "run_failed": "生成的脚本运行出错了",
+          "syntax_error": "生成的脚本有语法错误",
+          "target_missing": "助手没有写出新脚本",
+          "unknown": "没能生成可编辑版本"
+        },
+        "noPreview": "暂无预览",
+        "original": "原图",
+        "ready": "新版本生成好了，对照一下再决定",
+        "redrawn": "重画的新版本",
+        "running": "正在生成可编辑版本…"
       },
       "detail": {
         "args": "参数",
@@ -5749,12 +5785,12 @@ export default interface Resources {
     "stage": {
       "addFigure": "添加图",
       "backToCanvas": "返回画布",
-      "backToLayout": "返回排版",
       "contextBarLabel": "工作区位置",
       "crumbsLabel": "当前对象",
       "emptyHint": "从素材库选一张图放到画布上。",
       "emptyHintNoAssets": "把 PDF/PNG 或绘图脚本放进项目目录，就会出现在素材库。",
       "emptyTitle": "画布是空的",
+      "exitElementEdit": "退出图内编辑",
       "exitTitle": "退出图内编辑，回到画布层（Esc）",
       "rulerUnit": "mm",
       "rulerUnitTitle": "标尺单位：毫米",

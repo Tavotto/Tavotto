@@ -20,7 +20,7 @@ import { useWorkspaceStore } from './workspace'
  * - 画布上拖页面边（`interaction.kind === 'pageedge'`）：手势每一帧都在改页面尺寸，视口由手势自己管
  *   （拖左 / 上边时要反向补偿平移让图不动），补间适配会在手指底下把画面拉走；
  * - 快速编辑：那一屏取景的是那张图的包围盒，不是页面——此刻不动视口；停放的排版视口
- *   记着停放时的页面尺寸，回排版时 `returnToLayout` 比一比就知道要不要按新页面取景。
+ *   记着停放时的页面尺寸，第二张图进来切到多图排版时，`startWorkspaceModeSync` 按那时的页面取景「页面 ∪ 图」。
  */
 export function startPageSizeFit(): () => void {
   return useDocumentStore.subscribe((state, prev) => {

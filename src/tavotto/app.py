@@ -59,6 +59,7 @@ from werkzeug.exceptions import HTTPException
 from . import pdfbackend, tiffprobe
 from .engine import (
     ai_bridge as engine_ai,
+    ai_convert as engine_ai_convert,
     ai_data_figure as engine_ai_data_figure,
     ai_data_task as engine_ai_data_task,
     ai_figure_edit as engine_ai_figure_edit,
@@ -122,6 +123,7 @@ from .engine import (
     project_watch as engine_watch,
     projectenv as engine_projectenv,
     projscan as engine_projscan,
+    rasterhint as engine_rasterhint,
     readiness as engine_readiness,
     receipt as engine_receipt,
     registry as engine_registry,
@@ -11486,6 +11488,171 @@ def _ai_run_impl():
         "ai_assistant_invoked", {"agent": agent if agent in allowed else "other"}
     )
     return jsonify({"session": sid, "script": info["script"]})
+
+
+# --- 「生成可编辑版本」（ADR 0143）：位图库画的图 → 改图助手另写一份 Matplotlib 版**新**脚本，原脚本不动 -------
+_CONVERT_PROMPT = "生成可编辑的 Matplotlib 版本（{library}）"
+
+
+def _convert_error(exc: "engine_ai_convert.ConvertError"):
+    return jsonify({"error": exc.code, "code": exc.code, "params": {}}), exc.status
+
+
+def _convert_runner(ctx: "ProjectCtx", source_script: str):
+    """校验运行（注入 `ai_convert`）：走现有 probe 路径，**用户同一解释器 / 同一路由**；返回前退役它起的 worker。"""
+
+    def runner(figures_dir: str, rel: str, write_roots: tuple[str, ...] | None = None) -> dict:
+        # `write_roots`：写入根绊线（ADR 0141 / 0143）——候选只许写候选目录（与 worker 基础设施目录），写项目文件在事件发生时失败
+        roots_kw = {"write_roots": tuple(write_roots)} if write_roots else {}
+        try:
+            run = engine_runconfig.default_selection(ctx.path, source_script)
+        except Exception:  # noqa: BLE001 —— 配置读不出来就按不带参数跑
+            run = None
+        run_kw = {"run": run} if run is not None else {}
+        result = engine_probe.probe(figures_dir, rel, **run_kw, **roots_kw)
+        try:
+            if result.get("error"):
+                err = result["error"]
+                return {"error": {"code": err.get("code"), "message": err.get("message")}}
+            stems = list(result.get("stems") or [])
+            descs = result.get("descriptors") or []
+            size = descs[0].get("size_mm") if descs and isinstance(descs[0], dict) else None
+            svg = None
+            worker = engine_pool.peek(rel, figures_dir, **run_kw, **roots_kw) if stems else None
+            if worker is not None:
+                try:
+                    p = Path(
+                        engine_figcapture.usable_preview_path(worker.out_dir, stems[0], ".svg")
+                    )
+                    if p.is_file() and p.stat().st_size <= engine_ai_convert.PREVIEW_MAX_BYTES:
+                        svg = p.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    svg = None
+            return {"stems": stems, "size_mm": size, "svg": svg}
+        finally:
+            try:
+                engine_pool.invalidate(
+                    rel, figures_dir, run or None, only_run=True, force=True, **roots_kw
+                )
+            except Exception:  # noqa: BLE001 —— 退役失败不改变校验结论；池会按 LRU 淘汰
+                LOG.warning("转换校验后的 worker 退役失败", exc_info=True)
+
+    return runner
+
+
+@app.post("/api/ai/convert")
+def api_ai_convert():
+    """启动「生成可编辑版本」。body：`{script, library, path?, agent?, client_request_id?, model?, effort?, endpoint?}`。
+
+    `script` 是项目内的 `.py`（相对路径）；`library` 取 `rasterhint.LIBRARIES`；`path` 是原输出图的项目相对路径（D 的
+    `no_figure_hint.path`，可缺）。原脚本此后一个字节也不会被这个会话改写；Agent 只写候选工作区里的一个新文件。"""
+    if not engine_ai_convert.enabled():
+        return jsonify({"error": "convert_disabled", "code": "convert_disabled", "params": {}}), 404
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        abort(400)
+    ctx = current_ctx()
+    script = body.get("script")
+    library = body.get("library")
+    agent = body.get("agent") or "codex"
+    request_id = body.get("client_request_id")
+    if (
+        not isinstance(script, str)
+        or not script.endswith(".py")
+        or library not in engine_rasterhint.LIBRARIES
+        or not isinstance(agent, str)
+        or (request_id is not None and not _valid_client_request_id(request_id))
+    ):
+        abort(400)
+    real = engine_projectenv.contained_path(ctx.path, script)
+    if real is None or not Path(real).is_file():
+        return jsonify(
+            {"error": "script_not_found", "code": "script_not_found", "params": {"script": script}}
+        ), 404
+    rel = Path(os.path.relpath(real, os.path.realpath(ctx.path))).as_posix()
+    original = body.get("path")
+    original_rel = None
+    if isinstance(original, str) and original:
+        got = engine_projectenv.contained_path(ctx.path, original)
+        if got is not None and Path(got).is_file():
+            original_rel = Path(os.path.relpath(got, os.path.realpath(ctx.path))).as_posix()
+    try:
+        sid = engine_ai.run(
+            agent,
+            rel,
+            _CONVERT_PROMPT.format(library=library),
+            str(ctx.path),
+            on_event=lambda event, data: sse_publish(
+                event,
+                {**data, "pj": ctx.id, **({"client_request_id": request_id} if request_id else {})},
+            ),
+            client_request_id=request_id,
+            model=body.get("model") or None,
+            effort=body.get("effort") or None,
+            endpoint_id=body.get("endpoint"),
+            task_hooks={"runner": _convert_runner(ctx, rel)},
+            convert={"library": library, "original_rel": original_rel},
+        )
+    except engine_ai.DuplicateRequest as dup:
+        return jsonify({"session": dup.sid, "script": rel, "deduped": True})
+    except engine_ai.AgentError as exc:
+        LOG.warning("转换任务被拒: %s (%s)", agent, exc.code)
+        return _agent_error(exc)
+    except RuntimeError as exc:
+        LOG.error("转换任务启动失败: %s %s: %s", agent, rel, exc)
+        return jsonify(
+            {"error": str(exc), "code": "ai_start_failed", "params": {"reason": str(exc)}}
+        ), 500
+    return jsonify({"session": sid, "script": rel})
+
+
+@app.get("/api/ai/convert/<sid>")
+def api_ai_convert_status(sid):
+    """待采用候选的对照数据（版式、尺寸、是否有新版预览）；会话还没留存候选时 409 `convert_not_ready`。"""
+    try:
+        resp = jsonify(engine_ai_convert.status(sid, str(require_project().resolve())))
+    except engine_ai_convert.ConvertError as exc:
+        return _convert_error(exc)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/ai/convert/<sid>/preview.svg")
+def api_ai_convert_preview(sid):
+    """新版的 SVG 预览（校验运行时捕获的）。只给 `<img>` 用：沙盒 CSP + nosniff，脚本在这里跑不起来。"""
+    try:
+        data = engine_ai_convert.preview_svg(sid, str(require_project().resolve()))
+    except engine_ai_convert.ConvertError as exc:
+        return _convert_error(exc)
+    resp = Response(data, mimetype="image/svg+xml")
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Content-Security-Policy"] = (
+        "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+    )
+    return resp
+
+
+@app.post("/api/ai/convert/<sid>/adopt")
+def api_ai_convert_adopt(sid):
+    """采用新版本：后端把候选脚本**新建**进项目（原脚本同目录，重名加序号，永不覆盖），随后统一刷新。"""
+    ctx = current_ctx()
+    try:
+        made = engine_ai_convert.adopt(sid, str(ctx.path.resolve()))
+    except engine_ai_convert.ConvertError as exc:
+        return _convert_error(exc)
+    refresh = engine_ai.refresh_outcome(
+        lambda script: _after_ai_change(ctx, script), made["script"], True
+    )
+    return jsonify({**made, "refresh": refresh})
+
+
+@app.post("/api/ai/convert/<sid>/discard")
+def api_ai_convert_discard(sid):
+    try:
+        return jsonify(engine_ai_convert.discard(sid, str(require_project().resolve())))
+    except engine_ai_convert.ConvertError as exc:
+        return _convert_error(exc)
 
 
 @app.get("/api/ai/requests/<request_id>")

@@ -321,6 +321,7 @@ def probe(
     run=None,
     on_acquired=None,
     on_built=None,
+    write_roots=None,
 ) -> dict:
     """`_probe()` + 这次运行的输入去向（T08）：成功取 worker 的 `last_input_facts`，失败取第一处错误那次
     build 挂在异常上的 `input_facts`——与 `error` 说的是同一次尝试。"""
@@ -334,6 +335,7 @@ def probe(
         facts=box,
         on_acquired=on_acquired,
         on_built=on_built,
+        write_roots=write_roots,
     )
     if box.get("facts") is not None:
         result[INPUT_FACTS_KEY] = box["facts"]
@@ -350,6 +352,7 @@ def _probe(
     facts: dict,
     on_acquired=None,
     on_built=None,
+    write_roots=None,
 ) -> dict:
     """跑一次脚本，返回它真实产出的 stem 与每张图的结构化描述。
 
@@ -419,6 +422,8 @@ def _probe(
             }
 
     run_ctx = {"run": run} if run is not None else {}
+    # 写入根绊线（ADR 0141 / 0143）：给了就是带绊线的会话（池键多一段），取消 / 作废 / 取会话都要带同一份根
+    roots_ctx = {"write_roots": write_roots} if write_roots is not None else {}
 
     def before_build(worker):
         owned = pool.acquired_here(worker)
@@ -430,7 +435,9 @@ def _probe(
             if owned is False:
                 # 别人的会话（渲染路正在用的同键会话）：本次试运行只是放弃等待，不杀它
                 raise pool.WorkerError("试运行已取消", code=ERROR_CANCELLED)
-            if not pool.force_cancel(script, figures_dir, expected_worker=worker, **run_ctx):
+            if not pool.force_cancel(
+                script, figures_dir, expected_worker=worker, **run_ctx, **roots_ctx
+            ):
                 worker.force_kill()  # Already detached: never retire its replacement.
             raise pool.WorkerError("试运行已取消", code=ERROR_CANCELLED)
 
@@ -447,13 +454,13 @@ def _probe(
             # 就开新的会拿到旧会话——它的 `build` 命中「已建好」直接回缓存，脚本一行没重跑，`input()` 不再被问、
             # 自动回填的轻提示也就不会出（Windows 打包产物上 `script-input.spec` 的红）。关停未确认 =
             # WorkerError，当作这次试运行失败如实报，不假装重跑过。
-            pool.invalidate(script, figures_dir, run, only_run=True, force=True)
+            pool.invalidate(script, figures_dir, run, only_run=True, force=True, **roots_ctx)
             # `pool.build` = get + ensure_built + **一次项目环境自动 fallback**
             # （内置 runtime 缺依赖 → 项目自己的 .venv 接手，ADR 0018）。
             # 探测是「跑一次用户脚本」最主要的入口，自动接手必须覆盖它——
             # 否则素材库里能打开的项目，`tavotto open` 打不开。
             _worker, resp = pool.build(
-                script, figures_dir, entry, before_build=before_build, **run_ctx
+                script, figures_dir, entry, before_build=before_build, **run_ctx, **roots_ctx
             )
         except pool.WorkerError as exc:
             if cancelled():
@@ -462,7 +469,7 @@ def _probe(
                 LOG.info("探测被取消 %s [entry=%s]", script, entry)
                 facts["facts"] = getattr(exc, "input_facts", None)  # 在等输入时被停：诊断里看得到
                 return {**empty, "tried": tried, "error": _cancel_err()}
-            pool.invalidate(script, figures_dir, run, only_run=True)
+            pool.invalidate(script, figures_dir, run, only_run=True, **roots_ctx)
             LOG.info("探测失败 %s [entry=%s]: %s", script, entry, exc)
             if first_error is None:
                 first_error = _error_from_worker(exc, entry, figures_dir=figures_dir, script=script)
@@ -510,7 +517,7 @@ def _probe(
             offer = pool.missing_input_offer(script, figures_dir)
             if offer is not None:
                 first_error["missing_input"] = offer
-        pool.invalidate(script, figures_dir, run, only_run=True)
+        pool.invalidate(script, figures_dir, run, only_run=True, **roots_ctx)
 
     return {
         **empty,

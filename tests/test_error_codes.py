@@ -40,6 +40,8 @@ _SOURCE_FILES = (
     "security.py",
     "desktop.py",
     "engine/ai_bridge.py",
+    # 「生成可编辑版本」（ADR 0143）：`ConvertError("<code>")` 由 app 的 `_convert_error` 漏斗转成 JSON
+    "engine/ai_convert.py",
     "engine/project_refresh.py",
     "engine/atomicio.py",
     "engine/profilestore.py",
@@ -107,6 +109,7 @@ _CODE_PATTERNS = (
     r'AgentError\(\s*"([a-z0-9_]+)"',
     r'RefreshError\(\s*"([a-z0-9_]+)"',
     r'AtomicWriteError\(\s*"([a-z0-9_]+)"',
+    r'ConvertError\(\s*"([a-z0-9_]+)"',
     # ProfileStoreError 既有 `Cls("code", …)` 也有子类里的
     # `ProfileStoreError.__init__(self, "code", …)`（**刻意不用 super()**：
     # 那种写法这条门禁看不见，见 profilestore.RevisionConflict 的注释）
@@ -277,6 +280,18 @@ USER_VISIBLE_CODES = {
     # PR4：同一脚本上已有 AI 任务在跑（后端并发保护）/ 前端按请求 id 查询时后端没登记过
     "ai_script_busy": {"script"},
     "ai_request_not_found": set(),
+    # 转换会话从不改原脚本：没有可回滚的东西（ADR 0143）
+    "ai_revert_not_applicable": set(),
+    # 「生成可编辑版本」（ADR 0143）：总开关关着 / 采用与丢弃的稳定码
+    "convert_disabled": set(),
+    "convert_not_found": set(),
+    "convert_not_ready": set(),
+    "convert_source_changed": set(),
+    "convert_candidate_changed": set(),
+    "convert_outside_project": set(),
+    "convert_write_failed": set(),
+    "convert_name_exhausted": set(),
+    "convert_no_preview": set(),
     # 这个请求 id 已被新指令取代（改写后再发），不会再执行 / 取代时发现旧请求其实已经开始
     "ai_request_superseded": set(),
     "ai_supersede_conflict": set(),
@@ -501,6 +516,7 @@ def test_error_field_is_still_there_as_the_fallback():
                     "ProfileStoreError",
                     "ExportRequestError",
                     "TutorialError",
+                    "ConvertError",
                 )
             )
             # 导出作业的逐项失败经 `_legacy_export_response()` 这个唯一漏斗

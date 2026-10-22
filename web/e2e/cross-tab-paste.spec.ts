@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures'
+import { addSecondFigure, test, expect } from './fixtures'
 
 /**
  * 跨标签页复制粘贴：对象剪贴板走系统剪贴板（JSON + 魔数），
@@ -29,19 +29,18 @@ test('同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴',
     { timeout: 30_000 },
   )
   await tabA.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
-  // Prompt 09 起双击 = 进**快速编辑**，那一屏只渲染这一张图。而工作区模式按
-  // documentId 存在本机、**同一个浏览器上下文的两个标签页共用它**：标签 B
-  // 会跟着进快速编辑，粘贴进文档的那个对象存在但根本不画出来，`[data-object-id]`
-  // 永远是 1——判据量错了对象（不是「粘贴没成功」，是「这一屏不显示它」）。
-  // 这条用例测的是画布上的跨标签粘贴，所以回到画布排版再往下走。
-  await tabA.locator('[data-context-back]').click()
-  await expect(tabA.locator('[data-object-id]')).toHaveCount(1)
+  // Prompt 09 起双击 = 进**单图编辑**，那一屏只渲染这一张图，而且单图编辑里粘贴不落——
+  // 标签 B 加载出来若只有一张图，同样是单图编辑，粘贴进文档的对象存在但根本不画出来（量错了对象）。
+  // 这条用例测的是画布上的跨标签粘贴，所以放第二张图进来（画布上两张图 = 多图排版）再往下走；
+  // 模式由图数推出，标签 B 载入两张图的文档自然也是多图排版。
+  await addSecondFigure(tabA)
+  await expect(tabA.locator('[data-object-id]')).toHaveCount(2)
   // 复制的前提是**选区非空**（`lib/clipboard.ts` 的 `buildClipPayload` 在选区为空时回 null，
   // `handleCopyEvent` 静默不消费——按了等于没按，之后再也等不到「已复制」）。从快速编辑回到
   // 画布时选区还在不在取决于重建时序：2026-09-22 同一条断言在三次 CI 里红了两次（#499），
   // 播报区停在「正在构建 …」。这里显式点一下对象把前提摆好，再按 ⌘C——用例测的是跨标签
   // 粘贴，不是「返回画布会不会保住选区」（那要单独一条用例说）。
-  await tabA.locator('[data-object-id]').click()
+  await tabA.locator('[data-object-id]').last().click()
   await tabA.keyboard.press('ControlOrMeta+c')
   // 播报区认 `data-status-live`（`StatusToasts` 那块 aria-live），不认 `role="status"`：
   // 后者不唯一，`getByRole('status')` 撞上第二个产出点就是 strict 违例或量错对象。
@@ -67,16 +66,20 @@ test('同一项目开两个标签页：标签 A 复制面板，标签 B 粘贴',
   await expect(tabB.getByRole('button', { name: /当前项目/ })).toBeVisible({
     timeout: 30_000,
   })
-  // 基线：标签 B 加载出来的就是磁盘上那份（1 个 = 标签 A 刚放的面板）
-  await expect(tabB.locator('[data-object-id]')).toHaveCount(1, { timeout: 30_000 })
+  // 基线：标签 B 加载出来的就是磁盘上那份（2 个 = 标签 A 放的两张图）。上面等到的那次保存可能是第二张图之前的，
+  // 所以重载到磁盘上是两张为止（判据仍是磁盘那一份，不是 A 的内存）
+  await expect(async () => {
+    await tabB.reload()
+    await expect(tabB.locator('[data-object-id]')).toHaveCount(2, { timeout: 5_000 })
+  }).toPass({ timeout: 40_000 })
   await tabB.bringToFront()
   await tabB.locator('[data-canvas-stage]').click({ position: { x: 300, y: 200 } })
   await tabB.keyboard.press('ControlOrMeta+v')
   await expect(tabB.locator('[data-status-live]')).toHaveText(/已粘贴 1 个对象/, {
     timeout: 10_000,
   })
-  // 断言的是**这次粘贴多出来一个**，不是「一共只有一个」
-  await expect(tabB.locator('[data-object-id]')).toHaveCount(2)
+  // 断言的是**这次粘贴多出来一个**（2 → 3），不是「一共只有一个」
+  await expect(tabB.locator('[data-object-id]')).toHaveCount(3)
 
   await context.close()
 })
