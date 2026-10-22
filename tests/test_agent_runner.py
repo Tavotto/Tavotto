@@ -2014,3 +2014,57 @@ class TestReviewRound13:
         last = json.loads(p.stdout.splitlines()[-1])
         assert (last["type"], last["reason"], last["detail"]) == ("done", "internal", "bad_args")
         assert srv.requests == [] and p.returncode == 1
+
+
+class TestReviewRound14:
+    """Codex #1328 第十四轮：非 ASCII 保守计数；Chat 上的 effort 拒绝；非法停止轮不输出文字；重复工具调用 ID 不执行。"""
+
+    def test_non_ascii_text_is_counted_conservatively(self):
+        cjk = wires.Msg("user", text="图" * 3000)
+        ascii_ = wires.Msg("user", text="a" * 3000)
+        assert loop.estimate_tokens("", [], [cjk]) >= 3000
+        assert loop.estimate_tokens("", [], [ascii_]) == 1000
+
+    def test_effort_on_openai_chat_is_rejected(self, cand, serve):
+        srv = serve(_final_text_turn("anthropic", "hi"))
+        p = run_cli(
+            cand,
+            "openai-chat",
+            "--base-url",
+            srv.url,
+            "--model",
+            "m",
+            "--effort",
+            "high",
+            key=KEY_CANARY,
+            stdin="make it blue",
+        )
+        last = json.loads(p.stdout.splitlines()[-1])
+        assert (last["type"], last["reason"], last["detail"]) == ("done", "internal", "bad_args")
+        assert srv.requests == [] and p.returncode == 1
+
+    def test_text_of_an_invalid_stop_turn_is_not_emitted(self, cand, serve):
+        body = {"content": [{"type": "text", "text": "looks fine"}], "stop_reason": "weird"}
+        _, res, events = http_run(cand, serve, "anthropic", [(200, {}, body)])
+        assert res.reason == "network" and res.detail.startswith("bad_stop_")
+        assert not any(e["type"] == "text" for e in events)
+
+    def test_duplicate_tool_call_ids_are_not_executed(self, cand, serve):
+        before = _tree(cand)
+        call = {
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "write_file", "arguments": json.dumps({"content": "x\n"})},
+        }
+        body = {
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {"content": None, "tool_calls": [call, call]},
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+        _, res, events = http_run(cand, serve, "openai-chat", [(200, {}, body)])
+        assert (res.ok, res.reason, res.detail) == (False, "network", "duplicate_tool_call_id")
+        assert not any(e["type"] == "tool" for e in events) and _tree(cand) == before

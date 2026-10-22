@@ -304,18 +304,27 @@ class RunResult:
     elapsed_ms: int = 0
 
 
+def _tok(text: str) -> int:
+    """一段文字的保守 token 估计：ASCII 每 3 字符算 1；非 ASCII（中日韩、emoji…）每个字符算 1——
+    它们在各家分词器里常常一个字就是一个甚至多个 token，按 /3 会严重低估。"""
+    non_ascii = sum(1 for ch in text if ord(ch) > 127)
+    return (len(text) - non_ascii) // 3 + non_ascii
+
+
 def estimate_tokens(system: str, tools: list[ToolSpec], history: list[Msg]) -> int:
-    """粗估：字符数 / 3（偏高估，宁可早压缩）。"""
-    n = len(system) + sum(len(t.description) + len(json.dumps(t.schema)) for t in tools)
+    """粗估（偏高估，宁可早压缩）：见 `_tok`。"""
+    n = _tok(system) + sum(_tok(t.description) + _tok(json.dumps(t.schema)) for t in tools)
     for m in history:
-        n += len(m.text)
+        n += _tok(m.text)
         if m.turn:
-            n += len(m.turn.text) + sum(len(json.dumps(c.args or {})) for c in m.turn.tool_calls)
+            n += _tok(m.turn.text) + sum(
+                _tok(json.dumps(c.args or {}, ensure_ascii=False)) for c in m.turn.tool_calls
+            )
             if m.turn.native is not None:
                 # 回放时原样带回的原生内容（签名 thinking、加密 reasoning）也占上下文
-                n += len(json.dumps(m.turn.native, ensure_ascii=False, default=str))
-        n += sum(len(r.content) for r in m.results)
-    return n // 3
+                n += _tok(json.dumps(m.turn.native, ensure_ascii=False, default=str))
+        n += sum(_tok(r.content) for r in m.results)
+    return n
 
 
 def _accountable(usage: Usage, request_tokens: int, turn: Turn | None) -> Usage:
@@ -325,10 +334,11 @@ def _accountable(usage: Usage, request_tokens: int, turn: Turn | None) -> Usage:
     out = 0
     if turn is not None:
         out = (
-            len(turn.text)
-            + turn.thinking_chars
-            + sum(len(json.dumps(c.args or {})) for c in turn.tool_calls)
-        ) // 3 + 1
+            _tok(turn.text)
+            + turn.thinking_chars // 3
+            + sum(_tok(json.dumps(c.args or {}, ensure_ascii=False)) for c in turn.tool_calls)
+            + 1
+        )
     return Usage(
         input_tokens=max(usage.input_tokens, request_tokens),
         output_tokens=max(usage.output_tokens, out),
@@ -481,7 +491,9 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
             return _finish(res, False, "cancelled")
         if turn.thinking_chars:
             emit({"type": "thinking", "chars": turn.thinking_chars})
-        if turn.text and turn.stop != "max_tokens":  # 被截断的半截回答不给用户看
+        # 被截断的半截回答、以及停止原因不合法（未知 / 声称调工具却没有可用调用）的那一轮，都不把文字给用户看
+        rejected_stop = turn.stop == "max_tokens" or (not turn.tool_calls and turn.stop != "end")
+        if turn.text and not rejected_stop:
             emit({"type": "text", "text": turn.text})
         if cancel.is_set():
             return _finish(res, False, "cancelled")
@@ -497,6 +509,9 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
         if any(not (isinstance(c.id, str) and c.id.strip()) for c in turn.tool_calls):
             # 缺对应 ID 的工具调用：结果无法回填、下一轮必然失败——一个都不执行
             return _finish(res, False, "network", "tool_call_without_id")
+        if len({c.id for c in turn.tool_calls}) != len(turn.tool_calls):
+            # 同一轮里重复的对应 ID：结果无法一一回填——一个都不执行
+            return _finish(res, False, "network", "duplicate_tool_call_id")
         results: list[ToolResult] = []
         for call in turn.tool_calls:
             if cancel.is_set():  # 每个工具调用前都查：已取消就不再写文件

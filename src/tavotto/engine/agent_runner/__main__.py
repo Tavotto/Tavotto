@@ -150,6 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     model: object
     if bad_prompt:
         model = _FailModel(RunnerFailure("internal", "bad_prompt"))
+    elif args.effort is not None and args.wire == "openai-chat":
+        # Chat 协议没有可移植的推理强度字段：声明了就拒绝，不静默丢掉；不发任何请求
+        model = _FailModel(RunnerFailure("internal", "bad_args"))
     elif args.thinking != "none" and args.wire not in ("anthropic", "demo"):
         # 思考模式只有 anthropic 协议认；别的协议上声明了就拒绝，不静默丢掉；不发任何请求
         model = _FailModel(RunnerFailure("internal", "bad_args"))
