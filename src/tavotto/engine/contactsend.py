@@ -221,7 +221,7 @@ def capability() -> dict:
         return {"enabled": False}
     return {
         "enabled": True,
-        "recipient": brand.CONTACT_EMAIL,
+        "recipient": brand.FEEDBACK_EMAIL,
         "subject_max": SUBJECT_MAX,
         "body_max": BODY_MAX,
         "email_max": EMAIL_MAX,
@@ -289,13 +289,13 @@ def clean_attachment(name: object, data: bytes) -> Attachment:
 
 
 def valid_email(value: str) -> bool:
-    """服务端同一条基本规则：恰好一个 @、两侧非空、无空白 / 换行 / 逗号 / 尖括号。"""
+    """服务端同一条规则：只收可打印 ASCII，恰好一个 @、两侧非空，拒绝空白 / 引号 / 分号 / 逗号 / 括号，域名必须含「.」。"""
     if len(value) > EMAIL_MAX or value.count("@") != 1:
         return False
-    if any(c.isspace() or c in ",<>" for c in value):
+    if not all(0x21 <= ord(c) <= 0x7E for c in value) or any(c in ",;<>()[]\"'" for c in value):
         return False
     local, _, domain = value.partition("@")
-    return bool(local) and bool(domain)
+    return bool(local) and "." in domain and not domain.startswith(".") and not domain.endswith(".")
 
 
 @dataclass(frozen=True)
@@ -621,16 +621,21 @@ def _settle(sess: Session, targets, code, retry_after, cancelled) -> None:
     """发送线程的唯一收尾点。已经发出 complete 之后的取消不再生效（那一步不可撤回，结果以服务端答复为准）。"""
     global _REUSE
     stage = sess.stage or "init"
+    open_remote = not sess.complete_sent and bool(sess.complete_token and sess.message_id)
     user_cancel = cancelled or (bool(code) and sess.cancel.is_set() and not sess.complete_sent)
     if user_cancel and not sess.complete_sent and sess.complete_token and sess.message_id:
         _cancel_remote(sess, targets)  # 尽力而为：服务端 pending 一小时后自己也会过期
+    elif code and open_remote:
+        # 服务端 complete 时附件缺失会把整封信置 rejected：任何一步没走完就作废这封，重试用新的 client_message_id
+        _cancel_remote(sess, targets)
+        sess.message_id = ""
     with _LOCK:
         sess.stage = ""
         if user_cancel:
             sess.state = "cancelled"
         elif code:
             sess.state, sess.failure, sess.retry_after = "failed", code, retry_after
-            if code not in REOPEN_ON:
+            if code not in REOPEN_ON and not open_remote:
                 _REUSE = (sess.fingerprint, sess.client_message_id)
         else:
             sess.state = "done"

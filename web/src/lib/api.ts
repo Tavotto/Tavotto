@@ -5663,7 +5663,7 @@ export const discardDiagSend = (id: string, pj?: string | null) =>
 
 export interface ContactCapability {
   enabled: boolean
-  /** 收件地址（展示与「复制地址」用；与 `brand.CONTACT_EMAIL` 同源） */
+  /** 收件地址（展示与「复制地址」用；与 `brand.FEEDBACK_EMAIL` 同源） */
   recipient?: string
   subject_max?: number
   body_max?: number

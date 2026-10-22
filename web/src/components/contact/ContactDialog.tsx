@@ -2,9 +2,9 @@ import { useEffect, useId, useRef, useState, type DragEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
 import { formatDateTime } from '@/i18n/format'
-import { CONTACT_EMAIL } from '@/lib/brand'
+import { FEEDBACK_EMAIL } from '@/lib/brand'
 import { cn } from '@/lib/utils'
-import { draftText, useContactStore, type ContactFailure } from '@/store/contactStore'
+import { draftText, useContactStore, validEmail, type ContactFailure } from '@/store/contactStore'
 import { Button, IconButton } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
 import { Details, Summary } from '../ui/Details'
@@ -100,7 +100,7 @@ export function ContactDialog() {
 
   const busy = phase === 'sending' || phase === 'cancelling' || phase === 'diag'
   const editable = !busy && phase !== 'done'
-  const recipient = capability.recipient ?? CONTACT_EMAIL
+  const recipient = capability.recipient ?? FEEDBACK_EMAIL
   const bodyMax = capability.body_max ?? 5000
   const subjectMax = capability.subject_max ?? 120
   const maxFiles = capability.max_attachments ?? 5
@@ -357,6 +357,11 @@ export function ContactDialog() {
           onChange={(e) => s.setDraft({ replyEmail: e.target.value })}
           data-contact-email
         />
+        {draft.replyEmail.trim() !== '' && !validEmail(draft.replyEmail.trim()) && (
+          <p className="type-caption text-danger-content" data-contact-email-hint>
+            {cs('error.emailInvalid')}
+          </p>
+        )}
         <p className="type-caption" data-contact-email-note>
           {cs('emailNote')}
         </p>

@@ -387,10 +387,10 @@ cancelled, closed or failed send is never resumed on its own.
   window.
 * **No email program is involved.** The app never opens your mail program and
   contains no mail links; if sending fails it only offers *Copy content* and
-  *Copy address* (`contact@tavotto.com`) so you can decide how to send it.
+  *Copy address* (`feedback@tavotto.com`) so you can decide how to send it.
 * **Retention and deletion.** Letters, replies and attachments are deleted from
   the server after 365 days, and the app's local record is deleted after the same
-  period. To have a letter deleted earlier, email `contact@tavotto.com` quoting
+  period. To have a letter deleted earlier, email `feedback@tavotto.com` quoting
   its number (`TVM-…`).
 * **Switch.** `TAVOTTO_NO_CONTACT=1` removes the feature (no button, no network).
 

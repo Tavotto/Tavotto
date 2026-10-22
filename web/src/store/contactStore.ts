@@ -63,12 +63,12 @@ const UNREAD_REFRESH_MS = 5 * 60 * 1000
 
 export const EMPTY_DRAFT: ContactDraft = { subject: '', body: '', replyEmail: '', files: [], attachDiag: false }
 
-/** 与引擎 `contactsend.valid_email` 同一条基本规则：恰好一个 @、两侧非空、无空白 / 逗号 / 尖括号 */
+/** 与引擎 `contactsend.valid_email` 同一条规则：可打印 ASCII、一个 @、域名含「.」、无引号 / 分号 / 逗号 / 括号 */
 export function validEmail(v: string): boolean {
   if (v.length > 254 || v.split('@').length !== 2) return false
-  if (/[\s,<>]/.test(v)) return false
+  if (!/^[\x21-\x7e]+$/.test(v) || /[,;<>()[\]"']/.test(v)) return false
   const [local, domain] = v.split('@')
-  return !!local && !!domain
+  return !!local && domain.includes('.') && !domain.startsWith('.') && !domain.endsWith('.')
 }
 
 function readRemembered(): string | null {

@@ -119,7 +119,7 @@ def test_disabled_means_capability_false_and_everything_else_404(client, monkeyp
 
 def test_capability_has_limits_and_no_endpoint(on, client):
     cap = client.get("/api/contact").get_json()
-    assert cap["enabled"] is True and cap["recipient"] == "contact@tavotto.com"
+    assert cap["enabled"] is True and cap["recipient"] == "feedback@tavotto.com"
     assert (cap["max_attachments"], cap["max_total_bytes"]) == (5, 20 * 1024 * 1024)
     assert (cap["subject_max"], cap["body_max"]) == (120, 5000)
     assert cap["unread"] == 0

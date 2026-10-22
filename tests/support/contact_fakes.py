@@ -299,7 +299,9 @@ class FakeContactServer:
             return 422, {"error": {"code": "bad_request", "message": "x"}}
         email = req.get("reply_email")
         if email is not None and (
-            email.count("@") != 1 or any(c.isspace() or c in ",<>" for c in email)
+            email.count("@") != 1
+            or any(c.isspace() or c in ',;<>()"' for c in email)
+            or "." not in email.partition("@")[2]
         ):
             return 422, {"error": {"code": "invalid_email", "message": "x"}}
         rid = req.get("report_id")

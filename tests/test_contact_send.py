@@ -203,6 +203,11 @@ def test_region_judgement_is_not_reimplemented_in_python():
         ({"reply_email": "a@b.com,c@d.com"}, "email_invalid"),
         ({"reply_email": "<a@b.com>"}, "email_invalid"),
         ({"reply_email": "@b.com"}, "email_invalid"),
+        ({"reply_email": "a@b"}, "email_invalid"),  # 域名必须含「.」
+        ({"reply_email": 'a"b@c.com'}, "email_invalid"),
+        ({"reply_email": "a;b@c.com"}, "email_invalid"),
+        ({"reply_email": "a(b)@c.com"}, "email_invalid"),
+        ({"reply_email": "用户@c.com"}, "email_invalid"),  # 只收可打印 ASCII
         ({"report_id": "TVD-nope"}, "report_invalid"),
     ],
 )
@@ -735,7 +740,7 @@ def test_corrupt_or_foreign_records_are_ignored(tmp_path):
 
 
 def test_recipient_constant_is_the_brand_one(on):
-    assert contactsend.capability()["recipient"] == brand.CONTACT_EMAIL == "contact@tavotto.com"
+    assert contactsend.capability()["recipient"] == brand.FEEDBACK_EMAIL == "feedback@tavotto.com"
 
 
 def test_the_shell_hands_its_region_verdict_to_the_engine():
@@ -751,12 +756,24 @@ def test_the_shell_hands_its_region_verdict_to_the_engine():
 
 
 def test_contact_email_is_one_constant_on_both_sides():
-    """`engine/brand.py` 与 `web/src/lib/brand.ts` 的 `CONTACT_EMAIL` 是同一个地址（严格同源对，ADR 0145）。"""
+    """`engine/brand.py` 与 `web/src/lib/brand.ts` 的 `FEEDBACK_EMAIL` 是同一个地址（严格同源对，ADR 0145）。"""
     import re
     from pathlib import Path
 
     brand_ts = (Path(__file__).resolve().parent.parent / "web/src/lib/brand.ts").read_text(
         encoding="utf-8"
     )
-    (ts,) = re.findall(r"^export const CONTACT_EMAIL = '([^']+)'$", brand_ts, re.M)
-    assert ts == brand.CONTACT_EMAIL == "contact@tavotto.com"
+    (ts,) = re.findall(r"^export const FEEDBACK_EMAIL = '([^']+)'$", brand_ts, re.M)
+    assert ts == brand.FEEDBACK_EMAIL == "feedback@tavotto.com"
+
+
+def test_a_failed_upload_voids_the_letter_and_the_retry_uses_a_new_id(on):
+    """服务端 complete 时附件缺失会把整封信置 rejected：任何上传失败就 cancel，重试换新的 client_message_id。"""
+    on.fail("upload", 403, "forbidden")
+    contactsend.start(meta(), [("a.png", PNG)])
+    assert wait_for({"failed"})["code"] == "upload_denied"
+    assert on.count("/v1/messages/cancel") == 1 and on.count("/v1/messages/complete") == 0
+    contactsend.start(meta(), [("a.png", PNG)])
+    assert wait_for({"done"})["state"] == "done"
+    keys = [c["json"]["client_message_id"] for c in on.calls if c["path"] == "/v1/messages/init"]
+    assert len(keys) == 2 and keys[0] != keys[1]

@@ -25,8 +25,8 @@
 
 ### 二、用户不需要登录或配置邮箱：全产品没有邮件协议链接
 
-不用 `mailto:`、不唤起系统邮件程序。发送失败时界面只给三样：「再试一次」「复制内容」「复制地址 `contact@tavotto.com`」，由用户自己决定怎么发。
-`tests/test_contact_no_mailto.py` 扫 `web/src` 与 `src/tavotto` 钉住这个协议字面量一个都没有；`contact.test.tsx` 另在失败态量整页 HTML。收件地址 `CONTACT_EMAIL` 是 `engine/brand.py` ↔ `web/src/lib/brand.ts` 的严格同源对，只展示。
+不用 `mailto:`、不唤起系统邮件程序。发送失败时界面只给三样：「再试一次」「复制内容」「复制地址 `feedback@tavotto.com`」，由用户自己决定怎么发。
+`tests/test_contact_no_mailto.py` 扫 `web/src` 与 `src/tavotto` 钉住这个协议字面量一个都没有；`contact.test.tsx` 另在失败态量整页 HTML。收件地址 `FEEDBACK_EMAIL` 是 `engine/brand.py` ↔ `web/src/lib/brand.ts` 的严格同源对，只展示。
 
 ### 三、线路、选路与「大陆环境」判据（复用，不复制）
 

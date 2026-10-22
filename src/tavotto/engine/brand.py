@@ -26,7 +26,7 @@ RELEASES_URL = f"{REPO_URL}/releases"
 
 #: 「联系作者」的收件地址（ADR 0145）。只用于**展示**与失败时「复制地址」——产品里任何地方都没有 邮件协议链接，
 #: 也不唤起系统邮件程序；真正的投递由 Tavotto 服务器代发。↔ `web/src/lib/brand.ts` 同名常量（严格同源对）。
-CONTACT_EMAIL = "contact@tavotto.com"
+FEEDBACK_EMAIL = "feedback@tavotto.com"
 
 #: Codex 集成的安装参数。**唯一出处**——README 首用章节、`tavotto codex install`
 #: 与 `docs/codex-plugin-distribution.md` 都从这里派生；两处手写就会漂，而漂了

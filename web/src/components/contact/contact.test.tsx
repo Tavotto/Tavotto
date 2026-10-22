@@ -48,7 +48,7 @@ import {
   type ContactStatus,
   type DiagSendPrepared,
 } from '@/lib/api'
-import { CONTACT_EMAIL } from '@/lib/brand'
+import { FEEDBACK_EMAIL } from '@/lib/brand'
 import { t } from '@/i18n'
 import enDialogs from '@/i18n/locales/en-US/dialogs.json'
 import zhDialogs from '@/i18n/locales/zh-CN/dialogs.json'
@@ -78,7 +78,7 @@ globalThis.ResizeObserver ??= class {
 
 const CAP: ContactCapability = {
   enabled: true,
-  recipient: CONTACT_EMAIL,
+  recipient: FEEDBACK_EMAIL,
   subject_max: 120,
   body_max: 5000,
   email_max: 254,
@@ -247,7 +247,7 @@ describe('入口两处挂载', () => {
     )
     await click(q('[data-contact-button]'))
     expect(q('[data-dialog="contact"]')).not.toBeNull()
-    expect(q('[data-contact-recipient]')!.textContent).toBe(CONTACT_EMAIL)
+    expect(q('[data-contact-recipient]')!.textContent).toBe(FEEDBACK_EMAIL)
     expect(sendContact).not.toHaveBeenCalled()
     expect(startDiagSend).not.toHaveBeenCalled()
   })
@@ -275,7 +275,7 @@ describe('对话框的四个状态', () => {
 
   it('编辑：收件人只展示、主题 / 正文 / 附件 / 诊断 / 回信邮箱与那句说明都在', async () => {
     await openDialog()
-    expect(q('[data-contact-recipient]')!.textContent).toBe(CONTACT_EMAIL)
+    expect(q('[data-contact-recipient]')!.textContent).toBe(FEEDBACK_EMAIL)
     for (const sel of ['subject', 'text', 'pick', 'diag', 'email', 'email-note', 'drop']) {
       expect(q(`[data-contact-${sel}]`), sel).not.toBeNull()
     }
@@ -291,6 +291,16 @@ describe('对话框的四个状态', () => {
     await click(q('[data-contact-send]'))
     expect(q('[data-contact-form-error="bodyRequired"]')).not.toBeNull()
     expect(sendContact).not.toHaveBeenCalled()
+  })
+
+  it('回信邮箱输入时就在框下给一句提示（与服务端同规则：域名含「.」、无引号 / 分号 / 括号）', async () => {
+    await openDialog()
+    for (const bad of ['a@b', 'a;b@c.com', 'a(b)@c.com', 'a"b@c.com']) {
+      await typeInto(q<HTMLInputElement>('[data-contact-email]'), bad)
+      expect(q('[data-contact-email-hint]'), bad).not.toBeNull()
+    }
+    await typeInto(q<HTMLInputElement>('[data-contact-email]'), 'me@example.org')
+    expect(q('[data-contact-email-hint]')).toBeNull()
   })
 
   it('回信邮箱格式不对：本机先挡，不发', async () => {
@@ -381,7 +391,7 @@ describe('对话框的四个状态', () => {
     const [copyContent, copyAddress] = [...fallback.querySelectorAll('button')]
     await click(copyContent)
     await click(copyAddress)
-    expect(writeText.mock.calls.map((c) => c[0])).toEqual(['很重要的一段话', CONTACT_EMAIL])
+    expect(writeText.mock.calls.map((c) => c[0])).toEqual(['很重要的一段话', FEEDBACK_EMAIL])
     expect(copyContent.textContent).toBe(t('contact.copied', { ns: 'dialogs' })) // 复制后自己说「已复制」
 
     // 再试一次 = 又一次发送，带的还是那份草稿
