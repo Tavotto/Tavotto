@@ -401,6 +401,13 @@
       "title": "终止脚本？"
     }
   },
+  "pageEdge": {
+    "height": "高 {{mm}} mm",
+    "heightPrefix": "高 ",
+    "snapTo": "吸附到 {{name}}",
+    "width": "宽 {{mm}} mm",
+    "widthPrefix": "宽 "
+  },
   "panelBadge": {
     "approxPreview": "近似预览",
     "approxPreviewHint": "画布暂显示磁盘上的原图，未反映图内修改。",
@@ -562,8 +569,6 @@
     }
   },
   "save": {
-    "svgSnapshotWarning": "排版已保存：{{name}}。以下来源的 SVG 快照未能保留：{{sources}}。重新打开后，导出这些来源的 SVG 可能需要你明确重新运行脚本。",
-    "svgSnapshotPill": "SVG 快照未完整保留",
     "conflict": "排版已在别处改过，请先处理冲突。",
     "doneLocal": "已保存在本机（没有打开项目）",
     "doneProject": "已保存到项目：{{file}}",
@@ -1125,6 +1130,8 @@
       "distFailed": "装完后核对发现，装上的包和你确认的计划不一致。",
       "detail": {
         "listIntro": "这些库的来源还没法确定，Tavotto 不会替你装：",
+        "notPip": "这个脚本需要 {{name}}，内置 Python 装不了，请用装有它的环境。",
+        "localMissing": "找不到本地模块 {{name}}（脚本把 {{dirs}} 加进了搜索路径，请确认这个文件夹在）。",
         "userSpecifiedBadge": "用户指定，未经核实",
         "trustNote": "你填的包名不算可信来源：Tavotto 没法核实它们，所以装之前会让你再确认一次。",
         "alternatives": "有几个包都能提供它，先按 {{distribution}} 装；想换别的，请改用你自己的 Python 环境。"

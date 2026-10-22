@@ -1020,11 +1020,11 @@ describe('遥测 document_saved / recovery_action（ADR 0041）', () => {
 })
 
 
-describe('Autosave SVG snapshot warnings', () => {
+describe('Autosave SVG snapshot gaps stay silent', () => {
   beforeEach(reset)
   afterEach(() => { globalThis.fetch = baseFetchImpl })
 
-  it('preserves the response fact, clears it after a clean save, and never emits a save-error event', async () => {
+  it('records nothing in the store and never emits a save-error event', async () => {
     let warnings = ['source.pdf']
     globalThis.fetch = (async (url, init) => {
       const res = await baseFetchImpl(url, init)
@@ -1040,10 +1040,10 @@ describe('Autosave SVG snapshot warnings', () => {
       useDocumentStore.getState().commit(literal('text'), (d) => { d.objects.push(text('svg', 'SVG')) })
       await saveNow()
       expect(useDocumentStore.getState().saveState).toBe('saved')
-      expect(useDocumentStore.getState().svgSnapshotWarnings).toEqual(['source.pdf'])
+      expect('svgSnapshotWarnings' in useDocumentStore.getState()).toBe(false)
       warnings = []
       await saveNow()
-      expect(useDocumentStore.getState().svgSnapshotWarnings).toEqual([])
+      expect(useDocumentStore.getState().saveState).toBe('saved')
       expect(errors).toEqual([])
     } finally {
       window.removeEventListener('tavotto:autosave-error', onError)

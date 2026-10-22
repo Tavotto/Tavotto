@@ -1,0 +1,242 @@
+{
+  "head": "209c59c80d64f3f3bb0af83e2eb88b0c0c1f2429",
+  "run_id": 39416447642,
+  "method": "Adjacent completed-node timestamps, charged to the ending node file. Includes prior teardown, current setup/call, logging and scheduling overhead; not exact call duration. Initial collection and final session cleanup excluded. Last uncompleted file is a lower bound.",
+  "windows_jobs": {
+    "1": 118606531102,
+    "2": 118606531082,
+    "3": 118606531294
+  },
+  "macos_jobs": {
+    "1": 118606531037,
+    "2": 118606531312,
+    "3": 118606531022
+  },
+  "profiles": {
+    "windows": [
+      {
+        "shard": 1,
+        "log_sha256_lf_normalized": "91a81d591765fe2015afa7b4867d2e9b21060d7da498153038c70bacbc869ae3",
+        "expected_nodes": 6463,
+        "completed_nodes": 6463,
+        "complete": true,
+        "expected_files": 172,
+        "observed_files": 172,
+        "unfinished_file": null,
+        "observed_minutes": 72.17
+      },
+      {
+        "shard": 2,
+        "log_sha256_lf_normalized": "2055547b93b26e0352777c4c4af4ed08961018c735d31cd25bd8d765f3e3f3ea",
+        "expected_nodes": 5652,
+        "completed_nodes": 5597,
+        "complete": false,
+        "expected_files": 181,
+        "observed_files": 180,
+        "unfinished_file": "tests/test_worker_svg_canvas.py",
+        "observed_minutes": 88.087
+      },
+      {
+        "shard": 3,
+        "log_sha256_lf_normalized": "7e65261b42bdfd71081b17eaef5255affa2ff42c401eb626226f6ac7b3a79efd",
+        "expected_nodes": 5838,
+        "completed_nodes": 5838,
+        "complete": true,
+        "expected_files": 173,
+        "observed_files": 173,
+        "unfinished_file": null,
+        "observed_minutes": 64.811
+      }
+    ],
+    "macos": [
+      {
+        "shard": 1,
+        "log_sha256_lf_normalized": "c519ee4765c662a06a6bbb1f905caf4f0913b2b8a2b4210ff81330d5759b6b74",
+        "expected_nodes": 6463,
+        "completed_nodes": 6463,
+        "complete": true,
+        "expected_files": 172,
+        "observed_files": 172,
+        "unfinished_file": null,
+        "observed_minutes": 50.342
+      },
+      {
+        "shard": 2,
+        "log_sha256_lf_normalized": "acdbf412bf12aae5d360b6ab3379993a96b30d634e48860b040bfcb820432a56",
+        "expected_nodes": 5652,
+        "completed_nodes": 5652,
+        "complete": true,
+        "expected_files": 181,
+        "observed_files": 181,
+        "unfinished_file": null,
+        "observed_minutes": 67.894
+      },
+      {
+        "shard": 3,
+        "log_sha256_lf_normalized": "8ced56c4b6b4de1559aa553d6e14e32470ae4eb8fb918bfa3823136b1238d8a7",
+        "expected_nodes": 5838,
+        "completed_nodes": 5838,
+        "complete": true,
+        "expected_files": 173,
+        "observed_files": 173,
+        "unfinished_file": null,
+        "observed_minutes": 60.924
+      }
+    ]
+  },
+  "missing_windows_complete_files": [
+    "tests/test_worker_svg_canvas.py",
+    "tests/test_workerd_packaging.py"
+  ],
+  "missing_windows_forecast": "macOS complete cost * maximum shared canvas-node ratio (1.460125860344757), minimum1s; modeled, not observed Windows duration",
+  "missing_windows_forecast_seconds": {
+    "tests/test_worker_svg_canvas.py": 207.015,
+    "tests/test_workerd_packaging.py": 13.99
+  },
+  "selected_scenarios": [
+    {
+      "weights": "old",
+      "shards": 3,
+      "files_per_shard": [
+        172,
+        181,
+        173
+      ],
+      "estimated_minutes": [
+        40.15,
+        40.15,
+        40.15
+      ],
+      "windows_replay_minutes": [
+        72.17,
+        91.15,
+        64.81
+      ],
+      "macos_replay_minutes": [
+        50.34,
+        67.89,
+        60.92
+      ],
+      "coverage_files": 526,
+      "coverage_disjoint": true
+    },
+    {
+      "weights": "old",
+      "shards": 4,
+      "files_per_shard": [
+        128,
+        130,
+        130,
+        138
+      ],
+      "estimated_minutes": [
+        30.11,
+        30.11,
+        30.11,
+        30.11
+      ],
+      "windows_replay_minutes": [
+        47.06,
+        63.71,
+        55.89,
+        61.47
+      ],
+      "macos_replay_minutes": [
+        34.23,
+        50.67,
+        41.8,
+        52.45
+      ],
+      "coverage_files": 526,
+      "coverage_disjoint": true
+    }
+  ],
+  "weights_file_unchanged": true,
+  "coverage_files": 526,
+  "new_native_validation": "pending new-head CI; replay is a model, not a pass",
+  "local_validation": {
+    "contracts": {
+      "start": "2026-10-20T14:58:34.215260+00:00",
+      "end": "2026-10-20T14:58:42.939075+00:00",
+      "command": [
+        "/workspace/Tavotto/.venv/bin/python",
+        "-m",
+        "pytest",
+        "tests/test_merge_queue_workflows.py",
+        "tests/test_ci_baseline.py",
+        "tests/test_pytest_shard.py",
+        "tests/test_agents_rules_index.py",
+        "-vv",
+        "--durations=10"
+      ],
+      "exit_code": 0
+    },
+    "actual_collection": {
+      "full_nodeids": 17953,
+      "full_files": 526,
+      "full_node_set_sha256": "c9e68c0ed0ae5fc1e74884071adcb0a3de637a0fbc41f2a3c95d64efd2e043ab",
+      "partitions": {
+        "3": {
+          "node_counts": [
+            6463,
+            5652,
+            5838
+          ],
+          "file_counts": [
+            172,
+            181,
+            173
+          ],
+          "union_equals_full": true,
+          "pairwise_disjoint": true
+        },
+        "4": {
+          "node_counts": [
+            5932,
+            4306,
+            3294,
+            4421
+          ],
+          "file_counts": [
+            128,
+            130,
+            130,
+            138
+          ],
+          "union_equals_full": true,
+          "pairwise_disjoint": true
+        }
+      },
+      "test_execution": false,
+      "pytest_exit_code": 0
+    },
+    "missing_four_counterexample": {
+      "utc": "2026-10-20T14:57:42.855739+00:00",
+      "mutation": "remove platform shard4 while command and expected contract require4",
+      "exit_code": 1,
+      "expected_assertion": true,
+      "source_sha256": "9c9f2bfe747d23de3500e96205d6952b3d1af4b0e525952da7ebac0aeb172be9",
+      "mutant_sha256": "dd121ece53500a42ec3f4fbd87f2350c63c19f17ed19d6c30f6400a7c3af3dda",
+      "restored_exactly": true
+    },
+    "scope": {
+      "ci_executable_changes_only": {
+        "removed": [
+          "shard: [1, 2, 3]",
+          "python -m pytest --shard=${{ matrix.shard }}/3"
+        ],
+        "added": [
+          "shard: [1, 2, 3, 4]",
+          "python -m pytest --shard=${{ matrix.shard }}/4"
+        ]
+      },
+      "weights_unchanged": true,
+      "weights_sha256": "4a10bca5b1b4d35bc583d5f7982b7f3f53660c93c15813268679766ac2b41938",
+      "workflow_sha256": "9c9f2bfe747d23de3500e96205d6952b3d1af4b0e525952da7ebac0aeb172be9",
+      "required_checks_needs_events_permissions_timeouts_unchanged": true
+    },
+    "ruff_check": 0,
+    "ruff_format_check": 0,
+    "guidance_budget_command": 0
+  }
+}

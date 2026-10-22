@@ -7,15 +7,15 @@ import {
   type PointerEvent,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, FileCodeCorner, GripVertical, Image } from '@/components/ui/icons'
+import { Check, FileCodeCorner, GripVertical, Image, LoaderCircle } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { PRODUCT_NAME } from '@/lib/brand'
-import { DURATION } from '@/lib/motion'
+import { DURATION, tween } from '@/lib/motion'
 import { DEMO_FIGURE } from '@/lib/onboarding/demoFigure'
 import { markDemoStep } from '@/lib/onboarding/tutorial'
 import { cn } from '@/lib/utils'
 import { useOnboardingStore } from '@/store/onboardingStore'
-import { Button } from '../ui/Button'
+import { ProgressBar } from '../ui/ProgressBar'
 import { DemoFigure } from './DemoFigure'
 import { useTrackedRect } from './tutorialGeometry'
 import { FigureBoundary, FigureStage } from './tutorialLayout'
@@ -26,11 +26,14 @@ import { useStepFeedback } from './stepFeedback'
  *
  * **这是教程里的一个逻辑文件对象，不是系统文件拖放**：没有文件选择器、不读任何本机文件、
  * 不调用脚本运行接口。卡片真的落进投放框（松手点或卡片中心在框里）才算完成——悬停不算、
- * 计时不算；放错了平滑回到原位。键盘：空格拿起、方向键移动、回车放下、Esc 取消；
- * 不方便拖的人点「直接使用示例」，是同一个结果。
+ * 计时不算；放错了平滑回到原位。键盘：空格拿起、方向键移动、回车放下、Esc 取消。
+ * 没有「直接使用示例」之类的捷径：教程模拟不了「选脚本」，真实使用里那一步也不难懂，
+ * 所以这一步只教拖放（联合创始人原型的设计取舍）。
  *
- * 完成后出现的是内置演示图（`lib/onboarding/demoFigure`，按真实脚本量出来的几何），
- * 不是重新执行出来的——没有渲染这一步，所以也没有假的进度条。
+ * 放下之后先过一段**演示用的「渲染中」**（`RENDER_MS`，进度按时间走、不读任何作业），
+ * 走完才算完成、出现内置演示图（`lib/onboarding/demoFigure`，按真实脚本量出来的几何）。
+ * 这段是有意的：让人感到「脚本 → 渲染 → 图」，也把整个使用切成【导入】+【调整】两段。
+ * 不执行任何脚本；减少动态效果时直接落到完成（`tween` 的契约）。
  */
 
 interface Drag {
@@ -47,6 +50,8 @@ interface Drag {
 const KEY_STEP = 30
 const KEY_STEP_FINE = 10
 const MOVE_THRESHOLD = 6
+/** 演示「渲染中」的时长：原型的 1.8 秒（不是动效档位，是一段剧情，所以不取 DURATION） */
+const RENDER_MS = 1800
 
 export function DemoImportStep() {
   const { t } = useTranslation('dialogs')
@@ -59,6 +64,9 @@ export function DemoImportStep() {
   const [drag, setDragState] = useState<Drag | null>(null)
   const dragRef = useRef<Drag | null>(null)
   const [returning, setReturning] = useState(false)
+  /** 演示渲染的进度 0–100；null = 没在渲染 */
+  const [render, setRender] = useState<number | null>(null)
+  const stopRender = useRef<(() => void) | null>(null)
   const name = DEMO_FIGURE.script
 
   const setDrag = useCallback((d: Drag | null) => {
@@ -66,12 +74,27 @@ export function DemoImportStep() {
     setDragState(d)
   }, [])
 
+  /** 放进去了：先演一段渲染，走完才记完成 */
   const succeed = useCallback(() => {
     setDrag(null)
     fb.notice(null)
-    markDemoStep('demo_import')
-    fb.focusNext()
-  }, [fb, setDrag])
+    setRender(0)
+    fb.announce(t('onboarding.import.rendering'))
+    stopRender.current = tween({
+      duration: RENDER_MS,
+      ease: (x) => x,
+      onUpdate: (p) => setRender(Math.round(p * 100)),
+      onDone: () => {
+        stopRender.current = null
+        setRender(null)
+        markDemoStep('demo_import')
+        fb.focusNext()
+      },
+    })
+  }, [fb, setDrag, t])
+
+  // 渲染途中离开这一步（返回 / 跳过 / 收起）：停掉计时，不在别处补记完成
+  useEffect(() => () => stopRender.current?.(), [])
 
   /** 放下点或卡片中心落在投放框里 */
   const inside = useCallback((x: number | null, y: number | null): boolean => {
@@ -121,7 +144,7 @@ export function DemoImportStep() {
   }, [returning])
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
-    if (done || dragRef.current || !e.isPrimary || e.button !== 0) return
+    if (done || render !== null || dragRef.current || !e.isPrimary || e.button !== 0) return
     e.preventDefault()
     // 回位途中再抓：不等动画走完（手比动画快是常事），从原位重新算起
     setReturning(false)
@@ -154,7 +177,7 @@ export function DemoImportStep() {
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (done) return
+    if (done || render !== null) return
     const d = dragRef.current
     const pick = e.key === ' ' || e.key === 'Enter'
     if (!d) {
@@ -211,8 +234,9 @@ export function DemoImportStep() {
   }
 
   // 箭头：从卡片右缘画到投放框上沿，按两者此刻的位置现算（不写死坐标）
-  const cardRect = useTrackedRect(card, host, [done])
-  const zoneRect = useTrackedRect(zone, host, [done])
+  const imported = done || render !== null
+  const cardRect = useTrackedRect(card, host, [imported])
+  const zoneRect = useTrackedRect(zone, host, [imported])
 
   const lifted = drag !== null
   return (
@@ -220,26 +244,49 @@ export function DemoImportStep() {
       <h1 id="tutorial-task-title" className="sr-only">
         {t('onboarding.import.task')}
       </h1>
-      {done ? (
+      {imported ? (
         <>
-          <div className="flex h-14 shrink-0 items-end justify-center pb-2">
-            <span
-              data-tutorial-imported=""
-              className="inline-flex items-center gap-2.5 rounded-md bg-surface-2 py-1.5 pr-2 pl-1.5 text-base text-ink inset-ring inset-ring-border"
-            >
-              <span className="grid h-7 w-7 place-items-center rounded-sm bg-field text-ink-2">
-                <FileCodeCorner size={ICON_SIZE.sm} />
-              </span>
-              <span className="font-mono font-medium">{name}</span>
-              <span className="text-sm text-ink-3">{t('onboarding.import.builtin')}</span>
-              <span className="grid h-[18px] w-[18px] place-items-center rounded-full bg-ok text-surface">
-                <Check size={ICON_SIZE.xs} />
-              </span>
-            </span>
-          </div>
+          {/* 与第二、三步的任务标题同一位置（原型：渲染中有这句，出图后留白，图不跳） */}
+          <p
+            aria-hidden="true"
+            className={cn('type-display mt-12 shrink-0 text-center [@media(max-height:720px)]:mt-9', render === null && 'invisible')}
+          >
+            {t('onboarding.import.renderingTitle')}
+          </p>
           <FigureBoundary>
-            <FigureStage className="mx-auto w-full max-w-[900px] flex-1 animate-rise-in px-6 pt-3 pb-1 [@media(min-height:760px)]:max-h-[540px]" frameClassName="rounded-xs inset-ring inset-ring-border">
-              <DemoFigure demo={demo} label={t('onboarding.import.figureLabel', { name })} className="block h-full w-full" />
+            <FigureStage
+              className="mx-auto w-full max-w-[900px] flex-1 px-6 pt-8 pb-1 [@media(min-height:760px)]:max-h-[540px]"
+              frameClassName={cn('rounded-xs', render === null && 'inset-ring inset-ring-border')}
+            >
+              {render !== null ? (
+                <div
+                  data-tutorial-rendering=""
+                  className="absolute inset-0 flex animate-fade-in flex-col rounded-lg bg-surface p-3 shadow-[0_8px_24px_color-mix(in_srgb,var(--color-shadow)_6%,transparent)] inset-ring inset-ring-border"
+                >
+                  <span data-tutorial-imported="" className="flex items-center gap-2.5 text-base text-ink">
+                    <span className="grid h-8 w-8 place-items-center rounded-md bg-field text-ink-2">
+                      <FileCodeCorner size={ICON_SIZE.sm} />
+                    </span>
+                    <span className="font-mono font-medium">{name}</span>
+                    <span className="ml-auto text-sm text-ink-3">{t('onboarding.import.builtin')}</span>
+                    <span className="mr-1 grid h-[18px] w-[18px] place-items-center rounded-full bg-ok text-surface">
+                      <Check size={ICON_SIZE.xs} />
+                    </span>
+                  </span>
+                  <div role="status" className="flex flex-1 flex-col items-center justify-center gap-3 text-base text-ink-2">
+                    <LoaderCircle size={ICON_SIZE.lg} className="animate-spin text-ink-3 motion-reduce:animate-none" aria-hidden="true" />
+                    {t('onboarding.import.rendering')}
+                  </div>
+                  <div className="flex items-center gap-3 px-1 text-sm text-ink-3">
+                    <ProgressBar pct={render} label={t('onboarding.import.renderProgress')} className="flex-1" />
+                    <span aria-hidden="true" className="w-9 text-right tabular-nums">
+                      {render}%
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <DemoFigure demo={demo} label={t('onboarding.import.figureLabel', { name })} className="block h-full w-full animate-rise-in" />
+              )}
             </FigureStage>
           </FigureBoundary>
         </>
@@ -261,13 +308,6 @@ export function DemoImportStep() {
               <Image size={ICON_SIZE.lg} className="mb-3 h-12 w-12 text-ink-faint" aria-hidden="true" />
               <p className="type-display">{t('onboarding.import.zoneTitle')}</p>
               <p className="mt-2 type-heading font-normal text-ink-3">{t('onboarding.import.zoneBody', { product: PRODUCT_NAME })}</p>
-              {/* 拖不动的人（触控板 / 读屏 / 不想拖）的等价入口：放在投放框里、拖动时淡出，不和卡片抢位置 */}
-              <div className={cn('mt-5 flex items-center gap-3 transition-opacity', lifted ? 'opacity-0' : 'pointer-events-auto')}>
-                <span className="text-base text-ink-3">{t('onboarding.import.or')}</span>
-                <Button variant="secondary" size="lg" data-tutorial-use-sample="" tabIndex={lifted ? -1 : undefined} onClick={succeed}>
-                  {t('onboarding.import.useSample')}
-                </Button>
-              </div>
             </div>
           </div>
           <HintArrow from={cardRect} to={zoneRect} hidden={lifted} />

@@ -9,7 +9,10 @@
     "delete": "Delete",
     "refresh": "Refresh",
     "reload": "Reload",
-    "save": "Save"
+    "save": "Save",
+    "windowMaximize": "Maximize",
+    "windowMinimize": "Minimize",
+    "windowRestore": "Restore"
   },
   "colorField": {
     "picker": "{{label}}: colour picker",

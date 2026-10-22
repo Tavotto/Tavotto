@@ -652,19 +652,18 @@ describe('localStorage 写失败', () => {
 })
 
 
-describe('SVG snapshot warnings never turn a saved layout into a failure', () => {
-  it.each([true, false])('explicit save reports missing SVG snapshots (project=%s)', async (inProject) => {
+describe('missing SVG snapshots stay silent on save (they are explained when exporting SVG)', () => {
+  it.each([true, false])('explicit save shows the plain done message (project=%s)', async (inProject) => {
     if (inProject) bind()
     else setCurrentProjectId(null)
     svgWarnings = ['figures/source.pdf']
     edit('t-svg')
     await runManualSave()
     expect(s().saveState).toBe('saved')
-    expect(s().svgSnapshotWarnings).toEqual(['figures/source.pdf'])
-    expect(statusText()).toContain('排版已保存')
-    expect(statusText()).toContain('figures/source.pdf')
-    expect(statusText()).toContain('重新运行脚本')
-    expect(useUiStore.getState().statusTone).toBe('info')
+    expect('svgSnapshotWarnings' in s()).toBe(false)
+    expect(statusText()).not.toContain('figures/source.pdf')
+    expect(statusText()).not.toContain('SVG')
+    expect(useUiStore.getState().statusTone).toBe('done')
     expect(inProject ? written.length : autosave.size).toBe(1)
   })
 })

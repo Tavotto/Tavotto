@@ -27,6 +27,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import compat_explore_data as data_source
 import compat_guardian as cg
 
 #: 父用例的 `__main__` 守卫的规范文本。放成常量：这个模块只**识别**守卫，自己不是入口脚本，
@@ -61,6 +62,8 @@ class Parent:
     entry: str
     executable: bool
     provenance: dict = field(default_factory=dict)
+    #: The registered corpus case as committed (mutations, export_formats, stem...); empty for fakes.
+    case_spec: dict = field(default_factory=dict)
 
 
 def load_parent(suite: str, case_id: str) -> Parent:
@@ -91,7 +94,9 @@ def load_parent(suite: str, case_id: str) -> Parent:
         "repository_license_declaration": "AGPL-3.0-only",
         "individual_upstream_license_verified": False,
     }
-    return Parent(suite, case_id, category, files, script, entry, executable, provenance)
+    return Parent(
+        suite, case_id, category, files, script, entry, executable, provenance, dict(case)
+    )
 
 
 def default_parents() -> list[Parent]:
@@ -385,7 +390,7 @@ def _apply_style(ctx: Ctx, rng: random.Random) -> None:
     owner[start:start] = ast.parse(f"{ctx.alias()}.style.use({style!r})").body
 
 
-TRANSFORMS: tuple[Transform, ...] = (
+_CORE_TRANSFORMS: tuple[Transform, ...] = (
     Transform(
         "wrap_main",
         "entry_form",
@@ -477,6 +482,11 @@ TRANSFORMS: tuple[Transform, ...] = (
         "rename the pyplot (and numpy) import aliases",
     ),
 )
+#: CG-07：data_source 家族的读文件写法（compat_explore_data.py）；同轴互斥，与 inline_to_file 不成对。
+TRANSFORMS: tuple[Transform, ...] = _CORE_TRANSFORMS + tuple(
+    Transform(s.name, "data_source", "data_source", True, s.order, s.applies, s.apply, s.summary)
+    for s in data_source.SPECS
+)
 BY_NAME = {t.name: t for t in TRANSFORMS}
 
 
@@ -522,6 +532,7 @@ def build(parent: Parent, chain: tuple[str, ...], seed: int) -> dict:
         {t.axis for t in ordered}
     ) != len(ordered):
         raise cg.EvidenceError(f"chain must move distinct axes in canonical order: {chain}")
+    parent_signature = ast_signature(parent.files[parent.script].decode("utf-8"))
     files = dict(parent.files)
     ctx = Ctx(ast.parse(files[parent.script].decode("utf-8")), files, parent.script, parent.entry)
     steps = []
@@ -529,7 +540,9 @@ def build(parent: Parent, chain: tuple[str, ...], seed: int) -> dict:
         if not t.applies(ctx):
             raise cg.EvidenceError(f"{t.name} does not apply to {parent.case} at this point")
         ctx.params = {}
-        t.apply(ctx, _rng(seed, parent.suite, parent.case, t.name))
+        # 参数由 seed + 父本**结构**（规范化 AST 签名）+ 变换名派生，不用 case id：
+        # 结构相同的孪生父本拿到相同参数，才会被「轴向量 + AST 签名」去重
+        t.apply(ctx, _rng(seed, parent_signature, t.name))
         steps.append(
             {
                 "name": t.name,
@@ -572,7 +585,7 @@ def build(parent: Parent, chain: tuple[str, ...], seed: int) -> dict:
         },
     }
     core["static_checks"] = {"python_ast": "passed", "compile": "passed", "execution": "not_run"}
-    core["execution_plan"] = execution_plan(files, parent.executable, [st["name"] for st in steps])
+    core["execution_plan"] = execution_plan(files, parent.executable)
     return {"candidate_id": cg.canonical(core)[:20], **core}, files
 
 
@@ -667,7 +680,8 @@ def build_reduced(parent: Parent, chain: tuple[str, ...], seed: int, reduction: 
 
 
 def generator_digest() -> str:
-    return cg.digest(Path(__file__).read_bytes())
+    # 数据家族住在兄弟模块里，它的字节同样决定候选的内容
+    return cg.digest(Path(__file__).read_bytes() + Path(data_source.__file__).read_bytes())
 
 
 #: Names whose use makes a script's behavior depend on more than its own bytes.
@@ -687,23 +701,9 @@ _UNCERTAIN_IMPORTS = {
 }
 
 
-#: Transforms whose effect `compat_explore.compare` cannot observe (it compares figure counts,
-#: titles and written paths, never line widths, colors or other style). Executing them could only
-#: ever answer `no_difference`, which would read as "style agrees"; they stay static-only.
-STYLE_UNOBSERVED = ("rcparams", "style_use")
-
-
-def execution_plan(
-    files: dict[str, bytes], parent_executable: bool, chain: list[str] | tuple[str, ...] = ()
-) -> dict:
+def execution_plan(files: dict[str, bytes], parent_executable: bool) -> dict:
     """Decide executable vs static-only. Uncertain or non-deterministic means static only."""
     reasons = []
-    for name in chain:
-        if name in STYLE_UNOBSERVED:
-            reasons.append(
-                f"{name}: style axis is not compared (explore observes figure counts, titles "
-                "and paths only), so a run could not detect a style regression"
-            )
     if not parent_executable:
         reasons.append("parent is a V2 session fixture; explore does not drive the V2 adapter")
     for rel, data in sorted(files.items()):
@@ -841,6 +841,7 @@ def coverage(parents: list[Parent], candidates: list[dict], dropped: list[dict])
             "used_by_manifest_category": dict(sorted(by_category_used.items())),
             "corpus_by_manifest_category": dict(sorted(by_category_all.items())),
         },
+        "unavailable_transforms": data_source.unavailable(),
         "dedup": {
             "generated": len(candidates) + len(dropped),
             "unique": len(candidates),

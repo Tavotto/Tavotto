@@ -52,6 +52,12 @@
   （`projectenv` 不 import `userenvs`：它要 import 本模块的体检）。`TAVOTTO_USER_ENV_DISCOVERY=0` 整个关掉，
   **测试进程默认关**（`tests/conftest.py`，否则用例结果随 CI 机器上碰巧装了什么而变）；`script` 可来自请求体，
   `discover()` 先过 `projectenv.contained_path()`，下游只用净化器回的值（CodeQL `py/path-injection`）。
+  **Windows 发现补强与落选原因（ADR 0079 修订 2026-10-21，用户裁决「脚本默认在它原本能跑的环境里运行」）**：
+  `.condarc`（`%CONDARC%` / `~/.condarc`）的 `envs_dirs` / `pkgs_dirs` 旁的根、PATH 里 `conda.exe` / `mamba.exe` /
+  `micromamba.exe` 反推安装根（只 `is_file`，**不执行**）、PEP 514 注册表（`userenvs._windows_registry_pythons`，来源
+  `windows_registry`，第 3 档）；`rank()` 第一把尺子是体检确认程度（确认能跑 > 没量到 > 确认跑不了），不碰「内置能跑就不换」
+  （`runs_now` 分支）；被评估没选用的候选各有稳定码原因（`userenvs.REJECT_CODES`），在 `pool.EnvironmentDecision.rejected`，不带路径。
+  看护 `tests/test_user_environment_windows_discovery.py`。
   **映射不到包名的 import 也触发（ADR 0079 修订 2026-09-25，QA ENV-08-B1）**：计划 `nothing_needed` 但有无条件
   `unknown` 时，先经 `deprepair.unknown_imports_missing` → `userenvs.imports_missing` 在此刻的解释器里量一次（同一条体检、
   同一个缓存；内置 runtime 按 worker 的 `child_env()` / `child_args()` 量，`probe_environment(bundled=True)`）；只有**确实**
@@ -687,3 +693,17 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   hash 锁的 `provider_decisions` 与已扫描 import 的 `install_only` 按同一份实际安装集合 `installing`（整份选中锁）生成，不拿 active 环境里另一种 provider 的满足状态抵消本次安装记录（#970）；不因此增加锁外需求或改变仅声明依赖的记账规则。
 - 看护：`tests/test_dependency_origin_install.py`（计划层，四 provider × 声明 / 观察、editable / 本地 wheel / VCS、本地 helper / namespace、显式选择）、
   `tests/test_dependency_provider_scopes.py`（真 generation + 离线 pip：安装集合 = 脚本实际 provider = 回执；跨作用域切换；失败不动旧 active）。
+
+## 声明读取边界与「不送 pip」的名字（ADR 0061 §十，2026-10-21）
+
+- **声明只读到最近的项目标志**：`depresolve._decl_dirs` 从脚本目录往上，到含 `PROJECT_MARKERS`（`.git` / `pyproject.toml` / `setup.cfg` /
+  `setup.py`）的目录为止；`is_broad_folder`（家目录、桌面 / 文档 / 下载、盘符根）一律不读，遍历到就停。`project_declared()` 与
+  `declared_intents()` 共用，PEP 723 只看脚本本身。
+- **三类名字不送 pip**：`NOT_PIP_INSTALLABLE`（ROOT；声明里的同名发行包也过滤，进 `JointPlan.not_pip_installable`）、脚本字面量 `sys.path`
+  目录里找不到的 import（`origins[].local_module_missing`）、没有可信安装名的表外名（只有预填，用户确认才成 `user_specified`）。前两类不预填，
+  `user_specified` 对它们抛 `UserSpecifiedRejected(NOT_APPLICABLE)`。
+- **`importscan` 的字面量搜索根**只认 `__file__` 目录 + 字符串字面量（`_literal_dir`），至多 `_MAX_LITERAL_ROOTS` 个，词法钉在项目内；
+  新增标签 `sys_path_literal`（证据码同名）。
+- **找不到的包点名**：`deprepair.not_found_detail` → `RepairError.extra["not_found"]` → 终态进度 `not_found`；前端 `repairShortMessage(code, notFound)`。
+  不做「剔除后重试」（会破坏 `generation_atomic` 与装后核验，理由见 ADR 0061 §十）。
+- 看护：`tests/test_dependency_declaration_boundary.py`、`web/src/components/repairNotFoundNamed.test.tsx`。

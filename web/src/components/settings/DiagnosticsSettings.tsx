@@ -289,7 +289,7 @@ async function downloadDiagnostics(): Promise<void> {
 }
 
 /**
- * 「诊断报告」组：两行。
+ * 「诊断报告」组，自上而下（2026-10-21 起）：发送问题反馈 / 诊断摘要 / 联系维护者（仅中文）/ 诊断包。
  *
  *   * **诊断包**：导出（secondary）；结果（「诊断包已生成」/ 失败的人话）就是这一行的现状——此前它挤在分区头的
  *     按钮组里（2026-10-07 设计审计 §9.1）。问号说清包里有什么、没有什么。
@@ -326,31 +326,18 @@ function DiagnosticsReportSection() {
   return (
     <FormSection title={st('diagnostics.reportTitle')} data-settings-anchor="diagnostics.report">
       <FieldGroup>
-        <SettingRow
-          label={st('diagnostics.bundleLabel')}
-          help={
-            <p>
-              {st('about.diagnosticsHintBefore')}
-              <strong className="font-medium text-ink">{st('about.diagnosticsHintStrong')}</strong>
-              {st('about.diagnosticsHintAfter')}
-            </p>
-          }
-          helpLabel={st('about.diagnosticsHelpAria')}
-          status={
-            bundle === 'done' ? (
-              <span role="status">{st('about.exported')}</span>
-            ) : bundle === 'error' ? (
-              <span role="alert" className="text-danger-content">
-                {st('about.exportFailed')}
-              </span>
-            ) : undefined
-          }
-          data-diagnostics-bundle
-        >
-          <Button variant="secondary" size="sm" onClick={exportBundle} disabled={bundle === 'busy'}>
-            {bundle === 'busy' ? st('about.exporting') : st('about.exportBundle')}
-          </Button>
-        </SettingRow>
+        {/* 第一行（2026-10-21，beta 0.19.0b1 反馈：最该点的入口放最前）。能力说明在 App 启动时就取了，设置页打开时基本已就绪；没取到则不画 */}
+        {sendCap && (
+          <SettingRow
+            label={st('diagnostics.send.row')}
+            description={st('diagnostics.send.rowHint')}
+            data-diagnostics-send
+          >
+            <Button variant="secondary" size="sm" onClick={() => useDiagSendStore.getState().setOpen(true)} data-diagnostics-send-open>
+              {st('diagnostics.send.open')}
+            </Button>
+          </SettingRow>
+        )}
         <SettingRow
           label={st('diagnostics.summaryLabel')}
           status={
@@ -384,7 +371,7 @@ function DiagnosticsReportSection() {
             </>
           )}
         </SettingRow>
-        {/* 联系方式不依赖上传通道：发送功能关着也在；仅中文界面。放在发送行之前，让发送行仍是组的最后一行 */}
+        {/* 联系方式不依赖上传通道：发送功能关着也在；仅中文界面 */}
         {showContact && (
           <SettingRow
             label={st('diagnostics.send.contact.row')}
@@ -398,18 +385,31 @@ function DiagnosticsReportSection() {
             </span>
           </SettingRow>
         )}
-        {/* 放在组的最后一行：能力说明是异步取到的，它出现时上面的行一个像素都不动 */}
-        {sendCap && (
-          <SettingRow
-            label={st('diagnostics.send.row')}
-            description={st('diagnostics.send.rowHint')}
-            data-diagnostics-send
-          >
-            <Button variant="secondary" size="sm" onClick={() => useDiagSendStore.getState().setOpen(true)} data-diagnostics-send-open>
-              {st('diagnostics.send.open')}
-            </Button>
-          </SettingRow>
-        )}
+        <SettingRow
+          label={st('diagnostics.bundleLabel')}
+          help={
+            <p>
+              {st('about.diagnosticsHintBefore')}
+              <strong className="font-medium text-ink">{st('about.diagnosticsHintStrong')}</strong>
+              {st('about.diagnosticsHintAfter')}
+            </p>
+          }
+          helpLabel={st('about.diagnosticsHelpAria')}
+          status={
+            bundle === 'done' ? (
+              <span role="status">{st('about.exported')}</span>
+            ) : bundle === 'error' ? (
+              <span role="alert" className="text-danger-content">
+                {st('about.exportFailed')}
+              </span>
+            ) : undefined
+          }
+          data-diagnostics-bundle
+        >
+          <Button variant="secondary" size="sm" onClick={exportBundle} disabled={bundle === 'busy'}>
+            {bundle === 'busy' ? st('about.exporting') : st('about.exportBundle')}
+          </Button>
+        </SettingRow>
       </FieldGroup>
     </FormSection>
   )

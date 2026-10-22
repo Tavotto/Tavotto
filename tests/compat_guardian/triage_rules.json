@@ -286,6 +286,124 @@
       "why": "A native figure title is absent from every Tavotto manifest."
     },
     {
+      "id": "x.pixel_mismatch",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "pixel_mismatch"
+        }
+      ],
+      "family": "export_or_fidelity",
+      "stage": "fidelity",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/worker.py",
+        "src/tavotto/engine/overrides.py"
+      ],
+      "next_action": "Open the control/tavotto/diff PNGs in the evidence; check whether the script's style or rcParams reach the Tavotto-rendered figure the way they reach native savefig.",
+      "why": "The zero-patch Tavotto render differs from the native render beyond CompatBench's fidelity tolerance."
+    },
+    {
+      "id": "x.render_failed",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "render_failed"
+        }
+      ],
+      "family": "export_or_fidelity",
+      "stage": "fidelity",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/worker.py"
+      ],
+      "next_action": "Reproduce render_png on this stem in a fresh worker and read the worker error.",
+      "why": "Tavotto could not render the zero-patch PNG that native rendered."
+    },
+    {
+      "id": "x.structure_mismatch",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "structure_mismatch"
+        }
+      ],
+      "family": "manifest_semantics",
+      "stage": "semantic",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/manifest.py"
+      ],
+      "next_action": "Diff the parent and candidate manifests for the listed gid.prop keys; a shape-preserving transform must not change them.",
+      "why": "The shape-preserving candidate's Tavotto manifest differs from its parent's on editable fields."
+    },
+    {
+      "id": "x.edit_failed",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "edit_failed"
+        }
+      ],
+      "family": "editing_capability",
+      "stage": "edit",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/overrides.py",
+        "src/tavotto/engine/worker.py"
+      ],
+      "next_action": "Apply the parent's reviewed mutations on the candidate by hand and compare with the parent; the parent passes CompatBench edit.",
+      "why": "The parent's reviewed mutations no longer apply or revert on a shape-preserving candidate."
+    },
+    {
+      "id": "x.replay_mismatch",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "replay_mismatch"
+        }
+      ],
+      "family": "replay_inconsistency",
+      "stage": "replay",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/worker.py",
+        "src/tavotto/app.py"
+      ],
+      "next_action": "Replay the same patch list on a hot and a fresh worker for the candidate and diff the manifests.",
+      "why": "Hot, clear+replay and fresh-worker manifests disagree on a shape-preserving candidate."
+    },
+    {
+      "id": "x.export_failed",
+      "source": "explore",
+      "when": [
+        {
+          "field": "kind",
+          "op": "eq",
+          "value": "export_failed"
+        }
+      ],
+      "family": "export_or_fidelity",
+      "stage": "export",
+      "confidence": "medium",
+      "modules": [
+        "src/tavotto/engine/worker.py",
+        "src/tavotto/engine/exportjob.py"
+      ],
+      "next_action": "Export the candidate's stem in the parent's formats by hand and read the export warning or decode error.",
+      "why": "The parent's reviewed export formats fail or produce an unreadable file on a shape-preserving candidate."
+    },
+    {
       "id": "x.invalid_candidate",
       "source": "explore",
       "when": [

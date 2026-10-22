@@ -1,0 +1,19 @@
+import pathlib,shutil,subprocess,json,hashlib
+root=pathlib.Path('/tmp/cla-historical-revocation-review');src=root/'service';cases=[
+ {'name':'historical-only-terminal','before':"if(event.action!=='revoke')throw new Rejected('authorization_terminal_revocation_required');",'after':'','pattern':'independent historical path rejects signed enable'},
+ {'name':'historical-original-key','before':'event=await this.control(record,grant,g.hash,now,g.public_key);','after':'event=await this.control(record,grant,g.hash,now);','pattern':'independent historical uses registered original key even when current key signs the exact revoke body'},
+ {'name':'historical-full-chain','before':'const {grant}=await this.history(g,events,now,{publicKey:g.public_key,agreement}),event=','after':'const grant=original,event=','pattern':'independent historical rechecks complete stored chain metadata'},
+ {'name':'historical-commit-revision','before':'...this.s.store.cas(revision),','after':"...this.s.store.guard('1'),",'pattern':'independent historical revision conflict cannot consume predecessor'},
+ {'name':'historical-commit-clock','before':'\x24{DB_NOW}>=? AND','after':'(? IS NOT NULL) AND','pattern':'independent historical database clock is checked again at commit'}
+]
+result=[]
+for case in cases:
+ dst=root/'mutants'/case['name'];dst.mkdir(parents=True,exist_ok=True)
+ for p in ['src','tests','scripts']:shutil.copytree(src/p,dst/p,dirs_exist_ok=True)
+ path=dst/'src/native/delegation.ts';content=path.read_text();start=content.index('async appendHistoricalRevocation(');end=content.index('\n  }',start)+4;segment=content[start:end];assert segment.count(case['before'])==1,(case['name'],segment.count(case['before']))
+ path.write_text(content[:start]+segment.replace(case['before'],case['after'],1)+content[end:])
+ argv=['node','--test','--test-name-pattern='+case['pattern'],'tests/independent-historical-revocation.test.mjs'];p=subprocess.run(argv,cwd=dst,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+ log=root/(case['name']+'.txt');log.write_text(p.stdout)
+ r={**case,'file':'src/native/delegation.ts','method':'appendHistoricalRevocation','location_count':1,'argv':argv,'exit_code':p.returncode,'assertion_error':'AssertionError' in p.stdout,'log':str(log),'sha256':hashlib.sha256(log.read_bytes()).hexdigest()};result.append(r)
+ assert p.returncode==1 and r['assertion_error'],r
+(root/'mutation-results.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result,indent=2))

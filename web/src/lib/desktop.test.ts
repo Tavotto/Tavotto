@@ -9,7 +9,6 @@ import {
   __resetDesktopUpdate,
   bootstrapDesktopSession,
   canRevealInFileManager,
-  cssColorToHex,
   dragRegionProps,
   checkDesktopUpdate,
   armDesktopCloseGuard,
@@ -27,9 +26,10 @@ import {
   revealExportedFile,
   revealProjectFolder,
   runCodexIntegration,
-  setDesktopTitlebarColors,
   showDesktopAppMenu,
+  onWindowMaximizedChange,
   windowChrome,
+  windowControl,
   getEngineExited,
   onEngineExited,
   restartEngine,
@@ -58,6 +58,19 @@ vi.mock('@tauri-apps/api/core', () => ({
   },
 }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: tauri.open }))
+const tauriWindow = vi.hoisted(() => {
+  const unlisten = vi.fn()
+  return {
+    unlisten,
+    minimize: vi.fn(async () => {}),
+    toggleMaximize: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    destroy: vi.fn(async () => {}),
+    isMaximized: vi.fn(async () => false),
+    onResized: vi.fn(async (_cb: () => void) => unlisten),
+  }
+})
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => tauriWindow }))
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -139,8 +152,9 @@ describe('窗框（window_chrome.rs 注入的标记）', () => {
     expect(windowChrome()).toBe('native')
     expect(dragRegionProps()).toEqual({})
     expect(await showDesktopAppMenu(0, 44)).toBe(false)
-    expect(await setDesktopTitlebarColors('#efefed', '#1b1b18')).toBe(false)
+    expect(await windowControl('close')).toBe(false)
     expect(tauri.invoke).not.toHaveBeenCalled()
+    expect(tauriWindow.close).not.toHaveBeenCalled()
   })
 
   it('旧壳不注入标记 / 注入了认不出的值：native，一切照旧', () => {
@@ -167,18 +181,50 @@ describe('窗框（window_chrome.rs 注入的标记）', () => {
     expect(tauri.invoke).not.toHaveBeenCalled()
   })
 
-  it('Windows（menu-button）：按钮下方弹应用菜单、标题栏随主题上色；顶栏不当拖动区', async () => {
+  it('Windows（menu-button）：没有系统标题栏——顶栏是拖动区，按钮下方弹应用菜单', async () => {
     w.__TAURI_INTERNALS__ = {}
     w.__TAVOTTO_WINDOW_CHROME__ = 'menu-button'
     expect(windowChrome()).toBe('menu-button')
-    expect(dragRegionProps()).toEqual({})
+    expect(dragRegionProps()).toEqual({ 'data-tauri-drag-region': 'deep' })
+    expect(dragRegionProps('self')).toEqual({ 'data-tauri-drag-region': '' })
     expect(await showDesktopAppMenu(12, 44)).toBe(true)
     expect(tauri.invoke).toHaveBeenCalledWith('show_app_menu', { x: 12, y: 44 })
-    expect(await setDesktopTitlebarColors('#efefed', '#1b1b18')).toBe(true)
-    expect(tauri.invoke).toHaveBeenCalledWith('set_titlebar_colors', {
-      background: '#efefed',
-      text: '#1b1b18',
-    })
+  })
+
+  it('Windows（menu-button）：三颗窗口按钮各调一条窗口命令，关闭走 close（进关窗询问闸）', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_WINDOW_CHROME__ = 'menu-button'
+    expect(await windowControl('minimize')).toBe(true)
+    expect(await windowControl('toggle-maximize')).toBe(true)
+    expect(await windowControl('close')).toBe(true)
+    expect(tauriWindow.minimize).toHaveBeenCalledTimes(1)
+    expect(tauriWindow.toggleMaximize).toHaveBeenCalledTimes(1)
+    expect(tauriWindow.close).toHaveBeenCalledTimes(1)
+    expect(tauriWindow.destroy).not.toHaveBeenCalled()
+  })
+
+  it('最大化状态：先回读一次，之后每次 resize 再回读', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_WINDOW_CHROME__ = 'menu-button'
+    const seen: boolean[] = []
+    tauriWindow.isMaximized.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    const off = await onWindowMaximizedChange((v) => seen.push(v))
+    await vi.waitFor(() => expect(seen).toEqual([false]))
+    const onResize = tauriWindow.onResized.mock.calls[0][0] as () => void
+    onResize()
+    await vi.waitFor(() => expect(seen).toEqual([false, true]))
+    off()
+    expect(tauriWindow.unlisten).toHaveBeenCalledTimes(1)
+  })
+
+  it('macOS（overlay）不画窗口按钮：窗口命令一律不调', async () => {
+    w.__TAURI_INTERNALS__ = {}
+    w.__TAVOTTO_WINDOW_CHROME__ = 'overlay'
+    expect(await windowControl('minimize')).toBe(false)
+    const off = await onWindowMaximizedChange(() => {})
+    off()
+    expect(tauriWindow.minimize).not.toHaveBeenCalled()
+    expect(tauriWindow.onResized).not.toHaveBeenCalled()
   })
 
   it('壳拒了命令（ACL / 旧壳）不抛，回 false', async () => {
@@ -186,20 +232,6 @@ describe('窗框（window_chrome.rs 注入的标记）', () => {
     w.__TAVOTTO_WINDOW_CHROME__ = 'menu-button'
     tauri.invoke.mockRejectedValueOnce(new Error('not allowed'))
     expect(await showDesktopAppMenu(0, 0)).toBe(false)
-  })
-})
-
-describe('cssColorToHex', () => {
-  it('设计变量与计算样式的几种写法都换成 #rrggbb', () => {
-    expect(cssColorToHex(' #EFEFED ')).toBe('#efefed')
-    expect(cssColorToHex('rgb(22, 22, 21)')).toBe('#161615')
-    expect(cssColorToHex('rgba(27, 27, 24, 1)')).toBe('#1b1b18')
-  })
-  it('认不出来回 null（壳那边就不动标题栏）', () => {
-    expect(cssColorToHex('#fff')).toBeNull()
-    expect(cssColorToHex('oklch(0.9 0 0)')).toBeNull()
-    expect(cssColorToHex('rgb(300, 0, 0)')).toBeNull()
-    expect(cssColorToHex('')).toBeNull()
   })
 })
 

@@ -64,6 +64,62 @@ def _argvs(log: Path) -> list[list[str]]:
     return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line]
 
 
+def _assert_public_argv_redacted(report: dict, argument_value: str) -> None:
+    # 主语是公开投影里的 argv 业务字段与文本值，不把诊断耗时数字序列化后当参数查。
+    # argv 槽必须为空；即使错误地把字符串实参转成数字，也不能漏过。
+    def visit(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key == "argv":
+                    assert item == [], "公开投影的 argv 只能是脱敏占位"
+                visit(key)
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, str):
+            assert argument_value not in value, "参数值不进公开投影"
+
+    visit(report)
+
+
+@pytest.fixture
+def public_argv_report():
+    return {
+        "target": {"argv_count": 2},
+        "result": {
+            "receipt": {"spec": {"argv": [], "argv_count": 2}},
+            "trace": {"events": [{"at_ms": 1107.125}]},
+        },
+    }
+
+
+@pytest.mark.parametrize("duration", [7.125, 1107.125])
+def test_public_argv_redaction_accepts_numeric_diagnostic_substrings(public_argv_report, duration):
+    public_argv_report["result"]["trace"]["events"][0]["at_ms"] = duration
+    _assert_public_argv_redacted(public_argv_report, "7.125")
+
+
+@pytest.mark.parametrize(
+    ("path", "leak"),
+    [
+        (("target", "argv"), ["--scale", "7.125"]),
+        (("result", "receipt", "spec", "argv"), ["--scale", 7.125]),
+        (("result", "receipt", "spec", "argv"), ["--tag", "another-value"]),
+        (("result", "detail"), "reused --scale 7.125"),
+        (("result", "echo"), ["7.125"]),
+        (("result", "7.125"), "argument used as a key"),
+    ],
+)
+def test_public_argv_redaction_rejects_business_leaks(public_argv_report, path, leak):
+    parent = public_argv_report
+    for key in path[:-1]:
+        parent = parent[key]
+    parent[path[-1]] = leak
+    with pytest.raises(AssertionError):
+        _assert_public_argv_redacted(public_argv_report, "7.125")
+
+
 def _run(app, body: dict, log: Path) -> dict:
     """创建会话 → 认领 run → 等落定；回创建时的报告（看 target）与落定后的报告。"""
     status, created = app.call(SESSIONS, body, timeout=120)
@@ -115,7 +171,7 @@ def test_reuse_is_explicit_and_runs_the_recorded_argv(world):
         assert reused["created"]["target"]["argv_count"] == 2
         assert reused["final"]["phase"] == "completed"
         assert _argvs(log)[-1] == ["--scale", "7.125"]
-        assert "7.125" not in json.dumps(reused["created"])  # 参数值不进公开投影
+        _assert_public_argv_redacted(reused["created"], "7.125")
 
         # 显式给了空 argv（明确要「不带参数运行」）：它赢，不用上次的参数覆盖（Codex #1044 r4271063076）；
         # 只有省略 argv 才考虑沿用

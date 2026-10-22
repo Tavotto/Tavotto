@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useReducer, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Numbers } from '@sfinterface/numbers'
+import { useInteractionStore } from '@/store/interactionStore'
 import { ArrowLeftRight, ExternalLink, LayoutGrid, Trash2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { formatMm } from '@/lib/units'
 import { onExportDefaultsHydrated, readExportDefaults } from '@/lib/exportDefaults'
 import { hasRaster } from '@/lib/exportRequest'
 import { msg, t as translate, type UiMessage } from '@/i18n'
-import { DEFAULT_PROFILE_ID, loadProfile } from '@/lib/profile'
-import { resolveDocumentSpec } from '@/lib/specBinding'
+import { resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
 import { cn, MOD } from '@/lib/utils'
-import { clearGuides, PAGE_MM_MAX, PAGE_MM_MIN, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
+import { clearGuides, removeGuide, setPageSetup, setPageSize } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
@@ -29,27 +30,22 @@ import { MmField } from './MmField'
  * 页面尺寸预设。文案按 id 查 `inspector:canvas.presets.<id>`，这里只留尺寸。
  *
  * 「单栏 / 双栏」的**宽度不是这里的常量**：出版规范（`profiles/publication.json` 的
- * `widths_mm`）是唯一权威，预检 `page-width` 也读它，所以预设宽度由 `pagePresets()` 从当前画布
+ * `widths_mm`）是唯一权威，预检 `page-width` 也读它，所以预设宽度由 `pagePresets()` 经 `lib/pageColumns`（拖页面边的栏宽吸附读同一份）从当前画布
  * 绑定的规范取（与 `validationStore.collectCanvases` 同一条 `resolveDocumentSpec` 路径）。
  * 绑定的规范缺 `widths_mm` / 值不在页面能取的范围（`PAGE_MM_MIN`–`PAGE_MM_MAX`，`setPageSize` 按它夹取——
  * 摆一个夹完就对不上的预设，选了之后页面立刻变成「自定义」）时退回**内置默认规范**的那一档（仍是 `publication.json`，
  * 不在这里写第二个数）；高度只是常见起点，不是规范字段。「整页」「正方形」不在规范里，保持常量。
  */
-const FALLBACK_WIDTHS = loadProfile(DEFAULT_PROFILE_ID).widths_mm
-
 interface PagePreset {
   id: string
   w: number
   h: number
 }
 
-const positive = (v: unknown, fallback: number): number =>
-  typeof v === 'number' && Number.isFinite(v) && v >= PAGE_MM_MIN && v <= PAGE_MM_MAX ? v : fallback
-
-function pagePresets(widths: { single?: unknown; double?: unknown } | undefined): PagePreset[] {
+function pagePresets([single, double]: PageColumn[]): PagePreset[] {
   return [
-    { id: 'single', w: positive(widths?.single, FALLBACK_WIDTHS.single), h: 60 },
-    { id: 'double', w: positive(widths?.double, FALLBACK_WIDTHS.double), h: 100 },
+    { id: 'single', w: single.w, h: 60 },
+    { id: 'double', w: double.w, h: 100 },
     { id: 'full', w: 180, h: 240 },
     { id: 'square', w: 100, h: 100 },
   ]
@@ -101,11 +97,18 @@ function PageThumb({ w, h }: { w: number; h: number }) {
  * 参考线列表的方向是一列 │ / ─ 字形；末尾一行只读的导出摘要，点它打开导出对话框（不另起导出管线）。
  */
 export function CanvasPage() {
-  useTranslation('inspector')
   const page = useDocumentStore((s) => s.doc.page)
   const name = useDocumentStore((s) => s.doc.name)
   const guides = useDocumentStore((s) => s.doc.guides)
   const ui = useUiStore()
+  const { i18n } = useTranslation('inspector')
+  // 拖页面边时逐 mm 变化即时换（duration 0）；离散跳变（吸附 / ⌥）与属性栏的一步到位才滚
+  const dragging = useInteractionStore((s) => s.kind === 'pageedge' && !s.pageEdge?.rolls)
+  const numbersProps = {
+    duration: dragging ? 0 : undefined,
+    format: { useGrouping: false, minimumFractionDigits: 1, maximumFractionDigits: 1 },
+    locale: i18n.language,
+  } as const
   // 预设宽度跟着当前画布绑定的规范走：订阅绑定与规范清单，换规范 / 同步新版后立刻跟随
   const binding = useDocumentStore((s) => s.doc.profile)
   const specs = useProfileStore((s) => s.specs)
@@ -115,11 +118,11 @@ export function CanvasPage() {
   useEffect(() => {
     if (!specsLoaded) void useProfileStore.getState().load()
   }, [specsLoaded])
-  const widths = useMemo(
-    () => resolveDocumentSpec(binding, toCatalog(specs)).profile.widths_mm,
-    [binding, specs],
+  const columns = useMemo(
+    () => resolvePageColumns(binding, toCatalog(specs), specsLoaded).columns,
+    [binding, specs, specsLoaded],
   )
-  const PRESETS = useMemo(() => pagePresets(widths), [widths])
+  const PRESETS = useMemo(() => pagePresets(columns), [columns])
   const active = PRESETS.find((p) => p.w === page.w && p.h === page.h)
   // 摘要行互不排斥、各记各的（键 `canvas:<组>`）；开合跨会话记在 inspectorPrefs
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)
@@ -152,8 +155,11 @@ export function CanvasPage() {
       <header data-identity data-canvas-identity className="mx-3 mb-1 flex shrink-0 flex-col pt-2">
         <p className="flex h-6 min-w-0 items-center gap-1.5 text-sm text-ink-3">
           <span className="min-w-0 flex-1 truncate">{translate('tab.canvas', { ns: 'inspector' })}</span>
-          <span className="type-meta shrink-0">
-            {cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) })}
+          <span className="type-meta shrink-0" role="img" aria-label={cv('sizeMeta', { w: formatMm(page.w), h: formatMm(page.h) })}>
+            {/* 只读的页面尺寸读数是会滚的数字：± / 输入 / 预设一步到位地滚；拖页面边时逐 mm 即时换 */}
+            <Numbers value={page.w} {...numbersProps} />
+            {' × '}
+            <Numbers value={page.h} {...numbersProps} suffix=" mm" />
           </span>
         </p>
         <div className="flex min-h-8 items-center gap-2">

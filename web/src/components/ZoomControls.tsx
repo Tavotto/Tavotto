@@ -45,7 +45,7 @@ export function ZoomControls() {
             // e2e 的稳定锚点
             data-zoom-menu
           >
-            {/* 会滚的数字（@sfinterface/numbers，2026-09-15 调研后只上这一处）：一步到位的缩放
+            {/* 会滚的数字（@sfinterface/numbers，2026-09-15 调研后只上两处：这里与画布尺寸（canvas/PageEdgeResize、CanvasPage 页头））：一步到位的缩放
                 （± / 预设 / 适应）只有变了的位滚过去，说的是「变了多少、往哪变」；滚轮 / 捏合是
                 连续输入，读数即时换（duration 0），柱子不会永远在半路。静止时与普通文字像素一致。
                 时长接 --duration-slow（index.css 的 --sfi-resolve），分组关掉——Tavotto 的读数不分组。

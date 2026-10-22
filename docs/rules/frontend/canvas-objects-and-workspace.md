@@ -216,3 +216,19 @@
 - 加图软上限缩放、不用阈值，非落点时先避开已有对象排右→下（`placePanelInPage` 的 `occupied`）
 - 页面外画淡（`PageOutsideMask`）
 - 加图是一条分层链 `addFigureToLayout`（去重 / 聚焦）→ `addPanelToCanvas`（取景，只由 `frameAddedPanel` 判）→ `actions.addPanel`（只改文档，只许 workspace 调），权威在该细则
+- **拖页面四条边改画布大小（2026-10-21，渐进式画布改版裁决 5）**：只在多图排版（`mode === 'layout'`）里挂，
+  单图编辑没有页面。命中区 `canvas/PageEdgeResize.tsx`（屏幕空间、固定 10 px 宽、只有边没有角、在选框覆盖层之下），
+  手势 `canvas/pageEdgeDrag.startPageEdgeResize`。**写文档只有一个食谱** `actions.applyPageSize`（属性栏 `setPageSize`
+  与拖边共用，夹取只有一份）；整次拖动一个事务，松手一步撤销，Esc / pointercancel 经 `trackPointer` 的取消出口回到原值
+  （含视口平移）。拖左 / 上边 = 页面原点平移：食谱按手势开始时的位置**绝对**写对象与参考线的页面坐标
+  （`PageSizeBase`，不累加），视口 `setPan` 同量反向补偿，图在屏幕上不动。吸附与夹取的数学是纯函数
+  `lib/pageEdgeResize.resizePageEdge`（宽度离规范栏宽 ±2 mm 吸，⌥ 关；最小 30 mm；0.1 mm 一格）；栏宽读
+  `lib/pageColumns.pageColumns`，**与属性栏页面预设同一份**（`CanvasPage.pagePresets` 也经它），不另写第二套数。
+  拖动中 `interaction.kind === 'pageedge'`，`pageFit` 的补间取景让位。尺寸标注（`data-page-dims`，`--color-dim`）是画布
+  叠加层、只在拖动中挂，不进文档 / 导出 / SVG 预览平面；与对象拖动的对齐吸附（`snapXs`）互不相干。
+  标注与属性栏画布页头的只读尺寸用会滚的数字（`@sfinterface/numbers`，宪法「只上两处」）：连续拖动 `duration={0}`，
+  吸附 / ⌥ 跳变（`pageEdge.rolls`）与属性栏一步到位才滚。
+  拖边是对视口的直接操纵：每帧经 `setPan`（停补间、退出「适应画布」，右 / 下边平移量为 0 屏幕上不跳），Esc 取消时恢复原 `fitted`。
+  栏宽解析与属性栏预设同一判据 `lib/pageColumns.resolvePageColumns`：跟随全局清单的绑定在 `profileStore.loaded` 之前
+  `ready=false`，这一次手势不吸附（每帧现读，目录到了就开始吸）。
+  看护：`lib/pageEdgeResize.test.ts`、`canvas/pageEdgeResize.test.tsx`。

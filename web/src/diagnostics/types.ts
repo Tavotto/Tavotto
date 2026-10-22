@@ -564,6 +564,19 @@ export interface FrontendDiagnosticSnapshot {
    * 两者不可互相冒充——诊断包里把它们并排放着，正是为了让读包的人分得清
    * 「JS 侧大 payload 驻留」与「renderer 生命周期泄漏」是两回事。
    */
+  /**
+   * 新手教程状态（`tavotto.onboarding`）的结构摘要，排查「为什么没弹新手教程」用。
+   * 只有闭集取值与键名：状态机、步骤内容版本、走过的步骤 id、欢迎页出现过没有、看过的提示种类。
+   * 没有时间戳、项目 id、文档 id 与任何用户内容。
+   */
+  onboarding: {
+    status: 'not_started' | 'active' | 'paused' | 'completed' | 'skipped'
+    flow_version: number
+    completed_steps: string[]
+    /** `welcomeSeenAt` 非空 = 欢迎页已经出现过（首启自动弹只弹一次） */
+    welcome_seen: boolean
+    hint_seen_keys: string[]
+  }
   preview_memory: {
     /** 此刻 `byKey` 里所有还带着 `svg` 的条目的字节和（`residentSvgBytes`） */
     resident_svg_bytes: number

@@ -1,0 +1,88 @@
+name: Review budget (advisory)
+
+# A lightweight observation, not a fourth required check or a Codex trigger.
+# Do not add pull_request_target, merge_group or credentials with write access.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  # Reviews and review comments are separate webhook events from PR synchronizations.
+  # issue_comment runs from main; a job-level guard excludes ordinary issues.
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+  issue_comment:
+    types: [created, edited, deleted]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Existing Tavotto PR number to audit"
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+env:
+  TAVOTTO_NO_TELEMETRY: "1"
+
+jobs:
+  review-budget:
+    name: Review budget (advisory)
+    # Issue comments cover issues AND PRs; do not spend runners on ordinary issues
+    # or unrelated conversation. Never evaluate user-controlled text in a shell.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main') ||
+      ((github.event_name == 'pull_request_review' || github.event_name == 'pull_request_review_comment') &&
+       github.event.pull_request.base.ref == 'main') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       (github.event.action == 'deleted' ||
+        github.event.comment.user.login == 'chatgpt-codex-connector[bot]' ||
+        contains(github.event.comment.body, '@codex')))
+    # The concurrency group is PR-local and advisory-only. It lives at job level on
+    # purpose: a job only joins the group when its `if` is true, so an unrelated PR
+    # comment (skipped by `if`) cannot cancel an audit that is already running.
+    # An updated review supersedes an older ledger, but cannot cancel CI, CodeQL,
+    # or merge_group workflows.
+    concurrency:
+      group: review-budget-${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number || github.ref }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Trusted executable from main, not PR head. Fork PRs have read-only access.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Observe existing review evidence without requesting any review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          OUTPUT="$RUNNER_TEMP/review-budget.json"
+          if [ ! -f scripts/ci/review_budget.py ]; then
+            echo '{"schema_version":1,"status":"unknown","reason":"trusted main script not merged yet"}' > "$OUTPUT"
+            echo "### Review Budget (advisory)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Bootstrap: default branch has no auditor yet. No review coverage inferred." >> "$GITHUB_STEP_SUMMARY"
+          elif ! python3 -I scripts/ci/review_budget.py \
+            --repo "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER" \
+            --out "$OUTPUT" \
+            --summary "$GITHUB_STEP_SUMMARY"; then
+            echo "::warning::Review budget evidence incomplete. No approval or merge verdict inferred."
+          fi
+      - name: Preserve compact JSON evidence (30 days)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: review-budget-${{ github.run_id }}
+          path: ${{ runner.temp }}/review-budget.json
+          retention-days: 30
+          if-no-files-found: warn

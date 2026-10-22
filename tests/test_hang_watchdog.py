@@ -176,7 +176,21 @@ def test_exit_is_reached_even_when_the_writer_raises():
 
 @pytest.mark.skipif(os.name == "nt", reason="ps 只在 POSIX")
 def test_no_children_is_reported_as_none_not_as_the_ps_probe():
-    out = hw.describe_children()
+    """在一个刚起的干净解释器里调用：断言的主语是「没有后代时不把 ps 探针自己报出来」，与本片前面的
+    用例有没有留下仍在退出中的子进程无关（#1285：同片残留的 renderchild 让它随分片组成随机红）。"""
+    out = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from support import hang_watchdog as hw; print(hw.describe_children())",
+        ],
+        cwd=REPO / "tests",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=True,
+    ).stdout
     assert "没有子进程" in out, out
     assert "ps -axo" not in out, out
 

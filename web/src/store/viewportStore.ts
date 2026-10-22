@@ -94,6 +94,14 @@ interface ViewportState {
    * 画布的，下一次侧栏开合就按别的画布的取景框把还原出来的视口重算掉。
    */
   setView: (view: ViewTarget) => void
+  /**
+   * 手势开始前把视口**定住**并取一份完整快照：在飞的补间直接落到它的终点（不留半路帧），再记
+   * `{zoom, pan, fitted, lastFit}` 四项。拖页面边这类会临时脱离适应模式的手势用它，取消时整体还原
+   * （只还原 pan 会留下后来的 zoom，却把结果标成 fitted——视口声称代表 `lastFit` 但对不上）。
+   */
+  freezeView: () => ViewSnapshot
+  /** 把 `freezeView` 的快照四项原样整体还原（停补间、不退出 / 不触发取景）。 */
+  restoreFrozenView: (snap: ViewSnapshot) => void
 }
 
 /** 适应模式的一块非页面取景框（mm）与留白（px） */
@@ -103,6 +111,11 @@ export interface FitFrame {
   w: number
   h: number
   padding: number
+}
+
+export interface ViewSnapshot extends ViewTarget {
+  fitted: boolean
+  lastFit: FitRecord | null
 }
 
 /** 视口的一个落点：补间与瞬时设置共用同一种描述 */
@@ -185,8 +198,8 @@ function animateTo(set: Setter, get: Getter, target: ViewTarget) {
  * 最近一次要求适配的取景框；舞台尺寸变了、仍在适应模式时按它重算。`page` = 这块
  * 就是页面（`fit` / `fitAnimated`），否则是调用方给的矩形（`fitRect*`）。
  */
-let lastFit: { x: number; y: number; pageW: number; pageH: number; padding: number; page: boolean } | null =
-  null
+type FitRecord = { x: number; y: number; pageW: number; pageH: number; padding: number; page: boolean }
+let lastFit: FitRecord | null = null
 
 /**
  * 用户自己动过视口 = 退出适应模式：之后舞台尺寸再变也不重算。
@@ -388,6 +401,29 @@ export const useViewportStore = create<ViewportState>((set, get) => ({
     leaveFitMode(set, get)
     if (!get().viewW || !get().viewH) return
     animateTo(set, get, { zoom: clamp(zoom, MIN_ZOOM, MAX_ZOOM), panX, panY })
+  },
+
+  freezeView: () => {
+    if (animTarget) {
+      const t = animTarget
+      stopAnim()
+      set({ zoom: t.zoom, panX: t.panX, panY: t.panY, readoutZoom: t.zoom, readoutRolls: false })
+    }
+    const s = get()
+    return { zoom: s.zoom, panX: s.panX, panY: s.panY, fitted: s.fitted, lastFit }
+  },
+
+  restoreFrozenView: (snap) => {
+    stopAnim()
+    lastFit = snap.lastFit
+    set({
+      zoom: snap.zoom,
+      panX: snap.panX,
+      panY: snap.panY,
+      fitted: snap.fitted,
+      readoutZoom: snap.zoom,
+      readoutRolls: false,
+    })
   },
 
   setView: ({ zoom, panX, panY }) => {

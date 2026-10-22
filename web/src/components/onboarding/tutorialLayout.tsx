@@ -23,7 +23,13 @@ const ASPECT = DEMO_FIGURE.figure.width / DEMO_FIGURE.figure.height
  */
 export const FigureStage = forwardRef<
   HTMLDivElement,
-  { children: ReactNode; overlay?: ReactNode; className?: string; frameClassName?: string }
+  {
+    children: ReactNode
+    /** 覆盖层；给函数时拿到图框此刻的像素尺寸（欢迎页的标注按它现算落点） */
+    overlay?: ReactNode | ((size: { w: number; h: number }) => ReactNode)
+    className?: string
+    frameClassName?: string
+  }
 >(function FigureStage({ children, overlay, className, frameClassName }, ref) {
   const host = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState<{ w: number; h: number } | null>(null)
@@ -31,8 +37,10 @@ export const FigureStage = forwardRef<
     const el = host.current
     if (!el) return
     const fit = () => {
-      const w = el.clientWidth
-      const h = el.clientHeight
+      // clientWidth/Height 含内边距：按它取框会比内容区大，居中后把上下留白吃掉（标题贴图）
+      const cs = getComputedStyle(el)
+      const w = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)
+      const h = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)
       if (!w || !h) return
       const fw = Math.min(w, h * ASPECT)
       const next = { w: Math.floor(fw), h: Math.floor(fw / ASPECT) }
@@ -58,7 +66,7 @@ export const FigureStage = forwardRef<
           style={{ width: size.w, height: size.h }}
         >
           {children}
-          {overlay}
+          {typeof overlay === 'function' ? overlay(size) : overlay}
         </div>
       )}
     </div>
