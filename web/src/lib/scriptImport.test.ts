@@ -35,6 +35,33 @@ describe('parentDir / folderForPath', () => {
   })
 })
 
+describe('R / MATLAB 脚本（ADR 0143 修订）', () => {
+  it('folderForPath：.R / .r / .m 取上级目录（与 .py 同）', () => {
+    expect(folderForPath('/Users/a/paper/fig.R')).toBe('/Users/a/paper')
+    expect(folderForPath('C:\\work\\fig.m')).toBe('C:\\work')
+    expect(folderForPath('/Users/a/paper/data.csv')).toBe('/Users/a/paper/data.csv')
+  })
+
+  it('带路径放下：foreign-path（打开所在目录 + 脚本名 + 语言）', () => {
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/fig.R', files: ['fig.R'] }))).toEqual({
+      kind: 'foreign-path', folder: '/Users/a', script: 'fig.R', language: 'r',
+    })
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/fig.m', files: ['fig.m'] }))).toEqual({
+      kind: 'foreign-path', folder: '/Users/a', script: 'fig.m', language: 'matlab',
+    })
+  })
+
+  it('只有文件名：foreign-no-path；.py 与其它类型的判据不变', () => {
+    expect(dropTargetOf(drop({ files: ['fig.r'] }))).toEqual({ kind: 'foreign-no-path', name: 'fig.r', language: 'r' })
+    expect(dropTargetOf(drop({ files: ['fig.py'] }))).toEqual({ kind: 'no-path', name: 'fig.py' })
+    expect(dropTargetOf(drop({ files: ['fig.Rmd'] }))).toEqual({ kind: 'not-script', name: 'fig.Rmd' })
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/fig.mlx', files: ['fig.mlx'] }))).toEqual({ kind: 'not-script', name: 'fig.mlx' })
+    expect(dropTargetOf(drop({ uris: 'file:///Users/a/fig.py', files: ['fig.py'] }))).toEqual({
+      kind: 'path', folder: '/Users/a', script: 'fig.py',
+    })
+  })
+})
+
 describe('pathFromFileUri', () => {
   it('POSIX、Windows 盘符、UNC、百分号编码', () => {
     expect(pathFromFileUri('file:///Users/a/%E8%AE%BA%E6%96%87%20%E5%9B%BE/plot.py')).toBe(

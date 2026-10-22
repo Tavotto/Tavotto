@@ -1201,8 +1201,18 @@
         "other_file_changed": "助手改动了不该动的文件，已丢弃",
         "project_files_changed": "助手改动了项目文件，已丢弃",
         "render_not_wired": "暂时无法校验新版本",
-        "budget_exhausted": "尝试次数用完了"
+        "budget_exhausted": "尝试次数用完了",
+        "missing_dependency": "新版本要用的 Python 包没装上，请先在缺依赖提示里装好再试",
+        "dependency_install_failed": "新版本要用的 Python 包没装成功，请稍后重试",
+        "needs_input": "这份脚本里有一步在 Python 里没有可靠的对应，没有生成新版本",
+        "needs_input_reason": "没有生成新版本：{{reason}}"
       },
+      "foreign": {
+        "r": "这是 R 脚本，{{product}} 可以另写一份能直接编辑的 Matplotlib 版本，原脚本不动。",
+        "matlab": "这是 MATLAB 脚本，{{product}} 可以另写一份能直接编辑的 Matplotlib 版本，原脚本不动。"
+      },
+      "unverified": "{{product}} 没有运行 R / MATLAB，请并排看一眼再采用",
+      "installed": "已为这个项目装好 {{names}}",
       "btn": {
         "start": "生成可编辑版本",
         "adopt": "采用新版本",

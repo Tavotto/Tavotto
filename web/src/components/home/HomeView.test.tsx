@@ -10,6 +10,7 @@ import type { ProjectStatus, RecentProject } from '@/lib/api'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { configureOnboardingPersistence, useOnboardingStore, type OnboardingStatus } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
+import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useTutorialStore } from '@/lib/onboarding/tutorial'
 import { useUiStore } from '@/store/uiStore'
@@ -125,6 +126,7 @@ beforeEach(() => {
   desktop.state.handler = null
   desktop.state.offs = 0
   useUiStore.setState({ status: null })
+  useForeignScriptStore.setState({ offer: null })
   tutorial.runTutorialEntry.mockClear()
   tutorial.openSampleProject.mockClear()
 })
@@ -295,6 +297,58 @@ describe('老手版', () => {
     expect(host.querySelector('[role="alert"]')!.textContent).toContain('fig.pdf')
     expect(open).not.toHaveBeenCalled()
     expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+  })
+
+  describe('R / MATLAB 脚本（ADR 0143 修订）：不再被当成“不是脚本”，走入口卡', () => {
+    it.each([
+      ['/Users/me/fig/fig.R', 'fig.R', 'r'],
+      ['/Users/me/fig/fig.r', 'fig.r', 'r'],
+      ['/Users/me/fig/fig.m', 'fig.m', 'matlab'],
+    ])('放下带路径的 %s：打开所在目录、不运行、记下待提议', async (uri, name, language) => {
+      await mount()
+      const ev = await dropOn(host.querySelector('[data-home-dropzone]')!, { uris: `file://${uri}`, files: [name] })
+      expect(ev.defaultPrevented).toBe(true)
+      expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+      expect(prepOpen).not.toHaveBeenCalled() // 不是可运行的 Python 脚本：不走“打开并运行”
+      expect(useForeignScriptStore.getState().offer).toEqual({ script: name, language })
+      expect(host.querySelector('[role="alert"]')).toBeNull()
+    })
+
+    it('桌面壳选择器选了 .R：同一条路（打开所在目录 + 待提议）', async () => {
+      desktop.pickScriptFile.mockResolvedValueOnce('/Users/me/paper/fig.R')
+      await mount()
+      await click(host.querySelector<HTMLButtonElement>('[data-home-dropzone]')!)
+      expect(open).toHaveBeenCalledWith('/Users/me/paper', false)
+      expect(prepOpen).not.toHaveBeenCalled()
+      expect(useForeignScriptStore.getState().offer).toEqual({ script: 'fig.R', language: 'r' })
+    })
+
+    it('目录没打开成功就不提议', async () => {
+      open.mockRejectedValueOnce(new Error('cannot open'))
+      await mount()
+      await dropOn(main(), { uris: 'file:///Users/me/fig/fig.R', files: ['fig.R'] })
+      expect(useForeignScriptStore.getState().offer).toBeNull()
+    })
+
+    it('只有文件名（没有路径）：像 .py 一样说清是哪个文件、退回选择器', async () => {
+      desktop.pickScriptFile.mockResolvedValueOnce(null)
+      await mount()
+      await dropOn(main(), { files: ['fig.m'] })
+      expect(host.textContent).toContain(`系统没有告诉 ${PRODUCT_NAME}「fig.m」`)
+      expect(desktop.pickScriptFile).toHaveBeenCalledTimes(1)
+      expect(open).not.toHaveBeenCalled()
+    })
+
+    it('壳的拖放事件只交来名字（它的分类还不认 R / MATLAB）：说这是能转写的脚本、请用选择器，不说“不是脚本”', async () => {
+      desktop.nativeFileDropAvailable.mockResolvedValue(true)
+      await mount()
+      await act(async () => desktop.state.handler?.({ kind: 'unsupported', name: 'fig.R' }))
+      expect(host.textContent).toContain('「fig.R」是 R / MATLAB 脚本')
+      expect(host.querySelector('[role="alert"]')).toBeNull()
+      expect(open).not.toHaveBeenCalled()
+      await act(async () => desktop.state.handler?.({ kind: 'unsupported', name: 'fig.pdf' }))
+      expect(host.querySelector('[role="alert"]')!.textContent).toContain('fig.pdf')
+    })
   })
 
   it('放下带 file:// 路径的 pdf：说不收，不拿它当项目去开（#688）', async () => {

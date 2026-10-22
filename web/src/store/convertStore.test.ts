@@ -138,3 +138,64 @@ describe('convertStore', () => {
     expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'ready', session: 's1' })
   })
 })
+
+
+describe('convertStore：R / MATLAB 来源（ADR 0143 修订）', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    setCurrentProjectId('A')
+    useConvertStore.setState({ entries: {} })
+    useAiStore.setState({ caps: { agents: [] } as never })
+    vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 's1', script: 'fig.R' })
+    vi.mocked(fetchConvert).mockReset()
+    vi.mocked(fetchAiSession).mockReset().mockResolvedValue({ status: 'running', final: false } as never)
+  })
+  afterEach(() => {
+    useConvertStore.getState().clear('fig.R')
+    vi.useRealTimers()
+  })
+
+  it('请求体带 source_language、不带 library；Python 来源照旧带 library、不带 source_language', async () => {
+    const p = useConvertStore.getState().start('fig.R', null, null, 'r')
+    await vi.advanceTimersByTimeAsync(0)
+    const body = vi.mocked(startConvert).mock.calls[0]![0]
+    expect(body).toMatchObject({ script: 'fig.R', source_language: 'r', path: null })
+    expect(body).not.toHaveProperty('library')
+    expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ sourceLanguage: 'r', library: null, detail: null })
+    useConvertStore.getState().clear('fig.R')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+
+    vi.mocked(startConvert).mockResolvedValueOnce({ session: 's2', script: 'plot.py' })
+    const q = useConvertStore.getState().start('plot.py', 'pillow', 'out.png')
+    await vi.advanceTimersByTimeAsync(0)
+    const py = vi.mocked(startConvert).mock.calls[1]![0]
+    expect(py).toMatchObject({ script: 'plot.py', library: 'pillow', path: 'out.png' })
+    expect(py).not.toHaveProperty('source_language')
+    useConvertStore.getState().clear('plot.py')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await q
+  })
+
+  it('needs_input：落成 failed + reason=needs_input + 原因；不留可续查的会话（再试是同样的结论）', async () => {
+    vi.mocked(fetchAiSession).mockResolvedValue({
+      status: 'done', final: true,
+      task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'needs_input', detail: '某函数换不了' }] },
+    } as never)
+    const p = useConvertStore.getState().start('fig.R', null, null, 'r')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+    expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ phase: 'failed', reason: 'needs_input', detail: '某函数换不了' })
+    expect(fetchConvert).not.toHaveBeenCalled()
+  })
+
+  it('needs_input 没给原因：detail 为 null', async () => {
+    vi.mocked(fetchAiSession).mockResolvedValue({
+      status: 'done', final: true, task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'needs_input' }] },
+    } as never)
+    const p = useConvertStore.getState().start('fig.R', null, null, 'r')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+    expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ reason: 'needs_input', detail: null })
+  })
+})

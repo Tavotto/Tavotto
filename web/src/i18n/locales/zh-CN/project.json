@@ -95,6 +95,7 @@
     "import": {
       "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
       "dropNotScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
+      "dropForeign": "「{{name}}」是 R / MATLAB 脚本。请点「导入我的脚本」，在窗口里选中它。",
       "droppedMany": "拖入了 {{total}} 项，只用了「{{name}}」打开项目",
       "folderTitle": "选择脚本所在的文件夹",
       "nativeTitle": "选择 Python 绘图脚本",

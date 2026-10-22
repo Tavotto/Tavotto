@@ -67,7 +67,7 @@ import {
 } from '@/lib/api'
 import { i18n, resources } from '@/i18n'
 import { setCurrentProjectId } from '@/lib/session'
-import { PreparationCard } from '@/components/PreparationCard'
+import { ForeignScriptCard, PreparationCard } from '@/components/PreparationCard'
 import { ScriptInputDialog } from '@/components/ScriptInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -92,6 +92,7 @@ import errorReports from '../../../tests/golden/preparation_error_reports.json'
 import { ORIGIN_VIEWS } from '@/lib/importOrigin'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useConvertStore, POLL_MS } from '@/store/convertStore'
+import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { useAiStore } from '@/store/aiStore'
 import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, startConvert } from '@/lib/api'
 import type { DependencyPreparationOffer } from '@/lib/api'
@@ -1343,6 +1344,155 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     await act(async () => secondary()!.click())
     expect(useUiStore.getState().leftTab).toBe('layers')
     expect(useUiStore.getState().guideCard).toBe('closed')
+  })
+
+  describe('R / MATLAB 入口卡（ADR 0143 修订）', () => {
+    const readyR = {
+      session: 'sid-r', state: 'ready' as const, script: 'fig.R', target_name: 'fig_matplotlib.py', library: null,
+      source_language: 'r' as const,
+      comparison: { original: null, candidate: { figures: 1, width_mm: 50, height_mm: 40 }, aspect_delta: null, pixel_diff: null, reference: null, verification: 'unknown' as const },
+      has_preview: true,
+    }
+    const done = { status: 'done', final: true, task: { outcome: 'completed', unmet: [] } }
+    const foreignCard = () => host.querySelector('[data-foreign-card]') as HTMLElement | null
+    const startBtn = () => host.querySelector('[data-foreign-start]') as HTMLButtonElement | null
+    const line = () => foreignCard()?.querySelector('[data-prep-line]')?.textContent
+    const settle = () => act(async () => { await vi.advanceTimersByTimeAsync(POLL_MS + 10) })
+    async function mountBoth() {
+      host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <PreparationCard />
+            <ForeignScriptCard />
+          </TooltipProvider>,
+        )
+      })
+    }
+    const offer = (script: string, language: 'r' | 'matlab') =>
+      act(async () => useForeignScriptStore.getState().setOffer({ script, language }))
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout'] })
+      useConvertStore.setState({ entries: {} })
+      useForeignScriptStore.setState({ offer: null })
+      vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 'sid-r', script: 'fig.R' })
+      vi.mocked(fetchAiSession).mockReset().mockResolvedValue(done as never)
+      vi.mocked(fetchConvert).mockReset().mockResolvedValue(readyR)
+      vi.mocked(adoptConvert).mockReset().mockResolvedValue({ script: 'fig_matplotlib.py', name: 'fig_matplotlib.py' })
+      vi.mocked(discardConvert).mockReset().mockResolvedValue({ ok: true })
+    })
+    afterEach(() => vi.useRealTimers())
+
+    it.each([
+      ['r', 'fig.R', '这是 R 脚本，Tavotto 可以另写一份能直接编辑的 Matplotlib 版本，原脚本不动。'],
+      ['matlab', 'fig.m', '这是 MATLAB 脚本，Tavotto 可以另写一份能直接编辑的 Matplotlib 版本，原脚本不动。'],
+    ] as const)('%s 脚本：一句话 + 一个主按钮「生成可编辑版本」，没有横条', async (language, script, sentence) => {
+      await mountBoth()
+      expect(foreignCard()).toBeNull()
+      await offer(script, language)
+      expect(foreignCard()?.dataset.foreignCard).toBe(language)
+      expect(line()).toBe(sentence)
+      expect(startBtn()?.textContent).toBe('生成可编辑版本')
+      expect(visibleSentenceCount(foreignCard()!, 'zh-CN')).toBeLessThanOrEqual(1)
+      expect(visiblePrimaryButtons(foreignCard()!)).toBe(1)
+      expect(host.querySelector('[role="banner"], [data-banner]')).toBeNull()
+    })
+
+    it('点主按钮：按来源语言发起（source_language，不带 library），进度 → 对照；没有原图时说“未对照验证”', async () => {
+      await mountBoth()
+      await offer('fig.R', 'r')
+      await act(async () => startBtn()!.click())
+      const body = vi.mocked(startConvert).mock.calls[0]![0]
+      expect(body).toMatchObject({ script: 'fig.R', source_language: 'r', path: null })
+      expect(body).not.toHaveProperty('library')
+      expect(foreignCard()?.dataset.convertPhase).toBe('running')
+      await settle()
+      expect(foreignCard()?.dataset.convertPhase).toBe('ready')
+      expect(foreignCard()?.querySelector('[data-convert-unverified]')?.textContent).toBe('Tavotto 没有运行 R / MATLAB，请并排看一眼再采用')
+      expect(foreignCard()?.querySelector('[data-prep-primary]')?.textContent).toBe('采用新版本')
+    })
+
+    it('有原图（并排）时不说“未对照验证”；装好的包说一句', async () => {
+      vi.mocked(fetchConvert).mockResolvedValue({
+        ...readyR,
+        installed: ['pandas', 'statsmodels'],
+        comparison: { ...readyR.comparison, original: { path: 'fig.png', bytes: 9, sha256: 'x', width_px: 80, height_px: 40 }, reference: 'fig.png', verification: 'side_by_side' },
+      })
+      await mountBoth()
+      await offer('fig.R', 'r')
+      await act(async () => startBtn()!.click())
+      await settle()
+      expect(foreignCard()?.querySelector('[data-convert-unverified]')).toBeNull()
+      expect(foreignCard()?.querySelector('[data-convert-installed]')?.textContent).toBe('已为这个项目装好 pandas 和 statsmodels')
+    })
+
+    it('出现时 PreparationCard 让开：一次只有一张一句话卡片', async () => {
+      await mountBoth()
+      useUiStore.setState({ guideCard: 'card' })
+      await openWith(report(STATES.noFigure))
+      expect(host.querySelector('[data-prep-state]:not([data-foreign-card])')).not.toBeNull()
+      await offer('fig.R', 'r')
+      expect(host.querySelectorAll('[data-prep-card]').length).toBe(1)
+      expect(foreignCard()).not.toBeNull()
+    })
+
+    it('× 只收起这条提议：不影响别的状态；运行中点 × 会取消会话', async () => {
+      await mountBoth()
+      await offer('fig.R', 'r')
+      await act(async () => startBtn()!.click())
+      await act(async () => (host.querySelector('[data-prep-close]') as HTMLButtonElement).click())
+      expect(useForeignScriptStore.getState().offer).toBeNull()
+      expect(foreignCard()).toBeNull()
+      expect(vi.mocked(aiCancel)).toHaveBeenCalledWith('sid-r', expect.anything())
+    })
+
+    it('Agent 停下说明（needs_input）：一句话带原因，主按钮是“知道了”而不是重试', async () => {
+      vi.mocked(fetchAiSession).mockResolvedValue({
+        status: 'done', final: true,
+        task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'needs_input', detail: 'lme4::lmer 在 Python 里没有逐一对应' }] },
+      } as never)
+      await mountBoth()
+      await offer('fig.R', 'r')
+      await act(async () => startBtn()!.click())
+      await settle()
+      expect(foreignCard()?.dataset.convertPhase).toBe('failed')
+      expect(line()).toBe('没有生成新版本：lme4::lmer 在 Python 里没有逐一对应')
+      expect(foreignCard()?.querySelector('[data-convert-retry]')).toBeNull()
+      const btn = foreignCard()?.querySelector('[data-convert-dismiss]') as HTMLButtonElement
+      expect(btn.textContent).toBe('知道了')
+      await act(async () => btn.click())
+      expect(foreignCard()).toBeNull()
+      expect(useConvertStore.getState().entries['fig.R']).toBeUndefined()
+    })
+
+    it.each([
+      ['missing_dependency', '新版本要用的 Python 包没装上，请先在缺依赖提示里装好再试'],
+      ['dependency_install_failed', '新版本要用的 Python 包没装成功，请稍后重试'],
+    ])('失败原因 %s 有自己的一句话；可以重试', async (reason, sentence) => {
+      vi.mocked(fetchAiSession).mockResolvedValue({
+        status: 'done', final: true, task: { outcome: 'failed', unmet: [{ constraint_id: 'render.capture', reason_code: reason }] },
+      } as never)
+      await mountBoth()
+      await offer('fig.R', 'r')
+      await act(async () => startBtn()!.click())
+      await settle()
+      expect(line()).toBe(sentence)
+      expect(foreignCard()?.querySelector('[data-convert-retry]')?.textContent).toBe('重试')
+    })
+
+    it('采用后提议结束（不会退回“生成可编辑版本”再提议一遍）', async () => {
+      await mountBoth()
+      mockCreate.mockResolvedValue(report({ ...STATES.noFigure, no_figure_hint: null }))
+      await offer('fig.R', 'r')
+      await act(async () => startBtn()!.click())
+      await settle()
+      await act(async () => (foreignCard()?.querySelector('[data-convert-adopt]') as HTMLButtonElement).click())
+      expect(adoptConvert).toHaveBeenCalledWith('sid-r', expect.anything())
+      expect(useForeignScriptStore.getState().offer).toBeNull()
+      expect(foreignCard()).toBeNull()
+    })
   })
 
   describe('生成可编辑版本（ADR 0143）', () => {

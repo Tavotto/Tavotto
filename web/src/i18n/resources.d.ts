@@ -2412,6 +2412,7 @@ export default interface Resources {
       "convert_not_ready": "新版本还没生成好，或没有通过检查。",
       "convert_outside_project": "新版本的位置不在项目里，已拒绝写入。",
       "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
+      "convert_source_language_mismatch": "{{script}} 的内容看起来不是 R 或 MATLAB 脚本，没有生成。",
       "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",
       "data_decode_error": "这份数据不是 UTF-8 编码，读不出来。",
       "data_empty": "这份数据是空的。",
@@ -4599,6 +4600,7 @@ export default interface Resources {
       "backHome": "返回主页",
       "browseMore": "浏览更多项目",
       "import": {
+        "dropForeign": "「{{name}}」是 R / MATLAB 脚本。请点「导入我的脚本」，在窗口里选中它。",
         "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
         "dropNotScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
         "droppedMany": "拖入了 {{total}} 项，只用了「{{name}}」打开项目",
@@ -5281,6 +5283,10 @@ export default interface Resources {
         },
         "fail": {
           "budget_exhausted": "尝试次数用完了",
+          "dependency_install_failed": "新版本要用的 Python 包没装成功，请稍后重试",
+          "missing_dependency": "新版本要用的 Python 包没装上，请先在缺依赖提示里装好再试",
+          "needs_input": "这份脚本里有一步在 Python 里没有可靠的对应，没有生成新版本",
+          "needs_input_reason": "没有生成新版本：{{reason}}",
           "no_matplotlib_figure": "生成的脚本跑完没有画出 Matplotlib 图",
           "no_matplotlib_import": "生成的脚本没有用 Matplotlib",
           "other_file_changed": "助手改动了不该动的文件，已丢弃",
@@ -5291,11 +5297,17 @@ export default interface Resources {
           "target_missing": "助手没有写出新脚本",
           "unknown": "没能生成可编辑版本"
         },
+        "foreign": {
+          "matlab": "这是 MATLAB 脚本，{{product}} 可以另写一份能直接编辑的 Matplotlib 版本，原脚本不动。",
+          "r": "这是 R 脚本，{{product}} 可以另写一份能直接编辑的 Matplotlib 版本，原脚本不动。"
+        },
+        "installed": "已为这个项目装好 {{names}}",
         "noPreview": "暂无预览",
         "original": "原图",
         "ready": "新版本生成好了，对照一下再决定",
         "redrawn": "重画的新版本",
-        "running": "正在生成可编辑版本…"
+        "running": "正在生成可编辑版本…",
+        "unverified": "{{product}} 没有运行 R / MATLAB，请并排看一眼再采用"
       },
       "detail": {
         "args": "参数",

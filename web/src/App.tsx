@@ -23,7 +23,7 @@ import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
 import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
 import { ShortcutHelp } from '@/components/ShortcutHelp'
 import { StyleDialog } from '@/components/StyleDialog'
-import { PreparationCard } from '@/components/PreparationCard'
+import { ForeignScriptCard, PreparationCard } from '@/components/PreparationCard'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { LeftPanel } from '@/components/left/LeftPanel'
 import { LeftRail } from '@/components/left/LeftRail'
@@ -305,6 +305,8 @@ function Workspace() {
                 {/* 准备引导卡（T13b）：所有「准备并打开」入口共用的一张浮动卡，画布右下、浮动工具条上方；
                     不占布局（页面不下移），缩成角标 / 收起只改呈现 */}
                 <PreparationCard />
+                {/* R / MATLAB 脚本的入口卡（ADR 0143 修订）：它出现时 PreparationCard 自己让开 */}
+                <ForeignScriptCard />
               </div>
             </div>
             {right.mounted && <Inspector overlay={overlay} state={right.state} />}

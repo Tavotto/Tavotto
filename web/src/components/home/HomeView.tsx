@@ -33,6 +33,7 @@ import {
   useTutorialStore,
   type HomeVariant,
 } from '@/lib/onboarding/tutorial'
+import { foreignLanguageOf, type ForeignLanguage } from '@/lib/foreignScript'
 import {
   createDropArbiter,
   dragHasFiles,
@@ -43,6 +44,7 @@ import {
 } from '@/lib/scriptImport'
 import { cn } from '@/lib/utils'
 import { useOnboardingStore } from '@/store/onboardingStore'
+import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { scriptTarget, useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useProjectStore } from '@/store/projectStore'
 import { useUiStore } from '@/store/uiStore'
@@ -224,6 +226,16 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
       return ok
     })
 
+  /**
+   * R / MATLAB 脚本（ADR 0143 修订）：它们不是可运行的 Python 脚本，不走「打开并运行」。打开所在文件夹，
+   * 然后由画布右下的入口卡提议「生成可编辑版本」（原脚本不动）。后缀只是粗判，内容由后端复核。
+   */
+  const openForeign = (folder: string, script: string, language: ForeignLanguage): Promise<boolean> =>
+    openPath(folder).then((ok) => {
+      if (ok && script === script.trim()) useForeignScriptStore.getState().setOffer({ script, language })
+      return ok
+    })
+
   const openDropped = (drop: NativeFileDrop) => {
     // 壳的事件不经过页面的 onDrop，切换中的闸要在这里再挡一次（与主页其它入口的 disabled 同一个判据）
     if (useProjectStore.getState().switching) return
@@ -231,7 +243,12 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     // 壳本来只在页面接受了拖动时才发这条事件，这里是第二道闸
     if (useOnboardingStore.getState().surface !== 'none') return
     if (drop.kind === 'unsupported') {
-      setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: drop.name }) })
+      // 壳只交来名字（它的分类还不认 R / MATLAB，没有文件夹）：说清这是能转写的脚本、请用选择器选它，不说“不是脚本”
+      setNotice(
+        foreignLanguageOf(drop.name)
+          ? { tone: 'info', text: t('home.import.dropForeign', { name: drop.name }) }
+          : { tone: 'error', text: t('home.import.dropNotScript', { name: drop.name }) },
+      )
       return
     }
     setNotice(null)
@@ -273,7 +290,9 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
       void pickScriptFile(t('home.import.nativeTitle')).then((path) => {
         if (path) {
           setNotice(null)
-          void openFolder(folderForPath(path), scriptForPath(path))
+          const foreign = foreignLanguageOf(path)
+          if (foreign) void openForeign(folderForPath(path), path.replace(/^.*[\\/]/, ''), foreign)
+          else void openFolder(folderForPath(path), scriptForPath(path))
         }
       })
     } else setBrowsing(true)
@@ -293,7 +312,12 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
         setNotice(null)
         void openFolder(target.folder, target.script)
         return
+      case 'foreign-path':
+        setNotice(null)
+        void openForeign(target.folder, target.script, target.language)
+        return
       case 'no-path':
+      case 'foreign-no-path':
         setNotice({ tone: 'info', text: t('home.import.dropNoPath', { name: target.name, product: PRODUCT_NAME }) })
         choose()
         return

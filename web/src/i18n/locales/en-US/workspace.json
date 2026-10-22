@@ -1267,8 +1267,18 @@
         "other_file_changed": "The assistant changed files it shouldn’t have, so it was discarded",
         "project_files_changed": "The assistant changed project files, so it was discarded",
         "render_not_wired": "The new version can’t be checked right now",
-        "budget_exhausted": "Out of attempts"
+        "budget_exhausted": "Out of attempts",
+        "missing_dependency": "The new version needs Python packages that aren’t installed. Install them from the missing-package prompt and try again",
+        "dependency_install_failed": "The Python packages the new version needs couldn’t be installed. Try again in a moment",
+        "needs_input": "One step in this script has no reliable Python equivalent, so no new version was made",
+        "needs_input_reason": "No new version was made: {{reason}}"
       },
+      "foreign": {
+        "r": "This is an R script; {{product}} can write a separate, directly editable Matplotlib version and leave the original untouched.",
+        "matlab": "This is a MATLAB script; {{product}} can write a separate, directly editable Matplotlib version and leave the original untouched."
+      },
+      "unverified": "{{product}} didn’t run R / MATLAB. Compare side by side before using it",
+      "installed": "Installed {{names}} for this project",
       "btn": {
         "start": "Make editable version",
         "adopt": "Use the new version",

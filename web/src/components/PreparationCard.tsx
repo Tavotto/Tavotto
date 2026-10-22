@@ -43,6 +43,7 @@ import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { convertOriginalUrl, convertPreviewUrl } from '@/lib/api'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
@@ -63,6 +64,7 @@ import { enterEdit, noteAddedPanelFor, type EnterEditHost } from '@/store/prepEn
 import { findFigurePanel } from '@/store/documentStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useConvertStore } from '@/store/convertStore'
+import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -141,6 +143,7 @@ export function PreparationCard() {
   const forced = useProjectScanStore((s) => s.forced)
   const { hidden } = usePrepSurface()
   const lost = useProjectScanStore((s) => s.pollLost)
+  const foreign = useForeignScriptStore((s) => s.offer !== null)
   const toolbarUp = useCanvasToolbarVisible()
   // 草稿变了要重新渲染（参数改了 → 「继续」）
   const drafts = useScriptArgvStore((s) => s.drafts)
@@ -192,7 +195,8 @@ export function PreparationCard() {
     if (asking && useUiStore.getState().guideCard === 'pill') useUiStore.getState().setGuideCard('card')
   }, [asking])
 
-  if (hidden || mode === 'closed' || (!view && !scanned)) return null
+  // R / MATLAB 入口卡出现时让开别的引导卡：一次只有一张一句话卡片
+  if (foreign || hidden || mode === 'closed' || (!view && !scanned)) return null
   return (
     <div
       data-guide-anchor
@@ -254,10 +258,12 @@ interface ShellProps {
   more?: ReactNode
   ghost?: ReactNode
   primary?: ReactNode
+  /** 覆盖「×」的去向（默认收起整张引导卡）；R / MATLAB 入口卡的 × 是“不提议了”，并且没有“缩成角标” */
+  onClose?: () => void
 }
 
 /** 卡片外壳：步骤 · 工具（— ⋯ ×）/ 图标 + 标题 / 这一步 / 详情 / 详情 · 稍后 · 主按钮 */
-function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, more, ghost, primary }: ShellProps) {
+function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, more, ghost, primary, onClose }: ShellProps) {
   const [open, setOpen] = useState(false)
   const ui = useUiStore.getState()
   return (
@@ -284,22 +290,24 @@ function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, m
           ))}
         </ol>
         <div className="-mr-2 ml-auto flex items-center">
-          <IconButton
-            iconSize="sm"
-            label={pt('card.minimize')}
-            data-prep-minimize
-            className="text-ink-3"
-            onClick={() => ui.setGuideCard('pill')}
-          >
-            <Minus size={ICON_SIZE.sm} />
-          </IconButton>
+          {!onClose && (
+            <IconButton
+              iconSize="sm"
+              label={pt('card.minimize')}
+              data-prep-minimize
+              className="text-ink-3"
+              onClick={() => ui.setGuideCard('pill')}
+            >
+              <Minus size={ICON_SIZE.sm} />
+            </IconButton>
+          )}
           {more}
           <IconButton
             iconSize="sm"
             label={pt('card.close')}
             data-prep-close
             className="text-ink-3"
-            onClick={() => ui.setGuideCard('closed')}
+            onClick={() => (onClose ? onClose() : ui.setGuideCard('closed'))}
           >
             <X size={ICON_SIZE.sm} />
           </IconButton>
@@ -734,7 +742,7 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         return null
       case 'convert':
         // 不 await：生成要几十秒，进度与结果由卡片读 convertStore；失败也落在 store 里
-        void useConvertStore.getState().start(p.script, p.library, p.path)
+        void useConvertStore.getState().start(p.script, p.library, p.path, p.language)
         return null
     }
   }
@@ -770,6 +778,17 @@ function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useCon
           {pt('convert.aspectDiffers', { pct: Math.round(cmp.aspect_delta * 100) })}
         </p>
       ) : null}
+      {/* R / MATLAB 来源从不被运行：没有原图可对照就如实说“未对照验证”，让用户并排看一眼再采用 */}
+      {st?.source_language && st.source_language !== 'python' && cmp?.verification === 'unknown' ? (
+        <p data-convert-unverified className="text-sm text-ink-2">
+          {pt('convert.unverified', { product: PRODUCT_NAME })}
+        </p>
+      ) : null}
+      {st?.installed && st.installed.length > 0 ? (
+        <p data-convert-installed className="text-sm text-ink-3">
+          {pt('convert.installed', { names: listJoin(st.installed) })}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -778,10 +797,10 @@ function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useCon
 function convertFlow(
   c: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>,
   p: Extract<PrepPrimary, { kind: 'convert' }>,
-  entry: PrepEntry,
+  entry: PrepEntry | undefined,
 ): { title: string; slot?: ReactNode; primary?: ReactNode; ghost?: ReactNode } {
   const store = useConvertStore.getState()
-  const retry = () => void store.start(p.script, p.library, p.path)
+  const retry = () => void store.start(p.script, p.library, p.path, p.language)
   switch (c.phase) {
     case 'running':
       return {
@@ -823,20 +842,98 @@ function convertFlow(
           </Button>
         ),
       }
-    case 'failed':
+    case 'failed': {
+      // Agent 停下说明“Python 里没有可靠对应”：再试一次是同样的结论，主按钮是“知道了”（收起），不是重试
+      const needsInput = c.reason === 'needs_input'
       return {
-        title: c.error ?? pt(`convert.fail.${c.reason}`, { defaultValue: pt('convert.fail.unknown') }),
-        primary: (
+        title:
+          c.error ??
+          (needsInput && c.detail
+            ? pt('convert.fail.needs_input_reason', { reason: c.detail })
+            : pt(`convert.fail.${c.reason}`, { defaultValue: pt('convert.fail.unknown') })),
+        primary: needsInput ? (
+          <Button
+            variant="primary"
+            size="md"
+            data-convert-dismiss
+            data-prep-primary="convert_dismiss"
+            onClick={() => {
+              store.clear(p.script)
+              useForeignScriptStore.getState().clear()
+            }}
+          >
+            {pt('btn.dismiss')}
+          </Button>
+        ) : (
           <Button variant="primary" size="md" data-convert-retry data-prep-primary="convert_retry" onClick={retry}>
             {pt('convert.btn.retry')}
           </Button>
         ),
-        ghost: <SendReportButton variant="ghost" size="md" />,
+        ghost: needsInput ? undefined : <SendReportButton variant="ghost" size="md" />,
       }
+    }
     case 'adopted':
       return { title: pt('convert.adopted') }
   }
   void entry
+}
+
+/**
+ * R / MATLAB 脚本的入口卡（ADR 0143 修订）：项目里 / 拖入 / 打开的是 `.R` / `.r` / `.m` 时，一句话 + 一个主按钮。
+ * 点「生成可编辑版本」后同一张卡接着走既有的生成 / 对照 / 采用流水（`convertFlow`）；原脚本不动。
+ * 它不是准备会话的一部分（Tavotto 不运行 R / MATLAB，没有报告可读），所以单独摆在画布右下，并在它出现时让开别的引导卡。
+ */
+export function ForeignScriptCard() {
+  useTranslation('workspace')
+  const offer = useForeignScriptStore((s) => s.offer)
+  const convert = useConvertStore((s) => (offer ? s.entries[offer.script] : undefined))
+  const toolbarUp = useCanvasToolbarVisible()
+  const { hidden } = usePrepSurface()
+  // 采用完成：提议到此为止（否则卡片会退回“生成可编辑版本”再提议一遍）
+  useEffect(() => {
+    if (convert?.phase === 'adopted') useForeignScriptStore.getState().clear()
+  }, [convert?.phase])
+  if (!offer || hidden) return null
+  const language = offer.language
+  const p: Extract<PrepPrimary, { kind: 'convert' }> = { kind: 'convert', script: offer.script, library: null, path: null, language }
+  const flow = convert ? convertFlow(convert, p, undefined) : null
+  const title = flow?.title ?? pt(`convert.foreign.${language}`, { product: PRODUCT_NAME })
+  return (
+    <div
+      data-guide-anchor
+      className={cn(
+        'pointer-events-none absolute right-3 z-drawer flex max-h-[calc(100%-1.5rem)] w-[400px] max-w-[calc(100%-1.5rem)] flex-col items-end',
+        toolbarUp ? 'bottom-16' : 'bottom-3',
+      )}
+    >
+      <Shell
+        label={pt('aria', { script: offer.script })}
+        step={1}
+        icon={flow ? undefined : <FileCodeCorner size={ICON_SIZE.md} className="shrink-0 text-ink-3" />}
+        title={title}
+        attrs={{ 'data-foreign-card': language, 'data-convert-phase': convert?.phase ?? 'offer' }}
+        slot={flow?.slot}
+        ghost={flow?.ghost}
+        primary={
+          flow?.primary ?? (
+            <Button
+              variant="primary"
+              size="md"
+              data-foreign-start
+              data-prep-primary="convert"
+              onClick={() => void useConvertStore.getState().start(offer.script, null, null, language)}
+            >
+              {pt('convert.btn.start')}
+            </Button>
+          )
+        }
+        onClose={() => {
+          if (convert?.phase === 'running') void useConvertStore.getState().stop(offer.script)
+          useForeignScriptStore.getState().clear()
+        }}
+      />
+    </div>
+  )
 }
 
 function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {

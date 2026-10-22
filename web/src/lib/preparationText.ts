@@ -15,6 +15,7 @@
  * 草稿按后端 schema 还差几个必填参数（`missingArgs`）、加进画布的图首次编辑渲染好了没有（`editReady`）。
  */
 import type {
+  ConvertSourceLanguage,
   EnvCandidate,
   GuiDialogPayload,
   MissingInputOffer,
@@ -48,7 +49,7 @@ export type PrepPrimary =
   /** 跑完没图：知道了，收起卡片 */
   | { kind: 'dismiss' }
   /** 位图库画的图：让改图助手另写一份 Matplotlib 版新脚本（ADR 0143）；原脚本不动，用户对照后才采用 */
-  | { kind: 'convert'; script: string; library: string; path: string | null }
+  | { kind: 'convert'; script: string; library: string | null; path: string | null; language?: ConvertSourceLanguage }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
 export type PrepButton = 'run' | 'openRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'

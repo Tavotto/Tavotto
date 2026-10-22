@@ -3364,7 +3364,7 @@ export interface AiTaskSummary {
   task_type: string
   outcome: 'completed' | 'partial' | 'needs_input' | 'failed' | 'cancelled' | 'interrupted' | null
   /** 没满足的检查（技术 id + 稳定原因码）；界面只在详情里列 id */
-  unmet?: { constraint_id: string; reason_code: string }[]
+  unmet?: { constraint_id: string; reason_code: string; detail?: string }[]
   explain?: { message_key: string; params: Record<string, unknown> }
   /** 进行中的阶段：只在 Agent 正在自动修正上一版时为 `correcting`（有界修正，Phase 4）；终态没有 */
   phase?: 'correcting' | null
@@ -3513,14 +3513,26 @@ export interface ConvertComparison {
   candidate: { figures: number; width_mm: number | null; height_mm: number | null }
   aspect_delta: number | null
   pixel_diff: null
+  /** 参照的原图（项目相对路径）；没有原图 = null（R / MATLAB 来源：Tavotto 不运行它们，没有原图就无从对照）。老后端没有 */
+  reference?: string | null
+  /** `unknown` = 未对照验证（没有原图）；`side_by_side` = 并排给人看（不是判定）。老后端没有 */
+  verification?: 'unknown' | 'side_by_side'
 }
+
+/** 「生成可编辑版本」的来源语言（后端 `sourcelang.LANGUAGES`）：`python` = 位图库出的图；`r` / `matlab` = 转写 */
+export type ConvertSourceLanguage = 'python' | 'r' | 'matlab'
 
 export interface ConvertStatus {
   session: string
   state: 'ready' | 'adopted' | 'discarded'
   script: string
   target_name: string
-  library: string
+  /** 位图库名；R / MATLAB 来源没有（null） */
+  library: string | null
+  /** 老后端没有这个字段（= python） */
+  source_language?: ConvertSourceLanguage
+  /** 校验前自动装进用户环境的 Python 包 */
+  installed?: string[]
   comparison: ConvertComparison | null
   has_preview: boolean
   adopted_script?: string | null
@@ -3533,7 +3545,18 @@ const jsonPost = (body?: unknown): RequestInit => ({
 })
 
 export const startConvert = (
-  req: { script: string; library: string; path?: string | null; agent?: string; model?: string | null; effort?: string | null; client_request_id?: string },
+  req: {
+    script: string
+    /** Python 来源必填；R / MATLAB 来源必须缺省 */
+    library?: string
+    /** 缺省 = python */
+    source_language?: Exclude<ConvertSourceLanguage, 'python'>
+    path?: string | null
+    agent?: string
+    model?: string | null
+    effort?: string | null
+    client_request_id?: string
+  },
   pj: string | null,
 ) => jsonFetch<{ session: string; script: string; deduped?: boolean }>('/api/ai/convert', jsonPost(req), pj)
 

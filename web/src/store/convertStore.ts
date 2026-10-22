@@ -15,6 +15,7 @@ import {
   fetchConvert,
   isDefiniteRunFailure,
   startConvert,
+  type ConvertSourceLanguage,
   type ConvertStatus,
 } from '@/lib/api'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
@@ -33,13 +34,18 @@ export interface ConvertEntry {
   status: ConvertStatus | null
   /** 采用后新建的脚本（项目相对路径） */
   adopted: string | null
-  library: string
+  /** 位图库名；R / MATLAB 来源没有 */
+  library: string | null
+  sourceLanguage: ConvertSourceLanguage
   path: string | null
+  /** Agent 停下说明“哪一步换不了”的那一句（`needs_input`；后端已清洗并限长）；没有 = null */
+  detail: string | null
 }
 
 interface ConvertState {
   entries: Record<string, ConvertEntry>
-  start: (script: string, library: string, path: string | null) => Promise<void>
+  /** `language` 缺省 python（`library` 必填）；`r` / `matlab` 时 `library` 传 null */
+  start: (script: string, library: string | null, path: string | null, language?: ConvertSourceLanguage) => Promise<void>
   adopt: (script: string) => Promise<string | null>
   discard: (script: string) => Promise<void>
   stop: (script: string) => Promise<void>
@@ -84,7 +90,7 @@ function failureCode(unmet: { constraint_id: string; reason_code: string }[] | u
 export const useConvertStore = create<ConvertState>((set, get) => ({
   entries: {},
 
-  start: async (script, library, path) => {
+  start: async (script, library, path, language = 'python') => {
     const guard = captureProjectEpoch()
     const pj = currentProjectId()
     // 续查只认「失败卡上留着的、且登记为已受理」的那个会话（条目被重置后遗留的登记不算）
@@ -93,7 +99,18 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
     set((s) => ({
       entries: {
         ...s.entries,
-        [script]: { phase: 'running', session: null, error: null, reason: null, status: null, adopted: null, library, path },
+        [script]: {
+          phase: 'running',
+          session: null,
+          error: null,
+          reason: null,
+          status: null,
+          adopted: null,
+          library,
+          sourceLanguage: language,
+          path,
+          detail: null,
+        },
       },
     }))
     const mine = get().entries[script]
@@ -118,7 +135,14 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
         const model = agent ? (models[agent] ?? info?.default_model ?? null) : null
         const effort = agent && info?.efforts.length ? (efforts[agent] ?? info.default_effort ?? null) : null
         const posted = await startConvert(
-          { script, library, path, client_request_id: rid, ...(agent ? { agent, model, effort } : {}) },
+          {
+            script,
+            // Python 来源带位图库；R / MATLAB 来源带语言、不带库（后端据此分流并复核文件内容）
+            ...(language === 'python' ? { library: library ?? undefined } : { source_language: language }),
+            path,
+            client_request_id: rid,
+            ...(agent ? { agent, model, effort } : {}),
+          },
           pj,
         )
         session = posted.session
@@ -154,6 +178,12 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           set1(script, { phase: 'ready', status })
         } else if (sess.status === 'cancelled') {
           get().clear(script)
+        } else if (sess.task?.outcome === 'needs_input') {
+          // Agent 停下说明：Python 里没有可靠的逐一对应。再试一次也是同样的结论，卡片只说原因
+          acceptedSessions.delete(key)
+          const unmet = sess.task.unmet ?? []
+          const why = unmet.find((u) => typeof u.detail === 'string' && u.detail)?.detail ?? null
+          set1(script, { phase: 'failed', reason: 'needs_input', detail: why })
         } else {
           acceptedSessions.delete(key) // 任务明确终局失败：重试起新会话
           set1(script, {
