@@ -1208,6 +1208,7 @@
         "needs_input_reason": "没有生成新版本：{{reason}}",
         "convert_source_changed": "原脚本在这期间被改过，这份新版本是按旧版本写的，请重新生成",
         "convert_candidate_changed": "待采用的新版本文件被改动过，请重新生成",
+        "resume_unreachable": "暂时连不上，请稍后重试",
         "resume_error": "接着生成时出错了，请重试"
       },
       "foreign": {
@@ -1230,6 +1231,8 @@
         "systemBuiltin": "这是 {{product}} 内置的运行环境，不往里面装包。请给项目换一个环境。",
         "resuming": "正在装 {{names}}，装好后接着生成…",
         "replanning": "正在按新环境重新检查…",
+        "continuing": "正在继续检查新版本…",
+        "installedLate": "依赖已经装好了（停止来得太晚，没能撤回）。",
         "env": {
           "managed": "{{product}} 的项目环境"
         },
@@ -1237,6 +1240,7 @@
           "installAlways": "装，以后这个环境都自动装",
           "installOnce": "确认，装上",
           "decline": "不装",
+          "continue": "继续",
           "chooseEnv": "选择运行环境"
         }
       }

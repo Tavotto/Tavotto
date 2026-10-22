@@ -7,6 +7,7 @@
  */
 import { create } from 'zustand'
 import {
+  ApiError,
   adoptConvert,
   agentById,
   aiCancel,
@@ -29,7 +30,14 @@ import { newRequestId, useAiStore } from '@/store/aiStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 
-export type ConvertPhase = 'running' | 'deps' | 'resuming' | 'ready' | 'adopting' | 'adopted' | 'failed'
+export type ConvertPhase = 'running' | 'deps' | 'resuming' | 'installed' | 'ready' | 'adopting' | 'adopted' | 'failed'
+
+/** 一次续跑是哪种动作（装 / 换环境重判 / 装好后继续）：「暂时连不上」后重试，对账得知后端还没动时据此决定要不要重发 */
+export interface ResumeKind {
+  replanning: boolean
+  /** 装依赖时前端回显的卡片摘要；replan / 继续没有 */
+  digest: string | null
+}
 
 export interface ConvertEntry {
   phase: ConvertPhase
@@ -53,6 +61,8 @@ export interface ConvertEntry {
   envBase: string | null
   /** `resuming` 里这一轮是「按新环境重新检查」（卡片说“正在按新环境重新检查…”），不是装包 */
   replanning: boolean
+  /** 续跑的 POST / 轮询遇到传输错误、对账也没连上时留下的动作（`failed` + `resume_unreachable`）：重试先对账，不去轮询已终结的 AI 会话；没有 = null */
+  lost: ResumeKind | null
 }
 
 interface ConvertState {
@@ -67,6 +77,8 @@ interface ConvertState {
   chooseEnv: (script: string) => void
   /** 换了环境之后：按此刻的项目解释器重新判定**同一个**候选（后端 `replan`，不重跑 Agent）；结果是新卡 / 继续校验 */
   replanDeps: (script: string) => Promise<void>
+  /** 停止来得太晚、依赖已经装好（`installed` 阶段）后用户点「继续」：接着校验同一个候选 */
+  continueAfterInstall: (script: string) => Promise<void>
   stop: (script: string) => Promise<void>
   clear: (script: string) => void
 }
@@ -119,49 +131,121 @@ const envIdentity = (): string => {
   return [env?.python ?? '', env?.project?.source ?? '', env?.project?.python ?? ''].join('\u0000')
 }
 
+/** 对账得到的后端真实状态 → 条目。回 true = 还在续跑（继续轮询） */
+function applyConvertStatus(script: string, pj: string | null, status: ConvertStatus): boolean {
+  if (status.state === 'resuming') return true
+  if (status.state === 'ready') {
+    set1(script, { phase: 'ready', status, card: null, replanning: false, lost: null })
+  } else if (status.state === 'awaiting_dependencies' && status.dependency_card) {
+    set1(script, { phase: 'deps', card: status.dependency_card, replanning: false, lost: null })
+  } else if (status.state === 'deps_installed') {
+    // 取消来得太晚：依赖已装好，候选保留，等用户点「继续」
+    set1(script, { phase: 'installed', status, card: null, replanning: false, lost: null })
+  } else {
+    acceptedSessions.delete(scopeKey(pj, script))
+    set1(script, {
+      phase: 'failed',
+      reason: status.failure?.reason ?? 'unknown',
+      card: null,
+      replanning: false,
+      lost: null,
+    })
+  }
+  return false
+}
+
 /**
- * 起一个「接着走同一个候选」的后端作业（装依赖 / 按新环境重新判定），再轮询它到结局：
- * `ready` → 对照；又停住 → 换成新卡片；其余 → 失败。被关闭 / 停止 / 重试覆盖或换项目就静默退出。
+ * 起一个「接着走同一个候选」的后端作业（装依赖 / 按新环境重新判定 / 装好后继续），再轮询它到结局。
+ * 状态一律读 `GET /api/ai/convert/<sid>`（转换自己的状态），**从不**回头轮询那条已终结的 AI 会话。
+ *
+ * 传输类错误不直接判失败：POST 或轮询出错（网络 / 超时 / 5xx / 响应丢失，或 409 `convert_not_awaiting_dependencies`
+ * 之类说明后端状态已变）→ 先对账；按后端真实状态展示（resuming 继续等 / ready 可采用 / 又停住换新卡 / 失败 / 已不存在）。
+ * 对账也连不上 → 落「暂时连不上」（`failed` + `resume_unreachable`，保留动作 `lost`）；重试先对账，
+ * 只有后端仍在等用户（`awaiting_dependencies`）且是同一张卡时才重发 POST，已在续跑 / 已 ready 绝不重发。
+ * 被关闭 / 停止 / 重试覆盖或换项目就静默退出。
  */
-async function resumeWith(
+async function driveResume(
   script: string,
   session: string,
-  replanning: boolean,
-  post: (pj: string | null) => Promise<unknown>,
+  kind: ResumeKind,
+  post: ((pj: string | null) => Promise<unknown>) | null,
+  opts: { reconcileFirst?: boolean } = {},
 ): Promise<void> {
   const guard = captureProjectEpoch()
   const pj = currentProjectId()
   const get = useConvertStore.getState
-  const set = set1
-  set(script, { phase: 'resuming', error: null, reason: null, replanning, envBase: null })
-  try {
-    await post(pj)
-    for (;;) {
+  set1(script, { phase: 'resuming', error: null, reason: null, replanning: kind.replanning, envBase: null, lost: null })
+  const mine = () => {
+    const now = get().entries[script]
+    return !!now && now.session === session
+  }
+  // 重试路径允许在对账发现后端仍在等用户时重发一次 POST；POST 自己出错后的对账不重发（可能是响应丢了）
+  let canResend = !!opts.reconcileFirst && post !== null
+  let reconcile = !!opts.reconcileFirst
+  if (post && !opts.reconcileFirst) {
+    try {
+      await post(pj)
+    } catch {
+      if (!guard.still() || !mine()) return
+      reconcile = true
+    }
+  }
+  for (;;) {
+    if (!reconcile) {
       await new Promise((r) => setTimeout(r, POLL_MS))
       if (!guard.still()) return
       const now = get().entries[script]
       if (!now || now.session !== session || now.phase !== 'resuming') return // 被关闭 / 停止 / 重试覆盖
-      const status = await fetchConvert(session, pj)
-      if (!guard.still()) return
-      if (status.state === 'resuming') continue
-      if (status.state === 'ready') {
-        set(script, { phase: 'ready', status, card: null, replanning: false })
-      } else if (status.state === 'awaiting_dependencies' && status.dependency_card) {
-        set(script, { phase: 'deps', card: status.dependency_card, replanning: false })
-      } else {
+    }
+    let status: ConvertStatus
+    try {
+      status = await fetchConvert(session, pj)
+    } catch (e) {
+      if (!guard.still() || !mine()) return // 关闭 / 停止时候选被后端删掉，轮询会 404：那是用户自己点的，条目已经清了
+      if (e instanceof ApiError && e.status === 404) {
         acceptedSessions.delete(scopeKey(pj, script))
-        set(script, { phase: 'failed', reason: status.failure?.reason ?? 'unknown', card: null, replanning: false })
+        set1(script, { phase: 'failed', error: backendErrorText(e), reason: null, card: null, replanning: false, lost: null })
+        return
       }
+      if (!reconcile) {
+        reconcile = true // 轮询瞬时失败：马上对账一次
+        continue
+      }
+      set1(script, { phase: 'failed', reason: 'resume_unreachable', error: null, replanning: false, lost: kind })
       return
     }
-  } catch (e) {
-    if (!guard.still()) return
-    const now = get().entries[script]
-    // 关闭 / 停止时候选被后端删掉，轮询会 404：那是用户自己点的，条目已经清了
-    if (!now || now.session !== session) return
-    set(script, { phase: 'failed', error: backendErrorText(e), card: null, replanning: false })
+    if (!guard.still() || !mine()) return
+    const wasReconcile = reconcile
+    reconcile = false
+    if (wasReconcile && canResend && post && status.state === 'awaiting_dependencies' && status.dependency_card) {
+      canResend = false
+      const card = status.dependency_card
+      // 后端还停在原处、没收到那次点击：同一张卡（摘要一致）或 replan 才替用户重发；卡变了让用户看新卡再点
+      if (kind.replanning || (kind.digest !== null && card.impact_digest === kind.digest)) {
+        try {
+          await post(pj)
+        } catch {
+          if (!guard.still() || !mine()) return
+          reconcile = true
+        }
+        continue
+      }
+    }
+    if (applyConvertStatus(script, pj, status)) continue
+    return
   }
 }
+
+/** 重试「暂时连不上」的续跑：先对账；仍在等用户且是同一张卡才重发同一个动作 */
+function resumeAfterLost(script: string, session: string, kind: ResumeKind): Promise<void> {
+  return driveResume(script, session, kind, postFor(session, kind), { reconcileFirst: true })
+}
+
+/** 按动作种类造 POST（装 = 回显摘要；其余 = replan 入口） */
+const postFor = (session: string, kind: ResumeKind) => (pj: string | null) =>
+  !kind.replanning && kind.digest !== null
+    ? resolveConvertDependencies(session, kind.digest, pj)
+    : replanConvertDependencies(session, pj)
 
 export const useConvertStore = create<ConvertState>((set, get) => ({
   entries: {},
@@ -171,6 +255,12 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
     const pj = currentProjectId()
     // 续查只认「失败卡上留着的、且登记为已受理」的那个会话（条目被重置后遗留的登记不算）
     const prior = get().entries[script]
+    // 续跑（装 / 重判 / 继续）遇到传输错误落下的「暂时连不上」：先以转换自己的状态对账，再决定要不要重发——
+    // 不能去轮询那条已终结的 AI 会话（它永远是 needs_input，会盖掉已经 ready 的候选）
+    if (prior?.phase === 'failed' && prior.session && prior.lost) {
+      await resumeAfterLost(script, prior.session, prior.lost)
+      return
+    }
     const resumable = prior?.phase === 'failed' && prior.session ? prior.session : null
     set((s) => ({
       entries: {
@@ -189,6 +279,7 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           card: null,
           envBase: null,
           replanning: false,
+          lost: null,
         },
       },
     }))
@@ -309,7 +400,8 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
     if (!cur?.session || cur.phase !== 'deps' || !cur.card || cur.card.kind === 'system') return
     const digest = cur.card.impact_digest
     // 前端回显它看到的卡片摘要：服务端不自回显（对不上就换新卡片、不装）
-    await resumeWith(script, cur.session, false, (pj) => resolveConvertDependencies(cur.session as string, digest, pj))
+    const kind: ResumeKind = { replanning: false, digest }
+    await driveResume(script, cur.session, kind, postFor(cur.session, kind))
   },
 
   chooseEnv: (script) => {
@@ -322,14 +414,22 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
   replanDeps: async (script) => {
     const cur = get().entries[script]
     if (!cur?.session || cur.phase !== 'deps' || !cur.card) return
-    const session = cur.session
-    await resumeWith(script, session, true, (pj) => replanConvertDependencies(session, pj))
+    const kind: ResumeKind = { replanning: true, digest: null }
+    await driveResume(script, cur.session, kind, postFor(cur.session, kind))
+  },
+
+  continueAfterInstall: async (script) => {
+    const cur = get().entries[script]
+    if (!cur?.session || cur.phase !== 'installed') return
+    // 已不缺包：replan 入口直接接着校验同一个候选（不是“换了环境”，replanning=false 只影响文案）
+    const kind: ResumeKind = { replanning: false, digest: null }
+    await driveResume(script, cur.session, kind, (pj) => replanConvertDependencies(cur.session as string, pj))
   },
 
   discard: async (script) => {
     const cur = get().entries[script]
     get().clear(script)
-    if (cur?.session && (cur.phase === 'ready' || cur.phase === 'deps' || cur.phase === 'resuming')) {
+    if (cur?.session && (cur.phase === 'ready' || cur.phase === 'deps' || cur.phase === 'resuming' || cur.phase === 'installed')) {
       try {
         await discardConvert(cur.session, currentProjectId())
       } catch {
@@ -341,7 +441,7 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
   stop: async (script) => {
     const cur = get().entries[script]
     get().clear(script)
-    if (cur?.session && (cur.phase === 'deps' || cur.phase === 'resuming')) {
+    if (cur?.session && (cur.phase === 'deps' || cur.phase === 'resuming' || cur.phase === 'installed')) {
       // 任务已经以 needs_input 终局，没有可取消的任务了；候选和（可能正在进行的）安装由 discard 取消
       try {
         await discardConvert(cur.session, currentProjectId())

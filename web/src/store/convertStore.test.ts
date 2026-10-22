@@ -12,7 +12,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   aiCancel: vi.fn().mockResolvedValue({ ok: true }),
 }))
 
-import { aiCancel, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, startConvert } from '@/lib/api'
+import { ApiError, aiCancel, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, startConvert } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
 import { POLL_MS, useConvertStore } from '@/store/convertStore'
@@ -377,5 +377,145 @@ describe('convertStore：换环境后按新环境重新判定（Codex #1330 P1�
     useEnvStore.setState({ env: envOf('/usr/bin/python3') })
     await vi.advanceTimersByTimeAsync(POLL_MS + 20)
     expect(replanConvertDependencies).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('convertStore：续跑遇到传输错误先对账（Codex #1330 P1，GET /api/ai/convert 而非已终结的 AI 会话）', () => {
+  const card = {
+    kind: 'ask_once' as const, packages: ['pandas'], outside_list: [] as string[],
+    env: { kind: 'conda' as const, name: 'myenv' }, action: 'install_managed' as const, impact_digest: 'dg-1',
+    target: 'tavotto_managed', creates_environment: false, downloads_python: false, modifies_user_environment: false,
+  }
+  const held = {
+    status: 'done', final: true,
+    task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'dependency_decision', data: card }] },
+  } as never
+  const entry = () => useConvertStore.getState().entries['fig.R']
+  const begin = async () => {
+    const p = useConvertStore.getState().start('fig.R', null, null, 'r')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+  }
+  const netErr = () => new TypeError('Failed to fetch')
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    setCurrentProjectId('A')
+    useConvertStore.setState({ entries: {} })
+    useAiStore.setState({ caps: { agents: [] } as never })
+    vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 's1', script: 'fig.R' })
+    vi.mocked(fetchConvert).mockReset()
+    vi.mocked(fetchAiSession).mockReset().mockResolvedValue(held)
+    vi.mocked(resolveConvertDependencies).mockReset().mockResolvedValue({ session: 's1', state: 'resuming' })
+    vi.mocked(replanConvertDependencies).mockReset().mockResolvedValue({ session: 's1', state: 'resuming' })
+    await begin()
+  })
+  afterEach(() => {
+    useConvertStore.getState().clear('fig.R')
+    vi.useRealTimers()
+  })
+
+  it('POST 被后端接受但响应丢失：对账得 ready，可采用（不是 failed / 旧的依赖卡）', async () => {
+    vi.mocked(resolveConvertDependencies).mockRejectedValueOnce(netErr())
+    vi.mocked(fetchConvert).mockResolvedValue({ state: 'ready', installed: ['pandas'] } as never)
+    await useConvertStore.getState().resolveDeps('fig.R')
+    expect(entry()).toMatchObject({ phase: 'ready', card: null, lost: null })
+    expect(resolveConvertDependencies).toHaveBeenCalledTimes(1)
+    expect(fetchAiSession).toHaveBeenCalledTimes(1) // 只有起始那一次，续跑从不再轮询已终结的 AI 会话
+  })
+
+  it('POST 响应丢失但后端在续跑：对账得 resuming，接着轮询到 ready，不重发 POST', async () => {
+    vi.mocked(resolveConvertDependencies).mockRejectedValueOnce(netErr())
+    vi.mocked(fetchConvert)
+      .mockResolvedValueOnce({ state: 'resuming' } as never) // 对账
+      .mockResolvedValue({ state: 'ready' } as never)
+    const p = useConvertStore.getState().resolveDeps('fig.R')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(entry()?.phase).toBe('resuming')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+    expect(entry()).toMatchObject({ phase: 'ready' })
+    expect(resolveConvertDependencies).toHaveBeenCalledTimes(1)
+  })
+
+  it('轮询瞬时失败：对账一次后继续，最终 ready', async () => {
+    vi.mocked(fetchConvert)
+      .mockRejectedValueOnce(netErr()) // 轮询失败
+      .mockResolvedValueOnce({ state: 'resuming' } as never) // 马上对账
+      .mockResolvedValue({ state: 'ready' } as never)
+    const p = useConvertStore.getState().resolveDeps('fig.R')
+    await vi.advanceTimersByTimeAsync(POLL_MS * 3 + 30)
+    await p
+    expect(entry()).toMatchObject({ phase: 'ready', lost: null })
+  })
+
+  it('409 convert_not_awaiting_dependencies：按对账结果展示（已 ready），不卡死', async () => {
+    vi.mocked(resolveConvertDependencies).mockRejectedValueOnce(new ApiError('x', 409, { code: 'convert_not_awaiting_dependencies' }))
+    vi.mocked(fetchConvert).mockResolvedValue({ state: 'ready' } as never)
+    await useConvertStore.getState().resolveDeps('fig.R')
+    expect(entry()).toMatchObject({ phase: 'ready' })
+  })
+
+  it('对账也失败：落「暂时连不上」可重试状态；重试先对账，已 ready 就不重发 POST', async () => {
+    vi.mocked(resolveConvertDependencies).mockRejectedValueOnce(netErr())
+    vi.mocked(fetchConvert).mockRejectedValue(netErr())
+    await useConvertStore.getState().resolveDeps('fig.R')
+    expect(entry()).toMatchObject({ phase: 'failed', reason: 'resume_unreachable', lost: { replanning: false, digest: 'dg-1' } })
+    // 重试：对账得 ready
+    vi.mocked(fetchConvert).mockReset().mockResolvedValue({ state: 'ready' } as never)
+    await useConvertStore.getState().start('fig.R', null, null, 'r')
+    expect(entry()).toMatchObject({ phase: 'ready', lost: null })
+    expect(resolveConvertDependencies).toHaveBeenCalledTimes(1)
+    expect(startConvert).toHaveBeenCalledTimes(1)
+    expect(fetchAiSession).toHaveBeenCalledTimes(1) // 没有回头轮询已终结的 AI 会话
+  })
+
+  it('重试对账得「后端已在续跑」：不重发 POST，接着等', async () => {
+    vi.mocked(resolveConvertDependencies).mockRejectedValueOnce(netErr())
+    vi.mocked(fetchConvert).mockRejectedValue(netErr())
+    await useConvertStore.getState().resolveDeps('fig.R')
+    vi.mocked(fetchConvert).mockReset().mockResolvedValueOnce({ state: 'resuming' } as never).mockResolvedValue({ state: 'ready' } as never)
+    const p = useConvertStore.getState().start('fig.R', null, null, 'r')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+    expect(entry()).toMatchObject({ phase: 'ready' })
+    expect(resolveConvertDependencies).toHaveBeenCalledTimes(1)
+  })
+
+  it('重试对账得「后端仍停在同一张卡」（那次点击根本没到）：重发一次 POST', async () => {
+    vi.mocked(resolveConvertDependencies).mockRejectedValueOnce(netErr())
+    vi.mocked(fetchConvert).mockRejectedValue(netErr())
+    await useConvertStore.getState().resolveDeps('fig.R')
+    vi.mocked(fetchConvert)
+      .mockReset()
+      .mockResolvedValueOnce({ state: 'awaiting_dependencies', dependency_card: card } as never) // 对账
+      .mockResolvedValue({ state: 'ready' } as never)
+    const p = useConvertStore.getState().start('fig.R', null, null, 'r')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+    expect(resolveConvertDependencies).toHaveBeenCalledTimes(2)
+    expect(entry()).toMatchObject({ phase: 'ready' })
+  })
+
+  it('重试对账仍失败：保持「暂时连不上」，可再重试', async () => {
+    vi.mocked(resolveConvertDependencies).mockRejectedValueOnce(netErr())
+    vi.mocked(fetchConvert).mockRejectedValue(netErr())
+    await useConvertStore.getState().resolveDeps('fig.R')
+    await useConvertStore.getState().start('fig.R', null, null, 'r')
+    expect(entry()).toMatchObject({ phase: 'failed', reason: 'resume_unreachable', lost: { digest: 'dg-1' } })
+    expect(resolveConvertDependencies).toHaveBeenCalledTimes(1)
+  })
+
+  it('对账得 deps_installed（停止来得太晚）：落 installed；点继续走 replan 入口 → ready', async () => {
+    vi.mocked(fetchConvert).mockResolvedValue({ state: 'deps_installed', installed: ['pandas'] } as never)
+    const p = useConvertStore.getState().resolveDeps('fig.R')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+    expect(entry()).toMatchObject({ phase: 'installed', card: null })
+    vi.mocked(fetchConvert).mockReset().mockResolvedValue({ state: 'ready' } as never)
+    const c = useConvertStore.getState().continueAfterInstall('fig.R')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await c
+    expect(replanConvertDependencies).toHaveBeenCalledWith('s1', 'A')
+    expect(entry()).toMatchObject({ phase: 'ready' })
   })
 })

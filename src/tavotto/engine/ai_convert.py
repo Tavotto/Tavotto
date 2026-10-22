@@ -81,6 +81,7 @@ DEPENDENCY_INSTALL_FAILED = "convert_dependency_install_failed"
 #: 依赖钩子结果的 `status`（与 `convertdeps.STATUS_*` 同值；这里不 import 它：convertdeps 经 deprepair 通向既有 import 环，引擎侧只认 app 注入的钩子）
 DEPS_INSTALLED = "installed"
 DEPS_CANCELLED = "cancelled"
+DEPS_INSTALLED_STOPPED = "installed_stopped"  # 内部：续跑里装好后发现取消已置位（晚到的停止）
 DEPS_HOLD = "hold"
 DEPS_FAILED = "failed"
 #: 校验运行前发现要用户先决定一件事（装不装缺的包 / 换环境）的内部码：任务以 `needs_input` 终局、候选不删（`ConvertAdapter.hold`）
@@ -91,6 +92,8 @@ DEPENDENCY_DECISION_REASON = "dependency_decision"
 STATE_AWAITING = "awaiting_dependencies"
 STATE_RESUMING = "resuming"
 STATE_FAILED = "failed"
+#: 续跑里依赖已装好、但用户的停止来得太晚（过了 deprepair 提交点，环境已换代，修复层拒绝了取消）：候选保留，停在这里等用户点「继续」
+STATE_INSTALLED = "deps_installed"
 #: 跑通了但没捕获到 Matplotlib 图的错误码（`probe.ERROR_NO_FIGURE` 与准备路径的两个同义码）
 NO_FIGURE_CODES = frozenset(
     {"script_no_figure", "no_figures_captured", "no_figures_captured_silent"}
@@ -102,7 +105,15 @@ WRITE_OUTSIDE_HINT = (
     "新脚本只许读原数据，不要保存任何文件，让 Tavotto 自己导出图。"
 )
 _SID = re.compile(r"[0-9a-f]{12}")
-_STATES = ("ready", "adopted", "discarded", STATE_AWAITING, STATE_RESUMING, STATE_FAILED)
+_STATES = (
+    "ready",
+    "adopted",
+    "discarded",
+    STATE_AWAITING,
+    STATE_RESUMING,
+    STATE_FAILED,
+    STATE_INSTALLED,
+)
 
 
 def enabled() -> bool:
@@ -416,6 +427,11 @@ def _ensure_dependencies(cand: ConvertCandidate, rel: str) -> dict | None:
     status = got.get("status")
     if status == DEPS_INSTALLED:
         cand.installed = list(got.get("installed") or [])
+        cancel = cand.extras.get("cancel")
+        if cand.extras.get("resume") and cancel is not None and cancel.is_set():
+            # 续跑里装好了、而取消已置位：修复层拒绝了晚到的取消（环境已换代）。不再往下跑校验（违背用户的停止意图），
+            # 也不删候选——由 `run_resume` 停在「已装好、等你继续」
+            return {"status": DEPS_INSTALLED_STOPPED}
         return None
     if status == DEPS_CANCELLED:
         return {"status": "cancelled"}
@@ -1041,7 +1057,8 @@ def _rebuild(cdir: Path, meta: dict, project: Path) -> ConvertCandidate:
 def prepare_resume(sid: str, project: str) -> tuple[Path, dict, threading.Event]:
     """点卡片主按钮的同步部分：核对状态、登记取消标记（同一个候选同时只有一个续跑作业）。"""
     cdir, meta = _load_meta(sid, project)
-    if meta.get("state") != STATE_AWAITING or not isinstance(meta.get("dependency_card"), dict):
+    awaiting = meta.get("state") == STATE_AWAITING and isinstance(meta.get("dependency_card"), dict)
+    if not awaiting and meta.get("state") != STATE_INSTALLED:
         raise ConvertError("convert_not_awaiting_dependencies", 409)
     with _RESUMES_LOCK:
         if sid in _RESUMES:
@@ -1075,7 +1092,8 @@ def run_resume(
     """接着走**同一个候选**（不重跑 Agent）：装依赖（注入的 `resolve` = `convertdeps.resolve`，用户点击回显的摘要）→ 校验运行 → 对照 → 留存待采用。
     `ensure`（= `convertdeps.ensure`）给「按当前环境重新判定」：不带点击摘要，按**此刻**的项目解释器走自动路径的同一棵决定树
     （能直接装的装 / 要问一次或名单外或仍是系统 Python 的回新卡 / 已不缺的直接续跑）。二者给一个。
-    结局 `{"state": ready | awaiting_dependencies | failed | cancelled}`；`cancelled` 时候选目录已删。
+    结局 `{"state": ready | awaiting_dependencies | failed | cancelled | deps_installed}`；`cancelled` 时候选目录已删。
+    `deps_installed`：取消来得太晚（依赖步骤已过提交点、返回 installed）——候选保留，不再自动校验，等用户点「继续」。
     只在 `prepare_resume` 之后调用（它登记了 `cancel`），返回前一定摘掉登记。"""
     root = Path(project)
     try:
@@ -1087,6 +1105,7 @@ def run_resume(
             return {"state": STATE_FAILED, "reason": exc.code}
         cand.extras["runner"] = runner
         cand.extras["cancel"] = cancel
+        cand.extras["resume"] = True
         if ensure is not None:
             cand.extras["deps"] = lambda proj, rel, cancel_ev: ensure(proj, rel, cancel_ev)
         else:
@@ -1094,9 +1113,15 @@ def run_resume(
                 proj, rel, confirmed_impact=confirmed_impact, cancel=cancel_ev
             )
         result = run_validation(cand, runner)
-        if cancel.is_set() or result["status"] == "cancelled":
+        if result["status"] == "cancelled" or (cancel.is_set() and not cand.installed):
+            # 依赖步骤真的被取消（没过提交点），或根本没装过东西：用户的停止照旧生效，候选删掉
             remove_dir(cdir)
             return {"state": "cancelled"}
+        if cancel.is_set():
+            # 依赖步骤返回了 installed（修复层拒绝了晚到的取消，环境已换代）：以安装结果为准，不删候选，
+            # 也不再自动跑校验——停在「已装好、等你继续」，由用户点继续（走 replan 入口，已不缺包，直接校验）
+            _set_state(cdir, meta, STATE_INSTALLED, installed=list(cand.installed))
+            return {"state": STATE_INSTALLED, "installed": list(cand.installed)}
         if cand.hold is not None:
             # 摘要对不上 / 又遇到系统 Python：回到等用户，卡片换成新的（带 notice）
             _set_state(cdir, meta, STATE_AWAITING, dependency_card=cand.hold)

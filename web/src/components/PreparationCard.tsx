@@ -871,11 +871,36 @@ function convertFlow(
     }
     case 'resuming':
       return {
-        title: c.replanning ? pt('convert.deps.replanning') : pt('convert.deps.resuming', { names: listJoin(c.card?.packages ?? []) }),
+        title: c.replanning
+          ? pt('convert.deps.replanning')
+          : c.card?.packages.length
+            ? pt('convert.deps.resuming', { names: listJoin(c.card.packages) })
+            : pt('convert.deps.continuing'),
         slot: <Progress />,
         ghost: (
           <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
             {pt('btn.stop')}
+          </Button>
+        ),
+      }
+    case 'installed':
+      // 停止来得太晚：依赖已经装好（撤不回），候选保留；不自动往下跑，由用户点「继续」
+      return {
+        title: pt('convert.deps.installedLate'),
+        primary: (
+          <Button
+            variant="primary"
+            size="md"
+            data-convert-continue
+            data-prep-primary="convert_continue"
+            onClick={() => void store.continueAfterInstall(p.script)}
+          >
+            {pt('convert.deps.btn.continue')}
+          </Button>
+        ),
+        ghost: (
+          <Button variant="ghost" size="md" data-convert-discard className="text-ink-2" onClick={() => void store.discard(p.script)}>
+            {pt('convert.btn.discard')}
           </Button>
         ),
       }
@@ -995,7 +1020,7 @@ export function ForeignScriptCard() {
           )
         }
         onClose={() => {
-          if (convert?.phase === 'running' || convert?.phase === 'deps' || convert?.phase === 'resuming')
+          if (convert?.phase === 'running' || convert?.phase === 'deps' || convert?.phase === 'resuming' || convert?.phase === 'installed')
             void useConvertStore.getState().stop(offer.script)
           useForeignScriptStore.getState().clear()
         }}

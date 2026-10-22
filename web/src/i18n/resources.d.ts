@@ -5294,13 +5294,16 @@ export default interface Resources {
           "askOnceManaged": "要给这个环境（{{env}}）装缺的包吗（会装进 {{product}} 为本项目建的独立环境，不改动它）？",
           "btn": {
             "chooseEnv": "选择运行环境",
+            "continue": "继续",
             "decline": "不装",
             "installAlways": "装，以后这个环境都自动装",
             "installOnce": "确认，装上"
           },
+          "continuing": "正在继续检查新版本…",
           "env": {
             "managed": "{{product}} 的项目环境"
           },
+          "installedLate": "依赖已经装好了（停止来得太晚，没能撤回）。",
           "replanning": "正在按新环境重新检查…",
           "resuming": "正在装 {{names}}，装好后接着生成…",
           "system": "这个 Python 是系统自带的，往里面装包可能弄坏系统工具。请给项目换一个环境。",
@@ -5321,6 +5324,7 @@ export default interface Resources {
           "project_files_changed": "校验运行改动了项目文件，已丢弃",
           "render_not_wired": "暂时无法校验新版本",
           "resume_error": "接着生成时出错了，请重试",
+          "resume_unreachable": "暂时连不上，请稍后重试",
           "run_failed": "生成的脚本运行出错了",
           "syntax_error": "生成的脚本有语法错误",
           "target_missing": "助手没有写出新脚本",

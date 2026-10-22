@@ -1599,6 +1599,23 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(foreignCard()?.querySelector('[data-convert-deps-install]')).not.toBeNull()
     })
 
+    it('停止来得太晚（依赖已装好）：一句话「依赖已经装好了…」+ 主按钮「继续」；点继续接着校验同一个候选', async () => {
+      await begin(askOnce)
+      vi.mocked(fetchConvert).mockResolvedValue({ ...readyR, state: 'deps_installed' as never, installed: ['pandas'] } as never)
+      await act(async () => (foreignCard()?.querySelector('[data-convert-deps-install]') as HTMLButtonElement).click())
+      await settle()
+      expect(foreignCard()?.dataset.convertPhase).toBe('installed')
+      expect(line()).toBe('依赖已经装好了（停止来得太晚，没能撤回）。')
+      const btn = foreignCard()?.querySelector('[data-convert-continue]') as HTMLButtonElement
+      expect(btn.textContent).toBe('继续')
+      expect(visiblePrimaryButtons(foreignCard()!)).toBe(1)
+      vi.mocked(fetchConvert).mockResolvedValue(readyR)
+      await act(async () => btn.click())
+      expect(replanConvertDependencies).toHaveBeenCalledWith('sid-r', expect.anything())
+      await settle()
+      expect(foreignCard()?.dataset.convertPhase).toBe('ready')
+    })
+
     it('「不装」放弃候选并收起；装依赖期间点 × / 停止 → 放弃（后端据此取消正在进行的安装）', async () => {
       await begin(askOnce)
       await act(async () => (foreignCard()?.querySelector('[data-convert-decline]') as HTMLButtonElement).click())

@@ -99,6 +99,15 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 - **取消传到安装（Codex #1330 P1-1）**：任务的取消标记（`TaskRun.cancel_event`）与续跑作业的取消标记原样传给 `convertdeps`，由监视线程在取消到来时调 deprepair 现有的
   `cancel_status`（`prepare` 复用同一个取消句柄，开跑前就取消也会在拿锁前停手、一个字节不写）；过了提交点的取消被 `cancel_status` 拒绝，结果如实回 `installed`。
   卡片上点停止 / 关闭 = `discard`，它把取消传给正在进行的续跑作业，作业停手后删候选目录，结局 `cancelled`。
+- **晚到的停止以安装结果为准（Codex #1330 P2）**：续跑里依赖步骤返回 `installed`（过了 deprepair 提交点，`cancel_status` 拒绝了取消，环境已换代）而取消标记仍置位时，
+  **不删候选、不自动往下跑校验**（避免违背停止意图），候选停在 `meta.json` 状态 `deps_installed`（“已装好、等你继续”，`installed` 如实记录），界面一句「依赖已经装好了（停止来得太晚，没能撤回）。」
+  + 主按钮「继续」（走 `{action:"replan"}` 入口：已不缺包，直接校验同一个候选）。依赖步骤真的被取消（未过提交点，结局 `cancelled`）或根本没装过东西：照旧 `cancelled`、删候选。
+  取舍：停止是对“整件事”的意图，但环境写入已撤不回，保留候选让用户用已付出的安装继续，比删掉再让用户重来更不浪费；若用户在这之前已关掉卡片，候选留到 24 小时过期。
+- **续跑遇到传输错误先对账（Codex #1330 P1）**：前端续跑（install / replan / 继续）的 POST 或轮询遇到网络 / 超时 / 5xx / 响应丢失，或 409 `convert_not_awaiting_dependencies`，不直接判失败：
+  先 `GET /api/ai/convert/<sid>`（转换自己的状态，**不是**已终结的 AI 会话，后者永远是 `needs_input`，会把已 ready 的候选盖回旧依赖卡），按后端真实状态展示
+  （`resuming` 继续等 / `ready` 可采用 / `awaiting_dependencies` 换新卡 / `deps_installed` / `failed` / 404 已不存在）。对账也连不上 → 「暂时连不上，请稍后重试」（`failed` + `resume_unreachable`，保留动作）；
+  重试先对账：后端已在续跑 / 已 ready 绝不重发 POST，仅当后端仍停在同一张卡（摘要一致，或 replan）说明那次点击没到，才重发一次。**后端不改**：不为 POST 加幂等，
+  因为 `convert_resume_busy` / `convert_not_awaiting_dependencies` 的 409 正好是对账的触发点，状态读口已足够区分各情形。
 - **授权口径（两种，需要维护者知悉）**：`deprepair._check_confirmed` 要求调用方回显给用户看过的影响摘要，服务端自己持有的摘要不得代替回显。
   ① 问过一次 / 点过卡片：确认来自用户这次真实点击——前端把卡片带着的 `impact_digest` 原样回传，服务端重算计划，对不上就不装、回新的卡片，**不自回显**；
   ② 已记过常驻同意的环境（含 `project_venv` / 受管环境这两类上一轮就直接装的目标）：由服务端回显**同一次调用里刚算出的**摘要，依据是维护者 2026-10-23 的常驻同意裁决，

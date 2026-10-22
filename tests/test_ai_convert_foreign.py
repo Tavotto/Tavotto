@@ -504,6 +504,119 @@ def test_closing_the_card_during_resume_cancels_the_install_and_drops_the_candid
     assert not (ai_convert.CONVERT_DIR / sid).exists()
 
 
+def _slow_prepare(monkeypatch, *, past_commit):
+    """假 deprepair.prepare：登记取消句柄后挂起，直到测试放行；`past_commit` = 先把计划记成已过提交点（取消会被 cancel_status 拒绝）。"""
+    from tavotto.engine import deprepair
+
+    entered, release = threading.Event(), threading.Event()
+    seen = {}
+
+    def prepare(plan_id, on_event=None, *, claimed=False, confirmed_impact=None):
+        deprepair._register_cancel(plan_id)
+        if past_commit:
+            monkeypatch.setitem(deprepair._committed, plan_id, 1e18)  # 测试结束还原，不串到别的用例
+        seen["plan"] = plan_id
+        entered.set()
+        release.wait(10)
+        with deprepair._lock:
+            ev = deprepair._cancels.get(plan_id)
+        if ev is not None and ev.is_set():
+            return {"state": deprepair.STATE_CANCELLED}
+        return {"state": deprepair.STATE_DONE}
+
+    monkeypatch.setattr(deprepair, "prepare", prepare)
+    return entered, release, seen
+
+
+def _resume_real_deps(env, sid):
+    cdir, meta, cancel = ai_convert.prepare_resume(sid, _project(env))
+    out = {}
+    ran = []
+    t = threading.Thread(
+        target=lambda: out.update(
+            ai_convert.run_resume(
+                sid,
+                _project(env),
+                cdir,
+                meta,
+                cancel,
+                runner=lambda *a, **k: ran.append(1) or ok_runner(*a),
+                resolve=convertdeps.resolve,
+                confirmed_impact="digest-1",
+            )
+        )
+    )
+    return t, out, ran
+
+
+def test_a_stop_after_the_commit_point_keeps_the_candidate_and_waits_for_continue(
+    env,
+    fake_repair,  # noqa: F811 —— 夹具复用
+    tmp_path,
+    monkeypatch,
+):
+    """Codex #1330 P2：慢 prepare 过了提交点后用户点停止 → 修复层拒绝取消、环境已换代，convertdeps 回 installed。
+    续跑以安装结果为准：候选保留、状态 deps_installed（已装好待继续）、安装如实记录、不自动跑校验；继续（replan 入口）后正常 ready。"""
+    from tavotto.engine import deprepair, pool
+
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    _as(fake_repair, tmp_path, source=pool.SOURCE_CONFIGURED)
+    entered, release, _seen = _slow_prepare(monkeypatch, past_commit=True)
+    t, out, ran = _resume_real_deps(env, sid)
+    t.start()
+    assert entered.wait(10)
+    assert ai_convert.discard(sid, _project(env)) == {
+        "ok": True
+    }  # 停止：取消标记置位，安装已过提交点
+    release.set()
+    t.join(20)
+    assert out["state"] == ai_convert.STATE_INSTALLED, out
+    assert out["installed"], "环境写入如实记录"
+    assert not ran, "不违背停止意图：不自动跑校验"
+    st = ai_convert.status(sid, _project(env))
+    assert st["state"] == ai_convert.STATE_INSTALLED and st["installed"] == out["installed"]
+    assert st["dependency_card"] is None
+    assert (ai_convert.CONVERT_DIR / sid).exists(), "候选保留"
+    assert not ai_convert.resuming(sid)
+    with pytest.raises(ai_convert.ConvertError):  # 还没校验过，不能采用
+        ai_convert.adopt(sid, _project(env))
+    # 用户点「继续」：走 replan 入口，已不缺包，校验同一个候选 → ready
+    monkeypatch.setattr(convertdeps, "ensure", lambda p, r, cancel=None: {"status": "none"})
+    cdir, meta, cancel = ai_convert.prepare_resume(sid, _project(env))
+    res = ai_convert.run_resume(
+        sid, _project(env), cdir, meta, cancel, runner=ok_runner, ensure=convertdeps.ensure
+    )
+    assert res["state"] == "ready"
+    assert deprepair is not None
+
+
+def test_a_stop_before_the_commit_point_still_cancels_and_drops_the_candidate(
+    env,
+    fake_repair,  # noqa: F811 —— 夹具复用
+    tmp_path,
+    monkeypatch,
+):
+    """未过提交点的取消：prepare 的取消检查点停手 → cancelled，候选删，不跑校验（原有语义不变）。"""
+    from tavotto.engine import pool
+
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    _as(fake_repair, tmp_path, source=pool.SOURCE_CONFIGURED)
+    entered, release, _seen = _slow_prepare(monkeypatch, past_commit=False)
+    t, out, ran = _resume_real_deps(env, sid)
+    t.start()
+    assert entered.wait(10)
+    ai_convert.discard(sid, _project(env))
+    import time
+
+    time.sleep(0.3)  # 让监视线程把取消送进 cancel_status
+    release.set()
+    t.join(20)
+    assert out["state"] == "cancelled" and not ran
+    assert not (ai_convert.CONVERT_DIR / sid).exists()
+
+
 def test_a_second_click_while_resuming_is_refused(env, monkeypatch):
     sid = _run(env, hooks={"deps": _hold_hook()})
     _wait(sid)

@@ -3546,7 +3546,7 @@ export interface ConvertDependencyCard {
 
 export interface ConvertStatus {
   session: string
-  state: 'ready' | 'adopted' | 'discarded' | 'awaiting_dependencies' | 'resuming' | 'failed'
+  state: 'ready' | 'adopted' | 'discarded' | 'awaiting_dependencies' | 'resuming' | 'failed' | 'deps_installed'
   /** `state === 'awaiting_dependencies'` 时的卡片事实 */
   dependency_card?: ConvertDependencyCard | null
   /** `state === 'failed'`（续跑失败）时的原因 */
