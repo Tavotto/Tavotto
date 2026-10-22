@@ -3089,7 +3089,14 @@ export interface AiEndpointPreset {
   note?: string
 }
 
-export type AiModelsFetchReason = 'no_key' | 'timeout' | 'unauthorized' | 'bad_response' | 'network'
+export type AiModelsFetchReason =
+  | 'no_key'
+  | 'key_origin_mismatch'
+  | 'insecure_url'
+  | 'timeout'
+  | 'unauthorized'
+  | 'bad_response'
+  | 'network'
 
 export interface AiModelsFetchResult {
   models: string[]

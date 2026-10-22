@@ -413,5 +413,14 @@ def live_models(
     调用方退回预设的 `models` / 用户已填的列表；永不抛。"""
     saved = get(pid) or {}
     url = str(base_url or "").strip() or str(saved.get("base_url") or "")
-    key = str(api_key or "").strip() or str(saved.get("api_key") or "")
+    key = str(api_key or "").strip()
+    if not key:
+        # 已存密钥只发往已存地址的同源（scheme + host + 端口）：改了地址就必须重新填密钥，
+        # 否则「改 URL 后点获取」会把旧密钥送到另一个主机。后端判，不靠前端。
+        saved_key = str(saved.get("api_key") or "")
+        if saved_key:
+            want = ai_catalog.origin_of(url)
+            if want is None or want != ai_catalog.origin_of(str(saved.get("base_url") or "")):
+                return {"models": [], "source": "none", "reason": "key_origin_mismatch"}
+            key = saved_key
     return ai_catalog.live_models(str(pid or ""), url, key, refresh=refresh)

@@ -298,6 +298,84 @@ def test_providers_wrapper_fills_url_and_key_from_the_saved_endpoint(gateway):
     assert ai_providers.live_models("nope", None, None)["reason"] == "no_key"
 
 
+class _CountingOpener:
+    """假 opener：只数有没有被调用——被拒的请求必须一次都不发。"""
+
+    calls = 0
+
+    def open(self, req, timeout=None):
+        type(self).calls += 1
+        raise OSError("must not be called")
+
+
+@pytest.fixture
+def counting(monkeypatch):
+    _CountingOpener.calls = 0
+    monkeypatch.setattr(ai_catalog, "_opener", lambda: _CountingOpener())
+    return _CountingOpener
+
+
+def test_saved_key_is_not_sent_to_a_different_origin(counting):
+    ai_providers.save(
+        {
+            "id": "mine",
+            "agent": "claude",
+            "label": "m",
+            "base_url": "https://a.example",
+            "api_key": KEY,
+        }
+    )
+    out = ai_providers.live_models("mine", "https://b.example", None)
+    assert out == {"models": [], "source": "none", "reason": "key_origin_mismatch"}
+    assert counting.calls == 0
+    # 端口不同 / scheme 不同也是另一个源
+    for other in ("https://a.example:8443", "http://a.example"):
+        assert ai_providers.live_models("mine", other, None)["reason"] in (
+            "key_origin_mismatch",
+            "insecure_url",
+        )
+    assert counting.calls == 0
+    # 用户当场重新填了密钥 → 允许（密钥是用户刚给的，不是已存的）
+    ai_providers.live_models("mine", "https://b.example", "sk-new")
+    assert counting.calls == 1
+
+
+def test_saved_key_is_usable_on_same_origin_other_path(counting):
+    ai_providers.save(
+        {
+            "id": "mine",
+            "agent": "claude",
+            "label": "m",
+            "base_url": "https://A.example:443",
+            "api_key": KEY,
+        }
+    )
+    ai_providers.live_models("mine", "https://a.example/v2", None)
+    assert counting.calls == 1  # 大小写 / 默认端口归一，路径不算
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://evil.example", "http://localhost.evil.example", "http://127.0.0.1.nip.io"],
+)
+def test_plain_http_to_non_loopback_never_sends_the_key(counting, url):
+    out = ai_catalog.live_models("e1", url, KEY)
+    assert out["reason"] == "insecure_url"
+    assert counting.calls == 0
+
+
+@pytest.mark.parametrize("url", ["http://127.0.0.1:8080", "http://[::1]:1234", "http://localhost"])
+def test_plain_http_to_loopback_is_allowed(counting, url):
+    ai_catalog.live_models("e1", url, KEY)
+    assert counting.calls == 1
+
+
+def test_redirects_are_still_not_followed(gateway):
+    g = gateway(mode="redirect")
+    assert ai_catalog.live_models("e1", g.url, KEY)["reason"] == "bad_response"
+    assert len(g.hits) == 1
+
+
 def test_models_endpoint_http(gateway):
     from tavotto import app as m
 

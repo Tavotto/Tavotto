@@ -1072,6 +1072,8 @@
         "fetchedEmpty": "服务商没有返回可用型号",
         "fetchReason": {
           "no_key": "先填好接口地址和密钥，再获取。",
+          "key_origin_mismatch": "地址改了，请重新填写密钥。",
+          "insecure_url": "明文 http 地址不会带着密钥联网，请改用 https。",
           "timeout": "服务商没有及时回应，可稍后重试。",
           "unauthorized": "服务商拒绝了这个密钥。",
           "bad_response": "服务商返回的内容看不懂，请手动填写型号。",

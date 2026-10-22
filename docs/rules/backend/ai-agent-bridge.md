@@ -133,8 +133,10 @@
   **型号以服务商实时列表为准**：`POST /api/ai/endpoints/models`（`ai_providers.live_models`）对接口
   `GET {base_url}/v1/models`（`x-api-key` + `Bearer` 两个头、`anthropic-version`，5 s 超时、不跟随重定向），
   只在用户点「从服务商获取」时才联网，设置页渲染不碰网络；成功结果按（接口 id, base_url, 密钥 sha256 前缀）
-  缓存一天在 `config.data_dir()/ai_models_cache.json`；任何失败只回稳定原因码（`no_key / timeout / unauthorized /
-  bad_response / network`）、永远 200、不抛，界面保持预设 `models_hint` / 用户手填的列表。密钥只进请求头，
+  缓存一天在 `config.data_dir()/ai_models_cache.json`；**密钥只发往已存地址同源（scheme + host + 端口，
+  `ai_providers.live_models` 判，改了地址不带旧密钥 → `key_origin_mismatch`）、只走 https（回环 `localhost` /
+  127.0.0.0/8 / `::1` 例外，字面判不解析 DNS；其他 http → `insecure_url`）**；任何失败只回稳定原因码（`no_key /
+  key_origin_mismatch / insecure_url / timeout / unauthorized / bad_response / network`）、永远 200、不抛，界面保持预设 `models_hint` / 用户手填的列表。密钥只进请求头，
   日志只写接口 id 与原因码，缓存文件里没有密钥。看护：`tests/test_ai_catalog.py`、`EndpointDialog.test.tsx`。
 - **codex 模型清单读 `$CODEX_HOME/config.toml`（默认 `~/.codex`）的 `model` +
   `[profiles.*].model`，绝不在源码里写模型名**——OpenAI 换代后旧名会被服务端

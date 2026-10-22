@@ -1524,6 +1524,8 @@ export default interface Resources {
           "fetchModels": "从服务商获取",
           "fetchReason": {
             "bad_response": "服务商返回的内容看不懂，请手动填写型号。",
+            "insecure_url": "明文 http 地址不会带着密钥联网，请改用 https。",
+            "key_origin_mismatch": "地址改了，请重新填写密钥。",
             "network": "连不上服务商，请检查网络或手动填写型号。",
             "no_key": "先填好接口地址和密钥，再获取。",
             "timeout": "服务商没有及时回应，可稍后重试。",

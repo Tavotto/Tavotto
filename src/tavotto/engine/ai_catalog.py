@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -26,6 +27,7 @@ import tempfile
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -134,7 +136,56 @@ _MAX_BODY = 2 * 1024 * 1024
 _CACHE_LOCK = threading.Lock()
 
 #: 稳定的原因码（界面按它查文案，`dialogs:settings.agents.endpoint.fetchReason.*`）
-REASONS = ("no_key", "timeout", "unauthorized", "bad_response", "network")
+REASONS = (
+    "no_key",
+    "key_origin_mismatch",
+    "insecure_url",
+    "timeout",
+    "unauthorized",
+    "bad_response",
+    "network",
+)
+
+
+def _host_is_loopback(host: str) -> bool:
+    """字面判回环：`localhost` 精确匹配 + 字面 IP（127.0.0.0/8、::1）。不做 DNS 解析。"""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def url_refusal(base_url: str) -> str | None:
+    """带密钥的请求能不能发往这个地址 → None（可以）或原因码。
+
+    只许 https；明文 http 只放行回环（本机开发网关），其余一律拒绝，免得密钥在网上裸奔。"""
+    try:
+        parts = urllib.parse.urlsplit((base_url or "").strip())
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return "bad_response"
+    scheme = parts.scheme.lower()
+    if scheme == "https" and host:
+        return None
+    if scheme == "http" and host:
+        return None if _host_is_loopback(host) else "insecure_url"
+    return "bad_response"
+
+
+def origin_of(url: str) -> tuple[str, str, int] | None:
+    """(scheme, host, port)，默认端口归一、host 小写；解析不了 → None。"""
+    try:
+        parts = urllib.parse.urlsplit((url or "").strip())
+        scheme = parts.scheme.lower()
+        host = (parts.hostname or "").lower()
+        port = parts.port or {"http": 80, "https": 443}.get(scheme, 0)
+    except ValueError:
+        return None
+    if scheme not in ("http", "https") or not host:
+        return None
+    return scheme, host, port
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -180,9 +231,10 @@ def fetch_models(base_url: str, api_key: str) -> tuple[list[str] | None, str | N
     api_key = (api_key or "").strip()
     if not base_url or not api_key:
         return None, "no_key"
-    if not base_url.lower().startswith(("https://", "http://")):
-        return None, "bad_response"
-    req = urllib.request.Request(  # noqa: S310 - 上面已限定 http(s)
+    refusal = url_refusal(base_url)
+    if refusal:
+        return None, refusal
+    req = urllib.request.Request(  # noqa: S310 - 上面已限定 https / 回环 http
         models_url(base_url),
         headers={
             # Anthropic 兼容网关认 x-api-key，OpenAI 系认 Bearer：两个都给，多给无副作用
@@ -251,6 +303,9 @@ def live_models(pid: str, base_url: str, api_key: str, *, refresh: bool = False)
     api_key = (api_key or "").strip()
     if not (base_url or "").strip() or not api_key:
         return {"models": [], "source": "none", "reason": "no_key"}
+    refusal = url_refusal(base_url)
+    if refusal:
+        return {"models": [], "source": "none", "reason": refusal}
     key = _cache_key(pid, base_url, api_key)
     now = time.time()
     if not refresh:

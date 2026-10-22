@@ -1083,6 +1083,8 @@
         "fetchedEmpty": "The provider returned no models",
         "fetchReason": {
           "no_key": "Fill in the address and key first.",
+          "key_origin_mismatch": "The address changed; please re-enter the key.",
+          "insecure_url": "Plain http addresses never get the key; use https.",
           "timeout": "The provider did not answer in time; try again later.",
           "unauthorized": "The provider rejected this key.",
           "bad_response": "The provider's reply was not understood; enter models by hand.",

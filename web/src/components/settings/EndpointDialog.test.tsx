@@ -405,6 +405,18 @@ describe('厂商目录：分组、申请 Key 链接、从服务商获取型号',
     expect(document.body.querySelector('[role="status"]')?.textContent).toBe(ag('endpoint.fetchReason.network'))
   })
 
+  it('后端说地址改了要重填密钥 / 明文 http：各显示对应一句', async () => {
+    await mountCatalog()
+    await pick(0)
+    for (const reason of ['key_origin_mismatch', 'insecure_url'] as const) {
+      fetchModelsMock.mockResolvedValue({ models: [], source: 'none', reason })
+      await act(async () => byText(ag('endpoint.fetchModels'))!.click())
+      expect(document.body.querySelector('[role="status"]')?.textContent).toBe(
+        ag(`endpoint.fetchReason.${reason}`),
+      )
+    }
+  })
+
   it('没有接口地址时按钮是灰的；编辑已存接口时带上 id，让后端补密钥', async () => {
     await mountCatalog({ presets: [] })
     expect(byText(ag('endpoint.fetchModels'))!.disabled).toBe(true)
