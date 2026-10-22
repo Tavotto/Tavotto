@@ -216,13 +216,20 @@ def test_large_attachment_never_touches_a_disk_spool_and_arrives_intact(on, clie
 
 
 def test_request_without_content_length_is_refused(on, client):
-    resp = client.post(
-        "/api/contact/send",
-        data=b"--x--",
-        content_type="multipart/form-data; boundary=x",
-        headers={"Content-Length": ""},
-    )
-    assert resp.status_code in (400, 413)
+    """合法完整的 multipart（有 Content-Length 时会被接受）去掉 CONTENT_LENGTH、改成分块传输：必须在解析前 413。"""
+    from werkzeug.test import EnvironBuilder
+
+    data = {"meta": json.dumps({"locale": "en-US", "body": CANARY, "reply_email": MAIL})}
+    data["file"] = (io.BytesIO(PNG), "a.png")
+    builder = EnvironBuilder("/api/contact/send", method="POST", data=data)
+    environ = builder.get_environ()
+    assert environ["CONTENT_LENGTH"]  # 对照：带头时是个完整请求
+    del environ["CONTENT_LENGTH"]
+    environ["HTTP_TRANSFER_ENCODING"] = "chunked"
+    resp = client.open(environ)
+    assert resp.status_code == 413
+    assert resp.get_json()["code"] == "contact_attachments_too_large"
+    assert on.calls == []
 
 
 def test_inbox_write_failure_still_delivers_but_says_inbox_not_saved(on, client, monkeypatch):
