@@ -260,6 +260,7 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
 
     endpoint = None
     endpoint_backed = False
+    models_overridden = False
     if installed and agent.endpoint_family:
         endpoint = ai_providers.resolve(agent.id)
         if endpoint and endpoint.get("models"):
@@ -269,6 +270,7 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
             default_model = endpoint.get("default_model") or models[0]
             # 网关的模型名与官方目录无关：不带官方的显示名 / 档位
             details = []
+            models_overridden = True
         # 「算不算真的接管了」**问注入方自己**，不在这里另写一份判据：
         # codex 侧 base_url 为空时 spawn_overrides 其实一个字节都不注入，
         # 那种情况 CLI 自己的登录态仍然算数。两份规则迟早分叉，而分叉的
@@ -277,6 +279,10 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
         endpoint_backed = bool(args or env)
 
     state = _state(installed, enabled, res, endpoint_backed)
+    # 档位只认官方目录的 Agent（Claude）：网关接管时不暴露档位
+    effort_ok = agent.supports_effort_selection and not (
+        agent.effort_official_only and (endpoint_backed or models_overridden)
+    )
 
     info: dict = {
         "id": agent.id,
@@ -304,14 +310,14 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
             }
             for d in details
         ],
-        "efforts": list(caps.efforts) if agent.supports_effort_selection else [],
-        "default_effort": caps.default_effort if agent.supports_effort_selection else None,
+        "efforts": list(caps.efforts) if effort_ok else [],
+        "default_effort": caps.default_effort if effort_ok else None,
         "endpoint": ai_providers.public(endpoint) if endpoint else None,
         "active_endpoint_id": (ai_providers.active_id(agent.id) if agent.endpoint_family else None),
         "features": {
             "third_party_endpoints": bool(agent.endpoint_family),
             "model_selection": agent.supports_model_selection,
-            "effort_selection": agent.supports_effort_selection,
+            "effort_selection": effort_ok,
             "wire_api_selection": agent.supports_wire_api,
             "readiness_probe": agent.supports_readiness_probe,
         },

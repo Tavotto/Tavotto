@@ -383,6 +383,9 @@ class AgentDefinition:
     install_spec: InstallSpec | None = None
     supports_model_selection: bool = False
     supports_effort_selection: bool = False
+    #: 档位来自官方目录：接第三方接口（网关）时网关后面的型号未必认，界面不给档位、命令不传。
+    #: 默认 False（Codex 现状不变，网关下仍可传）
+    effort_official_only: bool = False
     #: 该族的第三方接口要不要选 wire api（OpenAI 兼容那一族才有 responses/chat
     #: 两种协议）。**由适配器声明**，前端不该靠 `id === "codex"` 猜。
     supports_wire_api: bool = False
@@ -672,6 +675,7 @@ class ClaudeAgent(AgentDefinition):
     supports_model_selection = True
     #: claude CLI 有 `--effort <level>`；档位来自它自己的模型目录缓存（读不到就不暴露档位）
     supports_effort_selection = True
+    effort_official_only = True
     supports_readiness_probe = True
 
     #: 模型目录缓存不可用时的退路：三个别名，行为与引入目录之前完全一致
@@ -838,7 +842,8 @@ class ClaudeAgent(AgentDefinition):
         cmd += ctx.endpoint_args
         if ctx.model:
             cmd += ["--model", ctx.model]
-        if ctx.effort:
+        # 网关（注入了接口参数 / 环境）后面的型号未必认这个档位：宁可不传
+        if ctx.effort and not (ctx.endpoint_args or ctx.endpoint_env):
             cmd += ["--effort", ctx.effort]
         return SpawnSpec(cmd, dict(ctx.endpoint_env))
 

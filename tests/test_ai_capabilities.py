@@ -326,6 +326,36 @@ def test_claude_model_without_effort_data_exposes_none(tmp_path, monkeypatch):
     assert caps["efforts"] == [] and caps["model_details"][0]["efforts"] == []
 
 
+def test_claude_gateway_hides_efforts_and_skips_flag(tmp_path, monkeypatch):
+    from tavotto.engine import ai_providers
+
+    _write_catalog(tmp_path, _CATALOG)
+    ai_providers.save(
+        {
+            "id": "gw",
+            "label": "GW",
+            "agent": "claude",
+            "api_key": "sk-x",
+            "base_url": "https://gw.example/anthropic",
+            "models": ["glm-x"],
+        }
+    )
+    ai_providers.set_active("claude", "gw")
+    caps = _claude(tmp_path, monkeypatch)
+    assert caps["models"] == ["glm-x"] and caps["model_details"] == []
+    assert caps["efforts"] == [] and caps["default_effort"] is None
+    assert caps["features"]["effort_selection"] is False
+    ctx = ai_agents.RunContext(
+        argv=["claude"],
+        prompt="p",
+        cwd=str(tmp_path),
+        model="glm-x",
+        effort="high",
+        endpoint_env={"ANTHROPIC_BASE_URL": "https://gw.example/anthropic"},
+    )
+    assert "--effort" not in ai_agents.ClaudeAgent().build_command(ctx).argv
+
+
 def test_claude_build_command_passes_effort(tmp_path):
     ctx = ai_agents.RunContext(
         argv=["claude"], prompt="p", cwd=str(tmp_path), model="claude-opus-5-5", effort="high"
