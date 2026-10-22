@@ -345,11 +345,18 @@ class OpenAIChatWire:
     * 系统提示 + 工具定义放在最前且逐字稳定，吃 OpenAI 的自动前缀缓存（不发 `cache_control`，兼容网关会拒收未知字段）。
     * 回复 `choices[0].message`：`content` 文字、`tool_calls[{id, function: {name, arguments(JSON 字符串)}}]`；
       回填为 `{"role": "tool", "tool_call_id", "content"}`。
-    * 长度上限字段用 `max_tokens`（兼容网关通用）。待核：OpenAI 自家推理模型要 `max_completion_tokens`。
+    * 长度上限字段默认 `max_tokens`（兼容网关通用）；OpenAI 自家 o 系列只认 `max_completion_tokens`，
+      由调用方声明（`--max-tokens-field`，将来来自厂商目录），runner 不按模型名猜。
     * 不传推理强度（本阶段只在 responses 上传；`reasoning_content` 若回了，只数字符、不回放）。
     """
 
     name = "openai-chat"
+    TOKEN_FIELDS = ("max_tokens", "max_completion_tokens")
+
+    def __init__(self, token_field: str = "max_tokens"):
+        if token_field not in self.TOKEN_FIELDS:
+            raise ValueError(token_field)
+        self.token_field = token_field
 
     def build(
         self,
@@ -388,7 +395,11 @@ class OpenAIChatWire:
                     {"role": "tool", "tool_call_id": r.call_id, "content": r.content}
                     for r in m.results
                 ]
-        body: dict[str, Any] = {"model": model, "max_tokens": max_output_tokens, "messages": msgs}
+        body: dict[str, Any] = {
+            "model": model,
+            self.token_field: max_output_tokens,
+            "messages": msgs,
+        }
         if tools:
             body["tools"] = [
                 {

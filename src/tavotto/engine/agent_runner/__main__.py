@@ -24,7 +24,14 @@ from pathlib import Path
 from . import loop
 from .redact import Redactor
 from .tools import TOOLSETS, Limits, RunEnvelope
-from .wires import ANTHROPIC_EFFORTS, THINKING_MODES, WIRES, RunnerFailure, check_base_url
+from .wires import (
+    ANTHROPIC_EFFORTS,
+    THINKING_MODES,
+    WIRES,
+    OpenAIChatWire,
+    RunnerFailure,
+    check_base_url,
+)
 
 ENV_API_KEY = "TAVOTTO_AGENT_API_KEY"
 DEFAULT_LIMITS = Limits()
@@ -50,6 +57,12 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--effort", choices=ANTHROPIC_EFFORTS, default=None)
     p.add_argument(
         "--thinking", choices=THINKING_MODES, default="none", help="思考怎么传（调用方声明）"
+    )
+    p.add_argument(
+        "--max-tokens-field",
+        choices=OpenAIChatWire.TOKEN_FIELDS,
+        default="max_tokens",
+        help="openai-chat 的长度上限字段（调用方声明；OpenAI o 系列要 max_completion_tokens）",
     )
     p.add_argument("--max-turns", type=int, default=DEFAULT_LIMITS.max_turns)
     p.add_argument("--max-seconds", type=float, default=DEFAULT_LIMITS.max_seconds)
@@ -144,8 +157,13 @@ def main(argv: list[str] | None = None) -> int:
     elif (bad := check_base_url(args.base_url)) is not None:
         model = _FailModel(RunnerFailure("network", bad))
     else:
+        wire = (
+            OpenAIChatWire(token_field=args.max_tokens_field)
+            if args.wire == OpenAIChatWire.name
+            else WIRES[args.wire]
+        )
         model = loop.HttpModel(
-            WIRES[args.wire],
+            wire,
             base_url=args.base_url,
             api_key=api_key,
             model=args.model,

@@ -1839,3 +1839,35 @@ class TestReviewRound9:
         _, res, events = http_run(cand, serve, "openai-chat", [(200, {}, body)])
         assert (res.ok, res.reason, res.detail) == (False, "network", "tool_call_without_id")
         assert not any(e["type"] == "tool" for e in events) and _tree(cand) == before
+
+
+class TestReviewRound10:
+    """Codex #1328 第十轮：openai-chat 的长度上限字段由调用方声明（o 系列要 max_completion_tokens）。"""
+
+    @pytest.mark.parametrize("field", ["max_tokens", "max_completion_tokens"])
+    def test_chat_token_field_is_caller_declared(self, cand, serve, field):
+        body = {
+            "choices": [
+                {"finish_reason": "stop", "message": {"role": "assistant", "content": "ok"}}
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        }
+        srv = serve([(200, {}, body)])
+        model = loop.HttpModel(
+            wires.OpenAIChatWire(token_field=field),
+            base_url=srv.url,
+            api_key=KEY_CANARY,
+            model="o4-mini",
+            retry_base=0.0,
+            request_timeout=5,
+        )
+        res, _ = run_demo(cand, {"turns": []}, model=model)
+        assert res.ok
+        sent = srv.requests[0][2]
+        other = "max_tokens" if field == "max_completion_tokens" else "max_completion_tokens"
+        assert field in sent and other not in sent
+
+    def test_default_stays_max_tokens_and_unknown_field_is_rejected(self):
+        assert wires.WIRES["openai-chat"].token_field == "max_tokens"
+        with pytest.raises(ValueError):
+            wires.OpenAIChatWire(token_field="max_output_tokens")
