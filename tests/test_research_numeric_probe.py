@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,9 @@ import research_numeric_probe as probe  # noqa: E402
 
 
 @pytest.mark.parametrize("draw", [False, True])
+@pytest.mark.parametrize("product_tracer", [False, True])
 def test_observer_leaves_arrays_and_rng_unchanged_and_detects_changed_data(
-    tmp_path, monkeypatch, draw
+    tmp_path, monkeypatch, draw, product_tracer
 ):
     np = pytest.importorskip("numpy")
     pytest.importorskip("matplotlib")
@@ -39,9 +41,21 @@ ax.plot(y[:, 0], y[:, 1])
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
     monkeypatch.setenv("CG_EXEC_LOG", str(tmp_path / "native-execs.jsonl"))
     try:
-        probe.attach(code, script, tmp_path, fd)
-        observed = {}
-        exec(code, observed)
+        from tavotto.engine.executionfact import on_user_entry
+
+        entries = []
+        context = (
+            on_user_entry(script, lambda: entries.append("entered"))
+            if product_tracer
+            else nullcontext()
+        )
+        with context:
+            existing_trace = sys.gettrace()
+            probe.attach(code, script, tmp_path, fd)
+            assert sys.gettrace() is existing_trace
+            observed = {}
+            exec(code, observed)
+        assert entries == (["entered"] if product_tracer else [])
     finally:
         sys.setprofile(None)
         sys.settrace(None)

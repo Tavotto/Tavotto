@@ -62,7 +62,7 @@ def attach(code, source: Path, root: Path, fd: int) -> None:
         row.update(pid=os.getpid(), leg=Path(os.environ["CG_EXEC_LOG"]).name)
         os.write(fd, (json.dumps(row, sort_keys=True) + "\n").encode())
 
-    if sys.getprofile() is not None or sys.gettrace() is not None:
+    if sys.getprofile() is not None:
         write({"phase": "diagnostic_error", "error": "another profiler is already installed"})
         return
     source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -78,50 +78,48 @@ def attach(code, source: Path, root: Path, fd: int) -> None:
         and node.func.value.value.id == "np"
     }
     script_globals = {}
+    script_frame = None
     complete = False
+    seed_reported = False
 
-    def trace(frame, event, _arg):
-        if frame.f_code is not code:
-            return None
-        if event == "line" and trace.pending:
+    def profile(frame, event, arg):
+        nonlocal script_globals, script_frame, complete, seed_reported
+        is_script = frame.f_code is code
+        if is_script:
+            script_globals = frame.f_globals
+            script_frame = frame
+        np = script_globals.get("np")
+        # The pinned script's next statement calls setup(). Observe before that
+        # call's body, after seed has returned. Do not replace the product tracer.
+        if (
+            not seed_reported
+            and np is not None
+            and script_frame is not None
+            and seed_lines
+            and script_frame.f_lineno > max(seed_lines)
+        ):
             write(
                 {
                     "phase": "seed_return",
                     "source_sha256": source_sha,
-                    "rng_sha256": rng_identity(frame.f_globals["np"]),
+                    "rng_sha256": rng_identity(np),
                 }
             )
-            trace.pending = False
-        if event == "line" and frame.f_lineno in seed_lines:
-            trace.pending = True
-        return trace
-
-    trace.pending = False
-
-    def profile(frame, event, arg):
-        nonlocal script_globals, complete
-        is_script = frame.f_code is code
-        if is_script:
-            script_globals = frame.f_globals
-        seed_return = is_script and event == "c_return" and getattr(arg, "__name__", "") == "seed"
+            seed_reported = True
         script_return = is_script and event == "return"
         draw_return = (
             event == "return"
             and frame.f_code.co_name == "draw"
             and frame.f_globals.get("__name__") == "matplotlib.figure"
         )
-        if not (seed_return or script_return or draw_return):
+        if not (script_return or draw_return):
             return
         np = script_globals.get("np")
         if np is None:
             return
         try:
             row = {
-                "phase": "seed_return"
-                if seed_return
-                else "script_return"
-                if script_return
-                else "draw_return",
+                "phase": "script_return" if script_return else "draw_return",
                 "source_sha256": source_sha,
                 "rng_sha256": rng_identity(np),
                 "after_script": complete,
@@ -131,7 +129,6 @@ def attach(code, source: Path, root: Path, fd: int) -> None:
                 row["figure"] = figure_state(np, figure)
             if script_return:
                 complete = True
-                sys.settrace(None)
                 row["numpy"] = np.__version__
                 row["argv"] = [value.replace(str(root), "<work>") for value in sys.argv]
                 row["cwd"] = os.getcwd().replace(str(root), "<work>")
@@ -156,5 +153,4 @@ def attach(code, source: Path, root: Path, fd: int) -> None:
         except Exception as exc:  # Diagnostic failure is evidence, never a changed script result.
             write({"phase": "diagnostic_error", "error": f"{type(exc).__name__}: {exc}"})
 
-    sys.settrace(trace)
     sys.setprofile(profile)
