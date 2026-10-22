@@ -181,10 +181,15 @@
         {
           "spec": "guarded-png-activation.spec.ts",
           "title": "source-backed PNG: legend + pixel difference → compare dialog → confirm → edit shows the engine redraw with no old legend → undo returns the disk pixels"
+        },
+        {
+          "spec": "guarded-png-activation.spec.ts",
+          "title": "source-backed PNG: saved-moment snapshot → no compare dialog, edits the figure as it was saved, and says so"
         }
       ],
       "desktop_manual": [
-        "打开一个脚本里带 ax.legend()、且保存 PNG 之后又改了图的项目，把它的 PNG 加进画布并点「编辑图内元素」：弹出对照窗口，左原图右重画，一句话说明差异像素比例与「原 PNG 不会被改动」，主按钮「以重画为基础编辑」、次要「保留原图」；点「保留原图」什么都不变；再点确认后进入图内编辑，此时画布仍是原 PNG 的像素；挪一下图例，整张图按重画渲染且原位置没有旧图例残影；一路撤销到没有修改，画布回到原 PNG 的像素；磁盘上的原 PNG 一个字节不变"
+        "打开一个脚本里带 ax.legend()、且保存 PNG 之后又改了图的项目，先在环境变量设 TAVOTTO_SAVE_MOMENT_SNAPSHOT=0 关掉保存瞬间快照（ADR 0139 §九），把它的 PNG 加进画布并点「编辑图内元素」：弹出对照窗口，左原图右重画，一句话说明差异像素比例与「原 PNG 不会被改动」，主按钮「以重画为基础编辑」、次要「保留原图」；点「保留原图」什么都不变；再点确认后进入图内编辑，此时画布仍是原 PNG 的像素；挪一下图例，整张图按重画渲染且原位置没有旧图例残影；一路撤销到没有修改，画布回到原 PNG 的像素；磁盘上的原 PNG 一个字节不变",
+        "同一个项目不设该环境变量（快照默认开）：点「编辑图内元素」不弹对照窗口，元素面板提示「按存盘时的样子编辑」，图内标题等是保存那一刻的样子而不是脚本之后改成的样子；磁盘上的原 PNG 与脚本一个字节不变"
       ]
     },
     {
