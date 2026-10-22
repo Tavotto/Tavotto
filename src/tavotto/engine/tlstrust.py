@@ -20,11 +20,12 @@ pip 不受影响：新版 pip 经 truststore 走平台校验。
 并记一条 WARNING（进程内一次）——**不静默**：那时 Windows 上缺根的机器会以 `private_python_tls` 失败，
 日志里写着为什么。
 
-**产品里的出站 HTTPS 只有七处，全经这里**（`tests/test_outbound_https_trust.py` 按 AST 钉）：私有 Python
+**产品里的出站 HTTPS 只有八处，全经这里**（`tests/test_outbound_https_trust.py` 按 AST 钉）：私有 Python
 下载（`privatepython._fetch`）、匿名遥测投递（`telemetry._post`）、检查更新（`updater._fetch_latest_release`）、
 没有 git 时下载 Codex 插件发行分支压缩包（`codexinstall._fetch`）、用户逐次确认后发送诊断包
 （`diagsend._opener`，ADR 0118；它另加一个不跟随重定向的处理器）、用户点「从服务商获取」时
-取型号列表（`ai_catalog._opener`，同样不跟随重定向）。这六处都是 `urllib.request.build_opener(tlstrust.https_handler(tlstrust.client_context()))`；另有内置执行器的模型请求（`wires._opener`，ADR 0147，不跟随重定向）。别的 `urlopen`
+取型号列表（`ai_catalog._opener`，同样不跟随重定向）、用户点「用账号登录」后的设备码授权与令牌刷新
+（`ai_oauth._opener`，ADR 0146；同样不跟随重定向）。这七处都是 `urllib.request.build_opener(tlstrust.https_handler(tlstrust.client_context()))`；另有内置执行器的模型请求（`wires._opener`，ADR 0147，不跟随重定向）。别的 `urlopen`
 全是 `http://127.0.0.1` 上的本机回环（会话凭据 / 交接 / 已在运行的实例），不经 TLS。
 
 纯标准库 + 延后 import 的 truststore（`pyproject.toml` 的运行时依赖；冻结产物由 `packaging/tavotto.spec`

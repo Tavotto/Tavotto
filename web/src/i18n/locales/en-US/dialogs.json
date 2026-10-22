@@ -1260,6 +1260,30 @@
         "waiting": "Waiting for sign-in…"
       },
       "noUsableAgent": "No usable figure assistant found. Install one, then click Rescan.",
+      "oauth": {
+        "action": "Sign in with {{name}}",
+        "title": "Sign in to {{name}}",
+        "region": {
+          "cn": "China",
+          "global": "International"
+        },
+        "instruction": "Confirm the code below on the page that just opened, and you're signed in.",
+        "codeAria": "Verification code",
+        "reopen": "Reopen page",
+        "cancel": "Cancel",
+        "again": "Try again",
+        "state": {
+          "expired": "The code has expired.",
+          "denied": "Access was denied on the page.",
+          "failed": "Sign-in didn't finish. Please try again later.",
+          "cancelled": "Sign-in was cancelled."
+        },
+        "signedIn": "Signed in",
+        "signedOut": "Signed out",
+        "logout": "Sign out",
+        "relogin": "Sign in again",
+        "logoutAria": "Sign out of “{{label}}”"
+      },
       "readiness": {
         "needs_auth": "Sign-in required",
         "ready": "Signed in",

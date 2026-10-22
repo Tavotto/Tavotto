@@ -101,7 +101,13 @@ def _clean(rec: dict, existing_ids: set[str] = frozenset()) -> dict:
     if default_model and default_model not in models:
         models.insert(0, default_model)
     wire = rec.get("wire_api")
+    out_extra: dict = {}
+    # 账号登录（设备码 OAuth，engine/ai_oauth.py）的记录：令牌只存这里，且只能由 ai_oauth 的
+    # `store_oauth` / `update_oauth` 写入（`save()` 会剥掉请求体里的这两个键）
+    if rec.get("auth") == "oauth" and isinstance(rec.get("oauth"), dict):
+        out_extra = {"auth": "oauth", "oauth": dict(rec["oauth"])}
     return {
+        **out_extra,
         "id": pid,
         "label": str(rec.get("label") or pid).strip()[:60],
         "agent": agent,
@@ -134,9 +140,12 @@ def get(pid: str | None) -> dict | None:
 def public(rec: dict) -> dict:
     """给界面看的形状：密钥只留「有没有」和尾四位，绝不整串回传。"""
     key = str(rec.get("api_key") or "")
-    return {
-        **{k: v for k, v in rec.items() if k != "api_key"},
-        "has_key": bool(key),
+    oauth = rec.get("oauth") if rec.get("auth") == "oauth" else None
+    signed_in = bool(isinstance(oauth, dict) and oauth.get("access"))
+    out = {
+        # 令牌（oauth 整个子对象）一个字节都不回传：只给 auth / signed_in / 过期时刻 / 厂商 / 区域
+        **{k: v for k, v in rec.items() if k not in ("api_key", "oauth")},
+        "has_key": bool(key) or signed_in,
         "key_hint": f"…{key[-4:]}" if len(key) >= 4 else "",
         "icon_key": ai_catalog.icon_for(
             str(rec.get("agent") or ""), str(rec.get("base_url") or "")
@@ -144,6 +153,16 @@ def public(rec: dict) -> dict:
         "incompatible": incompatibility(rec),
         "migratable": migration_kind(rec),
     }
+    if rec.get("auth") == "oauth":
+        o = oauth if isinstance(oauth, dict) else {}
+        out.update(
+            auth="oauth",
+            signed_in=signed_in,
+            oauth_expires_ms=o.get("expires_ms") if signed_in else None,
+            oauth_provider=o.get("provider"),
+            oauth_region=o.get("region"),
+        )
+    return out
 
 
 def incompatibility(rec: dict | None) -> str | None:
@@ -267,6 +286,8 @@ def migrate_to_claude(pid: str) -> dict:
 
 def save(rec: dict) -> list[dict]:
     """新增或更新一条。api_key 缺省 = 保留原值（界面不回显密钥，也就不该要求重填）。"""
+    # 令牌不接受来自请求体：登录态只由 ai_oauth 写（见 store_oauth）
+    rec = {k: v for k, v in rec.items() if k not in ("auth", "oauth")}
     providers = list_providers()
     incoming_id = _slug(str(rec.get("id") or ""))
     idx = next((i for i, p in enumerate(providers) if p.get("id") == incoming_id), -1)
@@ -291,6 +312,39 @@ def delete(pid: str) -> list[dict]:
     config.set_ai_settings({"providers": providers, "active_provider": active})
     _harden()
     return providers
+
+
+def store_oauth(defaults: dict, oauth: dict) -> dict:
+    """账号登录成功：把令牌写进一条接口记录（不存在就按 defaults 建）。**只给 ai_oauth 用。**
+
+    已有同 id 记录时保留用户改过的名称 / 模型，只换登录态；api_key 清空（这条记录靠账号，不靠 Key）。
+    """
+    providers = list_providers()
+    pid = _slug(str(defaults.get("id") or ""))
+    idx = next((i for i, p in enumerate(providers) if p.get("id") == pid), -1)
+    base = {**defaults, **providers[idx]} if idx >= 0 else dict(defaults)
+    rec = _clean({**base, "id": pid, "api_key": "", "auth": "oauth", "oauth": oauth})
+    if idx >= 0:
+        providers[idx] = rec
+    else:
+        providers.append(rec)
+    _write(providers)
+    return rec
+
+
+def update_oauth(pid: str, oauth: dict | None) -> dict | None:
+    """换掉（刷新后）或清掉（oauth=None，退出登录）一条记录的令牌；记录本身保留。"""
+    providers = list_providers()
+    idx = next((i for i, p in enumerate(providers) if p.get("id") == pid), -1)
+    if idx < 0 or providers[idx].get("auth") != "oauth":
+        return None
+    rec = {k: v for k, v in providers[idx].items() if k != "oauth"}
+    old = providers[idx].get("oauth") if isinstance(providers[idx].get("oauth"), dict) else {}
+    # 退出登录：令牌清掉，厂商 / 区域留着（界面据此给「重新登录」）
+    rec["oauth"] = dict(oauth) if oauth else {k: old[k] for k in ("provider", "region") if k in old}
+    providers[idx] = _clean(rec)
+    _write(providers)
+    return providers[idx]
 
 
 def _write(providers: list[dict]) -> None:
@@ -359,7 +413,15 @@ def spawn_overrides(
         env: dict[str, str] = {}
         if base_url:
             env["ANTHROPIC_BASE_URL"] = base_url
-        if api_key:
+        if rec.get("auth") == "oauth":
+            # 账号登录：访问令牌走 Bearer（`ANTHROPIC_AUTH_TOKEN` → Authorization 头）。**不设**
+            # `ANTHROPIC_API_KEY`——它会让 Claude Code 发 x-api-key（Kimi 社区报告会 401）；
+            # 设成空串是为了盖掉用户 shell 里继承来的真 Anthropic 密钥，别把它发给第三方网关
+            access = str((rec.get("oauth") or {}).get("access") or "").strip()
+            if access:
+                env["ANTHROPIC_AUTH_TOKEN"] = access
+            env["ANTHROPIC_API_KEY"] = ""
+        elif api_key:
             # 两个名字都给：不同网关认的字段不一样，多给一个不会有副作用
             env["ANTHROPIC_AUTH_TOKEN"] = api_key
             env["ANTHROPIC_API_KEY"] = api_key

@@ -276,6 +276,11 @@ USER_VISIBLE_CODES = {
     "endpoint_save_failed": {"reason"},
     "endpoint_invalid": {"reason"},
     "ai_endpoint_incompatible": {"endpoint"},
+    # 账号登录（设备码 OAuth，ADR 0146）
+    "ai_endpoint_needs_login": {"endpoint"},
+    "oauth_unavailable": set(),
+    "oauth_start_failed": set(),
+    "oauth_flow_not_found": set(),
     "ai_start_failed": {"reason"},
     "ai_revert_failed": {"reason"},
     # QA STATE-09：脚本在这次 AI 修改之后又变过，回滚被拒（409，AgentError 漏斗）

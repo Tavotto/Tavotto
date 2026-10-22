@@ -3088,6 +3088,36 @@ export interface AiEndpoint {
   migratable: 'codex_responses' | 'claude' | null
   /** 图标键：地址对上厂商目录某一行就是那家，否则 'custom'（通用图标）；老后端缺省 */
   icon_key?: string
+  /** 账号登录（设备码 OAuth）的记录：只有这些字段，令牌一个字节都不回传 */
+  auth?: 'oauth'
+  signed_in?: boolean
+  oauth_expires_ms?: number | null
+  oauth_provider?: string | null
+  oauth_region?: string | null
+}
+
+/** 一家支持账号登录的厂商。`oauth_available=false`（Tavotto 还没有它的 client_id）时界面不出现入口 */
+export interface AiOauthProvider {
+  label: string
+  oauth_available: boolean
+  regions: string[]
+  default_region: string
+}
+
+export type AiOauthFlowState = 'waiting' | 'signed_in' | 'expired' | 'denied' | 'cancelled' | 'failed'
+
+export interface AiOauthFlow {
+  flow_id: string
+  provider: string
+  region: string
+  state: AiOauthFlowState
+  user_code: string
+  verification_uri_complete: string
+  /** 绝对毫秒 */
+  expires_at: number
+  /** 轮询间隔（秒） */
+  interval: number
+  endpoint_id?: string
 }
 
 export interface AiEndpointPreset {
@@ -3132,6 +3162,8 @@ export interface AiCapabilities {
   agents: AiAgentCaps[]
   endpoints: AiEndpoint[]
   presets: AiEndpointPreset[]
+  /** 账号登录：厂商 id → 可用性；老后端没有，缺省 = 没有入口 */
+  oauth?: Record<string, AiOauthProvider>
   /** 上次探测完成的时刻（毫秒；与 AiHistoryEntry 的 *_ms 同一约定） */
   checked_at_ms: number
   /** TAF 实验开关（`ai.taf.enabled`）是否开着；老后端没有，缺省 = 关。助手面板的「从数据出图」只在它为真时出现 */
@@ -3225,6 +3257,24 @@ export const fetchAiEndpointModels = (rec: {
 /** 旧的不兼容 codex 接口一步迁移（按厂商：原地改 Responses，或改由 Claude Code 接入；保留密钥；不替用户切换执行器） */
 export const migrateAiEndpoint = (id: string) =>
   jsonFetch<AiCapabilities>(`/api/ai/endpoints/${encodeURIComponent(id)}/migrate`, { method: 'POST' })
+
+/** 账号登录：发起设备授权（同一厂商同时只有一个流程，重复点击拿回同一个） */
+export const startAiOauth = (provider: string, region?: string) =>
+  jsonFetch<AiOauthFlow>(`/api/ai/oauth/${encodeURIComponent(provider)}/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ region }),
+  })
+
+export const fetchAiOauthFlow = (flowId: string) =>
+  jsonFetch<AiOauthFlow>(`/api/ai/oauth/flows/${encodeURIComponent(flowId)}`)
+
+export const cancelAiOauthFlow = (flowId: string) =>
+  jsonFetch<AiOauthFlow>(`/api/ai/oauth/flows/${encodeURIComponent(flowId)}/cancel`, { method: 'POST' })
+
+/** 退出账号登录：只删这条记录的令牌 */
+export const logoutAiEndpoint = (id: string) =>
+  jsonFetch<AiCapabilities>(`/api/ai/endpoints/${encodeURIComponent(id)}/logout`, { method: 'POST' })
 
 export const deleteAiEndpoint = (id: string) =>
   jsonFetch<AiCapabilities>(`/api/ai/endpoints/${encodeURIComponent(id)}`, { method: 'DELETE' })

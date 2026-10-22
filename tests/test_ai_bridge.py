@@ -45,6 +45,7 @@ def test_capabilities_shape(client, monkeypatch):
         "agents",
         "endpoints",
         "presets",
+        "oauth",
         "checked_at_ms",
         "taf_enabled",
         "ai_fix_available",

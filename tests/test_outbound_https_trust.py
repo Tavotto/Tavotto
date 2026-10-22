@@ -275,6 +275,7 @@ class TestUpdater:
 OUTBOUND = {
     "engine/agent_runner/wires.py": "_opener",
     "engine/ai_catalog.py": "_opener",
+    "engine/ai_oauth.py": "_opener",
     "engine/codexinstall.py": "_fetch",
     "engine/diagsend.py": "_opener",
     "engine/privatepython.py": "_fetch",

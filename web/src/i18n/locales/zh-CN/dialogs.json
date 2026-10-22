@@ -1246,6 +1246,30 @@
         "waiting": "等待登录…"
       },
       "noUsableAgent": "没有可用的改图助手。装好后点「重新检测」。",
+      "oauth": {
+        "action": "用 {{name}} 账号登录",
+        "title": "登录 {{name}}",
+        "region": {
+          "cn": "国内",
+          "global": "海外"
+        },
+        "instruction": "在打开的网页里确认下面的验证码，登录就完成了。",
+        "codeAria": "验证码",
+        "reopen": "重新打开网页",
+        "cancel": "取消",
+        "again": "再试一次",
+        "state": {
+          "expired": "验证码已过期。",
+          "denied": "你在网页里拒绝了授权。",
+          "failed": "登录没有完成，请稍后再试。",
+          "cancelled": "登录已取消。"
+        },
+        "signedIn": "已登录",
+        "signedOut": "未登录",
+        "logout": "退出",
+        "relogin": "重新登录",
+        "logoutAria": "退出“{{label}}”的登录"
+      },
       "readiness": {
         "needs_auth": "需要登录",
         "ready": "已登录",

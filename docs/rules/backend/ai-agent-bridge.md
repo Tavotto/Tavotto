@@ -155,6 +155,18 @@
   127.0.0.0/8 / `::1` 例外，字面判不解析 DNS，且回环 http **不经任何代理**（`ProxyHandler({})`，否则 HTTP_PROXY 会拿到明文密钥）；其他 http → `insecure_url`）**；任何失败只回稳定原因码（`no_key /
   key_origin_mismatch / insecure_url / timeout / unauthorized / bad_response / network`）、永远 200、不抛，界面保持预设 `models_hint` / 用户手填的列表。密钥只进请求头，
   日志只写接口 id 与原因码，缓存文件里没有密钥。看护：`tests/test_ai_catalog.py`、`EndpointDialog.test.tsx`。
+- **账号登录（设备码 OAuth，`engine/ai_oauth.py`，ADR 0146，状态「提议」）**：只给**拿到 Tavotto 自有 client_id** 的厂商
+  （目前只有 MiniMax 国内 / 海外；Kimi 走官方命令行，不在此列；流程按规格表可扩展）。client_id 只在 `ai_oauth.CLIENT_IDS`（出厂 `None`）与环境变量 `TAVOTTO_OAUTH_CLIENT_ID_MINIMAX`；
+  `None` 时 capabilities 的 `oauth.<厂商>.oauth_available` 为 false、**界面不出现入口**（不放占位）。源码里不写别家的 client_id、
+  请求头只如实标 Tavotto 与版本（`brand`/`__version__`），不冒充别家客户端。令牌写进一条 `agent=claude` 的接口记录
+  （`auth:"oauth"` + `oauth:{access,refresh,expires_ms,token_endpoint,provider,region}`），与 api_key 一样只在用户配置（0700/0600）；
+  `public()` 只回 `auth/signed_in/oauth_expires_ms/oauth_provider/oauth_region`，令牌一个字节都不回传，`save()` 剥掉请求体里的 `auth/oauth`，
+  诊断包与日志不含令牌。**spawn 前刷新**：`ai_bridge.run` 在脚本锁 / 请求锁**之外**先调 `ai_oauth.ensure_fresh`（要联网，不能卡住别的请求），刷不动的结论等 `client_request_id` 去重查找之后、不兼容检查旁才抛（ADR 0132），剩余 < 10 分钟就回到**签发它的区域端点**
+  （端点必须在已知表中）刷新并写回；刷不动 → 409 `ai_endpoint_needs_login`、不 spawn。注入只设 `ANTHROPIC_AUTH_TOKEN`（Bearer），
+  `ANTHROPIC_API_KEY` 设空串（不发 x-api-key，也盖掉继承来的真密钥）。出站 HTTPS 的第七处（`ai_oauth._opener`，不跟随重定向、30 s、响应体上限），
+  登记在 `test_outbound_https_trust.OUTBOUND` 与 `tlstrust` 模块头。端点：`POST /api/ai/oauth/<provider>/start`、`GET /api/ai/oauth/flows/<id>`、
+  `POST /api/ai/oauth/flows/<id>/cancel`、`POST /api/ai/endpoints/<id>/logout`（只删令牌，不调撤销接口）。
+  看护：`tests/test_ai_oauth.py`（本机假授权服务器，绝不连真实服务器）。
 - **codex 模型清单读 `$CODEX_HOME/config.toml`（默认 `~/.codex`）的 `model` +
   `[profiles.*].model`，绝不在源码里写模型名**——OpenAI 换代后旧名会被服务端
   直接拒收（400 `The 'gpt-5' model is not supported when using Codex with a

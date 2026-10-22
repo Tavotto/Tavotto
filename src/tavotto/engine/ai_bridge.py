@@ -32,7 +32,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import ai_agents, ai_history, ai_providers, config, projectenv, scriptlock
+from . import ai_agents, ai_history, ai_oauth, ai_providers, config, projectenv, scriptlock
 from .ai_agents import spawn_env as _spawn_env  # noqa: F401 — run() 与旧调用方仍认这个名字
 from .runtime import (  # noqa: F401 — 重导出，历史调用方仍认这个名字
     CREATE_NEW_CONSOLE,
@@ -399,6 +399,8 @@ def capabilities(refresh: bool = False) -> dict:
         ],
         "endpoints": [ai_providers.public(p) for p in ai_providers.list_providers()],
         "presets": ai_providers.PRESETS,
+        # 账号登录（设备码 OAuth）：没有 Tavotto 自己的 client_id 的厂商 oauth_available=false → 界面不出现入口
+        "oauth": ai_oauth.available(),
         "checked_at_ms": int(time.time() * 1000),
     }
     with _CAPS_LOCK:
@@ -1081,6 +1083,16 @@ def run(
     则 409 `ai_script_busy`——后端不能只靠前端的 `runningHere` 挡并发。
     """
     require_usable(agent)
+    # 账号登录的接口：令牌剩余不足 10 分钟就在 spawn **之前**刷新并写回。刷新要联网（最多数次 30 s），
+    # 所以放在脚本锁 / 请求锁**之外**做，不卡住别的请求；刷不动的结论先记下，等去重查找之后再抛——
+    # 已受理请求的重发仍得到既有会话（ADR 0132，去重先于其他可变判断）
+    needs_login: dict | None = None
+    pre_chosen = ai_providers.resolve(agent, endpoint_id)
+    if pre_chosen is not None and pre_chosen.get("auth") == "oauth":
+        try:
+            ai_oauth.ensure_fresh(pre_chosen)
+        except ai_oauth.NeedsLogin:
+            needs_login = {"endpoint": pre_chosen.get("label") or pre_chosen.get("id") or ""}
     script_path = Path(figures_dir) / script
     project_key = str(Path(figures_dir).resolve())
     taf = _taf_enabled()
@@ -1102,6 +1114,8 @@ def run(
                 "ai_endpoint_incompatible",
                 {"endpoint": chosen.get("label") or chosen.get("id") or ""},
             )
+        if needs_login is not None:
+            raise AgentError("ai_endpoint_needs_login", needs_login)
         if not script_path.is_file():
             raise RuntimeError(f"脚本不存在: {script}")
         if script_busy(script_path):

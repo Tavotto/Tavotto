@@ -66,6 +66,7 @@ from .engine import (
     ai_data_task as engine_ai_data_task,
     ai_figure_edit as engine_ai_figure_edit,
     ai_history as engine_ai_history,
+    ai_oauth as engine_ai_oauth,
     ai_providers as engine_ai_providers,
     ai_tasks as engine_ai_tasks,
     artifactcontext as engine_artifactcontext,
@@ -11697,6 +11698,49 @@ def api_ai_endpoint_models():
     resp = jsonify(out)
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@app.post("/api/ai/oauth/<provider>/start")
+def api_ai_oauth_start(provider):
+    """账号登录（设备码 OAuth，ADR 0146）：发起设备授权，返回 user_code 与授权网址。没有自有 client_id 的厂商 400。"""
+    body = request.get_json(silent=True) or {}
+    region = body.get("region") if isinstance(body.get("region"), str) else None
+    try:
+        return jsonify(engine_ai_oauth.start(provider, region))
+    except engine_ai_oauth.OAuthError as exc:
+        if exc.code == "oauth_unavailable":
+            return jsonify({"error": "该厂商暂不支持账号登录", "code": "oauth_unavailable"}), 400
+        return jsonify({"error": "无法发起账号登录", "code": "oauth_start_failed"}), 502
+
+
+@app.get("/api/ai/oauth/flows/<flow_id>")
+def api_ai_oauth_flow(flow_id):
+    flow = engine_ai_oauth.status(flow_id)
+    if flow is None:
+        return jsonify({"error": "登录流程不存在", "code": "oauth_flow_not_found"}), 404
+    resp = jsonify(flow)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/oauth/flows/<flow_id>/cancel")
+def api_ai_oauth_cancel(flow_id):
+    flow = engine_ai_oauth.cancel(flow_id)
+    if flow is None:
+        return jsonify({"error": "登录流程不存在", "code": "oauth_flow_not_found"}), 404
+    return jsonify(flow)
+
+
+@app.post("/api/ai/endpoints/<pid>/logout")
+def api_ai_endpoint_logout(pid):
+    """退出账号登录：只删这条记录里的令牌（记录与模型设置保留）。"""
+    try:
+        engine_ai_oauth.logout(pid)
+    except (ValueError, OSError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "endpoint_invalid", "params": {"reason": str(exc)}}
+        ), 400
+    return jsonify(engine_ai.capabilities(refresh=True))
 
 
 @app.post("/api/ai/endpoints/active")

@@ -9,6 +9,7 @@ import {
   deleteAiEndpoint,
   fetchAiInstallStatus,
   fetchAiLoginStatus,
+  logoutAiEndpoint,
   patchAiAgent,
   migrateAiEndpoint,
   saveAiEndpoint,
@@ -36,6 +37,7 @@ import { VendorIcon } from './VendorIcon'
 import { ag, AgentStateBadge, agentVersionLabel } from './agentState'
 import { CopyButton } from './CopyButton'
 import { EndpointDialog } from './EndpointDialog'
+import { OAuthLoginDialog } from './OAuthLoginDialog'
 import { useSettingsCrumb } from './settingsPageContext'
 
 /** 「改动后重新拉能力」回调。返回 `false` = 刷新失败（父级 reload 自己吞掉错误，只用它告知）。 */
@@ -76,6 +78,7 @@ export function AgentDetailView({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState<null | { id?: string }>(null)
+  const [oauthLogin, setOauthLogin] = useState<null | { provider: string; region?: string; name: string }>(null)
 
   // 页头换成面包屑：「改图助手」那一截是返回（可达名与左侧导航的同名项区分开）
   useSettingsCrumb({ current: agent.display_name, onBack, backLabel: ag('backAria'), backAnchor: 'data-agent-back' })
@@ -172,6 +175,23 @@ export function AgentDetailView({
   )
 
   const mine = (caps.endpoints ?? []).filter((e) => e.agent === agent.id)
+  // 账号登录入口：只给后端说「有 Tavotto 自己的 client_id」的厂商；没有就一个字都不出现。登录的记录走 claude 协议
+  const loginEntries =
+    agent.id === 'claude'
+      ? Object.entries(caps.oauth ?? {}).flatMap(([provider, info]) =>
+          info.oauth_available
+            ? info.regions.map((region) => ({
+                provider,
+                region,
+                name: info.regions.length > 1 ? `${info.label}（${ag(`oauth.region.${region}`)}）` : info.label,
+              }))
+            : [],
+        )
+      : []
+  const reloginFor = (e: AiCapabilities['endpoints'][number]) => {
+    const entry = loginEntries.find((x) => x.provider === e.oauth_provider && x.region === e.oauth_region)
+    return entry ? () => setOauthLogin(entry) : undefined
+  }
   const activeId = agent.active_endpoint_id ?? ''
   const usingEndpoint = !!agent.active_endpoint_id
   const radioName = `endpoint-${agent.id}`
@@ -275,7 +295,21 @@ export function AgentDetailView({
                 onEdit={() => setEditing({ id: e.id })}
                 onDelete={() => void remove(e.id, e.label)}
                 onMigrate={() => void run(() => migrateAiEndpoint(e.id))}
+                onLogout={() => void run(() => logoutAiEndpoint(e.id))}
+                onRelogin={reloginFor(e)}
               />
+            ))}
+            {loginEntries.map((entry) => (
+              <div key={`${entry.provider}-${entry.region}`} className="flex min-h-7 items-center gap-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-oauth-login={`${entry.provider}:${entry.region}`}
+                  onClick={() => setOauthLogin(entry)}
+                >
+                  {ag('oauth.action', { name: entry.name })}
+                </Button>
+              </div>
             ))}
           </FieldGroup>
         </FormSection>
@@ -328,6 +362,19 @@ export function AgentDetailView({
           </DiagnosticDisclosure>
         </FieldGroup>
       </FormSection>
+
+      {oauthLogin && (
+        <OAuthLoginDialog
+          provider={oauthLogin.provider}
+          region={oauthLogin.region}
+          name={oauthLogin.name}
+          onClose={() => setOauthLogin(null)}
+          onSignedIn={() => {
+            setOauthLogin(null)
+            void run(onRefreshed)
+          }}
+        />
+      )}
 
       {editing && (
         <EndpointDialog
@@ -463,6 +510,8 @@ function EndpointRow({
   onEdit,
   onDelete,
   onMigrate,
+  onLogout,
+  onRelogin,
 }: {
   endpoint: AiCapabilities['endpoints'][number]
   radioName: string
@@ -471,8 +520,12 @@ function EndpointRow({
   onEdit: () => void
   onDelete: () => void
   onMigrate: () => void
+  onLogout: () => void
+  /** 只有该厂商的登录入口可用（Tavotto 有它的 client_id）时才有 */
+  onRelogin?: () => void
 }) {
   const menu = useRowMenu()
+  const oauth = e.auth === 'oauth'
   return (
     <div {...menu.rowProps} data-endpoint-row={e.id} className="group flex min-h-7 items-center gap-3">
       <label className="flex min-w-0 flex-1 items-center gap-3">
@@ -484,7 +537,13 @@ function EndpointRow({
             <span className="min-w-0 truncate font-mono" title={e.base_url || undefined}>
               {e.base_url || ag('detail.officialBaseUrl')}
             </span>
-            {!e.has_key && <span className="shrink-0 text-warn-content">{ag('detail.noKeySuffix')}</span>}
+            {oauth ? (
+              <span data-endpoint-signed-in={e.signed_in ? 'true' : 'false'} className="shrink-0">
+                {e.signed_in ? ag('oauth.signedIn') : ag('oauth.signedOut')}
+              </span>
+            ) : (
+              !e.has_key && <span className="shrink-0 text-warn-content">{ag('detail.noKeySuffix')}</span>
+            )}
           </span>
           {/* 一句话 + 一个主按钮：旧协议的接口能对上已知厂商就给「改由 Claude Code 接入」，否则只给「编辑」 */}
           {e.incompatible && (
@@ -506,6 +565,22 @@ function EndpointRow({
             : e.migratable === 'claude'
               ? ag('detail.migrateToClaude')
               : ag('detail.edit')}
+        </Button>
+      )}
+      {oauth && e.signed_in && (
+        <Button
+          data-endpoint-logout={e.id}
+          variant="secondary"
+          size="sm"
+          aria-label={ag('oauth.logoutAria', { label: e.label })}
+          onClick={onLogout}
+        >
+          {ag('oauth.logout')}
+        </Button>
+      )}
+      {oauth && !e.signed_in && onRelogin && (
+        <Button data-endpoint-relogin={e.id} variant="primary" size="sm" onClick={onRelogin}>
+          {ag('oauth.relogin')}
         </Button>
       )}
       <RowMenu state={menu} label={ag('detail.endpointActions', { label: e.label })} data-endpoint-menu={e.id}>

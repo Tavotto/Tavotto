@@ -1723,6 +1723,30 @@ export default interface Resources {
           "waiting": "等待登录…"
         },
         "noUsableAgent": "没有可用的改图助手。装好后点「重新检测」。",
+        "oauth": {
+          "action": "用 {{name}} 账号登录",
+          "again": "再试一次",
+          "cancel": "取消",
+          "codeAria": "验证码",
+          "instruction": "在打开的网页里确认下面的验证码，登录就完成了。",
+          "logout": "退出",
+          "logoutAria": "退出“{{label}}”的登录",
+          "region": {
+            "cn": "国内",
+            "global": "海外"
+          },
+          "relogin": "重新登录",
+          "reopen": "重新打开网页",
+          "signedIn": "已登录",
+          "signedOut": "未登录",
+          "state": {
+            "cancelled": "登录已取消。",
+            "denied": "你在网页里拒绝了授权。",
+            "expired": "验证码已过期。",
+            "failed": "登录没有完成，请稍后再试。"
+          },
+          "title": "登录 {{name}}"
+        },
         "readiness": {
           "needs_auth": "需要登录",
           "ready": "已登录",
@@ -2572,6 +2596,7 @@ export default interface Resources {
       "ai_agent_unknown": "无法识别该改图助手：{{agent}}。",
       "ai_draft_too_large": "指令过长（超过 {{limit_kb}} KB），没有保存为草稿。",
       "ai_endpoint_incompatible": "“{{endpoint}}”用的接口协议，Codex 已不再支持。到设置里改由 Claude Code 接入，或把地址换成支持 Responses 协议的。",
+      "ai_endpoint_needs_login": "“{{endpoint}}”的账号登录已失效。到设置里重新登录。",
       "ai_pending_limit": "这张图还有 {{count}} 条已发出的指令没确认，先等它们有结果（或点「查询结果」），再发新的。",
       "ai_pending_unresolved": "这份脚本还有已发出的指令没确认，先看它的结果再发新的。",
       "ai_request_not_found": "后端没有收到这条请求。",
@@ -2724,6 +2749,9 @@ export default interface Resources {
       "non_finite_number": "排版含无法保存的数值，如 NaN 或 ∞。磁盘上的文件未改动：{{reason}}",
       "non_finite_on_disk": "磁盘上的排版文件含有 NaN 或 ∞，不是合法 JSON，无法读取。该文件未被 Tavotto 改动，请检查写入它的外部工具。",
       "not_parameterizable": "这张图不可参数化：没有对应脚本。",
+      "oauth_flow_not_found": "这次登录已结束，请重新开始。",
+      "oauth_start_failed": "无法连接登录服务，请检查网络后再试。",
+      "oauth_unavailable": "这个服务暂不支持账号登录。",
       "open_project_failed": "无法打开该项目：{{reason}}",
       "package_file_missing": "缺少上传文件",
       "package_invalid": "不是有效的项目包：{{reason}}",
