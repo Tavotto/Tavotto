@@ -194,6 +194,22 @@ class FigureEditSession:
                 pass
             raise
 
+    def _commit_write(
+        self, name: str, call_id: str, real: str, before: str, after: str, eol: str
+    ) -> ToolResult | None:
+        """所有写目标文件的路径唯一经过这里：检查**写入后的完整文本**，再原子写。
+
+        只看单次的 `new` / `content` 会被拆成多次写入绕过（先写 `sk-…PAD`，再把 `PAD` 换成
+        剩余后缀：两次都不含完整密钥，结果脚本却含）。规则：写入后的文本含密钥、而写入前的
+        文本不含，才拒（`secret_in_content`，文件零改动）；原文件本来就含密钥（用户自己写的）
+        时不因此拒绝普通编辑。拒绝返回 ToolResult，成功返回 None。
+        """
+        if self.redactor.contains(after) and not self.redactor.contains(before):
+            return _secret_err(name, call_id)
+        self._write_text(real, after, eol)
+        self.mutated = True
+        return None
+
     # ---- 工具 ------------------------------------------------------------
     def read_file(self, args: dict, call_id: str = "") -> ToolResult:
         name = "read_file"
@@ -275,8 +291,6 @@ class FigureEditSession:
                 "not_read",
                 "Read the target script with read_file before editing it.",
             )
-        if self.redactor.contains(new):
-            return _secret_err(name, call_id)
         if old == "":
             return _err(name, call_id, "empty_old", "`old` must not be empty.")
         if old == new:
@@ -304,8 +318,9 @@ class FigureEditSession:
                 "it matches exactly once.",
             )
         updated = text.replace(old_n, new_n, 1)
-        self._write_text(real, updated, eol)
-        self.mutated = True
+        refused = self._commit_write(name, call_id, real, text, updated, eol)
+        if refused is not None:
+            return refused
         changed = sum(
             1
             for ln in difflib.ndiff(text.splitlines(), updated.splitlines())
@@ -335,15 +350,15 @@ class FigureEditSession:
                 "not_read",
                 "Read the target script with read_file before writing it.",
             )
-        if self.redactor.contains(content):
-            return _secret_err(name, call_id)
         if len(content.encode("utf-8")) > READ_LIMIT_BYTES:
             return _err(name, call_id, "too_large", "Content is larger than the allowed size.")
         got = self._read_text(real)
         eol = got[1] if not isinstance(got, str) else "\n"
         before = got[0] if not isinstance(got, str) else ""
-        self._write_text(real, content.replace("\r\n", "\n"), eol)
-        self.mutated = True
+        content_n = content.replace("\r\n", "\n")
+        refused = self._commit_write(name, call_id, real, before, content_n, eol)
+        if refused is not None:
+            return refused
         changed = sum(
             1
             for ln in difflib.ndiff(before.splitlines(), content.splitlines())

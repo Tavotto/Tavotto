@@ -1066,6 +1066,39 @@ class TestKeyRedaction:
         # 不含密钥的编辑照常
         assert not ts["edit_file"].handler({"old": "red", "new": "blue"}).is_error
 
+    def test_secret_split_across_writes_is_refused(self, cand):
+        from tavotto.engine.agent_runner.redact import Redactor
+
+        head, tail = KEY_CANARY[:-3], KEY_CANARY[-3:]
+        ts = tool_set(cand, redactor=Redactor(KEY_CANARY))
+        ts["read_file"].handler({"path": "fig.py"})
+        r = ts["write_file"].handler({"content": f"K = '{head}PAD'\n"})
+        assert not r.is_error
+        before = _tree(cand)
+        r = ts["edit_file"].handler({"old": "PAD", "new": tail})
+        assert (r.is_error, r.code) == (True, "secret_in_content")
+        assert _tree(cand) == before, "文件保持上一步内容"
+
+    def test_secret_assembled_by_two_edits_is_refused(self, cand):
+        from tavotto.engine.agent_runner.redact import Redactor
+
+        head, tail = KEY_CANARY[:-3], KEY_CANARY[-3:]
+        ts = tool_set(cand, redactor=Redactor(KEY_CANARY))
+        ts["read_file"].handler({"path": "fig.py"})
+        assert not ts["edit_file"].handler({"old": "red", "new": f"{head}XY"}).is_error
+        before = _tree(cand)
+        r = ts["edit_file"].handler({"old": "XY", "new": tail})
+        assert (r.is_error, r.code) == (True, "secret_in_content")
+        assert _tree(cand) == before
+
+    def test_edit_allowed_when_file_already_had_secret(self, cand):
+        from tavotto.engine.agent_runner.redact import Redactor
+
+        ts = tool_set(cand, redactor=Redactor(KEY_CANARY))
+        (cand / "fig.py").write_text(f"KEY = '{KEY_CANARY}'\ncolor = 'red'\n")
+        ts["read_file"].handler({"path": "fig.py"})
+        assert not ts["edit_file"].handler({"old": "red", "new": "blue"}).is_error
+
 
 class TestTerminalStates:
     @pytest.mark.parametrize(
