@@ -116,8 +116,8 @@ class FakeContactServer:
     def drop_after(self, endpoint: str, *, times: int = 1) -> None:
         self._force(endpoint, Forced("drop_after"), times)
 
-    def redirect(self, endpoint: str, location: str, *, times: int = 1) -> None:
-        self._force(endpoint, Forced("redirect", location=location), times)
+    def redirect(self, endpoint: str, location: str, *, status: int = 307, times: int = 1) -> None:
+        self._force(endpoint, Forced("redirect", status=status, location=location), times)
 
     def hold_early(self, endpoint: str, event: threading.Event) -> None:
         """读请求体之前先停住，直到 `event` 被置位：客户端的大块发送会在内核缓冲写满后阻塞（取消用例）。"""
@@ -258,7 +258,7 @@ class FakeContactServer:
                 self._drop(h)
                 return
             if forced.kind == "redirect":
-                h.send_response(307)
+                h.send_response(forced.status)
                 h.send_header("Location", forced.location)
                 h.send_header("Content-Length", "0")
                 h.end_headers()

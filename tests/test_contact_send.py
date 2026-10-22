@@ -504,10 +504,12 @@ def test_production_cos_host_shape_is_the_diagsend_one():
             diagsend.validate_upload_url(bad, t)
 
 
-def test_redirects_are_never_followed(two, srv, pki_files):
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_redirects_are_never_followed(two, srv, pki_files, status):
+    """urllib 默认会把 301/302/303 的 POST 改成 GET 跟过去（307/308 的 POST 它自己不跟）：每一种都要挡。"""
     a, b = two
     with FakeContactServer(_server_tls(pki_files)) as elsewhere:
-        a.redirect("init", elsewhere.base + "/v1/messages/init")
+        a.redirect("init", elsewhere.base + "/v1/messages/init", status=status)
         contactsend.start(meta(), [])
         st = wait_for({"failed"})
         assert (st["code"], st["retryable"]) == ("redirect_blocked", False)
