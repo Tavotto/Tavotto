@@ -206,10 +206,12 @@ def _opener(*, direct: bool = False) -> urllib.request.OpenerDirector:
     """`direct=True`：不经任何代理（回环 http 用）。`build_opener` 默认装环境变量里的
     `ProxyHandler`——回环例外只核了 URL 的 host，真正的网络目的地却可能是 HTTP_PROXY，
     密钥会以明文交给代理。https 照旧可走代理（隧道里是 TLS）。"""
-    handlers: list[urllib.request.BaseHandler] = [tlstrust.https_handler(tlstrust.client_context())]
     if direct:
-        handlers.append(urllib.request.ProxyHandler({}))
-    opener = urllib.request.build_opener(*handlers)
+        opener = urllib.request.build_opener(
+            tlstrust.https_handler(tlstrust.client_context()), urllib.request.ProxyHandler({})
+        )
+    else:
+        opener = urllib.request.build_opener(tlstrust.https_handler(tlstrust.client_context()))
     opener.add_handler(_NoRedirect())
     return opener
 
