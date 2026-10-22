@@ -321,7 +321,9 @@ async function openOriginalExport(page: Page, id: string) {
   await page.keyboard.press('ControlOrMeta+e')
   const dialog = await only(page.locator('[data-dialog="export"]'))
   await expect(dialog).toBeVisible()
-  await (await only(dialog.locator('[data-onboarding-anchor="export-scope"] [data-value="original"]'))).click()
+  // 单图档（只有一张图）没有范围控件，默认就是原图；多图档才有「导出内容」，其中「每张图单独导出」（value=original）才是原图口径
+  const scopeOriginal = dialog.locator('[data-onboarding-anchor="export-scope"] [data-value="original"]')
+  if (await scopeOriginal.count()) await (await only(scopeOriginal)).click()
   // The displayed name is a stem; identity belongs to the actual source thumbnail and request.
   await only(dialog.locator('[data-export-target]'))
   // 左栏大预览（对象头不再重复缩略图）：图带着图内修改（或在引擎里）时是引擎 SVG（`data-export-thumb="svg"`，

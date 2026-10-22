@@ -271,8 +271,12 @@ test('完整链：保存 → 关闭 → 重开 → 重放 → 预检 → 导出 
 
   // 出版预检（导出面板只给摘要，完整清单在左侧问题面板 —— ADR 0031 §四）
   await page.getByRole('button', { name: '导出' }).first().click()
+  // 检查摘要（认 data-* 锚点，不认文字：问题多时同时有「要改」「留意」几颗计数芯片，文字会命中多个）
   await expect(
-    page.getByText(/按「[^」]+」未发现问题|\d+ (项要改|项留意|条建议|项无法核验)/),
+    page
+      .locator('[data-export-group="checks"]')
+      .locator('[data-export-check-ok], [data-count-chip]')
+      .first(),
   ).toBeVisible({ timeout: 30_000 })
   await page.keyboard.press('Escape')
 
