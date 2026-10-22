@@ -1,0 +1,254 @@
+{
+  "version": 1,
+  "vendors": [
+    {
+      "id": "deepseek",
+      "label_key": "vendor.deepseek",
+      "brand": "DeepSeek",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://api.deepseek.com/anthropic",
+      "key_url": "https://platform.deepseek.com/api_keys",
+      "models_hint": [
+        "deepseek-v4-pro",
+        "deepseek-flash"
+      ],
+      "source": "PR #1323 已核实端点；key 页 openclaw docs/providers/deepseek.md",
+      "oauth": null
+    },
+    {
+      "id": "deepseek-codex",
+      "label_key": "vendor.deepseekCodex",
+      "brand": "DeepSeek (Codex)",
+      "region": "cn",
+      "agent": "codex",
+      "base_url": "https://api.deepseek.com",
+      "wire_api": "responses",
+      "key_url": "https://platform.deepseek.com/api_keys",
+      "models_hint": [
+        "deepseek-flash",
+        "deepseek-v4-pro"
+      ],
+      "oauth": null,
+      "source": "协调者转达 #1323 评审：DeepSeek 官方支持 Codex Responses"
+    },
+    {
+      "id": "moonshot",
+      "label_key": "vendor.moonshot",
+      "brand": "Kimi",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://api.moonshot.cn/anthropic",
+      "key_url": "https://platform.moonshot.cn/console/api-keys",
+      "models_hint": [
+        "kimi-k3",
+        "kimi-k2.7-code"
+      ],
+      "source": "PR #1323 已核实端点",
+      "oauth": null
+    },
+    {
+      "id": "kimi-code",
+      "label_key": "vendor.kimiCode",
+      "brand": "Kimi Code",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://api.kimi.com/coding/",
+      "key_url": "https://www.kimi.com/code/console",
+      "key_hint_key": "vendorKey.kimiCode",
+      "models_hint": [
+        "kimi-for-coding"
+      ],
+      "source": "openclaw docs/providers/moonshot.md#L196",
+      "oauth": null
+    },
+    {
+      "id": "zhipu",
+      "label_key": "vendor.zhipu",
+      "brand": "Zhipu GLM",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://open.bigmodel.cn/api/anthropic",
+      "key_url": "https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys",
+      "models_hint": [
+        "glm-5.3",
+        "glm-5.2"
+      ],
+      "source": "PR #1323 已核实端点",
+      "oauth": null
+    },
+    {
+      "id": "minimax",
+      "label_key": "vendor.minimax",
+      "brand": "MiniMax",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://api.minimaxi.com/anthropic",
+      "key_url": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+      "models_hint": [
+        "MiniMax-M3",
+        "MiniMax-M2.7"
+      ],
+      "source": "PR #1323 已核实端点；海外同构见 openclaw docs/providers/minimax.md",
+      "oauth": null
+    },
+    {
+      "id": "dashscope",
+      "label_key": "vendor.dashscope",
+      "brand": "Alibaba Bailian",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://dashscope.aliyuncs.com/apps/anthropic",
+      "key_url": "https://bailian.console.aliyun.com/?tab=model#/api-key",
+      "models_hint": [
+        "qwen3.7-plus",
+        "qwen3.8-max"
+      ],
+      "source": "PR #1323 已核实端点",
+      "oauth": null
+    },
+    {
+      "id": "dashscope-coding",
+      "label_key": "vendor.dashscopeCoding",
+      "brand": "Alibaba Bailian Coding Plan",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+      "key_url": "https://bailian.console.aliyun.com/",
+      "key_hint_key": "vendorKey.dashscopeCoding",
+      "models_hint": [
+        "qwen3.7-plus"
+      ],
+      "source": "PR #1323 已核实端点",
+      "oauth": null
+    },
+    {
+      "id": "anthropic",
+      "label_key": "vendor.anthropic",
+      "brand": "Anthropic",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "",
+      "key_url": "",
+      "key_hint_key": "vendorKey.officialLogin",
+      "models_hint": [
+        "sonnet",
+        "opus",
+        "haiku"
+      ],
+      "source": "openclaw docs/providers/anthropic.md",
+      "oauth": null
+    },
+    {
+      "id": "openai",
+      "label_key": "vendor.openai",
+      "brand": "OpenAI",
+      "region": "global",
+      "agent": "codex",
+      "base_url": "",
+      "wire_api": "responses",
+      "key_url": "",
+      "key_hint_key": "vendorKey.officialLogin",
+      "models_hint": [],
+      "source": "openclaw docs/providers/openai.md",
+      "oauth": null
+    },
+    {
+      "id": "minimax-global",
+      "label_key": "vendor.minimaxGlobal",
+      "brand": "MiniMax Global",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "https://api.minimax.io/anthropic",
+      "key_url": "https://platform.minimax.io/user-center/basic-information/interface-key",
+      "models_hint": [
+        "MiniMax-M3",
+        "MiniMax-M2.7"
+      ],
+      "source": "openclaw docs/providers/minimax.md#L136",
+      "oauth": null
+    },
+    {
+      "id": "zai",
+      "label_key": "vendor.zai",
+      "brand": "Z.AI",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "https://api.z.ai/api/anthropic",
+      "key_url": "https://z.ai/manage-apikey/apikey-list",
+      "key_hint_key": "vendorKey.zai",
+      "models_hint": [
+        "glm-5.3",
+        "glm-5.2"
+      ],
+      "source": "openclaw docs/providers/zai.md#L91",
+      "oauth": null
+    },
+    {
+      "id": "synthetic",
+      "label_key": "vendor.synthetic",
+      "brand": "Synthetic",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "https://api.synthetic.new/anthropic",
+      "key_url": "https://synthetic.new",
+      "models_hint": [
+        "hf:MiniMaxAI/MiniMax-M3"
+      ],
+      "source": "openclaw docs/providers/synthetic.md#L18",
+      "oauth": null
+    },
+    {
+      "id": "vercel-ai-gateway",
+      "label_key": "vendor.vercelAiGateway",
+      "brand": "Vercel AI Gateway",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "https://ai-gateway.vercel.sh",
+      "key_url": "https://vercel.com/dashboard",
+      "models_hint": [
+        "anthropic/claude-opus-4.6"
+      ],
+      "source": "openclaw docs/providers/vercel-ai-gateway.md#L17",
+      "oauth": null
+    },
+    {
+      "id": "opencode-go",
+      "label_key": "vendor.opencodeGo",
+      "brand": "OpenCode Go",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "https://opencode.ai/inference/go/anthropic",
+      "key_url": "https://opencode.ai/docs/go/",
+      "key_hint_key": "vendorKey.opencodeGo",
+      "models_hint": [],
+      "source": "openclaw docs/providers/opencode-go.md#L115",
+      "oauth": null
+    },
+    {
+      "id": "custom-claude",
+      "label_key": "vendor.customClaude",
+      "brand": "Custom (Anthropic-compatible)",
+      "region": "custom",
+      "agent": "claude",
+      "base_url": "",
+      "key_url": "",
+      "models_hint": [],
+      "source": "Tavotto 内置：用户自填",
+      "oauth": null
+    },
+    {
+      "id": "custom-codex",
+      "label_key": "vendor.customCodex",
+      "brand": "Custom (OpenAI Responses-compatible)",
+      "region": "custom",
+      "agent": "codex",
+      "base_url": "",
+      "wire_api": "responses",
+      "key_url": "",
+      "models_hint": [],
+      "source": "Tavotto 内置：用户自填",
+      "oauth": null
+    }
+  ]
+}

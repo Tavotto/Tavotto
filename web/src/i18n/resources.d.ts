@@ -1521,6 +1521,18 @@ export default interface Resources {
           "apiKeySaved": "已保存 {{hint}}，留空则不改",
           "baseUrl": "接口地址",
           "editTitle": "编辑模型服务 — {{label}}",
+          "fetchModels": "从服务商获取",
+          "fetchReason": {
+            "bad_response": "服务商返回的内容看不懂，请手动填写型号。",
+            "network": "连不上服务商，请检查网络或手动填写型号。",
+            "no_key": "先填好接口地址和密钥，再获取。",
+            "timeout": "服务商没有及时回应，可稍后重试。",
+            "unauthorized": "服务商拒绝了这个密钥。"
+          },
+          "fetchedEmpty": "服务商没有返回可用型号",
+          "fetchedHint": "点一下加入上面的模型列表",
+          "fetchingModels": "获取中…",
+          "getKey": "去申请 Key",
           "keyNote": "密钥以明文存在本机配置文件里。启动 CLI 时用环境变量传入，不写进命令行或项目文件。",
           "keyNoteDiagnostics": "导出或复制诊断时，该字段会替换为 ***。",
           "keyNoteMore": "存在哪里、能被谁读到",
@@ -1539,6 +1551,9 @@ export default interface Resources {
           "presetAria": "模型服务预设",
           "presetFilled": "预设已填好：地址、模型",
           "presetPlaceholder": "选一个预设填好地址…",
+          "regionCn": "国内",
+          "regionCustom": "其他",
+          "regionGlobal": "海外",
           "requiredAria": "必填"
         },
         "install": {
@@ -1595,6 +1610,32 @@ export default interface Resources {
         "toggleAria": "在 {{product}} 中启用 {{name}}",
         "useFromAgents": "连接外部工具",
         "useInProduct": "配置改图助手",
+        "vendor": {
+          "anthropic": "Anthropic 官方",
+          "customClaude": "自定义（Anthropic 兼容）",
+          "customCodex": "自定义（OpenAI Responses 兼容）",
+          "dashscope": "阿里云百炼（按量）",
+          "dashscopeCoding": "阿里云百炼 Coding Plan",
+          "deepseek": "DeepSeek",
+          "deepseekCodex": "DeepSeek（Codex）",
+          "kimiCode": "Kimi Code 会员",
+          "minimax": "MiniMax（国内）",
+          "minimaxGlobal": "MiniMax（海外）",
+          "moonshot": "Kimi 开放平台",
+          "openai": "OpenAI 官方",
+          "opencodeGo": "OpenCode Go",
+          "synthetic": "Synthetic",
+          "vercelAiGateway": "Vercel AI Gateway",
+          "zai": "Z.AI（GLM 海外）",
+          "zhipu": "智谱 GLM"
+        },
+        "vendorKey": {
+          "dashscopeCoding": "Coding Plan 专属 Key（sk-sp- 开头），与按量 Key 不通用",
+          "kimiCode": "Kimi Code 会员专属 Key，与开放平台 Key 不通用",
+          "officialLogin": "留空 = 用这个 CLI 自己的登录态",
+          "opencodeGo": "需要 OpenCode Go 订阅的 Key",
+          "zai": "需要 Z.AI Coding Plan 订阅的 Key"
+        },
         "viewGuide": "查看使用指南"
       },
       "canvas": {

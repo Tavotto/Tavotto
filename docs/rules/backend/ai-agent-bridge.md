@@ -124,6 +124,18 @@
   （`dashscope.aliyuncs.com`）走 `migrate_to_claude`：新建 claude 记录（Anthropic 端点、**保留原密钥**、
   模型换成新预设，id 撞车则加 `-2`，绝不覆盖用户已有记录）、删旧记录（codex 当前接口随之清回官方登录），
   **不替用户激活 claude 那边**；对不上的自定义记录（`null`）只给「编辑」。看护：`tests/test_ai_endpoint_presets.py`。
+  **预设的唯一权威是 `engine/ai_catalog.json`（厂商目录）**，`ai_providers.PRESETS` 只是 `ai_catalog.presets()`：
+  每行 `{id, label_key, brand, region(cn|global|custom), agent, base_url, key_url, key_hint_key?, models_hint, oauth, source}`。
+  **只收文档里明确写了 Anthropic Messages 兼容 base URL 的厂商**（Claude Code 接），外加官方登录态与两条用户自填；
+  拿不准就不收，`source` 必须写出处。界面名 / key 提示只存 i18n 键（`dialogs:settings.agents.vendor.*` / `vendorKey.*`，
+  中英两份），JSON 里不写中文界面串；`oauth` 本期恒为 `null`（预留位，界面不渲染「登录」）。加载失败 import 时抛
+  `CatalogError`，不退成空列表。冻结产物靠 `packaging/tavotto.spec` 的 datas 带上这份 JSON。
+  **型号以服务商实时列表为准**：`POST /api/ai/endpoints/models`（`ai_providers.live_models`）对接口
+  `GET {base_url}/v1/models`（`x-api-key` + `Bearer` 两个头、`anthropic-version`，5 s 超时、不跟随重定向），
+  只在用户点「从服务商获取」时才联网，设置页渲染不碰网络；成功结果按（接口 id, base_url, 密钥 sha256 前缀）
+  缓存一天在 `config.data_dir()/ai_models_cache.json`；任何失败只回稳定原因码（`no_key / timeout / unauthorized /
+  bad_response / network`）、永远 200、不抛，界面保持预设 `models_hint` / 用户手填的列表。密钥只进请求头，
+  日志只写接口 id 与原因码，缓存文件里没有密钥。看护：`tests/test_ai_catalog.py`、`EndpointDialog.test.tsx`。
 - **codex 模型清单读 `$CODEX_HOME/config.toml`（默认 `~/.codex`）的 `model` +
   `[profiles.*].model`，绝不在源码里写模型名**——OpenAI 换代后旧名会被服务端
   直接拒收（400 `The 'gpt-5' model is not supported when using Codex with a

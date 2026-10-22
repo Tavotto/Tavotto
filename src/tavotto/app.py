@@ -11394,6 +11394,26 @@ def api_ai_endpoint_migrate(pid):
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
+@app.post("/api/ai/endpoints/models")
+def api_ai_endpoint_models():
+    """「从服务商获取」型号：对一条接口 `GET {base_url}/v1/models`（5 s 超时，成功结果缓存一天）。
+
+    只在用户点按钮时调用，设置页渲染不碰网络。`id` 指向已存接口时缺的 `base_url` / `api_key`
+    用已存值补；永远 200：拿不到就 `source: "none"` + 原因码，界面退回预设 / 手填的型号。"""
+    body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        body = {}
+    out = engine_ai_providers.live_models(
+        str(body.get("id") or "") or None,
+        str(body.get("base_url") or "") or None,
+        str(body.get("api_key") or "") or None,
+        refresh=bool(body.get("refresh")),
+    )
+    resp = jsonify(out)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.post("/api/ai/endpoints/active")
 def api_ai_endpoint_active():
     """选中某个 agent 当前使用的接口；id 为空字符串 = 回到 CLI 自带登录态。"""

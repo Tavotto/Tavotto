@@ -1073,6 +1073,21 @@
         "presetAria": "Model service preset",
         "presetFilled": "Filled in by the preset: address, models",
         "presetPlaceholder": "Pick a preset to fill in the address…",
+        "getKey": "Get an API key",
+        "regionCn": "China",
+        "regionGlobal": "Global",
+        "regionCustom": "Other",
+        "fetchModels": "Fetch from provider",
+        "fetchingModels": "Fetching…",
+        "fetchedHint": "Click one to add it to the list above",
+        "fetchedEmpty": "The provider returned no models",
+        "fetchReason": {
+          "no_key": "Fill in the address and key first.",
+          "timeout": "The provider did not answer in time; try again later.",
+          "unauthorized": "The provider rejected this key.",
+          "bad_response": "The provider's reply was not understood; enter models by hand.",
+          "network": "Can't reach the provider; check your network or enter models by hand."
+        },
         "requiredAria": "required"
       },
       "install": {
@@ -1129,6 +1144,32 @@
       "toggleAria": "Enable {{name}} in {{product}}",
       "useFromAgents": "Connect an external tool",
       "useInProduct": "Set up the figure assistant",
+      "vendor": {
+        "anthropic": "Anthropic (official)",
+        "deepseek": "DeepSeek",
+        "deepseekCodex": "DeepSeek (Codex)",
+        "moonshot": "Kimi Open Platform",
+        "kimiCode": "Kimi Code membership",
+        "zhipu": "Zhipu GLM",
+        "minimax": "MiniMax (China)",
+        "minimaxGlobal": "MiniMax (global)",
+        "dashscope": "Alibaba Bailian (pay-as-you-go)",
+        "dashscopeCoding": "Alibaba Bailian Coding Plan",
+        "zai": "Z.AI (GLM, global)",
+        "synthetic": "Synthetic",
+        "vercelAiGateway": "Vercel AI Gateway",
+        "opencodeGo": "OpenCode Go",
+        "openai": "OpenAI (official)",
+        "customClaude": "Custom (Anthropic-compatible)",
+        "customCodex": "Custom (OpenAI Responses-compatible)"
+      },
+      "vendorKey": {
+        "kimiCode": "Kimi Code membership key; not interchangeable with Open Platform keys",
+        "dashscopeCoding": "Coding Plan key (starts with sk-sp-); not interchangeable with pay-as-you-go keys",
+        "officialLogin": "Leave empty to use this CLI's own sign-in",
+        "zai": "Needs a key from a Z.AI Coding Plan subscription",
+        "opencodeGo": "Needs a key from an OpenCode Go subscription"
+      },
       "viewGuide": "Read the guide",
       "defaultLabel": "Default assistant",
       "defaultNone": "No assistant available"
