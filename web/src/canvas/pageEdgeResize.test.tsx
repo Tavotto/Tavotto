@@ -15,7 +15,8 @@ import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToViewX, mmToViewY, getTransform, mmToWorld, useViewportStore } from '@/store/viewportStore'
-import { openFastEdit, useWorkspaceStore } from '@/store/workspace'
+import { useWorkspaceStore } from '@/store/workspace'
+import { settleMode } from '@/store/workspaceStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { CanvasStage } from './CanvasStage'
 import { useProfileStore } from '@/store/profileStore'
@@ -368,8 +369,12 @@ describe('画布上的拖边命中区与标注', () => {
   })
 
   it('单图编辑（fast_edit）没有拖边', async () => {
-    useDocumentStore.getState().commit(literal('x'), () => {})
-    act(() => openFastEdit('a.pdf'))
+    // 模式由画布图数推出（只剩一张图 = 单图编辑）：删掉第二张再对一次模式
+    useDocumentStore.getState().commit(literal('x'), (d) => {
+      d.objects = d.objects.filter((o) => o.id !== 'b')
+    })
+    act(() => settleMode())
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
     await mount()
     expect(container.querySelector('[data-page-edge]')).toBeNull()
   })
