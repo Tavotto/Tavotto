@@ -112,6 +112,9 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
   （`resuming` 继续等 / `ready` 可采用 / `awaiting_dependencies` 换新卡 / `deps_installed` / `failed` / 404 已不存在）。对账也连不上 → 「暂时连不上，请稍后重试」（`failed` + `resume_unreachable`，保留动作）；
   重试先对账：后端已在续跑 / 已 ready 绝不重发 POST，仅当后端仍停在同一张卡（摘要一致，或 replan）说明那次点击没到，才重发一次。**后端不改**：不为 POST 加幂等，
   因为 `convert_resume_busy` / `convert_not_awaiting_dependencies` 的 409 正好是对账的触发点，状态读口已足够区分各情形。
+- **孤儿续跑持久化回滚（Codex #1330 P2）**：`meta.json` 说 `resuming` 而本进程 `_RESUMES` 里没有该 sid（后端重启 / 续跑线程意外死掉）是同一个判据、同一处处理（`_reconcile_orphan_resume`，状态读口与 `prepare_resume` 共用）：
+  持 `_RESUMES_LOCK` 重读 meta 后原子写回——有 installed 记录 → `deps_installed`（等「继续」），否则 → `awaiting_dependencies`（卡片字段保留；环境若已被改动由下一次 install 的摘要校验兜住），没卡可回 → `failed`（`resume_interrupted`）。
+  于是卡片再点 install / replan 能续跑同一个候选；正在真实续跑的（已登记）不回滚。候选没有启动期扫描（`prune_expired` 只在新建候选时调用），故只在读路径与 `prepare_resume` 做。
 - **授权口径（两种，需要维护者知悉）**：`deprepair._check_confirmed` 要求调用方回显给用户看过的影响摘要，服务端自己持有的摘要不得代替回显。
   ① 问过一次 / 点过卡片：确认来自用户这次真实点击——前端把卡片带着的 `impact_digest` 原样回传，服务端重算计划，对不上就不装、回新的卡片，**不自回显**；
   ② 已记过常驻同意的环境（含 `project_venv` / 受管环境这两类上一轮就直接装的目标）：由服务端回显**同一次调用里刚算出的**摘要，依据是维护者 2026-10-23 的常驻同意裁决，

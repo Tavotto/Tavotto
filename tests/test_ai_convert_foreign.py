@@ -756,3 +756,76 @@ def test_replan_while_still_on_the_system_python_returns_the_system_card_again(e
     assert card["kind"] == "system" and card["action"] == "choose_env"
     assert "prepare" not in [c[0] for c in st.calls]
     assert len(env["prompts"]) == 1
+
+
+# --------------------------------------------------------------------------- 孤儿续跑（Codex #1330 P2）
+def _persist_resuming(sid, **extra):
+    cdir = ai_convert.CONVERT_DIR / sid
+    meta = json.loads((cdir / ai_convert.META_NAME).read_text(encoding="utf-8"))
+    meta.update({"state": ai_convert.STATE_RESUMING, **extra})
+    (cdir / ai_convert.META_NAME).write_text(json.dumps(meta), encoding="utf-8")
+    return cdir
+
+
+def _persisted_state(sid):
+    cdir = ai_convert.CONVERT_DIR / sid
+    return json.loads((cdir / ai_convert.META_NAME).read_text(encoding="utf-8"))["state"]
+
+
+def test_orphan_resume_after_restart_is_rolled_back_in_meta_and_can_be_continued(env, monkeypatch):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    _persist_resuming(sid)
+    assert not ai_convert.resuming(sid), "模拟重启：进程内没有续跑登记"
+    st = ai_convert.status(sid, _project(env))
+    assert st["state"] == ai_convert.STATE_AWAITING and st["dependency_card"] == CARD
+    assert _persisted_state(sid) == ai_convert.STATE_AWAITING, (
+        "不只是读出来像 awaiting，meta 已持久化回滚"
+    )
+    monkeypatch.setattr(
+        convertdeps,
+        "resolve",
+        lambda p, r, **kw: {"status": "installed", "installed": ["pandas"]},
+    )
+    t, out, _c = _await_resume(env, sid, runner=ok_runner, resolve=None)
+    t.start()
+    t.join(20)
+    assert out["state"] == "ready", out
+
+
+def test_prepare_resume_alone_reconciles_an_orphan_without_a_prior_get(env):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    _persist_resuming(sid)
+    _cdir, meta, _ev = ai_convert.prepare_resume(sid, _project(env))
+    assert meta["state"] == ai_convert.STATE_AWAITING
+    ai_convert.cancel_registration(sid)
+
+
+def test_orphan_resume_with_installed_record_rolls_back_to_deps_installed(env):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    _persist_resuming(sid, installed=["pandas"])
+    st = ai_convert.status(sid, _project(env))
+    assert st["state"] == ai_convert.STATE_INSTALLED and st["installed"] == ["pandas"]
+    assert _persisted_state(sid) == ai_convert.STATE_INSTALLED
+    _cdir, _meta, _ev = ai_convert.prepare_resume(sid, _project(env))
+    ai_convert.cancel_registration(sid)
+
+
+def test_a_really_running_resume_is_not_rolled_back(env):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    _persist_resuming(sid)
+    with ai_convert._RESUMES_LOCK:
+        ai_convert._RESUMES[sid] = threading.Event()
+    try:
+        st = ai_convert.status(sid, _project(env))
+        assert st["state"] == ai_convert.STATE_RESUMING
+        assert _persisted_state(sid) == ai_convert.STATE_RESUMING
+        with pytest.raises(ai_convert.ConvertError) as exc:
+            ai_convert.prepare_resume(sid, _project(env))
+        assert exc.value.code in ("convert_resume_busy", "convert_not_awaiting_dependencies")
+        assert _persisted_state(sid) == ai_convert.STATE_RESUMING
+    finally:
+        ai_convert.cancel_registration(sid)

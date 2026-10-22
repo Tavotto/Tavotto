@@ -879,12 +879,41 @@ def _load_meta(sid: str, project: str) -> tuple[Path, dict]:
     return cdir, meta
 
 
+def _reconcile_orphan_resume(sid: str, cdir: Path, meta: dict) -> dict:
+    """孤儿续跑的唯一判据与唯一处理：meta 说 `resuming`，本进程 `_RESUMES` 里却没有这个 sid（后端重启 / 续跑线程意外死掉）。
+    **持久化回滚**（原子写 meta，卡片等结构化字段原样保留），之后 `prepare_resume` 才能接受 install / replan：
+    有 installed 记录（已过安装提交点）→ `deps_installed`（等「继续」）；否则回 `awaiting_dependencies`（环境若已被装到一半改动，
+    下一次 install 的摘要校验 `dependency_impact_changed` / `repair_plan_stale` 兜住）；两样都没有（没卡可回）→ `failed`。
+    判断与回滚全程持 `_RESUMES_LOCK` 并**重读** meta：`prepare_resume` 登记与 `run_resume` 的摘牌都在这把锁里，
+    所以刚登记的续跑不会被回滚，也不会拿旧快照盖掉续跑刚写的终态。返回当前（可能已回滚的）meta。"""
+    if meta.get("state") != STATE_RESUMING:
+        return meta
+    with _RESUMES_LOCK:
+        if sid in _RESUMES:
+            return meta
+        try:
+            fresh = json.loads((cdir / META_NAME).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return meta
+        if not isinstance(fresh, dict) or fresh.get("state") != STATE_RESUMING:
+            return fresh if isinstance(fresh, dict) else meta
+        if fresh.get("installed"):
+            _set_state(cdir, fresh, STATE_INSTALLED)
+        elif isinstance(fresh.get("dependency_card"), dict):
+            _set_state(cdir, fresh, STATE_AWAITING)
+        else:
+            _set_state(cdir, fresh, STATE_FAILED, failure={"reason": "resume_interrupted"})
+        try:
+            return json.loads((cdir / META_NAME).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return fresh
+
+
 def status(sid: str, project: str) -> dict:
     """待采用候选的对照数据（不含脚本全文）。"""
     cdir, meta = _load_meta(sid, project)
+    meta = _reconcile_orphan_resume(sid, cdir, meta)
     state = meta.get("state")
-    if state == STATE_RESUMING and not resuming(sid):
-        state = STATE_AWAITING  # 续跑作业随进程没了：回到等用户点卡片（meta 里的卡片事实还在）
     return {
         "session": sid,
         "state": state,
@@ -1057,6 +1086,7 @@ def _rebuild(cdir: Path, meta: dict, project: Path) -> ConvertCandidate:
 def prepare_resume(sid: str, project: str) -> tuple[Path, dict, threading.Event]:
     """点卡片主按钮的同步部分：核对状态、登记取消标记（同一个候选同时只有一个续跑作业）。"""
     cdir, meta = _load_meta(sid, project)
+    meta = _reconcile_orphan_resume(sid, cdir, meta)
     awaiting = meta.get("state") == STATE_AWAITING and isinstance(meta.get("dependency_card"), dict)
     if not awaiting and meta.get("state") != STATE_INSTALLED:
         raise ConvertError("convert_not_awaiting_dependencies", 409)
