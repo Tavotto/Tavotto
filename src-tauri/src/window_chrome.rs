@@ -146,12 +146,17 @@ pub fn splash_background(theme: tauri::Theme) -> (u8, u8, u8) {
 }
 
 /// 非 macOS：主窗口建好、菜单栏藏好之后，把底色换成启动画面的颜色再显示（建窗时是 `visible(false)`）。
-/// 换底色失败也照样显示——宁可闪一下，不能留一个看不见的窗口。
+/// 顺序固定：换底色 → `restore`（恢复上次的位置 / 大小 / 最大化，最大化会让窗口真正落到屏幕上，
+/// 所以必须在藏菜单、铺底色之后）→ 显示。换底色失败也照样显示——宁可闪一下，不能留一个看不见的窗口。
 #[cfg(not(target_os = "macos"))]
-pub fn reveal_main_window<R: tauri::Runtime>(win: &tauri::WebviewWindow<R>) {
+pub fn reveal_main_window<R: tauri::Runtime>(
+    win: &tauri::WebviewWindow<R>,
+    restore: impl FnOnce(),
+) {
     let theme = win.theme().unwrap_or(tauri::Theme::Light);
     let (r, g, b) = splash_background(theme);
     let _ = win.set_background_color(Some(tauri::window::Color(r, g, b, 255)));
+    restore();
     if let Err(e) = win.show() {
         eprintln!("show main window: {e}");
     }

@@ -250,19 +250,25 @@ def test_web_window_buttons_use_only_granted_window_commands():
         assert perm in granted, perm
 
 
+def _plugin_chain(code: str) -> str:
+    at = code.index("tauri_plugin_window_state::Builder::default()")
+    return code[at : code.index(".build()", at)]
+
+
+def _fn_body(code: str, header: str) -> str:
+    return _bracket_body(code, code.index("{", code.index(header)))
+
+
 @needs_shell
 def test_window_state_plugin_never_restores_decorations():
     """VISIBLE 同理：非 macOS 主窗口建时不显示、藏好菜单栏再亮出来，插件恢复 `visible: true` 会抢先显示。
 
     `tauri-plugin-window-state` 默认连窗框一起记 / 恢复：从带系统标题栏的旧版本升上来，存着的
     `decorated: true` 会把 `decorations(false)` 顶掉——Windows 上系统标题栏与页面窗口按钮两套并存
-    （#1279 Win11 真机实测）。插件的状态位必须把 DECORATIONS 排除在外。"""
+    （#1279 Win11 真机实测）。状态位必须把 DECORATIONS 排除在外；插件与手动恢复共用 `window_state_flags()`。"""
     code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
-    at = code.index("tauri_plugin_window_state::Builder::default()")
-    chain = code[at : code.index(".build()", at)]
-    flags = re.search(r"\.with_state_flags\((.*)\)\s*$", chain, re.S)
-    assert flags, "window-state 插件没设状态位：默认会恢复窗框"
-    expr = re.sub(r"\s", "", flags.group(1)).rstrip(",")
+    body = _fn_body(code, "fn window_state_flags()")
+    expr = re.sub(r"\s", "", body).rstrip(";")
     flag = "tauri_plugin_window_state::StateFlags::"
     terms = expr.split("-")
     assert terms[0] == flag + "all()", expr
@@ -270,9 +276,37 @@ def test_window_state_plugin_never_restores_decorations():
 
 
 @needs_shell
+def test_main_window_skips_the_plugin_initial_restore_and_restores_itself():
+    """最大化的恢复会在 `.build()` 返回前就把 HWND 显示出来，藏菜单 / 铺底色赶不上第一帧（Codex #1286 P2）：
+    插件跳过主窗口建窗时的恢复，壳在 build 之后自己用**同一组状态位**恢复（macOS 也要，否则记不住位置大小）。"""
+    code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
+    chain = re.sub(r"\s", "", _plugin_chain(code))
+    assert ".skip_initial_state(MAIN_WINDOW)" in chain, "主窗口没跳过插件的建窗恢复"
+    assert ".with_state_flags(window_state_flags())" in chain, chain
+    restore = re.sub(r"\s", "", _fn_body(code, "fn restore_main_window_state("))
+    assert "win.restore_state(window_state_flags())" in restore, restore
+    # 全文件只有这两处用状态位：插件 builder 与手动恢复，没有第二份写法
+    assert len(re.findall(r"window_state_flags\(\)", code)) == 3  # 定义 + 插件 + 手动恢复
+    assert "StateFlags::all()" not in code.replace(_fn_body(code, "fn window_state_flags()"), ""), (
+        "状态位在 window_state_flags 之外又写了一份"
+    )
+    sites = window_builders(code)
+    after = code[sites["MAIN_WINDOW"] :]
+    after = after[after.index(".build()?;") :]
+    mac = re.search(r"#\[cfg\(target_os =\s*\)\]\s*restore_main_window_state\(&win\);", after)
+    assert mac, "macOS 主窗口建完没有手动恢复：窗口位置 / 大小记不住了"
+    non_mac = re.search(
+        r"#\[cfg\(not\(target_os =\s*\)\)\]\s*window_chrome::reveal_main_window\(&win,\s*\|\|\s*restore_main_window_state\(&win\)\);",
+        after,
+    )
+    assert non_mac, "非 macOS 的 reveal_main_window 没带上手动恢复"
+
+
+@needs_shell
 def test_main_window_is_revealed_only_after_the_menu_bar_is_hidden():
-    """非 macOS 主窗口 `visible(false)` 建出来，`hide_main_menu_bar` 之后才 `reveal_main_window`：
-    反过来 = 建窗那一刻闪一下原生菜单栏（#1279 真机连拍）；漏掉 reveal = 一个永远看不见的窗口。"""
+    """非 macOS 主窗口 `visible(false)` 建出来：hide_main_menu_bar → 铺底色 → restore_state → show。
+    反过来 = 建窗那一刻闪一下原生菜单栏 / 白底（#1279 真机连拍）；restore 在 show 之后 = 最大化时窗口先以
+    原尺寸闪一下；漏掉 reveal = 一个永远看不见的窗口。"""
     chrome = rust_code(CHROME_RS.read_text(encoding="utf-8"))
     head = chrome.index("fn main_window_chrome(self)")
     body = _bracket_body(chrome, chrome.index("{", head))
@@ -285,14 +319,13 @@ def test_main_window_is_revealed_only_after_the_menu_bar_is_hidden():
     after = code[sites["MAIN_WINDOW"] :]
     after = after[after.index(".build()?;") :]
     hide = after.index("hide_main_menu_bar(&handle);")
-    reveal = re.search(
-        r"#\[cfg\(not\(target_os =\s*\)\)\]\s*window_chrome::reveal_main_window\(&win\);", after
-    )
+    reveal = re.search(r"window_chrome::reveal_main_window\(&win,", after)
     assert reveal, "主窗口建完没有 reveal_main_window：Windows 上窗口永远不显示"
     assert hide < reveal.start(), "要先藏菜单栏再亮出窗口"
     rev = chrome[chrome.index("pub fn reveal_main_window") :]
     rev = _bracket_body(rev, rev.index("{"))
-    assert "win.show()" in rev and rev.index("set_background_color") < rev.index("win.show()")
+    assert "win.show()" in rev and "restore()" in rev
+    assert rev.index("set_background_color") < rev.index("restore()") < rev.index("win.show()")
 
 
 @needs_shell
