@@ -402,6 +402,11 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 `tests/test_compat_explore.py::RealDiscovery` 的 G1 / G2 用例已转为「修复后原生 / Tavotto 无差异」的回归；尚未修复的族仍按
 「最小复现目前仍然失败」钉住——缺口修好时那条会红，那是更新记录（`fix_pr`）、把复现转成正式回归用例的信号。
 
+周扫（run 39758109474，seed 202643）新发现的两族已登记，**行为按 ADR 0047 / 0084 有意保留、修的是诊断**，所以 explore 里仍是差异：
+`families/G4-cwd-relative-reader-zero-figures.json`（沙盒 cwd 下经 C++ 读取器读 cwd 相对数据 → 零图，issue #1253，诊断修复 #1297）与
+`families/G5-sandbox-empty-glob-empty-figure.json`（沙盒里 cwd 相对 `glob` 扫空 → 空图 / 下游报错，issue #1254，诊断修复 #1299）。
+记录里 `fix_pr` 分别是 1297 / 1299，`RealRepro` 钉的是「差异仍在」；根治（项目级「在脚本目录里运行」默认）落地时那两条会红，届时改成回归用例。
+
 最小化过程中暴露并修掉了 explore 比较里的一个误报：无标题的图（原生 `[""]` vs Tavotto `[]`）曾被当作同路径内容差异；
 最小化签名因此新增「原生确有多图写同一路径」这一条，缩减不能漂移到别的原因上。
 

@@ -1,0 +1,88 @@
+{
+  "schema": "tavotto-guardian-family/1",
+  "id": "G5-sandbox-empty-glob-empty-figure",
+  "title": "A cwd-relative glob scans empty in the sandbox cwd: Tavotto draws a figure with no data, native draws the real one",
+  "affected_script_shapes": [
+    "a script that lists its data with a cwd-relative glob.glob(...) (directly or inside a helper) and plots whatever came back"
+  ],
+  "root_cause": "In the sandbox cwd the glob matches nothing, the script keeps running and plots an empty series (ax.plot([])), so Tavotto shows an empty figure (pixel / structure / edit differences) or fails later downstream; `python script.py` in the script directory finds the files (issue #1254). The behavior is kept on purpose (ADR 0047 / 0084: the read-only fallback does not extend to glob / exists / C++ readers); the root cure is the project-level 'run in the script directory' switch. What was fixed is the diagnosis: #1299 observes relative probes that came back empty at run time, and attaches workdir_hint ('run in the script directory') to the error or to the no-figure result when the script directory has what the sandbox lacked.",
+  "category": "cwd_or_data_path",
+  "signature": {
+    "behavior_kind": "pixel_mismatch",
+    "call_site": [
+      "figure",
+      "savefig"
+    ],
+    "tavotto_error": null
+  },
+  "repro": {
+    "script": "tests/compat_guardian/families/G5-sandbox-empty-glob-empty-figure/repro.py",
+    "sha256": "fd3da51851dd539e38fccb09bb96b3f0f488064fd4d0d414dd48f42e8deb1138",
+    "entry": "build_figure",
+    "data_files": [
+      "tests/compat_guardian/families/G5-sandbox-empty-glob-empty-figure/data/cg_data_00.csv",
+      "tests/compat_guardian/families/G5-sandbox-empty-glob-empty-figure/data/cg_data_01.csv"
+    ],
+    "derived_from": {
+      "parent": {
+        "suite": "compat_engine",
+        "case": "shape_custom_entry"
+      },
+      "chain": [
+        "glob_dir"
+      ],
+      "seed": 202643
+    },
+    "minimized_by": "compat_guardian.py minimize",
+    "before": {
+      "statements": 15,
+      "lines": 16,
+      "bytes": 743,
+      "files": 3
+    },
+    "after": {
+      "statements": 13,
+      "lines": 13,
+      "bytes": 528,
+      "files": 1
+    },
+    "reproducibility": {
+      "confirmed": 3,
+      "total": 3
+    },
+    "runs": 58
+  },
+  "key_regression_tests": [
+    "tests/test_compat_guardian_families.py::RealRepro::test_g5_minimal_repro_still_draws_a_figure_without_data_by_design",
+    "tests/test_compat_guardian_families.py::RealRepro::test_g5_sandbox_run_reports_the_empty_glob_and_the_script_dir_hint",
+    "tests/test_runtime_probe_hint.py::test_a_successful_build_with_an_empty_glob_carries_the_hint_and_the_same_figure",
+    "tests/test_runtime_probe_hint.py::test_an_empty_glob_that_ends_in_no_figures_carries_the_same_hint",
+    "tests/test_runtime_probe_hint.py::test_a_helper_glob_that_is_empty_in_the_sandbox_points_at_the_script_dir"
+  ],
+  "environments": {
+    "verified": [
+      {
+        "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+        "python": "3.13.16",
+        "matplotlib": "3.11.2",
+        "route": "Safe engine path via the product discovery chain, sandbox cwd",
+        "revision": "main at 3f8b3965e (after #1297 / #1299)"
+      }
+    ],
+    "unverified": [
+      "Linux",
+      "Windows",
+      "the desktop (Native) route",
+      "other matplotlib / Python versions",
+      "a real user session through the UI (the workdir_hint is covered at the engine / HTTP-body level, not clicked)",
+      "the project-level 'run in the script directory' switch (it is the root-cause fix, not a default)"
+    ]
+  },
+  "recurrence": "edit_failed, pixel_mismatch and structure_mismatch 2 candidates each in the weekly sweep (run 39758109474, main 602ccf61f, seed 202643), all from the glob_dir transform on shape_custom_entry / shape_local_helper_import",
+  "in_corpus": false,
+  "fix_pr": 1299,
+  "promoted": false,
+  "issues": [
+    1254
+  ]
+}
