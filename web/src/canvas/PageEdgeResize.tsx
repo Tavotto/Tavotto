@@ -9,6 +9,7 @@ import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { cn } from '@/lib/utils'
 import { startPageEdgeResize } from './pageEdgeDrag'
+import { READOUT_H, READOUT_W, readoutBox } from './pageEdgeReadout'
 
 /** 命中区的屏幕宽度（px）：跟缩放倍率无关，永远是这么宽（命中区在屏幕空间画，不在世界层里） */
 const HIT_PX = 10
@@ -87,7 +88,7 @@ export function PageEdgeHandles() {
 }
 
 /**
- * 拖边时的机械制图式尺寸标注：两端引出线 + 双箭头 + 「宽 N mm」「高 N mm」（数字跟着文档里的页面尺寸实时变），
+ * 拖边时的机械制图式尺寸标注：两端引出线 + 双箭头，外加被拖那一维的无框读数「宽 N mm」/「高 N mm」（数字跟着文档里的页面尺寸实时变；读数在页面内侧，不压标尺），
  * 吸上栏宽时在宽度标注上方写栏宽名。**画布叠加层**：不进文档、不进导出、不碰 SVG 预览平面；
  * 只在拖动中挂（平时不挂 `<svg>`——e2e 有「舞台里第一个 svg」这类等渲染的定位）。
  * 颜色是 `--color-dim`（亮暗两套）。
@@ -100,6 +101,8 @@ function PageDimensions() {
   const panY = useViewportStore((s) => s.panY)
   const pageW = useDocumentStore((s) => s.doc.page.w)
   const pageH = useDocumentStore((s) => s.doc.page.h)
+  const viewW = useViewportStore((s) => s.viewW)
+  const viewH = useViewportStore((s) => s.viewH)
   if (!pageEdge) return null
   const L = panX
   const T = panY
@@ -108,13 +111,27 @@ function PageDimensions() {
   const y = Math.max(14, T - DIM_GAP)
   const x = Math.max(14, L - DIM_GAP)
   const showW = pageEdge.edge === 'l' || pageEdge.edge === 'r'
+  // 读数（2026-10-22 用户反馈：白底框跳动、压在标尺线 / 刻度数字上）：无框的轻量文字，锚在被拖那条边的画布内侧，
+  // 盒子宽高固定、数字 tabular-nums、位置只随边走（`pageEdgeReadout.readoutBox`），夹在舞台内所以不会碰到舞台外的标尺。
+  // 只出被拖那一维的数（拖宽出宽、拖高出高）；文字外沿一圈画布色描边保证压在图上也读得清。
   // 数字是会滚的（与顶栏缩放读数同一条规矩）：逐 mm 的连续拖动即时换（duration 0，否则永远在半路），
   // 吸上 / 离开栏宽、⌥ 按下 / 松开这类离散跳变才滚（默认时长）
-  const chip = (cx: number, cy: number, kind: 'width' | 'height', mm: number, rotate: boolean) => (
+  const kind = showW ? 'width' : 'height'
+  const mm = showW ? pageW : pageH
+  const box = readoutBox(pageEdge.edge, { left: L, top: T, w: W, h: H }, { w: viewW, h: viewH })
+  const readout = (
     <div
-      data-dim-chip={kind}
-      className="type-number absolute whitespace-nowrap rounded border border-dim bg-surface/90 px-1.5 py-px text-xs font-medium text-dim"
-      style={{ left: cx, top: cy, transform: `translate(-50%, -50%)${rotate ? ' rotate(-90deg)' : ''}` }}
+      data-dim-readout={kind}
+      data-readout-edge={pageEdge.edge}
+      className="type-number absolute whitespace-nowrap font-medium text-dim [text-shadow:0_0_2px_var(--color-canvas),0_0_2px_var(--color-canvas),0_0_4px_var(--color-canvas)]"
+      style={{
+        left: box.left,
+        top: box.top,
+        width: READOUT_W,
+        height: READOUT_H,
+        lineHeight: `${READOUT_H}px`,
+        textAlign: box.align,
+      }}
     >
       <Numbers
         value={Math.round(mm * 10) / 10}
@@ -157,8 +174,7 @@ function PageDimensions() {
         {arrow(x, T + 4, x, T + H - 4)}
       </g>
     </svg>
-      <div style={{ opacity: showW ? 1 : 0.45 }}>{chip(L + W / 2, y, 'width', pageW, false)}</div>
-      <div style={{ opacity: showW ? 0.45 : 1 }}>{chip(x, T + H / 2, 'height', pageH, true)}</div>
+      {readout}
     </div>
   )
 }
