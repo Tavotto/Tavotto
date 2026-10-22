@@ -54,6 +54,7 @@ import sys
 import tempfile
 import time
 import traceback
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -90,7 +91,7 @@ FIDELITY_TOLERANCE = {
 }
 
 #: 导出文件的最小合理体积。低于它基本可以断定是个空壳。
-MIN_EXPORT_BYTES = {"pdf": 900, "png": 900}
+MIN_EXPORT_BYTES = {"pdf": 900, "png": 900, "svg": 64}
 
 
 class Skip(Exception):
@@ -423,7 +424,7 @@ def stage_export(worker, stem: str, out_dir: Path, formats: list[str]) -> dict:
 def _decode_check(path: Path, fmt: str) -> dict:
     """导出物必须真的打得开——「文件存在」证明不了它不是半个字节流。
 
-    读取器是 pypdfium2 / Pillow：U10（ADR 0072）起两者都在 Tavotto 的运行时闭包里，所以这条判据**不再有
+    读取器是 pypdfium2 / Pillow / 标准库 XML：U10（ADR 0072）起前两者都在 Tavotto 的运行时闭包里，所以这条判据**不再有
     「没装就跳过」的档**——那一档以前让它在没装 PyMuPDF 的机器上恒绿。
     """
     if fmt == "pdf":
@@ -442,6 +443,14 @@ def _decode_check(path: Path, fmt: str) -> dict:
             return {"ok": True, "pages": 1, "page_pt": [round(w, 2), round(h, 2)]}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"PDF 打不开：{exc}"}
+    if fmt == "svg":
+        try:
+            root = ET.parse(path).getroot()
+            if root.tag != "{http://www.w3.org/2000/svg}svg":
+                return {"ok": False, "error": "XML 根元素不是 SVG"}
+            return {"ok": True, "root": root.tag}
+        except (ET.ParseError, OSError) as exc:
+            return {"ok": False, "error": f"SVG 打不开：{exc}"}
     try:
         from PIL import Image
 

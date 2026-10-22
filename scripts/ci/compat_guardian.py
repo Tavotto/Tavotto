@@ -738,7 +738,10 @@ def _execute(request: dict) -> dict:
             p.name: len(p.read_text(encoding="utf-8").splitlines())
             for p in work.glob("diagnostic-*-execs.jsonl")
         }
-        row["product_classification"] = result.get("classification")
+        classification = result.get("classification")
+        row["product_classification"] = (
+            None if classification == CC.RUNNER_ERROR else classification
+        )
         capture = (result.get("detail") or {}).get("capture") or {}
         got = capture.get("got_figures")
         row["figures"]["tavotto_captured"] = got if type(got) is int else None
