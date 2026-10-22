@@ -684,7 +684,7 @@ test(
 )
 
 test(
-  '功能：画布文字导出 SVG，文件落盘、文字转轮廓且物理尺寸正确',
+  '功能：画布文字导出 SVG，文件落盘、文字保留为可编辑文字且物理尺寸正确',
   { tag: ['@feature:export.svg'] },
   async ({ app, page }) => {
     test.setTimeout(300_000)
@@ -708,6 +708,12 @@ test(
     await expectInViewport(page, objects, '新建的画布文字')
     await page.keyboard.press('Escape')
     await page.keyboard.press('ControlOrMeta+e')
+    // 快捷键偶尔被焦点所在控件吞掉（本机 macOS 复现）；没开就点顶栏「导出」按钮。
+    const exportDialog = page.getByRole('dialog')
+    if (!(await exportDialog.waitFor({ state: 'visible', timeout: 5_000 }).then(() => true, () => false))) {
+      await page.getByRole('button', { name: '导出', exact: true }).click()
+    }
+    await expect(exportDialog).toBeVisible()
 
     const svg = page.locator('[data-export-format="svg"] input')
     await svg.check()
@@ -762,15 +768,20 @@ test(
         paths: Array.from(doc.querySelectorAll('path')).filter((p) => p.getAttribute('d')?.trim()).length,
         texts: doc.querySelectorAll('text').length,
         images: doc.querySelectorAll('image').length,
+        textContent: Array.from(doc.querySelectorAll('text')).map((t) => t.textContent ?? '').join('').trim(),
+        fontFamily: doc.querySelector('text')?.getAttribute('font-family') ?? doc.querySelector('text')?.getAttribute('style') ?? '',
         width: root.getAttribute('width'),
         height: root.getAttribute('height'),
         viewBox: root.getAttribute('viewBox'),
       }
     }, readFileSync(output, 'utf8'))
     expect(artifact).toMatchObject({
-      name: 'svg', namespace: 'http://www.w3.org/2000/svg', parseErrors: 0, texts: 0, images: 0,
+      name: 'svg', namespace: 'http://www.w3.org/2000/svg', parseErrors: 0, images: 0,
     })
-    expect(artifact.paths, '画布文字必须写成真实字形路径，不能丢字或栅格化').toBeGreaterThan(0)
+    // ADR 0142：SVG 默认保留 <text>（可编辑、可检索），不再转轮廓。
+    expect(artifact.texts, '画布文字必须保留为 <text>，不能转轮廓、丢字或栅格化').toBeGreaterThan(0)
+    expect(artifact.textContent.length, '<text> 里必须有实际字符').toBeGreaterThan(0)
+    expect(artifact.fontFamily, '<text> 必须带字体族').toMatch(/font-family|\w/)
     const widthPt = request.canvas.page_w_mm * 72 / 25.4
     const heightPt = request.canvas.page_h_mm * 72 / 25.4
     expect(widthPt).toBeGreaterThan(0)

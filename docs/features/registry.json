@@ -793,14 +793,14 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "导出 SVG（文字默认转轮廓）",
-        "en-US": "Export SVG with text outlined by default"
+        "zh-CN": "导出 SVG（文字默认保留为可编辑文字）",
+        "en-US": "Export SVG with editable text kept by default"
       },
       "entry": "顶栏「导出」/ ⌘E → 勾 SVG → 开始导出",
       "e2e": [
         {
           "spec": "features.spec.ts",
-          "title": "功能：画布文字导出 SVG，文件落盘、文字转轮廓且物理尺寸正确"
+          "title": "功能：画布文字导出 SVG，文件落盘、文字保留为可编辑文字且物理尺寸正确"
         }
       ]
     },
