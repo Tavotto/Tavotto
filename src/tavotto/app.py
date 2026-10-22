@@ -14647,6 +14647,7 @@ def main():
                     print(
                         f"* 在你自己的电脑上转发端口：{launchhint.ssh_forward_command(args.port)}"
                     )
+                    print(launchhint.ssh_host_hint(args.port))
                 print(f"* 打开 {url}")
                 return
             print(f"* Tavotto 已在 {landing(args.port)} 运行，打开现有窗口")

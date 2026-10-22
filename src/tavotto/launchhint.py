@@ -50,6 +50,10 @@ def ssh_forward_command(
 
     服务器地址取 `SSH_CONNECTION` 的第三段（客户端连进来时用的那个服务器地址，客户端一定连得上它），
     sshd 不在 22 端口时补 `-p`。不是经 SSH 登录的（本机控制台上跑）就留占位符。
+
+    局限：经 NAT / 跳板机 / 端口映射登录时，第三段是**服务器侧 socket 的地址**（常是内网地址），
+    用户电脑未必连得上；服务器也拿不到客户端原本敲的主机名。所以这里只填「检测到的 user@地址」
+    （直连场景下它可直接复制），并由 `ssh_host_hint` 在命令下面提醒用户换成自己平时登录用的那个。
     """
     if user is None:
         try:
@@ -63,6 +67,18 @@ def ssh_forward_command(
         host, ssh_port = parts[2], parts[3]
     opt = "" if ssh_port == "22" else f" -p {ssh_port}"
     return f"ssh -N -L {port}:127.0.0.1:{port}{opt} {user}@{host}"
+
+
+def ssh_host_hint(port: int, env: Mapping[str, str] = os.environ, user: str | None = None) -> str:
+    """跟在 `ssh -L` 命令后面的一句提示：命令里的 `user@地址` 只是服务器侧看到的，可能要换。
+
+    横幅的服务器分支和「端口复用」分支都用它，措辞只此一份。
+    """
+    target = ssh_forward_command(port, env, user).rsplit(" ", 1)[1]
+    return (
+        "  （如果你平时用别的地址、域名或 ~/.ssh/config 里的别名登录这台机器，"
+        f"把命令里的 {target} 换成你登录时用的那个。）"
+    )
 
 
 def ready_banner(url: str, port: int, *, opened: bool, env: Mapping[str, str] = os.environ) -> str:
@@ -83,6 +99,7 @@ def ready_banner(url: str, port: int, *, opened: bool, env: Mapping[str, str] = 
             "* Tavotto 已启动。这台机器没有图形界面，请在你自己的电脑上使用：",
             "  1. 在你自己的电脑上新开一个终端，运行（保持它开着）：",
             f"    {ssh_forward_command(port, env)}",
+            ssh_host_hint(port, env),
             "  2. 在你自己电脑的浏览器里打开：",
             f"    {url}",
         ]

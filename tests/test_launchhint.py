@@ -64,11 +64,22 @@ def test_server_banner_puts_the_login_url_on_its_own_line_with_the_forward_comma
     assert "Ctrl+C" in lines[-1]
 
 
+def test_server_banner_tells_the_user_to_swap_in_the_address_they_log_in_with(monkeypatch):
+    monkeypatch.setattr(launchhint.getpass, "getuser", lambda: "jiaqi")
+    text = launchhint.ready_banner("http://127.0.0.1:5089/#dnonce=abc", 5089, opened=False, env=SSH)
+    hint = launchhint.ssh_host_hint(5089, SSH, user="jiaqi")
+    assert hint in text.splitlines()
+    assert "~/.ssh/config" in hint and "jiaqi@10.191.198.3" in hint
+    lines = text.splitlines()
+    assert next(i for i, ln in enumerate(lines) if "ssh -N -L" in ln) < lines.index(hint)
+
+
 def test_local_banners_do_not_mention_ssh():
     url = "http://127.0.0.1:5089/#dnonce=abc"
     for opened in (True, False):
         text = launchhint.ready_banner(url, 5089, opened=opened, env={"DISPLAY": ":0"})
         assert f"    {url}" in text.splitlines() and "ssh" not in text
+        assert "~/.ssh/config" not in text
 
 
 def _free_port() -> int:
