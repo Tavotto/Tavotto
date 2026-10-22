@@ -67,10 +67,16 @@ export function stemOf(fileId: string): string {
   return dot > 0 ? base.slice(0, dot) : base
 }
 
+/** 磁盘面板属于哪张图：后端按注册表给的 `stem`（#1251），没有就是文件名 stem（老项目 / 老后端）。 */
+export function panelStemOf(p: Pick<PanelInfo, 'id' | 'stem'>): string {
+  return p.stem ?? stemOf(p.id)
+}
+
 function findByStem(panels: PanelInfo[], stem: string): PanelInfo | undefined {
-  // 同 stem 的 PDF 与 PNG 可能同时在（写回会两个载体一起更新）：矢量优先，
-  // 它才是能进图内编辑、能导出真矢量的那一份。
-  const hits = panels.filter((p) => stemOf(p.id) === stem)
+  // 同一张图的 PDF 与 PNG 可能同时在（写回会两个载体一起更新）：矢量优先，
+  // 它才是能进图内编辑、能导出真矢量的那一份。「同一张图」按 `panelStemOf`——同脚本里另一张图写的
+  // `panel.pdf`（stem `panel-2`）不是 `?open=panel` 要的那张。
+  const hits = panels.filter((p) => panelStemOf(p) === stem)
   return hits.find((p) => p.kind === 'pdf') ?? hits[0]
 }
 

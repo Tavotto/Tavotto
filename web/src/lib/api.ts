@@ -12,6 +12,12 @@ import type { ThumbObject, ThumbPage } from '@/types/thumb'
 export interface PanelInfo {
   id: string
   name: string
+  /**
+   * 注册表认的「这个文件是哪张图」（后端 `Registry.artifact_stem`，#1251）。只在与文件名 stem 不同时才发：
+   * 同脚本里 `panel.png`（甲）与 `panel.pdf`（乙，登记为 `panel-2`）时，pdf 面板的 `stem` 是 `panel-2`。
+   * 交接 `?open=<stem>` 与「runtime 素材 ↔ 磁盘图」的配对都按它；缺省 = 文件名 stem（老项目 / 老后端）。
+   */
+  stem?: string
   folder: string
   kind: 'pdf' | 'raster' | 'svg'
   native_w_mm: number

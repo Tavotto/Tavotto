@@ -576,7 +576,7 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
     # 「哪些文件算素材」的判据在 `engine/project_refresh.iter_assets()`（剪枝、
     # 隐藏文件、同名 PDF 盖过位图都在那儿）——统一刷新的 inventory 用的是同一
     # 个函数。这里只负责 probe 出尺寸并挂上注册表信息。
-    assets = engine_refresh.iter_assets(root)
+    assets = engine_refresh.iter_assets(root, reg=current_registry())
     # 「这张图能不能进图内编辑」的事实只有一份（`engine/readiness.py`）：
     # 这里挂的 capability 与 `/api/project/readiness` 是同一次计算的投影，
     # `/api/panels` 不自己再判一遍。
@@ -624,6 +624,10 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             if spec["px_w"] is not None:
                 entry.update(px_w=spec["px_w"], px_h=spec["px_h"])
             panel_stem, info = _disk_panel_rel(rel.replace("\\", "/"))
+            # 注册表认的「这个文件是哪张图」（#1251）：前端按它匹配交接的 `?open=<stem>`，不再自己猜文件名 stem。
+            # 只在与文件名 stem 不同时才发（没有 `artifacts` 映射的项目响应逐字节不变）
+            if panel_stem != p.stem:
+                entry["stem"] = panel_stem
             if info is not None:  # 可参数化面板：有产出它的 matplotlib 脚本
                 entry.update(script=info["script"], cost=info["cost"])
                 baseline_v = _baseline_version(panel_stem, baked)

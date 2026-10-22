@@ -427,6 +427,20 @@ def is_pyplot_capture(descriptor: object) -> bool:
     return isinstance(descriptor, dict) and descriptor.get("capture_source") == "pyplot"
 
 
+def has_disk_original(project_root: str | Path, info: dict, stem: str) -> bool:
+    """磁盘上有没有这张图（脚本条目 `info` 里的 `stem`）自己的原件。
+
+    注册表登记了「哪个文件是这张图写的」（`artifacts`，#1251）就按它判：同脚本里 `panel.png`（甲）与
+    `panel.pdf`（乙，`panel-2`）时，乙的原件是 `panel.pdf`，不是按名字找 `panel-2.*`（找不到会让乙在素材库里
+    既是磁盘素材又是 runtime 素材，违反「同一张图绝不双列」）；甲也不会被乙的 `panel.pdf` 冒充成有原件。
+    这张图没有任何映射条目（老注册表 / 静态起草）= 旧判据，按文件名 stem 找。
+    """
+    mine = [a for a, s in (info.get("artifacts") or {}).items() if s == stem]
+    if mine:
+        return any(os.path.isfile(os.path.join(str(project_root), a)) for a in mine)
+    return figcapture.find_original_artifact(str(project_root), stem) is not None
+
+
 def list_assets(project_root: str | Path, registry, *, worker_python: object = None) -> list[dict]:
     """当前项目全部 RuntimeFigureAsset 的清单——**只读，绝不执行脚本**。
 
@@ -465,7 +479,7 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
                 desc = (meta or {}).get("descriptor") or None
                 if (
                     not run_config
-                    and figcapture.find_original_artifact(root, stem) is not None
+                    and has_disk_original(root, info, stem)
                     and not is_pyplot_capture(desc)
                 ):
                     continue  # 磁盘有原件 → FileAsset 的地盘

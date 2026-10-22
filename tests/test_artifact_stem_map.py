@@ -508,3 +508,95 @@ def test_cli_target_stem_equals_the_stem_the_app_records_receipts_under(
     bare.mkdir()
     (bare / "x.pdf").write_bytes(b"%PDF")
     assert handoff.resolve_target(str(bare / "x.pdf")).stem == "x"
+
+
+# --------------------------------------------------------------------------- 素材盘点：不同的图不合并
+def _real_png(path):
+    import pymupdf
+
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 8, 6), False)
+    pix.set_rect(pix.irect, (200, 30, 30))
+    pix.save(str(path))
+
+
+def _touch_pair(root, art):
+    import test_write_back as wb
+
+    figs = wb._figs(root)
+    _real_png(figs / "Fig1.png")
+    (figs / "tavotto_registry.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "fig1.py": {
+                        "entry": "main",
+                        "cost": "light",
+                        "notes": "",
+                        "stems": ["Fig1", "Fig1-2"],
+                        **({"artifacts": art} if art else {}),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return figs
+
+
+def test_iter_assets_keeps_two_files_of_different_figures_apart(tmp_path):
+    from tavotto.engine import project_refresh
+
+    figs = _touch_pair(tmp_path, {"Fig1.png": "Fig1", "Fig1.pdf": "Fig1-2"})
+    ids = sorted(p.name for p, _k in project_refresh.iter_assets(figs))
+    assert ids == ["Fig1.pdf", "Fig1.png"]  # 甲（png）与乙（pdf）各是一份素材
+
+
+def test_iter_assets_still_folds_one_figure_saved_in_two_formats(tmp_path):
+    from tavotto.engine import project_refresh
+
+    # 没有映射（老项目）/ 映射说两个文件是同一张图：矢量版压掉位图，同旧
+    for art in (None, {"Fig1.png": "Fig1", "Fig1.pdf": "Fig1"}):
+        figs = _touch_pair(tmp_path, art)
+        assert sorted(p.name for p, _k in project_refresh.iter_assets(figs)) == ["Fig1.pdf"], art
+
+
+def test_panels_api_lists_both_disk_assets_with_their_own_stems(client, tmp_path, monkeypatch):
+    from tavotto import app as m
+
+    figs = _touch_pair(tmp_path, {"Fig1.png": "Fig1", "Fig1.pdf": "Fig1-2"})
+    m.reset_projects()
+    m.open_project(str(figs))
+    panels = {p["id"]: p for p in client.get("/api/panels").get_json()["panels"]}
+    assert set(panels) == {"Fig1.png", "Fig1.pdf"}
+    assert "stem" not in panels["Fig1.png"]  # 与文件名 stem 相同：不发
+    assert panels["Fig1.pdf"]["stem"] == "Fig1-2"
+    # 各自解析到正确的图
+    assert m._disk_panel_rel("Fig1.png")[0] == "Fig1"
+    assert m._disk_panel_rel("Fig1.pdf")[0] == "Fig1-2"
+
+
+def test_panels_api_without_a_map_is_unchanged(client, tmp_path):
+    from tavotto import app as m
+
+    figs = _touch_pair(tmp_path, None)
+    m.reset_projects()
+    m.open_project(str(figs))
+    panels = client.get("/api/panels").get_json()["panels"]
+    assert [p["id"] for p in panels] == ["Fig1.pdf"]
+    assert all("stem" not in p for p in panels)
+
+
+def test_runtime_list_does_not_double_list_a_figure_whose_original_is_mapped(tmp_path):
+    """乙（Fig1-2）的原件是 Fig1.pdf：磁盘素材的地盘，不再同时出现 runtime 条目；没有映射条目的图仍按文件名找。"""
+    from tavotto.engine import runtimeasset
+
+    figs = _touch_pair(tmp_path, {"Fig1.png": "Fig1", "Fig1.pdf": "Fig1-2"})
+    info = registry.open_registry(figs).entries()["fig1.py"]
+    assert runtimeasset.has_disk_original(figs, info, "Fig1-2")
+    assert runtimeasset.has_disk_original(figs, info, "Fig1")
+    (figs / "Fig1.pdf").unlink()
+    assert not runtimeasset.has_disk_original(figs, info, "Fig1-2")  # 乙的原件没了
+    assert runtimeasset.has_disk_original(figs, info, "Fig1")
+    old = {"stems": ["Fig1"]}
+    assert runtimeasset.has_disk_original(figs, old, "Fig1")  # 老条目：按文件名
