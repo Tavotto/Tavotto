@@ -245,8 +245,12 @@ def _flag(name: str) -> bool:
     return os.environ.get(name, "").strip() == "1"
 
 
-def parse_endpoint(raw: str, *, dev_loopback: bool) -> Target | None:
-    """`TAVOTTO_DIAG_ENDPOINT` → `Target`；任何一处不合规一律 None（不抛、不猜、不修正）。"""
+def parse_endpoint(
+    raw: str, *, dev_loopback: bool, hosts: frozenset[str] | None = None
+) -> Target | None:
+    """`TAVOTTO_DIAG_ENDPOINT` → `Target`；任何一处不合规一律 None（不抛、不猜、不修正）。
+    `hosts` 是主机白名单，默认诊断接收端的；「联系作者」（`contactsend.py`，ADR 0143）传它自己的两主机白名单，
+    其余校验（https、无用户信息 / 路径 / 查询串、回环仅开发模式）同一份实现。"""
     try:
         parts = urllib.parse.urlsplit((raw or "").strip())
         host = (parts.hostname or "").lower()
@@ -259,7 +263,7 @@ def parse_endpoint(raw: str, *, dev_loopback: bool) -> Target | None:
         return None
     if parts.query or parts.fragment or parts.path not in ("", "/"):
         return None
-    if host in ENDPOINT_HOSTS:
+    if host in (ENDPOINT_HOSTS if hosts is None else hosts):
         return Target(host, 443, False) if port in (None, 443) else None
     if dev_loopback and host == LOOPBACK_HOST and port:
         return Target(host, port, True)
@@ -376,7 +380,18 @@ class _MultipartBody:
 
     CHUNK = 64 * 1024
 
-    def __init__(self, spec: UploadSpec, data: bytes, cancel: threading.Event, on_progress) -> None:
+    def __init__(
+        self,
+        spec: UploadSpec,
+        data: bytes,
+        cancel: threading.Event,
+        on_progress,
+        *,
+        filename: str = "tavotto-diagnostics.zip",
+        content_type: str = "application/zip",
+    ) -> None:
+        # `filename` / `content_type` 的默认值就是诊断包的老值；「联系作者」的附件（ADR 0143）复用同一个流式、可取消的
+        # 实现，只换这两项（调用方保证是 ASCII、无引号与换行）
         self.boundary = "----tavotto" + secrets.token_hex(16)
         head = io.BytesIO()
         for key, value in spec.fields:
@@ -386,9 +401,7 @@ class _MultipartBody:
         head.write(f"--{self.boundary}\r\n".encode("ascii"))
         head.write(
             f'Content-Disposition: form-data; name="{spec.file_field}"; '
-            f'filename="tavotto-diagnostics.zip"\r\nContent-Type: application/zip\r\n\r\n'.encode(
-                "ascii"
-            )
+            f'filename="{filename}"\r\nContent-Type: {content_type}\r\n\r\n'.encode("ascii")
         )
         self._head = head.getvalue()
         self._data = data

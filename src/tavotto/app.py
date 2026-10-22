@@ -75,6 +75,8 @@ from .engine import (
     capabilities as engine_capabilities,
     cli as engine_cli,
     config as engine_config,
+    contactinbox as engine_contactinbox,
+    contactsend as engine_contactsend,
     convertdeps as engine_convertdeps,
     databinding as engine_databinding,
     depplan as engine_depplan,
@@ -4675,6 +4677,115 @@ def api_diagnostics_send_cancel(pid: str):
 def api_diagnostics_send_discard(pid: str):
     """对话框关了：释放内存里的包；发送中等于取消。重复调用无害。"""
     return _diag_send_json(engine_diagsend.discard(pid, scope=_diag_send_scope()))
+
+
+# --------------------- 联系作者（ADR 0143）---------------------
+# 全部在会话认证之内（ADR 0008，全局 before_request guard，没有旁路）。逻辑在 `engine/contactsend.py`（发信 / 轮询）与
+# `engine/contactinbox.py`（本机收件记录）；这里只做 HTTP 形状。**只有 `POST /api/contact/send` 与 `POST /api/contact/refresh`
+# 会引出远程请求**（后台轮询回信另在 `engine_contactsend.start_poller`，且没有任何已发的信时一次网络都不发）；
+# 状态 / 列表对象里没有令牌、邮箱、正文。关闭（`TAVOTTO_NO_CONTACT=1`）时能力说明回 `{"enabled": false}`，其余一律 404。
+# 遥测这次不加事件（攒齐一次升同意版本）。
+
+
+def _contact_error(exc: engine_contactsend.ContactError):
+    resp = jsonify({"error": exc.code, "code": f"contact_{exc.code}"})
+    resp.status_code = exc.status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _contact_json(payload: dict, status: int = 200):
+    resp = jsonify(payload)
+    resp.status_code = status
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/api/contact")
+def api_contact_capability():
+    """「联系作者」此刻可不可用 + 未读回信数（本机判断，**不联网**）。关闭时界面不画入口。"""
+    return _contact_json(engine_contactsend.capability())
+
+
+@app.get("/api/contact/status")
+def api_contact_status():
+    if not engine_contactsend.enabled():
+        return _contact_error(engine_contactsend.ContactError("contact_disabled", 404))
+    return _contact_json(engine_contactsend.status())
+
+
+@app.post("/api/contact/send")
+def api_contact_send():
+    """用户点了「发送」：multipart，`meta` 是 JSON 字符串（subject / body / reply_email / report_id / locale），
+    `file` 是 0..5 个附件。立即回 202 + 状态，真正的 init / 上传 / complete 在后台线程里做；界面轮询状态。"""
+    if not engine_contactsend.enabled():
+        return _contact_error(engine_contactsend.ContactError("contact_disabled", 404))
+    limit = engine_contactsend.MAX_TOTAL_BYTES + 1024 * 1024
+    if (request.content_length or 0) > limit:
+        return _contact_error(engine_contactsend.ContactError("attachments_too_large", 413))
+    try:
+        meta = json.loads(request.form.get("meta", ""))
+    except ValueError:
+        return _contact_error(engine_contactsend.ContactError("meta_invalid", 400))
+    files: list[tuple[str, bytes]] = []
+    total = 0
+    for f in request.files.getlist("file")[: engine_contactsend.MAX_ATTACHMENTS + 1]:
+        data = f.read(engine_contactsend.MAX_TOTAL_BYTES + 1)
+        total += len(data)
+        if total > engine_contactsend.MAX_TOTAL_BYTES:
+            return _contact_error(engine_contactsend.ContactError("attachments_too_large", 422))
+        files.append((f.filename or "", data))
+    try:
+        return _contact_json(engine_contactsend.start(meta, files), 202)
+    except engine_contactsend.ContactError as exc:
+        return _contact_error(exc)
+
+
+@app.post("/api/contact/cancel")
+def api_contact_cancel():
+    return _contact_json(engine_contactsend.cancel())
+
+
+@app.post("/api/contact/dismiss")
+def api_contact_dismiss():
+    """界面看过结果 / 关了对话框：丢掉已结束会话的展示态。重复调用无害。"""
+    return _contact_json(engine_contactsend.dismiss())
+
+
+@app.get("/api/contact/messages")
+def api_contact_messages():
+    """「我的来信」：本机记着的已发信件与取回的回信。**不联网**，不含令牌。"""
+    if not engine_contactsend.enabled():
+        return _contact_error(engine_contactsend.ContactError("contact_disabled", 404))
+    return _contact_json(
+        {
+            "messages": engine_contactinbox.public_messages(),
+            "unread": engine_contactinbox.unread_count(),
+        }
+    )
+
+
+@app.post("/api/contact/refresh")
+def api_contact_refresh():
+    """用户点了「检查回信」：立刻问一遍服务端（至多每 30 秒一次，没有已发的信时不联网）。"""
+    if not engine_contactsend.enabled():
+        return _contact_error(engine_contactsend.ContactError("contact_disabled", 404))
+    info = engine_contactsend.poll_once()
+    return _contact_json({**info, "unread": engine_contactinbox.unread_count()})
+
+
+@app.post("/api/contact/messages/<mid>/read")
+def api_contact_mark_read(mid: str):
+    """看过即已读：这封信现有的回信全部标已读。"""
+    engine_contactinbox.mark_read(mid)
+    return _contact_json({"unread": engine_contactinbox.unread_count()})
+
+
+@app.delete("/api/contact/messages/<mid>")
+def api_contact_forget(mid: str):
+    """从本机记录里删掉一封信（只删本机记录；服务端按保留期自行清理）。"""
+    engine_contactinbox.forget(mid)
+    return _contact_json({"unread": engine_contactinbox.unread_count()})
 
 
 @app.get("/api/project")
@@ -14823,6 +14934,7 @@ def main():
     if not args.desktop_sidecar:
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
         engine_updater.check_in_background()  # 默认每天一次；设置里可关，关了不联网
+    engine_contactsend.start_poller()  # 联系作者的回信：启动时 + 每 6 小时；没有已发的信就一次网络都不发
 
     # --figures 最高优先；否则恢复最近项目；都没有（或无效）→ 界面里的
     # Project Picker 接手，进程不再直接退出。

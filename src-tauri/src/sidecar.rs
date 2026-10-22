@@ -311,8 +311,15 @@ impl Sidecar {
         if let Some(dir) = project {
             cmd.arg("--figures").arg(dir);
         }
+        // 「联系作者」（ADR 0143）选线路要用“大陆环境”的结论；判据只有一处（`app_update::source_order`，ADR 0121），
+        // 引擎读这个环境变量，不在 Python 里再抄一份时区 / 语言表。界面语言此刻还不知道——引擎侧另有 zh-CN 兜底。
+        let region = match crate::app_update::detect_order(None).first() {
+            Some(crate::app_update::Source::Mirror) => "cn",
+            _ => "global",
+        };
         cmd.arg("--desktop-sidecar")
             .env("TAVOTTO_DESKTOP_HANDSHAKE", &handshake)
+            .env("TAVOTTO_NETWORK_REGION", region)
             .stdin(Stdio::piped())
             .stdout(Stdio::from(log_out))
             .stderr(Stdio::from(log_err));

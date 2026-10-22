@@ -24,6 +24,12 @@ export const PRIVACY_DOC_URL = `${REPO_URL}/blob/main/docs/privacy.md`
  * 混在一起说。
  */
 /**
+ * 「联系作者」的收件地址（ADR 0143，与 `engine/brand.py` 的 CONTACT_EMAIL 同源）。只用于展示与
+ * 失败时「复制地址」：全产品没有 邮件协议链接，也不唤起系统邮件程序。
+ */
+export const CONTACT_EMAIL = 'contact@tavotto.com'
+
+/**
  * 官网与它的「支持 Tavotto」页（设置页「关于与更新」的那颗按钮链到这里）。
  * 中文界面去官网的中文页，那一页同时给 Ko-fi 与爱发电两条路。
  */
