@@ -490,6 +490,20 @@ tavotto
 浏览器会打开 `http://127.0.0.1:5089`。`--figures <目录>` 直接打开某个图库，
 `--port` 换端口，`--no-browser` 不自动开浏览器。
 
+> **需要 Python 3.10 及以上。** Python 太旧（Ubuntu 20.04 自带 3.8）时，pip 只报
+> `No matching distribution found for tavotto[worker] (from versions: none)`，不说原因。
+> 先 `python3 --version` 看一眼；版本不够就让 [uv](https://docs.astral.sh/uv/)
+> 自带一份 Python 来装——不用 sudo，也不动系统 Python：
+>
+> ```sh
+> curl -LsSf https://astral.sh/uv/install.sh | sh
+> # 新开一个终端，uv 和 tavotto 才在 PATH 上
+> uv tool install --python 3.12 "tavotto[worker]"
+> ```
+>
+> `pipx install` 失败会留下 `~/.local/pipx/venvs/tavotto[worker]`，下次再装就报
+> 「Not installing to existing directory」；先删掉这个目录。
+
 ### 30 秒跑通一遍
 
 ```sh

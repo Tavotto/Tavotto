@@ -586,6 +586,22 @@ Your browser opens at `http://127.0.0.1:5089`. `--figures <dir>` opens a figure
 directory straight away, `--port` changes the port, `--no-browser` skips opening a
 browser.
 
+> **Needs Python 3.10 or later.** On an older Python (Ubuntu 20.04 ships 3.8) pip
+> reports only `No matching distribution found for tavotto[worker] (from versions: none)`
+> without saying why. Check with `python3 --version`. If it is older, let
+> [uv](https://docs.astral.sh/uv/) fetch its own Python instead — no sudo, and the
+> system Python stays untouched:
+>
+> ```sh
+> curl -LsSf https://astral.sh/uv/install.sh | sh
+> # open a new terminal so uv and tavotto are on PATH
+> uv tool install --python 3.12 "tavotto[worker]"
+> ```
+>
+> A failed `pipx install` leaves `~/.local/pipx/venvs/tavotto[worker]` behind, and the
+> next attempt stops with *Not installing to existing directory*; delete that
+> directory first.
+
 #### On a remote server, over SSH
 
 Tavotto only listens on `127.0.0.1`, so a server's copy is reached through an SSH port
