@@ -550,12 +550,10 @@ class TestToolSafety:
             (cand / "alias.py").symlink_to(cand / "fig.py")
         except (OSError, NotImplementedError):
             pytest.skip("no symlink support")
-        ts = tool_set(cand, target="alias.py")
-        self.call(ts, "read_file", path="alias.py")
-        before = _tree(cand)
-        r = self.call(ts, "edit_file", old="red", new="blue")
-        assert r.is_error and r.code == "not_target"
-        assert _tree(cand) == before and (cand / "alias.py").is_symlink()
+        # 目标本身是符号链接：起跑即拒（#1328 第八轮），不会走到写入
+        with pytest.raises(ValueError):
+            tool_set(cand, target="alias.py")
+        assert (cand / "alias.py").is_symlink()
 
     def test_target_outside_cwd_is_refused_at_construction(self, cand):
         with pytest.raises(ValueError):
@@ -1766,3 +1764,33 @@ class TestReviewRound7:
         )
         assert len(srv.requests) == 2
         assert (res.ok, res.reason) == (True, "completed")
+
+
+class TestReviewRound8:
+    """Codex #1328 第八轮：目标用不了时起跑即 bad_target，一次模型请求都不发。"""
+
+    @pytest.mark.parametrize("kind", ["missing", "directory", "oversized", "not_utf8"])
+    def test_unusable_target_fails_before_any_model_request(self, cand, kind):
+        if kind == "missing":
+            target = "nope.py"
+        elif kind == "directory":
+            (cand / "sub.py").mkdir()
+            target = "sub.py"
+        elif kind == "oversized":
+            (cand / "big.py").write_bytes(b"#" * (tools.READ_LIMIT_BYTES + 1))
+            target = "big.py"
+        else:
+            (cand / "bin.py").write_bytes(b"\xff\xfe\x00")
+            target = "bin.py"
+        model = loop.DemoModel({"turns": [{"text": "done"}]})
+        calls = []
+        orig = model.complete
+
+        def counting(**kw):
+            calls.append(1)
+            return orig(**kw)
+
+        model.complete = counting
+        res, events = run_demo(cand, {"turns": []}, model=model, target=target)
+        assert (res.ok, res.reason, res.detail) == (False, "internal", "bad_target")
+        assert calls == [] and res.turns == 0

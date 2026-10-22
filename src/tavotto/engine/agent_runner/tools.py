@@ -137,7 +137,17 @@ class FigureEditSession:
         self.redactor = envelope.redactor
         self.read_target = False
         self.mutated = False
+        self.envelope_target = envelope.target
         self.target_path = self._resolve(envelope.target)  # 构造时目标就须合法，否则 None
+
+    def target_usable(self) -> bool:
+        """目标必须是候选目录里一个能读的普通文本文件（不是符号链接）——否则 read_file 永远开不了写工具。"""
+        if self.target_path is None:
+            return False
+        raw = os.path.join(self.root, self.envelope_target)
+        if os.path.islink(raw):
+            return False
+        return not isinstance(self._read_text(self.target_path), str)
 
     # ---- 路径判据：一处 -------------------------------------------------
     def _resolve(self, rel: object) -> str | None:
@@ -410,8 +420,9 @@ class FigureEditToolset:
 
     def tools(self, envelope: RunEnvelope) -> list[Tool]:
         s = FigureEditSession(envelope)
-        if s.target_path is None:
-            raise ValueError("target outside cwd")
+        if not s.target_usable():
+            # 越界、不存在、目录、符号链接、超大、非 UTF-8：起跑即 bad_target，不发任何（计费的）模型请求
+            raise ValueError("target not usable")
 
         def bind(fn):
             return lambda args: fn(args)
