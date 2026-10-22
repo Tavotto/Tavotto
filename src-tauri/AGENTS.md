@@ -19,6 +19,11 @@
   （环境变量对同用户进程可见；桌面**不写**完整磁盘凭据，只写 scoped 只读的 handoff-status 文件（ADR 0008 修订），实例复用由壳的
   单实例 argv 转发负责）、握手文件（无密钥、原子写、退出清理）、
   stdin EOF + 父 PID 双路「壳没了就自杀」（`test_desktop_sidecar.py` 看护）。
+- **外链（`<a target=_blank>` / `window.open`）全由壳在 Rust 侧交给系统浏览器**：`navigation_allowed` → `OpenExternal`
+  与 `on_new_window` 两条原生路径，失败经 `open_external` 记日志。opener 插件必须 `open_js_links_on_click(false)`——
+  它默认注入的 click 监听会先 `preventDefault` 再走 ACL 拒绝的 IPC，两条原生路径永远等不到（beta 0.19.0b2「支持 Tavotto」
+  点了没反应的真根因，#1288 只修了 `window.open`）。capability 不给页面 `opener:*`；Rust 单测
+  `the_opener_plugin_never_swallows_link_clicks` 看护。
 - **前端唯一桌面感知点是 `web/src/lib/desktop.ts`**：组件不得直接 import
   `@tauri-apps/*`；每个能力都有浏览器回退（vitest 看护）。菜单事件 id 与
   `src-tauri/src/main.rs` 严格同源（`tavotto:menu`）。

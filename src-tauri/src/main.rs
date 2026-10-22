@@ -267,13 +267,21 @@ fn new_window_decision(url: &url::Url) -> NavDecision {
     }
 }
 
+/// 把外链交给系统默认程序。**失败不许静默**：用户看到的只是「点了没反应」，
+/// 日志里至少要有一行说清哪条链接、为什么没打开。
+fn open_external(app: &tauri::AppHandle, url: &url::Url) {
+    if let Err(e) = app.opener().open_url(url.as_str(), None::<&str>) {
+        eprintln!("open external link {url}: {e}");
+    }
+}
+
 /// `on_new_window` 的处理体：外链交给系统浏览器，永远返回 `Deny`（不新开 webview 窗口）。
 fn handle_new_window(
     app: &tauri::AppHandle,
     url: &url::Url,
 ) -> tauri::webview::NewWindowResponse<tauri::Wry> {
     if let NavDecision::OpenExternal = new_window_decision(url) {
-        let _ = app.opener().open_url(url.as_str(), None::<&str>);
+        open_external(app, url);
     }
     tauri::webview::NewWindowResponse::Deny
 }
@@ -821,7 +829,7 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
             NavDecision::Allow => true,
             NavDecision::Deny => false,
             NavDecision::OpenExternal => {
-                let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
+                open_external(&nav_handle, url);
                 false
             }
         }
@@ -1800,7 +1808,18 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        // opener 插件：**必须**关掉 `open_js_links_on_click`。开着时插件往每个页面注入一个
+        // window 级 click 监听，对 `<a target="_blank">` 先 `preventDefault` 再走 IPC
+        // `plugin:opener|open_url`——而 capability 不开放任意 opener（见 `capabilities/main.json`），
+        // IPC 被 ACL 静默拒绝，链接于是「点了没反应」，WebKit 的导航策略 / 新窗口请求也永远等不到
+        // （`on_navigation` / `on_new_window` 全被抢先吞了）。关掉之后 `<a target=_blank>` 回到
+        // 原生路径（`navigation_allowed` → `OpenExternal`），`window.open` 走 `on_new_window`，
+        // 两条都由壳在 Rust 侧调 `open_external`，不需要给页面任何 opener 权限。
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         // 应用内更新：前端经自有命令 desktop_update_check / desktop_update_install（来源编排见
         // app_update.rs，ADR 0121）检查/下载/安装，装完用 process 的 restart 重启。升级永不静默
         // 进行——什么时候换版本是用户按下按钮的结果（与 Python updater 同一条纪律）。
@@ -1925,7 +1944,7 @@ fn main() {
                     NavDecision::Allow => true,
                     NavDecision::Deny => false,
                     NavDecision::OpenExternal => {
-                        let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
+                        open_external(&nav_handle, url);
                         false
                     }
                 },
@@ -2407,6 +2426,24 @@ mod tests {
             "data:text/html,hi",
         ] {
             assert!(matches!(d(denied), NavDecision::Deny), "{denied}");
+        }
+    }
+
+    /// 外链「点了没反应」的根因看护（beta 0.19.0b2）：opener 插件默认注入的 click 监听会
+    /// 吞掉 `<a target=_blank>` 再走被 ACL 拒绝的 IPC，原生路径（`on_navigation` /
+    /// `on_new_window`）永远等不到。插件必须经 `opener_plugin()` 关掉它，且 capability
+    /// 不给页面任何 opener 权限（外链全由壳在 Rust 侧打开）。
+    #[test]
+    fn the_opener_plugin_never_swallows_link_clicks() {
+        let src = include_str!("main.rs");
+        let prod = &src[..src.find("#[cfg(test)]\nmod tests").expect("找不到测试模块")];
+        assert!(prod.contains(".open_js_links_on_click(false)"));
+        assert!(!prod.contains("tauri_plugin_opener::init"));
+        for cap in [
+            include_str!("../capabilities/main.json"),
+            include_str!("../capabilities/remote-engine.json"),
+        ] {
+            assert!(!cap.contains("opener:"), "页面不得持有 opener 权限");
         }
     }
 
