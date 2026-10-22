@@ -47,7 +47,7 @@ SNIPPET: list[list[str]] = [
     ],
     [
         'ax.set_title("Reaction kinetics at 25 °C")',
-        "ax.legend(loc=(0.26, 0.10), fontsize=7.2)",
+        "ax.legend(loc=(0.22, 0.42), fontsize=7.2)",
     ],
 ]
 

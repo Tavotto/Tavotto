@@ -151,16 +151,23 @@ def test_snippet_lines_are_verbatim_script_lines_in_order():
 
 
 def test_figure_describes_the_tutorial_story():
-    """教程讲的三件事落在真实的图上：标题字号是脚本的 9 pt、图例比正文小、在轴框下半。"""
+    """教程讲的三件事落在真实的图上：标题字号是脚本的 9 pt、图例比正文小、压住 Blank 曲线。"""
     fig = json.loads(_gen().OUT.read_text(encoding="utf-8"))
     assert fig["title"]["text"] == "Reaction kinetics at 25 °C"
     assert fig["title"]["sizePt"] == 9.0
     assert [e["text"].split(" ")[0] for e in fig["legend"]["entries"]] == ["Catalyst", "Blank"]
-    # 图例比正文小一号（2026-10-22 起 7.2 pt = 9 pt × 0.8）、略抬离底边，留出更大的操作空地；
-    # 它仍落在坐标轴框的下半、紧挨着 Blank 曲线（挪到哪都会碰到曲线，教程说「换个位置」）
+    # 图例比正文小一号（2026-10-22 起 7.2 pt = 9 pt × 0.8），放在轴框中部偏上并压住 Blank 虚线
+    # （用户 10-22 裁决：教程要把「有问题的图」调成「正确的图」，图例不压线就没有可调的理由）；
+    # 下方留出空地给后续操作
     assert all(e["sizePt"] == 7.2 for e in fig["legend"]["entries"])
     lx, ly, lw, lh = fig["legend"]["box"]
     ax, ay, aw, ah = fig["axes"]["box"]
-    assert ax <= lx and lx + lw <= ax + aw and ay + ah / 2 <= ly and ly + lh <= ay + ah, (
-        "图例应在坐标轴框的下半"
-    )
+    assert ax <= lx and lx + lw <= ax + aw and ay <= ly and ly + lh <= ay + ah, "图例应在坐标轴框内"
+    # 坐标轴坐标（y 向上）：图例下沿 ≥ 0.4（下方留空）、上沿 ≤ 0.8（中部偏上，不顶到轴框上缘）
+    bottom, top = 1 - (ly + lh - ay) / ah, 1 - (ly - ay) / ah
+    assert 0.4 <= bottom and top <= 0.8, f"图例应在轴框中部偏上，实际 {bottom:.2f}–{top:.2f}"
+    by_label = {line["label"].split(" ")[0]: line for line in fig["lines"]}
+    inside = [
+        (x, y) for x, y in by_label["Blank"]["points"] if lx <= x <= lx + lw and ly <= y <= ly + lh
+    ]
+    assert len(inside) >= 40, "脚本里的图例应当压住 Blank 虚线一大段——教程第二步的理由"

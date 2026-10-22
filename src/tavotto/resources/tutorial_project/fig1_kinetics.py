@@ -27,8 +27,9 @@ def main():
     ax.set_title("Reaction kinetics at 25 °C")
     ax.set_xlim(0, 60)
     ax.set_ylim(0, 1.05)
-    # 图例比正文小一号（9 pt × 0.8）并略抬离底边：教程里要在图上点选 / 拖动，留出更大的空地
-    ax.legend(loc=(0.26, 0.10), fontsize=7.2)
+    # 图例比正文小一号（9 pt × 0.8），放在轴框中部偏上、压住 Blank 虚线：教程要把一张「有问题的图」调成「正确的图」，
+    # 图例不压线就没有可调的理由；下方留出空地给后续操作
+    ax.legend(loc=(0.22, 0.42), fontsize=7.2)
     save(fig, "Fig1_kinetics")
 
 
