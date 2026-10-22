@@ -423,7 +423,7 @@ export function SaveStateLabel() {
           if (!nothingToSave) void runManualSave()
         }}
         className={cn(
-          'flex h-6 min-w-0 shrink items-center gap-1 rounded-md px-1.5 text-xs text-ink-3 outline-none focus-visible:focus-ring',
+          'flex h-6 min-w-0 shrink items-center gap-1 rounded-full px-2 text-xs text-ink-3 outline-none focus-visible:focus-ring',
           !nothingToSave && 'hover:bg-surface-hover hover:text-ink-2',
         )}
       >
@@ -436,7 +436,7 @@ export function SaveStateLabel() {
             <SettledIcon size={ICON_SIZE.sm} />
           )}
         </span>
-        <span className="grid min-w-0">
+        <span className="grid min-w-0 text-left">
           <span data-save-text className={cn('col-start-1 row-start-1', textShown)}>
             {text}
           </span>
