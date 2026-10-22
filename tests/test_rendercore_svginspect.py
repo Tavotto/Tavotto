@@ -426,7 +426,7 @@ def test_long_malformed_stylesheet_and_padded_values_are_bounded():
     ],
 )
 def test_check_svg_reads_the_first_family_of_live_text(tmp_path, node, family):
-    """ADR 0142：留成 <text> 的 SVG 能核字体族（取列表第一个，后面是回退）。"""
+    """ADR 0144：留成 <text> 的 SVG 能核字体族（取列表第一个，后面是回退）。"""
     path = tmp_path / "t.svg"
     path.write_bytes(svg(node))
     result = artifactcheck.check_svg(path, expect_mm=None, font_family=family)

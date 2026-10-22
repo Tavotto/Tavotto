@@ -588,7 +588,7 @@ def test_cold_execution_worker_never_runs_script_for_capture(tmp_path, legacy):
 
 @needs_user_python
 def test_text_variant_is_a_separate_serialization_and_the_path_baseline_is_untouched(tmp_path):
-    """ADR 0142：`svg_text_path` 另写一份 `svg.fonttype=none`；path 基准字节（#1185 等价证人）仍是 path。"""
+    """ADR 0144：`svg_text_path` 另写一份 `svg.fonttype=none`；path 基准字节（#1185 等价证人）仍是 path。"""
     result = _probe(tmp_path, "pair_text")
     assert [save["format"] for save in result["saves"]] == ["pdf", "svg", "svg"]
     assert [save["fonttype"] for save in result["saves"][1:]] == ["path", "none"]

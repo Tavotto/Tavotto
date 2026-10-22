@@ -1,4 +1,4 @@
-"""SVG `<text>` 的字体族写法——唯一出处（ADR 0142）。
+"""SVG `<text>` 的字体族写法——唯一出处（ADR 0144）。
 
 `svgwriter`（RenderCore 自己排的文字）与「按原图导出」的 matplotlib 文字（`svg.fonttype=none`）共用这一处：
 批准脸的真实族名 + 度量兼容 / 平台原生的回退链 + 通用族。用户脚本自己指定的字体（DejaVu Sans、Arial……）

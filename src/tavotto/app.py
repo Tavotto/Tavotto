@@ -1363,7 +1363,7 @@ def _serialize_figure_with_worker(
         companion_args["require_built"] = True
     text_svg = tmp.with_suffix(".text.svg") if (svg_text and svg_path is not None) else None
     if svg_text:
-        # 「按原图导出」的 SVG 默认保留文字（ADR 0142）：独立的一路 `svg.fonttype=none`，只写成品，
+        # 「按原图导出」的 SVG 默认保留文字（ADR 0144）：独立的一路 `svg.fonttype=none`，只写成品，
         # 不碰画布预览与 #1185 等价证人的 path 基准字节。旧 worker（签名里没有这两个字段）整体回退为轮廓。
         if fmt == engine_exportreq.FORMAT_SVG:
             companion_args.update(_supported_export_kwargs(worker, svg_fonttype="none"))
@@ -2412,7 +2412,7 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
                 else:
                     from .rendercore.sources import read_frozen
 
-                    # 同一次命令的「保留文字」成品优先（ADR 0142）；没有（已存快照 / 旧 worker / 它写失败）
+                    # 同一次命令的「保留文字」成品优先（ADR 0144）；没有（已存快照 / 旧 worker / 它写失败）
                     # 就交 path 基准那份，text_policy 由文件里有没有 <text> 如实记。
                     delivered = svg_text_source or svg_source
                     tmp.write_bytes(read_frozen(delivered))
@@ -2734,7 +2734,7 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
             job.warnings,
             tmp_dir,
             include_svg=engine_exportreq.FORMAT_SVG in job.request.formats,
-            # 画布里的 live Figure 面板也要 matplotlib 自己的 <text>（ADR 0142）；旧 worker / 已存快照回退 path 版
+            # 画布里的 live Figure 面板也要 matplotlib 自己的 <text>（ADR 0144）；旧 worker / 已存快照回退 path 版
             with_text_svg=engine_exportreq.FORMAT_SVG in job.request.formats,
             **(
                 {"artifact_source": artifact_sources[obj["id"]]}

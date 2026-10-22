@@ -333,7 +333,7 @@ class V1Handler:
                     raise ProtocolError("bad_request", "payload.svg_path 只支持 PDF 导出")
                 if Path(svg_path).resolve() == Path(path).resolve():
                     raise ProtocolError("bad_request", "PDF 与 SVG 导出路径必须不同")
-            # 加字段协议（ADR 0142）：旧 worker 不认这两个键、静默忽略，应答里就没有 `svg_text` /
+            # 加字段协议（ADR 0144）：旧 worker 不认这两个键、静默忽略，应答里就没有 `svg_text` /
             # 不是文字写法——调用方据此（与文件里有没有 <text>）如实回退为轮廓。
             svg_fonttype = payload.get("svg_fonttype")
             if svg_fonttype is not None and svg_fonttype not in ("path", "none"):

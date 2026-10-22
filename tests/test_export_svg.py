@@ -133,10 +133,10 @@ def assert_svg(body, item, *, scope="original", text=None):
     if text is None:
         text = scope == "canvas"
     if text and scope == "original":
-        # 规格变更（ADR 0142，用户追加裁决）：按原图导出的 matplotlib 图也默认留 <text>（独立的 fonttype=none 一路）
+        # 规格变更（ADR 0144，用户追加裁决）：按原图导出的 matplotlib 图也默认留 <text>（独立的 fonttype=none 一路）
         assert texts and any("Source title" in "".join(t.itertext()) for t in texts)
     elif scope == "canvas":
-        # 规格变更（ADR 0142）：画布合成由 RenderCore 写 SVG，文字默认留成 <text>（可在 Office 里编辑）。
+        # 规格变更（ADR 0144）：画布合成由 RenderCore 写 SVG，文字默认留成 <text>（可在 Office 里编辑）。
         assert texts and all((t.text or "").strip() for t in texts)
     else:
         # 已存快照 / 回退路径交的是 path 基准那份（#1185 等价证人）：文字仍是轮廓。
@@ -870,7 +870,7 @@ def _original_svg_text_facts(body, outputs):
 
 
 def test_original_export_keeps_matplotlib_text_with_its_own_font(project):
-    """ADR 0142：原样导出默认 <text>；脚本自己的字体（matplotlib 默认 DejaVu Sans）按输出保留。"""
+    """ADR 0144：原样导出默认 <text>；脚本自己的字体（matplotlib 默认 DejaVu Sans）按输出保留。"""
     client, _ = project
     source = run_script(client)
     body, outputs = output(client, spec(source, scope="original", strict=True))

@@ -199,7 +199,7 @@ def test_shaped_outlines_keep_gid_advance_offset_and_rise(tmp_path, provider):
         "f", face.upem / 100, (ir.Glyph(gid, "A", 900, 100, 200), ir.Glyph(gid, "A", 600)), rise=3
     )
     node = ir.ShapedText(10, 20, (run,), ir.Paint((0, 0, 0), 0.5))
-    # 规格变更（ADR 0142）：默认策略已是 text。这条钉的是 outlines 这条保留退路的行为，
+    # 规格变更（ADR 0144）：默认策略已是 text。这条钉的是 outlines 这条保留退路的行为，
     # 所以显式要 outlines，断言本身一字未松。
     _, root, facts = _write(
         tmp_path,
@@ -506,7 +506,7 @@ def test_repeated_and_concurrent_writes_are_deterministic(tmp_path):
     assert len(set(results)) == 1
 
 
-# --------------------------------------------------------------------------- text policy (ADR 0142)
+# --------------------------------------------------------------------------- text policy (ADR 0144)
 def _text_nodes(root):
     return root.findall(".//s:text", NS)
 

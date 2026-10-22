@@ -84,7 +84,7 @@
   与 `FileResource.sha256` 比，不符 `source_identity`、没交 `source_bytes_missing`——与 `read_frozen()` 是有意的两道（RC-014）。
 - **SVG 写入是同一 IR 的另一载体（X03）**：`svgwriter.write_svg` 支持 Path / Group / clip / Image /
   ShapedText，物理尺寸用 pt、viewBox 与页同尺寸；页面外层只翻一次 y，组矩阵与 paint order 原样保留。
-  **文字默认保留为 `<text>`（ADR 0142，`text_policy=text`）**：每个 shaped run 一个 `<text>`，真实 Unicode（来自 cluster 原文）、
+  **文字默认保留为 `<text>`（ADR 0144，`text_policy=text`）**：每个 shaped run 一个 `<text>`，真实 Unicode（来自 cluster 原文）、
   批准脸真实族名 + 回退链（唯一出处 `svgfonts.py`）、**每个 run 只一个起点 `x`**（逐字形 x 会被 Word「转换为形状」打散）、`xml:space=preserve`；还原不出可靠 Unicode 的 run
   （无 cluster 原文 / `.notdef` / 字体不覆盖 / 私用区 / 控制符）**逐 run 退回轮廓**并计 `text_fallback_runs`，不让整份失败。
   `text_policy=outlines` 保留为 `write_svg(..., text_policy="outlines")` 的内部退路：字形由批准脸的 fontTools 轮廓按已有

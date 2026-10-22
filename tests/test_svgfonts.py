@@ -1,4 +1,4 @@
-"""ADR 0142：SVG <text> 字体族的唯一出处——批准族补回退链，用户字体原样保留，幂等。"""
+"""ADR 0144：SVG <text> 字体族的唯一出处——批准族补回退链，用户字体原样保留，幂等。"""
 
 from __future__ import annotations
 

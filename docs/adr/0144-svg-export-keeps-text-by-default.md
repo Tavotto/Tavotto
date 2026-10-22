@@ -1,4 +1,4 @@
-# ADR 0142：SVG 导出默认保留可编辑文字（`text_policy=text`），字形轮廓降为保留退路
+# ADR 0144：SVG 导出默认保留可编辑文字（`text_policy=text`），字形轮廓降为保留退路
 
 日期：2026-10-21 · 状态：**Accepted**（用户 2026-10-21 明确拍板「改成默认保留文字」；1.0 收敛纪律下的**用户授权**能力变更）
 相关：[0031 统一导出管线](0031-unified-export-pipeline.md)、[0060 批准字体与 allowlist](0060-font-policy-and-allowlist.md)、

@@ -1,6 +1,6 @@
 """Render IR → self-contained SVG; shaped text is live ``<text>`` by default, glyph outlines on request (X03).
 
-``text_policy="text"`` (the default, ADR 0142) writes one ``<text>`` per shaped run with the
+``text_policy="text"`` (the default, ADR 0144) writes one ``<text>`` per shaped run with the
 approved face's real family name, per-character ``x`` positions taken from the IR advances, and
 the real Unicode from the cluster mapping. A run that cannot be restored to reliable Unicode
 (missing cluster text, ``.notdef``, private-use or control characters, a character the face does
@@ -182,7 +182,7 @@ class SvgWriter:
         self.provider = provider
         self.files = files or {}
         self.imported_svgs = imported_svgs or {}
-        # 同一次执行的「保留文字」成品（ADR 0142）：身份仍由 path 基准 `imported_svgs` 的 hash 钉住，
+        # 同一次执行的「保留文字」成品（ADR 0144）：身份仍由 path 基准 `imported_svgs` 的 hash 钉住，
         # 这份只在 text 策略下替换写入的字节；解析失败就回退 path 版。
         self.imported_text_svgs = imported_text_svgs or {}
         self.facts = WriteFacts(page=(page.width_pt, page.height_pt), text_policy=text_policy)

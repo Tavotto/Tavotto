@@ -772,7 +772,7 @@ test(
     expect(artifact).toMatchObject({
       name: 'svg', namespace: 'http://www.w3.org/2000/svg', parseErrors: 0, images: 0,
     })
-    // ADR 0142：SVG 默认保留 <text>（可编辑、可检索），不再转轮廓。
+    // ADR 0144：SVG 默认保留 <text>（可编辑、可检索），不再转轮廓。
     expect(artifact.texts, '画布文字必须保留为 <text>，不能转轮廓、丢字或栅格化').toBeGreaterThan(0)
     expect(artifact.textContent.length, '<text> 里必须有实际字符').toBeGreaterThan(0)
     expect(artifact.fontFamily, '<text> 的首选族必须是批准脸的真实族名').toMatch(/^\s*(font-family:\s*)?['"]?(Liberation (Serif|Sans|Mono)|Noto Sans SC)/)

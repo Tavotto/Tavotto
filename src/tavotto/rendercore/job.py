@@ -142,7 +142,7 @@ def produce(
                 imported_svgs.clear()
                 break
     if svg_source_error is None and svg_sources:
-        # 「保留文字」成品（ADR 0142）：尽力而为，读不到 / 超预算就留在 path 基准，不牵连任何格式。
+        # 「保留文字」成品（ADR 0144）：尽力而为，读不到 / 超预算就留在 path 基准，不牵连任何格式。
         spent = total_bytes
         for key, fs in rp.sources.items():
             text = fs.svg_text_representation() if key in svg_sources else None

@@ -75,7 +75,7 @@ class FrozenSource:
     # Static PDFs qualify only after an independent source/candidate comparison;
     # the persisted binding names the exact disk bytes that were admitted.
     svg_source_sha256: str | None = None
-    # 同一次命令里 `svg.fonttype=none` 写出的「保留文字」SVG 成品（ADR 0142）。它**不是**等价证人：
+    # 同一次命令里 `svg.fonttype=none` 写出的「保留文字」SVG 成品（ADR 0144）。它**不是**等价证人：
     # path 基准字节（`svg`）一字未动；重新加载的已存快照没有这一份，导出时如实回退为轮廓。
     svg_text: FrozenSource | None = None
 
