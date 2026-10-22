@@ -876,9 +876,7 @@ class LiveFigureSession:
         self.savefig_calls: dict[str, list | None] = {}
         self.savefig_observations = figcapture.SavefigObservations()
         #: 保存瞬间快照账（ADR 0139 §九）：开关关掉时不拍
-        self._save_moments = (
-            figcapture.SaveMomentLedger() if figcapture.save_moment_enabled() else None
-        )
+        self._save_moments = self._new_save_moments()
         self.artifact_source = None
         self._artifact_background_hidden = False
         self.artifact_probe = None
@@ -984,13 +982,28 @@ class LiveFigureSession:
             if hasattr(fig, figcapture.DIRTY_SINCE_SAVE):
                 setattr(fig, figcapture.DIRTY_SINCE_SAVE, False)
 
+    @staticmethod
+    def _new_save_moments():
+        return figcapture.SaveMomentLedger() if figcapture.save_moment_enabled() else None
+
+    def begin_save_moments(self) -> None:
+        """一次脚本执行开始：换一份**新**快照账（旧账先释放）。账的生命周期绑「一次执行」，不绑会话——
+        pool 会在同一个 worker 里重跑脚本（instrument / 发布阶段临时失败后重试），重跑必须有账可记。"""
+        self.release_save_moments()
+        self._save_moments = self._new_save_moments()
+
+    def release_save_moments(self) -> None:
+        """采用或放弃之后释放快照字节（账对象留着、已清空；下一次执行由 `begin_save_moments` 换新）。"""
+        if self._save_moments is not None:
+            self._save_moments.release()
+
     def adopt_save_moments(self) -> dict[str, str]:
         """存盘后又被脚本改过的 savefig 图：能还原保存那一刻的复制品，就让它顶替捕获表里的最终态 Figure（ADR 0139 §九）。
 
         在 `note_modified_after_save` 与 pyplot 兜底**之后**、`prepare_artifact` / `instrument_all` **之前**调（兜底按身份去重，
         先换会让原件被当成没认领的 pyplot 图又收一遍）。还原不了 = 原因进闭集 `SAVE_MOMENT_REASONS`，编辑基础仍是最终态。
         结论记在捕获表里那张 Figure 上（`figcapture.SAVE_MOMENT`），manifest 读它；返回 stem -> 结论。"""
-        ledger, self._save_moments = self._save_moments, None
+        ledger = self._save_moments
         if ledger is None:
             return {}
         if (
@@ -998,7 +1011,7 @@ class LiveFigureSession:
             and self.artifact_source.get("render_policy") != figcapture.SCRIPT_BACKED_POLICY
         ):
             # 精确策略（selected-figsize-v1）一字不动（ADR 0139 §二）：它的「存后改过就拒」是自己的闸门
-            ledger.release()
+            self.release_save_moments()
             return {}
         outcome: dict[str, str] = {}
         holders: dict[int, int] = {}
@@ -1030,7 +1043,7 @@ class LiveFigureSession:
                 row, art_stem, _, extras = self._artifact_save
                 self._artifact_save = (row, art_stem, restored, extras)
             outcome[stem] = figcapture.SAVE_MOMENT_RESTORED
-        ledger.release()
+        self.release_save_moments()
         return outcome
 
     def note_artifact(self, observation, stem, fig, extra_artists):

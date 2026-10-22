@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import filecmp
+import io
 import os
 from pathlib import Path
 from unittest import mock
@@ -219,6 +220,66 @@ def test_hot_session_and_fresh_replay_see_the_same_snapshot_figure(tmp_path):
     ]
 
 
+# ---- 同 worker 重试：快照账绑「一次脚本执行」（Codex #1314 P1-a） ----
+
+FLAKY_PUBLISH_PREFIX = """\
+import sys
+import matplotlib.pyplot as plt
+
+def _flaky_once():
+    # 模拟 instrument / 预览发布阶段的临时失败（Windows 上账本瞬时被锁一类）：第一次 build 在这里失败，
+    # pool 在同一个 worker 里重跑脚本。标记放在 builtins 上，跨「第二次执行脚本」存活。
+    import builtins
+    for mod in list(sys.modules.values()):
+        cls = getattr(mod, "LiveFigureSession", None)
+        if cls is not None and not getattr(cls, "_flaky_installed", False):
+            real = cls.instrument_all
+
+            def flaky(self, *a, __real=real, **k):
+                if not getattr(builtins, "_tav_flaky_done", False):
+                    builtins._tav_flaky_done = True
+                    raise OSError("transient publish failure")
+                return __real(self, *a, **k)
+
+            cls.instrument_all = flaky
+            cls._flaky_installed = True
+            break
+
+_flaky_once()
+
+"""
+
+
+@needs_worker
+def test_retry_in_the_same_worker_still_snapshots(tmp_path):
+    """第一次 build 在 instrument 阶段临时失败、同 worker 重试成功：存后改图的图仍按保存瞬间采用，且与一次性重放一致。"""
+    src = FLAKY_PUBLISH_PREFIX + REFERENCE + MUTATIONS["title_and_color"]
+    d = tmp_path / "retry"
+    d.mkdir()
+    (d / "s.py").write_text(src, encoding="utf-8")
+    w = pool.one_shot("s.py", str(d), "main")
+    try:
+        with pytest.raises(Exception):  # noqa: B017, PT011 —— 第一次 build 的临时失败
+            w.ensure_built()
+        w.ensure_built()  # 同一个 worker 里重跑脚本
+        man = w.override("fig", [])["manifest"]
+        png = tmp_path / "retry.png"
+        png.write_bytes(Path(w.render_png("fig", 300)).read_bytes())
+    finally:
+        pool.discard(w)
+    assert man["modified_after_save"] is True
+    assert man.get("save_moment") == "restored", man.get("save_moment_unavailable")
+    ref_man, ref_png = _run(tmp_path, REFERENCE, "ref_retry")
+    assert filecmp.cmp(ref_png, png, shallow=False), (
+        "重试后的编辑基础必须与一次性重放（保存瞬间）逐字节一致"
+    )
+    replay_man, replay_png = _run(
+        tmp_path, REFERENCE + MUTATIONS["title_and_color"], "replay_retry"
+    )
+    assert replay_man["save_moment"] == "restored"
+    assert filecmp.cmp(replay_png, png, shallow=False)
+
+
 # ---- 单元：账本本身（不起 worker） ----
 
 
@@ -278,12 +339,90 @@ class _UserThing:
     pass
 
 
-def test_restore_refuses_classes_outside_matplotlib_numpy():
+def test_user_classes_are_refused_at_both_ends():
+    """拍摄侧在序列化之前就拒（unpicklable）；还原侧对手工拼出来的含用户类的字节流照样拒（restore_failed）。两侧共用一张白名单。"""
+    import pickle
+
     fig = _figure()
     fig._user_thing = _UserThing()
     ledger = figcapture.SaveMomentLedger()
     ledger.take(fig, 1)
-    assert ledger.restore(fig) == (None, "restore_failed")
+    assert ledger.restore(fig) == (None, "unpicklable")
+    with pytest.raises(pickle.UnpicklingError):
+        figcapture._RestrictedUnpickler(io.BytesIO(pickle.dumps(_UserThing()))).load()
+
+
+class _Booby:
+    """序列化钩子会改活 Figure 再抛：拍快照时它一次都不许被调用。"""
+
+    calls = 0
+
+    def __init__(self, fig):
+        self._fig = fig
+
+    def __reduce__(self):
+        _Booby.calls += 1
+        self._fig.axes[0].set_title("MUTATED BY REDUCE")
+        raise RuntimeError("boom")
+
+
+@pytest.mark.parametrize("where", ["attr", "gid", "url", "subclass", "instance_hook"])
+def test_taking_a_snapshot_never_runs_user_serialisation_code(where):
+    import matplotlib.lines as mlines
+
+    fig = _figure()
+    ax = fig.axes[0]
+    ax.set_title("kept")
+    _Booby.calls = 0
+    line = ax.lines[0]
+    if where == "attr":
+        line.custom_attr = _Booby(fig)
+    elif where == "gid":
+        line.set_gid(_Booby(fig))
+    elif where == "url":
+        line.set_url(_Booby(fig))
+    elif where == "subclass":
+
+        class MyLine(mlines.Line2D):
+            def __reduce__(self):
+                _Booby.calls += 1
+                ax.set_title("MUTATED BY REDUCE")
+                raise RuntimeError("boom")
+
+        ax.add_line(MyLine([0, 1], [1, 0]))
+    else:
+        booby = _Booby(fig)
+
+        def hook(proto):
+            _Booby.calls += 1
+            ax.set_title("MUTATED BY REDUCE")
+            raise RuntimeError("boom")
+
+        booby.__dict__["__reduce_ex__"] = hook
+        line.custom_attr = booby
+    figcapture.mark_saved(fig)
+    ledger = figcapture.SaveMomentLedger()
+    ledger.take(fig, 1)
+    assert _Booby.calls == 0, "用户的 __reduce__ 被执行了"
+    assert ax.get_title() == "kept", "拍快照改了活 Figure"
+    assert ledger.restore(fig) == (None, "unpicklable")
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is False
+
+
+@needs_worker
+def test_unpicklable_user_hook_does_not_hide_modified_after_save(tmp_path):
+    """端到端：存一次、之后没改图——有用户对象挂在 Figure 上也不得被快照搅出 modified_after_save，且钩子从未被调用。"""
+    src = HEAD.replace(
+        "def main():",
+        "class Booby:\n    n = 0\n    def __reduce__(self):\n        Booby.n += 1\n"
+        "        plt.gcf().axes[0].set_title('MUTATED')\n        raise RuntimeError\n\n\ndef main():",
+    ).replace(
+        '    ax.set_title("saved")\n',
+        '    ax.set_title("saved")\n    line.custom_attr = Booby()\n',
+    )
+    man, _ = _run(tmp_path, src + '    fig.savefig("fig.png")\n    assert Booby.n == 0\n', "booby")
+    assert "modified_after_save" not in man
+    assert all(e.get("value") != "MUTATED" for e in man["elements"])
 
 
 def test_reasons_are_a_closed_set_and_release_frees_bytes():

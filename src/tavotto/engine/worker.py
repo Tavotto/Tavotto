@@ -1085,6 +1085,8 @@ class Worker(wireproto.V1Handler):
         t_build = time.perf_counter()
         if self.built:
             return self._stems_summary()
+        # 快照账绑「这一次脚本执行」：同 worker 重试（instrument / 发布阶段临时失败）也从一份新账开始
+        self.session.begin_save_moments()
         self.configure_run({})
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.sandbox.mkdir(parents=True, exist_ok=True)

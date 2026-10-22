@@ -193,6 +193,10 @@ manifest / overrides / 撤销重做不分叉）。
   dpi 切换，已经还原；与 `mark_saved` 清脏标记是同一时刻）。快照不是脚本改图：拍完把脏标记重置为「刚存完」。
 - **存放**：只在**本进程内存**（`SaveMomentLedger`，每张图只留最近一次保存的字节串，会话结束或判定完即释放）。
   **不写 `data_dir()`、不写包目录、不写项目、不发给别的进程。**
+- **账的生命周期绑「一次脚本执行」，不绑会话**（Codex #1314 P1-a）：`Worker.build` 在跑脚本之前调 `begin_save_moments()`
+  换一份新账（旧账先释放）；`adopt_save_moments` 采用或放弃之后调 `release_save_moments()` 清空字节，账对象留着、不置 None。
+  pool 会在同一个 worker 里重跑脚本（`instrument_all` / 预览发布临时失败后重试），重试因此从新账开始——否则存后改图的脚本会
+  被悄悄按最终态编辑，而一次性重放建新账、用保存态，热态所见 ≠ 重放所得，违反写回不变式。
 - **预算**：单张 ≤ 32 MiB，本次执行累计 ≤ 128 MiB，超出即放弃并记原因（`too_large` / `budget_exceeded`）。**只用字节数当预算，
   不用墙钟**——热会话与写回重放必须在同一处同样地放弃，计时抖动会破坏「热态 == 重放」。实测拍一张快照约 2–5 ms
   （1,000,000 点散点 18 MB，仍是毫秒级）。
@@ -233,6 +237,19 @@ manifest / overrides / 撤销重做不分叉）。
 - 还原用受限 Unpickler：只解析 matplotlib / mpl_toolkits / numpy 本体（对象自己的 `__module__` 也须在这些包里；带点名字只许是
   类的嵌套类）和少数精确名字（`object` / `getattr` / `functools.partial` / `collections.OrderedDict` / `itertools.count` 等）。
   用户自己的类 / 函数 / 模块一律拒绝（`restore_failed`）：还原不执行用户代码、不 import 用户模块。这是纵深防御——真正的边界是上一条。
+- **拍摄侧同样先把关，不执行用户的序列化代码**（Codex #1314 P1-b）：快照用 `pickle.Pickler` 子类，`reducer_override(obj)` 先于任何
+  `__reduce__` / `__reduce_ex__` / `__getstate__` 被调用，按 `type(obj)`（类 / 函数按自己的 `__module__` + `__qualname__`）查
+  **与还原侧共用的同一张白名单**（`figcapture.save_moment_module_allowed`，单一出处；还原侧在它之上再加解析后的 `__module__` 校验）。
+  用户类、用户继承 matplotlib 的子类（模块是用户的）、函数 / lambda、实例上挂的 `__reduce__` 钩子一律立刻抛 `PicklingError`，
+  记 `unpicklable`；绑定方法（C 实现的 `getattr(self, 名)`）放行、`self` 仍逐个过关。否则用户对象的 `__reduce__` 改了活 Figure
+  再抛异常，`pickle.dumps` 只记 `unpicklable` 却不还原那次改动，随后 `mark_saved` 清脏标记，就把改动藏进了「只保存一次」的图里。
+  还原前的结构签名也排在序列化之后算（先通过白名单，才读 `ax.lines` 之类，不会落到用户重写的属性上）；Figure / canvas 本身若是用户子类，
+  连 `canvas.manager = None` 都不碰。失败时仍把脏标记重置为「刚存完」：因为拍摄期间没有任何用户代码执行，不存在需要保留的改动。
+  `reducer_override` 对 None / bool / int / float / str / bytes 与精确的 list / tuple / dict / set / frozenset / bytearray 不调用
+  （它们没有用户代码，容器元素仍逐个经过）；这些的**子类**会被调用，因此用户的 dict / list 子类被拒。matplotlib 自己的
+  `Figure.__getstate__` / `CallbackRegistry.__getstate__` 只做纯数据整理，不回调用户代码；回调函数本身要被序列化时同样过白名单。
+  语义代价：语料里 `al_ticks`（用户 lambda 的 FuncFormatter）与 `ca_collection_alpha`（用户 HandlerBase 子类）原本在还原阶段才
+  `restore_failed`，现在拍摄阶段就是 `unpicklable`——都是退回最终态，数量不变。
 - 拍快照临时摘掉 `canvas.manager`（matplotlib 据此写 `_restore_to_pylab`，否则还原会把复制品登记进 pyplot），`finally` 放回。
 
 ### 7. 失败即退回现状、可回滚

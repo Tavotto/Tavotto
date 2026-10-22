@@ -163,6 +163,7 @@ import stat
 import sys
 import threading
 import time
+import types
 import unicodedata
 import weakref
 
@@ -1933,21 +1934,88 @@ def save_moment_enabled() -> bool:
     return os.environ.get(SAVE_MOMENT_ENV, "1").strip() != "0"
 
 
+def save_moment_module_allowed(module, name) -> bool:
+    """白名单的第一关（还原侧与拍摄侧共用）：精确名单里的 `(模块, 名字)`，或模块顶层包是 matplotlib / mpl_toolkits / numpy。
+    只看名字、不 import、不解析、不执行任何东西。用户模块（含用户继承 matplotlib 的子类，它们的 `__module__` 是用户模块）在这里被拒。
+    威胁模型是「诚实的用户钩子意外改了图」，不是蓄意把自己的类的 `__module__` 伪装成 numpy——后者本来就能直接改 Figure。"""
+    if not isinstance(module, str) or not isinstance(name, str):
+        return False
+    return (module, name) in _SAVE_MOMENT_EXACT or module.split(".", 1)[0] in _SAVE_MOMENT_PACKAGES
+
+
+def save_moment_global_allowed(module, name, resolve) -> bool:
+    """还原侧（`find_class`）的完整判据：第一关 `save_moment_module_allowed`（拍摄侧同用这一关），再要求名字不含点或点前是类
+    （`BoxStyle.Round` 这种嵌套类）、解析到的对象自己的 `__module__` 也在这些包里。`resolve(module, name)` 是 `Unpickler.find_class`。
+    用户模块在第一关就被拒，不会走到 `resolve`（不 import 用户模块）。"""
+    if not save_moment_module_allowed(module, name):
+        return False
+    if (module, name) in _SAVE_MOMENT_EXACT:
+        return True
+    if "." in name and not isinstance(resolve(module, name.split(".")[0]), type):
+        # 带点的名字只许是类的嵌套类（`BoxStyle.Round`），不许沿模块属性链走到别的模块去
+        return False
+    found = resolve(module, name)
+    owner = getattr(found, "__module__", None)
+    return isinstance(owner, str) and owner.split(".", 1)[0] in _SAVE_MOMENT_PACKAGES
+
+
 class _RestrictedUnpickler(pickle.Unpickler):
     def find_class(self, module, name):
-        if (module, name) not in _SAVE_MOMENT_EXACT:
-            top = module.split(".", 1)[0]
-            if top not in _SAVE_MOMENT_PACKAGES:
-                raise pickle.UnpicklingError(f"not allowed: {module}.{name}")
-            if "." in name and not isinstance(super().find_class(module, name.split(".")[0]), type):
-                # 带点的名字只许是类的嵌套类（`BoxStyle.Round`），不许沿模块属性链走到别的模块去
-                raise pickle.UnpicklingError(f"not allowed: {module}.{name}")
-            found = super().find_class(module, name)
-            owner = getattr(found, "__module__", None)
-            if not isinstance(owner, str) or owner.split(".", 1)[0] not in _SAVE_MOMENT_PACKAGES:
-                raise pickle.UnpicklingError(f"not allowed: {module}.{name}")
-            return found
+        if not save_moment_global_allowed(module, name, super().find_class):
+            raise pickle.UnpicklingError(f"not allowed: {module}.{name}")
         return super().find_class(module, name)
+
+
+def _snapshot_type_allowed(t) -> bool:
+    """`t`（类或函数）能不能出现在快照里：按它的 `__module__` / `__qualname__` 查共用白名单的第一关。"""
+    return save_moment_module_allowed(
+        getattr(t, "__module__", None), getattr(t, "__qualname__", None)
+    )
+
+
+class _SnapshotPickler(pickle.Pickler):
+    """拍摄侧的守门：**任何用户的 `__reduce__` / `__reduce_ex__` / `__getstate__` 被调用之前**先按类型把关。
+
+    `reducer_override` 先于 `__reduce_ex__` 被调用（C 实现里 int / str / bytes / float / bool / None 与精确的 list / tuple /
+    dict / set / frozenset / bytearray 走快速通道、不经过它——它们没有用户代码，容器里的元素仍逐个经过这里）。
+    不在白名单里的类型（用户类、用户继承 matplotlib 的子类、函数、lambda、绑定方法……）立刻抛 `PicklingError`，
+    所以拍快照绝不执行用户的序列化代码，也就不可能借它改活 Figure。允许的返回 `NotImplemented`，交给默认机制。
+    """
+
+    def reducer_override(self, obj):
+        t = type(obj)
+        if isinstance(obj, type):
+            # 类对象一律按全局名存（元类的 `__reduce__` 不会被调用，已实测），只看类自己在不在名单里
+            ok = _snapshot_type_allowed(obj)
+        elif t is types.BuiltinFunctionType and not isinstance(
+            getattr(obj, "__self__", None), (types.ModuleType, type(None))
+        ):
+            # 内建对象的绑定方法（`list.remove` 的 bound 形态）同样存成 `getattr(self, 名字)`，`self` 之后逐个过这里
+            ok = True
+        elif isinstance(obj, (types.FunctionType, types.BuiltinFunctionType)):
+            # 函数按全局名存（`copyreg._reconstructor`、numpy 的重建函数……）；lambda / 用户函数 / 内部函数都不在名单里
+            ok = _snapshot_type_allowed(obj)
+        elif t is types.MethodType:
+            # 绑定方法存成 `getattr(self, 名字)`：`__reduce__` 是 C 实现、不跑用户代码；`self` 之后仍逐个经过这里
+            ok = True
+        else:
+            ok = _snapshot_type_allowed(t)
+            if ok:
+                # 实例上挂着的序列化钩子（`obj.__reduce_ex__ = ...`）也是用户代码
+                inst = getattr(obj, "__dict__", None)
+                if isinstance(inst, dict) and any(
+                    k in inst for k in ("__reduce__", "__reduce_ex__", "__getstate__")
+                ):
+                    ok = False
+        if not ok:
+            raise pickle.PicklingError(f"not snapshot-safe: {t.__module__}.{t.__qualname__}")
+        return NotImplemented
+
+
+def _snapshot_dumps(fig) -> bytes:
+    buf = io.BytesIO()
+    _SnapshotPickler(buf, protocol=pickle.HIGHEST_PROTOCOL).dump(fig)
+    return buf.getvalue()
 
 
 def _structure_signature(fig) -> tuple:
@@ -2004,12 +2072,19 @@ class SaveMomentLedger:
             return
         canvas = manager = None
         try:
+            # 先看类型再碰对象：Figure / canvas 若是用户子类，读它们的属性（`fig.axes`、`canvas.manager = None`）就可能是用户代码
+            if not _snapshot_type_allowed(type(fig)):
+                raise pickle.PicklingError("user Figure subclass")
             canvas = fig.canvas
-            row["signature"] = _structure_signature(fig)
+            if canvas is not None and not _snapshot_type_allowed(type(canvas)):
+                canvas = None
+                raise pickle.PicklingError("user canvas")
             # 复制品不能带「还原时挂回 pyplot」：临时摘掉 canvas.manager（matplotlib 据此写 `_restore_to_pylab`），用完放回
             manager = getattr(canvas, "manager", None)
             canvas.manager = None
-            blob = pickle.dumps(fig, protocol=pickle.HIGHEST_PROTOCOL)
+            blob = _snapshot_dumps(fig)
+            # 签名最后算：序列化通过 = 图里全是库类型，读 `ax.lines` 之类不会落到用户重写的属性上
+            row["signature"] = _structure_signature(fig)
         except Exception:  # noqa: BLE001 —— 快照尽力而为：失败只是退回「告知」
             row["reason"] = "unpicklable"
             return
