@@ -453,13 +453,20 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
                 asset_id = figcapture.runtime_asset_id(script, stem)
             except ValueError:
                 continue  # 坏条目不该炸掉整张清单
-            variants = [("", asset_id)]
+            base_meta = load_metadata(project_root, asset_id)
+            variants = []
             # T03：同一脚本用不同参数跑出的同名图各是一张素材。只列**真跑过、cache 里有**的配置变体
             # （登记里的配置不等于跑过）；参数值不进清单，只带不透明引用。
             for cfg in runconfig.configs_of(project_root, script):
                 variant_id = figcapture.runtime_asset_id(script, stem, cfg.id)
                 if load_metadata(project_root, variant_id) is not None:
                     variants.append((cfg.id, variant_id))
+            # A union of registered stems is not evidence of an argument-free Figure.
+            # Once this stem has captured variants, list those actual identities instead
+            # of also offering an uncaptured default that runs the script with no argv.
+            # Keep real default captures, and the legacy placeholder before any capture.
+            if base_meta is not None or not variants:
+                variants.insert(0, ("", asset_id))
             for run_config, variant_id in variants:
                 meta = load_metadata(project_root, variant_id)
                 desc = (meta or {}).get("descriptor") or None

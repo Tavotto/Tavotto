@@ -65,6 +65,30 @@ def _tail(text: str, limit: int = 4000) -> str:
 
 
 # ---------------------------------------------------------------- 原生对照
+@contextlib.contextmanager
+def _observe_native_crop(figure):
+    """Observe Matplotlib's resolved crop during the original save, without another draw.
+
+    The native renderer has already resolved tight padding, extra artists and layout.
+    Do not use Tavotto's frame implementation to manufacture its own reference.
+    """
+    from matplotlib import _tight_bbox
+
+    original = _tight_bbox.adjust_bbox
+    crop = [None]
+
+    def observe(fig, bbox, *args, **kwargs):
+        if fig is figure:
+            crop[0] = bbox.frozen()
+        return original(fig, bbox, *args, **kwargs)
+
+    _tight_bbox.adjust_bbox = observe
+    try:
+        yield crop
+    finally:
+        _tight_bbox.adjust_bbox = original
+
+
 def run_native(req: dict) -> int:
     """普通 matplotlib 执行 + 真实 savefig + 按 stem 出 PNG。
 
@@ -91,13 +115,16 @@ def run_native(req: dict) -> int:
     sources: dict = {}
     calls: dict = {}
     extras: dict = {}
+    crops: dict = {}
 
     def recording_savefig(self, fname, *args, **kwargs):
         stem = figcapture.savefig_stem(fname)
         if stem and stem not in captured:
             captured[stem] = self
             sources[stem] = figcapture.SOURCE_SAVEFIG
-        result = real_savefig(self, fname, *args, **kwargs)  # ← 照常写出去
+        call = figcapture.savefig_call(fname, kwargs)
+        with _observe_native_crop(self) as observed:
+            result = real_savefig(self, fname, *args, **kwargs)  # ← 照常写出去
         if stem:  # 成功写盘之后才记账（失败的保存不顶替任何人），与 native bridge 同序
             figcapture.note_savefig_writer(
                 writers,
@@ -108,9 +135,12 @@ def run_native(req: dict) -> int:
                 stem,
                 self,
                 figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
-                figcapture.savefig_call(fname, kwargs),
+                call,
                 kwargs.get("bbox_extra_artists"),
             )
+            # Keep the measured crop on this save event. frame_call selects the
+            # actual recorded call, including writer changes and format aliases.
+            crops[id(call)] = observed[0]
         return result
 
     mfigure.Figure.savefig = recording_savefig
@@ -148,14 +178,29 @@ def run_native(req: dict) -> int:
     shots, sizes = {}, {}
     width = int(req.get("width", 800))
     for stem, fig in captured.items():
-        w_in = float(fig.get_size_inches()[0]) or 1.0
+        call = figcapture.frame_call(
+            calls.get(stem), figcapture.find_original_artifact(req["project"], stem)
+        )
+        crop = crops.get(id(call)) if call else None
+        if call and call.get("bbox_inches") is not None and crop is None:
+            return _fail("native_render_failed", f"{stem}: native crop was not observed")
+        inches = [crop.width, crop.height] if crop is not None else fig.get_size_inches()
+        w_in = float(inches[0]) or 1.0
         path = os.path.join(out_dir, f"{stem}.png")
         try:
-            real_savefig(fig, path, format="png", dpi=max(50, width / w_in))
+            if call:
+                # The save-time crop is authoritative even if rcParams changed later.
+                with matplotlib.rc_context({"savefig.bbox": None}):
+                    real_savefig(
+                        fig, path, format="png", dpi=max(50, width / w_in), bbox_inches=crop
+                    )
+            else:
+                # Pyplot-only captures have no original save to replay.
+                real_savefig(fig, path, format="png", dpi=max(50, width / w_in))
         except Exception as exc:  # noqa: BLE001
             return _fail("native_render_failed", f"{stem}: {exc}")
         shots[stem] = path
-        sizes[stem] = [round(float(v) * 25.4, 2) for v in fig.get_size_inches()]
+        sizes[stem] = [round(float(v) * 25.4, 2) for v in inches]
     return _ok(
         stems=sorted(captured),
         shots=shots,
