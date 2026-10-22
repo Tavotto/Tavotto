@@ -19,6 +19,8 @@ import {
   onNativeFileDrop,
   pickScriptFile,
   type NativeFileDrop,
+  WINDOW_CONTROLS_INSET,
+  windowChrome,
 } from '@/lib/desktop'
 import { msg } from '@/i18n'
 import { formatRelativeTime } from '@/i18n/format'
@@ -69,6 +71,13 @@ import { DirBrowser, TailPath } from '../DirBrowser'
  * 新建项目、按路径打开 / 筛选、失效目录、教程的「重新开始」都在「全部项目」视图里
  * （`ProjectPicker` 的另一半），这里的「浏览更多项目 / 更多 / 其他打开方式」都通到那儿。
  */
+/**
+ * Windows 窗口按钮（`WindowControls`，固定在视口右上角）压在首页顶上那一行的右段上时要让出的
+ * 宽度：这一列居中、最宽 1000、左右各 24 内边距，视口越宽列离右边越远，宽到一定程度就不用让。
+ * 多算 16 给竖向滚动条（按钮压在滚动条上方，列的右缘却在滚动条左边）。
+ */
+const HOME_CONTROLS_INSET = `max(0px, calc(${WINDOW_CONTROLS_INSET + 16 - 24}px - max(0px, (100vw - 1000px) / 2)))`
+
 export function HomeView({
   variant,
   error,
@@ -124,8 +133,12 @@ export function HomeView({
           矮时撑高整列、由 main 滚动（不重叠、不裁切）。各段间距统一读 --home-gap（index.css，随窗高伸缩） */}
       <div className="mx-auto flex min-h-full w-full max-w-[768px] flex-col px-6 pb-6 pt-4" {...dragRegionProps('self')}>
         {/* 从设置 / 菜单「切换项目」进来时后端仍有打开的项目——允许原路返回。
-            这一行也是窗框的一部分：macOS 下空白处可拖动窗口，Windows 的应用菜单在最左 */}
-        <div className="flex h-7 shrink-0 items-center justify-end" {...dragRegionProps('self')}>
+            这一行也是窗框的一部分：空白处可拖动窗口，Windows 的应用菜单在最左、右侧给窗口按钮让位 */}
+        <div
+          className="flex h-7 shrink-0 items-center justify-end"
+          style={windowChrome() === 'menu-button' ? { paddingRight: HOME_CONTROLS_INSET } : undefined}
+          {...dragRegionProps('self')}
+        >
           <AppMenuButton className="-ml-2.5 mr-auto" />
           {currentOpen && (
             <Button

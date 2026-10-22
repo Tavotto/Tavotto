@@ -209,12 +209,19 @@ export function writeRuntimeNamedProject(dir: string): void {
 }
 
 /**
- * 新手教程的欢迎页（ADR 0136）在「第一次打开、停在主页、没有自己的项目」时会自己盖上来——
+ * 新手教程的欢迎页（ADR 0136）在「新手态、欢迎页没出现过、停在主页」时会自己盖上来——
  * `noProject` 启动的用例每一条都是这个形状。默认替它们记成「欢迎页已经出现过」（只在
  * `tavotto.onboarding` 那一格还不存在时写，用例自己摆的、应用后来写的都不覆盖），
  * 测欢迎页 / 教程的用例 `test.use({ firstRunWelcome: true })` 要回真实的首次启动。
  */
-const WELCOME_SEEN = JSON.stringify({ schemaVersion: 1, flowVersion: 3, status: 'not_started', welcomeSeenAt: 1 })
+/**
+ * 当前教程纪元，必须等于 `web/src/store/onboardingStore.ts` 的 `ONBOARDING_FLOW_VERSION`
+ * （e2e 的 Node 侧不引应用源码；`src/lib/onboarding/e2eFlowVersion.test.ts` 看护两者相等）。
+ * 低于它的预置状态会被迁回新手态——要测旧版迁移的用例才写旧值。
+ */
+export const ONBOARDING_FLOW_VERSION = 4
+
+const WELCOME_SEEN = JSON.stringify({ schemaVersion: 1, flowVersion: ONBOARDING_FLOW_VERSION, status: 'not_started', welcomeSeenAt: 1 })
 
 /** 每个用例自带一个干净实例；用例里按需 `await app()` 拿到它。 */
 export const test = base.extend<{ app: (o?: AppOptions) => Promise<RunningApp>; firstRunWelcome: boolean }>({

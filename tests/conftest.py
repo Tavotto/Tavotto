@@ -195,6 +195,22 @@ def _isolated_system_pythons(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_windows_registry(monkeypatch):
+    """PEP 514 注册表是 Windows 机器级来源（`userenvs._windows_registry_pythons`）：CI 的 Windows runner 上真有
+    `PythonCore\\3.x`，「候选应为空 / 机器线索只有两条」的用例会多出五条。默认读空注册表；需要内容的用例自己注入 `reader`。"""
+    from tavotto.engine import userenvs
+
+    class _EmptyRegistry:
+        def subkeys(self, *a, **k):
+            return []
+
+        def values(self, *a, **k):
+            return {}
+
+    monkeypatch.setattr(userenvs, "_WinregReader", _EmptyRegistry)
+
+
+@pytest.fixture(autouse=True)
 def _stub_diag_detail_probes(monkeypatch):
     """发送包 `detail/` 里两处会碰外部世界的采集默认换成桩：对渲染解释器起子进程（import matplotlib，秒级）与
     对 tavotto.cn / github.com 的系统名字解析。`prepare` 在很多用例里都会走，不该每次都真探测一遍、

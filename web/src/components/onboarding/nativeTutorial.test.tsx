@@ -10,7 +10,13 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { configureOnboardingPersistence, useOnboardingStore } from '@/store/onboardingStore'
+import {
+  configureOnboardingPersistence,
+  migratePersisted,
+  ONBOARDING_FLOW_VERSION,
+  useOnboardingStore,
+} from '@/store/onboardingStore'
+import { homeVariant } from '@/lib/onboarding/tutorial'
 import { useProjectStore } from '@/store/projectStore'
 import { TITLE_SIZE } from '@/lib/onboarding/demoFigure'
 import { resetTutorialAutoOpenForTest } from './autoOpen'
@@ -170,40 +176,62 @@ describe('什么时候自己出现', () => {
     expect(ob().status).toBe('not_started')
   })
 
-  it('已经在用的人不打扰：最近列表里有自己的项目，或启动时项目就开着', async () => {
+  it('有自己的项目也一样弹（2026-10-21 裁决：升级的老用户和新用户同一条路径）；启动时项目就开着才不弹', async () => {
     useProjectStore.setState({ recent: [{ path: '/me/paper', name: 'paper' }] } as never)
     await mount()
-    expect(layer()).toBeNull()
+    expect(layer()?.dataset.surface).toBe('welcome')
     act(() => root.unmount())
     root = createRoot(host)
     resetTutorialAutoOpenForTest()
-    useProjectStore.setState({ recent: [], phase: 'open' } as never)
+    useOnboardingStore.setState({ surface: 'none', welcomeSeenAt: null })
+    useProjectStore.setState({ phase: 'open' } as never)
     await mount()
     expect(layer()).toBeNull()
   })
 
-  it('启动时项目列表没取到（后端暂时不可达，列表也是空的）：先不判、不记 welcomeSeenAt；取到了再判', async () => {
-    useProjectStore.setState({ listsLoaded: false } as never)
-    await mount()
-    expect(layer()).toBeNull()
-    expect(ob().welcomeSeenAt).toBeNull()
-    // 后端回来、列表取到：有自己的项目 → 照样不打扰
-    act(() => useProjectStore.setState({ recent: [{ path: '/me/paper', name: 'paper' }], listsLoaded: true } as never))
-    await flush()
-    expect(layer()).toBeNull()
-    expect(ob().welcomeSeenAt).toBeNull()
+  it('升级迁移端到端：旧版 completed / skipped 的 blob → 新手态 → 自动弹欢迎页 → 走完后是老手版且下次不再弹', async () => {
+    for (const status of ['completed', 'skipped'] as const) {
+      act(() => root.unmount())
+      root = createRoot(host)
+      resetTutorialAutoOpenForTest()
+      useOnboardingStore.setState({
+        ...migratePersisted({
+          schemaVersion: 1,
+          flowVersion: 2,
+          status,
+          completedSteps: ['done'],
+          welcomeSeenAt: 5,
+          completedAt: 9,
+        }),
+        surface: 'none',
+      })
+      useProjectStore.setState({ recent: [{ path: '/me/paper', name: 'paper' }] } as never)
+      expect(homeVariant(), status).toBe('newcomer')
+      await mount()
+      expect(layer()?.dataset.surface, status).toBe('welcome')
+      // 与真正的新用户同一条路径：开始 → 完成
+      await click(q('[data-tutorial-begin]'))
+      expect(ob().status).toBe('active')
+      act(() => useOnboardingStore.getState().complete())
+      expect(homeVariant()).toBe('returning')
+      // 下次启动：写回的是当前 flowVersion，不再迁移
+      const reread = migratePersisted({ ...ob(), schemaVersion: 1 })
+      expect(reread.status).toBe('completed')
+      expect(reread.flowVersion).toBe(ONBOARDING_FLOW_VERSION)
+    }
   })
 
-  it('列表取到之后确实没有自己的项目：这时才出欢迎页', async () => {
+  it('启动时项目列表没取到（后端暂时不可达）：先不判、不记 welcomeSeenAt；取到了再判', async () => {
     useProjectStore.setState({ listsLoaded: false } as never)
     await mount()
     expect(layer()).toBeNull()
+    expect(ob().welcomeSeenAt).toBeNull()
     act(() => useProjectStore.setState({ listsLoaded: true } as never))
     await flush()
     expect(layer()?.dataset.surface).toBe('welcome')
   })
 
-  it('示例项目不算「自己的项目」', async () => {
+  it('示例项目在最近列表里同样不影响', async () => {
     useProjectStore.setState({ recent: [{ path: '/data/tutorial/Tutorial', name: 'Tutorial', tutorial: true }] } as never)
     await mount()
     expect(layer()?.dataset.surface).toBe('welcome')

@@ -267,6 +267,7 @@ def test_a_pillow_script_that_wrote_into_the_default_sandbox_gets_the_reason_but
         "kind": "raster_script",
         "library": "pillow",
         "in_project": False,
+        "path": None,
     }
     assert final["facts"] == {"execution_finished": True, "figure_captured": False}
 
@@ -279,10 +280,17 @@ def test_a_pillow_script_that_wrote_nothing_in_the_sandbox_gets_no_hint(
     box = tmp_path / "box"
     box.mkdir()
     fake_pool["worker_factory"] = _sandbox_factory(root, box)
-    fake_pool["build_resp"] = _writes_out_png(root)  # 写到了项目里、没写进沙盒：不是沙盒 cwd 的证据
+    fake_pool["build_resp"] = _writes_out_png(
+        root
+    )  # 写到了项目里、没写进沙盒：沙盒里没证据，但项目素材盘点里有本次新文件
     final = _no_figure_report(client, root, _PILLOW_SRC)
     assert final["outcome"]["kind"] == "execution_finished_no_figure"
-    assert final["no_figure_hint"] is None
+    assert final["no_figure_hint"] == {
+        "kind": "raster_script",
+        "library": "pillow",
+        "in_project": True,
+        "path": "out.png",
+    }
 
 
 def test_a_pillow_script_run_in_project_mode_that_wrote_the_file_is_in_project(
@@ -300,6 +308,7 @@ def test_a_pillow_script_run_in_project_mode_that_wrote_the_file_is_in_project(
         "kind": "raster_script",
         "library": "pillow",
         "in_project": True,
+        "path": "out.png",
     }
 
 

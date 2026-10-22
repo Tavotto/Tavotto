@@ -104,6 +104,8 @@ export default defineConfig({
         // 运行中会话的恢复（PR4b）：占位与锁的文案是中英两套，定位走 data-*
         'ai-restore.spec.ts',
         'a11y.spec.ts',
+        // 拖页面边（渐进式画布改版 裁决 5）：标注是中英两套文案（宽 / W），定位走 data-*，两种语言各走一遍
+        'page-edge-resize.spec.ts',
         // 说明条 + 不推挤（UI 2.0 PR10）：构建不一致芯片不位移、刷新失败 Notice 顺着滑出；英文文案更长，两种语言各量
         'notice-no-push.spec.ts',
         'error-recovery-en.spec.ts',

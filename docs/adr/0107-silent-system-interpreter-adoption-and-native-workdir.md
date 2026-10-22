@@ -95,6 +95,32 @@ Tavotto 替他选）自己平时跑脚本的那个 Python，本身就是「像�
   项目根 / 两处同名不同值时照样先问（脚本目录一样不够用 / 机器不替用户裁决）。
 * 不是 native：进程仍是 Tavotto 自己起的 safe worker（ADR 0021 §1、ADR 0014 原样）。
 
+### 二之补：自动采用带来的派生授权，本次运行就地吸收（修订，2026-10-22 用户裁决）
+
+**现象**：Win11 真机端到端，第一次点「运行」被拦——`preparation_plan_stale / grant_changed`，用户要再点一次才跑。原因：项目没决定过工作目录，
+点「运行」时 Tavotto 自动采用了用户自己的 Python，`workdir.grant_for()` 因此从「沙盒、无授权」变成上面的派生授权（脚本目录），
+`preparation._stale_reason` 比出授权变了；`_replan_in_place` 当初**故意不吸收授权档变化**（写入范围没经用户确认）。
+
+**裁决**：现在就改成自动接受。授权变化**仅仅**是因为本次运行里的自动环境采用、且用户从未决定过工作目录（没有显式授权）时，吸收这次变化、
+接着跑，不让用户再点一次。守住的边界（`preparation.implied_grant_absorbable`，四条同时成立）：
+
+* 计划时：`decided=False`、没有任何授权（`cwd_write` 全空）、没有 `implied_by`——用户从未表过态；
+* 吸收时仍没人决定过（`workdir.decided` 为假）——期间有人设了工作目录就不吸收；
+* 新授权恰是上面的派生默认：`granted=True / granted_at=None / mode=project / implied_by=user_interpreter`，且等于此刻 `workdir.grant_for()`
+  ——范围与用户第一次手动点同一个环境得到的完全相同，不多一个字节；
+* 只有这一种变化被吸收：用户显式设过的授权、用户改了设置、别的会话改了，一律仍是 `grant_changed`。数据绑定随 cwd 档变的只有 `mode` / `revision`，
+  其余内容（读哪些文件、sha256、基准目录）必须一字不差，数据真变了仍是 `data_binding_changed`。
+
+**写入护栏照旧**：派生授权仍是「脚本目录」，`Path.unlink` 等守卫、write-root tripwire、savefig 捕获不落盘全部原样；不写任何设置
+（`decided` 仍为假），解释器改回内置后默认仍回到沙盒。**起会话前**（`_execute` 的就地重算）与**缺包后自动接手**（`before_retry`）两处
+自动采用用同一条判据；吸收后计划里的 `grant` 换成派生授权，回执挂换后的那份。
+
+**可追溯**：吸收时 `PreparationResult.trace` 的 `check` 阶段多一条 `facts = {grant_absorbed: user_interpreter, grant_mode: project}`；
+`workdir.grant_for().implied_by` 仍说明它从哪来。
+
+看护：`tests/test_preparation_api.py` 文末三条（判据正反例、吸收后直接跑完且计划授权更新且 trace 有记、采用同时用户设了授权仍 stale）；
+`tests/test_environment_autodetect.py` 里两条原先把 `grant_changed` 当规格的真 worker 用例改为一次点「运行」直接出图。
+
 ### 三、可追溯：无提示不等于无痕
 
 * 项目记录带 `automatic=True`、`trigger=missing_dependency`、`module`、体检当时的 `python_version` / `matplotlib_version` / `support`；

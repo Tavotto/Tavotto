@@ -7,8 +7,11 @@
   macOS 的红绿灯压在主页按钮上、或 Windows 上菜单栏藏了却没有按钮——菜单整个找不到。
 * **只给主窗口**：远程实例窗口加载服务器那一版前端（ADR 0105），未必认得标记；那里
   维持系统标题栏 + 可见菜单栏，壳不注入标记、不藏菜单。
-* **ACL**：顶栏拖动 / 双击缩放（`data-tauri-drag-region` 调的两条窗口命令）与两条自定义命令
-  只在主窗口的 capability 里；少了拖动权限，macOS 上叠了标题栏的窗口就**拖不动**。
+* **ACL**：顶栏拖动 / 双击缩放（`data-tauri-drag-region` 调的两条窗口命令）、Windows 无框窗口的
+  三颗窗口按钮（最小化 / 最大化 / 关闭 + 回读是否最大化）与「菜单」按钮只在主窗口的 capability 里；
+  少了拖动权限，没有系统标题栏的窗口就**拖不动**；少了按钮权限，点了**没反应**（ACL 静默拒绝）。
+* **Windows 无框**：非 macOS 的主窗口去掉系统窗框（`decorations(false)`），与 `chrome()` 取
+  `menu-button` 是同一个判据；壳自带的启动 / 出错页内联同一组窗口按钮，用的命令都得在 ACL 里。
 
 `src-tauri/` 不进 wheel/sdist，这几条在没有它的树上跳过。
 """
@@ -38,7 +41,14 @@ DRAG_PERMISSIONS = {
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
 }
-CHROME_COMMANDS = {"allow-show-app-menu", "allow-set-titlebar-colors"}
+WINDOW_CONTROL_PERMISSIONS = {
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+}
+CHROME_COMMANDS = {"allow-show-app-menu"}
+SHELL_PAGES = (TAURI / "shell" / "splash.html", TAURI / "shell" / "error.html")
 
 
 def _rust_const(src: str, name: str) -> str:
@@ -96,11 +106,15 @@ def test_drag_and_chrome_commands_are_granted_to_the_main_window_only():
     main = caps["main.json"]
     assert main["windows"] == ["main"]
     granted = set(main["permissions"])
-    assert DRAG_PERMISSIONS | CHROME_COMMANDS <= granted, sorted(granted)
+    assert DRAG_PERMISSIONS | WINDOW_CONTROL_PERMISSIONS | CHROME_COMMANDS <= granted, sorted(
+        granted
+    )
     for name, cap in caps.items():
         if name == "main.json":
             continue
-        leaked = (DRAG_PERMISSIONS | CHROME_COMMANDS) & set(cap["permissions"])
+        leaked = (DRAG_PERMISSIONS | WINDOW_CONTROL_PERMISSIONS | CHROME_COMMANDS) & set(
+            cap["permissions"]
+        )
         assert not leaked, f"{name} 拿到了主窗口的窗框权限：{sorted(leaked)}"
 
 
@@ -181,6 +195,75 @@ def test_fullscreen_event_command_and_acl_are_one_contract():
 
 
 @needs_shell
+def test_the_main_window_is_frameless_exactly_where_the_page_draws_window_buttons():
+    """`decorations(false)` 只在非 macOS、与 `chrome()` 给 `menu-button` 是同一个 cfg：
+    去了窗框却没注入 menu-button = 窗口没有任何关闭按钮；注入了却没去窗框 = 两套按钮。"""
+    code = rust_code(CHROME_RS.read_text(encoding="utf-8"))
+    head = code.index("fn main_window_chrome(self)")
+    body = _bracket_body(code, code.index("{", head))
+    m = re.search(r"#\[cfg\(([^\]]*)\)\]\s*let builder = builder\.decorations\(false\);", body)
+    assert m, body
+    assert re.sub(r"\s", "", m.group(1)) == "not(target_os=)", m.group(1)
+    assert body.count("decorations(") == 1
+    chrome = code[code.index("pub const fn chrome()") :]
+    chrome = _bracket_body(chrome, chrome.index("{"))
+    assert re.search(
+        r"if cfg!\(target_os =\s*\)\s*\{\s*CHROME_OVERLAY\s*\}\s*else\s*\{\s*CHROME_MENU_BUTTON",
+        chrome,
+    ), chrome
+
+
+@needs_shell
+def test_shell_pages_window_buttons_use_only_granted_window_commands():
+    """启动 / 出错页（`tauri://` 源，主窗口）没有 web 的 `WindowControls`，各自内联一组按钮：
+    每颗按钮调的 `plugin:window|<命令>` 都得在 main.json 里授权，且只在 menu-button 窗框露出。"""
+    granted = set(json.loads((CAPS / "main.json").read_text(encoding="utf-8"))["permissions"])
+    for page in SHELL_PAGES:
+        html = page.read_text(encoding="utf-8")
+        acts = re.findall(r'data-act="([\w]+)"', html)
+        assert sorted(acts) == ["close", "minimize", "toggle_maximize"], (page.name, acts)
+        for act in acts:
+            perm = "core:window:allow-" + act.replace("_", "-")
+            assert perm in granted, (page.name, perm)
+        assert "invoke('plugin:window|' + b.dataset.act, { label: 'main' })" in html, page.name
+        assert "window.__TAVOTTO_WINDOW_CHROME__ === 'menu-button'" in html, page.name
+        assert '<div id="winctl" hidden>' in html, page.name
+        # 最大化按钮随窗口状态换「还原」：查询命令 ↔ 授权，两种语言都有 restore 文案
+        assert "invoke('plugin:window|is_maximized', { label: 'main' })" in html, page.name
+        assert "core:window:allow-is-maximized" in granted, page.name
+        assert "addEventListener('resize', sync)" in html, page.name
+        assert len(re.findall(r"restore: '[^']+'", html)) == 2, page.name
+
+
+@needs_shell
+def test_web_window_buttons_use_only_granted_window_commands():
+    """页面的 `windowControl` / `onWindowMaximizedChange` 调的窗口 API ↔ main.json 授权。"""
+    ts = DESKTOP_TS.read_text(encoding="utf-8")
+    called = set(re.findall(r"win\.(minimize|toggleMaximize|close|isMaximized)\(", ts))
+    assert called == {"minimize", "toggleMaximize", "close", "isMaximized"}, called
+    granted = set(json.loads((CAPS / "main.json").read_text(encoding="utf-8"))["permissions"])
+    for name in called:
+        perm = "core:window:allow-" + re.sub(r"([A-Z])", lambda m: "-" + m.group(1).lower(), name)
+        assert perm in granted, perm
+
+
+@needs_shell
+def test_window_state_plugin_never_restores_decorations():
+    """`tauri-plugin-window-state` 默认连窗框一起记 / 恢复：从带系统标题栏的旧版本升上来，存着的
+    `decorated: true` 会把 `decorations(false)` 顶掉——Windows 上系统标题栏与页面窗口按钮两套并存
+    （#1279 Win11 真机实测）。插件的状态位必须把 DECORATIONS 排除在外。"""
+    code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
+    at = code.index("tauri_plugin_window_state::Builder::default()")
+    chain = code[at : code.index(".build()", at)]
+    flags = re.search(r"\.with_state_flags\((.*)\)\s*$", chain, re.S)
+    assert flags, "window-state 插件没设状态位：默认会恢复窗框"
+    expr = re.sub(r"\s", "", flags.group(1)).rstrip(",")
+    assert (
+        expr
+        == "tauri_plugin_window_state::StateFlags::all()-tauri_plugin_window_state::StateFlags::DECORATIONS"
+    ), expr
+
+
 def test_both_windows_install_on_new_window():
     """`target=_blank` / `window.open` 不经 `on_navigation`（macOS 静默无反应、Windows 弹内置小窗）：
     主窗口与远程实例窗口的 builder 都要装 `on_new_window`，外链才会交给系统浏览器。"""

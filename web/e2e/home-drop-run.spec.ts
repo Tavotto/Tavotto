@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { Page } from '@playwright/test'
-import { expect, test } from './fixtures'
+import { expect, ONBOARDING_FLOW_VERSION, test } from './fixtures'
 
 /**
  * 主页拖入 .py = 打开它所在的文件夹**并运行这个脚本**，图放进当前画布（2026-10-21 诊断包：同一文件夹里
@@ -16,7 +16,7 @@ import { expect, test } from './fixtures'
 
 const COMPLETED = JSON.stringify({
   schemaVersion: 1,
-  flowVersion: 2,
+  flowVersion: ONBOARDING_FLOW_VERSION,
   status: 'completed',
   currentStep: null,
   completedSteps: [],

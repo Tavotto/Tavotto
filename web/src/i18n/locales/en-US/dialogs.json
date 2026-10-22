@@ -1191,7 +1191,7 @@
           "environment": "Environment and version facts (user name and paths redacted)",
           "log": "Application log (event types and numbers only — no error text, script names or paths)",
           "settings": "App settings (keys replaced)",
-          "ui_state": "Interface state snapshot (no figure text or file names)",
+          "ui_state": "Interface state snapshot (no figure text or file names; includes tutorial progress: status, step ids, which hint types were seen)",
           "ui_trace": "Recent interface action trace (action types only)",
           "task": "Classification of recent failed tasks",
           "manifest": "Bundle version notes",
@@ -1209,7 +1209,7 @@
           "detail_console": "Recent errors and warnings from the interface console",
           "detail_display": "Display environment (scale, window, language, theme)",
           "detail_network": "Network facts (proxy, name resolution, time zone)",
-          "detail_source": "Script source (you ticked this)",
+          "detail_source": "Script source and dependency declaration files (you ticked this)",
           "detail_crash_reports": "System crash reports (you ticked this)",
           "detail_corrupt_sessions": "Contents of corrupted session copies (you ticked this)"
         },
@@ -1304,7 +1304,7 @@
           "corrupt_sessions": "Contents of corrupted session copies"
         },
         "extraHint": {
-          "source": "Scripts are attached as they are. We try to remove secrets we can recognise, but cannot guarantee it; if your scripts contain secrets, do not tick this.",
+          "source": "The script that failed (even if it is not registered in the project), the scripts registered in the project, and the requirements / constraints / pyproject files used for dependency installs are attached as they are. We try to remove secrets we can recognise, but cannot guarantee it; if these files contain secrets, do not tick this.",
           "crash_reports": "Tavotto system crash reports from the last 7 days. Windows crash dumps are snapshots of the program's memory and may contain the contents and paths of files that were open; they cannot be redacted.",
           "corrupt_sessions": "By default only the names and sizes of corrupted copies; tick to attach their contents."
         },
@@ -1331,7 +1331,7 @@
         "optionsLost": "The extras were too large, so they could not be attached this time.",
         "sentenceExtras": "A diagnostic bundle will be sent, with error details and logs (the logs may contain output printed by your script), plus what you ticked: {{items}}.",
         "sentenceItem": {
-          "source": "script source",
+          "source": "script source and dependency declaration files",
           "crash_reports": "system crash reports (may contain the contents of open files)",
           "corrupt_sessions": "contents of corrupted session copies"
         },

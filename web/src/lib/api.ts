@@ -4780,6 +4780,8 @@ export interface DependencyRepairOffer {
   managed?: ManagedEnvironment
   /** 探到了但不合格的系统解释器（老服务端没有这个字段） */
   system_rejected?: SystemInterpreterRejection[]
+  /** 缺的是已知装不了的包（例 ROOT，后端 `depresolve.NOT_PIP_INSTALLABLE`）：此时 `requirement` 为 null，要用户自己的环境；界面不给安装 */
+  not_pip_installable?: { label: string; hint: string }
   /** 支持的 Python 次版本范围（`docs/support-matrix.json` 的运行时镜像）；文案不手写版本号 */
   python_supported: { min: string; max: string }
   /** dependency_unresolved / dependency_repair_rounds_exhausted / dependency_interpreter_pinned */
@@ -4869,6 +4871,8 @@ export interface DependencyProgress {
    * 去重）。只有码、没有名字；普通 import 失败没有这个键。界面据此按原因分别说人话，不解析 `error` 文案
    */
   dist_reasons?: DistFailureReason[]
+  /** 终态 failed 且 `code = dependency_not_found`：pip 找不到的那个包（分发名 / 来自哪个 import / 哪份声明文件，相对项目路径）。认不出名字时没有这个键 */
+  not_found?: { name?: string; import_name?: string; source?: string }
 }
 
 export const createDependencyPlan = (body: {
@@ -4961,6 +4965,10 @@ export interface JointOrigin {
    * 没有这个字段 = 不给预填（curated 已有映射 / 撞上 curated 名或易混名 / 有别的来源证据 / 环境没读全）
    */
   suggested_distribution?: string
+  /** 已知装不了的包（后端 `depresolve.NOT_PIP_INSTALLABLE`，例 ROOT）：内置 Python 装不了，要用户自己装有它的环境。不预填、不送 pip */
+  not_pip_installable?: { label: string; hint: string }
+  /** 脚本把这些目录加进了 `sys.path`、里面却没有这个模块：本地模块缺失，不是缺 PyPI 包。不预填、不送 pip */
+  local_module_missing?: { search_dirs: string[] }
 }
 
 /**
@@ -5903,7 +5911,7 @@ export interface PreparationAttempt {
 
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 /** `rasterhint.LIBRARIES`：界面按它查库名（`workspace:prep.rasterHint.library.*`） */
-export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage'
+export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage' | 'plotly' | 'root'
 
 /**
  * 会话里一次真实执行尝试的账本条目（`engine/execpolicy.AttemptRecord.public()`，ADR 0127）：执行语义 · 解释器摘要 ·
@@ -5970,7 +5978,13 @@ export interface PreparationReport {
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
-  no_figure_hint?: { kind: 'raster_script'; library: RasterLibrary; in_project?: boolean } | null
+  no_figure_hint?: {
+    kind: 'raster_script'
+    library: RasterLibrary
+    in_project?: boolean
+    /** 能确定的输出文件（项目相对路径，素材库定位用）；拿不到 / 在项目外 / 老后端为 null 或缺省 */
+    path?: string | null
+  } | null
   result: {
     status: string
     error?: PreparationResultError | null

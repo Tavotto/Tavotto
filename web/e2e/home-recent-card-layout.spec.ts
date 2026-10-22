@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, test } from './fixtures'
+import { expect, ONBOARDING_FLOW_VERSION, test } from './fixtures'
 
 /**
  * 主页最近项目卡的布局回归（拆自 home.spec.ts，单独进 webkit 腿）：
@@ -10,7 +10,7 @@ import { expect, test } from './fixtures'
 /** 本机 onboarding 那一格：走完了教程 → 老手版（格式见 store/onboardingStore） */
 const COMPLETED = JSON.stringify({
   schemaVersion: 1,
-  flowVersion: 2,
+  flowVersion: ONBOARDING_FLOW_VERSION,
   status: 'completed',
   currentStep: null,
   completedSteps: [],

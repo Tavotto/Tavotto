@@ -284,12 +284,22 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 | import_alias | `import_alias`（pyplot/numpy 别名） | import_alias | 保型 |
 | entry_form | `wrap_main`（顶层改 `main()` + `__main__` 守卫） | entry | 保型 |
 | argparse_defaults | `argparse_out`（保存路径来自 argparse，默认值=原路径） | args | 保型 |
-| data_source | `inline_to_file`（第一个字面量数据列表改读相对 JSON） | data_source | 保型 |
+| data_source | `inline_to_file`（第一个字面量数据列表改读相对 JSON）；CG-07 读文件写法：`read_csv_pandas`、`read_csv_numpy`（`loadtxt`）、`genfromtxt_names`、`read_tsv_stdlib`、`read_npy`、`read_pickle`、`read_excel`（openpyxl）、`read_parquet`（pyarrow）、`glob_dir`（拆成 `data/*.csv` 再 `sorted(glob)`） | data_source | 保型 |
 | style_rc | `rcparams`、`style_use` | style | 改轴；现在可执行（CG-06 起 `compare` 之外还有像素判定，样式差异观察得到） |
+
+**data_source 家族（CG-07，`scripts/ci/compat_explore_data.py`）**：同轴互斥，一条链至多一个数据来源；全部以第一个字面量数值列表为数据源，
+确定性写出数据文件并把该实参改成读文件的表达式。读回的值与字面量逐值相等、元素类型一致（整数列表按整数、含浮点按浮点，
+`dtype=` / `int()` / `float()` 显式写出，pandas 用 `float_precision="round_trip"`），否则刻度会变、保型检查会把模板的锅记成假差异。
+由 `seed + 父本结构签名（规范化 AST）+ 变换名` 派生两个参数：**路径写法**（`os.path.join(os.path.dirname(__file__), 名)` / cwd 相对 / `Path(__file__).resolve().parent / "data" / 名`）和
+**编码**（仅文本格式：utf-8、utf-8-sig、gbk，或中文文件名 `实验数据`；读端显式写 encoding，表头第一列是中文所以 gbk / BOM 真的改变字节）。
+二进制逐字节确定：npy 头固定；pickle protocol 4；xlsx 重新打包（固定时间戳、不压缩、抹掉 docProps 的 created/modified）；parquet 不压缩、不写统计、不带 pandas 元数据
+（footer 的 `created_by` 带 pyarrow 版本，所以版本钉在 workflow 里）。去重口径：仅编码 / 文件名不同的候选 AST 签名相同被归一；路径写法不同是结构不同，各留一份。
+`openpyxl`、`pyarrow` **只在 Guardian workflow 的 job 里装**（版本钉在 `compat-guardian.yml`，产品依赖与 pyproject 不变）；缺失时 `read_excel` / `read_parquet`
+`applies` 为 False，原因进报告 `coverage.unavailable_transforms`。新增 import（pandas/numpy/csv/glob/os/pathlib/openpyxl/pyarrow）不在 `_UNCERTAIN_IMPORTS` 里，也没有放宽那张表。
 
 保型：native 输出（图数、标题）必须等于父本——执行器同时跑父本 native 核对，不等就是 `invalid_candidate`（模板有 bug，
 不是 Tavotto 缺陷）。改轴：只能与这个变体自己的 native 比。所有改动都是 AST 编辑，结果必须能 `compile`。
-同 seed 逐字节相同（参数由 `seed + 父本 + 变换名` 的哈希派生，不依赖其它候选）。
+同 seed 逐字节相同（参数由 `seed + 父本结构签名 + 变换名` 的哈希派生，不依赖其它候选）。
 
 **比较（`compare`，纯函数）**：`zero_figures`（原生 N 图 / Tavotto 0 图）、`fewer_figures`（partial_capture）、
 `same_path_content_mismatch`（原生最后写入该路径的图 vs Tavotto 保留的图）、`title_missing`。差异带 Guardian 失败类别。
@@ -302,7 +312,7 @@ Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探
 | 层 | 适用 | 判据 | 差异 kind（类别） |
 | --- | --- | --- | --- |
 | fidelity | 全部可执行候选 | 原生 PNG 与 Tavotto 零 patch PNG（同一 `FIDELITY_WIDTH`），`pixelcompare.verdict` 用 `FIDELITY_TOLERANCE`——与 CompatBench 同一档，不另设 | `pixel_mismatch`、`render_failed`（export_or_fidelity）；证据含三项指标、control/tavotto/diff PNG 的相对路径与 sha256 |
-| structure | 仅保型 | 父本在 Tavotto 里的 `{gid.prop: value}` 快照（每次 explore 运行每个父本只算一次）的每个键，候选里必须存在且 `_same_value`；候选多出的键不算 | `structure_mismatch`（manifest_semantics） |
+| structure | 仅保型 | 父本在 Tavotto 里的 `{gid.prop: value}` 快照（每次 explore 运行每个父本只算一次）的每个键，候选里必须存在且 `_same_value`；候选多出的键不算；**数据指纹**（manifest 每个数据类元素的只读 `data_fingerprint`，快照键 `gid.__data__.part` → sha256 + shape + finite）逐部件精确比较，不等记 `structure_mismatch`（evidence 带 `aspect: "data"` 与两侧 shape/finite），任一侧 `over_budget` / `unavailable` 则结构层 `not_run`、候选落 unknown；阶段记录里 `data_compared` 是真比过的部件数（0 = 没比数据） | `structure_mismatch`（manifest_semantics） |
 | edit / replay / export | 仅保型 | 继承父本用例已评审的 `mutations` 与 `export_formats`（缺省 pdf、png），在同一 worker 上调 `compat_matrix.stage_edit/stage_replay/stage_export` | `edit_failed`（editing_capability）、`replay_mismatch`（replay_inconsistency）、`export_failed`（export_or_fidelity） |
 
 改轴候选的 structure / edit / replay / export 记 `not_covered` 并写明判据：已评审的编辑目标按父本 gid 记，改轴之后没有已评审的目标。

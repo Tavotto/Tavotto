@@ -258,7 +258,7 @@ const RULES: Rule[] = [
     spares: '<span className="animate-sweep animate-spin text-shimmer animate-attention" />',
   },
   {
-    name: '层级只来自 z-index token（z-sticky / z-canvas-chrome / z-drawer / z-overlay / z-dialog / z-popover / z-tooltip / z-toast / z-onboarding），没有数字',
+    name: '层级只来自 z-index token（z-sticky / z-canvas-chrome / z-drawer / z-overlay / z-dialog / z-popover / z-tooltip / z-toast / z-onboarding / z-window-controls），没有数字',
     pattern: /(?:^|[\s'"`:])-?z-(?:\d+|\[)/,
     fix: 'index.css 的 --z-* 表里挑一档；新的一层先在那张表里加 token',
     catches: '<div className="fixed z-50" /> <div className="z-[59]" />',

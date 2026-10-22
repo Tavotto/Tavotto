@@ -45,12 +45,10 @@ percent-encoding = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 
-# Windows 主窗口的系统标题栏与页面顶栏同色（window_chrome.rs，DWM 的 caption / text color）。
-# 版本与 tauri 用的那份相同（`WebviewWindow::hwnd()` 返回的就是它的 HWND），不引入第二份。
+# 版本与 tauri 用的那份相同，不引入第二份。
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = [
     "Win32_Foundation",
-    "Win32_Graphics_Dwm",
     # crash_dump.rs：未处理异常过滤器 + MiniDumpWriteDump 写 .dmp
     "Win32_Security",
     "Win32_Storage_FileSystem",

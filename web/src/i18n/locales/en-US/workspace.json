@@ -419,6 +419,13 @@
       "title": "Stop this script?"
     }
   },
+  "pageEdge": {
+    "height": "H {{mm}} mm",
+    "heightPrefix": "H ",
+    "snapTo": "Snapped to {{name}}",
+    "width": "W {{mm}} mm",
+    "widthPrefix": "W "
+  },
   "panelBadge": {
     "approxPreview": "Approximate preview",
     "approxPreviewHint": "Showing the on-disk original for now — your figure edits aren’t reflected yet.",
@@ -1187,6 +1194,8 @@
       "distFailed": "After installing, the packages didn't match what you confirmed.",
       "detail": {
         "listIntro": "Tavotto can't tell where these come from, so it won't install them for you:",
+        "notPip": "This script needs {{name}}, which the built-in Python can’t install; use an environment that has it.",
+        "localMissing": "Can’t find local module {{name}} (the script added {{dirs}} to the search path; check that folder is there).",
         "userSpecifiedBadge": "Named by you, not verified",
         "trustNote": "A name you type isn't a trusted source: Tavotto can't verify it, so it asks you once more before installing.",
         "alternatives": "Several packages can provide it; {{distribution}} is installed first, and to use another, switch to your own Python environment."

@@ -21,6 +21,7 @@ colors:
   warn: "#b07400"
   ok: "#2b7649"
   sel: "#4685e2"
+  dim: "#4a8bdf"
   syntax-keyword: "#8a3350"
   syntax-function: "#5b45a8"
   syntax-string: "#7a5a2b"
@@ -217,6 +218,7 @@ Dialog 页脚三槽——全文在 **宪法第二十六节**。
 | `ink-faint` | `#6a6a64` |
 | `accent` | `#5a92e5` |
 | `accent-subtle` | `#1d2a3d` |
+| `dim` | `#7db6f5` |
 | `danger` | `#ef6e55` |
 | `warn` | `#d9a23a` |
 | `ok` | `#4fb37a` |

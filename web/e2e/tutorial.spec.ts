@@ -274,34 +274,41 @@ test('欢迎页「直接进入工作台」：不启动教程，下次启动不�
   await expect(step(page)).toHaveAttribute('data-tutorial-step', 'demo_import')
 })
 
-test('flow v2 进行到一半的老用户：升级后不被拽进新教程，入口显示「继续」，点了从新第一步开始', async ({
-  app,
-  page,
-}) => {
-  await page.addInitScript(() =>
-    window.localStorage.setItem(
-      'tavotto.onboarding',
-      JSON.stringify({
-        schemaVersion: 1,
-        flowVersion: 2,
-        status: 'active',
-        currentStep: 'export_canvas',
-        completedSteps: ['open_fast_edit', 'select_text'],
-        skippedSteps: [],
-        tutorialProjectId: 'p_old',
-        tutorialDocumentId: 'tavotto-tutorial',
-      }),
-    ),
-  )
-  const a = await app({ noProject: true })
-  await page.goto(a.baseURL)
-  await expect(page.locator('main[data-home-variant="newcomer"]')).toBeVisible()
-  await expect(tut(page)).toHaveCount(0)
-  const entry = page.locator('[data-onboarding-anchor="tutorial-entry"]')
-  await expect(entry).toContainText('继续')
-  await entry.click()
-  await expect(step(page)).toHaveAttribute('data-tutorial-step', 'demo_import')
-})
+for (const old of [
+  { status: 'active', currentStep: 'export_canvas', completedSteps: ['open_fast_edit', 'select_text'] },
+  { status: 'completed', currentStep: null, completedSteps: ['open_fast_edit', 'done'] },
+  { status: 'skipped', currentStep: null, completedSteps: [] },
+]) {
+  test(`flow v2 ${old.status} 的老用户（2026-10-21 裁决）：升级后回到新手态、自动弹一次欢迎页，走法与新用户相同`, async ({
+    app,
+    page,
+  }) => {
+    await page.addInitScript((blob) => {
+      // 只在这一格还是旧版时写（刷新后不覆盖应用写回的新版）
+      if (window.localStorage.getItem('tavotto.onboarding') === null) {
+        window.localStorage.setItem('tavotto.onboarding', JSON.stringify(blob))
+      }
+    }, {
+      schemaVersion: 1,
+      flowVersion: 2,
+      ...old,
+      skippedSteps: [],
+      welcomeSeenAt: 1,
+      tutorialProjectId: 'p_old',
+      tutorialDocumentId: 'tavotto-tutorial',
+    })
+    const a = await app({ noProject: true })
+    await page.goto(a.baseURL)
+    await expect(page.locator('[data-tutorial-open-workspace]')).toBeVisible()
+    await page.locator('[data-tutorial-open-workspace]').click()
+    await expect(tut(page)).toHaveCount(0)
+    await expect(page.locator('main[data-home-variant="newcomer"]')).toBeVisible()
+    const entry = page.locator('[data-onboarding-anchor="tutorial-entry"]')
+    await expect(entry).not.toContainText('继续')
+    await entry.click()
+    await expect(step(page)).toHaveAttribute('data-tutorial-step', 'demo_import')
+  })
+}
 
 for (const size of [
   { width: 1024, height: 720 },

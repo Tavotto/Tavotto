@@ -524,6 +524,80 @@ def test_a_retry_under_a_different_interpreter_is_stale_even_when_the_grant_did_
     assert result.receipt is None
 
 
+def _plan_requiring_input(monkeypatch):
+    """替身：就地重算出的计划多了一条 `required_input`（目标解释器上另一个静态依赖缺，要先授权依赖准备）。"""
+    import dataclasses
+
+    from tavotto.engine import deprepair
+
+    real = preparation.plan_for
+    needed = {"code": deprepair.ERROR_PREPARATION_REQUIRED, "message": "x"}
+
+    def fake(**kw):
+        return dataclasses.replace(real(**kw), required_input=dict(needed))
+
+    monkeypatch.setattr(preparation, "plan_for", fake)
+    return needed
+
+
+def test_a_retry_whose_absorbed_replan_needs_input_ends_needs_input_and_does_not_run_again(
+    tmp_path, fake_pool, monkeypatch
+):
+    """Codex #1294 P2：缺包后自动接手了用户自己的 Python，吸收派生授权后的重算计划要用户先答一件事
+    （依赖准备）——第二次执行不能跑（用户代码与副作用不能在「需要输入」的计划下发生），结局是 needs_input。"""
+    from tavotto.engine import workdir
+
+    svc = preparation.PreparationService()
+    root = _project(tmp_path, "p")
+    plan = preparation.plan_for(
+        project_id="pj",
+        project_root=str(root),
+        asset_id="fig.pdf",
+        stem="fig",
+        script="fig.py",
+        entry="__main__",
+        original_artifact="fig.pdf",
+    )
+    svc.register(plan)
+    ran = []
+
+    def runner(pl, before_retry=None):
+        ran.append("first")
+        monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda r: True)
+        needed = _plan_requiring_input(monkeypatch)
+        runner.needed = needed
+        before_retry()
+        ran.append("second")
+        raise AssertionError("重算计划要用户先答，还在重跑")
+
+    svc.start(plan.plan_id, runner=runner)
+    assert svc.wait(plan.plan_id, 30)
+    entry_plan, result = svc.get(plan.plan_id, "pj")
+    assert ran == ["first"]
+    assert result.status == preparation.STATUS_NEEDS_INPUT, result.error
+    assert result.required_input == runner.needed
+    assert result.receipt is None and result.error is None
+
+
+def test_auto_adoption_whose_absorbed_replan_needs_input_does_not_run(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """同一判据的另一处消费者：起会话之前吸收（`_replan_in_place`）得到的计划要用户先答 → needs_input，一次都不 build。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    hold = threading.Event()
+    monkeypatch.setattr(engine_pool, "peek", lambda script, root, **k: hold.wait(30) and None)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    _adopt_during_run(monkeypatch, root)
+    needed = _plan_requiring_input(monkeypatch)
+    hold.set()
+    body = _wait(client, plan["plan_id"])
+    assert body["result"]["status"] == preparation.STATUS_NEEDS_INPUT, body["result"]
+    assert body["result"]["required_input"]["code"] == needed["code"]
+    assert fake_pool["build_calls"] == 0
+
+
 # ---------------------------------------------------------------- 项目绑定（FO-008）
 
 
@@ -1177,3 +1251,112 @@ def test_auto_adopting_a_user_environment_does_not_stale_the_first_preparation(
     assert result["status"] == preparation.STATUS_READY
     assert fake_pool["build_calls"] == 1
     assert str(lab) not in json.dumps(body), "公开投影不带用户环境的路径"
+
+
+# ---- 自动采用用户自己的 Python 带来的派生授权：就地吸收（ADR 0107 §二修订，2026-10-22 用户裁决）----
+
+
+def _grant(decided=False, implied=None, mode=None, at=None):
+    return {
+        "cwd_write": {"granted": mode is not None, "granted_at": at, "mode": mode},
+        "decided": decided,
+        "implied_by": implied,
+    }
+
+
+def test_implied_grant_absorbable_only_for_undecided_to_user_interpreter_default(
+    tmp_path, monkeypatch
+):
+    from tavotto.engine import workdir
+
+    root = _project(tmp_path, "p")
+    monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda r: True)
+    undecided = _grant()
+    derived = _grant(implied="user_interpreter", mode="project")
+    assert workdir.grant_for(str(root)) == derived
+    assert preparation.implied_grant_absorbable(str(root), undecided, derived)
+    # 反例：用户显式授权过 / 计划时已派生 / 计划时决定过沙盒 → 不是「从未表态」，不吸收
+    for old in (
+        _grant(decided=True, mode="project", at=1.0),
+        _grant(decided=True),
+        _grant(implied="user_interpreter", mode="project"),
+    ):
+        assert not preparation.implied_grant_absorbable(str(root), old, derived)
+    # 反例：新授权不是派生默认（比如项目根、或带了点头时刻）→ 不吸收
+    for new in (
+        _grant(decided=True, mode="project_root", at=2.0),
+        _grant(implied="user_interpreter", mode="project_root"),
+        _grant(mode="project", at=3.0),
+        undecided,
+    ):
+        assert not preparation.implied_grant_absorbable(str(root), undecided, new)
+    # 反例：这期间有人设了工作目录 → 即使 new 恰好长得像派生，也不吸收
+    workdir.set_mode(str(root), "sandbox")
+    assert not preparation.implied_grant_absorbable(str(root), undecided, derived)
+
+
+def _adopt_during_run(monkeypatch, root, *, explicit: str | None = None):
+    """替身：执行线程里的「检测并采用」把项目切成用户自己的 Python（探针变真）；`explicit` 给了就是
+    『采用的同时用户（别的会话）也设了这一档』——授权变化不再只是派生默认。"""
+    from tavotto.engine import deprepair, workdir
+
+    state = {"adopted": False}
+
+    def decide(project_root, script, **_k):
+        if not state["adopted"]:
+            state["adopted"] = True
+            monkeypatch.setattr(workdir, "_user_interpreter_probe", lambda r: True)
+            if explicit is not None:
+                workdir.set_mode(str(root), explicit)
+            return engine_pool.EnvironmentDecision(adopted={"path": "x"})
+        return engine_pool.EnvironmentDecision(adopted=None)
+
+    monkeypatch.setattr(deprepair, "decide_environment_pinned", decide)
+    return state
+
+
+def test_auto_adoption_absorbs_the_implied_grant_and_runs_on(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    hold = threading.Event()
+    monkeypatch.setattr(engine_pool, "peek", lambda script, root, **k: hold.wait(30) and None)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    assert plan["grant"]["cwd_write"]["granted"] is False and plan["grant"]["implied_by"] is None
+    state = _adopt_during_run(monkeypatch, root)
+    hold.set()
+    body = _wait(client, plan["plan_id"])
+    assert state["adopted"]
+    assert body["result"]["status"] == preparation.STATUS_READY, body["result"]
+    assert fake_pool["build_calls"] == 1
+    # 计划里的授权被更新为派生授权（与手动点同一个环境得到的一字不差），不是用户点头的授权
+    grant = body["plan"]["grant"]
+    assert grant == _grant(implied="user_interpreter", mode="project")
+    assert grant["cwd_write"]["granted_at"] is None
+    # 审计：trace 的 check 阶段记着这次吸收
+    facts = [
+        e.get("facts", {})
+        for e in body["result"]["trace"]["events"]
+        if e["phase"] == "check" and "grant_absorbed" in e.get("facts", {})
+    ]
+    assert facts == [{"grant_absorbed": "user_interpreter", "grant_mode": "project"}]
+
+
+def test_auto_adoption_does_not_absorb_a_grant_the_user_also_set(
+    client, tmp_path, fake_pool, monkeypatch
+):
+    """负对照：采用的同时用户设了授权（别的会话 / 改了设置）→ 授权变化不再只是派生默认，照旧 grant_changed。"""
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    hold = threading.Event()
+    monkeypatch.setattr(engine_pool, "peek", lambda script, root, **k: hold.wait(30) and None)
+    resp = client.post("/api/engine/preparation", json={"id": "fig.pdf"})
+    plan = resp.get_json()["plan"]
+    _adopt_during_run(monkeypatch, root, explicit="project_root")
+    hold.set()
+    body = _wait(client, plan["plan_id"])
+    assert body["result"]["status"] == preparation.STATUS_ERROR
+    assert body["result"]["error"]["reason"] == preparation.STALE_GRANT
+    assert fake_pool["build_calls"] == 0

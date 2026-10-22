@@ -3528,7 +3528,7 @@ def _after_ai_change(ctx: "ProjectCtx", script: str) -> dict:
 def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
     """TAF 改图（ADR 0138 Phase 3b）提交前后的渲染层事实，注入给 AI 桥；**只在实验开关打开时**被调用。
 
-    * `before`：池里**已经 build 过**的那个 safe 会话（`pool.peek`，不建、不执行）落盘的 manifest；没有 → None
+    * `before`：池里**已经 build 过**的那个 safe 会话（`pool.peek`，不建、不执行）按**无 override** 重放出的 manifest；没有 → None
       （这次会话里没渲染过这张图，桥据此不做改后渲染）；会话 build **实际执行**的源码 sha256 必须等于此刻磁盘脚本；
     * `retire`：写入之后、刷新之前尽力同步退役该脚本的全部旧会话（`invalidate(force=True)`），让 after 少撞上旧会话；
       **不是正确性依据**；
@@ -3555,6 +3555,24 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
                 continue
         return out
 
+    def baseline_manifests(worker) -> dict:
+        """改前基准 = 每个 stem 的**无 override** 重放（`override(stem, [])`），不是落盘的那份。
+
+        落盘 manifest 带着用户在界面上叠的 override，改后 build 不带；直接比可编辑字段会把用户 override 过的每个属性都当成
+        这次的改动（`figureverify.changes_outside_target`）。已 built 的会话 `override` 只在捕获下来的 Figure 上重放补丁并重
+        导出，**不再执行用户脚本**（`worker.py` 的 override 分支 → `figsession.do_render`）；传空补丁 = 把这个会话里叠加的
+        override 全部退回脚本原样。会话随后即被 `retire` 退役，所以这次重置不会留给前端一个与真实状态错位的热会话。
+        数据指纹不随样式 override 变，`data_unchanged` 不受影响。某个 stem 重放失败 = 该 stem 的值为 None（显式缺基线，调用方记 unknown `no_baseline`），**不能静默丢掉**；全部失败时整体返回 None。"""
+        out = {}
+        for stem in ctx.registry.stems_of(script):
+            try:
+                man = worker.override(stem, [])["manifest"]
+            except Exception:  # noqa: BLE001 —— 这个 stem 量不了：缺基线，不让提交因旁路失败
+                out[stem] = None
+                continue
+            out[stem] = man if isinstance(man, dict) else None
+        return out
+
     def before():
         worker = engine_pool.peek(script, str(ctx.path), run=run_selection())
         if worker is None or not worker.built:
@@ -3568,7 +3586,8 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
             return None
         if getattr(worker, "last_build_source_sha256", None) != disk:
             return None
-        return manifests(worker) or None
+        base = baseline_manifests(worker)
+        return base if any(v is not None for v in base.values()) else None
 
     def retire():
         # 同步、确认式退役该脚本全部会话（`force=True`，确认不了抛 WorkerError）。尽力而为：监视器可能已先做过普通
@@ -4390,6 +4409,7 @@ def _build_diagnostics_bundle(
     src = engine_diagdetail.Sources(
         project=status,
         scripts=ctx.registry.all_scripts() if ctx is not None else [],
+        attempted=engine_taskdiag.STORE.attempted_scripts(pid) if pid else [],
         baked=load_baked(ctx) if ctx is not None else None,
         task_section=(
             engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid, limit=24) if pid else None

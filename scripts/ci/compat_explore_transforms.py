@@ -27,6 +27,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import compat_explore_data as data_source
 import compat_guardian as cg
 
 #: 父用例的 `__main__` 守卫的规范文本。放成常量：这个模块只**识别**守卫，自己不是入口脚本，
@@ -389,7 +390,7 @@ def _apply_style(ctx: Ctx, rng: random.Random) -> None:
     owner[start:start] = ast.parse(f"{ctx.alias()}.style.use({style!r})").body
 
 
-TRANSFORMS: tuple[Transform, ...] = (
+_CORE_TRANSFORMS: tuple[Transform, ...] = (
     Transform(
         "wrap_main",
         "entry_form",
@@ -481,6 +482,11 @@ TRANSFORMS: tuple[Transform, ...] = (
         "rename the pyplot (and numpy) import aliases",
     ),
 )
+#: CG-07：data_source 家族的读文件写法（compat_explore_data.py）；同轴互斥，与 inline_to_file 不成对。
+TRANSFORMS: tuple[Transform, ...] = _CORE_TRANSFORMS + tuple(
+    Transform(s.name, "data_source", "data_source", True, s.order, s.applies, s.apply, s.summary)
+    for s in data_source.SPECS
+)
 BY_NAME = {t.name: t for t in TRANSFORMS}
 
 
@@ -526,6 +532,7 @@ def build(parent: Parent, chain: tuple[str, ...], seed: int) -> dict:
         {t.axis for t in ordered}
     ) != len(ordered):
         raise cg.EvidenceError(f"chain must move distinct axes in canonical order: {chain}")
+    parent_signature = ast_signature(parent.files[parent.script].decode("utf-8"))
     files = dict(parent.files)
     ctx = Ctx(ast.parse(files[parent.script].decode("utf-8")), files, parent.script, parent.entry)
     steps = []
@@ -533,7 +540,9 @@ def build(parent: Parent, chain: tuple[str, ...], seed: int) -> dict:
         if not t.applies(ctx):
             raise cg.EvidenceError(f"{t.name} does not apply to {parent.case} at this point")
         ctx.params = {}
-        t.apply(ctx, _rng(seed, parent.suite, parent.case, t.name))
+        # 参数由 seed + 父本**结构**（规范化 AST 签名）+ 变换名派生，不用 case id：
+        # 结构相同的孪生父本拿到相同参数，才会被「轴向量 + AST 签名」去重
+        t.apply(ctx, _rng(seed, parent_signature, t.name))
         steps.append(
             {
                 "name": t.name,
@@ -671,7 +680,8 @@ def build_reduced(parent: Parent, chain: tuple[str, ...], seed: int, reduction: 
 
 
 def generator_digest() -> str:
-    return cg.digest(Path(__file__).read_bytes())
+    # 数据家族住在兄弟模块里，它的字节同样决定候选的内容
+    return cg.digest(Path(__file__).read_bytes() + Path(data_source.__file__).read_bytes())
 
 
 #: Names whose use makes a script's behavior depend on more than its own bytes.
@@ -831,6 +841,7 @@ def coverage(parents: list[Parent], candidates: list[dict], dropped: list[dict])
             "used_by_manifest_category": dict(sorted(by_category_used.items())),
             "corpus_by_manifest_category": dict(sorted(by_category_all.items())),
         },
+        "unavailable_transforms": data_source.unavailable(),
         "dedup": {
             "generated": len(candidates) + len(dropped),
             "unique": len(candidates),

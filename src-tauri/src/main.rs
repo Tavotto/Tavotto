@@ -1051,7 +1051,7 @@ fn menu_spec(m: &'static i18n::ShellText, macos: bool) -> Vec<Entry> {
     }
     menus.push(Sub(m.view, view));
 
-    // 「窗口」是 macOS 的标准菜单；Windows 的最小化 / 最大化在标题栏上，不另开一栏。
+    // 「窗口」是 macOS 的标准菜单；Windows 的最小化 / 最大化在页面右上角（window_chrome.rs），不另开一栏。
     if macos {
         menus.push(Sub(
             m.window,
@@ -1246,27 +1246,6 @@ fn show_app_menu(
     window
         .popup_menu_at(&menu, tauri::LogicalPosition::new(x, y))
         .map_err(|e| e.to_string())
-}
-
-/// 页面按当前主题报上来的顶栏底色 / 文字色（`#rrggbb`）→ 系统标题栏同色（Windows 11 起；
-/// 别的平台与 Windows 10 什么都不做）。颜色认不出来就回错，标题栏维持原样。
-#[tauri::command]
-fn set_titlebar_colors(
-    window: tauri::WebviewWindow,
-    background: String,
-    text: String,
-) -> Result<(), String> {
-    let (Some(bg), Some(fg)) = (
-        window_chrome::parse_hex_rgb(&background),
-        window_chrome::parse_hex_rgb(&text),
-    ) else {
-        return Err(format!("颜色认不出来：{background} / {text}"));
-    };
-    #[cfg(windows)]
-    window_chrome::apply_caption_colors(&window, bg, fg);
-    #[cfg(not(windows))]
-    let _ = (window, bg, fg);
-    Ok(())
 }
 
 /// 引擎意外退出时发给主窗口的事件（载荷 `{kind}`，闭集 signal / nonzero / zero）。
@@ -1792,7 +1771,17 @@ fn main() {
                 let _ = app.emit_to("main", "tavotto:open", req);
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 记住窗口位置 / 大小 / 最大化，但**不管窗框**：Windows 主窗口没有系统标题栏（window_chrome.rs），
+        // 默认会把旧版本存下的 `decorated: true` 恢复回来——系统标题栏与页面窗口按钮两套并存（#1279 真机）。
+        // 不管窗框也就不往状态文件写 false：退回旧版本时那边不会恢复出一个没有任何关闭按钮的窗口。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::all()
+                        - tauri_plugin_window_state::StateFlags::DECORATIONS,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         // 应用内更新：前端经自有命令 desktop_update_check / desktop_update_install（来源编排见
@@ -1816,7 +1805,6 @@ fn main() {
             desktop_update_check,
             desktop_update_install,
             show_app_menu,
-            set_titlebar_colors,
             take_previous_exit,
             current_engine_exit,
             current_fullscreen,
@@ -1906,8 +1894,9 @@ fn main() {
             .inner_size(1280.0, 860.0)
             // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）
             .min_inner_size(1024.0, 680.0)
-            // 窗框与页面顶栏融成一片（window_chrome.rs）：macOS 标题栏叠在页面上、红绿灯进顶栏；
-            // 并注入窗框标记，页面据它让出红绿灯 / 摆出「菜单」按钮
+            // 窗框与页面顶栏融成一片（window_chrome.rs）：macOS 标题栏叠在页面上、红绿灯进顶栏，
+            // Windows 去掉系统窗框、窗口按钮由页面画；并注入窗框标记，页面据它让出红绿灯 /
+            // 摆出「菜单」与窗口按钮
             .main_window_chrome()
             // Tauri 默认接管窗口的拖放事件（tauri://drag-drop），代价是 webview 里
             // 的 HTML5 drag&drop 整个失效——「素材拖入画布」在桌面壳里就是这么坏的。

@@ -402,7 +402,8 @@ def oracle_layers(
             )
         else:
             st = OR.structure_judgment(parent_snapshot, tavotto["snapshots"])
-            stages["structure"] = OR.stage("structure", st["status"])
+            stages["structure"] = OR.stage("structure", st["status"], st.get("note"))
+            stages["structure"]["data_compared"] = st["data_compared"]
             diffs += st["differences"]
         inherited = tavotto.get("inherited")
         if inherited is not None:

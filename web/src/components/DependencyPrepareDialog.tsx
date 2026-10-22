@@ -488,7 +488,7 @@ export function DependencyPrepareDialog() {
         {/* 失败：一条危险 Notice，放在页脚上方 */}
         {failing && (
           <Notice tone="danger" data-dependency-error={code}>
-            {distReasons.length > 0 ? og('distFailed') : repairShortMessage(code)}
+            {distReasons.length > 0 ? og('distFailed') : repairShortMessage(code, progress?.not_found)}
           </Notice>
         )}
       </div>

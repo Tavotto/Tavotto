@@ -3767,6 +3767,9 @@ class EnvironmentDecision:
     #: conda install / 改 activate.d 不换代，conda 从找不到变成找得到（直接启动 → 激活）也不换代——计划验证的都不是那个
     #: 环境（P09）。空 = 没钉（旧值 / 替身），只比路径与代
     launch_context: str = ""
+    #: 这一轮检测里**被评估但没选用**的候选各自的落选原因（`userenvs.rejection_reason` 的形状：不透明 id + 来源 + 稳定码，
+    #: 不带路径）。没评估（默认链条能跑 / 确认模式 / 非检测模式）= 空。供前端卡片与诊断包读，不参与 `matches`
+    rejected: tuple[dict, ...] = ()
 
     @property
     def pinned(self) -> bool:

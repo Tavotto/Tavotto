@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test'
-import { expect, showAllProjects, test } from './fixtures'
+import { expect, ONBOARDING_FLOW_VERSION, showAllProjects, test } from './fixtures'
 import { horizontalOffenders } from './overflow'
 
 /**
@@ -13,7 +13,7 @@ import { horizontalOffenders } from './overflow'
 /** 本机 onboarding 那一格：走完了教程 → 老手版（格式见 store/onboardingStore） */
 const COMPLETED = JSON.stringify({
   schemaVersion: 1,
-  flowVersion: 2,
+  flowVersion: ONBOARDING_FLOW_VERSION,
   status: 'completed',
   currentStep: null,
   completedSteps: [],

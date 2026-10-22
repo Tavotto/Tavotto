@@ -55,6 +55,10 @@
   `tavotto:fullscreen`（`{fullscreen}`）；`current_fullscreen` 回读防事件早于监听（仅主窗口，ACL 三处同步）。
   前端 `useWindowFullscreen`（非 `overlay` 窗框恒 false）让 TopBar 撤掉 `TRAFFIC_LIGHTS_INSET`。
   事件名 / 命令 / ACL 由 `tests/test_desktop_window_chrome.py` 看护。
+- **Windows 主窗口无系统标题栏**（`window_chrome.rs`，窗框 `menu-button`，2026-10-21）：非 macOS 的主窗口
+  `decorations(false)`，与 `chrome()` 同一个 cfg；最小化 / 最大化 / 关闭由页面 `WindowControls`（`main.tsx` 单独一个根，
+  崩溃页 / 会话失败页也在）画，壳自带的 splash / error 页各内联一组；关闭走 `close()` 照旧进关窗询问闸。窗口命令只在
+  `main.json`，远程实例窗口维持系统标题栏。看护同上。
 - **主页拖放拿真实路径**（ADR 0092）：`disable_drag_drop_handler()` 必须留着（装上 Tauri 的处理器
   页面 HTML5 拖放整片失效）；macOS 上 `native_drop.rs` 只旁听 `performDragOperation:` 读路径、发
   `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测），

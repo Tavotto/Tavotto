@@ -5,7 +5,7 @@ import type { Rect } from '@/lib/geometry'
 
 export type DragKind =
   | 'none' | 'move' | 'resize' | 'marquee' | 'pan'
-  | 'guide' | 'draw' | 'crop' | 'endpoint' | 'element'
+  | 'guide' | 'draw' | 'crop' | 'endpoint' | 'element' | 'pageedge'
 
 export type DraftPreview = Rect & {
   tool: string
@@ -83,6 +83,13 @@ interface InteractionState {
   nudge: { dx: number; dy: number } | null
   /** 从标尺拖出中的参考线 */
   pendingGuide: { axis: 'x' | 'y'; pos: number } | null
+  /**
+   * 拖页面边中的尺寸标注状态：哪条边、吸上了哪一档栏宽（`snapLabel` 是已翻好的「规范 栏名」）；
+   * `rolls` = 这一帧的读数是离散跳变（吸上 / 离开栏宽、⌥ 按下 / 松开）→ 会滚的数字滚过去，
+   * 逐 mm 的连续拖动为 false → 读数即时换（与缩放读数同一条规矩）。
+   * 只是画布叠加层的读数，不进文档；尺寸本身读文档（手势事务里每帧在写）。
+   */
+  pageEdge: { edge: 'l' | 'r' | 't' | 'b'; snapLabel: string | null; rolls: boolean } | null
 
   begin: (kind: DragKind) => void
   end: () => void
@@ -97,6 +104,7 @@ interface InteractionState {
   setCursor: (c: { x: number; y: number } | null) => void
   setNudge: (n: { dx: number; dy: number } | null) => void
   setPendingGuide: (g: { axis: 'x' | 'y'; pos: number } | null) => void
+  setPageEdge: (p: InteractionState['pageEdge']) => void
 }
 
 export const useInteractionStore = create<InteractionState>((set) => ({
@@ -114,6 +122,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   cursor: null,
   nudge: null,
   pendingGuide: null,
+  pageEdge: null,
 
   // 一次拖动 = 性能探针的一个片段（ADR 0075）；没在录制时两个调用都是空转
   begin: (kind) => {
@@ -130,6 +139,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       snapYs: [],
       snapFeedback: [],
       pendingGuide: null,
+      pageEdge: null,
       gidDrag: null,
       arrowPreview: null,
       elementPreview: null,
@@ -155,4 +165,5 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   setCursor: (cursor) => set({ cursor }),
   setNudge: (nudge) => set({ nudge }),
   setPendingGuide: (pendingGuide) => set({ pendingGuide }),
+  setPageEdge: (pageEdge) => set({ pageEdge }),
 }))

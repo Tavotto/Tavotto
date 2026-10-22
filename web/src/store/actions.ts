@@ -16,6 +16,7 @@ import { emitActivity } from '@/lib/activity'
 import { effectiveOverride, effectiveOverrideIndex } from '@/lib/effectiveOverride'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
+import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import {
   FIGURE_FRAME_VERSION,
@@ -680,15 +681,45 @@ export async function openRecentDocument(id: string): Promise<void> {
 
 /* --------------------------------- 页面 ----------------------------------- */
 
-/** 页面宽高能取的范围（mm）；`setPageSize` 按它夹取，预设也只摆得进这个范围的尺寸 */
-export const PAGE_MM_MIN = 10
-export const PAGE_MM_MAX = 1000
+export { PAGE_MM_MAX, PAGE_MM_MIN }
+
+/**
+ * 改页面尺寸的**唯一写法**（食谱）：属性栏的预设 / 宽高 / 横竖交换（`setPageSize`）与画布上拖页面四条边
+ * （`startPageEdgeResize`，在手势事务里反复调它）都经这里，夹取规则只有一份。
+ *
+ * `shift` 是页面原点的平移（mm，页面坐标系里新原点相对旧原点的位置取反）：拖左 / 上边时页面向左 / 上长出去，
+ * 原点跟着挪，所有对象与参考线的页面坐标反向补偿同样的量，图在屏幕上就纹丝不动。不给 = 原点不动
+ * （属性栏改尺寸的既有行为）。`base` 给了就按它的绝对位置写（拖动每一帧从手势开始时的位置现算，
+ * 不累加——夹取 / 吸附改变位移时不会漂）。
+ */
+export interface PageSizeBase {
+  objects: Map<string, { x: number; y: number }>
+  guides: number[]
+}
+
+export function applyPageSize(
+  d: FigureDocument,
+  w: number,
+  h: number,
+  shift?: { x: number; y: number; base: PageSizeBase },
+) {
+  d.page.w = clamp(w, PAGE_MM_MIN, PAGE_MM_MAX)
+  d.page.h = clamp(h, PAGE_MM_MIN, PAGE_MM_MAX)
+  if (!shift) return
+  for (const o of d.objects) {
+    const b = shift.base.objects.get(o.id)
+    if (!b) continue
+    o.x = b.x + shift.x
+    o.y = b.y + shift.y
+  }
+  d.guides.forEach((g, i) => {
+    const b = shift.base.guides[i]
+    if (b != null) g.pos = b + (g.axis === 'x' ? shift.x : shift.y)
+  })
+}
 
 export function setPageSize(w: number, h: number) {
-  commit(hist('setPageSize'), (d) => {
-    d.page.w = clamp(w, PAGE_MM_MIN, PAGE_MM_MAX)
-    d.page.h = clamp(h, PAGE_MM_MIN, PAGE_MM_MAX)
-  })
+  commit(hist('setPageSize'), (d) => applyPageSize(d, w, h))
 }
 
 /** 页面的非尺寸设置（背景、页边距）；尺寸走 setPageSize */

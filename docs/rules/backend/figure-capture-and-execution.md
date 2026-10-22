@@ -432,21 +432,25 @@ reconstruction_sha256, metrics}`；④ 真实编辑（结构性 `figure.frame` �
   诊断，日志只记变量个数）。所有「用目标解释器起子进程」的地方都**直接**起目标解释器（我们的直接子进程，取消 / 超时 / 协议 / 回执 pid
   与没有 Conda 时一样），只把 env 换成「调用方原来的 env + 激活增量」：worker（`pool.EngineWorker`）、预检探针（`launcher.activate_env`）、
   依赖门、`deprepair.worker_self_test`、`runtime.probe_packages`（app 注入 `env_for`）。
-- **启动方式是解释器路径的纯函数**：`launcher.launcher_for_interpreter(python)`——关开关 → Windows → 现场检测（Conda 环境 + 找得到 conda），
+- **启动方式是解释器路径的纯函数**：`launcher.launcher_for_interpreter(python)`——关开关 → 现场检测（Conda 环境 + 找得到 conda；Windows 同样，见下），
   不读脚本、项目、成功记录、来源标签，**没有** ContextVar 之类的“范围”，所以任何线程、任何入口对同一条解释器给出同一个 env。成功记录里的
   launcher 只作为事实写入（回执、记录照记），**不驱动决策**。行为变化：以前裸起成功过的 Conda 脚本，今后会带上激活环境（这本来就是用户对
-  Conda 环境的预期）。`TAVOTTO_CONDA_ACTIVATION=0` 关闭。**Windows 本期不启用**（没有真机验证；捕获方案本身可直接扩到 Windows）。
+  Conda 环境的预期）。`TAVOTTO_CONDA_ACTIVATION=0` 关闭。**Windows 同样默认开（ADR 0142，2026-10-21 修订）**，见下一条。
+- **Windows 的捕获（ADR 0142）**：与 POSIX 同构——只换三处。①conda 可执行只认安装根的 `Scripts\conda.exe`（`CONDA_EXE`、`PATH` 上 `condabin\conda.bat` 的所在根也按「上两级」推出安装根，但**不执行** `.bat` / `.cmd`：不经 cmd.exe、不拼 shell）；
+  常见安装位置另含 `%LOCALAPPDATA%` / `%ProgramData%` 下的 miniconda3 / anaconda3 / miniforge3，以及安装程序写的注册表卸载项 / PEP 514 InstallPath（仅作候选，仍须过安装根检查；ADR 0142 决策 7）；可信根下的环境若该根的 conda 可执行不可用，`activate_env`/`prewarm` 抛 `conda_launcher_unavailable` 而不裸起（决策 8），路径比较一律 `normcase`。②捕获脚本写成 `probe-results/capture-*.py`（`conda run` 在 Windows 把命令写进临时 `.bat`，
+  多行 `-c` 会被 cmd 截断），argv 里只剩路径；结果仍是 UTF-8 JSON 结果文件，不读 stdout，所以控制台代码页（chcp 936 / 65001）不影响。③超时收尾用 `taskkill /PID <conda> /T /F` 收整棵树。
+  失败仍是 `LauncherUnavailable`（`conda_launcher_unavailable`），不缓存。**合入门槛**（清单见 ADR 0142）：第 1/2/4/5/6/8 项已于 2026-10-21 Win11 真机通过；第 7 项以「PATH 只留 System32、无 `CONDA_EXE`」近似通过（真「开始菜单」启动未验）；第 3 项（ROOT）改由 #1282 承接。
 - **捕获失败一律 fail-closed 且不缓存**：Conda 环境捕获失败 / 超时，任何调用点都抛 `LauncherUnavailable`（稳定码 `conda_launcher_unavailable`），
   不退回裸起。体检 / 预检遇到它返回「不可用：conda_launcher_unavailable」，**不写**任何 verdict / facts 缓存（`launcher.is_unavailable`），
   不作废记住的解释器；项目已选定 / 记住 / 显式选择的解释器把稳定码交给用户，默认链条与系统候选只跳过这一个继续试后面的
   （`pool.select_worker_python`）。`plan_for` 写进环境错误，`_execute` 零执行收场（`deprepair.decide_environment_pinned` 把它转成 `WorkerError`）。
   **只激活用户自己的 conda 安装里的环境**：安装根本身（base）或它的 `envs/<名字>`；安装根来自 `CONDA_EXE` / `PATH` 上的 conda
-  与常见安装位置（`launcher._STANDARD_ROOTS`，须确实是安装根：`conda-meta/` + 可执行的 `bin/conda`）。激活会 source prefix
+  与常见安装位置（`launcher._STANDARD_ROOTS`；Windows 另含安装程序写的注册表卸载项 / PEP 514 InstallPath，仅作候选）。须确实是安装根：`conda-meta/` + 可执行的 conda 可执行文件（POSIX `bin/conda`，Windows `Scripts\conda.exe`，不认 `.bat` / `.cmd`）。激活会 source prefix
   自己的 `activate.d`；任何凭登记 / 路径形状的推断（environments.txt、项目标记）都可能被项目目录冒充，所以不用——其它位置的
   Conda 环境（`conda create -p` 到任意目录、克隆项目自带的 `.venv/conda-meta/`）一律直接启动（与 P09 之前一致），
   直接启动失败也不当成对环境的结论（`unlocated_conda_prefix`）。
   计划 / 钉下的决定 / 热会话比的是完整启动上下文 `launcher.context_key`（直接启动 ↔ 激活、conda、prefix、环境版本）。
-  conda 可执行文件的候选：prefix 所属安装根的 `bin/conda`，再是 `CONDA_EXE` / `PATH`（不读 `conda-meta/history`、不读 environments.txt：
+  conda 可执行文件的候选：prefix 所属安装根的 conda 可执行文件（POSIX `bin/conda`，Windows `Scripts\conda.exe`），再是 `CONDA_EXE` / `PATH`（不读 `conda-meta/history`、不读 environments.txt：
   都是项目能伪造或会过期的线索）。不会被激活的 Conda 形状的解释器（找不到 conda / 不在用户 conda 安装里）照常裸起；**但裸起失败不是对环境的
   结论**：`pool._has_matplotlib` / `projectenv.probe_environment` 此时抛 / 返回 `conda_launcher_unavailable`（瞬时，不缓存、不作废记住的
   解释器、不静默换别的）。
