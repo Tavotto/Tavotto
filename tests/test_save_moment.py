@@ -561,6 +561,27 @@ def test_first_seen_module_with_a_user_function_is_refused():
     figcapture._reset_trusted_surface_for_tests()
 
 
+def test_structure_signature_covers_inset_and_secondary_axes(fresh_surface):
+    """`fig.axes` 看不到 `inset_axes` 建出来的子轴；签名走 `ordered_axes`，它们的结构也在签名里。"""
+    fig = _figure()
+    ax = fig.axes[0]
+    inset = ax.inset_axes([0.5, 0.5, 0.4, 0.4])
+    inset.plot([0, 1], [1, 0])
+    assert len(fig.axes) == 1, "前提：fig.axes 里没有子轴"
+    sig = figcapture._structure_signature(fig)
+    assert (
+        len(sig[-1]) == 2
+    )  # 主轴 + inset（`secondary_xaxis` 本身 matplotlib 就 pickle 不了，不在快照范围）
+    figcapture.mark_saved(fig)
+    ledger = figcapture.SaveMomentLedger()
+    ledger.take(fig, 1)
+    inset.plot([0, 1], [0, 1])  # 存后在 inset 里加了一条线
+    restored, reason = ledger.restore(fig)
+    assert reason is None
+    assert figcapture._structure_signature(restored) == sig
+    assert figcapture._structure_signature(restored) != figcapture._structure_signature(fig)
+
+
 def _hostile(calls, fig):
     """每一种「被检查就会跑起来」的写法：属性钩子、比较 / 哈希 / 布尔钩子、元类的 `__instancecheck__` / `__getattr__`。"""
 

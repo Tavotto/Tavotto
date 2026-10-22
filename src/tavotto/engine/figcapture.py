@@ -168,8 +168,9 @@ import unicodedata
 import weakref
 
 if __package__:
-    from . import patchspec
+    from . import axestraversal, patchspec
 else:
+    import axestraversal
     import patchspec
 
 __all__ = [
@@ -2118,6 +2119,9 @@ def _surface_module_map(name: str, mod) -> tuple[dict, list]:
                     out[(attr, "!foreign")] = id(val)
                     refs.append(val)
                 continue
+            qualname = _T_QUALNAME.__get__(val)
+            if type(qualname) is str and "<locals>" in qualname:
+                continue  # 函数里现造的类（pyplot 每次切后端重新建的 `_backend_mod`）：库自己的惰性状态
             out[(attr, None)] = id(val)
             refs.append(val)
             for k, v in list(_T_DICT.__get__(val).items()):
@@ -2388,7 +2392,11 @@ def _snapshot_dumps(fig) -> bytes:
 
 
 def _structure_signature(fig) -> tuple:
-    """还原前后都能算的廉价结构签名：图幅 + 每个 Axes 的 artist 计数。不渲染、不改 Figure。"""
+    """还原前后都能算的廉价结构签名：图幅 + 每个 Axes 的 artist 计数。不渲染、不改 Figure。
+
+    轴的清单走 `axestraversal.ordered_axes`（全产品唯一的遍历权威，含 `inset_axes` / `secondary_[xy]axis` / 寄生轴）。
+    静态读纪律：只在**已通过类型白名单的库对象图**上调用——拍摄侧排在序列化成功之后（图里全是库类型），还原侧算在刚还原出的复制品上；
+    `ordered_axes` 只按属性名 `axes` / `child_axes` / `parasites` 走对象图。"""
     axes = tuple(
         (
             type(ax).__name__,
@@ -2399,7 +2407,7 @@ def _structure_signature(fig) -> tuple:
             len(ax.images),
             len(ax.containers),
         )
-        for ax in fig.axes
+        for ax in axestraversal.ordered_axes(fig)[0]
     )
     w, h = fig.get_size_inches()
     return (round(float(w), 6), round(float(h), 6), len(fig.texts), len(fig.artists), axes)

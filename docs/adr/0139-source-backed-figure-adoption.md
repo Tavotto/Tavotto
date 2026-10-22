@@ -191,6 +191,8 @@ manifest / overrides / 撤销重做不分叉）。
 
 - **进程与时刻**：safe worker 进程内，每次保存记完账之后（此时 `savefig` 内部对 Figure 的临时改动，如 `bbox_inches="tight"`、
   dpi 切换，已经还原；与 `mark_saved` 清脏标记是同一时刻）。快照不是脚本改图：拍完把脏标记重置为「刚存完」。
+- **与 ADR 0014 §6 / ADR 0020 §8 的关系**：那两处防的是 Figure 跨进程。快照不越界，所以是登记的例外：门禁按类 / 函数登记（`figcapture.py` 的
+  `_RestrictedUnpickler` / `_SnapshotPickler` / `_snapshot_dumps` / `SaveMomentLedger._take_into`），并用 AST 断言字节流向。
 - **存放**：只在**本进程内存**（`SaveMomentLedger`，每张图只留最近一次保存的字节串，会话结束或判定完即释放）。
   **不写 `data_dir()`、不写包目录、不写项目、不发给别的进程。**
 - **账的生命周期绑「一次脚本执行」，不绑会话**（Codex #1314 P1-a）：`Worker.build` 在跑脚本之前调 `begin_save_moments()`
