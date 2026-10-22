@@ -64,7 +64,7 @@ def startup(monkeypatch):
 
 
 def _serve_stub(calls: list[str], on_serve=None):
-    def serve(app, host, port, listener=None):
+    def serve(app, host, port, listener=None, announce=None):
         calls.append("serve_browser")
         try:
             if on_serve is not None:

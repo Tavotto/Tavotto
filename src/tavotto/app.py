@@ -198,6 +198,7 @@ app.json = _StrictJSONProvider(app)
 # 首个请求前注册；测试的 test_client 与 --insecure-no-auth 下全部旁路
 from . import (  # noqa: E402 —— 必须在 app 实例创建之后
     desktop as desktop_mode,
+    launchhint,
     localserver,
     security,  # 需要 app 实例存在后立即挂钩
 )
@@ -14637,10 +14638,15 @@ def main():
             nonce = engine_session_client.relaunch_nonce(args.port)
             if nonce:
                 url += "#dnonce=" + nonce
-            if args.no_browser:
+            if args.no_browser or not launchhint.can_open_browser():
                 # 没有浏览器可开（服务器上经 SSH 转发用）：换到的 nonce 只能靠这里
                 # 交给人，与首次启动打印带 nonce 的地址同一口径。不打印就等于白换。
+                # 没有图形会话时 webbrowser 会退到 lynx / w3m 占满终端，所以与 --no-browser 同一条路。
                 print(f"* Tavotto 已在 {landing(args.port)} 运行")
+                if not launchhint.can_open_browser():
+                    print(
+                        f"* 在你自己的电脑上转发端口：{launchhint.ssh_forward_command(args.port)}"
+                    )
                 print(f"* 打开 {url}")
                 return
             print(f"* Tavotto 已在 {landing(args.port)} 运行，打开现有窗口")
@@ -14727,8 +14733,9 @@ def main():
         atexit.register(engine_session_client.remove_secret, port)
     if port != args.port:
         print(f"* 端口 {args.port} 被占用，改用 {port}")
-    print(f"* 打开 {url}")
-    if not args.no_browser:
+    # 没有图形会话（经 SSH / 纯终端）时不开：webbrowser 会退到 lynx / w3m，占满终端还跑不了 JS
+    open_browser = not args.no_browser and launchhint.can_open_browser()
+    if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     # 同上：真的要开始服务了才算一次会话。**上面「已有实例在跑，把浏览器
     # 指过去就完事」那条分支刻意不记**——那个进程没有提供任何服务。
@@ -14738,7 +14745,16 @@ def main():
     # 上连接是 timed out 而不是 refused），就绪探测全部干等。缺陷、证据与逐项
     # 对照见 localserver.py。
     try:
-        localserver.serve_browser(app, "127.0.0.1", port, listener=listener)
+        # 登录地址在服务已 listen 之后作为最后一块打印（launchhint 模块注释）：它之前的输出都可能把它埋掉
+        localserver.serve_browser(
+            app,
+            "127.0.0.1",
+            port,
+            listener=listener,
+            announce=lambda: print(
+                launchhint.ready_banner(url, port, opened=open_browser), flush=True
+            ),
+        )
     finally:
         if not insecure:
             engine_session_client.remove_secret(port)
