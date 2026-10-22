@@ -66,6 +66,9 @@ def install() -> None:
     root = Path(os.environ["CG_EXEC_ROOT"]).resolve()
     allowed = set(json.loads(os.environ["CG_EXEC_HASHES"]))
     fd = os.open(os.environ["CG_EXEC_LOG"], os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    numeric_fd = None
+    if os.environ.get("CG_RESEARCH_NUMERIC") == "1":
+        numeric_fd = os.open(root / "numeric.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
 
     def observe(event, args):
         if event != "exec":
@@ -87,6 +90,10 @@ def install() -> None:
                 "environment": actual_environment(),
             }
             os.write(fd, (json.dumps(row, sort_keys=True) + "\n").encode())
+            if numeric_fd is not None:
+                from research_numeric_probe import attach
+
+                attach(code, path, root, numeric_fd)
         except OSError:
             # Missing counter evidence cannot result in a passing Guardian report.
             return

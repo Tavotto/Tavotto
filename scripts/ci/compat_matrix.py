@@ -111,15 +111,31 @@ def materialize(group: list[dict], workdir: Path) -> tuple[Path, str, str]:
     project = workdir / "project"
     project.mkdir(parents=True, exist_ok=True)
 
+    # Recorded upstream launch preparation (empty output directories are not Git blobs).
+    for relative in case.get("project_directories", []):
+        directory = (project / relative).resolve()
+        if not directory.is_relative_to(project.resolve()):
+            raise ValueError("project directory must stay inside the materialized project")
+        directory.mkdir(parents=True, exist_ok=True)
+
     dest_rel = case.get("script_dest") or Path(case["script"]).name
     dest = project / dest_rel
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(CC.COMPAT_DIR / case["script"], dest)
+
+    def copy_source(relative, target):
+        if case.get("research_project_id"):
+            import compat_research_sources as sources
+
+            target.write_bytes(sources.source_bytes(case, "tests/compat/" + relative))
+        else:
+            shutil.copy2(CC.COMPAT_DIR / relative, target)
+
+    copy_source(case["script"], dest)
 
     for rel, src in (case.get("extra_files") or {}).items():
         target = project / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(CC.COMPAT_DIR / src, target)
+        copy_source(src, target)
 
     for asset in case.get("assets") or []:
         # 素材放在**脚本自己的目录**旁边——`pd.read_csv("data.csv")` 的语义

@@ -1,0 +1,775 @@
+{
+  "schema": 1,
+  "cases": [
+    {
+      "id": "research_sgwbprobe",
+      "research_project_id": "sgwbprobe",
+      "category": "scientific_stack",
+      "script": "cases/research/sgwbprobe/upstream/Fig_1.py.source",
+      "script_dest": "Fig_1.py",
+      "extra_files": {
+        "sgwbprobe/SGWB_Signal.py": "cases/research/sgwbprobe/upstream/sgwbprobe/SGWB_Signal.py.source",
+        "sgwbprobe/__init__.py": "cases/research/sgwbprobe/upstream/sgwbprobe/__init__.py.source",
+        "sgwbprobe/effective_degrees.py": "cases/research/sgwbprobe/upstream/sgwbprobe/effective_degrees.py.source",
+        "sgwbprobe/interpolate.py": "cases/research/sgwbprobe/upstream/sgwbprobe/interpolate.py.source"
+      },
+      "project_directories": [
+        "figures"
+      ],
+      "reference_invocation": {
+        "cwd": ".",
+        "argv": []
+      },
+      "stem": "Fig_1",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#0072B2"
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_qudit_tomography",
+      "research_project_id": "qudit_tomography",
+      "category": "scientific_stack",
+      "script": "cases/research/qudit_tomography/upstream/plot_tomo_times.py.source",
+      "script_dest": "plot_tomo_times.py",
+      "extra_files": {
+        "data/times_CB_d141-200.txt": "cases/research/qudit_tomography/upstream/data/times_CB_d141-200.txt",
+        "data/times_CB_d2-140.txt": "cases/research/qudit_tomography/upstream/data/times_CB_d2-140.txt",
+        "data/times_QB_d141-200.txt": "cases/research/qudit_tomography/upstream/data/times_QB_d141-200.txt",
+        "data/times_QB_d2-140.txt": "cases/research/qudit_tomography/upstream/data/times_QB_d2-140.txt",
+        "data/times_RE_d2-120.txt": "cases/research/qudit_tomography/upstream/data/times_RE_d2-120.txt"
+      },
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": ".",
+        "argv": []
+      },
+      "stem": "qudit_times",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#0072B2"
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_steel_dilatometry",
+      "research_project_id": "steel_dilatometry",
+      "category": "scientific_stack",
+      "script": "cases/research/steel_dilatometry/upstream/dilatometry/data_plotter.py.source",
+      "script_dest": "dilatometry/data_plotter.py",
+      "extra_files": {
+        "dilatometry/data_set_conditioner.py": "cases/research/steel_dilatometry/upstream/dilatometry/data_set_conditioner.py.source",
+        "dilatometry/master_setup.txt": "cases/research/steel_dilatometry/upstream/dilatometry/master_setup.txt",
+        "dilatometry/raw_dil_data/CC1.csv": "cases/research/steel_dilatometry/upstream/dilatometry/raw_dil_data/CC1.csv",
+        "dilatometry/raw_dil_data/CC10.csv": "cases/research/steel_dilatometry/upstream/dilatometry/raw_dil_data/CC10.csv",
+        "dilatometry/raw_dil_data/CC25.csv": "cases/research/steel_dilatometry/upstream/dilatometry/raw_dil_data/CC25.csv",
+        "dilatometry/raw_dil_data/CC3.csv": "cases/research/steel_dilatometry/upstream/dilatometry/raw_dil_data/CC3.csv",
+        "dilatometry/raw_dil_data/CC30.csv": "cases/research/steel_dilatometry/upstream/dilatometry/raw_dil_data/CC30.csv",
+        "dilatometry/raw_dil_data/CC40.csv": "cases/research/steel_dilatometry/upstream/dilatometry/raw_dil_data/CC40.csv",
+        "dilatometry/raw_dil_data/CC5.csv": "cases/research/steel_dilatometry/upstream/dilatometry/raw_dil_data/CC5.csv"
+      },
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": "dilatometry",
+        "argv": []
+      },
+      "stem": "data_plotter",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 7,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 16
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_monogenic_signal",
+      "research_project_id": "monogenic_signal",
+      "category": "scientific_stack",
+      "script": "cases/research/monogenic_signal/upstream/Code/synthetic.py.source",
+      "script_dest": "Code/synthetic.py",
+      "extra_files": {
+        "Code/data.dat": "cases/research/monogenic_signal/upstream/Code/data.dat",
+        "Code/monogenic.py": "cases/research/monogenic_signal/upstream/Code/monogenic.py.source"
+      },
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": "Code",
+        "argv": []
+      },
+      "stem": "synthetic",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 3,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 16
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_infiltration_theory",
+      "research_project_id": "infiltration_theory",
+      "category": "scientific_stack",
+      "script": "cases/research/infiltration_theory/upstream/Fig(12) vanGenuchtenvsBrooks-Corey.py.source",
+      "script_dest": "Fig(12) vanGenuchtenvsBrooks-Corey.py",
+      "extra_files": {
+        "supporting_tools.py": "cases/research/infiltration_theory/upstream/supporting_tools.py.source"
+      },
+      "project_directories": [
+        "Figures"
+      ],
+      "reference_invocation": {
+        "cwd": ".",
+        "argv": []
+      },
+      "stem": "hydrus_fluxes",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#0072B2"
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_burnman_seismic",
+      "research_project_id": "burnman_seismic",
+      "category": "scientific_stack",
+      "script": "cases/research/burnman_seismic/upstream/examples/example_seismic.py.source",
+      "script_dest": "examples/example_seismic.py",
+      "extra_files": {},
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": ".",
+        "argv": []
+      },
+      "stem": "example_seismic",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 2,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 16
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_aec_calibration",
+      "research_project_id": "aec_calibration",
+      "category": "scientific_stack",
+      "script": "cases/research/aec_calibration/upstream/examples/02_fit_sakas.py.source",
+      "script_dest": "examples/02_fit_sakas.py",
+      "extra_files": {},
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": ".",
+        "argv": []
+      },
+      "stem": "02_fit_sakas",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 16
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_cantera_sofc",
+      "research_project_id": "cantera_sofc",
+      "category": "scientific_stack",
+      "script": "cases/research/cantera_sofc/upstream/samples/python/kinetics/sofc.py.source",
+      "script_dest": "samples/python/kinetics/sofc.py",
+      "extra_files": {
+        "data/gri30.yaml": "cases/research/cantera_sofc/upstream/data/gri30.yaml",
+        "data/sofc.yaml": "cases/research/cantera_sofc/upstream/data/sofc.yaml"
+      },
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": "data",
+        "argv": []
+      },
+      "stem": "sofc",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#0072B2"
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_astro_celerite_sho",
+      "research_project_id": "astro_celerite_sho",
+      "category": "scientific_stack",
+      "script": "cases/research/astro_celerite_sho/upstream/paper/figures/sho.py.source",
+      "script_dest": "paper/figures/sho.py",
+      "extra_files": {},
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": "paper/figures",
+        "argv": []
+      },
+      "stem": "sho",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#7B2CBF"
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_astro_ztf_m31",
+      "research_project_id": "astro_ztf_m31",
+      "category": "scientific_stack",
+      "script": "cases/research/astro_ztf_m31/upstream/src/plot.py.source",
+      "script_dest": "src/plot.py",
+      "extra_files": {
+        "data/arrays/magpsf.npy": "cases/research/astro_ztf_m31/upstream/data/arrays/magpsf.npy",
+        "data/arrays/rb.npy": "cases/research/astro_ztf_m31/upstream/data/arrays/rb.npy",
+        "data/arrays/jd.npy": "cases/research/astro_ztf_m31/upstream/data/arrays/jd.npy",
+        "data/arrays/sigmagap.npy": "cases/research/astro_ztf_m31/upstream/data/arrays/sigmagap.npy",
+        "data/arrays/fwhm.npy": "cases/research/astro_ztf_m31/upstream/data/arrays/fwhm.npy"
+      },
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": ".",
+        "argv": []
+      },
+      "stem": "magpsf",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 18
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_astro_gala_draco",
+      "research_project_id": "astro_gala_draco",
+      "category": "scientific_stack",
+      "script": "cases/research/astro_gala_draco/upstream/docs/tutorials/Milky-Way-model.py.source",
+      "script_dest": "docs/tutorials/Milky-Way-model.py",
+      "extra_files": {},
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": "docs/tutorials",
+        "argv": []
+      },
+      "stem": "Milky-Way-model-2",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 2,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.xlabel",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.xlabel",
+          "prop": "fontsize",
+          "value": 16
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_bio_brian_hindmarsh",
+      "research_project_id": "bio_brian_hindmarsh",
+      "category": "scientific_stack",
+      "script": "cases/research/bio_brian_hindmarsh/upstream/examples/frompapers/Hindmarsh_Rose_1984.py.source",
+      "script_dest": "examples/frompapers/Hindmarsh_Rose_1984.py",
+      "extra_files": {},
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": "examples/frompapers",
+        "argv": []
+      },
+      "stem": "Hindmarsh_Rose_1984",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#7B2CBF"
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_bio_vitay_timing",
+      "research_project_id": "bio_vitay_timing",
+      "category": "scientific_stack",
+      "script": "cases/research/bio_vitay_timing/upstream/code/Fig3-Load.py.source",
+      "script_dest": "code/Fig3-Load.py",
+      "extra_files": {
+        "data/timingcapacity.npz": "cases/research/bio_vitay_timing/upstream/data/timingcapacity.npz"
+      },
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": "code",
+        "argv": []
+      },
+      "stem": "Fig3-Load",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#7B2CBF"
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_bio_pysb_tyson",
+      "research_project_id": "bio_pysb_tyson",
+      "category": "scientific_stack",
+      "script": "cases/research/bio_pysb_tyson/upstream/pysb/examples/run_tyson_oscillator.py.source",
+      "script_dest": "pysb/examples/run_tyson_oscillator.py",
+      "extra_files": {},
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": "pysb/examples",
+        "argv": []
+      },
+      "stem": "run_tyson_oscillator",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#7B2CBF"
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_engineering_leaf_hppc",
+      "research_project_id": "engineering_leaf_hppc",
+      "category": "scientific_stack",
+      "script": "cases/research/engineering_leaf_hppc/upstream/plot.py.source",
+      "script_dest": "plot.py",
+      "extra_files": {
+        "datalib/__init__.py": "cases/research/engineering_leaf_hppc/upstream/datalib/__init__.py.source",
+        "datalib/bitrodedata.py": "cases/research/engineering_leaf_hppc/upstream/datalib/bitrodedata.py.source",
+        "datalib/celldata.py": "cases/research/engineering_leaf_hppc/upstream/datalib/celldata.py.source",
+        "datalib/plotter.py": "cases/research/engineering_leaf_hppc/upstream/datalib/plotter.py.source",
+        "datalib/tempdata.py": "cases/research/engineering_leaf_hppc/upstream/datalib/tempdata.py.source",
+        "data/NissanLeaf-cell-Low-Current-HPPC-25C-2.csv": "cases/research/engineering_leaf_hppc/upstream/data/NissanLeaf-cell-Low-Current-HPPC-25C-2.csv"
+      },
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": ".",
+        "argv": [
+          "hppc"
+        ]
+      },
+      "stem": "plot",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 5,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.title",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.title",
+          "prop": "fontsize",
+          "value": 18
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    },
+    {
+      "id": "research_engineering_cruise_control",
+      "research_project_id": "engineering_cruise_control",
+      "category": "scientific_stack",
+      "script": "cases/research/engineering_cruise_control/upstream/examples/cruise-control.py.source",
+      "script_dest": "examples/cruise-control.py",
+      "extra_files": {},
+      "project_directories": [],
+      "reference_invocation": {
+        "cwd": "examples",
+        "argv": []
+      },
+      "stem": "cruise-control",
+      "entry": "__main__",
+      "tier": "expected",
+      "discovery": "requires_probe",
+      "expected_figures": 6,
+      "expected": {},
+      "semantic_expectations": {
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#7B2CBF"
+        }
+      ],
+      "export_formats": [
+        "pdf",
+        "png",
+        "svg"
+      ],
+      "native_eligible": false,
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "Frozen original upstream research workflow; static target translation only, no source edits. This declaration is an intent, not a passing result.",
+      "classification": "partial_support",
+      "reason": "S0 measures the engine task only; desktop/CLI/native product routes and document persistence are not covered. Every declared engine stage must still pass."
+    }
+  ]
+}

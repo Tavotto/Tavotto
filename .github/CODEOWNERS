@@ -48,4 +48,5 @@
 /tests/test_compat_minimize*            @erwanjun
 /tests/compat_guardian/**            @erwanjun
 /.github/workflows/compat-guardian.yml  @erwanjun
+/.github/workflows/compat-research-s0.yml @erwanjun
 /docs/ci/compat-guardian.md             @erwanjun

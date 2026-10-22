@@ -205,15 +205,29 @@ def matches_head(root: Path, rel: str, path: Path | None = None) -> bool:
     return work == head
 
 
-def staged_source_hashes(root: Path, fixture: dict[str, str], script: str) -> list[str]:
+def staged_source_hashes(root: Path, fixture: dict[str, str], script: str, case=None) -> list[str]:
     """执行观测器（`CG_EXEC_HASHES`）要认的入口脚本摘要：按**实际拷进沙盒的工作区字节**算，不用 `fixture` 里按 HEAD blob
     记的语料身份——materialize / V2 staging 原样拷工作区文件，Windows `core.autocrlf` checkout 下是 CRLF，两者不同
     （Codex #1118 r4310318506）。内容与 HEAD 等价已由 `fixture_files` 核过。"""
     return [
-        digest(contained(root, k).read_bytes())
-        for k in fixture
-        if k.endswith(".py") and Path(k).name == Path(script).name
+        digest(fixture_bytes(root, k, case)) for k in fixture if Path(k).name == Path(script).name
     ]
+
+
+def fixture_path(root: Path, relative: str, case: dict | None = None) -> Path:
+    if case and case.get("research_project_id"):
+        import compat_research_sources as sources
+
+        return sources.source_file(case, relative, root=root)
+    return contained(root, relative)
+
+
+def fixture_bytes(root: Path, relative: str, case: dict | None = None) -> bytes:
+    if case and case.get("research_project_id"):
+        import compat_research_sources as sources
+
+        return sources.source_bytes(case, relative, root=root)
+    return contained(root, relative).read_bytes()
 
 
 def registered(suite: str) -> dict[str, dict]:
@@ -235,7 +249,42 @@ def registered(suite: str) -> dict[str, dict]:
     raise EvidenceError(f"unregistered suite: {suite}")
 
 
+def selected_registry(suite: str, case_ids) -> dict[str, dict]:
+    cases = registered(suite)
+    if suite == "compat_engine":
+        if any(cid.startswith("research_") for cid in set(case_ids) - cases.keys()):
+            import compat_guardian_research as research
+            import compat_research_sources as sources
+
+            for rel in (sources.COHORT_REL, sources.MANIFEST_REL):
+                if not matches_head(ROOT, rel):
+                    raise EvidenceError(f"research registration differs from reviewed HEAD: {rel}")
+            research.load_cohort(root=ROOT)
+            external = {c["id"]: c for c in research.load_cases(ROOT)}
+            cases.update({cid: external[cid] for cid in case_ids if cid in external})
+    return cases
+
+
 def fixture_files(suite: str, case: dict) -> dict[str, str]:
+    if suite == "compat_engine" and case.get("research_project_id"):
+        import compat_research_sources as sources
+
+        project = sources.project_for_case(case, root=ROOT)
+        result = {
+            rel: digest(sources.source_bytes(case, rel, root=ROOT))
+            for rel in project["staged_files"]
+        }
+        # Reuse the ordinary case validator after resolving the pinned external bytes.
+        resolved = {
+            **case,
+            "script": str(fixture_path(ROOT, "tests/compat/" + case["script"], case)),
+        }
+        resolved["extra_files"] = {
+            dest: str(fixture_path(ROOT, "tests/compat/" + rel, case))
+            for dest, rel in case.get("extra_files", {}).items()
+        }
+        CC._validate_case(resolved, CC.COMPAT_DIR)
+        return result
     if suite == "compat_v2":
         base = ROOT / "tests/fixtures/compat_v2" / case["id"]
         paths = sorted(p for p in base.rglob("*") if p.is_file())
@@ -322,6 +371,9 @@ def isolated_env(work: Path, audit_log: Path | None = None, hashes=()) -> dict:
     env["PYTHONPATH"] = os.pathsep.join(roots)
     # Explicit user-selected test interpreter; never let native/worker choose different stacks.
     env["TAVOTTO_WORKER_PYTHON"] = sys.executable
+    for key in ("TAVOTTO_RESEARCH_CACHE", "CG_RESEARCH_NUMERIC"):
+        if key in os.environ:
+            env[key] = os.environ[key]
     return env
 
 
@@ -622,7 +674,7 @@ def _execute(request: dict) -> dict:
 
     t_total = time.monotonic()
     suite, cid = request["suite"], request["case"]
-    case = registered(suite)[cid]
+    case = selected_registry(suite, (cid,))[cid]
     work = Path(request["work"])
     evidence = Path(request["evidence"])
     before = environment()
@@ -649,13 +701,22 @@ def _execute(request: dict) -> dict:
     # The already installed audit hook opened its file at process start; the child
     # native driver receives this separate leg's counter via sitecustomize.
     t0 = time.monotonic()
+    native_request = {"project": str(project), "script": str(project / script), "entry": entry}
+    if "reference_invocation" in case:
+        native_request["reference_invocation"] = case["reference_invocation"]
     native = cm.run_driver(
         sys.executable,
         "native_ref",
-        {"project": str(project), "script": str(project / script), "entry": entry},
+        native_request,
     )
     row["timings_s"]["native"] = round(time.monotonic() - t0, 3)
     row["native"] = {"status": _native_status(native), "result": _trim_native(native)}
+    if os.environ.get("CG_RESEARCH_NUMERIC") == "1":
+        for artifact in native.get("artifacts", []):
+            if Path(artifact["path"]).suffix == ".pdf":
+                target = evidence / "native-pdf" / artifact["path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(contained(project, artifact["path"]), target)
     row["executions"]["native"] = _count(work / "native-execs.jsonl")
     row["figures"]["native"] = native.get("figure_count") if native.get("ok") else None
     # Native fixture invalidity never enters the product-defect population.
@@ -679,6 +740,8 @@ def _execute(request: dict) -> dict:
             previous = os.environ["CG_EXEC_LOG"]
             os.environ["CG_EXEC_LOG"] = str(work / f"diagnostic-{mode}-execs.jsonl")
             try:
+                if mode in {"native_ref", "native", "census"} and "reference_invocation" in case:
+                    request = {**request, "reference_invocation": case["reference_invocation"]}
                 return original_driver(python, mode, request, timeout)
             finally:
                 os.environ["CG_EXEC_LOG"] = previous
@@ -693,6 +756,20 @@ def _execute(request: dict) -> dict:
             return response
 
         cm.stage_export = keep_export
+        if os.environ.get("CG_RESEARCH_NUMERIC") == "1":
+            original_fidelity = cm.stage_fidelity
+
+            def keep_zero_edit(python, project, script, entry, worker, stem, workdir, out_dir):
+                result = original_fidelity(
+                    python, project, script, entry, worker, stem, workdir, out_dir
+                )
+                # Preserve a PDF before any edit; the ordinary export stage runs after replay.
+                result.setdefault("detail", {})["zero_edit_export"] = original_export(
+                    worker, stem, evidence / "zero-edit", ["pdf"]
+                )
+                return result
+
+            cm.stage_fidelity = keep_zero_edit
         engine_case = {**case, "product_routes": {}}
         try:
             result = cm.run_group(
@@ -842,6 +919,8 @@ def preserve_execution_logs(work: Path, evidence: Path) -> None:
     """Retain partial/negative counters before the parent removes its workspace."""
     for path in work.glob("*-execs.jsonl"):
         shutil.copy2(path, evidence / path.name)
+    if (work / "numeric.jsonl").is_file():
+        shutil.copy2(work / "numeric.jsonl", evidence / "numeric.jsonl")
     fixture_log = work / "v2" / "exec_log.jsonl"
     if fixture_log.is_file():
         shutil.copy2(fixture_log, evidence / "fixture-execs.jsonl")
@@ -1039,7 +1118,7 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
     rows = report["cases"]
     if sorted(r["id"] for r in rows) != sorted(ids):
         raise EvidenceError("case set is incomplete/duplicated")
-    registry = registered(report["suite"])
+    registry = selected_registry(report["suite"], ids)
     entries = EX.load_entries()
     if report["expectations_sha256"] != EX.file_digest():
         raise EvidenceError("expectations digest does not match the committed declaration file")
@@ -1129,11 +1208,13 @@ def run(args) -> int:
         and os.environ.get("GITHUB_SHA", expected_sha) != expected_sha
     ):
         raise EvidenceError("GITHUB_SHA disagrees with actual HEAD")
-    registry = registered(args.suite)
+    registry = selected_registry(args.suite, args.case.split(",") if args.case else ())
     entries = EX.load_entries()
     ids = args.case.split(",") if args.case else list(registry)
     if not ids or len(set(ids)) != len(ids) or any(i not in registry for i in ids):
         raise EvidenceError("empty/duplicate/unknown case selection")
+    if os.environ.get("CG_RESEARCH_NUMERIC") == "1" and ids != ["research_astro_celerite_sho"]:
+        raise EvidenceError("numeric diagnostics are restricted to the registered Celerite case")
     fixtures = {cid: fixture_files(args.suite, registry[cid]) for cid in ids}
     run_id = uuid.uuid4().hex
     output = Path(args.out).resolve() / run_id
@@ -1153,7 +1234,7 @@ def run(args) -> int:
             # 观测器认的是**实际拷进沙盒的字节**（materialize / V2 staging 原样拷工作区文件）：Windows checkout 下是 CRLF，
             # 与报告里按 HEAD blob 记的语料身份（跨平台一致）不同。内容与 HEAD 等价已由 fixture_files 核过（Codex r4310318506）
             source_hashes = staged_source_hashes(
-                ROOT, fixtures[cid], registry[cid].get("script", "script.py")
+                ROOT, fixtures[cid], registry[cid].get("script", "script.py"), registry[cid]
             )
             env = isolated_env(work, work / "adapter-execs.jsonl", source_hashes)
             try:
@@ -1440,7 +1521,10 @@ def main(argv=None) -> int:
             print("valid current-checkout evidence")
             return 0
         request = json.loads(Path(args.request).read_text(encoding="utf-8"))
-        fixture_files(request["suite"], registered(request["suite"])[request["case"]])
+        fixture_files(
+            request["suite"],
+            selected_registry(request["suite"], (request["case"],))[request["case"]],
+        )
         row = _execute(request)
         (Path(request["evidence"]) / "result.json").write_text(
             json.dumps(row, indent=2), encoding="utf-8"
