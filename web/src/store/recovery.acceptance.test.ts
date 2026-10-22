@@ -238,7 +238,9 @@ describe('A03 handoff 在恢复未决期间到达', () => {
     expect(shape.documentId).toBe('d_text')
     const ids = shape.canvases[0].objects.map((o) => o.id)
     expect(ids).toContain('t_only')
-    expect(shape.canvases[0].objects.filter((o) => o.fileId === 'Fig1.pdf')).toHaveLength(1)
+    // 「打开」= 换看那一张：图不在任何画布上 → 新建一张画布放它，恢复出来的原画布一个字节不动（没有这张图）
+    expect(shape.canvases[0].objects.filter((o) => o.fileId === 'Fig1.pdf')).toHaveLength(0)
+    expect(shape.canvases.flatMap((c) => c.objects).filter((o) => o.fileId === 'Fig1.pdf')).toHaveLength(1)
   })
 
   it('正常新图交接（没有历史，恢复期间到达）仍 placed，不死等', async () => {
@@ -253,7 +255,7 @@ describe('A03 handoff 在恢复未决期间到达', () => {
     await restoring
     expect(outcome).toBe('placed')
     const shape = currentShape(app)
-    expect(shape.canvases[0].objects.filter((o) => o.fileId === 'Fig1.pdf')).toHaveLength(1)
+    expect(shape.canvases.flatMap((c) => c.objects).filter((o) => o.fileId === 'Fig1.pdf')).toHaveLength(1)
   })
 })
 

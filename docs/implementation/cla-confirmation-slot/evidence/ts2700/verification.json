@@ -1,0 +1,63 @@
+{
+  "reviewed_old_head": "dc2431f725798bd78c40a3b07e0a8054690fe82c",
+  "shared_child_old_head": "23e0f50c0e7fb318d4d42c8421fcf821071ba3b8",
+  "source_sha256": {
+    "services/cla-cloudflare/src/native/store.ts": "35c694576c1a8e4b6630ed6337f26a5a9e39fe55ddaa38dc46e31a50b672d140"
+  },
+  "change": "first<Omit<RefreshRequest,'capacity_blocked'> & {capacity_blocked:number}> replaces incompatible boolean/number intersection; no any or suppression.",
+  "original_hosted": [
+    {
+      "pr": 1168,
+      "run": 39126012271,
+      "job": 117671183649,
+      "checkout_sha": "dc2431f725798bd78c40a3b07e0a8054690fe82c",
+      "install": "success",
+      "typecheck": "TS2700 src/native/store.ts(153,52)",
+      "remaining_chain": "not executed"
+    },
+    {
+      "pr": 1169,
+      "run": 39126028608,
+      "job": 117671233509,
+      "checkout_sha": "23e0f50c0e7fb318d4d42c8421fcf821071ba3b8",
+      "install": "success",
+      "typecheck": "same TS2700",
+      "remaining_chain": "not executed"
+    }
+  ],
+  "local_commands": [
+    {
+      "command": "node --test tests/*.test.mjs",
+      "exit_code": 0,
+      "passed": 456,
+      "log": "node.txt"
+    },
+    {
+      "command": "python3 tests/migration.test.py",
+      "exit_code": 0,
+      "passed": 4,
+      "log": "migration.txt"
+    },
+    {
+      "command": "node tests/mutation-smoke.mjs",
+      "exit_code": 0,
+      "detected": 124,
+      "log": "mutations.txt"
+    }
+  ],
+  "independent_probe_groups": 6,
+  "independent_probe_exit": 0,
+  "erased_runtime_byte_identical": true,
+  "erased_runtime_sha256": "ddcaa66c6744ccc9db4f0f66f9960d4165156c4555adf924f0a1fbe455dd695a",
+  "current_fix_hosted_typecheck_build": "pending; no current-fix run yet",
+  "local_typescript_compiler": "unavailable; no download attempted",
+  "no_external_review_triggered": true,
+  "artifact_sha256": {
+    "node.txt": "ab1681c5c684384890fb8484155544c944e368918ab784ada44b5e20bd718ff3",
+    "independent-probe.json": "56c23d70853986197a6d72c22795f59673dfbafd31e8a844cee9b46f73f6c795",
+    "mutations.txt": "12d8248dc0e9aaf4d7dcb9ea09c7686012e122736f11a01505a4c53e748aa967",
+    "migration.txt": "d606de2c8feeb55869c4314faa3e37e8481a7705fa9001ddc307c4f85fceb85a",
+    "original-ci-logs.json": "63d75c9e8e2d98159f8f79cfd19f80d883433109e13d91bf78ce0d767d6774ee",
+    "independent-review.md": "9403f8040b7a6c433fe99764016af266c38d64db2453de00dfc9d5389543a78b"
+  }
+}

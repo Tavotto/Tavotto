@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import type { Page } from '@playwright/test'
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 
 /**
  * 新手黄金路径（渐进式编辑 P06）：普通编辑 → 排版往返 → 出版规范检查，三条各走一遍真实界面，
@@ -11,7 +11,8 @@ import { expect, test } from './fixtures'
  *   B 快编 → 回排版（对象不重复）→ 加第二张图 → 选两张 → 对齐 → 按画布导出 → 再进快编再回排版：文档逐项不变
  *   C 排版里选页面预设 + 出版规范 → 导出检查摘要 → 按画布导出并核对真实尺寸
  *
- * 进排版一律走 `[data-context-back]`；不使用「添加到画布」之类的按钮或其文案。
+ * 模式由画布上的图数推出：一张图 = 单图编辑，第二张进来才是多图排版（`addSecondFigure`，认 `[data-card-add]`，不认文案）；
+ * `[data-context-back]` 只是「退出图内编辑」的出口，不再是进排版的路。
  */
 
 const VIEWPORT = { width: 1440, height: 900 }
@@ -87,7 +88,7 @@ async function openRail(page: Page, id: string) {
   }).toPass({ timeout: 30_000 })
 }
 
-/** 退回排版（唯一出口锚点） */
+/** 退出图内编辑（唯一出口锚点；单图编辑里仍是单图编辑，多图排版里回到排版画布） */
 async function backToLayout(page: Page) {
   await page.locator('[data-context-back]').first().click()
   await expect(page.locator('[data-element-svg]')).toHaveCount(0)
@@ -285,7 +286,7 @@ test('B：快编 → 回排版（图不重复）→ 加第二张图 → 选两�
   await size.press('Enter')
   await waitExact(page, key0)
 
-  // 回排版：画布上已有这张图，对象数不变（1，不重复创建）
+  // 退出图内编辑：画布上已有这张图，对象数不变（1，不重复创建），仍是单图编辑
   await backToLayout(page)
   const objects = page.locator('[data-canvas-stage] [data-object-id]')
   await expect(objects).toHaveCount(1, { timeout: 30_000 })
@@ -293,11 +294,15 @@ test('B：快编 → 回排版（图不重复）→ 加第二张图 → 选两�
   const docId = await docIdP
   await savedDoc(page, a.baseURL, docId, 1)
 
-  // 加第二张图：双击另一张素材卡 = 打开它（文档里加一个面板），再回排版
+  // 加第二张图：「添加到画布」第二张进来 = 多图排版
+  await addSecondFigure(page, 'Fig2_yield.pdf')
+  await expect(objects).toHaveCount(2, { timeout: 30_000 })
+  // 第二张图还没渲染过：渲染回来会按真实图幅校正它的 w / h（文档里的合法修正）。先把它打开渲染一遍再退出，
+  // 让「往返不改文档」的快照取在校正之后（否则校正落在往返里，被误当成往返改了文档）
   await openRail(page, 'assets')
   await page.locator(CARD('Fig2_yield.pdf')).dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 120_000 })
-  await waitExact(page)
+  await page.waitForTimeout(1500) // 两张图在场，舞台上不止一个 [data-display]：不用 waitExact 的单例判据，等渲染校正落盘
   await backToLayout(page)
   await expect(objects).toHaveCount(2, { timeout: 30_000 })
   expect(await objects.evaluateAll((els) => els.map((e) => e.getAttribute('data-object-id')))).toContain(firstId)
@@ -336,11 +341,11 @@ test('B：快编 → 回排版（图不重复）→ 加第二张图 → 选两�
   expect(new Set(before.map((o) => o.id)).size).toBe(2)
   expect(before.some((o) => Array.isArray(o.overrides) && o.overrides.length > 0), '快编里的修改应当在 overrides 里').toBe(true)
 
-  // 再进快编（素材卡双击 = 打开；文档里已有这张图就只是聚焦，不会再建一个）再回排版：
+  // 再进图内编辑（素材卡双击 = 打开；文档里已有这张图就只是聚焦，不会再建一个；两张图 = 排版里的子状态）再退出：
   // 对象数、id、x/y/w/h、overrides 逐项不变
   await openRail(page, 'assets')
   await page.locator(CARD('Fig1_kinetics.pdf')).dblclick({ timeout: 30_000 })
-  await expect(page.locator('[data-workspace-context-bar]')).toHaveAttribute('data-workspace-mode', 'fast_edit', { timeout: 60_000 })
+  await expect(page.locator('[data-workspace-context-bar]')).toHaveAttribute('data-workspace-mode', 'layout', { timeout: 60_000 })
   await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 120_000 })
   // 文档里有两个面板，此刻舞台上不止一个 [data-display]：认模式锚点，不用 waitExact 的单例判据
   await backToLayout(page)
@@ -383,14 +388,15 @@ test('C：排版里选单栏页宽 + 出版规范 → 导出检查摘要 → 定
   await page.keyboard.press('Escape') // 关对话框
   await expect(page.locator('[data-dialog-scrim]')).toHaveCount(0)
 
-  // 放进一张图（素材卡双击 = 打开；回排版后画布上就是这张），页宽仍是单栏
+  // 放进两张图（素材卡双击 = 打开第一张；再「添加到画布」第二张 = 多图排版，才有页面与按画布导出），页宽仍是单栏
   await openRail(page, 'assets')
   await page.locator(CARD('Fig1_kinetics.pdf')).dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 120_000 })
   await waitExact(page)
   await backToLayout(page)
+  await addSecondFigure(page, 'Fig2_yield.pdf')
   const objects = page.locator('[data-canvas-stage] [data-object-id]')
-  await expect(objects).toHaveCount(1, { timeout: 30_000 })
+  await expect(objects).toHaveCount(2, { timeout: 30_000 })
 
   // 检查摘要：这张图在单栏页里有真实问题——计数芯片出现、不再是「未发现问题」，阻断项逐条可定位
   await page.keyboard.press('ControlOrMeta+e')
@@ -400,15 +406,15 @@ test('C：排版里选单栏页宽 + 出版规范 → 导出检查摘要 → 定
   const rows = dialog.locator('[data-blocking-issue]')
   expect(await rows.count()).toBeGreaterThanOrEqual(1)
 
-  // 定位第一条：对话框让开，工作区真的去了那个问题的位置
+  // 定位第一条：对话框让开，工作区真的去了那个问题的位置（两张图 = 排版里的图内编辑）
   await rows.first().locator('button').click()
   await expect(dialog).toHaveCount(0)
-  await expect(page.locator('[data-workspace-context-bar]')).toHaveAttribute('data-workspace-mode', 'fast_edit', { timeout: 30_000 })
+  await expect(page.locator('[data-workspace-context-bar]')).toHaveAttribute('data-workspace-mode', 'layout', { timeout: 30_000 })
   await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 60_000 })
 
   // 回排版导出（知情确认后）：按画布导出，请求里的页宽就是规范的单栏宽，落盘位图像素与之一致
   await backToLayout(page)
-  await expect(objects).toHaveCount(1)
+  await expect(objects).toHaveCount(2)
   const out = await exportWith(page, ['png'], `golden-c-${Date.now()}`)
   expect(out.request.scope).toBe('canvas')
   expect(out.request.canvas!.page_w_mm).toBeCloseTo(singleMm, 3)

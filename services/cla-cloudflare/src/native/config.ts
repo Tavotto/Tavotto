@@ -13,9 +13,12 @@ export interface LiveConfig extends Config {
   automaticPublishingEnabled?: boolean;
   agreementActivationEnabled?: boolean;
   agreementActivationHash?: string;
+  confirmationSlotEnabled?: boolean;
 }
 export interface Secrets { clientSecret: string; pkcs8: string; evidenceKey: string }
 export function validateLive(c: LiveConfig): void {
+  if(c.confirmationSlotEnabled!==undefined && typeof c.confirmationSlotEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
+  if(c.confirmationSlotEnabled===true && (!c.backgroundEnabled || !c.checkPublishingEnabled))throw new Rejected('confirmation_slot_recovery_required');
   if(c.agreementActivationEnabled!==undefined && typeof c.agreementActivationEnabled!=='boolean')throw new Rejected('live_configuration_invalid');
   if(c.agreementActivationEnabled===true && !/^[0-9a-f]{64}$/.test(c.agreementActivationHash ?? ''))throw new Rejected('agreement_activation_pin_required');
   validateConfig(c,c.agreementActivationEnabled===true);

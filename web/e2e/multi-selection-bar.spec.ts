@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 import { horizontalOffenders } from './overflow'
 import type { Page, Request } from '@playwright/test'
 
@@ -80,7 +80,8 @@ test('画布多选：浮动栏出现，左对齐真的对齐了', async ({ app, 
   await page.goto(a.baseURL)
   await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-exit-element-edit]')).toBeVisible({ timeout: 60_000 })
-  await page.locator('[data-context-back]').click()
+  // 文字工具与多选浮动栏是排版的事：第二张图进来才是多图排版
+  await addSecondFigure(page)
   await expect(page.locator('[data-object-id]').first()).toBeVisible()
 
   for (const [x, y, s] of [
@@ -258,7 +259,8 @@ test('画布多选全是文字、窗口很窄：压缩档仍放不下就降到�
   await page.goto(a.baseURL)
   await page.locator('[data-card="Fig1_kinetics.pdf"]').dblclick({ timeout: 30_000 })
   await expect(page.locator('[data-exit-element-edit]')).toBeVisible({ timeout: 60_000 })
-  await page.locator('[data-context-back]').click()
+  // 文字工具与多选浮动栏是排版的事：第二张图进来才是多图排版
+  await addSecondFigure(page)
   await expect(page.locator('[data-object-id]').first()).toBeVisible()
   for (const [x, y, s] of [
     [160, 140, 'alpha'],

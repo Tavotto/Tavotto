@@ -2,13 +2,14 @@ import type { CheckProposal, D1Database, D1Statement, Job, Packet, Role, Session
 import type {LiveConfig} from './config.ts';
 import {policyMaterial,packetAgreementMatches} from '../core/policy.ts';
 import {activationProjection,verifyActivationRecord} from './activation-record.ts';
+import {GitHub} from './github.ts';import type {NegativeWitness} from './github.ts';
 import { Rejected } from '../core/types.ts';
 import { canonical, randomToken } from '../core/crypto.ts';
 import { Store } from '../core/store.ts';
 import { BudgetDeferred, FREE_BUDGET, InvocationBudget, meterDatabase } from './budget.ts';
 
 export const PREFIX = 'cla_native_v2_';
-const objects = ['agreement_activations','activation_order','activations_update','activations_delete','head_requests','head_deliveries','head_deliveries_update','head_deliveries_delete','head_request_identity','head_revision','oauth_expiry','packets_subject_digest','authority','agreements','state','sessions','oauth_states','packets','intents','signatures',
+const objects = ['slot_policy','slot_policy_insert','slot_policy_update','slot_policy_delete','publication_slot_insert','publication_slot_enroll','publication_slot_release','publication_slot_update','publication_slot_delete','outbox_slot_delete','agreement_activations','activation_order','activations_update','activations_delete','head_requests','head_deliveries','head_deliveries_update','head_deliveries_delete','head_request_identity','head_revision','oauth_expiry','packets_subject_digest','authority','agreements','state','sessions','oauth_states','packets','intents','signatures',
   'eligibility_blocks','audit','targets','outbox','outbox_due','deliveries','published_checks','_guards',
   'revision_outbox','delivery_outbox','agreements_update','agreements_delete','packets_update','packets_delete',
   'signatures_update','signatures_delete','blocks_update','blocks_delete','audit_update','audit_delete',
@@ -23,8 +24,8 @@ export function namespace(db: D1Database): D1Database {
 export const DB_NOW = "CAST(strftime('%s','now') AS INTEGER)";
 export interface SignatureRow { role:Role; actor:number; evidence_cipher:string; evidence_hash:string; created:number }
 export interface Document {digest:string;kind:string;version:string;source_sha:string;content:string}
-export interface Publication {id:string;target_key:string;head_sha:string;revision:number;expires:number;phase:string;run_id:number|null;conclusion:'success'|'failure';proof_text:string;observation:string;position?:number;reconcile_attempts?:number}
-export interface RefreshRequest {target_key:string;source_attempt:string;revision:number;status:'pending'|'done'|'manual';attempts:number;due:number;reason:string}
+export interface Publication {id:string;target_key:string;head_sha:string;revision:number;expires:number;phase:string;run_id:number|null;conclusion:'success'|'failure';proof_text:string;observation:string;position?:number;reconcile_attempts?:number;confirmation_slot?:number|null}
+export interface RefreshRequest {target_key:string;source_attempt:string;revision:number;status:'pending'|'done'|'manual';attempts:number;due:number;reason:string;capacity_blocked?:boolean}
 export interface Progress {cursor:number;horizon:number}
 export interface ClaimedJob extends Job {lease_clock:number}
 export class LiveStore extends Store {
@@ -77,7 +78,20 @@ export class LiveStore extends Store {
   override async session(hash:string,_now:number):Promise<Session|null> {
     return this.stmt(`SELECT * FROM sessions WHERE token_hash=? AND expires>${DB_NOW}`,hash).first<Session>();
   }
+  positiveAdmission(enabled=this.expectedConfig?.confirmationSlotEnabled===true):string {
+    return enabled?`NOT EXISTS(SELECT 1 FROM slot_policy WHERE active_attempt IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE conclusion='success' AND phase!='resolved')`:
+      `NOT EXISTS(SELECT 1 FROM slot_policy)`;
+  }
+  private withdrawalPriority():string {
+    return `(${this.expectedConfig?.confirmationSlotEnabled===true?'1':'EXISTS(SELECT 1 FROM slot_policy)'}) AND p.conclusion='success'
+      AND p.phase!='manual' AND (p.phase!='resolved' OR p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))
+      AND (p.expires<=${DB_NOW} OR p.revision!=(SELECT revision FROM state WHERE id=1) OR (p.phase='resolved' AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1)))`;
+  }
   async beginPublication(key:string,check:CheckProposal):Promise<string> {
+    // This holder-triggered path has no shared background budget/send fence.
+    // Personal signing remains independent; positive publishing must use the
+    // measured background paths in slot mode. SQL also fences old binaries.
+    if(check.conclusion==='success' && this.expectedConfig?.confirmationSlotEnabled===true)throw new Rejected('holder_publication_requires_slot_background');
     const id=randomToken();
     // The durable issued record exists before HTTP. An uncertain attempt blocks later writes
     // for this target until an explicitly implemented reconciler resolves it.
@@ -91,6 +105,8 @@ export class LiveStore extends Store {
     ]); return id;
   }
   async beginAutomaticPublication(job:{request_key:string;pr:number;head:string;attempt:string},check:CheckProposal):Promise<string> {
+    const slot=this.expectedConfig?.confirmationSlotEnabled===true && check.conclusion==='success';
+    if(slot && !this.budget)throw new Rejected('invocation_budget_required');
     if(check.headSha!==job.head || check.proof.head_sha!==job.head || check.proof.pr!==job.pr || check.proof.kind!=='pr' ||
       check.text!=='tavotto-cla-v1\n'+canonical(check.proof) || check.proof.expires_at<=check.proof.issued_at || check.proof.expires_at>check.proof.issued_at+120 ||
       check.proof.expires_at>(check.authorityExpires ?? Number.MAX_SAFE_INTEGER))throw new Rejected('fresh_proof_unavailable');
@@ -105,6 +121,7 @@ export class LiveStore extends Store {
         key,json,check.proof.revision,check.proof.issued_at,check.proof.expires_at,job.request_key,job.pr,job.head,job.attempt,key,job.head,key),
       // The head claim's persisted lease outlives the invocation's 90-second cleanup
       // budget. A recovery tick/revision change cannot terminalize a live sender.
+      ...(slot?[this.stmt('INSERT INTO _guards(id,ok) VALUES(?,1)','confirmation-slot:'+id)]:[]),
       this.stmt(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,phase,created,updated,conclusion,proof_text,send_until)
         VALUES(?,?,?,?,?,'issued',${DB_NOW},${DB_NOW},?,?,(SELECT lease_until FROM head_requests WHERE request_key=? AND attempt=?))`,
         id,key,check.headSha,check.proof.revision,check.proof.expires_at,check.conclusion,check.text,job.request_key,job.attempt),
@@ -119,22 +136,24 @@ export class LiveStore extends Store {
   }
   async document(digest:string):Promise<Document|null> {return this.stmt('SELECT * FROM agreement_documents WHERE digest=?',digest).first<Document>();}
   async latestPublication(key:string):Promise<Publication|null> {
-    return this.stmt('SELECT * FROM publication_attempts WHERE target_key=? ORDER BY rowid DESC LIMIT 1',key).first<Publication>();
+    return this.stmt(`SELECT p.*,CASE WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) THEN 1 ELSE NULL END AS confirmation_slot FROM publication_attempts p WHERE target_key=? ORDER BY rowid DESC LIMIT 1`,key).first<Publication>();
   }
   async confirmedPublication(key:string,head:string,run:number,attempt:string):Promise<Publication|null> {
-    return this.stmt(`SELECT * FROM publication_attempts p WHERE target_key=? AND head_sha=? AND run_id=? AND id=? AND phase='confirmed'
+    return this.stmt(`SELECT p.*,CASE WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) THEN 1 ELSE NULL END AS confirmation_slot FROM publication_attempts p WHERE target_key=? AND head_sha=? AND run_id=? AND id=? AND phase='confirmed'
       AND rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha)`,key,head,run,attempt).first<Publication>();
   }
   async refreshRequest(job:Job):Promise<RefreshRequest|null> {
-    return this.stmt(`SELECT r.* FROM refresh_requests r WHERE r.target_key=? AND r.status='pending'
+    const row=await this.stmt(`SELECT r.*,CASE WHEN (${this.positiveAdmission()}) THEN 0 ELSE 1 END AS capacity_blocked FROM refresh_requests r WHERE r.target_key=? AND r.status='pending'
       AND r.revision=(SELECT revision FROM state WHERE id=1) AND r.due<=${DB_NOW} AND r.attempts<3
       AND r.source_attempt=coalesce((SELECT p.id FROM publication_attempts p WHERE p.target_key=r.target_key ORDER BY p.rowid DESC LIMIT 1),'')
       AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=r.target_key AND p.phase!='resolved')
+      AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=r.target_key AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))
       AND EXISTS(SELECT 1 FROM outbox o WHERE o.target_key=r.target_key AND o.lease=? AND o.generation=? AND o.lease_until>${DB_NOW})`,
-      job.target_key,job.lease,job.generation).first<RefreshRequest>();
+      job.target_key,job.lease,job.generation).first<Omit<RefreshRequest,'capacity_blocked'> & {capacity_blocked:number}>();
+    if(!row)return null;const {capacity_blocked,...request}=row;return {...request,...(capacity_blocked?{capacity_blocked:true}:{})};
   }
   async refreshPredecessor(key:string,head:string):Promise<Publication|null> {
-    return this.stmt(`SELECT p.* FROM publication_attempts p WHERE p.target_key=? AND p.head_sha=? AND p.phase='resolved'
+    return this.stmt(`SELECT p.*,CASE WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) THEN 1 ELSE NULL END AS confirmation_slot FROM publication_attempts p WHERE p.target_key=? AND p.head_sha=? AND p.phase='resolved'
       AND p.run_id IS NOT NULL AND p.run_id>0
       AND p.rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha)`,key,head).first<Publication>();
   }
@@ -149,6 +168,8 @@ export class LiveStore extends Store {
       job.target_key,job.lease,job.generation,r.revision,job.target_key,r.source_attempt,r.revision,r.attempts,r.due,r.reason,job.target_key,...values);
   }
   async beginFreshPublication(job:Job,r:RefreshRequest,check:CheckProposal,predecessor:Publication):Promise<string> {
+    const slot=this.expectedConfig?.confirmationSlotEnabled===true;
+    if(slot && !this.budget)throw new Rejected('invocation_budget_required');
     if(check.conclusion!=='success' || check.proof.head_sha!==check.headSha || check.proof.revision!==r.revision ||
       !Number.isSafeInteger(check.proof.issued_at) || !Number.isSafeInteger(check.proof.expires_at) ||
       check.proof.expires_at>check.proof.issued_at+120 || check.proof.expires_at<=check.proof.issued_at ||
@@ -162,8 +183,9 @@ export class LiveStore extends Store {
       ...this.refreshGuard(job,r,`${DB_NOW}<? AND ?<=${DB_NOW} AND EXISTS(SELECT 1 FROM publication_attempts p
         WHERE p.id=? AND p.target_key=? AND p.head_sha=? AND p.phase='resolved' AND p.run_id=? AND p.revision=?)`,
         [check.proof.expires_at,check.proof.issued_at,predecessor.id,job.target_key,predecessor.head_sha,predecessor.run_id,predecessor.revision]),
-      this.stmt(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,run_id,phase,created,updated,conclusion,proof_text)
-        VALUES(?,?,?,?,?,?,'issued',${DB_NOW},${DB_NOW},?,?)`,id,job.target_key,check.headSha,check.proof.revision,check.proof.expires_at,predecessor.run_id,check.conclusion,check.text),
+      ...(slot?[this.stmt('INSERT INTO _guards(id,ok) VALUES(?,1)','confirmation-slot:'+id)]:[]),
+      this.stmt(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,run_id,phase,created,updated,conclusion,proof_text,send_until)
+        VALUES(?,?,?,?,?,?,'issued',${DB_NOW},${DB_NOW},?,?,?)`,id,job.target_key,check.headSha,check.proof.revision,check.proof.expires_at,predecessor.run_id,check.conclusion,check.text,slot?job.lease_until:0),
       this.stmt("UPDATE refresh_requests SET status='done',reason='fresh_publication_issued' WHERE target_key=?",job.target_key),
     ]);return id;
   }
@@ -173,20 +195,26 @@ export class LiveStore extends Store {
       this.stmt('DELETE FROM outbox WHERE target_key=? AND lease=? AND generation=?',job.target_key,job.lease,job.generation)]);
   }
   async failRefresh(job:Job,r:RefreshRequest):Promise<void> {
+    const blocked=`NOT (${this.positiveAdmission()})`;
     await this.batch([...this.refreshGuard(job,r),
-      this.stmt(`UPDATE refresh_requests SET status=CASE WHEN attempts>=2 THEN 'manual' ELSE 'pending' END,
-        reason=CASE WHEN attempts>=2 THEN 'refresh_retry_exhausted' ELSE 'refresh_retry_pending' END,
-        attempts=min(3,attempts+1),due=${DB_NOW}+60 WHERE target_key=?`,job.target_key),
+      this.stmt(`UPDATE refresh_requests SET status=CASE WHEN ${blocked} THEN 'pending' WHEN attempts>=2 THEN 'manual' ELSE 'pending' END,
+        reason=CASE WHEN ${blocked} THEN 'confirmation_slot_wait' WHEN attempts>=2 THEN 'refresh_retry_exhausted' ELSE 'refresh_retry_pending' END,
+        attempts=CASE WHEN ${blocked} THEN attempts ELSE min(3,attempts+1) END,due=${DB_NOW}+CASE WHEN ${blocked} THEN 1 ELSE 60 END WHERE target_key=?`,job.target_key),
       this.stmt(`DELETE FROM outbox WHERE target_key=? AND lease=? AND generation=?
         AND EXISTS(SELECT 1 FROM refresh_requests r WHERE r.target_key=outbox.target_key AND r.status='manual')`,job.target_key,job.lease,job.generation),
       this.stmt(`UPDATE outbox SET due=(SELECT due FROM refresh_requests WHERE target_key=outbox.target_key),lease='',lease_until=0,attempts=0
         WHERE target_key=? AND lease=? AND generation=?`,job.target_key,job.lease,job.generation)]);
   }
+  async deferRefreshCapacity(job:Job,r:RefreshRequest):Promise<void> {
+    await this.batch([...this.refreshGuard(job,r),
+      this.stmt(`UPDATE refresh_requests SET due=${DB_NOW}+1,reason='confirmation_slot_wait' WHERE target_key=?`,job.target_key),
+      this.stmt(`UPDATE outbox SET due=${DB_NOW}+1,lease='',lease_until=0,attempts=0 WHERE target_key=? AND lease=? AND generation=?`,job.target_key,job.lease,job.generation)]);
+  }
   async settleFreshPublication(job:Job,id:string,phase:'reconcile'|'unknown',run:number|null=null):Promise<void> {
     // HTTP may finish after the revision/generation changes. Preserve its journal,
     // but never release or reschedule an outbox belonging to the newer generation.
     await this.batch([
-      this.stmt(`UPDATE publication_attempts SET phase=?,run_id=coalesce(?,run_id),updated=${DB_NOW},reconcile_due=0
+      this.stmt(`UPDATE publication_attempts SET phase=?,run_id=coalesce(?,run_id),updated=${DB_NOW},reconcile_due=0,send_until=0
         WHERE id=? AND target_key=? AND phase='issued' AND (? IS NULL OR run_id=?)`,phase,run,id,job.target_key,run,run),
       ...this.guard('changes()=1'),
       this.stmt(`UPDATE outbox SET due=0,lease='',lease_until=0,attempts=0
@@ -204,14 +232,15 @@ export class LiveStore extends Store {
     return (await this.stmt('SELECT cursor,horizon FROM reconciliation_progress WHERE target_key=?',job.target_key).first<Progress>())!;
   }
   private eligible(job:Job):string {
-    return `p.phase NOT IN ('resolved','manual') AND p.reconcile_attempts<3 AND p.reconcile_due IS NOT NULL
+    return `(p.phase NOT IN ('resolved','manual') OR (p.phase='resolved' AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))) AND p.reconcile_attempts<3 AND (p.reconcile_due IS NOT NULL OR p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))
       AND (p.phase!='issued' OR p.send_until<=${DB_NOW})
-      AND (p.reconcile_due<=${DB_NOW} OR (p.observation!='budget_deferred' AND p.reconcile_attempts=0 AND (p.observed_generation!=${job.generation} OR p.expires<=${DB_NOW})))
-      AND p.rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha)`;
+      AND (p.id IS NOT (SELECT active_attempt FROM slot_policy WHERE id=1) OR p.send_until<=${DB_NOW})
+      AND (p.reconcile_due<=${DB_NOW} OR (p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.phase='resolved') OR (p.observation!='budget_deferred' AND p.reconcile_attempts=0 AND (p.observed_generation!=${job.generation} OR p.expires<=${DB_NOW})))
+      AND (p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) OR p.rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha))`;
   }
   async publicationBatch(job:Job,progress:Progress):Promise<Publication[]> {
-    return (await this.stmt(`SELECT p.*,p.rowid AS position FROM publication_attempts p WHERE p.target_key=?
-      AND p.rowid>? AND p.rowid<=? AND ${this.eligible(job)} ORDER BY p.rowid LIMIT ${FREE_BUDGET.heads}`,job.target_key,progress.cursor,progress.horizon).all<Publication>()).results;
+    return (await this.stmt(`SELECT p.*,CASE WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) THEN 1 ELSE NULL END AS confirmation_slot,p.rowid AS position FROM publication_attempts p WHERE p.target_key=?
+      AND p.rowid>? AND p.rowid<=? AND ${this.eligible(job)} ORDER BY CASE WHEN ${this.withdrawalPriority()} THEN 0 ELSE 1 END,p.rowid LIMIT ${FREE_BUDGET.heads}`,job.target_key,progress.cursor,progress.horizon).all<Publication>()).results;
   }
   private advance(job:Job,p:Publication):D1Statement[] {
     if(!Number.isSafeInteger(p.position) || p.position!<1)throw new Rejected('progress_unavailable');
@@ -241,9 +270,13 @@ export class LiveStore extends Store {
     const progress=(await this.stmt('SELECT cursor,horizon FROM reconciliation_progress WHERE target_key=?',job.target_key).first<Progress>())!;
     const ahead=await this.stmt(`SELECT 1 FROM publication_attempts p WHERE p.target_key=? AND p.rowid>? AND p.rowid<=? AND ${this.eligible(job)} LIMIT 1`,job.target_key,progress.cursor,progress.horizon).first();
     const next=await this.stmt(`SELECT min(CASE WHEN p.phase='issued' AND p.send_until>${DB_NOW} THEN p.send_until
+      WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.send_until>${DB_NOW} THEN p.send_until
+      WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.phase='manual' THEN ${DB_NOW}+60
+      WHEN p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.phase='resolved' THEN 0
       WHEN p.observation!='budget_deferred' AND p.reconcile_attempts=0 AND (p.observed_generation!=? OR p.expires<=${DB_NOW}) THEN 0 ELSE p.reconcile_due END) AS due
-      FROM publication_attempts p WHERE p.target_key=? AND p.phase NOT IN ('resolved','manual') AND p.reconcile_attempts<3
-      AND p.rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha)`,job.generation,job.target_key).first<{due:number|null}>();
+      FROM publication_attempts p WHERE p.target_key=? AND (p.phase NOT IN ('resolved','manual') OR p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))
+      AND (p.reconcile_attempts<3 OR p.id=(SELECT active_attempt FROM slot_policy WHERE id=1))
+      AND (p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) OR p.rowid=(SELECT max(q.rowid) FROM publication_attempts q WHERE q.target_key=p.target_key AND q.head_sha=p.head_sha))`,job.generation,job.target_key).first<{due:number|null}>();
     const pending=`SELECT r.due FROM refresh_requests r WHERE r.target_key=outbox.target_key AND r.status='pending'
       AND r.revision=(SELECT revision FROM state WHERE id=1) AND r.attempts<3
       AND r.source_attempt=coalesce((SELECT p.id FROM publication_attempts p WHERE p.target_key=r.target_key ORDER BY p.rowid DESC LIMIT 1),'')
@@ -268,7 +301,7 @@ export class LiveStore extends Store {
             OR refresh_requests.source_attempt!=excluded.source_attempt OR refresh_requests.revision!=excluded.revision)`,revision,job.target_key),
       ]:[]),
       ...(next?.due===null && !ahead?[this.stmt(`DELETE FROM outbox WHERE target_key=? AND lease=? AND generation=?
-        AND NOT EXISTS(${pending})`,job.target_key,job.lease,job.generation)]:[]),
+        AND NOT EXISTS(${pending}) AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=outbox.target_key AND id=(SELECT active_attempt FROM slot_policy WHERE id=1))`,job.target_key,job.lease,job.generation)]:[]),
       this.stmt(`UPDATE outbox SET due=max(${DB_NOW}+1,coalesce((${pending}),?)),lease='',lease_until=0,attempts=0
         WHERE target_key=? AND lease=? AND generation=?`,ahead?0:next?.due ?? 0,job.target_key,job.lease,job.generation),
     ]);
@@ -277,7 +310,9 @@ export class LiveStore extends Store {
     const result=await this.db.batch<ClaimedJob>([this.stmt(`UPDATE outbox SET lease=?,lease_until=${DB_NOW}+120
       WHERE target_key=(SELECT target_key FROM outbox WHERE due<=${DB_NOW} AND lease_until<=${DB_NOW} AND attempts<3
       AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.phase='issued' AND p.send_until>${DB_NOW})
-      ORDER BY due,target_key LIMIT 1) AND lease_until<=${DB_NOW} RETURNING *,${DB_NOW} AS lease_clock`,randomToken())]);return result[0]?.results[0] ?? null;
+      AND NOT EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND p.id=(SELECT active_attempt FROM slot_policy WHERE id=1) AND p.send_until>${DB_NOW})
+      ORDER BY CASE WHEN EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=outbox.target_key AND ${this.withdrawalPriority()}) THEN 0 ELSE 1 END,
+      due,target_key LIMIT 1) AND lease_until<=${DB_NOW} RETURNING *,${DB_NOW} AS lease_clock`,randomToken())]);return result[0]?.results[0] ?? null;
   }
   override async owns(job:Job,_now:number):Promise<boolean> {
     return !!await this.stmt(`SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND lease_until>${DB_NOW} AND generation=?`,job.target_key,job.lease,job.generation).first();
@@ -286,13 +321,28 @@ export class LiveStore extends Store {
     await this.recordReconciliation(job,p,phase,run,observation,revision);
     await this.completeReconciliation(job,revision,due);
   }
-  async recordReconciliation(job:Job,p:Publication,phase:'confirmed'|'resolved'|'manual',run:number|null,observation:string,revision:number,due:number|null=null):Promise<void> {
+  async recordReconciliation(job:Job,p:Publication,phase:'confirmed'|'resolved'|'manual',run:number|null,observation:string,revision:number,due:number|null=null,
+    release?:{source:GitHub;witness:NegativeWitness}):Promise<void> {
+    const owned=p.confirmation_slot===1;let negative='';
+    if(owned && phase==='resolved'){
+      if(!release || !(release.source instanceof GitHub) || !this.budget || release.source.budget!==this.budget ||
+        this.expectedConfig && release.source.c.repositoryId!==this.expectedConfig.repositoryId)throw new Rejected('fresh_negative_release_required');
+      negative=release.source.consumeNegativeWitness(release.witness,p,job,revision);
+      if(JSON.parse(negative).run_id!==run)throw new Rejected('fresh_negative_release_required');
+    }else if(release)throw new Rejected('fresh_negative_release_required');
     await this.batch([
       ...this.guard(`EXISTS(SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND lease_until>${DB_NOW} AND generation=?)
         AND (SELECT revision FROM state WHERE id=1)=?`,job.target_key,job.lease,job.generation,revision),
-      this.stmt(`UPDATE publication_attempts SET phase=?,run_id=?,observation=?,updated=${DB_NOW},reconcile_due=?,reconcile_attempts=0,observed_generation=? WHERE id=?
+      this.stmt(`UPDATE publication_attempts SET phase=?,run_id=CASE WHEN id=(SELECT active_attempt FROM slot_policy WHERE id=1) THEN coalesce(?,run_id) ELSE ? END,
+        observation=?,updated=${DB_NOW},reconcile_due=?,reconcile_attempts=0,observed_generation=? WHERE id=?
         AND phase=? AND (phase!='issued' OR send_until<=${DB_NOW})
-        AND (?!='confirmed' OR (revision=? AND expires>${DB_NOW}))`,phase,run,observation,due,job.generation,p.id,p.phase,phase,revision),
+        AND target_key=? AND head_sha=? AND revision=? AND expires=? AND proof_text=? AND run_id IS ?
+        AND CASE WHEN id=(SELECT active_attempt FROM slot_policy WHERE id=1) THEN 1 ELSE 0 END=?
+        AND (id IS NOT (SELECT active_attempt FROM slot_policy WHERE id=1) OR send_until<=${DB_NOW})
+        AND (?='' OR (${DB_NOW}>=json_extract(?,'$.observed_at') AND ${DB_NOW}<json_extract(?,'$.valid_until')))
+        AND (?!='confirmed' OR (revision=? AND expires>${DB_NOW}))`,phase,run,run,negative||observation,due,job.generation,
+        p.id,p.phase,p.target_key,p.head_sha,p.revision,p.expires,p.proof_text,p.run_id,owned?1:0,
+        negative,negative,negative,phase,revision),
       ...this.guard('changes()=1'),
       ...(p.position===undefined?[]:this.advance(job,p)),
     ]);

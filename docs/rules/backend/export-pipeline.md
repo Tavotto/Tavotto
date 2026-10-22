@@ -100,6 +100,25 @@
     带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,
     profile_id}`（缺省 standard，老客户端等价）；strict 的阈值只从 `profilestore.resolve_spec` 来。细则在 `rendercore.md`。
 
+## 位图像素预算：两条路径各一份，互不替代
+
+- **worker 直出位图**（`figsession.do_export` → `Figure.savefig`，写回事务的 600 dpi PNG 目标走这条）：
+  Agg **整幅 RGBA 一次分配**，PNG / TIFF / JPEG 编码再各拷一份。预算 `figcapture.MAX_EXPORT_RASTER_PIXELS`
+  = 1 亿像素（≈ 400 MB 栅格，峰值约 3 倍），格式闭集 `RASTER_EXPORT_FORMATS`（pdf / svg / eps 等矢量格式不检查）。
+  **判据的主语是 savefig 即将分配的每一块栅格**：最终栅格取 `bbox_inches` 生效后的真实尺寸
+  （frame、脚本设的 `savefig.bbox="tight"` 都按 `print_figure` 同一做法量，tight 先在导出 dpi 下走一遍不出图的
+  draw 再取 `get_tightbbox` + `pad_inches`，看护用例与 `savefig` 真写出的像素逐一相等）；名义画布（figsize×dpi）
+  在有布局引擎或 tight 时也会被分配，同样核。检查在 `overrides.apply` 之后、`mkdir` / 任何写入之前
+  （`figsession._check_export_raster_budget`），超了抛 `ExportRasterTooLarge` → 协议错误
+  `export_raster_too_large`（extra：`width` / `height` / `max_pixels`，非 retryable）→ `pool.WorkerError`
+  → `pool.recovery_params` → `app._worker_error_payload` 的 `params`；写回事务沿用既有 409 + `stage: "verify"`、原件零改动。
+  **不降 dpi、不缩尺寸、不放行「差一点」**；预算常量没有对外调参入口（测试改模块常量）。
+- **RenderCore 最终导出**（`rendercore/renderchild.py` 的 `DEFAULT_MAX_PIXELS` / `DEFAULT_MAX_TOTAL_PIXELS`，
+  条带栅格）：PDFium 按带渲染、整页不落内存，上限更高、模型不同。**它不能证明 worker 直出安全，反之亦然**；
+  改任一份预算不连带另一份。
+- 看护：`tests/test_worker_export_pixel_budget.py`、`tests/test_write_back.py`（超预算 409 零改动）、
+  `tests/test_error_codes.py`（文案两种语言）。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

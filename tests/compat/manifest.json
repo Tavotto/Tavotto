@@ -6847,6 +6847,464 @@
       "browser_eligible": false,
       "smoke": false,
       "notes": "双曲线 + 图例——常量 for 循环 + entry=render。"
+    },
+    {
+      "id": "art_linecoll_alpha",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_collection_alpha.py",
+      "stem": "art_linecoll_alpha",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 2,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "linecoll",
+          "line",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.linecoll_0",
+            "color"
+          ],
+          [
+            "axes_0.linecoll_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.linecoll_0",
+          "prop": "color",
+          "value": "#d62728"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "逐段 alpha 的 LineCollection（同一色相、alpha 表示强弱），旁边有同色同名的独立 marker、图例 proxy 与自定义 handler。改线组颜色必须保留每段源 alpha，且同色的独立 marker / 图例项不跟着变（Collection 改色保留源 alpha，ADR 0034 的图例绑定规则）。"
+    },
+    {
+      "id": "art_scatter_rgba",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_collection_alpha.py",
+      "stem": "art_scatter_rgba",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 2,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "scatter",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.scatter_0",
+            "facecolor"
+          ],
+          [
+            "axes_0.scatter_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.scatter_0",
+          "prop": "facecolor",
+          "value": "#d62728"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "逐点 RGBA 面色的散点：facecolors 是 (N,4) 数组，每点 alpha 不同。改 facecolor 同一条保留源 alpha 的规则，alpha=数组不新增标量控件。"
+    },
+    {
+      "id": "res_radar",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_research_patterns.py",
+      "stem": "res_radar",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "patch",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.patches_0",
+            "facecolor"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.patches_0",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "科研雷达图：polar 轴 + 闭合折线 + fill 半透明面 + set_thetagrids 自定义角度标签。"
+    },
+    {
+      "id": "res_bars_err_hatch",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_research_patterns.py",
+      "stem": "res_bars_err_hatch",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "errorbar",
+          "legend",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_1",
+            "facecolor"
+          ],
+          [
+            "axes_0.errorbar_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_1",
+          "prop": "facecolor",
+          "value": "#775599"
+        },
+        {
+          "gid": "axes_0.errorbar_0",
+          "prop": "color",
+          "value": "#123456"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "分组柱状图：yerr 误差棒 + capsize + 逐组 hatch + 黑色描边，普通 legend。误差棒是 ErrorbarContainer，不能被当成另一组柱。"
+    },
+    {
+      "id": "res_legend_axes",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_research_patterns.py",
+      "stem": "res_legend_axes",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "bar_series",
+          "errorbar",
+          "legend"
+        ],
+        "editable": [
+          [
+            "axes_0.barseries_1",
+            "facecolor"
+          ],
+          [
+            "axes_1.legend",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.barseries_1",
+          "prop": "facecolor",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "图例独占一个 Axes：lax.axis('off') + legend(handles=[Patch…])，主图和图例分在两个 Axes 里。图例所在的 Axes 没有任何数据 artist。"
+    },
+    {
+      "id": "res_heatmap_annot",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_research_patterns.py",
+      "stem": "res_heatmap_annot",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 4,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "image",
+          "text",
+          "colorbar",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.images_0",
+            "cmap"
+          ],
+          [
+            "axes_0.texts_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.images_0",
+          "prop": "cmap",
+          "value": "magma"
+        },
+        {
+          "gid": "axes_0.texts_0",
+          "prop": "color",
+          "value": "#804000"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "热图：imshow + 逐格 ax.text 数值注释（颜色按底色深浅选黑/白）+ colorbar。"
+    },
+    {
+      "id": "lay_twin_manual",
+      "category": "axes_layout",
+      "script": "cases/axes_layout/al_twin_manual.py",
+      "stem": "lay_twin_manual",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_1.lines_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_1.lines_0",
+          "prop": "color",
+          "value": "#775599"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "twinx 孪生轴 + subplots_adjust 手动留白（没有 layout engine），右侧第二 y 轴落在手动边距里。"
+    },
+    {
+      "id": "shape_helper_shadows_pypi",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/helper_shadows_pypi.py",
+      "stem": "shape_helper_shadow",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.lines_0",
+            "linewidth"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        },
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "linewidth",
+          "value": 2.75
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "脚本 import 的同目录 helper 叫 scienceplots.py，与 PyPI 上的 SciencePlots 同名（本机没装）：它是本地文件，不是缺依赖，不能被依赖检测拦成 missing_dependency。",
+      "extra_files": {
+        "scienceplots.py": "cases/script_shapes/shadow_helper/scienceplots.py"
+      }
+    },
+    {
+      "id": "shape_same_stem_formats",
+      "category": "script_shapes",
+      "script": "cases/script_shapes/same_stem_formats.py",
+      "stem": "panel",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 2,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "两张不同的 Figure 写同一个 stem 的不同格式：panel.png（第一张）与 panel.pdf（第二张，随后 plt.close）。原生留下 2 张图；Tavotto 捕获 panel 与 panel-2（`figcapture.adopt_displaced_writers`），原件各归各的。"
+    },
+    {
+      "id": "art_3d_surface_scatter",
+      "category": "core_artists",
+      "script": "cases/core_artists/ca_surface_scatter3d.py",
+      "stem": "art_3d_surface_scatter",
+      "entry": "main",
+      "tier": "expected",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes3d",
+          "fill",
+          "scatter",
+          "title"
+        ],
+        "editable": [
+          [
+            "axes_0.scatter_1",
+            "facecolor"
+          ],
+          [
+            "axes_0.fill_0",
+            "alpha"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.scatter_1",
+          "prop": "facecolor",
+          "value": "#775599"
+        },
+        {
+          "gid": "axes_0.fill_0",
+          "prop": "alpha",
+          "value": 0.8
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "三维曲面（plot_surface + cmap）叠三维散点（固定数组，无随机数）。数据图元在 3D 轴上只给样式字段（ADR 0135），不包装成二维可编辑对象。"
+    },
+    {
+      "id": "sci_usetex",
+      "category": "scientific_stack",
+      "script": "cases/scientific_stack/sci_usetex.py",
+      "stem": "sci_usetex",
+      "entry": "main",
+      "tier": "exploratory",
+      "discovery": "discoverable",
+      "expected_figures": 1,
+      "expected": {},
+      "semantic_expectations": {
+        "roles_present": [
+          "axes",
+          "line",
+          "title",
+          "axis_label"
+        ],
+        "editable": [
+          [
+            "axes_0.lines_0",
+            "color"
+          ],
+          [
+            "axes_0.xlabel",
+            "fontsize"
+          ]
+        ]
+      },
+      "mutations": [
+        {
+          "gid": "axes_0.lines_0",
+          "prop": "color",
+          "value": "#123456"
+        }
+      ],
+      "browser_eligible": false,
+      "smoke": false,
+      "notes": "text.usetex=True 的图：公式经系统 TeX 工具链排版。托管 CI runner 没有 latex，脚本在 execute 阶段失败；有 TeX 的机器上全阶段通过。",
+      "classification": "environment_dependency",
+      "reason": "usetex 需要系统 TeX 工具链（latex 及 dvipng / dvips），托管 CI runner 与普通开发机未必装。缺它时 execute 阶段就失败，那是环境前提不是引擎缺陷；装了的机器上按全阶段正常判定。真实 TeX 路径另有 tests/test_tex_toolchain_real.py 看护。"
     }
   ]
 }

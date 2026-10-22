@@ -8,7 +8,7 @@
  * | 第一次进入快速编辑 | 修改会保存到当前文档 |
  * | 第一次多选 | 选区附近可直接对齐和分布 |
  * | 第一次出现问题 | 左侧「问题」可定位到对象和字段 |
-| 第一次**主动**从快速编辑回到排版（`returnToLayout`） | 纸面就是导出的 Figure 尺寸（锚在右栏「画布」页签，见下） |
+| 第一次因第二张图进来而进入多图排版 | 纸面就是导出的 Figure 尺寸（锚在右栏「画布」页签，见下） |
  *
  * 判据来自活动信号 + store 现状；「看过没有」记在 onboardingStore（本机，
  * 不依赖遥测同意）。**教程进行中不出提示**——coachmark 已经在说话了。
@@ -93,8 +93,8 @@ function onSignal(d: ActivityDetail): void {
     case 'workspace.mode_changed':
       if (d.mode === 'fast_edit') showHint('fast_edit_entered')
       return
-    case 'workspace.returned_to_layout':
-      // 只认 `returnToLayout` 发的这一枪：启动恢复 / 换文档 / 修剪 / 定位问题的被动退出都不发它
+    case 'workspace.entered_layout':
+      // 只认第二张图把单图编辑切成多图排版的那一枪：启动恢复 / 换文档 / 切画布 / 删光都不发它
       showHint('layout_page_bounds')
       return
     default:

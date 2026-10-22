@@ -90,3 +90,15 @@ trusted-main CI bootstrap requires code to land before wiring; native merge-grou
 proof support is still absent. Offline tests do not establish legal effect or
 live acceptance. Real registrations, control signatures and resource acceptance
 remain separately approved operations.
+
+A separately default-disabled confirmation-slot candidate serializes positive
+issued attempts through one permanent D1 latch and nullable active pointer. Its
+original issued batch adds one intent statement; same-head work becomes
+14 + qualificationSQL*N and automatic new-head work adds one statement. The
+conservative later-confirmation bound remains 16 + qualificationSQL*N. Fresh
+GET-backed, invocation-private negative witnesses and guarded settlement release
+capacity, never elapsed time or positive confirmation. Old binaries/flag-off
+positive paths are fenced after enrollment; compatible independent recovery and
+personal signing remain. Details and acceptance limits live in
+`docs/implementation/cla-confirmation-slot/README.md`. No live upgrade, real
+permission, authority or deployment is approved by this candidate.

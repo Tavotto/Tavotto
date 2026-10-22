@@ -279,6 +279,7 @@ _ENGINE_MODULES = (
     "scriptinput",
     "runtime",
     "writetripwire",
+    "texdiag",
 )
 _PKG = bridgeboot.load_engine_modules(str(HERE), _ENGINE_MODULES)
 
@@ -1004,6 +1005,9 @@ class Worker(wireproto.V1Handler):
                 )
                 if k in err
             }
+            tex = self._sensitive_tex_fact(err)
+            if tex:
+                safe["tex"] = tex
             safe.update(
                 message="Sensitive run failed; script diagnostics were omitted.",
                 traceback=_PRIVATE_OUTPUT_NOTICE.strip(),
@@ -1389,6 +1393,18 @@ class Worker(wireproto.V1Handler):
         # 只在脚本真的 import 过 pyplot 时才问它：没 import 过就不可能有 pyplot
         # figure，而在这里 import 一次要白付几十毫秒（还会给纯 OO API 的脚本
         # 凭空建一个 figure 管理器）。
+        # 写了文件却因 stem 被别的图持有而没认领的图（`panel.png` 甲 / `panel.pdf` 乙）：先于 pyplot 兜底补进来，
+        # 三条入口同一个函数、同一个顺序
+        figcapture.adopt_displaced_writers(
+            self.session.savefig_writers,
+            self.session.capture,
+            self.session.capture_source,
+            self.session.savefig_calls,
+            self.session.savefig_extras,
+            self.session.savefig_file_stem,
+        )
+        # 存盘后又被脚本改过的图（ADR 0139 §八）：脚本刚跑完、Tavotto 还没碰任何一张图，此刻判
+        figcapture.note_modified_after_save(self.session.capture, self.session.capture_source)
         _plt = sys.modules.get("matplotlib.pyplot")
         if _plt is not None:
             fallback, dropped = figcapture.collect_pyplot_figures(
@@ -1659,6 +1675,23 @@ class Worker(wireproto.V1Handler):
             cur = cur.__cause__ or cur.__context__
             seen += 1
         return {}
+
+    def _sensitive_tex_fact(self, err: dict) -> dict:
+        """敏感运行丢掉自由文本**之前**，先把 TeX 工具链失败的结构化事实（`texdiag`）留下来——否则父进程
+        只剩一句占位，缺 latex / 缺宏包又退回成笼统的脚本错误。只带闭集与白名单清洗过的值：`line`（LaTeX
+        的 `! …` 一行，可能引到图内文字）一律不带；文件名与任一敏感 token 有关（casefold 子串，任一方向，
+        与缺依赖模块名同一判据）也不带。build / render / export 的失败都经这里，与阶段无关。"""
+        fact = _PKG.texdiag.classify(f"{err.get('message') or ''}\n{err.get('traceback') or ''}")
+        if fact is None:
+            return {}
+        out = fact.as_fact()
+        out.pop("line", None)
+        name = str(out.get("file") or "").casefold()
+        if name and any(
+            (t := str(token).casefold()) and (t in name or name in t) for token in self.script_argv
+        ):
+            out.pop("file", None)
+        return out
 
     def _module_attributable_to_script(self, name: str) -> bool:
         folded = name.casefold()

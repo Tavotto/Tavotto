@@ -131,8 +131,8 @@ describe('命令集', () => {
     }
   })
 
-  // Codex #833：快速编辑这一屏只画正在编辑的那张图；选区里只有看不见的版面对象时不出现，有那张图时只框它
-  it('「缩放到选中」在快速编辑里只认正在编辑的那张图', async () => {
+  // 2026-10-21：单图编辑的舞台也画这张画布上的标注，选区里的对象都看得见 → 与排版同一口径，框选区的并集
+  it('「缩放到选中」在单图编辑里与排版同口径：选了标注就能缩放，选图 + 标注框并集', async () => {
     const text: TextObject = {
       id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
       color: '#000', align: 'left', x: 10, y: 20, w: 30, h: 8,
@@ -151,13 +151,13 @@ describe('命令集', () => {
       useSelectionStore.setState({ ids: ['t1'] })
       mount()
       expect(cmd()).not.toBeNull()
-      // 进快速编辑本身就让命令重算（面板开着也一样）
+      // 进单图编辑后标注仍看得见，命令照常可用
       act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
-      expect(cmd()).toBeNull()
+      expect(cmd()).not.toBeNull()
       act(() => useSelectionStore.setState({ ids: ['t1', 'p1'] }))
       expect(cmd()).not.toBeNull()
       act(() => cmd()!.click())
-      expect(spy).toHaveBeenCalledWith({ x: 100, y: 80, w: 40, h: 30 })
+      expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 130, h: 90 })
     } finally {
       useSelectionStore.setState({ ids: [] })
       useWorkspaceStore.getState().clear()
@@ -165,9 +165,9 @@ describe('命令集', () => {
     }
   })
 
-  // Codex #833（数据丢失）：快速编辑这一屏只画那张图——「全选」只收它，不把整版看不见的对象选上（接着 Delete
-  // 就删掉它们）；「适应画布」与 ⌘1 / 舞台双击同一个取景框，适应那张图。对照组：排版里全选整版、适应页面
-  it('「全选」与「适应画布」在快速编辑里只认正在编辑的那张图', async () => {
+  // 2026-10-21：单图编辑的舞台画着这张画布上的全部对象——「全选」收全部可选对象（与排版同口径，不再只收那张图）；
+  // 「适应画布」与 ⌘1 / 舞台双击同一个取景框：图 ∪ 标注的包围盒。对照组：排版里全选整版、适应页面
+  it('「全选」与「适应画布」在单图编辑里：全选整张画布，适应图 ∪ 标注', async () => {
     const text: TextObject = {
       id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
       color: '#000', align: 'left', x: 10, y: 20, w: 30, h: 8,
@@ -199,11 +199,11 @@ describe('命令集', () => {
       useWorkspaceStore.getState().enterFastEdit('p1')
       useSelectionStore.setState({ ids: [] })
       run('select-all')
-      expect(useSelectionStore.getState().ids).toEqual(['p1'])
+      expect(useSelectionStore.getState().ids).toEqual(['t1', 'p1'])
       run('fit')
-      // 那张图本身的矩形（含原点），不是 (0,0) 到它右下角的 140×110（Codex #833）
+      // 图 ∪ 标注的包围盒（含原点），不是 (0,0) 到右下角（Codex #833）
       expect(fit).toHaveBeenCalledTimes(1)
-      expect(fitRect).toHaveBeenLastCalledWith({ x: 100, y: 80, w: 40, h: 30 })
+      expect(fitRect).toHaveBeenLastCalledWith({ x: 10, y: 20, w: 130, h: 90 })
     } finally {
       useSelectionStore.setState({ ids: [] })
       useWorkspaceStore.getState().clear()

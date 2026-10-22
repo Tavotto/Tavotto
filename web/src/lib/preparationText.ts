@@ -47,6 +47,8 @@ export type PrepPrimary =
   | { kind: 'background' }
   /** 跑完没图：知道了，收起卡片 */
   | { kind: 'dismiss' }
+  /** 位图库画的图：让改图助手另写一份 Matplotlib 版新脚本（ADR 0143）；原脚本不动，用户对照后才采用 */
+  | { kind: 'convert'; script: string; library: string; path: string | null }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
 export type PrepButton = 'run' | 'openRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
@@ -63,6 +65,8 @@ export interface PrepView {
   /** 卡片标题：`workspace:prep.line.<key>`（一句话，不带句号） */
   sentence: { key: string; values: Record<string, unknown> }
   primary: PrepPrimary | null
+  /** 主按钮旁边保持原样的次按钮（位图提示卡：只当图片用 / 打开素材库）；多数卡没有 */
+  secondary: PrepPrimary | null
   /** 主按钮在但还不能按（必填参数没填齐 / 运行目录还没选） */
   primaryDisabled: boolean
   /** 主按钮旁边那颗：`later` = 稍后（缩成角标）、`stop` = 停止（会话的 cancel，文字按钮） */
@@ -131,7 +135,7 @@ export const fellBack = (report: PreparationReport): boolean => {
   )
 }
 
-type Extra = Partial<Pick<PrepView, 'input' | 'argsOpen' | 'primaryDisabled' | 'ghost' | 'step' | 'tone' | 'slot'>>
+type Extra = Partial<Pick<PrepView, 'secondary' | 'input' | 'argsOpen' | 'primaryDisabled' | 'ghost' | 'step' | 'tone' | 'slot'>>
 
 /** 有主按钮、又不是正在跑的卡，旁边都给一颗「稍后」（缩成角标） */
 const view = (
@@ -144,6 +148,7 @@ const view = (
   state,
   sentence: { key, values },
   primary,
+  secondary: extra?.secondary ?? null,
   primaryDisabled: extra?.primaryDisabled ?? false,
   ghost: extra && 'ghost' in extra ? (extra.ghost ?? null) : primary ? 'later' : null,
   step: extra?.step ?? 0,
@@ -287,7 +292,9 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
         if (raster) {
           // 脚本自己用位图库画成了图片：说出原因；后端确认那张图落在素材库盘点范围内（in_project）才给「打开素材库」，
           // 否则（绝对路径 / 沙盒 / 盘点不认的格式 / 判不出）素材库里找不到它，只给「知道了」。其余折叠进详情
-          return view('no_figure_raster', 'noFigureRaster', { ...v, library: RASTER_LIBRARY_NAME[raster.library] ?? raster.library }, raster.in_project === true ? { kind: 'open_assets' } : { kind: 'dismiss' }, {
+          return view('no_figure_raster', 'noFigureRaster', { ...v, library: RASTER_LIBRARY_NAME[raster.library] ?? raster.library }, { kind: 'convert', script: report.target.script ?? '', library: raster.library, path: raster.path ?? null }, {
+            // 次按钮保持现有：素材库里找得到就「打开素材库」，否则「只当图片用」（收起卡片）
+            secondary: raster.in_project === true ? { kind: 'open_assets' } : { kind: 'dismiss' },
             ghost: null,
             tone: 'mute',
             step: 1,

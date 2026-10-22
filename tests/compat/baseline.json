@@ -66,6 +66,20 @@
         "fidelity": true
       }
     },
+    "art_3d_surface_scatter": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
     "art_3d_wireframe": {
       "classification": "full_support",
       "stages": {
@@ -418,6 +432,20 @@
         "fidelity": true
       }
     },
+    "art_linecoll_alpha": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
     "art_matshow": {
       "classification": "full_support",
       "stages": {
@@ -559,6 +587,20 @@
       }
     },
     "art_scatter": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "art_scatter_rgba": {
       "classification": "full_support",
       "stages": {
         "discover": true,
@@ -1091,6 +1133,20 @@
         "fidelity": true
       }
     },
+    "lay_twin_manual": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
     "mm_annotated_helper": {
       "classification": "full_support",
       "stages": {
@@ -1455,6 +1511,62 @@
         "fidelity": true
       }
     },
+    "res_bars_err_hatch": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "res_heatmap_annot": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "res_legend_axes": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "res_radar": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
     "sci_cjk": {
       "classification": "full_support",
       "stages": {
@@ -1662,6 +1774,22 @@
       "reason": "seaborn 是内置渲染 runtime 里有、但普通开发机与 PR 档 CI 未必装的可选依赖（packaging/runtime-lock.json 锁着 0.13.2）。缺它时脚本以 missing_dependency 开局，那是环境前提不是引擎缺陷。装了 seaborn 的目标上这几条按 full/partial 正常判定。",
       "note": "本次环境满足依赖，全部阶段通过"
     },
+    "sci_usetex": {
+      "classification": "environment_dependency",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      },
+      "reason": "usetex 需要系统 TeX 工具链（latex 及 dvipng / dvips），托管 CI runner 与普通开发机未必装。缺它时 execute 阶段就失败，那是环境前提不是引擎缺陷；装了的机器上按全阶段正常判定。真实 TeX 路径另有 tests/test_tex_toolchain_real.py 看护。",
+      "note": "本次环境满足依赖，全部阶段通过"
+    },
     "shape_argv_isolation": {
       "classification": "full_support",
       "stages": {
@@ -1761,6 +1889,20 @@
       }
     },
     "shape_fstring_output": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_helper_shadows_pypi": {
       "classification": "full_support",
       "stages": {
         "discover": true,
@@ -2027,6 +2169,20 @@
       }
     },
     "shape_same_figure_two_formats": {
+      "classification": "full_support",
+      "stages": {
+        "discover": true,
+        "execute": true,
+        "capture": true,
+        "open": true,
+        "semantic": true,
+        "edit": true,
+        "replay": true,
+        "export": true,
+        "fidelity": true
+      }
+    },
+    "shape_same_stem_formats": {
       "classification": "full_support",
       "stages": {
         "discover": true,

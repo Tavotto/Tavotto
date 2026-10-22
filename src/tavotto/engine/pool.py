@@ -735,6 +735,9 @@ def recovery_params(exc: "WorkerError") -> dict:
     if exc.code in texdiag.ERROR_CODES:
         # TeX 工具链（`texdiag`）：缺的命令 / 文件名（白名单清洗过）与 LaTeX 的那一行 `! …`
         return texdiag.params_of(extra.get("tex"))
+    if exc.code == figcapture.EXPORT_RASTER_TOO_LARGE_CODE:
+        # 宽 / 高 / 上限都是整数事实，没有路径与内容；缺字段（旧 worker 之类）就不捏造
+        return {k: int(extra[k]) for k in ("width", "height", "max_pixels") if k in extra}
     if exc.code == ARGUMENTS_ERROR_CODE:
         params = {}
         if extra.get("argv_count"):
@@ -1174,16 +1177,22 @@ def _engine_files_incomplete_error(mod: str, traceback_text: str) -> "WorkerErro
     return err
 
 
-def _tex_error(message: str, traceback_text: str) -> "WorkerError | None":
+def _tex_error(message: str, traceback_text: str, extra=None) -> "WorkerError | None":
     """TeX 工具链的失败 → 各自的稳定码（`texdiag`）；不是 TeX 的回 None。
 
     **先于缺依赖判**：LaTeX 日志是一大段外部文本，TeX 的失败也绝不是「pip 装个包」能修的——
-    不能让它落进 `missing_dependency` 的一键安装出口。原始消息与 traceback 原样保留。"""
+    不能让它落进 `missing_dependency` 的一键安装出口。原始消息与 traceback 原样保留。
+    敏感运行的 worker 丢掉了自由文本，只留结构化的 `tex`（`worker._sensitive_tex_fact`）：文本认不出时用它。"""
     fact = texdiag.classify(f"{message}\n{traceback_text}")
-    if fact is None:
-        return None
-    err = WorkerError(message, traceback_text, code=texdiag.code_for(fact.as_fact()))
-    err.extra = {"tex": fact.as_fact()}
+    if fact is not None:
+        tex = fact.as_fact()
+    else:
+        given = extra.get("tex") if isinstance(extra, dict) else None
+        if not (isinstance(given, dict) and given.get("kind") in texdiag.KINDS):
+            return None
+        tex = texdiag.clean_fact(given)
+    err = WorkerError(message, traceback_text, code=texdiag.code_for(tex))
+    err.extra = {"tex": tex}
     return err
 
 
@@ -1712,6 +1721,8 @@ ERROR_CODES = (
     PROJECT_PYTHON_UNUSABLE_CODE,
     ENGINE_FILES_INCOMPLETE_CODE,
     WRITE_OUTSIDE_ROOTS_CODE,
+    # worker 直出位图超像素预算（`figcapture.check_export_raster`）：写回事务的 PNG 目标走到这里
+    figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
 )
 
 #: 自动记住的项目解释器被判失效并作废的记录：项目键 → {python, reason, trigger}。给准备
@@ -2686,7 +2697,7 @@ class EngineWorker:
             exc = _engine_files_incomplete_error(engine_mod, tb)
             exc.script_name = self.script_name
             return exc
-        tex = _tex_error(msg, tb)
+        tex = _tex_error(msg, tb, err if isinstance(err, dict) else None)
         if tex is not None:
             tex.script_name = self.script_name
             return tex
@@ -3160,7 +3171,7 @@ def _worker_error(
     engine_mod = missing_engine_module(f"{message}\n{traceback_text}")
     if engine_mod:
         return _engine_files_incomplete_error(engine_mod, traceback_text)
-    tex = _tex_error(message, traceback_text)
+    tex = _tex_error(message, traceback_text, extra)
     if tex is not None:
         return tex
     mod = missing_module(f"{message}\n{traceback_text}")
@@ -4823,6 +4834,7 @@ def build(
     allow_project_env: bool = True,
     before_build=None,
     run=None,
+    write_roots=None,
 ):
     """取会话并确保脚本已 build——**带一次项目环境自动 fallback**。
 
@@ -4845,6 +4857,8 @@ def build(
     替换会话（monkeypatch `pool.get`），改走别的入口它们会静默拿到真池。
     """
     context = {"run": run} if run is not None else {}
+    if write_roots is not None:
+        context["write_roots"] = write_roots
     worker, resp, _created = _build_with(
         lambda: (get(script_name, figures_dir, entry, **context), False),
         script_name,
@@ -5020,6 +5034,7 @@ def invalidate(
     force: bool = False,
     targets: tuple[WorkerTarget, ...] | None = None,
     preserve: tuple[WorkerTarget, ...] = (),
+    write_roots=None,
 ) -> None:
     """脚本文件变更后作废其会话（下次请求自动重建）。
 
@@ -5039,7 +5054,11 @@ def invalidate(
         if figures_dir is None:
             keys = [k for k in _workers if k[1] == script_name]
         elif run is not None or only_run:
-            keys = [k for k in _workers if k == _worker_key(figures_dir, script_name, None, run)]
+            keys = [
+                k
+                for k in _workers
+                if k == _worker_key(figures_dir, script_name, None, run, **_roots_kw(write_roots))
+            ]
         else:
             keys = [k for k in _workers if k[:2] == (_norm_dir(figures_dir), script_name)]
         if targets is not None:
@@ -5108,7 +5127,13 @@ def invalidate_project(
 
 
 def force_cancel(
-    script_name: str, figures_dir: str, *, artifact_source=None, expected_worker=None, run=None
+    script_name: str,
+    figures_dir: str,
+    *,
+    artifact_source=None,
+    expected_worker=None,
+    run=None,
+    write_roots=None,
 ) -> bool:
     """当场硬杀该脚本的在跑会话（探测取消的机制面）；返回是否真的杀了。
 
@@ -5124,7 +5149,7 @@ def force_cancel(
     占位期间 `acquire` 看到 `_closing` 直接拒绝（`session_dead`），不在池锁里阻塞；确认关闭后才摘表，
     未确认则保持围栏，下一次 `acquire` 有界重试关闭。不支持围栏的 worker（Python 池进程）维持先摘后杀。
     """
-    key = _worker_key(figures_dir, script_name, artifact_source, run)
+    key = _worker_key(figures_dir, script_name, artifact_source, run, **_roots_kw(write_roots))
     with _lock:
         w = _workers.get(key)
         if expected_worker is not None and w is not expected_worker:

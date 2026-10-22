@@ -249,6 +249,13 @@ function fitTweened(set: Setter, get: Getter, frame: NonNullable<typeof lastFit>
  */
 export const TOOLBAR_FIT_CLEARANCE = 60
 
+/**
+ * 单图编辑里再多让出的一行通知高度（一条 toast 的 36 + 间距 + 余量）。单图编辑的取景放大到铺满舞台，图的下边会压进
+ * 底部通知轨：「已为编辑新建了一张画布」是常驻的，首次进入还会叠上「改动会保存到当前排版」与「渲染完成」两条，
+ * 三条叠起来盖住贴着图下沿的 X 轴标题——点不中。多让一行后图下沿落在三条叠起来的顶边之上（CI 截图量得 522 对 551）。
+ */
+export const NOTICE_FIT_ROOM = 46
+
 /** 按取景框算落点；调用方保证视口已量到尺寸。`bottomClear`：底部要让出的高度（px），只抬高下边距 */
 function fitTarget(
   viewW: number,

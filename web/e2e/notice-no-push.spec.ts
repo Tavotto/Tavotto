@@ -1,7 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { lowContrastNodes } from './contrast'
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 
 /**
  * UI 2.0「错误与警告」+「不推挤」（PR10）。
@@ -21,9 +21,8 @@ async function openCanvasWithFigure(page: Page, baseURL: string) {
   const card = page.locator('[data-card="Fig1_kinetics.pdf"]')
   await expect(card).toHaveCount(1, { timeout: 30_000 })
   await card.dblclick()
-  const back = page.locator('[data-context-back]')
-  await expect(back).toHaveCount(1)
-  await back.click()
+  // 画布标签行在单图编辑里隐藏（只有一张画布时）；第二张图进来 = 多图排版，标签行回来
+  await addSecondFigure(page)
   await expect(page.locator('[data-canvas-tabs]')).toHaveCount(1)
   await expect(page.locator('[data-canvas-stage]')).toHaveCount(1)
 }

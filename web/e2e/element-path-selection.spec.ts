@@ -609,7 +609,10 @@ test('图内误差棒：描误差线 + 帽 + 数据点的轮廓，贴着墨迹�
     const worst = Math.max(
       ...samples.map((s) => Math.min(...ink.map((q) => Math.hypot(q.x - s.x, q.y - s.y) - q.r))),
     )
-    expect(worst, `${gid}：选中轮廓离墨迹最远 ${worst.toFixed(1)}px`).toBeLessThan(3)
+    // 容差是屏幕像素：墨迹线宽与描边的偏差都随视图倍率放大。单图编辑打开时取景放大到铺满舞台（比页面取景大），
+    // 所以按「SVG 用户单位 → 屏幕」的倍率换算（≤ 1 倍仍是 3px）
+    const scale = await page.evaluate(() => (document.querySelector('[data-element-svg] svg') as SVGSVGElement).getScreenCTM()!.a)
+    expect(worst, `${gid}：选中轮廓离墨迹最远 ${worst.toFixed(1)}px（倍率 ${scale.toFixed(2)}）`).toBeLessThan(3 * Math.max(1, scale))
   }
 
   // 第一组并集 bbox 里、离两组全部墨迹都最远、又不在边框命中带里的空白：不再选中第一组

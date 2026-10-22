@@ -1,0 +1,74 @@
+{
+  "head": "dc2431f725798bd78c40a3b07e0a8054690fe82c",
+  "old_store_sha256": "f56a0d9effb65a44ebb118ee33fd1611340361ea4bce9f5c3a31f77690dfad83",
+  "store_sha256": "35c694576c1a8e4b6630ed6337f26a5a9e39fe55ddaa38dc46e31a50b672d140",
+  "node": "v24.19.0",
+  "results": [
+    {
+      "name": "only-raw-row-generic-changed",
+      "status": "pass",
+      "detail": {
+        "single_type_only_replacement": true
+      }
+    },
+    {
+      "name": "TypeScript-erasure-byte-identical",
+      "status": "pass",
+      "detail": {
+        "runtime_sha256": "ddcaa66c6744ccc9db4f0f66f9960d4165156c4555adf924f0a1fbe455dd695a",
+        "byte_identical": true
+      }
+    },
+    {
+      "name": "actual-refreshRequest-raw-0",
+      "status": "pass",
+      "detail": {
+        "raw_numeric": 0,
+        "output_capacity": "omitted",
+        "statements": 1
+      }
+    },
+    {
+      "name": "actual-refreshRequest-raw-1",
+      "status": "pass",
+      "detail": {
+        "raw_numeric": 1,
+        "output_capacity": true,
+        "statements": 1
+      }
+    },
+    {
+      "name": "actual-refreshRequest-null-is-null",
+      "status": "pass",
+      "detail": {
+        "result": null,
+        "statements": 1
+      }
+    },
+    {
+      "name": "SQLite-CASE-returns-numeric-bit",
+      "status": "pass",
+      "detail": [
+        {
+          "condition": "1",
+          "capacity_blocked": 0
+        },
+        {
+          "condition": "0",
+          "capacity_blocked": 1
+        },
+        {
+          "condition": "NULL",
+          "capacity_blocked": 1
+        }
+      ]
+    }
+  ],
+  "pass": 6,
+  "fail": 0,
+  "network_calls": 0,
+  "worker_fetch_calls": 0,
+  "publication_calls": 0,
+  "dependency_downloads": 0,
+  "compiler_run": false
+}

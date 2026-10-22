@@ -250,7 +250,12 @@ class Dedup(unittest.TestCase):
             self.assertIn("axis", fam)
         self.assertIn("script_shapes", cov["parents"]["used_by_manifest_category"])
         self.assertGreater(cov["parents"]["corpus_by_manifest_category"]["core_artists"], 0)
-        self.assertNotIn("core_artists", cov["parents"]["used_by_manifest_category"])
+        # 偏向说明：父本现在覆盖 core_artists / axes_layout，仍然没有 metamorphic / scientific_stack
+        used = cov["parents"]["used_by_manifest_category"]
+        self.assertIn("core_artists", used)
+        self.assertIn("axes_layout", used)
+        self.assertNotIn("metamorphic", used)
+        self.assertNotIn("scientific_stack", used)
         self.assertIn("bias_note", cov)
         self.assertEqual(set(cov["by_class"]), {"shape_preserving", "axis_changing"})
 

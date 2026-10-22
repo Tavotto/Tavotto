@@ -101,38 +101,29 @@
 - **缩放到选中（⇧2 / 缩放菜单 / 命令面板 `zoom-selection`）只有一个判据与一个盒**：`store/zoomToSelection`
   的 `selectionBoxOf`——选区里没隐藏的对象按 `visualBounds` 求并，面积为 0 算没有；可用判据（菜单置灰用
   `useCanZoomToSelection`、命令面板用 `canZoomToSelectionNow`）与动作（`zoomToSelection`，⇧2 经
-  `runZoomCommand('selection')`）算的是同一个盒，入口不许自己拼判据。**快速编辑里只认正在编辑的那张图**
-  （`workspace.activePanelId`）：这一屏只画它（`CanvasLayers only=`），⌘A 之后选区里还有一整版看不见的
-  对象，按整个选区取景会把唯一看得见的图挪走、缩小（Codex #833）；选区含它 → 只框它（与快编的「适应」
-  对着那张图同一口径），不含 → 不可用（置灰 / 不出现 / ⇧2 不动视口）。菜单与面板订阅工作区模式，进出
-  快编即重算。看护 `components/zoomControls.test.tsx`、`components/CommandPalette.test.tsx`、
+  `runZoomCommand('selection')`）算的是同一个盒，入口不许自己拼判据。**单图编辑与排版同一口径**（2026-10-21 取代 Codex #833 的「快编只认那张图」：单图编辑的舞台也画全部对象）：选区里没隐藏的对象求并，面积为 0 算没有；菜单与面板订阅选区，进出单图编辑口径不变。看护 `components/zoomControls.test.tsx`、`components/CommandPalette.test.tsx`、
   `hooks/useKeyboardFastEdit.test.tsx`。
-- **快速编辑的出口只有一颗按钮，Esc 与它同一个 action（Prompt Pack P01）**：`WorkspaceContextBar` 在快编里只摆一颗
-  `[data-context-back]`，都调 `returnToLayout()`；文案按来源换（`data-context-back-kind`：`return` =「← 返回排版」，
-  `forward` =「排版与出版 →」），**测试按 kind 定位、不按文案**。来源 = `useWorkspaceStore.fastEditFromLayout`
-  （layout → fast_edit 那一次置位，快编里换图保持，会话恢复为 false，回排版清）且 `addedForEdit === null`（这次打开
-  刚把图加进文档就按前进说）；它是工作区视图状态，不进文档 / 撤销 / 落盘。不要再往快编里加「添加到画布」——
-  `openFastEdit` 已把图放进文档。`useKeyboard` 的 Esc 逐层退，快编里最外层 = `returnToLayout()`：先退版本抽屉 / 文字编辑 /
-  图内元素选区 / 裁剪 / 非选择工具，再回排版；输入框与对话框聚焦时（`inEditableTarget`）不抢。排版里的图内编辑
-  （非 fast_edit）那颗「返回画布」语义不变：只退出图内编辑并选中面板。
-- **快速编辑里作用于选区 / 取景的动作只认正在编辑的那张图（Codex #833，数据丢失）**：判据只有
-  `store/workspaceStore.fastEditPanelOf`（排版里 null；`store/workspace` 原样再导出。状态本体 `useWorkspaceStore` 与排版视口寄存处住在这个叶子模块里，
-  因为 `store/actions` 要读它，而 `store/workspace` 的工作流动作要调 `actions`——`actions` / `clipboard` 只许 import 叶子，否则成环，`importArchitecture.test.ts` 看护）。**全选**只有 `store/actions.selectAll` → `selectAllIds`
-  一处（⌘A、命令面板 `select-all`、画布菜单「全选」同经它）：排版里收整版看得见且没锁的对象
-  （`isSelectAllTarget`），快速编辑里只收那张图（也得过 `isSelectAllTarget`，锁着就什么都不选，不退到整版）——
-  此前 ⌘A 把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉。**删除**（`deleteSelected`，Delete /
-  Backspace 不在图内元素编辑时、系统菜单「删除」都到这里）在快速编辑里把选区收窄到那张图：选区里挂着的
-  旧版面对象（进快编之前留下的、图层面板点的）一个不删；删那张图本身照旧（看得见、可撤销，对象没了快速编辑
-  随之退出）。**粘贴与创建副本**在快速编辑里不落：粘贴只在 `lib/clipboard.consumePayload` 判一次（⌘V 原生 paste 事件、
-两份右键菜单的「粘贴」同经它；不拦事件，图内文字编辑器 / 输入框里的粘贴在离散动作闸门那步就让位给浏览器，照旧），
-创建副本只在 `store/actions.duplicateSelected` 判（⌘D、系统菜单、对象右键菜单、属性页「⋯」同经它）——此前对象菜单的
-「粘贴 / 创建副本」把副本落在这一屏不画的版面上、换掉选区；对象菜单与属性页「⋯」在快速编辑里不摆这两项。看护
-`lib/clipboardEvents.test.ts`、`store/actions.test.ts`、`canvas/objectContextMenu.test.tsx`（各带排版对照组）。**「适应」的取景框只有 `store/zoomToSelection.stageFitFrame` 一处**，动作 `fitStage()`：舞台双击、
-  ⌘1 / 系统菜单（`runZoomCommand('fit')`）、缩放菜单、命令面板 `fit`、画布工具条与画布菜单全走它——快速编辑里
-  框那张图**本身的矩形**（含原点，`fitRectAnimated`；曾按「(0,0) 到右下角」取景，x/y 为负时图被裁、为正时左上留白，
-  Codex #833），排版里框页面（`fitAnimated`）；首次挂载的瞬时适应与双击的「框外」判据（`lib/fitGuard`）读同一个框；此前 ⌘1 / 菜单 / 面板在快速编辑里适应这一屏根本没画的页面，
-  而双击适应那张图。看护 `hooks/useKeyboardFastEdit.test.tsx`（⌘A / Delete / ⌘1 各带排版对照组）、
-  `components/CommandPalette.test.tsx`、`canvas/stageFitRect.test.tsx`（正 / 负偏移下 ⌘1、系统菜单、`fitStage`、舞台双击的视口终点）。
+- **单图编辑没有「回排版」出口；图内编辑的出口至多一颗按钮，Esc 与它同一个动作（2026-10-21，取代 Prompt Pack P01 的
+  「快编出口 return / forward 两种来源」）**：单图编辑 = 画布上恰好一张图（`workspaceStore.settleMode` 推出，见
+  `workflows-and-original-spec.md`），没有排版可回——第二张图进来自然切成多图排版。`WorkspaceContextBar` 只在**图内编辑**
+  时摆一颗 `[data-context-back]`（`data-exit-element-edit`）：单图编辑里叫「退出图内编辑」、多图排版里叫「返回画布」，
+  动作相同（`setElementPanel(null)` + 选中该面板），Esc 的最外层与它同一个动作；单图编辑且不在图内编辑时没有出口按钮、
+  没有 `to-layout` 教程锚点；Esc 最外层清选区（单图编辑里标注可选了）。`fastEditFromLayout` /
+  `data-context-back-kind` / `returnToLayout` 已删。`useKeyboard` 的 Esc 逐层退：版本抽屉 / 文字编辑 / 图内元素选区 /
+  图内编辑 / 裁剪 / 非选择工具；输入框与对话框聚焦时（`inEditableTarget`）不抢。不要再往单图编辑里加「添加到画布」——
+  `openFastEdit` 已把图放进文档。`App` 的画布标签行在单图编辑里隐藏，**但该文档还有别的画布时留着**（模式按画布各自判，
+  隐藏了就切不走）。
+- **单图编辑与排版同一口径（2026-10-21，取代 Codex #833「快速编辑里只认正在编辑的那张图」整组不变量）**：单图编辑的舞台画这张画布上的
+  全部对象（`CanvasLayers` 不再有 `only`），所以选区里的东西都看得见，不再有「看不见的版面对象被误删 / 误取景」的前提。
+  **全选**只有 `store/actions.selectAll` → `selectAllIds` 一处（⌘A、命令面板 `select-all`、画布菜单「全选」同经它），收看得见且没锁的对象；
+  **删除**（`deleteSelected`）删选区；**粘贴**只在 `lib/clipboard.consumePayload`、**创建副本**只在 `store/actions.duplicateSelected`
+  落，单图编辑里照常——图 = 第二张 → 切多图排版，标注留在单图。**「适应」的取景框只有 `store/zoomToSelection.stageFitFrame` 一处**，动作 `fitStage()`：
+  舞台双击、⌘1 / 系统菜单、缩放菜单、命令面板 `fit`、画布工具条与画布菜单全走它——单图编辑里框「没隐藏对象的 `visualBounds` 并集」（图 ∪ 标注，
+  含原点，`fitRectAnimated`；曾按「(0,0) 到右下角」取景，x/y 为负时图被裁，Codex #833），排版里框页面（`fitAnimated`）；首次挂载的瞬时
+  适应与双击的「框外」判据（`lib/fitGuard`）读同一个框。载入 / 切项目 / 恢复 / 切画布之后的瞬时取景是 `fitStageNow`（同一个框）。
+  状态本体 `useWorkspaceStore` 与模式写入点 `settleMode` 住在叶子模块 `store/workspaceStore`（`actions` / `clipboard` 只许 import 叶子，
+  否则成环，`importArchitecture.test.ts` 看护）。看护 `hooks/useKeyboardFastEdit.test.tsx`（各带排版对照组）、`components/CommandPalette.test.tsx`、
+  `components/zoomControls.test.tsx`、`canvas/stageFitRect.test.tsx`、`lib/clipboardEvents.test.ts`、`store/actions.test.ts`。
 - **换画布尺寸就重新取景；新加的图软上限缩放；页面外画淡（2026-09-28，用户反馈）**：
   同一份文档、同一张画布的 `page.w/h` 一变（预设、手填、横竖对调、样式预设带的页面、
   以及它们的撤销 / 重做）→ `store/pageFit.startPageSizeFit` 按新页面 `fitAnimated`，
@@ -167,7 +158,7 @@
   - **加图是一条分层链，本条是它的唯一权威**（`asset-library.md`、`web/AGENTS.md` 引用这里，
     #706 评审 P1）：
     1. `workspace.addFigureToLayout(figureId)`——按素材 id 加，**去重 / 聚焦**：已在文档里就
-       只聚焦（`focused`），否则先回排版、再经第 2 层新建。素材库的「添加到画布」
+       只聚焦（`focused`），否则经第 2 层新建（第二张进来时模式订阅切到多图排版并取景）。素材库的「添加到画布」
        （Shift+Enter / 就近入口 / 看大图弹窗）、快编上下文栏、onboarding 走这一层；
     2. `workspace.addPanelToCanvas` / `addRuntimePanelToCanvas`——拿着 `PanelInfo` / 描述符
        直接新建一张并**取景**（`frameAddedPanel`）。自己判过「文档里有没有」或本来就是「再摆
@@ -178,17 +169,14 @@
        `store/addPanelEntry.test.ts` 按 TypeScript AST 钉住（追踪改名 / namespace 导入与
        转手再导出，只数真实调用；注释、字符串不算）。
     各入口走哪一层按它**原有**的去重语义定，别为了统一改行为。
-  **新加的图怎么进视野只有一处判：`workspace.frameAddedPanel`**，输入是工作区模式与停放的
-  排版视口（#706 评审 P2 四条都出在入口分散上）。
-  排版上：取景「页面 ∪ 这张图」（`fitRectAnimated`）并**留在适应模式**（之后抽屉收起、
-  窗口缩放页面仍居中）；拖放到一点、图整张已在视口里就不动视口。快速编辑里（对话框在快编
-  时加图，或 `openFastEdit` 打开一张还不在画布上的图）：**不动**正在编辑的那一屏，只把新图
-  记到停放的排版视口上（`openFastEdit` 先停放、再记，停放的永远是加图之前那一片，与有没有
-  补间无关）。停放记录同时记停放时的页面尺寸；回排版时（`layoutViewOnReturn`）页面尺寸比
-  **最终值**（快编里改了 W / H 又改回 / 撤销算没变）且新图都整张在停放那一片里 → 原样还原
-  （审计 T01），否则取景「页面 ∪ 新图」（没有新图就按新页面，与 `startPageSizeFit` 同一
-  落点）。`addFigureToLayout` 新建时先回排版再判，不 `revealRect`（那会退出适应模式）；只是
-  聚焦已有面板时照旧 `revealRect`。这块非页面的取景框随画布会话走（`viewportStore.fitFrame()`
+  **新加的图怎么进视野只有一处判：`workspace.frameAddedPanel`**，输入是工作区模式（#706 评审 P2 四条都出在入口分散上）。
+  多图排版上：取景「页面 ∪ 这张图」（`fitRectAnimated`）并**留在适应模式**（之后抽屉收起、
+  窗口缩放页面仍居中）；拖放到一点、图整张已在视口里就不动视口。单图编辑里（画布上恰好一张）加图 = 第二张进来：
+  模式订阅（`startWorkspaceModeSync` → `onLeftSingle`）在切换那一刻取景「页面 ∪ **所有**图」并留在适应模式，
+  同一调用栈里的 `frameAddedPanel` 认 `framedBySwitch` 不再取第二遍；画布上的第一张图（0 → 1）由订阅取景那张图本身。
+  不再有「进快编停放排版视口、回排版还原」（2026-10-21 删：单图编辑没有回排版这一步，用户说取景「页面 ∪ 图」）。
+  `addFigureToLayout` / `openFastEdit` 新建时不 `revealRect`（那会退出适应模式）；只是聚焦 / 打开已有面板时照旧 `revealRect`。
+  这块非页面的取景框随画布会话走（`viewportStore.fitFrame()`
   → `canvasSession` 的 `fitFrame`，切回来 `fitRect` 瞬时还原）：会话只记 `fitted` 的话，
   切走再切回按页面重新适配，伸出页面那截被裁掉、之后窗口缩放也只按页面算；取景的就是
   页面时存 null，回来按那时的页面算。

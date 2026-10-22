@@ -18,6 +18,7 @@ import json
 import os
 from pathlib import Path
 
+import compat_explore_shards as ES
 import compat_guardian as cg
 import compat_guardian_summary as GS
 import compat_guardian_taxonomy as TX
@@ -255,7 +256,7 @@ def _explore_findings(report: dict, report_path: Path):
             scripts[manifest["candidate_id"]] = manifest["parent"]["script"]
     for row in report["candidates"]:
         items = row["differences"] or (
-            [None] if row["outcome"] not in ("no_difference", "static_only") else []
+            [None] if row["outcome"] not in ("no_difference", "static_only", "not_run") else []
         )
         for diff in items:
             source = None
@@ -352,7 +353,7 @@ def explore_identity(row: dict, source: str | None, rules: list[dict] | None = N
     """Behavior identity of one explore row: the sorted triage cluster keys of its findings."""
     rules = rules if rules is not None else load_rules()
     items = row["differences"] or (
-        [None] if row["outcome"] not in ("no_difference", "static_only") else []
+        [None] if row["outcome"] not in ("no_difference", "static_only", "not_run") else []
     )
     keys = set()
     for diff in items:
@@ -372,9 +373,20 @@ def explore_identity(row: dict, source: str | None, rules: list[dict] | None = N
     return tuple(sorted(keys, key=repr))
 
 
-def triage(report_paths: list[Path], rules: list[dict] | None = None) -> dict:
+def triage(
+    report_paths: list[Path], rules: list[dict] | None = None, allow_partial_shards: bool = False
+) -> dict:
     rules = rules if rules is not None else load_rules()
     families = load_families()
+    # the shards of one weekly sweep must prove they belong together before any finding is read
+    shards = ES.check_set(
+        [
+            r
+            for r in (json.loads(Path(p).read_bytes()) for p in report_paths)
+            if r.get("schema") == "tavotto-guardian-explore/1"
+        ],
+        allow_partial_shards,
+    )
     attributions, sources = [], []
     for path in report_paths:
         raw = Path(path).read_bytes()
@@ -408,6 +420,9 @@ def triage(report_paths: list[Path], rules: list[dict] | None = None) -> dict:
                     **attr,
                     "stable_code": sig["stable_code"],
                     "diff": _diff_summary(f),
+                    "axes": sorted(
+                        {v.split(":", 1)[0] for v in (f["row"].get("axis_vector") or [])}
+                    ),
                     "signature": sig,
                     "confirmed": (f["row"].get("confirmation") or {}).get("reproduced")
                     if f["kind"] == "explore"
@@ -421,6 +436,7 @@ def triage(report_paths: list[Path], rules: list[dict] | None = None) -> dict:
     return {
         "schema": SCHEMA,
         "sources": sources,
+        **({"explore_shards": shards} if shards else {}),
         "rules_sha256": hashlib.sha256(RULES_PATH.read_bytes()).hexdigest(),
         "attributions": attributions,
         "clusters": (clusters := cluster(attributions, families)),
@@ -471,6 +487,7 @@ def cluster(attributions: list[dict], families: list[dict]) -> list[dict]:
                 "known_family": known_family({**first["signature"]}, families),
                 "size": len(members),
                 "members": sorted(m["finding_id"] for m in members),
+                "axes": sorted({a for m in members for a in m.get("axes", [])}),
                 "reproducible": _reproducible(members),
                 "confidence": min((m["confidence"] for m in members), key=CONFIDENCE_ORDER.get),
                 "representative": first["finding_id"],
@@ -515,13 +532,40 @@ def alerts(clusters: list[dict]) -> list[dict]:
 def render_markdown(result: dict) -> str:
     lines = [
         "### Guardian triage",
+        *(
+            [
+                f"explore shards: **{result['explore_shards']['label']}**"
+                + (
+                    ""
+                    if result["explore_shards"]["complete"]
+                    else f" (missing {result['explore_shards']['missing']}; findings cover only the completed shards)"
+                )
+                + (
+                    f"; time budget exhausted in shard(s) {result['explore_shards']['budget_exhausted_shards']}: "
+                    f"{result['explore_shards']['not_run']} candidate(s) not run"
+                    if result["explore_shards"].get("not_run")
+                    else ""
+                )
+            ]
+            if result.get("explore_shards")
+            else []
+        ),
         f"findings: {result['summary']['findings']}, clusters: {len(result['clusters'])}, "
         f"unknown: {result['summary']['unknown']}",
         "",
         "| cluster | family record | attribution | x | reproduced |",
         "| --- | --- | --- | --- | --- |",
     ]
-    for c in result["clusters"]:
+    # listing order only: clusters on heavier axes first (GS.AXIS_WEIGHTS); the data is untouched
+    ordered = sorted(
+        enumerate(result["clusters"]),
+        key=lambda ic: (-max((GS.axis_weight(a) for a in ic[1].get("axes", [])), default=1), ic[0]),
+    )
+    weight = {
+        c["cluster_id"]: max((GS.axis_weight(a) for a in c.get("axes", [])), default=1)
+        for c in result["clusters"]
+    }
+    for _, c in ordered:
         k = c["key"]
         lines.append(
             f"| {c['cluster_id']} | {c['known_family'] or 'NEW'} | "
@@ -532,7 +576,7 @@ def render_markdown(result: dict) -> str:
         lines += [
             f"- {a['cluster_id']}: {a['family']}/{a['stage']} {a['behavior_kind']} x{a['size']} "
             f"({a['representative']}); next: {a['next_action']}"
-            for a in result["alerts"]
+            for a in sorted(result["alerts"], key=lambda a: -weight.get(a["cluster_id"], 1))
         ]
     else:
         lines += [
@@ -556,7 +600,10 @@ def summary(attributions: list[dict]) -> dict:
 
 
 def run(args) -> int:
-    result = triage([Path(p) for p in args.reports])
+    result = triage(
+        [Path(p) for p in args.reports],
+        allow_partial_shards=bool(getattr(args, "allow_partial_shards", False)),
+    )
     out = Path(args.out).resolve()
     if out.is_relative_to(cg.ROOT):
         raise cg.EvidenceError("--out must be outside the source worktree")

@@ -40,6 +40,8 @@ _SOURCE_FILES = (
     "security.py",
     "desktop.py",
     "engine/ai_bridge.py",
+    # 「生成可编辑版本」（ADR 0143）：`ConvertError("<code>")` 由 app 的 `_convert_error` 漏斗转成 JSON
+    "engine/ai_convert.py",
     "engine/project_refresh.py",
     "engine/atomicio.py",
     "engine/profilestore.py",
@@ -107,6 +109,7 @@ _CODE_PATTERNS = (
     r'AgentError\(\s*"([a-z0-9_]+)"',
     r'RefreshError\(\s*"([a-z0-9_]+)"',
     r'AtomicWriteError\(\s*"([a-z0-9_]+)"',
+    r'ConvertError\(\s*"([a-z0-9_]+)"',
     # ProfileStoreError 既有 `Cls("code", …)` 也有子类里的
     # `ProfileStoreError.__init__(self, "code", …)`（**刻意不用 super()**：
     # 那种写法这条门禁看不见，见 profilestore.RevisionConflict 的注释）
@@ -177,6 +180,8 @@ USER_VISIBLE_CODES = {
     "engine_files_incomplete": set(),
     # #898：MCP 来源的运行里脚本想写授权根之外（写入根绊线）。路径相对化后只进 MCP 的结构化载荷，不进文案
     "write_outside_roots": set(),
+    # worker 直出位图超像素预算（`figcapture.check_export_raster`）；参数来自 `pool.recovery_params`
+    "export_raster_too_large": {"width", "height", "max_pixels"},
     # TeX 工具链（`texdiag`）：参数来自错误转换合同 `pool.recovery_params`；`tex_failed` 的 `{{error}}`
     # 与 `script_error` 同一来源（traceback 末行，前端 `engineErrorMsg` 填）
     "tex_command_missing": {"command"},
@@ -277,6 +282,18 @@ USER_VISIBLE_CODES = {
     # PR4：同一脚本上已有 AI 任务在跑（后端并发保护）/ 前端按请求 id 查询时后端没登记过
     "ai_script_busy": {"script"},
     "ai_request_not_found": set(),
+    # 转换会话从不改原脚本：没有可回滚的东西（ADR 0143）
+    "ai_revert_not_applicable": set(),
+    # 「生成可编辑版本」（ADR 0143）：总开关关着 / 采用与丢弃的稳定码
+    "convert_disabled": set(),
+    "convert_not_found": set(),
+    "convert_not_ready": set(),
+    "convert_source_changed": set(),
+    "convert_candidate_changed": set(),
+    "convert_outside_project": set(),
+    "convert_write_failed": set(),
+    "convert_name_exhausted": set(),
+    "convert_no_preview": set(),
     # 这个请求 id 已被新指令取代（改写后再发），不会再执行 / 取代时发现旧请求其实已经开始
     "ai_request_superseded": set(),
     "ai_supersede_conflict": set(),
@@ -431,6 +448,8 @@ USER_VISIBLE_CODES = {
     **{code: {"file"} for code in tiffprobe.ERROR_CODES},
     # 写回只重写 .pdf / .png：画布上是 JPEG / TIFF 时如实拒绝
     "write_back_format_unsupported": {"format"},
+    # 同一 stem 下另一张图写的文件（`app.WriteBackForeignFileError`）：写回拒绝覆盖
+    "write_back_foreign_file": {"file"},
     # --- U08（ADR 0068）：有限产物验证。`artifact_rejected` 是逐项失败（partial 那一档），
     #     `bad_inspection` 是请求里的检查政策不合法 / 指向的规范不可用 ---
     "artifact_rejected": {"failed", "policy"},
@@ -501,6 +520,7 @@ def test_error_field_is_still_there_as_the_fallback():
                     "ProfileStoreError",
                     "ExportRequestError",
                     "TutorialError",
+                    "ConvertError",
                 )
             )
             # 导出作业的逐项失败经 `_legacy_export_response()` 这个唯一漏斗

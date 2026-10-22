@@ -293,3 +293,87 @@ def test_classification_is_linear_on_pathological_logs(evil):
     texdiag.classify(text)
     texdiag.classify(evil)
     assert time.perf_counter() - t0 < 0.5
+
+
+# --- 敏感运行：自由文本被 worker 丢掉之前，TeX 事实先留下来 ------------------------------
+def _sensitive_build(tmp_path, script_text: str, token: str) -> dict:
+    import json
+    import subprocess
+
+    from tavotto.engine import execspec
+
+    figs = tmp_path / "figs"
+    figs.mkdir(parents=True)
+    (figs / "tex.py").write_text(script_text, encoding="utf-8")
+    spec = execspec.safe_spec(
+        "tex.py",
+        str(figs),
+        "__main__",
+        interpreter=WORKER_PY,
+        sandbox=str(tmp_path / "sb"),
+        argv=["placeholder"],
+        run_config="rc_test",
+    )
+    base = execspec.worker_argv(spec, worker_py=pool.WORKER_PY, out_dir=tmp_path / "o")
+    req = pool.build_envelope(
+        {
+            "cmd": "build",
+            "run": {
+                "config_id": "rc_test",
+                "argv": ["--token", token],
+                "sensitive": True,
+                "input_key": "0" * 64,
+            },
+        }
+    )
+    done = subprocess.run(
+        base,
+        input=json.dumps(req) + "\n",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    (resp,) = [json.loads(line) for line in done.stdout.splitlines()]
+    assert token not in done.stdout + done.stderr
+    return resp
+
+
+RAISE_STY = "raise RuntimeError({text!r})\n"
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_sensitive_run_keeps_the_structured_tex_fact_without_free_text(tmp_path):
+    resp = _sensitive_build(tmp_path, RAISE_STY.format(text=STY_MISSING), "s3cr3t-value")
+    err = resp["error"]
+    assert err["message"].startswith("Sensitive run failed")
+    assert "type1ec" not in err["message"] + err["traceback"], "自由文本必须仍被丢掉"
+    assert err["tex"] == {"kind": "package_missing", "command": "latex", "file": "type1ec.sty"}
+    parent = pool._worker_error(err["message"], err["code"], err["traceback"], err)
+    assert parent.code == "tex_package_missing"
+    assert pool.recovery_params(parent) == {"command": "latex", "file": "type1ec.sty"}
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_sensitive_run_drops_a_file_name_derived_from_the_secret_and_the_latex_line(tmp_path):
+    text = STY_MISSING.replace("type1ec.sty", "s3cr3tpkg.sty")
+    resp = _sensitive_build(tmp_path, RAISE_STY.format(text=text), "s3cr3tpkg")
+    assert resp["error"]["tex"] == {"kind": "package_missing", "command": "latex"}
+    resp = _sensitive_build(tmp_path / "b", RAISE_STY.format(text=COMPILE), "zzz-token")
+    assert resp["error"]["tex"] == {"kind": "compile_error", "command": "latex"}, "`! …` 行不带出"
+
+
+def test_parent_does_not_trust_a_forged_tex_fact():
+    err = pool._worker_error(
+        "Sensitive run failed",
+        "script_error",
+        "",
+        {"tex": {"kind": "package_missing", "file": "../x y", "command": "rm -rf"}},
+    )
+    # 清洗后没有文件名：缺必需占位符，按 `texdiag.code_for` 降级成 tex_failed
+    assert err.code == "tex_failed"
+    assert err.extra["tex"] == {"kind": "package_missing", "command": "other"}
+    assert (
+        pool._worker_error("x", "script_error", "", {"tex": {"kind": "bogus"}}).code
+        == "script_error"
+    )

@@ -18,6 +18,13 @@ export const TOP_SAFE = 88
  * 浮动栏翻到下方 / 夹在窗口底边时不许落进这一带，否则盖住工具条上的按钮。
  */
 export const BOTTOM_SAFE = 72
+
+/**
+ * 通知轨（`noticeRailStore` 量到的最上面一条的顶边，窗口坐标；没有 = null）在场时窗口底边要留的高度：
+ * 取工具条那一带与「窗口底边到通知轨顶边 + 一个缝」里大的那个。量真实的盒——长文案的通知会折成好几行，不能按条数估。
+ */
+export const bottomSafeFor = (noticeTop: number | null, viewportHeight: number): number =>
+  noticeTop == null ? BOTTOM_SAFE : Math.max(BOTTOM_SAFE, viewportHeight - noticeTop + MARGIN)
 /**
  * 完整多选栏（计数 + 参照 + 六向对齐 + 分布 / 尺寸 + 成组 + 更多）需要的最小可用宽度；
  * 侧栏之间比它窄时压缩成「对齐 / 分布 / 尺寸」三个弹层入口，不让它越界或压住侧栏
@@ -83,6 +90,7 @@ export function placeToolbar(
   size: { w: number; h: number },
   viewport: { width: number; height: number },
   insets: Insets,
+  bottomSafe: number = BOTTOM_SAFE,
 ): Placement {
   const minX = insets.left + MARGIN
   const maxX = viewport.width - insets.right - size.w - MARGIN
@@ -92,12 +100,12 @@ export function placeToolbar(
   if (y < TOP_SAFE) {
     y = Math.min(
       anchor.top + anchor.height + MARGIN,
-      viewport.height - BOTTOM_SAFE - size.h - MARGIN,
+      viewport.height - bottomSafe - size.h - MARGIN,
     )
     placement = 'below'
   }
-  // 锚点本身落在底部浮动工具条那一带时，「上方」也会压到工具条：整体夹回去
-  y = Math.min(y, viewport.height - BOTTOM_SAFE - size.h - MARGIN)
+  // 锚点本身落在底部浮动工具条（与通知轨）那一带时，「上方」也会压到它们：整体夹回去
+  y = Math.min(y, viewport.height - bottomSafe - size.h - MARGIN)
   return { x, y, placement }
 }
 
@@ -139,11 +147,12 @@ export function placeToolbarAvoiding(
   viewport: { width: number; height: number },
   insets: Insets,
   avoid: AvoidOptions,
+  bottomSafe: number = BOTTOM_SAFE,
 ): Placement {
   const minX = insets.left + MARGIN
   const maxX = viewport.width - insets.right - size.w - MARGIN
   const x = Math.max(minX, Math.min(anchor.left + anchor.width / 2 - size.w / 2, maxX))
-  const maxY = viewport.height - BOTTOM_SAFE - size.h - MARGIN
+  const maxY = viewport.height - bottomSafe - size.h - MARGIN
   const zone = avoid.zone ?? null
   const candidates: { y: number; placement: Placement['placement'] }[] = [
     { y: anchor.top - size.h - MARGIN, placement: 'above' },
@@ -169,7 +178,7 @@ export function placeToolbarAvoiding(
     }
   }
   if (best) return { x, y: best.y, placement: best.placement }
-  return placeToolbar(anchor, size, viewport, insets)
+  return placeToolbar(anchor, size, viewport, insets, bottomSafe)
 }
 
 /**

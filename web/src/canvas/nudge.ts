@@ -37,7 +37,6 @@ import { displayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgSt
 import { useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { useWorkspaceStore } from '@/store/workspace'
 import { moveLabel, warnBlockedGroups } from '@/store/actions'
 import { pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
 import type { PanelObject } from '@/types/document'
@@ -117,7 +116,6 @@ let quietTimer: ReturnType<typeof setTimeout> | null = null
 /** 此刻按着的方向键：按住时系统连发的首延迟可能长于 NUDGE_QUIET_MS，不能靠计时器判「停了」 */
 const held = new Set<string>()
 
-const inFastEdit = () => useWorkspaceStore.getState().mode === 'fast_edit'
 const interaction = () => useInteractionStore.getState()
 const status = (key: string) =>
   useUiStore.getState().setStatus(msg(`status.${key}`, undefined, 'workspace'), 'info')
@@ -149,9 +147,6 @@ function currentTargetKey(): string | null {
   if (ui.elementPanelId) {
     return ui.selectedGids.length ? `figure:${ui.elementPanelId}:${ui.selectedGids.join('|')}` : null
   }
-  // 快速编辑这一屏上只有这张图、没有版面：推面板在版上的 x/y 用户既看不见它动，
-  // 也不知道自己动了它——退出之后才发现图挪了位置
-  if (inFastEdit()) return null
   const ids = useSelectionStore.getState().ids
   return ids.length ? `layout:${ids.join('|')}` : null
 }
@@ -171,7 +166,7 @@ export function nudgeKeyDown(e: KeyboardEvent): boolean {
     // 图内编辑态 / 快速编辑里没选中图内元素：吃掉这个键（不让它冒出去滚界面），
     // 什么都不改——面板在版上的 x/y 不归这里推
     finishNudge()
-    return inFastEdit() || !!ui.elementPanelId
+    return !!ui.elementPanelId
   }
   if (burst && burst.key !== key) finishNudge()
   if (!burst && !beginBurst(key)) return true

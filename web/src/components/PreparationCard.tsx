@@ -41,6 +41,7 @@ import { cn } from '@/lib/utils'
 import { useCanvasToolbarVisible } from '@/components/CanvasToolbar'
 import { refreshProjectNow } from '@/store/liveSync'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { convertOriginalUrl, convertPreviewUrl } from '@/lib/api'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useEnvStore } from '@/store/envStore'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
@@ -60,6 +61,7 @@ import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderSto
 import { enterEdit, noteAddedPanelFor, type EnterEditHost } from '@/store/prepEnterEdit'
 import { findFigurePanel } from '@/store/documentStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { useConvertStore } from '@/store/convertStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -638,6 +640,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.background')
     case 'dismiss':
       return pt('btn.dismiss')
+    case 'convert':
+      return pt('convert.btn.start')
   }
 }
 
@@ -727,8 +731,111 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
       case 'dismiss':
         ui.setGuideCard('closed')
         return null
+      case 'convert':
+        // 不 await：生成要几十秒，进度与结果由卡片读 convertStore；失败也落在 store 里
+        void useConvertStore.getState().start(p.script, p.library, p.path)
+        return null
     }
   }
+}
+
+/** 对照视图：左原图、右新版（SVG 预览）；版式数据（宽高比差）只当提示，不替用户判 */
+function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]> }) {
+  const st = entry.status
+  const cmp = st?.comparison
+  const orig = cmp?.original?.path
+  return (
+    <div data-convert-compare className="flex flex-col gap-2">
+      <div className="grid grid-cols-2 gap-2">
+        <figure className="m-0 flex min-w-0 flex-col gap-1">
+          <div className="flex h-32 items-center justify-center overflow-hidden rounded-xs border border-border bg-surface-2">
+            {orig ? <img data-convert-original src={convertOriginalUrl(orig)} alt={pt('convert.original')} className="max-h-full max-w-full object-contain" /> : null}
+          </div>
+          <figcaption className="text-sm text-ink-3">{pt('convert.original')}</figcaption>
+        </figure>
+        <figure className="m-0 flex min-w-0 flex-col gap-1">
+          <div className="flex h-32 items-center justify-center overflow-hidden rounded-xs border border-border bg-surface-2">
+            {st?.has_preview && entry.session ? (
+              <img data-convert-new src={convertPreviewUrl(entry.session)} alt={pt('convert.redrawn')} className="max-h-full max-w-full object-contain" />
+            ) : (
+              <span className="px-2 text-center text-sm text-ink-3">{pt('convert.noPreview')}</span>
+            )}
+          </div>
+          <figcaption className="text-sm text-ink-3">{pt('convert.redrawn')}</figcaption>
+        </figure>
+      </div>
+      {cmp?.aspect_delta != null && cmp.aspect_delta > 0.02 ? (
+        <p data-convert-aspect className="text-sm text-ink-3">
+          {pt('convert.aspectDiffers', { pct: Math.round(cmp.aspect_delta * 100) })}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+/** 生成可编辑版本进行中 / 有结果时卡片的样子：一句话 + 一个主按钮（+ 一颗次按钮）。采用 = 后端新建兄弟脚本，再走「打开并运行」 */
+function convertFlow(
+  c: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>,
+  p: Extract<PrepPrimary, { kind: 'convert' }>,
+  entry: PrepEntry,
+): { title: string; slot?: ReactNode; primary?: ReactNode; ghost?: ReactNode } {
+  const store = useConvertStore.getState()
+  const retry = () => void store.start(p.script, p.library, p.path)
+  switch (c.phase) {
+    case 'running':
+      return {
+        title: pt('convert.running'),
+        slot: <Progress />,
+        ghost: (
+          <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
+            {pt('btn.stop')}
+          </Button>
+        ),
+      }
+    case 'ready':
+    case 'adopting':
+      return {
+        title: pt('convert.ready'),
+        slot: <ConvertCompare entry={c} />,
+        primary: (
+          <Button
+            variant="primary"
+            size="md"
+            data-convert-adopt
+            data-prep-primary="convert_adopt"
+            loading={c.phase === 'adopting'}
+            disabled={c.phase === 'adopting'}
+            onClick={async () => {
+              const made = await store.adopt(p.script)
+              if (!made) return
+              // 采用规则（ADR 0139 PR1 同款）：新脚本另起面板，原位图面板不动——用既有的「打开并运行」接进画布
+              void useProjectPreparationStore.getState().open(scriptTarget(made), { run: true, rerun: false })
+              store.clear(p.script)
+            }}
+          >
+            {pt('convert.btn.adopt')}
+          </Button>
+        ),
+        ghost: (
+          <Button variant="ghost" size="md" data-convert-discard className="text-ink-2" disabled={c.phase === 'adopting'} onClick={() => void store.discard(p.script)}>
+            {pt('convert.btn.discard')}
+          </Button>
+        ),
+      }
+    case 'failed':
+      return {
+        title: c.error ?? pt(`convert.fail.${c.reason}`, { defaultValue: pt('convert.fail.unknown') }),
+        primary: (
+          <Button variant="primary" size="md" data-convert-retry data-prep-primary="convert_retry" onClick={retry}>
+            {pt('convert.btn.retry')}
+          </Button>
+        ),
+        ghost: <SendReportButton variant="ghost" size="md" />,
+      }
+    case 'adopted':
+      return { title: pt('convert.adopted') }
+  }
+  void entry
 }
 
 function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
@@ -825,6 +932,39 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   }
 
   const details = ownsInput ? <InputOutput /> : <SessionDetails entry={entry} view={view} />
+  const convertScript = p?.kind === 'convert' ? p.script : null
+  const convert = useConvertStore((s) => (convertScript ? s.entries[convertScript] : undefined))
+  const convertUi = convertScript && p?.kind === 'convert' && convert ? convertFlow(convert, p, entry) : null
+  if (convertUi) {
+    return (
+      <Shell
+        label={pt('aria', { script })}
+        step={view.step}
+        icon={toneIcon(view.tone, view.state)}
+        title={convertUi.title}
+        attrs={{ ...attrs, 'data-convert-phase': convert!.phase }}
+        slot={convertUi.slot}
+        details={details}
+        ghost={convertUi.ghost}
+        primary={convertUi.primary}
+      />
+    )
+  }
+  const secondary =
+    view.secondary && (
+      <Button
+        variant="ghost"
+        size="md"
+        data-prep-alt={primaryId(view.secondary)}
+        className="text-ink-2"
+        onClick={async () => {
+          const err = await runPrimary(view.secondary!, workdir)
+          if (err) setLocalError(err)
+        }}
+      >
+        {primaryLabel(view.secondary, workdir)}
+      </Button>
+    )
   return (
     <>
       <Shell
@@ -837,7 +977,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         details={details}
         detailsLabel={ownsInput ? pt('card.allOutput') : undefined}
         more={ownsInput ? <InputMore answer={answer} /> : undefined}
-        ghost={ghost}
+        ghost={secondary || ghost}
         primary={ownsInput ? <AnswerButton answer={answer} /> : (primary ?? fallbackPrimary)}
       />
       {report && (report.captured ?? []).length > 1 && (

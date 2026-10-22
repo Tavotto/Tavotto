@@ -1,4 +1,4 @@
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 import type { Page } from '@playwright/test'
 
 /**
@@ -14,10 +14,25 @@ async function toLayout(page: Page, baseURL: string) {
   const card = page.locator('[data-card="Fig1_kinetics.pdf"]')
   await expect(card).toHaveCount(1, { timeout: 30_000 })
   await card.dblclick()
-  await page.locator('[data-context-back]').click()
+  // 一张图是单图编辑（没有纸面、没有拖边）；加第二张图才进多图排版
+  await addSecondFigure(page)
   await expect(page.locator('[data-page-sheet]')).toBeVisible()
-  // 回排版的取景补间走完再量几何（补间中途量到的是动画帧，不是拖边的结果）
+  // 进排版的取景补间走完再量几何（补间中途量到的是动画帧，不是拖边的结果）
   await expect(page.locator('[data-view-tweening]')).toHaveCount(0)
+  // 切成排版之后侧栏 / 舞台宽度还会安顿一两秒，适应模式的取景随舞台尺寸重算：等世界层的变换连续 800 ms 不变再量
+  const world = page.locator('[data-world-transform]')
+  let last = ''
+  let since = Date.now()
+  await expect
+    .poll(async () => {
+      const now = (await world.evaluate((n) => (n as HTMLElement).style.transform)) ?? ''
+      if (now !== last) {
+        last = now
+        since = Date.now()
+      }
+      return Date.now() - since
+    }, { timeout: 30_000, intervals: [200], message: '排版取景一直在变，没有稳定下来' })
+    .toBeGreaterThan(800)
 }
 
 const sheetBox = (page: Page) => page.locator('[data-page-sheet]').first().boundingBox()

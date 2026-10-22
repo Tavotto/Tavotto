@@ -82,10 +82,10 @@ import { resetPreview } from '@/store/svgPreviewStore'
 import { clearDiagnosticTrace } from '@/diagnostics'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { useViewportStore } from '@/store/viewportStore'
 import { setCurrentProjectLabel } from '@/lib/projectLabel'
 import { emptyDocument } from '@/types/document'
-import { useWorkspaceStore } from '@/store/workspace'
+import { settleMode, useWorkspaceStore } from '@/store/workspace'
+import { fitStageNow } from '@/store/zoomToSelection'
 
 /**
  * 当前项目状态。'loading' 只出现在启动探测阶段；'none' = 后端没有打开的
@@ -323,14 +323,9 @@ async function resetForNewProject(pj: string | null): Promise<RestoreToken> {
   //    最近文档 / 归属 / last / 时间线，也不排自动保存——恢复落定（有历史就换回去，没有就转正）之前一直如此
   await useDocumentStore.getState().switchDocument(emptyDocument(), newId('d'), undefined, { placeholder: true })
   armRestoreToken(token)
-  // 工作区模式指着旧文档里的一个对象 id，跟着换代（本机那一档按 documentId
-  // 存，切回去仍然作数——清的是内存里"现在停在哪张图上"）。
-  //
-  // **必须排在 `switchDocument` 之后。** 排在前面的话，
-  // `startWorkspacePersistence` 的那个订阅此刻认的还是**旧**文档 id：它会把
-  // `{mode:'layout'}` 写进 `tavotto.workspace.<旧 id>`，把用户在那份文档里停
-  // 的那张图抹掉——上面这句"切回去仍然作数"就成了一句假话。派生状态不许覆盖
-  // 用户偏好，切项目这件事更不是用户在表达"我不要快速编辑了"。
+  // 工作区模式指着旧文档里的一个对象 id，跟着换代：清掉内存里"现在停在哪张图上"。
+  // 模式本身由图数推出（`workspace.startWorkspaceModeSync`，不落本机），占位文档是空白的 = 排版；
+  // 恢复落定、换进真文档时订阅会按它的图数重新判。
   useWorkspaceStore.getState().clear()
   // 4. 重载新项目素材 + 它的接入就绪度（两份是同一次后端计算的两个投影）
   await useAssetStore.getState().load()
@@ -433,8 +428,11 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     // （量不到视口），`fit` 会把这次适配记成待办、舞台一量到尺寸就应用——
     // 改造前新项目沿用上一个项目留下的 175%（审计 T03）。
     {
-      const page = useDocumentStore.getState().doc.page
-      useViewportStore.getState().fit(page.w, page.h)
+      // 取景之前先把派生的模式对一遍：从选择器打开时 Workspace 还没挂、模式订阅没在跑，前面的 reset 把模式留在排版；
+      // 不先对的话这里按页面取景，`phase: 'open'` 之后首次对模式切成单图编辑却不再取景，停在错的缩放 / 平移。
+      // `settleMode` 仍是模式的唯一写入点
+      settleMode()
+      fitStageNow()
     }
     set({
       project: status,

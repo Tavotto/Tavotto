@@ -45,6 +45,12 @@ ENGINE_PARENTS = (
     "shape_local_helper_import",
     "shape_dunder_main",
     "shape_custom_entry",
+    "art_linecoll_alpha",
+    "res_radar",
+    "lay_twin_manual",
+    "art_3d_surface_scatter",
+    "shape_helper_shadows_pypi",
+    "shape_same_stem_formats",
 )
 V2_STATIC_PARENTS = ("s01_plain",)
 PAIRS_PER_PARENT = 3

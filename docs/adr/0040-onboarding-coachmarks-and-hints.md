@@ -209,3 +209,5 @@ resetHints()
 主页两版按 onboarding 状态分（`homeVariant`）。
 
 > 2026-10-20 追加（Prompt Pack P01）：快速编辑上下文栏里的「+ 添加到画布」及其锚点 `add-to-layout` 已删除（`openFastEdit` 早已把图放进文档，它与回排版是近义重复）；`to-layout` 锚点仍挂在快编里那颗唯一的出口按钮上，该按钮按来源显示「返回排版」或「排版与出版」。上表 `add_to_layout` 行描述的是已被 ADR 0136 取代的八步教程，保留作历史。
+>
+> 2026-10-21 追加：模式改为由激活画布的图数推出（1 张 = 单图编辑），单图编辑没有「回排版」出口，`to-layout` 锚点与 `data-context-back-kind` 随之删除（`docs/rules/frontend/workflows-and-original-spec.md`）。

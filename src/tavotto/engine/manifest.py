@@ -175,6 +175,11 @@ CMAPS = [
 _SKIP_LABELS = ("_child", "_nolegend_")
 
 
+#: 「存盘后脚本又改过这张图」的标记名——与 `figcapture.MODIFIED_AFTER_SAVE` 同一个字面量（manifest 不 import
+#: figcapture；`tests/test_modified_after_save.py` 钉着两边相等）
+MODIFIED_AFTER_SAVE_ATTR = "_mm_modified_after_save"
+
+
 def _snippet(text: str, n: int = 18) -> str:
     text = " ".join(text.split())
     return text if len(text) <= n else text[: n - 1] + "…"
@@ -5597,6 +5602,10 @@ def _measure_manifest(
         # 脚本按 `bbox_inches` 存过盘、图幅却算不出来：这一版按 figsize 出图（可能切边），说出来
         # ——不说的话它与「脚本本来就不裁」分不开（ADR 0098 §一第 4 条）。加字段协议，同上
         out["frame_unavailable"] = unavailable
+    if getattr(fig, MODIFIED_AFTER_SAVE_ATTR, False):
+        # 脚本存完盘之后又改过这张图（ADR 0139 §八）：编辑的是脚本跑完的最终态，与磁盘上的文件不同。
+        # 只在为真时出现；加字段协议，老前端原样忽略
+        out["modified_after_save"] = True
     # 真实的组（共享色条的几个子图 + 那条色条）：可选、只在有组时出现。
     # 加字段协议：老前端不认识它会原样忽略，元素表与几何一个字节不变。
     if groups:

@@ -553,6 +553,60 @@ def export_font_context(fmt: str, svg_fonttype: str = "path"):
 TIFF_PIL_KWARGS = {"compression": "tiff_adobe_deflate"}
 
 
+def _export_raster_px(fig, dpi: int, kwargs: dict) -> tuple[int, int]:
+    """`savefig(dpi=dpi, **kwargs)` **最终**写出的那块 Agg 栅格的 (宽, 高) 像素——只量，不为它分配内存。
+
+    尺寸来源与 `print_figure` 一致：`bbox_inches`（引擎给的 frame，否则脚本设的 `savefig.bbox`
+    rcParam）是 Bbox 时用它的英寸尺寸；是 `"tight"` 时先照 `print_figure` 的做法在导出 dpi 下走一遍
+    不出图的 draw（布局引擎、刻度、文字在这一遍里定位），再取 `get_tightbbox` 加 `savefig.pad_inches`；
+    都没有就是 figsize。乘 dpi 后与 RendererAgg 一样取整（截断）。
+    tight 的 draw 本身要分配「名义画布」（figsize×dpi）的 renderer，所以调用方必须先核过名义画布
+    （见 `_check_export_raster_budget`）；量不出来（异常）就让它抛——`savefig` 自己会在同一处抛同一个错，
+    不拿猜出来的上界放行。
+    """
+    bbox = kwargs.get("bbox_inches", matplotlib.rcParams["savefig.bbox"])
+    if isinstance(bbox, str):
+        if bbox != "tight":
+            raise ValueError(f"unsupported savefig.bbox {bbox!r}")
+        # 文字度量随 dpi 变（字体 hinting）：与 `print_figure` 一样，在**导出 dpi** 下量
+        prior_dpi = fig.dpi
+        fig.dpi = dpi
+        try:
+            fig.draw_without_rendering()
+            tight = fig.get_tightbbox()
+        finally:
+            fig.dpi = prior_dpi
+        # `savefig.pad_inches` 的 rc 值只能是数（"layout" 只在 savefig 关键字里合法，而 do_export 不传它）
+        pad = float(kwargs.get("pad_inches", matplotlib.rcParams["savefig.pad_inches"]))
+        width_in, height_in = tight.padded(pad, pad).size
+    elif bbox is not None:
+        width_in, height_in = bbox.size
+    else:
+        width_in, height_in = fig.get_size_inches()
+    return int(width_in * dpi), int(height_in * dpi)
+
+
+def _check_export_raster_budget(fig, fmt: str, dpi: int, kwargs: dict) -> None:
+    """位图导出的像素预算：`savefig` 要分配的每一块栅格都得在预算内，超了就 `ExportRasterTooLarge`。
+
+    要分配的栅格有两块：
+
+    * **最终栅格**（`_export_raster_px`：bbox_inches 生效后的真实尺寸）；
+    * **名义画布**（figsize×dpi）——只在 `print_figure` 要先走一遍 draw 时才会分配：有布局引擎
+      （constrained / tight_layout），或 `bbox_inches="tight"`。frame 裁切且没有布局引擎时它不存在，
+      不能按它拒掉本来分配得下的导出。
+
+    先核名义画布（便宜、不 draw），再量最终栅格——量 tight 要 draw，draw 才会分配名义画布。
+    """
+    if str(fmt).lower() not in figcapture.RASTER_EXPORT_FORMATS:
+        return
+    bbox = kwargs.get("bbox_inches", matplotlib.rcParams["savefig.bbox"])
+    if bbox == "tight" or fig.get_layout_engine() is not None:
+        width_in, height_in = fig.get_size_inches()
+        figcapture.check_export_raster(fmt, int(width_in * dpi), int(height_in * dpi))
+    figcapture.check_export_raster(fmt, *_export_raster_px(fig, dpi, kwargs))
+
+
 def export_format_kwargs(fmt: str) -> dict:
     """`savefig` 按格式额外要带的参数。只有 TIFF 需要（压缩方式）。"""
     if str(fmt).lower() in ("tif", "tiff"):
@@ -831,6 +885,8 @@ class LiveFigureSession:
         self.savefig_extras: dict[str, list] = {}
         #: stem -> {files: 目标文件键 -> 最近写它的 Figure（弱引用）, log: 影子日志}，见 `figcapture.note_savefig_writer`
         self.savefig_writers: dict[str, dict] = {}
+        #: 补认领的 stem -> 它写文件时用的 stem（`panel-2` -> `panel`），见 `figcapture.adopt_displaced_writers`
+        self.savefig_file_stem: dict[str, str] = {}
         # Safe capture normally suppresses savefig. File-object saves really draw
         # during the script; do not treat their later state as an undrawn seed.
         self.passthrough_figures: set[int] = set()
@@ -865,6 +921,15 @@ class LiveFigureSession:
             )
 
     # ---------------- 捕获表 ----------------
+    def original_artifact(self, project_root: str, stem: str) -> str | None:
+        """这张 savefig 图**自己**写的原件：按它写文件时的 stem（补认领的 `panel-2` 写的是 `panel.*`）、只认它
+        存过的格式（`figcapture.find_original_artifact(formats=…)`）。"""
+        return figcapture.find_original_artifact(
+            project_root,
+            self.savefig_file_stem.get(stem, stem),
+            formats=figcapture.saved_formats(self.savefig_calls.get(stem)),
+        )
+
     def add_figure(self, stem: str, fig, source: str) -> bool:
         """把一张 Figure 记进捕获表。已有同名 stem 时**不覆盖**，返回 False。
 
@@ -906,6 +971,7 @@ class LiveFigureSession:
             locked=stem in self.states or stem in self.failures,
             verify=verify,
         )
+        figcapture.mark_saved(fig)
 
     def note_artifact(self, observation, stem, fig, extra_artists):
         if self.artifact_source is None:
@@ -1044,7 +1110,7 @@ class LiveFigureSession:
             return
         artifact = None
         if self.frame_project_root is not None:
-            artifact = figcapture.find_original_artifact(self.frame_project_root, stem)
+            artifact = self.original_artifact(self.frame_project_root, stem)
         calls = self.savefig_calls.get(stem)
         call = figcapture.frame_call(calls, artifact)
         extra = figcapture.frame_extra_artists(calls, self.savefig_extras.get(stem), call)
@@ -1154,6 +1220,7 @@ class LiveFigureSession:
                 self.savefig_calls.pop(stem, None)
                 self.savefig_extras.pop(stem, None)
                 self.savefig_writers.pop(stem, None)
+                self.savefig_file_stem.pop(stem, None)
                 self.failures.pop(stem, None)
                 self._failed_states.pop(stem, None)
                 self.live_captured_at.pop(stem, None)
@@ -1361,7 +1428,7 @@ class LiveFigureSession:
             source = self.capture_source.get(stem, figcapture.SOURCE_SAVEFIG)
             artifact = None
             if source == figcapture.SOURCE_SAVEFIG and project_root is not None:
-                artifact = figcapture.find_original_artifact(project_root, stem)
+                artifact = self.original_artifact(project_root, stem)
             out.append(
                 figcapture.build_descriptor(
                     script=script,
@@ -1760,6 +1827,14 @@ class LiveFigureSession:
             t0 = time.perf_counter()
             warnings = overrides_mod.apply(state, patches)
             t1 = time.perf_counter()
+            # 像素预算：量即将分配的栅格，超了就在 mkdir / 任何写入之前抛（finally 照常还原 patches）。
+            # 放在 apply 之后，figsize / frame 类 patch 已经生效，量的是真实要画的尺寸。
+            _check_export_raster_budget(
+                state.fig,
+                fmt,
+                int(dpi),
+                {**export_format_kwargs(fmt), **pathgeom.output_kwargs(state.fig)},
+            )
             out.parent.mkdir(parents=True, exist_ok=True)
             blocker = None
             if companion is not None:

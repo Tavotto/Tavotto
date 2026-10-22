@@ -1,0 +1,13 @@
+{
+  "base": "a4695f830d321ffa03184595afd895d2055db3b3",
+  "real_http": 0,
+  "publication_calls": 0,
+  "legacy_positive_error": "transaction_rejected",
+  "held_owner": true,
+  "legacy_positive_rejected": true,
+  "plain_resolution_rejected": true,
+  "owned_outbox_delete_rejected": true,
+  "flag_off_positive_admission": false,
+  "slot_snapshot_unchanged": true,
+  "network_calls": 0
+}

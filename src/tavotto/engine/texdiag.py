@@ -176,6 +176,24 @@ def classify(text: str | None) -> TexFailure | None:
     return None
 
 
+KINDS = frozenset(_CODE_OF)
+
+
+def clean_fact(fact: dict) -> dict:
+    """跨进程收到的 `tex` 事实再过一遍闭集 / 白名单（不信任对端拼的值）。"""
+    out = {"kind": fact["kind"]}
+    command = fact.get("command")
+    if isinstance(command, str) and command:
+        out["command"] = command if command in COMMANDS else "other"
+    name = fact.get("file")
+    if isinstance(name, str) and _file(name):
+        out["file"] = _file(name)
+    line = fact.get("line")
+    if isinstance(line, str) and line:
+        out["line"] = line[:_LINE_LIMIT]
+    return out
+
+
 def params_of(fact: object) -> dict:
     """`extra["tex"]` → 文案占位符（`command` / `file` / `line`），值都是字符串；认不出的事实回空。"""
     if not isinstance(fact, dict) or fact.get("kind") not in _CODE_OF:

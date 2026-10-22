@@ -36,10 +36,10 @@ export async function verifyHeadOne(s:LiveService):Promise<string> {
   // Expired workers require manual recovery. No uncertain operation is automatically replayed.
   await s.store.stmt(`UPDATE head_requests SET status='manual',result='' WHERE status='running' AND lease_until<=${DB_NOW}`).run();
   const result=await s.store.db.batch<HeadRequest>([s.store.stmt(`UPDATE head_requests SET status='running',attempt=?,lease_until=${DB_NOW}+120
-    WHERE request_key=(SELECT request_key FROM head_requests WHERE status='pending' ORDER BY created,request_key LIMIT 1) AND status='pending' RETURNING *`,attempt)]);
+    WHERE request_key=(SELECT request_key FROM head_requests WHERE status='pending' AND (${s.c.automaticPublishingEnabled?s.store.positiveAdmission(s.c.confirmationSlotEnabled===true):'1'}) ORDER BY created,request_key LIMIT 1) AND status='pending' RETURNING *`,attempt)]);
   if(result.some(r=>!r.success))throw new Rejected('transaction_rejected');const job=result[0]?.results[0];if(!job)return 'idle';
   try {
-    const check=await s.evaluate(job.pr,s.c.automaticPublishingEnabled?7:5);
+    const check=await s.evaluate(job.pr,s.c.automaticPublishingEnabled?(s.c.confirmationSlotEnabled===true?8:7):5);
     if(check.headSha!==job.head)throw new Rejected('automatic_head_changed');
     if(s.c.automaticPublishingEnabled) {
       const exempt=new Set(Object.values(s.c.exemptionIds));
@@ -75,7 +75,11 @@ export async function verifyHeadOne(s:LiveService):Promise<string> {
   }catch {
     // Clear the result on every rejected, uncertain or budget-exhausted evaluation.
     s.store.budget?.settlement();
-    await s.store.stmt("UPDATE head_requests SET status='manual',result='' WHERE request_key=? AND status='running' AND attempt=?",job.request_key,attempt).run();
+    const waiting=s.c.automaticPublishingEnabled?`lease_until>${DB_NOW} AND NOT (${s.store.positiveAdmission(s.c.confirmationSlotEnabled===true)}) AND
+      NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=? AND head_sha=?)`:'0';
+    await s.store.stmt(`UPDATE head_requests SET status=CASE WHEN ${waiting} THEN 'pending' ELSE 'manual' END,result=''
+      WHERE request_key=? AND status='running' AND attempt=?`,
+      ...(s.c.automaticPublishingEnabled?[s.store.targetKey(s.c.repositoryId,{kind:'pr',number:job.pr}),job.head]:[]),job.request_key,attempt).run();
     return 'head_requires_manual_review';
   }
 }

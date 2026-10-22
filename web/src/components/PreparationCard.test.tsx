@@ -32,6 +32,12 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   }),
   refreshProject: vi.fn(),
   cancelNativeSession: vi.fn().mockResolvedValue({ confirmed: true, session: {} }),
+  startConvert: vi.fn(),
+  fetchAiSession: vi.fn(),
+  fetchConvert: vi.fn(),
+  adoptConvert: vi.fn(),
+  discardConvert: vi.fn(),
+  aiCancel: vi.fn().mockResolvedValue({ ok: true }),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/liveSync')>()),
@@ -85,6 +91,9 @@ import { visibleBlocks, visiblePrimaryButtons, visibleSentenceCount } from '@/te
 import errorReports from '../../../tests/golden/preparation_error_reports.json'
 import { ORIGIN_VIEWS } from '@/lib/importOrigin'
 import { useDepRepairStore } from '@/store/depRepairStore'
+import { useConvertStore, POLL_MS } from '@/store/convertStore'
+import { useAiStore } from '@/store/aiStore'
+import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, startConvert } from '@/lib/api'
 import type { DependencyPreparationOffer } from '@/lib/api'
 
 declare global {
@@ -485,6 +494,7 @@ async function openWith(r: PreparationReport) {
 
 const panel = () => host.querySelector('[data-prep-card]') as HTMLElement
 const primary = () => panel()?.querySelector('[data-prep-primary]') as HTMLButtonElement | null
+const secondary = () => panel()?.querySelector('[data-prep-alt]') as HTMLButtonElement | null
 
 const panelFor = (fileId: string): PanelObject =>
   ({
@@ -1199,13 +1209,14 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true } }))
     expect(panel().dataset.prepState).toBe('no_figure_raster')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本是用 Pillow 直接画成图片的，不是 Matplotlib 图')
-    expect(primary()?.textContent).toBe('打开素材库')
+    expect(primary()?.textContent).toBe('生成可编辑版本')
+    expect(secondary()?.textContent).toBe('打开素材库')
     // 一句话 + 一个主按钮：详情没展开时说明不在页面上
     expect(panel().querySelector('[data-prep-nofigure-raster-why]')).toBeNull()
     await toggleDetails()
     expect(details()?.querySelector('[data-prep-nofigure-raster-why]')?.textContent).toContain('改成用 Matplotlib 画')
     expect(details()?.querySelector('[data-prep-nofigure-why]')).toBeNull()
-    await act(async () => primary()!.click())
+    await act(async () => secondary()!.click())
     // 点按钮就主动刷新一次素材（刚写出的图不用等 watcher 轮询），再切标签
     expect(vi.mocked(refreshProjectNow)).toHaveBeenCalledTimes(1)
     expect(useUiStore.getState().leftTab).toBe('assets')
@@ -1237,7 +1248,7 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     useRuntimeAssetStore.setState({ assets: [], loadAssets })
     useAssetStore.getState().clear()
     await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true } }))
-    await act(async () => primary()!.click())
+    await act(async () => secondary()!.click())
     expect(useUiStore.getState().leftTab).toBe('assets')
     expect(useAssetStore.getState().loading).toBe(true)
     expect(fetchPanels).not.toHaveBeenCalled()
@@ -1258,10 +1269,164 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
     expect(panel().dataset.prepState).toBe('no_figure_raster')
     expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本是用 Pillow 直接画成图片的，不是 Matplotlib 图')
-    expect(primary()?.textContent).toBe('知道了')
-    await act(async () => primary()!.click())
+    expect(primary()?.textContent).toBe('生成可编辑版本')
+    expect(secondary()?.textContent).toBe('知道了')
+    await act(async () => secondary()!.click())
     expect(useUiStore.getState().leftTab).toBe('layers')
     expect(useUiStore.getState().guideCard).toBe('closed')
+  })
+
+  describe('生成可编辑版本（ADR 0143）', () => {
+    const hint = { kind: 'raster_script' as const, library: 'pillow' as const, in_project: true, path: 'out.png' }
+    const ready = {
+      session: 'sid1', state: 'ready' as const, script: 'plot.py', target_name: 'plot_matplotlib.py', library: 'pillow',
+      comparison: { original: { path: 'out.png', bytes: 10, sha256: 'x', width_px: 80, height_px: 40 }, candidate: { figures: 1, width_mm: 50, height_mm: 40 }, aspect_delta: 0.3, pixel_diff: null },
+      has_preview: true,
+    }
+    const done = { status: 'done', final: true, task: { outcome: 'completed', unmet: [] } }
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout'] })
+      useConvertStore.setState({ entries: {} })
+      vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 'sid1', script: 'plot.py' })
+      vi.mocked(fetchAiSession).mockReset().mockResolvedValue(done as never)
+      vi.mocked(fetchConvert).mockReset().mockResolvedValue(ready)
+      vi.mocked(adoptConvert).mockReset().mockResolvedValue({ script: 'plot_matplotlib.py', name: 'plot_matplotlib.py' })
+      vi.mocked(discardConvert).mockReset().mockResolvedValue({ ok: true })
+    })
+    afterEach(() => vi.useRealTimers())
+    const settle = () => act(async () => { await vi.advanceTimersByTimeAsync(POLL_MS + 10) })
+
+    it('主按钮发起任务（带库与输出路径）→ 进度 → 对照视图（左原图右新版）', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      expect(startConvert).toHaveBeenCalledWith(
+        expect.objectContaining({ script: 'plot.py', library: 'pillow', path: 'out.png', client_request_id: expect.any(String) }),
+        expect.anything(),
+      )
+      expect(panel().dataset.convertPhase).toBe('running')
+      expect(panel().querySelector('[data-prep-progress]')).not.toBeNull()
+      expect(primary()).toBeNull()
+      await settle()
+      expect(panel().dataset.convertPhase).toBe('ready')
+      expect(panel().querySelector('[data-convert-original]')).not.toBeNull()
+      expect(panel().querySelector<HTMLImageElement>('[data-convert-new]')!.src).toContain('/api/ai/convert/sid1/preview.svg')
+      expect(panel().querySelector('[data-convert-aspect]')?.textContent).toContain('30%')
+      expect(primary()?.textContent).toBe('采用新版本')
+      expect(panel().querySelector('[data-convert-discard]')?.textContent).toBe('放弃')
+    })
+
+    it('采用：后端新建脚本，随后用「打开并运行」接进画布；原脚本的位图面板不被替换', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      mockCreate.mockResolvedValueOnce(report({ ...STATES.noFigure, no_figure_hint: null }))
+      await act(async () => primary()!.click())
+      await settle()
+      await act(async () => (panel().querySelector('[data-convert-adopt]') as HTMLButtonElement).click())
+      expect(adoptConvert).toHaveBeenCalledWith('sid1', expect.anything())
+      expect(mockCreate).toHaveBeenLastCalledWith(expect.objectContaining({ script: 'plot_matplotlib.py' }), expect.anything(), expect.anything())
+      expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
+    })
+
+    it('放弃：删候选、回到原来的卡片（主按钮仍是「生成可编辑版本」）', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await settle()
+      await act(async () => (panel().querySelector('[data-convert-discard]') as HTMLButtonElement).click())
+      expect(discardConvert).toHaveBeenCalledWith('sid1', expect.anything())
+      expect(primary()?.textContent).toBe('生成可编辑版本')
+    })
+
+    it('失败：一句话原因 + 「重试」；重试再发起一次', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'failed', final: true, task: { outcome: 'failed', unmet: [{ constraint_id: 'render.capture', reason_code: 'no_matplotlib_figure' }] } } as never)
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await settle()
+      expect(panel().dataset.convertPhase).toBe('failed')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('生成的脚本跑完没有画出 Matplotlib 图')
+      expect(primary()?.textContent).toBe('重试')
+      await act(async () => primary()!.click())
+      expect(startConvert).toHaveBeenCalledTimes(2)
+      expect(adoptConvert).not.toHaveBeenCalled()
+    })
+
+    it('后端拒绝（总开关关了）：落成失败卡，不进入采用', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      const { ApiError } = await import('@/lib/api')
+      vi.mocked(startConvert).mockRejectedValueOnce(new ApiError('x', 404, { code: 'convert_disabled' }))
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      expect(panel().dataset.convertPhase).toBe('failed')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toContain('已被关闭')
+    })
+
+    it('用既有 AI 流程算出的实际 Agent（首选 Claude / Codex 不可用时不默认 codex）', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      useAiStore.setState({
+        agent: null,
+        caps: {
+          agents: [
+            { id: 'codex', usable: false, models: [], efforts: [], default_model: null, default_effort: null },
+            { id: 'claude', usable: true, models: [], efforts: [], default_model: null, default_effort: null },
+          ],
+        } as never,
+      })
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false } as never)
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      expect(vi.mocked(startConvert).mock.calls.at(-1)![0]).toMatchObject({ agent: 'claude' })
+      useAiStore.setState({ caps: null })
+    })
+
+    it('不确定是否送达的失败重试复用同一个 client_request_id；明确拒绝后换新的', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      vi.mocked(startConvert).mockRejectedValueOnce(new Error('network down'))
+      await act(async () => primary()!.click())
+      expect(panel().dataset.convertPhase).toBe('failed')
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false } as never)
+      await act(async () => primary()!.click())
+      const ids = vi.mocked(startConvert).mock.calls.slice(-2).map((c) => c[0].client_request_id)
+      expect(ids[0]).toBeTruthy()
+      expect(ids[1]).toBe(ids[0])
+      useConvertStore.getState().clear('plot.py')
+    })
+
+    it('POST 还没回来时点停止：回来后取消刚起的会话，不重建条目', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      let resolve!: (v: { session: string; script: string }) => void
+      vi.mocked(startConvert).mockReturnValueOnce(new Promise((r) => (resolve = r)))
+      vi.mocked(aiCancel).mockClear()
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await act(async () => { await useConvertStore.getState().stop('plot.py') })
+      expect(aiCancel).not.toHaveBeenCalled()
+      await act(async () => { resolve({ session: 'late1', script: 'plot.py' }) })
+      expect(aiCancel).toHaveBeenCalledWith('late1', expect.anything())
+      expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
+    })
+
+    it('停止：取消后端会话并回到原卡片', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      vi.mocked(fetchAiSession).mockResolvedValue({ status: 'running', final: false } as never)
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await settle()
+      await act(async () => (panel().querySelector('[data-convert-stop]') as HTMLButtonElement).click())
+      expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
+      expect(primary()?.textContent).toBe('生成可编辑版本')
+    })
   })
 
   it('没有提示（老后端 / 判不出）的跑完没图照旧', async () => {

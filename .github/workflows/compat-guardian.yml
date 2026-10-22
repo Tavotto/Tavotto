@@ -51,14 +51,25 @@ on:
         description: optional comma-separated transform families (default all)
         type: string
         default: ''
+      weekly:
+        description: run the weekly full sweep (4 shards) instead of the nightly jobs
+        type: boolean
+        default: false
+      weekly_seed:
+        description: weekly sweep seed (integer; empty = ISO year+week, e.g. 202643)
+        type: string
+        default: ''
   schedule:
     - cron: '41 3 * * *'
+    # CG-09 每周全量：周日 02:17 UTC，与 nightly 03:41 错开；两条 cron 都会触发整个 workflow，
+    # 下面每个 job 的 `if` 用 github.event.schedule 区分，周扫只跑 explore-weekly* 三个 job。
+    - cron: '17 2 * * 0'
 
 permissions:
   contents: read
 
 concurrency:
-  group: compat-guardian-${{ github.ref }}-${{ github.event_name }}
+  group: compat-guardian-${{ github.ref }}-${{ github.event_name }}-${{ github.event.schedule || inputs.weekly }}
   cancel-in-progress: true
 
 env:
@@ -71,7 +82,7 @@ jobs:
     name: Guardian observation (hosted, not a required check)
     # fork 的 PR 不跑：fork 代码会在这里被执行（夹具与脚本都来自 PR）。同仓库分支的 PR、
     # dispatch、schedule 照常。fork PR 即使被放行，token 也只读且拿不到 secrets，这条是纵深防御。
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && !(github.event.schedule == '17 2 * * 0' || inputs.weekly) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -178,7 +189,7 @@ jobs:
   # 非确定性/来源不确定的候选只做静态检查。PR 不跑（太长，且 PR 档只做 smoke）。
   explore:
     name: Guardian explore (nightly, hosted)
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' && !(github.event.schedule == '17 2 * * 0' || inputs.weekly) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -261,11 +272,223 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+  # CG-09 每周全量扫描：周日 02:17 UTC（或 dispatch 的 weekly=true）。观察型，和 nightly 同一套信任边界：
+  # 只用 GitHub 托管 runner、候选只由已评审父本 + 确定性变换 + seed 推导、不开 issue / PR、没有任何写权限。
+  # 预算：4 片 × 60 分钟；全量候选池（不设 --limit）按候选 id 切成 4 片，并集 == 全集。
+  # seed 在 plan job 里算一次（ISO 周号，dispatch 可用 weekly_seed 覆盖），4 片共用，不会因为跨周边界各算各的；
+  # 即便如此，汇总前仍校验 4 份报告同 seed / 同 HEAD / 同生成器（缺片、重复、混 seed 一律显式失败）。
+  explore-weekly-plan:
+    name: Guardian weekly plan (seed)
+    if: ${{ github.event_name != 'pull_request' && (github.event.schedule == '17 2 * * 0' || inputs.weekly) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      seed: ${{ steps.seed.outputs.seed }}
+    steps:
+      - id: seed
+        name: Derive the weekly seed
+        shell: bash
+        env:
+          WEEKLY_SEED: ${{ inputs.weekly_seed || '' }}
+        run: |
+          set -euo pipefail
+          seed="${WEEKLY_SEED:-$(date -u +%G%V)}"
+          if ! [[ "$seed" =~ ^[0-9]{1,12}$ ]]; then
+            echo "::error::weekly seed must be an integer"
+            exit 2
+          fi
+          echo "seed=$seed" >> "$GITHUB_OUTPUT"
+          echo "weekly seed: $seed" >> "$GITHUB_STEP_SUMMARY"
+
+  explore-weekly:
+    name: Guardian weekly explore (shard ${{ matrix.shard }}/4, hosted)
+    needs: explore-weekly-plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install (scientific stack pinned by the runtime lock)
+        env:
+          PIP_DEFAULT_TIMEOUT: '30'
+          PIP_RETRIES: '5'
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,ci]"
+          # shellcheck disable=SC2046
+          pip install $(python scripts/ci/runtime_pins.py --include-corpus)
+          # CG-07 data_source 变换要写 / 读 xlsx 与 parquet：只在 Guardian 的 job 里装，钉死版本
+          # （parquet footer 的 created_by 带 pyarrow 版本）；产品依赖与 pyproject 不变
+          pip install openpyxl==3.1.5 pyarrow==26.0.0
+      - name: Approved fonts (sha256 verified)
+        run: |
+          python scripts/fetch_fonts.py
+          python scripts/fetch_fonts.py --check
+      - name: Explore this shard
+        # 步骤上限 50 分钟；explore 自己的时间预算 --max-seconds 2700（45 分钟）= 步骤上限减 5 分钟：
+        # 预算花完后未开始的候选记 not_run 并照常出报告，不会被步骤超时杀掉而整片没有报告。
+        # 预算对每一次子进程调用生效（父本快照、候选、复跑确认的超时都取 min(--timeout, 剩余预算)，
+        # 剩余不足 30 s 就不再开始）：预算到期后最多再耗 compat_explore.OVERRUN_BOUND_SECONDS
+        # （清理 16 s + 固定开销 60 s = 76 s），2700 + 76 < 3000，由结构测试对着代码常量钉住。
+        timeout-minutes: 50
+        shell: bash
+        env:
+          # 输入只经 env 进入 shell，再校验为纯数字，绝不拼进命令行文本。
+          EXPLORE_SEED: ${{ needs.explore-weekly-plan.outputs.seed }}
+          EXPLORE_SHARD: ${{ matrix.shard }}
+        run: |
+          set +e
+          if ! [[ "$EXPLORE_SEED" =~ ^[0-9]{1,12}$ && "$EXPLORE_SHARD" =~ ^[1-4]$ ]]; then
+            echo "::error::weekly seed must be an integer and the shard 1..4"
+            exit 2
+          fi
+          args=(--seed "$EXPLORE_SEED" --shard "$EXPLORE_SHARD/4" --max-seconds 2700 --confirm-differences 3 --expected-sha "$GITHUB_SHA" --timeout 240 --out "$RUNNER_TEMP/compat-explore")
+          python scripts/ci/compat_guardian.py explore "${args[@]}" > "$RUNNER_TEMP/explore.out" 2>&1
+          code=$?
+          set -e
+          grep -E '^[0-9a-f]{20} ' "$RUNNER_TEMP/explore.out" | cut -c1-220 || true
+          case "$code" in
+            0) ;;
+            1) echo "::warning::weekly shard $EXPLORE_SHARD/4 found differences (the summary job triages them across all shards)" ;;
+            4) echo "::warning::weekly shard $EXPLORE_SHARD/4 spent its 45-minute time budget: remaining candidates are not_run (partial coverage, not a pass)" ;;
+            *) echo "::error::weekly explore shard $EXPLORE_SHARD/4 exited $code"; tail -n 30 "$RUNNER_TEMP/explore.out"; exit "$code" ;;
+          esac
+      - name: Shard summary
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          summaries=("$RUNNER_TEMP"/compat-explore/*/reports/explore-summary.md)
+          if [[ ${#summaries[@]} -eq 0 ]]; then
+            echo "::error::no explore report was produced for this shard"
+            echo "### Guardian weekly shard ${{ matrix.shard }}/4: no report produced (see step logs)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          cat "${summaries[0]}" >> "$GITHUB_STEP_SUMMARY"
+      # 白名单：报告、摘要、候选清单，以及候选的入口脚本 *.py（父本经确定性变换后的源码，triage 要读它算调用位置；
+      # 不含数据文件、证据目录、stdout / stderr）。
+      - name: Upload allowlisted shard evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: compat-guardian-weekly-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/compat-explore/*/reports/explore-report.json
+            ${{ runner.temp }}/compat-explore/*/reports/explore-summary.md
+            ${{ runner.temp }}/compat-explore/*/candidates.json
+            ${{ runner.temp }}/compat-explore/*/candidates/*/files/*.py
+          retention-days: 7
+          if-no-files-found: warn
+
+  # 汇总：至少一片有报告就汇总；4 份分片报告先过「同 seed / 同 HEAD / 同生成器 / 片号恰好 1..4 各一」校验，
+  # 缺片只有在 --allow-partial-shards 下才放行，且到处标「N 片中 M 片完成」。新报警簇只发注解并写进周报，不开 issue。
+  # 读上周周报与按名字取本 run 的分片 artifact 用 gh（只读，actions: read；与 trend 同理由）。
+  explore-weekly-summary:
+    name: Guardian weekly summary
+    needs: [explore-weekly-plan, explore-weekly]
+    if: ${{ always() && needs.explore-weekly-plan.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Fetch this run's shard reports and the previous weekly summary (read-only)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 按名字逐片取：某一片没产出 artifact 不让这一步失败（缺片由后面的合并校验显式报告）
+          for k in 1 2 3 4; do
+            if gh run download "$GITHUB_RUN_ID" --name "compat-guardian-weekly-shard-$k-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --dir "$RUNNER_TEMP/in/shard-$k" 2>/dev/null; then
+              echo "shard $k: report downloaded"
+            else
+              rm -rf "$RUNNER_TEMP/in/shard-$k"
+              echo "::warning::weekly shard $k/4 left no downloadable report"
+            fi
+          done
+          # 上一周周报：最近已完成的定时运行里能下载到 weekly-summary artifact 的那次（成功或失败都算），
+          # 往前最多找 14 次（每周 7 次 nightly + 1 次周扫，够到上一周）；找不到就 not_computed。
+          candidates="$(gh run list --workflow compat-guardian.yml --branch main --event schedule --status completed --limit 30 --json databaseId,conclusion --jq '[.[] | select(.conclusion == "success" or .conclusion == "failure")][:14][] | .databaseId')"
+          found=""
+          for prev in $candidates; do
+            if [[ "$prev" == "$GITHUB_RUN_ID" ]]; then continue; fi
+            rm -rf "$RUNNER_TEMP/prev"
+            if gh run download "$prev" --pattern 'compat-guardian-weekly-summary-*' --dir "$RUNNER_TEMP/prev" 2>/dev/null \
+              && { compgen -G "$RUNNER_TEMP/prev/compat-guardian-weekly.json" \
+                   || compgen -G "$RUNNER_TEMP/prev/*/compat-guardian-weekly.json"; } > /dev/null; then
+              found="$prev"
+              break
+            fi
+          done
+          if [[ -n "$found" ]]; then
+            echo "previous weekly summary from run $found"
+          else
+            rm -rf "$RUNNER_TEMP/prev"
+            echo "::notice::no earlier scheduled weekly summary is downloadable: trend, added and removed cases will be not_computed"
+          fi
+      - name: Merge shards, triage and summarize
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+          reports=("$RUNNER_TEMP"/in/shard-*/**/explore-report.json)
+          if [[ ${#reports[@]} -eq 0 ]]; then
+            echo "::error::no shard produced an explore report"
+            echo "### Guardian weekly: no shard report produced (see the shard jobs)" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [[ ${#reports[@]} -lt 4 ]]; then
+            echo "::warning::only ${#reports[@]} of 4 weekly shards produced a report; the weekly report covers the completed shards only"
+          fi
+          previous=("$RUNNER_TEMP"/prev/**/compat-guardian-weekly.json)
+          extra=()
+          if [[ ${#previous[@]} -gt 0 ]]; then extra=(--previous "${previous[0]}"); fi
+          mkdir -p "$RUNNER_TEMP/weekly"
+          # 合并校验在 triage 与 summarize 内部：混 seed / 混 HEAD / 重复片直接退出 2；缺片只在显式放行下继续
+          python scripts/ci/compat_guardian.py triage "${reports[@]}" --allow-partial-shards \
+            --out "$RUNNER_TEMP/weekly/triage.json" --markdown-out "$RUNNER_TEMP/weekly/triage.md"
+          python scripts/ci/compat_guardian.py summarize "${reports[@]}" "${extra[@]}" --allow-partial-shards \
+            --json-out "$RUNNER_TEMP/weekly/compat-guardian-weekly.json" \
+            --markdown-out "$RUNNER_TEMP/weekly/weekly.md" > /dev/null
+          cat "$RUNNER_TEMP/weekly/weekly.md" >> "$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/weekly/triage.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload weekly summary
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: compat-guardian-weekly-summary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/weekly/compat-guardian-weekly.json
+            ${{ runner.temp }}/weekly/weekly.md
+            ${{ runner.temp }}/weekly/triage.json
+            ${{ runner.temp }}/weekly/triage.md
+          retention-days: 30
+          if-no-files-found: warn
+
   # 趋势汇总：只读 artifact 与最近一次已完成且带趋势 artifact 的定时运行（需要 actions: read，只读）。
   trend:
     name: Guardian trend summary
     needs: [guardian, explore]
-    if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && !(github.event.schedule == '17 2 * * 0' || inputs.weekly) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

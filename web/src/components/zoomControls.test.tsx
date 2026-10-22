@@ -111,8 +111,8 @@ describe('缩放菜单', () => {
 })
 
 /**
- * 快速编辑这一屏只画正在编辑的那张图（`CanvasLayers only=`），缩放菜单还挂着。⌘A / 面板「全选」之后选区里有
- * 一整版看不见的对象——「缩放到选中」只认那张图；选区里没有它就置灰（Codex #833）。
+ * 单图编辑的舞台也画这张画布上的标注（2026-10-21）：⌘A / 面板「全选」之后选区里的对象都看得见，
+ * 「缩放到选中」与排版同一口径，框选区里没隐藏对象的并集。
  */
 describe('缩放菜单 · 快速编辑', () => {
   const panel: PanelObject = {
@@ -135,25 +135,24 @@ describe('缩放菜单 · 快速编辑', () => {
     expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 130, h: 90 })
   })
 
-  it('快速编辑里选中两者：只框正在编辑的那张图', async () => {
+  it('单图编辑里选中两者：框两者的并（与排版同口径）', async () => {
     const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
     act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
     act(() => useSelectionStore.setState({ ids: ['t1', 'p1'] }))
     await open()
     expect(item().hasAttribute('data-disabled')).toBe(false)
     await act(async () => item().click())
-    expect(spy).toHaveBeenCalledWith({ x: 100, y: 80, w: 40, h: 30 })
+    expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 130, h: 90 })
   })
 
-  it('快速编辑里只选中了看不见的版面对象：置灰，动作不动视口', async () => {
+  it('单图编辑里只选中标注：可用，框标注本身', async () => {
     const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
     act(() => useSelectionStore.setState({ ids: ['t1'] }))
     act(() => useWorkspaceStore.getState().enterFastEdit('p1'))
     await open()
-    // 进快速编辑本身要让已开着的菜单重算（订阅了工作区模式），不是只在选区变时
-    expect(item().hasAttribute('data-disabled')).toBe(true)
-    expect(zoomToSelection()).toBe(false)
-    expect(spy).not.toHaveBeenCalled()
+    expect(item().hasAttribute('data-disabled')).toBe(false)
+    expect(zoomToSelection()).toBe(true)
+    expect(spy).toHaveBeenCalledTimes(1)
   })
 })
 

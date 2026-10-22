@@ -245,7 +245,7 @@ test(
   await expect(page.locator('[data-group-page]')).toBeVisible()
   const b3s = await boxes(page)
   const bb = b3s.abs.axes_1
-  await page.mouse.click(bb.x + bb.w * 0.2, bb.y + bb.h / 2)
+  await page.mouse.click(bb.x + bb.w * 0.4, bb.y + bb.h / 2)
   await expect(page.locator('[data-group-page]')).toHaveCount(0)
   await openTree(page)
   const picked = page.locator('[role="tree"] [aria-selected="true"]')

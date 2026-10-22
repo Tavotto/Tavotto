@@ -268,6 +268,44 @@ def test_write_back_cleans_updating_when_second_export_fails(
     assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
 
 
+def test_write_back_over_pixel_budget_is_a_409_with_params_and_zero_file_changes(
+    client, tmp_path, monkeypatch
+):
+    """PNG 目标按 600 dpi 超过 worker 直出的像素预算（`export_raster_too_large`）：
+
+    与别的 verify 段 worker 失败同一纪律——409 + `stage: "verify"`、原件字节不变、不留 `.updating`；
+    错误体带 code 与 `params`（宽 / 高 / 上限），界面据此说得出「图太大」而不是「worker 挂了」。
+    WorkerError 的形状与 `pool` 从 worker 错误信封转出来的一致（真 worker 的转换见
+    `tests/test_worker_export_pixel_budget.py`）。
+    """
+    figs = _figs(tmp_path)
+    before_pdf = (figs / "Fig1.pdf").read_bytes()
+    before_png = (figs / "Fig1.png").read_bytes()
+    hot, fresh = _pair(figs, tmp_path)
+    real_export = fresh.export
+
+    def export(stem, patches, path, fmt="pdf", dpi=600):
+        if fmt != "png":
+            return real_export(stem, patches, path, fmt, dpi)
+        err = engine_pool.WorkerError("位图导出太大", "", code="export_raster_too_large")
+        err.extra = {"width": 20000, "height": 15000, "max_pixels": 100_000_000}
+        raise err
+
+    fresh.export = export
+    discarded = _use(monkeypatch, hot, fresh)
+
+    resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
+    assert resp.status_code == 409, resp.get_json()
+    body = resp.get_json()
+    assert body["code"] == "export_raster_too_large" and body["stage"] == "verify"
+    assert body["params"] == {"width": 20000, "height": 15000, "max_pixels": 100_000_000}
+    assert (figs / "Fig1.pdf").read_bytes() == before_pdf
+    assert (figs / "Fig1.png").read_bytes() == before_png
+    assert _leftovers(figs) == []
+    assert discarded == [fresh]
+    assert m.load_baked(m.PROJECTS[m._project_id(figs.resolve())]) == {}
+
+
 # ------------------------------ verify：干净重放 ------------------------------
 def test_staging_comes_from_a_fresh_worker_not_the_hot_session(client, tmp_path, monkeypatch):
     """写进用户原件的必须是**可复现的那一版**：热会话一次导出都不该被调用。"""

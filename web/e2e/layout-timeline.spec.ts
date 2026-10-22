@@ -43,7 +43,7 @@ async function settleInspectorMotion(page: Page) {
   })
 }
 
-/** 素材卡上画布，再回到排版 */
+/** 素材卡上画布（画布上只有这一张 = 单图编辑），再退出图内编辑（出口按钮只在图内编辑时有） */
 async function placeFigureAndBack(page: Page) {
   await (await only(page.locator('[data-card="Fig1_kinetics.pdf"]'), 30_000)).dblclick()
   await (await only(page.locator('[data-context-back]'))).click()
