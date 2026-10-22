@@ -22,6 +22,12 @@
     （ADR 0050 的静默看门狗，`pool.BUILD_IDLE_TIMEOUT` / `BUILD_HARD_TIMEOUT`），
     ADR 0048 的分档已删除，标 heavy 不再改变引擎侧任何超时
   * notes: "3d" = 仅文字类元素可编辑；"dead" = 产物已不在磁盘
+  * artifacts（可选，#1251）：`{项目相对路径: stem}`，「磁盘上的这个文件是这个脚本里哪张图
+    写的」。同一脚本里两张不同的图写同 stem 的不同文件（`panel.png` 甲 / `panel.pdf` 乙，
+    乙以 `panel-2` 登记）时，文件名 stem 回答不了「这个文件是谁的」——磁盘文件 → 图的解析
+    一律走 `for_artifact()`：先查这张表，查不到再退回按 stem。字段可缺（旧文件），旧版本
+    读新文件时按未知键忽略（`load_data` 只取已知键）；表是**派生数据**，坏的条目（非字符串、
+    stem 不在本脚本 stems 里、同一路径被两个脚本认领）静默丢弃，不让整份注册表打不开
 
 **一个进程可以同时端着多个项目的注册表**（不同标签页各开各的图库），所以
 索引数据装在 Registry 实例里；模块级函数代理到一个默认实例，保持老调用方式。
@@ -78,6 +84,8 @@ class Registry:
     def __init__(self) -> None:
         self._scripts: dict[str, dict] = {}
         self._index: dict[str, str] = {}
+        #: 磁盘文件（项目相对路径，POSIX）→ stem；见模块说明的 artifacts
+        self._artifacts: dict[str, str] = {}
         self._source: str = "<未加载>"
 
     # ---------------- 装载 ----------------
@@ -103,6 +111,7 @@ class Registry:
             raise RuntimeError(f"注册表缺少 scripts 表: {source}")
         cleaned: dict[str, dict] = {}
         index: dict[str, str] = {}
+        artifacts: dict[str, str] = {}
         for script, cfg in scripts.items():
             if not isinstance(cfg, dict):
                 raise RuntimeError(f"{source}: {script} 的配置必须是对象")
@@ -124,6 +133,8 @@ class Registry:
                 if stem in index:
                     raise RuntimeError(f"stem 重复注册: {stem} ({index[stem]} vs {script})")
                 index[stem] = script
+            for art, art_stem in clean_artifacts(cfg.get("artifacts"), stems).items():
+                artifacts.setdefault(art, art_stem)
             cleaned[script] = {
                 "entry": entry,
                 "cost": cost,
@@ -131,6 +142,7 @@ class Registry:
                 "stems": list(stems),
             }
         self._scripts, self._index, self._source = cleaned, index, source
+        self._artifacts = artifacts
 
     # ---------------- 查询 ----------------
     def loaded(self) -> bool:
@@ -147,6 +159,27 @@ class Registry:
         cfg = self._scripts[script]
         return {"script": script, "entry": cfg["entry"], "cost": cfg["cost"], "notes": cfg["notes"]}
 
+    def for_artifact(self, rel: str) -> dict | None:
+        """磁盘上的一个素材文件（项目相对路径）→ 产出它的那张图：`for_stem` 的字段加 `stem`。
+
+        **「磁盘文件 → 图」的唯一解析出处**（#1251）：先查注册表登记的 `artifacts`（哪张图写了这个
+        文件），查不到再退回按文件名 stem——老注册表、手写注册表、静态起草登记的图都没有这张表。
+        不是「stem 的原件在哪」（那是 `figcapture.find_original_artifact`），方向相反。
+        """
+        key = str(rel).replace("\\", "/")
+        stem = self._artifacts.get(key)
+        if stem is None or stem not in self._index:
+            stem = Path(key).stem
+        info = self.for_stem(stem)
+        return None if info is None else {**info, "stem": stem}
+
+    def artifacts_of(self, script: str) -> dict[str, str]:
+        """某脚本登记的 `{文件: stem}`（只读副本）。"""
+        stems = set(self._scripts.get(script, {}).get("stems", []))
+        return {
+            a: s for a, s in self._artifacts.items() if s in stems and self._index.get(s) == script
+        }
+
     def all_scripts(self) -> list[str]:
         return list(self._scripts)
 
@@ -156,6 +189,21 @@ class Registry:
     def entries(self) -> dict[str, dict]:
         """完整表（界面上的「脚本注册表」面板用）。"""
         return {k: dict(v) for k, v in self._scripts.items()}
+
+
+def clean_artifacts(raw: object, stems: list[str]) -> dict[str, str]:
+    """`artifacts` 字段的宽容清洗：只留「字符串路径 → 本脚本 stems 里的 stem」，其余丢弃。
+
+    读（`load_data`）与写（`discover.register`）共用这一份，两边对「什么算有效条目」不会分叉。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    allowed = set(stems)
+    out: dict[str, str] = {}
+    for art, stem in raw.items():
+        if isinstance(art, str) and art and isinstance(stem, str) and stem in allowed:
+            out[art.replace("\\", "/")] = stem
+    return out
 
 
 def open_registry(figures_dir: str | Path) -> Registry:
@@ -193,6 +241,10 @@ def source() -> str:
 
 def for_stem(stem: str) -> dict | None:
     return _DEFAULT.for_stem(stem)
+
+
+def for_artifact(rel: str) -> dict | None:
+    return _DEFAULT.for_artifact(rel)
 
 
 def all_scripts() -> list[str]:

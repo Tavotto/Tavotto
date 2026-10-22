@@ -1520,9 +1520,14 @@ def register(
     notes: str = "",
     *,
     append: bool = False,
+    artifacts: dict[str, str] | None = None,
     on_written: Callable[[str], None] | None = None,
 ) -> dict:
     """把一个脚本的 stem 归属写进注册表（试运行探测确认后调用）。
+
+    `artifacts`（#1251）：这次执行里「磁盘文件（项目相对路径）→ 写它的那张图的 stem」。给了就并进
+    （`append`）或替换（默认）这个脚本的 `artifacts` 字段；**不给 = 沿用磁盘上已有的**（手工裁决 /
+    AI 新建脚本这类没有执行证据的写入不许把已知映射抹掉），只按本次 stems 修剪掉指向已不属于它的图的条目。
 
     同名脚本整条替换（探测结果是权威的），其它脚本里被本次认领走的 stem
     一并摘掉——否则 registry.load 会因重复 stem 直接报错。
@@ -1539,7 +1544,15 @@ def register(
     """
     with inputremap.project_mutex(figures_dir):
         return _register_locked(
-            figures_dir, script, stems, entry, cost, notes, append=append, on_written=on_written
+            figures_dir,
+            script,
+            stems,
+            entry,
+            cost,
+            notes,
+            append=append,
+            artifacts=artifacts,
+            on_written=on_written,
         )
 
 
@@ -1566,6 +1579,7 @@ def _register_locked(
     notes,
     *,
     append: bool,
+    artifacts: dict[str, str] | None = None,
     on_written: Callable[[str], None] | None = None,
 ) -> dict:
     path = registry.existing_registry_path(figures_dir)
@@ -1580,19 +1594,42 @@ def _register_locked(
     claimed = set(stems)
     if append:
         claimed |= {str(x) for x in (prev_entry or {}).get("stems", [])}
+    claimed_list = sorted(claimed)
+    prev_arts = registry.clean_artifacts((prev_entry or {}).get("artifacts"), claimed_list)
+    if artifacts is None:
+        new_arts = prev_arts  # 没有执行证据：沿用已知映射（已按本次 stems 修剪）
+    else:
+        fresh_arts = registry.clean_artifacts(artifacts, claimed_list)
+        replaced = set(fresh_arts.values())
+        # 并进去时，旧条目里「同一张图换了文件」的那条让位于新的
+        new_arts = (
+            {a: s for a, s in prev_arts.items() if s not in replaced and a not in fresh_arts}
+            if append
+            else {}
+        )
+        new_arts.update(fresh_arts)
     for name, entry_cfg in list(scripts.items()):
         if name == script or not isinstance(entry_cfg, dict):
             continue
         kept = [s for s in entry_cfg.get("stems", []) if s not in claimed]
         if len(kept) != len(entry_cfg.get("stems", [])):
             entry_cfg["stems"] = kept
+        if "artifacts" in entry_cfg:
+            # 被本脚本认领走的图 / 文件，别处的映射跟着摘掉（一个文件只属于一个脚本）
+            other = registry.clean_artifacts(entry_cfg["artifacts"], kept)
+            other = {a: s for a, s in other.items() if a not in new_arts}
+            if other:
+                entry_cfg["artifacts"] = other
+            else:
+                entry_cfg.pop("artifacts")
     if claimed:
         prev = prev_entry or {}
         scripts[script] = {
             "entry": entry,
             "cost": cost or prev.get("cost", "medium"),
             "notes": notes or prev.get("notes", ""),
-            "stems": sorted(claimed),
+            "stems": claimed_list,
+            **({"artifacts": dict(sorted(new_arts.items()))} if new_arts else {}),
         }
     else:
         scripts.pop(script, None)

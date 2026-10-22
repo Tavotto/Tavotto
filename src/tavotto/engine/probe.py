@@ -580,6 +580,24 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str])
     return out
 
 
+def descriptor_artifacts(descriptors) -> dict[str, str] | None:
+    """一次执行的描述符 → `{原件相对路径: stem}`：登记进注册表的 `artifacts`（#1251）。
+
+    只收 `original_artifact` 有值的图（pyplot 捕获恒 None）。描述符里的原件已经是按这张图**自己存过的
+    格式**绑定的（`figcapture.find_original_artifact(formats=…)`），所以 `panel.pdf` 对应乙（`panel-2`）。
+    """
+    if descriptors is None:
+        return None  # 没有执行证据（不是「执行了、没有原件」）：调用方沿用已知映射
+    out: dict[str, str] = {}
+    for d in descriptors:
+        if not isinstance(d, dict):
+            continue
+        art, stem = d.get("original_artifact"), d.get("stem")
+        if isinstance(art, str) and art and isinstance(stem, str) and stem:
+            out.setdefault(art.replace("\\", "/"), stem)
+    return out
+
+
 def _partial_fields(build_resp) -> dict:
     """build 响应里被逐图隔离的图 → `{"failed_figures": [...], "partial": True}`；没有失败时不加任何键。"""
     failed = build_resp.get("failed_figures") if isinstance(build_resp, dict) else None
@@ -681,6 +699,7 @@ def register_probed(
                 # T03：带运行配置的执行只是这个脚本的**另一份配置**——并进去，不换掉。整条替换会让
                 # 无参数 / 别的参数登记过的图当场失去编辑入口（注册表是 stem 归属的唯一权威）
                 append=append,
+                artifacts=descriptor_artifacts(result.get("descriptors")),
                 **({"on_written": written.append} if on_registered is not None else {}),
             )
             registry.load(figures_dir)

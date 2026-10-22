@@ -498,6 +498,29 @@ def safe_resolve(rel_id: str) -> Path:
     return p
 
 
+def _disk_panel_rel(rel: str) -> tuple[str, dict | None]:
+    """磁盘素材文件（项目相对路径）→ `(stem, 注册表信息)`；注册表认不得它就是 `(文件名 stem, None)`。
+
+    **「磁盘文件 → 图」在 app 层的唯一出处**（#1251）：判据是 `registry.for_artifact`——先看注册表登记的
+    「哪个文件是哪张图写的」，查不到再退回文件名 stem。同一脚本里 `panel.png`（甲）与 `panel.pdf`（乙，
+    stem 是 `panel-2`）时，打开 `panel.pdf` 得到的是乙。凡是主语为「磁盘上的这个文件」的解析都走这里，
+    不再各自 `for_stem(path.stem)`；主语为 stem 的（runtime 素材、worker 返回的 stem）才直接 `for_stem`。
+    """
+    info = current_registry().for_artifact(rel)
+    if info is None:
+        return Path(rel).stem, None
+    return info["stem"], info
+
+
+def _disk_panel(path: Path) -> tuple[str, dict | None]:
+    """`_disk_panel_rel` 的 Path 版（`path` 是 `safe_resolve` 解出来的真实路径）。"""
+    try:
+        rel = path.relative_to(require_project().resolve()).as_posix()
+    except ValueError:
+        rel = path.name
+    return _disk_panel_rel(rel)
+
+
 # ---- 最近的后端请求记录（发送问题反馈的 detail-requests.json，ADR 0118 修订 2026-10-13）----
 # 进程内定长环、不写盘。每条只有 方法 / Flask 路由**规则** / 状态码 / 耗时 / 错误码（失败响应 JSON 的 `code`），
 # 不含请求体、查询串与实参。**任何异常都吞掉**——记录请求不许影响请求。
@@ -600,10 +623,10 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             )
             if spec["px_w"] is not None:
                 entry.update(px_w=spec["px_w"], px_h=spec["px_h"])
-            info = current_registry().for_stem(p.stem)
+            panel_stem, info = _disk_panel_rel(rel.replace("\\", "/"))
             if info is not None:  # 可参数化面板：有产出它的 matplotlib 脚本
                 entry.update(script=info["script"], cost=info["cost"])
-                baseline_v = _baseline_version(p.stem, baked)
+                baseline_v = _baseline_version(panel_stem, baked)
                 if baseline_v and baseline_v["patches"]:
                     entry["baked_overrides"] = baseline_v["patches"]
                     # 基线仍烙在文件上吗？文件被外部改写（用户重跑自己的构建
@@ -1335,10 +1358,9 @@ def _serialize_figure_with_worker(
         script = str(info["script"]) if info else ""
     else:
         path = safe_resolve(rel_id)
-        info = current_registry().for_stem(path.stem)
+        stem, info = _disk_panel(path)
         if info is None:
             return None
-        stem = path.stem
         script = str(info["script"])
         worker = _safe_worker(info["script"], info["entry"], stem)
 
@@ -2619,7 +2641,7 @@ def _has_runnable_script(rel_id: str) -> bool:
     """这张图有没有可重新运行的脚本（runtime 素材天生有；磁盘图看注册表按 stem 的映射）。"""
     if engine_runtimeasset.is_runtime_id(rel_id):
         return True
-    return current_registry().for_stem(Path(rel_id).stem) is not None
+    return _disk_panel_rel(rel_id)[1] is not None
 
 
 def _svg_asset_binding(src, tmp_dir: Path) -> tuple[str, str] | None:
@@ -3309,7 +3331,7 @@ def api_package():
         entry = {"id": rel_id}
         if p.is_relative_to(root.resolve()) and p.is_file():
             entry.update(sha1=_sha1_of(p), mtime=int(p.stat().st_mtime), bytes=p.stat().st_size)
-            info = current_registry().for_stem(p.stem)
+            _stem, info = _disk_panel_rel(rel_id.replace("\\", "/"))
             if info is not None:
                 entry["script"] = info["script"]
                 scripts[info["script"]] = root / info["script"]
@@ -6507,7 +6529,7 @@ def _artifact_source(rel_id: str, policy, expected=None, patches=(), confirmed=N
         )
     path = _artifact_path(rel_id)
     if policy in engine_figcapture.FIGSIZE_FRAME_POLICIES and _baseline_patches(
-        path.stem, load_baked()
+        _disk_panel(path)[0], load_baked()
     ):
         raise engine_artifactcontext.ArtifactContextError(
             "not_untouched", "This source has a saved edit baseline."
@@ -6902,7 +6924,7 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: 
             info["stem"],
         )
     path = safe_resolve(rel_id)
-    info = current_registry().for_stem(path.stem)
+    disk_stem, info = _disk_panel(path)
     if info is None:
         if artifact_source is not None:
             raise engine_artifactcontext.ArtifactContextError(
@@ -6916,13 +6938,13 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: 
             project_root=root,
             script=info["script"],
             entry=info["entry"],
-            stem=path.stem,
+            stem=disk_stem,
             execution_profile=engine_enginesession.PROFILE_SAFE,
             **({"existing_only": True} if existing_only else {}),
             **({"run": disk_run} if disk_run is not None else {}),
             **_artifact_kwargs(artifact_source),
         ),
-        path.stem,
+        disk_stem,
     )
 
 
@@ -6960,7 +6982,7 @@ def _handoff_target_stem(rel_id: str) -> str:
             return info["stem"] if info else ""
     except Exception:  # noqa: BLE001 —— 结论表是旁路
         return ""
-    return Path(rel_id).stem
+    return _disk_panel_rel(rel_id)[0]
 
 
 @app.get(security.HANDOFF_STATUS_PATH)
@@ -7585,7 +7607,7 @@ def api_engine_invalidate():
         run = engine_runtimeasset.run_selection(root, info)
     else:
         path = safe_resolve(rel_id)
-        info = current_registry().for_stem(path.stem)
+        info = _disk_panel(path)[1]
         if info is None:
             abort(404)
         script = info["script"]
@@ -7750,7 +7772,8 @@ def api_engine_update_source():
                 "code": "annotations_need_pdf",
             }
         ), 400
-    info = current_registry().for_stem(src.stem)
+    # 打开的是 `panel.pdf` 而它是同脚本里另一张图（`panel-2`）写的：编辑、基线都归那张图，写回只写它自己的文件
+    stem, info = _disk_panel(src)
     if info is None:
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
@@ -7758,10 +7781,15 @@ def api_engine_update_source():
     if fmt_err := _write_back_format_error(src):
         # 起 worker 之前就拒（判据与 `_write_source_files` 里那道是同一个函数）
         return _write_back_error_response(fmt_err)
-    worker = _safe_worker(info["script"], info["entry"], src.stem)
+    worker = _safe_worker(info["script"], info["entry"], stem)
     try:
         result = _write_source_files(
-            src, patches, worker, annotations=annotations, expected_mtime=body.get("expected_mtime")
+            src,
+            patches,
+            worker,
+            annotations=annotations,
+            expected_mtime=body.get("expected_mtime"),
+            stem=stem,
         )
     except (
         SourceChangedError,
@@ -7777,7 +7805,7 @@ def api_engine_update_source():
     # 把这组修改追加为该图的版本历史，末位即当前基线：
     # 新拖入的同名面板自动继承，双击进编辑态能接着改。
     # 带上 commit 后的文件身份——外部重写产物后基线要能被判失效
-    append_baked(src.stem, patches, files=result["file_identity"])
+    append_baked(stem, patches, files=result["file_identity"])
     return jsonify(_write_back_response(result, baked=bool(patches)))
 
 
@@ -8268,7 +8296,12 @@ def _backup_targets(tmps: list[tuple[Path, Path]], backup_root: Path, stem: str)
 
 
 def _write_source_files(
-    src: Path, patches: list, worker, annotations: list | None = None, expected_mtime=None
+    src: Path,
+    patches: list,
+    worker,
+    annotations: list | None = None,
+    expected_mtime=None,
+    stem: str | None = None,
 ) -> dict:
     """写回事务：prepare → verify → commit，任一环不过就保持原文件零改动。
 
@@ -8292,7 +8325,8 @@ def _write_source_files(
     以前只有「文件被占用」那一条路径清理，PDF 导出成功而 PNG 导出抛
     WorkerError 时，`.Fig1.pdf.updating` 就永久留在图库里了。
     """
-    stem = src.stem
+    # `stem` 是被写回的那张图（`_disk_panel` 解出来的）；缺省 = 文件名 stem（老调用方 / 注册表不认得时）
+    stem = stem or src.stem
     if fmt_err := _write_back_format_error(src):
         # 唯一的扼流点：调用方忘了早检，也绝不「零个目标、报成功、记基线」
         raise fmt_err
@@ -8658,16 +8692,16 @@ def api_engine_sync_overrides():
     src_path = safe_resolve(body.get("from_id", ""))
     dst_path = safe_resolve(body.get("to_id", ""))
     patches = body.get("patches", [])
-    info_s = current_registry().for_stem(src_path.stem)
-    info_d = current_registry().for_stem(dst_path.stem)
+    stem_s, info_s = _disk_panel(src_path)
+    stem_d, info_d = _disk_panel(dst_path)
     if info_s is None or info_d is None or info_s["script"] != info_d["script"]:
         return jsonify(
             {"error": "两张图不属于同一个脚本，无法同步", "code": "sync_different_scripts"}
         ), 400
-    worker = _safe_worker(info_s["script"], info_s["entry"], src_path.stem)
+    worker = _safe_worker(info_s["script"], info_s["entry"], stem_s)
     try:
-        man_s = _manifest_of(worker, src_path.stem)
-        man_d = _manifest_of(worker, dst_path.stem)
+        man_s = _manifest_of(worker, stem_s)
+        man_d = _manifest_of(worker, stem_d)
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
 
@@ -8784,7 +8818,7 @@ def api_engine_history_restore():
     patches = [] if n < 0 or n >= len(versions) else versions[n]["patches"]
     try:
         result = _write_source_files(
-            src, patches, worker, expected_mtime=body.get("expected_mtime")
+            src, patches, worker, expected_mtime=body.get("expected_mtime"), stem=stem
         )
     except (
         SourceChangedError,
@@ -9096,7 +9130,15 @@ def _resync_registration(ctx, worker) -> bool:
         with engine_inputremap.landing(root, getattr(worker, "remap_generation", None)):
             # cost 给空串：`register` 保留磁盘上原来那个值
             engine_discover.register(
-                root, script, stems, entry=worker.entry, cost="", append=bool(variant)
+                root,
+                script,
+                stems,
+                entry=worker.entry,
+                cost="",
+                append=bool(variant),
+                artifacts=engine_probe.descriptor_artifacts(
+                    getattr(worker, "last_build_descriptors", None)
+                ),
             )
             engine_inputremap.record_registration(root, script, variant)
     except engine_inputremap.RemapChanged:
@@ -9499,11 +9541,12 @@ def _preparation_target(rel_id: str) -> dict:
             **({"run": run} if run is not None else {}),
         }
     path = safe_resolve(rel_id)  # 已判：在项目根之内、是文件、扩展名在闭集里
-    info = current_registry().for_stem(path.stem) or {}
+    disk_stem, info = _disk_panel(path)
+    info = info or {}
     disk_run = _disk_panel_run(info["script"]) if info.get("script") else None
     return {
         **({"run": disk_run} if disk_run is not None else {}),
-        "stem": path.stem,
+        "stem": disk_stem,
         "script": info.get("script"),
         "entry": info.get("entry"),
         "original_artifact": rel_id.replace("\\", "/"),
@@ -11505,13 +11548,13 @@ def _ai_run_impl():
                 {"session": known["session"], "script": known.get("script") or "", "deduped": True}
             )
     path = safe_resolve(body.get("id", ""))
-    info = current_registry().for_stem(path.stem)
+    disk_stem, info = _disk_panel(path)
     if info is None:
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
         ), 404
     context = {
-        "stem": path.stem,
+        "stem": disk_stem,
         "gid": body.get("gid"),
         "label": body.get("label"),
         "overrides": body.get("overrides"),

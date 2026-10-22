@@ -178,3 +178,27 @@
 
 只做整图预览、摆放和原图 SVG 导出，不宣称静态 SVG 已有跨格式渲染闭包；不支持的导出
 明确报错。看护：`tests/test_svg_assets.py`，含去掉静态白名单后的反证。
+
+## 磁盘文件 → 图：注册表的 `artifacts`（#1251，2026-10-22）
+
+同一脚本里两张**不同**的图写同 stem 的不同文件（`panel.png` 甲 / `panel.pdf` 乙，乙以 `panel-2` 补认领，#1250）时，
+文件名 stem 回答不了「这个文件是哪张图写的」。注册表每个脚本条目因此多一个**可选**字段
+`artifacts: {项目相对路径(POSIX): stem}`：
+
+- **写入**：`probe.register_probed`（试运行 / 准备会话的登记）与改指表对账（`app._resync_registration`）把一次执行描述符里的
+  `original_artifact`（#1250 起按这张图自己存过的格式绑定）经 `probe.descriptor_artifacts` 传给 `discover.register(artifacts=…)`。
+  默认整条替换（以这次执行为准，空映射也替换——不沿用陈旧文件）；带运行配置的执行 `append` 并进去（同一张图换了文件时新的让位旧的）。
+  **没有执行证据的写入（PUT /api/registry 手工裁决、AI 新建脚本）不传 `artifacts`，沿用已知映射**，只按本次 stems 修剪；
+  被别的脚本认领走的 stem / 文件，原脚本里的映射随之摘掉（一个文件只属于一个脚本）。没有映射时文件字节与此前逐字节一致。
+- **读取**：`Registry.for_artifact(rel)` 是**「磁盘文件 → 图」的唯一解析出处**——先查 `artifacts`，查不到再退回按文件名 stem
+  （老注册表、手写注册表、静态起草登记的图都没有这张表）。app 层包成 `_disk_panel_rel` / `_disk_panel`，凡主语是「磁盘上的这个文件」的解析
+  （素材清单、渲染/写回/历史恢复的 worker 解析 `_resolve_engine_worker`、`update_source`、两图同步、AI 目标、准备目标描述符、作废重建、
+  `_has_runnable_script`、交接结论表的 stem）都走它，不再各自 `for_stem(path.stem)`。主语是 stem 的（runtime 素材、worker 返回的 stem、
+  `_stem_known`）才直接 `for_stem`。新增消费点照此判断，别回到 `for_stem(path.stem)`。
+- **兼容**：新版本读没有该字段的老文件 = 行为与按 stem 完全一致；旧版本读新文件，`load_data` 只取已知键，未知键忽略（旧版本整条重登记该脚本时会丢掉
+  映射，回落按 stem，不崩）。表是派生数据，坏条目（非字符串 / stem 不在本脚本 stems 里 / 同一路径被两个脚本认领）静默丢弃，不让注册表打不开。
+- **写回**：打开 `panel.pdf` 得到乙（`panel-2`），编辑与基线归乙；`_write_source_files(stem=…)` 的目标仍是 `src` 同名的 `WRITE_BACK_EXT` 文件，
+  经 `_own_write_back_targets` 去掉别的图的原件（`panel.png`），只写 `panel.pdf`。`write_back_foreign_file` 守卫不变（`src` 本身是别的图的原件才拒）。
+- **已知未覆盖**：`tavotto open <panel.pdf>`（handoff）仍按 stem 工作——CLI 取的是文件名 stem、再按 stem 找原件，不读 `artifacts`；
+  素材库清单里乙仍同时以 FileAsset（`panel.pdf`）与 runtime 素材（`runtime:…#panel-2`）出现。
+看护 `tests/test_artifact_stem_map.py`（注册表 / register 语义 / 假 worker 端点 / 真 worker 同 stem 夹具登记→解析）。
