@@ -9,7 +9,7 @@ import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { cn } from '@/lib/utils'
 import { startPageEdgeResize } from './pageEdgeDrag'
-import { dimSpan } from './pageEdgeReadout'
+import { DIM_INSET, dimSpan } from './pageEdgeReadout'
 
 /** 命中区的屏幕宽度（px）：跟缩放倍率无关，永远是这么宽（命中区在屏幕空间画，不在世界层里） */
 const HIT_PX = 10
@@ -163,12 +163,12 @@ function PageDimensions() {
         <g data-dim="w" opacity={showW ? 1 : 0.45}>
           <line x1={L} y1={T - 4} x2={L} y2={y - 8} stroke="currentColor" strokeWidth={0.8} />
           <line x1={L + W} y1={T - 4} x2={L + W} y2={y - 8} stroke="currentColor" strokeWidth={0.8} />
-          {gw && arrow(gw.a + 4, gw.b - 4, y, true, gw.startArrow, gw.endArrow)}
+          {gw && arrow(gw.a + DIM_INSET, gw.b - DIM_INSET, y, true, gw.startArrow, gw.endArrow)}
         </g>
         <g data-dim="h" opacity={showW ? 0.45 : 1}>
           <line x1={L - 4} y1={T} x2={x - 8} y2={T} stroke="currentColor" strokeWidth={0.8} />
           <line x1={L - 4} y1={T + H} x2={x - 8} y2={T + H} stroke="currentColor" strokeWidth={0.8} />
-          {gh && arrow(gh.a + 4, gh.b - 4, x, false, gh.startArrow, gh.endArrow)}
+          {gh && arrow(gh.a + DIM_INSET, gh.b - DIM_INSET, x, false, gh.startArrow, gh.endArrow)}
         </g>
       </svg>
       {gw && (
