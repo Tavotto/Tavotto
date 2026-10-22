@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import signal
 import sys
@@ -105,6 +106,16 @@ def main(argv: list[str] | None = None) -> int:
             sys.stderr.write(redactor.redact(message) + "\n")
         except OSError:
             pass
+
+    class _DiagHandler(logging.Handler):
+        """产品模块（如 tlstrust 的退回告警）的日志也只经 diag 出口：只发「模块名: 级别」短码，不带异常文本。"""
+
+        def emit(self, record: logging.LogRecord) -> None:
+            diag(f"agent_runner: log {record.name} {record.levelname.lower()}")
+
+    product_log = logging.getLogger("tavotto")
+    product_log.handlers = [_DiagHandler()]
+    product_log.propagate = False
 
     def emit(event: dict) -> None:
         line = json.dumps(redactor.redact_obj(event), ensure_ascii=True, separators=(",", ":"))

@@ -1871,3 +1871,63 @@ class TestReviewRound10:
         assert wires.WIRES["openai-chat"].token_field == "max_tokens"
         with pytest.raises(ValueError):
             wires.OpenAIChatWire(token_field="max_output_tokens")
+
+
+class TestReviewRound11:
+    """Codex #1328 第十一轮：混合换行以先出现的为准；产品模块日志只经 diag 出口。"""
+
+    @pytest.mark.parametrize(
+        ("raw", "eol"),
+        [
+            (b'import x\nplt.plot(color="red")\r\nprint(1)\n', b"\n"),
+            (b'import x\r\nplt.plot(color="red")\nprint(1)\r\n', b"\r\n"),
+        ],
+    )
+    def test_mixed_eol_keeps_the_first_newline_style(self, cand, raw, eol):
+        (cand / "fig.py").write_bytes(raw)
+        ts = tool_set(cand)
+        assert not ts["read_file"].handler({"path": "fig.py"}).is_error
+        r = ts["edit_file"].handler({"old": 'color="red"', "new": 'color="blue"'})
+        assert not r.is_error
+        out = (cand / "fig.py").read_bytes()
+        expected = raw.replace(b"\r\n", b"\n").replace(b'"red"', b'"blue"').replace(b"\n", eol)
+        assert out == expected  # 整份按先出现的换行写回，没有被一处异类换行带偏
+
+    def test_product_log_records_only_reach_stderr_as_short_codes(
+        self, cand, tmp_path, monkeypatch, capsys
+    ):
+        import logging
+
+        from tavotto.engine import tlstrust
+        from tavotto.engine.agent_runner import __main__ as runner_main
+
+        script = tmp_path / "demo.json"
+        script.write_text(json.dumps({"turns": [{"text": "done"}]}), encoding="utf-8")
+        prompt = tmp_path / "p.txt"
+        prompt.write_text("make it blue", encoding="utf-8")
+        monkeypatch.setenv("TAVOTTO_AGENT_API_KEY", KEY_CANARY)
+        product = logging.getLogger("tavotto")
+        saved = (list(product.handlers), product.propagate)
+        try:
+            runner_main.main(
+                [
+                    "--cwd",
+                    str(cand),
+                    "--target",
+                    "fig.py",
+                    "--wire",
+                    "demo",
+                    "--demo-script",
+                    str(script),
+                    "--prompt-file",
+                    str(prompt),
+                ]
+            )
+            capsys.readouterr()
+            monkeypatch.setattr(tlstrust, "_fallback_warned", False)
+            tlstrust._warn_fallback(RuntimeError(f"boom {KEY_CANARY}"))
+            err = capsys.readouterr().err
+        finally:
+            product.handlers, product.propagate = saved
+        assert "agent_runner: log tavotto.tlstrust warning" in err
+        assert KEY_CANARY not in err and "boom" not in err

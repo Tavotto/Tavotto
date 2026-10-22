@@ -184,7 +184,9 @@ class FigureEditSession:
             text = raw.decode("utf-8")
         except UnicodeDecodeError:
             return "not_text"
-        eol = "\r\n" if "\r\n" in text else "\n"
+        # 以文件里**先出现**的那种换行为准（混合换行时一处 CRLF 不该把整份改成 CRLF）
+        first_nl = text.find("\n")
+        eol = "\r\n" if first_nl > 0 and text[first_nl - 1] == "\r" else "\n"
         return text.replace("\r\n", "\n"), eol
 
     def _write_text(self, real: str, text: str, eol: str) -> None:
