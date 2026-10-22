@@ -217,6 +217,8 @@
     "isolated": "Isolated: {{label}}",
     "modifiedAfterSave": "Differs from the saved file",
     "modifiedAfterSaveHint": "The script changed this figure after saving it. You are editing the figure as it was when the script finished, so it can differ from the file on disk.",
+    "savedMoment": "Edited as saved",
+    "savedMomentHint": "The script changed this figure after saving it. You are editing the figure as it was at the moment of that save, so it matches the file on disk; the script's later changes are not included.",
     "listLabel": "Figure elements",
     "load": "Load element list",
     "lock": "Lock (canvas clicks skip it)",

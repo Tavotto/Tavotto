@@ -482,6 +482,7 @@ def _patched_savefig(self, fname, *args, **kwargs):
             kwargs.get("bbox_extra_artists"),
             target=figcapture.savefig_target_key(fname, kwargs, getattr(self, "canvas", None)),
             verify=figcapture.savefig_verifier(_REAL_SAVEFIG, self, fname, args, kwargs),
+            observation=observation,
         )
     if not to_path:
         if SESSION is not None:
@@ -1422,6 +1423,8 @@ class Worker(wireproto.V1Handler):
                 )
                 self.dropped_figures = dropped
 
+        # 存盘后又被改过的图：能还原保存那一刻的 Figure 就用它当编辑基础（ADR 0139 §九）
+        self.session.adopt_save_moments()
         try:
             if (
                 self.session.artifact_source is not None

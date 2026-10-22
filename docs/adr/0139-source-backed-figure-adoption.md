@@ -115,13 +115,14 @@ ADR 0098 末节的「完整 PNG 的受限采用」（`selected-figsize-v1`，#78
   池键 pin 段）放到 PR3 之后，单独评估。
 - 已知缺口（如实写进 PR）：safe 档不拦 `open('w')` / `PIL.Image.save` / `shutil.copy`，脚本在重画时覆写原件只能
   **事后检出**（`assert_current` → `source_changed`，整个采用作废），不能阻止或回滚。不在本 ADR 内扩大写拦截面。
-- 不 pickle、不跨进程传任何 Figure。
+- 不跨进程传任何 Figure；不落盘任何序列化的 Figure。**唯一例外**是 §九（2026-10-22 修订）：safe worker 在**本进程内存**里为
+  「存盘后又被脚本改过」的图留一份保存瞬间的 pickle 字节，本进程自己还原、自己用，随会话消亡。
 
 ### 八、保存瞬间状态
 
 来源驱动策略下，可编辑基础是**脚本跑完后的最终 Figure**。保存之后又改了 Figure 的脚本，最终态与原件会不同——
-这正是对照确认要让用户看见的东西；系统不声称拥有保存瞬间的快照。PR3 评估在 `_patched_savefig` 命中被选路径
-那一次保存时就地留下渲染证据，届时才可能把「保存瞬间」从推断变成事实。
+这正是对照确认要让用户看见的东西；系统不声称拥有保存瞬间的快照。（2026-10-22：safe worker 现在能拿到快照了，见 §九；
+以下 2026-10-21 的告知机制仍是判据，快照只在它判为真时才被用上。）
 
 **补充（2026-10-21）：至少要告知。** 可编辑基础仍是最终 Figure、仍不拍快照；但「存完又被脚本改过」这件事要说出来，
 否则用户在 Tavotto 里看到的与磁盘文件不同却无从知道。判据是 matplotlib 自带的 stale 传播：给 Figure 的 `stale_callback` 套一层只记录的透明包装（`figcapture.mark_saved`，只套一次，
@@ -144,10 +145,10 @@ ADR 0098 末节的「完整 PNG 的受限采用」（`selected-figsize-v1`，#78
 | PR2 | `script-backed-figure-v1`：编辑档安全条件、`artist_profile` reason、对照确认、`sourceBackedFigure` guard、服务端写回闸、零编辑原像素 / 编辑整图重渲染 | high（full-ci、mutation 清单、合前维护者点头） | 功能开关默认关；关掉即回到 PR1 行为 |
 | PR3 | AI 交接来源捕获：交接时记录脚本、解释器与 savefig 参数（按字节摘要绑定），保存瞬间证据，同次执行多格式绑定 | high | 记录是附加数据，忽略即回 |
 
-PR3 现状（第一片）：只做「交接时记录事实 + 响应里只读展示」——插件 `handoff.py` 在真的跑了脚本时，由脚本进程退出时
+PR3 现状（第一片；「保存瞬间证据」已由 §九 单独成文并授权）：只做「交接时记录事实 + 响应里只读展示」——插件 `handoff.py` 在真的跑了脚本时，由脚本进程退出时
 自报版本 / 后端 / `rcParams["figure.dpi"]`（不记 savefig 实参，探针看不到），按原件字节 sha256 写 `data_dir()/origin/`
 （`engine/originrecord.py`，不存解释器路径），准入响应的 `source_backed.origin` 展示它与本次重画的版本。
-**不参与 exact / needs_confirmation 判定，不换解释器。** 保存瞬间证据、同次执行多格式绑定、按记录选解释器
+**不参与 exact / needs_confirmation 判定，不换解释器。** 同次执行多格式绑定、按记录选解释器
 （审计 B §6.3 的授权与池键 pin）仍是后续，需单独 ADR 与用户授权。
 
 ## 不支持
@@ -170,3 +171,85 @@ PR3 现状（第一片）：只做「交接时记录事实 + 响应里只读展�
 3. 不变：import 了 matplotlib 家族一律沉默；证据缺失（旧文件 / 没写）一律沉默；不改 outcome / facts。
 4. hint 里的 `library` 与 `path` 是后续「生成可编辑版本」按钮（本修订不含）的输入。
 
+
+## 修订（2026-10-22）：九、保存瞬间快照——「存后改过」从告知升级为可编辑基础
+
+用户明确要求（2026-10-22）：脚本 `savefig` 之后又改了 Figure 时，可编辑基础用**保存那一刻**的状态，不止告知。§八 把这件事留给
+「单独 ADR 与用户授权」；授权已给，设计如下。**结论先说：方案站得住，且全部落在已有不变式之内，没有需要用户另行裁决的取舍；
+两处刻意收窄（只做 safe worker、不动精确策略）见 3 与 9。**
+
+### 1. 机制
+
+在 safe worker 的 `LiveFigureSession.note_savefig`（每次被拦截的 savefig 记完账、`mark_saved` 之后）给这张图拍快照：
+`pickle.dumps(fig)`——matplotlib 文档化的 Figure 持久化，不是自造序列化。脚本跑完、`note_modified_after_save` 判为真、
+pyplot 兜底收完之后（`LiveFigureSession.adopt_save_moments`，在 `prepare_artifact` / `instrument_all` 之前），
+对判为真的图**还原复制品**，让它顶替捕获表里那张最终态 Figure；判为假的图一个字节不动，快照直接丢弃。
+还原出的复制品挂回 `FigureCanvasAgg`（unpickle 出来的是裸 canvas），其余走**同一条**编辑代码路径（`FigState` /
+manifest / overrides / 撤销重做不分叉）。
+
+### 2. 进程、时刻、存放、预算
+
+- **进程与时刻**：safe worker 进程内，每次保存记完账之后（此时 `savefig` 内部对 Figure 的临时改动，如 `bbox_inches="tight"`、
+  dpi 切换，已经还原；与 `mark_saved` 清脏标记是同一时刻）。快照不是脚本改图：拍完把脏标记重置为「刚存完」。
+- **存放**：只在**本进程内存**（`SaveMomentLedger`，每张图只留最近一次保存的字节串，会话结束或判定完即释放）。
+  **不写 `data_dir()`、不写包目录、不写项目、不发给别的进程。**
+- **预算**：单张 ≤ 32 MiB，本次执行累计 ≤ 128 MiB，超出即放弃并记原因（`too_large` / `budget_exceeded`）。**只用字节数当预算，
+  不用墙钟**——热会话与写回重放必须在同一处同样地放弃，计时抖动会破坏「热态 == 重放」。实测拍一张快照约 2–5 ms
+  （1,000,000 点散点 18 MB，仍是毫秒级）。
+- **哪一次保存**：该图**最近一次**保存（与 §八 的脏判据「最后一次保存或重绘之后」同一时刻）。同一路径多次 savefig：取最后一次，
+  与「最后写者胜」一致；精确/来源驱动采用要求选定那次保存（`occurrence`）恰是快照那次，否则 `not_selected_save`、退回最终态。
+  同一张图以多个 stem 被捕获（`a.png` / `b.png`）：说不清快照属于哪个 stem，`multi_stem`、退回最终态。
+  `bbox_extra_artists` 非空：那批 artist 属于原件，复制品对不上，`bbox_extra_artists`、不拍。
+
+### 3. 适用范围（刻意收窄）
+
+- **只做 safe worker。** native bridge（用户进程里的活 Figure、脚本在屏障后继续跑）与浏览器 playground 不拍快照，
+  维持 §八 的告知（`modified_after_save` 无 `save_moment`）；它们的写回路径不是这条一次性重放，扩展需另议。
+- **精确策略 `selected-figsize-v1` 一字不动**（§二）：其「存后改过 → 像素不等 → 拒绝」是自己的闸门，
+  `adopt_save_moments` 在该策略下直接放弃。来源驱动策略与非 artifact 的普通路径使用快照。
+- 开关：环境变量 `TAVOTTO_SAVE_MOMENT_SNAPSHOT=0` 整体关掉（回到 #1250 行为）；worker 都由同一父进程拉起，热会话与一次性重放读同一个值。
+
+### 4. 还原保真度：证据，不是断言
+
+- 复制品**不称**「原件精确一致」。「精确」仍只由 `artifactcontext.validate_candidate` 的逐像素零差判定；快照只是让那道门更常过。
+- 结构自检：拍快照时记结构签名（图幅、每个 Axes 的 line/collection/patch/text/image/container 计数），还原后复核，对不上
+  `structure_mismatch`、退回最终态。
+- 语料实测（`tests/test_save_moment.py` 与手工脚本 `tests/support/save_moment_corpus.py`）：CompatBench 96 个 case 共 136 张图，
+  matplotlib 3.8.4 / 3.10.7 / 3.11.2 三个版本结果**逐一相同**：131 张还原后与原件 PNG 逐字节相同（0 张像素差），5 张因 lambda
+  格式化器 / 用户自定义类退回（`unpicklable` / `restore_failed`）。
+- 运行期不额外渲染（每次保存多渲两次不可接受）；保真度由上面的语料 + 结构签名 + 来源驱动路径上原有的逐像素对照承担。
+
+### 5. 写回事务不变式（热态所见 == 写进文件 == 重开后重放）
+
+写回的 verify 段本来就是**一次性 worker 从零重放整个脚本**（`pool.one_shot`），与热会话跑同一份 safe worker 代码。快照在重放里
+同样被拍、同样被采用，且判据只依赖脚本与 matplotlib（字节预算、结构签名都是确定的，不含墙钟或随机），所以热会话与重放得到同一个
+复制品；`test_hot_session_and_fresh_replay_see_the_same_snapshot_figure` 钉住。任何一侧放弃而另一侧没放弃，会被既有的
+`replay_divergence` / 像素门拦成 409，不会静默落盘。**不是**「重开时重放的是快照而非脚本」——重放永远是跑脚本，快照是跑脚本过程中的产物。
+
+### 6. 安全
+
+- pickle 字节**只在产生它的进程内存里存在**，从不落盘、从不来自项目文件（项目文件可由他人提供，读 pickle 就是反序列化漏洞）。
+  Tavotto 全仓没有任何「读项目里的 pickle」的路径，本修订不新增。
+- 还原用受限 Unpickler：只解析 matplotlib / mpl_toolkits / numpy 本体（对象自己的 `__module__` 也须在这些包里；带点名字只许是
+  类的嵌套类）和少数精确名字（`object` / `getattr` / `functools.partial` / `collections.OrderedDict` / `itertools.count` 等）。
+  用户自己的类 / 函数 / 模块一律拒绝（`restore_failed`）：还原不执行用户代码、不 import 用户模块。这是纵深防御——真正的边界是上一条。
+- 拍快照临时摘掉 `canvas.manager`（matplotlib 据此写 `_restore_to_pylab`，否则还原会把复制品登记进 pyplot），`finally` 放回。
+
+### 7. 失败即退回现状、可回滚
+
+任何一步失败（不可 pickle、超预算、还原失败、结构不符、选定保存不是最后一次……）→ 可编辑基础仍是脚本跑完的最终态，
+manifest 带 `modified_after_save: true` + `save_moment_unavailable: <闭集原因>`，行为与 #1250 完全相同。成功则
+`modified_after_save: true` + `save_moment: "restored"`，前端胶囊改说「按存盘时的样子编辑」（不再说「与存盘文件不同」，那已不成立）。
+闭集 `figcapture.SAVE_MOMENT_REASONS`。
+
+### 8. matplotlib 版本
+
+3.8.4 / 3.10.7 / 3.11.2 实测一致（见 4）。`Figure.__getstate__` 自 3.x 起稳定，同进程内存内的往返不涉及跨版本反序列化
+（matplotlib 的版本告警只在跨版本读盘时出现）。
+
+### 9. 不做
+
+- 不对 native / 浏览器拍快照；不改精确策略；不在运行期渲染做对拍；不把复制品称作原件；不为快照新增任何落盘文件或 API 字段以外的协议改动
+  （manifest 加两个可选字段，老前端原样忽略）。
+- 存后改了又重绘一次的盲区（§八）依旧：判据没报，就不会用快照。
+- 回归看护：`tests/test_save_moment.py`、`tests/test_modified_after_save.py`、`tests/test_script_backed_policy.py`。

@@ -527,6 +527,29 @@ describe('存盘后脚本又改过这张图（ADR 0139 §八）', () => {
     expect(chip.getAttribute('title')).toMatch(/保存这张图之后|after saving it/)
   })
 
+  it('manifest 同时报 save_moment: restored 时胶囊改说「按存盘时的样子编辑」，不再说与文件不同', async () => {
+    seedExactRender(
+      panel,
+      { ...manifest, modified_after_save: true, save_moment: 'restored' } as never,
+    )
+    await mount()
+    const chip = host.querySelector('[data-modified-after-save]') as HTMLElement
+    expect(chip.getAttribute('data-save-moment')).toBe('restored')
+    expect(chip.textContent).toMatch(/按存盘时的样子编辑|Edited as saved/)
+    expect(chip.textContent).not.toMatch(/与存盘文件不同|Differs from the saved file/)
+    expect(chip.getAttribute('title')).toMatch(/保存那一刻|moment of that save/)
+  })
+
+  it('没拍到快照（save_moment_unavailable）时仍是原来的「与存盘文件不同」', async () => {
+    seedExactRender(
+      panel,
+      { ...manifest, modified_after_save: true, save_moment_unavailable: 'unpicklable' } as never,
+    )
+    await mount()
+    const chip = host.querySelector('[data-modified-after-save]') as HTMLElement
+    expect(chip.textContent).toMatch(/与存盘文件不同|Differs from the saved file/)
+  })
+
   it('不报时没有胶囊', async () => {
     await mount()
     expect(host.querySelector('[data-modified-after-save]')).toBeNull()

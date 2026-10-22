@@ -155,6 +155,7 @@ import math
 import ntpath
 import os
 import pathlib
+import pickle
 import posixpath
 import re
 import shutil
@@ -1839,7 +1840,7 @@ def mark_saved(fig) -> None:
     **两个钩子只在脚本运行期存在**：`note_modified_after_save` 判定时一并卸掉，之后 Figure 与原生无异
     （采纳检查 `figsession._require_artifact_figure` 看不到它们）；已判过的图不再装。
     用户脚本若自己替换 `fig.stale_callback`：记录随之丢失（下次保存时重新套）；尽力而为、绝不抛错。
-    不额外渲染、不复制 Figure（ADR 0139 §八「不声称拥有保存瞬间的快照」——这里只报一个事实）。"""
+    本函数只报事实、不额外渲染、不复制 Figure；保存瞬间的快照是另一件事（`SaveMomentLedger`，ADR 0139 §九，只在 safe worker 的 `note_savefig` 里拍）。"""
     if hasattr(fig, MODIFIED_AFTER_SAVE):
         # 已经判过（例如 native 在 show 屏障判过、之后脚本又存盘）：钩子早已卸掉，不再装
         try:
@@ -1876,6 +1877,176 @@ def note_modified_after_save(capture: dict, capture_source: dict) -> list[str]:
         if getattr(fig, MODIFIED_AFTER_SAVE, False):
             out.append(stem)
     return out
+
+
+#: 保存瞬间快照（ADR 0139 §九）。只在 safe worker 里、只活在本进程内存里：**不落盘、不跨进程、不读项目文件里的任何 pickle**。
+#: 记在 Figure 上的结论属性（manifest 读它；`manifest.SAVE_MOMENT_ATTR` 是同源对，`tests/test_save_moment.py` 钉相等）
+SAVE_MOMENT = "_mm_save_moment"
+#: 结论取值：`SAVE_MOMENT_RESTORED`，或下面闭集里的一个失败原因（编辑基础退回脚本跑完的最终态，照旧只告知）
+SAVE_MOMENT_RESTORED = "restored"
+SAVE_MOMENT_REASONS = frozenset(
+    {
+        "unpicklable",  # pickle.dumps 抛了（lambda 格式化器、不可序列化的 artist……）
+        "too_large",  # 单张快照超过 SAVE_MOMENT_MAX_BYTES
+        "budget_exceeded",  # 本次执行累计超过 SAVE_MOMENT_TOTAL_BYTES
+        "bbox_extra_artists",  # 保存带 bbox_extra_artists：那批 artist 属于原件，复制品对不上
+        "restore_failed",  # 还原失败（含白名单外的类：用户自定义的 artist / 格式化器 / 变换）
+        "structure_mismatch",  # 还原出的 Figure 与拍快照时的结构签名对不上
+        "multi_stem",  # 同一张图以多个 stem 被捕获：快照只对应它最后一次保存，说不清是哪个 stem 的
+        "not_selected_save",  # 选定原件对应的那次保存不是这张图的最后一次保存（快照取的是最后一次）
+    }
+)
+#: 单张快照 / 本次执行累计的字节上限。**只用字节数当预算，不用墙钟**：热会话与写回的一次性重放必须在同一处同样地
+#: 放弃，否则「热态所见 == 重放所得」会被计时抖动破坏
+SAVE_MOMENT_MAX_BYTES = 32 * 1024 * 1024
+SAVE_MOMENT_TOTAL_BYTES = 128 * 1024 * 1024
+#: 关掉快照（只告知，行为与 #1250 相同）：环境变量值为 "0"。worker 由同一个父进程拉起，热会话与一次性重放读到同一个值
+SAVE_MOMENT_ENV = "TAVOTTO_SAVE_MOMENT_SNAPSHOT"
+#: 还原时允许解析的全局：matplotlib / mpl_toolkits / numpy 本体（名字不含点、对象自己的 `__module__` 也在这些包里），
+#: 加下面几个精确名字。用户自己的类 / 函数 / 模块一律拒绝——还原不执行用户代码、不 import 用户模块。
+#: 这是纵深防御，不是边界：边界是快照字节只在产生它的进程里存在，从不落盘、从不来自项目文件（ADR 0139 §九）
+_SAVE_MOMENT_PACKAGES = ("matplotlib", "mpl_toolkits", "numpy")
+_SAVE_MOMENT_EXACT = frozenset(
+    {
+        ("builtins", "object"),
+        ("builtins", "getattr"),
+        ("builtins", "set"),
+        ("builtins", "frozenset"),
+        ("builtins", "slice"),
+        ("builtins", "complex"),
+        ("builtins", "bytearray"),
+        ("builtins", "range"),
+        ("collections", "OrderedDict"),
+        ("collections", "defaultdict"),
+        ("collections", "deque"),
+        ("functools", "partial"),
+        ("itertools", "count"),
+        ("itertools", "cycle"),
+        ("copyreg", "_reconstructor"),
+    }
+)
+#: 拍快照时从复制品上抹掉的、属于 `mark_saved` 的私有记账（复制品没有这些钩子）
+_SAVE_MOMENT_STRIP = (_SAVED_MARK, DIRTY_SINCE_SAVE, _ORIG_STALE_CALLBACK, _DRAW_HOOK)
+
+
+def save_moment_enabled() -> bool:
+    return os.environ.get(SAVE_MOMENT_ENV, "1").strip() != "0"
+
+
+class _RestrictedUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if (module, name) not in _SAVE_MOMENT_EXACT:
+            top = module.split(".", 1)[0]
+            if top not in _SAVE_MOMENT_PACKAGES:
+                raise pickle.UnpicklingError(f"not allowed: {module}.{name}")
+            if "." in name and not isinstance(super().find_class(module, name.split(".")[0]), type):
+                # 带点的名字只许是类的嵌套类（`BoxStyle.Round`），不许沿模块属性链走到别的模块去
+                raise pickle.UnpicklingError(f"not allowed: {module}.{name}")
+            found = super().find_class(module, name)
+            owner = getattr(found, "__module__", None)
+            if not isinstance(owner, str) or owner.split(".", 1)[0] not in _SAVE_MOMENT_PACKAGES:
+                raise pickle.UnpicklingError(f"not allowed: {module}.{name}")
+            return found
+        return super().find_class(module, name)
+
+
+def _structure_signature(fig) -> tuple:
+    """还原前后都能算的廉价结构签名：图幅 + 每个 Axes 的 artist 计数。不渲染、不改 Figure。"""
+    axes = tuple(
+        (
+            type(ax).__name__,
+            len(ax.lines),
+            len(ax.collections),
+            len(ax.patches),
+            len(ax.texts),
+            len(ax.images),
+            len(ax.containers),
+        )
+        for ax in fig.axes
+    )
+    w, h = fig.get_size_inches()
+    return (round(float(w), 6), round(float(h), 6), len(fig.texts), len(fig.artists), axes)
+
+
+class SaveMomentLedger:
+    """保存瞬间快照账（一个 `FigureSession` 一份，ADR 0139 §九）。
+
+    每张 Figure 只留**最近一次**保存的快照（与「改动判据是最近一次保存之后」同一时刻）。快照是 `pickle.dumps(fig)`
+    ——matplotlib 文档化的 Figure 持久化——的字节串，只握在本进程内存里，随会话消亡；绝不写盘、不发给别的进程。
+    """
+
+    def __init__(self):
+        #: id(fig) -> {"ref", "blob", "occurrence", "signature", "reason", "stems"}
+        self._rows: dict[int, dict] = {}
+        self._total = 0
+
+    def _drop(self, key: int) -> None:
+        row = self._rows.pop(key, None)
+        if row is not None and row["blob"] is not None:
+            self._total -= len(row["blob"])
+
+    def take(self, fig, occurrence, extra_artists=None) -> None:
+        """一次 savefig 记完账之后调用：给 `fig` 拍快照（替换它上一次的）。绝不抛，也不改 Figure。"""
+        for key in [k for k, r in self._rows.items() if r["ref"]() is None]:
+            self._drop(key)
+        key = id(fig)
+        self._drop(key)
+        row = {
+            "ref": weakref.ref(fig),
+            "blob": None,
+            "occurrence": occurrence,
+            "signature": None,
+            "reason": None,
+        }
+        self._rows[key] = row
+        if extra_artists:
+            row["reason"] = "bbox_extra_artists"
+            return
+        canvas = manager = None
+        try:
+            canvas = fig.canvas
+            row["signature"] = _structure_signature(fig)
+            # 复制品不能带「还原时挂回 pyplot」：临时摘掉 canvas.manager（matplotlib 据此写 `_restore_to_pylab`），用完放回
+            manager = getattr(canvas, "manager", None)
+            canvas.manager = None
+            blob = pickle.dumps(fig, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception:  # noqa: BLE001 —— 快照尽力而为：失败只是退回「告知」
+            row["reason"] = "unpicklable"
+            return
+        finally:
+            if manager is not None:
+                canvas.manager = manager
+        if len(blob) > SAVE_MOMENT_MAX_BYTES:
+            row["reason"] = "too_large"
+        elif self._total + len(blob) > SAVE_MOMENT_TOTAL_BYTES:
+            row["reason"] = "budget_exceeded"
+        else:
+            row["blob"] = blob
+            self._total += len(blob)
+
+    def restore(self, fig, selected_occurrence=None):
+        """还原 `fig` 最近一次保存时的复制品；返回 `(restored, None)` 或 `(None, 原因)`。绝不抛。"""
+        row = self._rows.get(id(fig))
+        if row is None or row["ref"]() is not fig:
+            return None, "unpicklable"
+        if row["reason"] is not None:
+            return None, row["reason"]
+        if selected_occurrence is not None and selected_occurrence != row["occurrence"]:
+            return None, "not_selected_save"
+        try:
+            restored = _RestrictedUnpickler(io.BytesIO(row["blob"])).load()
+            if _structure_signature(restored) != row["signature"]:
+                return None, "structure_mismatch"
+        except Exception:  # noqa: BLE001
+            return None, "restore_failed"
+        for name in _SAVE_MOMENT_STRIP:
+            restored.__dict__.pop(name, None)
+        return restored, None
+
+    def release(self) -> None:
+        """判定完（采用或放弃）之后释放所有快照字节。"""
+        self._rows.clear()
+        self._total = 0
 
 
 def savefig_verifier(real_savefig, fig, fname, args, kwargs: dict):

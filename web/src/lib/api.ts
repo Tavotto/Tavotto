@@ -2474,6 +2474,13 @@ export interface Manifest {
    * 只在为真时出现；老引擎不发它。
    */
   modified_after_save?: boolean
+  /**
+   * 与 `modified_after_save` 同时出现（ADR 0139 §九）：编辑基础是保存那一刻的 Figure 复制品，与磁盘上的文件对应；
+   * 脚本后来的改动不在其中。缺席 = 没拍到快照，编辑的仍是脚本跑完时的最终态。
+   */
+  save_moment?: 'restored'
+  /** 快照没用上的原因（闭集，`figcapture.SAVE_MOMENT_REASONS`）；只用来区分文案之外的诊断，界面照旧说「与存盘文件不同」。 */
+  save_moment_unavailable?: string
 }
 
 export interface EngineRenderResponse {

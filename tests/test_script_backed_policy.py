@@ -334,7 +334,7 @@ def test_pixel_density_metadata_difference_is_refused_even_with_equal_pixels(sb_
 
 
 @needs_worker
-def test_save_then_mutate_figure_is_needs_confirmation_never_exact(sb_env):
+def _mutated_after_save_verdict(sb_env):
     source = PLAIN.replace(
         "fig.savefig('same.png', dpi=100)",
         "fig.savefig('same.png', dpi=100)\nax.plot([0, 1, 2], [3, 3, 3], color='red', lw=4)",
@@ -343,11 +343,26 @@ def test_save_then_mutate_figure_is_needs_confirmation_never_exact(sb_env):
     ctx = context(root, SB)
     worker, probe = build(root, ctx)
     try:
-        verdict = ac.admit_reconstruction(root / "same.png", Path(probe["initialized"]), ctx)
+        return ac.admit_reconstruction(root / "same.png", Path(probe["initialized"]), ctx)
     finally:
         pool.discard(worker)
+
+
+def test_save_then_mutate_figure_without_the_snapshot_is_needs_confirmation_never_exact(
+    sb_env, monkeypatch
+):
+    """快照关掉（ADR 0139 §九 的回滚开关）：编辑基础是脚本跑完的最终态，与原件有可见差异，只能 needs_confirmation。"""
+    monkeypatch.setenv(figcapture.SAVE_MOMENT_ENV, "0")
+    verdict = _mutated_after_save_verdict(sb_env)
     assert verdict["status"] == ac.STATUS_NEEDS_CONFIRMATION
     assert verdict["metrics"]["differing_pixels"] > 0
+
+
+def test_save_then_mutate_figure_with_the_snapshot_is_proven_exact_by_the_pixel_gate(sb_env):
+    """快照开（默认）：编辑基础是保存那一刻的 Figure。「精确」仍由逐像素零差这道门证明，不由快照自己宣称。"""
+    verdict = _mutated_after_save_verdict(sb_env)
+    assert verdict["status"] == ac.STATUS_EXACT and verdict["pixels_equal"]
+    assert verdict["metrics"]["differing_pixels"] == 0
 
 
 @needs_worker

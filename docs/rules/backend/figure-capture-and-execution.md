@@ -292,6 +292,14 @@
 看护 `tests/test_capture_saved_facts_identity.py`（硬链接 / NFC-NFD / 保存后改坏 / 缺目录边界）、`tests/test_capture_same_path_last_writer.py`（共享函数 + 会话规则 + 目标键 + 真 worker / 浏览器端到端）、
 `tests/bridge/test_bridge_same_path_last_writer.py`（native）。
 
+* **存盘后又改过 → 保存瞬间快照（ADR 0139 §九，safe worker 专属）**：`LiveFigureSession.note_savefig` 在每次保存记完账后给该图拍
+  `pickle.dumps(fig)`（`SaveMomentLedger`，只握在本进程内存、每图只留最近一次、单张 32 MiB / 累计 128 MiB，**只按字节预算不按墙钟**）；
+  脚本跑完、`note_modified_after_save` 判真、pyplot 兜底之后，`adopt_save_moments` 用受限 Unpickler（只认 matplotlib / mpl_toolkits /
+  numpy 本体）还原复制品顶替捕获表里的最终态 Figure。失败一律退回 #1250 的「只告知」，原因进闭集 `SAVE_MOMENT_REASONS`，
+  manifest 的 `save_moment` / `save_moment_unavailable` 与 `modified_after_save` 一同出现。**不落盘、不读项目里的 pickle**；
+  精确策略 `selected-figsize-v1`、native、浏览器不用快照。环境变量 `TAVOTTO_SAVE_MOMENT_SNAPSHOT=0` 整体关闭。
+  看护 `tests/test_save_moment.py`（含反证用例）、`tests/test_modified_after_save.py`、`tests/test_script_backed_policy.py`。
+
 ## 运行参数（T03，ADR 0014 §2 修订）
 
 用户手动给的**精确 argv** 贯通 探测 → 热编辑 → 冷重放 → 导出 → 重开；自动 argparse 表单是 T07，不在这里。

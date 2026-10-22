@@ -658,11 +658,14 @@ function TreeView({
         {manifest.modified_after_save && (
           <span
             data-modified-after-save
+            data-save-moment={manifest.save_moment}
             role="note"
-            title={et('modifiedAfterSaveHint')}
+            title={et(manifest.save_moment === 'restored' ? 'savedMomentHint' : 'modifiedAfterSaveHint')}
             className="flex h-7 min-w-0 shrink items-center rounded-full bg-surface-hover px-2 text-xs text-ink-2"
           >
-            <span className="min-w-0 truncate">{et('modifiedAfterSave')}</span>
+            <span className="min-w-0 truncate">
+              {et(manifest.save_moment === 'restored' ? 'savedMoment' : 'modifiedAfterSave')}
+            </span>
           </span>
         )}
       </div>

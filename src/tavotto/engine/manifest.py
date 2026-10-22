@@ -178,6 +178,8 @@ _SKIP_LABELS = ("_child", "_nolegend_")
 #: 「存盘后脚本又改过这张图」的标记名——与 `figcapture.MODIFIED_AFTER_SAVE` 同一个字面量（manifest 不 import
 #: figcapture；`tests/test_modified_after_save.py` 钉着两边相等）
 MODIFIED_AFTER_SAVE_ATTR = "_mm_modified_after_save"
+#: 保存瞬间快照的结论属性（同源对：figcapture.SAVE_MOMENT；`tests/test_save_moment.py` 钉相等）
+SAVE_MOMENT_ATTR = "_mm_save_moment"
 
 
 def _snippet(text: str, n: int = 18) -> str:
@@ -5606,6 +5608,12 @@ def _measure_manifest(
         # 脚本存完盘之后又改过这张图（ADR 0139 §八）：编辑的是脚本跑完的最终态，与磁盘上的文件不同。
         # 只在为真时出现；加字段协议，老前端原样忽略
         out["modified_after_save"] = True
+        # ADR 0139 §九：编辑基础是保存那一刻的复制品（"restored"），还是还原不了而退回最终态（原因闭集）。同样只在有结论时出现
+        moment = getattr(fig, SAVE_MOMENT_ATTR, None)
+        if moment == "restored":
+            out["save_moment"] = "restored"
+        elif isinstance(moment, str):
+            out["save_moment_unavailable"] = moment
     # 真实的组（共享色条的几个子图 + 那条色条）：可选、只在有组时出现。
     # 加字段协议：老前端不认识它会原样忽略，元素表与几何一个字节不变。
     if groups:

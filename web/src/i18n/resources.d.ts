@@ -4981,6 +4981,8 @@ export default interface Resources {
       "lockedState": "已锁定",
       "modifiedAfterSave": "与存盘文件不同",
       "modifiedAfterSaveHint": "脚本保存这张图之后又改动了它。这里编辑的是脚本跑完时的样子，可能与磁盘上的文件不一样。",
+      "savedMoment": "按存盘时的样子编辑",
+      "savedMomentHint": "脚本保存这张图之后又改动了它。这里编辑的是保存那一刻的样子，与磁盘上的文件对应；脚本后来的改动不在其中。",
       "needRender": "「{{name}}」的元素清单需要渲染一次。",
       "noEditableHint": "由脚本生成的图才能改图内对象",
       "noEditableTitle": "画布上还没有可编辑的图",
