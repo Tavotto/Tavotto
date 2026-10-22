@@ -157,6 +157,10 @@ class LoginSpec:
     argv_suffix: tuple[str, ...]
     mode: str
     account: str
+    #: 非空 = 后台命令会把「浏览器没打开时请手动访问」的授权地址打在输出里，Tavotto 只从输出里
+    #: 取**第一条主机精确命中这里的 https 地址**（授权地址只含 state / PKCE challenge，不是凭据），
+    #: 其余输出一概不存、不进日志。空 = 输出直接丢弃。
+    url_hosts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -485,7 +489,7 @@ class CodexAgent(AgentDefinition):
 
     def login_spec(self) -> LoginSpec | None:
         # `codex login` 自己开浏览器、自己在本机起回调：后台启动即可
-        return LoginSpec(("login",), "background", "ChatGPT")
+        return LoginSpec(("login",), "background", "ChatGPT", ("auth.openai.com",))
 
     #: 推理强度档位。**模型名故意不写死**——OpenAI 换代时旧名会被服务端直接
     #: 拒绝（"The 'gpt-5' model is not supported when using Codex with a

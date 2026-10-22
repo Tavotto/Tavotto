@@ -203,6 +203,20 @@ export function AgentDetailView({
                 </Button>
               )}
             </div>
+            {showLogin && login.phase === 'waiting' && login.authUrl && (
+              <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+                {ag('login.browserHint')}{' '}
+                <a
+                  data-agent-login-link
+                  href={login.authUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2"
+                >
+                  {ag('login.openLink')}
+                </a>
+              </p>
+            )}
             {showLogin && login.phase === 'terminal' && (
               <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
                 {ag('login.terminalHint')}
@@ -316,6 +330,7 @@ function useAgentLogin(
 ) {
   const [phase, setPhase] = useState<LoginPhase>('idle')
   const [command, setCommand] = useState('')
+  const [authUrl, setAuthUrl] = useState<string | null>(null)
   const refreshRef = useRef(onRefreshed)
   useEffect(() => {
     refreshRef.current = onRefreshed
@@ -336,10 +351,15 @@ function useAgentLogin(
         }
         try {
           const s = await fetchAiLoginStatus(agent.id)
-          if (stopped || s.status === 'running') return
+          if (stopped) return
+          if (s.status === 'running') {
+            if (s.auth_url) setAuthUrl(s.auth_url)
+            return
+          }
           stopped = true
           window.clearInterval(timer)
           await refreshRef.current()
+          setAuthUrl(null)
           setPhase('idle')
         } catch {
           /* 网络抖动：下一轮再问 */
@@ -385,7 +405,7 @@ function useAgentLogin(
     }
   }, [])
 
-  return { phase, command, begin: () => void begin(), confirm: () => void confirm() }
+  return { phase, command, authUrl, begin: () => void begin(), confirm: () => void confirm() }
 }
 
 /**

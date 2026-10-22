@@ -510,6 +510,29 @@ describe('Agent 详情', () => {
       expect(loginBtn('ChatGPT')).toBeTruthy()
     })
 
+    it('后台模式拿到授权地址后显示「浏览器没打开？」和链接', async () => {
+      await openDetail(capsOf([needsAuth()]))
+      vi.useFakeTimers()
+      loginMock.mockResolvedValue({ started: true, mode: 'background' })
+      loginStatusMock.mockResolvedValue({ status: 'running' })
+      await act(async () => loginBtn('ChatGPT')!.click())
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      expect(document.querySelector('[data-agent-login-link]')).toBeNull()
+      loginStatusMock.mockResolvedValue({
+        status: 'running',
+        auth_url: 'https://auth.openai.com/oauth/authorize?state=s',
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000)
+      })
+      const a = document.querySelector<HTMLAnchorElement>('[data-agent-login-link]')!
+      expect(a.getAttribute('href')).toBe('https://auth.openai.com/oauth/authorize?state=s')
+      expect(a.target).toBe('_blank')
+      expect(text()).toContain(ag('login.browserHint'))
+    })
+
     it('终端模式：一句提示 + 「我已登录」，不轮询，点了才重新探测', async () => {
       await openDetail(capsOf([needsAuth({ id: 'claude', display_name: 'Claude Code', login_account: 'Claude' })]))
       vi.useFakeTimers()

@@ -3269,8 +3269,14 @@ export interface AiLoginStart {
 export const startAiLogin = (agent: AiAgentId) =>
   jsonFetch<AiLoginStart>(`/api/ai/agents/${encodeURIComponent(agent)}/login`, { method: 'POST' })
 
+export interface AiLoginStatus {
+  status: 'idle' | 'running'
+  /** 官方命令打出来的授权地址（只含 state / PKCE，不是凭据）；浏览器没自动打开时给用户点 */
+  auth_url?: string
+}
+
 export const fetchAiLoginStatus = (agent: AiAgentId) =>
-  jsonFetch<{ status: 'idle' | 'running' }>(`/api/ai/agents/${encodeURIComponent(agent)}/login`)
+  jsonFetch<AiLoginStatus>(`/api/ai/agents/${encodeURIComponent(agent)}/login`)
 
 export interface AiHistoryEntry {
   id: string

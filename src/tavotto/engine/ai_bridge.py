@@ -20,6 +20,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -729,7 +730,47 @@ def login_status(agent_id: str) -> dict:
     with _LOGIN_LOCK:
         st = _LOGINS.get(agent_id)
         running = bool(st and st["proc"].poll() is None)
-    return {"status": "running" if running else "idle"}
+        url = st.get("auth_url") if running else None
+    out: dict = {"status": "running" if running else "idle"}
+    if url:
+        out["auth_url"] = url
+    return out
+
+
+#: 读线程最多看多少字节的输出（超出的继续读走但丢弃，免得把子进程堵在满管道上）
+LOGIN_OUTPUT_CAP = 64 * 1024
+_ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]")
+_URL = re.compile(rb"https://[^\s\"'<>\x00-\x1f]+")
+
+
+def _extract_auth_url(line: bytes, hosts: tuple[str, ...]) -> str | None:
+    """一行输出里第一条主机精确命中白名单的 https 地址；没有就 None。其余内容一个字节都不留。"""
+    from urllib.parse import urlsplit
+
+    for m in _URL.finditer(_ANSI.sub(b"", line)):
+        try:
+            url = m.group(0).decode("ascii")
+            parts = urlsplit(url)
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if parts.scheme == "https" and parts.hostname in hosts and not parts.username:
+            return url
+    return None
+
+
+def _watch_login_output(stream, state: dict, hosts: tuple[str, ...]) -> None:
+    """逐行读后台登录命令的输出，只提取授权地址存进登录登记。**不记日志、不存别的行。**"""
+    seen = 0
+    try:
+        for line in iter(lambda: stream.readline(8192), b""):
+            seen += len(line)
+            if seen > LOGIN_OUTPUT_CAP or state.get("auth_url"):
+                continue  # 超出上限 / 已拿到：继续读走（不堵管道）但丢弃
+            url = _extract_auth_url(line, hosts)
+            if url:
+                state["auth_url"] = url
+    except (OSError, ValueError):
+        pass
 
 
 def _shell_quote(argv: list[str]) -> str:
@@ -820,14 +861,21 @@ def start_login(agent_id: str) -> dict:
                 argv,
                 env=env,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE if spec.url_hosts else subprocess.DEVNULL,
+                stderr=subprocess.STDOUT if spec.url_hosts else subprocess.DEVNULL,
                 creationflags=CREATE_NO_WINDOW,
             )
         except OSError as exc:
             LOG.warning("login %s spawn failed: %s", agent_id, exc)
             raise AgentError("ai_agent_login_failed", {"agent": agent_id}) from exc
         _LOGINS[agent_id] = {"proc": proc, "started": time.time()}
+        if spec.url_hosts and proc.stdout is not None:
+            threading.Thread(
+                target=_watch_login_output,
+                args=(proc.stdout, _LOGINS[agent_id], spec.url_hosts),
+                daemon=True,
+                name=f"ai-login-out-{agent_id}",
+            ).start()
 
     def reap() -> None:
         try:

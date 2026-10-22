@@ -10,6 +10,8 @@
 """
 
 import inspect
+import io
+import logging
 import re
 import subprocess
 import sys
@@ -102,6 +104,11 @@ def popen(monkeypatch):
     def fake_popen(argv, **kw):
         calls.append({"argv": list(argv), **kw})
         proc = _FakeProc(hang=bool(getattr(fake_popen, "hang", False)))
+        proc.stdout = (
+            io.BytesIO(getattr(fake_popen, "output", b""))
+            if kw.get("stdout") == subprocess.PIPE
+            else None
+        )
         procs.append(proc)
         return proc
 
@@ -167,9 +174,9 @@ def test_background_login_uses_real_argv_and_spawn_env(popen):
     assert call["argv"] == ["/fake/bin/codex", "login"]
     # 与探测 / 运行同一份环境
     assert call["env"]["PATH"] == ai_agents.spawn_env("/fake/bin/codex")["PATH"]
-    # 不读它的输出，也不给它终端输入
+    # 不给它终端输入；输出走管道（只为取授权地址，见下面的用例），stderr 并进同一根管道
     assert call["stdin"] == subprocess.DEVNULL
-    assert call["stdout"] == subprocess.DEVNULL and call["stderr"] == subprocess.DEVNULL
+    assert call["stdout"] == subprocess.PIPE and call["stderr"] == subprocess.STDOUT
     popen.procs[0].returncode = 0
     assert _wait_registry_empty("codex")
 
@@ -228,6 +235,72 @@ def test_spawn_failure_is_a_stable_error(client, monkeypatch):
     assert "codex" not in ai_bridge._LOGINS
 
 
+# ---------------- 授权地址（浏览器没打开时给用户点）-------------------------
+
+_SECRET = "eyJhbGciOiJIUzI1NiJ9.SECRETTOKEN.sig sk-live-0123456789abcdef"
+_AUTH = "https://auth.openai.com/oauth/authorize?response_type=code&state=s1&code_challenge=c1"
+
+
+def _wait_for(pred, timeout: float = 3.0) -> bool:
+    import time
+
+    end = time.time() + timeout
+    while time.time() < end:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def _status(client=None):
+    return ai_bridge.login_status("codex")
+
+
+def test_only_the_allowlisted_auth_url_is_kept_and_nothing_else(popen, caplog):
+    """读线程只留主机命中的授权地址；形似 token 的串 / 其它地址 / 其它行都不进登记、不进日志。"""
+    popen.output = (
+        f"Starting local login server\n{_SECRET}\n"
+        "https://evil.example/x?token=abc\n"
+        "https://auth.openai.com.evil.example/oauth/authorize?state=1\n"
+        "https://auth.openai.com@evil.example/oauth/authorize\n"
+        f"If your browser did not open, visit \x1b[1m{_AUTH}\x1b[0m\n"
+        "https://auth.openai.com/oauth/authorize?state=second\n"
+    ).encode()
+    with caplog.at_level(logging.DEBUG):
+        ai_bridge.start_login("codex")
+        assert _wait_for(lambda: "auth_url" in ai_bridge._LOGINS["codex"])
+    assert _status() == {"status": "running", "auth_url": _AUTH}  # 第一条命中的，ANSI 已剥掉
+    state = ai_bridge._LOGINS["codex"]
+    assert set(state) == {"proc", "started", "auth_url"}
+    blob = repr({k: v for k, v in state.items() if k != "proc"}) + caplog.text
+    for secret in ("SECRETTOKEN", "sk-live", "evil.example", "second"):
+        assert secret not in blob
+    popen.procs[0].returncode = 0
+    assert _wait_registry_empty("codex")
+
+
+def test_no_matching_url_leaves_no_trace(popen, caplog):
+    popen.output = f"{_SECRET}\nhttps://evil.example/?u=https://auth.openai.com/x\n".encode()
+    with caplog.at_level(logging.DEBUG):
+        ai_bridge.start_login("codex")
+        assert _wait_for(lambda: popen.procs[0].stdout.tell() == len(popen.output))  # 读线程已读完
+    assert _status() == {"status": "running"}
+    assert "auth_url" not in ai_bridge._LOGINS["codex"]
+    assert "SECRETTOKEN" not in caplog.text and "sk-live" not in caplog.text
+    popen.procs[0].returncode = 0
+    assert _wait_registry_empty("codex")
+
+
+def test_output_beyond_the_byte_cap_is_discarded(popen, monkeypatch):
+    monkeypatch.setattr(ai_bridge, "LOGIN_OUTPUT_CAP", 1024)
+    popen.output = (b"x" * 100 + b"\n") * 30 + _AUTH.encode() + b"\n"
+    ai_bridge.start_login("codex")
+    assert _wait_for(lambda: popen.procs[0].stdout.tell() == len(popen.output))
+    assert _status() == {"status": "running"}
+    popen.procs[0].returncode = 0
+    assert _wait_registry_empty("codex")
+
+
 # ---------------- 拒绝路径 ---------------------------------------------------
 
 
@@ -264,6 +337,8 @@ def test_a_third_agent_login_needs_no_new_branch(monkeypatch, popen):
     assert fake["features"]["login"] is True and fake["login_account"] == "Fake"
     assert ai_bridge.start_login("fakelogin") == {"started": True, "mode": "background"}
     assert popen.calls[0]["argv"] == ["/fake/bin/fakelogin", "signin", "--now"]
+    # 适配器没声明授权地址主机 = 输出直接丢弃，不开管道
+    assert popen.calls[0]["stdout"] == subprocess.DEVNULL
     popen.procs[0].returncode = 0
 
 

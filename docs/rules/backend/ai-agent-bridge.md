@@ -48,7 +48,7 @@
   （`start_login` / `login_status`）不写 `if agent == ...`（`tests/test_ai_login.py` 用 Fake Adapter 与
   源码扫描双重反证）。`POST|GET /api/ai/agents/<id>/login` 与 install 同组、同一会话认证；argv =
   探测通过的真实启动 argv + 写死的子命令，环境与探测同一份 `spawn_env()`，请求体里没有也不接受
-  任何命令字段。background 同一 Agent 同时只有一个进程（再点返回 `already_running`），守护线程在
+  任何命令字段。后台命令的输出走管道，读线程（上限 64 KB，超出丢弃）**只取第一条主机精确命中适配器 `LoginSpec.url_hosts`（Codex = auth.openai.com）的 https 授权地址**存进登记、经 `GET /login` 的 `auth_url` 交给前端（浏览器没打开时给用户点；只含 state / PKCE，不是凭据），其余行一个字节都不存、不进日志。background 同一 Agent 同时只有一个进程（再点返回 `already_running`），守护线程在
   `LOGIN_TIMEOUT_S` 后结束**它自己起的那一个**；输出一律 DEVNULL，不读。**Tavotto 不读、不存、不刷新、
   不转发 Claude / Codex 的任何登录凭据**；登录成不成仍只看就绪检查（`codex login status` /
   `claude auth status`，一个字不变）——前端在进程结束 / 用户点「我已登录」/ 窗口重新聚焦时重新探测。
