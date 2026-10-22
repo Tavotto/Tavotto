@@ -256,6 +256,16 @@ def _render(
     )
 
 
+def _scope_for(stem: str, target: dict) -> str:
+    """这个 stem 的目标范围：目标 stem 用前端给的 scope（缺省 figure）；别的 stem 里没有目标，除非整张图都是目标。"""
+    scope = (
+        target.get("scope") if target.get("scope") in ("element", "axes", "figure") else "figure"
+    )
+    if scope != "figure" and target.get("stem") not in (None, "", stem):
+        return "none"
+    return scope
+
+
 def _check(cid: str, stage: str, role: str, verdict: str, reason: str | None = None, **observed):
     return CheckResult(
         id=cid,
@@ -430,8 +440,9 @@ class FigureEditAdapter:
           提交并刷新之后取同一个 safe 会话（同一份运行配置）并 build——就是前端随后本来要做的那次重渲染，前端
           来时会话已经 built，不再执行第二次。渲染失败（改前同一会话能渲染、改后不能）→ failed。
 
-        比的只有数据（`figureverify.data_unchanged`）：改前 manifest 带着用户的 override，改后这次 build 不带，坐标范围、
-        刻度、版式在两边不同口径，不比（列进 not_covered）。"""
+        比两样：数据（`figureverify.data_unchanged`）与「目标范围以外有没有改动」（`changes_outside_target`，范围取自桥放进
+        `cand.extras["target"]` 的 `{stem, gid, scope}`；范围外有改动记 unknown、结局最高 partial）。`before` 钩子给的是**无
+        override** 的重放基准，与改后同口径；坐标范围 / 刻度 / 版式的目标判定与新出现的版面问题仍不比（列进 not_covered）。"""
         not_covered = ("坐标范围与刻度", "新出现的版面问题", "用户点名的目标")
         hooks_after = cand.extras.get("after")
         if hooks_after is None:
@@ -455,13 +466,30 @@ class FigureEditAdapter:
             code = getattr(exc, "code", None) or type(exc).__name__
             return [_render(st, FAILED, "render_failed", code=str(code))]
         out = [_render(st, VERIFIED, None, stems=sorted(after), not_covered=not_covered)]
+        target = cand.extras.get("target") or {}
         for stem, man in sorted(before.items()):
+            if man is None:  # 这个 stem 的改前重放失败：显式缺基线，不能被静默略过
+                out.append(
+                    _render(
+                        st, UNKNOWN, "no_baseline", cid=f"render.{stem}", not_covered=("数据指纹",)
+                    )
+                )
+                continue
             if stem not in after:
                 out.append(_render(st, FAILED, "stem_not_rendered", cid=f"render.{stem}"))
                 continue
             out += [
                 dataclasses.replace(c, id=f"{stem}.{c.id}")
                 for c in figureverify.data_unchanged(after[stem], man, stage=st)
+            ] + [
+                dataclasses.replace(c, id=f"{stem}.{c.id}")
+                for c in figureverify.changes_outside_target(
+                    after[stem],
+                    man,
+                    scope=_scope_for(stem, target),
+                    gid=target.get("gid"),
+                    stage=st,
+                )
             ]
         if len(out) == 1:
             out.append(_render(st, NOT_APPLICABLE, "no_data_elements", cid="data"))

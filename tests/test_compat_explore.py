@@ -364,20 +364,19 @@ class Cli(unittest.TestCase):
                     list(Path(tmp).iterdir()), [], "nothing is written for a bad scope"
                 )
 
-    def test_style_axis_candidates_are_static_only_never_a_clean_no_difference(self):
+    def test_style_axis_candidates_are_executable_now_that_pixels_are_compared(self):
+        """CG-06：样式轴候选曾恒为 static_only（compare 观察不到样式）；像素判定落地后可执行。"""
         parent = xt.load_parent("compat_engine", "shape_oo_savefig")
         for name in ("rcparams", "style_use"):
             manifest, _ = xt.build(parent, (name,), 3)
-            plan = manifest["execution_plan"]
-            self.assertEqual(plan["status"], "static_only", name)
-            self.assertTrue(any("style axis is not compared" in r for r in plan["reasons"]))
-            with self.assertRaises(cg.EvidenceError):
-                ex.derive(
-                    {"suite": "compat_engine", "case": "shape_oo_savefig"},
-                    [name],
-                    3,
-                    manifest["candidate_id"],
-                )
+            self.assertEqual(manifest["execution_plan"]["status"], "executable", name)
+            self.assertFalse(hasattr(xt, "STYLE_UNOBSERVED"))
+            ex.derive(
+                {"suite": "compat_engine", "case": "shape_oo_savefig"},
+                [name],
+                3,
+                manifest["candidate_id"],
+            )
 
     def test_non_positive_limit_is_rejected_by_the_parser_and_by_select(self):
         for bad in ("-1", "0"):
@@ -487,13 +486,19 @@ class AuditedJudgment(unittest.TestCase):
         self.assertIn("tavotto", got["note"])
 
     def test_shape_preserving_also_needs_the_parent_native_execution(self):
-        counts = {"native": 1, "tavotto": 1, "parent_native": 0}
+        counts = {"native": 1, "native_pixels": 1, "tavotto": 1, "parent_native": 0}
         got = ex.audited_judgment("shape_preserving", self.CLEAN, counts)
         self.assertEqual(got["outcome"], "unknown")
         self.assertIn("parent_native", got["note"])
 
+    def test_the_pixel_native_run_needs_its_own_audited_execution(self):
+        counts = {"native": 1, "native_pixels": 0, "tavotto": 1, "parent_native": 1}
+        got = ex.audited_judgment("shape_preserving", self.CLEAN, counts)
+        self.assertEqual(got["outcome"], "unknown")
+        self.assertIn("native_pixels", got["note"])
+
     def test_audited_agreement_and_differences_pass_through(self):
-        counts = {"native": 1, "tavotto": 1, "parent_native": 1}
+        counts = {"native": 1, "native_pixels": 1, "tavotto": 1, "parent_native": 1}
         self.assertIs(ex.audited_judgment("shape_preserving", self.CLEAN, counts), self.CLEAN)
         diff = {"outcome": "difference_found", "differences": [{}]}
         self.assertIs(ex.audited_judgment("shape_changing", diff, {}), diff)

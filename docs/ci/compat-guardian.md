@@ -43,10 +43,10 @@ Guardian 的目标一句话：让尽可能多的科研用户的 matplotlib 脚�
 python scripts/ci/compat_guardian.py run --suite {compat_engine|compat_v2} [--case id1,id2] \
     --out DIR [--expected-sha SHA] [--timeout SEC]
 python scripts/ci/compat_guardian.py validate DIR/RUN_ID/reports/guardian.json
-python scripts/ci/compat_guardian.py summarize REPORT [REPORT ...] [--json-out F] [--markdown-out F]
+python scripts/ci/compat_guardian.py summarize REPORT [REPORT ...] [--json-out F] [--markdown-out F] [--allow-partial-shards]
 python scripts/ci/compat_guardian.py promote REPORT --case ID --out FILE     # 只出提案
-python scripts/ci/compat_guardian.py explore --seed N --out DIR [--limit N] [--parent a,b] [--static-only]
-python scripts/ci/compat_guardian.py triage REPORT [REPORT ...] --out FILE
+python scripts/ci/compat_guardian.py explore --seed N --out DIR [--limit N] [--parent a,b] [--static-only] [--shard K/N] [--max-seconds S]
+python scripts/ci/compat_guardian.py triage REPORT [REPORT ...] --out FILE [--allow-partial-shards]
 python scripts/ci/compat_guardian.py minimize --report EXPLORE_REPORT --candidate ID --out DIR [--max-runs N --max-seconds S]
 python scripts/ci/compat_guardian.py minimize --replay DIR/repro.json --out DIR2
 ```
@@ -58,6 +58,25 @@ python scripts/ci/compat_guardian.py minimize --replay DIR/repro.json --out DIR2
 - `explore` 不带 `--static-only` 时，执行前要求整个 `scripts/ci/` 与 HEAD 一致（`git status --porcelain`，含未跟踪文件）：
   生成、执行、取证的代码（变换、driver、matrix、执行观测器……）都在这里，脏工作区里改过的不会被当作评审过的模板执行。
   `minimize` 与 `minimize --replay` 执行前做同一道核对。
+- `explore --shard K/N`（CG-09，1 ≤ K ≤ N ≤ 16，写法严格：`0/4`、`5/4`、`1/17`、`01/4`、`a/b` 都是用法错误，退出码 2）只跑去重后候选池的第 K 片：
+  候选按 `candidate_id` 排序后取 `下标 % N == K-1`，所以同 seed 下 N 片的并集 == 不分片的全集、两两不相交、各片大小至多差 1，与候选在池里的顺序无关。
+  与其它参数的组合：`--parent` / `--families` **先**过滤、再切片（总数与过滤条件记进报告，N 片必须一致）；`--limit` 只作用于本片（家族均衡选取照旧）；
+  `--static-only` 照常（切片后全部只做静态检查）；与 `--candidates` 互斥（退出码 2）；片内为空则不发布报告（退出码 2）。
+  报告多一块 `shard: {k, n, candidates_in_shard, candidates_total, filters}`；不带 `--shard` 的报告与以前逐字节同形。
+- `explore --max-seconds S`（有限正数，非法值退出码 2）是整次 explore 的时间预算：预算花完后**还没开始**的可执行候选记 `outcome: not_run`
+  （note 写 `time budget exhausted`，阶段全 `not_run`，执行次数 0），已执行的照常出报告；预算花完后不再开复跑确认（未确认的差异不会触发提醒）。
+  报告多一块 `time_budget: {max_seconds, exhausted, not_run}`，没有未执行候选时退出码走原来的 0 / 1 / 3，**有 `not_run` 且无差异时退出码 4**（部分覆盖：不是通过，也不是失败）。
+  `not_run` 不算「已执行」（样本、家族覆盖、轴表都不计），也不是 triage 的发现。不带该参数时报告与以前逐字节同形。
+  预算对**每一次**子进程调用生效：父本快照、候选 adapter、复跑确认的超时都取 `min(--timeout, 剩余预算)`；剩余不足 30 s（`MIN_ATTEMPT_SECONDS`，
+  最快的真实候选约 15–18 s，再小只会被截断白费）就不再开始，该候选记 `not_run`。因预算截断而超时的候选记 `not_run`（不是 `unknown`、不是差异）；
+  候选自己的超时（没被预算限制）仍按原规则。预算截断的父本快照不进缓存，已完成的照旧缓存。
+  预算到期后到报告写完最多再耗 `OVERRUN_BOUND_SECONDS` = 清理 16 s（SIGTERM 等 10 s + 两次 3 s 的进程组确认）+ 固定开销 60 s = 76 s（预算时钟从 `explore()` 入口起算）。
+  不带该参数时行为与报告都不变。
+- `summarize` / `triage` 吃同一次周扫的 N 份分片报告时，先过合并校验：同 seed、同 HEAD、同生成器摘要与覆盖、同过滤条件与候选总数、
+  片号恰好 1..N 各一份、没有候选出现在两片里、混入不分片的报告也不行——任何一条不满足退出码 2，**不静默合并**。
+  缺片只有显式 `--allow-partial-shards` 才放行，放行后汇总 / 周报 / triage 到处标「N 片中 M 片完成」并写明「不是整个候选池」；
+  报告里的 `time_budget` 必须与候选行一致（有 `not_run` 行却无预算记录、计数对不上、声明耗尽却没有 `not_run` 行都失败）；合并信息给出 `not_run` 总数、预算耗尽的片号、`fully_executed`（片齐且无 `not_run`）；周报写「time budget exhausted in shard(s) […]: N candidate(s) NOT RUN」。
+  重复片、混 seed、混 HEAD、混生成器永远失败，`--allow-partial-shards` 也不放行。合并后的覆盖与指标按全集算（家族覆盖、候选数、结局计数取各片之和）。
 - `promote` 只写一个候选记录（`proposal_only: true, applied: false`），**拒绝**写入
   `tests/compat/`、`tests/compat_guardian/`（含期望声明）、`tests/fixtures/`、`tests/support/`，也拒绝写任何名为 `manifest.json` /
   `baseline.json` 的仓库内文件；基线与 manifest 的改动只能是人写的、过 CODEOWNERS 的普通 PR。
@@ -229,6 +248,10 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
   `s01/s04/s27` 为 `partial_coverage`；`s07/s17` 与 `s04b/s05/s06` 同属案例 13（声明为 `expected_limitation`）；`s25` 是真实产品缺口
   （#1134，G3），不声明、保持 `failed`——所以只要它未修，这个观察 workflow 每次都会红，这是有意的，不是被吞掉。
 
+- **周扫（CG-09）**：同一个 workflow 里另有三个 job，只由 `schedule`（`17 2 * * 0`，周日 02:17 UTC，与 nightly 的 03:41 错开）或
+  `workflow_dispatch` 的 `weekly: true` 触发，详见 §13。两条 cron 都会启动整个 workflow，所以每个 job 的 `if` 用
+  `github.event.schedule == '17 2 * * 0' || inputs.weekly` 分流：`guardian` / `explore` / `trend` 在周扫触发下跳过，`explore-weekly*` 在其它触发下跳过。
+
 ## 9. 评审边界（CODEOWNERS）
 
 `.github/CODEOWNERS` 为下列路径列出显式条目：`tests/compat/**`（manifest、基线、schema）、
@@ -284,17 +307,44 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 | import_alias | `import_alias`（pyplot/numpy 别名） | import_alias | 保型 |
 | entry_form | `wrap_main`（顶层改 `main()` + `__main__` 守卫） | entry | 保型 |
 | argparse_defaults | `argparse_out`（保存路径来自 argparse，默认值=原路径） | args | 保型 |
-| data_source | `inline_to_file`（第一个字面量数据列表改读相对 JSON） | data_source | 保型 |
-| style_rc | `rcparams`、`style_use` | style | 改轴；**仅静态**：compare 只看图数/标题/路径，观察不到样式，执行只会得到假的 `no_difference`，所以含这两步的候选恒为 static_only 并在报告里点名 |
+| data_source | `inline_to_file`（第一个字面量数据列表改读相对 JSON）；CG-07 读文件写法：`read_csv_pandas`、`read_csv_numpy`（`loadtxt`）、`genfromtxt_names`、`read_tsv_stdlib`、`read_npy`、`read_pickle`、`read_excel`（openpyxl）、`read_parquet`（pyarrow）、`glob_dir`（拆成 `data/*.csv` 再 `sorted(glob)`） | data_source | 保型 |
+| style_rc | `rcparams`、`style_use` | style | 改轴；现在可执行（CG-06 起 `compare` 之外还有像素判定，样式差异观察得到） |
+
+**data_source 家族（CG-07，`scripts/ci/compat_explore_data.py`）**：同轴互斥，一条链至多一个数据来源；全部以第一个字面量数值列表为数据源，
+确定性写出数据文件并把该实参改成读文件的表达式。读回的值与字面量逐值相等、元素类型一致（整数列表按整数、含浮点按浮点，
+`dtype=` / `int()` / `float()` 显式写出，pandas 用 `float_precision="round_trip"`），否则刻度会变、保型检查会把模板的锅记成假差异。
+由 `seed + 父本结构签名（规范化 AST）+ 变换名` 派生两个参数：**路径写法**（`os.path.join(os.path.dirname(__file__), 名)` / cwd 相对 / `Path(__file__).resolve().parent / "data" / 名`）和
+**编码**（仅文本格式：utf-8、utf-8-sig、gbk，或中文文件名 `实验数据`；读端显式写 encoding，表头第一列是中文所以 gbk / BOM 真的改变字节）。
+二进制逐字节确定：npy 头固定；pickle protocol 4；xlsx 重新打包（固定时间戳、不压缩、抹掉 docProps 的 created/modified）；parquet 不压缩、不写统计、不带 pandas 元数据
+（footer 的 `created_by` 带 pyarrow 版本，所以版本钉在 workflow 里）。去重口径：仅编码 / 文件名不同的候选 AST 签名相同被归一；路径写法不同是结构不同，各留一份。
+`openpyxl`、`pyarrow` **只在 Guardian workflow 的 job 里装**（版本钉在 `compat-guardian.yml`，产品依赖与 pyproject 不变）；缺失时 `read_excel` / `read_parquet`
+`applies` 为 False，原因进报告 `coverage.unavailable_transforms`。新增 import（pandas/numpy/csv/glob/os/pathlib/openpyxl/pyarrow）不在 `_UNCERTAIN_IMPORTS` 里，也没有放宽那张表。
 
 保型：native 输出（图数、标题）必须等于父本——执行器同时跑父本 native 核对，不等就是 `invalid_candidate`（模板有 bug，
 不是 Tavotto 缺陷）。改轴：只能与这个变体自己的 native 比。所有改动都是 AST 编辑，结果必须能 `compile`。
-同 seed 逐字节相同（参数由 `seed + 父本 + 变换名` 的哈希派生，不依赖其它候选）。
+同 seed 逐字节相同（参数由 `seed + 父本结构签名 + 变换名` 的哈希派生，不依赖其它候选）。
 
 **比较（`compare`，纯函数）**：`zero_figures`（原生 N 图 / Tavotto 0 图）、`fewer_figures`（partial_capture）、
 `same_path_content_mismatch`（原生最后写入该路径的图 vs Tavotto 保留的图）、`title_missing`。差异带 Guardian 失败类别。
 Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探测）再起一次性 worker 取 manifest。
 `show()` 之后 `close()` 的图原生算「出现过」（`native_ref` 记录 show 时的在开图）。
+
+**补判定（CG-06，`scripts/ci/compat_explore_oracles.py`）**：图数与标题之外再问四件事，判据全部借用 CompatBench 现成的，
+不另设一套——这样 explore 与 CompatBench 对同一张图不会给出相反结论。
+
+| 层 | 适用 | 判据 | 差异 kind（类别） |
+| --- | --- | --- | --- |
+| fidelity | 全部可执行候选 | 原生 PNG 与 Tavotto 零 patch PNG（同一 `FIDELITY_WIDTH`），`pixelcompare.verdict` 用 `FIDELITY_TOLERANCE`——与 CompatBench 同一档，不另设 | `pixel_mismatch`、`render_failed`（export_or_fidelity）；证据含三项指标、control/tavotto/diff PNG 的相对路径与 sha256 |
+| structure | 仅保型 | 父本在 Tavotto 里的 `{gid.prop: value}` 快照（每次 explore 运行每个父本只算一次）的每个键，候选里必须存在且 `_same_value`；候选多出的键不算；**数据指纹**（manifest 每个数据类元素的只读 `data_fingerprint`，快照键 `gid.__data__.part` → sha256 + shape + finite）逐部件精确比较，不等记 `structure_mismatch`（evidence 带 `aspect: "data"` 与两侧 shape/finite），任一侧 `over_budget` / `unavailable` 则结构层 `not_run`、候选落 unknown；阶段记录里 `data_compared` 是真比过的部件数（0 = 没比数据） | `structure_mismatch`（manifest_semantics） |
+| edit / replay / export | 仅保型 | 继承父本用例已评审的 `mutations` 与 `export_formats`（缺省 pdf、png），在同一 worker 上调 `compat_matrix.stage_edit/stage_replay/stage_export` | `edit_failed`（editing_capability）、`replay_mismatch`（replay_inconsistency）、`export_failed`（export_or_fidelity） |
+
+改轴候选的 structure / edit / replay / export 记 `not_covered` 并写明判据：已评审的编辑目标按父本 gid 记，改轴之后没有已评审的目标。
+候选行的 `stages` 逐层给 `{status, criterion}`（`passed / failed / not_run / not_covered`），报告 `stage_counts` 汇总各层状态，
+没跑的层可见。缺 numpy / Pillow 时 fidelity 记 `not_run`，**不是差异**，也不是通过。
+
+**能保证**：同一候选上，原生与 Tavotto 零 patch 渲染在 CompatBench 容差内一致；保型候选的父本编辑目标仍能应用、撤销、重放、导出，
+且可编辑字段值不变。**不能保证**：容差内的一致不是逐像素相同；改轴候选的编辑 / 导出没有被验证；字体 hinting 之类的系统性微差
+被容差吃掉；只覆盖父本里已评审的那几个编辑目标，别的属性没有被改过。
 
 **结构去重与覆盖**：按「轴向量 + 规范化 AST 签名」去重（数字/字符串常量与 `cg_plt3` 之类别名数字归一，所以仅参数不同不算新结构）。
 报告 `coverage` 给出：每个家族的轴、适用父本数、候选数；每个轴的候选数；保型/改轴数；去重前后；以及父本按语料类别的分布
@@ -362,6 +412,7 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 | PR smoke | `pull_request`（base 是 main，非 fork，且只在 Guardian 自己的文件变化时） | 合同测试 + 引擎 6 个登记 case + V2 全部场景 | 约 10–20 分钟，job 上限 35 |
 | Nightly | `schedule`（每日 03:41 UTC） | 上面一档 + `explore`（固定 seed 42、`--limit 24`、复现确认 3 个）→ `triage` → `trend` 汇总 | explore job 上限 60 分钟 |
 | Manual | `workflow_dispatch` | 同 Nightly，可传 `seed`、`limit`、`families`；本机另可用 `minimize` / `promote` 做深入调查 | 同上 |
+| Weekly | `schedule`（周日 02:17 UTC）或 `workflow_dispatch` 的 `weekly: true`（可传 `weekly_seed`） | 全量候选池切 4 片并行 explore → 合并校验 → triage → 周报；不跑上面三档的 job | 4 片 × 60 分钟 + 汇总 15 分钟 |
 
 **CI 上能做的**：在 GitHub 托管的临时 runner 上执行已提交夹具，和由已评审父本经确定性变换得到的派生候选（执行器自己重新推导，
 非确定性/来源不确定的只做静态检查）；上传白名单 artifact；把 triage/趋势写进 `GITHUB_STEP_SUMMARY`；对「新的、可复现、未登记家族」
@@ -370,6 +421,29 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 **CI 上不做的**：不跑用户或外部来源脚本，不进 self-hosted / `tavotto-lab`；不开 issue、不开 PR、不评论、不写任何东西
 （没有 `issues:` / `pull-requests:` / `contents: write`）；不改 baseline / manifest / 声明文件；不装依赖；不触发 merge_group，不是必需检查；
 不证明桌面（Native）路径、Windows、其它 Python / matplotlib 版本，也不产出真实用户成功率。`minimize` 不在 CI 里跑（耗时且需要人判断）。
+
+**周扫（CG-09）**：全量候选池每周扫一遍，不设 `--limit`；nightly 不变（seed 42、`--limit 24`、单例 `--timeout 240`）。
+
+| job | 做什么 | 预算 / 权限 |
+| --- | --- | --- |
+| `explore-weekly-plan` | 算一次 seed：`date -u +%G%V`（ISO 年 + 周号，如 `202643`），dispatch 可用 `weekly_seed` 覆盖；校验为纯数字后经 job output 交给各片 | 5 分钟；`contents: read` |
+| `explore-weekly`（matrix `shard: [1, 2, 3, 4]`，`fail-fast: false`） | 每片 `explore --seed <周 seed> --shard K/4 --max-seconds 2700 --confirm-differences 3 --timeout 240`；上传白名单 artifact（报告、摘要、`candidates.json`、候选入口脚本 `*.py`——triage 用它算调用位置；不含数据文件 / 证据目录 / stdout） | 每片 job 60 分钟（步骤 50）= 4 片 × 60 分钟；`contents: read` |
+| `explore-weekly-summary`（`always()`，plan 成功即跑） | 按名字取本 run 的各片 artifact（缺片不让这一步失败）→ `triage` + `summarize --previous <上一周周报>` → step summary 与 artifact（保留 30 天） | 15 分钟；`contents: read` + `actions: read`（读本 run 的分片 artifact 与上一周周报，与 `trend` 同理由） |
+
+- **每片时间预算**：步骤上限 50 分钟，`--max-seconds 2700`（45 分钟 = 步骤上限减 5 分钟）。池约 156 个候选（可执行约 137），每片约 39 个（约 33–36 个可执行），
+  本机实测约 15–18 s/候选（见 PR 回报），一片约 10–12 分钟；预算存在的理由是候选池会随新变换增长，而被步骤超时杀掉的片**没有报告**、每周重复。
+  预算花完 → 该片 `not_run` 若干、退出码 4（workflow 里 `::warning::`）、汇总标「partial coverage」，不算通过。
+- **seed 只算一次**：4 片共用 plan job 的输出，不会因为跨 ISO 周边界各算各的；就算被人为改乱，合并校验也会因混 seed 失败。
+- **缺片与失败**：某片崩了，其余片照常跑完（`fail-fast: false`），汇总照样产出，但标「N 片中 M 片完成」并发 `::warning::`，该片自己的 job 是红的；
+  一份报告都没有则汇总 job 红。重复片 / 混 seed / 混 HEAD 直接让汇总红（退出码 2）。
+- **提醒**：新报警簇（无家族记录 + 被复跑复现 + 不是 fixture / 环境问题）只发 `::warning::` 注解并写进周报（triage 小节），**不自动开 issue**，没有任何写权限。
+  周报里簇与轴的列出顺序按 `compat_guardian_summary.AXIS_WEIGHTS`（data_source 3、output_call 3、entry 2，其余 1；来源是遥测 `export_result` / 诊断包错误码的月度汇总，人工更新）：
+  **只影响列出顺序**，不改任何判定、退出码、计数或指标（`tests/test_compat_explore_shards.py::AxisWeightsOnlyReorder` 钉着：改权重后 JSON 逐字节不变）。
+  周报照旧写明「语料通过率 ≠ 用户首次成功率」。
+- **上一周周报**：最近已完成的定时运行里能下载到 `compat-guardian-weekly-summary-*` 的那次（往前最多 14 次）；手动 dispatch 的周扫不当基线。找不到则趋势 `not_computed`。
+- **不做**：不跑 `tavotto-lab` / self-hosted；不加 `issues:` / `pull-requests:` / 任何 `write`；不开 issue、不开 PR；不改 baseline / manifest / 家族记录；
+  不把周扫接进合并门禁；候选池仍是「已通过父本的派生」，全量扫完也不等于别的输入形状没问题。
+- **没在 GitHub 上真跑过**：分片、合并校验、周报排序有本机测试；矩阵并发、`gh run download` 取本 run 的 artifact、`always()` 汇总在部分分片失败时的表现，要等第一次真实周扫验证。
 
 **维护者提醒**：只有同时满足「没有家族记录（`tests/compat_guardian/families/`）」「被复跑复现」「不是 invalid_fixture / 环境问题」的 triage 簇
 才发注解（并出现在 step summary 的 “New reproducible families” 里）。已知家族（G1、G2）的差异在 summary 里列出，不再提醒。

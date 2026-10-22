@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import { clampLegendOffset, TITLE_SIZE } from '@/lib/onboarding/demoFigure'
+import { homeVariant } from '@/lib/onboarding/tutorial'
 import { REAL_STEP_IDS, STEP_IDS } from '@/lib/onboarding/stepIds'
 import {
   configureOnboardingPersistence,
@@ -278,7 +279,7 @@ describe('持久化与迁移', () => {
     expect(m.tutorialDocumentId).toBe('tavotto-tutorial')
   })
 
-  it('v2 → v3：八步教程进行到一半的用户落到新第一步、记成暂停（不在启动时被拽进新教程），旧步骤不算新步骤的完成', () => {
+  it('v2 → v3：八步教程进行到一半（active / paused）同样回到新手态（2026-10-21 裁决），不再记成暂停', () => {
     for (const status of ['active', 'paused'] as const) {
       const m = migratePersisted({
         schemaVersion: 1,
@@ -288,41 +289,110 @@ describe('持久化与迁移', () => {
         currentStep: 'export_canvas',
         completedSteps: ['open_fast_edit', 'select_text', 'change_typography'],
         skippedSteps: ['select_text'],
+        hintSeen: { multi_select: 7 },
         tutorialProjectId: 'p_tut',
         tutorialDocumentId: 'tavotto-tutorial',
         demo: { legendOffset: [5, 5], titleSizePt: 12 },
       })
-      expect(m.status).toBe('paused')
-      expect(m.pausedBy).toBe(status === 'paused' ? 'system' : 'user')
-      expect(m.currentStep).toBe('demo_import')
-      expect(m.completedSteps).toEqual([])
-      expect(m.skippedSteps).toEqual([])
-      // 上一版的演示改动不属于这一版的图
-      expect(m.demo).toEqual(DEMO_EDITS_EMPTY)
-      expect(m.flowVersion).toBe(ONBOARDING_FLOW_VERSION)
+      expect(m).toEqual({
+        ...ONBOARDING_DEFAULTS,
+        hintSeen: { multi_select: 7 },
+        tutorialProjectId: 'p_tut',
+        tutorialDocumentId: 'tavotto-tutorial',
+      })
     }
   })
 
-  it('v2 → v3：已完成 / 已跳过的用户原样（不被重新打扰），完成时间保留', () => {
+  it('旧版 completed / skipped → not_started：新手态（welcomeSeenAt 清空以便自动弹一次），hintSeen 保留，历史清掉', () => {
+    for (const status of ['completed', 'skipped'] as const) {
+      for (const flowVersion of [2, 1, undefined]) {
+        const m = migratePersisted({
+          schemaVersion: 1,
+          flowVersion,
+          status,
+          currentStep: null,
+          completedSteps: ['open_fast_edit', 'select_text', 'done'],
+          skippedSteps: ['select_text'],
+          hintSeen: { problem_found: 42 },
+          startedAt: 3,
+          completedAt: status === 'completed' ? 9 : null,
+          welcomeSeenAt: 5,
+        })
+        const tag = `${status} v${flowVersion}`
+        expect(m.status, tag).toBe('not_started')
+        expect(m.currentStep, tag).toBeNull()
+        expect(m.completedSteps, tag).toEqual([])
+        expect(m.skippedSteps, tag).toEqual([])
+        expect(m.completedAt, tag).toBeNull()
+        expect(m.startedAt, tag).toBeNull()
+        expect(m.welcomeSeenAt, tag).toBeNull()
+        expect(m.hintSeen, tag).toEqual({ problem_found: 42 })
+        expect(m.flowVersion, tag).toBe(ONBOARDING_FLOW_VERSION)
+        expect(homeVariant(m.status), tag).toBe('newcomer')
+      }
+    }
+  })
+
+  it('旧版 not_started 但看过欢迎页：welcomeSeenAt 清空，升级后照样自动弹一次', () => {
+    const m = migratePersisted({ schemaVersion: 1, flowVersion: 2, status: 'not_started', welcomeSeenAt: 5, hintSeen: { problem_found: 42 } })
+    expect(m.status).toBe('not_started')
+    expect(m.welcomeSeenAt).toBeNull()
+    expect(m.hintSeen).toEqual({ problem_found: 42 })
+    expect(m.flowVersion).toBe(ONBOARDING_FLOW_VERSION)
+  })
+
+  it('被 v3 代码读过并写回的旧 completed / skipped（flowVersion 已被规范成 3）也迁回新手态一次', () => {
     for (const status of ['completed', 'skipped'] as const) {
       const m = migratePersisted({
         schemaVersion: 1,
-        flowVersion: 2,
+        flowVersion: 3,
         status,
-        currentStep: null,
-        completedSteps: ['open_fast_edit', 'select_text', 'done'],
-        skippedSteps: ['select_text'],
+        completedSteps: ['done'],
+        hintSeen: { problem_found: 42 },
+        welcomeSeenAt: 5,
+      })
+      expect(m.status, status).toBe('not_started')
+      expect(m.welcomeSeenAt, status).toBeNull()
+      expect(m.hintSeen, status).toEqual({ problem_found: 42 })
+      expect(m.flowVersion, status).toBe(ONBOARDING_FLOW_VERSION)
+      expect(homeVariant(m.status), status).toBe('newcomer')
+    }
+    expect(ONBOARDING_FLOW_VERSION).toBeGreaterThanOrEqual(4)
+  })
+
+  it('当前 flowVersion 的 completed / skipped 原样不动（不被重新打扰）', () => {
+    for (const status of ['completed', 'skipped'] as const) {
+      const m = migratePersisted({
+        schemaVersion: 1,
+        flowVersion: ONBOARDING_FLOW_VERSION,
+        status,
+        completedSteps: ['demo_import', 'demo_move_legend', 'demo_change_title', 'done'],
         completedAt: status === 'completed' ? 9 : null,
+        welcomeSeenAt: 5,
       })
       expect(m.status).toBe(status)
-      expect(m.currentStep).toBeNull()
       expect(m.completedAt).toBe(status === 'completed' ? 9 : null)
-      // 跳过过的旧步骤不会被当成任何新步骤的完成；done 是两版共有的完成页 id
-      expect(m.completedSteps).toEqual(['done'])
+      expect(m.welcomeSeenAt).toBe(5)
+      expect(m.completedSteps).toEqual(['demo_import', 'demo_move_legend', 'demo_change_title', 'done'])
     }
   })
 
-  it('更早的 welcome 步骤：停在它上面的进行中用户同样落到新的第一步（并按升版记成暂停）', () => {
+  it('迁移只发生一次：迁完再写回、再读，不会又被迁；新版里完成 / 跳过后重读保持终态', () => {
+    const first = migratePersisted({ schemaVersion: 1, flowVersion: 2, status: 'completed', welcomeSeenAt: 5 })
+    expect(first.status).toBe('not_started')
+    // 模拟用户在新版里走完：start → complete，持久化后重读
+    useOnboardingStore.getState().start()
+    useOnboardingStore.getState().complete()
+    const raw = stored()
+    expect(raw.flowVersion).toBe(ONBOARDING_FLOW_VERSION)
+    expect(migratePersisted(raw).status).toBe('completed')
+    useOnboardingStore.getState().resetOnboarding()
+    useOnboardingStore.getState().start()
+    useOnboardingStore.getState().skip()
+    expect(migratePersisted(stored()).status).toBe('skipped')
+  })
+
+  it('更早的 welcome 步骤：停在它上面的进行中用户同样回到新手态', () => {
     const m = migratePersisted({
       schemaVersion: 1,
       flowVersion: 1,
@@ -330,8 +400,8 @@ describe('持久化与迁移', () => {
       currentStep: 'welcome',
       completedSteps: [],
     })
-    expect(m.currentStep).toBe('demo_import')
-    expect(m.status).toBe('paused')
+    expect(m.currentStep).toBeNull()
+    expect(m.status).toBe('not_started')
   })
 
   it('记的步骤越过了没完成的步骤（手改 / 半截写入）：回到第一个未完成的，往回翻的位置照常保留', () => {

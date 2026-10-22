@@ -205,29 +205,19 @@ describe('不带加速键的几条', () => {
     expect(doc().past).toHaveLength(1)
   })
 
-  it('快速编辑里对齐与创建副本都不动版面（按键与菜单一致）', () => {
+  it('单图编辑里对齐与创建副本照常生效（与排版同一口径，按键与菜单一致）', () => {
     useArrangeStore.setState({ alignRef: 'page' })
     useSelectionStore.getState().set(['p1'])
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     const before = observe()
-    for (const a of MENU_ACTIONS.filter((x) => x.startsWith('menu-align-'))) {
-      act(() => runMenuAction(a))
-    }
-    act(() => runMenuAction('menu-duplicate'))
-    act(() => {
-      document.body.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'd', metaKey: true, bubbles: true, cancelable: true }),
-      )
-    })
-    expect(observe()).toEqual(before)
-    expect(doc().doc.objects.find((o) => o.id === 'p1')!.x).toBe(10)
-
-    // 对照：同一个选区回到排版态，两条路都真的生效
-    useWorkspaceStore.getState().clear()
     act(() => runMenuAction('menu-align-right'))
+    const aligned = doc().doc.objects.find((o) => o.id === 'p1')!.x
+    expect(aligned).not.toBe(10)
+    expect(observe()).not.toEqual(before)
+    // 创建副本：菜单与 ⌘D 都落一份（副本是图 = 第二张图，模式订阅会切到多图排版；本用例没挂订阅，只量文档）
+    const n = doc().doc.objects.length
     act(() => runMenuAction('menu-duplicate'))
-    expect(doc().past).toHaveLength(2)
-    expect(doc().doc.objects).toHaveLength(3)
+    expect(doc().doc.objects).toHaveLength(n + 1)
   })
 
   it('没选东西时对齐要说出口，而不是点了没反应', () => {

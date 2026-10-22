@@ -411,3 +411,32 @@ def test_long_malformed_stylesheet_and_padded_values_are_bounded():
     with pytest.raises(SVGError, match="svg_unsafe_css"):
         parse_svg(svg("<style>" + " " * 100_000 + "invalid</style>"))
     parse_svg(svg('<path style="fill:' + " " * 100_000 + 'red"/>'))
+
+
+@pytest.mark.parametrize(
+    ("node", "family"),
+    [
+        (
+            "<text font-family=\"'Liberation Serif', 'Times New Roman', serif\">x</text>",
+            "Liberation Serif",
+        ),
+        ('<text font-family="Arial, sans-serif">x</text>', "Arial"),
+        ("<text style=\"font-family: 'DejaVu Sans', sans-serif\">x</text>", "DejaVu Sans"),
+        ("<text style=\"font: 10px 'DejaVu Sans'; text-anchor: middle\">x</text>", "DejaVu Sans"),
+    ],
+)
+def test_check_svg_reads_the_first_family_of_live_text(tmp_path, node, family):
+    """ADR 0144：留成 <text> 的 SVG 能核字体族（取列表第一个，后面是回退）。"""
+    path = tmp_path / "t.svg"
+    path.write_bytes(svg(node))
+    result = artifactcheck.check_svg(path, expect_mm=None, font_family=family)
+    assert result["fonts"] == [family] and result["has_text"] is True
+    assert result["font_ok"] is True and result["font_note"] is None
+    assert artifactcheck.check_svg(path, expect_mm=None, font_family="Other")["font_ok"] is False
+
+
+def test_check_svg_still_reports_outlines_as_unverifiable(tmp_path):
+    path = tmp_path / "o.svg"
+    path.write_bytes(svg('<path d="M0 0L1 1"/>'))
+    result = artifactcheck.check_svg(path, expect_mm=None, font_family="Arial")
+    assert result["has_text"] is False and result["font_ok"] is None and result["font_note"]

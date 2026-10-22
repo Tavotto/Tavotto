@@ -86,6 +86,9 @@ ERROR_CODES = (
     "eps_needs_live_figure",
     "export_basis_mismatch",
     "svg_source_unsupported",
+    # 执行来源（有脚本 / 改过 overrides 或运行时素材）缺与当前执行匹配的导出级 SVG 快照：先重新运行脚本；
+    # 与「来源本身没有 SVG 表示」的 `svg_source_unsupported` 分开，后者不该让人去重跑脚本
+    "svg_snapshot_missing",
     "no_output",
     "publish_failed",
     "report_failed",

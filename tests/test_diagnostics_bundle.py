@@ -86,6 +86,13 @@ def snapshot(**extra):
             "object_count": 0,
         },
         "preview": {"active_sessions": 0, "settled": None, "history_mode": "gesture"},
+        "onboarding": {
+            "status": "paused",
+            "flow_version": 3,
+            "completed_steps": ["demo_import"],
+            "welcome_seen": True,
+            "hint_seen_keys": ["panel_editable", "multi_select"],
+        },
         "preview_memory": {
             "resident_svg_bytes": 12_582_912,
             "resident_svg_count": 2,
@@ -435,6 +442,37 @@ def test_preview_representation_survives_the_backend_sanitiser():
     assert mem["budget_per_file"] == 16 * 1024 * 1024
 
 
+def test_onboarding_summary_survives_the_backend_sanitiser_and_stays_closed():
+    """新手教程状态的结构摘要：字段原样过后端，状态机取值是闭集（内容形状的串整条丢掉），列表只收技术标识。"""
+    out = dfe.sanitize_snapshot(snapshot(), _redact)
+    assert out["onboarding"] == {
+        "status": "paused",
+        "flow_version": 3,
+        "completed_steps": ["demo_import"],
+        "welcome_seen": True,
+        "hint_seen_keys": ["panel_editable", "multi_select"],
+    }
+    hostile = snapshot()
+    hostile["onboarding"]["status"] = SECRET_TITLE
+    hostile["onboarding"]["completed_steps"] = [SECRET_TITLE + " with spaces"]
+    out = dfe.sanitize_snapshot(hostile, _redact)
+    assert out["onboarding"]["status"] is None
+    assert out["onboarding"]["completed_steps"] == []
+    assert SECRET_TITLE not in json.dumps(out, ensure_ascii=False)
+    # 长得像技术标识、但不在闭集里的串（`patient_123`）也挡住；闭集内的保留
+    sneaky = snapshot()
+    sneaky["onboarding"]["completed_steps"] = ["patient_123", "demo_import", 7, None]
+    sneaky["onboarding"]["hint_seen_keys"] = ["secret_codename", "multi_select"]
+    out = dfe.sanitize_snapshot(sneaky, _redact)
+    assert out["onboarding"]["completed_steps"] == ["demo_import"]
+    assert out["onboarding"]["hint_seen_keys"] == ["multi_select"]
+    # 老前端不带这一段：整段退化成空值，不抛
+    old = snapshot()
+    del old["onboarding"]
+    got = dfe.sanitize_snapshot(old, _redact)["onboarding"]
+    assert got["status"] is None and got["flow_version"] == 0 and got["completed_steps"] == []
+
+
 def test_never_estimated_stays_none_instead_of_becoming_zero():
     """**`None` 与 `0` 在这里不是一回事**。
 
@@ -589,6 +627,24 @@ def test_unexpected_error_enums_match_frontend():
 
     assert values("UNEXPECTED_ERROR_SOURCES") == set(dfe._ENUM_FIELDS["source"])
     assert values("UNEXPECTED_ERROR_NAMES") == set(dfe._ENUM_FIELDS["error_name"])
+
+
+def test_onboarding_closed_sets_match_frontend():
+    """新手教程摘要两个列表的元素闭集：前端 `STEP_IDS` / `HINT_KINDS` == 后端 `_CLOSED_LISTS`。"""
+    import re
+
+    def values(path: str, const: str) -> set[str]:
+        ts = (REPO_ROOT / path).read_text(encoding="utf-8")
+        m = re.search(rf"export const {const} = \[(.*?)\] as const", ts, re.S)
+        assert m, const
+        return set(re.findall(r"'([A-Za-z_0-9]+)'", m.group(1)))
+
+    assert values("web/src/lib/onboarding/stepIds.ts", "STEP_IDS") == set(
+        dfe._CLOSED_LISTS["completed_steps"]
+    )
+    assert values("web/src/store/onboardingStore.ts", "HINT_KINDS") == set(
+        dfe._CLOSED_LISTS["hint_seen_keys"]
+    )
 
 
 def test_unexpected_error_event_keeps_only_closed_fields():

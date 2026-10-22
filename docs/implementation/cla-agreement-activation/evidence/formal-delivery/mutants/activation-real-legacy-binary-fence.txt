@@ -1,0 +1,27 @@
+✖ activation cannot replace a real version transition with source only (37.637638ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 224.081398
+
+✖ failing tests:
+
+test at tests/agreement-activation.test.mjs:64:1
+✖ activation cannot replace a real version transition with source only (37.637638ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async deniedUnchanged (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-real-legacy-binary-fence/tests/agreement-activation.test.mjs:21:28)
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-real-legacy-binary-fence/tests/agreement-activation.test.mjs:65:34
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-real-legacy-binary-fence/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'rejects',
+    diff: 'simple'
+  }

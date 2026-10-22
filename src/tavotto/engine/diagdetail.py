@@ -176,6 +176,9 @@ class Sources:
 
     project: dict | None = None  # `_diagnostics_project_status()`
     scripts: list[str] = dataclasses.field(default_factory=list)  # 项目登记的脚本（项目相对路径）
+    #: 最近尝试过的脚本 `[(脚本, 是否有失败的尝试)]`（`taskdiag.Store.attempted_scripts`：运行 / 依赖准备 / 依赖修复），
+    #: 不要求在登记表里——出错的那个脚本常常没登记（桌面当项目、直接拖进来的脚本）
+    attempted: list[tuple[str, bool]] = dataclasses.field(default_factory=list)
     baked: dict | None = None  # `load_baked(ctx)`：{stem: {"versions": [...]}}
     task_section: dict | None = None  # `taskdiag.bundle_section(..., limit=24)`
     frontend: dict | None = None  # 经 `diagnostics_frontend.sanitize_detail` 的前端 detail 子对象
@@ -2454,16 +2457,28 @@ def collect_network(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
 # ---------------------------------------------------------------------------
 # A 脚本源码（勾选）
 # ---------------------------------------------------------------------------
+SOURCE_REASON_FAILING = "failing_attempt"
+SOURCE_REASON_PANEL = "panel"
+SOURCE_REASON_RECENT = "recent"
+#: 声明文件（参与依赖计划的 requirements / constraints / pyproject）最多收几份
+DECLARED_FILES = 20
+#: 用来定「从哪个脚本所在目录往上找声明文件」的脚本数上限
+DECLARED_HINT_SCRIPTS = 3
+
+
 def source_candidates(
     src: Sources,
     failed: list[str] | None = None,
     ids: dict[str, FileId] | None = None,
     over_cap: list[str] | None = None,
+    reasons: dict[str, str] | None = None,
 ) -> list[tuple[str, Path]]:
-    """要收的脚本：判据 = 当前项目**登记的脚本**（项目相对路径），正在编辑 / 选中的面板的脚本排最前，
-    其余按修改时间新的在前。只收解析后仍在项目目录内的文件（登记表是用户文件，不信它）。
+    """要收的脚本，顺序 = ① 最近**失败**尝试涉及的脚本（不要求登记过）② 其余最近尝试过的 ③ 正在编辑 / 选中的面板的脚本
+    ④ 项目登记的其余脚本（按修改时间新的在前）。`reasons` 给了就记每个脚本为什么在里面：
+    `failing_attempt` > `panel` > `recent`（其余一律 recent）。
+    路径规则不变：只收解析后仍在项目目录内的文件（登记表与尝试记录都是用户侧的输入，不信它；符号链接指到项目外的不收）。
     **每个候选单独 stat**：一个无关脚本在枚举与排序之间被删 / 不可读，只让它自己进 `failed`（调用方标 read_failed），
-    不拖垮整个源码类别。"""
+    不拖垮整个源码类别。同一个文件被几种写法点名（登记表一种、尝试记录一种）只收一次。"""
     fig = (src.project or {}).get("figures_dir")
     if not fig:
         return []
@@ -2473,17 +2488,26 @@ def source_candidates(
         for p in ((src.frontend or {}).get("overrides") or [])
         if p.get("script")
     ]
+    failing = [s for s, bad in src.attempted if bad]
+    attempted_ok = [s for s, bad in src.attempted if not bad]
     seen: dict[str, Path] = {}
     fids: dict[str, FileId] = {}
     tried: set[str] = set()
-    for rel in [*focus, *src.scripts]:
-        if rel in tried:
+    by_path: dict[Path, str] = {}  # 解析后的路径 → 先到者的写法
+    alias: dict[str, str] = {}  # 后到的写法 → 先到者
+    for raw in [*failing, *attempted_ok, *focus, *src.scripts]:
+        if raw in tried:
             continue
-        tried.add(rel)
+        tried.add(raw)
         try:
-            path = (root / rel).resolve()
-            path.relative_to(root)
+            path = (root / raw).resolve()
+            rel_path = path.relative_to(root)
         except (OSError, ValueError):
+            continue
+        # 记录里是绝对路径时落成项目相对的 POSIX 写法：zip 成员名与 index 不带出绝对路径
+        rel = rel_path.as_posix() if Path(raw).is_absolute() else raw
+        if path in by_path:
+            alias[raw] = by_path[path]
             continue
         try:
             if not path.is_file():
@@ -2493,8 +2517,21 @@ def source_candidates(
             if failed is not None:
                 failed.append(rel)
             continue
+        by_path[path] = rel
+        alias[raw] = rel
         seen[rel] = path
-    ordered = list(dict.fromkeys(r for r in focus if r in seen))  # 多张面板同一脚本：按首次出现去重
+
+    def canon(names) -> list[str]:
+        return list(dict.fromkeys(alias[r] for r in names if r in alias and alias[r] in seen))
+
+    ordered_failing = canon(failing)
+    ordered_attempted = [r for r in canon(attempted_ok) if r not in ordered_failing]
+    ordered_focus = [r for r in canon(focus) if r not in ordered_failing + ordered_attempted]
+    ordered = [
+        *ordered_failing,
+        *ordered_attempted,
+        *ordered_focus,
+    ]  # 多张面板同一脚本：按首次出现去重
     rest = [r for r in seen if r not in ordered]
     rest.sort(
         key=lambda r: -fids[r].mtime_ns
@@ -2502,9 +2539,67 @@ def source_candidates(
     if ids is not None:
         ids.update(fids)
     chosen = [*ordered, *rest]
+    if reasons is not None:
+        panel_set = set(canon(focus))
+        for r in chosen:
+            reasons[r] = (
+                SOURCE_REASON_FAILING
+                if r in ordered_failing
+                else SOURCE_REASON_PANEL
+                if r in panel_set
+                else SOURCE_REASON_RECENT
+            )
     if over_cap is not None:  # 数量上限之外的：调用方在 index 与 truncated 里记账
         over_cap.extend(chosen[SOURCE_FILES:])
     return [(r, seen[r]) for r in chosen][:SOURCE_FILES]
+
+
+def declared_candidates(
+    src: Sources,
+    scripts: list[str],
+    failed: list[str] | None = None,
+    ids: dict[str, FileId] | None = None,
+) -> list[tuple[str, Path]]:
+    """参与依赖计划的**声明文件**（requirements*.txt / constraints.txt / pyproject.toml，含 `-r` / `-c` 跟进到的）：
+    就是 `depresolve.declared_intents` 实际读到的那几份——不另立一套枚举。从出错 / 面板脚本所在目录往上到项目根，
+    再加项目根自己的一份。`no_follow=True`：声明文件不跟随符号链接 / 路径替身；之后同样要求解析后仍在项目目录内。
+    脚本自己的 PEP 723（已在源码里）与管理器锁文件（`uv.lock` 等：体积大且依赖计划不读它的内容）不收。"""
+    fig = (src.project or {}).get("figures_dir")
+    if not fig:
+        return []
+    from . import depresolve
+
+    root = Path(fig).resolve()
+    names: list[str] = []
+    for hint in [*scripts[:DECLARED_HINT_SCRIPTS], None]:
+        seen: list[str] = []
+        try:
+            # 取遍历**真正读成功**的文件清单，而不是从 intent 的 source 反推：空文件 / 只有 `-r` 的父文件没有 intent
+            # 也要附；被 no_follow 拒读（符号链接 / 替身）的根本不在清单里，不会被下面的 resolve 再跟随一遍
+            depresolve.declared_intents(root, hint, no_follow=True, visited=seen)
+        except Exception:  # noqa: BLE001 —— 声明读不出来只让这一类别少一块，不拖垮源码
+            continue
+        names.extend(seen)
+    out: list[tuple[str, Path]] = []
+    for rel in dict.fromkeys(names):
+        if len(out) >= DECLARED_FILES:
+            break
+        try:
+            path = (root / rel).resolve()
+            path.relative_to(root)
+            if not path.is_file():
+                continue
+            fid = FileId.of(path.stat())
+        except ValueError:
+            continue
+        except OSError:
+            if failed is not None:
+                failed.append(rel)
+            continue
+        if ids is not None:
+            ids[rel] = fid
+        out.append((rel, path))
+    return out
 
 
 def _prose_spans(text: str) -> list[tuple[int, int]] | None:
@@ -2757,18 +2852,25 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
     stat_failed: list[str] = []
     ids: dict[str, FileId] = {}
     over_cap: list[str] = []
-    candidates = source_candidates(src, stat_failed, ids, over_cap)
+    reasons: dict[str, str] = {}
+    candidates = source_candidates(src, stat_failed, ids, over_cap, reasons)
     index.extend(
-        {"script": _clean_name(scrub, r), "bytes": ids[r].size, "skipped_over_count_cap": True}
+        {
+            "script": _clean_name(scrub, r),
+            "bytes": ids[r].size,
+            "reason": reasons.get(r, SOURCE_REASON_RECENT),
+            "skipped_over_count_cap": True,
+        }
         for r in over_cap
     )
     index.extend({"script": _clean_name(scrub, rel), "read_failed": True} for rel in stat_failed)
-    for n, (rel, path) in enumerate(candidates):
-        raw, why = _read_capped(path, ids[rel], SOURCE_FILE_CAP)
+
+    def add(rel: str, path: Path, zip_name: str, row: dict, ids_: dict[str, FileId]) -> None:
+        raw, why = _read_capped(path, ids_[rel], SOURCE_FILE_CAP)
         if raw is None:
-            index.append({"script": _clean_name(scrub, rel), why: True})
-            continue
-        size = ids[rel].size
+            index.append({**row, why: True})
+            return
+        size = ids_[rel].size
         text, encoding, fell_back = _decode_script(raw, rel)
         out_text = scrub_script(text, rel, full_scrub, code_scrub)
         if rel.lower().endswith(".py"):
@@ -2776,14 +2878,7 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
         data = out_text.encode("utf-8")
         if size > SOURCE_FILE_CAP:
             data += b"\n" + _marker(len(raw), size, "first")
-        zip_name = f"{n + 1:02d}-{_member_name(scrub, rel, slash='__')}"
-        row = {
-            "script": _clean_name(scrub, rel),
-            "id": _name_id(rel),
-            "file": zip_name,
-            "bytes": size,
-            "encoding": encoding,
-        }
+        row = {**row, "file": zip_name, "bytes": size, "encoding": encoding}
         if fell_back:
             row["encoding_fallback"] = (
                 True  # 声明的编码不合法 / 不认识：按 UTF-8 + replace 解的（文件里的字节不保证准）
@@ -2798,6 +2893,34 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
                 original_bytes=size if size > SOURCE_FILE_CAP else None,
             )
         )
+
+    for n, (rel, path) in enumerate(candidates):
+        zip_name = f"{n + 1:02d}-{_member_name(scrub, rel, slash='__')}"
+        row = {
+            "script": _clean_name(scrub, rel),
+            "id": _name_id(rel),
+            "reason": reasons.get(rel, SOURCE_REASON_RECENT),
+        }
+        add(rel, path, zip_name, row, ids)
+    # 依赖计划的声明文件：同一个勾选项，同一套清理与上限
+    decl_failed: list[str] = []
+    decl_ids: dict[str, FileId] = {}
+    declared = declared_candidates(src, [r for r, _p in candidates], decl_failed, decl_ids)
+    declarations: list[dict] = [
+        {"declared": _clean_name(scrub, rel), "read_failed": True} for rel in decl_failed
+    ]
+    index_before = len(index)
+    for n, (rel, path) in enumerate(declared):
+        zip_name = f"declared-{n + 1:02d}-{_member_name(scrub, rel, slash='__')}"
+        add(
+            rel,
+            path,
+            zip_name,
+            {"declared": _clean_name(scrub, rel), "id": _name_id(rel)},
+            decl_ids,
+        )
+    declarations.extend(index[index_before:])
+    del index[index_before:]
     items.insert(
         0,
         Item(
@@ -2806,8 +2929,13 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
             _dumps(
                 {
                     "schema": DETAIL_SCHEMA,
-                    "criterion": "scripts registered in the open project (panel scripts first, then newest first)",
+                    "criterion": "scripts from recent failed / attempted runs first (even if not registered in the "
+                    "project; only files inside the project folder), then scripts registered in the open project "
+                    "(panel scripts first, then newest first); each script carries a reason "
+                    "(failing_attempt / panel / recent). `declarations` are the dependency declaration files "
+                    "(requirements*.txt / constraints.txt / pyproject.toml) the dependency planner reads",
                     "scripts": index,
+                    "declarations": declarations,
                 }
             ),
             dropped_bytes=sum(ids[r].size for r in over_cap),

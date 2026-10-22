@@ -247,3 +247,120 @@ CORRECTABLE = frozenset(
         ("candidate.target", "target_missing"),
     }
 )
+
+
+# --------------------------------------------------------------------------- 「生成可编辑版本」（convert_to_editable，ADR 0143）
+# 这一节不进 `_TEMPLATES` / `V1`：它是另一个任务类型，Harness Lab 的候选 Pack 契约（figure_edit 的全部键）保持不变。
+# 占位符是闭集，渲染同样是单遍替换（用户脚本文件名里出现 `{x}` 不会被再展开）。
+_CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
+    "intro": (
+        frozenset({"library"}),
+        "你在为一篇论文的图表脚本（Python）生成「可编辑的 Matplotlib 版本」。原脚本用 {library} 把图直接画成了图片，"
+        "外部系统无法再逐元素编辑它。",
+    ),
+    "target": (
+        frozenset({"script", "target"}),
+        "原脚本：{script}（当前工作目录里的只读副本，不要修改它）。请新建且只新建一个文件：{target}。",
+    ),
+    "reference": (
+        frozenset({"reference"}),
+        "原脚本画出的图片的参考副本：{reference}（只读）。让新图的尺寸、字号、配色、标注位置尽量与它一致。",
+    ),
+    "rules_heading": (frozenset(), "硬性要求："),
+    "rule_keep_data": (
+        frozenset(),
+        "1. 保留原脚本的数据读取与计算部分（读文件、拟合、统计……）原样沿用，只把「绘图」换成 Matplotlib。"
+        "例如 ROOT / RooFit 脚本的拟合仍用 ROOT，从 RooPlot / RooCurve / RooHist 取出点再用 Matplotlib 画；"
+        "Pillow 画的热图用 imshow / pcolormesh 复现色标、格子标注、标题与脚注。",
+    ),
+    "rule_matplotlib": (
+        frozenset(),
+        "2. 图必须用 matplotlib 生成，并经 Figure.savefig(...) 落盘（沿用原脚本的输出文件名与格式）。"
+        "禁止再用 PIL / OpenCV / plotly / ROOT 画布出图。",
+    ),
+    "rule_size": (
+        frozenset(),
+        "3. 输出图幅（figsize × dpi）与字号尽量对齐原图。字体用字体族名（rcParams['font.family']），"
+        "不要用 FontProperties(fname=...) 指定字体文件。",
+    ),
+    "rule_scope": (
+        frozenset(),
+        "4. 不要运行脚本（渲染与校验由外部系统负责）；不要修改工作目录里的其他任何文件，只写上面那一个新文件。",
+    ),
+    "note": (
+        frozenset({"project_root"}),
+        "注意：当前工作目录是工作副本；原项目目录 {project_root} 只供只读参考（数据文件、同目录模块在那里），"
+        "不要在原项目目录里创建或修改任何文件——写好的新文件由外部系统校验后，经用户确认才放进项目。",
+    ),
+    "fix_no_matplotlib": (
+        frozenset({"target"}),
+        "{target} 里没有 import matplotlib；改成用 matplotlib 绘图。",
+    ),
+    "fix_no_figure": (
+        frozenset({"target"}),
+        "{target} 跑完后没有捕获到任何 Matplotlib 图；确认它用 matplotlib.pyplot 创建了 Figure 并 savefig 了。",
+    ),
+    "fix_run_failed": (
+        frozenset({"target", "detail"}),
+        "{target} 运行时出错：{detail}。修正它（数据读取沿用原脚本的写法）。",
+    ),
+    "fix_target_missing": (
+        frozenset({"target"}),
+        "新文件 {target} 没有写出来（或是空的）；在当前工作目录里创建它。",
+    ),
+    "fix_extra_files": (
+        frozenset({"files"}),
+        "工作目录里除了新文件还改动了 {files}；把它们恢复成原样，只写那一个新文件。",
+    ),
+}
+
+
+def _convert_render(name: str, **values) -> str:
+    allowed, text = _CONVERT_TEMPLATES[name]
+    missing = allowed - values.keys()
+    if missing:
+        raise PackError(f"{name} 缺占位符的值：{sorted(missing)}")
+    return _PLACEHOLDER.sub(
+        lambda m: str(values[m.group(1)]) if m.group(1) in allowed else m.group(0), text
+    )
+
+
+def convert_prompt(
+    *, script: str, target: str, library: str, reference: str | None, project_root
+) -> str:
+    """「生成可编辑版本」提示词：引言 → 目标 → 参考图（有才写）→ 硬性要求 → 工作副本说明。"""
+    lines = [
+        _convert_render("intro", library=library),
+        _convert_render("target", script=script, target=target),
+    ]
+    if reference:
+        lines.append(_convert_render("reference", reference=reference))
+    lines += [
+        "",
+        _convert_render("rules_heading"),
+        _convert_render("rule_keep_data"),
+        _convert_render("rule_matplotlib"),
+        _convert_render("rule_size"),
+        _convert_render("rule_scope"),
+        "",
+        _convert_render("note", project_root=project_root),
+    ]
+    return "\n".join(lines)
+
+
+def convert_fix_text(key: tuple[str, str | None], observed: dict) -> str | None:
+    """convert 任务特有的可修正失败 → 写给 Agent 的一句；不在闭集里回 None。"""
+    o = observed or {}
+    target = o.get("target") or "新文件"
+    if key == ("candidate.matplotlib", "no_matplotlib_import"):
+        return _convert_render("fix_no_matplotlib", target=target)
+    if key == ("render.capture", "no_matplotlib_figure"):
+        return _convert_render("fix_no_figure", target=target)
+    if key == ("render.capture", "run_failed"):
+        detail = (o.get("detail") or o.get("code") or "")[:300]
+        return _convert_render("fix_run_failed", target=target, detail=detail)
+    if key == ("candidate.target", "target_missing"):
+        return _convert_render("fix_target_missing", target=target)
+    if key == ("candidate.tree", "other_file_changed"):
+        return _convert_render("fix_extra_files", files=o.get("files"))
+    return None

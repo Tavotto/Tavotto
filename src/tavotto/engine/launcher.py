@@ -17,13 +17,17 @@
 限制：只捕获环境变量。激活脚本里环境变量以外的副作用（启动 license 服务、`ulimit`、shell 函数）不会在每次启动时重放，
 `deactivate.d` 不再执行——与 IDE 的通行做法一致。
 
-**启动方式是解释器路径的纯函数**（`launcher_for_interpreter`：关开关 → Windows → 现场检测）：不看脚本、项目、成功记录、
+**启动方式是解释器路径的纯函数**（`launcher_for_interpreter`：关开关 → 现场检测）：不看脚本、项目、成功记录、
 来源标签，也没有 ContextVar 之类的“范围”——所有入口、所有线程对同一条解释器天然给出同一个答案。成功记录里的 launcher 只
 作为事实记下，不驱动决策。**激活失败一律 fail-closed**：对 Conda 环境捕获失败 / 超时，任何调用点都抛
 `LauncherUnavailable`（稳定码 `conda_launcher_unavailable`），不退回裸起，失败也不进任何缓存。
 
-不碰：Windows（本期没有真机验证，`detect()` 恒 None；捕获方案本身可直接扩到 Windows）、mamba / micromamba（选项集不同，
-另列样本门）、内置 runtime 与 Tavotto 自己的受管环境（venv，没有 `conda-meta`）。
+Windows（ADR 0142，默认开）：同一方案——`<根>\\Scripts\\conda.exe run --no-capture-output --prefix <p> <python.exe> -I -S
+<捕获脚本文件> <结果文件>`，argv 列表直接交给 CreateProcess，**不经 cmd.exe、不拼 shell、不用 `conda.bat`**；捕获脚本在 Windows 上落成
+`probe-results/` 里的临时 `.py` 文件（`conda run` 在 Windows 上把命令写进临时 `.bat`，多行 `-c` 参数会被 cmd 截断），结果仍走 UTF-8 的 JSON
+结果文件，不受控制台代码页影响。超时用 `taskkill /T /F` 收整棵树。
+
+不碰：mamba / micromamba（选项集不同，另列样本门）、内置 runtime 与 Tavotto 自己的受管环境（venv，没有 `conda-meta`）。
 
 纯标准库；Flask 父进程侧。
 """
@@ -36,6 +40,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import ntpath
 import os
 import shutil
 import signal
@@ -94,8 +99,8 @@ def conda_prefix_of(python: str | os.PathLike) -> str | None:
     POSIX 解释器在 `<prefix>/bin/python*`，Windows 在 `<prefix>/python.exe`。**不 resolve 软链接**：
     我们要的是用户指给我们的那条路径所在的环境，不是它指向的基础解释器。"""
     p = Path(os.path.abspath(str(python)))
-    candidates = [p.parent] if os.name == "nt" else [p.parent.parent]
-    if os.name == "nt":
+    candidates = [p.parent] if _is_windows() else [p.parent.parent]
+    if _is_windows():
         candidates.append(p.parent.parent)  # Scripts\python.exe 之类
     for prefix in candidates:
         if (prefix / "conda-meta").is_dir():
@@ -124,19 +129,134 @@ _STANDARD_ROOTS = (
 )
 
 
+#: Windows 的常见安装位置（Miniconda / Anaconda / Miniforge 的“仅我自己”装在用户目录或 `%LOCALAPPDATA%`，“所有用户”装在 `%ProgramData%`）：
+#: （环境变量名, 子目录）；环境变量名为空 = 用户目录
+_WINDOWS_STANDARD_ROOTS = tuple(
+    (var, name)
+    for var, names in (
+        ("", ("miniconda3", "anaconda3", "miniforge3", "mambaforge")),
+        ("LOCALAPPDATA", ("miniconda3", "anaconda3", "miniforge3")),
+        ("ProgramData", ("miniconda3", "anaconda3", "miniforge3")),
+    )
+    for name in names
+)
+
+
 def _standard_conda_roots() -> list[str]:
+    if _is_windows():
+        out: list[str] = []
+        for var, name in _WINDOWS_STANDARD_ROOTS:
+            base = os.path.expanduser("~") if not var else os.environ.get(var, "")
+            if base:  # 变量缺失：该项丢弃，不当字面路径
+                out.append(os.path.join(base, name))
+        return out
     return [os.path.expanduser(r) for r in _STANDARD_ROOTS]
 
 
+#: 安装程序写的卸载项里，DisplayName 以这些开头（不区分大小写）的才算 conda 安装
+_REGISTRY_NAME_PREFIXES = ("miniconda", "anaconda", "miniforge", "mambaforge", "micromamba")
+#: 注册表读取的上限（卸载项 / PEP 514 子键各自最多看这么多个），防止异常机器上扫太久
+_REGISTRY_MAX_ENTRIES = 512
+_UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+_PEP514_KEY = r"Software\Python\ContinuumAnalytics"
+
+
+def _root_from_uninstall_entry(
+    display_name: str | None, install_location: str | None, uninstall_string: str | None
+) -> str | None:
+    """一个卸载项 → 候选安装根：DisplayName 须以 conda 系名字开头；优先 `InstallLocation`，否则 `UninstallString`
+    （去引号）所在目录（Miniconda 的卸载项没有 InstallLocation，只有 `"<根>\\Uninstall-Miniconda3.exe"`）。注册表值是 Windows 路径，用 ntpath 解析。"""
+    if not (display_name or "").lower().startswith(_REGISTRY_NAME_PREFIXES):
+        return None
+    if install_location and install_location.strip().strip('"'):
+        return install_location.strip().strip('"')
+    if uninstall_string and uninstall_string.strip().strip('"'):
+        return ntpath.dirname(uninstall_string.strip().strip('"')) or None
+    return None
+
+
+def _read_registry_candidates() -> list[str]:
+    """（只在 Windows 真正读）安装程序写进注册表的 conda 安装目录候选：HKCU / HKLM（含 WOW6432Node）卸载项
+    （DisplayName 前缀匹配；取 `InstallLocation`，没有则取 `UninstallString` 去引号后所在目录），加 PEP 514
+    `HKCU|HKLM\\Software\\Python\\ContinuumAnalytics\\*\\InstallPath`。只是**候选**：必须再过 `_is_install_root`。
+    测试替换这个函数注入假读取器；任何读取错误都只是少一个候选。"""
+    try:
+        import winreg  # noqa: PLC0415  (只在 Windows 存在)
+    except ImportError:
+        return []
+    out: list[str] = []
+
+    def value(key, name: str) -> str | None:
+        try:
+            v, _t = winreg.QueryValueEx(key, name)
+        except OSError:
+            return None
+        return v if isinstance(v, str) and v.strip() else None
+
+    def subkeys(root, path: str, view: int):
+        try:
+            with winreg.OpenKey(root, path, 0, winreg.KEY_READ | view) as k:
+                for i in range(_REGISTRY_MAX_ENTRIES):
+                    try:
+                        yield winreg.EnumKey(k, i)
+                    except OSError:
+                        return
+        except OSError:
+            return
+
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+            for name in subkeys(hive, _UNINSTALL_KEY, view):
+                try:
+                    with winreg.OpenKey(
+                        hive, _UNINSTALL_KEY + "\\" + name, 0, winreg.KEY_READ | view
+                    ) as k:
+                        root = _root_from_uninstall_entry(
+                            value(k, "DisplayName"),
+                            value(k, "InstallLocation"),
+                            value(k, "UninstallString"),
+                        )
+                        if root:
+                            out.append(root)
+                except OSError:
+                    continue
+            for tag in subkeys(hive, _PEP514_KEY, view):
+                try:
+                    with winreg.OpenKey(
+                        hive, _PEP514_KEY + "\\" + tag + "\\InstallPath", 0, winreg.KEY_READ | view
+                    ) as k:
+                        loc = value(k, "")
+                        if loc:
+                            out.append(loc.strip().strip('"'))
+                except OSError:
+                    continue
+    return out
+
+
+def _registry_conda_roots() -> list[str]:
+    if not _is_windows():
+        return []
+    try:
+        return list(_read_registry_candidates())
+    except Exception:  # noqa: BLE001  注册表读取只是增加候选，绝不能让检测崩
+        return []
+
+
+def _root_conda_exe(root: str) -> str:
+    """安装根里的 conda 可执行文件：POSIX `bin/conda`，Windows `Scripts\\conda.exe`（真正的 exe，不是 `condabin\\conda.bat`）。"""
+    if _is_windows():
+        return os.path.join(root, "Scripts", "conda.exe")
+    return os.path.join(root, "bin", "conda")
+
+
 def _is_install_root(root: str) -> bool:
-    return os.path.isdir(os.path.join(root, "conda-meta")) and _is_executable(
-        os.path.join(root, "bin", "conda")
-    )
+    return os.path.isdir(os.path.join(root, "conda-meta")) and _is_executable(_root_conda_exe(root))
 
 
-def _user_conda_roots() -> list[str]:
-    """用户自己的 conda 安装根：`CONDA_EXE` / `PATH` 上的 conda 所在的根，加上常见安装位置里确实装着 conda 的那些。
-    全都来自用户的环境变量或固定的安装目录——项目目录里的文件改不了它们。"""
+def _raw_conda_roots() -> list[str]:
+    """用户自己的 conda 安装根的**候选**（尚未核对里面有没有可执行的 conda）：`CONDA_EXE` / `PATH` 上的 conda 所在的根，
+    常见安装位置，Windows 再加安装程序写的注册表卸载项。全都来自用户的环境变量、固定的安装目录或安装程序写的注册表——
+    项目目录里的文件改不了它们。"""
     raw: list[str] = []
     for exe in (os.environ.get("CONDA_EXE"), shutil.which("conda")):
         if exe:
@@ -144,28 +264,50 @@ def _user_conda_roots() -> list[str]:
                 raw.append(os.path.dirname(os.path.dirname(os.path.realpath(exe))))
             except (OSError, ValueError):
                 continue
-    for root in _standard_conda_roots():
+    for root in [*_standard_conda_roots(), *_registry_conda_roots()]:
         try:
             raw.append(os.path.realpath(root))
         except (OSError, ValueError):
             continue
     out: list[str] = []
     for root in raw:
-        if root and root not in out and _is_install_root(root):
+        if root and root not in out:
             out.append(root)
     return out
 
 
-def _owning_root(prefix: str) -> str | None:
-    """prefix 属于哪一个用户 conda 安装：就是安装根本身（base），或在它的 `envs/` 下一层；都不是回 None。"""
+def _user_conda_roots() -> list[str]:
+    """候选里确实是安装根的（`conda-meta/` + 可执行的 conda）。"""
+    return [r for r in _raw_conda_roots() if _is_install_root(r)]
+
+
+def _owner_among(prefix: str, roots: list[str]) -> str | None:
     try:
         real = os.path.realpath(prefix)
     except (OSError, ValueError):
         return None
-    for root in _user_conda_roots():
-        if real == root or os.path.dirname(real) == os.path.join(root, "envs"):
+    nc = os.path.normcase  # Windows 路径不分大小写
+    for root in roots:
+        if nc(real) == nc(root) or nc(os.path.dirname(real)) == nc(os.path.join(root, "envs")):
             return root
     return None
+
+
+def _owning_root(prefix: str) -> str | None:
+    """prefix 属于哪一个用户 conda 安装：就是安装根本身（base），或在它的 `envs/` 下一层；都不是回 None。"""
+    return _owner_among(prefix, _user_conda_roots())
+
+
+def _unusable_owning_root(prefix: str) -> str | None:
+    """prefix 属于一个**可信来源指出的安装根**（有 `conda-meta/`），但这个根里的 conda 可执行文件现在不可用（被改名 / 删除 /
+    没有执行权限）→ 回那个根；否则 None。与“项目自带 conda-meta 的克隆目录 / `conda create -p` 到任意目录”不同：那些找不到任何可信根，
+    仍直接启动。"""
+    roots = [
+        r
+        for r in _raw_conda_roots()
+        if os.path.isdir(os.path.join(r, "conda-meta")) and not _is_install_root(r)
+    ]
+    return _owner_among(prefix, roots)
 
 
 def _conda_candidates(prefix: str) -> list[str]:
@@ -173,7 +315,7 @@ def _conda_candidates(prefix: str) -> list[str]:
     out: list[str] = []
     root = _owning_root(prefix)
     if root is not None:
-        out.append(os.path.join(root, "bin", "conda"))
+        out.append(_root_conda_exe(root))
     env_exe = os.environ.get("CONDA_EXE")
     if env_exe:
         out.append(env_exe)
@@ -185,7 +327,7 @@ def _conda_candidates(prefix: str) -> list[str]:
 
 def find_conda_exe(prefix: str) -> str | None:
     for cand in _conda_candidates(prefix):
-        # Windows 的 `conda.bat` 需要 cmd.exe 引号规则，本期不支持（不拼 shell）
+        # `conda.bat` / `.cmd` 需要 cmd.exe 引号规则（不拼 shell）：Windows 只认 `Scripts\\conda.exe`
         if cand.lower().endswith((".bat", ".cmd")):
             continue
         if _is_executable(cand):
@@ -261,10 +403,6 @@ def _conda_shaped(python: str | os.PathLike) -> str | None:
     只看路径与目录，不执行任何东西；**不**代表会被激活（见 `_activation_wanted`）。"""
     if disabled():
         return None
-    if _is_windows():
-        # 本期 Windows 不做 Conda 激活：没有真机验证（conda.exe 的 DLL 搜索路径 / 进程树）。Windows 保持 P09 之前的裸起，
-        # 真机验证后再开（捕获方案本身可直接扩到 Windows）。
-        return None
     if not os.path.isabs(str(python)) or str(python).startswith("-"):
         return None  # 捕获要把解释器当 `conda run` 的可执行部分：必须是绝对路径、不以 `-` 开头
     return conda_prefix_of(python)
@@ -288,7 +426,7 @@ def _trusted_prefix(prefix: str) -> bool:
 
 
 def launcher_for_interpreter(python: str | os.PathLike) -> CondaLauncher | None:
-    """**唯一的启动决策**：解释器路径的纯函数。关开关 → Windows → 现场检测（Conda 环境 + 找得到 conda）→ launcher；
+    """**唯一的启动决策**：解释器路径的纯函数。关开关 → 现场检测（Conda 环境 + 找得到 conda）→ launcher；
     否则 None（= 直接启动，与 P09 之前一致）。不读脚本、项目、成功记录、来源标签；任何线程、任何入口结果相同。"""
     prefix = _activation_wanted(python)
     if prefix is None:
@@ -326,6 +464,21 @@ def raise_if_unlocated(python: str | os.PathLike) -> None:
         raise LauncherUnavailable(
             "这是一个 Conda 环境，但找不到 conda 可执行文件，没法确认它能不能运行；请检查 Conda 安装，"
             "或设置 CONDA_EXE（或把 conda 放进 PATH）"
+        )
+
+
+def raise_if_trusted_root_unusable(python: str | os.PathLike) -> None:
+    """解释器在可信安装根下的 Conda 环境里、但那个根的 conda 可执行文件现在不可用：**不能当成非 Conda 环境裸起**——这类环境
+    不激活就会在运行时崩（缺 `Library\\bin` 的 DLL 路径之类），而裸起的体检可能偏偏过了。抛 `LauncherUnavailable`
+    （稳定码 `conda_launcher_unavailable`，瞬时，不缓存）。找不到任何可信根的 Conda 形状目录不在此列（直接启动）。"""
+    prefix = _conda_shaped(python)
+    if prefix is None or launcher_for_interpreter(python) is not None:
+        return
+    root = _unusable_owning_root(prefix)
+    if root is not None:
+        raise LauncherUnavailable(
+            "这个 Conda 环境所在的 Conda 安装里找不到可用的 conda 可执行文件（可能被改名或删除），没法激活它；"
+            "请修复或重装 Conda"
         )
 
 
@@ -452,7 +605,26 @@ def _descendant_levels(root_pid: int, *, timeout: float = 5.0) -> list[list[int]
 
 def _kill_tree(proc: subprocess.Popen) -> None:
     """超时收尾：**叶子先死**。conda 还活着时它的子进程先被杀，由 conda（它在 wait 它们）收尸，不留僵尸；
-    最后才杀 conda 本身并 wait。整组一起 SIGKILL 会让子进程在父进程来不及收尸时变成孤儿（PID 1 不收尸的容器里就是僵尸）。"""
+    最后才杀 conda 本身并 wait。整组一起 SIGKILL 会让子进程在父进程来不及收尸时变成孤儿（PID 1 不收尸的容器里就是僵尸）。
+    Windows 没有进程组 / 信号：`taskkill /T /F` 一次收整棵树（输出丢弃，不涉及控制台代码页）。"""
+    if _is_windows():
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=_KILL_TREE_BUDGET_S * 3,
+                creationflags=runtime.CREATE_NO_WINDOW,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        proc.kill()
+        try:
+            proc.wait(timeout=_KILL_TREE_BUDGET_S)
+        except subprocess.TimeoutExpired:
+            LOG.warning("Conda 激活超时收尾：进程 %s 在期限内没能收掉", proc.pid)
+        return
     if os.name != "nt":
         # 整个收尾一个总期限：再深的进程链也只多花 `_KILL_TREE_BUDGET_S`，到点余下的整组一起杀（下面的 killpg 兜底）
         deadline = time.monotonic() + _KILL_TREE_BUDGET_S
@@ -483,6 +655,7 @@ def _kill_tree(proc: subprocess.Popen) -> None:
 def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str | None]:
     """跑一次 `conda run … python -c <写 os.environ 到结果文件>`；任何失败 / 超时 → `LauncherUnavailable`。"""
     result_path = ""
+    script_path = ""
     sweep_results()  # 顺手清过期残留（上次删不掉的、启动之后才过期的）：只删过了过期线的，在途的都还新
     try:
         results = _results_dir()
@@ -491,6 +664,17 @@ def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str |
         os.close(fd)  # mkstemp 建出来就是 0600
         with _inflight_lock:
             _inflight.add(result_path)
+        if _is_windows():
+            # `conda run` 在 Windows 上把命令行写进临时 .bat：多行 / 带引号的 `-c` 参数会被 cmd 破坏。改用脚本文件，
+            # argv 里只剩路径（Popen 列表 → CreateProcess，不经 cmd.exe）
+            sfd, script_path = tempfile.mkstemp(prefix="capture-", suffix=".py", dir=results)
+            with os.fdopen(sfd, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(_CAPTURE_SRC)
+            with _inflight_lock:
+                _inflight.add(script_path)
+            script_args = [script_path, result_path]
+        else:
+            script_args = ["-c", _CAPTURE_SRC, result_path]
         argv = [
             lau.conda_exe,
             "run",
@@ -502,9 +686,7 @@ def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str |
             # 也不能把 sitecustomize 对环境的改动当成激活增量（真正的 worker 起来还会再跑一次）
             "-I",
             "-S",
-            "-c",
-            _CAPTURE_SRC,
-            result_path,
+            *script_args,
         ]
         proc = subprocess.Popen(
             argv,
@@ -532,20 +714,22 @@ def _capture(python: str, lau: CondaLauncher, timeout: float) -> dict[str, str |
     except OSError as exc:
         raise LauncherUnavailable(f"无法经 Conda 激活取环境：{exc.__class__.__name__}") from exc
     finally:
-        if result_path:
+        for leftover in (result_path, script_path):
+            if not leftover:
+                continue
             try:
-                os.unlink(result_path)
+                os.unlink(leftover)
             except FileNotFoundError:
                 gone = True
             except OSError:
-                # 删不掉（瞬时的文件系统错误）：留在在途登记里，退出时 `_cleanup_inflight` 再删一次；
-                # 下一次捕获前的 `sweep_results` 也会扫到过期的
+                # 删不掉（瞬时的文件系统错误；Windows 上进程刚死文件句柄还没放）：留在在途登记里，退出时
+                # `_cleanup_inflight` 再删一次；下一次捕获前的 `sweep_results` 也会扫到过期的
                 gone = False
             else:
                 gone = True
             if gone:
                 with _inflight_lock:
-                    _inflight.discard(result_path)
+                    _inflight.discard(leftover)
     delta: dict[str, str | None] = {
         str(k): str(v) for k, v in data.items() if k not in _VOLATILE_ENV and os.environ.get(k) != v
     }
@@ -626,7 +810,8 @@ def activate_within(python, base: dict | None, budget: float) -> tuple[dict | No
 
 def activate_env(python, base: dict | None = None, *, timeout: float | None = None) -> dict | None:
     """所有「用目标解释器起子进程」的地方取 env 的唯一入口：`launcher_for_interpreter` 的决策 + 合并激活增量。
-    Conda 环境捕获失败抛 `LauncherUnavailable`——**没有**“范围外降级成裸起”的分支。"""
+    Conda 环境捕获失败抛 `LauncherUnavailable`——**没有**“范围外降级成裸起”的分支；可信安装根里的 conda 不可用也一样。"""
+    raise_if_trusted_root_unusable(python)
     return merge_env(launcher_for_interpreter(python), python, base, timeout=timeout)
 
 
@@ -661,6 +846,7 @@ def no_capture():
 
 def prewarm(python, *, timeout: float | None = None) -> None:
     """（不持任何池锁时）先把这条解释器的激活增量捕获进缓存；之后锁内起会话只命中缓存。不需要激活的解释器什么都不做。"""
+    raise_if_trusted_root_unusable(python)
     lau = launcher_for_interpreter(python)
     if lau is not None:
         activated_delta(str(python), lau, timeout=timeout)

@@ -102,10 +102,18 @@
     绝对路径常量的 `via` 同样按它所在的调用判（被 `exists()` 问的给了选择器就是「指认 → 重跑 → 又弹」
     的死循环）。先判空再 `sys.exit` 的（`script_exited`）与「没出图」一样挂静态载荷。**C++ 读取器**
     （ADR 0110 §一）：`missing_input_of` 说不出时 worker 给 `script_error` 多带 `extra.enoent`
-    （`figcapture.enoent_fact`：`filename`，或 h5py 那种只在消息里的 `named`，加 cwd），父进程
+    （`figcapture.enoent_fact`：`filename`，或 h5py 那种只在消息里的 `named`——pyarrow 的
+    `FileNotFoundError("cg_data.parquet")` 整条消息就是路径，同样取——加 cwd），父进程
     `inputremap.native_miss` 拿静态证据对——整串相等或按路径段是前缀、只认对上的那条，对不上就不判、
     码一字不变；对上了码仍是 `script_error`，只挂 `via = native` 的载荷。这几档的出口是经确认改写脚本
-    （`script-edits.md`）。native 不改指。④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。
+    （`script-edits.md`）。native 不改指。
+    **对账只认和这次异常对得上的落空（#1253）**：异常没有 `filename`、消息里也没有引号括着的路径时，只认
+    消息里按路径段点了名的那次落空（`figcapture._named_miss`），**不退到「最近一次落空的」**——被 `try` 吞掉的可选读、
+    `importlib.metadata` 对不存在的 `sys.path` 条目（Homebrew 的 `python313.zip`）试 zipfile 打开，都会排在后面，
+    以前被指认成「缺的输入」。`sys.path` 条目本身不记账（`_is_sys_path_entry`，也不占 `MAX_INPUT_MISSES` 名额）。
+    数据在脚本目录里找得到、只是沙盒 cwd 下 C++ 读取器看不见时，静态证据里它不是「哪儿都找不到」的候选：
+    不挂 native 载荷，错误仍是 `script_error` + `extra.enoent`（诊断，行为不变）。
+    ④ **代次 + 按项目的一把互斥锁**（ADR 0106 §五，`inputremap.project_mutex`，可重入）：改指表按项目一个代次（跨重启单调）。
     同一把锁里：改表与换代、`state()` / `snapshot()` 的「表 + 代次」、注册表整段读改写（`discover.register`）与登记标记、
     所有落地提交（渲染回包的核对、runtime 物化、试运行登记与重新登记、写回的备份 + 整个 replace 循环、导出作业
     经 `exportjob.run(commit_guard=)` 的整个发布循环）。对不上报 `input_remap_changed`（409 可重试）。**锁序：池锁 →
@@ -114,7 +122,7 @@
     （无标记 + 有规则 = 过期），下一次按新表 build 后按真实产出重新登记（一张没出也算）。落在 cwd 里的绝对路径
     证得出是相对路径规范化来的才按相对处理（`figcapture.path_literals`），否则保留绝对身份。新增依赖映射的工作点先接到这里，清单与各自的持锁区间在 ADR 0106 §五。
     看护 `tests/test_missing_input.py`（真 worker 相对 / 绝对 / 脚本目录模式 / 原件回来 /
-    同名诱饵 / 试运行 / 三条 spawn 路径）、`web/src/components/MissingInputDialog.test.tsx`、
+    同名诱饵 / 试运行 / 三条 spawn 路径 / #1253 的 C++ 读取器与 sys.path 探测）、`web/src/components/MissingInputDialog.test.tsx`、
     `web/e2e/missing-input.spec.ts`。
   * 浏览器侧**刻意没有**这条回退：playground 是单文件的，相对读报
     `missing_file` 才是对的。桌面的 `entry` 机制同样是超集（浏览器按
@@ -399,8 +407,8 @@ occurrence/figure ordinal/result。看护：`tests/bridge/test_bridge_savefig_ob
 它只确认策略和磁盘字节、不启动 worker，也不宣称场景已经准入。看护：
 `tests/test_selected_figsize_policy.py`、`tests/test_selected_artifact_api.py`。
 
-`script-backed-figure-v1`（来源驱动采用，ADR 0139 / #1200）是第三条策略，**实验开关
-`config.experiments.script_backed_figure` 后面、默认关**（`artifactcontext.script_backed_enabled`；只认显式 `True`）：
+`script-backed-figure-v1`（来源驱动采用，ADR 0139 / #1200）是第三条策略，**应急开关
+`config.experiments.script_backed_figure`，10-21 起默认开**（`artifactcontext.script_backed_enabled`；只有布尔 `false` 关）：
 关着时请求带它一律 409 `policy_disabled`，其余行为逐字节不变。要点：① 安全条件分两档——
 `figsession._require_static_artifact_figure`（像素档，精确策略，白名单原样；白名单是**唯一**拒绝原因时报
 `artist_profile`，否则仍是 `unsupported_render_state`）与 `_require_editable_artifact_figure`（编辑档：类型须来自
@@ -432,21 +440,25 @@ reconstruction_sha256, metrics}`；④ 真实编辑（结构性 `figure.frame` �
   诊断，日志只记变量个数）。所有「用目标解释器起子进程」的地方都**直接**起目标解释器（我们的直接子进程，取消 / 超时 / 协议 / 回执 pid
   与没有 Conda 时一样），只把 env 换成「调用方原来的 env + 激活增量」：worker（`pool.EngineWorker`）、预检探针（`launcher.activate_env`）、
   依赖门、`deprepair.worker_self_test`、`runtime.probe_packages`（app 注入 `env_for`）。
-- **启动方式是解释器路径的纯函数**：`launcher.launcher_for_interpreter(python)`——关开关 → Windows → 现场检测（Conda 环境 + 找得到 conda），
+- **启动方式是解释器路径的纯函数**：`launcher.launcher_for_interpreter(python)`——关开关 → 现场检测（Conda 环境 + 找得到 conda；Windows 同样，见下），
   不读脚本、项目、成功记录、来源标签，**没有** ContextVar 之类的“范围”，所以任何线程、任何入口对同一条解释器给出同一个 env。成功记录里的
   launcher 只作为事实写入（回执、记录照记），**不驱动决策**。行为变化：以前裸起成功过的 Conda 脚本，今后会带上激活环境（这本来就是用户对
-  Conda 环境的预期）。`TAVOTTO_CONDA_ACTIVATION=0` 关闭。**Windows 本期不启用**（没有真机验证；捕获方案本身可直接扩到 Windows）。
+  Conda 环境的预期）。`TAVOTTO_CONDA_ACTIVATION=0` 关闭。**Windows 同样默认开（ADR 0142，2026-10-21 修订）**，见下一条。
+- **Windows 的捕获（ADR 0142）**：与 POSIX 同构——只换三处。①conda 可执行只认安装根的 `Scripts\conda.exe`（`CONDA_EXE`、`PATH` 上 `condabin\conda.bat` 的所在根也按「上两级」推出安装根，但**不执行** `.bat` / `.cmd`：不经 cmd.exe、不拼 shell）；
+  常见安装位置另含 `%LOCALAPPDATA%` / `%ProgramData%` 下的 miniconda3 / anaconda3 / miniforge3，以及安装程序写的注册表卸载项 / PEP 514 InstallPath（仅作候选，仍须过安装根检查；ADR 0142 决策 7）；可信根下的环境若该根的 conda 可执行不可用，`activate_env`/`prewarm` 抛 `conda_launcher_unavailable` 而不裸起（决策 8），路径比较一律 `normcase`。②捕获脚本写成 `probe-results/capture-*.py`（`conda run` 在 Windows 把命令写进临时 `.bat`，
+  多行 `-c` 会被 cmd 截断），argv 里只剩路径；结果仍是 UTF-8 JSON 结果文件，不读 stdout，所以控制台代码页（chcp 936 / 65001）不影响。③超时收尾用 `taskkill /PID <conda> /T /F` 收整棵树。
+  失败仍是 `LauncherUnavailable`（`conda_launcher_unavailable`），不缓存。**合入门槛**（清单见 ADR 0142）：第 1/2/4/5/6/8 项已于 2026-10-21 Win11 真机通过；第 7 项以「PATH 只留 System32、无 `CONDA_EXE`」近似通过（真「开始菜单」启动未验）；第 3 项（ROOT）改由 #1282 承接。
 - **捕获失败一律 fail-closed 且不缓存**：Conda 环境捕获失败 / 超时，任何调用点都抛 `LauncherUnavailable`（稳定码 `conda_launcher_unavailable`），
   不退回裸起。体检 / 预检遇到它返回「不可用：conda_launcher_unavailable」，**不写**任何 verdict / facts 缓存（`launcher.is_unavailable`），
   不作废记住的解释器；项目已选定 / 记住 / 显式选择的解释器把稳定码交给用户，默认链条与系统候选只跳过这一个继续试后面的
   （`pool.select_worker_python`）。`plan_for` 写进环境错误，`_execute` 零执行收场（`deprepair.decide_environment_pinned` 把它转成 `WorkerError`）。
   **只激活用户自己的 conda 安装里的环境**：安装根本身（base）或它的 `envs/<名字>`；安装根来自 `CONDA_EXE` / `PATH` 上的 conda
-  与常见安装位置（`launcher._STANDARD_ROOTS`，须确实是安装根：`conda-meta/` + 可执行的 `bin/conda`）。激活会 source prefix
+  与常见安装位置（`launcher._STANDARD_ROOTS`；Windows 另含安装程序写的注册表卸载项 / PEP 514 InstallPath，仅作候选）。须确实是安装根：`conda-meta/` + 可执行的 conda 可执行文件（POSIX `bin/conda`，Windows `Scripts\conda.exe`，不认 `.bat` / `.cmd`）。激活会 source prefix
   自己的 `activate.d`；任何凭登记 / 路径形状的推断（environments.txt、项目标记）都可能被项目目录冒充，所以不用——其它位置的
   Conda 环境（`conda create -p` 到任意目录、克隆项目自带的 `.venv/conda-meta/`）一律直接启动（与 P09 之前一致），
   直接启动失败也不当成对环境的结论（`unlocated_conda_prefix`）。
   计划 / 钉下的决定 / 热会话比的是完整启动上下文 `launcher.context_key`（直接启动 ↔ 激活、conda、prefix、环境版本）。
-  conda 可执行文件的候选：prefix 所属安装根的 `bin/conda`，再是 `CONDA_EXE` / `PATH`（不读 `conda-meta/history`、不读 environments.txt：
+  conda 可执行文件的候选：prefix 所属安装根的 conda 可执行文件（POSIX `bin/conda`，Windows `Scripts\conda.exe`），再是 `CONDA_EXE` / `PATH`（不读 `conda-meta/history`、不读 environments.txt：
   都是项目能伪造或会过期的线索）。不会被激活的 Conda 形状的解释器（找不到 conda / 不在用户 conda 安装里）照常裸起；**但裸起失败不是对环境的
   结论**：`pool._has_matplotlib` / `projectenv.probe_environment` 此时抛 / 返回 `conda_launcher_unavailable`（瞬时，不缓存、不作废记住的
   解释器、不静默换别的）。

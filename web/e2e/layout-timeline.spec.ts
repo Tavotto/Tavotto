@@ -43,7 +43,7 @@ async function settleInspectorMotion(page: Page) {
   })
 }
 
-/** 素材卡上画布，再回到排版 */
+/** 素材卡上画布（画布上只有这一张 = 单图编辑），再退出图内编辑（出口按钮只在图内编辑时有） */
 async function placeFigureAndBack(page: Page) {
   await (await only(page.locator('[data-card="Fig1_kinetics.pdf"]'), 30_000)).dblclick()
   await (await only(page.locator('[data-context-back]'))).click()
@@ -253,7 +253,7 @@ test('排版时间线：自动节点 → 命名 → 预览不改排版 → 恢�
   // ── 顶栏时钟钮打开时间线；等第一个自动节点 ──────────────────────────
   const clock = await only(page.locator('[data-timeline-button]'))
   await clock.click()
-  const drawer = await only(page.locator('[data-timeline-drawer]'))
+  const drawer = await only(page.locator('[data-timeline-panel]'))
   await expect(drawer).toBeVisible()
   const nodes = drawer.locator('[data-timeline-node]')
   await expect.poll(() => nodes.count(), { timeout: 30_000 }).toBeGreaterThan(0)
@@ -637,7 +637,7 @@ test('同一 SVG、同一几何只差水平翻转：节点缩略图是左右镜�
   await expect(flip).toHaveAttribute('data-active', 'true')
   await expect(display).toHaveAttribute('data-display-key', sourceKey!)
   await page.keyboard.press('ControlOrMeta+Shift+H')
-  const drawer = await only(page.locator('[data-timeline-drawer]'))
+  const drawer = await only(page.locator('[data-timeline-panel]'))
   const thumbOf = (name: string) =>
     drawer.locator('[data-timeline-node][data-timeline-named]', {
       has: page.locator('[data-timeline-name]', { hasText: name }),

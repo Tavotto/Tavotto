@@ -11,7 +11,7 @@
  * zh-CN 的 chromium / webkit 与 en-US 的 chromium-en 都跑；选择器一律稳定的 data-* / role。
  */
 import type { Page } from '@playwright/test'
-import { expect, openElementsTab, test } from './fixtures'
+import { addSecondFigure, expect, openElementsTab, test } from './fixtures'
 
 const CARD = '[data-card="Fig1_kinetics.pdf"]'
 test.use({ viewport: { width: 1440, height: 900 } })
@@ -220,12 +220,10 @@ test('拖分栏手柄时按 Esc：宽度复原，且选中对象的上下文栏�
   const card = page.locator(CARD)
   await expect(card).toHaveCount(1)
   await card.dblclick({ timeout: 30_000 })
-  // 稳定钩子：`data-context-back`（工作区上下文栏的「返回画布」）；所有目标先断言恰好 1 个再操作
-  const back = page.locator('[data-context-back]')
-  await expect(back).toHaveCount(1)
-  await back.click()
-  const panel = page.locator('[data-object-id]')
-  await expect(panel).toHaveCount(1)
+  // 第二张图进来才是多图排版（选中对象的上下文栏在排版里）；目标先断言恰好 2 个对象再操作
+  await addSecondFigure(page)
+  await expect(page.locator('[data-object-id]')).toHaveCount(2)
+  const panel = page.locator('[data-object-id]').last()
   await expect(panel).toBeVisible()
   await panel.click()
   const bar = page.locator('[data-context-bar]')

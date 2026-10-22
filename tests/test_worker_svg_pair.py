@@ -254,7 +254,22 @@ if mode == "invalid":
         response = pkg.wireproto.respond(handler, {"protocol_version": 1, "request_id": str(i),
             "cmd": "export", "stem": "F", "payload": {"path": str(pdf), "svg_path": value, "format": fmt}})
         assert not response["ok"] and response["error"]["code"] == "bad_request", response
+    text_svg = out / "t.svg"
+    for i, bad in enumerate([
+        {"format": "pdf", "svg_fonttype": "none"},
+        {"format": "svg", "svg_fonttype": "bold"},
+        {"format": "pdf", "svg_text_path": str(text_svg)},
+        {"format": "pdf", "svg_path": str(svg), "svg_text_path": ""},
+        {"format": "pdf", "svg_path": str(svg), "svg_text_path": str(svg)},
+        {"format": "pdf", "svg_path": str(svg), "svg_text_path": str(pdf)},
+    ]):
+        response = pkg.wireproto.respond(handler, {"protocol_version": 1, "request_id": f"t{i}",
+            "cmd": "export", "stem": "F", "payload": {"path": str(pdf), **bad}})
+        assert not response["ok"] and response["error"]["code"] == "bad_request", (bad, response)
     assert not calls and not saves
+elif mode == "fonttype_none":
+    result = session.do_export("F", patches, str(svg), "svg", 300, svg_fonttype="none")
+    assert calls == [patches, previous]
 elif mode.startswith("standalone"):
     result = session.do_export("F", patches, str(svg), "svg", 300)
     assert calls == [patches, previous]
@@ -267,7 +282,8 @@ else:
         "worker_generation": 7, "render_revision": 12,
         "cmd": "export", "stem": "F", "payload": {"patches": patches, "path": str(pdf),
         "format": "pdf", "dpi": 300, "svg_path": str(svg),
-        "require_built": True, "snapshot_only": mode.startswith("snapshot_")}})
+        "require_built": True, "snapshot_only": mode.startswith("snapshot_"),
+        **({"svg_text_path": str(out / "pair.text.svg")} if mode == "pair_text" else {})}})
     if mode.startswith("snapshot_") and mode != "snapshot_ok":
         assert not response["ok"] and response["error"]["code"] == "svg_source_unavailable", response
         assert response["error"]["retryable"] is False
@@ -568,3 +584,41 @@ def test_cold_execution_worker_never_runs_script_for_capture(tmp_path, legacy):
         if proc.poll() is None:
             proc.kill()
         proc.wait(timeout=10)
+
+
+@needs_user_python
+def test_text_variant_is_a_separate_serialization_and_the_path_baseline_is_untouched(tmp_path):
+    """ADR 0144：`svg_text_path` 另写一份 `svg.fonttype=none`；path 基准字节（#1185 等价证人）仍是 path。"""
+    result = _probe(tmp_path, "pair_text")
+    assert [save["format"] for save in result["saves"]] == ["pdf", "svg", "svg"]
+    assert [save["fonttype"] for save in result["saves"][1:]] == ["path", "none"]
+    # 同一份布局：三次保存之后坐标轴位置、取景框一字不差
+    assert len({tuple(save["axes_after"]) for save in result["saves"]}) == 1
+    assert len({tuple(save["frame"]) for save in result["saves"]}) == 1
+    baseline = (tmp_path / "pair.svg").read_bytes()
+    text = (tmp_path / "pair.text.svg").read_bytes()
+    ns = "{http://www.w3.org/2000/svg}text"
+    assert not ET.fromstring(baseline).findall(f".//{ns}")
+    texts = ET.fromstring(text).findall(f".//{ns}")
+    assert any("Export title" in "".join(t.itertext()) for t in texts)
+    assert result["result"]["svg"]["sha256"] == hashlib.sha256(baseline).hexdigest()
+    assert result["result"]["svg_text"] == {
+        "path": str(tmp_path / "pair.text.svg"),
+        "sha256": hashlib.sha256(text).hexdigest(),
+        "size_bytes": len(text),
+    }
+
+
+@needs_user_python
+def test_standalone_svg_can_keep_text_without_touching_the_default(tmp_path):
+    result = _probe(tmp_path, "fonttype_none")
+    assert [save["fonttype"] for save in result["saves"]] == ["none"]
+    root = ET.fromstring((tmp_path / "pair.svg").read_bytes())
+    assert any(
+        "Export title" in "".join(t.itertext())
+        for t in root.findall(".//{http://www.w3.org/2000/svg}text")
+    )
+    # the plain standalone export (no field) stays outlines: old callers are unaffected
+    (tmp_path / "plain").mkdir()
+    plain = _probe(tmp_path / "plain", "standalone")
+    assert [save["fonttype"] for save in plain["saves"]] == ["path"]

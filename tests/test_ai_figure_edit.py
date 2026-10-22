@@ -691,3 +691,22 @@ def test_the_phase_event_is_a_kind_the_frontend_listens_for():
     source = api_ts.read_text(encoding="utf-8")
     block = source[source.index("const EVENT_KINDS = [") :]
     assert "'ai.task'" in block[: block.index("] as const")]
+
+
+def test_a_stem_whose_baseline_replay_failed_is_unknown_not_silently_dropped(env):
+    """多 stem 脚本里一个 stem 的改前重放失败（基线值为 None）：它必须显式 unknown，整体不是 completed。"""
+    log: list = []
+    sid, _ = _run(
+        env,
+        task_hooks=_hooks(
+            env,
+            {"Fig1": _manifest("a" * 64), "Fig2": None},
+            {"Fig1": _manifest("a" * 64), "Fig2": _manifest("a" * 64)},
+            log,
+        ),
+    )
+    sess = _wait(sid)
+    checks = _render_checks(sid)
+    assert checks["render.Fig2"] == ("unknown", "no_baseline")
+    assert checks["Fig1.data.axes_0.lines_0"] == ("verified", None), "有基线的 stem 照常比较"
+    assert sess["task"]["outcome"] == "partial", sess["task"]

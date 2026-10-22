@@ -1,17 +1,21 @@
 /**
- * 工作区模式的状态本体（`useWorkspaceStore`）与「排版视口的寄存处」——从 `store/workspace.ts` 拆出的叶子模块。
+ * 工作区模式的状态本体（`useWorkspaceStore`）与模式的唯一写入点 `settleMode`——从 `store/workspace.ts` 拆出的叶子模块。
  *
  * 为什么单独一个文件：`store/actions` 要读「快速编辑正在编辑哪张图」（`fastEditPanelOf`：全选 / 删除 / 创建副本
  * 只认那张图，Codex #833），而 `store/workspace` 的工作流动作（`openFastEdit` / `addFigureToLayout`…）要调
  * `actions.addPanel` 等。两者互相 import 就是一个环（`importArchitecture.test.ts`）。这里**不许** import
  * `store/actions` 或 `store/workspace`；工作流动作、持久化与对外 API 仍在 `store/workspace.ts`（它原样再导出本文件的
  * 公开名字，既有调用方不用改）。模式规则全文见 `store/workspace.ts` 文件头与 ADR 0028。
+ *
+ * **模式是画布上图数推出来的派生值**（`settleMode`）：激活画布上恰好 1 张看得见的图 = `fast_edit`（单图编辑），
+ * 其余（0 张 / ≥2 张）= `layout`。`mode` / `activePanelId` 仍是存下来的字段（既有消费者都读它们），但**写它们的只有
+ * `settleMode`**（外加换文档的 `clear`）——入口不许各自去 `set`。
  */
 import { create } from 'zustand'
 import { cancelArtifactEntry } from '@/lib/artifactValidation'
 import { emitActivity } from '@/lib/activity'
 import { useDocumentStore } from '@/store/documentStore'
-import { useViewportStore } from '@/store/viewportStore'
+import type { CanvasObject, PanelObject } from '@/types/document'
 
 export type WorkspaceMode = 'fast_edit' | 'layout'
 
@@ -55,20 +59,13 @@ interface WorkspaceState {
    */
   addedForEditDepth: number
   /**
-   * 这一次快速编辑是**从排版里进来的**（工作区视图状态：不进文档、不进撤销、不落盘）。
-   * 上下文栏据此在「← 返回排版」与「排版与出版 →」之间选一句话（P01 单按钮）。
-   *
-   * 为什么现有字段不够：`mode` 进来之后恒为 `fast_edit`，上一个 mode 没人留；停放的排版视口
-   * （`parkedLayoutView`）受 `viewW/viewH` 为 0 时不记、回排版时被 `take` 清空，不是来源的权威。
-   * 只在 layout → fast_edit 的那一次置位，快编里换图保持；会话恢复（上次就停在快编）不是
-   * 「从排版进来」。「刚为编辑把图加进文档」（`addedForEdit`）时上下文栏仍按前进说，见组件。
+   * 进入快速编辑（对象必须已经在激活画布里）。**只有 `settleMode` 调它**——模式由图数推出，
+   * 业务入口不许直接进（直接进会造出「两张图却在单图编辑」的不一致态）
    */
-  fastEditFromLayout: boolean
-  /** 进入快速编辑（对象必须已经在激活画布里）；`fromLayout: false` = 会话恢复，没有排版来源 */
-  enterFastEdit: (panelId: string, opts?: { fromLayout?: boolean }) => void
+  enterFastEdit: (panelId: string) => void
   /** 设置 / 清除「等源脚本到了再进图内编辑」的待办 */
   setPendingElementEdit: (panelId: string | null) => void
-  /** 回到画布排版 */
+  /** 离开快速编辑（回排版态）。**只有 `settleMode` / `clear` 调它** */
   exitToLayout: () => void
   /** 换文档 / 换项目：整个清掉，不留指向旧文档对象的 id */
   clear: () => void
@@ -80,24 +77,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   pendingElementEdit: null,
   addedForEdit: null,
   addedForEditDepth: 0,
-  fastEditFromLayout: false,
-  enterFastEdit: (panelId, opts) => {
+  enterFastEdit: (panelId) => {
     cancelArtifactEntry()
     const changed = get().mode !== 'fast_edit' || get().activePanelId !== panelId
-    // 记下排版视口**在这里**，不在 `openFastEdit` 里：问题面板的定位
-    // （`lib/issueFocus.ts`）也是从排版进快速编辑的，它调的是这个 action
-    parkLayoutView()
-    // 显式传入的来源优先（会话恢复传 `false`）：快编里直接换文档、新文档也恢复进快编时，
-    // store 还停在上一份的 `fast_edit`，不能把上一份的来源带过来。没传才按原样——
-    // 已在快编里换图保持原来源，从排版进来默认 true
-    const fromLayout =
-      opts?.fromLayout !== undefined
-        ? opts.fromLayout
-        : get().mode === 'fast_edit'
-          ? get().fastEditFromLayout
-          : true
     // 换了一张图：上一张的「刚加入」说明不跟过来
-    set({ mode: 'fast_edit', activePanelId: panelId, fastEditFromLayout: fromLayout, ...(changed ? { addedForEdit: null } : {}) })
+    set({ mode: 'fast_edit', activePanelId: panelId, ...(changed ? { addedForEdit: null } : {}) })
     if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'fast_edit' })
   },
   setPendingElementEdit: (panelId) => set({ pendingElementEdit: panelId }),
@@ -105,19 +89,38 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     cancelArtifactEntry()
     const changed = get().mode !== 'layout'
     // 回排版 = 用户改了主意，那个待办跟着作废（迟到的关联不该把他拽回去）
-    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null, fastEditFromLayout: false })
+    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null })
     if (changed) emitActivity({ kind: 'workspace.mode_changed', mode: 'layout' })
   },
   // 换文档 / 换项目的清理**不发信号**：那不是用户在表达「我要回排版」
   clear: () => {
     cancelArtifactEntry()
-    // 第二道保险，**没有用例杀得掉它**：新文档的画布 id 是新生成的，
-    // `takeParkedLayoutView()` 的画布判据已经把跨文档还原挡住了（变异反证过）。
-    // 留着是为了不让模块变量一直挂着上一份文档的状态；别把它当成被看住的保证。
-    parkedLayoutView = null
-    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null, fastEditFromLayout: false })
+    set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null })
   },
 }))
+
+/**
+ * 一张画布上「算数」的图：面板（figure）。**判据只有这一处**——runtime 图与磁盘图同为 `panel`、同等计；
+ * 标注 / 文字 / 形状 / 箭头不是图，不计；**隐藏的图也计**（2026-10-21 用户拍板：隐藏是排版操作，不改模式、不发通知）。
+ */
+export function figuresOf(objects: readonly CanvasObject[]): PanelObject[] {
+  return objects.filter((o): o is PanelObject => o.type === 'panel')
+}
+
+/**
+ * **模式的唯一写入点**：按激活画布上的图数把 `mode` / `activePanelId` 对到该有的值——恰好 1 张 = 单图编辑
+ * （`fast_edit`，对着那一张），0 张或 ≥2 张 = 排版。幂等：已经对了就什么都不做，所以入口（`openFastEdit`…）
+ * 与订阅（`workspace.startWorkspaceModeSync`）可以都调它而不会打架。多画布各自判：它读的是激活画布的 `doc.objects`。
+ */
+export function settleMode(): void {
+  const figs = figuresOf(useDocumentStore.getState().doc.objects)
+  const ws = useWorkspaceStore.getState()
+  if (figs.length === 1) {
+    if (ws.mode !== 'fast_edit' || ws.activePanelId !== figs[0].id) ws.enterFastEdit(figs[0].id)
+  } else if (ws.mode === 'fast_edit') {
+    ws.exitToLayout()
+  }
+}
 
 /**
  * 快速编辑正在编辑的面板 id；排版里 null（不变式 `mode === 'fast_edit'` ⟺ `activePanelId !== null`）。
@@ -126,66 +129,3 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
  */
 export const fastEditPanelOf = (s: { mode: string; activePanelId: string | null }): string | null =>
   s.mode === 'fast_edit' ? s.activePanelId : null
-
-/* -------------------------- 排版视口的寄存处 ------------------------------ */
-
-/**
- * 进快速编辑那一刻用户在画布排版上看的是哪一片（审计 T01：**切换模式时画布
- * 不意外移动**）。
- *
- * 为什么必须记：快速编辑把那张图单独摆出来、按它自己的图幅框住，这一步一定
- * 要动视口；回来时如果只会「把那张图挪到视口中央」，用户精心摆好的排版视角
- * 就被换成了以某一张图为中心的另一片——他没做任何缩放平移，画面却变了。
- * ADR 0028 的「布局不变靠根本没动过」说的是文档，视口这一侧此前没人管。
- *
- * **带上画布 id**：`openFastEdit` 会为了找到那张图切画布（`ensurePanel`），
- * 换了画布之后记下的那一片属于**上一张画布**，还回去就是把用户送到别处。
- * 这里的主语是「哪一张画布的、哪一刻的视口」，两者缺一不可。
- *
- * 另记两件回来时要比对的事（#706 评审 P2）：停放时的**页面尺寸**（快速编辑里从画布属性
- * 改了 W / H 再改回原值，比的是最终尺寸，改回来就原样还原）；快速编辑期间**新加进这张
- * 画布的图**（`added`，由 `frameAddedPanel` 记，回排版时再决定要不要取景它们）。
- */
-export interface ParkedLayoutView {
-  canvasId: string
-  view: ViewTarget
-  page: { w: number; h: number }
-  added: string[]
-}
-
-let parkedLayoutView: ParkedLayoutView | null = null
-
-export interface ViewTarget {
-  zoom: number
-  panX: number
-  panY: number
-}
-
-/** 只在**从排版进入**快速编辑时记一次；已经在快速编辑里换图不覆盖 */
-function parkLayoutView(): void {
-  if (useWorkspaceStore.getState().mode === 'fast_edit') return
-  const { zoom, panX, panY, viewW, viewH } = useViewportStore.getState()
-  if (!viewW || !viewH) return
-  const { doc, activeCanvasId } = useDocumentStore.getState()
-  parkedLayoutView = {
-    canvasId: activeCanvasId,
-    view: { zoom, panX, panY },
-    page: { w: doc.page.w, h: doc.page.h },
-    added: [],
-  }
-}
-
-/** 取出并清空；画布对不上就当没记过 */
-export function takeParkedLayoutView(): ParkedLayoutView | null {
-  const parked = parkedLayoutView
-  parkedLayoutView = null
-  if (!parked) return null
-  return parked.canvasId === useDocumentStore.getState().activeCanvasId ? parked : null
-}
-
-/** 快速编辑期间加进停放那张画布的图：记下来，回排版时由 `workspace.layoutViewOnReturn` 一起判 */
-export function noteAddedWhileParked(panelId: string): void {
-  if (parkedLayoutView?.canvasId === useDocumentStore.getState().activeCanvasId) {
-    parkedLayoutView.added.push(panelId)
-  }
-}

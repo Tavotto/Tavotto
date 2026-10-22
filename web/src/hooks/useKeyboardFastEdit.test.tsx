@@ -102,20 +102,19 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('快速编辑里的版面快捷键', () => {
+describe('单图编辑里的版面快捷键', () => {
   it('方向键在排版模式下照常推动面板（对照组）', () => {
     press('ArrowRight')
     expect(panel().x).toBeCloseTo(10.5)
   })
 
-  it('方向键在快速编辑里一个字都不改', () => {
+  it('方向键在单图编辑里与排版同口径（2026-10-21：单图编辑的舞台就是这张画布，推选中的对象）', () => {
     useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    useSelectionStore.getState().set([PANEL.id])
     press('ArrowRight')
     press('ArrowDown')
-    expect(panel().x).toBe(10)
-    expect(panel().y).toBe(20)
-    // 也没有偷偷进历史
-    expect(useDocumentStore.getState().past).toHaveLength(0)
+    expect(panel().x).toBeCloseTo(10.5)
+    expect(panel().y).toBeCloseTo(20.5)
   })
 
   it('绘制工具快捷键在排版模式下照常切换（对照组）', () => {
@@ -123,16 +122,13 @@ describe('快速编辑里的版面快捷键', () => {
     expect(useUiStore.getState().tool).toBe('rect')
   })
 
-  it('绘制工具快捷键在快速编辑里全部无效', () => {
+  it('绘制工具快捷键在单图编辑里照常切换（标注在单图编辑里看得见、可画）', () => {
     useWorkspaceStore.getState().enterFastEdit(PANEL.id)
-    for (const key of ['t', 'a', 'r', 'o', 'l']) {
-      press(key)
-      expect(useUiStore.getState().tool).toBe('select')
-    }
+    press('r')
+    expect(useUiStore.getState().tool).toBe('rect')
   })
 
-  it('`V`（回到选择工具）在快速编辑里仍然有效', () => {
-    // 挡的是「在这一屏上做版面动作」，不是「回到那个唯一合法的工具」。
+  it('`V`（回到选择工具）在单图编辑里有效', () => {
     useUiStore.setState({ tool: 'rect' })
     useWorkspaceStore.getState().enterFastEdit(PANEL.id)
     press('v')
@@ -141,10 +137,10 @@ describe('快速编辑里的版面快捷键', () => {
 })
 
 /**
- * ⇧2「缩放到选中」在快速编辑里只认正在编辑的那张图（Codex #833）：这一屏只画这一张，⌘A 之后选区里还有
- * 一整版看不见的对象——按整个选区取景会把唯一看得见的图挪走、缩小。对照组：排版里照常框整个选区。
+ * ⇧2「缩放到选中」在单图编辑里与排版同口径（2026-10-21，取代 Codex #833 的「只认那张图」）：单图编辑的舞台画着
+ * 这张画布上的全部对象，选区里的都看得见，框选区里没隐藏对象的并集。
  */
-describe('快速编辑里的 ⇧2', () => {
+describe('单图编辑里的 ⇧2', () => {
   const NOTE: TextObject = {
     id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
     color: '#000', align: 'left', x: 100, y: 80, w: 30, h: 8,
@@ -173,31 +169,30 @@ describe('快速编辑里的 ⇧2', () => {
     expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 120, h: 68 })
   })
 
-  it('快速编辑里 ⌘A 后 ⇧2：只框正在编辑的那张图', () => {
+  it('单图编辑里 ⌘A 后 ⇧2：框整个选区（图 ∪ 标注）', () => {
     const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
     useWorkspaceStore.getState().enterFastEdit(PANEL.id)
     selectAllKey()
     shift2()
     expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 40, h: 30 })
+    expect(spy).toHaveBeenCalledWith({ x: 10, y: 20, w: 120, h: 68 })
   })
 
-  it('快速编辑里选区不含那张图：⇧2 不动视口', () => {
+  it('单图编辑里只选标注：⇧2 框标注', () => {
     const spy = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated').mockImplementation(() => {})
     useWorkspaceStore.getState().enterFastEdit(PANEL.id)
     useSelectionStore.getState().set([NOTE.id])
     shift2()
-    expect(spy).not.toHaveBeenCalled()
+    expect(spy).toHaveBeenCalledWith({ x: 100, y: 80, w: 30, h: 8 })
   })
 })
 
 /**
- * 快速编辑里的 ⌘A / Delete（Codex #833，数据丢失）：这一屏只画正在编辑的那张图，`selectAll` 曾经不看模式，
- * 把整版看不见的对象全选上，紧接着 Backspace（不在图内元素编辑里时）就经 `deleteSelected` 把它们从版上删掉。
- * 现在全选只收那张图，删除也只删得到那张图（选区里挂着的旧版面对象不动）。对照组：排版里 ⌘A 照常全选、
- * Backspace 照常整选区删除——否则「没删」也可能是判据自己没执行到。
+ * 单图编辑里的 ⌘A / Delete（2026-10-21，取代 Codex #833 的「只收 / 只删那张图」）：单图编辑的舞台画着这张画布上的全部
+ * 对象，选区里的都看得见，所以 ⌘A 与删除和排版同口径——全选看得见且没锁的对象，删除删选区。
+ * 对照组：排版里同样。
  */
-describe('快速编辑里的 ⌘A / Delete', () => {
+describe('单图编辑里的 ⌘A / Delete', () => {
   const NOTE: TextObject = {
     id: 't1', type: 'text', text: 'a', sizePt: 9, bold: false,
     color: '#000', align: 'left', x: 100, y: 80, w: 30, h: 8,
@@ -221,43 +216,35 @@ describe('快速编辑里的 ⌘A / Delete', () => {
     expect(ids()).toEqual([])
   })
 
-  it('快速编辑里 ⌘A 只选正在编辑的那张图', () => {
+  it('单图编辑里 ⌘A 选这张画布上全部看得见的对象', () => {
     useWorkspaceStore.getState().enterFastEdit(PANEL.id)
     modKey('a')
-    expect(useSelectionStore.getState().ids).toEqual(['p1'])
+    expect(useSelectionStore.getState().ids).toEqual(['p1', 't1'])
   })
 
-  it('快速编辑里那张图锁着：⌘A 什么都不选（不退到整版）', () => {
+  it('单图编辑里锁着的图不被 ⌘A 选上，标注照选', () => {
     useDocumentStore.getState().silent((d) => {
       d.objects[0].locked = true
     })
     useWorkspaceStore.getState().enterFastEdit(PANEL.id)
     modKey('a')
-    expect(useSelectionStore.getState().ids).toEqual([])
+    expect(useSelectionStore.getState().ids).toEqual(['t1'])
   })
 
-  it('快速编辑里 ⌘A 后 Backspace：看不见的版面对象一个不少，只删看得见的那张图', () => {
-    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
-    modKey('a')
-    press('Backspace')
-    // 删那张图本身是既有语义（看得见、可撤销，对象没了快速编辑随之退出）；版上别的对象原样在
-    expect(ids()).toEqual(['t1'])
-    expect(useDocumentStore.getState().past).toHaveLength(1)
-  })
-
-  it('快速编辑里选区挂着进来之前的版面对象：Backspace 只删那张图', () => {
-    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
-    useSelectionStore.getState().set(['p1', 't1'])
-    press('Backspace')
-    expect(ids()).toEqual(['t1'])
-  })
-
-  it('快速编辑里选区只有看不见的对象：Backspace 什么都不删、不进历史', () => {
+  it('单图编辑里选中标注按 Backspace：只删标注，图原样在', () => {
     useWorkspaceStore.getState().enterFastEdit(PANEL.id)
     useSelectionStore.getState().set(['t1'])
     press('Backspace')
-    expect(ids()).toEqual(['p1', 't1'])
-    expect(useDocumentStore.getState().past).toHaveLength(0)
+    expect(ids()).toEqual(['p1'])
+    expect(useDocumentStore.getState().past).toHaveLength(1)
+  })
+
+  it('单图编辑里 ⌘A 后 Backspace：整选区删除（与排版一致，可撤销）', () => {
+    useWorkspaceStore.getState().enterFastEdit(PANEL.id)
+    modKey('a')
+    press('Backspace')
+    expect(ids()).toEqual([])
+    expect(useDocumentStore.getState().past).toHaveLength(1)
   })
 })
 
@@ -289,8 +276,8 @@ describe('快速编辑里的 ⌘1', () => {
   })
 })
 
-describe('快速编辑里 Esc = 回排版（P01，与上下文栏出口同一个 action）', () => {
-  const enter = (fromLayout = true) => useWorkspaceStore.getState().enterFastEdit(PANEL.id, { fromLayout })
+describe('单图编辑里的 Esc：只退图内编辑，没有「排版」可回（模式由图数推出）', () => {
+  const enter = () => useWorkspaceStore.getState().enterFastEdit(PANEL.id)
   const mode = () => useWorkspaceStore.getState().mode
 
   it('对照组：排版里 Esc 只是清选区，不碰模式', () => {
@@ -299,26 +286,25 @@ describe('快速编辑里 Esc = 回排版（P01，与上下文栏出口同一个
     expect(mode()).toBe('layout')
   })
 
-  it('快编里没有更内层时 Esc 回排版并选中该面板（两种来源都一样）', () => {
-    for (const fromLayout of [true, false]) {
-      useWorkspaceStore.getState().clear()
-      enter(fromLayout)
-      press('Escape')
-      expect(mode()).toBe('layout')
-      expect(useSelectionStore.getState().ids).toEqual([PANEL.id])
-    }
+  it('单图编辑里没有更内层时 Esc 清选区（标注可选了），仍是单图编辑', () => {
+    enter()
+    useSelectionStore.getState().set([PANEL.id])
+    press('Escape')
+    expect(mode()).toBe('fast_edit')
+    expect(useSelectionStore.getState().ids).toEqual([])
   })
 
-  it('图内编辑有选区：第一下 Esc 只清选区，仍在快编；再一下才回排版', () => {
+  it('图内编辑有选区：第一下 Esc 只清选区；再一下退出图内编辑并选中该面板，模式不变', () => {
     enter()
     useUiStore.getState().setElementPanel(PANEL.id)
     useUiStore.getState().setSelectedGid('axes_0.yticks')
     press('Escape')
     expect(useUiStore.getState().selectedGids).toEqual([])
-    expect(mode()).toBe('fast_edit')
+    expect(useUiStore.getState().elementPanelId).toBe(PANEL.id)
     press('Escape')
-    expect(mode()).toBe('layout')
+    expect(mode()).toBe('fast_edit')
     expect(useUiStore.getState().elementPanelId).toBeNull()
+    expect(useSelectionStore.getState().ids).toEqual([PANEL.id])
   })
 
   it('输入框聚焦时不抢 Esc', () => {

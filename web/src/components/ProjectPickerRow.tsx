@@ -5,7 +5,7 @@ import { ArrowDown, ArrowUp, Bookmark, ExternalLink, Folder, TriangleAlert, X } 
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { dropLineClass, listRowClass, rowMetaClass } from '@/components/ui/listRow'
 import type { RecentProject } from '@/lib/api'
-import { canRevealInFileManager, fileManagerKind, revealProjectFolder, type FileManagerKind } from '@/lib/desktop'
+import { canRevealInFileManager, fileManagerKind, isDesktop, revealProjectFolder, type FileManagerKind } from '@/lib/desktop'
 import { ALT, cn, combo } from '@/lib/utils'
 import { useUiStore } from '@/store/uiStore'
 import { TailPath } from './DirBrowser'
@@ -104,7 +104,8 @@ export function ProjectRow({
   useTranslation('project')
   const drawer = density === 'drawer'
   const openable = entry.exists && !current && !busy && !switching
-  const canNewTab = !!entry.id && !current
+  // 桌面壳不新开窗口（main.rs new_window_decision 一律拒绝），点了会静默无反应：桌面版不给这一项
+  const canNewTab = !!entry.id && !current && !isDesktop()
   const canReveal = entry.exists && canRevealInFileManager()
   const hasMenu = !!order || !!onTogglePin || canNewTab || canReveal || !!onRemove
   const menu = useRowMenu({ enabled: hasMenu })

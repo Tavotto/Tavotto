@@ -40,7 +40,6 @@ import { newId } from '@/lib/id'
 import { currentProjectId } from '@/lib/session'
 import { emptyProject } from '@/types/document'
 import { useUiStore } from '@/store/uiStore'
-import { useViewportStore } from '@/store/viewportStore'
 import {
   acceptProbe,
   armRestoreToken,
@@ -69,6 +68,7 @@ import {
 import { fetchLayoutOwnerEvidence, fetchRecoveryCandidates, type RecoveryCandidateItem, type SessionIndexStatus } from '@/lib/api'
 import { correctRecordedProject, isForeignDocument } from '@/lib/docOwnership'
 import { confirmRestored, planRestore, type CandidatePlan, type RestoreCandidate } from '@/lib/projectDocs'
+import { fitStageNow } from '@/store/zoomToSelection'
 
 export { whenDocumentReady }
 /** 显式意图取代未落定的恢复（普通 `switchDocument` 已经会做；不换文档的入口用这个） */
@@ -680,8 +680,7 @@ export async function retryRestore(): Promise<RestoreOutcome> {
  */
 function fitIfRestored(out: RestoreOutcome): RestoreOutcome {
   if (out.kind === 'restored') {
-    const page = useDocumentStore.getState().doc.page
-    useViewportStore.getState().fit(page.w, page.h)
+    fitStageNow()
   }
   return out
 }
@@ -722,8 +721,7 @@ export async function continueNew(): Promise<boolean> {
     .getState()
     .switchDocument(emptyProject(), newId('d'), undefined, { reason: 'continued_new' })
   if (ok) {
-    const page = useDocumentStore.getState().doc.page
-    useViewportStore.getState().fit(page.w, page.h)
+    fitStageNow()
   }
   return ok
 }

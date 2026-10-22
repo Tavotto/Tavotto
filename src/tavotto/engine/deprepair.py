@@ -60,6 +60,7 @@ from . import (
     pool,
     privatepython,
     projectenv,
+    rootenv,
     runcodes,
     runtime,
     taskdiag,
@@ -858,6 +859,17 @@ def supported_python_range() -> dict:
     return {"min": f"{lo[0]}.{lo[1]}", "max": f"{hi[0]}.{hi[1]}"}
 
 
+def _not_pip_of(module: str, requirement: "depresolve.DependencyRequirement | None") -> dict | None:
+    """这个缺的 import / 解析出的发行包是「已知装不了」表里的吗？是则回 `{label, hint}`（与联合计划同一张表、同一口径）。
+
+    单包兜底路径（`offer` / `create_plan`）也要查：声明 `root`、`import ROOT` 时联合计划已把它从 missing 里摘掉，
+    执行后撞 import 失败才落到这里——这时 `depresolve.resolve()` 仍会解出一个「可装」的 `root`（Codex #1276 P1）。"""
+    hit = depresolve.not_pip_installable(module)
+    if hit is None and requirement is not None and requirement.distribution:
+        hit = depresolve.not_pip_for_distribution(requirement.distribution)
+    return {"label": hit["label"], "hint": hit["hint"]} if hit else None
+
+
 def offer(project: str | Path, script: str, module: str, project_env: dict | None = None) -> dict:
     """缺 `module` 时「能怎么修」——**只读判断，不装任何东西**。
 
@@ -963,6 +975,13 @@ def offer(project: str | Path, script: str, module: str, project_env: dict | Non
         for r in projectenv.rejected_system_candidates(system)
     ]
 
+    not_pip = _not_pip_of(module, requirement)
+    if not_pip is not None:
+        # 点名「需要自己的环境」：不给安装需求，也不给任何装进 Tavotto 管的环境的目标（上面采用已有环境的目标照旧）
+        out["requirement"] = None
+        out["not_pip_installable"] = not_pip
+        out["code"] = ERROR_UNRESOLVED
+        return out
     if requirement is None or not requirement.installable:
         out["code"] = ERROR_UNRESOLVED
         return out
@@ -1081,6 +1100,13 @@ def create_plan(
         requirement = depresolve.resolve(root, module, script)
         if requirement is None:
             raise RepairError(ERROR_UNRESOLVED, f"无法确定 {module} 对应哪个安装包")
+    not_pip = _not_pip_of(module, requirement)
+    if not_pip is not None:
+        raise RepairError(
+            ERROR_UNRESOLVED,
+            f"{not_pip['label']} 不在 PyPI 上，需要有它的自己的环境",
+            not_pip_installable=not_pip,
+        )
     if not requirement.installable:
         raise RepairError(ERROR_REQUIREMENT_INVALID, "这个需求不可安装")
 
@@ -1809,6 +1835,57 @@ def classify_pip_failure(text: str) -> str:
     if "could not find a version" in low or "no matching distribution" in low:
         return ERROR_NOT_FOUND if "from versions: none" in low else ERROR_REQUIRES_BUILD
     return ERROR_FAILED
+
+
+_NOT_FOUND_NAME_RES = (
+    re.compile(r"no matching distribution found for\s+([A-Za-z0-9][A-Za-z0-9._-]*)", re.I),
+    re.compile(
+        r"could not find a version that satisfies the requirement\s+([A-Za-z0-9][A-Za-z0-9._-]*)",
+        re.I,
+    ),
+)
+
+
+def not_found_detail(
+    out: str, record: tuple[dict, ...] | list[dict], project: str | Path, script: str
+) -> dict:
+    """pip 报「找不到」时点名：是哪个分发名、来自哪个声明文件 / 哪个 import（ADR 0061 修订 2026-10-21）。
+
+    `{name, import_name, source}`；认不出名字回 `{}`（界面退回通用句，不猜）。声明文件按 `depresolve.declared_intents`
+    重新读（只读），不在 `record` 里加字段（`record` 进回执与指纹）。"""
+    name = ""
+    for rx in _NOT_FOUND_NAME_RES:
+        m = rx.search(out or "")
+        if m:
+            name = m.group(1)
+            break
+    if not name:
+        return {}
+    key = depresolve.normalize_distribution(name)
+    import_name = next(
+        (
+            str(r.get("import_name") or "")
+            for r in record or ()
+            if depresolve.normalize_distribution(str(r.get("distribution") or "")) == key
+        ),
+        "",
+    )
+    source = ""
+    try:
+        for it in depresolve.declared_intents(project, script):
+            if it.declared and it.name == key and it.source:
+                source = it.source
+                break
+    except Exception:  # noqa: BLE001 - 点名是锦上添花，读不了声明不能让失败变形
+        source = ""
+    return {"name": key, "import_name": import_name, "source": source}
+
+
+def _not_found_extra(code: str, out: str, record, project, script) -> dict:
+    if code != ERROR_NOT_FOUND:
+        return {}
+    detail = not_found_detail(out, record, project, script)
+    return {"not_found": detail} if detail else {}
 
 
 def pip_install_argv(
@@ -2556,9 +2633,15 @@ def _emit(
     pinned: dict | None = None,
     impact: dict | None = None,
     dist_reasons: list[str] | None = None,
+    not_found: dict | None = None,
 ) -> dict:
     with _lock:
         rec = dict(_progress.get(plan_id) or {"log": ""})
+        if not_found:
+            # pip 找不到的那个包（点名：分发名 / 来自哪个 import / 哪份声明文件）：界面一句话说「找不到 X（来自 Y）」
+            rec["not_found"] = {
+                k: str(v) for k, v in not_found.items() if k in ("name", "import_name", "source")
+            }
         rec.update(
             plan_id=plan_id, state=state, code=code, error=error, result=result or rec.get("result")
         )
@@ -4574,6 +4657,7 @@ def _prepare_guarded(
             code=exc.code,
             error=str(exc),
             dist_reasons=dist_reasons_of(exc),
+            not_found=(exc.extra or {}).get("not_found"),
         )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("联合准备线程异常")
@@ -4718,7 +4802,11 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         )
         return {"ok": False, "code": ERROR_CANCELLED, **detail}
     if code:
-        raise RepairError(code, _sanitize(out)[-800:])
+        raise RepairError(
+            code,
+            _sanitize(out)[-800:],
+            **_not_found_extra(code, out, plan.record, plan.project, plan.script),
+        )
     _emit(plan.plan_id, STATE_VERIFYING, on_event, joint=plan)
     _verify_imports(python, plan.needed_imports)
     provided = _verify_distributions(
@@ -4993,7 +5081,11 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         managedenv.mark_generation(
             project, generation, managedenv.GEN_STATE_INCOMPLETE, f"安装失败: {code}"
         )
-        raise RepairError(code, _sanitize(out)[-800:])
+        raise RepairError(
+            code,
+            _sanitize(out)[-800:],
+            **_not_found_extra(code, out, job.record, job.project, job.script),
+        )
     if job.attempted:
         # pip 跑成了：从这里起「再装一遍同一个需求」改变不了任何东西（验证没过也一样），
         # 防循环的黑名单这时才登记——与项目 venv 那条路 `_run_install` 的登记点同一语义
@@ -5939,7 +6031,9 @@ def _user_env_discovery_off() -> bool:
     return projectenv.auto_adoption_off()
 
 
-def unknown_imports_missing(plan: dict, python: str, root: str = "") -> list[str]:
+def unknown_imports_missing(
+    plan: dict, python: str, root: str = "", overlay: dict | None = None
+) -> list[str]:
     """计划里映射不到包名的无条件 import，此刻的解释器里**确实** import 不到的那几个（ADR 0079 修订
     2026-09-25，QA ENV-08-B1）。
 
@@ -5954,7 +6048,16 @@ def unknown_imports_missing(plan: dict, python: str, root: str = "") -> list[str
         return []
     # 内置 runtime 由 worker 按 `runtime.child_env()` / `child_args()` 起：体检用同一套（Codex #609 P2）
     bundled = pool.same_python(python, runtime.bundled_python())
-    return userenvs.imports_missing(python, unknown, bundled=bundled, root=root)
+    return userenvs.imports_missing(python, unknown, bundled=bundled, root=root, overlay=overlay)
+
+
+def _unknown_missing_here(plan: dict, python: str, project: str, spec_root: str) -> list[str]:
+    """`unknown_imports_missing` 加上"项目记着的解释器若带叠加环境（ROOT），按带着它量"——否则每次都判成缺 ROOT、
+    重新发现一遍。没有叠加层时调用形状与以前逐字相同。"""
+    overlay = projectenv.remembered_overlay(project, python)
+    if overlay is None:
+        return unknown_imports_missing(plan, python, spec_root)
+    return unknown_imports_missing(plan, python, spec_root, overlay=overlay)
 
 
 def user_environment_offer(project: str | Path, script: str, plan: dict, python: str) -> list[dict]:
@@ -6097,7 +6200,7 @@ def _preparation_offer(project: str | Path, script: str) -> tuple[dict, list[dic
     elif joint.status == depplan.STATUS_NOTHING_NEEDED and not clean:
         # 没有能装的，但有映射不到包名、此刻又确实 import 不到的：同样的三步去找用户环境（只找、只改用，
         # 仍不装）。门不因此弹框——弹窗是「授权安装」，这里没有可装的东西；决定在 `decide_environment`
-        unknown_missing = unknown_imports_missing(plan_payload, python, root)
+        unknown_missing = _unknown_missing_here(plan_payload, python, root, root)
         if unknown_missing:
             user_envs = user_environment_offer(root, script, plan_payload, python)
     # 授权的实际影响（T06）：只有真能授权的计划才有——与 `create_joint_plan` 绑定出的计划同一个函数算出，
@@ -6253,8 +6356,53 @@ def _static_joint_plan(root: str, script: str) -> depplan.JointPlan:
     )
 
 
+def _root_overlay_entries(
+    root: str,
+    entries: list[dict],
+    current: str,
+    needed: list[dict],
+    unknown: list[str],
+    *,
+    project_exec: bool,
+) -> list[dict]:
+    """「候选解释器 × 用户装的 ROOT」的体检结果（`userenvs.evaluate` 的形状，带 `overlay`）。
+
+    底 = 此刻的解释器（内置 runtime 也算，它摘 `PYTHONPATH` 之后才叠）+ 已量过、健康、但装不齐的候选；
+    正被安装占着的不叠。Conda 环境也可以当底（2026-10-21 Win11 真机：conda-forge 在 Windows 上没有 `root` 包，
+    用户的 Python 3.14 恰是 conda-forge 的）：叠加层在激活增量**之后**叠（`pool.launch_env` / `projectenv._probe_environment`
+    同一个顺序），激活盖不掉它；conda-forge 自带 ROOT 的环境裸起就导入得了，根本走不到这里。
+    ROOT 至多拿最新的 2 个，组合至多 8 个，一个 ROOT 都找不到就是空表。点「运行」之前不起任何进程
+    （`cache_only`：叠加组合运行之前的体检要 import，那是明确的执行动作）。"""
+    installs = userenvs.root_installs()
+    if not installs:
+        return []
+    bases: list[dict] = []
+    seen: set = set()
+
+    def add(python: str, **extra) -> None:
+        if not python or userenvs._key(python) in seen or envlease.is_mutating(python):
+            return
+        seen.add(userenvs._key(python))
+        bases.append({"python": python, **extra})
+
+    if current:
+        add(current, bundled=pool.same_python(current, runtime.bundled_python()))
+    name = Path(root).name
+    for e in sorted(
+        (e for e in entries if e.get("ok") and not e.get("satisfies") and e.get("checked", True)),
+        key=lambda e: userenvs.rank(e, name),
+    ):
+        add(e["python"], python_version=e.get("python_version", ""))
+    combos = userenvs.overlay_candidates(bases, installs)
+    if not combos:
+        return []
+    return userenvs.evaluate(
+        combos, needed, unknown, cache_only=not project_exec, project_name=name
+    )
+
+
 def _detect_environment_unlocked(
-    root: str, script: str, *, project_exec: bool = True
+    root: str, script: str, *, project_exec: bool = True, rejected: list[dict] | None = None
 ) -> dict | None:
     """**调用方持 `_detect_lock(root)`**（见 `_detect_environment_pinned`）。检测模式（默认，ADR 0114 §六）：用户发起准备 / 运行之后，替他挑一个**能跑这个脚本**的环境。回新采用的那一条
     （`userenvs.evaluate` 的形状），不换回 None。
@@ -6271,7 +6419,10 @@ def _detect_environment_unlocked(
     * 机器先前定下的仍能跑 → 不动；不能跑 → 找别的能跑的换过去；都不能跑 → 检测自己记下的那条作废（装进 Tavotto
       管理的环境，不往用户的环境里装），历史记录（`legacy_auto`）照旧；
     * 预算：候选上限 `userenvs.PROBE_LIMIT`、每个 `projectenv.PROBE_TIMEOUT_S`；正被安装占着的环境不挑；这个项目
-      有依赖安装在跑时不改决定（`unless_installing`，与采用同一把锁）。"""
+      有依赖安装在跑时不改决定（`unless_installing`，与采用同一把锁）。
+
+    `rejected`（调用方给的空表）：本轮体检过、最终没被选用的候选各追加一条落选原因
+    （`userenvs.rejection_reason`，稳定码、不带路径）。默认链条能跑且无项目候选可比时没有体检，表保持为空。"""
     try:
         current = pool.resolve_worker_python(root, script=script, discover=False)[0]
     except pool.WorkerError as exc:
@@ -6299,7 +6450,7 @@ def _detect_environment_unlocked(
     runs_now = (
         not clean
         and joint.status == depplan.STATUS_NOTHING_NEEDED
-        and not unknown_imports_missing(plan, python, "" if project_exec else root)
+        and not _unknown_missing_here(plan, python, root, "" if project_exec else root)
     )
     needed, unknown = _plan_imports(plan)
     candidates = user_environment_candidates(root, script, exclude=current or python)
@@ -6334,11 +6485,23 @@ def _detect_environment_unlocked(
     candidates = [c for c in candidates if not envlease.is_mutating(c["python"])]
     entry = None
     adopted = False
-    if candidates and not _user_env_discovery_off():
+    evaluated: list[dict] = []
+    wants_root = not runs_now and rootenv.wants_root(
+        [n["import_name"] for n in needed if n.get("import_name")] + unknown
+    )
+    if (candidates or wants_root) and not _user_env_discovery_off():
         entries = _evaluate_candidates(root, candidates, needed, unknown, project_exec=project_exec)
+        evaluated = list(entries)
         if not project_exec and any(e.get("deferred") for e in entries):
             # 有候选的某个模块解析进了项目（可编辑安装指向项目）：运行之前不 import，它的结论延后——这一轮不采用排在后面的
             return None
+        if wants_root and userenvs.best(entries, Path(root).name) is None:
+            # 脚本 import ROOT、而没有一个候选**裸起**就导入得了它：把用户装的 ROOT 叠到候选解释器上再试
+            # （ADR 0079 修订 2026-10-21 b）。叠加组合与裸起的候选进同一张表，走同一个 best / 采用 / 落选原因
+            entries = entries + _root_overlay_entries(
+                root, entries, current or python, needed, unknown, project_exec=project_exec
+            )
+            evaluated = list(entries)
         while True:
             entry = userenvs.best(entries, Path(root).name)
             if entry is None:
@@ -6360,7 +6523,16 @@ def _detect_environment_unlocked(
                             **({} if project_exec else {"root": root}),
                         )[0]
                         if not fresh.get("satisfies"):
-                            entries = [e for e in entries if e["python"] != entry["python"]]
+                            # 缓存说装齐、现量说不齐：落选原因以现量的为准
+                            evaluated = [
+                                fresh if userenvs.entry_key(e) == userenvs.entry_key(entry) else e
+                                for e in evaluated
+                            ]
+                            entries = [
+                                e
+                                for e in entries
+                                if userenvs.entry_key(e) != userenvs.entry_key(entry)
+                            ]
                             continue
                         entry = {**entry, **fresh}
                     try:
@@ -6373,14 +6545,17 @@ def _detect_environment_unlocked(
                                 trigger=projectenv.TRIGGER_AUTO_DETECTED,
                                 health=entry,
                                 only_if=_record_allows_auto_adopt,
+                                env_overlay=entry.get("overlay"),
                             ),
                         )
                     except envlease.EnvironmentBusy:
                         return None
             except envlease.EnvironmentBusy:
-                entries = [e for e in entries if e["python"] != entry["python"]]
+                entries = [e for e in entries if userenvs.entry_key(e) != userenvs.entry_key(entry)]
                 continue
             break
+    if rejected is not None and evaluated:
+        rejected.extend(userenvs.rejections(evaluated, entry if adopted else None))
     if entry is None:
         if (
             not runs_now
@@ -6397,7 +6572,12 @@ def _detect_environment_unlocked(
     if not adopted:
         return None
     pool.note_project_python_ok(entry["python"])
-    LOG.info("自动检测：改用 %s（%s）", entry["python"], entry.get("source"))
+    LOG.info(
+        "自动检测：改用 %s（%s%s）",
+        entry["python"],
+        entry.get("source"),
+        "，叠加 " + rootenv.label_of(entry["overlay"]) if entry.get("overlay") else "",
+    )
     for listener in list(_adoption_listeners):
         try:
             listener(root, userenvs.public(entry))
@@ -6414,13 +6594,19 @@ def _detect_environment_pinned(
     锁只护住检测本身；返回之后消费方（`plan_for` 的快照、`pool.acquire` 起会话）若各自再解析共享的项目记录，
     同一项目另一个脚本就能在两次解析之间把记录换成它的解释器（Codex #820 P1）。钉下的值之后只比对、不重新解析。"""
     with _detect_lock(root):
-        adopted = _detect_environment_unlocked(root, script, project_exec=project_exec)
+        rejected: list[dict] = []
+        adopted = _detect_environment_unlocked(
+            root, script, project_exec=project_exec, rejected=rejected
+        )
         try:
             python, source = pool.resolve_worker_python(root, script=script, discover=False)
         except pool.WorkerError:
-            return pool.EnvironmentDecision(adopted=adopted)  # 解析不出来：原路径去报那条错
+            # 解析不出来：原路径去报那条错
+            return pool.EnvironmentDecision(adopted=adopted, rejected=tuple(rejected))
         return pool.EnvironmentDecision(
             adopted=adopted,
+            rejected=tuple(rejected),
+            env_overlay=projectenv.remembered_overlay(root, python),
             python=python,
             source=source,
             generation=projectenv.environment_generation(python),

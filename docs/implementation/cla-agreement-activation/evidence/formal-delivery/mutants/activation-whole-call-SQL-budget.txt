@@ -1,0 +1,29 @@
+✖ activation first real version fences legacy binaries within13 SQL (34.671894ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 202.216241
+
+✖ failing tests:
+
+test at tests/agreement-activation.test.mjs:53:1
+✖ activation first real version fences legacy binaries within13 SQL (34.671894ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  14 !== 13
+
+      at file:///tmp/cla-agreement-activation-formal-review/mutants/activation-whole-call-SQL-budget/tests/agreement-activation.test.mjs:57:48
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-whole-call-SQL-budget/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 14,
+    expected: 13,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

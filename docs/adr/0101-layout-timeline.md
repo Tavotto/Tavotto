@@ -255,7 +255,7 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
 
 - 顶栏只剩时钟钮；`NamedNodeButton`（顶栏浮层）删除。
 - ⌥⌘S 与命令面板「把现在存为命名节点…」仍不开抽屉，改为在**工作面板顶部居中**就地弹一个小框
-  （`NamedNodeQuickBox`，挂在 `App` 里 `VersionDrawer` 旁）：名字框 + 「存为命名节点」，回车保存、
+  （`NamedNodeQuickBox`，挂在 `App` 的工作面板里；2026-10-21 起时间线面板是右栏页签）：名字框 + 「存为命名节点」，回车保存、
   Esc / 点外面关闭；成功后关闭（`saveNamedNode` 自带「已把现在存为命名节点」状态条）；失败（命名节点
   超上限的 409）那句话留在小框里、名字不丢。开关仍是 `timelineStore.namingOpen`，只管这个小框。
 - 抽屉顶上原来常开的命名输入收成按钮「给现在存个名字…」（气泡带 ⌥⌘S），点开才展开名字框 +
@@ -284,3 +284,28 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
 
 看护：`VersionDialog.test.tsx`（默认焦点在容器、没有页脚「关闭」、一颗 ⋯ 与内联条、抽屉焦点）、
 `e2e/layout-timeline.spec.ts`、`e2e/timeline-row-actions.spec.ts`。
+
+### 修订（2026-10-21，beta 0.19.0b1 用户反馈）：时间线挪进右栏页签；预览按显示宽 × DPR 取图
+
+- **入口形态**：原「盖在画布上的 400 px 右侧浮板抽屉」（`VersionDrawer`，`uiStore.versionsOpen`）整条渲染路径删除，
+  改成右栏（`Inspector`）的第四个页签「时间线」（`RightTab = 'timeline'`，页签顺序 属性 | 画布 | 时间线 | 助手）。
+  顶栏时钟钮、排版菜单、命令面板、⇧⌘H 都只是切页签（`actions.openTimeline / closeTimeline / toggleTimeline`；
+  「亮着」的唯一判据 `uiStore.isTimelineOpen`）；Esc 先退预览、再回属性页。面板组件改名 `TimelinePanel`，
+  只在页签亮着时挂载（挂载 = 打开；卸载 = 预览一并退出、命名输入收起）。该页签是**会话态**：不写进偏好（刷新后落回属性页），
+  选中对象时 `autoShowProperties` 照旧把右栏切回属性页。预览仍是模态对话框，不变。
+- **恢复在飞不被卸载**（Codex #1268 P1）：预览 / 恢复对话框（`TimelinePreviewDialog`）不再嵌在 `TimelinePanel` 里，
+  而是与 `Inspector` 平级挂在 `App`，由 `timelineStore.preview` 驱动；`timelineStore.restoring` 期间面板被卸载
+  （原生 View 菜单收起右栏、切页签、选中对象自动回属性页、窗口变窄挤掉右栏）也不清 `preview`，对话框仍以 `busy` 挡住画布。
+- 旧「形态」一行「右侧浮板抽屉，不做成左栏抽屉」的结论保留（时间线仍是整份排版的东西，放右栏而不是左栏）；
+  被取代的是「浮板」。稳定钩子 `data-timeline-drawer` 改为 `data-timeline-panel`，面板头的标题与 × 删除
+  （页签就是标题，右栏的 × 关整栏）；`versions.title` / `versions.close` 两个文案键随之删除。
+- 最窄 320 px 英文下四个页签排不下，容器 < 340 px 时右栏的图钉让位（`@max-[339px]:hidden`，钉住偏好不丢）。
+- **预览清晰度（改动 1）**：根因是 `LayoutSnapshot` 给每个面板取图的档位写死 200（并且文字字号写死 6 px），
+  而预览对话框里的页面可宽到上千 px——位图被 CSS 放大 5 倍以上，Retina 下更糟。现在预览传 `displayWidth`：
+  面板按 `snapshotBucket()`（面板占页宽比例 × 显示宽 × `devicePixelRatio`，向上取 `RENDER_BUCKETS`，与画布 `PanelView`
+  同一把 `pickBucket`）取档，文字按 `sizePt × mm/pt × 显示宽 / 页宽` 缩放；SVG 面板本来就是 `/api/file` 的原矢量，不变。
+  没有第二套渲染态：仍是同一个 `useVariantPng` / `/api/render`。列表行的缩略图不给 `displayWidth`，仍是 200 档。
+
+看护：`components/layoutSnapshotSharpness.test.tsx`（档位像素宽 ≥ 显示宽 × DPR、字号随显示宽，变异反证过）、
+`VersionDialog.test.tsx`、`inspector/inspectorRedesign.test.tsx`（页签顺序与时间线页签内容）、`store/uiStore.test.ts`
+（open / toggle / 不持久化）、`e2e/timeline-row-actions.spec.ts`（右栏内、320 / 480 不溢出）、`e2e/layout-timeline.spec.ts`。

@@ -94,10 +94,8 @@ export function DemoTitleStep() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <h1 id="tutorial-task-title" className="type-display mt-12 shrink-0 text-center [@media(max-height:720px)]:mt-9">
-        {t(selected ? 'onboarding.title.taskSelected' : 'onboarding.title.task')}
-      </h1>
-      <div className="relative flex h-12 shrink-0 items-center justify-center">
+      {/* 字号条在任务标题上方、与「返回上一步」同一行（原型如此）：占的是标题原来的上边距，选中标题时标题不跳 */}
+      <div className="relative -mt-2 flex h-12 shrink-0 items-start justify-center">
         {selected && (
           <div
             ref={controls}
@@ -106,7 +104,7 @@ export function DemoTitleStep() {
             data-tutorial-font-controls=""
             onKeyDown={onControlsKey}
             className={cn(
-              'flex animate-pop-in items-center gap-1 rounded-lg bg-surface py-1 pr-2 pl-3 inset-ring inset-ring-border',
+              'relative flex animate-pop-in items-center gap-1 rounded-lg bg-surface py-1 pr-2 pl-3 inset-ring inset-ring-border',
               !done && 'shadow-[0_0_0_4px_var(--color-surface),0_0_0_5px_var(--color-border-control)]',
             )}
           >
@@ -146,7 +144,7 @@ export function DemoTitleStep() {
             {!done && (
               <span
                 aria-hidden="true"
-                className="absolute left-[calc(50%+150px)] hidden items-center [@media(min-width:900px)]:flex"
+                className="absolute top-1/2 left-full ml-4 hidden -translate-y-1/2 items-center [@media(min-width:900px)]:flex"
               >
                 <span className="h-2 w-2 translate-x-1 rotate-45 bg-ink" />
                 <span className="rounded-md bg-ink px-3 py-1.5 text-sm font-medium whitespace-nowrap text-surface">
@@ -157,10 +155,13 @@ export function DemoTitleStep() {
           </div>
         )}
       </div>
+      <h1 id="tutorial-task-title" className="type-display mt-2 shrink-0 text-center">
+        {t(selected ? 'onboarding.title.taskSelected' : 'onboarding.title.task')}
+      </h1>
       <FigureBoundary>
         <FigureStage
           ref={stage}
-          className="mx-auto w-full max-w-[900px] flex-1 px-6 pt-3 pb-1 [@media(min-height:760px)]:max-h-[520px]"
+          className="mx-auto w-full max-w-[900px] flex-1 px-6 pt-8 pb-1 [@media(min-height:760px)]:max-h-[520px]"
           frameClassName="rounded-xs inset-ring inset-ring-border"
           overlay={
             guiding ? (

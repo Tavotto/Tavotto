@@ -524,8 +524,13 @@ def _json_default(o):
 EXPORT_FONTTYPE = 42
 
 
-def export_font_context(fmt: str):
-    """临时导出字体策略：PDF / PS / EPS 嵌入字体，SVG 用自包含字形路径。
+#: SVG 文字的两种写法：`path` = 自包含字形路径（画布预览、#1185 等价证人的基准字节、默认）；
+#: `none` = 留成 `<text>`（只用于「按原图导出」的成品，ADR 0144）。两份字节各管各的，绝不互相替代。
+SVG_FONTTYPES = ("path", "none")
+
+
+def export_font_context(fmt: str, svg_fonttype: str = "path"):
+    """临时导出字体策略：PDF / PS / EPS 嵌入字体，SVG 默认用自包含字形路径。
 
     EPS 走 matplotlib 的 PostScript 后端：**它不支持透明度**（半透明元素按不透明
     画，matplotlib 自己会打一条日志），文字按 Type 42 嵌入。ADR 0046。"""
@@ -533,7 +538,8 @@ def export_font_context(fmt: str):
 
     fmt = str(fmt).lower()
     if fmt == "svg":
-        return matplotlib.rc_context({"svg.fonttype": "path", "svg.image_inline": True})
+        assert svg_fonttype in SVG_FONTTYPES, svg_fonttype
+        return matplotlib.rc_context({"svg.fonttype": svg_fonttype, "svg.image_inline": True})
     if fmt not in ("pdf", "ps", "eps"):
         return contextlib.nullcontext()
 
@@ -1705,6 +1711,8 @@ class LiveFigureSession:
         *,
         svg_path: str | None = None,
         snapshot_only: bool = False,
+        svg_fonttype: str | None = None,
+        svg_text_path: str | None = None,
     ) -> dict:
         """全质量导出（供画布合成 / 按原图导出）。
 
@@ -1715,6 +1723,20 @@ class LiveFigureSession:
         会拿着错的 applied 表去做还原。
         """
         self._own()
+        if svg_fonttype is not None and svg_fonttype not in SVG_FONTTYPES:
+            raise ValueError(f"svg_fonttype must be one of {SVG_FONTTYPES}")
+        if svg_fonttype == "none" and str(fmt).lower() != "svg":
+            raise ValueError("svg_fonttype only applies to SVG exports")
+        if svg_text_path is not None:
+            if not isinstance(svg_text_path, str) or not svg_text_path or svg_path is None:
+                raise ValueError("svg_text_path needs a nonempty path and an SVG companion")
+            if snapshot_only:
+                raise ValueError("snapshot_only never writes the text variant")
+            if (
+                len({Path(svg_text_path).resolve(), Path(svg_path).resolve(), Path(path).resolve()})
+                != 3
+            ):
+                raise ValueError("PDF, SVG and text SVG export paths must be different")
         if snapshot_only and svg_path is None:
             raise ValueError("snapshot_only requires an SVG companion path")
         if svg_path is not None:
@@ -1752,7 +1774,9 @@ class LiveFigureSession:
             with self.real_output():
                 # Automatic capture witnesses the script's original output policy;
                 # forcing PDF Type 42 here would change a saved Type 3 source's pixels.
-                with _NULL_CTX if snapshot_only else export_font_context(fmt):
+                with (
+                    _NULL_CTX if snapshot_only else export_font_context(fmt, svg_fonttype or "path")
+                ):
                     # Matplotlib opens SVG paths in text mode with platform newline
                     # translation. Own the UTF-8 stream so Windows writes the same bytes.
                     with (
@@ -1772,19 +1796,23 @@ class LiveFigureSession:
                     if blocker is not None:
                         raise ValueError(blocker)
                     companion.parent.mkdir(parents=True, exist_ok=True)
+
                     # The PDF draw has already established the layout. Re-running
                     # tight/constrained layout with SVG font metrics would move axes
                     # between the paired artifacts. Restore the script's engine after
                     # this save, including failure; normal draw caches remain native.
-                    layout_context = (
-                        state.fig._cm_set(layout_engine="none")
-                        if state.fig.get_layout_engine() is not None
-                        else _NULL_CTX
-                    )
+                    def layout_context():
+                        # 生成器式上下文只能进一次：写 path 基准与 text 成品各要一份新的
+                        return (
+                            state.fig._cm_set(layout_engine="none")
+                            if state.fig.get_layout_engine() is not None
+                            else _NULL_CTX
+                        )
+
                     with (
                         self.real_output(),
                         export_font_context("svg"),
-                        layout_context,
+                        layout_context(),
                         companion.open("w", encoding="utf-8", newline="") as fh,
                     ):
                         state.fig.savefig(
@@ -1804,6 +1832,36 @@ class LiveFigureSession:
                         "sha256": digest.hexdigest(),
                         "size_bytes": size_bytes,
                     }
+                    if svg_text_path is not None:
+                        # 同一次命令、同一份布局（引擎已钉成 none）再写一份「保留文字」的 SVG：
+                        # 它是成品，不是等价证人——path 基准字节（上面那份）一字未动。失败只记 svg_text_error。
+                        try:
+                            text_out = Path(svg_text_path)
+                            text_out.parent.mkdir(parents=True, exist_ok=True)
+                            with (
+                                self.real_output(),
+                                export_font_context("svg", "none"),
+                                layout_context(),
+                                text_out.open("w", encoding="utf-8", newline="") as fh,
+                            ):
+                                state.fig.savefig(
+                                    fh,
+                                    format="svg",
+                                    dpi=int(dpi),
+                                    **pathgeom.output_kwargs(state.fig),
+                                )
+                            raw = text_out.read_bytes()
+                            result["svg_text"] = {
+                                "path": str(text_out),
+                                "sha256": hashlib.sha256(raw).hexdigest(),
+                                "size_bytes": len(raw),
+                            }
+                        except Exception as exc:  # noqa: BLE001 — the text variant is optional
+                            Path(svg_text_path).unlink(missing_ok=True)
+                            result["svg_text_error"] = {
+                                "code": "svg_text_export_failed",
+                                "message": str(exc),
+                            }
                 except Exception as exc:  # noqa: BLE001 — companion failure must not discard the PDF
                     result["svg_error"] = {"code": "svg_export_failed", "message": str(exc)}
                     # No SVG acknowledgement means the export transaction must never publish

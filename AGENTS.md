@@ -49,7 +49,7 @@
   除非 correctness / safety / compatibility / release blocker，禁止扩大产品
   能力，禁止趁机重写已稳定模块。新增核心不变式测试提交前必须手工反证一次
   （空门禁比没有门禁更坏）。统一实施包（`docs/implementation/tavotto-foundation/`）的
-  RenderCore / 首开两条主线是这条纪律的**登记例外**（ADR 0053 立项、ADR 0072 切默认）：
+  RenderCore / 首开两条主线是**登记例外**（ADR 0053/0072；全表见 1.0-release-readiness §1.8）：
   它们替换的是渲染闭包与环境准备，按实施包的 registry / enrollment 逐项取得资格，不是「趁机重写」。
 - 许可证 AGPL-3.0-only；`docs/support-matrix.json` 是平台支持口径的唯一出处，
   README/网站/应用内文案必须与它一致。

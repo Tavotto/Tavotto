@@ -1,0 +1,28 @@
+✖ activation identical concurrent proposals recover the committed winner without another write (35.704849ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 227.508601
+
+✖ failing tests:
+
+test at tests/agreement-activation.test.mjs:123:1
+✖ activation identical concurrent proposals recover the committed winner without another write (35.704849ms)
+  AssertionError [ERR_ASSERTION]: Got unwanted rejection.
+  Actual message: "transaction_rejected"
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-identical-concurrency-confirmation/tests/agreement-activation.test.mjs:125:7
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-identical-concurrency-confirmation/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: Error: transaction_rejected
+        at LiveStore.batch (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-identical-concurrency-confirmation/src/native/store.ts:71:71),
+    expected: undefined,
+    operator: 'doesNotReject',
+    diff: 'simple'
+  }

@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import os from 'node:os'
 import path from 'node:path'
 import type { Locator, Page } from '@playwright/test'
-import { expect, openElementsTab, test, waitForDocumentReady } from './fixtures'
+import { addSecondFigure, expect, openElementsTab, test, waitForDocumentReady } from './fixtures'
 
 /**
  * 功能登记表的核心路径用例（ADR 0097，`docs/features/registry.json`）。
@@ -125,12 +125,13 @@ test(
   async ({ app, page }) => {
     const a = await app()
     await openFigure(page, a.baseURL)
-    // 回到排版：上下文栏上唯一那颗返回入口
-    await page.locator('[data-context-back]').click()
+    // 进多图排版：画布上放第二张图（单图编辑里没有排版）。两张图可能叠着放，下面认最上面（刚加进来）的那张
+    await addSecondFigure(page)
     await expect(page.locator('[data-element-svg]')).toHaveCount(0)
 
-    const panel = page.locator('[data-canvas-stage] [data-object-id]')
-    await expect(panel).toHaveCount(1, { timeout: 30_000 })
+    const panels = page.locator('[data-canvas-stage] [data-object-id]')
+    await expect(panels).toHaveCount(2, { timeout: 30_000 })
+    const panel = panels.last()
     await expectInViewport(page, panel, '画布上的面板')
 
     // ── 首次渲染：面板里是真图，不是空框 / 碎图标 / 占位 ──────────────────
@@ -181,7 +182,7 @@ test(
     await expectHittable(editBtn, '「编辑图内元素」')
 
     // ── 拖动：屏幕上真的移动了 Δ ────────────────────────────────────────────
-    const [b0] = await objectBoxes(page)
+    const b0 = (await objectBoxes(page)).at(-1)!
     const dx = 120
     const dy = 60
     await page.mouse.move(b0.x + b0.w / 2, b0.y + b0.h / 2)
@@ -190,11 +191,11 @@ test(
     await page.mouse.up()
     await expect
       .poll(async () => {
-        const [b] = await objectBoxes(page)
+        const b = (await objectBoxes(page)).at(-1)!
         return Math.abs(b.x - b0.x - dx) < 2 && Math.abs(b.y - b0.y - dy) < 2
       }, { message: '面板应当跟着鼠标平移 (120, 60)' })
       .toBe(true)
-    const [b1] = await objectBoxes(page)
+    const b1 = (await objectBoxes(page)).at(-1)!
     // 松手后单选浮动栏仍在（选区没丢）
     await expect(bar).toBeVisible()
 
@@ -202,14 +203,14 @@ test(
     await page.keyboard.press('ControlOrMeta+z')
     await expect
       .poll(async () => {
-        const [b] = await objectBoxes(page)
+        const b = (await objectBoxes(page)).at(-1)!
         return Math.hypot(b.x - b0.x, b.y - b0.y)
       }, { message: '撤销后面板应当回到拖动前的位置' })
       .toBeLessThan(1)
     await page.keyboard.press('ControlOrMeta+Shift+z')
     await expect
       .poll(async () => {
-        const [b] = await objectBoxes(page)
+        const b = (await objectBoxes(page)).at(-1)!
         return Math.hypot(b.x - b1.x, b.y - b1.y)
       }, { message: '重做后面板应当回到拖动后的位置' })
       .toBeLessThan(1)
@@ -420,11 +421,16 @@ test(
     expect(Math.abs(s0.y + s0.height / 2 - (g0.y + g0.height / 2 - 12)), '页面应当垂直居中（让出底部工具条）').toBeLessThan(2)
     expect(s0.width / s0.height).toBeCloseTo(40 / 30, 2)
 
-    // 素材卡选中后 Shift+Enter = 「添加到画布」（与卡上那颗就近入口同一个动作）
-    await page.locator(CARD).click()
+    // 素材卡选中后 Shift+Enter = 「添加到画布」（与卡上那颗就近入口同一个动作）。
+    // 画布上只有一张图是单图编辑（不画页面、不按页面缩放），所以先放一张垫底的，第二张进来才是多图排版——
+    // 下面量的是第二张（最上面那张）的放置与取景
+    await page.locator('[data-card="Fig2_yield.pdf"]').click()
     await page.keyboard.press('Shift+Enter')
-    const obj = page.locator('[data-canvas-stage] [data-object-id]')
-    await expect(obj).toHaveCount(1, { timeout: 30_000 })
+    await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1, { timeout: 30_000 })
+    await addSecondFigure(page, 'Fig1_kinetics.pdf')
+    const all = page.locator('[data-canvas-stage] [data-object-id]')
+    await expect(all).toHaveCount(2, { timeout: 30_000 })
+    const obj = all.last()
 
     const outline = page.locator('[data-page-outline]')
     await expect
@@ -612,8 +618,8 @@ test(
     test.setTimeout(300_000)
     const a = await app()
     await openFigure(page, a.baseURL)
-    await page.locator('[data-context-back]').click()
-    await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(1)
+    await addSecondFigure(page)
+    await expect(page.locator('[data-canvas-stage] [data-object-id]')).toHaveCount(2)
 
     await page.keyboard.press('ControlOrMeta+e')
     const dialog = page.getByRole('dialog')
@@ -681,7 +687,7 @@ test(
 )
 
 test(
-  '功能：画布文字导出 SVG，文件落盘、文字转轮廓且物理尺寸正确',
+  '功能：画布文字导出 SVG，文件落盘、文字保留为可编辑文字且物理尺寸正确',
   { tag: ['@feature:export.svg'] },
   async ({ app, page }) => {
     test.setTimeout(300_000)
@@ -757,15 +763,20 @@ test(
         paths: Array.from(doc.querySelectorAll('path')).filter((p) => p.getAttribute('d')?.trim()).length,
         texts: doc.querySelectorAll('text').length,
         images: doc.querySelectorAll('image').length,
+        textContent: Array.from(doc.querySelectorAll('text')).map((t) => t.textContent ?? '').join('').trim(),
+        fontFamily: doc.querySelector('text')?.getAttribute('font-family') ?? doc.querySelector('text')?.getAttribute('style') ?? '',
         width: root.getAttribute('width'),
         height: root.getAttribute('height'),
         viewBox: root.getAttribute('viewBox'),
       }
     }, readFileSync(output, 'utf8'))
     expect(artifact).toMatchObject({
-      name: 'svg', namespace: 'http://www.w3.org/2000/svg', parseErrors: 0, texts: 0, images: 0,
+      name: 'svg', namespace: 'http://www.w3.org/2000/svg', parseErrors: 0, images: 0,
     })
-    expect(artifact.paths, '画布文字必须写成真实字形路径，不能丢字或栅格化').toBeGreaterThan(0)
+    // ADR 0144：SVG 默认保留 <text>（可编辑、可检索），不再转轮廓。
+    expect(artifact.texts, '画布文字必须保留为 <text>，不能转轮廓、丢字或栅格化').toBeGreaterThan(0)
+    expect(artifact.textContent.length, '<text> 里必须有实际字符').toBeGreaterThan(0)
+    expect(artifact.fontFamily, '<text> 的首选族必须是批准脸的真实族名').toMatch(/^\s*(font-family:\s*)?['"]?(Liberation (Serif|Sans|Mono)|Noto Sans SC)/)
     const widthPt = request.canvas.page_w_mm * 72 / 25.4
     const heightPt = request.canvas.page_h_mm * 72 / 25.4
     expect(widthPt).toBeGreaterThan(0)
@@ -833,13 +844,14 @@ async function stageBox(page: Page) {
   return b!
 }
 
-/** 排版画布上唯一那个对象：回到排版、等它出现在视口里。 */
+/** 多图排版画布上最上面那个对象（刚加进来的第二张）：等它出现在视口里。 */
 async function toLayoutWithPanel(page: Page, baseURL: string) {
   await openFigure(page, baseURL)
-  await page.locator('[data-context-back]').click()
+  await addSecondFigure(page)
   await expect(page.locator('[data-element-svg]')).toHaveCount(0)
-  const panel = page.locator('[data-canvas-stage] [data-object-id]')
-  await expect(panel).toHaveCount(1, { timeout: 30_000 })
+  const panels = page.locator('[data-canvas-stage] [data-object-id]')
+  await expect(panels).toHaveCount(2, { timeout: 30_000 })
+  const panel = panels.last()
   await expectInViewport(page, panel, '画布上的面板')
   return panel
 }

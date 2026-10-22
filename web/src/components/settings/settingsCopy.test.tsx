@@ -444,7 +444,7 @@ describe('T43 导出偏好：与导出对话框同名同单位', () => {
     expect(byAria(ex('ppiSelectLabel'))!.hasAttribute('disabled')).toBe(true)
   })
 
-  it('SVG defaults persist, disclose outlines, and keep PPI disabled without raster formats', async () => {
+  it('SVG defaults persist, disclose editable-text default, and keep PPI disabled without raster formats', async () => {
     defaults({ formats: ['pdf'] })
     await open('export')
     const checkbox = (format: string) => body().querySelector<HTMLInputElement>(`[data-export-format="${format}"] input`)!

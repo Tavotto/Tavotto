@@ -302,7 +302,9 @@ async function exitEdit(page: Page) {
 }
 async function screenGeometry(page: Page, id: string, content: Locator) {
   const panel = await only(object(page, id))
-  const sheet = await only(page.locator('[data-page-sheet]'))
+  // 画布上只有一张图 = 单图编辑，不画页面纸：页面纸在场（多图排版）才量它
+  const sheetLoc = page.locator('[data-page-sheet]')
+  const sheet = (await sheetLoc.count()) ? await only(sheetLoc) : null
   const world = await only(page.locator('[data-world-transform]'))
   const rect = async (loc: Locator) => {
     const b = await loc.boundingBox()
@@ -310,7 +312,7 @@ async function screenGeometry(page: Page, id: string, content: Locator) {
     return { left: b!.x, top: b!.y, right: b!.x + b!.width, bottom: b!.y + b!.height }
   }
   return {
-    panel: await rect(panel), sheet: await rect(sheet), content: await rect(await only(content)),
+    panel: await rect(panel), sheet: sheet ? await rect(sheet) : null, content: await rect(await only(content)),
     transform: await world.evaluate(n => getComputedStyle(n).transform),
   }
 }
@@ -474,8 +476,14 @@ test('guarded PNG: hidden companion, stable adoption, undo, re-entry, and exact 
   const after = await screenGeometry(page, 'a', object(page, 'a').locator('[data-element-svg="a"]'))
   expect(after.transform).toBe(before.transform)
   for (const part of ['panel', 'sheet', 'content'] as const) {
+    const was = before[part]
+    const now = after[part]
+    if (!was || !now) {
+      expect(!was && !now, `${part} 的在场与否在采用前后不一致`).toBe(true)
+      continue
+    }
     for (const edge of ['left', 'top', 'right', 'bottom'] as const) {
-      expect(Math.abs(after[part][edge] - before[part][edge]), `${part}.${edge} moved on admission`).toBeLessThanOrEqual(0.5)
+      expect(Math.abs(now[edge] - was[edge]), `${part}.${edge} moved on admission`).toBeLessThanOrEqual(0.5)
     }
   }
 
@@ -728,7 +736,11 @@ test('guarded PNG: a dependency gate opens one-click repair and completion resum
 test('guarded PNG: an unverifiable legend gets one sentence and one rebuild button; the PNG stays and a new editable figure appears beside it', { tag: '@feature:assets.png-adoption-recovery' }, async ({ app, page }, testInfo) => {
   test.setTimeout(300_000)
   const source = sourceProject(testInfo.outputPath('source'), false, true)
-  const a = await app({ figures: source.figures })
+  // 来源驱动采用默认开（ADR 0139）：这条量的是它被应急关掉时的退路，所以显式关
+  const config = testInfo.outputPath('config')
+  mkdirSync(config, { recursive: true })
+  writeFileSync(path.join(config, 'config.json'), JSON.stringify({ experiments: { script_backed_figure: false } }))
+  const a = await app({ figures: source.figures, env: { TAVOTTO_CONFIG_DIR: config } })
   const data = await seed(page.request, a.baseURL, ['a'], 'guarded-png-legend')
   const traffic = watchRenders(page)
   await page.goto(`${a.baseURL}/${data.query}`)
@@ -811,7 +823,7 @@ test('source-backed PNG: legend + pixel difference → compare dialog → confir
   const source = sourceProject(testInfo.outputPath('source'), false, true, true)
   const config = testInfo.outputPath('config')
   mkdirSync(config, { recursive: true })
-  // 实验开关（默认关）：与 `config.experiment_enabled` 同一个键，只认显式 true
+  // 应急开关默认开；这里仍显式写 true，让用例不依赖默认值
   writeFileSync(path.join(config, 'config.json'), JSON.stringify({ experiments: { script_backed_figure: true } }))
   const a = await app({ figures: source.figures, env: { TAVOTTO_CONFIG_DIR: config } })
   const data = await seed(page.request, a.baseURL, ['a'], 'source-backed-png')

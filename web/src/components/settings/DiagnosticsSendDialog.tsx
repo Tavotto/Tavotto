@@ -36,6 +36,8 @@ const ds = (key: string, values?: Record<string, unknown>) =>
 const EXTRA_KEYS = ['source', 'crash_reports', 'corrupt_sessions'] as const
 
 const POLL_MS = 350
+/** 勾选变化后等多久才重新备包：连点几个框只备一次，点击本身从不等后端 */
+const REFRESH_DEBOUNCE_MS = 300
 const DEFAULT_NOTE_MAX = 1000
 const DEFAULT_CATEGORY = 'other'
 /** 引擎拒绝「迟到的 start」的两个码（`diagsend.start`）：取消已先被处理，不是发送失败 */
@@ -121,12 +123,16 @@ export function DiagnosticsSendDialog({
   const [epoch, setEpoch] = useState(0)
   /**
    * 三个勾选项（脚本源码 / 系统崩溃报告 / 会话损坏副本内容）：**每次打开对话框都从全不勾开始、不记忆**。
-   * 勾选变化 = 内容变了 = 重新备包（旧包随清理被丢弃，新包换新 `client_request_id`）；备包流程从 ref 读，
-   * 所以改选项只需要记一笔 + 把 epoch 推进一格。`keepForm` 让这一次重备不清掉用户已填的问题类型与说明。
+   * 勾选变化 = 内容变了 = 要换一份包，但**点击即时生效、不等后端**：框的状态本地立刻更新，换包走防抖的
+   * 静默刷新（`scheduleRefresh`：不回到「正在准备」、不禁用表单、不清已填内容；请求序号认最新一次，旧结果丢弃）。
+   * 刷新期间发送 / 保存禁用（旧包不含新勾选），新包到了才放开。
    */
   const [options, setOptions] = useState<DetailOptions>(NO_DETAIL_OPTIONS)
   const optionsRef = useRef<DetailOptions>(NO_DETAIL_OPTIONS)
-  const keepForm = useRef(false)
+  const refreshTimer = useRef<number | undefined>(undefined)
+  const refreshSeq = useRef(0)
+  /** 勾选已变、新包还没到：发送 / 保存暂不可用（框本身不受影响） */
+  const [refreshing, setRefreshing] = useState(false)
   /** 勾了但引擎没附上（引擎侧丢了载荷 / 老引擎）：折叠区里一句话说明 */
   const [optionsLost, setOptionsLost] = useState(false)
 
@@ -137,6 +143,23 @@ export function DiagnosticsSendDialog({
     if (id) void discardDiagSend(id, packagePj.current).catch(() => {})
   }, [])
 
+  /** 采用一份新备好的包；以引擎实际采用的选项为准：勾着的框不能在引擎没附上内容时仍显示勾着 */
+  const adoptPrepared = useCallback((p: DiagSendPrepared, asked: DetailOptions) => {
+    setPrepared(p)
+    const applied = { ...NO_DETAIL_OPTIONS, ...(p.options ?? {}) }
+    if (p.options) {
+      optionsRef.current = applied
+      setOptions(applied)
+      setOptionsLost(EXTRA_KEYS.some((k) => asked[k] && !applied[k]))
+    } else setOptionsLost(false)
+    idRef.current = p.id
+    actionGen.current = p.gen
+    // 旧包的「已不在引擎里」与失败说明只属于旧包：换上新包就一并复位，否则新包的普通失败仍显示过期文案
+    setPackageGone(false)
+    setStatus(null)
+    setPhase(p.too_large ? 'tooLarge' : 'ready')
+  }, [])
+
   // 打开 → 备包（只在打开那一刻采一次载荷）；关闭 / 卸载 → 丢弃
   useEffect(() => {
     if (!open) return
@@ -144,12 +167,12 @@ export function DiagnosticsSendDialog({
     setPhase('preparing')
     setPrepared(null)
     setStatus(null)
-    const opts = keepForm.current ? optionsRef.current : NO_DETAIL_OPTIONS
-    if (!keepForm.current) {
-      setCategory(DEFAULT_CATEGORY)
-      setNote('')
-    }
-    keepForm.current = false
+    window.clearTimeout(refreshTimer.current)
+    refreshSeq.current++
+    setRefreshing(false)
+    const opts = NO_DETAIL_OPTIONS
+    setCategory(DEFAULT_CATEGORY)
+    setNote('')
     optionsRef.current = opts
     setOptions(opts)
     setSaveState('idle')
@@ -170,17 +193,7 @@ export function DiagnosticsSendDialog({
           if (p.id) void discardDiagSend(p.id, pj).catch(() => {})
           return
         }
-        setPrepared(p)
-        // 以引擎实际采用的为准：勾着的框不能在引擎没附上内容时仍显示勾着
-        const applied = { ...NO_DETAIL_OPTIONS, ...(p.options ?? {}) }
-        if (p.options) {
-          optionsRef.current = applied
-          setOptions(applied)
-          setOptionsLost(EXTRA_KEYS.some((k) => opts[k] && !applied[k]))
-        } else setOptionsLost(false)
-        idRef.current = p.id
-        actionGen.current = p.gen
-        setPhase(p.too_large ? 'tooLarge' : 'ready')
+        adoptPrepared(p, opts)
       })
       .catch((e) => {
         if (isStalePrepare(e)) return // 被更新的备包取代：不是失败，界面由那份新请求更新
@@ -188,9 +201,11 @@ export function DiagnosticsSendDialog({
       })
     return () => {
       gen.current++
+      window.clearTimeout(refreshTimer.current)
+      refreshSeq.current++
       discard()
     }
-  }, [open, epoch, discard])
+  }, [open, epoch, discard, adoptPrepared])
 
   // 对话框开着时项目被换掉（外部 `tavotto open`、切项目）：旧项目的包（含在途的备包响应、发送中的会话）
   // 一律丢弃，并重新备包——绝不拿 A 项目的诊断包在 B 项目的界面上发出去（Codex #923 P1）
@@ -249,17 +264,70 @@ export function DiagnosticsSendDialog({
     }
   }, [phase])
 
+  /** 防抖的静默换包：只在「没有更新的勾选 / 没换代 / 没换项目」时才采用结果，旧响应丢弃并通知引擎释放 */
+  const scheduleRefresh = () => {
+    const mineGen = gen.current
+    const seq = ++refreshSeq.current
+    window.clearTimeout(refreshTimer.current)
+    setRefreshing(true)
+    // 旧包即将被换掉：「已保存」说的是旧包，换包后不再成立
+    setSaveState('idle')
+    refreshTimer.current = window.setTimeout(() => {
+      const opts = optionsRef.current
+      const pj = packagePj.current
+      const current = () => gen.current === mineGen && refreshSeq.current === seq
+      const run = (retried: boolean): void => {
+        void buildSendPayload(opts)
+          .then((payload) => (current() && currentProjectId() === pj ? prepareDiagSend(payload, opts, pj) : null))
+          .then((p) => {
+            // null = 备包前项目已换：epoch 会推进 gen，打开 effect 重跑并复位 refreshing，这里无需处理
+            if (!p) return
+            if (!current()) {
+              if (p.id && p.id !== idRef.current) void discardDiagSend(p.id, pj).catch(() => {})
+              return
+            }
+            const old = idRef.current
+            if (old && old !== p.id) void discardDiagSend(old, pj).catch(() => {})
+            adoptPrepared(p, opts)
+            setRefreshing(false)
+          })
+          .catch((e) => {
+            if (!current()) return // 已被更新的勾选 / 换代取代：由那一份更新界面
+            // 最新一次刷新被引擎判 stale（别的窗口为同一项目备了包）：没有更新的本地回调会来清 refreshing，
+            // 不能卡死。重试一次（optionsRef 此刻仍等于 opts，否则 current() 已为假）；再 stale 就按失败作废
+            if (isStalePrepare(e) && !retried) return run(true)
+            // 旧包不含用户刚改的勾选（例：刚取消勾选源码，旧包仍带源码）：失败时必须作废，
+            // 否则「保存」会把用户已取消的内容下载下来。丢弃引擎里那份并清空 prepared / idRef
+            discard()
+            setPrepared(null)
+            setRefreshing(false)
+            setPhase('prepareFailed')
+          })
+      }
+      run(false)
+    }, REFRESH_DEBOUNCE_MS)
+  }
+
+  const allOptionsOn = EXTRA_KEYS.every((k) => options[k])
+  /** 一键全选 / 全不选：全勾着就清空，否则全勾上；只记一笔、只换一次包 */
+  const toggleAllOptions = () => {
+    if (phase !== 'ready' && phase !== 'failed') return
+    const on = !EXTRA_KEYS.every((k) => optionsRef.current[k])
+    optionsRef.current = { ...optionsRef.current, source: on, crash_reports: on, corrupt_sessions: on }
+    setOptions(optionsRef.current)
+    scheduleRefresh()
+  }
+
   const toggleOption = (key: keyof DetailOptions) => {
     if (phase !== 'ready' && phase !== 'failed') return
-    keepForm.current = true
     optionsRef.current = { ...optionsRef.current, [key]: !optionsRef.current[key] }
     setOptions(optionsRef.current)
-    setEpoch((e) => e + 1)
+    scheduleRefresh()
   }
 
   const send = () => {
     const id = idRef.current
-    if (!id || (phase !== 'ready' && phase !== 'failed')) return
+    if (!id || refreshing || (phase !== 'ready' && phase !== 'failed')) return
     if (useProjectStore.getState().switching || packagePj.current !== currentProjectId()) {
       // 项目已换而监听还没来得及重渲：不发旧包，重新备包
       setEpoch((e) => e + 1)
@@ -297,11 +365,14 @@ export function DiagnosticsSendDialog({
 
   const save = () => {
     const id = idRef.current
-    if (!id) return
+    if (!id || refreshing) return
     const mine = gen.current
+    // 「勾选版本」：取包在途时用户改了勾选（只推进 refreshSeq、不推进 gen），这份包按旧勾选生成，
+    // 可能仍含刚取消的内容（脚本源码 / 崩溃数据）——不写盘。发送不需要：发送中复选框已禁用（toggleOption 要求 ready/failed）
+    const seq = refreshSeq.current
     fetchDiagSendBundle(id)
       .then((blob) => {
-        if (gen.current !== mine) return
+        if (gen.current !== mine || refreshSeq.current !== seq) return
         saveDiagnosticsZip(blob)
         setSaveState('saved')
       })
@@ -354,6 +425,7 @@ export function DiagnosticsSendDialog({
     .join(' ')
   const statusNode = (
     <div className="flex h-8 min-w-0 grow-[100] items-center gap-1" data-diag-send-status={phase}>
+      {/* 勾选触发的静默刷新（refreshing）不出字：「正在准备」只属于首次备包 */}
       {phase === 'preparing' && line('plain', ds('preparing'))}
       {phase === 'prepareFailed' && line('danger', ds('prepareFailed'))}
       {phase === 'tooLarge' &&
@@ -430,7 +502,7 @@ export function DiagnosticsSendDialog({
               variant="primary"
               size="lg"
               loading={phase === 'sending'}
-              disabled={phase === 'preparing' || phase === 'cancelling' || phase === 'sending'}
+              disabled={phase === 'preparing' || phase === 'cancelling' || phase === 'sending' || refreshing}
               onClick={send}
               data-diag-send-confirm
             >
@@ -443,6 +515,38 @@ export function DiagnosticsSendDialog({
         {/* 表单语言（2026-10-19，参照 OpenBitFun）：标签在字段上方、间距 6；提示与字数同一行（提示左、字数右）；
             框只给可编辑的控件；诊断包是一组（`FieldGroup`：3% 底、无边）里的一行可展开项，展开的内容与标题文字对齐缩进。
             如实说明要发什么的那一句是对话框副标题（常显）。 */}
+        {/* 额外内容（2026-10-21，beta 0.19.0b1 反馈）：三个框不折叠、紧跟副标题那一句，别埋在「查看内容」下面要滚才看到；
+            默认全不勾、不记忆；各框的风险短句留在各自下面；右上「全选 / 全不选」一键切换（一次只换一次包）。
+            勾选变化 = 换包，但点击本身即时生效（见 `scheduleRefresh`）。 */}
+        <section aria-label={ds('extrasTitle')} className="flex flex-col gap-1.5" data-diag-send-extras>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="type-section">{ds('extrasTitle')}</h3>
+            <Button variant="ghost" size="sm" disabled={!editable} onClick={toggleAllOptions} data-diag-send-extras-all>
+              {allOptionsOn ? ds('extrasSelectNone') : ds('extrasSelectAll')}
+            </Button>
+          </div>
+          {EXTRA_KEYS.map((key) => (
+            <label key={key} className="flex items-start gap-2 text-sm text-ink-2">
+              <Checkbox
+                checked={options[key]}
+                disabled={!editable}
+                onChange={() => toggleOption(key)}
+                data-diag-send-extra={key}
+                className="mt-0.5"
+              />
+              <span className="flex min-w-0 flex-col">
+                <span className="text-ink">{ds(`extra.${key}`)}</span>
+                <span className="type-caption">{ds(`extraHint.${key}`)}</span>
+              </span>
+            </label>
+          ))}
+          {optionsLost && (
+            <p className="type-caption text-warn-content" role="status" data-diag-send-options-lost>
+              {ds('optionsLost')}
+            </p>
+          )}
+        </section>
+
         <div className="flex flex-col gap-1.5">
           <label htmlFor={noteId} className="type-section">
             {ds('noteLabel')}
@@ -522,31 +626,6 @@ export function DiagnosticsSendDialog({
                 </p>
               </section>
 
-              {/* 额外内容：默认不勾、不记忆（每次打开从头来）；勾选变化 = 重新备包 */}
-              <section aria-label={ds('extrasTitle')} className="flex flex-col gap-1.5" data-diag-send-extras>
-                <h3 className="type-section">{ds('extrasTitle')}</h3>
-                {EXTRA_KEYS.map((key) => (
-                  <label key={key} className="flex items-start gap-2 text-sm text-ink-2">
-                    <Checkbox
-                      checked={options[key]}
-                      disabled={!editable}
-                      onChange={() => toggleOption(key)}
-                      data-diag-send-extra={key}
-                      className="mt-0.5"
-                    />
-                    <span className="flex min-w-0 flex-col">
-                      <span className="text-ink">{ds(`extra.${key}`)}</span>
-                      <span className="type-caption">{ds(`extraHint.${key}`)}</span>
-                    </span>
-                  </label>
-                ))}
-                {optionsLost && (
-                  <p className="type-caption text-warn-content" role="status" data-diag-send-options-lost>
-                    {ds('optionsLost')}
-                  </p>
-                )}
-              </section>
-
               <section aria-label={ds('filesTitle', { count: prepared?.entries.length ?? 0 })} className="flex flex-col gap-1" data-diag-send-files-section>
                 <Details data-diag-send-files className="text-sm">
                   <Summary className="h-6 text-ink-2 hover:text-ink">
@@ -576,7 +655,7 @@ export function DiagnosticsSendDialog({
                   variant="ghost"
                   size="sm"
                   onClick={save}
-                  disabled={!prepared?.id || phase === 'done'}
+                  disabled={!prepared?.id || phase === 'done' || refreshing}
                   data-diag-send-save
                 >
                   {ds('save')}

@@ -27,6 +27,8 @@ import traceback
 import uuid
 from pathlib import Path
 
+import compat_explore_oracles as OR
+import compat_explore_shards as SH
 import compat_explore_transforms as XT
 import compat_guardian as cg
 import compat_guardian_taxonomy as TX
@@ -63,8 +65,12 @@ def _titles(manifest: dict) -> list[str]:
     return out
 
 
-def tavotto_observe(project: Path, script: str) -> dict:
-    """What the product's own discovery + worker path produces for this project."""
+def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dict:
+    """What the product's own discovery + worker path produces for this project.
+
+    `deep` (CG-06) additionally takes, on the same worker, a manifest snapshot and a zero-patch
+    PNG per stem, and runs the parent's reviewed edit / replay / export when `deep["case"]` is set.
+    """
     from tavotto.engine import discover, pool, probe
 
     obs: dict = {"stems": {}, "error": None, "entry": None, "route": None}
@@ -90,15 +96,57 @@ def tavotto_observe(project: Path, script: str) -> dict:
         worker = pool.one_shot(script, str(project), entry)
         try:
             built = worker.ensure_built()
+            manifests = {}
             for stem in built.get("stems") or {}:
                 manifest = worker.override(stem, [])["manifest"]
+                manifests[stem] = manifest
                 obs["stems"][stem] = {"titles": _titles(manifest)}
+            if deep:
+                _observe_deep(obs, worker, manifests, deep, project, script, entry)
         finally:
             pool.discard(worker)
     except Exception as exc:  # noqa: BLE001 - product failure is an observation, recorded
         code = getattr(exc, "code", None) or type(exc).__name__
         obs["error"] = {"code": str(code), "message": str(exc)[:300]}
     return obs
+
+
+def _observe_deep(obs, worker, manifests, deep, project, script, entry) -> None:
+    """Snapshots + zero-patch PNGs first (before any edit: zero patch means untouched)."""
+    import compat_matrix as cm
+
+    shots_dir = Path(deep["shots_dir"])
+    shots_dir.mkdir(parents=True, exist_ok=True)
+    obs["snapshots"], obs["shots"], obs["shot_errors"] = {}, {}, {}
+    for stem, manifest in manifests.items():
+        obs["snapshots"][stem] = OR.editable_snapshot(manifest)
+        if not deep.get("render", True):
+            continue
+        try:
+            dest = shots_dir / f"{Path(stem).name}.png"
+            shutil.copy2(Path(worker.render_png(stem, cm.FIDELITY_WIDTH)), dest)
+            obs["shots"][stem] = str(dest)
+        except Exception as exc:  # noqa: BLE001
+            obs["shot_errors"][stem] = str(exc)[:300]
+    case = deep.get("case")
+    if not case:
+        return
+    stem = case.get("stem")
+    if stem not in manifests:
+        obs["inherited"] = {
+            "stages": {},
+            "differences": [],
+            "note": f"parent case stem {stem!r} not captured",
+        }
+        return
+    obs["inherited"] = OR.inherited_stages(
+        worker,
+        lambda: cm._fresh_worker(script, project, entry),
+        stem,
+        case,
+        manifests[stem],
+        Path(deep["work"]),
+    )
 
 
 # ---------------------------------------------------------------- comparison (pure)
@@ -116,8 +164,18 @@ def native_facts(result: dict) -> dict:
     }
 
 
-def compare(candidate_class: str, native: dict, tavotto: dict, parent_native: dict | None) -> dict:
-    """Pure judgment of one executed candidate. Never decides anything about the baseline."""
+def compare(
+    candidate_class: str,
+    native: dict,
+    tavotto: dict,
+    parent_native: dict | None,
+    extra: list[dict] | None = None,
+) -> dict:
+    """Pure judgment of one executed candidate. Never decides anything about the baseline.
+
+    `extra` are the CG-06 oracle differences (pixels, structure, edit, replay, export), appended
+    after the figure-level ones.
+    """
     nat = native_facts(native)
     if not nat["ok"]:
         status = cg._native_status(native)
@@ -209,6 +267,7 @@ def compare(candidate_class: str, native: dict, tavotto: dict, parent_native: di
                         {"title": title},
                     )
                 )
+    diffs.extend(extra or [])
     if not diffs and tavotto.get("error") and stems:
         # 观察到一部分图之后 Tavotto 报错（后面的图没观察到）：不是「无差异」，是没比完（Codex #1135 r4310366048）
         return {
@@ -261,7 +320,7 @@ def derive(
 
 def audited_judgment(candidate_class: str, judgment: dict, executions: dict) -> dict:
     """「无差异」要有审计到的子进程执行（python_exec_audit）作证；计数缺失 = 观测器失效，不是 clean。"""
-    audited = ("native", "tavotto") + (
+    audited = ("native", "native_pixels", "tavotto") + (
         ("parent_native",) if candidate_class == "shape_preserving" else ()
     )
     missing = [k for k in audited if not (executions.get(k) or 0) > 0]
@@ -278,11 +337,126 @@ def _count(path: Path) -> int | None:
     return cg._count(path)
 
 
+def _native_pixels(cm, project: Path, script: str, entry: str, work: Path) -> dict:
+    """Native PNGs at the CompatBench fidelity width (same request as `stage_fidelity`)."""
+    return cm.run_driver(
+        sys.executable,
+        "native",
+        {
+            "script": str(project / script),
+            "project": str(project),
+            "engine_dir": str(cm.ENGINE_DIR),
+            "entry": entry,
+            "out_dir": str(work / "native-shots"),
+            "width": cm.FIDELITY_WIDTH,
+        },
+    )
+
+
+def oracle_layers(
+    candidate_class: str,
+    tavotto: dict,
+    native_shots: dict,
+    parent_snapshot: dict | None,
+    evidence: Path,
+    native_note: str | None,
+) -> dict:
+    """Judge the CG-06 layers of one executed candidate: `{"stages", "differences"}`."""
+    stages = OR.blank_stages("not_run", "Tavotto observed nothing to judge")
+    diffs: list[dict] = []
+    if not tavotto.get("stems") and not native_shots:
+        # no figure on either side: nothing for any layer to judge
+        return {
+            "stages": OR.blank_stages("not_covered", "no figure on either side"),
+            "differences": diffs,
+        }
+    if not tavotto.get("stems") or "shots" not in tavotto:
+        return {"stages": stages, "differences": diffs}
+    # fidelity
+    if native_note:
+        stages["fidelity"] = OR.stage("fidelity", "not_run", native_note)
+    else:
+        pix = OR.pixel_judgment(
+            native_shots,
+            tavotto["shots"],
+            evidence,
+        )
+        stages["fidelity"] = OR.stage("fidelity", pix["status"], pix.get("note"))
+        if pix.get("unmatched"):
+            stages["fidelity"]["unmatched"] = pix["unmatched"]
+        diffs += pix["differences"]
+    for stem, err in sorted(tavotto.get("shot_errors", {}).items()):
+        stages["fidelity"] = OR.stage("fidelity", "failed", err)
+        diffs.append(
+            {
+                "kind": "render_failed",
+                "summary": f"{stem}: Tavotto could not render the zero-patch PNG ({err})",
+                "category": "export_or_fidelity",
+                "evidence": {"stem": stem, "error": err},
+            }
+        )
+    # structure + inherited edit / replay / export
+    if candidate_class == "shape_preserving":
+        if parent_snapshot is None:
+            stages["structure"] = OR.stage(
+                "structure", "not_run", "parent snapshot unavailable (not a difference)"
+            )
+        else:
+            st = OR.structure_judgment(parent_snapshot, tavotto["snapshots"])
+            stages["structure"] = OR.stage("structure", st["status"], st.get("note"))
+            stages["structure"]["data_compared"] = st["data_compared"]
+            diffs += st["differences"]
+        inherited = tavotto.get("inherited")
+        if inherited is not None:
+            for name, stage in inherited["stages"].items():
+                stages[name] = stage
+            for name in ("edit", "replay", "export"):
+                if name not in inherited["stages"]:
+                    stages[name] = OR.stage(name, "not_run", inherited.get("note", "not run"))
+            diffs += inherited["differences"]
+    else:
+        for name in ("structure", "edit", "replay", "export"):
+            stages[name] = OR.stage(name, "not_covered", OR.NOT_COVERED_AXIS_CHANGING)
+    return {"stages": stages, "differences": diffs}
+
+
+def native_pixel_note(native: dict, pixels: dict) -> str | None:
+    """Why the native pixel reference did not run, or None when it ran (or is structurally absent).
+
+    「没有原生像素参照」只在脚本确实没用 savefig 存过图时才是结构上不适用（`not_covered`）；
+    存过图却没渲染出来是没跑成，要让候选落到 unknown。
+    """
+    if not pixels.get("ok"):
+        return f"native render failed: {pixels.get('code')}"
+    written = sorted(native_facts(native)["last_writer"])  # savefig 写过的路径，不含别的产出文件
+    if written and not pixels.get("shots"):
+        return f"native wrote {written} but the pixel run rendered no figure"
+    return None
+
+
+def apply_unresolved(judgment: dict, stages: dict) -> tuple[dict, list[str]]:
+    """An in-scope layer that did not run (`not_run`) leaves a clean candidate without a verdict.
+
+    A found difference stays a difference (the missing layers are reported next to it);
+    `not_covered` layers are structurally inapplicable and never downgrade anything.
+    """
+    missing = OR.unresolved(stages)
+    if missing and judgment["outcome"] == "no_difference":
+        judgment = {
+            "outcome": "unknown",
+            "differences": [],
+            "note": "layer(s) did not run: " + "; ".join(missing),
+        }
+    return judgment, missing
+
+
 def execute_request(request: dict) -> dict:
     """Runs inside the isolated adapter process (see launch in `explore`)."""
     import compat_matrix as cm
 
     work, evidence = Path(request["work"]), Path(request["evidence"])
+    if request.get("mode") == "parent_snapshot":
+        return _parent_snapshot_request(request, work)
     parent, manifest, files = derive(
         request["parent"],
         request["chain"],
@@ -319,29 +493,82 @@ def execute_request(request: dict) -> dict:
             },
         )
         result["parent_native"] = cg._trim_native(parent_native)
+    layers = None
     if native_facts(native)["ok"]:
+        # 出像素这次原生运行单独记审计：「原生参照执行次数」只数 native_ref 那一次
+        os.environ["CG_EXEC_LOG"] = str(work / "native-pixels-execs.jsonl")
+        pixels = _native_pixels(cm, native_project, parent.script, manifest["entry"], work)
+        native_note = native_pixel_note(native, pixels)
         os.environ["CG_EXEC_LOG"] = str(work / "tavotto-execs.jsonl")
         t1 = time.monotonic()
         tavotto_project = _write_project(work / "tavotto", files)
-        result["tavotto"] = tavotto_observe(tavotto_project, parent.script)
+        deep = {
+            "shots_dir": str(work / "tavotto-shots"),
+            "work": str(work),
+            "case": OR.inherited_case(parent, manifest),
+        }
+        result["tavotto"] = tavotto_observe(tavotto_project, parent.script, deep)
         result["timings_s"]["tavotto"] = round(time.monotonic() - t1, 3)
+        layers = oracle_layers(
+            manifest["class"],
+            result["tavotto"],
+            pixels.get("shots") or {},
+            request.get("parent_snapshot") if not request.get("reduction") else None,
+            evidence,
+            native_note,
+        )
     else:
         result["tavotto"] = {"stems": {}, "error": None, "skipped": "native reference failed"}
     result["executions"] = {
         "native": _count(work / "native-execs.jsonl"),
         "parent_native": _count(work / "parent-execs.jsonl"),
+        "native_pixels": _count(work / "native-pixels-execs.jsonl"),
         "tavotto": _count(work / "tavotto-execs.jsonl"),
         "basis": "python_exec_audit",
     }
-    result["judgment"] = compare(manifest["class"], native, result["tavotto"], parent_native)
+    result["judgment"] = compare(
+        manifest["class"],
+        native,
+        result["tavotto"],
+        parent_native,
+        layers["differences"] if layers else None,
+    )
     result["judgment"] = audited_judgment(
         manifest["class"], result["judgment"], result["executions"]
     )
-    for name in ("native", "parent", "tavotto"):
+    judged = layers and result["judgment"]["outcome"] in ("difference_found", "no_difference")
+    if judged:
+        result["judgment"], result["unresolved_layers"] = apply_unresolved(
+            result["judgment"], layers["stages"]
+        )
+    result["stages"] = (
+        layers["stages"]
+        if judged
+        else OR.blank_stages("not_run", f"outcome {result['judgment']['outcome']}")
+    )
+    # the layer evidence belongs with the candidate; the tavotto-side shots are copied by the
+    # pixel judgment only when they differ
+    for name in ("native", "native-pixels", "parent", "tavotto"):
         log = work / f"{name}-execs.jsonl"
         if log.exists():
             shutil.copy2(log, evidence / f"{name}-execs.jsonl")
     return result
+
+
+def _parent_snapshot_request(request: dict, work: Path) -> dict:
+    """Tavotto's own manifest snapshot of an unmodified parent (computed once per explore run)."""
+    parent = XT.load_parent(request["parent"]["suite"], request["parent"]["case"])
+    os.environ["CG_EXEC_LOG"] = str(work / "tavotto-execs.jsonl")
+    project = _write_project(work / "parent-snapshot", parent.files)
+    obs = tavotto_observe(
+        project,
+        parent.script,
+        {"render": False, "shots_dir": str(work / "unused-shots"), "case": None},
+    )
+    log = work / "tavotto-execs.jsonl"
+    if log.exists():
+        shutil.copy2(log, Path(request["evidence"]) / "tavotto-execs.jsonl")
+    return {"snapshots": obs.get("snapshots"), "error": obs.get("error")}
 
 
 # ---------------------------------------------------------------- orchestration
@@ -378,37 +605,61 @@ def write_candidates(generated: dict, out: Path) -> Path:
     return path
 
 
-def run_one(
-    manifest: dict,
-    seed: int,
-    out: Path,
-    timeout: float,
-    reduction: dict | None = None,
-    tag: str | None = None,
-) -> dict:
-    cid = manifest["candidate_id"]
-    evidence = out / "evidence" / (f"{cid}-{tag}" if tag else cid)
-    evidence.mkdir(parents=True)
+# ---------------------------------------------------------------- time budget (CG-09)
+#: Below this much remaining budget no new adapter process is started: the quickest real candidate
+#: needs ~15-18 s (measured, bd4e45c5a, p95 15.3 s native+tavotto), so a smaller slice would only
+#: be cut mid-run and waste what is left; the candidate is `not_run` instead.
+MIN_ATTEMPT_SECONDS = 30.0
+#: After the deadline an adapter that was launched with the *remaining* budget as its timeout is
+#: killed by `package_smoke.terminate`: SIGTERM, wait <= TERMINATE_GRACE_S, SIGKILL, then up to two
+#: GROUP_GONE_WAIT_S looks at the process group.
+CLEANUP_GRACE_SECONDS = cg.package_smoke.TERMINATE_GRACE_S + 2 * cg.package_smoke.GROUP_GONE_WAIT_S
+#: Interpreter start + imports before `explore()` begins (its clock starts there), plus candidate
+#: generation, tree digest, report write after the loop. Measured well under this on a loaded
+#: laptop (see the PR); a generous constant, pinned by a test against the workflow.
+FIXED_OVERHEAD_SECONDS = 60.0
+#: Proven upper bound on (process end) - (start of the `--max-seconds` clock) - max_seconds:
+#: no subprocess starts with < MIN_ATTEMPT_SECONDS left, every one is launched with
+#: timeout <= remaining, so it is over (killed) by deadline + CLEANUP_GRACE_SECONDS; what follows
+#: is bounded work (FIXED_OVERHEAD_SECONDS).
+OVERRUN_BOUND_SECONDS = CLEANUP_GRACE_SECONDS + FIXED_OVERHEAD_SECONDS
+
+
+class BudgetExhausted(Exception):
+    """The `--max-seconds` budget cannot cover another adapter process (or cut this one short)."""
+
+
+def _slice(timeout: float, deadline: float | None) -> tuple[float, bool]:
+    """`(timeout for the next subprocess, whether the budget is what limits it)`."""
+    if deadline is None:
+        return timeout, False
+    remaining = deadline - time.monotonic()
+    if remaining < MIN_ATTEMPT_SECONDS:
+        raise BudgetExhausted
+    return (remaining, True) if remaining < timeout else (timeout, False)
+
+
+def budget_record(note: str) -> dict:
+    """A candidate the budget kept from running (or cut short): `not_run`, never a difference."""
+    return {
+        "judgment": {"outcome": "not_run", "differences": [], "note": note},
+        "executions": {
+            "native": 0,
+            "parent_native": 0,
+            "native_pixels": 0,
+            "tavotto": 0,
+            "basis": "not_executed",
+        },
+        "static_only_reasons": [note],
+    }
+
+
+def _adapter_run(request: dict, hashes: list[str], evidence: Path, timeout: float) -> dict:
+    """One isolated adapter process; returns its `result.json`. Raises like `launch_adapter`."""
     with tempfile.TemporaryDirectory(prefix="compat-explore-") as tmp:
         work = Path(tmp)
-        request = {
-            "parent": {"suite": manifest["parent"]["suite"], "case": manifest["parent"]["case"]},
-            "chain": [s["name"] for s in manifest["chain"]],
-            "seed": seed,
-            "candidate_id": cid,
-            "work": str(work),
-            "evidence": str(evidence),
-        }
-        if reduction:
-            request["reduction"] = reduction
+        request = {**request, "work": str(work), "evidence": str(evidence)}
         (work / "request.json").write_text(json.dumps(request), encoding="utf-8")
-        parent = XT.load_parent(request["parent"]["suite"], request["parent"]["case"])
-        script_hash = manifest["files"][parent.script]
-        if reduction:
-            script_hash = XT.build_reduced(parent, tuple(request["chain"]), seed, reduction)[0][
-                "files"
-            ][parent.script]
-        hashes = [script_hash, cg.digest(parent.files[parent.script])]
         env = cg.isolated_env(work, work / "adapter-execs.jsonl", hashes)
         try:
             cg.launch_adapter(
@@ -423,27 +674,129 @@ def run_one(
                 env=env,
                 timeout=timeout,
             )
-            record = json.loads((evidence / "result.json").read_text(encoding="utf-8"))
-        except (cg.AdapterTimeout, cg.EvidenceError, OSError, ValueError) as exc:
-            kind = "adapter_timeout" if isinstance(exc, cg.AdapterTimeout) else "runner_error"
-            record = {
-                "candidate_id": cid,
-                "judgment": {
-                    "outcome": "unknown",
-                    "differences": [],
-                    "note": f"{kind}: {str(exc)[:200]}",
-                },
-                "executions": {
-                    "native": None,
-                    "parent_native": None,
-                    "tavotto": None,
-                    "basis": "unobserved",
-                },
-            }
+            return json.loads((evidence / "result.json").read_text(encoding="utf-8"))
         finally:
             for log in work.glob("*-execs.jsonl"):
                 shutil.copy2(log, evidence / log.name)
+
+
+#: Per explore run (keyed by its output dir): the unmodified parent's Tavotto manifest snapshot,
+#: computed once per parent, however many candidates derive from it.
+_PARENT_SNAPSHOTS: dict[tuple, dict] = {}
+
+
+def parent_snapshot(
+    parent_spec: dict, out: Path, timeout: float, deadline: float | None = None
+) -> dict:
+    """`{"snapshots": {stem: {gid.prop: value}} | None, "error": ...}`; failure is data, not a raise."""
+    key = (str(out), parent_spec["suite"], parent_spec["case"])
+    if key not in _PARENT_SNAPSHOTS:
+        parent = XT.load_parent(parent_spec["suite"], parent_spec["case"])
+        evidence = out / "evidence" / f"parent-{parent_spec['case']}"
+        sliced, capped = _slice(
+            timeout, deadline
+        )  # BudgetExhausted: nothing cached, nothing started
+        evidence.mkdir(parents=True)
+        try:
+            record = _adapter_run(
+                {"mode": "parent_snapshot", "parent": dict(parent_spec)},
+                [cg.digest(parent.files[parent.script])],
+                evidence,
+                sliced,
+            )
+        except cg.AdapterTimeout as exc:
+            if capped:
+                raise BudgetExhausted from exc  # cut by the budget, not a verdict: not cached
+            record = {
+                "snapshots": None,
+                "error": {"code": "runner_error", "message": str(exc)[:200]},
+            }
+        except (cg.EvidenceError, OSError, ValueError) as exc:
+            record = {
+                "snapshots": None,
+                "error": {"code": "runner_error", "message": str(exc)[:200]},
+            }
+        if record.get("error") or not record.get("snapshots"):
+            record = {"snapshots": None, "error": record.get("error") or {"code": "no_stems"}}
+        _PARENT_SNAPSHOTS[key] = record
+    return _PARENT_SNAPSHOTS[key]
+
+
+def run_one(
+    manifest: dict,
+    seed: int,
+    out: Path,
+    timeout: float,
+    reduction: dict | None = None,
+    tag: str | None = None,
+    deadline: float | None = None,
+) -> dict:
+    try:
+        return _run_one(manifest, seed, out, timeout, reduction, tag, deadline)
+    except BudgetExhausted:
+        return budget_record("time budget exhausted")
+
+
+def _run_one(
+    manifest: dict,
+    seed: int,
+    out: Path,
+    timeout: float,
+    reduction: dict | None,
+    tag: str | None,
+    deadline: float | None,
+) -> dict:
+    cid = manifest["candidate_id"]
+    evidence = out / "evidence" / (f"{cid}-{tag}" if tag else cid)
+    evidence.mkdir(parents=True)
+    request = {
+        "parent": {"suite": manifest["parent"]["suite"], "case": manifest["parent"]["case"]},
+        "chain": [s["name"] for s in manifest["chain"]],
+        "seed": seed,
+        "candidate_id": cid,
+    }
+    if reduction:
+        request["reduction"] = reduction
+    parent = XT.load_parent(request["parent"]["suite"], request["parent"]["case"])
+    script_hash = manifest["files"][parent.script]
+    if reduction:
+        script_hash = XT.build_reduced(parent, tuple(request["chain"]), seed, reduction)[0][
+            "files"
+        ][parent.script]
+    hashes = [script_hash, cg.digest(parent.files[parent.script])]
+    if manifest["class"] == "shape_preserving" and not reduction:
+        request["parent_snapshot"] = parent_snapshot(request["parent"], out, timeout, deadline)[
+            "snapshots"
+        ]
+    sliced, capped = _slice(timeout, deadline)
+    try:
+        record = _adapter_run(request, hashes, evidence, sliced)
+    except cg.AdapterTimeout as exc:
+        if capped:
+            raise BudgetExhausted from exc  # the budget cut it short; not "the candidate hangs"
+        record = _failure_record(cid, "adapter_timeout", exc)
+    except (cg.EvidenceError, OSError, ValueError) as exc:
+        record = _failure_record(cid, "runner_error", exc)
     return record
+
+
+def _failure_record(cid: str, kind: str, exc: Exception) -> dict:
+    return {
+        "candidate_id": cid,
+        "judgment": {
+            "outcome": "unknown",
+            "differences": [],
+            "note": f"{kind}: {str(exc)[:200]}",
+        },
+        "executions": {
+            "native": None,
+            "parent_native": None,
+            "native_pixels": None,
+            "tavotto": None,
+            "basis": "unobserved",
+        },
+        "stages": OR.blank_stages("not_run", kind),
+    }
 
 
 #: 生成 / 执行派生候选、采集证据的代码都在这里（driver、matrix、执行观测器、变换……）：
@@ -458,6 +811,7 @@ def dirty_execution_code() -> list[str]:
 
 
 def explore(args) -> int:
+    clock0 = time.monotonic()  # the --max-seconds clock starts here
     initial = cg.source_state()
     expected = args.expected_sha or initial["commit"]
     if expected != initial["commit"]:
@@ -501,6 +855,33 @@ def explore(args) -> int:
             raise cg.EvidenceError(f"unknown transform family: {sorted(wanted_families - known)}")
         # 每一步都要在所选族里：混入未选族的两因子链会让差异来自操作者排除掉的变换（Codex #1139 r4311734919）
         pool = [c for c in pool if all(s["family"] in wanted_families for s in c["chain"])]
+    shard = getattr(args, "shard", None)
+    shard_info = None
+    if shard:
+        if getattr(args, "candidates", None):
+            raise cg.EvidenceError("--shard cannot be combined with --candidates")
+        k, n = shard
+        # 在 --parent / --families 过滤与去重之后、--limit 之前切：--limit 只作用于本片
+        total = len(pool)
+        pool = SH.slice_pool(pool, k, n)
+        shard_info = SH.shard_block(
+            k,
+            n,
+            len(pool),
+            total,
+            {
+                "parent": sorted(args.parent.split(",")) if args.parent else None,
+                "families": sorted(args.families.split(","))
+                if getattr(args, "families", None)
+                else None,
+                "limit": args.limit,
+                "static_only": bool(args.static_only),
+            },
+        )
+        if not pool:
+            raise cg.EvidenceError(
+                f"shard {k}/{n} is empty ({total} candidates); no report published"
+            )
     chosen = select(pool, args.limit)
     if getattr(args, "candidates", None):
         wanted_ids = set(args.candidates.split(","))
@@ -511,6 +892,8 @@ def explore(args) -> int:
         # An empty selection observed nothing; `all([])` must never read as a clean run.
         raise cg.EvidenceError("no candidates selected (not_run); no report published")
     started = time.monotonic()
+    budget = getattr(args, "max_seconds", None)
+    deadline = None if budget is None else clock0 + budget
     rows = []
     by_id: dict[str, dict] = {}
     for manifest in chosen:
@@ -522,13 +905,25 @@ def explore(args) -> int:
                 "executions": {
                     "native": 0,
                     "parent_native": 0,
+                    "native_pixels": 0,
                     "tavotto": 0,
                     "basis": "not_executed",
                 },
             }
             record["static_only_reasons"] = plan["reasons"] or ["--static-only"]
+        elif deadline is not None and deadline - time.monotonic() < MIN_ATTEMPT_SECONDS:
+            # CG-09: the time budget is spent (or too small for one more candidate). Say so per
+            # candidate instead of being killed by the step timeout (which would publish no report
+            # at all); not_run is never a pass.
+            record = budget_record(f"time budget exhausted ({budget:g} s)")
         else:
-            record = run_one(manifest, args.seed, out, args.timeout)
+            record = run_one(
+                manifest,
+                args.seed,
+                out,
+                args.timeout,
+                **({} if deadline is None else {"deadline": deadline}),
+            )
         row = {
             "candidate_id": manifest["candidate_id"],
             "parent": manifest["parent"]["case"],
@@ -544,6 +939,11 @@ def explore(args) -> int:
             "note": record["judgment"].get("note")
             or "; ".join(record.get("static_only_reasons", [])),
             "executions": record["executions"],
+            "unresolved_layers": record.get("unresolved_layers", []),
+            "stages": record.get("stages")
+            or OR.blank_stages(
+                "not_run", "; ".join(record.get("static_only_reasons", [])) or "not executed"
+            ),
             "tavotto_route": (record.get("tavotto") or {}).get("route"),
             "evidence": evidence_summary(record),
             "timings_s": record.get("timings_s"),
@@ -555,7 +955,7 @@ def explore(args) -> int:
             f"{row['candidate_id']} {row['parent']} {'+'.join(row['chain'])}: {row['outcome']}{flag}",
             flush=True,
         )
-    confirm_differences(rows, by_id, args, out)
+    confirm_differences(rows, by_id, args, out, deadline)
     if cg.source_state() != initial:
         raise cg.EvidenceError("source content changed during explore; no report published")
     report = {
@@ -568,13 +968,33 @@ def explore(args) -> int:
         "candidates": rows,
         "coverage": generated["coverage"],
         "known_gaps": known_gap_findings(rows),
+        **({"shard": shard_info} if shard_info else {}),
+        **(
+            {
+                "time_budget": {
+                    "max_seconds": budget,
+                    "exhausted": any(r["outcome"] == "not_run" for r in rows),
+                    "not_run": sum(r["outcome"] == "not_run" for r in rows),
+                }
+            }
+            if budget is not None
+            else {}
+        ),
         "outcome_counts": counts(rows),
+        "stage_counts": stage_counts(rows),
+        "oracles": {
+            "pixel_tolerance": dict(_fidelity_tolerance()),
+            "pixel_tolerance_source": "compat_matrix.FIDELITY_TOLERANCE (same as CompatBench)",
+            "parent_snapshots": sum(1 for k in _PARENT_SNAPSHOTS if k[0] == str(out)),
+        },
         "duration_s": round(time.monotonic() - started, 3),
         "unverified": [
             "candidates are derived from corpus shapes that already pass; agreement says nothing about other shapes",
             "native is plain `python script.py` in a private temp dir, not the user's environment",
             "differences are candidate failure records, not baseline changes and not issues",
             "V2 parents are static-only (the V2 session adapter is not driven by explore)",
+            "pixels use CompatBench's tolerance, so agreement is 'within that tolerance', not identical",
+            "edit / replay / export / structure run only for shape-preserving candidates, on the parent's reviewed targets; axis-changing candidates report them as not_covered",
         ],
     }
     (out / "reports").mkdir()
@@ -583,6 +1003,9 @@ def explore(args) -> int:
     print(json.dumps({"report": str(path), "run_id": run_id, "outcomes": report["outcome_counts"]}))
     if any(r["outcome"] == "difference_found" for r in rows):
         return EXIT_DIFFERENCES
+    # a spent time budget is partial coverage: never a clean pass, and not a failure either
+    if any(r["outcome"] == "not_run" for r in rows):
+        return cg.EXIT_PARTIAL
     # clean 要求真比对过：全是 static_only（没有一次原生 / Tavotto 对照）不是「无差异」（AC-11，Codex #1135 r4306059452）
     if all(r["outcome"] in ("no_difference", "static_only") for r in rows) and any(
         r["outcome"] == "no_difference" for r in rows
@@ -616,7 +1039,9 @@ def evidence_summary(record: dict) -> dict | None:
     }
 
 
-def confirm_differences(rows: list[dict], by_id: dict, args, out: Path) -> None:
+def confirm_differences(
+    rows: list[dict], by_id: dict, args, out: Path, deadline: float | None = None
+) -> None:
     """Re-run up to N differing candidates (one per distinct finding shape) to see if they reproduce.
 
     Only a confirmed difference may raise a maintainer alert; the rerun is the same trusted,
@@ -640,6 +1065,8 @@ def confirm_differences(rows: list[dict], by_id: dict, args, out: Path) -> None:
             break
         if row["outcome"] != "difference_found":
             continue
+        if deadline is not None and deadline - time.monotonic() < MIN_ATTEMPT_SECONDS:
+            break  # budget spent: the remaining differences stay unconfirmed (never alert)
         # The same behavior identity triage clusters on (attribution, relation, call site), so two
         # candidates triage would keep apart are never collapsed into one confirmation.
         source = source_of(row)
@@ -648,7 +1075,18 @@ def confirm_differences(rows: list[dict], by_id: dict, args, out: Path) -> None:
             continue
         seen.add(identity)
         budget -= 1
-        again = run_one(by_id[row["candidate_id"]], args.seed, out, args.timeout, None, "confirm")
+        # the deadline is passed only under a budget, so an unbudgeted run calls run_one as before
+        again = run_one(
+            by_id[row["candidate_id"]],
+            args.seed,
+            out,
+            args.timeout,
+            None,
+            "confirm",
+            **({} if deadline is None else {"deadline": deadline}),
+        )
+        if again["judgment"]["outcome"] == "not_run":
+            break  # cut by the budget: stays unconfirmed, never an alert
         rerun_row = {
             **row,
             "outcome": again["judgment"]["outcome"],
@@ -664,6 +1102,22 @@ def confirm_differences(rows: list[dict], by_id: dict, args, out: Path) -> None:
             f"{row['candidate_id']} confirm: {'reproduced' if row['confirmation']['reproduced'] else 'NOT reproduced'}",
             flush=True,
         )
+
+
+def _fidelity_tolerance() -> dict:
+    import compat_matrix
+
+    return compat_matrix.FIDELITY_TOLERANCE
+
+
+def stage_counts(rows: list[dict]) -> dict:
+    """`{stage: {status: n}}` over the executed rows, so a layer that never ran is visible."""
+    out: dict[str, dict[str, int]] = {}
+    for r in rows:
+        for name, st in (r.get("stages") or {}).items():
+            bucket = out.setdefault(name, {})
+            bucket[st["status"]] = bucket.get(st["status"], 0) + 1
+    return {k: dict(sorted(v.items())) for k, v in sorted(out.items())}
 
 
 def counts(rows: list[dict]) -> dict:
@@ -691,6 +1145,19 @@ def render_markdown(report: dict) -> str:
     lines = [
         f"### Guardian explore seed {report['seed']} run `{report['run_id'][:12]}`",
         "outcomes: " + ", ".join(f"{k}={v}" for k, v in report["outcome_counts"].items()),
+        "layers: "
+        + "; ".join(
+            f"{k}: " + ", ".join(f"{s}={n}" for s, n in v.items())
+            for k, v in report["stage_counts"].items()
+        ),
+        *(
+            [
+                f"**time budget {report['time_budget']['max_seconds']:g} s exhausted: "
+                f"{report['time_budget']['not_run']} candidate(s) not run (partial coverage, not a pass)**"
+            ]
+            if report.get("time_budget", {}).get("exhausted")
+            else []
+        ),
         "",
     ]
     for gap, info in report["known_gaps"].items():

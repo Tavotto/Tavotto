@@ -88,6 +88,8 @@ export default defineConfig({
         // 三步原生新手教程（ADR 0136）：卡片 / SVG 图例的指针拖动与 pointer capture、外部文件拖放的拒收
         // 都是引擎相关的事件序列，用户的 macOS 桌面壳就是这个引擎
         'tutorial.spec.ts',
+        // 主页最近项目卡超长路径：旧 WebKit（Safari 17）里 button 的 flex-col 不拉伸子项致卡片溢出，只有这个引擎量得出
+        'home-recent-card-layout.spec.ts',
       ],
     },
     // 英文 locale（审计 P1-02/P1-03）：a11y spec 是语言无关写法；
@@ -102,6 +104,8 @@ export default defineConfig({
         // 运行中会话的恢复（PR4b）：占位与锁的文案是中英两套，定位走 data-*
         'ai-restore.spec.ts',
         'a11y.spec.ts',
+        // 拖页面边（渐进式画布改版 裁决 5）：标注是中英两套文案（宽 / W），定位走 data-*，两种语言各走一遍
+        'page-edge-resize.spec.ts',
         // 说明条 + 不推挤（UI 2.0 PR10）：构建不一致芯片不位移、刷新失败 Notice 顺着滑出；英文文案更长，两种语言各量
         'notice-no-push.spec.ts',
         'error-recovery-en.spec.ts',

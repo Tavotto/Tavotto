@@ -227,10 +227,21 @@
   after 少撞上旧会话、**不是正确性依据**（watcher 可能已先做过异步 invalidate，force 找不到键也算成功），确认不了 → unknown `session_not_retired`、不调
   `after`；`after(expected_sha256)` 在提交 + 刷新之后
 （`enginesession.resolve`、safe、`runconfig.default_selection`）取会话并 build（已 built 的不再发请求）——就是前端随后要做的那次重渲染，会话执行的 sha256 须等于刚提交字节的，否则抛 `StaleSession` → unknown `stale_session`（不是 failed 也不是 verified）；剩余边界：`__main__` 括号路径上刻意 utime 回拨 mtime 的对抗性写入。前端来时会话
-  已 built（`tests/test_ai_figure_edit_app.py` 用执行计数钉住）。比对只取数据指纹（`figureverify.data_unchanged`：改前每个数据
-  元素改后同 gid 且 identity 不冲突、逐部件相同），改前 manifest 带用户 override 而改后 build 不带，坐标范围 / 版式不比、列进
+  已 built（`tests/test_ai_figure_edit_app.py` 用执行计数钉住）。比对两样：数据指纹（`figureverify.data_unchanged`：改前每个数据
+  元素改后同 gid 且 identity 不冲突、逐部件相同）与目标范围以外的改动（`figureverify.changes_outside_target`，范围取自桥放进 `cand.extras["target"]` 的 `{stem, gid, scope}`，范围外有改动记 unknown `changes_outside_target`、结局最高 partial；派生改动的排除见 `05-verification-design.md` 第七节）。`before` 钩子给的是**无 override 重放**（`worker.override(stem, [])`，不执行用户脚本）而不是落盘 manifest——后者带着用户 override，改后 build 不带；坐标范围 / 版式的目标判定不比、列进
   not_covered；改后渲染失败或少了 stem 记 failed（已提交的改动不自动回滚）。没注入钩子（纯引擎调用方）仍是 `render_not_wired`。`ai.done` 与会话详情多一个 `task`（类型、结局、未满足项、文案键），终态与 `task_result` 同一条
   `record_end`。R-03（CLI 不写 cwd 外）是 CLI 的行为，指纹兜底只能发现、不能阻止。看护 `tests/test_ai_figure_edit.py`。
+
+## 生成可编辑版本（`convert_to_editable`，ADR 0143，1.0 登记例外，默认开）
+
+位图库（Pillow / OpenCV / plotly / ROOT）画的图，改图助手在候选工作区 `cache/ai_convert/<sid>/` 里**新建**一份 Matplotlib 版脚本
+`<原名>_matplotlib.py`；入口仍是 `ai_bridge.run(..., convert={library, original_rel})`（同一张会话表、同一份历史、同一套取消 / 幂等），
+适配器 `ai_convert.ADAPTER` 注册在 `ai_tasks.ADAPTERS`，不看 TAF 实验开关（逃生口 `ai.convert.enabled=false` /
+`TAVOTTO_NO_CONVERT_TO_EDITABLE=1`）。**不变式**：原脚本字节不变（转换会话 `revert` 一律 `ai_revert_not_applicable`）；Agent 只写候选里的
+那一个新文件（提交前：候选树其余逐字节不变、项目指纹不变、项目里原脚本不变）；任务 `commit` 只留存候选、`writes_user_files=False`；
+写进项目只有 `ai_convert.adopt` → `scriptlock.create_script` → `atomicio.create_new_bytes`（O_EXCL，存在即失败，重名加序号，
+永不覆盖），采用前再核原脚本 sha256 与候选摘要。校验 = 在用户同一路由下 probe 一遍（紧挨原脚本的 `tavotto_convert_probe_<sid>.py`
+临时文件，后端建、跑完删），必须捕获到 Matplotlib 图。看护：`tests/test_ai_convert.py`、`tests/test_ai_convert_app.py`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

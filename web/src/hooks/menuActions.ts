@@ -10,7 +10,7 @@ import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useUpdateStore } from '@/store/updateStore'
-import { deleteSelection, inFastEdit, runUndoRedo, runZoomCommand } from './useKeyboard'
+import { deleteSelection, runUndoRedo, runZoomCommand } from './useKeyboard'
 
 const ALIGN_PREFIX = 'menu-align-'
 
@@ -130,9 +130,6 @@ function performMenuAction(action: MenuAction) {
       if (!res.ok) reportElementAlignBlocked(res.reason, mode, res.group)
       return
     }
-    // 画布对齐写的是版面上的 x/y：快速编辑这一屏没有版面，改了用户也看不见
-    // （与方向键 / 工具字母同一条判据 `inFastEdit`）
-    if (inFastEdit()) return
     // 菜单看不见选区：没选东西时说出口，而不是点了没反应
     const count = useSelectionStore.getState().ids.length
     if (!count) {

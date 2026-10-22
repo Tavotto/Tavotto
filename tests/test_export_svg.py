@@ -50,6 +50,10 @@ def project(tmp_path, monkeypatch):
     m.reset_projects()
     project_watch.stop()
     exportjob.reset_for_tests()
+    # 画布合成走 RenderCore 共享子进程；不关会漏给同一 xdist worker 里后面的用例（hang_watchdog 的「没有子进程」断言）
+    from tavotto.rendercore import renderhost
+
+    renderhost.shutdown_shared()
 
 
 def spec(source, *, scope="canvas", formats=("svg",), patches=None, strict=False, reference=None):
@@ -118,15 +122,26 @@ def output(client, value):
     return body, {o["format"]: o for o in body["outputs"]}
 
 
-def assert_svg(body, item):
+def assert_svg(body, item, *, scope="original", text=None):
     assert item["status"] == "done", body
     path = Path(body["export_dir"]) / item["name"]
     data = path.read_bytes()
     assert not data.startswith(b"\x89PNG")
     root = ET.fromstring(data)
     assert root.tag == "{http://www.w3.org/2000/svg}svg"
-    assert not list(root.iter("{http://www.w3.org/2000/svg}text"))
-    assert list(root.iter("{http://www.w3.org/2000/svg}path"))
+    texts = list(root.iter("{http://www.w3.org/2000/svg}text"))
+    if text is None:
+        text = scope == "canvas"
+    if text and scope == "original":
+        # 规格变更（ADR 0144，用户追加裁决）：按原图导出的 matplotlib 图也默认留 <text>（独立的 fonttype=none 一路）
+        assert texts and any("Source title" in "".join(t.itertext()) for t in texts)
+    elif scope == "canvas":
+        # 规格变更（ADR 0144）：画布合成由 RenderCore 写 SVG，文字默认留成 <text>（可在 Office 里编辑）。
+        assert texts and all((t.text or "").strip() for t in texts)
+    else:
+        # 已存快照 / 回退路径交的是 path 基准那份（#1185 等价证人）：文字仍是轮廓。
+        assert not texts
+        assert list(root.iter("{http://www.w3.org/2000/svg}path"))
     return data
 
 
@@ -142,7 +157,7 @@ def test_first_script_run_without_edits_and_saved_cold_reopen(project, monkeypat
     client, root = project
     source = run_script(client)
     body, outputs = output(client, spec(source, scope=scope, strict=True))
-    assert_svg(body, outputs["svg"])
+    assert_svg(body, outputs["svg"], scope=scope, text=True)
     saved = client.post("/api/layouts/first?target=project", json=document(source, []))
     assert saved.status_code == 200, saved.get_json()
     reference = saved.get_json()["figure_snapshots"]["panel"]
@@ -154,10 +169,10 @@ def test_first_script_run_without_edits_and_saved_cold_reopen(project, monkeypat
         client, spec(source, scope=scope, formats=("svg", "pdf"), reference=reference)
     )
     assert body["status"] == "done", body
-    assert_svg(body, outputs["svg"])
+    assert_svg(body, outputs["svg"], scope=scope)
     assert outputs["pdf"]["status"] == "done"
     body, outputs = output(client, spec(source, scope=scope, strict=True, reference=reference))
-    assert_svg(body, outputs["svg"])
+    assert_svg(body, outputs["svg"], scope=scope)
 
 
 def test_opaque_pdf_failure_is_per_format_and_names_source(project):
@@ -173,6 +188,31 @@ def test_opaque_pdf_failure_is_per_format_and_names_source(project):
         assert outputs["pdf"]["status"] == "done"
         assert outputs["svg"]["status"] == "failed"
         assert "external.pdf" in json.dumps(outputs["svg"]["error"])
+
+
+def test_raster_original_has_no_svg_and_does_not_ask_for_a_script_rerun(project):
+    import struct
+    import zlib
+
+    client, root = project
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00"))
+        + chunk(b"IEND", b"")
+    )
+    (root / "scan.png").write_bytes(png)
+    value = spec("scan.png", scope="original", formats=("svg",))
+    value["original"]["source_kind"] = "raster"
+    rejected = client.post("/api/export", json=value)
+    # 位图没有脚本可重跑：中性的 svg_source_unsupported，不是 svg_snapshot_missing
+    assert rejected.status_code >= 400, rejected.get_json()
+    assert rejected.get_json()["code"] == "svg_source_unsupported", rejected.get_json()
 
 
 def test_svg_companion_safety_failure_preserves_pdf(project, monkeypatch):
@@ -247,7 +287,7 @@ def test_edited_save_before_first_export_survives_project_move_and_cache_clear(
     m.open_project(str(moved))
     monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("saved SVG reran script"))
     body, outputs = output(client, spec(source, patches=patches, strict=True, reference=edited_ref))
-    assert_svg(body, outputs["svg"])
+    assert_svg(body, outputs["svg"], scope="canvas")
     assert body["status"] == "done", body
     # Also the unedited variant is export-grade, independent of the data cache.
     body, outputs = output(client, spec(source, scope="original", strict=True, reference=base_ref))
@@ -285,7 +325,7 @@ def test_matching_disk_pdf_gets_same_figure_svg_without_reexecution(project, mon
     for scope in ("original", "canvas"):
         body, outputs = output(client, spec("F.pdf", scope=scope, formats=("pdf", "svg")))
         assert body["status"] == "done", body
-        assert_svg(body, outputs["svg"])
+        assert_svg(body, outputs["svg"], scope=scope)
     # Nearby Python does not qualify changed bytes for the old representation.
     import pikepdf
 
@@ -534,7 +574,7 @@ def test_project_package_contains_only_referenced_portable_snapshots(project, mo
             client, spec(source, scope=scope, formats=("pdf", "svg"), reference=reference)
         )
         assert body["status"] == "done", body
-        assert_svg(body, outputs["svg"])
+        assert_svg(body, outputs["svg"], scope=scope)
         assert outputs["pdf"]["status"] == "done"
 
 
@@ -553,7 +593,7 @@ def test_single_original_svg_supports_live_custom_formatter_without_pairing(proj
     response = client.post("/api/engine/render", json={"id": source, "patches": []})
     assert response.status_code == 200, response.get_json()
     body, outputs = output(client, spec(source, scope="original", strict=True))
-    assert_svg(body, outputs["svg"])
+    assert_svg(body, outputs["svg"], text=True)
     # Cross-backend pairing has a stronger contract and explicitly declines it.
     body, outputs = output(client, spec(source, scope="original", formats=("pdf", "svg")))
     assert body["status"] == "partial", body
@@ -641,6 +681,8 @@ def test_failed_generation_marker_never_authorizes_an_unknown_current_snapshot(
     rejected = client.post("/api/export", json=spec(source, scope=scope, reference=reference))
     assert rejected.status_code >= 400, rejected.get_json()
     assert rejected.get_json()["status"] == "failed", rejected.get_json()
+    # 执行来源缺与当前执行匹配的快照：说「先重新运行脚本」的专用码，不是共用的 svg_source_unsupported
+    assert rejected.get_json()["code"] == "svg_snapshot_missing", rejected.get_json()
     # The established PDF-only path remains usable with no snapshot reference.
     body, outputs = output(client, spec(source, scope=scope, formats=("pdf",)))
     assert outputs["pdf"]["status"] == "done", body
@@ -672,7 +714,7 @@ def test_failed_generation_marker_never_authorizes_an_unknown_current_snapshot(
         client, spec(source, scope=scope, formats=("pdf", "svg"), reference=reference)
     )
     assert body["status"] == "done", body
-    assert_svg(body, outputs["svg"])
+    assert_svg(body, outputs["svg"], scope=scope)
     # A single PDF also honors the same explicit saved identity without executing.
     body, outputs = output(client, spec(source, scope=scope, formats=("pdf",), reference=reference))
     assert outputs["pdf"]["status"] == "done", body
@@ -818,3 +860,88 @@ def test_native_execution_revokes_saved_reference_before_new_materialization(
     assert m._svg_snapshot_matches_current(root, source, record, explicit=True) is (
         transition == "failed_continue"
     )
+
+
+def _original_svg_text_facts(body, outputs):
+    path = Path(body["export_dir"]) / outputs["svg"]["name"]
+    root = ET.fromstring(path.read_bytes())
+    ns = "{http://www.w3.org/2000/svg}"
+    return root, list(root.iter(ns + "text"))
+
+
+def test_original_export_keeps_matplotlib_text_with_its_own_font(project):
+    """ADR 0144：原样导出默认 <text>；脚本自己的字体（matplotlib 默认 DejaVu Sans）按输出保留。"""
+    client, _ = project
+    source = run_script(client)
+    body, outputs = output(client, spec(source, scope="original", strict=True))
+    root, texts = _original_svg_text_facts(body, outputs)
+    title = [t for t in texts if "".join(t.itertext()) == "Source title"]
+    assert len(title) == 1
+    style = title[0].get("style") or ""
+    assert "DejaVu Sans" in style and "Liberation" not in style
+
+
+def test_original_export_pair_serves_text_but_saved_snapshot_baseline_stays_path(project):
+    client, root = project
+    source = run_script(client)
+    body, outputs = output(client, spec(source, scope="original", formats=("pdf", "svg")))
+    assert body["status"] == "done", body
+    assert_svg(body, outputs["svg"], text=True)
+    # 存下快照：#1185 等价证人那份基准字节仍是 path，没有被文字版替换
+    saved = client.post("/api/layouts/first?target=project", json=document(source, []))
+    assert saved.status_code == 200, saved.get_json()
+    reference = saved.get_json()["figure_snapshots"]["panel"]
+    body, outputs = output(
+        client, spec(source, scope="original", formats=("svg", "pdf"), reference=reference)
+    )
+    assert_svg(body, outputs["svg"], text=False)
+
+
+def test_old_worker_without_the_new_fields_falls_back_to_outlines(project, monkeypatch):
+    client, _ = project
+    source = run_script(client)
+    monkeypatch.setattr(m, "_supported_export_kwargs", lambda worker, **wanted: {})
+    body, outputs = output(client, spec(source, scope="original", strict=True))
+    assert_svg(body, outputs["svg"], text=False)
+    body, outputs = output(client, spec(source, scope="original", formats=("pdf", "svg")))
+    assert_svg(body, outputs["svg"], text=False)
+
+
+def test_supported_export_kwargs_only_passes_what_the_worker_signature_has():
+    class Old:
+        def export(self, stem, patches, path, fmt="pdf", dpi=600, *, svg_path=None): ...
+
+    class New:
+        def export(
+            self, stem, patches, path, fmt="pdf", dpi=600, *, svg_fonttype=None, **extra
+        ): ...
+
+    wanted = {"svg_fonttype": "none", "svg_text_path": "x"}
+    assert m._supported_export_kwargs(Old(), **wanted) == {}
+    assert m._supported_export_kwargs(New(), **wanted) == wanted
+
+
+def _canvas_panel_texts(body, outputs):
+    path = Path(body["export_dir"]) / outputs["svg"]["name"]
+    ns = "{http://www.w3.org/2000/svg}"
+    return ["".join(t.itertext()) for t in ET.fromstring(path.read_bytes()).iter(ns + "text")]
+
+
+def test_canvas_live_figure_panel_keeps_matplotlib_text(project):
+    """P1（Codex #1283）：画布里的 live Figure 面板也要带上 matplotlib 自己的 <text>，不只画布新增文字。"""
+    client, _ = project
+    source = run_script(client)
+    body, outputs = output(client, spec(source, scope="canvas"))
+    assert body["status"] == "done", body
+    assert "Source title" in _canvas_panel_texts(body, outputs)
+
+
+def test_canvas_live_figure_panel_falls_back_to_outlines_on_old_worker(project, monkeypatch):
+    client, _ = project
+    source = run_script(client)
+    monkeypatch.setattr(m, "_supported_export_kwargs", lambda worker, **wanted: {})
+    body, outputs = output(client, spec(source, scope="canvas", formats=("svg", "pdf")))
+    assert body["status"] == "done", body
+    assert outputs["pdf"]["status"] == "done"
+    texts = _canvas_panel_texts(body, outputs)
+    assert "Source title" not in texts and texts  # 画布自己的文字仍在

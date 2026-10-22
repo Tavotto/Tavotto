@@ -90,7 +90,6 @@ export interface WrittenInfo {
   /** 这份正文是替哪个项目写的（排队时的项目，不是回包时碰巧是哪个） */
   pj: string | null
   metadata: WrittenMetadata
-  svgSnapshotWarnings?: string[]
   figureSnapshots?: Record<string, FigureSnapshot>
   snapshotContext?: FigureSnapshotSaveContext
 }
@@ -103,7 +102,7 @@ export interface DiskApi {
     baseline: number | undefined,
     revision: string | undefined,
     pj: string | null,
-  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; svg_snapshot_warnings?: string[]; figure_snapshots?: Record<string, FigureSnapshot> }>
+  ) => Promise<{ saved_at?: number; revision?: string | null; metadata?: WrittenMetadata; figure_snapshots?: Record<string, FigureSnapshot> }>
   fetch: (id: string, pj: string | null) => Promise<{ revision: string | null } | null>
   fetchSummary: (id: string, pj: string | null) => Promise<DiskDocumentSummary | null>
 }
@@ -299,7 +298,6 @@ export function createDiskWriter(ports: DiskWriterPorts): DiskWriter {
           pj,
           metadata: res.metadata,
           ...(res.figure_snapshots !== undefined ? { figureSnapshots: res.figure_snapshots, snapshotContext } : {}),
-          ...(res.svg_snapshot_warnings !== undefined ? { svgSnapshotWarnings: res.svg_snapshot_warnings } : {}),
         })
         ports.outcome(trigger, 'ok')
       })

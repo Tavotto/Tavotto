@@ -84,19 +84,23 @@
   与 `FileResource.sha256` 比，不符 `source_identity`、没交 `source_bytes_missing`——与 `read_frozen()` 是有意的两道（RC-014）。
 - **SVG 写入是同一 IR 的另一载体（X03）**：`svgwriter.write_svg` 支持 Path / Group / clip / Image /
   ShapedText，物理尺寸用 pt、viewBox 与页同尺寸；页面外层只翻一次 y，组矩阵与 paint order 原样保留。
-  字形由批准脸的 fontTools 轮廓按已有 gid / advance / offset / rise 落笔，不重新 shaping、不找系统字体；
-  如实记 `text_policy=outlines`、轮廓 / 缺字计数，不伪称可检索或字体嵌入。零宽 PDF hairline 无等价 SVG
+  **文字默认保留为 `<text>`（ADR 0144，`text_policy=text`）**：每个 shaped run 一个 `<text>`，真实 Unicode（来自 cluster 原文）、
+  批准脸真实族名 + 回退链（唯一出处 `svgfonts.py`）、**每个 run 只一个起点 `x`**（逐字形 x 会被 Word「转换为形状」打散）、`xml:space=preserve`；还原不出可靠 Unicode 的 run
+  （无 cluster 原文 / `.notdef` / 字体不覆盖 / 私用区 / 控制符）**逐 run 退回轮廓**并计 `text_fallback_runs`，不让整份失败。
+  `text_policy=outlines` 保留为 `write_svg(..., text_policy="outlines")` 的内部退路：字形由批准脸的 fontTools 轮廓按已有
+  gid / advance / offset / rise 落笔，不重新 shaping、不找系统字体。两种策略都不伪称字体嵌入（`embedded=false`）。零宽 PDF hairline 无等价 SVG
   表达时结构化拒绝。图片经既有解码与预算，PNG / JPEG 内嵌、TIFF 转 PNG，保原像素网格与 straight alpha。
   ImportedPage 的 SVG 能力是**按来源有条件成立**：`FileResource.svg_sha256` 必须来自已核验的同 Figure 对，
   写入器再次核 canonical 源与 companion 的字节 hash；只有第一张源页，opaque PDF 明确拒绝、不解析成猜测的路径、
   不自动栅格。导入 SVG 的 viewBox 归一到源可见框后复用 `placement.place()`，crop / rotation / flip 顺序不另写一份。
   每个实例前缀化所有 ID 与内部引用，CSS 选择器限定在该实例内，组 opacity 不分摊给 children。
+  导入伴随件里的 `<text>` 在 text 策略下原样保留（`imported_text_elements`），outlines 策略下仍以 `svg_source_text_not_outlined` 拒收。
   配对生成、`require_built` 与持久化约束分别在 `export-pipeline.md` / `layout-versions-and-documents.md`。
 - **SVG 安全与检查共用一处（X03）**：纯标准库 `svgcheck.parse_svg` 是导入和 `inspector` 的有界 XML / CSS 闸，
   拒绝 DTD / entities / 脚本 / 事件 / 外链 / 远程字体、危险 CSS，以及重复、悬空、循环资源引用；内嵌图片也受预算。
   只在可信 worker 生成边界、hash 冻结前允许移除精确匹配的 Matplotlib 惰性 DOCTYPE；任意导入文件不借这条放行。
   `svgwriter` 封口前再验整份组装结果，`inspector` 重新打开成品读物理尺寸、viewBox、轮廓 / 图片等字节事实。
-  轮廓策略不把字体嵌入或文字检索判为 verified；这也不等于已通过 Office 插入 / 重开 / 转 PDF 兼容性验证。
+  轮廓策略不把字体嵌入或文字检索判为 verified，text 策略也不判字体嵌入（只核 `font-family` 的首选族）；这也不等于已通过 Office 插入 / 重开 / 转 PDF 兼容性验证。
   看护：`tests/test_rendercore_svgwriter.py`、`tests/test_rendercore_svginspect.py`、`tests/test_worker_svg_pair.py`。
 - **native（PDFium）调用只在 render child 里，父进程一把锁串行**（ADR 0066，`renderchild.py` / `renderhost.py`）：probe / size /
   render / inspect 四种 op 都经 `RenderHost`（只要可见尺寸的调用走 `size`：`FPDF_GetPageSizeByIndexF` 不加载页、不解析内容流，

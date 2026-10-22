@@ -27,9 +27,9 @@
  * ### 版本
  *
  * `schemaVersion` 说的是这一格的**格式**；`flowVersion` 说的是**步骤内容**。
- * 格式认不出 → 回安全默认（未开始）；步骤内容升了版 → 进行中 / 暂停的用户回到
- * 第一个未完成的步骤（新加的步骤会被提供），已完成 / 已跳过的用户**不被重新
- * 打扰**、完成历史原样保留。
+ * 格式认不出 → 回安全默认（未开始）；步骤内容升了版 → 上一版留下的已完成 / 已跳过 /
+ * 进行中 / 暂停**一律回到新手态**，把新教程自动看一次（2026-10-21 用户裁决，ADR 0136 修订；
+ * 只发生一次，见 `migratePersisted`），`hintSeen` 保留。
  *
  * ### embedded
  *
@@ -49,12 +49,26 @@ export const ONBOARDING_SCHEMA_VERSION = 1
  *
  * v3（2026-10-19，ADR 0136）：八步工作台 coachmark 教程换成三步原生演示教程
  * （`demo_import` / `demo_move_legend` / `demo_change_title`）。
+ *
+ * v4（2026-10-21，同一教程内容，只升迁移纪元）：「老用户升级后看一次」的迁移要认得出**已经被 v3 代码读过并写回**的旧
+ * blob——v3 代码读旧 blob 时把 `flowVersion` 规范成 3 再原样存回（如 `markHintSeen`），按 `< 3` 判就认成「当前」了
+ * （Codex #1269）。升到 4 之后，凡 `flowVersion < 4`（含这些被规范成 3 的旧 blob）都迁回新手态一次。
+ * 代价：在 0.19.0b1 里真走完 v3 教程的人也会再看一次。
  */
-export const ONBOARDING_FLOW_VERSION = 3
+export const ONBOARDING_FLOW_VERSION = 4
 
 export const ONBOARDING_KEY = 'tavotto.onboarding'
 
 export type OnboardingStatus = 'not_started' | 'active' | 'paused' | 'completed' | 'skipped'
+export const ONBOARDING_STATUSES: readonly OnboardingStatus[] = [
+  'not_started',
+  'active',
+  'paused',
+  'completed',
+  'skipped',
+]
+export const isOnboardingStatus = (v: unknown): v is OnboardingStatus =>
+  typeof v === 'string' && (ONBOARDING_STATUSES as readonly string[]).includes(v)
 
 /** 一次性情境提示的种类（闭集）；每类只出现一次 */
 export const HINT_KINDS = [
@@ -246,7 +260,7 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
   const v = raw as Record<string, unknown>
   if (v.schemaVersion !== ONBOARDING_SCHEMA_VERSION) return { ...ONBOARDING_DEFAULTS }
 
-  let status = STATUSES.includes(v.status as OnboardingStatus)
+  const status = STATUSES.includes(v.status as OnboardingStatus)
     ? (v.status as OnboardingStatus)
     : 'not_started'
   const recorded = Array.isArray(v.completedSteps) ? (v.completedSteps.filter(isStepId) as StepId[]) : []
@@ -276,6 +290,24 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     }
   }
   const flowVersion = numOrNull(v.flowVersion) ?? 0
+  // 升级后让每个人把新教程看一次（2026-10-21 用户裁决，ADR 0136 修订，覆盖「已完成 / 已跳过的不被
+  // 重新打扰」）：上一版流程留下的 completed / skipped（也包括 active / paused——它们的步骤 id 在新流程里
+  // 本来就认不出，进度是空的）一律回到「新手态」，与一个真正的新用户同一条路径：主页显示新手版
+  // （`homeVariant`）、首次进入自动弹欢迎页（`useAutoOpen`）。**只发生一次**：返回值里的 `flowVersion`
+  // 是当前版本，之后用户在新版里完成 / 跳过就照常是老手版，下次读到时不再满足 `flowVersion < 当前`。
+  // 保留：`hintSeen`（用户已经知道的事不必再提示）。清掉：完成 / 跳过历史、起止时间（描述的是另一套
+  // 教程，留在 not_started 里自相矛盾；新一轮 `start()` 本就会重写）、`welcomeSeenAt`（它正是「自动弹一次」
+  // 的闸，不清则老用户永远不会自动弹；不另设标志位）、演示改动。`currentStep` 在未开始时恒为 null，
+  // 起点由 `start()` 设为第一步。tutorialProjectId / DocumentId 是 v2 遗留的格式字段，原样保留。
+  // 旧版的 not_started 也走这里：上一版看过欢迎页却没开始的人带着 `welcomeSeenAt`，不清就永远不会自动弹。
+  if (flowVersion < ONBOARDING_FLOW_VERSION) {
+    return {
+      ...ONBOARDING_DEFAULTS,
+      hintSeen,
+      tutorialProjectId: strOrNull(v.tutorialProjectId),
+      tutorialDocumentId: strOrNull(v.tutorialDocumentId),
+    }
+  }
   const done = new Set<string>(completedSteps)
   // 「欢迎」步骤已于 2026-09-30 取消；v2 的八个 coachmark 步骤于 2026-10-19 换成三步演示
   // （ADR 0136）。停在认不出的步骤上的进行中 / 暂停用户一律落到第一个未完成的新步骤；
@@ -285,7 +317,7 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
   if (inFlow) {
     // 步骤内容升了版，或记的步骤已经不存在：回到第一个未完成的步骤。
     // 完成历史一条不抹——用户做过的事仍然做过。
-    if (flowVersion < ONBOARDING_FLOW_VERSION || currentStep === null) {
+    if (currentStep === null) {
       currentStep = firstIncomplete(done)
     }
     // 停在前面还有没完成的步骤之后（手改 / 半截写入：如完成页 + 一步没做）：回到第一个未完成的。
@@ -294,9 +326,6 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     if (currentStep !== null && STEP_IDS.indexOf(currentStep) > STEP_IDS.indexOf(reachable)) {
       currentStep = reachable
     }
-    // 上一版的教程正进行到一半：换成了另一套教程，不在启动时把人直接拉进新的那套——
-    // 记成用户暂停，入口显示「继续」，点不点由他（ADR 0136：不因升级强迫老用户重新学）
-    if (flowVersion < ONBOARDING_FLOW_VERSION && status === 'active') status = 'paused'
   } else {
     currentStep = null
   }
@@ -320,8 +349,7 @@ export function migratePersisted(raw: unknown): OnboardingPersisted {
     tutorialDocumentId: strOrNull(v.tutorialDocumentId),
     pausedBy,
     welcomeSeenAt: numOrNull(v.welcomeSeenAt),
-    // 步骤内容换了版：上一版的演示改动不属于这一版的图
-    demo: flowVersion < ONBOARDING_FLOW_VERSION ? { ...DEMO_EDITS_EMPTY } : migrateDemo(v.demo),
+    demo: migrateDemo(v.demo),
   }
 }
 
@@ -361,6 +389,11 @@ interface OnboardingState extends OnboardingPersisted {
   resetHints: () => void
   /** 整格清掉：状态、进度、提示。教程副本（磁盘）不归这里管 */
   resetOnboarding: () => void
+  /**
+   * 回到新手态并落盘：与 `migratePersisted` 迁移旧流程同一状态（`not_started`、`welcomeSeenAt` 清空、
+   * `hintSeen` 保留）。Windows 卸载后重装（卸载记号，ADR 0136 修订 2026-10-21）用它；不碰示例项目副本。
+   */
+  resetToNewcomer: () => void
 }
 
 function commitState(patch: Partial<OnboardingPersisted>) {
@@ -469,6 +502,11 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   },
 
   resetHints: () => commitState({ hintSeen: {} }),
+
+  resetToNewcomer: () => {
+    set({ surface: 'none' })
+    commitState({ ...ONBOARDING_DEFAULTS, hintSeen: { ...get().hintSeen } })
+  },
 
   resetOnboarding: () => {
     set({ ...ONBOARDING_DEFAULTS, surface: 'none' })

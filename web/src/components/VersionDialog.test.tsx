@@ -45,7 +45,7 @@ import {
   type LayoutVersionMeta,
   type TimelineBudget,
 } from '@/lib/api'
-import { VersionDrawer } from '@/components/VersionDialog'
+import { TimelinePanel, TimelinePreviewDialog } from '@/components/VersionDialog'
 import { startNamedNode } from '@/store/actions'
 import { NamedNodeQuickBox } from '@/components/NamedNodeQuickBox'
 import { THUMB_OBJECT_LIMIT, THUMB_TEXT_CHARS } from '@/components/CanvasThumb'
@@ -53,7 +53,7 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useDocumentStore } from '@/store/documentStore'
 import { useTimelineStore } from '@/store/timelineStore'
 import { setCurrentProjectId } from '@/lib/session'
-import { useUiStore } from '@/store/uiStore'
+import { isTimelineOpen, useUiStore } from '@/store/uiStore'
 import { formatMessage, literal } from '@/i18n'
 import { emptyProject, type FigureDocument, type TextObject } from '@/types/document'
 
@@ -62,6 +62,17 @@ declare global {
   var IS_REACT_ACT_ENVIRONMENT: boolean
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+/** 右栏只在「时间线」页签亮着时才挂时间线面板（同 `Inspector`）；预览 / 恢复对话框与它平级常驻（同 `App`） */
+function TimelineHost() {
+  const open = useUiStore(isTimelineOpen)
+  return (
+    <>
+      {open ? <TimelinePanel /> : null}
+      <TimelinePreviewDialog />
+    </>
+  )
+}
 
 const mockList = vi.mocked(fetchTimeline)
 const mockDoc = vi.mocked(fetchVersionDoc)
@@ -112,7 +123,7 @@ async function mount(
   extra: Partial<Awaited<ReturnType<typeof fetchTimeline>>> = {},
 ) {
   mockList.mockResolvedValue({ versions: list, budget, ...extra })
-  useUiStore.setState({ versionsOpen: true })
+  useUiStore.setState({ rightOpen: true, rightTab: 'timeline' })
   useTimelineStore.setState({ namingOpen: false })
   const el = document.createElement('div')
   document.body.appendChild(el)
@@ -120,7 +131,7 @@ async function mount(
   await act(async () => {
     root.render(
       <TooltipProvider>
-        <VersionDrawer />
+        <TimelineHost />
         <NamedNodeQuickBox />
       </TooltipProvider>,
     )
@@ -165,7 +176,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   if (root) await act(async () => root.unmount())
-  useUiStore.setState({ versionsOpen: false })
+  useUiStore.setState({ rightTab: 'properties' })
 })
 
 const ids = () => useDocumentStore.getState().doc.objects.map((o) => o.id)
@@ -237,7 +248,7 @@ describe('预览对话框：只读，不改当前排版', () => {
     await mount([meta()])
     await act(async () => previews()[0].click())
     await flush()
-    await act(async () => useUiStore.setState({ versionsOpen: false }))
+    await act(async () => useUiStore.setState({ rightTab: 'properties' }))
     expect(useTimelineStore.getState().preview).toBeNull()
   })
 })
@@ -311,8 +322,8 @@ describe('抽屉的焦点（2026-10-07 设计审计 §10.2）', () => {
     document.body.appendChild(trigger)
     trigger.focus()
     await mount([meta()], undefined, false)
-    expect(document.activeElement).toBe($('[data-timeline-drawer]'))
-    await act(async () => useUiStore.setState({ versionsOpen: false }))
+    expect(document.activeElement).toBe($('[data-timeline-panel]'))
+    await act(async () => useUiStore.setState({ rightTab: 'properties' }))
     expect(document.activeElement).toBe(trigger)
     trigger.remove()
   })
@@ -333,16 +344,15 @@ describe('内联条的「恢复到这里」与预览恢复同一把锁（Codex #
     expect(dlg!.getAttribute('aria-busy')).toBe('true')
     expect($('[data-dialog="timeline-preview"] [data-dialog-close]')).toBeNull()
     expect($('[data-dialog-scrim]')).not.toBeNull()
-    // 抽屉也关不掉（右上角 × 禁用、Esc 不收）
-    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(true)
+    // 面板也收不起来（Esc 不收；页签与右栏都在模态遮罩后面）
     await act(async () => {
-      $('[data-timeline-drawer]')!.dispatchEvent(
+      $('[data-timeline-panel]')!.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
       )
     })
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     await flush()
-    expect(useUiStore.getState().versionsOpen).toBe(true)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(true)
     expect(useTimelineStore.getState().preview).not.toBeNull()
     expect(ids()).toEqual(['now'])
 
@@ -352,7 +362,6 @@ describe('内联条的「恢复到这里」与预览恢复同一把锁（Codex #
     expect(ids()).toEqual(['old'])
     expect(useTimelineStore.getState().restoring).toBeNull()
     expect(useTimelineStore.getState().preview).toBeNull()
-    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(false)
   })
 
   it('「恢复前」存不下来：不写、锁摘掉、为这次恢复打开的预览收回去', async () => {
@@ -364,7 +373,6 @@ describe('内联条的「恢复到这里」与预览恢复同一把锁（Codex #
     expect(ids()).toEqual(['now'])
     expect(useTimelineStore.getState().restoring).toBeNull()
     expect(useTimelineStore.getState().preview).toBeNull()
-    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(false)
   })
 })
 
@@ -441,7 +449,6 @@ describe('内联恢复取正文期间画布就被遮住（Codex #831 P1）', () 
     expect(useTimelineStore.getState().preview).toBeNull()
     expect($('[data-dialog="timeline-preview"]')).toBeNull()
     expect(useTimelineStore.getState().restoring).toBeNull()
-    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(false)
     expect($('[data-timeline-error-kind="preview"]')).not.toBeNull()
     expect(ids()).toEqual(['now'])
     expect(mockCreate).not.toHaveBeenCalled()
@@ -465,7 +472,6 @@ describe('恢复锁在取正文之前就挂上、按凭据摘（Codex #831 P1）
     // A 还在取正文：锁已挂上，所有行的「恢复到这里」一起禁用、抽屉关不掉
     expect(useTimelineStore.getState().restoring).not.toBeNull()
     expect(restoreBtn('vB').disabled).toBe(true)
-    expect($<HTMLButtonElement>('[data-timeline-close]')!.disabled).toBe(true)
     await act(async () => restoreBtn('vB').click())
     await flush()
     expect(mockDoc).toHaveBeenCalledTimes(1)
@@ -474,6 +480,32 @@ describe('恢复锁在取正文之前就挂上、按凭据摘（Codex #831 P1）
     await flush()
     expect(ids()).toEqual(['from_vA'])
     expect(mockCreate).toHaveBeenCalledTimes(1)
+    expect(useTimelineStore.getState().restoring).toBeNull()
+  })
+
+  it('恢复在飞时收起右栏 / 切页签 / 关时间线：面板卸载了，对话框仍挂着、预览不清（Codex #1268 P1）', async () => {
+    let giveA!: (v: Awaited<ReturnType<typeof fetchVersionDoc>>) => void
+    mockDoc.mockImplementation(
+      () => new Promise((resolve) => (giveA = resolve)),
+    )
+    await mount([meta({ id: 'vA' })], undefined, false)
+    await act(async () => node('vA').querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!.click())
+    await flush()
+    expect(useTimelineStore.getState().restoring).not.toBeNull()
+    expect($('[data-dialog="timeline-preview"]')).not.toBeNull()
+    for (const act1 of [
+      () => useUiStore.getState().toggleRight(),
+      () => useUiStore.getState().toggleRight(),
+      () => useUiStore.getState().setRightTab('properties'),
+    ]) {
+      await act(async () => act1())
+      await flush()
+      expect($('[data-dialog="timeline-preview"]')).not.toBeNull()
+      expect(useTimelineStore.getState().preview?.meta.id).toBe('vA')
+    }
+    expect($('[data-timeline-panel]')).toBeNull()
+    await act(async () => giveA({ ...meta({ id: 'vA' }), doc: { ...snapshot(), objects: [text('x', 'x')] } }))
+    await flush()
     expect(useTimelineStore.getState().restoring).toBeNull()
   })
 
@@ -680,7 +712,7 @@ describe('命名与改名', () => {
     })
     expect($('[data-timeline-name-open]')).toBeNull()
     expect(document.activeElement).toBe($('[data-timeline-name-input]'))
-    expect(document.querySelector('[data-timeline-drawer]')?.textContent).toContain('不会被自动清理')
+    expect(document.querySelector('[data-timeline-panel]')?.textContent).toContain('不会被自动清理')
   })
 
   it('Esc 只收起命名输入、不关抽屉', async () => {
@@ -691,13 +723,13 @@ describe('命名与改名', () => {
     })
     expect($('[data-timeline-name-input]')).toBeNull()
     expect($('[data-timeline-name-open]')).not.toBeNull()
-    expect(useUiStore.getState().versionsOpen).toBe(true)
+    expect(isTimelineOpen(useUiStore.getState())).toBe(true)
   })
 
   it('抽屉关掉再打开：命名输入不记得上次展开', async () => {
     await mount([meta()])
-    await act(async () => useUiStore.setState({ versionsOpen: false }))
-    await act(async () => useUiStore.setState({ versionsOpen: true }))
+    await act(async () => useUiStore.setState({ rightTab: 'properties' }))
+    await act(async () => useUiStore.setState({ rightOpen: true, rightTab: 'timeline' }))
     await flush()
     expect($('[data-timeline-name-input]')).toBeNull()
   })
@@ -727,7 +759,7 @@ describe('命名与改名', () => {
       return input
     }
     const openQuick = async () => {
-      await act(async () => useUiStore.setState({ versionsOpen: false }))
+      await act(async () => useUiStore.setState({ rightTab: 'properties' }))
       await act(async () => startNamedNode())
       await flush()
     }
@@ -736,8 +768,8 @@ describe('命名与改名', () => {
       mockCreate.mockResolvedValueOnce({ version: meta({ id: 'v_named' }) })
       await mount([meta()], undefined, false)
       await openQuick()
-      expect(useUiStore.getState().versionsOpen).toBe(false)
-      expect($('[data-timeline-drawer]')).toBeNull()
+      expect(isTimelineOpen(useUiStore.getState())).toBe(false)
+      expect($('[data-timeline-panel]')).toBeNull()
       const input = $<HTMLInputElement>('[data-timeline-quick-name-input]')!
       expect(document.activeElement).toBe(input)
       expect($('[data-timeline-quick-name]')?.textContent).toContain('不会被自动清理')
@@ -749,7 +781,7 @@ describe('命名与改名', () => {
       expect(mockCreate.mock.calls[0][1]).toMatchObject({ auto: false, named: true, name: '投稿前' })
       expect($('[data-timeline-quick-name]')).toBeNull()
       expect(useTimelineStore.getState().namingOpen).toBe(false)
-      expect(useUiStore.getState().versionsOpen).toBe(false)
+      expect(isTimelineOpen(useUiStore.getState())).toBe(false)
     })
 
     it('失败（超上限）：话写在小框里，小框不关、名字不丢', async () => {
@@ -904,14 +936,14 @@ describe('列表重取交叠：只认最新那一次', () => {
     mockList.mockImplementationOnce(
       () => new Promise((r) => (resolveOld = r as typeof resolveOld)),
     )
-    useUiStore.setState({ versionsOpen: true })
+    useUiStore.setState({ rightOpen: true, rightTab: 'timeline' })
     const el = document.createElement('div')
     document.body.appendChild(el)
     root = createRoot(el)
     await act(async () => {
       root.render(
         <TooltipProvider>
-          <VersionDrawer />
+          <TimelineHost />
         </TooltipProvider>,
       )
     })
@@ -934,14 +966,14 @@ describe('列表重取交叠：只认最新那一次', () => {
     mockList.mockImplementationOnce(
       () => new Promise((r) => (resolveOld = r as typeof resolveOld)),
     )
-    useUiStore.setState({ versionsOpen: true })
+    useUiStore.setState({ rightOpen: true, rightTab: 'timeline' })
     const el = document.createElement('div')
     document.body.appendChild(el)
     root = createRoot(el)
     await act(async () => {
       root.render(
         <TooltipProvider>
-          <VersionDrawer />
+          <TimelineHost />
         </TooltipProvider>,
       )
     })

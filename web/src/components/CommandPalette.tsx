@@ -58,6 +58,7 @@ import {
   selectAll,
   ungroupSelected,
   startNamedNode,
+  openTimeline,
 } from '@/store/actions'
 import { canCycleOverlapSelection, cycleOverlapSelection } from '@/canvas/interactions'
 import {
@@ -171,7 +172,7 @@ const COMMANDS: Command[] = [
   { id: 'save-document', shortcut: keyOf('save'), run: () => void runManualSave() },
   { id: 'save-layout', shortcut: keyOf('saveAs'), run: () => ui().setLayoutOpen(true, 'save') },
   { id: 'load-layout', run: () => ui().setLayoutOpen(true, 'load') },
-  { id: 'versions', shortcut: keyOf('timeline'), run: () => ui().setVersionsOpen(true) },
+  { id: 'versions', shortcut: keyOf('timeline'), run: openTimeline },
   { id: 'save-named-version', shortcut: keyOf('saveNamed'), run: startNamedNode },
   { id: 'styles', run: () => ui().setStylesOpen(true) },
   { id: 'new-doc', run: () => void newBlankDocument() },

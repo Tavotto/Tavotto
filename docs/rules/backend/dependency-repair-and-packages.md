@@ -52,6 +52,29 @@
   （`projectenv` 不 import `userenvs`：它要 import 本模块的体检）。`TAVOTTO_USER_ENV_DISCOVERY=0` 整个关掉，
   **测试进程默认关**（`tests/conftest.py`，否则用例结果随 CI 机器上碰巧装了什么而变）；`script` 可来自请求体，
   `discover()` 先过 `projectenv.contained_path()`，下游只用净化器回的值（CodeQL `py/path-injection`）。
+  **Windows 发现补强与落选原因（ADR 0079 修订 2026-10-21，用户裁决「脚本默认在它原本能跑的环境里运行」）**：
+  `.condarc`（`%CONDARC%` / `~/.condarc`）的 `envs_dirs` / `pkgs_dirs` 旁的根、PATH 里 `conda.exe` / `mamba.exe` /
+  `micromamba.exe` 反推安装根（只 `is_file`，**不执行**）、PEP 514 注册表（`userenvs._windows_registry_pythons`，来源
+  `windows_registry`，第 3 档）；`rank()` 第一把尺子是体检确认程度（确认能跑 > 没量到 > 确认跑不了），不碰「内置能跑就不换」
+  （`runs_now` 分支）；被评估没选用的候选各有稳定码原因（`userenvs.REJECT_CODES`），在 `pool.EnvironmentDecision.rejected`，不带路径。
+  看护 `tests/test_user_environment_windows_discovery.py`。
+  **ROOT 叠加环境（ADR 0079 修订 2026-10-21 b）**：脚本 import 了 `ROOT`、且没有候选**裸起**就导入得了它时，
+  `deprepair._root_overlay_entries` 把用户装的 CERN ROOT（`engine/rootenv.py`：`ROOTSYS` / Windows 卸载项 / 常见位置 / Homebrew
+  Cellar；判据 = `bin/thisroot.(bat|sh)` + PyROOT 标志，纯 stat，**不执行 thisroot**，至多 8 个、组合用最新 2 个、至多 8 对）
+  叠到候选解释器（含内置 runtime 与 Conda 环境——叠加层在激活增量之后叠）上用现有体检再量，`source=root_overlay`，标签 `Python 3.14 + ROOT 6.38`，
+  与裸起候选进同一张表走 `best()`。叠加层 = `{"kind","root","version"}`，随项目记录持久化（`projectenv.remember(env_overlay=)` /
+  `remembered_overlay`），环境变量每次起进程现算（`rootenv.apply_overlay`：安装根不再像 ROOT 就不叠），**最后**叠（内置 runtime
+  摘了 `PYTHONPATH` 之后；`pool.launch_env`）；只进 Popen 的 env，**不进 `ExecutionSpec`**，带叠加层的解释器只走 Python 池
+  （`WorkerdWorker` 拒收）；会话复用前核对叠加层（`叠加环境已变`）。**身份键 vs 代次键**：`rootenv.key_of`（只按路径）用于持久化 / pin / 候选身份 / `env_id` 对账，不随安装内容变；体检缓存键（`userenvs._cache_key`）与热 worker 复用（`env_overlay_key`）比的是 `rootenv.generation_of` = 身份键 + 安装内容指纹（`bin/thisroot.*`、版本头、`ROOT/_python_version.py`、`bin/cppyy/libcppyy*.pyd` 的 size + mtime_ns，纯 stat），原地升级 / 重新解压后旧结论与旧进程不再复用。`os.add_dll_directory` 返回的句柄必须被持有（worker 模块级 `_dll_dir_handles`、体检脚本模块变量）。身份是 `userenvs.entry_key` / `env_id(python, overlay)`
+  （同一解释器裸起与叠加是两个候选）。运行之前不量叠加组合（`spec` 体检 `-I` 忽略环境变量），采用发生在用户点「运行」之后。
+  落选原因多 `root_python_mismatch`（叠上仍 import 不了 ROOT：二进制包只配一个 Python 小版本）+ `root_version`（不带路径）。
+  **Windows 真机修订（2026-10-21，ADR 0079 同名小节）**：`apply_overlay` 在 Windows 上设私有变量 `TAVOTTO_ROOT_DLL_DIR`（`rootenv.DLL_DIR_ENV`）与
+  `TAVOTTO_ROOT_CPPYY_DIR`（`CPPYY_DIR_ENV`；`bin\cppyy` 里有 `types.py` 等同名标准库文件，**不许**进 `PYTHONPATH` / `sys.path`），worker 启动钩子 `worker._startup_dll_directory` 与体检脚本据此 `os.add_dll_directory` 并往 `sys.meta_path` 末尾装只认 `libcppyy` 的 finder
+  （两处必须同做，否则体检把 DLL 没登记误判成版本不配；worker 里的变量名与 `rootenv.DLL_DIR_ENV` 对拍；py3.10 兼容）；
+  `ROOT\_python_version.py` 的 `_root_python_version` 静态读出 `build_python`，与底小版本都已知且不同 → `overlay_candidates` 给组合打
+  `overlay_reject`（`root_python_mismatch`），没有 C++ 工具（`rootenv.msvc_available`，vswhere，有界超时）→ `root_needs_msvc`，均不起进程；
+  发现多 `PATH` 里含 thisroot 的 bin 与家目录 / 桌面 / 下载下一层的 `root*`（及 `root*\root`）；`RVersion.hxx` 宏合成版本。
+  看护 `tests/test_root_env_overlay.py`。
   **映射不到包名的 import 也触发（ADR 0079 修订 2026-09-25，QA ENV-08-B1）**：计划 `nothing_needed` 但有无条件
   `unknown` 时，先经 `deprepair.unknown_imports_missing` → `userenvs.imports_missing` 在此刻的解释器里量一次（同一条体检、
   同一个缓存；内置 runtime 按 worker 的 `child_env()` / `child_args()` 量，`probe_environment(bundled=True)`）；只有**确实**
@@ -687,3 +710,17 @@ PR1–PR6 的规则分散在上面各节（PR1 / PR2 在「联合依赖准备」
   hash 锁的 `provider_decisions` 与已扫描 import 的 `install_only` 按同一份实际安装集合 `installing`（整份选中锁）生成，不拿 active 环境里另一种 provider 的满足状态抵消本次安装记录（#970）；不因此增加锁外需求或改变仅声明依赖的记账规则。
 - 看护：`tests/test_dependency_origin_install.py`（计划层，四 provider × 声明 / 观察、editable / 本地 wheel / VCS、本地 helper / namespace、显式选择）、
   `tests/test_dependency_provider_scopes.py`（真 generation + 离线 pip：安装集合 = 脚本实际 provider = 回执；跨作用域切换；失败不动旧 active）。
+
+## 声明读取边界与「不送 pip」的名字（ADR 0061 §十，2026-10-21）
+
+- **声明只读到最近的项目标志**：`depresolve._decl_dirs` 从脚本目录往上，到含 `PROJECT_MARKERS`（`.git` / `pyproject.toml` / `setup.cfg` /
+  `setup.py`）的目录为止；`is_broad_folder`（家目录、桌面 / 文档 / 下载、盘符根）一律不读，遍历到就停。`project_declared()` 与
+  `declared_intents()` 共用，PEP 723 只看脚本本身。
+- **三类名字不送 pip**：`NOT_PIP_INSTALLABLE`（ROOT；声明里的同名发行包也过滤，进 `JointPlan.not_pip_installable`）、脚本字面量 `sys.path`
+  目录里找不到的 import（`origins[].local_module_missing`）、没有可信安装名的表外名（只有预填，用户确认才成 `user_specified`）。前两类不预填，
+  `user_specified` 对它们抛 `UserSpecifiedRejected(NOT_APPLICABLE)`。
+- **`importscan` 的字面量搜索根**只认 `__file__` 目录 + 字符串字面量（`_literal_dir`），至多 `_MAX_LITERAL_ROOTS` 个，词法钉在项目内；
+  新增标签 `sys_path_literal`（证据码同名）。
+- **找不到的包点名**：`deprepair.not_found_detail` → `RepairError.extra["not_found"]` → 终态进度 `not_found`；前端 `repairShortMessage(code, notFound)`。
+  不做「剔除后重试」（会破坏 `generation_atomic` 与装后核验，理由见 ADR 0061 §十）。
+- 看护：`tests/test_dependency_declaration_boundary.py`、`web/src/components/repairNotFoundNamed.test.tsx`。

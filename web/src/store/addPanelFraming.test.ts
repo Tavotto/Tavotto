@@ -1,10 +1,10 @@
 /**
  * 新加进画布的图怎么进视野，只由 `workspace.frameAddedPanel` 一处判（#706 评审 P2 ×4）：
  *
- * - 排版上：取景「页面 ∪ 这张图」并留在适应模式；拖放到一点、图整张已在视口里就不动；
- * - 快速编辑里（对话框在快编时加图、`openFastEdit` 打开一张还不在画布上的图）：不动
- *   正在编辑的那一屏，记到停放的排版视口上，回排版时再判；
- * - 回排版：页面尺寸比的是最终值（改了又改回算没变），新图都整张在停放那一片里就原样还原。
+ * - 多图排版上：取景「页面 ∪ 这张图」并留在适应模式；拖放到一点、图整张已在视口里就不动；
+ * - 单图编辑里（画布上恰好一张图；对话框在单图时加图，或 `openFastEdit` 打开一张还不在画布上的图）：
+ *   这一张的加入让画布变成两张 = 切到多图排版（`startWorkspaceModeSync`），那一刻取景「页面 ∪ 所有图」
+ *   并留在适应模式（不还原进单图之前的视口：用户说「取景页面 ∪ 图」）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CapturedFigureDescriptor, PanelInfo } from '@/lib/api'
@@ -20,7 +20,7 @@ import {
   addPanelToCanvas,
   addRuntimePanelToCanvas,
   openFastEdit,
-  returnToLayout,
+  startWorkspaceModeSync,
   useWorkspaceStore,
 } from './workspace'
 
@@ -31,6 +31,7 @@ const vp = () => useViewportStore.getState()
 const view = () => ({ zoom: vp().zoom, panX: vp().panX, panY: vp().panY })
 const page = () => useDocumentStore.getState().doc.page
 let stop: () => void = () => {}
+let stopMode: () => void = () => {}
 
 function info(id: string, w: number, h: number): PanelInfo {
   return { id, name: id, folder: '.', kind: 'pdf', native_w_mm: w, native_h_mm: h, mtime: 1 }
@@ -53,11 +54,25 @@ function descriptor(w: number, h: number): CapturedFigureDescriptor {
 }
 
 /** 取景框按「页面 ∪ 对象」独立算（不借 `pageUnion`：那等于拿被测代码验自己） */
-function unionOf(o: { x: number; y: number; w: number; h: number }) {
+function unionOf(...os: { x: number; y: number; w: number; h: number }[]) {
   const { w, h } = page()
-  const x = Math.min(0, o.x)
-  const y = Math.min(0, o.y)
-  return { x, y, w: Math.max(w, o.x + o.w) - x, h: Math.max(h, o.y + o.h) - y }
+  const x = Math.min(0, ...os.map((o) => o.x))
+  const y = Math.min(0, ...os.map((o) => o.y))
+  return {
+    x,
+    y,
+    w: Math.max(w, ...os.map((o) => o.x + o.w)) - x,
+    h: Math.max(h, ...os.map((o) => o.y + o.h)) - y,
+  }
+}
+
+const figures = () => useDocumentStore.getState().doc.objects.filter((o) => o.type === 'panel')
+
+/** 画布上先放两张小图：≥2 张 = 多图排版（后面用例在它上面再加图） */
+function seedLayout() {
+  addFigureToLayout('small.pdf')
+  addFigureToLayout('edit.pdf')
+  expect(useWorkspaceStore.getState().mode).toBe('layout')
 }
 
 /** 按页面适配的落点，按公式独立算 */
@@ -97,15 +112,20 @@ beforeEach(async () => {
   useViewportStore.setState({ zoom: 1, panX: 0, panY: 0, fitted: false })
   vp().setViewRect(VIEW)
   stop = startPageSizeFit()
+  // 模式由图数推出：挂上真订阅，加图就和应用里一样切模式、动视口
+  stopMode = startWorkspaceModeSync()
 })
 
 afterEach(() => {
   stop()
+  stopMode()
   useWorkspaceStore.getState().clear()
   vi.unstubAllGlobals()
 })
 
-describe('排版上加图', () => {
+describe('多图排版上加图', () => {
+  beforeEach(seedLayout)
+
   it('addPanelToCanvas（选图对话框 / 接入状态对话框）：超页图取景「页面 ∪ 图」，留在适应模式', () => {
     vp().setView({ zoom: 3, panX: -500, panY: -400 })
     const obj = addPanelToCanvas(bigInfo())!
@@ -135,38 +155,44 @@ describe('排版上加图', () => {
   })
 })
 
-describe('快速编辑里加图（r4129948725）', () => {
-  it('对话框在快编时加超页图：快编那一屏不动；回排版取景「页面 ∪ 图」', () => {
+describe('单图编辑里加图 = 第二张进来，切到多图排版', () => {
+  it('对话框在单图时加超页图：切多图排版，取景「页面 ∪ 所有图」', () => {
     customLayoutView()
     openFastEdit('edit.pdf')
-    const editing = view()
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
     const obj = addPanelToCanvas(bigInfo())!
-    expect(view(), '正在编辑的那一屏不许被新图带着跳').toEqual(editing)
-    returnToLayout()
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
     expect(vp().fitted).toBe(true)
-    expect(vp().fitFrame()).toMatchObject(unionOf(obj))
+    expect(vp().fitFrame()).toMatchObject(unionOf(...figures()))
+    expect(figures()).toContain(obj)
   })
 
-  it('对话框在快编时加的小图整张在停放那一片里：回排版原样还原', () => {
-    const before = customLayoutView()
+  it('对话框在单图时加的小图：同样取景「页面 ∪ 所有图」，不还原进单图之前的那一片', () => {
+    customLayoutView()
     openFastEdit('edit.pdf')
     addRuntimePanelToCanvas(descriptor(10, 10))
-    returnToLayout()
-    expect(view()).toEqual(before)
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
+    expect(vp().fitted).toBe(true)
+    expect(vp().fitFrame()).toMatchObject(unionOf(...figures()))
+  })
+
+  it('同一调用栈里不取两遍景：切换那一次已取了，`frameAddedPanel` 认账不再取', () => {
+    customLayoutView()
+    openFastEdit('edit.pdf')
+    const fit = vi.spyOn(useViewportStore.getState(), 'fitRectAnimated')
+    addPanelToCanvas(bigInfo())
+    expect(fit).toHaveBeenCalledTimes(1)
   })
 })
 
 describe('addFigureToLayout 是分层链第 1 层（r4130522228）', () => {
-  it('快编里点「添加到画布」一张新图：先回排版、再经第 2 层取景「页面 ∪ 图」', () => {
+  it('单图时点「添加到画布」一张新图：切多图排版、经第 2 层取景「页面 ∪ 图」', () => {
     customLayoutView()
     openFastEdit('edit.pdf')
     expect(addFigureToLayout('big.pdf')).toBe('added')
     expect(useWorkspaceStore.getState().mode).toBe('layout')
-    const obj = useDocumentStore
-      .getState()
-      .doc.objects.find((o) => o.type === 'panel' && o.fileId === 'big.pdf')!
     expect(vp().fitted).toBe(true)
-    expect(vp().fitFrame()).toMatchObject(unionOf(obj))
+    expect(vp().fitFrame()).toMatchObject(unionOf(...figures()))
   })
 
   it('已在文档里：只聚焦，不新建第二张', () => {
@@ -178,42 +204,41 @@ describe('addFigureToLayout 是分层链第 1 层（r4130522228）', () => {
 })
 
 describe('openFastEdit 打开还不在画布上的图（r4129948729）', () => {
-  it('停放的是加图之前那一片：小图回排版原样还原', () => {
-    const before = customLayoutView()
+  it('空画布上打开：这一张就是单图编辑，取景它本身的矩形', () => {
+    customLayoutView()
     openFastEdit('small.pdf')
     expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
-    returnToLayout()
-    expect(view()).toEqual(before)
+    const [only] = figures()
+    // 整张图都在舞台里（取景的是它本身的矩形，不是页面）
+    const k = BASE_PX_PER_MM * vp().zoom
+    expect(only.x * k + vp().panX).toBeGreaterThanOrEqual(0)
+    expect(only.y * k + vp().panY).toBeGreaterThanOrEqual(0)
+    expect((only.x + only.w) * k + vp().panX).toBeLessThanOrEqual(VIEW.width)
+    expect((only.y + only.h) * k + vp().panY).toBeLessThanOrEqual(VIEW.height)
+    expect(vp().zoom).toBeGreaterThan(pageFitView().zoom) // 小图被放大到铺满舞台，不是页面那一档
   })
 
-  it('超页图：回排版取景「页面 ∪ 图」', () => {
+  it('已有一张时再打开一张：换看（新画布），原画布一个字节不动；取景那张新图本身', () => {
     customLayoutView()
-    openFastEdit('big.pdf')
-    const obj = useDocumentStore
-      .getState()
-      .doc.objects.find((o) => o.type === 'panel' && o.fileId === 'big.pdf')!
-    returnToLayout()
-    expect(vp().fitFrame()).toMatchObject(unionOf(obj))
+    openFastEdit('small.pdf')
+    const first = useDocumentStore.getState().activeCanvasId
+    openFastEdit('edit.pdf')
+    expect(useWorkspaceStore.getState().mode).toBe('fast_edit')
+    expect(useDocumentStore.getState().activeCanvasId).not.toBe(first)
+    expect(figures()).toHaveLength(1)
+    expect(figures()[0]).toMatchObject({ fileId: 'edit.pdf' })
   })
 })
 
-describe('快速编辑里改页面尺寸（r4129948734）', () => {
-  it('改了 W / H 又改回原值：比的是最终尺寸，回排版原样还原', () => {
-    const { w, h } = page()
-    const before = customLayoutView()
+describe('单图编辑里改页面尺寸（r4129948734）', () => {
+  it('改了 W / H：第二张进来时按新页面取景「页面 ∪ 所有图」，不按旧页面还原', () => {
+    customLayoutView()
     openFastEdit('edit.pdf')
     setPageSize(300, 200)
-    setPageSize(w, h)
-    returnToLayout()
-    expect(view()).toEqual(before)
-  })
-
-  it('改了 W / H 又撤销：同样原样还原', () => {
-    const before = customLayoutView()
-    openFastEdit('edit.pdf')
-    setPageSize(300, 200)
-    useDocumentStore.getState().undo()
-    returnToLayout()
-    expect(view()).toEqual(before)
+    addFigureToLayout('small.pdf')
+    expect(useWorkspaceStore.getState().mode).toBe('layout')
+    expect(vp().fitted).toBe(true)
+    expect(vp().fitFrame()).toMatchObject(unionOf(...figures()))
+    expect(page()).toMatchObject({ w: 300, h: 200 })
   })
 })

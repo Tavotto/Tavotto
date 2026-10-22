@@ -24,6 +24,7 @@ from tavotto.rendercore.hbshaper import HbFaceProvider
 from tavotto.rendercore.svgwriter import SVG, XLINK, UnsupportedCapability, WriterError, write_svg
 
 NS = {"s": SVG}
+XML = "http://www.w3.org/XML/1998/namespace"
 
 
 def _rect(x, y, w, h, color=(1, 0, 0), alpha=1):
@@ -45,11 +46,19 @@ def _resource(data, kind="pdf", svg=None):
 
 
 def _write(
-    tmp_path, children, *, resources=None, files=None, svg=None, provider=None, name="out.svg"
+    tmp_path,
+    children,
+    *,
+    resources=None,
+    files=None,
+    svg=None,
+    provider=None,
+    name="out.svg",
+    **options,
 ):
     page = ir.Page(120, 90, tuple(children), resources=resources or {})
     path = tmp_path / name
-    facts = write_svg(page, path, provider, files, imported_svgs=svg)
+    facts = write_svg(page, path, provider, files, imported_svgs=svg, **options)
     return path, ET.parse(path).getroot(), facts
 
 
@@ -190,7 +199,15 @@ def test_shaped_outlines_keep_gid_advance_offset_and_rise(tmp_path, provider):
         "f", face.upem / 100, (ir.Glyph(gid, "A", 900, 100, 200), ir.Glyph(gid, "A", 600)), rise=3
     )
     node = ir.ShapedText(10, 20, (run,), ir.Paint((0, 0, 0), 0.5))
-    _, root, facts = _write(tmp_path, [node], resources={"f": face.resource}, provider=provider)
+    # 规格变更（ADR 0144）：默认策略已是 text。这条钉的是 outlines 这条保留退路的行为，
+    # 所以显式要 outlines，断言本身一字未松。
+    _, root, facts = _write(
+        tmp_path,
+        [node],
+        resources={"f": face.resource},
+        provider=provider,
+        text_policy="outlines",
+    )
     uses = root.findall("s:g/s:g/s:use", NS)
     assert [u.get("transform") for u in uses] == [
         "matrix(0.01 0 0 0.01 11 25)",
@@ -231,7 +248,9 @@ def test_text_and_geometry_match_canonical_pdf_in_an_independent_renderer(
     )
     page = ir.Page(120, 90, nodes, {"latin": latin.resource, "cjk": chinese.resource})
     svg_path, pdf_path = tmp_path / "compare.svg", tmp_path / "compare.pdf"
-    write_svg(page, svg_path, provider)
+    # 这条比的是几何（基线 / 镜像 / 缺字）与 PDF 的像素一致，必须用字形轮廓：<text> 取决于
+    # 渲染机装没装同款字体，不能当与 PDF 逐像素对照的基准（text 策略另有专测）。
+    write_svg(page, svg_path, provider, text_policy="outlines")
     write_pdf(page, pdf_path, provider)
     svg_image = _render(browser, svg_path)
     with pypdfium2.PdfDocument(pdf_path) as doc:
@@ -402,6 +421,7 @@ def test_approved_font_identity_and_missing_glyph_outline_are_explicit(tmp_path,
     with pytest.raises(WriterError) as exc:
         _write(tmp_path, [node], resources={"f": wrong_face}, provider=provider)
     assert exc.value.code == "font_identity"
+    assert facts.text_fallback_runs == 1 and facts.text_runs == 0
 
 
 @pytest.mark.parametrize(
@@ -438,7 +458,8 @@ def test_unverifiable_sources_fail_without_an_output(tmp_path, failure):
     )
     target = tmp_path / "rejected.svg"
     with pytest.raises(WriterError) as exc:
-        write_svg(page, target, None, files, imported_svgs=mapping)
+        # live_text 只在 outlines 策略下是拒收理由（text 策略保留 <text>，见下一条专测）
+        write_svg(page, target, None, files, imported_svgs=mapping, text_policy="outlines")
     expected = {
         "missing": "source_bytes_missing",
         "canonical_hash": "source_identity",
@@ -483,3 +504,255 @@ def test_repeated_and_concurrent_writes_are_deterministic(tmp_path):
     with ThreadPoolExecutor(max_workers=4) as pool:
         results = list(pool.map(write, range(8)))
     assert len(set(results)) == 1
+
+
+# --------------------------------------------------------------------------- text policy (ADR 0144)
+def _text_nodes(root):
+    return root.findall(".//s:text", NS)
+
+
+def test_default_policy_is_text_and_cjk_runs_use_the_cjk_family(tmp_path, provider):
+    cjk = provider.cjk_face()
+    if cjk is None:
+        pytest.skip("not_run: CJK face unavailable")
+    node = ir.ShapedText(10, 20, (ir.GlyphRun("c", 12, cjk.shape("中文")),), ir.Paint((0, 0, 0)))
+    _, root, facts = _write(tmp_path, [node], resources={"c": cjk.resource}, provider=provider)
+    (text,) = _text_nodes(root)
+    assert text.text == "中文" and "Noto Sans SC" in text.get("font-family")
+    assert facts.text_policy == "text" and facts.text_runs == 1
+
+
+def test_text_run_has_unicode_family_size_style_and_baseline(tmp_path, provider):
+    face = provider.face_for("serif", True, True)
+    glyphs = face.shape("Ag fi 10")
+    run = ir.GlyphRun("f", 12, glyphs, rise=3)
+    node = ir.ShapedText(10, 20, (run,), ir.Paint((0, 0, 1), 0.5))
+    _, root, facts = _write(tmp_path, [node], resources={"f": face.resource}, provider=provider)
+    (text,) = _text_nodes(root)
+    assert text.text == "Ag fi 10"
+    assert "'Liberation Serif'" in text.get("font-family") and text.get("font-family").endswith(
+        "serif"
+    )
+    assert text.get("font-size") == "12"
+    assert text.get("font-weight") == "700" and text.get("font-style") == "italic"
+    assert text.get(f"{{{XML}}}space") == "preserve"
+    # baseline origin: translate(10, 23) with a local y-down frame (page flip already outside)
+    assert text.get("transform") == "matrix(1 0 0 -1 10 23)"
+    # 每个 <text> 只有一个 x：Word「转换为形状」按每个显式 x 切成独立文本段（字母散开、每字带段落标记）。
+    assert text.get("x") == "0" and len(text.get("x").split()) == 1
+    assert text.get("y") is None
+    group = root.find("s:g/s:g", NS)
+    assert group.get("fill") == "rgb(0%,0%,100%)" and group.get("fill-opacity") == "0.5"
+    assert not root.findall("s:defs/s:path", NS)
+    assert facts.text_runs == 1 and facts.text_fallback_runs == 0 and facts.outlined_glyphs == 0
+    assert facts.fonts[0]["as_text"] is True and facts.fonts[0]["outlined"] is False
+
+
+def test_no_text_element_ever_carries_a_per_glyph_x_list(tmp_path, provider):
+    sans = provider.face_for("sans-serif", False, False)
+    cjk = provider.cjk_face()
+    nodes = [
+        ir.ShapedText(
+            5,
+            50,
+            (
+                ir.GlyphRun("s", 12, sans.shape("Title Bold fi ffl")),
+                ir.GlyphRun("s", 8, sans.shape("-1"), rise=4),
+                ir.GlyphRun("c", 12, cjk.shape("中文")),
+            ),
+            ir.Paint((0, 0, 0)),
+        )
+    ]
+    res = {"s": sans.resource, "c": cjk.resource}
+    _, root, _ = _write(tmp_path, nodes, resources=res, provider=provider)
+    texts = _text_nodes(root)
+    assert len(texts) == 3
+    for t in texts:
+        assert len(t.get("x").split()) == 1 and t.get("y") is None, t.attrib
+    # the second run starts where the first one's advance ends — one number, not a list
+    first_adv = sum(g.x_advance for g in sans.shape("Title Bold fi ffl")) * 12 / sans.upem
+    assert float(texts[1].get("transform").split()[4]) == pytest.approx(5 + first_adv, abs=1e-6)
+
+
+def test_vertical_glyph_offsets_are_the_only_reason_to_write_y(tmp_path, provider):
+    sans = provider.face_for("sans-serif", False, False)
+    gid = sans.shape("A")[0].gid
+    run = ir.GlyphRun("s", 10, (ir.Glyph(gid, "A", 600, 0, 100), ir.Glyph(gid, "A", 600)))
+    _, root, _ = _write(
+        tmp_path,
+        [ir.ShapedText(5, 20, (run,), ir.Paint((0, 0, 0)))],
+        resources={"s": sans.resource},
+        provider=provider,
+    )
+    (text,) = _text_nodes(root)
+    assert len(text.get("x").split()) == 1
+    assert [float(v) for v in text.get("y").split()] == pytest.approx(
+        [-100 * 10 / sans.upem, 0], abs=1e-9
+    )
+
+
+def test_text_paint_is_inherited_from_group(tmp_path, provider):
+    face = provider.face_for("sans-serif", False, False)
+    node = ir.ShapedText(5, 5, (ir.GlyphRun("f", 8, face.shape("ab")),), ir.Paint((1, 0, 0), 0.25))
+    _, root, _ = _write(tmp_path, [node], resources={"f": face.resource}, provider=provider)
+    group = root.find("s:g/s:g", NS)
+    assert group.get("fill-opacity") == "0.25" and group.find("s:text", NS) is not None
+
+
+def test_mixed_runs_split_into_positioned_texts_with_rise(tmp_path, provider):
+    face = provider.face_for("sans-serif", False, False)
+    base = ir.GlyphRun("f", 12, face.shape("x"))
+    sup = ir.GlyphRun("f", 8, face.shape("2"), rise=5, actual_text="²")
+    node = ir.ShapedText(10, 20, (base, sup), ir.Paint((0, 0, 0)))
+    _, root, facts = _write(tmp_path, [node], resources={"f": face.resource}, provider=provider)
+    first, second = _text_nodes(root)
+    adv = face.shape("x")[0].x_advance * 12 / face.upem
+    assert first.get("transform") == "matrix(1 0 0 -1 10 20)"
+    parts = second.get("transform")[len("matrix(") : -1].split()
+    assert float(parts[4]) == pytest.approx(10 + adv, abs=1e-6) and parts[5] == "25"
+    assert second.text == "2" and second.get("font-size") == "8"
+    assert facts.text_runs == 2
+
+
+@pytest.mark.parametrize(
+    "case", ["notdef", "no_cluster_text", "private_use", "control", "uncovered"]
+)
+def test_unrecoverable_runs_fall_back_to_outlines_not_failure(
+    tmp_path, provider, case, monkeypatch
+):
+    face = provider.face_for("sans-serif", False, False)
+    if case in ("private_use", "control"):
+        # 让字体「声称覆盖」：这两种必须由 _text_safe 自己拦，而不是碰巧被覆盖检查挡住
+        monkeypatch.setattr(type(face), "covers", lambda self, cp: True)
+    gid = face.shape("A")[0].gid
+    glyph = {
+        "notdef": ir.Glyph(0, "A", 500),
+        "no_cluster_text": ir.Glyph(gid, "", 500),
+        "private_use": ir.Glyph(gid, "\ue000", 500),
+        "control": ir.Glyph(gid, "\x01", 500),
+        "uncovered": ir.Glyph(gid, "\U0001f600", 500),
+    }[case]
+    good = ir.GlyphRun("f", 12, face.shape("ok"))
+    bad = ir.GlyphRun("f", 12, (glyph,))
+    node = ir.ShapedText(10, 20, (good, bad), ir.Paint((0, 0, 0)))
+    _, root, facts = _write(tmp_path, [node], resources={"f": face.resource}, provider=provider)
+    assert [t.text for t in _text_nodes(root)] == ["ok"]
+    assert len(root.findall("s:g/s:g/s:use", NS)) == 1
+    assert facts.text_runs == 1 and facts.text_fallback_runs == 1 and facts.outlined_glyphs == 1
+
+
+def test_imported_svg_text_is_kept_under_text_policy(tmp_path):
+    data, svg = b"pdf snapshot", b'<svg viewBox="0 0 20 20"><text x="1" y="9">Hello</text></svg>'
+    page = ir.Page(
+        120, 90, (ir.ImportedPage("p", (0, 0, 20, 20)),), {"p": _resource(data, svg=svg)}
+    )
+    target = tmp_path / "kept.svg"
+    facts = write_svg(page, target, None, {"p": data}, imported_svgs={"p": svg})
+    root = ET.parse(target).getroot()
+    assert [t.text for t in _text_nodes(root)] == ["Hello"]
+    assert facts.imported_text_elements == 1 and facts.text_policy == "text"
+
+
+def test_unknown_text_policy_is_rejected(tmp_path):
+    with pytest.raises(ValueError):
+        write_svg(ir.Page(10, 10, ()), tmp_path / "x.svg", None, text_policy="glyphs")
+
+
+def test_text_and_outline_renderings_agree_in_a_real_browser(tmp_path, provider, browser):
+    """同一份 IR 的 text 版与 outlines 版，在装了同款字体的浏览器里基线 / 字距几乎一致。"""
+    if browser == "inkscape":
+        pytest.skip("not_run: needs @font-face, Chromium only")
+    from PIL import Image, ImageChops
+
+    sans = provider.face_for("sans-serif", False, False)
+    serif = provider.face_for("serif", True, False)
+    nodes = (
+        ir.ShapedText(
+            8,
+            60,
+            (
+                ir.GlyphRun("a", 14, sans.shape("Temperature (K)")),
+                ir.GlyphRun("a", 9, sans.shape("2"), rise=6),
+            ),
+            ir.Paint((0, 0, 0)),
+        ),
+        ir.ShapedText(
+            8, 30, (ir.GlyphRun("b", 12, serif.shape("Quick fox 0.25")),), ir.Paint((0, 0, 0))
+        ),
+    )
+    resources = {"a": sans.resource, "b": serif.resource}
+    faces = {}
+    for face in (sans, serif):
+        faces[face.record.info.family_name + ("b" if face.resource.bold else "")] = (
+            face,
+            base64.b64encode(face.path.read_bytes()).decode(),
+        )
+    css = "".join(
+        f"@font-face{{font-family:'{face.record.info.family_name}';"
+        f"font-weight:{700 if face.resource.bold else 400};"
+        f"src:url(data:font/ttf;base64,{b64})}}"
+        for face, b64 in faces.values()
+    )
+    shots = {}
+    for policy in ("text", "outlines"):
+        path, _, _ = _write(
+            tmp_path,
+            nodes,
+            resources=resources,
+            provider=provider,
+            name=f"{policy}.svg",
+            text_policy=policy,
+        )
+        page = browser.new_page(viewport={"width": 400, "height": 300}, device_scale_factor=2)
+        try:
+            page.set_content(
+                f'<html><head><style>{css}</style></head><body style="margin:0">'
+                + path.read_text(encoding="utf-8")
+                + "</body></html>"
+            )
+            page.evaluate("document.fonts.ready")
+            page.wait_for_timeout(200)
+            shots[policy] = Image.open(io.BytesIO(page.locator("svg").first.screenshot())).convert(
+                "L"
+            )
+        finally:
+            page.close()
+    # artifacts for human review
+    for policy, image in shots.items():
+        image.save(tmp_path / f"{policy}.png")
+    ink = {k: sum(1 for p in v.getdata() if p < 128) for k, v in shots.items()}
+    assert ink["outlines"] > 200
+    assert abs(ink["text"] - ink["outlines"]) / ink["outlines"] < 0.12
+    delta = ImageChops.difference(shots["text"], shots["outlines"])
+    assert sum(delta.getdata()) / (delta.width * delta.height) < 6.0
+
+
+def test_imported_text_svg_replaces_path_baseline_but_identity_stays_pinned(tmp_path):
+    data = b"pdf snapshot"
+    base = b'<svg viewBox="0 0 20 20"><path d="M0 0L1 1"/></svg>'
+    text = b'<svg viewBox="0 0 20 20"><text x="1" y="9">Live</text></svg>'
+    page = ir.Page(
+        120, 90, (ir.ImportedPage("p", (0, 0, 20, 20)),), {"p": _resource(data, svg=base)}
+    )
+    out = tmp_path / "t.svg"
+    facts = write_svg(
+        page, out, None, {"p": data}, imported_svgs={"p": base}, imported_text_svgs={"p": text}
+    )
+    assert [t.text for t in _text_nodes(ET.parse(out).getroot())] == ["Live"]
+    assert facts.imported_text_elements == 1
+    # 身份仍看 path 基准：基准字节对不上 = 拒绝，文字版救不了
+    with pytest.raises(WriterError):
+        write_svg(
+            page, tmp_path / "b.svg", None, {"p": data},
+            imported_svgs={"p": b"<svg viewBox='0 0 1 1'/>"}, imported_text_svgs={"p": text},
+        )  # fmt: skip
+    # 文字版坏掉 / 策略 outlines：回到 path 基准
+    bad = write_svg(
+        page, tmp_path / "c.svg", None, {"p": data},
+        imported_svgs={"p": base}, imported_text_svgs={"p": b"<svg"},
+    )  # fmt: skip
+    assert bad.imported_text_elements == 0
+    write_svg(
+        page, tmp_path / "d.svg", None, {"p": data},
+        imported_svgs={"p": base}, imported_text_svgs={"p": text}, text_policy="outlines",
+    )  # fmt: skip

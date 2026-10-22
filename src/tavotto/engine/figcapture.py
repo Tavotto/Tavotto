@@ -3986,6 +3986,21 @@ def remap_target(rules, name: str, *, whole: bool = False) -> str | None:
     return best[1] if best else None
 
 
+def _is_sys_path_entry(name: str) -> bool:
+    """`name` 就是 `sys.path` 的某个条目（如 Homebrew 的 `.../lib/python313.zip`）。
+
+    `importlib.metadata` 扫已安装分发时对每个条目试 `zipfile.ZipFile(条目)`——不存在的条目 `io.open` 抛
+    `FileNotFoundError`，被它自己吞掉；但打开入口的包装已经记了一笔，占掉 `MAX_INPUT_MISSES` 的名额
+    （#1253）。解释器自己的搜索路径条目永远不是用户数据，不记。
+    """
+    if not os.path.isabs(name):
+        return False
+    key = os.path.normcase(os.path.normpath(name))
+    return any(
+        isinstance(p, str) and p and os.path.normcase(os.path.normpath(p)) == key for p in sys.path
+    )
+
+
 class InputMisses:
     """一次 build 里**原路径打开失败、改指也没救回来**的只读打开：脚本写的那串 + 当时的 cwd。
 
@@ -4188,6 +4203,8 @@ def install_input_remap(
         # 绝对路径换成了相对 base 的那一段：它相对的是 base，不是此刻的 cwd——脚本 chdir 过之后
         # 两者不同，按 cwd 拼回去是 base/sub/sub/x.csv，分类对不上（Codex 评 #716 P2）
         raw = os.fspath(file) if isinstance(file, (str, os.PathLike)) else None
+        if isinstance(raw, str) and _is_sys_path_entry(raw):
+            return  # import 机制探测不存在的 sys.path 条目（importlib.metadata 的 zipfile 打开），不是脚本的输入
         misses.note(shown, cwd=base if isinstance(raw, str) and shown != raw else None)
 
     def _readonly(mode) -> bool:
@@ -4309,9 +4326,34 @@ def enoent_fact(exc: BaseException) -> dict | None:
         cwd = ""
     return {
         "filename": filename,
-        "named": None if filename else quoted_name_in(fnf),
+        # pyarrow 的 `FileNotFoundError("cg_data.parquet")`：整条消息就是路径，没有引号也没有 filename
+        "named": None if filename else (quoted_name_in(fnf) or _message_of(fnf)),
         "cwd": cwd,
     }
+
+
+def _message_of(exc: BaseException) -> str | None:
+    """`FileNotFoundError("<路径>")` 这类只有一个字符串实参的异常消息；有 errno 的二元形态、多行、空的回 None。"""
+    args = getattr(exc, "args", ())
+    if len(args) != 1 or not isinstance(args[0], str):
+        return None
+    text = args[0]
+    return text if text and "\n" not in text and len(text) <= 4096 else None
+
+
+def _named_miss(fnf: BaseException, misses: InputMisses) -> str | None:
+    """异常消息里点了名的那次落空（从最近的往前找）；没点名回 None。点名按路径段边界：
+    `data.txt` 不算点了 `a.txt`，`d` 不算点了 `d.txt`。"""
+    text = _message_of(fnf)
+    if text is None:
+        return None
+    text = text.replace("\\", "/")
+    for item in reversed(misses.items):
+        needle = item["requested"].replace("\\", "/")
+        # 路径分隔符同样不是边界：`data` 不算点了 `data/file.parquet`，`file.parquet` 也不算（Codex #1297）
+        if re.search(rf"(?<![\w.\-/]){re.escape(needle)}(?![\w\-/]|\.\w)", text):
+            return item["requested"]
+    return None
 
 
 def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
@@ -4319,8 +4361,9 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
 
     **只在异常与记账对得上时才说**（ADR 0106 §一.2）：异常链里要有「文件不存在」，而且缺的
     那一串要么就是 `exc.filename` 且它确实作为只读打开落空过（写模式的「目录不存在」不算——
-    那不是输入），要么异常没带文件名、用最近一次落空的读。两样都没有就不判，调用方照旧报
-    `script_error`。
+    那不是输入），要么异常没带文件名、但消息里点了名某次落空的那一串（`_named_miss`）。两样都没有就不判，
+    调用方照旧报 `script_error`（C++ 读取器再走 `enoent_fact` → `native_miss`）。**不再退到「最近一次
+    落空的」**——那会指认与这次异常无关的路径（#1253）。
     """
     fnf = _file_not_found_in(exc)
     if fnf is None or not misses.items:
@@ -4350,7 +4393,13 @@ def missing_input_of(exc: BaseException, misses: InputMisses) -> dict | None:
             if requested is None:
                 return None  # 带了文件名却不是一次只读打开落空的：不判
     else:
-        requested = names[-1]
+        # 没文件名、消息里也没有引号括着的路径：只认**消息里点名了的**那次落空（numpy 的
+        # `"d.txt not found."`、pyarrow 的 `FileNotFoundError("cg_data.parquet")`）。点不了名就不判——
+        # 不能拿「最近一次落空的」凑数：被 try 吞掉的可选读、import 机制探测不存在的 sys.path 条目
+        # （importlib.metadata 的 zipfile 打开）都会排在后面，指认一个与这次异常无关的路径（#1253）。
+        requested = _named_miss(fnf, misses)
+        if requested is None:
+            return None
     entry = next(m for m in reversed(misses.items) if m["requested"] == requested)
     parsed = remap_parts(requested)
     return {

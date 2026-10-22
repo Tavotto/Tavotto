@@ -7,8 +7,11 @@
   macOS 的红绿灯压在主页按钮上、或 Windows 上菜单栏藏了却没有按钮——菜单整个找不到。
 * **只给主窗口**：远程实例窗口加载服务器那一版前端（ADR 0105），未必认得标记；那里
   维持系统标题栏 + 可见菜单栏，壳不注入标记、不藏菜单。
-* **ACL**：顶栏拖动 / 双击缩放（`data-tauri-drag-region` 调的两条窗口命令）与两条自定义命令
-  只在主窗口的 capability 里；少了拖动权限，macOS 上叠了标题栏的窗口就**拖不动**。
+* **ACL**：顶栏拖动 / 双击缩放（`data-tauri-drag-region` 调的两条窗口命令）、Windows 无框窗口的
+  三颗窗口按钮（最小化 / 最大化 / 关闭 + 回读是否最大化）与「菜单」按钮只在主窗口的 capability 里；
+  少了拖动权限，没有系统标题栏的窗口就**拖不动**；少了按钮权限，点了**没反应**（ACL 静默拒绝）。
+* **Windows 无框**：非 macOS 的主窗口去掉系统窗框（`decorations(false)`），与 `chrome()` 取
+  `menu-button` 是同一个判据；壳自带的启动 / 出错页内联同一组窗口按钮，用的命令都得在 ACL 里。
 
 `src-tauri/` 不进 wheel/sdist，这几条在没有它的树上跳过。
 """
@@ -38,7 +41,14 @@ DRAG_PERMISSIONS = {
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
 }
-CHROME_COMMANDS = {"allow-show-app-menu", "allow-set-titlebar-colors"}
+WINDOW_CONTROL_PERMISSIONS = {
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+}
+CHROME_COMMANDS = {"allow-show-app-menu"}
+SHELL_PAGES = (TAURI / "shell" / "splash.html", TAURI / "shell" / "error.html")
 
 
 def _rust_const(src: str, name: str) -> str:
@@ -96,11 +106,15 @@ def test_drag_and_chrome_commands_are_granted_to_the_main_window_only():
     main = caps["main.json"]
     assert main["windows"] == ["main"]
     granted = set(main["permissions"])
-    assert DRAG_PERMISSIONS | CHROME_COMMANDS <= granted, sorted(granted)
+    assert DRAG_PERMISSIONS | WINDOW_CONTROL_PERMISSIONS | CHROME_COMMANDS <= granted, sorted(
+        granted
+    )
     for name, cap in caps.items():
         if name == "main.json":
             continue
-        leaked = (DRAG_PERMISSIONS | CHROME_COMMANDS) & set(cap["permissions"])
+        leaked = (DRAG_PERMISSIONS | WINDOW_CONTROL_PERMISSIONS | CHROME_COMMANDS) & set(
+            cap["permissions"]
+        )
         assert not leaked, f"{name} 拿到了主窗口的窗框权限：{sorted(leaked)}"
 
 
@@ -178,3 +192,168 @@ def test_fullscreen_event_command_and_acl_are_one_contract():
     assert re.search(
         r"if\s*!\s*fullscreen_observer::installed\(\)\s*\{[^}]*fullscreen\s*\.update\(", seed
     ), seed
+
+
+@needs_shell
+def test_the_main_window_is_frameless_exactly_where_the_page_draws_window_buttons():
+    """`decorations(false)` 只在非 macOS、与 `chrome()` 给 `menu-button` 是同一个 cfg：
+    去了窗框却没注入 menu-button = 窗口没有任何关闭按钮；注入了却没去窗框 = 两套按钮。"""
+    code = rust_code(CHROME_RS.read_text(encoding="utf-8"))
+    head = code.index("fn main_window_chrome(self)")
+    body = _bracket_body(code, code.index("{", head))
+    m = re.search(
+        r"#\[cfg\(([^\]]*)\)\]\s*let builder = builder\.decorations\(false\)(?:\.visible\(false\))?;",
+        body,
+    )
+    assert m, body
+    assert re.sub(r"\s", "", m.group(1)) == "not(target_os=)", m.group(1)
+    assert body.count("decorations(") == 1
+    chrome = code[code.index("pub const fn chrome()") :]
+    chrome = _bracket_body(chrome, chrome.index("{"))
+    assert re.search(
+        r"if cfg!\(target_os =\s*\)\s*\{\s*CHROME_OVERLAY\s*\}\s*else\s*\{\s*CHROME_MENU_BUTTON",
+        chrome,
+    ), chrome
+
+
+@needs_shell
+def test_shell_pages_window_buttons_use_only_granted_window_commands():
+    """启动 / 出错页（`tauri://` 源，主窗口）没有 web 的 `WindowControls`，各自内联一组按钮：
+    每颗按钮调的 `plugin:window|<命令>` 都得在 main.json 里授权，且只在 menu-button 窗框露出。"""
+    granted = set(json.loads((CAPS / "main.json").read_text(encoding="utf-8"))["permissions"])
+    for page in SHELL_PAGES:
+        html = page.read_text(encoding="utf-8")
+        acts = re.findall(r'data-act="([\w]+)"', html)
+        assert sorted(acts) == ["close", "minimize", "toggle_maximize"], (page.name, acts)
+        for act in acts:
+            perm = "core:window:allow-" + act.replace("_", "-")
+            assert perm in granted, (page.name, perm)
+        assert "invoke('plugin:window|' + b.dataset.act, { label: 'main' })" in html, page.name
+        assert "window.__TAVOTTO_WINDOW_CHROME__ === 'menu-button'" in html, page.name
+        assert '<div id="winctl" hidden>' in html, page.name
+        # 最大化按钮随窗口状态换「还原」：查询命令 ↔ 授权，两种语言都有 restore 文案
+        assert "invoke('plugin:window|is_maximized', { label: 'main' })" in html, page.name
+        assert "core:window:allow-is-maximized" in granted, page.name
+        assert "addEventListener('resize', sync)" in html, page.name
+        assert len(re.findall(r"restore: '[^']+'", html)) == 2, page.name
+
+
+@needs_shell
+def test_web_window_buttons_use_only_granted_window_commands():
+    """页面的 `windowControl` / `onWindowMaximizedChange` 调的窗口 API ↔ main.json 授权。"""
+    ts = DESKTOP_TS.read_text(encoding="utf-8")
+    called = set(re.findall(r"win\.(minimize|toggleMaximize|close|isMaximized)\(", ts))
+    assert called == {"minimize", "toggleMaximize", "close", "isMaximized"}, called
+    granted = set(json.loads((CAPS / "main.json").read_text(encoding="utf-8"))["permissions"])
+    for name in called:
+        perm = "core:window:allow-" + re.sub(r"([A-Z])", lambda m: "-" + m.group(1).lower(), name)
+        assert perm in granted, perm
+
+
+def _plugin_chain(code: str) -> str:
+    at = code.index("tauri_plugin_window_state::Builder::default()")
+    return code[at : code.index(".build()", at)]
+
+
+def _fn_body(code: str, header: str) -> str:
+    return _bracket_body(code, code.index("{", code.index(header)))
+
+
+@needs_shell
+def test_window_state_plugin_never_restores_decorations():
+    """VISIBLE 同理：非 macOS 主窗口建时不显示、藏好菜单栏再亮出来，插件恢复 `visible: true` 会抢先显示。
+
+    `tauri-plugin-window-state` 默认连窗框一起记 / 恢复：从带系统标题栏的旧版本升上来，存着的
+    `decorated: true` 会把 `decorations(false)` 顶掉——Windows 上系统标题栏与页面窗口按钮两套并存
+    （#1279 Win11 真机实测）。状态位必须把 DECORATIONS 排除在外；插件与手动恢复共用 `window_state_flags()`。"""
+    code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
+    body = _fn_body(code, "fn window_state_flags()")
+    expr = re.sub(r"\s", "", body).rstrip(";")
+    flag = "tauri_plugin_window_state::StateFlags::"
+    terms = expr.split("-")
+    assert terms[0] == flag + "all()", expr
+    assert sorted(terms[1:]) == [flag + "DECORATIONS", flag + "VISIBLE"], expr
+
+
+@needs_shell
+def test_main_window_skips_the_plugin_initial_restore_and_restores_itself():
+    """最大化的恢复会在 `.build()` 返回前就把 HWND 显示出来，藏菜单 / 铺底色赶不上第一帧（Codex #1286 P2）：
+    插件跳过主窗口建窗时的恢复，壳在 build 之后自己用**同一组状态位**恢复（macOS 也要，否则记不住位置大小）。"""
+    code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
+    chain = re.sub(r"\s", "", _plugin_chain(code))
+    assert ".skip_initial_state(MAIN_WINDOW)" in chain, "主窗口没跳过插件的建窗恢复"
+    assert ".with_state_flags(window_state_flags())" in chain, chain
+    restore = re.sub(r"\s", "", _fn_body(code, "fn restore_main_window_state("))
+    assert "win.restore_state(window_state_flags())" in restore, restore
+    # 全文件只有这两处用状态位：插件 builder 与手动恢复，没有第二份写法
+    assert len(re.findall(r"window_state_flags\(\)", code)) == 3  # 定义 + 插件 + 手动恢复
+    assert "StateFlags::all()" not in code.replace(_fn_body(code, "fn window_state_flags()"), ""), (
+        "状态位在 window_state_flags 之外又写了一份"
+    )
+    sites = window_builders(code)
+    after = code[sites["MAIN_WINDOW"] :]
+    after = after[after.index(".build()?;") :]
+    mac = re.search(r"#\[cfg\(target_os =\s*\)\]\s*restore_main_window_state\(&win\);", after)
+    assert mac, "macOS 主窗口建完没有手动恢复：窗口位置 / 大小记不住了"
+    non_mac = re.search(
+        r"#\[cfg\(not\(target_os =\s*\)\)\]\s*window_chrome::reveal_main_window\(&win,\s*\|\|\s*restore_main_window_state\(&win\)\);",
+        after,
+    )
+    assert non_mac, "非 macOS 的 reveal_main_window 没带上手动恢复"
+
+
+@needs_shell
+def test_main_window_is_revealed_only_after_the_menu_bar_is_hidden():
+    """非 macOS 主窗口 `visible(false)` 建出来：hide_main_menu_bar → 铺底色 → restore_state → show。
+    反过来 = 建窗那一刻闪一下原生菜单栏 / 白底（#1279 真机连拍）；restore 在 show 之后 = 最大化时窗口先以
+    原尺寸闪一下；漏掉 reveal = 一个永远看不见的窗口。"""
+    chrome = rust_code(CHROME_RS.read_text(encoding="utf-8"))
+    head = chrome.index("fn main_window_chrome(self)")
+    body = _bracket_body(chrome, chrome.index("{", head))
+    assert re.search(
+        r"#\[cfg\(not\(target_os =\s*\)\)\]\s*let builder = builder\.decorations\(false\)\.visible\(false\);",
+        body,
+    ), body
+    code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
+    sites = window_builders(code)
+    after = code[sites["MAIN_WINDOW"] :]
+    after = after[after.index(".build()?;") :]
+    hide = after.index("hide_main_menu_bar(&handle);")
+    reveal = re.search(r"window_chrome::reveal_main_window\(&win,", after)
+    assert reveal, "主窗口建完没有 reveal_main_window：Windows 上窗口永远不显示"
+    assert hide < reveal.start(), "要先藏菜单栏再亮出窗口"
+    rev = chrome[chrome.index("pub fn reveal_main_window") :]
+    rev = _bracket_body(rev, rev.index("{"))
+    assert "win.show()" in rev and "restore()" in rev
+    assert rev.index("set_background_color") < rev.index("restore()") < rev.index("win.show()")
+
+
+@needs_shell
+def test_reveal_background_is_the_splash_page_background():
+    """亮出窗口时铺的底色 = 启动画面 `body` 的底色（亮 / 暗两档）：不一致就是先闪一下这个色再换成那个色。"""
+    rs = rust_code(CHROME_RS.read_text(encoding="utf-8"), keep_strings=True)
+
+    def rust_rgb(name: str) -> str:
+        m = re.search(rf"{name}: \(u8, u8, u8\) = \(0x(\w\w), 0x(\w\w), 0x(\w\w)\)", rs)
+        assert m, name
+        return "#" + "".join(m.groups()).upper()
+
+    html = (TAURI / "shell" / "splash.html").read_text(encoding="utf-8")
+    light = re.search(r"body \{[^}]*background: (#[0-9A-Fa-f]{6})", html)
+    dark = re.search(
+        r"prefers-color-scheme: dark\) \{[^@]*?\n\s*body \{ background: (#[0-9A-Fa-f]{6})", html
+    )
+    assert light and dark, "splash.html 的 body 底色写法变了"
+    assert rust_rgb("SPLASH_BG_LIGHT") == light.group(1).upper()
+    assert rust_rgb("SPLASH_BG_DARK") == dark.group(1).upper()
+
+
+@needs_shell
+def test_both_windows_install_on_new_window():
+    """`target=_blank` / `window.open` 不经 `on_navigation`（macOS 静默无反应、Windows 弹内置小窗）：
+    主窗口与远程实例窗口的 builder 都要装 `on_new_window`，外链才会交给系统浏览器。"""
+    code = rust_code(MAIN_RS.read_text(encoding="utf-8"))
+    sites = window_builders(code)
+    for label in ("MAIN_WINDOW", "REMOTE_WINDOW"):
+        methods = chain_methods(code, sites[label])
+        assert "on_navigation" in methods and "on_new_window" in methods, (label, methods)

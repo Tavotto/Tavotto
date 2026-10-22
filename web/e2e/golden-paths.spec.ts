@@ -11,7 +11,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { inflateRawSync } from 'node:zlib'
-import { expect, openWorkspace, showAllProjects, test, writeRuntimeNamedProject } from './fixtures'
+import { addSecondFigure, expect, openWorkspace, showAllProjects, test, writeRuntimeNamedProject } from './fixtures'
 
 const REPO = path.resolve(import.meta.dirname, '..', '..')
 
@@ -82,10 +82,9 @@ test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启�
   // 双击素材把面板放上画布
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await expect(page.getByText('画布是空的')).toHaveCount(0)
-  // Prompt 09：双击 = 打开（快速编辑）。标注工具画的是**画布对象**，
-  // 只在画布排版模式下有落点——先回排版再用它们。返回入口自审计 T01 起
-  // 收成了上下文栏上唯一那颗「返回画布」。
-  await page.locator('[data-context-back]').first().click()
+  // Prompt 09：双击 = 打开（单图编辑）。标注工具画的是**画布对象**，
+  // 只在多图排版下有落点——画布上有第二张图才是排版（没有「回排版」按钮了）。
+  await addSecondFigure(page)
 
   // 文字工具加一段带上标的标注，验证行内标记在画布上真的渲染成上标
   await page.getByRole('button', { name: '文字' }).click()

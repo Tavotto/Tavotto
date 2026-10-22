@@ -1,0 +1,34 @@
+✖ activation historic hold remains available and later evidence revisions stay ready (42.730813ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 233.771944
+
+✖ failing tests:
+
+test at tests/agreement-activation.test.mjs:201:1
+✖ activation historic hold remains available and later evidence revisions stay ready (42.730813ms)
+  AssertionError [ERR_ASSERTION]: Got unwanted rejection.
+  Actual message: "database_configuration_uninitialized_or_mismatched"
+      at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-subsequent-evidence-revisions/tests/agreement-activation.test.mjs:205:3
+      at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-subsequent-evidence-revisions/tests/activation-fixture.mjs:44:66)
+      at async Test.run (node:internal/test_runner/test:1389:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: Error: database_configuration_uninitialized_or_mismatched
+        at LiveStore.assertReady (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-subsequent-evidence-revisions/src/native/store.ts:61:29)
+        at async waitForActual (node:assert:646:5)
+        at async strict.doesNotReject (node:assert:789:33)
+        at async file:///tmp/cla-agreement-activation-formal-review/mutants/activation-subsequent-evidence-revisions/tests/agreement-activation.test.mjs:205:3
+        at async iso (file:///tmp/cla-agreement-activation-formal-review/mutants/activation-subsequent-evidence-revisions/tests/activation-fixture.mjs:44:66)
+        at async Test.run (node:internal/test_runner/test:1389:7)
+        at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3),
+    expected: undefined,
+    operator: 'doesNotReject',
+    diff: 'simple'
+  }

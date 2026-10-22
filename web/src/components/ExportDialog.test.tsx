@@ -336,6 +336,12 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+/*
+ * 模式：#1292 起 `mode` 由激活画布上的图数推出（`workspaceStore.settleMode` 是唯一写入点），而导出对话框只读 `mode`
+ * （`fast_edit` = 单图档，其余 = 多图档）。本文件的夹具直接给 `mode` 赋值，是**有意的**：它把「对话框怎么读 mode」
+ * 与「mode 怎么推出」拆开，且需要 #1292 之后到不了的组合（排版里只有一张图，才能测「整版 / 每张图」两档在单张图上的口径）。
+ * 「模式随图数推出」本身由 `store/workspace.test.ts` 钉着，这里不重复。
+ */
 vi.mock('@/lib/exportBatchInput', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/lib/exportBatchInput')>()
   let epoch = 0
@@ -705,7 +711,7 @@ describe('SVG 导出（X03）', () => {
     expect((exportBodies[0].style_check_report as { acknowledged: string[] }).acknowledged).toContain('font-below-absolute-floor')
   })
 
-  it('SVG follows the existing formats, discloses text outlines, and sends no PPI', async () => {
+  it('SVG follows the existing formats, discloses the editable-text default, and sends no PPI', async () => {
     await setup(9)
     expect([...document.body.querySelectorAll('[data-export-formats] [data-export-format]')].map((el) => el.getAttribute('data-export-format'))).toEqual(['pdf', 'png', 'eps', 'tiff', 'svg'])
     expect(formatBox('SVG').checked).toBe(false)
@@ -714,8 +720,8 @@ describe('SVG 导出（X03）', () => {
     await click(formatBox('PDF'))
     await click(formatBox('PNG'))
     const note = document.body.querySelector('[data-export-svg-note]')!
-    expect(note.textContent).toContain('文字转为轮廓')
-    expect(note.textContent).toContain('Office')
+    expect(note.textContent).toContain('保留文字')
+    expect(note.textContent).toContain('转换为形状')
     expect(formatBox('SVG').getAttribute('aria-describedby')).toBe(note.id)
     expect(ppiSelect()).toBeNull()
     await click(button('开始导出')!)

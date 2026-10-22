@@ -323,6 +323,7 @@ class V1Handler:
             if not isinstance(path, str) or not path:
                 raise ProtocolError("bad_request", "payload.path 必须是非空字符串")
             svg_path = payload.get("svg_path")
+            svg_fonttype = svg_text_path = None
             if snapshot_only and svg_path is None:
                 raise ProtocolError("bad_request", "snapshot_only 需要 SVG companion 路径")
             if svg_path is not None:
@@ -332,6 +333,23 @@ class V1Handler:
                     raise ProtocolError("bad_request", "payload.svg_path 只支持 PDF 导出")
                 if Path(svg_path).resolve() == Path(path).resolve():
                     raise ProtocolError("bad_request", "PDF 与 SVG 导出路径必须不同")
+            # 加字段协议（ADR 0144）：旧 worker 不认这两个键、静默忽略，应答里就没有 `svg_text` /
+            # 不是文字写法——调用方据此（与文件里有没有 <text>）如实回退为轮廓。
+            svg_fonttype = payload.get("svg_fonttype")
+            if svg_fonttype is not None and svg_fonttype not in ("path", "none"):
+                raise ProtocolError("bad_request", "payload.svg_fonttype 只能是 path 或 none")
+            if svg_fonttype == "none" and str(payload.get("format", "pdf")).lower() != "svg":
+                raise ProtocolError("bad_request", "payload.svg_fonttype 只用于 SVG 导出")
+            svg_text_path = payload.get("svg_text_path")
+            if svg_text_path is not None:
+                if not isinstance(svg_text_path, str) or not svg_text_path or svg_path is None:
+                    raise ProtocolError(
+                        "bad_request", "payload.svg_text_path 必须是非空字符串，且要带 svg_path"
+                    )
+                if snapshot_only:
+                    raise ProtocolError("bad_request", "snapshot_only 不写保留文字的变体")
+                if len({Path(p).resolve() for p in (svg_text_path, svg_path, path)}) != 3:
+                    raise ProtocolError("bad_request", "PDF、SVG 与保留文字 SVG 的路径必须互不相同")
         width = int_arg(payload, "width", 800 if cmd == "render_png" else 400)
         dpi = int_arg(payload, "dpi", 600)
         # 可选：这一次预览 SVG 用的 dpi（缺省 = 会话的 preview_dpi）。
@@ -375,6 +393,8 @@ class V1Handler:
                     timings,
                     **({"svg_path": svg_path} if svg_path is not None else {}),
                     **({"snapshot_only": True} if snapshot_only else {}),
+                    **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
+                    **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
                 )
         except ProtocolError:
             raise

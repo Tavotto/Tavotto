@@ -627,6 +627,160 @@ class TestOptionalContent:
         got = dict(diagdetail.source_candidates(src))
         assert list(got) == ["fig_one.py"]
 
+    def test_failing_script_outside_registry_is_attached_first(self, tmp_path):
+        """TVD-5JJY：出错的脚本不在登记表里（桌面当项目），也要收，且排在登记的脚本前面。"""
+        proj = tmp_path / "desk"
+        (proj / "sub").mkdir(parents=True)
+        (proj / "sub" / "registered.py").write_text("REGISTERED = 1\n", encoding="utf-8")
+        (proj / "fit_mass.py").write_text("FIT_MASS = 1\n", encoding="utf-8")
+        (proj / "tried_ok.py").write_text("TRIED_OK = 1\n", encoding="utf-8")
+        src = diagdetail.Sources(
+            project={"figures_dir": str(proj)},
+            scripts=["sub/registered.py"],
+            attempted=[("tried_ok.py", False), ("fit_mass.py", True)],
+        )
+        reasons: dict[str, str] = {}
+        got = [r for r, _p in diagdetail.source_candidates(src, reasons=reasons)]
+        assert got == ["fit_mass.py", "tried_ok.py", "sub/registered.py"]
+        assert reasons == {
+            "fit_mass.py": "failing_attempt",
+            "tried_ok.py": "recent",
+            "sub/registered.py": "recent",
+        }
+        items = diagdetail.collect_source(
+            src, diagdetail.DetailOptions(source=True), diagdetail.Scrubber()
+        )
+        index = json.loads(next(i.data for i in items if i.path == "index.json"))
+        assert [r["script"] for r in index["scripts"]] == [
+            "fit_mass.py",
+            "tried_ok.py",
+            "sub/registered.py",
+        ]
+        assert [r["reason"] for r in index["scripts"]][0] == "failing_attempt"
+        assert "failing_attempt" in index["criterion"] and "registered" in index["criterion"]
+        assert items[1].path.startswith("01-") and b"FIT_MASS" in items[1].data
+
+    def test_panel_script_outranks_plain_recent_and_attempt_paths_stay_inside_project(
+        self, tmp_path
+    ):
+        proj = tmp_path / "p"
+        proj.mkdir()
+        outside = tmp_path / "outside.py"
+        outside.write_text("OUTSIDE_CANARY = 1\n", encoding="utf-8")
+        for n in ("a.py", "b.py", "panel.py"):
+            (proj / n).write_text(f"X = '{n}'\n", encoding="utf-8")
+        try:
+            (proj / "link.py").symlink_to(outside)
+        except OSError:
+            pytest.skip("symlinks unavailable")
+        src = diagdetail.Sources(
+            project={"figures_dir": str(proj)},
+            scripts=["a.py", "b.py", "panel.py"],
+            frontend={"overrides": [{"script": "panel.py"}]},
+            # 绝对路径的记录落成项目相对；指到项目外的路径与符号链接都不收
+            attempted=[
+                (str(outside), True),
+                ("../outside.py", True),
+                ("link.py", True),
+                (str(proj / "a.py"), True),
+            ],
+        )
+        reasons: dict[str, str] = {}
+        got = [r for r, _p in diagdetail.source_candidates(src, reasons=reasons)]
+        assert got[0] == "a.py" and got[1] == "panel.py" and "b.py" in got
+        assert not {"link.py", "../outside.py"} & set(got)
+        assert reasons["a.py"] == "failing_attempt" and reasons["panel.py"] == "panel"
+        assert reasons["b.py"] == "recent"
+
+    def test_declaration_files_of_the_dependency_plan_are_attached_and_scrubbed(self, tmp_path):
+        proj = tmp_path / "p"
+        (proj / "sub").mkdir(parents=True)
+        (proj / "sub" / "run.py").write_text("RUN = 1\n", encoding="utf-8")
+        (proj / "requirements.txt").write_text(
+            "numpy>=1.24\n--extra-index-url https://u:CANARY_URL_PW@pip.example/simple\n",
+            encoding="utf-8",
+        )
+        (proj / "sub" / "requirements-dev.txt").write_text("pytest\n", encoding="utf-8")
+        (proj / "constraints.txt").write_text("numpy<2\n", encoding="utf-8")
+        (proj / "pyproject.toml").write_text(
+            '[project]\nname = "x"\ndependencies = ["scipy"]\n', encoding="utf-8"
+        )
+        (proj / "uv.lock").write_text("LOCK_CANARY\n", encoding="utf-8")
+        (proj / "notes.txt").write_text("NOT_DECLARED_CANARY\n", encoding="utf-8")
+        src = diagdetail.Sources(
+            project={"figures_dir": str(proj)},
+            scripts=["sub/run.py"],
+            attempted=[("sub/run.py", True)],
+        )
+        items = diagdetail.collect_source(
+            src, diagdetail.DetailOptions(source=True), diagdetail.Scrubber()
+        )
+        index = json.loads(next(i.data for i in items if i.path == "index.json"))
+        declared = {d["declared"] for d in index["declarations"]}
+        assert declared == {
+            "requirements.txt",
+            "sub/requirements-dev.txt",
+            "constraints.txt",
+            "pyproject.toml",
+        }
+        body = "\n".join(i.data.decode() for i in items if i.path != "index.json")
+        assert "scipy" in body and "numpy>=1.24" in body
+        assert "CANARY_URL_PW" not in body
+        assert "LOCK_CANARY" not in body and "NOT_DECLARED_CANARY" not in body
+        assert all(d["file"].startswith("declared-") for d in index["declarations"])
+
+    def test_declaration_files_without_intents_are_still_attached(self, tmp_path):
+        """只有 `-r base.txt` 的父文件、空文件 / 纯注释文件没有 intent，但依赖计划读过它们：照样附。"""
+        proj = tmp_path / "p"
+        proj.mkdir()
+        (proj / "requirements.txt").write_text("-r base.txt\n", encoding="utf-8")
+        (proj / "base.txt").write_text("numpy\n", encoding="utf-8")
+        (proj / "constraints.txt").write_text("# only a comment\n", encoding="utf-8")
+        src = diagdetail.Sources(project={"figures_dir": str(proj)}, scripts=[], attempted=[])
+        got = {rel for rel, _p in diagdetail.declared_candidates(src, [])}
+        assert got == {"requirements.txt", "base.txt", "constraints.txt"}
+
+    def test_symlinked_declaration_is_not_attached(self, tmp_path):
+        """no_follow 的依赖扫描拒读的符号链接声明，附件也不跟随（哪怕链接指向项目内的文件）。"""
+        proj = tmp_path / "p"
+        proj.mkdir()
+        (proj / "real.txt").write_text("SYMLINK_TARGET_CANARY\n", encoding="utf-8")
+        try:
+            (proj / "requirements.txt").symlink_to(proj / "real.txt")
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks unavailable")
+        src = diagdetail.Sources(project={"figures_dir": str(proj)}, scripts=[], attempted=[])
+        assert diagdetail.declared_candidates(src, []) == []
+
+    def test_attempted_scripts_come_from_the_task_store_and_reach_the_bundle(self, client, world):
+        from tavotto.engine import taskdiag
+
+        proj = _project(client, world["tmp"])
+        (proj / "fit_mass.py").write_text("FIT_MASS_CANARY = 1\n", encoding="utf-8")
+        (proj / "requirements.txt").write_text("numpy\n", encoding="utf-8")
+        with m.app.test_request_context():
+            pid = m._request_ctx().id
+        taskdiag.STORE.reset_for_tests()
+        try:
+            taskdiag.STORE.record(
+                pid,
+                taskdiag.KIND_PREPARATION,
+                "prep-1",
+                {"snapshot_version": 1, "kind": "preparation", "attempt_id": "prep-1"},
+                outcome="error",
+                failed=True,
+                subject={("script", "fit_mass.py")},
+            )
+            assert taskdiag.STORE.attempted_scripts(pid) == [("fit_mass.py", True)]
+            _prep, z = _prepare(client, source=True)
+        finally:
+            taskdiag.STORE.reset_for_tests()
+        inner = _inner(z, "optional-source.zip")
+        index = json.loads(inner.read("index.json"))
+        assert index["scripts"][0]["script"] == "fit_mass.py"
+        assert index["scripts"][0]["reason"] == "failing_attempt"
+        assert any(d["declared"] == "requirements.txt" for d in index["declarations"])
+
     def test_crash_reports_and_corrupt_contents_only_when_ticked(self, client, world):
         _prep, z = _prepare(client)
         blob = _blob(z)

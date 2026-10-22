@@ -236,7 +236,10 @@ export default interface Resources {
       "delete": "删除",
       "refresh": "刷新",
       "reload": "重新加载",
-      "save": "保存"
+      "save": "保存",
+      "windowMaximize": "最大化",
+      "windowMinimize": "最小化",
+      "windowRestore": "还原"
     },
     "colorField": {
       "documentColors": "排版里的颜色",
@@ -451,8 +454,8 @@ export default interface Resources {
       "statusFailed": "暂时无法获取导出状态，作业仍可能完成",
       "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
       "strictToggle": "严格核验产物",
-      "svgHint": "矢量 · 文字默认转轮廓",
-      "svgNote": "SVG 默认将文字转为轮廓，在 Office 中不能作为文字继续编辑。不支持的来源会明确报告导出失败。",
+      "svgHint": "矢量 · 文字默认保留为文字",
+      "svgNote": "SVG 默认保留文字：插入 Word / PowerPoint 后，选中图形并「转换为形状」即可编辑文字。对方电脑没装同款字体时，文字会换成相近字体显示。不支持的来源会明确报告导出失败。",
       "targetNoFigure": "当前没有图",
       "thumbNote": "缩略图仅为示意 · 非最终文件",
       "tiffHint": "位图 · 无损压缩",
@@ -604,12 +607,13 @@ export default interface Resources {
         "keyboardHelp": "按空格拿起卡片，方向键移动，回车放下，Esc 取消。",
         "leftZone": "离开了投放框。",
         "missed": "没有放进投放框，卡片已放回。再试一次。",
-        "or": "或",
         "overZone": "在投放框上方，回车放下。",
         "picked": "已拿起 {{name}}，用方向键移到投放框上，回车放下。",
-        "success": "示例图已载入",
+        "renderProgress": "示例图渲染进度",
+        "rendering": "正在渲染图表…",
+        "renderingTitle": "正在生成示例图…",
+        "success": "编译完成",
         "task": "第一步：把示例脚本拖进来",
-        "useSample": "直接使用示例",
         "zoneBody": "{{product}} 会打开它画出的图",
         "zoneLabel": "脚本投放框",
         "zoneTitle": "拖拽脚本到这里"
@@ -1668,8 +1672,10 @@ export default interface Resources {
           "extraHint": {
             "corrupt_sessions": "默认只有损坏副本的名字和大小；勾选后附上内容。",
             "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
-            "source": "脚本会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；脚本里有密钥请不要勾。"
+            "source": "出错的脚本（即使它没在项目里登记）、项目里登记的脚本，以及参与依赖安装的 requirements / constraints / pyproject 文件会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；这些文件里有密钥请不要勾。"
           },
+          "extrasSelectAll": "全选",
+          "extrasSelectNone": "全不选",
           "extrasTitle": "额外内容（默认不发送）",
           "failure": {
             "api_incompatible": "诊断服务的版本与这个 Tavotto 不兼容。请更新 Tavotto 后再试。",
@@ -1714,7 +1720,7 @@ export default interface Resources {
             "detail_requests": "最近的后端请求记录（只有方法、路由、状态码、耗时、错误码）",
             "detail_runs": "最近的渲染、导出、脚本试运行记录",
             "detail_shell": "桌面壳与安装信息（版本、系统、架构、更新结果）",
-            "detail_source": "脚本源码（你勾选了）",
+            "detail_source": "脚本源码与依赖声明文件（你勾选了）",
             "detail_state": "会话状态文件（含损坏副本清单）",
             "detail_storage": "存储环境（剩余空间、可写、是否在同步目录）",
             "environment": "运行环境与版本信息（用户名、路径已脱敏）",
@@ -1724,7 +1730,7 @@ export default interface Resources {
             "readme": "包内说明文件",
             "settings": "应用设置（密钥已替换）",
             "task": "最近几次失败任务的分类结果",
-            "ui_state": "界面状态快照（不含图内文字与文件名）",
+            "ui_state": "界面状态快照（不含图内文字与文件名；含新手教程进度：状态、步骤 id、看过哪几类提示）",
             "ui_trace": "最近的界面操作轨迹（只有操作类型）"
           },
           "listSeparator": "、",
@@ -1763,7 +1769,7 @@ export default interface Resources {
           "sentenceItem": {
             "corrupt_sessions": "会话损坏副本的内容",
             "crash_reports": "系统崩溃报告（可能含打开着的文件的内容）",
-            "source": "脚本源码"
+            "source": "脚本源码与依赖声明文件"
           },
           "short": {
             "console": "控制台",
@@ -2225,7 +2231,6 @@ export default interface Resources {
     "versions": {
       "beforeRestore": "恢复前（{{time}}）",
       "budgetOver": "命名节点已占用 {{used}} MB，超过 {{limit}} MB 的上限。它们不会被自动删除，但删掉几个之前不能再命名新节点。",
-      "close": "关闭排版时间线",
       "delete": "删除节点",
       "deleteBody": "删除后无法找回，当前排版不受影响。",
       "deleteTitle": "删除节点「{{name}}」？",
@@ -2314,7 +2319,6 @@ export default interface Resources {
         "resized": "图幅 {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
         "sameMetrics": "对象数与图幅未变"
       },
-      "title": "排版时间线",
       "today": "今天",
       "unname": "删除名字",
       "versionName": "节点名称",
@@ -2373,6 +2377,7 @@ export default interface Resources {
       "ai_request_unresolved": "这条请求的状态暂时无法确认，请稍后查询结果。",
       "ai_revert_conflict": "{{script}} 在这次 AI 修改之后又改过，回滚会覆盖后来的改动，已取消。",
       "ai_revert_failed": "无法撤销 AI 修改：{{reason}}",
+      "ai_revert_not_applicable": "这次是「生成可编辑版本」，原脚本从未被改动，没有可撤销的内容。",
       "ai_script_busy": "{{script}} 上已有一个 AI 任务在运行。等它结束，或先中止它，再发新的。",
       "ai_start_failed": "无法启动 AI 任务：{{reason}}",
       "ai_supersede_conflict": "上一次的修改其实已经开始了，没有改写成新指令。请先看它的结果。",
@@ -2397,6 +2402,15 @@ export default interface Resources {
       "bad_validation": "检查设置格式有误，请刷新页面后重试。",
       "batch_start_failed": "{{message}}",
       "conda_launcher_unavailable": "Conda 环境激活失败（取不到激活后的环境变量），这次没有运行任何东西。通常是暂时的：稍后再试；如果一直这样，请检查这个环境的 conda 安装和 activate.d 脚本。",
+      "convert_candidate_changed": "待采用的新版本文件被改动过，已拒绝采用。请重新生成。",
+      "convert_disabled": "「生成可编辑版本」已被关闭。",
+      "convert_name_exhausted": "同名的新版本文件太多了（已有 99 个），请先清理再试。",
+      "convert_no_preview": "这份新版本没有预览。",
+      "convert_not_found": "找不到这份待采用的新版本（可能已放弃、已过期，或属于别的项目）。",
+      "convert_not_ready": "新版本还没生成好，或没有通过检查。",
+      "convert_outside_project": "新版本的位置不在项目里，已拒绝写入。",
+      "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
+      "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",
       "data_decode_error": "这份数据不是 UTF-8 编码，读不出来。",
       "data_empty": "这份数据是空的。",
       "data_figure_input_missing": "请选一份数据文件，并说明想画什么。",
@@ -2605,9 +2619,14 @@ export default interface Resources {
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
       "svg_asset_export_unsupported": "SVG 素材目前支持预览、摆放和原图 SVG 导出；画布与跨格式导出尚未支持。请先将该素材转换为 PDF 后导入。",
       "svg_asset_unsupported": "此 SVG 暂不支持导入。请使用尺寸明确的独立静态 SVG；不支持脚本、外部资源或 DTD。",
+      "svg_snapshot_missing": "{{id}} 暂时无法导出为 SVG：请先重新运行这张图的脚本，或改用 PDF 导出。",
       "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",
       "taf_disabled": "这个实验功能还没有开启。",
+      "tex_command_missing": "这张图用了 LaTeX 排版（text.usetex），但当前渲染环境的 PATH 上找不到 {{command}}。这是系统里的 TeX 工具，不是 Python 包；装好 TeX 发行版后，如果刚装完，请重启 Tavotto 让它拿到新的 PATH，再重试。",
+      "tex_compile_failed": "LaTeX 编译这张图里的文字时出错：{{line}}。这是 TeX 自己报的错，请检查文字或导言区（text.latex.preamble）。",
+      "tex_failed": "LaTeX 排版（text.usetex）这一步失败了，原因无法从输出中判断：{{error}}",
+      "tex_package_missing": "LaTeX 排版缺少文件 {{file}}（TeX 宏包或字体，不是 Python 包）。用 TeX 发行版的包管理器装上它之后重试即可，Tavotto 会重新编译验证。",
       "tiff_bigtiff": "{{file}} 是 BigTIFF，暂不支持。请另存为普通 TIFF 或 PNG。",
       "tiff_bit_depth": "{{file}} 的位深暂不支持。只支持 8 位或 16 位（1 位仅限黑白）。",
       "tiff_color_space": "{{file}} 的颜色模式（如 CMYK、Lab）暂不支持。请转成 RGB 或灰度后再用。",
@@ -2902,6 +2921,9 @@ export default interface Resources {
       "repairManagedUnavailableHint": "需要 Python {{min}}–{{max}}；如果已经装过，可以在下面指定它。",
       "repairModifiesEnv": "会修改项目的 Python 环境。",
       "repairNeedsNetwork": "需要联网下载",
+      "repairNotFoundNamed": "软件源里找不到 {{name}}。",
+      "repairNotFoundNamedFrom": "软件源里找不到 {{name}}（来自 {{source}}）。",
+      "repairNotPipInstallable": "{{name}} 不能用 pip 安装，要在装有它的 Python 环境里运行。",
       "repairPackageAria": "要安装的包名",
       "repairPackagePlaceholder": "例如 my-lab-tools 或 my-lab-tools>=2.1",
       "repairPinnedBody": "渲染用的 Python 被固定为 {{python}}（{{source}}），在取消固定前，为这个项目装的或选的环境都不会被使用。",
@@ -4314,7 +4336,8 @@ export default interface Resources {
     },
     "tab": {
       "canvas": "画布",
-      "properties": "属性"
+      "properties": "属性",
+      "timeline": "时间线"
     },
     "tabsLabel": "右侧面板模式",
     "text": {
@@ -4978,15 +5001,14 @@ export default interface Resources {
     },
     "fastEdit": {
       "added": "{{name}} 已加入画布",
-      "addedForEdit": "已为编辑加入本排版",
-      "addedForEditLive": "已为编辑加入本排版，移除即撤销。",
+      "addedForEdit": "已为编辑新建了一张画布",
+      "addedForEditLive": "已为编辑新建了一张画布，移除即撤销放进去的图。",
       "alreadyOnCanvas": "{{name}} 已经在画布上",
       "connectSource": "连接源脚本",
-      "crumbTitle": "回到排版（Esc）",
+      "enteredLayout": "已进入多图排版",
       "figureMissing": "项目里找不到 {{name}}",
       "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。",
-      "removeAdded": "移除",
-      "toLayout": "排版与出版"
+      "removeAdded": "移除"
     },
     "hints": {
       "fast_edit_entered": "你的改动会保存到当前排版，原始文件不动。",
@@ -5159,6 +5181,13 @@ export default interface Resources {
         "title": "终止脚本？"
       }
     },
+    "pageEdge": {
+      "height": "高 {{mm}} mm",
+      "heightPrefix": "高 ",
+      "snapTo": "吸附到 {{name}}",
+      "width": "宽 {{mm}} mm",
+      "widthPrefix": "宽 "
+    },
     "panelBadge": {
       "approxPreview": "近似预览",
       "approxPreviewHint": "画布暂显示磁盘上的原图，未反映图内修改。",
@@ -5237,6 +5266,33 @@ export default interface Resources {
         },
         "steps": "进度",
         "stopScript": "停止脚本"
+      },
+      "convert": {
+        "adopted": "已采用，正在打开新版本…",
+        "aspectDiffers": "宽高比与原图相差约 {{pct}}%",
+        "btn": {
+          "adopt": "采用新版本",
+          "discard": "放弃",
+          "retry": "重试",
+          "start": "生成可编辑版本"
+        },
+        "fail": {
+          "budget_exhausted": "尝试次数用完了",
+          "no_matplotlib_figure": "生成的脚本跑完没有画出 Matplotlib 图",
+          "no_matplotlib_import": "生成的脚本没有用 Matplotlib",
+          "other_file_changed": "助手改动了不该动的文件，已丢弃",
+          "project_files_changed": "助手改动了项目文件，已丢弃",
+          "render_not_wired": "暂时无法校验新版本",
+          "run_failed": "生成的脚本运行出错了",
+          "syntax_error": "生成的脚本有语法错误",
+          "target_missing": "助手没有写出新脚本",
+          "unknown": "没能生成可编辑版本"
+        },
+        "noPreview": "暂无预览",
+        "original": "原图",
+        "ready": "新版本生成好了，对照一下再决定",
+        "redrawn": "重画的新版本",
+        "running": "正在生成可编辑版本…"
       },
       "detail": {
         "args": "参数",
@@ -5403,6 +5459,8 @@ export default interface Resources {
         "detail": {
           "alternatives": "有几个包都能提供它，先按 {{distribution}} 装；想换别的，请改用你自己的 Python 环境。",
           "listIntro": "这些库的来源还没法确定，Tavotto 不会替你装：",
+          "localMissing": "找不到本地模块 {{name}}（脚本把 {{dirs}} 加进了搜索路径，请确认这个文件夹在）。",
+          "notPip": "这个脚本需要 {{name}}，内置 Python 装不了，请用装有它的环境。",
           "trustNote": "你填的包名不算可信来源：Tavotto 没法核实它们，所以装之前会让你再确认一次。",
           "userSpecifiedBadge": "用户指定，未经核实"
         },
@@ -5622,9 +5680,7 @@ export default interface Resources {
       "projectConflict": "项目里的 {{file}} 已在别处改过，这次没有写入。请在弹出的对话框里决定。",
       "projectFailed": "没能存进项目里的 {{file}}：{{reason}}",
       "projectSkipped": "没有写入项目里的 {{file}}：按下保存之后切换了排版或项目。回到那份排版再保存一次。",
-      "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。",
-      "svgSnapshotPill": "SVG 快照未完整保留",
-      "svgSnapshotWarning": "排版已保存：{{name}}。以下来源的 SVG 快照未能保留：{{sources}}。重新打开后，导出这些来源的 SVG 可能需要你明确重新运行脚本。"
+      "skippedSwitched": "按下保存之后切换了排版或项目，这次没有写进项目。回到那份排版再保存一次。"
     },
     "scan": {
       "deps": {
@@ -5724,12 +5780,12 @@ export default interface Resources {
     "stage": {
       "addFigure": "添加图",
       "backToCanvas": "返回画布",
-      "backToLayout": "返回排版",
       "contextBarLabel": "工作区位置",
       "crumbsLabel": "当前对象",
       "emptyHint": "从素材库选一张图放到画布上。",
       "emptyHintNoAssets": "把 PDF/PNG 或绘图脚本放进项目目录，就会出现在素材库。",
       "emptyTitle": "画布是空的",
+      "exitElementEdit": "退出图内编辑",
       "exitTitle": "退出图内编辑，回到画布层（Esc）",
       "rulerUnit": "mm",
       "rulerUnitTitle": "标尺单位：毫米",

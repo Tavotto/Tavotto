@@ -1,0 +1,15 @@
+✔ activation rejects draft malformed and unbounded versions (35.883376ms)
+✔ activation cannot reuse an installed version with different bytes (18.448063ms)
+✔ activation later source observation retains original archived source (15.973474ms)
+✔ activation journal update and delete are immutable (11.481104ms)
+✔ activation bootstrap refuses a prepared current-mode configuration (8.93386ms)
+✔ activation preparation snapshots all caller inputs before awaiting (15.875278ms)
+✔ activation application snapshots caller proposal across rebuilding awaits (23.405293ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 284.413677

@@ -24,7 +24,7 @@ async function only(loc: Locator, timeout?: number): Promise<Locator> {
  */
 async function drawerWithOneNode(page: Page) {
   await (await only(page.locator('[data-timeline-button]'), 30_000)).click()
-  const drawer = await only(page.locator('[data-timeline-drawer]'))
+  const drawer = await only(page.locator('[data-timeline-panel]'))
   const node = await only(drawer.locator('[data-timeline-node]'), 15_000)
   return { drawer, node }
 }
@@ -61,3 +61,33 @@ test('单击一行只选中；⋯ 里的「改名」进入改名，选中行下�
   await (await only(node.locator('[data-timeline-preview-button]'))).click()
   await expect(await only(page.locator('[data-dialog="timeline-preview"]'))).toBeVisible()
 })
+
+for (const [locale, width] of [['zh-CN', 320], ['en-US', 320], ['zh-CN', 480]] as const) {
+  test(`时间线是右栏页签，最窄 ${width}px 下列表与页签行不溢出，预览对话框照常打开 (${locale})`, async ({ app, page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.addInitScript(
+      ({ locale, width }) => {
+        localStorage.setItem('tavotto.locale', locale)
+        localStorage.setItem('tavotto.ui', JSON.stringify({ prefsVersion: 2, rightWidth: width }))
+      },
+      { locale, width },
+    )
+    const a = await app()
+    await page.goto(a.baseURL)
+    const { node } = await drawerWithOneNode(page)
+    // 在右栏里，而不是盖在画布上的浮卡
+    await expect(page.locator('[data-inspector-panel] [data-timeline-panel]')).toHaveCount(1)
+    await expect(page.locator('[data-timeline-drawer]')).toHaveCount(0)
+    await expect(page.locator('[data-inspector-tab="timeline"]')).toHaveAttribute('aria-selected', 'true')
+    const { horizontalOffenders } = await import('./overflow')
+    expect(await horizontalOffenders(page, '[data-inspector-panel]')).toEqual([])
+    await row(node).click()
+    expect(await horizontalOffenders(page, '[data-inspector-panel]')).toEqual([])
+    const shots = process.env.TAVOTTO_SHOTS
+    if (shots) await page.screenshot({ path: `${shots}/timeline-tab-${locale}-${width}.png` })
+    await (await only(node.locator('[data-timeline-preview-button]'))).click()
+    await expect(await only(page.locator('[data-dialog="timeline-preview"]'))).toBeVisible()
+  })
+}
+
+const row = (node: Locator) => node.locator('[data-timeline-row]')

@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDocumentStore } from '@/store/documentStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
+import { ONBOARDING_DEFAULTS, useOnboardingStore } from '@/store/onboardingStore'
 import { renderKey, renderKeyOf, useRenderStore, type PanelRender } from '@/store/renderStore'
 import { resetPreview } from '@/store/svgPreviewStore'
 import { msg } from '@/i18n'
@@ -87,6 +88,40 @@ beforeEach(() => {
   useUiStore.setState({ elementPanelId: null, selectedGids: [] })
   useDocumentStore.setState({ past: [], future: [], txn: null })
   useRenderStore.setState({ byKey: {}, latest: {}, tracked: {}, building: {} })
+})
+
+describe('onboarding 摘要', () => {
+  it('只有结构：状态、flowVersion、走过的步骤、欢迎页出现过没有、看过的提示键名——没有时间戳与项目 id', () => {
+    useOnboardingStore.setState({
+      ...ONBOARDING_DEFAULTS,
+      status: 'paused',
+      completedSteps: ['demo_import'],
+      welcomeSeenAt: 1_760_000_000_000,
+      hintSeen: { panel_editable: 1_760_000_000_001, multi_select: 1_760_000_000_002 },
+      tutorialProjectId: 'secret-project-id',
+    })
+    const snap = buildFrontendDiagnosticSnapshot()
+    expect(snap.onboarding).toEqual({
+      status: 'paused',
+      flow_version: ONBOARDING_DEFAULTS.flowVersion,
+      completed_steps: ['demo_import'],
+      welcome_seen: true,
+      hint_seen_keys: ['panel_editable', 'multi_select'],
+    })
+    const text = JSON.stringify(snap)
+    expect(text).not.toContain('secret-project-id')
+    expect(text).not.toContain('1760000000')
+  })
+
+  it('全新用户：未开始、欢迎页没出现过、没看过任何提示', () => {
+    useOnboardingStore.setState({ ...ONBOARDING_DEFAULTS })
+    expect(buildFrontendDiagnosticSnapshot().onboarding).toMatchObject({
+      status: 'not_started',
+      completed_steps: [],
+      welcome_seen: false,
+      hint_seen_keys: [],
+    })
+  })
 })
 
 describe('frontend state snapshot', () => {

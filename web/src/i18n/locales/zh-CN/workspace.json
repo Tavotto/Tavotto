@@ -229,15 +229,14 @@
   },
   "fastEdit": {
     "added": "{{name}} 已加入画布",
-    "addedForEdit": "已为编辑加入本排版",
-    "addedForEditLive": "已为编辑加入本排版，移除即撤销。",
+    "enteredLayout": "已进入多图排版",
+    "addedForEdit": "已为编辑新建了一张画布",
+    "addedForEditLive": "已为编辑新建了一张画布，移除即撤销放进去的图。",
     "removeAdded": "移除",
     "alreadyOnCanvas": "{{name}} 已经在画布上",
     "connectSource": "连接源脚本",
-    "crumbTitle": "回到排版（Esc）",
     "figureMissing": "项目里找不到 {{name}}",
-    "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。",
-    "toLayout": "排版与出版"
+    "layoutOnly": "未连接源脚本。可在版面上摆放，不能改图内元素。"
   },
   "history": {
     "addArrow": "添加箭头",
@@ -401,6 +400,13 @@
       "title": "终止脚本？"
     }
   },
+  "pageEdge": {
+    "height": "高 {{mm}} mm",
+    "heightPrefix": "高 ",
+    "snapTo": "吸附到 {{name}}",
+    "width": "宽 {{mm}} mm",
+    "widthPrefix": "宽 "
+  },
   "panelBadge": {
     "approxPreview": "近似预览",
     "approxPreviewHint": "画布暂显示磁盘上的原图，未反映图内修改。",
@@ -562,8 +568,6 @@
     }
   },
   "save": {
-    "svgSnapshotWarning": "排版已保存：{{name}}。以下来源的 SVG 快照未能保留：{{sources}}。重新打开后，导出这些来源的 SVG 可能需要你明确重新运行脚本。",
-    "svgSnapshotPill": "SVG 快照未完整保留",
     "conflict": "排版已在别处改过，请先处理冲突。",
     "doneLocal": "已保存在本机（没有打开项目）",
     "doneProject": "已保存到项目：{{file}}",
@@ -633,7 +637,7 @@
   "stage": {
     "addFigure": "添加图",
     "backToCanvas": "返回画布",
-    "backToLayout": "返回排版",
+    "exitElementEdit": "退出图内编辑",
     "contextBarLabel": "工作区位置",
     "crumbsLabel": "当前对象",
     "emptyHint": "从素材库选一张图放到画布上。",
@@ -1125,6 +1129,8 @@
       "distFailed": "装完后核对发现，装上的包和你确认的计划不一致。",
       "detail": {
         "listIntro": "这些库的来源还没法确定，Tavotto 不会替你装：",
+        "notPip": "这个脚本需要 {{name}}，内置 Python 装不了，请用装有它的环境。",
+        "localMissing": "找不到本地模块 {{name}}（脚本把 {{dirs}} 加进了搜索路径，请确认这个文件夹在）。",
         "userSpecifiedBadge": "用户指定，未经核实",
         "trustNote": "你填的包名不算可信来源：Tavotto 没法核实它们，所以装之前会让你再确认一次。",
         "alternatives": "有几个包都能提供它，先按 {{distribution}} 装；想换别的，请改用你自己的 Python 环境。"
@@ -1173,7 +1179,34 @@
         "unknown": "装上的东西和计划对不上。"
       }
     },
-    "progress": "进行中"
+    "progress": "进行中",
+    "convert": {
+      "running": "正在生成可编辑版本…",
+      "ready": "新版本生成好了，对照一下再决定",
+      "adopted": "已采用，正在打开新版本…",
+      "original": "原图",
+      "redrawn": "重画的新版本",
+      "noPreview": "暂无预览",
+      "aspectDiffers": "宽高比与原图相差约 {{pct}}%",
+      "fail": {
+        "unknown": "没能生成可编辑版本",
+        "no_matplotlib_figure": "生成的脚本跑完没有画出 Matplotlib 图",
+        "run_failed": "生成的脚本运行出错了",
+        "no_matplotlib_import": "生成的脚本没有用 Matplotlib",
+        "target_missing": "助手没有写出新脚本",
+        "syntax_error": "生成的脚本有语法错误",
+        "other_file_changed": "助手改动了不该动的文件，已丢弃",
+        "project_files_changed": "助手改动了项目文件，已丢弃",
+        "render_not_wired": "暂时无法校验新版本",
+        "budget_exhausted": "尝试次数用完了"
+      },
+      "btn": {
+        "start": "生成可编辑版本",
+        "adopt": "采用新版本",
+        "discard": "放弃",
+        "retry": "重试"
+      }
+    }
   },
   "canvasMenu": {
     "aria": "画布操作",

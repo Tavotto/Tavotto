@@ -39,8 +39,10 @@ from . import (
     logsafe,
     patchspec,
     projectenv,
+    rootenv,
     runtime,
     scanbudget,
+    texdiag,
     workdir,
 )
 
@@ -716,6 +718,7 @@ def recovery_params(exc: "WorkerError") -> dict:
     * 输入类：`prompt`（脚本 `input()` 的提示原文）+ `reason`（为什么没人能答，闭集 `inputbroker.REASONS`）。
     * `script_needs_arguments`：`argv_count`（用户给了精确 token 才有）+ `parse_kind`（worker 有 argparse 的
       实际证据才有）。数值一律是字符串——那是已发布的线格式。
+    * TeX 工具链（`texdiag.ERROR_CODES`）：`command` / `file` / `line`，有才带。
     * 其余码：空（不为凑形状捏造字段）。
     """
     extra = getattr(exc, "extra", None) or {}
@@ -729,6 +732,9 @@ def recovery_params(exc: "WorkerError") -> dict:
         if extra.get("input_kind") in _INPUT_KINDS:
             params["input_kind"] = extra["input_kind"]
         return params
+    if exc.code in texdiag.ERROR_CODES:
+        # TeX 工具链（`texdiag`）：缺的命令 / 文件名（白名单清洗过）与 LaTeX 的那一行 `! …`
+        return texdiag.params_of(extra.get("tex"))
     if exc.code == ARGUMENTS_ERROR_CODE:
         params = {}
         if extra.get("argv_count"):
@@ -1165,6 +1171,19 @@ def _engine_files_incomplete_error(mod: str, traceback_text: str) -> "WorkerErro
         code=ENGINE_FILES_INCOMPLETE_CODE,
     )
     err.engine_module = mod
+    return err
+
+
+def _tex_error(message: str, traceback_text: str) -> "WorkerError | None":
+    """TeX 工具链的失败 → 各自的稳定码（`texdiag`）；不是 TeX 的回 None。
+
+    **先于缺依赖判**：LaTeX 日志是一大段外部文本，TeX 的失败也绝不是「pip 装个包」能修的——
+    不能让它落进 `missing_dependency` 的一键安装出口。原始消息与 traceback 原样保留。"""
+    fact = texdiag.classify(f"{message}\n{traceback_text}")
+    if fact is None:
+        return None
+    err = WorkerError(message, traceback_text, code=texdiag.code_for(fact.as_fact()))
+    err.extra = {"tex": fact.as_fact()}
     return err
 
 
@@ -1794,7 +1813,11 @@ def resolve_worker_python(
                 # 记住过不等于现在还成立。每个进程每条解释器（每个指纹）只做一次。
                 fingerprint = projectenv.interpreter_fingerprint(remembered)
                 try:
-                    ok = _has_matplotlib(remembered)
+                    # 记着的是内置 runtime（带叠加环境的组合）时按内置的那套量；其余调用形状不变
+                    if same_python(remembered, runtime.bundled_python()):
+                        ok = _has_matplotlib(remembered, bundled=True)
+                    else:
+                        ok = _has_matplotlib(remembered)
                 except launcher_mod.LauncherUnavailable as exc:
                     # 项目已选定 / 记住的环境：稳定码直接交给用户。不记体检结论、不作废记住的解释器、不静默换别的
                     raise _launcher_error(exc) from exc
@@ -1952,7 +1975,14 @@ def _project_python_unusable(python: str, reason: str, record: dict) -> "WorkerE
 
 
 #: 会话重建的原因（闭集，诊断日志按它放行明文）。
-_REBUILD_REASONS = ("已死", "入口已变", "渲染解释器已变", "环境代已变", "改指表已变")
+_REBUILD_REASONS = (
+    "已死",
+    "入口已变",
+    "渲染解释器已变",
+    "环境代已变",
+    "改指表已变",
+    "叠加环境已变",
+)
 
 
 def _invalidate_remembered(figures_dir: str | Path, python: str, reason: str, record: dict) -> None:
@@ -1984,6 +2014,10 @@ def remembered_source(figures_dir: str | Path, python: str) -> str:
     """
     from . import managedenv
 
+    # 记着的就是内置 runtime（带 ROOT 叠加层的组合，ADR 0079 修订 2026-10-21 b）：来源仍是内置——
+    # worker 按内置的那一套起（摘 `PYTHONPATH`、`-B`），叠加层在其后
+    if same_python(python, runtime.bundled_python()):
+        return SOURCE_BUNDLED
     # 受管环境按代（U04）：任何一代的解释器都是「Tavotto 替它建的」
     if managedenv.is_managed_python(figures_dir, python):
         return SOURCE_MANAGED_PROJECT
@@ -2362,6 +2396,11 @@ class EngineWorker:
         self.env_state = launcher_mod.env_state_of(python)
         #: 起会话那一刻的完整启动上下文（直接启动 / Conda 激活 + conda + prefix + 环境版本）：钉下的决定与它比
         self.launch_context = launcher_mod.context_key(python)
+        #: 随解释器记着的叠加环境（ROOT，`rootenv`）：钉下的决定带着它就只认它，否则读项目记录。
+        #: 起进程时叠在 Conda 激活之后；会话复用前核对（`acquire` 的"叠加环境已变"）
+        self.env_overlay = _overlay_for(figures_dir, python, pinned)
+        #: 代次键（路径 + 安装内容指纹），不是身份键：同一路径的 ROOT 被原地升级后，热会话还握着旧库，不能复用
+        self.env_overlay_key = rootenv.generation_of(self.env_overlay)
         # 内置 runtime 装在安装目录里（可能是 Program Files），一个字节都不往
         # 那儿写：.pyc 与 matplotlib 字体缓存改道到数据目录。Tavotto 自己的环境
         # （受管环境 / worker-env）的缓存同样落回数据目录（`runtime.owned_env`）。
@@ -2401,7 +2440,7 @@ class EngineWorker:
             logsafe.known(self.python_source, SOURCE_LABELS),
         )
         try:
-            popen_env = launcher_mod.merge_env(self.launcher, python, env)
+            popen_env = launch_env(self.launcher, python, env, self.env_overlay, bundled=bundled)
         except launcher_mod.CaptureDeferred:
             raise  # 持锁起会话时缓存没命中：交回 `acquire` 出锁预热再来
         except launcher_mod.LauncherUnavailable as exc:  # 激活取环境失败：稳定码，什么都没起
@@ -2647,6 +2686,10 @@ class EngineWorker:
             exc = _engine_files_incomplete_error(engine_mod, tb)
             exc.script_name = self.script_name
             return exc
+        tex = _tex_error(msg, tb)
+        if tex is not None:
+            tex.script_name = self.script_name
+            return tex
         mod = missing_module(f"{msg}\n{tb}")
         structured, structured_mod = structured_missing_dependency(err)
         mod = mod or structured_mod
@@ -2857,6 +2900,8 @@ class EngineWorker:
         svg_path: str | None = None,
         require_built: bool = False,
         snapshot_only: bool = False,
+        svg_fonttype: str | None = None,
+        svg_text_path: str | None = None,
     ) -> dict:
         if (require_built or snapshot_only) and not self.built:
             raise WorkerError(
@@ -2875,6 +2920,8 @@ class EngineWorker:
                 **({"svg_path": svg_path} if svg_path is not None else {}),
                 **({"require_built": True} if require_built else {}),
                 **({"snapshot_only": True} if snapshot_only else {}),
+                **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
+                **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
             },
             EXPORT_TIMEOUT,
         )
@@ -3113,6 +3160,9 @@ def _worker_error(
     engine_mod = missing_engine_module(f"{message}\n{traceback_text}")
     if engine_mod:
         return _engine_files_incomplete_error(engine_mod, traceback_text)
+    tex = _tex_error(message, traceback_text)
+    if tex is not None:
+        return tex
     mod = missing_module(f"{message}\n{traceback_text}")
     structured, structured_mod = structured_missing_dependency(extra)
     mod = mod or structured_mod
@@ -3223,6 +3273,9 @@ class WorkerdWorker:
         if launcher_mod.launcher_for_interpreter(python) is not None:
             # workerd 的 spawn 规格里没有激活增量：需要 Conda 激活的解释器只走 Python 池（调用方回退）
             raise WorkerdUnavailable("该解释器需要 Conda 激活启动，workerd 不接")
+        if _overlay_for(figures_dir, python, pinned):
+            # 同理：叠加环境（ROOT）不进 workerd 的 spawn 规格（规格进回执与哈希，不带安装路径），只走 Python 池
+            raise WorkerdUnavailable("该解释器需要叠加 ROOT 环境启动，workerd 不接")
         self.python_generation = projectenv.environment_generation(python)
         self.env_state = launcher_mod.env_state_of(python)
         self.launch_context = launcher_mod.context_key(python)
@@ -3563,6 +3616,8 @@ class WorkerdWorker:
         svg_path: str | None = None,
         require_built: bool = False,
         snapshot_only: bool = False,
+        svg_fonttype: str | None = None,
+        svg_text_path: str | None = None,
     ) -> dict:
         if (require_built or snapshot_only) and not self.built:
             raise WorkerError(
@@ -3582,6 +3637,8 @@ class WorkerdWorker:
                 **({"svg_path": svg_path} if svg_path is not None else {}),
                 **({"require_built": True} if require_built else {}),
                 **({"snapshot_only": True} if snapshot_only else {}),
+                **({"svg_fonttype": svg_fonttype} if svg_fonttype is not None else {}),
+                **({"svg_text_path": svg_text_path} if svg_text_path is not None else {}),
             },
         )
         return _fold_build_timings(resp, build)
@@ -3742,6 +3799,11 @@ class EnvironmentDecision:
     #: conda install / 改 activate.d 不换代，conda 从找不到变成找得到（直接启动 → 激活）也不换代——计划验证的都不是那个
     #: 环境（P09）。空 = 没钉（旧值 / 替身），只比路径与代
     launch_context: str = ""
+    #: 这一轮检测里**被评估但没选用**的候选各自的落选原因（`userenvs.rejection_reason` 的形状：不透明 id + 来源 + 稳定码，
+    #: 不带路径）。没评估（默认链条能跑 / 确认模式 / 非检测模式）= 空。供前端卡片与诊断包读，不参与 `matches`
+    rejected: tuple[dict, ...] = ()
+    #: 钉下的解释器要带的叠加环境（ROOT，`rootenv.overlay_spec`）；与解释器同一次决定，起会话时只认它。不参与 `matches`
+    env_overlay: dict | None = None
 
     @property
     def pinned(self) -> bool:
@@ -3796,6 +3858,8 @@ def pin_of_worker(worker) -> EnvironmentDecision:
         source=getattr(worker, "python_source", "") or "",
         generation=getattr(worker, "python_generation", "") or "",
         launch_context=getattr(worker, "launch_context", "") or "",
+        # 热会话带着的叠加环境（ROOT）也一并钉：重放 worker 与热会话同一环境，不再回头读项目记录
+        env_overlay=getattr(worker, "env_overlay", None) or None,
     )
 
 
@@ -3837,6 +3901,31 @@ def _scoped_pin(figures_dir) -> EnvironmentDecision | None:
 def _launcher_error(exc: "launcher_mod.LauncherUnavailable") -> "WorkerError":
     """Conda 激活取环境失败 → 带稳定码 `conda_launcher_unavailable` 的 `WorkerError`（不降级成裸起）。"""
     return WorkerError(str(exc), code=exc.code)
+
+
+def launch_env(
+    lau, python: str, env: dict | None, overlay: dict | None, *, bundled: bool
+) -> dict | None:
+    """起 worker 子进程的完整 env：`worker_env` 的结果 + Conda 激活增量，再叠上 ROOT 之类的叠加环境（`rootenv`）。
+
+    叠加层**最后**叠：内置 runtime 已经摘掉了 shell 的 `PYTHONPATH`（`bundled` 时叠加层替换而不是前置它），
+    激活增量也不会盖掉它。叠加层只进这一次 Popen 的 env，不进 `ExecutionSpec`（spec 会进回执，不带安装路径）。"""
+    popen_env = launcher_mod.merge_env(lau, python, env)
+    if overlay:
+        popen_env = rootenv.apply_overlay(popen_env, overlay, replace_pythonpath=bundled)
+    return popen_env
+
+
+def _overlay_for(
+    figures_dir: str | Path | None, python: str, pinned: "EnvironmentDecision | None"
+) -> dict | None:
+    """起这条解释器的 worker 要叠的环境（ROOT）：钉下的决定带着就只认它（与解释器同一次决定、不再读共享的项目记录），
+    否则读项目记录里随这条解释器记着的那份。没有回 None。"""
+    if pinned is not None and pinned.pinned:
+        return pinned.env_overlay if same_python(pinned.python, python) else None
+    if figures_dir is None or not python:
+        return None
+    return projectenv.remembered_overlay(figures_dir, python)
 
 
 def _resolve_for_worker(
@@ -4337,6 +4426,11 @@ def acquire(
                     # 同一路径、环境却被原地重建过（r4232403630）：缓存的进程还握着旧 / 混合的包。拆掉它，
                     # 重建出来的新会话再过下面「起出来的与钉下的对不上就 environment_changed」那一道
                     why = "环境代已变"
+                elif getattr(w, "env_overlay_key", "") != rootenv.generation_of(
+                    _overlay_for(figures_dir, want_python, pin)
+                ):
+                    # 叠加环境（ROOT）变了：同一个解释器路径，带不带 / 带哪个 ROOT 起的进程不是同一个环境
+                    why = "叠加环境已变"
                 elif not _remap_current(w, figures_dir):
                     # 会话是按旧改指表起的（ADR 0106 §五）：`shutdown_all` 摘掉之后仍在起的那条，
                     # 可能在改动之后才登记进池——复用它就是拿旧映射画图
@@ -4729,6 +4823,7 @@ def build(
     allow_project_env: bool = True,
     before_build=None,
     run=None,
+    write_roots=None,
 ):
     """取会话并确保脚本已 build——**带一次项目环境自动 fallback**。
 
@@ -4751,6 +4846,8 @@ def build(
     替换会话（monkeypatch `pool.get`），改走别的入口它们会静默拿到真池。
     """
     context = {"run": run} if run is not None else {}
+    if write_roots is not None:
+        context["write_roots"] = write_roots
     worker, resp, _created = _build_with(
         lambda: (get(script_name, figures_dir, entry, **context), False),
         script_name,
@@ -4926,6 +5023,7 @@ def invalidate(
     force: bool = False,
     targets: tuple[WorkerTarget, ...] | None = None,
     preserve: tuple[WorkerTarget, ...] = (),
+    write_roots=None,
 ) -> None:
     """脚本文件变更后作废其会话（下次请求自动重建）。
 
@@ -4945,7 +5043,11 @@ def invalidate(
         if figures_dir is None:
             keys = [k for k in _workers if k[1] == script_name]
         elif run is not None or only_run:
-            keys = [k for k in _workers if k == _worker_key(figures_dir, script_name, None, run)]
+            keys = [
+                k
+                for k in _workers
+                if k == _worker_key(figures_dir, script_name, None, run, **_roots_kw(write_roots))
+            ]
         else:
             keys = [k for k in _workers if k[:2] == (_norm_dir(figures_dir), script_name)]
         if targets is not None:
@@ -5014,7 +5116,13 @@ def invalidate_project(
 
 
 def force_cancel(
-    script_name: str, figures_dir: str, *, artifact_source=None, expected_worker=None, run=None
+    script_name: str,
+    figures_dir: str,
+    *,
+    artifact_source=None,
+    expected_worker=None,
+    run=None,
+    write_roots=None,
 ) -> bool:
     """当场硬杀该脚本的在跑会话（探测取消的机制面）；返回是否真的杀了。
 
@@ -5030,7 +5138,7 @@ def force_cancel(
     占位期间 `acquire` 看到 `_closing` 直接拒绝（`session_dead`），不在池锁里阻塞；确认关闭后才摘表，
     未确认则保持围栏，下一次 `acquire` 有界重试关闭。不支持围栏的 worker（Python 池进程）维持先摘后杀。
     """
-    key = _worker_key(figures_dir, script_name, artifact_source, run)
+    key = _worker_key(figures_dir, script_name, artifact_source, run, **_roots_kw(write_roots))
     with _lock:
         w = _workers.get(key)
         if expected_worker is not None and w is not expected_worker:

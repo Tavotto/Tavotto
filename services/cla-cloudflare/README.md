@@ -28,6 +28,14 @@ establish legal identity, ownership or authority. Corporate/guardian/unresolved
 cases remain outside this route. See [ADR 0137](../../docs/adr/0137-limited-cla-countersigning-authority.md)
 and the [outstanding activation gates](../../docs/implementation/cla-delegated-authority/README.md).
 
+The internal `appendHistoricalRevocation(id, signedControl)` candidate can append
+only a terminal revoke signed by the original registered key after an ID/key
+rotation. It has no HTTP or activation route. It retains the exact historical
+agreement, current holder/repository identity, full signed chain and atomic
+revision checks; it cannot enable old authority. Full chains, unavailable old
+keys and identity changes fail closed. See the [historical revocation evidence
+and remaining migration work](../../docs/implementation/cla-historical-revocation/README.md).
+
 The native entry is src/entry.ts. Each capability requires its explicit environment flag; omitted flags keep it off. No credentials, account bindings, worker IDs, queues or resource names are shipped. Agreement version 1.0 remains the only supported configuration; changing the same version's digest fails closed. A future version rollout needs separate review.
 
 ## Offline migration rehearsal
@@ -176,8 +184,8 @@ and fresh qualification checks remain separate from packet retrieval.
 
 ### Explicit database bootstrap and consumable proposal limits
 
-The production service binds every store to its configured holder and exact two
-agreement kind/version/digest rows. The existing revision read incorporates this
+In default legacy mode the production service binds every store to its configured
+holder and exactly two agreement kind/version/digest rows. The existing revision read incorporates this
 shared readiness predicate without adding a query to evaluation/verification.
 Signing/OAuth writes also perform an explicit read-only readiness check. The
 background driver reads readiness/revision before claiming work; normal
@@ -202,6 +210,14 @@ supported migration: an independently approved D1 integration must apply the
 same ordered statements atomically through its batch mechanism and verify
 readiness before enabling requests. Existing v2 schema upgrades also need the
 new immutable authority triggers. No live initialization is authorized here.
+
+The separately disabled [agreement selection journal](../../docs/implementation/cla-agreement-activation/README.md)
+adds an internal atomic append/archive/select transaction for future approved
+versions. It requires an explicit environment flag and exact latest hash pin;
+old configs/binaries reject after a real third agreement is retained. Old
+signatures do not migrate. The legacy bootstrap refuses this mode and any
+existing selection journal. Existing v2 databases need a separately reviewed
+additive schema upgrade before this binary is enabled.
 
 A proposal that can become successful is limited to six non-exempt contributors:
 verification requires eight fixed SQL reads plus two per contributor, so six

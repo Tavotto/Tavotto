@@ -250,6 +250,34 @@ enum NavDecision {
     OpenExternal,
 }
 
+/// 「新窗口请求」守卫（主窗口与远程实例窗口共用这一份）。
+///
+/// `<a target="_blank">` 与 `window.open(url, '_blank')` 不是同窗导航，**不经过**
+/// `on_navigation`：macOS 的 wry 在没装新窗口处理器时直接放弃这次请求（静默无反应），
+/// Windows 的 WebView2 则弹出自带的浏览器小窗。所以每个窗口都要另装 `on_new_window`，
+/// 并且永远不让它真的新开 webview 窗口：
+/// - 外部 http(s)/mailto → `OpenExternal`，交给系统默认程序；
+/// - 其余一律 `Deny`。这里**不能**直接用 `navigation_allowed` 的结果：它对壳自带页面与
+///   本机引擎根路径会给 `Allow`（同窗导航里是对的），放到新窗口里 `Allow` 就成了多开一个
+///   窗口，所以 `Allow` 也要折成 `Deny`；传 `port = None`，本机 127.0.0.1 因此一律 `Deny`。
+fn new_window_decision(url: &url::Url) -> NavDecision {
+    match navigation_allowed(url, None) {
+        NavDecision::OpenExternal => NavDecision::OpenExternal,
+        NavDecision::Allow | NavDecision::Deny => NavDecision::Deny,
+    }
+}
+
+/// `on_new_window` 的处理体：外链交给系统浏览器，永远返回 `Deny`（不新开 webview 窗口）。
+fn handle_new_window(
+    app: &tauri::AppHandle,
+    url: &url::Url,
+) -> tauri::webview::NewWindowResponse<tauri::Wry> {
+    if let NavDecision::OpenExternal = new_window_decision(url) {
+        let _ = app.opener().open_url(url.as_str(), None::<&str>);
+    }
+    tauri::webview::NewWindowResponse::Deny
+}
+
 /// 在导出目录里定位文件并在文件管理器中显示。前端只能传「目录 + 纯文件名」，
 /// 文件名不得含路径分隔符。暴露给（本机 sidecar 页面的）IPC 的文件类能力只有两条，
 /// 都只 reveal 不 open：这一条与下面的 `reveal_project_dir`。
@@ -774,6 +802,7 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
     let locale = *state.menu_locale.lock().unwrap();
     let slot = state.remote.clone();
     let nav_handle = app.clone();
+    let new_window_handle = app.clone();
     let win = tauri::WebviewWindowBuilder::new(
         app,
         REMOTE_WINDOW,
@@ -797,6 +826,8 @@ fn open_remote_window(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
         }
     })
+    // target=_blank / window.open 不经 on_navigation（见 new_window_decision）
+    .on_new_window(move |url, _features| handle_new_window(&new_window_handle, &url))
     .build()?;
     win.set_focus()
 }
@@ -1020,7 +1051,7 @@ fn menu_spec(m: &'static i18n::ShellText, macos: bool) -> Vec<Entry> {
     }
     menus.push(Sub(m.view, view));
 
-    // 「窗口」是 macOS 的标准菜单；Windows 的最小化 / 最大化在标题栏上，不另开一栏。
+    // 「窗口」是 macOS 的标准菜单；Windows 的最小化 / 最大化在页面右上角（window_chrome.rs），不另开一栏。
     if macos {
         menus.push(Sub(
             m.window,
@@ -1184,6 +1215,24 @@ fn set_menu_locale(
     Ok(())
 }
 
+/// window-state 插件与主窗口手动恢复共用的状态位：不管窗框（Windows 主窗口没有系统标题栏，
+/// 恢复旧版本存下的 `decorated: true` 会让系统标题栏与页面窗口按钮并存，#1279 真机）与可见性
+/// （非 macOS 主窗口建时不显示，由壳在藏好菜单后亮出来）。不管窗框也就不往状态文件写 false，
+/// 退回旧版本时不会恢复出一个没有关闭按钮的窗口。
+fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
+    tauri_plugin_window_state::StateFlags::all()
+        - tauri_plugin_window_state::StateFlags::DECORATIONS
+        - tauri_plugin_window_state::StateFlags::VISIBLE
+}
+
+/// 主窗口建好后手动恢复上次的位置 / 大小 / 最大化（插件在建窗时跳过了这一步）。
+fn restore_main_window_state(win: &tauri::WebviewWindow) {
+    use tauri_plugin_window_state::WindowExt;
+    if let Err(e) = win.restore_state(window_state_flags()) {
+        eprintln!("restore main window state: {e}");
+    }
+}
+
 /// Windows：主窗口的菜单栏藏起来（窗框形态见 `window_chrome`）。菜单仍挂在窗口上——加速键
 /// 照旧由它截获——只是不占一行。`app.set_menu` 会把菜单重新挂上**并显示**，所以每次换菜单
 /// 之后都要再藏一次。远程实例窗口不藏：那里是服务器那一版前端，未必有「菜单」按钮。
@@ -1215,27 +1264,6 @@ fn show_app_menu(
     window
         .popup_menu_at(&menu, tauri::LogicalPosition::new(x, y))
         .map_err(|e| e.to_string())
-}
-
-/// 页面按当前主题报上来的顶栏底色 / 文字色（`#rrggbb`）→ 系统标题栏同色（Windows 11 起；
-/// 别的平台与 Windows 10 什么都不做）。颜色认不出来就回错，标题栏维持原样。
-#[tauri::command]
-fn set_titlebar_colors(
-    window: tauri::WebviewWindow,
-    background: String,
-    text: String,
-) -> Result<(), String> {
-    let (Some(bg), Some(fg)) = (
-        window_chrome::parse_hex_rgb(&background),
-        window_chrome::parse_hex_rgb(&text),
-    ) else {
-        return Err(format!("颜色认不出来：{background} / {text}"));
-    };
-    #[cfg(windows)]
-    window_chrome::apply_caption_colors(&window, bg, fg);
-    #[cfg(not(windows))]
-    let _ = (window, bg, fg);
-    Ok(())
 }
 
 /// 引擎意外退出时发给主窗口的事件（载荷 `{kind}`，闭集 signal / nonzero / zero）。
@@ -1761,7 +1789,16 @@ fn main() {
                 let _ = app.emit_to("main", "tavotto:open", req);
             }
         }))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // 记住窗口位置 / 大小 / 最大化，状态位见 `window_state_flags`（不管窗框与可见性）。
+        // 主窗口跳过插件在建窗钩子里的那次恢复（`skip_initial_state`）：上次以最大化关闭时，那次恢复会在
+        // `.build()` 返回之前就把 HWND 显示出来，藏菜单 / 换底色赶不上第一帧，启动闪烁照旧。改由壳在藏好
+        // 菜单栏、铺好底色之后自己 `restore_state`（同一组状态位），再 `show()`。退出时的保存照常；远程实例窗口不受影响。
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(window_state_flags())
+                .skip_initial_state(MAIN_WINDOW)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         // 应用内更新：前端经自有命令 desktop_update_check / desktop_update_install（来源编排见
@@ -1785,7 +1822,6 @@ fn main() {
             desktop_update_check,
             desktop_update_install,
             show_app_menu,
-            set_titlebar_colors,
             take_previous_exit,
             current_engine_exit,
             current_fullscreen,
@@ -1836,6 +1872,7 @@ fn main() {
             let handle = app.handle().clone();
             let port_cell = app.state::<AppState>().port.clone();
             let nav_handle = handle.clone();
+            let new_window_handle = handle.clone();
             // 上次记下的语言。菜单与启动画面都用它——「装完第一次打开」之外
             // 每一次启动，用户看到的第一屏就已经是他选的语言。
             // 这里才是第一个能安全用 `handle.path()` 的地方（见 build_menu）
@@ -1874,8 +1911,9 @@ fn main() {
             .inner_size(1280.0, 860.0)
             // 三栏工作台的断点下限：再窄左右栏会互相挤压（见 CLAUDE.md 视觉纪律）
             .min_inner_size(1024.0, 680.0)
-            // 窗框与页面顶栏融成一片（window_chrome.rs）：macOS 标题栏叠在页面上、红绿灯进顶栏；
-            // 并注入窗框标记，页面据它让出红绿灯 / 摆出「菜单」按钮
+            // 窗框与页面顶栏融成一片（window_chrome.rs）：macOS 标题栏叠在页面上、红绿灯进顶栏，
+            // Windows 去掉系统窗框、窗口按钮由页面画；并注入窗框标记，页面据它让出红绿灯 /
+            // 摆出「菜单」与窗口按钮
             .main_window_chrome()
             // Tauri 默认接管窗口的拖放事件（tauri://drag-drop），代价是 webview 里
             // 的 HTML5 drag&drop 整个失效——「素材拖入画布」在桌面壳里就是这么坏的。
@@ -1892,8 +1930,17 @@ fn main() {
                     }
                 },
             )
+            // target=_blank / window.open 不经 on_navigation（见 new_window_decision）
+            .on_new_window(move |url, _features| handle_new_window(&new_window_handle, &url))
             .build()?;
             hide_main_menu_bar(&handle);
+            // 非 macOS 的主窗口建时不显示（window_chrome.rs）：菜单栏藏好、底色换好、位置 / 大小 / 最大化
+            // 恢复好才亮出来。恢复失败不阻止显示。
+            #[cfg(not(target_os = "macos"))]
+            window_chrome::reveal_main_window(&win, || restore_main_window_state(&win));
+            // macOS 主窗口本来就是显示的，但插件已跳过建窗时的恢复：这里补上，否则记不住位置与大小
+            #[cfg(target_os = "macos")]
+            restore_main_window_state(&win);
             // 主页拖放拿真实路径：只旁听 performDragOperation，不装 Tauri 的拖放处理器
             // （上面那条注释说的 HTML5 拖放照旧归页面）。见 native_drop.rs 与 ADR 0092。
             #[cfg(target_os = "macos")]
@@ -2339,6 +2386,28 @@ mod tests {
             navigation_allowed(&u("https://example.com/"), Some(5089)),
             NavDecision::OpenExternal
         ));
+    }
+
+    /// `target=_blank` / `window.open` 的新窗口请求：只有外链交给系统浏览器，
+    /// 其余（含本机引擎同源、壳自带页面、file:/javascript:/data:）一律拒，绝不新开窗口。
+    #[test]
+    fn new_window_requests_only_open_external_links() {
+        let d = |s: &str| new_window_decision(&url::Url::parse(s).unwrap());
+        let ext = |s: &str| matches!(d(s), NavDecision::OpenExternal);
+        assert!(ext("https://example.com/support"));
+        assert!(ext("http://example.com/"));
+        assert!(ext("mailto:a@example.com"));
+        for denied in [
+            "http://127.0.0.1:5089/",
+            "http://127.0.0.1:5089/?pj=x",
+            "tauri://localhost/index.html",
+            "http://tauri.localhost/",
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+        ] {
+            assert!(matches!(d(denied), NavDecision::Deny), "{denied}");
+        }
     }
 
     /// 远程实例窗口的标记与前端读的全局名是同一个（Python 侧再比一次两侧源码）。

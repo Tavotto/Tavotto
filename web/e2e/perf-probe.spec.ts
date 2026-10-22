@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import type { Locator, Page, Route } from '@playwright/test'
-import { expect, test } from './fixtures'
+import { addSecondFigure, expect, test } from './fixtures'
 
 const DIAGNOSTICS = /\/api\/diagnostics(?:\?|$)/
 const developerButton = (page: Page) => page.locator('[data-diagnostics-dev] > div > button')
@@ -79,9 +79,11 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
   // 空闲基线：探针在第一次拖动之前采这台机器空转时的帧
   await page.waitForTimeout(1200)
 
+  // 取 y 轴标签优先：单图编辑里图被选中、取景放大铺满舞台，标题 / x 轴标签正好落在选择框上下边中点的手柄旁，
+  // 点下去命中手柄而不是元素（选点 → 自动测试起不来）。y 轴标签离左边中点手柄远
   const target = await page.evaluate(() => {
     const svg = document.querySelector('[data-element-svg] svg')
-    for (const id of ['axes_0.title', 'axes_0.xlabel', 'axes_0.ylabel']) {
+    for (const id of ['axes_0.ylabel', 'axes_0.xlabel', 'axes_0.title']) {
       const n = svg?.querySelector(`[id="${id}"]`)
       if (!n) continue
       const r = (n as SVGGraphicsElement).getBoundingClientRect()
@@ -103,7 +105,7 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
   await page.waitForTimeout(1500)
   const moved = await page.evaluate(() => {
     const svg = document.querySelector('[data-element-svg] svg')
-    for (const id of ['axes_0.title', 'axes_0.xlabel', 'axes_0.ylabel']) {
+    for (const id of ['axes_0.ylabel', 'axes_0.xlabel', 'axes_0.title']) {
       const n = svg?.querySelector(`[id="${id}"]`)
       if (!n) continue
       const r = (n as SVGGraphicsElement).getBoundingClientRect()
@@ -131,9 +133,9 @@ test('性能探针：录制真实拖动 + 自动测试 + 保存报告', async ({
   )
   expect(after, '自动测试结束后被拖元素的 transform 必须复原').toBe(target!.transform)
 
-  // 普通点击动作：返回画布后打开预设面板，真实插入科学符号。
+  // 普通点击动作：进多图排版（第二张图进来）后打开预设面板，真实插入科学符号。
   // 同一份探针报告必须同时含拖动片段与符号动作，互不污染；无须新增独立 App 启动。
-  await page.locator('[data-context-back]').click()
+  await addSecondFigure(page)
   await expect(page.locator('[data-canvas-toolbar]')).toBeVisible()
   await page.locator('[data-tool-menu="annotate"]').click()
   await page.getByRole('menuitem', { name: /科研预设与符号/ }).click()

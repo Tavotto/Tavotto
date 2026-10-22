@@ -20,7 +20,7 @@ const SAMPLES: Record<ActivityKind, ActivityDetail> = {
   'selection.ungrouped': { kind: 'selection.ungrouped', count: 2 },
   'project.opened': { kind: 'project.opened', tutorial: true },
   'workspace.mode_changed': { kind: 'workspace.mode_changed', mode: 'fast_edit' },
-  'workspace.returned_to_layout': { kind: 'workspace.returned_to_layout' },
+  'workspace.entered_layout': { kind: 'workspace.entered_layout' },
   'figure.opened_fast_edit': { kind: 'figure.opened_fast_edit', outcome: 'editing' },
   'figure.element_edit_entered': { kind: 'figure.element_edit_entered' },
   'selection.changed': { kind: 'selection.changed', count: 1 },

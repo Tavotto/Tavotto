@@ -1253,6 +1253,14 @@ def positive_int(text: str) -> int:
     return value
 
 
+def positive_seconds(text: str) -> float:
+    """argparse type: a finite, positive number of seconds."""
+    value = float(text)
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError(f"must be a finite positive number, got {text}")
+    return value
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     subs = ap.add_subparsers(dest="command", required=True)
@@ -1272,6 +1280,11 @@ def main(argv=None) -> int:
         "--require-suites",
         help="comma-separated suites that must each have a report, else the comparison is not_computed",
     )
+    summarizer.add_argument(
+        "--allow-partial-shards",
+        action="store_true",
+        help="accept an incomplete set of explore shards (labelled 'M of N completed')",
+    )
     summarizer.add_argument("--previous", help="previous summary JSON for fixed-set comparison")
     promoter = subs.add_parser("promote", help="emit a promotion candidate record (proposal only)")
     promoter.add_argument("report")
@@ -1285,6 +1298,13 @@ def main(argv=None) -> int:
     explorer.add_argument(
         "--limit", type=positive_int, help="family-balanced cap on executed candidates"
     )
+    explorer.add_argument(
+        "--shard",
+        type=ES.parse_shard,
+        metavar="K/N",
+        help="run only slice K of N (1 <= K <= N <= 16) of the deduplicated candidates; "
+        "applied after --parent/--families and before --limit",
+    )
     explorer.add_argument("--parent", help="comma-separated parent case ids")
     explorer.add_argument("--static-only", action="store_true")
     explorer.add_argument("--candidates", help="comma-separated candidate ids to run")
@@ -1295,6 +1315,12 @@ def main(argv=None) -> int:
         default=0,
         help="re-run up to N differing candidates once",
     )
+    explorer.add_argument(
+        "--max-seconds",
+        type=positive_seconds,
+        help="time budget for the whole explore: candidates not started when it is spent are "
+        "reported as not_run (partial coverage, exit 4), instead of the job being killed with no report",
+    )
     explorer.add_argument("--expected-sha")
     explorer.add_argument("--timeout", type=float, default=240)
     triager = subs.add_parser(
@@ -1303,6 +1329,11 @@ def main(argv=None) -> int:
     triager.add_argument("reports", nargs="+")
     triager.add_argument("--out", required=True)
     triager.add_argument("--markdown-out")
+    triager.add_argument(
+        "--allow-partial-shards",
+        action="store_true",
+        help="accept an incomplete set of explore shards (labelled 'M of N completed')",
+    )
     minimizer = subs.add_parser(
         "minimize", help="bounded, re-verified reduction of one explore finding"
     )
@@ -1372,7 +1403,12 @@ def main(argv=None) -> int:
             unknown = set(required) - set(SUITES)
             if unknown:
                 raise EvidenceError(f"--require-suites names an unknown suite: {sorted(unknown)}")
-            trend = TR.build(run_paths, explore_paths, previous, SM_families(), required)
+            shards = ES.check_set(
+                [TR.classify(p)[1] for p in explore_paths], bool(args.allow_partial_shards)
+            )
+            trend = TR.build(
+                run_paths, explore_paths, previous, SM_families(), required, shards=shards
+            )
             summary["trend"] = trend
             markdown = (
                 (SM.render_markdown(summary) if run_paths else "")
@@ -1415,6 +1451,7 @@ def main(argv=None) -> int:
         return 2
 
 
+import compat_explore_shards as ES  # noqa: E402
 import compat_guardian_expectations as EX  # noqa: E402
 import compat_guardian_summary as SM  # noqa: E402  (circular by design; bottom import)
 

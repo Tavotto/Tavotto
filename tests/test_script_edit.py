@@ -742,9 +742,12 @@ def test_missing_input_of_prefers_the_path_named_in_the_message(tmp_path):
     assert figcapture.missing_input_of(h5, misses) is None
     misses.note("run/x.h5")
     assert figcapture.missing_input_of(h5, misses)["requested"] == "run/x.h5"
-    # 消息里没有引号（numpy 的 "d.txt not found."）→ 仍用最近一次落空
+    # 消息里没有引号（numpy 的 "d.txt not found."）：只认消息点了名的那次落空，不退到最近一次（#1253）
     np_like = _raise_and_catch(FileNotFoundError("d.txt not found."))
-    assert figcapture.missing_input_of(np_like, misses)["requested"] == "run/x.h5"
+    assert figcapture.missing_input_of(np_like, misses) is None
+    misses.note("d.txt")
+    misses.note("later-unrelated.cfg")
+    assert figcapture.missing_input_of(np_like, misses)["requested"] == "d.txt"
 
 
 # --------------------------------------------------------------- 共享底座

@@ -29,6 +29,9 @@
 - 前端渲染态分键与假实时预览（渲染平面 / 历史平面）的规则在
   `web/AGENTS.md`——引擎侧只需知道：render 请求带 `inline_svg` 时 SVG 与
   manifest 必须同一次响应返回；SSE 的 render.started/done 只带 fileId。
+- **export 的两个可选「保留文字」字段（ADR 0144，加字段协议）**：`svg_fonttype`（`"none"`，仅 `format=svg`）与 `svg_text_path`
+  （要带 `svg_path`、不与 `snapshot_only` 同用；应答多 `svg_text` / `svg_text_error`）。只给成品用，path 基准字节与 #1185 等价证人不动；
+  旧 worker 静默忽略，父进程只对签名里有这两个参数的 worker 带上，回退为 path 版。看护 `tests/test_worker_svg_pair.py`、`tests/test_export_svg.py`。
 - **export / preview_png 都是状态中立的一次性动作**：应用自己那组 patches 出图后
   必须把 `state.applied` 还原回去（还原那次的 warnings 丢弃）。不还原的话历史版本
   恢复与画布导出（每个面板各带一套 overrides）会把别人的状态留在常驻 figure 上，
@@ -168,6 +171,17 @@
   `secret: true`：build 响应、热会话、转录都没有值，重放时重新问，没人答 → `reason=secret_required`，绝不填空。
   问答去向计数（`InputFacts`）经 `facts_projection` 进 T04 任务诊断。不向协议 stdin 写答案；native / 子进程 input 不变。
   看护：`tests/test_script_input_context.py`、`tests/test_script_input_transcript_api.py`、`tests/test_input_transcript.py`。
+
+## TeX 工具链失败的分类（`texdiag`）
+
+`text.usetex` 的失败在两条错误收口（`pool.EngineWorker._error_of` / `pool._worker_error`）按 matplotlib 的固定模板分四码，
+**先于缺依赖判**（LaTeX 日志不会落进 `missing_dependency` 的 pip 出口）：`tex_command_missing`（`command` 闭集）/
+`tex_package_missing`（`.sty` / `.tfm`，文件名白名单清洗）/ `tex_compile_failed`（LaTeX 的 `! …` 行）/ `tex_failed`
+（落在 matplotlib 的 TeX 模块里但认不出原因；`dviread.find_tex_file` 那句分不清 kpsewhich 缺失与文件缺失，也归这里）。
+build 与之后的 render / export 同一收口；超时 / 取消保持各自的码。参数经错误转换合同 `pool.recovery_params`，渲染端点 /
+试运行探测 / 准备会话同一份。分类只读已发生的那次执行，不另起探测、不执行用户代码。worker 继承父进程 PATH（从 Finder 启动的
+桌面版里没有 `/Library/TeX/texbin`），文案据此提示「装完重启 Tavotto」；宏包装上后同一会话重跑即重新验证（kpathsea 每次编译现查，
+不依赖环境代）。看护 `tests/test_tex_diagnostics.py`（stub）与 `tests/test_tex_toolchain_real.py`（真 TeX，没有时 environment-blocked）。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

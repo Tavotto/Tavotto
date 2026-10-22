@@ -144,6 +144,7 @@ EVIDENCE_CODES = (
             "sys_path_script_dir",
             "sys_path_project_root",
             "sys_path_cwd",
+            "sys_path_literal",
             "package_with_init",
             "module_file",
             "extension_file",
@@ -272,6 +273,9 @@ _EXT_RE = re.compile(
     r"(?:\.(?:cpython-[0-9a-z]+-[0-9a-z_\-]+|cp[0-9a-z]+-[0-9a-z_]+|abi3|pypy[0-9a-z]+-[0-9a-z_]+))?"
     r"\.(?:so|pyd)$"
 )
+
+#: 一次扫描最多认几个字面量搜索根
+_MAX_LITERAL_ROOTS = 8
 
 #: `sys.path` 的就地修改方法（源码里出现就说明搜索路径不是静态可定的）。
 _PATH_MUTATORS = frozenset(
@@ -536,6 +540,116 @@ def _join_enclosing(*contexts: str) -> str:
     return max(contexts, key=_ENCLOSING_CONTEXTS.index)
 
 
+def _dotted(node: ast.AST) -> str:
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+#: 字面量目录求值的深度上限（防畸形的超深表达式）
+_MAX_DIR_EXPR_DEPTH = 12
+_SEP_RE = re.compile(r"[\\/]")
+_PATH_WRAPPERS = frozenset(
+    {
+        "os.path.abspath",
+        "os.path.realpath",
+        "abspath",
+        "realpath",
+        "str",
+        "Path",
+        "pathlib.Path",
+        "PurePath",
+    }
+)
+
+
+def _is_absolute_component(text: str) -> bool:
+    """`os.path.join` / `Path.__truediv__` 的后续分量是绝对路径（`/x`、`\\x`、`C:x`）时，Python 会丢掉前面的全部前缀。"""
+    return text.startswith(("/", "\\")) or bool(re.match(r"[A-Za-z]:", text))
+
+
+def _literal_dir(node: ast.AST):
+    """`sys.path.append/insert` 的目录实参里，**只由 `__file__` 所在目录与字符串字面量拼出**的那类表达式 →
+    相对于「这份文件所在目录」的路径段元组；认不出（含任何变量 / 环境 / cwd 相关）回 None。
+
+    认的形状：`os.path.dirname(__file__)`（含 abspath / realpath 包装）、`os.path.join(<目录>, "a", "b")`、
+    `Path(__file__).parent`（含 `.resolve()` / `.absolute()` / 链式 `.parent`）、`<目录> / "a"`、`str(<目录>)`。"""
+    val = _dir_value(node, 0)
+    if val is not None and val[0] == "D":
+        return val[1]
+    return None
+
+
+def _dir_value(node: ast.AST, depth: int):
+    """内部值：`("F",)` = `__file__`；`("D", segs)` = 目录；`("S", text)` = 字符串字面量。"""
+    if depth > _MAX_DIR_EXPR_DEPTH:
+        return None
+    if isinstance(node, ast.Name) and node.id == "__file__":
+        return ("F",)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return ("S", node.value)
+    if isinstance(node, ast.Call):
+        if node.keywords:
+            return None
+        fn = _dotted(node.func)
+        args = node.args
+        if fn in _PATH_WRAPPERS:
+            if len(args) != 1:
+                return None
+            inner = _dir_value(args[0], depth + 1)
+            return inner if inner is not None and inner[0] in ("F", "D") else None
+        if fn in ("os.path.dirname", "dirname"):
+            return _parent(_dir_value(args[0], depth + 1)) if len(args) == 1 else None
+        if fn in ("os.path.join", "join"):
+            first = _dir_value(args[0], depth + 1) if args else None
+            if first is None or first[0] != "D":
+                return None
+            segs = list(first[1])
+            for a in args[1:]:
+                part = _dir_value(a, depth + 1)
+                if part is None or part[0] != "S" or _is_absolute_component(part[1]):
+                    return None  # 绝对 / 带盘符的分量会丢掉前面的目录（Python 语义）：不当作相对本文件的路径
+                segs += [x for x in _SEP_RE.split(part[1]) if x and x != "."]
+            return ("D", tuple(segs))
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("resolve", "absolute")
+            and not args
+        ):
+            inner = _dir_value(node.func.value, depth + 1)
+            return inner if inner is not None and inner[0] in ("F", "D") else None
+        return None
+    if isinstance(node, ast.Attribute) and node.attr == "parent":
+        return _parent(_dir_value(node.value, depth + 1))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        left = _dir_value(node.left, depth + 1)
+        right = _dir_value(node.right, depth + 1)
+        if (
+            left is None
+            or right is None
+            or left[0] != "D"
+            or right[0] != "S"
+            or _is_absolute_component(right[1])
+        ):
+            return None
+        return ("D", (*left[1], *[x for x in _SEP_RE.split(right[1]) if x and x != "."]))
+    return None
+
+
+def _parent(inner):
+    if inner is None:
+        return None
+    if inner[0] == "F":
+        return ("D", ())
+    if inner[0] == "D":
+        return ("D", (*inner[1], ".."))
+    return None
+
+
 class _Visitor(ast.NodeVisitor):
     """收集一份模块里的 import 及其上下文。"""
 
@@ -546,6 +660,8 @@ class _Visitor(ast.NodeVisitor):
         self.dynamic: list[ImportUse] = []
         self.relatives: list[RelativeImport] = []
         self.path_mutations: list[int] = []  # 改 sys.path 的行号
+        #: `sys.path.append/insert` 里由 `__file__` 目录与字面量拼出的目录：(是否插在最前, 相对本文件目录的段, 行号)；函数 / 类体里的不认（可能根本没被调用，Codex #1276 P2）
+        self.path_dirs: list[tuple[bool, tuple[str, ...], int]] = []
         self._stack: list[str] = []  # 进入了哪些会改变上下文的结构
 
     # ---- 上下文 ----
@@ -704,6 +820,28 @@ class _Visitor(ast.NodeVisitor):
             )
         ):
             self.path_mutations.append(node.lineno)
+            # 只认**无条件**的模块级执行：函数 / 类体（可能没被调用）与 if / try / for 等条件分支（可能没走到）都不算（Codex #1276 P2）
+            deferred = self._context() != CONTEXT_UNCONDITIONAL
+            if (
+                not deferred
+                and fn.attr == "append"
+                and len(node.args) == 1
+                and _is_sys_path(fn.value, self.al)
+            ):
+                segs = _literal_dir(node.args[0])
+                if segs is not None:
+                    self.path_dirs.append((False, segs, node.lineno))
+            elif (
+                not deferred
+                and fn.attr == "insert"
+                and len(node.args) == 2
+                and _is_sys_path(fn.value, self.al)
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == 0
+            ):
+                segs = _literal_dir(node.args[1])
+                if segs is not None:
+                    self.path_dirs.append((True, segs, node.lineno))
         self.generic_visit(node)
 
     # ---- sys.path 被整体改写 / 就地改写 / 删除 ----
@@ -811,6 +949,9 @@ class _Root:
     path: Path
     tag: str  # script_dir | project_root | cwd
     confirmed: bool = True
+    #: 这个根对哪些顶级名**不**生效：同一份文件里在这条 `sys.path` 修改**之前**才 import（且之后不再 import）的名字——
+    #: 执行到那条 import 时目录还没加进去
+    exclude: frozenset[str] = frozenset()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1297,6 +1438,8 @@ class _Scanner:
         self.blocked_hit = False
         self.outside_hit = False
         self.path_modified = False
+        #: 源码里字面量加进 `sys.path` 的目录（项目相对）——找不到的 import 据此说「脚本把它加进了搜索路径」
+        self.literal_dirs: set[str] = set()
         self.cwd_rejected = False
         self.roots = self._search_roots()
 
@@ -1386,7 +1529,25 @@ class _Scanner:
             self.path_modified = True
             for line in v.path_mutations:
                 self.warn("sys_path_modified", rel, line)
+        self._add_literal_roots(v.path_dirs, rel, v.uses)
         return _Parsed(v.uses, v.dynamic, v.relatives, v.path_mutations, tree)
+
+    def _add_literal_roots(self, dirs, rel: str, uses=()) -> None:
+        """`sys.path.append(os.path.join(os.path.dirname(__file__), "pdf"))` 这类（只认字面量，有界）：目录加进本地模块
+        搜索根。词法钉在项目内（出界的不认；链接形态由 `_Finder` 的闸门照常挡）；目录不存在也不报错——模块照旧找不到。"""
+        base = (self.root / rel).parent if rel else self.script_p.parent
+        for front, segs, line in dirs[:_MAX_LITERAL_ROOTS]:
+            pinned = _pinned(self.root, Path(os.path.normpath(base.joinpath(*segs))))
+            if pinned is None:
+                continue
+            if any(os.path.normcase(str(r.path)) == os.path.normcase(pinned) for r in self.roots):
+                continue
+            before = {u.module for u in uses if u.lineno < line}
+            after = {u.module for u in uses if u.lineno > line}
+            root = _Root(Path(pinned), "sys_path_literal", True, frozenset(before - after))
+            self.literal_dirs.add(_rel(self.root, Path(pinned)) or ".")
+            self.roots = [root, *self.roots] if front else [*self.roots, root]
+            self._tops.clear()
 
     def _read(self, path: Path, rel: str) -> tuple[str | None, dict | None]:
         # 读之前把路径钉在项目根内（词法）：越界不 stat、不读。链接指到项目外由 `_Finder.guard` / no_follow 另判
@@ -1492,9 +1653,11 @@ class _Scanner:
     def _search_roots_for(self, name: str) -> _Top:
         if not _is_module_name(name):
             return _Top("none")
-        found = self._search([(r.path, r) for r in self.roots], name)
+        found = self._search([(r.path, r) for r in self.roots if name not in r.exclude], name)
         if found is None:
-            near = any(self.finder.near_miss(r.path, name) for r in self.roots)
+            near = any(
+                self.finder.near_miss(r.path, name) for r in self.roots if name not in r.exclude
+            )
             return _Top("none", near_miss=near)
         if found.kind == "namespace" and name in self.stdlib_names:
             # 常规包压过命名空间：标准库的 `statistics` 不会败给项目里一个没有 __init__ 的 statistics/ 目录
@@ -1939,6 +2102,7 @@ class _Scanner:
                         "script_dir": "sys_path_script_dir",
                         "project_root": "sys_path_project_root",
                         "cwd": "sys_path_cwd",
+                        "sys_path_literal": "sys_path_literal",
                     }[hit.root.tag]
                 )
                 if not hit.root.confirmed:

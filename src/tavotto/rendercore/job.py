@@ -114,6 +114,7 @@ def produce(
         svg_source_error = error
     files: dict[str, bytes] = {}
     imported_svgs: dict[str, bytes] = {}
+    imported_text_svgs: dict[str, bytes] = {}
     for key, fs in rp.sources.items():
         job.check_cancelled()
         try:
@@ -140,6 +141,22 @@ def produce(
                 svg_source_error = error
                 imported_svgs.clear()
                 break
+    if svg_source_error is None and svg_sources:
+        # 「保留文字」成品（ADR 0144）：尽力而为，读不到 / 超预算就留在 path 基准，不牵连任何格式。
+        spent = total_bytes
+        for key, fs in rp.sources.items():
+            text = fs.svg_text_representation() if key in svg_sources else None
+            if text is None:
+                continue
+            size = int(text.artifact.size_bytes)
+            if spent + size + max([*sizes, size]) > SOURCE_BYTES_BUDGET:
+                continue
+            job.check_cancelled()
+            try:
+                imported_text_svgs[key] = read_frozen(text)
+            except SourceError:
+                continue
+            spent += size
 
     width_mm, height_mm = round(req.canvas.page_w_mm, 3), round(req.canvas.page_h_mm, 3)
     produced: list[exportjob.Produced] = []
@@ -289,7 +306,12 @@ def produce(
             tmp = tmp_dir / "out.svg"
             try:
                 svg_facts = svgwriter.write_svg(
-                    rp.page, tmp, provider, files, imported_svgs=imported_svgs
+                    rp.page,
+                    tmp,
+                    provider,
+                    files,
+                    imported_svgs=imported_svgs,
+                    imported_text_svgs=imported_text_svgs,
                 )
                 svg_vector = artifactinspect.svg_vector(tmp)
             except (svgwriter.WriterError, OSError, ValueError) as exc:
@@ -307,7 +329,8 @@ def produce(
                             **plan_half,
                             "vector": svg_vector,
                             "px": None,
-                            "text_policy": "outlines",
+                            "text_policy": svg_facts.text_policy,
+                            "text_fallback_runs": svg_facts.text_fallback_runs,
                             "render_identity": vector_render_identity,
                             "sha256": svg_facts.sha256,
                         }

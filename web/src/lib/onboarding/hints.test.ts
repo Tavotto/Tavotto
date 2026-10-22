@@ -10,7 +10,7 @@ import { configureOnboardingPersistence, useOnboardingStore } from '@/store/onbo
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
-import { returnToLayout, useWorkspaceStore } from '@/store/workspace'
+import { useWorkspaceStore } from '@/store/workspace'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { HINT_AUTO_DISMISS_MS, showHint, startHintEngine, useHintStore } from './hints'
 import { hintSeen } from '@/store/onboardingStore'
@@ -141,7 +141,14 @@ describe('触发', () => {
   })
 })
 
-describe('layout_page_bounds：第一次主动回到排版', () => {
+/** 第二张图把单图编辑切成多图排版（`startWorkspaceModeSync` 发的那一枪）；原来的 `returnToLayout` 回排版会重新选中那张图，这里照做 */
+const enteredLayout = () => {
+  useWorkspaceStore.getState().exitToLayout() // 订阅先把模式对成排版，再发信号
+  emitActivity({ kind: 'workspace.entered_layout' })
+  useSelectionStore.getState().set(['a']) // 紧接着选中 a：先到先占那一个提示槽位
+}
+
+describe('layout_page_bounds：第一次进入多图排版', () => {
   // 回排版会重新选中那张图——把无关的两条面板提示标成看过，免得它们抢槽位混淆判据
   beforeEach(() => {
     useOnboardingStore.getState().markHintSeen('panel_editable')
@@ -151,18 +158,18 @@ describe('layout_page_bounds：第一次主动回到排版', () => {
   const enterThenReturn = () => {
     useWorkspaceStore.getState().enterFastEdit('a')
     useHintStore.getState().dismiss()
-    returnToLayout()
+    enteredLayout()
   }
   const seen = () => hintSeen('layout_page_bounds')
 
-  it('第一次 returnToLayout → 出现；记看过；活动信号里不带任何用户内容', () => {
+  it('第一次进入多图排版 → 出现；记看过；活动信号里不带任何用户内容', () => {
     const got: object[] = []
-    const off = onActivity((d) => d.kind === 'workspace.returned_to_layout' && got.push(d))
+    const off = onActivity((d) => d.kind === 'workspace.entered_layout' && got.push(d))
     enterThenReturn()
     off()
     expect(current()).toBe('layout_page_bounds')
     expect(seen()).toBe(true)
-    expect(got).toEqual([{ kind: 'workspace.returned_to_layout' }]) // 只有 kind，没有 id / 路径 / 文字
+    expect(got).toEqual([{ kind: 'workspace.entered_layout' }]) // 只有 kind，没有 id / 路径 / 文字
   })
 
   it('第二次不再出现（持久化在 onboardingStore.hintSeen）', () => {
@@ -172,12 +179,12 @@ describe('layout_page_bounds：第一次主动回到排版', () => {
     expect(current()).toBeNull()
   })
 
-  it('关闭后不立即重现：下一次回排版也不再来', () => {
+  it('关闭后不立即重现：下一次进入多图排版也不再来', () => {
     enterThenReturn()
     useHintStore.getState().dismiss()
     vi.advanceTimersByTime(HINT_AUTO_DISMISS_MS * 3)
     useWorkspaceStore.getState().enterFastEdit('b')
-    returnToLayout()
+    enteredLayout()
     expect(current()).toBeNull()
   })
 
@@ -190,13 +197,7 @@ describe('layout_page_bounds：第一次主动回到排版', () => {
     expect(current()).toBeNull()
   })
 
-  it('本来就在排版上的「回排版」不是一次进入：不触发、不记看过', () => {
-    returnToLayout()
-    expect(current()).toBeNull()
-    expect(seen()).toBe(false)
-  })
-
-  it('被动退出（定位问题 / 修剪 / 启动恢复）走 exitToLayout，不触发', () => {
+  it('被动退出（删光 / 切画布 / 启动恢复）走 exitToLayout，不发 entered_layout，不触发', () => {
     useWorkspaceStore.getState().enterFastEdit('a')
     useHintStore.getState().dismiss()
     useWorkspaceStore.getState().exitToLayout()
@@ -211,7 +212,7 @@ describe('layout_page_bounds：第一次主动回到排版', () => {
     expect(seen()).toBe(false)
   })
 
-  it('右栏收起（窄屏抽屉遮挡 / 锚点不在）→ 不出现、不记看过；下一次主动回排版再来', () => {
+  it('右栏收起（窄屏抽屉遮挡 / 锚点不在）→ 不出现、不记看过；下一次进入多图排版再来', () => {
     useUiStore.setState({ rightOpen: false })
     enterThenReturn()
     expect(current()).toBeNull()
@@ -231,7 +232,7 @@ describe('layout_page_bounds：第一次主动回到排版', () => {
   it('同一时刻只一条：轨上的提示占着槽位时它让位；两个事件相邻只显示一条', () => {
     useWorkspaceStore.getState().enterFastEdit('a') // fast_edit_entered 占着槽位
     expect(current()).toBe('fast_edit_entered')
-    returnToLayout()
+    enteredLayout()
     expect(current()).toBe('fast_edit_entered')
     expect(seen()).toBe(false)
   })
@@ -240,8 +241,8 @@ describe('layout_page_bounds：第一次主动回到排版', () => {
     useWorkspaceStore.getState().enterFastEdit('a')
     useHintStore.getState().dismiss()
     const token0 = useHintStore.getState().token
-    emitActivity({ kind: 'workspace.returned_to_layout' })
-    emitActivity({ kind: 'workspace.returned_to_layout' })
+    emitActivity({ kind: 'workspace.entered_layout' })
+    emitActivity({ kind: 'workspace.entered_layout' })
     expect(current()).toBe('layout_page_bounds')
     expect(useHintStore.getState().token).toBe(token0 + 1)
   })
@@ -254,10 +255,10 @@ describe('layout_page_bounds：第一次主动回到排版', () => {
 })
 
 describe('layout_page_bounds 与 panel_editable 抢槽位', () => {
-  it('刚从图内回来：先显示纸面说明；面板提示不叠、不记看过，关掉后下一次单选再来', () => {
+  it('刚进入多图排版：先显示纸面说明；面板提示不叠、不记看过，关掉后下一次单选再来', () => {
     useWorkspaceStore.getState().enterFastEdit('a')
     useHintStore.getState().dismiss()
-    returnToLayout() // 回排版会重新选中 a（可编辑面板）
+    enteredLayout() // 选中 a（可编辑面板）
     expect(current()).toBe('layout_page_bounds')
     expect(hintSeen('panel_editable')).toBe(false)
     useHintStore.getState().dismiss()

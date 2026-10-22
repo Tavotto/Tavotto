@@ -208,13 +208,16 @@ describe('帮助与诊断页', () => {
     await render(<DiagnosticsSettings />)
   }
 
-  it('zh-CN：发送功能开着时出现，并排在发送行之前（发送行仍是组的最后一行）', async () => {
+  it('zh-CN：发送功能开着时出现，在摘要之后、诊断包之前（发送第一行、诊断包最后一行）', async () => {
     await settings(CAP)
     const row = q('[data-diagnostics-contact]')!
     expect(row).not.toBeNull()
     expect(q<HTMLAnchorElement>('[data-diagnostics-contact] [data-wecom-link]')!.getAttribute('href')).toBe(WECOM_CONTACT_URL)
     expect(q('[data-diagnostics-contact] [data-wecom-qr-img]')).toBeNull()
-    expect(q('[data-diagnostics-send]')!.parentElement!.lastElementChild).toBe(q('[data-diagnostics-send]'))
+    const rows = Array.from(q('[data-diagnostics-send]')!.parentElement!.children)
+    expect(rows[0]).toBe(q('[data-diagnostics-send]'))
+    expect(rows[rows.length - 2]).toBe(row)
+    expect(rows[rows.length - 1]).toBe(q('[data-diagnostics-bundle]'))
   })
 
   it('zh-CN：发送功能关闭（capability null）也出现', async () => {

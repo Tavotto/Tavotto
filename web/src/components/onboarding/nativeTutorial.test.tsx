@@ -10,7 +10,13 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { configureOnboardingPersistence, useOnboardingStore } from '@/store/onboardingStore'
+import {
+  configureOnboardingPersistence,
+  migratePersisted,
+  ONBOARDING_FLOW_VERSION,
+  useOnboardingStore,
+} from '@/store/onboardingStore'
+import { homeVariant } from '@/lib/onboarding/tutorial'
 import { useProjectStore } from '@/store/projectStore'
 import { TITLE_SIZE } from '@/lib/onboarding/demoFigure'
 import { resetTutorialAutoOpenForTest } from './autoOpen'
@@ -66,7 +72,8 @@ beforeEach(() => {
   useProjectStore.setState({ phase: 'none', recent: [], pinned: [], project: null, listsLoaded: true } as never)
   resetTutorialAutoOpenForTest()
   vi.stubGlobal('ResizeObserver', NoopResizeObserver)
-  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0))
+  vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => setTimeout(() => cb(performance.now()), 0))
+  vi.stubGlobal('cancelAnimationFrame', (id: number) => clearTimeout(id))
   patch(HTMLElement.prototype, 'clientWidth', { get: () => 800 }, true)
   patch(HTMLElement.prototype, 'clientHeight', { get: () => 600 }, true)
   patch(HTMLElement.prototype, 'offsetWidth', { get: () => 800 }, true)
@@ -102,6 +109,15 @@ const layer = () => document.querySelector<HTMLElement>('[data-native-tutorial]'
 const q = <T extends Element = HTMLElement>(sel: string) => document.querySelector<T>(sel)
 const ob = () => useOnboardingStore.getState()
 const flush = () => act(async () => new Promise((r) => setTimeout(r, 5)))
+
+/** 第一步放下之后的演示渲染：把时钟拨过它的时长，让 tween 走到终点 */
+async function finishRender() {
+  const later = performance.now() + 10_000
+  const now = vi.spyOn(performance, 'now').mockReturnValue(later)
+  await flush()
+  await flush()
+  now.mockRestore()
+}
 
 async function click(el: Element | null) {
   expect(el).not.toBeNull()
@@ -160,40 +176,62 @@ describe('什么时候自己出现', () => {
     expect(ob().status).toBe('not_started')
   })
 
-  it('已经在用的人不打扰：最近列表里有自己的项目，或启动时项目就开着', async () => {
+  it('有自己的项目也一样弹（2026-10-21 裁决：升级的老用户和新用户同一条路径）；启动时项目就开着才不弹', async () => {
     useProjectStore.setState({ recent: [{ path: '/me/paper', name: 'paper' }] } as never)
     await mount()
-    expect(layer()).toBeNull()
+    expect(layer()?.dataset.surface).toBe('welcome')
     act(() => root.unmount())
     root = createRoot(host)
     resetTutorialAutoOpenForTest()
-    useProjectStore.setState({ recent: [], phase: 'open' } as never)
+    useOnboardingStore.setState({ surface: 'none', welcomeSeenAt: null })
+    useProjectStore.setState({ phase: 'open' } as never)
     await mount()
     expect(layer()).toBeNull()
   })
 
-  it('启动时项目列表没取到（后端暂时不可达，列表也是空的）：先不判、不记 welcomeSeenAt；取到了再判', async () => {
-    useProjectStore.setState({ listsLoaded: false } as never)
-    await mount()
-    expect(layer()).toBeNull()
-    expect(ob().welcomeSeenAt).toBeNull()
-    // 后端回来、列表取到：有自己的项目 → 照样不打扰
-    act(() => useProjectStore.setState({ recent: [{ path: '/me/paper', name: 'paper' }], listsLoaded: true } as never))
-    await flush()
-    expect(layer()).toBeNull()
-    expect(ob().welcomeSeenAt).toBeNull()
+  it('升级迁移端到端：旧版 completed / skipped 的 blob → 新手态 → 自动弹欢迎页 → 走完后是老手版且下次不再弹', async () => {
+    for (const status of ['completed', 'skipped'] as const) {
+      act(() => root.unmount())
+      root = createRoot(host)
+      resetTutorialAutoOpenForTest()
+      useOnboardingStore.setState({
+        ...migratePersisted({
+          schemaVersion: 1,
+          flowVersion: 2,
+          status,
+          completedSteps: ['done'],
+          welcomeSeenAt: 5,
+          completedAt: 9,
+        }),
+        surface: 'none',
+      })
+      useProjectStore.setState({ recent: [{ path: '/me/paper', name: 'paper' }] } as never)
+      expect(homeVariant(), status).toBe('newcomer')
+      await mount()
+      expect(layer()?.dataset.surface, status).toBe('welcome')
+      // 与真正的新用户同一条路径：开始 → 完成
+      await click(q('[data-tutorial-begin]'))
+      expect(ob().status).toBe('active')
+      act(() => useOnboardingStore.getState().complete())
+      expect(homeVariant()).toBe('returning')
+      // 下次启动：写回的是当前 flowVersion，不再迁移
+      const reread = migratePersisted({ ...ob(), schemaVersion: 1 })
+      expect(reread.status).toBe('completed')
+      expect(reread.flowVersion).toBe(ONBOARDING_FLOW_VERSION)
+    }
   })
 
-  it('列表取到之后确实没有自己的项目：这时才出欢迎页', async () => {
+  it('启动时项目列表没取到（后端暂时不可达）：先不判、不记 welcomeSeenAt；取到了再判', async () => {
     useProjectStore.setState({ listsLoaded: false } as never)
     await mount()
     expect(layer()).toBeNull()
+    expect(ob().welcomeSeenAt).toBeNull()
     act(() => useProjectStore.setState({ listsLoaded: true } as never))
     await flush()
     expect(layer()?.dataset.surface).toBe('welcome')
   })
 
-  it('示例项目不算「自己的项目」', async () => {
+  it('示例项目在最近列表里同样不影响', async () => {
     useProjectStore.setState({ recent: [{ path: '/data/tutorial/Tutorial', name: 'Tutorial', tutorial: true }] } as never)
     await mount()
     expect(layer()?.dataset.surface).toBe('welcome')
@@ -297,6 +335,14 @@ describe('第一步：拖入示例脚本', () => {
     await pointer(card, 'pointermove', 400, 420)
     expect(q('[data-tutorial-drop-zone]')!.hasAttribute('data-over')).toBe(true)
     await pointer(card, 'pointerup', 400, 420)
+    // 先演一段「渲染中」：这期间还没完成、「下一步」不亮、图还没出来
+    expect(q('[data-tutorial-rendering]')).not.toBeNull()
+    expect(q('[data-tutorial-imported]')).not.toBeNull()
+    expect(q('[data-demo-figure]')).toBeNull()
+    expect(ob().completedSteps).not.toContain('demo_import')
+    expect(q<HTMLButtonElement>('[data-tutorial-next]')!.disabled).toBe(true)
+    await finishRender()
+    expect(q('[data-tutorial-rendering]')).toBeNull()
     expect(ob().completedSteps).toContain('demo_import')
     expect(q<HTMLButtonElement>('[data-tutorial-next]')!.disabled).toBe(false)
     expect(q('[data-tutorial-feedback]')!.dataset.tutorialFeedback).toBe('success')
@@ -348,12 +394,39 @@ describe('第一步：拖入示例脚本', () => {
     for (let i = 0; i < 10; i++) await key(card, 'ArrowRight')
     await flush()
     await key(card, 'Enter')
+    expect(q('[data-tutorial-rendering]')).not.toBeNull()
+    await finishRender()
     expect(ob().completedSteps).toContain('demo_import')
   })
 
-  it('「直接使用示例」是等价的辅助入口', async () => {
+  it('只教拖放：没有「直接使用示例」之类的捷径', async () => {
     await openAt('demo_import')
-    await click(q('[data-tutorial-use-sample]'))
+    expect(q('[data-tutorial-use-sample]')).toBeNull()
+    expect(q('[data-tutorial-drop-zone] button')).toBeNull()
+  })
+
+  it('渲染途中返回欢迎页：计时停掉，不在背后补记完成（教程仍是进行中）', async () => {
+    await openAt('demo_import')
+    const card = q('[data-tutorial-file-card]')!
+    await pointer(card, 'pointerdown', 100, 100)
+    await pointer(card, 'pointermove', 400, 420)
+    await pointer(card, 'pointerup', 400, 420)
+    expect(q('[data-tutorial-rendering]')).not.toBeNull()
+    await click(q('[data-tutorial-back]'))
+    expect(layer()?.dataset.surface).toBe('welcome')
+    await finishRender()
+    expect(ob().status).toBe('active')
+    expect(ob().completedSteps).not.toContain('demo_import')
+  })
+
+  it('减少动态效果：放下即完成，不演渲染', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce'), addEventListener() {}, removeEventListener() {} }))
+    await openAt('demo_import')
+    const card = q('[data-tutorial-file-card]')!
+    await pointer(card, 'pointerdown', 100, 100)
+    await pointer(card, 'pointermove', 400, 420)
+    await pointer(card, 'pointerup', 400, 420)
+    expect(q('[data-tutorial-rendering]')).toBeNull()
     expect(ob().completedSteps).toContain('demo_import')
   })
 

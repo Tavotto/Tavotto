@@ -1,4 +1,11 @@
-"""Render IR → self-contained SVG, with shaped text represented by glyph outlines (X03).
+"""Render IR → self-contained SVG; shaped text is live ``<text>`` by default, glyph outlines on request (X03).
+
+``text_policy="text"`` (the default, ADR 0144) writes one ``<text>`` per shaped run with the
+approved face's real family name, per-character ``x`` positions taken from the IR advances, and
+the real Unicode from the cluster mapping. A run that cannot be restored to reliable Unicode
+(missing cluster text, ``.notdef``, private-use or control characters, a character the face does
+not cover) falls back to glyph outlines for that run only and is counted in the facts.
+``text_policy="outlines"`` keeps the previous behaviour (pure glyph paths, no font dependence).
 
 The page uses physical pt dimensions and one outer y-up → y-down transform. All IR
 coordinates and group matrices otherwise remain unchanged. Images and same-snapshot
@@ -25,11 +32,16 @@ from xml.etree import ElementTree as ET
 from . import ir, placement, raster, rasterio
 from .hbshaper import HbFaceProvider, require
 from .svgcheck import SVGError, parse_svg
+from .svgfonts import family_list
 
 SVG = "http://www.w3.org/2000/svg"
 XLINK = "http://www.w3.org/1999/xlink"
 ET.register_namespace("", SVG)
 ET.register_namespace("xlink", XLINK)
+
+TEXT_POLICY_TEXT = "text"
+TEXT_POLICY_OUTLINES = "outlines"
+TEXT_POLICIES = (TEXT_POLICY_TEXT, TEXT_POLICY_OUTLINES)
 
 WRITER_ERROR_CODES = (
     "unsupported_capability",
@@ -65,7 +77,12 @@ class WriteFacts:
     fonts: list[dict] = field(default_factory=list)
     text_objects: int = 0
     outlined_glyphs: int = 0
-    text_policy: str = "outlines"
+    text_policy: str = TEXT_POLICY_TEXT
+    #: runs written as live ``<text>`` / runs that had to fall back to outlines under the text policy
+    text_runs: int = 0
+    text_fallback_runs: int = 0
+    #: ``<text>`` elements carried by validated imported SVG companions (kept as-is under the text policy)
+    imported_text_elements: int = 0
     paths: int = 0
     groups: int = 0
     transparency_groups: int = 0
@@ -97,6 +114,18 @@ def _path(segments: tuple) -> str:
 
 def _element(parent: ET.Element, tag: str, **attrs: str) -> ET.Element:
     return ET.SubElement(parent, f"{{{SVG}}}{tag}", attrs)
+
+
+_XML = "http://www.w3.org/XML/1998/namespace"
+
+
+def _text_safe(cp: int) -> bool:
+    """A code point that survives XML and has a stable, editable meaning in Office."""
+    if cp in (0x20, 0xA0):
+        return True
+    if cp < 0x20 or 0x7F <= cp <= 0x9F or 0xD800 <= cp <= 0xDFFF or cp in (0xFFFE, 0xFFFF):
+        return False
+    return not (0xE000 <= cp <= 0xF8FF or 0xF0000 <= cp <= 0x10FFFF or 0xFDD0 <= cp <= 0xFDEF)
 
 
 _URL_REF = re.compile(r"url\(\s*(['\"]?)#([^\s)'\"]+)\1\s*\)", re.I)
@@ -143,14 +172,23 @@ class SvgWriter:
         files: Mapping[str, bytes] | None = None,
         *,
         imported_svgs: Mapping[str, bytes] | None = None,
+        imported_text_svgs: Mapping[str, bytes] | None = None,
+        text_policy: str = TEXT_POLICY_TEXT,
     ) -> None:
+        if text_policy not in TEXT_POLICIES:
+            raise ValueError(f"Unknown SVG text policy: {text_policy!r}")
+        self.text_policy = text_policy
         self.page = ir.validate(page)
         self.provider = provider
         self.files = files or {}
         self.imported_svgs = imported_svgs or {}
-        self.facts = WriteFacts(page=(page.width_pt, page.height_pt))
+        # 同一次执行的「保留文字」成品（ADR 0144）：身份仍由 path 基准 `imported_svgs` 的 hash 钉住，
+        # 这份只在 text 策略下替换写入的字节；解析失败就回退 path 版。
+        self.imported_text_svgs = imported_text_svgs or {}
+        self.facts = WriteFacts(page=(page.width_pt, page.height_pt), text_policy=text_policy)
         self._counter = 0
         self._faces: dict = {}
+        self._font_facts: dict[str, dict] = {}
         self._glyph_sets: dict = {}
         self._glyphs: dict[tuple[str, int], str] = {}
         self._images: dict[str, tuple[str, dict]] = {}
@@ -286,10 +324,12 @@ class SvgWriter:
                 {
                     "face_id": resource.face_id,
                     "sha256": resource.sha256,
-                    "outlined": True,
+                    "outlined": False,
+                    "as_text": False,
                     "embedded": False,
                 }
             )
+            self._font_facts[key] = self.facts.fonts[-1]
         return self._faces[key]
 
     def _glyph(self, key: str, gid: int) -> str:
@@ -311,6 +351,7 @@ class SvgWriter:
             raise WriterError(
                 "font_format", "Glyph outline is unavailable", {"font": key, "gid": gid}
             ) from exc
+        self._font_facts[key]["outlined"] = True
         name = self._name("glyph")
         _element(self.defs, "path", id=name, d=commands)
         self._glyphs[(key, gid)] = name
@@ -322,25 +363,103 @@ class SvgWriter:
         )
         pen_x = node.x
         for run in node.runs:
-            face = self._face(run.font)
-            size = run.size / face.upem
-            for glyph in run.glyphs:
-                name = self._glyph(run.font, glyph.gid)
-                matrix = (
-                    size,
-                    0,
-                    0,
-                    size,
-                    pen_x + glyph.x_offset * size,
-                    node.y + run.rise + glyph.y_offset * size,
-                )
-                _element(
-                    group, "use", **{f"{{{XLINK}}}href": "#" + name, "transform": _matrix(matrix)}
-                )
-                pen_x += glyph.x_advance * size
-                self.facts.outlined_glyphs += 1
-                self.facts.notdef_codes += int(glyph.gid == 0)
+            layout = self._text_layout(run) if self.text_policy == TEXT_POLICY_TEXT else None
+            if layout is not None:
+                self._text_element(group, node, run, pen_x, layout)
+                self.facts.text_runs += 1
+            else:
+                if self.text_policy == TEXT_POLICY_TEXT:
+                    self.facts.text_fallback_runs += 1
+                self._outline_run(group, node, run, pen_x)
+            pen_x += self._run_advance(run)
         self.facts.text_objects += 1
+
+    def _run_advance(self, run: ir.GlyphRun) -> float:
+        size = run.size / self._face(run.font).upem
+        return sum(g.x_advance for g in run.glyphs) * size
+
+    def _outline_run(self, group: ET.Element, node: ir.ShapedText, run: ir.GlyphRun, pen_x: float):
+        face = self._face(run.font)
+        size = run.size / face.upem
+        for glyph in run.glyphs:
+            name = self._glyph(run.font, glyph.gid)
+            matrix = (
+                size,
+                0,
+                0,
+                size,
+                pen_x + glyph.x_offset * size,
+                node.y + run.rise + glyph.y_offset * size,
+            )
+            _element(group, "use", **{f"{{{XLINK}}}href": "#" + name, "transform": _matrix(matrix)})
+            pen_x += glyph.x_advance * size
+            self.facts.outlined_glyphs += 1
+            self.facts.notdef_codes += int(glyph.gid == 0)
+
+    def _text_layout(self, run: ir.GlyphRun) -> tuple[str, float, list[float] | None] | None:
+        """Unicode string + the run's single start x (pt, relative to the run origin) + optional
+        per-character y, or None.
+
+        One x per run, no per-glyph x list: Word's "Convert to Shape" cuts a new text segment at every
+        explicit x, which scatters the letters ("T i t l e") and adds a paragraph mark after each one
+        (user report, 2026-10-21). Letter spacing is left to the renderer; on a machine with the same
+        approved face it is the face's own advance, i.e. what the IR was shaped with. ``y`` is only
+        written when a glyph truly carries a vertical offset.
+
+        None means this run cannot be restored to reliable Unicode and must stay outlines:
+        no cluster text on the first glyph, ``.notdef``, a character the approved face does not
+        cover, private-use / control / non-character code points, or no glyphs at all.
+        """
+        if not run.glyphs or run.glyphs[0].text == "":
+            return None
+        face = self._face(run.font)
+        size = run.size / face.upem
+        chars: list[str] = []
+        ys: list[float] = []
+        y = 0.0
+        for glyph in run.glyphs:
+            if glyph.gid == 0:
+                return None
+            if glyph.text:
+                y = -glyph.y_offset * size
+            for ch in glyph.text:
+                cp = ord(ch)
+                if not _text_safe(cp) or not face.covers(cp):
+                    return None
+                chars.append(ch)
+                ys.append(y)
+        return "".join(chars), run.glyphs[0].x_offset * size, (ys if any(ys) else None)
+
+    def _text_element(
+        self,
+        group: ET.Element,
+        node: ir.ShapedText,
+        run: ir.GlyphRun,
+        pen_x: float,
+        layout: tuple[str, float, list[float] | None],
+    ) -> None:
+        content, x0, ys = layout
+        face = self._face(run.font)
+        resource = face.resource
+        self._font_facts[run.font]["as_text"] = True
+        family = face.record.info.family_name or resource.postscript_name
+        attrs = {
+            # y is flipped once more so the glyph-up text frame sits inside the page's y-down flip.
+            "transform": _matrix((1, 0, 0, -1, pen_x, node.y + run.rise)),
+            "x": _num(x0),
+            "font-family": family_list(family, resource.family),
+            "font-size": _num(run.size),
+            "text-rendering": "geometricPrecision",
+            f"{{{_XML}}}space": "preserve",
+        }
+        if ys is not None:
+            attrs["y"] = " ".join(_num(v) for v in ys)
+        if resource.bold:
+            attrs["font-weight"] = "700"
+        if resource.italic:
+            attrs["font-style"] = "italic"
+        element = _element(group, "text", **attrs)
+        element.text = content
 
     def _image(self, node: ir.Image, parent: ET.Element) -> None:
         res, data = self._source_bytes(node)
@@ -418,14 +537,24 @@ class SvgWriter:
             )
         if node.resource not in self._sources:
             try:
-                root = parse_svg(data)
+                root = None
+                text_data = self.imported_text_svgs.get(node.resource)
+                if text_data is not None and self.text_policy == TEXT_POLICY_TEXT:
+                    try:
+                        root = parse_svg(text_data)
+                    except (SVGError, ValueError):
+                        root = None
+                if root is None:
+                    root = parse_svg(data)
                 for element in root.iter():
                     if not element.tag.startswith("{"):
                         element.tag = f"{{{SVG}}}{element.tag}"
-                if any(n.tag == f"{{{SVG}}}text" for n in root.iter()):
+                texts = sum(1 for n in root.iter() if n.tag == f"{{{SVG}}}text")
+                if texts and self.text_policy != TEXT_POLICY_TEXT:
                     raise UnsupportedCapability(
                         "text", "svg_source_text_not_outlined", node.object_id
                     )
+                self.facts.imported_text_elements += texts
                 values = [float(v) for v in root.get("viewBox", "").replace(",", " ").split()]
                 if (
                     len(values) != 4
@@ -502,6 +631,15 @@ def write_svg(
     files: Mapping[str, bytes] | None = None,
     *,
     imported_svgs: Mapping[str, bytes] | None = None,
+    imported_text_svgs: Mapping[str, bytes] | None = None,
+    text_policy: str = TEXT_POLICY_TEXT,
 ) -> WriteFacts:
     """Write a validated, self-contained vector SVG. No PDF → raster fallback exists."""
-    return SvgWriter(page, provider, files, imported_svgs=imported_svgs).write(out)
+    return SvgWriter(
+        page,
+        provider,
+        files,
+        imported_svgs=imported_svgs,
+        imported_text_svgs=imported_text_svgs,
+        text_policy=text_policy,
+    ).write(out)

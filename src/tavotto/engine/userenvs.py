@@ -34,7 +34,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import launcher, projectenv, runtime, scanbudget
+from . import launcher, projectenv, rootenv, runtime, scanbudget
 
 LOG = logging.getLogger("tavotto.userenvs")
 
@@ -48,6 +48,11 @@ SOURCE_LOGIN_SHELL = "login_shell"
 SOURCE_PROJECT_VENV = "project_venv"
 SOURCE_CONDA = "conda"
 SOURCE_PYENV = "pyenv"
+#: Windows 的 PEP 514 注册表登记（python.org / Anaconda / 商店之外的各家安装器都会写 `Software\\Python\\<公司>\\<标签>`）
+SOURCE_REGISTRY = "windows_registry"
+#: 「解释器 × ROOT 安装」的叠加组合（`rootenv`，ADR 0079 修订 2026-10-21 b）。不是 `discover()` 的来源——
+#: 它由 `deprepair` 在裸起都导入不了 ROOT 时按需构造，所以不在 `SOURCES` 里
+SOURCE_ROOT_OVERLAY = rootenv.SOURCE
 #: 顺序即优先级（`discover()` 按它拼表）
 SOURCES = (
     SOURCE_PROJECT_VENV,
@@ -58,6 +63,7 @@ SOURCES = (
     SOURCE_LOGIN_SHELL,
     SOURCE_CONDA,
     SOURCE_PYENV,
+    SOURCE_REGISTRY,
 )
 
 #: 项目自己声明 / 编辑器指向的那几类来源（`rank()` 的第 0 档）：检测模式下默认链条能跑这个脚本时，只有它们还排在
@@ -420,14 +426,161 @@ def login_shell_pythons() -> list[str]:
 # ------------------------------------------------------------------ Conda / pyenv
 
 
-def _conda_roots() -> list[str]:
+#: 这三个可执行文件只用来**反推安装根**：只 `is_file`，绝不执行（ADR 0079「不问任何 CLI」）
+_CONDA_EXE_NAMES = ("conda.exe", "mamba.exe", "micromamba.exe")
+#: `.condarc` 最多读多少字节、`envs_dirs` / `pkgs_dirs` 各取多少项（有界读，病态文件不拖住扫描）
+CONDARC_MAX_ITEMS = 32
+
+
+def _path_exe_roots(
+    path_env: str | None = None, *, nt: bool | None = None, isfile=os.path.isfile, walker=None
+) -> list[str]:
+    """PATH 里的 `conda.exe` / `mamba.exe` / `micromamba.exe` 反推安装根（不执行它们）。
+
+    `D:\\anaconda3\\Scripts\\conda.exe` / `D:\\anaconda3\\condabin\\conda.bat` 所在的 `Scripts` / `condabin` 的上一级就是根；
+    micromamba / mamba 常见在 `<根>\\Library\\bin`。其它位置的 micromamba 不猜根（它的根由 `MAMBA_ROOT_PREFIX` 决定）。"""
+    nt = os.name == "nt" if nt is None else nt
+    mod = ntpath if nt else os.path
+    raw = os.environ.get("PATH", "") if path_env is None else path_env
+    # PATH 里的目录可以是断线映射盘 / 指向 SMB 的 junction：`isfile` 之前先逐级不跟随地验（含盘类型），被拒的不探
+    walker = _walker(None, walker, nt=nt)
+    out: list[str] = []
+    for d in raw.split(";" if nt else os.pathsep):
+        d = d.strip().strip('"')
+        if not d or not _local_hint(d) or walker.redirected(d) is not None:
+            continue
+        base = mod.basename(d.rstrip("/\\")).lower()
+        if base not in ("scripts", "condabin", "bin"):
+            continue
+        parent = mod.dirname(d.rstrip("/\\"))
+        if base == "bin" and mod.basename(parent).lower() == "library":
+            parent = mod.dirname(parent)
+        elif base == "bin" and nt:
+            continue  # 单独的 `bin` 在 Windows 上不是 Conda 的布局
+        if not parent:
+            continue
+        exes = (*_CONDA_EXE_NAMES, "conda.bat") if base == "condabin" else _CONDA_EXE_NAMES
+        if any(isfile(mod.join(d, n)) for n in exes):
+            out.append(parent)
+    return out
+
+
+def _parse_condarc_lists(text: str, keys: tuple[str, ...]) -> dict[str, list[str]]:
+    """只解析 `.condarc` 里 `keys` 这几个键的**简单列表**（块式 `- x` 或行内 `[a, b]`）；纯标准库，不是 YAML 解析器。
+    其它结构一律忽略（宁可漏，不猜）。引号与行尾注释去掉；每个键最多 `CONDARC_MAX_ITEMS` 项。"""
+    out: dict[str, list[str]] = {k: [] for k in keys}
+
+    def clean(v: str) -> str:
+        v = v.strip()
+        if v[:1] in "\"'":
+            q = v[0]
+            end = v.find(q, 1)
+            return v[1:end] if end > 0 else v[1:]
+        return v.split(" #")[0].strip()
+
+    current: str | None = None
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line[0].isspace() and not line.startswith("-"):
+            current = None
+            key, sep, rest = line.partition(":")
+            key = key.strip()
+            if sep and key in out:
+                rest = rest.strip()
+                if rest.startswith("["):
+                    inner = rest[1:].split("]")[0]
+                    for item in inner.split(","):
+                        if clean(item) and len(out[key]) < CONDARC_MAX_ITEMS:
+                            out[key].append(clean(item))
+                elif not rest or rest.startswith("#"):
+                    current = key
+            continue
+        stripped = line.strip()
+        if current and stripped.startswith("-"):
+            item = clean(stripped[1:])
+            if item and len(out[current]) < CONDARC_MAX_ITEMS:
+                out[current].append(item)
+    return out
+
+
+def _condarc_files(environ: dict | None = None, *, nt: bool | None = None) -> list[str]:
+    env = os.environ if environ is None else environ
+    nt = os.name == "nt" if nt is None else nt
+    files: list[str] = []
+    if env.get("CONDARC"):
+        files.append(env["CONDARC"])
+    files.append(os.path.join(_home(), ".condarc"))
+    if nt:
+        files.append("C:\\ProgramData\\conda\\.condarc")
+    return files
+
+
+def _condarc_info(
+    budget: scanbudget.Budget | None = None,
+    *,
+    files: list[str] | None = None,
+    environ: dict | None = None,
+    walker=None,
+) -> tuple[list[str], list[str]]:
+    """`.condarc`（`%CONDARC%`、`~/.condarc`）里的 `envs_dirs`（其子目录就是环境）与 `pkgs_dirs` 旁的根
+    （`D:\\conda\\pkgs` → `D:\\conda`）。读不了 / 不是普通文件 = 当没有（记一条看不全），不抛。"""
+    env = os.environ if environ is None else environ
+    envs_dirs: list[str] = []
+    roots: list[str] = []
+    walker = _walker(budget, walker)
+    for f in files if files is not None else _condarc_files(env):
+        if budget is not None and budget.stop_reason() is not None:
+            break
+        # `%CONDARC%` 可以是 UNC / 断线映射盘 / 指向共享的 junction：打开它之前先词法 + 逐级不跟随地验，被拒的当没有
+        if not _local_hint(f) or walker.redirected(f) is not None:
+            continue
+        try:
+            parent, name = os.path.split(f)
+            text = scanbudget.read_regular_text(parent or ".", name, max_bytes=MAX_HINT_BYTES)
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError):
+            if budget is not None:
+                budget.note(scanbudget.ISSUE_UNREADABLE_FILE, scope="environment")
+            continue
+        lists = _parse_condarc_lists(text, ("envs_dirs", "pkgs_dirs"))
+
+        def expand(v: str) -> str:
+            return os.path.expanduser(os.path.expandvars(v))
+
+        for d in lists["envs_dirs"]:
+            d = expand(d)
+            if os.path.isabs(d) or ntpath.isabs(d):
+                envs_dirs.append(d)
+        for d in lists["pkgs_dirs"]:
+            norm = expand(d).replace("\\", "/").rstrip("/")
+            head, _, tail = norm.rpartition("/")
+            if (
+                head
+                and not head.endswith(":")
+                and tail.lower() == "pkgs"
+                and (os.path.isabs(norm) or ntpath.isabs(norm))
+            ):
+                roots.append(head)
+    return envs_dirs, roots
+
+
+def _conda_roots(
+    *, nt: bool | None = None, environ: dict | None = None, path_roots: list[str] | None = None
+) -> list[str]:
+    nt = os.name == "nt" if nt is None else nt
+    env = os.environ if environ is None else environ
     home = _home()
-    if os.name == "nt":
-        local = os.environ.get("LOCALAPPDATA") or ""
-        names = ("anaconda3", "miniconda3", "miniforge3", "mambaforge")
+    if nt:
+        local = env.get("LOCALAPPDATA") or ""
+        names = ("anaconda3", "miniconda3", "miniforge3", "mambaforge", "micromamba")
         roots = [os.path.join(home, n) for n in names]
         roots += [os.path.join(local, n) for n in names] if local else []
         roots += [os.path.join("C:\\ProgramData", n) for n in names]
+        if env.get("MAMBA_ROOT_PREFIX"):
+            roots.append(env["MAMBA_ROOT_PREFIX"])
+        roots += _path_exe_roots(env.get("PATH", ""), nt=True) if path_roots is None else path_roots
         return roots
     names = ("anaconda3", "miniconda3", "miniforge3", "mambaforge", "micromamba")
     roots = [os.path.join(home, n) for n in names]
@@ -499,7 +652,8 @@ def _conda_prefixes(budget: scanbudget.Budget | None = None, walker=None) -> lis
     `budget`（导入即扫描传）：`environments.txt` 有界读、`envs` 目录增量枚举，到期 / 取消返回已有的那部分。"""
     walker = _walker(budget, walker)
     out: list[str] = _conda_environments_txt(budget, walker)
-    for root in _conda_roots():
+    envs_dirs, rc_roots = _condarc_info(budget, walker=walker)
+    for root in [*_conda_roots(), *rc_roots]:
         if budget is not None and budget.stop_reason() is not None:
             break
         if _local_hint(root) and walker.redirected(root) is None and os.path.isdir(root):
@@ -507,6 +661,12 @@ def _conda_prefixes(budget: scanbudget.Budget | None = None, walker=None) -> lis
             out += _scan_children(os.path.join(root, "envs"), budget, walker)
     if budget is None or budget.stop_reason() is None:
         out += _scan_children(os.path.join(_home(), ".conda", "envs"), budget, walker)
+    # `.condarc` 的 `envs_dirs`：用户把环境放在别的盘上（Windows 上常见 `D:\\envs`）
+    for edir in envs_dirs:
+        if budget is not None and budget.stop_reason() is not None:
+            break
+        if _local_hint(edir) and walker.redirected(edir) is None and os.path.isdir(edir):
+            out += _scan_children(edir, budget, walker)
     seen: set[str] = set()
     uniq: list[str] = []
     for p in out:
@@ -533,6 +693,113 @@ def _pyenv_pythons(budget: scanbudget.Budget | None = None, walker=None) -> list
             py = _prefix_python(prefix, walker=walker)
             if py:
                 out.append((py, os.path.basename(prefix)))
+    return out
+
+
+# ------------------------------------------------------------------ Windows 注册表（PEP 514）
+
+#: 一个 hive / 视图下最多看多少个公司、每个公司最多多少个标签（病态注册表不拖住扫描）
+REGISTRY_MAX_COMPANIES = 64
+REGISTRY_MAX_TAGS = 64
+
+
+class _WinregReader:
+    """`winreg` 的薄封装（只在 Windows 上构造）。测试注入同接口的假读取器：
+    `subkeys(hive, view, path) -> list[str]`；`values(hive, view, path) -> dict[str, str]`（含默认值，键 `""`）。
+    读不到（键不存在 / 无权限）一律回空，不抛。`hive` 是 `"HKCU"` / `"HKLM"`，`view` 是 `64` / `32`
+    （32 = `WOW6432Node` 视图）。"""
+
+    def __init__(self) -> None:
+        import winreg  # noqa: PLC0415 — 只在 Windows 上存在
+
+        self._w = winreg
+
+    def _open(self, hive: str, view: int, path: str):
+        w = self._w
+        root = w.HKEY_CURRENT_USER if hive == "HKCU" else w.HKEY_LOCAL_MACHINE
+        flag = w.KEY_WOW64_32KEY if view == 32 else w.KEY_WOW64_64KEY
+        return w.OpenKey(root, path, 0, w.KEY_READ | flag)
+
+    def subkeys(
+        self, hive: str, view: int, path: str, limit: int | None = None, stop=None
+    ) -> list[str]:
+        """子键名；枚举**过程中**就受 `limit`（最多取多少个）与 `stop()`（真 = 预算到期 / 取消）约束，不先枚举完再切。"""
+        cap = REGISTRY_MAX_COMPANIES * REGISTRY_MAX_TAGS if limit is None else limit
+        out: list[str] = []
+        try:
+            with self._open(hive, view, path) as key:
+                i = 0
+                while i < cap:
+                    if stop is not None and stop():
+                        break
+                    try:
+                        out.append(self._w.EnumKey(key, i))
+                    except OSError:
+                        break
+                    i += 1
+        except OSError:
+            return []
+        return out
+
+    def values(self, hive: str, view: int, path: str) -> dict[str, str]:
+        out: dict[str, str] = {}
+        try:
+            with self._open(hive, view, path) as key:
+                i = 0
+                while i < 32:
+                    try:
+                        name, value, _kind = self._w.EnumValue(key, i)
+                    except OSError:
+                        break
+                    if isinstance(value, str):
+                        out[name] = value
+                    i += 1
+        except OSError:
+            return {}
+        return out
+
+
+def _windows_registry_pythons(
+    reader=None, *, nt: bool | None = None, budget: scanbudget.Budget | None = None
+) -> list[tuple[str, str]]:
+    """PEP 514 登记的解释器 `[(python.exe 路径, 标签)]`：HKCU 与 HKLM 的 `Software\\Python\\<公司>\\<标签>\\InstallPath`，
+    64 位与 32 位（`WOW6432Node`）视图都看。取 `ExecutablePath`，没有就用 `InstallPath` 默认值（目录）+ `python.exe`。
+    非 Windows 回空（`reader` 可注入，测试在别的平台上求值）。只读注册表、不执行任何东西；到期 / 取消就收手。
+    存在性（`is_file`、网络路径、重定向）由 `discover()` 统一过。"""
+    nt = os.name == "nt" if nt is None else nt
+    if not nt:
+        return []
+    if reader is None:
+        try:
+            reader = _WinregReader()
+        except ImportError:  # pragma: no cover — nt 但没有 winreg 不会发生
+            return []
+    out: list[tuple[str, str]] = []
+
+    def spent() -> bool:
+        return budget is not None and budget.stop_reason() is not None
+
+    for hive in ("HKCU", "HKLM"):
+        for view in (64, 32):
+            for company in reader.subkeys(
+                hive, view, "Software\\Python", limit=REGISTRY_MAX_COMPANIES, stop=spent
+            ):
+                if budget is not None and not budget.charge_entry():
+                    return out
+                base = f"Software\\Python\\{company}"
+                for tag in reader.subkeys(hive, view, base, limit=REGISTRY_MAX_TAGS, stop=spent):
+                    if budget is not None and not budget.charge_entry():
+                        return out
+                    vals = reader.values(hive, view, f"{base}\\{tag}\\InstallPath")
+                    exe = (vals.get("ExecutablePath") or "").strip().strip('"')
+                    if not exe:
+                        install = (vals.get("") or "").strip().strip('"')
+                        if not install:
+                            continue
+                        exe = ntpath.join(install, "python.exe")
+                    exe = os.path.expandvars(exe)
+                    if ntpath.isabs(exe):
+                        out.append((exe, f"{company}\\{tag}"))
     return out
 
 
@@ -598,6 +865,8 @@ def discover(
             raw.append((py, SOURCE_CONDA, _conda_label(pre)))
     if budget is None or budget.stop_reason() is None:
         raw += [(p, SOURCE_PYENV, n) for p, n in _pyenv_pythons(budget, walker)]
+    if budget is None or budget.stop_reason() is None:
+        raw += [(p, SOURCE_REGISTRY, n) for p, n in _windows_registry_pythons(budget=budget)]
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for python, source, label in raw:
@@ -659,6 +928,11 @@ _SOURCE_RANK = {
     # 2 = 名字与项目目录对得上的 Conda 环境（`best()` 里现算）
     SOURCE_CONDA: 3,
     SOURCE_PYENV: 3,
+    # 注册表登记的是用户**自己装**的解释器（安装器替他登记），和 Conda / pyenv 同属"用户自己的环境"一档；
+    # 但没有任何项目 / 终端线索指向它，所以不高于 3，且仍高于老链条的系统解释器
+    SOURCE_REGISTRY: 3,
+    # ROOT 叠加组合：同样是"用户自己装的东西"（解释器 + 他装的 ROOT），但需要我们替他拼环境，排在其余用户环境之后、系统之前
+    SOURCE_ROOT_OVERLAY: 3,
     SOURCE_SYSTEM: 4,
 }
 
@@ -718,7 +992,12 @@ def _health_fingerprint(health: dict) -> tuple:
 
 
 def _cache_key(
-    python: str, modules: tuple[str, ...], bundled: bool, mode: str = "import", root: str = ""
+    python: str,
+    modules: tuple[str, ...],
+    bundled: bool,
+    mode: str = "import",
+    root: str = "",
+    overlay: dict | None = None,
 ) -> tuple:
     """体检缓存的键：路径 + **环境代**（`projectenv.environment_generation`，与池 / 项目记录同一个"代"的概念）+ 要量的 import
     + 是否内置 + 体检方式。同一路径上被重建的环境换代，旧结论不再命中（Codex #820 r4233884149）。
@@ -737,6 +1016,9 @@ def _cache_key(
         how,
         # 内置 runtime 会摘掉 PYTHONPATH；用户解释器继承它，换值后旧 import / spec 结论均不可复用。
         (os.environ.get("PYTHONPATH") or "") if not bundled else "",
+        # 叠加环境（ROOT）：带叠加层量到的结论不能当裸起的用，反之亦然；也不同于另一个 ROOT 安装，
+        # 同一安装被原地升级 / 重新解压后也不能复用（代次键 = 路径 + 内容指纹）
+        rootenv.generation_of(overlay),
         # 启动上下文（direct / conda|exe|prefix）：裸起的结论不能在激活下复用。放在末尾——前面几位有人按位置读（`key[1]` 是环境代）
         launcher.context_key(python),
     )
@@ -749,21 +1031,24 @@ def _probe(
     bundled: bool = False,
     mode: str = "import",
     root: str = "",
+    overlay: dict | None = None,
 ) -> dict:
     from . import projectenv
 
-    key = _cache_key(python, modules, bundled, mode, root)
+    key = _cache_key(python, modules, bundled, mode, root, overlay)
     with _lock:
         hit = _probe_cache.get(key)
         if hit is None and mode == "spec":
             # 点过「运行」之后的 import 结论更强。
-            hit = _probe_cache.get(_cache_key(python, modules, bundled, "import"))
+            hit = _probe_cache.get(_cache_key(python, modules, bundled, "import", "", overlay))
     if hit is not None and _fresh(python, hit):
         return hit
     # 只在内置 runtime 时才带这个参数：用户环境的体检调用形状与以前逐字相同
     extra = {"bundled": True} if bundled else {}
     if mode == "spec":
         extra.update(import_mode="spec", project_root=root)
+    if overlay:
+        extra["env_overlay"] = overlay
     health = projectenv.probe_environment(python, modules=modules, **extra)
     health["_site_fp"] = _health_fingerprint(health)
     if launcher.is_unavailable(health):
@@ -811,7 +1096,12 @@ def _fresh(python: str, health: dict) -> bool:
 
 
 def imports_missing(
-    python: str, modules: list[str], *, bundled: bool = False, root: str = ""
+    python: str,
+    modules: list[str],
+    *,
+    bundled: bool = False,
+    root: str = "",
+    overlay: dict | None = None,
 ) -> list[str]:
     """`modules` 里此刻这个解释器**确实** import 不到的那几个（ADR 0079 修订 2026-09-25）。
 
@@ -824,22 +1114,30 @@ def imports_missing(
     mods = tuple(dict.fromkeys(m for m in modules if m))
     if not mods:
         return []
+    if overlay and root:
+        # 带叠加层的解释器运行之前量不了（`spec` 体检以 `-I` 启动，忽略叠加层的环境变量）：判不出不算缺
+        return []
     probed = (
         _probe(python, mods, bundled=bundled, mode="spec", root=root)
         if root
-        else _probe(python, mods, bundled=bundled)
+        else _probe(python, mods, bundled=bundled, overlay=overlay)
     )
     ok_map = probed.get("modules_ok") or {}
     return [m for m in mods if ok_map.get(m) is False]
 
 
 def cached_probe(
-    python: str, modules: tuple[str, ...], *, bundled: bool = False, root: str = ""
+    python: str,
+    modules: tuple[str, ...],
+    *,
+    bundled: bool = False,
+    root: str = "",
+    overlay: dict | None = None,
 ) -> dict | None:
     """这个候选在这组 import 上**已有**的体检结论（只读缓存，没有回 None；不起任何进程）。"""
     with _lock:
-        hit = _probe_cache.get(_cache_key(python, modules, bundled))
-        if hit is None and root:
+        hit = _probe_cache.get(_cache_key(python, modules, bundled, overlay=overlay))
+        if hit is None and root and not overlay:
             hit = _probe_cache.get(_cache_key(python, modules, bundled, "spec", root))
     return hit if hit is not None and _fresh(python, hit) else None
 
@@ -873,26 +1171,55 @@ def evaluate(
     todo = _within_budget(candidates, project_name or (Path(root).name if root else ""))
 
     def one(cand: dict) -> dict:
+        overlay = cand.get("overlay")
+        # 内置 runtime 作为叠加组合的底（`bundled`）：按 worker 起它的同一套量（摘 PYTHONPATH、`-B`），叠加层在其后
+        bundled = bool(cand.get("bundled"))
+        unchecked = {
+            **cand,
+            "ok": None,
+            "code": "",
+            "support": "",
+            "python_version": "",
+            "matplotlib_version": "",
+            "missing": [],
+            "satisfies": None,
+            "checked": False,
+            "probe_status": PROBE_UNCHECKED,
+        }
+        # 裸起候选的调用形状与以前逐字相同（测试替身的签名也不变）：只有叠加组合才多这两个参数
+        probe_extra = {
+            **({"overlay": overlay} if overlay else {}),
+            **({"bundled": True} if bundled else {}),
+        }
+        if cand.get("overlay_reject"):
+            # 静态已判定落选（Python 小版本对不上 / 没有 C++ 工具）：不起进程。结论是确定的「跑不了」
+            return {
+                **cand,
+                "ok": True,
+                "code": "",
+                "support": "",
+                "python_version": cand.get("python_version", ""),
+                "matplotlib_version": "",
+                "missing": [],
+                "import_failed": [],
+                "satisfies": False,
+                "checked": True,
+                "probe_status": PROBE_MODULE_MISSING,
+            }
+        if overlay and root:
+            # 叠加组合运行之前不量（`spec` 方式忽略叠加层）：与项目说了算的候选同一套"未检查"
+            return unchecked
         if cache_only:
-            health = cached_probe(cand["python"], imports, root=root)
+            health = cached_probe(
+                cand["python"], imports, root=root, overlay=overlay, bundled=bundled
+            )
             if health is None:
-                return {
-                    **cand,
-                    "ok": None,
-                    "code": "",
-                    "support": "",
-                    "python_version": "",
-                    "matplotlib_version": "",
-                    "missing": [],
-                    "satisfies": None,
-                    "checked": False,
-                    "probe_status": PROBE_UNCHECKED,
-                }
+                return unchecked
         elif use_cache:
             health = (
                 _probe(cand["python"], imports, mode="spec", root=root)
                 if root
-                else _probe(cand["python"], imports)
+                else _probe(cand["python"], imports, **probe_extra)
             )
         else:
             from . import projectenv
@@ -904,6 +1231,8 @@ def evaluate(
                 cand["python"],
                 modules=imports,
                 **({"import_mode": "spec", "project_root": root} if root else {}),
+                **({"env_overlay": overlay} if overlay else {}),
+                **({"bundled": True} if bundled else {}),
             )
         ok_map = health.get("modules_ok") or {}
         if (
@@ -977,6 +1306,8 @@ def evaluate(
             "satisfies": healthy and not missing,
             "checked": True,
             "probe_status": status,
+            # 只在体检超时时才有这个键：落选原因要把"超时"和"起不来"分开（`rejection_reason`）
+            **({"timed_out": True} if health.get("timed_out") else {}),
         }
 
     if not todo:
@@ -984,7 +1315,92 @@ def evaluate(
     from concurrent.futures import ThreadPoolExecutor
 
     with ThreadPoolExecutor(max_workers=min(PROBE_WORKERS, len(todo))) as pool:
-        return list(pool.map(one, todo))
+        return [_label_overlay(e) for e in pool.map(one, todo)]
+
+
+def _label_overlay(entry: dict) -> dict:
+    """叠加组合的标签写清楚是哪一对：`Python 3.14 + ROOT 6.38`（版本来自这次体检；没量到就只写 ROOT 版本）。"""
+    overlay = entry.get("overlay")
+    if not overlay:
+        return entry
+    parts = (entry.get("python_version") or "").split(".")
+    py = f"Python {'.'.join(parts[:2])} + " if len(parts) >= 2 and parts[0] else ""
+    return {**entry, "label": f"{py}{rootenv.label_of(overlay)}"}
+
+
+def entry_key(entry: dict) -> tuple:
+    """候选的身份：解释器（`_key`）+ 叠加层。同一个解释器带不同 ROOT 是不同的候选，裸起与叠加也是。"""
+    return (_key(entry["python"]), rootenv.key_of(entry.get("overlay")))
+
+
+# ------------------------------------------------------------------ ROOT 叠加组合（ADR 0079 修订 2026-10-21 b）
+
+
+def root_installs(budget: scanbudget.Budget | None = None) -> list[dict]:
+    """本机的 ROOT 安装（`rootenv.discover_installs`）：纯 stat / 读注册表，不执行任何东西。
+    Windows 上注入 `_WinregReader`；`TAVOTTO_USER_ENV_DISCOVERY=0` 的总开关由调用方（`deprepair`）判。"""
+    reader = None
+    if os.name == "nt":
+        try:
+            reader = _WinregReader()
+        except ImportError:  # pragma: no cover
+            reader = None
+    return rootenv.discover_installs(registry_reader=reader, budget=budget)
+
+
+def overlay_candidates(bases: list[dict], installs: list[dict]) -> list[dict]:
+    """「候选解释器 × ROOT 安装」的组合（有界：ROOT 至多 `rootenv.MAX_USED` 个、优先最新；要起进程的组合至多
+    `rootenv.MAX_COMBOS` 个）。
+
+    `bases`：`{"python", "bundled"?, "python_version"?}`，按调用方的偏好序。Conda 环境也可以当底（叠加层在激活增量之后叠，
+    激活盖不掉它；conda-forge 自带 ROOT 的环境裸起就导入得了，走不到这里）。
+    顺序：ROOT 自带的 Python 小版本标记（`py_tags`，只是提示）对得上的组合排前面，其余保持 底×ROOT 的偏好序；
+    认不出标记的不排除——真不真能跑由体检说了算。
+
+    **静态落选**（不起进程，组合带 `overlay_reject`，排在最后、至多 4 个）：ROOT 构建所用的 Python 小版本
+    （`build_python`，静态读 `ROOT/_python_version.py`）与底的小版本都读得出且不同 -> `root_python_mismatch`；
+    Windows 上没有带 C++ 工具的 Visual Studio / Build Tools（`rootenv.msvc_available`）-> `root_needs_msvc`
+    （cling 会崩溃）。版本对不上优先于缺 VS（装 VS 救不了版本不匹配）。"""
+    roots = rootenv.newest(installs)
+    viable: list[tuple[int, int, dict]] = []
+    rejected: list[dict] = []
+    # 没有任何组合时不去问 vswhere
+    msvc_ok = True if not (bases and roots) else rootenv.msvc_available()
+    for i, base in enumerate(bases):
+        minor = _minor_of(base.get("python_version", ""))
+        for j, install in enumerate(roots):
+            tags = install.get("py_tags") or frozenset()
+            hint = 0 if (not tags or minor is None or minor in tags) else 1
+            combo = {
+                "python": base["python"],
+                "source": SOURCE_ROOT_OVERLAY,
+                "label": rootenv.label_of(rootenv.overlay_spec(install)),
+                "overlay": rootenv.overlay_spec(install),
+                **({"bundled": True} if base.get("bundled") else {}),
+                **(
+                    {"python_version": base["python_version"]} if base.get("python_version") else {}
+                ),
+            }
+            built = _minor_of(install.get("build_python", ""))
+            if built is not None and minor is not None and built != minor:
+                rejected.append({**combo, "overlay_reject": REJECT_ROOT_PYTHON_MISMATCH})
+            elif not msvc_ok:
+                rejected.append({**combo, "overlay_reject": REJECT_ROOT_NEEDS_MSVC})
+            else:
+                viable.append((hint, i * len(roots) + j, combo))
+    viable.sort(key=lambda c: (c[0], c[1]))
+    return [c[2] for c in viable[: rootenv.MAX_COMBOS]] + rejected[:_MAX_STATIC_REJECTS]
+
+
+#: 静态落选的组合最多带几个（它们不起进程，只为让落选原因说得出；与 `PROBE_LIMIT` 合起来仍在预算内）
+_MAX_STATIC_REJECTS = 4
+
+
+def _minor_of(version: str) -> int | None:
+    parts = (version or "").split(".")
+    if len(parts) >= 2 and parts[0] == "3" and parts[1].isdigit():
+        return int(parts[1])
+    return None
 
 
 def system_candidates(budget: scanbudget.Budget | None = None) -> list[dict]:
@@ -1039,12 +1455,121 @@ def _within_budget(candidates: list[dict], project_name: str = "") -> list[dict]
     return [candidates[i] for i in sorted(ranked[:PROBE_LIMIT])]
 
 
+def _confirmation(entry: dict) -> int:
+    """体检对"能跑这个脚本"的确认程度（小 = 更确定）：0 = 确认装齐且健康（`satisfies`）；1 = 没量到 / 延后
+    （`checked=False`，不冒充装齐也不冒充没装齐）；2 = 量过、确认跑不了。"""
+    if entry.get("satisfies"):
+        return 0
+    if entry.get("satisfies") is None or entry.get("checked") is False:
+        return 1
+    return 2
+
+
 def rank(entry: dict, project_name: str = "") -> tuple:
-    """挑选的排序键（小的更好）：来源档位 → verified 优先 → Python 新的优先 → 原顺序由稳定排序保留。"""
+    """挑选的排序键（小的更好）：**确认能跑本脚本 > 没量到 > 确认跑不了** → 来源档位 → verified 优先 → Python 新的优先
+    → 原顺序由稳定排序保留。
+
+    第一把尺子是新加的（2026-10-21，ADR 0079 修订）：来源再靠前（项目线索 / 终端默认），只要体检确认它缺脚本要的 import，
+    就不该排在一个确认能跑的 Conda / 注册表环境前面。`best()` 本来就只在 `satisfies` 的里面挑，这条对它是空操作；
+    作用在展示顺序（`deprepair.user_environment_offer` 的候选表）与任何拿 `rank` 给混合结果排序的地方。
+    「内置环境能跑就不换」不在这里：那是 `deprepair._detect_environment_unlocked` 的 `runs_now` 分支，只让项目声明的
+    候选排在默认链条前面，本函数不参与。"""
     tier = source_tier(entry, project_name)
     verified = 0 if entry.get("support") == "verified" else 1
     ver = _version_tuple(entry.get("python_version", ""))
-    return (tier, verified, tuple(-v for v in ver))
+    return (_confirmation(entry), tier, verified, tuple(-v for v in ver))
+
+
+# ------------------------------------------------------------------ 落选原因
+
+#: 落选原因的稳定码（给前端卡片与诊断包读；不含路径、不含机器名）
+REJECT_MISSING_IMPORTS = (
+    "missing_imports"  # 健康，但脚本要的某些 import 得不到（`missing` 列出缺哪些）
+)
+REJECT_IMPORT_FAILED = "import_failed"  # 包在，但 import 时抛错（ABI / 依赖 / DLL）
+REJECT_PYTHON_OUT_OF_RANGE = "python_out_of_range"
+REJECT_NO_MATPLOTLIB = "no_matplotlib"
+REJECT_WORKER_CHAIN_FAILED = "worker_chain_failed"
+REJECT_ACTIVATION_FAILED = "activation_failed"
+REJECT_PROBE_TIMEOUT = "probe_timeout"
+REJECT_UNUSABLE = "unusable"  # 解释器起不来 / 体检进程崩溃
+REJECT_NOT_CHECKED = "not_checked"  # 没量到（延后到运行时 / 项目说了算的候选运行前不起）
+REJECT_OUTRANKED = "outranked"  # 能跑，但有排序更靠前的被选用了
+#: 解释器健康、叠上了这个 ROOT，`import ROOT` 仍失败：ROOT 的二进制包只配一个 Python 小版本，多半就是版本对不上
+REJECT_ROOT_PYTHON_MISMATCH = "root_python_mismatch"
+#: Windows 上没装带 C++ 工具的 Visual Studio / Build Tools：ROOT 的 cling 找不到头文件会崩溃，不起进程直接落选
+REJECT_ROOT_NEEDS_MSVC = "root_needs_msvc"
+REJECT_CODES = (
+    REJECT_MISSING_IMPORTS,
+    REJECT_IMPORT_FAILED,
+    REJECT_PYTHON_OUT_OF_RANGE,
+    REJECT_NO_MATPLOTLIB,
+    REJECT_WORKER_CHAIN_FAILED,
+    REJECT_ACTIVATION_FAILED,
+    REJECT_PROBE_TIMEOUT,
+    REJECT_UNUSABLE,
+    REJECT_NOT_CHECKED,
+    REJECT_OUTRANKED,
+    REJECT_ROOT_PYTHON_MISMATCH,
+    REJECT_ROOT_NEEDS_MSVC,
+)
+
+# 健康体检的 code（`projectenv.ERROR_*` / `launcher.UNAVAILABLE_CODE`）→ 落选码。字面量写在这里是有意的：
+# 它们是跨版本稳定的对外码，`userenvs` 不为取常量去依赖更多的 projectenv 内部名字
+_HEALTH_CODE_TO_REJECT = {
+    "project_env_unsupported_python": REJECT_PYTHON_OUT_OF_RANGE,
+    "project_env_no_matplotlib": REJECT_NO_MATPLOTLIB,
+    "project_env_worker_import_failed": REJECT_WORKER_CHAIN_FAILED,
+    "conda_launcher_unavailable": REJECT_ACTIVATION_FAILED,
+    "project_env_unusable": REJECT_UNUSABLE,
+}
+
+
+def rejection_reason(entry: dict) -> dict:
+    """一个**被评估但没被选用**的候选为什么落选（`evaluate()` 的结果形状 → 一句结构化原因）。
+
+    `{"id", "source", "label", "reason": <稳定码>, "missing": [...], "import_failed": [...]}`——没有路径
+    （ADR 0053 §二），`missing` 是分发名 / import 名，与 `public()` 同口径。本候选自己能跑（`satisfies`）= `outranked`
+    （能跑、只是排序在后）。"""
+    if entry.get("overlay_reject") in (REJECT_ROOT_PYTHON_MISMATCH, REJECT_ROOT_NEEDS_MSVC):
+        # 叠加组合的静态判定（没起进程）：Python 小版本对不上 ROOT 的构建版本 / Windows 上没有 C++ 工具
+        reason = entry["overlay_reject"]
+    elif entry.get("timed_out"):
+        reason = REJECT_PROBE_TIMEOUT
+    elif entry.get("satisfies"):
+        reason = REJECT_OUTRANKED
+    elif entry.get("checked") is False or entry.get("satisfies") is None:
+        reason = REJECT_NOT_CHECKED
+    elif entry.get("ok") is False:
+        reason = _HEALTH_CODE_TO_REJECT.get(entry.get("code") or "", REJECT_UNUSABLE)
+    elif entry.get("probe_status") == PROBE_IMPORT_FAILED:
+        reason = REJECT_IMPORT_FAILED
+    else:
+        reason = REJECT_MISSING_IMPORTS
+    overlay = entry.get("overlay")
+    if (
+        overlay
+        and reason in (REJECT_MISSING_IMPORTS, REJECT_IMPORT_FAILED)
+        and rootenv.IMPORT_NAME
+        in [*(entry.get("import_failed") or []), *(entry.get("missing") or [])]
+    ):
+        reason = REJECT_ROOT_PYTHON_MISMATCH
+    return {
+        "id": env_id(entry["python"], overlay),
+        "source": entry.get("source", ""),
+        "label": entry.get("label", ""),
+        "reason": reason,
+        "missing": list(entry.get("missing") or []) if reason == REJECT_MISSING_IMPORTS else [],
+        "import_failed": list(entry.get("import_failed") or []),
+        # 哪个 ROOT（只有版本，不带路径）：叠加组合才有
+        **({"root_version": overlay.get("version", "")} if overlay else {}),
+    }
+
+
+def rejections(entries: list[dict], selected: dict | None = None) -> list[dict]:
+    """`entries`（一轮评估的全部结果）里没被选用的，各出一条 `rejection_reason`，保持输入顺序。"""
+    skip = entry_key(selected) if selected else None
+    return [rejection_reason(e) for e in entries if entry_key(e) != skip]
 
 
 def best(entries: list[dict], project_name: str = "") -> dict | None:
@@ -1055,9 +1580,9 @@ def best(entries: list[dict], project_name: str = "") -> dict | None:
     return sorted(ok, key=lambda e: rank(e, project_name))[0]
 
 
-def env_id(python: str) -> str:
+def env_id(python: str, overlay: dict | None = None) -> str:
     """对外的不透明身份，实现见 `projectenv.env_id`（ADR 0053 §二：HTTP 投影不带机器路径）。"""
-    return projectenv.env_id(python)
+    return projectenv.env_id(python, overlay)
 
 
 #: 投影里保留的字段（`python` 不在其中）
@@ -1078,7 +1603,15 @@ PUBLIC_FIELDS = (
 
 
 def public(entry: dict) -> dict:
-    return {"id": env_id(entry["python"]), **{k: entry.get(k) for k in PUBLIC_FIELDS}}
+    out = {
+        "id": env_id(entry["python"], entry.get("overlay")),
+        **{k: entry.get(k) for k in PUBLIC_FIELDS},
+    }
+    overlay = entry.get("overlay")
+    if overlay:
+        # 叠加组合：只说是哪种、哪个版本，不带安装路径（ADR 0053 §二）
+        out["overlay"] = {"kind": overlay.get("kind", ""), "version": overlay.get("version", "")}
+    return out
 
 
 def _register_reset() -> None:

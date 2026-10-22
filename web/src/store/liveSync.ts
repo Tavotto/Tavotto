@@ -25,6 +25,7 @@ import { useProjectReadinessStore } from './projectReadinessStore'
 import { useProjectStore } from './projectStore'
 import { useRenderStore } from './renderStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
+import { useSelectionStore } from './selectionStore'
 import { previewSession, resetPreview } from './svgPreviewStore'
 import { useUiStore } from './uiStore'
 import { enterElementEdit } from './actions'
@@ -81,7 +82,12 @@ function applyPanelSync(result: PanelSyncResult): void {
     // 读**此刻**的 uiStore，不是函数开头那份快照：上面的降级分支可能刚改过它
     const now = useUiStore.getState()
     const idle = now.elementPanelId == null && now.cropTargetId == null && now.editingTextId == null
-    if (wsStore.activePanelId === pending && idle) {
+    // 「用户还在这张图上」：单图编辑看正在编辑的那张；多图排版里（`openFastEdit` 打开的是排版里的一张）看选区的主选
+    const stillHere =
+      wsStore.mode === 'fast_edit'
+        ? wsStore.activePanelId === pending
+        : useSelectionStore.getState().primary() === pending
+    if (stillHere && idle) {
       enterElementEdit(pending)
     }
   }

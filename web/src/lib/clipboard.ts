@@ -8,7 +8,6 @@ import { deferUserEntry } from '@/store/documentRestore'
 import { runDiscreteAction } from '@/store/gestureCoordinator'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
-import { fastEditPanelOf, useWorkspaceStore } from '@/store/workspaceStore'
 import type { CanvasObject, LayoutGroup, PanelObject } from '@/types/document'
 import { objectLabel } from '@/types/document'
 import { modKey } from '@/lib/utils'
@@ -290,15 +289,13 @@ export async function pasteObjects(): Promise<boolean> {
 }
 
 /**
- * 负载落地：缺素材先走重新链接对话框，否则直接粘贴。返回 false = 没落（快速编辑里）。
+ * 负载落地：缺素材先走重新链接对话框，否则直接粘贴。
  *
- * ⌘V（原生 paste 事件）、两份右键菜单的「粘贴」（`pasteObjects`）都到这里，「这一屏能不能粘」只在这判一次
- * （Codex #833）：快速编辑这一屏只画正在编辑的那张图（`CanvasLayers only=`），粘贴出来的副本落在版面上、
- * 换掉选区，用户什么都看不见——与 ⌘D / 创建副本（`duplicateSelected`）同一个判据 `fastEditPanelOf`。
- * 图内文字编辑器 / 输入框里的粘贴在 `handlePasteEvent` 的离散动作闸门那一步就让位给浏览器了，到不了这里。
+ * ⌘V（原生 paste 事件）、两份右键菜单的「粘贴」（`pasteObjects`）都到这里。单图编辑里也能粘（2026-10-21）：
+ * 粘出一张图 = 第二张图，模式订阅切到多图排版；粘标注就留在单图编辑。图内文字编辑器 / 输入框里的粘贴在
+ * `handlePasteEvent` 的离散动作闸门那一步就让位给浏览器了，到不了这里。
  */
 function consumePayload(payload: ClipPayload): boolean {
-  if (fastEditPanelOf(useWorkspaceStore.getState())) return false
   // 上次的排版还在恢复：这次粘贴排队到文档就绪再落（一次）；需要用户先处理恢复问题时拒掉并说一句。都算消费了这次粘贴
   if (deferUserEntry(() => void consumePayload(payload)) !== 'run') return true
   const assets = useAssetStore.getState().byId

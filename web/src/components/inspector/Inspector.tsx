@@ -13,6 +13,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
 import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
 import { useAiStore } from '@/store/aiStore'
+import { TimelinePanel } from '../VersionDialog'
 import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
 import { Button, IconButton } from '../ui/Button'
 import { Notice } from '../ui/Notice'
@@ -41,12 +42,13 @@ import { useSelectedObjects } from './common'
  * ADR 0010 要的两件事都还在：选中对象一律切回属性页（`autoShowProperties`）、助手会话状态
  * 在 aiStore 里切走不丢；运行状态点留在助手页签上。
  */
-const TABS: RightTab[] = ['properties', 'canvas', 'assistant']
+const TABS: RightTab[] = ['properties', 'canvas', 'timeline', 'assistant']
 /** 内容区 id（`TabPanel`）：`<id>-tab` 是对应页签的 id */
 const PANEL_ID: Record<RightTab, string> = {
   properties: 'inspector-panel-properties',
   assistant: 'inspector-panel-assistant',
   canvas: 'inspector-panel-canvas',
+  timeline: 'inspector-panel-timeline',
 }
 
 const tabLabel = (id: RightTab): string =>
@@ -96,8 +98,10 @@ export function Inspector({
       <div className={cn('flex h-full flex-col', INSPECTOR_CONTAINER)} style={{ width }}>
       {/* 页签条（2026-09-30 重设计，学 OpenBitFun 的面板头）：与左边画布标签行同高 44、底边同一条
           hairline，两条线在工作面板里连成一条 */}
-      <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border px-3">
-        <TabList label={t('tabsLabel')} className="min-w-0 self-stretch">
+      <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border px-3 @max-[379px]:gap-2 @max-[379px]:px-2">
+        {/* 四个页签在 Linux（DejaVu Sans，比 macOS 字体宽）英文下要 281px；容器 < 380px 时页签间距 12→6、
+            条的左右内边距 12→8，余量才够最窄 320px（图钉另在 < 350px 让位） */}
+        <TabList label={t('tabsLabel')} className="min-w-0 self-stretch @max-[379px]:gap-1.5">
           {TABS.map((id) => (
             <Tab
               key={id}
@@ -142,6 +146,9 @@ export function Inspector({
               side="bottom"
               iconSize="sm"
               aria-pressed={pinned}
+              // 四个页签（含「时间线」）在英文（Linux 字体 281px）下，压缩间距后簇里带图钉要 ≥ 350px 才排得下：
+              // 容器 < 350px 时图钉让位给页签行（钉住是偏好，不丢；栏拉宽到 350 就回来）
+              className="@max-[349px]:hidden"
               onClick={() => useUiStore.getState().setRightPinned(!pinned)}
             >
               <Pin size={ICON_SIZE.sm} filled={pinned} className={pinned ? 'text-ink' : 'text-ink-3'} />
@@ -170,6 +177,11 @@ export function Inspector({
       {tab === 'assistant' ? (
         <TabPanel id={PANEL_ID.assistant} className="flex min-h-0 flex-1 flex-col">
           <AssistantPanel />
+        </TabPanel>
+      ) : tab === 'timeline' ? (
+        // 排版时间线（ADR 0101 2026-10-21 修订）：右栏的一个页签，不再是盖在画布上的浮卡
+        <TabPanel id={PANEL_ID.timeline} className="flex min-h-0 flex-1 flex-col">
+          <TimelinePanel />
         </TabPanel>
       ) : tab === 'canvas' ? (
         <TabPanel id={PANEL_ID.canvas} className="min-h-0 flex-1 overflow-y-auto">

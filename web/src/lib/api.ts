@@ -260,7 +260,9 @@ export function engineErrorMsg(err: unknown): UiMessage {
       i18n.getResource(i18n.language, 'errors', `backend.${err.code}`) ?? '',
     )
     if (detail || !template.includes('{{error}}')) {
-      return msg(`backend.${err.code}`, { error: detail }, 'errors')
+      // 结构化 params（错误转换合同 `pool.recovery_params`，如 TeX 缺的命令 / 文件）一并给文案；
+      // `error` 永远是 traceback 末行，不让 params 里的同名键盖掉
+      return msg(`backend.${err.code}`, { ...(err.params ?? {}), error: detail }, 'errors')
     }
   }
   return literal(err instanceof Error ? err.message : String(err))
@@ -851,8 +853,6 @@ export async function fetchLayout(name: string): Promise<FetchedLayout> {
 }
 
 export interface SavedLayout {
-  /** Layout saved, but these exact source edits have no durable SVG snapshot. */
-  svg_snapshot_warnings?: string[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
@@ -924,8 +924,6 @@ export const REVISION_ABSENT = 'absent'
  * `owner_unknown` = 这次请求的项目身份已失效，归属没记。旧后端不发 = `undefined`（不知道，不当 `ok`）。
  */
 export interface PutAutosaveResult {
-  /** Nonblocking source snapshot warnings; the layout body was saved successfully. */
-  svg_snapshot_warnings?: string[]
   /** Complete verified snapshot map for candidate panel object IDs; absent means old backend. */
   figure_snapshots?: Record<string, FigureSnapshot>
   ok: boolean
@@ -2767,6 +2765,9 @@ export async function engineSpecfix(
       (body.traceback as string) || '',
       (body.code as string) || '',
       (body.module as string) || '',
+      undefined,
+      undefined,
+      { params: body.params as Record<string, unknown> | undefined },
     )
   }
   // 形状不对 = 没拿到（代理页、别的服务占了端口、半截的响应），不是「修好了」
@@ -3485,6 +3486,53 @@ export const aiRevert = (sid: string, pj: string | null) =>
 export const aiCancel = (sid: string, pj: string | null) =>
   jsonFetch<{ ok: boolean }>(`/api/ai/sessions/${sid}/cancel`, { method: 'POST' }, pj)
 
+/* ----------------- 生成可编辑版本（ADR 0143，`/api/ai/convert*`） ----------------- */
+
+/** 对照数据（`ai_convert.comparison_of`）：不含像素差（`pixel_diff` 恒 null——位图与矢量重画没有可辩护的逐像素差） */
+export interface ConvertComparison {
+  original: { path: string; bytes: number; sha256: string; width_px: number | null; height_px: number | null } | null
+  candidate: { figures: number; width_mm: number | null; height_mm: number | null }
+  aspect_delta: number | null
+  pixel_diff: null
+}
+
+export interface ConvertStatus {
+  session: string
+  state: 'ready' | 'adopted' | 'discarded'
+  script: string
+  target_name: string
+  library: string
+  comparison: ConvertComparison | null
+  has_preview: boolean
+  adopted_script?: string | null
+}
+
+const jsonPost = (body?: unknown): RequestInit => ({
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: body === undefined ? undefined : JSON.stringify(body),
+})
+
+export const startConvert = (
+  req: { script: string; library: string; path?: string | null; agent?: string; model?: string | null; effort?: string | null; client_request_id?: string },
+  pj: string | null,
+) => jsonFetch<{ session: string; script: string; deduped?: boolean }>('/api/ai/convert', jsonPost(req), pj)
+
+export const fetchConvert = (sid: string, pj: string | null) =>
+  jsonFetch<ConvertStatus>(`/api/ai/convert/${encodeURIComponent(sid)}`, undefined, pj)
+
+export const adoptConvert = (sid: string, pj: string | null) =>
+  jsonFetch<{ script: string; name: string }>(`/api/ai/convert/${encodeURIComponent(sid)}/adopt`, jsonPost(), pj)
+
+export const discardConvert = (sid: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(`/api/ai/convert/${encodeURIComponent(sid)}/discard`, jsonPost(), pj)
+
+/** 新版的 SVG 预览（只给 `<img>`：后端回沙盒 CSP） */
+export const convertPreviewUrl = (sid: string) => apiUrl(`/api/ai/convert/${encodeURIComponent(sid)}/preview.svg`)
+
+/** 原输出图的原字节（项目相对路径，与 `/api/file` 同一个出口） */
+export const convertOriginalUrl = (path: string) => fileUrl(path)
+
 /* ------------------------- 项目刷新（统一入口） ---------------------------- */
 
 /**
@@ -3981,6 +4029,16 @@ export interface TelemetrySettings {
    */
   needs_reconsent: boolean
 }
+
+/**
+ * Windows 卸载后重装的记号（NSIS 卸载器写、后端读，ADR 0136 修订 2026-10-21）。GET 只回布尔；
+ * 前端把 onboarding 迁回新手态之后再 ack 让后端删记号（读不删，处理失败下次启动接着来）。
+ */
+export const fetchReinstallMarker = () =>
+  jsonFetch<{ reinstalled: boolean }>('/api/onboarding/reinstall')
+
+export const ackReinstallMarker = () =>
+  jsonFetch<{ consumed: boolean }>('/api/onboarding/reinstall/ack', { method: 'POST' })
 
 export const fetchTelemetrySettings = () =>
   jsonFetch<TelemetrySettings>('/api/telemetry/settings')
@@ -4779,6 +4837,8 @@ export interface DependencyRepairOffer {
   managed?: ManagedEnvironment
   /** 探到了但不合格的系统解释器（老服务端没有这个字段） */
   system_rejected?: SystemInterpreterRejection[]
+  /** 缺的是已知装不了的包（例 ROOT，后端 `depresolve.NOT_PIP_INSTALLABLE`）：此时 `requirement` 为 null，要用户自己的环境；界面不给安装 */
+  not_pip_installable?: { label: string; hint: string }
   /** 支持的 Python 次版本范围（`docs/support-matrix.json` 的运行时镜像）；文案不手写版本号 */
   python_supported: { min: string; max: string }
   /** dependency_unresolved / dependency_repair_rounds_exhausted / dependency_interpreter_pinned */
@@ -4868,6 +4928,8 @@ export interface DependencyProgress {
    * 去重）。只有码、没有名字；普通 import 失败没有这个键。界面据此按原因分别说人话，不解析 `error` 文案
    */
   dist_reasons?: DistFailureReason[]
+  /** 终态 failed 且 `code = dependency_not_found`：pip 找不到的那个包（分发名 / 来自哪个 import / 哪份声明文件，相对项目路径）。认不出名字时没有这个键 */
+  not_found?: { name?: string; import_name?: string; source?: string }
 }
 
 export const createDependencyPlan = (body: {
@@ -4960,6 +5022,10 @@ export interface JointOrigin {
    * 没有这个字段 = 不给预填（curated 已有映射 / 撞上 curated 名或易混名 / 有别的来源证据 / 环境没读全）
    */
   suggested_distribution?: string
+  /** 已知装不了的包（后端 `depresolve.NOT_PIP_INSTALLABLE`，例 ROOT）：内置 Python 装不了，要用户自己装有它的环境。不预填、不送 pip */
+  not_pip_installable?: { label: string; hint: string }
+  /** 脚本把这些目录加进了 `sys.path`、里面却没有这个模块：本地模块缺失，不是缺 PyPI 包。不预填、不送 pip */
+  local_module_missing?: { search_dirs: string[] }
 }
 
 /**
@@ -5902,7 +5968,7 @@ export interface PreparationAttempt {
 
 /** 会话报告（`SessionService.report`）：前端只保存这份投影，不另算「能不能跑」 */
 /** `rasterhint.LIBRARIES`：界面按它查库名（`workspace:prep.rasterHint.library.*`） */
-export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage'
+export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage' | 'plotly' | 'root'
 
 /**
  * 会话里一次真实执行尝试的账本条目（`engine/execpolicy.AttemptRecord.public()`，ADR 0127）：执行语义 · 解释器摘要 ·
@@ -5969,7 +6035,13 @@ export interface PreparationReport {
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
-  no_figure_hint?: { kind: 'raster_script'; library: RasterLibrary; in_project?: boolean } | null
+  no_figure_hint?: {
+    kind: 'raster_script'
+    library: RasterLibrary
+    in_project?: boolean
+    /** 能确定的输出文件（项目相对路径，素材库定位用）；拿不到 / 在项目外 / 老后端为 null 或缺省 */
+    path?: string | null
+  } | null
   result: {
     status: string
     error?: PreparationResultError | null

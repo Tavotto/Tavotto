@@ -5,8 +5,8 @@
 * **PDF** —— 页面物理尺寸（pt → mm，容差 `SIZE_TOL_MM`）+ 首页用到的字体名
   （`pdfbackend.pdf_fonts`）；
 * **SVG** —— 根元素 `width` / `height`（pt / mm / in / px 换算）与 `viewBox` 的关系；
-  文字默认被 matplotlib 转成了路径（`svg.fonttype = "path"`），字体**查不了**，
-  如实回 None；
+  文字留成 `<text>`（RenderCore 默认、`svg.fonttype = "none"`）就核字体族；
+  被转成路径（`svg.fonttype = "path"`，matplotlib 默认）则字体**查不了**，如实回 None；
 * **PNG** —— 像素尺寸 = round(英寸 × dpi)（整数取整，容差 1 px）+ `pHYs` 里的密度
   （`originalspec.raster_dpi`）；字体查不了（位图）；
 * **TIFF** —— 像素尺寸；分辨率标签不解析（诚实地标「未核验」）；
@@ -95,6 +95,36 @@ def check_pdf(path: Path, *, expect_mm: list[float] | None, font_family: str | N
     }
 
 
+_SVG_FAMILY_ATTR = re.compile(r"""\s*(?:'([^']+)'|"([^"]+)"|([^,;'"]+))""")
+_SVG_STYLE_FAMILY = re.compile(r"font-family:\s*([^;]+)")
+_SVG_STYLE_FONT = re.compile(
+    r"(?:^|;)\s*font:\s*[^;]*?('([^']+)'|\"([^\"]+)\"|[A-Za-z][\w -]*)\s*(?:;|$)"
+)
+
+
+def _first_family(value: str) -> str | None:
+    m = _SVG_FAMILY_ATTR.match(value or "")
+    if not m:
+        return None
+    return next((g for g in m.groups() if g), "").strip() or None
+
+
+def _svg_text_family(node) -> str | None:
+    """`<text>` 的首选字体族：`font-family` 属性 / style 里的 `font-family` / matplotlib 的 `font:` 简写。
+    只取列表第一个——那是版面实际排版用的脸，后面是回退。"""
+    attr = node.get("font-family")
+    if attr:
+        return _first_family(attr)
+    style = node.get("style") or ""
+    m = _SVG_STYLE_FAMILY.search(style)
+    if m:
+        return _first_family(m.group(1))
+    m = _SVG_STYLE_FONT.search(style)
+    if m:
+        return (m.group(2) or m.group(3) or m.group(1)).strip()
+    return None
+
+
 def check_svg(
     path: Path,
     *,
@@ -131,25 +161,25 @@ def check_svg(
                     )
             except ValueError:
                 pass
-    # 文字有没有留成 <text>：matplotlib 默认 svg.fonttype="path"，那时字体查不了
+    # 文字有没有留成 <text>：RenderCore 默认留；matplotlib 默认 svg.fonttype="path" 时字体查不了
     ns = "{http://www.w3.org/2000/svg}"
     texts = list(root.iter(f"{ns}text")) + list(root.iter("text"))
     fonts: list[str] = []
     for t in texts:
-        style = t.get("style") or ""
-        m = re.search(r"font-family:\s*'?([^;']+)'?", style)
-        if m and m.group(1).strip() not in fonts:
-            fonts.append(m.group(1).strip())
+        name = _svg_text_family(t)
+        if name and name not in fonts:
+            fonts.append(name)
     return {
         "format": "svg",
         "size_mm": [round(size[0], 3), round(size[1], 3)] if size else None,
         "size_ok": _size_ok(size, expect_mm),
         "viewbox_ok": viewbox_ok,
         "fonts": fonts,
+        "has_text": bool(texts),
         "font_ok": font_names_match(font_family, fonts) if texts else None,
         "font_note": None
         if texts
-        else "SVG 里文字已转成路径（svg.fonttype=path），字体无法从文件核验",
+        else "SVG 里文字已转成路径（轮廓 / svg.fonttype=path），字体无法从文件核验",
     }
 
 

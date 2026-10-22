@@ -3,7 +3,7 @@
  *   1. 行网格：恢复钮住在常驻的状态槽里（出现 / 消失不改控件那一格的内容）；修改点全部 = 实心、部分 = 空心环；
  *   2. ColorField 在属性栏里带可编辑 hex（回车提交、非法值退回）与取色面板（文档颜色），浮动栏不带；
  *   3. 身份头：「n 个问题 ›」直达问题面板（`openProblemAt`）；锁定状态胶囊点了就解锁；路径行常驻（两行固定）；
- *   4. 页签顺序 属性 | 画布 | 助手；没有选中时属性页是文档摘要卡，「画布设置 ›」切到画布页。
+ *   4. 页签顺序 属性 | 画布 | 时间线 | 助手；没有选中时属性页是文档摘要卡，「画布设置 ›」切到画布页。
  * 选择器只认 data-*。
  */
 import { act } from 'react'
@@ -244,11 +244,20 @@ describe('身份头与右栏', () => {
     expect(q('[data-state-chip="locked"]')).toBeNull()
   })
 
-  it('页签顺序：属性 | 画布 | 助手', async () => {
+  it('页签顺序：属性 | 画布 | 时间线 | 助手', async () => {
     await seed([textObj], ['t1'])
     await render(<Inspector />)
     const tabs = [...document.querySelectorAll('[data-inspector-tab]')].map((t) => t.getAttribute('data-inspector-tab'))
-    expect(tabs).toEqual(['properties', 'canvas', 'assistant'])
+    expect(tabs).toEqual(['properties', 'canvas', 'timeline', 'assistant'])
+  })
+
+  it('「时间线」页签：内容是时间线面板，不再有独立浮卡', async () => {
+    await seed([textObj], [])
+    useUiStore.setState({ rightTab: 'timeline' })
+    await render(<Inspector />)
+    expect(q('[data-inspector-panel] [data-timeline-panel]')).not.toBeNull()
+    expect(document.querySelector('[data-timeline-drawer]')).toBeNull()
+    expect(q('[data-inspector-tab="timeline"]')!.getAttribute('aria-selected')).toBe('true')
   })
 
   it('没有选中：属性页是文档摘要卡，「画布设置 ›」切到画布页', async () => {

@@ -1,0 +1,7 @@
+{
+  "src/native/delegation.ts": "249fac5bcbe95b0c6d774de4f1016a0f0f1688464bfb44afd99df254126170f0",
+  "src/native/schema.sql": "bc8cb9f59b779690bebfffff1fb8ffa062aab12b8af1284cc1c5bd198a45ff0e",
+  "src/native/store.ts": "98d6681c2694c4b0d32cc5bb261d6164f6745a057e19a675e4189bfa0c78e22e",
+  "src/native/worker.ts": "c7c9e4b63e9097167859c6a615c1e39b19cf2950926b969faeb4d6bbae34250c",
+  "tests/delegation-fixture.mjs": "8f142a2f31a125fec60008d8e91cfbfeab51d2c8b07802bfd487774e77fd033d"
+}

@@ -1,4 +1,3 @@
-import { svgSnapshotWarning } from '@/lib/svgSnapshotWarning'
 import { adoptionGuardOf, adoptionOf, clearAdoption, isAdoptedPanel, SCRIPT_BACKED_SOURCE_POLICY, sourceBackedGuard, verdictFromResponse, verifiedSource, type AdoptionGuard, type SourceBackedFigure, type SourceBackedVerdict, artifactBackgroundOriginal, artifactRequestFields, isUnadoptedPngSource, artifactValidationIssue, ArtifactValidationError, FIGSIZE_SOURCE_POLICY, validationFromSource, beginArtifactEntry, artifactEntryCurrent, cancelArtifactEntry, deferArtifactEntry, refuseArtifactOperation, rememberArtifactEdit } from '@/lib/artifactValidation'
 import { currentProjectId } from '@/lib/session'
 import '@/store/figureSnapshotInvalidation'
@@ -17,6 +16,7 @@ import { emitActivity } from '@/lib/activity'
 import { effectiveOverride, effectiveOverrideIndex } from '@/lib/effectiveOverride'
 import { applyAlign, boundsOf, readingOrder, type AlignMode } from '@/lib/geometry'
 import { clamp } from '@/lib/units'
+import { PAGE_MM_MAX, PAGE_MM_MIN } from '@/lib/pageRange'
 import { placePanelInPage } from '@/lib/panelPlacement'
 import {
   FIGURE_FRAME_VERSION,
@@ -80,9 +80,8 @@ import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveConte
 import { useInteractionStore } from './interactionStore'
 import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
-import { askConfirm, useUiStore, type StatusTone } from './uiStore'
+import { askConfirm, isTimelineOpen, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
-import { fastEditPanelOf, useWorkspaceStore } from './workspaceStore'
 import { rectOf, visualBounds, type Rect } from '@/lib/geometry'
 import type { CropRect, PanelRotation } from '@/types/document'
 import {
@@ -95,6 +94,7 @@ import { contentToPageVec, panelContentTransform } from '@/lib/panelTransform'
 import { emitLayoutSaved } from '@/lib/layoutSaved'
 import { useTimelineStore } from './timelineStore'
 import { hasPendingStyleWork } from './styleWork'
+import { fitStageNow } from '@/store/zoomToSelection'
 
 /** 本文件的历史标签与状态提示都在 workspace 命名空间下 */
 const hist = (key: string, values?: Record<string, unknown>): UiMessage =>
@@ -400,11 +400,8 @@ export function updateObjects(ids: string[], label: UiMessage, patch: (o: Canvas
 }
 
 export function deleteSelected() {
-  // 快速编辑里只删得到这一屏画着的那张图：选区里可能还挂着看不见的版面对象（进快编之前留下的、
-  // 图层面板点的），删掉它们 = 用户看不见的东西从版上消失（Codex #833）。删那张图本身照旧——
-  // 看得见、可撤销，对象没了快速编辑随之退出（`usePruneSelection` 的 `usable`）
-  const fe = fastEditPanelOf(useWorkspaceStore.getState())
-  const ids = useSelectionStore.getState().ids.filter((id) => fe === null || id === fe)
+  // 单图编辑与排版同一口径（2026-10-21）：这一屏画着这张画布上的全部对象，选区里的都看得见，删的就是选区
+  const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   // 单选时把对象名（用户自己的内容，不翻译）插进去，多选才说数量——这是
   // **两句不同的话**，不是同一句的单复数：中文没有单数档（Intl.PluralRules
@@ -428,10 +425,8 @@ export function deleteSelected() {
 }
 
 export function duplicateSelected() {
-  // 快速编辑这一屏只画正在编辑的那张图：副本落在版面上、换掉选区，用户什么都看不见（Codex #833）。
-  // ⌘D、系统菜单「创建副本」、对象右键菜单、属性页「⋯」都到这里，判据只在这一处（与粘贴的
-  // `clipboard.consumePayload` 同一个 `fastEditPanelOf`）
-  if (fastEditPanelOf(useWorkspaceStore.getState())) return
+  // ⌘D、系统菜单「创建副本」、对象右键菜单、属性页「⋯」都到这里。单图编辑里也允许（2026-10-21）：副本是一张图 =
+  // 第二张图，画布变两张，模式订阅切到多图排版；副本是标注就留在单图编辑
   const ids = useSelectionStore.getState().ids
   if (!ids.length) return
   // 克隆**必须**在 commit 的 recipe 外面做：recipe 里的 d 是 Immer 草稿，
@@ -527,18 +522,15 @@ export function revealObjects(ids: string[]) {
 export const isSelectAllTarget = (o: CanvasObject): boolean => !o.hidden && !o.locked
 
 /**
- * 「全选」此刻收进来的 id：排版里是整版看得见、没锁的对象；**快速编辑里只有正在编辑的那张图**（它也得
- * 过 `isSelectAllTarget`，否则什么都不选）。⌘A、命令面板 `select-all`、任何菜单的「全选」都经 `selectAll`
+ * 「全选」此刻收进来的 id：这张画布上看得见、没锁的对象（单图编辑与排版同一口径，2026-10-21 取消「快编只收那张图」）。⌘A、命令面板 `select-all`、任何菜单的「全选」都经 `selectAll`
  * 走这一处——快速编辑里曾经把整版看不见的对象全选上，接着 Delete 就把它们从版上删掉（Codex #833）。
  */
-export function selectAllIds(objects: readonly CanvasObject[], fastEditPanel: string | null): string[] {
-  return objects
-    .filter((o) => isSelectAllTarget(o) && (fastEditPanel === null || o.id === fastEditPanel))
-    .map((o) => o.id)
+export function selectAllIds(objects: readonly CanvasObject[]): string[] {
+  return objects.filter(isSelectAllTarget).map((o) => o.id)
 }
 
 export function selectAll() {
-  select(selectAllIds(doc().objects, fastEditPanelOf(useWorkspaceStore.getState())))
+  select(selectAllIds(doc().objects))
 }
 
 /* ------------------------------- 文档切换 --------------------------------- */
@@ -559,8 +551,7 @@ const confirmLoss = () =>
 function afterSwitch(): void {
   useSelectionStore.getState().clear()
   useUiStore.getState().setElementPanel(null)
-  const page = useDocumentStore.getState().doc.page
-  useViewportStore.getState().fit(page.w, page.h)
+  fitStageNow()
 }
 
 /**
@@ -582,8 +573,7 @@ export async function runManualSave(): Promise<void> {
   const ui = useUiStore.getState()
   // 按下 ⌘S 那一刻的排版 / 项目 / 绑定：整条链只用它（`saveContext.ts`）
   const ctx = captureSaveContext()
-  const savedName = useDocumentStore.getState().projectMeta.name
-  const { state, wrote, svgSnapshotWarnings } = await saveNowWithResult()
+  const { state, wrote } = await saveNowWithResult()
   // saveNow 途中切走了：本机那一份（入口那份）已经照常落盘，项目文件这一步不再做——
   // 此刻开着的是另一份，写它、给它弹「存进项目」都不是用户要的；没写进项目要说出来
   if (ctx.pj !== null && !stillCurrent(ctx)) {
@@ -604,10 +594,7 @@ export async function runManualSave(): Promise<void> {
   // 跟**这次写没写成**走，不跟最终的实时状态走：写的途中又改过的话状态照实是 dirty，
   // 但按下那一刻的内容已经在盘上了（Codex #679）
   if (wrote) emitLayoutSaved('local', { moment: ctx.moment })
-  const warning = wrote ? svgSnapshotWarning(savedName, svgSnapshotWarnings) : null
-  if (warning && state !== 'conflict' && state !== 'save_error') {
-    ui.setStatus(warning, 'info')
-  } else if (state === 'saved' || state === 'clean') {
+  if (state === 'saved' || state === 'clean') {
     ui.setStatus(msg('save.doneLocal', undefined, 'workspace'), 'done')
   } else if (state === 'conflict') {
     ui.setStatus(msg('save.conflict', undefined, 'workspace'), 'error')
@@ -618,10 +605,20 @@ export async function runManualSave(): Promise<void> {
   // 顶栏的状态会继续往下走，这里不再多说一句话。
 }
 
-/** 打开 / 关闭排版时间线（顶栏时钟钮、⇧⌘H、命令面板共用；ADR 0101） */
+/** 打开排版时间线 = 右栏切到「时间线」页签（顶栏、排版菜单、命令面板共用；ADR 0101 2026-10-21 修订） */
+export function openTimeline(): void {
+  useUiStore.getState().setRightTab('timeline')
+}
+
+/** 收起时间线 = 右栏回到属性页（右栏本身不关） */
+export function closeTimeline(): void {
+  useUiStore.getState().setRightTab('properties')
+}
+
+/** 打开 / 关闭排版时间线（顶栏时钟钮、⇧⌘H 共用；ADR 0101） */
 export function toggleTimeline(): void {
-  const ui = useUiStore.getState()
-  ui.setVersionsOpen(!ui.versionsOpen)
+  if (isTimelineOpen(useUiStore.getState())) closeTimeline()
+  else openTimeline()
 }
 
 /**
@@ -694,15 +691,45 @@ export async function openRecentDocument(id: string): Promise<void> {
 
 /* --------------------------------- 页面 ----------------------------------- */
 
-/** 页面宽高能取的范围（mm）；`setPageSize` 按它夹取，预设也只摆得进这个范围的尺寸 */
-export const PAGE_MM_MIN = 10
-export const PAGE_MM_MAX = 1000
+export { PAGE_MM_MAX, PAGE_MM_MIN }
+
+/**
+ * 改页面尺寸的**唯一写法**（食谱）：属性栏的预设 / 宽高 / 横竖交换（`setPageSize`）与画布上拖页面四条边
+ * （`startPageEdgeResize`，在手势事务里反复调它）都经这里，夹取规则只有一份。
+ *
+ * `shift` 是页面原点的平移（mm，页面坐标系里新原点相对旧原点的位置取反）：拖左 / 上边时页面向左 / 上长出去，
+ * 原点跟着挪，所有对象与参考线的页面坐标反向补偿同样的量，图在屏幕上就纹丝不动。不给 = 原点不动
+ * （属性栏改尺寸的既有行为）。`base` 给了就按它的绝对位置写（拖动每一帧从手势开始时的位置现算，
+ * 不累加——夹取 / 吸附改变位移时不会漂）。
+ */
+export interface PageSizeBase {
+  objects: Map<string, { x: number; y: number }>
+  guides: number[]
+}
+
+export function applyPageSize(
+  d: FigureDocument,
+  w: number,
+  h: number,
+  shift?: { x: number; y: number; base: PageSizeBase },
+) {
+  d.page.w = clamp(w, PAGE_MM_MIN, PAGE_MM_MAX)
+  d.page.h = clamp(h, PAGE_MM_MIN, PAGE_MM_MAX)
+  if (!shift) return
+  for (const o of d.objects) {
+    const b = shift.base.objects.get(o.id)
+    if (!b) continue
+    o.x = b.x + shift.x
+    o.y = b.y + shift.y
+  }
+  d.guides.forEach((g, i) => {
+    const b = shift.base.guides[i]
+    if (b != null) g.pos = b + (g.axis === 'x' ? shift.x : shift.y)
+  })
+}
 
 export function setPageSize(w: number, h: number) {
-  commit(hist('setPageSize'), (d) => {
-    d.page.w = clamp(w, PAGE_MM_MIN, PAGE_MM_MAX)
-    d.page.h = clamp(h, PAGE_MM_MIN, PAGE_MM_MAX)
-  })
+  commit(hist('setPageSize'), (d) => applyPageSize(d, w, h))
 }
 
 /** 页面的非尺寸设置（背景、页边距）；尺寸走 setPageSize */

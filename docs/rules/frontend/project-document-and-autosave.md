@@ -286,7 +286,7 @@
   挂上时才发请求。「保存」时刻由保存侧发 `lib/layoutSaved.emitLayoutSaved()`、时间线订阅——
   新增一条写排版文件的路，在它的成功分支 emit 一次，不 import 时间线。恢复只有 `VersionDialog.restoreNode()` 一处：先 await「恢复前」节点，存不下来
   就不恢复，再一次 `restoreLayoutVersion` commit（⌘Z 一步退回；布局组跟着对象恢复）。
-  两个恢复入口（预览页脚、抽屉选中行内联条）都经 `restoreUnderLock()`：挂 `timelineStore.restoring`、
+  两个恢复入口（预览页脚、时间线面板选中行内联条）都经 `restoreUnderLock()`：挂 `timelineStore.restoring`、
   让模态预览以 `busy` 开着——遮罩挡画布、预览与抽屉都关不掉，「恢复前」在存时不许再编辑（Codex #831）。
   内联入口的模态预览在**取正文之前**就以「加载中」开起来（不是正文回来才开）；另记编辑标记（`past` / `future` / `txn` / 激活画布），
   正文回来时变了就放弃恢复（不写、不打「恢复前」），取不回来就把「加载中」预览收回。
@@ -295,6 +295,12 @@
   不进 documentStore、换项目时 `clear()`；「存为命名节点」只有 `saveNamedNode()` 一份（抽屉里「给现在存个名字…」
   点开展开输入；⌥⌘S / 命令面板在工作面板顶部就地弹 `NamedNodeQuickBox`、不开抽屉，顶栏没有书签钮）。自动间隔 15 s 停顿 / 2 分钟，e2e 只经
   `window.__TAVOTTO_TIMELINE_TIMING__` 注入，产品默认值不动。
+  **入口形态（ADR 0101 2026-10-21 修订）**：时间线是右栏第四个页签（`RightTab 'timeline'`），不再有盖在画布上的浮板；
+  打开只有 `actions.openTimeline()`、「亮着」只有 `uiStore.isTimelineOpen`，`TimelinePanel` 挂载即打开；页签是会话态不持久化。
+  预览里的位图取档 / 文字字号按显示宽 × DPR（`snapshotBucket`），不许写死档位（看护 `components/layoutSnapshotSharpness.test.tsx`）。
+  时间线行内动作的 e2e 看护 `e2e/timeline-row-actions.spec.ts`；整条时间线 e2e 看护 `e2e/layout-timeline.spec.ts`。
+  存盘与帧迁移的补充看护：`lib/figureFrame.test.ts`、`e2e/savefig-frame-migration.spec.ts`、`e2e/save-to-project.spec.ts`、`e2e/cross-tab-paste.spec.ts`。
+  文档与会话的补充看护：`store/layoutSession.restart.test.ts`、`e2e/layout-session.spec.ts`、`e2e/layout-project-isolation.spec.ts`、`store/projectSave.test.ts`、`lib/overrideIdentity.test.ts`、`store/layoutAutoReflow.test.ts`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 
