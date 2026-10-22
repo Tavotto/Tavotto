@@ -917,7 +917,13 @@ def explore(args) -> int:
             # at all); not_run is never a pass.
             record = budget_record(f"time budget exhausted ({budget:g} s)")
         else:
-            record = run_one(manifest, args.seed, out, args.timeout, deadline=deadline)
+            record = run_one(
+                manifest,
+                args.seed,
+                out,
+                args.timeout,
+                **({} if deadline is None else {"deadline": deadline}),
+            )
         row = {
             "candidate_id": manifest["candidate_id"],
             "parent": manifest["parent"]["case"],
@@ -1069,8 +1075,15 @@ def confirm_differences(
             continue
         seen.add(identity)
         budget -= 1
+        # the deadline is passed only under a budget, so an unbudgeted run calls run_one as before
         again = run_one(
-            by_id[row["candidate_id"]], args.seed, out, args.timeout, None, "confirm", deadline
+            by_id[row["candidate_id"]],
+            args.seed,
+            out,
+            args.timeout,
+            None,
+            "confirm",
+            **({} if deadline is None else {"deadline": deadline}),
         )
         if again["judgment"]["outcome"] == "not_run":
             break  # cut by the budget: stays unconfirmed, never an alert
