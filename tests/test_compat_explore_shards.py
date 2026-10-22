@@ -916,6 +916,69 @@ class BudgetCapsEverySubprocess(unittest.TestCase):
         self.assertEqual(report["time_budget"]["not_run"], 1)
         self.assertEqual(code, cg.EXIT_PARTIAL)
 
+    def test_each_layer_enforces_the_floor_on_its_own(self):
+        """explore's loop, `run_one` and the confirmation loop each refuse to start under the floor."""
+        parent = xt.load_parent("compat_engine", self.PARENT)
+        manifest, _ = xt.build(parent, ("import_alias",), 7)
+        clock = FakeClock()
+        low = clock.now + 20.0  # 20 s left < 30 s floor
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            mock.patch.object(ex.time, "monotonic", clock),
+            mock.patch.object(ex, "_adapter_run", side_effect=AssertionError("no child may start")),
+        ):
+            record = ex.run_one(manifest, 7, Path(tmp), 240.0, deadline=low)
+            self.assertEqual(record["judgment"]["outcome"], "not_run")
+            self.assertEqual(record["executions"]["basis"], "not_executed")
+            row = {
+                "candidate_id": manifest["candidate_id"],
+                "outcome": "difference_found",
+                "chain": ["import_alias"],
+                "differences": [{"kind": "k"}],
+            }
+            with mock.patch.object(
+                ex, "run_one", side_effect=AssertionError("no rerun under the floor")
+            ):
+                ex.confirm_differences(
+                    [row],
+                    {manifest["candidate_id"]: manifest},
+                    Namespace(confirm_differences=3, seed=7, timeout=240.0),
+                    Path(tmp),
+                    low,
+                )
+            self.assertIsNone(row["confirmation"])
+        with tempfile.TemporaryDirectory() as tmp:
+            args = Namespace(
+                seed=7,
+                out=tmp,
+                limit=None,
+                parent=self.PARENT,
+                static_only=False,
+                candidates=None,
+                families="import_alias",
+                confirm_differences=0,
+                expected_sha=None,
+                timeout=240.0,
+                shard=None,
+                max_seconds=self.BUDGET,
+            )
+            real = xt.generate
+
+            def late(*a, **k):
+                clock.now += self.BUDGET - 20.0
+                return real(*a, **k)
+
+            with (
+                mock.patch.object(ex.time, "monotonic", clock),
+                mock.patch.object(ex.XT, "generate", late),
+                mock.patch.object(ex, "dirty_execution_code", return_value=[]),
+                mock.patch.object(
+                    ex, "run_one", side_effect=AssertionError("loop must not call run_one")
+                ),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(ex.explore(args), cg.EXIT_PARTIAL)
+
     def test_a_confirmation_that_starts_before_the_deadline_is_cut_at_it(self):
         parent = xt.load_parent("compat_engine", self.PARENT)
         manifest, _ = xt.build(parent, ("import_alias",), 7)
