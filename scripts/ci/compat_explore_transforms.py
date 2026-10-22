@@ -20,6 +20,7 @@ No string replacement: every change is an AST edit and the result must `compile`
 from __future__ import annotations
 
 import ast
+import functools
 import hashlib
 import json
 import random
@@ -28,6 +29,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import compat_explore_data as data_source
+import compat_explore_shapes as shapes
 import compat_guardian as cg
 
 #: 父用例的 `__main__` 守卫的规范文本。放成常量：这个模块只**识别**守卫，自己不是入口脚本，
@@ -35,25 +37,30 @@ import compat_guardian as cg
 MAIN_GUARD = '__name__ == "__main__"'
 
 VERSION = "1.0.0"
-#: Reviewed executable parents (engine corpus) and static-only parents (V2 fixtures).
-ENGINE_PARENTS = (
-    "shape_oo_savefig",
-    "shape_plt_savefig",
-    "shape_toplevel_imperative",
-    "shape_entry_main",
-    "shape_relative_csv",
-    "shape_local_helper_import",
-    "shape_dunder_main",
-    "shape_custom_entry",
-    "art_linecoll_alpha",
-    "res_radar",
-    "lay_twin_manual",
-    "art_3d_surface_scatter",
-    "shape_helper_shadows_pypi",
-    "shape_same_stem_formats",
-)
+#: Static-only parents (V2 fixtures); the executable engine parents are chosen by rule (`select_engine_parents`).
 V2_STATIC_PARENTS = ("s01_plain",)
-PAIRS_PER_PARENT = 3
+
+
+def select_engine_parents(cases: dict[str, dict]) -> tuple[str, ...]:
+    """Reviewed executable parents: every `must` case that declares no stage as false.
+
+    `expected` maps a stage to False when the corpus itself records that the stage is not judged
+    for that case (e.g. `fidelity`); such a case is not a clean reference for a whole-pipeline
+    comparison, so it is not a parent. Pure function of the manifest, so the set follows the corpus.
+    """
+    return tuple(
+        sorted(
+            cid
+            for cid, case in cases.items()
+            if case.get("tier") == "must"
+            and not any(v is False for v in (case.get("expected") or {}).values())
+        )
+    )
+
+
+def engine_parent_ids() -> tuple[str, ...]:
+    return select_engine_parents(cg.registered("compat_engine"))
+
 
 # ---------------------------------------------------------------- parents
 
@@ -106,7 +113,7 @@ def load_parent(suite: str, case_id: str) -> Parent:
 
 
 def default_parents() -> list[Parent]:
-    return [load_parent("compat_engine", c) for c in ENGINE_PARENTS] + [
+    return [load_parent("compat_engine", c) for c in engine_parent_ids()] + [
         load_parent("compat_v2", c) for c in V2_STATIC_PARENTS
     ]
 
@@ -489,9 +496,19 @@ _CORE_TRANSFORMS: tuple[Transform, ...] = (
     ),
 )
 #: CG-07：data_source 家族的读文件写法（compat_explore_data.py）；同轴互斥，与 inline_to_file 不成对。
-TRANSFORMS: tuple[Transform, ...] = _CORE_TRANSFORMS + tuple(
-    Transform(s.name, "data_source", "data_source", True, s.order, s.applies, s.apply, s.summary)
-    for s in data_source.SPECS
+#: CG-08：入口形态与输出调用（compat_explore_shapes.py）。
+TRANSFORMS: tuple[Transform, ...] = (
+    _CORE_TRANSFORMS
+    + tuple(
+        Transform(
+            s.name, "data_source", "data_source", True, s.order, s.applies, s.apply, s.summary
+        )
+        for s in data_source.SPECS
+    )
+    + tuple(
+        Transform(s.name, s.family, s.axis, s.preserving, s.order, s.applies, s.apply, s.summary)
+        for s in shapes.SPECS
+    )
 )
 BY_NAME = {t.name: t for t in TRANSFORMS}
 
@@ -559,7 +576,7 @@ def build(parent: Parent, chain: tuple[str, ...], seed: int) -> dict:
             }
         )
     ast.fix_missing_locations(ctx.tree)
-    source = ast.unparse(ctx.tree) + "\n"
+    source = shapes.finalize_source(ast.unparse(ctx.tree) + "\n")
     compile(source, parent.script, "exec", dont_inherit=True)  # compile is not execution
     files[parent.script] = source.encode()
     for rel, data in files.items():
@@ -685,9 +702,14 @@ def build_reduced(parent: Parent, chain: tuple[str, ...], seed: int, reduction: 
     return manifest, files
 
 
+@functools.lru_cache(maxsize=None)
 def generator_digest() -> str:
-    # 数据家族住在兄弟模块里，它的字节同样决定候选的内容
-    return cg.digest(Path(__file__).read_bytes() + Path(data_source.__file__).read_bytes())
+    # 数据家族与脚本写法家族住在兄弟模块里，它们的字节同样决定候选的内容
+    return cg.digest(
+        Path(__file__).read_bytes()
+        + Path(data_source.__file__).read_bytes()
+        + Path(shapes.__file__).read_bytes()
+    )
 
 
 #: Names whose use makes a script's behavior depend on more than its own bytes.
@@ -744,40 +766,83 @@ def execution_plan(files: dict[str, bytes], parent_executable: bool) -> dict:
 # ---------------------------------------------------------------- generation + dedup
 
 
-def chains_for(parent: Parent, seed: int) -> list[tuple[str, ...]]:
-    """Single-axis chains for every applicable transform, plus a seeded sample of pairs."""
+def _fresh(parent: Parent) -> Ctx:
+    files = dict(parent.files)
+    return Ctx(ast.parse(files[parent.script].decode()), files, parent.script, parent.entry)
 
-    def fresh() -> Ctx:
-        files = dict(parent.files)
-        return Ctx(ast.parse(files[parent.script].decode()), files, parent.script, parent.entry)
 
-    singles = []
-    for t in TRANSFORMS:
-        if t.applies(fresh()):
-            singles.append((t.name,))
+def feasible_pairs(parent: Parent) -> list[tuple[str, str]]:
+    """Every ordered pair of transforms on different axes that applies to this parent, in order.
+
+    Same applicability test `build` does (a applies, a is applied, b applies on the result),
+    without serializing: the parent is parsed once per first transform.
+    """
     pairs = []
     for a in TRANSFORMS:
+        ctx = _fresh(parent)
+        if not a.applies(ctx):
+            continue
+        ctx.params = {}
+        a.apply(ctx, _rng(0, "feasible", parent.case, a.name))
         for b in TRANSFORMS:
-            if a.order >= b.order or a.axis == b.axis:
+            if a.order < b.order and a.axis != b.axis and b.applies(ctx):
+                pairs.append((a.name, b.name))
+    return sorted(pairs)
+
+
+def pairwise_plan(parents: list[Parent], seed: int) -> dict:
+    """Deterministic greedy cover of all feasible two-transform combinations, over all parents.
+
+    A combination is an unordered-by-parent pair of transform names on different axes; it is
+    covered once any parent carries it. Each round every parent (in seeded order) takes at most
+    one still-uncovered pair that it can apply, preferring the pair few parents can apply
+    (so rare combinations are not left to the end), ties broken by a seeded hash. A parent never
+    takes a pair that adds nothing. Terminates because every uncovered pair is feasible somewhere.
+    """
+    keyed = {(p.suite, p.case): p for p in parents}
+    feasible = {key: feasible_pairs(p) for key, p in keyed.items()}
+    holders: dict[tuple[str, str], int] = {}
+    for pairs in feasible.values():
+        for pair in pairs:
+            holders[pair] = holders.get(pair, 0) + 1
+    order = sorted(keyed)
+    _rng(seed, "pairwise", "parent-order").shuffle(order)
+    covered: set[tuple[str, str]] = set()
+    chosen: dict[tuple[str, str], list[tuple[str, str]]] = {key: [] for key in keyed}
+    while len(covered) < len(holders):
+        for key in order:
+            options = [pair for pair in feasible[key] if pair not in covered]
+            if not options:
                 continue
-            try:
-                build(parent, (a.name, b.name), 0)
-            except cg.EvidenceError:
-                continue
-            pairs.append((a.name, b.name))
-    rng = _rng(seed, parent.suite, parent.case, "pairs")
-    chosen = sorted(rng.sample(sorted(pairs), min(PAIRS_PER_PARENT, len(pairs)))) if pairs else []
-    return singles + chosen
+            pair = min(
+                options,
+                key=lambda pr: (holders[pr], _rng(seed, "pair", key[1], *pr).random(), pr),
+            )
+            covered.add(pair)
+            chosen[key].append(pair)
+    return {
+        "chosen": {key: sorted(pairs) for key, pairs in chosen.items()},
+        "feasible": sorted(holders),
+        "holders": holders,
+    }
+
+
+def chains_for(parent: Parent, seed: int, plan: dict | None = None) -> list[tuple[str, ...]]:
+    """Single-axis chains for every applicable transform, plus this parent's share of the pairwise cover."""
+    singles = [(t.name,) for t in TRANSFORMS if t.applies(_fresh(parent))]
+    plan = plan if plan is not None else pairwise_plan([parent], seed)
+    return singles + [tuple(pair) for pair in plan["chosen"][(parent.suite, parent.case)]]
 
 
 def generate(seed: int, parents: list[Parent] | None = None) -> dict:
     """All candidates for a seed, deduplicated by (axis vector, normalized AST signature)."""
     parents = parents if parents is not None else default_parents()
+    plan = pairwise_plan(parents, seed)
     seen: dict[tuple, str] = {}
     unique, dropped = [], []
     out_files: dict[str, dict[str, bytes]] = {}
     for parent in sorted(parents, key=lambda p: (p.suite, p.case)):
-        for chain in chains_for(parent, seed):
+        for chain in chains_for(parent, seed, plan):
             try:
                 manifest, files = build(parent, chain, seed)
             except cg.EvidenceError:
@@ -801,12 +866,14 @@ def generate(seed: int, parents: list[Parent] | None = None) -> dict:
         "generator": {"version": VERSION, "sha256": generator_digest()},
         "candidates": unique,
         "dropped_duplicates": dropped,
-        "coverage": coverage(parents, unique, dropped),
+        "coverage": coverage(parents, unique, dropped, plan),
         "_files": out_files,
     }
 
 
-def coverage(parents: list[Parent], candidates: list[dict], dropped: list[dict]) -> dict:
+def coverage(
+    parents: list[Parent], candidates: list[dict], dropped: list[dict], plan: dict | None = None
+) -> dict:
     """Make the bias toward already-supported shapes visible, by family and axis."""
     manifest_cases = cg.registered("compat_engine")
     by_category_all: dict[str, int] = {}
@@ -819,8 +886,15 @@ def coverage(parents: list[Parent], candidates: list[dict], dropped: list[dict])
     for t in TRANSFORMS:
         fam = families.setdefault(
             t.family,
-            {"axis": t.axis, "transforms": [], "parents_applicable": set(), "candidates": 0},
+            {
+                "axis": t.axis,
+                "axes": set(),
+                "transforms": [],
+                "parents_applicable": set(),
+                "candidates": 0,
+            },
         )
+        fam["axes"].add(t.axis)
         fam["transforms"].append(t.name)
     for c in candidates:
         for step in c["chain"]:
@@ -831,6 +905,12 @@ def coverage(parents: list[Parent], candidates: list[dict], dropped: list[dict])
         fam["parents_applicable"] = sorted(fam["parents_applicable"])
         fam["parent_count"] = len(fam["parents_applicable"])
         fam["transforms"] = sorted(fam["transforms"])
+        fam["axes"] = sorted(fam["axes"])
+    plan = plan if plan is not None else pairwise_plan(parents, 0)
+    feasible = {tuple(p) for p in plan["feasible"]}
+    carried = {
+        (c["chain"][0]["name"], c["chain"][1]["name"]) for c in candidates if len(c["chain"]) == 2
+    }
     return {
         "by_family": dict(sorted(families.items())),
         "by_axis": {
@@ -846,6 +926,12 @@ def coverage(parents: list[Parent], candidates: list[dict], dropped: list[dict])
             "executable": sum(1 for p in parents if p.executable),
             "used_by_manifest_category": dict(sorted(by_category_used.items())),
             "corpus_by_manifest_category": dict(sorted(by_category_all.items())),
+            "categories_without_parent": sorted(set(by_category_all) - set(by_category_used)),
+        },
+        "pairwise": {
+            "feasible": len(feasible),
+            "covered": len(feasible & carried),
+            "uncovered": [list(p) for p in sorted(feasible - carried)],
         },
         "unavailable_transforms": data_source.unavailable(),
         "dedup": {
@@ -853,6 +939,8 @@ def coverage(parents: list[Parent], candidates: list[dict], dropped: list[dict])
             "unique": len(candidates),
             "dropped": len(dropped),
         },
-        "bias_note": "All parents are corpus shapes that already pass; a candidate that agrees with "
-        "its own native run says nothing about shapes outside these families.",
+        "bias_note": "Parents are the corpus cases at tier 'must' that declare no stage false: shapes "
+        "that already pass. Categories without any such case (see parents.categories_without_parent) "
+        "have no parent; a candidate that agrees with its own native run says nothing about shapes "
+        "outside these families.",
     }
