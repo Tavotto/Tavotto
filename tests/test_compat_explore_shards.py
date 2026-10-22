@@ -334,6 +334,21 @@ class ConsumersEatShards(unittest.TestCase):
         self.assertEqual(sample["explore_candidates_total"], shards["candidates_total"])
         self.assertIn("4 of 4 shards completed", md.read_text(encoding="utf-8"))
 
+    def test_weekly_report_says_the_corpus_rate_is_not_a_user_rate_and_empty_comparison_is_not_green(
+        self,
+    ):
+        _, _, first, md = self.summarize(self.paths)
+        self.assertIn("语料通过率 ≠ 用户首次成功率", md.read_text(encoding="utf-8"))
+        previous = self.dir / "previous.json"
+        previous.write_text(json.dumps(first), encoding="utf-8")
+        code, _, second, md = self.summarize(self.paths, "--previous", str(previous))
+        self.assertEqual(code, 0)
+        fixed = second["trend"]["comparison"]["fixed_set"]
+        self.assertEqual(fixed["size"], 0)
+        self.assertEqual(
+            fixed["verdict"], "inconclusive", "nothing was compared, so not no_regression"
+        )
+
     def test_summarize_refuses_a_missing_shard_but_labels_it_when_allowed(self):
         code, stderr, _, _ = self.summarize(self.paths[:3])
         self.assertEqual(code, 2)

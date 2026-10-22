@@ -377,6 +377,8 @@ def compare(previous: dict | None, current: dict, required_suites: tuple[str, ..
     verdict = (
         "incomparable"
         if not comparable
+        else "inconclusive"
+        if not shared
         else (
             "regression"
             if any(t["kind"] == "regression" for t in transitions)
@@ -395,6 +397,8 @@ def compare(previous: dict | None, current: dict, required_suites: tuple[str, ..
             "note": (
                 "no regression verdict: the environment differs, so status changes below are observations"
                 if not comparable
+                else "no case exists on both sides (e.g. an explore-only weekly report): nothing was compared"
+                if not shared
                 else "same case bytes, same environment"
             ),
             "transitions": transitions,
@@ -576,6 +580,8 @@ def render_markdown(summary: dict) -> str:
                 else f" (missing shards {shards['missing']}: NOT the whole pool)"
             ),
             "- outcomes: " + ", ".join(f"{k}={v}" for k, v in shards["outcome_counts"].items()),
+            "- corpus pass rate is not a user first-success rate (语料通过率 ≠ 用户首次成功率): "
+            "these are derived candidates of already-passing corpus shapes",
         ]
     axes = summary.get("explore_axes")
     if axes:
