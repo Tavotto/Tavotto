@@ -13,7 +13,7 @@
         "deepseek-v4-pro",
         "deepseek-flash"
       ],
-      "source": "PR #1323 已核实端点；key 页 openclaw docs/providers/deepseek.md",
+      "source": "https://api-docs.deepseek.com/guides/anthropic_api/",
       "oauth": null,
       "icon_key": "deepseek"
     },
@@ -31,7 +31,7 @@
         "deepseek-v4-pro"
       ],
       "oauth": null,
-      "source": "协调者转达 #1323 评审：DeepSeek 官方支持 Codex Responses",
+      "source": "https://api-docs.deepseek.com/quick_start/agent_integrations/codex/",
       "icon_key": "deepseek"
     },
     {
@@ -46,7 +46,7 @@
         "kimi-k3",
         "kimi-k2.7-code"
       ],
-      "source": "PR #1323 已核实端点",
+      "source": "https://platform.kimi.com/docs/guide/claude-code-kimi",
       "oauth": null,
       "icon_key": "moonshot"
     },
@@ -78,7 +78,7 @@
         "glm-5.3",
         "glm-5.2"
       ],
-      "source": "PR #1323 已核实端点",
+      "source": "https://docs.bigmodel.cn/cn/guide/develop/claude",
       "oauth": null,
       "icon_key": "zhipu"
     },
@@ -94,7 +94,7 @@
         "MiniMax-M3",
         "MiniMax-M2.7"
       ],
-      "source": "PR #1323 已核实端点；海外同构见 openclaw docs/providers/minimax.md",
+      "source": "https://platform.minimax.cn/docs/guides/text-ai-coding-tools",
       "oauth": null,
       "icon_key": "minimax"
     },
@@ -110,7 +110,7 @@
         "qwen3.7-plus",
         "qwen3.8-max"
       ],
-      "source": "PR #1323 已核实端点",
+      "source": "https://help.aliyun.com/zh/model-studio/claude-code",
       "oauth": null,
       "icon_key": "bailian"
     },
@@ -126,7 +126,7 @@
       "models_hint": [
         "qwen3.7-plus"
       ],
-      "source": "PR #1323 已核实端点",
+      "source": "https://help.aliyun.com/zh/model-studio/claude-code",
       "oauth": null,
       "icon_key": "bailian"
     },
