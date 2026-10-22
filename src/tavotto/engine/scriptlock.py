@@ -17,6 +17,9 @@
   候选；会话此刻仍是 `running`，别的改写 / 复原照旧按 `script_busy` 让路。
 * `ai_data_task.commit`（TAF 数据出图，ADR 0138 Phase 5b）：项目锁内核 stem 未被占用 → `create_script` **新建**模板脚本
   （已存在就失败，永不覆盖）→ 登记。
+* `ai_convert.run_validation`（生成可编辑版本，ADR 0143）：紧挨原脚本 `create_script` **新建**临时候选
+  `tavotto_convert_probe_<sid>.py`（O_EXCL）→ 带写入根绊线跑一次 → 删掉；原脚本不碰。
+* `ai_convert.adopt`（同上）：`create_script` **新建**兄弟脚本（`<名>.py` / `<名>_2.py` …，已存在换下一个号，永不覆盖）。
 
 写脚本字节只经 `write_script()` / `create_script()`：没持有这份脚本的锁就抛——门禁落在写的那一刻，不靠调用方记得。
 纯标准库 + `atomicio`；Flask 父进程 import。

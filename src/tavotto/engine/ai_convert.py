@@ -225,7 +225,9 @@ def create_candidate(
     try:
         cdir.mkdir(parents=True, exist_ok=False)
         base = script_path.read_bytes()
-        (cdir / Path(script_rel).name).write_bytes(base)
+        # 候选目录在 Tavotto 数据目录里（不是项目）：这份是给 Agent 看的原脚本副本，不是用户脚本
+        reference_copy = cdir / Path(script_rel).name
+        reference_copy.write_bytes(base)
         if (
             original_path is not None
             and original_path.is_file()
