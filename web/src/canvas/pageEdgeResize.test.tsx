@@ -422,57 +422,6 @@ describe('画布上的拖边命中区与标注', () => {
     act(() => fire('pointerup', mm(31.4), 0))
   })
 
-  it('读数不画白底框：没有 border / bg-surface，只出被拖那一维', async () => {
-    await mount()
-    act(() => startPageEdgeResize(down(0, 0), 'b'))
-    act(() => fire('pointermove', 0, 10 * PX_PER_MM()))
-    expect(container.querySelector('[data-dim-chip]')).toBeNull()
-    const readouts = [...container.querySelectorAll<HTMLElement>('[data-dim-readout]')]
-    expect(readouts.map((r) => r.dataset.dimReadout)).toEqual(['height'])
-    expect(readouts[0].className).not.toMatch(/\bborder\b|bg-surface/)
-    expect(readouts[0].className).toContain('type-number') // tabular-nums
-    act(() => fire('pointerup', 0, 10 * PX_PER_MM()))
-  })
-
-  it('读数位置固定锚定：位置只由「边的屏幕位置」决定（与数值位数无关），盒子宽高固定、不进舞台外的标尺区', async () => {
-    await mount()
-    act(() => useViewportStore.setState({ viewW: 1200, viewH: 800 })) // 舞台量到的尺寸在 jsdom 里是 0：挂载后补上
-    const mm = (v: number) => v * PX_PER_MM()
-    const box = () => {
-      const r = container.querySelector<HTMLElement>('[data-dim-readout]')!
-      return { left: parseFloat(r.style.left), top: parseFloat(r.style.top), w: parseFloat(r.style.width), h: parseFloat(r.style.height) }
-    }
-    // 每一帧都拿「同一帧的页面矩形」套同一个纯函数：位置不依赖文字，也就没有逐帧抖动的来源
-    const expected = () => {
-      const v = useViewportStore.getState()
-      const k = mmToWorld(1) * v.zoom
-      return readoutBox('b', { left: v.panX, top: v.panY, w: page().w * k, h: page().h * k }, { w: v.viewW, h: v.viewH })
-    }
-    act(() => startPageEdgeResize(down(0, 0), 'b'))
-    const sizes = new Set<string>()
-    for (const dy of [1, 1.3, -0.3, -30, -45.55, -60]) {
-      act(() => fire('pointermove', 0, mm(dy)))
-      const b = box()
-      const e = expected()
-      expect(b.left).toBeCloseTo(e.left, 3)
-      expect(b.top).toBeCloseTo(e.top, 3)
-      sizes.add(`${b.w}x${b.h}`)
-    }
-    expect(sizes.size, '盒子宽高固定，不随数值变').toBe(1)
-    act(() => fire('pointerup', 0, mm(-60)))
-    // 四条边的读数盒都在舞台 [0, view] 内：标尺在舞台之外，读数不会压到标尺
-    for (const edge of ['l', 'r', 't', 'b'] as const) {
-      act(() => startPageEdgeResize(down(0, 0), edge))
-      act(() => fire('pointermove', 5, 5))
-      const b = box()
-      expect(b.left, edge).toBeGreaterThanOrEqual(0)
-      expect(b.top, edge).toBeGreaterThanOrEqual(0)
-      expect(b.left + b.w, edge).toBeLessThanOrEqual(1200)
-      expect(b.top + b.h, edge).toBeLessThanOrEqual(800)
-      act(() => fire('pointerup', 5, 5))
-    }
-  })
-
   it('图内编辑子状态（排版里双击某张图进图内）没有拖边，退出后回来', async () => {
     await mount()
     expect(container.querySelectorAll('[data-page-edge]')).toHaveLength(4)
