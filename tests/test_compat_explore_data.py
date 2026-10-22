@@ -229,7 +229,8 @@ class StaticPlan(unittest.TestCase):
     def test_compiles_and_is_executable_without_touching_the_uncertain_table(self):
         before = dict(xt._UNCERTAIN_IMPORTS)
         for parent in xt.default_parents():
-            if not parent.executable:
+            # 父本自己就带不确定 import（al_ticks.py 的 datetime）的，静态判定本来就是 static_only
+            if xt.execution_plan(parent.files, parent.executable)["status"] != "executable":
                 continue
             for name in NAMES:
                 if data.missing(data.BY_NAME[name]) or not xt.BY_NAME[name].applies(

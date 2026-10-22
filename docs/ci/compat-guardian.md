@@ -298,7 +298,7 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 
 依赖授权端点零调用、不装任何东西、不用外部 LLM/API；缺包只会让 native 失败 → `environment_unavailable`。
 
-**变换（一次只动一个轴；少量二因子组合按 seed 抽样）**
+**变换（一次只动一个轴；二因子组合按两两覆盖确定性选取，见下）**
 
 | 家族 | 变换 | 轴 | 类别 |
 | --- | --- | --- | --- |
@@ -308,6 +308,8 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 | entry_form | `wrap_main`（顶层改 `main()` + `__main__` 守卫） | entry | 保型 |
 | argparse_defaults | `argparse_out`（保存路径来自 argparse，默认值=原路径） | args | 保型 |
 | data_source | `inline_to_file`（第一个字面量数据列表改读相对 JSON）；CG-07 读文件写法：`read_csv_pandas`、`read_csv_numpy`（`loadtxt`）、`genfromtxt_names`、`read_tsv_stdlib`、`read_npy`、`read_pickle`、`read_excel`（openpyxl）、`read_parquet`（pyarrow）、`glob_dir`（拆成 `data/*.csv` 再 `sorted(glob)`） | data_source | 保型 |
+| entry_form | `class_wrapper`（绘图代码移进 `class Plotter: def run(self)`）、`return_fig`（`_cg_draw()` 返回 fig，调用方 savefig）、`sys_argv_out`（保存路径来自 `sys.argv[1]`，缺省为原路径）、`cell_markers`（语句之间插 `# %%` / `# %% [markdown]` 注释，模拟 notebook 导出的 .py）——CG-08 | entry（`class_wrapper`、`return_fig`，与 `wrap_main` 互斥）、args（`sys_argv_out`，与 `argparse_out` 互斥）、cells（`cell_markers`） | 保型 |
+| output_call | `multi_format`（同一 stem 存 png+pdf+svg）、`pdfpages`（`PdfPages` 多页）、`bytesio_close`（savefig 到 `io.BytesIO` 后 close，**#749**）、`same_stem_two_figs`（两张不同的图写同一 stem 不同格式、后写的被 close，**f4p 缺口**）、`bbox_tight_dpi`（`bbox_inches="tight", dpi=600`）——CG-08 | output_call（与 `show_only` / `show_close` 互斥） | 改轴 |
 | style_rc | `rcparams`、`style_use` | style | 改轴；现在可执行（CG-06 起 `compare` 之外还有像素判定，样式差异观察得到） |
 
 **data_source 家族（CG-07，`scripts/ci/compat_explore_data.py`）**：同轴互斥，一条链至多一个数据来源；全部以第一个字面量数值列表为数据源，
@@ -319,6 +321,12 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 （footer 的 `created_by` 带 pyarrow 版本，所以版本钉在 workflow 里）。去重口径：仅编码 / 文件名不同的候选 AST 签名相同被归一；路径写法不同是结构不同，各留一份。
 `openpyxl`、`pyarrow` **只在 Guardian workflow 的 job 里装**（版本钉在 `compat-guardian.yml`，产品依赖与 pyproject 不变）；缺失时 `read_excel` / `read_parquet`
 `applies` 为 False，原因进报告 `coverage.unavailable_transforms`。新增 import（pandas/numpy/csv/glob/os/pathlib/openpyxl/pyarrow）不在 `_UNCERTAIN_IMPORTS` 里，也没有放宽那张表。
+
+**脚本写法与输出写法（CG-08，`scripts/ci/compat_explore_shapes.py`）**：同样是 AST 编辑、必须能 `compile`、参数由 `seed + 父本结构签名 + 变换名` 派生、
+新 import（`io` / `sys` / `matplotlib.backends.backend_pdf`）不在 `_UNCERTAIN_IMPORTS` 里，那张表没有放宽。入口形态里 `class_wrapper` / `return_fig` 排在输出变换**之后**
+（顺序号 80/81，要把前面各步改出来的区域整体搬进函数），搬不动的（区域里有 `return` / `global` / 通配 import，或搬进函数后外面的代码还要读区域里赋值的名字，
+或 savefig 之前的变量被之后的语句用到）一律「不适用」，不硬搬。`cell_markers` 的注释不在 AST 里：变换先放独占一行的哨兵语句，`ast.unparse` 之后把**整行等于哨兵**的行
+换成注释行（序列化的一部分，不是对已有源码的字符串替换）；注释不进规范化 AST 签名，所以带标记的候选与父本同签名、靠轴向量区分。
 
 保型：native 输出（图数、标题）必须等于父本——执行器同时跑父本 native 核对，不等就是 `invalid_candidate`（模板有 bug，
 不是 Tavotto 缺陷）。改轴：只能与这个变体自己的 native 比。所有改动都是 AST 编辑，结果必须能 `compile`。
@@ -346,12 +354,20 @@ Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探
 且可编辑字段值不变。**不能保证**：容差内的一致不是逐像素相同；改轴候选的编辑 / 导出没有被验证；字体 hinting 之类的系统性微差
 被容差吃掉；只覆盖父本里已评审的那几个编辑目标，别的属性没有被改过。
 
+**父本按规则选取（CG-08）**：不再写死名单。`compat_engine` 里 `tier == "must"` 且 `expected` 中没有任何值为 `False`（语料自己声明某阶段不判）的 case 都是父本
+（纯函数 `select_engine_parents`，随语料变）；V2 静态父本不变。语料里 `metamorphic` 没有任何 `must` 用例，所以它按规则没有父本——覆盖报告的
+`parents.categories_without_parent` 明说这一点。父本自带不确定 import（如 `datetime`）的，静态判定仍是 static_only。
+
+**两两覆盖（CG-08）**：对任意一对**不同轴**的变换 `(a, b)`（`a` 的顺序号小于 `b`），只要某个父本上两者能依次适用，就是一个「可行组合」。确定性贪心覆盖：每一轮每个父本
+（顺序由 seed 洗牌）至多取一个**尚未被覆盖**且自己适用的组合，优先取适用父本最少的，平局由 seed 派生的哈希打破；一个组合只落在一个父本上，所以每次都新增覆盖，总数 =
+可行组合数而不是父本数 × 抽样数。报告 `coverage.pairwise` 给 `feasible / covered / uncovered`。同 seed 同字节；`--limit` 的选取按**家族**轮转
+（家族内再按变换轮转，变换内按 `seed|candidate_id` 的哈希排序），不会因为变换变多就把字典序靠后的家族（含 G1 / G2）挤出去。
+
 **结构去重与覆盖**：按「轴向量 + 规范化 AST 签名」去重（数字/字符串常量与 `cg_plt3` 之类别名数字归一，所以仅参数不同不算新结构）。
 报告 `coverage` 给出：每个家族的轴、适用父本数、候选数；每个轴的候选数；保型/改轴数；去重前后；以及父本按语料类别的分布
-对比整个语料——**父本集中在 `script_shapes`（脚本组织形状）加少量 `core_artists` / `axes_layout` 的科研图构图
-（逐段 alpha 线组、radar、twinx 手动布局、三维曲面+散点）；`metamorphic / scientific_stack` 仍为零**，
-其中同 stem 不同格式的父本（`shape_same_stem_formats`）登记时是 `product_bug`（后写且被 close 的那张丢失），修复（`figcapture.adopt_displaced_writers`）后基线为 `full_support`，留作父本让 explore 继续在这个边界周围变换；
-usetex 需要系统 TeX，托管 runner 上跑不了，不作父本。这个偏向在报告里是明文，候选与自己的 native 一致不代表别的形状没问题。
+对比整个语料。父本现在是 `script_shapes / core_artists / axes_layout / scientific_stack` 里已经通过的 `must` case，`metamorphic` 为零（语料里它没有 `must` 用例），
+其中同 stem 不同格式的父本（`shape_same_stem_formats`）登记时是 `product_bug`（后写且被 close 的那张丢失），修复（`figcapture.adopt_displaced_writers`）后基线为 `full_support`；usetex 需要系统 TeX，托管 runner 上跑不了，不作父本。
+这个偏向在报告里是明文，候选与自己的 native 一致不代表别的形状没问题。
 
 **输出**（`--out/RUN_ID/`）：`candidates.json`（确定性）、`candidates/<id>/files/`、`evidence/<id>/…`、
 `reports/explore-report.json`、`reports/explore-summary.md`。报告含每候选的 seed、父本、变换链、AST 签名、信任级、

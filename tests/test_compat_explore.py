@@ -250,12 +250,13 @@ class Dedup(unittest.TestCase):
             self.assertIn("axis", fam)
         self.assertIn("script_shapes", cov["parents"]["used_by_manifest_category"])
         self.assertGreater(cov["parents"]["corpus_by_manifest_category"]["core_artists"], 0)
-        # 偏向说明：父本现在覆盖 core_artists / axes_layout，仍然没有 metamorphic / scientific_stack
+        # CG-08：父本按规则选（tier=must 且无声明为假的阶段），四类都有；metamorphic 在语料里没有 must 用例
         used = cov["parents"]["used_by_manifest_category"]
-        self.assertIn("core_artists", used)
-        self.assertIn("axes_layout", used)
+        for category in ("script_shapes", "core_artists", "axes_layout", "scientific_stack"):
+            self.assertGreater(used[category], 0, category)
         self.assertNotIn("metamorphic", used)
-        self.assertNotIn("scientific_stack", used)
+        self.assertEqual(cov["parents"]["categories_without_parent"], ["metamorphic"])
+        self.assertEqual(cov["pairwise"]["covered"], cov["pairwise"]["feasible"])
         self.assertIn("bias_note", cov)
         self.assertEqual(set(cov["by_class"]), {"shape_preserving", "axis_changing"})
 

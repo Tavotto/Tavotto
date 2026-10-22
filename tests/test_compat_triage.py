@@ -196,7 +196,22 @@ class Clusters(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.tmp.cleanup)
         cls.run_dir = Path(cls.tmp.name) / "RUN"
-        cls.generated = xt.generate(42)
+        # 按 CG-02 当时的八个形状父本（+V2）生成：11 + 16 条发现要聚成两簇。CG-08 起默认父本是 38 个按规则选的 case，
+        # 其中有自己就多图 / 循环的，调用位置不同、簇更多——那是新的事实，不是这条用例要钉的东西
+        shape_parents = [
+            xt.load_parent("compat_engine", c)
+            for c in (
+                "shape_oo_savefig",
+                "shape_plt_savefig",
+                "shape_toplevel_imperative",
+                "shape_entry_main",
+                "shape_relative_csv",
+                "shape_local_helper_import",
+                "shape_dunder_main",
+                "shape_custom_entry",
+            )
+        ] + [xt.load_parent("compat_v2", c) for c in xt.V2_STATIC_PARENTS]
+        cls.generated = xt.generate(42, shape_parents)
         ex.write_candidates(cls.generated, cls.run_dir)
         # 这条用例钉的是「父本不同、调用形状相同 → 同一簇」，所以只取单图父本。多图父本（线组 alpha 的两张图、
         # 同 stem 的两张图）循环里有两对 figure/savefig，调用形状本来就不同，按设计是另一簇
