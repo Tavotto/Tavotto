@@ -1756,6 +1756,8 @@ _SAVED_MARK = "_mm_saved_once"
 DIRTY_SINCE_SAVE = "_mm_dirty_since_save"
 #: 记录包装之下的原 `stale_callback`（可能是 None，也可能是 pyplot 的 `_auto_draw_if_interactive`）
 _ORIG_STALE_CALLBACK = "_mm_orig_stale_callback"
+#: 已连上 `draw_event` 清标记回调的记号（只连一次）
+_DRAW_HOOK = "_mm_draw_hook_cid"
 #: 判过一次的结论（True = 存盘后被脚本改过）；只判一次——之后 Tavotto 自己的编辑也会让标记变 True
 MODIFIED_AFTER_SAVE = "_mm_modified_after_save"
 
@@ -1778,6 +1780,31 @@ class _StaleRecorder:
         return None
 
 
+def _hook_draw_event(fig) -> None:
+    """连一个 `draw_event` 回调（只连一次）：Figure 每画完一次，把 `DIRTY_SINCE_SAVE` 清成 False。
+    draw 过程中 matplotlib 自己会多次置 stale（`Axes.apply_aspect` 等），那些噪声先弄脏标记、画完被这里清掉；
+    `draw_event` 在 `Figure.draw` 画完之后才发，回调注册表在 figure 上，`print_figure` 换临时 canvas 时照样触发
+    （matplotlib 3.11 实测）。闭包只持 weakref，不拖住 Figure。"""
+    if getattr(fig, _DRAW_HOOK, None) is not None:
+        return
+    import weakref
+
+    ref = weakref.ref(fig)
+
+    def _on_draw(_event):
+        f = ref()
+        if f is not None:
+            try:
+                setattr(f, DIRTY_SINCE_SAVE, False)
+            except Exception:  # noqa: BLE001
+                pass
+
+    try:
+        setattr(fig, _DRAW_HOOK, fig.canvas.mpl_connect("draw_event", _on_draw))
+    except Exception:  # noqa: BLE001 —— 连不上就退化成不清（只会多报，不抛）
+        pass
+
+
 def mark_saved(fig) -> None:
     """一次 savefig 记完账之后调用：把 `DIRTY_SINCE_SAVE` 清成 False，打上「存过盘」的标记，并保证 Figure 的
     `stale_callback` 外面套着一层只记录的 `_StaleRecorder`（只套一次；重复保存不叠层）。
@@ -1789,6 +1816,8 @@ def mark_saved(fig) -> None:
     `bbox_inches="tight"` 保存过程中的临时改动发生在本函数**之前**，不会误报。回调调用不看 stale 原值，
     而 `print_figure` 收尾本来就把 stale 置 True，所以不需要（也不能）去清 `fig.stale`——
     那会让存盘后读 `fig.stale` 的用户脚本在 Tavotto 下走不同分支。
+    语义与旧的「清 `stale`」一致：从**最后一次保存或最后一次重绘（`draw_event`）之后**被改过才算——存后脚本自己
+    `fig.canvas.draw()` 不报告；已知盲区：存后改了又重绘（`plt.pause`）一次，也不再报告。
     用户脚本若自己替换 `fig.stale_callback`：记录随之丢失（下次保存时重新套）；尽力而为、绝不抛错。
     不额外渲染、不复制 Figure（ADR 0139 §八「不声称拥有保存瞬间的快照」——这里只报一个事实）。"""
     try:
@@ -1796,6 +1825,7 @@ def mark_saved(fig) -> None:
         if not isinstance(cb, _StaleRecorder):
             setattr(fig, _ORIG_STALE_CALLBACK, cb)
             fig.stale_callback = _StaleRecorder(cb)
+        _hook_draw_event(fig)
         setattr(fig, DIRTY_SINCE_SAVE, False)
         setattr(fig, _SAVED_MARK, True)
     except Exception:  # noqa: BLE001 —— 记账尽力而为，绝不影响用户的 savefig

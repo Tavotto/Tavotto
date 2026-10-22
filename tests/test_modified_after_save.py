@@ -67,6 +67,8 @@ CASES = {
     # 改完再存：最后一次保存之后没改
     "saved_again": HEAD
     + '    fig.savefig("fig.png")\n    ax.set_title("final")\n    fig.savefig("fig.png")\n',
+    # 存完脚本自己重绘一次（draw 中 matplotlib 会自己置 stale）：没改图
+    "draw_only": HEAD + '    fig.savefig("fig.png")\n    fig.canvas.draw()\n',
     # 只改 rcParams：不改已有的 artist，不算改图
     "rc_only": HEAD + '    fig.savefig("fig.png")\n    plt.rcParams["lines.linewidth"] = 5\n',
 }
@@ -77,6 +79,7 @@ EXPECT = {
     "two_formats": False,
     "saved_again": False,
     "rc_only": False,
+    "draw_only": False,
 }
 
 
@@ -242,9 +245,8 @@ def test_the_lazy_verify_render_leaves_the_users_stale_as_it_was():
     """惰性验证渲染发生在**另一张图**保存时：持有者的 `fig.stale`（用户可见）与私有标记都原样还回去。"""
     import io
 
-    from matplotlib.figure import Figure
-
     from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
 
     fig = Figure()
     FigureCanvasAgg(fig)
@@ -254,6 +256,39 @@ def test_the_lazy_verify_render_leaves_the_users_stale_as_it_was():
     fig.canvas.draw()  # 脚本自己画过一次：此刻 stale 为 False
     assert fig.stale is False
     real = Figure.savefig
-    assert figcapture.savefig_verify_render(lambda f, *a, **k: real(f, *a, **k), fig, "x.png", (), {})
+    assert figcapture.savefig_verify_render(
+        lambda f, *a, **k: real(f, *a, **k), fig, "x.png", (), {}
+    )
     assert fig.stale is False
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is False
+
+
+def _saved_agg_figure():
+    import io
+
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    fig = Figure()
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot()
+    ax.plot([0, 1])
+    fig.savefig(io.BytesIO(), format="png")
+    figcapture.mark_saved(fig)
+    return fig, ax
+
+
+def test_a_redraw_after_save_is_not_a_change():
+    """draw 过程中 matplotlib 自己会多次置 stale；`draw_event` 画完清标记，没改图就不报告。"""
+    fig, _ = _saved_agg_figure()
+    fig.canvas.draw()
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is False
+
+
+def test_a_change_after_save_is_reported_until_the_next_redraw():
+    fig, ax = _saved_agg_figure()
+    ax.set_title("changed")
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is True
+    # 已知盲区，与旧的「清 stale」语义一致：改完又重绘过，不再报告
+    fig.canvas.draw()
     assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is False
