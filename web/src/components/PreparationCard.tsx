@@ -1322,7 +1322,7 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const originFacts = originFactsOf(report)
   const fallbackNote = nativeFallbackNote(report ?? null)
   const env = report?.environment
-  const overlayLabel = useEnvStore((s) => s.env?.project?.env_overlay?.label ?? '')
+  const overlayLabel = env?.overlay?.label ?? ''
   const notUsed = visibleNotUsed(env?.not_used)
   const primaryAction = view.primary?.kind === 'action' ? view.primary.action : null
   const recheck = primaryAction !== 'recheck' && report?.actions.some((a) => a.kind === 'recheck')

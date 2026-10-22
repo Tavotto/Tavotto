@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 from typing import Callable, Iterable
 
-from . import launcher, pool, projectenv, projscan, runtime, userenvs
+from . import launcher, pool, projectenv, projscan, rootenv, runtime, userenvs
 
 REC_VERSION = 1
 
@@ -561,6 +561,7 @@ def adoption_fact(
     invalidated: dict | None,
     effective: str = "",
     rejected: Iterable[dict] = (),
+    overlay: dict | None = None,
 ) -> dict:
     """准备报告里关于环境**唯一**要给用户看的事实（ADR 0114 §六）：这次用的是哪一类、谁定的、这次检查是不是
     刚换了一个（`switched`）、换之前那个为什么不能用（`replaced`）。**不要求用户做任何事**——要用户动手的只有
@@ -584,6 +585,15 @@ def adoption_fact(
     }
     # 这一轮检测里评估过而没采用的候选各自为什么落选（ADR 0079 修订）：只在有时才出现这个键，老形状不变；
     # 条目就是 `userenvs.rejection_reason` 的形状（稳定码，不带路径，ADR 0053 §二），界面按码说一句人话
+    # 这次采用的叠加环境（ROOT）的快照：与上面其余字段一样随报告冻结，界面只渲染它、不回头读项目当前记录。
+    # 只有种类 / 版本 / 标签，不带安装路径（ADR 0053 §二）
+    spec = rootenv.valid_spec(overlay)
+    if spec:
+        out["overlay"] = {
+            "kind": spec["kind"],
+            "version": spec["version"],
+            "label": rootenv.label_of(spec),
+        }
     not_used = [_public_rejection(r) for r in list(rejected)[:NOT_USED_LIMIT]]
     if not_used:
         out["not_used"] = not_used

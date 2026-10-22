@@ -512,6 +512,7 @@ def plan_for(
             invalidated=invalidated,
             effective=python,
             rejected=decision.rejected,
+            overlay=environment_overlay,
         ),
     }
     grant = workdir.grant_for(root)

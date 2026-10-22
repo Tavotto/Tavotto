@@ -885,14 +885,21 @@ describe('主按钮就是后端给的那件事', () => {
     expect(details()?.querySelector('[data-prep-env-not-used]')).toBeNull()
   })
 
-  it('已采用带 ROOT 叠加的环境：「用的是」一行带上 ROOT 标签', async () => {
+  it('已采用带 ROOT 叠加的环境：「用的是」一行只认报告里冻结的叠加，envStore 里别的叠加不串进来', async () => {
     await mount()
     useEnvStore.setState({
-      env: { project: { open: true, env_overlay: { kind: 'root', version: '6.38.02', label: 'ROOT 6.38' } } },
+      env: { project: { open: true, env_overlay: { kind: 'root', version: '6.30.00', label: 'ROOT 6.30' } } },
     } as never)
-    await openWith(report({ environment: envFact({ kind: 'user' }) }))
+    const row = () => details()?.querySelector('[data-prep-row="environment"]')?.textContent ?? ''
+    await openWith(
+      report({ environment: envFact({ kind: 'user', overlay: { kind: 'root', version: '6.38.02', label: 'ROOT 6.38' } }) }),
+    )
     await toggleDetails()
-    expect(details()?.querySelector('[data-prep-row="environment"]')?.textContent).toContain('ROOT 6.38')
+    expect(row()).toContain('ROOT 6.38')
+    expect(row()).not.toContain('ROOT 6.30')
+    // 报告里没有叠加：即使项目当前记录有，也不说
+    await openWith(report({ environment: envFact({ kind: 'user' }), observation_seq: 2 }))
+    expect(row()).not.toContain('ROOT')
     useEnvStore.setState({ env: null } as never)
   })
 

@@ -71,3 +71,11 @@ def test_no_rejections_keeps_the_old_shape_and_the_list_is_bounded():
     many = [{"source": "s", "label": f"L{i}", "reason": "unusable"} for i in range(40)]
     fact = envadvice.adoption_fact("/p", "", adopted=None, invalidated=None, rejected=many)
     assert len(fact["not_used"]) == envadvice.NOT_USED_LIMIT
+
+
+def test_report_overlay_snapshot_has_no_path():
+    spec = {"kind": "root", "root": "C:/root_v6.38", "version": "6.38.02"}
+    fact = envadvice.adoption_fact("/p", "", adopted=None, invalidated=None, overlay=spec)
+    assert fact["overlay"] == {"kind": "root", "version": "6.38.02", "label": "ROOT 6.38"}
+    assert "C:/" not in json.dumps(fact)
+    assert "overlay" not in envadvice.adoption_fact("/p", "", adopted=None, invalidated=None)

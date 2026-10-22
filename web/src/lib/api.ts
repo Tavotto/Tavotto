@@ -6105,6 +6105,8 @@ export interface PreparationEnvironmentFact {
   switched: boolean
   /** 这一轮检测里评估过、没被采用的候选各自为什么落选（后端 `envadvice.adoption_fact`；没有就没这个键 / 老后端没有） */
   not_used?: EnvironmentNotUsed[]
+  /** 这次采用的叠加环境（ROOT）的快照，随报告冻结；只有种类 / 版本 / 标签，不带路径；没有叠加 / 老后端 = 没这个键 */
+  overlay?: { kind: string; version: string; label: string }
   /** 换之前用的那个为什么不能用了（被删 / 被重建 / 起不来 / 跑不了这个脚本）；没换 = null */
   replaced: { reason: string } | null
 }
