@@ -31,9 +31,9 @@ import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { admissionToastCovers } from '@/store/pngAdmissionMemory'
 import { useUiStore } from '@/store/uiStore'
+import { panelStemOfFileId } from '@/lib/panelStem'
 
 const short = (id: string) => id.split('/').pop()?.replace(/\.[^.]+$/, '') ?? id
-const stemOf = (fileId: string) => short(fileId)
 /** 后端稳定错误码 → 当前语言的一句话（参数为空的那些） */
 const translateBackend = (code: string) => t(`backend.${code}`, { ns: 'errors' })
 
@@ -199,7 +199,7 @@ export function handleServerEvent(ev: ServerEvent) {
             o.type === 'panel' &&
             (o.fileKind === 'runtime'
               ? o.source != null && stems.has(o.source.stem)
-              : stems.has(stemOf(o.fileId))),
+              : stems.has(panelStemOfFileId(o.fileId))),
         )
         .map((o) => (o as { fileId: string }).fileId)
       // 转入引擎跟踪 → useEngineSync 立刻按当前 overrides 冷重建，

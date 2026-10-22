@@ -211,8 +211,8 @@
   CLI 打开 `?open=panel-2` 时前端按 stem 没有磁盘面板（`panel-2` 不是文件名），落到 runtime 素材 `panel-2`，这就是乙。注册表不存在 / 读不了 = 文件名 stem（与此前一致，损坏的报错仍由 `ensure_registered` 给）。
 - **素材盘点与交接落地（真机验证补的回归）**：`project_refresh.iter_assets` 里「同目录同名 PDF 压掉位图」的「同名」= 同一张图（`figure_key_of` → `Registry.artifact_stem`），
   不是文件名 stem 相同：注册表说 `panel.png`（甲）与 `panel.pdf`（乙）是两张图时各是一份素材，同一张图存的多种格式照旧矢量优先。`/api/panels` 在 stem 与文件名 stem
-  不同时才发 `stem`（没有映射的项目响应不变）；前端 `openRequest.findByStem` / Figure 选择器 / 素材库「同源」配对都按 `panelStemOf`（`stem ?? 文件名 stem`），所以
+  不同时才发 `stem`（没有映射的项目响应不变）；前端凡主语是「这张图」的匹配都走 `lib/panelStem.ts`（`panelStemOf` / `panelStemOfFileId`，`stem ?? 文件名 stem`）：`openRequest.findByStem`、Figure 选择器、素材库「同源」配对、`useServerEvents` 的 `panel.file_changed`（stems → 文档面板，否则乙不会标 stale）、`pngRebuild`；主语是文件名的（导出文件名、写回目标文件名与报错里的名字）仍用 `stemOf`，所以
   `?open=panel` 落到甲、`?open=panel-2` 落到乙，**两者都落在磁盘素材上**，CLI 等的键仍是 `Registry.artifact_stem` 算的那个。协议没变，老 `?open=<stem>` 链接照旧。
   `runtimeasset.has_disk_original` 按 `artifacts` 判一张图有没有自己的原件，乙不再同时以磁盘素材与 runtime 素材双列（没有映射条目的图仍按文件名找）。
-- **已知未覆盖**：同一路径被两张图都写过时（见上）退回按文件名 stem，不论谁最后写；`useServerEvents` 里按文件名 stem 匹配服务端事件 stem 的那处（`stems.has(stemOf(o.fileId))`）仍按文件名。
+- **已知未覆盖**：同一路径被两张图都写过时（见上）退回按文件名 stem，不论谁最后写。
 看护 `tests/test_artifact_stem_map.py`（注册表 / register 语义 / 假 worker 端点 / 真 worker 同 stem 夹具登记→解析）。

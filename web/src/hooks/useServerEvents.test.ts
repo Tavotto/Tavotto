@@ -215,6 +215,45 @@ describe('panel.file_changed', () => {
     expect(mockPanels).toHaveBeenCalledTimes(1)
   })
 
+  describe('同脚本里两张图写同 stem 的不同文件（#1251）', () => {
+    // 注册表：panel.png 是甲（stem panel）、panel.pdf 是乙（stem panel-2）；后端给 pdf 面板发 stem
+    const both = () => {
+      seed([
+        panelObj('jia', 'panel.png', { script: 'f.py', fileKind: 'raster' }),
+        panelObj('yi', 'panel.pdf', { script: 'f.py' }),
+      ])
+      useAssetStore.setState({
+        byId: {
+          'panel.png': info('panel.png', { kind: 'raster' }),
+          'panel.pdf': info('panel.pdf', { stem: 'panel-2' }),
+        },
+      })
+      mockPanels.mockResolvedValue(panels([]))
+    }
+    const staleAfter = (stems: string[]) => {
+      useRenderStore.setState({ tracked: {} })
+      handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['f.py'], stems }))
+      return Object.keys(useRenderStore.getState().tracked).sort()
+    }
+
+    it('stems 带 panel-2：只标乙（panel.pdf），甲不动', () => {
+      both()
+      expect(staleAfter(['panel-2'])).toEqual(['panel.pdf'])
+    })
+
+    it('stems 带 panel：只标甲（panel.png），乙不被误标', () => {
+      both()
+      expect(staleAfter(['panel'])).toEqual(['panel.png'])
+    })
+
+    it('老后端没有 stem 字段：仍按文件名 stem（行为不变）', () => {
+      seed([panelObj('o1', 'Fig1.pdf', { script: 'f.py' })])
+      useAssetStore.setState({ byId: { 'Fig1.pdf': info('Fig1.pdf') } })
+      mockPanels.mockResolvedValue(panels([]))
+      expect(staleAfter(['Fig1'])).toEqual(['Fig1.pdf'])
+    })
+  })
+
   it('设置里的改写备份跟着重读：状态是按磁盘现算的，挂着旧的「恢复原脚本」点下去是整份覆盖', () => {
     mockPanels.mockResolvedValue(panels([]))
     const before = useEnvStore.getState().scriptBackupGeneration

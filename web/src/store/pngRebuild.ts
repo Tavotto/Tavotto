@@ -1,5 +1,5 @@
 import { msg } from '@/i18n'
-import { stemOf } from '@/lib/openRequest'
+import { panelStemOfFileId } from '@/lib/panelStem'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -33,7 +33,7 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
   const panel = findPanel(panelId)
   const script = panel?.script
   if (!panel || !script) return 'stale'
-  const stem = stemOf(panel.fileId)
+  const stem = panelStemOfFileId(panel.fileId)
   const guard = captureProjectEpoch(() => useScriptRunStore.getState().epoch)
   // 发起时的排版身份：同项目里打开了另一份已保存的排版（documentId / loadSeq 变）或切了画布，
   // 捕获的面板就会落进错误的排版——整个丢弃，什么都不写

@@ -31,6 +31,10 @@ import { useUiStore } from '@/store/uiStore'
 import { backendErrorText, postHandoffDisplayAck } from '@/lib/api'
 import type { HandoffDisplayAck } from '@/lib/api'
 import type { PanelInfo, RuntimeAssetInfo } from '@/lib/api'
+import { panelStemOf } from '@/lib/panelStem'
+
+// 「这个磁盘文件属于哪张图」的判据只在 `lib/panelStem.ts`；这里转出给老的 import 路径
+export { panelStemOf, panelStemOfFileId, stemOf } from '@/lib/panelStem'
 
 export interface OpenRequest {
   /** 图库目录绝对路径；桌面事件才有，URL 形态下项目由后端认领 */
@@ -59,18 +63,6 @@ export type OpenOutcome =
   | 'deferred'         // 上次的排版没恢复好 / 项目已切换：这张图没有放进文档（图仍在素材库里）
   | 'no-project'       // 没有项目可落
   | 'failed'
-
-/** 素材 id 是图库相对路径（可能带子目录）；stem = 去目录去扩展名。 */
-export function stemOf(fileId: string): string {
-  const base = fileId.split(/[/\\]/).pop() ?? fileId
-  const dot = base.lastIndexOf('.')
-  return dot > 0 ? base.slice(0, dot) : base
-}
-
-/** 磁盘面板属于哪张图：后端按注册表给的 `stem`（#1251），没有就是文件名 stem（老项目 / 老后端）。 */
-export function panelStemOf(p: Pick<PanelInfo, 'id' | 'stem'>): string {
-  return p.stem ?? stemOf(p.id)
-}
 
 function findByStem(panels: PanelInfo[], stem: string): PanelInfo | undefined {
   // 同一张图的 PDF 与 PNG 可能同时在（写回会两个载体一起更新）：矢量优先，
