@@ -518,3 +518,18 @@ def test_tool_definitions_and_system_prompt_are_stable_across_output_names(tmp_p
     assert sys_a == sys_b
     assert tools_a == tools_b
     assert "fig_matplotlib.py" in first_a and "panel_b_matplotlib.py" in first_b
+
+
+def test_system_prompt_does_not_restate_the_shared_requirements():
+    """产品要求只有 ai_prompt_pack.convert_requirements() 一份；执行器那段只许写执行器特有的约束（Codex #1329 P2）。"""
+    from tavotto.engine.agent_runner.tools import CONVERT_SYSTEM_PROMPT
+
+    extra = CONVERT_SYSTEM_PROMPT.split("Additional rules for this session", 1)[1]
+    for word in (
+        "data reading",
+        "calculations",
+        "font size",
+        "figure's size",
+        "Match the original",
+    ):
+        assert word not in extra, word

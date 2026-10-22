@@ -549,8 +549,6 @@ The product's requirements follow verbatim (they are written in Chinese; follow 
 Additional rules for this session (not negotiable):
 - The original script is read-only. You create exactly one new file with create_file; no other file can be written.
 - Never try to run any script yourself: you have no shell. The check tool runs the new file for you.
-- Keep the original script's data reading and calculations; only the drawing becomes Matplotlib.
-- Match the original figure's size, font sizes, colors and annotation positions as closely as you can.
 
 How to work:
 1. Read the original script with read_file. Use list_dir to see what else is in the directory
