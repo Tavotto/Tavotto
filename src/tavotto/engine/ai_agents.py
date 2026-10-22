@@ -670,17 +670,126 @@ class ClaudeAgent(AgentDefinition):
     endpoint_family = "anthropic"
     install_spec = InstallSpec(method="npm", package="@anthropic-ai/claude-code")
     supports_model_selection = True
-    #: claude CLI 没有推理强度开关，不假装有
-    supports_effort_selection = False
+    #: claude CLI 有 `--effort <level>`；档位来自它自己的模型目录缓存（读不到就不暴露档位）
+    supports_effort_selection = True
     supports_readiness_probe = True
 
+    #: 模型目录缓存不可用时的退路：三个别名，行为与引入目录之前完全一致
     MODELS = ["sonnet", "opus", "haiku"]
 
+    @staticmethod
+    def _home() -> Path:
+        """Claude Code 自己的配置目录（`CLAUDE_CONFIG_DIR` 是其官方覆盖变量，测试也用它重定向）。"""
+        return Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude"))
+
+    @classmethod
+    def _catalog(cls) -> tuple[list[ModelDetail], dict[str, str], dict[str, str]]:
+        """读 `<home>/cache/model-catalog/*.json`（CLI 自己缓存的模型目录），只读。
+
+        返回 (`section == "main"` 的型号按文件原序, id→family, 别名→id)。文件名里带账号
+        uuid、可能有多份：取 `fetchedAt` 最大且**可解析、main 段非空**的一份。缺失 / 损坏 /
+        结构变了一律返回空（调用方退回三个别名），绝不抛、不猜。`overflow` 段是旧型号，不列。
+        """
+        best: tuple[float, list, dict] | None = None
+        try:
+            files = sorted((cls._home() / "cache" / "model-catalog").glob("*.json"))
+        except OSError:
+            return [], {}, {}
+        for f in files:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                cfg = data["catalog"]["config"]
+                raw = cfg["models"]
+                fetched = data.get("fetchedAt")
+                if not isinstance(raw, list) or isinstance(fetched, bool):
+                    continue
+                stamp = float(fetched)
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+            if best is None or stamp > best[0]:
+                if any(isinstance(m, dict) and m.get("section") == "main" for m in raw):
+                    best = (stamp, raw, cfg)
+        if best is None:
+            return [], {}, {}
+        details: list[ModelDetail] = []
+        families: dict[str, str] = {}
+        for m in best[1]:
+            if not isinstance(m, dict) or m.get("section") != "main":
+                continue
+            mid = m.get("id")
+            if not isinstance(mid, str) or not mid or any(d.id == mid for d in details):
+                continue
+            name = m.get("name")
+            desc = m.get("description")
+            rt = m.get("runtime") if isinstance(m.get("runtime"), dict) else {}
+            levels = rt.get("effort_levels")
+            efforts = (
+                [e for e in levels if isinstance(e, str) and e] if isinstance(levels, list) else []
+            )
+            default = rt.get("default_effort")
+            fam = rt.get("family")
+            if isinstance(fam, str) and fam:
+                families[mid] = fam
+            details.append(
+                ModelDetail(
+                    id=mid,
+                    display_name=name if isinstance(name, str) and name else mid,
+                    description=desc if isinstance(desc, str) else "",
+                    efforts=list(dict.fromkeys(efforts)),
+                    default_effort=default if isinstance(default, str) and default else None,
+                )
+            )
+        aliases: dict[str, str] = {}
+        pat = best[2].get("provider_alias_targets")
+        if isinstance(pat, dict):
+            for alias, spec in pat.items():
+                target = spec.get("default") if isinstance(spec, dict) else None
+                if isinstance(alias, str) and isinstance(target, str):
+                    aliases[alias] = target
+        return details, families, aliases
+
+    @classmethod
+    def _user_model(cls) -> str | None:
+        """用户 `settings.json` 里的 `model`（只读）；`[1m]` 之类方括号后缀去掉。"""
+        try:
+            data = json.loads((cls._home() / "settings.json").read_text(encoding="utf-8"))
+            value = data["model"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        if not isinstance(value, str):
+            return None
+        return re.sub(r"\[[^\]]*\]$", "", value.strip()) or None
+
     def model_capabilities(self) -> ModelCapabilities:
+        details, families, aliases = self._catalog()
+        if not details:
+            return ModelCapabilities(
+                models=list(self.MODELS),
+                default_model="sonnet",
+                model_details=[ModelDetail(id=m, display_name=m.capitalize()) for m in self.MODELS],
+            )
+        ids = [d.id for d in details]
+        wanted = self._user_model()
+        default = ids[0]
+        if wanted:
+            if wanted in ids:
+                default = wanted
+            elif aliases.get(wanted) in ids:
+                default = aliases[wanted]
+            else:
+                default = next((i for i in ids if families.get(i) == wanted), ids[0])
+        by_id = {d.id: d for d in details}
+        efforts: list[str] = []
+        for d in details:
+            for e in d.efforts:
+                if e not in efforts:
+                    efforts.append(e)
         return ModelCapabilities(
-            models=list(self.MODELS),
-            default_model="sonnet",
-            model_details=[ModelDetail(id=m, display_name=m.capitalize()) for m in self.MODELS],
+            models=ids,
+            default_model=default,
+            efforts=efforts,
+            default_effort=by_id[default].default_effort,
+            model_details=details,
         )
 
     def readiness(self, argv: list[str]) -> ReadinessResult:
@@ -729,6 +838,8 @@ class ClaudeAgent(AgentDefinition):
         cmd += ctx.endpoint_args
         if ctx.model:
             cmd += ["--model", ctx.model]
+        if ctx.effort:
+            cmd += ["--effort", ctx.effort]
         return SpawnSpec(cmd, dict(ctx.endpoint_env))
 
     def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:

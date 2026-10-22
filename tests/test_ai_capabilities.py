@@ -18,7 +18,7 @@ from tavotto.engine import ai_agents, ai_bridge
 
 
 @pytest.fixture(autouse=True)
-def _fake_cli(monkeypatch):
+def _fake_cli(monkeypatch, tmp_path_factory):
     """假装两个 CLI 都装了，并清掉能力缓存（模块级全局，会串味）。
 
     候选枚举 + 启动验证是探测的新缝隙：candidates 给一个假路径、
@@ -31,6 +31,8 @@ def _fake_cli(monkeypatch):
     )
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "test 0.0.0")
     monkeypatch.setattr(ai_agents, "_run_probe", lambda argv, timeout=10: None)
+    # 默认把 Claude Code 家目录指向空目录：不读这台机器真实的 ~/.claude
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("claude-home")))
     ai_bridge.invalidate_capabilities()
     yield
     ai_bridge.invalidate_capabilities()
@@ -197,20 +199,142 @@ def test_catalog_survives_without_tomllib(tmp_path, monkeypatch):
     assert caps["default_effort"] == "low"
 
 
-def test_claude_models_carry_display_names(tmp_path, monkeypatch):
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
-    caps = _agent(ai_bridge.capabilities(refresh=True), "claude")
-    assert [d["id"] for d in caps["model_details"]] == caps["models"]
-    assert [d["display_name"] for d in caps["model_details"]] == ["Sonnet", "Opus", "Haiku"]
-    assert all(d["efforts"] == [] for d in caps["model_details"])
+def _model(mid, name, section="main", family=None, efforts=("low", "high"), default="high"):
+    rt = {"family": family or mid.split("-")[1]}
+    if efforts is not None:
+        rt["effort_levels"] = list(efforts)
+        rt["default_effort"] = default
+    return {"id": mid, "name": name, "description": f"{name} d", "section": section, "runtime": rt}
 
 
-def test_claude_side_reports_no_effort_switch(tmp_path, monkeypatch):
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
-    caps = _agent(ai_bridge.capabilities(refresh=True), "claude")
+def _write_catalog(home, models, *, fetched=1000, name="a-cc.json", targets=None, settings=None):
+    d = home / "cache" / "model-catalog"
+    d.mkdir(parents=True, exist_ok=True)
+    cfg = {"id": "cc", "models": models}
+    if targets is not None:
+        cfg["provider_alias_targets"] = targets
+    (d / name).write_text(
+        json.dumps({"version": 2, "fetchedAt": fetched, "catalog": {"config": cfg}}),
+        encoding="utf-8",
+    )
+    if settings is not None:
+        (home / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
+
+
+def _claude(home, monkeypatch):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    return _agent(ai_bridge.capabilities(refresh=True), "claude")
+
+
+_CATALOG = [
+    _model("claude-opus-5-5", "Opus 5.5", default="medium"),
+    _model("claude-sonnet-5-5", "Sonnet 5.5", efforts=("low", "medium", "high"), default="medium"),
+    _model("claude-opus-4-8", "Opus 4.8", section="overflow"),
+]
+
+
+def test_claude_without_catalog_falls_back_to_aliases(tmp_path, monkeypatch):
+    caps = _claude(tmp_path, monkeypatch)
     assert caps["models"] == ["sonnet", "opus", "haiku"]
-    assert caps["efforts"] == []  # claude CLI 没有强度开关，不假装有
+    assert caps["default_model"] == "sonnet"
+    assert [d["display_name"] for d in caps["model_details"]] == ["Sonnet", "Opus", "Haiku"]
+    assert caps["efforts"] == []
     assert caps["default_effort"] is None
+
+
+def test_claude_lists_only_main_section_in_file_order(tmp_path, monkeypatch):
+    _write_catalog(tmp_path, _CATALOG)
+    caps = _claude(tmp_path, monkeypatch)
+    assert caps["models"] == ["claude-opus-5-5", "claude-sonnet-5-5"]
+    d = caps["model_details"][0]
+    assert (d["id"], d["display_name"], d["description"]) == (
+        "claude-opus-5-5",
+        "Opus 5.5",
+        "Opus 5.5 d",
+    )
+    assert d["efforts"] == ["low", "high"] and d["default_effort"] == "medium"
+    assert caps["efforts"] == ["low", "high", "medium"]  # 各型号并集，保序
+
+
+def test_claude_default_is_first_without_user_model(tmp_path, monkeypatch):
+    _write_catalog(tmp_path, _CATALOG)
+    caps = _claude(tmp_path, monkeypatch)
+    assert caps["default_model"] == "claude-opus-5-5"
+    assert caps["default_effort"] == "medium"
+
+
+@pytest.mark.parametrize(
+    "setting,expected",
+    [
+        ("sonnet", "claude-sonnet-5-5"),  # 家族名
+        ("sonnet[1m]", "claude-sonnet-5-5"),  # 去掉后缀
+        ("claude-sonnet-5-5", "claude-sonnet-5-5"),  # 完整 id
+        ("haiku", "claude-opus-5-5"),  # 目录里没有该家族：取第一项
+        ("claude-opus-4-8", "claude-opus-5-5"),  # overflow 型号：不在列表里，取第一项
+    ],
+)
+def test_claude_default_maps_user_setting(tmp_path, monkeypatch, setting, expected):
+    _write_catalog(tmp_path, _CATALOG, settings={"model": setting})
+    assert _claude(tmp_path, monkeypatch)["default_model"] == expected
+
+
+def test_claude_alias_targets_take_priority(tmp_path, monkeypatch):
+    _write_catalog(
+        tmp_path,
+        _CATALOG,
+        targets={"best": {"default": "claude-sonnet-5-5"}},
+        settings={"model": "best"},
+    )
+    assert _claude(tmp_path, monkeypatch)["default_model"] == "claude-sonnet-5-5"
+
+
+def test_claude_newest_parseable_catalog_wins(tmp_path, monkeypatch):
+    _write_catalog(tmp_path, [_model("claude-old-1", "Old")], fetched=1, name="a.json")
+    _write_catalog(tmp_path, [_model("claude-new-1", "New")], fetched=9, name="b.json")
+    d = tmp_path / "cache" / "model-catalog"
+    (d / "c.json").write_text("{not json", encoding="utf-8")
+    (d / "d.json").write_text(
+        json.dumps({"fetchedAt": 99, "catalog": {"config": {"models": "oops"}}}), encoding="utf-8"
+    )
+    assert _claude(tmp_path, monkeypatch)["models"] == ["claude-new-1"]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "not json",
+        "[]",
+        '{"catalog": {}}',
+        '{"fetchedAt": 1, "catalog": {"config": {"models": []}}}',
+    ],
+)
+def test_claude_broken_catalog_falls_back(tmp_path, monkeypatch, content):
+    d = tmp_path / "cache" / "model-catalog"
+    d.mkdir(parents=True)
+    (d / "x.json").write_text(content, encoding="utf-8")
+    assert _claude(tmp_path, monkeypatch)["models"] == ["sonnet", "opus", "haiku"]
+
+
+def test_claude_catalog_without_main_models_falls_back(tmp_path, monkeypatch):
+    _write_catalog(tmp_path, [_model("claude-opus-4-8", "Opus 4.8", section="overflow")])
+    assert _claude(tmp_path, monkeypatch)["models"] == ["sonnet", "opus", "haiku"]
+
+
+def test_claude_model_without_effort_data_exposes_none(tmp_path, monkeypatch):
+    _write_catalog(tmp_path, [_model("claude-haiku-5", "Haiku 5", efforts=None)])
+    caps = _claude(tmp_path, monkeypatch)
+    assert caps["efforts"] == [] and caps["model_details"][0]["efforts"] == []
+
+
+def test_claude_build_command_passes_effort(tmp_path):
+    ctx = ai_agents.RunContext(
+        argv=["claude"], prompt="p", cwd=str(tmp_path), model="claude-opus-5-5", effort="high"
+    )
+    cmd = ai_agents.ClaudeAgent().build_command(ctx).argv
+    assert cmd[cmd.index("--model") + 1] == "claude-opus-5-5"
+    assert cmd[cmd.index("--effort") + 1] == "high"
+    ctx2 = ai_agents.RunContext(argv=["claude"], prompt="p", cwd=str(tmp_path))
+    assert "--effort" not in ai_agents.ClaudeAgent().build_command(ctx2).argv
 
 
 def test_spawn_env_appends_cli_dir_and_common_bins(tmp_path, monkeypatch):
