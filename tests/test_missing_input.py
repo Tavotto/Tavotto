@@ -690,6 +690,13 @@ def test_an_exception_without_a_filename_only_claims_the_miss_it_names(remapped)
     with pytest.raises(FileNotFoundError):
         open("d")
     assert figcapture.missing_input_of(FileNotFoundError("d.txt not found."), misses) is None
+    # 路径分隔符也不是边界（Codex #1297 r4344277214）：先吞掉的 `open("data")` 是真失败路径
+    # `data/file.parquet` 的前缀，`file.parquet` 是它的后缀——两者都不算被点了名
+    for name in ("data", "file.parquet"):
+        with pytest.raises(FileNotFoundError):
+            open(name)
+    assert figcapture.missing_input_of(FileNotFoundError("data/file.parquet"), misses) is None
+    assert figcapture.missing_input_of(FileNotFoundError("data\\file.parquet"), misses) is None
 
 
 def test_the_interpreters_own_sys_path_probes_are_not_recorded_as_inputs(remapped, monkeypatch):

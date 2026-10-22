@@ -4350,7 +4350,8 @@ def _named_miss(fnf: BaseException, misses: InputMisses) -> str | None:
     text = text.replace("\\", "/")
     for item in reversed(misses.items):
         needle = item["requested"].replace("\\", "/")
-        if re.search(rf"(?<![\w.\-]){re.escape(needle)}(?![\w\-]|\.\w)", text):
+        # 路径分隔符同样不是边界：`data` 不算点了 `data/file.parquet`，`file.parquet` 也不算（Codex #1297）
+        if re.search(rf"(?<![\w.\-/]){re.escape(needle)}(?![\w\-/]|\.\w)", text):
             return item["requested"]
     return None
 
