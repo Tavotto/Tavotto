@@ -236,3 +236,24 @@ def test_user_replacing_stale_callback_never_raises():
     figcapture.mark_saved(fig)  # 下次保存重新套上
     ax.set_title("y")
     assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is True
+
+
+def test_the_lazy_verify_render_leaves_the_users_stale_as_it_was():
+    """惰性验证渲染发生在**另一张图**保存时：持有者的 `fig.stale`（用户可见）与私有标记都原样还回去。"""
+    import io
+
+    from matplotlib.figure import Figure
+
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    fig = Figure()
+    FigureCanvasAgg(fig)
+    fig.add_subplot().plot([0, 1])
+    fig.savefig(io.BytesIO(), format="png")
+    figcapture.mark_saved(fig)
+    fig.canvas.draw()  # 脚本自己画过一次：此刻 stale 为 False
+    assert fig.stale is False
+    real = Figure.savefig
+    assert figcapture.savefig_verify_render(lambda f, *a, **k: real(f, *a, **k), fig, "x.png", (), {})
+    assert fig.stale is False
+    assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is False

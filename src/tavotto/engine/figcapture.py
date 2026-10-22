@@ -1699,16 +1699,20 @@ def savefig_verify_render(real_savefig, fig, fname, args, kwargs: dict) -> bool:
             kw["format"] = ext
         # tight 量包围盒失败在原生下同样会抛、文件不会写出：与 native 同源判失败（Codex #1141 r4306180020）。
         # 这里只决定**顶替**，持有者自己的保存不经验证，ADR 0098 的 frame_unavailable 报告不受影响
-        # 验证渲染是我们的动作、不是脚本改图：渲染前后保存 / 还原「存后被改过」的私有标记（`fig.stale` 一处不碰）
+        # 验证渲染是我们的动作、不是脚本改图（它发生在**另一张图**保存时）：用户可见的 `fig.stale` 与「存后被改过」的
+        # 私有标记都原样还回去。先还 stale（置 True 会经 `_StaleRecorder` 弄脏标记），再还标记
+        stale = getattr(fig, "stale", None)
         dirty = getattr(fig, DIRTY_SINCE_SAVE, None)
         try:
             real_savefig(fig, io.BytesIO(), *args, **kw)
         finally:
-            if dirty is not None:
-                try:
+            try:
+                if stale is not None:
+                    fig.stale = stale
+                if dirty is not None:
                     setattr(fig, DIRTY_SINCE_SAVE, dirty)
-                except Exception:  # noqa: BLE001
-                    pass
+            except Exception:  # noqa: BLE001
+                pass
     except Exception:  # noqa: BLE001 —— 原生下这次保存会抛
         return False
     return True
