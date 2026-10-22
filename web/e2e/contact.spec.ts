@@ -26,7 +26,7 @@ test('硬开关：主页没有入口，本机端点只回 enabled:false', async 
   expect((await page.request.get(`${a.baseURL}/api/contact/messages`)).status()).toBe(404)
 })
 
-test('主页：入口在右上角；点发送前零连接；失败有人话、草稿还在、只有复制（没有邮件链接）', async ({ app, page }) => {
+test('主页：入口在右上角；点发送前零连接；失败有人话、草稿还在、只有复制（没有邮件链接）', { tag: '@feature:contact.maker' }, async ({ app, page }) => {
   test.setTimeout(240_000)
   let connections = 0
   const sink = net.createServer((sock) => {

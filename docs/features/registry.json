@@ -1135,6 +1135,25 @@
       "desktop_manual": [
         "打开含静态 SVG 的项目，确认缩略图、添加到画布及缩放后图像清晰。"
       ]
+    },
+    {
+      "id": "contact.maker",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "右上角「联系作者」：不登录邮箱就能写信给作者，可附截图 / 诊断信息，回信经邮件或应用内收到",
+        "en-US": "\"Contact the maker\" in the top-right corner: write to the maker without signing in to any mailbox, attach screenshots or diagnostics, and get replies by email or in the app"
+      },
+      "entry": "主页 / 编辑器右上角 → 联系作者",
+      "e2e": [
+        {
+          "spec": "contact.spec.ts",
+          "title": "主页：入口在右上角；点发送前零连接；失败有人话、草稿还在、只有复制（没有邮件链接）"
+        }
+      ],
+      "desktop_manual": [
+        "桌面版主页与编辑器右上角各点一次「联系作者」，确认按钮可点、拖入截图可加为附件、窗口拖动区不受影响。"
+      ]
     }
   ]
 }
