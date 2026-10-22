@@ -38,7 +38,7 @@ export/fidelity 各 10。历史机器快照 `tests/compat/research-baseline.json
 
 | 项目 | 已知证据 | 下一步 |
 | --- | --- | --- |
-| Celerite | 零编辑 PNG 为 640×213 与 640×203；比较器在尺寸不同时提前返回。此前“先修边距/布局”的分诊撤回。 | 比较完整 x/y 数组与 RNG 状态，并对照原脚本 PDF 的尺寸及保存参数。数据差异、RNG/BLAS 根因目前均未确认。 |
+| Celerite | 5 次执行的 26 条曲线数据、seed 后及脚本结束时的 RNG、末次协方差矩阵一致；历史两张 PNG 逐字节重现。同尺寸 PDF 仍有布局偏移。 | 先对齐原生对照的保存参数，再定位零编辑布局重算；本例没有支持 RNG/BLAS 导致数据改变的证据。详见下节。 |
 | Leaf | 原生带 `hppc` 出 5 图，engine 探针没有传参；错误提示已有 CLI 参数入口。 | 经真实 CLI/桌面入口验证 argv，不据此宣称全产品不支持参数。 |
 | Qudit | 原生完成；engine 的相对 glob 为空。 | 记录实际 cwd 与命中文件，验证已有项目目录运行路径。 |
 | Gala | PNG/SVG 正常；PDF 报 Cython 共享类型尺寸错误。原生任务没有输出 PDF。 | 补同环境原生 PDF 和完整异常栈，再判断具体扩展。 |
@@ -46,9 +46,48 @@ export/fidelity 各 10。历史机器快照 `tests/compat/research-baseline.json
 | SGWB | TeX 准备超过 35 分钟。 | 原生和产品都未运行；准备完成后另记一次观测。 |
 | Vitay | 原始 NPZ 的 r 为 2×2，脚本 delays 有 10 个。 | 保留 invalid_fixture，不改数据凑通过。 |
 
+## Celerite 复核结论
+
+[复核运行 39779799508](https://github.com/Tavotto/Tavotto/actions/runs/39779799508) 使用
+`cc038006df3a5446dbeb5bb42629b5319957e34b`，其产品源码仍等于原基线 `6dcf344c`。
+最终草稿随后整理为依赖 #1307 的叠栈；该历史观测不冒充新基线的产品验收。
+[机器摘要](../../../tests/compat/research-celerite-retriage.json) 绑定原始报告、数值日志和 PDF 的 SHA-256。
+
+- **数据没有变。** 原生参照、PNG 对照、hot/fresh worker 和 census 共 5 次执行，覆盖 69 次 Figure 观察。
+  3 个 axes 的 5/5/16 条曲线（其中 12 条随机样本）的完整 x/y 数组逐项同哈希；每次 seed 后状态相同，
+  每次脚本结束状态相同，末次 1000×1000 协方差矩阵相同。历史 control / Tavotto PNG 均逐字节重现。
+  这支持撤回本例“第三栏是两组数据”的判断，不能泛化为所有科学脚本都数值等价。
+- **线宽和颜色没有被改。** 脚本结束时逐条 Line2D 的 color/linewidth 一致；两份 PDF 的
+  `w/RG/rg/G/g/Tf` 指令序列相同，文字内容相同。
+- **原 PNG 判据有协议问题。** `compat_driver.run_native` 再存 PNG 时只传 format/dpi，漏掉原脚本
+  `bbox_inches="tight"`。它拿完整画布 640×213 对比产品裁切后的 640×203；旧报告中的 1.0 / 255
+  是尺寸短路的占位值，不能当作已量出的像素差，更不能据此判断数组改变。
+- **产品仍有零编辑布局差异。** 原生 PDF 与任何编辑前的产品 PDF 都是 843.84×267.84 pt；用同一
+  PDFium、同一 640 px 宽度栅格化后均为 640×204。3 个 axes 的底边上移约 0.442767 pt，高度相应缩短；
+  文字坐标最大差约 1.051598 pt。沿用现有像素判据：changed ratio 0.084766、mean 2.6069、max 255，
+  三项都超过原阈值。重放后回零的 PDF 像素与编辑前一致，差异已在编辑前出现。
+
+因此保留 **fidelity failed**，分成“原生对照保存参数未对齐”和“零编辑布局漂移”两项。
+后续先修对照协议，再用保留的 PDF/数组证据定位布局调用顺序及渲染上下文；不改随机种子、科学计算、
+样本数据或像素阈值。Leaf 的 argv、Qudit 的 cwd 继续作为真实入口验证的优先项。
+
+首轮数值探针拒绝了 worker 已有的执行 tracer，未获得产品数组；该轮不能用于数据一致性结论。
+修复后的观察器仅用 profiler，保留产品 tracer。合成脚本与真实 `executionfact.on_user_entry` 的并存测试通过，
+换回旧观察器会失败；删掉一条实际 worker 记录时分析器拒绝汇总，改掉一个数组哈希时报告不一致。
+
+复算下载后的最终 artifact（需要现有开发环境的 PDFium/pikepdf）：
+
+```sh
+python scripts/dev/retriage_celerite.py /absolute/unpacked-artifact --out /absolute/retriage-output
+# 可选：--previous-fidelity /absolute/original-archive/fidelity，核验两张历史 PNG 的字节一致性
+```
+
+完整证据留在 [Actions artifact 12427200839](https://github.com/Tavotto/Tavotto/actions/runs/39779799508/artifacts/12427200839)
+及本地归档，不重新塞回 Git。研究运行仍以退出码 1 暴露保真失败；这与 #1307 的绿色 CI 是不同结论。
+
 ## 获取与复现
 
-上游源码、数据和完整日志已移出 PR 的当前文件树。仓库保留提交、文件哈希、许可证记录、任务、配方与结果摘要。
+上游源码、数据和完整日志已移出 PR 的文件树及待合入提交历史。仓库保留提交、文件哈希、许可证记录、任务、配方与结果摘要。
 下载器从固定提交获取 365 个登记文件，逐个校验 SHA-256；已实测 16 项全部一致。
 下载与验证不执行脚本，缓存须在仓库外。普通 CompatBench 仍是 149 项，不会隐式下载科研语料。
 
