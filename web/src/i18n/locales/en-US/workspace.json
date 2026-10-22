@@ -1298,6 +1298,7 @@
         "resuming": "Installing {{names}}, then continuing…",
         "replanning": "Re-checking with the new environment…",
         "continuing": "Continuing to check the new version…",
+        "stopping": "Stopping…",
         "installedLate": "The dependencies are already installed (the stop came too late to undo).",
         "env": {
           "managed": "{{product}} project environment"

@@ -1633,7 +1633,25 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       await act(async () => (foreignCard()?.querySelector('[data-convert-stop]') as HTMLButtonElement).click())
       expect(discardConvert).toHaveBeenCalledWith('sid-r', expect.anything())
       expect(aiCancel).not.toHaveBeenCalled()
+      // 等后端回话才清卡：期间只有一句「正在停止…」，没有可点的停止按钮
+      expect(foreignCard()?.dataset.convertPhase).toBe('resuming')
+      expect(line()).toBe('正在停止…')
+      expect(foreignCard()?.querySelector('[data-convert-stop]')).toBeNull()
+      vi.mocked(fetchConvert).mockRejectedValue(new ApiError('convert_not_found', 404, {}))
+      await settle()
       expect(useConvertStore.getState().entries['fig.R']).toBeUndefined()
+    })
+
+    it('续跑中停止来得太晚（后端回 deps_installed）：「正在停止…」之后出「依赖已经装好了」+「继续」，不被清掉', async () => {
+      await begin(askOnce)
+      await act(async () => (foreignCard()?.querySelector('[data-convert-deps-install]') as HTMLButtonElement).click())
+      vi.mocked(fetchConvert).mockResolvedValue({ ...readyR, state: 'deps_installed' as never, installed: ['pandas'] } as never)
+      await act(async () => (foreignCard()?.querySelector('[data-convert-stop]') as HTMLButtonElement).click())
+      expect(line()).toBe('正在停止…')
+      await settle()
+      expect(foreignCard()?.dataset.convertPhase).toBe('installed')
+      expect(line()).toBe('依赖已经装好了（停止来得太晚，没能撤回）。')
+      expect(foreignCard()?.querySelector('[data-convert-continue]')).not.toBeNull()
     })
 
     it('摘要对不上时后端回新的卡片：卡片换成新的，不当失败', async () => {

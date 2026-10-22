@@ -28,6 +28,7 @@ function verdict(name: string): string {
   const uri = `file://${DIR}/${encodeURIComponent(name)}`
   const t = dropTargetOf(data({ uris: uri, name }))
   if (t.kind === 'not-script') return 'unsupported'
+  if (t.kind === 'foreign-path') return t.folder === DIR ? 'foreign_script' : `unexpected-folder:${t.folder}`
   if (t.kind !== 'path') return `unexpected:${t.kind}`
   if (t.folder === DIR) return 'script'
   if (t.folder === path) return 'folder'
@@ -39,8 +40,8 @@ describe('拖放的脚本判据 ↔ 壳的 drop_paths::classify', () => {
     expect(cases.length).toBeGreaterThan(10)
     // 「不同」= 结论不同，或者是符号链接（结论相同时两侧打开的目录也不同：壳按目标、页面按链接）
     for (const c of cases) expect(!!c.page_blind, c.name).toBe(c.page !== c.shell || c.on_disk === 'symlink')
-    // 三档都真的出现过，否则某一档判错了也量不出来
-    expect(new Set(cases.map((c) => c.page))).toEqual(new Set(['script', 'folder', 'unsupported']))
+    // 四档都真的出现过，否则某一档判错了也量不出来
+    expect(new Set(cases.map((c) => c.page))).toEqual(new Set(['script', 'foreign_script', 'folder', 'unsupported']))
   })
 
   it.each(cases.map((c) => [JSON.stringify(c.name), c] as const))('带路径放下 %s', (_, c) => {
@@ -59,6 +60,7 @@ describe('拖放的脚本判据 ↔ 壳的 drop_paths::classify', () => {
 
   it.each(cases.map((c) => [JSON.stringify(c.name), c] as const))('只有文件名放下 %s：只有脚本退回选择器', (_, c) => {
     const t = dropTargetOf(data({ name: c.name }))
-    expect(t).toEqual({ kind: c.page === 'script' ? 'no-path' : 'not-script', name: c.name })
+    if (c.page === 'foreign_script') expect(t).toMatchObject({ kind: 'foreign-no-path', name: c.name })
+    else expect(t).toEqual({ kind: c.page === 'script' ? 'no-path' : 'not-script', name: c.name })
   })
 })

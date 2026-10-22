@@ -268,15 +268,70 @@ describe('convertStore：缺依赖卡（Codex #1330 P1-2，候选留着、接着
 
   it('装依赖期间停止：走 discard（后端据此取消正在进行的安装），不走已终局的任务取消；之后轮询的 404 不写回条目', async () => {
     await begin()
-    vi.mocked(fetchConvert).mockRejectedValue(new Error('convert_not_found'))
+    vi.mocked(fetchConvert).mockRejectedValue(new ApiError('convert_not_found', 404, {}))
     const p = useConvertStore.getState().resolveDeps('fig.R')
     await vi.advanceTimersByTimeAsync(0)
     await useConvertStore.getState().stop('fig.R')
     expect(discardConvert).toHaveBeenCalledWith('s1', 'A')
     expect(aiCancel).not.toHaveBeenCalled()
+    // 等后端回话才清卡：discard 回来时条目还在「正在停止…」
+    expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ phase: 'resuming', stopping: true })
     await vi.advanceTimersByTimeAsync(POLL_MS + 20)
     await p
     expect(useConvertStore.getState().entries['fig.R']).toBeUndefined()
+  })
+
+  it('续跑中停止来得太晚：先「正在停止」，后端对账得 deps_installed → 出「继续」卡（installed），不被清掉', async () => {
+    await begin()
+    vi.mocked(discardConvert).mockResolvedValue({ ok: true })
+    vi.mocked(fetchConvert).mockResolvedValue({ state: 'deps_installed', installed: ['pandas'] } as never)
+    const p = useConvertStore.getState().resolveDeps('fig.R')
+    await vi.advanceTimersByTimeAsync(0)
+    await useConvertStore.getState().stop('fig.R')
+    expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ phase: 'resuming', stopping: true })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 20)
+    await p
+    expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ phase: 'installed', stopping: false })
+  })
+
+  it('续跑中停止、后端报候选已删（discarded）：这才清卡', async () => {
+    await begin()
+    vi.mocked(discardConvert).mockResolvedValue({ ok: true })
+    vi.mocked(fetchConvert).mockResolvedValue({ state: 'discarded' } as never)
+    const p = useConvertStore.getState().resolveDeps('fig.R')
+    await vi.advanceTimersByTimeAsync(0)
+    await useConvertStore.getState().stop('fig.R')
+    expect(useConvertStore.getState().entries['fig.R']?.stopping).toBe(true)
+    await vi.advanceTimersByTimeAsync(POLL_MS + 20)
+    await p
+    expect(useConvertStore.getState().entries['fig.R']).toBeUndefined()
+  })
+
+  it('续跑中停止、discard 请求本身失败：先对账（GET 转换状态）再按结果展示——对账得 deps_installed 就出「继续」卡', async () => {
+    await begin()
+    vi.mocked(discardConvert).mockRejectedValue(new Error('network down'))
+    vi.mocked(fetchConvert).mockResolvedValueOnce({ state: 'resuming' } as never)
+    const p = useConvertStore.getState().resolveDeps('fig.R')
+    await vi.advanceTimersByTimeAsync(0)
+    vi.mocked(fetchConvert).mockReset().mockResolvedValue({ state: 'deps_installed', installed: ['pandas'] } as never)
+    await useConvertStore.getState().stop('fig.R')
+    expect(fetchConvert).toHaveBeenCalled()
+    expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ phase: 'installed', stopping: false })
+    await vi.advanceTimersByTimeAsync(POLL_MS + 20)
+    await p
+  })
+
+  it('续跑中停止、discard 失败且对账得仍在续跑：停止没送到，退回可再点停止（stopping 复位）', async () => {
+    await begin()
+    vi.mocked(discardConvert).mockRejectedValue(new Error('network down'))
+    vi.mocked(fetchConvert).mockResolvedValue({ state: 'resuming' } as never)
+    const p = useConvertStore.getState().resolveDeps('fig.R')
+    await vi.advanceTimersByTimeAsync(0)
+    await useConvertStore.getState().stop('fig.R')
+    expect(useConvertStore.getState().entries['fig.R']).toMatchObject({ phase: 'resuming', stopping: false })
+    useConvertStore.getState().clear('fig.R')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 20)
+    await p
   })
 
   it('续跑失败：落 failed + 后端给的原因码', async () => {

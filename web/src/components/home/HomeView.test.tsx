@@ -339,13 +339,12 @@ describe('老手版', () => {
       expect(open).not.toHaveBeenCalled()
     })
 
-    it('壳的拖放事件只交来名字（它的分类还不认 R / MATLAB）：说这是能转写的脚本、请用选择器，不说“不是脚本”', async () => {
+    it('壳的拖放事件交来外语脚本（foreign_script）：开所在文件夹并出卡；fig.pdf 仍照旧说不收', async () => {
       desktop.nativeFileDropAvailable.mockResolvedValue(true)
       await mount()
-      await act(async () => desktop.state.handler?.({ kind: 'unsupported', name: 'fig.R' }))
-      expect(host.textContent).toContain('「fig.R」是 R / MATLAB 脚本')
-      expect(host.querySelector('[role="alert"]')).toBeNull()
-      expect(open).not.toHaveBeenCalled()
+      await act(async () => desktop.state.handler?.({ kind: 'foreign_script', folder: '/Users/me/fig', script: '/Users/me/fig/fig.R', name: 'fig.R', ignored: 0 }))
+      expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+      expect(useForeignScriptStore.getState().offer).toEqual({ script: 'fig.R', language: 'r' })
       await act(async () => desktop.state.handler?.({ kind: 'unsupported', name: 'fig.pdf' }))
       expect(host.querySelector('[role="alert"]')!.textContent).toContain('fig.pdf')
     })
@@ -448,6 +447,31 @@ describe('系统拖放（桌面壳交来真实路径，ADR 0092）', () => {
     act(() => useProjectStore.setState({ switching: false }))
     await fire({ kind: 'script', folder: '/Users/me/fig', script: '/Users/me/fig/plot.py', name: 'plot.py', ignored: 0 })
     expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+  })
+
+  it.each([
+    ['fig.R', 'r'],
+    ['fig.r', 'r'],
+    ['calc.m', 'matlab'],
+  ])('壳交来外语脚本 %s：打开所在文件夹、出外语脚本卡（与选择器同一入口），不运行、不提示“请重新选择”', async (name, language) => {
+    await mount()
+    await fire({ kind: 'foreign_script', folder: '/Users/me/fig', script: `/Users/me/fig/${name}`, name, ignored: 0 })
+    expect(open).toHaveBeenCalledWith('/Users/me/fig', false)
+    expect(useForeignScriptStore.getState().offer).toEqual({ script: name, language })
+    expect(prepOpen).not.toHaveBeenCalled()
+    expect(desktop.pickScriptFile).not.toHaveBeenCalled()
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    expect(host.textContent).not.toContain('dropForeign')
+  })
+
+  it('壳交来的外语脚本：项目没打开成就不出卡；多拖了几个说只用了哪个', async () => {
+    open.mockRejectedValueOnce(new Error('nope'))
+    await mount()
+    await fire({ kind: 'foreign_script', folder: '/a', script: '/a/f.R', name: 'f.R', ignored: 0 })
+    expect(useForeignScriptStore.getState().offer).toBeNull()
+    await fire({ kind: 'foreign_script', folder: '/a', script: '/a/f.R', name: 'f.R', ignored: 2 })
+    expect(useForeignScriptStore.getState().offer).toEqual({ script: 'f.R', language: 'r' })
+    expect(JSON.stringify(status())).toContain('home.import.droppedMany')
   })
 
   it('不支持的类型：说不收，什么都不打开', async () => {

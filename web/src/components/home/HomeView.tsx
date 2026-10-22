@@ -198,7 +198,7 @@ type Importer = ReturnType<typeof useScriptImport>
  * 上次的排版，用户看到的永远是第一张图（2026-10-21 诊断包）。只给目录的入口（目录浏览器、拖文件夹）不运行任何脚本。
  *
  * 拖放（ADR 0092）：macOS 桌面壳旁听系统拖放、交来 canonicalize 过的真实路径
- * （`onNativeFileDrop`），`.py` 打开它所在的文件夹、文件夹直接当项目、别的说不收，
+ * （`onNativeFileDrop`），`.py` 打开它所在的文件夹、`.R` / `.r` / `.m` 打开所在文件夹并提议“生成可编辑版本”、文件夹直接当项目、别的说不收，
  * 多拖了几个说一句只开了哪个。拿不到路径的宿主（浏览器、其它平台）退回选择器并说清是
  * 哪个文件。同一次放下两条路都会到，谁先谁后不定，由 `createDropArbiter` 仲裁。
  */
@@ -243,12 +243,22 @@ function useScriptImport(openPath: (path: string) => Promise<boolean>) {
     // 壳本来只在页面接受了拖动时才发这条事件，这里是第二道闸
     if (useOnboardingStore.getState().surface !== 'none') return
     if (drop.kind === 'unsupported') {
-      // 壳只交来名字（它的分类还不认 R / MATLAB，没有文件夹）：说清这是能转写的脚本、请用选择器选它，不说“不是脚本”
-      setNotice(
-        foreignLanguageOf(drop.name)
-          ? { tone: 'info', text: t('home.import.dropForeign', { name: drop.name }) }
-          : { tone: 'error', text: t('home.import.dropNotScript', { name: drop.name }) },
-      )
+      setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: drop.name }) })
+      return
+    }
+    if (drop.kind === 'foreign_script') {
+      // R / MATLAB 脚本：与 DOM 拖放、选择器同一个入口（openForeign）→ 画布右下的“生成可编辑版本”卡；语言只按后缀粗判，后端复核内容
+      const language = foreignLanguageOf(drop.name)
+      if (!language) {
+        setNotice({ tone: 'error', text: t('home.import.dropNotScript', { name: drop.name }) })
+        return
+      }
+      setNotice(null)
+      void openForeign(drop.folder, drop.name, language).then((ok) => {
+        // 单个：画布右下的入口卡自己会说话；多拖了的说只用了哪个（openedScript 的“正在运行它”对外语脚本不成立）
+        if (ok && drop.ignored > 0)
+          useUiStore.getState().setStatus(msg('home.import.droppedMany', { name: drop.name, total: drop.ignored + 1 }, 'project'), 'done')
+      })
       return
     }
     setNotice(null)

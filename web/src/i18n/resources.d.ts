@@ -4608,7 +4608,6 @@ export default interface Resources {
       "backHome": "返回主页",
       "browseMore": "浏览更多项目",
       "import": {
-        "dropForeign": "「{{name}}」是 R / MATLAB 脚本。请点「导入我的脚本」，在窗口里选中它。",
         "dropNoPath": "系统没有告诉 {{product}}「{{name}}」在哪个文件夹，请在接下来的窗口里选中它。",
         "dropNotScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
         "droppedMany": "拖入了 {{total}} 项，只用了「{{name}}」打开项目",
@@ -5306,6 +5305,7 @@ export default interface Resources {
           "installedLate": "依赖已经装好了（停止来得太晚，没能撤回）。",
           "replanning": "正在按新环境重新检查…",
           "resuming": "正在装 {{names}}，装好后接着生成…",
+          "stopping": "正在停止…",
           "system": "这个 Python 是系统自带的，往里面装包可能弄坏系统工具。请给项目换一个环境。",
           "systemBuiltin": "这是 {{product}} 内置的运行环境，不往里面装包。请给项目换一个环境。",
           "uncommon": "{{names}} 这个包不常见，确认是你要的再装。"

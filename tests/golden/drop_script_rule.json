@@ -1,5 +1,5 @@
 {
-  "_comment": "主页拖放「什么算脚本、打开哪个目录」的共享向量（严格同源对，docs/rules/repo/same-origin-pairs.md）。壳 src-tauri/src/drop_paths.rs::classify 与页面 web/src/lib/scriptImport.ts::dropTargetOf 各自与它比，不读对方源码。结论三档：script = 打开它的上级目录；folder = 打开它自己；unsupported = 不收。name 是拖进来的那一项的最后一段；on_disk 是它在磁盘上的真实类型：file / dir / symlink（symlink 时 link_to 给出目标的名字与类型，目标放在另一个目录里）。壳先 canonicalize 再判，所以链接按**目标**判、打开的是目标那一侧的目录；页面只看得到链接自己的路径串，不能 stat、不能解析链接。两侧不同的条目必须写 page_blind（页面为什么判不出），反过来也一样——「不同」指结论不同，或者是符号链接（结论相同时打开的目录也不同）；这条两侧的用例都断言，page_blind 的清单以这里为准。posix_only 的条目 Windows 上建不出来，壳那侧在 Windows 上跳过。on_disk = dir 的条目两侧另外各量一次带结尾分隔符的路径：页面看得见分隔符时必须与壳同为 folder。",
+  "_comment": "主页拖放「什么算脚本、打开哪个目录」的共享向量（严格同源对，docs/rules/repo/same-origin-pairs.md）。壳 src-tauri/src/drop_paths.rs::classify 与页面 web/src/lib/scriptImport.ts::dropTargetOf 各自与它比，不读对方源码。结论四档：script = 打开它的上级目录；foreign_script = R / MATLAB 脚本（只认 .R / .r / .m，区分大小写），同样打开上级目录，但前端提议“生成可编辑版本”而不是运行（ADR 0143 修订二）；folder = 打开它自己；unsupported = 不收。name 是拖进来的那一项的最后一段；on_disk 是它在磁盘上的真实类型：file / dir / symlink（symlink 时 link_to 给出目标的名字与类型，目标放在另一个目录里）。壳先 canonicalize 再判，所以链接按**目标**判、打开的是目标那一侧的目录；页面只看得到链接自己的路径串，不能 stat、不能解析链接。两侧不同的条目必须写 page_blind（页面为什么判不出），反过来也一样——「不同」指结论不同，或者是符号链接（结论相同时打开的目录也不同）；这条两侧的用例都断言，page_blind 的清单以这里为准。posix_only 的条目 Windows 上建不出来，壳那侧在 Windows 上跳过。on_disk = dir 的条目两侧另外各量一次带结尾分隔符的路径：页面看得见分隔符时必须与壳同为 folder。",
   "cases": [
     {
       "name": "plot.py",
@@ -148,6 +148,55 @@
       "page": "script",
       "page_blind": "页面不能解析符号链接：只看得到链接自己的名字与所在目录",
       "posix_only": "Windows 建符号链接要开发者模式或管理员权限"
+    },
+    {
+      "name": "fig.R",
+      "on_disk": "file",
+      "shell": "foreign_script",
+      "page": "foreign_script"
+    },
+    {
+      "name": "fig.r",
+      "on_disk": "file",
+      "shell": "foreign_script",
+      "page": "foreign_script"
+    },
+    {
+      "name": "calc.m",
+      "on_disk": "file",
+      "shell": "foreign_script",
+      "page": "foreign_script"
+    },
+    {
+      "name": "calc.M",
+      "on_disk": "file",
+      "shell": "unsupported",
+      "page": "unsupported"
+    },
+    {
+      "name": "doc.Rmd",
+      "on_disk": "file",
+      "shell": "unsupported",
+      "page": "unsupported"
+    },
+    {
+      "name": "live.mlx",
+      "on_disk": "file",
+      "shell": "unsupported",
+      "page": "unsupported"
+    },
+    {
+      "name": ".R",
+      "on_disk": "file",
+      "shell": "unsupported",
+      "page": "unsupported"
+    },
+    {
+      "name": "model.m",
+      "on_disk": "dir",
+      "shell": "folder",
+      "page": "foreign_script",
+      "page_blind": "页面不能 stat：名字以 .m / .R 结尾的目录只看得出是外语脚本的形状"
     }
   ]
 }

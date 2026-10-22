@@ -1232,6 +1232,7 @@
         "resuming": "正在装 {{names}}，装好后接着生成…",
         "replanning": "正在按新环境重新检查…",
         "continuing": "正在继续检查新版本…",
+        "stopping": "正在停止…",
         "installedLate": "依赖已经装好了（停止来得太晚，没能撤回）。",
         "env": {
           "managed": "{{product}} 的项目环境"

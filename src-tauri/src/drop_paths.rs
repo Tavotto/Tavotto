@@ -6,8 +6,10 @@
 //! * 只认**真实存在的本地绝对路径**：先看原串是不是绝对路径，再 `canonicalize`（解开
 //!   符号链接与 `..`）；拿不到规范路径的一律丢掉，不猜。
 //! * 放下的东西里**第一个 `.py`** 赢：打开它所在的文件夹（项目 = 脚本所在的文件夹），
-//!   脚本本身一起交给前端（说出口 + 关联）；没有 `.py` 时**第一个文件夹**当项目打开；
-//!   都没有就是「不支持的类型」，把第一个的名字交给前端提示。
+//!   脚本本身一起交给前端（说出口 + 关联）；没有 `.py` 时**第一个外语脚本**（`.R` / `.r` / `.m`，
+//!   ADR 0143 修订二；大小写与 `web/src/lib/foreignScript.ts`、后端 `sourcelang.extension_hint` 同一份，
+//!   `.M` 不算）同样打开它所在的文件夹，前端据此提议「生成可编辑版本」而不是运行；
+//!   都没有脚本时**第一个文件夹**当项目打开；都没有就是「不支持的类型」，把第一个的名字交给前端提示。
 //! * `ignored` = 这次放下来、但没被采用的条目数（多拖了几个时前端要说一句）。
 //!
 //! 产出只是一个建议：前端拿到路径后仍走 `/api/projects/open`——会话认证（ADR 0008）与
@@ -21,6 +23,13 @@ use std::path::{Path, PathBuf};
 pub enum DropTarget {
     /// 放下的是 `.py`：打开 `folder`，并告诉用户是哪个脚本
     Script {
+        folder: String,
+        script: String,
+        name: String,
+        ignored: usize,
+    },
+    /// 放下的是 R / MATLAB 脚本（`.R` / `.r` / `.m`）：打开 `folder`，由前端提议「生成可编辑版本」；不运行
+    ForeignScript {
         folder: String,
         script: String,
         name: String,
@@ -62,6 +71,16 @@ fn is_script(p: &Path) -> bool {
             .is_some_and(|e| e.eq_ignore_ascii_case("py"))
 }
 
+/// R / MATLAB 脚本的后缀：只认 `.R` / `.r` / `.m`（区分大小写，`.M` 不算；
+/// 与 `web/src/lib/foreignScript.ts::foreignLanguageOf`、`sourcelang.extension_hint` 同一份）。
+/// 后缀只是粗判，内容由后端复核（`.m` 也是 Objective-C 的后缀）。
+fn is_foreign_script(p: &Path) -> bool {
+    p.is_file()
+        && p.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| matches!(e, "R" | "r" | "m"))
+}
+
 /// 一次放下 → 分派结果；一个能用的路径都没有时 `None`（什么都不发）。
 pub fn classify(paths: &[PathBuf]) -> Option<DropTarget> {
     let real: Vec<PathBuf> = paths
@@ -74,6 +93,15 @@ pub fn classify(paths: &[PathBuf]) -> Option<DropTarget> {
     if let Some(script) = real.iter().find(|p| is_script(p)) {
         let folder = script.parent()?;
         return Some(DropTarget::Script {
+            folder: display_path(folder)?,
+            script: display_path(script)?,
+            name: name_of(script),
+            ignored,
+        });
+    }
+    if let Some(script) = real.iter().find(|p| is_foreign_script(p)) {
+        let folder = script.parent()?;
+        return Some(DropTarget::ForeignScript {
             folder: display_path(folder)?,
             script: display_path(script)?,
             name: name_of(script),
@@ -145,6 +173,86 @@ mod tests {
                 assert_eq!(name, "a.py");
                 assert_eq!(ignored, 3);
             }
+            other => panic!("expected Script, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r_and_matlab_scripts_open_their_folder_as_foreign_scripts() {
+        let d = scratch("foreign");
+        for (i, name) in ["fig.R", "fig.r", "calc.m"].into_iter().enumerate() {
+            let sub = d.join(i.to_string());
+            fs::create_dir(&sub).unwrap();
+            let f = sub.join(name);
+            touch(&f);
+            match classify(std::slice::from_ref(&f)).unwrap() {
+                DropTarget::ForeignScript {
+                    folder,
+                    script,
+                    name: n,
+                    ignored,
+                } => {
+                    assert_eq!(folder, display_path(&sub).unwrap());
+                    assert_eq!(script, display_path(&f).unwrap());
+                    assert_eq!(n, name);
+                    assert_eq!(ignored, 0);
+                }
+                other => panic!("{name}: expected ForeignScript, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn only_the_three_exact_suffixes_count_as_foreign_scripts() {
+        let d = scratch("foreign-no");
+        for name in [
+            "calc.M",
+            "doc.Rmd",
+            "live.mlx",
+            "fig.rs",
+            "notes.mat",
+            ".R",
+            "m",
+        ] {
+            let f = d.join(name);
+            touch(&f);
+            assert_eq!(
+                classify(std::slice::from_ref(&f)),
+                Some(DropTarget::Unsupported { name: name.into() }),
+                "{name}"
+            );
+        }
+        // 叫 fig.R 的目录不是脚本：按文件夹走
+        let dir = d.join("dir.R");
+        fs::create_dir(&dir).unwrap();
+        assert!(matches!(
+            classify(std::slice::from_ref(&dir)),
+            Some(DropTarget::Folder { .. })
+        ));
+    }
+
+    #[test]
+    fn multi_drop_rules_py_first_then_foreign_then_folder() {
+        let d = scratch("foreign-many");
+        let sub = d.join("sub");
+        fs::create_dir(&sub).unwrap();
+        let r = d.join("a.R");
+        let m = d.join("b.m");
+        let py = d.join("c.py");
+        for f in [&r, &m, &py] {
+            touch(f);
+        }
+        // 外语脚本赢文件夹；多个外语脚本第一个赢
+        match classify(&[sub.clone(), r.clone(), m.clone()]).unwrap() {
+            DropTarget::ForeignScript { name, ignored, .. } => {
+                assert_eq!(name, "a.R");
+                assert_eq!(ignored, 2);
+            }
+            other => panic!("expected ForeignScript, got {other:?}"),
+        }
+        // .py 赢外语脚本（与既有「第一个 .py 赢」一致）
+        match classify(&[r, m, py]).unwrap() {
+            DropTarget::Script { name, .. } => assert_eq!(name, "c.py"),
             other => panic!("expected Script, got {other:?}"),
         }
     }
@@ -273,6 +381,14 @@ mod tests {
                     assert_eq!(n, name_of(&judged));
                     "script"
                 }
+                Some(DropTarget::ForeignScript {
+                    folder, name: n, ..
+                }) => {
+                    let up = judged.parent().unwrap();
+                    assert_eq!(folder, display_path(up).unwrap(), "{name:?}");
+                    assert_eq!(n, name_of(&judged));
+                    "foreign_script"
+                }
                 Some(DropTarget::Folder { folder, .. }) => {
                     assert_eq!(folder, display_path(&judged).unwrap(), "{name:?}");
                     "folder"
@@ -295,8 +411,8 @@ mod tests {
                 );
             }
         }
-        // 三档都真的出现过，否则某一档判错了也量不出来
-        assert_eq!(seen.len(), 3, "{seen:?}");
+        // 四档都真的出现过，否则某一档判错了也量不出来
+        assert_eq!(seen.len(), 4, "{seen:?}");
     }
 
     #[test]
@@ -312,6 +428,21 @@ mod tests {
         assert_eq!(
             display_path(Path::new("/Users/me/figs")).unwrap(),
             "/Users/me/figs"
+        );
+    }
+
+    #[test]
+    fn the_foreign_script_payload_shape_is_what_the_frontend_reads() {
+        let v = serde_json::to_value(DropTarget::ForeignScript {
+            folder: "/x".into(),
+            script: "/x/f.R".into(),
+            name: "f.R".into(),
+            ignored: 0,
+        })
+        .unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"kind": "foreign_script", "folder": "/x", "script": "/x/f.R", "name": "f.R", "ignored": 0})
         );
     }
 

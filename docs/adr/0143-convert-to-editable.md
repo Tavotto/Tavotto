@@ -103,6 +103,10 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
   **不删候选、不自动往下跑校验**（避免违背停止意图），候选停在 `meta.json` 状态 `deps_installed`（“已装好、等你继续”，`installed` 如实记录），界面一句「依赖已经装好了（停止来得太晚，没能撤回）。」
   + 主按钮「继续」（走 `{action:"replan"}` 入口：已不缺包，直接校验同一个候选）。依赖步骤真的被取消（未过提交点，结局 `cancelled`）或根本没装过东西：照旧 `cancelled`、删候选。
   取舍：停止是对“整件事”的意图，但环境写入已撤不回，保留候选让用户用已付出的安装继续，比删掉再让用户重来更不浪费；若用户在这之前已关掉卡片，候选留到 24 小时过期。
+- **续跑期间点停止先对账再清卡（Codex #1330 P2）**：`resuming` 里点「停止」/ 关闭不再先清条目——条目留在 `resuming` 并标 `stopping`（卡片只一句「正在停止…」、无按钮），
+  发 `discard` 后由续跑轮询按后端真实状态收尾：候选已删（404 / `discarded`）→ 才清卡；`deps_installed`（停止来得太晚）→ 落 `installed`，出上面那张「依赖已经装好了……」+「继续」；
+  `ready` / `awaiting_dependencies` / `failed` 如实展示。`discard` 请求本身失败 → 立刻 `GET` 对账再按结果展示（仍在续跑 = 取消没送到，退回可再点停止）。后端不改：
+  `discard` 对续跑作业只置取消标记并立即回 `{ok:true}`（作业异步收尾，回复里本来就不可能知道结局），结局以状态读口为准。非续跑阶段（`deps` / `installed` / `ready` / `running`）的停止 / 关闭行为不变。
 - **续跑遇到传输错误先对账（Codex #1330 P1）**：前端续跑（install / replan / 继续）的 POST 或轮询遇到网络 / 超时 / 5xx / 响应丢失，或 409 `convert_not_awaiting_dependencies`，不直接判失败：
   先 `GET /api/ai/convert/<sid>`（转换自己的状态，**不是**已终结的 AI 会话，后者永远是 `needs_input`，会把已 ready 的候选盖回旧依赖卡），按后端真实状态展示
   （`resuming` 继续等 / `ready` 可采用 / `awaiting_dependencies` 换新卡 / `deps_installed` / `failed` / 404 已不存在）。对账也连不上 → 「暂时连不上，请稍后重试」（`failed` + `resume_unreachable`，保留动作）；
@@ -117,7 +121,9 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 其余不变：端点同一个 `POST /api/ai/convert`（多可选 `source_language`，缺省 `python`；r / matlab 时 `library` 必须缺省，声明与文件内容对不上 400
 `convert_source_language_mismatch`）；候选 / 校验 / 采用全套（第二节逐条）；目标名 `fig.R` → `fig_matplotlib.py`；`library` 在 r / matlab 时为 null；
 会话元数据（sidecar、`meta.json`）记 `source_language`；预算与契约不变；**不加遥测事件**（第五节）。前端：主页拖入 / 选择 `.R` / `.r` / `.m` 时打开所在文件夹并出一张
-一句话卡片（主按钮「生成可编辑版本」），不当成“不是脚本”，也不走“打开并运行”；桌面壳的原生拖放分类（`drop_paths.rs`）还不认这些后缀，壳只交来名字时提示用选择器（后续）。
+一句话卡片（主按钮「生成可编辑版本」），不当成“不是脚本”，也不走“打开并运行”；桌面壳的原生拖放分类（`drop_paths.rs`，Codex #1330 P2）认这三个后缀（区分大小写，`.M` / `.Rmd` / `.mlx` 不算，与 `foreignScript.ts` / `sourcelang.extension_hint` 同一份）：
+`DropTarget::ForeignScript { folder, script, name, ignored }`（载荷 `kind: "foreign_script"`），分派顺序 `.py` > 外语脚本 > 文件夹 > 不支持，多个取第一个；页面收到后与 DOM 拖放、选择器走同一个入口
+（`openForeign`：开所在文件夹 → 出卡，不运行；语言按文件名后缀在页面侧判）。
 
 ## 不做
 

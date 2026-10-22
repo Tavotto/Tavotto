@@ -66,7 +66,7 @@
   `main.json`，远程实例窗口维持系统标题栏。看护同上。
 - **主页拖放拿真实路径**（ADR 0092）：`disable_drag_drop_handler()` 必须留着（装上 Tauri 的处理器
   页面 HTML5 拖放整片失效）；macOS 上 `native_drop.rs` 只旁听 `performDragOperation:` 读路径、发
-  `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测），
+  `tavotto:file-drop`、再调原实现。路径分派只在 `drop_paths::classify`（绝对 + canonicalize，Rust 单测；`.py` > 外语脚本 `.R`/`.r`/`.m` > 文件夹，ADR 0143 修订二），
   视图分派在前端（只有主页订阅）；两侧同源由 `tests/test_desktop_file_drop.py` 看护，「什么算脚本」与页面
   `scriptImport.ts` 同源由 `tests/golden/drop_script_rule.json`（两侧各读）看护。
 - **远程实例窗口**（ADR 0105）：label `remote`，加载 `ssh -L` 转发过来的服务器引擎。

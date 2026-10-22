@@ -870,6 +870,10 @@ function convertFlow(
       }
     }
     case 'resuming':
+      if (c.stopping) {
+        // 停止可能来得太晚：等后端回话再决定清卡还是显示「依赖已装好」，期间只有一句话、没有可点的按钮
+        return { title: pt('convert.deps.stopping'), slot: <Progress /> }
+      }
       return {
         title: c.replanning
           ? pt('convert.deps.replanning')

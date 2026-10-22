@@ -63,6 +63,8 @@ export interface ConvertEntry {
   replanning: boolean
   /** 续跑的 POST / 轮询遇到传输错误、对账也没连上时留下的动作（`failed` + `resume_unreachable`）：重试先对账，不去轮询已终结的 AI 会话；没有 = null */
   lost: ResumeKind | null
+  /** 续跑期间点了「停止」、正在等后端对账（`resuming` 里显示“正在停止…”）：停止可能来得太晚（依赖已过提交点），不能先清卡 */
+  stopping?: boolean
 }
 
 interface ConvertState {
@@ -134,13 +136,18 @@ const envIdentity = (): string => {
 /** 对账得到的后端真实状态 → 条目。回 true = 还在续跑（继续轮询） */
 function applyConvertStatus(script: string, pj: string | null, status: ConvertStatus): boolean {
   if (status.state === 'resuming') return true
+  if (status.state === 'discarded' && useConvertStore.getState().entries[script]?.stopping) {
+    // 用户点了停止、后端确已删掉候选：这才清卡
+    useConvertStore.getState().clear(script)
+    return false
+  }
   if (status.state === 'ready') {
-    set1(script, { phase: 'ready', status, card: null, replanning: false, lost: null })
+    set1(script, { phase: 'ready', status, card: null, replanning: false, lost: null, stopping: false })
   } else if (status.state === 'awaiting_dependencies' && status.dependency_card) {
-    set1(script, { phase: 'deps', card: status.dependency_card, replanning: false, lost: null })
+    set1(script, { phase: 'deps', card: status.dependency_card, replanning: false, lost: null, stopping: false })
   } else if (status.state === 'deps_installed') {
     // 取消来得太晚：依赖已装好，候选保留，等用户点「继续」
-    set1(script, { phase: 'installed', status, card: null, replanning: false, lost: null })
+    set1(script, { phase: 'installed', status, card: null, replanning: false, lost: null, stopping: false })
   } else {
     acceptedSessions.delete(scopeKey(pj, script))
     set1(script, {
@@ -149,6 +156,7 @@ function applyConvertStatus(script: string, pj: string | null, status: ConvertSt
       card: null,
       replanning: false,
       lost: null,
+      stopping: false,
     })
   }
   return false
@@ -204,6 +212,10 @@ async function driveResume(
       if (!guard.still() || !mine()) return // 关闭 / 停止时候选被后端删掉，轮询会 404：那是用户自己点的，条目已经清了
       if (e instanceof ApiError && e.status === 404) {
         acceptedSessions.delete(scopeKey(pj, script))
+        if (get().entries[script]?.stopping) {
+          get().clear(script) // 停止已被后端受理、候选已删：这才清卡
+          return
+        }
         set1(script, { phase: 'failed', error: backendErrorText(e), reason: null, card: null, replanning: false, lost: null })
         return
       }
@@ -440,9 +452,35 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
 
   stop: async (script) => {
     const cur = get().entries[script]
+    if (cur?.session && cur.phase === 'resuming') {
+      // 续跑期间的停止可能来得太晚（依赖步骤已过提交点）：不能先清卡——先进「正在停止…」，
+      // 由 driveResume 的轮询按后端真实状态收尾（候选已删 → 清卡；deps_installed → 「继续 / 放弃」卡）
+      const session = cur.session
+      const pj = currentProjectId()
+      const guard = captureProjectEpoch()
+      set1(script, { stopping: true })
+      try {
+        await discardConvert(session, pj)
+      } catch {
+        // discard 请求本身失败：不知道后端到底停没停——先对账再按结果展示
+        if (!guard.still()) return
+        if (get().entries[script]?.session !== session) return
+        try {
+          const status = await fetchConvert(session, pj)
+          if (!guard.still() || get().entries[script]?.session !== session) return
+          if (!applyConvertStatus(script, pj, status)) return
+          set1(script, { stopping: false }) // 还在续跑、取消没送到：回到可再点停止的状态
+        } catch (e) {
+          if (!guard.still() || get().entries[script]?.session !== session) return
+          if (e instanceof ApiError && e.status === 404) get().clear(script)
+          else set1(script, { stopping: false })
+        }
+      }
+      return
+    }
     get().clear(script)
-    if (cur?.session && (cur.phase === 'deps' || cur.phase === 'resuming' || cur.phase === 'installed')) {
-      // 任务已经以 needs_input 终局，没有可取消的任务了；候选和（可能正在进行的）安装由 discard 取消
+    if (cur?.session && (cur.phase === 'deps' || cur.phase === 'installed')) {
+      // 任务已经以 needs_input 终局，没有可取消的任务了；候选由 discard 删除
       try {
         await discardConvert(cur.session, currentProjectId())
       } catch {

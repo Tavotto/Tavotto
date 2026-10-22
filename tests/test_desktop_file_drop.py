@@ -69,7 +69,7 @@ def test_the_event_name_is_one_string_on_both_sides():
 
 def test_the_payload_kinds_are_the_same_closed_set_on_both_sides():
     rust, ts = _rust_kinds(), _ts_kinds()
-    assert rust == {"script", "folder", "unsupported"}, rust
+    assert rust == {"script", "foreign_script", "folder", "unsupported"}, rust
     assert ts == rust
 
 
