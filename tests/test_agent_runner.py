@@ -1338,3 +1338,155 @@ class TestReviewRound2:
         )
         assert res.ok
         assert srv.requests[0][2]["thinking"] == {"type": "enabled", "budget_tokens": 12000}
+
+
+class _TrickleServer:
+    """每 0.2 s 吐一个字节（至多 5 s）的假服务器：每次 read 都成功，socket 超时管不住。"""
+
+    def __init__(self):
+        import socket
+
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(4)
+        self.url = f"http://127.0.0.1:{self.sock.getsockname()[1]}"
+        self.stop = threading.Event()
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        while not self.stop.is_set():
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._drip, args=(conn,), daemon=True).start()
+
+    def _drip(self, conn):
+        try:
+            conn.recv(65536)
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100000\r\n\r\n"
+            )
+            for _ in range(25):  # 至多 5 s：没有总时限的实现会红而不是挂死
+                if self.stop.is_set():
+                    break
+                conn.sendall(b" ")
+                time.sleep(0.2)
+        except OSError:
+            pass
+        finally:
+            conn.close()
+
+    def close(self):
+        self.stop.set()
+        self.sock.close()
+
+
+class TestReviewRound3:
+    """Codex 第三轮 P2：慢吐字节越过总时限 / 非 end 停止不算完成 / responses+max 拒绝 / 恰好用满的终止答复。"""
+
+    def test_slow_trickle_response_cannot_cross_total_deadline(self, cand):
+        srv = _TrickleServer()
+        try:
+            model = loop.HttpModel(
+                wires.WIRES["anthropic"],
+                base_url=srv.url,
+                api_key=KEY_CANARY,
+                model="m-1",
+                retry_base=0.0,
+                max_attempts=1,
+                request_timeout=30,
+            )
+            t0 = time.monotonic()
+            res, _ = run_demo(
+                cand, {"turns": []}, model=model, limits=tools.Limits(max_seconds=1.0)
+            )
+            assert time.monotonic() - t0 < 2.0
+            assert (res.ok, res.reason, res.detail) == (False, "budget", "time")
+        finally:
+            srv.close()
+
+    @pytest.mark.parametrize(
+        ("wire", "body", "detail"),
+        [
+            (
+                "anthropic",
+                {
+                    "content": [{"type": "text", "text": "x"}],
+                    "stop_reason": "Weird-Reason!!",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+                "bad_stop_weirdreason",
+            ),
+            (
+                "anthropic",
+                {
+                    "content": [{"type": "text", "text": "x"}],
+                    "stop_reason": "tool_use",
+                    "usage": {"input_tokens": 1, "output_tokens": 1},
+                },
+                "bad_stop_tool_use",
+            ),
+            (
+                "openai-chat",
+                {
+                    "choices": [
+                        {
+                            "finish_reason": "tool_calls",
+                            "message": {"role": "assistant", "content": "x", "tool_calls": []},
+                        }
+                    ],
+                    "usage": {},
+                },
+                "bad_stop_tool_calls",
+            ),
+        ],
+    )
+    def test_non_end_stop_without_tool_calls_is_protocol_failure(
+        self, cand, serve, wire, body, detail
+    ):
+        _, res, events = http_run(cand, serve, wire, [(200, {}, body)])
+        assert (res.ok, res.reason, res.detail) == (False, "network", detail)
+        assert done(events)["ok"] is False
+
+    def test_responses_with_effort_max_is_rejected_before_any_request(self, cand, serve):
+        srv = serve(_final_text_turn("anthropic", "hi"))
+        p = run_cli(
+            cand,
+            "openai-responses",
+            "--base-url",
+            srv.url,
+            "--model",
+            "m",
+            "--effort",
+            "max",
+            key=KEY_CANARY,
+            stdin="make it blue",
+        )
+        last = json.loads(p.stdout.splitlines()[-1])
+        assert (last["type"], last["reason"], last["detail"]) == ("done", "internal", "bad_args")
+        assert srv.requests == [] and p.returncode == 1
+
+    def test_terminal_reply_using_exactly_the_cap_completes(self, cand):
+        res, _ = run_demo(
+            cand,
+            {"turns": [{"text": "ok", "usage": {"input": 6, "output": 4}}]},
+            limits=tools.Limits(max_total_tokens=10),
+        )
+        assert (res.ok, res.reason) == (True, "completed")
+
+    def test_tool_reply_using_exactly_the_cap_is_budget_and_tool_not_run(self, cand):
+        before = _tree(cand)
+        edit = {"name": "edit_file", "args": {"old": 'color="red"', "new": 'color="blue"'}}
+        res, events = run_demo(
+            cand,
+            {
+                "turns": [
+                    {"tool_calls": [edit], "usage": {"input": 6, "output": 4}},
+                    {"text": "done"},
+                ]
+            },
+            limits=tools.Limits(max_total_tokens=10),
+        )
+        assert (res.ok, res.reason, res.detail, res.turns) == (False, "budget", "tokens", 1)
+        assert not any(e["type"] == "tool" for e in events) and _tree(cand) == before

@@ -145,7 +145,9 @@ class HttpModel:
             retry_after = None
             try:
                 status, headers, data = _cancellable(
-                    lambda: self._post(req.url, req.headers, req.body, timeout=timeout), cancel
+                    lambda: self._post(req.url, req.headers, req.body, timeout=timeout),
+                    cancel,
+                    deadline,
                 )
             except RunnerFailure as exc:
                 if not exc.retryable:
@@ -201,8 +203,9 @@ def _retry_after(headers: dict[str, str]) -> float | None:
     return v if 0 <= v <= 30 else None
 
 
-def _cancellable(fn: Callable, cancel: threading.Event):
-    """在线程里跑阻塞的网络调用，主线程每 50 ms 看一次取消。取消时放弃那个线程（守护线程，进程随后退出）。"""
+def _cancellable(fn: Callable, cancel: threading.Event, deadline: float | None = None):
+    """在线程里跑阻塞的网络调用，主线程每 50 ms 看一次取消与总时限（socket 超时管不住「慢慢吐字节」）。
+    取消 / 到点时放弃那个线程（守护线程，进程随后退出），在途响应丢弃。"""
     box: dict = {}
     done = threading.Event()
 
@@ -218,6 +221,8 @@ def _cancellable(fn: Callable, cancel: threading.Event):
     while not done.wait(0.05):
         if cancel.is_set():
             raise RunnerFailure("cancelled")
+        if deadline is not None and time.monotonic() >= deadline:
+            raise RunnerFailure("budget", "time")
     if "error" in box:
         raise box["error"]
     return box["value"]
@@ -407,8 +412,11 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                 "cached_input_tokens": turn.usage.cached_input_tokens,
             }
         )
-        # 每轮记账后立刻复查：首轮就超的回复不接受、其工具不执行
-        if led.total_in + led.total_out >= limits.max_total_tokens:
+        # 每轮记账后立刻复查：超额的回复不接受、其工具不执行。终止答复（end 且无工具调用）恰好用满上限
+        # 仍算完成（`>` 才拒）；要开下一轮 / 要执行工具的回复等于上限也拦（`>=`）。
+        terminal = not turn.tool_calls and turn.stop == "end"
+        used = led.total_in + led.total_out
+        if used > limits.max_total_tokens or (not terminal and used >= limits.max_total_tokens):
             return _finish(res, False, "budget", "tokens")
         if cancel.is_set():  # 请求期间被取消，或上面的 usage 输出遇到 BrokenPipe
             return _finish(res, False, "cancelled")
@@ -423,6 +431,8 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
         if not turn.tool_calls:
             if turn.stop == "max_tokens":
                 return _finish(res, False, "budget", "output_truncated")
+            if turn.stop != "end":  # 未知停止原因 / 声称要调工具却没有可用调用：不是完成
+                return _finish(res, False, "network", f"bad_stop_{turn.stop_value or turn.stop}")
             return _finish(res, True, "completed")
 
         results: list[ToolResult] = []

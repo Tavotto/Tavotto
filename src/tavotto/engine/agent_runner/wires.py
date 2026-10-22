@@ -68,10 +68,20 @@ class Turn:
     usage: Usage = field(default_factory=Usage)
     #: "end" | "tool_use" | "max_tokens" | "other"
     stop: str = "end"
+    #: stop == "other" 时服务端给的原值，经白名单清洗（只留小写字母数字下划线、≤ 24 字符），仅用于 detail
+    stop_value: str = ""
     #: 思考内容的字符数（内容本身不出进程）
     thinking_chars: int = 0
     #: 协议私有的、回放这一轮时要原样带回的东西（anthropic 的 content 块含 thinking 签名；responses 的 output 项）
     native: Any = None
+
+
+def clean_stop(value: object) -> str:
+    """服务端给的停止原因只以白名单字符进 detail（它来自不可信的响应体）。"""
+    if not isinstance(value, str):
+        return "none"
+    out = "".join(c for c in value.lower() if c.isascii() and (c.isalnum() or c == "_"))[:24]
+    return out or "empty"
 
 
 @dataclass
@@ -294,6 +304,7 @@ class AnthropicWire:
                 stop, "other"
             )
         )
+        turn.stop_value = clean_stop(stop)
         return turn
 
 
@@ -407,6 +418,7 @@ class OpenAIChatWire:
             if turn.tool_calls
             else {"stop": "end", "length": "max_tokens"}.get(fin, "other")
         )
+        turn.stop_value = clean_stop(fin)
         return turn
 
 

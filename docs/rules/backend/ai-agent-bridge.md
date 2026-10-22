@@ -274,7 +274,7 @@
   只经 stdout 事件行与父进程说话。入口 `python -m tavotto.engine.agent_runner --cwd <候选目录> --target <相对路径> --wire <名> --base-url <url> --model <名>`。
 - **协议**（`wires.py`）：`anthropic`（`{base}/v1/messages`，`x-api-key` 与 `Authorization: Bearer` 都给，`anthropic-version: 2023-06-01`，
   系统提示与最后一个工具定义带 `cache_control: ephemeral`）、`openai-chat`（`{base}/chat/completions`）、`openai-responses`
-  （`{base}/responses`，`store: false`）、`demo`（剧本回放，不联网，端到端测试用）。anthropic 的思考由**调用方声明** `--thinking {adaptive,budget,none}`（默认 `none`，runner 不猜：第三方兼容网关各不相同）：`adaptive` 发 `thinking:{type:adaptive}` + 有 effort 才发 `output_config.effort`（新模型，不发已弃用的 `budget_tokens`）；`budget` 发旧式 `budget_tokens`（必须配 `--effort low|medium|high|max`，`max` 映射到 high 档；缺省 effort 起跑即 `internal/bad_args`、0 次请求，不静默不发 thinking）；`none` 都不发。thinking 块按原样回放，不做 assistant prefill，工具参数一律 `json.loads`。openai-responses 只在给了 `--effort` 时传 `reasoning.effort`。
+  （`{base}/responses`，`store: false`）、`demo`（剧本回放，不联网，端到端测试用）。anthropic 的思考由**调用方声明** `--thinking {adaptive,budget,none}`（默认 `none`，runner 不猜：第三方兼容网关各不相同）：`adaptive` 发 `thinking:{type:adaptive}` + 有 effort 才发 `output_config.effort`（新模型，不发已弃用的 `budget_tokens`）；`budget` 发旧式 `budget_tokens`（必须配 `--effort low|medium|high|max`，`max` 映射到 high 档；缺省 effort 起跑即 `internal/bad_args`、0 次请求，不静默不发 thinking）；`none` 都不发。thinking 块按原样回放，不做 assistant prefill，工具参数一律 `json.loads`。openai-responses 只在给了 `--effort` 时传 `reasoning.effort`。`--wire openai-responses` 配 `--effort max` 起跑即 `internal/bad_args`、0 次请求（Responses 没有 max 档，不静默不发 reasoning）。
   系统提示 + 工具定义在请求最前且逐字稳定（吃提示缓存）；变化的东西（目标名、用户指令）只在第一条用户消息里。
 - **出站**：只许 https，或主机恰为字面量 `127.0.0.1` 的 http；URL 不带用户信息 / 查询 / 片段。https 走 `_opener()`（`build_opener(tlstrust.https_handler(tlstrust.client_context()))`
   + 不跟随重定向，代理沿用环境变量）；回环 http 用字面量 `HTTPConnection("127.0.0.1", …)` 直连、**不经代理**。响应体有上限；
@@ -299,7 +299,8 @@
   402 或额度类 429 → `quota`，429 重试用尽 → `quota`，其余 4xx 不重试 → `network`。服务端过滤 / 拒答 → `refused`（chat `finish_reason=content_filter`、
   anthropic `stop_reason=refusal`、responses `status:incomplete` 且原因不是 `max_output_tokens`，`detail` 如 `incomplete_content_filter`）；
   responses 顶层 `status` 为 `failed`（`detail=failed_<error.code>`）或 `cancelled / queued / in_progress`（`status_<名>`）→ `network`，不再当作空的 end 轮。
-  重试等待 = min(退避, Retry-After, 30 s, 距总时限的剩余)，剩余 ≤ 0 不再发请求 → `budget`（`detail=time`）；单次请求超时也不超过剩余时间。同一工具的同一错误码连续 3 次 → `tool_error_loop`。
+  重试等待 = min(退避, Retry-After, 30 s, 距总时限的剩余)，剩余 ≤ 0 不再发请求 → `budget`（`detail=time`）；单次请求超时也不超过剩余时间。**等响应时也看总时限**：服务端以小于 socket 超时的间隔慢慢吐字节时每次 read 都成功，所以等待循环（与取消同一处、每 50 ms）同时判 deadline，到点即 `budget/time`，在途请求丢弃、回复不接受。
+  **只有 `stop == end` 且无工具调用才算 `completed`**：其它停止值（未知 `stop_reason` / `finish_reason`，或 `tool_calls` / `tool_use` 结束却没有可用调用）→ `network`，`detail=bad_stop_<值>`（值只留小写字母数字下划线、≤ 24 字符）；`max_tokens` 仍是 `budget/output_truncated`。同一工具的同一错误码连续 3 次 → `tool_error_loop`。
   SIGTERM / SIGINT / Ctrl-Break → `cancelled`。
 - **预算与账本**：轮数、token（input+output）、秒数三道上限。每轮 input / output / 耗时入账，结束时核「合计 == 各轮之和」，不等记
-  `done.ledger_mismatch=true`（不抛）。估计上下文超阈值时把早先的 `read_file` 结果换成「已读过 X（第 a–b 行，sha 前缀）」。
+  `done.ledger_mismatch=true`（不抛）。每轮记账后立刻复查 token：**终止答复**（`end` 且无工具调用）累计 `>` 上限才拒，恰好用满上限仍 `completed`；带工具调用 / 要开下一轮的答复累计 `>=` 上限即 `budget/tokens`，工具不执行、不开新轮。估计上下文超阈值时把早先的 `read_file` 结果换成「已读过 X（第 a–b 行，sha 前缀）」。

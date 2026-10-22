@@ -129,6 +129,9 @@ def main(argv: list[str] | None = None) -> int:
     elif args.thinking == "budget" and args.effort is None and args.wire != "demo":
         # budget 要有档位：显式优于静默（缺省时旧实现悄悄不发 thinking）；不发任何请求
         model = _FailModel(RunnerFailure("internal", "bad_args"))
+    elif args.wire == "openai-responses" and args.effort == "max":
+        # Responses 没有 max 档：显式拒绝，不静默不发 reasoning；不发任何请求
+        model = _FailModel(RunnerFailure("internal", "bad_args"))
     elif args.wire == "demo":
         try:
             model = loop.DemoModel.from_file(args.demo_script or "")
