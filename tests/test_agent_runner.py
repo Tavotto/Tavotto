@@ -1231,3 +1231,110 @@ class TestDeadlineAndPrompt:
         assert (d["ok"], d["reason"], d["detail"]) == (False, "internal", "bad_prompt")
         assert p.returncode == 1 and len(srv.requests) == 0
         assert KEY_CANARY not in p.stdout + p.stderr
+
+
+class TestReviewRound2:
+    """Codex 第二轮 P2：refusal 内容块 / message.refusal / 记账后复查 token / 取消先于工具 / budget 缺档位。"""
+
+    def test_responses_refusal_content_part_is_refused(self, cand, serve):
+        body = {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "refusal", "refusal": PROMPT_CANARY}],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        }
+        _, res, events = http_run(cand, serve, "openai-responses", [(200, {}, body)])
+        assert (res.ok, res.reason, res.detail) == (False, "refused", "refusal")
+        assert PROMPT_CANARY not in json.dumps(events)
+
+    def test_chat_message_refusal_with_null_content_is_refused(self, cand, serve):
+        body = {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": None, "refusal": PROMPT_CANARY},
+                }
+            ],
+            "usage": {},
+        }
+        _, res, events = http_run(cand, serve, "openai-chat", [(200, {}, body)])
+        assert (res.ok, res.reason, res.detail) == (False, "refused", "refusal")
+        assert PROMPT_CANARY not in json.dumps(events)
+
+    def test_first_reply_over_token_budget_is_not_accepted_and_tools_not_run(self, cand):
+        before = _tree(cand)
+        edit = {"name": "edit_file", "args": {"old": 'color="red"', "new": 'color="blue"'}}
+        turns = [
+            {"tool_calls": [edit], "usage": {"input": 900, "output": 200}},
+            {"text": "done"},
+        ]
+        res, events = run_demo(cand, {"turns": turns}, limits=tools.Limits(max_total_tokens=500))
+        assert (res.ok, res.reason, res.detail, res.turns) == (False, "budget", "tokens", 1)
+        assert not any(e["type"] == "tool" for e in events) and _tree(cand) == before
+        # 超额的「最终答复」同样不算完成
+        res, _ = run_demo(
+            cand,
+            {"turns": [{"text": "ok", "usage": {"input": 900, "output": 200}}]},
+            limits=tools.Limits(max_total_tokens=500),
+        )
+        assert (res.ok, res.reason) == (False, "budget")
+
+    def test_cancel_after_reply_blocks_all_tool_execution(self, cand):
+        before = _tree(cand)
+        ev = threading.Event()
+        events: list[dict] = []
+
+        def emit(e):  # 模拟 stdout 断开：usage 输出置取消
+            events.append(e)
+            if e["type"] == "usage":
+                ev.set()
+
+        edit = {"name": "write_file", "args": {"content": "pwned = 1\n"}}
+        model = loop.DemoModel({"turns": [{"tool_calls": [edit], "usage": {"input": 1}}]})
+        res = loop.run(model, tools.TOOLSETS["figure_edit"], envelope(cand), emit, ev)
+        assert (res.ok, res.reason) == (False, "cancelled")
+        assert not any(e["type"] == "tool" for e in events) and _tree(cand) == before
+
+    def test_cancel_between_tool_calls_stops_the_rest(self, cand):
+        ev = threading.Event()
+        events: list[dict] = []
+
+        def emit(e):
+            events.append(e)
+            if e["type"] == "tool":
+                ev.set()
+
+        calls = [{"name": "list_dir", "args": {}}] * 3
+        model = loop.DemoModel({"turns": [{"tool_calls": calls}]})
+        res = loop.run(model, tools.TOOLSETS["figure_edit"], envelope(cand), emit, ev)
+        assert res.reason == "cancelled"
+        assert sum(e["type"] == "tool" for e in events) == 1
+
+    def test_thinking_budget_without_effort_is_rejected_before_any_request(self, cand, serve):
+        srv = serve(ANTHROPIC_TURNS)
+        p = run_cli(
+            cand,
+            "anthropic",
+            "--base-url",
+            srv.url,
+            "--model",
+            "m",
+            "--thinking",
+            "budget",
+            key=KEY_CANARY,
+            stdin="make it blue",
+        )
+        last = json.loads(p.stdout.splitlines()[-1])
+        assert (last["type"], last["reason"], last["detail"]) == ("done", "internal", "bad_args")
+        assert srv.requests == [] and p.returncode == 1
+
+    def test_thinking_budget_with_max_maps_to_high_budget(self, cand, serve):
+        srv, res, _ = http_run(
+            cand, serve, "anthropic", ANTHROPIC_TURNS, effort="max", thinking="budget"
+        )
+        assert res.ok
+        assert srv.requests[0][2]["thinking"] == {"type": "enabled", "budget_tokens": 12000}

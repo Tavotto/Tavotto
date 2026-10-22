@@ -241,8 +241,9 @@ class AnthropicWire:
             body["thinking"] = {"type": "adaptive"}
             if effort in ANTHROPIC_EFFORTS:
                 body["output_config"] = {"effort": effort}
-        elif thinking == "budget" and effort in _THINKING_BUDGET:
-            budget = _THINKING_BUDGET[effort]
+        elif thinking == "budget" and effort is not None:
+            # budget 必须有档位（CLI 层已拒绝缺省）；max 在旧式预算里没有对应档，映射到 high
+            budget = _THINKING_BUDGET["high" if effort == "max" else effort]
             body["max_tokens"] = max_output_tokens + budget
             body["thinking"] = {"type": "enabled", "budget_tokens": budget}
         headers = {
@@ -371,6 +372,11 @@ class OpenAIChatWire:
         msg = choices[0].get("message")
         if not isinstance(msg, dict):
             raise _bad("bad_response")
+        rf = msg.get("refusal")
+        if (
+            isinstance(rf, str) and rf.strip()
+        ):  # content:null + refusal + finish_reason:stop 不是空成功
+            raise _refused("refusal")
         turn = Turn(text=msg["content"] if isinstance(msg.get("content"), str) else "")
         for c in msg.get("tool_calls") or []:
             fn = c.get("function") if isinstance(c, dict) else None
@@ -494,6 +500,8 @@ class OpenAIResponsesWire:
             kind = it.get("type")
             if kind == "message":
                 for part in it.get("content") or []:
+                    if isinstance(part, dict) and part.get("type") == "refusal":
+                        raise _refused("refusal")  # 服务端文字不回显
                     if (
                         isinstance(part, dict)
                         and part.get("type") == "output_text"

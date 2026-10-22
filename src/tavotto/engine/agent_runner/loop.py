@@ -407,10 +407,17 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                 "cached_input_tokens": turn.usage.cached_input_tokens,
             }
         )
+        # 每轮记账后立刻复查：首轮就超的回复不接受、其工具不执行
+        if led.total_in + led.total_out >= limits.max_total_tokens:
+            return _finish(res, False, "budget", "tokens")
+        if cancel.is_set():  # 请求期间被取消，或上面的 usage 输出遇到 BrokenPipe
+            return _finish(res, False, "cancelled")
         if turn.thinking_chars:
             emit({"type": "thinking", "chars": turn.thinking_chars})
         if turn.text:
             emit({"type": "text", "text": turn.text})
+        if cancel.is_set():
+            return _finish(res, False, "cancelled")
         history.append(Msg("assistant", turn=turn))
 
         if not turn.tool_calls:
@@ -420,6 +427,8 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
 
         results: list[ToolResult] = []
         for call in turn.tool_calls:
+            if cancel.is_set():  # 每个工具调用前都查：已取消就不再写文件
+                return _finish(res, False, "cancelled")
             r = _execute(by_name, call)
             results.append(r)
             res.changed = res.changed or r.mutated
