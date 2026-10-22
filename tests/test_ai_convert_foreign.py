@@ -1129,3 +1129,38 @@ def test_a_stop_during_a_running_validation_force_cancels_the_probe(env, monkeyp
     assert out == {"state": "cancelled"}, out
     assert len(forced) == 1 and forced[0][0].startswith(ai_convert.STAGE_PREFIX)
     assert not (ai_convert.CONVERT_DIR / sid).exists()
+
+
+def test_cancel_resume_sets_the_event_while_holding_the_registry_lock():
+    """discard 与续跑落 ready 之间不许有空隙：取消标记必须在 _RESUMES_LOCK 内置位（Codex #1330 第十二轮）。"""
+    import threading as _t
+
+    from tavotto.engine import ai_convert as ac
+
+    seen = []
+
+    class Probe(_t.Event):
+        def set(self):
+            got = []
+
+            def try_take():
+                ok = ac._RESUMES_LOCK.acquire(blocking=False)
+                got.append(ok)
+                if ok:
+                    ac._RESUMES_LOCK.release()
+
+            th = _t.Thread(target=try_take)
+            th.start()
+            th.join()
+            seen.append(not got[0])  # 别的线程拿不到锁 = 置位时锁被持有
+            super().set()
+
+    sid = "s-lockcheck"
+    with ac._RESUMES_LOCK:
+        ac._RESUMES[sid] = Probe()
+    try:
+        assert ac._cancel_resume(sid) is True
+    finally:
+        with ac._RESUMES_LOCK:
+            ac._RESUMES.pop(sid, None)
+    assert seen == [True]

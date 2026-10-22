@@ -1128,11 +1128,13 @@ def resuming(sid: str) -> bool:
 
 def _cancel_resume(sid: str) -> bool:
     """有续跑作业就置位它的取消标记（回 True）；没有回 False。"""
+    # 置位必须在锁内：续跑线程「查取消 → 落 ready → 摘登记」也在这把锁里，二者只能一先一后——
+    # 要么续跑看见标记（取消赢、删候选），要么登记已摘（回 False，discard 按已 ready 的候选照常删）
     with _RESUMES_LOCK:
         ev = _RESUMES.get(sid)
-    if ev is None:
-        return False
-    ev.set()
+        if ev is None:
+            return False
+        ev.set()
     return True
 
 
