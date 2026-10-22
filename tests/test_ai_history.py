@@ -127,15 +127,17 @@ def test_capabilities_reports_uninstalled(monkeypatch):
         assert p["diagnostics"]["searched"], "必须报出找过的目录"
 
 
-def test_capabilities_agent_specific(monkeypatch):
+def test_capabilities_agent_specific(monkeypatch, tmp_path):
     _no_readiness(monkeypatch)
+    # 不读这台机器真实的 ~/.claude：没有模型目录缓存时 Claude 退回三个别名、无档位
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude-empty"))
     monkeypatch.setattr(ai_agents, "candidates", _fake_candidates(lambda i: [f"/fake/{i}"]))
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1.0")
     ai_agents.clear_cache()
     caps = ai_bridge.capabilities(refresh=True)
     codex, claude = _agent(caps, "codex"), _agent(caps, "claude")
     assert codex["efforts"]  # codex 有推理强度
-    assert claude["efforts"] == []  # claude CLI 不暴露，不假装有
+    assert claude["efforts"] == []  # 读不到 Claude 模型目录：不假装有档位
     assert codex["features"]["effort_selection"] is True
     assert claude["features"]["effort_selection"] is False
     assert codex["models"] != claude["models"]

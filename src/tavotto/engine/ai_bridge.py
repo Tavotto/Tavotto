@@ -298,8 +298,11 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
 
     state = _state(installed, enabled, res, endpoint_backed)
     # 档位只认官方目录的 Agent（Claude）：网关接管时不暴露档位
-    effort_ok = agent.supports_effort_selection and not (
-        agent.effort_official_only and (endpoint_backed or models_overridden)
+    # 没有任何可选档位（如 Claude 读不到模型目录）就不宣称能选档位
+    effort_ok = (
+        agent.supports_effort_selection
+        and bool(caps.efforts)
+        and not (agent.effort_official_only and (endpoint_backed or models_overridden))
     )
 
     info: dict = {
