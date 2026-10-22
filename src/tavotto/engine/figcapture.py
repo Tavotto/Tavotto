@@ -1805,6 +1805,24 @@ def _hook_draw_event(fig) -> None:
         pass
 
 
+def _unhook(fig) -> None:
+    """卸掉 `mark_saved` 装的两个钩子：`stale_callback` 若仍是我们的 `_StaleRecorder` 就还原成它记住的原回调
+    （用户换成自己的就不动），`draw_event` 回调断开并清掉记号。不抛。"""
+    try:
+        cb = getattr(fig, "stale_callback", None)
+        if isinstance(cb, _StaleRecorder):
+            fig.stale_callback = cb.orig
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        cid = getattr(fig, _DRAW_HOOK, None)
+        if cid is not None:
+            fig.canvas.mpl_disconnect(cid)
+            setattr(fig, _DRAW_HOOK, None)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def mark_saved(fig) -> None:
     """一次 savefig 记完账之后调用：把 `DIRTY_SINCE_SAVE` 清成 False，打上「存过盘」的标记，并保证 Figure 的
     `stale_callback` 外面套着一层只记录的 `_StaleRecorder`（只套一次；重复保存不叠层）。
@@ -1818,8 +1836,17 @@ def mark_saved(fig) -> None:
     那会让存盘后读 `fig.stale` 的用户脚本在 Tavotto 下走不同分支。
     语义与旧的「清 `stale`」一致：从**最后一次保存或最后一次重绘（`draw_event`）之后**被改过才算——存后脚本自己
     `fig.canvas.draw()` 不报告；已知盲区：存后改了又重绘（`plt.pause`）一次，也不再报告。
+    **两个钩子只在脚本运行期存在**：`note_modified_after_save` 判定时一并卸掉，之后 Figure 与原生无异
+    （采纳检查 `figsession._require_artifact_figure` 看不到它们）；已判过的图不再装。
     用户脚本若自己替换 `fig.stale_callback`：记录随之丢失（下次保存时重新套）；尽力而为、绝不抛错。
     不额外渲染、不复制 Figure（ADR 0139 §八「不声称拥有保存瞬间的快照」——这里只报一个事实）。"""
+    if hasattr(fig, MODIFIED_AFTER_SAVE):
+        # 已经判过（例如 native 在 show 屏障判过、之后脚本又存盘）：钩子早已卸掉，不再装
+        try:
+            setattr(fig, _SAVED_MARK, True)
+        except Exception:  # noqa: BLE001
+            pass
+        return
     try:
         cb = getattr(fig, "stale_callback", None)
         if not isinstance(cb, _StaleRecorder):
@@ -1840,6 +1867,7 @@ def note_modified_after_save(capture: dict, capture_source: dict) -> list[str]:
     for stem, fig in capture.items():
         if capture_source.get(stem) != SOURCE_SAVEFIG or not getattr(fig, _SAVED_MARK, False):
             continue
+        _unhook(fig)  # 钩子只活到判定这一刻（不论这次是否新判、不论结论）
         if not hasattr(fig, MODIFIED_AFTER_SAVE):
             try:
                 setattr(fig, MODIFIED_AFTER_SAVE, bool(getattr(fig, DIRTY_SINCE_SAVE, False)))

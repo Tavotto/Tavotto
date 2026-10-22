@@ -292,3 +292,47 @@ def test_a_change_after_save_is_reported_until_the_next_redraw():
     # 已知盲区，与旧的「清 stale」语义一致：改完又重绘过，不再报告
     fig.canvas.draw()
     assert getattr(fig, figcapture.DIRTY_SINCE_SAVE) is False
+
+
+def _our_draw_callbacks(fig):
+    return [
+        cb for cb in fig.canvas.callbacks.callbacks.get("draw_event", {}).values() if cb is not None
+    ]
+
+
+def test_hooks_live_only_until_the_verdict_then_the_figure_is_native_again():
+    """采纳检查（`figsession._require_artifact_figure`）拒绝任何 draw_event 回调与非标准 stale_callback：
+    钩子判定时必须卸干净，`stale_callback` 恢复成原值（`is` 相同），且判过之后再 `mark_saved` 不再装。"""
+    import io
+
+    fig, ax, _ = _real_figure()
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    FigureCanvasAgg(fig)
+    original = fig.stale_callback
+    before = _our_draw_callbacks(fig)
+    fig.savefig(io.BytesIO(), format="png")
+    figcapture.mark_saved(fig)
+    assert isinstance(fig.stale_callback, figcapture._StaleRecorder)
+    assert len(_our_draw_callbacks(fig)) == len(before) + 1
+    ax.set_title("x")
+    capture, source = {"a": fig}, {"a": figcapture.SOURCE_SAVEFIG}
+    assert figcapture.note_modified_after_save(capture, source) == ["a"]
+    assert fig.stale_callback is original
+    assert _our_draw_callbacks(fig) == before
+    figcapture.mark_saved(fig)  # 已判过：不再装
+    assert fig.stale_callback is original
+    assert _our_draw_callbacks(fig) == before
+    assert figcapture.note_modified_after_save(capture, source) == ["a"], "结论不变"
+
+
+def test_unhook_keeps_a_callback_the_user_installed():
+    import io
+
+    fig, _, _ = _real_figure()
+    fig.savefig(io.BytesIO())
+    figcapture.mark_saved(fig)
+    mine = lambda artist, val: None  # noqa: E731
+    fig.stale_callback = mine
+    figcapture.note_modified_after_save({"a": fig}, {"a": figcapture.SOURCE_SAVEFIG})
+    assert fig.stale_callback is mine
