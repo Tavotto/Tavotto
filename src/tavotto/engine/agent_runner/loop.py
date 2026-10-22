@@ -309,6 +309,9 @@ def estimate_tokens(system: str, tools: list[ToolSpec], history: list[Msg]) -> i
         n += len(m.text)
         if m.turn:
             n += len(m.turn.text) + sum(len(json.dumps(c.args or {})) for c in m.turn.tool_calls)
+            if m.turn.native is not None:
+                # 回放时原样带回的原生内容（签名 thinking、加密 reasoning）也占上下文
+                n += len(json.dumps(m.turn.native, ensure_ascii=False, default=str))
         n += sum(len(r.content) for r in m.results)
     return n // 3
 
@@ -451,7 +454,7 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
             return _finish(res, False, "cancelled")
         if turn.thinking_chars:
             emit({"type": "thinking", "chars": turn.thinking_chars})
-        if turn.text:
+        if turn.text and turn.stop != "max_tokens":  # 被截断的半截回答不给用户看
             emit({"type": "text", "text": turn.text})
         if cancel.is_set():
             return _finish(res, False, "cancelled")
@@ -464,6 +467,9 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                 return _finish(res, False, "network", f"bad_stop_{turn.stop_value or turn.stop}")
             return _finish(res, True, "completed")
 
+        if any(not (isinstance(c.id, str) and c.id.strip()) for c in turn.tool_calls):
+            # 缺对应 ID 的工具调用：结果无法回填、下一轮必然失败——一个都不执行
+            return _finish(res, False, "network", "tool_call_without_id")
         results: list[ToolResult] = []
         for call in turn.tool_calls:
             if cancel.is_set():  # 每个工具调用前都查：已取消就不再写文件

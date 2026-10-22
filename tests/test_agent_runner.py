@@ -1794,3 +1794,48 @@ class TestReviewRound8:
         res, events = run_demo(cand, {"turns": []}, model=model, target=target)
         assert (res.ok, res.reason, res.detail) == (False, "internal", "bad_target")
         assert calls == [] and res.turns == 0
+
+
+class TestReviewRound9:
+    """Codex #1328 第九轮：估算算上原生回放内容；截断轮不输出文字；缺 ID 的工具调用一个不执行。"""
+
+    def test_context_estimate_counts_replayed_native_payload(self):
+        big = [{"type": "thinking", "thinking": "", "signature": "S" * 30_000}]
+        plain = wires.Msg("assistant", turn=wires.Turn(text="ok"))
+        with_native = wires.Msg("assistant", turn=wires.Turn(text="ok", native=big))
+        base = loop.estimate_tokens("", [], [plain])
+        assert loop.estimate_tokens("", [], [with_native]) >= base + 30_000 // 3
+
+    def test_truncated_reply_text_is_not_emitted(self, cand, serve):
+        body = {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"role": "assistant", "content": "half an ans"},
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+        _, res, events = http_run(cand, serve, "openai-chat", [(200, {}, body)])
+        assert (res.reason, res.detail) == ("budget", "output_truncated")
+        assert not any(e["type"] == "text" for e in events)
+
+    def test_tool_call_without_id_is_not_executed(self, cand, serve):
+        before = _tree(cand)
+        call = {
+            "id": "",
+            "type": "function",
+            "function": {
+                "name": "write_file",
+                "arguments": json.dumps({"content": "print(1)\n"}),
+            },
+        }
+        body = {
+            "choices": [
+                {"finish_reason": "tool_calls", "message": {"content": None, "tool_calls": [call]}}
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        }
+        _, res, events = http_run(cand, serve, "openai-chat", [(200, {}, body)])
+        assert (res.ok, res.reason, res.detail) == (False, "network", "tool_call_without_id")
+        assert not any(e["type"] == "tool" for e in events) and _tree(cand) == before
