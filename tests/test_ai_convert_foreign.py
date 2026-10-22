@@ -829,3 +829,64 @@ def test_a_really_running_resume_is_not_rolled_back(env):
         assert _persisted_state(sid) == ai_convert.STATE_RESUMING
     finally:
         ai_convert.cancel_registration(sid)
+
+
+# --------------------------------------------------------------------------- 完整性闸门先于依赖等待（Codex #1330 P1）
+def test_project_changed_during_the_dependency_survey_never_enters_the_hold(env):
+    """依赖调查期间别的进程改了项目里另一个文件：不进依赖等待、结局是完整性失败、候选不留存（不是 needs_input）。"""
+
+    def hook(project, rel, cancel=None):
+        (env["figs"] / "other.csv").write_text("changed-by-someone\n", encoding="utf-8")
+        return _hold_hook()(project, rel, cancel)
+
+    sid = _run(env, hooks={"deps": hook})
+    sess = _wait(sid)
+    task = sess["task"]
+    assert task["outcome"] != "needs_input", task
+    assert any(u["constraint_id"] == "project.untouched" for u in task["unmet"]), task["unmet"]
+    assert not (ai_convert.CONVERT_DIR / sid).exists(), "候选不留存"
+    with pytest.raises(ai_convert.ConvertError):
+        ai_convert.status(sid, _project(env))
+
+
+def test_resume_fails_and_drops_the_candidate_when_a_project_file_changed_after_the_hold(env):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    (env["figs"] / "other.csv").write_text("changed-after-hold\n", encoding="utf-8")
+    t, out, _c = _await_resume(env, sid, runner=ok_runner, resolve=None)
+    t.start()
+    t.join(20)
+    assert out["state"] == "failed" and out["reason"] == "convert_project_changed", out
+    cdir = ai_convert.CONVERT_DIR / sid
+    assert not (cdir / "fig_matplotlib.py").exists(), "候选脚本已删"
+    with pytest.raises(ai_convert.ConvertError):
+        ai_convert.adopt(sid, _project(env))
+
+
+def test_resume_fails_and_drops_the_candidate_when_the_original_script_changed_after_the_hold(env):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    (env["figs"] / "fig.R").write_text("# edited\n", encoding="utf-8")
+    t, out, _c = _await_resume(env, sid, runner=ok_runner, resolve=None)
+    t.start()
+    t.join(20)
+    assert out["state"] == "failed" and out["reason"] == "convert_source_changed", out
+    assert not (ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py").exists()
+    with pytest.raises(ai_convert.ConvertError):
+        ai_convert.adopt(sid, _project(env))
+
+
+def test_resume_baseline_is_the_one_taken_at_start_and_a_missing_one_fails_closed(env):
+    sid = _run(env, hooks={"deps": _hold_hook()})
+    _wait(sid)
+    meta_path = ai_convert.CONVERT_DIR / sid / ai_convert.META_NAME
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert (
+        isinstance(meta["project_before"], dict) and meta["project_before"].get("files") is not None
+    )
+    del meta["project_before"]
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    t, out, _c = _await_resume(env, sid, runner=ok_runner, resolve=None)
+    t.start()
+    t.join(20)
+    assert out["state"] == "failed" and out["reason"] == "convert_project_changed", out

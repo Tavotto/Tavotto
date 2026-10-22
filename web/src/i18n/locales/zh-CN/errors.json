@@ -51,6 +51,7 @@
     "convert_not_found": "找不到这份待采用的新版本（可能已放弃、已过期，或属于别的项目）。",
     "convert_not_ready": "新版本还没生成好，或没有通过检查。",
     "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
+    "convert_project_changed": "项目里的文件在生成之后被改动过，已拒绝继续。请重新生成。",
     "convert_candidate_changed": "待采用的新版本文件被改动过，已拒绝采用。请重新生成。",
     "convert_outside_project": "新版本的位置不在项目里，已拒绝写入。",
     "convert_write_failed": "无法把新版本写进项目，请检查文件夹是否可写。",

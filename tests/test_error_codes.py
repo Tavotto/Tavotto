@@ -289,6 +289,7 @@ USER_VISIBLE_CODES = {
     "convert_not_found": set(),
     "convert_not_ready": set(),
     "convert_source_changed": set(),
+    "convert_project_changed": set(),
     "convert_candidate_changed": set(),
     "convert_outside_project": set(),
     "convert_write_failed": set(),

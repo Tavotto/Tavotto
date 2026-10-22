@@ -22,6 +22,9 @@
 2. **Agent 只写候选工作区里的一个新文件**。候选 `data_dir()/cache/ai_convert/<sid>/` 只**复制**原脚本（与 ≤ 8 MB 的原输出图当参考），
    不建链接；提交前检查：除这一个新文件外候选树逐字节不变（含原脚本副本）、原项目指纹不变、项目里原脚本仍是起跑那一版。
    CLI 把写入挡在 cwd 之外是 CLI 的行为，指纹只能发现、不能阻止（同 `figure_edit`，R-03）。
+   **完整性闸门先于依赖等待（Codex #1330 P1）**：校验运行前的依赖调查期间项目文件被改（`project.untouched` / `project.target` 失败）→ 不进入依赖等待、
+   不留存候选，结局同不缺依赖时的完整性失败。续跑的项目指纹基线是**起跑时**存进 `meta.json` 的那份（`project_before`），不用此刻的项目重建；
+   停住期间项目或原脚本被改、或 meta 里没有基线 → 续跑失败（`convert_project_changed` / `convert_source_changed`）并删掉候选脚本与预览，不可采用。
 3. **提交不碰用户文件**：任务的 `commit` 只把通过检查的候选留存待采用（候选目录 + `meta.json`，24 h 过期清理）。用户点「采用」才由后端
    `ai_convert.adopt` 把候选**新建**进项目——新原语 `atomicio.create_new_bytes`（同目录临时文件写满 fsync → `os.link` 到目标，已存在由内核
    原子拒绝；不支持硬链接的文件系统退到 `O_CREAT|O_EXCL`）经 `scriptlock.create_script`（必须持目标的 `script_guard`）。存在即失败、

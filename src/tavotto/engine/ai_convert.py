@@ -610,10 +610,15 @@ class ConvertAdapter:
         out += self._project_untouched(cand, st)
         if any(c.verdict != VERIFIED for c in out):
             return out  # 静态检查都没过就不浪费一次真运行
-        out += self._render(run, cand, st)
+        rendered = self._render(run, cand, st)
         # 校验运行会在原脚本旁真跑候选：它写相对路径输出（out.png 之类）就会改到项目文件，所以跑完要再核一遍
-        out += [c for c in self._project_untouched(cand, st) if c.verdict != VERIFIED]
-        return out
+        after = [c for c in self._project_untouched(cand, st) if c.verdict != VERIFIED]
+        if cand.hold is not None and after:
+            # 依赖调查期间项目被动了：完整性闸门先于“停住等用户决定”。不进依赖等待、不留存候选，
+            # 结局同不缺依赖时的完整性失败（“停住”那条伪失败不算证据，丢掉）
+            cand.hold = None
+            return out + after
+        return out + rendered + after
 
     def _project_untouched(self, cand: ConvertCandidate, st: str) -> list[CheckResult]:
         out = []
@@ -827,6 +832,8 @@ def stage_hold(cand: ConvertCandidate) -> None:
         "original_rel": cand.original_rel,
         "reference_name": cand.reference_name,
         "dependency_card": cand.hold,
+        # 起跑时拍下的项目指纹：续跑的复核基线只能是它（不能用“此刻”的项目重建，否则停住期间的改动被洗白）
+        "project_before": cand.project_before,
         "created": time.time(),
     }
     try:
@@ -1052,7 +1059,8 @@ def _cancel_resume(sid: str) -> bool:
 
 def _rebuild(cdir: Path, meta: dict, project: Path) -> ConvertCandidate:
     """从留存的候选目录 + meta.json 还原一个能再跑校验的候选。原脚本字节必须仍是起跑基线、候选脚本字节必须仍是停住时的摘要
-    ——续跑校验的就是对照时看到的那份。项目指纹基线取**现在**（停住到点击之间用户可能合法地改过别的文件）。"""
+    ——续跑校验的就是对照时看到的那份。项目指纹基线是**起跑时**存进 meta 的那份（Codex #1330 P1：不许用此刻的项目重建，
+    否则停住期间别的进程改了项目文件会被洗白）；此刻的项目与它对不上、或 meta 里没有基线（旧留存）→ 一律失败。"""
     script_rel = str(meta["script_rel"])
     script_path = project / script_rel
     try:
@@ -1064,6 +1072,13 @@ def _rebuild(cdir: Path, meta: dict, project: Path) -> ConvertCandidate:
         raise ConvertError("convert_source_changed", 409)
     if _sha256(new) != meta["candidate_sha256"]:
         raise ConvertError("convert_candidate_changed", 409)
+    baseline = meta.get("project_before")
+    if not isinstance(baseline, dict):
+        raise ConvertError("convert_project_changed", 409)
+    if ai_figure_edit.fingerprint_changes(
+        baseline, ai_figure_edit.project_fingerprint(project, exclude=_own_files(script_rel))
+    ):
+        raise ConvertError("convert_project_changed", 409)
     return ConvertCandidate(
         sid=str(meta["sid"]),
         dir=cdir,
@@ -1077,7 +1092,7 @@ def _rebuild(cdir: Path, meta: dict, project: Path) -> ConvertCandidate:
         original_rel=meta.get("original_rel"),
         reference_name=meta.get("reference_name"),
         tree_before=ai_figure_edit._tree(cdir) or {},
-        project_before=ai_figure_edit.project_fingerprint(project, exclude=_own_files(script_rel)),
+        project_before=baseline,
         source_language=str(meta.get("source_language") or sourcelang.PYTHON),
         new_bytes=new,
     )
@@ -1096,6 +1111,16 @@ def prepare_resume(sid: str, project: str) -> tuple[Path, dict, threading.Event]
         ev = threading.Event()
         _RESUMES[sid] = ev
     return cdir, meta, ev
+
+
+def _drop_candidate_files(cdir: Path, meta: dict) -> None:
+    """续跑的完整性失败：删掉候选脚本与预览（meta 留着，只为让轮询读到失败原因；`failed` 本就不可采用）。"""
+    for name in (str(meta.get("target_name") or ""), PREVIEW_NAME):
+        if name and "/" not in name:
+            try:
+                (cdir / name).unlink()
+            except OSError:
+                pass
 
 
 def _set_state(cdir: Path, meta: dict, state: str, **extra) -> None:
@@ -1131,6 +1156,8 @@ def run_resume(
         try:
             cand = _rebuild(cdir, meta, root)
         except ConvertError as exc:
+            if exc.code in ("convert_project_changed", "convert_source_changed"):
+                _drop_candidate_files(cdir, meta)  # 完整性失败：候选不可再被采用
             _set_state(cdir, meta, STATE_FAILED, failure={"reason": exc.code})
             return {"state": STATE_FAILED, "reason": exc.code}
         cand.extras["runner"] = runner
@@ -1169,6 +1196,7 @@ def run_resume(
                 stage(cand)
                 return {"state": "ready"}
             failure = {"reason": "project_files_changed"}
+            _drop_candidate_files(cdir, meta)
         else:
             check = _failure_check(result, "precommit")
             failure = {
