@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import os
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +26,10 @@ def _bare(cls):
     w.build_failed = False
     w.last_build_descriptors = []
     w.last_patch_hash_by_stem = {}
+    # WorkerdWorker.ensure_built 会起「worker.log 在长」的进度小线程，它读 log_path；裸对象没走 __init__，
+    # 缺了它线程在后台抛 AttributeError（CI 里变成 PytestUnhandledThreadExceptionWarning，还被记到别的用例头上）
+    w.log_path = Path(os.devnull)
+    w.progress = pool.ProgressListeners()
     return w
 
 

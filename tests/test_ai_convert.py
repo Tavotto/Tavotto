@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import threading
+import traceback
 from pathlib import Path
 
 import pytest
@@ -107,11 +108,29 @@ def _run(env, *, runner="default", original="out.png", events=None, library="pil
     )
 
 
-def _wait(sid, timeout=20.0):
+#: pump 收尾的等待上限。本地 / macOS / Linux 这些用例每条不到 0.1 s；Windows runner 上一个分片里**第一批**起
+#: 子进程的用例会撞上进程创建冷启动（同一日志里 test_dependency_transaction / test_handoff 等一串与本文件无关的起
+#: 子进程用例也各要 15–29 s，同一文件后面的用例回到 0.2 s/条），所以预算按「冷启动」给，不是按本机耗时给。
+#: 超时时 `_stuck_report` 把 pump 此刻卡在哪一行、Agent 子进程还活不活写进断言信息，下次就不必再猜。
+PUMP_TIMEOUT_S = 90.0
+
+
+def _stuck_report(sid, pump) -> str:
+    sess = ai_bridge.SESSIONS.get(sid) or {}
+    proc = sess.get("proc")
+    frame = sys._current_frames().get(pump.ident)
+    where = "".join(traceback.format_stack(frame)[-6:]) if frame is not None else "(无栈)"
+    return (
+        f"pump 线程没有收尾：status={sess.get('status')!r} "
+        f"proc.pid={getattr(proc, 'pid', None)} returncode={getattr(proc, 'returncode', '?')}\n{where}"
+    )
+
+
+def _wait(sid, timeout=PUMP_TIMEOUT_S):
     pump = next((t for t in threading.enumerate() if t.name == f"ai-{sid}"), None)
     if pump is not None:
         pump.join(timeout)
-        assert not pump.is_alive(), "pump 线程没有收尾"
+        assert not pump.is_alive(), _stuck_report(sid, pump)
     return ai_bridge.SESSIONS[sid]
 
 
