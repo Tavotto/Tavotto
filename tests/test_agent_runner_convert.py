@@ -533,3 +533,36 @@ def test_system_prompt_does_not_restate_the_shared_requirements():
         "Match the original",
     ):
         assert word not in extra, word
+
+
+class TestOutputSizeLimit:
+    """Codex #1328 第七轮：写出的新文件同样不许超过读取上限（首次新建走 O_EXCL 路径，不经 _commit_write）。"""
+
+    @staticmethod
+    def _ts(cand: Path) -> dict[str, tools.Tool]:
+        return {t.name: t for t in TASK.tools(envelope(cand))}
+
+    def test_first_create_over_limit_is_refused_and_nothing_is_created(self, cand):
+        ts = self._ts(cand)
+        before = _tree(cand)
+        big = "x = 1\n" * (tools.READ_LIMIT_BYTES // 6 + 1)
+        r = ts["create_file"].handler({"content": big})
+        assert (r.is_error, r.code) == (True, "too_large")
+        assert _tree(cand) == before
+
+    def test_rewrite_and_edit_over_limit_are_refused_and_file_keeps_old_bytes(self, cand):
+        ts = self._ts(cand)
+        assert not ts["create_file"].handler({"content": NEW}).is_error
+        out = cand / "fig_matplotlib.py"
+        assert out.read_bytes() == NEW.encode()
+        big = "x = 1\n" * (tools.READ_LIMIT_BYTES // 6 + 1)
+        r = ts["create_file"].handler({"content": big})
+        assert (r.is_error, r.code) == (True, "too_large")
+        assert out.read_bytes() == NEW.encode()
+        # 用例各行互异：difflib 对海量相同行是二次方的
+        near = "".join(f"x{i:05d} = 1\n" for i in range(tools.READ_LIMIT_BYTES // 11 - 5))
+        assert not ts["create_file"].handler({"content": near}).is_error
+        size = out.stat().st_size
+        r = ts["edit_file"].handler({"old": "x00000 = 1", "new": "x00000 = 1  # " + "y" * 200})
+        assert (r.is_error, r.code) == (True, "too_large")
+        assert out.stat().st_size == size
