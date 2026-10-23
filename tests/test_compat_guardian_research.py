@@ -955,3 +955,47 @@ def test_archived_sources_are_source_not_data_and_distinguish_cases():
     assert fa["source_sha256"] != cg.canonical({})
     plain = cg.fixture_digests({"plot.py": "a" * 64, "data/x.csv": "d" * 64})
     assert plain["source_sha256"] == cg.canonical({"plot.py": "a" * 64})
+
+
+def _refused_row():
+    path = Path(__file__).parent / "compat" / "launch-context-unsupported-row.json"
+    row = json.loads(path.read_text(encoding="utf-8"))
+    row["comparable"] = False
+    cg.finalize_row(row)
+    return row
+
+
+def test_pre_launch_refusal_stays_in_the_native_qualified_denominator_as_a_product_failure():
+    refused = _refused_row()
+    assert refused["status"] == "failed"
+    assert cg.native_eligible(refused)
+    passed_stages = {s: "passed" for s in research.cc.STAGES}
+    healthy = {
+        "project_id": "healthy",
+        "status": "passed",
+        "eligible": True,
+        "stages": passed_stages,
+        "failure_category": None,
+        "source_code": None,
+    }
+    item = {
+        "project_id": "cantera",
+        "status": refused["status"],
+        "eligible": cg.native_eligible(refused),
+        "stages": {s: c["status"] for s, c in refused["stages"].items()},
+        "failure_category": refused["failure_category"]["category"],
+        "source_code": refused["failure_category"]["source_code"],
+    }
+    data = {"projects": [healthy, item]}
+    research.refresh_accounting(data)
+    assert data["n_eligible"] == 2
+    assert data["stages_fixed_denominator"]["discover"] == {"passed": 1, "denominator": 2}
+    assert data["stages_fixed_denominator"]["fidelity"] == {"passed": 1, "denominator": 2}
+    assert data["clusters"] == {"product:cwd_or_data_path:launch_context_unsupported": ["cantera"]}
+
+
+def test_unlaunched_rows_without_a_refusal_code_are_not_eligible():
+    row = _refused_row()
+    row["raw"]["detail"]["discover"]["code"] = "something_else"
+    row["comparable"] = False
+    assert not cg.native_eligible(row)

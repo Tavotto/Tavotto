@@ -264,12 +264,7 @@ def project_reports(cohort: dict, reports: list[dict], expected_sha: str) -> dic
             )
             continue
         native = row["native"]
-        eligible = (
-            native["status"] == "passed"
-            and (row["figures"]["native"] or 0) > 0
-            and row["comparable"]
-            and (row["executions"]["native"] or 0) > 0
-        )
+        eligible = cg.native_eligible(row)
         failure = row["failure_category"]
         cells = {s: row["stages"][s]["status"] for s in cc.STAGES}
         item = {

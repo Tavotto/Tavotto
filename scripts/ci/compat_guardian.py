@@ -623,6 +623,21 @@ def refused_before_launch(row: dict) -> bool:
     )
 
 
+def native_eligible(row: dict) -> bool:
+    """The one test for "this row belongs in the native-qualified denominator".
+
+    Native passed with a real figure and an execution proof, and the two legs are comparable (which
+    already means the environment did not move) -- or the product refused before launching (`refused_before_launch`),
+    where a comparable pair cannot exist but the refusal is itself the product outcome.
+    """
+    return bool(
+        row["native"]["status"] == "passed"
+        and (row["figures"]["native"] or 0) > 0
+        and (row["executions"]["native"] or 0) > 0
+        and (row["comparable"] or refused_before_launch(row))
+    )
+
+
 def case_status(row: dict) -> str:
     native = row["native"]["status"]
     if native != "passed":
