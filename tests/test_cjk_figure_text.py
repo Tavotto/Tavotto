@@ -377,6 +377,14 @@ ax.text(0.5, 0.5, "x", usetex=True)
 overrides.ensure_rcparams_fallback([fig])
 assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"], matplotlib.rcParams["font.family"]
 
+# b2) 一张图遍历抛异常：判不出 → 不补 rcParams，也不让异常逃出去
+class Boom:
+    def findobj(self, *a, **k):
+        raise RuntimeError("custom artist")
+
+overrides.ensure_rcparams_fallback([Boom()])
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"], matplotlib.rcParams["font.family"]
+
 # c) 没有任何 TeX 文字：照旧补
 plt.close(fig)
 fig, ax = plt.subplots()

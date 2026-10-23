@@ -1128,6 +1128,9 @@ class BridgeRun:
                 # `instrument_all()` 只管新图，不在这里补的话它在 native 里永远按 figsize、切边。
                 # 已有图幅 / 没有调用的图 `establish_frame` 当场返回
                 self.session.establish_frame(stem, state.fig)
+                # 字体回退尾巴（ADR 0045）：屏障之间脚本可能往这张图加了默认族的文字；有 TeX
+                # 文字的图不补 rcParams，只有逐 Text 这一步兜得住它们。幂等
+                overrides.ensure_figure_fallback(state.fig)
                 manifest.instrument(state)
                 patches = self.saved_patches.get(stem) or []
                 warnings = overrides.apply(state, patches) if patches else []

@@ -1144,7 +1144,13 @@ def ensure_rcparams_fallback(figures=()) -> None:
     if mpl.rcParams["text.usetex"]:
         return
     for fig in figures:
-        if any(t.get_usetex() for t in fig.findobj(Text)):
+        try:
+            tex = any(t.get_usetex() for t in fig.findobj(Text))
+        except Exception:  # noqa: BLE001 — 用户的 artist 遍历时什么都可能抛
+            # 这张图判不出有没有 TeX 文字：宁可不补 rcParams（逐 Text 兜底照常），异常也不能
+            # 逃出去拖垮整批——这张图自己的坏会在逐图隔离块里（`ensure_figure_fallback`）照常记账
+            return
+        if tex:
             return
     cur = [str(f) for f in mpl.rcParams["font.family"]]
     chain = _family_chain(cur)
