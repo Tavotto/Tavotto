@@ -111,12 +111,39 @@ def test_script_directory_cwd_glob(fake_project, tmp_path):
     assert _captured(_run(_case("sub/plot.py", {"cwd": "sub", "argv": []}), tmp_path))
 
 
-def test_launch_cwd_the_product_cannot_express_is_a_runner_error(fake_project, tmp_path):
+def test_launch_cwd_the_product_cannot_express_fails_the_product_leg_at_discover(
+    fake_project, tmp_path
+):
     script = NEEDS_RELATIVE_GLOB.format(pattern="*.txt")
     fake_project({"sub/plot.py": script, "data/a.txt": "1\n2\n"}, "sub/plot.py")
     result = _run(_case("sub/plot.py", {"cwd": "data", "argv": []}), tmp_path)
-    assert result["classification"] == "runner_error"
-    assert "neither the script directory nor the project root" in result["detail"]["runner_error"]
+    assert result["classification"] == "product_bug"
+    assert result["stages"] == {"discover": False}
+    assert result["detail"]["discover"] == {
+        "code": "launch_context_unsupported",
+        "launch_cwd": "data",
+        "expressible_modes": ["project", "project_root"],
+    }
+    assert "runner_error" not in result["detail"]
+
+
+def test_that_failure_is_attributed_to_the_launch_directory_not_the_runner():
+    import compat_guardian_taxonomy as TX
+
+    detail = {"discover": {"code": "launch_context_unsupported"}}
+    row = {
+        "status": "failed",
+        "raw": {"detail": detail},
+        "native": {"status": "passed", "result": {}},
+        "stages": {"discover": {"status": "failed"}},
+    }
+    got = TX.attribute(row)
+    assert (got["category"], got["source_code"]) == (
+        "cwd_or_data_path",
+        "launch_context_unsupported",
+    )
+    row["raw"]["detail"] = {"discover": {}}
+    assert TX.attribute(row)["source_code"] == "stage:discover"
 
 
 def test_without_registered_launch_the_ordinary_path_is_unchanged(fake_project, tmp_path):

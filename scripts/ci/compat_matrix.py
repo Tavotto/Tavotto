@@ -148,8 +148,21 @@ def materialize(group: list[dict], workdir: Path) -> tuple[Path, str, str]:
 # --------------------------------------------------------------------------
 # 阶段 1：发现（discover → probe → registry）
 # --------------------------------------------------------------------------
+#: Working directories the product can give a script (`execspec.CWD_PROJECT` = the script's directory,
+#: `execspec.CWD_PROJECT_ROOT` = the project root). Anything else is a product capability boundary.
+LAUNCH_CONTEXT_UNSUPPORTED = "launch_context_unsupported"
+
+
 class LaunchNotExpressible(ValueError):
     """The registered launch cannot be handed to the product's own run settings."""
+
+    def __init__(self, cwd: str, modes: list[str]) -> None:
+        super().__init__(f"launch cwd {cwd!r} is neither the script directory nor the project root")
+        self.detail = {
+            "code": LAUNCH_CONTEXT_UNSUPPORTED,
+            "launch_cwd": cwd,
+            "expressible_modes": modes,
+        }
 
 
 def registered_launch(project: Path, script_rel: str, case: dict):
@@ -172,9 +185,7 @@ def registered_launch(project: Path, script_rel: str, case: dict):
     elif cwd == root:
         mode = execspec.CWD_PROJECT_ROOT
     else:
-        raise LaunchNotExpressible(
-            f"launch cwd {launch['cwd']!r} is neither the script directory nor the project root"
-        )
+        raise LaunchNotExpressible(launch["cwd"], [execspec.CWD_PROJECT, execspec.CWD_PROJECT_ROOT])
     workdir.set_mode(project, mode)
     return runconfig.selection_for(project, script_rel, launch["argv"])
 
@@ -1408,7 +1419,14 @@ def run_group(
     hot = fresh = None
     try:
         # ── 发现 ────────────────────────────────────────────────
-        run = registered_launch(project, script_rel, lead)
+        try:
+            run = registered_launch(project, script_rel, lead)
+        except LaunchNotExpressible as exc:
+            # A product capability boundary, not a runner fault: the product leg fails at discover.
+            for ca in group:
+                results[ca["id"]]["stages"]["discover"] = False
+                results[ca["id"]]["detail"]["discover"] = exc.detail
+            return _finish(results, group, t0)
         disc = stage_discover(project, script_rel, lead, run=run)
         entry = disc["entry"] or declared_entry
         for ca in group:

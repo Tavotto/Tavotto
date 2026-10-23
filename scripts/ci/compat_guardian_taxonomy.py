@@ -66,6 +66,8 @@ CODE_TO_CATEGORY = {
     "dependency_version_conflict": "dependency_version",
     "input_not_found": "cwd_or_data_path",
     "argument_required": "argument_or_input",
+    # the registered launch directory is neither the script directory nor the project root
+    "launch_context_unsupported": "cwd_or_data_path",
 }
 
 
@@ -148,6 +150,13 @@ def attribute(row: dict) -> dict:
                         "category": "partial_capture",
                         "source_code": f"stage:{name}",
                         "basis": f"Tavotto captured {have} of the {want} figures native produced",
+                    }
+                code = (((raw.get("detail") or {}).get(name)) or {}).get("code")
+                if code in CODE_TO_CATEGORY:
+                    return {
+                        "category": category_of_code(code),
+                        "source_code": code,
+                        "basis": f"the {name} stage failed with a product-side capability code",
                     }
                 return {
                     "category": category_of_stage(name),

@@ -12,7 +12,7 @@ artifact / 外部归档保存；`verify-snapshot --evidence-directory ...` 可�
 
 研究 case 的产品腿按登记的 `reference_invocation` 起脚本：argv 经 `runconfig.selection_for` 成为产品的运行配置，
 cwd 经 `workdir.set_mode` 成为项目的工作目录模式（脚本目录或项目根），与原生腿同源。脚本、原生腿与 worker 跑在 `TAVOTTO_SCIENCE_PYTHON` 指定的科研 venv（未设则用当前解释器），Guardian 与 Tavotto 依赖留在自己的 venv，对应产品的进程边界；`verify-science-environment` 断言科研 venv 没有 RenderCore 包。登记的目录两者都不是时，
-产品腿报 `runner_error`，不在别处运行。报告的 `raw.line_data` 只读比较原生曲线数组与产品 manifest 的
+产品腿在 discover 阶段以 `launch_context_unsupported`（`cwd_or_data_path`）失败，报告带登记的 cwd 与可表达的模式，不在别处运行，也不是 `runner_error`。报告的 `raw.line_data` 只读比较原生曲线数组与产品 manifest 的
 `data_fingerprint.parts.xy`，是诊断证据，不影响 Guardian 的成功判据，也不代替桌面/CLI/native 用户路径验收。
 
 本文件是 Guardian 的**唯一**架构/接口文档：CG-00 审计汇总、CG-01 runner 的契约、给 Agent 的调用

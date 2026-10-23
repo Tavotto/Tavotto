@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       case_id:
-        description: Frozen development case, or all
+        description: Frozen development case id, or all
         type: string
-        default: research_astro_celerite_sho
+        required: true
 
 permissions:
   contents: read
@@ -36,7 +36,7 @@ jobs:
       - name: Verify frozen registration without downloading or running projects
         id: cohort
         env:
-          CASE_ID: ${{ inputs.case_id || 'research_astro_celerite_sho' }}
+          CASE_ID: ${{ inputs.case_id }}
         shell: bash
         run: |
           set -euo pipefail
