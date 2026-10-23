@@ -134,6 +134,9 @@ try:
             _spawns.append(event)
             raise PermissionError("Tavotto trial: starting other processes is not allowed")
     sys.addaudithook(_no_spawn)
+    # 两个守卫都装好之后才做 site 初始化：site-packages、.pth、sitecustomize / usercustomize 都在守卫之下执行
+    import site
+    site.main()
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"guarded": True}, f)
 except BaseException:
@@ -331,6 +334,7 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
                 *sandbox_prefix,
                 python,
                 *runtime.probe_args(),
+                "-S",  # 先不做 site 初始化：sitecustomize / usercustomize / .pth 要等守卫装好后才跑（见 _GUARDED_SRC）
                 "-c",
                 _GUARDED_SRC,
                 _guard_path(),

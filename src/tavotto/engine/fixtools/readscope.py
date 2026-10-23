@@ -225,7 +225,7 @@ def _value(sfx: str, min_bare: int) -> str:
     """值的三种形状（组名带后缀 `sfx` 以便同一正则里出现两次）：双引号 / 单引号（可含空格、任意长度）/ 裸值。"""
     return (
         rf"(?:(?P<dq{sfx}>{_DQ})|(?P<sq{sfx}>{_SQ})"
-        rf"|(?!\*\*\*)(?P<bare{sfx}>[^\s\"',;]{{{min_bare},}}))"
+        rf"|(?!\*\*\*)(?P<bare{sfx}>[^\s\"',;()\[\]{{}}<>]{{{min_bare},}}))"
     )
 
 
@@ -257,6 +257,9 @@ _BENIGN_KEY = re.compile(
 )
 
 
+_LITERAL_NON_SECRETS = frozenset({"null", "none", "true", "false", "nil", "undefined"})
+
+
 def _mask_secret(m: re.Match) -> str:
     if m.group("cli") is not None:
         if _BENIGN_KEY.fullmatch(m.group("cname") or ""):
@@ -275,6 +278,10 @@ def _mask_secret(m: re.Match) -> str:
         return head + '"***"'
     if m.group("sqK") is not None:
         return head + "'***'"
+    if (m.group("bareK") or "").lower() in _LITERAL_NON_SECRETS:
+        return m.group(
+            0
+        )  # `"password": null` / `token=None`：空值不是凭据，原样保留（结构也不被破坏）
     return head + "***"
 
 

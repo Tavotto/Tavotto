@@ -1584,3 +1584,46 @@ def test_try_run_reads_through_a_file_link_and_reports_blocked_ones(box):
     assert "exit code 0" in r.content, r.content
     assert "copy_incomplete: 1 linked file(s) were not copied (k.txt)" in r.content
     assert "PRIVATE" not in r.content
+
+
+# --------------------------------------------------------------------------- Codex #1353 第十轮
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("connect(password=secret)", "connect(password=***)"),
+        ('{"password": null}', '{"password": null}'),
+        ("f(token=abc, x=1)", "f(token=***, x=1)"),
+        ("[pwd=hunter2]", "[pwd=***]"),
+        ("<auth=xyz>", "<auth=***>"),
+    ],
+)
+def test_bare_secret_values_keep_surrounding_delimiters(text, want):
+    assert readscope.scrub(text) == want
+
+
+def test_site_initialization_runs_under_the_guard(box, monkeypatch):
+    """解释器自己 site-packages 里的 `.pth` / `sitecustomize` 在启动时自动执行：守卫必须先装好
+    （-S 启动、守卫后再 site.main()）。造一个临时 venv，往它的 site-packages 放一个往项目外写的 `.pth`。"""
+    import subprocess as _sp
+    import venv
+
+    outside = put(box.tmp / "elsewhere" / "victim.txt", "ORIGINAL")
+    vdir = box.tmp / "v"
+    venv.EnvBuilder(with_pip=False).create(vdir)
+    vpy = str(vdir / ("Scripts/python.exe" if os.name == "nt" else "bin/python"))
+    sp = _sp.run(
+        [vpy, "-c", "import site; print(site.getsitepackages()[0])"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.strip()
+    (Path(sp) / "evil.pth").write_text(
+        f"import os; open({str(outside)!r}, 'w').write('CLOBBER')\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        trial, "_find_tool", lambda kind: None
+    )  # 只测进程内守卫（没有 OS 沙盒的 Windows 就是这样）
+    res = trial.run_python(vpy, code="print('ok')", timeout=60, session_id="s1")
+    assert outside.read_bytes() == b"ORIGINAL"
+    assert res.get("status") == "ok" and res.get("blocked_writes"), res
