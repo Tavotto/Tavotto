@@ -188,3 +188,38 @@ describe('registered：未知 ≠ 假（#1348 Codex）', () => {
     expect(useRuntimeAssetStore.getState().byId[id]).toMatchObject({ registered: true, status: 'fresh' })
   })
 })
+
+describe('逐 id 代次：旧响应不得覆盖新状态（#1348 Codex P2）', () => {
+  const id = 'runtime:fig.py#fig'
+  const answer = (registered: boolean) => ({
+    status: registered ? 'fresh' : 'needs_rerun',
+    cached: registered,
+    registered,
+    execution_profile: 'safe',
+  })
+
+  it('在飞请求期间 invalidate + markFresh：旧响应（false）回来后丢弃，不覆盖', async () => {
+    let resolveOld!: (v: unknown) => void
+    mockFetch.mockImplementationOnce(() => new Promise((r) => (resolveOld = r)) as never)
+    useRuntimeAssetStore.getState().ensure(runtimePanel())
+    useRuntimeAssetStore.getState().invalidate([id])
+    useRuntimeAssetStore.getState().markFresh(id)
+    resolveOld(answer(false))
+    await flush()
+    expect(useRuntimeAssetStore.getState().byId[id]).toMatchObject({ registered: true, status: 'fresh' })
+  })
+
+  it('invalidate 把该 id 移出 inflight：下一次 ensure() 重新发请求，旧响应不干扰', async () => {
+    let resolveOld!: (v: unknown) => void
+    mockFetch.mockImplementationOnce(() => new Promise((r) => (resolveOld = r)) as never)
+    mockFetch.mockResolvedValueOnce(answer(true) as never)
+    useRuntimeAssetStore.getState().ensure(runtimePanel())
+    useRuntimeAssetStore.getState().invalidate([id])
+    useRuntimeAssetStore.getState().ensure(runtimePanel())
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    await flush()
+    resolveOld(answer(false))
+    await flush()
+    expect(useRuntimeAssetStore.getState().byId[id]?.registered).toBe(true)
+  })
+})

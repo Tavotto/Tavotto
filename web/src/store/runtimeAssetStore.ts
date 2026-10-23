@@ -60,6 +60,13 @@ let assetsInflight: Promise<void> | null = null
  *  Zustand reset 长——A 项目的响应落进 B 项目的清单就是靠这个挡的
  *  （与 scriptRunStore 的 epoch 同一条纪律）。 */
 let epoch = 0
+/** 逐 id 的代次：`invalidate()` / `markFresh()` 加一；在飞的 `ensure()` 响应回来发现代次变了就丢弃，旧答案不得覆盖新状态 */
+const generation = new Map<string, number>()
+const genOf = (id: string) => generation.get(id) ?? 0
+const bump = (id: string) => {
+  generation.set(id, genOf(id) + 1)
+  inflight.delete(id) // 下一次 ensure() 要能重新发请求
+}
 
 export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
   byId: {},
@@ -103,6 +110,7 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
     if (get().byId[id]?.checked || inflight.has(id)) return
     inflight.add(id)
     const started = epoch
+    const gen = genOf(id)
     const source = panel.source
       ? {
           script: panel.source.script,
@@ -112,7 +120,7 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
       : undefined
     void fetchRuntimeStatus(id, source)
       .then((st) => {
-        if (epoch !== started) return // 切过项目：旧项目的判定作废
+        if (epoch !== started || genOf(id) !== gen) return // 切过项目 / 期间失效或刷新过：旧答案作废
         set((s) => ({
           byId: {
             ...s.byId,
@@ -127,7 +135,7 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
         }))
       })
       .catch(() => {
-        if (epoch !== started) return
+        if (epoch !== started || genOf(id) !== gen) return
         // 查询失败（网络 / 5xx / 非 2xx）：按「需要重跑、没有缓存」处理——面板显示占位与提示，绝不猜成新鲜；
         // 但**注册状态是未知（null），不是「不认」**：只有后端成功响应且明确 registered:false 才是 false。
         // 把传输失败存成 false，单图导出会被静默降级到画布（低保真）——前端预测失败不得静默换口径。
@@ -144,10 +152,13 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
           },
         }))
       })
-      .finally(() => inflight.delete(id))
+      .finally(() => {
+        if (genOf(id) === gen) inflight.delete(id) // 代次变了：marker 已被 bump 清掉，别误删新请求的
+      })
   },
 
-  markFresh: (fileId) =>
+  markFresh: (fileId) => {
+    bump(fileId)
     set((s) => ({
       byId: {
         ...s.byId,
@@ -160,7 +171,8 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
           checked: true,
         },
       },
-    })),
+    }))
+  },
 
   markRerunFailed: (fileId) =>
     set((s) => {
@@ -174,6 +186,7 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
       const byId = { ...s.byId }
       let changed = false
       for (const id of fileIds) {
+        bump(id)
         if (byId[id]) {
           // 脚本 / 注册表变了：注册状态一并作废成「未知」，不留旧的 false（重跑注册后它就是错的）
           byId[id] = { ...byId[id], checked: false, registered: null }
@@ -188,6 +201,7 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
     epoch += 1
     assetsInflight = null
     inflight.clear()
+    generation.clear()
     set({ byId: {}, assets: null, assetsLoading: false, assetsError: null, previewNonce: {} })
   },
 }))

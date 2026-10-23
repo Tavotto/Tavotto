@@ -167,6 +167,12 @@ describe('scope', () => {
     expect(originalAvailability('runtime:fig.py#F', { panel: rt }).ok).toBe(true)
     useRuntimeAssetStore.setState({ byId: { 'runtime:fig.py#F': { registered: true, checked: true } } } as never)
     expect(originalAvailability('runtime:fig.py#F', { panel: rt }).ok).toBe(true)
+    // 缓存的素材清单还留着旧条目、而刚问来的结果明确「不认」：逐面板结果优先
+    useRuntimeAssetStore.setState({
+      assets: [{ id: 'runtime:fig.py#F' }],
+      byId: { 'runtime:fig.py#F': { registered: false, checked: true } },
+    } as never)
+    expect(originalAvailability('runtime:fig.py#F', { panel: rt })).toMatchObject({ ok: false, reason: 'source_stale' })
   })
 
   it('判据是「够不够得着」而不是 `spec.stale`', () => {
