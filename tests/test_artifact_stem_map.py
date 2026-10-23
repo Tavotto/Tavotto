@@ -658,3 +658,97 @@ def test_file_changed_event_omits_files_when_they_cannot_be_computed(client, tmp
     monkeypatch.setattr(m.engine_refresh, "iter_assets", lambda *a, **k: 1 / 0)
     payload = _file_changed_payload(m, monkeypatch, ["fig1.py"])
     assert "files" not in payload  # 前端退回按文件名 stem（老行为）
+
+
+# --------------------------------------------------------------------------- 真实文件名大小写 / 只发完整的 files
+def test_find_artifacts_keeps_the_real_file_name_case(tmp_path):
+    from tavotto.engine import figcapture
+
+    (tmp_path / "panel.PDF").write_bytes(b"%PDF")
+    (tmp_path / "panel.png").write_bytes(b"x")
+    (tmp_path / "other.pdf").write_bytes(b"%PDF")
+    root = str(tmp_path)
+    assert figcapture.find_artifacts(root, "panel", formats=["pdf"]) == ["panel.PDF"]
+    assert figcapture.find_artifacts(root, "panel", formats=["pdf", "png"]) == [
+        "panel.PDF",
+        "panel.png",
+    ]
+    assert figcapture.find_original_artifact(root, "panel", formats=["pdf"]) == "panel.PDF"
+    assert (
+        figcapture.find_original_artifact(root, "panel") == "panel.PDF"
+    )  # 不知道格式：旧顺序里的首个
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "plot.SVG").write_bytes(b"<svg/>")
+    assert figcapture.find_artifacts(root, "sub/plot", formats=["svg"]) == ["sub/plot.SVG"]
+
+
+def test_real_run_upper_case_extension_resolves_by_its_real_id(tmp_path):
+    """乙存 `panel.PDF`、甲存 `panel.png`：登记进注册表的键是真实文件名，素材盘点的真实 id 查得到，解析到 `panel-2`。"""
+    from tavotto.engine import pool, project_refresh
+    from test_same_stem_other_figure import WORKER_PY
+
+    if WORKER_PY is None:
+        pytest.skip("not_run：找不到装有 matplotlib 的解释器")
+    (tmp_path / "panels.py").write_text(
+        TWO_FORMATS_SCRIPT.replace('fig.savefig("panel.pdf")', 'fig.savefig("panel.PDF")').replace(
+            '    fig.savefig("panel.svg")\n', ""
+        ),
+        encoding="utf-8",
+    )
+    for name in ("panel.png", "panel.PDF"):
+        (tmp_path / name).write_bytes(b"x")
+    w = pool.one_shot("panels.py", str(tmp_path), "main")
+    try:
+        w.ensure_built()
+        descriptors = list(w.last_build_descriptors)
+    finally:
+        pool.discard(w)
+    stems = [d["stem"] for d in descriptors]
+    assert stems == ["panel", "panel-2"]
+    out = probe.register_probed(
+        tmp_path,
+        "panels.py",
+        {"stems": stems, "entry": "main", "descriptors": descriptors, "remap_generation": None},
+    )
+    assert out["registered"], out
+    assert _read(tmp_path)["scripts"]["panels.py"]["artifacts"] == {
+        "panel.PDF": "panel-2",
+        "panel.png": "panel",
+    }
+    reg = registry.open_registry(tmp_path)
+    ids = sorted(p.name for p, _k in project_refresh.iter_assets(tmp_path, reg=reg))
+    assert ids == ["panel.PDF", "panel.png"]  # 素材盘点的真实 id
+    assert reg.for_artifact("panel.PDF")["stem"] == "panel-2"
+    assert reg.for_artifact("panel.png")["stem"] == "panel"
+
+
+def test_file_changed_event_never_carries_a_partial_files_list(client, tmp_path, monkeypatch):
+    """某个子目录暂时读不了：iter_assets 非 strict 会悄悄跳过那个子树——这里用 strict，算不出就不带 `files`
+    （前端退回按文件名 stem），不「部分带」、也不发空数组。正常情况仍带。"""
+    import os
+
+    from tavotto import app as m
+
+    figs = _touch_pair(tmp_path, {"Fig1.png": "Fig1", "Fig1.pdf": "Fig1-2"})
+    (figs / "sub").mkdir()
+    (figs / "sub" / "Fig1.png").write_bytes(b"x")
+    m.reset_projects()
+    m.open_project(str(figs))
+    assert _file_changed_payload(m, monkeypatch, ["fig1.py"])["files"] == [
+        "Fig1.pdf",
+        "Fig1.png",
+        "sub/Fig1.png".replace("/", os.sep),
+    ]
+
+    real = os.scandir
+
+    def flaky(path="."):
+        if os.path.basename(os.fspath(path)) == "sub":
+            raise PermissionError(13, "denied", os.fspath(path))
+        return real(path)
+
+    monkeypatch.setattr(os, "scandir", flaky)
+    payload = _file_changed_payload(m, monkeypatch, ["fig1.py"])
+    assert "files" not in payload
+    assert sorted(payload["stems"]) == ["Fig1", "Fig1-2"]

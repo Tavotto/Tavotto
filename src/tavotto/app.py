@@ -3594,6 +3594,9 @@ def _panel_files_of_stems(ctx: "ProjectCtx", stems: list[str]) -> list[str] | No
     含被同一张图的 PDF 让位隐藏的位图（`include_shadowed`）：排版里留着的 PNG 面板不会因为素材盘点不再列它就收不到
     事件、永远渲染旧脚本的结果。同 stem 的**另一张**图的文件不算（甲的 `panel.png` 不在乙的 files 里）。
 
+    **只发完整的列表**：枚举用 `strict=True`，任何一处读不动（某个子目录暂时不可读）就抛、返回 None（事件不带 `files`，
+    前端退回按文件名 stem）。残缺列表被前端当权威，被跳过的子树里的面板就永远不会被标 stale；不做「部分带」。
+
     `panel.file_changed` 带上它，前端对非 runtime 面板按 fileId 精确匹配，不再拿异步加载的素材清单去推断
     「这个文件是哪张图」（#1251）。判据与素材盘点是同一个出处：`project_refresh.figure_key_of`
     （`Registry.artifact_stem`）——同 stem 两张图时乙的脚本变了，files 是 `panel.pdf`，不含 `panel.png`。
@@ -3605,11 +3608,11 @@ def _panel_files_of_stems(ctx: "ProjectCtx", stems: list[str]) -> list[str] | No
         return sorted(
             str(p.relative_to(root))
             for p, _kind in engine_refresh.iter_assets(
-                root, reg=ctx.registry, include_shadowed=True
+                root, strict=True, reg=ctx.registry, include_shadowed=True
             )
             if key(p) in wanted
         )
-    except Exception:  # noqa: BLE001 —— 旁路信息：算不出不许影响事件本身
+    except Exception:  # noqa: BLE001 —— 旁路信息：算不出（含某个子目录读不了）就不带，**不带残缺列表**
         LOG.debug("panel.file_changed 的 files 计算失败", exc_info=True)
         return None
 

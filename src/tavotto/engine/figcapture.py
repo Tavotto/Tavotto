@@ -949,9 +949,12 @@ def project_relative_stem(stem: object) -> bool:
     return ".." not in stem.replace("\\", "/").split("/")
 
 
-def find_artifacts(
-    project_root: str, stem: str, *, isfile=os.path.isfile, formats=None
-) -> list[str]:
+#: 默认的磁盘探测谓词（import 时的那个函数对象）：worker 里用户脚本沙箱可能替换 `os.path.isfile`，
+#: 判「是不是真磁盘」不能拿模块属性比（那会让沙箱里恒走合成路径探测，丢掉真实大小写）
+_DISK_ISFILE = os.path.isfile
+
+
+def find_artifacts(project_root: str, stem: str, *, isfile=_DISK_ISFILE, formats=None) -> list[str]:
     """项目根下 stem 的**所有**产物（相对路径，POSIX，按 `ARTIFACT_EXTS` 顺序）；没有回 `[]`。
 
     `formats`（这张图自己 savefig 过的格式）给了就只认这些扩展名，且**每个存在的都收**：同一张图存了
@@ -962,7 +965,20 @@ def find_artifacts(
         return []  # 先于任何拼接：UNC / 绝对 / 盘符 / `..` 的 stem 一个字节都不探
     allowed = None if formats is None else {_norm_format(f) for f in formats if f}
     out: list[str] = []
-    for ext in ARTIFACT_EXTS:
+    if isfile is _DISK_ISFILE:
+        # 真磁盘：列目录取**真实文件名**（含扩展名大小写，`panel.PDF`）——合成 `stem + ".pdf"` 去探测，在 Windows / macOS
+        # 上记下的是小写的合成路径，在区分大小写的文件系统上什么都找不到；而素材盘点的 id 是真实文件名，
+        # 注册表 `artifacts` 的键必须与它逐字相同（#1251）
+        by_ext = _real_files_with_stem(project_root, stem)
+        for ext in ARTIFACT_EXTS:
+            if allowed is not None and _norm_format(ext[1:]) not in allowed:
+                continue
+            for name in by_ext.get(ext, ()):
+                out.append(name)
+                if allowed is None:
+                    return out
+        return out
+    for ext in ARTIFACT_EXTS:  # 注入的 isfile（测试 / handoff 的 dry 场景）：合成路径探测，保持原样
         if allowed is not None and _norm_format(ext[1:]) not in allowed:
             continue
         if isfile(os.path.join(project_root, stem + ext)):
@@ -972,8 +988,30 @@ def find_artifacts(
     return out
 
 
+def _real_files_with_stem(project_root: str, stem: str) -> dict[str, list[str]]:
+    """`{小写扩展名: [项目相对真实路径（POSIX）]}`：`stem` 所在目录里，文件名主干 == stem 的普通文件。
+    扩展名大小写不敏感（`.PDF` 归 `.pdf`），主干按原样比；读不了目录 = 空。"""
+    rel_dir, _, base = stem.replace("\\", "/").rpartition("/")
+    try:
+        entries = list(os.scandir(os.path.join(project_root, rel_dir) if rel_dir else project_root))
+    except OSError:
+        return {}
+    out: dict[str, list[str]] = {}
+    for entry in sorted(entries, key=lambda e: e.name):
+        root_name, ext = os.path.splitext(entry.name)
+        if root_name != base or not ext:
+            continue
+        try:
+            if not entry.is_file():
+                continue
+        except OSError:
+            continue
+        out.setdefault(ext.lower(), []).append(f"{rel_dir}/{entry.name}" if rel_dir else entry.name)
+    return out
+
+
 def find_original_artifact(
-    project_root: str, stem: str, *, isfile=os.path.isfile, formats=None
+    project_root: str, stem: str, *, isfile=_DISK_ISFILE, formats=None
 ) -> str | None:
     """项目根下 stem 的原始产物（相对路径，POSIX）；没有回 None。
 
