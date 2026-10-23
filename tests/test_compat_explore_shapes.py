@@ -487,6 +487,49 @@ class SelectByFamily(unittest.TestCase):
         self.assertGreaterEqual(len(out), 4)
 
 
+class SeedRotation(unittest.TestCase):
+    def test_which_transforms_of_a_big_family_run_depends_on_the_seed(self):
+        parents = [xt.load_parent("compat_engine", c) for c in ("shape_oo_savefig",)]
+        runs = set()
+        for seed in range(1, 7):
+            pool = [c for c in xt.generate(seed, parents)["candidates"] if len(c["chain"]) == 1]
+            chosen = ex.select(pool, 12)
+            runs.add(
+                tuple(
+                    sorted(
+                        c["chain"][0]["name"]
+                        for c in chosen
+                        if c["chain"][0]["family"] == "data_source"
+                    )
+                )
+            )
+        self.assertGreater(len(runs), 1)
+
+
+class ShardsAndSelect(unittest.TestCase):
+    """CG-09 的 --shard 在 --limit 之前切池：每片自己轮转，片与片不重不漏。"""
+
+    def test_shards_partition_the_pool_and_select_stays_inside_its_shard(self):
+        import compat_explore_shards as sh
+
+        parents = [
+            xt.load_parent("compat_engine", c)
+            for c in ("shape_oo_savefig", "shape_toplevel_imperative")
+        ]
+        pool = xt.generate(42, parents)["candidates"]
+        seen: list[str] = []
+        for k in (1, 2, 3):
+            part = sh.slice_pool(pool, k, 3)
+            chosen = ex.select(part, 8)
+            self.assertLessEqual(
+                {c["candidate_id"] for c in chosen}, {c["candidate_id"] for c in part}
+            )
+            self.assertEqual(len(chosen), 8)
+            self.assertEqual(chosen, ex.select(part, 8))
+            seen += [c["candidate_id"] for c in part]
+        self.assertEqual(sorted(seen), sorted(c["candidate_id"] for c in pool))
+
+
 class RealExecution(unittest.TestCase):
     """真实执行（需要科学栈）。每条用例只跑一个变换在 2 个父本上——合在一起会超出 5 分钟单例超时。"""
 

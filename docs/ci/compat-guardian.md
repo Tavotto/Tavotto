@@ -366,7 +366,7 @@ Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探
 **结构去重与覆盖**：按「轴向量 + 规范化 AST 签名」去重（数字/字符串常量与 `cg_plt3` 之类别名数字归一，所以仅参数不同不算新结构）。
 报告 `coverage` 给出：每个家族的轴、适用父本数、候选数；每个轴的候选数；保型/改轴数；去重前后；以及父本按语料类别的分布
 对比整个语料。父本现在是 `script_shapes / core_artists / axes_layout / scientific_stack` 里已经通过的 `must` case，`metamorphic` 为零（语料里它没有 `must` 用例），
-其中同 stem 不同格式的父本（`shape_same_stem_formats`）登记时是 `product_bug`（后写且被 close 的那张丢失），修复（`figcapture.adopt_displaced_writers`）后基线为 `full_support`；usetex 需要系统 TeX，托管 runner 上跑不了，不作父本。
+#1250 手工加进名单的六个 `expected` 档父本（`art_linecoll_alpha`、`res_radar`、`lay_twin_manual`、`art_3d_surface_scatter`、`shape_helper_shadows_pypi`、`shape_same_stem_formats`）按规则**不再是父本**（档位是 `expected` 不是 `must`；同 stem 不同格式的边界改由 `same_stem_two_figs` 变换在 `must` 父本上直接造出）；usetex 需要系统 TeX，托管 runner 上跑不了，不作父本。
 这个偏向在报告里是明文，候选与自己的 native 一致不代表别的形状没问题。
 
 **输出**（`--out/RUN_ID/`）：`candidates.json`（确定性）、`candidates/<id>/files/`、`evidence/<id>/…`、
