@@ -194,6 +194,38 @@ elif mode in {"formatter", "snapshot_formatter", "standalone_formatter"}:
         counter[0] += 1
         return str(counter[0])
     ax.xaxis.set_major_formatter(FuncFormatter(changing_formatter))
+elif mode in {"children_class", "snapshot_children_class"}:
+    # 类对象当 get_children：调用它跑的是 __new__（类对象不是「非可调用数据」）
+    counter = [0]
+    native_children = ax.get_children
+    class StatefulChildren:
+        def __new__(cls):
+            counter[0] += 1
+            return native_children()
+    ax.get_children = StatefulChildren
+elif mode in {"filter_class", "snapshot_filter_class"}:
+    counter = [0]
+    class StatefulFilter:
+        def __init__(self, image, dpi):
+            counter[0] += 1
+            self.result = (image, 0, 0)
+        def __iter__(self):
+            return iter(self.result)
+    ax.lines[0].set_agg_filter(StatefulFilter)
+elif mode in {"partial_user", "snapshot_partial_user"}:
+    import functools
+    counter = [0]
+    def user_filter(image, dpi, tag=None):
+        counter[0] += 1
+        return image, 0, 0
+    ax.lines[0].set_agg_filter(functools.partial(user_filter, tag="x"))
+elif mode in {"callable_object", "snapshot_callable_object"}:
+    counter = [0]
+    class UserFilter:
+        def __call__(self, image, dpi):
+            counter[0] += 1
+            return image, 0, 0
+    ax.lines[0].set_agg_filter(UserFilter())
 elif mode in {"stateful_transform", "snapshot_stateful_transform"}:
     # 有状态的自定义 Transform：renderer 拿到 transform 对象并各自求值，几何会不同
     from matplotlib.transforms import Affine2D
@@ -322,8 +354,8 @@ elif mode == "mkdir_failure":
 PAIRED = {"formatter", "locator", "formatter_subclass"}
 PAIRED |= {"snapshot_" + name for name in PAIRED}
 #: 能看到 renderer 的回调：仍阻断（它们可能按 renderer 的类分派，tee 与 PDF renderer 不是同一个类）
-BLOCKED = {"callback", "custom_draw", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch", "scale", "transform", "stateful_transform"}
-BLOCKED |= {"snapshot_" + name for name in ("callback", "custom", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch", "scale", "transform", "stateful_transform")}
+BLOCKED = {"callback", "custom_draw", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch", "scale", "transform", "stateful_transform", "children_class", "filter_class", "partial_user", "callable_object"}
+BLOCKED |= {"snapshot_" + name for name in ("callback", "custom", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch", "scale", "transform", "stateful_transform", "children_class", "filter_class", "partial_user", "callable_object")}
 result = None
 if mode == "invalid":
     handler = pkg.wireproto.V1Handler(session)
@@ -381,7 +413,7 @@ else:
     assert calls == [patches, previous], calls
 if mode in {"snapshot_formatter", "snapshot_locator"}:
     assert counter[0] > 0  # 单次绘制：画了，而且只画一次的结果同时进 PDF 与 SVG
-if mode in {"snapshot_annotation", "snapshot_effect", "snapshot_get_children", "snapshot_agg_filter", "snapshot_window_extent", "snapshot_scale", "snapshot_transform", "snapshot_stateful_transform"}:
+if mode in {"snapshot_annotation", "snapshot_effect", "snapshot_get_children", "snapshot_agg_filter", "snapshot_window_extent", "snapshot_scale", "snapshot_transform", "snapshot_stateful_transform", "snapshot_children_class", "snapshot_filter_class", "snapshot_partial_user", "snapshot_callable_object"}:
     assert counter[0] == 0  # 阻断发生在任何绘制 / 遍历调用用户方法之前
 assert session.snapshot("F") == previous
 assert title.get_text() == "Hot title"
@@ -498,6 +530,10 @@ def test_value_callbacks_are_paired_from_one_draw(tmp_path, mode):
         "scale",
         "transform",
         "stateful_transform",
+        "children_class",
+        "filter_class",
+        "partial_user",
+        "callable_object",
     ],
 )
 def test_renderer_visible_callbacks_still_block_pairing(tmp_path, mode):
@@ -660,6 +696,10 @@ def test_automatic_snapshot_pairs_value_callbacks_from_one_draw(tmp_path, mode):
         "snapshot_scale",
         "snapshot_transform",
         "snapshot_stateful_transform",
+        "snapshot_children_class",
+        "snapshot_filter_class",
+        "snapshot_partial_user",
+        "snapshot_callable_object",
     ],
 )
 def test_automatic_snapshot_declines_renderer_visible_callbacks_without_drawing(tmp_path, mode):

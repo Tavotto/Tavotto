@@ -40,6 +40,7 @@ safe worker 本来就是单线程串行读 stdin，这条断言对它恒真（�
 
 from __future__ import annotations
 
+import abc
 import base64
 import functools
 import hashlib
@@ -792,9 +793,19 @@ def _svg_pair_env_blocker(fig) -> str | None:
 
 #: 这些模块的可调用对象自己不会去跑用户代码（C 实现 / 标准库包装）；用户回调要靠 `__wrapped__` / 闭包才进得去，下面逐层核
 _PASSIVE_CALLABLE_MODULES = ("builtins", "functools", "numpy")
+#: 类对象当属性值时，这些标准库基类不会去跑用户代码
+_PASSIVE_CLASS_MODULES = (
+    "builtins",
+    "collections",
+    "collections.abc",
+    "abc",
+    "typing",
+    "enum",
+    "numbers",
+)
 
 
-def _svg_pair_owned(method, depth=0) -> bool:
+def _svg_pair_owned(method, depth=0, cache=None) -> bool:
     """这个可调用对象**确实是 matplotlib / mpl_toolkits 自己定义的**（或 Tavotto 已核过闭包的包装）。只读，不调用。
 
     判据是代码出处（`__code__` 的文件与模块 globals 对得上），不是 `__module__`：`functools.wraps(native)` 会把
@@ -802,8 +813,12 @@ def _svg_pair_owned(method, depth=0) -> bool:
     """
     if depth > 6:
         return False
+    if isinstance(method, type):
+        # 类对象一旦被当成属性值（`artist.get_children = SomeClass`），调用它就会跑 `__new__` / `__init__` / `__call__`：
+        # 整条 MRO 与类字典里的可调用都要是 matplotlib / numpy / 内建自己的
+        return _svg_pair_class_blocker(method, {} if cache is None else cache, extra=True) is None
     if isinstance(method, (functools.partial, functools.partialmethod)):
-        return _svg_pair_owned(method.func, depth + 1)
+        return _svg_pair_owned(method.func, depth + 1, cache)
     method = getattr(method, "__func__", method)
     if getattr(method, "__code__", None) is not None:
         if _svg_pair_native_canvas_method(method):
@@ -826,7 +841,7 @@ def _svg_pair_owned(method, depth=0) -> bool:
             and "original" in method.__code__.co_freevars
         ):
             cells = dict(zip(method.__code__.co_freevars, method.__closure__ or ()))
-            return _svg_pair_owned(cells["original"].cell_contents, depth + 1)
+            return _svg_pair_owned(cells["original"].cell_contents, depth + 1, cache)
         # Tavotto
         return _svg_pair_standard_method(method) and getattr(method, "__module__", "") in (
             manifest_mod.__name__,
@@ -835,7 +850,7 @@ def _svg_pair_owned(method, depth=0) -> bool:
     kind = type(method)
     wrapped = getattr(method, "__wrapped__", None)
     if wrapped is not None:  # lru_cache 之类的 C 包装：核被包的函数
-        return _svg_pair_owned(wrapped, depth + 1)
+        return _svg_pair_owned(wrapped, depth + 1, cache)
     if kind.__module__.startswith(_MPL_MODULES):
         return True  # matplotlib 自己的可调用对象（如 `_process_plot_var_args`）
     if isinstance(method, types.BuiltinFunctionType):
@@ -855,7 +870,9 @@ def _svg_pair_callable_parts(value) -> list:
     if isinstance(value, property):
         return [f for f in (value.fget, value.fset, value.fdel) if f is not None]
     if isinstance(value, type):
-        return []
+        return [
+            value
+        ]  # 类对象是可调用的（实例化会跑用户的 `__new__` / `__init__`）：不能当数据放过
     if isinstance(
         value,
         (types.FunctionType, types.MethodType, functools.partial, functools.partialmethod),
@@ -868,28 +885,42 @@ def _svg_pair_callable_parts(value) -> list:
     return [value] if callable(value) else []
 
 
-def _svg_pair_class_blocker(cls, cache: dict) -> str | None:
-    """这个类的整条 MRO 都是 matplotlib 的，且类上所有可调用属性都没被换成用户的（含对 matplotlib 类的全局 monkeypatch）。"""
-    if cls in cache:
-        return cache[cls]
+def _svg_pair_class_blocker(cls, cache: dict, *, extra: bool = False) -> str | None:
+    """这个类的整条 MRO 都是 matplotlib 的，且类上所有可调用属性都没被换成用户的（含对 matplotlib 类的全局 monkeypatch）。
+
+    `extra=True`（类对象当属性值时）另外接受 numpy 与内建类（`dict` / `float` 之类）：它们不会去跑用户代码。
+    """
+    key = (cls, extra)
+    if key in cache:
+        return cache[key]
+    cache[key] = None  # 自引用的类（类字典里又引用自己）不递归
+    allowed = (*_MPL_MODULES, "numpy.") if extra else _MPL_MODULES
     result = None
     for klass in cls.__mro__:
         if klass is object:
             continue
-        if not klass.__module__.startswith(_MPL_MODULES):
+        module = klass.__module__
+        if extra and module in _PASSIVE_CLASS_MODULES:
+            continue  # 标准库基类（`Sequence` / `dict` / `Enum`……）：不扫它们的类字典
+        if not module.startswith(allowed):
             result = f"custom class {klass.__qualname__}"
+            break
+        if type(klass) not in (type, abc.ABCMeta) and not type(klass).__module__.startswith(
+            allowed
+        ):
+            result = f"custom metaclass of {klass.__qualname__}"
             break
         for name, value in vars(klass).items():
             if (
                 name == "savefig"
             ):  # Figure.savefig 由 `_svg_pair_standard_savefig` 专门核（采集钩子的包装）
                 continue
-            if any(not _svg_pair_owned(part) for part in _svg_pair_callable_parts(value)):
+            if any(not _svg_pair_owned(part, 0, cache) for part in _svg_pair_callable_parts(value)):
                 result = f"custom {klass.__qualname__}.{name}"
                 break
         if result is not None:
             break
-    cache[cls] = result
+    cache[key] = result
     return result
 
 
@@ -903,7 +934,7 @@ def _svg_pair_artist_blocker(artist, cache: dict) -> str | None:
     if why is not None:
         return why
     for name, value in (getattr(artist, "__dict__", None) or {}).items():
-        if any(not _svg_pair_owned(part) for part in _svg_pair_callable_parts(value)):
+        if any(not _svg_pair_owned(part, 0, cache) for part in _svg_pair_callable_parts(value)):
             return f"custom instance attribute {type(artist).__qualname__}.{name}"
     # path effect 对象不是可调用属性，但它们的 draw_path 拿着 renderer：按类核
     for effect in getattr(artist, "_path_effects", None) or ():

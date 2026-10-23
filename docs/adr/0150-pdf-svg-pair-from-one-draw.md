@@ -29,6 +29,9 @@ Figure 的 PDF / SVG 配对原来是「同一命令里 PDF 画一遍、SVG 再�
    （`figsession._svg_pair_artist_blocker`）：整条 MRO 的类都来自 matplotlib，类字典里没有被换成用户函数的可调用（含对 matplotlib 类的全局 monkeypatch），
    实例字典里同样没有（实例级 monkeypatch、用户的 `agg_filter` / axes locator / 注解坐标 callable / 自定义 path effect 类）。判据是**代码出处**（`__code__` 的文件与模块 globals 对得上，
    numpy 自己的纯 Python 函数同理，Tavotto 自己的 colorbar 观察包装核闭包里的原方法），不是 `__module__`——`functools.wraps` 会把它抄成 matplotlib 的。
+   **类对象不是「非可调用数据」**（Codex #1355）：`artist.get_children = SomeClass` / `set_agg_filter(SomeClass)` 一调用就跑 `__new__` / `__init__` / `__call__`。
+   所以实例 / 类字典里的任何 callable——函数、bound method、`functools.partial`（解开看 `func`）、带 `__call__` 的实例、**类对象**——都要出处是 matplotlib / mpl_toolkits / numpy / 内建自己的；
+   类对象按其整条 MRO 与类字典里的可调用判定（标准库基类如 `Sequence` / `dict` 不扫）。非 callable 的数据属性照旧忽略。
    只读（`vars` / `__mro__` / `__code__`），**判定不调用用户代码**；通过后才用 matplotlib 自己的 `get_children` 往下走。`draw_event` 处理器同样阻断。
    理由：能看到 renderer 的代码可能按 renderer 的类分派（tee 与 PDF 本来拿到的不是同一个类，连 PDF 都会变）、可能被每个目标各跑一次（如 `stop_filter`）、
    可能在两次 draw 之间不同；这些都不是「值」，白名单一次覆盖，不靠穷举。
