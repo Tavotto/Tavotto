@@ -337,8 +337,12 @@ out = {"python_version": platform.python_version(), "platform": "-".join((platfo
        "implementation": platform.python_implementation()}
 try:
     from importlib import metadata
-    out["packages"] = sorted({(d.metadata["Name"] or "") + "==" + (d.version or "")
-                              for d in metadata.distributions() if d.metadata["Name"]})[:400]
+    _all = sorted({(d.metadata["Name"] or "") + "==" + (d.version or "")
+                   for d in metadata.distributions() if d.metadata["Name"]})
+    out["packages"] = _all[:400]
+    out["package_total"] = len(_all)
+    if len(_all) > 400:
+        out["packages_truncated"] = "only the first 400 (alphabetical) are listed; use try_import to check a specific package"
 except Exception as exc:
     out["packages_error"] = type(exc).__name__
 try:
@@ -379,8 +383,13 @@ def inspect_environment(ctx: FixContext, args: dict) -> ToolResult:
         )
     pk = info.get("packages")
     if isinstance(pk, list):
-        info["package_count"] = len(pk)
+        total = info.pop("package_total", None)
+        info["package_count"] = (
+            total if isinstance(total, int) else len(pk)
+        )  # 真实总数，不是截断后的条数
     info["os_sandbox"] = res.get("os_sandbox") or "none"  # 结果仍是一个 JSON 文档
+    if res.get("activation") == "skipped":
+        info["activation"] = "skipped (Conda activation not cached; activate scripts were not run)"
     return ok(
         json.dumps(info, ensure_ascii=False, indent=1) + trial.guard_note(res, sandbox=False),
         "inspected environment",

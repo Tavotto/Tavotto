@@ -1309,3 +1309,86 @@ def test_the_sandbox_probe_dir_lives_in_the_cache_and_cleans_up(box, monkeypatch
     assert d.parent == trial.trial_root()
     assert not str(d).startswith(os.path.realpath(tempfile.gettempdir()) + os.sep + "tavotto-sbx")
     assert not d.exists()
+
+
+# --------------------------------------------------------------------------- Codex #1353 第八轮
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".cache/huggingface/token",
+        ".npmrc",
+        ".cargo/credentials.toml",
+        ".config/gh/hosts.yml",
+        ".kaggle/kaggle.json",
+        ".pgpass",
+        "proj/api_token.txt",
+        "proj/aws_credentials",
+        "proj/client_secret.json",
+    ],
+)
+def test_more_credential_stores_and_names_are_denied(box, rel):
+    p = put(box.home / rel, "hf_abcdefghijklmnopqrstuvwxyz")
+    r = call(make_ctx(box), "read_file", {"path": str(p)})
+    assert r.is_error and r.code == "denied"
+
+
+@pytest.mark.parametrize(
+    "name", ["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"]
+)
+def test_tokenizer_files_are_still_readable(box, name):
+    p = put(box.proj / name, "{}")
+    assert not call(make_ctx(box), "read_file", {"path": str(p)}).is_error
+
+
+@pytest.mark.parametrize(
+    "tok",
+    [
+        "hf_" + "a" * 34,
+        "npm_" + "b" * 36,
+        "glpat-" + "c" * 20,
+        "github_pat_" + "d" * 30,
+        "pypi-" + "e" * 40,
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop",
+    ],
+)
+def test_more_token_shapes_are_scrubbed(tok):
+    assert tok not in readscope.scrub(f"value {tok} end")
+
+
+def test_trial_never_captures_a_cold_conda_activation(box, monkeypatch):
+    """冷缓存的激活捕获会跑 conda 与 activate.d：不许在沙盒 / 守卫外跑——只用缓存，没缓存就不激活并说明。"""
+    from tavotto.engine import launcher
+
+    calls = []
+
+    def cold(python, base=None, *, timeout=None):
+        calls.append(getattr(launcher._no_capture, "on", False))
+        raise launcher.CaptureDeferred("cold")
+
+    monkeypatch.setattr(launcher, "activate_env", cold)
+    r = call(_guarded_ctx(box, "print('hi')\n"), "try_run", {"env": "e"})
+    assert calls == [True]  # 只在 no_capture 里问过缓存
+    assert not r.is_error and "activation: skipped" in r.content
+
+
+def test_package_count_is_the_real_total_with_a_truncation_marker(box, monkeypatch):
+    big = {
+        "python_version": "3.12.1",
+        "packages": [f"p{i}==1" for i in range(400)],
+        "package_total": 812,
+        "packages_truncated": "only the first 400",
+    }
+
+    def fake_run(python, **kw):
+        return {
+            "status": "ok",
+            "returncode": 0,
+            "stdout": json.dumps(big),
+            "stderr": "",
+            "os_sandbox": "none",
+        }
+
+    monkeypatch.setattr(trial, "run_python", fake_run)
+    r = call(make_ctx(box, environments={"e": "py"}), "inspect_environment", {"env": "e"})
+    info = json.loads(r.content.split("\n\n")[0] if "\n\n" in r.content else r.content)
+    assert info["package_count"] == 812 and "only the first 400" in info["packages_truncated"]

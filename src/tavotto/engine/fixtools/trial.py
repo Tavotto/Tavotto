@@ -309,8 +309,14 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
         return {"status": "spawn_failed", **empty}
     tmp = str(trial_dir / "tmp")
     work = str(trial_dir / "work")
+    # 激活只许命中缓存：冷缓存的捕获会跑 `conda run` 与环境的 activate.d 脚本，那发生在沙盒 / 守卫之外。
+    # 没缓存就不激活、照常跑，并在结果里如实说明（正常运行过一次的环境通常已有缓存）
+    activation = "cached"
     try:
-        env = launcher.activate_env(python, runtime.probe_env(python), timeout=timeout)
+        with launcher.no_capture():
+            env = launcher.activate_env(python, runtime.probe_env(python), timeout=timeout)
+    except launcher.CaptureDeferred:
+        env, activation = runtime.probe_env(python), "skipped"
     except launcher.LauncherUnavailable:
         return {"status": "env_unavailable", **empty}
     env = dict(os.environ if env is None else env)
@@ -383,6 +389,7 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
     return {
         "status": "ok",
         "os_sandbox": sandbox,
+        "activation": activation,
         "returncode": proc.returncode,
         "stdout": out.text(),
         "stderr": err_.text(),
@@ -424,7 +431,15 @@ def guard_note(res: dict, *, sandbox: bool = True) -> str:
 
 def sandbox_note(res: dict) -> str:
     """每次真正跑过用户代码的结果都带这一句，让模型知道有没有操作系统层的保护。"""
-    return f"\nos_sandbox: {res.get('os_sandbox') or 'none'}" if res.get("status") == "ok" else ""
+    if res.get("status") != "ok":
+        return ""
+    note = f"\nos_sandbox: {res.get('os_sandbox') or 'none'}"
+    if res.get("activation") == "skipped":
+        note += (
+            "\nactivation: skipped — this Conda environment's activation was not cached yet, so its activate "
+            "scripts were not run (they would run outside the guard); results may differ from a normal run"
+        )
+    return note
 
 
 def _tail(text: str, n: int = ERROR_TAIL_LINES) -> str:

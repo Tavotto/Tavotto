@@ -39,6 +39,33 @@ DENY_HOME_RELATIVE: tuple[str, ...] = (
     ".git-credentials",
     ".codex/auth.json",
     ".claude/.credentials.json",
+    # 常见开发工具的凭据存放处（Codex #1353：逐个补会一直漏，这里按「工具 → 默认凭据位置」整批列）
+    ".cache/huggingface/token",
+    ".cache/huggingface/stored_tokens",
+    ".huggingface/token",
+    ".npmrc",
+    ".yarnrc",
+    ".yarnrc.yml",
+    ".cargo/credentials",
+    ".cargo/credentials.toml",
+    ".config/gh/hosts.yml",
+    ".config/hub",
+    ".kaggle/kaggle.json",
+    ".config/openai",
+    ".config/anthropic",
+    ".wandb",
+    ".config/wandb",
+    ".databrickscfg",
+    ".terraform.d/credentials.tfrc.json",
+    ".config/rclone",
+    ".s3cfg",
+    ".boto",
+    ".pgpass",
+    ".my.cnf",
+    ".jupyter/runtime",
+    ".local/share/jupyter/runtime",
+    "Library/Jupyter/runtime",
+    ".config/configstore",
     # 浏览器 profile（Cookie / 登录态 / 保存的密码都在里面）
     "Library/Application Support/Google/Chrome",
     "Library/Application Support/Chromium",
@@ -59,9 +86,31 @@ DENY_HOME_RELATIVE: tuple[str, ...] = (
 )
 
 #: 任意位置、按文件名判的私钥 / 环境文件形状。
-DENY_NAME_PATTERNS: tuple[str, ...] = (".env", ".env.*", "*.pem", "*.key", "*.p12", "id_*")
+DENY_NAME_PATTERNS: tuple[str, ...] = (
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "id_*",
+    "token",
+    "*token*",
+    "*credential*",
+    "*secret*",
+    "*password*",
+    "*.keystore",
+    "*.jks",
+)
 #: `id_rsa.pub` 之类公钥不是秘密
 _NAME_EXEMPT_SUFFIX = (".pub",)
+#: 名字含 token 但不是凭据：模型的分词器文件（`tokenizer.json` / `tokenizer_config.json` / `special_tokens_map.json`）
+_NAME_EXEMPT_PATTERNS = (
+    "tokenizer*",
+    "*tokenizer.*",
+    "special_tokens_map.json",
+    "added_tokens.json",
+)
 
 REASON_DENIED = "denied"
 REASON_OUTSIDE = "outside_scope"
@@ -206,8 +255,11 @@ def _mask_secret(m: re.Match) -> str:
 
 _BEARER = re.compile(r"(?i)\bBearer\s+(?!\*\*\*)[A-Za-z0-9._~+/=-]{12,}")
 _TOKEN_SHAPES = re.compile(
-    r"\b(?:sk-[A-Za-z0-9_\-]{8,}|gh[pousr]_[A-Za-z0-9]{10,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}"
-    r"|AIza[0-9A-Za-z_\-]{30,})\b"
+    r"\b(?:sk-[A-Za-z0-9_\-]{8,}|gh[pousr]_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_\-]{30,}|hf_[A-Za-z0-9]{20,}|npm_[A-Za-z0-9]{20,}"
+    r"|glpat-[A-Za-z0-9_\-]{20,}|pypi-[A-Za-z0-9_\-]{20,}|sk_live_[A-Za-z0-9]{16,}|rk_live_[A-Za-z0-9]{16,}"
+    r"|SG\.[A-Za-z0-9_\-]{16,}\.[A-Za-z0-9_\-]{16,}|ya29\.[A-Za-z0-9_\-]{20,}"
+    r"|eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})\b"
 )
 
 
@@ -259,7 +311,9 @@ class ReadScope:
         name = os.path.basename(path)
         if self._ci:
             name = name.casefold()
-        if name.endswith(_NAME_EXEMPT_SUFFIX):
+        if name.endswith(_NAME_EXEMPT_SUFFIX) or any(
+            fnmatch.fnmatchcase(name, pat) for pat in _NAME_EXEMPT_PATTERNS
+        ):
             return False
         return any(fnmatch.fnmatchcase(name, pat) for pat in DENY_NAME_PATTERNS)
 
