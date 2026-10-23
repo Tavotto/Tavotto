@@ -2520,15 +2520,14 @@ export function ResultBlock({
   const warningCount = job.warnings?.length ?? 0;
   // 一件都没写出来：原因就在摘要行里（用户要的是「为什么」，不该再点开才知道）；有成功的才把失败原因折进详情
   const firstFailure = savedCount === 0 ? job.outputs.find((o) => !outputSaved(o)) : undefined
-  const note = firstFailure
-    ? outputFailureReason(firstFailure)
-    : inspectionFailedCount > 0
-      ? ex("resultInspectionFailed", { count: inspectionFailedCount })
-      : warningCount > 0
-        ? ex("resultWarnings", { count: warningCount })
-        : edited
-          ? ex("editedDuringExport")
-          : undefined;
+  // 几件事同时成立时都要说（一句话里合并），不让优先级链吃掉任何一个：核验未通过 / 警告 / 导出期间又被编辑过
+  const noteParts = [
+    firstFailure ? outputFailureReason(firstFailure) : null,
+    inspectionFailedCount > 0 ? ex("resultInspectionFailed", { count: inspectionFailedCount }) : null,
+    warningCount > 0 ? ex("resultWarnings", { count: warningCount }) : null,
+    edited ? ex("editedDuringExport") : null,
+  ].filter((x): x is string => x !== null);
+  const note = noteParts.length ? noteParts.join("；") : undefined;
   const clean = failedCount === 0 && !note;
   // 摘要一句话 + 至多一个动作；逐个文件、核验、警告、诊断都在默认折叠的「详情」里（卡片一句话读懂）
   return (
@@ -2562,6 +2561,7 @@ export function ResultBlock({
                 "exports/",
             })}
           </p>
+          {edited && <p className="text-warn-content">{ex("editedDuringExport")}</p>}
           {job.outputs.map((o) => (
             <OutputRow
               key={`${o.format}-${o.name ?? "x"}`}

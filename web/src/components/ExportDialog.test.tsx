@@ -96,6 +96,7 @@ let exportBodies: Record<string, unknown>[]
 let jobStatus: 'done' | 'partial' | 'conflict' | 'running' = 'done'
 /** 终局回执里的 outputs（不设 = 一件没有 manifest 的 PDF） */
 let jobOutputs: Record<string, unknown>[] | null = null
+let jobWarnings: string[] = []
 /** 后端 validate 的 `route`（#1209）：按请求体现造；null = 旧后端 / 算不出（响应里没有 route） */
 /** 逐个作业依次给的状态（一批作业里每张一个）；用完退回 `jobStatus` */
 /** 每次 `buildBatchInput` 调用时的微任务纪元（见「冻结是一个同步块」） */
@@ -132,7 +133,7 @@ function stubFetch() {
                   },
                 ])
               : [],
-          warnings: [],
+          warnings: jobWarnings,
           conflicts: status === 'conflict' ? ['a.pdf'] : [],
           export_dir: '/out',
           error: null,
@@ -326,6 +327,7 @@ beforeEach(() => {
   jobStatusSeq = null
   routeDelayMs = 0
   jobOutputs = null
+  jobWarnings = []
   resetExportState()
   useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
   useSelectionStore.getState().clear()
@@ -3236,6 +3238,29 @@ describe('导出页改版（beta 0.19.0b3 反馈）', () => {
     await setup(9)
     await click(q('[data-export-start]')!)
     expect(q('[data-export-result]')!.textContent).toContain('1 个文件核验未通过')
+    expect(q('[data-export-result]')!.getAttribute('data-notice')).toBe('warn')
+  })
+
+  it('核验未通过 + 警告 + 导出期间被编辑：摘要一句话里三样都在，不被优先级链吃掉', async () => {
+    jobOutputs = [
+      {
+        ...out('pdf', 'a.pdf', 'done'),
+        manifest: {
+          manifest_version: 1, format: 'pdf', sha256: 'x', bytes: 10, policy: 'standard', verdict: 'accepted',
+          required: ['integrity', 'size'], notes: [],
+          checks: { integrity: 'verified', size: 'verified', dpi_tag: 'failed' },
+        },
+      } as never,
+    ]
+    jobWarnings = ['w1', 'w2']
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    // 导出期间文档被改：这个标志由 store 按指纹算，这里直接置位（算法本身另有用例）
+    await act(async () => { useExportStore.setState({ editedDuringExport: true }) })
+    const text = q('[data-export-result]')!.textContent!
+    expect(text).toContain('1 个文件核验未通过')
+    expect(text).toContain('2 条提示')
+    expect(text).toContain('导出期间排版又改了')
     expect(q('[data-export-result]')!.getAttribute('data-notice')).toBe('warn')
   })
 })
