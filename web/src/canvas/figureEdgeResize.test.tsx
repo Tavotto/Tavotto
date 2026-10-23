@@ -22,6 +22,7 @@ import { emptyProject, type PanelObject } from '@/types/document'
 import { CanvasStage } from './CanvasStage'
 import { startFigureEdgeResize } from './figureEdgeDrag'
 import { seedExactRender } from '@/test/renderFixtures'
+import { useSelectionStore } from '@/store/selectionStore'
 import { useRenderStore } from '@/store/renderStore'
 import type { Manifest } from '@/lib/api'
 
@@ -264,6 +265,8 @@ describe('松手后新图回来之前：只留虚线占位', () => {
     await mount()
     act(() => useViewportStore.setState({ viewW: 4000, viewH: 3000 }))
     expect(container.querySelector('[data-fast-edit-paper]')).not.toBeNull()
+    act(() => useSelectionStore.getState().set(['a']))
+    expect(container.querySelector('[data-handle]')).not.toBeNull() // 前提：选中时手柄在
     act(() => startFigureEdgeResize(down(0, 0), 'l', 'a'))
     fire('pointermove', dx(-15), 0)
     act(() => fire('pointerup', dx(-15), 0))
@@ -272,12 +275,36 @@ describe('松手后新图回来之前：只留虚线占位', () => {
     expect(container.querySelector('[data-fast-edit-paper]')).toBeNull()
     expect(container.querySelector('[data-figure-pending]')).not.toBeNull()
     expect(container.querySelector('[data-figure-edge]')).toBeNull()
-    // 新图回来：这个变体键有了精确渲染
+    // 选区轮廓 / 缩放手柄一并压住（面板保持选中是常态）
+    expect(container.querySelector('[data-handle]')).toBeNull()
+    // 新图回来，但同步器还没把面板几何校正到位：占位不撤（否则新图配旧尺寸露一帧）
     act(() => seedExactRender(fig() as PanelObject, manifestOf(95, 55)))
+    await act(async () => {})
+    expect(useInteractionStore.getState().figureFramePending).not.toBeNull()
+    expect(container.querySelector('[data-fast-edit-paper]')).toBeNull()
+    // 同步器校正（nativeW/H → w/h）落地：占位才撤
+    act(() => {
+      useDocumentStore.getState().silent((d) => {
+        const o = d.objects[0] as PanelObject
+        o.w = 95
+        o.nativeW = 95
+      })
+    })
     await act(async () => {})
     expect(useInteractionStore.getState().figureFramePending).toBeNull()
     expect(container.querySelector('[data-figure-pending]')).toBeNull()
     expect(container.querySelector('[data-fast-edit-paper]')).not.toBeNull()
+  })
+
+  it('占位期间撤销：目标作废，占位立即撤、旧图回来', async () => {
+    await mount()
+    act(() => startFigureEdgeResize(down(0, 0), 'r', 'a'))
+    fire('pointermove', dx(10), 0)
+    act(() => fire('pointerup', dx(10), 0))
+    expect(useInteractionStore.getState().figureFramePending).not.toBeNull()
+    act(() => void useDocumentStore.getState().undo())
+    await act(async () => {})
+    expect(useInteractionStore.getState().figureFramePending).toBeNull()
   })
 })
 

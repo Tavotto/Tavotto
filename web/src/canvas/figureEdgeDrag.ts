@@ -1,6 +1,7 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { t as translate } from '@/i18n'
 import { resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
+import { effectiveOverride } from '@/lib/effectiveOverride'
 import { figureFrameFacts } from '@/lib/figureEdgeFrame'
 import { planFigureFrame, type PageEdge } from '@/lib/pageEdgeResize'
 import { setFigureFrame } from '@/store/actions'
@@ -16,9 +17,9 @@ const PLACEHOLDER_MAX_MS = 20_000
 
 /**
  * 松手后到新图回来之前，画布上只留虚线框（`interaction.figureFramePending`）：旧图按旧尺寸画在新位置上会错位闪一下。
- * 新图的判据 = 这张面板当前变体已有精确渲染（`exactPanelRender`）；撤销 / 面板没了 / 超时也收。
+ * 新图的判据 = 这张面板当前变体已有精确渲染（`exactPanelRender`）**且**面板的 nativeW / nativeH 已追上目标图幅（同步器校正完）；撤销 / 面板没了 / 超时也收。
  */
-function holdPlaceholder(panelId: string, box: { x: number; y: number; w: number; h: number }) {
+function holdPlaceholder(panelId: string, box: { x: number; y: number; w: number; h: number }, sizeMm: [number, number]) {
   const ix = useInteractionStore
   const stop: (() => void)[] = []
   let timer = 0
@@ -31,9 +32,20 @@ function holdPlaceholder(panelId: string, box: { x: number; y: number; w: number
   const check = () => {
     const p = useDocumentStore.getState().doc.objects.find((o) => o.id === panelId)
     if (ix.getState().figureFramePending?.id !== panelId) return done()
-    if (!p || p.type !== 'panel' || exactPanelRender(useRenderStore.getState(), p)) done()
+    if (!p || p.type !== 'panel') return done()
+    // 撤销 / 别处改了图幅：这次的目标已作废
+    const ov = effectiveOverride(p.overrides, 'figure', 'size_mm')?.value
+    if (!Array.isArray(ov) || ov[0] !== sizeMm[0] || ov[1] !== sizeMm[1]) return done()
+    // 新图回来**且** `useEngineSync` 已把面板几何（nativeW/H → w/h、x/y）校正到位才撤：
+    // 新图一到就撤的话，校正在之后的 effect 里才落，中间那次 render 是新图配旧尺寸（又闪一帧）
+    if (
+      exactPanelRender(useRenderStore.getState(), p) &&
+      Math.abs(p.nativeW - sizeMm[0]) <= 0.05 &&
+      Math.abs(p.nativeH - sizeMm[1]) <= 0.05
+    )
+      done()
   }
-  ix.getState().setFigureFramePending({ id: panelId, box })
+  ix.getState().setFigureFramePending({ id: panelId, box, sizeMm })
   stop.push(useRenderStore.subscribe(check), useDocumentStore.subscribe(check))
   timer = window.setTimeout(done, PLACEHOLDER_MAX_MS)
   check()
@@ -117,7 +129,7 @@ export function startFigureEdgeResize(e: ReactPointerEvent, edge: PageEdge, pane
       const [w, h] = last.sizeMm
       if (w === facts.sizeMm[0] && h === facts.sizeMm[1]) return
       setFigureFrame(panelId, last.sizeMm, edge === 'l' || edge === 't' ? last.pos : undefined)
-      holdPlaceholder(panelId, last.box)
+      holdPlaceholder(panelId, last.box, last.sizeMm)
     },
   })
 }

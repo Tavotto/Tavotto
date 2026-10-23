@@ -94,9 +94,14 @@ interface InteractionState {
   figureEdgeBox: { x: number; y: number; w: number; h: number } | null
   /**
    * 拖图边松手后、新图幅的渲染回来之前：这张图的目标框（页面 mm）。画布上旧图与背纸先收起来、只留虚线框占位
-   * （旧图按旧尺寸画在新位置上会错位闪一下）；新图回来（或超时 / 面板没了）就清掉。**不随 `end()` 清**，由 `figureEdgeDrag` 管。
+   * （旧图按旧尺寸画在新位置上会错位闪一下）；新图回来**且面板几何已追上目标图幅**（或撤销 / 超时 / 面板没了）才清掉；期间该面板的选区轮廓与缩放手柄也压住。**不随 `end()` 清**，由 `figureEdgeDrag` 管。
    */
-  figureFramePending: { id: string; box: { x: number; y: number; w: number; h: number } } | null
+  figureFramePending: {
+    id: string
+    box: { x: number; y: number; w: number; h: number }
+    /** 目标图幅（脚本 mm）：面板的 nativeW / nativeH 追上它才算新图落定 */
+    sizeMm: [number, number]
+  } | null
 
   begin: (kind: DragKind) => void
   end: () => void
