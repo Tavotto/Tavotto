@@ -354,6 +354,44 @@ def test_ensure_helpers_cover_texts_created_after_build_and_explicit_families(in
     assert out.stdout.strip().endswith("OK")
 
 
+_USETEX_DRIVER = """\
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib.texmanager import TexManager
+import overrides
+
+# TeX 管理器只认长度为 1 的 font.family；补尾巴会让它退成 serif，TeX 文字度量全变
+matplotlib.rcParams["text.usetex"] = True
+matplotlib.rcParams["font.family"] = "sans-serif"
+overrides.ensure_rcparams_fallback()
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"], matplotlib.rcParams["font.family"]
+assert TexManager._get_font_family_and_reduced() == ("sans-serif", False)
+
+# 关着 usetex 时照旧补
+matplotlib.rcParams["text.usetex"] = False
+overrides.ensure_rcparams_fallback()
+assert len(matplotlib.rcParams["font.family"]) > 1
+print("OK")
+"""
+
+
+def test_rcparams_fallback_leaves_usetex_font_family_alone(installed_cjk):
+    """Celerite 零编辑漂移的根因：`text.usetex` 下 `font.family` 多了尾巴，TeX 文字度量变了。"""
+    if not installed_cjk:
+        pytest.skip("worker 的解释器找不到任何中日韩候选字体")
+    out = subprocess.run(
+        [WORKER_PY, "-c", _USETEX_DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().endswith("OK")
+
+
 def test_cjk_character_class_is_the_same_on_both_processes():
     """manifest（worker 侧）与 preflight（Flask 侧）各持一份「哪些字算中日韩」；
     两份必须字面相同，否则 worker 报成 `cjk_family` 的字，预检那边不认它是中文。"""

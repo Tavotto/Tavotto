@@ -1133,7 +1133,14 @@ def ensure_rcparams_fallback() -> None:
     这是兜底，不是兑现点：懒建的刻度标签从模板 tick 拷字体属性、图例重建
     （`rebuild_legend`）从旧文字拷，都不经 rcParams。今天没有哪条产品路径
     依赖它——`test_cjk_figure_text.py` 的变异反证里拿掉它不会红，那是已知的。
+
+    **`text.usetex` 开着时不动**：TeX 管理器只认长度为 1 的 `font.family`，多一条尾巴就
+    退成 `serif`，布局里所有 TeX 文字的度量随之变了——零编辑的导出就和脚本自己的第一次
+    保存对不上（Celerite `sho.py`：x 轴下方整体上移 0.44 pt）。TeX 文字的字形由 TeX 出，
+    逐字形回退本来就够不着，补了没有收益。
     """
+    if mpl.rcParams["text.usetex"]:
+        return
     cur = [str(f) for f in mpl.rcParams["font.family"]]
     chain = _family_chain(cur)
     if chain != cur:
