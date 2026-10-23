@@ -5754,7 +5754,9 @@ export default interface Resources {
       "progress": "进行中",
       "rasterHint": {
         "line": "这个脚本是用 {{library}} 直接画成图片的，不是 Matplotlib 图",
-        "why": "可以把它生成的图片文件加进来排版；想逐个元素编辑，需要改成用 Matplotlib 画。"
+        "lineNoFile": "这张图是用 {{library}} 画的，Tavotto 不能直接编辑它。",
+        "why": "可以把它生成的图片文件加进来排版；想逐个元素编辑，需要改成用 Matplotlib 画。",
+        "whyNoFile": "想逐个元素编辑，需要改成用 Matplotlib 画；点「生成可编辑版本」让改图助手另写一份新脚本，原脚本不会被改动。"
       },
       "row": {
         "attention": "需要处理",

@@ -1295,13 +1295,14 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
     await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true } }))
     expect(panel().dataset.prepState).toBe('no_figure_raster')
-    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本是用 Pillow 直接画成图片的，不是 Matplotlib 图')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这张图是用 Pillow 画的，Tavotto 不能直接编辑它。')
     expect(primary()?.textContent).toBe('生成可编辑版本')
     expect(secondary()?.textContent).toBe('打开素材库')
     // 一句话 + 一个主按钮：详情没展开时说明不在页面上
     expect(panel().querySelector('[data-prep-nofigure-raster-why]')).toBeNull()
     await toggleDetails()
     expect(details()?.querySelector('[data-prep-nofigure-raster-why]')?.textContent).toContain('改成用 Matplotlib 画')
+    expect(details()?.querySelector('[data-prep-nofigure-raster-why]')?.textContent).not.toContain('图片文件')
     expect(details()?.querySelector('[data-prep-nofigure-why]')).toBeNull()
     await act(async () => secondary()!.click())
     // 点按钮就主动刷新一次素材（刚写出的图不用等 watcher 轮询），再切标签
@@ -1355,12 +1356,39 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
     await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
     expect(panel().dataset.prepState).toBe('no_figure_raster')
-    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本是用 Pillow 直接画成图片的，不是 Matplotlib 图')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这张图是用 Pillow 画的，Tavotto 不能直接编辑它。')
     expect(primary()?.textContent).toBe('生成可编辑版本')
     expect(secondary()?.textContent).toBe('知道了')
     await act(async () => secondary()!.click())
     expect(useUiStore.getState().leftTab).toBe('layers')
     expect(useUiStore.getState().guideCard).toBe('closed')
+  })
+
+  it('Pillow 画图脚本、有输出文件（path 非空）：沿用「画成图片」句子、详情说图片文件可排版，仍有「打开素材库」次按钮', async () => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: { kind: 'raster_script', library: 'pillow', in_project: true, path: 'out.png' } }))
+    expect(panel().dataset.prepState).toBe('no_figure_raster')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本是用 Pillow 直接画成图片的，不是 Matplotlib 图')
+    expect(primary()?.textContent).toBe('生成可编辑版本')
+    expect(secondary()?.textContent).toBe('打开素材库')
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-nofigure-raster-why]')?.textContent).toContain('图片文件')
+  })
+
+  it.each([
+    ['path 为 null', { kind: 'raster_script' as const, library: 'pillow' as const, in_project: false, path: null }],
+    ['path 缺省', { kind: 'raster_script' as const, library: 'pillow' as const, in_project: false }],
+  ])('Pillow 画图脚本、找不到输出文件（%s）：说「Pillow 画的、不能直接编辑」，主按钮「生成可编辑版本」，次按钮只有「知道了」', async (_name, hint) => {
+    await mount()
+    useUiStore.setState({ guideCard: 'card', leftTab: 'layers' })
+    await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+    expect(panel().dataset.prepState).toBe('no_figure_raster')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这张图是用 Pillow 画的，Tavotto 不能直接编辑它。')
+    expect(primary()?.textContent).toBe('生成可编辑版本')
+    expect(secondary()?.textContent).toBe('知道了')
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-nofigure-raster-why]')?.textContent).toContain('生成可编辑版本')
   })
 
   describe('R / MATLAB 入口卡（ADR 0143 修订）', () => {

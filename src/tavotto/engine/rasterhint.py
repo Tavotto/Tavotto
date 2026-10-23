@@ -113,6 +113,25 @@ _EXTS_BY_LIB: dict[str, frozenset[str]] = {
 }
 
 
+#: Pillow「画图」证据（ADR 0143 修订 2026-10-23）：`ImageDraw.Draw` 对象上的绘制方法
+_PIL_DRAW_METHODS = frozenset(
+    {
+        "line",
+        "rectangle",
+        "ellipse",
+        "polygon",
+        "text",
+        "arc",
+        "pieslice",
+        "point",
+        "multiline_text",
+    }
+)
+_PIL_DRAW_FUNCS = frozenset({"PIL.ImageDraw.Draw"})
+_PIL_NEW_FUNCS = frozenset({"PIL.Image.new"})
+_PIL_FONT_PREFIX = "PIL.ImageFont."
+
+
 def _exts_of(lib: str) -> frozenset[str]:
     return _EXTS_BY_LIB.get(lib, _IMAGE_EXTS)
 
@@ -134,6 +153,11 @@ class _FileScan(ast.NodeVisitor):
         #: 库与路径成对记，后面挑「新写出的文件」时不能把 A 库的路径安到 B 库头上
         self.saves: list[tuple[str, str | None]] = []
         self._save_calls: list[ast.Call] = []
+        #: Pillow 画图证据（`finish` 后有效）：强 = 对 `ImageDraw.Draw` 对象调了绘制方法（或 Draw + ImageFont 画字）；
+        #: 弱 = `Image.new` 之后有 `.save` / `.show`（不是 Image.open 的图片处理）
+        self.pil_draw_strong = False
+        self.pil_draw_weak = False
+        self._draw_bindings: list[tuple[list[ast.expr], ast.expr]] = []
 
     def visit_Import(self, node: ast.Import) -> None:
         for a in node.names:
@@ -151,6 +175,16 @@ class _FileScan(ast.NodeVisitor):
             for a in node.names:
                 if a.name != "*":
                     self.bound[a.asname or a.name] = f"{node.module}.{a.name}"
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        self._draw_bindings.append((list(node.targets), node.value))
+        self.generic_visit(node)
+
+    def visit_With(self, node: ast.With) -> None:
+        for item in node.items:
+            if item.optional_vars is not None:
+                self._draw_bindings.append(([item.optional_vars], item.context_expr))
         self.generic_visit(node)
 
     def _note(self, top: str) -> None:
@@ -175,8 +209,44 @@ class _FileScan(ast.NodeVisitor):
             return None
         return ".".join([self.bound[cur.id], *reversed(parts)])
 
+    def _scan_pillow_drawing(self) -> None:
+        """Pillow 画图证据（纯 AST）：绘制方法的接收者必须是 `ImageDraw.Draw(...)` 的结果（赋给的名字 / with-as /
+        直接链式调用），所以 `ax.text` / `plt.plot` 不会被当成 Pillow 绘制。"""
+        if not self.imports_pil:
+            return
+        draw_names: set[str] = set()
+        has_draw_call = has_font = has_new = has_out = False
+        for targets, value in self._draw_bindings:
+            if isinstance(value, ast.Call) and self._resolve(value.func) in _PIL_DRAW_FUNCS:
+                draw_names.update(ast.unparse(t) for t in targets)
+        strong = False
+        for call in self._save_calls:
+            full = self._resolve(call.func)
+            if full in _PIL_DRAW_FUNCS:
+                has_draw_call = True
+            elif full in _PIL_NEW_FUNCS:
+                has_new = True
+            elif full is not None and full.startswith(_PIL_FONT_PREFIX):
+                has_font = True
+            func = call.func
+            if not isinstance(func, ast.Attribute):
+                continue
+            if func.attr in _PIL_DRAW_METHODS:
+                recv = func.value
+                if ast.unparse(recv) in draw_names or (
+                    isinstance(recv, ast.Call) and self._resolve(recv.func) in _PIL_DRAW_FUNCS
+                ):
+                    strong = True
+            elif func.attr in ("save", "show") and not self._receiver_is_foreign_module(
+                func.value, frozenset({"PIL"})
+            ):
+                has_out = True
+        self.pil_draw_strong = strong or (has_draw_call and has_font)
+        self.pil_draw_weak = has_new and has_out
+
     def finish(self) -> None:
         """import 全部收齐之后再判调用（调用可能写在 import 之前的函数体里）。"""
+        self._scan_pillow_drawing()
         for call in self._save_calls:
             func = call.func
             full = self._resolve(func)
@@ -410,6 +480,7 @@ def detect(
     if scan.truncated or scan.problems:
         return None  # 反面判据（有没有 matplotlib）看不全：不说
     saves: list[tuple[str, str | None]] = []
+    mpl_any = draw_strong = draw_weak = False
     for rel in scan.files:
         text, problem = discover.read_source(root_p / rel)  # PEP 263 / BOM；解不出就不说
         if problem is not None or text is None:
@@ -420,15 +491,55 @@ def detect(
             return None
         fs = _FileScan()
         fs.visit(tree)
-        if fs.imports_mpl:
-            return None
         fs.finish()
+        mpl_any = mpl_any or fs.imports_mpl
+        draw_strong = draw_strong or fs.pil_draw_strong
+        draw_weak = draw_weak or fs.pil_draw_weak
         saves += fs.saves
     # 扫描只读 .py；编译扩展 / 命名空间包的内部看不见，已在 scan 里记入 problems 或不进 files，这里不再猜
+    if mpl_any:
+        # 旧版在这里一刀切不提示。现在「没捕获到 Figure」是运行事实（本函数只在 no_figure 结局后被问）：
+        # 只有 Pillow 绘制证据成立（强证据）才说，文件证据只认 Pillow 自己的保存
+        if not draw_strong:
+            return None
+        pil_saves = [(lib, p) for lib, p in saves if lib == LIB_PILLOW]
+        hit = _hint_from_files(
+            root_p, script, cwd_mode, run_started_at, sandbox_dir, pil_saves, False
+        )
+        return hit if hit is not None else _pillow_drawn_hint()
+    hit = _hint_from_files(
+        root_p, script, cwd_mode, run_started_at, sandbox_dir, saves, scan.dynamic
+    )
+    if hit is not None:
+        return hit
+    # 没有文件证据（动态路径 / 只 `.show()` / 文件还不存在）：AST 能证明这是 Pillow 画图脚本就说（维护者 2026-10-23：先跑再提示）。
+    # 强证据在动态 import 下仍可说（运行事实已经是没出 Figure）；弱证据（Image.new + save / show）看不全就不说
+    only_pillow_saves = all(
+        lib == LIB_PILLOW for lib, _p in saves
+    )  # 别的库也在存图：弱证据分不清是谁，不说
+    if draw_strong or (draw_weak and not scan.dynamic and only_pillow_saves):
+        return _pillow_drawn_hint()
+    return None
+
+
+def _pillow_drawn_hint() -> dict:
+    return {"kind": "raster_script", "library": LIB_PILLOW, "in_project": False, "path": None}
+
+
+def _hint_from_files(
+    root_p: Path,
+    script: str,
+    cwd_mode: str | None,
+    run_started_at: float | None,
+    sandbox_dir: str | None,
+    saves: list[tuple[str, str | None]],
+    dynamic: bool,
+) -> dict | None:
+    """旧判据：静态上有保存位图的调用 + 本次运行写出了文件的证据 → hint；否则 None。"""
     libs = [lib for lib, _p in saves]
     if not libs:
         return None
-    if scan.dynamic and not set(libs) <= _DYNAMIC_TOLERANT:
+    if dynamic and not set(libs) <= _DYNAMIC_TOLERANT:
         return None  # 动态 import 可能装进没扫过的 matplotlib：位图库脚本看不全就不说
     # 多个库时取先出现的；顺序按 LIBRARIES 稳定化，保证同一份脚本总给同一个答案
     fresh = [

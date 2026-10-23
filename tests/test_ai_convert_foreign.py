@@ -139,7 +139,9 @@ def test_r_and_matlab_prompts_are_variants_of_the_same_section():
     kw = {"script": "fig.R", "target": "fig_matplotlib.py", "reference": None, "project_root": "/p"}
     r = ai_prompt_pack.convert_prompt(source_language="r", **kw)
     m = ai_prompt_pack.convert_prompt(source_language="matlab", **kw)
-    py = ai_prompt_pack.convert_prompt(library="pillow", **kw)
+    py = ai_prompt_pack.convert_prompt(
+        library="root", **kw
+    )  # pillow 的对照表自带 NEEDS_INPUT 约定（0143 修订 2026-10-23）
     for text in (r, m):
         assert "TAVOTTO_NEEDS_INPUT:" in text and "不会运行它" in text
         assert "fig_matplotlib.py" in text and "/p" in text, "目标与工作副本说明沿用同一份模板"

@@ -162,6 +162,26 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 `DropTarget::ForeignScript { folder, script, name, ignored }`（载荷 `kind: "foreign_script"`），分派顺序 `.py` > 外语脚本 > 文件夹 > 不支持，多个取第一个；页面收到后与 DOM 拖放、选择器走同一个入口
 （`openForeign`：开所在文件夹 → 出卡，不运行；语言按文件名后缀在页面侧判）。
 
+## 修订：Pillow 画图脚本的识别放宽 + 转写对照表（2026-10-23，维护者裁决「先照常跑，跑完没有 matplotlib 图就出」）
+
+`rasterhint` 原先要求「找得到本次运行写出的文件」，Pillow 画图脚本一旦输出路径动态拼、只 `im.show()` 不存盘、或文件还没出现，
+就进不了「生成可编辑版本」。本修订只动 Pillow 分支（opencv / imageio / skimage / plotly / ROOT 判据不变，仍要文件证据）：
+
+1. **时机不变**：仍只在结局 `execution_finished_no_figure`（跑完没有 Matplotlib 图）之后问一次；纯 AST、只读、不执行，读不了 / 解析不了 / 扫描被截断一律 None。
+2. **Pillow 画图证据**（AST，接收者必须真是 `ImageDraw.Draw(...)` 的结果——赋值名 / with-as / 链式调用，所以 `ax.text`、`plt.show()` 不算）：
+   强证据＝对 Draw 对象调了 `line / rectangle / ellipse / polygon / text / arc / pieslice / point`，或同时有 `ImageDraw.Draw` 与 `ImageFont`（画字）；
+   弱证据＝`Image.new(...)` 之后有 `.save` / `.show`（`Image.open(...).resize().save()` 这类图片处理没有 `Image.new` 也没有绘制，**不算**）。
+3. **文件证据变成可选**：有（字面量路径文件 / 素材盘点新文件）就带 `path`，没有就 `path: null`、`in_project: false`；旧的文件证据路径原样保留并优先。
+4. **同时 import matplotlib**：结局已是“没捕获到 Figure”这个运行事实，不再一刀切沉默；但只认**强证据**（弱证据在有 matplotlib 时仍沉默），文件证据只认 Pillow 自己的保存。
+5. **看不全时**：强证据在动态 import 下仍可说（运行事实已替代“有没有 matplotlib”的静态猜测）；弱证据遇动态 import、或脚本里还有别的库在存图（分不清是谁）仍沉默。
+6. **卡片**：`path` 为空时一句话＝「这张图是用 Pillow 画的，Tavotto 不能直接编辑它。」，主按钮「生成可编辑版本」，次按钮「知道了」；有 `path` 时保留原句与「打开素材库」。
+7. **提示词**：`convert_prompt(library="pillow")` 在硬性要求之后追加一段 Pillow → Matplotlib 对照表（别的库与 R / MATLAB 来源不出现）：
+   ImageDraw 的 line / rectangle / ellipse / polygon → `ax.plot` / `patches.Rectangle` / `Ellipse` / `Polygon` 且处理原点翻转（`set_ylim(H, 0)`）；
+   text + ImageFont → `ax.text`（`pt = px × 72 / dpi`）；`Image.new` → `figsize=(w/dpi, h/dpi)` + 背景色 + `axis("off")` + `subplots_adjust(0,0,1,1)`；
+   `Image.open` / `paste` → `imshow(np.asarray(img), extent=...)`；没有可靠对应 → `TAVOTTO_NEEDS_INPUT:` 停下。
+8. **盲点（写在明处）**：绘制方法的接收者只跟踪同文件内赋值得到的 Draw 对象；Draw 对象当参数传进 helper 后在 helper 里画（接收者是形参）看不见，除非同时有 `ImageFont`。
+   不改变“永远不改用户脚本”：结果仍另存 `<原名>_matplotlib.py`，不加遥测事件。
+
 ## 不做
 
 - 不自动采用；不替用户改任何已有脚本；不在原脚本上叠改。

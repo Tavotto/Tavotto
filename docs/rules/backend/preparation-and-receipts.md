@@ -214,6 +214,7 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   ②运行时才定的路径——项目素材盘点（`iter_assets`，带 3 s 预算，不另开全盘扫描）里 mtime ≥ 运行开始（容差 1 s）的新增 / 被改写文件（png / jpg / tiff / pdf；svg / eps 盘点外，只走①）。
   ②的库归属只看「输出路径运行时才定」的那几处保存（字面量路径已逐个核过）、且扩展名为该库所认：候选库唯一才给，多库都可能（如未调用的 Pillow helper + plotly 都写 PNG）就不说；plotly 的 `to_image` 返回字节不写文件，不算存图调用。`path` 是能确定的输出文件（供「打开素材」定位 / 后续「生成可编辑版本」），不在项目里或判不出为 `null`。
   只是提示：不改 `outcome` / `facts`，不改捕获。界面一句话 + 主按钮「打开素材库」（现成入口），原因说明折叠在详情；库名映射 `preparationText.RASTER_LIBRARY_NAME` 与 `rasterhint.LIBRARIES` 同源。
+  **Pillow 例外（ADR 0143 修订 2026-10-23）**：上面的“硬条件 / import matplotlib 即沉默”只管文件证据路径；AST 能证明是 Pillow 画图脚本（`ImageDraw.Draw` 对象上的绘制调用，或 `Image.new` 之后 `.save` / `.show`）时，没有文件证据也给 hint（`path: null`、`in_project: false`），同时 import matplotlib 只认强证据（绘制调用）。其它库不变。
   看护 `tests/test_rasterhint.py`、`tests/test_preparation_session_lifecycle.py`、`web/src/components/PreparationCard.test.tsx`。
 - **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
   报告多 `dependency_delta`），失败 / 取消保留原代并重新给新的授权动作；脚本跑到一半才发现缺包 = 新的一次尝试

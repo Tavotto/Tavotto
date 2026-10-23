@@ -312,6 +312,34 @@ def test_a_pillow_script_run_in_project_mode_that_wrote_the_file_is_in_project(
     }
 
 
+def test_a_pillow_drawing_script_without_any_output_file_gets_a_pathless_hint(
+    client, tmp_path, fake_pool, sessions
+):
+    from tavotto.engine import workdir
+
+    root = _project(tmp_path, "p")
+    _open(client, root)
+    workdir.set_mode(root, "project")
+    fake_pool["build_resp"] = lambda: {
+        "ok": True,
+        "stems": {},
+        "descriptors": [],
+        "runtime": {"pid": 1},
+    }  # 没写任何文件、输出路径动态
+    final = _no_figure_report(
+        client,
+        root,
+        "import sys\nfrom PIL import Image, ImageDraw\nim = Image.new('RGB', (9, 9))\n"
+        "ImageDraw.Draw(im).line([(0, 0), (8, 8)])\nim.save(sys.argv[0] + '.png')\n",
+    )
+    assert final["no_figure_hint"] == {
+        "kind": "raster_script",
+        "library": "pillow",
+        "in_project": False,
+        "path": None,
+    }
+
+
 def test_a_pillow_helper_never_called_gets_no_hint_even_in_project_mode(
     client, tmp_path, fake_pool, sessions
 ):
@@ -329,7 +357,9 @@ def test_a_pillow_helper_never_called_gets_no_hint_even_in_project_mode(
     final = _no_figure_report(
         client,
         root,
-        "from PIL import Image\ndef unused():\n    Image.new('RGB', (4, 4)).save('out.png')\n",
+        # 图片处理 helper（不是画图：无 Image.new / ImageDraw）；Image.new + save 现在属于 AST 弱证据，即使没写文件也会提示
+        # （ADR 0143 修订 2026-10-23，见 tests/test_rasterhint.py）
+        "from PIL import Image\ndef unused():\n    Image.open('a.png').save('out.png')\n",
     )
     assert final["outcome"]["kind"] == "execution_finished_no_figure"
     assert final["no_figure_hint"] is None

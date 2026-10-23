@@ -1088,7 +1088,8 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
     localError ??
     // 跑完没出 Matplotlib 图、但脚本自己用位图库写了图片：这句话独立成一组键（`prep.rasterHint.*`）
     (view.state === 'no_figure_raster'
-      ? pt('rasterHint.line', view.sentence.values)
+      ? // 没有落盘文件（动态路径 / 只 show / 文件还没出现）：不说「画成图片」，说「画的、不能直接编辑」（ADR 0143 修订 2026-10-23）
+        pt(report?.no_figure_hint?.path ? 'rasterHint.line' : 'rasterHint.lineNoFile', view.sentence.values)
       : pt(`line.${view.sentence.key}`, view.sentence.values))
   const originView = localError ? null : originViewOfCard(view.state)
   const attrs = {
@@ -1612,7 +1613,11 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         <TaskDiagnostic key={dep.plan_id} kind="dependency" refId={dep.plan_id} folded={false} />
       )}
       {view.state === 'no_figure' && <p data-prep-nofigure-why>{pt('detail.noFigureWhy')}</p>}
-      {view.state === 'no_figure_raster' && <p data-prep-nofigure-raster-why>{pt('rasterHint.why')}</p>}
+      {view.state === 'no_figure_raster' && (
+        <p data-prep-nofigure-raster-why>
+          {pt(report?.no_figure_hint?.path ? 'rasterHint.why' : 'rasterHint.whyNoFile')}
+        </p>
+      )}
       {(report?.failed_figures ?? []).length > 0 && report?.phase === 'partial' && (
         <p data-prep-failed-figures>
           {pt('detail.failedFigures', {

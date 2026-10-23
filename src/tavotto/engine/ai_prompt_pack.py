@@ -287,6 +287,19 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         frozenset(),
         "4. 不要运行脚本（渲染与校验由外部系统负责）；不要修改工作目录里的其他任何文件，只写上面那一个新文件。",
     ),
+    # --- Pillow 来源（ADR 0143 修订，2026-10-23）：library == "pillow" 时在硬性要求后追加的对照表；别的库不出现
+    "pillow_table": (
+        frozenset(),
+        "Pillow → Matplotlib 对照（原脚本是 Pillow 直接画的；Pillow 的原点在左上角、y 向下，搬运时务必处理坐标翻转）：\n"
+        "- ImageDraw.line / rectangle / ellipse / polygon → ax.plot / matplotlib.patches.Rectangle / Ellipse / Polygon；"
+        "坐标翻转：画布像素坐标直接沿用，并设 ax.set_xlim(0, W); ax.set_ylim(H, 0)（或自行换算 y = H - y）。\n"
+        "- ImageDraw.text + ImageFont → ax.text；字号按 px 换算成 pt：pt = px × 72 / dpi。\n"
+        "- Image.new((w, h), color) → fig = plt.figure(figsize=(w / dpi, h / dpi), dpi=dpi)，背景色设到 figure / axes，"
+        'ax.axis("off")，fig.subplots_adjust(0, 0, 1, 1)，让坐标轴铺满整张图。\n'
+        "- 已有照片 / Image.open / paste → ax.imshow(np.asarray(img), extent=...)，extent 按像素位置给。\n"
+        "- 遇到没有可靠对应的 Pillow 操作（滤镜、混合模式、复杂变换……）：不要近似替换。此时停下，"
+        "你的回答第一行写 `TAVOTTO_NEEDS_INPUT: ` 紧跟一句话说清是哪一步换不了、为什么，并且不要写任何新文件。",
+    ),
     "note": (
         frozenset({"project_root"}),
         "注意：当前工作目录是工作副本；原项目目录 {project_root} 只供只读参考（数据文件、同目录模块在那里），"
@@ -421,6 +434,8 @@ def convert_prompt(
         ]
     else:
         lines += [*convert_requirements(), _convert_render("rule_scope")]
+    if not foreign and (library or "").lower() == "pillow":
+        lines += ["", _convert_render("pillow_table")]
     lines += ["", _convert_render("note", project_root=project_root)]
     return "\n".join(lines)
 

@@ -1175,7 +1175,9 @@
     },
     "rasterHint": {
       "line": "This script draws an image directly with {{library}}, not a Matplotlib figure",
-      "why": "You can bring the image file it saves in to lay out; to edit it element by element, it has to be redrawn with Matplotlib."
+      "lineNoFile": "This figure was drawn with {{library}}, so Tavotto can't edit it directly.",
+      "why": "You can bring the image file it saves in to lay out; to edit it element by element, it has to be redrawn with Matplotlib.",
+      "whyNoFile": "To edit it element by element, it has to be redrawn with Matplotlib. Use “Make editable version” to have the assistant write a separate new script; your original script is never changed."
     },
     "row": {
       "checking": "Checking",
