@@ -3181,6 +3181,14 @@ describe('导出页改版（beta 0.19.0b3 反馈）', () => {
     expect(stage.className).not.toMatch(/\bp-3\b|border/)
     expect(q('[data-export-preview]')!.querySelector('p.font-medium')).toBeNull()
     expect(q('[data-export-preview-size]')!.textContent).toMatch(/mm/)
+    // 图是直角：预览区里（容器、舞台、内容盒、图本身）没有任何圆角类，overflow-hidden 的容器也不带
+    for (const el of [q('[data-export-preview]')!, stage, ...stage.querySelectorAll<HTMLElement>('*')]) {
+      if (el.closest('[data-export-preview-tabs]') || el.closest('[data-export-preview-reset]')) continue
+      if (el.className && typeof el.className === 'string' && !el.closest('.pointer-events-none')) {
+        expect(el.className, '预览里的图不许有圆角').not.toMatch(/\brounded/)
+      }
+    }
+    expect(q('[data-export-preview] > div')!.className).not.toMatch(/\brounded/)
   })
 
   it('全部成功：一句「已导出 N 个文件」+ 一个「在文件夹中显示」，逐个文件与核验都折在详情里', async () => {

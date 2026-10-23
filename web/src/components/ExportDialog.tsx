@@ -1970,9 +1970,10 @@ function ExportPreviewPane({
   const flagged = (f: ExportableFigure) => !!f.panel && flaggedObjectIds.has(f.panel.id);
   const pageSize = fallbackCrop?.page ?? doc.page;
   return (
+    // 直角：容器不给圆角（overflow-hidden 会把图的四角裁圆），图本身也不带圆角
     // 整列都是预览区：灰底面板从上到下铺满本列，图在里面按比例 contain、不留边距（上下或左右顶满）
     <div data-export-preview className="relative min-h-[320px] min-w-0 md:min-h-0">
-      <div className="flex h-full max-h-[calc(86vh-13rem)] min-h-[320px] flex-col overflow-hidden rounded-lg bg-surface-2 md:sticky md:top-0">
+      <div className="flex h-full max-h-[calc(86vh-13rem)] min-h-[320px] flex-col overflow-hidden bg-surface-2 md:sticky md:top-0">
         {!single && (
           <div
             role="tablist"
