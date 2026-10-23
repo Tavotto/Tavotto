@@ -268,12 +268,21 @@ def _pyproject_requires_python(text: str) -> str | bool | None:
         if value is None:
             return None
         return value if isinstance(value, str) else False
+    # 3.10 没有 tomllib：正则兜底只认最常见的写法；表头长得不像 TOML（`[[[`、没闭合）就当「读不懂」，宁可不换
     in_project = False
     for line in text.splitlines():
-        stripped = line.strip()
+        stripped = line.split("#", 1)[0].strip()
         if stripped.startswith("["):
+            if not re.fullmatch(r"\[\[?[A-Za-z0-9_.\-\s\"']+\]\]?", stripped):
+                return False
             in_project = stripped == "[project]"
             continue
+        if (
+            in_project
+            and stripped.startswith("requires-python")
+            and not re.match(r'requires-python\s*=\s*["\'][^"\']*["\']\s*$', stripped)
+        ):
+            return False
         m = re.match(r'requires-python\s*=\s*["\']([^"\']*)["\']\s*(?:#.*)?$', stripped)
         if in_project and m:
             return m.group(1)
@@ -475,6 +484,13 @@ def apply_python_change(
     return _build_generation(plan, base, note, cancel)
 
 
+def _run_prepare(plan_id: str, on_event, digest: str):
+    """执行这一代的联合计划。摘要由调用方传入：这里的授权来自维护者 2026-10-23 的裁决（版本不合时**不问、直接换**，
+    且只在 Tavotto 自己的受管环境里另建、绝不碰用户环境），所以绑定的是同一次调用里刚算出的计划摘要——
+    与 `convertdeps._run_prepare` 对「已同意的环境」同一口径；`tests/test_dependency_executor_entry.py` 逐个登记。"""
+    return deprepair.prepare(plan_id, on_event, confirmed_impact=digest)
+
+
 def _build_generation(
     plan: PythonChangePlan, base: str, note: Callable[..., None], cancel: threading.Event
 ) -> dict:
@@ -512,9 +528,7 @@ def _build_generation(
                 return {"ok": False, "code": ERROR_CANCELLED, "to": plan.to_version}
             watched["plan_id"] = joint.plan_id
             watcher.start()
-            result = deprepair.prepare(
-                joint.plan_id, on_event, confirmed_impact=joint.impact_digest
-            )
+            result = _run_prepare(joint.plan_id, on_event, joint.impact_digest)
     except deprepair.RepairError as exc:
         LOG.warning("换 Python：受管环境准备失败 %s", exc.code)
         return {"ok": False, "code": exc.code, "to": plan.to_version}

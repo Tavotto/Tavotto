@@ -43,6 +43,9 @@ EXPECTED_CALL_SITES = {
     ("src/tavotto/engine/deprepair.py", "_prepare_guarded", "prepare"),
     # 「生成可编辑版本」缺包：摘要由调用方传入（点卡片 = 前端回显；已同意的环境 = 同次调用里算出的，见 convertdeps 模块头）
     ("src/tavotto/engine/convertdeps.py", "_run_prepare", "prepare"),
+    # Python 版本不合时自动另建受管环境：维护者 2026-10-23 裁决「不问，直接换」，只在 Tavotto 自己的受管环境里建；
+    # 摘要是同次调用里刚算出的计划摘要，经形参传入（见 pyversionfix._run_prepare 的 docstring）
+    ("src/tavotto/engine/pyversionfix.py", "_run_prepare", "prepare"),
 }
 
 

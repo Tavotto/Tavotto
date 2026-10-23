@@ -804,3 +804,28 @@ def test_private_python_lock_version_is_judged_on_the_full_version(tmp_path, mon
     )
     failure = {"code": "project_env_unsupported_python", "script": "fig.py", "env_python": "3.9"}
     assert pyversionfix.plan_python_change(failure, root) is None
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ('[project]\nrequires-python = ">=3.11"\n', ">=3.11"),
+        ("[project]\nname = 'x'\n", None),
+        ("[[[", False),
+        ("[project\nrequires-python = '>=3.11'\n", False),
+        ("[project]\nrequires-python = >=3.11\n", False),
+    ],
+)
+def test_the_no_tomllib_fallback_treats_malformed_files_as_unreadable(monkeypatch, text, want):
+    """3.10 没有 tomllib：正则兜底遇到不像 TOML 的表头 / 没加引号的值，按「读不懂」（不换），不是「没写」。"""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_tomllib(name, *a, **k):
+        if name == "tomllib":
+            raise ImportError("simulated 3.10")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", no_tomllib)
+    assert pyversionfix._pyproject_requires_python(text) == want
