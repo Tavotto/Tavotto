@@ -464,7 +464,10 @@ def test_macos_command_file_exports_cli_env_but_never_secrets(monkeypatch, tmp_p
     assert "export PATH=" in script
     assert "sk-secret" not in script and "ANTHROPIC_API_KEY" not in script
     assert "RANDOM_VAR" not in script and "zzz-unrelated" not in script
-    assert oct(os.stat(ran[0][3]).st_mode & 0o777) == "0o700"
+    if (
+        os.name != "nt"
+    ):  # 这条用例在任何宿主上模拟 macOS；Windows 没有 POSIX 权限位，chmod 0o700 读回来是 0o666
+        assert oct(os.stat(ran[0][3]).st_mode & 0o777) == "0o700"
 
 
 def test_terminal_login_on_windows_opens_a_new_console(monkeypatch, popen):
