@@ -32,6 +32,11 @@ def test_agreement_reports_a_changed_curve_and_a_dropped_duplicate():
     assert (report["only_native"], report["only_product"]) == (2, 1)
 
 
+def test_exact_match_beats_a_figure_that_merely_shares_more_curves():
+    report = guardian.line_data_agreement([["a", "b"], ["a"]], _result("a"))
+    assert (report["status"], report["closest_native_figure"]) == ("equal", 1)
+
+
 def test_agreement_picks_the_native_figure_the_product_opened():
     report = guardian.line_data_agreement([["x"], ["a", "b"]], _result("a", "b"))
     assert (report["status"], report["closest_native_figure"]) == ("equal", 1)

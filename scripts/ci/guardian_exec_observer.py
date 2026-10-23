@@ -24,6 +24,7 @@ KEY_DISTRIBUTIONS = (
     "matplotlib",
     "numpy",
     "pillow",
+    "fonttools",
     "pandas",
     "scipy",
     "seaborn",

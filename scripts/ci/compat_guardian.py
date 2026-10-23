@@ -178,6 +178,12 @@ def science_python() -> str:
 
 
 def environment() -> dict:
+    """Identity of the environment the measurement ran in.
+
+    With a separate scientific interpreter both are bound: the top-level facts are the scientific
+    interpreter's (where scripts and workers run) and `facts.guardian` is Tavotto's own, so a change
+    on either side changes the fingerprint.
+    """
     python = science_python()
     if python == sys.executable:
         return actual_environment()
@@ -189,7 +195,8 @@ def environment() -> dict:
     out = subprocess.run(
         [python, "-I", "-c", code, str(HERE)], capture_output=True, text=True, check=True
     ).stdout
-    return json.loads(out)
+    facts = {**json.loads(out)["facts"], "guardian": actual_environment()["facts"]}
+    return {"fingerprint": canonical(facts), "facts": facts}
 
 
 def fonts_dir() -> Path:
@@ -198,26 +205,38 @@ def fonts_dir() -> Path:
     return Path(override) if override else ROOT / "src/tavotto/resources/fonts"
 
 
+#: What each side really imports. The Guardian process uses numpy/Pillow for the pixel comparison
+#: (`pixelcompare`) and RenderCore for the product; scripts and workers need matplotlib/numpy.
+GUARDIAN_MODULES = tuple(m for m in REQUIRED_MODULES if m != "matplotlib")
 SCIENCE_MODULES = ("matplotlib", "numpy")
 
 
 def preflight() -> list[str]:
     python = science_python()
     if python == sys.executable:
-        wanted = REQUIRED_MODULES
-        remote: list[str] = []
-    else:
-        wanted = tuple(m for m in REQUIRED_MODULES if m not in ("matplotlib",))
-        probe = "import importlib.util as u, sys; print(*[m for m in sys.argv[1:] if u.find_spec(m) is None])"
-        found = subprocess.run(
-            [python, "-I", "-c", probe, *SCIENCE_MODULES], capture_output=True, text=True
+        return [f"module:{m}" for m in REQUIRED_MODULES if importlib.util.find_spec(m) is None] + (
+            _font_gaps()
         )
-        remote = (
-            [f"science_module:{m}" for m in found.stdout.split()]
-            if found.returncode == 0
-            else ["science_python:unusable"]
-        )
-    missing = [f"module:{m}" for m in wanted if importlib.util.find_spec(m) is None] + remote
+    probe = (
+        "import importlib.util as u, sys;"
+        "print(*[m for m in sys.argv[1:] if u.find_spec(m) is None])"
+    )
+    found = subprocess.run(
+        [python, "-I", "-c", probe, *SCIENCE_MODULES], capture_output=True, text=True
+    )
+    remote = (
+        [f"module:{m}@science" for m in found.stdout.split()]
+        if found.returncode == 0
+        else ["science_python:unusable"]
+    )
+    local = [
+        f"module:{m}@guardian" for m in GUARDIAN_MODULES if importlib.util.find_spec(m) is None
+    ]
+    return local + remote + _font_gaps()
+
+
+def _font_gaps() -> list[str]:
+    missing: list[str] = []
     allowlist = json.loads(
         (ROOT / "src/tavotto/rendercore/fonts_allowlist.json").read_text(encoding="utf-8")
     )
@@ -706,11 +725,13 @@ def line_data_agreement(native_line_xy, result: dict) -> dict:
     for index, digests in enumerate(native_line_xy):
         if digests is None:
             continue
-        shared = sum((Counter(digests) & target).values())
-        scored.append((shared, -index, index, digests))
+        have = Counter(digests)
+        gap = sum((have - target).values()) + sum((target - have).values())
+        # Smallest curve-set difference first (an exact match wins), then most shared, then order.
+        scored.append((gap, -sum((have & target).values()), index, digests))
     if not scored:
         return {"status": "not_observed"}
-    _shared, _order, index, digests = max(scored)
+    _gap, _shared, index, digests = min(scored)
     only_native = sum((Counter(digests) - target).values())
     only_product = sum((target - Counter(digests)).values())
     return {

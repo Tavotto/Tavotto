@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -38,17 +39,17 @@ def test_preflight_and_environment_describe_the_science_interpreter(monkeypatch)
         return real([sys.executable, *cmd[1:]], *a, **k)
 
     with mock.patch.object(subprocess, "run", spy):
-        assert not [m for m in guardian.preflight() if m.startswith("science_")]
-        facts = guardian.environment()
-    assert facts["fingerprint"]
-    assert calls and set(calls) == {"/science/bin/python"}
+        assert not [m for m in guardian.preflight() if "@science" in m]
+        env = guardian.environment()
+    assert env["fingerprint"] == guardian.canonical(env["facts"])
+    assert "/science/bin/python" in calls
 
 
 def test_preflight_names_a_science_interpreter_without_matplotlib(monkeypatch):
     monkeypatch.setattr(guardian, "science_python", lambda: "/science/bin/python")
     done = subprocess.CompletedProcess([], 0, stdout="matplotlib\n", stderr="")
     with mock.patch.object(subprocess, "run", return_value=done):
-        assert "science_module:matplotlib" in guardian.preflight()
+        assert "module:matplotlib@science" in guardian.preflight()
 
 
 def test_render_packages_are_reported_when_present():
@@ -62,3 +63,54 @@ def test_clean_interpreter_passes_and_dirty_one_fails_the_cli(capsys):
     with mock.patch.object(research, "renderer_packages", return_value=["uharfbuzz"]):
         assert research.main(["verify-science-environment", "--python", "/x/python"]) == 1
     assert "uharfbuzz" in capsys.readouterr().out
+
+
+def _spawn(missing_in_science):
+    return subprocess.CompletedProcess([], 0, stdout=" ".join(missing_in_science), stderr="")
+
+
+def test_preflight_checks_each_side_for_what_it_really_imports(monkeypatch):
+    """The Guardian parent needs numpy/Pillow for pixel comparison; scripts/workers need them too."""
+    monkeypatch.setattr(guardian, "science_python", lambda: "/science/bin/python")
+    real_find = guardian.importlib.util.find_spec
+    monkeypatch.setattr(
+        guardian.importlib.util,
+        "find_spec",
+        lambda n, *a: None if n == "numpy" else real_find(n, *a),
+    )
+    with mock.patch.object(subprocess, "run", return_value=_spawn([])):
+        assert "module:numpy@guardian" in guardian.preflight()
+        assert not [m for m in guardian.preflight() if m.endswith("@science")]
+    with mock.patch.object(subprocess, "run", return_value=_spawn(["numpy"])):
+        assert "module:numpy@science" in guardian.preflight()
+    # matplotlib is never required of the Guardian parent when a science interpreter is selected.
+    monkeypatch.setattr(
+        guardian.importlib.util,
+        "find_spec",
+        lambda n, *a: None if n == "matplotlib" else real_find(n, *a),
+    )
+    with mock.patch.object(subprocess, "run", return_value=_spawn([])):
+        assert guardian.preflight() == []
+
+
+def test_environment_identity_changes_when_either_side_changes(monkeypatch):
+    monkeypatch.setattr(guardian, "science_python", lambda: "/science/bin/python")
+    science = {"facts": {"python": "3.13", "key_distributions": {"matplotlib": "3.11.1"}}}
+    guard = {"facts": {"key_distributions": {"uharfbuzz": "0.56.1"}}}
+
+    def identity(sci, gua):
+        done = subprocess.CompletedProcess([], 0, stdout=json.dumps(sci), stderr="")
+        with (
+            mock.patch.object(subprocess, "run", return_value=done),
+            mock.patch.object(guardian, "actual_environment", return_value=gua),
+        ):
+            return guardian.environment()
+
+    base = identity(science, guard)
+    assert base["facts"]["guardian"] == guard["facts"]
+    assert base["facts"]["key_distributions"] == science["facts"]["key_distributions"]
+    assert base["fingerprint"] == guardian.canonical(base["facts"])
+    changed_guard = {"facts": {"key_distributions": {"uharfbuzz": "0.57.0"}}}
+    changed_science = {"facts": {**science["facts"], "python": "3.13.1"}}
+    assert identity(science, changed_guard)["fingerprint"] != base["fingerprint"]
+    assert identity(changed_science, guard)["fingerprint"] != base["fingerprint"]

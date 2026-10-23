@@ -77,7 +77,9 @@ jobs:
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/tavotto-venv"
-          "$RUNNER_TEMP/tavotto-venv/bin/python" -m pip install -e '.[dev,ci]'
+          # Both venvs follow the runtime lock, so neither drifts with upstream releases.
+          python scripts/ci/runtime_pins.py --format lines > "$RUNNER_TEMP/tavotto-constraints.txt"
+          "$RUNNER_TEMP/tavotto-venv/bin/python" -m pip install -c "$RUNNER_TEMP/tavotto-constraints.txt" -e '.[dev,ci]'
           python scripts/ci/runtime_pins.py --include-corpus --format lines > "$RUNNER_TEMP/runtime-constraints.txt"
           python -m venv "$RUNNER_TEMP/science-venv"
           "$RUNNER_TEMP/science-venv/bin/python" -m pip install -r "$RUNNER_TEMP/runtime-constraints.txt"
@@ -152,6 +154,11 @@ jobs:
           else
             python -m pip freeze --all > "$RUNNER_TEMP/research-installed.txt"
           fi
+          if [[ -n "${TAVOTTO_PYTHON:-}" ]]; then
+            "$TAVOTTO_PYTHON" -m pip freeze --all > "$RUNNER_TEMP/tavotto-installed.txt"
+          else
+            : > "$RUNNER_TEMP/tavotto-installed.txt"
+          fi
           python - <<'PY'
           import hashlib, json, os, platform
           from pathlib import Path
@@ -165,6 +172,7 @@ jobs:
               'python': platform.python_version(),
               'steps': {k: os.environ[k.upper() + '_OUTCOME'] for k in ('core', 'fonts', 'scientific', 'tex')},
               'installed_sha256': hashlib.sha256((root / 'research-installed.txt').read_bytes()).hexdigest(),
+              'tavotto_installed_sha256': hashlib.sha256((root / 'tavotto-installed.txt').read_bytes()).hexdigest(),
           }
           (root / 'setup-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
           PY
@@ -186,6 +194,7 @@ jobs:
           path: |
             ${{ runner.temp }}/setup-receipt.json
             ${{ runner.temp }}/research-installed.txt
+            ${{ runner.temp }}/tavotto-installed.txt
             ${{ runner.temp }}/research-s0/*/reports/guardian.json
             ${{ runner.temp }}/research-s0/*/reports/summary.md
             ${{ runner.temp }}/research-s0/*/reports/guardian.unvalidated.json
