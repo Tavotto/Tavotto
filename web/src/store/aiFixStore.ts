@@ -147,6 +147,7 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
     entries: {},
 
     request: async (key, ref) => {
+      const guard = captureProjectEpoch()
       let caps = useAiStore.getState().caps
       if (!caps) {
         // 还没探测过本机的 AI：先探测一次再判断（失败当作没连）
@@ -156,6 +157,8 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
           /* 探测失败：按没连处理 */
         }
         caps = useAiStore.getState().caps
+        // 探测在途时用户切走了项目：这次点击属于原项目，不落 store、不起修复（A→B→A 也算作废）
+        if (!guard.still()) return
       }
       if (usableAgents(caps).length === 0) {
         set((s) => ({ entries: { ...s.entries, [key]: { phase: 'awaiting_connect', ref } } }))

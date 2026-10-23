@@ -733,7 +733,7 @@ def test_audit_failure_never_breaks_the_tool(box):
 
 # =========================================================================== registry / adapter
 def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_running_tools():
-    # D2b 起注册表还有「问与报」组（`tests/test_fixasks.py` 钉它们）；这里只钉看 / 试两组，其余组不在此断言
+    # 注册表恰好是这些工具：多一个（例如拆出去的 run_command 回来了）或少一个都红
     assert {
         "read_run_report",
         "read_file",
@@ -759,7 +759,7 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "pick_file",
         "prepare_diagnostics",
         "finish",
-    }
+    } == set(REGISTRY)
     assert {n for n, t in REGISTRY.items() if t.tier == "run"} == {
         "inspect_environment",
         "try_import",

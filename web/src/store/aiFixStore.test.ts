@@ -217,6 +217,31 @@ describe('切项目竞态', () => {
     expect(fetchAiFix).not.toHaveBeenCalled()
   })
 
+  it('探测本机 AI（loadCaps）在途时 A → B → A：这次点击作废，不落 store、不发修复请求', async () => {
+    setCurrentProjectId('pjA')
+    let release: () => void = () => {}
+    const loadCaps = vi.fn(
+      () =>
+        new Promise<void>((r) => {
+          release = () => {
+            useAiStore.setState({ caps: { agents: [{ id: 'claude', usable: true }], endpoints: [], presets: [], checked_at_ms: 0 } as never })
+            r()
+          }
+        }),
+    )
+    const realLoadCaps = useAiStore.getState().loadCaps
+    useAiStore.setState({ caps: null, loadCaps } as never)
+    const p = useAiFixStore.getState().request(KEY, REF)
+    setCurrentProjectId('pjB')
+    setCurrentProjectId('pjA')
+    release()
+    await p
+    expect(loadCaps).toHaveBeenCalled()
+    expect(entry()).toBeUndefined()
+    expect(requestAiFix).not.toHaveBeenCalled()
+    useAiStore.setState({ loadCaps: realLoadCaps })
+  })
+
   it('A → B → A 回到同一个 id 也已换代：旧请求仍然丢弃', async () => {
     setCurrentProjectId('pjA')
     let release: (v: { ok: true; fix_id: string }) => void = () => {}
