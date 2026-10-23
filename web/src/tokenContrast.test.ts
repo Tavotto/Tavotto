@@ -354,8 +354,8 @@ const SELECTION_FG = (() => {
 const SELECTABLE_GROUNDS = ['surface', 'bg', 'canvas', 'surface-2', 'field', 'field-hover', 'thumb'] as const
 const TEXT_VIEW = readFileSync(path.resolve(HERE, 'canvas/TextView.tsx'), 'utf8')
 /** 两套主题都不变的不透明 token：纸与纸上的墨是文档内容；sel 是画在纸上的那一种彩色线（对纸白与两种画布灰都 ≥3） */
-// spotlight-light：定位舞台灯照在画布内容（纸）上的光，与纸一样不跟主题走（`canvas/IssueSpotlight`）
-const THEME_INVARIANT = ['paper', 'paper-ink', 'sel', 'spotlight-light']
+// spotlight-shade：定位舞台灯压在画布内容（纸）上的暗幕，与纸一样不跟主题走（`canvas/IssueSpotlight`）
+const THEME_INVARIANT = ['paper', 'paper-ink', 'sel', 'spotlight-shade']
 const PAGE_SHEET = readFileSync(path.resolve(HERE, 'canvas/PageSheet.tsx'), 'utf8')
 /**
  * 透明页面棋盘格的深格 `--color-paper-checker`：`color-mix(in srgb, var(--color-paper-ink) N%, var(--color-paper))`

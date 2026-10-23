@@ -56,7 +56,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/canvas/ArrowView.tsx': 1, // 画布箭头本体
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层
   '/src/canvas/PageEdgeResize.tsx': 1, // 拖页面边的尺寸标注（引出线 + 双箭头，画布叠加层）
-  '/src/canvas/IssueSpotlight.tsx': 1, // 定位舞台灯的光柱（画布叠加层，柔边锥形光）
+  '/src/canvas/IssueSpotlight.tsx': 1, // 定位舞台灯的暗幕与受光遮罩（画布叠加层）
   '/src/components/ui/BrandMark.tsx': 1, // 品牌标（唯一出处 lib/brand.ts 的图形侧）
   '/src/components/inspector/controls/TickAndSpineDiagram.tsx': 1, // 四边刻度示意图（网格开关那枚小 svg 已随 Toggle 回收）
   '/src/components/inspector/controls/TickTaskCard.tsx': 1, // 刻度朝向示意（in/out/both）
