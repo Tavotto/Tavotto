@@ -5709,6 +5709,8 @@ export interface ContactReply {
   id: string
   created_at: string
   body: string
+  /** 有清洗过的 HTML 版本：用 `fetchContactReplyDoc` 取信纸文档；没有就只显示 `body` 纯文字 */
+  has_html: boolean
   read: boolean
 }
 
@@ -5718,6 +5720,10 @@ export interface ContactMessage {
   route: 'cn' | 'global'
   state: 'new' | 'replied' | 'closed'
   unread: number
+  /** 用户自己写的主题 / 正文 / 附件文件名（本机存的那一份；旧记录没有就是空） */
+  subject: string
+  body: string
+  attachment_names: string[]
   replies: ContactReply[]
 }
 
@@ -5745,6 +5751,11 @@ export const dismissContact = () => jsonFetch<ContactStatus>('/api/contact/dismi
 export const fetchContactMessages = () =>
   jsonFetch<{ messages: ContactMessage[]; unread: number }>('/api/contact/messages')
 /** 用户点了「检查回信」：引擎立刻问一遍服务器（至多每 30 秒一次；没有已发的信时不联网）。 */
+/** 一封 HTML 回信的完整文档（引擎拼：CSP + 基础样式 + 附图已内联），给沙盒 iframe 的 srcDoc；纯本机读盘，不联网。 */
+export const fetchContactReplyDoc = (messageId: string, replyId: string) =>
+  jsonFetch<{ doc: string }>(
+    `/api/contact/replies/${encodeURIComponent(messageId)}/${encodeURIComponent(replyId)}/doc`,
+  )
 export const refreshContactMessages = () =>
   jsonFetch<{ polled: number; throttled?: boolean; unread: number }>('/api/contact/refresh', { method: 'POST' })
 export const markContactRead = (id: string) =>

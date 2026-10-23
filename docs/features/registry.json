@@ -1146,14 +1146,18 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "右上角「联系作者」：不登录邮箱就能写信给作者，可附截图 / 诊断信息，回信经邮件或应用内收到",
-        "en-US": "\"Contact the maker\" in the top-right corner: write to the maker without signing in to any mailbox, attach screenshots or diagnostics, and get replies by email or in the app"
+        "zh-CN": "右上角「联系作者」：不登录邮箱就能写信给作者，可附截图 / 诊断信息，回信经邮件或应用内收到（带图排版的回信显示成信纸）",
+        "en-US": "\"Contact the maker\" in the top-right corner: write to the maker without signing in to any mailbox, attach screenshots or diagnostics, and get replies by email or in the app (formatted replies with images are shown as a letter)"
       },
       "entry": "主页 / 编辑器右上角 → 联系作者",
       "e2e": [
         {
           "spec": "contact.spec.ts",
           "title": "主页：入口在右上角；点发送前零连接；失败有人话、草稿还在、只有复制（没有邮件链接）"
+        },
+        {
+          "spec": "contact.spec.ts",
+          "title": "我的来信：收到 HTML 回信显示成白色信纸（沙盒 iframe、无 allow-scripts、附图本机内联），上面是自己写的原文"
         }
       ],
       "desktop_manual": [
