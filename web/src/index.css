@@ -809,17 +809,29 @@
   opacity: 0.6;
 }
 
-/* 舞台灯的光束（`canvas/IssueSpotlight`）：以元素中心为光心，`--spot-r` 是光圈半径。中心一点暖光，
-   半径的八成以内全透，往外拖很长一段才压到近黑——光圈没有边。压的是画布上的内容，两档主题同值 */
+/* 舞台灯的光束（`canvas/IssueSpotlight`）：以元素中心为光心，`--spot-r` 是光圈半径。**只有一层光圈**：
+   半径七成以内全透，往外按 smoothstep 一条曲线压到近黑（逐点取样，中途没有折点，不出色带），景深层的
+   遮罩 `--spotlight-mask` 用同一组取样点，模糊与压暗严格重合（用户：看起来有好几层光圈，要一层）。
+   压的是画布上的内容，两档主题同值 */
 @utility bg-spotlight-beam {
   background-image: radial-gradient(
     circle farthest-side at 50% 50%,
-    rgb(255 236 214 / 0.1) 0,
-    rgb(255 236 214 / 0.05) calc(var(--spot-r) * 0.55),
-    rgb(5 6 9 / 0) calc(var(--spot-r) * 0.8),
-    rgb(5 6 9 / 0.5) calc(var(--spot-r) * 1.6),
-    rgb(5 6 9 / 0.74) calc(var(--spot-r) * 3)
+    rgb(5 6 9 / 0.0) calc(var(--spot-r) * 0.7),
+    rgb(5 6 9 / 0.031) calc(var(--spot-r) * 0.85),
+    rgb(5 6 9 / 0.112) calc(var(--spot-r) * 1.0),
+    rgb(5 6 9 / 0.228) calc(var(--spot-r) * 1.15),
+    rgb(5 6 9 / 0.36) calc(var(--spot-r) * 1.3),
+    rgb(5 6 9 / 0.492) calc(var(--spot-r) * 1.45),
+    rgb(5 6 9 / 0.607) calc(var(--spot-r) * 1.6),
+    rgb(5 6 9 / 0.689) calc(var(--spot-r) * 1.75),
+    rgb(5 6 9 / 0.72) calc(var(--spot-r) * 1.9)
   );
+}
+
+@utility mask-spotlight {
+  -webkit-mask-image: var(--spotlight-mask);
+  mask-image: var(--spotlight-mask);
+  --spotlight-mask: radial-gradient(circle farthest-side at 50% 50%, rgb(0 0 0 / 0.0) calc(var(--spot-r) * 0.7), rgb(0 0 0 / 0.043) calc(var(--spot-r) * 0.85), rgb(0 0 0 / 0.156) calc(var(--spot-r) * 1.0), rgb(0 0 0 / 0.316) calc(var(--spot-r) * 1.15), rgb(0 0 0 / 0.5) calc(var(--spot-r) * 1.3), rgb(0 0 0 / 0.684) calc(var(--spot-r) * 1.45), rgb(0 0 0 / 0.844) calc(var(--spot-r) * 1.6), rgb(0 0 0 / 0.957) calc(var(--spot-r) * 1.75), rgb(0 0 0 / 1.0) calc(var(--spot-r) * 1.9));
 }
 
 /* 层级工具类：值在 :root 的 --z-*（见上），组件只写名字 */

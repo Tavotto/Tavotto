@@ -1,6 +1,6 @@
 /**
  * 定位舞台灯（`IssueSpotlight`）：跟着定位高亮框亮起，放完一段自己撤；没有高亮框就不亮；
- * 景深层的柔边遮罩与光束层都以高亮框中心为光心。
+ * 景深层与光束层同一块几何、都以高亮框中心为光心。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -63,14 +63,14 @@ describe('定位舞台灯', () => {
     await act(async () => useUiStore.getState().setIssueHighlight({ objectId: 'p1', gid: 'axes_0.legend.title' }))
     await frame()
     expect(spot()).not.toBeNull()
-    const blur = host.querySelector<HTMLElement>('[data-spotlight-blur]')!
-    // 光圈中心 = 高亮框中心，半径 = 半对角线 + 36（柔边，中心清晰）
-    expect(blur.style.maskImage).toContain('58px at 120px 130px')
-    // 光束层以光圈为中心
-    const beam = host.querySelector<HTMLElement>('[data-spotlight-beam]')!
-    const side = parseFloat(beam.style.width)
-    expect(parseFloat(beam.style.left) + side / 2).toBe(120)
-    expect(parseFloat(beam.style.top) + side / 2).toBe(130)
+    // 景深与光束两层同一块几何：以高亮框中心为光心，半径 = 半对角线 + 36（只有一层光圈）
+    for (const sel of ['[data-spotlight-blur]', '[data-spotlight-beam]']) {
+      const layer = host.querySelector<HTMLElement>(sel)!
+      const side = parseFloat(layer.style.width)
+      expect(parseFloat(layer.style.left) + side / 2).toBe(120)
+      expect(parseFloat(layer.style.top) + side / 2).toBe(130)
+      expect(layer.style.getPropertyValue('--spot-r')).toBe('58px')
+    }
     await frame(SPOTLIGHT_MS)
     expect(spot()).toBeNull()
   })
