@@ -810,6 +810,7 @@ def pairwise_plan(parents: list[Parent], seed: int) -> dict:
     covered: set[tuple[str, str]] = set()
     chosen: dict[tuple[str, str], list[tuple[str, str]]] = {key: [] for key in keyed}
     while len(covered) < len(holders):
+        before = len(covered)
         for key in order:
             options = [pair for pair in feasible[key] if pair not in covered]
             if not options:
@@ -820,6 +821,8 @@ def pairwise_plan(parents: list[Parent], seed: int) -> dict:
             )
             covered.add(pair)
             chosen[key].append(pair)
+        if len(covered) == before:
+            raise cg.EvidenceError("pairwise cover made no progress")
     return {
         "chosen": {key: sorted(pairs) for key, pairs in chosen.items()},
         "feasible": sorted(holders),

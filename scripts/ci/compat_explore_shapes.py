@@ -191,11 +191,7 @@ def _return_fig_site(ctx):
         if not head or not _movable(head):
             continue
         name, expr = _receiver(ctx, call)
-        tail = owner[i:end]
-        escaping = _names(head, ast.Store) & _names(tail, ast.Load)
         allowed = {name} if name != ctx.alias() else set()
-        if escaping - allowed:
-            continue
         if name != ctx.alias() and name not in _names(head, ast.Store):
             continue
         if _leaks(ctx, head, frozenset(allowed)):
