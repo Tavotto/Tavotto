@@ -181,6 +181,7 @@ _SNAPSHOT_REFERENCES = {
     "_SnapshotPickler": {"_snapshot_dumps"},
     "_RestrictedUnpickler": {"SaveMomentLedger.restore"},
 }
+_DYNAMIC_NAME_CALLS = {"globals", "vars", "locals", "eval", "exec", "__import__"}
 _IO_CALLS = {"open", "print"}
 _IO_ATTRS = {"write", "write_bytes", "write_text", "send", "sendall", "sendto", "sendmsg", "put"}
 
@@ -259,10 +260,19 @@ def test_no_engine_module_ever_pickles_a_figure():
 def test_the_snapshot_bytes_never_leave_the_process():
     """ADR 0139 §九 的例外只有在字节出不了进程时才成立——用 AST 正面写出流向。
 
-    * `_snapshot_dumps` / `_SnapshotPickler` / `_RestrictedUnpickler` 只许被登记的调用方引用，且全引擎只有 figcapture 里有；
+    * `_snapshot_dumps` / `_SnapshotPickler` / `_RestrictedUnpickler` 只许被 `_SNAPSHOT_REFERENCES` 登记的那几处引用，且全引擎只有 figcapture
+      里有。**没有自作用域豁免**：它们自己的函数体 / 类体里再写 `escaped = _snapshot_dumps`、`_alias = _RestrictedUnpickler`
+      也判红（只有 `def` / `class` 语句本身不产生 `ast.Name`，天然不受限）；递归需要的话单独登记；
+    * 同样判红的还有：`global` / `nonlocal` 声明点名它们、`ast.Attribute` 形式（`figcapture._snapshot_dumps`、`self._snapshot_dumps`）、
+      `from … import _snapshot_dumps` 的别名、以及整个字符串常量恰好等于这些名字（`getattr(mod, "_snapshot_dumps")`）；
     * 字符串键 `"blob"`（快照字节存放处）只许出现在 `SaveMomentLedger` 的方法里；
     * `SaveMomentLedger` 的方法与 `_snapshot_dumps` 里没有任何写盘 / 发送 / 打印调用，也不 `return` 字节；
-    * 引擎里只有 `figsession.py` 引用 `SaveMomentLedger`（建账），且只在 `_new_save_moments` 里。
+    * 引擎里只有 `figsession.py` 引用 `SaveMomentLedger`（建账），且只在 `_new_save_moments` 里；
+    * 快照相关作用域（和模块作用域）里不许调用 `globals` / `vars` / `locals` / `eval` / `exec` / `__import__`。
+
+    **AST 判不出的边界**（写明，不假装）：运行期拼出来的名字（`getattr(m, "_snap" + "shot_dumps")`）、经第三方对象间接取名字、
+    别的非 engine 目录里的代码对 figcapture 的引用。前者靠上面对 `globals()` 等调用的封堵与代码评审；后者靠 import 架构测试
+    （别的目录不得 import engine 内部名字）。
     """
     problems = []
     for path in sorted(ENGINE_DIR.glob("*.py")):
@@ -276,11 +286,44 @@ def test_the_snapshot_bytes_never_leave_the_process():
                 else None
             )
             if ref in _SNAPSHOT_REFERENCES:
-                allowed = _SNAPSHOT_REFERENCES[ref]
-                # 只有它们自己的 `def` / `class` 语句（名字绑定，不是 `ast.Name` 引用）不受限；模块作用域里的任何其它引用
-                # （赋值别名 `x = _snapshot_dumps`、装饰器、默认参数……）都算越界
-                if path.name != "figcapture.py" or scope not in allowed | {ref}:
+                # 只有登记的调用方可以引用；受保护符号自己的函数体 / 类体里也一样（没有自作用域豁免）
+                if path.name != "figcapture.py" or scope not in _SNAPSHOT_REFERENCES[ref]:
                     problems.append(f"{path.name}: {ref} 被 {scope or '<module>'} 引用")
+            if isinstance(node, (ast.Global, ast.Nonlocal)):
+                for n in node.names:
+                    if n in _SNAPSHOT_REFERENCES:
+                        problems.append(
+                            f"{path.name}: {scope or '<module>'} 里 global/nonlocal 点名 {n}"
+                        )
+            if isinstance(node, ast.alias) and node.name.split(".")[-1] in _SNAPSHOT_REFERENCES:
+                problems.append(f"{path.name}: import 别名引用 {node.name}")
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value in _SNAPSHOT_REFERENCES
+            ):
+                problems.append(
+                    f"{path.name}: 字符串常量 {node.value!r} 出现在 {scope or '<module>'}"
+                )
+            snapshot_scope = path.name == "figcapture.py" and (
+                scope is None
+                or scope.split(".")[0]
+                in {
+                    "SaveMomentLedger",
+                    "_snapshot_dumps",
+                    "_SnapshotPickler",
+                    "_RestrictedUnpickler",
+                }
+            )
+            if (
+                snapshot_scope
+                and isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id in _DYNAMIC_NAME_CALLS
+            ):
+                problems.append(
+                    f"{scope or '<module>'}: 调用 {node.func.id}（可不经 Name 读到绑定）"
+                )
             if ref == "SaveMomentLedger" and not (
                 (path.name == "figcapture.py")
                 or (path.name == "figsession.py" and scope == "LiveFigureSession._new_save_moments")
