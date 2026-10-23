@@ -205,6 +205,12 @@ def materialize(project_root: str | Path, descriptor: dict, svg_source: Path) ->
     try:
         if not svg_source.is_file():
             return None
+        # Document replays and native/render captures can bypass probe registration.
+        # Persist their identity outside the disposable preview cache as well.
+        if descriptor.get("stem"):
+            runconfig.record_captures(
+                project_root, script, [descriptor["stem"]], str(descriptor.get("run_config") or "")
+            )
         target = cache_dir(project_root, asset_id)
         target.mkdir(parents=True, exist_ok=True)
         _atomic_write(target / "preview.svg", svg_source.read_bytes())
@@ -448,6 +454,7 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
     out: list[dict] = []
     for script, info in sorted(registry.entries().items()):
         entry = info.get("entry", "main")
+        configured_only = runconfig.configured_only_stems(project_root, script)
         for stem in info.get("stems", ()):
             try:
                 asset_id = figcapture.runtime_asset_id(script, stem)
@@ -461,11 +468,10 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
                 variant_id = figcapture.runtime_asset_id(script, stem, cfg.id)
                 if load_metadata(project_root, variant_id) is not None:
                     variants.append((cfg.id, variant_id))
-            # A union of registered stems is not evidence of an argument-free Figure.
-            # Once this stem has captured variants, list those actual identities instead
-            # of also offering an uncaptured default that runs the script with no argv.
-            # Keep real default captures, and the legacy placeholder before any capture.
-            if base_meta is not None or not variants:
+            # Cache absence cannot erase a real argument-free identity. Suppress only
+            # stems whose durable history proves configured-only origins; legacy records
+            # without that evidence retain their placeholder even beside a cached variant.
+            if base_meta is not None or stem not in configured_only:
                 variants.insert(0, ("", asset_id))
             for run_config, variant_id in variants:
                 meta = load_metadata(project_root, variant_id)

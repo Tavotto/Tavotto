@@ -64,9 +64,8 @@ python -m tavotto run -- "$PYTHON" plot_tomo_times.py
 **Leaf：参数链路已通，素材列表有重复占位。** 在修复前的真实 sidecar 中，5 张带参数捕获均能打开，
 但素材列表同时列出 5 个未捕获的无参数 id；渲染这些 id 得到 `script_needs_arguments`。
 原因是注册表的 stems 是各次运行的并集，清单却把每个 stem 都当作无参数运行的产物。
-现在同一个 stem 已有带参数捕获时，只列实际捕获的变体；真实的无参数捕获仍独立保留，
-没有任何捕获的旧注册项仍保留待运行占位。资产解析与已存文档的 id 不变。
-修复后 Leaf 的清单为 5 项，均能完成上述链路。
+首次复测修复后 Leaf 的清单为 5 项，均能完成上述链路。该版清单判断仍依赖可被清理的 cache，
+后续评审发现无参数素材会因缓存淘汰而消失，修正见下文。资产解析与已存文档的 id 不变。
 
 **Qudit：原 S0 的空 glob 取决于 cwd。** 用户 Python 的桌面默认脚本目录与终端项目目录均成功。
 在同一解释器与输入下，显式选择 sandbox cwd 可重现 `need at least one array to concatenate`、零图；
@@ -89,3 +88,21 @@ python -m tavotto run -- "$PYTHON" plot_tomo_times.py
   本机完整回执、原生数组记录、导出与脚本驱动存于 `/private/tmp/tavotto-launch-validation/`。
 
 #1307 的 `compat_matrix.py`、`compat_guardian.py` 无改动；#1305 保持草稿且未追加提交。
+
+## 2026-10-23：#1322 P2 缓存淘汰回归
+
+无参数身份的历史改存本机 `runconfigs/<项目摘要>.json`，按脚本、配置引用记录产出的 stem。
+空引用表示无参数捕获；已有注册项没有历史时继续保留占位，后续带参数重跑不会抹掉这份未知。
+新 stem 明确只由带参数运行产出时继续隐藏无参数占位。历史与预览缓存分开保存，资产 ID 与解析保持原样。
+
+`tests/test_runtime_config_listing.py` 的缓存淘汰回归先捕获同一 stem 的无参数、带参数两份身份，
+将无参数目录 mtime 设旧，真实调用 `prune_cache(keep=1)`；核对旧目录已删、带参数目录仍在、
+持久历史字节不变，无参数素材以待重跑状态继续出现在清单。另覆盖文档重放直接物化与旧登记 fail-open。
+
+反证只将 `list_assets` 条件换回 `base_meta is not None or not variants`，确认变异落在该函数后运行上述用例：
+pytest 退出码 **1**，失败原因为清单缺少 `runtime:plot.py#plot`。恢复修复后，9 项清单回归退出码 **0**。
+本机原始日志：`/private/tmp/tavotto-1322-review-fix/counterexample.log`。
+
+本次修复的相关回归为 **240 passed、0 skipped**（106.54 秒），覆盖清单、RuntimeFigureAsset、素材库、probe、
+运行参数模型、真实 HTTP 全生命周期、敏感参数与启动记录事务。推送前全仓 `ruff format . && ruff check .` 通过，
+1099 个文件无需格式变更；#1307 与 #1321 涉及文件逐一核对 SHA-256，未改动。
