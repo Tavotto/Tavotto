@@ -259,9 +259,11 @@ def test_real_mcp_hot_pair_uses_engine_guard_and_single_svg_stays_native(
         paired = _body(result)
         by_fmt = {f["format"]: f for f in paired["files"]}
         assert by_fmt["pdf"]["status"] == "done", paired
-        if mode == "plain":
+        if mode in ("plain", "formatter"):
+            # ADR 0150：刻度 formatter 只在 Axis.draw 阶段算一次，PDF 与 SVG 出自同一次 draw——不再阻断配对
             assert paired["status"] == "done", paired
-        else:
+            assert by_fmt["svg"]["status"] == "done", paired
+        else:  # draw_event 回调能看到 renderer：仍阻断
             assert paired["status"] == "partial", paired
             assert by_fmt["svg"]["error"]["code"] == "svg_source_unsupported"
             assert not list((tmp_path / "pair").glob("*.svg"))
