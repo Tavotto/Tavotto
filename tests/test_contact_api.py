@@ -99,6 +99,7 @@ def test_the_routes_exist_in_the_url_map_so_the_default_deny_sweep_sees_them():
         ("/api/contact/refresh", ("POST",)),
         ("/api/contact/messages/<mid>/read", ("POST",)),
         ("/api/contact/messages/<mid>", ("DELETE",)),
+        ("/api/contact/replies/<mid>/<rid>/doc", ("GET",)),
     }
     assert expected <= rules
 
@@ -109,6 +110,7 @@ def test_disabled_means_capability_false_and_everything_else_404(client, monkeyp
     for method, url in (
         ("get", "/api/contact/status"),
         ("get", "/api/contact/messages"),
+        ("get", "/api/contact/replies/TVM-ABCD-EFGH-JKMN-PQRS/r_A/doc"),
         ("post", "/api/contact/refresh"),
         ("post", "/api/contact/send"),
     ):
@@ -135,8 +137,11 @@ def test_end_to_end_through_http_and_no_secret_in_any_response(on, client):
     listing = client.get("/api/contact/messages").get_json()
     assert [x["message_id"] for x in listing["messages"]] == [msg.mid]
     seen = json.dumps([resp.get_json(), st, listing, client.get("/api/contact").get_json()])
-    for secret in (msg.reply_token, msg.complete_token, MAIL, CANARY):
+    for secret in (msg.reply_token, msg.complete_token, MAIL):
         assert secret not in seen
+    # 正文只在「我的来信」列表里（本机存的那一份，第二期）；发送状态与能力说明里没有
+    assert listing["messages"][0]["body"] == CANARY
+    assert CANARY not in json.dumps([resp.get_json(), st, client.get("/api/contact").get_json()])
     assert resp.headers["Cache-Control"] == "no-store"
 
     on.reply(msg.mid, "thanks")
@@ -249,3 +254,35 @@ def test_inbox_write_failure_still_delivers_but_says_inbox_not_saved(on, client,
 def test_inbox_saved_is_true_on_the_normal_path(on, client):
     assert _send(client).status_code == 202
     assert _wait(client, {"done", "failed"})["inbox_saved"] is True
+
+
+def test_reply_doc_endpoint_serves_the_sandbox_document_with_inlined_images(on, client):
+    from pathlib import Path
+
+    html = (Path(__file__).parent / "fixtures" / "contact" / "reply_sanitized.html").read_text(
+        encoding="utf-8"
+    )
+    assert _send(client).status_code == 202
+    _wait(client, {"done"})
+    mid = on.only_message().mid
+    rid = on.reply(mid, "plain", html=html, assets=[("image/png", PNG)] * 4)
+    plain = on.reply(mid, "只有文字")
+    client.post("/api/contact/refresh")
+    listing = client.get("/api/contact/messages").get_json()["messages"][0]["replies"]
+    assert {r["id"]: r["has_html"] for r in listing} == {rid: True, plain: False}
+
+    resp = client.get(f"/api/contact/replies/{mid}/{rid}/doc")
+    assert resp.status_code == 200 and resp.headers["Cache-Control"] == "no-store"
+    doc = resp.get_json()["doc"]
+    assert "Content-Security-Policy" in doc and "img-src data:" in doc
+    assert "asset:" not in doc and doc.count("data:image/png;base64,") == 4
+    # 没有 HTML 的回信 / 不存在的回信：404（纯文字直接用列表里的 body）
+    assert client.get(f"/api/contact/replies/{mid}/{plain}/doc").status_code == 404
+    assert client.get(f"/api/contact/replies/{mid}/r_NOPE/doc").status_code == 404
+    assert client.get(f"/api/contact/replies/{mid}/..%2Fx/doc").status_code == 404
+
+
+def test_reply_doc_endpoint_is_session_gated():
+    """会话认证是全局 before_request（ADR 0008）：这条新路由必须在 url_map 里，由 test_browser_auth 的枚举兜住。"""
+    rules = {r.rule for r in m.app.url_map.iter_rules()}
+    assert "/api/contact/replies/<mid>/<rid>/doc" in rules

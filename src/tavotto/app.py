@@ -4781,6 +4781,18 @@ def api_contact_messages():
     )
 
 
+@app.get("/api/contact/replies/<mid>/<rid>/doc")
+def api_contact_reply_doc(mid: str, rid: str):
+    """一封带 HTML 的回信的完整文档（CSP + 基础样式 + 附图内联成 data: URI），给界面的沙盒 iframe 当 srcdoc。
+    纯本机读盘、不联网；没有 HTML 的回信 / 不存在 = 404（纯文字回信直接用列表里的 body）。"""
+    if not engine_contactsend.enabled():
+        return _contact_error(engine_contactsend.ContactError("disabled", 404))
+    doc = engine_contactinbox.reply_doc(mid, rid)
+    if doc is None:
+        return _contact_error(engine_contactsend.ContactError("not_found", 404))
+    return _contact_json({"doc": doc})
+
+
 @app.post("/api/contact/refresh")
 def api_contact_refresh():
     """用户点了「检查回信」：立刻问一遍服务端（至多每 30 秒一次，没有已发的信时不联网）。"""

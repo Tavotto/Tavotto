@@ -347,8 +347,13 @@ def test_reply_token_is_stored_0600_and_never_in_status_or_listing(on):
     rec = json.loads(raw)["messages"][0]
     assert rec["message_id"] == msg.mid and rec["reply_token"] == msg.reply_token
     assert rec["route"] in ("cn", "global") and rec["sent_at"] > 0 and rec["delivered"] is True
-    # 用户写的东西一样都没落盘
-    for secret in (CANARY_BODY, CANARY_MAIL, CANARY_SUBJECT, msg.complete_token):
+    # 第二期：本机留主题 / 正文 / 附件文件名；邮箱、complete_token、附件内容仍然一样都没落盘
+    assert (rec["subject"], rec["body"], rec["attachment_names"]) == (
+        CANARY_SUBJECT,
+        CANARY_BODY,
+        ["a.png"],
+    )
+    for secret in (CANARY_MAIL, msg.complete_token, PNG.hex(), "0123456789abcdef"):
         assert secret not in raw
     if sys.platform != "win32":
         assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
@@ -812,3 +817,340 @@ def test_init_409_session_closed_restarts_with_a_new_id_once(on):
     assert wait_for({"done", "failed"})["state"] == "done"
     keys = [c["json"]["client_message_id"] for c in on.calls if c["path"] == "/v1/messages/init"]
     assert len(keys) == 2 and keys[0] != keys[1]
+
+
+# --------------------------------------------------------------------------- 第二期：本机原文、回信 HTML 与附图
+from pathlib import Path  # noqa: E402
+
+FIXTURE_HTML = (Path(__file__).parent / "fixtures" / "contact" / "reply_sanitized.html").read_text(
+    encoding="utf-8"
+)
+JPG = b"\xff\xd8\xff\xe0" + b"jpegbody" * 4
+GIF = b"GIF89a" + b"gifbody!" * 4
+WEBP = b"RIFF\x10\x00\x00\x00WEBP" + b"webpbody" * 2
+FOUR = [("image/png", PNG), ("image/jpeg", JPG), ("image/gif", GIF), ("image/webp", WEBP)]
+MID = "TVM-ABCD-EFGH-JKMN-PQRS"
+TOKEN = "a" * 64
+
+
+def _asset_dir(mid: str) -> Path:
+    return contactinbox.path().parent / contactinbox.ASSET_DIR / mid
+
+
+def _html_reply(on, mid, assets=FOUR, html=FIXTURE_HTML):
+    return on.reply(mid, "纯文字版", html=html, assets=list(assets))
+
+
+def test_contact_inbox_limits_match_the_contract():
+    assert contactinbox.MAX_SUBJECT_CHARS == contactsend.SUBJECT_MAX
+    assert contactinbox.MAX_BODY_CHARS == contactsend.BODY_MAX
+    assert contactinbox.MAX_ATTACHMENT_NAMES == contactsend.MAX_ATTACHMENTS
+
+
+def test_add_keeps_the_original_text_capped_and_public_messages_returns_it():
+    names = [f"{i}-" + "n" * 200 + ".png" for i in range(7)]
+    assert contactinbox.add(
+        MID,
+        TOKEN,
+        "cn",
+        delivered=True,
+        subject="s" * 500,
+        body="b" * 9000,
+        attachment_names=names,
+    )
+    (m,) = contactinbox.public_messages()
+    assert (len(m["subject"]), len(m["body"])) == (120, 5000)
+    assert len(m["attachment_names"]) == 5
+    assert all(len(n) == 120 for n in m["attachment_names"])
+
+
+def test_add_is_idempotent_and_fills_in_text_the_first_call_lacked():
+    contactinbox.add(MID, TOKEN, "cn", delivered=False)
+    contactinbox.add(MID, TOKEN, "cn", delivered=True, subject="S", body="B")
+    contactinbox.add(MID, TOKEN, "cn", delivered=True, subject="other", body="other")
+    (m,) = contactinbox.public_messages()
+    assert (m["subject"], m["body"]) == ("S", "B")
+
+
+def test_old_records_without_the_new_fields_still_load_as_empty():
+    p = contactinbox.path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    old = {
+        "message_id": MID,
+        "reply_token": TOKEN,
+        "route": "cn",
+        "sent_at": time.time(),
+        "delivered": True,
+        "state": "",
+        "replies": [{"id": "r_AAAA", "created_at": "2026-10-22T08:00:00Z", "body": "hi"}],
+        "read": [],
+    }
+    p.write_text(json.dumps({"version": 1, "messages": [old]}), encoding="utf-8")
+    (m,) = contactinbox.public_messages()
+    assert (m["subject"], m["body"], m["attachment_names"]) == ("", "", [])
+    assert m["replies"][0]["has_html"] is False
+
+
+def test_a_sent_letter_stores_its_text_and_attachment_names_but_not_the_files(on):
+    contactsend.start(meta(), [("shot.png", PNG)])
+    wait_for({"done"})
+    (m,) = contactinbox.public_messages()
+    assert (m["subject"], m["body"], m["attachment_names"]) == (
+        CANARY_SUBJECT,
+        CANARY_BODY,
+        ["shot.png"],
+    )
+
+
+def test_apply_replies_stores_html_and_assets_and_drops_html_over_256kib():
+    contactinbox.add(MID, TOKEN, "cn", delivered=True)
+    meta_ = [{"n": 0, "content_type": "image/png", "size": 10}]
+    big = "<p>" + "x" * contactinbox.MAX_REPLY_HTML_BYTES + "</p>"
+    contactinbox.apply_replies(
+        MID,
+        "replied",
+        [
+            {"id": "r_OK", "created_at": "t", "body": "b", "html": "<p>hi</p>", "assets": meta_},
+            {"id": "r_BIG", "created_at": "t", "body": "b", "html": big, "assets": meta_},
+            {"id": "r_TXT", "created_at": "t", "body": "plain"},
+        ],
+    )
+    (m,) = contactinbox.pollable()
+    by = {r["id"]: r for r in m["replies"]}
+    assert by["r_OK"]["html"] == "<p>hi</p>" and by["r_OK"]["assets"] == meta_
+    assert "html" not in by["r_BIG"] and "assets" not in by["r_BIG"]  # 只留纯文字
+    assert "html" not in by["r_TXT"]
+    assert [r["has_html"] for r in contactinbox.public_messages()[0]["replies"]] == [
+        True,
+        False,
+        False,
+    ]
+    assert "html" not in json.dumps(contactinbox.public_messages()).replace("has_html", "")
+
+
+def test_asset_metadata_is_validated_when_stored():
+    contactinbox.add(MID, TOKEN, "cn", delivered=True)
+    bad = [
+        {"n": 0, "content_type": "image/svg+xml", "size": 5},
+        {"n": 1, "content_type": "image/png", "size": contactinbox.MAX_ASSET_BYTES + 1},
+        {"n": 2, "content_type": "image/png", "size": 5},
+        {"n": 2, "content_type": "image/png", "size": 5},
+        {"n": 99, "content_type": "image/png", "size": 5},
+        {"n": "x", "content_type": "image/png", "size": 5},
+    ]
+    contactinbox.apply_replies(
+        MID,
+        "replied",
+        [{"id": "r_A", "created_at": "t", "body": "b", "html": "<p/>", "assets": bad}],
+    )
+    (m,) = contactinbox.pollable()
+    assert m["replies"][0]["assets"] == [{"n": 2, "content_type": "image/png", "size": 5}]
+
+
+def test_html_reply_assets_are_downloaded_0600_into_a_0700_tree(on):
+    mid = _send_ok(on)
+    rid = _html_reply(on, mid)
+    contactsend.poll_once(force=True)
+    d = _asset_dir(mid) / rid
+    assert [(d / str(i)).read_bytes() for i in range(4)] == [b for _, b in FOUR]
+    reqs = [c for c in on.calls if "/assets/" in c["path"]]
+    assert [c["path"].rsplit("/", 1)[1] for c in reqs] == ["0", "1", "2", "3"]
+    assert reqs[0]["headers"]["authorization"] == f"Bearer {on.only_message().reply_token}"
+    assert reqs[0]["headers"]["user-agent"] == contactsend._UA
+    assert reqs[0]["headers"]["tavotto-diagnostics-api"] == "1"
+    if sys.platform != "win32":
+        assert stat.S_IMODE(os.stat(d / "0").st_mode) == 0o600
+        assert stat.S_IMODE(os.stat(d).st_mode) == 0o700
+        assert stat.S_IMODE(os.stat(_asset_dir(mid)).st_mode) == 0o700
+    # 已下完的不再下
+    n = len(on.calls)
+    contactsend.poll_once(force=True)
+    assert [c["path"] for c in on.calls[n:] if "/assets/" in c["path"]] == []
+
+
+@pytest.mark.parametrize(
+    "ctype, data",
+    [
+        ("image/jpeg", PNG),  # 头说 jpeg、元数据说 png
+        ("image/png", b"X" * len(PNG)),  # 类型对、大小对，只有魔数不符
+        ("image/svg+xml", PNG),  # 类型不在四种之内
+        ("text/html", b"<html></html>"),
+        ("image/png", PNG + b"extra"),  # 大小与元数据不符
+        ("image/png", PNG[:-3]),
+    ],
+)
+def test_bad_asset_responses_are_rejected_and_not_saved(on, ctype, data):
+    mid = _send_ok(on)
+    rid = _html_reply(on, mid, assets=[("image/png", PNG)])
+    on.serve_asset_as(rid, 0, ctype, data)
+    contactsend.poll_once(force=True)
+    assert not (_asset_dir(mid) / rid / "0").exists()
+    assert [a["n"] for a in contactinbox.pending_assets(mid)] == [0]
+
+
+def test_asset_over_10mib_is_refused_even_if_the_metadata_lies(on):
+    mid = _send_ok(on)
+    big = PNG + b"\0" * (contactinbox.MAX_ASSET_BYTES + 5 - len(PNG))
+    rid = on.reply(mid, "b", html="<p/>", assets=[("image/png", PNG)])
+    # 元数据声明合法（<=10MiB），实际体超限
+    on.serve_asset_as(rid, 0, "image/png", big)
+    contactsend.poll_once(force=True)
+    assert not (_asset_dir(mid) / rid / "0").exists()
+    # 元数据本身超限：存回信时就丢掉这张，更不会去下
+    n = len(on.calls)
+    rid2 = on.reply(mid, "b", html="<p/>", assets=[("image/png", PNG)])
+    on.only_message().replies[-1]["assets"][0]["size"] = contactinbox.MAX_ASSET_BYTES + 1
+    contactsend.poll_once(force=True)
+    assert not [c for c in on.calls[n:] if rid2 in c["path"] and "/assets/" in c["path"]]
+
+
+def test_failed_asset_downloads_retry_next_round_without_blocking_other_replies(on):
+    mid = _send_ok(on)
+    rid = _html_reply(on, mid, assets=FOUR[:2])
+    on.fail("asset", 500, "internal", times=2)  # 两条线路各一次？只有一条线路：前两张请求各失败一次
+    contactsend.poll_once(force=True)
+    d = _asset_dir(mid) / rid
+    assert not (d / "0").exists() and not (d / "1").exists()
+    on.reply(mid, "第二封纯文字")
+    contactsend.poll_once(force=True)  # 下一轮：补齐，并且新回信也收到了
+    assert (d / "0").read_bytes() == PNG and (d / "1").read_bytes() == JPG
+    assert len(contactinbox.public_messages()[0]["replies"]) == 2
+
+
+def test_asset_404_skips_that_image_only(on):
+    mid = _send_ok(on)
+    rid = _html_reply(on, mid, assets=FOUR[:3])
+    on.fail("asset", 404, "not_found", times=1)
+    contactsend.poll_once(force=True)
+    d = _asset_dir(mid) / rid
+    assert not (d / "0").exists() and (d / "1").exists() and (d / "2").exists()
+
+
+@pytest.mark.parametrize("status", [301, 307])
+def test_asset_redirects_are_never_followed(two, status):
+    a, b = two
+    contactsend.start(meta(), [])
+    wait_for({"done"})
+    mid = a.only_message().mid
+    rid = _html_reply(a, mid, assets=FOUR[:1])
+    a.redirect("asset", f"{b.base}/v1/messages/{mid}/replies/{rid}/assets/0", status=status)
+    contactsend.poll_once(force=True)
+    assert not (_asset_dir(mid) / rid / "0").exists()
+    assert b.calls == []  # 重定向目标一次都没被访问
+
+
+def test_assets_are_only_fetched_from_the_whitelisted_hosts(on, monkeypatch):
+    mid = _send_ok(on)
+    _html_reply(on, mid, assets=FOUR[:1])
+    monkeypatch.setenv(contactsend.ENV_ENDPOINT, "https://evil.example.com")
+    n = len(on.calls)
+    assert contactsend.poll_once(force=True) == {"polled": 0}
+    assert len(on.calls) == n and not _asset_dir(mid).exists()
+
+
+def test_a_closed_letter_still_gets_its_missing_assets(on):
+    mid = _send_ok(on)
+    rid = _html_reply(on, mid, assets=FOUR[:1])
+    on.fail("asset", 500, "internal", times=1)
+    contactsend.poll_once(force=True)
+    on.only_message().state = "closed"
+    contactsend.poll_once(force=True)  # 状态变 closed 的这一轮：问到了 closed，附图补下
+    contactsend.poll_once(force=True)
+    assert (_asset_dir(mid) / rid / "0").read_bytes() == PNG
+
+
+def test_a_closed_letter_with_all_assets_is_not_polled_again(on):
+    mid = _send_ok(on)
+    _html_reply(on, mid, assets=FOUR[:1])
+    on.only_message().state = "closed"
+    contactsend.poll_once(force=True)
+    n = len(on.calls)
+    contactsend.poll_once(force=True)
+    assert len(on.calls) == n
+
+
+def test_per_round_asset_budget_caps_the_work_and_the_next_round_continues(on, monkeypatch):
+    mid = _send_ok(on)
+    rid = _html_reply(on, mid)
+    monkeypatch.setattr(contactsend, "ASSET_ROUND_REQUESTS", 2)
+    contactsend.poll_once(force=True)
+    d = _asset_dir(mid) / rid
+    assert sorted(p.name for p in d.iterdir()) == ["0", "1"]
+    contactsend.poll_once(force=True)
+    assert sorted(p.name for p in d.iterdir()) == ["0", "1", "2", "3"]
+
+
+def test_forget_and_retention_delete_the_asset_tree(on, monkeypatch):
+    mid = _send_ok(on)
+    _html_reply(on, mid, assets=FOUR[:2])
+    contactsend.poll_once(force=True)
+    assert _asset_dir(mid).is_dir()
+    assert contactinbox.forget(mid) is True
+    assert not _asset_dir(mid).exists()
+    # 365 天保留期到了：下一次读（prune）连带删
+    mid2 = _send_ok_again(on)
+    _html_reply(on, mid2, assets=FOUR[:1])
+    contactsend.poll_once(force=True)
+    assert _asset_dir(mid2).is_dir()
+    real = time.time()
+    monkeypatch.setattr(contactinbox, "_now", lambda: real + 366 * 86400)
+    assert contactinbox.public_messages() == []
+    assert not _asset_dir(mid2).exists()
+
+
+def _send_ok_again(on) -> str:
+    contactsend.start(meta(body=CANARY_BODY + " 2"), [])
+    wait_for({"done"})
+    return [m for m in on.messages.values() if m.mid != next(iter(on.messages))][-1].mid
+
+
+@pytest.mark.parametrize("bad", ["../x", "TVM-ABCD", "a/b"])
+def test_asset_paths_reject_traversal(bad):
+    assert contactinbox.asset_file(bad, "r_A", 0) is None
+    assert contactinbox.asset_file(MID, bad, 0) is None
+    assert contactinbox.asset_file(MID, "r_A", -1) is None
+    assert contactinbox.save_asset(bad, "r_A", 0, PNG) is False
+
+
+def test_reply_doc_has_csp_inlines_every_asset_and_uses_placeholders_for_missing(on):
+    mid = _send_ok(on)
+    rid = _html_reply(on, mid)
+    on.serve_asset_as(rid, 3, "image/png", b"")  # 第 4 张永远下不来 -> 占位
+    contactsend.poll_once(force=True)
+    doc = contactinbox.reply_doc(mid, rid)
+    assert doc is not None and doc.startswith("<!doctype html>")
+    assert (
+        f'<meta http-equiv="Content-Security-Policy" content="{contactinbox.REPLY_DOC_CSP}">' in doc
+    )
+    assert (
+        contactinbox.REPLY_DOC_CSP == "default-src 'none'; img-src data:; style-src 'unsafe-inline'"
+    )
+    assert doc.index("Content-Security-Policy") < doc.index("<style>") < doc.index("<table")
+    assert "asset:" not in doc
+    assert '<base target="_blank">' in doc
+    import base64
+
+    for ctype, data in FOUR[:3]:
+        assert f"data:{ctype};base64,{base64.b64encode(data).decode()}" in doc
+    assert contactinbox._PLACEHOLDER in doc
+    assert 'alt="Tavotto"' in doc  # alt 仍在
+    for rule in ("#fff", "max-width:100%!important", "pre-wrap", "overflow-wrap:anywhere"):
+        assert rule in doc
+
+
+def test_reply_doc_is_none_without_html_or_for_unknown_ids(on):
+    mid = _send_ok(on)
+    on.reply(mid, "plain")
+    contactsend.poll_once(force=True)
+    rid = contactinbox.public_messages()[0]["replies"][0]["id"]
+    assert contactinbox.reply_doc(mid, rid) is None
+    assert contactinbox.reply_doc(mid, "r_NOPE") is None
+    assert contactinbox.reply_doc("TVM-0000-0000-0000-0000", rid) is None
+
+
+def test_replies_response_bigger_than_the_default_cap_is_not_truncated(on):
+    mid = _send_ok(on)
+    html = "<p>" + "字" * 60000 + "</p>"  # ~180 KB，远超默认 64 KiB 响应上限
+    on.reply(mid, "b", html=html, assets=[])
+    contactsend.poll_once(force=True)
+    assert contactinbox.pollable()[0]["replies"][0]["html"] == html
