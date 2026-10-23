@@ -10,8 +10,10 @@ SHA-256。Guardian 同时核验登记与 HEAD 一致、缓存字节一致，之�
 artifact / 外部归档保存；`verify-snapshot --evidence-directory ...` 可从归档重算快照。
 `runner_error` 保留为 unknown 观测及原始异常，不进入产品六分类；SVG 校验使用标准库 XML。
 
-Celerite 可选数值观察器只对登记脚本生效：记录 seed 后、脚本返回时的 RNG 状态，以及绘制前后完整
-曲线数组的哈希。它是分诊证据，不影响 Guardian 的成功判据，也不代替桌面/CLI/native 用户路径验收。
+研究 case 的产品腿按登记的 `reference_invocation` 起脚本：argv 经 `runconfig.selection_for` 成为产品的运行配置，
+cwd 经 `workdir.set_mode` 成为项目的工作目录模式（脚本目录或项目根），与原生腿同源。登记的目录两者都不是时，
+产品腿报 `runner_error`，不在别处运行。报告的 `raw.line_data` 只读比较原生曲线数组与产品 manifest 的
+`data_fingerprint.parts.xy`，是诊断证据，不影响 Guardian 的成功判据，也不代替桌面/CLI/native 用户路径验收。
 
 本文件是 Guardian 的**唯一**架构/接口文档：CG-00 审计汇总、CG-01 runner 的契约、给 Agent 的调用
 接口都在这里，后续 PR（CG-02 起）引用本文，不再另写总架构文档。

@@ -658,6 +658,7 @@ def line_data_agreement(native_line_xy, result: dict) -> dict:
     product = opened.get("line_xy")
     if not isinstance(native_line_xy, list) or product is None:
         return {"status": "not_observed"}
+
     def summary(digests):
         return {
             "lines": len(digests),

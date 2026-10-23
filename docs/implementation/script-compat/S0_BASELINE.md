@@ -1,7 +1,10 @@
 # S0 探索基线与复核
 
-状态：已取得首轮 engine 探索结果，尚未完成用户路径验收。原 PR #1305 保持草稿；SVG / runner_error
-测量修复拆到 [#1307](https://github.com/Tavotto/Tavotto/pull/1307)。
+状态：已取得首轮 engine 探索结果，尚未完成用户路径验收。测量修复已拆出并合入 main：
+[#1307](https://github.com/Tavotto/Tavotto/pull/1307)（SVG 测量、runner_error）、
+[#1321](https://github.com/Tavotto/Tavotto/pull/1321)（原生对照沿用 savefig 实际裁切框）、
+[#1322](https://github.com/Tavotto/Tavotto/pull/1322)（素材清单不列虚构的无参数占位）。
+本 PR 只保留研究 Guardian 与登记语料。
 
 ## 原始观测
 
@@ -36,11 +39,17 @@ export/fidelity 各 10。历史机器快照 `tests/compat/research-baseline.json
 
 ## 重新分诊
 
+首轮的研究产品腿没有传登记的 `launch`（argv 为空、cwd 为 sandbox），Leaf 与 Qudit 的失败来自测量，
+不是产品缺陷（真实入口复测见 [2026-10-22-research-entry-retest.md](../../qa/2026-10-22-research-entry-retest.md)）。
+现在 Guardian 的产品腿把登记的 argv 交给产品的运行配置、把 cwd 交给项目的工作目录模式（脚本目录或项目根），
+与原生腿同源。首轮快照 `research-baseline.json` 保留原样，尚未用新测量重跑。
+
 | 项目 | 已知证据 | 下一步 |
 | --- | --- | --- |
-| Celerite | 5 次执行的 26 条曲线数据、seed 后及脚本结束时的 RNG、末次协方差矩阵一致；历史两张 PNG 逐字节重现。同尺寸 PDF 仍有布局偏移。 | 先对齐原生对照的保存参数，再定位零编辑布局重算；本例没有支持 RNG/BLAS 导致数据改变的证据。详见下节。 |
-| Leaf | 原生带 `hppc` 出 5 图，engine 探针没有传参；错误提示已有 CLI 参数入口。 | 经真实 CLI/桌面入口验证 argv，不据此宣称全产品不支持参数。 |
-| Qudit | 原生完成；engine 的相对 glob 为空。 | 记录实际 cwd 与命中文件，验证已有项目目录运行路径。 |
+| Celerite | 5 次执行的 26 条曲线数据、RNG、末次协方差矩阵一致；原生对照丢失 `bbox_inches` 已由 #1321 修正。同尺寸 PDF 仍有布局偏移。 | 用新对照重跑；定位零编辑布局重算。详见下节。 |
+| Leaf | 登记入口 `plot.py hppc`；首轮产品腿没传 argv。真实入口复测通过。 | 用新测量重跑。 |
+| Qudit | 登记 cwd 为项目根，相对 glob；首轮产品腿用了 sandbox。真实入口复测通过。 | 用新测量重跑。 |
+| Cantera | 登记 cwd 为 `data`，既不是脚本目录也不是项目根；产品没有任意目录模式。 | 产品腿现在记 runner_error 而不是改在别处运行；是否扩产品由维护者定。 |
 | Gala | PNG/SVG 正常；PDF 报 Cython 共享类型尺寸错误。原生任务没有输出 PDF。 | 补同环境原生 PDF 和完整异常栈，再判断具体扩展。 |
 | PySB | 我们的配方固定 SymPy 1.11.1，上游要求 >=1.12。 | 准备配方错误，产品未运行；修配方不能记成产品修复。 |
 | SGWB | TeX 准备超过 35 分钟。 | 原生和产品都未运行；准备完成后另记一次观测。 |
@@ -50,8 +59,8 @@ export/fidelity 各 10。历史机器快照 `tests/compat/research-baseline.json
 
 [复核运行 39779799508](https://github.com/Tavotto/Tavotto/actions/runs/39779799508) 使用
 `cc038006df3a5446dbeb5bb42629b5319957e34b`，其产品源码仍等于原基线 `6dcf344c`。
-最终草稿随后整理为依赖 #1307 的叠栈；该历史观测不冒充新基线的产品验收。
-[机器摘要](../../../tests/compat/research-celerite-retriage.json) 绑定原始报告、数值日志和 PDF 的 SHA-256。
+该历史观测不冒充新基线的产品验收。当时用 Celerite 专用的 RNG/数组观察器取证；该观察器和复核脚本已移出仓库，
+结论与 artifact 链接保留在此，通用的曲线数据比对见本文末。
 
 - **数据没有变。** 原生参照、PNG 对照、hot/fresh worker 和 census 共 5 次执行，覆盖 69 次 Figure 观察。
   3 个 axes 的 5/5/16 条曲线（其中 12 条随机样本）的完整 x/y 数组逐项同哈希；每次 seed 后状态相同，
@@ -59,31 +68,20 @@ export/fidelity 各 10。历史机器快照 `tests/compat/research-baseline.json
   这支持撤回本例“第三栏是两组数据”的判断，不能泛化为所有科学脚本都数值等价。
 - **线宽和颜色没有被改。** 脚本结束时逐条 Line2D 的 color/linewidth 一致；两份 PDF 的
   `w/RG/rg/G/g/Tf` 指令序列相同，文字内容相同。
-- **原 PNG 判据有协议问题。** `compat_driver.run_native` 再存 PNG 时只传 format/dpi，漏掉原脚本
-  `bbox_inches="tight"`。它拿完整画布 640×213 对比产品裁切后的 640×203；旧报告中的 1.0 / 255
+- **原 PNG 判据有协议问题（已由 #1321 修正）。** `compat_driver.run_native` 再存 PNG 时只传 format/dpi，
+  漏掉原脚本 `bbox_inches="tight"`。它拿完整画布 640×213 对比产品裁切后的 640×203；旧报告中的 1.0 / 255
   是尺寸短路的占位值，不能当作已量出的像素差，更不能据此判断数组改变。
 - **产品仍有零编辑布局差异。** 原生 PDF 与任何编辑前的产品 PDF 都是 843.84×267.84 pt；用同一
   PDFium、同一 640 px 宽度栅格化后均为 640×204。3 个 axes 的底边上移约 0.442767 pt，高度相应缩短；
   文字坐标最大差约 1.051598 pt。沿用现有像素判据：changed ratio 0.084766、mean 2.6069、max 255，
   三项都超过原阈值。重放后回零的 PDF 像素与编辑前一致，差异已在编辑前出现。
 
-因此保留 **fidelity failed**，分成“原生对照保存参数未对齐”和“零编辑布局漂移”两项。
-后续先修对照协议，再用保留的 PDF/数组证据定位布局调用顺序及渲染上下文；不改随机种子、科学计算、
-样本数据或像素阈值。Leaf 的 argv、Qudit 的 cwd 继续作为真实入口验证的优先项。
+旧报告的 fidelity failed 包含“对照保存参数未对齐”（已修）和“零编辑布局漂移”（仍待定位）两项。
+不改随机种子、科学计算、样本数据或像素阈值。
 
-首轮数值探针拒绝了 worker 已有的执行 tracer，未获得产品数组；该轮不能用于数据一致性结论。
-修复后的观察器仅用 profiler，保留产品 tracer。合成脚本与真实 `executionfact.on_user_entry` 的并存测试通过，
-换回旧观察器会失败；删掉一条实际 worker 记录时分析器拒绝汇总，改掉一个数组哈希时报告不一致。
-
-复算下载后的最终 artifact（需要现有开发环境的 PDFium/pikepdf）：
-
-```sh
-python scripts/dev/retriage_celerite.py /absolute/unpacked-artifact --out /absolute/retriage-output
-# 可选：--previous-fidelity /absolute/original-archive/fidelity，核验两张历史 PNG 的字节一致性
-```
-
-完整证据留在 [Actions artifact 12427200839](https://github.com/Tavotto/Tavotto/actions/runs/39779799508/artifacts/12427200839)
-及本地归档，不重新塞回 Git。研究运行仍以退出码 1 暴露保真失败；这与 #1307 的绿色 CI 是不同结论。
+完整证据（报告、数值日志、两份 PDF）留在
+[Actions artifact 12427200839](https://github.com/Tavotto/Tavotto/actions/runs/39779799508/artifacts/12427200839)
+及本地归档，不重新塞回 Git。
 
 ## 获取与复现
 
@@ -98,8 +96,11 @@ python scripts/ci/compat_guardian_research.py fetch --case research_astro_celeri
 ```
 
 科学依赖、TeX 和批准字体在 `compat-research-s0.yml` 的 hosted runner 中准备。显式选择 `case_id`；
-`all` 才运行全部开发项目。Celerite 的 `numeric_diagnostics` 只读取数组和 RNG 状态，不改变种子或计算。
-输入提交与 SHA-256 不符、缓存被改动或登记元数据未提交时，Guardian 拒绝执行。
+`all` 才运行全部开发项目。输入提交与 SHA-256 不符、缓存被改动或登记元数据未提交时，Guardian 拒绝执行。
+
+每个 case 的报告在 `raw.line_data` 里给出只读的曲线数据比对：原生每条 `Line2D.get_xydata()` 与产品打开的
+manifest `data_fingerprint.parts.xy` 按同一摘要规则（形状 + 小端 float64）逐条比较，保留重复曲线，
+报告相等 / 不同及两侧独有条数。它只是诊断，不改变任何阶段判据。
 
 完整旧证据已保存为本地归档，并能复算原快照。历史 GitHub artifact 按 Actions 的保留期限提供；
 长期复核可使用保留同一目录结构的归档：
