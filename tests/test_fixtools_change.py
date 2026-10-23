@@ -240,8 +240,13 @@ def test_unknown_env_and_bad_package_lists(box):
     assert ctx.fake_env.installs == []
 
 
-def test_system_python_is_never_installed_into_even_with_consent(box):
-    ctx = change_ctx(box, environments={"e": "/usr/bin/python3"})
+def test_system_python_is_never_installed_into_even_with_consent(box, monkeypatch):
+    # 「是不是系统自带 Python」按平台判（`convertdeps._is_os_python`）；这里钉 change.py 的护栏本身，与平台无关
+    from tavotto.engine import convertdeps
+
+    system_py = str(box.home / "system" / "python3")
+    monkeypatch.setattr(convertdeps, "_is_os_python", lambda python: python == system_py)
+    ctx = change_ctx(box, environments={"e": system_py})
     r = call(ctx, "install_packages", {"env": "e", "packages": ["seaborn"]})
     assert r.is_error and r.code == "env_not_installable"
     assert ctx.fake_env.installs == [] and ctx.asker.cards == []
