@@ -169,8 +169,8 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 
 1. **时机不变**：仍只在结局 `execution_finished_no_figure`（跑完没有 Matplotlib 图）之后问一次；纯 AST、只读、不执行，读不了 / 解析不了 / 扫描被截断一律 None。
 2. **Pillow 画图证据**（AST，接收者必须真是 `ImageDraw.Draw(...)` 的结果——赋值名 / with-as / 链式调用，所以 `ax.text`、`plt.show()` 不算）：
-   强证据＝对 Draw 对象调了 `line / rectangle / ellipse / polygon / text / arc / pieslice / point`，或同时有 `ImageDraw.Draw` 与 `ImageFont`（画字）；
-   弱证据＝`Image.new(...)` 的结果本身（赋给的名字含带类型标注 / with-as / 直接链式；名字若还被赋过别的值则不算）被 `.save` / `.show`，别的接收者的 `.save` 不算（`Image.open(...).resize().save()` 这类图片处理没有 `Image.new` 也没有绘制，**不算**）。
+   强证据＝对 Draw 对象（同作用域、`ImageDraw.Draw(...)` 绑定在前，含 with-as / 海象 / 带标注）调了 `line / rectangle / ellipse / polygon / text / arc / pieslice / point`，或同时有 `ImageDraw.Draw` 与 `ImageFont`（画字）；
+   弱证据＝`Image.new(...)` 的结果本身（赋给的名字含带类型标注 / with-as / 直接链式；**同作用域、绑定在前**：接收者名字须在同一作用域里、位置在调用之前最近一次绑定就是 `Image.new`，形参 / 重赋成别的值 / global·nonlocal 声明的名字都不算）被 `.save` / `.show`，别的接收者的 `.save` 不算（`Image.open(...).resize().save()` 这类图片处理没有 `Image.new` 也没有绘制，**不算**）。
 3. **文件证据变成可选**：有（字面量路径文件 / 素材盘点新文件）就带 `path`，没有就 `path: null`、`in_project: false`；旧的文件证据路径原样保留并优先。
 4. **同时 import matplotlib**：结局已是“没捕获到 Figure”这个运行事实，不再一刀切沉默；但只认**强证据**（弱证据在有 matplotlib 时仍沉默），文件证据只认 Pillow 自己的保存。
 5. **看不全时**：强证据在动态 import 下仍可说（运行事实已替代“有没有 matplotlib”的静态猜测）；弱证据遇动态 import、或脚本里还有别的库在存图（分不清是谁）仍沉默。

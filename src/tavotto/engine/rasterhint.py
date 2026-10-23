@@ -157,12 +157,103 @@ class _FileScan(ast.NodeVisitor):
         #: 弱 = `Image.new(...)` 的结果（赋给的名字 / 链式）本身被 `.save` / `.show`（不是 Image.open 的图片处理）
         self.pil_draw_strong = False
         self.pil_draw_weak = False
-        self._draw_bindings: list[tuple[list[ast.expr], ast.expr]] = []
+        # 作用域 + 先后：名字绑定与调用都记下所在作用域 id 和源位置，接收者只认「同作用域、在它之前、最近一次」绑定
+        self._scope_stack: list[int] = [0]
+        self._n_scopes = 1
+        #: (作用域, 名字) → [(位置, 绑定值的 Call 或 None)]；None = 不是 Image.new / Draw 的绑定（形参、for、import、重赋…）
+        self._events: dict[tuple[int, str], list[tuple[tuple[int, int], ast.expr | None]]] = {}
+        self._decl_names: set[tuple[int, str]] = (
+            set()
+        )  # global / nonlocal 声明过的名字：分析不了，不算
+        self._value_of: dict[int, ast.expr] = {}  # 直接名字目标 → 它被赋的值
+        self._pos_of: dict[int, tuple[int, int]] = {}  # 目标名字 → 绑定生效位置（语句末尾）
+        self._call_site: dict[int, tuple[int, tuple[int, int]]] = {}
+
+    # ---- 作用域与绑定 ----
+    @property
+    def _scope(self) -> int:
+        return self._scope_stack[-1]
+
+    def _bind(self, name: str, pos: tuple[int, int], value: ast.expr | None = None) -> None:
+        self._events.setdefault((self._scope, name), []).append((pos, value))
+
+    def _mark(self, target: ast.expr, value: ast.expr, end: ast.stmt | ast.expr) -> None:
+        if isinstance(target, ast.Name):
+            self._value_of[id(target)] = value
+            if getattr(end, "end_lineno", None) is not None:
+                self._pos_of[id(target)] = (end.end_lineno or 0, end.end_col_offset or 0)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            pos = self._pos_of.get(id(node), (node.lineno, node.col_offset))
+            self._bind(node.id, pos, self._value_of.get(id(node)))
+
+    def _enter(self, visit_inner: list[ast.AST]) -> None:
+        self._scope_stack.append(self._n_scopes)
+        self._n_scopes += 1
+        for child in visit_inner:
+            self.visit(child)
+        self._scope_stack.pop()
+
+    def _visit_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> None:
+        a = node.args
+        for d in [*a.defaults, *(x for x in a.kw_defaults if x is not None)]:
+            self.visit(d)
+        if not isinstance(node, ast.Lambda):
+            for d in node.decorator_list:
+                self.visit(d)
+            if node.returns is not None:
+                self.visit(node.returns)
+            self._bind(node.name, (node.lineno, node.col_offset))
+        params = [*a.posonlyargs, *a.args, *a.kwonlyargs, *(x for x in (a.vararg, a.kwarg) if x)]
+
+        def bind_params() -> None:
+            for arg in params:
+                self._bind(arg.arg, (arg.lineno, arg.col_offset))
+
+        self._scope_stack.append(self._n_scopes)
+        self._n_scopes += 1
+        bind_params()
+        body = [node.body] if isinstance(node, ast.Lambda) else node.body
+        for child in body:
+            self.visit(child)
+        self._scope_stack.pop()
+
+    visit_FunctionDef = _visit_func
+    visit_AsyncFunctionDef = _visit_func
+    visit_Lambda = _visit_func
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for d in [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]:
+            self.visit(d)
+        self._bind(node.name, (node.lineno, node.col_offset))
+        self._enter(list(node.body))
+
+    def visit_Global(self, node: ast.Global) -> None:
+        self._decl_names.update((self._scope, n) for n in node.names)
+
+    visit_Nonlocal = visit_Global  # type: ignore[assignment]
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name:
+            self._bind(node.name, (node.lineno, node.col_offset))
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        if node.name:
+            self._bind(node.name, (node.lineno, node.col_offset))
+        self.generic_visit(node)
+
+    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        if node.name:
+            self._bind(node.name, (node.lineno, node.col_offset))
 
     def visit_Import(self, node: ast.Import) -> None:
         for a in node.names:
             top = _top(a.name)
             self._note(top)
+            local = a.asname or top
+            self._bind(local, (node.lineno, node.col_offset))
             if a.asname:
                 self.bound[a.asname] = a.name
             else:
@@ -170,6 +261,9 @@ class _FileScan(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for a in node.names:
+            if a.name != "*":
+                self._bind(a.asname or a.name, (node.lineno, node.col_offset))
         if node.level == 0 and node.module:
             self._note(_top(node.module))
             for a in node.names:
@@ -178,24 +272,27 @@ class _FileScan(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
-        self._draw_bindings.append((list(node.targets), node.value))
+        for t in node.targets:
+            self._mark(t, node.value, node)
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         # `draw: ImageDraw.ImageDraw = ImageDraw.Draw(im)`：带类型标注的绑定同样要追踪（无值的纯标注不是绑定）
         if node.value is not None:
-            self._draw_bindings.append(([node.target], node.value))
+            self._mark(node.target, node.value, node)
         self.generic_visit(node)
 
     def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
-        self._draw_bindings.append(([node.target], node.value))
+        self._mark(node.target, node.value, node)
         self.generic_visit(node)
 
     def visit_With(self, node: ast.With) -> None:
         for item in node.items:
             if item.optional_vars is not None:
-                self._draw_bindings.append(([item.optional_vars], item.context_expr))
+                self._mark(item.optional_vars, item.context_expr, item.context_expr)
         self.generic_visit(node)
+
+    visit_AsyncWith = visit_With  # type: ignore[assignment]
 
     def _note(self, top: str) -> None:
         self.imports_tops.add(top)
@@ -206,6 +303,7 @@ class _FileScan(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         self._save_calls.append(node)
+        self._call_site[id(node)] = (self._scope, (node.lineno, node.col_offset))
         self.generic_visit(node)
 
     def _resolve(self, func: ast.expr) -> str | None:
@@ -219,26 +317,26 @@ class _FileScan(ast.NodeVisitor):
             return None
         return ".".join([self.bound[cur.id], *reversed(parts)])
 
+    def _bound_to(self, recv: ast.expr, call: ast.Call, funcs: frozenset[str]) -> bool:
+        """接收者是名字，且在调用所在作用域里、位置在调用之前的**最近一次**绑定是 `funcs` 里的调用
+        （形参、重赋成别的值、global / nonlocal 声明过的名字都不算）。"""
+        if not isinstance(recv, ast.Name):
+            return False
+        scope, pos = self._call_site[id(call)]
+        if (scope, recv.id) in self._decl_names:
+            return False
+        before = [e for e in self._events.get((scope, recv.id), []) if e[0] < pos]
+        if not before:
+            return False
+        value = max(before, key=lambda e: e[0])[1]
+        return isinstance(value, ast.Call) and self._resolve(value.func) in funcs
+
     def _scan_pillow_drawing(self) -> None:
-        """Pillow 画图证据（纯 AST）：绘制方法的接收者必须是 `ImageDraw.Draw(...)` 的结果（赋给的名字 / with-as /
-        直接链式调用），所以 `ax.text` / `plt.plot` 不会被当成 Pillow 绘制。"""
+        """Pillow 画图证据（纯 AST）：绘制方法的接收者必须是 `ImageDraw.Draw(...)` 的结果（同作用域内、在前的绑定 /
+        with-as / 直接链式调用），所以 `ax.text` / `plt.plot` 不会被当成 Pillow 绘制。"""
         if not self.imports_pil:
             return
-        draw_names: set[str] = set()
-        new_names: set[str] = set()
-        other_bound: set[str] = (
-            set()
-        )  # 被赋过 `Image.new` 以外的值的名字：保守起见不再算 Image.new 的图
         has_draw_call = has_font = has_out = False
-        for targets, value in self._draw_bindings:
-            is_call = isinstance(value, ast.Call)
-            if is_call and self._resolve(value.func) in _PIL_DRAW_FUNCS:
-                draw_names.update(ast.unparse(t) for t in targets)
-            if is_call and self._resolve(value.func) in _PIL_NEW_FUNCS:
-                new_names.update(ast.unparse(t) for t in targets)
-            else:
-                other_bound.update(ast.unparse(t) for t in targets)
-        new_names -= other_bound
         strong = False
         for call in self._save_calls:
             full = self._resolve(call.func)
@@ -251,14 +349,14 @@ class _FileScan(ast.NodeVisitor):
                 continue
             if func.attr in _PIL_DRAW_METHODS:
                 recv = func.value
-                if ast.unparse(recv) in draw_names or (
+                if self._bound_to(recv, call, _PIL_DRAW_FUNCS) or (
                     isinstance(recv, ast.Call) and self._resolve(recv.func) in _PIL_DRAW_FUNCS
                 ):
                     strong = True
             elif func.attr in ("save", "show"):
                 # 弱证据只认 `Image.new(...)` 的结果本身被 save/show（名字或直接链式），别的接收者的 `.save` 不算
                 recv = func.value
-                if ast.unparse(recv) in new_names or (
+                if self._bound_to(recv, call, _PIL_NEW_FUNCS) or (
                     isinstance(recv, ast.Call) and self._resolve(recv.func) in _PIL_NEW_FUNCS
                 ):
                     has_out = True

@@ -873,3 +873,84 @@ def test_chained_image_new_save_gets_a_hint(tmp_path):
 def test_image_new_name_reassigned_to_something_else_is_not_counted(tmp_path):
     body = "from PIL import Image\nim = Image.new('L', (4, 4))\nim = load()\nim.save(p)\n"
     assert _bare(tmp_path, body) is None
+
+
+# ---- 名字匹配按作用域 + 先后（Codex #1340 P2：接收者名字不能是全文件、不分先后的匹配） ----
+
+_PIL = "import sys\nfrom PIL import Image, ImageDraw\n"
+
+
+def test_save_before_the_image_new_binding_in_the_same_function_is_not_counted(tmp_path):
+    body = _PIL + "def f(im):\n    im.show()\n    im = Image.new('L', (2, 2))\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_save_before_the_image_new_binding_at_module_level_is_not_counted(tmp_path):
+    body = _PIL + "im.save(sys.argv[1])\nim = Image.new('L', (2, 2))\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_same_name_in_two_functions_is_not_the_image_new_object(tmp_path):
+    body = (
+        _PIL
+        + "def a():\n    im = Image.new('L', (2, 2))\n    return im\n"
+        + "def b(im):\n    im.save(sys.argv[1])\n"
+    )
+    assert _bare(tmp_path, body) is None
+
+
+def test_image_new_then_save_in_the_same_function_gets_a_hint(tmp_path):
+    body = _PIL + "def f():\n    im = Image.new('L', (2, 2))\n    im.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_image_new_then_save_at_module_level_gets_a_hint(tmp_path):
+    body = _PIL + "im = Image.new('L', (2, 2))\nim.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_module_level_binding_is_not_seen_from_inside_a_function(tmp_path):
+    body = _PIL + "im = Image.new('L', (2, 2))\ndef f():\n    im.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_function_parameter_shadowing_the_name_is_not_counted(tmp_path):
+    body = _PIL + "im = Image.new('L', (2, 2))\ndef f(im):\n    im.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_global_declared_name_is_not_counted(tmp_path):
+    body = (
+        _PIL
+        + "def f():\n    global im\n    im = Image.new('L', (2, 2))\n    im.save(sys.argv[1])\n"
+    )
+    assert _bare(tmp_path, body) is None
+
+
+def test_with_as_image_new_then_save_in_the_with_body_gets_a_hint(tmp_path):
+    body = _PIL + "with Image.new('L', (2, 2)) as im:\n    im.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_draw_bound_in_another_function_is_not_the_draw_object(tmp_path):
+    body = (
+        _PIL
+        + "def a(img):\n    d = ImageDraw.Draw(img)\n    return d\n"
+        + "def b(d):\n    d.line([(0, 0), (1, 1)])\n"
+    )
+    assert _bare(tmp_path, body) is None
+
+
+def test_draw_call_before_the_draw_binding_is_not_counted(tmp_path):
+    body = _PIL + "def f(img, d):\n    d.line([(0, 0), (1, 1)])\n    d = ImageDraw.Draw(img)\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_draw_bound_in_the_same_function_before_the_call_gets_a_hint(tmp_path):
+    body = _PIL + "def f(img):\n    d = ImageDraw.Draw(img)\n    d.line([(0, 0), (1, 1)])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_draw_and_font_combination_evidence_is_unchanged_by_scoping(tmp_path):
+    body = "from PIL import Image, ImageDraw, ImageFont\nim = Image.open('a.png')\nf = ImageFont.truetype('x.ttf', 12)\nd = ImageDraw.Draw(im)\nrender(d, f)\n"
+    assert _bare(tmp_path, body) == _NO_PATH
