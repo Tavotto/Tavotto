@@ -186,11 +186,9 @@ def read_scripts(paths: list[str]) -> dict[str, bytes] | None:
 
 @contextlib.contextmanager
 def hold_scripts(paths: list[str]):
-    """依次（按规范化真实路径排序，防死锁）持有这些脚本的 `scriptlock.script_guard`，整段「取基线 → 命令 → 核对 / 恢复」不放。
+    """经 `scriptlock.script_guard_all` 一次持有这些脚本的锁（全拿到或全不占，防死锁），整段「取基线 → 命令 → 核对 / 恢复」不放。
     界面里的保存走同一把锁（`scriptbackup.replace` 等），会**等**到这一段结束再落盘，所以用户的合法编辑不会被当成命令的改动写回旧版。"""
-    with contextlib.ExitStack() as stack:
-        for real in sorted(paths, key=scriptlock.script_key):
-            stack.enter_context(scriptlock.script_guard(real))
+    with scriptlock.script_guard_all(paths):
         yield
 
 

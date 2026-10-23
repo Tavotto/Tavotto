@@ -25,7 +25,7 @@
   （`<名>.py` / `<名>_2.py` …，已存在换下一个号，永不覆盖）。
 * `snapshots.restore_script`（AI 修复工具箱，ADR 0149 §七）：`run_command` / `convert_script` 事后核对发现用户脚本被改 / 被删，
   或 `rollback` 重试未恢复的脚本时，持这份脚本的锁、`write_script` 把**执行前备份的原字节**写回；从不写新内容。
-* `snapshots.hold_scripts`（AI 修复工具箱）：`run_command` 在用户点同意之后，依次（按规范化真实路径排序）持有项目里全部用户脚本的锁，
+* `snapshots.hold_scripts`（AI 修复工具箱）：`run_command` 在用户点同意之后，经 `script_guard_all` 一次持有项目里全部用户脚本的锁（全拿到或全不占、退避重来，防与固定锁序的嵌套持有死等），
   整段「取基线 → 命令 → 核对 / 恢复」不放；界面保存会等这一段结束，不会被当成命令的改动写回旧版。
 * `change.convert_script`（同上）：持原脚本的锁做完「读基线 → 转换器（只拿临时副本）→ 核对 / 必要时恢复」。
 
@@ -38,6 +38,7 @@ from __future__ import annotations
 import contextlib
 import os
 import threading
+import time
 from pathlib import Path
 
 from . import atomicio
@@ -63,6 +64,36 @@ def script_guard(script_path: str | os.PathLike):
             yield
         finally:
             _OWNERS[key].pop()
+
+
+@contextlib.contextmanager
+def script_guard_all(script_paths):
+    """一次持有多份脚本的锁：**要么全拿到、要么一把不占**（拿不到就全放、退避后重来），不和别处固定锁序的嵌套持有（如 `ai_convert.adopt`）互相死等。"""
+    keys = sorted({script_key(p) for p in script_paths})
+    with _GUARD:
+        locks = [(k, _LOCKS.setdefault(k, threading.RLock())) for k in keys]
+    delay = 0.01
+    while True:
+        taken = []
+        for key, lock in locks:
+            if not lock.acquire(blocking=False):
+                break
+            taken.append((key, lock))
+        if len(taken) == len(locks):
+            break
+        for _key, lock in reversed(taken):
+            lock.release()
+        time.sleep(delay)
+        delay = min(delay * 2, 0.2)
+    me = threading.get_ident()
+    for key, _lock in taken:
+        _OWNERS.setdefault(key, []).append(me)
+    try:
+        yield
+    finally:
+        for key, lock in reversed(taken):
+            _OWNERS[key].pop()
+            lock.release()
 
 
 def held(script_path: str | os.PathLike) -> bool:

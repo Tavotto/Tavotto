@@ -1268,3 +1268,45 @@ def test_converter_scratch_copy_cleanup_failure_is_reported_and_swept_later(box,
     r = call(ctx, "convert_script", {})  # 下一次开头扫掉残留
     assert not r.is_error and "cleanup_pending" not in r.content
     assert list(change.convert_root().iterdir()) == []
+
+
+def test_holding_all_scripts_does_not_deadlock_with_a_nested_fixed_order_holder(tmp_path):
+    """`ai_convert.adopt` 先持原脚本、再持兄弟脚本；`hold_scripts` 一次要两把——全拿到或全不占，两边都能走完。"""
+    import threading
+    import time
+
+    from tavotto.engine import scriptlock
+    from tavotto.engine.fixtools import snapshots
+
+    a, b = tmp_path / "a_fig.py", tmp_path / "b_fig.py"
+    a.write_bytes(b"x = 1\n")
+    b.write_bytes(b"y = 2\n")
+    # 让「嵌套持有者」先拿外层那把（排序靠后的 b），再去要 a；hold_scripts 按排序会先拿 a
+    outer_taken, go_inner, done = threading.Event(), threading.Event(), []
+
+    def nested():
+        with scriptlock.script_guard(b):
+            outer_taken.set()
+            go_inner.wait(5)
+            time.sleep(0.3)  # 给 holder 时间先拿到 a、再去要 b——逐把阻塞地拿就会在这里死等
+            with scriptlock.script_guard(a):
+                done.append("nested")
+
+    def holder():
+        outer_taken.wait(5)
+        go_inner.set()
+        with snapshots.hold_scripts([str(a), str(b)]):
+            assert scriptlock.held(a) and scriptlock.held(b)
+            done.append("holder")
+
+    ts = [
+        threading.Thread(target=nested, daemon=True),
+        threading.Thread(target=holder, daemon=True),
+    ]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(10)
+    assert not any(t.is_alive() for t in ts), "deadlocked"
+    assert sorted(done) == ["holder", "nested"]
+    assert not scriptlock.held(a) and not scriptlock.held(b)

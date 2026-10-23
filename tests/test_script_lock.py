@@ -85,7 +85,8 @@ def test_the_guard_holders_are_exactly_the_documented_list():
     清单里的某个入口不再拿锁也红。"""
     documented = _documented_holders()
     assert len(documented) >= 5, "清单解析成空集合：判据量在空集上"
-    assert _functions_calling("script_guard") == documented
+    holders = _functions_calling("script_guard") | _functions_calling("script_guard_all")
+    assert holders == documented
 
 
 def test_script_bytes_are_written_only_through_write_script():
