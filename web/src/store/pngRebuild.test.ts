@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
-import type { CapturedFigureDescriptor, ProbeResult } from '@/lib/api'
+import { fetchPanels, type CapturedFigureDescriptor, type ProbeResult } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { emptyProject, type PanelObject } from '@/types/document'
+import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { useFigurePickerStore } from './figurePickerStore'
 import { useRuntimeAssetStore } from './runtimeAssetStore'
@@ -34,6 +35,14 @@ const pngPanel = (): PanelObject => ({
   id: 'p', type: 'panel', fileId: 'out/same.png', fileKind: 'raster', script: 'fig.py', figureFrame: 1,
   nativeW: 50, nativeH: 40, pxW: 400, pxH: 320, x: 10, y: 12, w: 50, h: 40, overrides: [],
 })
+const assetRow = (over: Record<string, unknown> = {}) =>
+  ({ id: 'out/same.png', name: 'same', folder: 'out', kind: 'raster', native_w_mm: 50, native_h_mm: 40, mtime: 1, script: 'fig.py', ...over })
+// 素材清单里有这张 PNG；试运行会顺手刷新清单，所以后端的响应也要给同一份（否则刷新把它清掉）
+const seedAsset = (over: Record<string, unknown> = {}, served = true) => {
+  const row = assetRow(over)
+  useAssetStore.setState({ byId: served ? { [row.id]: row } : {} } as never)
+  vi.mocked(fetchPanels).mockResolvedValue({ figures_dir: '', panels: served ? [row] : [] } as never)
+}
 const S = () => useDocumentStore.getState()
 const panels = () => S().doc.objects.filter((o): o is PanelObject => o.type === 'panel')
 
@@ -49,6 +58,7 @@ beforeEach(async () => {
   await S().switchDocument(emptyProject(), 'rebuild-test')
   S().commit(literal('seed'), (d) => { d.objects.push(pngPanel()) })
   useDocumentStore.setState({ past: [], future: [] })
+  seedAsset() // 素材清单里有这张 PNG（stem 缺省 = 文件名 stem）
 })
 
 describe('rebuild as editable figure (ADR 0139 PR1)', () => {
@@ -82,17 +92,18 @@ describe('rebuild as editable figure (ADR 0139 PR1)', () => {
     expect(await rebuildEditableFromScript('p')).toBe('rebuilt')
     expect(panels().map((p) => p.fileId)).toEqual(['out/same.png', 'runtime:fig.py#same'])
   })
-  it('素材清单还没覆盖到这张 PNG：先补取，按注册表的 stem（same-2）找图，不按文件名 stem（same）猜（#1251）', async () => {
-    const api = await import('@/lib/api')
-    vi.mocked(api.fetchPanels).mockResolvedValueOnce({
-      figures_dir: '',
-      panels: [
-        { id: 'out/same.png', name: 'same', stem: 'same-2', folder: 'out', kind: 'raster', native_w_mm: 50, native_h_mm: 40, mtime: 1, script: 'fig.py' },
-      ],
-    } as never)
+  it('素材清单有这张 PNG 的映射（same-2）：按它建对图，不按文件名 stem（same）（#1251）', async () => {
+    seedAsset({ stem: 'same-2' })
     probe.mockResolvedValue(ok([desc('same'), desc('same-2')]))
     expect(await rebuildEditableFromScript('p')).toBe('rebuilt')
     expect(panels().map((p) => p.fileId)).toEqual(['out/same.png', 'runtime:fig.py#same-2'])
+  })
+  it('素材清单没有这张 PNG（启动并行 / 刷新失败）：不猜文件名 stem，交给选择器，不建任何图', async () => {
+    seedAsset({}, false) // 清单没有它（启动并行 / 刷新失败）
+    probe.mockResolvedValue(ok([desc('same')])) // 文件名 stem 恰好唯一匹配，也不自动选
+    expect(await rebuildEditableFromScript('p')).toBe('picker')
+    expect(useFigurePickerStore.getState().script).toBe('fig.py')
+    expect(panels()).toHaveLength(1)
   })
   it('a failed script run says so once and leaves the PNG untouched', async () => {
     probe.mockResolvedValue({ ...ok([]), error: { code: 'script_error', message: 'boom', params: {} } })

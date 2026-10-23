@@ -1,5 +1,5 @@
 import { msg } from '@/i18n'
-import { panelStemOfFileId } from '@/lib/panelStem'
+import { panelStemOf } from '@/lib/panelStem'
 import { useAssetStore } from '@/store/assetStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useDepRepairStore } from '@/store/depRepairStore'
@@ -34,9 +34,6 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
   const panel = findPanel(panelId)
   const script = panel?.script
   if (!panel || !script) return 'stale'
-  // 素材清单还没覆盖到这张图（启动并行 / 首次请求失败）：先补取一次，别拿文件名 stem 去猜「哪张图」（#1251）
-  if (!useAssetStore.getState().byId[panel.fileId]) await useAssetStore.getState().load()
-  const stem = panelStemOfFileId(panel.fileId)
   const guard = captureProjectEpoch(() => useScriptRunStore.getState().epoch)
   // 发起时的排版身份：同项目里打开了另一份已保存的排版（documentId / loadSeq 变）或切了画布，
   // 捕获的面板就会落进错误的排版——整个丢弃，什么都不写
@@ -72,7 +69,11 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
     useUiStore.getState().setStatus(msg('artifact.rebuildFailed', undefined, 'errors'), 'error', { owner })
     return 'failed'
   }
-  const matches = row.descriptors.filter((d) => d.script === script && d.stem === stem)
+  // 这张 PNG 属于哪张图：只认素材清单里**已经有**的映射（后端 `Registry.artifact_stem`，#1251）。清单没有它
+  // （启动并行 / 请求失败）就不猜、也不为它新加 await——不拿文件名 stem 自动选图，交给 Figure 选择器让用户挑
+  const info = useAssetStore.getState().byId[panel.fileId]
+  const stem = info ? panelStemOf(info) : null
+  const matches = stem === null ? [] : row.descriptors.filter((d) => d.script === script && d.stem === stem)
   if (matches.length !== 1) {
     useUiStore.getState().clearStatusOwnedBy(owner)
     useFigurePickerStore.getState().open(script)

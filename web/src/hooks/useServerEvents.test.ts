@@ -57,7 +57,6 @@ import { useDepRepairStore } from '@/store/depRepairStore'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { subscribeEvents } from '@/lib/api'
-import { resetPendingFileChangesForTests } from '@/store/liveSync'
 import { handleServerEvent, reconcileInstalls, resetProjectErrorSeq, useServerEvents } from './useServerEvents'
 
 const mockPanels = vi.mocked(fetchPanels)
@@ -118,7 +117,6 @@ beforeEach(() => {
   mockPanels.mockReset()
   mockRefresh.mockReset().mockResolvedValue({} as never)
   resetAssetLoadBookkeeping()
-  resetPendingFileChangesForTests()
   resetReconnectThrottle()
   useAssetStore.setState({ panels: [], byId: {}, loading: false, loaded: false, error: null })
   useProjectStore.setState({
@@ -218,103 +216,64 @@ describe('panel.file_changed', () => {
   })
 
   describe('同脚本里两张图写同 stem 的不同文件（#1251）', () => {
-    // 注册表：panel.png 是甲（stem panel）、panel.pdf 是乙（stem panel-2）；后端给 pdf 面板发 stem
-    const both = () => {
-      seed([
-        panelObj('jia', 'panel.png', { script: 'f.py', fileKind: 'raster' }),
-        panelObj('yi', 'panel.pdf', { script: 'f.py' }),
-      ])
-      useAssetStore.setState({
-        byId: {
-          'panel.png': info('panel.png', { kind: 'raster' }),
-          'panel.pdf': info('panel.pdf', { stem: 'panel-2' }),
-        },
-      })
-      mockPanels.mockResolvedValue(panels([]))
-    }
-    const staleAfter = (stems: string[]) => {
-      useRenderStore.setState({ tracked: {} })
-      handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['f.py'], stems }))
-      return Object.keys(useRenderStore.getState().tracked).sort()
-    }
-
-    it('stems 带 panel-2：只标乙（panel.pdf），甲不动', () => {
-      both()
-      expect(staleAfter(['panel-2'])).toEqual(['panel.pdf'])
-    })
-
-    it('stems 带 panel：只标甲（panel.png），乙不被误标', () => {
-      both()
-      expect(staleAfter(['panel'])).toEqual(['panel.png'])
-    })
-
-    describe('素材清单还没覆盖到面板（启动并行 / 首次请求失败）', () => {
+    describe('事件直接带 files（不依赖素材清单）', () => {
       const seedTwo = () => {
         seed([
           panelObj('jia', 'panel.png', { script: 'f.py', fileKind: 'raster' }),
           panelObj('yi', 'panel.pdf', { script: 'f.py' }),
         ])
         useRenderStore.setState({ tracked: {} })
+        mockPanels.mockResolvedValue(panels([]))
       }
-      const mapping = () =>
-        panels([
-          info('panel.png', { kind: 'raster', script: 'f.py' }),
-          info('panel.pdf', { stem: 'panel-2', script: 'f.py' }),
-        ])
       const tracked = () => Object.keys(useRenderStore.getState().tracked).sort()
+      const fire = (extra: Record<string, unknown>) =>
+        handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['f.py'], ...extra } as never))
 
-      it('事件到达时 byId 为空，随后刷新填入 panel.pdf → panel-2：最终乙被标 stale，甲不被误标', async () => {
+      it('byId 为空也能精确标乙、不标甲：fileId 直接对 files', () => {
         seedTwo()
-        mockPanels.mockResolvedValue(mapping())
-        handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['f.py'], stems: ['panel-2'] }))
-        // 到达那一刻不知道映射：按文件名 stem 对不上 panel-2，什么都没标
-        expect(tracked()).toEqual([])
-        await tick()
+        expect(useAssetStore.getState().byId).toEqual({})
+        fire({ stems: ['panel-2'], files: ['panel.pdf'] })
         expect(tracked()).toEqual(['panel.pdf'])
       })
 
-      it('第一次刷新失败：不误标甲；下一次成功的刷新补标乙（不永久漏标）', async () => {
+      it('files 只有甲时只标甲，即使乙的文件名 stem 也是 panel', () => {
         seedTwo()
-        mockPanels.mockRejectedValueOnce(new Error('boom'))
-        handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['f.py'], stems: ['panel-2'] }))
-        await tick()
-        expect(tracked()).toEqual([]) // 失败：没有映射信息，不猜
-        mockPanels.mockResolvedValue(mapping())
-        resetAssetLoadBookkeeping()
-        handleServerEvent(
-          ev({ kind: 'assets.changed', pj: 'p1', ids: ['panel.pdf'], added: [], removed: [], changed: ['panel.pdf'] }),
-        )
-        await tick()
-        expect(tracked()).toEqual(['panel.pdf'])
-      })
-
-      it('清单已覆盖时不挂起：之后的刷新不会拿旧事件再标一次', async () => {
-        seedTwo()
-        useAssetStore.setState({
-          byId: {
-            'panel.png': info('panel.png', { kind: 'raster', script: 'f.py' }),
-            'panel.pdf': info('panel.pdf', { stem: 'panel-2', script: 'f.py' }),
-          },
-        })
-        mockPanels.mockResolvedValue(mapping())
-        handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['f.py'], stems: ['panel'] }))
-        await tick()
+        fire({ stems: ['panel'], files: ['panel.png'] })
         expect(tracked()).toEqual(['panel.png'])
+      })
+
+      it('老事件没有 files：行为不变，按文件名 stem', () => {
+        seedTwo()
+        fire({ stems: ['panel'] })
+        expect(tracked()).toEqual(['panel.pdf', 'panel.png'])
+      })
+
+      it('files 是空数组 = 后端算出「没有文件」：什么都不标（不退回按 stem 猜）', () => {
+        seedTwo()
+        fire({ stems: ['panel'], files: [] })
+        expect(tracked()).toEqual([])
+      })
+
+      it('没有任何跨事件状态：A 项目的事件不会影响之后 B 项目的面板', () => {
+        seedTwo()
+        fire({ stems: ['panel-2'], files: ['panel.pdf'] })
+        project = 'p2'
+        seed([panelObj('b1', 'panel.pdf', { script: 'g.py' })])
         useRenderStore.setState({ tracked: {} })
-        resetAssetLoadBookkeeping()
+        // 之后一次无关的刷新（assets.changed）不会拿 A 的旧事件去标 B 的面板
         handleServerEvent(
-          ev({ kind: 'assets.changed', pj: 'p1', ids: [], added: [], removed: [], changed: [] }),
+          ev({ kind: 'assets.changed', pj: 'p2', ids: [], added: [], removed: [], changed: [] }),
         )
-        await tick()
         expect(tracked()).toEqual([])
       })
     })
 
-    it('老后端没有 stem 字段：仍按文件名 stem（行为不变）', () => {
+    it('老后端（事件没有 files、面板清单没有 stem）：仍按文件名 stem，行为不变', () => {
       seed([panelObj('o1', 'Fig1.pdf', { script: 'f.py' })])
-      useAssetStore.setState({ byId: { 'Fig1.pdf': info('Fig1.pdf') } })
+      useRenderStore.setState({ tracked: {} })
       mockPanels.mockResolvedValue(panels([]))
-      expect(staleAfter(['Fig1'])).toEqual(['Fig1.pdf'])
+      handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['f.py'], stems: ['Fig1'] }))
+      expect(Object.keys(useRenderStore.getState().tracked)).toEqual(['Fig1.pdf'])
     })
   })
 

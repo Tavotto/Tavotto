@@ -600,3 +600,52 @@ def test_runtime_list_does_not_double_list_a_figure_whose_original_is_mapped(tmp
     assert runtimeasset.has_disk_original(figs, info, "Fig1")
     old = {"stems": ["Fig1"]}
     assert runtimeasset.has_disk_original(figs, old, "Fig1")  # 老条目：按文件名
+
+
+# --------------------------------------------------------------------------- panel.file_changed 直接带磁盘文件 id
+def _file_changed_payload(m, monkeypatch, scripts):
+    sent: list[tuple[str, dict]] = []
+    monkeypatch.setattr(m, "sse_publish", lambda kind, data: sent.append((kind, data)))
+    m._script_change_handler(m.current_ctx())(scripts)
+    assert [k for k, _ in sent] == ["panel.file_changed"]
+    return sent[0][1]
+
+
+def test_file_changed_event_carries_the_files_of_the_figures_that_changed(
+    client, tmp_path, monkeypatch
+):
+    from tavotto import app as m
+
+    figs = _touch_pair(tmp_path, {"Fig1.png": "Fig1", "Fig1.pdf": "Fig1-2"})
+    m.reset_projects()
+    m.open_project(str(figs))
+    # 乙（Fig1-2）变了：files 是 Fig1.pdf，不含甲的 Fig1.png
+    with m.app.test_request_context():
+        assert m._panel_files_of_stems(m.current_ctx(), ["Fig1-2"]) == ["Fig1.pdf"]
+        assert m._panel_files_of_stems(m.current_ctx(), ["Fig1"]) == ["Fig1.png"]
+        assert m._panel_files_of_stems(m.current_ctx(), ["nobody"]) == []
+    payload = _file_changed_payload(m, monkeypatch, ["fig1.py"])
+    assert sorted(payload["stems"]) == ["Fig1", "Fig1-2"]
+    assert payload["files"] == ["Fig1.pdf", "Fig1.png"]
+
+
+def test_file_changed_files_without_a_map_follow_the_stem(client, tmp_path):
+    from tavotto import app as m
+
+    figs = _touch_pair(tmp_path, None)  # 没有映射：Fig1.pdf / Fig1.png 都是 Fig1（png 让位给 pdf）
+    m.reset_projects()
+    m.open_project(str(figs))
+    with m.app.test_request_context():
+        assert m._panel_files_of_stems(m.current_ctx(), ["Fig1"]) == ["Fig1.pdf"]
+        assert m._panel_files_of_stems(m.current_ctx(), ["Fig1-2"]) == []
+
+
+def test_file_changed_event_omits_files_when_they_cannot_be_computed(client, tmp_path, monkeypatch):
+    from tavotto import app as m
+
+    figs = _touch_pair(tmp_path, None)
+    m.reset_projects()
+    m.open_project(str(figs))
+    monkeypatch.setattr(m.engine_refresh, "iter_assets", lambda *a, **k: 1 / 0)
+    payload = _file_changed_payload(m, monkeypatch, ["fig1.py"])
+    assert "files" not in payload  # 前端退回按文件名 stem（老行为）

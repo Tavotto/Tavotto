@@ -3742,6 +3742,11 @@ export type ServerEvent =
       kind: 'panel.file_changed'
       scripts?: string[]
       stems?: string[]
+      /**
+       * 受影响的**磁盘素材文件 id**（与 `/api/panels` 的 `id` 相同；后端 `Registry.artifact_stem` 算出，#1251）。
+       * 有它就按 fileId 精确匹配非 runtime 面板，不依赖素材清单；老后端没有 = 退回按文件名 stem。
+       */
+      files?: string[]
       reason?: 'watcher' | 'ai' | 'script_input'
     } & ProjectScoped)
   /**
@@ -3952,6 +3957,11 @@ export function affectedStemsOf(event: ServerEvent): string[] {
     return union(event.stems)
   }
   return []
+}
+
+/** `panel.file_changed` 直接带的磁盘素材文件 id；没有（老后端 / 后端算不出）= undefined */
+export function affectedFilesOf(event: ServerEvent): string[] | undefined {
+  return event.kind === 'panel.file_changed' && Array.isArray(event.files) ? event.files : undefined
 }
 
 /** 这条事件牵涉到的**素材 id**（新增 / 删除 / 内容变化的并集） */

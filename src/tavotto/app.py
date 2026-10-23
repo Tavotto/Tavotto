@@ -3588,6 +3588,27 @@ engine_deprepair.on_user_environment_adopted(_publish_user_environment_adopted)
 # ------------------------- 项目（Project）管理 -------------------------------
 # 对象层级见 docs/adr/0001-project-canvas-tab-object.md：Project = 图库路径 +
 # 素材根 + 导出/备份位置 + 设置。用户级配置（最近项目等）存 engine_config。
+def _panel_files_of_stems(ctx: "ProjectCtx", stems: list[str]) -> list[str] | None:
+    """这些 stem（图）对应的**磁盘素材文件 id**（与 `/api/panels` 的 `id` 逐字相同）；算不出返回 None。
+
+    `panel.file_changed` 带上它，前端对非 runtime 面板按 fileId 精确匹配，不再拿异步加载的素材清单去推断
+    「这个文件是哪张图」（#1251）。判据与素材盘点是同一个出处：`project_refresh.figure_key_of`
+    （`Registry.artifact_stem`）——同 stem 两张图时乙的脚本变了，files 是 `panel.pdf`，不含 `panel.png`。
+    """
+    try:
+        root = ctx.path.resolve()
+        wanted = set(stems)
+        key = engine_refresh.figure_key_of(root, ctx.registry)
+        return sorted(
+            str(p.relative_to(root))
+            for p, _kind in engine_refresh.iter_assets(root, reg=ctx.registry)
+            if key(p) in wanted
+        )
+    except Exception:  # noqa: BLE001 —— 旁路信息：算不出不许影响事件本身
+        LOG.debug("panel.file_changed 的 files 计算失败", exc_info=True)
+        return None
+
+
 def _script_change_handler(ctx: "ProjectCtx", reason: str = "watcher"):
     """watcher 回调必须绑定到具体项目——事件里带上 pj，别的标签页才不会
     因为另一个图库的脚本变动去重渲染自己的面板。
@@ -3599,10 +3620,11 @@ def _script_change_handler(ctx: "ProjectCtx", reason: str = "watcher"):
 
     def _on_change(changed: list[str]) -> None:
         stems = [s for sc in changed for s in ctx.registry.stems_of(sc)]
-        sse_publish(
-            "panel.file_changed",
-            {"scripts": changed, "stems": stems, "pj": ctx.id, "reason": reason},
-        )
+        payload = {"scripts": changed, "stems": stems, "pj": ctx.id, "reason": reason}
+        files = _panel_files_of_stems(ctx, stems)
+        if files is not None:  # 算不出就不带：前端退回按文件名 stem（老行为）
+            payload["files"] = files
+        sse_publish("panel.file_changed", payload)
 
     return _on_change
 

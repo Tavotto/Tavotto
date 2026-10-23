@@ -3,6 +3,7 @@ import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { i18n, msg, t } from '@/i18n'
 import {
   affectedAssetIdsOf,
+  affectedFilesOf,
   affectedStemsOf,
   subscribeEvents,
   type ServerEvent,
@@ -10,11 +11,10 @@ import {
 import { hintAiRev, setAiSettledNotifier, useAiStore, type DonePayload } from '@/store/aiStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
-import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
 import { applyExportJob } from '@/store/exportStore'
-import { notePendingFileChangeStems, recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
+import { recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -32,7 +32,7 @@ import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { admissionToastCovers } from '@/store/pngAdmissionMemory'
 import { useUiStore } from '@/store/uiStore'
-import { panelStemOfFileId } from '@/lib/panelStem'
+import { stemOf } from '@/lib/panelStem'
 
 const short = (id: string) => id.split('/').pop()?.replace(/\.[^.]+$/, '') ?? id
 /** 后端稳定错误码 → 当前语言的一句话（参数为空的那些） */
@@ -191,18 +191,10 @@ export function handleServerEvent(ev: ServerEvent) {
 
     case 'panel.file_changed': {
       const stems = new Set(affectedStemsOf(ev))
-      // 有面板的 fileId 还不在素材清单里：它属于哪张图此刻不知道（按文件名 stem 匹配是老行为），
-      // 记下 stems，下一次成功的素材刷新用刷新后的清单再对一次（liveSync.rematchPendingFileChanges）
-      {
-        const known = useAssetStore.getState().byId
-        if (
-          useDocumentStore
-            .getState()
-            .doc.objects.some((o) => o.type === 'panel' && o.fileKind !== 'runtime' && !known[o.fileId])
-        ) {
-          notePendingFileChangeStems(stems)
-        }
-      }
+      // 后端直接带了受影响的磁盘文件 id：非 runtime 面板按 fileId 精确匹配，不依赖素材清单（#1251）；
+      // 老后端没有 files：退回按文件名 stem（老行为）
+      const files = affectedFilesOf(ev)
+      const fileSet = files ? new Set(files) : null
       // stems 是脚本产出的面板名，映射回文档里用到的文件 id。
       // runtime 面板按持久化描述块的 stem 认领（id 是不透明标识，不反解）
       const affected = useDocumentStore
@@ -212,7 +204,9 @@ export function handleServerEvent(ev: ServerEvent) {
             o.type === 'panel' &&
             (o.fileKind === 'runtime'
               ? o.source != null && stems.has(o.source.stem)
-              : stems.has(panelStemOfFileId(o.fileId))),
+              : fileSet
+                ? fileSet.has(o.fileId)
+                : stems.has(stemOf(o.fileId))),
         )
         .map((o) => (o as { fileId: string }).fileId)
       // 转入引擎跟踪 → useEngineSync 立刻按当前 overrides 冷重建，
