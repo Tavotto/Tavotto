@@ -26,8 +26,8 @@ vi.mock('@/lib/api', async (orig) => ({
   patchProjectSettings: (...a: unknown[]) => h.patch(...a),
 }))
 vi.mock('./DirBrowser', () => ({
-  DirBrowser: (p: { initialPath?: string; onClose: () => void; onPick: (path: string, create: boolean) => void }) => (
-    <div data-fake-dirbrowser data-initial={p.initialPath}>
+  DirBrowser: (p: { initialPath?: string; fallbackPath?: string; highlight?: string; onClose: () => void; onPick: (path: string, create: boolean) => void }) => (
+    <div data-fake-dirbrowser data-initial={p.initialPath} data-fallback={p.fallbackPath} data-highlight={p.highlight}>
       <button data-pick onClick={() => p.onPick('/data/figs/out', false)} />
       <button data-cancel onClick={p.onClose} />
     </div>
@@ -35,7 +35,7 @@ vi.mock('./DirBrowser', () => ({
 }))
 
 import { initI18n } from '@/i18n'
-import { ExportLocationRow } from './ExportLocationRow'
+import { ExportLocationRow, parentDir } from './ExportLocationRow'
 import { abbreviateHome } from '@/lib/pathDisplay'
 import { useProjectStore } from '@/store/projectStore'
 
@@ -95,11 +95,25 @@ describe('位置显示', () => {
   })
 })
 
+describe('parentDir', () => {
+  it('去掉末级；根与盘符根', () => {
+    expect(parentDir('/a/b/export')).toBe('/a/b')
+    expect(parentDir('/a/b/export/')).toBe('/a/b')
+    expect(parentDir('/export')).toBe('/')
+    expect(parentDir('C:\\p\\export')).toBe('C:\\p')
+    expect(parentDir('C:\\export')).toBe('C:\\')
+    expect(parentDir('export')).toBeUndefined()
+  })
+})
+
 describe('更改…', () => {
   it('浏览器：弹 DirBrowser（起点是当前导出目录）→ 选目录 → 写项目设置 → 位置更新；不再跳设置页', async () => {
     await clickEl(q('[data-export-location-change]')!)
     const fake = q('[data-fake-dirbrowser]')!
-    expect(fake.getAttribute('data-initial')).toBe('/Users/ann/混合等离子体气体文章/export')
+    // 从当前导出目录的上一级打开，当前目录高亮，上一级打不开回落到它自己
+    expect(fake.getAttribute('data-initial')).toBe('/Users/ann/混合等离子体气体文章')
+    expect(fake.getAttribute('data-highlight')).toBe('/Users/ann/混合等离子体气体文章/export')
+    expect(fake.getAttribute('data-fallback')).toBe('/Users/ann/混合等离子体气体文章/export')
     await clickEl(q('[data-pick]')!)
     expect(h.patch).toHaveBeenCalledWith({ export_dir: '/data/figs/out' })
     expect(q('[data-fake-dirbrowser]')).toBeNull()

@@ -19,6 +19,16 @@ import { DirBrowser } from './DirBrowser'
 import { FormRow } from './FormRow'
 import { Button } from './ui/Button'
 
+/** 目录的上一级（去掉末级）；根 / 盘符根 / 没有上一级时 undefined */
+export function parentDir(dir: string): string | undefined {
+  const trimmed = dir.replace(/[\\/]+$/, '')
+  const i = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  if (i < 0) return undefined
+  const parent = trimmed.slice(0, i)
+  if (parent === '') return '/'
+  return /^[A-Za-z]:$/.test(parent) ? parent + dir[i] : parent
+}
+
 const ex = (key: string) => translate(`export.${key}`, { ns: 'dialogs' })
 
 export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) {
@@ -70,7 +80,10 @@ export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) 
         <DirBrowser
           mode="open"
           title={ex('locationPickTitle')}
-          initialPath={exportDir ?? undefined}
+          // 从当前导出目录的上一级打开、把它高亮——一眼看到同级；上一级打不开就回落到它自己
+          initialPath={(exportDir && parentDir(exportDir)) || exportDir || undefined}
+          fallbackPath={exportDir ?? undefined}
+          highlight={exportDir ?? undefined}
           onClose={() => setBrowsing(false)}
           onPick={(path) => {
             setBrowsing(false)

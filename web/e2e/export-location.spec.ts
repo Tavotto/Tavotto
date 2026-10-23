@@ -35,6 +35,11 @@ test(
     const browser = page.locator('[data-dir-browser-path]')
     await expect(browser).toBeVisible()
     await expect(page.locator('[data-dialog="settings"]')).toHaveCount(0)
+    // 从当前导出目录的上一级打开，当前目录那一行高亮（一眼看到同级、也能点进去确认原目录）
+    const current = page.locator('[data-dir-row][data-current]')
+    await expect(current).toHaveCount(1)
+    await expect(current).toHaveAttribute('data-dir-row', path.basename(before!))
+    expect(path.dirname(before!)).toBe(await browser.inputValue())
     await browser.fill(target)
     await browser.press('Enter')
     const confirm = page.locator('[data-dir-browser-confirm]')

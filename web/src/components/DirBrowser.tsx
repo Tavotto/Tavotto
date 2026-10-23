@@ -51,6 +51,8 @@ export function TailPath({ path, className }: { path: string; className?: string
 export function DirBrowser({
   mode,
   initialPath,
+  fallbackPath,
+  highlight,
   title,
   onClose,
   onPick,
@@ -58,6 +60,13 @@ export function DirBrowser({
 }: {
   mode: 'open' | 'create'
   initialPath?: string
+  /** 起点打不开（不存在 / 不可读）时回落到这里；不给就只显示那条错误 */
+  fallbackPath?: string
+  /**
+   * 当前已选的目录（绝对路径）：浏览到它的上一级时，它那一行高亮（`data-current`）并成为漫游焦点所在行，
+   * 一眼看到同级、也能点进去直接确认原目录。只是标记，不改「确认」选的是哪个目录。
+   */
+  highlight?: string
   /** 换掉默认标题（主页「导入我的脚本」在浏览器里用它说「选择脚本所在的文件夹」） */
   title?: string
   onClose: () => void
@@ -83,7 +92,7 @@ export function DirBrowser({
    */
   const focusFirstOnLand = useRef(false)
 
-  const nav = async (path?: string, opts?: { focusFirst?: boolean }) => {
+  const nav = async (path?: string, opts?: { focusFirst?: boolean }): Promise<boolean> => {
     try {
       const next = await browseDirs(path)
       if (opts?.focusFirst) focusFirstOnLand.current = true
@@ -92,17 +101,21 @@ export function DirBrowser({
       setError(null)
       setNearest(null)
       if (!editingPath.current) setPathText(next.is_roots ? '' : next.path)
+      return true
     } catch (e) {
       setError(backendErrorText(e))
       // 后端在「路径不存在」时附带最近的存在祖先，给一个一键跳转——
       // 手输路径打错一个字符不该只换来一句死报错
       const hint = e instanceof ApiError ? e.body.nearest : null
       setNearest(typeof hint === 'string' ? hint : null)
+      return false
     }
   }
 
   useEffect(() => {
-    void nav(initialPath)
+    void nav(initialPath).then((ok) => {
+      if (!ok && fallbackPath) void nav(fallbackPath)
+    })
     // 只在打开时定位一次：之后的位置由用户的导航决定，不该被 props 拉回去
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -113,6 +126,23 @@ export function DirBrowser({
   const createDisabled = mode === 'create' && nameProblem !== null
   const target = state?.is_roots ? '' : (state?.path ?? '')
   const dirs = state?.dirs ?? []
+  const isCurrent = (d: DirEntry) => {
+    if (!highlight || state?.is_roots) return false
+    const norm = (p: string) => p.replace(/[\\/]+$/, '')
+    if (norm(d.path) === norm(highlight)) return true
+    // 服务端回的路径可能是解析过的（符号链接 / /private/var）：同名且上一级的名字也对得上就算
+    const segs = norm(highlight).split(/[\\/]/)
+    const here = norm(state?.path ?? '').split(/[\\/]/).pop()
+    return d.name === segs[segs.length - 1] && here === segs[segs.length - 2]
+  }
+  // 高亮行就是漫游焦点所在行（Tab 进清单落在它上面），并滚进视野
+  const currentIndex = dirs.findIndex(isCurrent)
+  useEffect(() => {
+    if (currentIndex < 0) return
+    setActive(currentIndex)
+    listRef.current?.querySelectorAll<HTMLElement>('[data-dir-row]')[currentIndex]?.scrollIntoView?.({ block: 'center' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentIndex, state?.path])
 
   const focusRow = (i: number) => {
     const next = Math.max(0, Math.min(dirs.length - 1, i))
@@ -278,13 +308,15 @@ export function DirBrowser({
               <button
                 type="button"
                 data-dir-row={d.name}
+                data-current={isCurrent(d) ? '' : undefined}
+                aria-current={isCurrent(d) ? 'true' : undefined}
                 tabIndex={i === active ? 0 : -1}
                 onFocus={() => setActive(i)}
                 onClick={() => {
                   editingPath.current = false
                   void nav(d.path)
                 }}
-                className={cn(listRowClass(), 'h-8 w-full gap-2 px-2 text-left text-sm')}
+                className={cn(listRowClass(), 'h-8 w-full gap-2 px-2 text-left text-sm', isCurrent(d) && 'bg-selected font-medium')}
               >
                 {state?.is_roots ? (
                   <HardDrive size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
