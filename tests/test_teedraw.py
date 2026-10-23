@@ -306,3 +306,37 @@ def test_other_figures_and_other_threads_never_see_the_tee():
     assert same_thread_other == plain_other
     assert background["pdf"] == plain_other and background["same"]
     assert backend_pdf.MixedModeRenderer is teedraw._REAL_MIXED  # 会话结束，模块名字还原
+
+
+def test_formatter_and_locator_run_exactly_as_often_as_in_a_plain_savefig():
+    """tick 槽是单次绘制下唯一的值槽例外：它们在 Axis.draw 阶段只算一次，tee 不得让它们被多跑（每个目标各一遍）。"""
+    from matplotlib.ticker import MaxNLocator
+
+    def build():
+        fig = Figure(figsize=(3, 2))
+        ax = fig.subplots()
+        calls = {"fmt": 0, "loc": 0}
+
+        def label(_v, _p):
+            calls["fmt"] += 1
+            return "x"
+
+        class CountingLocator(MaxNLocator):
+            def __call__(self):
+                calls["loc"] += 1
+                return super().__call__()
+
+        ax.xaxis.set_major_formatter(FuncFormatter(label))
+        ax.xaxis.set_major_locator(CountingLocator())
+        return fig, calls
+
+    fig, plain_calls = build()
+    _pdf(fig)
+    fig, tee_calls = build()
+    with teedraw.single_draw(
+        fig,
+        [teedraw.SvgTarget(RC_PATH, lambda t: None), teedraw.SvgTarget(RC_TEXT, lambda t: None)],
+    ):
+        _pdf(fig)
+    assert plain_calls["fmt"] > 0 and plain_calls["loc"] > 0
+    assert tee_calls == plain_calls

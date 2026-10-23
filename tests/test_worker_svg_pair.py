@@ -194,6 +194,15 @@ elif mode in {"formatter", "snapshot_formatter", "standalone_formatter"}:
         counter[0] += 1
         return str(counter[0])
     ax.xaxis.set_major_formatter(FuncFormatter(changing_formatter))
+elif mode in {"stateful_transform", "snapshot_stateful_transform"}:
+    # 有状态的自定义 Transform：renderer 拿到 transform 对象并各自求值，几何会不同
+    from matplotlib.transforms import Affine2D
+    counter = [0]
+    class Shifty(Affine2D):
+        def transform_path(self, path):
+            counter[0] += 1
+            return super().transform_path(path)
+    ax.lines[0].set_transform(Shifty().translate(0, 0) + ax.transData)
 elif mode in {"window_extent", "snapshot_window_extent"}:
     # 实例级覆盖 get_window_extent（能看到 renderer、会在布局里被调用）：白名单拦住，且判定不调用它
     counter = [0]
@@ -310,11 +319,11 @@ elif mode == "mkdir_failure":
     (out / "blocker").write_text("not a directory")
     svg = out / "blocker" / "pair.svg"
 #: 只算值的回调：单次绘制下 PDF 与 SVG 配对（ADR 0150）
-PAIRED = {"formatter", "locator", "scale", "transform", "formatter_subclass"}
+PAIRED = {"formatter", "locator", "formatter_subclass"}
 PAIRED |= {"snapshot_" + name for name in PAIRED}
 #: 能看到 renderer 的回调：仍阻断（它们可能按 renderer 的类分派，tee 与 PDF renderer 不是同一个类）
-BLOCKED = {"callback", "custom_draw", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch"}
-BLOCKED |= {"snapshot_" + name for name in ("callback", "custom", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch")}
+BLOCKED = {"callback", "custom_draw", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch", "scale", "transform", "stateful_transform"}
+BLOCKED |= {"snapshot_" + name for name in ("callback", "custom", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch", "scale", "transform", "stateful_transform")}
 result = None
 if mode == "invalid":
     handler = pkg.wireproto.V1Handler(session)
@@ -370,9 +379,9 @@ else:
         assert response.get("svg_strict_blocker")
     result = response
     assert calls == [patches, previous], calls
-if mode in {"snapshot_formatter", "snapshot_locator", "snapshot_scale", "snapshot_transform"}:
+if mode in {"snapshot_formatter", "snapshot_locator"}:
     assert counter[0] > 0  # 单次绘制：画了，而且只画一次的结果同时进 PDF 与 SVG
-if mode in {"snapshot_annotation", "snapshot_effect", "snapshot_get_children", "snapshot_agg_filter", "snapshot_window_extent"}:
+if mode in {"snapshot_annotation", "snapshot_effect", "snapshot_get_children", "snapshot_agg_filter", "snapshot_window_extent", "snapshot_scale", "snapshot_transform", "snapshot_stateful_transform"}:
     assert counter[0] == 0  # 阻断发生在任何绘制 / 遍历调用用户方法之前
 assert session.snapshot("F") == previous
 assert title.get_text() == "Hot title"
@@ -450,9 +459,7 @@ def test_svg_failure_preserves_pdf_and_restores_state(tmp_path, mode):
 
 
 @needs_user_python
-@pytest.mark.parametrize(
-    "mode", ["formatter", "locator", "scale", "transform", "formatter_subclass"]
-)
+@pytest.mark.parametrize("mode", ["formatter", "locator", "formatter_subclass"])
 def test_value_callbacks_are_paired_from_one_draw(tmp_path, mode):
     """ADR 0150：只算值的回调再不纯，PDF 与 SVG 看到的也是同一个场景。"""
     result = _probe(tmp_path, mode)
@@ -488,6 +495,9 @@ def test_value_callbacks_are_paired_from_one_draw(tmp_path, mode):
         "text_subclass",
         "wraps_draw",
         "class_patch",
+        "scale",
+        "transform",
+        "stateful_transform",
     ],
 )
 def test_renderer_visible_callbacks_still_block_pairing(tmp_path, mode):
@@ -625,9 +635,7 @@ def test_capture_export_never_reopens_expired_workerd_session(monkeypatch, tmp_p
 
 
 @needs_user_python
-@pytest.mark.parametrize(
-    "mode", ["snapshot_formatter", "snapshot_locator", "snapshot_scale", "snapshot_transform"]
-)
+@pytest.mark.parametrize("mode", ["snapshot_formatter", "snapshot_locator"])
 def test_automatic_snapshot_pairs_value_callbacks_from_one_draw(tmp_path, mode):
     result = _probe(tmp_path, mode)
     assert [save["format"] for save in result["saves"]] == ["pdf"]
@@ -649,6 +657,9 @@ def test_automatic_snapshot_pairs_value_callbacks_from_one_draw(tmp_path, mode):
         "snapshot_text_subclass",
         "snapshot_wraps_draw",
         "snapshot_class_patch",
+        "snapshot_scale",
+        "snapshot_transform",
+        "snapshot_stateful_transform",
     ],
 )
 def test_automatic_snapshot_declines_renderer_visible_callbacks_without_drawing(tmp_path, mode):

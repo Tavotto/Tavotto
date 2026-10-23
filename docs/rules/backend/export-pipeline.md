@@ -53,8 +53,8 @@
     执行回执与 generation；**PDF 与 SVG（path 基准 + 保留文字）出自同一次 `Figure.draw`**（ADR 0150，`engine/teedraw`：
     `print_pdf` 里的 `MixedModeRenderer` 换成 `TeeRenderer`，版面度量取自 PDF），**单次绘制资格是白名单**（`_svg_pair_artist_blocker`）：图里每个 artist 的类与实例两层、所有可调用属性都必须是 matplotlib / mpl_toolkits 自己定义的
     （按代码出处认，不看 `__module__`；只读、不调用用户代码），否则阻断——能看到 renderer / 会被每个目标各跑一次 / 两遍之间会不同的代码（`draw_event`、自定义子类、
-    `get_window_extent` 等实例覆盖、`agg_filter`、axes locator、注解坐标回调、path effect……）靠这一条整体覆盖，不再逐个列黑名单。唯一例外是封闭的值槽：刻度 formatter / locator、
-    scale 与 transform 的用户函数（计数器 FuncFormatter 照常放行）；另保留 `_svg_pair_env_blocker`（自定义 `Figure.savefig` / canvas / 打印方法 / 注册后端）。`teedraw.status()` 自检先于任何导出，
+    `get_window_extent` 等实例覆盖、`agg_filter`、axes locator、注解坐标回调、path effect……）靠这一条整体覆盖，不再逐个列黑名单。transform / scale（用户 Transform 子类、FuncScale / FuncTransform 的用户函数：renderer 拿对象自己求值）两种口径都核；
+    唯一例外是封闭的值槽 = Axis 的 formatter 与 locator（它们在 Axis.draw 阶段只算一次，计数器 FuncFormatter 照常放行）；另保留 `_svg_pair_env_blocker`（自定义 `Figure.savefig` / canvas / 打印方法 / 注册后端）。`teedraw.status()` 自检先于任何导出，
     不过就退回「二次绘制 + 完整回调阻断」并把自检结论带进原因。响应里 `svg_pairing` = `single_draw` | `two_pass`。
     `teedraw` 的替身只对「当前线程会话 + 会话那张 figure」生效，别的线程 / 别的 figure 的 `savefig` 原样。
     **#1185 SVG 素材字节绑定的等价证人不走 tee**（独立 savefig，见 ADR 0150「为什么不走 tee」），且**有任何用户回调就不绑**（响应 `svg_strict_blocker`）。

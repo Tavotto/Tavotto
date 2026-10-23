@@ -32,8 +32,10 @@ Figure 的 PDF / SVG 配对原来是「同一命令里 PDF 画一遍、SVG 再�
    只读（`vars` / `__mro__` / `__code__`），**判定不调用用户代码**；通过后才用 matplotlib 自己的 `get_children` 往下走。`draw_event` 处理器同样阻断。
    理由：能看到 renderer 的代码可能按 renderer 的类分派（tee 与 PDF 本来拿到的不是同一个类，连 PDF 都会变）、可能被每个目标各跑一次（如 `stop_filter`）、
    可能在两次 draw 之间不同；这些都不是「值」，白名单一次覆盖，不靠穷举。
-   **唯一的例外是封闭的「值槽」**：刻度 formatter / locator（含 `FuncFormatter` 包着的用户函数、用户的 Formatter / Locator 子类）、scale 与 transform 的用户函数——
-   它们只算值、不接触 renderer；它们本来就不是 artist 的可调用属性（挂在 `Ticker` / `Transform` 对象里），所以天然不在白名单扫描范围内。二次绘制口径（退路与 #1185 证人）才另外核它们。
+   **transform / scale 两种口径都要核**（Codex #1355）：renderer 拿到的是 transform **对象**并自己求值（PDF 与每个 SVG 各求一遍），有状态的 `transform_path` 会让各份几何不同——
+   它们不是「已算好的值」。所以用户的 Transform 子类、`FuncTransform` / `FuncScale` 里的用户函数在单次绘制下也阻断（`_svg_pair_value_blocker`）。
+   **唯一的例外是封闭的「值槽」= Axis 的 formatter 与 locator**（含 `FuncFormatter` 包着的用户函数、用户的 Formatter / Locator 子类）：它们在 `Axis.draw` 阶段只算一次，
+   产出 Text / 数值后才进 renderer（`tests/test_teedraw.py` 核了调用次数与常规 savefig 相同）；它们挂在 `Ticker` 对象里，本来就不在白名单扫描范围内，二次绘制口径才另外核它们。
    另保留自定义 `Figure.savefig` / canvas / 打印方法 / 注册后端（`_svg_pair_env_blocker`）。
    评估过「让 `TeeRenderer` 对 `isinstance` 透明」：不做（见上一版论证，白名单已使它不再必要）。
 5. **自检先于导出**：`teedraw.status()`（进程内一次）用一张小图核对三件事——tee 的 PDF 与常规 PDF 字节相同；计数器回调的文字调用在 PDF 与 SVG 两路是同一串；两份 SVG 是合法 XML 且 text 变体保留 `<text>`。

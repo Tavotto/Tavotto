@@ -913,8 +913,13 @@ def _svg_pair_artist_blocker(artist, cache: dict) -> str | None:
     return None
 
 
-def _svg_pair_value_blocker(artist, seen_transforms) -> str | None:
-    """二次绘制口径才要核的「值槽」：刻度格式化 / 定位、scale、transform 的用户函数（单次绘制下它们是允许的值槽）。"""
+def _svg_pair_value_blocker(artist, seen_transforms, *, tick_slots: bool) -> str | None:
+    """用户的 transform / scale 函数与 Transform 子类。**两种口径都要核**：renderer 拿到的是 transform 对象并**自己求值**
+    （PDF 与每个 SVG 各求一遍），有状态的 `transform_path` 会让几何各不相同——它们不是「已算好的值」。
+
+    `tick_slots=True`（二次绘制口径）再核刻度 formatter / locator：二次绘制里它们会在两遍里各算一次。
+    单次绘制下它们在 `Axis.draw` 阶段只算一次、产出 Text / 数值后才进 renderer，所以是唯一的值槽例外。
+    """
     if not all(
         _svg_pair_standard_transform(transform, seen_transforms)
         for transform in (artist.get_transform(), artist.get_clip_box(), artist.get_clip_path())
@@ -927,6 +932,8 @@ def _svg_pair_value_blocker(artist, seen_transforms) -> str | None:
             and _svg_pair_standard_transform(scale.get_transform(), seen_transforms)
         ):
             return "SVG pairing is unavailable for user scale callbacks."
+        if not tick_slots:
+            return None
         for component in (
             artist.get_major_formatter(),
             artist.get_minor_formatter(),
@@ -954,13 +961,17 @@ def _svg_pair_blocker(fig, *, single_draw: bool = False) -> str | None:
     those can see the renderer, can run once per renderer the tee forwards to, or can differ between two passes.
     `draw_event` handlers block for the same reason.
 
-    The one closed set of exceptions are *value slots* — tick formatters and locators (including a `FuncFormatter`'s
-    user function), scale functions and transform functions.  They only compute values and never touch a renderer.
+    Transforms and scales are checked in **both** modes (`_svg_pair_value_blocker`): a renderer receives the transform
+    *object* and evaluates it itself (PDF and every SVG each once), so a stateful `transform_path` would give each
+    output different geometry.
 
-    * Single draw (`single_draw=True`, `teedraw`, ADR 0150): the whitelist above is all that is checked; value slots
-      are allowed because PDF and SVG come out of the same draw.
-    * Two-pass (the legacy pairing, and the #1185 witness which is an independent savefig): a value slot may still
-      differ between two draws, so it is checked as well (`_svg_pair_value_blocker`).
+    The one closed exception is the *tick slots*: an Axis' formatter and locator (including a `FuncFormatter`'s user
+    function or a Formatter / Locator subclass).  In a single draw they run once, in `Axis.draw`, and only their
+    output (Text / numbers) reaches the renderer.
+
+    * Single draw (`single_draw=True`, `teedraw`, ADR 0150): whitelist + transform / scale; tick slots allowed.
+    * Two-pass (the legacy pairing, and the #1185 witness which is an independent savefig): tick slots may differ
+      between two draws, so they are checked as well.
     """
     env_blocker = _svg_pair_env_blocker(fig)
     if env_blocker is not None:
@@ -976,10 +987,9 @@ def _svg_pair_blocker(fig, *, single_draw: bool = False) -> str | None:
         why = _svg_pair_artist_blocker(artist, cache)
         if why is not None:
             return f"SVG pairing is unavailable for custom code in the figure ({why})."
-        if not single_draw:
-            why = _svg_pair_value_blocker(artist, seen_transforms)
-            if why is not None:
-                return why
+        why = _svg_pair_value_blocker(artist, seen_transforms, tick_slots=not single_draw)
+        if why is not None:
+            return why
         # `get_children` is Matplotlib's own here (checked above), so walking with it runs no user code
         pending.extend(artist.get_children())
     return None
