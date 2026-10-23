@@ -91,7 +91,8 @@ def find_base_python(accept=None) -> str | None:
     内置 runtime 明确排除：官方 embeddable 发行版不带 `ensurepip`，
     `python -m venv` 建到一半就失败，白白给用户一段看不懂的报错。
 
-    `accept(路径, 版本串)` 是**额外**判据（受管环境要求版本在支持区间内，
+    `accept(路径, 版本串)` 的版本串是完整的「主.次.微」（同一次探测，不多起进程；补丁位约束要按它判，
+    调用方要小版本自己取前两段）。是**额外**判据（受管环境要求版本在支持区间内，
     见 `managedenv.base_python`）。做成回调而不是让调用方自己再遍历一遍：
     候选清单与「跳过 bundled」这两条只该有一份实现。不给就是老行为。
     """
@@ -104,7 +105,7 @@ def find_base_python(accept=None) -> str | None:
         if cand in seen or not Path(cand).exists():
             continue
         seen.add(cand)
-        version = _probe(cand, "import venv,sys;print('%d.%d' % sys.version_info[:2])")
+        version = _probe(cand, "import venv,sys;print('%d.%d.%d' % sys.version_info[:3])")
         if not version:
             continue
         if accept is not None and not accept(cand, version):

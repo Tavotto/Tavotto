@@ -791,7 +791,7 @@ class _PyChange:
     done: int = 0
     total: int = 0
     code: str = ""
-    #: 用户点取消时置上（`act` 的取消分支）；`pyversionfix.apply_python_change` 轮询它
+    #: 会话上的 `python_change_cancel`（规划之前就挂好，用户点取消时置上）；`pyversionfix.apply_python_change` 轮询它
     cancel: threading.Event = dataclasses.field(default_factory=threading.Event, repr=False)
 
     def public(self) -> dict:
@@ -988,6 +988,11 @@ class Session:
     python_change: _PyChange | None = None
     #: 已经自动换过版本的那次运行（`ledger.run`）：每次运行至多换一次，防循环
     python_change_run: int = 0
+    #: 本次运行的「换 Python」取消事件：**会话建立 / 每次新运行时就挂好**，早于规划（规划要探测系统解释器，可能很慢）。
+    #: 取消处理器总能 set 它，不用等 `python_change` 出现；`_PyChange.cancel` 就是同一个对象（ADR 0114 §七）
+    python_change_cancel: threading.Event = dataclasses.field(
+        default_factory=threading.Event, repr=False
+    )
     lock: threading.RLock = dataclasses.field(default_factory=threading.RLock, repr=False)
 
     def public_target(self) -> dict:
@@ -1208,6 +1213,7 @@ class SessionService:
             ]
         for sess in mine:
             sess.cancel_requested = True
+            sess.python_change_cancel.set()
 
     # ---- 检查（不执行任何用户代码）----
     def check(
@@ -1402,8 +1408,8 @@ class SessionService:
                     # 取消之后不再有任何额外执行（ADR 0127）：标记先于取消落下，回退的最后一刻核对它；
                     # 回退可能已经把第二次尝试接上了，取消要落在**最新**的那次上，不是动作当初指着的那次
                     sess.cancel_requested = True
-                    if sess.python_change is not None and sess.python_change.state == "running":
-                        sess.python_change.cancel.set()  # 正在另建环境：停在能停的地方（代事务提交点之前）
+                    # 规划（探测系统解释器）期间 `python_change` 还不存在：事件在会话上，总能置上
+                    sess.python_change_cancel.set()  # 另建环境：停在能停的地方（代事务提交点之前）
                     for aid in dict.fromkeys(
                         [action.attempt_id]
                         + (
@@ -1726,6 +1732,7 @@ class SessionService:
         # 新的一次用户发起的运行：回退预算与取消标记都从头算（ADR 0127）
         sess.ledger.begin_run()
         sess.cancel_requested = False
+        sess.python_change_cancel = threading.Event()  # 新的一次运行用新事件：上次的取消不带过来
         sess.ledger.record(plan.plan_id, spec_key_of(plan))
         done = self._done_callback(sess, attempt, launch=launch, finalize=finalize, desktop=desktop)
 
@@ -1826,9 +1833,15 @@ class SessionService:
             # 将来 fixrouter 的 `remedy.kind == 'change_python'` 也从这里接（`_plan_python_change` 换个入口即可）
             rerun = None
             try:
+                with sess.lock:
+                    change_cancel = (
+                        sess.python_change_cancel
+                    )  # 规划之前取定：探测期间的取消也落在它上
                 change = self._plan_python_change(sess, done_plan, done_result, desktop)
                 if change is not None:
-                    rerun = self._change_python_and_replan(sess, attempt, change, done_plan)
+                    rerun = self._change_python_and_replan(
+                        sess, attempt, change, done_plan, change_cancel
+                    )
             except Exception:  # noqa: BLE001 — 换版本出错不能改写这次尝试已经发生的终局
                 LOG.exception("自动换 Python 版本失败 %s", done_plan.script)
             # native 成功的启动记录 + 运行默认值已在 app 的成功收口里同一次写入提交（`launchctx.basis_of`）——这里不再补写
@@ -2072,12 +2085,18 @@ class SessionService:
         return pyversionfix.plan_python_change(failure, sess.project_root)
 
     def _change_python_and_replan(
-        self, sess: Session, attempt: _Attempt, change, done_plan
+        self,
+        sess: Session,
+        attempt: _Attempt,
+        change,
+        done_plan,
+        cancel: threading.Event | None = None,
     ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
         """执行线程上、锁外：把会话标成「正在换版本」（这次尝试保持未收尾，phase = preparing_environment）→ 阻塞执行
         `pyversionfix.apply_python_change`（进度写回会话并通知）→ 成功就按新环境重新规划，回 `(新计划, 它的执行身份)`；
         失败 / 取消 / 重新规划不可用回 None（原失败结局保留，一行用户代码都不再跑）。"""
-        state = _PyChange(plan=change)
+        cancel = cancel if cancel is not None else sess.python_change_cancel
+        state = _PyChange(plan=change, cancel=cancel)
         with sess.lock:
             sess.python_change = state
             sess.python_change_run = sess.ledger.run
@@ -2098,7 +2117,11 @@ class SessionService:
             self._notify(sess)
 
         try:
-            result = pyversionfix.apply_python_change(change, progress, state.cancel)
+            if cancel.is_set() or sess.cancel_requested:
+                # 规划（探测）期间用户点了停止：一个字节都不下、不建环境，结局记成取消
+                result = {"ok": False, "code": pyversionfix.ERROR_CANCELLED}
+            else:
+                result = pyversionfix.apply_python_change(change, progress, cancel)
         except Exception:  # noqa: BLE001 — 换版本的事务不许让执行线程静默死掉
             LOG.exception("自动换 Python 版本异常 %s", done_plan.script)
             result = {"ok": False, "code": pyversionfix.ERROR_FAILED}

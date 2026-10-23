@@ -176,6 +176,10 @@
   `TAVOTTO_AUTO_PYTHON_CHANGE=0` 都不换。
 * **新环境里补依赖走现有联合计划**（`create_joint_plan` → `prepare`），名单内包的口径不变：`deprepair.pinned_base()` 是线程局部的钉子，
   把新一代的基础解释器钉成上面挑出的那个，计划按它的 fresh venv 量事实（与干净机器同形），目标强制 `TARGET_MANAGED`。
+* **取消在规划前就挂上；补丁位按完整版本判**：取消事件在运行开始时就挂在会话上（`Session.python_change_cancel`），规划（探测系统解释器）
+  期间点停止也能置上，规划返回后、执行前、执行内每个阶段边界都查它，已取消就不下载、不建环境、不激活。`requires-python` 里带补丁位的子句
+  （`>=3.11.2`、`==3.12.1`）区间装不下，原样记下，选解释器时对候选的**完整版本**（探测本来就带「主.次.微」，不多起进程；私有 Python 用锁里的精确版本）
+  用 `packaging.specifiers` 判；拿不到完整版本而约束含补丁位 = 不满足，宁可不换。
 * **进账本，报告看得见**：`attempt_history` 多一种条目 `kind: "python_changed"`（from / to / base / download_bytes / outcome，不占回退预算）；
   报告顶层 `python_change` 带阶段与进度；换版本期间 phase 是 `preparing_environment`（`outcome.reason = python_change`），
   卡片一句话「正在换成 Python 3.12（下载约 N MB）…」+ 进度 + 停止，完成后照常出图，详情里留「换成了 Python 3.12」。

@@ -180,6 +180,35 @@ def test_cancel_stops_the_change_and_keeps_the_original_failure(
     assert len(_runs(final)) == 1
 
 
+def test_cancel_while_planning_probes_never_downloads_or_builds(
+    client, tmp_path, fake_pool, change, sessions, monkeypatch
+):
+    """P1：取消落在规划（探测系统解释器）期间——这时 `python_change` 还不存在，取消事件要早已挂在会话上。
+    探测返回后不得开始换：不下载、不建环境、不激活，结局是取消。"""
+    probing, release = threading.Event(), threading.Event()
+
+    def slow_pick(**kw):
+        probing.set()
+        assert release.wait(20)
+        return ("/sys/python3.12", "3.12")
+
+    monkeypatch.setattr(managedenv, "base_pick", slow_pick)
+    sid = _start(client, tmp_path, fake_pool)
+    assert probing.wait(10)
+    mid = _get(client, sid).get_json()
+    assert mid["python_change"] is None  # 还在规划：换版本的状态不存在
+    cancel = _action(mid, "cancel")
+    resp = _act(client, sid, cancel["id"], mid["config_revision"])
+    assert resp.status_code == 200, resp.get_json()
+    release.set()
+    final = _until(client, sid, _finished)
+    assert change["applied"] == []  # 没有进到执行（下载 / 建环境 / 激活都在里面）
+    assert fake_pool["build_calls"] == 1
+    assert final["python_change"]["state"] == "cancelled"
+    assert _changes(final)[0]["outcome"] == "cancelled"
+    assert final["outcome"]["kind"] == "failed" and len(_runs(final)) == 1
+
+
 def test_a_failed_change_keeps_the_original_failure_and_does_not_rerun(
     client, tmp_path, fake_pool, change, sessions
 ):

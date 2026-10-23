@@ -481,7 +481,9 @@ def remove(project: str | Path) -> bool:
 
 
 # --------------------------------------------------------------- 创建
-def base_python(*, within: tuple[tuple[int, int], tuple[int, int]] | None = None) -> str | None:
+def base_python(
+    *, within: tuple[tuple[int, int], tuple[int, int]] | None = None, patch_spec: str = ""
+) -> str | None:
     """能用来建 venv 的基础解释器；一个都没有回 None。
 
     直接复用 `bootstrap.find_base_python()`——它已经排除了内置 runtime
@@ -498,16 +500,39 @@ def base_python(*, within: tuple[tuple[int, int], tuple[int, int]] | None = None
     `within=((lo_major, lo_minor), (hi_major, hi_minor))`（半开区间，ADR 0114 修订 2026-10-23「版本不合自动换」）：
     再收窄到脚本 / 项目要的小版本范围，且在范围内**挑最高的**（默认形态仍是候选清单里的第一个合格者）。
     """
-    pick = base_pick(within=within, with_version=False)
+    pick = base_pick(within=within, with_version=False, patch_spec=patch_spec)
     return pick[0] if pick else None
 
 
 def base_pick(
-    *, within: tuple[tuple[int, int], tuple[int, int]] | None = None, with_version: bool = True
+    *,
+    within: tuple[tuple[int, int], tuple[int, int]] | None = None,
+    with_version: bool = True,
+    patch_spec: str = "",
 ) -> tuple[str, str] | None:
     """`base_python` 的带版本形态：回 `(解释器路径, "主.次")`；没有回 None。选择逻辑只此一处。
-    `with_version=False`（`base_python` 用）时默认形态不为取版本多起一个子进程，版本串为空。"""
+    `with_version=False`（`base_python` 用）时默认形态不为取版本多起一个子进程，版本串为空。
+
+    `patch_spec`（PEP 440 specifier 串，只含带补丁位的子句；ADR 0114 §七）：候选的**完整**版本（探测本来就带「主.次.微」）
+    要满足它；拿不到完整版本（探测只给了「主.次」）就当不满足——宁可不换。私有 Python 的锁版本同样按完整版本判。"""
     from . import bootstrap, projectenv
+
+    spec = None
+    if patch_spec:
+        from packaging.specifiers import InvalidSpecifier, SpecifierSet
+
+        try:
+            spec = SpecifierSet(patch_spec)
+        except InvalidSpecifier:
+            return None  # 读不懂的约束 = 推不出，不选
+
+    def _full_ok(version: str) -> bool:
+        if spec is None:
+            return True
+        parts = version.strip().split(".")
+        if len(parts) != 3 or not all(x.isdigit() for x in parts):
+            return False
+        return spec.contains(".".join(parts), prereleases=True)
 
     def _minor(version: str) -> tuple[int, int] | None:
         try:
@@ -520,15 +545,21 @@ def base_pick(
         parts = _minor(version)
         if parts is None or not (projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE):
             return False
-        return within is None or within[0] <= parts < within[1]
+        if within is not None and not within[0] <= parts < within[1]:
+            return False
+        return _full_ok(version)
 
-    found: list[tuple[tuple[int, int], str]] = []
+    found: list[tuple[tuple[int, ...], str]] = []
+
+    def _micro(version: str) -> int:
+        tail = version.strip().split(".")[2:3]
+        return int(tail[0]) if tail and tail[0].isdigit() else 0
 
     def _accept(path: str, version: str) -> bool:
         ok = _supported(path, version)
         if ok and within is not None:
             # 要「范围内最高」：收集全部合格者，不在第一个就停
-            found.append((_minor(version) or (0, 0), path))
+            found.append(((*(_minor(version) or (0, 0)), _micro(version)), path))
             return False
         return ok
 
@@ -558,6 +589,8 @@ def base_pick(
         return None
     private_minor = _minor(source.version)
     if within is not None and (private_minor is None or not within[0] <= private_minor < within[1]):
+        return None
+    if not _full_ok(source.version):
         return None
     return private, ".".join(source.version.split(".")[:2])
 

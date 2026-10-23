@@ -76,9 +76,7 @@ def test_requires_python_maps_to_a_minor_range(text, lo, hi_minor):
     assert cut.lo == lo and cut.hi == (3, hi_minor)
 
 
-@pytest.mark.parametrize(
-    "text", ["", "garbage", ">=3.11 || <3.9", "===3.12", "==3.12.4", ">=", ">=three"]
-)
+@pytest.mark.parametrize("text", ["", "garbage", ">=3.11 || <3.9", "===3.12", ">=", ">=three"])
 def test_unparseable_requires_python_is_not_guessed(text):
     assert pyversionfix.parse_requires_python(text) is None
 
@@ -236,9 +234,11 @@ class _Picks:
     def __init__(self, found: tuple[str, str] | None):
         self.found = found
         self.calls: list = []
+        self.specs: list = []
 
-    def __call__(self, *, within=None, with_version=True):
+    def __call__(self, *, within=None, with_version=True, patch_spec=""):
         self.calls.append(within)
+        self.specs.append(patch_spec)
         return self.found
 
 
@@ -751,3 +751,56 @@ class TestRealTransaction:
             if g != gen1 and meta["state"] == managedenv.GEN_STATE_READY
         ]
         assert broken == []  # 没有"看起来好了"的半成品
+
+
+# ---- 补丁位约束按完整版本判（ADR 0114 §七）----
+def test_patch_bearing_clauses_are_kept_for_full_version_checks():
+    span = pyversionfix.parse_requires_python(">=3.11.2,<3.12")
+    assert span is not None and span.patches == (">=3.11.2",)
+    assert pyversionfix.parse_requires_python("==3.12.1").patches == ("==3.12.1",)
+    assert pyversionfix.parse_requires_python(">=3.11").patches == ()  # 无补丁位：区间已完整表达
+
+
+@pytest.mark.parametrize(
+    ("requires", "probed", "picked"),
+    [
+        (">=3.11.2,<3.12", "3.11.0", False),
+        (">=3.11.2,<3.12", "3.11.4", True),
+        ("==3.12.1", "3.12.3", False),
+        ("==3.12.1", "3.12.1", True),
+        (">=3.11.2,<3.12", "3.11", False),  # 只拿到小版本而约束含补丁位：不满足，宁可不换
+        (">=3.11,<3.12", "3.11", True),  # 无补丁位的旧口径照旧
+    ],
+)
+def test_base_pick_judges_patch_constraints_on_the_full_version(
+    tmp_path, monkeypatch, requires, probed, picked
+):
+    _fake_interpreters(tmp_path, monkeypatch, {"p": probed})
+    span = pyversionfix.parse_requires_python(requires).meet(pyversionfix._supported_span())
+    got = managedenv.base_pick(within=((3, 11), (3, 13)), patch_spec=span.patch_spec())
+    assert (got is not None) is picked
+
+
+def test_plan_passes_the_patch_spec_to_the_picker_and_declines_without_a_candidate(
+    tmp_path, monkeypatch
+):
+    root = _project(tmp_path, pyproject='[project]\nrequires-python = ">=3.11.2,<3.12"\n')
+    picks = _Picks(None)
+    monkeypatch.setattr(managedenv, "base_pick", picks)
+    monkeypatch.setattr(privatepython, "source_for", lambda *a, **k: None)
+    failure = {"code": "project_env_unsupported_python", "script": "fig.py", "env_python": "3.9"}
+    assert pyversionfix.plan_python_change(failure, root) is None
+    assert picks.calls == [((3, 11), (3, 12))] and picks.specs == [">=3.11.2"]
+
+
+def test_private_python_lock_version_is_judged_on_the_full_version(tmp_path, monkeypatch):
+    root = _project(tmp_path, pyproject='[project]\nrequires-python = ">=3.13.20"\n')
+    monkeypatch.setattr(managedenv, "base_pick", _Picks(None))
+    monkeypatch.setattr(privatepython, "source_for", lambda *a, **k: _private_source("3.13.15"))
+    monkeypatch.setattr(privatepython, "offered", lambda s: True)
+    monkeypatch.setattr(privatepython, "python_of", lambda s=None: None)
+    monkeypatch.setattr(
+        privatepython, "offer_payload", lambda *a, **k: pytest.fail("补丁位不满足不该谈下载")
+    )
+    failure = {"code": "project_env_unsupported_python", "script": "fig.py", "env_python": "3.9"}
+    assert pyversionfix.plan_python_change(failure, root) is None

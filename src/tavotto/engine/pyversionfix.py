@@ -15,7 +15,7 @@
   （`projectenv.remember`）；新环境里补依赖走现有联合计划（`create_joint_plan` + `prepare`），名单内包的口径不变。
 * 取消可停；失败不留半成品（代事务把未提交的一代标 incomplete，active 不动）。
 
-纯标准库（Flask 父进程 import 链上）。
+标准库 + `packaging`（Flask 父进程运行时闭包里本来就有；补丁位约束按完整版本用 `packaging.specifiers` 判，不自写）。
 """
 
 from __future__ import annotations
@@ -104,9 +104,20 @@ class _Span:
     lo: Minor
     hi: Minor
     excluded: frozenset[Minor] = frozenset()
+    #: 带补丁位的 specifier 子句（`>=3.11.2` / `==3.12.1` …）原串：小版本区间装不下它们，选解释器时按**完整版本**判
+    #: （`packaging.specifiers`，ADR 0114 §七）。没有补丁位的子句不在这里（它们已被区间完整表达）
+    patches: tuple[str, ...] = ()
 
     def meet(self, other: "_Span") -> "_Span":
-        return _Span(max(self.lo, other.lo), min(self.hi, other.hi), self.excluded | other.excluded)
+        return _Span(
+            max(self.lo, other.lo),
+            min(self.hi, other.hi),
+            self.excluded | other.excluded,
+            tuple(dict.fromkeys((*self.patches, *other.patches))),
+        )
+
+    def patch_spec(self) -> str:
+        return ",".join(self.patches)
 
     def minors(self) -> list[Minor]:
         """范围内（含上界之下）的小版本，从高到低；只数同一个主版本（3.x）。"""
@@ -127,9 +138,11 @@ _SPEC = re.compile(r"^(~=|==|!=|>=|<=|>|<)\s*(\d+(?:\.\d+)*)(\.\*)?$")
 def parse_requires_python(text: str) -> _Span | None:
     """PEP 440 的 `requires-python` → 小版本级的半开区间；**任何一段读不懂都回 None**（推不出就不换，不猜）。
 
-    补丁号只用来判有效，不进区间：`>=3.11.2` 当 `>=3.11`；`<=3.12` / `<=3.12.4` 当 `<3.13`（作者写 `<=3.12` 几乎
+    补丁号不进区间（区间只到小版本），但带补丁位的子句原样记进 `patches`，选解释器时按完整版本判（`>=3.11.2,<3.12` 不会
+    选到 3.11.0）。区间上：`>=3.11.2` 当 `>=3.11`；`<=3.12` / `<=3.12.4` 当 `<3.13`（作者写 `<=3.12` 几乎
     都是「3.12 都行」）；`>3.11` 当 `>=3.12`（更严，宁可少选）；`!=3.12.*` / `!=3.12` 把 3.12 整个排除。"""
     span = _Span((0, 0), (99, 0))
+    patches: list[str] = []
     parts = [p for p in re.split(r"\s*,\s*", str(text or "").strip()) if p]
     if not parts:
         return None
@@ -139,6 +152,8 @@ def parse_requires_python(text: str) -> _Span | None:
             return None
         op, num, star = m.group(1), m.group(2), m.group(3)
         nums = [int(x) for x in num.split(".")]
+        if len(nums) >= 3:
+            patches.append(f"{op}{num}{star or ''}")
         if len(nums) < 2 and not (op in (">=", ">", "<", "<=", "==") and len(nums) == 1):
             return None
         major = nums[0]
@@ -165,10 +180,8 @@ def parse_requires_python(text: str) -> _Span | None:
         elif op == "<=":
             cur = _Span((0, 0), (major, minor + 1))
         elif op == "==":
-            cur = _Span((major, minor), (major, minor + 1)) if (star or len(nums) == 2) else None
-            if cur is None:
-                # `==3.12.4`：钉死补丁号，系统里的 3.12.x 不一定是它——推不出
-                return None
+            # `==3.12.4`：小版本是 3.12，补丁号钉死——系统里的 3.12.x 不一定是它，由 `patches` 在选解释器时按完整版本判
+            cur = _Span((major, minor), (major, minor + 1))
         elif op == "~=":
             cur = (
                 _Span((major, minor), (major, minor + 1))
@@ -182,7 +195,7 @@ def parse_requires_python(text: str) -> _Span | None:
                 # `!=3.12.4` 排除的只是一个补丁号，对小版本的选择没有约束
                 cur = _Span((0, 0), (99, 0))
         span = span.meet(cur)
-    return span
+    return dataclasses.replace(span, patches=tuple(dict.fromkeys(patches)))
 
 
 _PEP723_BLOCK = re.compile(r"(?m)^# /// script\s*$(?P<body>(?:\n#(?: .*)?$)*?)\n# ///\s*$")
@@ -336,6 +349,9 @@ def plan_python_change(failure: dict, project: str | Path) -> PythonChangePlan |
     code = str(failure.get("code") or "")
     script = str(failure.get("script") or "")
 
+    spec = span.patch_spec()
+    if spec and not _valid_spec(spec):
+        return None  # 补丁位约束读不懂 = 推不出
     system = _system_pick(within, span)
     if system is not None:
         python, version = system
@@ -355,6 +371,8 @@ def plan_python_change(failure: dict, project: str | Path) -> PythonChangePlan |
     version = ".".join(source.version.split(".")[:2])
     if _parse_minor(version) not in minors:
         return None  # 锁里只有一个私有 Python 版本：不在范围内就没有可供应的
+    if not _full_version_ok(source.version, spec):
+        return None  # 锁版本是精确补丁版本：补丁位约束同样按它判（不满足就不下载）
     present = privatepython.python_of(source) is not None
     offer = None if present else privatepython.offer_payload(source)
     if not present and offer is None:
@@ -371,10 +389,32 @@ def plan_python_change(failure: dict, project: str | Path) -> PythonChangePlan |
     )
 
 
+def _valid_spec(spec: str) -> bool:
+    from packaging.specifiers import InvalidSpecifier, SpecifierSet
+
+    try:
+        SpecifierSet(spec)
+    except InvalidSpecifier:
+        return False
+    return True
+
+
+def _full_version_ok(version: str, spec: str) -> bool:
+    """完整版本（「主.次.微」）满足补丁位约束吗？没有约束恒真；拿不到完整版本而有约束 = 不满足（宁可不换）。"""
+    if not spec:
+        return True
+    parts = str(version or "").strip().split(".")
+    if len(parts) != 3 or not all(x.isdigit() for x in parts):
+        return False
+    from packaging.specifiers import SpecifierSet
+
+    return SpecifierSet(spec).contains(".".join(parts), prereleases=True)
+
+
 def _system_pick(within: MinorRange, span: _Span) -> tuple[str, str] | None:
     """范围内（排除 `!=` 的）最高的合格系统 Python。私有 Python（已就位的）在 `managedenv.base_pick` 里是兜底，
     这里把它排除出系统一支——它走计划里的私有 Python 一支（披露口径不同）。"""
-    pick = managedenv.base_pick(within=within)
+    pick = managedenv.base_pick(within=within, patch_spec=span.patch_spec())
     if pick is None:
         return None
     python, version = pick
@@ -445,6 +485,8 @@ def _build_generation(
         deprepair.STATE_INSTALLING: STAGE_INSTALLING,
         deprepair.STATE_VERIFYING: STAGE_VERIFYING,
     }
+    if cancel.is_set():  # 阶段边界：建一代之前再查一次
+        return {"ok": False, "code": ERROR_CANCELLED, "to": plan.to_version}
     done = threading.Event()
     watched: dict[str, str] = {}
 
@@ -466,6 +508,8 @@ def _build_generation(
             joint = deprepair.create_joint_plan(
                 plan.project, plan.script, target_kind=deprepair.TARGET_MANAGED
             )
+            if cancel.is_set():  # 阶段边界：联合计划只是计划，此刻停下什么都没建
+                return {"ok": False, "code": ERROR_CANCELLED, "to": plan.to_version}
             watched["plan_id"] = joint.plan_id
             watcher.start()
             result = deprepair.prepare(
