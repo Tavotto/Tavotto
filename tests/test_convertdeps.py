@@ -34,8 +34,8 @@ def test_allowlist_file_is_normalized_sorted_free_data_and_covers_the_seed():
         "文件里每一行都是 PEP 503 规范名"
     )
     text = convertdeps.ALLOWLIST_PATH.read_text(encoding="utf-8")
-    assert text.startswith("#") and "快照来源" in text and "许可证" in text, (
-        "文件头写明来源 / 日期 / 许可证"
+    assert text.startswith("#") and "来源：" in text and "快照日期：" in text, (
+        "文件头写明来源 / 快照日期"
     )
 
 

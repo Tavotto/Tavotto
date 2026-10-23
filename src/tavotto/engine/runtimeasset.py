@@ -205,6 +205,12 @@ def materialize(project_root: str | Path, descriptor: dict, svg_source: Path) ->
     try:
         if not svg_source.is_file():
             return None
+        # Document replays and native/render captures can bypass probe registration.
+        # Persist their identity outside the disposable preview cache as well.
+        if descriptor.get("stem"):
+            runconfig.record_captures(
+                project_root, script, [descriptor["stem"]], str(descriptor.get("run_config") or "")
+            )
         target = cache_dir(project_root, asset_id)
         target.mkdir(parents=True, exist_ok=True)
         _atomic_write(target / "preview.svg", svg_source.read_bytes())
@@ -427,6 +433,20 @@ def is_pyplot_capture(descriptor: object) -> bool:
     return isinstance(descriptor, dict) and descriptor.get("capture_source") == "pyplot"
 
 
+def has_disk_original(project_root: str | Path, info: dict, stem: str) -> bool:
+    """磁盘上有没有这张图（脚本条目 `info` 里的 `stem`）自己的原件。
+
+    注册表登记了「哪个文件是这张图写的」（`artifacts`，#1251）就按它判：同脚本里 `panel.png`（甲）与
+    `panel.pdf`（乙，`panel-2`）时，乙的原件是 `panel.pdf`，不是按名字找 `panel-2.*`（找不到会让乙在素材库里
+    既是磁盘素材又是 runtime 素材，违反「同一张图绝不双列」）；甲也不会被乙的 `panel.pdf` 冒充成有原件。
+    这张图没有任何映射条目（老注册表 / 静态起草）= 旧判据，按文件名 stem 找。
+    """
+    mine = [a for a, s in (info.get("artifacts") or {}).items() if s == stem]
+    if mine:
+        return any(os.path.isfile(os.path.join(str(project_root), a)) for a in mine)
+    return figcapture.find_original_artifact(str(project_root), stem) is not None
+
+
 def list_assets(project_root: str | Path, registry, *, worker_python: object = None) -> list[dict]:
     """当前项目全部 RuntimeFigureAsset 的清单——**只读，绝不执行脚本**。
 
@@ -448,24 +468,31 @@ def list_assets(project_root: str | Path, registry, *, worker_python: object = N
     out: list[dict] = []
     for script, info in sorted(registry.entries().items()):
         entry = info.get("entry", "main")
+        configured_only = runconfig.configured_only_stems(project_root, script)
         for stem in info.get("stems", ()):
             try:
                 asset_id = figcapture.runtime_asset_id(script, stem)
             except ValueError:
                 continue  # 坏条目不该炸掉整张清单
-            variants = [("", asset_id)]
+            base_meta = load_metadata(project_root, asset_id)
+            variants = []
             # T03：同一脚本用不同参数跑出的同名图各是一张素材。只列**真跑过、cache 里有**的配置变体
             # （登记里的配置不等于跑过）；参数值不进清单，只带不透明引用。
             for cfg in runconfig.configs_of(project_root, script):
                 variant_id = figcapture.runtime_asset_id(script, stem, cfg.id)
                 if load_metadata(project_root, variant_id) is not None:
                     variants.append((cfg.id, variant_id))
+            # Cache absence cannot erase a real argument-free identity. Suppress only
+            # stems whose durable history proves configured-only origins; legacy records
+            # without that evidence retain their placeholder even beside a cached variant.
+            if base_meta is not None or stem not in configured_only:
+                variants.insert(0, ("", asset_id))
             for run_config, variant_id in variants:
                 meta = load_metadata(project_root, variant_id)
                 desc = (meta or {}).get("descriptor") or None
                 if (
                     not run_config
-                    and figcapture.find_original_artifact(root, stem) is not None
+                    and has_disk_original(root, info, stem)
                     and not is_pyplot_capture(desc)
                 ):
                     continue  # 磁盘有原件 → FileAsset 的地盘

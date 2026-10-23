@@ -215,6 +215,76 @@ describe('panel.file_changed', () => {
     expect(mockPanels).toHaveBeenCalledTimes(1)
   })
 
+  describe('同脚本里两张图写同 stem 的不同文件（#1251）', () => {
+    describe('事件直接带 files（不依赖素材清单）', () => {
+      const seedTwo = () => {
+        seed([
+          panelObj('jia', 'panel.png', { script: 'f.py', fileKind: 'raster' }),
+          panelObj('yi', 'panel.pdf', { script: 'f.py' }),
+        ])
+        useRenderStore.setState({ tracked: {} })
+        mockPanels.mockResolvedValue(panels([]))
+      }
+      const tracked = () => Object.keys(useRenderStore.getState().tracked).sort()
+      const fire = (extra: Record<string, unknown>) =>
+        handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['f.py'], ...extra } as never))
+
+      it('byId 为空也能精确标乙、不标甲：fileId 直接对 files', () => {
+        seedTwo()
+        expect(useAssetStore.getState().byId).toEqual({})
+        fire({ stems: ['panel-2'], files: ['panel.pdf'] })
+        expect(tracked()).toEqual(['panel.pdf'])
+      })
+
+      it('files 只有甲时只标甲，即使乙的文件名 stem 也是 panel', () => {
+        seedTwo()
+        fire({ stems: ['panel'], files: ['panel.png'] })
+        expect(tracked()).toEqual(['panel.png'])
+      })
+
+      it('文档里只剩被矢量版让位隐藏的 PNG 面板：files 含它，照样标 stale（素材盘点不再列它也一样）', () => {
+        seed([panelObj('jia', 'panel.png', { script: 'f.py', fileKind: 'raster' })])
+        useRenderStore.setState({ tracked: {} })
+        mockPanels.mockResolvedValue(panels([info('panel.pdf', { script: 'f.py' })])) // 清单里只有 pdf
+        fire({ stems: ['panel'], files: ['panel.pdf', 'panel.png'] })
+        expect(tracked()).toEqual(['panel.png'])
+      })
+
+      it('老事件没有 files：行为不变，按文件名 stem', () => {
+        seedTwo()
+        fire({ stems: ['panel'] })
+        expect(tracked()).toEqual(['panel.pdf', 'panel.png'])
+      })
+
+      it('files 是空数组 = 后端算出「没有文件」：什么都不标（不退回按 stem 猜）', () => {
+        seedTwo()
+        fire({ stems: ['panel'], files: [] })
+        expect(tracked()).toEqual([])
+      })
+
+      it('没有任何跨事件状态：A 项目的事件不会影响之后 B 项目的面板', () => {
+        seedTwo()
+        fire({ stems: ['panel-2'], files: ['panel.pdf'] })
+        project = 'p2'
+        seed([panelObj('b1', 'panel.pdf', { script: 'g.py' })])
+        useRenderStore.setState({ tracked: {} })
+        // 之后一次无关的刷新（assets.changed）不会拿 A 的旧事件去标 B 的面板
+        handleServerEvent(
+          ev({ kind: 'assets.changed', pj: 'p2', ids: [], added: [], removed: [], changed: [] }),
+        )
+        expect(tracked()).toEqual([])
+      })
+    })
+
+    it('老后端（事件没有 files、面板清单没有 stem）：仍按文件名 stem，行为不变', () => {
+      seed([panelObj('o1', 'Fig1.pdf', { script: 'f.py' })])
+      useRenderStore.setState({ tracked: {} })
+      mockPanels.mockResolvedValue(panels([]))
+      handleServerEvent(ev({ kind: 'panel.file_changed', pj: 'p1', scripts: ['f.py'], stems: ['Fig1'] }))
+      expect(Object.keys(useRenderStore.getState().tracked)).toEqual(['Fig1.pdf'])
+    })
+  })
+
   it('设置里的改写备份跟着重读：状态是按磁盘现算的，挂着旧的「恢复原脚本」点下去是整份覆盖', () => {
     mockPanels.mockResolvedValue(panels([]))
     const before = useEnvStore.getState().scriptBackupGeneration

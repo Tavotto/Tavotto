@@ -810,6 +810,22 @@
       ]
     },
     {
+      "id": "export.preview-zoom",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导出对话框的预览：整列铺满不留边距，滚轮以指针为中心缩放、拖动平移、双击回到适合大小",
+        "en-US": "Export dialog preview: edge-to-edge, wheel zoom around the pointer, drag to pan, double-click to fit"
+      },
+      "entry": "顶栏「导出」/ ⌘E → 左侧预览区",
+      "e2e": [
+        {
+          "spec": "export-preview.spec.ts",
+          "title": "导出预览：图在预览区里不留边距，滚轮以指针为中心缩放、可拖动、双击回到适合大小"
+        }
+      ]
+    },
+    {
       "id": "keyboard.core-loop",
       "status": "active",
       "platform": "both",

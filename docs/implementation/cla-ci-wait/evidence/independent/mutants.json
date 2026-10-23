@@ -1,0 +1,86 @@
+[
+  {
+    "name": "manual phase cannot qualify as confirmed",
+    "file": "src/native/store.ts",
+    "before": "AND id=? AND phase='confirmed'",
+    "after": "AND id=? AND phase IN ('confirmed','manual')",
+    "pattern": "composition manual held owner exhausts pending without confirmation or replay",
+    "unique_locations": 1,
+    "offset": 14130,
+    "exit": 1,
+    "assertionError": true,
+    "source_sha256": "eaeba99f908d736d56552cdaa1e8f315b33287c1ed57f548f21af6840b815730",
+    "mutant_sha256": "5922198171e27335caf4ae662e2fe0dfad022de23cdf9ad2569111610ea859d8",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=composition manual held owner exhausts pending without confirmation or replay",
+      "tests/independent-wait-slot.test.mjs"
+    ],
+    "cwd": "/tmp/cla-ci-composition-56aca/mutant-1",
+    "log": "/tmp/cla-ci-composition-56aca/mutant-1.log"
+  },
+  {
+    "name": "second authority pending cannot restart confirmation wait",
+    "file": "src/ci/consumer.ts",
+    "before": "if(error instanceof CIPending)throw new Rejected('ci_live_state_changed');",
+    "after": "if(error instanceof CIPending)throw new CIPending('confirmation_pending',{source:branch.sha,candidate:identity,expiresAt:proof.expires_at});",
+    "pattern": "composition second authority manual pending is terminal and retains owner",
+    "unique_locations": 1,
+    "offset": 11374,
+    "exit": 1,
+    "assertionError": true,
+    "source_sha256": "b2b09ea5023848d31114db4e76ed4fdfecb2999a139d57bdbbc546ebd6b9a96a",
+    "mutant_sha256": "1e5746e4b9ef186f3df9353e00016015b1404602526803f3822039830e82724f",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=composition second authority manual pending is terminal and retains owner",
+      "tests/independent-wait-slot.test.mjs"
+    ],
+    "cwd": "/tmp/cla-ci-composition-56aca/mutant-2",
+    "log": "/tmp/cla-ci-composition-56aca/mutant-2.log"
+  },
+  {
+    "name": "original short proof clamps monotonic deadline",
+    "file": "src/ci/wait.ts",
+    "before": "deadline=Math.min(deadline,now+anchor.expiresAt*1000-milliseconds);",
+    "after": "void 0;",
+    "pattern": "composition short original proof cancels before another GET at monotonic boundary",
+    "unique_locations": 1,
+    "offset": 3625,
+    "exit": 1,
+    "assertionError": true,
+    "source_sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+    "mutant_sha256": "9deb52e2818e715ae109633068bbddd76495a4dc349df7ea5b34c438bd1a63e1",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=composition short original proof cancels before another GET at monotonic boundary",
+      "tests/independent-wait-slot.test.mjs"
+    ],
+    "cwd": "/tmp/cla-ci-composition-56aca/mutant-3",
+    "log": "/tmp/cla-ci-composition-56aca/mutant-3.log"
+  },
+  {
+    "name": "authority whole verification statement cost",
+    "file": "src/native/verification.ts",
+    "before": "  const current=await s.evaluate(pr,VERIFICATION_FINAL_SQL);",
+    "after": "  await s.store.databaseNow();const current=await s.evaluate(pr,VERIFICATION_FINAL_SQL);",
+    "pattern": "composition fixed confirmed held slot verifies twice with actual11 SQL authority budgets",
+    "unique_locations": 1,
+    "offset": 985,
+    "exit": 1,
+    "assertionError": true,
+    "source_sha256": "fed366829694544af6893a1ef3de01ce4309f9eba47d9f76c6c2c6e68a2adb9e",
+    "mutant_sha256": "690a182421fea850d2392a9556f963c19cb68dfe88674bbcc52d9615b3fcf53d",
+    "command": [
+      "node",
+      "--test",
+      "--test-name-pattern=composition fixed confirmed held slot verifies twice with actual11 SQL authority budgets",
+      "tests/independent-wait-slot.test.mjs"
+    ],
+    "cwd": "/tmp/cla-ci-composition-56aca/mutant-4",
+    "log": "/tmp/cla-ci-composition-56aca/mutant-4.log"
+  }
+]

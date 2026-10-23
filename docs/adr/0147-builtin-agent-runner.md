@@ -28,7 +28,15 @@ CLI 的写入面（任意 shell、网络、绝对路径写）也比「改一个�
 `reason` ∈ `completed | max_turns | budget | tool_error_loop | auth | quota | refused | network | cancelled`（外加兜底 `internal`）。`refused` = 服务端过滤 / 拒答。
 预算恒等式（每轮入账之和 == 合计）不成立时记 `ledger_mismatch`，不抛。
 
-### 四、本阶段不做
+### 四、第二套工具集：`convert_to_editable`
+
+同一个循环、第二套任务工具集（`--task convert_to_editable --target <原脚本> --output <原名>_matplotlib.py`）。权限边界逐条对应
+[0143 §二](0143-convert-to-editable.md)：原脚本永远不可写；Agent 只能在候选目录顶层**新建**那一个文件（`create_file` / `edit_file` / 整份覆盖这个新文件，
+别的路径一律工具错误）；`--output` 起跑即校验、不合格 `done internal bad_output`（0 次请求）；`check` 是注入回调（语义 = 0143 的 `run_validation`），
+最多 3 次（0143 的「校验运行 ≤ 3」），本阶段入口没有注入方。系统提示的产品要求引用 `ai_prompt_pack.convert_requirements()` 的同一份文字，不复制。
+没有 `write_file`、没有 shell / 网络。
+
+### 五、本阶段不做
 
 接进 `ai_bridge` / `ai_agents` / 设置页（等在飞的 PR 合入后另起阶段）；`check` 回调的真实实现（复用 TAF 的候选检查）；
 流式回复；打包进冻结产物（`python -m` 在冻结包里怎么起，另一阶段决定）；默认开启。

@@ -26,6 +26,7 @@ import type {
   WorkdirConfirmation,
 } from '@/lib/api'
 import { listJoin } from '@/i18n/format'
+import { isRemedy, type Remedy } from '@/lib/fixRemedy'
 import { originFactsOf } from '@/lib/importOrigin'
 import type { PrepEntry } from '@/store/projectPreparationStore'
 
@@ -50,6 +51,10 @@ export type PrepPrimary =
   | { kind: 'dismiss' }
   /** 位图库画的图：让改图助手另写一份 Matplotlib 版新脚本（ADR 0143）；原脚本不动，用户对照后才采用 */
   | { kind: 'convert'; script: string; library: string | null; path: string | null; language?: ConvertSourceLanguage }
+  /** 智能修复（ADR 0148）：「✦ 使用你的 AI 来修复」。remedy 是 `ai_fix` / `connect_ai` 时它就是主按钮；没连 AI 时点它先去连 */
+  | { kind: 'ai_fix' }
+  /** 反馈卡（remedy `feedback`）：「发送」——发送问题反馈（ADR 0118，逐次确认、源码默认不勾） */
+  | { kind: 'feedback' }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
 export type PrepButton = 'run' | 'openRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
@@ -76,6 +81,13 @@ export interface PrepView {
   step: 0 | 1 | 2
   tone: PrepTone
   slot: PrepSlot
+  /**
+   * 这张失败卡要不要摆一颗显眼的次按钮「✦ 使用你的 AI 来修复」（ADR 0148，维护者裁决：每次失败都出，不管 remedy 是什么；
+   * 例外：`switch_native` 是静默回退、正在运行、教程层激活）。主按钮已经是它自己时为 false（不重复摆）
+   */
+  aiFix: boolean
+  /** 本卡对应的 remedy（报告里认得的形状）；没有 = null。只给测试与详情读，按钮已经体现在 `primary` 里 */
+  remedy: Remedy | null
   /** 嵌入正在等的那一问（同一请求只有一个展示面，卡片认领期间原对话框让开） */
   input: boolean
   /** 参数表单要直接摆出来（这一步要填的内容，不是收起的详情） */
@@ -97,6 +109,8 @@ export interface PrepContext {
    * 要用户点通知轨上的「重新启动」。其它原因的断线（网络暂断）这一位是 false，提示保持原样。
    */
   engineExited?: boolean
+  /** 教程层 / 教程项目激活：任何「连接 AI」相关 UI 都不出现（ADR 0136） */
+  tutorial?: boolean
 }
 
 const has = (report: PreparationReport, kind: PreparationActionKind) =>
@@ -155,6 +169,8 @@ const view = (
   step: extra?.step ?? 0,
   tone: extra?.tone ?? null,
   slot: extra?.slot ?? null,
+  aiFix: false,
+  remedy: null,
   input: extra?.input ?? false,
   argsOpen: extra?.argsOpen ?? false,
 })
@@ -187,7 +203,77 @@ const BUSY = new Set(['running', 'awaiting_runtime_input', 'preparing_environmen
 /** 这几种状态下「运行」的前提是参数：必填参数没填齐就换成参数卡（任何卡都不说「可以运行」） */
 const ARGS_GATED = new Set(['ready', 'gui_dialog', 'restarted', 'needs_args', 'args_changed', 'origin_unknown'])
 
+/**
+ * 失败卡：下面这些状态都是「跑不了 / 没出图 / 走不通」的结局（`prepView` 的 `state`）。智能修复的次按钮只摆在它们上面；
+ * 还没跑（ready）、在跑（running…）、要先答的事（workdir / args / missing_data）、成功的卡都不在内。
+ */
+const FAILURE_STATES = new Set([
+  'failed',
+  'deps_failed',
+  'deps_runtime',
+  'deps_platform',
+  'deps_stdlib',
+  'deps_unknown',
+  'env_blocked',
+  'blocked',
+  'file_ops_blocked',
+  'no_figure',
+  'no_figure_raster',
+  'not_registered',
+])
+/** remedy 是 `ai_fix` / `connect_ai` 时，这几张卡的主按钮换成「使用你的 AI 来修复」（其余失败卡的主按钮是它自己的修法，照旧） */
+const AI_PRIMARY_STATES = new Set(['failed', 'deps_failed', 'blocked', 'no_figure', 'not_registered'])
+
+/**
+ * 智能修复（ADR 0148）：在卡片之上读后端选好的 `report.remedy`，只翻译、不判定。
+ * 装包 / 转写 / 选环境三种确定修法的主按钮就是卡片原来的那一颗（后端 remedy 与这些卡的来源是同一份事实）；
+ * `ai_fix` / `connect_ai` 把主按钮换成 AI 修复；`feedback` 换成一句话 +「发送」；`switch_native` 不动（静默）。
+ */
+function withRemedy(view: PrepView, report: PreparationReport | null | undefined, ctx: PrepContext): PrepView {
+  const remedy = report && isRemedy(report.remedy) ? report.remedy : null
+  if (ctx.tutorial || !FAILURE_STATES.has(view.state)) return { ...view, remedy }
+  let out: PrepView = { ...view, remedy }
+  if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
+    out = { ...out, primary: { kind: 'ai_fix' }, secondary: null, primaryDisabled: false, ghost: 'later' }
+  } else if (remedy?.kind === 'feedback') {
+    out = {
+      ...out,
+      state: 'feedback',
+      sentence: { key: 'feedback', values: view.sentence.values },
+      primary: { kind: 'feedback' },
+      secondary: null,
+      primaryDisabled: false,
+      ghost: 'later',
+      slot: null,
+    }
+  }
+  return { ...out, aiFix: remedy?.kind !== 'switch_native' && out.primary?.kind !== 'ai_fix' }
+}
+
+/**
+ * AI 环境修复暂时做不了（`ai_fix_unavailable`，点过「使用你的 AI 来修复」之后）：同一张卡落成一句话
+ * 「这个问题 AI 暂时还不会修」+ 主按钮「发送」。次按钮不再摆（刚说完不会修）；下一次运行出新尝试后卡片自然换回。
+ */
+export function withAiUnavailable(view: PrepView): PrepView {
+  return {
+    ...view,
+    state: 'ai_unavailable',
+    sentence: { key: 'aiUnavailable', values: view.sentence.values },
+    primary: { kind: 'feedback' },
+    secondary: null,
+    primaryDisabled: false,
+    ghost: 'later',
+    slot: null,
+    aiFix: false,
+    tone: 'bad',
+  }
+}
+
 export function prepView(entry: PrepEntry, ctx: PrepContext): PrepView {
+  return withRemedy(prepViewBase(entry, ctx), entry.report, ctx)
+}
+
+function prepViewBase(entry: PrepEntry, ctx: PrepContext): PrepView {
   const script = targetName(entry)
   const v = { script }
   if (entry.failure) return view('check_failed', 'checkFailed', v, { kind: 'reopen', label: 'retry' }, { tone: 'bad' })

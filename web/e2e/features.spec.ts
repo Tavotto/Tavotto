@@ -653,7 +653,7 @@ test(
     const exportDir = job.export_dir!
 
     // 界面说出了结果（不是只有请求成功）
-    await expect(dialog.getByText(/已保存到/)).toBeVisible({ timeout: 240_000 })
+    await expect(dialog.locator('[data-export-result]')).toBeVisible({ timeout: 240_000 })
     // 文件按扩展名认（同目录里还有预检报告等别的产物）；文件头要对得上格式，不认「有个文件」
     const magic: Record<string, (b: Buffer) => boolean> = {
       '.pdf': (b) => b.subarray(0, 5).toString('latin1') === '%PDF-',
@@ -718,7 +718,6 @@ test(
       const checkbox = page.locator(`[data-export-format="${format}"] input`)
       if (await checkbox.isChecked()) await checkbox.uncheck()
     }
-    await expect(page.locator('[data-export-svg-note]')).toBeVisible()
     // 文件名尚无 data 锚点，使用产品的稳定表单 id；独立名称排除夹具里的历史导出。
     const filename = `feature-svg-${Date.now()}`
     await page.locator('#export-filename').fill(filename)

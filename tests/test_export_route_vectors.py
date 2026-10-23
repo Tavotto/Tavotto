@@ -26,6 +26,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
+from support.registrystub import stem_registry
 from tavotto import app as m
 from tavotto.engine import runtimeasset
 from tavotto.rendercore import sources as rc_sources
@@ -70,9 +71,7 @@ def _install_worker(monkeypatch, *, has_script: bool) -> None:
 
     info = {"script": "s.py", "entry": "main"} if has_script else None
     monkeypatch.setattr(m, "_safe_worker", lambda *a, **kw: FakeWorker())
-    monkeypatch.setattr(
-        m, "current_registry", lambda: type("R", (), {"for_stem": lambda self, s: info})()
-    )
+    monkeypatch.setattr(m, "current_registry", lambda: stem_registry(info))
 
 
 def test_the_vectors_cover_both_scopes_and_both_outcomes():

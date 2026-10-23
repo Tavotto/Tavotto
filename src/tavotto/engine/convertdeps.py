@@ -9,7 +9,7 @@ worker 退役全在里面）。本模块只回答两件事：**这一次能不�
 
 只装「在名单里」的发行包：`autoinstall_dists.txt`（PEP 503 规范名，一行一个，打包随 `packaging/tavotto.spec` 的 datas 带上；
 `scripts/dev/refresh_autoinstall_list.py` 重新生成，产品运行时从不联网取名单）。名单 = 14 个科学计算种子 ∪ PyPI 30 天下载量
-前 1000 的项目名快照。Agent 写进脚本的任意 import 名不会因此变成对用户环境的任意 pip 安装；名单外的包只会先出卡片点名。
+前 1000 的项目名 − 排除名单（pip / setuptools 等管理环境与打包工具）。Agent 写进脚本的任意 import 名不会因此变成对用户环境的任意 pip 安装；名单外的包只会先出卡片点名。
 
 ## 每个环境问一次（裁决 2）
 

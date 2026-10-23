@@ -4,7 +4,7 @@ import { Check, Play } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { Badge } from './ui/Badge'
 import { panelSrc, type PanelInfo, type RuntimeAssetInfo } from '@/lib/api'
-import { stemOf } from '@/lib/openRequest'
+import { panelStemOf } from '@/lib/openRequest'
 import { formatCm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { msg, t as translate } from '@/i18n'
@@ -54,7 +54,7 @@ export function FigurePickerDialog() {
   const entries: Entry[] = [
     ...panels
       .filter((p) => p.script === script)
-      .map((p): Entry => ({ kind: 'panel', stem: stemOf(p.id), info: p })),
+      .map((p): Entry => ({ kind: 'panel', stem: panelStemOf(p), info: p })),
     ...(assets ?? [])
       .filter((a) => a.script === script)
       .map((a): Entry => ({ kind: 'runtime', stem: a.stem, asset: a })),

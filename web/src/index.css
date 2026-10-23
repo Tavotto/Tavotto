@@ -1022,8 +1022,16 @@
   [data-ui-field-group] > * {
     padding: 12px 16px;
   }
-  [data-ui-field-group] > * + * {
+  [data-ui-field-group]:not([data-ui-field-group-plain]) > * + * {
     background: linear-gradient(var(--color-border), var(--color-border)) no-repeat 16px 0 / calc(100% - 32px) 1px;
+  }
+
+  /* 无分隔线的字段组（FieldGroup plain）：只保留卡片本身，行与行靠留白分开（导出对话框「输出」组） */
+  [data-ui-field-group-plain] {
+    padding-block: 4px;
+  }
+  [data-ui-field-group-plain] > * {
+    padding-block: 8px;
   }
 
   /* 搜索框（ui/SearchInput 用在 type="search" 时，如设置导航）自带清除钮：WebKit 原生的那颗蓝 × 藏掉，不出现两颗 */

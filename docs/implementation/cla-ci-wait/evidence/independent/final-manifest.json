@@ -1,0 +1,63 @@
+{
+  "base": "56aca50844ecd85aefe9818d8f9e4be0df063d8c",
+  "base_tree": "4a32a8a23a664c907b3c5e9fd88eb0b8a9527c24",
+  "store_sha256": "eaeba99f908d736d56552cdaa1e8f315b33287c1ed57f548f21af6840b815730",
+  "source_matches_final_worktree": true,
+  "ci9_donor907_identical": true,
+  "tests": 14,
+  "test_exit": 0,
+  "test_sha256": "b759612f1cdbc2893f8f1b7b95f2549bd8f60d48ab5ded7fdfadd410d9875440",
+  "mutation_runner_exit": 0,
+  "mutants": [
+    {
+      "name": "manual phase cannot qualify as confirmed",
+      "exit": 1,
+      "assertionError": true,
+      "unique_locations": 1,
+      "source_sha256": "eaeba99f908d736d56552cdaa1e8f315b33287c1ed57f548f21af6840b815730",
+      "mutant_sha256": "5922198171e27335caf4ae662e2fe0dfad022de23cdf9ad2569111610ea859d8"
+    },
+    {
+      "name": "second authority pending cannot restart confirmation wait",
+      "exit": 1,
+      "assertionError": true,
+      "unique_locations": 1,
+      "source_sha256": "b2b09ea5023848d31114db4e76ed4fdfecb2999a139d57bdbbc546ebd6b9a96a",
+      "mutant_sha256": "1e5746e4b9ef186f3df9353e00016015b1404602526803f3822039830e82724f"
+    },
+    {
+      "name": "original short proof clamps monotonic deadline",
+      "exit": 1,
+      "assertionError": true,
+      "unique_locations": 1,
+      "source_sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+      "mutant_sha256": "9deb52e2818e715ae109633068bbddd76495a4dc349df7ea5b34c438bd1a63e1"
+    },
+    {
+      "name": "authority whole verification statement cost",
+      "exit": 1,
+      "assertionError": true,
+      "unique_locations": 1,
+      "source_sha256": "fed366829694544af6893a1ef3de01ce4309f9eba47d9f76c6c2c6e68a2adb9e",
+      "mutant_sha256": "690a182421fea850d2392a9556f963c19cb68dfe88674bbcc52d9615b3fcf53d"
+    }
+  ],
+  "artifacts": {
+    "review.md": "535f46393da2a0ee30c27ea916654538adf484bb554003a1e11468e817c6e735",
+    "source-manifest.json": "070174faa90ba8c01810d9323521d3b522b09a51f96d5c4b72671568b8b5c5e3",
+    "transplant-identity.json": "ed18832fe866289dd65a185b692dbe4158afdf20b22a96c23031195ef1cc966c",
+    "commands.json": "3b2521bc9a2282a88851f96c9d4b0e6717820da8536be6077f553c118fb727db",
+    "mutants.json": "8df96c0625fc5bcd765b794ac85edde6027bfa2817fcce989d4167145bf915d3",
+    "raw-logs.json": "50ed04e63e33d08d258317a719c5281091ce544acbd073462d44a7f3972b6962",
+    "independent-wait-slot.test.mjs.txt": "b759612f1cdbc2893f8f1b7b95f2549bd8f60d48ab5ded7fdfadd410d9875440",
+    "mutate.py": "bbb65e3d668dcbda3ea727dfe74a50854448c04bf0f57c1dbd6bdd553c68f66c"
+  },
+  "scope": {
+    "workspace_edits": 0,
+    "worker_fetch": 0,
+    "publication_calls": 0,
+    "http": 0,
+    "clock_advances": 0,
+    "downloads": 0
+  }
+}

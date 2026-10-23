@@ -502,6 +502,29 @@ def safe_resolve(rel_id: str) -> Path:
     return p
 
 
+def _disk_panel_rel(rel: str) -> tuple[str, dict | None]:
+    """磁盘素材文件（项目相对路径）→ `(stem, 注册表信息)`；注册表认不得它就是 `(文件名 stem, None)`。
+
+    **「磁盘文件 → 图」在 app 层的唯一出处**（#1251）：判据是 `registry.for_artifact`——先看注册表登记的
+    「哪个文件是哪张图写的」，查不到再退回文件名 stem。同一脚本里 `panel.png`（甲）与 `panel.pdf`（乙，
+    stem 是 `panel-2`）时，打开 `panel.pdf` 得到的是乙。凡是主语为「磁盘上的这个文件」的解析都走这里，
+    不再各自 `for_stem(path.stem)`；主语为 stem 的（runtime 素材、worker 返回的 stem）才直接 `for_stem`。
+    """
+    reg = current_registry()
+    info = reg.for_artifact(rel)
+    # stem 由 `artifact_stem` 给（CLI 的 `handoff.resolve_target` 用同一个函数，交接回执两边的键因此一致）
+    return reg.artifact_stem(rel), info
+
+
+def _disk_panel(path: Path) -> tuple[str, dict | None]:
+    """`_disk_panel_rel` 的 Path 版（`path` 是 `safe_resolve` 解出来的真实路径）。"""
+    try:
+        rel = path.relative_to(require_project().resolve()).as_posix()
+    except ValueError:
+        rel = path.name
+    return _disk_panel_rel(rel)
+
+
 # ---- 最近的后端请求记录（发送问题反馈的 detail-requests.json，ADR 0118 修订 2026-10-13）----
 # 进程内定长环、不写盘。每条只有 方法 / Flask 路由**规则** / 状态码 / 耗时 / 错误码（失败响应 JSON 的 `code`），
 # 不含请求体、查询串与实参。**任何异常都吞掉**——记录请求不许影响请求。
@@ -557,7 +580,7 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
     # 「哪些文件算素材」的判据在 `engine/project_refresh.iter_assets()`（剪枝、
     # 隐藏文件、同名 PDF 盖过位图都在那儿）——统一刷新的 inventory 用的是同一
     # 个函数。这里只负责 probe 出尺寸并挂上注册表信息。
-    assets = engine_refresh.iter_assets(root)
+    assets = engine_refresh.iter_assets(root, reg=current_registry())
     # 「这张图能不能进图内编辑」的事实只有一份（`engine/readiness.py`）：
     # 这里挂的 capability 与 `/api/project/readiness` 是同一次计算的投影，
     # `/api/panels` 不自己再判一遍。
@@ -604,10 +627,14 @@ def scan_panels(unsupported: list[dict] | None = None) -> list[dict]:
             )
             if spec["px_w"] is not None:
                 entry.update(px_w=spec["px_w"], px_h=spec["px_h"])
-            info = current_registry().for_stem(p.stem)
+            panel_stem, info = _disk_panel_rel(rel.replace("\\", "/"))
+            # 注册表认的「这个文件是哪张图」（#1251）：前端按它匹配交接的 `?open=<stem>`，不再自己猜文件名 stem。
+            # 只在与文件名 stem 不同时才发（没有 `artifacts` 映射的项目响应逐字节不变）
+            if panel_stem != p.stem:
+                entry["stem"] = panel_stem
             if info is not None:  # 可参数化面板：有产出它的 matplotlib 脚本
                 entry.update(script=info["script"], cost=info["cost"])
-                baseline_v = _baseline_version(p.stem, baked)
+                baseline_v = _baseline_version(panel_stem, baked)
                 if baseline_v and baseline_v["patches"]:
                     entry["baked_overrides"] = baseline_v["patches"]
                     # 基线仍烙在文件上吗？文件被外部改写（用户重跑自己的构建
@@ -1086,6 +1113,20 @@ def api_panels():
     return resp
 
 
+@app.get("/api/panel-stem")
+def api_panel_stem():
+    """磁盘素材文件 id → 注册表认的「这是哪张图」的 stem（`Registry.artifact_stem`，#1251）。
+
+    给「重建为可编辑图」这类要按 stem 找图的前端动作一个**权威值**：素材清单（`/api/panels`）里没有这个文件
+    （比如被同一张图的 PDF 让位隐藏的 PNG，或清单正在刷新）时，前端不许退回文件名 stem 去猜。
+    """
+    rel_id = request.args.get("id", "")
+    safe_resolve(rel_id)  # 在项目根之内、是文件；不是就按老规矩 4xx（带稳定 code）
+    resp = jsonify({"id": rel_id, "stem": _disk_panel_rel(rel_id.replace("\\", "/"))[0]})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/api/render")
 def api_render():
     """把面板渲染为指定像素宽度的 PNG（带磁盘缓存），用于画布显示与缩略图。
@@ -1339,10 +1380,9 @@ def _serialize_figure_with_worker(
         script = str(info["script"]) if info else ""
     else:
         path = safe_resolve(rel_id)
-        info = current_registry().for_stem(path.stem)
+        stem, info = _disk_panel(path)
         if info is None:
             return None
-        stem = path.stem
         script = str(info["script"])
         worker = _safe_worker(info["script"], info["entry"], stem)
 
@@ -2623,7 +2663,7 @@ def _has_runnable_script(rel_id: str) -> bool:
     """这张图有没有可重新运行的脚本（runtime 素材天生有；磁盘图看注册表按 stem 的映射）。"""
     if engine_runtimeasset.is_runtime_id(rel_id):
         return True
-    return current_registry().for_stem(Path(rel_id).stem) is not None
+    return _disk_panel_rel(rel_id)[1] is not None
 
 
 def _svg_asset_binding(src, tmp_dir: Path) -> tuple[str, str] | None:
@@ -3313,7 +3353,7 @@ def api_package():
         entry = {"id": rel_id}
         if p.is_relative_to(root.resolve()) and p.is_file():
             entry.update(sha1=_sha1_of(p), mtime=int(p.stat().st_mtime), bytes=p.stat().st_size)
-            info = current_registry().for_stem(p.stem)
+            _stem, info = _disk_panel_rel(rel_id.replace("\\", "/"))
             if info is not None:
                 entry["script"] = info["script"]
                 scripts[info["script"]] = root / info["script"]
@@ -3566,6 +3606,35 @@ engine_deprepair.on_user_environment_adopted(_publish_user_environment_adopted)
 # ------------------------- 项目（Project）管理 -------------------------------
 # 对象层级见 docs/adr/0001-project-canvas-tab-object.md：Project = 图库路径 +
 # 素材根 + 导出/备份位置 + 设置。用户级配置（最近项目等）存 engine_config。
+def _panel_files_of_stems(ctx: "ProjectCtx", stems: list[str]) -> list[str] | None:
+    """这些 stem（图）在磁盘上的**所有文件 id**（与 `/api/panels` 的 `id` 逐字相同）；算不出返回 None。
+
+    含被同一张图的 PDF 让位隐藏的位图（`include_shadowed`）：排版里留着的 PNG 面板不会因为素材盘点不再列它就收不到
+    事件、永远渲染旧脚本的结果。同 stem 的**另一张**图的文件不算（甲的 `panel.png` 不在乙的 files 里）。
+
+    **只发完整的列表**：枚举用 `strict=True`，任何一处读不动（某个子目录暂时不可读）就抛、返回 None（事件不带 `files`，
+    前端退回按文件名 stem）。残缺列表被前端当权威，被跳过的子树里的面板就永远不会被标 stale；不做「部分带」。
+
+    `panel.file_changed` 带上它，前端对非 runtime 面板按 fileId 精确匹配，不再拿异步加载的素材清单去推断
+    「这个文件是哪张图」（#1251）。判据与素材盘点是同一个出处：`project_refresh.figure_key_of`
+    （`Registry.artifact_stem`）——同 stem 两张图时乙的脚本变了，files 是 `panel.pdf`，不含 `panel.png`。
+    """
+    try:
+        root = ctx.path.resolve()
+        wanted = set(stems)
+        key = engine_refresh.figure_key_of(root, ctx.registry)
+        return sorted(
+            str(p.relative_to(root))
+            for p, _kind in engine_refresh.iter_assets(
+                root, strict=True, reg=ctx.registry, include_shadowed=True
+            )
+            if key(p) in wanted
+        )
+    except Exception:  # noqa: BLE001 —— 旁路信息：算不出（含某个子目录读不了）就不带，**不带残缺列表**
+        LOG.debug("panel.file_changed 的 files 计算失败", exc_info=True)
+        return None
+
+
 def _script_change_handler(ctx: "ProjectCtx", reason: str = "watcher"):
     """watcher 回调必须绑定到具体项目——事件里带上 pj，别的标签页才不会
     因为另一个图库的脚本变动去重渲染自己的面板。
@@ -3577,10 +3646,11 @@ def _script_change_handler(ctx: "ProjectCtx", reason: str = "watcher"):
 
     def _on_change(changed: list[str]) -> None:
         stems = [s for sc in changed for s in ctx.registry.stems_of(sc)]
-        sse_publish(
-            "panel.file_changed",
-            {"scripts": changed, "stems": stems, "pj": ctx.id, "reason": reason},
-        )
+        payload = {"scripts": changed, "stems": stems, "pj": ctx.id, "reason": reason}
+        files = _panel_files_of_stems(ctx, stems)
+        if files is not None:  # 算不出就不带：前端退回按文件名 stem（老行为）
+            payload["files"] = files
+        sse_publish("panel.file_changed", payload)
 
     return _on_change
 
@@ -3784,7 +3854,7 @@ def _open_project(path: Path, make_default: bool) -> dict:
         reg = engine_registry.open_registry(path)
     except FileNotFoundError:
         cfg, rep = engine_discover.build_draft(path)
-        engine_discover.write_config(path, cfg)
+        engine_discover.write_config(path, cfg, static_discovery=True)
         reg = engine_registry.open_registry(path)
         drafted, conflicts = True, sorted(rep["conflicts"])
     ctx = ProjectCtx(path, pid, reg)
@@ -4505,6 +4575,7 @@ def _build_diagnostics_bundle(
         ),
         frontend=detail.frontend,
         registry=ctx.registry if ctx is not None else None,
+        fix_journey=engine_prepsession.SESSIONS.fix_journeys(pid) if pid else None,
     )
     items = engine_diagdetail.collect(src, detail.options)
     # report.json 只算一次：超限时 `fit` 会按优先级截断重建几次 ZIP，不该每次都重新探测渲染环境
@@ -6634,7 +6705,7 @@ def _artifact_source(rel_id: str, policy, expected=None, patches=(), confirmed=N
         )
     path = _artifact_path(rel_id)
     if policy in engine_figcapture.FIGSIZE_FRAME_POLICIES and _baseline_patches(
-        path.stem, load_baked()
+        _disk_panel(path)[0], load_baked()
     ):
         raise engine_artifactcontext.ArtifactContextError(
             "not_untouched", "This source has a saved edit baseline."
@@ -7029,7 +7100,7 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: 
             info["stem"],
         )
     path = safe_resolve(rel_id)
-    info = current_registry().for_stem(path.stem)
+    disk_stem, info = _disk_panel(path)
     if info is None:
         if artifact_source is not None:
             raise engine_artifactcontext.ArtifactContextError(
@@ -7043,13 +7114,13 @@ def _resolve_engine_worker(rel_id: str, *, artifact_source=None, existing_only: 
             project_root=root,
             script=info["script"],
             entry=info["entry"],
-            stem=path.stem,
+            stem=disk_stem,
             execution_profile=engine_enginesession.PROFILE_SAFE,
             **({"existing_only": True} if existing_only else {}),
             **({"run": disk_run} if disk_run is not None else {}),
             **_artifact_kwargs(artifact_source),
         ),
-        path.stem,
+        disk_stem,
     )
 
 
@@ -7080,14 +7151,17 @@ def _note_handoff_failure(stem: str, exc: BaseException) -> None:
 
 
 def _handoff_target_stem(rel_id: str) -> str:
-    """面板 id → 结论表匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板取文件名主干）。"""
+    """面板 id → 结论表匹配用的 stem，判据与 `_resolve_engine_worker` 一致（runtime 素材查注册表，磁盘面板经 `Registry.artifact_stem`，CLI 的 `handoff.resolve_target` 同一个函数）。"""
     try:
         if engine_runtimeasset.is_runtime_id(rel_id):
             info = engine_runtimeasset.resolve(rel_id, current_registry())
             return info["stem"] if info else ""
     except Exception:  # noqa: BLE001 —— 结论表是旁路
         return ""
-    return Path(rel_id).stem
+    try:
+        return _disk_panel_rel(rel_id)[0]
+    except Exception:  # noqa: BLE001 —— 同上：读注册表失败不许盖掉真正的渲染错误，退回文件名 stem（与改动前一致）
+        return Path(rel_id).stem
 
 
 @app.get(security.HANDOFF_STATUS_PATH)
@@ -7712,7 +7786,7 @@ def api_engine_invalidate():
         run = engine_runtimeasset.run_selection(root, info)
     else:
         path = safe_resolve(rel_id)
-        info = current_registry().for_stem(path.stem)
+        info = _disk_panel(path)[1]
         if info is None:
             abort(404)
         script = info["script"]
@@ -7877,7 +7951,8 @@ def api_engine_update_source():
                 "code": "annotations_need_pdf",
             }
         ), 400
-    info = current_registry().for_stem(src.stem)
+    # 打开的是 `panel.pdf` 而它是同脚本里另一张图（`panel-2`）写的：编辑、基线都归那张图，写回只写它自己的文件
+    stem, info = _disk_panel(src)
     if info is None:
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
@@ -7885,10 +7960,15 @@ def api_engine_update_source():
     if fmt_err := _write_back_format_error(src):
         # 起 worker 之前就拒（判据与 `_write_source_files` 里那道是同一个函数）
         return _write_back_error_response(fmt_err)
-    worker = _safe_worker(info["script"], info["entry"], src.stem)
+    worker = _safe_worker(info["script"], info["entry"], stem)
     try:
         result = _write_source_files(
-            src, patches, worker, annotations=annotations, expected_mtime=body.get("expected_mtime")
+            src,
+            patches,
+            worker,
+            annotations=annotations,
+            expected_mtime=body.get("expected_mtime"),
+            stem=stem,
         )
     except (
         SourceChangedError,
@@ -7904,7 +7984,7 @@ def api_engine_update_source():
     # 把这组修改追加为该图的版本历史，末位即当前基线：
     # 新拖入的同名面板自动继承，双击进编辑态能接着改。
     # 带上 commit 后的文件身份——外部重写产物后基线要能被判失效
-    append_baked(src.stem, patches, files=result["file_identity"])
+    append_baked(stem, patches, files=result["file_identity"])
     return jsonify(_write_back_response(result, baked=bool(patches)))
 
 
@@ -8395,7 +8475,12 @@ def _backup_targets(tmps: list[tuple[Path, Path]], backup_root: Path, stem: str)
 
 
 def _write_source_files(
-    src: Path, patches: list, worker, annotations: list | None = None, expected_mtime=None
+    src: Path,
+    patches: list,
+    worker,
+    annotations: list | None = None,
+    expected_mtime=None,
+    stem: str | None = None,
 ) -> dict:
     """写回事务：prepare → verify → commit，任一环不过就保持原文件零改动。
 
@@ -8419,7 +8504,8 @@ def _write_source_files(
     以前只有「文件被占用」那一条路径清理，PDF 导出成功而 PNG 导出抛
     WorkerError 时，`.Fig1.pdf.updating` 就永久留在图库里了。
     """
-    stem = src.stem
+    # `stem` 是被写回的那张图（`_disk_panel` 解出来的）；缺省 = 文件名 stem（老调用方 / 注册表不认得时）
+    stem = stem or src.stem
     if fmt_err := _write_back_format_error(src):
         # 唯一的扼流点：调用方忘了早检，也绝不「零个目标、报成功、记基线」
         raise fmt_err
@@ -8785,16 +8871,16 @@ def api_engine_sync_overrides():
     src_path = safe_resolve(body.get("from_id", ""))
     dst_path = safe_resolve(body.get("to_id", ""))
     patches = body.get("patches", [])
-    info_s = current_registry().for_stem(src_path.stem)
-    info_d = current_registry().for_stem(dst_path.stem)
+    stem_s, info_s = _disk_panel(src_path)
+    stem_d, info_d = _disk_panel(dst_path)
     if info_s is None or info_d is None or info_s["script"] != info_d["script"]:
         return jsonify(
             {"error": "两张图不属于同一个脚本，无法同步", "code": "sync_different_scripts"}
         ), 400
-    worker = _safe_worker(info_s["script"], info_s["entry"], src_path.stem)
+    worker = _safe_worker(info_s["script"], info_s["entry"], stem_s)
     try:
-        man_s = _manifest_of(worker, src_path.stem)
-        man_d = _manifest_of(worker, dst_path.stem)
+        man_s = _manifest_of(worker, stem_s)
+        man_d = _manifest_of(worker, stem_d)
     except engine_pool.WorkerError as exc:
         return jsonify(_worker_error_payload(exc)), 500
 
@@ -8911,7 +8997,7 @@ def api_engine_history_restore():
     patches = [] if n < 0 or n >= len(versions) else versions[n]["patches"]
     try:
         result = _write_source_files(
-            src, patches, worker, expected_mtime=body.get("expected_mtime")
+            src, patches, worker, expected_mtime=body.get("expected_mtime"), stem=stem
         )
     except (
         SourceChangedError,
@@ -8970,10 +9056,32 @@ def api_ai_capabilities():
     refresh = request.args.get("refresh") in ("1", "true", "yes")
     # `taf_enabled`（TAF 实验开关）只在这一层并入：`engine_ai.capabilities` 的缓存内容不含它，开关随时可翻
     resp = jsonify(
-        {**engine_ai.capabilities(refresh=refresh), "taf_enabled": engine_ai_figure_edit.enabled()}
+        {
+            **engine_ai.capabilities(refresh=refresh),
+            "taf_enabled": engine_ai_figure_edit.enabled(),
+            # 「使用你的 AI 来修复」的 AI 环境修复任务能不能真的跑（智能修复主线 PR D，ADR 0148）。端点契约已定、任务还没实现：
+            # 前端在它为 false 时按钮照常出现，点击走「这个问题 AI 暂时还不会修」降级
+            "ai_fix_available": False,
+        }
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@app.post("/api/ai/fix")
+def api_ai_fix():
+    """「使用你的 AI 来修复」（智能修复主线，ADR 0148）。body：`{session_id, script}`（准备会话 id 与脚本项目相对路径）。
+
+    AI 环境修复任务在后续 PR 实现；本版只定契约：一律 `200 {ok: false, reason: "ai_fix_unavailable"}`，前端据此把卡片落成
+    「这个问题 AI 暂时还不会修」+「发送反馈」。会话认证照常（ADR 0008），畸形请求体 400，不做任何副作用。"""
+    body = request.get_json(silent=True)
+    if (
+        not isinstance(body, dict)
+        or not isinstance(body.get("session_id"), str)
+        or not isinstance(body.get("script"), str)
+    ):
+        abort(400)
+    return jsonify({"ok": False, "reason": "ai_fix_unavailable"})
 
 
 @app.patch("/api/ai/agents/<agent_id>")
@@ -9223,7 +9331,15 @@ def _resync_registration(ctx, worker) -> bool:
         with engine_inputremap.landing(root, getattr(worker, "remap_generation", None)):
             # cost 给空串：`register` 保留磁盘上原来那个值
             engine_discover.register(
-                root, script, stems, entry=worker.entry, cost="", append=bool(variant)
+                root,
+                script,
+                stems,
+                entry=worker.entry,
+                cost="",
+                append=bool(variant),
+                artifacts=engine_probe.descriptor_artifacts(
+                    getattr(worker, "last_build_descriptors", None)
+                ),
             )
             engine_inputremap.record_registration(root, script, variant)
     except engine_inputremap.RemapChanged:
@@ -9626,11 +9742,12 @@ def _preparation_target(rel_id: str) -> dict:
             **({"run": run} if run is not None else {}),
         }
     path = safe_resolve(rel_id)  # 已判：在项目根之内、是文件、扩展名在闭集里
-    info = current_registry().for_stem(path.stem) or {}
+    disk_stem, info = _disk_panel(path)
+    info = info or {}
     disk_run = _disk_panel_run(info["script"]) if info.get("script") else None
     return {
         **({"run": disk_run} if disk_run is not None else {}),
-        "stem": path.stem,
+        "stem": disk_stem,
         "script": info.get("script"),
         "entry": info.get("entry"),
         "original_artifact": rel_id.replace("\\", "/"),
@@ -10234,6 +10351,14 @@ def _publish_preparation_session(payload: dict) -> None:
 
 
 engine_prepsession.SESSIONS.notifier = _publish_preparation_session
+
+
+def _ai_connected() -> bool:
+    """本机有没有可用的 AI（智能修复路由用；与设置页 / 助手选择器同一判据 `agents[*].usable`，读 `capabilities` 的缓存结论）。"""
+    return any(a.get("usable") for a in engine_ai.capabilities().get("agents") or ())
+
+
+engine_prepsession.SESSIONS.ai_connected = _ai_connected
 
 
 def _dependency_event_sink(ctx: "ProjectCtx", extra=None):
@@ -11521,6 +11646,26 @@ def api_ai_endpoint_migrate(pid):
     return jsonify(engine_ai.capabilities(refresh=True))
 
 
+@app.post("/api/ai/endpoints/models")
+def api_ai_endpoint_models():
+    """「从服务商获取」型号：对一条接口 `GET {base_url}/v1/models`（5 s 超时，成功结果缓存一天）。
+
+    只在用户点按钮时调用，设置页渲染不碰网络。`id` 指向已存接口时缺的 `base_url` / `api_key`
+    用已存值补；永远 200：拿不到就 `source: "none"` + 原因码，界面退回预设 / 手填的型号。"""
+    body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        body = {}
+    out = engine_ai_providers.live_models(
+        str(body.get("id") or "") or None,
+        str(body.get("base_url") or "") or None,
+        str(body.get("api_key") or "") or None,
+        refresh=bool(body.get("refresh")),
+    )
+    resp = jsonify(out)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.post("/api/ai/endpoints/active")
 def api_ai_endpoint_active():
     """选中某个 agent 当前使用的接口；id 为空字符串 = 回到 CLI 自带登录态。"""
@@ -11632,13 +11777,13 @@ def _ai_run_impl():
                 {"session": known["session"], "script": known.get("script") or "", "deduped": True}
             )
     path = safe_resolve(body.get("id", ""))
-    info = current_registry().for_stem(path.stem)
+    disk_stem, info = _disk_panel(path)
     if info is None:
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
         ), 404
     context = {
-        "stem": path.stem,
+        "stem": disk_stem,
         "gid": body.get("gid"),
         "label": body.get("label"),
         "overrides": body.get("overrides"),

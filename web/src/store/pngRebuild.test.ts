@@ -14,11 +14,13 @@ import { useEnvStore } from './envStore'
 import { GATE_CANCEL_GRACE_MS, rebuildEditableFromScript } from './pngRebuild'
 
 const probe = vi.fn()
+const stemApi = vi.fn()
 vi.mock('@/lib/api', async (original) => ({
   ...(await original<typeof import('@/lib/api')>()),
   probeScript: (...a: unknown[]) => probe(...a),
   fetchRuntimeAssets: vi.fn().mockResolvedValue({ assets: [] }),
   fetchPanels: vi.fn().mockResolvedValue({ figures_dir: '', panels: [] }),
+  fetchPanelStem: (...a: unknown[]) => stemApi(...a),
   engineRender: vi.fn().mockRejectedValue(new Error('no render in this test')),
 }))
 vi.mock('./figureSnapshotInvalidation', () => ({}))
@@ -34,6 +36,12 @@ const pngPanel = (): PanelObject => ({
   id: 'p', type: 'panel', fileId: 'out/same.png', fileKind: 'raster', script: 'fig.py', figureFrame: 1,
   nativeW: 50, nativeH: 40, pxW: 400, pxH: 320, x: 10, y: 12, w: 50, h: 40, overrides: [],
 })
+// 后端按 fileId 给的权威 stem（`Registry.artifact_stem`）；缺省 = 文件名 stem，null = 取不到
+const backendStem = (stem: string | null = 'same') =>
+  stemApi.mockImplementation(async (id: string) => {
+    if (stem === null) throw new Error('no stem')
+    return { id, stem }
+  })
 const S = () => useDocumentStore.getState()
 const panels = () => S().doc.objects.filter((o): o is PanelObject => o.type === 'panel')
 
@@ -49,6 +57,8 @@ beforeEach(async () => {
   await S().switchDocument(emptyProject(), 'rebuild-test')
   S().commit(literal('seed'), (d) => { d.objects.push(pngPanel()) })
   useDocumentStore.setState({ past: [], future: [] })
+  stemApi.mockReset()
+  backendStem()
 })
 
 describe('rebuild as editable figure (ADR 0139 PR1)', () => {
@@ -81,6 +91,19 @@ describe('rebuild as editable figure (ADR 0139 PR1)', () => {
     probe.mockResolvedValue(ok([desc('other'), desc('same')]))
     expect(await rebuildEditableFromScript('p')).toBe('rebuilt')
     expect(panels().map((p) => p.fileId)).toEqual(['out/same.png', 'runtime:fig.py#same'])
+  })
+  it('后端给的权威 stem 是 same-2：按它建对图，不按文件名 stem（same）（#1251）', async () => {
+    backendStem('same-2')
+    probe.mockResolvedValue(ok([desc('same'), desc('same-2')]))
+    expect(await rebuildEditableFromScript('p')).toBe('rebuilt')
+    expect(panels().map((p) => p.fileId)).toEqual(['out/same.png', 'runtime:fig.py#same-2'])
+  })
+  it('取不到后端的权威 stem：不猜文件名 stem，交给选择器，不建任何图', async () => {
+    backendStem(null) // 取不到权威 stem（后端失败）
+    probe.mockResolvedValue(ok([desc('same')])) // 文件名 stem 恰好唯一匹配，也不自动选
+    expect(await rebuildEditableFromScript('p')).toBe('picker')
+    expect(useFigurePickerStore.getState().script).toBe('fig.py')
+    expect(panels()).toHaveLength(1)
   })
   it('a failed script run says so once and leaves the PNG untouched', async () => {
     probe.mockResolvedValue({ ...ok([]), error: { code: 'script_error', message: 'boom', params: {} } })

@@ -113,6 +113,25 @@ _EXTS_BY_LIB: dict[str, frozenset[str]] = {
 }
 
 
+#: Pillow「画图」证据（ADR 0143 修订 2026-10-23）：`ImageDraw.Draw` 对象上的绘制方法
+_PIL_DRAW_METHODS = frozenset(
+    {
+        "line",
+        "rectangle",
+        "ellipse",
+        "polygon",
+        "text",
+        "arc",
+        "pieslice",
+        "point",
+        "multiline_text",
+    }
+)
+_PIL_DRAW_FUNCS = frozenset({"PIL.ImageDraw.Draw"})
+_PIL_NEW_FUNCS = frozenset({"PIL.Image.new"})
+_PIL_FONT_PREFIX = "PIL.ImageFont."
+
+
 def _exts_of(lib: str) -> frozenset[str]:
     return _EXTS_BY_LIB.get(lib, _IMAGE_EXTS)
 
@@ -134,11 +153,107 @@ class _FileScan(ast.NodeVisitor):
         #: 库与路径成对记，后面挑「新写出的文件」时不能把 A 库的路径安到 B 库头上
         self.saves: list[tuple[str, str | None]] = []
         self._save_calls: list[ast.Call] = []
+        #: Pillow 画图证据（`finish` 后有效）：强 = 对 `ImageDraw.Draw` 对象调了绘制方法（或 Draw + ImageFont 画字）；
+        #: 弱 = `Image.new(...)` 的结果（赋给的名字 / 链式）本身被 `.save` / `.show`（不是 Image.open 的图片处理）
+        self.pil_draw_strong = False
+        self.pil_draw_weak = False
+        # 作用域 + 先后：名字绑定与调用都记下所在作用域 id 和源位置，接收者只认「同作用域、在它之前、最近一次」绑定
+        self._scope_stack: list[int] = [0]
+        self._n_scopes = 1
+        #: (作用域, 名字) → [(位置, 绑定值的 Call 或 None)]；None = 不是 Image.new / Draw 的绑定（形参、for、import、重赋…）
+        self._events: dict[tuple[int, str], list[tuple[tuple[int, int], ast.expr | None]]] = {}
+        self._decl_names: set[tuple[int, str]] = (
+            set()
+        )  # global / nonlocal 声明过的名字：分析不了，不算
+        self._value_of: dict[int, ast.expr] = {}  # 直接名字目标 → 它被赋的值
+        self._pos_of: dict[int, tuple[int, int]] = {}  # 目标名字 → 绑定生效位置（语句末尾）
+        self._call_site: dict[int, tuple[int, tuple[int, int]]] = {}
+
+    # ---- 作用域与绑定 ----
+    @property
+    def _scope(self) -> int:
+        return self._scope_stack[-1]
+
+    def _bind(self, name: str, pos: tuple[int, int], value: ast.expr | None = None) -> None:
+        self._events.setdefault((self._scope, name), []).append((pos, value))
+
+    def _mark(self, target: ast.expr, value: ast.expr, end: ast.stmt | ast.expr) -> None:
+        if isinstance(target, ast.Name):
+            self._value_of[id(target)] = value
+            if getattr(end, "end_lineno", None) is not None:
+                self._pos_of[id(target)] = (end.end_lineno or 0, end.end_col_offset or 0)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            pos = self._pos_of.get(id(node), (node.lineno, node.col_offset))
+            self._bind(node.id, pos, self._value_of.get(id(node)))
+
+    def _enter(self, visit_inner: list[ast.AST]) -> None:
+        self._scope_stack.append(self._n_scopes)
+        self._n_scopes += 1
+        for child in visit_inner:
+            self.visit(child)
+        self._scope_stack.pop()
+
+    def _visit_func(self, node: ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda) -> None:
+        a = node.args
+        for d in [*a.defaults, *(x for x in a.kw_defaults if x is not None)]:
+            self.visit(d)
+        if not isinstance(node, ast.Lambda):
+            for d in node.decorator_list:
+                self.visit(d)
+            if node.returns is not None:
+                self.visit(node.returns)
+            self._bind(node.name, (node.lineno, node.col_offset))
+        params = [*a.posonlyargs, *a.args, *a.kwonlyargs, *(x for x in (a.vararg, a.kwarg) if x)]
+
+        def bind_params() -> None:
+            for arg in params:
+                self._bind(arg.arg, (arg.lineno, arg.col_offset))
+
+        self._scope_stack.append(self._n_scopes)
+        self._n_scopes += 1
+        bind_params()
+        body = [node.body] if isinstance(node, ast.Lambda) else node.body
+        for child in body:
+            self.visit(child)
+        self._scope_stack.pop()
+
+    visit_FunctionDef = _visit_func
+    visit_AsyncFunctionDef = _visit_func
+    visit_Lambda = _visit_func
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        for d in [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]:
+            self.visit(d)
+        self._bind(node.name, (node.lineno, node.col_offset))
+        self._enter(list(node.body))
+
+    def visit_Global(self, node: ast.Global) -> None:
+        self._decl_names.update((self._scope, n) for n in node.names)
+
+    visit_Nonlocal = visit_Global  # type: ignore[assignment]
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name:
+            self._bind(node.name, (node.lineno, node.col_offset))
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        if node.name:
+            self._bind(node.name, (node.lineno, node.col_offset))
+        self.generic_visit(node)
+
+    def visit_MatchStar(self, node: ast.MatchStar) -> None:
+        if node.name:
+            self._bind(node.name, (node.lineno, node.col_offset))
 
     def visit_Import(self, node: ast.Import) -> None:
         for a in node.names:
             top = _top(a.name)
             self._note(top)
+            local = a.asname or top
+            self._bind(local, (node.lineno, node.col_offset))
             if a.asname:
                 self.bound[a.asname] = a.name
             else:
@@ -146,12 +261,38 @@ class _FileScan(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for a in node.names:
+            if a.name != "*":
+                self._bind(a.asname or a.name, (node.lineno, node.col_offset))
         if node.level == 0 and node.module:
             self._note(_top(node.module))
             for a in node.names:
                 if a.name != "*":
                     self.bound[a.asname or a.name] = f"{node.module}.{a.name}"
         self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        for t in node.targets:
+            self._mark(t, node.value, node)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        # `draw: ImageDraw.ImageDraw = ImageDraw.Draw(im)`：带类型标注的绑定同样要追踪（无值的纯标注不是绑定）
+        if node.value is not None:
+            self._mark(node.target, node.value, node)
+        self.generic_visit(node)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        self._mark(node.target, node.value, node)
+        self.generic_visit(node)
+
+    def visit_With(self, node: ast.With) -> None:
+        for item in node.items:
+            if item.optional_vars is not None:
+                self._mark(item.optional_vars, item.context_expr, item.context_expr)
+        self.generic_visit(node)
+
+    visit_AsyncWith = visit_With  # type: ignore[assignment]
 
     def _note(self, top: str) -> None:
         self.imports_tops.add(top)
@@ -162,6 +303,7 @@ class _FileScan(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         self._save_calls.append(node)
+        self._call_site[id(node)] = (self._scope, (node.lineno, node.col_offset))
         self.generic_visit(node)
 
     def _resolve(self, func: ast.expr) -> str | None:
@@ -175,8 +317,55 @@ class _FileScan(ast.NodeVisitor):
             return None
         return ".".join([self.bound[cur.id], *reversed(parts)])
 
+    def _bound_to(self, recv: ast.expr, call: ast.Call, funcs: frozenset[str]) -> bool:
+        """接收者是名字，且在调用所在作用域里、位置在调用之前的**最近一次**绑定是 `funcs` 里的调用
+        （形参、重赋成别的值、global / nonlocal 声明过的名字都不算）。"""
+        if not isinstance(recv, ast.Name):
+            return False
+        scope, pos = self._call_site[id(call)]
+        if (scope, recv.id) in self._decl_names:
+            return False
+        before = [e for e in self._events.get((scope, recv.id), []) if e[0] < pos]
+        if not before:
+            return False
+        value = max(before, key=lambda e: e[0])[1]
+        return isinstance(value, ast.Call) and self._resolve(value.func) in funcs
+
+    def _scan_pillow_drawing(self) -> None:
+        """Pillow 画图证据（纯 AST）：绘制方法的接收者必须是 `ImageDraw.Draw(...)` 的结果（同作用域内、在前的绑定 /
+        with-as / 直接链式调用），所以 `ax.text` / `plt.plot` 不会被当成 Pillow 绘制。"""
+        if not self.imports_pil:
+            return
+        has_draw_call = has_font = has_out = False
+        strong = False
+        for call in self._save_calls:
+            full = self._resolve(call.func)
+            if full in _PIL_DRAW_FUNCS:
+                has_draw_call = True
+            elif full is not None and full.startswith(_PIL_FONT_PREFIX):
+                has_font = True
+            func = call.func
+            if not isinstance(func, ast.Attribute):
+                continue
+            if func.attr in _PIL_DRAW_METHODS:
+                recv = func.value
+                if self._bound_to(recv, call, _PIL_DRAW_FUNCS) or (
+                    isinstance(recv, ast.Call) and self._resolve(recv.func) in _PIL_DRAW_FUNCS
+                ):
+                    strong = True
+            elif func.attr in ("save", "show"):
+                # 弱证据只认 `Image.new(...)` 的结果本身被 save/show（名字或直接链式），别的接收者的 `.save` 不算
+                recv = func.value
+                if self._bound_to(recv, call, _PIL_NEW_FUNCS) or (
+                    isinstance(recv, ast.Call) and self._resolve(recv.func) in _PIL_NEW_FUNCS
+                ):
+                    has_out = True
+        self.pil_draw_strong = strong or (has_draw_call and has_font)
+        self.pil_draw_weak = has_out
+
     def finish(self) -> None:
         """import 全部收齐之后再判调用（调用可能写在 import 之前的函数体里）。"""
+        self._scan_pillow_drawing()
         for call in self._save_calls:
             func = call.func
             full = self._resolve(func)
@@ -410,6 +599,7 @@ def detect(
     if scan.truncated or scan.problems:
         return None  # 反面判据（有没有 matplotlib）看不全：不说
     saves: list[tuple[str, str | None]] = []
+    mpl_any = draw_strong = draw_weak = False
     for rel in scan.files:
         text, problem = discover.read_source(root_p / rel)  # PEP 263 / BOM；解不出就不说
         if problem is not None or text is None:
@@ -420,15 +610,55 @@ def detect(
             return None
         fs = _FileScan()
         fs.visit(tree)
-        if fs.imports_mpl:
-            return None
         fs.finish()
+        mpl_any = mpl_any or fs.imports_mpl
+        draw_strong = draw_strong or fs.pil_draw_strong
+        draw_weak = draw_weak or fs.pil_draw_weak
         saves += fs.saves
     # 扫描只读 .py；编译扩展 / 命名空间包的内部看不见，已在 scan 里记入 problems 或不进 files，这里不再猜
+    if mpl_any:
+        # 旧版在这里一刀切不提示。现在「没捕获到 Figure」是运行事实（本函数只在 no_figure 结局后被问）：
+        # 只有 Pillow 绘制证据成立（强证据）才说，文件证据只认 Pillow 自己的保存
+        if not draw_strong:
+            return None
+        pil_saves = [(lib, p) for lib, p in saves if lib == LIB_PILLOW]
+        hit = _hint_from_files(
+            root_p, script, cwd_mode, run_started_at, sandbox_dir, pil_saves, False
+        )
+        return hit if hit is not None else _pillow_drawn_hint()
+    hit = _hint_from_files(
+        root_p, script, cwd_mode, run_started_at, sandbox_dir, saves, scan.dynamic
+    )
+    if hit is not None:
+        return hit
+    # 没有文件证据（动态路径 / 只 `.show()` / 文件还不存在）：AST 能证明这是 Pillow 画图脚本就说（维护者 2026-10-23：先跑再提示）。
+    # 强证据在动态 import 下仍可说（运行事实已经是没出 Figure）；弱证据（Image.new + save / show）看不全就不说
+    only_pillow_saves = all(
+        lib == LIB_PILLOW for lib, _p in saves
+    )  # 别的库也在存图：弱证据分不清是谁，不说
+    if draw_strong or (draw_weak and not scan.dynamic and only_pillow_saves):
+        return _pillow_drawn_hint()
+    return None
+
+
+def _pillow_drawn_hint() -> dict:
+    return {"kind": "raster_script", "library": LIB_PILLOW, "in_project": False, "path": None}
+
+
+def _hint_from_files(
+    root_p: Path,
+    script: str,
+    cwd_mode: str | None,
+    run_started_at: float | None,
+    sandbox_dir: str | None,
+    saves: list[tuple[str, str | None]],
+    dynamic: bool,
+) -> dict | None:
+    """旧判据：静态上有保存位图的调用 + 本次运行写出了文件的证据 → hint；否则 None。"""
     libs = [lib for lib, _p in saves]
     if not libs:
         return None
-    if scan.dynamic and not set(libs) <= _DYNAMIC_TOLERANT:
+    if dynamic and not set(libs) <= _DYNAMIC_TOLERANT:
         return None  # 动态 import 可能装进没扫过的 matplotlib：位图库脚本看不全就不说
     # 多个库时取先出现的；顺序按 LIBRARIES 稳定化，保证同一份脚本总给同一个答案
     fresh = [

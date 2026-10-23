@@ -1,0 +1,289 @@
+{
+  "version": 1,
+  "vendors": [
+    {
+      "id": "deepseek",
+      "label_key": "vendor.deepseek",
+      "brand": "DeepSeek",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://api.deepseek.com/anthropic",
+      "key_url": "https://platform.deepseek.com/api_keys",
+      "models_hint": [
+        "deepseek-v4-pro",
+        "deepseek-flash"
+      ],
+      "source": "https://api-docs.deepseek.com/guides/anthropic_api/",
+      "oauth": null,
+      "icon_key": "deepseek"
+    },
+    {
+      "id": "deepseek-codex",
+      "label_key": "vendor.deepseek",
+      "brand": "DeepSeek",
+      "region": "cn",
+      "agent": "codex",
+      "base_url": "https://api.deepseek.com",
+      "wire_api": "responses",
+      "key_url": "https://platform.deepseek.com/api_keys",
+      "models_hint": [
+        "deepseek-flash",
+        "deepseek-v4-pro"
+      ],
+      "oauth": null,
+      "source": "https://api-docs.deepseek.com/quick_start/agent_integrations/codex/",
+      "icon_key": "deepseek"
+    },
+    {
+      "id": "moonshot",
+      "label_key": "vendor.moonshot",
+      "brand": "Kimi",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://api.moonshot.cn/anthropic",
+      "key_url": "https://platform.kimi.com/console/api-keys",
+      "models_hint": [
+        "kimi-k3",
+        "kimi-k2.7-code"
+      ],
+      "source": "https://platform.kimi.com/docs/guide/claude-code-kimi",
+      "oauth": null,
+      "icon_key": "moonshot"
+    },
+    {
+      "id": "kimi-code",
+      "label_key": "vendor.kimiCode",
+      "brand": "Kimi Code",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://api.kimi.com/coding/",
+      "key_url": "https://www.kimi.com/code/console",
+      "key_hint_key": "vendorKey.kimiCode",
+      "models_hint": [
+        "kimi-for-coding"
+      ],
+      "source": "openclaw docs/providers/moonshot.md#L196",
+      "oauth": null,
+      "icon_key": "kimi"
+    },
+    {
+      "id": "kimi-code-codex",
+      "label_key": "vendor.kimiCode",
+      "brand": "Kimi Code",
+      "region": "cn",
+      "agent": "codex",
+      "base_url": "https://api.kimi.com/coding/v1",
+      "wire_api": "responses",
+      "key_url": "https://www.kimi.com/code/console",
+      "key_hint_key": "vendorKey.kimiCode",
+      "models_hint": [
+        "k3-256k",
+        "k3"
+      ],
+      "oauth": null,
+      "source": "https://www.kimi.com/code/docs/en/third-party-tools/codex",
+      "icon_key": "kimi"
+    },
+    {
+      "id": "zhipu",
+      "label_key": "vendor.zhipu",
+      "brand": "Zhipu GLM",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://open.bigmodel.cn/api/anthropic",
+      "key_url": "https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys",
+      "models_hint": [
+        "glm-5.3",
+        "glm-5.2"
+      ],
+      "source": "https://docs.bigmodel.cn/cn/guide/develop/claude",
+      "oauth": null,
+      "icon_key": "zhipu"
+    },
+    {
+      "id": "minimax",
+      "label_key": "vendor.minimax",
+      "brand": "MiniMax",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://api.minimaxi.com/anthropic",
+      "key_url": "https://platform.minimaxi.com/console/access?tab=api-keys",
+      "models_hint": [
+        "MiniMax-M3",
+        "MiniMax-M2.7"
+      ],
+      "source": "https://platform.minimax.cn/docs/guides/text-ai-coding-tools",
+      "oauth": null,
+      "icon_key": "minimax"
+    },
+    {
+      "id": "dashscope",
+      "label_key": "vendor.dashscope",
+      "brand": "Alibaba Bailian",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://dashscope.aliyuncs.com/apps/anthropic",
+      "key_url": "https://bailian.console.aliyun.com/?tab=model#/api-key",
+      "models_hint": [
+        "qwen3.7-plus",
+        "qwen3.8-max"
+      ],
+      "source": "https://help.aliyun.com/zh/model-studio/claude-code",
+      "oauth": null,
+      "icon_key": "bailian"
+    },
+    {
+      "id": "dashscope-coding",
+      "label_key": "vendor.dashscopeCoding",
+      "brand": "Alibaba Bailian Coding Plan",
+      "region": "cn",
+      "agent": "claude",
+      "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+      "key_url": "https://bailian.console.aliyun.com/",
+      "key_hint_key": "vendorKey.dashscopeCoding",
+      "models_hint": [
+        "qwen3.7-plus"
+      ],
+      "source": "https://help.aliyun.com/zh/model-studio/claude-code",
+      "oauth": null,
+      "icon_key": "bailian"
+    },
+    {
+      "id": "anthropic",
+      "label_key": "vendor.anthropic",
+      "brand": "Anthropic",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "",
+      "key_url": "",
+      "key_hint_key": "vendorKey.officialLogin",
+      "models_hint": [
+        "sonnet",
+        "opus",
+        "haiku"
+      ],
+      "source": "openclaw docs/providers/anthropic.md",
+      "oauth": null,
+      "icon_key": "anthropic"
+    },
+    {
+      "id": "openai",
+      "label_key": "vendor.openai",
+      "brand": "OpenAI",
+      "region": "global",
+      "agent": "codex",
+      "base_url": "",
+      "wire_api": "responses",
+      "key_url": "",
+      "key_hint_key": "vendorKey.officialLogin",
+      "models_hint": [],
+      "source": "openclaw docs/providers/openai.md",
+      "oauth": null,
+      "icon_key": "openai"
+    },
+    {
+      "id": "minimax-global",
+      "label_key": "vendor.minimaxGlobal",
+      "brand": "MiniMax Global",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "https://api.minimax.io/anthropic",
+      "key_url": "https://platform.minimax.io/console/access",
+      "models_hint": [
+        "MiniMax-M3",
+        "MiniMax-M2.7"
+      ],
+      "source": "openclaw docs/providers/minimax.md#L136",
+      "oauth": null,
+      "icon_key": "minimax"
+    },
+    {
+      "id": "zai",
+      "label_key": "vendor.zai",
+      "brand": "Z.AI",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "https://api.z.ai/api/anthropic",
+      "key_url": "https://z.ai/manage-apikey/apikey-list",
+      "key_hint_key": "vendorKey.zai",
+      "models_hint": [
+        "glm-5.3",
+        "glm-5.2"
+      ],
+      "source": "openclaw docs/providers/zai.md#L91",
+      "oauth": null,
+      "icon_key": "zai"
+    },
+    {
+      "id": "synthetic",
+      "label_key": "vendor.synthetic",
+      "brand": "Synthetic",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "https://api.synthetic.new/anthropic",
+      "key_url": "https://synthetic.new",
+      "models_hint": [
+        "hf:MiniMaxAI/MiniMax-M3"
+      ],
+      "source": "openclaw docs/providers/synthetic.md#L18",
+      "oauth": null,
+      "icon_key": "synthetic"
+    },
+    {
+      "id": "vercel-ai-gateway",
+      "label_key": "vendor.vercelAiGateway",
+      "brand": "Vercel AI Gateway",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "https://ai-gateway.vercel.sh",
+      "key_url": "https://vercel.com/docs/ai-gateway/authentication-and-byok/authentication",
+      "models_hint": [
+        "anthropic/claude-opus-4.6"
+      ],
+      "source": "openclaw docs/providers/vercel-ai-gateway.md#L17",
+      "oauth": null,
+      "icon_key": "vercel"
+    },
+    {
+      "id": "opencode-go",
+      "label_key": "vendor.opencodeGo",
+      "brand": "OpenCode Go",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "https://opencode.ai/inference/go/anthropic",
+      "key_url": "https://opencode.ai/v2/docs/console/go/",
+      "key_hint_key": "vendorKey.opencodeGo",
+      "models_hint": [],
+      "source": "openclaw docs/providers/opencode-go.md#L115",
+      "oauth": null,
+      "icon_key": "opencode"
+    },
+    {
+      "id": "custom-claude",
+      "label_key": "vendor.customClaude",
+      "brand": "Custom (Anthropic-compatible)",
+      "region": "custom",
+      "agent": "claude",
+      "base_url": "",
+      "key_url": "",
+      "models_hint": [],
+      "source": "Tavotto 内置：用户自填",
+      "oauth": null,
+      "icon_key": "custom"
+    },
+    {
+      "id": "custom-codex",
+      "label_key": "vendor.customCodex",
+      "brand": "Custom (OpenAI Responses-compatible)",
+      "region": "custom",
+      "agent": "codex",
+      "base_url": "",
+      "wire_api": "responses",
+      "key_url": "",
+      "models_hint": [],
+      "source": "Tavotto 内置：用户自填",
+      "oauth": null,
+      "icon_key": "custom"
+    }
+  ]
+}

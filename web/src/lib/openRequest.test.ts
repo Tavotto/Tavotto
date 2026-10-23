@@ -184,6 +184,34 @@ describe('applyOpenRequest', () => {
     expect(obj.fileId).toBe('Fig1.pdf')
   })
 
+  describe('同脚本里两张图写同 stem 的不同文件（#1251）', () => {
+    // 注册表：panel.png 是甲（stem panel）、panel.pdf 是乙（stem panel-2）；后端给 pdf 面板发 stem
+    const two = () => [panel('panel.png'), panel('panel.pdf', { stem: 'panel-2' })]
+    const opened = async (stem: string) => {
+      useAssetStore.setState({ load: vi.fn(async () => setPanels(two())) } as never)
+      const out = await applyOpenRequest({ stem })
+      const objs = useDocumentStore.getState().doc.objects as { fileId: string }[]
+      return { out, files: objs.map((o) => o.fileId) }
+    }
+
+    it('open=panel 落到甲（panel.png），不是同名的 panel.pdf', async () => {
+      expect(await opened('panel')).toEqual({ out: 'placed', files: ['panel.png'] })
+    })
+
+    it('open=panel-2 落到乙（panel.pdf）的磁盘面板，不走运行期素材', async () => {
+      expect(await opened('panel-2')).toEqual({ out: 'placed', files: ['panel.pdf'] })
+    })
+
+    it('老链接 / 老后端（面板没有 stem 字段）：仍按文件名 stem，矢量优先', async () => {
+      useAssetStore.setState({
+        load: vi.fn(async () => setPanels([panel('Fig1.png'), panel('Fig1.pdf')])),
+      } as never)
+      await applyOpenRequest({ stem: 'Fig1' })
+      const obj = useDocumentStore.getState().doc.objects[0] as { fileId: string }
+      expect(obj.fileId).toBe('Fig1.pdf')
+    })
+  })
+
   it('项目不同才切项目——同项目绝不调 open（会把画布清空）', async () => {
     const open = vi.fn(async () => ({}) as never)
     const load = vi.fn(async () => setPanels([panel('Fig1.pdf')]))

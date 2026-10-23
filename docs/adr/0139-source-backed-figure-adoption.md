@@ -307,3 +307,10 @@ manifest 带 `modified_after_save: true` + `save_moment_unavailable: <闭集原�
   （manifest 加两个可选字段，老前端原样忽略）。
 - 存后改了又重绘一次的盲区（§八）依旧：判据没报，就不会用快照。
 - 回归看护：`tests/test_save_moment.py`、`tests/test_modified_after_save.py`、`tests/test_script_backed_policy.py`。
+
+## 修订（2026-10-22）：磁盘文件 → 图按「谁写的」解析（#1251）
+
+「同 stem 但不是同一次保存的 PNG / PDF：不按 stem 绑定」在 #1250 之后对**捕获**成立（两张图各以 `panel` / `panel-2` 登记、原件按各自存过的格式绑定），
+但对**打开磁盘文件**不成立：`panel.pdf` 仍按文件名 stem 落到 `panel`。注册表现在按脚本记 `artifacts`（文件 → stem），
+`Registry.for_artifact` 先查它再退回按 stem，所以打开 `panel.pdf` 得到乙，编辑 / 写回 / 基线都归乙。细则见
+`docs/rules/backend/registry-discovery-and-probe.md`「磁盘文件 → 图」。
