@@ -273,12 +273,14 @@ def _plan_line_width(el: dict, profile: dict, scale: float) -> list[tuple] | Non
     return [(prop, value, round(eff, 3), best)]
 
 
-def _font_entries(manifest: dict, profile: dict) -> list[dict]:
+def _font_entries(manifest: dict, profile: dict, scale: float) -> list[dict]:
     """manifest 里一切可见的带字号的 `(gid, prop, role, 当前脚本值)`。
 
     图例本体的 `fontsize` 是设置器，预检判的是图例里**画出来的条目文字**
     （`preflight.legend_entry_sizes`）：改的也要是同一个量——取离图例区间最远的那条条目
     当「当前值」，整组改（`fontsize` 覆盖会写到全部条目）。没有画出来的条目就不登记。
+    「离区间最远」按**页面上的字号**（脚本值 × `scale`）比，与预检和 `_plan_fonts` 同一把尺：按脚本值比的话，
+    缩放 0.5 时 17 / 10 pt 的两条（页面上 8.5 / 5 pt）会挑中 17、判它已合规而不修，5 pt 那条一直留着（Codex #1366 P2）。
     """
     legend = profile.get("legend_policy") or {}
     llo, lhi = _num(legend.get("min_font_size_pt")), _num(legend.get("max_font_size_pt"))
@@ -296,7 +298,7 @@ def _font_entries(manifest: dict, profile: dict) -> list[dict]:
             if not sizes or not _has(el, "fontsize"):
                 continue
             if llo is not None and lhi is not None:
-                v = max(sizes, key=lambda x: max(llo - x, x - lhi))
+                v = max(sizes, key=lambda x: max(llo - x * scale, x * scale - lhi))
             else:
                 v = sizes[0]
         else:
@@ -342,7 +344,7 @@ def _plan_fonts(
     （轴标题 / 标题）还大，上层跟着抬到同一档：用户要的是「字号合规」，不是
     「刻度比轴标题还醒目」。上层被自己的上限挡住时就停在上限，不越界。
     """
-    entries = _font_entries(manifest, profile)
+    entries = _font_entries(manifest, profile, scale)
     eff = {(e["gid"], e["prop"]): e["size"] * scale for e in entries}
     new: dict[tuple[str, str], tuple[float, str]] = {}
     out: list[dict] = []

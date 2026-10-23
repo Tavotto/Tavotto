@@ -92,6 +92,19 @@ def test_legend_is_fixed_by_its_drawn_entries_not_the_container_setter():
     )
 
 
+def test_scaled_legend_picks_the_worst_entry_on_the_page_not_in_script_points():
+    """缩放 0.5：条目 17 / 10 pt 画在页面上是 8.5 / 5 pt。按脚本值比会挑 17（离 8–9 远）、而它页面上
+    8.5 已合规 → 不出补丁，5 pt 那条一直留着（Codex #1366 P2）。要按页面字号挑 10。"""
+    m = _manifest(
+        _el("a.legend", "legend", fontsize=10.0),
+        _el("a.legend.texts_0", "legend_text", fontsize=17.0),
+        _el("a.legend.texts_1", "legend_text", fontsize=10.0),
+    )
+    plan = specfix.plan(m, profiles.load(), scale=0.5, targets=[("legend-font-size", "a.legend")])
+    assert _change(plan, "a.legend", "fontsize")["before"] == 5.0  # 页面上的字号（10 × 0.5）
+    assert _value(plan, "a.legend", "fontsize") == 17.0  # 页面 8.5 pt / 0.5
+
+
 def test_empty_interval_is_skipped_not_forced():
     p = profiles.load()
     p["legend_policy"] = {**p["legend_policy"], "max_font_size_pt": 8.0}  # 8.5 起才过绝对下限
