@@ -63,7 +63,16 @@ export type PrepButton = 'run' | 'openRun' | 'runAnyway' | 'runAgain' | 'retry' 
 export type PrepTone = 'busy' | 'ok' | 'bad' | 'mute' | null
 
 /** 卡片主区里除标题外要摆出来的那一块（它就是这一步要做的事，不是收起的详情） */
-export type PrepSlot = 'workdir' | 'args' | 'install' | 'progress' | 'input' | 'figures' | 'ready' | null
+export type PrepSlot =
+  | 'workdir'
+  | 'args'
+  | 'install'
+  | 'progress'
+  | 'python_change'
+  | 'input'
+  | 'figures'
+  | 'ready'
+  | null
 
 export interface PrepView {
   /** 稳定的状态名（`data-prep-state`）：e2e / 单测按它断言，不按文案 */
@@ -135,9 +144,13 @@ const find = <K extends PreparationRequirement['kind']>(
 ): Extract<PreparationRequirement, { kind: K }> | undefined =>
   report.requirements.find((r) => r.kind === kind) as Extract<PreparationRequirement, { kind: K }> | undefined
 
+/** 账本里的执行尝试（去掉「自动换 Python」那种非执行条目） */
+export const runAttempts = (report: PreparationReport | null | undefined): PreparationAttempt[] =>
+  (report?.attempt_history ?? []).filter((a): a is PreparationAttempt => a.kind !== 'python_changed')
+
 /** 当前这一次尝试在账本里的那一条（没有就取最后一条）；老后端没有账本 = undefined */
 export const currentAttempt = (report: PreparationReport): PreparationAttempt | undefined => {
-  const all = report.attempt_history ?? []
+  const all = runAttempts(report)
   return all.find((a) => a.attempt_id === report.provider.attempt_id) ?? all[all.length - 1]
 }
 
@@ -145,7 +158,7 @@ export const currentAttempt = (report: PreparationReport): PreparationAttempt | 
 export const fellBack = (report: PreparationReport): boolean => {
   const current = currentAttempt(report)
   // 只看**本次运行**（账本按 run 分组，历史里更早一次运行的回退不算）
-  return (report.attempt_history ?? []).some(
+  return runAttempts(report).some(
     (a) => current !== undefined && a.run === current.run && a.profile === 'native' && a.changed.includes('profile'),
   )
 }
@@ -332,12 +345,25 @@ function fromReport(report: PreparationReport, entry: PrepEntry, ctx: PrepContex
         step: 1,
         tone: 'mute',
       })
-    case 'preparing_environment':
+    case 'preparing_environment': {
+      // 版本不合、正在自动另建合适版本的环境（ADR 0114 修订 2026-10-23）：一句话 + 进度 + 停止，不问用户
+      const pc = report.python_change
+      if (pc && pc.state === 'running') {
+        const download = pc.base === 'private' && pc.download_bytes > 0
+        return view(
+          'python_change',
+          download ? 'pythonChangeDownload' : 'pythonChange',
+          { ...v, version: pc.to, size: Math.max(1, Math.round(pc.download_bytes / 1048576)) },
+          { kind: 'background' },
+          { ghost: has(report, 'cancel') ? 'stop' : null, tone: 'busy', slot: 'python_change' },
+        )
+      }
       return view('preparing', 'preparing', v, { kind: 'background' }, {
         ghost: has(report, 'cancel') ? 'stop' : null,
         tone: 'busy',
         slot: 'progress',
       })
+    }
     case 'ready_to_run': {
       // 来源事实（Import Origin PR4/PR6，只有计数与闭集原因码）：有 import 没有可信的安装名时不说「可以运行了」——
       // 带预填的（后端数在 `confirmable` 里）让用户确认包名；其余只说来源还没法确定，主按钮仍是报告里的运行（改口成「仍然运行」）
@@ -597,7 +623,7 @@ export const finishedWithFigures = (report: PreparationReport | null | undefined
  */
 export function nativeFallbackNote(report: PreparationReport | null): { noWriteback: boolean } | null {
   if (!finishedWithFigures(report)) return null
-  const history = report?.attempt_history ?? []
+  const history = runAttempts(report)
   if (history.length === 0) return null
   const run = Math.max(...history.map((a) => a.run))
   const last = history.filter((a) => a.run === run).at(-1)

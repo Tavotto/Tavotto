@@ -242,6 +242,18 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     runtime_input: { id: 'req-1', index: 1, input_kind: 'input', secret: false },
   },
   preparing: { phase: 'preparing_environment', outcome: { kind: 'running' }, actions: [action('cancel')] },
+  pythonChange: {
+    phase: 'preparing_environment',
+    outcome: { kind: 'running', reason: 'python_change' },
+    actions: [action('cancel')],
+    python_change: { from: '3.14', to: '3.12', base: 'system', download_bytes: 0, state: 'running', stage: 'creating', done: 0, total: 0, code: '' },
+  },
+  pythonChangeDownload: {
+    phase: 'preparing_environment',
+    outcome: { kind: 'running', reason: 'python_change' },
+    actions: [action('cancel')],
+    python_change: { from: '3.9', to: '3.13', base: 'private', download_bytes: 25304407, state: 'running', stage: 'downloading', done: 5242880, total: 25304407, code: '' },
+  },
   env: {
     phase: 'awaiting_confirmation',
     requirements: [
@@ -3170,5 +3182,88 @@ describe('智能修复（ADR 0148）：每张失败卡都有「✦ 使用你的 
       const text = JSON.stringify([ws.btn.aiFix, ws.line.feedback, ws.line.aiUnavailable])
       expect(text).not.toMatch(/执行器|CLI|agent/i)
     }
+  })
+})
+
+describe('版本不合自动换 Python（ADR 0114 修订 2026-10-23）：一句话 + 进度 + 停止，不问用户', () => {
+  const change = (over: Partial<NonNullable<PreparationReport['python_change']>> = {}, extra: Partial<PreparationReport> = {}) =>
+    report({ ...STATES.pythonChange, python_change: { ...STATES.pythonChange.python_change!, ...over }, ...extra })
+
+  it('系统 Python：「正在换成 Python 3.12…」，阶段一句 + 不定态进度条 + 文字「停止」；没有主按钮之外的第二件事', async () => {
+    await mount()
+    await openWith(change())
+    expect(panel().dataset.prepState).toBe('python_change')
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在换成 Python 3.12…')
+    expect(panel().querySelector('[data-python-change-line]')?.textContent).toBe('正在创建新的运行环境…')
+    expect(panel().querySelector('[data-prep-progress]')).not.toBeNull()
+    expect(panel().querySelector('[data-prep-stop]')).not.toBeNull()
+    expect(visibleSentenceCount(panel())).toBeLessThanOrEqual(1)
+    // 只讲「连接/换成」，不出现「执行器」
+    expect(panel().textContent).not.toContain('执行器')
+  })
+
+  it('私有 Python 要下载：标题如实说约多少 MB；下载那一段说已下载字节并画确定的进度条（百分比）', async () => {
+    await mount()
+    await openWith(report(STATES.pythonChangeDownload))
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在换成 Python 3.13（下载约 24 MB）…')
+    expect(panel().querySelector('[data-python-change-line]')?.textContent).toBe('已下载 5 / 24 MB')
+    const bar = panel().querySelector('[role="progressbar"]') as HTMLElement | null
+    expect(bar?.getAttribute('aria-valuenow')).toBe('21')
+  })
+
+  it('已就位 / 本地缓存的私有 Python（下载字节为 0）不说"下载约…"', async () => {
+    await mount()
+    await openWith(change({ base: 'private', stage: 'launching' }))
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('正在换成 Python 3.12…')
+    expect(panel().querySelector('[data-python-change-line]')?.textContent).toBe('正在启动 Python…')
+  })
+
+  it('「停止」认领报告里的 cancel 动作（会话里的取消，后端把它转给换环境的事务）', async () => {
+    await mount()
+    await openWith(change())
+    mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'cancelled', observation_seq: 2 }) })
+    await act(async () => (panel().querySelector('[data-prep-stop]') as HTMLButtonElement).click())
+    expect(mockAct.mock.calls[0][1]).toMatchObject({ action_id: 'act-cancel' })
+  })
+
+  it('完成后照常出图：卡片回到出图的句子，详情里留一行「换成了 Python 3.12」，运行记录不把它当一次执行', async () => {
+    await mount()
+    await openWith(
+      report({
+        ...STATES.completed,
+        python_change: { from: '3.14', to: '3.12', base: 'system', download_bytes: 0, state: 'done', stage: 'installing', done: 0, total: 0, code: '' },
+        attempt_history: [
+          { run: 1, seq: 1, attempt_id: 'a1', profile: 'safe', interpreter: 'i', launch: 'l', cause: '', changed: [], outcome: 'failed', code: 'project_env_unsupported_python', declined: '' },
+          { kind: 'python_changed', run: 1, from: '3.14', to: '3.12', base: 'system', download_bytes: 0, outcome: 'succeeded', code: '' },
+          { run: 1, seq: 2, attempt_id: 'a2', profile: 'safe', interpreter: 'j', launch: 'l', cause: 'python_changed', changed: ['interpreter'], outcome: 'succeeded', code: '', declined: '' },
+        ],
+      }),
+    )
+    expect(panel().dataset.prepState).not.toBe('python_change')
+    expect(panel().querySelector('[data-python-change-line]')).toBeNull()
+    await toggleDetails()
+    expect(details()?.querySelector('[data-prep-row="python-changed"]')?.textContent).toBe('换成了Python 3.12')
+    // 运行记录只数执行：两次执行，不是三条
+    expect(details()?.querySelectorAll('[data-prep-row="history"]').length).toBe(2)
+  })
+
+  it('en-US：同一套状态用英文说，且同样没有"executor"', async () => {
+    await i18n.changeLanguage('en-US')
+    try {
+      await mount()
+      await openWith(report(STATES.pythonChangeDownload))
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('Switching to Python 3.13 (about 24 MB to download)…')
+      expect(panel().querySelector('[data-python-change-line]')?.textContent).toBe('5 / 24 MB downloaded')
+      expect(panel().textContent?.toLowerCase()).not.toContain('executor')
+    } finally {
+      await i18n.changeLanguage('zh-CN')
+    }
+  })
+
+  it('老后端没有 python_change / 非换版本的准备中状态：仍是原来的"正在安装…"', async () => {
+    await mount()
+    await openWith(report(STATES.preparing))
+    expect(panel().dataset.prepState).toBe('preparing')
+    expect(panel().querySelector('[data-prep-python-change]')).toBeNull()
   })
 })

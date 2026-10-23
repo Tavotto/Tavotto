@@ -5583,6 +5583,8 @@ export default interface Resources {
           "unknown": "脚本的参数解析器不接受这些参数"
         },
         "prompt": "脚本的提问",
+        "pythonChanged": "换成了",
+        "pythonChangedTo": "Python {{version}}",
         "script": "脚本",
         "unlinked": "此前带其他参数生成的 {{names}} 已不再关联，用原参数再运行一次即可恢复。",
         "usedBy": "用的是",
@@ -5685,6 +5687,8 @@ export default interface Resources {
         "originConfirm_other": "有 {{count}} 个库要你确认包名",
         "originUnknown_other": "有 {{count}} 个库的来源还没法确定",
         "preparing": "正在安装…",
+        "pythonChange": "正在换成 Python {{version}}…",
+        "pythonChangeDownload": "正在换成 Python {{version}}（下载约 {{size}} MB）…",
         "ready": "可以运行了",
         "readyProject": "可以运行了，项目自带的环境会在运行时检查",
         "rejected": "设置变了，已刷新",
@@ -5756,6 +5760,18 @@ export default interface Resources {
         "pendingMany_other": "{{count}} 个绘图脚本待准备"
       },
       "progress": "进行中",
+      "pythonChange": {
+        "downloadBytes": "已下载 {{done}} / {{total}} MB",
+        "stage": {
+          "creating": "正在创建新的运行环境…",
+          "downloading": "正在下载 Python…",
+          "extracting": "正在解压 Python…",
+          "installing": "正在安装所需的包…",
+          "launching": "正在启动 Python…",
+          "preparing": "正在准备…",
+          "verifying": "正在检查…"
+        }
+      },
       "rasterHint": {
         "line": "这个脚本是用 {{library}} 直接画成图片的，不是 Matplotlib 图",
         "why": "可以把它生成的图片文件加进来排版；想逐个元素编辑，需要改成用 Matplotlib 画。"

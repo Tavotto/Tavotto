@@ -50,6 +50,7 @@ from . import (
     nativesession,
     pool,
     preparation,
+    pyversionfix,
     rasterhint,
     registry,
     scriptargs,
@@ -548,6 +549,7 @@ def derive(facts: dict) -> dict:
         awaiting_input 这次尝试的脚本此刻有没有在等一个 `input()` 的回答
         dependency     None | {running, state, code, joined, reason}（T06）：比最近一次执行尝试更晚的那次
                        依赖准备；`running` 含「装完了、正在按新环境重新检查」
+        python_change  None | {running}：版本不合、正在自动另建合适版本的受管环境（`pyversionfix`）
 
     纯函数、不读时钟、不读 provider：黄金向量 `tests/golden/preparation_session_vectors.json`
     逐条钉它的输出。provider 的状态保留原权威——这里只**投影**，不另造一份可运行判据。
@@ -571,6 +573,11 @@ def derive(facts: dict) -> dict:
                 code=str(dep.get("code") or "") or "dependency_install_failed",
                 reason="dependency_preparation",
             )
+    change = facts.get("python_change")
+    if change is not None and change["running"]:
+        # 版本不合：正在另建一个合适版本的受管环境（ADR 0114 修订 2026-10-23）。这次尝试已经失败、收尾还没做完，
+        # 但用户看到的不是「失败」而是「正在换成 Python x」
+        return _result(PHASE_PREPARING_ENVIRONMENT, OUTCOME_RUNNING, reason="python_change")
     attempt = facts.get("attempt")
     if attempt is None or (facts.get("stale") and not attempt_running(attempt)):
         # 没有（当前修订的）尝试，或检查那一刻的世界已经变了而没有尝试在跑：phase 由检查 / 失效决定，
@@ -774,6 +781,31 @@ class _DepAttempt:
 
 
 @dataclasses.dataclass
+class _PyChange:
+    """一次「版本不合自动换 Python」（`pyversionfix`）：会话里至多一份进行中的；终局保留到本次运行结束，报告据此说
+    「换成了 Python 3.12」。进度字段只有闭集阶段与字节数，没有路径。"""
+
+    plan: pyversionfix.PythonChangePlan
+    state: str = "running"  # running | done | failed | cancelled
+    stage: str = ""
+    done: int = 0
+    total: int = 0
+    code: str = ""
+    #: 用户点取消时置上（`act` 的取消分支）；`pyversionfix.apply_python_change` 轮询它
+    cancel: threading.Event = dataclasses.field(default_factory=threading.Event, repr=False)
+
+    def public(self) -> dict:
+        return {
+            **self.plan.public(),
+            "state": self.state,
+            "stage": self.stage,
+            "done": self.done,
+            "total": self.total,
+            "code": self.code,
+        }
+
+
+@dataclasses.dataclass
 class _Observation:
     """`SessionService._observe_locked` 的结果（私有）：给 `report` 与意图的推进共用。"""
 
@@ -952,6 +984,10 @@ class Session:
     ledger: execpolicy.AttemptLedger = dataclasses.field(default_factory=execpolicy.AttemptLedger)
     #: 用户在本次运行里点过取消：之后到的失败不再触发任何额外执行（回退也不）
     cancel_requested: bool = False
+    #: 最近一次自动换 Python 版本（`pyversionfix`）；None = 没发生过
+    python_change: _PyChange | None = None
+    #: 已经自动换过版本的那次运行（`ledger.run`）：每次运行至多换一次，防循环
+    python_change_run: int = 0
     lock: threading.RLock = dataclasses.field(default_factory=threading.RLock, repr=False)
 
     def public_target(self) -> dict:
@@ -1366,6 +1402,8 @@ class SessionService:
                     # 取消之后不再有任何额外执行（ADR 0127）：标记先于取消落下，回退的最后一刻核对它；
                     # 回退可能已经把第二次尝试接上了，取消要落在**最新**的那次上，不是动作当初指着的那次
                     sess.cancel_requested = True
+                    if sess.python_change is not None and sess.python_change.state == "running":
+                        sess.python_change.cancel.set()  # 正在另建环境：停在能停的地方（代事务提交点之前）
                     for aid in dict.fromkeys(
                         [action.attempt_id]
                         + (
@@ -1784,6 +1822,15 @@ class SessionService:
                 fallback = self._plan_fallback(sess, attempt, done_plan, done_result, code, desktop)
             except Exception:  # noqa: BLE001 — 回退的判断出错不能改写这次尝试已经发生的终局
                 LOG.exception("执行回退的判断失败 %s", done_plan.script)
+            # 版本不合（ADR 0114 修订 2026-10-23）：不问，直接另建合适版本的受管环境并重跑一次。调用点只有这一处——
+            # 将来 fixrouter 的 `remedy.kind == 'change_python'` 也从这里接（`_plan_python_change` 换个入口即可）
+            rerun = None
+            try:
+                change = self._plan_python_change(sess, done_plan, done_result, desktop)
+                if change is not None:
+                    rerun = self._change_python_and_replan(sess, attempt, change, done_plan)
+            except Exception:  # noqa: BLE001 — 换版本出错不能改写这次尝试已经发生的终局
+                LOG.exception("自动换 Python 版本失败 %s", done_plan.script)
             # native 成功的启动记录 + 运行默认值已在 app 的成功收口里同一次写入提交（`launchctx.basis_of`）——这里不再补写
             with sess.lock:
                 sess.ledger.close(attempt.attempt_id, outcome, code)
@@ -1800,6 +1847,15 @@ class SessionService:
                         attempt,
                         fallback,
                         code,
+                        launch=launch,
+                        finalize=finalize,
+                        desktop=desktop,
+                    )
+                if rerun is not None:
+                    self._start_python_rerun(
+                        sess,
+                        attempt,
+                        rerun,
                         launch=launch,
                         finalize=finalize,
                         desktop=desktop,
@@ -1989,6 +2045,156 @@ class SessionService:
         if sess.intent is not None and attempt.attempt_id in sess.intent.attempts:
             sess.intent.attempts.append(nplan.plan_id)
             sess.intent.note("fallback", nplan.plan_id, self._clock())
+        sess.dependency_delta = None
+
+    # ---- 版本不合：自动换 Python（ADR 0114 修订 2026-10-23）----
+    def _plan_python_change(
+        self, sess: Session, done_plan, done_result, desktop: bool
+    ) -> "pyversionfix.PythonChangePlan | None":
+        """锁外、只读：这次失败是不是「版本不合」且推得出要换成哪个版本。每次运行至多一次；非桌面窗口发起的运行
+        不换（改磁盘上的环境是桌面用户的授权边界，同 native 的来源闸门）；用户已取消不换。"""
+        if not desktop or done_plan.target != TARGET_SCRIPT:
+            return None
+        if done_result.status != preparation.STATUS_ERROR:
+            return None
+        if sess.cancel_requested or done_result.cancel_requested_at is not None:
+            return None
+        if sess.python_change_run == sess.ledger.run:
+            return None
+        adoption = (done_plan.environment or {}).get("adoption") or {}
+        failure = pyversionfix.failure_from_report(
+            script=str(done_plan.script or ""),
+            error=done_result.error,
+            not_used=adoption.get("not_used"),
+        )
+        if failure is None:
+            return None
+        return pyversionfix.plan_python_change(failure, sess.project_root)
+
+    def _change_python_and_replan(
+        self, sess: Session, attempt: _Attempt, change, done_plan
+    ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
+        """执行线程上、锁外：把会话标成「正在换版本」（这次尝试保持未收尾，phase = preparing_environment）→ 阻塞执行
+        `pyversionfix.apply_python_change`（进度写回会话并通知）→ 成功就按新环境重新规划，回 `(新计划, 它的执行身份)`；
+        失败 / 取消 / 重新规划不可用回 None（原失败结局保留，一行用户代码都不再跑）。"""
+        state = _PyChange(plan=change)
+        with sess.lock:
+            sess.python_change = state
+            sess.python_change_run = sess.ledger.run
+            sess.ledger.note_python_change(
+                from_version=change.from_version,
+                to_version=change.to_version,
+                base=change.base,
+                download_bytes=change.download_bytes,
+                outcome=execpolicy.OUTCOME_PENDING,
+            )
+        self._notify(sess)
+
+        def progress(snap: dict) -> None:
+            with sess.lock:
+                state.stage = str(snap.get("stage") or "")
+                state.done = int(snap.get("done") or 0)
+                state.total = int(snap.get("total") or 0)
+            self._notify(sess)
+
+        try:
+            result = pyversionfix.apply_python_change(change, progress, state.cancel)
+        except Exception:  # noqa: BLE001 — 换版本的事务不许让执行线程静默死掉
+            LOG.exception("自动换 Python 版本异常 %s", done_plan.script)
+            result = {"ok": False, "code": pyversionfix.ERROR_FAILED}
+        ok = bool(result.get("ok"))
+        code = str(result.get("code") or "")
+        cancelled = state.cancel.is_set() or code == pyversionfix.ERROR_CANCELLED
+        with sess.lock:
+            state.state = "done" if ok else ("cancelled" if cancelled else "failed")
+            state.code = code
+            sess.ledger.note_python_change(
+                from_version=change.from_version,
+                to_version=change.to_version,
+                base=change.base,
+                download_bytes=change.download_bytes,
+                outcome=(
+                    execpolicy.OUTCOME_SUCCEEDED
+                    if ok
+                    else (execpolicy.OUTCOME_CANCELLED if cancelled else execpolicy.OUTCOME_FAILED)
+                ),
+                code=code,
+            )
+        if not ok:
+            return None
+        try:
+            nplan = self._plan_of(sess.project_id, sess.project_root, sess.target)
+        except Exception:  # noqa: BLE001 — 规划失败 = 这次不重跑，原结局保留
+            LOG.exception("换 Python 之后重新规划失败 %s", done_plan.script)
+            return None
+        if nplan.script != done_plan.script or nplan.script_revision != done_plan.script_revision:
+            return None
+        if nplan.required_input or any(c["status"] != CHECK_OK for c in checks_of(nplan)):
+            return None
+        if preparation.stale_reason(nplan) is not None:
+            return None
+        key = spec_key_of(nplan)
+        nplan = dataclasses.replace(
+            nplan,
+            plan_id=f"prep-{uuid.uuid4().hex}",
+            created_at=self._clock(),
+            retry_of=done_plan.plan_id,
+            retry_cause="python_changed",
+            retry_changed=(execpolicy.CHANGED_INTERPRETER,),
+        )
+        return nplan, key
+
+    def _start_python_rerun(
+        self,
+        sess: Session,
+        attempt: _Attempt,
+        rerun,
+        *,
+        launch,
+        finalize,
+        desktop: bool = False,
+    ) -> None:
+        """会话锁内：换完 Python 之后把重跑作为**同一会话的下一个 attempt** 交出去，最后一刻的复核（取消 / 取代 / 项目
+        重开）与 `_start_fallback` 同一套——任何一项不成立就保持原结局，一行用户代码都不再跑。"""
+        nplan, key = rerun
+        if sess.attempts[-1] is not attempt or sess.cancel_requested:
+            return
+        intent = sess.intent
+        if intent is not None and intent.status == INTENT_CANCELLED:
+            return
+        if self._prep.superseded(attempt.attempt_id):
+            return
+        if attempt.epoch != nativesession.REGISTRY.project_epoch(sess.project_root):
+            return
+        second = _Attempt(
+            attempt_id=nplan.plan_id,
+            action_id=attempt.action_id,
+            config_revision=sess.config_revision,
+            created_at=self._clock(),
+            profile=nplan.execution,
+            epoch=attempt.epoch,
+        )
+        sess.ledger.record(nplan.plan_id, key, cause="python_changed")
+        self._prep.register(nplan, project_epoch=attempt.epoch)
+        sess.plan = (
+            nplan  # 会话的计划跟上（不加修订，同"点运行时采用了项目环境"）：报告里的环境是换后的
+        )
+        sess.fingerprint = _fingerprint(nplan)
+        sess.attempts.append(second)
+        done = self._done_callback(sess, second, launch=launch, finalize=finalize, desktop=desktop)
+        found = self._prep.get(nplan.plan_id, sess.project_id)
+        try:
+            if found is None or found[1].status != preparation.STATUS_PENDING:
+                raise RuntimeError("换 Python 之后的重跑没有进入待执行")
+            launch(nplan, done)
+        except Exception:  # noqa: BLE001 — 没交出去：撤回这次尝试，原结局保留
+            LOG.exception("换 Python 之后的重跑没能交给执行线程 %s", nplan.script)
+            sess.attempts.remove(second)
+            sess.ledger.discard(nplan.plan_id)
+            return
+        if sess.intent is not None and attempt.attempt_id in sess.intent.attempts:
+            sess.intent.attempts.append(nplan.plan_id)
+            sess.intent.note("python_changed", nplan.plan_id, self._clock())
         sess.dependency_delta = None
 
     # ---- 持续运行意图（P05b，ADR 0124）----
@@ -2322,6 +2528,16 @@ class SessionService:
                 (sess.intent.status, sess.intent.reason, sess.intent.waiting_on)
                 if sess.intent is not None
                 else None,
+                # 换 Python 版本的阶段与下载进度（按 5% 分桶：不让每个下载块都推进一次序号）
+                (
+                    sess.python_change.state,
+                    sess.python_change.stage,
+                    (sess.python_change.done * 20 // sess.python_change.total)
+                    if sess.python_change.total
+                    else 0,
+                )
+                if sess.python_change is not None
+                else None,
             )
             if signature != sess.signature:
                 sess.signature = signature
@@ -2422,6 +2638,11 @@ class SessionService:
                 # 这个会话里每次真实执行尝试的账本（V2，ADR 0127）：执行语义 · 原因码 · 与上次相比变了什么 · 结局。
                 # 只有摘要与闭集码，没有路径 / argv / 环境值
                 "attempt_history": sess.ledger.history(),
+                # 版本不合时自动换 Python（ADR 0114 修订 2026-10-23）：换成了什么 / 基础来源 / 下载字节 / 进度 / 结局；
+                # None = 这个会话里没发生过。没有路径
+                "python_change": (
+                    sess.python_change.public() if sess.python_change is not None else None
+                ),
                 "plan": sess.plan.to_payload(),
                 "result": result.to_payload() if result else None,
             }
@@ -2452,6 +2673,11 @@ class SessionService:
             "attempt": attempt_fact,
             "awaiting_input": bool(awaiting_input) and attempt_fact is not None,
             "dependency": dep_fact,
+            "python_change": (
+                {"running": True}
+                if sess.python_change is not None and sess.python_change.state == "running"
+                else None
+            ),
         }
         derived = derive(facts)
         if attempt_gone:

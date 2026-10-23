@@ -481,7 +481,7 @@ def remove(project: str | Path) -> bool:
 
 
 # --------------------------------------------------------------- 创建
-def base_python() -> str | None:
+def base_python(*, within: tuple[tuple[int, int], tuple[int, int]] | None = None) -> str | None:
     """能用来建 venv 的基础解释器；一个都没有回 None。
 
     直接复用 `bootstrap.find_base_python()`——它已经排除了内置 runtime
@@ -494,23 +494,57 @@ def base_python() -> str | None:
     界面提供受管修复 → 建 venv → 下载装 matplotlib 与那个包 → **最后**才在
     体检那一步报「这个 Python 不在支持范围内」。用户白等一场下载。
     把判据提到选解释器那一刻，代价从「几十 MB + 几分钟」降到一次版本探测。
+
+    `within=((lo_major, lo_minor), (hi_major, hi_minor))`（半开区间，ADR 0114 修订 2026-10-23「版本不合自动换」）：
+    再收窄到脚本 / 项目要的小版本范围，且在范围内**挑最高的**（默认形态仍是候选清单里的第一个合格者）。
     """
+    pick = base_pick(within=within, with_version=False)
+    return pick[0] if pick else None
+
+
+def base_pick(
+    *, within: tuple[tuple[int, int], tuple[int, int]] | None = None, with_version: bool = True
+) -> tuple[str, str] | None:
+    """`base_python` 的带版本形态：回 `(解释器路径, "主.次")`；没有回 None。选择逻辑只此一处。
+    `with_version=False`（`base_python` 用）时默认形态不为取版本多起一个子进程，版本串为空。"""
     from . import bootstrap, projectenv
 
-    def _supported(_path: str, version: str) -> bool:
+    def _minor(version: str) -> tuple[int, int] | None:
         try:
             parts = tuple(int(x) for x in version.strip().split(".")[:2])
         except ValueError:
+            return None
+        return (parts[0], parts[1]) if len(parts) == 2 else None
+
+    def _supported(_path: str, version: str) -> bool:
+        parts = _minor(version)
+        if parts is None or not (projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE):
             return False
-        return bool(parts) and projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE
+        return within is None or within[0] <= parts < within[1]
+
+    found: list[tuple[tuple[int, int], str]] = []
+
+    def _accept(path: str, version: str) -> bool:
+        ok = _supported(path, version)
+        if ok and within is not None:
+            # 要「范围内最高」：收集全部合格者，不在第一个就停
+            found.append((_minor(version) or (0, 0), path))
+            return False
+        return ok
 
     try:
-        found = bootstrap.find_base_python(accept=_supported)
+        first = bootstrap.find_base_python(accept=_accept)
     except (OSError, ValueError) as exc:  # 探测本身不该让请求 500
         LOG.warning("基础解释器探测失败: %s", exc)
-        found = None
-    if found:
-        return found
+        first = None
+    if within is not None and found:
+        best = max(range(len(found)), key=lambda i: (found[i][0], -i))
+        version, path = found[best]
+        return path, f"{version[0]}.{version[1]}"
+    if first:
+        if not with_version:
+            return first, ""
+        return first, ".".join(python_version_of(first).split(".")[:2])
     # 这台机器上没有合格的基础解释器 → **已经供应好的**私有 Python（U05，ADR 0063）。
     # 只认磁盘上已就位的那份，这里一个字节都不下载：下载要经计划里明示的授权
     # （`deprepair` 的事务在 `provision_private` 为真时才去取），探测路径上不联网。
@@ -519,7 +553,13 @@ def base_python() -> str | None:
     source = privatepython.source_for()
     if source is None or not privatepython.offered(source):
         return None
-    return privatepython.python_of(source)
+    private = privatepython.python_of(source)
+    if not private:
+        return None
+    private_minor = _minor(source.version)
+    if within is not None and (private_minor is None or not within[0] <= private_minor < within[1]):
+        return None
+    return private, ".".join(source.version.split(".")[:2])
 
 
 def _run(argv: list[str], timeout: int) -> tuple[int, str]:

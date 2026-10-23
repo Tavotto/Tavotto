@@ -37,7 +37,7 @@ import { envNotUsedSentence, visibleNotUsed } from '@/lib/envRejectionText'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
-import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, targetName, withAiUnavailable, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
+import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, runAttempts, targetName, withAiUnavailable, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
@@ -1194,6 +1194,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
   // 「这一步」：参数块按 key 摆在固定位置——在 ready 与参数卡之间切换时输入框不重建、焦点不丢
   const slot: ReactNode[] = []
   if (view.slot === 'progress') slot.push(<Progress key="progress" />)
+  if (view.slot === 'python_change') slot.push(<PythonChangeLine key="python-change" report={report} />)
   if (view.slot === 'workdir' && workdirPayload) {
     slot.push(<WorkdirChoice key="workdir" payload={workdirPayload} choice={workdir} onChoose={setWorkdir} />)
   }
@@ -1406,6 +1407,32 @@ function WorkdirChoice({
         </button>
       )}
     </fieldset>
+  )
+}
+
+/**
+ * 自动换 Python 版本时卡片里的那一行进度（ADR 0114 修订 2026-10-23）：下载那一段说字节数并画一根确定的进度条，其余阶段
+ * 一句话 + 不定态的条。完成后不留（主句已经换成出图的句子），「换成了 Python x」在详情里。
+ */
+const PYTHON_CHANGE_STAGES = new Set(['downloading', 'verifying', 'extracting', 'launching', 'preparing', 'creating', 'installing'])
+
+function PythonChangeLine({ report }: { report: PreparationReport | null }) {
+  useTranslation('workspace')
+  const pc = report?.python_change
+  if (!pc || pc.state !== 'running') return null
+  const MB = 1048576
+  const downloading = pc.stage === 'downloading' && pc.total > 0
+  const pct = downloading ? Math.min(100, Math.round((pc.done / pc.total) * 100)) : null
+  const text = downloading
+    ? pt('pythonChange.downloadBytes', { done: Math.round(pc.done / MB), total: Math.round(pc.total / MB) })
+    : pt(`pythonChange.stage.${PYTHON_CHANGE_STAGES.has(pc.stage) ? pc.stage : 'preparing'}`)
+  return (
+    <div className="flex flex-col gap-1.5" data-prep-python-change data-python-change-stage={pc.stage}>
+      <p className="text-sm tabular-nums text-ink-2" data-python-change-line>
+        {text}
+      </p>
+      <ProgressBar pct={pct} label={pt('progress')} data-prep-progress />
+    </div>
   )
 }
 
@@ -1679,7 +1706,14 @@ function SessionDetails({ entry, view }: { entry: PrepEntry; view: PrepView }) {
       {(report?.unlinked_stems ?? []).length > 0 && finishedWithFigures(report) && (
         <p data-prep-unlinked>{pt('detail.unlinked', { names: listJoin(report.unlinked_stems ?? []) })}</p>
       )}
-      {(report?.attempt_history?.length ?? 0) > 0 && <RunHistory history={report?.attempt_history ?? []} />}
+      {report?.python_change && report.python_change.state === 'done' && (
+        <Row
+          k={pt('detail.pythonChanged')}
+          v={pt('detail.pythonChangedTo', { version: report.python_change.to })}
+          attr="python-changed"
+        />
+      )}
+      {runAttempts(report).length > 0 && <RunHistory history={runAttempts(report)} />}
       {report?.target.script && <Row k={pt('detail.script')} v={<span className="font-mono">{report.target.script}</span>} attr="script" />}
       {env?.kind && (
         <Row

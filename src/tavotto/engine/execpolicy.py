@@ -115,6 +115,11 @@ OUTCOMES = (OUTCOME_PENDING, OUTCOME_SUCCEEDED, OUTCOME_FAILED, OUTCOME_BLOCKED,
 #: 账本容量（所有 run 合计）。
 MAX_RECORDS = 16
 
+#: 账本里非执行尝试的条目种类：换 Python 版本（`engine/pyversionfix.py`，ADR 0114 修订 2026-10-23）。
+#: 它不是一次「执行」——不占回退预算、不参与 `current()` / `count()`——只是同一次运行里发生过的一件事，
+#: 报告里要看得见「换成了 Python 3.12」。执行尝试的条目没有 `kind` 键（老形状不变）。
+KIND_PYTHON_CHANGED = "python_changed"
+
 
 # ---------------------------------------------------------------- 策略
 def fallback_enabled() -> bool:
@@ -236,6 +241,8 @@ class AttemptRecord:
     code: str = ""
     #: 本次本可回退（原因是 blocked）却没有回退的理由（`REASONS` 里的闭集码）；空 = 不适用 / 已回退
     declined: str = ""
+    #: 账本内的先后序（与换版本条目共用一条时间线；不对外）
+    tick: int = 0
 
     def public(self) -> dict:
         return {
@@ -259,6 +266,9 @@ class AttemptLedger:
         self._max = max_records
         self._records: list[AttemptRecord] = []
         self._run = 0
+        self._tick = 0
+        #: 非执行条目（换 Python 版本）：有界，与 `_records` 按 tick 合并成一条时间线
+        self._changes: list[dict] = []
 
     def begin_run(self) -> int:
         """一次新的用户发起的运行：预算与「已经回退过」都从头算。"""
@@ -282,10 +292,59 @@ class AttemptLedger:
                 spec=spec,
                 cause=cause if prev is not None else "",
                 changed=changed_between(prev.spec if prev else None, spec),
+                tick=self._next_tick(),
             )
             self._records.append(rec)
             del self._records[: -self._max]
             return dataclasses.replace(rec)
+
+    def _next_tick(self) -> int:
+        self._tick += 1
+        return self._tick
+
+    def note_python_change(
+        self,
+        *,
+        from_version: str,
+        to_version: str,
+        base: str,
+        download_bytes: int,
+        outcome: str,
+        code: str = "",
+    ) -> None:
+        """记一条「自动换 Python 版本」（只有主.次版本号、基础来源类别、下载字节、结局与稳定码；没有路径）。
+        同一次运行（run）至多一条在进行；`outcome` 在 `OUTCOMES` 里（pending → succeeded / failed / cancelled）。"""
+        if outcome not in OUTCOMES:
+            raise ValueError(f"尝试结局不在闭集里: {outcome!r}")
+        with self._lock:
+            # 同一 run 里已有一条 pending 的就原地改写（进行中 → 终局），不堆条目
+            for entry in reversed(self._changes):
+                if entry["run"] == self._run and entry["outcome"] == OUTCOME_PENDING:
+                    entry.update(outcome=outcome, code=str(code or ""))
+                    return
+            self._changes.append(
+                {
+                    "kind": KIND_PYTHON_CHANGED,
+                    "run": self._run,
+                    "from": str(from_version or ""),
+                    "to": str(to_version or ""),
+                    "base": str(base or ""),
+                    "download_bytes": int(download_bytes or 0),
+                    "outcome": outcome,
+                    "code": str(code or ""),
+                    "tick": self._next_tick(),
+                }
+            )
+            del self._changes[: -self._max]
+
+    def python_changes(self) -> list[dict]:
+        """这次 run 里的换版本条目（公开形态）。"""
+        with self._lock:
+            return [
+                {k: v for k, v in e.items() if k != "tick"}
+                for e in self._changes
+                if e["run"] == self._run
+            ]
 
     def close(self, attempt_id: str, outcome: str, code: str = "") -> None:
         if outcome not in OUTCOMES:
@@ -317,9 +376,12 @@ class AttemptLedger:
             return [dataclasses.replace(r) for r in self._records if r.run == self._run]
 
     def history(self) -> list[dict]:
-        """全部（有界）尝试的公开投影。"""
+        """全部（有界）条目的公开投影，按发生先后：执行尝试 + 换 Python 版本（后者带 `kind`）。"""
         with self._lock:
-            return [r.public() for r in self._records]
+            merged = [(r.tick, r.public()) for r in self._records] + [
+                (e["tick"], {k: v for k, v in e.items() if k != "tick"}) for e in self._changes
+            ]
+            return [item for _tick, item in sorted(merged, key=lambda x: x[0])]
 
     def count(self) -> int:
         """当前 run 里真实尝试的次数。"""

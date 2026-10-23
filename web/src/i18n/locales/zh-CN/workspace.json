@@ -950,7 +950,9 @@
       "depsCancelled": "安装已停止",
       "attention": "还有一件事要处理",
       "originConfirm_other": "有 {{count}} 个库要你确认包名",
-      "originUnknown_other": "有 {{count}} 个库的来源还没法确定"
+      "originUnknown_other": "有 {{count}} 个库的来源还没法确定",
+      "pythonChange": "正在换成 Python {{version}}…",
+      "pythonChangeDownload": "正在换成 Python {{version}}（下载约 {{size}} MB）…"
     },
     "btn": {
       "later": "稍后",
@@ -1099,7 +1101,9 @@
       },
       "nativeFallback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。",
       "nativeFallbackNoWriteback": "安全模式拦下了脚本的文件操作，已自动换成按真实文件运行。这样出的图，改动不会写回脚本。",
-      "notUsedTitle": "没用到的环境"
+      "notUsedTitle": "没用到的环境",
+      "pythonChanged": "换成了",
+      "pythonChangedTo": "Python {{version}}"
     },
     "fact": {
       "finished": "脚本执行完成",
@@ -1271,6 +1275,18 @@
       "root_python_mismatch": "这份 {{root}} 是为另一个 Python 版本编译的，和这个环境的 Python 版本不一致，所以没用它。",
       "root_python_mismatch_versions": "这份 {{root}} 是为 Python {{built}} 编译的，这个环境是 Python {{env}}，所以没用它。",
       "root_needs_msvc": "{{root}} 在 Windows 上要装 Visual Studio 的 C++ 工具才能运行，这台电脑还没装，所以没用它。"
+    },
+    "pythonChange": {
+      "downloadBytes": "已下载 {{done}} / {{total}} MB",
+      "stage": {
+        "downloading": "正在下载 Python…",
+        "verifying": "正在检查…",
+        "extracting": "正在解压 Python…",
+        "launching": "正在启动 Python…",
+        "preparing": "正在准备…",
+        "creating": "正在创建新的运行环境…",
+        "installing": "正在安装所需的包…"
+      }
     }
   },
   "canvasMenu": {

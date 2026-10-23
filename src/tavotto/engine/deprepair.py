@@ -31,6 +31,7 @@ Tavotto 给出的仍然是一句 `ModuleNotFoundError` ——用户得先知道 
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import dataclasses
 import hashlib
@@ -581,7 +582,12 @@ def _managed_scope(root: str, kind: str) -> tuple[bool, dict | None, str]:
     if kind != TARGET_MANAGED:
         return False, None, ""
     managed_python = managedenv.python_of(root) or ""
-    return not managed_python, _private_python_offer(), managed_python
+    # 钉了基础解释器（换 Python 版本）：就算已有 active 代，也是在它旁边另建一代
+    return (
+        (not managed_python) or bool(pinned_base_python()),
+        _private_python_offer(),
+        managed_python,
+    )
 
 
 def offer_impact(root: str, joint, kind: str, python: str, scope_policy: str = "") -> dict | None:
@@ -845,8 +851,34 @@ def _probe_base_python() -> str | None:
     return found
 
 
+#: 「换 Python 版本」（`engine/pyversionfix.py`，ADR 0114 修订 2026-10-23）钉下的基础解释器：**线程局部**，
+#: 只在 `pinned_base()` 的 with 块里、同一线程上生效（计划与执行是同步的同一线程）。别的线程 / 别的请求
+#: 看到的永远是 `base_python()` 的常规结论，所以它不会漏到别的项目的计划里。
+_pin = threading.local()
+
+
+@contextlib.contextmanager
+def pinned_base(python: str):
+    """块内把受管环境新一代的基础解释器钉成 `python`：计划按它的 fresh venv 量事实、事务拿它建 venv。
+    仍然只往 Tavotto 自己的受管环境里建（目标永远是 `TARGET_MANAGED`），用户的环境一个字节不碰。"""
+    prev = getattr(_pin, "python", "")
+    _pin.python = str(python or "")
+    try:
+        yield
+    finally:
+        _pin.python = prev
+
+
+def pinned_base_python() -> str:
+    """此刻线程上钉着的基础解释器；没钉回空串。"""
+    return str(getattr(_pin, "python", "") or "")
+
+
 def base_python() -> str | None:
     """基础解释器（同步；没有回 None）。计划创建那条路上用它。"""
+    pinned = pinned_base_python()
+    if pinned:
+        return pinned
     with _lock:
         if _base_python_known:
             return _base_python
@@ -4024,6 +4056,12 @@ def private_python_target(project: str | Path, script: str) -> tuple[str, str, o
     这是干净机器上第一份计划的来源（U05 PR B）：没有它，`joint_target_for` 抛 `no_worker_python`、
     `depplan.plan(facts=None)` 是 `dependency_target_unavailable`——都不是「先下载再准备」这条路。"""
     root = str(Path(project))
+    pinned = pinned_base_python()
+    if pinned:
+        # 换 Python 版本：目标永远是受管环境（新建一代），事实按这个基础解释器的 fresh venv 量——
+        # 与干净机器同一个形状（缺什么 / 装什么都按将要新建的那一代，不按此刻跑不了脚本的那个解释器）
+        fresh = depplan.fresh_venv_facts(pinned, provided=depplan.adapter_distributions())
+        return (TARGET_MANAGED, fresh.python, fresh) if fresh is not None else None
     try:
         pool.resolve_worker_python(root, script=script)
         return None
@@ -4064,7 +4102,7 @@ def _run_env_ours(project: str | Path, facts: depplan.TargetFacts | None) -> boo
     """此刻跑脚本的环境是不是 Tavotto 自己的、坏了只能换一代而不是原地修（`depplan.plan(run_env_replaceable=)`）：受管环境的某一代、
     内置 runtime、还没落盘（替身事实）或刚由私有 Python 新建的一代。用户交给我们的系统解释器 / 本进程的解释器 / 任何别的路径都不是——
     项目声明里多出来的差集在那里只记录，不为它去换环境（能原样跑就不动，ADR 0114 §六）。"""
-    if facts is None or not facts.python:
+    if facts is None or not facts.python or pinned_base_python():
         return True
     python = facts.python
     if _is_managed_generation_path(project, python):

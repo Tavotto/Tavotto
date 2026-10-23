@@ -6237,6 +6237,8 @@ export interface PreparationAction {
  * 触发它的原因码 · 与上次相比变了什么 · 结局 · 本可回退却没回退的理由。全是闭集码与不可还原的摘要，没有路径 / argv / 环境值。
  */
 export interface PreparationAttempt {
+  /** 执行尝试没有 `kind`（与账本里的 `PythonChangeEntry` 区分的判别键） */
+  kind?: undefined
   /** 第几次用户发起的运行（新的运行动作重算预算） */
   run: number
   /** 在这次运行里的序号，从 1 起 */
@@ -6264,6 +6266,35 @@ export type RasterLibrary = 'pillow' | 'opencv' | 'imageio' | 'skimage' | 'plotl
  * 启动上下文摘要 · 触发原因码 · 与上次相比变了哪几维（`profile` / `interpreter` / `launch_context`）· 结局。
  * 只有摘要与闭集码，没有路径 / argv / 环境值。老后端没有 `attempt_history`。
  */
+/**
+ * 账本里「自动换 Python 版本」的一条（`execpolicy.AttemptLedger.note_python_change`，ADR 0114 修订 2026-10-23）：
+ * 不是一次执行，没有 `profile` / `attempt_id`；有 `kind` 区分。版本号只到 `主.次`，`base` 是基础解释器的来源类别。
+ */
+export interface PythonChangeEntry {
+  kind: 'python_changed'
+  run: number
+  from: string
+  to: string
+  base: 'system' | 'private'
+  download_bytes: number
+  outcome: 'pending' | 'succeeded' | 'failed' | 'blocked' | 'cancelled'
+  code: string
+}
+
+/** 报告顶层的 `python_change`：版本不合时自动另建合适版本的受管环境（进度 + 结局）。没有路径 */
+export interface PythonChange {
+  from: string
+  to: string
+  base: 'system' | 'private'
+  download_bytes: number
+  state: 'running' | 'done' | 'failed' | 'cancelled'
+  /** `downloading` | `verifying` | `extracting` | `launching`（私有 Python）· `preparing` | `creating` | `installing` | `verifying`（受管环境） */
+  stage: string
+  done: number
+  total: number
+  code: string
+}
+
 /** #1097 起的同一份账本记录（与 `PreparationAttempt` 同形） */
 export type PreparationAttemptRecord = PreparationAttempt
 
@@ -6312,7 +6343,9 @@ export interface PreparationReport {
   /** 运行意图（P05b）；老后端没有这个键 */
   intent?: PreparationRunIntent | null
   /** 这个会话里每次真实执行尝试的账本（V2，ADR 0127，有界）；老后端没有这个键 */
-  attempt_history?: PreparationAttempt[]
+  attempt_history?: (PreparationAttempt | PythonChangeEntry)[]
+  /** 版本不合时自动换 Python（ADR 0114 修订 2026-10-23）；没发生过 / 老后端 = null 或缺省 */
+  python_change?: PythonChange | null
   /** 环境：只是一个可展示的事实（ADR 0114 §六），不要求用户动作；老后端没有 */
   environment?: PreparationEnvironmentFact | null
   /** 正在等的那一问（只有 id / 序号 / 读取方式 / 要不要掩码；提示与答案走 `/api/script_input/*`） */
