@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { useUiStore } from '@/store/uiStore'
 
-/** 舞台灯整段多长（ms）：光束落下 · 停一秒 · 散开。与 `index.css` 的 `--animate-spotlight-*` 同长 */
-export const SPOTLIGHT_MS = 2200
+/** 舞台灯整段多长（ms）：光束落下 ≈0.55 s · 停半秒 · 散开 ≈0.45 s（用户：停一秒太长）。与 `index.css` 的 `--animate-spotlight-*` 同长 */
+export const SPOTLIGHT_MS = 1500
 
 type Spot = { cx: number; cy: number; r: number; W: number; H: number }
 
@@ -14,7 +14,7 @@ const radius = (w: number, h: number) => Math.hypot(w, h) / 2 + 36
 
 /**
  * 定位之后的「舞台灯」（2026-10-23 用户提出，参照 iMessage 的「聚光灯」效果）：问题面板点「定位」，
- * 画布整体暗下去、轻微失焦，一束柔光从斜上方落到目标上、收拢；停一秒后光散开、画面复原。不画任何描边。
+ * 画布整体暗下去、轻微失焦，一束柔光从斜上方落到目标上、收拢；停半秒后光散开、画面复原。不画任何描边。
  *
  * 两层，各管各的：
  * - **景深**（`data-spotlight-blur`）：光外轻微高斯模糊。动画只在带 `backdrop-filter` 的那一层自己身上

@@ -343,11 +343,11 @@
      不是 Tailwind 的 pulse——那条无限呼吸被门禁禁了（加载方言只有 sweep / 静态骨架 / shimmer / 转圈）；
      这是一次性的注意力信号，有限次数、走 token 曲线。 */
   --animate-attention: attention 900ms var(--ease-standard) 3;
-  /* 定位舞台灯（`canvas/IssueSpotlight`，参照 iMessage「聚光灯」）：光束落下 · 停一秒 · 散开（2200ms，
+  /* 定位舞台灯（`canvas/IssueSpotlight`，参照 iMessage「聚光灯」）：光束落下 · 停半秒 · 散开（1500ms，
      `SPOTLIGHT_MS` 同长），一次性、有限。景深层的关键帧直接动 backdrop-filter（祖先有 opacity / transform 时
      背后取不到，模糊失效）；光束层的缓动写在各关键帧里（落下 pop、散开 exit） */
-  --animate-spotlight-blur: spotlight-blur 2200ms var(--ease-standard) both;
-  --animate-spotlight-beam: spotlight-beam 2200ms linear both;
+  --animate-spotlight-blur: spotlight-blur 1500ms var(--ease-standard) both;
+  --animate-spotlight-beam: spotlight-beam 1500ms linear both;
 }
 
 /* @sfinterface/numbers 的两个时长钩子接到动效 token（宪法第七节：时长只来自 token）：
@@ -603,8 +603,8 @@
     -webkit-backdrop-filter: blur(0);
     backdrop-filter: blur(0);
   }
-  28%,
-  78% {
+  37%,
+  70% {
     -webkit-backdrop-filter: blur(2.5px);
     backdrop-filter: blur(2.5px);
   }
@@ -617,11 +617,11 @@
     transform: translate(calc(var(--spot-r) * -1.6), calc(var(--spot-r) * -2.4)) scale(1.8);
     animation-timing-function: var(--ease-pop);
   }
-  30% {
+  37% {
     opacity: 1;
     transform: none;
   }
-  78% {
+  70% {
     opacity: 1;
     transform: none;
     animation-timing-function: var(--ease-exit);
