@@ -205,7 +205,7 @@ function CopyAction({
       onClick={() => {
         const value = typeof text === 'function' ? text() : text
         void navigator.clipboard?.writeText(value).then(
-          () => useUiStore.getState().setStatus(msg(`contact.${toastKey}`, toastValues, 'dialogs')),
+          () => useUiStore.getState().setStatus(msg(`contact.${toastKey}`, toastValues, 'dialogs'), 'done'),
           () => {},
         )
       }}
@@ -342,7 +342,7 @@ export function ContactDialog() {
             label={cs('sentCopyNumber')}
             appearance="icon"
             feedback="toast"
-            onCopied={() => useUiStore.getState().setStatus(msg('contact.numberCopied', undefined, 'dialogs'))}
+            onCopied={() => useUiStore.getState().setStatus(msg('contact.numberCopied', undefined, 'dialogs'), 'done')}
           />}
       </span>
     </div>
