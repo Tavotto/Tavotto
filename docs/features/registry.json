@@ -826,6 +826,22 @@
       ]
     },
     {
+      "id": "export.location-picker",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "导出对话框的「位置」：显示家目录缩写后的路径，点「更改…」直接选文件夹，导出写到新位置",
+        "en-US": "Export dialog Location: shows a shortened path; Change… opens a folder picker and the export lands in the new folder"
+      },
+      "entry": "顶栏「导出」/ ⌘E → 输出 › 位置 › 更改…",
+      "e2e": [
+        {
+          "spec": "export-location.spec.ts",
+          "title": "导出位置：点「更改…」弹目录浏览器 → 选目录 → 位置更新 → 导出写到新目录"
+        }
+      ]
+    },
+    {
       "id": "keyboard.core-loop",
       "status": "active",
       "platform": "both",

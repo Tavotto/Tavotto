@@ -413,13 +413,10 @@ describe('信息架构：删掉的东西不许回来', () => {
     expect(group('checks').querySelector('[aria-label="严格核验产物"]')).not.toBeNull()
     // 没有一个收起的「高级」把它们藏起来
     for (const d of document.body.querySelectorAll('details')) expect(d.textContent).not.toContain('样式检查报告')
-    // 输出组里导出之前就看得见文件落到哪，「更改…」去设置 › 导出
+    // 输出组里导出之前就看得见文件落到哪；「更改…」直接弹选择文件夹（细节在 ExportLocationRow.test.tsx），不再跳设置页
     expect(group('output').querySelector('[data-export-location]')).not.toBeNull()
     await click(group('output').querySelector('[data-export-location-change]')!)
-    expect(useUiStore.getState().settingsOpen).toBe(true)
-    expect(useUiStore.getState().settingsSection).toBe('export')
-    // 设置压在导出上（dialogStack）：收起来，别把这一层栈带进后面的用例
-    await act(async () => useUiStore.getState().setSettingsOpen(false))
+    expect(useUiStore.getState().settingsOpen).toBe(false)
   })
 })
 

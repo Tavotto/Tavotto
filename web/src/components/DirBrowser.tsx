@@ -229,6 +229,7 @@ export function DirBrowser({
             }}
             placeholder={t('browser.pathPlaceholder')}
             aria-label={t('browser.pathLabel')}
+            data-dir-browser-path
             className="min-w-0 flex-1 font-mono"
             spellCheck={false}
           />

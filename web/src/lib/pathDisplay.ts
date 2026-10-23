@@ -11,3 +11,11 @@
 export function dirTail(dir: string): string {
   return dir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || dir
 }
+
+/**
+ * 把家目录缩成 `~`（macOS `/Users/<你>`、Linux `/home/<你>`、Windows `C:\Users\<你>`）。
+ * 只用于**显示**：全路径仍放在 title 里，不许消失。认不出家目录时原样返回。
+ */
+export function abbreviateHome(path: string): string {
+  return path.replace(/^(?:\/Users\/[^/]+|\/home\/[^/]+|[A-Za-z]:[\\/]Users[\\/][^\\/]+)(?=[\\/]|$)/, '~')
+}

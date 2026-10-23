@@ -302,6 +302,7 @@
     "groupOutput": "输出",
     "groupFormat": "格式",
     "groupChecks": "检查",
+    "locationPickTitle": "选择导出文件夹",
     "locationLabel": "位置",
     "locationDefault": "项目的导出目录",
     "locationChange": "更改…",

@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
-import { backendErrorText, patchProjectSettings } from '@/lib/api'
+import { backendErrorText } from '@/lib/api'
+import { applyProjectSettingsPatch } from '@/lib/projectSettingsPatch'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
 import { dirTail } from '@/lib/pathDisplay'
 import { useProjectStore } from '@/store/projectStore'
@@ -56,22 +57,10 @@ export function ProjectSettings() {
   // 后端只在明确写了 false 时才是「不许写回」：字段缺失 = 允许（老项目）
   const allowWriteBack = project?.settings?.allow_write_back !== false
 
-  const save = async (patch: Parameters<typeof patchProjectSettings>[0]) => {
+  const save = async (patch: Parameters<typeof applyProjectSettingsPatch>[0]) => {
     setError(null)
     try {
-      const res = await patchProjectSettings(patch)
-      useProjectStore.setState((s) =>
-        s.project
-          ? {
-              project: {
-                ...s.project,
-                settings: res.settings,
-                export_dir: res.export_dir,
-                backup_dir: res.backup_dir,
-              },
-            }
-          : s,
-      )
+      await applyProjectSettingsPatch(patch)
     } catch (e) {
       setError(backendErrorText(e))
     }

@@ -1,0 +1,83 @@
+/**
+ * 导出对话框「输出 › 位置」：导出之前就看得见文件会落到哪（至少两级、过长从左省略、家目录缩成 ~，
+ * 全路径在 title），点「更改…」**直接弹选择文件夹**——桌面版是系统原生选择器（`pickDirectory`），
+ * 浏览器版是服务器端目录浏览器（`DirBrowser`）。
+ *
+ * 选完改的是**项目的导出文件夹**（`project.settings.export_dir`，与设置页 › 项目 › 导出位置同一个字段，
+ * 同一条 `applyProjectSettingsPatch`）：后端导出就读它，没有「只这一次」的第二个通道；设置页里
+ * 「恢复默认」照旧能退回去。取消什么都不变。
+ */
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { backendErrorText } from '@/lib/api'
+import { isDesktop, pickDirectory } from '@/lib/desktop'
+import { abbreviateHome } from '@/lib/pathDisplay'
+import { applyProjectSettingsPatch } from '@/lib/projectSettingsPatch'
+import { t as translate } from '@/i18n'
+import { useProjectStore } from '@/store/projectStore'
+import { DirBrowser } from './DirBrowser'
+import { FormRow } from './FormRow'
+import { Button } from './ui/Button'
+
+const ex = (key: string) => translate(`export.${key}`, { ns: 'dialogs' })
+
+export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) {
+  useTranslation('dialogs')
+  const exportDir = useProjectStore((s) => s.project?.export_dir ?? null)
+  const [browsing, setBrowsing] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const choose = async (dir: string) => {
+    setError(null)
+    try {
+      await applyProjectSettingsPatch({ export_dir: dir })
+    } catch (e) {
+      setError(backendErrorText(e))
+    }
+  }
+  const change = async () => {
+    if (isDesktop()) {
+      const picked = await pickDirectory(ex('locationPickTitle'))
+      if (picked != null) await choose(picked) // 取消不是错误，什么都不变
+    } else {
+      setBrowsing(true)
+    }
+  }
+  return (
+    <>
+      <FormRow label={ex('locationLabel')}>
+        {/* dir=rtl：放不下时从左边省略、末尾两级（`…/项目/export`）始终在；两端的 U+200E 把路径钉在从左到右 */}
+        <span
+          data-export-location
+          dir="rtl"
+          className="min-w-0 flex-1 truncate text-left text-sm text-ink-2"
+          title={exportDir ?? undefined}
+        >
+          {exportDir ? '‎' + abbreviateHome(exportDir) + '‎' : ex('locationDefault')}
+        </span>
+        <Button variant="ghost" size="sm" data-export-location-change disabled={disabled} onClick={() => void change()}>
+          {ex('locationChange')}
+        </Button>
+      </FormRow>
+      {error && (
+        <FormRow>
+          <p data-export-location-error className="text-sm text-danger-content">
+            {error}
+          </p>
+        </FormRow>
+      )}
+      {browsing && (
+        <DirBrowser
+          mode="open"
+          title={ex('locationPickTitle')}
+          initialPath={exportDir ?? undefined}
+          onClose={() => setBrowsing(false)}
+          onPick={(path) => {
+            setBrowsing(false)
+            void choose(path)
+          }}
+        />
+      )}
+    </>
+  )
+}

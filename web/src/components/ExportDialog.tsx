@@ -55,6 +55,7 @@ import {
 import { ICON_SIZE } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { ExportZoomStage } from "./ExportZoomStage";
+import { ExportLocationRow } from "./ExportLocationRow";
 import { Checkbox } from "./ui/Checkbox";
 import { Segmented } from "./ui/Segmented";
 import {
@@ -168,7 +169,6 @@ import { FieldGroup, FormSection } from "./ui/FormSection";
 import { Notice } from "./ui/Notice";
 import { splitNoticeSentences } from "@/lib/noticeText";
 import { ProgressBar } from "./ui/ProgressBar";
-import { dirTail } from "@/lib/pathDisplay";
 
 
 /** 导出终局 toast 的主人：重开对话框 / 新一轮开始时撤掉 */
@@ -302,8 +302,6 @@ export function ExportDialog() {
   const cancelError = useExportStore((s) => s.cancelError);
   const cancelState = useExportStore((s) => s.cancelState);
   const editedDuringExport = useExportStore((s) => s.editedDuringExport);
-  /** 导出会落到哪个目录（后端说了算：`project.export_dir`）；导出之前就摆出来，改它在设置 › 导出 */
-  const exportDir = useProjectStore((s) => s.project?.export_dir ?? null);
 
   const [formats, setFormats] = useState<string[]>(
     () => readExportDefaults().formats,
@@ -1592,24 +1590,8 @@ export function ExportDialog() {
             </section>
             )}
 
-            {/* 2. 位置 —— 导出之前就看得见文件会落到哪（审计 §10.2 P0）；改它在设置 › 导出（这里只读） */}
-            <FormRow label={ex("locationLabel")}>
-              <span
-                data-export-location
-                className="min-w-0 flex-1 truncate font-mono text-sm text-ink-2"
-                title={exportDir ?? undefined}
-              >
-                {exportDir ? dirTail(exportDir) : ex("locationDefault")}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                data-export-location-change
-                onClick={() => useUiStore.getState().setSettingsOpen(true, "export")}
-              >
-                {ex("locationChange")}
-              </Button>
-            </FormRow>
+            {/* 2. 位置 —— 导出之前就看得见文件会落到哪（审计 §10.2 P0）；「更改…」直接弹选择文件夹 */}
+            <ExportLocationRow disabled={busy} />
           </FieldGroup>
         </FormSection>
 

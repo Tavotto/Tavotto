@@ -82,6 +82,12 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   「N 个成功，M 个失败」。逐个文件、每件的核验（已核验 / 未核验）、警告、失败原因、诊断都在默认折叠的「详情」里。**例外：核验未通过
   （`failed`）与警告不许只藏在详情里**——摘要行用一句说出数量（`resultInspectionFailed` / `resultWarnings`）并把语气升到 warn；
   「未核验」是常态，不上摘要。看护 `ExportDialog.test.tsx`「导出页改版」组。
+- **「位置」行直接选文件夹**（2026-10-23，b3 反馈）：`ExportLocationRow` 显示家目录缩成 `~` 的路径（`pathDisplay.abbreviateHome`，
+  放不下从左省略、末两级留着、title 是全路径、非等宽）；「更改…」不再跳设置页——桌面走原生 `pickDirectory`，浏览器走 `DirBrowser`
+  （`mode="open"`），选完经 `lib/projectSettingsPatch.applyProjectSettingsPatch` 写**项目的导出文件夹**（`project.settings.export_dir`，
+  与设置页 › 项目同一个字段、同一条写入链；后端导出只读它，没有「只这一次」的第二个通道，设置页「恢复默认」照旧能退回）。取消不变；
+  后端拒绝（目录不可用）一句话说原因；导出进行中按钮置灰。不碰 `src-tauri`（`pickDirectory` 沿用 `dialog:allow-open`）。
+  看护 `ExportLocationRow.test.tsx`、`e2e/export-location.spec.ts`（`@feature:export.location-picker`）。
 - **点了之后的回应不许在视口外，完成后不许还挂着「开始导出」**（2026-10-07，设计审计 §10.2 P0）：
   进度 / 撞名 / 拒绝 / 结果住在 `Dialog status` 那块**不随正文滚**的状态区（脚部正上方，
   `data-dialog-status`），不在可滚正文的末尾。这一回在对话框里导完（`done` / `partial` 且至少一件写出）

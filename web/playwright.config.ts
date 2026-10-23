@@ -124,6 +124,8 @@ export default defineConfig({
         'sync-overrides.spec.ts',
         // 导出对象头的「示意」标注与透明背景棋盘格（PR3）：英文标注更长，撑破对象头的话先在这里红
         'export-preview.spec.ts',
+        // 导出位置行（b3 反馈）：英文「Change…」更长、路径从左省略；语言无关写法，两种语言各走一遍
+        'export-location.spec.ts',
         // 素材卡 / 属性栏底部：英文文案更长，量盒子位置两种语言各一遍
         'inspector-assets.spec.ts',
         // 新手黄金路径（渐进式编辑 P06）：只认 data-* 锚点与落盘产物，不认显示文案——两种语言各走一遍
