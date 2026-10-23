@@ -2,6 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「进程与依赖边界（重要）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_install_locate.py`（`test_subcommands_run_without_flask_or_pymupdf`）、`tests/bridge/`、`tests/test_first_open_environment.py`
 
 - Flask 跑在 `.venv`（flask + packaging + RenderCore 的五个包：pikepdf / fonttools / uharfbuzz / pypdfium2 / pillow，
   **没有 matplotlib**）。

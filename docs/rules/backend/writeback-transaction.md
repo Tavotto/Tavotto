@@ -2,6 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「诊断与排障」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_write_back.py`、`test_worker_roundtrip.py` 末节、`web` 的 `WriteBackDialog.test.tsx`
 
 - 「写回原始文件」撞上 Windows 独占锁（PDF 被阅读器打开）回 409
   `code=file_locked`，带上是哪个文件、回滚结果如何，并清掉 `.updating`

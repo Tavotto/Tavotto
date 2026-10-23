@@ -3,6 +3,7 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「首次使用契约（2026-08-25，勿破坏）」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_codex_plugin.py`、`tests/test_codex_install_cli.py`
 
 - **普通用户安装绝不需要 clone 仓库**，也不需要 pnpm/npm/cargo/Tauri/前端构建/
   `run.sh`/测试套件/editable install。README 的「在 Codex 中第一次使用

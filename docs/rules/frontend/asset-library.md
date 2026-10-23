@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「素材库普通入口（2026-08-26，Compatibility Bridge Session 5）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scriptRunStore.test.ts`、`ScriptLibrary.test.tsx`、`AssetBrowser.runtime.test.tsx`、`AssetBrowser.tiff.test.tsx`、`lib/panelSrc.test.ts`、`projectSwitchAssets.test.ts`、`openRequest.test.ts`、`FigurePickerDialog.test.tsx`、`e2e/asset-library.spec.ts`、`projectSwitchDepRepair.test.ts`、`projectSwitchAi.test.ts`、`rebuildProgressId.golden.test.ts`
 
 素材面板分「图」（FileAsset + RuntimeFigureAsset 同一个 listbox，runtime
 卡带「运行时图」badge、cache 预览、stale 角标；重跑在卡片的右键 / ⇧F10 / ContextMenu 键菜单里的「重新运行」，不嵌在卡里；素材抽屉没有页脚，UI 2.0 第二轮 08）与「脚本」

@@ -2,6 +2,7 @@
 
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 决策与取舍见 `docs/adr/0097-feature-registry.md`。
+> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_feature_registry.py`、`node web/scripts/e2e-skip-scan.mjs --self-test`
 
 ## 是什么
 

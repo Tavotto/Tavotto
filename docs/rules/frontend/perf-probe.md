@@ -3,6 +3,7 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 完整背景与裁决在 `docs/adr/0075-drag-performance-probe.md`；给测试者 / 开发者的用法在
 > `docs/perf-probe-guide.md`。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`perf/core.test.ts`、`perf/synthetic.test.ts`、`perf/probeStore.test.tsx`、`e2e/perf-probe.spec.ts`、`tests/test_perf_probe.py`
 
 - **热路径只 import `perf/core.ts`**（叶子，不 import 任何 store）。编排、store 订阅、
   DOM 统计、报告组装在 `perf/session.ts`，只被探针自己的界面（`perf/probeStore.ts`、

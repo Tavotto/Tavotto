@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「显示回退 ≠ 几何权威（2026-08-26，issue #131；ADR 0017）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`store/geometryAuthority.test.ts`、`store/alignAction.test.ts`、`canvas/alignUndoConvergence.test.tsx`、`test/renderFixtures.ts` 的 `seedExactRender()`
 
 **旧 SVG 可以继续显示；旧 manifest 不得作为几何写操作的权威输入。**
 细则与理由在 `docs/adr/0017-display-fallback-vs-geometry-authority.md`，

@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「预览表示法：vector / hybrid / raster（2026-08-28，issue #181；ADR 0022）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`canvas/panelPreviewMode.test.tsx`、`lib/previewBudget.test.ts`、`store/renderStore.test.ts`、`mcp/session.test.ts`、`tests/test_preview_budget.py`
 
 **画法可以换，能编辑的东西一个都不许少。** 细则在
 `docs/adr/0022-complexity-aware-editor-preview.md`，动手前先读。要点：

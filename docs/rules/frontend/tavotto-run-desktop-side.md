@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「`tavotto run` 的桌面面（2026-08-28，Compatibility Bridge Session 9B；ADR 0021）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`nativeSessionStore.test.ts`、`renderStore.test.ts`、`NativeConfirmDialog.test.tsx`、`openRequest.test.ts`、`tests/native/test_run_beta_claims.py`
 
 CLI 拥有用户的 Python，**桌面只是渲染面与那一道闸**。前端能提交的只有一个
 不透明的 `native_id`——host / port / token / 完整命令一律由后端从那份 0600 的

@@ -2,6 +2,7 @@
 
 > 原文出自 `.github/AGENTS.md`「门禁纪律」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestRunnerTrustZones`
 
 - **runner 信任区的静态守卫（CI04，2026-09-16）**：`tests/test_merge_queue_workflows.py::TestRunnerTrustZones` 五条——
   监听 `pull_request` / `pull_request_target` / `merge_group` / `pull_request_review` /

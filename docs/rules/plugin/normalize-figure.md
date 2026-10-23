@@ -3,6 +3,7 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「已有图的保留式规范化（2026-09-13，ADR 0051）」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_normalize.py`、`tests/test_mcp_normalize.py`、`tests/test_codex_plugin.py`
 
 - **`tavotto_normalize_figure` 是第八个工具**，也是用户「已有一张图、只要改宽度 /
   字体 / 字号下限」时该走的那条路——技能里明写不许用 `tavotto_apply_overrides` 手拼。

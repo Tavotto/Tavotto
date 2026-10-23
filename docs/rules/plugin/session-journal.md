@@ -3,6 +3,7 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「会话跨进程恢复（2026-09-23，ADR 0078）」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_session_journal.py`、`tests/test_mcp_roundtrip.py`
 
 - **会话不再只活在 server 进程内存里**：提交点（open 结束 / apply 结束 / 规范化收尾，含回退）
   经 `tavotto_mcp/sessionjournal.py` 落 `data_dir()/mcp-sessions/<id>.json`；内存未命中时

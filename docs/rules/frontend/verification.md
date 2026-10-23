@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「验证」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scripts/tailwind-scan-check.mjs`（反向判据的金丝雀 `tracking-widest` 常驻在本文件这一行，删了它门禁红）、`e2e/a11y.spec.ts`、`e2e/overflow.ts`
 
 - `cd web && pnpm test`（vitest+jsdom；NODE_OPTIONS 里禁用了 node 内建
   webstorage，否则 jsdom localStorage 被遮蔽）。

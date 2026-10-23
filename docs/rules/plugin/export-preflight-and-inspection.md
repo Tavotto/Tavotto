@@ -3,6 +3,7 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「导出产物核验（2026-09-21，统一实施包 U08，ADR 0068）/ MCP server 与内嵌画布」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_export_inspection.py`、`tests/test_mcp_server.py`
 
 ## 导出先预检（原「MCP server 与内嵌画布」一节）
 

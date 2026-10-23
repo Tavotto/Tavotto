@@ -4,6 +4,8 @@
 > （RenderCore 是唯一渲染后端，PyMuPDF 退役）；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」
 > 表里（`rendercore/` 那一行）。这里是这一主题规则的**唯一全文**；速查表只留一行。
 > 改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_rendercore_*.py` 及导出核验 / 身份 / 退役扫描等九份，全名单见细则末节
+> `src/tavotto/AGENTS.md`「改到」压缩前原文（2026-10-23）：`rendercore/`（`ir` / `geometry` / `typography` / `fonts` / `sources` / `plan` / `placement` / `raster` 纯模型；`hbshaper` / `pdfwriter` / `svgwriter` / `rasterio` / `renderchild` / `renderhost` / `preview` / `job` / `facade` / `inspector` native 适配与入口；`identity` 四身份）、`fonts_allowlist.json`、`pdfbackend/canvas_coverage.json`、`scripts/fetch_fonts.py`、pyproject 的 `dependencies`（五个 native 包，U10 起）
 
 - **分层是硬边界**（`tests/support/importgraph.py` 的 `rendercore_model` / `rendercore_native`
   两层 + 层规则，`tests/test_rendercore_model.py` 钉外部名字）：纯模型（`ir` / `geometry` /

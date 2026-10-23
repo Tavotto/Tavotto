@@ -95,8 +95,8 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 - 引擎改动后重启服务：`lsof -ti:5089 -sTCP:LISTEN | xargs kill; ./run.sh --no-browser`。
 - 完整验证链（CompatBench / 等价性矩阵 / 不变式 / nightly / E2E / 性能基线）
   见 `docs/rules/ci/verification-chain.md`（`.github/AGENTS.md` 是速查表）。指导文档自身的门禁：`tests/test_agents_rules_index.py`
-  （速查表 ↔ 细则一一对应、引用的路径 / 用例 / ADR 都在），体积按实际加载路径
-  量：`python scripts/dev/agents_budget.py`。
+  （速查表 ↔ 细则一一对应、引用都在、每份指令的棘轮上限、速查表每格 ≤ 300 B），
+  体积：`python scripts/dev/agents_budget.py --check`。
 
 ## Review guidelines
 

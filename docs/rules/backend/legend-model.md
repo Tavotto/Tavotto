@@ -2,6 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_legend_binding.py`、`test_legend_custom_handler.py`、`test_legend_model_pairs.py`、`test_legend_anchor.py`、`test_legend_text.py`、`test_hidden_legend_geometry.py`、`test_legend_fontsize_native.py`
 
 - **图例条目模型（2026-09-02，ADR 0034）**：每个图例挂一份
   `legendmodel.LegendEntries`（`instrument` 时建，`_register_legend` 一处；整个图例族——条目模型、

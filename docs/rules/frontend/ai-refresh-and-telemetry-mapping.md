@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「Codex / AI 刷新、入口整合与遥测映射（2026-09-02，ADR 0041）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/activityTelemetry.test.ts`、`CommandPalette.test.tsx`、`store/projectReadinessStore.test.ts`、`hooks/useServerEvents.test.ts`
 
 完整版在 `docs/adr/0041-codex-ai-refresh-and-telemetry-integration.md`，改动前先读。
 

@@ -2,6 +2,8 @@
 
 > 原文出自 `.github/AGENTS.md`「门禁纪律」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestPlaywrightShards`、`tests/test_playwright_shard_check.py`、`tests/test_feature_registry.py`
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：Windows 三片完整构建（chromium 内部原生 `--shard=1/2`、`2/2` + webkit/chromium-en 一片，`others` 用 `\|` 隔开）；POSIX 三片按 planned list 对拍 active 用例；必需步骤不加 `if:`；`others` == 其余各片的 projects；artifact 名带 shard；step 级 `timeout-minutes`
 
 - **`windows-exe-smoke` 的 Playwright 分 3 片（CI03c，2026-09-16 按 project 分 2 片；2026-10-19 chromium 内部再拆一刀）**：
   matrix `include` 三条（片 1 `--project=chromium --shard=1/2`；片 2 `--project=webkit --project=chromium-en`；片 3

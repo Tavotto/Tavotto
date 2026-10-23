@@ -2,6 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_colorbar_orientation.py`、`test_colorbar_resize.py`、`test_figure_recognition.py`、`test_colorbar_groups.py`
 
 - **色条方向（2026-08-18）**：**就地**结构改造，不是普通 setter，也不是销毁
   重建。`colorbarmodel._cb_reorient`（整个色条族——`ColorbarProxy`、方向 / 延伸、

@@ -2,6 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「外部交接（`tavotto open` 与桌面唤起）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_install_locate.py`、`test_handoff.py`、`test_open_script_route.py`、`test_desktop_launch.py`
 
 完整版在 `docs/adr/0005-external-handoff-and-codex-plugin.md`，改动前先读。
 插件侧（codex-plugin/ 的镜像定位器、update_check、技能纪律）见

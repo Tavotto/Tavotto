@@ -2,6 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「`tavotto run` 的控制面（ADR 0021，Beta）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/native/`（含 `test_run_cli_integration.py`、`test_native_inconsistent.py`）、`tests/test_windows_regressions.py`
 
 进程关系是**倒过来的**——用户的 Python 是 **CLI 的子进程**，sidecar 只是
 通过一条认证 relay 连上去：

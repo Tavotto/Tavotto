@@ -2,6 +2,8 @@
 
 > 原文出自 `web/AGENTS.md`「前端诊断：状态快照与交互轨迹（2026-08-27，ADR 0016）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`diagnostics/*.test.ts`（含 `privacy.test.ts`、`detail.test.ts`）、`settings/DiagnosticsSendDialog.test.tsx`、`lib/diagSendApi.test.ts`、`components/contact/contact.test.tsx`、`tests/test_diagnostics_bundle.py`
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：只观察不当真源、吞异常；定长 240 纯内存；不记 mousemove；发送问题反馈只在用户点「发送」时 `startDiagSend`；detail/复选框仅发送路径、默认不勾；意外错误经 `lib/unexpectedErrors.ts`；联系作者（ADR 0145）只在用户点「发送」时 `sendContact`、失败只给复制（无邮件协议链接）、草稿在 store 里、回信提醒只用小圆点 + 通知轨胶囊
 
 完整版在 `docs/adr/0016-diagnostics-v2-frontend-state-tracing.md`，改动前先读。
 模块是 `web/src/diagnostics/`，业务代码**只 import `@/diagnostics`**。

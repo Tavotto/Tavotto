@@ -3,6 +3,8 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「首次使用契约 / MCP server 与内嵌画布」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_resolver.py`、`tests/test_mcp_stdio.py`、`tests/test_codex_install_cli.py`、`tests/test_pip_config_pair.py`
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：启动器对的形态约束（cmd 半边第一行 `@echo off`、stdout 首帧前零字节）；每个候选都真的验证 `import tavotto.engine`；venv 只在区间内的解释器上建；自管环境落后时后台重装（Windows 用 `CREATE_NO_WINDOW` 不用 DETACHED；Popen 返回且记号写入后退避 30 分钟，spawn 失败不计）、互斥只用内核文件锁；子进程除交棒外都带 `CREATE_NO_WINDOW`；它的 pip / matplotlib 缓存在 `mcp-runtime/cache`；pip 索引让 pip 自己在目标解释器里解析 install 选项（探测脚本与引擎同源），问不到报 unknown 不猜
 
 ## 启动器对（原「首次使用契约」一节的「双语启动器」）
 

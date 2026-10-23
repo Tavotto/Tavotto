@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「浏览器 playground（网站 /try，2026-08-21）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`playground/*.test.ts`、`e2e/playground.spec.ts`、`tests/test_browser_session.py`、`tests/test_playground_build.py`
 
 完整版在 `docs/adr/0007-browser-playground.md` 与
 `docs/adr/0011-playground-examples-first.md`，改动前先读。引擎侧

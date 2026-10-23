@@ -2,6 +2,7 @@
 
 > 原文出自 `.github/AGENTS.md`「发布链」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_release_workflow_contract.py`、`tests/test_update_chain_gates.py`
 
 - **两段链（F.2，2026-09-16 起）**：实验室 runner 注册在私有仓库 `Tavotto/ci-infra`，
   公开仓库不能等私有仓库（本仓库禁止轮询：lab 的排队时间没有上界），所以发布链在 lab

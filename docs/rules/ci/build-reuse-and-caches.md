@@ -2,6 +2,7 @@
 
 > 原文出自 `.github/AGENTS.md`「门禁纪律」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches` / `::TestCacheSeed` / `::TestLandingAudit`、`tests/test_ci_baseline.py`
 
 - **构建产物不跨 job 抽取、缓存按下载 / 编译分类（CI02，2026-09-16；字体归档补充见下）**：九种 recipe（web 应用 / MCP 画布 / 插件候选 / playground /
   wheel / workerd / 内置 runtime / PyInstaller / .app）逐行量过——0 行值得新抽取，唯一的数据边仍是 `frontend → plugin-candidate`

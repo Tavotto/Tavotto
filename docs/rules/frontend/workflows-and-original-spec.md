@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「两条工作流与原图规格（2026-08-29，Prompt 09；ADR 0028）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`store/workspace.test.ts`、`lib/originalSpec.test.ts`、`canvas/fastEditStage.test.tsx`、`e2e/nav-audit.spec.ts`、`tests/test_original_spec.py`
 
 ```text
 单图编辑（代码里叫 fast_edit）：画布上恰好 1 张图 → 修改 → 按原图规格导出

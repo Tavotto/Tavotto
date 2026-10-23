@@ -2,6 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「布局层（R18）」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_export_pipeline.py`、`test_export_route.py`、`test_worker_export_pixel_budget.py`、`test_export_request.py`、`test_export_endpoint.py`、`test_tiffwrite.py`、`test_epsfile.py`、`tests/golden/filename_vectors.json`
 
 - **导出（ADR 0031，2026-08-31 定版）**：`POST /api/export`（同步）/
   `/api/export/start`（后台作业，进度经 SSE `export.progress`）/ `/state` /

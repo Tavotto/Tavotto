@@ -2,6 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编辑预览的表示法与复杂度预算（ADR 0022，issue #181）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preview_budget.py`、`test_preview_complexity.py`、`test_preview_hybrid.py`、`test_issue181_large_preview.py`
 
 **预览怎么画** 与 **能编辑什么** 是两件事。动这一带之前先读
 `docs/adr/0022-complexity-aware-editor-preview.md` 与

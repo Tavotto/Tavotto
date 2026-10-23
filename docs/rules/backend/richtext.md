@@ -2,6 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「文字：行内上下标与大小写」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_compose_text.py`、`test_glyph_plan.py`
 
 - **画布标注**用行内标记 `^{…}` / `_{…}`（`web/src/lib/richText.ts` ↔
   `src/tavotto/richtext.py` **严格同源**：`SCRIPT_SIZE/SUP_RISE/SUB_DROP`

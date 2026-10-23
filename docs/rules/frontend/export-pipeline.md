@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「统一导出管线（2026-08-31，Prompt 12；ADR 0031）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/guardedExport.test.tsx`、`lib/artifactApi.test.ts`、`lib/exportRequest.test.ts`、`store/exportStore.test.ts`、`lib/exportFigures.test.ts`、`lib/artifactInspection.test.ts`、`lib/imgRetry.test.tsx`、`components/ExportDialog.test.tsx`、`tests/golden/filename_vectors.json`、`tests/test_export_request.py`、`tests/test_export_phase_labels.py`
 
 ```text
 prepareExport(input)   请求成形 + 就地校验（**不发网络**，输入框每敲一个字都能调）

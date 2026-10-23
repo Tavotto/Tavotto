@@ -373,3 +373,62 @@ def test_budget_json_covers_every_layer_and_every_agents_file():
     assert set(SHEETS) <= files
     assert {s["file"] for s in report["sheets"]} == files
     assert {f for c in report["codex"] for f in c["files"]} == files
+
+
+# ---------------------------------------------------------------- 四、棘轮上限与每格限长（2026-10-23）
+
+
+def test_every_resident_instruction_stays_under_its_ceiling():
+    """每份 AGENTS.md / SKILL.md 都登记了棘轮上限，且没越过（`tests/fixtures/agents_ceilings.json`）。
+
+    只有 32 KiB 那条硬线时，速查表一路涨到撞墙才有人发现，然后临时「腾字」——余量曾经只剩
+    72 B。上限按文件钉住，长大必须在同一个 PR 里重写那份 JSON，增长在 diff 里看得见。
+    判据的主语：仓库**跟踪的**每一份常驻指令（`git ls-files`），按 CRLF 口径量。
+    """
+    ab = _budget()
+    targets = ab.ceiling_targets()
+    assert set(SHEETS) <= set(targets) and ab.skill_files(), "枚举多半量在空集合上"
+    problems = ab.ceiling_violations()
+    assert not problems, (
+        "越过棘轮上限（确需长大：`python scripts/dev/agents_budget.py --write-ceilings` 并在 PR "
+        "正文写明理由；更好的是把全文迁进细则）:\n  " + "\n  ".join(problems)
+    )
+
+
+def test_ceilings_along_every_codex_chain_fit_the_default_cap():
+    """上限本身也不许越过 Codex 的 32 KiB：沿每条拼接链把上限加起来 ≤ 默认上限。
+
+    否则「按规矩重写上限」就能把一串推过硬线，棘轮失去意义。
+    """
+    ab = _budget()
+    ceilings = ab.load_ceilings()
+    over = []
+    for cwd in ab.codex_cwds():
+        fs = ab.codex_chain(cwd)
+        total = sum(ceilings.get(f, 0) for f in fs)
+        if total > ab.CODEX_DEFAULT_CAP:
+            over.append(f"cwd={cwd}: 上限之和 {total:,} B ← {' + '.join(fs)}")
+    assert not over, "这些拼接链的上限之和越过了 32 KiB:\n  " + "\n  ".join(over)
+
+
+@pytest.mark.parametrize("sheet", sorted(set(SHEETS) - {"AGENTS.md"}))
+def test_sheet_rows_are_three_short_cells(sheet: str):
+    """速查表每行三格「改到 | 主题 | 必守要点」，每格 ≤ `SHEET_CELL_MAX` 字节。
+
+    #608 之后表格又涨回八成体积：每个功能 PR 往「改到」「看护」里追加文件名与用例名。
+    「看护」列已整列迁进细则头部引用块；「改到」写目录与入口文件、「必守要点」写一句索引，
+    想写更多就是该写进细则的信号。
+    """
+    ab = _budget()
+    assert sheet in ab.SHEETS_WITH_TABLE
+    rows = ab.sheet_rows(sheet)
+    assert len(rows) >= 5, f"{sheet} 只解析到 {len(rows)} 行——表头变了，判据量在空集合上"
+    wrong = [f"{sheet}:{ln} 有 {len(cells)} 格" for ln, cells in rows if len(cells) != 3]
+    assert not wrong, "速查表每行只有三格（看护用例写在细则头部）:\n  " + "\n  ".join(wrong)
+    long = ab.oversized_cells([sheet])
+    assert not long, "这些格太长了（完整清单 / 全文迁进细则，这里留索引）:\n  " + "\n  ".join(long)
+
+
+def test_sheets_with_table_matches_sheets():
+    """预算脚本里那份有表的清单与这里的 `SHEETS` 一致（加一层两边一起改）。"""
+    assert set(_budget().SHEETS_WITH_TABLE) == set(SHEETS) - {"AGENTS.md"}

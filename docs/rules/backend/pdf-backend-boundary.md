@@ -2,6 +2,9 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「PDF 后端边界（许可证相关，勿破坏）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_rendercore_facade.py`、`tests/test_retirement_scan.py`、`tests/test_glyph_plan.py`、`tests/test_font_family_options.py`、`tests/test_cmap_facts.py`、`tests/test_cjk_figure_text.py`、`tests/test_render_cache.py`、`tests/test_windows_regressions.py`
+> 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestApprovedFontsAndRetirementScan`、`tests/test_retirement_scan.py`
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：U10（ADR 0072）：RenderCore 是默认后端、字体不进 git——每条装项目的腿先 `fetch_fonts.py`（闭集在合同用例里；缓存只含归档，命中仍逐项验 SHA），wheel / 冻结产物出来之后扫原生库名单 + METADATA + 字体 13 张；没有一条 `pip install` 再点名 pymupdf
 
 - **`src/tavotto/pdfbackend/__init__.py` 是与实现无关的契约层**（probe_asset / pdf_fonts /
   render_preview_png / text_width / text_plan / missing_glyphs / coverage_ranges / compare_png /

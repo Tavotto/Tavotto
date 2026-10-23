@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「设置外壳与包管理（2026-09-02，ADR 0038）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`SettingsDialog.test.tsx`、`settings/PackagesSettings.test.tsx`、`settings/PackagesSearch.test.tsx`、`store/projectSwitchPackages.test.ts`、`updateStates.test.tsx`、`SettingsTelemetry.test.tsx`、`e2e/settings-shell.spec.ts`
 
 完整版在 `docs/adr/0038-settings-shell-agents-packages.md`，改动前先读。
 

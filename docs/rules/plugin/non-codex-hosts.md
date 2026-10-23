@@ -3,6 +3,8 @@
 > 2026-09-25 迁自 `codex-plugin/AGENTS.md`「非 Codex 宿主（2026-09-24，全文 `docs/implementation/multi-host-mcp/README.md`）」（#608：Codex 自动拼接的 32 KiB 上限），
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
+> 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_configure.py`、`tests/test_mcp_host_profiles.py`、`tests/test_plugin_candidate.py`、`tests/test_claude_plugin.py`、`tests/test_dsh_bundle.py`
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：同一份包、同一个启动器、同一份 Skill；不写任何文件；授权只来自 `--project-root`；文档证明不了的字段不加；Claude 插件的 server 名与 Codex 配置同名、超时按毫秒换算且 `timeout` / `timeoutMs` 同值（ADR 0103 / 0109）；插件目录里不许有别家自动读的 `.mcp.json` / `mcp/*.json`（ADR 0109）；DSH bundle 的包目录只由胶水插件提供（ADR 0104）
 
 - **同一份完整包、同一个启动器、同一份 Skill**：`integrations/configure.py`（纯标准库，进
   `pluginmanifest.STAGE_REQUIRED`——只卡新 staging；**不进** `REQUIRED`，否则体检会把没有它的旧版已装插件报成损坏）从自己的位置找 `mcp/server.py`，按 `--host` 打印那一家的配置片段，

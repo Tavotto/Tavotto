@@ -1,6 +1,7 @@
 # 改用户脚本：经确认的改写、备份与复原（ADR 0110 / 0094）
 
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_script_edit.py`、`tests/test_script_lock.py`、`tests/test_ai_revert_stale.py`
 
 - **原则不变：Tavotto 为了兼容、在用户没要求时绝不动脚本。** 改脚本只有一种来由：用户在界面里
   **亲手发起、看过后端生成的逐行 diff、勾选确认**。今天唯一的入口是「找不到脚本要读的数据」里

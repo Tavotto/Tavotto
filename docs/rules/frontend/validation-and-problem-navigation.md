@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「统一检查与问题定位（2026-08-31，ADR 0030）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/validation.test.ts`、`lib/issueFocus.test.ts`、`lib/issueFix.test.ts`、`lib/problemList.test.ts`、`lib/subplotParts.test.ts`、`store/validationStore.test.ts`、`tests/test_preflight.py`、`hooks/useServerEvents.test.ts`、`store/statusPassive.test.ts`
 
 完整版在 `docs/adr/0030-validation-and-problem-navigation.md`，改动前先读。
 **「这份项目有什么问题」只有一条链**：

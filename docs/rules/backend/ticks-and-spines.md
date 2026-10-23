@@ -2,6 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_axes_ticks_scale.py`、`test_tick_sides_geometry.py`、`test_manifest_ticklabel_cost.py`
 
 - **刻度定位走 Locator / Formatter，不是改已经生成出来的 Text**（2026-08-18）：
   刻度标签每次 draw 由 locator 现算、Text 对象现建，改 Text 属性只能靠

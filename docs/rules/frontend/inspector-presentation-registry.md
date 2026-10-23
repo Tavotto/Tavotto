@@ -2,6 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「图内属性的展示注册表（2026-09-06，UI/UX 审计 P1 / P2）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`presentation/registry.test.ts`、`controls/pickers.test.tsx`、`colorScalePanels.test.tsx`、`figureFontFamilies.test.tsx`、`tickTaskCard.test.tsx`
 
 `components/inspector/presentation/` 是**排版决策的唯一出处**：manifest 是能力
 权威，这里只决定「摆在哪一桶、此刻显不显示、长成哪种控件」，**字段进来多少

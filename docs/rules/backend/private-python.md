@@ -2,6 +2,7 @@
 
 > 随 U05 新增；`src/tavotto/AGENTS.md` 只留速查行。这里是这一主题规则的**唯一全文**。改规则改这里，并同步那一行。
 > 架构决策在 `docs/adr/0063-private-python-provisioning.md`；目标资格另立一份 ADR（0064，随 PR C）。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_private_python.py`、`tests/test_private_python_tls.py`、`tests/test_private_python_transaction.py`、`tests/test_private_python_bundle.py`
 
 它只回答一个问题：**受管环境的基础解释器从哪来**（这台机器没有合格 Python 时）。装包仍是 U04 的代事务
 （`docs/rules/backend/dependency-repair-and-packages.md`「事务：受管环境按代」）+ pip；本模块交出去的只是一条解释器路径。

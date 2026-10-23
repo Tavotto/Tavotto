@@ -2,6 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「品牌与命名」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_desktop_launch.py`、`tests/test_handoff.py`
 
 产品名 **Tavotto**（拼写大小写固定）。品牌与格式常量唯一出处：
 `web/src/lib/brand.ts`、`engine/brand.py`——界面/导出格式不得手写产品名。
