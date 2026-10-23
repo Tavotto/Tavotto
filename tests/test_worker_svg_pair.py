@@ -194,6 +194,39 @@ elif mode in {"formatter", "snapshot_formatter", "standalone_formatter"}:
         counter[0] += 1
         return str(counter[0])
     ax.xaxis.set_major_formatter(FuncFormatter(changing_formatter))
+elif mode in {"window_extent", "snapshot_window_extent"}:
+    # 实例级覆盖 get_window_extent（能看到 renderer、会在布局里被调用）：白名单拦住，且判定不调用它
+    counter = [0]
+    native_extent = ax.title.get_window_extent
+    def counting_extent(renderer=None):
+        counter[0] += 1
+        return native_extent(renderer)
+    ax.title.get_window_extent = counting_extent
+elif mode in {"text_subclass", "snapshot_text_subclass"}:
+    from matplotlib.text import Text
+    class MyText(Text):
+        pass
+    ax.add_artist(MyText(.5, .5, "custom"))
+elif mode in {"wraps_draw", "snapshot_wraps_draw"}:
+    # functools.wraps 会把 __module__ 抄成 matplotlib 的：按代码出处认，冒充不了
+    import functools
+    native_line_draw = ax.lines[0].draw
+    ax.lines[0].draw = functools.wraps(native_line_draw)(lambda renderer: native_line_draw(renderer))
+elif mode in {"class_patch", "snapshot_class_patch"}:
+    # 对 matplotlib 的类做全局 monkeypatch（不是自定义子类）
+    from matplotlib.text import Text
+    native_text_extent = Text.get_window_extent
+    def patched_extent(self, renderer=None, dpi=None):
+        return native_text_extent(self, renderer, dpi)
+    Text.get_window_extent = patched_extent
+elif mode == "formatter_subclass":
+    from matplotlib.ticker import Formatter
+    counter = [0]
+    class CountingFormatter(Formatter):
+        def __call__(self, x, pos=None):
+            counter[0] += 1
+            return f"s{counter[0]}"
+    ax.xaxis.set_major_formatter(CountingFormatter())
 elif mode in {"agg_filter", "snapshot_agg_filter"}:
     # 有状态的图像滤镜：tee 会把 stop_filter 广播给每个目标，每个目标各跑一次——仍须阻断，且判定不得调用它
     counter = [0]
@@ -277,11 +310,11 @@ elif mode == "mkdir_failure":
     (out / "blocker").write_text("not a directory")
     svg = out / "blocker" / "pair.svg"
 #: 只算值的回调：单次绘制下 PDF 与 SVG 配对（ADR 0150）
-PAIRED = {"formatter", "locator", "scale", "transform"}
+PAIRED = {"formatter", "locator", "scale", "transform", "formatter_subclass"}
 PAIRED |= {"snapshot_" + name for name in PAIRED}
 #: 能看到 renderer 的回调：仍阻断（它们可能按 renderer 的类分派，tee 与 PDF renderer 不是同一个类）
-BLOCKED = {"callback", "custom_draw", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter"}
-BLOCKED |= {"snapshot_" + name for name in ("callback", "custom", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter")}
+BLOCKED = {"callback", "custom_draw", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch"}
+BLOCKED |= {"snapshot_" + name for name in ("callback", "custom", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch")}
 result = None
 if mode == "invalid":
     handler = pkg.wireproto.V1Handler(session)
@@ -339,7 +372,7 @@ else:
     assert calls == [patches, previous], calls
 if mode in {"snapshot_formatter", "snapshot_locator", "snapshot_scale", "snapshot_transform"}:
     assert counter[0] > 0  # 单次绘制：画了，而且只画一次的结果同时进 PDF 与 SVG
-if mode in {"snapshot_annotation", "snapshot_effect", "snapshot_get_children", "snapshot_agg_filter"}:
+if mode in {"snapshot_annotation", "snapshot_effect", "snapshot_get_children", "snapshot_agg_filter", "snapshot_window_extent"}:
     assert counter[0] == 0  # 阻断发生在任何绘制 / 遍历调用用户方法之前
 assert session.snapshot("F") == previous
 assert title.get_text() == "Hot title"
@@ -417,7 +450,9 @@ def test_svg_failure_preserves_pdf_and_restores_state(tmp_path, mode):
 
 
 @needs_user_python
-@pytest.mark.parametrize("mode", ["formatter", "locator", "scale", "transform"])
+@pytest.mark.parametrize(
+    "mode", ["formatter", "locator", "scale", "transform", "formatter_subclass"]
+)
 def test_value_callbacks_are_paired_from_one_draw(tmp_path, mode):
     """ADR 0150：只算值的回调再不纯，PDF 与 SVG 看到的也是同一个场景。"""
     result = _probe(tmp_path, mode)
@@ -449,6 +484,10 @@ def test_value_callbacks_are_paired_from_one_draw(tmp_path, mode):
         "renderer_dispatch",
         "get_children",
         "agg_filter",
+        "window_extent",
+        "text_subclass",
+        "wraps_draw",
+        "class_patch",
     ],
 )
 def test_renderer_visible_callbacks_still_block_pairing(tmp_path, mode):
@@ -606,6 +645,10 @@ def test_automatic_snapshot_pairs_value_callbacks_from_one_draw(tmp_path, mode):
         "snapshot_renderer_dispatch",
         "snapshot_get_children",
         "snapshot_agg_filter",
+        "snapshot_window_extent",
+        "snapshot_text_subclass",
+        "snapshot_wraps_draw",
+        "snapshot_class_patch",
     ],
 )
 def test_automatic_snapshot_declines_renderer_visible_callbacks_without_drawing(tmp_path, mode):
@@ -690,3 +733,55 @@ def test_standalone_svg_can_keep_text_without_touching_the_default(tmp_path):
     (tmp_path / "plain").mkdir()
     plain = _probe(tmp_path / "plain", "standalone")
     assert [save["fonttype"] for save in plain["saves"]] == ["path"]
+
+
+WHITELIST_PROBE = r"""
+import importlib.util, json, sys
+from pathlib import Path
+engine = sys.argv[1]
+spec = importlib.util.spec_from_file_location("boot", Path(engine) / "bridgeboot.py")
+boot = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(boot)
+pkg = boot.load_engine_modules(engine, ("figcapture", "patchspec", "pathgeom", "axestraversal",
+    "spinemodel", "tickmodel", "colorbarmodel", "legendmodel", "overrides", "manifest",
+    "preview_hybrid", "teedraw", "figsession", "wireproto"))
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+blocker = pkg.figsession._svg_pair_blocker
+out = {}
+x = np.linspace(-1, 1, 8)
+X, Y = np.meshgrid(x, x)
+fig, ax = plt.subplots(constrained_layout=True)
+ax.plot([0, 1], label="a"); ax.legend(); ax.set_yscale("log")
+ax.annotate("n", (1, 1), (1.5, 1.5), arrowprops={"arrowstyle": "->"})
+ax.bar([1], [1], hatch="//"); ax.errorbar([1], [1], yerr=.1)
+ax.text(.5, .5, "$x^2$", bbox={"boxstyle": "round"})
+fig.colorbar(ax.imshow(np.random.rand(3, 3)))
+out["stock"] = blocker(fig, single_draw=True)
+f3 = plt.figure(); a3 = f3.add_subplot(projection="3d"); a3.plot_surface(X, Y, X * Y)
+out["mplot3d"] = blocker(f3, single_draw=True)
+f4, a4 = plt.subplots(); a4.contourf(X, Y, np.sin(X * Y)); a4.pcolormesh(np.random.rand(4, 4))
+out["collections"] = blocker(f4, single_draw=True)
+print(json.dumps(out))
+"""
+
+
+@needs_user_python
+def test_whitelist_accepts_stock_matplotlib_figures(tmp_path):
+    """白名单反转后不能误伤：常规的 matplotlib 图（含 constrained layout、colorbar、3D、集合……）仍可配对。"""
+    completed = subprocess.run(
+        [USER_PYTHON, "-c", WHITELIST_PROBE, str(pool.WORKER_PY.parent)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=child_env(),
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert json.loads(completed.stdout.splitlines()[-1]) == {
+        "stock": None,
+        "mplot3d": None,
+        "collections": None,
+    }

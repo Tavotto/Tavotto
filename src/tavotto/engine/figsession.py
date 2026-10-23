@@ -53,6 +53,7 @@ import platform
 import sys
 import threading
 import time
+import types
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
@@ -93,16 +94,15 @@ class ArtifactSourceUnavailable(figcapture.ArtifactContextError):
         super().__init__(reason, "The selected file cannot be verified against the current figure.")
 
 
+_MPL_MODULES = ("matplotlib.", "mpl_toolkits.")
+
+
 class SvgSnapshotUnavailable(RuntimeError):
     """Automatic SVG capture cannot safely serialize this live figure."""
 
     protocol_code = "svg_source_unavailable"
 
 
-#: 艺术家方法里**能看到 renderer** 的那两个（单次绘制下仍必须是 matplotlib 自己的）
-_RENDERER_ARTIST_METHODS = ("draw", "get_tightbbox")
-#: 判定遍历自己会调用的方法：必须在调用之前确认是 matplotlib 的
-_WALKED_ARTIST_METHODS = ("get_children",)
 _ARTIST_METHODS = (
     "draw",
     "get_children",
@@ -699,11 +699,15 @@ def _svg_pair_native_canvas_method(method) -> bool:
     # Module-relative filenames also work for bytecode/frozen installations, where the
     # original build root and the module's installed absolute path need not coincide.
     source = code.co_filename.replace("\\", "/")
+    relative = module_name.replace(".", "/")
     return (
-        module_name.startswith("matplotlib.")
+        (module_name in ("matplotlib", "mpl_toolkits") or module_name.startswith(_MPL_MODULES))
         and module is not None
         and namespace is vars(module)
-        and ("/" + source).endswith("/" + module_name.replace(".", "/") + ".py")
+        and (
+            ("/" + source).endswith("/" + relative + ".py")
+            or ("/" + source).endswith("/" + relative + "/__init__.py")
+        )
     )
 
 
@@ -786,108 +790,197 @@ def _svg_pair_env_blocker(fig) -> str | None:
     return _svg_pair_canvas_blocker(fig.canvas)
 
 
-def _svg_pair_blocker(fig, *, single_draw: bool = False) -> str | None:
-    """Known draw-time code can change the scene between two serializers (and may see which renderer it draws on).
+#: 这些模块的可调用对象自己不会去跑用户代码（C 实现 / 标准库包装）；用户回调要靠 `__wrapped__` / 闭包才进得去，下面逐层核
+_PASSIVE_CALLABLE_MODULES = ("builtins", "functools", "numpy")
 
-    * Two-pass (`single_draw=False`, the legacy pairing and the #1185 witness): any user callback can differ between the
-      PDF pass and the SVG pass, so every kind is a blocker.
-    * Single draw (`teedraw`, ADR 0150): PDF and SVG come out of one draw, so callbacks that only compute *values*
-      (tick formatters, locators, scale / transform functions) are fine. Image filters (`agg_filter`) are NOT: the tee forwards
-      `stop_filter` to every renderer, so the callback would run once per target. Callbacks that can **see the
-      renderer** stay blocked — `draw_event` handlers, custom `Artist.draw` / `get_tightbbox`, axes locators, annotation
-      coordinate callables, path effects: they may dispatch on the renderer's class and the tee is a different class
-      from the PDF renderer the figure would normally get, so even the PDF could change.
+
+def _svg_pair_owned(method, depth=0) -> bool:
+    """这个可调用对象**确实是 matplotlib / mpl_toolkits 自己定义的**（或 Tavotto 已核过闭包的包装）。只读，不调用。
+
+    判据是代码出处（`__code__` 的文件与模块 globals 对得上），不是 `__module__`：`functools.wraps(native)` 会把
+    `__module__` 抄成 matplotlib 的，用户的包装函数就能冒充。
+    """
+    if depth > 6:
+        return False
+    if isinstance(method, (functools.partial, functools.partialmethod)):
+        return _svg_pair_owned(method.func, depth + 1)
+    method = getattr(method, "__func__", method)
+    if getattr(method, "__code__", None) is not None:
+        if _svg_pair_native_canvas_method(method):
+            return True
+        # numpy 自己的纯 Python 函数（如 3D 集合的 `_zsortfunc = np.average`）：模块 globals 与文件都对得上
+        name = method.__globals__.get("__name__", "")
+        module = sys.modules.get(name)
+        if (
+            (name == "numpy" or name.startswith("numpy."))
+            and module is not None
+            and method.__globals__ is vars(module)
+            and "/numpy/" in method.__code__.co_filename.replace("\\", "/")
+        ):
+            return True
+        # Tavotto 自己装的 `FigureBase.colorbar` 观察包装（`figcapture.install_colorbar_capture`）：`@wraps` 会把
+        # `__module__` / `__qualname__` 抄成 matplotlib 的，所以按代码出处认，并核它闭包里的原方法
+        if (
+            method.__globals__ is vars(figcapture)
+            and method.__code__.co_name == "colorbar"
+            and "original" in method.__code__.co_freevars
+        ):
+            cells = dict(zip(method.__code__.co_freevars, method.__closure__ or ()))
+            return _svg_pair_owned(cells["original"].cell_contents, depth + 1)
+        # Tavotto
+        return _svg_pair_standard_method(method) and getattr(method, "__module__", "") in (
+            manifest_mod.__name__,
+            overrides_mod.__name__,
+        )
+    kind = type(method)
+    wrapped = getattr(method, "__wrapped__", None)
+    if wrapped is not None:  # lru_cache 之类的 C 包装：核被包的函数
+        return _svg_pair_owned(wrapped, depth + 1)
+    if kind.__module__.startswith(_MPL_MODULES):
+        return True  # matplotlib 自己的可调用对象（如 `_process_plot_var_args`）
+    if isinstance(method, types.BuiltinFunctionType):
+        return True
+    return kind.__module__ in _PASSIVE_CALLABLE_MODULES and getattr(method, "__module__", None) in (
+        None,
+        "builtins",
+        "functools",
+        "numpy",
+    )
+
+
+def _svg_pair_callable_parts(value) -> list:
+    """类 / 实例上的一个属性值会跑的函数；纯数据回 `[]`。"""
+    if isinstance(value, (staticmethod, classmethod)):
+        value = value.__func__
+    if isinstance(value, property):
+        return [f for f in (value.fget, value.fset, value.fdel) if f is not None]
+    if isinstance(value, type):
+        return []
+    if isinstance(
+        value,
+        (types.FunctionType, types.MethodType, functools.partial, functools.partialmethod),
+    ):
+        return [value]
+    if isinstance(value, (types.BuiltinFunctionType, types.WrapperDescriptorType)):
+        return []
+    if isinstance(value, (types.MethodDescriptorType, types.MethodWrapperType)):
+        return []
+    return [value] if callable(value) else []
+
+
+def _svg_pair_class_blocker(cls, cache: dict) -> str | None:
+    """这个类的整条 MRO 都是 matplotlib 的，且类上所有可调用属性都没被换成用户的（含对 matplotlib 类的全局 monkeypatch）。"""
+    if cls in cache:
+        return cache[cls]
+    result = None
+    for klass in cls.__mro__:
+        if klass is object:
+            continue
+        if not klass.__module__.startswith(_MPL_MODULES):
+            result = f"custom class {klass.__qualname__}"
+            break
+        for name, value in vars(klass).items():
+            if (
+                name == "savefig"
+            ):  # Figure.savefig 由 `_svg_pair_standard_savefig` 专门核（采集钩子的包装）
+                continue
+            if any(not _svg_pair_owned(part) for part in _svg_pair_callable_parts(value)):
+                result = f"custom {klass.__qualname__}.{name}"
+                break
+        if result is not None:
+            break
+    cache[cls] = result
+    return result
+
+
+def _svg_pair_artist_blocker(artist, cache: dict) -> str | None:
+    """一个 artist 的类与实例两层：任何可调用属性都必须是 matplotlib 自己的（白名单）。只读，不调用。
+
+    能看到 renderer 的方法（draw / get_window_extent / get_tightbbox / get_children / 滤镜 / 注解坐标 / axes locator……）
+    不用逐个列：只要被用户换过（实例上的 monkeypatch 或自定义子类），这里都会拦住。
+    """
+    why = _svg_pair_class_blocker(type(artist), cache)
+    if why is not None:
+        return why
+    for name, value in (getattr(artist, "__dict__", None) or {}).items():
+        if any(not _svg_pair_owned(part) for part in _svg_pair_callable_parts(value)):
+            return f"custom instance attribute {type(artist).__qualname__}.{name}"
+    # path effect 对象不是可调用属性，但它们的 draw_path 拿着 renderer：按类核
+    for effect in getattr(artist, "_path_effects", None) or ():
+        why = _svg_pair_class_blocker(type(effect), cache)
+        if why is not None:
+            return f"custom path effect ({why})"
+    return None
+
+
+def _svg_pair_value_blocker(artist, seen_transforms) -> str | None:
+    """二次绘制口径才要核的「值槽」：刻度格式化 / 定位、scale、transform 的用户函数（单次绘制下它们是允许的值槽）。"""
+    if not all(
+        _svg_pair_standard_transform(transform, seen_transforms)
+        for transform in (artist.get_transform(), artist.get_clip_box(), artist.get_clip_path())
+    ):
+        return "SVG pairing is unavailable for user transform callbacks."
+    if isinstance(artist, Axis):
+        scale = artist._scale
+        if not type(scale).__module__.startswith(_MPL_MODULES) or not (
+            _svg_pair_standard_method(scale.get_transform)
+            and _svg_pair_standard_transform(scale.get_transform(), seen_transforms)
+        ):
+            return "SVG pairing is unavailable for user scale callbacks."
+        for component in (
+            artist.get_major_formatter(),
+            artist.get_minor_formatter(),
+            artist.get_major_locator(),
+            artist.get_minor_locator(),
+        ):
+            if not type(component).__module__.startswith(_MPL_MODULES):
+                return "SVG pairing is unavailable for custom tick formatters or locators."
+            if not _svg_pair_standard_method(component.__call__):
+                return "SVG pairing is unavailable for custom tick drawing methods."
+            if isinstance(component, ticker.FuncFormatter) and not _svg_pair_standard_method(
+                component.func
+            ):
+                return "SVG pairing is unavailable for user tick-formatting callbacks."
+    return None
+
+
+def _svg_pair_blocker(fig, *, single_draw: bool = False) -> str | None:
+    """Can PDF and SVG be certified as the same Figure?  Read-only: nothing here calls user code.
+
+    **Whitelist, not blacklist.**  Every artist in the figure (figure, axes, axis, text, collections, …) must have its
+    class chain and every callable attribute — on the class *and* on the instance — defined by matplotlib /
+    mpl_toolkits themselves (`_svg_pair_artist_blocker`).  Anything else (an instance-level monkeypatch, a user
+    subclass, a user `agg_filter` / axes locator / annotation-coordinate callable, a custom path effect, …) blocks:
+    those can see the renderer, can run once per renderer the tee forwards to, or can differ between two passes.
+    `draw_event` handlers block for the same reason.
+
+    The one closed set of exceptions are *value slots* — tick formatters and locators (including a `FuncFormatter`'s
+    user function), scale functions and transform functions.  They only compute values and never touch a renderer.
+
+    * Single draw (`single_draw=True`, `teedraw`, ADR 0150): the whitelist above is all that is checked; value slots
+      are allowed because PDF and SVG come out of the same draw.
+    * Two-pass (the legacy pairing, and the #1185 witness which is an independent savefig): a value slot may still
+      differ between two draws, so it is checked as well (`_svg_pair_value_blocker`).
     """
     env_blocker = _svg_pair_env_blocker(fig)
     if env_blocker is not None:
         return env_blocker
-    values = not single_draw
     if fig.canvas.callbacks.callbacks.get("draw_event"):
         return "SVG pairing is unavailable for figures with draw-event callbacks."
-    pending, seen, seen_transforms = [fig], set(), set()
+    pending, seen, seen_transforms, cache = [fig], set(), set(), {}
     while pending:
         artist = pending.pop()
         if id(artist) in seen:
             continue
         seen.add(id(artist))
-        # Built-in artist families remain supported; a custom Artist may draw different
-        # content each time even without leaving any inspectable state on the Figure.
-        if not type(artist).__module__.startswith(("matplotlib.", "mpl_toolkits.")):
-            return "SVG pairing is unavailable for custom artist implementations."
-        for name in _ARTIST_METHODS:
-            # draw / get_tightbbox receive the renderer; get_children is *called by this very walk* (an instance-level
-            # override would run user code that a plain savefig never runs); the rest only compute values
-            if (
-                values or name in _RENDERER_ARTIST_METHODS or name in _WALKED_ARTIST_METHODS
-            ) and not _svg_pair_standard_method(getattr(artist, name)):
-                return "SVG pairing is unavailable for custom artist drawing methods."
-        # every getter below is called by this walk: check it is Matplotlib's own *before* calling it, so deciding
-        # eligibility never runs user code that a plain savefig would not run (an instance-level override would)
-        walked = ["get_path_effects", "get_agg_filter"]
-        if isinstance(artist, Axes):
-            walked.append("get_axes_locator")
-        if isinstance(artist, Annotation):
-            walked.append("get_anncoords")
-        if values:
-            if isinstance(artist, Axis):
-                walked += [
-                    "get_major_formatter",
-                    "get_minor_formatter",
-                    "get_major_locator",
-                    "get_minor_locator",
-                ]
-        if not all(_svg_pair_standard_method(getattr(artist, name)) for name in walked):
-            return "SVG pairing is unavailable for custom artist drawing methods."
-        if values and not all(
-            _svg_pair_standard_transform(transform, seen_transforms)
-            for transform in (artist.get_transform(), artist.get_clip_box(), artist.get_clip_path())
-        ):
-            return "SVG pairing is unavailable for user transform callbacks."
-        if values and isinstance(artist, Axis):
-            scale = artist._scale
-            if not type(scale).__module__.startswith(("matplotlib.", "mpl_toolkits.")) or not (
-                _svg_pair_standard_method(scale.get_transform)
-                and _svg_pair_standard_transform(scale.get_transform(), seen_transforms)
-            ):
-                return "SVG pairing is unavailable for user scale callbacks."
-            for component in (
-                artist.get_major_formatter(),
-                artist.get_minor_formatter(),
-                artist.get_major_locator(),
-                artist.get_minor_locator(),
-            ):
-                if not type(component).__module__.startswith(("matplotlib.", "mpl_toolkits.")):
-                    return "SVG pairing is unavailable for custom tick formatters or locators."
-                if not _svg_pair_standard_method(component.__call__):
-                    return "SVG pairing is unavailable for custom tick drawing methods."
-                if isinstance(component, ticker.FuncFormatter) and not _svg_pair_standard_method(
-                    component.func
-                ):
-                    return "SVG pairing is unavailable for user tick-formatting callbacks."
-        if isinstance(artist, Axes):
-            locator = artist.get_axes_locator()
-            if locator is not None and not _svg_pair_standard_method(locator):
-                return "SVG pairing is unavailable for user axes-location callbacks."
-        # An image filter is run by `renderer.stop_filter()` — once per renderer the tee forwards to (PDF and every SVG),
-        # so a stateful filter would yield different content in each while reporting one draw: always a blocker.
-        agg_filter = artist.get_agg_filter()
-        if agg_filter is not None and not _svg_pair_standard_method(agg_filter):
-            return "SVG pairing is unavailable for user image-filter callbacks."
-        if isinstance(artist, Annotation):
-            coordinates = [artist.xycoords, artist.get_anncoords()]
-            while coordinates:
-                coord = coordinates.pop()
-                if isinstance(coord, tuple):
-                    coordinates.extend(coord)
-                elif callable(coord) and not _svg_pair_standard_method(coord):
-                    return "SVG pairing is unavailable for annotation coordinate callbacks."
-        # Standard collections use None to mean no path effects.
-        effects = artist.get_path_effects()
-        for effect in () if effects is None else effects:
-            if not type(effect).__module__.startswith(("matplotlib.", "mpl_toolkits.")) or not (
-                _svg_pair_standard_method(effect.draw_path)
-            ):
-                return "SVG pairing is unavailable for custom path-effect callbacks."
+        why = _svg_pair_artist_blocker(artist, cache)
+        if why is not None:
+            return f"SVG pairing is unavailable for custom code in the figure ({why})."
+        if not single_draw:
+            why = _svg_pair_value_blocker(artist, seen_transforms)
+            if why is not None:
+                return why
+        # `get_children` is Matplotlib's own here (checked above), so walking with it runs no user code
         pending.extend(artist.get_children())
     return None
 
@@ -2018,7 +2111,9 @@ class LiveFigureSession:
                         else nullcontext(out)
                     ) as fh:
                         with (
-                            teedraw.single_draw(tee_targets) if tee_targets else nullcontext()
+                            teedraw.single_draw(state.fig, tee_targets)
+                            if tee_targets
+                            else nullcontext()
                         ) as tee_session:
                             state.fig.savefig(
                                 fh,

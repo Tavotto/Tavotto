@@ -28,6 +28,7 @@ import threading
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 import matplotlib as mpl
@@ -187,6 +188,7 @@ for _name in _DRAW_CALLS:
 class DrawSession:
     """`single_draw()` 的结果：真正走到 finalize 的那一组 SVG 目标各自的错误（None = 成功写出）。"""
 
+    figure: object
     targets: Sequence[SvgTarget]
     groups: list[list[_Follower]] = field(default_factory=list)
     finalized: list[_Follower] | None = None
@@ -199,46 +201,76 @@ class DrawSession:
         return [f.error for f in self.finalized]
 
 
-_LOCK = threading.Lock()
+#: 当前线程 / 上下文里正在进行的会话。**不是进程级状态**：别的线程（ContextVar 默认不继承）、别的 figure 的
+#: `savefig` 看到的是 None / 另一张图，原样走 matplotlib 自己的 `MixedModeRenderer`。
+_SESSION: ContextVar[DrawSession | None] = ContextVar("teedraw_session", default=None)
+_INSTALL_LOCK = threading.Lock()
+_INSTALLED = 0
+_REAL_MIXED = backend_pdf.MixedModeRenderer
+
+
+def _dispatch(figure, width, height, dpi, vector, bbox_inches_restore=None):
+    """`backend_pdf.MixedModeRenderer` 的替身：只在「本上下文的会话 + 会话要导的那张 figure」时返回 `TeeRenderer`。"""
+    master = _REAL_MIXED(
+        figure, width, height, dpi, vector, bbox_inches_restore=bbox_inches_restore
+    )
+    session = _SESSION.get()
+    if session is None or session.figure is not figure:
+        return master
+    followers = []
+    for target in session.targets:
+        buffer = io.StringIO()
+        with _rc(target.rc):
+            svg = backend_svg.RendererSVG(width * 72, height * 72, buffer, image_dpi=dpi)
+        mixed = MixedModeRenderer(
+            figure, width, height, dpi, svg, bbox_inches_restore=bbox_inches_restore
+        )
+        followers.append(_Follower(mixed, target, buffer))
+    session.groups.append(followers)
+    tee = TeeRenderer(master, followers, height * 72, session.trace)
+    real_finalize = tee.finalize
+
+    def finalize():
+        real_finalize()
+        session.finalized = followers
+
+    tee.finalize = finalize
+    return tee
 
 
 @contextmanager
-def single_draw(targets: Sequence[SvgTarget], *, trace: list | None = None):
-    """在这个上下文里跑 `fig.savefig(<pdf>)`：同一次 draw 另出 `targets` 里的 SVG。
+def _installed():
+    """会话存续期间把 `backend_pdf.MixedModeRenderer` 换成 `_dispatch`（引用计数），最后一个会话退出即还原。
 
-    出上下文后读 `session.errors()`。只对 `savefig(format="pdf")` 有意义（换的是 `backend_pdf` 里的名字）。
+    换的只是一个模块级名字，而且替身对没有会话的调用方就是原类的构造：并发的别的 `savefig` 不受影响。
     """
-    session = DrawSession(targets=list(targets), trace=trace)
-    real = backend_pdf.MixedModeRenderer
+    global _INSTALLED
+    with _INSTALL_LOCK:
+        if _INSTALLED == 0:
+            backend_pdf.MixedModeRenderer = _dispatch
+        _INSTALLED += 1
+    try:
+        yield
+    finally:
+        with _INSTALL_LOCK:
+            _INSTALLED -= 1
+            if _INSTALLED == 0:
+                backend_pdf.MixedModeRenderer = _REAL_MIXED
 
-    def factory(figure, width, height, dpi, vector, bbox_inches_restore=None):
-        master = real(figure, width, height, dpi, vector, bbox_inches_restore=bbox_inches_restore)
-        followers = []
-        for target in session.targets:
-            buffer = io.StringIO()
-            with _rc(target.rc):
-                svg = backend_svg.RendererSVG(width * 72, height * 72, buffer, image_dpi=dpi)
-            mixed = MixedModeRenderer(
-                figure, width, height, dpi, svg, bbox_inches_restore=bbox_inches_restore
-            )
-            followers.append(_Follower(mixed, target, buffer))
-        session.groups.append(followers)
-        tee = TeeRenderer(master, followers, height * 72, trace)
-        real_finalize = tee.finalize
 
-        def finalize():
-            real_finalize()
-            session.finalized = followers
+@contextmanager
+def single_draw(figure, targets: Sequence[SvgTarget], *, trace: list | None = None):
+    """在这个上下文里跑 `figure.savefig(<pdf>)`：同一次 draw 另出 `targets` 里的 SVG。
 
-        tee.finalize = finalize
-        return tee
-
-    with _LOCK:
-        backend_pdf.MixedModeRenderer = factory
-        try:
+    只对**这个线程、这张 figure** 生效。出上下文后读 `session.errors()`。只对 `savefig(format="pdf")` 有意义。
+    """
+    session = DrawSession(figure=figure, targets=list(targets), trace=trace)
+    token = _SESSION.set(session)
+    try:
+        with _installed():
             yield session
-        finally:
-            backend_pdf.MixedModeRenderer = real
+    finally:
+        _SESSION.reset(token)
 
 
 # ---------------------------------------------------------------------------
@@ -307,8 +339,9 @@ def _self_test() -> tuple[bool, str]:
 
     # 1) PDF 与常规 savefig 字节相同（确定性的图）
     plain = _pdf_bytes(build(False))
-    with single_draw(targets) as session:
-        teed = _pdf_bytes(build(False))
+    fig_a = build(False)
+    with single_draw(fig_a, targets) as session:
+        teed = _pdf_bytes(fig_a)
     if plain != teed:
         return False, "tee PDF differs from the plain savefig PDF"
     if any(session.errors()):
@@ -317,8 +350,9 @@ def _self_test() -> tuple[bool, str]:
     # 2) 带计数器回调的图：PDF 与 SVG 看到同一串文字调用，SVG 是合法 XML 且保留了 <text>
     sinks.clear()
     trace: list = []
-    with single_draw(targets, trace=trace):
-        _pdf_bytes(build(True))
+    fig_b = build(True)
+    with single_draw(fig_b, targets, trace=trace):
+        _pdf_bytes(fig_b)
     labels = [s for _n, s in trace if s.startswith("c")]
     if not labels or labels != sorted(labels, key=lambda s: int(s[1:])):
         return False, "counter formatter did not run exactly once per tick"

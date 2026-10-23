@@ -19,20 +19,23 @@ Figure 的 PDF / SVG 配对原来是「同一命令里 PDF 画一遍、SVG 再�
    SVG 目标：每次调用单独 `new_gc()` + `copy_properties`（方向：目标 ← tee 的 gc）；`draw_text` / `draw_tex` 的 y 在 `flipy` 不同的目标上换成 `H - y`；
    `svg.fonttype` / `svg.image_inline` 是 draw 时才读的 rcParam，每个 SVG 目标带自己的 rc、只在转发给它时生效，所以 path 与 text 变体同一次 draw 并存。
 3. **SVG 目标失败不拖累 PDF**（该目标停掉并记原因）；`bbox_inches="tight"` 的探测 renderer 建完即弃，SVG 缓冲在内存、只有走到 `finalize()` 的那一组才交给 sink。
-4. **阻断收窄（只放行「不接触 renderer」的回调）**：单次绘制路径（`_svg_pair_blocker(fig, single_draw=True)`）放行只算值的回调——
-   `FuncFormatter` / Locator / scale / transform 函数（用户反馈的场景）；**仍阻断能看到 renderer 的回调**与**会被多个目标各跑一次的回调**：`draw_event` 处理器、自定义
-   `Artist.draw` / `get_tightbbox`（含自定义 Artist 类）、axes locator、注解坐标回调、path effect。理由（Codex #1355）：这些回调可以按 renderer 的类分派
-   （`isinstance(renderer, MixedModeRenderer / RendererPdf)`），而 tee 与 PDF 本来拿到的 renderer 不是同一个类，**连 PDF 自己都可能变**；自检只用内置 artist，测不到。
-   **判定本身不得跑用户代码**（Codex #1355 复核）：遍历会调用的方法（`get_children`、`get_path_effects`、`get_axes_locator`、`get_anncoords`，二次绘制口径还有各 getter / formatter / locator）
-   先确认是 matplotlib 自己的再调用——实例级的有状态 `get_children` 会让判定多跑一次常规 savefig 里没有的调用。
-   **图像滤镜 `agg_filter` 也阻断**（Codex #1355）：`stop_filter` 被广播给每个目标，同一个用户回调会对 PDF 与每份 SVG 各跑一次，有状态的滤镜会让三份内容不同却报 `single_draw`。
-   不做「跑一次共享结果」（要在 tee 里改写滤镜语义）。已逐个核过 tee 里所有「转发给每个目标」的点：`draw_path` / `draw_markers` / `draw_path_collection` / `draw_quad_mesh` /
-   `draw_gouraud_triangles` / `draw_image` 收到的都是 artist 阶段已算好的数组 / Path / 仿射变换（非仿射部分与用户的 transform / scale 函数在 artist 里只算一次），
-   `draw_text` / `draw_tex` 只读 matplotlib 自己的 FontProperties / Text（自定义 Text 子类被「自定义 Artist」阻断挡住），`open_group` / `close_group` / `start|stop_rasterizing` 不含用户代码；
-   只有 `start_filter` / `stop_filter` 会执行用户回调，故一并阻断。
-   另保留自定义 `Figure.savefig` / canvas / 打印方法 / 注册后端（`_svg_pair_env_blocker`）。二次绘制退路与 #1185 证人仍用完整阻断。
-   评估过「让 `TeeRenderer` 对 `isinstance` 透明」（子类化 `MixedModeRenderer` 代理）：能骗过 `isinstance(…, MixedModeRenderer)`，但用户代码读 `renderer._renderer`、
-   直接判 `RendererPdf`、按 `renderer.__class__.__name__` 分派都无法完整模拟，且无法在三档 matplotlib 上穷尽证明——**不做**，保守放行范围，将来有证据再放宽。
+3a. **作用域**（Codex #1355）：替换 `backend_pdf.MixedModeRenderer` 的替身只对「**当前线程的会话 + 会话要导的那张 figure**」返回 `TeeRenderer`（`ContextVar` 标记会话），
+   别的线程、同线程别的 figure 的 `savefig` 拿到的就是原类的构造；替换按引用计数、最后一个会话退出即还原；SVG sink 绑在会话对象上，不是模块级状态。
+   评估过完全不 patch（自己构造 `PdfFile` + `MixedModeRenderer` 再 `figure.draw`，复刻 `print_pdf`）：要重复 `print_pdf` 的 dpi / PdfPages / `endStream` / metadata 分支，
+   三档 matplotlib 之间有差异，比「按上下文分派的替身」更脆，不取。已知边界：SVG 目标的 `svg.fonttype` / `svg.image_inline` 是 draw 时读的进程级 rcParams，
+   只在转发到 SVG 目标那一刻临时置位、立即还原，且只发生在会话线程里。
+4. **阻断改成白名单（Codex #1355 三轮后的结构）**：不再逐个列「哪些回调危险」（draw → get_children → agg_filter → get_window_extent……每轮都漏一个）。
+   单次绘制资格 = 图里**每一个 artist**（figure、axes、axis、text、集合……）在**类和实例两层**上，**所有可调用属性都是 matplotlib / mpl_toolkits 自己定义的**
+   （`figsession._svg_pair_artist_blocker`）：整条 MRO 的类都来自 matplotlib，类字典里没有被换成用户函数的可调用（含对 matplotlib 类的全局 monkeypatch），
+   实例字典里同样没有（实例级 monkeypatch、用户的 `agg_filter` / axes locator / 注解坐标 callable / 自定义 path effect 类）。判据是**代码出处**（`__code__` 的文件与模块 globals 对得上，
+   numpy 自己的纯 Python 函数同理，Tavotto 自己的 colorbar 观察包装核闭包里的原方法），不是 `__module__`——`functools.wraps` 会把它抄成 matplotlib 的。
+   只读（`vars` / `__mro__` / `__code__`），**判定不调用用户代码**；通过后才用 matplotlib 自己的 `get_children` 往下走。`draw_event` 处理器同样阻断。
+   理由：能看到 renderer 的代码可能按 renderer 的类分派（tee 与 PDF 本来拿到的不是同一个类，连 PDF 都会变）、可能被每个目标各跑一次（如 `stop_filter`）、
+   可能在两次 draw 之间不同；这些都不是「值」，白名单一次覆盖，不靠穷举。
+   **唯一的例外是封闭的「值槽」**：刻度 formatter / locator（含 `FuncFormatter` 包着的用户函数、用户的 Formatter / Locator 子类）、scale 与 transform 的用户函数——
+   它们只算值、不接触 renderer；它们本来就不是 artist 的可调用属性（挂在 `Ticker` / `Transform` 对象里），所以天然不在白名单扫描范围内。二次绘制口径（退路与 #1185 证人）才另外核它们。
+   另保留自定义 `Figure.savefig` / canvas / 打印方法 / 注册后端（`_svg_pair_env_blocker`）。
+   评估过「让 `TeeRenderer` 对 `isinstance` 透明」：不做（见上一版论证，白名单已使它不再必要）。
 5. **自检先于导出**：`teedraw.status()`（进程内一次）用一张小图核对三件事——tee 的 PDF 与常规 PDF 字节相同；计数器回调的文字调用在 PDF 与 SVG 两路是同一串；两份 SVG 是合法 XML 且 text 变体保留 `<text>`。
    不过（换了 matplotlib、内部名字变了）= 退回二次绘制 + 完整回调阻断，原因带上自检结论（`… (single-draw pairing unavailable: <why>)`），经 `svg_error.message` 进 `job.warnings` / 诊断，并由 `svg_figure_unavailable` 说成人话。
    自检不经 `Figure.savefig`（worker / bridge 的 savefig 捕获钩子不能把它记成一次用户保存）。

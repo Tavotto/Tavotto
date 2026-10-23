@@ -101,7 +101,7 @@
     "export_render_failed": "{{id}} 重渲染失败：{{reason}}",
     "external_change": "排版在磁盘上被 Tavotto 之外的改动覆盖，本次保存未写入。",
     "file_locked": "文件被其他程序占用，请关闭正在打开它的程序后重试。",
-    "svg_figure_unavailable": "{{figure}} 暂时无法导出为 SVG：这张图的脚本替换了 matplotlib 自己的保存 / 画布方式（或当前环境暂不支持），Tavotto 无法保证 SVG 与 PDF 完全一致。其余格式已照常导出，也可用 PDF 在矢量软件里转换。",
+    "svg_figure_unavailable": "{{figure}} 暂时无法导出为 SVG：这张图用了会影响绘制过程的自定义代码，为保证 SVG 与 PDF 是同一张图，这次没有导出 SVG。其余格式已照常导出，也可用 PDF 在矢量软件里转换。",
     "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
     "svg_snapshot_missing": "{{id}} 暂时无法导出为 SVG：请先重新运行这张图的脚本，或改用 PDF 导出。",
     "format_failed": "无法导出该格式：{{error}}。",

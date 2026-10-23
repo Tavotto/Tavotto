@@ -101,7 +101,7 @@
     "export_render_failed": "Re-rendering {{id}} failed: {{reason}}",
     "external_change": "This layout changed on disk outside Tavotto. This save wasn’t written.",
     "file_locked": "The file is locked by another program. Close whatever has it open and retry.",
-    "svg_figure_unavailable": "{{figure}} can’t be exported as SVG yet: its script replaces matplotlib’s own saving or canvas machinery (or this environment doesn’t support it), so Tavotto can’t guarantee the SVG matches the PDF. The other formats were exported as usual; you can also convert the PDF in a vector editor.",
+    "svg_figure_unavailable": "{{figure}} can’t be exported as SVG yet: this figure uses custom code that can affect how it is drawn, so to keep the SVG and the PDF the same figure, no SVG was written. The other formats were exported as usual; you can also convert the PDF in a vector editor.",
     "svg_source_unsupported": "{{id}} cannot be safely converted to SVG from its current source. Export as PDF instead.",
     "svg_snapshot_missing": "{{id}} can’t be exported as SVG yet: run its script again first, or export as PDF instead.",
     "format_failed": "This format couldn’t be produced: {{error}}.",
