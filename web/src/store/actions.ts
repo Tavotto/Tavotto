@@ -974,6 +974,29 @@ export function setOverride(
 }
 
 /**
+ * 改图幅（`figure.size_mm` override，与属性栏「图幅」W / H 同一条 override）并可选地挪面板的 x / y：
+ * **一条历史、一次渲染**。画布上拖图的四条边（`figureEdgeDrag`）松手时调用：拖左 / 上边时对侧边要不动，
+ * 渲染回来之后 `useEngineSync` 按缩放比不变静默校正 w / h（锚点 = 左上角，所以 x / y 要在这里先挪好）。
+ */
+export function setFigureFrame(
+  panelId: string,
+  sizeMm: [number, number],
+  pos?: { x: number; y: number },
+) {
+  finishActiveGesture()
+  updateObject<PanelObject>(panelId, hist('setProp', { prop: propLabel('size_mm') }), (o) => {
+    upsertOverrides(o, [{ gid: 'figure', prop: 'size_mm', value: sizeMm }])
+    if (pos) {
+      o.x = pos.x
+      o.y = pos.y
+    }
+  })
+  const panel = findObject(panelId)
+  if (panel?.type === 'panel') requestRender(panel, true)
+  emitActivity({ kind: 'element.property_changed', prop: 'size_mm' })
+}
+
+/**
  * 关掉图内文字的一种效果（背景 / 描边）：写开关 `false`，**并把从属字段的
  * override 一并清掉**——一条历史、一次渲染。
  *

@@ -324,6 +324,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   const approxPreview =
     !runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc
 
+  const figureFramePending = useInteractionStore((s) => s.figureFramePending?.id === panelId)
   // The canvas feedback portal consumes this same transform/opacity chain.
   const contentStyle: CSSProperties = {
     width: contentW,
@@ -337,6 +338,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   return (
     <div
       className="absolute inset-0 overflow-hidden"
+      // 拖图边改图幅松手后、新图回来之前：旧图收起（按旧尺寸画在新位置上会错位），虚线框占位在 `FigureEdgeHandles`
+      style={figureFramePending ? { opacity: 0 } : undefined}
       // 此刻画布挂的是哪一版、是不是这一版自己的精确图。
       // exact = 图与文档同源；fallback = 暂时挂着上一张（几何交互已停摆）。
       // key 过短 hash：变体键里带文件名与 overrides 原文，不落进 DOM。

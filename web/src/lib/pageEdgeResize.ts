@@ -97,3 +97,44 @@ export function resizeFigureEdge(opts: {
     snap: r.snap,
   }
 }
+
+/** 单图拖边落到图幅上的结果：写进 `figure.size_mm` 的值与面板新的 x / y，以及虚线预览框（页面 mm） */
+export interface FigureFramePlan {
+  sizeMm: [number, number]
+  /** 拖左 / 上边时的新 x / y（对侧边不动）；右 / 下边不改 */
+  pos: { x: number; y: number }
+  /** 预览框：x / y 与 `pos` 同，w / h = 图幅 × 缩放比（渲染回来后面板的页面尺寸） */
+  box: { x: number; y: number; w: number; h: number }
+  snap: PageColumn | null
+}
+
+/**
+ * 单图编辑拖边 → 图幅（纯函数）。`start` 是面板在页面上的框（mm），`sizeMm` 是它此刻的图幅（脚本里的 mm），
+ * 缩放比 `scale = start.w / sizeMm[0]`（页面 mm 每图幅 mm；字号线宽不随图幅变，所以图幅变 = 页面上的框按同一比例变）。
+ * 夹取 / 吸附（宽度吸栏宽、⌥ 关）在**页面 mm**上做（与拖页面边同一份 `resizeFigureEdge`），再换回图幅 mm（0.01 一格，
+ * 属性栏「图幅」的精度）；`limits` 是引擎给 `size_mm` 的界。预览框用取整后的图幅反算，与渲染回来的面板尺寸一致。
+ */
+export function planFigureFrame(opts: {
+  edge: PageEdge
+  start: { x: number; y: number; w: number; h: number }
+  sizeMm: readonly [number, number]
+  delta: number
+  columns: PageColumn[]
+  noSnap?: boolean
+  limits?: { min?: number; max?: number }
+}): FigureFramePlan {
+  const { edge, start, sizeMm, limits } = opts
+  const kx = start.w / sizeMm[0]
+  const ky = start.h / sizeMm[1]
+  const r = resizeFigureEdge(opts)
+  const clamp = (v: number) => Math.min(limits?.max ?? Infinity, Math.max(limits?.min ?? -Infinity, v))
+  const round2 = (v: number) => Math.round(v * 100) / 100
+  const horizontal = edge === 'l' || edge === 'r'
+  const nw = horizontal ? clamp(round2(r.w / kx)) : sizeMm[0]
+  const nh = horizontal ? sizeMm[1] : clamp(round2(r.h / ky))
+  const w = nw * kx
+  const h = nh * ky
+  const x = edge === 'l' ? round4(start.x + start.w - w) : start.x
+  const y = edge === 't' ? round4(start.y + start.h - h) : start.y
+  return { sizeMm: [nw, nh], pos: { x, y }, box: { x, y, w, h }, snap: r.snap }
+}

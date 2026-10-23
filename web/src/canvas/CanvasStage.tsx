@@ -437,6 +437,9 @@ function FastEditPaper({
   objects: ReturnType<typeof useDocumentStore.getState>['doc']['objects']
 }) {
   const o = panelId ? objects.find((x) => x.id === panelId) : undefined
+  // 拖图边改图幅松手后、新图回来之前：背纸一并收起，只留虚线框占位（`FigureEdgeHandles`）
+  const pending = useInteractionStore((s) => s.figureFramePending?.id === panelId)
+  if (pending) return null
   // 隐藏的图不画，背纸也不画（否则画布上留一块白矩形；取消隐藏图回来、背纸跟着回来）
   if (!o || o.hidden) return null
   // 与 ObjectView 给面板的落位同一种写法（#836）：left / top 恒 0，位置走 translate——WebKit 会把 left / top

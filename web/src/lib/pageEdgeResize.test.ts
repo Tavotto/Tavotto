@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { pageColumns } from './pageColumns'
-import { FIGURE_EDGE_MIN_MM, PAGE_EDGE_MIN_MM, resizeFigureEdge, resizePageEdge } from './pageEdgeResize'
+import { FIGURE_EDGE_MIN_MM, PAGE_EDGE_MIN_MM, planFigureFrame, resizeFigureEdge, resizePageEdge } from './pageEdgeResize'
 
 const columns = pageColumns({ single: 89, double: 183 })
 const start = { w: 180, h: 120 }
@@ -88,5 +88,28 @@ describe('resizeFigureEdge（单图编辑拖图的边）', () => {
     const small = { x: 0, y: 0, w: 20, h: 20 }
     expect(resizeFigureEdge({ edge: 'r', start: small, delta: 0, columns: [] }).w).toBe(20)
     expect(resizeFigureEdge({ edge: 'r', start: small, delta: -5, columns: [] }).w).toBe(15)
+  })
+})
+
+describe('planFigureFrame（拖边 → 图幅）', () => {
+  const start = { x: 7, y: 18, w: 80, h: 55 }
+  it('缩放比 1：图幅 = 页面框；右边不挪 x，左边按对侧不动挪 x', () => {
+    expect(planFigureFrame({ edge: 'r', start, sizeMm: [80, 55], delta: 12, columns: [] })).toMatchObject({
+      sizeMm: [92, 55],
+      pos: { x: 7, y: 18 },
+      box: { x: 7, y: 18, w: 92, h: 55 },
+    })
+    const l = planFigureFrame({ edge: 'l', start, sizeMm: [80, 55], delta: -15, columns: [] })
+    expect(l.sizeMm).toEqual([95, 55])
+    expect(l.pos.x + l.box.w).toBeCloseTo(87, 6)
+  })
+  it('缩放比 2：位移按页面 mm，图幅是页面的一半；预览框用取整后的图幅反算', () => {
+    const p = planFigureFrame({ edge: 'r', start: { x: 0, y: 0, w: 160, h: 110 }, sizeMm: [80, 55], delta: 20.3, columns: [] })
+    expect(p.sizeMm).toEqual([90.15, 55])
+    expect(p.box.w).toBeCloseTo(180.3, 6)
+  })
+  it('图幅夹在引擎的界里；高度不吸栏宽', () => {
+    expect(planFigureFrame({ edge: 'r', start, sizeMm: [80, 55], delta: 999, columns: [], limits: { max: 120 } }).sizeMm[0]).toBe(120)
+    expect(planFigureFrame({ edge: 'b', start: { ...start, h: 180 }, sizeMm: [80, 180], delta: 4, columns }).snap).toBeNull()
   })
 })

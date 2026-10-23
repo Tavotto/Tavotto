@@ -4,6 +4,8 @@ import { Numbers } from '@sfinterface/numbers'
 import { perfCount } from '@/perf/core'
 import type { PageEdge } from '@/lib/pageEdgeResize'
 import { useDocumentStore } from '@/store/documentStore'
+import { figureFrameFacts } from '@/lib/figureEdgeFrame'
+import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
@@ -66,7 +68,7 @@ export function PageEdgeHandles() {
 /**
  * 单图编辑里拖这张图的四条边改图幅：同一套命中区与尺寸标注（`EdgeStrips` / `EdgeDimensions`），框是画布上那张图。
  * 手势在 `figureEdgeDrag.startFigureEdgeResize`。挂载条件由 `CanvasStage` 管（`mode === 'fast_edit'`）；
- * 图被隐藏 / 锁定、非选择工具、裁剪中、别的拖动占着时让位；**图内编辑里照常可用**（单图编辑打开图默认就在图内编辑里），
+ * 精确 manifest 缺席（或面板被裁过 / 旋转过）时整组不挂（`figureFrameFacts`）；图被隐藏 / 锁定、非选择工具、裁剪中、别的拖动占着时让位；**图内编辑里照常可用**（单图编辑打开图默认就在图内编辑里），
  * 命中区压进图里只有 `FIGURE_HIT_IN` px，免得盖住贴着图框的轴标题 / 刻度。
  */
 export function FigureEdgeHandles({ panelId }: { panelId: string | null }) {
@@ -76,18 +78,45 @@ export function FigureEdgeHandles({ panelId }: { panelId: string | null }) {
   const panY = useViewportStore((s) => s.panY)
   const spaceDown = useViewportStore((s) => s.spaceDown)
   const o = useDocumentStore((s) => (panelId ? s.doc.objects.find((x) => x.id === panelId) : undefined))
+  // 权威只认精确 manifest（ADR 0017）：选择器只回布尔，别把每次新造的 manifest 当订阅值
+  const hasFrame = useRenderStore((s) =>
+    o?.type === 'panel' ? figureFrameFacts(o, exactPanelManifest(s, o)) != null : false,
+  )
   const tool = useUiStore((s) => s.tool)
   const cropTargetId = useUiStore((s) => s.cropTargetId)
   const kind = useInteractionStore((s) => s.kind)
   const active = useInteractionStore((s) => (s.kind === 'figureedge' ? (s.pageEdge?.edge ?? null) : null))
+  const preview = useInteractionStore((s) => s.figureEdgeBox)
+  const pending = useInteractionStore((s) => (s.figureFramePending?.id === panelId ? s.figureFramePending.box : null))
   if (!o || o.type !== 'panel' || o.hidden || o.locked) return null
-  const idle = tool === 'select' && !spaceDown && cropTargetId == null && kind === 'none'
-  const box = {
-    left: panX + mmToWorld(o.x) * zoom,
-    top: panY + mmToWorld(o.y) * zoom,
-    w: mmToWorld(o.w) * zoom,
-    h: mmToWorld(o.h) * zoom,
+  // 松手后新图回来之前：只留虚线框占位（旧图与背纸已收起，`PanelView` / `FastEditPaper` 读同一个状态）
+  if (pending) {
+    const r = {
+      left: panX + mmToWorld(pending.x) * zoom,
+      top: panY + mmToWorld(pending.y) * zoom,
+      w: mmToWorld(pending.w) * zoom,
+      h: mmToWorld(pending.h) * zoom,
+    }
+    return (
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div
+          data-figure-pending=""
+          className="pointer-events-none absolute border border-dashed border-dim"
+          style={{ left: r.left, top: r.top, width: r.w, height: r.h }}
+        />
+      </div>
+    )
   }
+  if (!hasFrame) return null
+  const idle = tool === 'select' && !spaceDown && cropTargetId == null && kind === 'none'
+  const toScreen = (r: { x: number; y: number; w: number; h: number }) => ({
+    left: panX + mmToWorld(r.x) * zoom,
+    top: panY + mmToWorld(r.y) * zoom,
+    w: mmToWorld(r.w) * zoom,
+    h: mmToWorld(r.h) * zoom,
+  })
+  const box = toScreen(o)
+  const pv = preview ? toScreen(preview) : null
   return (
     <div className="pointer-events-none absolute inset-0 overflow-hidden">
       <EdgeStrips
@@ -98,7 +127,16 @@ export function FigureEdgeHandles({ panelId }: { panelId: string | null }) {
         lead={HIT_PX - FIGURE_HIT_IN}
         onStart={(e, edge) => startFigureEdgeResize(e, edge, o.id)}
       />
-      <EdgeDimensions dimsAttr="data-figure-dims" box={box} wMm={o.w} hMm={o.h} />
+      {pv && preview && (
+        <>
+          <div
+            data-figure-preview=""
+            className="pointer-events-none absolute border border-dashed border-dim"
+            style={{ left: pv.left, top: pv.top, width: pv.w, height: pv.h }}
+          />
+          <EdgeDimensions dimsAttr="data-figure-dims" box={pv} wMm={preview.w} hMm={preview.h} />
+        </>
+      )}
     </div>
   )
 }

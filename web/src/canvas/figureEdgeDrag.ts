@@ -1,15 +1,43 @@
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { msg, t as translate, type UiMessage } from '@/i18n'
+import { t as translate } from '@/i18n'
 import { resolvePageColumns, type PageColumn } from '@/lib/pageColumns'
-import { resizeFigureEdge, type PageEdge } from '@/lib/pageEdgeResize'
-import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
+import { figureFrameFacts } from '@/lib/figureEdgeFrame'
+import { planFigureFrame, type PageEdge } from '@/lib/pageEdgeResize'
+import { setFigureFrame } from '@/store/actions'
+import { useDocumentStore } from '@/store/documentStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { toCatalog, useProfileStore } from '@/store/profileStore'
-import { getTransform, pxToMm } from '@/store/viewportStore'
+import { exactPanelManifest, exactPanelRender, useRenderStore } from '@/store/renderStore'
+import { getTransform, pxToMm, useViewportStore } from '@/store/viewportStore'
 import { trackPointer } from './interactions'
 
-/** 与画布上缩放手柄同一条历史标签：拖边与拖手柄在撤销面板里是同一个名字 */
-const HIST_LABEL: UiMessage = msg('history.resizeObjects', undefined, 'workspace')
+/** 渲染没回来时占位的最长时间（ms）：渲染失败 / 被取代时不让旧图永远藏着 */
+const PLACEHOLDER_MAX_MS = 20_000
+
+/**
+ * 松手后到新图回来之前，画布上只留虚线框（`interaction.figureFramePending`）：旧图按旧尺寸画在新位置上会错位闪一下。
+ * 新图的判据 = 这张面板当前变体已有精确渲染（`exactPanelRender`）；撤销 / 面板没了 / 超时也收。
+ */
+function holdPlaceholder(panelId: string, box: { x: number; y: number; w: number; h: number }) {
+  const ix = useInteractionStore
+  const stop: (() => void)[] = []
+  let timer = 0
+  const done = () => {
+    stop.forEach((f) => f())
+    stop.length = 0
+    window.clearTimeout(timer)
+    if (ix.getState().figureFramePending?.id === panelId) ix.getState().setFigureFramePending(null)
+  }
+  const check = () => {
+    const p = useDocumentStore.getState().doc.objects.find((o) => o.id === panelId)
+    if (ix.getState().figureFramePending?.id !== panelId) return done()
+    if (!p || p.type !== 'panel' || exactPanelRender(useRenderStore.getState(), p)) done()
+  }
+  ix.getState().setFigureFramePending({ id: panelId, box })
+  stop.push(useRenderStore.subscribe(check), useDocumentStore.subscribe(check))
+  timer = window.setTimeout(done, PLACEHOLDER_MAX_MS)
+  check()
+}
 
 function columnLabel(specLabel: string, c: PageColumn): string {
   const name = translate(`canvas.presets.${c.id}.label`, { ns: 'inspector' })
@@ -17,13 +45,16 @@ function columnLabel(specLabel: string, c: PageColumn): string {
 }
 
 /**
- * 单图编辑里拖这张图的四条边之一改图幅（面板的 w / h，mm）——手感与多图排版里拖页面边（`startPageEdgeResize`）一致。
+ * 单图编辑里拖这张图的四条边之一改**图幅**（`figure.size_mm`，属性栏「图幅」W / H 同一条 override）——
+ * 与多图排版里拖页面边（`startPageEdgeResize`）同一套手感：框变大、**内容不缩放**（字号线宽不变，图按新图幅重新渲染）。
  *
- * - **写文档与缩放手柄同一条路径**：每一帧 `txnUpdate` 写面板的 x / y / w / h（与 `startResizeDrag` 同一种写法，
- *   图幅没有第二个入口），登记对侧锚点（`setTxnAnchor`，渲染校正图幅时绕它收尾）；整次拖动一个事务、松手一步撤销，
- *   Esc / 指针被系统打断回到原值。尺寸标注是 `canvas/PageEdgeResize.EdgeDimensions`。
- * - 对侧那条边不动（拖左 / 上边时 x / y 反向补偿）；视口不动。
- * - 宽度吸栏宽 ±2 mm、⌥ 关、最小 30 mm、0.1 mm 一格：数学与拖页面边是同一份（`resizeFigureEdge` → `resizePageEdge`）。
+ * - **拖动中不写文档、不发渲染**：只在 `interaction.figureEdgeBox` 里放一个虚线预览框，尺寸标注读它；
+ *   松手才 `setFigureFrame` 一次（一条历史 + 一次渲染）。Esc / pointercancel / 没拖动 = 什么都没发生。
+ * - 松手后新图回来之前只留虚线框占位（`holdPlaceholder`），不闪错位的旧图。
+ * - 拖左 / 上边时对侧边不动：松手时同一次提交里把 x / y 挪好（渲染回来后 `useEngineSync` 以左上角为锚点静默校正 w / h）。
+ * - 拖动是对视口的直接操纵：每帧 `setPan` 退出「适应画布」（否则图幅一变适应模式把图挪走），Esc 取消时视口整体还原。
+ * - 宽度吸栏宽 ±2 mm、⌥ 关、0.1 mm 一格（页面 mm 上做，`planFigureFrame` → `resizeFigureEdge`）。
+ * - 权威只认精确 manifest（`figureFrameFacts`）：没有就不起手势。
  */
 export function startFigureEdgeResize(e: ReactPointerEvent, edge: PageEdge, panelId: string) {
   if (e.button !== 0) return
@@ -32,7 +63,11 @@ export function startFigureEdgeResize(e: ReactPointerEvent, edge: PageEdge, pane
   const store = useDocumentStore.getState()
   const target = store.doc.objects.find((o) => o.id === panelId)
   if (!target || target.type !== 'panel' || target.locked) return
+  const facts = figureFrameFacts(target, exactPanelManifest(useRenderStore.getState(), target))
+  if (!facts) return
   const start = { x: target.x, y: target.y, w: target.w, h: target.h }
+  // 先把视口定住（在飞的取景补间落到终点）再取快照：取消时整体还原
+  const view0 = useViewportStore.getState().freezeView()
   const t0 = getTransform()
   const columnsNow = () => {
     const ps = useProfileStore.getState()
@@ -45,44 +80,44 @@ export function startFigureEdgeResize(e: ReactPointerEvent, edge: PageEdge, pane
 
   interaction.begin('figureedge')
   interaction.setPageEdge({ edge, snapLabel: null, rolls: false })
-  store.beginTxn(HIST_LABEL)
-  // 对侧边的中点：渲染把图幅校正到别的值时，收尾绕它伸缩，这条边仍然不动
-  setTxnAnchor(panelId, {
-    x: edge === 'l' ? start.x + start.w : edge === 'r' ? start.x : start.x + start.w / 2,
-    y: edge === 't' ? start.y + start.h : edge === 'b' ? start.y : start.y + start.h / 2,
-  })
+  interaction.setFigureEdgeBox({ ...start })
 
+  let last: ReturnType<typeof planFigureFrame> | null = null
   let prevSnap: string | null = null
   let prevAlt = false
   trackPointer(e, {
     onMove: (ev, dxPx, dyPx) => {
       const { columns, specLabel } = columnsNow()
-      const res = resizeFigureEdge({
+      const plan = planFigureFrame({
         edge,
         start,
+        sizeMm: facts.sizeMm,
         delta: pxToMm(horizontal ? dxPx : dyPx, t0),
         columns,
         noSnap: ev.altKey,
+        limits: facts.limits,
       })
-      store.txnUpdate((d) => {
-        const o = d.objects.find((x) => x.id === panelId)
-        if (!o) return
-        o.x = res.x
-        o.y = res.y
-        o.w = res.w
-        o.h = res.h
-      })
-      const snapId = res.snap?.id ?? null
+      last = plan
+      // 直接操纵视口：退出「适应画布」（否则松手后图幅变了，适应模式按新图幅重新取景，图在屏幕上被挪走）
+      useViewportStore.getState().setPan(t0.panX, t0.panY)
+      const snapId = plan.snap?.id ?? null
       const rolls = snapId !== prevSnap || ev.altKey !== prevAlt
       prevSnap = snapId
       prevAlt = ev.altKey
-      useInteractionStore
-        .getState()
-        .setPageEdge({ edge, snapLabel: res.snap ? columnLabel(specLabel, res.snap) : null, rolls })
+      const ix = useInteractionStore.getState()
+      ix.setFigureEdgeBox(plan.box)
+      ix.setPageEdge({ edge, snapLabel: plan.snap ? columnLabel(specLabel, plan.snap) : null, rolls })
     },
     onEnd: (moved, _ev, end) => {
       useInteractionStore.getState().end()
-      store.endTxn({ discard: !moved || end.cancelled })
+      if (end.cancelled || !moved || !last) {
+        if (moved) useViewportStore.getState().restoreFrozenView(view0)
+        return
+      }
+      const [w, h] = last.sizeMm
+      if (w === facts.sizeMm[0] && h === facts.sizeMm[1]) return
+      setFigureFrame(panelId, last.sizeMm, edge === 'l' || edge === 't' ? last.pos : undefined)
+      holdPlaceholder(panelId, last.box)
     },
   })
 }
