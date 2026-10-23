@@ -291,14 +291,47 @@ def _reraise(exc: OSError) -> None:
     raise exc
 
 
+def figure_key_of(root: Path, reg=None) -> Callable[[Path], str]:
+    """素材文件 → 「它是哪张图」的键（同目录内比较）：`Registry.artifact_stem`——与后端解析、CLI 交接同一个判据（#1251）。
+
+    `reg=None` 时读磁盘上的注册表；没有 / 读不了 = 文件名 stem（老项目、没有 `artifacts` 映射的项目逐字节同旧行为）。
+    """
+    if reg is None:
+        try:
+            reg = registry.open_registry(root)
+        except Exception:  # noqa: BLE001 —— 没有注册表 / 坏了：素材盘点不该因此失败
+            reg = None
+    if reg is None:
+        return lambda p: p.stem
+    root = Path(root)
+
+    def key(p: Path) -> str:
+        try:
+            rel = p.relative_to(root).as_posix()
+        except ValueError:
+            return p.stem
+        return reg.artifact_stem(rel)
+
+    return key
+
+
 def iter_assets(
-    root: Path, *, strict: bool = False, budget: scanbudget.Budget | None = None
+    root: Path,
+    *,
+    strict: bool = False,
+    budget: scanbudget.Budget | None = None,
+    reg=None,
+    include_shadowed: bool = False,
 ) -> list[tuple[Path, str]]:
     """项目里的素材文件与它们的 kind —— `/api/panels` 与刷新共用这一份判据。
 
     * 隐藏目录与 `EXCLUDE_DIRS` **当场剪枝，不下探**：图库里常有 .venv、.git、
       工具留下的 .rendered/.qa_* 快照，爬进去既是噪音又很慢；
-    * 同目录同名的 PDF 与位图只算矢量那份（有矢量版就不重复列出位图）。
+    * 同目录同名的 PDF 与位图只算矢量那份（有矢量版就不重复列出位图）。「同名」= **同一张图**（`figure_key_of`）：
+      注册表说 `panel.png`（甲）与 `panel.pdf`（乙，`panel-2`）是两张不同的图时，两个文件各自是一份素材（#1251）；
+      没有 `artifacts` 映射的项目就是文件名 stem 相同，行为不变。`reg`（一个已装载的 `Registry`）缺省读磁盘上的注册表。
+      `include_shadowed=True` 不做「矢量版让位」：被同一张图的 PDF 压掉的位图也列出（`panel.file_changed` 的 `files`
+      要的是「这张图在磁盘上的所有文件」，文档里留着的 PNG 面板不能因为被让位就收不到事件）。其余判据（剪枝 / 扩展名）不变。
 
     `strict=True` 时中途读不动就抛（`_reraise`），**不返回半张表**。
     `/api/panels` 与刷新照旧宽容：一个读不动的子目录不该让素材面板整个空掉；
@@ -309,6 +342,7 @@ def iter_assets(
     判据（哪些算素材、怎么剪枝）与不带预算时是同一份。
     """
     root = Path(root)
+    figure_key = figure_key_of(root, reg)
     files: list[Path] = []
     uncertain_pdf_stems: set[tuple[Path, str]] = set()
 
@@ -361,7 +395,7 @@ def iter_assets(
                             # 单项消失不抹掉其它已发现的素材/子目录；但未知 PDF
                             # 仍遮住同名位图，不能把不完整观测误当成「没有 PDF」。
                             if path.suffix.lower() in PDF_EXT:
-                                uncertain_pdf_stems.add((path.parent, path.stem))
+                                uncertain_pdf_stems.add((path.parent, figure_key(path)))
                             continue
                         if scanbudget.is_redirect(metadata):
                             budget.note(
@@ -392,12 +426,17 @@ def iter_assets(
             pending.extend(reversed(subdirs))
     files.sort()
     pdf_stems = uncertain_pdf_stems | {
-        (p.parent, p.stem) for p in files if p.suffix.lower() in PDF_EXT
+        (p.parent, figure_key(p)) for p in files if p.suffix.lower() in PDF_EXT
     }
 
     out: list[tuple[Path, str]] = []
     for p in files:
-        kind = asset_kind(p.name, pdf_twin=(p.parent, p.stem) in pdf_stems)
+        kind = asset_kind(
+            p.name,
+            pdf_twin=(not include_shadowed)
+            and p.suffix.lower() in IMG_EXT
+            and (p.parent, figure_key(p)) in pdf_stems,
+        )
         if kind is None:
             continue
         if budget is not None:
@@ -579,7 +618,7 @@ def _static_merge(root: Path, state: RefreshState) -> tuple[dict[str, list[str]]
         current = b""
     if atomicio.dumps_json(cfg, indent=1) != current:
         try:
-            discover.write_config(root, cfg)
+            discover.write_config(root, cfg, static_discovery=True)
         except (OSError, ValueError) as exc:  # AtomicWriteError 是 OSError 的子类
             # 写不下去与扫描失败对用户是两件事（一个是"你的注册表存不了"，
             # 另一个是"你的脚本读不动"），但**对外的 code 不能改**——

@@ -3,6 +3,7 @@ import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type Ar
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { ExportRoute } from '@/lib/exportRoute'
+import type { Remedy } from '@/lib/fixRemedy'
 import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { PreviewMetadata } from '@/lib/previewBudget'
@@ -12,6 +13,12 @@ import type { ThumbObject, ThumbPage } from '@/types/thumb'
 export interface PanelInfo {
   id: string
   name: string
+  /**
+   * 注册表认的「这个文件是哪张图」（后端 `Registry.artifact_stem`，#1251）。只在与文件名 stem 不同时才发：
+   * 同脚本里 `panel.png`（甲）与 `panel.pdf`（乙，登记为 `panel-2`）时，pdf 面板的 `stem` 是 `panel-2`。
+   * 交接 `?open=<stem>` 与「runtime 素材 ↔ 磁盘图」的配对都按它；缺省 = 文件名 stem（老项目 / 老后端）。
+   */
+  stem?: string
   folder: string
   kind: 'pdf' | 'raster' | 'svg'
   native_w_mm: number
@@ -393,6 +400,10 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
 }
 
 export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
+
+/** 磁盘素材文件 id → 注册表认的 stem（后端 `Registry.artifact_stem`，#1251）：权威值，清单里没有这个文件也答得出。 */
+export const fetchPanelStem = (id: string) =>
+  jsonFetch<{ id: string; stem: string }>(`/api/panel-stem?id=${encodeURIComponent(id)}`)
 
 /**
  * 项目接入就绪度。**只读诊断**：后端不跑用户脚本、不 probe、不写盘、不发事件。
@@ -3071,16 +3082,45 @@ export interface AiEndpoint {
   /** 不能用、且能对上已知厂商 → 可一步迁移：`codex_responses` = 该厂商支持 Responses，原地改协议；
    *  `claude` = 只有 Anthropic 端点，改由 Claude Code 接入；null = 对不上，只能手动编辑 */
   migratable: 'codex_responses' | 'claude' | null
+  /** 图标键：地址对上厂商目录某一行就是那家，否则 'custom'（通用图标）；老后端缺省 */
+  icon_key?: string
 }
 
 export interface AiEndpointPreset {
   id: string
+  /** 品牌名（存成接口时的默认名）；界面显示的名字走 `label_key`（`dialogs:settings.agents.<label_key>`） */
   label: string
+  /** 厂商目录（`engine/ai_catalog.json`）的 i18n 键；老后端 / 测试夹具可缺省 → 回退 `label` */
+  label_key?: string
+  /** 厂商图标键（`VendorIcon`）；表外 / 缺省 = 通用图标 */
+  icon_key?: string
   agent: AiAgentId
+  /** 'custom' = 官方登录态 / 自定义两类「用户自填」行；老后端缺省 → 不分组 */
+  region?: 'cn' | 'global' | 'custom'
   base_url: string
+  /** 申请 Key 的页面（https）；空 = 没有 */
+  key_url?: string
+  /** 申请 Key 的补充一句话（i18n 键，同 `label_key` 的解析方式） */
+  key_hint_key?: string
   models: string[]
   wire_api?: 'responses'
   note?: string
+}
+
+export type AiModelsFetchReason =
+  | 'no_key'
+  | 'key_origin_mismatch'
+  | 'insecure_url'
+  | 'timeout'
+  | 'unauthorized'
+  | 'bad_response'
+  | 'network'
+
+export interface AiModelsFetchResult {
+  models: string[]
+  /** 'none' = 没取到（看 `reason`），界面保持预设 / 手填的列表不变 */
+  source: 'live' | 'cache' | 'none'
+  reason: AiModelsFetchReason | null
 }
 
 export interface AiCapabilities {
@@ -3092,7 +3132,23 @@ export interface AiCapabilities {
   checked_at_ms: number
   /** TAF 实验开关（`ai.taf.enabled`）是否开着；老后端没有，缺省 = 关。助手面板的「从数据出图」只在它为真时出现 */
   taf_enabled?: boolean
+  /**
+   * 「使用你的 AI 来修复」的 AI 环境修复任务后端能不能真跑（智能修复主线，ADR 0148）。老后端没有；`false` = 端点契约已定、
+   * 任务还没实现：按钮照常出现（每次失败都出），点击走「这个问题 AI 暂时还不会修」降级
+   */
+  ai_fix_available?: boolean
 }
+
+/** `POST /api/ai/fix` 的响应：`ok: false` + 稳定原因码（目前只有 `ai_fix_unavailable`）；成功形状由后续 PR 定 */
+export type AiFixResponse = { ok: true } | { ok: false; reason: string }
+
+/** 请求 AI 环境修复（ADR 0148）。body：准备会话 id 与脚本（项目相对路径） */
+export const requestAiFix = (body: { session_id: string; script: string }) =>
+  jsonFetch<AiFixResponse>('/api/ai/fix', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 
 /* --- capabilities 的读取助手（前端只认后端返回的 Agent，不自己列名单）--- */
 
@@ -3145,6 +3201,19 @@ export const saveAiEndpoint = (rec: {
 }) =>
   jsonFetch<AiCapabilities>('/api/ai/endpoints', {
     method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(rec),
+  })
+
+/** 「从服务商获取」型号：`id` 指向已存接口时缺的地址 / 密钥由后端补；永远 200，拿不到看 `reason` */
+export const fetchAiEndpointModels = (rec: {
+  id?: string
+  base_url?: string
+  api_key?: string
+  refresh?: boolean
+}) =>
+  jsonFetch<AiModelsFetchResult>('/api/ai/endpoints/models', {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(rec),
   })
@@ -3736,6 +3805,11 @@ export type ServerEvent =
       kind: 'panel.file_changed'
       scripts?: string[]
       stems?: string[]
+      /**
+       * 受影响的**磁盘素材文件 id**（与 `/api/panels` 的 `id` 相同；后端 `Registry.artifact_stem` 算出，#1251）。
+       * 有它就按 fileId 精确匹配非 runtime 面板，不依赖素材清单；老后端没有 = 退回按文件名 stem。
+       */
+      files?: string[]
       reason?: 'watcher' | 'ai' | 'script_input'
     } & ProjectScoped)
   /**
@@ -3946,6 +4020,11 @@ export function affectedStemsOf(event: ServerEvent): string[] {
     return union(event.stems)
   }
   return []
+}
+
+/** `panel.file_changed` 直接带的磁盘素材文件 id；没有（老后端 / 后端算不出）= undefined */
+export function affectedFilesOf(event: ServerEvent): string[] | undefined {
+  return event.kind === 'panel.file_changed' && Array.isArray(event.files) ? event.files : undefined
 }
 
 /** 这条事件牵涉到的**素材 id**（新增 / 删除 / 内容变化的并集） */
@@ -6264,6 +6343,8 @@ export interface PreparationReport {
   failed_figures?: { stem: string; code?: string }[]
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
+  /** 智能修复路由选的唯一修法（ADR 0148，`engine/fixrouter.py`）；没失败 / 还在跑 / 老后端 = null 或缺省。认不出的形状前端当没有（`isRemedy`） */
+  remedy?: Remedy | null
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
   no_figure_hint?: {
     kind: 'raster_script'

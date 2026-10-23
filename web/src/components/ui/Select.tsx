@@ -9,6 +9,10 @@ export interface SelectOption<T extends string = string> {
   value: T
   label: ReactNode
   hint?: string
+  /** 选项前的小图标（下拉里和收起的触发器里都显示）；不带 = 行为不变 */
+  icon?: ReactNode
+  /** 分组标题；相邻且同名的选项归一组，组标题不可选。全部不带 group = 平铺 */
+  group?: string
 }
 
 interface SelectProps<T extends string> {
@@ -21,6 +25,17 @@ interface SelectProps<T extends string> {
   ariaLabel?: string
   /** 当前取值的一句解释（原生 title）；逐项的解释放 `SelectOption.hint` */
   title?: string
+}
+
+/** 相邻且同名 `group` 的选项并成一组（保持原顺序）；没有 group 的各自并成无标题的一组。 */
+function groupOptions<T extends string>(options: SelectOption<T>[]) {
+  const out: { title?: string; items: SelectOption<T>[] }[] = []
+  for (const opt of options) {
+    const last = out[out.length - 1]
+    if (last && last.title === opt.group) last.items.push(opt)
+    else out.push({ title: opt.group, items: [opt] })
+  }
+  return out
 }
 
 export function Select<T extends string>({
@@ -87,24 +102,43 @@ export function Select<T extends string>({
           )}
         >
           <RS.Viewport className="max-h-72">
-            {options.map((opt) => (
-              <RS.Item
-                key={opt.value}
-                value={opt.value}
-                className={cn(
-                  'relative flex h-7 cursor-default select-none items-center gap-2 rounded-md',
-                  'pl-6 pr-2 text-sm text-ink outline-none',
-                  'data-[highlighted]:bg-surface-hover data-[state=checked]:font-medium data-[state=checked]:text-ink',
-                )}
-              >
-                <RS.ItemIndicator className="absolute left-1.5 flex items-center">
-                  <Check size={ICON_SIZE.sm} />
-                </RS.ItemIndicator>
-                <RS.ItemText>{opt.label}</RS.ItemText>
-                {/* 说明是正文（中英混排的一句话），不用等宽字：等宽字体里的中文字宽与字形都不对；数字走 tabular-nums 照样对得齐 */}
-                {opt.hint && <span className="ml-auto pl-2 text-xs tabular-nums text-ink-3">{opt.hint}</span>}
-              </RS.Item>
-            ))}
+            {groupOptions(options).map((g, gi) => {
+              const items = g.items.map((opt) => (
+                <RS.Item
+                  key={opt.value}
+                  value={opt.value}
+                  className={cn(
+                    'relative flex h-7 cursor-default select-none items-center gap-2 rounded-md',
+                    'pl-6 pr-2 text-sm text-ink outline-none',
+                    'data-[highlighted]:bg-surface-hover data-[state=checked]:font-medium data-[state=checked]:text-ink',
+                  )}
+                >
+                  <RS.ItemIndicator className="absolute left-1.5 flex items-center">
+                    <Check size={ICON_SIZE.sm} />
+                  </RS.ItemIndicator>
+                  <RS.ItemText>
+                    {opt.icon ? (
+                      <span className="flex items-center gap-1.5">
+                        {opt.icon}
+                        {opt.label}
+                      </span>
+                    ) : (
+                      opt.label
+                    )}
+                  </RS.ItemText>
+                  {/* 说明是正文（中英混排的一句话），不用等宽字：等宽字体里的中文字宽与字形都不对；数字走 tabular-nums 照样对得齐 */}
+                  {opt.hint && <span className="ml-auto pl-2 text-xs tabular-nums text-ink-3">{opt.hint}</span>}
+                </RS.Item>
+              ))
+              return g.title ? (
+                <RS.Group key={`${gi}-${g.title}`}>
+                  <RS.Label className="px-2 pb-0.5 pt-1.5 text-xs text-ink-3">{g.title}</RS.Label>
+                  {items}
+                </RS.Group>
+              ) : (
+                <RS.Group key={`${gi}-`}>{items}</RS.Group>
+              )
+            })}
           </RS.Viewport>
         </RS.Content>
       </RS.Portal>

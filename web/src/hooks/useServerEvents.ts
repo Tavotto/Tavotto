@@ -3,6 +3,7 @@ import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { i18n, msg, t } from '@/i18n'
 import {
   affectedAssetIdsOf,
+  affectedFilesOf,
   affectedStemsOf,
   subscribeEvents,
   type ServerEvent,
@@ -31,9 +32,9 @@ import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { admissionToastCovers } from '@/store/pngAdmissionMemory'
 import { useUiStore } from '@/store/uiStore'
+import { stemOf } from '@/lib/panelStem'
 
 const short = (id: string) => id.split('/').pop()?.replace(/\.[^.]+$/, '') ?? id
-const stemOf = (fileId: string) => short(fileId)
 /** 后端稳定错误码 → 当前语言的一句话（参数为空的那些） */
 const translateBackend = (code: string) => t(`backend.${code}`, { ns: 'errors' })
 
@@ -190,6 +191,10 @@ export function handleServerEvent(ev: ServerEvent) {
 
     case 'panel.file_changed': {
       const stems = new Set(affectedStemsOf(ev))
+      // 后端直接带了受影响的磁盘文件 id：非 runtime 面板按 fileId 精确匹配，不依赖素材清单（#1251）；
+      // 老后端没有 files：退回按文件名 stem（老行为）
+      const files = affectedFilesOf(ev)
+      const fileSet = files ? new Set(files) : null
       // stems 是脚本产出的面板名，映射回文档里用到的文件 id。
       // runtime 面板按持久化描述块的 stem 认领（id 是不透明标识，不反解）
       const affected = useDocumentStore
@@ -199,7 +204,9 @@ export function handleServerEvent(ev: ServerEvent) {
             o.type === 'panel' &&
             (o.fileKind === 'runtime'
               ? o.source != null && stems.has(o.source.stem)
-              : stems.has(stemOf(o.fileId))),
+              : fileSet
+                ? fileSet.has(o.fileId)
+                : stems.has(stemOf(o.fileId))),
         )
         .map((o) => (o as { fileId: string }).fileId)
       // 转入引擎跟踪 → useEngineSync 立刻按当前 overrides 冷重建，

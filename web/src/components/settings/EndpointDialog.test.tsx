@@ -10,7 +10,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { i18n, t } from '@/i18n'
 import { EndpointDialog } from './EndpointDialog'
-import type { AiEndpoint, AiEndpointPreset } from '@/lib/api'
+import { fetchAiEndpointModels, type AiEndpoint, type AiEndpointPreset } from '@/lib/api'
+
+vi.mock('@/lib/api', async (orig) => ({
+  ...(await orig<typeof import('@/lib/api')>()),
+  fetchAiEndpointModels: vi.fn(),
+}))
+const fetchModelsMock = vi.mocked(fetchAiEndpointModels)
 
 declare global {
   // eslint-disable-next-line no-var
@@ -264,5 +270,164 @@ describe('隐私说明说的是核过的事实（审计 T45）', () => {
     expect(ag('endpoint.keyNote')).not.toContain('权限')
     await i18n.changeLanguage('en-US')
     expect(ag('endpoint.keyNotePerms')).toContain('Windows')
+  })
+})
+
+describe('厂商目录：分组、申请 Key 链接、从服务商获取型号', () => {
+  const CATALOG: AiEndpointPreset[] = [
+    {
+      id: 'deepseek',
+      label: 'DeepSeek',
+      label_key: 'vendor.deepseek',
+      region: 'cn',
+      agent: 'claude',
+      base_url: 'https://api.deepseek.com/anthropic',
+      key_url: 'https://platform.deepseek.com/api_keys',
+      models: ['deepseek-v4-pro'],
+    },
+    {
+      id: 'kimi-code',
+      label: 'Kimi Code',
+      label_key: 'vendor.kimiCode',
+      region: 'cn',
+      agent: 'claude',
+      base_url: 'https://api.kimi.com/coding/',
+      key_url: 'https://www.kimi.com/code/console',
+      key_hint_key: 'vendorKey.kimiCode',
+      models: [],
+    },
+    {
+      id: 'zai',
+      label: 'Z.AI',
+      label_key: 'vendor.zai',
+      region: 'global',
+      agent: 'claude',
+      base_url: 'https://api.z.ai/api/anthropic',
+      key_url: 'https://z.ai/manage-apikey/apikey-list',
+      models: [],
+    },
+    {
+      id: 'custom-claude',
+      label: 'Custom',
+      label_key: 'vendor.customClaude',
+      region: 'custom',
+      agent: 'claude',
+      base_url: '',
+      key_url: '',
+      models: [],
+    },
+  ]
+  const mountCatalog = (over: Partial<Parameters<typeof EndpointDialog>[0]> = {}) =>
+    mount({ agent: 'claude', agentLabel: 'Claude Code', wireApi: false, presets: CATALOG, ...over })
+  const pick = async (idx: number) => {
+    const options = await openSelect(ag('endpoint.presetAria'))
+    await act(async () => options[idx].click())
+  }
+  const modelChips = () =>
+    [...document.body.querySelectorAll('[data-model-list] > span')].map((e) =>
+      e.textContent?.replace(ag('endpoint.modelDefault'), '').trim(),
+    )
+
+  beforeEach(() => fetchModelsMock.mockReset())
+
+  it('预设下拉按「国内 / 海外 / 其他」分组，名字走 i18n 键', async () => {
+    await mountCatalog()
+    const options = await openSelect(ag('endpoint.presetAria'))
+    expect(options.map((o) => o.textContent?.trim())).toEqual([
+      ag('vendor.deepseek'),
+      ag('vendor.kimiCode'),
+      ag('vendor.zai'),
+      ag('vendor.customClaude'),
+    ])
+    const labels = [...document.body.querySelectorAll('[role="group"] > [id], [role="group"]')].map(
+      (g) => g.getAttribute('aria-labelledby'),
+    )
+    expect(labels.filter(Boolean)).toHaveLength(3)
+    for (const title of [ag('endpoint.regionCn'), ag('endpoint.regionGlobal'), ag('endpoint.regionCustom')]) {
+      expect(document.body.textContent).toContain(title)
+    }
+    // 国内组的标题排在海外组之前
+    const body = document.body.textContent ?? ''
+    expect(body.indexOf(ag('endpoint.regionCn'))).toBeLessThan(body.indexOf(ag('endpoint.regionGlobal')))
+  })
+
+  it('选中后显示「去申请 Key」外链与 key 提示；没有 key_url 的预设不显示', async () => {
+    await mountCatalog()
+    await pick(1)
+    const link = document.body.querySelector<HTMLAnchorElement>('[data-key-link]')!
+    expect(link.href).toBe('https://www.kimi.com/code/console')
+    expect(link.target).toBe('_blank')
+    expect(link.rel).toContain('noreferrer')
+    expect(link.textContent).toContain(ag('endpoint.getKey'))
+    expect(document.body.querySelector('[data-key-hint]')?.textContent).toBe(ag('vendorKey.kimiCode'))
+    expect(input(ag('endpoint.name')).value).toBe(ag('vendor.kimiCode'))
+
+    // 换成没有 key_url 的「自定义」：链接和提示都不在
+    await act(async () => root.unmount())
+    root = createRoot(host)
+    await mountCatalog()
+    await pick(3)
+    expect(document.body.querySelector('[data-key-link]')).toBeNull()
+    expect(document.body.querySelector('[data-key-hint]')).toBeNull()
+  })
+
+  it('「从服务商获取」：取到的型号点一下加入列表，已有的不重复列出', async () => {
+    fetchModelsMock.mockResolvedValue({ models: ['deepseek-v4-pro', 'm-new'], source: 'live', reason: null })
+    await mountCatalog()
+    await pick(0)
+    await type(ag('endpoint.apiKey'), 'sk-typed')
+    // 预设折叠区里的按钮要先展开才在 DOM 里可见——折叠的 details 内容仍在 DOM 里，直接点
+    await act(async () => byText(ag('endpoint.fetchModels'))!.click())
+
+    expect(fetchModelsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ base_url: 'https://api.deepseek.com/anthropic', api_key: 'sk-typed' }),
+    )
+    const fetchedBox = document.body.querySelector('[data-model-fetched]')!
+    const chips = [...fetchedBox.querySelectorAll('button')]
+    expect(chips.map((c) => c.textContent)).toEqual(['m-new']) // deepseek-v4-pro 已在列表里
+    await act(async () => chips[0].click())
+    expect(modelChips()).toEqual(['deepseek-v4-pro', 'm-new'])
+    expect(document.body.querySelector('[data-model-fetched]')).toBeNull()
+  })
+
+  it('没取到时只说一句原因，已有型号一个不动', async () => {
+    fetchModelsMock.mockResolvedValue({ models: [], source: 'none', reason: 'unauthorized' })
+    await mountCatalog()
+    await pick(0)
+    await act(async () => byText(ag('endpoint.fetchModels'))!.click())
+    expect(document.body.querySelector('[role="status"]')?.textContent).toBe(ag('endpoint.fetchReason.unauthorized'))
+    expect(modelChips()).toEqual(['deepseek-v4-pro'])
+
+    // 请求本身失败（后端没应）也只是一句话，不抛
+    // 后端回了个看不懂的形状（老后端 / 被代理改写）：同样只是一句话，不抛
+    fetchModelsMock.mockResolvedValue({} as never)
+    await act(async () => byText(ag('endpoint.fetchModels'))!.click())
+    expect(document.body.querySelector('[role="status"]')?.textContent).toBe(ag('endpoint.fetchReason.network'))
+  })
+
+  it('后端说地址改了要重填密钥 / 明文 http：各显示对应一句', async () => {
+    await mountCatalog()
+    await pick(0)
+    for (const reason of ['key_origin_mismatch', 'insecure_url'] as const) {
+      fetchModelsMock.mockResolvedValue({ models: [], source: 'none', reason })
+      await act(async () => byText(ag('endpoint.fetchModels'))!.click())
+      expect(document.body.querySelector('[role="status"]')?.textContent).toBe(
+        ag(`endpoint.fetchReason.${reason}`),
+      )
+    }
+  })
+
+  it('没有接口地址时按钮是灰的；编辑已存接口时带上 id，让后端补密钥', async () => {
+    await mountCatalog({ presets: [] })
+    expect(byText(ag('endpoint.fetchModels'))!.disabled).toBe(true)
+
+    await act(async () => root.unmount())
+    root = createRoot(host)
+    fetchModelsMock.mockResolvedValue({ models: [], source: 'none', reason: 'no_key' })
+    await mountCatalog({ presets: [], existing: { ...EXISTING, agent: 'claude' } })
+    await act(async () => byText(ag('endpoint.fetchModels'))!.click())
+    expect(fetchModelsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'e1', base_url: 'https://gw.example/v1', api_key: undefined }),
+    )
   })
 })

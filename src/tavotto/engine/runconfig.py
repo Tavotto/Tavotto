@@ -24,6 +24,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -32,6 +33,8 @@ import time
 from pathlib import Path
 
 from . import atomicio, config, execspec
+
+LOG = logging.getLogger("tavotto.runconfig")
 
 ID_PREFIX = "rc_"
 #: `put` 生成的引用形状（`ID_PREFIX` + 12 位小写十六进制）。登记校验、`get` 与资产 id 后缀解析
@@ -196,7 +199,7 @@ def _read(project_root: str | Path) -> dict:
     恢复由用户显式进行：修复或删除该登记文件后重试。"""
     found = _locate(project_root)
     if found is None:
-        return {"configs": {}, "defaults": {}, "launches": {}}
+        return {"configs": {}, "defaults": {}, "launches": {}, "captures": {}}
     return _parse(found[1])
 
 
@@ -231,7 +234,33 @@ def _parse(raw: str) -> dict:
         if isinstance(launches, dict)
         else {}
     )
-    return {"configs": configs, "defaults": defaults, "launches": launches}
+    # Capture history is listing evidence, never an execution default. Missing or malformed
+    # history must retain legacy placeholders, not invent an argument-free absence.
+    captures = data.get("captures", {})
+    captures = (
+        {k: v for k, v in captures.items() if isinstance(k, str) and _capture_history_ok(v)}
+        if isinstance(captures, dict)
+        else {}
+    )
+    return {"configs": configs, "defaults": defaults, "launches": launches, "captures": captures}
+
+
+def _capture_history_ok(rec) -> bool:
+    if not isinstance(rec, dict) or not isinstance(rec.get("runs"), dict):
+        return False
+    discovered = rec.get("discovered", [])
+    if not isinstance(discovered, list) or not all(isinstance(s, str) for s in discovered):
+        return False
+    legacy = rec.get("legacy_stems")
+    if not isinstance(legacy, list) or not all(isinstance(s, str) for s in legacy):
+        return False
+    return all(
+        isinstance(cid, str)
+        and (not cid or ID_RE.fullmatch(cid))
+        and isinstance(stems, list)
+        and all(isinstance(s, str) for s in stems)
+        for cid, stems in rec["runs"].items()
+    )
 
 
 def _is_str(x) -> bool:
@@ -323,6 +352,8 @@ def _write(project_root: str | Path, data: dict) -> None:
     out = {"version": FORMAT_VERSION, **data}
     if not out.get("launches"):
         out.pop("launches", None)  # 没有成功记录时文件字节与 P09 之前一致
+    if not out.get("captures"):
+        out.pop("captures", None)
     atomicio.write_json(path, out)
 
 
@@ -473,6 +504,103 @@ def forget_secrets() -> None:
     """测试与"清除敏感值"用：模拟进程重启后敏感配置不在了。"""
     with _LOCK:
         _SECRETS.clear()
+
+
+# ---------------------------------------------------------------------------
+# Durable capture provenance (independent of preview cache eviction)
+# ---------------------------------------------------------------------------
+def record_discovered(project_root: str | Path, discoveries: dict[str, set[str]]) -> None:
+    """Remember newly published static candidates locally, never in the project registry."""
+    if not any(discoveries.values()):
+        return
+    try:
+        with _LOCK:
+            data = _read(project_root)
+            changed = False
+            for script, stems in discoveries.items():
+                if not stems:
+                    continue
+                old = data["captures"].get(script, {"runs": {}, "legacy_stems": []})
+                known = set().union(*old["runs"].values(), old["legacy_stems"])
+                discovered = set(old.get("discovered", [])) | (set(stems) - known)
+                if discovered and discovered != set(old.get("discovered", [])):
+                    data["captures"][script] = {**old, "discovered": sorted(discovered)}
+                    changed = True
+            if changed:
+                _write(project_root, data)
+    except (OSError, RunConfigError):
+        LOG.warning("discovery history could not be recorded", exc_info=True)
+
+
+def discovered_stems(project_root: str | Path, script: str) -> set[str]:
+    """Uncaptured static candidates with explicit local evidence; missing/bad history is unknown."""
+    try:
+        with _LOCK:
+            history = _read(project_root)["captures"].get(script, {})
+        return set(history.get("discovered", []))
+    except RunConfigError:
+        return set()
+
+
+def record_captures(
+    project_root: str | Path,
+    script: str,
+    stems,
+    config_id: str = "",
+    *,
+    registered_stems=None,
+) -> None:
+    """Union actual outputs by configuration; the empty reference means no argv.
+
+    Registration supplies prior stems whose origins are unknown, excluding explicitly
+    static-only discoveries. An unknown old stem stays legacy after a configured run.
+    Materialization also records captures (including document replays); without a
+    registration snapshot, previously untracked stems remain legacy. No argv is copied here.
+    """
+    observed = set(stems)
+    if not observed:
+        return
+    try:
+        with _LOCK:
+            data = _read(project_root)
+            histories = data["captures"]
+            old = histories.get(script, {"runs": {}, "legacy_stems": []})
+            runs = {cid: set(values) for cid, values in old["runs"].items()}
+            known = set().union(*runs.values())
+            legacy = set(old["legacy_stems"])
+            discovered = set(old.get("discovered", []))
+            unknown = observed - known - discovered
+            legacy.update(
+                unknown if registered_stems is None else unknown.intersection(registered_stems)
+            )
+            runs.setdefault(config_id, set()).update(observed)
+            updated = {
+                "runs": {cid: sorted(values) for cid, values in runs.items()},
+                "legacy_stems": sorted(legacy),
+            }
+            if remaining := discovered - observed:
+                updated["discovered"] = sorted(remaining)
+            if updated != old:
+                histories[script] = updated
+                _write(project_root, data)
+    except (OSError, RunConfigError):
+        # Match preview materialization: unavailable evidence does not undo a successful
+        # run or overwrite an unreadable store. Listing without history fails open.
+        LOG.warning("capture history could not be recorded", exc_info=True)
+
+
+def configured_only_stems(project_root: str | Path, script: str) -> set[str]:
+    """Stems known to have only configured captures; untracked legacy stems are unknown."""
+    with _LOCK:
+        history = _read(project_root)["captures"].get(script)
+    if history is None:
+        return set()
+    runs = history["runs"]
+    return (
+        {stem for cid, stems in runs.items() if cid for stem in stems}
+        - set(runs.get("", []))
+        - set(history["legacy_stems"])
+    )
 
 
 # ---------------------------------------------------------------------------

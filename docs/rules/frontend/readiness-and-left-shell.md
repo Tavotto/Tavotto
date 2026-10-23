@@ -340,6 +340,8 @@
   无参数重跑的可恢复提示；开关关闭时委派旧状态机、零会话请求）、`RegistryDialog.test.tsx`。旧路径的 e2e（`asset-library` /
   `dependency-one-click` / `missing-input*` / `script-input`）在开关关闭下跑。
 
+- **准备卡的智能修复（ADR 0148 提议）**：`prepView` 只读报告的 `remedy`（`lib/fixRemedy.ts`，与后端 `fixrouter` 同源对）画主按钮；每张失败卡（`switch_native` 静默 / 运行中 / 教程层激活除外）都有显眼的次按钮「使用你的 AI 来修复」（Sparkles 图标 + 蓝色描边走语义 token，每次失败都出，不因 `ai_fix_available === false` 隐藏）。点它：没连 AI 开设置 AI 页、连好自动接着修（`store/aiFixStore.ts`）；已连调 `POST /api/ai/fix`，`ai_fix_unavailable` 落成「AI 暂时还不会修」+「发送」（反馈卡，0118 规矩不变）。界面只说「AI」，不出现「执行器」「CLI」「agent」。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `web/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

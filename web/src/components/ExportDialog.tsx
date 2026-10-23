@@ -54,6 +54,7 @@ import {
 } from "@/components/ui/icons";
 import { ICON_SIZE } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
+import { ExportZoomStage } from "./ExportZoomStage";
 import { Checkbox } from "./ui/Checkbox";
 import { Segmented } from "./ui/Segmented";
 import {
@@ -162,7 +163,6 @@ import { TaskDiagnostic } from "./TaskDiagnostic";
 import { SendReportButton } from "./SendReportButton";
 import { Select } from "./ui/Select";
 import { Toggle } from "./ui/Toggle";
-import { Card } from "./ui/Card";
 import { CountChip, type CountTone } from "./ui/CountChip";
 import { FieldGroup, FormSection } from "./ui/FormSection";
 import { Notice } from "./ui/Notice";
@@ -296,7 +296,6 @@ export function ExportDialog() {
   const job = batch?.done ? batch.aggregate : storeJob;
   /** 有作业在飞，或一批还没收尾（两张之间也算忙；撞名停住的那一张不算——它在等用户决定） */
   const busy = running || (batchActive && storeJob?.status !== "conflict");
-  const lastInput = useExportStore((s) => s.lastInput);
   const startError = useExportStore((s) => s.startError);
   const pollError = useExportStore((s) => s.pollError);
   const refreshing = useExportStore((s) => s.refreshing);
@@ -816,16 +815,6 @@ export function ExportDialog() {
   const prepared = prepareExport(inputOf());
   const filenameIssue = prepared.filenameProblem;
   const names = prepared.names;
-  /**
-   * 对象头里「会写出的文件名」：导出进行中取**正在跑的那次请求**（`lastInput` 经同一个
-   * `prepareExport`），不取此刻的表单——运行期间文件名 / 格式 / 范围控件仍可改，头部
-   * 若跟着变，会说在写 other.svg 而实际在写 Fig1.pdf（#1228 评审 P2）。空闲时取当前表单。
-   */
-  const runningNames = useMemo(
-    () => (running && lastInput ? prepareExport(lastInput).names : null),
-    [running, lastInput],
-  );
-
   // 数的是**这次真会发出去的**格式（`names` 由 `buildExportRequest` 来，画布范围下
   // 勾着的 EPS 不在其中）：只勾 EPS 又切到画布，按钮得灰，不能发一个空格式列表
   const canStart =
@@ -1384,7 +1373,12 @@ export function ExportDialog() {
         </Notice>
       )}
       {job && !busy && job.status !== "conflict" && (
-        <ResultBlock job={job} edited={editedDuringExport} onRetry={startExport} />
+        <ResultBlock
+          job={job}
+          edited={editedDuringExport}
+          onRetry={startExport}
+          onReveal={revealTarget ? revealDone : undefined}
+        />
       )}
     </div>
   ) : null;
@@ -1411,11 +1405,6 @@ export function ExportDialog() {
             {ex("exportAgain")}
           </Button>
         ),
-        secondary: revealTarget ? (
-          <Button variant="secondary" size="lg" data-export-reveal onClick={revealDone}>
-            {ex("showInFolder")}
-          </Button>
-        ) : undefined,
         primary: (
           <Button ref={finishRef} variant="primary" size="lg" data-export-finish onClick={close}>
             {ex("finish")}
@@ -1500,16 +1489,11 @@ export function ExportDialog() {
             page={exportPage}
             doc={doc}
             asset={figureId ? assets[figureId] : undefined}
-            // 写不出来的名字不报：文件名不合法、或原图范围下这张图此刻导不出
-            files={
-              runningNames ??
-              (filenameIssue || (scope === "original" && !availability.ok) ? [] : names)
-            }
           />
         )
       }
       // 左栏预览 + 右栏表单两列；比 `xl` 再宽一点，右栏的标签 + 下拉才排得下
-      width="min(920px, calc(100vw - 32px))"
+      width="min(1040px, calc(100vw - 32px))"
       covered={covered}
       anchor="export"
       status={statusBlock}
@@ -1518,7 +1502,7 @@ export function ExportDialog() {
       {/* 三组（2026-10-07 设计审计 §10.2）：输出（范围 · 文件名 · 位置）/ 格式（格式 · 分辨率 · 透明背景）/
           检查（规范 · 摘要 + 阻断项 + 一句提示 · 严格核验 · 报告）。「高级选项」拆散进各自所属的组——
           折起来的开关没人看得见，而它们决定的是交出去的文件 */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,500px)]">
       <ExportPreviewPane
         single={single}
         fallbackPage={singleFallback}
@@ -1539,10 +1523,10 @@ export function ExportDialog() {
         className="m-0 flex min-w-0 flex-col gap-5 border-0 p-0"
       >
         <FormSection title={ex("groupOutput")} data-export-group="output">
-          <FieldGroup>
+          <FieldGroup plain>
             {/* 0. 范围 —— 一组互斥取值 → `Segmented`（宪法第五节；2026-09-14 审计 B1 / S3）。
                 `data-onboarding-anchor`：新手教程的 coachmark 挂在这一组上（Step 5 / 8） */}
-            <section aria-label={ex("scopeLabel")} className="flex flex-col gap-2">
+            <section aria-label={ex("scopeLabel")} className="flex flex-col gap-2 empty:hidden">
               {/* 单图编辑没有「输出范围」：固定按原图尺寸导。多图排版才有「导出内容」 */}
               {!single && (
                 <FormRow label={ex("contentLabel")}>
@@ -1668,18 +1652,10 @@ export function ExportDialog() {
                       onChange={() => toggleFormat("svg")}
                       format="svg"
                       hint={ex("svgHint")}
-                      describedBy={formats.includes("svg") ? "export-svg-note" : undefined}
                     />
                   </div>
                 </FormRow>
               </fieldset>
-              {formats.includes("svg") && (
-                <FormRow>
-                  <p id="export-svg-note" data-export-svg-note className="type-caption">
-                    {ex("svgNote")}
-                  </p>
-                </FormRow>
-              )}
               {/* 勾着 EPS 却给不出（切回了画布 / 这张图没有脚本）：原因摆成可见的一行，
                   不只藏在灰掉的复选框的 title 里——一个灰掉的复选框解释不了自己 */}
               {formats.includes("eps") && !eps.ok && (
@@ -1991,64 +1967,79 @@ function ExportPreviewPane({
   const sizeMm = showPage
     ? ([(fallbackCrop?.page ?? doc.page).w, (fallbackCrop?.page ?? doc.page).h] as const)
     : (specMm ?? shownFigure?.sizeMm ?? null);
-  const title = showPage ? doc.name : (shownFigure?.name ?? ex("targetNoFigure"));
   const flagged = (f: ExportableFigure) => !!f.panel && flaggedObjectIds.has(f.panel.id);
+  const pageSize = fallbackCrop?.page ?? doc.page;
   return (
-    <div data-export-preview className="flex min-w-0 flex-col gap-3 md:sticky md:top-0 md:self-start">
-      {!single && (
-        <div
-          role="tablist"
-          aria-label={ex("previewTabs")}
-          data-export-preview-tabs
-          className="flex max-w-full gap-2 overflow-x-auto pb-1"
-        >
-          <PreviewTab
-            id="page"
-            label={ex("previewWhole")}
-            selected={showPage}
-            flagged={pageFlagged}
-            onShow={onShow}
+    // 直角：容器不给圆角（overflow-hidden 会把图的四角裁圆），图本身也不带圆角
+    // 整列都是预览区：灰底面板从上到下铺满本列，图在里面按比例 contain、不留边距（上下或左右顶满）
+    <div data-export-preview className="relative min-h-[320px] min-w-0 md:min-h-0">
+      <div className="flex h-full max-h-[calc(86vh-13rem)] min-h-[320px] flex-col overflow-hidden bg-surface-2 md:sticky md:top-0">
+        {!single && (
+          <div
+            role="tablist"
+            aria-label={ex("previewTabs")}
+            data-export-preview-tabs
+            className="flex max-w-full shrink-0 gap-2 overflow-x-auto p-2"
           >
-            <CanvasThumb page={doc.page} objects={doc.objects} className="h-full w-full" />
-          </PreviewTab>
-          {figures.map((f) => (
             <PreviewTab
-              key={f.figureId}
-              id={f.figureId}
-              label={f.name}
-              selected={shownFigure?.figureId === f.figureId}
-              flagged={flagged(f)}
+              id="page"
+              label={ex("previewWhole")}
+              selected={showPage}
+              flagged={pageFlagged}
               onShow={onShow}
             >
-              <PreviewTabArt figure={f} />
+              <CanvasThumb page={doc.page} objects={doc.objects} className="h-full w-full" />
             </PreviewTab>
-          ))}
-        </div>
-      )}
-      <div
-        data-export-preview-stage
-        className="flex h-[260px] items-center justify-center overflow-hidden rounded-md border border-border bg-surface-2 p-3"
-      >
-        {showPage ? (
-          <CanvasThumb
-            page={fallbackCrop?.page ?? doc.page}
-            objects={fallbackCrop?.objects ?? doc.objects}
-            className="h-full w-full"
-            transparent={transparent}
-          />
-        ) : shownFigure ? (
-          <PreviewStageArt figure={shownFigure} ratio={sizeMm ? sizeMm[0] / sizeMm[1] : undefined} />
-        ) : (
-          <ImageOff size={ICON_SIZE.md} className="text-ink-3" aria-hidden />
+            {figures.map((f) => (
+              <PreviewTab
+                key={f.figureId}
+                id={f.figureId}
+                label={f.name}
+                selected={shownFigure?.figureId === f.figureId}
+                flagged={flagged(f)}
+                onShow={onShow}
+              >
+                <PreviewTabArt figure={f} />
+              </PreviewTab>
+            ))}
+          </div>
         )}
-      </div>
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-ink" title={title}>
-          {title}
-        </p>
-        <p data-export-preview-size className="type-meta tabular-nums">
-          {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
-        </p>
+        <div data-export-preview-stage className="relative min-h-0 flex-1">
+          {showPage ? (
+            <ExportZoomStage key="page" ratio={pageSize.w / pageSize.h}>
+              {(px) => (
+                <CanvasThumb
+                  page={pageSize}
+                  objects={fallbackCrop?.objects ?? doc.objects}
+                  className="h-full w-full"
+                  transparent={transparent}
+                  flush
+                  pxWidth={px || undefined}
+                />
+              )}
+            </ExportZoomStage>
+          ) : shownFigure ? (
+            <PreviewStageArt
+              key={shownFigure.figureId}
+              figure={shownFigure}
+              ratio={sizeMm ? sizeMm[0] / sizeMm[1] : undefined}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <ImageOff size={ICON_SIZE.md} className="text-ink-3" aria-hidden />
+            </div>
+          )}
+          {/* 左下角一枚小标：这块预览的尺寸 + 「示意」。预览不是最终文件（位图格式的像素、页面合成不在这里），
+              说一句，克制：中性灰，不是警告 */}
+          <div className="pointer-events-none absolute bottom-2 left-2 flex max-w-[calc(100%-4rem)] items-center gap-1.5 rounded-full bg-surface/80 px-2.5 py-1 backdrop-blur">
+            <span data-export-preview-size className="type-meta truncate tabular-nums">
+              {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
+            </span>
+            <span data-export-thumb-note className="type-caption truncate text-ink-3">
+              {ex("thumbNote")}
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -2105,13 +2096,40 @@ function PreviewTabArt({ figure }: { figure: ExportableFigure }) {
   return <FigureThumbArt source={source} boxRatio={56 / 40} />;
 }
 
-/** 大预览：按真实图幅比例定盒（`ratio` 优先，其次素材自报 / 渲染清单里的比例），贴在 260 高的舞台里 */
+/**
+ * 大预览：放进缩放舞台，按真实图幅比例（`ratio` 优先，其次素材自报 / 渲染清单里的比例）contain 铺满。
+ * 位图放大时按舞台给的 `px` 换更高档的 `/api/render`（沿用 `figureThumbSrc`，不新起接口）；
+ * 引擎 SVG / 矢量源是矢量，放大本来就清晰。
+ */
 function PreviewStageArt({ figure, ratio }: { figure: ExportableFigure; ratio: number | undefined }) {
   const source = useFigureThumbSource(figure, 480);
   return (
-    <div className="flex h-full w-full items-center justify-center rounded-xs bg-paper">
-      <FigureThumbArt source={source} boxRatio={4 / 3} ratio={ratio} />
-    </div>
+    <ExportZoomStage ratio={ratio ?? source.ratio}>
+      {(px) => {
+        if (source.svgMarkup) {
+          return (
+            <span
+              data-export-thumb="svg"
+              className="block h-full w-full bg-paper"
+              dangerouslySetInnerHTML={source.svgMarkup}
+            />
+          );
+        }
+        const src = px ? figureThumbSrc(figure, px) : source.src;
+        if (src) {
+          return (
+            <RetryImg
+              data-export-thumb="file"
+              src={src}
+              alt=""
+              draggable={false}
+              className="block h-full w-full bg-paper object-contain"
+            />
+          );
+        }
+        return <span data-export-thumb="none" className="block h-full w-full bg-surface-2" />;
+      }}
+    </ExportZoomStage>
   );
 }
 
@@ -2232,12 +2250,8 @@ export function diskSizeNote(
 }
 
 /**
- * 导出对象头部：缩略图 · 名字 · 范围 · 最终尺寸。**尺寸只在这里出现一次**
- * （原图 = `OriginalOutputSpec`，画布 = 页面尺寸），别处只说话不报数。
- *
- * 缩略图不新起渲染：磁盘素材走现成的 `/api/render` 分档缩略图（素材库同一张），
- * runtime 素材走 materialized cache 预览；画布范围复用 `CanvasThumb`（画布列表 /
- * 版本列表同一张：按页面比例摆真实内容），不合成整页。
+ * 导出对象头部，一行：名字 · 最终尺寸（原图 = `OriginalOutputSpec`，画布 = 页面尺寸）。
+ * 缩略图在左栏预览（`ExportPreviewPane`）；会写出的文件名由右栏文件名输入框 + 格式勾选说了，这里不复述。
  */
 function TargetHeader({
   scope,
@@ -2246,7 +2260,6 @@ function TargetHeader({
   page,
   doc,
   asset,
-  files,
 }: {
   scope: ExportScope;
   /** 原图范围下这次导的那张（候选清单里的那一条；还没上画布的素材 `panel` 为 null 也是它） */
@@ -2257,12 +2270,6 @@ function TargetHeader({
   doc: FigureDocument;
   /** 素材清单里的那一条（缩略图换代的 mtime + 磁盘原件的尺寸）；不在清单里就是 undefined */
   asset: PanelInfo | undefined;
-  /**
-   * 这次会写出的文件名（含扩展名，也就是勾选的格式）。**直接是 `prepareExport().names`**
-   * ——`buildExportRequest` 发给后端的同一份，这里不自己拼、不自己剥扩展名。
-   * 文件名不合法 / 没有可导的格式时调用方传空数组：不报一个写不出来的名字。
-   */
-  files: readonly string[];
 }) {
   useTranslation("dialogs");
   const original = scope === "original";
@@ -2278,40 +2285,15 @@ function TargetHeader({
     : ex("mmSize", { w: round1(page.w), h: round1(page.h) });
   const originNote =
     original && spec ? diskSizeNote(spec, asset?.original_spec) : null;
-  const visibleObjects = doc.objects.filter((o) => !o.hidden).length;
   return (
-    <div data-export-target className="flex items-center gap-3">
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-medium text-ink" title={name}>
-          {name}
-        </p>
-        <p className="type-meta">
-          {ex(original ? "scopeOriginal" : "scopeCanvas")}
-          {" · "}
-          <span className="tabular-nums">{size}</span>
-          {!original && (
-            <>
-              {" · "}
-              {ex("canvasObjects", { count: visibleObjects })}
-            </>
-          )}
-        </p>
-        {originNote && <p className="type-caption">{originNote}</p>}
-        {files.length > 0 && (
-          <p
-            data-export-target-files
-            className="type-meta truncate"
-            title={files.join(" · ")}
-          >
-            {files.join(" · ")}
-          </p>
-        )}
-        {/* 缩略图不是最终文件（画布缩略图不含图内修改与页面合成、位图格式的像素也不在这里），
-            说一句，克制：中性灰，不是警告 */}
-        <p data-export-thumb-note className="type-caption text-ink-3">
-          {ex("thumbNote")}
-        </p>
-      </div>
+    // 一行：名字 · 尺寸（范围 / 对象数 / 文件名清单都不重复：右栏的导出内容与文件名输入框已经说了）
+    <div data-export-target className="min-w-0">
+      <p className="truncate font-medium text-ink" title={name}>
+        {name}
+        {" · "}
+        <span className="tabular-nums font-normal text-ink-2">{size}</span>
+      </p>
+      {originNote && <p className="type-caption">{originNote}</p>}
     </div>
   );
 }
@@ -2471,10 +2453,13 @@ export function ResultBlock({
   job,
   edited,
   onRetry,
+  onReveal,
 }: {
   job: ExportJob;
   edited: boolean;
   onRetry: () => void;
+  /** 在系统文件管理器中显示第一件写出的文件（只在能显示时给）；摘要行上的唯一动作 */
+  onReveal?: () => void;
 }) {
   useTranslation(["dialogs", "errors"]);
   if (job.status === "cancelled") {
@@ -2525,54 +2510,96 @@ export function ResultBlock({
       </Notice>
     );
   }
+  const savedCount = job.outputs.filter(outputSaved).length;
+  const failedCount = job.outputs.length - savedCount;
+  // 文件已交付、但服务端重新打开封口文件量出「核验未通过」：投出去之前得知道，所以这一条要上到摘要行；
+  // 「未核验」（常态，如像素密度量不了）与「已核验」只在详情里逐个说，不在摘要行里占一格
+  const inspectionFailedCount = job.outputs.filter(
+    (o) => outputSaved(o) && inspectionState(o.manifest).tone === "failed",
+  ).length;
+  const warningCount = job.warnings?.length ?? 0;
+  // 一件都没写出来：原因就在摘要行里（用户要的是「为什么」，不该再点开才知道）；有成功的才把失败原因折进详情
+  const firstFailure = savedCount === 0 ? job.outputs.find((o) => !outputSaved(o)) : undefined
+  // 几件事同时成立时都要说（一句话里合并），不让优先级链吃掉任何一个：核验未通过 / 警告 / 导出期间又被编辑过
+  const noteParts = [
+    firstFailure ? outputFailureReason(firstFailure) : null,
+    inspectionFailedCount > 0 ? ex("resultInspectionFailed", { count: inspectionFailedCount }) : null,
+    warningCount > 0 ? ex("resultWarnings", { count: warningCount }) : null,
+    edited ? ex("editedDuringExport") : null,
+  ].filter((x): x is string => x !== null);
+  const note = noteParts.length ? noteParts.join("；") : undefined;
+  const clean = failedCount === 0 && !note;
+  // 摘要一句话 + 至多一个动作；逐个文件、核验、警告、诊断都在默认折叠的「详情」里（卡片一句话读懂）
   return (
-    <Card appearance="subtle" padding="sm" data-export-result className="flex flex-col gap-1 px-3">
-      <p className="break-all text-sm text-ink-3">
-        {ex("savedTo", {
-          dir:
-            job.export_dir ??
-            useProjectStore.getState().project?.export_dir ??
-            "exports/",
-        })}
-      </p>
-      {/* 部分失败：先一句汇总（数字就是下面逐行的计数，来自后端回执的 outputs，不另算） */}
-      {job.status === "partial" && (
-        <p data-export-partial-summary className="text-sm font-medium text-ink">
-          {ex("partialSummary", {
-            ok: job.outputs.filter(outputSaved).length,
-            failed: job.outputs.filter((o) => !outputSaved(o)).length,
-          })}
-        </p>
-      )}
-      {job.outputs.map((o) => (
-        <OutputRow
-          key={`${o.format}-${o.name ?? "x"}`}
-          out={o}
-          dir={job.export_dir ?? ""}
-        />
-      ))}
-      {edited && (
-        <p className="mt-1 text-sm text-warn-content">{ex("editedDuringExport")}</p>
-      )}
-      {/* 部分失败 / 每一件产物都失败（此时 outputs 非空，进不了上面的无产物分支）：同一个折叠入口（T04）；全部成功时不出现 */}
-      {(job.status === "partial" || job.status === "failed") && job.job_id && (
-        <TaskDiagnostic key={job.job_id} kind="export" refId={job.job_id} />
-      )}
-      {/* 引擎重渲染的警告：图已经出来了，但可能与画布不完全一致
-          （元素不存在 = 脚本改过了）。不吞——用户投出去之前得知道 */}
-      {!!job.warnings?.length && (
-        <div className="mt-1 flex flex-col gap-0.5 border-t border-border pt-1">
-          <p className="text-sm text-ink-2">{ex("warningsIntro")}</p>
-          {job.warnings.map((w) => (
-            <p key={w} className="break-all text-sm text-ink-3">
-              {w}
-            </p>
+    <Notice
+      tone={failedCount > 0 ? (savedCount > 0 ? "warn" : "danger") : clean ? "ok" : "warn"}
+      data-export-result
+      title={
+        failedCount > 0 ? (
+          <span data-export-partial-summary>
+            {ex("partialSummary", { ok: savedCount, failed: failedCount })}
+          </span>
+        ) : (
+          ex("exportedCount", { count: savedCount })
+        )
+      }
+      detailKey={job.job_id ?? "result"}
+      action={
+        onReveal ? (
+          <Button size="sm" data-export-reveal onClick={onReveal}>
+            {ex("showInFolder")}
+          </Button>
+        ) : undefined
+      }
+      detail={
+        <div className="flex flex-col gap-1 whitespace-normal font-sans text-sm">
+          <p className="break-all text-ink-3">
+            {ex("savedTo", {
+              dir:
+                job.export_dir ??
+                useProjectStore.getState().project?.export_dir ??
+                "exports/",
+            })}
+          </p>
+          {edited && <p className="text-warn-content">{ex("editedDuringExport")}</p>}
+          {job.outputs.map((o) => (
+            <OutputRow
+              key={`${o.format}-${o.name ?? "x"}`}
+              out={o}
+              dir={job.export_dir ?? ""}
+            />
           ))}
+          {/* 部分失败 / 每一件产物都失败（此时 outputs 非空，进不了上面的无产物分支）：同一个折叠入口（T04）；全部成功时不出现 */}
+          {(job.status === "partial" || job.status === "failed") && job.job_id && (
+            <TaskDiagnostic key={job.job_id} kind="export" refId={job.job_id} />
+          )}
+          {/* 引擎重渲染的警告：图已经出来了，但可能与画布不完全一致
+              （元素不存在 = 脚本改过了）。不吞——用户投出去之前得知道 */}
+          {!!job.warnings?.length && (
+            <div className="mt-1 flex flex-col gap-0.5 border-t border-border pt-1">
+              <p className="text-ink-2">{ex("warningsIntro")}</p>
+              {job.warnings.map((w) => (
+                <p key={w} className="break-all text-ink-3">
+                  {w}
+                </p>
+              ))}
+            </div>
+          )}
         </div>
-      )}
-    </Card>
+      }
+    >
+      {note}
+    </Notice>
   );
 }
+
+/** 一件失败产物的原因（后端错误码的本地化文案）；`OutputRow` 的失败行与摘要行共用这一份 */
+const outputFailureReason = (o: ExportOutput) =>
+  translate(`backend.${o.error?.code ?? "format_failed"}`, {
+    ns: "errors",
+    ...(o.error?.params ?? {}),
+    defaultValue: o.error?.code ?? "",
+  });
 
 /** 这一件产物已被后端确认写出（`OutputRow` 画成功行的同一条判据） */
 const outputSaved = (o: ExportOutput) => o.status !== "failed" && !!o.name;
@@ -2591,11 +2618,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
         {ex("outputFailed", {
           // 一批里根本没起来的那张没有格式，点名用图名
           format: out.format ? out.format.toUpperCase() : (out.name ?? ""),
-          reason: translate(`backend.${out.error?.code ?? "format_failed"}`, {
-            ns: "errors",
-            ...(out.error?.params ?? {}),
-            defaultValue: out.error?.code ?? "",
-          }),
+          reason: outputFailureReason(out),
         })}
       </p>
     );

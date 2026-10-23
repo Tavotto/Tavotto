@@ -193,3 +193,32 @@ describe('透明背景（导出对话框用）：默认行为一字不变', () =
     expect(svg.textContent).toContain('标题')
   })
 })
+
+describe('flush / pxWidth（导出预览的缩放舞台用）：默认行为一字不变', () => {
+  const panelObjs = [{ id: 'p', type: 'panel', fileId: 'Fig1.pdf', x: 0, y: 0, w: PAGE.w / 2, h: PAGE.h }] as never
+  const draw = async (el: React.ReactElement) => {
+    await teardown()
+    return render(el)
+  }
+
+  it('不传、传 false / undefined：DOM 逐字相同；面板取缩略图档 200', async () => {
+    const plain = (await draw(<CanvasThumb page={PAGE} objects={panelObjs} />)).outerHTML
+    const off = (await draw(<CanvasThumb page={PAGE} objects={panelObjs} flush={false} pxWidth={undefined} />)).outerHTML
+    expect(off).toBe(plain)
+    expect(plain).toContain('w=200')
+  })
+
+  it('flush：页面顶满盒子（viewBox 就是页面本身），不画外框与圆角', async () => {
+    const svg = await draw(<CanvasThumb page={PAGE} objects={[]} flush />)
+    expect(svg.getAttribute('viewBox')).toBe(`0 0 ${PAGE.w} ${PAGE.h}`)
+    const page = svg.querySelector('[data-thumb-page]')!
+    expect(page.getAttribute('stroke')).toBe('none')
+    expect(page.getAttribute('rx')).toBe('0')
+  })
+
+  it('pxWidth：按每张面板自己的显示宽度挑档（放大后更清晰）', async () => {
+    // 面板占页宽一半；页面显示 3000 设备像素 → 面板 1500 → 1600 档
+    const svg = await draw(<CanvasThumb page={PAGE} objects={panelObjs} flush pxWidth={3000} />)
+    expect(svg.querySelector('[data-thumb-panel]')!.getAttribute('href')).toContain('w=1600')
+  })
+})

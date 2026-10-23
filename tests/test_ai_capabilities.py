@@ -479,7 +479,7 @@ def test_capabilities_echo_the_saved_path_override_and_leak_nothing(monkeypatch)
 
     blob = json.dumps(caps, ensure_ascii=False)
     assert "sk-secret-abcdef" not in blob  # 密钥永不整串回传
-    assert "api_key" not in blob
+    assert '"api_key"' not in blob  # 字段名；厂商目录的 key_url 里合法地含 api_keys 字样
     assert '"argv"' not in blob  # 前端没有消费者，就不公开
 
 

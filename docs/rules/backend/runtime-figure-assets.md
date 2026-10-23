@@ -59,6 +59,10 @@
 （本机不透明引用，不是 argv 摘要）。`resolve()` 仍是正向重算——对注册表里每对 (script, stem) 算 base id 比对，再认 `base + "~rc_…"`
 这一种后缀，别的形状一律不认；无配置时返回的字典键与此前相同。**歧义显式失败**：stem 可以合法地形如 `plot~rc_<12 hex>`，其无参数 id 与同脚本 stem `plot` 的带参数 id 逐字相同；同一 id 有不止一种读法时 `resolve()` 返回 `None`（调用方回 `runtime_asset_unknown`），不按注册表顺序猜。注册表装载不拒绝这种并存（否则整个图库打不开），只有撞上的那一个 id 不可解析；其余 id、单独一个形如后缀的 stem、不同脚本的同名 stem 都不受影响。
 （409），渲染 / 导出 / 重开**不回落成空参数**。`list_assets` 把"真跑过、cache 里有"的配置变体各列一条（带 `run_config`，无参数值）。
+无参数身份是否列出依赖 **runconfig 的持久捕获历史**，不能从 cache 缺失推断。`captures[script].runs` 按配置引用保存产出的 stem 并集，空引用记录无参数产出；这份记录位于 `runconfigs/`，不随 runtime cache 清理，也不随配置淘汰删除。
+`probe.register_probed` 在合并注册表前记录成功捕获，`runtimeasset.materialize` 补记绕过 probe 的文档重放 / 渲染捕获。只有历史明确为「仅带参数产出」的新 stem 才隐藏无参数占位；真实无参数捕获在 cache 删除后仍列为待重跑。
+来源未知的旧注册项缺少历史、或历史格式不可读时保留占位（fail-open）；后来带参数重跑也不能将其历史改判为「从未无参数运行」，由 `legacy_stems` 保留这份未知。明确由静态发现登记的候选不算捕获证据（落地入口见 [注册表规则](registry-discovery-and-probe.md)）；来源仅存在本机同一份历史的可选 `discovered` 集合中，不扩展用户项目的注册表格式。首次带参数捕获时将实际产出的 stem 从 discovered 移入配置历史，不混入 `legacy_stems`；尚未运行的候选仍保留待运行占位。若该候选已有真实无参数 cache metadata，则登记时先将这份正证据补记到持久历史，再处理本次产出，之后清理 cache 也不丢身份。判据只影响清单，不改资产 id、解析或已存文档。
+看护 `tests/test_runtime_config_listing.py`：真实 `prune_cache` 只删除旧无参数目录后素材仍在、文档重放补记、配置专属 stem、旧项与坏历史保留占位、静态来源保存与旧无参数正证据补记。`tests/test_run_argv_e2e.py` 以真实 sidecar 验证字面量 savefig 先静态登记、再仅带参数执行后只列该配置素材。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

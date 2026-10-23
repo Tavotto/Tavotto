@@ -446,7 +446,7 @@ test(
     await exp.getByRole('button', { name: /开始导出/ }).click()
     const job = (await (await started).json()) as { export_dir?: string }
     expect(job.export_dir, 'start 回包里应当有导出目录').toBeTruthy()
-    await expect(exp.getByText(/已保存到/)).toBeVisible({ timeout: 240_000 })
+    await expect(exp.locator('[data-export-result]')).toBeVisible({ timeout: 240_000 })
     const exportDir = job.export_dir!
     const pdfs = () =>
       (existsSync(exportDir) ? readdirSync(exportDir) : []).filter(

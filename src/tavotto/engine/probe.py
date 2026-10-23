@@ -580,6 +580,40 @@ def _live_stem_conflicts(figures_dir: str | Path, script: str, stems: list[str])
     return out
 
 
+def descriptor_artifacts(descriptors) -> dict[str, str] | None:
+    """一次执行的描述符 → `{磁盘文件相对路径: stem}`：登记进注册表的 `artifacts`（#1251）。
+
+    每张图收它写过的**全部**文件（描述符的 `artifacts`，缺省退回只有 `original_artifact` 的旧描述符）：乙存了
+    `panel.pdf` 与 `panel.svg` 时两个文件都记到 `panel-2`，打开哪个都是乙。文件已经是按这张图**自己存过的
+    格式**绑定的（`figcapture.find_artifacts(formats=…)`，与 #1250 的「原件归属」同一份判据），pyplot 捕获没有。
+
+    同一路径被两张不同的图都声称（两张图都存过 `panel.pdf`，磁盘上只剩最后写的那个）时**不记**：这里没有
+    「谁最后写」的证据（那是捕获层 `note_savefig_writer` 的事），猜错比不记更糟——不记 = 退回按文件名 stem，
+    与没有这张表时的行为一致。
+    """
+    if descriptors is None:
+        return None  # 没有执行证据（不是「执行了、没有原件」）：调用方沿用已知映射
+    owner: dict[str, str] = {}
+    contested: set[str] = set()
+    for d in descriptors:
+        if not isinstance(d, dict):
+            continue
+        stem = d.get("stem")
+        if not (isinstance(stem, str) and stem):
+            continue
+        files = d.get("artifacts")
+        paths = list(files) if isinstance(files, (list, tuple)) else []
+        if isinstance(d.get("original_artifact"), str):
+            paths.append(d["original_artifact"])
+        for art in paths:
+            if not (isinstance(art, str) and art):
+                continue
+            art = art.replace("\\", "/")
+            if owner.setdefault(art, stem) != stem:
+                contested.add(art)
+    return {a: s for a, s in owner.items() if a not in contested}
+
+
 def _partial_fields(build_resp) -> dict:
     """build 响应里被逐图隔离的图 → `{"failed_figures": [...], "partial": True}`；没有失败时不加任何键。"""
     failed = build_resp.get("failed_figures") if isinstance(build_resp, dict) else None
@@ -667,11 +701,43 @@ def register_probed(
         with inputremap.landing(figures_dir, result.get("remap_generation")):
             # 无参数运行整条替换（T03 已知缺口）：替换之前这个脚本名下、这次没产出的图名会就此失去关联——多半是此前**带参数**
             # 产出的。记下来如实告诉用户（`unlinked_stems`），用原参数再运行一次即可并回来；不改注册表格式（T09b）
-            before = [] if append else discover.registered_stems(figures_dir, script)
+            origins = discover.registered_stem_origins(figures_dir, script)
+            before = list(origins or {})
+            legacy_candidates = (
+                None
+                if origins is None
+                else [stem for stem, origin in origins.items() if origin != "static"]
+            )
             # 「替换掉了哪些此前真捕获过的图名」的证据在**注册表提交之前**算完：任何环节在这里失败，整次登记失败、
             # 注册表字节不变——绝不能出现「端点报失败、注册表却已丢了旧 stem」（r4220769153）
             # 一次索引：运行配置读一次、cache 目录列一次，不随被替换 stem 数 × 配置数增长（#819 r4232302927）
-            unlinked = sorted(captured_stems(figures_dir, script, set(before) - set(all_stems))[0])
+            unlinked = (
+                []
+                if append
+                else sorted(captured_stems(figures_dir, script, set(before) - set(all_stems))[0])
+            )
+            # A pre-history base cache is positive capture evidence even if discovery
+            # recorded a static candidate locally. Persist it before that cache is pruned.
+            # Cache absence is never used as evidence against an unknown legacy stem.
+            for stem in set(result["stems"]).intersection(
+                stem for stem, origin in (origins or {}).items() if origin == "static"
+            ):
+                if (
+                    runtimeasset.load_metadata(
+                        figures_dir, figcapture.runtime_asset_id(script, stem)
+                    )
+                    is not None
+                ):
+                    runconfig.record_captures(figures_dir, script, [stem])
+            # Snapshot provenance before recording the capture consumes discovery evidence. Unknown
+            # old entries stay legacy; discovery-only entries are not capture evidence.
+            runconfig.record_captures(
+                figures_dir,
+                script,
+                result["stems"],
+                str(result.get("run_config") or ""),
+                registered_stems=legacy_candidates,
+            )
             registered_config = discover.register(
                 figures_dir,
                 script,
@@ -681,6 +747,7 @@ def register_probed(
                 # T03：带运行配置的执行只是这个脚本的**另一份配置**——并进去，不换掉。整条替换会让
                 # 无参数 / 别的参数登记过的图当场失去编辑入口（注册表是 stem 归属的唯一权威）
                 append=append,
+                artifacts=descriptor_artifacts(result.get("descriptors")),
                 **({"on_written": written.append} if on_registered is not None else {}),
             )
             registry.load(figures_dir)

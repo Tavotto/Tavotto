@@ -46,12 +46,14 @@ from . import (
     dialogscan,
     execpolicy,
     execspec,
+    fixrouter,
     nativesession,
     pool,
     preparation,
     rasterhint,
     registry,
     scriptargs,
+    sourcelang,
     taskdiag,
 )
 from .preparation import TARGET_SCRIPT
@@ -939,6 +941,11 @@ class Session:
     signature: tuple = ()
     #: 「跑完没出图」的原因提示缓存（`rasterhint.detect`）：按尝试 id 记，一次尝试只读一遍源码
     no_figure_hint: dict = dataclasses.field(default_factory=dict)
+    #: 最近一次报告里智能修复路由给出的 remedy（ADR 0148）：只给诊断包「修复经过」读，不参与任何判断。
+    #: 连同它是为哪次尝试算的（`last_remedy_attempt`）一起记；`fix_journeys` 只在两者对得上当前尝试时才读，
+    #: 所以后来的重跑 / 成功 / 取消不会把上一次失败的 remedy 带进「最后一次」
+    last_remedy: dict | None = None
+    last_remedy_attempt: str = ""
     #: 最近一次「打开并运行」意图（P05b）；None = 从没有过。终结后保留到被新的取代，供报告说明发生了什么
     intent: RunIntent | None = None
     #: 这个会话里每次真实执行尝试的账本（V2，ADR 0127）：原因码 · 与上次相比变了什么 · 结局
@@ -1142,6 +1149,9 @@ class SessionService:
         #: app 注入：`notifier({"session_id", "project_id", "target", "config_revision"})`（只是「重新读报告」的提示）。
         #: 在会话锁**之外**调；它抛出的异常只记日志。
         self.notifier: Callable[[dict], None] | None = None
+        #: app 注入：「本机有没有可用的 AI」（`ai_bridge.capabilities()` 里有 `usable` 的 agent）。没注入 = 当作没连——
+        #: 智能修复路由（`fixrouter`，ADR 0148）只用它在 `ai_fix` / `connect_ai` 之间选，不在引擎里探测本机
+        self.ai_connected: Callable[[], bool] | None = None
         self._prep.project_cancel_listeners.append(self._on_project_cancel)
 
     def _on_project_cancel(
@@ -2317,6 +2327,11 @@ class SessionService:
                 sess.signature = signature
                 sess.observation_seq += 1
             plan, result = found if found else (None, None)
+            no_figure_hint = (
+                self._no_figure_hint(sess, plan, result)
+                if plan is not None and derived["outcome"]["kind"] == OUTCOME_NO_FIGURE
+                else None
+            )
             return {
                 "session_version": SESSION_VERSION,
                 "session_id": sess.session_id,
@@ -2391,11 +2406,10 @@ class SessionService:
                 ),
                 # 跑完没出图时的原因（`rasterhint`）：脚本自己把图片写成了文件（Pillow / OpenCV …），不是 Matplotlib 图。
                 # 只是提示——不改 outcome / facts；None = 不适用或判不出（老后端没有这个键）
-                "no_figure_hint": (
-                    self._no_figure_hint(sess, plan, result)
-                    if plan is not None and derived["outcome"]["kind"] == OUTCOME_NO_FIGURE
-                    else None
-                ),
+                "no_figure_hint": no_figure_hint,
+                # 智能修复路由（ADR 0148）：失败 / 没出图 / 走不通时按失败类型选的唯一修法（`fixrouter.REMEDY_KINDS`）。
+                # 新增字段，None = 不适用（没失败 / 还在跑）；旧前端读不到也不坏
+                "remedy": self._remedy(sess, derived, plan, result, missing, no_figure_hint),
                 # 部分捕获：这次成功的尝试里预览捕获失败的图（`{stem, code}`，稳定码）。phase 是 `partial` 而 outcome 仍是
                 # `succeeded`（成功那几张照常在 `captured` 里）；全部成功 / 全部失败时是空表
                 "failed_figures": (
@@ -2470,6 +2484,174 @@ class SessionService:
         if now.partition(":")[2] != plan.script_revision.partition(":")[2]:
             sess.stale = {"reason": preparation.STALE_SOURCE}
             sess.actions = {k: v for k, v in sess.actions.items() if v.attempt_id}
+
+    def _remedy(
+        self,
+        sess: Session,
+        derived: dict,
+        plan,
+        result,
+        missing: dict | None,
+        no_figure_hint: dict | None,
+    ) -> dict | None:
+        """失败 / 没出图 / 走不通的结局上调用 `fixrouter.choose`（会话锁内，只读：不起进程、不探测）。"""
+        remedy = self._choose_remedy(sess, derived, plan, result, missing, no_figure_hint)
+        # 随当前尝试一起记（含「没有 remedy」）：诊断包只读与当前尝试对得上的那一份
+        sess.last_remedy = remedy
+        sess.last_remedy_attempt = sess.attempts[-1].attempt_id if sess.attempts else ""
+        return remedy
+
+    def _choose_remedy(
+        self,
+        sess: Session,
+        derived: dict,
+        plan,
+        result,
+        missing: dict | None,
+        no_figure_hint: dict | None,
+    ) -> dict | None:
+        outcome = derived["outcome"]
+        # needs_dependencies：运行期才发现缺包（动态 import），同样是「走不通」，且正是 `install_packages` 的主场
+        if outcome.get("kind") not in (
+            OUTCOME_FAILED,
+            OUTCOME_NO_FIGURE,
+            OUTCOME_BLOCKED,
+            OUTCOME_NEEDS_DEPENDENCIES,
+        ):
+            return None
+        if derived["phase"] in (PHASE_RUNNING, PHASE_AWAITING_RUNTIME_INPUT):
+            return None
+        code = str(
+            outcome.get("code") or ((result.error or {}).get("code") if result else "") or ""
+        )
+        if not code and outcome.get("kind") == OUTCOME_NO_FIGURE:
+            code = "no_figure"
+        env = sess.plan.environment or {}
+        packages: tuple[str, ...] = ()
+        installable = bool(missing and missing.get("installable"))
+        if installable:
+            # `missing["requirement"]` 是 `depresolve` 的需求载荷（dict：distribution / requirement / …），不是字符串
+            req = missing.get("requirement")
+            if isinstance(req, dict):
+                name = str(req.get("distribution") or "") or fixrouter.dist_name(
+                    str(req.get("requirement") or "")
+                )
+            else:
+                name = fixrouter.dist_name(str(req or ""))
+            packages = (name,) if name else ()
+        auto_ok = False
+        if packages:
+            auto_ok = self._auto_install_allowed(
+                sess.plan.interpreter, str(env.get("source") or "")
+            )
+        connected = False
+        probe = self.ai_connected
+        if probe is not None:
+            try:
+                connected = bool(probe())
+            except Exception:  # noqa: BLE001 — 探测失败当作没连：只影响 ai_fix / connect_ai 二选一
+                LOG.exception("判断 AI 是否已连接失败")
+        run_start = None
+        cur = sess.ledger.current()
+        if cur:
+            run_start = next(
+                (a.created_at for a in sess.attempts if a.attempt_id == cur[0].attempt_id), None
+            )
+        installed = run_start is not None and any(
+            d.created_at >= run_start
+            and d.finished is not None
+            and d.finished.get("state") == deprepair.STATE_DONE
+            for d in sess.dep_attempts
+        )
+        script = sess.plan.script or ""
+        history = tuple(sess.ledger.history())
+        # 本可回退却没回退（账本记了理由：不是桌面发起的运行 / 用户只要 safe / 取消了…）：不能再标「静默换成原样运行」
+        declined = any(r.get("declined") for r in history[-1:])
+        ctx = fixrouter.Ctx(
+            ai_connected=connected,
+            native_allowed=(
+                execpolicy.fallback_enabled()
+                and execpolicy.mode_for(sess.project_root) != execpolicy.MODE_SAFE_ONLY
+                and not declined
+            ),
+            missing_installable=installable,
+            packages=packages,
+            auto_install_allowed=auto_ok,
+            python_from=str(env.get("python_version") or ""),
+            no_figure_hint=no_figure_hint,
+            source_language=sourcelang.extension_hint(script) if script else None,
+            history=history,
+            installed_this_run=installed,
+        )
+        return fixrouter.choose(code, ctx)
+
+    def fix_journeys(self, project_id: str) -> list[dict]:
+        """诊断包「修复经过」（ADR 0148）：这个项目每个有过执行尝试的会话——走过哪些修法（账本 + 路由）、各自的结局码、
+        最后一次的报错原文。只读；原文里的路径 / 密钥形状由诊断包的统一脱敏（`diagdetail.Scrubber`）处理，这里不自己抹。"""
+        with self._lock:
+            mine = [s for s in self._by_id.values() if s.project_id == project_id]
+        out: list[dict] = []
+        for sess in mine:
+            with sess.lock:
+                history = sess.ledger.history()
+                if not history:
+                    continue
+                found = self._current_attempt(sess)
+                err = (found[1].error or {}) if found else {}
+                out.append(
+                    {
+                        "script": sess.plan.script or "",
+                        "tried": list(
+                            fixrouter.tried_in_run(fixrouter.Ctx(history=tuple(history)))
+                        ),
+                        "remedy": (
+                            dict(sess.last_remedy)
+                            if sess.last_remedy
+                            and found is not None
+                            and sess.last_remedy_attempt == found[0].plan_id
+                            else None
+                        ),
+                        "attempts": [
+                            {
+                                k: r.get(k)
+                                for k in (
+                                    "run",
+                                    "seq",
+                                    "profile",
+                                    "changed",
+                                    "cause",
+                                    "outcome",
+                                    "code",
+                                )
+                            }
+                            for r in history
+                        ],
+                        "last_error": {
+                            "code": str(err.get("code") or ""),
+                            "message": str(err.get("message") or "")[:4000],
+                        }
+                        if err
+                        else None,
+                    }
+                )
+        return out
+
+    @staticmethod
+    def _auto_install_allowed(interpreter: str, source: str) -> bool:
+        """环境允许不问就装：自动安装开关开着，且环境是 Tavotto 自管的（项目 venv / 受管）或用户已按环境同意过
+        （`convertdeps` 的「每环境问一次」口径，不另写一份）。读不出来一律当不允许。"""
+        if not interpreter:
+            return False
+        try:
+            from . import convertdeps  # 延迟：见 fixrouter
+
+            if not convertdeps.enabled():
+                return False
+            env = convertdeps.describe_env(interpreter, source)
+            return env["kind"] in convertdeps.DIRECT_KINDS or convertdeps.has_consent(env["key"])
+        except Exception:  # noqa: BLE001
+            LOG.exception("判断环境是否允许直接装包失败")
+            return False
 
     @staticmethod
     def _no_figure_hint(

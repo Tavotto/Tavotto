@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react'
 import { Bot } from '@/components/ui/icons'
-import { cn } from '@/lib/utils'
+import { IconFrame } from './IconFrame'
 import { ICON_SIZE } from '@/components/ui/Icon'
 
 /**
@@ -54,15 +54,8 @@ export function AgentIcon({
 }) {
   const Glyph = GLYPHS[iconKey] ?? Bot
   return (
-    <span
-      aria-hidden
-      style={{ width: size, height: size }}
-      className={cn(
-        'flex shrink-0 items-center justify-center text-ink-2',
-        className,
-      )}
-    >
+    <IconFrame size={size} className={className}>
       <Glyph size={glyphSize} />
-    </span>
+    </IconFrame>
   )
 }

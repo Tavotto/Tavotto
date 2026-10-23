@@ -1285,19 +1285,21 @@ class TestDeadlineAndPrompt:
         )
         assert turn.text == "hi" and len(waits) == 1
         assert waits[0] == pytest.approx(30.0, abs=0.01), "封顶 30 s，而不是 1 s 退避"
-        # 剩余时间更短时取剩余
+        # 剩余时间比要等的短：直接按时限停下，不等、不再发第二次请求（早醒的 wait 会让第二次请求越过时限）
         waits.clear()
         srv2 = serve([(429, {"Retry-After": "60"}, {}), *_final_text_turn("anthropic", "hi")])
         model.base_url = srv2.url
-        model.complete(
-            system="s",
-            tools=[],
-            history=[loop.Msg("user", text="hi")],
-            max_output_tokens=100,
-            cancel=SpyEvent(),
-            deadline=time.monotonic() + 5,
-        )
-        assert 0 < waits[0] <= 5
+        with pytest.raises(loop.RunnerFailure) as exc:
+            model.complete(
+                system="s",
+                tools=[],
+                history=[loop.Msg("user", text="hi")],
+                max_output_tokens=100,
+                cancel=SpyEvent(),
+                deadline=time.monotonic() + 5,
+            )
+        assert (exc.value.reason, exc.value.detail) == ("budget", "time")
+        assert waits == [] and len(srv2.requests) == 1
 
     @pytest.mark.parametrize("how", ["missing", "empty", "blank", "stdin_empty"])
     def test_unreadable_or_blank_prompt_fails_without_calling_the_model(
@@ -2071,3 +2073,27 @@ class TestReviewRound14:
         _, res, events = http_run(cand, serve, "openai-chat", [(200, {}, body)])
         assert (res.ok, res.reason, res.detail) == (False, "network", "duplicate_tool_call_id")
         assert not any(e["type"] == "tool" for e in events) and _tree(cand) == before
+
+
+def test_a_retry_wait_that_would_reach_the_deadline_stops_without_another_request(cand, serve):
+    """Event.wait 早醒（Windows 计时粒度）也不许多发一次请求：等待会碰到时限就直接按时限停下。"""
+
+    class EarlyWake(threading.Event):
+        def wait(self, timeout=None):  # 模拟早醒：立刻返回「没被取消」
+            return False
+
+    srv = serve([(429, {"Retry-After": "30"}, {}), *_final_text_turn("anthropic", "hi")])
+    model = loop.HttpModel(
+        wires.WIRES["anthropic"], base_url=srv.url, api_key=KEY_CANARY, model="m-1", max_attempts=3
+    )
+    with pytest.raises(loop.RunnerFailure) as exc:
+        model.complete(
+            system="s",
+            tools=[],
+            history=[wires.Msg("user", text="hi")],
+            max_output_tokens=100,
+            cancel=EarlyWake(),
+            deadline=time.monotonic() + 1.0,
+        )
+    assert (exc.value.reason, exc.value.detail) == ("budget", "time")
+    assert len(srv.requests) == 1

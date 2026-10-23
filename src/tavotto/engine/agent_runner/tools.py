@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from ..ai_prompt_pack import convert_requirements
 from .redact import NO_REDACTION, Redactor
 from .wires import ToolResult, ToolSpec
 
@@ -55,14 +56,28 @@ class RunEnvelope:
     check: Callable[[], tuple[bool, str]] | None = None
     #: 已知密钥的过滤器：写进目标脚本的内容含密钥 → `secret_in_content` 拒写（文件会被提交进用户项目）
     redactor: Redactor = NO_REDACTION
+    #: `convert_to_editable`：要新建的那一个文件名（`<原名>_matplotlib.py`，候选目录顶层，且尚不存在）；其余任务忽略
+    output: str = ""
+
+
+class BadEnvelope(ValueError):
+    """工具集拒绝这次运行的输入（启动即 `done internal <code>`，0 次请求）。"""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
 
 
 class TaskToolset(Protocol):
     """一种任务类型的工具集。`tools()` 每次运行现建（工具带本次运行的状态，例如「已读过目标脚本」）。"""
 
     task_type: str
+    #: 该任务的默认预算（命令行没给就用它）
+    default_limits: Limits
 
     def tools(self, envelope: RunEnvelope) -> list[Tool]: ...
+
+    def first_message(self, envelope: RunEnvelope) -> str: ...
 
     def system_prompt(self, envelope: RunEnvelope) -> str: ...
 
@@ -419,6 +434,10 @@ def _obj(props: dict, required: list[str]) -> dict:
 
 class FigureEditToolset:
     task_type = "figure_edit"
+    default_limits = Limits()
+
+    def first_message(self, envelope: RunEnvelope) -> str:
+        return f"Target script: {envelope.target}\n\nInstruction:\n{envelope.instruction}"
 
     def tools(self, envelope: RunEnvelope) -> list[Tool]:
         s = FigureEditSession(envelope)
@@ -505,4 +524,295 @@ class FigureEditToolset:
         return envelope.limits
 
 
-TOOLSETS: dict[str, TaskToolset] = {FigureEditToolset.task_type: FigureEditToolset()}
+# --------------------------------------------------------------------------- convert_to_editable（ADR 0143 / 0147）
+CONVERT_SUFFIX = "_matplotlib.py"
+#: ADR 0143：校验运行 ≤ 3（Agent ≤ 1 + 一轮有界修正）。第 4 次 `check` 是工具错误 `check_budget`。
+CONVERT_MAX_CHECKS = 3
+#: 一份完整重画脚本可能很长：输出上限比 figure_edit 大；轮数按「读 1–3 + 写 1 + check/修 ≤ 3 轮 + 收尾」留余量。
+CONVERT_LIMITS = Limits(
+    max_turns=20, max_total_tokens=400_000, max_seconds=900.0, max_output_tokens=16384
+)
+
+# 要求的正文来自 ai_prompt_pack（CLI 路径用的同一份），这里只加执行器特有的部分（工具、不运行脚本、check 的预算）。
+CONVERT_SYSTEM_PROMPT = (
+    """\
+You are the conversion assistant built into Tavotto, a desktop editor for scientific figures.
+You turn ONE plotting script that draws its figure as a bitmap (Pillow, OpenCV, plotly, ROOT, ...) into an editable
+Matplotlib version, so the figure can be edited element by element afterwards.
+You work in a scratch copy of the project directory; the user reviews the new file before it is added to the project.
+
+The product's requirements follow verbatim (they are written in Chinese; follow them exactly):
+"""
+    + "\n".join(convert_requirements())
+    + """
+
+Additional rules for this session (not negotiable):
+- The original script is read-only. You create exactly one new file with create_file; no other file can be written.
+- Never try to run any script yourself: you have no shell. The check tool runs the new file for you.
+
+How to work:
+1. Read the original script with read_file. Use list_dir to see what else is in the directory
+   (helper modules, data files); read what you need.
+2. Write the complete new script with create_file. Fix details with edit_file (small exact replacements).
+3. Call check. It runs the new file the way the user would and reports whether a Matplotlib figure was produced.
+   If it reports a problem, fix it and call check again. You have at most 3 check calls.
+4. Finish with one or two sentences saying what you built. Reply in the language of the user's instruction.
+"""
+)
+
+
+def _convert_output_ok(root: str, target_rel: str, output: str) -> bool:
+    """`--output` 的判据：正是 `<原名>_matplotlib.py`（只有文件名，位于候选目录顶层）、此刻尚不存在（含悬空链接）。"""
+    if not output or "\x00" in output or output != os.path.basename(output) or "\\" in output:
+        return False
+    stem = Path(target_rel).stem
+    if not stem or output != stem + CONVERT_SUFFIX:
+        return False
+    return not os.path.lexists(os.path.join(root, output))
+
+
+class ConvertSession(FigureEditSession):
+    """convert_to_editable 的一次运行：原脚本只读，唯一可写的是 `--output` 那个新文件。路径判据复用 `_resolve`。"""
+
+    def __init__(self, envelope: RunEnvelope):
+        super().__init__(envelope)
+        if not self.target_usable():  # 原脚本必须能读（同 figure_edit），否则不发任何模型请求
+            raise BadEnvelope("bad_target")
+        if not _convert_output_ok(self.root, envelope.target, envelope.output):
+            raise BadEnvelope("bad_output")
+        self.output_rel = envelope.output
+        self.output_path = self._resolve(envelope.output)
+        if self.output_path is None or os.path.dirname(self.output_path) != self.root:
+            raise BadEnvelope("bad_output")
+        self.created = False  # 本次运行里新文件已由 create_file 写出
+        self.checks_run = 0
+
+    def _is_output(self, real: str) -> bool:
+        return os.path.normcase(real) == os.path.normcase(self.output_path or "")
+
+    def _writable_output(self, name: str, call_id: str, path: object) -> str | ToolResult:
+        real = self._resolve(path)
+        if real is None:
+            return _err(name, call_id, "path_outside", "Path is not inside the project directory.")
+        if self._is_target(real):
+            return _err(
+                name,
+                call_id,
+                "source_readonly",
+                f"The original script ({self.target_rel}) is read-only and must not be changed.",
+            )
+        if not self._is_output(real):
+            return _err(
+                name,
+                call_id,
+                "not_output",
+                f"Only the new file ({self.output_rel}) may be written.",
+            )
+        return real
+
+    def create_file(self, args: dict, call_id: str = "") -> ToolResult:
+        name = "create_file"
+        content = args.get("content")
+        if not isinstance(content, str):
+            return _err(name, call_id, "bad_arguments", "`content` must be a string.")
+        real = self._writable_output(name, call_id, args.get("path", self.output_rel))
+        if isinstance(real, ToolResult):
+            return real
+        if not content.strip():
+            return _err(name, call_id, "empty_content", "`content` must not be empty.")
+        if len(content.encode("utf-8")) > READ_LIMIT_BYTES:
+            return _err(name, call_id, "too_large", "Content is larger than the allowed size.")
+        text = content.replace("\r\n", "\n")
+        if not self.created:
+            # 新建前没有「写入前的文本」：整份内容含密钥就拒，且必须在建文件之前（零改动）
+            if self.redactor.contains(text):
+                return _secret_err(name, call_id)
+            # 第一次：新建。O_EXCL —— 此刻已存在（含悬空符号链接）就失败，绝不覆盖别人的文件
+            try:
+                fd = os.open(real, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+            except FileExistsError:
+                return _err(name, call_id, "output_exists", "The output file already exists.")
+            with os.fdopen(fd, "wb") as f:
+                f.write(text.encode("utf-8"))
+                f.flush()
+                os.fsync(f.fileno())
+            self.created = True
+            verb = "created"
+        else:
+            got = self._read_text(real)
+            before = got[0] if not isinstance(got, str) else ""
+            refused = self._commit_write(name, call_id, real, before, text, "\n")
+            if refused is not None:
+                return refused
+            verb = "rewrote"
+        n = text.count("\n") + (0 if text.endswith("\n") else 1)
+        return ToolResult(
+            call_id,
+            name,
+            f"Wrote {self.output_rel}.",
+            summary=f"{verb} {n} lines",
+            mutated=True,
+        )
+
+    def edit_file(self, args: dict, call_id: str = "") -> ToolResult:
+        name = "edit_file"
+        old, new = args.get("old"), args.get("new")
+        if not isinstance(old, str) or not isinstance(new, str):
+            return _err(name, call_id, "bad_arguments", "`old` and `new` must be strings.")
+        real = self._writable_output(name, call_id, args.get("path", self.output_rel))
+        if isinstance(real, ToolResult):
+            return real
+        if not self.created:
+            return _err(
+                name,
+                call_id,
+                "not_created",
+                "Create the new file with create_file before editing it.",
+            )
+        if old == "":
+            return _err(name, call_id, "empty_old", "`old` must not be empty.")
+        if old == new:
+            return _err(name, call_id, "no_change", "`old` and `new` are identical; nothing to do.")
+        got = self._read_text(real)
+        if isinstance(got, str):
+            return _err(name, call_id, got, "The new file can no longer be read as text.")
+        text, eol = got
+        old_n, new_n = old.replace("\r\n", "\n"), new.replace("\r\n", "\n")
+        count = text.count(old_n)
+        if count == 0:
+            return _err(
+                name,
+                call_id,
+                "old_not_found",
+                "`old` was not found in the file. It must match exactly, including whitespace and "
+                "indentation. Read the file again and copy the text verbatim.",
+            )
+        if count > 1:
+            return _err(
+                name,
+                call_id,
+                "old_not_unique",
+                f"`old` appears {count} times in the file. Include more surrounding lines so that "
+                "it matches exactly once.",
+            )
+        refused = self._commit_write(name, call_id, real, text, text.replace(old_n, new_n, 1), eol)
+        if refused is not None:
+            return refused
+        return ToolResult(
+            call_id, name, f"Edited {self.output_rel}.", summary="edited new file", mutated=True
+        )
+
+    def check(self, args: dict, call_id: str = "") -> ToolResult:
+        name = "check"
+        # 先报可操作的流程错误（还没建文件），再报环境限制（本会话没有 check）
+        if not self.created:
+            return _err(name, call_id, "not_created", "Create the new file with create_file first.")
+        if self.check_fn is None:
+            return _err(name, call_id, "not_available", "check is not available in this session.")
+        if self.checks_run >= CONVERT_MAX_CHECKS:
+            return _err(
+                name,
+                call_id,
+                "check_budget",
+                f"check was already called {CONVERT_MAX_CHECKS} times; no more runs are allowed. "
+                "Stop and tell the user what is still wrong.",
+            )
+        self.checks_run += 1
+        return super().check(args, call_id)
+
+
+class ConvertToEditableToolset:
+    task_type = "convert_to_editable"
+    default_limits = CONVERT_LIMITS
+
+    def first_message(self, envelope: RunEnvelope) -> str:
+        return (
+            f"Original script (read-only): {envelope.target}\n"
+            f"New file to create: {envelope.output}\n\n"
+            f"Instruction:\n{envelope.instruction}"
+        )
+
+    def tools(self, envelope: RunEnvelope) -> list[Tool]:
+        s = ConvertSession(envelope)
+        return [
+            Tool(
+                "read_file",
+                "Read a text file in the project directory (at most 200 KB). Use it on the original script first, "
+                "and on helper modules or small data files the script uses. Do not use it to look for files "
+                "(use list_dir) and do not re-read a file you already have unless it changed.",
+                _obj({"path": {"type": "string", "description": _PATH_DESC}}, ["path"]),
+                s.read_file,
+            ),
+            Tool(
+                "list_dir",
+                "List the files directly inside the project directory (one level, no recursion). Use it when you "
+                "are unsure which files exist. It cannot list anything outside the project directory.",
+                _obj({}, []),
+                s.list_dir,
+            ),
+            Tool(
+                "create_file",
+                # 不插值文件名：工具定义要跨次运行逐字稳定（提示缓存前缀），文件名由首条用户消息给出
+                "Create the new Matplotlib script named in the first message, with `content` (the complete file). "
+                "This is the "
+                "only file you can write; any other path, and the original script, is refused. Call it once with the "
+                "whole script; to fix details use edit_file. Calling it again replaces the whole new file, so only do "
+                "that for a rewrite. Never put keys or tokens into the content.",
+                _obj(
+                    {
+                        "path": {
+                            "type": "string",
+                            "description": _PATH_DESC + " Optional; must be the new file.",
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "The complete new script.",
+                        },
+                    },
+                    ["content"],
+                ),
+                s.create_file,
+            ),
+            Tool(
+                "edit_file",
+                "Replace one exact piece of text in the new file. `old` must appear in it exactly once: if it appears "
+                "several times or not at all the call fails and nothing changes, so include enough surrounding lines "
+                "to make it unique and copy whitespace verbatim. Use it after create_file and after check reports a "
+                "problem. It cannot modify the original script or any other file.",
+                _obj(
+                    {
+                        "path": {
+                            "type": "string",
+                            "description": _PATH_DESC + " Optional; must be the new file.",
+                        },
+                        "old": {
+                            "type": "string",
+                            "description": "Exact text to replace (non-empty).",
+                        },
+                        "new": {"type": "string", "description": "Replacement text."},
+                    },
+                    ["old", "new"],
+                ),
+                s.edit_file,
+            ),
+            Tool(
+                "check",
+                "Run the new file the way the user would run the original and verify that it produces a Matplotlib "
+                "figure. Call it after create_file, and again after fixing a reported problem. You have at most "
+                f"{CONVERT_MAX_CHECKS} calls in total. It takes no arguments and changes nothing.",
+                _obj({}, []),
+                s.check,
+            ),
+        ]
+
+    def system_prompt(self, envelope: RunEnvelope) -> str:
+        return CONVERT_SYSTEM_PROMPT
+
+    def budget(self, envelope: RunEnvelope) -> Limits:
+        return envelope.limits
+
+
+TOOLSETS: dict[str, TaskToolset] = {
+    FigureEditToolset.task_type: FigureEditToolset(),
+    ConvertToEditableToolset.task_type: ConvertToEditableToolset(),
+}

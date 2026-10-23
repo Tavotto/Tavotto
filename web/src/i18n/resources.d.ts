@@ -477,6 +477,7 @@ export default interface Resources {
       },
       "exportAgain": "再次导出",
       "exported": "导出完成：{{files}}",
+      "exportedCount_other": "已导出 {{count}} 个文件",
       "failTitle": "导出没有完成",
       "filenameError": {
         "control_char": "文件名里有不可见字符，请重新输入。",
@@ -527,7 +528,7 @@ export default interface Resources {
       "openProblems": "在问题面板中查看",
       "operationFailed": "无法完成：{{error}}",
       "outputFailed": "无法导出 {{format}}：{{reason}}",
-      "partialSummary": "已保存 {{ok}} 个，{{failed}} 个失败",
+      "partialSummary": "{{ok}} 个成功，{{failed}} 个失败",
       "pdfHint": "矢量",
       "phase": {
         "cancelled": "已取消",
@@ -550,6 +551,7 @@ export default interface Resources {
       "preflightFailed": "无法完成预检。导出前请自行确认。",
       "preflightFailedKept": "无法完成预检。下面的结论来自更早一次，可能已过时。",
       "preflightOk": "按「{{spec}}」未发现问题",
+      "previewFit": "适合大小",
       "previewFlagged": "有检查提示",
       "previewTabs": "预览",
       "previewWhole": "整版",
@@ -565,6 +567,8 @@ export default interface Resources {
       "replaced": "已覆盖",
       "reportTitle": "随导出生成一份 JSON 报告，供投稿留档。",
       "reportToggle": "生成样式检查报告",
+      "resultInspectionFailed_other": "{{count}} 个文件核验未通过，见详情",
+      "resultWarnings_other": "有 {{count}} 条提示，见详情",
       "retry": "重试",
       "retryStatus": "重试获取状态",
       "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
@@ -589,7 +593,6 @@ export default interface Resources {
       "strictTitle": "按所选规范重新打开写好的文件核对；不合格或无法核验的文件不会保存。EPS 不核验。",
       "strictToggle": "严格核验产物",
       "svgHint": "矢量 · 文字默认保留为文字",
-      "svgNote": "SVG 默认保留文字：插入 Word / PowerPoint 后，选中图形并「转换为形状」即可编辑文字。对方电脑没装同款字体时，文字会换成相近字体显示。不支持的来源会明确报告导出失败。",
       "targetNoFigure": "当前没有图",
       "thumbNote": "缩略图仅为示意 · 非最终文件",
       "tiffHint": "位图 · 无损压缩",
@@ -1654,6 +1657,20 @@ export default interface Resources {
           "apiKeySaved": "已保存 {{hint}}，留空则不改",
           "baseUrl": "接口地址",
           "editTitle": "编辑模型服务 — {{label}}",
+          "fetchModels": "从服务商获取",
+          "fetchReason": {
+            "bad_response": "服务商返回的内容看不懂，请手动填写型号。",
+            "insecure_url": "明文 http 地址不会带着密钥联网，请改用 https。",
+            "key_origin_mismatch": "地址改了，请重新填写密钥。",
+            "network": "连不上服务商，请检查网络或手动填写型号。",
+            "no_key": "先填好接口地址和密钥，再获取。",
+            "timeout": "服务商没有及时回应，可稍后重试。",
+            "unauthorized": "服务商拒绝了这个密钥。"
+          },
+          "fetchedEmpty": "服务商没有返回可用型号",
+          "fetchedHint": "点一下加入上面的模型列表",
+          "fetchingModels": "获取中…",
+          "getKey": "去申请 Key",
           "keyNote": "密钥以明文存在本机配置文件里。启动 CLI 时用环境变量传入，不写进命令行或项目文件。",
           "keyNoteDiagnostics": "导出或复制诊断时，该字段会替换为 ***。",
           "keyNoteMore": "存在哪里、能被谁读到",
@@ -1672,6 +1689,9 @@ export default interface Resources {
           "presetAria": "模型服务预设",
           "presetFilled": "预设已填好：地址、模型",
           "presetPlaceholder": "选一个预设填好地址…",
+          "regionCn": "国内",
+          "regionCustom": "其他",
+          "regionGlobal": "海外",
           "requiredAria": "必填"
         },
         "install": {
@@ -1728,6 +1748,31 @@ export default interface Resources {
         "toggleAria": "在 {{product}} 中启用 {{name}}",
         "useFromAgents": "连接外部工具",
         "useInProduct": "配置改图助手",
+        "vendor": {
+          "anthropic": "Anthropic 官方",
+          "customClaude": "自定义（Anthropic 兼容）",
+          "customCodex": "自定义（OpenAI Responses 兼容）",
+          "dashscope": "阿里云百炼（按量）",
+          "dashscopeCoding": "阿里云百炼 Coding Plan",
+          "deepseek": "DeepSeek",
+          "kimiCode": "Kimi Code 会员",
+          "minimax": "MiniMax（国内）",
+          "minimaxGlobal": "MiniMax（海外）",
+          "moonshot": "Kimi 开放平台",
+          "openai": "OpenAI 官方",
+          "opencodeGo": "OpenCode Go",
+          "synthetic": "Synthetic",
+          "vercelAiGateway": "Vercel AI Gateway",
+          "zai": "Z.AI（GLM 海外）",
+          "zhipu": "智谱 GLM"
+        },
+        "vendorKey": {
+          "dashscopeCoding": "Coding Plan 专属 Key（sk-sp- 开头），与按量 Key 不通用",
+          "kimiCode": "Kimi Code 会员专属 Key，与开放平台 Key 不通用",
+          "officialLogin": "留空 = 用这个 CLI 自己的登录态",
+          "opencodeGo": "需要 OpenCode Go 订阅的 Key",
+          "zai": "需要 Z.AI Coding Plan 订阅的 Key"
+        },
         "viewGuide": "查看使用指南"
       },
       "canvas": {
@@ -5371,6 +5416,7 @@ export default interface Resources {
     "prep": {
       "aria": "准备 {{script}}",
       "btn": {
+        "aiFix": "使用你的 AI 来修复",
         "answer": "回答",
         "background": "放到后台",
         "cancelScan": "取消检查",
@@ -5392,6 +5438,7 @@ export default interface Resources {
         "run": "运行",
         "runAgain": "再运行",
         "runAnyway": "仍然运行",
+        "send": "发送",
         "stop": "停止运行",
         "switchScope": "用本项目的版本",
         "useIt": "用它",
@@ -5598,6 +5645,7 @@ export default interface Resources {
         "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚"
       },
       "line": {
+        "aiUnavailable": "这个问题 AI 暂时还不会修",
         "argsMissing_other": "还差 {{count}} 个参数",
         "argsReady": "参数已填好",
         "argsRejected_other": "脚本不认你填的 {{count}} 个参数",
@@ -5629,6 +5677,7 @@ export default interface Resources {
         "expired": "上次的记录没了",
         "failed": "运行出错了",
         "failedAfterFallback": "安全运行不能照常执行，改用原样运行后又出错了",
+        "feedback": "这个脚本暂时用不了，发给我们看看？",
         "fileOpsBlocked": "脚本改了项目里的文件又去读，安全运行不会真改，结果会不同，所以没有出图",
         "fileOpsBlockedOff": "原样运行被关掉了；脚本改了项目里的文件又去读，安全运行结果会不同，所以没有出图",
         "fileOpsBlockedSafeOnly": "这个项目设成了只用安全运行；脚本改了文件又去读，结果会不同，所以没有出图",
@@ -5718,7 +5767,9 @@ export default interface Resources {
       "progress": "进行中",
       "rasterHint": {
         "line": "这个脚本是用 {{library}} 直接画成图片的，不是 Matplotlib 图",
-        "why": "可以把它生成的图片文件加进来排版；想逐个元素编辑，需要改成用 Matplotlib 画。"
+        "lineNoFile": "这张图是用 {{library}} 画的，Tavotto 不能直接编辑它。",
+        "why": "可以把它生成的图片文件加进来排版；想逐个元素编辑，需要改成用 Matplotlib 画。",
+        "whyNoFile": "想逐个元素编辑，需要改成用 Matplotlib 画；点「生成可编辑版本」让改图助手另写一份新脚本，原脚本不会被改动。"
       },
       "row": {
         "attention": "需要处理",

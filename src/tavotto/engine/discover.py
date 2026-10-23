@@ -43,7 +43,7 @@ import tokenize
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from . import atomicio, figcapture, inputremap, projectenv, registry, runtime, scanbudget
+from . import atomicio, figcapture, inputremap, projectenv, registry, runconfig, runtime, scanbudget
 
 #: 「什么算一份图产物」的唯一出处在 `figcapture.ARTIFACT_EXTS`（捕获描述符
 #: 判原件、handoff 找产物、这里的静态扫描必须是同一张表）；旧名保留作镜像。
@@ -1437,7 +1437,11 @@ def build_draft(figures_dir: str | Path, *, target_python: str | None = None) ->
 
 
 def write_config(
-    figures_dir: str | Path, cfg: dict, *, on_written: Callable[[str], None] | None = None
+    figures_dir: str | Path,
+    cfg: dict,
+    *,
+    static_discovery: bool = False,
+    on_written: Callable[[str], None] | None = None,
 ) -> Path:
     """注册表落盘 —— 走 `engine/atomicio`（ADR 0023 的唯一写入实现）。
 
@@ -1459,9 +1463,28 @@ def write_config(
     误认成本次写入。返回值仍是路径。
     """
     path = registry.registry_path(figures_dir)
-    revision = atomicio.write_json(path, cfg, indent=1)
-    if on_written is not None:
-        on_written(revision)
+    with inputremap.project_mutex(figures_dir):
+        discovered = {}
+        if static_discovery:
+            try:
+                previous = registry.open_registry(figures_dir).entries()
+            except FileNotFoundError:
+                previous = {}
+            except (OSError, ValueError, RuntimeError):
+                previous = None  # Unknown prior ownership is not new static evidence.
+            if previous is not None:
+                registered = {stem for entry in previous.values() for stem in entry["stems"]}
+                discovered = {
+                    script: set(entry["stems"]) - registered
+                    for script, entry in cfg["scripts"].items()
+                }
+        revision = atomicio.write_json(path, cfg, indent=1)
+        # The project keeps its four-field registry contract. Only successfully published
+        # new discoveries become local evidence; merely building a draft stays read-only.
+        if discovered:
+            runconfig.record_discovered(figures_dir, discovered)
+        if on_written is not None:
+            on_written(revision)
     return path
 
 
@@ -1520,9 +1543,14 @@ def register(
     notes: str = "",
     *,
     append: bool = False,
+    artifacts: dict[str, str] | None = None,
     on_written: Callable[[str], None] | None = None,
 ) -> dict:
     """把一个脚本的 stem 归属写进注册表（试运行探测确认后调用）。
+
+    `artifacts`（#1251）：这次执行里「磁盘文件（项目相对路径）→ 写它的那张图的 stem」。给了就并进
+    （`append`）或替换（默认）这个脚本的 `artifacts` 字段；**不给 = 沿用磁盘上已有的**（手工裁决 /
+    AI 新建脚本这类没有执行证据的写入不许把已知映射抹掉），只按本次 stems 修剪掉指向已不属于它的图的条目。
 
     同名脚本整条替换（探测结果是权威的），其它脚本里被本次认领走的 stem
     一并摘掉——否则 registry.load 会因重复 stem 直接报错。
@@ -1539,22 +1567,49 @@ def register(
     """
     with inputremap.project_mutex(figures_dir):
         return _register_locked(
-            figures_dir, script, stems, entry, cost, notes, append=append, on_written=on_written
+            figures_dir,
+            script,
+            stems,
+            entry,
+            cost,
+            notes,
+            append=append,
+            artifacts=artifacts,
+            on_written=on_written,
         )
 
 
 def registered_stems(figures_dir: str | Path, script: str) -> list[str]:
-    """注册表文件里此刻登记在 `script` 名下的 stem（读不到 / 没有这条 = 空表）。只读，不加锁——要与随后的写成对时由调用方
-    持项目锁（`inputremap.landing` / `project_mutex`）。"""
+    """Current registered stems; unreadable/missing entries retain the old empty-list contract."""
+    return list(registered_stem_origins(figures_dir, script) or {})
+
+
+def registered_stem_origins(figures_dir: str | Path, script: str) -> dict[str, str] | None:
+    """Registry ownership plus local discovery evidence; unknown origins fail open.
+
+    Missing registry/entry means no previous stems; unreadable provenance is None (fail open).
+    Callers pairing this snapshot with registration hold the project mutex.
+    """
     path = registry.existing_registry_path(figures_dir)
+    if path is None:
+        return {}
     try:
-        cfg = json.loads(path.read_text(encoding="utf-8")) if path else {}
+        cfg = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
-    entry = (cfg.get("scripts") or {}).get(script) if isinstance(cfg, dict) else None
+        return None
+    scripts = cfg.get("scripts") if isinstance(cfg, dict) else None
+    if not isinstance(scripts, dict):
+        return None
+    entry = scripts.get(script)
+    if entry is None:
+        return {}
     if not isinstance(entry, dict):
-        return []
-    return [str(s) for s in entry.get("stems") or []]
+        return None
+    stems = entry.get("stems") or []
+    if not isinstance(stems, list) or not all(isinstance(stem, str) for stem in stems):
+        return None
+    static = runconfig.discovered_stems(figures_dir, script)
+    return {stem: "static" if stem in static else "unknown" for stem in stems}
 
 
 def _register_locked(
@@ -1566,6 +1621,7 @@ def _register_locked(
     notes,
     *,
     append: bool,
+    artifacts: dict[str, str] | None = None,
     on_written: Callable[[str], None] | None = None,
 ) -> dict:
     path = registry.existing_registry_path(figures_dir)
@@ -1580,19 +1636,42 @@ def _register_locked(
     claimed = set(stems)
     if append:
         claimed |= {str(x) for x in (prev_entry or {}).get("stems", [])}
+    claimed_list = sorted(claimed)
+    prev_arts = registry.clean_artifacts((prev_entry or {}).get("artifacts"), claimed_list)
+    if artifacts is None:
+        new_arts = prev_arts  # 没有执行证据：沿用已知映射（已按本次 stems 修剪）
+    else:
+        fresh_arts = registry.clean_artifacts(artifacts, claimed_list)
+        replaced = set(fresh_arts.values())
+        # 并进去时，旧条目里「同一张图换了文件」的那条让位于新的
+        new_arts = (
+            {a: s for a, s in prev_arts.items() if s not in replaced and a not in fresh_arts}
+            if append
+            else {}
+        )
+        new_arts.update(fresh_arts)
     for name, entry_cfg in list(scripts.items()):
         if name == script or not isinstance(entry_cfg, dict):
             continue
         kept = [s for s in entry_cfg.get("stems", []) if s not in claimed]
         if len(kept) != len(entry_cfg.get("stems", [])):
             entry_cfg["stems"] = kept
+        if "artifacts" in entry_cfg:
+            # 被本脚本认领走的图 / 文件，别处的映射跟着摘掉（一个文件只属于一个脚本）
+            other = registry.clean_artifacts(entry_cfg["artifacts"], kept)
+            other = {a: s for a, s in other.items() if a not in new_arts}
+            if other:
+                entry_cfg["artifacts"] = other
+            else:
+                entry_cfg.pop("artifacts")
     if claimed:
         prev = prev_entry or {}
         scripts[script] = {
             "entry": entry,
             "cost": cost or prev.get("cost", "medium"),
             "notes": notes or prev.get("notes", ""),
-            "stems": sorted(claimed),
+            "stems": claimed_list,
+            **({"artifacts": dict(sorted(new_arts.items()))} if new_arts else {}),
         }
     else:
         scripts.pop(script, None)
@@ -1634,7 +1713,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.write:
         cfg, rep, changes = merge(args.figures_dir)
-        path = write_config(args.figures_dir, cfg)
+        path = write_config(args.figures_dir, cfg, static_discovery=True)
         print(f"已写入 {path}")
         _print_report(rep)
         if changes["added_scripts"]:

@@ -526,6 +526,42 @@ def test_prompt_pack_section_is_closed_over_its_placeholders():
     assert not any(k.startswith("fix_no_") for k in ai_prompt_pack.V1["templates"])
 
 
+def _convert_text(library, source_language="python"):
+    return ai_prompt_pack.convert_prompt(
+        script="a.py",
+        target="a_matplotlib.py",
+        library=library,
+        reference=None,
+        project_root="/p",
+        source_language=source_language,
+    )
+
+
+def test_pillow_library_appends_the_pillow_to_matplotlib_table():
+    text = _convert_text("pillow")
+    assert "Pillow → Matplotlib 对照" in text
+    assert "ax.set_ylim(H, 0)" in text and "pt = px × 72 / dpi" in text
+    assert "figsize=(w / dpi, h / dpi)" in text and "subplots_adjust(0, 0, 1, 1)" in text
+    assert "np.asarray(img)" in text and "TAVOTTO_NEEDS_INPUT:" in text
+    # 表在硬性要求之后、工作副本说明之前
+    assert (
+        text.index("硬性要求")
+        < text.index("Pillow → Matplotlib 对照")
+        < text.index("注意：当前工作目录")
+    )
+
+
+@pytest.mark.parametrize("library", ["opencv", "ROOT", "plotly", "imageio", "skimage", None])
+def test_other_libraries_do_not_get_the_pillow_table(library):
+    text = _convert_text(library)
+    assert "Pillow → Matplotlib 对照" not in text and "TAVOTTO_NEEDS_INPUT" not in text
+
+
+@pytest.mark.parametrize("language", ["r", "matlab"])
+def test_foreign_sources_never_get_the_pillow_table(language):
+    assert "Pillow → Matplotlib 对照" not in _convert_text("pillow", language)
+
+
 def test_image_dimensions_reads_png_jpeg_gif_headers():
     assert ai_convert.image_dimensions(PNG) == (40, 20)
     assert ai_convert.image_dimensions(b"GIF89a" + b"\x0a\x00\x05\x00") == (10, 5)

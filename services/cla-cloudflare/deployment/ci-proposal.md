@@ -5,6 +5,11 @@ ci.disabled.json is explicitly disabled and contains invalid placeholder IDs.
 scripts/ci-candidate.mjs is a reviewable Node 24 entry for src/ci/consumer.ts;
 it performs GET requests only. It is not a signing or publishing client.
 
+The optional trusted-config wait policy is default disabled. Its bounded retry
+contract and remaining scheduling/version/merge-group engineering are documented
+in [the followup audit](../../../docs/implementation/cla-ci-wait/README.md).
+It cannot change event locators, extend a proof or wire this entry into a workflow.
+
 The existing gate-discipline rule requires two changes in order:
 
 1. Land and review the consumer and its complete source closure on main while
