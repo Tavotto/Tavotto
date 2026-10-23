@@ -1,4 +1,4 @@
-"""「看」组工具（tier=observe）：都是现有函数的薄壳，只读、不联网、不改任何东西（ADR 0149 §四）。
+"""「看」组工具（tier=observe）：都是现有函数的薄壳，只读、不联网、不改任何东西（ADR 0149 §四）。唯一例外是 `inspect_environment`：它要在目标环境里起一个短命子进程，登记为 tier=run，走 `trial.run_python` 的同一套保护。
 
 读文件类一律走 `readscope`（范围 + 硬拦 + 脱敏 + 截断）；find / grep 有条数与时间上限，跳过拦截区与大目录。
 """
@@ -380,8 +380,9 @@ def inspect_environment(ctx: FixContext, args: dict) -> ToolResult:
     pk = info.get("packages")
     if isinstance(pk, list):
         info["package_count"] = len(pk)
+    info["os_sandbox"] = res.get("os_sandbox") or "none"  # 结果仍是一个 JSON 文档
     return ok(
-        json.dumps(info, ensure_ascii=False, indent=1) + trial.guard_note(res),
+        json.dumps(info, ensure_ascii=False, indent=1) + trial.guard_note(res, sandbox=False),
         "inspected environment",
     )
 
@@ -522,12 +523,15 @@ OBSERVE_TOOLS: tuple[FixTool, ...] = (
     FixTool(
         "inspect_environment",
         "Report one Python environment: version, platform, installed packages and the matplotlib backend. "
+        "It starts a short-lived process in that environment under the same protection as try_run (writes outside "
+        "a scratch folder blocked, no other processes, OS sandbox where available). "
         "`env` must be an id returned by list_environments.",
         obj(
             {"env": {"type": "string", "description": "Environment id from list_environments."}},
             ["env"],
         ),
         inspect_environment,
+        tier="run",
     ),
     FixTool(
         "list_environments",

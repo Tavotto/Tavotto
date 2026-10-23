@@ -1,4 +1,4 @@
-"""「试」组工具（tier=observe）：在指定环境里起一次性子进程试一下，**用户文件一律不动**（ADR 0149 §四）。
+"""「试」组工具（tier=run）：在指定环境里起一次性子进程**以与 safe 运行同等的保护**试一下（ADR 0149 §四）。**不是「什么都不改」的承诺**：进程内绊线有盲区（C 层写 / ctypes），所以再叠操作系统沙盒（有就用）。
 
 子进程封装与体检同一纪律（`projectenv._probe_environment`）：`runtime.probe_args`（`-B`，不往用户解释器目录写 .pyc）、
 `runtime.probe_env` + `launcher.activate_env`（Conda 环境按激活后的环境起）、`stdin=DEVNULL`、`creationflags=CREATE_NO_WINDOW`、
@@ -7,7 +7,8 @@
 **fixtools 起的每一个子进程只有一条执行路径 `run_python`**，它都在 **safe 的写入根绊线**（`engine/writetripwire.py`，ADR 0141，worker 的
 safe 执行同一个守卫）下跑目标代码：`try_run` 的脚本、`try_import` 的 import（模块的导入副作用）、`inspect_environment` 的探测代码一视同仁。
 写入根只有本次专用的缓存子目录（`data_dir()/cache/fix_trials/<会话>-<随机>/`，里面是副本 `work/`、专用 TMPDIR、matplotlib 配置目录）；
-读不限。守卫装不上（解释器 < 3.8 等）就拒绝执行（`trial_unguarded`），不退化成裸跑。临时目录一律建在缓存目录里（不用系统临时目录），
+读不限。**纵深**：macOS 有 `sandbox-exec`、Linux 有 `bwrap` 就再套一层只许写试跑目录的操作系统沙盒（`_os_sandbox_prefix`），结果带 `os_sandbox: macos-sandbox-exec|bwrap|none`；
+沙盒命令找不到 / 探测起不来就退回绊线并标 `none`（Windows 暂无）。网络不动。守卫装不上（解释器 < 3.8 等）就拒绝执行（`trial_unguarded`），不退化成裸跑。临时目录一律建在缓存目录里（不用系统临时目录），
 清理走 `_remove_tree` 重试 + `.cleanup_pending` 标记 + `sweep_stale_trials()`。子进程输出只留有上限的尾部，总量超限即结束子进程。
 """
 
@@ -186,6 +187,7 @@ def run_python(
     returncode, stdout, stderr, output_truncated, figures, blocked_writes, cleanup_pending}`，不抛。stdout / stderr 只是**尾部**
     （各 `OUTPUT_TAIL_BYTES`）；总输出超 `OUTPUT_LIMIT_BYTES` 即结束子进程。"""
     empty = {
+        "os_sandbox": "none",
         "returncode": None,
         "stdout": "",
         "stderr": "",
@@ -209,6 +211,81 @@ def run_python(
     if own:
         res["cleanup_pending"] = pending
     return res
+
+
+# --------------------------------------------------------------------------- 操作系统沙盒（纵深）
+SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+_PROBE_CACHE: dict[tuple, bool] = {}
+
+
+def _find_tool(kind: str) -> str | None:
+    """沙盒命令的路径；没有回 None（测试里 monkeypatch 它模拟「找不到」）。"""
+    if kind == "macos-sandbox-exec":
+        return SANDBOX_EXEC if sys.platform == "darwin" and os.path.exists(SANDBOX_EXEC) else None
+    if kind == "bwrap":
+        return shutil.which("bwrap") if sys.platform.startswith("linux") else None
+    return None
+
+
+def _sbpl_quote(path: str) -> str:
+    return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def macos_profile(trial_dir: str) -> str:
+    """只许写本次试跑目录（含专用 TMPDIR / mpl 配置 / 副本，均在其下）与 /dev/null、/dev/tty；其余写一律拒绝。读、网络不动。"""
+    real = os.path.realpath(trial_dir)  # /var → /private/var
+    return (
+        "(version 1)(allow default)(deny file-write*)"
+        f"(allow file-write* (subpath {_sbpl_quote(real)}) "
+        '(literal "/dev/null") (literal "/dev/tty"))'
+    )
+
+
+def _sandbox_args(kind: str, tool: str, trial_dir: str) -> list[str]:
+    real = os.path.realpath(trial_dir)
+    if kind == "macos-sandbox-exec":
+        return [tool, "-p", macos_profile(trial_dir)]
+    # bwrap：整盘只读，/tmp 换成空 tmpfs，仅试跑目录可写；不动网络命名空间
+    return [
+        tool,
+        "--ro-bind", "/", "/",
+        "--dev", "/dev",
+        "--proc", "/proc",
+        "--tmpfs", "/tmp",
+        "--bind", real, real,
+        "--die-with-parent",
+    ]  # fmt: skip
+
+
+def _probe(kind: str, tool: str) -> bool:
+    """这台机器上沙盒真能起（嵌套在别的沙盒里、用户命名空间被禁都会失败）。同一个工具只探一次。"""
+    key = (kind, tool)
+    if key not in _PROBE_CACHE:
+        probe_dir = tempfile.mkdtemp(prefix="tavotto-sbx-probe-")
+        try:
+            args = _sandbox_args(kind, tool, probe_dir)
+            r = subprocess.run(  # noqa: S603 - 固定的系统沙盒命令
+                [*args, sys.executable, "-c", "pass"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            _PROBE_CACHE[key] = r.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            _PROBE_CACHE[key] = False
+        finally:
+            shutil.rmtree(probe_dir, ignore_errors=True)
+    return _PROBE_CACHE[key]
+
+
+def _os_sandbox_prefix(trial_dir: Path) -> tuple[str, list[str]]:
+    """(名字, 命令前缀)。没有可用沙盒 → ("none", [])，调用方退回进程内绊线。"""
+    for kind in ("macos-sandbox-exec", "bwrap"):
+        tool = _find_tool(kind)
+        if tool and _probe(kind, tool):
+            return kind, _sandbox_args(kind, tool, str(trial_dir))
+    return "none", []
 
 
 def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empty) -> dict:
@@ -235,9 +312,11 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
     env.update(MPLBACKEND="Agg", TMPDIR=tmp, TEMP=tmp, TMP=tmp, MPLCONFIGDIR=str(trial_dir / "mpl"))
     if extra_env:
         env.update(extra_env)
+    sandbox, sandbox_prefix = _os_sandbox_prefix(trial_dir)
     try:
         proc = subprocess.Popen(
             [
+                *sandbox_prefix,
                 python,
                 *runtime.probe_args(),
                 "-c",
@@ -297,6 +376,7 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
         return {"status": "trial_unguarded", **empty}  # 守卫没装上：不报成一次正常执行
     return {
         "status": "ok",
+        "os_sandbox": sandbox,
         "returncode": proc.returncode,
         "stdout": out.text(),
         "stderr": err_.text(),
@@ -315,7 +395,7 @@ _SPAWN_NOTE = (
 )
 
 
-def guard_note(res: dict) -> str:
+def guard_note(res: dict, *, sandbox: bool = True) -> str:
     """给 `run_python` 结果的守卫相关附注：被拦的越界写、清不掉的残留。"""
     note = ""
     blocked = res.get("blocked_writes") or []
@@ -333,7 +413,12 @@ def guard_note(res: dict) -> str:
             "\ncleanup_pending: the scratch folder could not be fully deleted; it is kept in Tavotto's cache "
             "folder and will be removed later."
         )
-    return note
+    return note + (sandbox_note(res) if sandbox else "")
+
+
+def sandbox_note(res: dict) -> str:
+    """每次真正跑过用户代码的结果都带这一句，让模型知道有没有操作系统层的保护。"""
+    return f"\nos_sandbox: {res.get('os_sandbox') or 'none'}" if res.get("status") == "ok" else ""
 
 
 def _tail(text: str, n: int = ERROR_TAIL_LINES) -> str:
@@ -613,6 +698,7 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
             f"\noutput_truncated: the script printed more than {OUTPUT_LIMIT_BYTES // (1024 * 1024)} MiB, "
             "so it was stopped; only the last part of the output is kept"
         )
+    extra += sandbox_note(res)
     tail = _tail(res.get("stderr") or "")
     summary = "trial run done" + (" (writes blocked)" if blocked else "")
     summary += " (cleanup_pending)" if pending else ""
@@ -628,8 +714,9 @@ _ENV = {"type": "string", "description": "Environment id from list_environments.
 TRIAL_TOOLS: tuple[FixTool, ...] = (
     FixTool(
         "try_import",
-        "Check whether a module imports in one environment, in a throw-away process (nothing is installed or "
-        "changed). Returns OK with the version, or the last lines of the error.",
+        "Check whether a module imports in one environment, in a throw-away process. Nothing is installed, but "
+        "importing runs the module's own code, so it runs under the same protection as a trial run (see try_run). "
+        "Returns OK with the version, or the last lines of the error.",
         obj(
             {
                 "env": _ENV,
@@ -641,13 +728,17 @@ TRIAL_TOOLS: tuple[FixTool, ...] = (
             ["env", "module"],
         ),
         try_import,
+        tier="run",
     ),
     FixTool(
         "try_run",
         "Run a copy of the user's script once in one environment with a non-interactive matplotlib backend, and "
-        "report the exit code, the number of figures and the last 40 lines of the error output. The user's files "
-        "are never touched: it runs in a temporary copy that is deleted afterwards, and any attempt to write "
-        "outside that copy is blocked and reported.",
+        "report the exit code, the number of figures and the last 40 lines of the error output. It runs the "
+        "user's code, protected as follows: it runs in a temporary copy that is deleted afterwards; attempts to "
+        "write outside that copy are blocked and reported; starting other processes is blocked; and where the "
+        "operating system offers a sandbox (macOS sandbox-exec, Linux bwrap) it also only allows writes inside "
+        "that copy. The result says `os_sandbox: macos-sandbox-exec|bwrap|none`. Known gaps: with `none`, writes "
+        "from native extensions (C code, ctypes) are not caught; reads and the network are not restricted.",
         obj(
             {
                 "env": _ENV,
@@ -660,5 +751,6 @@ TRIAL_TOOLS: tuple[FixTool, ...] = (
             ["env"],
         ),
         try_run,
+        tier="run",
     ),
 )

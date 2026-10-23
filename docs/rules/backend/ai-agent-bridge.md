@@ -393,15 +393,15 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 - **边界**：本包 import `agent_runner.tools / wires`（取 `Tool` / `ToolResult`），**`agent_runner` 不 import 本包**（它是独立子进程，保持纯标准库）。
   不 import app / Flask：工具拿注入的 `FixContext`（`base.py`：项目根、主目录、环境 id → 解释器表、报告回调、环境清单回调、日志路径、脚本、执行器、`reads`）。
   测试里 `home` 一律给 `tmp_path` 假主目录。
-- **档位**：`ToolSpec.tier ∈ observe | tavotto | listed | user_env | outward`（默认 `observe`）+ `waits_for_user`（默认 `False`），**不序列化给模型**
-  （`tests/test_fixtools.py::test_tier_is_never_sent_to_the_model` 钉三种 wire 的请求体）。`FixContext.allowed_tiers` 之外的工具 `run_tool` 拒绝（`tier_not_allowed`）。
-  D1 只有 `observe`：看（`read_run_report` / `read_file` / `list_dir` / `find_files` / `grep_files` / `inspect_environment` / `list_environments` / `read_logs` / `lookup_package`）与
-  试（`try_import` / `try_run`）。
+- **档位**：`ToolSpec.tier ∈ observe | run | tavotto | listed | user_env | outward`（默认 `observe`）+ `waits_for_user`（默认 `False`），**不序列化给模型**
+  （`tests/test_fixtools.py::test_tier_is_never_sent_to_the_model` 钉三种 wire 的请求体）。`FixContext.allowed_tiers` 之外的工具 `run_tool` 拒绝（`tier_not_allowed`）；裸构造默认只放行 `observe`，修复会话创建方用 `FixContext.for_fix_session(...)`（放行 `observe` + `run`）。
+  D1 有两档：`observe` 看（`read_run_report` / `read_file` / `list_dir` / `find_files` / `grep_files` / `list_environments` / `read_logs` / `lookup_package`）；
+  `run` 试（`try_import` / `try_run` / `inspect_environment`）——**运行用户代码，不承诺「什么都不改」**，保护范围与盲区见下条。
 - **读取范围**（`readscope.py`，判据只有 `ReadScope.check`）：主目录 + 项目根 + 环境前缀内可读，其余 `outside_scope`；`DENY_HOME_RELATIVE` / `DENY_NAME_PATTERNS` 命中
-  `denied`（词法与 `realpath` 后各判一次；大小写不敏感于 macOS / Windows；Tavotto 自己的 `config.json` 在内）。单次读 ≤ 256 KiB（截断给说明，`start_line` / `max_lines` 续读），
+  `denied`（词法与 `realpath` 后各判一次；大小写不敏感于 macOS / Windows；Tavotto 自己的 `config.json` 在内）。单次读 ≤ 256 KiB（**按 64 KiB 块读、自己切行，当前行只留前 256 KiB**，所以任何文件大小下内存都有界；单行超限就截断该行并说明；截断给说明，`start_line` / `max_lines` 续读），
   二进制只给类型与大小。项目外的读取进 `ctx.reads`；**跟随的文件符号链接按解析后的目标记**（`_walk` 与 `resolve_or_error` 都用 `ReadScope.check` 的结果：目标在项目外就记目标路径，在项目内不记）。
   **所有给模型的文本过 `readscope.scrub`**（`run_tool` 对返回内容再过一遍）；「键 + 值」类密钥只有**一条规则**（`_SECRET_ASSIGN`），由敏感键名表 `SENSITIVE_KEYS`（password / passwd / pwd / secret / token / api-key / apikey / access-key / auth / credential(s) / private-key，大小写、`-` / `_` 通用）
-  与值形状（裸值 / 单引号 / 双引号，含内部空格）驱动：命令行旗标后（空白或 `=`）的值整体换成 `***` 只留旗标，`key = value` / JSON 形保留引号换内容；`-p` 只在值带引号时当密码；非敏感旗标（`--output "my file.png"`）不动。新增键名只加进那张表。新增敏感位置：加进两张表并补 `test_fixtools.py::DENIED_REL`。
+  与值形状（裸值 / 单引号 / 双引号，含内部空格）驱动：命令行旗标后（空白或 `=`）的值整体换成 `***` 只留旗标，`key = value` / JSON 形保留引号换内容；`-p` 只在值带引号时当密码；非敏感旗标（`--output "my file.png"`）不动。**HTTP 凭据头**（`Authorization` / `Proxy-Authorization` / `Cookie` / `Set-Cookie` / `X-Api-Key` / `X-Auth-Token`）走单独一条 `_HTTP_CRED`：冒号后到行尾（JSON 形是那个字符串值，`curl -H '…'` 到包着它的引号）整体 `***`，因为值里有空格。新增键名只加进那张表。新增敏感位置：加进两张表并补 `test_fixtools.py::DENIED_REL`。
 - **find / grep**：条数 + 墙钟（`SCAN_SECONDS`）上限；跳过 `SKIP_DIRS`、拦截区，`site-packages` 只下探两层，不跟随目录符号链接。
   **`grep_files` 是字面量搜索**（`in`，可选 `ignore_case`），不接受正则——没有正则就没有灾难性回溯；工具描述与 schema 如实告诉模型。
 - **「试」的子进程**（`trial.run_python`）：与体检同一纪律——`runtime.probe_args`（`-B`）、`runtime.probe_env` + `launcher.activate_env`、`stdin=DEVNULL`、
@@ -413,7 +413,9 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   **守卫的做法**：子进程按文件加载 `engine/writetripwire.py`（worker 的 safe 执行同一个写入根绊线，ADR 0141），写入根只有本次试跑目录
   `data_dir()/cache/fix_trials/<会话>-<随机>/`（`work/` 副本 + `tmp/` 专用 TMPDIR + `mpl/` + `out/`），读不限；越界写（`open` / `Path.write_text` / `os.remove` 等）当场 `PermissionError`，
   违规记进结果的 `blocked_writes`（脚本吞掉异常也在）。**绊线不是沙盒**，盲区见 `writetripwire` 头注。守卫装不上（握手文件没出现 / 退出码 97）→ `trial_unguarded`，不退化成裸跑。
-  `mode=native` 不属于 observe 档，直接 `native_trial_not_observe`（归 D2 的 `user_env` 档 + 用户确认）。
+  **操作系统沙盒（纵深）**：`trial._os_sandbox_prefix` 在 macOS 有 `/usr/bin/sandbox-exec`、Linux 有 `bwrap` 且探测能起时把子进程套进去（只许写试跑目录；macOS profile 原文在 `trial.macos_profile`，ADR 0149 §四）；找不到 / 探测失败退回绊线。工具结果带 `os_sandbox: macos-sandbox-exec|bwrap|none`（`inspect_environment` 是 JSON 里的 `os_sandbox` 字段）。
+  `none`（含 Windows）时 C 层 / `ctypes` 的写不被拦；读与网络始终不受限。工具描述（给模型看）如实写这些，不得再写 "changes nothing"。
+  `mode=native` 不属于 observe / run 档，直接 `native_trial_not_observe`（归 D2 的 `user_env` 档 + 用户确认）。
   **输出上限**：`run_python` 用 `Popen` + 两个读线程，每路只留 `OUTPUT_TAIL_BYTES`（64 KiB）尾部并数总字节，两路合计超 `OUTPUT_LIMIT_BYTES`（8 MiB）就结束子进程（POSIX 按自己的进程组，绝不按名字杀），结果 `output_truncated`。
   **副本清理**：删除带有限次重试（Windows 文件占用）；仍失败 → 结果如实报 `cleanup_pending`、目录留 `.cleanup_pending` 标记；`sweep_stale_trials()` 在每次 `run_python` 开头清标记目录与超过 1 小时的残留。
 - **审计**（`audit.py`）：`data_dir()/ai/fix_audit.jsonl`，字段 `ts / session / step / tool / tier / args / approved_by / result{ok,code,summary}`；路径类参数保留、其余只记长度，

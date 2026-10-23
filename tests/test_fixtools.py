@@ -52,7 +52,7 @@ def box(tmp_path, monkeypatch):
 
 def make_ctx(box, **kw) -> FixContext:
     kw.setdefault("case_insensitive", False)
-    return FixContext(session_id="s1", project_root=box.proj, home=box.home, **kw)
+    return FixContext.for_fix_session("s1", box.proj, home=box.home, **kw)
 
 
 def call(ctx, name, args, audit=None):
@@ -728,7 +728,7 @@ def test_audit_failure_never_breaks_the_tool(box):
 
 
 # =========================================================================== registry / adapter
-def test_registry_contains_the_look_and_try_groups_all_observe():
+def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_running_tools():
     assert set(REGISTRY) == {
         "read_run_report",
         "read_file",
@@ -742,7 +742,15 @@ def test_registry_contains_the_look_and_try_groups_all_observe():
         "try_import",
         "try_run",
     }
-    assert {t.tier for t in REGISTRY.values()} == {"observe"}
+    assert {n for n, t in REGISTRY.items() if t.tier == "run"} == {
+        "inspect_environment",
+        "try_import",
+        "try_run",
+    }
+    assert {t.tier for t in REGISTRY.values()} == {"observe", "run"}
+    for name in ("try_run", "try_import", "inspect_environment"):
+        assert "changes nothing" not in REGISTRY[name].description
+        assert "never touched" not in REGISTRY[name].description
     assert not any(t.waits_for_user for t in REGISTRY.values())
 
 
@@ -752,7 +760,9 @@ def test_build_agent_tools_adapts_registry_and_audits(box):
     ctx = make_ctx(box)
     agent_tools = build_agent_tools(ctx, audit)
     assert [t.name for t in agent_tools] == list(REGISTRY)
-    assert all(isinstance(t, runner_tools.Tool) and t.tier == "observe" for t in agent_tools)
+    assert all(
+        isinstance(t, runner_tools.Tool) and t.tier == REGISTRY[t.name].tier for t in agent_tools
+    )
     by = {t.name: t for t in agent_tools}
     res = by["read_file"].handler({"path": str(f)})
     assert isinstance(res, wires.ToolResult) and "adapter-ok" in res.content
@@ -787,7 +797,8 @@ def test_a_crashing_handler_and_non_object_args_are_tool_errors(box):
 
 def test_tier_is_never_sent_to_the_model(box):
     specs = [t.spec() for t in build_agent_tools(make_ctx(box), AuditLog(box.data / "a.jsonl"))]
-    assert all(s.tier == "observe" and s.waits_for_user is False for s in specs)
+    assert {s.tier for s in specs} == {"observe", "run"}
+    assert all(s.waits_for_user is False for s in specs)
     for name, wire in wires.WIRES.items():
         if name == "demo":
             continue
@@ -1074,3 +1085,193 @@ def test_copy_enumeration_stops_early_on_a_huge_folder(tmp_path, monkeypatch):
     name, whole = trial._copy_project(src, script, dest)
     assert (name, whole) == ("fig.py", False)
     assert sorted(p.name for p in dest.iterdir()) == ["fig.py"]
+
+
+# =========================================================================== run 档
+def test_bare_context_allows_only_observe_and_fix_session_adds_run(box):
+    bare = FixContext(session_id="s", project_root=box.proj, home=box.home)
+    assert bare.allowed_tiers == frozenset({"observe"})
+    script = put(box.proj / "s.py", "print(1)\n")
+    bare.environments, bare.script_path = {"e": sys.executable}, script
+    for name, args in (("try_run", {"env": "e"}), ("try_import", {"env": "e", "module": "os"})):
+        r = run_tool(REGISTRY[name], bare, args)
+        assert r.is_error and r.code == "tier_not_allowed"
+    assert run_tool(REGISTRY["read_logs"], bare, {"source": "bad"}).code == "bad_arguments"
+    fix = FixContext.for_fix_session(
+        "s", box.proj, home=box.home, environments={"e": sys.executable}, script_path=script
+    )
+    assert fix.allowed_tiers == frozenset({"observe", "run"})
+    assert not run_tool(REGISTRY["try_run"], fix, {"env": "e"}).is_error
+    assert fix.session_id == "s" and fix.project_root == box.proj
+
+
+def _sandbox_kind():
+    for kind in ("macos-sandbox-exec", "bwrap"):
+        tool = trial._find_tool(kind)
+        if tool and trial._probe(kind, tool):
+            return kind
+    return None
+
+
+_C_WRITE = (
+    "import sqlite3, sys\n"
+    "try:\n"
+    "    c = sqlite3.connect({path!r}); c.execute('create table t(x)'); c.commit(); c.close()\n"
+    "    print('WROTE')\n"
+    "except Exception as e:\n"
+    "    print('FAILED', type(e).__name__)\n"
+)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="macOS sandbox-exec")
+def test_macos_sandbox_blocks_a_c_level_write_the_tripwire_cannot_see(box):
+    if _sandbox_kind() != "macos-sandbox-exec":
+        pytest.skip("sandbox-exec not usable here (e.g. already inside a sandbox)")
+    outside = box.tmp / "elsewhere" / "x.db"
+    outside.parent.mkdir()
+    ctx = _guarded_ctx(box, _C_WRITE.format(path=str(outside)))
+    r = call(ctx, "try_run", {"env": "e"})
+    assert not r.is_error, r.content
+    assert "FAILED" not in r.content  # stdout 不进结果；看文件
+    assert not outside.exists()
+    assert "os_sandbox: macos-sandbox-exec" in r.content
+    # 同一段代码在专用目录里写得成（沙盒没有把整个试跑废掉）
+    ok_ctx = _guarded_ctx(
+        box,
+        _C_WRITE.format(path="inside.db") + "assert __import__('os').path.exists('inside.db')\n",
+    )
+    r2 = call(ok_ctx, "try_run", {"env": "e"})
+    assert "exit code 0" in r2.content, r2.content
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux bwrap")
+def test_bwrap_blocks_a_c_level_write_the_tripwire_cannot_see(box):
+    if _sandbox_kind() != "bwrap":
+        pytest.skip("bwrap not available or user namespaces disabled")
+    outside = box.tmp / "elsewhere" / "x.db"
+    outside.parent.mkdir()
+    ctx = _guarded_ctx(box, _C_WRITE.format(path=str(outside)))
+    r = call(ctx, "try_run", {"env": "e"})
+    assert not r.is_error, r.content
+    assert not outside.exists() and "os_sandbox: bwrap" in r.content
+
+
+def test_macos_profile_text_is_exactly_the_narrow_write_allowlist(tmp_path):
+    d = tmp_path / 'we"ird'
+    d.mkdir()
+    prof = trial.macos_profile(str(d))
+    real = os.path.realpath(d).replace('"', '\\"')
+    assert prof == (
+        "(version 1)(allow default)(deny file-write*)"
+        f'(allow file-write* (subpath "{real}") (literal "/dev/null") (literal "/dev/tty"))'
+    )
+    assert prof.count("subpath") == 1  # 只放试跑目录这一个根，不放系统临时目录根
+
+
+def test_without_a_sandbox_command_the_trial_falls_back_to_the_tripwire_and_says_none(
+    box, monkeypatch
+):
+    monkeypatch.setattr(trial, "_find_tool", lambda kind: None)
+    outside = put(box.tmp / "elsewhere" / "p.txt", "ORIGINAL")
+    ctx = _guarded_ctx(box, f"open({str(outside)!r}, 'w').write('X')\n")
+    r = call(ctx, "try_run", {"env": "e"})
+    assert not r.is_error and "os_sandbox: none" in r.content and "blocked_writes: 1" in r.content
+    assert outside.read_text() == "ORIGINAL"
+    r2 = call(ctx, "try_import", {"env": "e", "module": "json"})
+    assert "os_sandbox: none" in r2.content
+    assert (
+        json.loads(call(ctx, "inspect_environment", {"env": "e"}).content)["os_sandbox"] == "none"
+    )
+
+
+def test_a_sandbox_that_fails_to_start_falls_back_instead_of_erroring(box, monkeypatch):
+    monkeypatch.setattr(trial, "_find_tool", lambda kind: "/nonexistent/sandbox-tool")
+    monkeypatch.setattr(trial, "_PROBE_CACHE", {})
+    ctx = _guarded_ctx(box, "print('hi')\n")
+    r = call(ctx, "try_run", {"env": "e"})
+    assert not r.is_error and "exit code 0" in r.content and "os_sandbox: none" in r.content
+
+
+# =========================================================================== HTTP 凭据头 / 有界读取
+@pytest.mark.parametrize(
+    ("raw", "secret"),
+    [
+        ("Authorization: Basic dXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA"),
+        ('authorization: Digest username="a", response="b"', 'response="b"'),
+        ("Proxy-Authorization: Basic cHJveHk6cHc=", "cHJveHk6cHc"),
+        ("Cookie: a=b; c=d", "c=d"),
+        ("  Set-Cookie: sid=abc123; Path=/; HttpOnly", "sid=abc123"),
+        ("X-Api-Key: abcdefgh ijkl", "ijkl"),
+        ("x-auth-token: tok tok tok", "tok tok"),
+        ('{"Authorization":"Basic x\\"y"}', 'x\\"y'),
+        ("curl -H 'Authorization: Basic abc' https://h", "Basic abc"),
+        ('curl -H "Cookie: a=b; c=d" https://h', "c=d"),
+        ("authorization=Basic dXNlcjpwdw==", "dXNlcjpwdw"),
+        ('headers = {"authorization": "Bearer tt tt"}', "tt tt"),
+    ],
+)
+def test_http_credential_headers_are_masked_whole(raw, secret):
+    out = readscope.scrub(raw)
+    assert secret not in out and "***" in out, out
+    assert readscope.scrub(out) == out
+    assert "*** ***" not in out
+
+
+def test_http_credential_masking_keeps_the_rest_and_ignores_lookalikes():
+    assert readscope.scrub("curl -H 'Authorization: Basic abc' https://h") == (
+        "curl -H 'Authorization: ***' https://h"
+    )
+    assert readscope.scrub('{"Authorization":"Basic x\\"y","n":1}') == (
+        '{"Authorization":"***","n":1}'
+    )
+    for benign in ("author: bob", "Authors: a, b", "x-cookie-banner: on", "cookies are good"):
+        assert readscope.scrub(benign) == benign
+
+
+def test_read_file_on_a_huge_single_line_is_bounded_in_memory(box):
+    import tracemalloc
+
+    big = box.proj / "one_line.txt"
+    with open(big, "wb") as f:
+        for _ in range(50):
+            f.write(b"a" * (1024 * 1024))
+    assert big.stat().st_size == 50 * 1024 * 1024
+    ctx = make_ctx(box)
+    tracemalloc.start()
+    try:
+        r = call(ctx, "read_file", {"path": str(big)})
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert not r.is_error and "[truncated" in r.content and "longer than 256 KiB" in r.content
+    body = r.content.split("\n[truncated")[0]
+    assert len(body.encode()) <= readscope.MAX_READ_BYTES
+    assert peak < 8 * 1024 * 1024, peak
+
+
+def test_scrub_is_linear_on_a_very_long_word_run():
+    import time
+
+    text = "x" * 262144 + "\n[truncated: showing lines 4-4 of a file]"
+    t0 = time.monotonic()
+    readscope.scrub(text)
+    assert time.monotonic() - t0 < 2.0
+    assert "***" in readscope.scrub("a.b." * 10 + "password = hunter22")
+
+
+def test_bounded_read_keeps_line_semantics(box):
+    f = put(box.proj / "l.txt", "one\ntwo\nthree\n" + "x" * 300_000 + "\nlast\n")
+    ctx = make_ctx(box)
+    r = call(ctx, "read_file", {"path": str(f), "max_lines": 2})
+    assert r.content.startswith("one\ntwo\n") and "three" not in r.content.split("[truncated")[0]
+    r = call(ctx, "read_file", {"path": str(f), "start_line": 3})
+    body = r.content.split("[truncated")[0]
+    assert (
+        body.startswith("three\n") and "longer than" not in r.content
+    )  # 第 4 行放不下：停在它前面
+    r = call(ctx, "read_file", {"path": str(f), "start_line": 4})
+    assert "line 4 is longer than 256 KiB" in r.content
+    r = call(ctx, "read_file", {"path": str(f), "start_line": 5})
+    assert r.content.strip() == "last"
+    g = put(box.proj / "nonl.txt", "no newline at end")
+    assert call(ctx, "read_file", {"path": str(g)}).content == "no newline at end"

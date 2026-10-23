@@ -15,8 +15,13 @@ from typing import Literal
 from ..agent_runner.wires import ToolResult
 from . import readscope
 
-Tier = Literal["observe", "tavotto", "listed", "user_env", "outward"]
-TIERS: tuple[str, ...] = ("observe", "tavotto", "listed", "user_env", "outward")
+#: `observe` = 只读；`run` = 以与准备会话 safe 运行同等的保护运行用户代码（写入绊线 + 禁起进程 + 只在专用目录里跑 + 审计 + 有则加操作系统沙盒）。
+#: 用户点「使用你的 AI 来修复」开启修复会话即视为授权 `run` 这一档；它**不是**「什么都不改」的承诺，盲区见 ADR 0149。
+Tier = Literal["observe", "run", "tavotto", "listed", "user_env", "outward"]
+TIERS: tuple[str, ...] = ("observe", "run", "tavotto", "listed", "user_env", "outward")
+
+#: 修复会话（D2 创建方）默认放行的档
+FIX_SESSION_TIERS: frozenset[str] = frozenset({"observe", "run"})
 
 #: 这些错误码 = 「被拦」：审计里记 approved_by=blocked
 BLOCKED_CODES = frozenset(
@@ -44,7 +49,7 @@ class FixContext:
     script_path: Path | None = None
     #: `try_run` 的执行器 `(python, work_dir, script_name, mode, timeout) -> dict`；None = 内置的一次性子进程
     runner: Callable[..., dict] | None = None
-    #: 本会话允许的档；D1 只有 observe
+    #: 本会话允许的档；裸构造只放行 observe（只读），修复会话用 `for_fix_session` 加上 run
     allowed_tiers: frozenset[str] = frozenset({"observe"})
     #: 项目外的读取清单（供卡片详情列出）
     reads: list[dict] = field(default_factory=list)
@@ -62,6 +67,12 @@ class FixContext:
             extra_deny=self.extra_deny,
             case_insensitive=self.case_insensitive,
         )
+
+    @classmethod
+    def for_fix_session(cls, session_id: str, project_root: Path, **kw) -> FixContext:
+        """修复会话的构造帮手：用户点「使用你的 AI 来修复」即授权 `observe` + `run`；其余字段同构造。"""
+        kw.setdefault("allowed_tiers", FIX_SESSION_TIERS)
+        return cls(session_id=session_id, project_root=project_root, **kw)
 
     def python_of(self, env_id: object) -> str | None:
         return self.environments.get(env_id) if isinstance(env_id, str) else None

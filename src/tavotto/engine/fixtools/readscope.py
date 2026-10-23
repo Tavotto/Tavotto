@@ -95,9 +95,38 @@ def scrub(text: str) -> str:
     except Exception:  # noqa: BLE001 - 脱敏不该被它拖垮，退到下面的形状规则
         pass
     text = _PRIVATE_KEY_BLOCK.sub("[redacted private key]", text)
+    text = _HTTP_CRED.sub(_mask_http_cred, text)
     text = _SECRET_ASSIGN.sub(_mask_secret, text)
     text = _BEARER.sub("Bearer ***", text)
     return _TOKEN_SHAPES.sub("***", text)
+
+
+#: HTTP 凭据头：整行（冒号后到行尾；JSON 形则是那一个字符串值；`curl -H '…'` 则到包着它的引号）换成 `***`。
+#: 值里常有空格（`Basic xxx` / `Digest a="b", c="d"` / `a=b; c=d`），所以不能走「键 + 单个裸值」的规则。
+#: 名字前须是行首 / 空白 / 引号 / `{` / `,`（`author:`、`x-cookie` 之类不命中）；`=` 写法只认 authorization。
+_HTTP_CRED_NAMES = r"(?:proxy-)?authorization|set-cookie|cookie|x-api-key|x-auth-token"
+_HTTP_CRED = re.compile(
+    rf"(?im)(?P<lead>^|[\s{{,\"'])(?P<name>{_HTTP_CRED_NAMES})(?P<cq>[\"']?)"
+    rf"(?P<sep>[ \t]*[:=][ \t]*)(?P<val>[^\n]*)"
+)
+
+
+def _mask_http_cred(m: re.Match) -> str:
+    name, sep, val, lead = m.group("name"), m.group("sep"), m.group("val"), m.group("lead")
+    if "=" in sep and not name.lower().endswith("authorization"):
+        return m.group(0)
+    head = m.group("lead") + name + m.group("cq") + sep
+    if m.group("cq"):  # JSON / 字典形：`"Authorization": "Basic x\"y"`
+        for pat in (_DQ, _SQ):
+            q = re.match(pat, val)
+            if q:
+                return head + val[0] + "***" + val[0] + val[q.end() :]
+        return head + "***"
+    if lead in ("'", '"'):  # `curl -H 'Authorization: …'`：到包着它的引号为止
+        end = re.search(rf"(?<!\\){lead}", val)
+        if end:
+            return head + "***" + val[end.start() :]
+    return head + "***"
 
 
 _PRIVATE_KEY_BLOCK = re.compile(
@@ -117,6 +146,7 @@ SENSITIVE_KEYS: tuple[str, ...] = (
     "credential",
     "credentials",
     "private-key",
+    "authorization",
 )
 _KEY_ALT = "|".join(re.escape(k).replace(r"\-", "[_-]") for k in SENSITIVE_KEYS)
 _KEY = rf"(?:(?:{_KEY_ALT})[\w-]*|auth(?:[_-](?:token|key))?(?![A-Za-z0-9]))"
@@ -139,11 +169,12 @@ def _value(sfx: str, min_bare: int) -> str:
 #:  * `cli`：命令行旗标 `--password x` / `-token=x` / `--api-key "a b"`（旗标后空白或 `=`）；整个值（含引号）换成 `***`，只留旗标。
 #:    另有短旗标 `-p 'x'`（`cliP`）：`-p` 常是端口 / 路径，所以**只在值带引号时**当密码处理。
 #:  * `kv`：`password = x` / `"password": "x"` / `token: x`（`=` 或 `:`）；引号保留、内容换成 `***`；裸值**不论长短**都抹（键名已说明是凭据）。
+#:    键名前缀（命名空间）最多回溯 80 个字符：超长单词串上不会二次方扫描（读文件的超长单行）。
 #:    计数类键名（`max_tokens` / `num_tokens` / `token_count` / `tokenizer` …，见 `_BENIGN_KEY`）不是凭据，原样保留。
 _SECRET_ASSIGN = re.compile(
     rf"(?i)(?:(?P<cli>(?<![\w-])-{{1,2}}{_KEY}(?:\s+|\s*=\s*)){_value('C', 1)}"
     rf"|(?P<cliP>(?<![\w-])-p\s+)(?:{_DQ}|{_SQ})"
-    rf"|(?P<kv>(?P<kname>[\w.-]*?{_KEY})[\"']?\s*[:=]\s*){_value('K', 1)})"
+    rf"|(?P<kv>(?P<kname>[\w.-]{{0,80}}?{_KEY})[\"']?\s*[:=]\s*){_value('K', 1)})"
 )
 
 
@@ -278,10 +309,17 @@ class ReadOutcome:
     end_line: int = 0
 
 
+#: 分块读取的块大小；任何一次分配都不超过 `cap + _CHUNK`
+_CHUNK = 64 * 1024
+
+
 def read_text_capped(
     real: str, *, start_line: int = 1, max_lines: int | None = None, cap: int = MAX_READ_BYTES
 ) -> ReadOutcome:
-    """读 `real`（已过 `check`）。二进制只给类型与大小；超过 `cap` 的给前若干行 + 截断说明。"""
+    """读 `real`（已过 `check`）。二进制只给类型与大小；超过 `cap` 的给前若干行 + 截断说明。
+
+    **有界读取**：按 64 KiB 块读、自己切行，当前行只留前 `cap` 字节（其余丢弃），所以无论文件多大、有没有换行，
+    内存里同时只有 O(cap + 块) 字节；单行超过 `cap` 就截断该行并在说明里讲清。"""
     try:
         if not os.path.isfile(real):
             return ReadOutcome("error", code="not_a_file")
@@ -294,21 +332,57 @@ def read_text_capped(
             lines: list[bytes] = []
             used = 0
             truncated = False
+            cut_line = 0  # 被截断的那一行的行号（0 = 没有）
             lineno = 0
-            for raw in f:
+            cur = bytearray()
+            clipped = False
+            done = False
+
+            def finish() -> bool:
+                """一行收齐了；回 True = 该停了。"""
+                nonlocal lineno, used, truncated, cut_line, clipped
                 lineno += 1
+                line, was_clipped = bytes(cur), clipped
+                cur.clear()
+                clipped = False
                 if lineno < start_line:
-                    continue
+                    return False
                 if max_lines is not None and len(lines) >= max_lines:
                     truncated = True
-                    break
-                if used + len(raw) > cap:
+                    return True
+                if used + len(line) > cap or (was_clipped and lines):
                     truncated = True
                     if not lines:  # 单行就超上限：截断这一行
-                        lines.append(raw[:cap])
+                        lines.append(line[:cap])
+                        cut_line = lineno
+                    return True
+                lines.append(line)
+                used += len(line)
+                if was_clipped:  # 恰好填满 cap 的超长行：留下，但标明被截断
+                    truncated = True
+                    cut_line = lineno
+                    return True
+                return False
+
+            while not done:
+                chunk = f.read(_CHUNK)
+                if not chunk:
+                    if cur or clipped:
+                        finish()
                     break
-                lines.append(raw)
-                used += len(raw)
+                pos = 0
+                while pos < len(chunk):
+                    nl = chunk.find(b"\n", pos)
+                    stop = len(chunk) if nl < 0 else nl + 1
+                    room = cap - len(cur)
+                    if room > 0:
+                        cur += chunk[pos : min(stop, pos + room)]
+                    if stop - pos > max(room, 0):
+                        clipped = True
+                    pos = stop
+                    if nl >= 0 and finish():
+                        done = True
+                        break
     except OSError:
         return ReadOutcome("error", code="read_failed")
     text = b"".join(lines).decode("utf-8", errors="replace")
@@ -319,6 +393,11 @@ def read_text_capped(
             f"[truncated: showing lines {start_line}-{end} of a {size}-byte file; "
             f"limit is {cap // 1024} KiB per read. Use start_line / max_lines to continue.]"
         )
+        if cut_line:
+            note += (
+                f" [line {cut_line} is longer than {cap // 1024} KiB and was cut there; "
+                "the rest of that line is not shown.]"
+            )
     return ReadOutcome(
         "text",
         text=text,

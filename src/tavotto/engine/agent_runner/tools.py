@@ -91,7 +91,7 @@ class Tool:
     schema: dict
     handler: Callable[[dict], ToolResult]
     #: 风险档与是否等用户（ADR 0149）；默认值保证既有工具不变，且不进 wire
-    tier: Literal["observe", "tavotto", "listed", "user_env", "outward"] = "observe"
+    tier: Literal["observe", "run", "tavotto", "listed", "user_env", "outward"] = "observe"
     waits_for_user: bool = False
 
     def spec(self) -> ToolSpec:

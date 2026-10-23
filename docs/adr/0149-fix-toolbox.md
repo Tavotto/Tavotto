@@ -16,17 +16,20 @@
 | 组 | 做什么 | 档 | 本 PR |
 |---|---|---|---|
 | 看 | 只读：运行报告、读文件 / 列目录 / 找文件 / 搜文本、环境清单与详情、日志尾部、导入名→包名 | `observe` | 做 |
-| 试 | 在指定环境起一次性子进程试一下：能不能 `import X`、脚本在临时副本里跑一次 | `observe` | 做 |
+| 试 | 在指定环境起一次性子进程试一下：能不能 `import X`、脚本在临时副本里跑一次、环境体检（`inspect_environment`） | `run` | 做 |
 | 改 | Tavotto 自己的东西（项目设置、记住环境）；清单里的动作（装包进 Tavotto 管理的环境） | `tavotto` / `listed` | D2+ |
 | 外 | 改用户环境、联网查 PyPI、对外发信 | `user_env` / `outward` | D2+ |
 
-「试」仍是 `observe` 档：不写用户文件、不装东西；`try_run` 跑的是脚本的**临时副本**，且**在 safe 的写入根绊线（`writetripwire`，ADR 0141）下**跑，写入根只有本次试跑目录（副本 + 专用 TMPDIR），越界写被拦并如实报告；守卫装不上就拒绝（`trial_unguarded`），不裸跑。
-**native 方式的试跑不属于 observe 档**（它用用户自己的环境，写入面不由我们圈定），本 PR 拒绝 `mode=native`，留给 D2 以 `user_env` 档 + 用户确认实现。子进程输出只留 64 KiB 尾部，合计超 8 MiB 即结束子进程（`output_truncated`）。
+「试」是 **`run` 档**，**不再宣称「试跑什么都不改」**：它要运行用户的代码（`try_run` 的脚本、`try_import` 的导入副作用、`inspect_environment` 的探测），而进程内的写入绊线有盲区（C 扩展 / C 层 `fopen` / `ctypes` 的写绕得过去）。
+`run` 档的含义：**以与准备会话 safe 运行同等的保护运行用户代码**——写入绊线（`writetripwire`，ADR 0141）+ 禁止起进程 + 只在缓存里的副本 / 专用目录（`fix_trials/<会话>-<随机>/`，副本 + 专用 TMPDIR + mpl 配置）里跑 + 本地审计；守卫装不上就拒绝（`trial_unguarded`），不裸跑。
+**纵深**：有操作系统沙盒就再套一层只许写专用目录的沙盒——macOS `/usr/bin/sandbox-exec`（profile：`(version 1)(allow default)(deny file-write*)(allow file-write* (subpath "<试跑目录 realpath>") (literal "/dev/null") (literal "/dev/tty"))`）、Linux `bwrap`（`--ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --bind <试跑目录> <试跑目录>`，不动网络）；找不到 / 探测起不来就退回绊线，结果里一律带 `os_sandbox: macos-sandbox-exec|bwrap|none` 让模型知道。Windows 暂无（`none`，另开 issue）。
+**已知盲区**：`os_sandbox: none` 时 C 层 / `ctypes` 的写不被拦；读与网络任何情形下都不受限（本档只关写）。用户点「使用你的 AI 来修复」开启修复会话即视为授权这一档：`FixContext.for_fix_session(...)` 默认放行 `observe` + `run`，裸构造的 `FixContext` 仍只放行 `observe`。
+**native 方式的试跑不属于 observe / run 档**（它用用户自己的环境，写入面不由我们圈定），本 PR 拒绝 `mode=native`，留给 D2 以 `user_env` 档 + 用户确认实现。子进程输出只留 64 KiB 尾部，合计超 8 MiB 即结束子进程（`output_truncated`）。
 副本放在 `data_dir()/cache/fix_trials/<会话>-<随机>/`（不放系统临时目录），删除带重试，删不掉如实报 `cleanup_pending` 并留标记，`sweep_stale_trials()` 清残留（每次 `try_run` 开头调用）。
 
 ### 二、五档 tier
 
-`observe`（只读 / 一次性试验）→ `tavotto`（只改 Tavotto 自己的状态）→ `listed`（清单里预先点过头的动作）→ `user_env`（改用户自己的环境，每次问）→ `outward`（出站）。
+`observe`（只读）→ `run`（以 safe 同等保护运行用户代码，见上）→ `tavotto`（只改 Tavotto 自己的状态）→ `listed`（清单里预先点过头的动作）→ `user_env`（改用户自己的环境，每次问）→ `outward`（出站）。
 `ToolSpec` / `Tool` 新增 `tier`（默认 `observe`）与 `waits_for_user`（默认 `False`）；**两者只给 Tavotto 的策略层看，不序列化给模型**
 （三种 wire 仍只发 name / description / schema），既有的五个改图工具不变。调用入口 `run_tool` 在会话允许的档之外一律拒绝（`tier_not_allowed`，审计记 `blocked`）。
 
@@ -58,7 +61,7 @@
 ### 六、维护者三条裁决（2026-10-23）
 
 1. 读取范围是整个用户主目录，不是只读项目目录；敏感目录仍硬拦。
-2. 「试」与「看」同档（`observe`），不单独设一档、不逐次问用户。
+2. 「试」单设 `run` 档（原与「看」同档的说法被 Codex 第六轮推翻：运行用户代码不是只读）；不逐次问用户，开启修复会话即授权这一档。
 3. 审计只在本地，不上传、不进遥测；内容不落盘。
 
 ## 本阶段不做
