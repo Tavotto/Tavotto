@@ -173,6 +173,8 @@
     "checkScopeCanvasNamed": "查整个画布「{{name}}」",
     "checkScopeFigureNamed": "仅查原图「{{name}}」",
     "checkScopeOffCanvas": "「{{name}}」不在画布上，这次导出不做规范检查",
+    "needsRerun": "这张图需要重新运行脚本才能按原图导出。也可以改按画布导出（版面按画布，保真度较低）。",
+    "exportAsCanvas": "改按画布导出",
     "checkingFigure": "正在确认这张图……",
     "conflict": "导出目录里已经有 {{files}}。",
     "conflictRename": "另存一份",

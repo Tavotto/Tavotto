@@ -440,7 +440,19 @@ export function ExportDialog() {
    * 重开、素材清单里还没有它——或根本没有可选的图）静默改按画布导（内部 canvas scope，界面上不出现范围选择、
    * 不报错）；左栏预览如实显示导出的页面与页面尺寸（`ExportPreviewPane` 的 `fallbackPage`）。多图档由用户选。
    */
-  const scope: ExportScope = single ? (availability.ok ? "original" : "canvas") : scopeState;
+  /** 后端成功响应且明确「不认」这张 runtime 图：不静默改走画布，让用户显式选（下面的 note + 按钮） */
+  const [canvasAccepted, setCanvasAccepted] = useState(false);
+  const runtimeRefused =
+    single && !!figureId && figureId.startsWith("runtime:") && runtimeRegistration(figureId) === false;
+  useEffect(() => {
+    if (!open) setCanvasAccepted(false);
+  }, [open, figureId]);
+  // 明确「不认」的 runtime 图：留在原图口径（按钮灰、给 note），用户显式点「改按画布导出」才退到画布；其余不可用情形照旧静默退画布
+  const scope: ExportScope = single
+    ? availability.ok || (runtimeRefused && !canvasAccepted)
+      ? "original"
+      : "canvas"
+    : scopeState;
   const singleFallback = single && scope === "canvas";
   /** 单图退路导出的区域 = 可见对象并集包围盒（`lib/exportCrop`）；预览与尺寸读它，与请求同一份 */
   const fallbackCrop = useMemo(
@@ -464,7 +476,9 @@ export function ExportDialog() {
     single &&
     !!figureId &&
     figureId.startsWith("runtime:") &&
-    runtimeRegistration(figureId) === null;
+    runtimeRegistration(figureId) === null &&
+    // 问过但没问成（传输失败）= 仍未知，不再「确认中」：照常请求原图口径，交给后端权威校验
+    !runtimeById[figureId]?.checked;
   const checkedPanelId = panel?.id;
   const checkedFileId = panel && isRuntimePanel(panel) ? panel.fileId : null;
   useEffect(() => {
@@ -1591,15 +1605,32 @@ export function ExportDialog() {
                   </p>
                 </FormRow>
               )}
+              {runtimeRefused && !canvasAccepted && (
+                <FormRow>
+                  <div data-export-runtime-refused className="flex flex-col items-start gap-1.5">
+                    <p className="type-caption">{ex("needsRerun")}</p>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      data-export-accept-canvas
+                      onClick={() => setCanvasAccepted(true)}
+                    >
+                      {ex("exportAsCanvas")}
+                    </Button>
+                  </div>
+                </FormRow>
+              )}
+              {!(runtimeRefused && !canvasAccepted) && (
               <ScopeNote
-                scope={scope}
-                // 每张图单独导出不用先选一张：「尚未选择要导出的图」那句指引在这一档不成立
-                available={availability.ok || (batchMode && availability.reason === "no_figure")}
-                reason={availability.reason}
-                originalSelectable={originalSelectable}
-                ignored={availability.spec?.ignored ?? []}
-                fallback={availability.spec?.fallback ?? false}
-              />
+                  scope={scope}
+                  // 每张图单独导出不用先选一张：「尚未选择要导出的图」那句指引在这一档不成立
+                  available={availability.ok || (batchMode && availability.reason === "no_figure")}
+                  reason={availability.reason}
+                  originalSelectable={originalSelectable}
+                  ignored={availability.spec?.ignored ?? []}
+                  fallback={availability.spec?.fallback ?? false}
+                />
+              )}
             </section>
 
             {batchMode ? (

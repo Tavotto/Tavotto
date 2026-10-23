@@ -128,15 +128,16 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
       })
       .catch(() => {
         if (epoch !== started) return
-        // 查询失败（未登记 404 / 网络）：按「需要重跑、没有缓存」处理——
-        // 面板显示占位与提示，绝不猜成新鲜
+        // 查询失败（网络 / 5xx / 非 2xx）：按「需要重跑、没有缓存」处理——面板显示占位与提示，绝不猜成新鲜；
+        // 但**注册状态是未知（null），不是「不认」**：只有后端成功响应且明确 registered:false 才是 false。
+        // 把传输失败存成 false，单图导出会被静默降级到画布（低保真）——前端预测失败不得静默换口径。
         set((s) => ({
           byId: {
             ...s.byId,
             [id]: {
               status: 'needs_rerun',
               cached: false,
-              registered: false,
+              registered: null,
               profile: 'safe',
               checked: true,
             },
