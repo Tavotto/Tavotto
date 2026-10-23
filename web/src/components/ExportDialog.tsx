@@ -2517,8 +2517,11 @@ export function ResultBlock({
     (o) => outputSaved(o) && inspectionState(o.manifest).tone === "failed",
   ).length;
   const warningCount = job.warnings?.length ?? 0;
-  const note =
-    inspectionFailedCount > 0
+  // 一件都没写出来：原因就在摘要行里（用户要的是「为什么」，不该再点开才知道）；有成功的才把失败原因折进详情
+  const firstFailure = savedCount === 0 ? job.outputs.find((o) => !outputSaved(o)) : undefined
+  const note = firstFailure
+    ? outputFailureReason(firstFailure)
+    : inspectionFailedCount > 0
       ? ex("resultInspectionFailed", { count: inspectionFailedCount })
       : warningCount > 0
         ? ex("resultWarnings", { count: warningCount })
@@ -2589,6 +2592,14 @@ export function ResultBlock({
   );
 }
 
+/** 一件失败产物的原因（后端错误码的本地化文案）；`OutputRow` 的失败行与摘要行共用这一份 */
+const outputFailureReason = (o: ExportOutput) =>
+  translate(`backend.${o.error?.code ?? "format_failed"}`, {
+    ns: "errors",
+    ...(o.error?.params ?? {}),
+    defaultValue: o.error?.code ?? "",
+  });
+
 /** 这一件产物已被后端确认写出（`OutputRow` 画成功行的同一条判据） */
 const outputSaved = (o: ExportOutput) => o.status !== "failed" && !!o.name;
 
@@ -2606,11 +2617,7 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
         {ex("outputFailed", {
           // 一批里根本没起来的那张没有格式，点名用图名
           format: out.format ? out.format.toUpperCase() : (out.name ?? ""),
-          reason: translate(`backend.${out.error?.code ?? "format_failed"}`, {
-            ns: "errors",
-            ...(out.error?.params ?? {}),
-            defaultValue: out.error?.code ?? "",
-          }),
+          reason: outputFailureReason(out),
         })}
       </p>
     );
