@@ -1775,6 +1775,36 @@ describe('行：单击选中、「预览」钮开预览、双击或「改名」�
   })
 })
 
+describe('对比小卡片（Codex #1349）', () => {
+  it('点「放大查看」：卡片收起；关掉模态预览之后卡片不重现', async () => {
+    await mount([meta({ id: 'a1' })])
+    await openModal('a1')
+    await flush()
+    expect(useTimelineStore.getState().preview?.meta.id).toBe('a1')
+    expect($('[data-timeline-card]')).toBeNull()
+    await act(async () => useTimelineStore.getState().setPreview(null))
+    await flush()
+    expect($('[data-timeline-card]')).toBeNull()
+  })
+
+  it('每个文档按自己的长宽比 contain：极端长宽比的两格都不超过最大高度，比例各自正确', async () => {
+    const { cardFrameWidth } = await import('./VersionDialog')
+    expect(cardFrameWidth({ w: 10, h: 1000 }, 148, 190)).toBeCloseTo(1.9, 5)
+    expect(cardFrameWidth({ w: 1000, h: 10 }, 148, 190)).toBe(148)
+    expect(cardFrameWidth({ w: 150, h: 100 }, 148, 190)).toBe(148)
+    mockDoc.mockResolvedValue({ ...meta(), doc: { ...snapshot(), page: { w: 10, h: 1000 } } })
+    await mount([meta({ id: 'a1' })])
+    await openCard('a1')
+    const boxes = [...document.querySelectorAll<HTMLElement>('[data-timeline-card-box]')]
+    expect(boxes).toHaveLength(2)
+    const [moment, current] = boxes.map((b) => parseFloat(b.style.width))
+    // 那一刻是 10 × 1000：按自己的比例缩，高 = 宽 × 100 ≤ 190；当前是 150 × 100，不借用历史的比例
+    expect(moment * 100).toBeLessThanOrEqual(190 + 1e-6)
+    expect(current).toBe(148)
+    expect(current / 1.5).toBeLessThanOrEqual(190)
+  })
+})
+
 describe('预览取正文失败：下一次预览把这句话作废（Codex #679）', () => {
   it('A 取失败 → B 预览成功 → 关闭：抽屉里没有 A 的旧错', async () => {
     await mount([meta({ id: 'a' }), meta({ id: 'b', ts: NOW })])

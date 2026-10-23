@@ -270,7 +270,7 @@ export function TimelinePanel() {
   const openPreview = useCallback(
     (meta: LayoutVersionMeta, doc?: FigureDocument) => {
       const tl = useTimelineStore.getState()
-      setCard({ ctx, id: meta.id })
+      // 不重设卡片：从卡片点「放大查看」时调用方刚把它关掉，这里再 set 会让它在关模态后重现
       setPreviewError(null) // 新的一次预览：上一次取正文的失败作废
       tl.setPreview({ docId, meta, doc: doc ?? null })
       // 卡片已经取回了正文：直接放大，不再取第二遍
@@ -839,6 +839,12 @@ const CARD_W = 340
 /** 每一格预览的最大高度（px）：竖版页面不把卡片撑出屏幕 */
 const CARD_FRAME_MAX_H = 190
 
+/** 每个文档按自己的长宽比在 (maxW, maxH) 盒内 contain；极端长宽比也不撑出盒子（不设最小宽） */
+export function cardFrameWidth(page: { w: number; h: number }, maxW: number, maxH: number): number {
+  if (!(page.w > 0) || !(page.h > 0)) return maxW
+  return Math.min(maxW, (maxH * page.w) / page.h)
+}
+
 /**
  * 点时间线一行弹出的小卡片：左「那一刻」右「现在」并排，一句话（这一版比上一版变了什么），
  * 一个主按钮「恢复到这里」+ 取消。只读——唯一会写的是「恢复到这里」，走的仍是
@@ -876,17 +882,15 @@ function CompareCard({
       live = false
     }
   }, [docId, meta.id])
-  const page = doc?.page ?? currentDoc.page
   // 浮层 p-2 + 灰底 p-2 + 两格间距
   const half = (CARD_W - 16 - 16 - 12) / 2
-  const frameW = Math.max(40, Math.min(half, (CARD_FRAME_MAX_H * page.w) / Math.max(1, page.h)))
   const frame = (d: FigureDocument, caption: string, which: 'moment' | 'current') => (
     <figure className="flex flex-col items-center gap-1" style={{ width: half }} data-timeline-card-frame={which}>
-      <div className="relative" style={{ width: frameW }}>
+      <div className="relative" style={{ width: cardFrameWidth(d.page, half, CARD_FRAME_MAX_H) }} data-timeline-card-box>
         <LayoutSnapshot
           doc={d}
           renderOverrides
-          displayWidth={frameW}
+          displayWidth={cardFrameWidth(d.page, half, CARD_FRAME_MAX_H)}
           onApproximate={which === 'moment' ? setApproximate : undefined}
         />
       </div>
