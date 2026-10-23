@@ -2,6 +2,7 @@
 
 import pytest
 
+from support.registrystub import stem_registry
 from tavotto import app as m, svgasset
 from tavotto.engine import originalspec, pool, project_refresh, project_watch
 
@@ -220,7 +221,7 @@ def test_scripted_svg_asset_original_eps_without_proof_never_reaches_the_worker(
     monkeypatch.setattr(
         m,
         "current_registry",
-        lambda: type("R", (), {"for_stem": lambda self, s: {"script": "s.py", "entry": "main"}})(),
+        lambda: stem_registry({"script": "s.py", "entry": "main"}),
     )
     monkeypatch.setattr(
         m, "_safe_worker", lambda *a, **kw: pytest.fail("EPS reached a worker without proof")

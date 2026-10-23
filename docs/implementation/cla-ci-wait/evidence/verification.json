@@ -1,0 +1,397 @@
+{
+  "stage": "final negative-recovery-base combination, actual local source-tree checks",
+  "base": "56aca50844ecd85aefe9818d8f9e4be0df063d8c",
+  "base_tree": "4a32a8a23a664c907b3c5e9fd88eb0b8a9527c24",
+  "donor": "907af3f3920a62bbc52712c1e9fcf9da371f54d5",
+  "nine_source_files_byte_identical": true,
+  "source_files": {
+    "services/cla-cloudflare/deployment/ci-proposal.md": {
+      "source_sha256": "ae1aff01db11d11592edc21439e84742c2223b7d366af730a0d8340417d02060",
+      "integrated_sha256": "ae1aff01db11d11592edc21439e84742c2223b7d366af730a0d8340417d02060",
+      "identical": true
+    },
+    "services/cla-cloudflare/deployment/ci.disabled.json": {
+      "source_sha256": "7a0498856b503b846b59703349369fec5cb9f1a03fba92caf2d3c6dacee0eb2e",
+      "integrated_sha256": "7a0498856b503b846b59703349369fec5cb9f1a03fba92caf2d3c6dacee0eb2e",
+      "identical": true
+    },
+    "services/cla-cloudflare/scripts/ci-candidate.mjs": {
+      "source_sha256": "86f27446ed18b4a181dff2db488c414c1bc85b36165863d4fac29ac7875d8e01",
+      "integrated_sha256": "86f27446ed18b4a181dff2db488c414c1bc85b36165863d4fac29ac7875d8e01",
+      "identical": true
+    },
+    "services/cla-cloudflare/src/ci/consumer.ts": {
+      "source_sha256": "b2b09ea5023848d31114db4e76ed4fdfecb2999a139d57bdbbc546ebd6b9a96a",
+      "integrated_sha256": "b2b09ea5023848d31114db4e76ed4fdfecb2999a139d57bdbbc546ebd6b9a96a",
+      "identical": true
+    },
+    "services/cla-cloudflare/src/ci/wait.ts": {
+      "source_sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+      "integrated_sha256": "c4b3276ce018dc9db3ff9a90485d089ccbae6d5bd31d4498ce0b20173d1faebb",
+      "identical": true
+    },
+    "services/cla-cloudflare/tests/ci-candidate.test.mjs": {
+      "source_sha256": "29e6d5f3626a025c4b58a0bf0b5c6a9a7dd0a4ff5cf8f078128614b7da0f6ba2",
+      "integrated_sha256": "29e6d5f3626a025c4b58a0bf0b5c6a9a7dd0a4ff5cf8f078128614b7da0f6ba2",
+      "identical": true
+    },
+    "services/cla-cloudflare/tests/ci-fixture.mjs": {
+      "source_sha256": "686f31617dd30e168e2726ba058e9a70fe16d46a3a6a5d79d387edc8b1a936d6",
+      "integrated_sha256": "686f31617dd30e168e2726ba058e9a70fe16d46a3a6a5d79d387edc8b1a936d6",
+      "identical": true
+    },
+    "services/cla-cloudflare/tests/ci-wait-mutation-cases.json": {
+      "source_sha256": "72a236150278497a71b483ebb4631db4b520838b993eaaba2274bbd6a1ba8e15",
+      "integrated_sha256": "72a236150278497a71b483ebb4631db4b520838b993eaaba2274bbd6a1ba8e15",
+      "identical": true
+    },
+    "services/cla-cloudflare/tests/ci-wait.test.mjs": {
+      "source_sha256": "07eeef9f8b1af601f11783b03e547e70149c305db0f89bb2ec9dd50491012ef0",
+      "integrated_sha256": "07eeef9f8b1af601f11783b03e547e70149c305db0f89bb2ec9dd50491012ef0",
+      "identical": true
+    },
+    "services/cla-cloudflare/tests/mutation-smoke.mjs": {
+      "source_sha256": "932d882352b2ac2de6b6a1da3a01d6999a0f6ea49644a2a67383930927290338",
+      "base_sha256": "f213b55829895b58f5f07410e194fff962b49fae9c2964022192c7f24676d9ab",
+      "integrated_sha256": "600606571916746d7e65eff9e5f77b582a1c59e12ec9828c7d7ba3cde5c1d3d9",
+      "identical": false,
+      "integration_delta": "new base retained byte-for-byte plus only ci-wait cases import; selectedTitle compatibility inherited"
+    }
+  },
+  "runtime_diff": {
+    "files": 10,
+    "insertions": 526,
+    "deletions": 48,
+    "harness_delta": "base byte-for-byte plus ci-wait import only",
+    "recovery_case_imports_retained": true,
+    "native_schema_workflow_permission_diff": false,
+    "planner_added": false
+  },
+  "commands": {
+    "node-combined": {
+      "command": [
+        "node",
+        "--test",
+        "tests/activation-boundaries.test.mjs",
+        "tests/agreement-activation.test.mjs",
+        "tests/audit.test.mjs",
+        "tests/automatic-publication.test.mjs",
+        "tests/automatic.test.mjs",
+        "tests/ci-candidate.test.mjs",
+        "tests/ci-wait.test.mjs",
+        "tests/confirmation-slot-config.test.mjs",
+        "tests/delegation.test.mjs",
+        "tests/deployment-plan.test.mjs",
+        "tests/github-installation-token.test.mjs",
+        "tests/historical-revocation.test.mjs",
+        "tests/independent-authority-contract.test.mjs",
+        "tests/independent-bootstrap-budget.test.mjs",
+        "tests/independent-confirmation-slot.test.mjs",
+        "tests/independent-http-boundaries.test.mjs",
+        "tests/independent-identity-admission.test.mjs",
+        "tests/independent-lifecycle.test.mjs",
+        "tests/independent-optimized-authority.test.mjs",
+        "tests/independent-packet-pagination.test.mjs",
+        "tests/independent-public-abuse.test.mjs",
+        "tests/independent-refresh-boundaries.test.mjs",
+        "tests/independent-review-boundaries.test.mjs",
+        "tests/independent-slot-budget.test.mjs",
+        "tests/independent-slot-recovery.test.mjs",
+        "tests/independent-ui-packets.test.mjs",
+        "tests/independent-v2-upgrade.test.mjs",
+        "tests/inflight-publication.test.mjs",
+        "tests/v2-upgrade-cli.test.mjs",
+        "tests/v2-upgrade-durability.test.mjs"
+      ],
+      "cwd": "/workspace/Tavotto-cla-ci-integration/services/cla-cloudflare",
+      "base": "56aca50844ecd85aefe9818d8f9e4be0df063d8c",
+      "exit_code": 0,
+      "duration_seconds": 13.64,
+      "raw_log_member": "negative-base-node-combined.raw.log",
+      "raw_sha256": "4df300efa360da265f32a3966a6ad0cdafeb5e9fc9133b038e6cff4cecff7399",
+      "passed": 582
+    },
+    "migration": {
+      "command": [
+        "python3",
+        "tests/migration.test.py"
+      ],
+      "cwd": "/workspace/Tavotto-cla-ci-integration/services/cla-cloudflare",
+      "base": "56aca50844ecd85aefe9818d8f9e4be0df063d8c",
+      "exit_code": 0,
+      "duration_seconds": 0.783,
+      "raw_log_member": "negative-base-migration.raw.log",
+      "raw_sha256": "e51fd004f727b72ed2ad74edc7fb688a70d3fad11e20fba5e96072fb43a05fee",
+      "passed": 4
+    },
+    "mutations": {
+      "command": [
+        "node",
+        "tests/mutation-smoke.mjs"
+      ],
+      "cwd": "/workspace/Tavotto-cla-ci-integration/services/cla-cloudflare",
+      "base": "56aca50844ecd85aefe9818d8f9e4be0df063d8c",
+      "exit_code": 0,
+      "duration_seconds": 58.092,
+      "raw_log_member": "negative-base-mutations.raw.log",
+      "raw_sha256": "2dd2f3a8bfbc244298a7899f5ee9f59823077ff1f0c24fe7641c6482b7a95edf",
+      "detected": 187
+    },
+    "ci-targeted": {
+      "command": [
+        "node",
+        "--test",
+        "tests/ci-candidate.test.mjs",
+        "tests/ci-wait.test.mjs"
+      ],
+      "cwd": "/workspace/Tavotto-cla-ci-integration/services/cla-cloudflare",
+      "base": "56aca50844ecd85aefe9818d8f9e4be0df063d8c",
+      "exit_code": 0,
+      "duration_seconds": 4.991,
+      "raw_log_member": "negative-base-ci-targeted.raw.log",
+      "raw_sha256": "5407945a199802ce21fc85ff4bff6e8bdb9680238b89d458dbd1513b5f7fd2c4",
+      "passed": 51
+    },
+    "escaped-regex-witness": {
+      "command": [
+        "node",
+        "/tmp/tavotto-cla-ci-integration/negative-base-escaped-regex-witness.mjs"
+      ],
+      "exit_code": 0,
+      "raw_log_member": "negative-base-escaped-regex-witness.raw.log",
+      "raw_sha256": "3a09c4f9c0fa7527af353964b56b53abe952c3528092cea0d21eeaf36682b7f5",
+      "mutant_log_member": "escaped-regex-mutant.raw.log",
+      "actual_mutant_exit": 1,
+      "actual_assertion_error": true,
+      "details_member": "escaped-regex-witness.result.json",
+      "script_member": "escaped-regex-witness.mjs"
+    }
+  },
+  "independent": {
+    "base": "56aca50844ecd85aefe9818d8f9e4be0df063d8c",
+    "tests": 14,
+    "test_exit": 0,
+    "reverse_mutants": 4,
+    "each_mutant_exit": 1,
+    "each_actual_assertion_error": true,
+    "runner_exit": 0,
+    "source_pins_match_final_worktree": true,
+    "original_files": {
+      "independent/review.md": {
+        "sha256": "535f46393da2a0ee30c27ea916654538adf484bb554003a1e11468e817c6e735",
+        "bytes": 3894
+      },
+      "independent/final-manifest.json": {
+        "sha256": "ac12d5cdda262a5a2b3f9f0c080c718b7e00c126de50316667fcbfdcdeb4afc1",
+        "bytes": 2698
+      },
+      "independent/source-manifest.json": {
+        "sha256": "070174faa90ba8c01810d9323521d3b522b09a51f96d5c4b72671568b8b5c5e3",
+        "bytes": 9880
+      },
+      "independent/transplant-identity.json": {
+        "sha256": "ed18832fe866289dd65a185b692dbe4158afdf20b22a96c23031195ef1cc966c",
+        "bytes": 1347
+      },
+      "independent/commands.json": {
+        "sha256": "3b2521bc9a2282a88851f96c9d4b0e6717820da8536be6077f553c118fb727db",
+        "bytes": 1829
+      },
+      "independent/mutants.json": {
+        "sha256": "8df96c0625fc5bcd765b794ac85edde6027bfa2817fcce989d4167145bf915d3",
+        "bytes": 3819
+      },
+      "independent/independent-wait-slot.test.mjs.txt": {
+        "sha256": "b759612f1cdbc2893f8f1b7b95f2549bd8f60d48ab5ded7fdfadd410d9875440",
+        "bytes": 11967
+      },
+      "independent/mutate.py.txt": {
+        "sha256": "bbb65e3d668dcbda3ea727dfe74a50854448c04bf0f57c1dbd6bdd553c68f66c",
+        "bytes": 2702
+      }
+    },
+    "commands": [
+      {
+        "command": "node --test tests/independent-wait-slot.test.mjs",
+        "cwd": "/tmp/cla-ci-composition-56aca/snapshot",
+        "exit": 0,
+        "tests": 14,
+        "raw_log_member": "independent-tests.log",
+        "raw_sha256": "7f35df2b8c59eceb2cee3d931c9679502101f9bd8269c9c9612a6e3cfb0a70d1"
+      },
+      {
+        "command": "python3 /tmp/cla-ci-composition-56aca/mutate.py",
+        "cwd": "/workspace",
+        "exit": 0,
+        "mutants": 4,
+        "raw_log_member": "mutation-run.log",
+        "raw_sha256": "7aec67cc8b93876fdbe45369e37c097447e67eb684bdc41f72668eeea9a837c1"
+      },
+      {
+        "command": [
+          "node",
+          "--test",
+          "--test-name-pattern=composition manual held owner exhausts pending without confirmation or replay",
+          "tests/independent-wait-slot.test.mjs"
+        ],
+        "cwd": "/tmp/cla-ci-composition-56aca/mutant-1",
+        "exit": 1,
+        "assertionError": true,
+        "unique_locations": 1,
+        "raw_log_member": "mutant-1.log",
+        "raw_sha256": "17d3a80b512591900997dd18d87121b1826f46941842063bb8105d36237f0239"
+      },
+      {
+        "command": [
+          "node",
+          "--test",
+          "--test-name-pattern=composition second authority manual pending is terminal and retains owner",
+          "tests/independent-wait-slot.test.mjs"
+        ],
+        "cwd": "/tmp/cla-ci-composition-56aca/mutant-2",
+        "exit": 1,
+        "assertionError": true,
+        "unique_locations": 1,
+        "raw_log_member": "mutant-2.log",
+        "raw_sha256": "e5fe57f959f138beb6d8014a1013497e88adb82ee913b7d0e7c5f1fe24beef45"
+      },
+      {
+        "command": [
+          "node",
+          "--test",
+          "--test-name-pattern=composition short original proof cancels before another GET at monotonic boundary",
+          "tests/independent-wait-slot.test.mjs"
+        ],
+        "cwd": "/tmp/cla-ci-composition-56aca/mutant-3",
+        "exit": 1,
+        "assertionError": true,
+        "unique_locations": 1,
+        "raw_log_member": "mutant-3.log",
+        "raw_sha256": "c50a4f61c96c563be8b9f3051a57cd52b457d10ac9abed0fa42c98ba6f7a23bf"
+      },
+      {
+        "command": [
+          "node",
+          "--test",
+          "--test-name-pattern=composition fixed confirmed held slot verifies twice with actual11 SQL authority budgets",
+          "tests/independent-wait-slot.test.mjs"
+        ],
+        "cwd": "/tmp/cla-ci-composition-56aca/mutant-4",
+        "exit": 1,
+        "assertionError": true,
+        "unique_locations": 1,
+        "raw_log_member": "mutant-4.log",
+        "raw_sha256": "2eb59dbe53adabcaa1a10dc650fb9d6cb8488960c36faa89b404e862618397c9"
+      }
+    ],
+    "no_worker_fetch": true,
+    "transport": "in-process synthetic GET seam calling actual native verification; not real GitHub E2E"
+  },
+  "raw_logs": {
+    "file": "raw-logs.json",
+    "sha256": "773c18794d9857df6ff372eceb3c3b9f0529ee382f1457fcc7f1f9c64afd9d86",
+    "members": {
+      "negative-base-node-combined.raw.log": {
+        "sha256": "4df300efa360da265f32a3966a6ad0cdafeb5e9fc9133b038e6cff4cecff7399",
+        "bytes": 53231
+      },
+      "negative-base-migration.raw.log": {
+        "sha256": "e51fd004f727b72ed2ad74edc7fb688a70d3fad11e20fba5e96072fb43a05fee",
+        "bytes": 102
+      },
+      "negative-base-mutations.raw.log": {
+        "sha256": "2dd2f3a8bfbc244298a7899f5ee9f59823077ff1f0c24fe7641c6482b7a95edf",
+        "bytes": 13420
+      },
+      "negative-base-ci-targeted.raw.log": {
+        "sha256": "5407945a199802ce21fc85ff4bff6e8bdb9680238b89d458dbd1513b5f7fd2c4",
+        "bytes": 4030
+      },
+      "negative-base-escaped-regex-witness.raw.log": {
+        "sha256": "3a09c4f9c0fa7527af353964b56b53abe952c3528092cea0d21eeaf36682b7f5",
+        "bytes": 1023
+      },
+      "negative-base-local-tools.raw.log": {
+        "sha256": "fb08571121b4eb55e4c76d35c3f30f01ec87f01d8e9be45a8e5792a70ee093d5",
+        "bytes": 298
+      },
+      "escaped-regex-mutant.raw.log": {
+        "sha256": "dfd69dca599e3512bb4031c1b9f9d0d674510dec79b54cea239d825ee38f9e5d",
+        "bytes": 954
+      },
+      "escaped-regex-witness.result.json": {
+        "sha256": "3a09c4f9c0fa7527af353964b56b53abe952c3528092cea0d21eeaf36682b7f5",
+        "bytes": 1023
+      },
+      "escaped-regex-witness.mjs": {
+        "sha256": "e1a1dabbd7bc58afd8e68aaaf51fbaed3dd43c70f0533e8120aa7b96faa5b347",
+        "bytes": 2556
+      },
+      "independent-tests.log": {
+        "sha256": "7f35df2b8c59eceb2cee3d931c9679502101f9bd8269c9c9612a6e3cfb0a70d1",
+        "bytes": 1523
+      },
+      "mutation-run.log": {
+        "sha256": "7aec67cc8b93876fdbe45369e37c097447e67eb684bdc41f72668eeea9a837c1",
+        "bytes": 457
+      },
+      "mutant-1.log": {
+        "sha256": "17d3a80b512591900997dd18d87121b1826f46941842063bb8105d36237f0239",
+        "bytes": 958
+      },
+      "mutant-2.log": {
+        "sha256": "e5fe57f959f138beb6d8014a1013497e88adb82ee913b7d0e7c5f1fe24beef45",
+        "bytes": 1603
+      },
+      "mutant-3.log": {
+        "sha256": "c50a4f61c96c563be8b9f3051a57cd52b457d10ac9abed0fa42c98ba6f7a23bf",
+        "bytes": 1664
+      },
+      "mutant-4.log": {
+        "sha256": "2eb59dbe53adabcaa1a10dc650fb9d6cb8488960c36faa89b404e862618397c9",
+        "bytes": 1267
+      }
+    },
+    "roundtrip_original_bytes_verified": true
+  },
+  "local_tools": {
+    "typecheck": "blocked_missing_local_typescript",
+    "build": "blocked_missing_local_esbuild",
+    "typecheck_executed": false,
+    "build_executed": false,
+    "download_attempted": false,
+    "raw_log_member": "negative-base-local-tools.raw.log"
+  },
+  "historical_initial_combination": {
+    "base": "7324a2d0541d79b90f106aed74991b22b8af60ae",
+    "node": 550,
+    "migration": 4,
+    "mutation": 166,
+    "ci_targeted": 51,
+    "status": "own earlier local results only; not evidence for final base",
+    "exact_backup_patch": "/tmp/tavotto-cla-ci-integration/base7324-precise-backup/exact.patch",
+    "exact_backup_patch_sha256": "acee96cb841534452e59881f9176e0b407c3a369f0d42acf0a8e97536058ad69"
+  },
+  "hosted_ci": {
+    "integrated_tree_pass_claimed": false,
+    "compiler_build_acceptance": "pending exact integrated head",
+    "parent_or_donor_ci_is_new_head_evidence": false
+  },
+  "excluded": [
+    "real GitHub or Cloudflare E2E",
+    "HTTP/default transport or real credentials/signatures/deployment",
+    "successful publication transition across proof expiry",
+    "dependency download/proxy/mirror/alternate environment workaround",
+    "#1163 planner or queue policy/permission activation",
+    "workflow/required-gate changes",
+    "new external review or dispatch"
+  ],
+  "remaining": [
+    "exact-head hosted compiler/build and full CI",
+    "#1163 current-head formal coverage gap retained",
+    "#1169 full/scoped review allowance exhausted; no retrigger",
+    "actual wakeup/confirmation deadline and live platform acceptance",
+    "trusted-main landing followed by separately reviewed wiring",
+    "native merge-group product/permission/provenance and complete runtime support"
+  ]
+}

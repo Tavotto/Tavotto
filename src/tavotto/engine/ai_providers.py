@@ -25,7 +25,7 @@ import os
 import re
 from urllib.parse import urlparse
 
-from . import ai_agents, config
+from . import ai_agents, ai_catalog, config
 
 # codex 侧临时覆盖用的 provider id 与密钥环境变量名。用 tavotto 前缀是为了
 # 不和用户自己 config.toml 里的 provider 撞名（`-c` 只在本次进程生效，但
@@ -57,116 +57,11 @@ def _family(agent: str) -> str | None:
 
 DEEPSEEK_CODEX_ID = "deepseek-codex"
 
-# 内置预设只提供「接口地址 + 协议 + 常见模型名」，绝不含任何密钥。
-# 模型名会过时，所以在界面上可自由编辑——预设只是省去查文档。
-PRESETS: list[dict] = [
-    {
-        "id": "anthropic",
-        "label": "Anthropic 官方",
-        "agent": "claude",
-        "base_url": "",
-        "models": ["sonnet", "opus", "haiku"],
-        "note": "留空 = 用 claude CLI 自己的登录态",
-    },
-    # 国产厂商多数只有 Anthropic 兼容端点（没有 OpenAI Responses 协议），经 Claude Code
-    # 接入；Codex 只认 Responses 协议（见 WIRE_APIS），目前只有 DeepSeek 官方明确原生支持
-    # Responses（api-docs.deepseek.com/quick_start/agent_integrations/codex/），所以它同时有
-    # 两条预设。base_url 不带结尾斜杠：`_clean` 一律 rstrip("/")，Codex 在其后拼 `/responses`。
-    {
-        "id": "deepseek",
-        "label": "DeepSeek",
-        "agent": "claude",
-        "base_url": "https://api.deepseek.com/anthropic",
-        "models": ["deepseek-v4-pro", "deepseek-flash"],
-    },
-    {
-        "id": DEEPSEEK_CODEX_ID,
-        "label": "DeepSeek",
-        "agent": "codex",
-        "base_url": "https://api.deepseek.com",
-        "wire_api": "responses",
-        "models": ["deepseek-flash", "deepseek-v4-pro"],
-    },
-    {
-        "id": "moonshot",
-        "label": "Kimi 开放平台",
-        "agent": "claude",
-        "base_url": "https://api.moonshot.cn/anthropic",
-        "models": ["kimi-k3", "kimi-k2.7-code"],
-    },
-    {
-        "id": "kimi-code",
-        "label": "Kimi Code 会员",
-        "agent": "claude",
-        "base_url": "https://api.kimi.com/coding/",
-        "models": ["kimi-for-coding"],
-        "note": "Kimi Code 会员专属 Key，与开放平台 Key 不通用",
-    },
-    # Kimi Code 官方也原生支持 Responses（kimi.com/code/docs/en/third-party-tools/codex），
-    # 只有 Codex 的会员用户不必装 Claude Code。国内地址；同一把会员 Key。
-    {
-        "id": "kimi-code-codex",
-        "label": "Kimi Code 会员",
-        "agent": "codex",
-        "base_url": "https://api.kimi.com/coding/v1",
-        "wire_api": "responses",
-        "models": ["k3-256k", "k3"],
-        "note": "Kimi Code 会员专属 Key，与开放平台 Key 不通用",
-    },
-    {
-        "id": "zhipu",
-        "label": "智谱 GLM",
-        "agent": "claude",
-        "base_url": "https://open.bigmodel.cn/api/anthropic",
-        "models": ["glm-5.3", "glm-5.2"],
-    },
-    {
-        "id": "minimax",
-        "label": "MiniMax",
-        "agent": "claude",
-        "base_url": "https://api.minimaxi.com/anthropic",
-        "models": ["MiniMax-M3", "MiniMax-M2.7"],
-    },
-    {
-        "id": "dashscope",
-        "label": "阿里云百炼（按量）",
-        "agent": "claude",
-        "base_url": "https://dashscope.aliyuncs.com/apps/anthropic",
-        "models": ["qwen3.7-plus", "qwen3.8-max"],
-    },
-    {
-        "id": "dashscope-coding",
-        "label": "阿里云百炼 Coding Plan",
-        "agent": "claude",
-        "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
-        "models": ["qwen3.7-plus"],
-        "note": "Coding Plan 专属 Key（sk-sp- 开头），与按量 Key 不通用",
-    },
-    {
-        "id": "openai",
-        "label": "OpenAI 官方",
-        "agent": "codex",
-        "base_url": "",
-        "wire_api": "responses",
-        "models": [],
-        "note": "留空 = 用 codex CLI 自己的登录态",
-    },
-    {
-        "id": "custom-claude",
-        "label": "自定义（Anthropic 兼容）",
-        "agent": "claude",
-        "base_url": "",
-        "models": [],
-    },
-    {
-        "id": "custom-codex",
-        "label": "自定义（OpenAI Responses 兼容）",
-        "agent": "codex",
-        "base_url": "",
-        "wire_api": "responses",
-        "models": [],
-    },
-]
+# 内置预设的**唯一权威是 `engine/ai_catalog.json`**（厂商目录；规则见 ai_bridge 细则「第三方 API 接入」）。
+# 只提供「接口地址 + 申请 Key 的页面 + 常见模型名」，绝不含任何密钥。模型名会过时，所以界面上
+# 可自由编辑，还能对已存接口「从服务商获取」实时列表（`live_models`）。
+# 加载失败在 import 时就抛 `ai_catalog.CatalogError`——宁可大声失败，也不让设置页静默没有预设。
+PRESETS: list[dict] = ai_catalog.presets()
 
 # 旧版 codex 预设（wire_api=chat）的已知厂商 → 改由 Claude Code 接入时用的预设 id。
 # 只认主机名精确相等：coding.dashscope.aliyuncs.com 等是另一套 Key，不在此列。
@@ -243,6 +138,9 @@ def public(rec: dict) -> dict:
         **{k: v for k, v in rec.items() if k != "api_key"},
         "has_key": bool(key),
         "key_hint": f"…{key[-4:]}" if len(key) >= 4 else "",
+        "icon_key": ai_catalog.icon_for(
+            str(rec.get("agent") or ""), str(rec.get("base_url") or "")
+        ),
         "incompatible": incompatibility(rec),
         "migratable": migration_kind(rec),
     }
@@ -503,3 +401,26 @@ def spawn_overrides(
 def models_for(agent: str, pid: str | None = None) -> list[str]:
     rec = resolve(agent, pid)
     return list(rec.get("models") or []) if rec else []
+
+
+def live_models(
+    pid: str | None, base_url: str | None, api_key: str | None, *, refresh: bool = False
+) -> dict:
+    """对一条接口取服务商实时型号列表（`GET {base_url}/v1/models`，见 `ai_catalog.live_models`）。
+
+    `pid` 指向已存接口时，没给的 `base_url` / `api_key` 用已存值补（界面从不回显密钥）；
+    都给了就用给的（新建接口还没保存时也能先试）。拿不到 → `source: "none"` + 原因码，
+    调用方退回预设的 `models` / 用户已填的列表；永不抛。"""
+    saved = get(pid) or {}
+    url = str(base_url or "").strip() or str(saved.get("base_url") or "")
+    key = str(api_key or "").strip()
+    if not key:
+        # 已存密钥只发往已存地址的同源（scheme + host + 端口）：改了地址就必须重新填密钥，
+        # 否则「改 URL 后点获取」会把旧密钥送到另一个主机。后端判，不靠前端。
+        saved_key = str(saved.get("api_key") or "")
+        if saved_key:
+            want = ai_catalog.origin_of(url)
+            if want is None or want != ai_catalog.origin_of(str(saved.get("base_url") or "")):
+                return {"models": [], "source": "none", "reason": "key_origin_mismatch"}
+            key = saved_key
+    return ai_catalog.live_models(str(pid or ""), url, key, refresh=refresh)

@@ -15,6 +15,7 @@ from pathlib import Path
 import pymupdf
 import pytest
 
+from support.registrystub import stem_registry
 from tavotto import app as m
 from tavotto.engine import exportjob, exportreq, originalspec as engine_originalspec
 
@@ -1146,7 +1147,7 @@ def test_two_concurrent_override_renders_do_not_share_one_intermediate_file(env,
     monkeypatch.setattr(
         m,
         "current_registry",
-        lambda: type("R", (), {"for_stem": lambda self, s: {"script": "s.py", "entry": "main"}})(),
+        lambda: stem_registry({"script": "s.py", "entry": "main"}),
     )
     del real_worker_export
 
@@ -1447,7 +1448,7 @@ def test_original_eps_comes_from_the_worker_and_the_pdf_is_rerendered_in_the_sam
     monkeypatch.setattr(
         m,
         "current_registry",
-        lambda: type("R", (), {"for_stem": lambda self, s: {"script": "s.py", "entry": "main"}})(),
+        lambda: stem_registry({"script": "s.py", "entry": "main"}),
     )
     _, body = _post(client, _original(formats=["pdf", "eps"]))
     assert body["status"] == "done", body
@@ -1479,7 +1480,7 @@ def test_pdf_alone_still_uses_the_disk_file_when_nothing_forces_a_rerender(env, 
     monkeypatch.setattr(
         m,
         "current_registry",
-        lambda: type("R", (), {"for_stem": lambda self, s: {"script": "s.py", "entry": "main"}})(),
+        lambda: stem_registry({"script": "s.py", "entry": "main"}),
     )
     _, body = _post(client, _original(formats=["pdf", "png"], ppi=100))
     assert body["status"] == "done", body

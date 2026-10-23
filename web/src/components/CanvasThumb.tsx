@@ -24,6 +24,7 @@ import { useRetryingSrc } from '@/lib/imgRetry'
 import { cn } from '@/lib/utils'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { bucketFor } from '@/lib/previewBuckets'
 import type { ThumbObject, ThumbPage } from '@/types/thumb'
 
 /**
@@ -49,6 +50,8 @@ export function CanvasThumb({
   objects,
   className,
   transparent = false,
+  flush = false,
+  pxWidth,
 }: {
   page: ThumbPage
   objects: readonly ThumbObject[]
@@ -59,6 +62,16 @@ export function CanvasThumb({
    * 默认 false 时 DOM 与不带这个 prop 之前逐字相同（画布列表 / 版本列表共用，`canvasThumb.test.tsx` 钉着）。
    */
   transparent?: boolean
+  /**
+   * 页面顶满盒子：不留四周的边、不画圆角与外框（导出预览的缩放舞台用，图在预览区里不留边距）。
+   * 默认 false 时 DOM 与不带这个 prop 之前逐字相同。
+   */
+  flush?: boolean
+  /**
+   * 页面此刻的显示宽度（设备像素）：给了就按每张面板自己的显示宽度挑 `/api/render` 的档位
+   * （放大预览时更清晰）；不给就是缩略图档 200。
+   */
+  pxWidth?: number
 }) {
   const { w, h } = page
   const byId = useAssetStore((s) => s.byId)
@@ -71,11 +84,11 @@ export function CanvasThumb({
   // 盒子是透明的，**画出来的是页面本身**（2026-10-07 设计审计 §10.3）：此前白底与边框画在 svg 盒上，
   // 横版与竖版的缩略图一模一样（都是一个 56×40 的白框）。现在页面矩形按真实比例居中，方向一眼可辨；
   // 圆角 4px（缩略图半径族 4 / 6 的小档），按默认盒子的缩放折成用户单位
-  const pad = Math.max(w, h) * PAD
+  const pad = flush ? 0 : Math.max(w, h) * PAD
   const vw = w + 2 * pad
   const vh = h + 2 * pad
   const unitsPerPx = 1 / Math.min(BOX_W / vw, BOX_H / vh)
-  const radius = 4 * unitsPerPx
+  const radius = flush ? 0 : 4 * unitsPerPx
   return (
     <svg
       viewBox={`${-pad} ${-pad} ${vw} ${vh}`}
@@ -121,7 +134,7 @@ export function CanvasThumb({
         rx={radius}
         fill={transparent ? `url(#${checker})` : 'var(--color-paper)'}
         data-thumb-transparent={transparent ? '' : undefined}
-        stroke="var(--color-border-strong)"
+        stroke={flush ? 'none' : 'var(--color-border-strong)'}
         strokeWidth={1}
         vectorEffect="non-scaling-stroke"
       />
@@ -135,7 +148,7 @@ export function CanvasThumb({
             const href =
               o.fileKind === 'runtime'
                 ? runtimePreviewUrl(o.fileId, nonce[o.fileId])
-                : renderUrl(o.fileId, 200, byId[o.fileId]?.mtime)
+                : renderUrl(o.fileId, pxWidth && w > 0 ? bucketFor((o.w / w) * pxWidth) : 200, byId[o.fileId]?.mtime)
             return (
               <ThumbImage
                 key={key}

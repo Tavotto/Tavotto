@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from support import foundation_app as fa
-from tavotto.engine import figcapture, pool as _pool, svgstore
+from tavotto.engine import figcapture, pool as _pool, registry, svgstore
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -249,6 +249,28 @@ def project(tmp_path):
     counter = tmp_path / "runs.jsonl"
     (proj / "scaled.py").write_text(SCRIPT.format(counter=str(counter), ys=YS), encoding="utf-8")
     return proj, counter, tmp_path / "work"
+
+
+@needs_worker
+def test_static_discovery_then_only_configured_run_has_no_argument_free_asset(project):
+    proj, counter, work = project
+    with fa.sidecar_app(proj, work, env_overrides=ENV) as app:
+        # The real project-open path discovers the literal fig.savefig("result.pdf")
+        # before any script execution. It is a candidate, not an argument-free capture.
+        registered = json.loads((proj / registry.REGISTRY_NAME).read_text(encoding="utf-8"))
+        assert registered["scripts"]["scaled.py"]["stems"] == ["result"]
+        assert set(registered["scripts"]["scaled.py"]) == {"entry", "cost", "notes", "stems"}
+        assert not counter.exists()
+        _, initial = app.call("/api/runtime/assets")
+        assert len(initial["assets"]) == 1 and initial["assets"][0]["cached"] is False
+
+        result = _probe(app, ["--scale", "2"])
+        assert result["registered"], result
+        configured = figcapture.runtime_asset_id("scaled.py", "result", result["run_config"])
+        _, listed = app.call("/api/runtime/assets")
+        assert [asset["id"] for asset in listed["assets"]] == [configured]
+        assert listed["assets"][0]["run_config"] == result["run_config"]
+        assert _runs(counter) == [["--scale", "2"]]
 
 
 @needs_worker

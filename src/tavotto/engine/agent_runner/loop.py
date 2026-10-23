@@ -168,8 +168,15 @@ class HttpModel:
                     raise last
                 retry_after = _retry_after(headers)
             if attempt + 1 < self.max_attempts:
-                delay = retry_after if retry_after is not None else self.retry_base * (2**attempt)
-                if cancel.wait(max(0.0, min(delay, 30.0, deadline - time.monotonic()))):
+                delay = min(
+                    retry_after if retry_after is not None else self.retry_base * (2**attempt), 30.0
+                )
+                left = deadline - time.monotonic()
+                if delay >= left:
+                    # 等完就到总时限了：直接按时限停下。不先睡到时限再查——Windows 上 Event.wait 会早醒几毫秒，
+                    # 醒来时「还没到时限」于是又发一次请求（合并组 windows 腿实测）
+                    raise RunnerFailure("budget", "time")
+                if cancel.wait(delay):
                     raise RunnerFailure("cancelled")
         assert last is not None
         # 重试用尽：429 → quota（被限流），其余 → network
@@ -410,17 +417,12 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
     limits: Limits = toolset.budget(envelope)
     try:
         tools = toolset.tools(envelope)
-    except ValueError:
-        return _finish(res, False, "internal", "bad_target")
+    except ValueError as exc:
+        return _finish(res, False, "internal", getattr(exc, "code", "bad_target"))
     by_name = {t.name: t for t in tools}
     specs = [t.spec() for t in tools]
     system = toolset.system_prompt(envelope)
-    history: list[Msg] = [
-        Msg(
-            "user",
-            text=f"Target script: {envelope.target}\n\nInstruction:\n{envelope.instruction}",
-        )
-    ]
+    history: list[Msg] = [Msg("user", text=toolset.first_message(envelope))]
     deadline = t0 + limits.max_seconds
     led = res.ledger
     streak_key, streak = None, 0

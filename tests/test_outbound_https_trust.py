@@ -274,6 +274,7 @@ class TestUpdater:
 #: PR 里的枚举表是同一份事实——多一处少一处这里都红，逼着清单跟着改。
 OUTBOUND = {
     "engine/agent_runner/wires.py": "_opener",
+    "engine/ai_catalog.py": "_opener",
     "engine/codexinstall.py": "_fetch",
     "engine/diagsend.py": "_opener",
     "engine/privatepython.py": "_fetch",
@@ -334,10 +335,28 @@ def _is_tlstrust_call(node: ast.AST, name: str) -> bool:
     )
 
 
+def _is_no_proxy_handler(node: ast.AST) -> bool:
+    """`urllib.request.ProxyHandler({})`——只许空字典：它只关代理（回环 http 不能交给 HTTP_PROXY），不碰 TLS。"""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "ProxyHandler"
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Dict)
+        and not node.args[0].keys
+    )
+
+
 def _opener_shape_ok(call: ast.Call, fn: ast.AST) -> bool:
     """`build_opener(tlstrust.https_handler(ctx))`，且 `ctx` 在同一个函数里取自 `tlstrust.client_context()`
-    （或直接内联那一次调用）。"""
-    if len(call.args) != 1 or call.keywords or not _is_tlstrust_call(call.args[0], "https_handler"):
+    （或直接内联那一次调用）。唯一允许的第二个参数是关掉代理的 `ProxyHandler({})`。"""
+    extra_ok = len(call.args) == 2 and _is_no_proxy_handler(call.args[1])
+    if (
+        (len(call.args) != 1 and not extra_ok)
+        or call.keywords
+        or not _is_tlstrust_call(call.args[0], "https_handler")
+    ):
         return False
     handler = call.args[0]
     if len(handler.args) != 1:
@@ -497,6 +516,25 @@ class TestStructure:
         )
         bad, openers = _outbound_violations("engine/x.py", ast.parse(ok))
         assert bad == [] and openers == {"engine/x.py": "f"}
+
+    def test_only_an_empty_proxy_handler_may_ride_along(self):
+        """回环 http 关代理的那一种写法放行；ProxyHandler 带代理、或第二个参数是别的处理器都不行。"""
+        good = (
+            "def f(req):\n    urllib.request.build_opener(\n"
+            "        tlstrust.https_handler(tlstrust.client_context()), urllib.request.ProxyHandler({})\n"
+            "    ).open(req)\n"
+        )
+        assert _outbound_violations("engine/x.py", ast.parse(good))[0] == []
+        for extra in (
+            "urllib.request.ProxyHandler({'http': 'http://p:1'})",
+            "urllib.request.HTTPSHandler()",
+        ):
+            bad_src = (
+                "def f(req):\n    urllib.request.build_opener(\n"
+                f"        tlstrust.https_handler(tlstrust.client_context()), {extra}\n"
+                "    ).open(req)\n"
+            )
+            assert _outbound_violations("engine/x.py", ast.parse(bad_src))[0], extra
 
     def test_the_tlstrust_inventory_names_the_same_call_sites(self):
         """`tlstrust` 模块头的清单与 `OUTBOUND` 同一份事实：每一处的函数名都写在那里。"""

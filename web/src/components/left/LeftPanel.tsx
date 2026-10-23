@@ -58,7 +58,9 @@ export function LeftPanel({
       className={cn(
         // overflow-hidden 是动效的一部分：停靠态动的是外层 width，内容包在下面
         // 那层定宽 div 里，所以展开收起时抽屉自己的子树一次都不重排
-        'relative shrink-0 overflow-hidden',
+        // isolate：抽屉自己是一个层叠上下文。否则问题面板吸顶组头的 z-sticky 会直接落在根层叠上下文里，
+        // 压过右边画布面板（无 z-index）在抽屉一侧的投影 / 描边——组头那几行的底色把画布左缘「切」断（b3 反馈）
+        'relative isolate shrink-0 overflow-hidden',
         // 停靠时抽屉就坐在灰色桌面上（2026-09-30 重设计）：与右边的白色工作面板之间靠明度差分开，
         // 不画线。覆盖式是浮层：白底 + 浮层投影——投影自带 1px 环，再画一条实边就是双描边
         // （宪法第一节「浮层不再画实色 border」；左栏审计 L20）

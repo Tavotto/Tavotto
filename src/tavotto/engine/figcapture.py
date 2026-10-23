@@ -223,6 +223,7 @@ __all__ = [
     "runtime_asset_id",
     "source_fingerprint",
     "size_mm_of",
+    "find_artifacts",
     "find_original_artifact",
     "project_relative_stem",
     "SOURCE_ARTIFACT_VERSION",
@@ -948,8 +949,74 @@ def project_relative_stem(stem: object) -> bool:
     return ".." not in stem.replace("\\", "/").split("/")
 
 
+#: 默认的磁盘探测谓词（import 时的那个函数对象）：worker 里用户脚本沙箱可能替换 `os.path.isfile`，
+#: 判「是不是真磁盘」不能拿模块属性比（那会让沙箱里恒走合成路径探测，丢掉真实大小写）
+_DISK_ISFILE = os.path.isfile
+#: 同理的真 `os.scandir`：worker 里 `install_probe_observer` 会把 `os.scandir` / `os.listdir` 换成记账版（脚本读了哪些路径的诊断）。
+#: Tavotto 自己的列目录（`find_artifacts`）不是用户脚本的探测，不能被记进缺失输入诊断 / rasterhint——直接用 import 时的真函数
+_DISK_SCANDIR = os.scandir
+
+
+def find_artifacts(project_root: str, stem: str, *, isfile=_DISK_ISFILE, formats=None) -> list[str]:
+    """项目根下 stem 的**所有**产物（相对路径，POSIX，按 `ARTIFACT_EXTS` 顺序）；没有回 `[]`。
+
+    `formats`（这张图自己 savefig 过的格式）给了就只认这些扩展名，且**每个存在的都收**：同一张图存了
+    `panel.pdf` 与 `panel.svg` 时两个文件都是它的（#1251：打开哪个都该是这张图）。不给（不知道它存过什么）
+    = 旧判据，只回第一个存在的——不知道格式时不能把同 stem 下别的图的文件算进来。
+    """
+    if not project_relative_stem(stem):
+        return []  # 先于任何拼接：UNC / 绝对 / 盘符 / `..` 的 stem 一个字节都不探
+    allowed = None if formats is None else {_norm_format(f) for f in formats if f}
+    out: list[str] = []
+    if isfile is _DISK_ISFILE:
+        # 真磁盘：列目录取**真实文件名**（含扩展名大小写，`panel.PDF`）——合成 `stem + ".pdf"` 去探测，在 Windows / macOS
+        # 上记下的是小写的合成路径，在区分大小写的文件系统上什么都找不到；而素材盘点的 id 是真实文件名，
+        # 注册表 `artifacts` 的键必须与它逐字相同（#1251）
+        by_ext = _real_files_with_stem(project_root, stem)
+        for ext in ARTIFACT_EXTS:
+            if allowed is not None and _norm_format(ext[1:]) not in allowed:
+                continue
+            for name in by_ext.get(ext, ()):
+                out.append(name)
+                if allowed is None:
+                    return out
+        return out
+    for ext in ARTIFACT_EXTS:  # 注入的 isfile（测试 / handoff 的 dry 场景）：合成路径探测，保持原样
+        if allowed is not None and _norm_format(ext[1:]) not in allowed:
+            continue
+        if isfile(os.path.join(project_root, stem + ext)):
+            out.append(stem + ext)
+            if allowed is None:
+                break
+    return out
+
+
+def _real_files_with_stem(project_root: str, stem: str) -> dict[str, list[str]]:
+    """`{小写扩展名: [项目相对真实路径（POSIX）]}`：`stem` 所在目录里，文件名主干 == stem 的普通文件。
+    扩展名大小写不敏感（`.PDF` 归 `.pdf`），主干按原样比；读不了目录 = 空。"""
+    rel_dir, _, base = stem.replace("\\", "/").rpartition("/")
+    try:
+        entries = list(
+            _DISK_SCANDIR(os.path.join(project_root, rel_dir) if rel_dir else project_root)
+        )
+    except OSError:
+        return {}
+    out: dict[str, list[str]] = {}
+    for entry in sorted(entries, key=lambda e: e.name):
+        root_name, ext = os.path.splitext(entry.name)
+        if root_name != base or not ext:
+            continue
+        try:
+            if not entry.is_file():
+                continue
+        except OSError:
+            continue
+        out.setdefault(ext.lower(), []).append(f"{rel_dir}/{entry.name}" if rel_dir else entry.name)
+    return out
+
+
 def find_original_artifact(
-    project_root: str, stem: str, *, isfile=os.path.isfile, formats=None
+    project_root: str, stem: str, *, isfile=_DISK_ISFILE, formats=None
 ) -> str | None:
     """项目根下 stem 的原始产物（相对路径，POSIX）；没有回 None。
 
@@ -959,17 +1026,10 @@ def find_original_artifact(
 
     `formats`（这张图自己 savefig 过的格式，取自它的调用表）给了就只认这些扩展名：同一 stem 下别的图写的
     文件不是它的原件——`panel.png` 甲 / `panel.pdf` 乙时，甲的原件若按扩展名顺序取成 `panel.pdf`，写回就会
-    拿甲去覆盖乙的产物。不给（不知道它存过什么）= 旧判据。
+    拿甲去覆盖乙的产物。不给（不知道它存过什么）= 旧判据。「全部产物」是 `find_artifacts`，这里取它的首个。
     """
-    if not project_relative_stem(stem):
-        return None  # 先于任何拼接：UNC / 绝对 / 盘符 / `..` 的 stem 一个字节都不探
-    allowed = None if formats is None else {_norm_format(f) for f in formats if f}
-    for ext in ARTIFACT_EXTS:
-        if allowed is not None and _norm_format(ext[1:]) not in allowed:
-            continue
-        if isfile(os.path.join(project_root, stem + ext)):
-            return stem + ext
-    return None
+    found = find_artifacts(project_root, stem, isfile=isfile, formats=formats)
+    return found[0] if found else None
 
 
 def saved_formats(calls) -> list[str] | None:
@@ -1008,11 +1068,20 @@ class CapturedFigureDescriptor:
     #: 产出这张图的运行配置引用（T03；本机不透明 id，不是 argv）。空 = 没给参数——此时 payload 里**没有**
     #: 这个键，旧描述符与对拍用例一个字节不变。
     run_config: str = ""
+    #: 这张图写过的**所有**磁盘文件（项目相对路径，POSIX；#1251）：按它自己存过的格式绑定，含 `original_artifact`。
+    #: `original_artifact` 语义不变（首选原件、写回目标）；这里是「打开其中任何一个文件都是这张图」的证据，
+    #: 由 `probe.descriptor_artifacts` 登记进注册表。空 = 没有（pyplot 捕获 / playground / 不知道）——此时 payload 里
+    #: **没有**这个键，旧描述符与对拍用例一个字节不变。
+    artifacts: tuple[str, ...] = ()
 
     def to_payload(self) -> dict:
         out = dataclasses.asdict(self)
         if not self.run_config:
             out.pop("run_config")
+        if self.artifacts:
+            out["artifacts"] = list(self.artifacts)
+        else:
+            out.pop("artifacts")
         out["size_mm"] = [float(v) for v in self.size_mm]
         out["savefig_calls"] = (
             None if self.savefig_calls is None else [dict(c) for c in self.savefig_calls]
@@ -1032,6 +1101,7 @@ def build_descriptor(
     original_artifact: str | None = None,
     savefig_calls=None,
     run_config: str = "",
+    artifacts=(),
 ) -> CapturedFigureDescriptor:
     """描述符工厂——**writeback 能力只能派生，不能指定**。
 
@@ -1067,6 +1137,15 @@ def build_descriptor(
         )
     if original_artifact is not None:
         original_artifact = original_artifact.replace("\\", "/")
+    if artifacts is None:
+        artifacts = ()
+    if not isinstance(artifacts, (list, tuple)) or not all(
+        isinstance(a, str) and a for a in artifacts
+    ):
+        raise ValueError(f"artifacts 必须是非空字符串列表: {artifacts!r}")
+    artifacts = tuple(dict.fromkeys(a.replace("\\", "/") for a in artifacts))
+    if capture_source == SOURCE_PYPLOT and artifacts:
+        raise ValueError(f"pyplot 捕获的 Figure 没有产物文件，artifacts 必须为空: {artifacts!r}")
     if savefig_calls is not None:
         if not isinstance(savefig_calls, (list, tuple)) or not all(
             isinstance(c, dict) for c in savefig_calls
@@ -1089,6 +1168,7 @@ def build_descriptor(
         can_writeback_source=False,
         savefig_calls=savefig_calls,
         run_config=run_config,
+        artifacts=artifacts,
     )
 
 
@@ -1111,6 +1191,7 @@ def descriptor_from_payload(data: dict) -> CapturedFigureDescriptor:
         original_artifact=data.get("original_artifact"),
         savefig_calls=data.get("savefig_calls"),
         run_config=data.get("run_config") or "",
+        artifacts=data.get("artifacts") or (),
     )
     for key in ("asset_id", "can_writeback_artifact", "can_writeback_source"):
         if key in data and data[key] != getattr(desc, key):

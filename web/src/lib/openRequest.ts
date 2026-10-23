@@ -31,6 +31,10 @@ import { useUiStore } from '@/store/uiStore'
 import { backendErrorText, postHandoffDisplayAck } from '@/lib/api'
 import type { HandoffDisplayAck } from '@/lib/api'
 import type { PanelInfo, RuntimeAssetInfo } from '@/lib/api'
+import { panelStemOf } from '@/lib/panelStem'
+
+// 「这个磁盘文件属于哪张图」的判据只在 `lib/panelStem.ts`；这里转出给老的 import 路径
+export { panelStemOf, panelStemOfFileId, stemOf } from '@/lib/panelStem'
 
 export interface OpenRequest {
   /** 图库目录绝对路径；桌面事件才有，URL 形态下项目由后端认领 */
@@ -60,17 +64,11 @@ export type OpenOutcome =
   | 'no-project'       // 没有项目可落
   | 'failed'
 
-/** 素材 id 是图库相对路径（可能带子目录）；stem = 去目录去扩展名。 */
-export function stemOf(fileId: string): string {
-  const base = fileId.split(/[/\\]/).pop() ?? fileId
-  const dot = base.lastIndexOf('.')
-  return dot > 0 ? base.slice(0, dot) : base
-}
-
 function findByStem(panels: PanelInfo[], stem: string): PanelInfo | undefined {
-  // 同 stem 的 PDF 与 PNG 可能同时在（写回会两个载体一起更新）：矢量优先，
-  // 它才是能进图内编辑、能导出真矢量的那一份。
-  const hits = panels.filter((p) => stemOf(p.id) === stem)
+  // 同一张图的 PDF 与 PNG 可能同时在（写回会两个载体一起更新）：矢量优先，
+  // 它才是能进图内编辑、能导出真矢量的那一份。「同一张图」按 `panelStemOf`——同脚本里另一张图写的
+  // `panel.pdf`（stem `panel-2`）不是 `?open=panel` 要的那张。
+  const hits = panels.filter((p) => panelStemOf(p) === stem)
   return hits.find((p) => p.kind === 'pdf') ?? hits[0]
 }
 

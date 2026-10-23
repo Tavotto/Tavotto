@@ -180,7 +180,7 @@ describe('执行器与模型（两级选择器）', () => {
     expect(family('codex').getAttribute('aria-haspopup')).toBe('menu')
   })
 
-  it('第二级列该家族的型号：显示名为主、说明为次，当前型号 aria-checked，默认型号带小标', async () => {
+  it('第二级列该家族的型号：只写显示名（不带说明），当前型号 aria-checked，默认型号带小标', async () => {
     useAiStore.setState({ caps: capsOf(codexCatalog, claudeNamed) })
     await mount()
     await openMenu()
@@ -188,7 +188,9 @@ describe('执行器与模型（两级选择器）', () => {
     const rows = modelItems()
     expect(rows.map((r) => r.dataset.aiModelItem)).toEqual(['gpt-6-astra', 'gpt-6.1-sol', 'gpt-6-luna'])
     expect(rows[1].textContent).toContain('GPT-6.1-Sol')
-    expect(rows[1].textContent).toContain('Latest workhorse')
+    // 说明副行已去掉：行文本只有型号名（+ 默认徽标）
+    expect(rows[1].textContent).not.toContain('Latest workhorse')
+    expect(rows[1].textContent).toBe('GPT-6.1-Sol')
     expect(rows.map((r) => r.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false'])
     expect(rows[0].textContent).toContain('默认')
   })

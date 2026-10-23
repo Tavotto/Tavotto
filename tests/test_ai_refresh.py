@@ -215,7 +215,14 @@ class TestAfterAiChange:
         kinds = [ev for ev, _ in sse_spy]
         assert kinds.count("panel.file_changed") == 1
         payload = next(d for ev, d in sse_spy if ev == "panel.file_changed")
-        assert payload == {"scripts": ["fig1.py"], "stems": ["Fig1"], "pj": ctx.id, "reason": "ai"}
+        # `files`：后端直接带受影响的磁盘素材文件 id（#1251），前端不再靠素材清单推断
+        assert payload == {
+            "scripts": ["fig1.py"],
+            "stems": ["Fig1"],
+            "files": ["Fig1.pdf"],
+            "pj": ctx.id,
+            "reason": "ai",
+        }
         # 内容改了但注册表关系没变：统一刷新一条事件都不发
         assert "registry.changed" not in kinds and "assets.changed" not in kinds
 

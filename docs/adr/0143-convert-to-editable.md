@@ -78,11 +78,13 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 
 替换上面 4 里的“14 包闭集 + 只两类目标”。
 
-- **名单**：只装“在名单里”的发行包。名单 = 上一轮 14 个科学计算包 ∪ PyPI 30 天下载量前 1000 的项目名快照（来源 hugovk/top-pypi-packages 的
-  `top-pypi-packages-30-days.min.json`），存成纯数据文件 `src/tavotto/engine/autoinstall_dists.txt`（PEP 503 规范名，一行一个，文件头写来源 URL / 快照日期 / 许可证），
-  随 `packaging/tavotto.spec` 的 datas 进冻结产物；`scripts/dev/refresh_autoinstall_list.py` 重新生成（开发侧工具，必须显式给 `--license`，产品运行时从不联网取名单）。
-  **本次提交只带 14 个种子**：该上游仓库没有声明任何许可证（GitHub license API 404、仓库根无 LICENSE），“许可证不允许再分发就停下”的口径下没有把 1000 条快照提交进来；
-  维护者确认可再分发后跑一条脚本命令即可并入。名单读不到时退回 14 个种子（只会更小）。名单外的包：不自动装，卡片点名“这个包不常见，确认是你要的再装”。
+- **名单**：只装“在名单里”的发行包。名单 = 上一轮 14 个科学计算包 ∪ 30 个常见大包（torch / tensorflow / jax / transformers / xgboost / sympy …，维护者 2026-10-23 裁决，不看当月排名）∪ PyPI 近 30 天下载量前 1000 的项目名 − 排除名单。数据取自 ClickHouse 公开的 PyPI 数据集
+  （源头是 PSF 在 BigQuery 公开的 `bigquery-public-data.pypi` 下载日志）；下载次数是事实数据，我们只取项目名、自己排序生成，不分发任何第三方文件。
+  存成纯数据文件 `src/tavotto/engine/autoinstall_dists.txt`（PEP 503 规范名，一行一个，文件头写来源 / 窗口天数 / 快照日期 / top N / 条数），
+  随 `packaging/tavotto.spec` 的 datas 进冻结产物；`scripts/dev/refresh_autoinstall_list.py` 重新生成（开发侧工具，产品运行时从不联网取名单）。
+  **按主键切片查询**：公开端点每次最多读 10 亿行、默认超了静默截断，全表 30 天聚合约 11 亿行——脚本按 project 切四片、每片 `read_overflow_mode='throw'`，并拿 numpy 的切片合计与单独按主键查的值交叉核对，不一致就不写文件（2026-10-23 首版名单就是被截断的数据生成的，漏了 torch / sympy）。
+  **排除名单**：pip / setuptools / wheel / virtualenv / poetry / uv / conda 等管理环境与打包工具本身不许被自动装进用户环境（脚本常量 `EXCLUDE`，文件头同列）。
+  名单读不到时退回 14 个种子（只会更小）。名单外的包：不自动装，卡片点名“这个包不常见，确认是你要的再装”。
 - **每个环境问一次**（环境按 `pool.resolve_worker_python` 此刻会跑脚本的解释器分类，`convertdeps.describe_env`）：
   `project_venv` / 已存在的受管环境一代：名单内直接装（保持上一轮口径；受管目标要新建环境或下载私有 Python 时仍问）；
   `system`（OS 自带 / `EXTERNALLY-MANAGED`）与 `builtin`（内置 runtime / 自建 worker-env / 本进程解释器）：**永不装**，卡片“这个 Python 是系统自带的……请给项目换一个环境”，
@@ -159,6 +161,26 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 一句话卡片（主按钮「生成可编辑版本」），不当成“不是脚本”，也不走“打开并运行”；桌面壳的原生拖放分类（`drop_paths.rs`，Codex #1330 P2）认这三个后缀（区分大小写，`.M` / `.Rmd` / `.mlx` 不算，与 `foreignScript.ts` / `sourcelang.extension_hint` 同一份）：
 `DropTarget::ForeignScript { folder, script, name, ignored }`（载荷 `kind: "foreign_script"`），分派顺序 `.py` > 外语脚本 > 文件夹 > 不支持，多个取第一个；页面收到后与 DOM 拖放、选择器走同一个入口
 （`openForeign`：开所在文件夹 → 出卡，不运行；语言按文件名后缀在页面侧判）。
+
+## 修订：Pillow 画图脚本的识别放宽 + 转写对照表（2026-10-23，维护者裁决「先照常跑，跑完没有 matplotlib 图就出」）
+
+`rasterhint` 原先要求「找得到本次运行写出的文件」，Pillow 画图脚本一旦输出路径动态拼、只 `im.show()` 不存盘、或文件还没出现，
+就进不了「生成可编辑版本」。本修订只动 Pillow 分支（opencv / imageio / skimage / plotly / ROOT 判据不变，仍要文件证据）：
+
+1. **时机不变**：仍只在结局 `execution_finished_no_figure`（跑完没有 Matplotlib 图）之后问一次；纯 AST、只读、不执行，读不了 / 解析不了 / 扫描被截断一律 None。
+2. **Pillow 画图证据**（AST，接收者必须真是 `ImageDraw.Draw(...)` 的结果——赋值名 / with-as / 链式调用，所以 `ax.text`、`plt.show()` 不算）：
+   强证据＝对 Draw 对象（同作用域、`ImageDraw.Draw(...)` 绑定在前，含 with-as / 海象 / 带标注）调了 `line / rectangle / ellipse / polygon / text / arc / pieslice / point`，或同时有 `ImageDraw.Draw` 与 `ImageFont`（画字）；
+   弱证据＝`Image.new(...)` 的结果本身（赋给的名字含带类型标注 / with-as / 直接链式；**同作用域、绑定在前**：接收者名字须在同一作用域里、位置在调用之前最近一次绑定就是 `Image.new`，形参 / 重赋成别的值 / global·nonlocal 声明的名字都不算）被 `.save` / `.show`，别的接收者的 `.save` 不算（`Image.open(...).resize().save()` 这类图片处理没有 `Image.new` 也没有绘制，**不算**）。
+3. **文件证据变成可选**：有（字面量路径文件 / 素材盘点新文件）就带 `path`，没有就 `path: null`、`in_project: false`；旧的文件证据路径原样保留并优先。
+4. **同时 import matplotlib**：结局已是“没捕获到 Figure”这个运行事实，不再一刀切沉默；但只认**强证据**（弱证据在有 matplotlib 时仍沉默），文件证据只认 Pillow 自己的保存。
+5. **看不全时**：强证据在动态 import 下仍可说（运行事实已替代“有没有 matplotlib”的静态猜测）；弱证据遇动态 import、或脚本里还有别的库在存图（分不清是谁）仍沉默。
+6. **卡片**：`path` 为空时一句话＝「这张图是用 Pillow 画的，Tavotto 不能直接编辑它。」，主按钮「生成可编辑版本」，次按钮「知道了」；有 `path` 时保留原句与「打开素材库」。
+7. **提示词**：`convert_prompt(library="pillow")` 在硬性要求之后追加一段 Pillow → Matplotlib 对照表（别的库与 R / MATLAB 来源不出现）：
+   ImageDraw 的 line / rectangle / ellipse / polygon → `ax.plot` / `patches.Rectangle` / `Ellipse` / `Polygon` 且处理原点翻转（`set_ylim(H, 0)`）；
+   text + ImageFont → `ax.text`（`pt = px × 72 / dpi`）；`Image.new` → `figsize=(w/dpi, h/dpi)` + 背景色 + `axis("off")` + `subplots_adjust(0,0,1,1)`；
+   `Image.open` / `paste` → `imshow(np.asarray(img), extent=...)`；没有可靠对应 → `TAVOTTO_NEEDS_INPUT:` 停下。
+8. **盲点（写在明处）**：绘制方法的接收者只跟踪同文件内赋值得到的 Draw 对象；Draw 对象当参数传进 helper 后在 helper 里画（接收者是形参）看不见，除非同时有 `ImageFont`。
+   不改变“永远不改用户脚本”：结果仍另存 `<原名>_matplotlib.py`，不加遥测事件。
 
 ## 不做
 

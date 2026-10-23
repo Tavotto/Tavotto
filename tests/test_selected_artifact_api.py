@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from support.registrystub import stem_registry
 from tavotto import app as m
 from tavotto.engine import artifactcontext as ac, exportreq, figcapture
 
@@ -26,7 +27,7 @@ def api(tmp_path, monkeypatch):
     ctx = SimpleNamespace(
         id="selected-project",
         path=root,
-        registry=SimpleNamespace(for_stem=lambda stem: {"script": "plot.py", "entry": "main"}),
+        registry=stem_registry({"script": "plot.py", "entry": "main"}),
     )
     monkeypatch.setattr(m, "PROJECTS", {ctx.id: ctx})
     monkeypatch.setattr(m, "DEFAULT_PROJECT", ctx.id)

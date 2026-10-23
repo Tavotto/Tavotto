@@ -1,5 +1,5 @@
 import { msg } from '@/i18n'
-import { stemOf } from '@/lib/openRequest'
+import { fetchPanelStem } from '@/lib/api'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -33,7 +33,6 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
   const panel = findPanel(panelId)
   const script = panel?.script
   if (!panel || !script) return 'stale'
-  const stem = stemOf(panel.fileId)
   const guard = captureProjectEpoch(() => useScriptRunStore.getState().epoch)
   // 发起时的排版身份：同项目里打开了另一份已保存的排版（documentId / loadSeq 变）或切了画布，
   // 捕获的面板就会落进错误的排版——整个丢弃，什么都不写
@@ -69,7 +68,15 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
     useUiStore.getState().setStatus(msg('artifact.rebuildFailed', undefined, 'errors'), 'error', { owner })
     return 'failed'
   }
-  const matches = row.descriptors.filter((d) => d.script === script && d.stem === stem)
+  // 这张 PNG 属于哪张图：由后端按 fileId 用 `Registry.artifact_stem` 给出权威值（#1251）。不从素材清单取——它可能
+  // 被试运行的刷新清空，或根本不列这个文件（被同一张图的 PDF 让位隐藏的 PNG）；也绝不退回文件名 stem 去猜。
+  // 这一步在 guard / origin 捕获**之后**，await 回来立刻复核；取不到就是 null：交给 Figure 选择器，不建任何图
+  const stem = await fetchPanelStem(panel.fileId).then(
+    (r) => r.stem,
+    () => null,
+  )
+  if (!guard.still() || !origin.still()) return abandon()
+  const matches = stem === null ? [] : row.descriptors.filter((d) => d.script === script && d.stem === stem)
   if (matches.length !== 1) {
     useUiStore.getState().clearStatusOwnedBy(owner)
     useFigurePickerStore.getState().open(script)

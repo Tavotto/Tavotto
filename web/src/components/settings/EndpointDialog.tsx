@@ -1,21 +1,52 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, X } from '@/components/ui/icons'
+import { ChevronRight, ExternalLink, X } from '@/components/ui/icons'
 import { Details, Summary } from '../ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
-import type { AiAgentId, AiEndpoint, AiEndpointPreset, saveAiEndpoint } from '@/lib/api'
+import {
+  fetchAiEndpointModels,
+  type AiAgentId,
+  type AiEndpoint,
+  type AiEndpointPreset,
+  type AiModelsFetchReason,
+  type saveAiEndpoint,
+} from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { FormRow } from '../FormRow'
 import { Button } from '../ui/Button'
+import { buttonClass } from '../ui/buttonClass'
 import { FIELD_BOX, FIELD_FOCUS_WITHIN } from '../ui/fieldBox'
 import { Dialog } from '../ui/Dialog'
 import { TextInput } from '../ui/Input'
 import { Select } from '../ui/Select'
+import { VendorIcon } from './VendorIcon'
 
 /** 本节文案在 dialogs:settings.agents.* 下 */
 const ag = (key: string, values?: Record<string, unknown>) =>
   translate(`settings.agents.${key}`, { ns: 'dialogs', ...(values ?? {}) })
+
+/** 预设的界面名：厂商目录给 `label_key`（i18n）；夹具 / 老后端没有就用 `label` */
+const presetName = (p: AiEndpointPreset) => (p.label_key ? ag(p.label_key) : p.label)
+
+/** 预设下拉的分组顺序与标题：国内 / 海外 / 其他（官方登录态之外的「自定义」行） */
+const REGION_ORDER = ['cn', 'global', 'custom'] as const
+const regionTitle = (r: (typeof REGION_ORDER)[number]) =>
+  ag(`endpoint.${r === 'cn' ? 'regionCn' : r === 'global' ? 'regionGlobal' : 'regionCustom'}`)
+
+/** 按「国内 / 海外 / 其他」分组；后端没给 `region`（老后端 / 夹具）→ 平铺不分组。组内保持目录顺序 */
+function groupedPresetOptions(presets: AiEndpointPreset[]) {
+  const row = (p: AiEndpointPreset, group?: string) => ({
+    value: p.id,
+    label: presetName(p),
+    group,
+    icon: <VendorIcon iconKey={p.icon_key} size={ICON_SIZE.sm} glyphSize={ICON_SIZE.sm} />,
+  })
+  if (!presets.some((p) => p.region)) return presets.map((p) => row(p))
+  return REGION_ORDER.flatMap((r) =>
+    presets.filter((p) => (p.region ?? 'custom') === r).map((p) => row(p, regionTitle(r))),
+  )
+}
 
 /**
  * 一行字段：**标签列在左 80px、控件在右**（全面打磨 D22，L1）——与导出对话框、
@@ -110,6 +141,10 @@ export function EndpointDialog({
   const [models, setModels] = useState<string[]>(existing?.models ?? [])
   const [modelDraft, setModelDraft] = useState('')
   const [nameError, setNameError] = useState<string | null>(null)
+  /** 「从服务商获取」型号：取到的列表（点一下加入）/ 没取到的原因 / 进行中 */
+  const [fetched, setFetched] = useState<string[]>([])
+  const [fetchReason, setFetchReason] = useState<AiModelsFetchReason | 'empty' | null>(null)
+  const [fetching, setFetching] = useState(false)
 
   // 选中的预设留在本地态：`ui/Select` 是受控的，不留住这一格触发器会一直显示
   // 占位文案，用户看不出自己刚选了哪一个（原生 `<select>` 靠浏览器自己记）
@@ -124,11 +159,37 @@ export function EndpointDialog({
   /** 预设填好的那三项（地址 / 模型 / 协议）默认折起来；手动填写时它们就是主体 */
   const fromPreset = !!preset
 
+  const presetRec = presets.find((x) => x.id === preset)
+
+  const fetchModels = async (refresh: boolean) => {
+    setFetching(true)
+    setFetchReason(null)
+    try {
+      const r = await fetchAiEndpointModels({
+        id: existing?.id,
+        base_url: baseUrl.trim(),
+        api_key: apiKey.trim() || undefined,
+        refresh,
+      })
+      const fresh = r.models.filter((m) => !models.includes(m))
+      setFetched(fresh)
+      setFetchReason(r.source === 'none' ? (r.reason ?? 'network') : fresh.length ? null : 'empty')
+    } catch {
+      // 请求本身没到后端（断网 / 后端重启）：与「连不上服务商」同一句，不另造一种失败
+      setFetched([])
+      setFetchReason('network')
+    } finally {
+      setFetching(false)
+    }
+  }
+
   const applyPreset = (id: string) => {
     const p = presets.find((x) => x.id === id)
     if (!p) return
     setPreset(id)
-    setLabel(p.label)
+    setFetched([])
+    setFetchReason(null)
+    setLabel(presetName(p))
     setBaseUrl(p.base_url)
     setModels([...p.models])
   }
@@ -230,6 +291,44 @@ export function EndpointDialog({
             </Button>
           )}
         </span>
+        {/* 型号以服务商实时列表为准（预设里的会过时）。只在点按钮时才联网，设置页渲染不碰网络 */}
+        <span className="flex flex-wrap items-center gap-1.5" data-model-fetch>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={fetching || !baseUrl.trim()}
+            onClick={() => void fetchModels(fetched.length > 0 || fetchReason !== null)}
+          >
+            {fetching ? ag('endpoint.fetchingModels') : ag('endpoint.fetchModels')}
+          </Button>
+          {fetchReason && (
+            <span role="status" className="text-xs text-ink-3">
+              {fetchReason === 'empty'
+                ? ag('endpoint.fetchedEmpty')
+                : ag(`endpoint.fetchReason.${fetchReason}`)}
+            </span>
+          )}
+        </span>
+        {fetched.length > 0 && (
+          <span className="flex flex-col gap-1" data-model-fetched>
+            <span className="text-xs text-ink-3">{ag('endpoint.fetchedHint')}</span>
+            <span className="flex max-h-24 flex-wrap gap-1 overflow-y-auto">
+              {fetched.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => {
+                    setModels([...models, m])
+                    setFetched(fetched.filter((x) => x !== m))
+                  }}
+                  className="h-5 rounded-sm bg-surface-2 px-1.5 font-mono text-xs text-ink-2 outline-none hover:bg-border focus-visible:focus-ring"
+                >
+                  {m}
+                </button>
+              ))}
+            </span>
+          </span>
+        )}
       </Field>
     </>
   )
@@ -264,7 +363,7 @@ export function EndpointDialog({
             <Select
               value={preset}
               onChange={applyPreset}
-              options={presets.map((p) => ({ value: p.id, label: p.label }))}
+              options={groupedPresetOptions(presets)}
               placeholder={ag('endpoint.presetPlaceholder')}
               ariaLabel={ag('endpoint.presetAria')}
               className="w-full"
@@ -306,6 +405,24 @@ export function EndpointDialog({
                 spellCheck={false}
               />
             </Field>
+            {presetRec && (presetRec.key_url || presetRec.key_hint_key) && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-[92px] text-xs text-ink-3">
+                {presetRec.key_url && (
+                  // 外链走全站同一种写法：<a target=_blank rel=noreferrer>，由系统浏览器打开
+                  <a
+                    href={presetRec.key_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-key-link
+                    className={buttonClass({ variant: 'ghost', size: 'sm' })}
+                  >
+                    {ag('endpoint.getKey')}
+                    <ExternalLink size={ICON_SIZE.xs} aria-hidden />
+                  </a>
+                )}
+                {presetRec.key_hint_key && <span data-key-hint>{ag(presetRec.key_hint_key)}</span>}
+              </div>
+            )}
             {/* 隐私说明：一句准确的短话紧跟在密钥下面，细节在末尾展开。**不许虚构安全保证**——
                 下面每一句都对着 `engine/ai_providers.py` 与 `engine/config.py`
                 核过（审计 T45）。特别是权限那条：`_harden()` 在 Windows 上
@@ -318,7 +435,7 @@ export function EndpointDialog({
               <Summary className="flex min-h-7 cursor-default items-center gap-2 text-sm font-medium text-ink-2">
                 <span className="min-w-0 flex-1 truncate">{ag('endpoint.presetFilled')}</span>
                 <span className="shrink-0 truncate text-xs font-normal text-ink-3">
-                  {presets.find((p) => p.id === preset)?.label}
+                  {presetRec ? presetName(presetRec) : ''}
                 </span>
                 <ChevronRight
                   size={ICON_SIZE.sm}

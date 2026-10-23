@@ -50,7 +50,7 @@ export function ExportSettings() {
     <FormSection title={st('export.sectionDefaults')}>
       <FieldGroup>
         {/* 「默认格式」这四个字已经说清了它管什么，下面不再复述一句（全面打磨 D36） */}
-        <SettingRow label={st('export.defaultFormats')} layout="balanced" status={defaults.formats.includes('svg') ? ex('svgNote') : undefined} data-settings-anchor="export.formats">
+        <SettingRow label={st('export.defaultFormats')} layout="balanced" data-settings-anchor="export.formats">
           <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
             {FORMATS.map((f) => (
               <label key={f} data-export-format={f} className="flex h-7 items-center gap-1.5 text-sm text-ink">

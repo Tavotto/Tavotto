@@ -10,6 +10,7 @@
   runtime 的事实 / 回执 / 错误 / 取消时刻）。计划**只读**产品自己的决定
   （`pool.resolve_worker_python` / `projectenv.state` / `workdir` / `depresolve`），不替产品
   选环境、不装包、不改 cwd。终局字段先于终局 `status` 写（与 `exportjob` 同一条纪律）。
+- **失败时报告带 `remedy`（智能修复路由，ADR 0148 提议）**：`prepsession.report` 在失败 / 没出图 / 走不通的结局上调用 `fixrouter.choose`，把唯一修法放进新字段 `remedy`（闭集 `switch_native / install_packages / change_python / convert_to_matplotlib / ai_fix / connect_ai / feedback`，一次运行最多 3 种，第 4 次 `feedback`）。路由只标注、不执行：safe→native 仍由 `execpolicy.decide_fallback` 做（ADR 0127 不改）。「AI 连没连」由 app 注入 `SESSIONS.ai_connected`（`ai_bridge.capabilities()` 的 `usable`），引擎不探测。诊断包 `detail-runs.json` 的 `fix_journey` 读 `SESSIONS.fix_journeys`。看护 `tests/test_fixrouter*.py`。
 - **执行只有一条路**：`pool.build_owned()`（`build()` + 池锁里给出的 `created`）。准备接口不另写
   `get + ensure_built`——自动 fallback 只有一份实现，漏掉一个入口就是「素材库里能打开、准备
   接口打不开」。已 build 且解释器决策没变的会话直接用它记下的 build 响应装配回执，不发请求。
@@ -214,6 +215,7 @@ input 协议，前端也没有 readiness 计算器。端点 `POST /api/engine/pr
   ②运行时才定的路径——项目素材盘点（`iter_assets`，带 3 s 预算，不另开全盘扫描）里 mtime ≥ 运行开始（容差 1 s）的新增 / 被改写文件（png / jpg / tiff / pdf；svg / eps 盘点外，只走①）。
   ②的库归属只看「输出路径运行时才定」的那几处保存（字面量路径已逐个核过）、且扩展名为该库所认：候选库唯一才给，多库都可能（如未调用的 Pillow helper + plotly 都写 PNG）就不说；plotly 的 `to_image` 返回字节不写文件，不算存图调用。`path` 是能确定的输出文件（供「打开素材」定位 / 后续「生成可编辑版本」），不在项目里或判不出为 `null`。
   只是提示：不改 `outcome` / `facts`，不改捕获。界面一句话 + 主按钮「打开素材库」（现成入口），原因说明折叠在详情；库名映射 `preparationText.RASTER_LIBRARY_NAME` 与 `rasterhint.LIBRARIES` 同源。
+  **Pillow 例外（ADR 0143 修订 2026-10-23）**：上面的“硬条件 / import matplotlib 即沉默”只管文件证据路径；AST 能证明是 Pillow 画图脚本（`ImageDraw.Draw` 对象上的绘制调用，或 `Image.new` 之后 `.save` / `.show`）时，没有文件证据也给 hint（`path: null`、`in_project: false`），同时 import matplotlib 只认强证据（绘制调用）。其它库不变。
   看护 `tests/test_rasterhint.py`、`tests/test_preparation_session_lifecycle.py`、`web/src/components/PreparationCard.test.tsx`。
 - **依赖准备并入同一个会话（T06）**：phase `preparing_environment` 由依赖作业事实派生；装好后同一会话按新环境重新检查（只重算差额，
   报告多 `dependency_delta`），失败 / 取消保留原代并重新给新的授权动作；脚本跑到一半才发现缺包 = 新的一次尝试

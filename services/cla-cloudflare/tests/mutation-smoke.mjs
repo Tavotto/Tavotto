@@ -20,6 +20,7 @@ const cases=[
  ...JSON.parse(readFileSync(new URL('./historical-revocation-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./independent-review-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./inflight-mutation-cases.json',import.meta.url),'utf8')),
+ ...JSON.parse(readFileSync(new URL('./ci-wait-mutation-cases.json',import.meta.url),'utf8')),
  {name:'head admission capacity',file:'src/native/automatic.ts',before:'LIMIT 100))<100',after:'LIMIT 100))<101',pattern:'head request admission rejects the 101st distinct head',testFile:'tests/automatic.test.mjs'},
  {name:'delivery admission capacity',file:'src/native/automatic.ts',before:'LIMIT 1000))<1000',after:'LIMIT 1000))<1001',pattern:'delivery admission rejects the 1001st record while exact duplicate remains idempotent',testFile:'tests/automatic.test.mjs'},
  {name:'delegated disabled direct operation',file:'src/native/delegation.ts',before:"if(this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled)throw new Rejected('delegated_countersigning_disabled');",after:'// mutation: skip delegation capability guard',pattern:'disabled delegated operation cannot use an existing personally signed packet',testFile:'tests/delegation.test.mjs'},

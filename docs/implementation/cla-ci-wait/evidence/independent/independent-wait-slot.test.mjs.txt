@@ -1,0 +1,136 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {fixture} from './delegation-fixture.mjs';
+import {LiveStore} from '../src/native/store.ts';
+import {LiveService} from '../src/native/service.ts';
+import {GitHub} from '../src/native/github.ts';
+import {InvocationBudget} from '../src/native/budget.ts';
+import {verification} from '../src/native/verification.ts';
+import {reconcileOne} from '../src/native/background.ts';
+import {candidate} from '../scripts/ci-candidate.mjs';
+import {Rejected} from '../src/core/types.ts';
+import {randomToken,canonical} from '../src/core/crypto.ts';
+const NOW=1800000000,KEY='pr:707:9';let outbound=0;
+globalThis.fetch=async()=>{outbound++;throw Error('OUTBOUND_FORBIDDEN');};
+const WAIT={enabled:true,maxAttempts:3,intervalMs:1000,timeoutMs:10000};
+async function setup({phase='confirmed',lifetime=120}={}){
+ const f=await fixture();await f.install();const packet=await f.create();await f.sign(packet);
+ const check=await f.s.evaluate(9);check.proof.issued_at=lifetime===0?NOW-120:NOW;check.proof.expires_at=NOW+lifetime;check.text='tavotto-cla-v1\n'+canonical(check.proof);
+ Object.assign(f.c,{githubEnabled:true,backgroundEnabled:true,checkPublishingEnabled:true,confirmationSlotEnabled:true});
+ const id=randomToken();await f.store.track(707,{kind:'pr',number:9});
+ // Fixed pre-existing synthetic owner snapshot. No publishing or clock transition.
+ await f.store.batch([f.store.stmt('INSERT INTO _guards VALUES(?,1)','confirmation-slot:'+id),
+  f.store.stmt(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,phase,run_id,created,updated,conclusion,proof_text,send_until)
+   VALUES(?,?,?,?,?,'issued',101,?,?,'success',?,?)`,id,KEY,check.headSha,check.proof.revision,check.proof.expires_at,NOW,NOW,check.text,NOW+120)]);
+ await f.store.stmt("UPDATE publication_attempts SET phase='unknown',send_until=0 WHERE id=?",id).run();
+ if(phase!=='unknown')await f.store.stmt('UPDATE publication_attempts SET phase=?,reconcile_due=? WHERE id=?',phase,phase==='manual'?null:check.proof.expires_at,id).run();
+ await f.store.enqueue(KEY);
+ const run={id:101,app:{id:f.c.appId,slug:f.c.appSlug},name:f.c.checkName,head_sha:check.headSha,external_id:id,status:'completed',conclusion:'success',output:{summary:check.text}};
+ const pr={number:9,state:'open',head:{sha:check.headSha},base:{repo:{id:707},ref:'main',sha:check.proof.base_sha}};
+ const config={enabled:true,repository:f.c.repository,repositoryId:707,origin:f.c.origin,appId:f.c.appId,appSlug:f.c.appSlug,checkName:f.c.checkName,wait:{...WAIT}};
+ const event={repository:{id:707},number:9,pull_request:{number:9,head:{sha:check.headSha}}};
+ const calls=[],serverMeters=[],hooks={};let authorityCalls=0,pauses=0,tick=0,serverReads=0,branches=0;
+ function invocation(){const budget=new InvocationBudget(()=>0,()=>NOW*1000),store=new LiveStore(f.db,budget,f.c);
+  const g=new GitHub(f.c,{clientSecret:'',pkcs8:'',evidenceKey:''},async(url,init)=>{
+   assert.equal(init.method,'GET');serverReads++;const p=new URL(url).pathname;
+   if(p.includes('/commits/'))return Response.json({total_count:1,check_runs:[structuredClone(run)]});
+   assert.equal(p,'/repos/'+f.c.repository+'/check-runs/'+run.id);return Response.json(structuredClone(run));
+  },f.now,budget);g.installationToken=async()=>'SYNTHETIC_SERVER_READ';
+  for(const n of ['publish','publishNew','publishFresh','withdraw'])g[n]=async()=>{throw Error(n+'_FORBIDDEN');};
+  const gh={...f.gh,budget,readPublication:p=>g.readPublication(p)};
+  return {budget,store,g,s:new LiveService(f.c,store,gh,f.key)};
+ }
+ async function authority(url){const c=invocation();try{return await verification(c.s,9,check.headSha,101,id);}finally{serverMeters.push(c.budget.snapshot());}}
+ const transport=async(url,init)=>{
+  assert.equal(init.method,'GET');assert.equal(init.redirect,'manual');assert.equal(init.cache,'no-store');calls.push({url,method:init.method});
+  const u=new URL(url);let data;
+  if(u.origin===f.c.origin){
+   assert.equal(init.headers.authorization,undefined);authorityCalls++;
+   const intercepted=await hooks.beforeAuthority?.(authorityCalls);if(intercepted)return intercepted;
+   try{data=await authority(url);}catch(error){if(!(error instanceof Rejected))throw error;return Response.json({error:error.code},{status:403});}
+   await hooks.afterAuthority?.(authorityCalls,data);return Response.json(data);
+  }
+  assert.equal(u.origin,'https://api.github.com');assert.equal(init.headers.authorization,'Bearer SYNTHETIC_TOKEN');
+  const p=u.pathname.replace('/repos/'+f.c.repository,'');
+  if(p==='')data={id:707,full_name:f.c.repository,default_branch:'main'};
+  else if(p==='/commits/main')data={sha:hooks.branch?.(++branches)??f.c.referenceSha};
+  else if(p.startsWith('/contents/')){assert.equal(u.searchParams.get('ref'),f.c.referenceSha);const name=p.slice(10);
+   const text=name==='.github/cla-policy.json'?JSON.stringify(f.c.policy):name===f.c.policy.agreements.individual.path?'SYNTHETIC DELEGATED CLA ONLY':'SYNTHETIC CORPORATE CLA';
+   data={type:'file',path:name,encoding:'base64',content:Buffer.from(text).toString('base64')};}
+  else if(p==='/pulls/9')data=structuredClone(pr);
+  else if(p.endsWith('/check-runs'))data=await hooks.list?.()??{total_count:1,check_runs:[structuredClone(run)]};
+  else if(p==='/check-runs/'+run.id)data=structuredClone(run);
+  else throw Error('UNEXPECTED_GET '+p);
+  return Response.json(data);
+ };
+ const execute=(options={})=>candidate(config,event,options.eventName??'pull_request','SYNTHETIC_TOKEN',{
+  transport,clock:f.now,wallMilliseconds:()=>NOW*1000,monotonic:()=>tick,
+  pause:async ms=>{pauses++;tick+=ms;await hooks.pause?.();},...options});
+ const state=async()=>({owner:await f.store.stmt('SELECT * FROM slot_policy').first(),p:await f.store.latestPublication(KEY)});
+ async function negativeRelease(){run.conclusion='failure';const c=invocation();
+  const result=await reconcileOne({c:f.c,store:c.store,github:c.g,evaluate:async()=>{throw Error('NEGATIVE_EVALUATION_FORBIDDEN');}});
+  assert.equal(result.disposition,'remote_failure_observed');assert.equal(result.budget.sql,27);assert.equal(result.budget.external,2);return result;
+ }
+ return {...f,id,check,run,pr,config,event,calls,hooks,serverMeters,state,execute,negativeRelease,
+  stats:()=>({authorityCalls,pauses,serverReads,tick}),setTick:n=>{tick=n;}};
+}
+async function isolated(fn,options){const f=await setup(options);try{await fn(f);assert.equal(f.now(),NOW);assert.equal(outbound,0);}finally{f.close();}}
+const pending=()=>Response.json({error:'proof_not_confirmed'},{status:403});
+
+test('composition fixed confirmed held slot verifies twice with actual11 SQL authority budgets',t=>isolated(async f=>{
+ const before=await f.state(),result=await f.execute();assert.equal(result.status,'success');assert.equal(result.expires_at,NOW+120);
+ assert.deepEqual(f.serverMeters,[{sql:11,external:1},{sql:11,external:1}]);assert.equal(f.stats().pauses,0);assert.equal(f.stats().serverReads,2);
+ assert.deepEqual(await f.state(),before);assert.ok(f.calls.every(x=>x.method==='GET'));
+ t.diagnostic(JSON.stringify({authority_budgets:f.serverMeters,ci_gets:f.calls.length}));
+}));
+for(const phase of ['manual','unknown'])test('composition '+phase+' held owner exhausts pending without confirmation or replay',()=>isolated(async f=>{
+ const before=await f.state();await assert.rejects(f.execute(),e=>e.code==='ci_wait_exhausted');assert.equal(f.stats().authorityCalls,3);assert.equal(f.stats().pauses,2);
+ assert.deepEqual(f.serverMeters,[{sql:1,external:0},{sql:1,external:0},{sql:1,external:0}]);assert.equal(f.stats().serverReads,0);assert.deepEqual(await f.state(),before);
+},{phase}));
+test('composition missing check waits for visibility of static confirmed snapshot',()=>isolated(async f=>{
+ let lists=0;f.hooks.list=()=>++lists===1?{total_count:0,check_runs:[]}:undefined;
+ const result=await f.execute();assert.equal(result.status,'success');assert.equal(f.stats().pauses,1);assert.equal(lists,2);assert.equal(f.stats().authorityCalls,2);
+}));
+test('composition second authority manual pending is terminal and retains owner',()=>isolated(async f=>{
+ f.hooks.beforeAuthority=async n=>{if(n===2)await f.store.stmt("UPDATE publication_attempts SET phase='manual',reconcile_due=NULL WHERE id=?",f.id).run();};
+ await assert.rejects(f.execute(),e=>e.code==='ci_live_state_changed');assert.equal(f.stats().pauses,0);assert.equal(f.stats().authorityCalls,2);
+ assert.equal((await f.state()).p.phase,'manual');assert.equal((await f.state()).owner.active_attempt,f.id);
+}));
+test('composition revoked evidence after first pending is not a retryable confirmation',()=>isolated(async f=>{
+ f.hooks.beforeAuthority=n=>n===1?pending():undefined;f.hooks.pause=async()=>f.s.delegation.append(await f.control('revoke'));
+ await assert.rejects(f.execute(),e=>e.code==='ci_read_unavailable');assert.equal(f.stats().pauses,1);assert.equal(f.stats().authorityCalls,2);
+ assert.equal((await f.state()).owner.active_attempt,f.id);
+}));
+test('composition original run pin rejects replacement before second authority read',()=>isolated(async f=>{
+ f.hooks.beforeAuthority=n=>n===1?pending():undefined;f.hooks.pause=()=>{f.run.id=102;};
+ await assert.rejects(f.execute(),e=>e.code==='ci_candidate_changed');assert.equal(f.stats().authorityCalls,1);assert.equal(f.stats().pauses,1);
+ assert.equal((await f.state()).p.run_id,101);
+}));
+test('composition final exact authority receipt cannot borrow another attempt',()=>isolated(async f=>{
+ f.hooks.afterAuthority=(n,data)=>{if(n===2)data.attempt='z'.repeat(43);};
+ await assert.rejects(f.execute(),e=>e.code==='ci_live_state_changed');assert.equal(f.stats().pauses,0);assert.equal(f.stats().authorityCalls,2);
+}));
+test('composition fresh negative GET release invalidates in-flight CI without old proof reuse',()=>isolated(async f=>{
+ const original=await f.state();f.hooks.afterAuthority=async n=>{if(n===1)await f.negativeRelease();};
+ await assert.rejects(f.execute(),e=>e.code==='ci_final_state_changed');assert.equal(f.stats().pauses,0);assert.equal(f.stats().authorityCalls,1);
+ const after=await f.state();assert.equal(after.owner.active_attempt,null);assert.equal(after.p.phase,'resolved');
+ assert.equal(after.p.proof_text,original.p.proof_text);assert.equal(after.p.expires,original.p.expires);
+ assert.equal(JSON.parse(after.p.observation).attempt,f.id);
+}));
+test('composition static expired proof never reaches authority or yields eligibility',()=>isolated(async f=>{
+ await assert.rejects(f.execute(),e=>e.code==='proof_invalid');assert.equal(f.stats().authorityCalls,0);assert.equal(f.stats().pauses,0);
+ assert.equal((await f.state()).owner.active_attempt,f.id);
+},{lifetime:0}));
+test('composition short original proof cancels before another GET at monotonic boundary',()=>isolated(async f=>{
+ f.hooks.beforeAuthority=()=>pending();f.hooks.pause=()=>f.setTick(2000);
+ await assert.rejects(f.execute(),e=>e.code==='ci_wait_deadline');assert.equal(f.stats().authorityCalls,1);assert.equal(f.stats().pauses,1);
+ assert.equal(f.now(),NOW);assert.equal((await f.state()).p.expires,NOW+2);
+},{lifetime:2}));
+for(const status of [429,503])test('composition authority '+status+' is terminal without polling',()=>isolated(async f=>{
+ f.hooks.beforeAuthority=()=>Response.json({error:'proof_not_confirmed'},{status});
+ await assert.rejects(f.execute(),e=>e.code==='ci_read_unavailable');assert.equal(f.stats().pauses,0);assert.equal(f.stats().authorityCalls,1);
+}));
+test('composition disabled waiting remains one shot and merge group rejects before reads',()=>isolated(async f=>{
+ f.config.wait={enabled:false};f.hooks.list=()=>({total_count:0,check_runs:[]});await assert.rejects(f.execute(),e=>e.code==='ci_check_ambiguous');assert.equal(f.stats().pauses,0);
+ const before=f.calls.length;await assert.rejects(f.execute({eventName:'merge_group'}),/ci_candidate_event_rejected/);assert.equal(f.calls.length,before);
+}));
