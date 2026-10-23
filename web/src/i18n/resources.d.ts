@@ -5470,6 +5470,38 @@ export default interface Resources {
       "stale": "脚本已更新"
     },
     "prep": {
+      "aiFix": {
+        "busy": "已经有一个修复在进行",
+        "cancel": "取消",
+        "confirm": "确认修复",
+        "decline": "不了",
+        "failed": {
+          "auth": "AI 连接的密钥不对，请到设置里检查",
+          "budget": "AI 在限定的步数内没能修好",
+          "network": "连不上 AI 服务，稍后再试",
+          "other": "AI 这次没能修好",
+          "quota": "AI 的额度用完了",
+          "refused": "AI 服务拒绝了这次请求"
+        },
+        "gotIt": "知道了",
+        "notFixed": "这次没能修好",
+        "notRead": "没读：敏感目录（密钥、钥匙串、.env 等）直接拦",
+        "other": "我自己填…",
+        "pathAria": "路径",
+        "pathPlaceholder": "粘贴路径",
+        "pickDir": "选择文件夹…",
+        "pickFile": "选择文件…",
+        "readNone": "没有读过项目以外的文件",
+        "readTitle": "AI 看过",
+        "running": "AI 正在查找原因…",
+        "sendNo": "不发送",
+        "sendNote": "AI 写的说明",
+        "sendReview": "查看并发送",
+        "sendSource": "AI 想看这个脚本；要不要附上，由你在发送窗口里勾选，默认不附。",
+        "sendTitle": "没修好，发给我们看看？",
+        "skip": "跳过",
+        "useIt": "用它"
+      },
       "aria": "准备 {{script}}",
       "btn": {
         "aiFix": "使用你的 AI 来修复",

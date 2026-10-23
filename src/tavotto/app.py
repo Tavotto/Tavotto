@@ -101,6 +101,7 @@ from .engine import (
     exportroute as engine_exportroute,
     exporttelemetry as engine_exporttelemetry,
     figcapture as engine_figcapture,
+    fixsession as engine_fixsession,
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
     inputbroker as engine_inputbroker,
@@ -4577,6 +4578,7 @@ def _build_diagnostics_bundle(
         frontend=detail.frontend,
         registry=ctx.registry if ctx is not None else None,
         fix_journey=engine_prepsession.SESSIONS.fix_journeys(pid) if pid else None,
+        fix_audit=engine_fixsession.audit_tail(),
     )
     items = engine_diagdetail.collect(src, detail.options)
     # report.json 只算一次：超限时 `fit` 会按优先级截断重建几次 ZIP，不该每次都重新探测渲染环境
@@ -9082,21 +9084,36 @@ def api_ai_capabilities():
         {
             **engine_ai.capabilities(refresh=refresh),
             "taf_enabled": engine_ai_figure_edit.enabled(),
-            # 「使用你的 AI 来修复」的 AI 环境修复任务能不能真的跑（智能修复主线 PR D，ADR 0148）。端点契约已定、任务还没实现：
-            # 前端在它为 false 时按钮照常出现，点击走「这个问题 AI 暂时还不会修」降级
-            "ai_fix_available": False,
+            # 「使用你的 AI 来修复」的 AI 环境修复任务能不能真的跑（ADR 0148 / 0149）：有内置执行器能直接用的 API 连接时为 true。
+            # 只连了 CLI 时为 false（CLI 经 MCP 的接法是 D3）：按钮照常出现，点击走「这个问题 AI 暂时还不会修」降级
+            "ai_fix_available": engine_fixsession.available(),
         }
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
+def _fix_error(exc: "engine_fixsession.FixError"):
+    return jsonify({"error": exc.code, "code": exc.code}), exc.status
+
+
+def _fix_session_env(sess) -> dict:
+    """修复会话上下文里能从准备会话拿到的环境事实：当前解释器所在的前缀（可能在主目录外，读取范围要带上它）。"""
+    env = getattr(sess.plan, "environment", None) or {}
+    py = env.get("python") or env.get("interpreter") or env.get("executable")
+    if not isinstance(py, str) or not py:
+        return {}
+    prefix = Path(py).parent.parent
+    return {"env_prefixes": [prefix]} if prefix.is_dir() else {}
+
+
 @app.post("/api/ai/fix")
 def api_ai_fix():
-    """「使用你的 AI 来修复」（智能修复主线，ADR 0148）。body：`{session_id, script}`（准备会话 id 与脚本项目相对路径）。
+    """「使用你的 AI 来修复」（智能修复主线，ADR 0148 / 0149）。body：`{session_id, script}`（准备会话 id 与脚本项目相对路径）。
 
-    AI 环境修复任务在后续 PR 实现；本版只定契约：一律 `200 {ok: false, reason: "ai_fix_unavailable"}`，前端据此把卡片落成
-    「这个问题 AI 暂时还不会修」+「发送反馈」。会话认证照常（ADR 0008），畸形请求体 400，不做任何副作用。"""
+    起一个修复会话（`engine/fixsession`）：`200 {ok: true, fix_id}`；没有内置执行器能用的 API 连接 ->
+    `200 {ok: false, reason: "ai_fix_unavailable"}`（前端落成「这个问题 AI 暂时还不会修」）；已有别的修复在跑 ->
+    `{ok: false, reason: "ai_fix_busy"}`。会话认证照常（ADR 0008），畸形请求体 400。"""
     body = request.get_json(silent=True)
     if (
         not isinstance(body, dict)
@@ -9104,7 +9121,79 @@ def api_ai_fix():
         or not isinstance(body.get("script"), str)
     ):
         abort(400)
-    return jsonify({"ok": False, "reason": "ai_fix_unavailable"})
+    conn = engine_fixsession.connection()
+    if conn is None:
+        return jsonify({"ok": False, "reason": "ai_fix_unavailable"})
+    ctx = current_ctx()
+    try:
+        sess = engine_prepsession.SESSIONS.session(body["session_id"], ctx.id)
+    except engine_prepsession.SessionError as exc:
+        return _session_error(exc)
+    model, redactor = engine_fixsession.build_model(conn)
+    script = body["script"]
+    script_path = (ctx.path / script) if script else None
+    try:
+        fx = engine_fixsession.SESSIONS.start(
+            scope=ctx.id,
+            prep_session_id=body["session_id"],
+            script=script,
+            project_root=ctx.path,
+            model=model,
+            report=lambda: _session_report(ctx, sess),
+            redactor=redactor,
+            audit=engine_fixsession.AuditLog(),
+            script_path=script_path if script_path and script_path.is_file() else None,
+            ctx_kwargs=_fix_session_env(sess),
+        )
+    except engine_fixsession.FixError as exc:
+        if exc.code == "fix_busy":
+            return jsonify({"ok": False, "reason": "ai_fix_busy"})
+        return _fix_error(exc)
+    return jsonify({"ok": True, "fix_id": fx.id})
+
+
+@app.get("/api/ai/fix/<fix_id>")
+def api_ai_fix_state(fix_id):
+    """修复会话此刻的样子：`{fix_id, state: running|waiting|finished, card, outcome, summary, reason, steps, seq}`。
+    SSE `ai.fix` 只是「重读」提示（不带内容），状态以这里为准。"""
+    try:
+        resp = jsonify(engine_fixsession.SESSIONS.get(fix_id, current_ctx().id))
+    except engine_fixsession.FixError as exc:
+        return _fix_error(exc)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/fix/<fix_id>/answer")
+def api_ai_fix_answer(fix_id):
+    """回答当前卡片：`{card_id, answer, text?}`。`answer` 按卡种类校验（approve: yes|no；choice: 选项 id|other|skip；
+    pick: skip 或所选路径；send: sent|no）；卡片已过期 409，畸形回答 400。"""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        abort(400)
+    try:
+        out = engine_fixsession.SESSIONS.answer(
+            fix_id, current_ctx().id, body.get("card_id"), body.get("answer"), body.get("text")
+        )
+    except engine_fixsession.FixError as exc:
+        return _fix_error(exc)
+    return jsonify(out)
+
+
+@app.post("/api/ai/fix/<fix_id>/cancel")
+def api_ai_fix_cancel(fix_id):
+    try:
+        out = engine_fixsession.SESSIONS.cancel(fix_id, current_ctx().id)
+    except engine_fixsession.FixError as exc:
+        return _fix_error(exc)
+    return jsonify(out)
+
+
+def _publish_fix_hint(scope: str, fix_id: str) -> None:
+    sse_publish("ai.fix", {"pj": scope, "fix_id": fix_id})
+
+
+engine_fixsession.SESSIONS.notifier = _publish_fix_hint
 
 
 @app.patch("/api/ai/agents/<agent_id>")

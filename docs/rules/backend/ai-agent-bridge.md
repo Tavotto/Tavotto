@@ -482,3 +482,23 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 - **#1361 三条**：`_copy_project` 只复制普通文件（FIFO / socket / 设备及指向它们的链接跳过、记 `skipped["special"]`、结果 `copy_incomplete`，复制前再 `S_ISREG` 核一次防枚举后被换成 FIFO）；
   `list_environments` 列满 30 条时如实报 `[showing 30 of N …]`，本项目当前 / 选过的环境排前，`match` 参数按名字 / 来源 / 路径片段筛（被列出的才登记 id）；`_copy_project(…, reads)` 回传实际复制了内容的链接目标，`try_run` 逐个 `ctx.note_read(…, "try_run")`。
 - **freeze 的「可用」按成败判（#1371 P1）**：`default_freezer` 成功回文本（全新空环境是 `""`）、失败回 `None`；快照的 `freeze_available` = 拿到了没有，不按输出是否为空。
+
+- **持锁的基线（#1371 第三轮）**：「取基线 → 执行 → 核对 / 恢复」中间有窗口，用户的合法保存会被当成命令的改动写回旧版——所以不补窗口，改结构：`run_command` 审批前只做规模预检（`snapshots.list_scripts`，超限 `scripts_too_large` 不问用户），
+  用户点 yes 之后 `snapshots.hold_scripts` 按规范化真实路径排序依次持有全部用户脚本的 `script_guard`（`ExitStack`），在锁内读基线、打快照、跑命令、核对恢复，全程不放。界面保存走同一把锁（`scriptbackup.replace` 等），是**阻塞等待**不是失败：
+  命令跑的这段时间（最长 300 s）保存请求会挂着，命令结束才落盘，内容是用户的新版本。`convert_script` 同理，原脚本的锁从读基线持到核对完。`list_scripts` 跟随目录符号链接（按真实路径去重防环），受 `ReadScope`（允许范围 + DENY）与 1000 个 / 32 MiB / 20 万目录条目上限约束。
+  转换器临时副本（`data_dir()/cache/fix_convert/`）用 `trial._remove_tree` 带重试清理，删不掉如实报 `cleanup_pending` 并留 `.cleanup_pending` 标记，下次 `trial.sweep_stale_trials(root=…)` 清。
+
+
+
+### D2b：「问与报」组 + 修复会话 + `POST /api/ai/fix`（`fixtools/ask.py`、`engine/fixsession.py`）
+
+- **五个工具都 `waits_for_user=True`**：`propose_fix`（`approve` 卡，详情列 `ctx.reads` 的 `~/…` 写法与「没读：敏感目录」）、`ask_user`（`choice` 卡，回选项 id；`other` / `skip` 是保留 id）、
+  `pick_file`（`pick` 卡；回答是路径，**先过 `ReadScope.grant` 的敏感硬拦**才加进本会话可读根，只放这一个路径，文件系统根不放）、
+  `prepare_diagnostics`（`outward` 档，`send` 卡；工具**只弹卡**，打包与上传全走现成的「发送问题反馈」对话框，用户不点「发送」就不发，永不附源码——`include_source` 只是卡片上的提示）、
+  `finish`（非阻塞，把结局交给会话）。`ctx.ask is None` / 回答畸形 / 抛异常 = 「未获同意」（`needs_approval`），超时 / 取消 = `no_answer`，绝不默认通过。
+- **会话**（`fixsession.SESSIONS`）：同一时刻一个；id 是 `secrets.token_urlsafe`、比较 `compare_digest`、按项目 id 作用域（别的项目 404）。循环在**本进程**线程里跑（工具要碰应用状态），
+  模型只有 `HttpModel` 一条出站路径；密钥只在内存，卡片文字过 `Redactor` + `readscope.scrub`，SSE `ai.fix` 只带 `{pj, fix_id}`（「重读」提示），状态以 `GET /api/ai/fix/<id>` 为准。
+  卡片回答 `POST …/answer {card_id, answer, text?}` 按卡种类校验（坏回答 400、过期卡 409）；`POST …/cancel` 唤醒阻塞中的工具。预算：40 轮 / 30 分钟（含用户思考时间）/ 60 万 token；`finish` 之后不再请求模型。
+- **连接**：`connection()` 只认当前选中的第三方 API 接口（有地址 / 密钥 / 型号、地址过 `check_base_url`）；只连了 CLI 时 `ai_fix_available=false`（CLI 经 MCP 是 D3）。
+- **验证**：会话结束后由前端重跑准备会话；`finish(fixed)` 只是 AI 的说法。诊断包 `detail-runs.json` 多 `fix_audit`（审计尾部，本来就不含内容）。看护 `tests/test_fixasks.py`、`tests/test_ai_fix_endpoint.py`。
+

@@ -91,3 +91,8 @@
 **`run_command` 不在 D2a，移到后续 PR**：它要在操作系统沙盒里跑任意命令，而沙盒逃逸面太大——Linux 桌面上 bwrap 只隔离挂载，`/run/user/<uid>/bus` 仍可连，命令能 `systemd-run --user` 让宿主的 user manager 改项目；macOS 同类（Apple Events 让 Finder 写、`launchctl` 等）。
 需要能抵御进程代理逃逸的沙盒后再做：Linux 隔离 `/run` 与 D-Bus 等、macOS 限制 mach-lookup / Apple Events，Windows 见 #1358。这台机器上要改东西只能用专用工具。
 `convert_script` 保留持锁结构（单个脚本，没有枚举竞态）：转换器只拿临时副本，原脚本哈希变了用执行前读到的原字节经 `scriptlock` 恢复。
+
+**修订（2026-10-23，D2b）**：「问与报」组落地（`fixtools/ask.py`）与修复会话（`engine/fixsession.py`）：`ctx.ask` 由会话实现，卡片经 SSE 提示 + `GET/POST /api/ai/fix/<id>[/answer|/cancel]` 与前端交互；
+`pick_file` 的路径过 `ReadScope.grant`（敏感硬拦照旧，只放被选的路径）；`prepare_diagnostics` 只弹「发送」卡，上传仍是 ADR 0118 的逐次确认流程，不附源码（用户在对话框里自己勾）。
+`ai_fix_available` 仅在有可用的 API 连接时为真，CLI 经 MCP 的接法仍是 D3。内置执行器的循环在本进程线程里跑（工具要碰应用状态），不起 `agent_runner` 子进程。
+

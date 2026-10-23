@@ -18,6 +18,7 @@ import {
 import { PRIVACY_DOC_URL } from '@/lib/brand'
 import { cn } from '@/lib/utils'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { useProjectStore } from '@/store/projectStore'
 import { Button } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
@@ -172,7 +173,8 @@ export function DiagnosticsSendDialog({
     setRefreshing(false)
     const opts = NO_DETAIL_OPTIONS
     setCategory(DEFAULT_CATEGORY)
-    setNote('')
+    // AI 修复替用户起草的说明（若有）：只预填，用户可改可删；源码勾选框照旧从不勾开始
+    setNote(useDiagSendStore.getState().takePresetNote().slice(0, DEFAULT_NOTE_MAX))
     optionsRef.current = opts
     setOptions(opts)
     setSaveState('idle')
@@ -238,7 +240,10 @@ export function DiagnosticsSendDialog({
         if (stop) return
         setStatus(s)
         if (s.gen !== undefined) actionGen.current = s.gen
-        if (s.state === 'done') return setPhase('done')
+        if (s.state === 'done') {
+          useDiagSendStore.getState().markSent() // AI 修复的「发送」卡据此知道用户真的点了发送
+          return setPhase('done')
+        }
         if (s.state === 'unknown') return setPhase('unknown')
         if (s.state === 'failed') return setPhase('failed')
         if (s.state === 'cancelled') {

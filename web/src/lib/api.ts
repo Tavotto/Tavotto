@@ -3169,22 +3169,67 @@ export interface AiCapabilities {
   /** TAF 实验开关（`ai.taf.enabled`）是否开着；老后端没有，缺省 = 关。助手面板的「从数据出图」只在它为真时出现 */
   taf_enabled?: boolean
   /**
-   * 「使用你的 AI 来修复」的 AI 环境修复任务后端能不能真跑（智能修复主线，ADR 0148）。老后端没有；`false` = 端点契约已定、
-   * 任务还没实现：按钮照常出现（每次失败都出），点击走「这个问题 AI 暂时还不会修」降级
+   * 「使用你的 AI 来修复」的 AI 环境修复任务后端能不能真跑（ADR 0148 / 0149）。老后端没有；`false` = 没有内置执行器能用的 API 连接
+   * （只连了命令行 AI 时也是 false）：按钮照常出现（每次失败都出），点击走「这个问题 AI 暂时还不会修」降级
    */
   ai_fix_available?: boolean
 }
 
-/** `POST /api/ai/fix` 的响应：`ok: false` + 稳定原因码（目前只有 `ai_fix_unavailable`）；成功形状由后续 PR 定 */
-export type AiFixResponse = { ok: true } | { ok: false; reason: string }
+/** `POST /api/ai/fix` 的响应：成功给修复会话 id；`ok: false` + 稳定原因码（`ai_fix_unavailable` 没有可用的 API 连接 / `ai_fix_busy` 已有别的修复在跑） */
+export type AiFixResponse = { ok: true; fix_id: string } | { ok: false; reason: string }
 
-/** 请求 AI 环境修复（ADR 0148）。body：准备会话 id 与脚本（项目相对路径） */
+/** 请求 AI 环境修复（ADR 0148 / 0149）。body：准备会话 id 与脚本（项目相对路径） */
 export const requestAiFix = (body: { session_id: string; script: string }) =>
   jsonFetch<AiFixResponse>('/api/ai/fix', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
+
+/**
+ * 修复会话等用户点的那张卡（ADR 0149「问与报」）。`kind`：`approve` 一句话方案 + 确认 / `choice` 选择题 / `pick` 选文件或文件夹 /
+ * `send` 发送诊断包。内容都是后端已脱敏的文字；`reads` 是主目录写法（`~/…`）的相对路径，不带本机用户名。
+ */
+export interface AiFixCard {
+  id: string
+  kind: 'approve' | 'choice' | 'pick' | 'send'
+  summary: string
+  details?: string
+  reads?: string[]
+  not_read?: string
+  options?: { id: string; label: string }[]
+  allow_other?: boolean
+  pick?: 'file' | 'dir'
+  wants_source?: boolean
+}
+
+export interface AiFixState {
+  fix_id: string
+  state: 'running' | 'waiting' | 'finished'
+  script: string
+  session_id: string
+  card: AiFixCard | null
+  /** 结束后：`fixed | not_fixed`（AI 自己的说法，要由重跑准备会话验证）/ `cancelled` / `failed` */
+  outcome: 'fixed' | 'not_fixed' | 'cancelled' | 'failed' | null
+  summary: string
+  /** `failed` 时 runner 的闭集原因码（`budget` / `auth` / `quota` / `network` …） */
+  reason: string
+  steps: number
+  seq: number
+}
+
+export const fetchAiFix = (fixId: string) =>
+  jsonFetch<AiFixState>(`/api/ai/fix/${encodeURIComponent(fixId)}`, { cache: 'no-store' })
+
+export const answerAiFix = (fixId: string, body: { card_id: string; answer: string; text?: string }) =>
+  jsonFetch<AiFixState>(`/api/ai/fix/${encodeURIComponent(fixId)}/answer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+export const cancelAiFix = (fixId: string) =>
+  jsonFetch<AiFixState>(`/api/ai/fix/${encodeURIComponent(fixId)}/cancel`, { method: 'POST' })
 
 /* --- capabilities 的读取助手（前端只认后端返回的 Agent，不自己列名单）--- */
 
@@ -3931,6 +3976,8 @@ export type ServerEvent =
   | ({ kind: 'project.scan'; scan_id: string; epoch: number } & ProjectScoped)
   /** 准备会话可能有新事实：只是「重读报告」的提示，不带 phase 与序号（以 GET 为准，T01 / T09） */
   | ({ kind: 'preparation.session'; session_id: string; config_revision: number } & ProjectScoped)
+  /** AI 修复会话状态变了（新卡片 / 步骤 / 结束）：只是「重读」提示，不带内容；状态以 `GET /api/ai/fix/<fix_id>` 为准 */
+  | ({ kind: 'ai.fix'; fix_id: string } & ProjectScoped)
   /** 素材（PDF/PNG/JPG）变了：`ids` = 三类的并集，够用时不必再看细分 */
   | ({
       kind: 'assets.changed'
@@ -4042,6 +4089,7 @@ const EVENT_KINDS = [
   'assets.changed',
   'project.scan',
   'preparation.session',
+  'ai.fix',
   'project.error',
   'probe.started',
   'native.session',

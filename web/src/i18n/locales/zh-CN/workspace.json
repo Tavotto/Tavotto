@@ -1289,6 +1289,38 @@
         "creating": "正在创建新的运行环境…",
         "installing": "正在安装所需的包…"
       }
+    },
+    "aiFix": {
+      "running": "AI 正在查找原因…",
+      "cancel": "取消",
+      "confirm": "确认修复",
+      "decline": "不了",
+      "skip": "跳过",
+      "useIt": "用它",
+      "other": "我自己填…",
+      "readTitle": "AI 看过",
+      "readNone": "没有读过项目以外的文件",
+      "notRead": "没读：敏感目录（密钥、钥匙串、.env 等）直接拦",
+      "pickFile": "选择文件…",
+      "pickDir": "选择文件夹…",
+      "pathAria": "路径",
+      "pathPlaceholder": "粘贴路径",
+      "sendTitle": "没修好，发给我们看看？",
+      "sendNote": "AI 写的说明",
+      "sendSource": "AI 想看这个脚本；要不要附上，由你在发送窗口里勾选，默认不附。",
+      "sendReview": "查看并发送",
+      "sendNo": "不发送",
+      "gotIt": "知道了",
+      "busy": "已经有一个修复在进行",
+      "notFixed": "这次没能修好",
+      "failed": {
+        "budget": "AI 在限定的步数内没能修好",
+        "auth": "AI 连接的密钥不对，请到设置里检查",
+        "quota": "AI 的额度用完了",
+        "network": "连不上 AI 服务，稍后再试",
+        "refused": "AI 服务拒绝了这次请求",
+        "other": "AI 这次没能修好"
+      }
     }
   },
   "canvasMenu": {

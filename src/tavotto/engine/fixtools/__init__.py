@@ -1,7 +1,7 @@
 """AI 修复工具箱的注册表（ADR 0149）。
 
 一张 `REGISTRY`，两种接法共用：内置执行器经 `build_agent_tools(ctx)` 变成原生工具调用；CLI 经 MCP 的接法（D3）读同一张表。
-D1 登记「看」「试」两组；D2a 加「改」组（change.py：装包 / 切执行方式 / 换 Python / 换环境 / 跑命令 / 转写 / 回滚，改动前自动打快照）。
+D1 登记「看」「试」两组；D2a 加「改」组（change.py：装包 / 切执行方式 / 换 Python / 换环境 / 跑命令 / 转写 / 回滚，改动前自动打快照）；D2b 加「问与报」五个（`ask.py`：弹卡片等用户点，都是 waits_for_user）。
 工具拿到注入的 `FixContext`，不 import app；每次调用写一行本地审计（`audit.py`，内容不落盘）。
 """
 
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from ..agent_runner.tools import Tool
 from ..agent_runner.wires import ToolResult
+from .ask import ASK_TOOLS
 from .audit import AuditLog
 from .base import BLOCKED_CODES, FIX_SESSION_TIERS, TIERS, FixContext, FixTool
 from .change import CHANGE_TOOLS
@@ -16,7 +17,9 @@ from .observe import OBSERVE_TOOLS
 from .readscope import scrub
 from .trial import TRIAL_TOOLS
 
-REGISTRY: dict[str, FixTool] = {t.name: t for t in (*OBSERVE_TOOLS, *TRIAL_TOOLS, *CHANGE_TOOLS)}
+REGISTRY: dict[str, FixTool] = {
+    t.name: t for t in (*OBSERVE_TOOLS, *TRIAL_TOOLS, *CHANGE_TOOLS, *ASK_TOOLS)
+}
 
 
 def _failed(name: str, code: str, message: str) -> ToolResult:

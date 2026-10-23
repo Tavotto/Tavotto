@@ -187,6 +187,8 @@ class Sources:
     )
     #: 智能修复的「修复经过」（`prepsession.SESSIONS.fix_journeys`，ADR 0148）：每个会话走过的修法、结局码、最后的报错
     fix_journey: list[dict] | None = None
+    #: AI 修复的本地审计尾部（`fixsession.audit_tail`，ADR 0149 §四）：哪个工具、什么档、谁批准、结果码；不含内容
+    fix_audit: list[dict] | None = None
 
 
 @dataclasses.dataclass
@@ -2162,6 +2164,8 @@ def collect_runs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
             "task_snapshots": snapshots,
             # 修复经过（ADR 0148）：每种修法 · 结果 · 最后的报错；与其余字段同一遍 `scrub.obj`
             "fix_journey": list(src.fix_journey or []),
+            # AI 修复的审计（工具调用的名字 / 档 / 批准方 / 结果码；内容本来就不落盘）
+            "fix_audit": list(src.fix_audit or []),
             "log_events": recs,
         }
         doc = scrub.obj(doc)

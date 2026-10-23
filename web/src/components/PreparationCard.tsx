@@ -74,6 +74,7 @@ import { useScriptInputStore } from '@/store/scriptInputStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useUiStore } from '@/store/uiStore'
+import { aiFixFlow } from './AiFixFlow'
 import { ProbeResultsDialog } from './left/ScriptLibrary'
 import { OriginReasonCounts } from './OriginDetails'
 import { ScriptArgsForm } from './ScriptArgsForm'
@@ -1234,6 +1235,29 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
         details={details}
         ghost={convertUi.ghost}
         primary={convertUi.primary}
+      />
+    )
+  }
+  // AI 修复会话在跑 / 在等用户点 / 刚结束（ADR 0149）：同一张卡换内容——一句话 + 一个主按钮，其余折叠
+  const fixUi = fix ? aiFixFlow(entry.key, fix) : null
+  if (fix && fixUi) {
+    return (
+      <Shell
+        label={pt('aria', { script })}
+        step={view.step}
+        icon={
+          fix.phase === 'running'
+            ? toneIcon('busy', 'ai_fix')
+            : fix.phase === 'done' || fix.phase === 'busy'
+              ? toneIcon('bad', 'ai_fix')
+              : <Sparkles size={ICON_SIZE.md} className="shrink-0 text-accent" />
+        }
+        title={fixUi.title}
+        attrs={{ ...attrs, 'data-ai-fix-phase': fix.phase, 'data-ai-fix-card': fix.card?.kind ?? '' }}
+        slot={fixUi.slot}
+        details={fixUi.details}
+        ghost={fixUi.ghost}
+        primary={fixUi.primary}
       />
     )
   }

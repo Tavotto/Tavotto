@@ -733,7 +733,8 @@ def test_audit_failure_never_breaks_the_tool(box):
 
 # =========================================================================== registry / adapter
 def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_running_tools():
-    assert set(REGISTRY) == {
+    # D2b 起注册表还有「问与报」组（`tests/test_fixasks.py` 钉它们）；这里只钉看 / 试两组，其余组不在此断言
+    assert {
         "read_run_report",
         "read_file",
         "list_dir",
@@ -752,6 +753,12 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "select_environment",
         "convert_script",
         "rollback",
+        # D2b 的「问与报」组（细节见 tests/test_fixasks.py）
+        "propose_fix",
+        "ask_user",
+        "pick_file",
+        "prepare_diagnostics",
+        "finish",
     }
     assert {n for n, t in REGISTRY.items() if t.tier == "run"} == {
         "inspect_environment",
@@ -764,6 +771,7 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "tavotto",
         "listed",
         "user_env",
+        "outward",
     }
     for name in ("try_run", "try_import", "inspect_environment"):
         assert "changes nothing" not in REGISTRY[name].description

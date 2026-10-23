@@ -1,21 +1,43 @@
 /**
- * 「✦ 使用你的 AI 来修复」（智能修复主线，ADR 0148）的前端状态：按准备卡条目记「这张卡点过修复之后走到哪了」。
+ * 「✦ 使用你的 AI 来修复」（智能修复主线，ADR 0148 / 0149）的前端状态：按准备卡条目记「这张卡点过修复之后走到哪了」。
  *
  * 流程（维护者裁决：每次失败都出这颗按钮，点它——）：
  * * 没连 AI：打开设置的 AI 页（`setSettingsOpen(true, 'ai')`），记成 `awaiting_connect`；连好回来
  *   （`aiStore.caps` 里出现可用的 AI）就自动接着进入修复，用户不用再点一次；设置关了还没连上就放弃等待；
- * * 已连 AI：调 `startAiFix`（`POST /api/ai/fix`）。AI 环境修复任务本身在后续 PR；契约先定——后端现在一律回
- *   `{ok:false, reason:'ai_fix_unavailable'}`，capabilities 的 `ai_fix_available` 也是 false。两种情况都落成
- *   `unavailable`：卡片说「这个问题 AI 暂时还不会修」+ 主按钮「发送反馈」，按钮本身不隐藏。
+ * * 已连 AI：调 `startAiFix`（`POST /api/ai/fix`）。后端回 `{ok:true, fix_id}` 就进入 `running`；
+ *   `ai_fix_unavailable`（没有内置执行器能用的 API 连接，例如只连了命令行 AI）→ `unavailable`：卡片说
+ *   「这个问题 AI 暂时还不会修」+ 主按钮「发送反馈」；`ai_fix_busy`（已有别的修复在跑）→ `busy`；
+ * * `running` / `waiting`：后端修复会话在跑。SSE `ai.fix` 只是「重读」提示，状态以 `GET /api/ai/fix/<id>` 为准，
+ *   另有轻量轮询兜底（SSE 丢了也不会卡）。`waiting` 带一张要用户点的卡（`card`）：回答走 `answer`，取消走 `cancel`；
+ * * 结束（`finished`）：`fixed` → 清掉条目并**重跑准备会话**验证（不信 AI 的一面之词）；`not_fixed` / `failed` →
+ *   `done`，卡片说结果、用户点「知道了」回到原来的失败卡；`cancelled` → 直接清掉。
  *
- * 不存任何用户内容：只有条目 key、会话 id、脚本相对路径与阶段名；不持久化。
+ * 不存任何用户内容以外的东西：卡片文字只在内存里（后端已脱敏），不持久化。
  */
 import { create } from 'zustand'
-import { requestAiFix, usableAgents } from '@/lib/api'
+import {
+  ApiError,
+  answerAiFix,
+  cancelAiFix,
+  fetchAiFix,
+  requestAiFix,
+  usableAgents,
+  type AiFixCard,
+  type AiFixState,
+} from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
+import { useDiagSendStore } from '@/store/diagSendStore'
+import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useUiStore } from '@/store/uiStore'
 
-export type AiFixPhase = 'awaiting_connect' | 'starting' | 'unavailable' | 'running'
+export type AiFixPhase =
+  | 'awaiting_connect'
+  | 'starting'
+  | 'unavailable'
+  | 'busy'
+  | 'running'
+  | 'waiting'
+  | 'done'
 
 export interface AiFixRef {
   session_id: string
@@ -27,65 +49,209 @@ export interface AiFixRef {
 export interface AiFixEntry {
   phase: AiFixPhase
   ref: AiFixRef
+  fixId?: string
+  /** `waiting` 时要用户点的那张卡 */
+  card?: AiFixCard
+  /** `done` 时：AI 的结局与它说的一句话；`failed` 带 runner 的原因码 */
+  outcome?: 'not_fixed' | 'failed'
+  summary?: string
+  reason?: string
+  /** 「发送」卡：用户点过「查看并发送」那一刻的发送计数；之后计数增加 = 真的发出去了 */
+  sendBase?: number
+  /** 回答请求在途（按钮置忙，防连点） */
+  answering?: boolean
 }
 
-interface AiFixState {
+interface AiFixStoreState {
   entries: Record<string, AiFixEntry>
   /** 点「✦ 使用你的 AI 来修复」：没连 AI 去设置里连，已连就开始修复 */
   request: (key: string, ref: AiFixRef) => Promise<void>
   /** 已连 AI：开始修复（`ai_fix_available === false` 或端点回 `ai_fix_unavailable` 都落成 `unavailable`） */
   startAiFix: (key: string, ref: AiFixRef) => Promise<void>
+  /** 重读修复会话的状态并落地 */
+  refresh: (key: string) => Promise<void>
+  /** SSE `ai.fix`：只是「重读」提示 */
+  onHint: (fixId: string) => void
+  /** 回答当前卡片 */
+  answer: (key: string, answer: string, text?: string) => Promise<void>
+  /** 取消修复 */
+  cancel: (key: string) => Promise<void>
+  /** 「发送」卡：用户点了「查看并发送」（打开发送对话框，预填 AI 起草的说明；源码默认不勾） */
+  openSend: (key: string) => void
   clear: (key: string) => void
   reset: () => void
 }
 
-export const useAiFixStore = create<AiFixState>((set, get) => ({
-  entries: {},
+/** 轮询兜底的间隔：SSE 提示正常到达时几乎用不上 */
+const POLL_MS = 2000
+const timers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  request: async (key, ref) => {
-    let caps = useAiStore.getState().caps
-    if (!caps) {
-      // 还没探测过本机的 AI：先探测一次再判断（失败当作没连）
-      try {
-        await useAiStore.getState().loadCaps()
-      } catch {
-        /* 探测失败：按没连处理 */
-      }
-      caps = useAiStore.getState().caps
-    }
-    if (usableAgents(caps).length === 0) {
-      set((s) => ({ entries: { ...s.entries, [key]: { phase: 'awaiting_connect', ref } } }))
-      useUiStore.getState().setSettingsOpen(true, 'ai')
-      return
-    }
-    await get().startAiFix(key, ref)
-  },
+const stop = (key: string) => {
+  const t = timers.get(key)
+  if (t !== undefined) clearTimeout(t)
+  timers.delete(key)
+}
 
-  startAiFix: async (key, ref) => {
-    const put = (phase: AiFixPhase) => set((s) => ({ entries: { ...s.entries, [key]: { phase, ref } } }))
-    put('starting')
-    if (useAiStore.getState().caps?.ai_fix_available === false) {
-      put('unavailable')
-      return
-    }
-    try {
-      const res = await requestAiFix({ session_id: ref.session_id, script: ref.script })
-      put(res.ok ? 'running' : 'unavailable')
-    } catch {
-      // 请求本身失败（断线 / 老后端没有这个端点）：同样落到反馈，不让用户卡在一个转圈的按钮上
-      put('unavailable')
-    }
-  },
-
-  clear: (key) =>
+export const useAiFixStore = create<AiFixStoreState>((set, get) => {
+  const put = (key: string, patch: (e: AiFixEntry) => AiFixEntry | null) =>
     set((s) => {
-      if (!(key in s.entries)) return s
-      const { [key]: _drop, ...rest } = s.entries
-      return { entries: rest }
-    }),
+      const cur = s.entries[key]
+      if (!cur) return s
+      const next = patch(cur)
+      if (next === null) {
+        const { [key]: _drop, ...rest } = s.entries
+        return { entries: rest }
+      }
+      return { entries: { ...s.entries, [key]: next } }
+    })
 
-  reset: () => set({ entries: {} }),
-}))
+  const schedule = (key: string) => {
+    stop(key)
+    const e = get().entries[key]
+    if (!e || (e.phase !== 'running' && e.phase !== 'waiting')) return
+    timers.set(
+      key,
+      setTimeout(() => void get().refresh(key), POLL_MS),
+    )
+  }
+
+  /** 结束：fixed → 清掉并重跑准备会话验证；cancelled → 清掉；其余落成 `done` */
+  const settle = (key: string, st: AiFixState) => {
+    stop(key)
+    const entry = get().entries[key]
+    if (!entry) return
+    if (st.outcome === 'cancelled') return get().clear(key)
+    if (st.outcome === 'fixed') {
+      get().clear(key)
+      // 重跑准备会话：这一次是验证，不是用户新点的「运行」之外的东西——只重新检查并按报告说话
+      const prep = useProjectPreparationStore.getState()
+      const target = prep.entries[key]?.target
+      if (target) void prep.open(target, { run: true, rerun: true })
+      return
+    }
+    put(key, (e) => ({
+      ...e,
+      phase: 'done',
+      card: undefined,
+      outcome: st.outcome === 'not_fixed' ? 'not_fixed' : 'failed',
+      summary: st.summary,
+      reason: st.reason,
+    }))
+  }
+
+  return {
+    entries: {},
+
+    request: async (key, ref) => {
+      let caps = useAiStore.getState().caps
+      if (!caps) {
+        // 还没探测过本机的 AI：先探测一次再判断（失败当作没连）
+        try {
+          await useAiStore.getState().loadCaps()
+        } catch {
+          /* 探测失败：按没连处理 */
+        }
+        caps = useAiStore.getState().caps
+      }
+      if (usableAgents(caps).length === 0) {
+        set((s) => ({ entries: { ...s.entries, [key]: { phase: 'awaiting_connect', ref } } }))
+        useUiStore.getState().setSettingsOpen(true, 'ai')
+        return
+      }
+      await get().startAiFix(key, ref)
+    },
+
+    startAiFix: async (key, ref) => {
+      const setPhase = (phase: AiFixPhase, extra: Partial<AiFixEntry> = {}) =>
+        set((s) => ({ entries: { ...s.entries, [key]: { phase, ref, ...extra } } }))
+      setPhase('starting')
+      if (useAiStore.getState().caps?.ai_fix_available === false) {
+        setPhase('unavailable')
+        return
+      }
+      try {
+        const res = await requestAiFix({ session_id: ref.session_id, script: ref.script })
+        if (res.ok) {
+          setPhase('running', { fixId: res.fix_id })
+          schedule(key)
+          void get().refresh(key)
+        } else setPhase(res.reason === 'ai_fix_busy' ? 'busy' : 'unavailable')
+      } catch {
+        // 请求本身失败（断线 / 老后端没有这个端点）：同样落到反馈，不让用户卡在一个转圈的按钮上
+        setPhase('unavailable')
+      }
+    },
+
+    refresh: async (key) => {
+      const fixId = get().entries[key]?.fixId
+      if (!fixId) return
+      try {
+        const st = await fetchAiFix(fixId)
+        // 读的期间条目被清掉 / 换了一次修复：丢弃
+        if (get().entries[key]?.fixId !== fixId) return
+        if (st.state === 'finished') return settle(key, st)
+        put(key, (e) => ({
+          ...e,
+          phase: st.state === 'waiting' && st.card ? 'waiting' : 'running',
+          // 同一张卡不重置「发送」卡的计数基线
+          card: st.card ?? undefined,
+          sendBase: st.card && e.card?.id === st.card.id ? e.sendBase : undefined,
+        }))
+      } catch (e) {
+        // 读不到：断线就下一轮再试；会话没了（404，后端重启丢了它）就放弃，回到原来的失败卡
+        if (e instanceof ApiError && e.status === 404) return get().clear(key)
+      }
+      schedule(key)
+    },
+
+    onHint: (fixId) => {
+      for (const [key, e] of Object.entries(get().entries)) if (e.fixId === fixId) void get().refresh(key)
+    },
+
+    answer: async (key, answer, text) => {
+      const e = get().entries[key]
+      if (!e?.fixId || !e.card || e.answering) return
+      const { fixId, card } = e
+      put(key, (x) => ({ ...x, answering: true }))
+      try {
+        await answerAiFix(fixId, { card_id: card.id, answer, ...(text ? { text } : {}) })
+      } catch {
+        /* 卡片已过期 / 回答被拒：下面的重读会把真实状态摆出来 */
+      }
+      put(key, (x) => ({ ...x, answering: false }))
+      await get().refresh(key)
+    },
+
+    cancel: async (key) => {
+      const fixId = get().entries[key]?.fixId
+      if (!fixId) return get().clear(key)
+      try {
+        await cancelAiFix(fixId)
+      } catch {
+        /* 会话已经没了：照样收起 */
+      }
+      await get().refresh(key)
+    },
+
+    openSend: (key) => {
+      const e = get().entries[key]
+      if (!e?.card || e.card.kind !== 'send') return
+      const diag = useDiagSendStore.getState()
+      put(key, (x) => ({ ...x, sendBase: diag.sentCount }))
+      diag.openWithNote(e.card.summary)
+    },
+
+    clear: (key) => {
+      stop(key)
+      put(key, () => null)
+    },
+
+    reset: () => {
+      for (const key of [...timers.keys()]) stop(key)
+      set({ entries: {} })
+    },
+  }
+})
 
 /** 此刻还在等用户连 AI 的条目 */
 const waiting = () => Object.entries(useAiFixStore.getState().entries).filter(([, e]) => e.phase === 'awaiting_connect')
@@ -100,4 +266,14 @@ useAiStore.subscribe((s, prev) => {
 useUiStore.subscribe((s, prev) => {
   if (!prev.settingsOpen || s.settingsOpen) return
   for (const [key] of waiting()) useAiFixStore.getState().clear(key)
+})
+
+// 「发送」卡：用户在发送对话框里真的点了「发送」并成功（发送计数增加）→ 回答 `sent`
+useDiagSendStore.subscribe((s, prev) => {
+  if (s.sentCount === prev.sentCount) return
+  for (const [key, e] of Object.entries(useAiFixStore.getState().entries)) {
+    if (e.card?.kind === 'send' && e.sendBase !== undefined && s.sentCount > e.sendBase) {
+      void useAiFixStore.getState().answer(key, 'sent')
+    }
+  }
 })

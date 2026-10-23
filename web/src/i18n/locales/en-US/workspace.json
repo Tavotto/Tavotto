@@ -1355,6 +1355,38 @@
         "creating": "Creating the new environment…",
         "installing": "Installing the packages the script needs…"
       }
+    },
+    "aiFix": {
+      "running": "AI is looking for the cause…",
+      "cancel": "Cancel",
+      "confirm": "Confirm fix",
+      "decline": "No thanks",
+      "skip": "Skip",
+      "useIt": "Use it",
+      "other": "Type your own…",
+      "readTitle": "What the AI looked at",
+      "readNone": "Nothing outside the project was read",
+      "notRead": "Not read: sensitive places (keys, keychains, .env and similar) are blocked",
+      "pickFile": "Choose a file…",
+      "pickDir": "Choose a folder…",
+      "pathAria": "Path",
+      "pathPlaceholder": "Paste a path",
+      "sendTitle": "Couldn't fix it; send it to us to take a look?",
+      "sendNote": "The AI's note",
+      "sendSource": "The AI would like to see this script. Whether to attach it is your choice in the send window; it is off by default.",
+      "sendReview": "Review and send",
+      "sendNo": "Don't send",
+      "gotIt": "Got it",
+      "busy": "A fix is already in progress",
+      "notFixed": "Couldn't fix it this time",
+      "failed": {
+        "budget": "The AI ran out of steps before fixing it",
+        "auth": "The AI connection's key was rejected; check it in Settings",
+        "quota": "The AI's quota is used up",
+        "network": "Can't reach the AI service; try again later",
+        "refused": "The AI service refused this request",
+        "other": "The AI couldn't fix it this time"
+      }
     }
   },
   "canvasMenu": {

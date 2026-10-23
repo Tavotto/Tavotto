@@ -9,6 +9,7 @@ import {
   type ServerEvent,
 } from '@/lib/api'
 import { hintAiRev, setAiSettledNotifier, useAiStore, type DonePayload } from '@/store/aiStore'
+import { useAiFixStore } from '@/store/aiFixStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -315,6 +316,11 @@ export function handleServerEvent(ev: ServerEvent) {
     case 'preparation.session':
       // 准备会话可能有新事实：只是「重读」提示，报告以 GET 为准（SSE 丢了，轮询 / 重连也会补上；T09）
       useProjectPreparationStore.getState().onHint(ev.session_id)
+      break
+
+    case 'ai.fix':
+      // AI 修复会话状态变了（新卡片 / 结束）：只是「重读」提示，状态以 GET 为准（ADR 0149）
+      useAiFixStore.getState().onHint(ev.fix_id)
       break
 
     case 'ai.delta':

@@ -80,6 +80,10 @@ class FixContext:
     allowed_tiers: frozenset[str] = frozenset({"observe"})
     #: 项目外的读取清单（供卡片详情列出）
     reads: list[dict] = field(default_factory=list)
+    #: 弹卡并阻塞等用户点（D2b 的修复会话实现；None = 没有界面，需要用户点的一律按「未获同意」处理）。
+    #: 入参 card: {"kind": "approve"|"choice"|"pick"|"send", "tool": str, "summary": str, ...}
+    #: 返回 {"answer": "yes"|"no"|<选项 id>|<路径>|"sent"|"cancelled"|"timeout", ...}
+    ask: Callable[[dict], dict] | None = None
     step: int = 0
     case_insensitive: bool | None = None
     extra_deny: list[Path] | None = None

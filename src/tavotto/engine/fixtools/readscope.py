@@ -380,6 +380,23 @@ class ReadScope:
             return Resolved(False, reason=REASON_OUTSIDE)
         return Resolved(True, real=real_raw, in_project=self._under(real, self.project_root))
 
+    def grant(self, raw: object) -> Resolved:
+        """`pick_file`：用户亲手选的路径。敏感硬拦照旧（词法与解析后各判一次）；通过就把它加进本会话的可读根，
+        主目录外的也能读。只加这一个路径（文件或文件夹），不放宽别的位置。"""
+        lexical = self.expand(raw)
+        if lexical is None:
+            return Resolved(False, reason=REASON_BAD_PATH)
+        is_dir = os.path.isdir(lexical)
+        if self._path_denied(self._norm(lexical), is_dir=is_dir):
+            return Resolved(False, reason=REASON_DENIED)
+        real_raw = os.path.realpath(lexical)
+        real = self._norm(real_raw)
+        if self._path_denied(real, is_dir=is_dir):
+            return Resolved(False, reason=REASON_DENIED)
+        if not any(self._under(real, r) for r in self._roots):
+            self._roots.append(real)
+        return Resolved(True, real=real_raw, in_project=self._under(real, self.project_root))
+
     def is_denied(self, real_path: str) -> bool:
         return self._path_denied(
             self._norm(os.path.realpath(real_path)), is_dir=os.path.isdir(real_path)
