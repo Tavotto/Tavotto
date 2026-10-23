@@ -113,12 +113,6 @@ jobs:
           # Process boundary: the scientific interpreter must not carry Tavotto's RenderCore packages.
           "$TAVOTTO_PYTHON" scripts/ci/compat_guardian_research.py verify-science-environment \
             --python "$TAVOTTO_SCIENCE_PYTHON"
-      - name: Restore cached TeX packages
-        if: ${{ !cancelled() && matrix.tex }}
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/apt-archives
-          key: tex-apt-${{ runner.os }}-${{ hashFiles('.github/workflows/compat-research-s0.yml') }}
       - name: Prepare original TeX prerequisites
         id: tex
         if: ${{ !cancelled() && matrix.tex }}
@@ -126,17 +120,14 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          archives="$RUNNER_TEMP/apt-archives"
-          mkdir -p "$archives/partial"
           # An own, shorter limit so a stuck install leaves a marker the receipt can report.
           timeout 2400 bash -c '
             set -euo pipefail
             sudo apt-get update -qq
-            sudo apt-get -o Dir::Cache::archives="$1" install -y --no-install-recommends \
+            sudo apt-get install -y --no-install-recommends \
               texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra texlive-science cm-super dvipng
-          ' _ "$archives"
+          '
           code=$?
-          sudo chown -R "$(id -u):$(id -g)" "$archives" || true
           if [[ "$code" == 124 ]]; then echo timeout > "$RUNNER_TEMP/tex-setup.txt"; fi
           exit "$code"
       - name: Observe native and Tavotto without rewriting the research script

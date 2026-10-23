@@ -2090,6 +2090,37 @@ class TestBuildReuseAndCaches:
             ):
                 assert bad not in path, (path, bad)
 
+    #: 除 ci.yml（上面有逐条枚举）外，哪些 workflow 允许出现任何形式的缓存；其余一律不许。
+    #: 新增缓存要先回 docs/rules/ci/build-reuse-and-caches.md 归类，再来改这里。
+    CACHE_PATTERN = re.compile(
+        r"actions/cache|Swatinem/rust-cache|(?m:^\s*cache(-dependency-path)?:)|Dir::Cache|PIP_CACHE"
+    )
+    CACHING_WORKFLOWS = {
+        "ci.yml",
+        "desktop-tauri.yml",
+        "nightly.yml",
+        "performance-agent.yml",
+        "release.yml",
+    }
+
+    def test_no_workflow_outside_the_enumeration_introduces_a_cache(self):
+        """缓存是枚举：ci.yml 另有逐条看护；其余 workflow 里出现缓存的文件集合是闭集，
+        研究 S0 workflow 尤其不许有（APT `.deb`、pip、setup-* 的 `cache:` 都不在批准的四类里）。"""
+        found = {
+            path.name
+            for path in WF.glob("*.yml")
+            if self.CACHE_PATTERN.search(
+                "\n".join(
+                    line
+                    for line in path.read_text(encoding="utf-8").splitlines()
+                    if not line.lstrip().startswith("#")
+                )
+            )
+        }
+        assert found == self.CACHING_WORKFLOWS, sorted(found ^ self.CACHING_WORKFLOWS)
+        research = (WF / "compat-research-s0.yml").read_text(encoding="utf-8")
+        assert not self.CACHE_PATTERN.search(research)
+
     #: setup-node 的 pnpm 缓存：开了的 job 必须按 web/pnpm-lock.yaml 取 key；`package` 四条腿没开
     #: （CI02 决定不加：合并组上每个候选 ref 都冷，加了只是多四份 57 MiB 的 save——文档 §4；
     #: 种子落地后可回来开，那是另一个 PR）。`cache-seed` 是 push main 上的种子（每个 os 一条腿
