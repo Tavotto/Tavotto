@@ -334,6 +334,11 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 
 **比较（`compare`，纯函数）**：`zero_figures`（原生 N 图 / Tavotto 0 图）、`fewer_figures`（partial_capture）、
 `same_path_content_mismatch`（原生最后写入该路径的图 vs Tavotto 保留的图）、`title_missing`。差异带 Guardian 失败类别。
+多输出变换另比输出本身（`output_call_differences`，Codex #1368 P1）：`multi_format` 比同一 stem 原生写出的格式集合与产品记录的 savefig 格式
+（`format_set_mismatch`）；`pdfpages` 比原生 PDF 的页数（driver 数 `/Type /Page`）与产品记录的 pdf 保存次数（`page_count_mismatch`）——
+`PdfPages.savefig` 不是 `Figure.savefig`，产品不记录它、没有页的概念，所以多页 PDF 目前恒为已知差异。产品没观察到调用表的 stem 不在此比。
+去重键是「轴向量 + AST 签名 + 判定身份」：判定身份取父本用例的 `stem / entry / expected / expected_figures / semantic_expectations / mutations / export_formats`，
+同一脚本服务的多个 must 用例（如 `ca_basic_series.py`）各自保留候选，判定相同的孪生父本仍去重。
 Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探测）再起一次性 worker 取 manifest。
 `show()` 之后 `close()` 的图原生算「出现过」（`native_ref` 记录 show 时的在开图）。
 
