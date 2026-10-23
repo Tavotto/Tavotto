@@ -351,6 +351,7 @@ export const useContactStore = create<ContactState>((set, get) => {
       if (body.length > (capability?.body_max ?? 5000)) return set({ formError: 'bodyTooLong' })
       if (draft.subject.trim().length > (capability?.subject_max ?? 120)) return set({ formError: 'subjectTooLong' })
       if (email && !validEmail(email)) return set({ formError: 'emailInvalid' })
+      if (!email && get().rememberedEmail) get().forgetEmail() // 清空邮箱框再发 = 忘记已记住的邮箱
       const mine = ++runToken
       set({ formError: null, failure: null, status: null, phase: draft.attachDiag ? 'diag' : 'sending' })
       let reportId: string | undefined

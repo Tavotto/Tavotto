@@ -51,6 +51,7 @@ import {
   type DiagSendPrepared,
 } from '@/lib/api'
 import { FEEDBACK_EMAIL } from '@/lib/brand'
+import { useUiStore } from '@/store/uiStore'
 import { i18n, t } from '@/i18n'
 import enDialogs from '@/i18n/locales/en-US/dialogs.json'
 import zhDialogs from '@/i18n/locales/zh-CN/dialogs.json'
@@ -362,8 +363,11 @@ describe('对话框的四个状态', () => {
     expect(q('[data-contact-status="done"]')).not.toBeNull()
     expect(q('[data-contact-message-id]')!.textContent).toContain(MSG)
     expect(q('[data-contact-status="done"]')!.textContent).toContain(t('contact.sentReplyHere', { ns: 'dialogs' }))
-    // 成功后邮箱在本机记住（可删）
+    // 成功后邮箱在本机记住（清空邮箱框即忘记）
     expect(localStorage.getItem('tavotto.contact.email')).toBe('me@example.org')
+    // 成功后写信表单整个退场，只剩结果卡
+    expect(q('[data-contact-body]')).toBeNull()
+    expect(q('[data-contact-text]')).toBeNull()
   })
 
   async function noInboxCase(email: string, key: string) {
@@ -382,6 +386,7 @@ describe('对话框的四个状态', () => {
     expect(done.textContent).not.toContain(t('contact.sentReplyHere', { ns: 'dialogs' }))
     expect(done.textContent).toContain(MSG)
     expect(q('[data-contact-inbox-missing]')).not.toBeNull()
+    expect(q('[data-contact-body]')).toBeNull()
   }
 
   it('已送达但本机存不下回信（inbox_saved=false），留了邮箱：说作者会回到邮箱', async () => {
@@ -439,6 +444,9 @@ describe('对话框的四个状态', () => {
     await click(copyAddress)
     expect(writeText.mock.calls.map((c) => c[0])).toEqual(['很重要的一段话', FEEDBACK_EMAIL])
     expect(copyContent.textContent).toBe(t('contact.copied', { ns: 'dialogs' })) // 复制后自己说「已复制」
+    // 复制地址：底部通知轨的轻提示说「已复制 地址」（不挤页面）；失败卡里不再有「或用自己的邮箱发到」那句
+    expect(useUiStore.getState().status).not.toBeNull()
+    expect(fallback.textContent).not.toContain(FEEDBACK_EMAIL)
 
     // 再试一次 = 又一次发送，带的还是那份草稿
     vi.mocked(fetchContactStatus).mockResolvedValue(st({ state: 'done', stage: null, message_id: MSG, route: 'cn' }))
@@ -507,6 +515,7 @@ describe('对话框的四个状态', () => {
       expect(q('[data-contact-file="shot.png"] img[data-contact-file-thumb]')).not.toBeNull()
       expect(q('[data-contact-file="paper.pdf"] img')).toBeNull()
       expect(q('[data-contact-file="paper.pdf"] [data-contact-file-ext]')!.textContent).toBe('PDF')
+      expect(q('[data-contact-file="paper.pdf"] [data-contact-file-kind] svg')).not.toBeNull()
       expect(q('[data-contact-file="paper.pdf"] [data-contact-file-name]')!.textContent).toBe('paper.pdf')
       expect(q('[data-contact-pick]')).not.toBeNull()
       await click(q('[data-contact-file="shot.png"] [data-contact-file-remove]'))
@@ -543,17 +552,34 @@ describe('对话框的四个状态', () => {
     }
   })
 
-  it('记住的邮箱可以删', async () => {
+  it('记住的邮箱预填在框里；清空后离开输入框就忘记（没有单独的「忘记」行）', async () => {
     localStorage.setItem('tavotto.contact.email', 'me@example.org')
     resetStore({ rememberedEmail: 'me@example.org', draft: { ...EMPTY_DRAFT, replyEmail: 'me@example.org' } })
     await render(<ContactHost />)
     await act(async () => useContactStore.getState().setOpen(true))
-    expect(q<HTMLInputElement>('[data-contact-email]')!.value).toBe('me@example.org')
-    await click(q('[data-contact-email-forget]'))
-    expect(localStorage.getItem('tavotto.contact.email')).toBeNull()
-    expect(q<HTMLInputElement>('[data-contact-email]')!.value).toBe('')
+    expect(q<HTMLTextAreaElement>('[data-contact-email]')!.value).toBe('me@example.org')
     expect(q('[data-contact-email-remembered]')).toBeNull()
+    expect(q('[data-contact-email-forget]')).toBeNull()
+    await typeInto(q<HTMLInputElement>('[data-contact-email]'), '')
+    await act(async () => {
+      q<HTMLInputElement>('[data-contact-email]')!.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    })
+    expect(localStorage.getItem('tavotto.contact.email')).toBeNull()
+    expect(useContactStore.getState().rememberedEmail).toBeNull()
   })
+
+  it('记住的邮箱：清空后直接发送也忘记', async () => {
+    localStorage.setItem('tavotto.contact.email', 'me@example.org')
+    resetStore({ rememberedEmail: 'me@example.org', draft: { ...EMPTY_DRAFT, replyEmail: '', body: '内容' } })
+    vi.mocked(sendContact).mockResolvedValue(st({}))
+    vi.mocked(fetchContactStatus).mockResolvedValue(st({ state: 'done', stage: null, message_id: MSG, route: 'cn' }))
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true))
+    await click(q('[data-contact-send]'))
+    await settle(800)
+    expect(localStorage.getItem('tavotto.contact.email')).toBeNull()
+  })
+
 })
 
 describe('附上诊断信息：prepare → 预览 → start → 带编号发信', () => {

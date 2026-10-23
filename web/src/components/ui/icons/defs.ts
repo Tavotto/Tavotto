@@ -233,6 +233,7 @@ export const ICON_DEFS = {
   FolderPlus: { s: [FOLDER, 'M12 10.5v6', 'M9 13.5h6'] },
   // 主页 = 项目列表（顶栏左上角「回到项目列表」）：屋形外框 + 一扇门，两个元素
   House: { s: [poly([[4, 10], [12, 3.5], [20, 10], [20, 20], [4, 20]], 2.5), 'M9.5 20v-4.5a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V20'] },
+  File: { s: [DOC, DOC_FOLD] },
   FileUp: { s: [DOC, DOC_FOLD, 'M12 17.5v-6', 'M9.5 14l2.5-2.5 2.5 2.5'] },
   FileCodeCorner: { s: [DOC, DOC_FOLD, 'M10 12l-2 2.5 2 2.5', 'M14 12l2 2.5-2 2.5'] },
   FileExclamationPoint: { s: [DOC, DOC_FOLD, 'M12 11v3.5'], f: [dot(12, 17.5)] },

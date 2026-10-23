@@ -14,7 +14,9 @@ import { TextArea, TextInput } from '../ui/Input'
 import { Notice } from '../ui/Notice'
 import { Popover } from '../ui/Popover'
 import { ProgressBar } from '../ui/ProgressBar'
-import { Plus, Trash2, X } from '../ui/icons'
+import { Check, File as FileIcon, Plus, Trash2, X } from '../ui/icons'
+import { useUiStore } from '@/store/uiStore'
+import { msg } from '@/i18n/message'
 import { ICON_SIZE } from '../ui/Icon'
 import { CopyButton } from '../settings/CopyButton'
 import { WeComQrImage, useWeComContactVisible } from '../settings/WeComContact'
@@ -76,7 +78,7 @@ function extOf(name: string): string {
   return i >= 0 ? name.slice(i + 1, i + 6).toUpperCase() : ''
 }
 
-/** 一个已添加的附件：88 见方；图片是缩略图，其它是扩展名徽标；文件名在下面截断；右上角 × 删除。 */
+/** 一个已添加的附件：88 见方；图片是缩略图，其它是文件图标 + 下方的扩展名徽标；文件名在下面截断；右上角 × 删除。 */
 function AttachTile({ file, onRemove, disabled }: { file: File; onRemove: () => void; disabled: boolean }) {
   const isImage = file.type.startsWith('image/')
   return (
@@ -88,11 +90,14 @@ function AttachTile({ file, onRemove, disabled }: { file: File; onRemove: () => 
       >
         {isImage && <Thumb file={file} />}
         {(!isImage || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') && (
-          <span
-            className="rounded-sm bg-accent-subtle px-1.5 py-0.5 text-xs font-medium tracking-tight text-accent"
-            data-contact-file-ext
-          >
-            {extOf(file.name) || '···'}
+          <span className="flex flex-col items-center gap-1.5" data-contact-file-kind>
+            <FileIcon size={ICON_SIZE.lg} className="text-ink-3" />
+            <span
+              className="rounded-sm bg-accent-subtle px-1.5 py-0.5 text-xs font-medium tracking-tight text-accent"
+              data-contact-file-ext
+            >
+              {extOf(file.name) || '···'}
+            </span>
           </span>
         )}
       </div>
@@ -106,7 +111,7 @@ function AttachTile({ file, onRemove, disabled }: { file: File; onRemove: () => 
         disabled={disabled}
         onClick={onRemove}
         data-contact-file-remove
-        className="absolute right-1 top-1 rounded-full bg-surface/90 shadow-sm"
+        className="absolute right-1 top-1 rounded-full border border-border bg-surface/90"
       >
         <X size={ICON_SIZE.sm} />
       </IconButton>
@@ -181,7 +186,16 @@ function WeComEntry() {
  * 失败卡里的复制动作：按钮上写明复制什么（「复制内容」「复制地址」），复制后自己说「已复制」两秒。
  * 剪贴板不可用时保持原样——用户仍可从旁边的文字手工选中。这里只写剪贴板，不调起任何别的程序。
  */
-function CopyAction({ text, label }: { text: string | (() => string); label: string }) {
+function CopyAction({
+  text,
+  label,
+  toast,
+}: {
+  text: string | (() => string)
+  label: string
+  /** 复制成功后在底部通知轨说一句（不挤页面）；缺省按钮自己说「已复制」 */
+  toast?: string
+}) {
   const [copied, setCopied] = useState(false)
   useEffect(() => {
     if (!copied) return
@@ -195,7 +209,10 @@ function CopyAction({ text, label }: { text: string | (() => string); label: str
       onClick={() => {
         const value = typeof text === 'function' ? text() : text
         void navigator.clipboard?.writeText(value).then(
-          () => setCopied(true),
+          () => {
+            setCopied(true)
+            if (toast) useUiStore.getState().setStatus(msg('contact.addressCopied', { address: toast }, 'dialogs'))
+          },
           () => {},
         )
       }}
@@ -277,20 +294,6 @@ export function ContactDialog() {
         />
       </div>
     )
-  } else if (phase === 'done') {
-    statusNode = (
-      <Notice tone="ok" title={cs('sentTitle')} data-contact-status="done">
-        <span className="flex flex-col gap-1">
-          <span className="flex flex-wrap items-center gap-x-2">
-            <span data-contact-message-id>{cs('sentNumber', { id: s.messageId ?? '' })}</span>
-            {s.messageId && <CopyButton text={s.messageId} label={cs('sentCopyNumber')} appearance="icon" />}
-          </span>
-          <span data-contact-inbox-missing={s.inboxMissing ? '' : undefined}>
-            {cs(s.inboxMissing ? (draft.replyEmail.trim() ? 'sentNoInboxEmail' : 'sentNoInboxNoEmail') : 'sentReplyHere')}
-          </span>
-        </span>
-      </Notice>
-    )
   } else if (phase === 'failed' && s.failure) {
     const wait = s.failure.retryable ? retryText(s.failure.retryAfter) : null
     statusNode = (
@@ -302,8 +305,7 @@ export function ContactDialog() {
           {/* 没有邮件协议链接、也不唤起邮件程序：只给「复制内容 / 复制地址」，由用户自己决定怎么发 */}
           <span className="flex flex-wrap items-center gap-1.5" data-contact-fallback>
             <CopyAction text={() => draftText(draft)} label={cs('copyContent')} />
-            <CopyAction text={recipient} label={cs('copyAddress')} />
-            <span className="type-caption">{cs('failedFallback', { address: recipient })}</span>
+            <CopyAction text={recipient} label={cs('copyAddress')} toast={recipient} />
           </span>
         </span>
       </Notice>
@@ -317,6 +319,31 @@ export function ContactDialog() {
   } else if (s.status?.state === 'cancelled' || (phase === 'edit' && s.status?.state === 'idle')) {
     statusNode = <p className="type-caption">{cs('cancelledNote')}</p>
   }
+
+  // 发送成功：写信表单整个退场，窗口里只剩这张结果卡（含「存不下回信凭据」两种）
+  const doneView = (
+    <div
+      className="flex flex-col items-center gap-3 px-2 py-8 text-center"
+      role="status"
+      data-contact-status="done"
+    >
+      <span className="flex size-12 items-center justify-center rounded-full bg-ok-surface text-ok-content">
+        <Check size={ICON_SIZE.lg} />
+      </span>
+      <p className="type-section" data-contact-sent-title>
+        {cs('sentTitle')}
+      </p>
+      <p className="text-sm text-ink-2" data-contact-inbox-missing={s.inboxMissing ? '' : undefined}>
+        {cs(s.inboxMissing ? (draft.replyEmail.trim() ? 'sentNoInboxEmail' : 'sentNoInboxNoEmail') : 'sentReplyHere')}
+      </p>
+      <span className="flex items-center gap-1 text-sm text-ink-3">
+        <span className="font-mono" data-contact-message-id>
+          {cs('sentNumber', { id: s.messageId ?? '' })}
+        </span>
+        {s.messageId && <CopyButton text={s.messageId} label={cs('sentCopyNumber')} appearance="icon" />}
+      </span>
+    </div>
+  )
 
   const writeView = (
     <div className="flex flex-col gap-4" data-contact-body {...dropHandlers}>
@@ -383,7 +410,7 @@ export function ContactDialog() {
                 className={cn(
                   'flex items-center justify-center rounded-md border border-dashed border-ink-3/50 text-ink-3',
                   'transition-colors duration-fast hover:border-accent hover:bg-accent-subtle hover:text-accent',
-                  'focus-visible:outline-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50',
+                  'focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40',
                   dragging && 'border-accent bg-accent-subtle text-accent',
                 )}
               >
@@ -468,19 +495,15 @@ export function ContactDialog() {
           placeholder={cs('emailPlaceholder')}
           disabled={!editable}
           onChange={(e) => s.setDraft({ replyEmail: e.target.value })}
+          onBlur={() => {
+            // 清空了回信邮箱就等于不再让本机记着它
+            if (s.rememberedEmail && draft.replyEmail.trim() === '') s.forgetEmail()
+          }}
           data-contact-email
         />
         {draft.replyEmail.trim() !== '' && !validEmail(draft.replyEmail.trim()) && (
           <p className="type-caption text-danger-content" role="alert" data-contact-email-hint>
             {cs('error.emailInvalid')}
-          </p>
-        )}
-        {s.rememberedEmail && (
-          <p className="flex items-center gap-1 type-caption" data-contact-email-remembered>
-            {cs('emailRemembered')}
-            <Button variant="ghost" size="sm" onClick={s.forgetEmail} disabled={!editable} data-contact-email-forget>
-              {cs('emailForget')}
-            </Button>
           </p>
         )}
       </div>
@@ -625,7 +648,7 @@ export function ContactDialog() {
           ),
       }}
     >
-      {view === 'write' ? writeView : lettersView}
+      {view === 'write' ? (phase === 'done' ? doneView : writeView) : lettersView}
     </Dialog>
   )
 }

@@ -302,6 +302,7 @@ export default interface Resources {
       "title": "有未保存的修改"
     },
     "contact": {
+      "addressCopied": "已复制 {{address}}",
       "attachLabel": "附件（选填）",
       "attachPick": "添加附件",
       "attachRemove": "移除 {{name}}",
@@ -331,10 +332,8 @@ export default interface Resources {
       "diagReady": "诊断包 · {{size}}",
       "diagTooLarge": "诊断包太大了，没法一起发送，请取消勾选。",
       "done": "完成",
-      "emailForget": "忘记",
       "emailLabel": "回信邮箱（选填）",
       "emailPlaceholder": "留邮箱，回信也会发到这里",
-      "emailRemembered": "已在本机记住这个邮箱。",
       "error": {
         "attachment_empty": "有附件是空文件。",
         "attachment_mismatch": "有附件的内容与它的扩展名对不上。",
@@ -354,7 +353,6 @@ export default interface Resources {
         "subjectTooLong": "主题太长了。",
         "subject_too_long": "主题太长了。"
       },
-      "failedFallback": "或用自己的邮箱发到 {{address}}",
       "failedTitle": "没有发送出去",
       "failure": {
         "api_incompatible": "这个版本的 Tavotto 与服务器不兼容，请先更新。",

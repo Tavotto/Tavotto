@@ -42,14 +42,11 @@ export function WeComQr() {
 /** 二维码图（展开后才挂）。 */
 export function WeComQrImage() {
   return (
-    <img
-      src={qrUrl}
-      alt={wc('qrAlt')}
-      width={160}
-      height={160}
-      data-wecom-qr-img
-      className="mt-1 rounded-md bg-paper"
-    />
+    // 原图（sha256 钉死、不改）上下各自带一条 2 px 的细边线；用外层裁掉 1 个显示像素（约 3.7 个原图像素，
+    // 只吃线与线内侧的留白），二维码本体与左右留白原样保留
+    <div className="mt-1 h-[158px] w-[160px] overflow-hidden rounded-md bg-paper" data-wecom-qr-crop>
+      <img src={qrUrl} alt={wc('qrAlt')} width={160} height={160} data-wecom-qr-img className="-mt-px block max-w-none" />
+    </div>
   )
 }
 
