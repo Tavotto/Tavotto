@@ -14,10 +14,11 @@ import time
 from pathlib import Path
 
 MAX_BYTES = 1024 * 1024
-#: 值本身可以进审计的参数名（路径 / 标识，不是用户内容）
-KEEP_KEYS = frozenset(
-    {"path", "root", "glob", "env", "module", "name", "source", "mode", "limit", "lines"}
-)
+#: 值本身可以进审计的参数名：只有**路径**与**闭集枚举**。`glob` / `module` / `name` / `pattern` 之类模型可填任意文字的字段
+#: 可能夹带从上一个工具结果里看到的凭据或文件内容，一律只记长度（Codex #1353）
+PATH_KEYS = frozenset({"path", "root"})
+ENUM_KEYS = {"mode": frozenset({"script", "native"}), "source": frozenset({"app", "worker"})}
+KEEP_KEYS = PATH_KEYS | frozenset(ENUM_KEYS)
 _MAX_STR = 300
 _lock = threading.Lock()
 
@@ -37,7 +38,12 @@ def summarize_args(args: object) -> dict:
         if isinstance(v, bool | int | float) or v is None:
             out[key] = v
         elif isinstance(v, str):
-            out[key] = v[:_MAX_STR] if key in KEEP_KEYS else f"<str len={len(v)}>"
+            if key in PATH_KEYS:
+                out[key] = v[:_MAX_STR]
+            elif key in ENUM_KEYS and v in ENUM_KEYS[key]:
+                out[key] = v
+            else:
+                out[key] = f"<str len={len(v)}>"
         else:
             out[key] = f"<{type(v).__name__}>"
     return out

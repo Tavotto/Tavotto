@@ -116,7 +116,7 @@ def list_dir(ctx: FixContext, args: dict) -> ToolResult:
     if isinstance(r, ToolResult):
         return r
     try:
-        entries = sorted(os.scandir(r.real), key=lambda e: e.name)
+        entries = _scan_bounded(r.real, time.monotonic() + SCAN_SECONDS)
     except OSError:
         return err("not_a_dir", "Could not list that path (is it a directory?).")
     rows: list[str] = []
@@ -145,6 +145,22 @@ def list_dir(ctx: FixContext, args: dict) -> ToolResult:
 
 
 # --------------------------------------------------------------------------- find / grep
+#: 单个目录最多枚举的条目数：超大目录不先整个读进内存再排序
+DIR_ENTRY_CAP = 5000
+
+
+def _scan_bounded(path: str, deadline: float) -> list[os.DirEntry]:
+    """惰性枚举一个目录：边读边查时限与条数上限（不 `sorted(os.scandir(...))` 一次吃光），读到的再排序。"""
+    out: list[os.DirEntry] = []
+    with os.scandir(path) as it:
+        for i, e in enumerate(it):
+            if len(out) >= DIR_ENTRY_CAP or (i % 256 == 0 and time.monotonic() > deadline):
+                break
+            out.append(e)
+    out.sort(key=lambda e: e.name)
+    return out
+
+
 def _walk(ctx: FixContext, root: str, deadline: float):
     """受限遍历：不跟随目录符号链接、跳过大目录与拦截区、限时。产出 `(文件的绝对路径, 解析结果)`。
 
@@ -156,7 +172,7 @@ def _walk(ctx: FixContext, root: str, deadline: float):
         if time.monotonic() > deadline:
             return
         try:
-            it = sorted(os.scandir(cur), key=lambda e: e.name)
+            it = _scan_bounded(cur, deadline)
         except OSError:
             continue
         for e in it:

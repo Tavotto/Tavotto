@@ -942,3 +942,53 @@ def test_followed_file_symlink_is_judged_and_recorded_by_its_target(box):
     (box.proj / "ln_ssh.txt").symlink_to(box.home / ".ssh" / "k.txt")
     ctx3 = make_ctx(box)
     assert "secret" not in call(ctx3, "grep_files", {"root": ".", "pattern": "needle"}).content
+
+
+# --------------------------------------------------------------------------- Codex #1353 第三轮
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ("password=abc", "password=***"),
+        ("token=12345", "token=***"),
+        ("api_token=xyz", "api_token=***"),
+        ("PWD: a1", "PWD: ***"),
+        ("max_tokens = 4096", "max_tokens = 4096"),
+        ("num_tokens: 12", "num_tokens: 12"),
+        ("token_count=7", "token_count=7"),
+        ("tokenizer=bert", "tokenizer=bert"),
+    ],
+)
+def test_short_credentials_are_masked_but_count_keys_are_not(text, want):
+    assert readscope.scrub(text) == want
+
+
+def test_audit_keeps_only_paths_and_enum_values(box):
+    from tavotto.engine.fixtools import audit
+
+    got = audit.summarize_args(
+        {
+            "path": "~/x.csv",
+            "glob": SECRET,
+            "module": SECRET,
+            "name": "x" * 9,
+            "mode": "script",
+            "source": "worker",
+            "pattern": SECRET,
+        }
+    )
+    assert got["path"] == "~/x.csv" and got["mode"] == "script" and got["source"] == "worker"
+    for k in ("glob", "module", "name", "pattern"):
+        assert got[k].startswith("<str len=") and SECRET not in got[k]
+    assert audit.summarize_args({"mode": SECRET})["mode"].startswith("<str len=")
+
+
+def test_directory_enumeration_is_bounded_and_lazy(tmp_path, monkeypatch):
+    big = tmp_path / "big"
+    big.mkdir()
+    for i in range(60):
+        (big / f"f{i:03}.txt").write_text("x")
+    monkeypatch.setattr(observe, "DIR_ENTRY_CAP", 10)
+    assert len(observe._scan_bounded(str(big), deadline=float("inf"))) == 10
+    import time as _t
+
+    assert observe._scan_bounded(str(big), deadline=_t.monotonic() - 1) == []

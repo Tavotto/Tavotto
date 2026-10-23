@@ -133,11 +133,19 @@ def _value(sfx: str, min_bare: int) -> str:
 #: 一条规则、两种「键的写法」，值形状共用：
 #:  * `cli`：命令行旗标 `--password x` / `-token=x` / `--api-key "a b"`（旗标后空白或 `=`）；整个值（含引号）换成 `***`，只留旗标。
 #:    另有短旗标 `-p 'x'`（`cliP`）：`-p` 常是端口 / 路径，所以**只在值带引号时**当密码处理。
-#:  * `kv`：`password = x` / `"password": "x"` / `token: x`（`=` 或 `:`）；引号保留、内容换成 `***`；裸值至少 6 个字符（避开 `max_tokens = 4096`）。
+#:  * `kv`：`password = x` / `"password": "x"` / `token: x`（`=` 或 `:`）；引号保留、内容换成 `***`；裸值**不论长短**都抹（键名已说明是凭据）。
+#:    计数类键名（`max_tokens` / `num_tokens` / `token_count` / `tokenizer` …，见 `_BENIGN_KEY`）不是凭据，原样保留。
 _SECRET_ASSIGN = re.compile(
     rf"(?i)(?:(?P<cli>(?<![\w-])-{{1,2}}{_KEY}(?:\s+|\s*=\s*)){_value('C', 1)}"
     rf"|(?P<cliP>(?<![\w-])-p\s+)(?:\"[^\"\n]*\"|'[^'\n]*')"
-    rf"|(?P<kv>{_KEY}[\"']?\s*[:=]\s*){_value('K', 6)})"
+    rf"|(?P<kv>(?P<kname>[\w.-]*?{_KEY})[\"']?\s*[:=]\s*){_value('K', 1)})"
+)
+
+
+#: 含 token 但不是凭据的计数类键名：上下限 / 计数 / 用量 / 分词器（`max_tokens = 4096` 不该被抹）
+_BENIGN_KEY = re.compile(
+    r"(?i)(?:^|[_.-])(?:max|min|num|n|total|count|limit|budget|used|prompt|completion|input|output)[_-]?tokens?$"
+    r"|tokens?[_-](?:count|limit|budget|used|usage|per[_-]\w+)$|tokeni[sz]er"
 )
 
 
@@ -147,6 +155,8 @@ def _mask_secret(m: re.Match) -> str:
     if m.group("cliP") is not None:
         return m.group("cliP") + "***"
     head = m.group("kv")
+    if _BENIGN_KEY.search(m.group("kname") or ""):
+        return m.group(0)
     if m.group("dqK") is not None:
         return head + '"***"'
     if m.group("sqK") is not None:
