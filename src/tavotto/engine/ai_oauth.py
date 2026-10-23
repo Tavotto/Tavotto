@@ -646,7 +646,8 @@ def ensure_fresh(rec: dict | None) -> dict | None:
             updated = ai_providers.update_oauth(cur["id"], new)
             return updated or {**cur, "oauth": new}
         if outcome == "transient" and still_valid:
-            LOG.info("令牌刷新遇到暂时性故障，沿用尚未过期的令牌: %s", provider)
+            # 日志里不带任何取自令牌记录的值（CodeQL py/clear-text-logging-sensitive-data）
+            LOG.info("令牌刷新遇到暂时性故障，沿用尚未过期的令牌")
             return cur
         raise NeedsLogin("refresh failed")
 
