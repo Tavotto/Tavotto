@@ -274,7 +274,10 @@ def fetch_models(base_url: str, api_key: str) -> tuple[list[str] | None, str | N
 
 
 def _fingerprint(api_key: str) -> str:
-    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
+    """缓存键里区分「换了 key」用的短指纹（落盘，所以不用裸哈希：PBKDF2 让拿到缓存文件的人没法廉价地离线验证猜测的 key）。"""
+    return hashlib.pbkdf2_hmac(
+        "sha256", api_key.encode("utf-8"), b"tavotto-ai-models-cache", 20_000
+    ).hex()[:12]
 
 
 def _cache_path() -> Path:
