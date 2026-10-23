@@ -845,3 +845,31 @@ def test_other_libraries_keep_requiring_file_evidence(tmp_path):
 def test_weak_pillow_evidence_defers_to_another_library_that_saves(tmp_path):
     body = "import plotly.io as pio\nfrom PIL import Image\ndef h():\n    Image.new('L', (1, 1)).save(p)\npio.write_image(object(), q)\n"
     assert _bare(tmp_path, body) is None
+
+
+def test_annotated_draw_binding_counts(tmp_path):
+    body = (
+        "from PIL import Image, ImageDraw\nim = Image.open('a.png')\n"
+        "draw: ImageDraw.ImageDraw = ImageDraw.Draw(im)\ndraw.line([(0, 0), (5, 5)])\n"
+    )
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_annotated_image_new_with_dynamic_save_gets_a_hint(tmp_path):
+    body = "import sys\nfrom PIL import Image\nim: Image.Image = Image.new('L', (4, 4))\nim.save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_weak_evidence_needs_the_image_new_object_itself_to_be_saved(tmp_path):
+    body = "from PIL import Image\nim = Image.new('L', (4, 4))\nmodel.save('weights.bin')\n"
+    assert _bare(tmp_path, body) is None
+
+
+def test_chained_image_new_save_gets_a_hint(tmp_path):
+    body = "import sys\nfrom PIL import Image\nImage.new('L', (4, 4)).save(sys.argv[1])\n"
+    assert _bare(tmp_path, body) == _NO_PATH
+
+
+def test_image_new_name_reassigned_to_something_else_is_not_counted(tmp_path):
+    body = "from PIL import Image\nim = Image.new('L', (4, 4))\nim = load()\nim.save(p)\n"
+    assert _bare(tmp_path, body) is None

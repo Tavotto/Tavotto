@@ -154,7 +154,7 @@ class _FileScan(ast.NodeVisitor):
         self.saves: list[tuple[str, str | None]] = []
         self._save_calls: list[ast.Call] = []
         #: Pillow 画图证据（`finish` 后有效）：强 = 对 `ImageDraw.Draw` 对象调了绘制方法（或 Draw + ImageFont 画字）；
-        #: 弱 = `Image.new` 之后有 `.save` / `.show`（不是 Image.open 的图片处理）
+        #: 弱 = `Image.new(...)` 的结果（赋给的名字 / 链式）本身被 `.save` / `.show`（不是 Image.open 的图片处理）
         self.pil_draw_strong = False
         self.pil_draw_weak = False
         self._draw_bindings: list[tuple[list[ast.expr], ast.expr]] = []
@@ -179,6 +179,16 @@ class _FileScan(ast.NodeVisitor):
 
     def visit_Assign(self, node: ast.Assign) -> None:
         self._draw_bindings.append((list(node.targets), node.value))
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        # `draw: ImageDraw.ImageDraw = ImageDraw.Draw(im)`：带类型标注的绑定同样要追踪（无值的纯标注不是绑定）
+        if node.value is not None:
+            self._draw_bindings.append(([node.target], node.value))
+        self.generic_visit(node)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        self._draw_bindings.append(([node.target], node.value))
         self.generic_visit(node)
 
     def visit_With(self, node: ast.With) -> None:
@@ -215,17 +225,25 @@ class _FileScan(ast.NodeVisitor):
         if not self.imports_pil:
             return
         draw_names: set[str] = set()
-        has_draw_call = has_font = has_new = has_out = False
+        new_names: set[str] = set()
+        other_bound: set[str] = (
+            set()
+        )  # 被赋过 `Image.new` 以外的值的名字：保守起见不再算 Image.new 的图
+        has_draw_call = has_font = has_out = False
         for targets, value in self._draw_bindings:
-            if isinstance(value, ast.Call) and self._resolve(value.func) in _PIL_DRAW_FUNCS:
+            is_call = isinstance(value, ast.Call)
+            if is_call and self._resolve(value.func) in _PIL_DRAW_FUNCS:
                 draw_names.update(ast.unparse(t) for t in targets)
+            if is_call and self._resolve(value.func) in _PIL_NEW_FUNCS:
+                new_names.update(ast.unparse(t) for t in targets)
+            else:
+                other_bound.update(ast.unparse(t) for t in targets)
+        new_names -= other_bound
         strong = False
         for call in self._save_calls:
             full = self._resolve(call.func)
             if full in _PIL_DRAW_FUNCS:
                 has_draw_call = True
-            elif full in _PIL_NEW_FUNCS:
-                has_new = True
             elif full is not None and full.startswith(_PIL_FONT_PREFIX):
                 has_font = True
             func = call.func
@@ -237,12 +255,15 @@ class _FileScan(ast.NodeVisitor):
                     isinstance(recv, ast.Call) and self._resolve(recv.func) in _PIL_DRAW_FUNCS
                 ):
                     strong = True
-            elif func.attr in ("save", "show") and not self._receiver_is_foreign_module(
-                func.value, frozenset({"PIL"})
-            ):
-                has_out = True
+            elif func.attr in ("save", "show"):
+                # 弱证据只认 `Image.new(...)` 的结果本身被 save/show（名字或直接链式），别的接收者的 `.save` 不算
+                recv = func.value
+                if ast.unparse(recv) in new_names or (
+                    isinstance(recv, ast.Call) and self._resolve(recv.func) in _PIL_NEW_FUNCS
+                ):
+                    has_out = True
         self.pil_draw_strong = strong or (has_draw_call and has_font)
-        self.pil_draw_weak = has_new and has_out
+        self.pil_draw_weak = has_out
 
     def finish(self) -> None:
         """import 全部收齐之后再判调用（调用可能写在 import 之前的函数体里）。"""
