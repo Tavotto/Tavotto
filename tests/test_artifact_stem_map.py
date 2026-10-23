@@ -752,3 +752,52 @@ def test_file_changed_event_never_carries_a_partial_files_list(client, tmp_path,
     payload = _file_changed_payload(m, monkeypatch, ["fig1.py"])
     assert "files" not in payload
     assert sorted(payload["stems"]) == ["Fig1", "Fig1-2"]
+
+
+def test_find_artifacts_listing_is_not_recorded_as_a_user_script_probe(tmp_path, monkeypatch):
+    """worker 里 `os.scandir` 被换成记账版（脚本读了哪些路径的诊断）。Tavotto 自己找原件的列目录不是用户脚本的探测：
+    相对根 + 不存在的子目录这种会被记账版记下来的调用，走捕获的真 scandir 就不留痕。"""
+    from tavotto.engine import figcapture
+
+    monkeypatch.chdir(tmp_path)
+    misses = figcapture.ProbeMisses()
+    undo = figcapture.install_probe_observer(misses, str(tmp_path))
+    try:
+        assert figcapture.find_artifacts(".", "nosuchdir/plot", formats=["pdf"]) == []
+        # 对照：用户脚本自己列同一个不存在的目录，记账版照常记
+        import os
+
+        with pytest.raises(FileNotFoundError):
+            os.scandir("nosuchdir")
+    finally:
+        undo()
+    assert [m["target"] for m in misses.items] == ["nosuchdir"]
+
+
+def test_cli_normalises_a_hand_typed_path_to_the_real_file_name(tmp_path):
+    """`panel.PDF` 是乙的真实文件名、注册表键也是它；用户在大小写不敏感的盘上敲 `panel.pdf`：先规范成真实名再查映射。"""
+    from tavotto.engine import handoff
+
+    (tmp_path / "panel.PDF").write_bytes(b"%PDF")
+    (tmp_path / "panel.png").write_bytes(b"x")
+    (tmp_path / "tavotto_registry.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "scripts": {
+                    "p.py": {
+                        "entry": "main",
+                        "stems": ["panel", "panel-2"],
+                        "artifacts": {"panel.PDF": "panel-2", "panel.png": "panel"},
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    root = str(tmp_path)
+    assert handoff._real_rel(root, "panel.pdf") == "panel.PDF"
+    assert handoff._artifact_stem(root, "panel.pdf", "panel") == "panel-2"
+    assert handoff._artifact_stem(root, "panel.PDF", "panel") == "panel-2"
+    assert handoff._artifact_stem(root, "panel.png", "panel") == "panel"
+    assert handoff._real_rel(root, "nothing.pdf") == "nothing.pdf"  # 找不到的原样

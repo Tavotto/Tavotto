@@ -158,9 +158,30 @@ def _artifact_stem(project: str, rel: str, fallback: str) -> str:
     （`app._handoff_target_stem`）用的是同一个函数，所以 CLI 轮询的键 == app 记账的键。
     注册表不存在 / 读不了（损坏的报错留给后面的 `ensure_registered`）= 文件名 stem，行为与此前一致。"""
     try:
-        return engine_registry.open_registry(project).artifact_stem(rel)
+        return engine_registry.open_registry(project).artifact_stem(_real_rel(project, rel))
     except (OSError, RuntimeError, ValueError):
         return fallback
+
+
+def _real_rel(project: str, rel: str) -> str:
+    """手输路径 → 磁盘上的真实相对路径（POSIX）。注册表 `artifacts` 的键是真实文件名（`panel.PDF`），在大小写不敏感的
+    文件系统上用户可能敲 `panel.pdf`：逐级列目录，精确同名优先，没有就取**唯一**的不区分大小写匹配（两个以上不猜）；
+    读不了 / 找不到的一级原样保留。"""
+    parts = [p for p in rel.replace("\\", "/").split("/") if p]
+    here, out = project, []
+    for part in parts:
+        real = part
+        try:
+            names = os.listdir(here)
+        except OSError:
+            names = []
+        if part not in names:
+            folded = [n for n in names if n.casefold() == part.casefold()]
+            if len(folded) == 1:
+                real = folded[0]
+        out.append(real)
+        here = os.path.join(here, real)
+    return "/".join(out)
 
 
 def resolve_target(raw: str, *, isdir=os.path.isdir, isfile=os.path.isfile) -> Target:

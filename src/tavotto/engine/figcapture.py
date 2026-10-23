@@ -952,6 +952,9 @@ def project_relative_stem(stem: object) -> bool:
 #: 默认的磁盘探测谓词（import 时的那个函数对象）：worker 里用户脚本沙箱可能替换 `os.path.isfile`，
 #: 判「是不是真磁盘」不能拿模块属性比（那会让沙箱里恒走合成路径探测，丢掉真实大小写）
 _DISK_ISFILE = os.path.isfile
+#: 同理的真 `os.scandir`：worker 里 `install_probe_observer` 会把 `os.scandir` / `os.listdir` 换成记账版（脚本读了哪些路径的诊断）。
+#: Tavotto 自己的列目录（`find_artifacts`）不是用户脚本的探测，不能被记进缺失输入诊断 / rasterhint——直接用 import 时的真函数
+_DISK_SCANDIR = os.scandir
 
 
 def find_artifacts(project_root: str, stem: str, *, isfile=_DISK_ISFILE, formats=None) -> list[str]:
@@ -993,7 +996,9 @@ def _real_files_with_stem(project_root: str, stem: str) -> dict[str, list[str]]:
     扩展名大小写不敏感（`.PDF` 归 `.pdf`），主干按原样比；读不了目录 = 空。"""
     rel_dir, _, base = stem.replace("\\", "/").rpartition("/")
     try:
-        entries = list(os.scandir(os.path.join(project_root, rel_dir) if rel_dir else project_root))
+        entries = list(
+            _DISK_SCANDIR(os.path.join(project_root, rel_dir) if rel_dir else project_root)
+        )
     except OSError:
         return {}
     out: dict[str, list[str]] = {}
