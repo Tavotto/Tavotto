@@ -12,7 +12,7 @@ import { modelDetail, useAiStore } from '@/store/aiStore'
  * 「执行器与模型」两级选择器（beta 0.19 反馈）。
  *
  * 第一级是**执行器家族**（Claude Code / Codex …，带各自图标），第二级才是该家族的模型型号
- * （显示名为主，说明 / slug 为次）。弹出与键盘全部由 Radix 菜单负责：→ / Enter 进子菜单，
+ * （只写显示名，不带说明）。弹出与键盘全部由 Radix 菜单负责：→ / Enter 进子菜单，
  * ← / Esc 收回一层，↑↓ 在层内移动；子菜单项是 `menuitemradio`，当前型号 aria-checked。
  *
  * **只是呈现**：选中一项仍写 aiStore 的两个字段（agent / models[agent]）。外层的两个入口
@@ -107,16 +107,13 @@ export function ModelPicker({
                 }}
               >
                 {familyModels(a, isActive ? model : null).map((m) => {
-                  const d = modelDetail(a, m)
-                  const name = d?.display_name || m
-                  // 次要文字：说明优先；没有说明但显示名与 id 不同时露出 id（用户在 config 里写的是 id）
-                  const note = d?.description || (name !== m ? m : undefined)
+                  // 只写型号名（beta 0.19.0b3 反馈）：不再带说明 / id 副行；说明字段仍由后端给，只是不显示
+                  const name = modelDetail(a, m)?.display_name || m
                   return (
                     <MenuRadioItem
                       key={m}
                       value={m}
                       data-ai-model-item={m}
-                      description={note}
                       tag={m === a.default_model ? ai('panel.effortDefault') : undefined}
                     >
                       {name}
