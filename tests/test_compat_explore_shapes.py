@@ -177,10 +177,10 @@ class Shapes(unittest.TestCase):
         self.assertEqual({out.splitlines()[0] for out in outs}, {'"""doc"""'})
 
     def test_finalize_only_rewrites_whole_sentinel_lines(self):
-        src = f"x = 1\n{shapes.CODE_MARK}\ny = '{shapes.CODE_MARK}'\n  {shapes.CODE_MARK}\n{shapes.MD_MARK}2\n{shapes.MD_MARK}x\n"
+        src = f"x = 1\n{shapes.CODE_MARK}\ny = '{shapes.CODE_MARK}'\n  {shapes.CODE_MARK}\n{shapes.MD_MARK}2\n{shapes.MD_MARK}x\n{shapes.CODE_MARK}_x = 1\n"
         self.assertEqual(
             shapes.finalize_source(src),
-            "x = 1\n# %%\ny = 'CG_CELL_CODE'\n  CG_CELL_CODE\n# %% [markdown]\n# ## Step 2\n# %%\nCG_CELL_MD_x\n",
+            "x = 1\n# %%\ny = 'CG_CELL_CODE'\n  CG_CELL_CODE\n# %% [markdown]\n# ## Step 2\n# %%\nCG_CELL_MD_x\nCG_CELL_CODE_x = 1\n",
         )
 
     def test_multi_format_saves_one_stem_in_three_formats(self):
