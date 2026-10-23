@@ -482,3 +482,42 @@ def test_rebase_adds_cjk_fallback_to_text_created_between_barriers_on_a_tex_figu
     if int(old) == 1:
         pytest.skip("这台机器没有可用的中日韩候选字体")
     assert int(new) > 1, f"屏障后新加的文字没有回退尾巴: {line}"
+
+
+TEX_LATER_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.texmanager import TexManager
+
+matplotlib.rcParams["font.family"] = "sans-serif"
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+ax.set_title("Script")
+plt.show()                           # ← 屏障 1：没有 TeX，rcParams 补了回退尾巴
+
+ax.text(0.5, 0.5, "", usetex=True)   # 之后才出现 TeX 文字（空串不触发 TeX）
+plt.show()                           # ← 屏障 2：rebase 必须把我们补的尾巴撤回
+print("FAMILY", list(matplotlib.rcParams["font.family"]), TexManager._get_font_family_and_reduced())
+"""
+
+
+def test_rebase_removes_injected_family_tail_when_tex_appears_later(tmp_path):
+    """屏障 1 无 TeX（尾巴已补）、屏障 2 前脚本开了 usetex 文字：`font.family` 恢复脚本原值。"""
+    nativekit.write(tmp_path / "figure.py", TEX_LATER_SCRIPT)
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        session.ensure_built()
+        session.resume()
+        nativekit.wait_state(session, [nativesession.BARRIER, nativesession.ENDED])
+        assert session.state == nativesession.BARRIER
+        session.ensure_built()
+        code, out, err = nativekit.finish(session, proc)
+
+    assert code == 0, err
+    line = next(ln for ln in out.splitlines() if ln.startswith("FAMILY"))
+    assert line == "FAMILY ['sans-serif'] ('sans-serif', False)", line

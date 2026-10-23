@@ -391,6 +391,40 @@ fig, ax = plt.subplots()
 overrides.ensure_rcparams_fallback([fig])
 assert len(matplotlib.rcParams["font.family"]) > 1
 
+# c2) 先补了尾巴、之后才出现 TeX 文字（native 两个屏障之间开 usetex）：撤回我们追加的那段
+matplotlib.rcdefaults()
+matplotlib.rcParams["font.family"] = "sans-serif"
+fig, ax = plt.subplots()
+overrides.ensure_rcparams_fallback([fig])
+assert len(matplotlib.rcParams["font.family"]) > 1
+overrides.ensure_rcparams_fallback([fig])  # 无 TeX 时幂等
+chain = list(matplotlib.rcParams["font.family"])
+overrides.ensure_rcparams_fallback([fig])
+assert list(matplotlib.rcParams["font.family"]) == chain
+ax.text(0.5, 0.5, "x", usetex=True)
+overrides.ensure_rcparams_fallback([fig])
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"], matplotlib.rcParams["font.family"]
+assert TexManager._get_font_family_and_reduced() == ("sans-serif", False)
+overrides.ensure_rcparams_fallback([fig])  # 有 TeX 时幂等
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"]
+
+# c3) 脚本自己设的多项 family 不被我们动（有 TeX 时）；补过尾巴后脚本又改了值，也不被撤成旧值
+matplotlib.rcdefaults()
+matplotlib.rcParams["font.family"] = ["serif", "Some Fallback"]
+fig, ax = plt.subplots()
+ax.text(0.5, 0.5, "x", usetex=True)
+overrides.ensure_rcparams_fallback([fig])
+assert list(matplotlib.rcParams["font.family"]) == ["serif", "Some Fallback"]
+matplotlib.rcdefaults()
+matplotlib.rcParams["font.family"] = "sans-serif"
+fig2, _ = plt.subplots()
+overrides.ensure_rcparams_fallback([fig2])
+matplotlib.rcParams["font.family"] = ["Script Own A", "Script Own B"]  # 脚本在屏障之间自己改了
+_, ax3 = plt.subplots()
+ax3.text(0.5, 0.5, "x", usetex=True)
+overrides.ensure_rcparams_fallback([plt.gcf()])
+assert list(matplotlib.rcParams["font.family"]) == ["Script Own A", "Script Own B"]
+
 # d) 反方向：rcParams 开着 usetex 时，同图 usetex=False 的汉字走逐个 Text 补，仍画得出来
 matplotlib.rcdefaults()
 matplotlib.rcParams["text.usetex"] = True

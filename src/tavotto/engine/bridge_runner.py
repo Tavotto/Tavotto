@@ -1117,6 +1117,9 @@ class BridgeRun:
         manifest = _PKG.manifest
         overrides = _PKG.overrides
         self.rebase_warnings = {}
+        # 每个屏障重新判一次 rcParams 的回退尾巴：脚本在两个屏障之间可能开了 usetex（撤回尾巴）
+        # 或关了它（补回）。幂等，只动我们自己追加的那一份
+        overrides.ensure_rcparams_fallback(list(self.session.capture.values()))
         for stem, state in list(self.session.states.items()):
             if stem not in self._known_stems:
                 # 这一轮**新出现**的图：`instrument_all()` 刚给它建过状态、
