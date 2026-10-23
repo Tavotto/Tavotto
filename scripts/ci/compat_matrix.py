@@ -375,6 +375,26 @@ def manifest_xy_digests(man: dict) -> list[str]:
     return sorted(out)
 
 
+#: Roles whose curves live in a container or under other fingerprint parts (`points`, `xyz`).
+_LINE_CONTAINER_ROLES = ("errorbar", "stem_series")
+
+
+def manifest_incomparable_lines(man: dict) -> int:
+    """Line-related elements the plain `xy` comparison cannot cover (grouped / 3D / non-xy parts)."""
+    count = 0
+    for el in man.get("elements", []):
+        fingerprint = el.get("data_fingerprint") or {}
+        if el.get("role") in _LINE_CONTAINER_ROLES:
+            count += 1
+        elif (
+            el.get("role") == "line"
+            and fingerprint.get("status") == "ok"
+            and set(fingerprint.get("parts") or {}) != {"xy"}
+        ):
+            count += 1
+    return count
+
+
 def manifest_unobserved_lines(man: dict) -> int:
     """Line elements whose fingerprint is `over_budget` / `unavailable` / missing: not observed."""
     return sum(
@@ -1510,6 +1530,7 @@ def run_group(
                 "render_ms": ot.get("total_ms"),
                 "line_xy": manifest_xy_digests(base_man),
                 "line_xy_unobserved": manifest_unobserved_lines(base_man),
+                "line_xy_incomparable": manifest_incomparable_lines(base_man),
             }
             if not r["stages"]["open"]:
                 continue

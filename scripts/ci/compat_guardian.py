@@ -800,7 +800,7 @@ def _trim_native(result: dict) -> dict:
     return trimmed
 
 
-def line_data_agreement(native_line_xy, result: dict) -> dict:
+def line_data_agreement(native_line_xy, result: dict, native_incomparable=None) -> dict:
     """Read-only comparison of curve data: native `Line2D.get_xydata()` vs the product manifest.
 
     Both sides are digests of shape + little-endian float64 (`manifest.canonical_digest`); duplicates
@@ -832,15 +832,24 @@ def line_data_agreement(native_line_xy, result: dict) -> dict:
     _gap, _shared, index, digests = min(scored)
     only_native = sum((Counter(digests) - target).values())
     only_product = sum((target - Counter(digests)).values())
+    incomparable_product = opened.get("line_xy_incomparable") or 0
+    incomparable_native = (
+        native_incomparable[index]
+        if isinstance(native_incomparable, list) and index < len(native_incomparable)
+        else 0
+    ) or 0
     unobserved_product = opened.get("line_xy_unobserved") or 0
     unobserved_native = sum(1 for d in native_line_xy if d is None)
-    if unobserved_product or unobserved_native:
-        # A curve nobody measured can neither agree nor differ: say so instead of "different".
+    if unobserved_product or unobserved_native or incomparable_product or incomparable_native:
+        # Only plain Line2D curves on both sides are comparable; an unmeasured or differently stored
+        # curve (errorbar, stem, 3D, ...) can neither agree nor differ: say so, never a false "different".
         status = "unknown"
     else:
         status = "equal" if not only_native and not only_product else "different"
     return {
         "status": status,
+        "incomparable_product_lines": incomparable_product,
+        "incomparable_native_curves": incomparable_native,
         "unobserved_product_lines": unobserved_product,
         "unobserved_native_figures": unobserved_native,
         "native_figures": [d if d is None else summary(d) for d in native_line_xy],
@@ -918,9 +927,14 @@ def _execute(request: dict) -> dict:
     )
     row["timings_s"]["native"] = round(time.monotonic() - t0, 3)
     native_line_xy = native.get("line_xy")
+    native_incomparable = native.get("line_xy_incomparable")
     row["native"] = {
         "status": _native_status(native),
-        "result": {k: v for k, v in _trim_native(native).items() if k != "line_xy"},
+        "result": {
+            k: v
+            for k, v in _trim_native(native).items()
+            if k not in ("line_xy", "line_xy_incomparable")
+        },
     }
     row["executions"]["native"] = _count(work / "native-execs.jsonl")
     row["figures"]["native"] = native.get("figure_count") if native.get("ok") else None
@@ -977,7 +991,7 @@ def _execute(request: dict) -> dict:
             row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
             return finalize_row(row)
         row["raw"] = result
-        row["raw"]["line_data"] = line_data_agreement(native_line_xy, result)
+        row["raw"]["line_data"] = line_data_agreement(native_line_xy, result, native_incomparable)
         if "runner_error" in (result.get("detail") or {}):
             row["raw"]["runner_error"] = str(result["detail"]["runner_error"])[-1500:]
         for s in CC.STAGES:

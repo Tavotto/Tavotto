@@ -113,3 +113,71 @@ def test_manifest_counts_only_unfingerprinted_lines_as_unobserved():
     }
     assert CM.manifest_unobserved_lines(manifest) == 3
     assert CM.manifest_xy_digests(manifest) == ["a"]
+
+
+def _result_with(*product, incomparable=0):
+    result = _result(*product)
+    result["detail"]["open"]["line_xy_incomparable"] = incomparable
+    return result
+
+
+def test_errorbar_figure_is_unknown_not_a_false_different():
+    # Native sees the errorbar's data line; the product stores it as a grouped `points` fingerprint.
+    report = guardian.line_data_agreement([["e", "a"]], _result_with("a", incomparable=1))
+    assert report["status"] == "unknown"
+    assert report["incomparable_product_lines"] == 1
+
+
+def test_three_d_figure_is_unknown_when_only_the_native_side_knows_it():
+    report = guardian.line_data_agreement([["z"]], _result_with(incomparable=0), [2])
+    assert report["status"] == "unknown"
+    assert report["incomparable_native_curves"] == 2
+
+
+def test_incomparable_curves_in_another_native_figure_do_not_poison_the_comparison():
+    report = guardian.line_data_agreement([["a"], ["x"]], _result_with("a"), [0, 3])
+    assert report["status"] == "equal"
+
+
+def test_plain_multi_line_figures_still_get_equal_and_different():
+    assert (
+        guardian.line_data_agreement([["a", "b"]], _result_with("b", "a"), [0])["status"] == "equal"
+    )
+    assert guardian.line_data_agreement([["a", "b"]], _result_with("a", "c"), [0])["status"] == (
+        "different"
+    )
+
+
+def test_manifest_counts_grouped_and_non_xy_line_elements_as_incomparable():
+    ok = {"status": "ok", "parts": {"xy": {"sha256": "a"}}}
+    manifest = {
+        "elements": [
+            {"role": "line", "data_fingerprint": ok},
+            {"role": "line", "data_fingerprint": {"status": "ok", "parts": {"xyz": {}}}},
+            {"role": "errorbar", "data_fingerprint": {"status": "ok", "parts": {"points": {}}}},
+            {"role": "stem_series", "data_fingerprint": ok},
+            {"role": "scatter", "data_fingerprint": {"status": "ok", "parts": {"offsets": {}}}},
+        ]
+    }
+    assert CM.manifest_incomparable_lines(manifest) == 3
+
+
+def test_native_driver_flags_errorbar_stem_and_three_d_but_not_plain_lines():
+    plt = pytest.importorskip("matplotlib.pyplot")
+    figures = []
+    try:
+        plain, ax = plt.subplots()
+        ax.plot([0, 1], [0, 1])
+        ax.plot([0, 1], [1, 0])
+        err, ax = plt.subplots()
+        ax.errorbar([0, 1], [0, 1], yerr=0.1)
+        stem, ax = plt.subplots()
+        ax.stem([0, 1], [1, 2])
+        three = plt.figure()
+        three.add_subplot(projection="3d").plot([0, 1], [0, 1], [0, 1])
+        figures = [plain, err, stem, three]
+        counts = [driver._line_xy_incomparable(f) for f in figures]
+        assert counts[0] == 0
+        assert all(c > 0 for c in counts[1:]), counts
+    finally:
+        plt.close("all")

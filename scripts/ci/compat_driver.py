@@ -321,6 +321,21 @@ def _line_xy_digests(figure) -> list[str] | None:
     return sorted(digests)
 
 
+def _line_xy_incomparable(figure) -> int:
+    """Curves the plain-Line2D comparison cannot speak for: errorbar / stem containers, 3D axes and
+    any line that is not exactly a `Line2D` (the product stores those under other fingerprint parts)."""
+    from matplotlib.container import ErrorbarContainer, StemContainer  # noqa: PLC0415
+    from matplotlib.lines import Line2D  # noqa: PLC0415
+
+    count = 0
+    for ax in figure.axes:
+        if getattr(ax, "name", "") == "3d":
+            count += 1
+        count += sum(isinstance(c, (ErrorbarContainer, StemContainer)) for c in ax.containers)
+        count += sum(type(line) is not Line2D for line in ax.lines)
+    return count
+
+
 def run_native_ref(req: dict) -> int:
     """Guardian 的原生参照：普通 `python script.py`，只观测、不干预。
 
@@ -455,6 +470,7 @@ def run_native_ref(req: dict) -> int:
             for i, fig in enumerate(figures)
         },
         line_xy=[_line_xy_digests(fig) for fig in figures],
+        line_xy_incomparable=[_line_xy_incomparable(fig) for fig in figures],
         log=_tail(log.getvalue()),
     )
 

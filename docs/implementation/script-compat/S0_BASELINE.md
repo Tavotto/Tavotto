@@ -100,7 +100,7 @@ python scripts/ci/compat_guardian_research.py fetch --case research_astro_celeri
 
 每个 case 的报告在 `raw.line_data` 里给出只读的曲线数据比对：原生每条 `Line2D.get_xydata()` 与产品打开的
 manifest `data_fingerprint.parts.xy` 按同一摘要规则（形状 + 小端 float64）逐条比较，保留重复曲线，
-报告相等 / 不同及两侧独有条数。它只是诊断，不改变任何阶段判据。
+报告相等 / 不同及两侧独有条数。它只覆盖两侧都是普通 Line2D 的曲线；误差棒、stem、3D 线、指纹未取得或原生取不到的曲线一律给 `unknown`（带不可比 / 未观测计数），不给 different。它只是诊断，不改变任何阶段判据。
 
 完整旧证据已保存为本地归档，并能复算原快照。历史 GitHub artifact 按 Actions 的保留期限提供；
 长期复核可使用保留同一目录结构的归档：
