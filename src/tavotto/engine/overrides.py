@@ -5272,23 +5272,29 @@ def state_reverse_index(state: "FigState") -> dict[int, str]:
     return rev
 
 
-def alias_covers(state: "FigState", rev: dict, artist, gid: str) -> dict[str, dict[str, list[str]]]:
+def alias_covers(
+    state: "FigState", rev: dict, artist, gid: str, registered: frozenset[str]
+) -> dict[str, dict[str, list[str]]]:
     """这个元素的广播型 prop 各自**会盖掉谁**：`{prop: {窄 prop: [窄 gid, ...]}}`。
 
     manifest 元素上的 `alias_covers`（前端「一个量只留一个 override 地址」的唯一事实来源）。
     与 `apply` 同一张 `ALIAS_GROUPS` 和同一份反查口径；排除与自身同 gid 的项（`fill→facecolor`
     等同元素别名不是「同一个量」）和 `cmap`（色阶组另有 `cmap_group_gids`）。没有就返回空 dict。
+
+    **只发元素表里登记的 gid**（`registered`）：反查表里还混着 `state.index` 的旧 gid 别名与独立
+    `ScalarMappable` 的合成 gid（`mappable#<对象 id>`，每个进程都不同）——它们不是用户能选中、
+    能写 override 的元素，发出去会让热态 manifest ≠ 冷启动重放。prop 按名字排序，输出与迭代序无关。
     """
     out: dict[str, dict[str, list[str]]] = {}
     key = _cls_key(artist)
-    for prop in _BROADCAST_PROPS:
+    for prop in sorted(_BROADCAST_PROPS):
         if prop == "cmap":
             continue
         resolver = ALIAS_GROUPS.get((key, prop))
         if resolver is None:
             continue
         for ngid, nprop in resolver(state, rev, artist):
-            if ngid == gid:
+            if ngid == gid or ngid not in registered:
                 continue
             gids = out.setdefault(prop, {}).setdefault(nprop, [])
             if ngid not in gids:

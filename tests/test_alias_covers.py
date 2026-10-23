@@ -39,6 +39,9 @@ def main():
     im = bx.imshow(np.arange(16.0).reshape(4, 4))
     fig.colorbar(im, ax=bx)
     ax.add_patch(plt.Rectangle((3, 0.5), 1, 0.5))
+    from matplotlib.cm import ScalarMappable
+
+    fig.colorbar(ScalarMappable(cmap="magma"), ax=ax)  # 独立 mappable：没有登记的元素
     fig.savefig("Alias.pdf")
 """
 
@@ -101,3 +104,17 @@ def test_cmap_and_same_element_aliases_are_not_listed(manifest):
 def test_plain_elements_carry_no_field(manifest):
     line = _el(manifest, "axes_0.lines_0")
     assert "alias_covers" not in line
+
+
+def test_only_registered_gids_are_listed(manifest):
+    """独立 `ScalarMappable` 的合成 gid（`mappable#<对象 id>`，每个进程都不同）不是元素：发出去热态
+    manifest 就 ≠ 冷启动重放（CI 的 test_hot_equals_replay_after_removal 抓到过）。
+    （色条轴刻度组 `axes_k.xticks` 登记在元素表里、只是 manifest 不单列，写 override 的目标有效，所以不能拿
+    manifest 元素表当参照。）"""
+    seen = 0
+    for e in manifest["elements"]:
+        for narrow in (e.get("alias_covers") or {}).values():
+            for covered in narrow.values():
+                seen += len(covered)
+                assert not any("#" in g for g in covered), (e["gid"], covered)
+    assert seen

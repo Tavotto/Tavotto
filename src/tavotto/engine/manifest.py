@@ -5058,6 +5058,7 @@ def _measure_manifest(
         gid_by_artist_id.setdefault(id(el["artist"]), el["gid"])
     #: 别名解析用的反查表（含旧 gid 别名），按需建一次——绝大多数元素没有广播型 prop
     alias_rev: dict[int, str] | None = None
+    alias_registered = frozenset(e["gid"] for e in state.elements)
 
     fingerprint_budget = [FINGERPRINT_BUDGET]
     for el in state.elements:
@@ -5421,7 +5422,7 @@ def _measure_manifest(
         # 控件读到另一端的旧值）。可选：不是广播端 / 没有被盖的就不发；旧前端忽略它。
         if alias_rev is None:
             alias_rev = state_reverse_index(state)
-        covers = alias_covers(state, alias_rev, artist, el["gid"])
+        covers = alias_covers(state, alias_rev, artist, el["gid"], alias_registered)
         if covers:
             entry["alias_covers"] = covers
         # 箭头：端点（figure 分数、top-origin，[尾, 头]）随 manifest 下发，前端据此画
