@@ -1109,6 +1109,20 @@ def api_panels():
     return resp
 
 
+@app.get("/api/panel-stem")
+def api_panel_stem():
+    """磁盘素材文件 id → 注册表认的「这是哪张图」的 stem（`Registry.artifact_stem`，#1251）。
+
+    给「重建为可编辑图」这类要按 stem 找图的前端动作一个**权威值**：素材清单（`/api/panels`）里没有这个文件
+    （比如被同一张图的 PDF 让位隐藏的 PNG，或清单正在刷新）时，前端不许退回文件名 stem 去猜。
+    """
+    rel_id = request.args.get("id", "")
+    safe_resolve(rel_id)  # 在项目根之内、是文件；不是就按老规矩 4xx（带稳定 code）
+    resp = jsonify({"id": rel_id, "stem": _disk_panel_rel(rel_id.replace("\\", "/"))[0]})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.get("/api/render")
 def api_render():
     """把面板渲染为指定像素宽度的 PNG（带磁盘缓存），用于画布显示与缩略图。

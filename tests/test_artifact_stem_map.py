@@ -801,3 +801,30 @@ def test_cli_normalises_a_hand_typed_path_to_the_real_file_name(tmp_path):
     assert handoff._artifact_stem(root, "panel.PDF", "panel") == "panel-2"
     assert handoff._artifact_stem(root, "panel.png", "panel") == "panel"
     assert handoff._real_rel(root, "nothing.pdf") == "nothing.pdf"  # 找不到的原样
+
+
+def test_panel_stem_endpoint_answers_even_for_files_the_inventory_does_not_list(client, tmp_path):
+    """「重建为可编辑图」按它取权威 stem：素材清单不列的文件（被同一张图的 PDF 让位隐藏的 PNG）也答得出。"""
+    from tavotto import app as m
+
+    # 同一张图的 PNG 被 PDF 让位：/api/panels 只有 pdf，但 panel-stem 对 png 也答 Fig1
+    figs = _touch_pair(tmp_path, None)
+    m.reset_projects()
+    m.open_project(str(figs))
+    assert [p["id"] for p in client.get("/api/panels").get_json()["panels"]] == ["Fig1.pdf"]
+    got = client.get("/api/panel-stem", query_string={"id": "Fig1.png"})
+    assert got.status_code == 200 and got.get_json() == {"id": "Fig1.png", "stem": "Fig1"}
+    # 两张不同的图：各自的 stem
+    figs = _touch_pair(tmp_path, {"Fig1.png": "Fig1", "Fig1.pdf": "Fig1-2"})
+    m.reset_projects()
+    m.open_project(str(figs))
+    assert (
+        client.get("/api/panel-stem", query_string={"id": "Fig1.pdf"}).get_json()["stem"]
+        == "Fig1-2"
+    )
+    assert (
+        client.get("/api/panel-stem", query_string={"id": "Fig1.png"}).get_json()["stem"] == "Fig1"
+    )
+    # 不是项目里的文件：老规矩 4xx
+    assert client.get("/api/panel-stem", query_string={"id": "nothing.png"}).status_code == 404
+    assert client.get("/api/panel-stem", query_string={"id": "../x.png"}).status_code in (403, 404)

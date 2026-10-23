@@ -400,6 +400,10 @@ async function jsonFetch<T>(url: string, init?: RequestInit, pj?: string | null)
 
 export const fetchPanels = () => jsonFetch<PanelsResponse>('/api/panels')
 
+/** 磁盘素材文件 id → 注册表认的 stem（后端 `Registry.artifact_stem`，#1251）：权威值，清单里没有这个文件也答得出。 */
+export const fetchPanelStem = (id: string) =>
+  jsonFetch<{ id: string; stem: string }>(`/api/panel-stem?id=${encodeURIComponent(id)}`)
+
 /**
  * 项目接入就绪度。**只读诊断**：后端不跑用户脚本、不 probe、不写盘、不发事件。
  *

@@ -1,6 +1,5 @@
 import { msg } from '@/i18n'
-import { panelStemOf } from '@/lib/panelStem'
-import { useAssetStore } from '@/store/assetStore'
+import { fetchPanelStem } from '@/lib/api'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -69,10 +68,14 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
     useUiStore.getState().setStatus(msg('artifact.rebuildFailed', undefined, 'errors'), 'error', { owner })
     return 'failed'
   }
-  // 这张 PNG 属于哪张图：只认素材清单里**已经有**的映射（后端 `Registry.artifact_stem`，#1251）。清单没有它
-  // （启动并行 / 请求失败）就不猜、也不为它新加 await——不拿文件名 stem 自动选图，交给 Figure 选择器让用户挑
-  const info = useAssetStore.getState().byId[panel.fileId]
-  const stem = info ? panelStemOf(info) : null
+  // 这张 PNG 属于哪张图：由后端按 fileId 用 `Registry.artifact_stem` 给出权威值（#1251）。不从素材清单取——它可能
+  // 被试运行的刷新清空，或根本不列这个文件（被同一张图的 PDF 让位隐藏的 PNG）；也绝不退回文件名 stem 去猜。
+  // 这一步在 guard / origin 捕获**之后**，await 回来立刻复核；取不到就是 null：交给 Figure 选择器，不建任何图
+  const stem = await fetchPanelStem(panel.fileId).then(
+    (r) => r.stem,
+    () => null,
+  )
+  if (!guard.still() || !origin.still()) return abandon()
   const matches = stem === null ? [] : row.descriptors.filter((d) => d.script === script && d.stem === stem)
   if (matches.length !== 1) {
     useUiStore.getState().clearStatusOwnedBy(owner)
