@@ -521,3 +521,39 @@ def test_rebase_removes_injected_family_tail_when_tex_appears_later(tmp_path):
     assert code == 0, err
     line = next(ln for ln in out.splitlines() if ln.startswith("FAMILY"))
     assert line == "FAMILY ['sans-serif'] ('sans-serif', False)", line
+
+
+TAIL_ONLY_IN_BARRIER_SCRIPT = """\
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+matplotlib.rcParams["font.family"] = "sans-serif"
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+plt.show()                           # ← 屏障 1：无 TeX，屏障内 rcParams 带尾巴
+print("BETWEEN", list(matplotlib.rcParams["font.family"]))
+plt.show()                           # ← 屏障 2：仍无 TeX，尾巴重新补上
+print("DONE")
+"""
+
+
+def test_family_tail_exists_only_inside_barriers(tmp_path):
+    """放行后脚本看到自己的 `font.family`；下一个屏障按当时有无 TeX 重新判定（这里无 TeX → 补上）。"""
+    nativekit.write(tmp_path / "figure.py", TAIL_ONLY_IN_BARRIER_SCRIPT)
+    with nativekit.product_run(nativekit.USER_PYTHON, "figure.py", cwd=tmp_path) as (
+        session,
+        proc,
+        _,
+    ):
+        nativekit.wait_state(session, [nativesession.BARRIER])
+        session.ensure_built()
+        session.resume()
+        nativekit.wait_state(session, [nativesession.BARRIER, nativesession.ENDED])
+        assert session.state == nativesession.BARRIER
+        session.ensure_built()
+        code, out, err = nativekit.finish(session, proc)
+
+    assert code == 0, err
+    line = next(ln for ln in out.splitlines() if ln.startswith("BETWEEN"))
+    assert line == "BETWEEN ['sans-serif']", line

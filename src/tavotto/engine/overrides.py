@@ -1158,9 +1158,7 @@ def ensure_rcparams_fallback(figures=()) -> None:
         # 之前（脚本还没有 TeX 文字时）补进去的尾巴要**撤回**：native 脚本在两个屏障之间才开
         # usetex，留着多项族 TexManager 照样退成 serif。只撤我们追加的那一份——现值必须恰好
         # 等于我们写进去的链；脚本后来自己改过 `font.family` 的，那是脚本的值，不碰
-        if added and cur == added[1]:
-            mpl.rcParams["font.family"] = list(added[0])
-        added.clear()
+        restore_rcparams_fallback()
         return
     if added and cur == added[1]:
         return  # 已经是我们补过的那份
@@ -1170,6 +1168,16 @@ def ensure_rcparams_fallback(figures=()) -> None:
         added[:] = [list(cur), list(chain)]
     else:
         added.clear()
+
+
+def restore_rcparams_fallback() -> None:
+    """撤回 `ensure_rcparams_fallback` 追加的尾巴：现值恰好等于我们写入的链才恢复补之前的值
+    （脚本自己改过的不碰）。没补过就什么都不做。幂等。native 离开屏障时也走这里——
+    尾巴只存在于屏障内，脚本接着跑时看到的是它自己的 `font.family`。"""
+    added = _RC_FAMILY_ADDED
+    if added and [str(f) for f in mpl.rcParams["font.family"]] == added[1]:
+        mpl.rcParams["font.family"] = list(added[0])
+    added.clear()
 
 
 #: 我们往 `rcParams["font.family"]` 里追加过尾巴的记录 `[补之前的值, 补之后的值]`；空表示没补过。

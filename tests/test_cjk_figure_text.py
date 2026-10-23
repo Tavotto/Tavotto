@@ -408,6 +408,19 @@ assert TexManager._get_font_family_and_reduced() == ("sans-serif", False)
 overrides.ensure_rcparams_fallback([fig])  # 有 TeX 时幂等
 assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"]
 
+# c2b) 离开屏障：撤回；下一个屏障无 TeX 时重新补上
+matplotlib.rcdefaults()
+matplotlib.rcParams["font.family"] = "sans-serif"
+fig, ax = plt.subplots()
+overrides.ensure_rcparams_fallback([fig])
+assert len(matplotlib.rcParams["font.family"]) > 1
+overrides.restore_rcparams_fallback()
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"]
+overrides.restore_rcparams_fallback()  # 幂等
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"]
+overrides.ensure_rcparams_fallback([fig])
+assert len(matplotlib.rcParams["font.family"]) > 1
+
 # c3) 脚本自己设的多项 family 不被我们动（有 TeX 时）；补过尾巴后脚本又改了值，也不被撤成旧值
 matplotlib.rcdefaults()
 matplotlib.rcParams["font.family"] = ["serif", "Some Fallback"]

@@ -1197,11 +1197,17 @@ class BridgeRun:
         self._had_barrier = True
         # 脚本接着跑：失败过的图下一个屏障再试一次（可能已被脚本改好）
         self.session.allow_retry_failed()
+        if not owed:
+            # 字体回退尾巴（ADR 0045）也是我们注入的状态：放行前撤回，脚本接着跑时 rcParams 是它自己
+            # 的值；下一个屏障 `rebase()` 按当时有没有 TeX 文字重新判定。没放行成（owed）就留着
+            overrides.restore_rcparams_fallback()
         return owed
 
     def resume_editing(self) -> None:
         """放行被拒之后回到编辑态：把刚存下的列表重放回去（与 `rebase()` 的重放同一个 apply）。"""
         overrides = _PKG.overrides
+        # 放行被拒前 `release_barrier` 可能已撤回尾巴：回到编辑态补回（有 TeX 文字则照旧不补）
+        overrides.ensure_rcparams_fallback(list(self.session.capture.values()))
         for stem, state in self.session.states.items():
             try:
                 overrides.apply(state, self.saved_patches.get(stem) or [])
