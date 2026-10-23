@@ -199,19 +199,29 @@ jobs:
           [[ ${#reports[@]} -eq 1 ]]
           "${TAVOTTO_PYTHON:-python}" scripts/ci/compat_guardian.py validate "${reports[0]}"
           cat "$(dirname "${reports[0]}")/summary.md" >> "$GITHUB_STEP_SUMMARY"
-      - name: Preserve allowlisted observation artifacts including failures
+      # The report references every file under evidence/ by SHA-256 (json, jsonl, svg, png, pdf, ...), so
+      # the artifact is the staged run directory, not a filtered subset; the staged copy is validated.
+      - name: Stage the artifact and validate that exact copy
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          stage="$RUNNER_TEMP/s0-artifact"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          for name in setup-receipt.json research-installed.txt tavotto-installed.txt; do
+            if [[ -f "$RUNNER_TEMP/$name" ]]; then cp "$RUNNER_TEMP/$name" "$stage/"; fi
+          done
+          if [[ -d "$RUNNER_TEMP/research-s0" ]]; then cp -R "$RUNNER_TEMP/research-s0" "$stage/research-s0"; fi
+          reports=("$stage"/research-s0/*/reports/guardian.json)
+          [[ ${#reports[@]} -eq 1 ]]
+          "${TAVOTTO_PYTHON:-python}" scripts/ci/compat_guardian.py validate "${reports[0]}"
+      - name: Preserve the validated observation artifact including failures
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
         with:
           name: research-s0-${{ matrix.case_id }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/setup-receipt.json
-            ${{ runner.temp }}/research-installed.txt
-            ${{ runner.temp }}/tavotto-installed.txt
-            ${{ runner.temp }}/research-s0/*/reports/guardian.json
-            ${{ runner.temp }}/research-s0/*/reports/summary.md
-            ${{ runner.temp }}/research-s0/*/reports/guardian.unvalidated.json
-            ${{ runner.temp }}/research-s0/*/evidence/**/*.png
-            ${{ runner.temp }}/research-s0/*/evidence/**/*.pdf
+          path: ${{ runner.temp }}/s0-artifact
           retention-days: 30
           if-no-files-found: error

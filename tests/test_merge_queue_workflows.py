@@ -2121,6 +2121,20 @@ class TestBuildReuseAndCaches:
         research = (WF / "compat-research-s0.yml").read_text(encoding="utf-8")
         assert not self.CACHE_PATTERN.search(research)
 
+    def test_research_artifact_is_the_whole_staged_run_validated_before_upload(self):
+        """guardian.json 引用 evidence/ 下全部文件（json / jsonl / svg / png / pdf …）：上传集合不得按扩展名
+        过滤，且上传前要在即将上传的那份拷贝上跑 `validate`。"""
+        text = (WF / "compat-research-s0.yml").read_text(encoding="utf-8")
+        steps = re.split(r"(?m)^      - ", text.split("  baseline:", 1)[1])
+        upload = next(s for s in steps if "actions/upload-artifact" in s)
+        stage = next(s for s in steps if s.startswith("name: Stage the artifact"))
+        assert "path: ${{ runner.temp }}/s0-artifact" in upload
+        assert not re.search(r"\*\.(png|pdf|json|jsonl|svg)", upload), upload
+        assert 'stage="$RUNNER_TEMP/s0-artifact"' in stage
+        assert 'compat_guardian.py validate "${reports[0]}"' in stage
+        assert 'cp -R "$RUNNER_TEMP/research-s0" "$stage/research-s0"' in stage
+        assert steps.index(stage) < steps.index(upload)
+
     #: setup-node 的 pnpm 缓存：开了的 job 必须按 web/pnpm-lock.yaml 取 key；`package` 四条腿没开
     #: （CI02 决定不加：合并组上每个候选 ref 都冷，加了只是多四份 57 MiB 的 save——文档 §4；
     #: 种子落地后可回来开，那是另一个 PR）。`cache-seed` 是 push main 上的种子（每个 os 一条腿

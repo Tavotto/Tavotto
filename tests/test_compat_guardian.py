@@ -407,6 +407,23 @@ class GuardianContract(GuardianBase):
         (self.ev / "raw.json").write_text("tampered", encoding="utf-8")
         self.rejected()
 
+    def test_every_referenced_evidence_type_must_be_present_not_only_images(self):
+        """An artifact keeping only png/pdf cannot be validated after the runner is gone."""
+        for name, data in {
+            "result.json": b"{}",
+            "tavotto-execs.jsonl": b"{}\n",
+            "shot.svg": b"<svg/>",
+            "shot.png": b"\x89PNG",
+            "doc.pdf": b"%PDF-1.7",
+        }.items():
+            (self.ev / name).write_bytes(data)
+        self.report["evidence"] = cg.evidence_refs(self.ev)
+        self.valid()
+        for ref in self.report["evidence"]:
+            if not ref["path"].endswith((".png", ".pdf")):
+                (self.ev / ref["path"]).unlink()
+        self.rejected()
+
     def test_duplicate_case_rejected(self):
         self.report["cases"].append(copy.deepcopy(self.row))
         self.rejected()
