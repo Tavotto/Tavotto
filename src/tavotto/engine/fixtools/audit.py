@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -17,8 +18,14 @@ MAX_BYTES = 1024 * 1024
 #: 值本身可以进审计的参数名：只有**路径**与**闭集枚举**。`glob` / `module` / `name` / `pattern` 之类模型可填任意文字的字段
 #: 可能夹带从上一个工具结果里看到的凭据或文件内容，一律只记长度（Codex #1353）
 PATH_KEYS = frozenset({"path", "root"})
-ENUM_KEYS = {"mode": frozenset({"script", "native"}), "source": frozenset({"app", "worker"})}
-KEEP_KEYS = PATH_KEYS | frozenset(ENUM_KEYS)
+ENUM_KEYS = {
+    "mode": frozenset({"script", "native", "safe"}),
+    "source": frozenset({"app", "worker"}),
+}
+#: 不透明标识（环境 id、快照 id）：形状合格才记原值，其余只记长度
+ID_KEYS = frozenset({"env", "snapshot"})
+_ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+KEEP_KEYS = PATH_KEYS | frozenset(ENUM_KEYS) | ID_KEYS
 _MAX_STR = 300
 _lock = threading.Lock()
 
@@ -41,6 +48,8 @@ def summarize_args(args: object) -> dict:
             if key in PATH_KEYS:
                 out[key] = v[:_MAX_STR]
             elif key in ENUM_KEYS and v in ENUM_KEYS[key]:
+                out[key] = v
+            elif key in ID_KEYS and _ID_RE.fullmatch(v):
                 out[key] = v
             else:
                 out[key] = f"<str len={len(v)}>"
@@ -68,6 +77,7 @@ class AuditLog:
         args: object,
         approved_by: str,
         result: dict,
+        snapshot: str | None = None,
     ) -> None:
         line = {
             "ts": round(time.time(), 3),
@@ -83,6 +93,8 @@ class AuditLog:
                 "summary": str(result.get("summary") or "")[:120],
             },
         }
+        if snapshot:
+            line["snapshot"] = str(snapshot)[:64]  # 改动前打的快照 id（「改」组）
         try:
             with _lock:
                 p = self.path

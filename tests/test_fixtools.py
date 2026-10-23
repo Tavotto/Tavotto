@@ -20,6 +20,7 @@ import pytest
 
 from tavotto.engine.agent_runner import tools as runner_tools, wires
 from tavotto.engine.fixtools import (
+    FIX_SESSION_TIERS,
     REGISTRY,
     AuditLog,
     FixContext,
@@ -744,17 +745,31 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "lookup_package",
         "try_import",
         "try_run",
+        # D2a 的「改」组（细节见 tests/test_fixtools_change.py）
+        "install_packages",
+        "switch_execution",
+        "change_python",
+        "select_environment",
+        "run_command",
+        "convert_script",
+        "rollback",
     }
     assert {n for n, t in REGISTRY.items() if t.tier == "run"} == {
         "inspect_environment",
         "try_import",
         "try_run",
     }
-    assert {t.tier for t in REGISTRY.values()} == {"observe", "run"}
+    assert {t.tier for t in REGISTRY.values()} == {
+        "observe",
+        "run",
+        "tavotto",
+        "listed",
+        "user_env",
+    }
     for name in ("try_run", "try_import", "inspect_environment"):
         assert "changes nothing" not in REGISTRY[name].description
         assert "never touched" not in REGISTRY[name].description
-    assert not any(t.waits_for_user for t in REGISTRY.values())
+    assert not any(t.waits_for_user for t in REGISTRY.values() if t.tier in ("observe", "run"))
 
 
 def test_build_agent_tools_adapts_registry_and_audits(box):
@@ -777,7 +792,7 @@ def test_tools_beyond_the_allowed_tiers_are_refused_and_audited_as_blocked(box):
 
     risky = FixTool("poke", "x", obj({}), lambda c, a: ok("done"), tier="user_env")
     audit = AuditLog(box.data / "ai" / "fix_audit.jsonl")
-    ctx = make_ctx(box)
+    ctx = make_ctx(box, allowed_tiers=frozenset({"observe", "run"}))
     r = run_tool(risky, ctx, {}, audit)
     assert r.is_error and r.code == "tier_not_allowed"
     assert json.loads((box.data / "ai" / "fix_audit.jsonl").read_text())["approved_by"] == "blocked"
@@ -800,8 +815,10 @@ def test_a_crashing_handler_and_non_object_args_are_tool_errors(box):
 
 def test_tier_is_never_sent_to_the_model(box):
     specs = [t.spec() for t in build_agent_tools(make_ctx(box), AuditLog(box.data / "a.jsonl"))]
-    assert {s.tier for s in specs} == {"observe", "run"}
-    assert all(s.waits_for_user is False for s in specs)
+    assert {s.tier for s in specs} == {t.tier for t in REGISTRY.values()}
+    assert {s.name: s.waits_for_user for s in specs} == {
+        n: t.waits_for_user for n, t in REGISTRY.items()
+    }
     for name, wire in wires.WIRES.items():
         if name == "demo":
             continue
@@ -1063,7 +1080,7 @@ def test_try_run_refuses_to_start_other_processes(box):
 def test_a_copy_failure_whose_cleanup_also_fails_reports_cleanup_pending(box, monkeypatch):
     ctx = make_ctx(box, environments={"e": "py"}, script_path=put(box.proj / "s.py"))
 
-    def half_copy(src_dir, script, dest, scope=None, skipped=None):
+    def half_copy(src_dir, script, dest, scope=None, skipped=None, reads=None):
         dest.mkdir(parents=True, exist_ok=True)
         (dest / "partial.txt").write_text("x")
         raise OSError("disk full")
@@ -1103,7 +1120,7 @@ def test_bare_context_allows_only_observe_and_fix_session_adds_run(box):
     fix = FixContext.for_fix_session(
         "s", box.proj, home=box.home, environments={"e": sys.executable}, script_path=script
     )
-    assert fix.allowed_tiers == frozenset({"observe", "run"})
+    assert fix.allowed_tiers == FIX_SESSION_TIERS
     assert not run_tool(REGISTRY["try_run"], fix, {"env": "e"}).is_error
     assert fix.session_id == "s" and fix.project_root == box.proj
 
@@ -1556,7 +1573,7 @@ def test_readable_file_symlink_is_copied_as_a_regular_file(box):
     dest, _, whole, skipped = _copy(box)
     assert whole and (dest / "data.csv").read_text() == "1,2\n"
     assert not (dest / "data.csv").is_symlink()
-    assert skipped == {"files": [], "dirs": []}
+    assert skipped == {"files": [], "dirs": [], "special": []}
 
 
 def test_blocked_dangling_and_folder_links_are_not_copied_and_are_reported(box):

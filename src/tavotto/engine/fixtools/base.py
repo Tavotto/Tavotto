@@ -20,12 +20,22 @@ from . import readscope
 Tier = Literal["observe", "run", "tavotto", "listed", "user_env", "outward"]
 TIERS: tuple[str, ...] = ("observe", "run", "tavotto", "listed", "user_env", "outward")
 
-#: 修复会话（D2 创建方）默认放行的档
-FIX_SESSION_TIERS: frozenset[str] = frozenset({"observe", "run"})
+#: 修复会话（D2 创建方）默认放行的档。`tavotto` / `listed` / `user_env` / `outward` 放行 ≠ 不问：
+#: 要不要问用户由各工具自己的 `ctx.ask` 把关（listed 名单内不问、user_env 一律问、outward 永远问）；没有 `ask` 一律按未获同意处理
+FIX_SESSION_TIERS: frozenset[str] = frozenset(
+    {"observe", "run", "tavotto", "listed", "user_env", "outward"}
+)
 
 #: 这些错误码 = 「被拦」：审计里记 approved_by=blocked
 BLOCKED_CODES = frozenset(
-    {readscope.REASON_DENIED, readscope.REASON_OUTSIDE, "tier_not_allowed", "env_unknown"}
+    {
+        readscope.REASON_DENIED,
+        readscope.REASON_OUTSIDE,
+        "tier_not_allowed",
+        "env_unknown",
+        "needs_approval",  # 需要用户点头而没拿到（没有界面 / 用户说不 / 超时）
+        "hard_blocked",  # `run_command` 的硬拦表：问也不给
+    }
 )
 
 
@@ -49,6 +59,24 @@ class FixContext:
     script_path: Path | None = None
     #: `try_run` 的执行器 `(python, work_dir, script_name, mode, timeout) -> dict`；None = 内置的一次性子进程
     runner: Callable[..., dict] | None = None
+    #: 弹卡并阻塞等用户点（D2b 的修复会话实现；None = 没有界面，需要用户点的一律按「未获同意」处理）。
+    #: 入参 card: {"kind": "approve"|"choice"|"pick"|"send", "tool": str, "summary": str, ...}
+    #: 返回 {"answer": "yes"|"no"|<选项 id>|<路径>|"sent"|"cancelled"|"timeout", ...}
+    ask: Callable[[dict], dict] | None = None
+    #: 「改」组的执行器，全部可注入（测试一律用假的，绝不往真实环境装包）。None = 用应用里现有的那条路径（见 `change.py`）：
+    #: 装 / 卸包 `(python, [需求串]) -> {"ok": bool, "code": str, "done": [需求串]}`
+    installer: Callable[[str, list[str]], dict] | None = None
+    uninstaller: Callable[[str, list[str]], dict] | None = None
+    #: `pip freeze` 文本 `(python) -> str`（问不出来回空串）
+    freezer: Callable[[str], str] | None = None
+    #: 另建合适版本的 Tavotto 私有环境 `({"version", "project"}) -> {"ok", "code", "message", "python"?}`；None = 暂不可用（#1342 未合入）
+    python_changer: Callable[[dict], dict] | None = None
+    #: 转成 matplotlib `({"script", "output", "project"}) -> {"ok", "code", "message"}`，只许写 `output`；None = 暂不可用（D2b 接转换任务）
+    script_converter: Callable[[dict], dict] | None = None
+    #: 环境 id → 叠加环境（`list_environments` 登记；`select_environment` 记住环境时要带上）
+    environment_overlays: dict[str, dict] = field(default_factory=dict)
+    #: 本次调用的元信息：`run_tool` 每次调用前清空，工具写 `approved_by`（"user"）与 `snapshot`（快照 id），审计读它
+    call_meta: dict = field(default_factory=dict)
     #: 本会话允许的档；裸构造只放行 observe（只读），修复会话用 `for_fix_session` 加上 run
     allowed_tiers: frozenset[str] = frozenset({"observe"})
     #: 项目外的读取清单（供卡片详情列出）
@@ -70,7 +98,7 @@ class FixContext:
 
     @classmethod
     def for_fix_session(cls, session_id: str, project_root: Path, **kw) -> FixContext:
-        """修复会话的构造帮手：用户点「使用你的 AI 来修复」即授权 `observe` + `run`；其余字段同构造。"""
+        """修复会话的构造帮手：放行 `FIX_SESSION_TIERS`（需要用户点头的动作由各工具经 `ctx.ask` 把关）；其余字段同构造。"""
         kw.setdefault("allowed_tiers", FIX_SESSION_TIERS)
         return cls(session_id=session_id, project_root=project_root, **kw)
 

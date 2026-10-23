@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -29,7 +30,7 @@ from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
 from .base import FixContext, FixTool, err, obj, ok
-from .readscope import ReadScope
+from .readscope import ReadScope, Resolved
 
 INSPECT_TIMEOUT_S = 40.0
 IMPORT_TIMEOUT_S = 40.0
@@ -500,15 +501,21 @@ def _copy_project(
     dest: Path,
     scope: ReadScope | None = None,
     skipped: dict[str, list[str]] | None = None,
+    reads: list[Resolved] | None = None,
 ) -> tuple[str, bool]:
     """把脚本所在目录复制到 `dest`（有上限，超了只复制脚本）。回 (脚本在 dest 里的相对名, 是否整目录复制)。
 
     **文件符号链接**：目标经 `scope.check` 可读（不在拦截区、在允许范围内）就复制目标内容到副本里的同名位置（`copy2` 跟随链接），
     脚本读 `data.csv -> ../shared/data.csv` 照样读得到；目标不可读 / 在拦截区 / 悬空 / 没给 `scope` → 不复制。
-    **目录符号链接**不跟随。两类没复制的都记进 `skipped["files"]` / `skipped["dirs"]`（相对名），由调用方写进结果的 `copy_incomplete`。"""
+    **目录符号链接**不跟随。两类没复制的都记进 `skipped["files"]` / `skipped["dirs"]`（相对名），由调用方写进结果的 `copy_incomplete`。
+    **只复制普通文件**（#1361）：FIFO / socket / 设备文件（含指向它们的链接）一律跳过、记进 `skipped["special"]`——
+    `shutil.copy2` 打开 FIFO 会一直阻塞，而复制发生在有超时的子进程之前，`try_run` 会无限挂起。
+    `reads`：实际把内容复制进副本的**链接目标**（`ReadScope.check` 结果），调用方逐个 `ctx.note_read`（项目外的读取清单，#1361）。"""
     skipped = skipped if skipped is not None else {}
     skipped.setdefault("files", [])
     skipped.setdefault("dirs", [])
+    skipped.setdefault("special", [])
+    link_reads: dict[Path, Resolved] = {}
     total = files = seen = 0
     plan: list[tuple[Path, Path]] = []  # (读哪里, 副本里的相对位置)
     linked: set[Path] = set()
@@ -530,8 +537,13 @@ def _copy_project(
                             skipped["dirs"].append(str(rel))
                             continue
                         r = scope.check(e.path) if scope is not None else None
-                        if r is None or not r.ok or not os.path.isfile(r.real):
+                        if r is None or not r.ok:
                             skipped["files"].append(str(rel))
+                            continue
+                        if not os.path.isfile(r.real):
+                            # 目标存在却不是普通文件（FIFO / socket / 设备）：单独记，不打开它
+                            bucket = "special" if os.path.lexists(r.real) else "files"
+                            skipped[bucket].append(str(rel))
                             continue
                         try:
                             total += os.stat(r.real).st_size
@@ -541,6 +553,7 @@ def _copy_project(
                         files += 1
                         plan.append((Path(r.real), rel))
                         linked.add(rel)
+                        link_reads[rel] = r
                         if total > COPY_MAX_BYTES or files > COPY_MAX_FILES:
                             too_big = True
                             break
@@ -548,6 +561,9 @@ def _copy_project(
                     if e.is_dir(follow_symlinks=False):
                         if e.name not in _COPY_SKIP:
                             stack.append(Path(e.path))
+                        continue
+                    if not e.is_file(follow_symlinks=False):
+                        skipped["special"].append(str(Path(e.path).relative_to(src_dir)))
                         continue
                     try:
                         total += e.stat(follow_symlinks=False).st_size
@@ -570,12 +586,19 @@ def _copy_project(
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
+            # 枚举到复制之间文件可能被换成 FIFO：打开前再核一次是普通文件（lstat 不会阻塞）
+            if not stat.S_ISREG(os.stat(p).st_mode):
+                skipped["special"].append(str(rel))
+                continue
             shutil.copy2(p, target)
         except OSError:
             if rel not in linked:
                 raise
             skipped["files"].append(str(rel))  # 链接目标读不了（刚被删 / 权限）：不让整次复制失败
             target.unlink(missing_ok=True)
+        else:
+            if reads is not None and rel in link_reads:
+                reads.append(link_reads[rel])
     return str(script.relative_to(src_dir)), True
 
 
@@ -583,6 +606,7 @@ def _copy_incomplete_note(skipped: dict[str, list[str]]) -> str:
     """副本里缺了哪些符号链接（只写项目内的相对名，不写目标路径）；全复制了就是空串。"""
     note = ""
     files, dirs = skipped.get("files") or [], skipped.get("dirs") or []
+    special = skipped.get("special") or []
     if files:
         note += (
             f"\ncopy_incomplete: {len(files)} linked file(s) were not copied ({', '.join(files[:8])}"
@@ -593,6 +617,12 @@ def _copy_incomplete_note(skipped: dict[str, list[str]]) -> str:
         note += (
             f"\ncopy_incomplete: {len(dirs)} linked folder(s) were not copied ({', '.join(dirs[:8])}"
             f"{', ...' if len(dirs) > 8 else ''}); folder links are never followed"
+        )
+    if special:
+        note += (
+            f"\ncopy_incomplete: {len(special)} special file(s) (named pipe, socket or device) were not copied "
+            f"({', '.join(special[:8])}{', ...' if len(special) > 8 else ''}); only regular files are copied, "
+            "so a script that reads them may fail here for that reason"
         )
     return note
 
@@ -721,11 +751,12 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
     pending = False
     copy_failed = False
     link_skipped: dict[str, list[str]] = {}
+    link_reads: list[Resolved] = []
     res: dict = {}
     try:
         try:
             name, whole = _copy_project(
-                src_dir, script, trial_dir / "work", ctx.scope, link_skipped
+                src_dir, script, trial_dir / "work", ctx.scope, link_skipped, link_reads
             )
         except OSError:
             copy_failed = True
@@ -733,6 +764,8 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
             runner = ctx.runner or _default_runner
             res = runner(python, str(trial_dir / "work"), name, mode, timeout)
     finally:
+        for target in link_reads:  # 副本跟随链接读了的项目外文件：记进读取清单（#1361）
+            ctx.note_read(target, "try_run")
         # 副本里的一切（含脚本写出的文件）随它去；用户目录从未被写。删不掉（Windows 文件占用）就如实报 cleanup_pending
         pending = not _remove_tree(trial_dir)
     if copy_failed:

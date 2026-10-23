@@ -303,20 +303,66 @@ def _environment_entries(ctx: FixContext) -> list[dict]:
     return userenvs.discover(ctx.project_root, ask_login_shell=None)
 
 
-def list_environments(ctx: FixContext, args: dict) -> ToolResult:
-    from .. import userenvs
+#: `list_environments` 一次最多列这么多；超出如实报总数（#1361），按 `match` 筛
+ENV_LIST_LIMIT = 30
 
+
+def _env_rank(ctx: FixContext, entry: dict, remembered_key) -> int:
+    """排序键：本项目当前所用的环境（前缀在 `env_prefixes` 里）与用户为本项目选过的环境排最前，项目自己的 `.venv` 其次。"""
+    from .. import projectenv
+
+    py = entry.get("python")
+    if not isinstance(py, str) or not py:
+        return 3
+    try:
+        key = projectenv.env_key(py)
+        norm = os.path.normcase(os.path.abspath(py))
+        for prefix in ctx.env_prefixes:
+            base = os.path.normcase(os.path.abspath(str(prefix))) + os.sep
+            if norm.startswith(base):
+                return 0
+        if remembered_key is not None and key == remembered_key:
+            return 0
+    except (OSError, ValueError):
+        pass
+    return 1 if entry.get("source") == "project_venv" else 2
+
+
+def list_environments(ctx: FixContext, args: dict) -> ToolResult:
+    from .. import projectenv, userenvs
+
+    match = args.get("match")
+    if match is not None and not isinstance(match, str):
+        return err("bad_arguments", "`match` must be a text fragment such as `conda` or `lab`.")
     try:
         entries = _environment_entries(ctx)
     except Exception as exc:  # noqa: BLE001 - 发现失败是工具错误，不抛
         return err("discover_failed", f"Could not list environments ({type(exc).__name__}).")
+    valid = [e for e in entries if isinstance(e.get("python"), str) and e.get("python")]
+    total = len(valid)
+    if match and match.strip():
+        needle = match.strip().casefold()
+        # 名字 / 来源 / 路径片段都能筛；路径只用来筛，不会出现在返回里
+        valid = [
+            e
+            for e in valid
+            if needle
+            in " ".join(str(e.get(k) or "") for k in ("label", "source", "python")).casefold()
+        ]
+    try:
+        remembered = projectenv.remembered(ctx.project_root)
+        remembered_key = projectenv.env_key(remembered) if remembered else None
+    except Exception:  # noqa: BLE001 - 取不到「用户选过」只影响排序
+        remembered_key = None
+    ranked = sorted(enumerate(valid), key=lambda it: (_env_rank(ctx, it[1], remembered_key), it[0]))
+    shown = [e for _, e in ranked[:ENV_LIST_LIMIT]]
     rows = []
-    for e in entries[:30]:
-        py = e.get("python")
-        if not isinstance(py, str) or not py:
-            continue
+    for e in shown:
+        py = e["python"]
         eid = userenvs.env_id(py, e.get("overlay"))
         ctx.environments[eid] = py  # 之后 inspect_environment / try_* 用这个 id 指认
+        if isinstance(e.get("overlay"), dict):
+            ctx.environment_overlays[eid] = e["overlay"]
         row = {"id": eid, "source": e.get("source", ""), "label": e.get("label", "")}
         if "satisfies" in e or "checked" in e:
             # 已评估过的：给落选原因的稳定码（与界面 envRejectionText 同一套 reason code）
@@ -327,8 +373,28 @@ def list_environments(ctx: FixContext, args: dict) -> ToolResult:
                     row[k] = rej[k]
         rows.append(row)
     if not rows:
+        if total and match:
+            return ok(
+                f"(none of the {total} environments matches `{match.strip()[:60]}`)",
+                "0 environments",
+            )
         return ok("(no Python environments found)", "0 environments")
-    return ok(json.dumps(rows, ensure_ascii=False, indent=1), f"{len(rows)} environments")
+    text = json.dumps(rows, ensure_ascii=False, indent=1)
+    note = ""
+    if len(valid) > len(rows):
+        note = (
+            f"\n[showing {len(rows)} of {len(valid)}"
+            + (
+                f" matching environments ({total} found in all)"
+                if match and match.strip()
+                else " environments"
+            )
+            + "; the others are not listed and have no id yet. The project's current and previously chosen "
+            "environments come first. Pass `match` (part of a name, source or path) to list the rest.]"
+        )
+    elif match and match.strip():
+        note = f"\n[{len(rows)} of {total} environments match `{match.strip()[:60]}`]"
+    return ok(text + note, f"{len(rows)} of {len(valid)} environments")
 
 
 _INSPECT_SRC = r"""
@@ -550,8 +616,17 @@ OBSERVE_TOOLS: tuple[FixTool, ...] = (
     FixTool(
         "list_environments",
         "List the Python environments Tavotto found on this computer (id, source, label), with the reason one was "
-        "not usable for this project when known.",
-        obj({}),
+        "not usable for this project when known. At most 30 are listed (the project's current and previously chosen "
+        "ones first) and the result says how many there are in all; pass `match` to narrow the list by part of a "
+        "name, source or path, and the matching ones are listed with ids.",
+        obj(
+            {
+                "match": {
+                    "type": "string",
+                    "description": "Only environments whose name, source or path contains this text.",
+                }
+            }
+        ),
         list_environments,
     ),
     FixTool(

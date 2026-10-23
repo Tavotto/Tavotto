@@ -78,3 +78,13 @@
 * 规则全文：`docs/rules/backend/ai-agent-bridge.md`「AI 修复工具箱」一节；看护 `tests/test_fixtools.py`。
 
 **修订（2026-10-23，Codex #1353 第五轮）**：写入绊线只管本解释器，子进程不在它的视野里，所以「试」的子进程里**一律不许再起进程**（`subprocess.Popen` / `os.system` / `os.exec*` / `os.spawn*` / `os.posix_spawn` / `os.fork` / `pty.spawn` / `os.startfile` 由第二个 audit hook 拦下、记进 `blocked_spawns` 并告诉模型）。体检探测代码本身也不起进程（不用 `platform.platform()`，它会起 `uname` / `file`）。仍有的盲区：C 扩展在 C 层直接写文件——要彻底关住只能靠操作系统级沙盒，不在本 PR 范围内。复制副本改为惰性枚举、过上限即只复制脚本；复制到一半失败时结果在清理之后才组装（照样报 `cleanup_pending`）。
+
+## 七、D2a：「改」组、快照与回滚（2026-10-23）
+
+「改」组七个工具登记进同一张注册表（`engine/fixtools/change.py`）：`install_packages`（`listed`：常见大包名单内不问、名单外 `ctx.ask`）、`switch_execution`（`tavotto`）、`change_python`（`tavotto`）、
+`select_environment`（`user_env`，一律问）、`run_command`（`user_env`，一律问 + 硬拦表）、`convert_script`（`tavotto`，另存 `<原名>_matplotlib.py`，原脚本不动）、`rollback`（`tavotto`）。
+**同意由工具自己经 `FixContext.ask` 取得**：`FIX_SESSION_TIERS` 扩成 observe / run / tavotto / listed / user_env / outward（放行 ≠ 不问）；没有 `ask` 或回答不是 yes 一律 `needs_approval`、审计 `approved_by=blocked`，用户点了 yes 记 `user`。
+会改东西的工具执行前先打快照（项目设置两个键 + 目标环境 `pip freeze` + 环境目录清单，`data_dir()/cache/fix_snapshots/<会话>/`），审计行多 `snapshot`；打不出快照就不改；`rollback` 设置精确恢复、包按差异卸 / 装回。
+**不新写任何执行路径**：装 / 卸包走 `deprepair._pip_install` / `_pip_uninstall` + 环境独占锁，切运行方式走 `execpolicy.set_mode`，换环境走 `projectenv.remember`；`change_python` / `convert_script` 的执行器由 `FixContext` 注入（#1342 / D2b 接），没注入返回 `unavailable`。
+`switch_execution` 的 `safe` / `native` 落在既有的项目级 `execution_policy`（`safe_only` / `compatible`，即「允许 safe 被自己的守卫拦下时回退 native」）上；放宽用户明确选过的 `safe_only` 要先问。
+同批修 #1361 三条（试跑副本跳过特殊文件、环境列表如实报截断并可筛、经链接复制的项目外读取记入 `reads`）。规则全文见 `docs/rules/backend/ai-agent-bridge.md` 的「D2a」一节。

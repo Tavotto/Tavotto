@@ -437,3 +437,25 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   **副本清理**：删除带有限次重试（Windows 文件占用）；仍失败 → 结果如实报 `cleanup_pending`、目录留 `.cleanup_pending` 标记；`sweep_stale_trials()` 在每次 `run_python` 开头清标记目录与超过 1 小时的残留。
 - **审计**（`audit.py`）：`data_dir()/ai/fix_audit.jsonl`，字段 `ts / session / step / tool / tier / args / approved_by / result{ok,code,summary}`；路径类参数保留、其余只记长度，
   内容不落盘；1 MiB 滚成 `.1`；失败不影响调用。
+
+### D2a：「改」组（`change.py` / `snapshots.py` / `executors.py`，ADR 0149 §七）
+
+七个工具：`install_packages`（`listed`）、`switch_execution` / `change_python` / `convert_script` / `rollback`（`tavotto`）、`select_environment` / `run_command`（`user_env`）。
+看护 `tests/test_fixtools_change.py`。`FIX_SESSION_TIERS` 放行 observe / run / tavotto / listed / user_env / outward，**放行 ≠ 不问**：要不要问用户由各工具自己经 `FixContext.ask` 把关
+（`change.approve`：没有 `ask`、回答不是 `yes`、`ask` 抛了、超时，一律 `needs_approval` 且审计记 `blocked`；通过则审计记 `approved_by=user`）。
+
+- **执行都在既有出处里，本包不自己拼命令**：装 / 卸包 = `deprepair._pip_install` / `_pip_uninstall`（同一份 argv、只装 wheel、镜像回退）+ `pool.mutating_environment`（环境独占锁），
+  需求串先过 `depresolve.parse_requirement`（`-r` / URL / 路径 / extras / 标记死在那里）；**名单** = `convertdeps.in_allowlist`（`autoinstall_dists.txt`，PyPI 公开下载量生成）：名单内不问、名单外 `ask`；
+  `convertdeps.describe_env` 判为系统自带 / 内置 runtime 的解释器永不装（`env_not_installable`）。切运行方式 = `execpolicy.set_mode`（`safe` → `safe_only`，`native` → `compatible`；
+  把用户明确选过的 `safe_only` 放宽要先问）。换环境 = `projectenv.remember(..., automatic=False, trigger="user_selected")`。
+  执行器全部可经 `FixContext` 注入（`installer` / `uninstaller` / `freezer` / `python_changer` / `script_converter`）；**测试一律注入假的，不往真实环境装包**。
+  `change_python` 的执行器（#1342 pyversionfix）与 `convert_script` 的执行器（D2b 接转换任务）没注入时返回 `unavailable`。
+- **快照**（`snapshots.py`）：除 `rollback` 外每个会改东西的工具执行前先 `snapshots.take`，存 `data_dir()/cache/fix_snapshots/<会话>/<id>.json`：项目设置里 `execution_policy` / `environment` 两个键的原值（含「没有」）+
+  目标环境的 `pip freeze` 解析成 `{规范名: 版本}`（只留 `名==版本` 行，URL / 路径行不存）+ 环境目录顶层条目名。**打不出快照就不改**（`snapshot_failed`）；快照 id 进工具返回与审计行 `snapshot` 字段；每会话留最近 30 份。
+  `rollback` 只认本会话 + 本项目的快照、id 形状固定（`snap_<时间>_<6 位十六进制>`）；设置**精确恢复**（原来没有的键清掉，并 `projectenv.reset_cache`）；包按 freeze 差异——快照后新装的卸掉
+  （`pip` / `setuptools` / `wheel` 不卸），被改版本 / 被卸掉的装回快照里的版本，走同一条 `executors`。
+- **`run_command`**：先过 `hard_block_reason`（硬拦：sudo 类、磁盘 / 关机类、起 shell、管道进 shell、shell 语法、`dd of=/dev/…`、对根 / 盘符 / 主目录的递归删除与改权限、指向 `ReadScope` 硬拦区的参数）——**命中不问用户直接 `hard_blocked`**；
+  再 `ask`（一律问）→ 快照 → `Popen`（不用 shell，`shlex` 拆；cwd=项目；`clean_env` 去掉名字带 KEY / TOKEN / SECRET / PASSWORD / AUTH 等的环境变量；超时默认 60 s、上限 300 s；输出沿用 `trial._Capture` 的 64 KiB 尾部 + 8 MiB 总量叫停，并过 `scrub`）。
+- **`convert_script`**：原脚本**绝不动**——只许写 `<原名>_matplotlib.py`（已存在则 `_matplotlib_2`…，不覆盖）；脚本必须在项目内（解析符号链接后）；执行器返回后核原脚本 sha256，变了即 `original_modified`。
+- **#1361 三条**：`_copy_project` 只复制普通文件（FIFO / socket / 设备及指向它们的链接跳过、记 `skipped["special"]`、结果 `copy_incomplete`，复制前再 `S_ISREG` 核一次防枚举后被换成 FIFO）；
+  `list_environments` 列满 30 条时如实报 `[showing 30 of N …]`，本项目当前 / 选过的环境排前，`match` 参数按名字 / 来源 / 路径片段筛（被列出的才登记 id）；`_copy_project(…, reads)` 回传实际复制了内容的链接目标，`try_run` 逐个 `ctx.note_read(…, "try_run")`。
