@@ -2,7 +2,11 @@
 
 子进程封装与体检同一纪律（`projectenv._probe_environment`）：`runtime.probe_args`（`-B`，不往用户解释器目录写 .pyc）、
 `runtime.probe_env` + `launcher.activate_env`（Conda 环境按激活后的环境起）、`stdin=DEVNULL`、`creationflags=CREATE_NO_WINDOW`、
-`encoding="utf-8"`、超时。cwd 是一次性临时目录；环境只能用会话给出的环境 id 指认，不接受任意解释器路径。
+`encoding="utf-8"`、超时。环境只能用会话给出的环境 id 指认，不接受任意解释器路径。
+
+`try_run` 不是裸跑：脚本在 **safe 的写入根绊线**（`engine/writetripwire.py`，ADR 0141，worker 的 safe 执行同一个守卫）下跑，
+写入根只有本次试跑专用的缓存子目录（`data_dir()/cache/fix_trials/<会话>-<随机>/`，里面是副本、专用 TMPDIR、matplotlib 配置目录）；
+读不限。守卫装不上（解释器 < 3.8 等）就拒绝试跑（`trial_unguarded`），不退化成裸跑。子进程输出只留有上限的尾部，总量超限即结束子进程。
 """
 
 from __future__ import annotations
@@ -11,8 +15,13 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
+import sys
 import tempfile
+import threading
+import time
+from collections import deque
 from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
@@ -28,12 +37,76 @@ COPY_MAX_BYTES = 64 * 1024 * 1024
 COPY_MAX_FILES = 5000
 _COPY_SKIP = frozenset({".git", "node_modules", "__pycache__", ".venv", "venv", ".hg", ".svn"})
 
+#: 子进程输出：每路只在内存里留尾部这么多字节；两路合计超过 OUTPUT_LIMIT_BYTES 就结束子进程（`output_truncated`）
+OUTPUT_TAIL_BYTES = 64 * 1024
+OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024
+#: 试跑副本的清理：重试次数 / 间隔（Windows 上子进程或扫描器还占着文件）；残留目录超过这个年龄被 `sweep_stale_trials` 清
+CLEANUP_ATTEMPTS = 4
+CLEANUP_DELAY_S = 0.5
+STALE_TRIAL_AGE_S = 3600.0
+PENDING_MARKER = ".cleanup_pending"
+
 _MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 RUN_MODES = ("script",)
 
 
 def valid_dotted_module(name: object) -> bool:
     return isinstance(name, str) and len(name) <= 200 and _MODULE_RE.fullmatch(name) is not None
+
+
+class _Capture:
+    """一路子进程输出：只留尾部 `OUTPUT_TAIL_BYTES` 字节，另外数总字节；两路共用一个总量计数，超限就叫停。"""
+
+    def __init__(self, stream, shared: dict, lock: threading.Lock, on_overflow) -> None:
+        self.tail: deque[bytes] = deque()
+        self.tail_len = 0
+        self.total = 0
+        self._stream, self._shared, self._lock, self._on_overflow = (
+            stream,
+            shared,
+            lock,
+            on_overflow,
+        )
+        self.thread = threading.Thread(target=self._pump, daemon=True)
+        self.thread.start()
+
+    def _pump(self) -> None:
+        try:
+            while True:
+                chunk = self._stream.read1(65536) if hasattr(self._stream, "read1") else b""
+                if not chunk:
+                    return
+                self.total += len(chunk)
+                self.tail.append(chunk)
+                self.tail_len += len(chunk)
+                while self.tail_len - len(self.tail[0]) >= OUTPUT_TAIL_BYTES:
+                    self.tail_len -= len(self.tail.popleft())
+                with self._lock:
+                    self._shared["bytes"] += len(chunk)
+                    over = self._shared["bytes"] > OUTPUT_LIMIT_BYTES
+                if over:
+                    self._on_overflow()
+                    return
+        except (OSError, ValueError):
+            return
+
+    def text(self) -> str:
+        data = b"".join(self.tail)[-OUTPUT_TAIL_BYTES:]
+        return data.decode("utf-8", errors="replace")
+
+
+def _kill_own(proc: subprocess.Popen) -> None:
+    """只结束**自己起的**子进程（POSIX 连它的进程组，那是 `start_new_session` 给它单开的）；绝不按名字杀。"""
+    try:
+        if os.name != "nt":
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except (OSError, ProcessLookupError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
 
 
 def run_python(
@@ -44,40 +117,69 @@ def run_python(
     cwd: str | None = None,
     extra_env: dict | None = None,
 ) -> dict:
-    """在 `python` 里跑一次。回 `{"status": ok|timeout|spawn_failed|env_unavailable, returncode, stdout, stderr}`，不抛。"""
+    """在 `python` 里跑一次。回 `{"status": ok|timeout|spawn_failed|env_unavailable, returncode, stdout, stderr,
+    output_truncated}`，不抛。stdout / stderr 只是**尾部**（各 `OUTPUT_TAIL_BYTES`）；总输出超 `OUTPUT_LIMIT_BYTES` 即结束子进程。"""
     from .. import launcher, runtime
 
     scratch = tempfile.mkdtemp(prefix="tavotto-fixtool-") if cwd is None else None
+    empty = {"returncode": None, "stdout": "", "stderr": "", "output_truncated": False}
     try:
         try:
             env = launcher.activate_env(python, runtime.probe_env(python), timeout=timeout)
         except launcher.LauncherUnavailable:
-            return {"status": "env_unavailable", "returncode": None, "stdout": "", "stderr": ""}
+            return {"status": "env_unavailable", **empty}
         if extra_env:
             env = dict(os.environ if env is None else env)
             env.update(extra_env)
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 [python, *runtime.probe_args(), *args],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 stdin=subprocess.DEVNULL,
                 cwd=cwd or scratch,
                 env=env,
                 creationflags=runtime.CREATE_NO_WINDOW,
+                start_new_session=(os.name != "nt"),
             )
-        except subprocess.TimeoutExpired:
-            return {"status": "timeout", "returncode": None, "stdout": "", "stderr": ""}
         except (OSError, subprocess.SubprocessError):
-            return {"status": "spawn_failed", "returncode": None, "stdout": "", "stderr": ""}
+            return {"status": "spawn_failed", **empty}
+        overflow = threading.Event()
+
+        def stop() -> None:
+            overflow.set()
+            _kill_own(proc)
+
+        shared = {"bytes": 0}
+        lock = threading.Lock()
+        out = _Capture(proc.stdout, shared, lock, stop)
+        err_ = _Capture(proc.stderr, shared, lock, stop)
+        timed_out = False
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _kill_own(proc)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+        for cap in (out, err_):
+            cap.thread.join(timeout=5)
+        for pipe in (proc.stdout, proc.stderr):
+            try:
+                pipe.close()
+            except OSError:
+                pass
+        if timed_out and not overflow.is_set():
+            return {"status": "timeout", **empty}
         return {
             "status": "ok",
             "returncode": proc.returncode,
-            "stdout": proc.stdout or "",
-            "stderr": proc.stderr or "",
+            "stdout": out.text(),
+            "stderr": err_.text(),
+            "output_truncated": overflow.is_set(),
+            "output_bytes": out.total + err_.total,
         }
     finally:
         if scratch:
@@ -124,15 +226,28 @@ def try_import(ctx: FixContext, args: dict) -> ToolResult:
 
 # --------------------------------------------------------------------------- try_run
 _RUN_SRC = r"""
-import json, runpy, sys
-script, out = sys.argv[1], sys.argv[2]
+import json, os, sys
+guard, root, script, out = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+# 先把后面要用的标准库导进来，再装守卫：守卫只管「写」，读不受限
+import runpy, traceback, importlib.util, tempfile, re, threading, errno
+try:
+    spec = importlib.util.spec_from_file_location("_tavotto_trial_guard", guard)
+    wt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wt)
+    wt.install([root])
+    wt.arm(True)
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump({"guarded": True}, f)
+except BaseException:
+    sys.exit(97)
+sys.modules.pop("_tavotto_trial_guard", None)
 code = 0
+sys.argv = [script]
 try:
     runpy.run_path(script, run_name="__main__")
 except SystemExit as exc:
     code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
 except BaseException:
-    import traceback
     traceback.print_exc()
     code = 1
 figs = None
@@ -143,11 +258,19 @@ if "matplotlib.pyplot" in sys.modules:
         figs = None
 try:
     with open(out, "w", encoding="utf-8") as f:
-        json.dump({"figures": figs}, f)
+        json.dump({"guarded": True, "figures": figs, "blocked_writes": wt.violations()}, f)
 except OSError:
     pass
 sys.exit(code)
 """
+GUARD_EXIT_CODE = 97
+
+
+def _guard_path() -> str:
+    """worker 的 safe 执行用的写入根绊线（`engine/writetripwire.py`，纯标准库）的文件路径；试跑的子进程按文件加载它。"""
+    from .. import writetripwire
+
+    return str(Path(writetripwire.__file__).resolve())
 
 
 def _copy_project(src_dir: Path, script: Path, dest: Path) -> tuple[str, bool]:
@@ -178,25 +301,116 @@ def _copy_project(src_dir: Path, script: Path, dest: Path) -> tuple[str, bool]:
     return str(script.relative_to(src_dir)), True
 
 
-def _default_runner(python: str, work: str, script_name: str, mode: str, timeout: float) -> dict:
-    out_file = os.path.join(tempfile.mkdtemp(prefix="tavotto-fixrun-"), "result.json")
-    try:
-        res = run_python(
-            python,
-            ["-c", _RUN_SRC, script_name, out_file],
-            timeout=timeout,
-            cwd=work,
-            extra_env={"MPLBACKEND": "Agg"},
-        )
-        figures = None
-        try:
-            with open(out_file, encoding="utf-8") as f:
-                figures = json.load(f).get("figures")
-        except (OSError, ValueError):
+def trial_root() -> Path:
+    """试跑副本的家：Tavotto 自己的缓存目录，不放系统临时目录（清不掉的残留要找得到、扫得到）。"""
+    from ..config import data_dir
+
+    return data_dir() / "cache" / "fix_trials"
+
+
+def _rmtree_once(path: Path) -> None:
+    """删一棵树，尽量多删；有任何一处删不掉就在最后抛 OSError。"""
+    first: list[BaseException] = []
+
+    def on_err(func, p, exc):  # noqa: ANN001
+        e = exc if isinstance(exc, BaseException) else exc[1]
+        try:  # Windows 只读文件：改成可写再试一次
+            os.chmod(p, 0o700)
+            func(p)
+            return
+        except OSError:
             pass
-        return {**res, "figures": figures}
-    finally:
-        shutil.rmtree(os.path.dirname(out_file), ignore_errors=True)
+        first.append(e)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=on_err)
+    else:
+        shutil.rmtree(path, onerror=lambda f, p, ei: on_err(f, p, ei[1]))
+    if first:
+        raise OSError(f"could not remove {path}") from first[0]
+
+
+def _remove_tree(path: Path, *, attempts: int | None = None) -> bool:
+    """有限次重试地删；成功（含本来就不在）回 True。仍失败：在目录里留 `.cleanup_pending` 标记，回 False。"""
+    n = CLEANUP_ATTEMPTS if attempts is None else attempts
+    for i in range(max(1, n)):
+        try:
+            _rmtree_once(path)
+            return True
+        except FileNotFoundError:
+            return True
+        except OSError:
+            if i + 1 < n:
+                time.sleep(CLEANUP_DELAY_S)
+    try:
+        (path / PENDING_MARKER).write_text("cleanup pending\n", encoding="utf-8")
+    except OSError:
+        pass
+    return not path.exists()
+
+
+def sweep_stale_trials(*, max_age_s: float | None = None, now: float | None = None) -> int:
+    """清残留的试跑副本：有 `.cleanup_pending` 标记的，或超过 `STALE_TRIAL_AGE_S` 没动过的。回清掉的个数。
+
+    挂点：`try_run` 每次开头调一次（fixtools 首次使用时就扫）。在途的试跑目录既没标记又很新，不会被误删。"""
+    age = STALE_TRIAL_AGE_S if max_age_s is None else max_age_s
+    now = time.time() if now is None else now
+    root = trial_root()
+    removed = 0
+    try:
+        entries = [p for p in root.iterdir() if p.is_dir() and not p.is_symlink()]
+    except OSError:
+        return 0
+    for d in entries:
+        try:
+            stale = (d / PENDING_MARKER).exists() or now - d.stat().st_mtime > age
+        except OSError:
+            continue
+        if stale and _remove_tree(d, attempts=1):
+            removed += 1
+    return removed
+
+
+def _make_trial_dir(session_id: str) -> Path:
+    root = trial_root()
+    root.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", str(session_id))[:40] or "s"
+    d = Path(tempfile.mkdtemp(prefix=f"{safe}-", dir=root))  # 随机后缀，0700
+    for sub in ("work", "tmp", "mpl", "out"):
+        (d / sub).mkdir()
+    return d
+
+
+def _default_runner(python: str, work: str, script_name: str, mode: str, timeout: float) -> dict:
+    """在 safe 的写入根绊线下跑副本。`work` 是 `<试跑目录>/work`；写入根 = 整个试跑目录（副本 + 专用 TMPDIR + mpl 配置）。"""
+    trial_dir = Path(work).parent
+    out_file = str(trial_dir / "out" / "result.json")
+    res = run_python(
+        python,
+        ["-c", _RUN_SRC, _guard_path(), str(trial_dir), script_name, out_file],
+        timeout=timeout,
+        cwd=work,
+        extra_env={
+            "MPLBACKEND": "Agg",
+            "TMPDIR": str(trial_dir / "tmp"),
+            "TEMP": str(trial_dir / "tmp"),
+            "TMP": str(trial_dir / "tmp"),
+            "MPLCONFIGDIR": str(trial_dir / "mpl"),
+        },
+    )
+    info: dict = {}
+    try:
+        with open(out_file, encoding="utf-8") as f:
+            info = json.load(f)
+    except (OSError, ValueError):
+        pass
+    if res["status"] == "ok" and (res["returncode"] == GUARD_EXIT_CODE or not info.get("guarded")):
+        return {**res, "status": "trial_unguarded"}  # 守卫没装上：不报成一次正常试跑
+    return {
+        **res,
+        "figures": info.get("figures"),
+        "blocked_writes": info.get("blocked_writes") or [],
+    }
 
 
 def try_run(ctx: FixContext, args: dict) -> ToolResult:
@@ -207,6 +421,11 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
             "Unknown environment id. Call list_environments first and use one of its ids.",
         )
     mode = args.get("mode", "script")
+    if mode == "native":
+        return err(
+            "native_trial_not_observe",
+            "Trial runs in the user's own environment are not available at this level.",
+        )
     if mode not in RUN_MODES:
         return err("bad_arguments", f"`mode` must be one of {list(RUN_MODES)}.")
     script = ctx.script_path
@@ -220,22 +439,38 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
     )
     script = Path(script).resolve()
     src_dir = script.parent
-    work = tempfile.mkdtemp(prefix="tavotto-fixwork-")
+    try:
+        sweep_stale_trials()
+        trial_dir = _make_trial_dir(ctx.session_id)
+    except OSError:
+        return err("copy_failed", "Could not make a scratch copy of the script.")
+    pending = False
     try:
         try:
-            name, whole = _copy_project(src_dir, script, Path(work))
+            name, whole = _copy_project(src_dir, script, trial_dir / "work")
         except OSError:
             return err("copy_failed", "Could not make a scratch copy of the script.")
         runner = ctx.runner or _default_runner
-        res = runner(python, work, name, mode, timeout)
+        res = runner(python, str(trial_dir / "work"), name, mode, timeout)
     finally:
-        shutil.rmtree(
-            work, ignore_errors=True
-        )  # 临时副本里的一切（含脚本写出的文件）随它去；用户目录从未被写
+        # 副本里的一切（含脚本写出的文件）随它去；用户目录从未被写。删不掉（Windows 文件占用）就如实报 cleanup_pending
+        pending = not _remove_tree(trial_dir)
+    note = (
+        "\ncleanup_pending: the scratch copy could not be fully deleted; it is kept in Tavotto's cache "
+        "folder and will be removed later."
+        if pending
+        else ""
+    )
+    if res.get("status") == "trial_unguarded":
+        return err(
+            "trial_unguarded",
+            "The write guard could not be enabled for this environment, so the trial run was refused."
+            + note,
+        )
     if res.get("status") != "ok":
         return err(
             str(res.get("status") or "run_failed"),
-            f"The trial run did not finish ({res.get('status')}).",
+            f"The trial run did not finish ({res.get('status')})." + note,
         )
     figures = res.get("figures")
     head = (
@@ -243,10 +478,25 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
         f"{figures if figures is not None else 'unknown'}"
         + ("" if whole else " (only the script file was copied; the folder was too large)")
     )
+    extra = ""
+    blocked = res.get("blocked_writes") or []
+    if blocked:
+        shown = ", ".join(f"{b.get('event')} {b.get('path')}" for b in blocked[:8])
+        extra += (
+            f"\nblocked_writes: {len(blocked)} attempt(s) to write outside the scratch copy were "
+            f"blocked and nothing was written there ({shown})"
+        )
+    if res.get("output_truncated"):
+        extra += (
+            f"\noutput_truncated: the script printed more than {OUTPUT_LIMIT_BYTES // (1024 * 1024)} MiB, "
+            "so it was stopped; only the last part of the output is kept"
+        )
     tail = _tail(res.get("stderr") or "")
+    summary = "trial run done" + (" (writes blocked)" if blocked else "")
+    summary += " (cleanup_pending)" if pending else ""
     return ok(
-        head + (f"\n--- last lines of the error output ---\n{tail}" if tail else ""),
-        "trial run done",
+        head + extra + note + (f"\n--- last lines of the error output ---\n{tail}" if tail else ""),
+        summary,
     )
 
 
@@ -274,7 +524,8 @@ TRIAL_TOOLS: tuple[FixTool, ...] = (
         "try_run",
         "Run a copy of the user's script once in one environment with a non-interactive matplotlib backend, and "
         "report the exit code, the number of figures and the last 40 lines of the error output. The user's files "
-        "are never touched: it runs in a temporary copy that is deleted afterwards.",
+        "are never touched: it runs in a temporary copy that is deleted afterwards, and any attempt to write "
+        "outside that copy is blocked and reported.",
         obj(
             {
                 "env": _ENV,

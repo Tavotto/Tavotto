@@ -402,8 +402,14 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   二进制只给类型与大小。项目外的读取进 `ctx.reads`。**所有给模型的文本过 `readscope.scrub`**（`run_tool` 对返回内容再过一遍）。新增敏感位置：加进两张表并补 `test_fixtools.py::DENIED_REL`。
 - **find / grep**：条数 + 墙钟（`SCAN_SECONDS`）上限；跳过 `SKIP_DIRS`、拦截区，`site-packages` 只下探两层，不跟随目录符号链接。
 - **「试」的子进程**（`trial.run_python`）：与体检同一纪律——`runtime.probe_args`（`-B`）、`runtime.probe_env` + `launcher.activate_env`、`stdin=DEVNULL`、
-  `creationflags=CREATE_NO_WINDOW`、`encoding="utf-8"`、超时、cwd 为一次性临时目录。环境只认会话的**环境 id**（`list_environments` 登记），不接受解释器路径。
+  `creationflags=CREATE_NO_WINDOW`、UTF-8 解码（`errors="replace"`）、超时、cwd 为一次性临时目录。环境只认会话的**环境 id**（`list_environments` 登记），不接受解释器路径。
   模块名走 `fullmatch` 的点分标识符校验，并作为 `argv` 传入（不拼进 `-c`）。`try_run` 把脚本所在目录复制到临时目录（超 64 MiB / 5000 个文件只复制脚本）跑一次，
   MPLBACKEND=Agg；`FixContext.runner` 可注入执行器（接准备会话 / 运行器的现成路径留给后续 PR）。
+  **`try_run` 在 safe 守卫下跑，不是裸跑**：子进程按文件加载 `engine/writetripwire.py`（worker 的 safe 执行同一个写入根绊线，ADR 0141），写入根只有本次试跑目录
+  `data_dir()/cache/fix_trials/<会话>-<随机>/`（`work/` 副本 + `tmp/` 专用 TMPDIR + `mpl/` + `out/`），读不限；越界写（`open` / `Path.write_text` / `os.remove` 等）当场 `PermissionError`，
+  违规记进结果的 `blocked_writes`（脚本吞掉异常也在）。**绊线不是沙盒**，盲区见 `writetripwire` 头注。守卫装不上（握手文件没出现 / 退出码 97）→ `trial_unguarded`，不退化成裸跑。
+  `mode=native` 不属于 observe 档，直接 `native_trial_not_observe`（归 D2 的 `user_env` 档 + 用户确认）。
+  **输出上限**：`run_python` 用 `Popen` + 两个读线程，每路只留 `OUTPUT_TAIL_BYTES`（64 KiB）尾部并数总字节，两路合计超 `OUTPUT_LIMIT_BYTES`（8 MiB）就结束子进程（POSIX 按自己的进程组，绝不按名字杀），结果 `output_truncated`。
+  **副本清理**：删除带有限次重试（Windows 文件占用）；仍失败 → 结果如实报 `cleanup_pending`、目录留 `.cleanup_pending` 标记；`sweep_stale_trials()` 在每次 `try_run` 开头清标记目录与超过 1 小时的残留。
 - **审计**（`audit.py`）：`data_dir()/ai/fix_audit.jsonl`，字段 `ts / session / step / tool / tier / args / approved_by / result{ok,code,summary}`；路径类参数保留、其余只记长度，
   内容不落盘；1 MiB 滚成 `.1`；失败不影响调用。

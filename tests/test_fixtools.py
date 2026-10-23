@@ -245,6 +245,41 @@ def test_read_content_is_scrubbed_of_secret_shapes(box):
     assert "lr = 0.1" in r.content  # 普通内容原样
 
 
+@pytest.mark.parametrize(
+    ("raw", "secret", "kept"),
+    [
+        ("password=correcthorsebattery", "correcthorsebattery", "password=***"),
+        ("password = correcthorsebattery", "correcthorsebattery", "password = ***"),
+        ("PASSWORD: correcthorsebattery", "correcthorsebattery", "PASSWORD: ***"),
+        ('password = "correct horse battery"', "horse", 'password = "***"'),
+        ("api_key: 'hunter2'", "hunter2", "api_key: '***'"),
+        ('{"password": "x"}', '"x"', '{"password": "***"}'),
+        ('{"auth_token": "abc def ghi"}', "abc def", '{"auth_token": "***"}'),
+        ("--password hunter22 -v", "hunter22", "--password *** -v"),
+        ("--api-key=abcdefghij", "abcdefghij", "--api-key=***"),
+        ('secret = "it\'s fine"', "fine", 'secret = "***"'),
+    ],
+)
+def test_key_value_secrets_keep_the_key_and_drop_the_whole_value(raw, secret, kept):
+    out = readscope.scrub(raw)
+    assert secret not in out and "***" in out
+    assert kept in out and '***"***' not in out and "****" not in out
+    assert readscope.scrub(out) == out  # 幂等
+
+
+def test_every_scrub_rule_drops_the_captured_secret_itself():
+    key = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowCANARY\n-----END RSA PRIVATE KEY-----"
+    for raw, canary in [
+        ("Authorization: Bearer abcdefghijklmnop1234", "abcdefghijklmnop1234"),
+        (key, "MIIEowCANARY"),
+        ("x sk-abcdefghij12345 y", "abcdefghij12345"),
+        ("ghp_abcdefghij1234567890", "abcdefghij1234567890"),
+        ("AKIAABCDEFGHIJKLMNOP", "ABCDEFGHIJKLMNOP"),
+    ]:
+        assert canary not in readscope.scrub(raw), raw
+    assert readscope.scrub("max_tokens = 4096 lr = 0.1") == "max_tokens = 4096 lr = 0.1"
+
+
 def test_private_key_block_is_masked(box):
     f = put(
         box.proj / "notes.txt",
@@ -459,6 +494,145 @@ def test_try_run_counts_figures_and_traceback_tail_is_limited(box):
     assert "exit code 1" in r.content
     tail = r.content.split("error output ---\n")[1]
     assert len(tail.splitlines()) <= trial.ERROR_TAIL_LINES and "ZeroDivisionError" in tail
+
+
+def _guarded_ctx(box, script_text):
+    script = put(box.proj / "s.py", script_text)
+    return make_ctx(box, environments={"e": sys.executable}, script_path=script)
+
+
+def test_try_run_blocks_writes_outside_the_copy_and_leaves_real_files_untouched(box):
+    outside = put(box.tmp / "elsewhere" / "precious.txt", "ORIGINAL")
+    victim = put(box.tmp / "elsewhere" / "victim.txt", "KEEP")
+    project_file = put(box.proj / "data.csv", "1,2\n")
+    fake_home_target = box.home / "dropped.txt"
+    script = (
+        "import os, pathlib\n"
+        "for fn in (\n"
+        f"    lambda: open({str(outside)!r}, 'w').write('CLOBBER'),\n"
+        f"    lambda: open({str(project_file)!r}, 'w').write('CLOBBER'),\n"
+        "    lambda: (pathlib.Path.home() / 'dropped.txt').write_text('x'),\n"
+        f"    lambda: os.remove({str(victim)!r}),\n"
+        "):\n"
+        "    try:\n"
+        "        fn()\n"
+        "    except PermissionError:\n"
+        "        pass\n"
+    )
+    ctx = _guarded_ctx(box, script)
+    before_all = _tree_bytes(box.tmp / "elsewhere")
+    r = call(ctx, "try_run", {"env": "e"})
+    assert not r.is_error, r.content
+    assert "blocked_writes: 4" in r.content and "blocked" in r.summary
+    assert _tree_bytes(box.tmp / "elsewhere") == before_all  # 逐字节不变，victim 仍在
+    assert victim.exists() and outside.read_bytes() == b"ORIGINAL"
+    assert project_file.read_text() == "1,2\n" and not fake_home_target.exists()
+
+
+def test_try_run_blocks_even_when_the_script_swallows_the_error(box):
+    outside = put(box.tmp / "elsewhere" / "p.txt", "ORIGINAL")
+    ctx = _guarded_ctx(
+        box,
+        f"try:\n    open({str(outside)!r}, 'w').write('X')\nexcept Exception:\n    pass\n",
+    )
+    r = call(ctx, "try_run", {"env": "e"})
+    assert "exit code 0" in r.content and "blocked_writes: 1" in r.content
+    assert outside.read_text() == "ORIGINAL"
+
+
+def test_try_run_allows_writes_inside_the_copy_and_its_private_tmp(box):
+    script = (
+        "import tempfile, os\n"
+        "open('inside.txt', 'w').write('ok')\n"
+        "os.makedirs('sub', exist_ok=True); open('sub/a.txt', 'w').write('ok')\n"
+        "with tempfile.NamedTemporaryFile('w', delete=True) as f: f.write('t')\n"
+        "print(os.path.dirname(f.name))\n"
+    )
+    ctx = _guarded_ctx(box, script)
+    r = call(ctx, "try_run", {"env": "e"})
+    assert not r.is_error and "exit code 0" in r.content and "blocked_writes" not in r.content
+
+
+def test_try_run_refuses_when_the_guard_cannot_be_enabled(box, monkeypatch):
+    bad = put(box.tmp / "not_a_guard.py", "raise RuntimeError('no guard')\n")
+    monkeypatch.setattr(trial, "_guard_path", lambda: str(bad))
+    ctx = _guarded_ctx(box, "open('x.txt', 'w').write('x')\n")
+    r = call(ctx, "try_run", {"env": "e"})
+    assert r.is_error and r.code == "trial_unguarded"
+    assert not (box.proj / "x.txt").exists()
+
+
+def test_native_trial_is_not_an_observe_level_mode(box):
+    ctx = _guarded_ctx(box, "pass\n")
+    r = call(ctx, "try_run", {"env": "e", "mode": "native"})
+    assert r.is_error and r.code == "native_trial_not_observe"
+    assert "native" not in json.dumps(REGISTRY["try_run"].schema)
+
+
+def test_runaway_output_keeps_a_bounded_tail_and_the_process_is_stopped(box, monkeypatch):
+    monkeypatch.setattr(trial, "OUTPUT_LIMIT_BYTES", 512 * 1024)
+    monkeypatch.setattr(trial, "OUTPUT_TAIL_BYTES", 4096)
+    started = []
+    real_popen = trial.subprocess.Popen
+
+    def spy(*a, **kw):
+        p = real_popen(*a, **kw)
+        started.append(p)
+        return p
+
+    monkeypatch.setattr(trial.subprocess, "Popen", spy)
+    res = trial.run_python(
+        sys.executable,
+        [
+            "-c",
+            "import sys\nwhile True:\n    print('x' * 999)\n    print('e' * 999, file=sys.stderr)",
+        ],
+        timeout=60,
+    )
+    assert res["status"] == "ok" and res["output_truncated"] is True
+    assert len(res["stdout"].encode()) <= 4096 and len(res["stderr"].encode()) <= 4096
+    assert res["output_bytes"] > 512 * 1024
+    assert started[0].poll() is not None  # 子进程已被结束（按自己的 PID / 进程组）
+    ctx = _guarded_ctx(box, "while True:\n    print('y' * 999)\n")
+    r = call(ctx, "try_run", {"env": "e"})
+    assert not r.is_error and "output_truncated" in r.content
+
+
+def test_try_run_copy_lives_in_tavottos_cache_and_failed_cleanup_is_reported(box, monkeypatch):
+    import tempfile
+
+    seen = {}
+
+    def fake(python, work, name, mode, timeout):
+        seen["work"] = work
+        return {"status": "ok", "returncode": 0, "figures": 0, "stderr": ""}
+
+    ctx = make_ctx(box, environments={"e": "py"}, script_path=put(box.proj / "s.py"), runner=fake)
+    real = trial._rmtree_once
+
+    def boom(path):
+        raise OSError("file in use")
+
+    monkeypatch.setattr(trial, "_rmtree_once", boom)
+    monkeypatch.setattr(trial, "CLEANUP_DELAY_S", 0)
+    r = call(ctx, "try_run", {"env": "e"})
+    assert not r.is_error and "cleanup_pending" in r.content and "cleanup_pending" in r.summary
+    left = Path(seen["work"]).parent
+    assert left.parent == box.data / "cache" / "fix_trials" == trial.trial_root()
+    assert not str(left).startswith(os.path.realpath(tempfile.gettempdir()) + os.sep + "tavotto-")
+    assert (left / trial.PENDING_MARKER).is_file()
+    monkeypatch.setattr(trial, "_rmtree_once", real)
+    assert trial.sweep_stale_trials() == 1 and not left.exists()
+
+
+def test_sweep_removes_old_unmarked_trials_but_not_fresh_ones(box):
+    root = trial.trial_root()
+    old, fresh = root / "old-1", root / "fresh-1"
+    for d in (old, fresh):
+        put(d / "work" / "a.txt")
+    os.utime(old, (1, 1))
+    assert trial.sweep_stale_trials() == 1
+    assert not old.exists() and fresh.exists()
 
 
 def test_try_run_timeout_unknown_env_no_script_and_bad_mode(box):

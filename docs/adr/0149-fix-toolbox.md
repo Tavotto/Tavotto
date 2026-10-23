@@ -20,7 +20,9 @@
 | 改 | Tavotto 自己的东西（项目设置、记住环境）；清单里的动作（装包进 Tavotto 管理的环境） | `tavotto` / `listed` | D2+ |
 | 外 | 改用户环境、联网查 PyPI、对外发信 | `user_env` / `outward` | D2+ |
 
-「试」仍是 `observe` 档：子进程在一次性临时目录里跑，不写用户文件、不装东西；`try_run` 跑的是脚本的**临时副本**。
+「试」仍是 `observe` 档：不写用户文件、不装东西；`try_run` 跑的是脚本的**临时副本**，且**在 safe 的写入根绊线（`writetripwire`，ADR 0141）下**跑，写入根只有本次试跑目录（副本 + 专用 TMPDIR），越界写被拦并如实报告；守卫装不上就拒绝（`trial_unguarded`），不裸跑。
+**native 方式的试跑不属于 observe 档**（它用用户自己的环境，写入面不由我们圈定），本 PR 拒绝 `mode=native`，留给 D2 以 `user_env` 档 + 用户确认实现。子进程输出只留 64 KiB 尾部，合计超 8 MiB 即结束子进程（`output_truncated`）。
+副本放在 `data_dir()/cache/fix_trials/<会话>-<随机>/`（不放系统临时目录），删除带重试，删不掉如实报 `cleanup_pending` 并留标记，`sweep_stale_trials()` 清残留（每次 `try_run` 开头调用）。
 
 ### 二、五档 tier
 
