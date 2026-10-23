@@ -659,6 +659,17 @@ pip install "tavotto[worker]"
 tavotto
 ```
 
+> **Don't `pip install` Tavotto into a scientific environment that has astropy 8.**
+> Tavotto depends on uharfbuzz, and every current uharfbuzz 0.56.x wheel clashes with
+> astropy 8's compiled modules (a Cython 3.3.0 bug,
+> [cython/cython#7914](https://github.com/cython/cython/issues/7914)). In that
+> environment your *own* scripts' `savefig(..., format="pdf")` fails with
+> `TypeError: Shared Cython type cython_function_or_method has the wrong size` once
+> `astropy.table` is imported — with or without Tavotto running. Install Tavotto with
+> `pipx` (above) and point it at that environment instead, as described next. Tracked
+> upstream in [uharfbuzz#318](https://github.com/harfbuzz/uharfbuzz/issues/318) and
+> [fonttools#4354](https://github.com/fonttools/fonttools/issues/4354).
+
 **Reuse the environment your figures were made in.** Drop the `[worker]` extra and
 point Tavotto at your own interpreter, so figures render against exactly the
 dependencies they were written for. (This installs the lightweight CLI only: without
