@@ -18,6 +18,7 @@
 import { refreshProject } from '@/lib/api'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { msg } from '@/i18n'
+import { panelStemOf } from '@/lib/panelStem'
 import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 import { syncPanelSourceMetadata, type PanelSyncResult } from './panelSourceSync'
@@ -112,6 +113,47 @@ function applyPanelSync(result: PanelSyncResult): void {
  * 返回 `null` = 这一轮没有权威数据可用（请求失败、或响应属于已经切走的项目）。
  * 那时**什么都不做**：旧素材、旧文档原样留着，下一条事件会再来一次。
  */
+/**
+ * `panel.file_changed` 到达时，文档里有面板的 fileId 还不在素材清单里（启动时文档恢复与素材加载并行、
+ * 或第一次素材请求失败）——它属于哪张图（`stem`，#1251）此刻不知道，按文件名 stem 匹配是老行为但可能漏掉
+ * 「`panel.pdf` 其实是 `panel-2`」的面板。事件的 stems 记在这里，**下一次成功的素材刷新**用刷新后的清单再对一次
+ * （与事件到达时那次匹配取并集）：不依赖「清单已加载」这个时机，也不会永久漏标；刷新失败就留着，等下一次成功。
+ */
+const pendingFileChangeStems = new Set<string>()
+const MAX_PENDING_STEMS = 64
+
+export function notePendingFileChangeStems(stems: Iterable<string>): void {
+  for (const s of stems) {
+    if (pendingFileChangeStems.size >= MAX_PENDING_STEMS) break
+    pendingFileChangeStems.add(s)
+  }
+}
+
+function rematchPendingFileChanges(): void {
+  if (pendingFileChangeStems.size === 0) return
+  const byId = useAssetStore.getState().byId
+  const hit = useDocumentStore
+    .getState()
+    .doc.objects.filter(
+      (o) =>
+        o.type === 'panel' &&
+        o.fileKind !== 'runtime' &&
+        byId[o.fileId] != null &&
+        pendingFileChangeStems.has(panelStemOf(byId[o.fileId])),
+    )
+    .map((o) => (o as { fileId: string }).fileId)
+  pendingFileChangeStems.clear()
+  if (hit.length === 0) return
+  const ids = [...new Set(hit)]
+  useRenderStore.getState().markStale(ids)
+  useRuntimeAssetStore.getState().invalidate(ids)
+}
+
+/** 仅给用例：忘掉挂起的 stems */
+export function resetPendingFileChangesForTests(): void {
+  pendingFileChangeStems.clear()
+}
+
 export async function refreshAssetsAndSync(opts?: {
   force?: boolean
   affectedIds?: readonly string[]
@@ -128,6 +170,7 @@ export async function refreshAssetsAndSync(opts?: {
   void useProjectReadinessStore.getState().load({ force: opts?.force })
   const data = await useAssetStore.getState().load({ force: opts?.force })
   if (!data) return null
+  rematchPendingFileChanges() // 刷新成功：挂起的 file_changed 用这份清单再对一次
   const result = syncPanelSourceMetadata(
     useAssetStore.getState().byId,
     opts?.affectedIds ? { affectedIds: opts.affectedIds } : undefined,

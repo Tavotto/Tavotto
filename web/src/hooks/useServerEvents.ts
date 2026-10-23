@@ -10,10 +10,11 @@ import {
 import { hintAiRev, setAiSettledNotifier, useAiStore, type DonePayload } from '@/store/aiStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
+import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { useEnvStore } from '@/store/envStore'
 import { applyExportJob } from '@/store/exportStore'
-import { recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
+import { notePendingFileChangeStems, recoverAfterReconnect, refreshAssetsAndSync } from '@/store/liveSync'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useProjectScanStore } from '@/store/projectScanStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -190,6 +191,18 @@ export function handleServerEvent(ev: ServerEvent) {
 
     case 'panel.file_changed': {
       const stems = new Set(affectedStemsOf(ev))
+      // 有面板的 fileId 还不在素材清单里：它属于哪张图此刻不知道（按文件名 stem 匹配是老行为），
+      // 记下 stems，下一次成功的素材刷新用刷新后的清单再对一次（liveSync.rematchPendingFileChanges）
+      {
+        const known = useAssetStore.getState().byId
+        if (
+          useDocumentStore
+            .getState()
+            .doc.objects.some((o) => o.type === 'panel' && o.fileKind !== 'runtime' && !known[o.fileId])
+        ) {
+          notePendingFileChangeStems(stems)
+        }
+      }
       // stems 是脚本产出的面板名，映射回文档里用到的文件 id。
       // runtime 面板按持久化描述块的 stem 认领（id 是不透明标识，不反解）
       const affected = useDocumentStore

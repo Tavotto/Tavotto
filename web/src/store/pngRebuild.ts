@@ -1,5 +1,6 @@
 import { msg } from '@/i18n'
 import { panelStemOfFileId } from '@/lib/panelStem'
+import { useAssetStore } from '@/store/assetStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -33,6 +34,8 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
   const panel = findPanel(panelId)
   const script = panel?.script
   if (!panel || !script) return 'stale'
+  // 素材清单还没覆盖到这张图（启动并行 / 首次请求失败）：先补取一次，别拿文件名 stem 去猜「哪张图」（#1251）
+  if (!useAssetStore.getState().byId[panel.fileId]) await useAssetStore.getState().load()
   const stem = panelStemOfFileId(panel.fileId)
   const guard = captureProjectEpoch(() => useScriptRunStore.getState().epoch)
   // 发起时的排版身份：同项目里打开了另一份已保存的排版（documentId / loadSeq 变）或切了画布，

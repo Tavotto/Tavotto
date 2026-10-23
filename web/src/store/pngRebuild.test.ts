@@ -82,6 +82,18 @@ describe('rebuild as editable figure (ADR 0139 PR1)', () => {
     expect(await rebuildEditableFromScript('p')).toBe('rebuilt')
     expect(panels().map((p) => p.fileId)).toEqual(['out/same.png', 'runtime:fig.py#same'])
   })
+  it('素材清单还没覆盖到这张 PNG：先补取，按注册表的 stem（same-2）找图，不按文件名 stem（same）猜（#1251）', async () => {
+    const api = await import('@/lib/api')
+    vi.mocked(api.fetchPanels).mockResolvedValueOnce({
+      figures_dir: '',
+      panels: [
+        { id: 'out/same.png', name: 'same', stem: 'same-2', folder: 'out', kind: 'raster', native_w_mm: 50, native_h_mm: 40, mtime: 1, script: 'fig.py' },
+      ],
+    } as never)
+    probe.mockResolvedValue(ok([desc('same'), desc('same-2')]))
+    expect(await rebuildEditableFromScript('p')).toBe('rebuilt')
+    expect(panels().map((p) => p.fileId)).toEqual(['out/same.png', 'runtime:fig.py#same-2'])
+  })
   it('a failed script run says so once and leaves the PNG untouched', async () => {
     probe.mockResolvedValue({ ...ok([]), error: { code: 'script_error', message: 'boom', params: {} } })
     const before = structuredClone(panels()[0])
