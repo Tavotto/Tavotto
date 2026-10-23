@@ -406,6 +406,11 @@ def read_logs(ctx: FixContext, args: dict) -> ToolResult:
     path = _log_path(ctx, source)
     if path is None or not os.path.isfile(path):
         return err("no_log", f"There is no {source} log to read.")
+    # 日志读取也进「项目外读过的文件」清单（日志是 Tavotto 自己的文件，不受主目录范围限制，但照样告诉用户）
+    seen = ctx.scope.check(path)
+    if not seen.ok:  # 日志在主目录 / 项目范围之外也照记（不 ok 只是范围判据，不是「没读」）
+        seen = readscope.Resolved(True, real=os.path.realpath(path), in_project=False)
+    ctx.note_read(seen, "read_logs")
     try:
         with open(path, "rb") as f:
             f.seek(0, os.SEEK_END)

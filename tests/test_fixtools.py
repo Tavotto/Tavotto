@@ -1275,3 +1275,37 @@ def test_bounded_read_keeps_line_semantics(box):
     assert r.content.strip() == "last"
     g = put(box.proj / "nonl.txt", "no newline at end")
     assert call(ctx, "read_file", {"path": str(g)}).content == "no newline at end"
+
+
+# --------------------------------------------------------------------------- Codex #1353 第七轮
+def test_read_logs_is_listed_in_the_outside_reads(box):
+    log = put(box.data / "cache" / "app.log", "line1\nline2\n")
+    ctx = make_ctx(box, log_paths={"app": str(log)})
+    r = call(ctx, "read_logs", {"source": "app", "lines": 10})
+    assert not r.is_error, r.content
+    assert any(x["tool"] == "read_logs" and x["path"] == os.path.realpath(log) for x in ctx.reads)
+
+
+def test_a_script_exiting_97_is_a_real_exit_code_not_a_guard_failure(box):
+    r = call(_guarded_ctx(box, "import sys\nsys.exit(97)\n"), "try_run", {"env": "e"})
+    assert not r.is_error, r.content
+    assert "exit code 97" in r.content
+
+
+def test_the_sandbox_probe_dir_lives_in_the_cache_and_cleans_up(box, monkeypatch):
+    import tempfile
+
+    trial._PROBE_CACHE.clear()
+    seen = {}
+
+    def fake_args(kind, tool, probe_dir):
+        seen["dir"] = probe_dir
+        return []
+
+    monkeypatch.setattr(trial, "_sandbox_args", fake_args)
+    trial._probe("macos-sandbox-exec", "/usr/bin/true")
+    trial._PROBE_CACHE.clear()
+    d = Path(seen["dir"])
+    assert d.parent == trial.trial_root()
+    assert not str(d).startswith(os.path.realpath(tempfile.gettempdir()) + os.sep + "tavotto-sbx")
+    assert not d.exists()

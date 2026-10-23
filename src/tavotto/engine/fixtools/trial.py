@@ -261,7 +261,12 @@ def _probe(kind: str, tool: str) -> bool:
     """这台机器上沙盒真能起（嵌套在别的沙盒里、用户命名空间被禁都会失败）。同一个工具只探一次。"""
     key = (kind, tool)
     if key not in _PROBE_CACHE:
-        probe_dir = tempfile.mkdtemp(prefix="tavotto-sbx-probe-")
+        # 探测目录也放 Tavotto 缓存、走同一套有重试 + 标记 + 清扫的清理（不在系统临时目录里留 tavotto-sbx-probe-*）
+        try:
+            probe_dir = str(_make_trial_dir("sbx-probe"))
+        except OSError:
+            _PROBE_CACHE[key] = False
+            return False
         try:
             args = _sandbox_args(kind, tool, probe_dir)
             r = subprocess.run(  # noqa: S603 - 固定的系统沙盒命令
@@ -275,7 +280,7 @@ def _probe(kind: str, tool: str) -> bool:
         except (OSError, subprocess.SubprocessError):
             _PROBE_CACHE[key] = False
         finally:
-            shutil.rmtree(probe_dir, ignore_errors=True)
+            _remove_tree(Path(probe_dir))  # 失败会留 .cleanup_pending，由 sweep_stale_trials 收
     return _PROBE_CACHE[key]
 
 
@@ -372,7 +377,8 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
             info = json.load(f)
     except (OSError, ValueError):
         pass
-    if proc.returncode == GUARD_EXIT_CODE or not info.get("guarded"):
+    # 握手文件（守卫装好后才写）是唯一判据：脚本自己 sys.exit(97) 不等于守卫没装上
+    if not info.get("guarded"):
         return {"status": "trial_unguarded", **empty}  # 守卫没装上：不报成一次正常执行
     return {
         "status": "ok",
