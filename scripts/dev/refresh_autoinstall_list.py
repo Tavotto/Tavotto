@@ -19,6 +19,7 @@ import argparse
 import datetime
 import re
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -50,6 +51,39 @@ SEED = (
     "pingouin",
     "adjusttext",
 )
+#: 常见的大包（维护者 2026-10-23 裁决「加入常见的大包」）：不管当月下载排名，一律在名单里
+BIG_PACKAGES = (
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "tensorflow",
+    "keras",
+    "jax",
+    "jaxlib",
+    "transformers",
+    "xgboost",
+    "lightgbm",
+    "catboost",
+    "opencv-python",
+    "opencv-python-headless",
+    "scikit-image",
+    "plotly",
+    "bokeh",
+    "altair",
+    "polars",
+    "numba",
+    "sympy",
+    "networkx",
+    "h5py",
+    "netcdf4",
+    "xarray",
+    "astropy",
+    "biopython",
+    "pymc",
+    "arviz",
+    "dask",
+    "tqdm",
+)
 #: 管理环境 / 打包工具本身：不许被自动装进用户环境（规范名）
 EXCLUDE = frozenset(
     "pip setuptools wheel distribute virtualenv pipenv poetry poetry-core pdm hatch hatchling "
@@ -61,13 +95,36 @@ def normalize(name: str) -> str:
     return _NORMALIZE_RE.sub("-", str(name or "").strip()).lower()
 
 
+#: 按主键（project）切片查询：公开端点每次查询最多读 10 亿行、默认超了就**静默截断**（read_overflow_mode=break），
+#: 全表 30 天聚合要扫约 11 亿行，截断后的计数会少一大截（2026-10-23 实测 numpy 少了一半多、torch 掉出前 1000）。
+#: 每片带 read_overflow_mode='throw'：超了就报错停下，而不是给一份看着正常的错数。
+SHARDS = (("", "d"), ("d", "m"), ("m", "s"), ("s", None))
+#: 交叉核对用的项目：切片合并后的计数必须与单独按主键查的一致，否则视为截断、不写文件
+CHECK_PROJECT = "numpy"
+
+
 def _query(sql: str) -> str:
     req = urllib.request.Request(ENDPOINT, data=sql.encode("utf-8"), method="POST")
-    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # noqa: S310 —— 固定的 https 数据源
-        body = resp.read(MAX_BODY + 1)
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # noqa: S310 —— 固定的 https 数据源
+            body = resp.read(MAX_BODY + 1)
+    except urllib.error.HTTPError as exc:
+        raise SystemExit(
+            f"数据源报错（HTTP {exc.code}）：{exc.read(300).decode('utf-8', 'replace')}"
+        ) from None
+    except (urllib.error.URLError, OSError) as exc:
+        raise SystemExit(f"连不上数据源：{exc}——不写文件") from None
     if len(body) > MAX_BODY:
         raise SystemExit("响应超过上限，停下")
-    return body.decode("utf-8")
+    text = body.decode("utf-8")
+    if "DB::Exception" in text[:2000]:
+        raise SystemExit(f"数据源报错：{text[:300]}")
+    return text
+
+
+def _shard_where(lo: str, hi: str | None) -> str:
+    cond = f"project >= '{lo}'"
+    return cond + (f" AND project < '{hi}'" if hi is not None else "")
 
 
 def fetch_tsv(top: int, days: int) -> tuple[str, str]:
@@ -77,11 +134,28 @@ def fetch_tsv(top: int, days: int) -> tuple[str, str]:
         datetime.date.fromisoformat(snap)
     except ValueError:
         raise SystemExit(f"快照日期解析失败：{snap[:40]!r}") from None
-    sql = (
-        "SELECT project, sum(count) c FROM pypi.pypi_downloads_per_day "
-        f"WHERE date >= today()-{int(days)} GROUP BY project ORDER BY c DESC LIMIT {int(top)} FORMAT TSV"
-    )
-    return _query(sql), snap
+    parts = []
+    for lo, hi in SHARDS:
+        parts.append(
+            _query(
+                "SELECT project, sum(count) c FROM pypi.pypi_downloads_per_day "
+                f"WHERE {_shard_where(lo, hi)} AND date >= today()-{int(days)} "
+                f"GROUP BY project ORDER BY c DESC LIMIT {int(top)} "
+                "SETTINGS read_overflow_mode='throw' FORMAT TSV"
+            )
+        )
+    tsv = "".join(p if p.endswith("\n") or not p else p + "\n" for p in parts)
+    exact = _query(
+        "SELECT sum(count) FROM pypi.pypi_downloads_per_day "
+        f"WHERE project = '{CHECK_PROJECT}' AND date >= today()-{int(days)} "
+        "SETTINGS read_overflow_mode='throw' FORMAT TSV"
+    ).strip()
+    got = {line.split("\t")[0]: line.split("\t")[-1] for line in tsv.splitlines() if "\t" in line}
+    if got.get(CHECK_PROJECT) != exact:
+        raise SystemExit(
+            f"交叉核对失败：{CHECK_PROJECT} 切片合计 {got.get(CHECK_PROJECT)} ≠ 单查 {exact}——数据源可能截断，不写文件"
+        )
+    return tsv, snap
 
 
 def parse_tsv(text: str) -> list[str]:
@@ -102,7 +176,7 @@ def parse_tsv(text: str) -> list[str]:
 
 
 def build_names(names: list[str], top: int) -> list[str]:
-    merged = {normalize(n) for n in (*SEED, *names[:top])}
+    merged = {normalize(n) for n in (*SEED, *BIG_PACKAGES, *names[:top])}
     return sorted(n for n in merged if n and n not in EXCLUDE)
 
 
@@ -111,7 +185,7 @@ def render(names: list[str], *, source: str, snapshot: str, days: int, top: int)
         "# 「生成可编辑版本」允许自动安装的发行包名单（ADR 0143 修订，维护者 2026-10-23 裁决）。engine/convertdeps.py 读它。",
         "# 格式：一行一个 PEP 503 规范名；# 开头是注释；空行忽略。名单内的包才可能被自动安装，名单外的包一律先出卡片。",
         "#",
-        f"# 名单 = 14 个科学计算种子  ∪  PyPI 近 {days} 天下载量前 {top} 的项目名  −  排除名单。由 scripts/dev/refresh_autoinstall_list.py 生成，别手改。",
+        f"# 名单 = {len(SEED)} 个科学计算种子  ∪  {len(BIG_PACKAGES)} 个常见大包  ∪  PyPI 近 {days} 天下载量前 {top} 的项目名  −  排除名单。由 scripts/dev/refresh_autoinstall_list.py 生成，别手改。",
         f"# 来源：{source}",
         f"# 窗口天数：{days}",
         f"# 快照日期：{snapshot}",

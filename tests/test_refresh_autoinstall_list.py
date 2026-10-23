@@ -80,3 +80,53 @@ def test_real_generated_allowlist():
     assert {"numpy", "requests"} <= names
     assert not {"pip", "setuptools", "wheel"} & names
     assert len(names) >= 900
+
+
+def test_big_packages_are_always_listed(tmp_path):
+    rc, out = _run(tmp_path, [("requests", 9), ("idna", 8)], top=2)
+    names = _names(out)
+    assert rc == 0 and {"torch", "tensorflow", "sympy", "xgboost"} <= set(names)
+
+
+class _FakeSource:
+    """按 SQL 回假数据；记下每条 SQL。`numpy_exact` 模拟单独按主键查到的真值。"""
+
+    def __init__(self, shard_rows, numpy_exact):
+        self.sqls, self.shard_rows, self.numpy_exact = [], list(shard_rows), numpy_exact
+
+    def __call__(self, sql):
+        self.sqls.append(sql)
+        if "max(date)" in sql:
+            return "2026-10-22\n"
+        if "project = 'numpy'" in sql:
+            return f"{self.numpy_exact}\n"
+        rows = self.shard_rows.pop(0)
+        return "".join(f"{n}\t{c}\n" for n, c in rows)
+
+
+def test_every_shard_throws_on_truncation_and_together_cover_the_key_space(monkeypatch):
+    fake = _FakeSource([[("numpy", 100)], [("pandas", 50)], [("requests", 40)], [("six", 30)]], 100)
+    monkeypatch.setattr(mod, "_query", fake)
+    tsv, snap = mod.fetch_tsv(top=10, days=30)
+    shard_sqls = [s for s in fake.sqls if "GROUP BY project" in s]
+    assert len(shard_sqls) == len(mod.SHARDS) and snap == "2026-10-22"
+    assert all("read_overflow_mode='throw'" in s for s in shard_sqls)
+    # 切片首尾相接、覆盖整个主键空间：第一片从空串起，最后一片无上界，中间的上界 = 下一片的下界
+    assert mod.SHARDS[0][0] == "" and mod.SHARDS[-1][1] is None
+    assert all(a[1] == b[0] for a, b in zip(mod.SHARDS, mod.SHARDS[1:]))
+    assert {"numpy", "pandas", "requests", "six"} == {ln.split("\t")[0] for ln in tsv.splitlines()}
+
+
+def test_a_silently_truncated_count_is_caught_by_the_cross_check(tmp_path, monkeypatch):
+    # 切片里 numpy 只有 40（被截断），单独按主键查是 100 → 拒绝、不写文件
+    fake = _FakeSource([[("numpy", 40)], [("pandas", 50)], [("requests", 40)], [("six", 30)]], 100)
+    monkeypatch.setattr(mod, "_query", fake)
+    out = tmp_path / "out.txt"
+    with pytest.raises(SystemExit, match="交叉核对失败"):
+        mod.main(["--top", "4", "--out", str(out)])
+    assert not out.exists()
+
+
+def test_the_real_list_has_the_big_packages():
+    allow = convertdeps.allowlist()
+    assert {"torch", "tensorflow", "sympy", "xgboost", "jax", "transformers"} <= allow
