@@ -343,10 +343,11 @@
      不是 Tailwind 的 pulse——那条无限呼吸被门禁禁了（加载方言只有 sweep / 静态骨架 / shimmer / 转圈）；
      这是一次性的注意力信号，有限次数、走 token 曲线。 */
   --animate-attention: attention 900ms var(--ease-standard) 3;
-  /* 定位舞台灯（`canvas/IssueSpotlight`）：渐亮 · 停一秒 · 渐暗（1800ms，`SPOTLIGHT_MS` 同长），一次性、有限。
-     关键帧改的是 backdrop-filter 本身，不是 opacity（祖先有 opacity 时背后取不到，模糊失效） */
-  --animate-spotlight-shade: spotlight-shade 1800ms var(--ease-standard) both;
-  --animate-spotlight-lift: spotlight-lift 1800ms var(--ease-standard) both;
+  /* 定位舞台灯（`canvas/IssueSpotlight`，参照 iMessage「聚光灯」）：光束落下 · 停一秒 · 散开（2200ms，
+     `SPOTLIGHT_MS` 同长），一次性、有限。景深层的关键帧直接动 backdrop-filter（祖先有 opacity / transform 时
+     背后取不到，模糊失效）；光束层的缓动写在各关键帧里（落下 pop、散开 exit） */
+  --animate-spotlight-blur: spotlight-blur 2200ms var(--ease-standard) both;
+  --animate-spotlight-beam: spotlight-beam 2200ms linear both;
 }
 
 /* @sfinterface/numbers 的两个时长钩子接到动效 token（宪法第七节：时长只来自 token）：
@@ -593,32 +594,41 @@
   }
 }
 
-/* 舞台灯：光圈外渐渐模糊、压暗，光圈里稍提亮；两端都是原样（blur 0 / brightness 1），停在末帧不留痕。
+/* 舞台灯的景深：光外轻微失焦，两端都是原样（blur 0），停在末帧不留痕。
    **带前缀的那条必须写在前面**：构建期的压缩器把两条当成同一属性、只留后写的那条——标准写法在前时产物里只剩
-   -webkit-，Chrome 不认它，整段舞台灯在 Chrome 里什么都没有（2026-10-23 实测） */
-@keyframes spotlight-shade {
+   -webkit-，Chrome 不认它，整段在 Chrome 里什么都没有（2026-10-23 实测） */
+@keyframes spotlight-blur {
   0%,
   100% {
-    -webkit-backdrop-filter: blur(0) brightness(1);
-    backdrop-filter: blur(0) brightness(1);
+    -webkit-backdrop-filter: blur(0);
+    backdrop-filter: blur(0);
   }
-  18%,
-  72% {
-    -webkit-backdrop-filter: blur(5px) brightness(0.62) saturate(0.85);
-    backdrop-filter: blur(5px) brightness(0.62) saturate(0.85);
+  28%,
+  78% {
+    -webkit-backdrop-filter: blur(2.5px);
+    backdrop-filter: blur(2.5px);
   }
 }
 
-@keyframes spotlight-lift {
-  0%,
-  100% {
-    -webkit-backdrop-filter: brightness(1);
-    backdrop-filter: brightness(1);
+/* 舞台灯的光束：从斜上方、放大着落下收拢到目标（pop 缓动，像光打过来对上焦），停住，最后原地放大散开 */
+@keyframes spotlight-beam {
+  0% {
+    opacity: 0;
+    transform: translate(calc(var(--spot-r) * -1.6), calc(var(--spot-r) * -2.4)) scale(1.8);
+    animation-timing-function: var(--ease-pop);
   }
-  18%,
-  72% {
-    -webkit-backdrop-filter: brightness(1.12);
-    backdrop-filter: brightness(1.12);
+  30% {
+    opacity: 1;
+    transform: none;
+  }
+  78% {
+    opacity: 1;
+    transform: none;
+    animation-timing-function: var(--ease-exit);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.4);
   }
 }
 
@@ -797,6 +807,19 @@
    那一刻已经截好，所以拖影是实色、原位这一行淡下去——一眼分得出「在拿的」和「放哪儿」（2026-10 UI 审计 G11）。 */
 @utility opacity-dragging {
   opacity: 0.6;
+}
+
+/* 舞台灯的光束（`canvas/IssueSpotlight`）：以元素中心为光心，`--spot-r` 是光圈半径。中心一点暖光，
+   半径的八成以内全透，往外拖很长一段才压到近黑——光圈没有边。压的是画布上的内容，两档主题同值 */
+@utility bg-spotlight-beam {
+  background-image: radial-gradient(
+    circle farthest-side at 50% 50%,
+    rgb(255 236 214 / 0.1) 0,
+    rgb(255 236 214 / 0.05) calc(var(--spot-r) * 0.55),
+    rgb(5 6 9 / 0) calc(var(--spot-r) * 0.8),
+    rgb(5 6 9 / 0.5) calc(var(--spot-r) * 1.6),
+    rgb(5 6 9 / 0.74) calc(var(--spot-r) * 3)
+  );
 }
 
 /* 层级工具类：值在 :root 的 --z-*（见上），组件只写名字 */
