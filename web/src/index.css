@@ -230,6 +230,11 @@
   --color-glass: color-mix(in srgb, var(--color-field) 90%, transparent);
   /* 拖放接收态的外发光（ui/dropZone）：accent 14% 的 4px 环，不透明度走 color-mix，不在组件里手写任意投影 */
   --shadow-drop: 0 0 0 4px color-mix(in srgb, var(--color-accent) 14%, transparent);
+  /* 定位舞台灯（`canvas/IssueSpotlight`）：光圈一圈 sel 描边 + 外发光；光圈外压暗用 --color-spotlight-shade。
+     两档主题同值：压的是画布上的内容，不是界面底色 */
+  --shadow-spotlight:
+    0 0 0 2px var(--color-sel), 0 0 28px 6px color-mix(in srgb, var(--color-sel) 45%, transparent);
+  --color-spotlight-shade: rgb(0 0 0 / 0.28);
   --shadow-composer:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 4%, transparent),
     0 2px 8px color-mix(in srgb, var(--color-shadow) 4%, transparent),
@@ -343,6 +348,8 @@
      不是 Tailwind 的 pulse——那条无限呼吸被门禁禁了（加载方言只有 sweep / 静态骨架 / shimmer / 转圈）；
      这是一次性的注意力信号，有限次数、走 token 曲线。 */
   --animate-attention: attention 900ms var(--ease-standard) 3;
+  /* 定位舞台灯：淡入 · 停一秒 · 淡出（1400ms，`IssueSpotlight.SPOTLIGHT_MS` 同长），一次性、有限 */
+  --animate-spotlight: spotlight 1400ms var(--ease-standard) both;
 }
 
 /* @sfinterface/numbers 的两个时长钩子接到动效 token（宪法第七节：时长只来自 token）：
@@ -586,6 +593,19 @@
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+@keyframes spotlight {
+  0% {
+    opacity: 0;
+  }
+  12%,
+  78% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
   }
 }
 
