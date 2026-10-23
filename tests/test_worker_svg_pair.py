@@ -194,6 +194,14 @@ elif mode in {"formatter", "snapshot_formatter", "standalone_formatter"}:
         counter[0] += 1
         return str(counter[0])
     ax.xaxis.set_major_formatter(FuncFormatter(changing_formatter))
+elif mode in {"renderer_dispatch", "snapshot_renderer_dispatch"}:
+    from matplotlib.artist import Artist
+    from matplotlib.backends.backend_mixed import MixedModeRenderer
+    class Dispatch(Artist):
+        def draw(self, renderer):
+            # 按 renderer 的类分派：tee 传进来的不是 MixedModeRenderer 时 PDF 自己就会变
+            title.set_text("Mixed" if isinstance(renderer, MixedModeRenderer) else "Other")
+    ax.add_artist(Dispatch())
 elif mode == "standalone_artist":
     from matplotlib.artist import Artist
     from matplotlib.path import Path as MplPath
@@ -253,8 +261,12 @@ elif mode == "fixed_labels":
 elif mode == "mkdir_failure":
     (out / "blocker").write_text("not a directory")
     svg = out / "blocker" / "pair.svg"
-DYNAMIC = {"callback", "custom_draw", "formatter", "locator", "scale", "transform", "annotation", "effect"}
-DYNAMIC |= {"snapshot_" + name for name in ("callback", "custom", "formatter", "locator", "scale", "transform", "annotation", "effect")}
+#: 只算值的回调：单次绘制下 PDF 与 SVG 配对（ADR 0150）
+PAIRED = {"formatter", "locator", "scale", "transform"}
+PAIRED |= {"snapshot_" + name for name in PAIRED}
+#: 能看到 renderer 的回调：仍阻断（它们可能按 renderer 的类分派，tee 与 PDF renderer 不是同一个类）
+BLOCKED = {"callback", "custom_draw", "annotation", "effect", "renderer_dispatch"}
+BLOCKED |= {"snapshot_" + name for name in ("callback", "custom", "annotation", "effect", "renderer_dispatch")}
 result = None
 if mode == "invalid":
     handler = pkg.wireproto.V1Handler(session)
@@ -291,21 +303,29 @@ else:
         "cmd": "export", "stem": "F", "payload": {"patches": patches, "path": str(pdf),
         "format": "pdf", "dpi": 300, "svg_path": str(svg),
         "require_built": True, "snapshot_only": mode.startswith("snapshot_"),
-        **({"svg_text_path": str(out / "pair.text.svg")} if mode == "pair_text" or (mode in DYNAMIC and not mode.startswith("snapshot_")) else {})}})
-    assert response["ok"], response
-    assert response["worker_generation"] == 7 and response["render_revision"] == 12
-    assert response["unrestored"] == 0
-    if mode in {"failure", "mkdir_failure"}:
+        **({"svg_text_path": str(out / "pair.text.svg")} if mode == "pair_text" or (mode in PAIRED and not mode.startswith("snapshot_")) else {})}})
+    if mode in BLOCKED and mode.startswith("snapshot_"):
+        assert not response["ok"] and response["error"]["code"] == "svg_source_unavailable", response
+        assert response["error"]["retryable"] is False
+        assert not saves and not pdf.exists() and not svg.exists()
+    else:
+        assert response["ok"], response
+        assert response["worker_generation"] == 7 and response["render_revision"] == 12
+        assert response["unrestored"] == 0
+    if mode in {"failure", "mkdir_failure"} or (mode in BLOCKED and not mode.startswith("snapshot_")):
         assert "svg" not in response and response["svg_error"]["code"] == "svg_export_failed", response
         assert pdf.is_file() and not svg.is_file()
-    elif mode in DYNAMIC:
-        # ADR 0150：回调不再挡 SVG——PDF 与 SVG 出自同一次 draw
+    elif mode in PAIRED:
         assert "svg_error" not in response and response["svg"]["path"] == str(svg), response
         assert response["svg_pairing"] == "single_draw"
+        # 有用户回调：调用方不得拿独立 savefig 的证人绑磁盘素材（#1185）
+        assert response.get("svg_strict_blocker")
     result = response
     assert calls == [patches, previous], calls
-if mode in {"snapshot_formatter", "snapshot_locator", "snapshot_scale", "snapshot_transform", "snapshot_annotation", "snapshot_effect"}:
+if mode in {"snapshot_formatter", "snapshot_locator", "snapshot_scale", "snapshot_transform"}:
     assert counter[0] > 0  # 单次绘制：画了，而且只画一次的结果同时进 PDF 与 SVG
+if mode in {"snapshot_annotation", "snapshot_effect"}:
+    assert counter[0] == 0
 assert session.snapshot("F") == previous
 assert title.get_text() == "Hot title"
 assert dict(matplotlib.rcParams) == before_rc
@@ -382,21 +402,9 @@ def test_svg_failure_preserves_pdf_and_restores_state(tmp_path, mode):
 
 
 @needs_user_python
-@pytest.mark.parametrize(
-    "mode",
-    [
-        "callback",
-        "custom_draw",
-        "formatter",
-        "locator",
-        "scale",
-        "transform",
-        "annotation",
-        "effect",
-    ],
-)
-def test_dynamic_draw_is_paired_from_one_draw(tmp_path, mode):
-    """ADR 0150（取代「动态回调不授予 SVG 资格」）：回调的副作用再不纯，PDF 与 SVG 看到的也是同一个场景。"""
+@pytest.mark.parametrize("mode", ["formatter", "locator", "scale", "transform"])
+def test_value_callbacks_are_paired_from_one_draw(tmp_path, mode):
+    """ADR 0150：只算值的回调再不纯，PDF 与 SVG 看到的也是同一个场景。"""
     result = _probe(tmp_path, mode)
     assert [save["format"] for save in result["saves"]] == ["pdf"]
     assert result["result"]["svg"]["path"] == str(tmp_path / "pair.svg")
@@ -413,6 +421,17 @@ def test_dynamic_draw_is_paired_from_one_draw(tmp_path, mode):
         )
     )
     assert pdf_words == svg_words, (pdf_words, svg_words)
+
+
+@needs_user_python
+@pytest.mark.parametrize(
+    "mode", ["callback", "custom_draw", "annotation", "effect", "renderer_dispatch"]
+)
+def test_renderer_visible_callbacks_still_block_pairing(tmp_path, mode):
+    """能看到 renderer 的回调（draw_event、自定义 Artist.draw、注解坐标、path effect、按 renderer 类分派）仍不授予 SVG 资格。"""
+    result = _probe(tmp_path, mode)
+    assert [save["format"] for save in result["saves"]] == ["pdf"]
+    assert "svg" not in result["result"]
 
 
 @needs_user_python
@@ -544,22 +563,28 @@ def test_capture_export_never_reopens_expired_workerd_session(monkeypatch, tmp_p
 
 @needs_user_python
 @pytest.mark.parametrize(
+    "mode", ["snapshot_formatter", "snapshot_locator", "snapshot_scale", "snapshot_transform"]
+)
+def test_automatic_snapshot_pairs_value_callbacks_from_one_draw(tmp_path, mode):
+    result = _probe(tmp_path, mode)
+    assert [save["format"] for save in result["saves"]] == ["pdf"]
+    assert result["result"]["svg"]["path"] == str(tmp_path / "pair.svg")
+
+
+@needs_user_python
+@pytest.mark.parametrize(
     "mode",
     [
         "snapshot_callback",
         "snapshot_custom",
-        "snapshot_formatter",
-        "snapshot_locator",
-        "snapshot_scale",
-        "snapshot_transform",
         "snapshot_annotation",
         "snapshot_effect",
+        "snapshot_renderer_dispatch",
     ],
 )
-def test_automatic_snapshot_pairs_dynamic_draw_from_one_draw(tmp_path, mode):
+def test_automatic_snapshot_declines_renderer_visible_callbacks_without_drawing(tmp_path, mode):
     result = _probe(tmp_path, mode)
-    assert [save["format"] for save in result["saves"]] == ["pdf"]
-    assert result["result"]["svg"]["path"] == str(tmp_path / "pair.svg")
+    assert result["saves"] == []
 
 
 @needs_user_python

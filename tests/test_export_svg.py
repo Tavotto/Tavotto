@@ -473,6 +473,34 @@ def test_svg_asset_saved_by_the_live_figure_gets_svg_and_eps_from_one_basis(proj
     assert receipt_id
 
 
+def test_svg_asset_with_user_callbacks_is_never_bound(project, monkeypatch):
+    """#1355 Codex P1：#1185 的证人是独立 savefig，配对是单次绘制——有用户回调（哪怕只算值）就不能把
+    「证人与磁盘一致」当成「被 freeze 的配对那份也一致」。此处回调是确定的，证人与磁盘必然一致，所以只有阻断条件能挡住绑定。"""
+    client, root = project
+    script = _script_saving_svg((3, 2)).replace(
+        '    ax.set_title("Source title")',
+        "    from matplotlib.ticker import FuncFormatter\n"
+        '    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _p: "x"))\n'
+        '    ax.set_title("Source title")',
+    )
+    (root / "plot.py").write_text(script, encoding="utf-8")
+    import os
+    import subprocess
+
+    subprocess.run(
+        [sys.executable, "-c", "import runpy; runpy.run_path('plot.py')['main']()"],
+        cwd=root,
+        env={**os.environ, "MPLBACKEND": "agg"},
+        check=True,
+    )
+    assert (root / "F.svg").is_file()
+    run_script(client)
+    assert m._svg_asset_binding(type("S", (), {"figure_id": "F.svg"})(), root) is None
+    monkeypatch.setattr(pool, "get", lambda *a, **k: pytest.fail("EPS reran the script"))
+    body, outputs = output(client, spec("F.svg", scope="original", formats=("svg", "eps")))
+    assert outputs["eps"]["error"]["code"] == "eps_source_unverified"
+
+
 def test_a_rerun_between_the_binding_check_and_the_worker_never_keeps_the_old_basis(
     project, monkeypatch
 ):

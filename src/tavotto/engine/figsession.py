@@ -99,6 +99,8 @@ class SvgSnapshotUnavailable(RuntimeError):
     protocol_code = "svg_source_unavailable"
 
 
+#: 艺术家方法里**能看到 renderer** 的那两个（单次绘制下仍必须是 matplotlib 自己的）
+_RENDERER_ARTIST_METHODS = ("draw", "get_tightbbox")
 _ARTIST_METHODS = (
     "draw",
     "get_children",
@@ -774,23 +776,29 @@ def _svg_pair_canvas_blocker(canvas) -> str | None:
 def _svg_pair_env_blocker(fig) -> str | None:
     """The one draw must go through Matplotlib's own `print_pdf`: custom savefig / canvas / backends can't be teed.
 
-    This is all that blocks pairing when the single-draw path (`teedraw`, ADR 0150) is available — user callbacks
-    no longer matter there because PDF and SVG come out of the same draw.
+    Part of every pairing blocker. In the single-draw path (`teedraw`, ADR 0150) value-only user callbacks no longer
+    matter because PDF and SVG come out of the same draw; renderer-visible ones are still checked by `_svg_pair_blocker`.
     """
     if not _svg_pair_standard_savefig(fig):
         return "SVG pairing is unavailable for custom Figure saving methods."
     return _svg_pair_canvas_blocker(fig.canvas)
 
 
-def _svg_pair_blocker(fig) -> str | None:
-    """Two-pass fallback only: known draw-time code can change the scene between two serializers.
+def _svg_pair_blocker(fig, *, single_draw: bool = False) -> str | None:
+    """Known draw-time code can change the scene between two serializers (and may see which renderer it draws on).
 
-    Used when the single-draw self-test failed (`teedraw.status()`): never label a second draw as a frozen
-    companion when user callbacks or custom draw implementations can mutate it.
+    * Two-pass (`single_draw=False`, the legacy pairing and the #1185 witness): any user callback can differ between the
+      PDF pass and the SVG pass, so every kind is a blocker.
+    * Single draw (`teedraw`, ADR 0150): PDF and SVG come out of one draw, so callbacks that only compute *values*
+      (tick formatters, locators, scale / transform functions, image filters) are fine. Callbacks that can **see the
+      renderer** stay blocked — `draw_event` handlers, custom `Artist.draw` / `get_tightbbox`, axes locators, annotation
+      coordinate callables, path effects: they may dispatch on the renderer's class and the tee is a different class
+      from the PDF renderer the figure would normally get, so even the PDF could change.
     """
     env_blocker = _svg_pair_env_blocker(fig)
     if env_blocker is not None:
         return env_blocker
+    values = not single_draw
     if fig.canvas.callbacks.callbacks.get("draw_event"):
         return "SVG pairing is unavailable for figures with draw-event callbacks."
     pending, seen, seen_transforms = [fig], set(), set()
@@ -804,14 +812,17 @@ def _svg_pair_blocker(fig) -> str | None:
         if not type(artist).__module__.startswith(("matplotlib.", "mpl_toolkits.")):
             return "SVG pairing is unavailable for custom artist implementations."
         for name in _ARTIST_METHODS:
-            if not _svg_pair_standard_method(getattr(artist, name)):
+            # draw / get_tightbbox receive the renderer; the rest only compute values
+            if (values or name in _RENDERER_ARTIST_METHODS) and not _svg_pair_standard_method(
+                getattr(artist, name)
+            ):
                 return "SVG pairing is unavailable for custom artist drawing methods."
-        if not all(
+        if values and not all(
             _svg_pair_standard_transform(transform, seen_transforms)
             for transform in (artist.get_transform(), artist.get_clip_box(), artist.get_clip_path())
         ):
             return "SVG pairing is unavailable for user transform callbacks."
-        if isinstance(artist, Axis):
+        if values and isinstance(artist, Axis):
             scale = artist._scale
             if not type(scale).__module__.startswith(("matplotlib.", "mpl_toolkits.")) or not (
                 _svg_pair_standard_method(scale.get_transform)
@@ -836,9 +847,10 @@ def _svg_pair_blocker(fig) -> str | None:
             locator = artist.get_axes_locator()
             if locator is not None and not _svg_pair_standard_method(locator):
                 return "SVG pairing is unavailable for user axes-location callbacks."
-        agg_filter = artist.get_agg_filter()
-        if agg_filter is not None and not _svg_pair_standard_method(agg_filter):
-            return "SVG pairing is unavailable for user image-filter callbacks."
+        if values:
+            agg_filter = artist.get_agg_filter()
+            if agg_filter is not None and not _svg_pair_standard_method(agg_filter):
+                return "SVG pairing is unavailable for user image-filter callbacks."
         if isinstance(artist, Annotation):
             coordinates = [artist.xycoords, artist.get_anncoords()]
             while coordinates:
@@ -1934,20 +1946,22 @@ class LiveFigureSession:
             )
             out.parent.mkdir(parents=True, exist_ok=True)
             blocker = None
+            strict_blocker = None
             single_draw = False
             if companion is not None:
-                # ADR 0150：PDF 与 SVG 出自**同一次 draw**（`teedraw`），用户回调不再需要被证明是纯的；
+                # ADR 0150：PDF 与 SVG 出自**同一次 draw**（`teedraw`），只算值的回调（刻度格式化 / 定位 / scale / transform）不再需要被证明是纯的；
+                # 能看到 renderer 的回调（draw_event、自定义 Artist.draw、path effect……）仍阻断；
                 # 自检不过才退回二次绘制 + 回调阻断，并把自检结论带进原因（进诊断）。
                 single_ok, single_why = teedraw.status()
                 single_draw = single_ok
                 try:
-                    blocker = (
-                        _svg_pair_env_blocker(state.fig)
-                        if single_ok
-                        else _svg_pair_blocker(state.fig)
-                    )
+                    blocker = _svg_pair_blocker(state.fig, single_draw=single_ok)
+                    # 完整（二次绘制口径）阻断另算一份交给调用方：#1185 的等价证人是独立 savefig，
+                    # 有用户回调（哪怕是只算值的）就不能拿它去绑磁盘素材
+                    strict_blocker = blocker if not single_ok else _svg_pair_blocker(state.fig)
                 except Exception as exc:  # noqa: BLE001 — a companion check cannot block the PDF
                     blocker = f"SVG pairing state could not be verified: {type(exc).__name__}"
+                    strict_blocker = blocker
                 if blocker is not None and not single_ok:
                     blocker = f"{blocker} (single-draw pairing unavailable: {single_why})"
                 if snapshot_only and blocker is not None:
@@ -2003,6 +2017,9 @@ class LiveFigureSession:
                         if tee_results[0] is not None:
                             raise ValueError(f"single-draw SVG failed: {tee_results[0]}")
                         result["svg_pairing"] = "single_draw"
+                        if strict_blocker is not None:
+                            # 有用户回调（只算值的也算）：调用方不得拿独立 savefig 的证人去绑磁盘素材（#1185）
+                            result["svg_strict_blocker"] = strict_blocker
                     else:
                         result["svg_pairing"] = "two_pass"
                     companion.parent.mkdir(parents=True, exist_ok=True)
