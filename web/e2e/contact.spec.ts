@@ -230,5 +230,8 @@ test('我的来信：收到 HTML 回信显示成白色信纸（沙盒 iframe、�
   // 深色模式下信纸仍是白的
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'))
   expect(await dialog.locator('[data-contact-reply-paper]').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(255, 255, 255)')
-  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'letters-html-reply-dark.png') })
+  if (SHOTS) {
+    await page.waitForTimeout(400) // 按钮颜色有过渡动画：切主题后立刻截会截到半途
+    await page.screenshot({ path: path.join(SHOTS, 'letters-html-reply-dark.png') })
+  }
 })

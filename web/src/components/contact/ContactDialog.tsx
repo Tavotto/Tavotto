@@ -522,7 +522,7 @@ export function ContactDialog() {
           <Button variant="ghost" size="lg" onClick={s.reset} data-contact-another>
             {cs('sentAnother')}
           </Button>
-        ) : (
+        ) : view === 'letters' ? null : ( // 「我的来信」只有主按钮「关闭」，不再并排两个「关闭」
           <Button variant="ghost" size="lg" onClick={() => s.setOpen(false)} data-contact-dismiss>
             {cs('close')}
           </Button>
