@@ -1126,7 +1126,7 @@ def ensure_figure_fallback(fig) -> int:
     return n
 
 
-def ensure_rcparams_fallback() -> None:
+def ensure_rcparams_fallback(figures=()) -> None:
     """给 rcParams 的 `font.family` 补尾巴：之后**才**用默认 FontProperties 新建的
     Text 读的是它。幂等。
 
@@ -1134,13 +1134,18 @@ def ensure_rcparams_fallback() -> None:
     （`rebuild_legend`）从旧文字拷，都不经 rcParams。今天没有哪条产品路径
     依赖它——`test_cjk_figure_text.py` 的变异反证里拿掉它不会红，那是已知的。
 
-    **`text.usetex` 开着时不动**：TeX 管理器只认长度为 1 的 `font.family`，多一条尾巴就
-    退成 `serif`，布局里所有 TeX 文字的度量随之变了——零编辑的导出就和脚本自己的第一次
-    保存对不上（Celerite `sho.py`：x 轴下方整体上移 0.44 pt）。TeX 文字的字形由 TeX 出，
-    逐字形回退本来就够不着，补了没有收益。
+    **有 TeX 文字时不动**（`rcParams["text.usetex"]` 开着，或 `figures` 里任何一段 Text 的
+    `get_usetex()` 为真）：TeX 管理器只认长度为 1 的 `font.family`，多一条尾巴就退成
+    `serif`，所有 TeX 文字的度量随之变了——零编辑的导出就和脚本自己的第一次保存对不上
+    （Celerite `sho.py`：x 轴下方整体上移 0.44 pt）。TeX 文字的字形由 TeX 出，逐字形
+    回退本来就够不着，补了没有收益。同图里 `usetex=False` 的 CJK 文字走的是逐个 Text
+    那一条（`ensure_figure_fallback`），不靠 rcParams。
     """
     if mpl.rcParams["text.usetex"]:
         return
+    for fig in figures:
+        if any(t.get_usetex() for t in fig.findobj(Text)):
+            return
     cur = [str(f) for f in mpl.rcParams["font.family"]]
     chain = _family_chain(cur)
     if chain != cur:

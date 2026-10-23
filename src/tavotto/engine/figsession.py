@@ -1245,7 +1245,7 @@ class LiveFigureSession:
             # 从模板 tick 拷字体、图例重建从旧文字拷字体）都不靠它，变异反证里
             # 拿掉它不会红——它兜的是「直接用默认 FontProperties 新建 Text」
             # 这条今天还不存在的路。
-            overrides_mod.ensure_rcparams_fallback()
+            overrides_mod.ensure_rcparams_fallback(self.capture.values())
             # 只有中文名的字体按真名补登记：override 里存的是真名，应用之前就得解析得到
             # （中日韩尾巴关掉时 `font_installed` 不会先被问到，这里不靠它顺带）
             overrides_mod.register_font_name_aliases()

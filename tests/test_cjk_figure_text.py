@@ -355,30 +355,57 @@ def test_ensure_helpers_cover_texts_created_after_build_and_explicit_families(in
 
 
 _USETEX_DRIVER = """\
-import sys
+import sys, warnings
 sys.path.insert(0, sys.argv[1])
 import matplotlib
 matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from matplotlib.texmanager import TexManager
 import overrides
 
-# TeX 管理器只认长度为 1 的 font.family；补尾巴会让它退成 serif，TeX 文字度量全变
+# a) rcParams 开着 usetex：TeX 管理器只认长度为 1 的 font.family，补尾巴会退成 serif
 matplotlib.rcParams["text.usetex"] = True
 matplotlib.rcParams["font.family"] = "sans-serif"
 overrides.ensure_rcparams_fallback()
 assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"], matplotlib.rcParams["font.family"]
 assert TexManager._get_font_family_and_reduced() == ("sans-serif", False)
 
-# 关着 usetex 时照旧补
+# b) rcParams 关着，但图上有个别 usetex=True 的 Text：同样不补
 matplotlib.rcParams["text.usetex"] = False
-overrides.ensure_rcparams_fallback()
+fig, ax = plt.subplots()
+ax.text(0.5, 0.5, "x", usetex=True)
+overrides.ensure_rcparams_fallback([fig])
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"], matplotlib.rcParams["font.family"]
+
+# c) 没有任何 TeX 文字：照旧补
+plt.close(fig)
+fig, ax = plt.subplots()
+overrides.ensure_rcparams_fallback([fig])
 assert len(matplotlib.rcParams["font.family"]) > 1
+
+# d) 反方向：rcParams 开着 usetex 时，同图 usetex=False 的汉字走逐个 Text 补，仍画得出来
+matplotlib.rcdefaults()
+matplotlib.rcParams["text.usetex"] = True
+fig, ax = plt.subplots()
+ax.set_axis_off()
+t = ax.text(0.5, 0.5, "中文", usetex=False)
+overrides.ensure_rcparams_fallback([fig])
+assert list(matplotlib.rcParams["font.family"]) == ["sans-serif"]
+overrides.ensure_figure_fallback(fig)
+assert overrides.cjk_fallback_tail()[0] in t.get_fontfamily(), t.get_fontfamily()
+with warnings.catch_warnings():
+    warnings.simplefilter("error")  # Glyph missing / findfont 都当错
+    fig.canvas.draw()
 print("OK")
 """
 
 
-def test_rcparams_fallback_leaves_usetex_font_family_alone(installed_cjk):
-    """Celerite 零编辑漂移的根因：`text.usetex` 下 `font.family` 多了尾巴，TeX 文字度量变了。"""
+def test_rcparams_fallback_leaves_tex_font_family_alone(installed_cjk):
+    """Celerite 零编辑漂移的根因：有 TeX 文字时 `font.family` 多了尾巴，TeX 文字度量变了。
+
+    整个 rcParams 开 usetex、只有个别 Text 开 usetex 都要不动；同图 `usetex=False` 的汉字
+    仍由逐个补的尾巴画出（不出方框）。无需 TeX：断言的是 rcParams 与 TexManager 的选族。
+    """
     if not installed_cjk:
         pytest.skip("worker 的解释器找不到任何中日韩候选字体")
     out = subprocess.run(
