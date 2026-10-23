@@ -108,6 +108,8 @@ let routeOf: ((req: Record<string, any>) => Record<string, unknown>) | null = nu
 /** `/api/runtime/status` 的回答（null = 走兜底）；`runtimeStatusGate` 非 null 时先等它再回（模拟 ensure() 往返） */
 let runtimeStatus: Record<string, unknown> | null = null
 let runtimeStatusGate: Promise<void> | null = null
+/** 非 0 时 `/api/runtime/status` 回这个 HTTP 状态码（模拟服务端瞬时失败）；-1 = 抛网络错误 */
+let runtimeStatusFail = 0
 
 function stubFetch() {
   exportBodies = []
@@ -143,6 +145,10 @@ function stubFetch() {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
+    }
+    if (url.includes('/api/runtime/status') && runtimeStatusFail) {
+      if (runtimeStatusFail < 0) throw new TypeError('network down')
+      return new Response(JSON.stringify({ error: { code: 'boom' } }), { status: runtimeStatusFail })
     }
     if (url.includes('/api/runtime/status') && runtimeStatus) {
       if (runtimeStatusGate) await runtimeStatusGate
@@ -3229,6 +3235,7 @@ describe('runtime 图：打开对话框主动确认注册状态（#1348 Codex）
   afterEach(() => {
     runtimeStatus = null
     runtimeStatusGate = null
+    runtimeStatusFail = 0
   })
 
   it('清单缺 id、注册状态未知：先显示「正在确认」且不放行，ensure 回 registered 后可用（EPS 亮、按原图导）', async () => {
@@ -3264,5 +3271,35 @@ describe('runtime 图：打开对话框主动确认注册状态（#1348 Codex）
     await settle()
     expect(useRuntimeAssetStore.getState().byId[ID]?.registered).toBe(true)
     expect(formatBox('EPS').disabled).toBe(false)
+  })
+
+  const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 30))))
+
+  it.each([500, -1])('status 查询失败（%i）：注册状态仍未知，照常请求原图口径，不静默改走画布', async (fail) => {
+    runtimeStatusFail = fail
+    await setup(9)
+    await openRuntime()
+    await settle()
+    expect(useRuntimeAssetStore.getState().byId[ID]?.registered, '传输失败不是「不认」').toBeNull()
+    expect(document.body.querySelector('[data-export-figure-checking]'), '问过了，不再「确认中」').toBeNull()
+    expect(document.body.querySelector('[data-export-runtime-refused]')).toBeNull()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope, '按原图口径交给后端权威校验').toBe('original')
+  })
+
+  it('后端明确回 registered:false：不静默改走画布，给 note 与按钮，用户显式选了才按画布导', async () => {
+    runtimeStatus = { status: 'needs_rerun', cached: false, registered: false, execution_profile: 'safe' }
+    await setup(9)
+    await openRuntime()
+    await settle()
+    expect(document.body.querySelector('[data-export-runtime-refused]'), '说清楚要重新运行').toBeTruthy()
+    expect(button('开始导出')!.hasAttribute('disabled'), '不静默导出').toBe(true)
+    await click(document.body.querySelector('[data-export-accept-canvas]') as HTMLElement)
+    expect(document.body.querySelector('[data-export-runtime-refused]')).toBeNull()
+    await click(button('开始导出')!)
+    expect(exportBodies).toHaveLength(1)
+    expect(exportBodies[0].scope, '用户显式选了才走画布').toBe('canvas')
   })
 })

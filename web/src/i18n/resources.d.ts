@@ -478,6 +478,7 @@ export default interface Resources {
         "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
       },
       "exportAgain": "再次导出",
+      "exportAsCanvas": "改按画布导出",
       "exported": "导出完成：{{files}}",
       "failTitle": "导出没有完成",
       "filenameError": {
@@ -526,6 +527,7 @@ export default interface Resources {
       "locationDefault": "项目的导出目录",
       "locationLabel": "位置",
       "mmSize": "{{w}} × {{h}} mm",
+      "needsRerun": "这张图需要重新运行脚本才能按原图导出。也可以改按画布导出（版面按画布，保真度较低）。",
       "openProblems": "在问题面板中查看",
       "operationFailed": "无法完成：{{error}}",
       "outputFailed": "无法导出 {{format}}：{{reason}}",

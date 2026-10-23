@@ -95,7 +95,7 @@ describe('runtimeAssetStore', () => {
     useRuntimeAssetStore.getState().ensure(runtimePanel())
     await flush()
     expect(useRuntimeAssetStore.getState().byId['runtime:fig.py#fig']).toEqual({
-      status: 'needs_rerun', cached: false, registered: false, checked: true,
+      status: 'needs_rerun', cached: false, registered: null, checked: true,
       // 查询失败时同样按 safe：不猜成 native，也就不会误挂「会话已结束」
       profile: 'safe',
     })

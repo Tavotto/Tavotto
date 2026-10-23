@@ -178,6 +178,8 @@
     "checkScopeCanvasNamed": "checks the whole canvas “{{name}}”",
     "checkScopeFigureNamed": "checks only the original “{{name}}”",
     "checkScopeOffCanvas": "“{{name}}” is not on the canvas, so this export gets no spec check",
+    "needsRerun": "This figure has to be re-run before it can be exported at its original size. You can also export it as the canvas (lower fidelity).",
+    "exportAsCanvas": "Export as canvas instead",
     "checkingFigure": "Checking this figure…",
     "conflict": "The export folder already has {{files}}.",
     "conflictRename": "Save a copy",
