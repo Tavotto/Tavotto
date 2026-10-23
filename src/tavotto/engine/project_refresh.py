@@ -321,6 +321,7 @@ def iter_assets(
     strict: bool = False,
     budget: scanbudget.Budget | None = None,
     reg=None,
+    include_shadowed: bool = False,
 ) -> list[tuple[Path, str]]:
     """项目里的素材文件与它们的 kind —— `/api/panels` 与刷新共用这一份判据。
 
@@ -329,6 +330,8 @@ def iter_assets(
     * 同目录同名的 PDF 与位图只算矢量那份（有矢量版就不重复列出位图）。「同名」= **同一张图**（`figure_key_of`）：
       注册表说 `panel.png`（甲）与 `panel.pdf`（乙，`panel-2`）是两张不同的图时，两个文件各自是一份素材（#1251）；
       没有 `artifacts` 映射的项目就是文件名 stem 相同，行为不变。`reg`（一个已装载的 `Registry`）缺省读磁盘上的注册表。
+      `include_shadowed=True` 不做「矢量版让位」：被同一张图的 PDF 压掉的位图也列出（`panel.file_changed` 的 `files`
+      要的是「这张图在磁盘上的所有文件」，文档里留着的 PNG 面板不能因为被让位就收不到事件）。其余判据（剪枝 / 扩展名）不变。
 
     `strict=True` 时中途读不动就抛（`_reraise`），**不返回半张表**。
     `/api/panels` 与刷新照旧宽容：一个读不动的子目录不该让素材面板整个空掉；
@@ -430,7 +433,9 @@ def iter_assets(
     for p in files:
         kind = asset_kind(
             p.name,
-            pdf_twin=p.suffix.lower() in IMG_EXT and (p.parent, figure_key(p)) in pdf_stems,
+            pdf_twin=(not include_shadowed)
+            and p.suffix.lower() in IMG_EXT
+            and (p.parent, figure_key(p)) in pdf_stems,
         )
         if kind is None:
             continue

@@ -629,15 +629,24 @@ def test_file_changed_event_carries_the_files_of_the_figures_that_changed(
     assert payload["files"] == ["Fig1.pdf", "Fig1.png"]
 
 
-def test_file_changed_files_without_a_map_follow_the_stem(client, tmp_path):
+def test_file_changed_files_include_the_bitmap_a_pdf_twin_hides(client, tmp_path):
+    """同一张图有 PNG 和 PDF（素材盘点里 PNG 被矢量版让位）：排版里留着的 PNG 面板也要收到事件，files 两个都含。"""
     from tavotto import app as m
 
-    figs = _touch_pair(tmp_path, None)  # 没有映射：Fig1.pdf / Fig1.png 都是 Fig1（png 让位给 pdf）
-    m.reset_projects()
-    m.open_project(str(figs))
-    with m.app.test_request_context():
-        assert m._panel_files_of_stems(m.current_ctx(), ["Fig1"]) == ["Fig1.pdf"]
-        assert m._panel_files_of_stems(m.current_ctx(), ["Fig1-2"]) == []
+    # 无映射（老项目）与映射说两个文件是同一张图：都一样
+    for art in (None, {"Fig1.png": "Fig1", "Fig1.pdf": "Fig1"}):
+        figs = _touch_pair(tmp_path, art)
+        m.reset_projects()
+        m.open_project(str(figs))
+        with m.app.test_request_context():
+            assert m._panel_files_of_stems(m.current_ctx(), ["Fig1"]) == ["Fig1.pdf", "Fig1.png"], (
+                art
+            )
+            assert m._panel_files_of_stems(m.current_ctx(), ["Fig1-2"]) == [], art
+        # 对照：素材盘点里 PNG 确实被让位隐藏
+        from tavotto.engine import project_refresh
+
+        assert [p.name for p, _k in project_refresh.iter_assets(figs)] == ["Fig1.pdf"]
 
 
 def test_file_changed_event_omits_files_when_they_cannot_be_computed(client, tmp_path, monkeypatch):

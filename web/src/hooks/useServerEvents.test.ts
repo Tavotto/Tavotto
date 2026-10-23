@@ -242,6 +242,14 @@ describe('panel.file_changed', () => {
         expect(tracked()).toEqual(['panel.png'])
       })
 
+      it('文档里只剩被矢量版让位隐藏的 PNG 面板：files 含它，照样标 stale（素材盘点不再列它也一样）', () => {
+        seed([panelObj('jia', 'panel.png', { script: 'f.py', fileKind: 'raster' })])
+        useRenderStore.setState({ tracked: {} })
+        mockPanels.mockResolvedValue(panels([info('panel.pdf', { script: 'f.py' })])) // 清单里只有 pdf
+        fire({ stems: ['panel'], files: ['panel.pdf', 'panel.png'] })
+        expect(tracked()).toEqual(['panel.png'])
+      })
+
       it('老事件没有 files：行为不变，按文件名 stem', () => {
         seedTwo()
         fire({ stems: ['panel'] })

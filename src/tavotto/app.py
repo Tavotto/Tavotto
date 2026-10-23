@@ -3589,7 +3589,10 @@ engine_deprepair.on_user_environment_adopted(_publish_user_environment_adopted)
 # 对象层级见 docs/adr/0001-project-canvas-tab-object.md：Project = 图库路径 +
 # 素材根 + 导出/备份位置 + 设置。用户级配置（最近项目等）存 engine_config。
 def _panel_files_of_stems(ctx: "ProjectCtx", stems: list[str]) -> list[str] | None:
-    """这些 stem（图）对应的**磁盘素材文件 id**（与 `/api/panels` 的 `id` 逐字相同）；算不出返回 None。
+    """这些 stem（图）在磁盘上的**所有文件 id**（与 `/api/panels` 的 `id` 逐字相同）；算不出返回 None。
+
+    含被同一张图的 PDF 让位隐藏的位图（`include_shadowed`）：排版里留着的 PNG 面板不会因为素材盘点不再列它就收不到
+    事件、永远渲染旧脚本的结果。同 stem 的**另一张**图的文件不算（甲的 `panel.png` 不在乙的 files 里）。
 
     `panel.file_changed` 带上它，前端对非 runtime 面板按 fileId 精确匹配，不再拿异步加载的素材清单去推断
     「这个文件是哪张图」（#1251）。判据与素材盘点是同一个出处：`project_refresh.figure_key_of`
@@ -3601,7 +3604,9 @@ def _panel_files_of_stems(ctx: "ProjectCtx", stems: list[str]) -> list[str] | No
         key = engine_refresh.figure_key_of(root, ctx.registry)
         return sorted(
             str(p.relative_to(root))
-            for p, _kind in engine_refresh.iter_assets(root, reg=ctx.registry)
+            for p, _kind in engine_refresh.iter_assets(
+                root, reg=ctx.registry, include_shadowed=True
+            )
             if key(p) in wanted
         )
     except Exception:  # noqa: BLE001 —— 旁路信息：算不出不许影响事件本身
