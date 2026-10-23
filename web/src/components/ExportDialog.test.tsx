@@ -503,7 +503,7 @@ describe('输出范围', () => {
     // 没有范围选择的单图档里，EPS 灰着的原因不能指向不存在的「每张图单独导出」
     const epsBox = formatBox('EPS')
     expect(epsBox.disabled).toBe(true)
-    expect(epsBox.closest('label')!.title).toContain('请先运行这张图的脚本')
+    expect(epsBox.closest('label')!.title).toContain('没有可重新运行的脚本')
     expect(epsBox.closest('label')!.title).not.toContain('每张图单独导出')
     expect(text()).not.toContain('先选中一张图')
     expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览显示页面').toBeTruthy()

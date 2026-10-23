@@ -815,3 +815,41 @@ def test_the_same_request_twice_gives_the_same_plan_identity_and_bytes(project, 
     assert (tmp_path / "a" / "Fig 1.pdf").read_bytes() == (
         tmp_path / "b" / "Fig 1.pdf"
     ).read_bytes()
+
+
+def _svg_gap_plan(origins: dict[str, str]):
+    """每个 object_id 一块 `imported_page`，来源 = `origins[object_id]`；SVG 都没有同 Figure 表示。"""
+    from types import SimpleNamespace
+
+    from tavotto.rendercore import ir
+    from tavotto.rendercore.ir import unsupported_for
+
+    resources, children = {}, []
+    for oid, origin in origins.items():
+        key = f"file:{oid}"
+        resources[key] = ir.FileResource(
+            source_id=f"{origin}:{oid}",
+            kind="pdf",
+            sha256="0" * 64,
+            origin=origin,
+            semantic_identity="sha256:" + "0" * 64,
+        )
+        children.append(ir.ImportedPage(resource=key, rect=(0, 0, 10, 10), object_id=oid))
+    page = ir.Page(100, 100, tuple(children), resources)
+    return SimpleNamespace(page=page), unsupported_for(page, "svg")
+
+
+def test_svg_panel_gap_names_the_right_code_per_source_kind():
+    """#1348 Codex P2：脚本图缺 SVG 与静态 PDF 缺 SVG 同画布时，静态 PDF 不得被标成「脚本里的自定义函数」。"""
+    from tavotto.rendercore.job import _svg_panel_gap
+
+    rp, gaps = _svg_gap_plan({"a": "execution"})
+    assert _svg_panel_gap(rp, gaps, ["execution:a: SVG unavailable: custom canvas"])[0] == (
+        "svg_figure_unavailable"
+    )
+    rp, gaps = _svg_gap_plan({"s": "static"})
+    assert _svg_panel_gap(rp, gaps, [])[0] == "svg_source_unsupported"
+    rp, gaps = _svg_gap_plan({"a": "execution", "s": "static"})
+    code, params = _svg_panel_gap(rp, gaps, [])
+    assert code == "svg_source_unsupported"
+    assert "execution:a" in params["id"] and "static:s" in params["id"]

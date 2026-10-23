@@ -176,7 +176,14 @@ export function epsAvailability(
   /** 单图档（没有范围选择）：画布范围只可能是「原图口径不可用」的静默退路 */
   single = false,
 ): { ok: boolean; reason: EpsBlockReason } {
-  if (scope !== 'original') return { ok: false, reason: single ? 'figure_not_ready' : 'canvas_scope' }
+  if (scope !== 'original') {
+    if (!single) return { ok: false, reason: 'canvas_scope' }
+    // 单图档静默退到画布：先说「这张图没有脚本」（静态文件 / 原文件已删），只有 runtime 图才说「先运行它」
+    if (!figureId || (!figureId.startsWith('runtime:') && !useAssetStore.getState().byId[figureId]?.script)) {
+      return { ok: false, reason: 'no_script' }
+    }
+    return { ok: false, reason: 'figure_not_ready' }
+  }
   if (!figureId) return { ok: false, reason: 'no_script' }
   const fromRoute = epsFromRoute(route, scope, figureId)
   if (fromRoute) return fromRoute
