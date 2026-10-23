@@ -71,6 +71,11 @@ describe('定位舞台灯', () => {
       expect(parseFloat(layer.style.top) + side / 2).toBe(130)
       expect(layer.style.getPropertyValue('--spot-r')).toBe('58px')
     }
+    // 光柱从离光心最近的画布角（左上，往外推 40px）射向光心
+    const shaft = host.querySelector<SVGElement>('[data-spotlight-shaft]')!
+    const [sx, sy] = shaft.style.transformOrigin.split(' ').map(parseFloat)
+    expect(sx).toBeLessThan(0)
+    expect(sy).toBeLessThan(0)
     await frame(SPOTLIGHT_MS)
     expect(spot()).toBeNull()
   })

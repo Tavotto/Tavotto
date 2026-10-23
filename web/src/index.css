@@ -230,6 +230,8 @@
   --color-glass: color-mix(in srgb, var(--color-field) 90%, transparent);
   /* 拖放接收态的外发光（ui/dropZone）：accent 14% 的 4px 环，不透明度走 color-mix，不在组件里手写任意投影 */
   --shadow-drop: 0 0 0 4px color-mix(in srgb, var(--color-accent) 14%, transparent);
+  /* 定位舞台灯（`canvas/IssueSpotlight`）的光柱颜色：照在画布内容上的光，两档主题同值 */
+  --color-spotlight-light: #fffaf0;
   --shadow-composer:
     0 0 0 1px color-mix(in srgb, var(--color-shadow-edge) 4%, transparent),
     0 2px 8px color-mix(in srgb, var(--color-shadow) 4%, transparent),
@@ -343,11 +345,12 @@
      不是 Tailwind 的 pulse——那条无限呼吸被门禁禁了（加载方言只有 sweep / 静态骨架 / shimmer / 转圈）；
      这是一次性的注意力信号，有限次数、走 token 曲线。 */
   --animate-attention: attention 900ms var(--ease-standard) 3;
-  /* 定位舞台灯（`canvas/IssueSpotlight`，参照 iMessage「聚光灯」）：光束落下 · 停半秒 · 散开（1500ms，
-     `SPOTLIGHT_MS` 同长），一次性、有限。景深层的关键帧直接动 backdrop-filter（祖先有 opacity / transform 时
-     背后取不到，模糊失效）；光束层的缓动写在各关键帧里（落下 pop、散开 exit） */
-  --animate-spotlight-blur: spotlight-blur 1500ms var(--ease-standard) both;
-  --animate-spotlight-beam: spotlight-beam 1500ms linear both;
+  /* 定位舞台灯（`canvas/IssueSpotlight`，参照 iMessage「聚光灯」）：光打过来 · 停 · 散开，整段 1000ms
+     （`SPOTLIGHT_MS` 同长），一次性、有限。景深层的关键帧直接动 backdrop-filter（祖先有 opacity / transform 时
+     背后取不到，模糊失效）；光圈与光柱的缓动写在各关键帧里（打过来 pop、散开 exit） */
+  --animate-spotlight-blur: spotlight-blur 1000ms var(--ease-standard) both;
+  --animate-spotlight-beam: spotlight-beam 1000ms linear both;
+  --animate-spotlight-shaft: spotlight-shaft 1000ms linear both;
 }
 
 /* @sfinterface/numbers 的两个时长钩子接到动效 token（宪法第七节：时长只来自 token）：
@@ -603,21 +606,21 @@
     -webkit-backdrop-filter: blur(0);
     backdrop-filter: blur(0);
   }
-  37%,
+  30%,
   70% {
     -webkit-backdrop-filter: blur(2.5px);
     backdrop-filter: blur(2.5px);
   }
 }
 
-/* 舞台灯的光束：从斜上方、放大着落下收拢到目标（pop 缓动，像光打过来对上焦），停住，最后原地放大散开 */
+/* 舞台灯的光圈：从光源那一侧、放大着收拢到目标（pop 缓动，像光打过来对上焦），停住，最后原地放大散开 */
 @keyframes spotlight-beam {
   0% {
     opacity: 0;
-    transform: translate(calc(var(--spot-r) * -1.6), calc(var(--spot-r) * -2.4)) scale(1.8);
+    transform: translate(var(--spot-from-x), var(--spot-from-y)) scale(1.5);
     animation-timing-function: var(--ease-pop);
   }
-  37% {
+  30% {
     opacity: 1;
     transform: none;
   }
@@ -628,7 +631,27 @@
   }
   100% {
     opacity: 0;
-    transform: scale(1.4);
+    transform: scale(1.2);
+  }
+}
+
+/* 舞台灯的光柱：从光源一端射出去（transform-origin 由组件设在光源处），停住，淡出 */
+@keyframes spotlight-shaft {
+  0% {
+    opacity: 0;
+    transform: scale(0.15);
+    animation-timing-function: var(--ease-pop);
+  }
+  30% {
+    opacity: 1;
+    transform: none;
+  }
+  70% {
+    opacity: 1;
+    animation-timing-function: var(--ease-exit);
+  }
+  100% {
+    opacity: 0;
   }
 }
 
@@ -809,12 +832,22 @@
   opacity: 0.6;
 }
 
-/* 舞台灯的光束（`canvas/IssueSpotlight`）：以元素中心为光心，`--spot-r` 是光圈半径。**只有一层光圈**：
+/* 舞台灯的光圈（`canvas/IssueSpotlight`）：以元素中心为光心，`--spot-r` 是光圈半径。**只有一层光圈**（外缘一圈很淡的光晕）：
    半径七成以内全透，往外按 smoothstep 一条曲线压到近黑（逐点取样，中途没有折点，不出色带），景深层的
    遮罩 `--spotlight-mask` 用同一组取样点，模糊与压暗严格重合（用户：看起来有好几层光圈，要一层）。
    压的是画布上的内容，两档主题同值 */
 @utility bg-spotlight-beam {
-  background-image: radial-gradient(
+  background-image:
+    /* 光圈外缘一圈很淡的光晕：压暗刚开始的地方，平滑起落、没有折点 */
+    radial-gradient(
+      circle farthest-side at 50% 50%,
+      rgb(255 250 240 / 0) calc(var(--spot-r) * 0.8),
+      rgb(255 250 240 / 0.04) calc(var(--spot-r) * 0.95),
+      rgb(255 250 240 / 0.07) calc(var(--spot-r) * 1.08),
+      rgb(255 250 240 / 0.04) calc(var(--spot-r) * 1.22),
+      rgb(255 250 240 / 0) calc(var(--spot-r) * 1.42)
+    ),
+    radial-gradient(
     circle farthest-side at 50% 50%,
     rgb(5 6 9 / 0.0) calc(var(--spot-r) * 0.7),
     rgb(5 6 9 / 0.031) calc(var(--spot-r) * 0.85),
