@@ -459,6 +459,11 @@ export function ContactDialog() {
               </Button>
             </div>
             <YourLetter subject={m.subject ?? ''} body={m.body ?? ''} names={m.attachment_names ?? []} />
+            {m.poll_error && (
+              <p className="type-caption" data-contact-poll-error={m.poll_error}>
+                {cs(m.poll_error === 'too_large' ? 'pollTooLarge' : 'pollBad')}
+              </p>
+            )}
             {m.replies.map((r) => (
               <div key={r.id} className="flex flex-col gap-1 rounded-md bg-surface px-3 py-2" data-contact-reply={r.id}>
                 <div className="flex items-center gap-2 type-caption">

@@ -68,9 +68,11 @@ class Forced:
         code: str = "internal",
         location: str = "",
         event: threading.Event | None = None,
+        raw: bytes = b"",
     ):
         self.kind, self.status, self.code, self.location = kind, status, code, location
         self.event = event
+        self.raw = raw
 
 
 class Message:
@@ -121,6 +123,10 @@ class FakeContactServer:
 
     def redirect(self, endpoint: str, location: str, *, status: int = 307, times: int = 1) -> None:
         self._force(endpoint, Forced("redirect", status=status, location=location), times)
+
+    def raw_200(self, endpoint: str, raw: bytes, *, times: int = 1) -> None:
+        """让该端点回 200 + 这段原样字节（截断 / 坏 JSON 用例）。"""
+        self._force(endpoint, Forced("raw_200", raw=raw), times)
 
     def hold_early(self, endpoint: str, event: threading.Event) -> None:
         """读请求体之前先停住，直到 `event` 被置位：客户端的大块发送会在内核缓冲写满后阻塞（取消用例）。"""
@@ -282,6 +288,15 @@ class FakeContactServer:
                 return
             if forced.kind == "drop_before":
                 self._drop(h)
+                return
+            if forced.kind == "raw_200":
+                h.send_response(200)
+                h.send_header("Tavotto-Diagnostics-Api", "1.0.0")
+                h.send_header("Content-Type", "application/json")
+                h.send_header("Content-Length", str(len(forced.raw)))
+                h.end_headers()
+                h.wfile.write(forced.raw)
+                h.wfile.flush()
                 return
             if forced.kind == "redirect":
                 h.send_response(forced.status)

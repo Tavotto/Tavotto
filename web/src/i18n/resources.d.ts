@@ -409,6 +409,8 @@ export default interface Resources {
         "replied": "已回复"
       },
       "lettersYouWrote": "你写的",
+      "pollBad": "暂时取不到回信，稍后会再试。",
+      "pollTooLarge": "回信太多，暂时取不全，稍后会再试。",
       "replyFrom": "作者的回信",
       "replyLoading": "正在打开回信…",
       "replyNew": "新",

@@ -103,8 +103,20 @@ UPLOAD_TIMEOUT_S = 60
 COMPLETE_TIMEOUT_S = 70
 CANCEL_TIMEOUT_S = 5
 POLL_TIMEOUT_S = 15
-#: 带 HTML 的回信列表的响应体上限（单封回信 HTML ≤ 256 KiB，见 `contactinbox`；默认 64 KiB 会把它截断成坏 JSON）
-REPLIES_MAX_BYTES = 8 * 1024 * 1024
+#: 带 HTML 的回信列表的响应体上限，由**合法最大响应**推出（服务端回信列表没有分页）：
+#: 一封信最多 `MAX_REPLIES_PER_MESSAGE`（200）条回信，每条 = HTML 256 KiB + 正文 20000 字 × 4 字节（UTF-8 最坏）
+#: + 每条 JSON 开销（id / created_at / 键名 / 引号，取 1 KiB）+ 20 张附图元数据（每张取 128 B）；再加 1 MiB 余量。
+#: 约 70 MB 是上限不是常态（真实回信几 KiB）；超过它或 JSON 解析不了都**不当成功**：标 `poll_error`，下一轮再试。
+REPLIES_MAX_BYTES = (
+    contactinbox.MAX_REPLIES_PER_MESSAGE
+    * (
+        contactinbox.MAX_REPLY_HTML_BYTES
+        + contactinbox.MAX_REPLY_CHARS * 4
+        + 1024
+        + contactinbox.MAX_ASSETS_PER_REPLY * 128
+    )
+    + 1024 * 1024
+)
 ASSET_TIMEOUT_S = 60
 #: 一轮轮询最多下多少字节 / 最多发多少次附图请求（防服务端异常或被劫持时失控；下一轮继续）
 ASSET_ROUND_BYTES = 64 * 1024 * 1024
@@ -939,10 +951,16 @@ def _fetch_assets(rec: dict, targets: list[diagsend.Target], budget: _AssetBudge
     mid = rec["message_id"]
     prefer = next((t for t in targets if route_label(t) == rec["route"]), None)
     for a in contactinbox.pending_assets(mid):
-        if budget.requests_left <= 0 or budget.bytes_left < a["size"]:
+        if budget.requests_left <= 0 or budget.bytes_left <= 0 or budget.bytes_left < a["size"]:
             return True
-        budget.requests_left -= 1
         rid, n = a["reply_id"], a["n"]
+        if not contactinbox.quota_allows(mid, a["size"]):
+            # 本机落盘配额（每封 / 全部）已满：不下载、不再重试，信纸里这张显示占位
+            contactinbox.mark_asset_skipped(mid, rid, n, "quota")
+            continue
+        budget.requests_left -= 1
+        # 单次读取 ≤ min(单张上限, 本轮剩余预算) + 1：多出的 1 字节用来识别「超限」而不是被静默截断
+        read_cap = min(contactinbox.MAX_ASSET_BYTES, budget.bytes_left) + 1
         try:
             resp, _ = _failover(
                 targets,
@@ -953,11 +971,12 @@ def _fetch_assets(rec: dict, targets: list[diagsend.Target], budget: _AssetBudge
                     rec["reply_token"],
                     ASSET_TIMEOUT_S,
                     accept="image/*",
-                    limit=contactinbox.MAX_ASSET_BYTES + 1,
+                    limit=read_cap,
                 ),
             )
         except _Failure:
             return False
+        budget.bytes_left -= len(resp.body)  # 按实际读到的字节扣，不论后面校验过不过
         if resp.status == 429:
             return False
         if resp.status != 200:
@@ -970,8 +989,15 @@ def _fetch_assets(rec: dict, targets: list[diagsend.Target], budget: _AssetBudge
             or not _sniff_ok(a["content_type"], data)
         ):
             continue
-        budget.bytes_left -= len(data)
         contactinbox.save_asset(mid, rid, n, data)
+    return True
+
+
+def _poll_failed(message_id: str, error: str) -> bool:
+    """这封信这一轮没取到（响应超上限 / 不是合法回信 JSON）：不当成功，记下原因给界面，下一轮照常再试。
+    日志只记编号与原因，不记响应内容。"""
+    LOG.warning("联系作者: 取回信失败 (%s, %s)", message_id, error)
+    contactinbox.set_poll_error(message_id, error)
     return True
 
 
@@ -987,23 +1013,26 @@ def _poll_one(rec: dict, targets: list[diagsend.Target], budget: _AssetBudget) -
                 f"/v1/messages/{rec['message_id']}/replies",
                 rec["reply_token"],
                 POLL_TIMEOUT_S,
-                limit=REPLIES_MAX_BYTES,
+                limit=REPLIES_MAX_BYTES
+                + 1,  # 多读 1 字节：读满上限 + 1 = 超限，而不是被静默截成坏 JSON
             ),
         )
     except _Failure:
         _log("network", "poll")
         return False
     if resp.status == 200:
+        mid = rec["message_id"]
+        if len(resp.body) > REPLIES_MAX_BYTES:
+            return _poll_failed(mid, "too_large")
         try:
             obj = diagsend._json_body(resp)
         except _Failure:
-            return True
+            return _poll_failed(mid, "bad_response")
         replies, state = obj.get("replies"), obj.get("state")
-        if obj.get("message_id") == rec["message_id"] and isinstance(replies, list):
-            contactinbox.apply_replies(
-                rec["message_id"], state if isinstance(state, str) else "", replies
-            )
+        if obj.get("message_id") == mid and isinstance(replies, list):
+            contactinbox.apply_replies(mid, state if isinstance(state, str) else "", replies)
             return _fetch_assets(rec, targets, budget)
+        return _poll_failed(mid, "bad_response")
     elif resp.status == 429:
         return False
     return True

@@ -140,6 +140,8 @@
     "replyLoading": "正在打开回信…",
     "replyPaperFailed": "这封回信的排版没能打开，下面是纯文字版本。",
     "lettersForget": "从本机删除记录",
+    "pollTooLarge": "回信太多，暂时取不全，稍后会再试。",
+    "pollBad": "暂时取不到回信，稍后会再试。",
     "unreadDot": "有新回信",
     "capsule": "作者回信了",
     "capsuleOpen": "查看",

@@ -54,6 +54,18 @@ MAX_ASSETS_PER_REPLY = 20
 MAX_ASSET_BYTES = 10 * 1024 * 1024
 ASSET_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
 ASSET_DIR = "contact_assets"
+#: 本机附图的**持久化**配额（磁盘上已落盘的字节）：每封来信合计 / 全部来信合计。单封回信 20 张 × 10 MiB、一封信
+#: 200 封回信，合法数据最坏能写满盘，而每轮 64 MiB 的下载预算每 6 小时就重置，只能减慢不能封顶——所以这里按落盘量封。
+#: 超了的那张不下载，元数据标 `skipped: "quota"`（不再重试），信纸里显示占位。
+MAX_ASSET_BYTES_PER_MESSAGE = 100 * 1024 * 1024
+MAX_ASSET_BYTES_TOTAL = 500 * 1024 * 1024
+ASSET_SKIPPED = ("quota",)
+#: 一封信纸里内联图片的原始字节合计上限（base64 后约 ×1.34，再经 JSON / srcDoc 复制数份；超出的图用占位）
+MAX_REPLY_DOC_IMAGE_BYTES = 24 * 1024 * 1024
+#: 取不到回信的原因（`contactsend` 写；下一轮照常再试，成功即清）
+POLL_ERRORS = ("too_large", "bad_response")
+#: 附图目录删除失败（占用 / 杀软 / 权限）后留待重试的编号上限
+MAX_PENDING_ASSET_DELETES = MAX_MESSAGES
 
 _MESSAGE_ID = re.compile(r"^TVM-[0-9A-HJKMNP-TV-Z]{4}(?:-[0-9A-HJKMNP-TV-Z]{4}){3}$")
 _TOKEN = re.compile(r"^[0-9a-f]{64}$")
@@ -74,7 +86,7 @@ def _now() -> float:
 
 
 def _blank() -> dict:
-    return {"version": SCHEMA_VERSION, "messages": []}
+    return {"version": SCHEMA_VERSION, "messages": [], "pending_asset_deletes": []}
 
 
 def _valid_record(rec: object) -> bool:
@@ -135,7 +147,10 @@ def _clean_assets(raw: object) -> list[dict]:
             and 0 < size <= MAX_ASSET_BYTES
         ):
             seen.add(n)
-            out.append({"n": n, "content_type": ctype, "size": size})
+            clean = {"n": n, "content_type": ctype, "size": size}
+            if a.get("skipped") in ASSET_SKIPPED:
+                clean["skipped"] = a["skipped"]
+            out.append(clean)
     return out
 
 
@@ -165,6 +180,7 @@ def _normalize(rec: dict) -> dict:
         "state": state if state in _STATES else "",
         "replies": replies,
         "read": read,
+        "poll_error": rec["poll_error"] if rec.get("poll_error") in POLL_ERRORS else "",
     }
 
 
@@ -176,7 +192,20 @@ def _load_locked() -> dict:
     if not isinstance(raw, dict) or not isinstance(raw.get("messages"), list):
         return _blank()
     msgs = [_normalize(r) for r in raw["messages"] if _valid_record(r)]
-    return {"version": SCHEMA_VERSION, "messages": msgs}
+    return {
+        "version": SCHEMA_VERSION,
+        "messages": msgs,
+        "pending_asset_deletes": _clean_pending(raw.get("pending_asset_deletes")),
+    }
+
+
+def _clean_pending(raw: object) -> list[str]:
+    out: list[str] = []
+    if isinstance(raw, list):
+        for x in raw:
+            if isinstance(x, str) and _MESSAGE_ID.match(x) and x not in out:
+                out.append(x)
+    return out[-MAX_PENDING_ASSET_DELETES:]
 
 
 def _prune_locked(data: dict) -> None:
@@ -194,7 +223,7 @@ def _prune_locked(data: dict) -> None:
     live = {m["message_id"] for m in kept}
     for rec in data["messages"]:
         if rec["message_id"] not in live:
-            _remove_assets(rec["message_id"])
+            _remove_assets(rec["message_id"], data)
     data["messages"] = kept
 
 
@@ -212,8 +241,10 @@ def _save_locked(data: dict) -> bool:
 def _load_pruned_locked() -> dict:
     data = _load_locked()
     before = len(data["messages"])
+    pending_before = list(data["pending_asset_deletes"])
+    _retry_pending_deletes(data)
     _prune_locked(data)
-    if len(data["messages"]) != before:
+    if len(data["messages"]) != before or data["pending_asset_deletes"] != pending_before:
         _save_locked(data)
     return data
 
@@ -283,6 +314,8 @@ def apply_replies(message_id: str, state: str, replies: list[dict]) -> int:
             changed = (
                 bool(fresh) or not cur["delivered"] or (state in _STATES and cur["state"] != state)
             )
+            changed = changed or bool(cur["poll_error"])
+            cur["poll_error"] = ""
             cur["delivered"] = True
             cur["replies"] = (cur["replies"] + fresh)[-MAX_REPLIES_PER_MESSAGE:]
             if state in _STATES:
@@ -315,8 +348,8 @@ def forget(message_id: str) -> bool:
         before = len(data["messages"])
         data["messages"] = [m for m in data["messages"] if m["message_id"] != message_id]
         if len(data["messages"]) != before:
+            _remove_assets(message_id, data)  # 删不掉会记进 pending，随下面这次保存落盘
             _save_locked(data)
-            _remove_assets(message_id)
             return True
     return False
 
@@ -355,6 +388,7 @@ def public_messages() -> list[dict]:
                 "subject": m["subject"],
                 "body": m["body"],
                 "attachment_names": list(m["attachment_names"]),
+                "poll_error": m["poll_error"],
                 "replies": [
                     {
                         "id": r["id"],
@@ -385,10 +419,94 @@ def asset_file(message_id: str, reply_id: str, n: int) -> Path | None:
     return _assets_root() / message_id / reply_id / str(n)
 
 
-def _remove_assets(message_id: str) -> None:
+def _try_remove_dir(message_id: str) -> bool:
+    """删这封信的附图目录；True = 目录已经不在。失败（Windows 文件占用 / 杀软 / 权限，含删到一半）返回 False。
+    日志只记编号与异常类型，不记路径。"""
+    target = _assets_root() / message_id
+    try:
+        if target.exists():
+            shutil.rmtree(target)
+    except OSError as exc:
+        LOG.warning(
+            "联系作者: 回信附图目录删除失败，稍后重试 (%s, %s)", message_id, type(exc).__name__
+        )
+    try:
+        return not target.exists()
+    except OSError:
+        return False
+
+
+def _remove_assets(message_id: str, data: dict) -> None:
+    """删附图目录；删不掉就把编号记进 `data["pending_asset_deletes"]`，每次读（`_load_pruned_locked`）重试。"""
     if not _MESSAGE_ID.match(message_id):
         return
-    shutil.rmtree(_assets_root() / message_id, ignore_errors=True)
+    if _try_remove_dir(message_id):
+        return
+    pending = data["pending_asset_deletes"]
+    if message_id not in pending:
+        pending.append(message_id)
+        del pending[:-MAX_PENDING_ASSET_DELETES]
+
+
+def _retry_pending_deletes(data: dict) -> None:
+    data["pending_asset_deletes"] = [
+        mid for mid in data["pending_asset_deletes"] if not _try_remove_dir(mid)
+    ]
+
+
+def asset_bytes(message_id: str | None = None) -> int:
+    """已落盘的附图字节数：给定编号 = 这封信，否则全部。读不到的当 0。"""
+    root = _assets_root() if message_id is None else _assets_root() / message_id
+    total = 0
+    try:
+        for f in root.rglob("*"):
+            try:
+                if f.is_file():
+                    total += f.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        return total
+    return total
+
+
+def quota_allows(message_id: str, size: int) -> bool:
+    """再落 `size` 字节后，这封信与全部来信的附图是否仍在配额内。"""
+    return (
+        asset_bytes(message_id) + size <= MAX_ASSET_BYTES_PER_MESSAGE
+        and asset_bytes() + size <= MAX_ASSET_BYTES_TOTAL
+    )
+
+
+def mark_asset_skipped(message_id: str, reply_id: str, n: int, reason: str) -> None:
+    """给一张附图的元数据标「不再下载」（目前只有 `quota`）。"""
+    if reason not in ASSET_SKIPPED:
+        return
+    with _LOCK:
+        data = _load_locked()
+        for m in data["messages"]:
+            if m["message_id"] != message_id:
+                continue
+            for r in m["replies"]:
+                if r["id"] != reply_id:
+                    continue
+                for a in r.get("assets", []):
+                    if a["n"] == n and a.get("skipped") != reason:
+                        a["skipped"] = reason
+                        _save_locked(data)
+                        return
+
+
+def set_poll_error(message_id: str, error: str) -> None:
+    """记下/清除这封信这一轮取不全回信的原因（`POLL_ERRORS` 或 ""）；界面据此显示一句说明。"""
+    error = error if error in POLL_ERRORS else ""
+    with _LOCK:
+        data = _load_locked()
+        for m in data["messages"]:
+            if m["message_id"] == message_id and m["poll_error"] != error:
+                m["poll_error"] = error
+                _save_locked(data)
+                return
 
 
 def save_asset(message_id: str, reply_id: str, n: int, data: bytes) -> bool:
@@ -424,6 +542,8 @@ def pending_assets(message_id: str) -> list[dict]:
             continue
         for r in m["replies"]:
             for a in r.get("assets", []):
+                if a.get("skipped"):
+                    continue
                 f = asset_file(message_id, r["id"], a["n"])
                 if f is not None and not f.is_file():
                     out.append({"reply_id": r["id"], **a})
@@ -459,6 +579,11 @@ _REPLY_DOC_STYLE = (
 #: 附图缺失（还没下完）时的占位：1x1 透明 GIF，`alt` 仍在
 _PLACEHOLDER = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
 _ASSET_SRC = re.compile(r"""(\bsrc\s*=\s*)(["'])asset:([0-9]{1,2})\2""", re.IGNORECASE)
+_IMG_TAG = re.compile(r"<img\b[^>]*>", re.IGNORECASE)
+_ALT_ATTR = re.compile(r"""\s\balt\s*=\s*(?:"[^"]*"|'[^']*')""", re.IGNORECASE)
+#: 占位图的说明（中英双语，不走 i18n：这是回信文档里的内容，不在应用界面里）
+ALT_TOO_BIG = "图片较大，未在这里显示 / Image too large to show here"
+ALT_QUOTA = "图片未保存（超出本机空间上限） / Image not saved (local storage limit reached)"
 
 
 def reply_doc(message_id: str, reply_id: str) -> str | None:
@@ -471,27 +596,62 @@ def reply_doc(message_id: str, reply_id: str) -> str | None:
         for r in m["replies"]:
             if r["id"] != reply_id or "html" not in r:
                 continue
-            types = {a["n"]: a["content_type"] for a in r["assets"]}
+            meta = {a["n"]: a for a in r["assets"]}
+            budget = [MAX_REPLY_DOC_IMAGE_BYTES]  # 本信纸还能内联多少原始字节
 
-            def inline(mo: re.Match[str]) -> str:
-                n = int(mo.group(3))
+            def resolve(n: int) -> tuple[str, str]:
+                """(src, 占位说明)；说明为空 = 正常内联或普通缺图占位。"""
                 f = asset_file(message_id, reply_id, n)
-                uri = _PLACEHOLDER
-                if f is not None and n in types:
-                    try:
-                        raw = f.read_bytes()
-                    except OSError:
-                        raw = b""
-                    if raw and len(raw) <= MAX_ASSET_BYTES:
-                        uri = f"data:{types[n]};base64,{base64.b64encode(raw).decode('ascii')}"
-                return f'{mo.group(1)}"{uri}"'
+                a = meta.get(n)
+                if f is None or a is None:
+                    return _PLACEHOLDER, ""
+                if a.get("skipped") == "quota":
+                    return _PLACEHOLDER, ALT_QUOTA
+                try:
+                    size = f.stat().st_size
+                except OSError:
+                    return _PLACEHOLDER, ""
+                if size <= 0 or size > MAX_ASSET_BYTES:
+                    return _PLACEHOLDER, ""
+                if size > budget[0]:
+                    return _PLACEHOLDER, ALT_TOO_BIG
+                try:
+                    raw = f.read_bytes()
+                except OSError:
+                    return _PLACEHOLDER, ""
+                if not raw or len(raw) > min(MAX_ASSET_BYTES, budget[0]):
+                    return _PLACEHOLDER, ALT_TOO_BIG if raw else ""
+                budget[0] -= len(raw)
+                return (
+                    f"data:{a['content_type']};base64,{base64.b64encode(raw).decode('ascii')}",
+                    "",
+                )
+
+            def tag(mo: re.Match[str]) -> str:
+                note = ""
+
+                def inline(sm: re.Match[str]) -> str:
+                    nonlocal note
+                    src, why = resolve(int(sm.group(3)))
+                    note = note or why
+                    return f'{sm.group(1)}"{src}"'
+
+                out = _ASSET_SRC.sub(inline, mo.group(0))
+                if note:
+                    out = _ALT_ATTR.sub("", out)
+                    out = out[:-1].rstrip("/ ") + f' alt="{note}">'
+                return out
+
+            html = _IMG_TAG.sub(tag, r["html"])
+            # img 标签之外的（不该出现的）asset: 引用也不许原样留下
+            html = _ASSET_SRC.sub(lambda sm: f'{sm.group(1)}"{_PLACEHOLDER}"', html)
 
             return (
                 '<!doctype html><html><head><meta charset="utf-8">'
                 f'<meta http-equiv="Content-Security-Policy" content="{REPLY_DOC_CSP}">'
                 # 服务器已给链接强制 target=_blank；<base> 兜底没带 target 的链接（否则会在 iframe 里就地导航）
                 f'<base target="_blank"><style>{_REPLY_DOC_STYLE}</style></head><body>'
-                f"{_ASSET_SRC.sub(inline, r['html'])}</body></html>"
+                f"{html}</body></html>"
             )
     return None
 

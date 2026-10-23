@@ -705,6 +705,20 @@ describe('未读回信：小圆点、通知轨胶囊、我的来信', () => {
     expect(frame.getAttribute('srcdoc')).toContain('排版版')
   })
 
+  it('这封信这一轮没取全回信时，信上显示一句说明；正常则没有', async () => {
+    vi.mocked(fetchContactMessages).mockResolvedValue({
+      messages: [message({ poll_error: 'too_large' }), message({ message_id: 'TVM-2222-2222-2222-2222', poll_error: '' })],
+      unread: 0,
+    })
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true, 'letters'))
+    await settle(10)
+    const notes = document.body.querySelectorAll('[data-contact-poll-error]')
+    expect(notes).toHaveLength(1)
+    expect(notes[0].getAttribute('data-contact-poll-error')).toBe('too_large')
+    expect(notes[0].textContent).toContain('回信太多')
+  })
+
   it('信纸 iframe 的 sandbox 不含 allow-scripts；深色主题下仍是白纸（paper 令牌，无 dark: 覆盖）', async () => {
     document.documentElement.dataset.theme = 'dark'
     try {

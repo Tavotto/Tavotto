@@ -1154,3 +1154,201 @@ def test_replies_response_bigger_than_the_default_cap_is_not_truncated(on):
     on.reply(mid, "b", html=html, assets=[])
     contactsend.poll_once(force=True)
     assert contactinbox.pollable()[0]["replies"][0]["html"] == html
+
+
+# --------------------------------------------------------------------------- Codex 评审 #1344：上限与可重试清理
+def test_rmtree_failure_keeps_a_retryable_pending_delete_and_the_next_read_finishes_it(
+    on, monkeypatch, caplog
+):
+    mid = _send_ok(on)
+    _html_reply(on, mid, assets=FOUR[:2])
+    contactsend.poll_once(force=True)
+    d = _asset_dir(mid)
+    assert d.is_dir()
+    real = contactinbox.shutil.rmtree
+
+    def boom(*a, **k):
+        raise PermissionError("locked by antivirus")
+
+    monkeypatch.setattr(contactinbox.shutil, "rmtree", boom)
+    with caplog.at_level(logging.WARNING):
+        assert contactinbox.forget(mid) is True  # 记录照删
+    assert contactinbox.public_messages() == []
+    assert d.is_dir()  # 图还在盘上……
+    raw = json.loads(contactinbox.path().read_text(encoding="utf-8"))
+    assert raw["pending_asset_deletes"] == [mid]  # ……但留了重试的凭据
+    assert "PermissionError" in caplog.text and "antivirus" not in caplog.text
+    assert str(d) not in caplog.text
+    monkeypatch.setattr(contactinbox.shutil, "rmtree", real)
+    contactinbox.public_messages()  # 下一轮读：重试成功
+    assert not d.exists()
+    assert (
+        json.loads(contactinbox.path().read_text(encoding="utf-8"))["pending_asset_deletes"] == []
+    )
+
+
+def test_partial_rmtree_failure_counts_as_failure_and_pending_is_deduped_and_validated(
+    on, monkeypatch
+):
+    mid = _send_ok(on)
+    _html_reply(on, mid, assets=FOUR[:1])
+    contactsend.poll_once(force=True)
+
+    def half(path, *a, **k):  # 删了一半就抛
+        for f in Path(path).rglob("*"):
+            if f.is_file():
+                f.unlink()
+        raise PermissionError("x")
+
+    monkeypatch.setattr(contactinbox.shutil, "rmtree", half)
+    contactinbox.forget(mid)
+    assert _asset_dir(mid).exists()
+    contactinbox.public_messages()
+    contactinbox.public_messages()
+    raw = json.loads(contactinbox.path().read_text(encoding="utf-8"))
+    assert raw["pending_asset_deletes"] == [mid]
+    # 路径只由编号正则合成：文件里被塞进去的脏值不会被当目录删
+    raw["pending_asset_deletes"] = ["../x", mid, mid, 5]
+    contactinbox.path().write_text(json.dumps(raw), encoding="utf-8")
+    assert contactinbox._load_locked()["pending_asset_deletes"] == [mid]
+
+
+def _tiny_quota(monkeypatch, per_message, total):
+    monkeypatch.setattr(contactinbox, "MAX_ASSET_BYTES_PER_MESSAGE", per_message)
+    monkeypatch.setattr(contactinbox, "MAX_ASSET_BYTES_TOTAL", total)
+
+
+def test_constants_of_the_asset_quota_and_render_cap():
+    assert contactinbox.MAX_ASSET_BYTES_PER_MESSAGE == 100 * 1024 * 1024
+    assert contactinbox.MAX_ASSET_BYTES_TOTAL == 500 * 1024 * 1024
+    assert contactinbox.MAX_REPLY_DOC_IMAGE_BYTES == 24 * 1024 * 1024
+
+
+def test_per_message_quota_skips_further_downloads_for_good_and_marks_the_asset(on, monkeypatch):
+    mid = _send_ok(on)
+    size = len(PNG)
+    _tiny_quota(monkeypatch, size * 2, 10**9)  # 每封只放得下两张
+    rid = _html_reply(on, mid, assets=[("image/png", PNG)] * 4)
+    contactsend.poll_once(force=True)
+    d = _asset_dir(mid) / rid
+    assert sorted(p.name for p in d.iterdir()) == ["0", "1"]
+    (m,) = contactinbox.pollable()
+    assert [a.get("skipped") for a in m["replies"][0]["assets"]] == [None, None, "quota", "quota"]
+    n = len(on.calls)
+    contactsend.poll_once(force=True)  # 标过 skipped 的不再重试
+    assert [c for c in on.calls[n:] if "/assets/" in c["path"]] == []
+    doc = contactinbox.reply_doc(mid, rid)
+    assert doc is not None and "asset:" not in doc and contactinbox.ALT_QUOTA in doc
+    assert doc.count(contactinbox._PLACEHOLDER) == 2
+
+
+def test_global_quota_spans_letters_and_stops_requests(on, monkeypatch):
+    mid = _send_ok(on)
+    mid2 = _send_ok_again(on)
+    size = len(PNG)
+    _tiny_quota(monkeypatch, 10**9, size * 3)
+    r1 = _html_reply(on, mid, assets=[("image/png", PNG)] * 2)
+    contactsend.poll_once(force=True)
+    r2 = _html_reply(on, mid2, assets=[("image/png", PNG)] * 3)
+    n = len(on.calls)
+    contactsend.poll_once(force=True)
+    got = [c["path"] for c in on.calls[n:] if "/assets/" in c["path"]]
+    assert len(got) == 1  # 全局只剩一张的空间；其余没发请求
+    assert contactinbox.asset_bytes() == size * 3
+    assert (_asset_dir(mid) / r1 / "0").exists()
+    (m2,) = [m for m in contactinbox.pollable() if m["message_id"] == mid2]
+    assert [a.get("skipped") for a in m2["replies"][0]["assets"]] == [None, "quota", "quota"]
+    assert r2
+
+
+def test_reply_doc_caps_inlined_image_bytes_and_uses_placeholders_after_the_cap(on, monkeypatch):
+    mid = _send_ok(on)
+    big = PNG + b"\0" * 4000
+    rid = on.reply(
+        mid,
+        "b",
+        html="<p>" + "".join(f'<img src="asset:{i}" alt="p{i}">' for i in range(4)) + "</p>",
+        assets=[("image/png", big)] * 4,
+    )
+    contactsend.poll_once(force=True)
+    monkeypatch.setattr(contactinbox, "MAX_REPLY_DOC_IMAGE_BYTES", len(big) * 2 + 10)
+    doc = contactinbox.reply_doc(mid, rid)
+    assert doc is not None
+    assert doc.count("data:image/png;base64,") == 2  # 前面的正常内联
+    assert doc.count(contactinbox.ALT_TOO_BIG) == 2  # 超出的是占位 + 说明
+    assert 'alt="p0"' in doc and 'alt="p2"' not in doc
+    assert len(doc) < (len(big) * 2 + 10) * 1.4 + 20_000
+
+
+def test_too_many_or_garbled_replies_are_not_silent_success_and_recover(on, monkeypatch, caplog):
+    mid = _send_ok(on)
+    on.reply(mid, "第一封")
+    contactsend.poll_once(force=True)
+    # 1. 超上限：不当成功，标 too_large，旧回信保留
+    orig = contactsend.REPLIES_MAX_BYTES
+    monkeypatch.setattr(contactsend, "REPLIES_MAX_BYTES", 300)
+    on.reply(mid, "x" * 1000)
+    with caplog.at_level(logging.WARNING):
+        contactsend.poll_once(force=True)
+    (m,) = contactinbox.public_messages()
+    assert m["poll_error"] == "too_large" and len(m["replies"]) == 1
+    assert "xxxx" not in caplog.text and mid in caplog.text and "too_large" in caplog.text
+    # 2. 恢复：同一封下一轮照常再试，标记清除，新回信进来
+    monkeypatch.setattr(contactsend, "REPLIES_MAX_BYTES", orig)
+    contactsend.poll_once(force=True)
+    (m,) = contactinbox.public_messages()
+    assert m["poll_error"] == "" and len(m["replies"]) == 2
+    # 3. 坏 JSON（响应被截断）
+    on.raw_200("replies", b'{"message_id": "' + mid.encode() + b'", "replies": [{"id"')
+    contactsend.poll_once(force=True)
+    assert contactinbox.public_messages()[0]["poll_error"] == "bad_response"
+    # 4. 合法 JSON 但不是回信（缺 replies）也不算成功
+    on.raw_200("replies", b'{"message_id": "' + mid.encode() + b'"}')
+    contactsend.poll_once(force=True)
+    assert contactinbox.public_messages()[0]["poll_error"] == "bad_response"
+    contactsend.poll_once(force=True)
+    assert contactinbox.public_messages()[0]["poll_error"] == ""
+
+
+def test_replies_limit_is_derived_from_the_largest_legal_response():
+    per_reply = (
+        contactinbox.MAX_REPLY_HTML_BYTES
+        + contactinbox.MAX_REPLY_CHARS * 4
+        + 1024
+        + contactinbox.MAX_ASSETS_PER_REPLY * 128
+    )
+    assert contactsend.REPLIES_MAX_BYTES >= contactinbox.MAX_REPLIES_PER_MESSAGE * per_reply
+    assert contactsend.REPLIES_MAX_BYTES > 8 * 1024 * 1024  # 旧的 8 MiB 装不下合法的最大响应
+
+
+def test_round_budget_is_charged_by_bytes_actually_read_not_by_validated_bytes(on, monkeypatch):
+    """服务端对每张小图回超大垃圾：每次读取都扣预算，本轮实际读到的字节 ≤ 预算（读取被剩余预算封顶，所以比「预算 + 一张」更紧）。"""
+    mid = _send_ok(on)
+    one = (
+        1024 * 1024
+    )  # 缩小比例跑：单张上限 1 MiB、本轮预算 3 MiB（生产值 10 MiB / 64 MiB，逻辑同）
+    monkeypatch.setattr(contactinbox, "MAX_ASSET_BYTES", one)
+    monkeypatch.setattr(contactsend, "ASSET_ROUND_BYTES", 3 * one)
+    rids = [
+        on.reply(mid, "b", html="<p/>", assets=[("image/png", PNG)] * 20) for _ in range(4)
+    ]  # 80 张，元数据都只有几十字节
+    junk = b"J" * (one + 1)
+    for rid in rids:
+        for n in range(20):
+            on.serve_asset_as(rid, n, "image/png", junk)
+    read: list[int] = []
+    real_get = contactsend._get
+
+    def spy(*a, **k):
+        resp = real_get(*a, **k)
+        if "/assets/" in a[1]:
+            read.append(len(resp.body))
+        return resp
+
+    monkeypatch.setattr(contactsend, "_get", spy)
+    contactsend.poll_once(force=True)
+    assert read  # 确实在下
+    assert (
+        sum(read) <= 3 * one + 1
+    )  # 单次读取被剩余预算封顶：只允许 1 字节的超限哨兵，不是「再多读一张」
+    assert len(read) < contactsend.ASSET_ROUND_REQUESTS  # 预算耗尽就停，没有把 80 次发满

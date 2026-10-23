@@ -5724,6 +5724,8 @@ export interface ContactMessage {
   subject: string
   body: string
   attachment_names: string[]
+  /** 这一轮没取全回信的原因（引擎写，下一轮重试成功即清）；空串 = 正常 */
+  poll_error?: '' | 'too_large' | 'bad_response'
   replies: ContactReply[]
 }
 

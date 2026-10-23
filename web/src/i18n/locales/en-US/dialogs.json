@@ -140,6 +140,8 @@
     "replyLoading": "Opening the reply…",
     "replyPaperFailed": "This reply could not be shown formatted. Here is the plain-text version.",
     "lettersForget": "Remove from this computer",
+    "pollTooLarge": "There are too many replies to fetch at once; we will try again later.",
+    "pollBad": "Couldn't fetch replies just now; we will try again later.",
     "unreadDot": "New reply",
     "capsule": "The maker replied",
     "capsuleOpen": "View",
