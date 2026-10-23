@@ -776,7 +776,18 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
     for name in ("try_run", "try_import", "inspect_environment"):
         assert "changes nothing" not in REGISTRY[name].description
         assert "never touched" not in REGISTRY[name].description
-    assert not any(t.waits_for_user for t in REGISTRY.values() if t.tier in ("observe", "run"))
+    # 会弹卡等用户点的：「问与报」五个 + 可能问同意的「改」组四个；「看」「试」一个都不等
+    assert {n for n, t in REGISTRY.items() if t.waits_for_user} == {
+        "propose_fix",
+        "ask_user",
+        "pick_file",
+        "prepare_diagnostics",
+        "finish",
+        "install_packages",
+        "switch_execution",
+        "select_environment",
+        "run_command",
+    }
 
 
 def test_build_agent_tools_adapts_registry_and_audits(box):
