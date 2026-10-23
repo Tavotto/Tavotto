@@ -562,7 +562,9 @@ def _copy_project(
             continue
     if too_big:
         dest.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(script, dest / script.name)
+        # 目标是缓存里的试跑副本，不是用户脚本（用户脚本只经 scriptlock.write_script 写；test_script_lock 按目标名字判）
+        copy_target = dest / script.name
+        shutil.copy2(script, copy_target)
         return script.name, False
     for p, rel in plan:
         target = dest / rel
