@@ -103,17 +103,21 @@ UPLOAD_TIMEOUT_S = 60
 COMPLETE_TIMEOUT_S = 70
 CANCEL_TIMEOUT_S = 5
 POLL_TIMEOUT_S = 15
-#: 带 HTML 的回信列表的响应体上限，由**合法最大响应**推出（服务端回信列表没有分页）：
-#: 一封信最多 `MAX_REPLIES_PER_MESSAGE`（200）条回信，每条 = HTML 256 KiB + 正文 20000 字 × 4 字节（UTF-8 最坏）
-#: + 每条 JSON 开销（id / created_at / 键名 / 引号，取 1 KiB）+ 20 张附图元数据（每张取 128 B）；再加 1 MiB 余量。
-#: 约 70 MB 是上限不是常态（真实回信几 KiB）；超过它或 JSON 解析不了都**不当成功**：标 `poll_error`，下一轮再试。
+#: 带 HTML 的回信列表的响应体上限，按**最坏线缆编码**（JSON 文本的字节数，不是原文字节数）推出（服务端回信列表没有分页）：
+#: 一封信最多 `MAX_REPLIES_PER_MESSAGE`（50）条回信，每条 =
+#:   2 ×（HTML 256 KiB + 正文 20000 字 × 4 字节（UTF-8 最坏））——JSON 转义最坏 2 倍：服务端响应是 `ensure_ascii=False`
+#:     （非 ASCII 字符原样输出，不膨胀成 6 字节的 \uXXXX），且存库前已去掉除 \n \t 外的控制字符（否则一个控制字符会膨胀成
+#:     6 字节 \u00XX）；剩下需要转义的只有 `"` 和 `\\`（1 字节 -> 2 字节）与 \n \t（同为 1 -> 2），所以最坏 2 倍；
+#:   + 固定开销 1 KiB（id / created_at / 键名 / 引号）+ 20 张附图元数据 × 256 B；
+#: 再加 1 MiB 余量（外层 message_id / state 等）。约 36 MB 是上限不是常态（真实回信几 KiB）。
+#: **这个上界依赖服务端的两条保证**（infra）：单封信 ≤ 50 条回信、回信 HTML 与正文存库前去控制字符。任一条变了，这里必须同步改
+#: （ADR 0145「第二期修订」同样写明）。超过它或 JSON 解析不了都**不当成功**：标 `poll_error`，下一轮再试。
 REPLIES_MAX_BYTES = (
     contactinbox.MAX_REPLIES_PER_MESSAGE
     * (
-        contactinbox.MAX_REPLY_HTML_BYTES
-        + contactinbox.MAX_REPLY_CHARS * 4
+        2 * (contactinbox.MAX_REPLY_HTML_BYTES + contactinbox.MAX_REPLY_CHARS * 4)
         + 1024
-        + contactinbox.MAX_ASSETS_PER_REPLY * 128
+        + contactinbox.MAX_ASSETS_PER_REPLY * 256
     )
     + 1024 * 1024
 )
@@ -455,9 +459,10 @@ def _ordered(
     return [prefer] + [t for t in targets if t != prefer]
 
 
-def _failover(targets, prefer, call):
+def _failover(targets, prefer, call, spent: list[int] | None = None):
     """按顺序在各线路上做 `call(target) -> _Response`；传输失败 / 5xx 换下一条，最后一条的结果（或失败）交回。
-    返回 (响应, 作答的线路)。"""
+    返回 (响应, 作答的线路)。`spent`（可选，单元素列表）累计**每次尝试**实际读到的响应体字节（含被换掉的线路的错误体），
+    调用方据此扣预算；不传则行为不变。"""
     last_fail: _Failure | None = None
     last_resp = None
     for tgt in _ordered(targets, prefer):
@@ -468,6 +473,8 @@ def _failover(targets, prefer, call):
                 raise
             last_fail, last_resp = fail, None
             continue
+        if spent is not None:
+            spent[0] += len(resp.body)
         if resp.status >= 500:
             last_fail, last_resp = None, (resp, tgt)
             continue
@@ -961,6 +968,7 @@ def _fetch_assets(rec: dict, targets: list[diagsend.Target], budget: _AssetBudge
         budget.requests_left -= 1
         # 单次读取 ≤ min(单张上限, 本轮剩余预算) + 1：多出的 1 字节用来识别「超限」而不是被静默截断
         read_cap = min(contactinbox.MAX_ASSET_BYTES, budget.bytes_left) + 1
+        spent = [0]
         try:
             resp, _ = _failover(
                 targets,
@@ -973,10 +981,14 @@ def _fetch_assets(rec: dict, targets: list[diagsend.Target], budget: _AssetBudge
                     accept="image/*",
                     limit=read_cap,
                 ),
+                spent,
             )
         except _Failure:
+            budget.bytes_left -= spent[0]  # 失败前已读到的（被换掉的线路的错误体）也要扣
             return False
-        budget.bytes_left -= len(resp.body)  # 按实际读到的字节扣，不论后面校验过不过
+        budget.bytes_left -= spent[
+            0
+        ]  # 按每条线路实际读到的字节扣（含备用前首选的错误体），不论后面校验过不过
         if resp.status == 429:
             return False
         if resp.status != 200:

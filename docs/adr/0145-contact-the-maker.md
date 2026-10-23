@@ -104,8 +104,8 @@ COS 上传地址复用 `diagsend.validate_upload_url`（同一条 `_COS_HOST` �
 - **评审后补的五个上限（PR #1344 Codex 评审）。**
   - **持久化配额**：每封来信附图落盘合计 ≤100 MiB、全部来信合计 ≤500 MiB（`contactinbox.MAX_ASSET_BYTES_PER_MESSAGE` / `_TOTAL`）。每轮 64 MiB 的下载预算每 6 小时重置，只能减慢写盘；配额按**已落盘字节**判（下载前：已落盘 + 本张元数据大小），超了不发请求，元数据标 `skipped: "quota"`（不再重试），信纸里这张是占位，`alt` 为中英双语短句。
   - **信纸聚合渲染上限**：一封信纸内联图片的原始字节合计 ≤24 MiB（`MAX_REPLY_DOC_IMAGE_BYTES`），按出现顺序内联，超出的用占位（`alt`「图片较大，未在这里显示 / Image too large to show here」）。否则 20×10 MiB 会经 base64、JSON、`srcDoc` 复制出数百 MiB 的 HTML。
-  - **回信列表读取上限由合法最大响应推出**（服务端无分页）：`200 ×（256 KiB HTML + 20000 字 × 4 字节 + 1 KiB JSON 开销 + 20 × 128 B 附图元数据）+ 1 MiB` ≈ 70 MB（`contactsend.REPLIES_MAX_BYTES`），多读 1 字节来识别超限。超限或 JSON 不合法**不当成功**：这封信记 `poll_error: "too_large" | "bad_response"`（日志只记编号与原因），下一轮照常再试，成功即清；`public_messages` 带出该字段，界面在那封信上显示一句说明。
-  - **轮次预算按实际读到的字节扣**（不论类型 / 魔数是否通过），单次读取上限 `min(10 MiB, 剩余预算) + 1`，预算耗尽即停本轮——否则白名单服务对每个小图返回 10 MiB+1 的垃圾，80 次请求都读完又丢弃，绕过 64 MiB 边界。
-  - **附图目录删除失败可重试**：`rmtree` 不再 `ignore_errors`；失败（含删一半，删完再核目录是否还在）把编号记进收件 JSON 的 `pending_asset_deletes`（去重、≤200、只收符合编号正则的），日志只记编号与异常类型；每次 `_load_pruned_locked`（含 `poll_once`）先重试，删净才移除。`forget` 的返回与界面不变。
+  - **回信列表读取上限按最坏线缆编码推出**（服务端无分页；量的是 JSON 文本字节，不是原文字节）：`50 ×（2 ×（256 KiB HTML + 20000 字 × 4 字节）+ 1 KiB 固定开销 + 20 × 256 B 附图元数据）+ 1 MiB` ≈ 36 MB（`contactsend.REPLIES_MAX_BYTES`），多读 1 字节来识别超限。2 倍是 JSON 转义的最坏膨胀。**这个上界依赖服务端的两条保证**：每封来信最多 50 条回信（客户端 `MAX_REPLIES_PER_MESSAGE` = 50 同值，超过只存前 50 条）、回信 HTML 与正文存库前去掉除 `\n` `\t` 外的控制字符且响应 `ensure_ascii=False`（否则一个控制字符会膨胀成 6 字节、非 ASCII 字符也会）；任一条变了，这里必须同步改。超限或 JSON 不合法**不当成功**：这封信记 `poll_error: "too_large" | "bad_response"`（日志只记编号与原因），下一轮照常再试，成功即清；`public_messages` 带出该字段，界面在那封信上显示一句说明。
+  - **轮次预算按实际读到的字节扣**（不论类型 / 魔数是否通过），单次读取上限 `min(10 MiB, 剩余预算) + 1`，预算耗尽即停本轮——否则白名单服务对每个小图返回 10 MiB+1 的垃圾，80 次请求都读完又丢弃，绕过 64 MiB 边界。故障转移时首选线路被换掉的 5xx 错误体同样实际读了，`_failover(…, spent)` 累计每次尝试的读取量，附图循环按累计值扣。
+  - **附图目录删除失败由有界扫尾重新发现**：`rmtree` 不再 `ignore_errors`；失败只记日志（编号与异常类型），**不再记“待删队列”**（队列要截断，截断就会丢凭据；旧 JSON 里的 `pending_asset_deletes` 容忍并忽略）。磁盘本身就是凭据：每次 `_load_pruned_locked`（含 `poll_once`）列出 `contact_assets/`，名字合规却不属于现存记录的 `<mid>`、以及现存记录里已不存在的回信 `<mid>/<rid>`，每次最多尝试删 20 个（起点逐次轮转，持续失败的不会饿死其余）；名字不合规的不碰。`forget` 的返回与界面不变。
 
 未验证（NOT_RUN）：真实服务器的附图端点与 Worker 放行；Tauri 真机里 srcdoc iframe 内 `target=_blank` 是否确实交给系统浏览器（macOS WKWebView / Windows WebView2）；真实 nh3 输出里 `asset:` 之外的写法。

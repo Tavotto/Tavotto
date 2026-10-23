@@ -39,7 +39,8 @@ SCHEMA_VERSION = 1
 RETENTION_DAYS = 365
 UNDELIVERED_KEEP_S = 2 * 3600
 #: 单封信最多缓存多少条回信 / 每条回信正文多长（服务端回信是作者手写的，不会大；这里只是防御性封顶）
-MAX_REPLIES_PER_MESSAGE = 200
+#: 与服务端 `MAX_REPLIES_PER_MESSAGE`（infra）一致；超过的只存前 50 条。`contactsend.REPLIES_MAX_BYTES` 依赖这个数。
+MAX_REPLIES_PER_MESSAGE = 50
 MAX_REPLY_CHARS = 20000
 MAX_MESSAGES = 200
 #: 本机留的原文上限（与 `contactsend.SUBJECT_MAX` / `BODY_MAX` 同值，`test_contact_inbox_limits_match_the_contract` 钉）
@@ -64,8 +65,8 @@ ASSET_SKIPPED = ("quota",)
 MAX_REPLY_DOC_IMAGE_BYTES = 24 * 1024 * 1024
 #: 取不到回信的原因（`contactsend` 写；下一轮照常再试，成功即清）
 POLL_ERRORS = ("too_large", "bad_response")
-#: 附图目录删除失败（占用 / 杀软 / 权限）后留待重试的编号上限
-MAX_PENDING_ASSET_DELETES = MAX_MESSAGES
+#: 附图目录“有界扫尾”：每次加载最多尝试删多少个不属于任何现存记录 / 回信的目录（失败留在盘上，下次再被发现）
+MAX_ASSET_SWEEP = 20
 
 _MESSAGE_ID = re.compile(r"^TVM-[0-9A-HJKMNP-TV-Z]{4}(?:-[0-9A-HJKMNP-TV-Z]{4}){3}$")
 _TOKEN = re.compile(r"^[0-9a-f]{64}$")
@@ -86,7 +87,7 @@ def _now() -> float:
 
 
 def _blank() -> dict:
-    return {"version": SCHEMA_VERSION, "messages": [], "pending_asset_deletes": []}
+    return {"version": SCHEMA_VERSION, "messages": []}
 
 
 def _valid_record(rec: object) -> bool:
@@ -192,20 +193,8 @@ def _load_locked() -> dict:
     if not isinstance(raw, dict) or not isinstance(raw.get("messages"), list):
         return _blank()
     msgs = [_normalize(r) for r in raw["messages"] if _valid_record(r)]
-    return {
-        "version": SCHEMA_VERSION,
-        "messages": msgs,
-        "pending_asset_deletes": _clean_pending(raw.get("pending_asset_deletes")),
-    }
-
-
-def _clean_pending(raw: object) -> list[str]:
-    out: list[str] = []
-    if isinstance(raw, list):
-        for x in raw:
-            if isinstance(x, str) and _MESSAGE_ID.match(x) and x not in out:
-                out.append(x)
-    return out[-MAX_PENDING_ASSET_DELETES:]
+    # 旧版本写过 `pending_asset_deletes`：容忍并忽略（下次保存即丢；残留目录由扫尾重新发现）
+    return {"version": SCHEMA_VERSION, "messages": msgs}
 
 
 def _prune_locked(data: dict) -> None:
@@ -223,7 +212,7 @@ def _prune_locked(data: dict) -> None:
     live = {m["message_id"] for m in kept}
     for rec in data["messages"]:
         if rec["message_id"] not in live:
-            _remove_assets(rec["message_id"], data)
+            _remove_assets(rec["message_id"])
     data["messages"] = kept
 
 
@@ -241,10 +230,9 @@ def _save_locked(data: dict) -> bool:
 def _load_pruned_locked() -> dict:
     data = _load_locked()
     before = len(data["messages"])
-    pending_before = list(data["pending_asset_deletes"])
-    _retry_pending_deletes(data)
     _prune_locked(data)
-    if len(data["messages"]) != before or data["pending_asset_deletes"] != pending_before:
+    _sweep_orphan_assets(data)
+    if len(data["messages"]) != before:
         _save_locked(data)
     return data
 
@@ -317,7 +305,7 @@ def apply_replies(message_id: str, state: str, replies: list[dict]) -> int:
             changed = changed or bool(cur["poll_error"])
             cur["poll_error"] = ""
             cur["delivered"] = True
-            cur["replies"] = (cur["replies"] + fresh)[-MAX_REPLIES_PER_MESSAGE:]
+            cur["replies"] = (cur["replies"] + fresh)[:MAX_REPLIES_PER_MESSAGE]
             if state in _STATES:
                 cur["state"] = state
             if changed:
@@ -348,7 +336,7 @@ def forget(message_id: str) -> bool:
         before = len(data["messages"])
         data["messages"] = [m for m in data["messages"] if m["message_id"] != message_id]
         if len(data["messages"]) != before:
-            _remove_assets(message_id, data)  # 删不掉会记进 pending，随下面这次保存落盘
+            _remove_assets(message_id)  # 删不掉也没关系：目录留在盘上，下次加载的扫尾会再发现
             _save_locked(data)
             return True
     return False
@@ -419,39 +407,58 @@ def asset_file(message_id: str, reply_id: str, n: int) -> Path | None:
     return _assets_root() / message_id / reply_id / str(n)
 
 
-def _try_remove_dir(message_id: str) -> bool:
-    """删这封信的附图目录；True = 目录已经不在。失败（Windows 文件占用 / 杀软 / 权限，含删到一半）返回 False。
+def _try_remove_dir(target: Path, label: str) -> bool:
+    """删一个附图目录；True = 目录已经不在。失败（Windows 文件占用 / 杀软 / 权限，含删到一半）返回 False。
     日志只记编号与异常类型，不记路径。"""
-    target = _assets_root() / message_id
     try:
         if target.exists():
             shutil.rmtree(target)
     except OSError as exc:
-        LOG.warning(
-            "联系作者: 回信附图目录删除失败，稍后重试 (%s, %s)", message_id, type(exc).__name__
-        )
+        LOG.warning("联系作者: 回信附图目录删除失败，稍后重试 (%s, %s)", label, type(exc).__name__)
     try:
         return not target.exists()
     except OSError:
         return False
 
 
-def _remove_assets(message_id: str, data: dict) -> None:
-    """删附图目录；删不掉就把编号记进 `data["pending_asset_deletes"]`，每次读（`_load_pruned_locked`）重试。"""
-    if not _MESSAGE_ID.match(message_id):
-        return
-    if _try_remove_dir(message_id):
-        return
-    pending = data["pending_asset_deletes"]
-    if message_id not in pending:
-        pending.append(message_id)
-        del pending[:-MAX_PENDING_ASSET_DELETES]
+def _remove_assets(message_id: str) -> None:
+    """尽力删这封信的附图目录；删不掉不记任何“凭据”——磁盘本身就是凭据，`_sweep_orphan_assets` 会重新发现它。"""
+    if _MESSAGE_ID.match(message_id):
+        _try_remove_dir(_assets_root() / message_id, message_id)
 
 
-def _retry_pending_deletes(data: dict) -> None:
-    data["pending_asset_deletes"] = [
-        mid for mid in data["pending_asset_deletes"] if not _try_remove_dir(mid)
-    ]
+_sweep_cursor = 0
+
+
+def _subdirs(p: Path) -> list[Path]:
+    try:
+        return sorted(c for c in p.iterdir() if c.is_dir())
+    except OSError:
+        return []
+
+
+def _sweep_orphan_assets(data: dict) -> None:
+    """有界扫尾：`contact_assets/` 下名字合规却不属于现存记录的 `<mid>`，以及现存记录里已不存在的回信 `<mid>/<rid>`，
+    每次加载最多尝试删 `MAX_ASSET_SWEEP` 个；失败只记日志，下次再试。名字不合规的一律不碰。
+    起点逐次轮转，持续失败的目录不会饿死其余的。"""
+    global _sweep_cursor
+    live = {m["message_id"]: {r["id"] for r in m["replies"]} for m in data["messages"]}
+    orphans: list[tuple[Path, str]] = []
+    for d in _subdirs(_assets_root()):
+        if not _MESSAGE_ID.match(d.name):
+            continue
+        if d.name not in live:
+            orphans.append((d, d.name))
+            continue
+        for r in _subdirs(d):
+            if _REPLY_ID.match(r.name) and r.name not in live[d.name]:
+                orphans.append((r, f"{d.name}/{r.name}"))
+    if not orphans:
+        return
+    start = _sweep_cursor % len(orphans)
+    _sweep_cursor += MAX_ASSET_SWEEP
+    for target, label in (orphans[start:] + orphans[:start])[:MAX_ASSET_SWEEP]:
+        _try_remove_dir(target, label)
 
 
 def asset_bytes(message_id: str | None = None) -> int:
