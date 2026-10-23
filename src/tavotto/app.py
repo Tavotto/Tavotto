@@ -3772,7 +3772,7 @@ def _open_project(path: Path, make_default: bool) -> dict:
         reg = engine_registry.open_registry(path)
     except FileNotFoundError:
         cfg, rep = engine_discover.build_draft(path)
-        engine_discover.write_config(path, cfg)
+        engine_discover.write_config(path, cfg, static_discovery=True)
         reg = engine_registry.open_registry(path)
         drafted, conflicts = True, sorted(rep["conflicts"])
     ctx = ProjectCtx(path, pid, reg)

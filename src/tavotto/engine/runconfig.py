@@ -248,6 +248,9 @@ def _parse(raw: str) -> dict:
 def _capture_history_ok(rec) -> bool:
     if not isinstance(rec, dict) or not isinstance(rec.get("runs"), dict):
         return False
+    discovered = rec.get("discovered", [])
+    if not isinstance(discovered, list) or not all(isinstance(s, str) for s in discovered):
+        return False
     legacy = rec.get("legacy_stems")
     if not isinstance(legacy, list) or not all(isinstance(s, str) for s in legacy):
         return False
@@ -506,6 +509,39 @@ def forget_secrets() -> None:
 # ---------------------------------------------------------------------------
 # Durable capture provenance (independent of preview cache eviction)
 # ---------------------------------------------------------------------------
+def record_discovered(project_root: str | Path, discoveries: dict[str, set[str]]) -> None:
+    """Remember newly published static candidates locally, never in the project registry."""
+    if not any(discoveries.values()):
+        return
+    try:
+        with _LOCK:
+            data = _read(project_root)
+            changed = False
+            for script, stems in discoveries.items():
+                if not stems:
+                    continue
+                old = data["captures"].get(script, {"runs": {}, "legacy_stems": []})
+                known = set().union(*old["runs"].values(), old["legacy_stems"])
+                discovered = set(old.get("discovered", [])) | (set(stems) - known)
+                if discovered and discovered != set(old.get("discovered", [])):
+                    data["captures"][script] = {**old, "discovered": sorted(discovered)}
+                    changed = True
+            if changed:
+                _write(project_root, data)
+    except (OSError, RunConfigError):
+        LOG.warning("discovery history could not be recorded", exc_info=True)
+
+
+def discovered_stems(project_root: str | Path, script: str) -> set[str]:
+    """Uncaptured static candidates with explicit local evidence; missing/bad history is unknown."""
+    try:
+        with _LOCK:
+            history = _read(project_root)["captures"].get(script, {})
+        return set(history.get("discovered", []))
+    except RunConfigError:
+        return set()
+
+
 def record_captures(
     project_root: str | Path,
     script: str,
@@ -532,7 +568,8 @@ def record_captures(
             runs = {cid: set(values) for cid, values in old["runs"].items()}
             known = set().union(*runs.values())
             legacy = set(old["legacy_stems"])
-            unknown = observed - known
+            discovered = set(old.get("discovered", []))
+            unknown = observed - known - discovered
             legacy.update(
                 unknown if registered_stems is None else unknown.intersection(registered_stems)
             )
@@ -541,6 +578,8 @@ def record_captures(
                 "runs": {cid: sorted(values) for cid, values in runs.items()},
                 "legacy_stems": sorted(legacy),
             }
+            if remaining := discovered - observed:
+                updated["discovered"] = sorted(remaining)
             if updated != old:
                 histories[script] = updated
                 _write(project_root, data)

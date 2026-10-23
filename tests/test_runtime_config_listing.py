@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import discover, figcapture, probe, registry, runconfig, runtimeasset
+from tavotto.engine import atomicio, discover, figcapture, probe, registry, runconfig, runtimeasset
 
 
 @pytest.fixture
@@ -189,16 +189,26 @@ def test_static_merge_marks_only_new_stems_and_preserves_unrun_candidates(projec
         encoding="utf-8",
     )
     cfg, _, _ = discover.merge(root)
-    discover.write_config(root, cfg)
+    discover.write_config(root, cfg, static_discovery=True)
     assert discover.registered_stem_origins(root, "plot.py") == {
         "plot": "unknown",
         "other": "unknown",
         "first": "static",
         "second": "static",
     }
-    # Loading and writing the registry must not discard explicit static provenance.
+    before = registry.registry_path(root).read_bytes()
+    assert before == atomicio.dumps_json(cfg, indent=1)
+    assert all(
+        set(entry) == {"entry", "cost", "notes", "stems"} for entry in cfg["scripts"].values()
+    )
+    history = json.loads(runconfig.store_path(root).read_text(encoding="utf-8"))["captures"][
+        "plot.py"
+    ]
+    assert history["discovered"] == ["first", "second"]
+    # Loading and writing the unchanged registry does not discard local provenance.
     reg = registry.open_registry(root)
     discover.write_config(root, {"version": 1, "scripts": reg.entries()})
+    assert registry.registry_path(root).read_bytes() == before
     run = runconfig.put(root, "plot.py", ["hppc"])
     first = capture(root, "first", run.id)
     assert discover.registered_stem_origins(root, "plot.py")["second"] == "static"
@@ -221,13 +231,13 @@ def test_positive_old_base_cache_is_preserved_when_static_history_is_missing(pro
         'import matplotlib.pyplot as plt\nplt.savefig("plot.pdf")\n', encoding="utf-8"
     )
     draft, _ = discover.build_draft(root)
-    discover.write_config(root, draft)
+    discover.write_config(root, draft, static_discovery=True)
     plain = capture(root, "plot", register=False)
     run = runconfig.put(root, "plot.py", ["hppc"])
     # Simulate a base preview written before durable capture history existed.
     path = runconfig.store_path(root)
     data = json.loads(path.read_text(encoding="utf-8"))
-    data.pop("captures")
+    data["captures"]["plot.py"] = {"runs": {}, "legacy_stems": [], "discovered": ["plot"]}
     path.write_text(json.dumps(data), encoding="utf-8")
     configured = capture(root, "plot", run.id)
     shutil.rmtree(runtimeasset.cache_dir(root, plain))
@@ -240,11 +250,45 @@ def test_positive_old_base_cache_is_preserved_when_static_history_is_missing(pro
 @pytest.mark.parametrize("static", [None, "plot", ["plot", 7]])
 def test_missing_or_invalid_static_origins_fail_open(project, static):
     root, _ = project
-    path = registry.registry_path(root)
-    data = json.loads(path.read_text(encoding="utf-8"))
-    data["scripts"]["plot.py"]["static_stems"] = static
-    path.write_text(json.dumps(data), encoding="utf-8")
     run = runconfig.put(root, "plot.py", ["hppc"])
+    path = runconfig.store_path(root)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["captures"] = {"plot.py": {"runs": {}, "legacy_stems": [], "discovered": static}}
+    path.write_text(json.dumps(data), encoding="utf-8")
     configured = capture(root, "plot", run.id)
     plain = figcapture.runtime_asset_id("plot.py", "plot")
     assert {row["id"] for row in listing(project) if row["stem"] == "plot"} == {plain, configured}
+
+
+def test_discovery_history_is_local_and_only_records_a_successful_write(project, monkeypatch):
+    root, _ = project
+    (root / "plot.py").write_text(
+        'import matplotlib.pyplot as plt\nplt.savefig("new.pdf")\n', encoding="utf-8"
+    )
+    registry_path = registry.registry_path(root)
+    before = registry_path.read_bytes()
+    cfg, _, _ = discover.merge(root)
+    local_history = runconfig.store_path(root)
+    assert not local_history.exists()  # A scan/draft alone never records provenance.
+    assert registry_path.read_bytes() == before
+
+    def fail_write(*args, **kwargs):
+        raise OSError("injected registry write failure")
+
+    with monkeypatch.context() as m:
+        m.setattr(atomicio, "write_json", fail_write)
+        with pytest.raises(OSError, match="injected registry write failure"):
+            discover.write_config(root, cfg, static_discovery=True)
+    assert not local_history.exists()
+    assert registry_path.read_bytes() == before
+
+    discover.write_config(root, cfg, static_discovery=True)
+    assert registry_path.read_bytes() == atomicio.dumps_json(cfg, indent=1)
+    assert all(
+        set(entry) == {"entry", "cost", "notes", "stems"} for entry in cfg["scripts"].values()
+    )
+    assert local_history.is_relative_to(root.parent / "state")
+    assert runconfig.discovered_stems(root, "plot.py") == {"new"}
+    configured = capture(root, "new", runconfig.put(root, "plot.py", ["hppc"]).id)
+    assert runconfig.discovered_stems(root, "plot.py") == set()
+    assert [row["id"] for row in listing(project) if row["stem"] == "new"] == [configured]

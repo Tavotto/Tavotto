@@ -43,7 +43,7 @@ import tokenize
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
-from . import atomicio, figcapture, inputremap, projectenv, registry, runtime, scanbudget
+from . import atomicio, figcapture, inputremap, projectenv, registry, runconfig, runtime, scanbudget
 
 #: 「什么算一份图产物」的唯一出处在 `figcapture.ARTIFACT_EXTS`（捕获描述符
 #: 判原件、handoff 找产物、这里的静态扫描必须是同一张表）；旧名保留作镜像。
@@ -1432,18 +1432,16 @@ def build_draft(figures_dir: str | Path, *, target_python: str | None = None) ->
     for script, info in sorted(rep["scripts"].items()):
         stems = [s for s in info["stems"] if s not in rep["conflicts"]]
         if stems:
-            cfg[script] = {
-                "entry": info["entry"],
-                "cost": "medium",
-                "notes": "",
-                "stems": stems,
-                "static_stems": list(stems),
-            }
+            cfg[script] = {"entry": info["entry"], "cost": "medium", "notes": "", "stems": stems}
     return {"version": 1, "scripts": cfg}, rep
 
 
 def write_config(
-    figures_dir: str | Path, cfg: dict, *, on_written: Callable[[str], None] | None = None
+    figures_dir: str | Path,
+    cfg: dict,
+    *,
+    static_discovery: bool = False,
+    on_written: Callable[[str], None] | None = None,
 ) -> Path:
     """注册表落盘 —— 走 `engine/atomicio`（ADR 0023 的唯一写入实现）。
 
@@ -1465,9 +1463,28 @@ def write_config(
     误认成本次写入。返回值仍是路径。
     """
     path = registry.registry_path(figures_dir)
-    revision = atomicio.write_json(path, cfg, indent=1)
-    if on_written is not None:
-        on_written(revision)
+    with inputremap.project_mutex(figures_dir):
+        discovered = {}
+        if static_discovery:
+            try:
+                previous = registry.open_registry(figures_dir).entries()
+            except FileNotFoundError:
+                previous = {}
+            except (OSError, ValueError, RuntimeError):
+                previous = None  # Unknown prior ownership is not new static evidence.
+            if previous is not None:
+                registered = {stem for entry in previous.values() for stem in entry["stems"]}
+                discovered = {
+                    script: set(entry["stems"]) - registered
+                    for script, entry in cfg["scripts"].items()
+                }
+        revision = atomicio.write_json(path, cfg, indent=1)
+        # The project keeps its four-field registry contract. Only successfully published
+        # new discoveries become local evidence; merely building a draft stays read-only.
+        if discovered:
+            runconfig.record_discovered(figures_dir, discovered)
+        if on_written is not None:
+            on_written(revision)
     return path
 
 
@@ -1509,12 +1526,10 @@ def merge(figures_dir: str | Path, *, target_python: str | None = None) -> tuple
             continue
         registered.update(fresh)
         if script in scripts:
-            static = registry.static_stems(scripts[script])
             scripts[script]["stems"] = list(scripts[script].get("stems", [])) + fresh
-            scripts[script]["static_stems"] = sorted(static.union(fresh))
             added_stems[script] = fresh
         else:
-            scripts[script] = {**cfg_s, "stems": fresh, "static_stems": list(fresh)}
+            scripts[script] = {**cfg_s, "stems": fresh}
             added_scripts.append(script)
     return merged, rep, {"added_scripts": added_scripts, "added_stems": added_stems}
 
@@ -1557,7 +1572,7 @@ def registered_stems(figures_dir: str | Path, script: str) -> list[str]:
 
 
 def registered_stem_origins(figures_dir: str | Path, script: str) -> dict[str, str] | None:
-    """One registry snapshot: explicit static discovery vs unknown prior provenance.
+    """Registry ownership plus local discovery evidence; unknown origins fail open.
 
     Missing registry/entry means no previous stems; unreadable provenance is None (fail open).
     Callers pairing this snapshot with registration hold the project mutex.
@@ -1580,7 +1595,7 @@ def registered_stem_origins(figures_dir: str | Path, script: str) -> dict[str, s
     stems = entry.get("stems") or []
     if not isinstance(stems, list) or not all(isinstance(stem, str) for stem in stems):
         return None
-    static = registry.static_stems(entry)
+    static = runconfig.discovered_stems(figures_dir, script)
     return {stem: "static" if stem in static else "unknown" for stem in stems}
 
 
@@ -1613,8 +1628,6 @@ def _register_locked(
         kept = [s for s in entry_cfg.get("stems", []) if s not in claimed]
         if len(kept) != len(entry_cfg.get("stems", [])):
             entry_cfg["stems"] = kept
-            if "static_stems" in entry_cfg:
-                entry_cfg["static_stems"] = sorted(registry.static_stems(entry_cfg))
     if claimed:
         prev = prev_entry or {}
         scripts[script] = {
@@ -1623,11 +1636,6 @@ def _register_locked(
             "notes": notes or prev.get("notes", ""),
             "stems": sorted(claimed),
         }
-        # Preserve untouched static candidates across an append, but a newly registered
-        # output is no longer discovery-only. Capture facts live in runconfig history.
-        static = registry.static_stems(prev).intersection(claimed).difference(stems)
-        if static:
-            scripts[script]["static_stems"] = sorted(static)
     else:
         scripts.pop(script, None)
     if on_written is None:
@@ -1668,7 +1676,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.write:
         cfg, rep, changes = merge(args.figures_dir)
-        path = write_config(args.figures_dir, cfg)
+        path = write_config(args.figures_dir, cfg, static_discovery=True)
         print(f"已写入 {path}")
         _print_report(rep)
         if changes["added_scripts"]:

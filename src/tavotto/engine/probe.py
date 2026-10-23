@@ -645,7 +645,7 @@ def register_probed(
     try:
         with inputremap.landing(figures_dir, result.get("remap_generation")):
             # 无参数运行整条替换（T03 已知缺口）：替换之前这个脚本名下、这次没产出的图名会就此失去关联——多半是此前**带参数**
-            # 产出的。记下来如实告诉用户（`unlinked_stems`），用原参数再运行一次即可并回来
+            # 产出的。记下来如实告诉用户（`unlinked_stems`），用原参数再运行一次即可并回来；不改注册表格式（T09b）
             origins = discover.registered_stem_origins(figures_dir, script)
             before = list(origins or {})
             legacy_candidates = (
@@ -662,7 +662,7 @@ def register_probed(
                 else sorted(captured_stems(figures_dir, script, set(before) - set(all_stems))[0])
             )
             # A pre-history base cache is positive capture evidence even if discovery
-            # tagged the registry entry. Persist it before that disposable cache is pruned.
+            # recorded a static candidate locally. Persist it before that cache is pruned.
             # Cache absence is never used as evidence against an unknown legacy stem.
             for stem in set(result["stems"]).intersection(
                 stem for stem, origin in (origins or {}).items() if origin == "static"
@@ -674,7 +674,7 @@ def register_probed(
                     is not None
                 ):
                     runconfig.record_captures(figures_dir, script, [stem])
-            # Snapshot provenance before publication removes the static marker. Unknown
+            # Snapshot provenance before recording the capture consumes discovery evidence. Unknown
             # old entries stay legacy; discovery-only entries are not capture evidence.
             runconfig.record_captures(
                 figures_dir,

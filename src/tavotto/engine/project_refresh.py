@@ -579,7 +579,7 @@ def _static_merge(root: Path, state: RefreshState) -> tuple[dict[str, list[str]]
         current = b""
     if atomicio.dumps_json(cfg, indent=1) != current:
         try:
-            discover.write_config(root, cfg)
+            discover.write_config(root, cfg, static_discovery=True)
         except (OSError, ValueError) as exc:  # AtomicWriteError 是 OSError 的子类
             # 写不下去与扫描失败对用户是两件事（一个是"你的注册表存不了"，
             # 另一个是"你的脚本读不动"），但**对外的 code 不能改**——

@@ -238,7 +238,9 @@ def ensure_registered(project: str, stem: str | None) -> dict:
     if should_write:
         try:
             # 写出永远是新名——老图库合并一次即完成搬迁。
-            info["registry"] = str(engine_discover.write_config(project, cfg))
+            info["registry"] = str(
+                engine_discover.write_config(project, cfg, static_discovery=True)
+            )
         except OSError as exc:
             # 只读目录 / 没有写权限 / 磁盘满。以前这条裸 OSError 会一路冒到
             # `tavotto open` 外面变成 traceback，插件那侧只看得到「脚本挂了」。

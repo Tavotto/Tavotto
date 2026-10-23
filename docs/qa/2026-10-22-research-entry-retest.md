@@ -110,8 +110,9 @@ pytest 退出码 **1**，失败原因为清单缺少 `runtime:plot.py#plot`。�
 ## 2026-10-23：静态发现不冒充历史捕获
 
 首次带参数运行前，字面量 `savefig` 已能被静态扫描登记；这些候选不能作为 `legacy_stems` 的证据。
-注册表现以可选 `static_stems` 保存明确的静态来源，执行登记时保留尚未运行的候选、移除实际产出的标记。
-旧条目缺少来源仍保留占位，静态重扫不改判。遇到既有无参数 cache 的正证据则先补记持久历史。
+该轮提交 `0b505b690` 将来源存入注册表的 `static_stems`，随后被 T11 首跑用例判为违反四字段格式契约；
+该存储方案已由下节的本机来源历史取代。旧条目缺少来源仍保留占位，静态重扫不改判；
+遇到既有无参数 cache 的正证据则先补记持久历史。
 
 真实 sidecar 回归覆盖「打开项目先静态登记字面量 savefig → 只运行一次带参数脚本 → 清单只有配置素材」。
 只将 `register_probed` 的历史候选改回全部旧登记 stem，新用例因额外出现 `runtime:scaled.py#result` 失败，
@@ -123,3 +124,23 @@ pytest 退出码 **1**，失败原因为清单缺少 `runtime:plot.py#plot`。�
 5 个素材逐一渲染成功。执行后 9 个文件 SHA-256 仍与冻结清单一致。本次只复测该 sidecar 捕获与清单路径；
 前文 CLI、导出、保存重开与 Qudit 的结果仍属上一轮证据。
 原始回执、输入哈希与反证日志：`/private/tmp/tavotto-1322-static-origin/`，Leaf 成功目录为 `leaf-zi7s1n4v/`。
+
+## 2026-10-23：来源历史回到本机数据目录
+
+`0b505b690` 的 T11-S1 首跑在本机同样失败（退出 **1**）：项目注册表条目多出 `static_stems`。
+本次恢复 `entry/cost/notes/stems` 四字段和原来的序列化字节格式；来源改存
+`data_dir()/runconfigs/<项目摘要>.json` 的 `captures[script].discovered`，不写用户项目。
+首次打开、静态刷新、CLI 交接与命令行扫描在注册表成功落盘后记录新增候选；只构建草稿、写入失败
+都不留下证据。旧条目不会因重扫被重新定性，缺失或损坏的来源继续 fail-open。
+
+- 用户指定三份完整测试 **27 passed、0 skipped**（72.23 秒）：`test_foundation_script_first_run.py`、
+  `test_runtime_config_listing.py`、`test_run_argv_e2e.py`。首跑文件及其四字段断言均未修改。
+  命令清除 `TAVOTTO_WORKER_PYTHON` 强制覆盖，让 T11-S2 的受管环境依赖修复按原用例执行。
+- 相关登记、刷新、交接、扫描、运行历史回归 **486 passed**；规则索引 **19 passed**。
+- 缓存清理与字面量 savefig 后仅带参数运行两条回归完整保留。新增草稿零写入、登记失败不记来源、
+  成功登记的项目注册表原字节格式与本机数据落点断言。
+- 反证：只移除 `write_config` 中的本机来源记录调用，真实 sidecar 回归因额外出现
+  `runtime:scaled.py#result` 退出 **1**；逐字节恢复源码后，该用例与缓存清理用例合跑退出 **0**。
+
+本机日志：`/private/tmp/tavotto-1322-local-provenance/`。本次未重新执行 Leaf 上游项目，
+前节 Leaf 的 5 个带参数素材结果仍属于上一轮复测证据。
