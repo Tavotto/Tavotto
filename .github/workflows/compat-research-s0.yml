@@ -67,19 +67,28 @@ jobs:
         env:
           CASE_ID: ${{ matrix.case_id }}
         run: python scripts/ci/compat_guardian_research.py fetch --case "$CASE_ID"
-      - name: Install fixed measurement environment
+      # Two interpreters, as in the product (docs/rules/backend/process-boundaries.md): Tavotto's own
+      # venv (Flask + RenderCore packages) and the scientific venv that runs scripts and workers.
+      # Sharing one venv lets RenderCore's uharfbuzz clash with a research package's abi3 Cython
+      # extension (e.g. astropy), which breaks matplotlib's PDF backend in the measurement only.
+      - name: Install fixed measurement environments
         id: core
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install -e '.[dev,ci]'
+          python -m venv "$RUNNER_TEMP/tavotto-venv"
+          "$RUNNER_TEMP/tavotto-venv/bin/python" -m pip install -e '.[dev,ci]'
           python scripts/ci/runtime_pins.py --include-corpus --format lines > "$RUNNER_TEMP/runtime-constraints.txt"
-          python -m pip install -r "$RUNNER_TEMP/runtime-constraints.txt"
+          python -m venv "$RUNNER_TEMP/science-venv"
+          "$RUNNER_TEMP/science-venv/bin/python" -m pip install -r "$RUNNER_TEMP/runtime-constraints.txt"
+          echo "TAVOTTO_SCIENCE_PYTHON=$RUNNER_TEMP/science-venv/bin/python" >> "$GITHUB_ENV"
+          echo "TAVOTTO_PYTHON=$RUNNER_TEMP/tavotto-venv/bin/python" >> "$GITHUB_ENV"
       - name: Approved fonts
         id: fonts
+        shell: bash
         run: |
-          python scripts/fetch_fonts.py
-          python scripts/fetch_fonts.py --check
+          "$TAVOTTO_PYTHON" scripts/fetch_fonts.py
+          "$TAVOTTO_PYTHON" scripts/fetch_fonts.py --check
       - name: Prepare original scientific prerequisites
         id: scientific
         env:
@@ -89,15 +98,18 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$CASE_ID" =~ ^research_[a-z0-9_]+$ ]]
-          python -m pip install -c "$RUNNER_TEMP/runtime-constraints.txt" \
+          "$TAVOTTO_SCIENCE_PYTHON" -m pip install -c "$RUNNER_TEMP/runtime-constraints.txt" \
             -r "tests/compat/research-environments/$CASE_ID.txt"
           if [[ "$SOURCE_PACKAGE" == 'true' ]]; then
             python scripts/ci/compat_guardian_research.py stage-dependency \
               --case "$CASE_ID" --out "$RUNNER_TEMP/scientific-source"
-            python -m pip install -c "$RUNNER_TEMP/runtime-constraints.txt" "$RUNNER_TEMP/scientific-source"
+            "$TAVOTTO_SCIENCE_PYTHON" -m pip install -c "$RUNNER_TEMP/runtime-constraints.txt" "$RUNNER_TEMP/scientific-source"
           fi
-          python -m pip check
-          python scripts/ci/compat_guardian_research.py verify-environment --case "$CASE_ID"
+          "$TAVOTTO_SCIENCE_PYTHON" -m pip check
+          "$TAVOTTO_PYTHON" scripts/ci/compat_guardian_research.py verify-environment --case "$CASE_ID"
+          # Process boundary: the scientific interpreter must not carry Tavotto's RenderCore packages.
+          "$TAVOTTO_PYTHON" scripts/ci/compat_guardian_research.py verify-science-environment \
+            --python "$TAVOTTO_SCIENCE_PYTHON"
       - name: Prepare original TeX prerequisites
         id: tex
         if: ${{ !cancelled() && matrix.tex }}
@@ -114,7 +126,7 @@ jobs:
           set -euo pipefail
           [[ "$CASE_ID" =~ ^research_[a-z0-9_]+$ ]]
           set +e
-          python scripts/ci/compat_guardian.py run --suite compat_engine \
+          "$TAVOTTO_PYTHON" scripts/ci/compat_guardian.py run --suite compat_engine \
             --case "$CASE_ID" --expected-sha "$GITHUB_SHA" --timeout 900 \
             --out "$RUNNER_TEMP/research-s0" > "$RUNNER_TEMP/research-s0.out" 2>&1
           code=$?
@@ -135,7 +147,11 @@ jobs:
           TEX_OUTCOME: ${{ steps.tex.outcome }}
         shell: bash
         run: |
-          python -m pip freeze --all > "$RUNNER_TEMP/research-installed.txt"
+          if [[ -n "${TAVOTTO_SCIENCE_PYTHON:-}" ]]; then
+            "$TAVOTTO_SCIENCE_PYTHON" -m pip freeze --all > "$RUNNER_TEMP/research-installed.txt"
+          else
+            python -m pip freeze --all > "$RUNNER_TEMP/research-installed.txt"
+          fi
           python - <<'PY'
           import hashlib, json, os, platform
           from pathlib import Path
@@ -160,7 +176,7 @@ jobs:
           shopt -s nullglob
           reports=("$RUNNER_TEMP"/research-s0/*/reports/guardian.json)
           [[ ${#reports[@]} -eq 1 ]]
-          python scripts/ci/compat_guardian.py validate "${reports[0]}"
+          "${TAVOTTO_PYTHON:-python}" scripts/ci/compat_guardian.py validate "${reports[0]}"
           cat "$(dirname "${reports[0]}")/summary.md" >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve allowlisted observation artifacts including failures
         if: ${{ !cancelled() }}

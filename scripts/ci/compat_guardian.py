@@ -171,8 +171,25 @@ def contained(root: Path, name: str) -> Path:
     return candidate
 
 
+def science_python() -> str:
+    """Interpreter that runs scripts and workers (ADR process boundary: the scientific stack is not
+    Tavotto's own venv). `TAVOTTO_SCIENCE_PYTHON` selects a separate research venv; unset = this one."""
+    return os.environ.get("TAVOTTO_SCIENCE_PYTHON") or sys.executable
+
+
 def environment() -> dict:
-    return actual_environment()
+    python = science_python()
+    if python == sys.executable:
+        return actual_environment()
+    code = (
+        "import json, sys; sys.path.insert(0, sys.argv[1]);"
+        "from guardian_exec_observer import actual_environment;"
+        "print(json.dumps(actual_environment()))"
+    )
+    out = subprocess.run(
+        [python, "-I", "-c", code, str(HERE)], capture_output=True, text=True, check=True
+    ).stdout
+    return json.loads(out)
 
 
 def fonts_dir() -> Path:
@@ -181,8 +198,26 @@ def fonts_dir() -> Path:
     return Path(override) if override else ROOT / "src/tavotto/resources/fonts"
 
 
+SCIENCE_MODULES = ("matplotlib", "numpy")
+
+
 def preflight() -> list[str]:
-    missing = [f"module:{m}" for m in REQUIRED_MODULES if importlib.util.find_spec(m) is None]
+    python = science_python()
+    if python == sys.executable:
+        wanted = REQUIRED_MODULES
+        remote: list[str] = []
+    else:
+        wanted = tuple(m for m in REQUIRED_MODULES if m not in ("matplotlib",))
+        probe = "import importlib.util as u, sys; print(*[m for m in sys.argv[1:] if u.find_spec(m) is None])"
+        found = subprocess.run(
+            [python, "-I", "-c", probe, *SCIENCE_MODULES], capture_output=True, text=True
+        )
+        remote = (
+            [f"science_module:{m}" for m in found.stdout.split()]
+            if found.returncode == 0
+            else ["science_python:unusable"]
+        )
+    missing = [f"module:{m}" for m in wanted if importlib.util.find_spec(m) is None] + remote
     allowlist = json.loads(
         (ROOT / "src/tavotto/rendercore/fonts_allowlist.json").read_text(encoding="utf-8")
     )
@@ -371,9 +406,10 @@ def isolated_env(work: Path, audit_log: Path | None = None, hashes=()) -> dict:
         )
     env["PYTHONPATH"] = os.pathsep.join(roots)
     # Explicit user-selected test interpreter; never let native/worker choose different stacks.
-    env["TAVOTTO_WORKER_PYTHON"] = sys.executable
-    if "TAVOTTO_RESEARCH_CACHE" in os.environ:
-        env["TAVOTTO_RESEARCH_CACHE"] = os.environ["TAVOTTO_RESEARCH_CACHE"]
+    env["TAVOTTO_WORKER_PYTHON"] = science_python()
+    for key in ("TAVOTTO_RESEARCH_CACHE", "TAVOTTO_SCIENCE_PYTHON"):
+        if key in os.environ:
+            env[key] = os.environ[key]
     return env
 
 
@@ -745,7 +781,7 @@ def _execute(request: dict) -> dict:
     if "reference_invocation" in case:
         native_request["reference_invocation"] = case["reference_invocation"]
     native = cm.run_driver(
-        sys.executable,
+        science_python(),
         "native_ref",
         native_request,
     )
@@ -798,7 +834,7 @@ def _execute(request: dict) -> dict:
         try:
             result = cm.run_group(
                 [engine_case],
-                python=sys.executable,
+                python=science_python(),
                 root=work,
                 out_dir=evidence,
                 want_fidelity=True,

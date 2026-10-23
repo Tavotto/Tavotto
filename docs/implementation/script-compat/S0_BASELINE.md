@@ -50,7 +50,7 @@ export/fidelity 各 10。历史机器快照 `tests/compat/research-baseline.json
 | Leaf | 登记入口 `plot.py hppc`；首轮产品腿没传 argv。真实入口复测通过。 | 用新测量重跑。 |
 | Qudit | 登记 cwd 为项目根，相对 glob；首轮产品腿用了 sandbox。真实入口复测通过。 | 用新测量重跑。 |
 | Cantera | 登记 cwd 为 `data`，既不是脚本目录也不是项目根；产品没有任意目录模式。 | 产品腿现在记 runner_error 而不是改在别处运行；是否扩产品由维护者定。 |
-| Gala | PNG/SVG 正常；PDF 报 Cython 共享类型尺寸错误。原生任务没有输出 PDF。 | 补同环境原生 PDF 和完整异常栈，再判断具体扩展。 |
+| Gala | PDF 报 Cython 共享类型尺寸错误：测量环境把 Tavotto（RenderCore 的 uharfbuzz，abi3 Cython）与科研依赖（astropy 的 abi3 Cython 扩展）装进同一 venv，matplotlib PDF 后端 → `fontTools.subset` → `import uharfbuzz` 与 astropy 的同名共享类型冲突；原生在同一 venv 里存 PDF 同样失败。最小复现 `python -c "import astropy.table, uharfbuzz"`。真实产品的 worker 经 bridgeboot 私有包加载引擎，不带 Tavotto 的 site-packages，不受影响。 | 非产品问题。workflow 已拆成两个 venv（Tavotto / 科研），并断言科研 venv 无 uharfbuzz、pikepdf、pypdfium2；用新测量重跑。 |
 | PySB | 我们的配方固定 SymPy 1.11.1，上游要求 >=1.12。 | 准备配方错误，产品未运行；修配方不能记成产品修复。 |
 | SGWB | TeX 准备超过 35 分钟。 | 原生和产品都未运行；准备完成后另记一次观测。 |
 | Vitay | 原始 NPZ 的 r 为 2×2，脚本 delays 有 10 个。 | 保留 invalid_fixture，不改数据凑通过。 |

@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.metadata
 import json
 import re
+import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -44,6 +44,24 @@ def project_relative(path: str, *, directory: bool = False) -> None:
         or any(part in ("", ".", "..") for part in path.split("/"))
     ):
         raise cg.EvidenceError("frozen staging path must be canonical and project-relative")
+
+
+#: Tavotto's own RenderCore dependencies (process boundary): they belong to the Tavotto venv, never
+#: to the interpreter that runs a research script or the worker.
+RENDER_PACKAGES = ("uharfbuzz", "pikepdf", "pypdfium2")
+
+
+def renderer_packages(python: str) -> list[str]:
+    """RenderCore packages visible to `python` (isolated mode), by import spec and by distribution."""
+    probe = (
+        "import importlib.metadata as m, importlib.util as u, sys;"
+        "print(*[n for n in sys.argv[1:] if u.find_spec(n) is not None or any("
+        "(d.metadata['Name'] or '').lower() == n for d in m.distributions())])"
+    )
+    done = subprocess.run(
+        [python, "-I", "-c", probe, *RENDER_PACKAGES], capture_output=True, text=True, check=True
+    )
+    return done.stdout.split()
 
 
 def check_project_contract(project: dict, case: dict, root: Path) -> None:
@@ -466,6 +484,7 @@ def main(argv: list[str] | None = None) -> int:
             "summarize",
             "stage-dependency",
             "verify-environment",
+            "verify-science-environment",
             "fetch",
         ),
     )
@@ -474,6 +493,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json-out", type=Path)
     parser.add_argument("--markdown-out", type=Path)
     parser.add_argument("--case")
+    parser.add_argument("--python", type=Path)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--setup-receipts", type=Path, nargs="*", default=[])
     parser.add_argument("--snapshot", type=Path, default=SNAPSHOT)
@@ -486,6 +506,15 @@ def main(argv: list[str] | None = None) -> int:
         else:
             verify_snapshot(args.snapshot, evidence_directory=args.evidence_directory)
         print("research snapshot exactly reproduces its referenced Guardian evidence")
+        return 0
+    if args.command == "verify-science-environment":
+        if args.python is None:
+            parser.error("verify-science-environment requires --python")
+        present = renderer_packages(str(args.python))
+        if present:
+            print("science environment contains Tavotto render packages: " + ", ".join(present))
+            return 1
+        print("science environment has none of the Tavotto render packages")
         return 0
     cohort = load_cohort()
     selected = [p for p in cohort["development"] if args.case is None or p["case_id"] == args.case]
@@ -503,7 +532,22 @@ def main(argv: list[str] | None = None) -> int:
         helper = project.get("dependency_helper_integrity")
         if helper:
             parts = helper["module"].split(".")
-            path = importlib.metadata.distribution(parts[0]).locate_file("/".join(parts) + ".py")
+            # The helper lives in the scientific interpreter, not in this (Tavotto) one.
+            located = subprocess.run(
+                [
+                    cg.science_python(),
+                    "-I",
+                    "-c",
+                    "import importlib.metadata as m, sys;"
+                    "print(m.distribution(sys.argv[1]).locate_file(sys.argv[2]))",
+                    parts[0],
+                    "/".join(parts) + ".py",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            path = located
             if file_digest(Path(path)) != helper["sha256"]:
                 raise cg.EvidenceError(
                     "installed scientific helper differs from frozen upstream source"
