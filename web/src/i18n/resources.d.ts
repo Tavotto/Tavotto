@@ -326,6 +326,7 @@ export default interface Resources {
         "prepare_failed": "诊断包没准备好。",
         "unknown": "结果无法确认，请到「发送问题反馈」里查看。"
       },
+      "diagHint": "日志里可能有脚本打印出的内容；不含你的脚本和数据文件。",
       "diagKindsTitle": "包含",
       "diagLabel": "附上诊断信息",
       "diagPreparing": "正在准备诊断包…",

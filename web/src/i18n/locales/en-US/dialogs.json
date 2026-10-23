@@ -24,6 +24,7 @@
       "total": "Attachments can't exceed {{size}} in total."
     },
     "diagLabel": "Attach diagnostic info",
+    "diagHint": "Logs may contain text your script printed. Your script and data files are not included.",
     "diagPreparing": "Preparing the diagnostics bundle...",
     "diagReady": "Diagnostics bundle · {{size}}",
     "diagFailedPrepare": "The diagnostics bundle isn't ready. Untick this or try again later.",

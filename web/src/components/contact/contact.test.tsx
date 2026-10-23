@@ -669,11 +669,15 @@ describe('附上诊断信息：prepare → 预览 → start → 带编号发信'
     resetStore()
     await render(<ContactHost />)
     await act(async () => useContactStore.getState().setOpen(true))
+    expect(q('[data-contact-diag-hint]')).toBeNull()
     await click(q('input[data-contact-diag]'))
     await settle(10)
+    // 勾上后、点发送前：明说日志里可能有脚本打印的内容
+    expect(q('[data-contact-diag-hint]')!.textContent).toContain('脚本打印')
     await click(q('input[data-contact-diag]'))
     expect(useContactStore.getState().diag).toEqual({ state: 'off', prepared: null })
     expect(q('[data-contact-diag-details]')).toBeNull()
+    expect(q('[data-contact-diag-hint]')).toBeNull()
   })
 })
 

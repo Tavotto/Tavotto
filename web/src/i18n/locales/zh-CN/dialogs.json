@@ -24,6 +24,7 @@
       "total": "附件合计不能超过 {{size}}。"
     },
     "diagLabel": "附上诊断信息",
+    "diagHint": "日志里可能有脚本打印出的内容；不含你的脚本和数据文件。",
     "diagPreparing": "正在准备诊断包…",
     "diagReady": "诊断包 · {{size}}",
     "diagFailedPrepare": "诊断包没准备好，请取消勾选或稍后再试。",

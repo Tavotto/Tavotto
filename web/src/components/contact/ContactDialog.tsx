@@ -461,6 +461,9 @@ export function ContactDialog() {
             <span>{cs('diagLabel')}</span>
           </label>
           {draft.attachDiag && (
+            <p data-contact-diag-hint className="type-caption pl-6">{cs('diagHint')}</p>
+          )}
+          {draft.attachDiag && (
             <Details data-contact-diag-details className="pl-6 text-sm">
               <Summary className="h-8 text-ink-2 hover:text-ink">
                 <span className="flex min-w-0 flex-1 items-center gap-1.5">
