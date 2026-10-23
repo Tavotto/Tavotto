@@ -2065,6 +2065,7 @@ _surface_roots: tuple[str, ...] = ()
 #: 仅 matplotlib / mpl_toolkits 自己的包目录：变化条目复核（`_changed_entries_are_library`）只认这里的函数
 _surface_mpl_roots: tuple[str, ...] = ()
 _realpath_cache: dict[str, tuple[str, str]] = {}
+_STDLIB_NAMES = frozenset(getattr(sys, "stdlib_module_names", ()))
 _LIB_TOPS = (
     frozenset(_SURFACE_PACKAGES) | {"numpy"} | frozenset(getattr(sys, "stdlib_module_names", ()))
 )
@@ -2105,9 +2106,32 @@ def _record_class_value(v) -> bool:
     # 它们一被取用 / 调用就可能跑到用户代码。不可调用的普通数据（首次使用才写入的缓存）仍不记
     for c in _T_MRO.__get__(t):
         cd = _T_DICT.__get__(c)
-        if "__call__" in cd or "__get__" in cd:
+        if (
+            _dict_get(cd, "__call__", _MISSING) is not _MISSING
+            or _dict_get(cd, "__get__", _MISSING) is not _MISSING
+        ):
             return True
     return False
+
+
+_MISSING = object()
+
+
+def _dict_get(d, name: str, default=None):
+    """精确 dict / mappingproxy 里取 `name`：逐项只比精确 `str` 键。不用 `in` / `[]` / `.get`——非 `str` 键可能带自定义
+    `__hash__` / `__eq__`，哈希碰撞时会被调用。"""
+    for k, v in d.items():
+        if type(k) is str and k == name:
+            return v
+    return default
+
+
+def _loaded_module_dict(name: str):
+    """`sys.modules` 里 `name` 的命名空间（静态读）；`sys.modules` 被换成别的容器类型就当不可信（None）。"""
+    mods = sys.modules
+    if type(mods) is not dict:
+        return None
+    return _module_dict(mods.get(name))
 
 
 def _surface_module_map(name: str, mod) -> tuple[dict, dict]:
@@ -2151,7 +2175,10 @@ def _surface_module_map(name: str, mod) -> tuple[dict, dict]:
 
 def _surface_modules() -> dict:
     out = {}
-    for k, m in list(sys.modules.items()):
+    mods = sys.modules
+    if type(mods) is not dict:
+        raise TypeError("sys.modules is not a plain dict")  # 外层兜底成「被改过」
+    for k, m in list(mods.items()):
         if type(k) is not str or m is None:
             continue
         if k.split(".", 1)[0] in _SURFACE_PACKAGES or k in _SURFACE_EXTRA_MODULES:
@@ -2168,29 +2195,28 @@ def _owner_module_ok(cls) -> bool:
     top = module.split(".", 1)[0]
     if top in _LIB_TOPS:
         return True
-    d = _module_dict(sys.modules.get(top))
+    d = _loaded_module_dict(top)
     if d is None:
         return False
-    for key in ("__file__", "__path__"):
-        loc = d.get(key)
-        if type(loc) is str:
-            return _path_under_roots(loc, _surface_roots)
-        if key == "__path__" and loc is not None:
-            try:
-                paths = list(loc)
-            except Exception:  # noqa: BLE001
-                return False
-            return bool(paths) and all(
-                type(x) is str and _path_under_roots(x, _surface_roots) for x in paths
-            )
+    loc = _dict_get(d, "__file__")
+    if type(loc) is str:
+        return _path_under_roots(loc, _surface_roots)
+    # 包：`__path__` 只认精确的 list / tuple（里面全是精确 str）。命名空间包的 `_NamespacePath` 一迭代就会重算——走
+    # `sys.meta_path` / `path_hooks`，那是用户可注入的代码——所以其它类型一律当「非库来源」
+    paths = _dict_get(d, "__path__")
+    if type(paths) is list or type(paths) is tuple:
+        return bool(paths) and all(
+            type(x) is str and _path_under_roots(x, _surface_roots) for x in paths
+        )
     return False
 
 
 def _path_under_roots(filename: str, roots) -> bool:
     """`filename` 在 `roots` 之下（先按原样规整比，再按 realpath 比；Windows 的大小写 / 短路径 / 符号链接差异都不该造成误判）。
-    `<frozen …>` 与 `<string>`（库自己的冻结模块 / 代码生成）也算库来源。"""
-    if filename.startswith("<frozen ") or filename == "<string>":
-        return True
+    `<…>` 形式的合成文件名（`<string>`、`<frozen …>` 等）一律不算：`exec` 生成的用户函数就是 `<string>`；
+    冻结的标准库函数由 `_function_origin_ok` 按 `__module__` 另判。"""
+    if filename.startswith("<"):
+        return False
     cached = _realpath_cache.get(filename)
     if cached is None:
         raw = os.path.normcase(os.path.normpath(filename))
@@ -2208,11 +2234,22 @@ def _path_under_roots(filename: str, roots) -> bool:
 
 def _function_origin_ok(fn, roots) -> bool:
     filename = _CODE_FILENAME.__get__(_FN_CODE.__get__(fn))
-    if type(filename) is str and _path_under_roots(filename, roots):
+    module = _FN_MODULE.__get__(fn)
+    if type(filename) is not str:
+        return False
+    if filename.startswith("<"):
+        # 合成文件名：`<string>` 等一律不算库来源；`<frozen X>` 只在 X 精确等于该函数的 `__module__` 且它是标准库模块时才认
+        if filename.startswith("<frozen ") and filename.endswith(">"):
+            return (
+                type(module) is str
+                and filename[len("<frozen ") : -1] == module
+                and module.split(".", 1)[0] in _STDLIB_NAMES
+            )
+        return False
+    if _path_under_roots(filename, roots):
         return True
     # 路径对不上时（打包 runtime 的目录布局各异）再看函数声明的所属模块：库的函数 `__module__` 是库的模块，
     # 用户脚本里写的 patch 函数是用户的模块。威胁模型同上（防诚实的用户钩子，不防蓄意伪装 `__module__`）
-    module = _FN_MODULE.__get__(fn)
     return type(module) is str and module.split(".", 1)[0] in _LIB_TOPS
 
 
@@ -2277,14 +2314,20 @@ def freeze_trusted_surface() -> None:
                         roots.append(form)
 
         for pkg in _SURFACE_PACKAGES:
-            d = _module_dict(sys.modules.get(pkg))
-            paths = d.get("__path__") if d is not None else None
-            if paths is not None:
+            d = _loaded_module_dict(pkg)
+            paths = _dict_get(d, "__path__") if d is not None else None
+            # 只读精确的 list / tuple；命名空间包（mpl_toolkits）的 `_NamespacePath` 不迭代（迭代会重算、走 meta_path / path_hooks），
+            # 改取它已算好的内部 `_path` 列表，再不行就用 matplotlib 目录的兄弟目录
+            if type(paths) is not list and type(paths) is not tuple and paths is not None:
                 try:
-                    for p in list(paths):
-                        add(p)
+                    inner = object.__getattribute__(paths, "_path")
                 except Exception:  # noqa: BLE001
-                    pass
+                    inner = None
+                paths = inner if type(inner) is list or type(inner) is tuple else None
+            for p in paths or ():
+                add(p)
+        if roots and not any(os.path.basename(r) == "mpl_toolkits" for r in roots):
+            add(os.path.join(os.path.dirname(roots[0]), "mpl_toolkits"))
         _surface_mpl_roots = tuple(roots)
         # 「库来源」还包括：matplotlib 所在的 site-packages（它的依赖）、解释器安装前缀（标准库、嵌入式发行版的 python3xx.zip、
         # 各平台 site-packages）、Tavotto 引擎目录（worker 对 `plt.show` 等的自家 patch）。被用户脚本里的函数顶替才是 patch
@@ -2429,10 +2472,9 @@ def _class_hooks_trusted(t) -> bool:
     只静态读各类的 `__dict__`，不调用、不触发描述符；每次 dump 重新判，不跨快照缓存。"""
     for name in _SERIALISATION_HOOKS:
         for klass in _T_MRO.__get__(t):
-            cd = _T_DICT.__get__(klass)
-            if name not in cd:
+            attr = _dict_get(_T_DICT.__get__(klass), name, _MISSING)
+            if attr is _MISSING:
                 continue
-            attr = cd[name]
             ta = type(attr)
             if ta is staticmethod:
                 attr = _SM_FUNC.__get__(attr)

@@ -275,6 +275,12 @@ manifest / overrides / 撤销重做不分叉）。
     自己的惰性重绑定（pyplot 的 `switch_backend` 等）。`functools.partial(用户函数)`、绑定方法、描述符包装、库类型的实例、scienceplots /
     seaborn 等第三方包和标准库的函数一律判为被改（用户裁决：matplotlib 被任何东西改过就放弃快照）。指纹因此也记库类型里**可调用 / 描述符**
     的实例（partial、绑定方法、`cached_property`……）。「库来源」的扩大目录集合（site-packages、解释器前缀）只用于首次见到的模块的来源判定。
+  - **合成文件名与迭代纪律**（Codex #1314 复核）：`<string>`（用户 `exec` 生成的函数就是它）一律不算库来源；`<frozen X>` 只在 X 精确等于函数静态读出的
+    `__module__` 且是标准库模块（`sys.stdlib_module_names`）时才认，其它 `<…>` 合成文件名都不算——Windows 打包 runtime 里冻结的标准库函数照常通过。
+    首次见到的模块里外来类所在顶层包的 `__path__` 只认精确的 `list` / `tuple`（元素是精确 `str`）；命名空间包的 `_NamespacePath` 一迭代就会重算、
+    走 `sys.meta_path` / `path_hooks`（用户可注入的代码），所以其它类型一律当「非库来源」，绝不迭代。启动时取 matplotlib / mpl_toolkits 的包目录也不迭代
+    `_NamespacePath`，改读它已算好的内部列表（再不行用 matplotlib 目录的兄弟目录）。字典查找（类字典 / 模块字典）逐项只比精确 `str` 键，不用 `in` / `[]`；
+    `sys.modules` 不是精确 `dict` 就当不可信。
   - **实测耗时**：启动指纹约 10 ms（107 个模块、约 6800 个条目），每次比对约 3.8 ms（静态描述符读比 `getattr` 慢，换来不执行用户代码）。
   - **与纵深层的关系**：指纹覆盖 matplotlib 与上述入口模块；`_class_hooks_trusted` 另外覆盖没进指纹的类型（其它 numpy 类型等）的类级钩子，
     且只在 dump 内读一次、很便宜，所以两者保留，不删。结构层（拍摄期间置脏即作废）同样保留。

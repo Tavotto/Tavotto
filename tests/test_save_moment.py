@@ -592,7 +592,7 @@ def test_library_origin_is_decided_by_location_not_by_one_platform_layout(
     under = figcapture._path_under_roots
     assert under(os.path.join(root, "python313.zip", "enum.pyc"), roots)
     assert under(os.path.join(root, "Lib", "site-packages", "cycler", "__init__.py"), roots)
-    assert under("<frozen os>", roots) and under("<string>", roots)
+    assert not under("<frozen os>", roots) and not under("<string>", roots)  # 合成文件名不按路径认
     assert not under(str(tmp_path / "rtX" / "evil.py"), roots)
     assert not under(str(tmp_path / "project" / "figure.py"), roots)
 
@@ -685,6 +685,66 @@ def test_pyplot_switching_backend_is_not_a_patch(fresh_surface):
     plt.switch_backend("agg")
     assert figcapture.trusted_surface_intact() is True
     plt.close("all")
+
+
+def _function_from(source: str, filename: str, module: str):
+    ns = {"__name__": module}
+    exec(compile(source, filename, "exec"), ns)  # noqa: S102
+    return ns["f"]
+
+
+def test_synthetic_filenames_are_not_library_origin_unless_frozen_stdlib(fresh_surface):
+    """`<string>`（用户 `exec` 生成的函数就是它）不算库来源；`<frozen X>` 只在 X 精确等于函数的 `__module__` 且是标准库时才认。"""
+    roots = figcapture._surface_roots
+    ok = figcapture._function_origin_ok
+    src = "def f():\n    pass\n"
+    assert ok(_function_from(src, "<frozen os>", "os"), roots)  # Windows 冻结的标准库
+    assert not ok(_function_from(src, "<frozen os>", "evil_lib"), roots)  # X 对不上 `__module__`
+    assert not ok(_function_from(src, "<frozen evil_lib>", "evil_lib"), roots)  # 不是标准库
+    assert not ok(_function_from(src, "<string>", "matplotlib.text"), roots)  # 即便借了库的模块名
+    assert not ok(_function_from(src, "<whatever>", "matplotlib.text"), roots)
+
+
+def test_exec_generated_method_in_a_first_seen_module_is_a_patch(monkeypatch, fresh_surface):
+    calls = []
+    fn = _function_from(
+        "def f(self, *a):\n    CALLS.append(1)\n", "<string>", "mpl_toolkits.fake_exec"
+    )
+    fn.__globals__["CALLS"] = calls
+    mod = types.ModuleType("mpl_toolkits.fake_exec")
+    cls = type("C", (), {"__setstate__": fn, "__module__": mod.__name__})
+    mod.C = cls
+    monkeypatch.setitem(sys.modules, mod.__name__, mod)
+    fig = _figure()
+    figcapture.mark_saved(fig)
+    ledger = figcapture.SaveMomentLedger()
+    ledger.take(fig, 1)
+    assert ledger.restore(fig) == (None, "matplotlib_patched")
+    assert calls == []
+    # 被判过的模块不能被记成基线：再比一次仍然是被改过
+    assert figcapture.trusted_surface_intact() is False
+
+
+def test_a_foreign_packages_custom_path_is_never_iterated(monkeypatch, fresh_surface):
+    """外来类所在顶层包的 `__path__` 可以是任意对象（命名空间包的 `_NamespacePath` 迭代会走 meta_path / path_hooks）：
+    只认精确的 list / tuple，其它当非库来源，且绝不迭代。"""
+    iterated = []
+
+    class HostilePath:
+        def __iter__(self):
+            iterated.append(1)
+            raise RuntimeError("hostile __iter__")
+
+    pkg = types.ModuleType("hostile_ns_pkg")
+    pkg.__path__ = HostilePath()
+    monkeypatch.setitem(sys.modules, "hostile_ns_pkg", pkg)
+    foreign = type("Foreign", (), {"__module__": "hostile_ns_pkg.sub"})
+    assert figcapture._owner_module_ok(foreign) is False
+    mod = types.ModuleType("mpl_toolkits.fake_foreign")
+    mod.Foreign = foreign
+    monkeypatch.setitem(sys.modules, mod.__name__, mod)
+    assert figcapture.trusted_surface_intact() is False
+    assert iterated == []
 
 
 def _hostile(calls, fig):

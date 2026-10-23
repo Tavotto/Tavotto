@@ -277,9 +277,10 @@ def test_the_snapshot_bytes_never_leave_the_process():
             )
             if ref in _SNAPSHOT_REFERENCES:
                 allowed = _SNAPSHOT_REFERENCES[ref]
+                # 只有它们自己的 `def` / `class` 语句（名字绑定，不是 `ast.Name` 引用）不受限；模块作用域里的任何其它引用
+                # （赋值别名 `x = _snapshot_dumps`、装饰器、默认参数……）都算越界
                 if path.name != "figcapture.py" or scope not in allowed | {ref}:
-                    if not (path.name == "figcapture.py" and scope is None):
-                        problems.append(f"{path.name}: {ref} 被 {scope} 引用")
+                    problems.append(f"{path.name}: {ref} 被 {scope or '<module>'} 引用")
             if ref == "SaveMomentLedger" and not (
                 (path.name == "figcapture.py")
                 or (path.name == "figsession.py" and scope == "LiveFigureSession._new_save_moments")
