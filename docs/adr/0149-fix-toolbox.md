@@ -38,9 +38,11 @@
   `~/.git-credentials`、`~/.codex/auth.json`、`~/.claude/.credentials.json`、Tavotto 自己存 API key 的 `config.json`、任意 `.env` / `.env.*`、
   `*.pem` / `*.key` / `*.p12` / `id_*`（私钥形状；`.pub` 公钥除外）、Chrome / Chromium / Edge / Brave / Firefox / Safari 的 profile 目录。符号链接指向拦截区也拦。
 * **单次读取上限 256 KiB**：更大的给前 N 行 + 截断说明（可用 `start_line` / `max_lines` 续读）；二进制只给类型与大小。
-* **项目外的读取记入会话的 `reads` 清单**，供卡片详情列出（「AI 看过项目外的哪些位置」）。
-* **读到的内容一律先脱敏**：诊断包同一套文本脱敏（`diagnostics.redact_text`：密钥形状、主目录、用户名、邮箱）+ 私钥块、`key=value` 形的密钥、`Bearer` 令牌。
-  find / grep 有条数与墙钟上限，跳过拦截区、`node_modules`、`.git`、`site-packages` 深层，且不跟随目录符号链接。
+* **项目外的读取记入会话的 `reads` 清单**，供卡片详情列出（「AI 看过项目外的哪些位置」）；跟随文件符号链接时记**解析后的目标**（项目内目标不记）。
+* **读到的内容一律先脱敏**：诊断包同一套文本脱敏（`diagnostics.redact_text`：密钥形状、主目录、用户名、邮箱）+ 私钥块、`key=value` / 命令行旗标形的密钥（一张敏感键名表 × 值形状：裸值 / 单引号 / 双引号，含内部空格，整体抹掉）、`Bearer` 令牌。
+  find / grep 有条数与墙钟上限，跳过拦截区、`node_modules`、`.git`、`site-packages` 深层，且不跟随目录符号链接；
+  `grep_files` 是**字面量**搜索（不接受正则，从根上没有灾难性回溯）。
+* **fixtools 启动的每个子进程**（`try_run` / `try_import` / `inspect_environment`）都走同一条受守卫的执行路径：safe 写入根绊线 + 缓存目录下的专用临时目录 + 统一的重试清理与残留清扫；守卫装不上就不执行。
 
 ### 四、本地审计
 

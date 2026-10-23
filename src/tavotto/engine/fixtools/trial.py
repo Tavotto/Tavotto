@@ -4,9 +4,11 @@
 `runtime.probe_env` + `launcher.activate_env`（Conda 环境按激活后的环境起）、`stdin=DEVNULL`、`creationflags=CREATE_NO_WINDOW`、
 `encoding="utf-8"`、超时。环境只能用会话给出的环境 id 指认，不接受任意解释器路径。
 
-`try_run` 不是裸跑：脚本在 **safe 的写入根绊线**（`engine/writetripwire.py`，ADR 0141，worker 的 safe 执行同一个守卫）下跑，
-写入根只有本次试跑专用的缓存子目录（`data_dir()/cache/fix_trials/<会话>-<随机>/`，里面是副本、专用 TMPDIR、matplotlib 配置目录）；
-读不限。守卫装不上（解释器 < 3.8 等）就拒绝试跑（`trial_unguarded`），不退化成裸跑。子进程输出只留有上限的尾部，总量超限即结束子进程。
+**fixtools 起的每一个子进程只有一条执行路径 `run_python`**，它都在 **safe 的写入根绊线**（`engine/writetripwire.py`，ADR 0141，worker 的
+safe 执行同一个守卫）下跑目标代码：`try_run` 的脚本、`try_import` 的 import（模块的导入副作用）、`inspect_environment` 的探测代码一视同仁。
+写入根只有本次专用的缓存子目录（`data_dir()/cache/fix_trials/<会话>-<随机>/`，里面是副本 `work/`、专用 TMPDIR、matplotlib 配置目录）；
+读不限。守卫装不上（解释器 < 3.8 等）就拒绝执行（`trial_unguarded`），不退化成裸跑。临时目录一律建在缓存目录里（不用系统临时目录），
+清理走 `_remove_tree` 重试 + `.cleanup_pending` 标记 + `sweep_stale_trials()`。子进程输出只留有上限的尾部，总量超限即结束子进程。
 """
 
 from __future__ import annotations
@@ -109,81 +111,210 @@ def _kill_own(proc: subprocess.Popen) -> None:
             pass
 
 
+GUARD_EXIT_CODE = 97
+_GUARDED_SRC = r"""
+import json, os, sys
+guard, root, out, target = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+# 先把后面要用的标准库导进来，再装守卫：守卫只管「写」，读不受限
+import runpy, traceback, importlib.util, tempfile, re, threading, errno
+try:
+    spec = importlib.util.spec_from_file_location("_tavotto_trial_guard", guard)
+    wt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(wt)
+    wt.install([root])
+    wt.arm(True)
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump({"guarded": True}, f)
+except BaseException:
+    sys.exit(97)
+sys.modules.pop("_tavotto_trial_guard", None)
+code = 0
+sys.argv = [target] + sys.argv[5:]
+try:
+    runpy.run_path(target, run_name="__main__")
+except SystemExit as exc:
+    code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+except BaseException:
+    traceback.print_exc()
+    code = 1
+figs = None
+if "matplotlib.pyplot" in sys.modules:
+    try:
+        figs = len(sys.modules["matplotlib.pyplot"].get_fignums())
+    except Exception:
+        figs = None
+try:
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump({"guarded": True, "figures": figs, "blocked_writes": wt.violations()}, f)
+except OSError:
+    pass
+sys.exit(code)
+"""
+
+
+def _guard_path() -> str:
+    """worker 的 safe 执行用的写入根绊线（`engine/writetripwire.py`，纯标准库）的文件路径；子进程按文件加载它。"""
+    from .. import writetripwire
+
+    return str(Path(writetripwire.__file__).resolve())
+
+
 def run_python(
     python: str,
-    args: list[str],
     *,
     timeout: float,
-    cwd: str | None = None,
+    code: str | None = None,
+    script: str | None = None,
+    argv: tuple[str, ...] = (),
+    session_id: str = "fixtool",
+    trial_dir: Path | None = None,
     extra_env: dict | None = None,
 ) -> dict:
-    """在 `python` 里跑一次。回 `{"status": ok|timeout|spawn_failed|env_unavailable, returncode, stdout, stderr,
-    output_truncated}`，不抛。stdout / stderr 只是**尾部**（各 `OUTPUT_TAIL_BYTES`）；总输出超 `OUTPUT_LIMIT_BYTES` 即结束子进程。"""
+    """fixtools 唯一的起 Python 子进程的入口：目标（`code` 源码，或 `trial_dir/work` 里的 `script`）一律在写入根绊线下执行。
+
+    写入根 = 本次专用目录 `trial_dir`（调用方给，如 `try_run` 把副本放在里面并自己清理；不给就在缓存目录里新建、结束时清理，
+    清不掉如实回 `cleanup_pending`）。回 `{"status": ok|timeout|spawn_failed|env_unavailable|trial_unguarded|scratch_failed,
+    returncode, stdout, stderr, output_truncated, figures, blocked_writes, cleanup_pending}`，不抛。stdout / stderr 只是**尾部**
+    （各 `OUTPUT_TAIL_BYTES`）；总输出超 `OUTPUT_LIMIT_BYTES` 即结束子进程。"""
+    empty = {
+        "returncode": None,
+        "stdout": "",
+        "stderr": "",
+        "output_truncated": False,
+        "figures": None,
+        "blocked_writes": [],
+        "cleanup_pending": False,
+    }
+    own = trial_dir is None
+    if own:
+        try:
+            sweep_stale_trials()
+            trial_dir = _make_trial_dir(session_id)
+        except OSError:
+            return {"status": "scratch_failed", **empty}
+    assert trial_dir is not None
+    try:
+        res = _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empty)
+    finally:
+        pending = not _remove_tree(trial_dir) if own else False
+    if own:
+        res["cleanup_pending"] = pending
+    return res
+
+
+def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empty) -> dict:
     from .. import launcher, runtime
 
-    scratch = tempfile.mkdtemp(prefix="tavotto-fixtool-") if cwd is None else None
-    empty = {"returncode": None, "stdout": "", "stderr": "", "output_truncated": False}
+    out_file = str(trial_dir / "out" / "result.json")
+    target = script
+    if code is not None:
+        src = trial_dir / "out" / "target.py"
+        try:
+            src.write_text(code, encoding="utf-8")
+        except OSError:
+            return {"status": "scratch_failed", **empty}
+        target = str(src)
+    if target is None:
+        return {"status": "spawn_failed", **empty}
+    tmp = str(trial_dir / "tmp")
+    work = str(trial_dir / "work")
     try:
-        try:
-            env = launcher.activate_env(python, runtime.probe_env(python), timeout=timeout)
-        except launcher.LauncherUnavailable:
-            return {"status": "env_unavailable", **empty}
-        if extra_env:
-            env = dict(os.environ if env is None else env)
-            env.update(extra_env)
-        try:
-            proc = subprocess.Popen(
-                [python, *runtime.probe_args(), *args],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.DEVNULL,
-                cwd=cwd or scratch,
-                env=env,
-                creationflags=runtime.CREATE_NO_WINDOW,
-                start_new_session=(os.name != "nt"),
-            )
-        except (OSError, subprocess.SubprocessError):
-            return {"status": "spawn_failed", **empty}
-        overflow = threading.Event()
+        env = launcher.activate_env(python, runtime.probe_env(python), timeout=timeout)
+    except launcher.LauncherUnavailable:
+        return {"status": "env_unavailable", **empty}
+    env = dict(os.environ if env is None else env)
+    env.update(MPLBACKEND="Agg", TMPDIR=tmp, TEMP=tmp, TMP=tmp, MPLCONFIGDIR=str(trial_dir / "mpl"))
+    if extra_env:
+        env.update(extra_env)
+    try:
+        proc = subprocess.Popen(
+            [
+                python,
+                *runtime.probe_args(),
+                "-c",
+                _GUARDED_SRC,
+                _guard_path(),
+                str(trial_dir),
+                out_file,
+                target,
+                *argv,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            cwd=work,
+            env=env,
+            creationflags=runtime.CREATE_NO_WINDOW,
+            start_new_session=(os.name != "nt"),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"status": "spawn_failed", **empty}
+    overflow = threading.Event()
 
-        def stop() -> None:
-            overflow.set()
-            _kill_own(proc)
+    def stop() -> None:
+        overflow.set()
+        _kill_own(proc)
 
-        shared = {"bytes": 0}
-        lock = threading.Lock()
-        out = _Capture(proc.stdout, shared, lock, stop)
-        err_ = _Capture(proc.stderr, shared, lock, stop)
-        timed_out = False
+    shared = {"bytes": 0}
+    lock = threading.Lock()
+    out = _Capture(proc.stdout, shared, lock, stop)
+    err_ = _Capture(proc.stderr, shared, lock, stop)
+    timed_out = False
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _kill_own(proc)
         try:
-            proc.wait(timeout=timeout)
+            proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            timed_out = True
-            _kill_own(proc)
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
-        for cap in (out, err_):
-            cap.thread.join(timeout=5)
-        for pipe in (proc.stdout, proc.stderr):
-            try:
-                pipe.close()
-            except OSError:
-                pass
-        if timed_out and not overflow.is_set():
-            return {"status": "timeout", **empty}
-        return {
-            "status": "ok",
-            "returncode": proc.returncode,
-            "stdout": out.text(),
-            "stderr": err_.text(),
-            "output_truncated": overflow.is_set(),
-            "output_bytes": out.total + err_.total,
-        }
-    finally:
-        if scratch:
-            shutil.rmtree(scratch, ignore_errors=True)
+            pass
+    for cap in (out, err_):
+        cap.thread.join(timeout=5)
+    for pipe in (proc.stdout, proc.stderr):
+        try:
+            pipe.close()
+        except OSError:
+            pass
+    if timed_out and not overflow.is_set():
+        return {"status": "timeout", **empty}
+    info: dict = {}
+    try:
+        with open(out_file, encoding="utf-8") as f:
+            info = json.load(f)
+    except (OSError, ValueError):
+        pass
+    if proc.returncode == GUARD_EXIT_CODE or not info.get("guarded"):
+        return {"status": "trial_unguarded", **empty}  # 守卫没装上：不报成一次正常执行
+    return {
+        "status": "ok",
+        "returncode": proc.returncode,
+        "stdout": out.text(),
+        "stderr": err_.text(),
+        "output_truncated": overflow.is_set(),
+        "output_bytes": out.total + err_.total,
+        "figures": info.get("figures"),
+        "blocked_writes": info.get("blocked_writes") or [],
+        "cleanup_pending": False,
+    }
+
+
+def guard_note(res: dict) -> str:
+    """给 `run_python` 结果的守卫相关附注：被拦的越界写、清不掉的残留。"""
+    note = ""
+    blocked = res.get("blocked_writes") or []
+    if blocked:
+        shown = ", ".join(f"{b.get('event')} {b.get('path')}" for b in blocked[:8])
+        note += (
+            f"\nblocked_writes: {len(blocked)} attempt(s) to write outside the scratch folder were "
+            f"blocked and nothing was written there ({shown})"
+        )
+    if res.get("cleanup_pending"):
+        note += (
+            "\ncleanup_pending: the scratch folder could not be fully deleted; it is kept in Tavotto's cache "
+            "folder and will be removed later."
+        )
+    return note
 
 
 def _tail(text: str, n: int = ERROR_TAIL_LINES) -> str:
@@ -210,69 +341,29 @@ def try_import(ctx: FixContext, args: dict) -> ToolResult:
         return err(
             "bad_module", "`module` must be a dotted Python identifier such as `scipy.optimize`."
         )
-    res = run_python(python, ["-c", _IMPORT_SRC, module], timeout=IMPORT_TIMEOUT_S)
+    res = run_python(
+        python,
+        code=_IMPORT_SRC,
+        argv=(module,),
+        timeout=IMPORT_TIMEOUT_S,
+        session_id=ctx.session_id,
+    )
+    note = guard_note(res)
     if res["status"] != "ok":
-        return err(res["status"], f"The import test did not finish ({res['status']}).")
+        return err(res["status"], f"The import test did not finish ({res['status']}).{note}")
     if res["returncode"] == 0:
         version = res["stdout"].strip().removeprefix("version=")
         return ok(
-            f"import {module}: OK" + (f" (version {version})" if version else ""), "import ok"
+            f"import {module}: OK" + (f" (version {version})" if version else "") + note,
+            "import ok",
         )
     return ok(
-        f"import {module}: FAILED (exit {res['returncode']})\n{_tail(res['stderr'])}",
+        f"import {module}: FAILED (exit {res['returncode']})\n{_tail(res['stderr'])}{note}",
         "import failed",
     )
 
 
 # --------------------------------------------------------------------------- try_run
-_RUN_SRC = r"""
-import json, os, sys
-guard, root, script, out = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-# 先把后面要用的标准库导进来，再装守卫：守卫只管「写」，读不受限
-import runpy, traceback, importlib.util, tempfile, re, threading, errno
-try:
-    spec = importlib.util.spec_from_file_location("_tavotto_trial_guard", guard)
-    wt = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(wt)
-    wt.install([root])
-    wt.arm(True)
-    with open(out, "w", encoding="utf-8") as f:
-        json.dump({"guarded": True}, f)
-except BaseException:
-    sys.exit(97)
-sys.modules.pop("_tavotto_trial_guard", None)
-code = 0
-sys.argv = [script]
-try:
-    runpy.run_path(script, run_name="__main__")
-except SystemExit as exc:
-    code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
-except BaseException:
-    traceback.print_exc()
-    code = 1
-figs = None
-if "matplotlib.pyplot" in sys.modules:
-    try:
-        figs = len(sys.modules["matplotlib.pyplot"].get_fignums())
-    except Exception:
-        figs = None
-try:
-    with open(out, "w", encoding="utf-8") as f:
-        json.dump({"guarded": True, "figures": figs, "blocked_writes": wt.violations()}, f)
-except OSError:
-    pass
-sys.exit(code)
-"""
-GUARD_EXIT_CODE = 97
-
-
-def _guard_path() -> str:
-    """worker 的 safe 执行用的写入根绊线（`engine/writetripwire.py`，纯标准库）的文件路径；试跑的子进程按文件加载它。"""
-    from .. import writetripwire
-
-    return str(Path(writetripwire.__file__).resolve())
-
-
 def _copy_project(src_dir: Path, script: Path, dest: Path) -> tuple[str, bool]:
     """把脚本所在目录复制到 `dest`（有上限，超了只复制脚本）。回 (脚本在 dest 里的相对名, 是否整目录复制)。"""
     total = files = 0
@@ -383,34 +474,12 @@ def _make_trial_dir(session_id: str) -> Path:
 
 def _default_runner(python: str, work: str, script_name: str, mode: str, timeout: float) -> dict:
     """在 safe 的写入根绊线下跑副本。`work` 是 `<试跑目录>/work`；写入根 = 整个试跑目录（副本 + 专用 TMPDIR + mpl 配置）。"""
-    trial_dir = Path(work).parent
-    out_file = str(trial_dir / "out" / "result.json")
-    res = run_python(
+    return run_python(
         python,
-        ["-c", _RUN_SRC, _guard_path(), str(trial_dir), script_name, out_file],
+        script=str(Path(work) / script_name),
         timeout=timeout,
-        cwd=work,
-        extra_env={
-            "MPLBACKEND": "Agg",
-            "TMPDIR": str(trial_dir / "tmp"),
-            "TEMP": str(trial_dir / "tmp"),
-            "TMP": str(trial_dir / "tmp"),
-            "MPLCONFIGDIR": str(trial_dir / "mpl"),
-        },
+        trial_dir=Path(work).parent,
     )
-    info: dict = {}
-    try:
-        with open(out_file, encoding="utf-8") as f:
-            info = json.load(f)
-    except (OSError, ValueError):
-        pass
-    if res["status"] == "ok" and (res["returncode"] == GUARD_EXIT_CODE or not info.get("guarded")):
-        return {**res, "status": "trial_unguarded"}  # 守卫没装上：不报成一次正常试跑
-    return {
-        **res,
-        "figures": info.get("figures"),
-        "blocked_writes": info.get("blocked_writes") or [],
-    }
 
 
 def try_run(ctx: FixContext, args: dict) -> ToolResult:

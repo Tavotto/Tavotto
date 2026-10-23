@@ -95,8 +95,7 @@ def scrub(text: str) -> str:
     except Exception:  # noqa: BLE001 - 脱敏不该被它拖垮，退到下面的形状规则
         pass
     text = _PRIVATE_KEY_BLOCK.sub("[redacted private key]", text)
-    text = _KV_SECRET.sub(_mask_kv, text)
-    text = _CLI_SECRET.sub(lambda m: f"{m.group(1)}***", text)
+    text = _SECRET_ASSIGN.sub(_mask_secret, text)
     text = _BEARER.sub("Bearer ***", text)
     return _TOKEN_SHAPES.sub("***", text)
 
@@ -104,25 +103,53 @@ def scrub(text: str) -> str:
 _PRIVATE_KEY_BLOCK = re.compile(
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.S
 )
-#: 键名（含 `password` / `token` 等）+ 分隔符（`=` 或 `:`，两侧可有空白）+ 值。值要么是引号包着的任意内容（含空格、
-#: 任意长度，`"password": "x"` 也抹），要么是 >=6 个非空白字符的裸值。命名组 `head` = 键与分隔符（保留），其余整体换成 `***`。
-_KV_SECRET = re.compile(
-    r"(?i)(?P<head>(?:api[_-]?key|secret|passwd|password|token|auth[_-]?token|access[_-]?key)[\w-]*[\"']?\s*[:=]\s*)"
-    r"(?:(?P<dq>\"[^\"\n]*\")|(?P<sq>'[^'\n]*')|(?!\*\*\*)(?P<bare>[^\s\"',;]{6,}))"
+#: 敏感键名表（一张）：`scrub` 的「键 + 值」类规则全由它驱动。大小写不敏感，`-` / `_` 可互换（`api-key` = `api_key`）。
+#: `auth` 单独收紧（`auth` / `auth_token` / `auth-key`），不然 `author: ...` 会被当成密钥。
+SENSITIVE_KEYS: tuple[str, ...] = (
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "api-key",
+    "apikey",
+    "access-key",
+    "credential",
+    "credentials",
+    "private-key",
 )
-#: 命令行形状 `--password hunter22` / `--api-key=abc`：只保留旗标
-_CLI_SECRET = re.compile(
-    r"(?i)(--(?:api[_-]?key|secret|passwd|password|token|auth[_-]?token|access[_-]?key)(?:\s+|=))"
-    r"(?!\*\*\*)[^\s\"']+"
+_KEY_ALT = "|".join(re.escape(k).replace(r"\-", "[_-]") for k in SENSITIVE_KEYS)
+_KEY = rf"(?:(?:{_KEY_ALT})[\w-]*|auth(?:[_-](?:token|key))?(?![A-Za-z0-9]))"
+
+
+def _value(sfx: str, min_bare: int) -> str:
+    """值的三种形状（组名带后缀 `sfx` 以便同一正则里出现两次）：双引号 / 单引号（可含空格、任意长度）/ 裸值。"""
+    return (
+        rf"(?:(?P<dq{sfx}>\"[^\"\n]*\")|(?P<sq{sfx}>'[^'\n]*')"
+        rf"|(?!\*\*\*)(?P<bare{sfx}>[^\s\"',;]{{{min_bare},}}))"
+    )
+
+
+#: 一条规则、两种「键的写法」，值形状共用：
+#:  * `cli`：命令行旗标 `--password x` / `-token=x` / `--api-key "a b"`（旗标后空白或 `=`）；整个值（含引号）换成 `***`，只留旗标。
+#:    另有短旗标 `-p 'x'`（`cliP`）：`-p` 常是端口 / 路径，所以**只在值带引号时**当密码处理。
+#:  * `kv`：`password = x` / `"password": "x"` / `token: x`（`=` 或 `:`）；引号保留、内容换成 `***`；裸值至少 6 个字符（避开 `max_tokens = 4096`）。
+_SECRET_ASSIGN = re.compile(
+    rf"(?i)(?:(?P<cli>(?<![\w-])-{{1,2}}{_KEY}(?:\s+|\s*=\s*)){_value('C', 1)}"
+    rf"|(?P<cliP>(?<![\w-])-p\s+)(?:\"[^\"\n]*\"|'[^'\n]*')"
+    rf"|(?P<kv>{_KEY}[\"']?\s*[:=]\s*){_value('K', 6)})"
 )
 
 
-def _mask_kv(m: re.Match) -> str:
-    """键与分隔符原样，值整体换成 `***`（引号保留）。"""
-    head = m.group("head")
-    if m.group("dq") is not None:
+def _mask_secret(m: re.Match) -> str:
+    if m.group("cli") is not None:
+        return m.group("cli") + "***"
+    if m.group("cliP") is not None:
+        return m.group("cliP") + "***"
+    head = m.group("kv")
+    if m.group("dqK") is not None:
         return head + '"***"'
-    if m.group("sq") is not None:
+    if m.group("sqK") is not None:
         return head + "'***'"
     return head + "***"
 

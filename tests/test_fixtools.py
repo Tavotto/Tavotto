@@ -257,6 +257,16 @@ def test_read_content_is_scrubbed_of_secret_shapes(box):
         ('{"auth_token": "abc def ghi"}', "abc def", '{"auth_token": "***"}'),
         ("--password hunter22 -v", "hunter22", "--password *** -v"),
         ("--api-key=abcdefghij", "abcdefghij", "--api-key=***"),
+        ('--password "correct horse battery" -v', "horse", "--password *** -v"),
+        ("--api-key 'long secret' -v", "secret'", "--api-key *** -v"),
+        ('--token="x y" -v', "x y", "--token=*** -v"),
+        ("--TOKEN='x y' -v", "x y", "--TOKEN=*** -v"),
+        ("-p 'secret words' -v", "secret", "-p *** -v"),
+        ('--Access_Key "a b c"', "a b", "--Access_Key ***"),
+        ("--private-key 'k k k'", "k k", "--private-key ***"),
+        ("--credentials=abc", "abc", "--credentials=***"),
+        ("--pwd=hunter22", "hunter22", "--pwd=***"),
+        ("--auth bearerthing", "bearerthing", "--auth ***"),
         ('secret = "it\'s fine"', "fine", 'secret = "***"'),
     ],
 )
@@ -265,6 +275,21 @@ def test_key_value_secrets_keep_the_key_and_drop_the_whole_value(raw, secret, ke
     assert secret not in out and "***" in out
     assert kept in out and '***"***' not in out and "****" not in out
     assert readscope.scrub(out) == out  # 幂等
+
+
+@pytest.mark.parametrize(
+    "benign",
+    [
+        '--output "my file.png"',
+        "-p 8080",
+        "--dpi 300 --format 'svg and png'",
+        "author: Someone Quite Long",
+        "docker login --password-stdin",
+        "max_tokens = 4096",
+    ],
+)
+def test_non_sensitive_flags_and_values_are_not_masked(benign):
+    assert readscope.scrub(benign) == benign
 
 
 def test_every_scrub_rule_drops_the_captured_secret_itself():
@@ -350,9 +375,11 @@ def test_grep_matches_limits_and_scrubs(box):
     r = call(ctx, "grep_files", {"root": ".", "pattern": "key"})
     assert "a.py:2" in r.content and SECRET not in r.content
     put(box.proj / "many.txt", "m\n" * 20)
-    r = call(ctx, "grep_files", {"root": ".", "pattern": "^m$", "glob": "many.txt", "limit": 3})
+    r = call(ctx, "grep_files", {"root": ".", "pattern": "m", "glob": "many.txt", "limit": 3})
     assert len(r.content.splitlines()) == 4 and "first 3" in r.content
-    assert call(ctx, "grep_files", {"root": ".", "pattern": "("}).code == "bad_pattern"
+    assert (
+        call(ctx, "grep_files", {"root": ".", "pattern": "("}).content == "(no matches)"
+    )  # 字面量
     assert call(ctx, "grep_files", {"root": "."}).code == "bad_arguments"
 
 
@@ -583,11 +610,9 @@ def test_runaway_output_keeps_a_bounded_tail_and_the_process_is_stopped(box, mon
     monkeypatch.setattr(trial.subprocess, "Popen", spy)
     res = trial.run_python(
         sys.executable,
-        [
-            "-c",
-            "import sys\nwhile True:\n    print('x' * 999)\n    print('e' * 999, file=sys.stderr)",
-        ],
+        code="import sys\nwhile True:\n    print('x' * 999)\n    print('e' * 999, file=sys.stderr)",
         timeout=60,
+        session_id="s1",
     )
     assert res["status"] == "ok" and res["output_truncated"] is True
     assert len(res["stdout"].encode()) <= 4096 and len(res["stderr"].encode()) <= 4096
@@ -789,3 +814,131 @@ def test_toolspec_defaults_leave_existing_tools_unchanged():
     assert s.tier == "observe" and s.waits_for_user is False
     t = runner_tools.Tool("n", "d", {"type": "object"}, lambda a: None)
     assert t.spec() == s
+
+
+# =========================================================================== 第二轮：结构性修法
+def _fake_module_env(box, name: str, body: str) -> dict:
+    mods = box.tmp / "fakemods"
+    put(mods / f"{name}.py", body)
+    return {"PYTHONPATH": str(mods)}
+
+
+def test_try_import_runs_under_the_write_guard_and_blocks_import_time_writes(box, monkeypatch):
+    victim = put(box.tmp / "elsewhere" / "real.txt", "ORIGINAL")
+    body = (
+        "import pathlib\n"
+        "for fn in (\n"
+        f"    lambda: pathlib.Path({str(victim)!r}).write_text('CLOBBER'),\n"
+        "    lambda: (pathlib.Path.home() / 'x').write_text('dropped'),\n"
+        "):\n"
+        "    try:\n"
+        "        fn()\n"
+        "    except PermissionError:\n"
+        "        pass\n"
+    )
+    monkeypatch.setenv("PYTHONPATH", _fake_module_env(box, "writer_fx", body)["PYTHONPATH"])
+    ctx = make_ctx(box, environments={"e": sys.executable})
+    r = call(ctx, "try_import", {"env": "e", "module": "writer_fx"})
+    assert "blocked_writes: 2" in r.content and "import writer_fx: OK" in r.content
+    assert victim.read_text() == "ORIGINAL" and not (box.home / "x").exists()
+
+
+def test_inspect_environment_runs_with_the_guard_armed(box, monkeypatch):
+    seen = {}
+    real = trial.run_python
+
+    def spy(python, **kw):
+        res = real(python, **kw)
+        seen.update(res)
+        return res
+
+    monkeypatch.setattr(trial, "run_python", spy)
+    code = (
+        "import json, sys\n"
+        "try:\n"
+        "    open(sys.argv[1], 'w').write('x')\n"
+        "    print(json.dumps({'python_version': 'x.y', 'wrote': True}))\n"
+        "except PermissionError:\n"
+        "    print(json.dumps({'python_version': 'x.y', 'wrote': False}))\n"
+    )
+    outside = box.tmp / "elsewhere" / "probe.txt"
+    outside.parent.mkdir()
+    res = real(sys.executable, code=code, argv=(str(outside),), timeout=30, session_id="s1")
+    assert res["status"] == "ok" and '"wrote": false' in res["stdout"] and not outside.exists()
+    assert res["blocked_writes"]
+    ctx = make_ctx(box, environments={"e": sys.executable})
+    r = call(ctx, "inspect_environment", {"env": "e"})
+    assert not r.is_error and seen["status"] == "ok" and "blocked_writes" not in seen["stderr"]
+
+
+def test_unguardable_python_refuses_import_and_inspect_too(box, monkeypatch):
+    bad = put(box.tmp / "not_a_guard.py", "raise RuntimeError('no guard')\n")
+    monkeypatch.setattr(trial, "_guard_path", lambda: str(bad))
+    ctx = make_ctx(box, environments={"e": sys.executable})
+    assert call(ctx, "try_import", {"env": "e", "module": "json"}).code == "trial_unguarded"
+    assert call(ctx, "inspect_environment", {"env": "e"}).code == "trial_unguarded"
+
+
+def test_every_subprocess_scratch_lives_in_the_cache_dir_and_failed_cleanup_is_reported(
+    box, monkeypatch
+):
+    import tempfile
+
+    systmp = Path(tempfile.gettempdir())
+    before = {p.name for p in systmp.glob("tavotto-fixtool-*")}
+    ctx = make_ctx(box, environments={"e": sys.executable})
+    call(ctx, "try_import", {"env": "e", "module": "json"})
+    call(ctx, "inspect_environment", {"env": "e"})
+    assert {p.name for p in systmp.glob("tavotto-fixtool-*")} == before
+    assert list(trial.trial_root().iterdir()) == []  # 正常路径：清得干干净净
+    monkeypatch.setattr(trial, "_rmtree_once", lambda path: (_ for _ in ()).throw(OSError("busy")))
+    monkeypatch.setattr(trial, "CLEANUP_DELAY_S", 0)
+    r = call(ctx, "try_import", {"env": "e", "module": "json"})
+    assert not r.is_error and "cleanup_pending" in r.content
+    left = list(trial.trial_root().iterdir())
+    assert len(left) == 1 and (left[0] / trial.PENDING_MARKER).is_file()
+    r = call(ctx, "inspect_environment", {"env": "e"})
+    assert "cleanup_pending" in r.content
+    monkeypatch.undo()
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", str(box.data))
+    assert trial.sweep_stale_trials() >= 1
+
+
+def test_grep_is_a_literal_search_and_never_backtracks(box):
+    import time
+
+    put(box.proj / "evil.txt", "a" * 40 + "!\n")
+    put(box.proj / "lit.txt", "x (a+)+$ y\nplain Needle\n")
+    ctx = make_ctx(box)
+    t0 = time.monotonic()
+    r = call(ctx, "grep_files", {"root": ".", "pattern": "(a+)+$"})
+    assert time.monotonic() - t0 < 2.0
+    assert r.content.strip() == "lit.txt:1: x (a+)+$ y"
+    assert call(ctx, "grep_files", {"root": ".", "pattern": "a.*"}).content == "(no matches)"
+    assert "lit.txt:2" in call(ctx, "grep_files", {"root": ".", "pattern": "Needle"}).content
+    assert call(ctx, "grep_files", {"root": ".", "pattern": "needle"}).content == "(no matches)"
+    ci = call(ctx, "grep_files", {"root": ".", "pattern": "needle", "ignore_case": True})
+    assert "lit.txt:2" in ci.content
+    assert "regular expression" not in REGISTRY["grep_files"].description.split("NOT")[0]
+    assert "NOT a regular expression" in REGISTRY["grep_files"].description
+
+
+def test_followed_file_symlink_is_judged_and_recorded_by_its_target(box):
+    outside = put(box.home / "other" / "t.txt", "needle outside")
+    inside = put(box.proj / "real.txt", "needle inside")
+    (box.proj / "ln_out.txt").symlink_to(outside)
+    (box.proj / "ln_in.txt").symlink_to(inside)
+    ctx = make_ctx(box)
+    r = call(ctx, "grep_files", {"root": ".", "pattern": "needle"})
+    assert "needle outside" in r.content and "needle inside" in r.content
+    assert [x["path"] for x in ctx.reads] == [os.path.realpath(outside)]
+    assert ctx.reads[0]["tool"] == "grep_files"
+    ctx2 = make_ctx(box)
+    call(ctx2, "read_file", {"path": "ln_out.txt"})
+    call(ctx2, "read_file", {"path": "ln_in.txt"})
+    assert [x["path"] for x in ctx2.reads] == [os.path.realpath(outside)]
+    # 指向拦截区 / 范围外的链接不被跟随
+    put(box.home / ".ssh" / "k.txt", "needle secret")
+    (box.proj / "ln_ssh.txt").symlink_to(box.home / ".ssh" / "k.txt")
+    ctx3 = make_ctx(box)
+    assert "secret" not in call(ctx3, "grep_files", {"root": ".", "pattern": "needle"}).content

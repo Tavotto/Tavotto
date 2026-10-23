@@ -8,7 +8,6 @@ from __future__ import annotations
 import fnmatch
 import json
 import os
-import re
 import time
 from collections import deque
 
@@ -147,7 +146,10 @@ def list_dir(ctx: FixContext, args: dict) -> ToolResult:
 
 # --------------------------------------------------------------------------- find / grep
 def _walk(ctx: FixContext, root: str, deadline: float):
-    """受限遍历：不跟随目录符号链接、跳过大目录与拦截区、限时。产出文件的绝对路径。"""
+    """受限遍历：不跟随目录符号链接、跳过大目录与拦截区、限时。产出 `(文件的绝对路径, 解析结果)`。
+
+    文件符号链接会被跟随，`解析结果` 就是**链接目标**的 `ReadScope.check`（项目外判断以目标为准；与 `resolve_or_error`
+    同一个判据）；普通文件为 None。读了内容的调用方要对非 None 的结果调 `ctx.note_read`。"""
     stack = deque([(root, -1)])  # (目录, site-packages 之下的层数；-1 = 不在其中)
     while stack:
         cur, site = stack.popleft()
@@ -168,11 +170,11 @@ def _walk(ctx: FixContext, root: str, deadline: float):
                         continue
                     stack.append((full, nxt))
                 elif e.is_file(follow_symlinks=False):
-                    yield full
+                    yield full, None
                 elif e.is_symlink():
-                    real = os.path.realpath(full)
-                    if os.path.isfile(real) and ctx.scope.check(real).ok:
-                        yield full
+                    target = ctx.scope.check(full)
+                    if target.ok and os.path.isfile(target.real):
+                        yield full, target
             except OSError:
                 continue
 
@@ -189,7 +191,7 @@ def find_files(ctx: FixContext, args: dict) -> ToolResult:
     limit = _int(args.get("limit"), 100, 1, FIND_LIMIT_MAX) or 100
     deadline = time.monotonic() + SCAN_SECONDS
     found: list[str] = []
-    for full in _walk(ctx, r.real, deadline):
+    for full, _target in _walk(ctx, r.real, deadline):
         rel = os.path.relpath(full, r.real).replace(os.sep, "/")
         if ctx.scope.is_denied(full) or not _glob_ok(os.path.basename(full), rel, glob):
             continue
@@ -204,15 +206,15 @@ def find_files(ctx: FixContext, args: dict) -> ToolResult:
 
 
 def grep_files(ctx: FixContext, args: dict) -> ToolResult:
+    """**字面量**搜索（不是正则）：按原样 `in` 匹配，可选大小写不敏感。没有正则就没有灾难性回溯这一类问题。"""
     pattern = args.get("pattern")
-    if not isinstance(pattern, str) or not pattern or len(pattern) > 500:
+    if not isinstance(pattern, str) or not pattern or len(pattern) > 500 or "\n" in pattern:
         return err(
-            "bad_arguments", "`pattern` must be a non-empty regular expression (at most 500 chars)."
+            "bad_arguments",
+            "`pattern` must be a non-empty single-line text to search for (at most 500 chars).",
         )
-    try:
-        rx = re.compile(pattern)
-    except re.error:
-        return err("bad_pattern", "`pattern` is not a valid regular expression.")
+    ignore_case = args.get("ignore_case") is True
+    needle = pattern.casefold() if ignore_case else pattern
     r = resolve_or_error(ctx, args.get("root"), "grep_files")
     if isinstance(r, ToolResult):
         return r
@@ -221,7 +223,8 @@ def grep_files(ctx: FixContext, args: dict) -> ToolResult:
     deadline = time.monotonic() + SCAN_SECONDS
     hits: list[str] = []
     files = 0
-    for full in _walk(ctx, r.real, deadline):
+    noted: set[str] = set()
+    for full, target in _walk(ctx, r.real, deadline):
         rel = os.path.relpath(full, r.real).replace(os.sep, "/")
         if ctx.scope.is_denied(full) or not _glob_ok(os.path.basename(full), rel, glob):
             continue
@@ -232,11 +235,14 @@ def grep_files(ctx: FixContext, args: dict) -> ToolResult:
                 data = f.read(GREP_FILE_BYTES)
         except OSError:
             continue
+        if target is not None and target.real not in noted:
+            noted.add(target.real)  # 实际读的是链接目标：项目外就记进 reads
+            ctx.note_read(target, "grep_files")
         if b"\x00" in data[:8192]:
             continue
         files += 1
         for i, line in enumerate(data.decode("utf-8", errors="replace").splitlines(), 1):
-            if rx.search(line):
+            if needle in (line.casefold() if ignore_case else line):
                 hits.append(f"{rel}:{i}: {line[:300]}")
                 if len(hits) >= limit:
                     break
@@ -321,17 +327,28 @@ def inspect_environment(ctx: FixContext, args: dict) -> ToolResult:
             "env_unknown",
             "Unknown environment id. Call list_environments first and use one of its ids.",
         )
-    res = trial.run_python(python, ["-c", _INSPECT_SRC], timeout=trial.INSPECT_TIMEOUT_S)
+    res = trial.run_python(
+        python, code=_INSPECT_SRC, timeout=trial.INSPECT_TIMEOUT_S, session_id=ctx.session_id
+    )
     if res["status"] != "ok":
-        return err(res["status"], f"Could not inspect the environment ({res['status']}).")
+        return err(
+            res["status"],
+            f"Could not inspect the environment ({res['status']})." + trial.guard_note(res),
+        )
     try:
         info = json.loads(res["stdout"].strip().splitlines()[-1])
     except (ValueError, IndexError):
-        return err("inspect_failed", "The environment did not answer in the expected form.")
+        return err(
+            "inspect_failed",
+            "The environment did not answer in the expected form." + trial.guard_note(res),
+        )
     pk = info.get("packages")
     if isinstance(pk, list):
         info["package_count"] = len(pk)
-    return ok(json.dumps(info, ensure_ascii=False, indent=1), "inspected environment")
+    return ok(
+        json.dumps(info, ensure_ascii=False, indent=1) + trial.guard_note(res),
+        "inspected environment",
+    )
 
 
 # --------------------------------------------------------------------------- read_logs
@@ -446,12 +463,20 @@ OBSERVE_TOOLS: tuple[FixTool, ...] = (
     ),
     FixTool(
         "grep_files",
-        "Search text files under a root directory with a regular expression. Returns `file:line: text`. "
+        "Search text files under a root directory for a literal piece of text (NOT a regular expression: every "
+        "character, including `.` `*` `(` `[`, is matched as itself). Returns `file:line: text`. "
         "Skips binaries, large files, node_modules, .git; has a count and time limit.",
         obj(
             {
                 "root": _PATH,
-                "pattern": {"type": "string", "description": "Python regular expression."},
+                "pattern": {
+                    "type": "string",
+                    "description": "Literal text to look for in a single line (not a regular expression).",
+                },
+                "ignore_case": {
+                    "type": "boolean",
+                    "description": "Match upper and lower case alike (default false).",
+                },
                 "glob": {"type": "string", "description": "Only files matching this glob."},
                 "limit": {"type": "integer", "description": "Maximum matches (default 50)."},
             },
