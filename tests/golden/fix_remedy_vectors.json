@@ -1,0 +1,97 @@
+{
+  "_comment": "智能修复 remedy 的前后端同源对（ADR 0148）。后端 tests/test_fixrouter_pair.py 用 fixrouter.choose 逐条复算 vectors；前端 web/src/lib/fixRemedy.test.ts 用 isRemedy / REMEDY_FIELDS 与 prepView 逐条读同一份。fields = 每种 kind 除 kind 外的字段名（闭集）。",
+  "kinds": [
+    "switch_native",
+    "install_packages",
+    "change_python",
+    "convert_to_matplotlib",
+    "ai_fix",
+    "connect_ai",
+    "feedback"
+  ],
+  "fields": {
+    "switch_native": ["silent"],
+    "install_packages": ["ask", "packages"],
+    "change_python": ["from", "to"],
+    "convert_to_matplotlib": ["source"],
+    "ai_fix": [],
+    "connect_ai": [],
+    "feedback": ["tried"]
+  },
+  "vectors": [
+    {
+      "name": "safe guard blocked -> silent native",
+      "failure": "safe_file_operation_blocked",
+      "ctx": { "native_allowed": true },
+      "remedy": { "kind": "switch_native", "silent": true }
+    },
+    {
+      "name": "listed package in an allowed environment -> install without asking",
+      "failure": "missing_dependency",
+      "ctx": { "missing_installable": true, "packages": ["scipy"], "auto_install_allowed": true },
+      "remedy": { "kind": "install_packages", "packages": ["scipy"], "ask": false }
+    },
+    {
+      "name": "unlisted package -> install but ask",
+      "failure": "missing_dependency",
+      "ctx": { "missing_installable": true, "packages": ["totally-unlisted-pkg"], "auto_install_allowed": true },
+      "remedy": { "kind": "install_packages", "packages": ["totally-unlisted-pkg"], "ask": true }
+    },
+    {
+      "name": "python out of range -> change python",
+      "failure": "project_env_unsupported_python",
+      "ctx": { "python_from": "3.9.1", "python_to": "3.12" },
+      "remedy": { "kind": "change_python", "from": "3.9.1", "to": "3.12" }
+    },
+    {
+      "name": "python mismatch without a suggestion",
+      "failure": "root_python_mismatch",
+      "ctx": { "python_from": "3.14" },
+      "remedy": { "kind": "change_python", "from": "3.14", "to": null }
+    },
+    {
+      "name": "raster script -> convert",
+      "failure": "no_figures_captured",
+      "ctx": { "no_figure_hint": { "kind": "raster_script", "library": "pillow" } },
+      "remedy": { "kind": "convert_to_matplotlib", "source": "python" }
+    },
+    {
+      "name": "R source -> convert",
+      "failure": "script_error",
+      "ctx": { "source_language": "r" },
+      "remedy": { "kind": "convert_to_matplotlib", "source": "r" }
+    },
+    {
+      "name": "other failure with AI connected",
+      "failure": "script_error",
+      "ctx": { "ai_connected": true },
+      "remedy": { "kind": "ai_fix" }
+    },
+    {
+      "name": "other failure without AI",
+      "failure": "script_error",
+      "ctx": {},
+      "remedy": { "kind": "connect_ai" }
+    },
+    {
+      "name": "ai rounds used up -> feedback",
+      "failure": "script_error",
+      "ctx": { "ai_connected": true, "ai_rounds_exhausted": true },
+      "remedy": { "kind": "feedback", "tried": [] }
+    },
+    {
+      "name": "fourth remedy in one run -> feedback",
+      "failure": "script_error",
+      "ctx": {
+        "ai_connected": true,
+        "installed_this_run": true,
+        "history": [
+          { "run": 1, "seq": 1, "changed": [] },
+          { "run": 1, "seq": 2, "changed": ["profile"] },
+          { "run": 1, "seq": 3, "changed": ["interpreter"] }
+        ]
+      },
+      "remedy": { "kind": "feedback", "tried": ["install_packages", "switch_native", "change_python"] }
+    }
+  ]
+}

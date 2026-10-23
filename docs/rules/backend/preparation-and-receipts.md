@@ -10,6 +10,7 @@
   runtime 的事实 / 回执 / 错误 / 取消时刻）。计划**只读**产品自己的决定
   （`pool.resolve_worker_python` / `projectenv.state` / `workdir` / `depresolve`），不替产品
   选环境、不装包、不改 cwd。终局字段先于终局 `status` 写（与 `exportjob` 同一条纪律）。
+- **失败时报告带 `remedy`（智能修复路由，ADR 0148 提议）**：`prepsession.report` 在失败 / 没出图 / 走不通的结局上调用 `fixrouter.choose`，把唯一修法放进新字段 `remedy`（闭集 `switch_native / install_packages / change_python / convert_to_matplotlib / ai_fix / connect_ai / feedback`，一次运行最多 3 种，第 4 次 `feedback`）。路由只标注、不执行：safe→native 仍由 `execpolicy.decide_fallback` 做（ADR 0127 不改）。「AI 连没连」由 app 注入 `SESSIONS.ai_connected`（`ai_bridge.capabilities()` 的 `usable`），引擎不探测。诊断包 `detail-runs.json` 的 `fix_journey` 读 `SESSIONS.fix_journeys`。看护 `tests/test_fixrouter*.py`。
 - **执行只有一条路**：`pool.build_owned()`（`build()` + 池锁里给出的 `created`）。准备接口不另写
   `get + ensure_built`——自动 fallback 只有一份实现，漏掉一个入口就是「素材库里能打开、准备
   接口打不开」。已 build 且解释器决策没变的会话直接用它记下的 build 响应装配回执，不发请求。

@@ -14,6 +14,7 @@ import {
   LoaderCircle,
   Minus,
   RotateCcw,
+  Sparkles,
   Unplug,
   X,
 } from '@/components/ui/icons'
@@ -36,7 +37,7 @@ import { envNotUsedSentence, visibleNotUsed } from '@/lib/envRejectionText'
 import { markAutoShown, wasAutoShown } from '@/lib/guideCardSeen'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { originFactsOf, originViewOfCard } from '@/lib/importOrigin'
-import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, targetName, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
+import { dialogKinds, finishedWithFigures, nativeFallbackNote, prepRowKey, prepView, targetName, withAiUnavailable, type PrepPrimary, type PrepTone, type PrepView } from '@/lib/preparationText'
 import { dependenciesLine, issueLine, roleLabel, scanCard, scanLine, type ScanCardKind } from '@/lib/projectScanText'
 import { missingRequirements, readTokens, type ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import { cn } from '@/lib/utils'
@@ -64,7 +65,9 @@ import { exactPanelRender, renderKeyOf, useRenderStore } from '@/store/renderSto
 import { enterEdit, noteAddedPanelFor, type EnterEditHost } from '@/store/prepEnterEdit'
 import { findFigurePanel } from '@/store/documentStore'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { useAiFixStore } from '@/store/aiFixStore'
 import { useConvertStore } from '@/store/convertStore'
+import { useDiagSendStore } from '@/store/diagSendStore'
 import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { useScriptArgvStore } from '@/store/scriptArgvStore'
 import { useScriptInputStore } from '@/store/scriptInputStore'
@@ -259,12 +262,14 @@ interface ShellProps {
   more?: ReactNode
   ghost?: ReactNode
   primary?: ReactNode
+  /** 标题与这一步下面那颗显眼的次按钮「✦ 使用你的 AI 来修复」（失败卡；不是横条，不占整行以外的位置） */
+  aiFix?: ReactNode
   /** 覆盖「×」的去向（默认收起整张引导卡）；R / MATLAB 入口卡的 × 是“不提议了”，并且没有“缩成角标” */
   onClose?: () => void
 }
 
 /** 卡片外壳：步骤 · 工具（— ⋯ ×）/ 图标 + 标题 / 这一步 / 详情 / 详情 · 稍后 · 主按钮 */
-function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, more, ghost, primary, onClose }: ShellProps) {
+function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, more, ghost, primary, aiFix, onClose }: ShellProps) {
   const [open, setOpen] = useState(false)
   const ui = useUiStore.getState()
   return (
@@ -322,6 +327,7 @@ function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, m
           </p>
         </div>
         {slot}
+        {aiFix}
         {details && open && (
           <div
             data-prep-details
@@ -652,6 +658,10 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.dismiss')
     case 'convert':
       return pt('convert.btn.start')
+    case 'ai_fix':
+      return pt('btn.aiFix')
+    case 'feedback':
+      return pt('btn.send')
   }
 }
 
@@ -744,6 +754,20 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
       case 'convert':
         // 不 await：生成要几十秒，进度与结果由卡片读 convertStore；失败也落在 store 里
         void useConvertStore.getState().start(p.script, p.library, p.path, p.language)
+        return null
+      case 'ai_fix':
+        // 没连 AI：去设置的 AI 页连，连好回来自动接着修；已连：开始修复（aiFixStore 管，ADR 0148）。不 await：修复是后台任务
+        if (report) {
+          void useAiFixStore.getState().request(entry.key, {
+            session_id: report.session_id,
+            script: report.target.script ?? '',
+            attemptId: report.provider.attempt_id,
+          })
+        }
+        return null
+      case 'feedback':
+        // 打开发送问题反馈对话框（本机备包，逐次确认；源码复选框默认不勾——ADR 0118）
+        useDiagSendStore.getState().setOpen(true)
         return null
     }
   }
@@ -1063,9 +1087,15 @@ export function ForeignScriptCard() {
   )
 }
 
-function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
+function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepView }) {
   useTranslation(['workspace', 'errors'])
   const report = entry.report
+  // 点过「✦ 使用你的 AI 来修复」：AI 暂时修不了（`ai_unavailable`）就落成反馈卡；只对点的那一次尝试有效，重新运行后换回原卡
+  const fix = useAiFixStore((s) => s.entries[entry.key])
+  const view =
+    fix?.phase === 'unavailable' && fix.ref.attemptId === (report?.provider.attempt_id ?? null)
+      ? withAiUnavailable(baseView)
+      : baseView
   const script = targetName(entry)
   const [localError, setLocalError] = useState<string | null>(null)
   const [resultsOpen, setResultsOpen] = useState(false)
@@ -1100,12 +1130,20 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   }
   const scriptTargetName = 'id' in entry.target ? null : entry.target.script
 
-  const primary = p && (
+  // 反馈卡的主按钮：复用设置页同一个入口（开关关着时不渲染）；其余主按钮是下面那颗普通 Button
+  const feedbackPrimary = p?.kind === 'feedback' ? <SendReportButton variant="primary" size="md" label={pt('btn.send')} /> : null
+  const fixBusy = fix?.phase === 'starting'
+  const fixAction = async () => {
+    setLocalError(null)
+    const err = await runPrimary({ kind: 'ai_fix' }, workdir)
+    if (err) setLocalError(err)
+  }
+  const primary = p && p.kind !== 'feedback' && (
     <Button
       variant="primary"
       size="md"
       data-prep-primary={primaryId(p)}
-      loading={pending}
+      loading={pending || (p.kind === 'ai_fix' && fixBusy)}
       disabled={pending || disabled}
       onClick={async () => {
         setLocalError(null)
@@ -1113,6 +1151,7 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         if (err) setLocalError(err)
       }}
     >
+      {p.kind === 'ai_fix' && <Sparkles size={ICON_SIZE.sm} />}
       {primaryLabel(p, workdir)}
     </Button>
   )
@@ -1121,6 +1160,21 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const failedNoAction =
     !p && report?.outcome.kind === 'failed' && report.outcome.reason !== 'dependency_preparation'
   const fallbackPrimary = failedNoAction ? <SendReportButton variant="primary" size="md" /> : null
+  // 显眼的次按钮（维护者裁决：每次失败都出）：蓝色描边 + 图标集的 Sparkles（不拿 ✦ 字符当图标，iconography 门禁），颜色全走语义 token；主按钮仍只有一个
+  const aiFix = view.aiFix ? (
+    <Button
+      variant="ghost"
+      size="md"
+      data-prep-ai-fix
+      className="self-start text-accent inset-ring inset-ring-accent hover:bg-accent-subtle"
+      loading={fixBusy}
+      disabled={pending}
+      onClick={fixAction}
+    >
+      <Sparkles size={ICON_SIZE.sm} />
+      {pt('btn.aiFix')}
+    </Button>
+  ) : null
   const ghost =
     view.ghost === 'later' ? (
       <Later />
@@ -1209,7 +1263,8 @@ function SessionCard({ entry, view }: { entry: PrepEntry; view: PrepView }) {
         detailsLabel={ownsInput ? pt('card.allOutput') : undefined}
         more={ownsInput ? <InputMore answer={answer} /> : undefined}
         ghost={secondary || ghost}
-        primary={ownsInput ? <AnswerButton answer={answer} /> : (primary ?? fallbackPrimary)}
+        aiFix={aiFix}
+        primary={ownsInput ? <AnswerButton answer={answer} /> : (feedbackPrimary ?? primary ?? fallbackPrimary)}
       />
       {report && (report.captured ?? []).length > 1 && (
         <ProbeResultsDialog

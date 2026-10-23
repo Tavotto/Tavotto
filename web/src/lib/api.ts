@@ -3,6 +3,7 @@ import { ArtifactValidationError, FIGSIZE_SOURCE_POLICY, verifiedSource, type Ar
 import { apiUrl, apiUrlFor, currentProjectId, withProject, withProjectFor } from '@/lib/session'
 import { formatMessage, i18n, literal, msg, t, type UiMessage } from '@/i18n'
 import type { ExportRoute } from '@/lib/exportRoute'
+import type { Remedy } from '@/lib/fixRemedy'
 import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
 import type { PreviewMetadata } from '@/lib/previewBudget'
@@ -3092,7 +3093,23 @@ export interface AiCapabilities {
   checked_at_ms: number
   /** TAF 实验开关（`ai.taf.enabled`）是否开着；老后端没有，缺省 = 关。助手面板的「从数据出图」只在它为真时出现 */
   taf_enabled?: boolean
+  /**
+   * 「使用你的 AI 来修复」的 AI 环境修复任务后端能不能真跑（智能修复主线，ADR 0148）。老后端没有；`false` = 端点契约已定、
+   * 任务还没实现：按钮照常出现（每次失败都出），点击走「这个问题 AI 暂时还不会修」降级
+   */
+  ai_fix_available?: boolean
 }
+
+/** `POST /api/ai/fix` 的响应：`ok: false` + 稳定原因码（目前只有 `ai_fix_unavailable`）；成功形状由后续 PR 定 */
+export type AiFixResponse = { ok: true } | { ok: false; reason: string }
+
+/** 请求 AI 环境修复（ADR 0148）。body：准备会话 id 与脚本（项目相对路径） */
+export const requestAiFix = (body: { session_id: string; script: string }) =>
+  jsonFetch<AiFixResponse>('/api/ai/fix', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
 
 /* --- capabilities 的读取助手（前端只认后端返回的 Agent，不自己列名单）--- */
 
@@ -6264,6 +6281,8 @@ export interface PreparationReport {
   failed_figures?: { stem: string; code?: string }[]
   /** 这次（无参数）运行替换掉的旧图名（T09b，与 `ProbeResult.unlinked_stems` 同一口径）；老后端没有 */
   unlinked_stems?: string[]
+  /** 智能修复路由选的唯一修法（ADR 0148，`engine/fixrouter.py`）；没失败 / 还在跑 / 老后端 = null 或缺省。认不出的形状前端当没有（`isRemedy`） */
+  remedy?: Remedy | null
   /** 跑完没出图时的原因（`rasterhint`）：脚本自己用位图库把图片写成了文件，不是 Matplotlib 图；只是提示，不改 outcome / facts。老后端没有 */
   no_figure_hint?: {
     kind: 'raster_script'

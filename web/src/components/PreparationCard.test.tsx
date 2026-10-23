@@ -40,6 +40,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   resolveConvertDependencies: vi.fn(),
   replanConvertDependencies: vi.fn(),
   aiCancel: vi.fn().mockResolvedValue({ ok: true }),
+  requestAiFix: vi.fn(),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/liveSync')>()),
@@ -96,6 +97,9 @@ import { useDepRepairStore } from '@/store/depRepairStore'
 import { useConvertStore, POLL_MS } from '@/store/convertStore'
 import { useForeignScriptStore } from '@/store/foreignScriptStore'
 import { useAiStore } from '@/store/aiStore'
+import { requestAiFix } from '@/lib/api'
+import { useAiFixStore } from '@/store/aiFixStore'
+import { useOnboardingStore } from '@/store/onboardingStore'
 import { adoptConvert, aiCancel, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, startConvert } from '@/lib/api'
 import type { DependencyPreparationOffer } from '@/lib/api'
 
@@ -469,6 +473,10 @@ const STATES: Record<string, Partial<PreparationReport>> = {
     actions: [action('run'), action('recheck')],
   },
   cancelled: { phase: 'cancelled', outcome: { kind: 'cancelled' }, actions: [action('run'), action('recheck')] },
+  // 智能修复（ADR 0148）：remedy 决定主按钮；「✦ 使用你的 AI 来修复」次按钮每张失败卡都有，不算主按钮也不算一句话
+  errRemedyAi: { ...fromBackend('plain_exception'), remedy: { kind: 'ai_fix' } },
+  errRemedyConnect: { ...fromBackend('plain_exception'), remedy: { kind: 'connect_ai' } },
+  errRemedyFeedback: { ...fromBackend('plain_exception'), remedy: { kind: 'feedback', tried: ['switch_native'] } },
 }
 
 let host: HTMLElement
@@ -3003,5 +3011,164 @@ describe('停止运行（V2 PR4 第二轮）：用户不感知运行层，只有
     mockAct.mockResolvedValueOnce({ claimed: true, report: runningNative() })
     await act(async () => (panel().querySelector('[data-prep-stop]') as HTMLButtonElement).click())
     expect(cancelNativeSession).not.toHaveBeenCalled()
+  })
+})
+
+describe('智能修复（ADR 0148）：每张失败卡都有「✦ 使用你的 AI 来修复」', () => {
+  const aiBtn = () => panel()?.querySelector('[data-prep-ai-fix]') as HTMLButtonElement | null
+  const mockFix = vi.mocked(requestAiFix)
+  const usable = (on: boolean) =>
+    ({ agents: [{ id: 'claude', usable: on }], endpoints: [], presets: [], checked_at_ms: 0 }) as never
+
+  beforeEach(() => {
+    mockFix.mockReset()
+    useAiFixStore.getState().reset()
+    useAiStore.setState({ caps: usable(false), loadCaps: vi.fn(async () => {}) })
+    useUiStore.setState({ settingsOpen: false, settingsSection: null })
+    useDiagSendStore.setState({ capability: { enabled: true } as never })
+    useOnboardingStore.setState({ status: 'idle' } as never)
+  })
+  afterEach(() => {
+    useDiagSendStore.setState({ capability: null })
+    useAiFixStore.getState().reset()
+    useAiStore.setState({ caps: null })
+  })
+
+  it('失败卡都有这颗按钮（蓝色描边用语义 token，不是主按钮）；ready / 运行中 / 成功没有', async () => {
+    const withBtn = ['errPlain', 'errRemedyAi', 'errRemedyConnect', 'errRemedyFeedback', 'depsRuntime', 'depsUnknown', 'depsUnresolvable', 'depsStdlib', 'fileOpsBlocked']
+    const without = ['ready', 'running', 'completedMany', 'cancelled', 'workdir']
+    for (const name of [...withBtn, ...without]) {
+      await mount()
+      await openWith(report(STATES[name]))
+      if (withBtn.includes(name)) {
+        // 主按钮就是 AI 修复时不重复摆次按钮（errRemedyAi / errRemedyConnect）
+        const primaryIsAi = primary()?.dataset.prepPrimary === 'ai_fix'
+        expect(aiBtn() !== null || primaryIsAi, name).toBe(true)
+        if (aiBtn()) {
+          expect(aiBtn()!.textContent).toBe('使用你的 AI 来修复')
+          expect(aiBtn()!.className).toMatch(/inset-ring-accent/)
+          expect(aiBtn()!.className).not.toMatch(/#[0-9a-f]{3,6}/i)
+          expect(aiBtn()!.dataset.variant).not.toBe('primary')
+        }
+      } else {
+        expect(aiBtn(), name).toBeNull()
+        expect(primary()?.dataset.prepPrimary, name).not.toBe('ai_fix')
+      }
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('remedy 为 ai_fix / connect_ai：主按钮就是它；feedback：一句话 +「发送」', async () => {
+    await mount()
+    await openWith(report(STATES.errRemedyAi))
+    expect(primary()?.dataset.prepPrimary).toBe('ai_fix')
+    expect(primary()?.textContent).toBe('使用你的 AI 来修复')
+    expect(aiBtn()).toBeNull()
+    await act(async () => root.unmount())
+    host.remove()
+    await mount()
+    await openWith(report(STATES.errRemedyFeedback))
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个脚本暂时用不了，发给我们看看？')
+    expect(panel().querySelector('[data-send-report]')?.textContent).toBe('发送')
+    expect(primary()).toBeNull() // 反馈卡的主按钮是 SendReportButton（打开发送对话框，源码默认不勾）
+    expect(aiBtn()).not.toBeNull()
+  })
+
+  it('没连 AI：点它打开设置的 AI 页；连好（caps 里出现可用的 AI）后自动接着进入修复，不用再点', async () => {
+    mockFix.mockResolvedValue({ ok: false, reason: 'ai_fix_unavailable' })
+    await mount()
+    await openWith(report(STATES.errPlain))
+    await act(async () => aiBtn()!.click())
+    expect(useUiStore.getState().settingsOpen).toBe(true)
+    expect(useUiStore.getState().settingsSection).toBe('ai')
+    expect(mockFix).not.toHaveBeenCalled()
+    expect(useAiFixStore.getState().entries[useProjectPreparationStore.getState().focus!]?.phase).toBe('awaiting_connect')
+    // 用户在设置里连好了
+    await act(async () => {
+      useAiStore.setState({ caps: usable(true) })
+    })
+    expect(mockFix).toHaveBeenCalledTimes(1)
+    expect(mockFix).toHaveBeenCalledWith({ session_id: 'psess-1', script: 'plot.py' })
+  })
+
+  it('设置关了还没连上：放弃等待，之后偶然连上 AI 不会冷不丁开始修', async () => {
+    await mount()
+    await openWith(report(STATES.errPlain))
+    await act(async () => aiBtn()!.click())
+    await act(async () => useUiStore.getState().setSettingsOpen(false))
+    await act(async () => {
+      useAiStore.setState({ caps: usable(true) })
+    })
+    expect(mockFix).not.toHaveBeenCalled()
+  })
+
+  it('已连 AI：调 POST /api/ai/fix；遇到 ai_fix_unavailable 落成「AI 暂时还不会修」+ 发送', async () => {
+    useAiStore.setState({ caps: usable(true) })
+    mockFix.mockResolvedValue({ ok: false, reason: 'ai_fix_unavailable' })
+    await mount()
+    await openWith(report(STATES.errPlain))
+    await act(async () => aiBtn()!.click())
+    expect(mockFix).toHaveBeenCalledWith({ session_id: 'psess-1', script: 'plot.py' })
+    expect(useUiStore.getState().settingsOpen).toBe(false)
+    expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('这个问题 AI 暂时还不会修')
+    expect(panel().dataset.prepState).toBe('ai_unavailable')
+    expect(panel().querySelector('[data-send-report]')?.textContent).toBe('发送')
+    expect(aiBtn()).toBeNull()
+    expect(visiblePrimaryButtons(panel())).toBeLessThanOrEqual(1)
+  })
+
+  it('capabilities 说 ai_fix_available === false：按钮照常出现，点击直接走降级，不发请求', async () => {
+    useAiStore.setState({ caps: { ...(usable(true) as object), ai_fix_available: false } as never })
+    await mount()
+    await openWith(report(STATES.errPlain))
+    expect(aiBtn()).not.toBeNull()
+    await act(async () => aiBtn()!.click())
+    expect(mockFix).not.toHaveBeenCalled()
+    expect(panel().dataset.prepState).toBe('ai_unavailable')
+  })
+
+  it('降级只对点的那次尝试有效：重新运行出新尝试后卡片换回原样', async () => {
+    useAiStore.setState({ caps: { ...(usable(true) as object), ai_fix_available: false } as never })
+    await mount()
+    await openWith(report(STATES.errPlain))
+    await act(async () => aiBtn()!.click())
+    expect(panel().dataset.prepState).toBe('ai_unavailable')
+    const next = report({
+      ...STATES.errPlain,
+      observation_seq: 9,
+      provider: { plan_id: 'p', attempt_id: 'prep-NEW', attempts: 2, dependency: null },
+    })
+    await act(async () => {
+      useProjectPreparationStore.setState((st) => {
+        const key = st.focus!
+        return { entries: { ...st.entries, [key]: { ...st.entries[key], report: next } } }
+      })
+    })
+    expect(panel().dataset.prepState).toBe('failed')
+    expect(aiBtn()).not.toBeNull()
+  })
+
+  it('教程层激活时：整张准备卡让位，不出现任何「连接 AI」相关按钮', async () => {
+    await mount()
+    await openWith(report(STATES.errPlain))
+    expect(aiBtn()).not.toBeNull()
+    await act(async () => {
+      useOnboardingStore.setState({ status: 'active' } as never)
+    })
+    expect(host.querySelector('[data-prep-card]')).toBeNull()
+    expect(host.querySelector('[data-prep-ai-fix]')).toBeNull()
+  })
+
+  it('英文界面：按钮文案是英文，没有「执行器 / CLI / agent」字样', async () => {
+    await i18n.changeLanguage('en-US')
+    await mount()
+    await openWith(report(STATES.errPlain))
+    expect(aiBtn()?.textContent).toBe('Fix it with your AI')
+    for (const lng of ['zh-CN', 'en-US']) {
+      const ws = resources[lng as keyof typeof resources].workspace.prep
+      const text = JSON.stringify([ws.btn.aiFix, ws.line.feedback, ws.line.aiUnavailable])
+      expect(text).not.toMatch(/执行器|CLI|agent/i)
+    }
   })
 })

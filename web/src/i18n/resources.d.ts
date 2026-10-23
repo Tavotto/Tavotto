@@ -5365,6 +5365,7 @@ export default interface Resources {
     "prep": {
       "aria": "准备 {{script}}",
       "btn": {
+        "aiFix": "使用你的 AI 来修复",
         "answer": "回答",
         "background": "放到后台",
         "cancelScan": "取消检查",
@@ -5386,6 +5387,7 @@ export default interface Resources {
         "run": "运行",
         "runAgain": "再运行",
         "runAnyway": "仍然运行",
+        "send": "发送",
         "stop": "停止运行",
         "switchScope": "用本项目的版本",
         "useIt": "用它",
@@ -5592,6 +5594,7 @@ export default interface Resources {
         "toUserLong": "你电脑上已有的那套，装坏了不能完整回滚"
       },
       "line": {
+        "aiUnavailable": "这个问题 AI 暂时还不会修",
         "argsMissing_other": "还差 {{count}} 个参数",
         "argsReady": "参数已填好",
         "argsRejected_other": "脚本不认你填的 {{count}} 个参数",
@@ -5623,6 +5626,7 @@ export default interface Resources {
         "expired": "上次的记录没了",
         "failed": "运行出错了",
         "failedAfterFallback": "安全运行不能照常执行，改用原样运行后又出错了",
+        "feedback": "这个脚本暂时用不了，发给我们看看？",
         "fileOpsBlocked": "脚本改了项目里的文件又去读，安全运行不会真改，结果会不同，所以没有出图",
         "fileOpsBlockedOff": "原样运行被关掉了；脚本改了项目里的文件又去读，安全运行结果会不同，所以没有出图",
         "fileOpsBlockedSafeOnly": "这个项目设成了只用安全运行；脚本改了文件又去读，结果会不同，所以没有出图",

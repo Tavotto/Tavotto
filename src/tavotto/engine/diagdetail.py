@@ -185,6 +185,8 @@ class Sources:
     registry: object | None = (
         None  # 项目的脚本注册表（把焦点面板的 runtime 素材 id 解析成 script / stem）
     )
+    #: 智能修复的「修复经过」（`prepsession.SESSIONS.fix_journeys`，ADR 0148）：每个会话走过的修法、结局码、最后的报错
+    fix_journey: list[dict] | None = None
 
 
 @dataclasses.dataclass
@@ -2158,6 +2160,8 @@ def collect_runs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
             "note": "task snapshots are the frozen terminal projections (same as task-diagnostics.json); "
             "log_events are raw engine log records about renders / exports / script runs",
             "task_snapshots": snapshots,
+            # 修复经过（ADR 0148）：每种修法 · 结果 · 最后的报错；与其余字段同一遍 `scrub.obj`
+            "fix_journey": list(src.fix_journey or []),
             "log_events": recs,
         }
         doc = scrub.obj(doc)

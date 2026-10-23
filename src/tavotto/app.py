@@ -4505,6 +4505,7 @@ def _build_diagnostics_bundle(
         ),
         frontend=detail.frontend,
         registry=ctx.registry if ctx is not None else None,
+        fix_journey=engine_prepsession.SESSIONS.fix_journeys(pid) if pid else None,
     )
     items = engine_diagdetail.collect(src, detail.options)
     # report.json 只算一次：超限时 `fit` 会按优先级截断重建几次 ZIP，不该每次都重新探测渲染环境
@@ -8970,10 +8971,32 @@ def api_ai_capabilities():
     refresh = request.args.get("refresh") in ("1", "true", "yes")
     # `taf_enabled`（TAF 实验开关）只在这一层并入：`engine_ai.capabilities` 的缓存内容不含它，开关随时可翻
     resp = jsonify(
-        {**engine_ai.capabilities(refresh=refresh), "taf_enabled": engine_ai_figure_edit.enabled()}
+        {
+            **engine_ai.capabilities(refresh=refresh),
+            "taf_enabled": engine_ai_figure_edit.enabled(),
+            # 「使用你的 AI 来修复」的 AI 环境修复任务能不能真的跑（智能修复主线 PR D，ADR 0148）。端点契约已定、任务还没实现：
+            # 前端在它为 false 时按钮照常出现，点击走「这个问题 AI 暂时还不会修」降级
+            "ai_fix_available": False,
+        }
     )
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@app.post("/api/ai/fix")
+def api_ai_fix():
+    """「使用你的 AI 来修复」（智能修复主线，ADR 0148）。body：`{session_id, script}`（准备会话 id 与脚本项目相对路径）。
+
+    AI 环境修复任务在后续 PR 实现；本版只定契约：一律 `200 {ok: false, reason: "ai_fix_unavailable"}`，前端据此把卡片落成
+    「这个问题 AI 暂时还不会修」+「发送反馈」。会话认证照常（ADR 0008），畸形请求体 400，不做任何副作用。"""
+    body = request.get_json(silent=True)
+    if (
+        not isinstance(body, dict)
+        or not isinstance(body.get("session_id"), str)
+        or not isinstance(body.get("script"), str)
+    ):
+        abort(400)
+    return jsonify({"ok": False, "reason": "ai_fix_unavailable"})
 
 
 @app.patch("/api/ai/agents/<agent_id>")
@@ -10234,6 +10257,14 @@ def _publish_preparation_session(payload: dict) -> None:
 
 
 engine_prepsession.SESSIONS.notifier = _publish_preparation_session
+
+
+def _ai_connected() -> bool:
+    """本机有没有可用的 AI（智能修复路由用；与设置页 / 助手选择器同一判据 `agents[*].usable`，读 `capabilities` 的缓存结论）。"""
+    return any(a.get("usable") for a in engine_ai.capabilities().get("agents") or ())
+
+
+engine_prepsession.SESSIONS.ai_connected = _ai_connected
 
 
 def _dependency_event_sink(ctx: "ProjectCtx", extra=None):

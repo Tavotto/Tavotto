@@ -945,6 +945,8 @@
       "blocked": "现在还不能运行",
       "depsFailed": "没装好，原有文件没动",
       "failed": "运行出错了",
+      "feedback": "这个脚本暂时用不了，发给我们看看？",
+      "aiUnavailable": "这个问题 AI 暂时还不会修",
       "depsCancelled": "安装已停止",
       "attention": "还有一件事要处理",
       "originConfirm_other": "有 {{count}} 个库要你确认包名",
@@ -980,6 +982,8 @@
       "dismiss": "知道了",
       "answer": "回答",
       "openAssets": "打开素材库",
+      "aiFix": "使用你的 AI 来修复",
+      "send": "发送",
       "cancelScan": "取消检查",
       "confirmOrigins": "确认包名"
     },
