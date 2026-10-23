@@ -19,7 +19,7 @@ const HIT_PX = 10
 /** 尺寸标注离页面的距离（px）与标注条的贴边下限 */
 const DIM_GAP = 26
 /** 单图的命中区压进图里的深度（px）：图框边上常贴着轴标题，比页面边（对称 5 px）浅 */
-const FIGURE_HIT_IN = 3
+const FIGURE_HIT_IN = 2
 
 const MM_SUFFIX = '\u00a0mm'
 const mmText = (v: number) => String(Math.round(v * 10) / 10)
@@ -69,7 +69,7 @@ export function PageEdgeHandles() {
  * 单图编辑里拖这张图的四条边改图幅：同一套命中区与尺寸标注（`EdgeStrips` / `EdgeDimensions`），框是画布上那张图。
  * 手势在 `figureEdgeDrag.startFigureEdgeResize`。挂载条件由 `CanvasStage` 管（`mode === 'fast_edit'`）；
  * 精确 manifest 缺席（或面板被裁过 / 旋转过）时整组不挂（`figureFrameFacts`）；图被隐藏 / 锁定、非选择工具、裁剪中、别的拖动占着时让位；**图内编辑里照常可用**（单图编辑打开图默认就在图内编辑里），
- * 命中区压进图里只有 `FIGURE_HIT_IN` px，免得盖住贴着图框的轴标题 / 刻度。
+ * 命中区压进图里只有 `FIGURE_HIT_IN` px（其余在图外），免得盖住贴着图框的轴标题 / 刻度。
  */
 export function FigureEdgeHandles({ panelId }: { panelId: string | null }) {
   perfCount('render.FigureEdgeHandles')
@@ -124,7 +124,7 @@ export function FigureEdgeHandles({ panelId }: { panelId: string | null }) {
         box={box}
         idle={idle}
         active={active}
-        lead={HIT_PX - FIGURE_HIT_IN}
+        lead={FIGURE_HIT_IN}
         onStart={(e, edge) => startFigureEdgeResize(e, edge, o.id)}
       />
       {pv && preview && (
@@ -154,7 +154,7 @@ function EdgeStrips({
   box: { left: number; top: number; w: number; h: number }
   idle: boolean
   active: PageEdge | null
-  /** 命中区外侧到边线的距离（px）：页面边对称（`HIT_PX / 2`），单图偏外 */
+  /** 命中区压进被量矩形里的深度（px，命中区从边线内侧 `lead` 起、向外共 `HIT_PX` 宽）：页面边对称（`HIT_PX / 2`），单图只压进 `FIGURE_HIT_IN` */
   lead?: number
   onStart: (e: React.PointerEvent, edge: PageEdge) => void
 }) {

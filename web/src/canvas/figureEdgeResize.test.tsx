@@ -309,7 +309,7 @@ describe('松手后新图回来之前：只留虚线占位', () => {
 })
 
 describe('单图编辑拖边的命中区与标注', () => {
-  it('四条边各有一个命中区（data-figure-edge），没有页面的拖边；压进图里只有 3 px', async () => {
+  it('四条边各有一个命中区（data-figure-edge），没有页面的拖边；压进图里只有 2 px', async () => {
     await mount()
     const edges = [...container.querySelectorAll('[data-figure-edge]')]
     expect(edges.map((e) => e.getAttribute('data-figure-edge')).sort()).toEqual(['b', 'l', 'r', 't'])
@@ -317,8 +317,8 @@ describe('单图编辑拖边的命中区与标注', () => {
     const t = getTransform()
     const r = container.querySelector('[data-figure-edge="r"]') as HTMLElement
     const edgeX = t.panX + mmToWorld(87) * t.zoom
-    expect(parseFloat(r.style.left)).toBeCloseTo(edgeX - 7, 4)
-    expect(parseFloat(r.style.left) + parseFloat(r.style.width)).toBeCloseTo(edgeX + 3, 4)
+    expect(parseFloat(r.style.left)).toBeCloseTo(edgeX - 2, 4)
+    expect(parseFloat(r.style.left) + parseFloat(r.style.width)).toBeCloseTo(edgeX + 8, 4)
   })
 
   it('没有精确 manifest（权威缺席）时整组不挂', async () => {
