@@ -805,6 +805,33 @@ _PASSIVE_CLASS_MODULES = (
 )
 
 
+_C_CALLABLES = (
+    types.BuiltinFunctionType,
+    types.MethodWrapperType,
+    types.MethodDescriptorType,
+    types.WrapperDescriptorType,
+)
+
+
+def _svg_pair_owned_c_callable(method) -> bool:
+    """C 实现的可调用（builtin 函数 / C 的 bound method / 方法描述符）：只有它**属于 matplotlib / numpy 自己的对象**才放行。
+
+    `deque.popleft`、`list.pop`、`dict.get` 之类绑在用户（或内建）对象上的，一调用就改用户状态：阻断。
+    """
+    if isinstance(method, (types.MethodDescriptorType, types.WrapperDescriptorType)):
+        owner = getattr(method, "__objclass__", None)
+        return isinstance(owner, type) and owner.__module__.startswith((*_MPL_MODULES, "numpy."))
+    owner = getattr(method, "__self__", None)
+    if owner is None or isinstance(owner, types.ModuleType):
+        return False
+    name = getattr(method, "__name__", None)
+    return (
+        type(owner).__module__.startswith((*_MPL_MODULES, "numpy."))
+        and name is not None
+        and getattr(type(owner), name, None) is not None  # 名字确实是它类型自己的方法
+    )
+
+
 def _svg_pair_owned(method, depth=0, cache=None) -> bool:
     """这个可调用对象**确实是 matplotlib / mpl_toolkits 自己定义的**（或 Tavotto 已核过闭包的包装）。只读，不调用。
 
@@ -819,6 +846,8 @@ def _svg_pair_owned(method, depth=0, cache=None) -> bool:
         return _svg_pair_class_blocker(method, {} if cache is None else cache, extra=True) is None
     if isinstance(method, (functools.partial, functools.partialmethod)):
         return _svg_pair_owned(method.func, depth + 1, cache)
+    if isinstance(method, _C_CALLABLES):
+        return _svg_pair_owned_c_callable(method)
     method = getattr(method, "__func__", method)
     if getattr(method, "__code__", None) is not None:
         if _svg_pair_native_canvas_method(method):
@@ -853,8 +882,6 @@ def _svg_pair_owned(method, depth=0, cache=None) -> bool:
         return _svg_pair_owned(wrapped, depth + 1, cache)
     if kind.__module__.startswith(_MPL_MODULES):
         return True  # matplotlib 自己的可调用对象（如 `_process_plot_var_args`）
-    if isinstance(method, types.BuiltinFunctionType):
-        return True
     return kind.__module__ in _PASSIVE_CALLABLE_MODULES and getattr(method, "__module__", None) in (
         None,
         "builtins",
@@ -878,10 +905,6 @@ def _svg_pair_callable_parts(value) -> list:
         (types.FunctionType, types.MethodType, functools.partial, functools.partialmethod),
     ):
         return [value]
-    if isinstance(value, (types.BuiltinFunctionType, types.WrapperDescriptorType)):
-        return []
-    if isinstance(value, (types.MethodDescriptorType, types.MethodWrapperType)):
-        return []
     return [value] if callable(value) else []
 
 
@@ -924,6 +947,15 @@ def _svg_pair_class_blocker(cls, cache: dict, *, extra: bool = False) -> str | N
     return result
 
 
+def _is_list_remove(value) -> bool:
+    """封闭例外表（三档 matplotlib 常规图实测，实例字典里的 builtin / C bound method 只有这一种）：`artist._remove_method = <list>.remove`。"""
+    return (
+        isinstance(value, types.BuiltinFunctionType)
+        and getattr(value, "__name__", None) == "remove"
+        and isinstance(getattr(value, "__self__", None), list)
+    )
+
+
 def _svg_pair_artist_blocker(artist, cache: dict) -> str | None:
     """一个 artist 的类与实例两层：任何可调用属性都必须是 matplotlib 自己的（白名单）。只读，不调用。
 
@@ -934,6 +966,8 @@ def _svg_pair_artist_blocker(artist, cache: dict) -> str | None:
     if why is not None:
         return why
     for name, value in (getattr(artist, "__dict__", None) or {}).items():
+        if name == "_remove_method" and _is_list_remove(value):
+            continue  # matplotlib 自己放进实例字典的唯一 C bound method（`Artist.remove` 时才调用，绘制不调用）
         if any(not _svg_pair_owned(part, 0, cache) for part in _svg_pair_callable_parts(value)):
             return f"custom instance attribute {type(artist).__qualname__}.{name}"
     # path effect 对象不是可调用属性，但它们的 draw_path 拿着 renderer：按类核
@@ -951,25 +985,30 @@ def _svg_pair_value_blocker(artist, seen_transforms, *, tick_slots: bool) -> str
     `tick_slots=True`（二次绘制口径）再核刻度 formatter / locator：二次绘制里它们会在两遍里各算一次。
     单次绘制下它们在 `Axis.draw` 阶段只算一次、产出 Text / 数值后才进 renderer，所以是唯一的值槽例外。
     """
+    cls = type(artist)
     if not all(
         _svg_pair_standard_transform(transform, seen_transforms)
-        for transform in (artist.get_transform(), artist.get_clip_box(), artist.get_clip_path())
+        for transform in (
+            cls.get_transform(artist),
+            cls.get_clip_box(artist),
+            cls.get_clip_path(artist),
+        )
     ):
         return "SVG pairing is unavailable for user transform callbacks."
     if isinstance(artist, Axis):
         scale = artist._scale
         if not type(scale).__module__.startswith(_MPL_MODULES) or not (
             _svg_pair_standard_method(scale.get_transform)
-            and _svg_pair_standard_transform(scale.get_transform(), seen_transforms)
+            and _svg_pair_standard_transform(type(scale).get_transform(scale), seen_transforms)
         ):
             return "SVG pairing is unavailable for user scale callbacks."
         if not tick_slots:
             return None
         for component in (
-            artist.get_major_formatter(),
-            artist.get_minor_formatter(),
-            artist.get_major_locator(),
-            artist.get_minor_locator(),
+            cls.get_major_formatter(artist),
+            cls.get_minor_formatter(artist),
+            cls.get_major_locator(artist),
+            cls.get_minor_locator(artist),
         ):
             if not type(component).__module__.startswith(_MPL_MODULES):
                 return "SVG pairing is unavailable for custom tick formatters or locators."
@@ -1022,7 +1061,8 @@ def _svg_pair_blocker(fig, *, single_draw: bool = False) -> str | None:
         if why is not None:
             return why
         # `get_children` is Matplotlib's own here (checked above), so walking with it runs no user code
-        pending.extend(artist.get_children())
+        # 经**类**上 matplotlib 自己的函数取子节点，不经实例属性：实例字典里的任何东西（含 C 的 bound method）都不会被调用
+        pending.extend(type(artist).get_children(artist))
     return None
 
 

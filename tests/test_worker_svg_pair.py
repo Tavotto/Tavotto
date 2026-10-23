@@ -194,6 +194,14 @@ elif mode in {"formatter", "snapshot_formatter", "standalone_formatter"}:
         counter[0] += 1
         return str(counter[0])
     ax.xaxis.set_major_formatter(FuncFormatter(changing_formatter))
+elif mode in {"deque_children", "snapshot_deque_children"}:
+    # C 的 bound method（deque.popleft）当 get_children：判定遍历既不能经实例属性调用它，也不能把它当数据放过
+    import collections
+    held = collections.deque([1, 2])
+    ax.lines[0].get_children = held.popleft
+elif mode in {"list_pop_getter", "snapshot_list_pop_getter"}:
+    held = [1, 2]
+    ax.lines[0].get_label = held.pop
 elif mode in {"children_class", "snapshot_children_class"}:
     # 类对象当 get_children：调用它跑的是 __new__（类对象不是「非可调用数据」）
     counter = [0]
@@ -354,8 +362,8 @@ elif mode == "mkdir_failure":
 PAIRED = {"formatter", "locator", "formatter_subclass"}
 PAIRED |= {"snapshot_" + name for name in PAIRED}
 #: 能看到 renderer 的回调：仍阻断（它们可能按 renderer 的类分派，tee 与 PDF renderer 不是同一个类）
-BLOCKED = {"callback", "custom_draw", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch", "scale", "transform", "stateful_transform", "children_class", "filter_class", "partial_user", "callable_object"}
-BLOCKED |= {"snapshot_" + name for name in ("callback", "custom", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch", "scale", "transform", "stateful_transform", "children_class", "filter_class", "partial_user", "callable_object")}
+BLOCKED = {"callback", "custom_draw", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch", "scale", "transform", "stateful_transform", "children_class", "filter_class", "partial_user", "callable_object", "deque_children", "list_pop_getter"}
+BLOCKED |= {"snapshot_" + name for name in ("callback", "custom", "annotation", "effect", "renderer_dispatch", "get_children", "agg_filter", "window_extent", "text_subclass", "wraps_draw", "class_patch", "scale", "transform", "stateful_transform", "children_class", "filter_class", "partial_user", "callable_object", "deque_children", "list_pop_getter")}
 result = None
 if mode == "invalid":
     handler = pkg.wireproto.V1Handler(session)
@@ -413,6 +421,8 @@ else:
     assert calls == [patches, previous], calls
 if mode in {"snapshot_formatter", "snapshot_locator"}:
     assert counter[0] > 0  # 单次绘制：画了，而且只画一次的结果同时进 PDF 与 SVG
+if mode in {"deque_children", "snapshot_deque_children", "list_pop_getter", "snapshot_list_pop_getter"}:
+    assert len(held) == 2  # 判定没有调用它（既不经实例属性，也不把它当数据放过）
 if mode in {"snapshot_annotation", "snapshot_effect", "snapshot_get_children", "snapshot_agg_filter", "snapshot_window_extent", "snapshot_scale", "snapshot_transform", "snapshot_stateful_transform", "snapshot_children_class", "snapshot_filter_class", "snapshot_partial_user", "snapshot_callable_object"}:
     assert counter[0] == 0  # 阻断发生在任何绘制 / 遍历调用用户方法之前
 assert session.snapshot("F") == previous
@@ -534,6 +544,8 @@ def test_value_callbacks_are_paired_from_one_draw(tmp_path, mode):
         "filter_class",
         "partial_user",
         "callable_object",
+        "deque_children",
+        "list_pop_getter",
     ],
 )
 def test_renderer_visible_callbacks_still_block_pairing(tmp_path, mode):
@@ -700,6 +712,8 @@ def test_automatic_snapshot_pairs_value_callbacks_from_one_draw(tmp_path, mode):
         "snapshot_filter_class",
         "snapshot_partial_user",
         "snapshot_callable_object",
+        "snapshot_deque_children",
+        "snapshot_list_pop_getter",
     ],
 )
 def test_automatic_snapshot_declines_renderer_visible_callbacks_without_drawing(tmp_path, mode):

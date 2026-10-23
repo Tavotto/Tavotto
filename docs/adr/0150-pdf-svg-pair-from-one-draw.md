@@ -32,6 +32,10 @@ Figure 的 PDF / SVG 配对原来是「同一命令里 PDF 画一遍、SVG 再�
    **类对象不是「非可调用数据」**（Codex #1355）：`artist.get_children = SomeClass` / `set_agg_filter(SomeClass)` 一调用就跑 `__new__` / `__init__` / `__call__`。
    所以实例 / 类字典里的任何 callable——函数、bound method、`functools.partial`（解开看 `func`）、带 `__call__` 的实例、**类对象**——都要出处是 matplotlib / mpl_toolkits / numpy / 内建自己的；
    类对象按其整条 MRO 与类字典里的可调用判定（标准库基类如 `Sequence` / `dict` 不扫）。非 callable 的数据属性照旧忽略。
+   **C 实现的可调用也不放过**（Codex #1355）：builtin 函数 / C 的 bound method / 方法描述符（`ax.get_children = deque.popleft`、`list.pop`、`dict.get`）只有 `__self__`（描述符看 `__objclass__`）
+   是 matplotlib / numpy 的对象、且名字确是其类型自己的方法才放行；绑在用户或内建对象上的一律阻断。**封闭例外表**（三档 matplotlib 常规图实测，实例字典里 matplotlib 自己放的 builtin / C bound method
+   只有这一种）：`artist._remove_method = <list>.remove`（`Artist.remove()` 时才调用，绘制不调用）。类字典里没有。
+   **判定遍历不经实例属性调用任何方法**：往下走一律用 `type(artist).get_children(artist)`（类上 matplotlib 自己的函数，且只在该实例通过白名单之后），transform / scale / 刻度 getter 同理。
    只读（`vars` / `__mro__` / `__code__`），**判定不调用用户代码**；通过后才用 matplotlib 自己的 `get_children` 往下走。`draw_event` 处理器同样阻断。
    理由：能看到 renderer 的代码可能按 renderer 的类分派（tee 与 PDF 本来拿到的不是同一个类，连 PDF 都会变）、可能被每个目标各跑一次（如 `stop_filter`）、
    可能在两次 draw 之间不同；这些都不是「值」，白名单一次覆盖，不靠穷举。
