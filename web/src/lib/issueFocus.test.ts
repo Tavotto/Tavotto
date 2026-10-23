@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { literal } from '@/i18n'
-import { focusObject, HIGHLIGHT_MS, openProblems } from './issueFocus'
+import { FIELD_FLASH_MS, focusObject, HIGHLIGHT_MS, openProblems } from './issueFocus'
 import { currentFigureOf } from './problemContext'
 import { effectiveScope, issuesInScope } from './problemList'
 import type { ObjectRef, ValidationIssue } from './validation'
@@ -69,7 +69,7 @@ async function seed(objects = [panel(), text]) {
 }
 
 beforeEach(() => {
-  useUiStore.setState({ issueHighlight: null, problemFilter: null, elementPanelId: null })
+  useUiStore.setState({ issueHighlight: null, fieldLocate: null, problemFilter: null, elementPanelId: null })
   useWorkspaceStore.getState().clear()
 })
 
@@ -131,23 +131,102 @@ describe('图内元素：进图内编辑', () => {
     expect(useUiStore.getState().elementPanelId).toBeNull()
   })
 
-  it('属性字段真的被聚焦（选择器用 data-prop，不用本地化文案）', async () => {
-    await seed()
+  /** 属性页里的一个字段锚点：`gid` 挂在锚点自己身上（FieldBlock），或挂在外层页上（`data-inspector-gid`） */
+  const anchor = (prop: string, gid: string | null, where: 'self' | 'page' = 'self') => {
     const host = document.createElement('div')
-    host.setAttribute('data-prop', 'fontsize')
+    host.setAttribute('data-prop', prop)
     const input = document.createElement('input')
     host.appendChild(input)
-    document.body.appendChild(host)
-    const raf = vi
-      .spyOn(globalThis, 'requestAnimationFrame')
-      .mockImplementation(((cb: FrameRequestCallback) => {
-        cb(0)
-        return 1
-      }) as never)
+    if (where === 'self' && gid) host.setAttribute('data-gid', gid)
+    if (where === 'page') {
+      const page = document.createElement('div')
+      if (gid) page.setAttribute('data-inspector-gid', gid)
+      page.appendChild(host)
+      document.body.appendChild(page)
+    } else {
+      document.body.appendChild(host)
+    }
+    return { host, input }
+  }
+
+  /** 手动推帧：`focusField` 的重试排在 rAF 里 */
+  const frames = () => {
+    const queue: FrameRequestCallback[] = []
+    const raf = vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(((cb: FrameRequestCallback) => {
+      queue.push(cb)
+      return queue.length
+    }) as never)
+    return {
+      step: (n = 1) => {
+        for (let i = 0; i < n; i++) queue.splice(0).forEach((cb) => cb(0))
+      },
+      restore: () => raf.mockRestore(),
+    }
+  }
+
+  it('属性字段真的被聚焦（选择器用 data-prop，不用本地化文案），那一行亮一下', async () => {
+    await seed()
+    const { host, input } = anchor('fontsize', 'axes_0.xticks')
     const out = focusObject(refFor({ gid: 'axes_0.xticks' }), 'fontsize')
     expect(out).toMatchObject({ field: 'focused' })
     expect(document.activeElement).toBe(input)
-    raf.mockRestore()
+    expect(host.hasAttribute('data-locate-flash')).toBe(true)
+    expect(useUiStore.getState().fieldLocate).toBeNull()
+  })
+
+  it('同名字段认主人：上一个元素的属性页还挂着时，不落到它的「字号」上（2026-10-23 用户反馈）', async () => {
+    await seed()
+    // 从「图例」跳到「图例标题」：旧页（图例）还在，新页（标题）下一帧才挂上
+    const stale = anchor('fontsize', 'axes_0.legend')
+    const f = frames()
+    try {
+      const out = focusObject(refFor({ gid: 'axes_0.legend.title' }), 'fontsize')
+      expect(out).toMatchObject({ field: 'requested' })
+      expect(document.activeElement).not.toBe(stale.input)
+      // 请求挂着：属性页据此展开字段所在的那一折
+      expect(useUiStore.getState().fieldLocate).toMatchObject({ gid: 'axes_0.legend.title', prop: 'fontsize' })
+      f.step(3)
+      const fresh = anchor('fontsize', 'axes_0.legend.title', 'page')
+      f.step()
+      expect(document.activeElement).toBe(fresh.input)
+      expect(fresh.host.hasAttribute('data-locate-flash')).toBe(true)
+      expect(stale.host.hasAttribute('data-locate-flash')).toBe(false)
+      expect(useUiStore.getState().fieldLocate).toBeNull()
+    } finally {
+      f.restore()
+    }
+  })
+
+  it('等不到落点就放下请求（折不会被一张过期的请求一直撑开），也不宣称已聚焦', async () => {
+    await seed()
+    const f = frames()
+    try {
+      const out = focusObject(refFor({ gid: 'axes_0.xticks' }), 'fontsize')
+      expect(out).toMatchObject({ field: 'requested' })
+      f.step(100)
+      expect(useUiStore.getState().fieldLocate).toBeNull()
+    } finally {
+      f.restore()
+    }
+  })
+
+  it('落点那一行的亮框到点撤掉', async () => {
+    vi.useFakeTimers()
+    await seed()
+    const { host } = anchor('fontsize', 'axes_0.xticks')
+    focusObject(refFor({ gid: 'axes_0.xticks' }), 'fontsize')
+    expect(host.hasAttribute('data-locate-flash')).toBe(true)
+    vi.advanceTimersByTime(FIELD_FLASH_MS + 1)
+    expect(host.hasAttribute('data-locate-flash')).toBe(false)
+  })
+
+  it('画布对象（没有 gid）不认图内元素属性页里的同名字段', async () => {
+    await seed()
+    const inFigure = anchor('sizePt', 'axes_0.title', 'page')
+    const own = anchor('sizePt', null)
+    focusObject(refFor({ objectId: 't1' }), 'sizePt')
+    expect(document.activeElement).toBe(own.input)
+    expect(document.activeElement).not.toBe(inFigure.input)
   })
 
   it('没有 propertyPath 时回 none，不宣称"已定位到字段"', async () => {

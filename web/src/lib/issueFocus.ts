@@ -70,8 +70,11 @@ export type FocusOutcome =
   | { ok: true; mode: 'layout' | 'fast_edit'; field: FieldFocus }
   | { ok: false; reason: FocusFailure }
 
-/** 高亮持续多久（ms）。够看见，短到不碍事。 */
-export const HIGHLIGHT_MS = 1400
+/**
+ * 高亮持续多久（ms）。够看见，短到不碍事：画布上的 `animate-attention` 是 900 ms × 3 次，
+ * 此前 1400 ms 就撤掉，第二次闪到一半就没了——用户反馈「提醒不够明显」（2026-10-23）。
+ */
+export const HIGHLIGHT_MS = 2700
 
 let clearTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -141,7 +144,7 @@ function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOu
     else if (entered) useUiStore.getState().setSelectedGid(ref.gid)
     useUiStore.getState().setRightTab('properties')
     flash(ref)
-    return { ok: true, mode: workspaceModeNow(), field: focusField(propertyPath) }
+    return { ok: true, mode: workspaceModeNow(), field: focusField(ref.gid ?? null, propertyPath) }
   }
 
   // 画布对象：越界、重叠、页边距这些只在版面上说得清；模式照图数推出，这里只收起图内编辑、选中它
@@ -152,7 +155,7 @@ function focusObjectInner(ref: ObjectRef, propertyPath?: string | null): FocusOu
   reveal(obj)
   useUiStore.getState().setRightTab('properties')
   flash(ref)
-  return { ok: true, mode: workspaceModeNow(), field: focusField(propertyPath) }
+  return { ok: true, mode: workspaceModeNow(), field: focusField(ref.gid ?? null, propertyPath) }
 }
 
 /** 定位到一条问题（面板整行点击与「定位」按钮共用）。 */
@@ -175,33 +178,101 @@ function flash(ref: ObjectRef): void {
   }, HIGHLIGHT_MS)
 }
 
+/** 等落点进 DOM 最多等几帧（≈0.5 s）：进图内编辑、换元素、展开「更多」各要一两次提交 */
+const FIELD_FRAMES = 30
+
+/** 落点那一行亮多久（ms）：与画布上的 `HIGHLIGHT_MS` 同长，两处一起亮、一起灭 */
+export const FIELD_FLASH_MS = HIGHLIGHT_MS
+
+let fieldRun = 0
+let fieldFlash: { host: HTMLElement; timer: ReturnType<typeof setTimeout> } | null = null
+
 /**
- * 把焦点落到属性页里对应的那个字段上。
+ * 这个锚点是不是**目标元素**的那一个字段。
+ *
+ * 同名字段到处都有（图例与图例标题都有 `fontsize`）：定位从一个元素跳到另一个时，
+ * 旧元素的属性页还挂着，按 `data-prop` 取第一个就会把焦点放进**上一个元素**的同名字段
+ * ——随后新属性页一挂载，焦点又被抢走，用户看到的是「定位没反应」。所以锚点要认主人：
+ * 自己的 `data-gid`，或外层图内属性页的 `data-inspector-gid`（排版控件那类锚点不带 gid）。
+ * 目标是画布对象（`gid` 为 null）时，只认不属于任何图内元素的锚点。
+ */
+function ownsField(host: HTMLElement, gid: string | null): boolean {
+  const owner =
+    host.getAttribute('data-gid') ??
+    host.closest('[data-inspector-gid]')?.getAttribute('data-inspector-gid') ??
+    null
+  return owner === gid
+}
+
+/** 落点那一行亮一下（`index.css` 的 `[data-locate-flash]`）；上一次的先撤 */
+function flashField(host: HTMLElement): void {
+  if (fieldFlash) {
+    clearTimeout(fieldFlash.timer)
+    fieldFlash.host.removeAttribute('data-locate-flash')
+  }
+  host.setAttribute('data-locate-flash', '')
+  fieldFlash = {
+    host,
+    timer: setTimeout(() => {
+      host.removeAttribute('data-locate-flash')
+      fieldFlash = null
+    }, FIELD_FLASH_MS),
+  }
+}
+
+/**
+ * 把焦点落到属性页里对应的那个字段上，并让那一行亮一下。
  *
  * 选择器用 `data-prop`（属性名是稳定的机器标识），**不用 aria-label**
  * ——那是本地化文案，换个语言就选不中了（`focusRescue.ts` 踩过同一个坑）。
  * 锚点由属性能力层统一挂（`lib/typography.propertyPathOf()` →
- * `controls/TypographyControls` 的 `Anchor`），报字段名的和挂锚点的读同一张表。
+ * `controls/TypographyControls` 的 `Anchor`），报字段名的和挂锚点的读同一张表；
+ * 锚点还要**属于目标元素**（`ownsField`）。
  *
- * 当场找得到就当场聚焦并回 `focused`；找不到不是失败——切模式 / 进图内编辑
- * 会换掉整棵属性页，DOM 这时候还没重排完，所以再排一帧重试，回 `requested`。
+ * 当场找得到就当场聚焦并回 `focused`；找不到不是失败——切模式 / 进图内编辑 /
+ * 换元素会换掉整棵属性页，字段收在「更多」里时还要先展开那一折，所以把请求挂到
+ * `uiStore.fieldLocate`（属性页据此展开字段所在的那一折），
+ * 再逐帧重试，最多 `FIELD_FRAMES` 帧，回 `requested`。
  * **回 `requested` 不等于成功**：调用方不许拿它说「已定位到字段」。
  */
-function focusField(propertyPath?: string | null): FieldFocus {
+function focusField(gid: string | null, propertyPath?: string | null): FieldFocus {
   if (!propertyPath || typeof document === 'undefined') return 'none'
-  const run = (): boolean => {
-    const host = document.querySelector<HTMLElement>(`[data-prop="${cssEscape(propertyPath)}"]`)
+  const run = ++fieldRun
+  const attempt = (): boolean => {
+    const hosts = document.querySelectorAll<HTMLElement>(`[data-prop="${cssEscape(propertyPath)}"]`)
+    const host = [...hosts].find((h) => ownsField(h, gid))
     if (!host) return false
     const control = host.querySelector<HTMLElement>('input, select, textarea, button')
     const target = control ?? host
     // 两个方法都可选调用：jsdom 没有 scrollIntoView，而"定位"这一步失手
     // 不该把整条动作炸掉——用户要的是焦点落到字段上，滚动只是顺带
-    target.scrollIntoView?.({ block: 'nearest' })
+    target.scrollIntoView?.({ block: 'center' })
     target.focus?.()
+    // 行内锚点（加粗 / 斜体）是 `display:contents`，自己没有盒子、画不出亮框：亮控件本身
+    const contents = typeof getComputedStyle === 'function' && getComputedStyle(host).display === 'contents'
+    flashField(contents ? target : host)
     return true
   }
-  if (run()) return 'focused'
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run)
+  const settle = () => {
+    // 只清自己挂的那一张：中途又定位了别处，`fieldLocate` 已经是下一次的
+    if (run === fieldRun) useUiStore.getState().setFieldLocate(null)
+  }
+  if (attempt()) {
+    settle()
+    return 'focused'
+  }
+  useUiStore.getState().setFieldLocate({ gid, prop: propertyPath })
+  if (typeof requestAnimationFrame !== 'function') {
+    settle()
+    return 'requested'
+  }
+  let left = FIELD_FRAMES
+  const retry = () => {
+    if (run !== fieldRun) return
+    if (attempt() || --left <= 0) settle()
+    else requestAnimationFrame(retry)
+  }
+  requestAnimationFrame(retry)
   return 'requested'
 }
 

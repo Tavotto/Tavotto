@@ -712,6 +712,17 @@
     background: transparent;
   }
 
+  /* 定位落点（`lib/issueFocus.focusField` 加上、到点撤掉）：问题面板「定位」把焦点送到的那一行亮一下——
+     sel 色内环 + 淡底，与画布上那一圈同一个注意力节拍（`--animate-attention`，有限三次）。此前落点只有
+     输入框自己的焦点边，混在一屏字段里认不出来（2026-10-23 用户反馈「提醒不够明显」）。内环不外扩：
+     属性栏的滚动容器会裁掉外扩的阴影。reduced motion 下不闪，静静亮同样长的时间 */
+  [data-locate-flash] {
+    border-radius: var(--radius-sm);
+    background-color: color-mix(in srgb, var(--color-sel) 14%, transparent);
+    box-shadow: inset 0 0 0 2px var(--color-sel);
+    animation: var(--animate-attention);
+  }
+
   /* 动效可关：动画只是点缀，关掉不损失任何信息 */
   @media (prefers-reduced-motion: reduce) {
     *,

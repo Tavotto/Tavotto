@@ -44,7 +44,7 @@ import {
 } from './interactions'
 import { contentDirOnPage, elementOverlayTransform } from './elementGeometry'
 import { openQuickEdit } from './quickEditStore'
-import { IssueOverlay } from './IssueOverlay'
+import { IssueElementHighlight, IssueOverlay } from './IssueOverlay'
 
 /**
  * 覆盖层语法（2026-10-07 设计审计 §10.1，值在 index.css 的画布覆盖层 token）：
@@ -244,6 +244,17 @@ export function OverlaySvg() {
         (() => {
           const target = objects.find((o) => o.id === issueHighlight.objectId)
           if (!target) return null
+          // 问题落在图内某个元素上：闪那个元素，不闪整张图（`IssueElementHighlight`）
+          if (target.type === 'panel' && issueHighlight.gid) {
+            return (
+              <IssueElementHighlight
+                key={issueHighlight.token}
+                panel={target}
+                gid={issueHighlight.gid}
+                t={t}
+              />
+            )
+          }
           const box = toScreen(target, t)
           return (
             <rect

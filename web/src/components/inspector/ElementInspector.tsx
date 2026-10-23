@@ -171,6 +171,7 @@ import { FIGURE_TEXT_BATCH_PROPS, useFigureTypography } from './typographyAdapte
 import { fontStackOf } from './controls/fontStack'
 import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
+import { useLocateReveal } from './useLocateReveal'
 import { TextActionRow } from './TextActions'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
@@ -429,6 +430,9 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
         <AlignSection panel={panel} items={alignGroup ?? []} syncing={syncing} />
       )}
       {alignGroup || syncing || batch || styleBatch ? null : (
+      /* `data-inspector-gid`：这一页属于哪个元素。定位（`issueFocus.focusField`）认锚点的主人——
+         从一个元素跳到另一个时旧页还挂着，同名字段（都叫 `fontsize`）不认主人就会落到上一个元素上 */
+      <div className="contents" data-inspector-gid={element?.gid}>
       <Section>
         {manifest && element && <RelatedRow manifest={manifest} element={element} />}
         {/* 色条与它上色的图像共用一份色阶（审计 T22 / T23）：关系说出口，
@@ -539,6 +543,7 @@ export function ElementInspector({ panel }: { panel: PanelObject }) {
           <p className="mt-2 text-xs leading-relaxed text-ink-3">{el('alignSyncing')}</p>
         )}
       </Section>
+      </div>
       )}
 
       <HiddenElements panel={panel} manifest={manifest} />
@@ -1107,6 +1112,18 @@ function FieldList({
     else restGroups.push([pf.field.group, [pf]])
   }
 
+  // 定位要找的字段收在「更多」/ 某一折里：先把那一折打开，落点才进得了 DOM（`useLocateReveal`）
+  useLocateReveal(element.gid, buckets.more.map((pf) => pf.field.prop), moreOpen, () => setMoreOpen(role, true))
+  const foldProps = buckets.folds.flatMap((f) => f.fields.map((pf) => pf.field.prop))
+  const locate = useUiStore((s) => s.fieldLocate)
+  const locateFold = buckets.folds.find((f) => f.fields.some((pf) => pf.field.prop === locate?.prop))
+  useLocateReveal(
+    element.gid,
+    foldProps,
+    !locateFold || (foldOpen[`${role}:${locateFold.spec.id}`] ?? false),
+    () => locateFold && setFoldOpen(`${role}:${locateFold.spec.id}`, true),
+  )
+
   const modifiedInMore = buckets.more.filter((pf) =>
     panel.overrides.some((o) => o.gid === element.gid && o.prop === pf.field.prop),
   ).length
@@ -1309,6 +1326,12 @@ function AxesRangeCard({
   const overridden = (p: string) => panel.overrides.some((o) => o.gid === element.gid && o.prop === p)
   const foldOpen = useInspectorPrefs((s) => s.foldOpen)
   const setFoldOpen = useInspectorPrefs((s) => s.setFoldOpen)
+  useLocateReveal(
+    element.gid,
+    [...scale.map((f) => f.prop), ...invert, ...(aspect ? ['aspect'] : [])],
+    foldOpen['axes:coords'] ?? false,
+    () => setFoldOpen('axes:coords', true),
+  )
   if (!range.length && !scale.length && !invert.length && !aspect) return null
   // 右边只写当前值：X 轴的缩放方式 · 纵横比（反转了就说「反转」）
   const coordsValue = [
@@ -1492,6 +1515,15 @@ function TickPage({
     )
   }
   const foldOf = (id: string) => buckets.folds.find((f) => f.spec.id === id)
+  // 定位要找的字段收在某一折里：打开那一折（与 `FieldList` 同一个钩子）
+  const locate = useUiStore((s) => s.fieldLocate)
+  const locateFold = buckets.folds.find((f) => f.fields.some((pf) => pf.field.prop === locate?.prop))
+  useLocateReveal(
+    element.gid,
+    buckets.folds.flatMap((f) => f.fields.map((pf) => pf.field.prop)),
+    !locateFold || (foldOpen[`ticks:${locateFold.spec.id}`] ?? false),
+    () => locateFold && setFoldOpen(`ticks:${locateFold.spec.id}`, true),
+  )
   const minorFields = foldFields('minor')
   // 小刻度：开关 + 长 / 宽在卡里（`TickMinorBlock`），方式 / 间距 / 格式是认领来的字段。
   // 引擎一条次刻度能力都没发（Z 轴）时整行不出现——计数为 0 的节不显示

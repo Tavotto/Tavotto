@@ -65,7 +65,14 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   选中 → 视口 → 高亮 → Inspector → 属性字段，失败回**闭集原因**
   （`canvas_missing` / `object_deleted` / `not_editable` / `document_not_loaded`），
   绝不静默不动。属性字段的落点是 `data-prop`（稳定机器标识），**不是
-  aria-label**——那是本地化文案，换语言就选不中。
+  aria-label**——那是本地化文案，换语言就选不中。**落点要认主人**（2026-10-23 用户反馈）：锚点自己的
+  `data-gid` 或外层图内属性页的 `data-inspector-gid` 必须等于目标 gid（画布对象 = 不属于任何图内元素）——
+  同名字段到处都有，从图例跳到图例标题时旧页还挂着，按第一个匹配取会落到上一个元素的「字号」上，新页挂上后
+  焦点又被「内容」框抢走。找不到就把请求挂在 `uiStore.fieldLocate`、逐帧重试（≤30 帧）：字段收在「更多」/
+  摘要行里时属性页据此打开那一折（`inspector/useLocateReveal`，收起的折不挂控件）；落到了那一行亮一下
+  （`[data-locate-flash]`，sel 内环 + 淡底，与画布同一个 `--animate-attention`），画布上那一下闪在问题带 gid 时
+  描**那个图内元素**（`IssueOverlay.IssueElementHighlight`，与悬停轮廓同一份换算），不是整张图；两处都亮
+  `HIGHLIGHT_MS`（2700，够闪完三次）。看护 `lib/issueFocus.test.ts`、`components/inspector/locateField.test.tsx`。
 * **普通界面不出现 gid / 对象 id**：措辞唯一实现 `lib/validationText.ts`，
   主语取 manifest 的 `label`（过 `engineLabel()`），精确名词只在每行收起的
   「技术详情」里。它是行尾 88px **尾随格**里的 ⓘ（`data-issue-tech-toggle`），点开是一个 popover

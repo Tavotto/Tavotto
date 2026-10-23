@@ -318,6 +318,13 @@ interface UiState extends Persisted {
    */
   issueHighlight: { objectId: string | null; gid: string | null; token: number } | null
   /**
+   * 定位还**欠着**的那个属性字段（`lib/issueFocus.focusField` 写、找到落点或放弃时清）。
+   *
+   * 属性页据此把字段所在的「更多」/ 摘要行打开（`inspector/useLocateReveal`）：收起的折里不挂控件，
+   * 落点根本不在 DOM 里。`gid` 为 null = 画布对象的属性页。
+   */
+  fieldLocate: { gid: string | null; prop: string; token: number } | null
+  /**
    * 问题面板里**指着**哪一条（2026-10-07 设计审计 §9.4）：画布上给那个对象画一道悬停轮廓
    * （`canvas/IssueOverlay`），与画布自己的 hover 预示同一种画法。只是「我在看它」，不选中、
    * 不定位、不进文档；指针离开 / 焦点离开 / 那一行卸载 / 面板卸载就清。
@@ -469,6 +476,7 @@ interface UiState extends Persisted {
   clearStatusOwnedByPrefix: (prefix: string) => void
   setEditingText: (id: string | null) => void
   setIssueHighlight: (v: { objectId: string | null; gid: string | null } | null) => void
+  setFieldLocate: (v: { gid: string | null; prop: string } | null) => void
   setIssueHover: (v: IssueHover | null) => void
   /** 比对后再清：此刻的 `issueHover` 还是 `v` 这个对象（同一身份）才撤，别的行写下的不动 */
   releaseIssueHover: (v: IssueHover) => void
@@ -578,6 +586,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   elementPanelId: null,
   selectedGids: [],
   issueHighlight: null,
+  fieldLocate: null,
   issueHover: null,
   problemPins: false,
   problemFilter: null,
@@ -784,6 +793,8 @@ export const useUiStore = create<UiState>((set, get) => ({
         ? { ...v, token: (s.issueHighlight?.token ?? 0) + 1 }
         : null,
     })),
+  setFieldLocate: (v) =>
+    set((s) => ({ fieldLocate: v ? { ...v, token: (s.fieldLocate?.token ?? 0) + 1 } : null })),
   setProblemFilter: (problemFilter) => set({ problemFilter }),
   // 用户显式换范围 / 换切法：退回总览、放下游标。现场键里本来就有这两项，这里再清一次
   // 是为了**换回来时**不复活上一次点进的那张卡片（那是用户已经离开的地方）
