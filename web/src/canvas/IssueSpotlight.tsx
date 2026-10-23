@@ -41,8 +41,8 @@ function sourceOf(s: Spot): { x: number; y: number } {
  *   mask，背后的画布就取不到，模糊整个失效；
  * - **光圈**（`data-spotlight-beam`）：以光心为中心、远大于画布的径向渐变（光圈里全透、往外一条 smoothstep
  *   曲线压到近黑，外缘叠一圈很淡的光晕）。打过来 = 从光源方向放大着收拢到目标；散开 = 原地放大淡出；
- * - **光柱**（`data-spotlight-shaft`）：从光源到光圈的一道柔边锥形光（SVG，高斯模糊），越近目标越亮、
- *   进光圈后淡掉；从光源一端「射」出去。
+ * - **光柱**（`data-spotlight-shaft`）：从光源到光圈的一道柔边光锥（SVG，高斯模糊），两条边与光圈相切、
+ *   越近目标越亮、一路接进光圈；从光源一端「射」出去。目标离光源太近（光源落在光圈里）时不画光柱。
  *
  * **光心不自己算几何**：读 `OverlaySvg` 里那个定位高亮框（`[data-issue-highlight]`，图内元素时由
  * `IssueOverlay.IssueElementHighlight` 按与悬停轮廓同一份换算画；动效开着时不可见，只当锚点）的屏幕
@@ -104,19 +104,24 @@ export function IssueSpotlight() {
     '--spot-from-x': `${Math.round(ux * spot.r * 1.2)}px`,
     '--spot-from-y': `${Math.round(uy * spot.r * 1.2)}px`,
   } as CSSProperties
-  // 光柱：光源处窄、到光圈处与光圈同宽（垂直于射向的两侧各一点）
+  // 光柱：一束光锥，两条边与光圈**相切**（光圈可见亮区半径 ≈ 1.25r）——锥在切点处与光圈一样宽、顺着
+  // 光圈的轮廓收进去，没有「细棍顶个球」的收腰（用户：顶部像棒棒糖）。光源一端也留一点宽度（灯口，不是针尖）
   const px = -uy
   const py = ux
-  const near = spot.r * 0.12
-  const far = spot.r * 0.95
-  const cone = [
-    [src.x + px * near, src.y + py * near],
-    [spot.cx + px * far, spot.cy + py * far],
-    [spot.cx - px * far, spot.cy - py * far],
-    [src.x - px * near, src.y - py * near],
+  const lit = spot.r * 1.25
+  const cos = Math.min(1, lit / dist)
+  const sin = Math.sqrt(1 - cos * cos)
+  const mouth = spot.r * 0.3
+  const tangent = (side: 1 | -1) => [
+    spot.cx + lit * (cos * ux + side * sin * px),
+    spot.cy + lit * (cos * uy + side * sin * py),
   ]
+  const cone = [[src.x + px * mouth, src.y + py * mouth], tangent(1), tangent(-1), [src.x - px * mouth, src.y - py * mouth]]
     .map(([x, y]) => `${Math.round(x)},${Math.round(y)}`)
     .join(' ')
+  // 渐变从灯口一路渐强到切点那条弦，接进光圈，不先淡掉
+  const chord = Math.max(0, Math.min(1, (dist - lit * cos) / dist))
+  const showShaft = dist > lit * 1.4
 
   return (
     <div ref={host} data-issue-spotlight className="pointer-events-none absolute inset-0 overflow-hidden">
@@ -152,16 +157,16 @@ export function IssueSpotlight() {
             x2={spot.cx}
             y2={spot.cy}
           >
-            <stop offset="0" style={{ stopColor: LIGHT }} stopOpacity="0.04" />
-            <stop offset="0.65" style={{ stopColor: LIGHT }} stopOpacity="0.18" />
-            <stop offset="0.88" style={{ stopColor: LIGHT }} stopOpacity="0.12" />
-            <stop offset="1" style={{ stopColor: LIGHT }} stopOpacity="0" />
+            <stop offset="0" style={{ stopColor: LIGHT }} stopOpacity="0.03" />
+            <stop offset={chord * 0.6} style={{ stopColor: LIGHT }} stopOpacity="0.09" />
+            <stop offset={chord} style={{ stopColor: LIGHT }} stopOpacity="0.16" />
+            <stop offset="1" style={{ stopColor: LIGHT }} stopOpacity="0.16" />
           </linearGradient>
           <filter id={`shaft-soft-${uid}`} x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation={Math.max(4, Math.round(spot.r * 0.14))} />
+            <feGaussianBlur stdDeviation={Math.max(6, Math.round(spot.r * 0.22))} />
           </filter>
         </defs>
-        <polygon points={cone} fill={`url(#shaft-fill-${uid})`} filter={`url(#shaft-soft-${uid})`} />
+        {showShaft && <polygon points={cone} fill={`url(#shaft-fill-${uid})`} filter={`url(#shaft-soft-${uid})`} />}
       </svg>
     </div>
   )
