@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/tickSides.test.ts`、`canvas/spineZones.test.tsx`、`inspector/tickTaskCard.test.tsx`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 110
+改到: `lib/tickSides.ts`、`ElementHitLayer` 的边框命中区、`TickAndSpineDiagram`、`applyTickSidePlan`
+主题: 坐标轴边框的语义命中区与四边刻度 → `spine-zones-and-tick-sides.md`
+必守要点: 命中函数纯；状态派生自 `direction` + `ticks_<side>`；一次 commit
+-->
+
 完整版在 `docs/adr/0035-axis-tick-direct-manipulation.md`，改动前先读。
 
 * **点内侧控向内、点外侧控向外、线本身选中子图**。命中函数是纯的

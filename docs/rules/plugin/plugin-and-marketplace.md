@@ -5,6 +5,14 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_codex_plugin.py`、`tests/test_install_locate.py`、`tests/test_plugin_update_check.py`
 
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 30
+改到: `.codex-plugin/plugin.json`、`.agents/plugins/marketplace.json`、路径镜像、`update_check.py`、`scripts/handoff.py`
+主题: 插件本体与市场 → `plugin-and-marketplace.md`
+必守要点: 插件版本 == `tavotto.__version__`；路径规则镜像 `engine/locate.py`、一个 pathlib 都不用；更新检查四条底线；脚本与产物同目录、死图退出码 4；跑脚本的 `MPLCONFIGDIR` 是引擎判据的镜像
+-->
+
 - **Codex 插件在 `codex-plugin/`**，市场清单在仓库根 `.agents/plugins/marketplace.json`
   （仓库即市场根）。**已不再是 skills-only**：2026-08-18 起同时带一个本地 stdio
   MCP server 与内嵌画布（2026-09-02 起七个工具，含 `tavotto_refresh_project`；2026-09-13 起八个，加 `tavotto_normalize_figure`；2026-09-21 起加 `tavotto_session_state`，画布的取件通道）；交接这条路一字未改。**仍不做 `.app.json`**（需要

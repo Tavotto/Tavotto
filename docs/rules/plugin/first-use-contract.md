@@ -5,6 +5,14 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_codex_plugin.py`、`tests/test_codex_install_cli.py`
 
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 10
+改到: `skills/tavotto-figure/SKILL.md` 与 `references/`、README 的首次使用章节、安装命令、`agents/openai.yaml`
+主题: 首次使用契约 → `first-use-contract.md`
+必守要点: 先检查不安装；装完新开会话；安装命令两条分开写、唯一出处 `brand.CODEX_SPARSE_PATHS`；`openai.yaml` 的 `command` 与 `codex.mcp.json` 同步
+-->
+
 - **普通用户安装绝不需要 clone 仓库**，也不需要 pnpm/npm/cargo/Tauri/前端构建/
   `run.sh`/测试套件/editable install。README 的「在 Codex 中第一次使用
   Tavotto」是普通用户的唯一入口；源码安装只留给贡献者。

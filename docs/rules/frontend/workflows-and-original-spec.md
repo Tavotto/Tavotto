@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`store/workspace.test.ts`、`lib/originalSpec.test.ts`、`canvas/fastEditStage.test.tsx`、`e2e/nav-audit.spec.ts`、`tests/test_original_spec.py`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 260
+改到: `store/workspace.ts`、`openFastEdit` / `addFigureToLayout` / `focusLayoutPanel`、`lib/originalSpec.ts`
+主题: 两条工作流与原图规格 → `workflows-and-original-spec.md`
+必守要点: 模式由画布图数推出（1 张=单图编辑），`settleMode` 唯一写入点；三个稳定动作是唯一出口
+-->
+
 ```text
 单图编辑（代码里叫 fast_edit）：画布上恰好 1 张图 → 修改 → 按原图规格导出
 多图排版（layout）          ：画布上 ≥2 张图 → 排列 → 按画布规格导出

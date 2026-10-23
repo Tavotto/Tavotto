@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_outbound_https_trust.py`、`tests/test_telemetry.py`、`test_telemetry_api.py`、`test_telemetry_proxy.py`、`test_telemetry_invariants.py`、`test_telemetry_disclosure.py`、`test_distribution_metrics.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 270
+改到: `engine/telemetry.py`、`EVENTS`、`services/telemetry_proxy/`、`collect_distribution_metrics.py`
+主题: 匿名用量统计 → `telemetry.md`
+必守要点: 不引入任何分析 SDK；`capture()` 永不抛不阻塞；范围扩大升 `CONSENT_VERSION`；HTTPS 只经 `tlstrust`
+-->
+
 事件契约与指标定义在 `docs/analytics/`（`telemetry-events.md` / `yc-metrics.md` /
 `yc-dashboard.json`），隐私承诺在 `docs/privacy.md`，代理部署在
 `services/telemetry_proxy/README.md`。改动前先读。

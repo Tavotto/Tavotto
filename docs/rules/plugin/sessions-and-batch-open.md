@@ -5,6 +5,14 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_server.py`
 
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 120
+改到: `stems` / `discover_stems`、`_safe_preflight()`、`_live_session_for()`、`Session.acquire()`
+主题: 批量打开与会话账本 → `sessions-and-batch-open.md`
+必守要点: 一张失败不回滚整批、「没尝试」是第三个桶；open 之后每一步都不许把已登记会话带走；会话不抱 worker 引用、渲染成功后才登记
+-->
+
 - **批量打开（issue #174）**：`tavotto_open_figure` 的 `stems` / `discover_stems`
   一次开 N 张独立图，每张仍走 `open_figure` 那条路（`_resolve_project` 是单图与
   批量共用的那一段解析，范围校验顺序只有一份）。四条不许破坏：**一张失败不回滚

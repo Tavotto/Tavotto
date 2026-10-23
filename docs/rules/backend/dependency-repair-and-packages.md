@@ -5,6 +5,14 @@
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_dependency_repair.py`、`tests/test_pypi_mirror_fallback.py`、`tests/test_pypi_slow_fallback.py`、`test_dependency_repair_e2e.py`、`test_package_management.py`、`test_package_lookup.py`、`test_environment_health_parity.py`、`test_dependency_plan.py`、`test_dependency_declared_roots.py`、`test_import_origin_static.py`、`test_import_origin_safety.py`、`test_import_origin_metadata.py`、`test_environment_coverage.py`、`test_user_environments.py`、`test_root_env_overlay.py`、`test_env_project_attribution.py`、`test_environment_adoption.py`、`test_environment_session.py`、`test_environment_autodetect.py`、`test_dependency_impact.py`、`test_dependency_scope.py`、`test_import_origin_user_specified.py`、`test_import_origin_cross_platform.py`、`test_import_origin_perf.py`、`test_import_origin_diagnostics_privacy.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：内置 runtime 永不是安装目标；pip exit 0 ≠ 修好；用户显式决定过的环境不碰；环境建议纯读；环境覆盖度只有 `userenvs._probe_cache` 一份，授权检查会执行用户包、不宣称无副作用；来源解析默认零执行、来源事实不进诊断内容；默认准备/运行时自动检测、能跑就用，确认模式可选（ADR 0114 §六）；镜像回退见细则
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 160
+改到: `engine/depresolve.py`、`managedenv.py`、`deprepair.py`、`userenvs.py`、`rootenv.py`、`envadvice.py`、`projectenv.probe_environment`、`pool.mutating_environment`、`importscan.py`、`distmeta.py`、`depplan.py`
+主题: 受控依赖修复与包管理、联合依赖准备（ADR 0061）、Import 来源解析（ADR 0119）、PyPI 镜像回退（ADR 0111 / 0112 §二） → `dependency-repair-and-packages.md`
+必守要点: 内置 runtime 永不是安装目标；pip exit 0 ≠ 修好；用户显式决定过的环境不碰；来源解析默认零执行；镜像回退见细则
+-->
+
 缺包时「一键装上并继续」。**动它之前先读 ADR 0019**——它是本仓库唯一一个会
 往磁盘装第三方代码的子系统，边界比实现重要得多。
 

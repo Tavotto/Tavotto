@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_axes_ticks_scale.py`、`test_tick_sides_geometry.py`、`test_manifest_ticklabel_cost.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 120
+改到: `tickmodel.py`（`tick_cfg` / `apply_tick_model` / `TickSet` / `TickLabel`）、`spinemodel.spine_cfg`、`manifest.spine_geometry`
+主题: 刻度定位、边框模型与 spines 几何 → `ticks-and-spines.md`
+必守要点: 写进 cfg 再整体重建，没表态 = 脚本原样；刻度记忆表只活一次测量；spines 端点取 `Spine.get_path()`
+-->
+
 - **刻度定位走 Locator / Formatter，不是改已经生成出来的 Text**（2026-08-18）：
   刻度标签每次 draw 由 locator 现算、Text 对象现建，改 Text 属性只能靠
   tick_params 持久（字号/颜色/朝向那一档），而「几个刻度、落在哪、写成什么」

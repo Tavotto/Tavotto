@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`SettingsDialog.test.tsx`、`settings/PackagesSettings.test.tsx`、`settings/PackagesSearch.test.tsx`、`store/projectSwitchPackages.test.ts`、`updateStates.test.tsx`、`SettingsTelemetry.test.tsx`、`e2e/settings-shell.spec.ts`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 140
+改到: `SettingsDialog`、`settings/*`、`store/packageStore.ts`、`store/updateStore.ts`、遥测同意控件
+主题: 设置外壳与包管理 → `settings-shell-and-packages.md`
+必守要点: 外壳尺寸是合同；`run` 只在 `PackagesSettings` 里被调；查找只在点「在 PyPI 查找」时出网
+-->
+
 完整版在 `docs/adr/0038-settings-shell-agents-packages.md`，改动前先读。
 
 * **外壳尺寸是合同**：`SettingsDialog` 固定 `SHELL_WIDTH = 1000` / `SHELL_HEIGHT = 680px`

@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_updater.py`、`tests/test_outbound_https_trust.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 40
+改到: `engine/updater.py`、`/api/update/*`
+主题: 检查更新 → `update-check.md`
+必守要点: 纯标准库；升级永不静默、升级后 `restart_required`；桌面模式整个关掉；HTTPS 只经 `tlstrust`
+-->
+
 - `engine/updater.py`（纯标准库）：查 GitHub Releases 最新 tag → 与
   `tavotto.__version__` 比 → 按安装方式给升级命令。仓库地址等常量在
   `engine/brand.py`，别处不得手写。

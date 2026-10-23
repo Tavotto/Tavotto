@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/desktop.test.ts`、`hooks/menuActions.test.tsx`、`components/UpdateNoticeDialog.test.tsx`、`store/updateStore.test.ts`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 270
+改到: `lib/desktop.ts`、`hooks/menuActions.ts`、`lib/updateNotice.ts`、`UpdateNoticeDialog`
+主题: 桌面感知与更新 → `desktop-and-update.md`
+必守要点: 组件不得直接 import `@tauri-apps/*`；只查一条更新通道；菜单转发与键盘同一个让位判据
+-->
+
 - **前端唯一桌面感知点是 `web/src/lib/desktop.ts`**：组件不得直接 import
   `@tauri-apps/*`；每个能力都有浏览器回退（vitest 看护）。菜单事件 id 与
   `src-tauri/src/main.rs` 严格同源（`tavotto:menu`）。

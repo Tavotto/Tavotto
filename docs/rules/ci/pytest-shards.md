@@ -5,6 +5,14 @@
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestGates`、`tests/test_pytest_shard.py`
 > `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：backend-fast 当前 4 片、backend-platforms 4 片（各自独立约束）；选项必须 `=` 形式；进程内自验并集 == 全集；不带 `--shard` 是 no-op；lab 常规套件 = 同机 N 片并行、片号是变量、每片退出码进控制流；权重表只影响平衡不影响覆盖；不加 `-n auto`
 
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 50
+改到: `backend-fast` / `backend-platforms` 的 `--shard`、`_lab-qualification.yml` 的常规套件、`tests/support/shard.py`、`shard_weights.json`
+主题: pytest 分片（CI03a）→ `pytest-shards.md`
+必守要点: 选项必须 `=` 形式；进程内自验并集 == 全集；不带 `--shard` 是 no-op；权重表只影响平衡不影响覆盖；不加 `-n auto`
+-->
+
 - **backend 的 pytest 按文件分片（CI03a，2026-09-16）**：`backend-fast` / `backend-platforms`
   的 matrix 各有一根 `shard` 轴，命令是 `python -m pytest --shard=K/N --shard-manifest=… --junitxml … -rs`（两个
   conftest 选项**必须 `=` 形式**：pytest 预解析会把未知选项的下一个 token 当路径去找 conftest，

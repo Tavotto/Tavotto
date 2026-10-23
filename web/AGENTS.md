@@ -2,8 +2,8 @@
 
 仓库级路由与不变量在根 `AGENTS.md`；引擎与后端在 `src/tavotto/AGENTS.md`。
 本层规则的**全文按主题**在 `docs/rules/frontend/`：先在下表按路径找到主题，
-读那一份细则与它点名的 ADR，再动手。看护用例在细则头部。规则改在细则文件里，并同步
-这里那一行，不放第二份全文。
+读那一份细则与它点名的 ADR，再动手。看护用例在细则头部。下表是生成的：改细则头部的 `agents-route` 块，再
+`python scripts/dev/gen_agents_sheets.py --write`，别手改；这里不放第二份全文。
 
 技术栈：Vite + React 19 + TS + Tailwind v4。品牌常量唯一出处 `web/src/lib/brand.ts`
 （与 `engine/brand.py` 同源），界面不得手写产品名。
@@ -37,6 +37,7 @@
 
 ## 按改动路径找细则
 
+<!-- BEGIN GENERATED: agents-routes -->
 | 改到 | 主题（细则在 `docs/rules/frontend/`） | 必守要点 |
 | --- | --- | --- |
 | 任何前端改动的验证方式、`index.css` 的扫描面、e2e 定位与溢出尺子 | 验证 → `verification.md` | `pnpm build` 才是类型检查；`web/src` 改了要重建 playground 产物；横向溢出只用 `e2e/overflow.ts` 一把尺 |
@@ -69,6 +70,7 @@
 | `web/src/i18n/`、`UiMessage`、`errors.json`、`backendErrorText()`、`lib/stylePresets.ts` / `specBinding.ts` / `exportDefaults.ts` | 多语言 → `i18n.md` | 资源静态 import；code 一旦发布不能改名；`pnpm i18n:check` 是硬门禁；界面名词只有项目 / 排版 / 画布 / 项目包；目录选择器常用起点按 `id` 翻译，`ShortcutId` 与后端严格同源 |
 | `web/src/playground/`、`pyodide.worker.ts`、`prewarm.ts`、`examples/*.py` | 浏览器 playground（网站 /try） → `browser-playground.md` | Pyodide 版本与包白名单钉在 `packaging/playground-runtime.json`；一个文件 = 一个 Worker |
 | `components/ui/*`、`src/index.css` 的 `@theme` 与暗色值表、`lib/theme.ts`、图标、设置窗口排版、工作台结构 | UI 视觉纪律 → `ui-visual-discipline.md`（全文 `docs/ux/DESIGN_CONSTITUTION.md`） | 尺寸 / 层级 / 颜色只走语义 token（纸两套同值）；卡只经 `ui/Card`；同类控件第二套先删 |
+<!-- END GENERATED: agents-routes -->
 
 ## 验证
 

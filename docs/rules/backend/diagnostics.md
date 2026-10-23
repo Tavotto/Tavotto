@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_diagnostics_bundle.py`、`test_diag_send.py`、`test_diag_send_api.py`、`test_diagnostics_worker_evidence.py`、`test_diagnostics_worker_structure.py`、`test_diagnostics_log_privacy.py`、`test_task_diagnostics.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 280
+改到: `engine/diagnostics.py`、`diagnostics_frontend.py`、`diagdetail.py`、`taskdiag.py`、`diagsend.py`、`contact*.py`、`/api/diagnostics/*`
+主题: 诊断包与任务绑定诊断 → `diagnostics.md`
+必守要点: 先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外：用户逐次确认的「发送问题反馈」，默认开启，ADR 0118）；日志只读出门版；导出包严格脱敏不变，仅发送包多 `detail/`（schema 8）
+-->
+
 - `engine/diagnostics.py` 出**一键诊断包**（`GET /api/diagnostics/bundle`）：
   版本 / 系统与编码 / 安装方式 / 数据目录 / 渲染解释器 + matplotlib /
   AI CLI 探测 / 项目概况 / 最近错误 + app.log + 用户配置。

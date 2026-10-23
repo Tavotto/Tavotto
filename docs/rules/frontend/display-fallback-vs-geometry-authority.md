@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`store/geometryAuthority.test.ts`、`store/alignAction.test.ts`、`canvas/alignUndoConvergence.test.tsx`、`test/renderFixtures.ts` 的 `seedExactRender()`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 30
+改到: 任何读 manifest 几何后写文档的动作、`panelDisplayView`、override upsert
+主题: 显示回退 ≠ 几何权威 → `display-fallback-vs-geometry-authority.md`
+必守要点: 显示 API 与权威 API 分开；没有视觉位移就不写 override；重复 (gid, prop) 读写都取最后一条（`effectiveOverride`）
+-->
+
 **旧 SVG 可以继续显示；旧 manifest 不得作为几何写操作的权威输入。**
 细则与理由在 `docs/adr/0017-display-fallback-vs-geometry-authority.md`，
 动手前先读。要点：

@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/guardedExport.test.tsx`、`lib/artifactApi.test.ts`、`lib/exportRequest.test.ts`、`store/exportStore.test.ts`、`lib/exportFigures.test.ts`、`lib/artifactInspection.test.ts`、`lib/imgRetry.test.tsx`、`components/ExportDialog.test.tsx`、`tests/golden/filename_vectors.json`、`tests/test_export_request.py`、`tests/test_export_phase_labels.py`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 250
+改到: `lib/exportRequest.ts`、`store/exportStore.ts`、`lib/exportFigures.ts`、`lib/exportName.ts`、`lib/artifactInspection.ts`、`lib/imgRetry.ts`、导出对话框
+主题: 统一导出管线 → `export-pipeline.md`
+必守要点: 载荷只由 `buildExportRequest()` 构造；文件名规则严格同源对；产物核验的解读只有 `inspectionState()` 一处
+-->
+
 ```text
 prepareExport(input)   请求成形 + 就地校验（**不发网络**，输入框每敲一个字都能调）
 validateExport(input)  真的开始之前能看出来的：重名 / 目录写不写得了

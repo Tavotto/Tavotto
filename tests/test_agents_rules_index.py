@@ -432,3 +432,88 @@ def test_sheet_rows_are_three_short_cells(sheet: str):
 def test_sheets_with_table_matches_sheets():
     """预算脚本里那份有表的清单与这里的 `SHEETS` 一致（加一层两边一起改）。"""
     assert set(_budget().SHEETS_WITH_TABLE) == set(SHEETS) - {"AGENTS.md"}
+
+
+# ---------------------------------------------------------------- 五、路由表由细则生成（2026-10-23）
+
+
+def _gen():
+    spec = importlib.util.spec_from_file_location(
+        "gen_agents_sheets", ROOT / "scripts" / "dev" / "gen_agents_sheets.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_gen_sheet_layers_match_sheets():
+    """生成器里「速查表 → 细则层」与这里的 `SHEETS`（去掉根）一致（加一层两边一起改）。"""
+    gen = _gen()
+    assert gen.SHEET_LAYERS == {s: SHEETS[s].name for s in SHEETS if s != "AGENTS.md"}
+
+
+def test_generated_route_tables_are_not_stale():
+    """四份速查表里 BEGIN/END GENERATED 之间的路由表 == 由细则头部 `agents-route` 块生成的结果。
+
+    判据的主语：**仓库里已提交的速查表**与**已提交的细则块**此刻生成出来的表是否逐字相同。
+    手改了表、或改了细则块却没跑 `--write`，两种都红；这样「表 = 细则的投影」才不会重新退化成
+    两处手写（#1354 之后每个功能 PR 改同一张表的冲突就是这么来的）。
+    """
+    gen = _gen()
+    by_sheet = gen.collect()
+    # 前提：每张表都真的有块，且块总数不小（空集合上「生成物相同」恒真）。
+    assert set(by_sheet) == set(SHEETS) - {"AGENTS.md"}
+    assert all(len(v) >= 5 for v in by_sheet.values()), {k: len(v) for k, v in by_sheet.items()}
+    diff = gen.stale()
+    assert not diff, (
+        "速查表路由表已过期：改细则头部的 agents-route 块后跑 "
+        "`python scripts/dev/gen_agents_sheets.py --write`\n" + "\n".join(diff[:40])
+    )
+
+
+def test_agents_route_blocks_are_well_formed():
+    """每个 agents-route 块：键齐全、`sheet` 是 `SHEETS` 里有表的一份、同一 sheet 内 `order` 不重复。
+
+    判据的主语：`docs/rules/**` 下每份细则里的**每一个**块（一份细则可有多个）。`collect()` 对
+    任一违规抛 `RouteError`，这里再单独核一遍块总数与每份细则的块都在 `SHEETS` 里。
+    """
+    gen = _gen()
+    blocks = [b for p in gen.rules_files() for b in gen.parse_blocks(p)]
+    assert len(blocks) >= 80, f"只解析到 {len(blocks)} 个块——解析多半量在空集合上"
+    allowed = set(SHEETS) - {"AGENTS.md"}
+    bad_sheet = [f"{b['_file']}: {b['sheet']}" for b in blocks if b["sheet"] not in allowed]
+    assert not bad_sheet, bad_sheet
+    seen: dict[tuple[str, str], str] = {}
+    dup = []
+    for b in blocks:
+        key = (b["sheet"], b["order"])
+        if key in seen:
+            dup.append(f"{b['sheet']} order {b['order']}: {seen[key]} 与 {b['_file']}")
+        seen[key] = b["_file"]
+    assert not dup, dup
+    gen.collect()  # 其余违规（缺键 / order 非整数 / 单元格含 ' | '）在这里抛
+
+
+def test_agents_route_checker_catches_malformed_blocks(tmp_path, monkeypatch):
+    """生成器对坏块真的报错（门禁自己的反证：缺 `order`、重复 `order`、未知 `sheet`）。"""
+    gen = _gen()
+    rules = tmp_path / "docs" / "rules" / "backend"
+    rules.mkdir(parents=True)
+    monkeypatch.setattr(gen, "ROOT", tmp_path)
+    monkeypatch.setattr(gen, "RULES", tmp_path / "docs" / "rules")
+
+    def block(order: str | None, sheet: str = "src/tavotto/AGENTS.md") -> str:
+        o = f"order: {order}\n" if order is not None else ""
+        return f"<!-- agents-route\nsheet: {sheet}\n{o}改到: a\n主题: b\n必守要点: c\n-->\n"
+
+    (rules / "a.md").write_text(block("10"), encoding="utf-8")
+    assert len(gen.collect()["src/tavotto/AGENTS.md"]) == 1
+    (rules / "b.md").write_text(block("10"), encoding="utf-8")
+    with pytest.raises(gen.RouteError, match="重复"):
+        gen.collect()
+    (rules / "b.md").write_text(block(None), encoding="utf-8")
+    with pytest.raises(gen.RouteError, match="缺少键"):
+        gen.collect()
+    (rules / "b.md").write_text(block("20", sheet="nope/AGENTS.md"), encoding="utf-8")
+    with pytest.raises(gen.RouteError, match="不是有路由表"):
+        gen.collect()

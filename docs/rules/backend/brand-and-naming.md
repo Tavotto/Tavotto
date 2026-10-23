@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_desktop_launch.py`、`tests/test_handoff.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 10
+改到: `engine/brand.py`、任何品牌 / 标识符 / 存储键
+主题: 品牌与命名 → `brand-and-naming.md`
+必守要点: 干净断裂：旧名一律不认、不加 LEGACY_；唯二 `mm` 例外只在读取端回退
+-->
+
 产品名 **Tavotto**（拼写大小写固定）。品牌与格式常量唯一出处：
 `web/src/lib/brand.ts`、`engine/brand.py`——界面/导出格式不得手写产品名。
 对象层级 Project / Canvas / Tab / Object 见

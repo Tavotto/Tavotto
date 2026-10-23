@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`playground/*.test.ts`、`e2e/playground.spec.ts`、`tests/test_browser_session.py`、`tests/test_playground_build.py`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 290
+改到: `web/src/playground/`、`pyodide.worker.ts`、`prewarm.ts`、`examples/*.py`
+主题: 浏览器 playground（网站 /try） → `browser-playground.md`
+必守要点: Pyodide 版本与包白名单钉在 `packaging/playground-runtime.json`；一个文件 = 一个 Worker
+-->
+
 完整版在 `docs/adr/0007-browser-playground.md` 与
 `docs/adr/0011-playground-examples-first.md`，改动前先读。引擎侧
 （`engine/browser.py` 的平铺 import 纪律与 ENGINE_FILES 白名单）见

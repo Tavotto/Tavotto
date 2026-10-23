@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`canvas/arrowNudge.test.tsx`、`canvas/nudgeThenPointer.test.tsx`、`e2e/arrow-nudge.spec.ts`、`canvas/dragCoverage.test.tsx`、`e2e/drag-coverage.spec.ts`、`canvas/patchCarryDrag.test.tsx`、`lib/pathGeom.test.ts`、`elementPathSelection.test.tsx`、`shapeOutline.test.tsx`、`canvas/twinAxesPick.test.tsx`、`e2e/twin-axes-pick.spec.ts`、`canvas/inFigureDrag.test.tsx`、`canvas/axesCompanionDrag.test.tsx`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 190
+改到: `lib/pathGeom.ts`、`lib/shapeGeometry.ts`、`pickElement` / `pickElementStack`、⌥ 轮换、`patchContents`、图内拖动吸附 `inFigureSnapCandidates`、随行元素 `companionPatchesFor`、图内平移 `InFigureMove`、方向键微调 `canvas/nudge.ts`
+主题: 命中与选择几何 → `hit-and-selection-geometry.md`
+必守要点: 填充按 nonzero、距离换到 mm；描边先于填充（ADR 0086）；⌥ 只换选中且必须说出口；拖动与方向键共用一份 `InFigureMove`（ADR 0093）；拖不动的说出为什么（ADR 0100）
+-->
+
 - 图内元素的命中 / 框选 / 描边全在 `web/src/lib/pathGeom.ts`（距离一律换到 mm
   再比，与图内箭头同一口径；填充按 nonzero 缠绕数算内部——判据的完整理由见
   `docs/rules/backend/pdf-backend-boundary.md`，别在别处另写一份 even-odd 的；

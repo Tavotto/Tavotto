@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_install_locate.py`、`test_handoff.py`、`test_open_script_route.py`、`test_desktop_launch.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 310
+改到: `engine/locate.py`、`cli.py`、`handoff.py`、`tavotto open` / `doctor`、桌面 argv
+主题: 外部交接 → `external-handoff.md`
+必守要点: 发现链唯一权威 `locate.py`；子命令分派在 import Flask 之前；`HandoffError` 一律带稳定 code
+-->
+
 完整版在 `docs/adr/0005-external-handoff-and-codex-plugin.md`，改动前先读。
 插件侧（codex-plugin/ 的镜像定位器、update_check、技能纪律）见
 `codex-plugin/AGENTS.md`。

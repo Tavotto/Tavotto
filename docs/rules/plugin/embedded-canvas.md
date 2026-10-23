@@ -5,6 +5,14 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scripts/ci/check_generated_untracked.py`、`web/e2e/mcp-canvas.spec.ts`、`docs/acceptance/codex-desktop-canvas.md`
 
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 130
+改到: `web/src/lib/engineTransport.ts`、`mcp/widget/canvas.html`、`scripts/build_mcp_widget.py`、画布 CSP
+主题: 内嵌画布 → `embedded-canvas.md`
+必守要点: 画布 = Tavotto 前端那一份代码、唯一改动是 `engineTransport` 的可选覆盖；产物不进 git；不用「开浏览器」冒充；不发遥测
+-->
+
 - **内嵌画布 = Tavotto 前端那一份代码**（`CanvasStage`/`OverlaySvg`/`interactions.ts`/
   `ElementInspector`/既有 stores），拖拽、命中、吸附、undo、patch 状态**没有第二份实现**。
   唯一改动是 `web/src/lib/engineTransport.ts`：一个**可选覆盖**（HTTP ↔ `tools/call`）。

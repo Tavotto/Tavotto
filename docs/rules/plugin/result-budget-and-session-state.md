@@ -5,6 +5,14 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_server.py`、`web/src/mcp/boot.test.ts`、`web/e2e/mcp-canvas.spec.ts`
 
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 60
+改到: 工具结果体积、`CANVAS_INLINE_BUDGET_BYTES`、`APPLY_SUMMARY_BUDGET_BYTES`、`tavotto_session_state`、`web/src/mcp/boot.ts`
+主题: 工具结果的体积预算与画布取件 → `result-budget-and-session-state.md`
+必守要点: 单图 open 与显式 apply 摘要量紧凑 UTF-8（错误也有界且保留错误码）；旧 apply 默认完整；诊断账本有界；取件只读不重渲染；画布启动三路都不自己发起 open
+-->
+
 - **Codex 把 MCP 工具结果送给桌面 UI 的事件副本封顶在 1 MiB**，超过就把 `structuredContent`
   / `_meta` 置空——模型那份与画布自己发的 `tools/call` 不受影响，症状是「模型正常、画布永远
   等待」（422 元素 ≈ 1.3 MB）。**顺带**：`structuredContent` 非空时 codex 只把它给模型，

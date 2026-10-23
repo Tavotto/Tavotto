@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`store/svgMemoryBudget.test.ts`、`hooks/useEngineSync.test.ts`、`embedded/session.test.ts`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 50
+改到: `renderStore` 的 `dropSvgPayload` / `residentSvgBytes` / pin 集合
+主题: SVG payload 的字节预算 → `svg-byte-budget.md`
+必守要点: 条目数与字节两条策略并存；三条 pin 一条不能少
+-->
+
 **条目数不是字节预算。** `docs/rules/frontend/display-fallback-vs-geometry-authority.md` 里那条 `RECENT_VARIANTS = 4` 管的是「留几档语义
 状态」，它对「留了多少字节」一无所知——hybrid 之后仍有 8～12 MiB 的预览 SVG
 乘以 4 档乘以几个文件，就是几百 MB 常驻在 JS 堆里，而每一份都是合法的撤销

@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scripts/tailwind-scan-check.mjs`（反向判据的金丝雀 `tracking-widest` 常驻在本文件这一行，删了它门禁红）、`e2e/a11y.spec.ts`、`e2e/overflow.ts`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 10
+改到: 任何前端改动的验证方式、`index.css` 的扫描面、e2e 定位与溢出尺子
+主题: 验证 → `verification.md`
+必守要点: `pnpm build` 才是类型检查；`web/src` 改了要重建 playground 产物；横向溢出只用 `e2e/overflow.ts` 一把尺
+-->
+
 - `cd web && pnpm test`（vitest+jsdom；NODE_OPTIONS 里禁用了 node 内建
   webstorage，否则 jsdom localStorage 被遮蔽）。
 - `pnpm build` = 类型检查（`tsc -b`）+ 打包。**别用 `tsc --noEmit` 当类型检查**：

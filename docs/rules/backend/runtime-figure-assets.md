@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_runtime_asset.py`、`test_asset_library.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 140
+改到: `engine/runtimeasset.py`、`runtime:` id、`/api/runtime/*`
+主题: RuntimeFigureAsset → `runtime-figure-assets.md`
+必守要点: id 不透明；端点只读绝不执行；写回硬拒绝；导出必须当次 live 渲染
+-->
+
 - **RuntimeFigureAsset（2026-08-26，Compatibility Bridge Session 4，ADR 0013
   定稿）**：没有磁盘产物的捕获 Figure 是正式素材类型，面板 fileId 是
   `runtime:<script>#<stem>`（**不透明标识**）。引擎侧唯一实现

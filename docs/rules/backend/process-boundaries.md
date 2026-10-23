@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_install_locate.py`（`test_subcommands_run_without_flask_or_pymupdf`）、`tests/bridge/`、`tests/test_first_open_environment.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 20
+改到: Flask 侧 / 子进程侧 / bridge 侧任一模块的 import、`pool.resolve_worker_python` 的优先级链
+主题: 进程与依赖边界 → `process-boundaries.md`
+必守要点: 三侧模块名单与各自允许的依赖；项目级解释器决策唯一出处 `pool.resolve_worker_python(项目, script=)`，失效的显式选择报错不静默替换
+-->
+
 - Flask 跑在 `.venv`（flask + packaging + RenderCore 的五个包：pikepdf / fonttools / uharfbuzz / pypdfium2 / pillow，
   **没有 matplotlib**）。
   `engine/registry.py`、`engine/pool.py`、`engine/ai_bridge.py`、`engine/config.py`、

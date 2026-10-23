@@ -5,6 +5,14 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_server.py`、`tests/test_mcp_resolver.py`
 
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 40
+改到: `tavotto_refresh_project`、`bridge.refresh_project()`
+主题: 改过脚本之后的显式刷新 → `refresh-project.md`
+必守要点: 两条路都不复制 discover、不 probe、不跑脚本；项目只来自授权；结果里没有绝对路径；用例绝不真的探 5089
+-->
+
 - **`tavotto_refresh_project` 是第七个工具**，也是模型改完 .py 之后该调的那一步；技能与
   README 里不再写「重开会话 / 手动刷新」让 Tavotto 跟上。实现全在 `bridge.refresh_project()`：
   先探 `127.0.0.1:5089/api/version`，可达就委托运行中的 Tavotto（`/api/projects/open

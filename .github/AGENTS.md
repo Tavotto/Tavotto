@@ -2,8 +2,8 @@
 
 仓库级路由与不变量在根 `AGENTS.md`；引擎与后端在 `src/tavotto/AGENTS.md`，前端在
 `web/AGENTS.md`。本层规则的**全文按主题**在 `docs/rules/ci/`：先在下表按改动路径找到
-主题，读那一份细则（各 1–6 KB）与它点名的合同用例，再动手。看护用例在细则头部。规则改在细则文件里，
-并同步这里那一行；这里不放第二份全文。
+主题，读那一份细则（各 1–6 KB）与它点名的合同用例，再动手。看护用例在细则头部。下表是生成的：改细则头部的 `agents-route` 块，再
+`python scripts/dev/gen_agents_sheets.py --write`，别手改；这里不放第二份全文。
 
 ## 本层不可破坏
 
@@ -32,6 +32,7 @@
 
 ## 按改动路径找细则
 
+<!-- BEGIN GENERATED: agents-routes -->
 | 改到 | 主题（细则在 `docs/rules/ci/`） | 必守要点 |
 | --- | --- | --- |
 | `.github/workflows/ci.yml` 的事件 / `needs` / Gate 闭集、`scripts/ci/aggregate_gate.py` | CI 分层 → `ci-lanes.md` | 时机分工与覆盖面不变；三个稳定 Gate；`cancel-in-progress` 只对 PR 开；顶层 `TAVOTTO_NO_TELEMETRY=1`；目录里每个监听 `pull_request` 的 workflow 都带 `branches: [main]`（`TestPullRequestBaseFilter`，算出来的集合、不用登记） |
@@ -50,3 +51,4 @@
 | `release.yml` / `release-publish.yml`、`codex-plugin.json`、`latest.json`、遥测代理部署 | 发布链 → `release-chain.md` | 第一段不等 lab；`trust2` 不信任载荷、publish 只能压成 false、读一次 `lab/release` status；插件清单由 `build` 生成、不进 `desktop-tauri.yml`；先发代理再发客户端 |
 | `desktop-shell` job、`src-tauri` 的 cargo 三件、fast 档 job 的 `if:` | desktop-shell 与 Gate 闭集 → `desktop-shell-lane.md` | 两条腿（ubuntu + macos）都跑 fmt / clippy / test；`bundle.resources` 空目录就够；改 fast 档条件先看闭集用例 |
 | `frontend` / `plugin-candidate` job、`scripts/plugin_stage.py`、`scripts/plugin_publish.py`、`plugin-stable.yml` | Codex 插件候选（ADR 0043）→ `codex-plugin-candidate.md` | 候选只验证不发布；有产物时 `tests/test_plugin_candidate.py` 不许 skip；`plugin_stable` 投影同一份 zip；发行分支不触发源码 CI；发布器与夹具的 git 不起后台维护（#604，同源对） |
+<!-- END GENERATED: agents-routes -->

@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_colorbar_orientation.py`、`test_colorbar_resize.py`、`test_figure_recognition.py`、`test_colorbar_groups.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 110
+改到: `colorbarmodel.py`（`_cb_reorient`、`extend`、`follow_map`）、色条轴 position
+主题: 色条：方向、延伸与大小 → `colorbar.md`
+必守要点: 就地结构改造、`fig.axes` 顺序不动；色阶兄弟只认 `scale_siblings`；布局归属只认显式宿主
+-->
+
 - **色条方向（2026-08-18）**：**就地**结构改造，不是普通 setter，也不是销毁
   重建。`colorbarmodel._cb_reorient`（整个色条族——`ColorbarProxy`、方向 / 延伸、
   `_cb_release_aspect` / `_cb_restore_aspect`、`colorbar_maps` / `follow_map` / 随行表——

@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/validation.test.ts`、`lib/issueFocus.test.ts`、`lib/issueFix.test.ts`、`lib/problemList.test.ts`、`lib/subplotParts.test.ts`、`store/validationStore.test.ts`、`tests/test_preflight.py`、`hooks/useServerEvents.test.ts`、`store/statusPassive.test.ts`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 70
+改到: `lib/validation.ts`、`store/validationStore.ts`、`lib/issueFocus.ts`、`lib/problemList.ts`、`lib/subplotParts.ts`、导出对话框的摘要、`uiStore` 的 status 主人 / `useServerEvents` 的 `render.failed`↔`render.done` toast
+主题: 统一检查与问题定位 → `validation-and-problem-navigation.md`
+必守要点: 摘要只由 `summaryFor()` 组装；定位只有 `focusObject()` 一处；失败 toast 挂主人，同项目同文件渲染成功才撤
+-->
+
 完整版在 `docs/adr/0030-validation-and-problem-navigation.md`，改动前先读。
 **「这份项目有什么问题」只有一条链**：
 

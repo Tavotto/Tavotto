@@ -5,6 +5,14 @@
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestPlaywrightShards`、`tests/test_playwright_shard_check.py`、`tests/test_feature_registry.py`
 > `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：Windows 三片完整构建（chromium 内部原生 `--shard=1/2`、`2/2` + webkit/chromium-en 一片，`others` 用 `\|` 隔开）；POSIX 三片按 planned list 对拍 active 用例；必需步骤不加 `if:`；`others` == 其余各片的 projects；artifact 名带 shard；step 级 `timeout-minutes`
 
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 60
+改到: `windows-exe-smoke` matrix、`posix-e2e` 原生 `--shard`、`web/playwright.config.ts` 的 project 集
+主题: Playwright 分片（CI03c）→ `playwright-shards.md`
+必守要点: 各片 projects 并集 == 全集、POSIX 按 planned list 对拍；必需步骤不加 `if:`；artifact 名带 shard；step 级 `timeout-minutes`
+-->
+
 - **`windows-exe-smoke` 的 Playwright 分 3 片（CI03c，2026-09-16 按 project 分 2 片；2026-10-19 chromium 内部再拆一刀）**：
   matrix `include` 三条（片 1 `--project=chromium --shard=1/2`；片 2 `--project=webkit --project=chromium-en`；片 3
   `--project=chromium --shard=2/2`），每条带 `browsers`（本片要装的引擎）、`projects`（本片的参数，原样进 `pnpm e2e`；可带一个

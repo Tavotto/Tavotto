@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestRunnerTrustZones`
 
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 100
+改到: `runs-on`、workflow 事件、`.github/actionlint.yaml`、可复用 workflow
+主题: runner 信任区（CI04）→ `runner-trust-zones.md`
+必守要点: PR / merge_group / review / issue_comment 只许 hosted；审查和评论事件只由只读的 `review-budget.yml` 消费；`tavotto-lab` 只在 `_lab-qualification.yml`；事件闭集；标签集合 == 实际用到的
+-->
+
 - **runner 信任区的静态守卫（CI04，2026-09-16）**：`tests/test_merge_queue_workflows.py::TestRunnerTrustZones` 五条——
   监听 `pull_request` / `pull_request_target` / `merge_group` / `pull_request_review` /
   `pull_request_review_comment` / `issue_comment` 的每个 workflow，全部 job 的 `runs-on`（矩阵展开、经本仓库可复用

@@ -5,6 +5,14 @@
 > `docs/perf-probe-guide.md`。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`perf/core.test.ts`、`perf/synthetic.test.ts`、`perf/probeStore.test.tsx`、`e2e/perf-probe.spec.ts`、`tests/test_perf_probe.py`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 180
+改到: `web/src/perf/`、`PerfProbeHud`、`interactionStore.begin/end`、热路径上的 `perfSpan` / `perfInput` / `perfCount`
+主题: 拖动性能探针 → `perf-probe.md`
+必守要点: 热路径只 import `perf/core.ts`、没录制时零成本；自动测试绝不改文档
+-->
+
 - **热路径只 import `perf/core.ts`**（叶子，不 import 任何 store）。编排、store 订阅、
   DOM 统计、报告组装在 `perf/session.ts`，只被探针自己的界面（`perf/probeStore.ts`、
   `components/PerfProbeHud.tsx`）import——反过来就绕出 import 环。

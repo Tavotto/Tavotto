@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_export_pipeline.py`、`test_export_route.py`、`test_worker_export_pixel_budget.py`、`test_export_request.py`、`test_export_endpoint.py`、`test_tiffwrite.py`、`test_epsfile.py`、`tests/golden/filename_vectors.json`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 210
+改到: `/api/export*`、`engine/exportreq.py`、`exportjob.py`、`exportroute.py`、`svgstore.py`、`svgexecution.py`、`tiffwrite.py`、`_serialize_figure`
+主题: 导出（ADR 0031 / 0046） → `export-pipeline.md`
+必守要点: 五端点一服务；文件名严格同源
+-->
+
 - **导出（ADR 0031，2026-08-31 定版）**：`POST /api/export`（同步）/
   `/api/export/start`（后台作业，进度经 SSE `export.progress`）/ `/state` /
   `/cancel` / `/validate` —— **五个端点、一个服务**。「要什么」只有

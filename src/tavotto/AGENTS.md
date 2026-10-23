@@ -4,7 +4,8 @@
 插件与 MCP server 在 `codex-plugin/AGENTS.md`，打包与内置 runtime 在
 `packaging/AGENTS.md`。本层规则的**全文按主题**在 `docs/rules/backend/`：
 先在下表按改动路径找到主题，读那一份细则（各 1–10 KB）与它点名的 ADR，再动手。
-看护用例在细则头部。规则改在细则文件里，并同步这里那一行；这里不放第二份全文。
+看护用例在细则头部。下表是生成的：改细则头部的 `agents-route` 块，再
+`python scripts/dev/gen_agents_sheets.py --write`，别手改；这里不放第二份全文。
 
 技术形状：Flask 后端（`src/tavotto/app.py`）+ RenderCore（`rendercore/`：pikepdf /
 HarfBuzz / PDFium render child + 批准字体，**只经 `src/tavotto/pdfbackend/` 契约层**）；
@@ -38,6 +39,7 @@ TS + Tailwind v4）。
 
 ## 按改动路径找细则
 
+<!-- BEGIN GENERATED: agents-routes -->
 | 改到 | 主题（细则在 `docs/rules/backend/`） | 必守要点 |
 | --- | --- | --- |
 | `engine/brand.py`、任何品牌 / 标识符 / 存储键 | 品牌与命名 → `brand-and-naming.md` | 干净断裂：旧名一律不认、不加 LEGACY_；唯二 `mm` 例外只在读取端回退 |
@@ -74,6 +76,7 @@ TS + Tailwind v4）。
 | `engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`/api/engine/preparation*`（完整清单见细则） | 准备计划、执行回执与源图产物（ADR 0053 / 0057 / 0070 / 0071）、准备会话（T01） → `preparation-and-receipts.md` | 计划与观测分开；过期不执行 |
 | `rendercore/`、`fonts_allowlist.json`、`pdfbackend/canvas_coverage.json`、`scripts/fetch_fonts.py`、pyproject 的 native 依赖（模块分层见细则） | RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成、栅格、facade 接线与有限产物验证（ADR 0059 / 0060 / 0065 / 0066 / 0067 / 0068 / 0070 / 0071 / 0072 / 0077） → `rendercore.md` | 纯模型只许标准库、整包零 `import pymupdf`；`facade.py` 是契约的唯一实现；离开本机的只有 `inspector.public_projection()` |
 | `engine/browser.py`、`browser_imports.py`、`ENGINE_FILES` | 浏览器 playground（引擎侧） → `browser-playground-engine.md` | 平铺 import 与 worker 同一条 sys.path 纪律；加 flat import 同步 `ENGINE_FILES` |
+<!-- END GENERATED: agents-routes -->
 
 ## 验证
 

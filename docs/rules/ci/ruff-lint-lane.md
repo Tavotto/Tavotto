@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py`
 
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 40
+改到: `python-lint` job、`pyproject.toml` 的 `[tool.ruff]`
+主题: Ruff 这一格 → `ruff-lint-lane.md`
+必守要点: 规则与豁免只在 `pyproject.toml`，CI 不 `--fix`；check 与 format 两个独立结论；新增 sys.path 源码根要回来审 `src`
+-->
+
 - **Ruff（`python-lint`）是快线里最便宜的一格，不是别的门禁的替代品**：
   它只回答「这份 Python 在语法与名字层面立得住吗」（F821/F401/F841 那一类），
   语义问题仍归不变式 / 等价性矩阵 / CompatBench。它经 `CI fast gate` 参与合并

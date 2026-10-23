@@ -5,6 +5,14 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_export_inspection.py`、`tests/test_mcp_server.py`
 
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 90
+改到: `bridge.export`、`_inspection_summary`、导出前预检
+主题: 导出：先预检与产物核验 → `export-preflight-and-inspection.md`
+必守要点: 有 error 或 `not_verifiable` 且没确认就一张不出；与 HTTP 导出同一份检查器接线；「未核验」永远不是「已核验」
+-->
+
 ## 导出先预检（原「MCP server 与内嵌画布」一节）
 
 - **导出先预检**：有 error **或 `not_verifiable`** 且没有 `explicit_confirm` 时

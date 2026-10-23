@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/pagePtLens.test.ts`、`inspector/pagePtInspector.test.tsx`、`lib/typography.test.ts`、`typographyAdapter.test.tsx`、`lib/canvasTextFont.test.ts`、`tests/test_typography_families.py`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 80
+改到: `lib/typography.ts`、`typographyAdapter.ts`、`TypographyControls.tsx`、`lib/glyphPlan.ts`、图内 pt 量的写入器
+主题: 属性能力层与 Typography 控件 → `typography-capability-layer.md`
+必守要点: 不许按对象类型 switch 写属性；值四档不压扁；`propertyPathOf` 唯一；图内 pt 量按页面值进出、换算只在 `pagePtLens`（ADR 0082）
+-->
+
 完整版在 `docs/adr/0032-typography-capability-layer.md`，改动前先读。
 **「一段文字长什么样」只有一套词汇**：
 

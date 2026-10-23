@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`inspector/legendCard.test.tsx`、`legendSpacingCard.test.tsx`、`controls/pickers.test.tsx`、`tests/test_legend_binding.py`、`canvas/inFigureDrag.test.tsx`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 100
+改到: `lib/legendModel.ts`、`LegendCard`、`LegendSpacingCard`、`setLegendPlacement`、`lib/legendScale.ts` / `startLegendScale`
+主题: 图例条目与绑定 → `legend-entries-and-binding.md`
+必守要点: 脱开判据 = 任一 `handle_*` override 在；`LEGEND_ENTRY_STYLE_PROPS` / `LEGEND_BINDINGS` 与引擎严格同源
+-->
+
 完整版在 `docs/adr/0034-legend-entry-binding.md`，改动前先读。
 
 * **图例项 = 一段文字 + 一个条目**：文字那半走 ADR 0032 的 Typography 控件；

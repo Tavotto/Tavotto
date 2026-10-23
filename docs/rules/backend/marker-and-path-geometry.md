@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_manifest_marker_shape.py`、`test_manifest_geometry.py`、`test_series_shape_geometry.py`、`test_manifest_vector_text_metrics.py`、`test_preview_layout_geometry.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 90
+改到: `_marker_field` / `marker_current` / `marker_original`、`engine/pathgeom.py`、`manifest.vector_text_metrics`
+主题: 标记形状事实与路径几何 → `marker-and-path-geometry.md`
+必守要点: 形状是只读派生事实不是取值；geometry 不进文档；超过 `MAX_MARKERS` 整组退回 bbox
+-->
+
 - **标记形状是只读事实，不是取值（2026-09-06，UI/UX 审计 T16 补做）**：
   marker 一族的 enum 字段（曲线 / 散点 / 茎叶 markerline / 图例示意标记）带一个
   `marker_current`，回答「图上此刻画的是什么形状」——而 `value` 回答的是

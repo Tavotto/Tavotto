@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`shapeSwitch.golden.test.ts` + `tests/test_compose_switched_shapes.py`、`canvas/shapeOutline.test.tsx`、`store/workspace.test.ts`、`store/pageFit.test.ts`、`store/addPanelFraming.test.ts`、`store/addPanelEntry.test.ts`、`store/addPanelAvoid.test.ts`、`lib/panelPlacement.test.ts`、`canvas/pageOutsideMask.test.tsx`、`e2e/cross-tab-paste.spec.ts`、`e2e/nav-audit.spec.ts`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 210
+改到: 画布标签图层、`CanvasThumb`、标注与 `lib/shapeSwitch.ts`、混排对齐、`writeBackAnnotations.ts`、`EmptyState`、`viewportStore.fitted`、拖页面边 / 单图拖图边 `PageEdgeResize` · `figureEdgeDrag`
+主题: 画布对象、标注与工作区视口 → `canvas-objects-and-workspace.md`
+必守要点: 剪贴板主路径是原生 ClipboardEvent；类型切换一次 commit 不换 id；「适应画布」是模式；加图分层链 `addFigureToLayout` → `addPanelToCanvas` → `actions.addPanel`，权威在该细则
+-->
+
 - **剪贴板（2026-08-17）**：⌘C/⌘V 的主路径是**原生 copy/paste ClipboardEvent**
   （`e.clipboardData` 同步读写，`lib/clipboard.ts` 的 handleCopyEvent /
   handlePasteEvent）——WebKit（Safari / 桌面壳）不给非编辑区的异步

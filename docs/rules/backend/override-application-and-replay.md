@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_invariants_engine.py`、`test_override_identity.py`、`test_equivalence_matrix.py`、`test_layout_engine_pinning.py`、`test_normalize.py`、`test_specfix*.py`、`test_value_original_pair.py`；其余看护用例见细则
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 70
+改到: `engine/overrides.py` 的 `apply` / `_apply_rank` / `_FRAC_ANCHORED`、tight 布局、字体脸、`normalize.py` 三模块、`specfix.py`
+主题: override 语义、应用顺序与全量重放 → `override-application-and-replay.md`
+必守要点: override 是全量列表；七档顺序是契约；刻度类与 frac 锚定 prop 每次重放；带 `identity` 的 patch 对不上目标身份就不应用（ADR 0083）
+-->
+
 - **导出 PDF / PS 一律 fonttype 42**（`figsession.export_font_context`，T-122）：matplotlib 默认的
   Type 3 把 U+00FF 之外的字符画成 XObject，像素对、文本层没有它们（`⁵ μ α ≤`……），
   期刊也拒收。改回 3 的前提是先让 `tests/test_scientific_text_matrix.py` 有别的办法绿。

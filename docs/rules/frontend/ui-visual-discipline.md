@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`components/ui/foundation.test.ts`、`ui/notice.test.tsx`、`e2e/notice-no-push.spec.ts`、`components/settings/themePreference.test.tsx`、`e2e/theme.spec.ts`、`components/ui/summaryRow.test.tsx`、`components/ui/keyboardPrimitives.test.tsx`、`lib/motion.test.tsx`、`src/tokenContrast.test.ts`、`iconography.test.tsx`、`e2e/contrast.ts`、`components/canvasToolbar.test.tsx`、`e2e/canvas-toolbar.spec.ts`、`e2e/topbar-narrow.spec.ts`、`lib/keymap.test.tsx`、`canvas/overlayGrammar.test.tsx`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 300
+改到: `components/ui/*`、`src/index.css` 的 `@theme` 与暗色值表、`lib/theme.ts`、图标、设置窗口排版、工作台结构
+主题: UI 视觉纪律 → `ui-visual-discipline.md`（全文 `docs/ux/DESIGN_CONSTITUTION.md`）
+必守要点: 尺寸 / 层级 / 颜色只走语义 token（纸两套同值）；卡只经 `ui/Card`；同类控件第二套先删
+-->
+
 全文是 `docs/ux/DESIGN_CONSTITUTION.md`（Paper × Instrument；2026-09-11 Visual
 Consolidation Session 1 定稿），值在 `src/index.css` 的 `@theme`，门禁
 `components/ui/foundation.test.ts`（类名字面量：像素圆角 / 像素字号 / ink 透明度 hover /

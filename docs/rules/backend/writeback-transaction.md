@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_write_back.py`、`test_worker_roundtrip.py` 末节、`web` 的 `WriteBackDialog.test.tsx`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 300
+改到: `_write_source_files`、`pool.one_shot()`、`REPLAY_PIXEL_TOL`、`/api/update_source`、`history/restore`
+主题: 写回事务 → `writeback-transaction.md`
+必守要点: prepare 两道校验；verify 全量重放 + 几何 + 像素；热态不是这组 patches 就报 `fresh_only`
+-->
+
 - 「写回原始文件」撞上 Windows 独占锁（PDF 被阅读器打开）回 409
   `code=file_locked`，带上是哪个文件、回滚结果如何，并清掉 `.updating`
   半成品——不接住的话用户拿到 500 + traceback，图库里还多个垃圾文件。

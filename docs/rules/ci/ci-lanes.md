@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py`、`tests/test_aggregate_gate.py`
 
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 10
+改到: `.github/workflows/ci.yml` 的事件 / `needs` / Gate 闭集、`scripts/ci/aggregate_gate.py`
+主题: CI 分层 → `ci-lanes.md`
+必守要点: 时机分工与覆盖面不变；三个稳定 Gate；`cancel-in-progress` 只对 PR 开；顶层 `TAVOTTO_NO_TELEMETRY=1`；目录里每个监听 `pull_request` 的 workflow 都带 `branches: [main]`（`TestPullRequestBaseFilter`，算出来的集合、不用登记）
+-->
+
 CI 按**发生时机**分工（`.github/workflows/ci.yml` 抬头有全图，2026-08-25
 Merge Queue 定版）：PR = 快速反馈（python-lint / invariants / backend-fast /
 frontend / workerd / **desktop-shell** / compat-smoke / CodeQL）；merge_group = 完整合并资格的唯一常规执行

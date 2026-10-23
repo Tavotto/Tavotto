@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`canvas/objectContextMenu.test.tsx`、`store/quickEditActions.test.ts`、`components/inspector/syncOverrides.test.tsx`、`components/inspector/writeBackRecords.test.tsx`、`e2e/sync-overrides.spec.ts`、`e2e/quick-menu.spec.ts`、`tests/test_engine_invalidate.py`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 130
+改到: `canvas/ObjectContextMenu.tsx`、`QuickEdit.tsx`、`quickEditStore`、`rebuildPanel`、`SyncOverridesDialog` / `syncOverridesStore`、写回窗口的「写回记录」页 `WriteBackRecords`
+主题: 画布对象的右键菜单 → `object-context-menu.md`
+必守要点: 五份清单只发意图；「更改为」的判据在 `lib/shapeSwitch.ts`；同步并写回只走标准 `WriteBackDialog`
+-->
+
 完整版在 `docs/adr/0037-quickedit-context-menu.md`，改动前先读。
 
 * **两种外壳一个开关**：画布对象 → `canvas/ObjectContextMenu.tsx`（Radix 菜单，

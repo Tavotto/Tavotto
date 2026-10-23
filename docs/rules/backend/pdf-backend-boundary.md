@@ -6,6 +6,22 @@
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestApprovedFontsAndRetirementScan`、`tests/test_retirement_scan.py`
 > `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：U10（ADR 0072）：RenderCore 是默认后端、字体不进 git——每条装项目的腿先 `fetch_fonts.py`（闭集在合同用例里；缓存只含归档，命中仍逐项验 SHA），wheel / 冻结产物出来之后扫原生库名单 + METADATA + 字体 13 张；没有一条 `pip install` 再点名 pymupdf
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 30
+改到: `pdfbackend/`、`glyphplan.py`、字体 / 色图事实、`/api/render` 缓存
+主题: PDF 后端边界 → `pdf-backend-boundary.md`
+必守要点: 契约层唯一实现 `rendercore/facade`；`pymupdf` 报 `backend_retired`、不静默回退；字形归属四层只在 `glyphplan.py`
+-->
+
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 70
+改到: 任何装本项目 / 打 wheel / PyInstaller 的 job 的「批准字体」步、`package` 与两条 app smoke 腿的「退役扫描」步、`scripts/ci/retirement_scan.py`
+主题: PDF 后端边界（后端侧细则）→ `../docs/rules/backend/pdf-backend-boundary.md`
+必守要点: U10（ADR 0072）：装项目的腿先 `fetch_fonts.py`；产物出来后扫原生库名单 + METADATA + 字体；没有 `pip install` 再点名 pymupdf
+-->
+
 - **`src/tavotto/pdfbackend/__init__.py` 是与实现无关的契约层**（probe_asset / pdf_fonts /
   render_preview_png / text_width / text_plan / missing_glyphs / coverage_ranges / compare_png /
   compose + original_* / annotate_asset + mm2pt / hex2rgb + 四个常量，19 项）。`app.py` /

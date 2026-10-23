@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/native/`（含 `test_run_cli_integration.py`、`test_native_inconsistent.py`）、`tests/test_windows_regressions.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 190
+改到: `runcli.py`、`runspec.py`、`nativerelay.py`、`nativesession.py`、`envlease.py`、`enginesession.py`、`desktopproc.py`
+主题: `tavotto run` 的控制面 → `tavotto-run-control-plane.md`
+必守要点: 确认前一行用户代码不跑；Tavotto 只写 stderr；屏障释放必经 `release_barrier()`
+-->
+
 进程关系是**倒过来的**——用户的 Python 是 **CLI 的子进程**，sidecar 只是
 通过一条认证 relay 连上去：
 

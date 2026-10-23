@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_browser_auth.py`、`scripts/smoke_app.py` 的 401 硬断言
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 230
+改到: `security.py`、`session_client.py`、任何新端点
+主题: 会话认证（ADR 0008） → `session-auth.md`
+必守要点: 旁路只有三个；用户可控的路径碰文件系统 / 子进程前只经 `app.safe_resolve` / `projectenv.contained_path`
+-->
+
 **会话认证在 `src/tavotto/security.py`，桌面与浏览器模式共用一道边界**
 （2026-08-21，1.0 审计的 P0 修复）：一次性 nonce →
 `POST /api/session/bootstrap` → HttpOnly + SameSite=Strict cookie，

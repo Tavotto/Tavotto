@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_preflight.py`、`test_manifest_clip_bbox.py`、`test_profile_store.py`、`tests/golden/preflight_vectors.json`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 260
+改到: `profiles/publication.json`、`engine/profiles.py`、`preflight.py`、`profilestore.py`
+主题: 出版规范 profile 与预检 → `profiles-and-preflight.md`
+必守要点: 规则唯一权威是那份 JSON；两侧求值器靠 golden vectors 对齐
+-->
+
 - **规则的唯一权威文件是 `src/tavotto/profiles/publication.json`**（随 wheel 分发）。
   Python 走 `engine/profiles.py`（`importlib.resources` 定位，装成 wheel 后源码树的
   相对路径不存在），TypeScript 经 **`@profiles` 路径别名**整份 import 进 bundle

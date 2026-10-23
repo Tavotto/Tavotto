@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_protocol.py`、`test_loginpath.py`、`test_tex_diagnostics.py`、`test_worker_roundtrip.py`、`test_worker_exit_report.py`、`test_workerd_client.py`、`test_build_watchdog.py`、`test_windows_regressions.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 60
+改到: `engine/pool.py`、`executionfact.py`、`wireproto.py`、`workerd_client.py`、`texdiag.py`、`loginpath.py`、超时 / 关停 / 计时
+主题: worker 协议、计时、超时与关停、TeX 分类 → `worker-protocol-and-lifecycle.md`
+必守要点: 协议 v1 信封原样回显、`request_id` 对不上 kill；patch 规范化唯一权威 `patchspec.py`；kill 之后必 reap；TeX 先于缺依赖判
+-->
+
 - **worker 协议 v1（2026-08-18）**：请求带 `protocol_version/request_id/
   worker_generation/render_revision/canonical_patch_hash` 信封，命令
   ping/build/render/render_png/preview_png/export/cancel/shutdown，

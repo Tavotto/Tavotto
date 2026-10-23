@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`context-bar/position.test.ts`、`multiSelectionBar.test.tsx`、`context-bar/elementMultiBar.test.tsx`、`e2e/multi-selection-bar.spec.ts`、`store/alignSelectedTo.test.ts`、`store/arrangeStore.test.ts`、`canvas/contextBar.test.tsx`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 120
+改到: `canvas/context-bar/`、`actions.beginCrop`、`store/arrangeStore`、`arrangeButtons.ts`
+主题: 多选浮动栏与共享排列参照 → `multi-selection-context-bar.md`
+必守要点: 进裁剪一律 `beginCrop`；浮动栏只发意图；参照只有 `arrangeStore`
+-->
+
 完整版在 `docs/adr/0036-multi-selection-context-bar.md`，改动前先读。
 
 * **一个外壳五种目标**：`canvas/context-bar/ContextBar.tsx` 解析目标（正在裁剪的

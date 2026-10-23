@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py`
 
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 110
+改到: 任何 `shell: pwsh` 步骤
+主题: pwsh 退出码 → `pwsh-exit-codes.md`
+必守要点: 最后一条原生命令故意非零时显式 `exit 0`；失败路径全是 `throw`
+-->
+
 - **pwsh / powershell 步骤里，最后一条原生命令故意非零退出（「期望用法错误退 2」
   那类判据）时，脚本必须以显式 `exit 0`（或 `$global:LASTEXITCODE = 0`）结尾。**
   否则断言全过、最后一行 `✓` 都打印了，步骤仍然退 1——不是 PowerShell 抛了什么，

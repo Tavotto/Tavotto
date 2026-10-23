@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`onboardingStore.test.ts`、`activity.test.ts`、`lib/onboarding/*.test.ts`、`nativeTutorial.test.tsx`、`lib/liveRegionSelector.test.ts`、`e2e/tutorial.spec.ts`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 150
+改到: `lib/activity.ts`、`store/onboardingStore.ts`、`lib/onboarding/*`、`data-*` 锚点、活动区
+主题: 交互式 Onboarding 与本地活动信号 → `onboarding-and-activity.md`
+必守要点: 活动信号闭集；step id 是持久化格式；`[role=status]` 绝不当选择器
+-->
+
 完整版在 `docs/adr/0040-onboarding-coachmarks-and-hints.md`（Activity Bus / 状态 / 提示）与
 `docs/adr/0136-native-three-step-onboarding.md`（三步原生教程，取代 0040 的 coachmark 教程），改动前先读。
 

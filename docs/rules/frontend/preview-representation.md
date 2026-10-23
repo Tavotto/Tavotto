@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`canvas/panelPreviewMode.test.tsx`、`lib/previewBudget.test.ts`、`store/renderStore.test.ts`、`mcp/session.test.ts`、`tests/test_preview_budget.py`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 40
+改到: `lib/previewBudget.ts`、`PanelView` 的分档、`mergeRender`、内嵌画布位图
+主题: 预览表示法：vector / hybrid / raster → `preview-representation.md`
+必守要点: 加字段协议（老后端 = `VECTOR_PREVIEW`）；hybrid 不新增分支
+-->
+
 **画法可以换，能编辑的东西一个都不许少。** 细则在
 `docs/adr/0022-complexity-aware-editor-preview.md`，动手前先读。要点：
 

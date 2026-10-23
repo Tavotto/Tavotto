@@ -9,7 +9,8 @@
 交接的引擎侧（`engine/locate.py` / `engine/handoff.py` / `engine/cli.py`）在
 `docs/rules/backend/external-handoff.md`。本层规则的**全文按主题**在 `docs/rules/plugin/`
 （2026-09-25 从本文件逐字迁出，#608）：先在下表按改动路径找到主题，读那一份细则与它点名的
-ADR，再动手。看护用例在细则头部。规则改在细则文件里，并同步这里那一行；这里不放第二份全文。
+ADR，再动手。看护用例在细则头部。下表是生成的：改细则头部的 `agents-route` 块，再
+`python scripts/dev/gen_agents_sheets.py --write`，别手改；这里不放第二份全文。
 
 ## 本层不可破坏
 
@@ -26,6 +27,7 @@ ADR，再动手。看护用例在细则头部。规则改在细则文件里，�
 
 ## 按改动路径找细则
 
+<!-- BEGIN GENERATED: agents-routes -->
 | 改到 | 主题（细则在 `docs/rules/plugin/`） | 必守要点 |
 | --- | --- | --- |
 | `skills/tavotto-figure/SKILL.md` 与 `references/`、README 的首次使用章节、安装命令、`agents/openai.yaml` | 首次使用契约 → `first-use-contract.md` | 先检查不安装；装完新开会话；安装命令两条分开写、唯一出处 `brand.CODEX_SPARSE_PATHS`；`openai.yaml` 的 `command` 与 `codex.mcp.json` 同步 |
@@ -41,6 +43,7 @@ ADR，再动手。看护用例在细则头部。规则改在细则文件里，�
 | `_bridge_error_from_worker`、`workdir=` / `prepare_dependencies=` / `argv=` / `adopt_environment=` 参数、`requirements` | 首开的「需要输入」与跑前依赖准备 → `first-open-questions.md` | 与桌面 / HTTP 是同一份决定；不替用户猜、不替用户授权；批量 open 不接受准备参数；引擎没宣告能力就拒、不先无参数试；新模块只经 `_optional_engine` |
 | `stems` / `discover_stems`、`_safe_preflight()`、`_live_session_for()`、`Session.acquire()` | 批量打开与会话账本 → `sessions-and-batch-open.md` | 一张失败不回滚整批、「没尝试」是第三个桶；open 之后每一步都不许把已登记会话带走；会话不抱 worker 引用、渲染成功后才登记 |
 | `web/src/lib/engineTransport.ts`、`mcp/widget/canvas.html`、`scripts/build_mcp_widget.py`、画布 CSP | 内嵌画布 → `embedded-canvas.md` | 画布 = Tavotto 前端那一份代码、唯一改动是 `engineTransport` 的可选覆盖；产物不进 git；不用「开浏览器」冒充；不发遥测 |
+<!-- END GENERATED: agents-routes -->
 
 ## 验证
 

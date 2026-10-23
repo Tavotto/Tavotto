@@ -5,6 +5,14 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_session_journal.py`、`tests/test_mcp_roundtrip.py`
 
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 70
+改到: `tavotto_mcp/sessionjournal.py`、`_restore_session`
+主题: 会话跨进程恢复 → `session-journal.md`
+必守要点: 记录不能自证权限、越界拒在渲染之前；明确释放的不复活；落盘失败不让工具调用失败
+-->
+
 - **会话不再只活在 server 进程内存里**：提交点（open 结束 / apply 结束 / 规范化收尾，含回退）
   经 `tavotto_mcp/sessionjournal.py` 落 `data_dir()/mcp-sessions/<id>.json`；内存未命中时
   `get_session` → `_restore_session` 按记录在本进程重建。起因是宿主会换进程（WorkBuddy 一轮后

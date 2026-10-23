@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_figure_recognition.py`、`tests/test_axes_traversal_authority.py`、`tests/test_engine_family_modules.py`、`test_parasite_axes.py`、`test_artist_families.py`、`test_worker_roundtrip.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 80
+改到: `axestraversal.ordered_axes`、`spinemodel`、`tickmodel`、`colorbarmodel`、`legendmodel`、`_cls_key`、能力表、3D 数据图元 / 箭头 / marker
+主题: axes 遍历、特殊 artist 与 artist family 能力层 → `axes-and-artist-families.md`
+必守要点: `fig.axes` 只许出现在白名单函数里；族模块是叶子；能力按真实 getter 实况判不按类名
+-->
+
 - **「这张图上有哪些 axes」只有 `axestraversal.ordered_axes` 一处**（看护
   `tests/test_axes_traversal_authority.py` 的源码级门禁）。它住在只依赖标准库 +
   matplotlib 的底层模块 `engine/axestraversal.py`，`manifest` 与 `overrides` 都从它取，

@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_projects.py`、`test_paths_and_baked.py`、`test_project_refresh.py`、`test_project_watch.py`、`test_project_readiness.py`、`test_original_spec.py`、`test_tutorial.py`、`test_tiff_assets.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 220
+改到: `app.py` 的 `PROJECTS` / `_request_ctx` / `bound_project`、`project_refresh.py`、`project_watch.py`、`readiness.py`、`originalspec.py`、`tutorial.py`、`tiffprobe.py`
+主题: 项目系统（后端侧） → `project-system.md`
+必守要点: 指名不存在的项目 409 绝不落默认项目；派生刷新只有 `app.refresh_project()`；readiness 只报告不动手
+-->
+
 - **项目（多开，2026-08-16 起）**：`app.py` 无默认路径；`PROJECTS: dict[id, ProjectCtx]`
   同时端着多个图库，`DEFAULT_PROJECT` 只是「不带 pj 的请求落到哪」。未打开项目时
   API 回 409 `code=no_project`，前端渲染 ProjectPicker。用户级配置在

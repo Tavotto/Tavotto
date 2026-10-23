@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestGates`
 
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 150
+改到: `desktop-shell` job、`src-tauri` 的 cargo 三件、fast 档 job 的 `if:`
+主题: desktop-shell 与 Gate 闭集 → `desktop-shell-lane.md`
+必守要点: 两条腿（ubuntu + macos）都跑 fmt / clippy / test；`bundle.resources` 空目录就够；改 fast 档条件先看闭集用例
+-->
+
 - **`desktop-shell`（2026-09-04，issue #275）**：`src-tauri` 的
   `cargo fmt --check` / `clippy -D warnings` / `cargo test`，与 `workerd` 同一条
   纪律（都不做 paths 过滤）。它原先只在 `desktop-tauri.yml` 里跑，而那个工作流

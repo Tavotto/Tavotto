@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_browser_session.py`、`test_playground_build.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 340
+改到: `engine/browser.py`、`browser_imports.py`、`ENGINE_FILES`
+主题: 浏览器 playground（引擎侧） → `browser-playground-engine.md`
+必守要点: 平铺 import 与 worker 同一条 sys.path 纪律；加 flat import 同步 `ENGINE_FILES`
+-->
+
 `engine/browser.py` 平铺 import `manifest/overrides/pathgeom/patchspec` 与
 `figcapture`（**语义与捕获策略都只有一份实现**，与 worker.py 同一条 sys.path
 纪律，不许出现 browser_manifest.py 这类分叉）。engine.zip 的模块白名单在

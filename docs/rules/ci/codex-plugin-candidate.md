@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_plugin_candidate.py`、`tests/test_plugin_publish.py::test_fixture_git_mirrors_the_publisher_maintenance_settings`、`docs/ci/plugin-stable-channel.md`
 
+<!-- agents-route
+sheet: .github/AGENTS.md
+order: 160
+改到: `frontend` / `plugin-candidate` job、`scripts/plugin_stage.py`、`scripts/plugin_publish.py`、`plugin-stable.yml`
+主题: Codex 插件候选（ADR 0043）→ `codex-plugin-candidate.md`
+必守要点: 候选只验证不发布；有产物时 `tests/test_plugin_candidate.py` 不许 skip；`plugin_stable` 投影同一份 zip；发行分支不触发源码 CI；发布器与夹具的 git 不起后台维护（#604，同源对）
+-->
+
 - **完整 Codex 插件（ADR 0043，2026-09-05）**：ci.yml 的 `frontend` job 从本次 checkout 真构建
   画布 → `scripts/plugin_stage.py` 按 git 清单 + 显式构建物组装、验证、确定性 zip → artifact
   `codex-plugin-candidate`；`plugin-candidate` job 脱离源码树解包、真起 MCP server 读画布、执行

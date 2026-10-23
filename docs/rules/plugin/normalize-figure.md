@@ -5,6 +5,14 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_normalize.py`、`tests/test_mcp_normalize.py`、`tests/test_codex_plugin.py`
 
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 50
+改到: `tavotto_normalize_figure`、`bridge.normalize_figure()`、`engine/normalize.py`
+主题: 已有图的保留式规范化 → `normalize-figure.md`
+必守要点: 桥只翻译；任何异常都回退；提交之后会话挂合同；用户目标直接决定的规则不挡事务
+-->
+
 - **`tavotto_normalize_figure` 是第八个工具**，也是用户「已有一张图、只要改宽度 /
   字体 / 字号下限」时该走的那条路——技能里明写不许用 `tavotto_apply_overrides` 手拼。
   实现全在 `bridge.normalize_figure()`，逻辑全在 `engine/normalize.py`（纯标准库、只算

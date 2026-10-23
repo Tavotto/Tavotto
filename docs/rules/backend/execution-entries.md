@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_roundtrip.py`、`tests/test_install_dir_bytecode_free.py`、`tests/bridge/test_bridge_namespace.py`、`tests/bridge/test_bridge_thread_model.py`、`tests/test_import_architecture.py`、`tests/test_foundation_first_open.py`
 
+<!-- agents-route
+sheet: src/tavotto/AGENTS.md
+order: 180
+改到: `figsession.py`、`wireproto.py`、`bridge_runner.py`、`bridgeboot.py`、`worker.py` 的装载形态
+主题: 两条执行入口：safe worker 与 native bridge → `execution-entries.md`
+必守要点: 编辑语义只有一份；用户的同名模块永远赢；native 侧不起后台线程
+-->
+
 **Figure 到手之后的编辑语义只有一份**（总纲原则 1）。两条入口的分工：
 
 | | safe worker（`worker.py`） | native bridge（`bridge_runner.py`） |

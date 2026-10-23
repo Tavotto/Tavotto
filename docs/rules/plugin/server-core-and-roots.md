@@ -5,6 +5,14 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_roundtrip.py`、`tests/test_mcp_roots.py`、`tests/test_mcp_stdio.py`
 
+<!-- agents-route
+sheet: codex-plugin/AGENTS.md
+order: 100
+改到: `tavotto_mcp/` 的分层、`rpc.hijack_stdout()`、`RootAuthority` / `roots.WORKSPACE_FAILURES`
+主题: MCP server：只翻译、stdout、路径范围 → `server-core-and-roots.md`
+必守要点: 只翻译不实现；先存 `_REAL_STDOUT` 再改道；授权失败分档、「没弹框」绝不报成用户拒绝；越界一律拒
+-->
+
 ADR 0005 的「skills-only / 不做 MCP server」这一条**已被 ADR 0006 推翻**
 （交接那条路不变）。
 

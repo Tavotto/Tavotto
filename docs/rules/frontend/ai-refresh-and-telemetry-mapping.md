@@ -4,6 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/activityTelemetry.test.ts`、`CommandPalette.test.tsx`、`store/projectReadinessStore.test.ts`、`hooks/useServerEvents.test.ts`
 
+<!-- agents-route
+sheet: web/AGENTS.md
+order: 160
+改到: `store/liveSync.ts`、`useServerEvents`、`lib/activityTelemetry.ts`、命令面板 id
+主题: Codex / AI 刷新、入口整合与遥测映射 → `ai-refresh-and-telemetry-mapping.md`
+必守要点: 刷新入口只有 `refreshProjectNow()`；活动 → 遥测映射只在一处
+-->
+
 完整版在 `docs/adr/0041-codex-ai-refresh-and-telemetry-integration.md`，改动前先读。
 
 * **项目文件变化只走统一刷新**：前端唯一的刷新入口是 `liveSync.refreshProjectNow()`（调

@@ -2,8 +2,8 @@
 
 试行预算只报告，不当门禁（`--strict` 才按预算退非零）。理由写在 docs/rules/README.md：预算是
 本项目试行的数字，超标先报告、不为达标粗暴删规则；量的是原始字节，**不是 token 数**，
-也不代表任何账户的实际扣费。硬线有三条，`--check` 按它们退非零，
-`tests/test_agents_rules_index.py` 钉着同样三条：
+也不代表任何账户的实际扣费。硬线有四条，`--check` 按它们退非零，
+`tests/test_agents_rules_index.py` 钉着同样的几条：
 
 1. **Codex 自动拼接不越过 32 KiB**（#608）——那不是我们定的预算，是 Codex 的默认上限，
    越过就静默截掉末尾。
@@ -27,6 +27,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
@@ -228,6 +229,25 @@ def oversized_cells(sheets: list[str]) -> list[str]:
     return out
 
 
+def stale_route_tables() -> list[str]:
+    """速查表路由表相对细则末尾 `agents-route` 块是否过期（复用 `gen_agents_sheets.py` 的判定）。
+
+    空列表 = 都是新的；块写得不合规矩时把错误信息当成一条违规返回。
+    """
+    spec = importlib.util.spec_from_file_location(
+        "gen_agents_sheets", ROOT / "scripts" / "dev" / "gen_agents_sheets.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    try:
+        diff = mod.stale()
+    except mod.RouteError as exc:
+        return [str(exc)]
+    if not diff:
+        return []
+    return ["速查表路由表已过期（跑 `python scripts/dev/gen_agents_sheets.py --write`）"] + diff
+
+
 def rule_layers() -> list[str]:
     """`docs/rules/` 下的每一层（子目录名）。"""
     return sorted(p.name for p in (ROOT / "docs" / "rules").iterdir() if p.is_dir())
@@ -333,7 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.strict and over:
         return 1
     if args.check:
-        problems = ceiling_violations() + oversized_cells(SHEETS_WITH_TABLE)
+        problems = ceiling_violations() + oversized_cells(SHEETS_WITH_TABLE) + stale_route_tables()
         for msg in problems:
             print(f"!! {msg}", file=sys.stderr)
         if problems or not all(c["within_default_cap"] for c in r["codex"]):
