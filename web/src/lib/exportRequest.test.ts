@@ -337,7 +337,14 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
   })
 
   it('单图档（没有范围选择）静默退到画布时，EPS 的原因不再指向不存在的「每张图单独导出」', () => {
+    // 没有脚本的图（静态文件 / 原文件已删）：先说「没有脚本」，不叫用户去运行一个不存在的脚本
+    expect(epsAvailability('canvas', 'Fig1.pdf', null, true)).toEqual({ ok: false, reason: 'no_script' })
+    expect(epsAvailability('canvas', null, null, true)).toEqual({ ok: false, reason: 'no_script' })
+    useAssetStore.setState({
+      byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1, script: 'fig1.py' } },
+    } as never)
     expect(epsAvailability('canvas', 'Fig1.pdf', null, true)).toEqual({ ok: false, reason: 'figure_not_ready' })
+    expect(epsAvailability('canvas', 'runtime:abc', null, true)).toEqual({ ok: false, reason: 'figure_not_ready' })
     // 多图档的画布范围仍是「选每张图单独导出」那句
     expect(epsAvailability('canvas', 'Fig1.pdf', null, false)).toEqual({ ok: false, reason: 'canvas_scope' })
     // 单图档里原图口径可用就照常给 EPS（runtime 素材天生有脚本）

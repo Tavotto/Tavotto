@@ -540,15 +540,16 @@ def _svg_panel_gap(
 ) -> tuple[str, dict] | None:
     """SVG 缺口全是「面板没有同 Figure 的 SVG 表示」时的用户话：`(错误码, 参数)`，否则 None（走通用 `format_failed`）。
 
-    * 脚本现画的图（`origin=execution`）：`svg_figure_unavailable`，`reason` 是 worker 给的原因（若有）；
-    * 静态 PDF / 位图：沿用 `svg_source_unsupported`。
-    两者都带图名，不让 `imported_page: A static PDF requires …` 这种内部串到界面上。
+    * **全是**脚本现画的图（`origin=execution`）：`svg_figure_unavailable`，`reason` 是 worker 给的原因（若有）；
+    * 静态 PDF / 位图，或两种来源混在一起：`svg_source_unsupported`（一句话对两种来源都说得准：当前来源无法安全转 SVG，请改用 PDF），
+      不把静态来源错标成「脚本里的自定义函数」。
+    都带图名，不让 `imported_page: A static PDF requires …` 这种内部串到界面上。
     """
     if not gaps or any(g.get("operation") != "imported_page" for g in gaps):
         return None
     by_id = {getattr(n, "object_id", ""): n for n, _ in ir.walk(rp.page)}
     figures: list[str] = []
-    executed = False
+    origins: set[str] = set()
     for g in gaps:
         node = by_id.get(g.get("object_id", ""))
         res = rp.page.resources.get(getattr(node, "resource", ""))
@@ -556,8 +557,8 @@ def _svg_panel_gap(
             return None
         if res.source_id not in figures:
             figures.append(res.source_id)
-        executed = executed or res.origin == "execution"
-    if not executed:
+        origins.add(res.origin)
+    if origins != {"execution"}:
         return "svg_source_unsupported", {"id": "、".join(figures)}
     reason = ""
     for fig in figures:
