@@ -48,7 +48,9 @@ def cand(tmp_path) -> Path:
     d.mkdir()
     (d / "fig.py").write_text(SCRIPT, encoding="utf-8")
     (d / "notes.txt").write_text("keep me\n", encoding="utf-8")
-    (tmp_path / "secret.txt").write_text("OUTSIDE_SECRET\n", encoding="utf-8")
+    (tmp_path / "secret.txt").write_bytes(
+        b"OUTSIDE_SECRET\n"
+    )  # 字节写：Windows 上 write_text 会写成 CRLF
     return d
 
 
