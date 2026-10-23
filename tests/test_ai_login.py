@@ -83,6 +83,11 @@ def _clean(monkeypatch):
         lambda agent, override=None: [ai_agents.CliCandidate(f"/fake/bin/{agent.id}", "path")],
     )
     monkeypatch.setattr(ai_agents, "probe_version", lambda argv: "v1")
+    # 宿主环境（CI 跑机设了 XDG_CONFIG_HOME、开发机可能有代理）不许漏进「登录命令带哪些变量」的断言：
+    # 闭集里 PATH / HOME / LANG / LC_ALL 之外的成员一律清掉，需要的用例自己在 spawn_env 里加
+    for name in ai_bridge._TERMINAL_ENV_NAMES:
+        if name not in ("PATH", "HOME", "LANG", "LC_ALL"):
+            monkeypatch.delenv(name, raising=False)
     ai_bridge._LOGINS.clear()
     yield
     ai_bridge._LOGINS.clear()

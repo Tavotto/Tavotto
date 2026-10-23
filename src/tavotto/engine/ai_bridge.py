@@ -870,7 +870,9 @@ def _open_in_terminal(argv: list[str], env: dict) -> bool:
     不用 System Events。→ 终端是否打开了；找不到终端返回 False（调用方给出手动命令）。"""
     if ai_agents._is_windows():
         # 新开一个控制台窗口，直接运行（不经 cmd.exe 中转：路径里的 & % ^ 不会被吃掉）
-        subprocess.Popen(argv, env=env, creationflags=CREATE_NEW_CONSOLE)
+        # stdin=None 是刻意的：新控制台给子进程它自己的输入（登录要交互）；Windows 上 close_fds 默认 True，
+        # sidecar 的「父进程死亡信号」管道不会被继承
+        subprocess.Popen(argv, env=env, stdin=None, creationflags=CREATE_NEW_CONSOLE)
         return True
     script = _terminal_env_exports(env) + f"{_shell_quote(argv)}\n"
     if sys.platform == "darwin":
@@ -897,7 +899,10 @@ def _open_in_terminal(argv: list[str], env: dict) -> bool:
         if found:
             keep = script + "printf '\\n'; read -r _\n"  # 命令跑完留住窗口，让用户看到结果
             subprocess.Popen(
-                [found, *flag, "sh", "-c", keep], env=env, creationflags=CREATE_NO_WINDOW
+                [found, *flag, "sh", "-c", keep],
+                env=env,
+                stdin=subprocess.DEVNULL,  # 终端模拟器自带 pty；不外传 sidecar 的 stdin
+                creationflags=CREATE_NO_WINDOW,
             )
             return True
     return False
