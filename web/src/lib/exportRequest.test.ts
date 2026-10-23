@@ -20,6 +20,7 @@ import {
 } from './exportRequest'
 import { useDocumentStore } from '@/store/documentStore'
 import { useAssetStore } from '@/store/assetStore'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
 import { emptyProject, type FigureDocument, type PanelObject } from '@/types/document'
 import { literal } from '@/i18n'
@@ -151,6 +152,21 @@ describe('scope', () => {
     expect(a.spec).toBeTruthy() // 规格还在（上一次已知的那份），只是导不出来
     expect(a.ok).toBe(false)
     expect(a.reason).toBe('source_stale')
+  })
+
+  it('runtime 图：素材清单没有它（被磁盘同名原件让位 / 清单还没取到）但后端注册表认它 → 原图口径可用', () => {
+    const rt: PanelObject = { ...panel, id: 'r1', fileId: 'runtime:fig.py#F', fileKind: 'runtime' } as never
+    useAssetStore.setState({ byId: {} } as never)
+    useRuntimeAssetStore.setState({ assets: [], byId: {} } as never)
+    expect(originalAvailability('runtime:fig.py#F', { panel: rt })).toMatchObject({ ok: false, reason: 'source_stale' })
+    useRuntimeAssetStore.setState({
+      assets: null,
+      byId: { 'runtime:fig.py#F': { registered: true, checked: true } },
+    } as never)
+    expect(originalAvailability('runtime:fig.py#F', { panel: rt }).ok).toBe(true)
+    // 注册表不认（脚本被移出登记）：仍不可用
+    useRuntimeAssetStore.setState({ byId: { 'runtime:fig.py#F': { registered: false, checked: true } } } as never)
+    expect(originalAvailability('runtime:fig.py#F', { panel: rt }).ok).toBe(false)
   })
 
   it('判据是「够不够得着」而不是 `spec.stale`', () => {

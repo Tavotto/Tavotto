@@ -134,7 +134,12 @@ export function originalAvailability(
 /** Guarded hidden PNGs still require the exact-source export preflight before publication. */
 function canValidateOriginalSource(figureId: string, panel?: PanelObject | null): boolean {
   if (figureId.startsWith('runtime:')) {
-    return (useRuntimeAssetStore.getState().assets ?? []).some((a) => a.id === figureId)
+    const rt = useRuntimeAssetStore.getState()
+    if ((rt.assets ?? []).some((a) => a.id === figureId)) return true
+    // 素材清单（`/api/runtime/assets`）会把「磁盘上已有同名原件」的 runtime 图让给 FileAsset，清单也可能还没取到；
+    // 但后端解析 runtime id 只看注册表（`runtimeasset.resolve`）。面板渲染时 `ensure()` 问来的 `registered` 就是同一判据，
+    // 认它，否则脚本跑出来的图被静默按画布导（EPS 灰、SVG 走画布合成）。
+    return rt.byId[figureId]?.registered === true
   }
   // /panels prefers a same-stem PDF; absence is not proof that this PNG is missing.
   // This permits validation, not a source-existence or fresh-metadata claim.
