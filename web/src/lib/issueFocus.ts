@@ -86,6 +86,9 @@ let clearTimer: ReturnType<typeof setTimeout> | null = null
  * 崩溃，是一个说得出原因的失败（`not_editable`）。
  */
 export function focusObject(ref: ObjectRef, propertyPath?: string | null): FocusOutcome {
+  // 每一次定位都是一次新的导航：上一次还在逐帧重试的字段落点先作废（失败 / 没有字段的这一次也算），
+  // 否则它会在这次之后把焦点与亮框落到旧字段上（Codex #1365 P2）
+  cancelFieldLocate()
   const outcome = focusObjectInner(ref, propertyPath)
   // 本地活动信号：只说成功没成功、落在哪条工作流、字段聚焦到哪一档——不带 id / gid
   emitActivity(
@@ -188,6 +191,15 @@ let fieldRun = 0
 let fieldFlash: { host: HTMLElement; timer: ReturnType<typeof setTimeout> } | null = null
 
 /**
+ * 作废还在重试的字段落点并撤下挂着的请求。每次定位开头调一次；切项目时文档 id 变了，重试也会自己停
+ * （`focusField` 认发起时的 documentId）。
+ */
+export function cancelFieldLocate(): void {
+  fieldRun++
+  if (useUiStore.getState().fieldLocate) useUiStore.getState().setFieldLocate(null)
+}
+
+/**
  * 这个锚点是不是**目标元素**的那一个字段。
  *
  * 同名字段到处都有（图例与图例标题都有 `fontsize`）：定位从一个元素跳到另一个时，
@@ -238,6 +250,9 @@ function flashField(host: HTMLElement): void {
 function focusField(gid: string | null, propertyPath?: string | null): FieldFocus {
   if (!propertyPath || typeof document === 'undefined') return 'none'
   const run = ++fieldRun
+  // 重试只属于发起它的那份文档：切了项目 / 换了排版就停，不把焦点落进另一个项目
+  const docId = useDocumentStore.getState().documentId
+  const current = () => run === fieldRun && useDocumentStore.getState().documentId === docId
   const attempt = (): boolean => {
     const hosts = document.querySelectorAll<HTMLElement>(`[data-prop="${cssEscape(propertyPath)}"]`)
     const host = [...hosts].find((h) => ownsField(h, gid))
@@ -268,7 +283,10 @@ function focusField(gid: string | null, propertyPath?: string | null): FieldFocu
   }
   let left = FIELD_FRAMES
   const retry = () => {
-    if (run !== fieldRun) return
+    if (!current()) {
+      settle()
+      return
+    }
     if (attempt() || --left <= 0) settle()
     else requestAnimationFrame(retry)
   }

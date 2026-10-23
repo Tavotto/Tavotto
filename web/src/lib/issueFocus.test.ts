@@ -210,6 +210,39 @@ describe('图内元素：进图内编辑', () => {
     }
   })
 
+  it('还在重试时又定位了一条没有字段的问题：旧的重试作废，之后挂上的同名字段不被抢焦点（Codex #1365 P2）', async () => {
+    await seed()
+    const f = frames()
+    try {
+      focusObject(refFor({ gid: 'axes_0.legend' }), 'title_fontsize')
+      expect(useUiStore.getState().fieldLocate).not.toBeNull()
+      // 紧接着定位到一张图本身（页面级 / 无字段）
+      focusObject(refFor({}))
+      expect(useUiStore.getState().fieldLocate).toBeNull()
+      const late = anchor('title_fontsize', 'axes_0.legend', 'page')
+      f.step(5)
+      expect(document.activeElement).not.toBe(late.input)
+      expect(late.host.hasAttribute('data-locate-flash')).toBe(false)
+    } finally {
+      f.restore()
+    }
+  })
+
+  it('还在重试时切了文档：重试停下，不把焦点落进另一份文档（Codex #1365 P2）', async () => {
+    await seed()
+    const f = frames()
+    try {
+      focusObject(refFor({ gid: 'axes_0.legend' }), 'title_fontsize')
+      await useDocumentStore.getState().switchDocument(emptyProject(), 'd_other')
+      const late = anchor('title_fontsize', 'axes_0.legend', 'page')
+      f.step(5)
+      expect(document.activeElement).not.toBe(late.input)
+      expect(useUiStore.getState().fieldLocate).toBeNull()
+    } finally {
+      f.restore()
+    }
+  })
+
   it('落点那一行的亮框到点撤掉', async () => {
     vi.useFakeTimers()
     await seed()
