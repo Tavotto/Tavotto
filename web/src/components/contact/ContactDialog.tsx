@@ -183,25 +183,21 @@ function WeComEntry() {
 }
 
 /**
- * 失败卡里的复制动作：按钮上写明复制什么（「复制内容」「复制地址」），复制后自己说「已复制」两秒。
- * 剪贴板不可用时保持原样——用户仍可从旁边的文字手工选中。这里只写剪贴板，不调起任何别的程序。
+ * 失败卡里的复制动作：按钮上写明复制什么（「复制内容」「复制地址」）；复制成功后**只在底部通知轨说一句**
+ * （「已复制 …」），按钮文字不变——与同窗里的「复制编号」同一做法，不挤页面。
+ * 剪贴板不可用时什么都不说——用户仍可从旁边的文字手工选中。这里只写剪贴板，不调起任何别的程序。
  */
 function CopyAction({
   text,
   label,
-  toast,
+  toastKey,
+  toastValues,
 }: {
   text: string | (() => string)
   label: string
-  /** 复制成功后在底部通知轨说一句（不挤页面）；缺省按钮自己说「已复制」 */
-  toast?: string
+  toastKey: string
+  toastValues?: Record<string, unknown>
 }) {
-  const [copied, setCopied] = useState(false)
-  useEffect(() => {
-    if (!copied) return
-    const id = window.setTimeout(() => setCopied(false), 2000)
-    return () => window.clearTimeout(id)
-  }, [copied])
   return (
     <Button
       variant="secondary"
@@ -209,16 +205,13 @@ function CopyAction({
       onClick={() => {
         const value = typeof text === 'function' ? text() : text
         void navigator.clipboard?.writeText(value).then(
-          () => {
-            setCopied(true)
-            if (toast) useUiStore.getState().setStatus(msg('contact.addressCopied', { address: toast }, 'dialogs'))
-          },
+          () => useUiStore.getState().setStatus(msg(`contact.${toastKey}`, toastValues, 'dialogs')),
           () => {},
         )
       }}
       data-contact-copy
     >
-      {copied ? cs('copied') : label}
+      {label}
     </Button>
   )
 }
@@ -241,6 +234,8 @@ export function ContactDialog() {
   const fileInput = useRef<HTMLInputElement | null>(null)
   const [dragging, setDragging] = useState(false)
   const wecom = useWeComContactVisible()
+  // 写信表单此刻的高度：进入结果态时拿它当结果卡的最小高度，对话框不因表单退场而变矮跳动
+  const formHeight = useRef(0)
   if (!capability) return null
 
   const busy = phase === 'sending' || phase === 'cancelling' || phase === 'diag'
@@ -304,8 +299,8 @@ export function ContactDialog() {
           </span>
           {/* 没有邮件协议链接、也不唤起邮件程序：只给「复制内容 / 复制地址」，由用户自己决定怎么发 */}
           <span className="flex flex-wrap items-center gap-1.5" data-contact-fallback>
-            <CopyAction text={() => draftText(draft)} label={cs('copyContent')} />
-            <CopyAction text={recipient} label={cs('copyAddress')} toast={recipient} />
+            <CopyAction text={() => draftText(draft)} label={cs('copyContent')} toastKey="contentCopied" />
+            <CopyAction text={recipient} label={cs('copyAddress')} toastKey="addressCopied" toastValues={{ address: recipient }} />
           </span>
         </span>
       </Notice>
@@ -323,7 +318,9 @@ export function ContactDialog() {
   // 发送成功：写信表单整个退场，窗口里只剩这张结果卡（含「存不下回信凭据」两种）
   const doneView = (
     <div
-      className="flex flex-col items-center gap-3 px-2 py-8 text-center"
+      className="flex flex-col items-center justify-center gap-3 px-2 py-8 text-center"
+      // 最小高度 = 发送前表单的高度（窗口矮了就让位给窗口：不超过视口减去页眉页脚的一截），结果卡在其中垂直居中
+      style={{ minHeight: formHeight.current ? `min(${formHeight.current}px, calc(100dvh - 14rem))` : undefined }}
       role="status"
       data-contact-status="done"
     >
@@ -340,13 +337,26 @@ export function ContactDialog() {
         <span className="font-mono" data-contact-message-id>
           {cs('sentNumber', { id: s.messageId ?? '' })}
         </span>
-        {s.messageId && <CopyButton text={s.messageId} label={cs('sentCopyNumber')} appearance="icon" />}
+        {s.messageId && <CopyButton
+            text={s.messageId}
+            label={cs('sentCopyNumber')}
+            appearance="icon"
+            feedback="toast"
+            onCopied={() => useUiStore.getState().setStatus(msg('contact.numberCopied', undefined, 'dialogs'))}
+          />}
       </span>
     </div>
   )
 
   const writeView = (
-    <div className="flex flex-col gap-4" data-contact-body {...dropHandlers}>
+    <div
+      className="flex flex-col gap-4"
+      data-contact-body
+      ref={(el) => {
+        if (el) formHeight.current = el.offsetHeight
+      }}
+      {...dropHandlers}
+    >
       <div className="flex flex-col gap-1.5">
         <label htmlFor={subjectId} className="type-section">
           {cs('subjectLabel')}

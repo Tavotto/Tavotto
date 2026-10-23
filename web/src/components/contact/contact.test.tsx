@@ -443,7 +443,7 @@ describe('对话框的四个状态', () => {
     await click(copyContent)
     await click(copyAddress)
     expect(writeText.mock.calls.map((c) => c[0])).toEqual(['很重要的一段话', FEEDBACK_EMAIL])
-    expect(copyContent.textContent).toBe(t('contact.copied', { ns: 'dialogs' })) // 复制后自己说「已复制」
+    expect(copyContent.textContent).toBe(t('contact.copyContent', { ns: 'dialogs' })) // 按钮文字不变，只在通知轨说一句
     // 复制地址：底部通知轨的轻提示说「已复制 地址」（不挤页面）；失败卡里不再有「或用自己的邮箱发到」那句
     expect(useUiStore.getState().status).not.toBeNull()
     expect(fallback.textContent).not.toContain(FEEDBACK_EMAIL)

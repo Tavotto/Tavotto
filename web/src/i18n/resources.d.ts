@@ -316,7 +316,7 @@ export default interface Resources {
       "capsuleClose": "收起回信提醒",
       "capsuleOpen": "查看",
       "close": "关闭",
-      "copied": "已复制",
+      "contentCopied": "已复制内容",
       "copyAddress": "复制地址",
       "copyContent": "复制内容",
       "diagContents": "查看会发送的内容",
@@ -401,6 +401,7 @@ export default interface Resources {
         "replied": "已回复"
       },
       "lettersYouWrote": "你写的",
+      "numberCopied": "已复制编号",
       "pollBad": "暂时取不到回信，稍后会再试。",
       "pollTooLarge": "回信太多，暂时取不全，稍后会再试。",
       "replyFrom": "作者的回信",
