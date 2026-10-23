@@ -353,6 +353,17 @@ def stage_edit(worker, stem: str, case: dict, base_man: dict) -> dict:
     }
 
 
+def manifest_xy_digests(man: dict) -> list[str]:
+    """Sorted `data_fingerprint.parts.xy` digests of the opened figure (duplicates kept)."""
+    out = []
+    for el in man.get("elements", []):
+        fingerprint = el.get("data_fingerprint") or {}
+        part = (fingerprint.get("parts") or {}).get("xy")
+        if fingerprint.get("status") == "ok" and part:
+            out.append(part["sha256"])
+    return sorted(out)
+
+
 def _editable_snapshot(man: dict) -> dict:
     """manifest 里每个可编辑字段的当前值：`{"gid.prop": value}`。"""
     return {
@@ -1470,6 +1481,7 @@ def run_group(
                 "warnings": opened.get("warnings") or [],
                 "size_mm": base_man.get("size_mm"),
                 "render_ms": ot.get("total_ms"),
+                "line_xy": manifest_xy_digests(base_man),
             }
             if not r["stages"]["open"]:
                 continue

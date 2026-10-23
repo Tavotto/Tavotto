@@ -34,6 +34,7 @@ import tempfile
 import time
 import traceback
 import uuid
+from collections import Counter
 from pathlib import Path, PureWindowsPath
 
 HERE = Path(__file__).resolve().parent
@@ -371,9 +372,8 @@ def isolated_env(work: Path, audit_log: Path | None = None, hashes=()) -> dict:
     env["PYTHONPATH"] = os.pathsep.join(roots)
     # Explicit user-selected test interpreter; never let native/worker choose different stacks.
     env["TAVOTTO_WORKER_PYTHON"] = sys.executable
-    for key in ("TAVOTTO_RESEARCH_CACHE", "CG_RESEARCH_NUMERIC"):
-        if key in os.environ:
-            env[key] = os.environ[key]
+    if "TAVOTTO_RESEARCH_CACHE" in os.environ:
+        env["TAVOTTO_RESEARCH_CACHE"] = os.environ["TAVOTTO_RESEARCH_CACHE"]
     return env
 
 
@@ -647,6 +647,45 @@ def _trim_native(result: dict) -> dict:
     return trimmed
 
 
+def line_data_agreement(native_line_xy, result: dict) -> dict:
+    """Read-only comparison of curve data: native `Line2D.get_xydata()` vs the product manifest.
+
+    Both sides are digests of shape + little-endian float64 (`manifest.canonical_digest`); duplicates
+    are kept. The product opens only the target figure, so it is compared with every native figure
+    and the closest one is reported. Diagnostic only: it never changes a stage verdict.
+    """
+    opened = (result.get("detail") or {}).get("open") or {}
+    product = opened.get("line_xy")
+    if not isinstance(native_line_xy, list) or product is None:
+        return {"status": "not_observed"}
+    def summary(digests):
+        return {
+            "lines": len(digests),
+            "sha256": hashlib.sha256("\n".join(digests).encode()).hexdigest(),
+        }
+
+    target = Counter(product)
+    scored = []
+    for index, digests in enumerate(native_line_xy):
+        if digests is None:
+            continue
+        shared = sum((Counter(digests) & target).values())
+        scored.append((shared, -index, index, digests))
+    if not scored:
+        return {"status": "not_observed"}
+    _shared, _order, index, digests = max(scored)
+    only_native = sum((Counter(digests) - target).values())
+    only_product = sum((target - Counter(digests)).values())
+    return {
+        "status": "equal" if not only_native and not only_product else "different",
+        "native_figures": [d if d is None else summary(d) for d in native_line_xy],
+        "closest_native_figure": index,
+        "product": summary(product),
+        "only_native": only_native,
+        "only_product": only_product,
+    }
+
+
 def _count(path: Path) -> int | None:
     """Lines in an append-only counter; None when the counter was never opened."""
     return len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else None
@@ -710,13 +749,11 @@ def _execute(request: dict) -> dict:
         native_request,
     )
     row["timings_s"]["native"] = round(time.monotonic() - t0, 3)
-    row["native"] = {"status": _native_status(native), "result": _trim_native(native)}
-    if os.environ.get("CG_RESEARCH_NUMERIC") == "1":
-        for artifact in native.get("artifacts", []):
-            if Path(artifact["path"]).suffix == ".pdf":
-                target = evidence / "native-pdf" / artifact["path"]
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(contained(project, artifact["path"]), target)
+    native_line_xy = native.get("line_xy")
+    row["native"] = {
+        "status": _native_status(native),
+        "result": {k: v for k, v in _trim_native(native).items() if k != "line_xy"},
+    }
     row["executions"]["native"] = _count(work / "native-execs.jsonl")
     row["figures"]["native"] = native.get("figure_count") if native.get("ok") else None
     # Native fixture invalidity never enters the product-defect population.
@@ -756,20 +793,6 @@ def _execute(request: dict) -> dict:
             return response
 
         cm.stage_export = keep_export
-        if os.environ.get("CG_RESEARCH_NUMERIC") == "1":
-            original_fidelity = cm.stage_fidelity
-
-            def keep_zero_edit(python, project, script, entry, worker, stem, workdir, out_dir):
-                result = original_fidelity(
-                    python, project, script, entry, worker, stem, workdir, out_dir
-                )
-                # Preserve a PDF before any edit; the ordinary export stage runs after replay.
-                result.setdefault("detail", {})["zero_edit_export"] = original_export(
-                    worker, stem, evidence / "zero-edit", ["pdf"]
-                )
-                return result
-
-            cm.stage_fidelity = keep_zero_edit
         engine_case = {**case, "product_routes": {}}
         try:
             result = cm.run_group(
@@ -786,6 +809,7 @@ def _execute(request: dict) -> dict:
             row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
             return finalize_row(row)
         row["raw"] = result
+        row["raw"]["line_data"] = line_data_agreement(native_line_xy, result)
         if "runner_error" in (result.get("detail") or {}):
             row["raw"]["runner_error"] = str(result["detail"]["runner_error"])[-1500:]
         for s in CC.STAGES:
@@ -919,8 +943,6 @@ def preserve_execution_logs(work: Path, evidence: Path) -> None:
     """Retain partial/negative counters before the parent removes its workspace."""
     for path in work.glob("*-execs.jsonl"):
         shutil.copy2(path, evidence / path.name)
-    if (work / "numeric.jsonl").is_file():
-        shutil.copy2(work / "numeric.jsonl", evidence / "numeric.jsonl")
     fixture_log = work / "v2" / "exec_log.jsonl"
     if fixture_log.is_file():
         shutil.copy2(fixture_log, evidence / "fixture-execs.jsonl")
@@ -1213,8 +1235,6 @@ def run(args) -> int:
     ids = args.case.split(",") if args.case else list(registry)
     if not ids or len(set(ids)) != len(ids) or any(i not in registry for i in ids):
         raise EvidenceError("empty/duplicate/unknown case selection")
-    if os.environ.get("CG_RESEARCH_NUMERIC") == "1" and ids != ["research_astro_celerite_sho"]:
-        raise EvidenceError("numeric diagnostics are restricted to the registered Celerite case")
     fixtures = {cid: fixture_files(args.suite, registry[cid]) for cid in ids}
     run_id = uuid.uuid4().hex
     output = Path(args.out).resolve() / run_id

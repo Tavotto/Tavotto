@@ -7,10 +7,6 @@ on:
         description: Frozen development case, or all
         type: string
         default: research_astro_celerite_sho
-      numeric_diagnostics:
-        description: Read-only Celerite array/RNG observations
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -41,15 +37,10 @@ jobs:
         id: cohort
         env:
           CASE_ID: ${{ inputs.case_id || 'research_astro_celerite_sho' }}
-          NUMERIC: ${{ inputs.numeric_diagnostics }}
         shell: bash
         run: |
           set -euo pipefail
           python scripts/ci/compat_guardian_research.py verify
-          if [[ "$NUMERIC" == 'true' && "$CASE_ID" != 'research_astro_celerite_sho' ]]; then
-            echo 'Numeric diagnostics require the registered Celerite case' >&2
-            exit 2
-          fi
           args=()
           if [[ "$CASE_ID" != 'all' ]]; then args=(--case "$CASE_ID"); fi
           matrix="$(python scripts/ci/compat_guardian_research.py matrix "${args[@]}")"
@@ -61,7 +52,6 @@ jobs:
     timeout-minutes: 35
     env:
       TAVOTTO_RESEARCH_CACHE: ${{ github.workspace }}/../research-sources
-      CG_RESEARCH_NUMERIC: ${{ inputs.numeric_diagnostics && '1' || '0' }}
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -185,6 +175,5 @@ jobs:
             ${{ runner.temp }}/research-s0/*/reports/guardian.unvalidated.json
             ${{ runner.temp }}/research-s0/*/evidence/**/*.png
             ${{ runner.temp }}/research-s0/*/evidence/**/*.pdf
-            ${{ runner.temp }}/research-s0/*/evidence/**/numeric.jsonl
           retention-days: 30
           if-no-files-found: error

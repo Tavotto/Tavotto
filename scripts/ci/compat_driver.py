@@ -298,6 +298,29 @@ def _ref_readable(path: str) -> bool:
         return False
 
 
+def _line_xy_digests(figure) -> list[str] | None:
+    """Sorted per-Line2D `get_xydata()` digests (shape + little-endian float64, as `manifest.canonical_digest`).
+
+    Read-only and independent of the product: the control must not borrow the product's code path.
+    """
+    import hashlib  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    digests = []
+    try:
+        for ax in figure.axes:
+            for line in ax.lines:
+                arr = np.ma.filled(np.ma.asarray(line.get_xydata(), dtype=float), np.nan)
+                arr = arr.astype("<f8", copy=True)
+                arr[np.isnan(arr)] = np.nan
+                head = ("x".join(str(n) for n in arr.shape) + ":").encode()
+                digests.append(hashlib.sha256(head + arr.tobytes(order="C")).hexdigest())
+    except Exception:  # noqa: BLE001 - a diagnostic must never fail the control run
+        return None
+    return sorted(digests)
+
+
 def run_native_ref(req: dict) -> int:
     """Guardian 的原生参照：普通 `python script.py`，只观测、不干预。
 
@@ -431,6 +454,7 @@ def run_native_ref(req: dict) -> int:
             f"figure{i}": {"titles": [ax.get_title() for ax in fig.axes]}
             for i, fig in enumerate(figures)
         },
+        line_xy=[_line_xy_digests(fig) for fig in figures],
         log=_tail(log.getvalue()),
     )
 
