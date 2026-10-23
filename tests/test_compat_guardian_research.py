@@ -944,3 +944,14 @@ def test_snapshot_rejects_a_two_venv_receipt_whose_lists_are_not_archived(
     save()
     with pytest.raises(cg.EvidenceError, match="package lists are not archived"):
         research.verify_snapshot(root=root)
+
+
+def test_archived_sources_are_source_not_data_and_distinguish_cases():
+    a = {"tests/compat/cases/research/a/upstream/plot.py.source": "a" * 64, "data/x.csv": "d" * 64}
+    b = {"tests/compat/cases/research/b/upstream/plot.py.source": "b" * 64, "data/x.csv": "d" * 64}
+    fa, fb = cg.fixture_digests(a), cg.fixture_digests(b)
+    assert fa["source_sha256"] != fb["source_sha256"]
+    assert fa["data_sha256"] == fb["data_sha256"]
+    assert fa["source_sha256"] != cg.canonical({})
+    plain = cg.fixture_digests({"plot.py": "a" * 64, "data/x.csv": "d" * 64})
+    assert plain["source_sha256"] == cg.canonical({"plot.py": "a" * 64})

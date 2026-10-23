@@ -383,6 +383,18 @@ def fixture_bytes(root: Path, relative: str, case: dict | None = None) -> bytes:
     return contained(root, relative).read_bytes()
 
 
+#: Executable code in a fixture inventory: a plain script, or the archived `<name>.py.source` form the
+#: research corpus stores upstream scripts under (kept un-importable inside the repository).
+SOURCE_SUFFIXES = (".py", ".py.source")
+
+
+def fixture_digests(files: dict[str, str]) -> dict:
+    """The one split of a fixture inventory into code and data, used when producing and validating."""
+    code = {k: v for k, v in files.items() if k.endswith(SOURCE_SUFFIXES)}
+    data = {k: v for k, v in files.items() if not k.endswith(SOURCE_SUFFIXES)}
+    return {"files": files, "source_sha256": canonical(code), "data_sha256": canonical(data)}
+
+
 def registered(suite: str) -> dict[str, dict]:
     metadata = (
         ["tests/compat/manifest.json"]
@@ -1331,11 +1343,7 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
         if row["id"] not in registry:
             raise EvidenceError("case does not belong to registered suite")
         files = fixture_files(report["suite"], registry[row["id"]])
-        fixture = {
-            "files": files,
-            "source_sha256": canonical({k: v for k, v in files.items() if k.endswith(".py")}),
-            "data_sha256": canonical({k: v for k, v in files.items() if not k.endswith(".py")}),
-        }
+        fixture = fixture_digests(files)
         if row["fixture"] != fixture:
             raise EvidenceError("fixture/source/data digest mismatch")
         fixture_map[row["id"]] = files
@@ -1470,15 +1478,7 @@ def run(args) -> int:
                 finalize_row(row)
             finally:
                 preserve_execution_logs(work, dest)
-            row["fixture"] = {
-                "files": fixtures[cid],
-                "source_sha256": canonical(
-                    {k: v for k, v in fixtures[cid].items() if k.endswith(".py")}
-                ),
-                "data_sha256": canonical(
-                    {k: v for k, v in fixtures[cid].items() if not k.endswith(".py")}
-                ),
-            }
+            row["fixture"] = fixture_digests(fixtures[cid])
             entry = EX.find(entries, args.suite, cid)
             if entry is not None:
                 resolved = EX.evaluate(row, entry)
