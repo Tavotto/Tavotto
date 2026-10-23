@@ -4578,7 +4578,9 @@ def _build_diagnostics_bundle(
         frontend=detail.frontend,
         registry=ctx.registry if ctx is not None else None,
         fix_journey=engine_prepsession.SESSIONS.fix_journeys(pid) if pid else None,
-        fix_audit=engine_fixsession.audit_tail(),
+        fix_audit=engine_fixsession.audit_tail(engine_fixsession.SESSIONS.ids_for(pid))
+        if pid
+        else None,
     )
     items = engine_diagdetail.collect(src, detail.options)
     # report.json 只算一次：超限时 `fit` 会按优先级截断重建几次 ZIP，不该每次都重新探测渲染环境
@@ -9129,9 +9131,18 @@ def api_ai_fix():
         sess = engine_prepsession.SESSIONS.session(body["session_id"], ctx.id)
     except engine_prepsession.SessionError as exc:
         return _session_error(exc)
+    # 脚本只认准备会话里记的那一个：请求里的 script 必须与之一致；解析后的真实路径还要在项目内
+    # （绝对路径、`..`、符号链接逃逸都拒——try_run 会复制并执行它）
+    target = getattr(sess, "target", None) or {}
+    script = target.get("script") if target.get("kind") == "script" else None
+    if not isinstance(script, str) or not script or body["script"] != script:
+        return _fix_error(engine_fixsession.FixError("fix_script_mismatch", 400))
+    root_real = os.path.realpath(ctx.path)
+    cand = os.path.realpath(os.path.join(ctx.path, script))
+    if os.path.isabs(script) or os.path.commonpath([root_real, cand]) != root_real:
+        return _fix_error(engine_fixsession.FixError("fix_script_outside_project", 400))
+    script_path = Path(cand) if os.path.isfile(cand) else None
     model, redactor = engine_fixsession.build_model(conn)
-    script = body["script"]
-    script_path = (ctx.path / script) if script else None
     try:
         fx = engine_fixsession.SESSIONS.start(
             scope=ctx.id,
@@ -9142,7 +9153,7 @@ def api_ai_fix():
             report=lambda: _session_report(ctx, sess),
             redactor=redactor,
             audit=engine_fixsession.AuditLog(),
-            script_path=script_path if script_path and script_path.is_file() else None,
+            script_path=script_path,
             ctx_kwargs=_fix_session_env(sess),
         )
     except engine_fixsession.FixError as exc:

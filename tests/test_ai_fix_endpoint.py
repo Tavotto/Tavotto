@@ -182,3 +182,34 @@ def test_unknown_fix_id_is_404_on_every_endpoint(client, tmp_path, fake_pool, se
     )
     assert client.post("/api/ai/fix/fx_nope/cancel").status_code == 404
     assert client.post("/api/ai/fix/fx_nope/answer", data="x").status_code == 400
+
+
+@pytest.mark.parametrize("bad", ["/etc/passwd.py", "../../outside.py", "other.py", ""])
+def test_script_must_match_the_preparation_session_and_stay_in_the_project(
+    client, tmp_path, fake_pool, sessions, monkeypatch, bad
+):
+    _root, _pj, report = _create_ready(client, tmp_path)
+    connect(monkeypatch, Scripted())
+    resp = client.post("/api/ai/fix", json={"session_id": report["session_id"], "script": bad})
+    assert resp.status_code == 400 and resp.get_json()["code"] == "fix_script_mismatch"
+    assert fixsession.SESSIONS.active() is None
+
+
+def test_a_symlinked_script_escaping_the_project_is_refused(
+    client, tmp_path, fake_pool, sessions, monkeypatch
+):
+    import os
+
+    root, _pj, report = _create_ready(client, tmp_path)
+    outside = tmp_path / "outside.py"
+    outside.write_bytes(b"print(1)\n")
+    target = root / "fig.py"
+    target.unlink()
+    try:
+        os.symlink(outside, target)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    connect(monkeypatch, Scripted())
+    resp = client.post("/api/ai/fix", json={"session_id": report["session_id"], "script": "fig.py"})
+    assert resp.status_code == 400 and resp.get_json()["code"] == "fix_script_outside_project"
+    assert fixsession.SESSIONS.active() is None

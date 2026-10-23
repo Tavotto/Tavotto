@@ -3218,18 +3218,19 @@ export interface AiFixState {
   seq: number
 }
 
-export const fetchAiFix = (fixId: string) =>
-  jsonFetch<AiFixState>(`/api/ai/fix/${encodeURIComponent(fixId)}`, { cache: 'no-store' })
+/** 三个读写都可显式指定项目（`pj`）：切项目之后要取消 / 重读的是发起时那个项目的修复，不是当前项目的 */
+export const fetchAiFix = (fixId: string, pj?: string | null) =>
+  jsonFetch<AiFixState>(`/api/ai/fix/${encodeURIComponent(fixId)}`, { cache: 'no-store' }, pj)
 
-export const answerAiFix = (fixId: string, body: { card_id: string; answer: string; text?: string }) =>
-  jsonFetch<AiFixState>(`/api/ai/fix/${encodeURIComponent(fixId)}/answer`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
+export const answerAiFix = (fixId: string, body: { card_id: string; answer: string; text?: string }, pj?: string | null) =>
+  jsonFetch<AiFixState>(
+    `/api/ai/fix/${encodeURIComponent(fixId)}/answer`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    pj,
+  )
 
-export const cancelAiFix = (fixId: string) =>
-  jsonFetch<AiFixState>(`/api/ai/fix/${encodeURIComponent(fixId)}/cancel`, { method: 'POST' })
+export const cancelAiFix = (fixId: string, pj?: string | null) =>
+  jsonFetch<AiFixState>(`/api/ai/fix/${encodeURIComponent(fixId)}/cancel`, { method: 'POST' }, pj)
 
 /* --- capabilities 的读取助手（前端只认后端返回的 Agent，不自己列名单）--- */
 

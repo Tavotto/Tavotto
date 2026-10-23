@@ -16,6 +16,7 @@ import { answerAiFix, ApiError, cancelAiFix, fetchAiFix, requestAiFix, type AiFi
 import { useAiFixStore } from '@/store/aiFixStore'
 import { useAiStore } from '@/store/aiStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
+import { setCurrentProjectId } from '@/lib/session'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 
 const KEY = 'script:plot.py'
@@ -63,7 +64,7 @@ describe('开始', () => {
     expect(requestAiFix).toHaveBeenCalledWith({ session_id: 'psess-1', script: 'plot.py' })
     expect(entry()?.phase).toBe('running')
     expect(entry()?.fixId).toBe('fx_1')
-    expect(fetchAiFix).toHaveBeenCalledWith('fx_1')
+    expect(fetchAiFix).toHaveBeenCalledWith('fx_1', undefined)
   })
 
   it('ai_fix_unavailable / 请求失败 → unavailable；ai_fix_busy → busy', async () => {
@@ -96,7 +97,7 @@ describe('卡片', () => {
     vi.mocked(answerAiFix).mockResolvedValue(state({}))
     vi.mocked(fetchAiFix).mockResolvedValue(state({}))
     await useAiFixStore.getState().answer(KEY, 'yes')
-    expect(answerAiFix).toHaveBeenCalledWith('fx_1', { card_id: 'c1', answer: 'yes' })
+    expect(answerAiFix).toHaveBeenCalledWith('fx_1', { card_id: 'c1', answer: 'yes' }, undefined)
     expect(entry()?.phase).toBe('running')
   })
 
@@ -113,7 +114,7 @@ describe('卡片', () => {
     await useAiFixStore.getState().refresh(KEY)
     vi.mocked(answerAiFix).mockResolvedValue(state({}))
     await useAiFixStore.getState().answer(KEY, 'other', '~/lab')
-    expect(answerAiFix).toHaveBeenCalledWith('fx_1', { card_id: 'c1', answer: 'other', text: '~/lab' })
+    expect(answerAiFix).toHaveBeenCalledWith('fx_1', { card_id: 'c1', answer: 'other', text: '~/lab' }, undefined)
   })
 
   it('回答期间不重复提交（防连点）', async () => {
@@ -141,7 +142,7 @@ describe('「发送」卡', () => {
     expect(answerAiFix).not.toHaveBeenCalled() // 光是打开对话框不算发送
     vi.mocked(answerAiFix).mockResolvedValue(state({}))
     useDiagSendStore.getState().markSent()
-    await vi.waitFor(() => expect(answerAiFix).toHaveBeenCalledWith('fx_1', { card_id: 'c1', answer: 'sent' }))
+    await vi.waitFor(() => expect(answerAiFix).toHaveBeenCalledWith('fx_1', { card_id: 'c1', answer: 'sent' }, undefined))
   })
 
   it('没点过「查看并发送」时别处的发送成功不会被当成这张卡的回答', async () => {
@@ -187,7 +188,7 @@ describe('结束', () => {
     vi.mocked(cancelAiFix).mockResolvedValue(state({}))
     vi.mocked(fetchAiFix).mockResolvedValue(state({ state: 'finished', outcome: 'cancelled' }))
     await useAiFixStore.getState().cancel(KEY)
-    expect(cancelAiFix).toHaveBeenCalledWith('fx_1')
+    expect(cancelAiFix).toHaveBeenCalledWith('fx_1', undefined)
     expect(entry()).toBeUndefined()
   })
 
@@ -196,5 +197,65 @@ describe('结束', () => {
     vi.mocked(fetchAiFix).mockRejectedValue(new ApiError('gone', 404, {}))
     await useAiFixStore.getState().refresh(KEY)
     expect(entry()).toBeUndefined()
+  })
+})
+
+describe('切项目竞态', () => {
+  afterEach(() => setCurrentProjectId(null))
+
+  it('POST 未返回时切到 B：A 的结果不落进 store，已起来的修复按 A 的项目 id 取消', async () => {
+    setCurrentProjectId('pjA')
+    let release: (v: { ok: true; fix_id: string }) => void = () => {}
+    vi.mocked(requestAiFix).mockReturnValue(new Promise((r) => (release = r)))
+    vi.mocked(cancelAiFix).mockResolvedValue(state({}))
+    const p = useAiFixStore.getState().startAiFix(KEY, REF)
+    setCurrentProjectId('pjB')
+    release({ ok: true, fix_id: 'fx_A' })
+    await p
+    expect(entry()).toBeUndefined()
+    expect(cancelAiFix).toHaveBeenCalledWith('fx_A', 'pjA')
+    expect(fetchAiFix).not.toHaveBeenCalled()
+  })
+
+  it('A → B → A 回到同一个 id 也已换代：旧请求仍然丢弃', async () => {
+    setCurrentProjectId('pjA')
+    let release: (v: { ok: true; fix_id: string }) => void = () => {}
+    vi.mocked(requestAiFix).mockReturnValue(new Promise((r) => (release = r)))
+    vi.mocked(cancelAiFix).mockResolvedValue(state({}))
+    const p = useAiFixStore.getState().startAiFix(KEY, REF)
+    setCurrentProjectId('pjB')
+    setCurrentProjectId('pjA')
+    release({ ok: true, fix_id: 'fx_A' })
+    await p
+    expect(entry()).toBeUndefined()
+  })
+
+  it('在跑的修复，切走时被取消（带发起时的项目 id），条目清空；轮询返回的旧结果不落地', async () => {
+    setCurrentProjectId('pjA')
+    vi.mocked(requestAiFix).mockResolvedValue({ ok: true, fix_id: 'fx_A' })
+    let release: (v: AiFixState) => void = () => {}
+    vi.mocked(fetchAiFix).mockReturnValue(new Promise((r) => (release = r)))
+    vi.mocked(cancelAiFix).mockResolvedValue(state({}))
+    await useAiFixStore.getState().startAiFix(KEY, REF)
+    expect(entry()?.pj).toBe('pjA')
+    setCurrentProjectId('pjB')
+    expect(cancelAiFix).toHaveBeenCalledWith('fx_A', 'pjA')
+    expect(entry()).toBeUndefined()
+    release(state({ state: 'waiting', card: card({}) }))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(entry()).toBeUndefined() // 重读的结果不会把 A 的卡片写进 B
+  })
+
+  it('读状态与回答都带发起时的项目 id', async () => {
+    setCurrentProjectId('pjA')
+    vi.mocked(requestAiFix).mockResolvedValue({ ok: true, fix_id: 'fx_A' })
+    vi.mocked(fetchAiFix).mockResolvedValue(state({ state: 'waiting', card: card({}) }))
+    await useAiFixStore.getState().startAiFix(KEY, REF)
+    await vi.waitFor(() => expect(entry()?.phase).toBe('waiting'))
+    expect(fetchAiFix).toHaveBeenCalledWith('fx_A', 'pjA')
+    vi.mocked(answerAiFix).mockResolvedValue(state({}))
+    await useAiFixStore.getState().answer(KEY, 'yes')
+    expect(answerAiFix).toHaveBeenCalledWith('fx_A', { card_id: 'c1', answer: 'yes' }, 'pjA')
   })
 })

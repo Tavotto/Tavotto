@@ -182,6 +182,11 @@ class FixSessions:
                     return s
         raise FixError("fix_not_found", 404)
 
+    def ids_for(self, scope: str) -> set[str]:
+        """这个项目名下（还留着的）修复会话 id：诊断包只取这些会话的审计，别的项目的记录不出项目。"""
+        with self._lock:
+            return {s.id for s in self._by_id.values() if s.scope == scope}
+
     def active(self) -> FixSession | None:
         with self._lock:
             for s in self._by_id.values():
@@ -444,8 +449,11 @@ def build_model(conn: dict):
     return model, Redactor(conn["api_key"])
 
 
-def audit_tail(limit: int = 200) -> list[dict]:
-    """诊断包「修复审计」：`fix_audit.jsonl` 末尾若干行。审计本身不含内容（见 `fixtools/audit.py`），这里只读。"""
+def audit_tail(session_ids: set[str], limit: int = 200) -> list[dict]:
+    """诊断包「修复审计」：`fix_audit.jsonl` 里属于 `session_ids`（当前项目的修复会话）的末尾若干行；
+    没给会话 id 就是空。路径类参数的处理在 `diagdetail`（与诊断包其余文件名同一规矩）。"""
+    if not session_ids:
+        return []
     import json
 
     try:
@@ -453,14 +461,14 @@ def audit_tail(limit: int = 200) -> list[dict]:
     except OSError:
         return []
     out: list[dict] = []
-    for line in lines[-limit:]:
+    for line in lines:
         try:
             rec = json.loads(line)
         except ValueError:
             continue
-        if isinstance(rec, dict):
+        if isinstance(rec, dict) and rec.get("session") in session_ids:
             out.append(rec)
-    return out
+    return out[-limit:]
 
 
 __all__ = [

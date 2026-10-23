@@ -930,6 +930,21 @@ def _name_id(raw: str) -> str:
     return hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:10]
 
 
+def _audit_row(row: dict) -> dict:
+    """AI 修复审计的一行：路径类参数（`path` / `root`）不原样进包——目录名、文件名可能就是患者 / 课题名。
+    与其余文件名同一规矩：只留不可逆短标识（`_name_id`）加常见扩展名（`_KEEP_EXTS`）。"""
+    out = dict(row)
+    args = dict(out.get("args") or {}) if isinstance(out.get("args"), dict) else {}
+    for key in ("path", "root"):
+        v = args.get(key)
+        if isinstance(v, str):
+            ext = Path(v).suffix.lower()
+            args[key] = f"<path {_name_id(v)}{ext if ext in _KEEP_EXTS else ''}>"
+    if "args" in out:
+        out["args"] = args
+    return out
+
+
 def _clean_name(scrub: "Scrubber", raw: str) -> str:
     """名字（文件名 / 面板标识 / 脚本相对路径）的清理 = `Scrubber.text()`。令牌贴在下划线后面（WER 目录名
     `AppCrash_Tavotto.exe_ghp_…`）也要认得出，所以 `_PROVIDER_TOKEN` 的起点不用 `\\b`（`_` 是词字符）。"""
@@ -2165,7 +2180,7 @@ def collect_runs(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[Ite
             # 修复经过（ADR 0148）：每种修法 · 结果 · 最后的报错；与其余字段同一遍 `scrub.obj`
             "fix_journey": list(src.fix_journey or []),
             # AI 修复的审计（工具调用的名字 / 档 / 批准方 / 结果码；内容本来就不落盘）
-            "fix_audit": list(src.fix_audit or []),
+            "fix_audit": [_audit_row(r) for r in src.fix_audit or ()],
             "log_events": recs,
         }
         doc = scrub.obj(doc)

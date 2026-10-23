@@ -25,6 +25,8 @@ import {
   type AiFixCard,
   type AiFixState,
 } from '@/lib/api'
+import { captureProjectEpoch } from '@/lib/projectEpoch'
+import { onCurrentProjectChange } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -50,6 +52,8 @@ export interface AiFixEntry {
   phase: AiFixPhase
   ref: AiFixRef
   fixId?: string
+  /** 发起修复时的项目：切项目之后取消 / 重读都认它，不认当前项目 */
+  pj?: string | null
   /** `waiting` 时要用户点的那张卡 */
   card?: AiFixCard
   /** `done` 时：AI 的结局与它说的一句话；`failed` 带 runner 的原因码 */
@@ -116,7 +120,7 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
   }
 
   /** 结束：fixed → 清掉并重跑准备会话验证；cancelled → 清掉；其余落成 `done` */
-  const settle = (key: string, st: AiFixState) => {
+  const settle = (key: string, st: AiFixState, still: () => boolean) => {
     stop(key)
     const entry = get().entries[key]
     if (!entry) return
@@ -126,7 +130,7 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
       // 重跑准备会话：这一次是验证，不是用户新点的「运行」之外的东西——只重新检查并按报告说话
       const prep = useProjectPreparationStore.getState()
       const target = prep.entries[key]?.target
-      if (target) void prep.open(target, { run: true, rerun: true })
+      if (target && still()) void prep.open(target, { run: true, rerun: true })
       return
     }
     put(key, (e) => ({
@@ -164,6 +168,7 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
     startAiFix: async (key, ref) => {
       const setPhase = (phase: AiFixPhase, extra: Partial<AiFixEntry> = {}) =>
         set((s) => ({ entries: { ...s.entries, [key]: { phase, ref, ...extra } } }))
+      const guard = captureProjectEpoch()
       setPhase('starting')
       if (useAiStore.getState().caps?.ai_fix_available === false) {
         setPhase('unavailable')
@@ -171,25 +176,33 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
       }
       try {
         const res = await requestAiFix({ session_id: ref.session_id, script: ref.script })
+        if (!guard.still()) {
+          // 请求在途时用户切走了项目：这份结果不属于现在的项目，绝不落进 store；已经起来的修复取消掉（别在后台白跑）
+          if (res.ok) void cancelAiFix(res.fix_id, guard.pj).catch(() => {})
+          return
+        }
         if (res.ok) {
-          setPhase('running', { fixId: res.fix_id })
+          setPhase('running', { fixId: res.fix_id, pj: guard.pj ?? undefined })
           schedule(key)
           void get().refresh(key)
         } else setPhase(res.reason === 'ai_fix_busy' ? 'busy' : 'unavailable')
       } catch {
+        if (!guard.still()) return
         // 请求本身失败（断线 / 老后端没有这个端点）：同样落到反馈，不让用户卡在一个转圈的按钮上
         setPhase('unavailable')
       }
     },
 
     refresh: async (key) => {
-      const fixId = get().entries[key]?.fixId
+      const cur = get().entries[key]
+      const fixId = cur?.fixId
       if (!fixId) return
+      const guard = captureProjectEpoch()
       try {
-        const st = await fetchAiFix(fixId)
-        // 读的期间条目被清掉 / 换了一次修复：丢弃
-        if (get().entries[key]?.fixId !== fixId) return
-        if (st.state === 'finished') return settle(key, st)
+        const st = await fetchAiFix(fixId, cur.pj)
+        // 读的期间条目被清掉 / 换了一次修复 / 切了项目：丢弃
+        if (get().entries[key]?.fixId !== fixId || !guard.still()) return
+        if (st.state === 'finished') return settle(key, st, guard.still)
         put(key, (e) => ({
           ...e,
           phase: st.state === 'waiting' && st.card ? 'waiting' : 'running',
@@ -199,6 +212,7 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
         }))
       } catch (e) {
         // 读不到：断线就下一轮再试；会话没了（404，后端重启丢了它）就放弃，回到原来的失败卡
+        if (!guard.still()) return
         if (e instanceof ApiError && e.status === 404) return get().clear(key)
       }
       schedule(key)
@@ -214,7 +228,7 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
       const { fixId, card } = e
       put(key, (x) => ({ ...x, answering: true }))
       try {
-        await answerAiFix(fixId, { card_id: card.id, answer, ...(text ? { text } : {}) })
+        await answerAiFix(fixId, { card_id: card.id, answer, ...(text ? { text } : {}) }, e.pj)
       } catch {
         /* 卡片已过期 / 回答被拒：下面的重读会把真实状态摆出来 */
       }
@@ -223,10 +237,11 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
     },
 
     cancel: async (key) => {
-      const fixId = get().entries[key]?.fixId
+      const cur = get().entries[key]
+      const fixId = cur?.fixId
       if (!fixId) return get().clear(key)
       try {
-        await cancelAiFix(fixId)
+        await cancelAiFix(fixId, cur.pj)
       } catch {
         /* 会话已经没了：照样收起 */
       }
@@ -276,4 +291,14 @@ useDiagSendStore.subscribe((s, prev) => {
       void useAiFixStore.getState().answer(key, 'sent')
     }
   }
+})
+
+// 切项目：属于旧项目的条目一律丢掉（A 的卡片绝不出现在 B 的同名脚本上），在跑的修复取消（带发起时的项目 id，
+// 不然会打到 B 上）；在途请求靠 `captureProjectEpoch` 作废
+onCurrentProjectChange(() => {
+  const { entries } = useAiFixStore.getState()
+  for (const e of Object.values(entries)) {
+    if (e.fixId && e.phase !== 'done') void cancelAiFix(e.fixId, e.pj).catch(() => {})
+  }
+  useAiFixStore.getState().reset()
 })

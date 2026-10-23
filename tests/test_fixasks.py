@@ -596,7 +596,7 @@ def test_audit_tail_reads_back_what_the_session_wrote(box):
         box, Scripted([("read_run_report", {})], [("finish", {"outcome": "fixed", "summary": "x"})])
     )
     wait_for(lambda: fixsession.SESSIONS.get(s.id, "pj")["state"] == "finished")
-    tail = fixsession.audit_tail()
+    tail = fixsession.audit_tail({s.id})
     assert [r["tool"] for r in tail][-2:] == ["read_run_report", "finish"]
     assert set(asks.__dict__) >= {"ASK_TOOLS"}
 
@@ -624,3 +624,42 @@ def test_fix_audit_enters_the_diagnostics_bundle_and_secret_shapes_are_scrubbed(
         diagdetail.Sources(), diagdetail.DetailOptions(), diagdetail.Scrubber()
     )
     assert json.loads(empty.data)["fix_audit"] == []
+
+
+def test_audit_tail_only_returns_the_given_sessions(box):
+    s = start(
+        box, Scripted([("read_run_report", {})], [("finish", {"outcome": "fixed", "summary": "x"})])
+    )
+    wait_for(lambda: fixsession.SESSIONS.get(s.id, "pj")["state"] == "finished")
+    path = box.data / "ai" / "fix_audit.jsonl"
+    with open(path, "ab") as f:
+        f.write(
+            b'{"session": "fx_other_project", "tool": "read_file", "args": {"path": "/x/Patient Bob/a.py"}}\n'
+        )
+    assert fixsession.audit_tail(set()) == []
+    rows = fixsession.audit_tail({s.id})
+    assert rows and {r["session"] for r in rows} == {s.id}
+    assert (
+        fixsession.SESSIONS.ids_for("pj") == {s.id}
+        and fixsession.SESSIONS.ids_for("other") == set()
+    )
+
+
+def test_bundle_audit_paths_are_hashed_not_spelled_out():
+    from tavotto.engine import diagdetail
+
+    rows = [
+        {
+            "session": "fx_1",
+            "tool": "read_file",
+            "args": {"path": "~/Patient Alice/plot.py", "start_line": 3},
+        }
+    ]
+    (item,) = diagdetail.collect_runs(
+        diagdetail.Sources(fix_audit=rows), diagdetail.DetailOptions(), diagdetail.Scrubber()
+    )
+    text = item.data.decode("utf-8")
+    assert "Alice" not in text and "Patient" not in text and "plot" not in text
+    doc = json.loads(text)["fix_audit"][0]
+    assert doc["args"]["path"].startswith("<path ") and doc["args"]["path"].endswith(".py>")
+    assert doc["args"]["start_line"] == 3
