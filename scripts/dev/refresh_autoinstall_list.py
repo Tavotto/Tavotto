@@ -87,7 +87,27 @@ BIG_PACKAGES = (
 #: 管理环境 / 打包工具本身：不许被自动装进用户环境（规范名）
 EXCLUDE = frozenset(
     "pip setuptools wheel distribute virtualenv pipenv poetry poetry-core pdm hatch hatchling "
-    "flit flit-core uv conda conda-build mamba tox nox pip-tools build twine".split()
+    "flit flit-core uv conda conda-build mamba tox nox pip-tools build twine "
+    # 构建后端 / 安装器 / 原生构建工具链：都是“改环境本身”的东西（Codex #1338）
+    "installer pyproject-hooks maturin pbr pbs-installer cmake ninja scikit-build scikit-build-core "
+    "meson meson-python jupyter-builder nodejs-wheel-binaries pipx".split()
+)
+#: 再加一道前缀规则：这些工具家族的插件 / 后端（uv-build、pip-audit、setuptools-scm、hatch-vcs、poetry-plugin-*…）同样排除
+EXCLUDE_PREFIXES = (
+    "pip-",
+    "setuptools-",
+    "wheel-",
+    "virtualenv-",
+    "pipenv-",
+    "poetry-",
+    "pdm-",
+    "hatch-",
+    "flit-",
+    "uv-",
+    "conda-",
+    "mamba-",
+    "tox-",
+    "nox-",
 )
 
 
@@ -134,12 +154,14 @@ def fetch_tsv(top: int, days: int) -> tuple[str, str]:
         datetime.date.fromisoformat(snap)
     except ValueError:
         raise SystemExit(f"快照日期解析失败：{snap[:40]!r}") from None
+    # 窗口锚定在快照日（数据源最新的完整一天），恰好 days 个日期：数据延迟或今天的半天数据都不改变窗口长度
+    window = f"date > toDate('{snap}') - {int(days)} AND date <= toDate('{snap}')"
     parts = []
     for lo, hi in SHARDS:
         parts.append(
             _query(
                 "SELECT project, sum(count) c FROM pypi.pypi_downloads_per_day "
-                f"WHERE {_shard_where(lo, hi)} AND date >= today()-{int(days)} "
+                f"WHERE {_shard_where(lo, hi)} AND {window} "
                 f"GROUP BY project ORDER BY c DESC LIMIT {int(top)} "
                 "SETTINGS read_overflow_mode='throw' FORMAT TSV"
             )
@@ -147,7 +169,7 @@ def fetch_tsv(top: int, days: int) -> tuple[str, str]:
     tsv = "".join(p if p.endswith("\n") or not p else p + "\n" for p in parts)
     exact = _query(
         "SELECT sum(count) FROM pypi.pypi_downloads_per_day "
-        f"WHERE project = '{CHECK_PROJECT}' AND date >= today()-{int(days)} "
+        f"WHERE project = '{CHECK_PROJECT}' AND {window} "
         "SETTINGS read_overflow_mode='throw' FORMAT TSV"
     ).strip()
     got = {line.split("\t")[0]: line.split("\t")[-1] for line in tsv.splitlines() if "\t" in line}
@@ -175,9 +197,14 @@ def parse_tsv(text: str) -> list[str]:
     return [name for _, name in rows]
 
 
+def excluded(name: str) -> bool:
+    """规范名是否属于不许自动安装的环境 / 打包工具（精确名单 + 家族前缀）。"""
+    return name in EXCLUDE or name.startswith(EXCLUDE_PREFIXES)
+
+
 def build_names(names: list[str], top: int) -> list[str]:
     merged = {normalize(n) for n in (*SEED, *BIG_PACKAGES, *names[:top])}
-    return sorted(n for n in merged if n and n not in EXCLUDE)
+    return sorted(n for n in merged if n and not excluded(n))
 
 
 def render(names: list[str], *, source: str, snapshot: str, days: int, top: int) -> str:
@@ -191,6 +218,7 @@ def render(names: list[str], *, source: str, snapshot: str, days: int, top: int)
         f"# 快照日期：{snapshot}",
         f"# top N：{top}",
         "# 排除（管理环境 / 打包工具本身，不许被自动装进用户环境）：" + " ".join(sorted(EXCLUDE)),
+        "# 另按前缀排除这些工具家族的插件 / 后端：" + " ".join(f"{p}*" for p in EXCLUDE_PREFIXES),
         f"# 条数：{len(names)}",
     ]
     return "\n".join([*header, *names]) + "\n"

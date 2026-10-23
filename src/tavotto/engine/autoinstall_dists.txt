@@ -6,8 +6,9 @@
 # 窗口天数：30
 # 快照日期：2026-10-22
 # top N：1000
-# 排除（管理环境 / 打包工具本身，不许被自动装进用户环境）：build conda conda-build distribute flit flit-core hatch hatchling mamba nox pdm pip pip-tools pipenv poetry poetry-core setuptools tox twine uv virtualenv wheel
-# 条数：1004
+# 排除（管理环境 / 打包工具本身，不许被自动装进用户环境）：build cmake conda conda-build distribute flit flit-core hatch hatchling installer jupyter-builder mamba maturin meson meson-python ninja nodejs-wheel-binaries nox pbr pbs-installer pdm pip pip-tools pipenv pipx poetry poetry-core pyproject-hooks scikit-build scikit-build-core setuptools tox twine uv virtualenv wheel
+# 另按前缀排除这些工具家族的插件 / 后端：pip-* setuptools-* wheel-* virtualenv-* pipenv-* poetry-* pdm-* hatch-* flit-* uv-* conda-* mamba-* tox-* nox-*
+# 条数：989
 absl-py
 accelerate
 adal
@@ -131,7 +132,6 @@ click-repl
 clickhouse-connect
 cloudpathlib
 cloudpickle
-cmake
 cobble
 colorama
 coloredlogs
@@ -316,7 +316,6 @@ h11
 h2
 h3
 h5py
-hatch-vcs
 hf-xet
 hiredis
 holidays
@@ -354,7 +353,6 @@ inflect
 inflection
 iniconfig
 inquirerpy
-installer
 invoke
 ipykernel
 ipython
@@ -389,7 +387,6 @@ jsonref
 jsonschema
 jsonschema-path
 jsonschema-specifications
-jupyter-builder
 jupyter-client
 jupyter-core
 jupyter-events
@@ -458,7 +455,6 @@ marshmallow
 mashumaro
 matplotlib
 matplotlib-inline
-maturin
 maxminddb
 mccabe
 mcp
@@ -508,10 +504,8 @@ netcdf4
 networkx
 nexus-rpc
 nh3
-ninja
 nltk
 nodeenv
-nodejs-wheel-binaries
 notebook
 notebook-shim
 numba
@@ -618,8 +612,6 @@ pathlib-abc
 pathspec
 pathvalidate
 patsy
-pbr
-pbs-installer
 pdf2image
 pdfminer-six
 pdfplumber
@@ -633,9 +625,6 @@ phonenumbers
 pillow
 pillow-heif
 pingouin
-pip-api
-pip-audit
-pip-requirements-parser
 pkginfo
 platformdirs
 playwright
@@ -723,7 +712,6 @@ pypdfium2
 pyperclip
 pyphen
 pyproj
-pyproject-hooks
 pyright
 pyroaring
 pyrsistent
@@ -827,7 +815,6 @@ sentencepiece
 sentry-sdk
 service-identity
 setproctitle
-setuptools-scm
 shapely
 shellingham
 shortuuid
@@ -969,7 +956,6 @@ uri-template
 uritemplate
 urllib3
 uuid-utils
-uv-build
 uvicorn
 uvloop
 validators

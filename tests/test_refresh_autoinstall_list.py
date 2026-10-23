@@ -130,3 +130,32 @@ def test_a_silently_truncated_count_is_caught_by_the_cross_check(tmp_path, monke
 def test_the_real_list_has_the_big_packages():
     allow = convertdeps.allowlist()
     assert {"torch", "tensorflow", "sympy", "xgboost", "jax", "transformers"} <= allow
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["uv-build", "pip-audit", "setuptools-scm", "hatch-vcs", "installer", "maturin", "cmake"],
+)
+def test_packaging_tool_families_are_excluded_by_prefix_or_name(tmp_path, name):
+    rc, out = _run(tmp_path, [(name, 900), ("requests", 800)], top=2)
+    assert rc == 0 and name not in _names(out) and "requests" in _names(out)
+
+
+@pytest.mark.parametrize("name", ["uvicorn", "uvloop", "packaging", "pipe"])
+def test_lookalike_names_are_not_excluded(name):
+    assert not mod.excluded(name)
+
+
+def test_the_window_is_anchored_to_the_snapshot_date_not_today(monkeypatch):
+    fake = _FakeSource([[("numpy", 100)], [], [], []], 100)
+    monkeypatch.setattr(mod, "_query", fake)
+    mod.fetch_tsv(top=10, days=30)
+    windowed = [s for s in fake.sqls if "GROUP BY project" in s or "project = 'numpy'" in s]
+    assert windowed and all("today()" not in s for s in windowed)
+    want = "date > toDate('2026-10-22') - 30 AND date <= toDate('2026-10-22')"
+    assert all(want in s for s in windowed)
+
+
+def test_the_real_list_has_no_packaging_tools():
+    allow = convertdeps.allowlist()
+    assert not {"uv-build", "installer", "pip-audit", "setuptools-scm", "cmake", "maturin"} & allow
