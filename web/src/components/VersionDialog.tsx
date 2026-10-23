@@ -865,18 +865,6 @@ function CompareCard({
   return (
     <div className="flex flex-col gap-2" data-timeline-card={meta.id}>
       <div className="relative flex min-h-24 items-start justify-between gap-3 rounded-md bg-canvas p-2">
-        <IconButton
-          iconSize="sm"
-          label={vd('enlarge')}
-          data-timeline-card-enlarge
-          className="absolute right-1 top-1 z-10"
-          disabled={!doc}
-          onClick={() => {
-            if (doc) onEnlarge(doc)
-          }}
-        >
-          <Eye size={ICON_SIZE.sm} className="text-ink-2" />
-        </IconButton>
         {failed ? (
           <p className="p-2 text-sm text-danger" data-timeline-card-error>
             {failed}
@@ -891,6 +879,18 @@ function CompareCard({
             {vd('loadingSnapshot')}
           </p>
         )}
+        <IconButton
+          iconSize="sm"
+          label={vd('enlarge')}
+          data-timeline-card-enlarge
+          className="absolute right-1 top-1"
+          disabled={!doc}
+          onClick={() => {
+            if (doc) onEnlarge(doc)
+          }}
+        >
+          <Eye size={ICON_SIZE.sm} className="text-ink-2" />
+        </IconButton>
       </div>
       {approximate && <p className="type-caption">{vd('previewApproximate')}</p>}
       {summary && (
