@@ -566,6 +566,8 @@ export interface ProjectStatus {
   settings?: { export_dir?: string; backup_dir?: string; allow_write_back?: boolean }
   export_dir?: string
   backup_dir?: string
+  /** 本机真实家目录（后端 `Path.home()`）：界面缩写 `~` 只认它，不按路径形状猜 */
+  home_dir?: string
   /**
    * 「另存为」把文档写到哪（审计 T04）。规则的唯一出处是后端
    * `app.project_layout_dir()`——界面自己拼 `<项目>/tavottofile` 抄不到

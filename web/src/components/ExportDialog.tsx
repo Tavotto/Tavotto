@@ -56,6 +56,7 @@ import { ICON_SIZE } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { ExportZoomStage } from "./ExportZoomStage";
 import { ExportLocationRow } from "./ExportLocationRow";
+import { useProjectSettingsPending } from "@/lib/projectSettingsPatch";
 import { Checkbox } from "./ui/Checkbox";
 import { Segmented } from "./ui/Segmented";
 import {
@@ -810,6 +811,8 @@ export function ExportDialog() {
    * `start()` 没有"，第五轮又抓到"两边都有，但 `start()` 那份少了一条"。
    * 一份判断、两个消费点，就没有"少写一条"这回事了。
    */
+  // 导出位置的写入还在飞：导出键灰着，免得写到旧目录
+  const locationUpdating = useProjectSettingsPending();
   const prepared = prepareExport(inputOf());
   const filenameIssue = prepared.filenameProblem;
   const names = prepared.names;
@@ -819,6 +822,7 @@ export function ExportDialog() {
     !prepared.error &&
     names.length > 0 &&
     !filenameIssue &&
+    !locationUpdating &&
     (scope !== "original" || availability.ok);
 
   /**
@@ -827,7 +831,7 @@ export function ExportDialog() {
    * 走的就是单张导出的那条路，没有第二套。
    */
   const batchMode = !single && scope === "original";
-  const canStartBatch = batchMode && canvasFigures.length > 0 && formats.length > 0 && !busy;
+  const canStartBatch = batchMode && canvasFigures.length > 0 && formats.length > 0 && !busy && !locationUpdating;
   /**
    * 「每张图单独导出」的**冻结**：点「导出」之后分两步，且两步之间没有任何交错——
    * ① 先 await 拿齐每张图的 export route（只取后端的回答，不读文档、不生成请求输入；用户这几秒里改了什么，

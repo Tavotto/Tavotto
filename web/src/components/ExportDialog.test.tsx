@@ -106,10 +106,21 @@ let jobStatusSeq: string[] | null = null
 let routeDelayMs = 0
 let routeOf: ((req: Record<string, any>) => Record<string, unknown>) | null = null
 
+/** 项目设置 PATCH 回包前先等它（模拟位置写入在飞） */
+let settingsGate: Promise<void> | null = null
+
 function stubFetch() {
   exportBodies = []
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
+    if (url.includes('/api/project/settings')) {
+      await settingsGate
+      const body = JSON.parse(String(init?.body ?? '{}')) as { export_dir?: string }
+      return new Response(
+        JSON.stringify({ settings: { export_dir: body.export_dir }, export_dir: body.export_dir, backup_dir: '/b' }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
     if (url.includes('/api/export/start') || url.endsWith('/api/export')) {
       exportBodies.push(JSON.parse(String(init?.body ?? '{}')))
       const status = jobStatusSeq?.length ? jobStatusSeq.shift()! : jobStatus
@@ -3259,5 +3270,20 @@ describe('导出页改版（beta 0.19.0b3 反馈）', () => {
     expect(text).toContain('2 条提示')
     expect(text).toContain('导出期间排版又改了')
     expect(q('[data-export-result]')!.getAttribute('data-notice')).toBe('warn')
+  })
+
+  it('位置写入在飞：开始导出灰着（免得写到旧目录），落地后恢复；写入失败也恢复', async () => {
+    await setup(9)
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    let release!: () => void
+    settingsGate = new Promise<void>((r) => { release = r })
+    const { applyProjectSettingsPatch } = await import('@/lib/projectSettingsPatch')
+    let done!: Promise<void>
+    await act(async () => { done = applyProjectSettingsPatch({ export_dir: '/new/dir' }) })
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(q('[data-export-location]')!.textContent).toBe('正在更新…')
+    await act(async () => { release(); await done })
+    settingsGate = null
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
   })
 })

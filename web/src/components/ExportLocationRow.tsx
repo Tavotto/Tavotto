@@ -12,7 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { backendErrorText } from '@/lib/api'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
 import { abbreviateHome } from '@/lib/pathDisplay'
-import { applyProjectSettingsPatch } from '@/lib/projectSettingsPatch'
+import { applyProjectSettingsPatch, useProjectSettingsPending } from '@/lib/projectSettingsPatch'
 import { t as translate } from '@/i18n'
 import { useProjectStore } from '@/store/projectStore'
 import { DirBrowser } from './DirBrowser'
@@ -34,6 +34,9 @@ const ex = (key: string) => translate(`export.${key}`, { ns: 'dialogs' })
 export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) {
   useTranslation('dialogs')
   const exportDir = useProjectStore((s) => s.project?.export_dir ?? null)
+  const homeDir = useProjectStore((s) => s.project?.home_dir ?? null)
+  // 写入没落地前位置还是旧的：说「正在更新…」，导出键由对话框同一个信号挡住（否则会写到旧目录）
+  const updating = useProjectSettingsPending()
   const [browsing, setBrowsing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -59,13 +62,14 @@ export function ExportLocationRow({ disabled = false }: { disabled?: boolean }) 
         {/* dir=rtl：放不下时从左边省略、末尾两级（`…/项目/export`）始终在；两端的 U+200E 把路径钉在从左到右 */}
         <span
           data-export-location
+          data-updating={updating ? '' : undefined}
           dir="rtl"
           className="min-w-0 flex-1 truncate text-left text-sm text-ink-2"
           title={exportDir ?? undefined}
         >
-          {exportDir ? '‎' + abbreviateHome(exportDir) + '‎' : ex('locationDefault')}
+          {updating ? ex('locationUpdating') : exportDir ? '‎' + abbreviateHome(exportDir, homeDir) + '‎' : ex('locationDefault')}
         </span>
-        <Button variant="ghost" size="sm" data-export-location-change disabled={disabled} onClick={() => void change()}>
+        <Button variant="ghost" size="sm" data-export-location-change disabled={disabled || updating} onClick={() => void change()}>
           {ex('locationChange')}
         </Button>
       </FormRow>

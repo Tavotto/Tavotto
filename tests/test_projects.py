@@ -279,6 +279,13 @@ def test_status_says_where_documents_are_saved(client, tmp_path):
     assert (Path(body["document_dir"]) / "Fig_1.json").exists()
 
 
+def test_status_reports_the_real_home_dir(client, tmp_path):
+    """界面缩写 `~` 用后端说的真实家目录，不靠路径形状猜（/Users/Shared 不是谁的家）。"""
+    figs = _make_figs(tmp_path)
+    body = client.post("/api/projects/open", json={"path": str(figs)}).get_json()
+    assert body["home_dir"] == str(Path.home())
+
+
 def test_open_missing_dir_keeps_current(client, tmp_path, monkeypatch):
     figs = _make_figs(tmp_path)
     m.open_project(str(figs))

@@ -48,7 +48,9 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 let host: HTMLDivElement
 let root: Root
 const setDir = (dir: string | undefined) =>
-  useProjectStore.setState({ project: { settings: {}, export_dir: dir, backup_dir: '/b' } as never })
+  useProjectStore.setState({
+    project: { id: 'pa', settings: {}, export_dir: dir, backup_dir: '/b', home_dir: '/Users/ann' } as never,
+  })
 const q = (sel: string) => host.querySelector<HTMLElement>(sel)
 const clickEl = (el: Element) => act(async () => { (el as HTMLElement).click() })
 
@@ -85,13 +87,25 @@ describe('位置显示', () => {
     expect(el.className).toContain('truncate')
   })
 
-  it('abbreviateHome：mac / Linux / Windows 家目录；家目录以外原样', () => {
-    expect(abbreviateHome('/Users/a/p/export')).toBe('~/p/export')
-    expect(abbreviateHome('/home/a/p/export')).toBe('~/p/export')
-    expect(abbreviateHome('C:\\Users\\a\\p\\export')).toBe('~\\p\\export')
-    expect(abbreviateHome('/data/p/export')).toBe('/data/p/export')
-    expect(abbreviateHome('/Users/ab')).toBe('~')
-    expect(abbreviateHome('/Users/abc/')).toBe('~/')
+  it('abbreviateHome：只认后端给的真实家目录，不按路径形状猜', () => {
+    expect(abbreviateHome('/Users/a/p/export', '/Users/a')).toBe('~/p/export')
+    expect(abbreviateHome('/home/a/p/export', '/home/a/')).toBe('~/p/export')
+    expect(abbreviateHome('C:\\Users\\a\\p\\export', 'C:\\Users\\a')).toBe('~\\p\\export')
+    expect(abbreviateHome('/Users/a', '/Users/a')).toBe('~')
+    // 形状像家目录、但不是这台机器的家：不缩
+    expect(abbreviateHome('/Users/Shared/exports', '/Users/a')).toBe('/Users/Shared/exports')
+    expect(abbreviateHome('C:\\Users\\Public\\exports', 'C:\\Users\\a')).toBe('C:\\Users\\Public\\exports')
+    // 前缀相同但不是同一级（/Users/ab 不在 /Users/a 下）
+    expect(abbreviateHome('/Users/ab/p', '/Users/a')).toBe('/Users/ab/p')
+    // 没有 home（老后端 / 没打开项目）：原样
+    expect(abbreviateHome('/Users/a/p')).toBe('/Users/a/p')
+  })
+
+  it('/Users/Shared/exports 即使形状像家目录也不缩写（真实 home 是 /Users/ann）', async () => {
+    setDir('/Users/Shared/exports')
+    await act(async () => root.render(<ExportLocationRow />))
+    expect(q('[data-export-location]')!.textContent).toContain('/Users/Shared/exports')
+    expect(q('[data-export-location]')!.textContent).not.toContain('~')
   })
 })
 
@@ -152,6 +166,25 @@ describe('更改…', () => {
     await clickEl(q('[data-pick]')!)
     expect(q('[data-export-location-error]')).not.toBeNull()
     expect(q('[data-export-location]')!.getAttribute('title')).toBe('/Users/ann/混合等离子体气体文章/export')
+  })
+
+  it('写入在飞：位置行说「正在更新…」、更改钮灰着；落地后恢复并显示新位置', async () => {
+    let release!: () => void
+    h.patch.mockImplementationOnce(
+      (p: { export_dir?: string }) =>
+        new Promise((res) => {
+          release = () => res({ settings: { export_dir: p.export_dir }, export_dir: p.export_dir, backup_dir: '/b' })
+        }),
+    )
+    await clickEl(q('[data-export-location-change]')!)
+    await clickEl(q('[data-pick]')!)
+    expect(q('[data-export-location]')!.textContent).toBe('正在更新…')
+    expect(q('[data-export-location]')!.hasAttribute('data-updating')).toBe(true)
+    expect(q('[data-export-location-change]')!.hasAttribute('disabled')).toBe(true)
+    await act(async () => release())
+    expect(q('[data-export-location]')!.hasAttribute('data-updating')).toBe(false)
+    expect(q('[data-export-location]')!.getAttribute('title')).toBe('/data/figs/out')
+    expect(q('[data-export-location-change]')!.hasAttribute('disabled')).toBe(false)
   })
 
   it('disabled（导出进行中）：按钮灰着', async () => {

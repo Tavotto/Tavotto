@@ -3792,6 +3792,8 @@ def project_status(ctx: "ProjectCtx | None") -> dict:
         "settings": engine_config.project_settings(str(p)),
         "export_dir": str(project_export_dir(ctx)),
         "backup_dir": str(project_backup_dir(ctx)),
+        # 本机真实的家目录：界面只在路径确实落在它下面时才把它缩成 `~`（不按 `/Users/x` 的形状猜）
+        "home_dir": str(Path.home()),
         # 「另存为」把文档写到哪（审计 T04：另存时只需名字和位置）。
         # 「命名文档存在项目的 tavottofile/ 里」这条规则的出处只有
         # `project_layout_dir()`——界面自己拼一个 `<项目>/tavottofile` 就是把

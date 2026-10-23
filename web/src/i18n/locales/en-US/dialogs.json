@@ -310,6 +310,7 @@
     "groupOutput": "Output",
     "groupFormat": "Format",
     "groupChecks": "Checks",
+    "locationUpdating": "Updating…",
     "locationPickTitle": "Choose export folder",
     "locationLabel": "Location",
     "locationDefault": "Project export folder",

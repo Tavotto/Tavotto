@@ -525,6 +525,7 @@ export default interface Resources {
       "locationDefault": "项目的导出目录",
       "locationLabel": "位置",
       "locationPickTitle": "选择导出文件夹",
+      "locationUpdating": "正在更新…",
       "mmSize": "{{w}} × {{h}} mm",
       "openProblems": "在问题面板中查看",
       "operationFailed": "无法完成：{{error}}",

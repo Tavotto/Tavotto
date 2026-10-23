@@ -30,6 +30,13 @@ test(
     // 非等宽、不再是只有末级名
     expect(await location.evaluate((el) => getComputedStyle(el).fontFamily)).not.toMatch(/mono/i)
 
+    // 拖慢项目设置写入，让「更新中」的窗口足够长、能被断言到
+    let releasePatch!: () => void
+    const gate = new Promise<void>((r) => { releasePatch = r })
+    await page.route('**/api/project/settings*', async (route) => {
+      if (route.request().method() === 'PATCH') await gate
+      await route.continue()
+    })
     await dialog.locator('[data-export-location-change]').click()
     // 弹的是选择文件夹，不是设置页
     const browser = page.locator('[data-dir-browser-path]')
@@ -46,15 +53,22 @@ test(
     await expect(confirm).toBeEnabled()
     await confirm.click()
     await expect(browser).toHaveCount(0)
+    // 写入在飞（这里人为拖慢）：位置行说「正在更新…」、开始导出灰着——不会写到旧目录
+    const start = dialog.locator('[data-export-start]')
+    await expect(location).toHaveAttribute('data-updating', '')
+    await expect(start).toBeDisabled()
+    await expect(dialog.locator('[data-export-location-change]')).toBeDisabled()
+    releasePatch()
+    await expect(start).toBeEnabled()
 
-    await expect(location).toHaveAttribute('title', new RegExp(`${path.basename(target)}$`))
-
+    // 不再显式等 title 才点导出——导出键在更新期间本来就点不了，点到的一定是新目录
     const started = page.waitForResponse(
       (r) => new URL(r.url()).pathname === '/api/export/start' && r.request().method() === 'POST',
     )
-    await dialog.locator('[data-export-start]').click()
+    await start.click()
     const job = (await (await started).json()) as { export_dir?: string }
     expect(job.export_dir, '导出写到选的目录').toMatch(new RegExp(`${path.basename(target)}$`))
+    await expect(location).toHaveAttribute('title', new RegExp(`${path.basename(target)}$`))
     await expect(dialog.locator('[data-export-result]')).toBeVisible({ timeout: 240_000 })
     await expect
       .poll(() => (existsSync(target) ? readdirSync(target).filter((f) => /\.(pdf|png)$/i.test(f)).length : 0), {
