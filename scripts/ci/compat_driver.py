@@ -29,6 +29,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import runpy
 import sys
 import traceback
@@ -239,6 +240,22 @@ def _ref_snapshot(root: str) -> dict[str, tuple[int, str]]:
     return snap
 
 
+def _ref_pdf_pages(path: str) -> dict:
+    """`{"pdf_pages": N}` for a PDF artifact (page objects in the file), `{}` for anything else.
+
+    Matplotlib's PDF backend writes page dictionaries uncompressed (`/Type /Page`, as opposed to
+    the `/Type /Pages` tree), so counting them is exact for the files these scripts produce.
+    """
+    if not path.lower().endswith(".pdf"):
+        return {}
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return {}
+    return {"pdf_pages": len(re.findall(rb"/Type\s*/Page(?![A-Za-z])", data))}
+
+
 def _ref_readable(path: str) -> bool:
     """产物能不能被读回来——只回答「是不是一个合法文件」，不回答「画得对不对」。"""
     suffix = os.path.splitext(path)[1].lower()
@@ -362,6 +379,7 @@ def run_native_ref(req: dict) -> int:
             "bytes": after[rel][0],
             "sha256": after[rel][1],
             "readable": _ref_readable(os.path.join(project, rel)),
+            **_ref_pdf_pages(os.path.join(project, rel)),
         }
         for rel in created + modified
     ]

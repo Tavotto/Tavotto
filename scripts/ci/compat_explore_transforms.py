@@ -837,6 +837,30 @@ def chains_for(parent: Parent, seed: int, plan: dict | None = None) -> list[tupl
     return singles + [tuple(pair) for pair in plan["chosen"][(parent.suite, parent.case)]]
 
 
+#: What the oracles judge a candidate against, besides its script bytes: which figure of the script is
+#: checked (`stem`), what is expected of it, and the edit / export the parent case replays. Two parents
+#: that share one script but differ here are different tests (ca_basic_series.py serves four `must` cases),
+#: so their structurally identical candidates are not duplicates. Id, category, notes and the like are
+#: bookkeeping and stay out: a twin with the same judgment is still dropped.
+_JUDGED_FIELDS = (
+    "stem",
+    "entry",
+    "expected",
+    "expected_figures",
+    "semantic_expectations",
+    "mutations",
+    "export_formats",
+)
+
+
+def judgment_identity(parent: Parent) -> str:
+    spec = parent.case_spec or {}
+    picked = {k: spec[k] for k in _JUDGED_FIELDS if k in spec}
+    return (
+        cg.digest(json.dumps(picked, sort_keys=True, ensure_ascii=False).encode()) if picked else ""
+    )
+
+
 def generate(seed: int, parents: list[Parent] | None = None) -> dict:
     """All candidates for a seed, deduplicated by (axis vector, normalized AST signature)."""
     parents = parents if parents is not None else default_parents()
@@ -845,12 +869,13 @@ def generate(seed: int, parents: list[Parent] | None = None) -> dict:
     unique, dropped = [], []
     out_files: dict[str, dict[str, bytes]] = {}
     for parent in sorted(parents, key=lambda p: (p.suite, p.case)):
+        judged = judgment_identity(parent)
         for chain in chains_for(parent, seed, plan):
             try:
                 manifest, files = build(parent, chain, seed)
             except cg.EvidenceError:
                 continue
-            key = (tuple(manifest["axis_vector"]), manifest["ast_signature"])
+            key = (tuple(manifest["axis_vector"]), manifest["ast_signature"], judged)
             if key in seen:
                 dropped.append(
                     {

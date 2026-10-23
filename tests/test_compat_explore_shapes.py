@@ -233,6 +233,79 @@ def savefig_paths(source: str) -> list[str]:
     return [c.args[0].value for c in savefig_calls(source) if isinstance(c.args[0], ast.Constant)]
 
 
+def _native(artifacts):
+    return {
+        "ok": True,
+        "exit_status": 0,
+        "figure_count": 1,
+        "figures_shown": 0,
+        "semantics": {"f": {"titles": ["t"]}},
+        "savefig_last_writer": {},
+        "artifacts": artifacts,
+    }
+
+
+def _tav(calls):
+    return {"stems": {"s": {"titles": ["t"]}}, "error": None, "savefig_calls": calls}
+
+
+def _art(path, pages=None):
+    return {"path": path, **({} if pages is None else {"pdf_pages": pages})}
+
+
+class OutputFacts(unittest.TestCase):
+    """多输出变换比的是输出本身：格式集合与页数（Codex #1368 P1）。"""
+
+    THREE = [_art("s.pdf", 1), _art("s.png"), _art("s.svg")]
+
+    def kinds(self, chain, native, tavotto):
+        return [
+            d["kind"]
+            for d in ex.compare("axis_changing", native, tavotto, None, None, chain)["differences"]
+        ]
+
+    def test_every_written_format_recorded_is_no_difference(self):
+        verdict = ex.compare(
+            "axis_changing",
+            _native(self.THREE),
+            _tav({"s": ["svg", "png", "pdf"]}),
+            None,
+            None,
+            ["multi_format"],
+        )
+        self.assertEqual(verdict["outcome"], "no_difference")
+
+    def test_a_missing_format_is_a_format_set_mismatch(self):
+        for calls in (["png"], ["png", "pdf"], ["png", "pdf", "svg", "eps"]):
+            with self.subTest(calls=calls):
+                self.assertEqual(
+                    self.kinds(["multi_format"], _native(self.THREE), _tav({"s": calls})),
+                    ["format_set_mismatch"],
+                )
+
+    def test_unobserved_calls_are_not_a_format_mismatch(self):
+        self.assertEqual(self.kinds(["multi_format"], _native(self.THREE), _tav({})), [])
+
+    def test_formats_are_only_compared_for_the_multi_format_transform(self):
+        self.assertEqual(self.kinds(["show_only"], _native(self.THREE), _tav({"s": ["png"]})), [])
+
+    def test_pages_recorded_equal_to_pages_written_is_no_difference(self):
+        native = _native([_art("s.pdf", 3)])
+        self.assertEqual(self.kinds(["pdfpages"], native, _tav({"s": ["pdf", "pdf", "pdf"]})), [])
+
+    def test_a_missing_page_is_a_page_count_mismatch(self):
+        native = _native([_art("s.pdf", 3)])
+        for calls in ([], ["pdf"], ["pdf", "pdf"], ["pdf"] * 4):
+            with self.subTest(calls=calls):
+                self.assertEqual(
+                    self.kinds(["pdfpages"], native, _tav({"s": calls})), ["page_count_mismatch"]
+                )
+
+    def test_pages_are_only_compared_for_the_pdfpages_transform(self):
+        native = _native([_art("s.pdf", 3)])
+        self.assertEqual(self.kinds(["multi_format"], native, _tav({"s": []})), [])
+
+
 class Applicability(unittest.TestCase):
     def applies(self, name, parent):
         return xt.BY_NAME[name].applies(ctx_of(parent))
@@ -572,10 +645,26 @@ class RealExecution(unittest.TestCase):
         record = self.check_axis_changing("multi_format")
         self.assertEqual(record["judgment"]["outcome"], "no_difference", record)
         self.assertEqual(len(record["native"]["artifacts"]), 3, record["native"])
+        (stem,) = {Path(a["path"]).stem for a in record["native"]["artifacts"]}
+        self.assertEqual(
+            sorted(record["tavotto"]["savefig_calls"][stem]),
+            ["pdf", "png", "svg"],
+            record["tavotto"],
+        )
 
-    def test_pdfpages_matches_native(self):
-        record = self.check_axis_changing("pdfpages")
-        self.assertEqual(record["judgment"]["outcome"], "no_difference", record)
+    def test_pdfpages_is_the_known_page_gap(self):
+        """多页 PDF：原生 PDF 有 N 页，产品只把那张图捕获一次、不记 `PdfPages.savefig`（它不是 Figure.savefig），
+        所以知道 0 页。口径是「产品记录的 pdf 保存次数」——产品没有页的概念，这是登记已知、已看到的缺口，不是模板的锅。"""
+        for case in self.PARENTS:
+            with self.subTest(parent=case):
+                record = self.check_axis_changing("pdfpages", case)
+                self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
+                self.assertEqual(self.kinds(record), {"page_count_mismatch"}, record["judgment"])
+                (diff,) = record["judgment"]["differences"]
+                self.assertEqual(
+                    diff["evidence"]["native_pages"], ex.native_facts(record["native"])["pdf_pages"]
+                )
+                self.assertGreaterEqual(diff["evidence"]["native_pages"], 2)
 
     def test_bytesio_close_is_the_known_gap_749(self):
         """savefig 到 BytesIO 再 close：原生有一张图，Tavotto 一张都没捕获（script_no_figure）。登记已知、已看到。"""
