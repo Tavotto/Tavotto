@@ -381,10 +381,23 @@ cancelled, closed or failed send is never resumed on its own.
   maker's reply can be fetched by the app: after sending, the app stores the
   letter's number and a secret reply token in its data folder (readable by your
   user only, where the platform supports it) and asks the service for replies
-  when it starts and every 6 hours — and only while such a record exists. Nothing
-  you wrote is kept in that record; the reply email address is remembered, if at
-  all, only in the app's local interface storage and can be forgotten from the
+  when it starts and every 6 hours — and only while such a record exists. The
+  reply email address is not kept in that record; it is remembered, if at all,
+  only in the app's local interface storage and can be forgotten from the
   window.
+* **What stays on your computer (second phase).** Besides the number and the
+  reply token, the app keeps a local copy of **the subject and message you
+  wrote and the *names* of the files you attached** (not the files themselves, and
+  not your reply email address) so *My letters* can show your letter next to the
+  maker's reply. It is deleted together with the record: when you remove the
+  letter in the app, or after 365 days. If a reply contains images, the app
+  downloads them from the same service (same hosts, same reply token, only while
+  the record exists) and stores them in its data folder (readable by your user
+  only, where the platform supports it); they are deleted with the record too.
+  **Opening a reply makes no network request**: the reply is shown from the local
+  copy in a sandboxed frame that cannot run scripts or connect anywhere, and its
+  images are read from disk. Clicking a link in a reply opens it in your default
+  browser, as any link would.
 * **No email program is involved.** The app never opens your mail program and
   contains no mail links; if sending fails it only offers *Copy content* and
   *Copy address* (`feedback@tavotto.com`) so you can decide how to send it.
