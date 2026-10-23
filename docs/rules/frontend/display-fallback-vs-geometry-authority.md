@@ -43,13 +43,20 @@
   不渲染）。旧文档里重复的 (gid, prop) 按引擎的 last-wins：改的、比的、读的都是最后那条——
   判据只有 `lib/effectiveOverride.ts` 一份，按 (gid, prop) 取 override 值不许再写 `overrides.find(...)`
   （那回的是第一条：控件显示过期值、下一次拖动从过期值起跳）。
+* **一个量只留一个 override 地址**：引擎里同一个量可有广播端与窄端两个地址（图例「标题字号」
+  `(legend, title_fontsize)` 与图例标题元素 `(legend.title, fontsize)`；图例整体字号 vs 单条；色条刻度；
+  柱 / stem 系列），窄端永远排在广播之后应用——两条并存时改广播端画面不变、控件却读着自己那条显示新值。
+  `upsertOverrides` 是唯一写入口，同一次 commit 里按引擎 manifest 元素的 `alias_covers`（`overrides.alias_covers`
+  唯一出处，不排同元素别名与 `cmap`）清掉另一端：写广播端 → 删它盖着的窄端；写窄端且某广播端**只**盖着它
+  （1:1）→ 删广播端，1:多保留。事实取 `structuralPanelManifest`（结构事实，不要求这一版已画好，**不许**拿它做
+  几何写）；拿不到 / 旧引擎不发 = 只 upsert。判据在 `lib/aliasOverrides.ts` 一份，别在控件里另写清理。
 * 撤销的落点要还在：每个文件保留最近 4 档成功变体（有界），`latest` 按**请求
   序号**推进——乱序返回时旧变体只入库、不挪 `latest`，也不丢弃（同文件的另一个
   副本可能还等着它）。
 * 布局版本预览按**版本自己的 overrides** 出图（`useVariantPng` →
   `preview_png`），出不来就退回磁盘图并明确标「近似预览」，**不许无提示地拿
   磁盘原图冒充版本视觉状态**。只给用户当前展开的那一份渲染。
-* 看护：`store/geometryAuthority.test.ts`、`store/alignAction.test.ts`、
+* 看护：`store/aliasOverrideWrites.test.ts`（别名地址归一）、`tests/test_alias_covers.py`、`store/geometryAuthority.test.ts`、`store/alignAction.test.ts`、
   `canvas/alignUndoConvergence.test.tsx`、`canvas/inFigureDragNoop.test.tsx`、`diagnostics/store.test.ts`（追踪环已并入
   诊断模块，ADR 0016）。
   测试里「这一版已经精确画好」用 `test/renderFixtures.ts` 的 `seedExactRender()`

@@ -78,7 +78,8 @@ import { finishActiveGesture } from './gestureCoordinator'
 import { writeBoundProjectFile } from './projectSave'
 import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
 import { useInteractionStore } from './interactionStore'
-import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, useRenderStore } from './renderStore'
+import { aliasClearPlan } from '@/lib/aliasOverrides'
+import { exactPanelManifest, rejectArtifactRenders, renderEpoch, renderKeyOf, structuralPanelManifest, useRenderStore } from './renderStore'
 import { useSelectionStore } from './selectionStore'
 import { askConfirm, isTimelineOpen, useUiStore, type StatusTone } from './uiStore'
 import { useViewportStore } from './viewportStore'
@@ -960,7 +961,14 @@ export function setOverride(
   const current = findObject(panelId)
   if (current?.type === 'panel') {
     const i = effectiveOverrideIndex(current.overrides, gid, prop)
-    if (i >= 0 && JSON.stringify(current.overrides[i].value) === JSON.stringify(value)) return
+    // 同值但另一个地址上还留着旧 override（旧文档里两条并存）时不算 no-op：这次写要把它清掉
+    if (
+      i >= 0 &&
+      JSON.stringify(current.overrides[i].value) === JSON.stringify(value) &&
+      !pendingAliasClears(current, [{ gid, prop }]).length
+    ) {
+      return
+    }
   }
   // 原地 upsert（与批量 setOverrides 同一个 upsertOverrides）：filter + push 会把命中的
   // 那条挪到数组末尾，顺序一变变体键就变
@@ -1438,10 +1446,20 @@ export function setColormapOverrides(
  * 「改回同一个值」也会触发一次完全没必要的重渲染，撤销栈里还多一条看不出
  * 差别的历史。issue #131 里对齐一次能挪好几条，键churn 尤其明显。
  */
+function pendingAliasClears(panel: PanelObject, patches: { gid: string; prop: string }[]) {
+  return aliasClearPlan(panel.overrides, structuralPanelManifest(useRenderStore.getState(), panel), patches)
+}
+
 function upsertOverrides(
   panel: PanelObject,
   patches: { gid: string; prop: string; value: unknown }[],
 ) {
+  // 一个量只留一个 override 地址：同一次写入里把另一个地址上的旧 override 清掉（`lib/aliasOverrides.ts`）。
+  // 事实来自引擎 manifest 的 `alias_covers`；拿不到 manifest / 旧引擎没发 = 什么都不清，行为同从前
+  const clears = pendingAliasClears(panel, patches)
+  if (clears.length) {
+    panel.overrides = panel.overrides.filter((o) => !clears.some((c) => c.gid === o.gid && c.prop === o.prop))
+  }
   for (const p of patches) {
     // 改生效的那条（重复条目时是最后一条，引擎 last-wins）；改第一条会被后面的遮住
     const i = effectiveOverrideIndex(panel.overrides, p.gid, p.prop)

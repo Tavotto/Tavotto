@@ -1226,6 +1226,23 @@ export function exactPanelManifest(
 }
 
 /**
+ * 面板的**结构性** manifest：只回答「这张图里有哪些元素、元素之间是什么结构关系」（如 `alias_covers`），
+ * 不回答几何。所以与 `exactPanelManifest` 不同——不要求这一版已经画好：连续写入时（输入框打字、
+ * 第二次点击赶在上一次渲染返回之前）当前变体的 manifest 还没回来，结构事实却没有变，退到该文件最近
+ * 一次成功渲染的那份（`latest`，即画布上挂着的显示退路）。**绝不可拿它做几何写操作**
+ * （`display-fallback-vs-geometry-authority.md`）。拿不到（还没渲染过）= `null`，调用方退化为不处理。
+ */
+export function structuralPanelManifest(
+  state: Pick<RenderState, 'byKey' | 'latest'>,
+  panel: PanelObject,
+): Manifest | null {
+  const own = state.byKey[renderKeyOf(panel)]?.manifest
+  if (own) return own
+  const key = state.latest[panel.fileId]
+  return (key && state.byKey[key]?.manifest) || null
+}
+
+/**
  * 画布上此刻挂着的那一版的来源。**判别联合**，不是一个带注释的可选字段：
  * `fallback` 分支在类型上就没有 `manifest`，退回来的墨迹框想流进写路径
  * 得先过 TypeScript 这一关。

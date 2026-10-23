@@ -94,6 +94,7 @@ from overrides import (
     _linecoll_linestyle_name,
     _linestyle_name,
     _stroke_state,
+    alias_covers,
     annotation_arrow_display,
     annotation_arrow_owner,
     annotation_text_draggable,
@@ -123,6 +124,7 @@ from overrides import (
     remember_axis_directions,
     scale_options,
     set_original_reader,
+    state_reverse_index,
     sync_font_caches,
     text_linespacing,
     to_hex,
@@ -5054,6 +5056,8 @@ def _measure_manifest(
     gid_by_artist_id: dict[int, str] = {}
     for el in state.elements:
         gid_by_artist_id.setdefault(id(el["artist"]), el["gid"])
+    #: 别名解析用的反查表（含旧 gid 别名），按需建一次——绝大多数元素没有广播型 prop
+    alias_rev: dict[int, str] | None = None
 
     fingerprint_budget = [FINGERPRINT_BUDGET]
     for el in state.elements:
@@ -5412,6 +5416,14 @@ def _measure_manifest(
             group = [g for g in _cmap_alias_gids(state, artist, el["gid"]) if g != el["gid"]]
             if group:
                 entry["cmap_group_gids"] = group
+        # 广播型字段「会盖掉谁」（`overrides.alias_covers`，唯一出处）：前端写入口据此保证一个量只留一个
+        # override 地址——写广播端清掉被盖的窄端、写 1:1 的窄端清掉广播端（否则引擎里窄端永远排在广播之后，
+        # 控件读到另一端的旧值）。可选：不是广播端 / 没有被盖的就不发；旧前端忽略它。
+        if alias_rev is None:
+            alias_rev = state_reverse_index(state)
+        covers = alias_covers(state, alias_rev, artist, el["gid"])
+        if covers:
+            entry["alias_covers"] = covers
         # 箭头：端点（figure 分数、top-origin，[尾, 头]）随 manifest 下发，前端据此画
         # 端点手柄、整体拖动 / 单端拖动都写 endpoints_frac override。两类出端点：
         # 独立箭头（端点就是 patch 自己的 posA / posB）与**纯箭头注释**（端点是注释的

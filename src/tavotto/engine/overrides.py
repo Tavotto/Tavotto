@@ -5255,6 +5255,47 @@ for _axis in ("x", "y"):
 _BROADCAST_PROPS = frozenset(prop for _cls, prop in ALIAS_GROUPS)
 
 
+def state_reverse_index(state: "FigState") -> dict[int, str]:
+    """`id(artist)` → gid，别名组解析器（`ALIAS_GROUPS`）的反查表；`apply` 与 manifest 的
+    `alias_covers` 共用这一份口径。"""
+    rev = {id(el["artist"]): el["gid"] for el in state.elements}
+    # **别名 gid 也算组员**。容器消费掉的成员（stem 的 markerline）只在
+    # `state.index` 里留了一条旧 gid 别名，元素表里没有它——而别名与
+    # 系列指着**同一个 artist**。不算进来的话：历史文档里那条
+    # `axes_i.lines_k` 被撤掉时，成员被还原成脚本原样，系列那条值没变
+    # 于是走了「跳过」的捷径，结果是**茎还是新颜色、marker 却退回原色**，
+    # 而全量重放两者都是新颜色——热态 ≠ 重放，写回自检又只比几何、
+    # 看不见颜色，坏状态会直接写进用户的原件。
+    # 元素表里已有的 gid 优先（setdefault）：别名是补充，不是改名。
+    for _gid, _artist in state.index.items():
+        rev.setdefault(id(_artist), _gid)
+    return rev
+
+
+def alias_covers(state: "FigState", rev: dict, artist, gid: str) -> dict[str, dict[str, list[str]]]:
+    """这个元素的广播型 prop 各自**会盖掉谁**：`{prop: {窄 prop: [窄 gid, ...]}}`。
+
+    manifest 元素上的 `alias_covers`（前端「一个量只留一个 override 地址」的唯一事实来源）。
+    与 `apply` 同一张 `ALIAS_GROUPS` 和同一份反查口径；排除与自身同 gid 的项（`fill→facecolor`
+    等同元素别名不是「同一个量」）和 `cmap`（色阶组另有 `cmap_group_gids`）。没有就返回空 dict。
+    """
+    out: dict[str, dict[str, list[str]]] = {}
+    key = _cls_key(artist)
+    for prop in _BROADCAST_PROPS:
+        if prop == "cmap":
+            continue
+        resolver = ALIAS_GROUPS.get((key, prop))
+        if resolver is None:
+            continue
+        for ngid, nprop in resolver(state, rev, artist):
+            if ngid == gid:
+                continue
+            gids = out.setdefault(prop, {}).setdefault(nprop, [])
+            if ngid not in gids:
+                gids.append(ngid)
+    return out
+
+
 #: 应用顺序的**规范档位**。同档内保持列表序（sorted 稳定），跨档必须按这里
 #: 的先后，否则同一组 patch 在热会话与全量重放里会落成两张不同的图。
 #:
@@ -5418,17 +5459,7 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
     def _reverse_index() -> dict:
         nonlocal _rev, _rev_gen
         if _rev_gen != state.index_generation:
-            _rev = {id(el["artist"]): el["gid"] for el in state.elements}
-            # **别名 gid 也算组员**。容器消费掉的成员（stem 的 markerline）只在
-            # `state.index` 里留了一条旧 gid 别名，元素表里没有它——而别名与
-            # 系列指着**同一个 artist**。不算进来的话：历史文档里那条
-            # `axes_i.lines_k` 被撤掉时，成员被还原成脚本原样，系列那条值没变
-            # 于是走了「跳过」的捷径，结果是**茎还是新颜色、marker 却退回原色**，
-            # 而全量重放两者都是新颜色——热态 ≠ 重放，写回自检又只比几何、
-            # 看不见颜色，坏状态会直接写进用户的原件。
-            # 元素表里已有的 gid 优先（setdefault）：别名是补充，不是改名。
-            for _gid, _artist in state.index.items():
-                _rev.setdefault(id(_artist), _gid)
+            _rev = state_reverse_index(state)
             _rev_gen = state.index_generation
         return _rev
 

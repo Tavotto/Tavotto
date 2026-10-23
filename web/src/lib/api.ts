@@ -2377,6 +2377,15 @@ export interface ManifestElement {
    */
   cmap_group_gids?: string[]
   /**
+   * 广播型字段**会盖掉谁**（引擎 `overrides.alias_covers`，唯一出处）：`{ 广播 prop: { 窄 prop: [窄 gid, ...] } }`，
+   * 如图例 `title_fontsize → { fontsize: ['axes_0.legend.title'] }`、`fontsize → { fontsize: [每条图例项] }`、
+   * 色条 `tick_fontsize` → 色条轴刻度组、柱形系列样式 → 每根柱。引擎里窄端永远排在广播之后应用，所以一个量有两个
+   * override 地址时广播端那条被盖、控件却显示它的旧值——写入口（`lib/aliasOverrides.ts`）据此让一个量只留一个
+   * 地址。不含同一元素上的别名（`fill → facecolor` 等）与 `cmap`（色阶组走 `cmap_group_gids`）。可选：没有就不发，
+   * 旧引擎也不发（前端退化为只 upsert）。
+   */
+  alias_covers?: Record<string, Record<string, string[]>>
+  /**
    * 拖动这个 axes 时该一起走的**其他 axes**（色条轴、twinx/twiny 的孪生轴）。
    * 由引擎裁决（只有那边有 matplotlib 的共享关系与落点），前端只负责把同一个
    * 位移发给它们。子图自己的标题/轴标签不在这里——它们是 Axes 的孩子，
