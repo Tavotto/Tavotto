@@ -56,3 +56,42 @@
 * 子图编号 (a)(b)(c) 用户要了才加（这也算克制原则里的标注）。
 
 以上是默认值，用户特殊要求（比如「里侧子图不要重复轴标题」）就按用户的。
+
+## 开工三问细则（技能正文只留摘要）
+
+先读已记录的偏好（脚本路径相对本技能目录；解释器用能跑起来的那个——Windows 上 `python3`
+可能是商店别名，用 `tavotto_health` 回报的 `server.python`）：
+
+```
+python3 scripts/prefs.py --json
+```
+
+三个键里**记录过的直接用，不再问**——唯一例外是 `width` 记的是 `ask`：
+那个哨兵值的含义就是「宽度每次都问」，撞见它宽度照问（另外两个键照常）。
+没记录的用宿主的**向用户提问工具**
+（ask user question / request_user_input，一次问卷问齐，别拆成三轮对话）问；宿主没有专用
+提问工具时，用**一条普通消息**把三件事一次问齐。宿主不能在本机执行脚本（例如 Claude Desktop
+聊天）时跳过偏好文件：直接问，也**不声称已经记住**：
+
+1. **画幅宽度**——选项：单栏 **8 cm**、双栏 **15 cm**。用户不清楚就按这次
+   任务自己推荐并说明理由：单张简单曲线/单组对比 → 单栏 8 cm；曲线多、
+   面板多、横向信息密 → 双栏 15 cm。推荐项放在第一位。
+2. **字体**——选项**必须包括 Times New Roman 与 Arial**（默认推荐
+   Times New Roman）；用户点名其它字体就用其它字体。
+3. **图例加不加框**——加框 / 无框（默认推荐无框）。用户选了加框，之后调
+   `tavotto_preflight` / `tavotto_export` 时带
+   `{"journal": {"legend_policy": {"frame": true}}}`——那是用户自己点的头，
+   别让预检把它当违规每次都报一条 warning。
+
+用户在回答里表示「以后都这样 / 记住」时才写偏好（`width` 记 `single` /
+`double`；用户明确说「宽度每次都问」记 `ask`）：
+
+```
+python3 scripts/prefs.py --set font="Times New Roman" --set legend_frame=off --json
+```
+
+用户改主意时用 `--set` 覆盖或 `--unset` 退回「下次再问」。偏好写不进去
+（`saved: false`）不算错误——下次重新问就是了。
+
+期刊有自己的尺寸就带 `journal`，只覆盖点名的键：
+`{"journal": {"widths_mm": {"double": 178}}}`。

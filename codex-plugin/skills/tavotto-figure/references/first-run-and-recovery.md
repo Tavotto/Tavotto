@@ -46,6 +46,8 @@ tavotto codex install     # 修：把已装副本的启动命令钉到一个验�
 
 按返回的 `code` 只做**对应的一条**恢复动作，不做全套重装：
 
+* `engine_too_old` / `engine_incompatible` 是装着引擎、只是版本对不上：转达 `recovery` 里的升级命令（镜像滞后时带 `--index-url`），不给 provision。
+
 * `desktop_only` —— 用户装了 Tavotto 桌面版，**不要说「没有安装 Tavotto」**。
   桌面交接（`scripts/handoff.py`）此刻就能用。只有用户明确要 Codex 内嵌画布 /
   MCP 工具时，才给这两条里的一条（不是都给）：
@@ -108,6 +110,16 @@ codex plugin marketplace upgrade tavotto
 不自动升级、不反复提醒、不为此打断手里的活。`update`
 里若还有 `tavotto` 字段，那是说本机 Tavotto 版本低于新插件的要求——让用户去
 Releases 更新 Tavotto（**跟插件是两码事，别混着说**）。
+
+### 各宿主的升级命令（会话入口第 6 条原文）
+
+发现插件更新：当前任务照常完成，只在收尾提醒一次（Codex：
+`codex plugin marketplace upgrade tavotto`；Claude Code 插件版：`claude plugin update tavotto@tavotto`；
+DSH bundle：`dsh plugin --profile <名> update tavotto-dsh`；WorkBuddy 插件版：在插件市场的
+已安装列表中打开 Tavotto 插件卡片，选择「更新」，完成后新开对话并调用 `tavotto_health`；
+其他配置版宿主：下载新版完整包、解压、
+重新生成配置并刷新技能），
+不自动升级、不反复提醒。
 
 ## 离线 / 网络失败
 
