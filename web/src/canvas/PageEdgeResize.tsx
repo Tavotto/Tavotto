@@ -8,6 +8,7 @@ import { useInteractionStore } from '@/store/interactionStore'
 import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { cn } from '@/lib/utils'
+import { startFigureEdgeResize } from './figureEdgeDrag'
 import { startPageEdgeResize } from './pageEdgeDrag'
 import { DIM_INSET, dimSpan } from './pageEdgeReadout'
 
@@ -15,6 +16,8 @@ import { DIM_INSET, dimSpan } from './pageEdgeReadout'
 const HIT_PX = 10
 /** 尺寸标注离页面的距离（px）与标注条的贴边下限 */
 const DIM_GAP = 26
+/** 单图的命中区压进图里的深度（px）：图框边上常贴着轴标题，比页面边（对称 5 px）浅 */
+const FIGURE_HIT_IN = 3
 
 const MM_SUFFIX = '\u00a0mm'
 const mmText = (v: number) => String(Math.round(v * 10) / 10)
@@ -44,21 +47,92 @@ export function PageEdgeHandles() {
   const idle = tool === 'select' && !spaceDown && cropTargetId == null && kind === 'none'
   const w = mmToWorld(pageW) * zoom
   const h = mmToWorld(pageH) * zoom
-  const half = HIT_PX / 2
   if (inFigure) return null
 
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      <EdgeStrips
+        attr="data-page-edge"
+        box={{ left: panX, top: panY, w, h }}
+        idle={idle}
+        active={active}
+        onStart={(e, edge) => startPageEdgeResize(e, edge)}
+      />
+      <PageDimensions />
+    </div>
+  )
+}
+
+/**
+ * 单图编辑里拖这张图的四条边改图幅：同一套命中区与尺寸标注（`EdgeStrips` / `EdgeDimensions`），框是画布上那张图。
+ * 手势在 `figureEdgeDrag.startFigureEdgeResize`。挂载条件由 `CanvasStage` 管（`mode === 'fast_edit'`）；
+ * 图被隐藏 / 锁定、非选择工具、裁剪中、别的拖动占着时让位；**图内编辑里照常可用**（单图编辑打开图默认就在图内编辑里），
+ * 命中区压进图里只有 `FIGURE_HIT_IN` px，免得盖住贴着图框的轴标题 / 刻度。
+ */
+export function FigureEdgeHandles({ panelId }: { panelId: string | null }) {
+  perfCount('render.FigureEdgeHandles')
+  const zoom = useViewportStore((s) => s.zoom)
+  const panX = useViewportStore((s) => s.panX)
+  const panY = useViewportStore((s) => s.panY)
+  const spaceDown = useViewportStore((s) => s.spaceDown)
+  const o = useDocumentStore((s) => (panelId ? s.doc.objects.find((x) => x.id === panelId) : undefined))
+  const tool = useUiStore((s) => s.tool)
+  const cropTargetId = useUiStore((s) => s.cropTargetId)
+  const kind = useInteractionStore((s) => s.kind)
+  const active = useInteractionStore((s) => (s.kind === 'figureedge' ? (s.pageEdge?.edge ?? null) : null))
+  if (!o || o.type !== 'panel' || o.hidden || o.locked) return null
+  const idle = tool === 'select' && !spaceDown && cropTargetId == null && kind === 'none'
+  const box = {
+    left: panX + mmToWorld(o.x) * zoom,
+    top: panY + mmToWorld(o.y) * zoom,
+    w: mmToWorld(o.w) * zoom,
+    h: mmToWorld(o.h) * zoom,
+  }
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      <EdgeStrips
+        attr="data-figure-edge"
+        box={box}
+        idle={idle}
+        active={active}
+        lead={HIT_PX - FIGURE_HIT_IN}
+        onStart={(e, edge) => startFigureEdgeResize(e, edge, o.id)}
+      />
+      <EdgeDimensions dimsAttr="data-figure-dims" box={box} wMm={o.w} hMm={o.h} />
+    </div>
+  )
+}
+
+/** 四条边的命中区 + 悬停把手（屏幕空间；页面与单图共用）。`box` 是被拖的矩形在舞台里的位置（px） */
+function EdgeStrips({
+  attr,
+  box,
+  idle,
+  active,
+  lead = HIT_PX / 2,
+  onStart,
+}: {
+  attr: 'data-page-edge' | 'data-figure-edge'
+  box: { left: number; top: number; w: number; h: number }
+  idle: boolean
+  active: PageEdge | null
+  /** 命中区外侧到边线的距离（px）：页面边对称（`HIT_PX / 2`），单图偏外 */
+  lead?: number
+  onStart: (e: React.PointerEvent, edge: PageEdge) => void
+}) {
+  const { left: panX, top: panY, w, h } = box
   const strip = (edge: PageEdge, style: CSSProperties, line: string, grip: string): ReactNode => (
     <div
       key={edge}
-      data-page-edge={edge}
+      {...{ [attr]: edge }}
       data-active={active === edge || undefined}
       className={cn(
         'group absolute',
         edge === 'l' || edge === 'r' ? 'cursor-ew-resize' : 'cursor-ns-resize',
         idle || active === edge ? 'pointer-events-auto' : 'pointer-events-none',
       )}
-      style={style}
-      onPointerDown={(e) => startPageEdgeResize(e, edge)}
+      style={{ ...style, '--lead': `${lead}px` } as CSSProperties}
+      onPointerDown={(e) => onStart(e, edge)}
     >
       <span
         aria-hidden
@@ -78,13 +152,12 @@ export function PageEdgeHandles() {
   )
 
   return (
-    <div className="pointer-events-none absolute inset-0 overflow-hidden">
-      {strip('l', { left: panX - half, top: panY, width: HIT_PX, height: h }, 'inset-y-0 left-1/2 w-px -translate-x-1/2', 'left-1/2 top-1/2 h-6 w-1 -translate-x-1/2 -translate-y-1/2')}
-      {strip('r', { left: panX + w - half, top: panY, width: HIT_PX, height: h }, 'inset-y-0 left-1/2 w-px -translate-x-1/2', 'left-1/2 top-1/2 h-6 w-1 -translate-x-1/2 -translate-y-1/2')}
-      {strip('t', { left: panX, top: panY - half, width: w, height: HIT_PX }, 'inset-x-0 top-1/2 h-px -translate-y-1/2', 'left-1/2 top-1/2 h-1 w-6 -translate-x-1/2 -translate-y-1/2')}
-      {strip('b', { left: panX, top: panY + h - half, width: w, height: HIT_PX }, 'inset-x-0 top-1/2 h-px -translate-y-1/2', 'left-1/2 top-1/2 h-1 w-6 -translate-x-1/2 -translate-y-1/2')}
-      <PageDimensions />
-    </div>
+    <>
+      {strip('l', { left: panX - lead, top: panY, width: HIT_PX, height: h }, 'inset-y-0 left-[var(--lead)] w-px -translate-x-1/2', 'left-[var(--lead)] top-1/2 h-6 w-1 -translate-x-1/2 -translate-y-1/2')}
+      {strip('r', { left: panX + w - lead, top: panY, width: HIT_PX, height: h }, 'inset-y-0 left-[var(--lead)] w-px -translate-x-1/2', 'left-[var(--lead)] top-1/2 h-6 w-1 -translate-x-1/2 -translate-y-1/2')}
+      {strip('t', { left: panX, top: panY - lead, width: w, height: HIT_PX }, 'inset-x-0 top-[var(--lead)] h-px -translate-y-1/2', 'left-1/2 top-[var(--lead)] h-1 w-6 -translate-x-1/2 -translate-y-1/2')}
+      {strip('b', { left: panX, top: panY + h - lead, width: w, height: HIT_PX }, 'inset-x-0 top-[var(--lead)] h-px -translate-y-1/2', 'left-1/2 top-[var(--lead)] h-1 w-6 -translate-x-1/2 -translate-y-1/2')}
+    </>
   )
 }
 
@@ -103,20 +176,39 @@ const TEXT_H = 14
  * 吸上 / 离开栏宽、⌥ 按下 / 松开这类离散跳变才滚。
  */
 function PageDimensions() {
-  const { t, i18n } = useTranslation('workspace')
-  const pageEdge = useInteractionStore((s) => s.pageEdge)
   const zoom = useViewportStore((s) => s.zoom)
   const panX = useViewportStore((s) => s.panX)
   const panY = useViewportStore((s) => s.panY)
   const pageW = useDocumentStore((s) => s.doc.page.w)
   const pageH = useDocumentStore((s) => s.doc.page.h)
+  return (
+    <EdgeDimensions
+      dimsAttr="data-page-dims"
+      box={{ left: panX, top: panY, w: mmToWorld(pageW) * zoom, h: mmToWorld(pageH) * zoom }}
+      wMm={pageW}
+      hMm={pageH}
+    />
+  )
+}
+
+/** 尺寸标注本体（页面与单图共用）：`box` 是被量的矩形在舞台里的位置（px），`wMm` / `hMm` 是它此刻的尺寸 */
+function EdgeDimensions({
+  dimsAttr,
+  box,
+  wMm: pageW,
+  hMm: pageH,
+}: {
+  dimsAttr: 'data-page-dims' | 'data-figure-dims'
+  box: { left: number; top: number; w: number; h: number }
+  wMm: number
+  hMm: number
+}) {
+  const { t, i18n } = useTranslation('workspace')
+  const pageEdge = useInteractionStore((s) => s.pageEdge)
   const viewW = useViewportStore((s) => s.viewW)
   const viewH = useViewportStore((s) => s.viewH)
   if (!pageEdge) return null
-  const L = panX
-  const T = panY
-  const W = mmToWorld(pageW) * zoom
-  const H = mmToWorld(pageH) * zoom
+  const { left: L, top: T, w: W, h: H } = box
   const y = Math.max(14, T - DIM_GAP)
   const x = Math.max(14, L - DIM_GAP)
   const showW = pageEdge.edge === 'l' || pageEdge.edge === 'r'
@@ -153,7 +245,7 @@ function PageDimensions() {
     )
   }
   return (
-    <div data-page-dims="" className="pointer-events-none absolute inset-0 overflow-hidden">
+    <div {...{ [dimsAttr]: '' }} className="pointer-events-none absolute inset-0 overflow-hidden">
       <svg aria-hidden className="pointer-events-none absolute inset-0 h-full w-full overflow-visible text-dim">
         <defs>
           <marker id="page-dim-arrow" viewBox="0 0 10 10" refX={5} refY={5} markerWidth={9} markerHeight={9} orient="auto-start-reverse">

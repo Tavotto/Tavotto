@@ -5,7 +5,7 @@ import type { Rect } from '@/lib/geometry'
 
 export type DragKind =
   | 'none' | 'move' | 'resize' | 'marquee' | 'pan'
-  | 'guide' | 'draw' | 'crop' | 'endpoint' | 'element' | 'pageedge'
+  | 'guide' | 'draw' | 'crop' | 'endpoint' | 'element' | 'pageedge' | 'figureedge'
 
 export type DraftPreview = Rect & {
   tool: string

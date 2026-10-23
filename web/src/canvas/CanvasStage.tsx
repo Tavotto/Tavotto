@@ -26,7 +26,7 @@ import { ContextBar } from './context-bar/ContextBar'
 import { QuickEdit } from './QuickEdit'
 import { SyncOverridesHost } from '@/components/inspector/SyncOverridesDialog'
 import { PageOutsideMask } from './PageOutsideMask'
-import { PageEdgeHandles } from './PageEdgeResize'
+import { FigureEdgeHandles, PageEdgeHandles } from './PageEdgeResize'
 import { Rulers, RULER_SIZE } from './Rulers'
 import { CanvasContextMenu } from './CanvasContextMenu'
 import { placePanelInPage } from '@/lib/panelPlacement'
@@ -292,6 +292,8 @@ export function CanvasStage() {
         {!fastEdit && <PageOutsideMask />}
         {/* 拖页面四条边改画布大小：只在多图排版（单图编辑没有页面）；命中区在选框覆盖层之下 */}
         {layoutMode && <PageEdgeHandles />}
+        {/* 单图编辑：直接拖这张图的四条边改图幅，手感与上面拖页面边一致 */}
+        {fastEdit && <FigureEdgeHandles panelId={activePanelId} />}
 
         <OverlaySvg />
         {ghost.box && <DropGhost box={ghost.box} />}

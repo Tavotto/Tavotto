@@ -284,6 +284,22 @@
       ]
     },
     {
+      "id": "canvas.single-figure-edge-resize",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "单图编辑里直接拖图的四条边改图幅，机械制图式尺寸标注、栏宽吸附，松手一步撤销",
+        "en-US": "In single-figure editing, drag any of the figure's four edges to change its size, with dimension lines, column-width snapping and a single undo step"
+      },
+      "entry": "画布 → 单图编辑 → 悬停并拖图的上 / 下 / 左 / 右边",
+      "e2e": [
+        {
+          "spec": "figure-edge-resize.spec.ts",
+          "title": "单图编辑拖右边：图幅变宽、尺寸标注出现又消失、左边不动，撤销一步回到原样"
+        }
+      ]
+    },
+    {
       "id": "canvas.single-context-bar",
       "status": "active",
       "platform": "both",
