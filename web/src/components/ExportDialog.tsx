@@ -842,6 +842,8 @@ export function ExportDialog() {
    * 之后的发送只读冻结好的输入。表单在冻结段里整块禁用（`fieldset`）。
    */
   const startBatch = () => {
+    // 所有会发起导出的入口共用「位置写入在飞」这一个前置条件（canStart / 冲突按钮 / Esc / 批的逐张发送都读它）
+    if (locationUpdating) return;
     writeExportDefaults({ formats, dpi: String(ppi), withProof: withReport, strictInspection: strict });
     const figs = canvasFigures;
     if (
@@ -1070,7 +1072,7 @@ export function ExportDialog() {
   const lastRecorded = useRef<unknown>(null);
   // 发（send）：只按冻结的输入依次发
   useEffect(() => {
-    if (!batch || batch.done || batch.cancelRequested || batch.phase !== "send" || running) return;
+    if (!batch || batch.done || batch.cancelRequested || batch.phase !== "send" || running || locationUpdating) return;
     if (launched.current.ids === batch.ids && launched.current.index === batch.index) return; // 已发出：等终局或撞名决定
     const cur = batch.prepared[batch.index];
     if (!cur) return;
@@ -1081,7 +1083,7 @@ export function ExportDialog() {
     // 同步路径上就没起来（请求成形被拒）：不会有终局，直接记失败
     if (!useExportStore.getState().running) recordBatchStartFailure(sendFailureReason());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [batch, running]);
+  }, [batch, running, locationUpdating]);
   // 收尾：这一张落了终局（撞名除外——停在冲突条上等用户选覆盖 / 另存，再发出的是新作业）
   useEffect(() => {
     if (!batch || batch.done || batch.phase !== "send" || running) return;
@@ -1098,6 +1100,8 @@ export function ExportDialog() {
   }, [batch, running, storeJob, startError]);
   /** 撞名后的「覆盖 / 另存一份」：一批里重发的是这一张**冻结的**输入，不读活的表单 */
   const restart = (overwrite: OverwritePolicy) => {
+    // 位置写入在飞时覆盖 / 另存一份也不许发：会按旧目录写（批的分支直接 runExport，不经 canStart）
+    if (locationUpdating) return;
     if (batch && !batch.done && batch.phase === "send") {
       const cur = batch.prepared[batch.index];
       if (!cur) return;
@@ -1421,7 +1425,7 @@ export function ExportDialog() {
             </Button>
           ),
           secondary: (
-            <Button variant="secondary" size="lg" data-export-conflict-rename onClick={() => restart("rename")}>
+            <Button variant="secondary" size="lg" data-export-conflict-rename disabled={locationUpdating} onClick={() => restart("rename")}>
               {ex("conflictRename")}
             </Button>
           ),
@@ -1430,6 +1434,7 @@ export function ExportDialog() {
               variant="danger-tinted"
               size="lg"
               data-export-conflict-replace
+              disabled={locationUpdating}
               onClick={() => restart("replace")}
             >
               {ex("conflictReplace")}

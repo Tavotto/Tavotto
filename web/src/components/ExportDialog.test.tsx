@@ -2563,6 +2563,50 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(useExportStore.getState().batch?.aggregate?.status).toBe('done')
   })
 
+  it('撞名停下后位置写入在飞：覆盖 / 另存一份都不发（会按旧目录写），落地后才放行', async () => {
+    jobStatusSeq = ['conflict', 'done', 'done']
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await until(() => !!button('覆盖'))
+    expect(exportBodies).toHaveLength(1)
+    let release!: () => void
+    settingsGate = new Promise<void>((r) => { release = r })
+    const { applyProjectSettingsPatch } = await import('@/lib/projectSettingsPatch')
+    let done!: Promise<void>
+    await act(async () => { done = applyProjectSettingsPatch({ export_dir: '/new/dir' }) })
+    expect(button('覆盖')!.hasAttribute('disabled')).toBe(true)
+    expect(button('另存一份')!.hasAttribute('disabled')).toBe(true)
+    await click(button('覆盖')!)
+    await click(button('另存一份')!)
+    expect(exportBodies, '写入在飞：一个请求都不许发').toHaveLength(1)
+    await act(async () => { release(); await done })
+    settingsGate = null
+    expect(button('覆盖')!.hasAttribute('disabled')).toBe(false)
+    await click(button('覆盖')!)
+    await batchDone()
+    expect(exportBodies[1].overwrite).toBe('replace')
+  })
+
+  it('撞名停下后位置写入在飞：Esc（安全答案 = 另存一份）也不发请求', async () => {
+    jobStatusSeq = ['conflict', 'done', 'done']
+    await setupTwo({ select: [] })
+    await click(originalRadio())
+    await start()
+    await until(() => !!button('覆盖'))
+    let release!: () => void
+    settingsGate = new Promise<void>((r) => { release = r })
+    const { applyProjectSettingsPatch } = await import('@/lib/projectSettingsPatch')
+    let done!: Promise<void>
+    await act(async () => { done = applyProjectSettingsPatch({ export_dir: '/new/dir' }) })
+    await act(async () => {
+      document.querySelector('[data-dialog="export"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(exportBodies, '写入在飞：Esc 不许发另存一份').toHaveLength(1)
+    await act(async () => { release(); await done })
+    settingsGate = null
+  })
+
   it('批开始后改格式 / PPI / 排版、甚至关掉对话框：后面每张的请求仍是点击那一刻冻结的（Codex #1295 P1）', async () => {
     jobStatusSeq = ['running', 'done']
     await setupTwo({ select: [] })
