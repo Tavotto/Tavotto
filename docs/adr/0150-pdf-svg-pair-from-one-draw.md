@@ -23,6 +23,8 @@ Figure 的 PDF / SVG 配对原来是「同一命令里 PDF 画一遍、SVG 再�
    `FuncFormatter` / Locator / scale / transform 函数 / 图像滤镜（用户反馈的场景）；**仍阻断能看到 renderer 的回调**：`draw_event` 处理器、自定义
    `Artist.draw` / `get_tightbbox`（含自定义 Artist 类）、axes locator、注解坐标回调、path effect。理由（Codex #1355）：这些回调可以按 renderer 的类分派
    （`isinstance(renderer, MixedModeRenderer / RendererPdf)`），而 tee 与 PDF 本来拿到的 renderer 不是同一个类，**连 PDF 自己都可能变**；自检只用内置 artist，测不到。
+   **判定本身不得跑用户代码**（Codex #1355 复核）：遍历会调用的方法（`get_children`、`get_path_effects`、`get_axes_locator`、`get_anncoords`，二次绘制口径还有各 getter / formatter / locator）
+   先确认是 matplotlib 自己的再调用——实例级的有状态 `get_children` 会让判定多跑一次常规 savefig 里没有的调用。
    另保留自定义 `Figure.savefig` / canvas / 打印方法 / 注册后端（`_svg_pair_env_blocker`）。二次绘制退路与 #1185 证人仍用完整阻断。
    评估过「让 `TeeRenderer` 对 `isinstance` 透明」（子类化 `MixedModeRenderer` 代理）：能骗过 `isinstance(…, MixedModeRenderer)`，但用户代码读 `renderer._renderer`、
    直接判 `RendererPdf`、按 `renderer.__class__.__name__` 分派都无法完整模拟，且无法在三档 matplotlib 上穷尽证明——**不做**，保守放行范围，将来有证据再放宽。

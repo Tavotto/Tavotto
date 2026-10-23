@@ -101,6 +101,8 @@ class SvgSnapshotUnavailable(RuntimeError):
 
 #: 艺术家方法里**能看到 renderer** 的那两个（单次绘制下仍必须是 matplotlib 自己的）
 _RENDERER_ARTIST_METHODS = ("draw", "get_tightbbox")
+#: 判定遍历自己会调用的方法：必须在调用之前确认是 matplotlib 的
+_WALKED_ARTIST_METHODS = ("get_children",)
 _ARTIST_METHODS = (
     "draw",
     "get_children",
@@ -812,11 +814,30 @@ def _svg_pair_blocker(fig, *, single_draw: bool = False) -> str | None:
         if not type(artist).__module__.startswith(("matplotlib.", "mpl_toolkits.")):
             return "SVG pairing is unavailable for custom artist implementations."
         for name in _ARTIST_METHODS:
-            # draw / get_tightbbox receive the renderer; the rest only compute values
-            if (values or name in _RENDERER_ARTIST_METHODS) and not _svg_pair_standard_method(
-                getattr(artist, name)
-            ):
+            # draw / get_tightbbox receive the renderer; get_children is *called by this very walk* (an instance-level
+            # override would run user code that a plain savefig never runs); the rest only compute values
+            if (
+                values or name in _RENDERER_ARTIST_METHODS or name in _WALKED_ARTIST_METHODS
+            ) and not _svg_pair_standard_method(getattr(artist, name)):
                 return "SVG pairing is unavailable for custom artist drawing methods."
+        # every getter below is called by this walk: check it is Matplotlib's own *before* calling it, so deciding
+        # eligibility never runs user code that a plain savefig would not run (an instance-level override would)
+        walked = ["get_path_effects"]
+        if isinstance(artist, Axes):
+            walked.append("get_axes_locator")
+        if isinstance(artist, Annotation):
+            walked.append("get_anncoords")
+        if values:
+            walked.append("get_agg_filter")
+            if isinstance(artist, Axis):
+                walked += [
+                    "get_major_formatter",
+                    "get_minor_formatter",
+                    "get_major_locator",
+                    "get_minor_locator",
+                ]
+        if not all(_svg_pair_standard_method(getattr(artist, name)) for name in walked):
+            return "SVG pairing is unavailable for custom artist drawing methods."
         if values and not all(
             _svg_pair_standard_transform(transform, seen_transforms)
             for transform in (artist.get_transform(), artist.get_clip_box(), artist.get_clip_path())

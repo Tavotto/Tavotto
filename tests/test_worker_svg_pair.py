@@ -194,6 +194,14 @@ elif mode in {"formatter", "snapshot_formatter", "standalone_formatter"}:
         counter[0] += 1
         return str(counter[0])
     ax.xaxis.set_major_formatter(FuncFormatter(changing_formatter))
+elif mode in {"get_children", "snapshot_get_children"}:
+    # 实例级、有状态的 get_children：判定遍历本身不得调用它（常规 savefig 的遍历里没有这次调用）
+    counter = [0]
+    native_children = ax.get_children
+    def counting_children():
+        counter[0] += 1
+        return native_children()
+    ax.get_children = counting_children
 elif mode in {"renderer_dispatch", "snapshot_renderer_dispatch"}:
     from matplotlib.artist import Artist
     from matplotlib.backends.backend_mixed import MixedModeRenderer
@@ -265,8 +273,8 @@ elif mode == "mkdir_failure":
 PAIRED = {"formatter", "locator", "scale", "transform"}
 PAIRED |= {"snapshot_" + name for name in PAIRED}
 #: 能看到 renderer 的回调：仍阻断（它们可能按 renderer 的类分派，tee 与 PDF renderer 不是同一个类）
-BLOCKED = {"callback", "custom_draw", "annotation", "effect", "renderer_dispatch"}
-BLOCKED |= {"snapshot_" + name for name in ("callback", "custom", "annotation", "effect", "renderer_dispatch")}
+BLOCKED = {"callback", "custom_draw", "annotation", "effect", "renderer_dispatch", "get_children"}
+BLOCKED |= {"snapshot_" + name for name in ("callback", "custom", "annotation", "effect", "renderer_dispatch", "get_children")}
 result = None
 if mode == "invalid":
     handler = pkg.wireproto.V1Handler(session)
@@ -324,8 +332,8 @@ else:
     assert calls == [patches, previous], calls
 if mode in {"snapshot_formatter", "snapshot_locator", "snapshot_scale", "snapshot_transform"}:
     assert counter[0] > 0  # 单次绘制：画了，而且只画一次的结果同时进 PDF 与 SVG
-if mode in {"snapshot_annotation", "snapshot_effect"}:
-    assert counter[0] == 0
+if mode in {"snapshot_annotation", "snapshot_effect", "snapshot_get_children"}:
+    assert counter[0] == 0  # 阻断发生在任何绘制 / 遍历调用用户方法之前
 assert session.snapshot("F") == previous
 assert title.get_text() == "Hot title"
 assert dict(matplotlib.rcParams) == before_rc
@@ -425,7 +433,7 @@ def test_value_callbacks_are_paired_from_one_draw(tmp_path, mode):
 
 @needs_user_python
 @pytest.mark.parametrize(
-    "mode", ["callback", "custom_draw", "annotation", "effect", "renderer_dispatch"]
+    "mode", ["callback", "custom_draw", "annotation", "effect", "renderer_dispatch", "get_children"]
 )
 def test_renderer_visible_callbacks_still_block_pairing(tmp_path, mode):
     """能看到 renderer 的回调（draw_event、自定义 Artist.draw、注解坐标、path effect、按 renderer 类分派）仍不授予 SVG 资格。"""
@@ -580,6 +588,7 @@ def test_automatic_snapshot_pairs_value_callbacks_from_one_draw(tmp_path, mode):
         "snapshot_annotation",
         "snapshot_effect",
         "snapshot_renderer_dispatch",
+        "snapshot_get_children",
     ],
 )
 def test_automatic_snapshot_declines_renderer_visible_callbacks_without_drawing(tmp_path, mode):
