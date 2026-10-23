@@ -1432,7 +1432,13 @@ def build_draft(figures_dir: str | Path, *, target_python: str | None = None) ->
     for script, info in sorted(rep["scripts"].items()):
         stems = [s for s in info["stems"] if s not in rep["conflicts"]]
         if stems:
-            cfg[script] = {"entry": info["entry"], "cost": "medium", "notes": "", "stems": stems}
+            cfg[script] = {
+                "entry": info["entry"],
+                "cost": "medium",
+                "notes": "",
+                "stems": stems,
+                "static_stems": list(stems),
+            }
     return {"version": 1, "scripts": cfg}, rep
 
 
@@ -1503,10 +1509,12 @@ def merge(figures_dir: str | Path, *, target_python: str | None = None) -> tuple
             continue
         registered.update(fresh)
         if script in scripts:
+            static = registry.static_stems(scripts[script])
             scripts[script]["stems"] = list(scripts[script].get("stems", [])) + fresh
+            scripts[script]["static_stems"] = sorted(static.union(fresh))
             added_stems[script] = fresh
         else:
-            scripts[script] = {**cfg_s, "stems": fresh}
+            scripts[script] = {**cfg_s, "stems": fresh, "static_stems": list(fresh)}
             added_scripts.append(script)
     return merged, rep, {"added_scripts": added_scripts, "added_stems": added_stems}
 
@@ -1544,17 +1552,36 @@ def register(
 
 
 def registered_stems(figures_dir: str | Path, script: str) -> list[str]:
-    """注册表文件里此刻登记在 `script` 名下的 stem（读不到 / 没有这条 = 空表）。只读，不加锁——要与随后的写成对时由调用方
-    持项目锁（`inputremap.landing` / `project_mutex`）。"""
+    """Current registered stems; unreadable/missing entries retain the old empty-list contract."""
+    return list(registered_stem_origins(figures_dir, script) or {})
+
+
+def registered_stem_origins(figures_dir: str | Path, script: str) -> dict[str, str] | None:
+    """One registry snapshot: explicit static discovery vs unknown prior provenance.
+
+    Missing registry/entry means no previous stems; unreadable provenance is None (fail open).
+    Callers pairing this snapshot with registration hold the project mutex.
+    """
     path = registry.existing_registry_path(figures_dir)
+    if path is None:
+        return {}
     try:
-        cfg = json.loads(path.read_text(encoding="utf-8")) if path else {}
+        cfg = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
-    entry = (cfg.get("scripts") or {}).get(script) if isinstance(cfg, dict) else None
+        return None
+    scripts = cfg.get("scripts") if isinstance(cfg, dict) else None
+    if not isinstance(scripts, dict):
+        return None
+    entry = scripts.get(script)
+    if entry is None:
+        return {}
     if not isinstance(entry, dict):
-        return []
-    return [str(s) for s in entry.get("stems") or []]
+        return None
+    stems = entry.get("stems") or []
+    if not isinstance(stems, list) or not all(isinstance(stem, str) for stem in stems):
+        return None
+    static = registry.static_stems(entry)
+    return {stem: "static" if stem in static else "unknown" for stem in stems}
 
 
 def _register_locked(
@@ -1586,6 +1613,8 @@ def _register_locked(
         kept = [s for s in entry_cfg.get("stems", []) if s not in claimed]
         if len(kept) != len(entry_cfg.get("stems", [])):
             entry_cfg["stems"] = kept
+            if "static_stems" in entry_cfg:
+                entry_cfg["static_stems"] = sorted(registry.static_stems(entry_cfg))
     if claimed:
         prev = prev_entry or {}
         scripts[script] = {
@@ -1594,6 +1623,11 @@ def _register_locked(
             "notes": notes or prev.get("notes", ""),
             "stems": sorted(claimed),
         }
+        # Preserve untouched static candidates across an append, but a newly registered
+        # output is no longer discovery-only. Capture facts live in runconfig history.
+        static = registry.static_stems(prev).intersection(claimed).difference(stems)
+        if static:
+            scripts[script]["static_stems"] = sorted(static)
     else:
         scripts.pop(script, None)
     if on_written is None:

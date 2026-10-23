@@ -52,6 +52,14 @@ def valid_entry(entry: object) -> bool:
     return isinstance(entry, str) and (entry == INLINE_ENTRY or entry.isidentifier())
 
 
+def static_stems(entry: dict) -> set[str]:
+    """Explicit discovery-only provenance; missing/malformed metadata remains unknown."""
+    values = entry.get("static_stems")
+    if not isinstance(values, list) or not all(isinstance(stem, str) for stem in values):
+        return set()
+    return set(values).intersection(entry.get("stems") or ())
+
+
 def registry_path(figures_dir: str | Path) -> Path:
     """**写入**用的路径——永远是新名，绝不回写旧名。"""
     return Path(figures_dir) / REGISTRY_NAME
@@ -130,6 +138,8 @@ class Registry:
                 "notes": str(cfg.get("notes", "")),
                 "stems": list(stems),
             }
+            if static := static_stems(cfg):
+                cleaned[script]["static_stems"] = sorted(static)
         self._scripts, self._index, self._source = cleaned, index, source
 
     # ---------------- 查询 ----------------

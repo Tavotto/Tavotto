@@ -516,10 +516,10 @@ def record_captures(
 ) -> None:
     """Union actual outputs by configuration; the empty reference means no argv.
 
-    Registration supplies its previous stems before publishing the new union. An old
-    stem with no history stays unknown even after a configured run. Materialization
-    also records captures (including document replays); without a registration snapshot,
-    previously untracked stems conservatively remain legacy. No argv is copied here.
+    Registration supplies prior stems whose origins are unknown, excluding explicitly
+    static-only discoveries. An unknown old stem stays legacy after a configured run.
+    Materialization also records captures (including document replays); without a
+    registration snapshot, previously untracked stems remain legacy. No argv is copied here.
     """
     observed = set(stems)
     if not observed:

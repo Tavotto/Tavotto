@@ -177,3 +177,74 @@ def test_argument_free_provenance_is_per_stem_not_per_script(project):
     cfg = runconfig.put(root, "plot.py", ["hppc"])
     configured = capture(root, "configured-plot", cfg.id)
     assert {row["id"] for row in listing(project)} == {plain, configured}
+
+
+def test_static_merge_marks_only_new_stems_and_preserves_unrun_candidates(project):
+    root, _ = project
+    (root / "plot.py").write_text(
+        "import matplotlib.pyplot as plt\n"
+        'plt.savefig("plot.pdf")\n'
+        'plt.savefig("first.pdf")\n'
+        'plt.savefig("second.pdf")\n',
+        encoding="utf-8",
+    )
+    cfg, _, _ = discover.merge(root)
+    discover.write_config(root, cfg)
+    assert discover.registered_stem_origins(root, "plot.py") == {
+        "plot": "unknown",
+        "other": "unknown",
+        "first": "static",
+        "second": "static",
+    }
+    # Loading and writing the registry must not discard explicit static provenance.
+    reg = registry.open_registry(root)
+    discover.write_config(root, {"version": 1, "scripts": reg.entries()})
+    run = runconfig.put(root, "plot.py", ["hppc"])
+    first = capture(root, "first", run.id)
+    assert discover.registered_stem_origins(root, "plot.py")["second"] == "static"
+    second = capture(root, "second", run.id)
+    assert {row["id"] for row in listing(project) if row["stem"] in {"first", "second"}} == {
+        first,
+        second,
+    }
+    # A rescan of an old, source-unknown stem cannot manufacture a static-only origin.
+    old = capture(root, "plot", run.id)
+    assert {row["id"] for row in listing(project) if row["stem"] == "plot"} == {
+        old,
+        figcapture.runtime_asset_id("plot.py", "plot"),
+    }
+
+
+def test_positive_old_base_cache_is_preserved_when_static_history_is_missing(project):
+    root, _ = project
+    (root / "plot.py").write_text(
+        'import matplotlib.pyplot as plt\nplt.savefig("plot.pdf")\n', encoding="utf-8"
+    )
+    draft, _ = discover.build_draft(root)
+    discover.write_config(root, draft)
+    plain = capture(root, "plot", register=False)
+    run = runconfig.put(root, "plot.py", ["hppc"])
+    # Simulate a base preview written before durable capture history existed.
+    path = runconfig.store_path(root)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("captures")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    configured = capture(root, "plot", run.id)
+    shutil.rmtree(runtimeasset.cache_dir(root, plain))
+    assert {row["id"] for row in listing(project)} == {plain, configured}
+    assert json.loads(path.read_text(encoding="utf-8"))["captures"]["plot.py"]["runs"][""] == [
+        "plot"
+    ]
+
+
+@pytest.mark.parametrize("static", [None, "plot", ["plot", 7]])
+def test_missing_or_invalid_static_origins_fail_open(project, static):
+    root, _ = project
+    path = registry.registry_path(root)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["scripts"]["plot.py"]["static_stems"] = static
+    path.write_text(json.dumps(data), encoding="utf-8")
+    run = runconfig.put(root, "plot.py", ["hppc"])
+    configured = capture(root, "plot", run.id)
+    plain = figcapture.runtime_asset_id("plot.py", "plot")
+    assert {row["id"] for row in listing(project) if row["stem"] == "plot"} == {plain, configured}

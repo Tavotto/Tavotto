@@ -106,3 +106,20 @@ pytest 退出码 **1**，失败原因为清单缺少 `runtime:plot.py#plot`。�
 本次修复的相关回归为 **240 passed、0 skipped**（106.54 秒），覆盖清单、RuntimeFigureAsset、素材库、probe、
 运行参数模型、真实 HTTP 全生命周期、敏感参数与启动记录事务。推送前全仓 `ruff format . && ruff check .` 通过，
 1099 个文件无需格式变更；#1307 与 #1321 涉及文件逐一核对 SHA-256，未改动。
+
+## 2026-10-23：静态发现不冒充历史捕获
+
+首次带参数运行前，字面量 `savefig` 已能被静态扫描登记；这些候选不能作为 `legacy_stems` 的证据。
+注册表现以可选 `static_stems` 保存明确的静态来源，执行登记时保留尚未运行的候选、移除实际产出的标记。
+旧条目缺少来源仍保留占位，静态重扫不改判。遇到既有无参数 cache 的正证据则先补记持久历史。
+
+真实 sidecar 回归覆盖「打开项目先静态登记字面量 savefig → 只运行一次带参数脚本 → 清单只有配置素材」。
+只将 `register_probed` 的历史候选改回全部旧登记 stem，新用例因额外出现 `runtime:scaled.py#result` 失败，
+退出码 **1**；恢复修复后退出码 **0**。上一轮真实 `prune_cache` 用例完整保留且通过。
+本轮相关回归 **365 passed、0 skipped**（111.56 秒），包含注册表往返、静态合并、坏来源 fail-open、项目扫描与真实 HTTP 生命周期。
+
+重新复制并核对 Leaf 固定提交的 9 个文件，在全新数据目录启动真实 `--desktop-sidecar`，选择相同科学解释器，
+经 preparation-session 的 run action 执行 `plot.py`、`argv=["hppc"]`：清单 **5 个带参数素材、0 个无参数占位**，
+5 个素材逐一渲染成功。执行后 9 个文件 SHA-256 仍与冻结清单一致。本次只复测该 sidecar 捕获与清单路径；
+前文 CLI、导出、保存重开与 Qudit 的结果仍属上一轮证据。
+原始回执、输入哈希与反证日志：`/private/tmp/tavotto-1322-static-origin/`，Leaf 成功目录为 `leaf-zi7s1n4v/`。

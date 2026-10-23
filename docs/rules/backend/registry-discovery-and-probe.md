@@ -18,6 +18,11 @@
   与常量 for 循环展开。递归扫子目录（剪掉 .venv/__pycache__/node_modules…）。
   手动生成/合并：`python -m tavotto.engine.discover <figures_dir> --write`
   （现有条目永远优先，冲突 stem 只报告不裁决）。
+  * **静态来源不是执行证据**：`build_draft` / `merge` 在条目的可选 `static_stems` 中标记新登记的静态候选；
+    重扫不重新定性既有来源未知的 stem。装载 / 保存保留有效标记，字段缺失或损坏时来源视为未知。
+    `discover.registered_stem_origins` 在同一注册表快照中读取来源；执行登记只移除本次产出的标记，
+    append 未运行的静态候选继续保留标记，归属转移时同步裁掉旧归属的标记。
+    真实捕获按配置记入 runconfig 历史，清单的 fail-open 与无参数身份规则见 [RuntimeFigureAsset](runtime-figure-assets.md)。
   * **通配输出名的磁盘比对有界（#684）**：每份 `discover()` 报告共用一份惰性输出索引，
     每个目录只列一次，宿主解析的所有脚本 / 模式 / 输出格式共用（目标解析器子进程各自受限）；
     复用 `scanbudget` 的目录项、墙钟与取消预算，
