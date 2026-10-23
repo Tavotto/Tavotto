@@ -941,8 +941,11 @@ class Session:
     signature: tuple = ()
     #: 「跑完没出图」的原因提示缓存（`rasterhint.detect`）：按尝试 id 记，一次尝试只读一遍源码
     no_figure_hint: dict = dataclasses.field(default_factory=dict)
-    #: 最近一次报告里智能修复路由给出的 remedy（ADR 0148）：只给诊断包「修复经过」读，不参与任何判断
+    #: 最近一次报告里智能修复路由给出的 remedy（ADR 0148）：只给诊断包「修复经过」读，不参与任何判断。
+    #: 连同它是为哪次尝试算的（`last_remedy_attempt`）一起记；`fix_journeys` 只在两者对得上当前尝试时才读，
+    #: 所以后来的重跑 / 成功 / 取消不会把上一次失败的 remedy 带进「最后一次」
     last_remedy: dict | None = None
+    last_remedy_attempt: str = ""
     #: 最近一次「打开并运行」意图（P05b）；None = 从没有过。终结后保留到被新的取代，供报告说明发生了什么
     intent: RunIntent | None = None
     #: 这个会话里每次真实执行尝试的账本（V2，ADR 0127）：原因码 · 与上次相比变了什么 · 结局
@@ -2492,8 +2495,29 @@ class SessionService:
         no_figure_hint: dict | None,
     ) -> dict | None:
         """失败 / 没出图 / 走不通的结局上调用 `fixrouter.choose`（会话锁内，只读：不起进程、不探测）。"""
+        remedy = self._choose_remedy(sess, derived, plan, result, missing, no_figure_hint)
+        # 随当前尝试一起记（含「没有 remedy」）：诊断包只读与当前尝试对得上的那一份
+        sess.last_remedy = remedy
+        sess.last_remedy_attempt = sess.attempts[-1].attempt_id if sess.attempts else ""
+        return remedy
+
+    def _choose_remedy(
+        self,
+        sess: Session,
+        derived: dict,
+        plan,
+        result,
+        missing: dict | None,
+        no_figure_hint: dict | None,
+    ) -> dict | None:
         outcome = derived["outcome"]
-        if outcome.get("kind") not in (OUTCOME_FAILED, OUTCOME_NO_FIGURE, OUTCOME_BLOCKED):
+        # needs_dependencies：运行期才发现缺包（动态 import），同样是「走不通」，且正是 `install_packages` 的主场
+        if outcome.get("kind") not in (
+            OUTCOME_FAILED,
+            OUTCOME_NO_FIGURE,
+            OUTCOME_BLOCKED,
+            OUTCOME_NEEDS_DEPENDENCIES,
+        ):
             return None
         if derived["phase"] in (PHASE_RUNNING, PHASE_AWAITING_RUNTIME_INPUT):
             return None
@@ -2506,7 +2530,14 @@ class SessionService:
         packages: tuple[str, ...] = ()
         installable = bool(missing and missing.get("installable"))
         if installable:
-            name = fixrouter.dist_name(str(missing.get("requirement") or ""))
+            # `missing["requirement"]` 是 `depresolve` 的需求载荷（dict：distribution / requirement / …），不是字符串
+            req = missing.get("requirement")
+            if isinstance(req, dict):
+                name = str(req.get("distribution") or "") or fixrouter.dist_name(
+                    str(req.get("requirement") or "")
+                )
+            else:
+                name = fixrouter.dist_name(str(req or ""))
             packages = (name,) if name else ()
         auto_ok = False
         if packages:
@@ -2552,9 +2583,7 @@ class SessionService:
             history=history,
             installed_this_run=installed,
         )
-        remedy = fixrouter.choose(code, ctx)
-        sess.last_remedy = remedy
-        return remedy
+        return fixrouter.choose(code, ctx)
 
     def fix_journeys(self, project_id: str) -> list[dict]:
         """诊断包「修复经过」（ADR 0148）：这个项目每个有过执行尝试的会话——走过哪些修法（账本 + 路由）、各自的结局码、
@@ -2575,7 +2604,13 @@ class SessionService:
                         "tried": list(
                             fixrouter.tried_in_run(fixrouter.Ctx(history=tuple(history)))
                         ),
-                        "remedy": dict(sess.last_remedy) if sess.last_remedy else None,
+                        "remedy": (
+                            dict(sess.last_remedy)
+                            if sess.last_remedy
+                            and found is not None
+                            and sess.last_remedy_attempt == found[0].plan_id
+                            else None
+                        ),
                         "attempts": [
                             {
                                 k: r.get(k)

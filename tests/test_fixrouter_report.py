@@ -14,6 +14,7 @@ from test_preparation_session import (  # noqa: F401
     _act,
     _action,
     _create_ready,
+    _get,
     _settle,
     sessions,
 )
@@ -154,3 +155,104 @@ def test_no_journey_is_an_empty_list_not_a_missing_key():
         diagdetail.Sources(), diagdetail.DetailOptions(), diagdetail.Scrubber()
     )
     assert json.loads(item.data)["fix_journey"] == []
+
+
+# ---------------------------------------------------------------- 运行期缺包也走路由 / 修复经过只反映当前尝试
+
+
+def _missing_offer(distribution: str, module: str) -> dict:
+    """与 `_observe_missing` 同形的差异计划载荷：`requirement` 是 depresolve 的需求 dict，不是字符串。"""
+    return {
+        "module": module,
+        "installable": True,
+        "requirement": {
+            "import_name": module,
+            "distribution": distribution,
+            "specifier": "",
+            "requirement": distribution,
+            "resolution_source": "table",
+            "confidence": "high",
+            "installable": True,
+        },
+        "rounds_remaining": 1,
+        "impact": {"installs_packages": True},
+        "impact_digest": "d",
+    }
+
+
+@pytest.mark.parametrize(
+    ("distribution", "module", "ask"),
+    [("seaborn", "seaborn", False), ("tavotto-unlisted-pkg", "unlisted", True)],
+)
+def test_a_runtime_missing_import_routes_to_install_packages(
+    client, tmp_path, fake_pool, sessions, monkeypatch, distribution, module, ask
+):
+    monkeypatch.setattr(
+        prepsession.SESSIONS, "_observe_missing", lambda *_a: _missing_offer(distribution, module)
+    )
+    monkeypatch.setattr(
+        prepsession.SessionService, "_auto_install_allowed", staticmethod(lambda *_a: True)
+    )
+    _sid, final = _run_to_failure(
+        client,
+        tmp_path,
+        fake_pool,
+        engine_pool.WorkerError("no module", code="missing_dependency", module=module),
+    )
+    assert final["outcome"]["kind"] == "needs_dependencies"
+    assert final["remedy"] == {"kind": "install_packages", "packages": [distribution], "ask": ask}
+
+
+def _journey(sess_project_id):
+    (j,) = prepsession.SESSIONS.fix_journeys(sess_project_id)
+    return j
+
+
+def test_the_journey_forgets_the_old_remedy_after_a_successful_rerun(
+    client, tmp_path, fake_pool, sessions
+):
+    sid, failed = _run_to_failure(
+        client, tmp_path, fake_pool, engine_pool.WorkerError("boom", code="script_error")
+    )
+    assert failed["remedy"] is not None
+    (sess,) = list(prepsession.SESSIONS._by_id.values())
+    assert _journey(sess.project_id)["remedy"] is not None
+    fake_pool["error"] = None
+    assert (
+        _act(client, sid, _action(failed, "run")["id"], failed["config_revision"]).status_code
+        == 202
+    )
+    done = _settle(client, sid)
+    assert done["phase"] == "completed"
+    # 没有任何人在成功之后再读过 remedy 也一样：journey 只认与当前尝试对得上的那份
+    j = _journey(sess.project_id)
+    assert j["remedy"] is None and j["last_error"] is None
+    assert j["attempts"][-1]["outcome"] != "failed"
+
+
+def test_the_journey_forgets_the_old_remedy_after_a_cancelled_rerun(
+    client, tmp_path, fake_pool, sessions
+):
+    sid, failed = _run_to_failure(
+        client, tmp_path, fake_pool, engine_pool.WorkerError("boom", code="script_error")
+    )
+    (sess,) = list(prepsession.SESSIONS._by_id.values())
+    assert _journey(sess.project_id)["remedy"] is not None
+    fake_pool["error"] = None
+    fake_pool["gate"].clear()
+    fake_pool["build_entered"].clear()
+    assert (
+        _act(client, sid, _action(failed, "run")["id"], failed["config_revision"]).status_code
+        == 202
+    )
+    assert fake_pool["build_entered"].wait(5)
+    running = _get(client, sid).get_json()
+    assert (
+        _act(client, sid, _action(running, "cancel")["id"], running["config_revision"]).status_code
+        == 200
+    )
+    fake_pool["gate"].set()
+    final = _settle(client, sid)
+    assert final["phase"] == "cancelled"
+    j = _journey(sess.project_id)
+    assert j["remedy"] is None and j["last_error"] is None
