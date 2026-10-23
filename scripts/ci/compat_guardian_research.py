@@ -394,14 +394,28 @@ def verify_snapshot(
     if not isinstance(snapshot, dict):
         raise cg.EvidenceError("research snapshot must be an object")
     evidence = snapshot.get("evidence")
-    if not isinstance(evidence, dict) or set(evidence) != {"reports", "setup_receipts", "sha256"}:
+    required_keys = {"reports", "setup_receipts", "sha256"}
+    if not isinstance(evidence, dict) or not (
+        required_keys <= set(evidence) <= required_keys | {"inventories"}
+    ):
         raise cg.EvidenceError("research snapshot requires explicit evidence references and hashes")
+    inventories = evidence.get("inventories", {})
+    if not isinstance(inventories, dict) or any(
+        not isinstance(entry, dict)
+        or set(entry) != {"research", "tavotto"}
+        or any(not isinstance(name, str) for name in entry.values())
+        for entry in inventories.values()
+    ):
+        raise cg.EvidenceError("snapshot inventories must map a receipt to its two package lists")
     references = []
     for kind in ("reports", "setup_receipts"):
         names = evidence[kind]
         if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
             raise cg.EvidenceError("snapshot evidence references must be lists of relative paths")
         references.extend(names)
+    if set(inventories) - set(evidence["setup_receipts"]):
+        raise cg.EvidenceError("snapshot inventories name a receipt outside the evidence")
+    references.extend(name for entry in inventories.values() for name in entry.values())
     hashes = evidence["sha256"]
     if (
         len(set(references)) != len(references)
@@ -433,6 +447,7 @@ def verify_snapshot(
         ):
             raise cg.EvidenceError(f"snapshot evidence hash differs: {name}")
         files[name] = source
+    check_package_inventories(evidence, files)
     enrollment_sha = snapshot.get("enrollment_sha")
     if not isinstance(enrollment_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", enrollment_sha):
         raise cg.EvidenceError("research snapshot requires an immutable enrollment SHA")
@@ -445,6 +460,31 @@ def verify_snapshot(
     if json.dumps(snapshot, sort_keys=True) != json.dumps(recomputed, sort_keys=True):
         raise cg.EvidenceError("research snapshot differs from recomputed evidence")
     return recomputed
+
+
+#: receipt field -> inventory role. Receipts from before the two-venv split carry only the first.
+INVENTORY_FIELDS = (("installed_sha256", "research"), ("tavotto_installed_sha256", "tavotto"))
+
+
+def check_package_inventories(evidence: dict, files: dict) -> None:
+    """Each receipt's recorded package-list hashes must match archived lists, byte for byte.
+
+    A receipt that records `tavotto_installed_sha256` (two-venv format) must come with both lists;
+    older receipts record only the scientific list and may omit the archive. Recorded but absent,
+    listed but unrecorded, or different bytes all fail.
+    """
+    inventories = evidence.get("inventories", {})
+    for name in evidence["setup_receipts"]:
+        receipt = json.loads(files[name].read_text(encoding="utf-8"))
+        recorded = {role: receipt.get(field) for field, role in INVENTORY_FIELDS}
+        listed = inventories.get(name)
+        if listed is None:
+            if recorded["tavotto"] is not None:
+                raise cg.EvidenceError(f"receipt package lists are not archived: {name}")
+            continue
+        for role, path in listed.items():
+            if recorded[role] is None or file_digest(files[path]) != recorded[role]:
+                raise cg.EvidenceError(f"receipt package list differs from archive: {name} {role}")
 
 
 def markdown(data: dict) -> str:

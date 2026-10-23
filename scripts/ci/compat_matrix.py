@@ -375,6 +375,15 @@ def manifest_xy_digests(man: dict) -> list[str]:
     return sorted(out)
 
 
+def manifest_unobserved_lines(man: dict) -> int:
+    """Line elements whose fingerprint is `over_budget` / `unavailable` / missing: not observed."""
+    return sum(
+        1
+        for el in man.get("elements", [])
+        if el.get("role") == "line" and (el.get("data_fingerprint") or {}).get("status") != "ok"
+    )
+
+
 def _editable_snapshot(man: dict) -> dict:
     """manifest 里每个可编辑字段的当前值：`{"gid.prop": value}`。"""
     return {
@@ -1500,6 +1509,7 @@ def run_group(
                 "size_mm": base_man.get("size_mm"),
                 "render_ms": ot.get("total_ms"),
                 "line_xy": manifest_xy_digests(base_man),
+                "line_xy_unobserved": manifest_unobserved_lines(base_man),
             }
             if not r["stages"]["open"]:
                 continue

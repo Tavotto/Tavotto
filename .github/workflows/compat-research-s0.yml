@@ -49,7 +49,8 @@ jobs:
   baseline:
     needs: prepare
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    # Environment setup (up to 40 min of TeX), observation (18 min), receipt and evidence upload.
+    timeout-minutes: 90
     env:
       TAVOTTO_RESEARCH_CACHE: ${{ github.workspace }}/../research-sources
     strategy:
@@ -112,12 +113,32 @@ jobs:
           # Process boundary: the scientific interpreter must not carry Tavotto's RenderCore packages.
           "$TAVOTTO_PYTHON" scripts/ci/compat_guardian_research.py verify-science-environment \
             --python "$TAVOTTO_SCIENCE_PYTHON"
+      - name: Restore cached TeX packages
+        if: ${{ !cancelled() && matrix.tex }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/apt-archives
+          key: tex-apt-${{ runner.os }}-${{ hashFiles('.github/workflows/compat-research-s0.yml') }}
       - name: Prepare original TeX prerequisites
         id: tex
         if: ${{ !cancelled() && matrix.tex }}
+        timeout-minutes: 45
+        shell: bash
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra texlive-science cm-super dvipng
+          set -uo pipefail
+          archives="$RUNNER_TEMP/apt-archives"
+          mkdir -p "$archives/partial"
+          # An own, shorter limit so a stuck install leaves a marker the receipt can report.
+          timeout 2400 bash -c '
+            set -euo pipefail
+            sudo apt-get update -qq
+            sudo apt-get -o Dir::Cache::archives="$1" install -y --no-install-recommends \
+              texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra texlive-science cm-super dvipng
+          ' _ "$archives"
+          code=$?
+          sudo chown -R "$(id -u):$(id -g)" "$archives" || true
+          if [[ "$code" == 124 ]]; then echo timeout > "$RUNNER_TEMP/tex-setup.txt"; fi
+          exit "$code"
       - name: Observe native and Tavotto without rewriting the research script
         if: ${{ !cancelled() && steps.core.outcome == 'success' && steps.fonts.outcome == 'success' && steps.scientific.outcome == 'success' && (steps.tex.outcome == 'success' || steps.tex.outcome == 'skipped') }}
         timeout-minutes: 18
@@ -171,6 +192,7 @@ jobs:
               'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
               'python': platform.python_version(),
               'steps': {k: os.environ[k.upper() + '_OUTCOME'] for k in ('core', 'fonts', 'scientific', 'tex')},
+              'tex_setup': (root / 'tex-setup.txt').read_text().strip() if (root / 'tex-setup.txt').exists() else None,
               'installed_sha256': hashlib.sha256((root / 'research-installed.txt').read_bytes()).hexdigest(),
               'tavotto_installed_sha256': hashlib.sha256((root / 'tavotto-installed.txt').read_bytes()).hexdigest(),
           }

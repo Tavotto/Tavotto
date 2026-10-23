@@ -81,3 +81,35 @@ def test_manifest_digests_use_only_ok_xy_parts_and_keep_duplicates():
         ]
     }
     assert CM.manifest_xy_digests(manifest) == ["a", "a", "b"]
+
+
+def test_unobserved_product_curves_make_the_comparison_unknown_not_different():
+    result = _result("a")
+    result["detail"]["open"]["line_xy_unobserved"] = 2
+    report = guardian.line_data_agreement([["a", "b", "c"]], result)
+    assert report["status"] == "unknown"
+    assert report["unobserved_product_lines"] == 2
+
+
+def test_an_unobservable_native_figure_makes_the_comparison_unknown():
+    report = guardian.line_data_agreement([None, ["a"]], _result("a"))
+    assert report["status"] == "unknown"
+    assert report["unobserved_native_figures"] == 1
+
+
+def test_manifest_counts_only_unfingerprinted_lines_as_unobserved():
+    manifest = {
+        "elements": [
+            {
+                "role": "line",
+                "data_fingerprint": {"status": "ok", "parts": {"xy": {"sha256": "a"}}},
+            },
+            {"role": "line", "data_fingerprint": {"status": "over_budget"}},
+            {"role": "line", "data_fingerprint": {"status": "unavailable"}},
+            {"role": "line"},
+            {"role": "scatter", "data_fingerprint": {"status": "over_budget"}},
+            {"role": "title"},
+        ]
+    }
+    assert CM.manifest_unobserved_lines(manifest) == 3
+    assert CM.manifest_xy_digests(manifest) == ["a"]

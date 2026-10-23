@@ -832,8 +832,17 @@ def line_data_agreement(native_line_xy, result: dict) -> dict:
     _gap, _shared, index, digests = min(scored)
     only_native = sum((Counter(digests) - target).values())
     only_product = sum((target - Counter(digests)).values())
+    unobserved_product = opened.get("line_xy_unobserved") or 0
+    unobserved_native = sum(1 for d in native_line_xy if d is None)
+    if unobserved_product or unobserved_native:
+        # A curve nobody measured can neither agree nor differ: say so instead of "different".
+        status = "unknown"
+    else:
+        status = "equal" if not only_native and not only_product else "different"
     return {
-        "status": "equal" if not only_native and not only_product else "different",
+        "status": status,
+        "unobserved_product_lines": unobserved_product,
+        "unobserved_native_figures": unobserved_native,
         "native_figures": [d if d is None else summary(d) for d in native_line_xy],
         "closest_native_figure": index,
         "product": summary(product),

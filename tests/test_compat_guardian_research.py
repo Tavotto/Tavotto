@@ -864,3 +864,83 @@ def test_verify_snapshot_cli_only_verifies_the_selected_snapshot(monkeypatch, tm
     assert research.main(["verify-snapshot", "--snapshot", str(selected)]) == 0
     assert calls == [selected]
     assert not selected.exists()
+
+
+@pytest.fixture
+def snapshot_with_inventories(snapshot_inputs):
+    """Every receipt in the two-venv format, with both package lists archived and hash-covered."""
+    root, _, snapshot, report_path, save = snapshot_inputs
+    evidence = snapshot["evidence"]
+    receipts = [root / name for name in evidence["setup_receipts"]]
+    evidence["inventories"] = {}
+    for receipt_path in receipts:
+        stem = receipt_path.stem
+        lists = {
+            "research": receipt_path.with_name(f"{stem}-research-installed.txt"),
+            "tavotto": receipt_path.with_name(f"{stem}-tavotto-installed.txt"),
+        }
+        lists["research"].write_text("numpy==2.5.2\n")
+        lists["tavotto"].write_text("uharfbuzz==0.56.1\n")
+        receipt = json.loads(receipt_path.read_text())
+        receipt["installed_sha256"] = hashlib.sha256(lists["research"].read_bytes()).hexdigest()
+        receipt["tavotto_installed_sha256"] = hashlib.sha256(
+            lists["tavotto"].read_bytes()
+        ).hexdigest()
+        receipt_path.write_text(json.dumps(receipt))
+        evidence["inventories"][receipt_path.relative_to(root).as_posix()] = {
+            role: path.relative_to(root).as_posix() for role, path in lists.items()
+        }
+    for path in [report_path, *receipts]:
+        evidence["sha256"][path.relative_to(root).as_posix()] = hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
+    for entry in evidence["inventories"].values():
+        for name in entry.values():
+            evidence["sha256"][name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
+    cohort = research.load_cohort(root / "tests/compat/research-cohort.json", root=root)
+    observed = research.project_reports(cohort, [research.summary.load_report(report_path)], SHA)
+    research.check_setup_receipts(observed, receipts)
+    observed["evidence"] = evidence
+    snapshot.clear()
+    snapshot.update(observed)
+    save()
+    return root, snapshot, save
+
+
+def test_snapshot_with_archived_package_lists_verifies(snapshot_with_inventories):
+    root, snapshot, _ = snapshot_with_inventories
+    assert research.verify_snapshot(root=root) == snapshot
+
+
+@pytest.mark.parametrize("role", ["research", "tavotto"])
+def test_snapshot_rejects_a_tampered_package_list(snapshot_with_inventories, role):
+    root, snapshot, save = snapshot_with_inventories
+    entry = next(iter(snapshot["evidence"]["inventories"].values()))
+    path = root / entry[role]
+    path.write_text(path.read_text() + "evil==1\n")
+    # Keep the snapshot's own file hash consistent so only the receipt's recorded hash can catch it.
+    snapshot["evidence"]["sha256"][entry[role]] = hashlib.sha256(path.read_bytes()).hexdigest()
+    save()
+    with pytest.raises(cg.EvidenceError, match="package list differs"):
+        research.verify_snapshot(root=root)
+
+
+@pytest.mark.parametrize("role", ["research", "tavotto"])
+def test_snapshot_rejects_a_deleted_package_list(snapshot_with_inventories, role):
+    root, snapshot, _ = snapshot_with_inventories
+    entry = next(iter(snapshot["evidence"]["inventories"].values()))
+    (root / entry[role]).unlink()
+    with pytest.raises(cg.EvidenceError, match="evidence must be a file"):
+        research.verify_snapshot(root=root)
+
+
+def test_snapshot_rejects_a_two_venv_receipt_whose_lists_are_not_archived(
+    snapshot_with_inventories,
+):
+    root, snapshot, save = snapshot_with_inventories
+    receipt_name = next(iter(snapshot["evidence"]["inventories"]))
+    for name in snapshot["evidence"]["inventories"].pop(receipt_name).values():
+        del snapshot["evidence"]["sha256"][name]
+    save()
+    with pytest.raises(cg.EvidenceError, match="package lists are not archived"):
+        research.verify_snapshot(root=root)
