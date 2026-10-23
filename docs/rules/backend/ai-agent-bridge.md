@@ -384,3 +384,26 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   - 系统提示是英文（要求用用户指令的语言回复）；产品要求三条（保留数据读取与计算 / 必须 Matplotlib 出图 / 图幅字号对齐）**引用 `ai_prompt_pack.convert_requirements()` 的同一份文字**（CLI 路径的 `convert_prompt` 也用它，不各抄一份），
     执行器特有的部分（只写一个新文件、不运行脚本、check ≤ 3 次）写在 `tools.py`。`ai_prompt_pack` 是纯标准库，所以 `agent_runner` 对它的 import 不破坏依赖方向（`test_import_architecture` 兜底）。
   - 看护 `tests/test_agent_runner_convert.py`（Demo 协议端到端 + 单元）。
+
+## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
+
+脚本跑不起来时让 AI 去查的工具集。**一张注册表、两种接法**：`REGISTRY: dict[str, FixTool]`（`__init__.py`）与接法无关，内置执行器经
+`build_agent_tools(ctx)`，CLI 经 MCP（D3）都走同一个 `run_tool`（档位检查 → handler → 脱敏 → 审计）。看护 `tests/test_fixtools.py`。
+
+- **边界**：本包 import `agent_runner.tools / wires`（取 `Tool` / `ToolResult`），**`agent_runner` 不 import 本包**（它是独立子进程，保持纯标准库）。
+  不 import app / Flask：工具拿注入的 `FixContext`（`base.py`：项目根、主目录、环境 id → 解释器表、报告回调、环境清单回调、日志路径、脚本、执行器、`reads`）。
+  测试里 `home` 一律给 `tmp_path` 假主目录。
+- **档位**：`ToolSpec.tier ∈ observe | tavotto | listed | user_env | outward`（默认 `observe`）+ `waits_for_user`（默认 `False`），**不序列化给模型**
+  （`tests/test_fixtools.py::test_tier_is_never_sent_to_the_model` 钉三种 wire 的请求体）。`FixContext.allowed_tiers` 之外的工具 `run_tool` 拒绝（`tier_not_allowed`）。
+  D1 只有 `observe`：看（`read_run_report` / `read_file` / `list_dir` / `find_files` / `grep_files` / `inspect_environment` / `list_environments` / `read_logs` / `lookup_package`）与
+  试（`try_import` / `try_run`）。
+- **读取范围**（`readscope.py`，判据只有 `ReadScope.check`）：主目录 + 项目根 + 环境前缀内可读，其余 `outside_scope`；`DENY_HOME_RELATIVE` / `DENY_NAME_PATTERNS` 命中
+  `denied`（词法与 `realpath` 后各判一次；大小写不敏感于 macOS / Windows；Tavotto 自己的 `config.json` 在内）。单次读 ≤ 256 KiB（截断给说明，`start_line` / `max_lines` 续读），
+  二进制只给类型与大小。项目外的读取进 `ctx.reads`。**所有给模型的文本过 `readscope.scrub`**（`run_tool` 对返回内容再过一遍）。新增敏感位置：加进两张表并补 `test_fixtools.py::DENIED_REL`。
+- **find / grep**：条数 + 墙钟（`SCAN_SECONDS`）上限；跳过 `SKIP_DIRS`、拦截区，`site-packages` 只下探两层，不跟随目录符号链接。
+- **「试」的子进程**（`trial.run_python`）：与体检同一纪律——`runtime.probe_args`（`-B`）、`runtime.probe_env` + `launcher.activate_env`、`stdin=DEVNULL`、
+  `creationflags=CREATE_NO_WINDOW`、`encoding="utf-8"`、超时、cwd 为一次性临时目录。环境只认会话的**环境 id**（`list_environments` 登记），不接受解释器路径。
+  模块名走 `fullmatch` 的点分标识符校验，并作为 `argv` 传入（不拼进 `-c`）。`try_run` 把脚本所在目录复制到临时目录（超 64 MiB / 5000 个文件只复制脚本）跑一次，
+  MPLBACKEND=Agg；`FixContext.runner` 可注入执行器（接准备会话 / 运行器的现成路径留给后续 PR）。
+- **审计**（`audit.py`）：`data_dir()/ai/fix_audit.jsonl`，字段 `ts / session / step / tool / tier / args / approved_by / result{ok,code,summary}`；路径类参数保留、其余只记长度，
+  内容不落盘；1 MiB 滚成 `.1`；失败不影响调用。
