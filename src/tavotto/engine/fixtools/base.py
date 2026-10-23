@@ -34,7 +34,6 @@ BLOCKED_CODES = frozenset(
         "tier_not_allowed",
         "env_unknown",
         "needs_approval",  # 需要用户点头而没拿到（没有界面 / 用户说不 / 超时）
-        "hard_blocked",  # `run_command` 的硬拦表：问也不给
     }
 )
 

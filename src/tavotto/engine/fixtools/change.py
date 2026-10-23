@@ -1,15 +1,14 @@
-"""「改」组工具（ADR 0149 §七）：装包 / 切运行方式 / 换 Python / 换环境 / 跑命令 / 转写 / 回滚。
+"""「改」组工具（ADR 0149 §七）：装包 / 切运行方式 / 换 Python / 换环境 / 转写 / 回滚（`run_command` 已移到后续 PR，见 ADR 0149 §七）。
 
 **每个动作的执行都在自己的出处里**，本模块只做「守门 → 问用户 → 打快照 → 调出处」：
 
 * 装 / 卸包：`deprepair._pip_install` / `_pip_uninstall`（同一份 argv 出处、只装 wheel、镜像回退、取消）+ `pool.mutating_environment`
   （环境独占锁，池里用这个解释器的 worker 先收掉）。需求串先过 `depresolve.parse_requirement`（`-r` / URL / 路径 / 带标记的都死在那里）。
   系统自带 / 内置 runtime 的解释器永不装（`convertdeps.describe_env` 同一口径）。「常见大包」名单 = `convertdeps.in_allowlist`
-  （`autoinstall_dists.txt`，PyPI 公开下载量生成）：名单内不问，名单外与 `run_command` / `select_environment` 经 `ctx.ask` 问用户。
+  （`autoinstall_dists.txt`，PyPI 公开下载量生成）：名单内不问，名单外与 `select_environment` 经 `ctx.ask` 问用户。
 * 切运行方式：`execpolicy.set_mode`（项目级 `execution_policy`；`safe` = `safe_only`，`native` = `compatible`，即允许 safe 被自己的守卫拦下时回退 native）。
 * 换环境：`projectenv.remember(..., automatic=False)`（与界面「选择运行环境」同一个写入）。
 * 换 Python / 转写：执行器由 `FixContext` 注入（`python_changer` / `script_converter`），没有就 `unavailable`；本模块不自己造。
-* 跑命令：不经 shell（`shlex` 拆）、cwd=项目、去掉密钥类环境变量、有超时、输出有界并脱敏；先过**硬拦表**（问都不问）。
 
 所有会改东西的工具在执行前打快照（`snapshots.py`），快照 id 进审计行与工具返回，`rollback` 用它恢复。
 **没有 `ctx.ask`（无界面）= 未获同意**：需要点头的动作一律 `needs_approval`，审计记 `blocked`。
@@ -20,9 +19,6 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-import shlex
-import subprocess
-import threading
 import uuid
 from pathlib import Path
 
@@ -32,12 +28,6 @@ from .base import FixContext, FixTool, err, obj, ok
 from .readscope import scrub
 
 PACKAGES_MAX = 20
-COMMAND_TOKENS_MAX = 64
-COMMAND_TOKEN_CHARS = 4096
-COMMAND_TIMEOUT_DEFAULT_S = 60.0
-COMMAND_TIMEOUT_MAX_S = 300.0
-#: 命令输出给模型看的最大行数（字节另有 `trial.OUTPUT_TAIL_BYTES` 的尾部上限）
-OUTPUT_LINES = 200
 
 _VERSION_RE = re.compile(r"3\.\d{1,2}(\.\d{1,2})?")
 
@@ -279,336 +269,6 @@ def select_environment(ctx: FixContext, args: dict) -> ToolResult:
     return _done(ctx, "This project now uses that environment.", "environment selected")
 
 
-# --------------------------------------------------------------------------- run_command
-_SHELLS = frozenset(
-    {"sh", "bash", "zsh", "dash", "ksh", "csh", "tcsh", "fish", "cmd", "powershell", "pwsh"}
-)
-_PRIVILEGE = frozenset({"sudo", "doas", "su", "runas", "pkexec"})
-_DISK = frozenset(
-    {
-        "diskpart",
-        "format",
-        "fdisk",
-        "sfdisk",
-        "parted",
-        "mkswap",
-        "shutdown",
-        "reboot",
-        "halt",
-        "poweroff",
-    }
-)
-_RECURSIVE_TOOLS = frozenset({"rm", "rmdir", "rd", "del", "erase", "chmod", "chown", "chgrp"})
-_PIPE_TO_SHELL = re.compile(
-    r"\|\s*(?:sudo\s+)?(?:\S*[/\\])?(?:sh|bash|zsh|dash|ksh|csh|tcsh|fish|cmd|powershell|pwsh)(?:\.exe)?\b",
-    re.IGNORECASE,
-)
-_SHELL_SYNTAX = frozenset({"|", "||", "&", "&&", ";", ">", ">>", "<", "2>", "2>&1"})
-_SECRET_ENV = re.compile(
-    r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|_PWD$|CREDENTIAL|AUTH|COOKIE|SIGNATURE|PRIVATE)",
-    re.IGNORECASE,
-)
-
-
-def _program_name(argv0: str) -> str:
-    base = os.path.basename(argv0.replace("\\", "/")).lower()
-    return base[:-4] if base.endswith(".exe") else base
-
-
-def _expand(ctx: FixContext, token: str) -> str:
-    if token == "~" or token.startswith(("~/", "~\\")):
-        return str(ctx.home) + token[1:]
-    return token
-
-
-def _dangerous_root(ctx: FixContext, token: str) -> bool:
-    """这个删除 / 改权限的目标是不是根目录、盘符根、主目录或主目录的上级。"""
-    raw = token.strip("\"'")
-    if raw in ("*", "/*", "~/*", "\\*"):
-        return True
-    expanded = _expand(ctx, raw)
-    if not os.path.isabs(expanded):
-        expanded = os.path.join(
-            str(ctx.project_root), expanded
-        )  # 相对路径相对项目（命令的 cwd），不是本进程的 cwd
-    path = os.path.normcase(os.path.abspath(expanded))
-    home = os.path.normcase(os.path.abspath(str(ctx.home)))
-    anchor = os.path.normcase(os.path.splitdrive(path)[0] + os.sep)
-    if path == anchor or path == os.path.normcase(os.sep):
-        return True
-    if raw.startswith("$HOME") or raw.startswith("%USERPROFILE%"):
-        return True
-    return path == home or home.startswith(path.rstrip(os.sep) + os.sep)
-
-
-def hard_block_reason(ctx: FixContext, argv: list[str], text: str) -> str | None:
-    """硬拦表（方案 HARD_BLOCK）：命中就不执行、也不问用户。回理由（给模型看，不含命令内容），不命中回 None。"""
-    prog = _program_name(argv[0])
-    if prog in _PRIVILEGE:
-        return "commands that raise privileges (sudo and the like) are never run"
-    if prog in _DISK or prog == "mkfs" or prog.startswith("mkfs."):
-        return "disk formatting, partitioning and power commands are never run"
-    if prog in _SHELLS:
-        return "shells are not started; run the program itself with its arguments"
-    if _PIPE_TO_SHELL.search(text):
-        return "piping output into a shell is never run"
-    if any(t in _SHELL_SYNTAX for t in argv) or any("$(" in t or "`" in t for t in argv):
-        return "shell syntax (pipes, redirects, ;, &&, substitutions) is not supported; run one program with its arguments"
-    if prog == "dd" and any(t.startswith("of=/dev/") or t.startswith("of=\\\\.\\") for t in argv):
-        return "writing to a raw device is never run"
-    if prog in _RECURSIVE_TOOLS:
-        rest = argv[1:]
-        recursive = any(
-            re.fullmatch(r"-[A-Za-z]*[rR][A-Za-z]*", t) or t in ("--recursive", "/s", "/S")
-            for t in rest
-        )
-        targets = [t for t in rest if not t.startswith("-") and t.lower() not in ("/s", "/q", "/f")]
-        if recursive and any(_dangerous_root(ctx, t) for t in targets):
-            return "recursive delete / permission changes on the root, a drive or the home folder are never run"
-    for token in argv[1:]:
-        for part in (token, token.partition("=")[2]):
-            if part and "://" not in part and not part.startswith("-"):
-                probe = _expand(ctx, part)
-                if not os.path.isabs(probe):
-                    probe = os.path.join(str(ctx.project_root), probe)
-                if ctx.scope.is_denied(probe):
-                    return "that location holds credentials or private browser data"
-    return None
-
-
-def _split_command(command: str) -> list[str]:
-    if os.name == "nt":
-        return [t.strip("\"'") for t in shlex.split(command, posix=False)]
-    return shlex.split(command)
-
-
-def _command_argv(args: dict) -> list[str] | ToolResult:
-    raw_argv, command = args.get("argv"), args.get("command")
-    if (raw_argv is None) == (command is None):
-        return err("bad_arguments", "Give exactly one of `argv` (a list) or `command` (a string).")
-    if raw_argv is not None:
-        if not isinstance(raw_argv, list) or not all(isinstance(t, str) for t in raw_argv):
-            return err("bad_arguments", "`argv` must be a list of strings.")
-        argv = list(raw_argv)
-    else:
-        if not isinstance(command, str):
-            return err("bad_arguments", "`command` must be a string.")
-        try:
-            argv = _split_command(command)
-        except ValueError:
-            return err("bad_arguments", "`command` could not be split (unbalanced quotes?).")
-    if (
-        not argv
-        or not argv[0].strip()
-        or len(argv) > COMMAND_TOKENS_MAX
-        or any(len(t) > COMMAND_TOKEN_CHARS or "\x00" in t for t in argv)
-    ):
-        return err("bad_arguments", "The command is empty, too long, or contains a NUL character.")
-    return argv
-
-
-def clean_env() -> dict[str, str]:
-    """子进程的环境：去掉密钥类变量（名字带 KEY / TOKEN / SECRET / PASSWORD / AUTH 等），其余原样。"""
-    return {k: v for k, v in os.environ.items() if not _SECRET_ENV.search(k)}
-
-
-def _project_env_ids(ctx: FixContext) -> list[str]:
-    """本项目当前所用的环境（前缀在 `env_prefixes` 里的）：命令可能改它，所以一并打快照。"""
-    out: list[str] = []
-    for eid, py in ctx.environments.items():
-        norm = os.path.normcase(os.path.abspath(py))
-        if any(
-            norm.startswith(os.path.normcase(os.path.abspath(str(p))) + os.sep)
-            for p in ctx.env_prefixes
-        ):
-            out.append(eid)
-    return out
-
-
-#: pip / conda 的用户缓存目录（相对主目录的**标准位置**；不读用户的 pip.conf / condarc）
-_CACHE_DIRS = (".cache/pip", "Library/Caches/pip", ".conda")
-
-
-def _python_prefix(python: str) -> str:
-    p = Path(os.path.abspath(python)).parent
-    return str(p.parent if p.name.lower() in ("bin", "scripts") else p)
-
-
-def command_writable_dirs(ctx: FixContext) -> list[str]:
-    """`run_command` 在沙盒里除了自己的临时工作目录之外**可写**的目录清单（真实路径、去重）：
-    本项目所用环境的前缀（`ctx.env_prefixes`）+ 已登记 env id 的前缀 + pip / conda 的用户缓存。项目目录与其余一切都不可写。"""
-    found: list[str] = []
-    candidates = [str(p) for p in ctx.env_prefixes]
-    candidates += [_python_prefix(py) for py in ctx.environments.values()]
-    candidates += [str(ctx.home / rel) for rel in _CACHE_DIRS]
-    for c in candidates:
-        if not os.path.isdir(c):
-            continue
-        real = os.path.realpath(c)
-        if real not in found:
-            found.append(real)
-    return found
-
-
-def _contains(outer: str, inner: str) -> bool:
-    outer, inner = os.path.normcase(outer), os.path.normcase(inner)
-    return inner == outer or inner.startswith(outer.rstrip(os.sep) + os.sep)
-
-
-def commands_root() -> Path:
-    """命令的临时工作目录的家：Tavotto 的缓存目录（`trial._remove_tree` + `.cleanup_pending` + sweep 的同一套清理）。"""
-    from .. import config
-
-    return config.data_dir() / "cache" / "fix_commands"
-
-
-_NO_SANDBOX = (
-    "Running arbitrary commands is not possible on this computer: it needs an operating-system sandbox "
-    "(macOS sandbox-exec or Linux bwrap) so that the command cannot write to your project, and none is "
-    "available here. Nothing was run. Use a dedicated tool instead (install_packages, select_environment, "
-    "switch_execution, change_python, convert_script), or ask the user to run the command."
-)
-
-
-def run_command(ctx: FixContext, args: dict) -> ToolResult:
-    from . import trial
-
-    argv = _command_argv(args)
-    if isinstance(argv, ToolResult):
-        return argv
-    why = hard_block_reason(ctx, argv, " ".join(argv))
-    if why is not None:
-        return err("hard_blocked", f"Refused: {why}.")
-    timeout = args.get("timeout_s")
-    timeout = (
-        float(min(max(timeout, 1), COMMAND_TIMEOUT_MAX_S))
-        if isinstance(timeout, int | float) and not isinstance(timeout, bool)
-        else COMMAND_TIMEOUT_DEFAULT_S
-    )
-    project = str(ctx.project_root)
-    if not os.path.isdir(project):
-        return err("no_project", "The project folder is not there.")
-    # 结构性保证「用户脚本不会被命令改」：命令在操作系统沙盒里跑，可写的只有自己的临时工作目录 + 目标环境前缀 + pip / conda 缓存，
-    # 项目目录本身不可写——所以不需要备份 / 核对 / 恢复。没有沙盒就不跑（不问用户）
-    writable = command_writable_dirs(ctx)
-    real_project = os.path.realpath(project)
-    if any(_contains(w, real_project) for w in writable):
-        return err(
-            "env_contains_project",
-            "A Python environment's folder contains the project folder, so the project could not be kept "
-            "read-only while a command runs. Nothing was run.",
-        )
-    work = commands_root() / uuid.uuid4().hex
-    if trial._os_sandbox_kind() is None:
-        return err("no_sandbox", _NO_SANDBOX)
-    shown = shlex.join(argv) if os.name != "nt" else subprocess.list2cmdline(argv)
-    denied = approve(
-        ctx,
-        "run_command",
-        f"Run this command (the project folder is read-only for it): {shown[:400]}",
-        argv=[scrub(t)[:200] for t in argv[:16]],
-    )
-    if denied is not None:
-        return denied
-    if snapshots.take(ctx, "run_command", _project_env_ids(ctx)) is None:
-        return err(
-            "snapshot_failed", "Could not save a snapshot to roll back to, so nothing was changed."
-        )
-    trial.sweep_stale_trials(root=commands_root())
-    try:
-        work.mkdir(parents=True)
-    except OSError:
-        trial._remove_tree(work)
-        return err("scratch_failed", _with_snapshot(ctx, "Could not make a scratch folder."))
-    kind, prefix = trial._os_sandbox_prefix(work, writable)
-    if kind == "none":  # 审批期间沙盒不见了（极少见）
-        trial._remove_tree(work)
-        return err("no_sandbox", _NO_SANDBOX)
-    try:
-        res = _spawn_sandboxed(ctx, argv, work, prefix, timeout, project)
-    finally:
-        pending = not trial._remove_tree(work)
-    if pending:
-        res.content += (
-            "\ncleanup_pending: the scratch folder could not be fully deleted; it is kept in Tavotto's "
-            "cache folder and will be removed later."
-        )
-    res.content += f"\nos_sandbox: {kind}"
-    res.mutated = True  # 命令可能改了环境
-    return res
-
-
-def _spawn_sandboxed(
-    ctx: FixContext, argv: list[str], work: Path, prefix: list[str], timeout: float, project: str
-) -> ToolResult:
-    from .. import runtime
-    from . import trial
-
-    env = clean_env()
-    scratch = str(work)
-    env.update(
-        TMPDIR=scratch,
-        TEMP=scratch,
-        TMP=scratch,
-        PYTHONDONTWRITEBYTECODE="1",  # 项目只读：别让 Python 往 __pycache__ 写
-        TAVOTTO_PROJECT=project,  # 命令的 cwd 是临时目录；项目在这儿（只读）
-    )
-    try:
-        proc = subprocess.Popen(
-            [*prefix, *argv],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            cwd=scratch,
-            env=env,
-            creationflags=runtime.CREATE_NO_WINDOW,
-            start_new_session=(os.name != "nt"),
-        )
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return err(
-            "spawn_failed",
-            _with_snapshot(ctx, "The program could not be started (is it installed?)."),
-        )
-    overflow = threading.Event()
-
-    def stop() -> None:
-        overflow.set()
-        trial._kill_own(proc)
-
-    cap = trial._Capture(proc.stdout, {"bytes": 0}, threading.Lock(), stop)
-    timed_out = False
-    try:
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        trial._kill_own(proc)
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
-    cap.thread.join(timeout=5)
-    try:
-        proc.stdout.close()
-    except OSError:
-        pass
-    tail = "\n".join(cap.text().splitlines()[-OUTPUT_LINES:])
-    notes = ""
-    if overflow.is_set():
-        notes += (
-            f"\noutput_truncated: more than {trial.OUTPUT_LIMIT_BYTES // (1024 * 1024)} MiB of output, "
-            "the program was stopped; only the last part is kept"
-        )
-    body = _with_snapshot(
-        ctx, f"exit code: {proc.returncode}{notes}\n--- output (last lines) ---\n{tail}"
-    )
-    if timed_out and not overflow.is_set():
-        return err(
-            "timeout",
-            f"The command did not finish within {int(timeout)} s and was stopped.\n{body}",
-        )
-    return ok(body, f"exit {proc.returncode}")
-
-
 # --------------------------------------------------------------------------- convert_script
 def convert_root() -> Path:
     """转换器临时副本的家：Tavotto 自己的缓存目录（清不掉的残留要找得到、扫得到）。"""
@@ -799,32 +459,6 @@ CHANGE_TOOLS: tuple[FixTool, ...] = (
         "Takes a snapshot. `env` must be an id returned by list_environments.",
         obj({"env": _ENV}, ["env"]),
         select_environment,
-        tier="user_env",
-        waits_for_user=True,
-    ),
-    FixTool(
-        "run_command",
-        "Run one program with arguments after the user approves it. It runs inside an operating-system sandbox: "
-        "the project folder is READ-ONLY for it (it can read your files, never write them), and it can only write "
-        "to its own scratch folder (the working directory and TMPDIR, deleted afterwards), the Python environment "
-        "of this project and pip / conda caches. The project path is in the environment variable TAVOTTO_PROJECT; "
-        "use absolute paths to read project files. If this computer has no sandbox (Windows, or Linux without bwrap) "
-        "the tool answers `no_sandbox` and runs nothing: use install_packages, select_environment, switch_execution, "
-        "change_python or convert_script instead. Give `argv` (a list) or `command` (split into words; no shell: no "
-        "pipes, redirects, `&&`, substitutions). Never runs sudo, shells, disk tools, piping into a shell or recursive "
-        "deletes of the root or home folder; secret-looking environment variables are removed; output is cut and "
-        "masked; there is a time limit. Takes a snapshot of the settings and the environment's packages.",
-        obj(
-            {
-                "argv": {"type": "array", "items": {"type": "string"}},
-                "command": {"type": "string"},
-                "timeout_s": {
-                    "type": "integer",
-                    "description": "Seconds before it is stopped (default 60, max 300).",
-                },
-            }
-        ),
-        run_command,
         tier="user_env",
         waits_for_user=True,
     ),

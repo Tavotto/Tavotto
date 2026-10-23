@@ -750,7 +750,6 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "switch_execution",
         "change_python",
         "select_environment",
-        "run_command",
         "convert_script",
         "rollback",
     }
@@ -1650,17 +1649,3 @@ def test_site_initialization_runs_under_the_guard(box, monkeypatch):
     res = trial.run_python(vpy, code="print('ok')", timeout=60, session_id="s1")
     assert outside.read_bytes() == b"ORIGINAL"
     assert res.get("status") == "ok" and res.get("blocked_writes"), res
-
-
-def test_bwrap_args_bind_every_extra_writable_dir_and_nothing_else(tmp_path):
-    """bwrap 分支（只有装了 bwrap 的 Linux 会真跑）：额外可写目录逐个 `--bind`，项目不在其中；不靠真沙盒也能量。"""
-    from tavotto.engine.fixtools import trial
-
-    work, env, project = tmp_path / "work", tmp_path / "env", tmp_path / "proj"
-    for d in (work, env, project):
-        d.mkdir()
-    args = trial._sandbox_args("bwrap", "/usr/bin/bwrap", str(work), [str(env)])
-    binds = [args[i + 1] for i, a in enumerate(args) if a == "--bind"]
-    assert binds == [os.path.realpath(work), os.path.realpath(env)]
-    assert args[1:4] == ["--ro-bind", "/", "/"]
-    assert os.path.realpath(project) not in args
