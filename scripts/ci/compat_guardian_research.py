@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import subprocess
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -20,6 +21,12 @@ import compat_corpus as cc
 import compat_guardian as cg
 import compat_guardian_summary as summary
 import compat_research_sources as sources
+
+# Windows runners fall back to the code page when stdout/stderr are pipes; pin both
+# so evidence errors and Chinese diagnostics reach the parent (same as build_frontend.py).
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 COHORT = cc.COMPAT_DIR / "research-cohort.json"
 SNAPSHOT = Path("tests/compat/research-baseline.json")
