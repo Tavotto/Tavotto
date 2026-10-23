@@ -35,6 +35,7 @@ const MANIFEST = {
     el(LEG, {
       role: 'legend',
       alias_covers: { title_fontsize: { fontsize: [TITLE] }, fontsize: { fontsize: [T0, T1] } },
+      alias_pure: ['title_fontsize'],
     }),
     el(TITLE),
     el(T0),
@@ -131,6 +132,38 @@ describe('图例整体字号 vs 单条（1:多）', () => {
       { gid: LEG, prop: 'fontsize', value: 8 },
       { gid: T0, prop: 'fontsize', value: 5 },
     ])
+  })
+})
+
+describe('单条目图例：整体字号不纯，不许被反向清', () => {
+  // 只有一条图例项时 `fontsize` 也是 1:1，但 `_set_legend_fontsize` 还改 `Legend._fontsize` 并重建布局
+  // （示意线长 / 内边距 / 文字间距），窄端存不下——引擎不把它声明为 alias_pure
+  const ONE = {
+    elements: [
+      el(LEG, { role: 'legend', alias_covers: { fontsize: { fontsize: [T0] } } }),
+      el(T0),
+    ],
+  } as unknown as Manifest
+
+  it('先改图例整体字号、再改那一条的字号：(legend, fontsize) 保留', async () => {
+    await seed([{ gid: LEG, prop: 'fontsize', value: 8 }], ONE)
+    setOverride('p1', T0, 'fontsize', 5, true)
+    expect(ov()).toEqual([
+      { gid: LEG, prop: 'fontsize', value: 8 },
+      { gid: T0, prop: 'fontsize', value: 5 },
+    ])
+  })
+
+  it('对照：同样 1:1 但被声明为纯别名时才反向清', async () => {
+    const pure = {
+      elements: [
+        el(LEG, { role: 'legend', alias_covers: { fontsize: { fontsize: [T0] } }, alias_pure: ['fontsize'] }),
+        el(T0),
+      ],
+    } as unknown as Manifest
+    await seed([{ gid: LEG, prop: 'fontsize', value: 8 }], pure)
+    setOverride('p1', T0, 'fontsize', 5, true)
+    expect(ov()).toEqual([{ gid: T0, prop: 'fontsize', value: 5 }])
   })
 })
 

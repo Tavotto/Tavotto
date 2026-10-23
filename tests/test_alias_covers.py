@@ -118,3 +118,16 @@ def test_only_registered_gids_are_listed(manifest):
                 seen += len(covered)
                 assert not any("#" in g for g in covered), (e["gid"], covered)
     assert seen
+
+
+def test_alias_pure_lists_only_declared_pure_props(manifest):
+    """`alias_pure`：可互换（纯别名）的广播 prop。依据见 `overrides.ALIAS_PURE`。"""
+    legend = _el(manifest, "axes_0.legend")
+    assert legend["alias_pure"] == ["title_fontsize"]
+    assert "fontsize" not in legend["alias_pure"]  # 整体字号还改 Legend._fontsize 并重建布局
+    cb = next(e for e in manifest["elements"] if e["role"] == "colorbar")
+    assert cb["alias_pure"] == ["vmax", "vmin"]  # 刻度字号 / 颜色（tick_params 留默认值）不纯
+    series = next(e for e in manifest["elements"] if e["role"] == "bar_series")
+    assert "alias_pure" not in series
+    for e in manifest["elements"]:
+        assert set(e.get("alias_pure") or ()) <= set(e.get("alias_covers") or ()), e["gid"]

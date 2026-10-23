@@ -95,6 +95,7 @@ from overrides import (
     _linestyle_name,
     _stroke_state,
     alias_covers,
+    alias_pure,
     annotation_arrow_display,
     annotation_arrow_owner,
     annotation_text_draggable,
@@ -5425,6 +5426,9 @@ def _measure_manifest(
         covers = alias_covers(state, alias_rev, artist, el["gid"], alias_registered)
         if covers:
             entry["alias_covers"] = covers
+            # 其中哪些是纯别名（可反向清广播端，见 `overrides.ALIAS_PURE`）；可选
+            if pure := alias_pure(artist, covers):
+                entry["alias_pure"] = pure
         # 箭头：端点（figure 分数、top-origin，[尾, 头]）随 manifest 下发，前端据此画
         # 端点手柄、整体拖动 / 单端拖动都写 endpoints_frac override。两类出端点：
         # 独立箭头（端点就是 patch 自己的 posA / posB）与**纯箭头注释**（端点是注释的

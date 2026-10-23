@@ -11,9 +11,9 @@ import { effectiveOverrideIndex } from './effectiveOverride'
  * 同一次 commit 里清掉另一个地址：
  *
  * - 写广播端 `(g, p)`：删掉 `alias_covers[p]` 列出的全部窄端 override（不删，这次写就不生效）；
- * - 写窄端 `(g', p')`，且某个广播端**只**盖着这一个窄端（1:1，如图例标题）：删掉那条广播 override——
- *   窄端本来就赢，但广播端控件会读着旧 override 显示过期值；1:多（图例整体字号 vs 单条）时保留广播，
- *   它还管着别的成员。
+ * - 写窄端 `(g', p')`，且某个**纯别名**（`alias_pure`）的广播端**只**盖着这一个窄端（1:1，如图例标题）：删掉那条
+ *   广播 override——窄端本来就赢，但广播端控件会读着旧 override 显示过期值；1:多（图例整体字号 vs 单条）时保留广播，
+ *   它还管着别的成员；不纯的广播端（单条目图例上的整体字号：还改 `Legend._fontsize` 并重建布局）无论几个成员都保留。
  *
  * 同一批 patch 里一起写的两端都保留（样式预设 / 批量写入有意同时写，窄端赢是引擎既有语义）。
  */
@@ -48,6 +48,8 @@ export function aliasClearPlan(
   for (const e of manifest.elements) {
     if (!e.alias_covers) continue
     for (const [bprop, narrow] of Object.entries(e.alias_covers)) {
+      // 只有引擎声明的纯别名才可反向清：不纯的广播端（图例整体字号会改 `_fontsize` 并重建布局）有窄端存不下的状态
+      if (!e.alias_pure?.includes(bprop)) continue
       const entries = Object.entries(narrow).flatMap(([nprop, gids]) => gids.map((g) => ({ gid: g, prop: nprop })))
       if (entries.length === 1 && narrowKeys.has(keyOf(entries[0]))) clear(e.gid, bprop)
     }

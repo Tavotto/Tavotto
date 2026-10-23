@@ -2386,6 +2386,12 @@ export interface ManifestElement {
    */
   alias_covers?: Record<string, Record<string, string[]>>
   /**
+   * `alias_covers` 里**纯别名**的广播 prop（引擎 `overrides.ALIAS_PURE`，逐个读过 setter 才进）：广播端没有任何
+   * 窄端存不下的额外状态，两个地址可互换。只有这些才能在写窄端时反向删掉广播端那条 override；图例整体字号
+   * （还改 `Legend._fontsize` 并重建布局）等不纯的不在其中，窄端写入不许动它们。可选。
+   */
+  alias_pure?: string[]
+  /**
    * 拖动这个 axes 时该一起走的**其他 axes**（色条轴、twinx/twiny 的孪生轴）。
    * 由引擎裁决（只有那边有 matplotlib 的共享关系与落点），前端只负责把同一个
    * 位移发给它们。子图自己的标题/轴标签不在这里——它们是 Axes 的孩子，

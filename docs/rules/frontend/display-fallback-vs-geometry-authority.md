@@ -48,7 +48,8 @@
   柱 / stem 系列），窄端永远排在广播之后应用——两条并存时改广播端画面不变、控件却读着自己那条显示新值。
   `upsertOverrides` 是唯一写入口，同一次 commit 里按引擎 manifest 元素的 `alias_covers`（`overrides.alias_covers`
   唯一出处，不排同元素别名与 `cmap`）清掉另一端：写广播端 → 删它盖着的窄端；写窄端且某广播端**只**盖着它
-  （1:1）→ 删广播端，1:多保留。事实取 `structuralPanelManifest`（结构事实，不要求这一版已画好，**不许**拿它做
+  （1:1）**且引擎声明它是纯别名**（manifest `alias_pure`，`overrides.ALIAS_PURE`：setter 与窄端同一个调用、无额外状态）
+  → 删广播端；1:多或不纯（如图例整体字号，还改 `Legend._fontsize` 并重建布局）保留。事实取 `structuralPanelManifest`（结构事实，不要求这一版已画好，**不许**拿它做
   几何写）；拿不到 / 旧引擎不发 = 只 upsert。判据在 `lib/aliasOverrides.ts` 一份，别在控件里另写清理。
 * 撤销的落点要还在：每个文件保留最近 4 档成功变体（有界），`latest` 按**请求
   序号**推进——乱序返回时旧变体只入库、不挪 `latest`，也不丢弃（同文件的另一个
