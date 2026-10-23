@@ -51,7 +51,7 @@ import {
   type DiagSendPrepared,
 } from '@/lib/api'
 import { FEEDBACK_EMAIL } from '@/lib/brand'
-import { t } from '@/i18n'
+import { i18n, t } from '@/i18n'
 import enDialogs from '@/i18n/locales/en-US/dialogs.json'
 import zhDialogs from '@/i18n/locales/zh-CN/dialogs.json'
 import { ContactButton } from '@/components/contact/ContactButton'
@@ -254,7 +254,6 @@ describe('入口两处挂载', () => {
     )
     await click(q('[data-contact-button]'))
     expect(q('[data-dialog="contact"]')).not.toBeNull()
-    expect(q('[data-contact-recipient]')!.textContent).toBe(FEEDBACK_EMAIL)
     expect(sendContact).not.toHaveBeenCalled()
     expect(startDiagSend).not.toHaveBeenCalled()
   })
@@ -280,17 +279,28 @@ describe('对话框的四个状态', () => {
     await act(async () => useContactStore.getState().setOpen(true))
   }
 
-  it('编辑：收件人只展示、主题 / 正文 / 附件 / 诊断 / 回信邮箱与那句说明都在', async () => {
+  it('编辑：主题 / 正文 / 附件方块 / 诊断 / 回信邮箱都在；不展示收件人，也没有副标题和那几段说明', async () => {
     await openDialog()
-    expect(q('[data-contact-recipient]')!.textContent).toBe(FEEDBACK_EMAIL)
-    for (const sel of ['subject', 'text', 'pick', 'diag', 'email', 'email-note', 'drop']) {
+    for (const sel of ['subject', 'text', 'pick', 'diag', 'email', 'drop']) {
       expect(q(`[data-contact-${sel}]`), sel).not.toBeNull()
     }
-    expect(q('[data-contact-email-note]')!.textContent).toBe(t('contact.emailNote', { ns: 'dialogs' }))
-    expect(q('[data-contact-email-note]')!.textContent).toContain('不填也能在 Tavotto 里收到回信')
-    // 收件人是文字不是链接，也没有输入框
-    expect(q('[data-contact-recipient]')!.closest('a')).toBeNull()
+    expect(q('[data-contact-recipient]')).toBeNull()
+    expect(q('[data-contact-email-note]')).toBeNull()
+    expect(q('[data-contact-body-count]')).toBeNull() // 没写到上限的 90% 不显示字数
+    const text = q('[data-dialog="contact"]')!.textContent ?? ''
+    expect(text).not.toContain(FEEDBACK_EMAIL)
+    expect(text).not.toContain('不用登录')
+    expect(text).not.toContain('合计不超过')
+    expect(q<HTMLInputElement>('[data-contact-email]')!.placeholder).toBe(t('contact.emailPlaceholder', { ns: 'dialogs' }))
     expect(q('[data-contact-send]')!.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('字数计数只在超过上限的 90% 时出现', async () => {
+    await openDialog()
+    await typeInto(q<HTMLTextAreaElement>('[data-contact-text]'), 'x'.repeat(4400))
+    expect(q('[data-contact-body-count]')).toBeNull()
+    await typeInto(q<HTMLTextAreaElement>('[data-contact-text]'), 'x'.repeat(4600))
+    expect(q('[data-contact-body-count]')!.textContent).toContain('4600')
   })
 
   it('正文为空：点发送只提示，不发（零远程）', async () => {
@@ -315,7 +325,10 @@ describe('对话框的四个状态', () => {
     await typeInto(q<HTMLTextAreaElement>('[data-contact-text]'), 'hello')
     await typeInto(q<HTMLInputElement>('[data-contact-email]'), 'a@@b')
     await click(q('[data-contact-send]'))
-    expect(q('[data-contact-form-error="emailInvalid"]')).not.toBeNull()
+    // 只在输入框下方行内红字，不进底栏上方的状态区
+    expect(q('[data-contact-email-hint]')).not.toBeNull()
+    expect(q('[data-contact-form-error]')).toBeNull()
+    expect(q('[data-dialog-status]')).toBeNull()
     expect(sendContact).not.toHaveBeenCalled()
   })
 
@@ -478,6 +491,56 @@ describe('对话框的四个状态', () => {
     await act(async () => useContactStore.getState().removeFile(0))
     await act(async () => useContactStore.getState().addFiles([png('big.png', 20 * 1024 * 1024)]))
     expect(q('[data-contact-file-error="total"]')).not.toBeNull()
+  })
+
+  it('附件方块：图片出缩略图、其它显示扩展名、× 删除、满 5 个「+」方块隐藏；缩略图 URL 卸载时 revoke', async () => {
+    const create = vi.fn(() => 'blob:thumb')
+    const revoke = vi.fn()
+    Object.assign(URL, { createObjectURL: create, revokeObjectURL: revoke })
+    try {
+      await openDialog()
+      await act(async () =>
+        useContactStore
+          .getState()
+          .addFiles([png('shot.png'), new File(['%PDF'], 'paper.pdf', { type: 'application/pdf' })]),
+      )
+      expect(q('[data-contact-file="shot.png"] img[data-contact-file-thumb]')).not.toBeNull()
+      expect(q('[data-contact-file="paper.pdf"] img')).toBeNull()
+      expect(q('[data-contact-file="paper.pdf"] [data-contact-file-ext]')!.textContent).toBe('PDF')
+      expect(q('[data-contact-file="paper.pdf"] [data-contact-file-name]')!.textContent).toBe('paper.pdf')
+      expect(q('[data-contact-pick]')).not.toBeNull()
+      await click(q('[data-contact-file="shot.png"] [data-contact-file-remove]'))
+      expect(q('[data-contact-file="shot.png"]')).toBeNull()
+      expect(revoke).toHaveBeenCalledWith('blob:thumb')
+      await act(async () => useContactStore.getState().addFiles([1, 2, 3, 4].map((i) => png(`p${i}.png`, 10 + i))))
+      expect(useContactStore.getState().draft.files).toHaveLength(5)
+      expect(q('[data-contact-pick]')).toBeNull()
+    } finally {
+      delete (URL as { createObjectURL?: unknown }).createObjectURL
+      delete (URL as { revokeObjectURL?: unknown }).revokeObjectURL
+    }
+  })
+
+  it('企业微信入口：中文界面有，点开出二维码；写信页与我的来信页都在；英文界面没有', async () => {
+    await openDialog()
+    expect(q('[data-contact-wecom]')).not.toBeNull()
+    expect(q('[data-wecom-qr-img]')).toBeNull()
+    await click(q('[data-contact-wecom]'))
+    expect(q('[data-contact-wecom-pop] [data-wecom-qr-img]')).not.toBeNull()
+    await click(q('[data-contact-wecom]')) // 收起
+    await click(q('[data-contact-switch-view]'))
+    expect(q('[data-contact-letters]')).not.toBeNull()
+    expect(q('[data-contact-wecom]')).not.toBeNull()
+    await act(async () => {
+      await i18n.changeLanguage('en-US')
+    })
+    try {
+      expect(q('[data-contact-wecom]')).toBeNull()
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage('zh-CN')
+      })
+    }
   })
 
   it('记住的邮箱可以删', async () => {

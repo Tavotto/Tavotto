@@ -60,7 +60,7 @@ test('主页：入口在右上角；点发送前零连接；失败有人话、�
     await home.click()
     const dialog = page.locator('[data-dialog="contact"]')
     await expect(dialog).toBeVisible()
-    await expect(dialog.locator('[data-contact-recipient]')).toHaveText('feedback@tavotto.com')
+    await expect(dialog.locator('[data-contact-recipient]')).toHaveCount(0)
     await dialog.locator('[data-contact-subject]').fill('e2e')
     await dialog.locator('[data-contact-text]').fill('e2e: nothing private here')
     await dialog.locator('[data-contact-email]').fill('someone@example.org')

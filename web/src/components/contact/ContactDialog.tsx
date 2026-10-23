@@ -9,14 +9,15 @@ import { Button, IconButton } from '../ui/Button'
 import { Checkbox } from '../ui/Checkbox'
 import { Details, Summary } from '../ui/Details'
 import { Dialog } from '../ui/Dialog'
-import { dropZoneClass } from '../ui/dropZone'
 import { FieldGroup } from '../ui/FormSection'
 import { TextArea, TextInput } from '../ui/Input'
 import { Notice } from '../ui/Notice'
+import { Popover } from '../ui/Popover'
 import { ProgressBar } from '../ui/ProgressBar'
-import { X } from '../ui/icons'
+import { Plus, Trash2, X } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { CopyButton } from '../settings/CopyButton'
+import { WeComQrImage, useWeComContactVisible } from '../settings/WeComContact'
 import { ReplyPaper } from './ReplyPaper'
 
 const cs = (key: string, values?: Record<string, unknown>) =>
@@ -51,6 +52,68 @@ function failureText(f: ContactFailure): string {
   return cs(`failure.${f.code}`, { defaultValue: cs('failure.unexpected_response') })
 }
 
+/** 附件方块边长（px）。 */
+const TILE = 88
+
+/** 图片缩略图：object URL 随文件挂载、卸载即 revoke；环境没有 createObjectURL（测试 / 极老内核）就退回类型方块。 */
+function Thumb({ file }: { file: File }) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') return
+    const u = URL.createObjectURL(file)
+    setUrl(u)
+    return () => {
+      URL.revokeObjectURL(u)
+      setUrl(null)
+    }
+  }, [file])
+  if (!url) return null
+  return <img src={url} alt="" className="size-full object-cover" draggable={false} data-contact-file-thumb />
+}
+
+function extOf(name: string): string {
+  const i = name.lastIndexOf('.')
+  return i >= 0 ? name.slice(i + 1, i + 6).toUpperCase() : ''
+}
+
+/** 一个已添加的附件：88 见方；图片是缩略图，其它是扩展名徽标；文件名在下面截断；右上角 × 删除。 */
+function AttachTile({ file, onRemove, disabled }: { file: File; onRemove: () => void; disabled: boolean }) {
+  const isImage = file.type.startsWith('image/')
+  return (
+    <li className="group relative flex flex-col gap-1" style={{ width: TILE }} data-contact-file={file.name}>
+      <div
+        className="relative flex items-center justify-center overflow-hidden rounded-md bg-surface-hover"
+        style={{ width: TILE, height: TILE }}
+        title={`${file.name} · ${formatBytes(file.size)}`}
+      >
+        {isImage && <Thumb file={file} />}
+        {(!isImage || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') && (
+          <span
+            className="rounded-sm bg-accent-subtle px-1.5 py-0.5 text-xs font-medium tracking-tight text-accent"
+            data-contact-file-ext
+          >
+            {extOf(file.name) || '···'}
+          </span>
+        )}
+      </div>
+      <span className="truncate text-xs text-ink-3" data-contact-file-name>
+        {file.name}
+      </span>
+      <IconButton
+        label={cs('attachRemove', { name: file.name })}
+        iconSize="xs"
+        tip={false}
+        disabled={disabled}
+        onClick={onRemove}
+        data-contact-file-remove
+        className="absolute right-1 top-1 rounded-full bg-surface/90 shadow-sm"
+      >
+        <X size={ICON_SIZE.sm} />
+      </IconButton>
+    </li>
+  )
+}
+
 /** 「我的来信」里用户自己写的那一份：灰色引用块；正文长了折叠成前 4 行 +「展开」。 */
 function YourLetter({ subject, body, names }: { subject: string; body: string; names: string[] }) {
   const [open, setOpen] = useState(false)
@@ -75,7 +138,7 @@ function YourLetter({ subject, body, names }: { subject: string; body: string; n
         <Button
           variant="ghost"
           size="sm"
-          className="self-start"
+          className="-ml-2 self-start"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
           data-contact-letter-toggle
@@ -89,6 +152,28 @@ function YourLetter({ subject, body, names }: { subject: string; body: string; n
         </span>
       )}
     </blockquote>
+  )
+}
+
+/** 中文界面的轻量入口：页脚里的 ghost 小钮，点开一个小浮层，里面是企业微信二维码。 */
+function WeComEntry() {
+  return (
+    <Popover
+      side="top"
+      align="start"
+      width={196}
+      ariaLabel={cs('wecom')}
+      trigger={
+        <Button variant="ghost" size="lg" data-contact-wecom>
+          {cs('wecom')}
+        </Button>
+      }
+    >
+      <div className="flex flex-col items-center gap-2 p-1" data-contact-wecom-pop>
+        <WeComQrImage />
+        <span className="type-caption">{cs('wecomScan')}</span>
+      </div>
+    </Popover>
   )
 }
 
@@ -138,6 +223,7 @@ export function ContactDialog() {
   const emailId = useId()
   const fileInput = useRef<HTMLInputElement | null>(null)
   const [dragging, setDragging] = useState(false)
+  const wecom = useWeComContactVisible()
   if (!capability) return null
 
   const busy = phase === 'sending' || phase === 'cancelling' || phase === 'diag'
@@ -213,7 +299,6 @@ export function ContactDialog() {
           <span data-contact-failure={s.failure.code}>
             {failureText(s.failure)} {wait}
           </span>
-          {s.failure.source !== 'local' && <span>{cs('failedKept')}</span>}
           {/* 没有邮件协议链接、也不唤起邮件程序：只给「复制内容 / 复制地址」，由用户自己决定怎么发 */}
           <span className="flex flex-wrap items-center gap-1.5" data-contact-fallback>
             <CopyAction text={() => draftText(draft)} label={cs('copyContent')} />
@@ -223,7 +308,7 @@ export function ContactDialog() {
         </span>
       </Notice>
     )
-  } else if (s.formError) {
+  } else if (s.formError && s.formError !== 'emailInvalid') {
     statusNode = (
       <p className="text-sm text-danger-content" role="alert" data-contact-form-error={s.formError}>
         {cs(`error.${s.formError}`)}
@@ -234,14 +319,7 @@ export function ContactDialog() {
   }
 
   const writeView = (
-    <div className="flex flex-col gap-4" data-contact-body>
-      <div className="flex items-center gap-2 text-sm">
-        <span className="type-section">{cs('toLabel')}</span>
-        <span className="text-ink-2" data-contact-recipient>
-          {recipient}
-        </span>
-      </div>
-
+    <div className="flex flex-col gap-4" data-contact-body {...dropHandlers}>
       <div className="flex flex-col gap-1.5">
         <label htmlFor={subjectId} className="type-section">
           {cs('subjectLabel')}
@@ -274,56 +352,51 @@ export function ContactDialog() {
           data-contact-text
           className="px-3 py-2"
         />
-        <p className="flex justify-end type-caption tabular-nums">
-          {cs('bodyCount', { count: draft.body.length, max: bodyMax })}
-        </p>
+        {draft.body.length > bodyMax * 0.9 && (
+          <p className="flex justify-end type-caption tabular-nums" data-contact-body-count>
+            {cs('bodyCount', { count: draft.body.length, max: bodyMax })}
+          </p>
+        )}
       </div>
 
       <div className="flex flex-col gap-1.5" data-contact-attachments>
         <span className="type-section">{cs('attachLabel')}</span>
-        <div
-          {...dropHandlers}
+        <ul
           data-contact-drop
-          className={cn(
-            'flex flex-col gap-2 rounded-md bg-surface-hover px-3 py-2.5',
-            dropZoneClass(dragging),
-          )}
+          data-dragging={dragging ? '' : undefined}
+          className="flex flex-wrap gap-2"
+          data-contact-file-list
         >
-          <p className="type-caption">{cs('attachHint', { max: maxFiles, size: formatBytes(maxTotal) })}</p>
-          {draft.files.length > 0 && (
-            <ul className="flex flex-col gap-1" data-contact-file-list>
-              {draft.files.map((f, i) => (
-                <li key={`${f.name}-${f.size}`} className="flex items-center gap-2 text-sm" data-contact-file={f.name}>
-                  <span className="min-w-0 flex-1 truncate text-ink">{f.name}</span>
-                  <span className="shrink-0 text-xs text-ink-3">{formatBytes(f.size)}</span>
-                  <IconButton
-                    label={cs('attachRemove', { name: f.name })}
-                    disabled={!editable}
-                    onClick={() => s.removeFile(i)}
-                    data-contact-file-remove
-                  >
-                    <X size={ICON_SIZE.sm} />
-                  </IconButton>
-                </li>
-              ))}
-            </ul>
+          {draft.files.map((f, i) => (
+            <AttachTile key={`${f.name}-${f.size}-${f.lastModified}`} file={f} disabled={!editable} onRemove={() => s.removeFile(i)} />
+          ))}
+          {draft.files.length < maxFiles && (
+            <li className="flex flex-col" style={{ width: TILE }}>
+              <button
+                type="button"
+                disabled={!editable}
+                onClick={() => fileInput.current?.click()}
+                aria-label={cs('attachPick')}
+                title={cs('attachPick')}
+                data-contact-pick
+                style={{ width: TILE, height: TILE }}
+                className={cn(
+                  'flex items-center justify-center rounded-md border border-dashed border-ink-3/50 text-ink-3',
+                  'transition-colors duration-fast hover:border-accent hover:bg-accent-subtle hover:text-accent',
+                  'focus-visible:outline-2 focus-visible:outline-accent disabled:pointer-events-none disabled:opacity-50',
+                  dragging && 'border-accent bg-accent-subtle text-accent',
+                )}
+              >
+                <Plus size={ICON_SIZE.lg} />
+              </button>
+            </li>
           )}
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="md"
-              disabled={!editable || draft.files.length >= maxFiles}
-              onClick={() => fileInput.current?.click()}
-              data-contact-pick
-            >
-              {cs('attachPick')}
-            </Button>
-            {s.fileError && (
-              <span className="type-caption text-danger-content" role="alert" data-contact-file-error={s.fileError}>
-                {cs(`fileError.${s.fileError}`)}
-              </span>
-            )}
-          </div>
+        </ul>
+        {s.fileError && (
+          <p className="type-caption text-danger-content" role="alert" data-contact-file-error={s.fileError}>
+            {cs(`fileError.${s.fileError}`, { max: maxFiles, size: formatBytes(maxTotal) })}
+          </p>
+        )}
           <input
             ref={fileInput}
             type="file"
@@ -336,7 +409,6 @@ export function ContactDialog() {
             }}
             data-contact-file-input
           />
-        </div>
       </div>
 
       <FieldGroup>
@@ -349,10 +421,7 @@ export function ContactDialog() {
               data-contact-diag
               className="mt-0.5"
             />
-            <span className="flex min-w-0 flex-col">
-              <span>{cs('diagLabel')}</span>
-              <span className="type-caption">{cs('diagHint')}</span>
-            </span>
+            <span>{cs('diagLabel')}</span>
           </label>
           {draft.attachDiag && (
             <Details data-contact-diag-details className="pl-6 text-sm">
@@ -402,13 +471,10 @@ export function ContactDialog() {
           data-contact-email
         />
         {draft.replyEmail.trim() !== '' && !validEmail(draft.replyEmail.trim()) && (
-          <p className="type-caption text-danger-content" data-contact-email-hint>
+          <p className="type-caption text-danger-content" role="alert" data-contact-email-hint>
             {cs('error.emailInvalid')}
           </p>
         )}
-        <p className="type-caption" data-contact-email-note>
-          {cs('emailNote')}
-        </p>
         {s.rememberedEmail && (
           <p className="flex items-center gap-1 type-caption" data-contact-email-remembered>
             {cs('emailRemembered')}
@@ -423,11 +489,10 @@ export function ContactDialog() {
 
   const lettersView = (
     <div className="flex flex-col gap-3" data-contact-letters>
-      <div className="flex items-center justify-between gap-2">
-        <p className="type-caption">{cs('lettersRetention', { days: capability.retention_days ?? 365 })}</p>
+      <div className="flex justify-end">
         <Button
-          variant="secondary"
-          size="md"
+          variant="ghost"
+          size="sm"
           loading={s.checking}
           loadingLabel={cs('lettersChecking')}
           onClick={() => void s.checkReplies()}
@@ -444,19 +509,22 @@ export function ContactDialog() {
       <ul className="flex flex-col gap-3">
         {s.messages.map((m) => (
           <li key={m.message_id} className="flex flex-col gap-2 rounded-md bg-surface-hover px-3 py-2.5" data-contact-letter={m.message_id}>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
-              <span className="font-medium text-ink">{cs('lettersNumber', { id: m.message_id })}</span>
-              <span className="type-caption">{cs('lettersSentAt', { time: formatDateTime(m.sent_at * 1000) })}</span>
-              <span className="type-caption">· {cs(`lettersState.${m.state}`)}</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="ml-auto"
+            <div className="flex items-center gap-x-2 text-sm">
+              <span className="font-mono text-xs text-ink" data-contact-letter-number>
+                {cs('lettersNumber', { id: m.message_id })}
+              </span>
+              <span className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-x-1.5">
+                <span className="type-caption">{cs('lettersSentAt', { time: formatDateTime(m.sent_at * 1000) })}</span>
+                <span className="type-caption">· {cs(`lettersState.${m.state}`)}</span>
+              </span>
+              <IconButton
+                label={cs('lettersForget')}
+                iconSize="sm"
                 onClick={() => void s.forget(m.message_id)}
                 data-contact-letter-forget
               >
-                {cs('lettersForget')}
-              </Button>
+                <Trash2 size={ICON_SIZE.sm} />
+              </IconButton>
             </div>
             <YourLetter subject={m.subject ?? ''} body={m.body ?? ''} names={m.attachment_names ?? []} />
             {m.poll_error && (
@@ -495,7 +563,6 @@ export function ContactDialog() {
       open={s.open}
       onOpenChange={(o) => s.setOpen(o)}
       title={view === 'letters' ? cs('letters') : cs('title')}
-      description={<span className="block text-sm leading-5">{cs('description')}</span>}
       size="md"
       anchor="contact"
       blockDismiss={busy}
@@ -503,15 +570,18 @@ export function ContactDialog() {
       status={view === 'write' ? statusNode : null}
       footer={{
         start: (
-          <Button
-            variant="ghost"
-            size="lg"
-            disabled={busy}
-            onClick={() => s.setView(view === 'write' ? 'letters' : 'write')}
-            data-contact-switch-view
-          >
-            {view === 'write' ? `${cs('letters')}${unreadBadge}` : cs('write')}
-          </Button>
+          <span className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="lg"
+              disabled={busy}
+              onClick={() => s.setView(view === 'write' ? 'letters' : 'write')}
+              data-contact-switch-view
+            >
+              {view === 'write' ? `${cs('letters')}${unreadBadge}` : cs('write')}
+            </Button>
+            {wecom && <WeComEntry />}
+          </span>
         ),
         secondary: busy ? (
           <Button

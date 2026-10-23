@@ -302,9 +302,8 @@ export default interface Resources {
       "title": "有未保存的修改"
     },
     "contact": {
-      "attachHint": "把截图或文件拖到这里，或点「选择文件」。支持图片、PDF、Word、Excel、PowerPoint；最多 {{max}} 个，合计不超过 {{size}}。",
       "attachLabel": "附件（选填）",
-      "attachPick": "选择文件",
+      "attachPick": "添加附件",
       "attachRemove": "移除 {{name}}",
       "bodyCount": "{{count}} / {{max}}",
       "bodyLabel": "想说的话",
@@ -319,7 +318,6 @@ export default interface Resources {
       "copied": "已复制",
       "copyAddress": "复制地址",
       "copyContent": "复制内容",
-      "description": "写给 Tavotto 的作者。不用登录，也不用配置邮箱。",
       "diagContents": "查看会发送的内容",
       "diagFailedPrepare": "诊断包没准备好，请取消勾选或稍后再试。",
       "diagFailure": "诊断信息没发出去：{{reason}}",
@@ -327,7 +325,6 @@ export default interface Resources {
         "prepare_failed": "诊断包没准备好。",
         "unknown": "结果无法确认，请到「发送问题反馈」里查看。"
       },
-      "diagHint": "已脱敏的诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），不附带你的脚本文件和数据文件。发送前可以先看包含哪些内容。",
       "diagKindsTitle": "包含",
       "diagLabel": "附上诊断信息",
       "diagPreparing": "正在准备诊断包…",
@@ -336,8 +333,7 @@ export default interface Resources {
       "done": "完成",
       "emailForget": "忘记",
       "emailLabel": "回信邮箱（选填）",
-      "emailNote": "填了邮箱作者会用邮件回你；不填也能在 Tavotto 里收到回信。邮箱只用来回信。",
-      "emailPlaceholder": "name@example.com",
+      "emailPlaceholder": "留邮箱，回信也会发到这里",
       "emailRemembered": "已在本机记住这个邮箱。",
       "error": {
         "attachment_empty": "有附件是空文件。",
@@ -358,8 +354,7 @@ export default interface Resources {
         "subjectTooLong": "主题太长了。",
         "subject_too_long": "主题太长了。"
       },
-      "failedFallback": "也可以复制内容，用你自己的邮箱发到 {{address}}。",
-      "failedKept": "你写的内容还在，可以再试一次。",
+      "failedFallback": "或用自己的邮箱发到 {{address}}",
       "failedTitle": "没有发送出去",
       "failure": {
         "api_incompatible": "这个版本的 Tavotto 与服务器不兼容，请先更新。",
@@ -387,10 +382,10 @@ export default interface Resources {
         "upload_url_rejected": "服务器给的上传地址不安全，已拒绝上传。"
       },
       "fileError": {
-        "count": "附件太多了。",
+        "count": "最多 {{max}} 个附件。",
         "empty": "空文件不能作为附件。",
-        "total": "附件合计太大了。",
-        "type": "这种文件类型不能作为附件。"
+        "total": "附件合计不能超过 {{size}}。",
+        "type": "只支持图片、PDF、Word、Excel、PowerPoint。"
       },
       "letters": "我的来信",
       "lettersAttachments": "附件：{{names}}",
@@ -399,9 +394,8 @@ export default interface Resources {
       "lettersCollapse": "收起",
       "lettersEmpty": "还没有写过信。发出的信会记在这里，作者的回信也会出现在这里。",
       "lettersExpand": "展开",
-      "lettersForget": "从本机删除记录",
+      "lettersForget": "从本机删除",
       "lettersNumber": "编号 {{id}}",
-      "lettersRetention": "来信与回信在服务器上保留 {{days}} 天，本机记录也会在到期后删除。",
       "lettersSentAt": "{{time}} 发出",
       "lettersState": {
         "closed": "已结束",
@@ -422,10 +416,10 @@ export default interface Resources {
       "send": "发送",
       "sentAnother": "再写一封",
       "sentCopyNumber": "复制编号",
-      "sentNoInboxEmail": "已送达。这台电脑存不下回信，作者会回到你的邮箱。",
-      "sentNoInboxNoEmail": "已送达，但这台电脑存不下回信，应用里收不到回复。想收到回复请留邮箱再发一次。",
-      "sentNumber": "编号 {{id}}，请留着它。",
-      "sentReplyHere": "回信会出现在这里的「我的来信」；有新回信时 Tavotto 会提醒你。",
+      "sentNoInboxEmail": "回信将发到你的邮箱。",
+      "sentNoInboxNoEmail": "这台电脑存不下回信；想收到回复，请留邮箱再发一次。",
+      "sentNumber": "编号 {{id}}",
+      "sentReplyHere": "回信会出现在「我的来信」里。",
       "sentTitle": "已发送",
       "stage": {
         "cancel": "正在取消…",
@@ -438,8 +432,9 @@ export default interface Resources {
       "subjectLabel": "主题（选填）",
       "subjectPlaceholder": "一句话说明想聊什么",
       "title": "联系作者",
-      "toLabel": "收件人",
       "unreadDot": "有新回信",
+      "wecom": "企业微信",
+      "wecomScan": "微信扫码添加",
       "write": "写信"
     },
     "draftGuard": {

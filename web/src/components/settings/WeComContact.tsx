@@ -40,7 +40,7 @@ export function WeComQr() {
 }
 
 /** 二维码图（展开后才挂）。 */
-function WeComQrImage() {
+export function WeComQrImage() {
   return (
     <img
       src={qrUrl}
