@@ -309,7 +309,7 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 | argparse_defaults | `argparse_out`（保存路径来自 argparse，默认值=原路径） | args | 保型 |
 | data_source | `inline_to_file`（第一个字面量数据列表改读相对 JSON）；CG-07 读文件写法：`read_csv_pandas`、`read_csv_numpy`（`loadtxt`）、`genfromtxt_names`、`read_tsv_stdlib`、`read_npy`、`read_pickle`、`read_excel`（openpyxl）、`read_parquet`（pyarrow）、`glob_dir`（拆成 `data/*.csv` 再 `sorted(glob)`） | data_source | 保型 |
 | entry_form | `class_wrapper`（绘图代码移进 `class Plotter: def run(self)`）、`return_fig`（`_cg_draw()` 返回 fig，调用方 savefig）、`sys_argv_out`（保存路径来自 `sys.argv[1]`，缺省为原路径）、`cell_markers`（语句之间插 `# %%` / `# %% [markdown]` 注释，模拟 notebook 导出的 .py）——CG-08 | entry（`class_wrapper`、`return_fig`，与 `wrap_main` 互斥）、args（`sys_argv_out`，与 `argparse_out` 互斥）、cells（`cell_markers`） | 保型 |
-| output_call | `multi_format`（同一 stem 存 png+pdf+svg）、`pdfpages`（`PdfPages` 多页）、`bytesio_close`（savefig 到 `io.BytesIO` 后 close，**#749**）、`same_stem_two_figs`（两张不同的图写同一 stem 不同格式、后写的被 close，**f4p 缺口**）、`bbox_tight_dpi`（`bbox_inches="tight", dpi=600`）——CG-08 | output_call（与 `show_only` / `show_close` 互斥） | 改轴 |
+| output_call | `multi_format`（同一 stem 存 png+pdf+svg）、`pdfpages`（`PdfPages` 多页）、`bytesio_close`（savefig 到 `io.BytesIO` 后 close，**#749**）、`same_stem_two_figs`（两张不同的图写同一 stem 不同格式、后写的被 close；#1250 后第二张另存 `<stem>-2` 不再丢，只剩同路径内容差异 `same_path_content_mismatch`）、`bbox_tight_dpi`（`bbox_inches="tight", dpi=600`）——CG-08 | output_call（与 `show_only` / `show_close` 互斥） | 改轴 |
 | style_rc | `rcparams`、`style_use` | style | 改轴；现在可执行（CG-06 起 `compare` 之外还有像素判定，样式差异观察得到） |
 
 **data_source 家族（CG-07，`scripts/ci/compat_explore_data.py`）**：同轴互斥，一条链至多一个数据来源；全部以第一个字面量数值列表为数据源，

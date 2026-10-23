@@ -102,6 +102,11 @@ class Slicing(unittest.TestCase):
                 sh.parse_shard(bad)
 
 
+#: 两个候选的小池：一个可执行父本、一个纯静态父本，各一条 import_alias 单步链。池大小由这两条过滤钉死，
+#: 不随新家族（CG-07 / CG-08）加变换而变：这几条用例钉的是切片与过滤的次序，不是某个家族有几条。
+SMALL_POOL = ("--parent", "s01_plain,shape_toplevel_imperative", "--families", "import_alias")
+
+
 class ExploreShardCli(unittest.TestCase):
     """`explore --shard` through the real CLI; --static-only keeps these off the executor."""
 
@@ -153,16 +158,16 @@ class ExploreShardCli(unittest.TestCase):
         self.assertEqual(report["shard"]["filters"]["limit"], 3)
 
     def test_filters_run_before_the_slice_and_are_recorded(self):
-        _, report = self.explore("--shard", "1/2", "--families", "entry_form")
+        _, report = self.explore("--shard", "1/2", *SMALL_POOL)
         self.assertEqual(report["shard"]["candidates_total"], 2)
         self.assertEqual(report["shard"]["candidates_in_shard"], 1)
-        self.assertEqual(report["shard"]["filters"]["families"], ["entry_form"])
+        self.assertEqual(report["shard"]["filters"]["families"], ["import_alias"])
         _, parent = self.explore("--shard", "1/2", "--parent", "shape_oo_savefig")
         self.assertEqual(parent["shard"]["filters"]["parent"], ["shape_oo_savefig"])
         self.assertTrue(all(r["parent"] == "shape_oo_savefig" for r in parent["candidates"]))
 
     def test_a_shard_with_nothing_in_it_publishes_no_report(self):
-        code, report = self.explore("--shard", "3/3", "--families", "entry_form")
+        code, report = self.explore("--shard", "3/3", *SMALL_POOL)
         self.assertEqual(code, 2)
         self.assertIsNone(report)
 
@@ -545,10 +550,10 @@ class RealShardedExplore(unittest.TestCase):
                     seed=7,
                     out=str(Path(tmp) / f"s{k}"),
                     limit=2,
-                    parent=None,
+                    parent=SMALL_POOL[1],
                     static_only=False,
                     candidates=None,
-                    families="entry_form",
+                    families=SMALL_POOL[3],
                     confirm_differences=0,
                     expected_sha=None,
                     timeout=200,

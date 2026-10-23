@@ -587,20 +587,22 @@ class RealExecution(unittest.TestCase):
                 zero = record["judgment"]["differences"][0]
                 self.assertEqual(zero["evidence"]["tavotto_error"], "script_no_figure")
 
-    def test_same_stem_two_figs_is_the_known_f4p_gap(self):
-        """同一 stem 两张图、后写的被 close：后写且被 close 的那张从 Tavotto 的捕获里消失。登记已知、已看到。"""
+    def test_same_stem_two_figs_loses_no_figure_but_the_stem_file_still_differs(self):
+        """同一 stem 两张图、后写的被 close。#1250 之后后写的那张不再从捕获里消失（另起 `<stem>-2`），
+        所以 `fewer_figures` / `title_missing` 没了；剩下的是同一路径上的内容：原生磁盘上的 `<stem>.png`
+        最后是第二张，Tavotto 的 `<stem>` 仍是第一张。登记已知、已看到——只钉这一种差异。"""
         for case in self.PARENTS:
             with self.subTest(parent=case):
                 record = self.check_axis_changing("same_stem_two_figs", case)
                 self.assertEqual(record["native"]["figure_count"], 2, record)
                 self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
                 self.assertEqual(self.kinds(record), SAME_STEM_KINDS, record["judgment"])
-                titles = {
-                    d["evidence"].get("title")
-                    for d in record["judgment"]["differences"]
-                    if d["kind"] == "title_missing"
-                }
-                self.assertEqual(titles, {"cg_second"})
+                (diff,) = record["judgment"]["differences"]
+                self.assertEqual(diff["evidence"]["native_titles"], ["cg_second"])
+                self.assertNotEqual(diff["evidence"]["tavotto_titles"], ["cg_second"])
+                # 第二张图被 Tavotto 另存了一个 stem（不是丢了）
+                titles = [t for v in record["tavotto"]["stems"].values() for t in v["titles"]]
+                self.assertIn("cg_second", titles)
 
     def test_bbox_tight_dpi_capture_is_right_and_pixels_are_reported_as_observed(self):
         """图的捕获没问题（一张、无 zero / fewer）。像素层本机观察到 pixel_mismatch（原生按 tight 裁切、
@@ -613,7 +615,7 @@ class RealExecution(unittest.TestCase):
 
 #: 已知缺口的差异种类（Tavotto 产品侧，不是模板 bug；这里只登记「已知、已看到」，不替产品掩盖）
 BYTESIO_KINDS = {"zero_figures"}
-SAME_STEM_KINDS = {"fewer_figures", "same_path_content_mismatch", "title_missing"}
+SAME_STEM_KINDS = {"same_path_content_mismatch"}
 
 for _name in ENTRY_FORMS:
     setattr(
