@@ -5,8 +5,11 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import types
 from pathlib import Path
 from unittest import mock
+
+import pytest
 
 CI_DIR = Path(__file__).resolve().parents[1] / "scripts" / "ci"
 sys.path.insert(0, str(CI_DIR))
@@ -114,3 +117,45 @@ def test_environment_identity_changes_when_either_side_changes(monkeypatch):
     changed_science = {"facts": {**science["facts"], "python": "3.13.1"}}
     assert identity(science, changed_guard)["fingerprint"] != base["fingerprint"]
     assert identity(changed_science, guard)["fingerprint"] != base["fingerprint"]
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        ["module:numpy@science"],
+        ["module:matplotlib@science"],
+        ["science_python:unusable"],
+        ["module:numpy@guardian"],
+        ["module:PIL@guardian"],
+        ["module:numpy"],
+    ],
+)
+def test_blocking_prerequisites_stop_before_the_native_leg(missing, tmp_path):
+    native_leg = mock.Mock(name="run_driver")
+    cm = types.ModuleType("compat_matrix")
+    cm.run_driver = native_leg
+    cm.materialize = native_leg
+    with (
+        mock.patch.dict(sys.modules, {"compat_matrix": cm}),
+        mock.patch.object(guardian, "preflight", return_value=missing),
+        mock.patch.object(guardian, "environment", return_value={}),
+        mock.patch.object(guardian, "selected_registry", return_value={"c": {"id": "c"}}),
+        mock.patch.object(guardian, "finalize_row", side_effect=lambda row: row),
+    ):
+        row = guardian._execute(
+            {
+                "suite": "compat_engine",
+                "case": "c",
+                "work": str(tmp_path),
+                "evidence": str(tmp_path),
+            }
+        )
+    assert row["native"]["status"] == "environment_unavailable"
+    assert row["raw"] == {"missing_prerequisites": missing}
+    native_leg.assert_not_called()
+
+
+def test_non_blocking_gaps_do_not_stop_the_native_leg():
+    for item in ("font:x.ttf", "module:flask@guardian", "module:pikepdf"):
+        assert not guardian.blocks_execution(item)
+    assert guardian.parse_prerequisite("module:numpy@science") == ("module", "numpy", "science")

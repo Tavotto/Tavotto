@@ -235,6 +235,24 @@ def preflight() -> list[str]:
     return local + remote + _font_gaps()
 
 
+#: Modules whose absence makes the native leg meaningless (scripts/workers need matplotlib/numpy; the
+#: pixel comparison needs numpy/Pillow in the Guardian process). Either side blocks execution.
+BLOCKING_MODULES = ("matplotlib", "numpy", "PIL")
+
+
+def parse_prerequisite(item: str) -> tuple[str, str, str | None]:
+    """`module:numpy@science` -> ("module", "numpy", "science"); `font:x` -> ("font", "x", None)."""
+    kind, _, rest = item.partition(":")
+    name, _, side = rest.partition("@")
+    return kind, name, side or None
+
+
+def blocks_execution(item: str) -> bool:
+    """Single authority: does this `preflight()` item make running the native leg pointless?"""
+    kind, name, _side = parse_prerequisite(item)
+    return (kind == "module" and name in BLOCKING_MODULES) or item == "science_python:unusable"
+
+
 def _font_gaps() -> list[str]:
     missing: list[str] = []
     allowlist = json.loads(
@@ -780,7 +798,7 @@ def _execute(request: dict) -> dict:
     )
     scenario_absent: tuple = ()
     missing = preflight()
-    if any(f"module:{name}" in missing for name in ("matplotlib", "numpy", "PIL")):
+    if any(blocks_execution(item) for item in missing):
         row["native"]["status"] = "environment_unavailable"
         row["raw"] = {"missing_prerequisites": missing}
         row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
