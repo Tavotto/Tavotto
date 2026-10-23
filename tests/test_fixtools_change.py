@@ -1073,7 +1073,7 @@ def test_backups_skip_environment_and_vcs_folders(box):
     put(box.proj / "fig.py", b"A = 1\n")
     put(box.proj / ".venv" / "lib" / "x.py", b"junk")
     put(box.proj / "node_modules" / "y.py", b"junk")
-    got = snapshots.collect_scripts(box.proj)
+    got = snapshots.list_scripts(box.proj)
     assert [Path(k).name for k in got] == ["fig.py"]
 
 
@@ -1136,3 +1136,135 @@ def test_a_failed_freeze_is_still_unavailable_not_empty(box):
     call(ctx, "install_packages", {"env": "e", "packages": ["seaborn"]})
     doc = snapshots.load(ctx, ctx.call_meta["snapshot"])
     assert doc["envs"]["e"]["freeze_available"] is False
+
+
+# =========================================================================== 第三轮：持锁的基线（用户并发保存不被当成破坏）
+def _ui_save(path: Path, data: bytes, done: dict) -> threading.Thread:
+    """界面保存脚本走的写入口：持脚本锁 + write_script（与 scriptbackup.replace 同一把锁）。"""
+    from tavotto.engine import scriptlock
+
+    def go():
+        with scriptlock.script_guard(path):
+            scriptlock.write_script(path, data)
+        done["at"] = __import__("time").monotonic()
+
+    t = threading.Thread(target=go, daemon=True)
+    t.start()
+    return t
+
+
+def test_a_script_saved_while_the_approval_card_is_open_is_not_rolled_back(box):
+    fig = put(box.proj / "fig.py", b"OLD\n")
+
+    def ask(card):  # 用户在审批卡开着时在界面里保存了脚本，然后点 yes
+        fig.write_bytes(b"USER SAVED\n")
+        return {"answer": "yes"}
+
+    ctx = change_ctx(box, ask=ask)
+    r = call(ctx, "run_command", {"argv": _py("print(1)")})
+    assert not r.is_error and fig.read_bytes() == b"USER SAVED\n"
+    assert "scripts_restored" not in r.content
+    doc = snapshots.load(ctx, ctx.call_meta["snapshot"])
+    assert doc["scripts"][0]["sha256"] == __import__("hashlib").sha256(b"USER SAVED\n").hexdigest()
+
+
+def test_a_ui_save_during_the_command_waits_for_it_and_survives(box):
+    import time
+
+    fig = put(box.proj / "fig.py", b"OLD\n")
+    started = box.tmp / "started.txt"
+    code = f"import time\nopen({str(started)!r}, 'w').write('x')\ntime.sleep(1.5)"
+    ctx = change_ctx(box)
+    result: dict = {}
+    runner = threading.Thread(
+        target=lambda: result.setdefault("r", call(ctx, "run_command", {"argv": _py(code)})),
+        daemon=True,
+    )
+    runner.start()
+    for _ in range(300):
+        if started.exists():
+            break
+        time.sleep(0.05)
+    assert started.exists()
+    t0 = time.monotonic()
+    done: dict = {}
+    saver = _ui_save(fig, b"USER NEW\n", done)
+    saver.join(30)
+    runner.join(30)
+    assert not saver.is_alive() and not runner.is_alive()
+    assert done["at"] - t0 >= 0.8, "the UI save must wait for the command to finish"
+    r = result["r"]
+    assert not r.is_error and "scripts_restored" not in r.content
+    assert fig.read_bytes() == b"USER NEW\n"  # 用户的新版本落盘了，没被恢复成旧版
+
+
+def test_scripts_behind_a_directory_link_are_protected_and_cycles_terminate(box):
+    shared = box.home / "shared"
+    lib = put(shared / "lib.py", b"X = 1\n")
+    (box.proj / "shared").symlink_to(shared, target_is_directory=True)
+    (box.proj / "loop").symlink_to(box.proj, target_is_directory=True)  # 环
+    got = snapshots.list_scripts(box.proj)
+    assert os.path.realpath(lib) in got
+    ctx = change_ctx(box)
+    r = call(ctx, "run_command", {"argv": _py("open('shared/lib.py', 'w').write('CHANGED')")})
+    assert lib.read_bytes() == b"X = 1\n" and "scripts_restored: 1" in r.content
+
+
+def test_linked_folders_in_sensitive_places_are_not_walked(box):
+    secret = put(box.home / ".ssh" / "evil.py", b"S = 1\n")
+    (box.proj / "ssh").symlink_to(box.home / ".ssh", target_is_directory=True)
+    outside = put(box.tmp / "outside_home" / "o.py", b"O = 1\n")
+    (box.proj / "out").symlink_to(box.tmp / "outside_home", target_is_directory=True)
+    got = snapshots.list_scripts(box.proj, make_ctx(box).scope)
+    assert os.path.realpath(secret) not in got and os.path.realpath(outside) not in got
+
+
+def test_directory_links_count_against_the_size_limits(box, monkeypatch):
+    put(box.home / "shared" / "a.py", b"A\n")
+    put(box.home / "shared" / "b.py", b"B\n")
+    (box.proj / "shared").symlink_to(box.home / "shared", target_is_directory=True)
+    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_FILES", 1)
+    assert snapshots.list_scripts(box.proj) is None
+    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_FILES", 10)
+    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_ENTRIES", 2)
+    assert snapshots.list_scripts(box.proj) is None
+
+
+def test_a_ui_save_during_the_conversion_waits_and_is_not_treated_as_tampering(box):
+    import time
+
+    orig = put(box.proj / "fig.py", b"print(1)\n")
+    done: dict = {}
+    state: dict = {}
+
+    def converter(req):
+        state["saver"] = _ui_save(orig, b"USER NEW\n", done)
+        time.sleep(0.6)
+        state["converter_returned_at"] = time.monotonic()
+        Path(req["output"]).write_bytes(b"import matplotlib\n")
+        return {"ok": True}
+
+    ctx = change_ctx(box, script_path=orig, script_converter=converter)
+    r = call(ctx, "convert_script", {})
+    state["saver"].join(30)
+    assert not r.is_error, r.content
+    assert done["at"] >= state["converter_returned_at"]
+    assert orig.read_bytes() == b"USER NEW\n"
+
+
+def test_converter_scratch_copy_cleanup_failure_is_reported_and_swept_later(box, monkeypatch):
+    orig = put(box.proj / "fig.py", b"print(1)\n")
+    ctx = change_ctx(box, script_path=orig, script_converter=_converter())
+    real = trial._rmtree_once
+    monkeypatch.setattr(
+        trial, "_rmtree_once", lambda path: (_ for _ in ()).throw(OSError("in use"))
+    )
+    monkeypatch.setattr(trial, "CLEANUP_DELAY_S", 0)
+    r = call(ctx, "convert_script", {})
+    assert not r.is_error and "cleanup_pending" in r.content
+    left = [d for d in change.convert_root().iterdir()]
+    assert len(left) == 1 and (left[0] / trial.PENDING_MARKER).exists()
+    monkeypatch.setattr(trial, "_rmtree_once", real)
+    r = call(ctx, "convert_script", {})  # 下一次开头扫掉残留
+    assert not r.is_error and "cleanup_pending" not in r.content
+    assert list(change.convert_root().iterdir()) == []

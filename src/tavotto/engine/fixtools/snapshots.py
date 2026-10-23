@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
@@ -121,28 +122,76 @@ def is_user_script(name: str) -> bool:
     return Path(name).suffix == ".py" or sourcelang.extension_hint(name) is not None
 
 
-def collect_scripts(project_root: Path) -> dict[str, bytes] | None:
-    """项目里所有用户脚本的字节，键 = 真实路径（符号链接解析后，所以经链接改到项目外的脚本也在内）。
-    超过 `SCRIPTS_MAX_FILES` / `SCRIPTS_MAX_BYTES` 回 None（备份不了就不让命令去跑）；读不了的文件同样当作备份不了。"""
-    found: dict[str, bytes] = {}
-    total = 0
-    for dirpath, dirnames, filenames in os.walk(project_root, followlinks=False):
-        dirnames[:] = [d for d in dirnames if d not in SCRIPTS_SKIP_DIRS]
-        for name in filenames:
-            if not is_user_script(name):
-                continue
-            real = os.path.realpath(os.path.join(dirpath, name))
-            if real in found or not os.path.isfile(real):
-                continue
-            try:
-                data = Path(real).read_bytes()
-            except OSError:
+#: 找脚本时最多看这么多个目录条目（跟随目录链接后可能撞上一棵巨树）；超了按「备份不了」处理
+SCRIPTS_MAX_ENTRIES = 200_000
+
+
+def list_scripts(project_root: Path, scope=None) -> list[str] | None:
+    """项目里所有用户脚本的**真实路径**（去重）。回 None = 规模超限（文件数 / 总字节 / 目录条目数），备份不了就不让命令去跑。
+
+    **跟随目录符号链接**（`shared -> ../shared` 里的脚本命令一样改得到），按目录的真实路径去重防环；`scope`（`ReadScope`）给了，
+    不在允许范围内或在敏感区（`DENY`）的目录 / 文件不下探、不收。只 stat、不读内容。"""
+    found: dict[str, int] = {}
+    seen_dirs: set[str] = set()
+    stack = [os.path.realpath(project_root)]
+    entries = total = 0
+    while stack:
+        cur = stack.pop()
+        if cur in seen_dirs:
+            continue
+        seen_dirs.add(cur)
+        try:
+            with os.scandir(cur) as it:
+                listing = list(it)
+        except OSError:
+            continue
+        for e in listing:
+            entries += 1
+            if entries > SCRIPTS_MAX_ENTRIES:
                 return None
-            total += len(data)
+            try:
+                is_dir = e.is_dir()  # 跟随链接
+                if not is_dir and not (is_user_script(e.name) and e.is_file()):
+                    continue
+                if is_dir and e.name in SCRIPTS_SKIP_DIRS:
+                    continue
+                real = os.path.realpath(e.path)
+                if scope is not None and not scope.check(e.path).ok:
+                    continue
+                if is_dir:
+                    stack.append(real)
+                    continue
+                if real in found:
+                    continue
+                size = os.stat(real).st_size
+            except OSError:
+                return None  # 看得见却读不了：保护不了，当作备份不了
+            total += size
             if len(found) >= SCRIPTS_MAX_FILES or total > SCRIPTS_MAX_BYTES:
                 return None
-            found[real] = data
-    return found
+            found[real] = size
+    return sorted(found)
+
+
+def read_scripts(paths: list[str]) -> dict[str, bytes] | None:
+    """读出这些脚本的字节（基线）；读不了回 None。**调用方要先持有它们的锁**（见 `hold_scripts`）。"""
+    out: dict[str, bytes] = {}
+    for real in paths:
+        try:
+            out[real] = Path(real).read_bytes()
+        except OSError:
+            return None
+    return out
+
+
+@contextlib.contextmanager
+def hold_scripts(paths: list[str]):
+    """依次（按规范化真实路径排序，防死锁）持有这些脚本的 `scriptlock.script_guard`，整段「取基线 → 命令 → 核对 / 恢复」不放。
+    界面里的保存走同一把锁（`scriptbackup.replace` 等），会**等**到这一段结束再落盘，所以用户的合法编辑不会被当成命令的改动写回旧版。"""
+    with contextlib.ExitStack() as stack:
+        for real in sorted(paths, key=scriptlock.script_key):
+            stack.enter_context(scriptlock.script_guard(real))
+        yield
 
 
 def restore_script(path: str | os.PathLike, data: bytes) -> bool:

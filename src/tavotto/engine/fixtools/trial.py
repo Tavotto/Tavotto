@@ -675,13 +675,15 @@ def _remove_tree(path: Path, *, attempts: int | None = None) -> bool:
     return not path.exists()
 
 
-def sweep_stale_trials(*, max_age_s: float | None = None, now: float | None = None) -> int:
+def sweep_stale_trials(
+    *, max_age_s: float | None = None, now: float | None = None, root: Path | None = None
+) -> int:
     """清残留的试跑副本：有 `.cleanup_pending` 标记的，或超过 `STALE_TRIAL_AGE_S` 没动过的。回清掉的个数。
 
     挂点：`try_run` 每次开头调一次（fixtools 首次使用时就扫）。在途的试跑目录既没标记又很新，不会被误删。"""
     age = STALE_TRIAL_AGE_S if max_age_s is None else max_age_s
     now = time.time() if now is None else now
-    root = trial_root()
+    root = root if root is not None else trial_root()
     removed = 0
     try:
         entries = [p for p in root.iterdir() if p.is_dir() and not p.is_symlink()]

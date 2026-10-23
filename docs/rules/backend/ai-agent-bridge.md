@@ -463,3 +463,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   命令结束（含超时）后 `verify_scripts` 逐个核对，被改 / 被删的经 `snapshots.restore_script`（`scriptlock.script_guard` + `write_script`，持有者清单已登记）写回原字节，结果带 `scripts_restored`；写回失败 → `scripts_unrestored`，并把路径记进快照的 `unrestored`，`rollback` 再试一次（只恢复这些，不碰用户后来自己改的）。命令运行期间用户在界面里改同一脚本会被一并写回（已知取舍）。
   `convert_script` 的转换器拿到的是原脚本的**临时副本**（`data_dir()/cache/fix_convert/`，用完即删）；返回后仍核原脚本哈希，变了用执行前读到的原字节经同一条路径恢复并报 `original_modified`。
 - **freeze 的「可用」按成败判（#1371 P1）**：`default_freezer` 成功回文本（全新空环境是 `""`）、失败回 `None`；快照的 `freeze_available` = 拿到了没有，不按输出是否为空。
+- **持锁的基线（#1371 第三轮）**：「取基线 → 执行 → 核对 / 恢复」中间有窗口，用户的合法保存会被当成命令的改动写回旧版——所以不补窗口，改结构：`run_command` 审批前只做规模预检（`snapshots.list_scripts`，超限 `scripts_too_large` 不问用户），
+  用户点 yes 之后 `snapshots.hold_scripts` 按规范化真实路径排序依次持有全部用户脚本的 `script_guard`（`ExitStack`），在锁内读基线、打快照、跑命令、核对恢复，全程不放。界面保存走同一把锁（`scriptbackup.replace` 等），是**阻塞等待**不是失败：
+  命令跑的这段时间（最长 300 s）保存请求会挂着，命令结束才落盘，内容是用户的新版本。`convert_script` 同理，原脚本的锁从读基线持到核对完。`list_scripts` 跟随目录符号链接（按真实路径去重防环），受 `ReadScope`（允许范围 + DENY）与 1000 个 / 32 MiB / 20 万目录条目上限约束。
+  转换器临时副本（`data_dir()/cache/fix_convert/`）用 `trial._remove_tree` 带重试清理，删不掉如实报 `cleanup_pending` 并留 `.cleanup_pending` 标记，下次 `trial.sweep_stale_trials(root=…)` 清。

@@ -21,7 +21,6 @@ import hashlib
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import threading
 import uuid
@@ -427,8 +426,6 @@ def _project_env_ids(ctx: FixContext) -> list[str]:
 
 
 def run_command(ctx: FixContext, args: dict) -> ToolResult:
-    from . import trial
-
     argv = _command_argv(args)
     if isinstance(argv, ToolResult):
         return argv
@@ -444,14 +441,9 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
     cwd = str(ctx.project_root)
     if not os.path.isdir(cwd):
         return err("no_project", "The project folder is not there.")
-    # 用户脚本永不被改：执行前把项目里的用户脚本字节备份进快照，备份不了（太多 / 太大 / 读不了）就不让命令去跑
-    saved_files = snapshots.collect_scripts(ctx.project_root)
-    if saved_files is None:
-        return err(
-            "scripts_too_large",
-            "The project has too many or too large script files to protect while a command runs, "
-            "so the command was not run. Run it yourself, or use a more specific tool.",
-        )
+    # 用户脚本永不被改。审批前只做规模预检（超限不问用户）；用户点了 yes 之后才在**持锁**状态下取基线（见 `_run_locked`）
+    if snapshots.list_scripts(ctx.project_root, ctx.scope) is None:
+        return _too_many_scripts()
     shown = shlex.join(argv) if os.name != "nt" else subprocess.list2cmdline(argv)
     denied = approve(
         ctx,
@@ -461,6 +453,31 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
     )
     if denied is not None:
         return denied
+    paths = snapshots.list_scripts(ctx.project_root, ctx.scope)
+    if paths is None:
+        return _too_many_scripts()
+    # 「取基线 → 执行 → 核对 / 恢复」整段持有这些脚本的锁：界面里的保存走同一把锁，会等命令结束再落盘，
+    # 所以审批卡开着时、命令运行中用户做的合法编辑既不会进基线、也不会被当成命令的改动写回旧版
+    with snapshots.hold_scripts(paths):
+        saved_files = snapshots.read_scripts(paths)
+        if saved_files is None:
+            return _too_many_scripts()
+        return _run_locked(ctx, argv, cwd, timeout, saved_files)
+
+
+def _too_many_scripts() -> ToolResult:
+    return err(
+        "scripts_too_large",
+        "The project has too many or too large script files to protect while a command runs, "
+        "so the command was not run. Run it yourself, or use a more specific tool.",
+    )
+
+
+def _run_locked(
+    ctx: FixContext, argv: list[str], cwd: str, timeout: float, saved_files: dict[str, bytes]
+) -> ToolResult:
+    from . import trial
+
     if snapshots.take(ctx, "run_command", _project_env_ids(ctx), saved_files) is None:
         return err(
             "snapshot_failed", "Could not save a snapshot to roll back to, so nothing was changed."
@@ -543,6 +560,13 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
 
 
 # --------------------------------------------------------------------------- convert_script
+def convert_root() -> Path:
+    """转换器临时副本的家：Tavotto 自己的缓存目录（清不掉的残留要找得到、扫得到）。"""
+    from .. import config
+
+    return config.data_dir() / "cache" / "fix_convert"
+
+
 def _sha256(path: Path) -> str | None:
     h = hashlib.sha256()
     try:
@@ -599,31 +623,44 @@ def convert_script(ctx: FixContext, args: dict) -> ToolResult:
     bad = _snapshot_or_error(ctx, "convert_script")
     if bad is not None:
         return bad
-    try:
-        original = script.read_bytes()
-    except OSError:
-        return err("no_script", "That script file could not be read.")
-    # 转换器拿到的是原脚本的**临时副本**，不是原路径：它没有任何理由去写原脚本
-    from .. import config
+    from .. import scriptlock
+    from . import trial
 
-    work = config.data_dir() / "cache" / "fix_convert" / uuid.uuid4().hex
-    try:
-        work.mkdir(parents=True)
-        copy_path = work / script.name
-        copy_path.write_bytes(original)
-    except OSError:
-        shutil.rmtree(work, ignore_errors=True)
-        return err("copy_failed", "Could not make a scratch copy of the script.")
-    try:
-        res = executors.call_executor(
-            ctx.script_converter,
-            {"script": str(copy_path), "output": str(out), "project": str(ctx.project_root)},
-        )
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-    # 原脚本绝对不动：无论执行器说什么，字节变了就用执行前读到的原字节经 scriptlock 恢复，并报错
-    if _sha256(script) != hashlib.sha256(original).hexdigest():
-        back = snapshots.restore_script(script, original)
+    trial.sweep_stale_trials(root=convert_root())  # 上次没删干净的临时副本
+    work = convert_root() / uuid.uuid4().hex
+    pending = False
+    # 「读基线 → 转换器 → 核对 / 恢复」整段持原脚本的锁：用户在界面里并发保存会等这一段结束，不会被当成转换器的篡改写回旧版
+    with scriptlock.script_guard(script):
+        try:
+            original = script.read_bytes()
+        except OSError:
+            return err("no_script", "That script file could not be read.")
+        # 转换器拿到的是原脚本的**临时副本**，不是原路径：它没有任何理由去写原脚本
+        try:
+            work.mkdir(parents=True)
+            copy_path = work / script.name
+            copy_path.write_bytes(original)
+        except OSError:
+            trial._remove_tree(work)
+            return err("copy_failed", "Could not make a scratch copy of the script.")
+        try:
+            res = executors.call_executor(
+                ctx.script_converter,
+                {"script": str(copy_path), "output": str(out), "project": str(ctx.project_root)},
+            )
+        finally:
+            # 带重试；删不掉留 .cleanup_pending 标记，下次 sweep
+            pending = not trial._remove_tree(work)
+        # 原脚本绝对不动：无论执行器说什么，字节变了就用执行前读到的原字节经 scriptlock 恢复，并报错
+        modified = _sha256(script) != hashlib.sha256(original).hexdigest()
+        back = snapshots.restore_script(script, original) if modified else True
+    note = (
+        "\ncleanup_pending: the scratch copy could not be fully deleted; it is kept in Tavotto's cache "
+        "folder and will be removed later."
+        if pending
+        else ""
+    )
+    if modified:
         return err(
             "original_modified",
             _with_snapshot(
@@ -634,19 +671,21 @@ def convert_script(ctx: FixContext, args: dict) -> ToolResult:
                     if back
                     else "The original could NOT be put back."
                 )
-                + " Tell the user.",
+                + " Tell the user."
+                + note,
             ),
         )
     if not res.get("ok") or not out.is_file():
         return err(
             str(res.get("code") or "convert_failed")[:60],
             _with_snapshot(
-                ctx, str(res.get("message") or "The conversion did not produce a script.")
+                ctx, str(res.get("message") or "The conversion did not produce a script.") + note
             ),
         )
     return _done(
         ctx,
-        f"Converted. The new script was saved next to the original as `{out.name}`; the original is untouched.",
+        f"Converted. The new script was saved next to the original as `{out.name}`; the original is untouched."
+        + note,
         "script converted",
     )
 
