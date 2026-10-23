@@ -317,18 +317,65 @@ def _check_panel_raster(panel: dict, profile: dict, sink: _Sink) -> None:
     )
 
 
-def _iter_font_elements(manifest: dict):
-    """(element, fontsize) —— manifest 里一切带字号的元素。"""
+def _hidden_legends(manifest: dict) -> set[str]:
+    """被整体藏起来的图例的 gid。
+
+    图例条目（`legend_text`，含标题）的 `visible` 是**条目自己**的可见性，图例整体
+    `set_visible(False)` 时它们仍报 True——「这段字画没画出来」要回到图例本体上问。
+    """
+    return {
+        str(el.get("gid", ""))
+        for el in manifest.get("elements") or []
+        if el.get("role") == "legend" and _field(el, "visible") is False
+    }
+
+
+def _is_drawn(el: dict, hidden_legends: set[str]) -> bool:
+    """这个元素此刻画出来了吗——预检里所有「只量画出来的东西」共用的唯一判据。
+
+    `visible` 不是 False，且（图例条目）所在的图例没有被整体藏起来。
+    """
+    if _field(el, "visible") is False:
+        return False
+    if el.get("role") == "legend_text":
+        return str(el.get("gid", "")).rpartition(".")[0] not in hidden_legends
+    return True
+
+
+def legend_entry_sizes(manifest: dict) -> dict[str, list[float]]:
+    """图例 gid → 它里面**画出来的条目文字**的字号（脚本值，不乘缩放）。
+
+    `legend-font-size` 量的是这个，不是图例的 `fontsize` 设置器；按规范修图
+    （`specfix`）也从这里取数，免得「判的」与「改的」不是同一个量。标题
+    （`.title`）不在内——它是单独一个文字元素，由字号三条规则按自己的 gid 报。
+    """
+    hidden = _hidden_legends(manifest)
+    out: dict[str, list[float]] = {}
     for el in manifest.get("elements") or []:
+        if el.get("role") != "legend_text" or not _is_drawn(el, hidden):
+            continue
+        parent, _, leaf = str(el.get("gid", "")).rpartition(".")
+        size = _num(_field(el, "fontsize"))
+        if leaf.startswith("texts_") and size is not None:
+            out.setdefault(parent, []).append(size)
+    return out
+
+
+def _iter_font_elements(manifest: dict, hidden_legends: set[str]):
+    """(element, fontsize) —— 一切**画出来的文字元素**的字号。
+
+    只量字真正画在图上的元素。容器上的字号设置器（图例的 `fontsize` /
+    `title_fontsize`、色条的 `tick_fontsize`）不量：它们画出来的字已经由
+    `legend_text`（含图例标题）与 `ticks` 元素各自带着真实字号报过一遍，再量一次
+    是同一段字报两次；而设置器的值与画出来的字会分叉（逐条改好图例项后
+    `_fontsize` 不动），那样的提醒用户永远消不掉。
+    """
+    for el in manifest.get("elements") or []:
+        if el.get("role") == "legend" or not _is_drawn(el, hidden_legends):
+            continue
         size = _num(_field(el, "fontsize"))
         if size is not None:
             yield el, size
-        tick = _num(_field(el, "tick_fontsize"))  # colorbar 的刻度字号
-        if tick is not None:
-            yield el, tick
-        title = _num(_field(el, "title_fontsize"))  # 图例标题
-        if title is not None:
-            yield el, title
 
 
 def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
@@ -351,10 +398,9 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
     cjk_ok = {str(x).lower() for x in (cjk.get("accepted") or [])}
     weights = profile.get("text_weight_policy") or {}
 
-    for el, size in _iter_font_elements(manifest):
+    hidden_legends = _hidden_legends(manifest)
+    for el, size in _iter_font_elements(manifest, hidden_legends):
         gid = el.get("gid", "")
-        if _field(el, "visible") is False:
-            continue
         eff = size * scale
         if eff <= floor:
             sink.add(
@@ -388,6 +434,8 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
             )
 
     for el in manifest.get("elements") or []:
+        if not _is_drawn(el, hidden_legends):
+            continue
         gid = el.get("gid", "")
         family = _field(el, "fontfamily")
         text = _field(el, "text")
@@ -500,6 +548,9 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
         str(c).lower() for group in (palette.get("by_semantic") or {}).values() for c in group
     }
 
+    hidden_legends = _hidden_legends(manifest)
+    legend_sizes = legend_entry_sizes(manifest)
+
     tick_labels: dict[str, int] = {}
     lines_by_axes: dict[str, list[dict]] = {}
     roles_by_axes: dict[str, set[str]] = {}
@@ -509,7 +560,7 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
         ax = _axes_of(gid)
         roles_by_axes.setdefault(ax, set()).add(role)
 
-        if role == "legend":
+        if role == "legend" and _is_drawn(el, hidden_legends):
             if legend.get("frame") is False and _field(el, "frameon") is True:
                 sink.add(
                     "legend-frame",
@@ -518,11 +569,19 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                     object_ids=[pid],
                     gids=[gid],
                 )
-            size = _num(_field(el, "fontsize"))
+            # 量的是图例里**画出来的条目文字**，不是图例的 `fontsize` 设置器
+            # （它是创建时的值，逐条改完条目也不动）。多条出界取离区间最远的那条
             lo, hi = _num(legend.get("min_font_size_pt")), _num(legend.get("max_font_size_pt"))
-            if size is not None and lo is not None and hi is not None:
-                eff = size * scale
-                if eff < lo - 1e-9 or eff > hi + 1e-9:
+            if lo is not None and hi is not None:
+                worst: tuple[float, float] | None = None  # (离区间多远, 有效字号)
+                for size in legend_sizes.get(gid, []):
+                    eff = size * scale
+                    if eff < lo - 1e-9 or eff > hi + 1e-9:
+                        dist = max(lo - eff, eff - hi)
+                        if worst is None or dist > worst[0]:
+                            worst = (dist, eff)
+                if worst is not None:
+                    dist, eff = worst
                     sink.add(
                         "legend-font-size",
                         f"图例字号最终有效值 {eff:.2f}pt 不在规范的 {lo:g}–{hi:g}pt 之间",
@@ -534,7 +593,7 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                         gids=[gid],
                         detail={"effective_pt": _r2(eff)},
                         # 越出区间越远越糟（两边都可能出界）
-                        worse=max(lo - eff, eff - hi),
+                        worse=dist,
                     )
 
         if role == "ticks":
@@ -627,7 +686,7 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                         detail={"effective_pt": _r2(eff)},
                         worse=min(abs(eff - v) for v in presets),
                     )
-        if role == "legend_text":
+        if role == "legend_text" and _is_drawn(el, hidden_legends):
             # 图例项的示意线（ADR 0034）：**自定义**的那些自己是一份状态，宽度
             # 要过档位，且定位到图例项本身；跟随源的由源那条规则管着——再报
             # 一次是同一件事报两遍。没有源的项（binding 字段缺席）按自定义算

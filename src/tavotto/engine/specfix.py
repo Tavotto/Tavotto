@@ -56,9 +56,6 @@ FONT_RULES = (
     "legend-font-size",
 )
 
-#: 带字号的 prop（与 `preflight._iter_font_elements` 同一组）
-FONT_SIZE_PROPS = ("fontsize", "tick_fontsize", "title_fontsize")
-
 #: 字号层级：数大的角色字号不许比数小的角色小。没登记的角色（刻度、图例、
 #: 图内文字、色条……）都在最底层。只用于「抬了下层要不要顺带补上层」。
 ROLE_RANK = {"title": 3, "axis_label": 2}
@@ -276,23 +273,36 @@ def _plan_line_width(el: dict, profile: dict, scale: float) -> list[tuple] | Non
     return [(prop, value, round(eff, 3), best)]
 
 
-def _font_entries(manifest: dict) -> list[dict]:
-    """manifest 里一切可见的带字号的 `(gid, prop, role, 当前脚本值)`。"""
+def _font_entries(manifest: dict, profile: dict) -> list[dict]:
+    """manifest 里一切可见的带字号的 `(gid, prop, role, 当前脚本值)`。
+
+    图例本体的 `fontsize` 是设置器，预检判的是图例里**画出来的条目文字**
+    （`preflight.legend_entry_sizes`）：改的也要是同一个量——取离图例区间最远的那条条目
+    当「当前值」，整组改（`fontsize` 覆盖会写到全部条目）。没有画出来的条目就不登记。
+    """
+    legend = profile.get("legend_policy") or {}
+    llo, lhi = _num(legend.get("min_font_size_pt")), _num(legend.get("max_font_size_pt"))
+    legend_sizes = preflight.legend_entry_sizes(manifest)
     out = []
     for el in manifest.get("elements") or []:
         if _field(el, "visible") is False:
             continue
-        for prop in FONT_SIZE_PROPS:
-            v = _num(_field(el, prop)) if _has(el, prop) else None
-            if v is not None and v > 0:
-                out.append(
-                    {
-                        "gid": str(el.get("gid", "")),
-                        "prop": prop,
-                        "role": str(el.get("role", "")),
-                        "size": v,
-                    }
-                )
+        role = str(el.get("role", ""))
+        gid = str(el.get("gid", ""))
+        # 预检只量画出来的文字元素的 `fontsize`；图例的 `title_fontsize`、色条的
+        # `tick_fontsize` 是容器设置器，不是被判的量，这里也不改
+        if role == "legend":
+            sizes = legend_sizes.get(gid, [])
+            if not sizes or not _has(el, "fontsize"):
+                continue
+            if llo is not None and lhi is not None:
+                v = max(sizes, key=lambda x: max(llo - x, x - lhi))
+            else:
+                v = sizes[0]
+        else:
+            v = _num(_field(el, "fontsize")) if _has(el, "fontsize") else None
+        if v is not None and v > 0:
+            out.append({"gid": gid, "prop": "fontsize", "role": role, "size": v})
     return out
 
 
@@ -332,7 +342,7 @@ def _plan_fonts(
     （轴标题 / 标题）还大，上层跟着抬到同一档：用户要的是「字号合规」，不是
     「刻度比轴标题还醒目」。上层被自己的上限挡住时就停在上限，不越界。
     """
-    entries = _font_entries(manifest)
+    entries = _font_entries(manifest, profile)
     eff = {(e["gid"], e["prop"]): e["size"] * scale for e in entries}
     new: dict[tuple[str, str], tuple[float, str]] = {}
     out: list[dict] = []

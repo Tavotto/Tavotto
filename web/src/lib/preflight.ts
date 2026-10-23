@@ -405,16 +405,70 @@ function checkPanelRaster(
   )
 }
 
+/**
+ * 被整体藏起来的图例的 gid。图例条目（`legend_text`，含标题）的 `visible` 是条目
+ * 自己的可见性，图例整体 `set_visible(False)` 时它们仍报 true——「这段字画没画出来」
+ * 要回到图例本体上问。与 `engine/preflight.py::_hidden_legends` 逐字同口径。
+ */
+function hiddenLegends(manifest: Manifest): Set<string> {
+  const out = new Set<string>()
+  for (const el of manifest.elements ?? []) {
+    if (el.role === 'legend' && field(el, 'visible') === false) out.add(el.gid)
+  }
+  return out
+}
+
+/** gid 去掉最后一段（`axes_0.legend.texts_1` → `axes_0.legend`） */
+function parentGid(gid: string): string {
+  const i = gid.lastIndexOf('.')
+  return i < 0 ? '' : gid.slice(0, i)
+}
+
+/**
+ * 这个元素此刻画出来了吗——预检里所有「只量画出来的东西」共用的唯一判据：
+ * `visible` 不是 false，且（图例条目）所在的图例没有被整体藏起来。
+ * 与 `engine/preflight.py::_is_drawn` 同源。
+ */
+function isDrawn(el: ManifestElement, hidden: Set<string>): boolean {
+  if (field(el, 'visible') === false) return false
+  if (el.role === 'legend_text') return !hidden.has(parentGid(el.gid))
+  return true
+}
+
+/**
+ * 图例 gid → 它里面**画出来的条目文字**的字号（脚本值，不乘缩放）。`legend-font-size`
+ * 量的是这个，不是图例的 `fontsize` 设置器；标题（`.title`）不在内——它是单独一个
+ * 文字元素，由字号三条规则按自己的 gid 报。与 `engine/preflight.py::legend_entry_sizes` 同源。
+ */
+function legendEntrySizes(manifest: Manifest, hidden: Set<string>): Map<string, number[]> {
+  const out = new Map<string, number[]>()
+  for (const el of manifest.elements ?? []) {
+    if (el.role !== 'legend_text' || !isDrawn(el, hidden)) continue
+    const size = num(field(el, 'fontsize'))
+    const leaf = el.gid.slice(el.gid.lastIndexOf('.') + 1)
+    if (!leaf.startsWith('texts_') || size == null) continue
+    const k = parentGid(el.gid)
+    if (!out.has(k)) out.set(k, [])
+    out.get(k)!.push(size)
+  }
+  return out
+}
+
+/**
+ * 一切**画出来的文字元素**的字号。容器上的字号设置器（图例的 `fontsize` /
+ * `title_fontsize`、色条的 `tick_fontsize`）不量：它们画出来的字已由 `legend_text`
+ * （含图例标题）与 `ticks` 元素各自带着真实字号报过一遍，再量一次是同一段字报两次；
+ * 而设置器的值与画出来的字会分叉（逐条改好图例项后 `_fontsize` 不动），那样的提醒
+ * 用户永远消不掉。与 `engine/preflight.py::_iter_font_elements` 同源。
+ */
 function* fontElements(
   manifest: Manifest,
+  hidden: Set<string>,
 ): Generator<[ManifestElement, number, string]> {
   for (const el of manifest.elements ?? []) {
+    if (el.role === 'legend' || !isDrawn(el, hidden)) continue
     const size = num(field(el, 'fontsize'))
     if (size != null) yield [el, size, 'fontsize']
-    const tick = num(field(el, 'tick_fontsize'))
-    if (tick != null) yield [el, tick, 'tick_fontsize']
-    const title = num(field(el, 'title_fontsize'))
-    if (title != null) yield [el, title, 'title_fontsize']
   }
 }
 
@@ -437,9 +491,9 @@ function checkPanelFonts(
   const cjkOk = new Set((cjk.accepted ?? []).map((s) => s.toLowerCase()))
   const weights = profile.text_weight_policy ?? {}
 
-  for (const [el, size, sizeProp] of fontElements(manifest)) {
+  const hidden = hiddenLegends(manifest)
+  for (const [el, size, sizeProp] of fontElements(manifest, hidden)) {
     const gid = el.gid
-    if (field(el, 'visible') === false) continue
     const eff = size * scale
     if (eff <= floor) {
       sink.add(
@@ -464,6 +518,7 @@ function checkPanelFonts(
   }
 
   for (const el of manifest.elements ?? []) {
+    if (!isDrawn(el, hidden)) continue
     const gid = el.gid
     const family = field(el, 'fontfamily')
     const text = field(el, 'text')
@@ -559,6 +614,9 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
       .map((c) => c.toLowerCase()),
   )
 
+  const hidden = hiddenLegends(manifest)
+  const legendSizes = legendEntrySizes(manifest, hidden)
+
   const tickLabels = new Map<string, number>()
   const linesByAxes = new Map<string, ManifestElement[]>()
   const rolesByAxes = new Map<string, Set<string>>()
@@ -570,22 +628,30 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
     if (!rolesByAxes.has(ax)) rolesByAxes.set(ax, new Set())
     rolesByAxes.get(ax)!.add(role)
 
-    if (role === 'legend') {
+    if (role === 'legend' && isDrawn(el, hidden)) {
       if (legend.frame === false && field(el, 'frameon') === true) {
         sink.add('legend-frame', pf('legendFrame'), { objectIds: [pid], gids: [gid], prop: 'frameon' })
       }
-      const size = num(field(el, 'fontsize'))
+      // 量的是图例里**画出来的条目文字**，不是图例的 `fontsize` 设置器（它是创建时的
+      // 值，逐条改完条目也不动）。多条出界取离区间最远的那条
       const lo = num(legend.min_font_size_pt)
       const hi = num(legend.max_font_size_pt)
-      if (size != null && lo != null && hi != null) {
-        const eff = size * scale
-        if (eff < lo - 1e-9 || eff > hi + 1e-9) {
+      if (lo != null && hi != null) {
+        let worst: { dist: number; eff: number } | null = null
+        for (const size of legendSizes.get(gid) ?? []) {
+          const eff = size * scale
+          if (eff < lo - 1e-9 || eff > hi + 1e-9) {
+            // 越出区间越远越糟（两边都可能出界，所以取到区间的距离）
+            const dist = Math.max(lo - eff, eff - hi)
+            if (worst == null || dist > worst.dist) worst = { dist, eff }
+          }
+        }
+        if (worst) {
           sink.add(
             'legend-font-size',
-            pf('legendFontSize', { effective: eff.toFixed(2), min: g(lo), max: g(hi) }),
-            // 越出区间越远越糟（两边都可能出界，所以取到区间的距离）
-            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff) },
-              worse: Math.max(lo - eff, eff - hi), prop: 'fontsize' },
+            pf('legendFontSize', { effective: worst.eff.toFixed(2), min: g(lo), max: g(hi) }),
+            { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(worst.eff) },
+              worse: worst.dist, prop: 'fontsize' },
           )
         }
       }
@@ -663,7 +729,7 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
         }
       }
     }
-    if (role === 'legend_text') {
+    if (role === 'legend_text' && isDrawn(el, hidden)) {
       // 图例项的示意线（ADR 0034）：自定义的那些自己是一份状态，宽度要过档位，
       // 定位到图例项本身；跟随源的由源那条规则管着（再报一次是同一件事报两遍）
       const lw = num(field(el, 'handle_linewidth'))
