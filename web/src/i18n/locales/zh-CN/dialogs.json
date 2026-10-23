@@ -180,6 +180,7 @@
     "epsHint": "矢量 · 不支持透明度",
     "epsUnavailable": {
       "canvas_scope": "EPS 只支持导出单张图：在单图编辑里导出，或选「每张图单独导出」。",
+      "figure_not_ready": "这张图现在还不能导出 EPS：它需要由脚本重新画一遍。请先运行这张图的脚本，再回来导出。",
       "no_script": "此图没有可重新运行的脚本。EPS 只能由脚本生成。"
     },
     "exported": "导出完成：{{files}}",

@@ -500,6 +500,11 @@ describe('输出范围', () => {
     // 单图编辑没有范围按钮；原图口径不可用时静默改按画布导（不报错、不灰按钮），左栏预览如实显示导出的页面
     expect(scopeRadios()).toHaveLength(0)
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+    // 没有范围选择的单图档里，EPS 灰着的原因不能指向不存在的「每张图单独导出」
+    const epsBox = formatBox('EPS')
+    expect(epsBox.disabled).toBe(true)
+    expect(epsBox.closest('label')!.title).toContain('请先运行这张图的脚本')
+    expect(epsBox.closest('label')!.title).not.toContain('每张图单独导出')
     expect(text()).not.toContain('先选中一张图')
     expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览显示页面').toBeTruthy()
     expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm')

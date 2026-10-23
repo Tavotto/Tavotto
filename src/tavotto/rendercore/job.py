@@ -174,6 +174,21 @@ def produce(
             )
         )
 
+    def failed_svg_gaps(gaps: list[dict]) -> None:
+        """SVG 给不出的缺口：面板缺同 Figure 的 SVG 表示时说人话（带图名），技术原文留在 `detail`。"""
+        friendly = _svg_panel_gap(rp, gaps, job.warnings)
+        if friendly is None:
+            failed(exportreq.FORMAT_SVG, _gap_text(gaps), unsupported=gaps)
+            return
+        code, params = friendly
+        produced.append(
+            exportjob.Produced(
+                format=exportreq.FORMAT_SVG,
+                error_code=code,
+                error_params={**params, "detail": _gap_text(gaps)[:200], "unsupported": gaps},
+            )
+        )
+
     # ---- Canonical PDF：一定写（PNG / TIFF 从它出），要了才交付 -------------------------
     job.check_cancelled()
     job.trace.mark("compose", sources=len(rp.sources))
@@ -301,7 +316,7 @@ def produce(
                 continue
             gaps = rp.unsupported.get(fmt) or []
             if gaps:
-                failed(fmt, _gap_text(gaps), unsupported=gaps)
+                failed_svg_gaps(gaps)
                 continue
             tmp = tmp_dir / "out.svg"
             try:
@@ -518,6 +533,37 @@ def plan_facts(rp: plan.RenderPlan) -> dict:
 
 def _raster_gaps(rp: plan.RenderPlan) -> list[dict]:
     return [g for fmt in exportreq.RASTER_FORMATS for g in (rp.unsupported.get(fmt) or [])]
+
+
+def _svg_panel_gap(
+    rp: plan.RenderPlan, gaps: list[dict], warnings: list[str]
+) -> tuple[str, dict] | None:
+    """SVG 缺口全是「面板没有同 Figure 的 SVG 表示」时的用户话：`(错误码, 参数)`，否则 None（走通用 `format_failed`）。
+
+    * 脚本现画的图（`origin=execution`）：`svg_figure_unavailable`，`reason` 是 worker 给的原因（若有）；
+    * 静态 PDF / 位图：沿用 `svg_source_unsupported`。
+    两者都带图名，不让 `imported_page: A static PDF requires …` 这种内部串到界面上。
+    """
+    if not gaps or any(g.get("operation") != "imported_page" for g in gaps):
+        return None
+    by_id = {getattr(n, "object_id", ""): n for n, _ in ir.walk(rp.page)}
+    figures: list[str] = []
+    executed = False
+    for g in gaps:
+        node = by_id.get(g.get("object_id", ""))
+        res = rp.page.resources.get(getattr(node, "resource", ""))
+        if not isinstance(res, ir.FileResource):
+            return None
+        if res.source_id not in figures:
+            figures.append(res.source_id)
+        executed = executed or res.origin == "execution"
+    if not executed:
+        return "svg_source_unsupported", {"id": "、".join(figures)}
+    reason = ""
+    for fig in figures:
+        prefix = f"{fig}: SVG unavailable: "
+        reason = next((w[len(prefix) :] for w in warnings if w.startswith(prefix)), reason)
+    return "svg_figure_unavailable", {"figure": "、".join(figures), "reason": reason[:200]}
 
 
 def _gap_text(gaps: list[dict]) -> str:

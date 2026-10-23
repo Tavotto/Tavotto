@@ -66,6 +66,9 @@
     无 override 的静态 PDF 可由独立接纳且绑定到**当前精确字节 hash** 的配对授权，不依赖未知的运行回执；
     同名邻居文件、预览、任意旧导出不算，已知新回执仍须匹配。
     opaque PDF 的 SVG 逐格式失败并指出来源，其他成功格式照常交付，不整页转位图或少画面板。
+    面板缺同 Figure 的 SVG 表示时，该项失败带**面向用户的码**（`rendercore/job._svg_panel_gap`）：脚本现画的图 `svg_figure_unavailable`
+    （`figure` 图名；`reason` = worker 给的配对阻断原因，如自定义刻度函数；`detail` = 内部原文，只进诊断），静态 PDF / 位图 `svg_source_unsupported`；
+    不得再让 `imported_page: A static PDF requires …` 这类内部串落到界面。
     首次明确运行后自动尽力捕获全质量对，捕获失败不把成功运行或正常 PDF 导出变成失败；
     保存布局先冻结精确编辑变体再一次原子写正文，失败清除待保存正文的旧引用并返回来源 warning，布局仍可保存。
     持久化与旧项目恢复边界见 `layout-versions-and-documents.md`。

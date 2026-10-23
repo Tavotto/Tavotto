@@ -778,9 +778,9 @@ export function ExportDialog() {
     [scope, route, formats],
   );
   const eps = useMemo(
-    () => epsAvailability(scope, figureId, route),
+    () => epsAvailability(scope, figureId, route, single),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scope, figureId, assets, runtimeAssets, route],
+    [scope, figureId, assets, runtimeAssets, route, single],
   );
 
   function inputOf(over?: Partial<ExportRequestInput>): ExportRequestInput {

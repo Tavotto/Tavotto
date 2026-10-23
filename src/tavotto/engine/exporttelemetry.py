@@ -52,6 +52,7 @@ _REQUEST_CODES = frozenset(
         "eps_needs_live_figure",
         "export_basis_mismatch",
         "eps_not_for_canvas",
+        "svg_figure_unavailable",
         "missing_figure",
         "missing_original",
         "name_exhausted",

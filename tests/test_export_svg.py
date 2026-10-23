@@ -945,3 +945,26 @@ def test_canvas_live_figure_panel_falls_back_to_outlines_on_old_worker(project, 
     assert outputs["pdf"]["status"] == "done"
     texts = _canvas_panel_texts(body, outputs)
     assert "Source title" not in texts and texts  # 画布自己的文字仍在
+
+
+FORMATTER_SCRIPT = SCRIPT.replace(
+    '    ax.set_title("Source title")',
+    "    from matplotlib.ticker import FuncFormatter\n"
+    "    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _p: f'{v:.1f}'))\n"
+    '    ax.set_title("Source title")',
+)
+
+
+def test_canvas_svg_of_a_script_figure_without_svg_pairing_says_so_in_user_words(project):
+    """脚本里的自定义刻度函数让 worker 不给 SVG 配对：该项失败，但错误码是面向用户的，不是 `imported_page: …` 内部串。"""
+    client, root = project
+    (root / "plot.py").write_text(FORMATTER_SCRIPT, encoding="utf-8")
+    source = run_script(client)
+    body, outputs = output(client, spec(source, scope="canvas", formats=("svg", "pdf")))
+    assert body["status"] == "partial", body
+    assert outputs["pdf"]["status"] == "done"
+    error = outputs["svg"]["error"]
+    assert error["code"] == "svg_figure_unavailable", error
+    assert error["params"]["figure"] == source
+    assert "tick-formatting" in error["params"]["reason"]  # 技术原因进参数 / 诊断，不进文案
+    assert "imported_page" in error["params"]["detail"]  # 原文留作详情

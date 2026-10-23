@@ -320,6 +320,14 @@ describe('EPS 与 TIFF（ADR 0046）', () => {
     expect(epsAvailability('original', 'runtime:abc')).toEqual({ ok: true, reason: 'none' })
   })
 
+  it('单图档（没有范围选择）静默退到画布时，EPS 的原因不再指向不存在的「每张图单独导出」', () => {
+    expect(epsAvailability('canvas', 'Fig1.pdf', null, true)).toEqual({ ok: false, reason: 'figure_not_ready' })
+    // 多图档的画布范围仍是「选每张图单独导出」那句
+    expect(epsAvailability('canvas', 'Fig1.pdf', null, false)).toEqual({ ok: false, reason: 'canvas_scope' })
+    // 单图档里原图口径可用就照常给 EPS（runtime 素材天生有脚本）
+    expect(epsAvailability('original', 'runtime:abc', null, true)).toEqual({ ok: true, reason: 'none' })
+  })
+
   it('SVG 素材与 PDF 同一判据：有脚本可用（字节绑定由后端逐项判，不预先禁用）、没脚本 no_script', () => {
     useAssetStore.setState({
       byId: {

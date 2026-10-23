@@ -149,7 +149,9 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
  * 所以它只在「按原图导出一张**有脚本**的图」时存在：
  *
  * * `canvas_scope`：画布合成走 RenderCore（PDF / PNG / TIFF），给不出 EPS；
- * * `no_script`：这张图在注册表里没有脚本（runtime 素材天生有），引擎没法重画。
+ * * `no_script`：这张图在注册表里没有脚本（runtime 素材天生有），引擎没法重画；
+ * * `figure_not_ready`：单图档（没有范围选择）里这张图此刻按原图导不出（还没运行过 / 源文件不在），
+ *   于是静默按画布导，而画布没有 EPS——此时再说「选每张图单独导出」是指向一个不存在的选项，改说「先运行这张图」。
  *
  * 前端只判「有没有脚本」这一条；SVG 素材的 EPS 另需后端的字节绑定证明（`_produce_svg_asset_eps`，#1185），
  * 前端拿不到这个事实，**不预先禁用**——后端逐项失败并给真实原因（`eps_source_unverified` /
@@ -159,15 +161,17 @@ function canValidateOriginalSource(figureId: string, panel?: PanelObject | null)
  * 素材清单里的 `script`（那正是「注册表声明了映射没有」）。**不可用时不隐藏
  * 选项、不静默丢掉它**：禁用并说原因，发出去的请求里也不带它。
  */
-export type EpsBlockReason = 'none' | 'canvas_scope' | 'no_script'
+export type EpsBlockReason = 'none' | 'canvas_scope' | 'no_script' | 'figure_not_ready'
 
 export function epsAvailability(
   scope: ExportScope,
   figureId: string | null,
   /** 后端 validate 发布的 route；有就只读它（`offers.eps`），没有退回下面的旧判据 */
   route?: ExportRoute | null,
+  /** 单图档（没有范围选择）：画布范围只可能是「原图口径不可用」的静默退路 */
+  single = false,
 ): { ok: boolean; reason: EpsBlockReason } {
-  if (scope !== 'original') return { ok: false, reason: 'canvas_scope' }
+  if (scope !== 'original') return { ok: false, reason: single ? 'figure_not_ready' : 'canvas_scope' }
   if (!figureId) return { ok: false, reason: 'no_script' }
   const fromRoute = epsFromRoute(route, scope, figureId)
   if (fromRoute) return fromRoute
