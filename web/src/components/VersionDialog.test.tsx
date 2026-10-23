@@ -151,9 +151,21 @@ const flush = () =>
   })
 
 const rows = () => [...document.querySelectorAll('[data-timeline-row]')] as HTMLButtonElement[]
-/** 行上的「预览」钮（单击行只选中，不开模态） */
-const previews = () =>
-  [...document.querySelectorAll('[data-timeline-preview-button]')] as HTMLButtonElement[]
+/** 单击一行：弹出对比小卡片（不开模态） */
+const openCard = async (id: string) => {
+  await act(async () => node(id).querySelector<HTMLButtonElement>('[data-timeline-row]')!.click())
+  await act(async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve()
+    await new Promise((r) => setTimeout(r, 0))
+  })
+}
+/** 卡片上的「放大查看」→ 模态预览（缩放 / 差异列表） */
+const openModal = async (id: string) => {
+  await openCard(id)
+  await act(async () => $<HTMLButtonElement>('[data-timeline-card-enlarge]')!.click())
+}
+/** 卡片上的「恢复到这里」（卡片得是开着的） */
+const cardRestoreBtn = () => $<HTMLButtonElement>('[data-timeline-card-restore]')
 const node = (id: string) => document.querySelector(`[data-timeline-node="${id}"]`)!
 const days = () =>
   [...document.querySelectorAll('[data-timeline-day] h3')].map((h) => h.textContent)
@@ -190,7 +202,7 @@ describe('预览对话框：只读，不改当前排版', () => {
     await mount([meta()])
     const pastBefore = useDocumentStore.getState().past.length
     const docBefore = useDocumentStore.getState().doc
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     expect(dialog()).not.toBeNull()
     expect(dialog()!.querySelector('[data-timeline-preview]')?.getAttribute('data-timeline-preview')).toBe('v1')
@@ -204,7 +216,7 @@ describe('预览对话框：只读，不改当前排版', () => {
 
   it('标题写「预览：时间 名字」；默认焦点在对话框容器上（回车不会误触恢复）；页脚只有「恢复到这里」', async () => {
     await mount([meta({ kind: 'named', named: true, auto: false, name: '投稿前' })])
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     expect(dialog()!.textContent).toMatch(/预览：.*投稿前/)
     const content = $('[data-dialog="timeline-preview"]')!
@@ -216,7 +228,7 @@ describe('预览对话框：只读，不改当前排版', () => {
 
   it('右上角关闭收起对话框，排版不动', async () => {
     await mount([meta()])
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     await act(async () => $<HTMLButtonElement>('[data-dialog-close]')!.click())
     expect(useTimelineStore.getState().preview).toBeNull()
@@ -225,7 +237,7 @@ describe('预览对话框：只读，不改当前排版', () => {
 
   it('与当前对比：并排时两格——那一刻与当前各一张；叠加时当前是描边', async () => {
     await mount([meta()])
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     await act(async () => $<HTMLButtonElement>('[data-timeline-view] [data-value="side"]')!.click())
     // 判据落在两格画框自己身上——差异列表里也写着「现在这一段」，按整个对话框的文字判是空的
@@ -239,14 +251,14 @@ describe('预览对话框：只读，不改当前排版', () => {
 
   it('差异列表说出「和现在比变了什么」', async () => {
     await mount([meta()])
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     expect(dialog()!.querySelector('[data-timeline-diff]')?.textContent).toContain('现在这一段')
   })
 
   it('关掉抽屉，预览跟着退出', async () => {
     await mount([meta()])
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     await act(async () => useUiStore.setState({ rightTab: 'properties' }))
     expect(useTimelineStore.getState().preview).toBeNull()
@@ -256,7 +268,7 @@ describe('预览对话框：只读，不改当前排版', () => {
 describe('恢复：先存「恢复前」，再写，⌘Z 能退回', () => {
   it('先存下当前内容（关键时刻 before_restore，不是命名节点），再写入节点内容', async () => {
     await mount([meta()])
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
     await flush()
@@ -276,7 +288,7 @@ describe('恢复：先存「恢复前」，再写，⌘Z 能退回', () => {
 
   it('恢复是一条历史：撤销一步回到恢复之前', async () => {
     await mount([meta()])
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
     await flush()
@@ -298,7 +310,7 @@ describe('恢复：先存「恢复前」，再写，⌘Z 能退回', () => {
     }
     mockDoc.mockResolvedValue({ ...meta(), doc: withGroup })
     await mount([meta()])
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
     await flush()
@@ -308,7 +320,7 @@ describe('恢复：先存「恢复前」，再写，⌘Z 能退回', () => {
   it('「恢复前」存不下来就不恢复：当前排版原样', async () => {
     mockCreate.mockRejectedValueOnce(new Error('disk full'))
     await mount([meta()])
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
     await flush()
@@ -334,8 +346,8 @@ describe('内联条的「恢复到这里」与预览恢复同一把锁（Codex #
     let done!: (v: Awaited<ReturnType<typeof createVersion>>) => void
     mockCreate.mockImplementationOnce(() => new Promise((resolve) => (done = resolve)))
     await mount([meta()], undefined, false)
-    const bar = node('v1').querySelector('[data-timeline-row-actions]')!
-    await act(async () => bar.querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!.click())
+    await openCard('v1')
+    await act(async () => cardRestoreBtn()!.click())
     await flush()
     expect(mockCreate).toHaveBeenCalledTimes(1)
     // 锁：模态预览以 busy 开着（遮罩挡住画布），× 收起
@@ -367,8 +379,8 @@ describe('内联条的「恢复到这里」与预览恢复同一把锁（Codex #
   it('「恢复前」存不下来：不写、锁摘掉、为这次恢复打开的预览收回去', async () => {
     mockCreate.mockRejectedValueOnce(new Error('disk full'))
     await mount([meta()], undefined, false)
-    const bar = node('v1').querySelector('[data-timeline-row-actions]')!
-    await act(async () => bar.querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!.click())
+    await openCard('v1')
+    await act(async () => cardRestoreBtn()!.click())
     await flush()
     expect(ids()).toEqual(['now'])
     expect(useTimelineStore.getState().restoring).toBeNull()
@@ -380,18 +392,20 @@ describe('内联恢复取正文期间画布就被遮住（Codex #831 P1）', () 
   /** 让 `fetchVersionDoc` 挂起，返回放行 / 失败的两个把手 */
   const holdFetch = () => {
     const h: { give: () => void; fail: (e: unknown) => void } = { give: () => {}, fail: () => {} }
-    mockDoc.mockImplementationOnce(
-      () =>
-        new Promise((resolve, reject) => {
-          h.give = () => resolve({ ...meta(), doc: snapshot() })
-          h.fail = reject
-        }),
-    )
+    // 第一次取正文是对比卡片自己取的（立即回来）；挂起的是「恢复到这里」那一次取
+    let n = 0
+    mockDoc.mockImplementation(() => {
+      if (++n === 1) return Promise.resolve({ ...meta(), doc: snapshot() })
+      return new Promise((resolve, reject) => {
+        h.give = () => resolve({ ...meta(), doc: snapshot() })
+        h.fail = reject
+      })
+    })
     return h
   }
   const clickRowRestore = async () => {
-    const bar = node('v1').querySelector('[data-timeline-row-actions]')!
-    await act(async () => bar.querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!.click())
+    await openCard('v1')
+    await act(async () => cardRestoreBtn()!.click())
     await flush()
   }
 
@@ -399,7 +413,7 @@ describe('内联恢复取正文期间画布就被遮住（Codex #831 P1）', () 
     const h = holdFetch()
     await mount([meta()], undefined, false)
     await clickRowRestore()
-    expect(mockDoc).toHaveBeenCalledTimes(1)
+    expect(mockDoc).toHaveBeenCalledTimes(2)
     expect(mockCreate).not.toHaveBeenCalled()
     const dlg = $('[data-dialog="timeline-preview"]')
     expect(dlg).not.toBeNull()
@@ -459,22 +473,24 @@ describe('恢复锁在取正文之前就挂上、按凭据摘（Codex #831 P1）
   it('A 的正文还在路上时再点 B 的「恢复到这里」：B 不取、不写，只有 A 写进去', async () => {
     let giveA!: (v: Awaited<ReturnType<typeof fetchVersionDoc>>) => void
     const docOf = (id: string): FigureDocument => ({ ...snapshot(), objects: [text(id, id)] })
+    let aCalls = 0
     mockDoc.mockImplementation((_doc, id) =>
-      id === 'vA'
+      id === 'vA' && ++aCalls > 1 // 第一次是对比卡片取的，第二次才是「恢复到这里」那次
         ? new Promise((resolve) => (giveA = resolve))
         : Promise.resolve({ ...meta({ id }), doc: docOf(`from_${id}`) }),
     )
     await mount([meta({ id: 'vA', ts: NOW - 120_000 }), meta({ id: 'vB' })], undefined, false)
-    const restoreBtn = (id: string) =>
-      node(id).querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!
-    await act(async () => restoreBtn('vA').click())
+    await openCard('vA')
+    await act(async () => cardRestoreBtn()!.click())
     await flush()
     // A 还在取正文：锁已挂上，所有行的「恢复到这里」一起禁用、抽屉关不掉
     expect(useTimelineStore.getState().restoring).not.toBeNull()
-    expect(restoreBtn('vB').disabled).toBe(true)
-    await act(async () => restoreBtn('vB').click())
+    await openCard('vB')
+    expect(cardRestoreBtn()!.disabled).toBe(true)
+    await act(async () => cardRestoreBtn()!.click())
     await flush()
-    expect(mockDoc).toHaveBeenCalledTimes(1)
+    // 卡片 A + 恢复 A + 卡片 B；B 的「恢复」被锁拒掉，不取
+    expect(mockDoc).toHaveBeenCalledTimes(3)
 
     await act(async () => giveA({ ...meta({ id: 'vA' }), doc: docOf('from_vA') }))
     await flush()
@@ -489,7 +505,8 @@ describe('恢复锁在取正文之前就挂上、按凭据摘（Codex #831 P1）
       () => new Promise((resolve) => (giveA = resolve)),
     )
     await mount([meta({ id: 'vA' })], undefined, false)
-    await act(async () => node('vA').querySelector<HTMLButtonElement>('[data-timeline-row-restore]')!.click())
+    await openCard('vA')
+    await act(async () => cardRestoreBtn()!.click())
     await flush()
     expect(useTimelineStore.getState().restoring).not.toBeNull()
     expect($('[data-dialog="timeline-preview"]')).not.toBeNull()
@@ -557,7 +574,7 @@ describe('恢复在飞时预览锁住（Codex #679 P1）', () => {
   }
   const open = async () => {
     await mount([meta()])
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     expect($('[data-timeline-preview]')).not.toBeNull()
   }
@@ -606,7 +623,7 @@ describe('恢复在飞时预览锁住（Codex #679 P1）', () => {
     // 排版 id 相同的另一个项目：只有项目代际变了
     await act(async () => useTimelineStore.getState().clear())
     await flush()
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     expect($('[data-timeline-preview]')).not.toBeNull()
     expect($('[data-dialog="timeline-preview"]')!.getAttribute('aria-busy')).toBeNull()
@@ -990,8 +1007,14 @@ describe('列表重取交叠：只认最新那一次', () => {
     await mount([meta({ id: 'a' }), meta({ id: 'b', ts: NOW })])
     let rejectA!: (e: Error) => void
     mockDoc.mockImplementationOnce(() => new Promise((_, rej) => (rejectA = rej)))
-    await act(async () => node('a').querySelector<HTMLButtonElement>('[data-timeline-preview-button]')!.click())
-    await act(async () => node('b').querySelector<HTMLButtonElement>('[data-timeline-preview-button]')!.click())
+    await openCard('a')
+    // 取 A 的正文还没回来就收起 A 的卡片、去看 B（真实操作里点另一行先收起这一张）
+    await act(async () => $<HTMLButtonElement>('[data-timeline-card-cancel]')!.click())
+    await flush()
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null))) // 卡片收起后焦点还回触发行的那一帧
+    })
+    await openModal('b')
     await flush()
     expect(useTimelineStore.getState().preview?.meta.id).toBe('b')
     await act(async () => rejectA(new Error('boom')))
@@ -1087,7 +1110,7 @@ describe('换项目 / 换排版：旧上下文的列表当场不再显示', () =
 
   it('换排版时别的排版的预览一并退出', async () => {
     await mount([meta({ id: 'a1' })])
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     expect(useTimelineStore.getState().preview?.meta.id).toBe('a1')
     await switchDoc()
@@ -1186,7 +1209,7 @@ describe('A 里发起、换到 B 之后才完成：不改 B 的任何本地状�
     await flush()
   }
   const openPreviewAndRestore = async () => {
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
     await flush()
@@ -1547,7 +1570,7 @@ describe('换项目 / 换排版：用户正在编辑的草稿与确认框当场�
       name: '跨画布恢复的确认框',
       nodes: [meta({ id: 'a1', canvasId: 'c_gone', canvasName: '已删的画布' })],
       start: async () => {
-        await act(async () => previews()[0].click())
+        await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
         await flush()
         await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
         await flush()
@@ -1683,13 +1706,17 @@ describe('行操作失败：错误留在抽屉里，紧跟着的列表刷新不�
 /* ----------------- 行上的显式入口：单击只选中，双击改名不被预览抢先 ----------------- */
 
 describe('行：单击选中、「预览」钮开预览、双击或「改名」钮改名（Codex #679）', () => {
-  it('单击行只选中（露出本行的钮），不开模态', async () => {
+  it('单击行弹出对比小卡片（自动取那一刻的正文），不开模态；再点一下收起', async () => {
     await mount([meta({ id: 'a1' })])
     await act(async () => rows()[0].click())
     await flush()
     expect(useTimelineStore.getState().preview).toBeNull()
-    expect(rows()[0].getAttribute('aria-pressed')).toBe('true')
-    expect(mockDoc).not.toHaveBeenCalled()
+    expect(rows()[0].getAttribute('aria-expanded')).toBe('true')
+    expect($('[data-timeline-card="a1"]')).not.toBeNull()
+    expect(mockDoc).toHaveBeenCalledTimes(1)
+    await act(async () => rows()[0].click())
+    await flush()
+    expect($('[data-timeline-card]')).toBeNull()
   })
 
   it('真实双击的事件序列（click → click → dblclick）进入改名，预览不抢先', async () => {
@@ -1705,7 +1732,7 @@ describe('行：单击选中、「预览」钮开预览、双击或「改名」�
     expect($('[data-timeline-rename]')).not.toBeNull()
   })
 
-  it('一行的动作只有一颗 ⋯（预览 / 改名 / 复制 / 删除）；选中行下面一条「预览 · 恢复到这里」', async () => {
+  it('一行的动作只有一颗 ⋯（改名 / 复制 / 删除）；点行弹出对比卡片，悬停不再冒按钮', async () => {
     await mount([meta({ id: 'a1' })])
     const row = node('a1')
     // 行里不再有单独的改名图标；⋯ 有可达名
@@ -1716,7 +1743,7 @@ describe('行：单击选中、「预览」钮开预览、双击或「改名」�
       more.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }))
     })
     await flush()
-    expect($('[data-timeline-menu-preview]')).not.toBeNull()
+    expect($('[data-timeline-menu-preview]')).toBeNull()
     expect($('[data-timeline-delete]')!.className).toContain('text-danger')
     await act(async () => $<HTMLElement>('[data-timeline-rename-button]')!.click())
     await act(async () => {
@@ -1725,12 +1752,24 @@ describe('行：单击选中、「预览」钮开预览、双击或「改名」�
     expect($('[data-timeline-rename]')).not.toBeNull()
     expect(document.activeElement).toBe($('[data-timeline-rename]'))
     await act(async () => $<HTMLInputElement>('[data-timeline-rename]')!.blur())
-    // 选中这一行：内联条露出来（data 锚点在每一行上，靠 CSS 收起 / 露出）
-    const bar = row.querySelector('[data-timeline-row-actions]')!
-    expect(bar.className).toContain('hidden')
-    await act(async () => row.querySelector<HTMLButtonElement>('[data-timeline-row]')!.click())
-    expect(bar.className).not.toContain('hidden')
-    await act(async () => bar.querySelector<HTMLButtonElement>('[data-timeline-preview-button]')!.click())
+    // 行下面不再有悬停 / 选中的内联条；单击行弹出卡片：自动取那一刻的正文，左右并排「那一刻 | 当前」
+    expect(row.querySelector('[data-timeline-row-actions]')).toBeNull()
+    expect(row.querySelector('[data-timeline-preview-button]')).toBeNull()
+    await openCard('a1')
+    expect($('[data-timeline-card="a1"]')).not.toBeNull()
+    expect($('[data-timeline-card-frame="moment"]')).not.toBeNull()
+    expect($('[data-timeline-card-frame="current"]')).not.toBeNull()
+    expect(mockDoc).toHaveBeenCalledWith('d_versions', 'a1')
+    // 只读：打开卡片不开模态、不占预览槽
+    expect(useTimelineStore.getState().preview).toBeNull()
+    // Esc 收起卡片
+    await act(async () => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    await flush()
+    expect($('[data-timeline-card]')).toBeNull()
+    await openCard('a1')
+    await act(async () => $<HTMLButtonElement>('[data-timeline-card-enlarge]')!.click())
     await flush()
     expect(useTimelineStore.getState().preview?.meta.id).toBe('a1')
   })
@@ -1739,11 +1778,13 @@ describe('行：单击选中、「预览」钮开预览、双击或「改名」�
 describe('预览取正文失败：下一次预览把这句话作废（Codex #679）', () => {
   it('A 取失败 → B 预览成功 → 关闭：抽屉里没有 A 的旧错', async () => {
     await mount([meta({ id: 'a' }), meta({ id: 'b', ts: NOW })])
+    await openCard('a')
+    // 卡片取到了，「恢复到这里」再取一遍时失败（预览那一槽）
     mockDoc.mockRejectedValueOnce(new Error('A 的正文取不回来'))
-    await act(async () => node('a').querySelector<HTMLButtonElement>('[data-timeline-preview-button]')!.click())
+    await act(async () => cardRestoreBtn()!.click())
     await flush()
     expect($('[data-timeline-error-kind="preview"]')?.textContent).toContain('A 的正文取不回来')
-    await act(async () => node('b').querySelector<HTMLButtonElement>('[data-timeline-preview-button]')!.click())
+    await openModal('b')
     await flush()
     expect(useTimelineStore.getState().preview?.meta.id).toBe('b')
     await act(async () => useTimelineStore.getState().setPreview(null))
@@ -1765,7 +1806,7 @@ describe('预览取正文失败：下一次预览把这句话作废（Codex #679
     )!
     await act(async () => item.click())
     await flush()
-    await act(async () => node('a').querySelector<HTMLButtonElement>('[data-timeline-preview-button]')!.click())
+    await openModal('a')
     await flush()
     expect($('[data-timeline-error-kind="action"]')?.textContent).toContain('复制失败了')
   })
@@ -1805,7 +1846,7 @@ describe('恢复确认框里的「当前画布」名字取活文档（Codex #679
     await mount([meta({ id: 'a1', canvasId: 'c_gone', canvasName: '已删的画布' })])
     const st = useDocumentStore.getState()
     await act(async () => st.renameCanvas(st.activeCanvasId, '刚改的名字'))
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     await flush()
     await act(async () => $<HTMLButtonElement>('[data-timeline-preview-restore]')!.click())
     await flush()
@@ -1864,7 +1905,7 @@ describe('每行一张缩略图', () => {
     expect(thumbs()).toHaveLength(3)
     expect(mockDoc).not.toHaveBeenCalled()
     expect(mockList).toHaveBeenCalledTimes(1)
-    await act(async () => previews()[0].click())
+    await openModal(rows()[0].closest('[data-timeline-node]')!.getAttribute('data-timeline-node')!)
     expect(mockDoc).toHaveBeenCalledTimes(1)
   })
 

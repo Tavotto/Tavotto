@@ -2372,6 +2372,7 @@ export default interface Resources {
     "versions": {
       "beforeRestore": "恢复前（{{time}}）",
       "budgetOver": "命名节点已占用 {{used}} MB，超过 {{limit}} MB 的上限。它们不会被自动删除，但删掉几个之前不能再命名新节点。",
+      "compareLabel": "对比这一版与现在",
       "delete": "删除节点",
       "deleteBody": "删除后无法找回，当前排版不受影响。",
       "deleteTitle": "删除节点「{{name}}」？",
@@ -2403,6 +2404,7 @@ export default interface Resources {
       "duplicate": "复制节点",
       "emptyBody": "编辑停顿后，最多每 2 分钟会自动留一个节点；导出、写回、保存、打开和离开项目时也会留一个。",
       "emptyTitle": "还没有节点",
+      "enlarge": "放大查看",
       "filterAll": "全部",
       "filterLabel": "显示哪些节点",
       "filterNamed": "命名",
@@ -2432,7 +2434,6 @@ export default interface Resources {
       "noDiff": "与当前画布没有差异",
       "noNamed": "还没有命名节点。给任意节点起个名字，它就不会被自动清理。",
       "overlayHint": "底图 = 那一刻；描边 = 当前画布",
-      "preview": "预览",
       "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
       "previewTitle": "预览：{{time}} {{name}}",
       "quickNameTitle": "把现在存为命名节点",

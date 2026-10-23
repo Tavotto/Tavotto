@@ -44,21 +44,29 @@ test('双击一行进入改名（前导 click 不开模态），回车存成命�
   await expect(named.locator('[data-timeline-name]')).toHaveText('投稿前')
 })
 
-test('单击一行只选中；⋯ 里的「改名」进入改名，选中行下面的「预览」打开预览', async ({ app, page }) => {
+test('单击一行弹出对比卡片（悬停不冒按钮）；⋯ 里的「改名」进入改名，卡片的「放大查看」打开预览', async ({ app, page }) => {
   const a = await app()
   await page.goto(a.baseURL)
   const { drawer, node } = await drawerWithOneNode(page)
   const row = await only(node.locator('[data-timeline-row]'))
+  // 悬停只有轻微底色，不再冒「预览」「恢复到这里」两颗按钮
+  await row.hover()
+  await expect(node.locator('[data-timeline-row-actions]')).toHaveCount(0)
   await row.click()
-  await expect(row).toHaveAttribute('aria-pressed', 'true')
+  await expect(row).toHaveAttribute('aria-expanded', 'true')
+  await expect(await only(page.locator('[data-timeline-card]'))).toBeVisible()
   await expect(page.locator('[data-dialog="timeline-preview"]')).toHaveCount(0)
+  await page.keyboard.press('Escape') // Esc 收起卡片，时间线页签还在
+  await expect(page.locator('[data-timeline-card]')).toHaveCount(0)
+  await expect(drawer).toBeVisible()
   // 一行的动作只有一颗 ⋯（2026-10-07 设计审计 §10.2）；菜单 portal 在 body 上
   await (await only(node.locator('[data-timeline-more]'))).click()
   await (await only(page.locator('[data-timeline-rename-button]'))).click()
   await expect(await only(drawer.locator('[data-timeline-rename]'))).toBeFocused()
   await page.keyboard.press('Escape') // 放弃改名
   await expect(drawer.locator('[data-timeline-rename]')).toHaveCount(0)
-  await (await only(node.locator('[data-timeline-preview-button]'))).click()
+  await row.click()
+  await (await only(page.locator('[data-timeline-card-enlarge]'))).click()
   await expect(await only(page.locator('[data-dialog="timeline-preview"]'))).toBeVisible()
 })
 
@@ -85,7 +93,15 @@ for (const [locale, width] of [['zh-CN', 320], ['en-US', 320], ['zh-CN', 480]] a
     expect(await horizontalOffenders(page, '[data-inspector-panel]')).toEqual([])
     const shots = process.env.TAVOTTO_SHOTS
     if (shots) await page.screenshot({ path: `${shots}/timeline-tab-${locale}-${width}.png` })
-    await (await only(node.locator('[data-timeline-preview-button]'))).click()
+    const card = await only(page.locator('[data-timeline-card]'))
+    await expect(card).toBeVisible()
+    // 最窄的右栏下卡片也整张落在视口里（Radix 会翻边 / 贴边）
+    const box = (await card.boundingBox())!
+    const vp = page.viewportSize()!
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(vp.width)
+    if (shots) await page.screenshot({ path: `${shots}/timeline-card-${locale}-${width}.png` })
+    await (await only(card.locator('[data-timeline-card-enlarge]'))).click()
     await expect(await only(page.locator('[data-dialog="timeline-preview"]'))).toBeVisible()
   })
 }

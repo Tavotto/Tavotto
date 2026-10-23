@@ -69,6 +69,7 @@ import { MenuItem, MenuSeparator } from './ui/Menu'
 import { Dialog } from './ui/Dialog'
 import { focusOrigin } from './ui/focusOrigin'
 import { Segmented } from './ui/Segmented'
+import { Popover } from './ui/Popover'
 import { Tip } from './ui/Tooltip'
 import { isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
 
@@ -177,11 +178,11 @@ export function TimelinePanel() {
   const nameRef = useRef<HTMLInputElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
   const previewing = preview?.docId === docId ? preview.meta.id : null
-  // 单击行 = 选中（露出这一行的「预览」「改名」钮），**不开模态**：真实的双击先发一次 click，
-  // 单击就开模态的话遮罩盖住这一行，第二下落不到行上，「双击改名」永远用不了（Codex #679）。
-  // 选中按上下文记账（换了排版 / 项目就不认）
-  const [picked, setPicked] = useState<{ ctx: string; id: string } | null>(null)
-  const selected = previewing ?? (picked?.ctx === ctx ? picked.id : null)
+  // 单击行 = 在该行旁弹出对比小卡片（那一刻 vs 当前，一句话 + 一个主按钮「恢复到这里」）。
+  // 卡片只读：不开模态、不占预览槽，所以双击的第二下仍落在这一行上（双击改名，Codex #679）。
+  // 卡片按上下文记账（换了排版 / 项目就不认）
+  const [card, setCard] = useState<{ ctx: string; id: string } | null>(null)
+  const selected = previewing ?? (card?.ctx === ctx ? card.id : null)
 
   /**
    * 列表的请求序号（Codex #679 P2）：拍一个节点会 bump 两次（节点建好、缩略图挂上），
@@ -262,11 +263,13 @@ export function TimelinePanel() {
   }, [ctx, docId])
 
   const openPreview = useCallback(
-    (meta: LayoutVersionMeta) => {
+    (meta: LayoutVersionMeta, doc?: FigureDocument) => {
       const tl = useTimelineStore.getState()
-      setPicked({ ctx, id: meta.id })
+      setCard({ ctx, id: meta.id })
       setPreviewError(null) // 新的一次预览：上一次取正文的失败作废
-      tl.setPreview({ docId, meta, doc: null })
+      tl.setPreview({ docId, meta, doc: doc ?? null })
+      // 卡片已经取回了正文：直接放大，不再取第二遍
+      if (doc) return
       // 期间换了节点 / 退出了预览：这份正文作废，它的失败也一样。换上下文不必另判：
       // 换项目 `clear()`、换排版那个 effect 都会清掉预览，`current()` 已经是假
       const current = () => {
@@ -467,10 +470,13 @@ export function TimelinePanel() {
                     meta={v}
                     all={versions}
                     selected={v.id === selected}
+                    cardOpen={card?.ctx === ctx && card.id === v.id}
+                    onCardOpenChange={(on) =>
+                      setCard((c) => (on ? { ctx, id: v.id } : c?.ctx === ctx && c.id === v.id ? null : c))
+                    }
                     renaming={renaming === v.id}
                     showCanvas={canvases.length > 1 || v.canvasId !== activeCanvasId}
-                    onSelect={() => setPicked({ ctx, id: v.id })}
-                    onPreview={() => openPreview(v)}
+                    onEnlarge={(doc) => openPreview(v, doc)}
                     onRestore={() => restoreFromRow(v)}
                     onRename={(on) => setRenaming(on ? v.id : null)}
                     onChanged={async () => {
@@ -559,8 +565,9 @@ function TimelineRow({
   selected,
   renaming,
   showCanvas,
-  onSelect,
-  onPreview,
+  cardOpen,
+  onCardOpenChange,
+  onEnlarge,
   onRestore,
   onRename,
   onChanged,
@@ -574,11 +581,12 @@ function TimelineRow({
   selected: boolean
   renaming: boolean
   showCanvas: boolean
-  /** 单击行：选中（不开模态） */
-  onSelect: () => void
-  /** 选中行内联条上的「预览」：打开模态预览 */
-  onPreview: () => void
-  /** 选中行内联条上的「恢复到这里」（同一个 `restoreNode`） */
+  /** 对比小卡片开着：单击行弹出，Esc / 点外面 / 取消收起 */
+  cardOpen: boolean
+  onCardOpenChange: (on: boolean) => void
+  /** 卡片角上的「放大查看」：带着卡片已取回的正文打开模态预览（缩放 / 差异列表） */
+  onEnlarge: (doc: FigureDocument) => void
+  /** 卡片上的「恢复到这里」（同一个 `restoreNode`） */
   onRestore: () => Promise<void>
   onRename: (on: boolean) => void
   onChanged: () => Promise<void>
@@ -634,9 +642,8 @@ function TimelineRow({
 
   const index = all.indexOf(v)
   // 一行的动作只有一颗 ⋯（2026-10-07 设计审计 §10.2：此前「预览」「改名」两颗图标 + ⋯，三个入口说的是同一张清单）。
-  // ⋯ / 右键 / ⇧F10 是同一份菜单（`RowMenu`）；选中的那一行下面再露一条「预览 · 恢复到这里」
+  // ⋯ / 右键 / ⇧F10 是同一份菜单（`RowMenu`）；点行本身弹出对比小卡片（预览 + 恢复到这里）
   const menu = useRowMenu()
-  const [restoring, setRestoring] = useState(false)
   // 这个上下文有一次恢复在飞（哪一行发起的都算）：所有行的「恢复到这里」一起禁用
   const restoreLocked = useTimelineStore((s) => s.restoring) === ctx
   const renamingFromMenu = useRef(false)
@@ -649,57 +656,85 @@ function TimelineRow({
           selected ? 'bg-selected' : 'hover:bg-surface-hover',
         )}
       >
-        <button
-          type="button"
-          onClick={onSelect}
-          // 双击改名：单击只选中、不开模态，所以双击的第二下仍落在这一行上
-          onDoubleClick={(e) => {
-            e.preventDefault()
-            onRename(true)
-          }}
-          aria-pressed={selected}
-          data-timeline-row
-          className="flex min-w-0 flex-1 items-start gap-2 rounded-md py-1.5 pl-3 text-left outline-none focus-visible:focus-ring"
-        >
-          <RowThumb docId={docId} meta={v} />
-          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <span className="flex items-center gap-1.5">
-              <span className={cn('shrink-0 text-sm tabular-nums text-ink', selected && 'font-medium')}>
-                {formatTime(v.ts)}
-              </span>
-              {named && <Bookmark size={ICON_SIZE.xs} filled className="shrink-0 text-accent" aria-hidden />}
-              {/* 自动节点的名字由后端按时间生成，与这里的时间重复，所以只显示
-                  **用户起的**名字（`versionDisplayName`）；命名节点的名字加重 */}
-              {!renaming && (
-                <span
-                  className={cn(
-                    'min-w-0 flex-1 truncate text-sm',
-                    named ? 'font-medium text-ink' : 'text-ink-2',
+        <Popover
+          open={cardOpen && !renaming}
+          onOpenChange={onCardOpenChange}
+          side="left"
+          align="start"
+          width={CARD_W}
+          ariaLabel={vd('compareLabel')}
+          trigger={
+            <button
+              type="button"
+              // 双击改名：单击只选中、不开模态，所以双击的第二下仍落在这一行上
+              onDoubleClick={(e) => {
+                e.preventDefault()
+                onCardOpenChange(false)
+                onRename(true)
+              }}
+              aria-expanded={cardOpen}
+              data-timeline-row
+              className="flex min-w-0 flex-1 items-start gap-2 rounded-md py-1.5 pl-3 text-left outline-none focus-visible:focus-ring"
+            >
+              <RowThumb docId={docId} meta={v} />
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="flex items-center gap-1.5">
+                  <span className={cn('shrink-0 text-sm tabular-nums text-ink', selected && 'font-medium')}>
+                    {formatTime(v.ts)}
+                  </span>
+                  {named && <Bookmark size={ICON_SIZE.xs} filled className="shrink-0 text-accent" aria-hidden />}
+                  {/* 自动节点的名字由后端按时间生成，与这里的时间重复，所以只显示
+                      **用户起的**名字（`versionDisplayName`）；命名节点的名字加重 */}
+                  {!renaming && (
+                    <span
+                      className={cn(
+                        'min-w-0 flex-1 truncate text-sm',
+                        named ? 'font-medium text-ink' : 'text-ink-2',
+                      )}
+                      data-timeline-name
+                    >
+                      {versionDisplayName(v)}
+                    </span>
                   )}
-                  data-timeline-name
-                >
-                  {versionDisplayName(v)}
+                  {renaming && <span className="flex-1" />}
+                  <KindMark meta={v} />
                 </span>
-              )}
-              {renaming && <span className="flex-1" />}
-              <KindMark meta={v} />
-            </span>
-            <span className="text-xs text-ink-3">
-              {versionSummaryText(versionSummary(v, comparableEarlier(all, index)))
-                .map(formatMessage)
-                .join(' · ')}
-            </span>
-            {/* 这一版拍的是哪张画布（R-03）。旧节点没有这个字段，**照实说「不知道」**，
-                不猜成当前画布（左栏审计 L21）。 */}
-            {showCanvas && (
-              <span className="truncate type-meta">
-                {v.canvasId
-                  ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
-                  : vd('fromUnknownCanvas')}
+                <span className="text-xs text-ink-3">
+                  {versionSummaryText(versionSummary(v, comparableEarlier(all, index)))
+                    .map(formatMessage)
+                    .join(' · ')}
+                </span>
+                {/* 这一版拍的是哪张画布（R-03）。旧节点没有这个字段，**照实说「不知道」**，
+                    不猜成当前画布（左栏审计 L21）。 */}
+                {showCanvas && (
+                  <span className="truncate type-meta">
+                    {v.canvasId
+                      ? vd('fromCanvas', { name: v.canvasName || v.canvasId })
+                      : vd('fromUnknownCanvas')}
+                  </span>
+                )}
               </span>
-            )}
-          </span>
-        </button>
+            </button>
+          }
+        >
+          <CompareCard
+            docId={docId}
+            meta={v}
+            summary={versionSummaryText(versionSummary(v, comparableEarlier(all, index)))
+              .map(formatMessage)
+              .join(' · ')}
+            locked={restoreLocked}
+            onRestore={() => {
+              onCardOpenChange(false)
+              return onRestore()
+            }}
+            onEnlarge={(doc) => {
+              onCardOpenChange(false)
+              onEnlarge(doc)
+            }}
+            onCancel={() => onCardOpenChange(false)}
+          />
+        </Popover>
         <RowMenu
           state={menu}
           label={vd('more')}
@@ -712,9 +747,6 @@ function TimelineRow({
             e.preventDefault()
           }}
         >
-          <MenuItem icon={Eye} data-timeline-menu-preview onSelect={onPreview}>
-            {vd('preview')}
-          </MenuItem>
           <MenuItem
             icon={Pencil}
             data-timeline-rename-button
@@ -740,38 +772,6 @@ function TimelineRow({
             {vd('delete')}
           </MenuItem>
         </RowMenu>
-      </div>
-      {/* 选中行下面的内联条：「预览」「恢复到这里」。没选中时收起，悬停 / 键盘焦点在这一行时也露出来
-          （鼠标用户不必先点一下才看得见这两件最常做的事） */}
-      <div
-        data-timeline-row-actions
-        className={cn(
-          'items-center gap-1 pb-1.5 pl-[76px] pr-3',
-          selected ? 'flex' : 'hidden group-hover/node:flex group-focus-within/node:flex',
-        )}
-      >
-        <Button variant="secondary" size="sm" data-timeline-preview-button onClick={onPreview}>
-          <Eye size={ICON_SIZE.sm} />
-          {vd('preview')}
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          data-timeline-row-restore
-          loading={restoring}
-          disabled={restoreLocked}
-          onClick={async () => {
-            setRestoring(true)
-            try {
-              await onRestore()
-            } finally {
-              setRestoring(false)
-            }
-          }}
-        >
-          <RotateCcw size={ICON_SIZE.sm} />
-          {vd('restore')}
-        </Button>
       </div>
       {renaming && (
         <div className="px-3 pb-1.5">
@@ -799,6 +799,129 @@ function TimelineRow({
       )}
       {children}
     </li>
+  )
+}
+
+/* ------------------------------ 对比小卡片 -------------------------------- */
+
+const CARD_W = 340
+/** 每一格预览的最大高度（px）：竖版页面不把卡片撑出屏幕 */
+const CARD_FRAME_MAX_H = 190
+
+/**
+ * 点时间线一行弹出的小卡片：左「那一刻」右「现在」并排，一句话（这一版比上一版变了什么），
+ * 一个主按钮「恢复到这里」+ 取消。只读——唯一会写的是「恢复到这里」，走的仍是
+ * `restoreFromRow` → `restoreUnderLock`（同一把锁、同一个 `restoreNode`）。
+ * 正文在卡片挂上时才取（Popover 内容只在打开时挂载），关掉就丢。
+ */
+function CompareCard({
+  docId,
+  meta,
+  summary,
+  locked,
+  onRestore,
+  onEnlarge,
+  onCancel,
+}: {
+  docId: string
+  meta: LayoutVersionMeta
+  summary: string
+  locked: boolean
+  onRestore: () => Promise<void>
+  onEnlarge: (doc: FigureDocument) => void
+  onCancel: () => void
+}) {
+  const currentDoc = useCurrentDocFor(meta)
+  const [doc, setDoc] = useState<FigureDocument | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+  const [approximate, setApproximate] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+  useEffect(() => {
+    let live = true
+    fetchVersionDoc(docId, meta.id)
+      .then((v) => live && setDoc(v.doc as FigureDocument))
+      .catch((e) => live && setFailed(backendErrorText(e)))
+    return () => {
+      live = false
+    }
+  }, [docId, meta.id])
+  const page = doc?.page ?? currentDoc.page
+  // 浮层 p-2 + 灰底 p-2 + 两格间距
+  const half = (CARD_W - 16 - 16 - 12) / 2
+  const frameW = Math.max(40, Math.min(half, (CARD_FRAME_MAX_H * page.w) / Math.max(1, page.h)))
+  const frame = (d: FigureDocument, caption: string, which: 'moment' | 'current') => (
+    <figure className="flex flex-col items-center gap-1" style={{ width: half }} data-timeline-card-frame={which}>
+      <div className="relative" style={{ width: frameW }}>
+        <LayoutSnapshot
+          doc={d}
+          renderOverrides
+          displayWidth={frameW}
+          onApproximate={which === 'moment' ? setApproximate : undefined}
+        />
+      </div>
+      <figcaption className="type-caption">{caption}</figcaption>
+    </figure>
+  )
+  return (
+    <div className="flex flex-col gap-2" data-timeline-card={meta.id}>
+      <div className="relative flex min-h-24 items-start justify-between gap-3 rounded-md bg-canvas p-2">
+        <IconButton
+          iconSize="sm"
+          label={vd('enlarge')}
+          data-timeline-card-enlarge
+          className="absolute right-1 top-1 z-10"
+          disabled={!doc}
+          onClick={() => {
+            if (doc) onEnlarge(doc)
+          }}
+        >
+          <Eye size={ICON_SIZE.sm} className="text-ink-2" />
+        </IconButton>
+        {failed ? (
+          <p className="p-2 text-sm text-danger" data-timeline-card-error>
+            {failed}
+          </p>
+        ) : doc ? (
+          <>
+            {frame(doc, vd('sideMoment'), 'moment')}
+            {frame(currentDoc, vd('sideCurrent'), 'current')}
+          </>
+        ) : (
+          <p className="text-shimmer w-full p-4 text-center text-ink-3" data-timeline-card-loading>
+            {vd('loadingSnapshot')}
+          </p>
+        )}
+      </div>
+      {approximate && <p className="type-caption">{vd('previewApproximate')}</p>}
+      {summary && (
+        <p className="text-sm text-ink-2" data-timeline-card-summary>
+          {summary}
+        </p>
+      )}
+      <div className="flex items-center justify-end gap-2">
+        <Button size="sm" onClick={onCancel} data-timeline-card-cancel>
+          {translate('actions.cancel', { ns: 'common' })}
+        </Button>
+        <Button
+          variant="primary"
+          size="sm"
+          loading={restoring}
+          disabled={locked || !!failed}
+          data-timeline-card-restore
+          onClick={async () => {
+            setRestoring(true)
+            try {
+              await onRestore()
+            } finally {
+              setRestoring(false)
+            }
+          }}
+        >
+          <RotateCcw size={ICON_SIZE.sm} />
+          {vd('restore')}
+        </Button>
+      </div>
+    </div>
   )
 }
 
