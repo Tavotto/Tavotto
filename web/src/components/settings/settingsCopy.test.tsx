@@ -444,7 +444,7 @@ describe('T43 导出偏好：与导出对话框同名同单位', () => {
     expect(byAria(ex('ppiSelectLabel'))!.hasAttribute('disabled')).toBe(true)
   })
 
-  it('SVG defaults persist, disclose editable-text default, and keep PPI disabled without raster formats', async () => {
+  it('SVG defaults persist and keep PPI disabled without raster formats', async () => {
     defaults({ formats: ['pdf'] })
     await open('export')
     const checkbox = (format: string) => body().querySelector<HTMLInputElement>(`[data-export-format="${format}"] input`)!
@@ -453,7 +453,7 @@ describe('T43 导出偏好：与导出对话框同名同单位', () => {
     await act(async () => { checkbox('svg').click(); checkbox('pdf').click() })
     expect(checkbox('svg').checked).toBe(true)
     expect(JSON.parse(localStorage.getItem('tavotto.export.defaults')!).formats).toEqual(['svg'])
-    expect(bodyText()).toContain(ex('svgNote'))
+    expect(bodyText()).not.toContain('转换为形状')
     expect(byAria(ex('ppiSelectLabel'))!.hasAttribute('disabled')).toBe(true)
   })
 
