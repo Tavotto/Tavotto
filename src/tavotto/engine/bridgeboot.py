@@ -113,6 +113,7 @@ _TOPLEVEL_TO_RESTORE = (
     "previewbudget",
     "preview_complexity",
     "preview_hybrid",
+    "teedraw",
 )
 
 
