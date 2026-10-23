@@ -510,7 +510,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "verify-science-environment":
         if args.python is None:
             parser.error("verify-science-environment requires --python")
-        present = renderer_packages(str(args.python))
+        try:
+            present = renderer_packages(str(args.python))
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(f"science interpreter cannot be inspected: {type(exc).__name__}")
+            return 1
         if present:
             print("science environment contains Tavotto render packages: " + ", ".join(present))
             return 1
@@ -533,20 +537,7 @@ def main(argv: list[str] | None = None) -> int:
         if helper:
             parts = helper["module"].split(".")
             # The helper lives in the scientific interpreter, not in this (Tavotto) one.
-            located = subprocess.run(
-                [
-                    cg.science_python(),
-                    "-I",
-                    "-c",
-                    "import importlib.metadata as m, sys;"
-                    "print(m.distribution(sys.argv[1]).locate_file(sys.argv[2]))",
-                    parts[0],
-                    "/".join(parts) + ".py",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            ).stdout.strip()
+            located = cg.science_distribution_file(parts[0], "/".join(parts) + ".py")
             path = located
             if file_digest(Path(path)) != helper["sha256"]:
                 raise cg.EvidenceError(

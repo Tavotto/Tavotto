@@ -35,6 +35,7 @@ import time
 import traceback
 import uuid
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
 HERE = Path(__file__).resolve().parent
@@ -177,25 +178,112 @@ def science_python() -> str:
     return os.environ.get("TAVOTTO_SCIENCE_PYTHON") or sys.executable
 
 
+@dataclass(frozen=True)
+class ScienceInterpreter:
+    """The scientific interpreter, probed once: usable + its facts, or unusable + the reason."""
+
+    python: str
+    usable: bool
+    reason: str | None = None
+    facts: dict | None = None
+    missing: tuple[str, ...] = ()
+
+
+#: Modules the scripts/workers need in the scientific interpreter (see GUARDIAN_MODULES for the other side).
+SCIENCE_MODULES = ("matplotlib", "numpy")
+_PROBE = (
+    "import importlib.util as u, json, sys; sys.path.insert(0, sys.argv[1]);"
+    "from guardian_exec_observer import actual_environment;"
+    "print(json.dumps({'env': actual_environment(),"
+    " 'missing': [m for m in sys.argv[2:] if u.find_spec(m) is None]}))"
+)
+_SCIENCE_CACHE: dict[str, ScienceInterpreter] = {}
+
+
+def reset_science_cache() -> None:
+    _SCIENCE_CACHE.clear()
+
+
+def science_interpreter() -> ScienceInterpreter:
+    """The one place that starts the scientific interpreter to learn about it (cached per path).
+
+    Environment fingerprint, preflight and `_execute()` all read this; none starts its own checked
+    subprocess, so a missing / non-executable / failing interpreter becomes `usable=False` with a
+    reason instead of an exception raised before preflight can report it.
+    """
+    python = science_python()
+    cached = _SCIENCE_CACHE.get(python)
+    if cached is not None:
+        return cached
+    if python == sys.executable:
+        result = ScienceInterpreter(
+            python,
+            True,
+            facts=actual_environment(),
+            missing=tuple(m for m in SCIENCE_MODULES if importlib.util.find_spec(m) is None),
+        )
+    else:
+        try:
+            done = subprocess.run(
+                [python, "-I", "-c", _PROBE, str(HERE), *SCIENCE_MODULES],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if done.returncode != 0:
+                result = ScienceInterpreter(
+                    python, False, f"exit {done.returncode}: {done.stderr.strip()[-300:]}"
+                )
+            else:
+                data = json.loads(done.stdout)
+                result = ScienceInterpreter(
+                    python, True, facts=data["env"], missing=tuple(data["missing"])
+                )
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
+            result = ScienceInterpreter(python, False, f"{type(exc).__name__}: {str(exc)[-300:]}")
+    _SCIENCE_CACHE[python] = result
+    return result
+
+
+def science_distribution_file(distribution: str, relative: str) -> str:
+    """Where a distribution's file lives in the scientific interpreter (for `verify-environment`)."""
+    science = science_interpreter()
+    if not science.usable:
+        raise EvidenceError(f"scientific interpreter unusable: {science.reason}")
+    done = subprocess.run(
+        [
+            science.python,
+            "-I",
+            "-c",
+            "import importlib.metadata as m, sys;"
+            "print(m.distribution(sys.argv[1]).locate_file(sys.argv[2]))",
+            distribution,
+            relative,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if done.returncode != 0:
+        raise EvidenceError(f"cannot locate {distribution} in the scientific interpreter")
+    return done.stdout.strip()
+
+
 def environment() -> dict:
-    """Identity of the environment the measurement ran in.
+    """Identity of the environment the measurement ran in; never raises for a bad interpreter.
 
     With a separate scientific interpreter both are bound: the top-level facts are the scientific
     interpreter's (where scripts and workers run) and `facts.guardian` is Tavotto's own, so a change
-    on either side changes the fingerprint.
+    on either side changes the fingerprint. An unusable interpreter is recorded as such.
     """
-    python = science_python()
-    if python == sys.executable:
-        return actual_environment()
-    code = (
-        "import json, sys; sys.path.insert(0, sys.argv[1]);"
-        "from guardian_exec_observer import actual_environment;"
-        "print(json.dumps(actual_environment()))"
+    science = science_interpreter()
+    if science.python == sys.executable:
+        return science.facts
+    base = (
+        science.facts["facts"]
+        if science.facts is not None
+        else {"science_interpreter": {"usable": False, "reason": science.reason}}
     )
-    out = subprocess.run(
-        [python, "-I", "-c", code, str(HERE)], capture_output=True, text=True, check=True
-    ).stdout
-    facts = {**json.loads(out)["facts"], "guardian": actual_environment()["facts"]}
+    facts = {**base, "guardian": actual_environment()["facts"]}
     return {"fingerprint": canonical(facts), "facts": facts}
 
 
@@ -208,25 +296,17 @@ def fonts_dir() -> Path:
 #: What each side really imports. The Guardian process uses numpy/Pillow for the pixel comparison
 #: (`pixelcompare`) and RenderCore for the product; scripts and workers need matplotlib/numpy.
 GUARDIAN_MODULES = tuple(m for m in REQUIRED_MODULES if m != "matplotlib")
-SCIENCE_MODULES = ("matplotlib", "numpy")
 
 
 def preflight() -> list[str]:
-    python = science_python()
-    if python == sys.executable:
+    science = science_interpreter()
+    if science.python == sys.executable:
         return [f"module:{m}" for m in REQUIRED_MODULES if importlib.util.find_spec(m) is None] + (
             _font_gaps()
         )
-    probe = (
-        "import importlib.util as u, sys;"
-        "print(*[m for m in sys.argv[1:] if u.find_spec(m) is None])"
-    )
-    found = subprocess.run(
-        [python, "-I", "-c", probe, *SCIENCE_MODULES], capture_output=True, text=True
-    )
     remote = (
-        [f"module:{m}@science" for m in found.stdout.split()]
-        if found.returncode == 0
+        [f"module:{m}@science" for m in science.missing]
+        if science.usable
         else ["science_python:unusable"]
     )
     local = [
@@ -801,6 +881,9 @@ def _execute(request: dict) -> dict:
     if any(blocks_execution(item) for item in missing):
         row["native"]["status"] = "environment_unavailable"
         row["raw"] = {"missing_prerequisites": missing}
+        science = science_interpreter()
+        if not science.usable:
+            row["raw"]["science_python_unusable"] = science.reason
         row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
         return finalize_row(row)
     native_root = work / "native-control"
