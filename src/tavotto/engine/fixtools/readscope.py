@@ -122,10 +122,15 @@ _KEY_ALT = "|".join(re.escape(k).replace(r"\-", "[_-]") for k in SENSITIVE_KEYS)
 _KEY = rf"(?:(?:{_KEY_ALT})[\w-]*|auth(?:[_-](?:token|key))?(?![A-Za-z0-9]))"
 
 
+#: 引号值：认反斜杠转义（`"abc\"def"` 是一整个值，不在转义的引号处截断）
+_DQ = r'"(?:\\.|[^"\\\n])*"'
+_SQ = r"'(?:\\.|[^'\\\n])*'"
+
+
 def _value(sfx: str, min_bare: int) -> str:
     """值的三种形状（组名带后缀 `sfx` 以便同一正则里出现两次）：双引号 / 单引号（可含空格、任意长度）/ 裸值。"""
     return (
-        rf"(?:(?P<dq{sfx}>\"[^\"\n]*\")|(?P<sq{sfx}>'[^'\n]*')"
+        rf"(?:(?P<dq{sfx}>{_DQ})|(?P<sq{sfx}>{_SQ})"
         rf"|(?!\*\*\*)(?P<bare{sfx}>[^\s\"',;]{{{min_bare},}}))"
     )
 
@@ -137,15 +142,19 @@ def _value(sfx: str, min_bare: int) -> str:
 #:    计数类键名（`max_tokens` / `num_tokens` / `token_count` / `tokenizer` …，见 `_BENIGN_KEY`）不是凭据，原样保留。
 _SECRET_ASSIGN = re.compile(
     rf"(?i)(?:(?P<cli>(?<![\w-])-{{1,2}}{_KEY}(?:\s+|\s*=\s*)){_value('C', 1)}"
-    rf"|(?P<cliP>(?<![\w-])-p\s+)(?:\"[^\"\n]*\"|'[^'\n]*')"
+    rf"|(?P<cliP>(?<![\w-])-p\s+)(?:{_DQ}|{_SQ})"
     rf"|(?P<kv>(?P<kname>[\w.-]*?{_KEY})[\"']?\s*[:=]\s*){_value('K', 1)})"
 )
 
 
 #: 含 token 但不是凭据的计数类键名：上下限 / 计数 / 用量 / 分词器（`max_tokens = 4096` 不该被抹）
 _BENIGN_KEY = re.compile(
-    r"(?i)(?:^|[_.-])(?:max|min|num|n|total|count|limit|budget|used|prompt|completion|input|output)[_-]?tokens?$"
-    r"|tokens?[_-](?:count|limit|budget|used|usage|per[_-]\w+)$|tokeni[sz]er"
+    # 整个键名（可带 `a.b.` 命名空间前缀）**完全**是计数 / 分词器字段才豁免；`tokenizer_api_token` 之类一律照抹
+    r"(?i)(?:[\w-]+\.)*(?:"
+    r"(?:max|min|num|n|total|count|limit|budget|used|prompt|completion|input|output)[_-]?tokens?"
+    r"|tokens?[_-](?:count|limit|budget|used|usage)"
+    r"|tokeni[sz]er(?:[_-](?:name|path|type))?"
+    r")"
 )
 
 
@@ -155,7 +164,7 @@ def _mask_secret(m: re.Match) -> str:
     if m.group("cliP") is not None:
         return m.group("cliP") + "***"
     head = m.group("kv")
-    if _BENIGN_KEY.search(m.group("kname") or ""):
+    if _BENIGN_KEY.fullmatch(m.group("kname") or ""):
         return m.group(0)
     if m.group("dqK") is not None:
         return head + '"***"'

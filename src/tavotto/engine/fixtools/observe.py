@@ -116,7 +116,7 @@ def list_dir(ctx: FixContext, args: dict) -> ToolResult:
     if isinstance(r, ToolResult):
         return r
     try:
-        entries = _scan_bounded(r.real, time.monotonic() + SCAN_SECONDS)
+        entries, partial = _scan_bounded(r.real, time.monotonic() + SCAN_SECONDS)
     except OSError:
         return err("not_a_dir", "Could not list that path (is it a directory?).")
     rows: list[str] = []
@@ -141,6 +141,8 @@ def list_dir(ctx: FixContext, args: dict) -> ToolResult:
     tail = (f"\n... and {more} more" if more > 0 else "") + (
         f"\n({hidden} protected entries not shown)" if hidden else ""
     )
+    if partial:
+        tail += PARTIAL_NOTE
     return ok(("\n".join(rows) or "(empty)") + tail, f"listed {len(rows)} entries")
 
 
@@ -149,19 +151,28 @@ def list_dir(ctx: FixContext, args: dict) -> ToolResult:
 DIR_ENTRY_CAP = 5000
 
 
-def _scan_bounded(path: str, deadline: float) -> list[os.DirEntry]:
-    """惰性枚举一个目录：边读边查时限与条数上限（不 `sorted(os.scandir(...))` 一次吃光），读到的再排序。"""
+def _scan_bounded(path: str, deadline: float) -> tuple[list[os.DirEntry], bool]:
+    """惰性枚举一个目录：边读边查时限与条数上限（不 `sorted(os.scandir(...))` 一次吃光），读到的再排序。
+    → (条目, 是否没读全)。没读全必须如实告诉调用方——否则「没扫到」会被当成「不存在」。"""
     out: list[os.DirEntry] = []
+    partial = False
     with os.scandir(path) as it:
         for i, e in enumerate(it):
             if len(out) >= DIR_ENTRY_CAP or (i % 256 == 0 and time.monotonic() > deadline):
+                partial = True
                 break
             out.append(e)
     out.sort(key=lambda e: e.name)
-    return out
+    return out, partial
 
 
-def _walk(ctx: FixContext, root: str, deadline: float):
+PARTIAL_NOTE = (
+    f"\n[incomplete: some directories have more than {DIR_ENTRY_CAP} entries and were only partly scanned; "
+    "a missing result does not mean the file / text is absent — narrow the root]"
+)
+
+
+def _walk(ctx: FixContext, root: str, deadline: float, stats: dict | None = None):
     """受限遍历：不跟随目录符号链接、跳过大目录与拦截区、限时。产出 `(文件的绝对路径, 解析结果)`。
 
     文件符号链接会被跟随，`解析结果` 就是**链接目标**的 `ReadScope.check`（项目外判断以目标为准；与 `resolve_or_error`
@@ -172,7 +183,9 @@ def _walk(ctx: FixContext, root: str, deadline: float):
         if time.monotonic() > deadline:
             return
         try:
-            it = _scan_bounded(cur, deadline)
+            it, partial = _scan_bounded(cur, deadline)
+            if partial and stats is not None:
+                stats["partial"] = True
         except OSError:
             continue
         for e in it:
@@ -207,7 +220,8 @@ def find_files(ctx: FixContext, args: dict) -> ToolResult:
     limit = _int(args.get("limit"), 100, 1, FIND_LIMIT_MAX) or 100
     deadline = time.monotonic() + SCAN_SECONDS
     found: list[str] = []
-    for full, _target in _walk(ctx, r.real, deadline):
+    stats: dict = {}
+    for full, _target in _walk(ctx, r.real, deadline, stats):
         rel = os.path.relpath(full, r.real).replace(os.sep, "/")
         if ctx.scope.is_denied(full) or not _glob_ok(os.path.basename(full), rel, glob):
             continue
@@ -218,6 +232,8 @@ def find_files(ctx: FixContext, args: dict) -> ToolResult:
     note = "\n[stopped at the time limit; narrow the root or the glob]" if timed_out else ""
     if len(found) >= limit:
         note = f"\n[showing the first {limit}; narrow the glob for more]"
+    if stats.get("partial"):
+        note += PARTIAL_NOTE
     return ok("\n".join(found) + note if found else "(no matches)" + note, f"{len(found)} files")
 
 
@@ -240,7 +256,8 @@ def grep_files(ctx: FixContext, args: dict) -> ToolResult:
     hits: list[str] = []
     files = 0
     noted: set[str] = set()
-    for full, target in _walk(ctx, r.real, deadline):
+    stats: dict = {}
+    for full, target in _walk(ctx, r.real, deadline, stats):
         rel = os.path.relpath(full, r.real).replace(os.sep, "/")
         if ctx.scope.is_denied(full) or not _glob_ok(os.path.basename(full), rel, glob):
             continue
@@ -269,6 +286,8 @@ def grep_files(ctx: FixContext, args: dict) -> ToolResult:
         note = f"\n[showing the first {limit} matches]"
     elif time.monotonic() > deadline:
         note = "\n[stopped at the time limit; narrow the root or the glob]"
+    if stats.get("partial"):
+        note += PARTIAL_NOTE
     return ok(
         "\n".join(hits) + note if hits else "(no matches)" + note,
         f"{len(hits)} matches in {files} files",

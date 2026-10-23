@@ -988,7 +988,37 @@ def test_directory_enumeration_is_bounded_and_lazy(tmp_path, monkeypatch):
     for i in range(60):
         (big / f"f{i:03}.txt").write_text("x")
     monkeypatch.setattr(observe, "DIR_ENTRY_CAP", 10)
-    assert len(observe._scan_bounded(str(big), deadline=float("inf"))) == 10
+    entries, partial = observe._scan_bounded(str(big), deadline=float("inf"))
+    assert len(entries) == 10 and partial
     import time as _t
 
-    assert observe._scan_bounded(str(big), deadline=_t.monotonic() - 1) == []
+    assert observe._scan_bounded(str(big), deadline=_t.monotonic() - 1) == ([], True)
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        ('{"password":"abc\\"def"}', '{"password":"***"}'),
+        ("pwd='it\\'s'", "pwd='***'"),
+        ("tokenizer_api_token=abc", "tokenizer_api_token=***"),
+        ("my_tokenizer_password=abc", "my_tokenizer_password=***"),
+        ("tokenizer=bert", "tokenizer=bert"),
+        ("gen.max_tokens = 4096", "gen.max_tokens = 4096"),
+    ],
+)
+def test_escaped_quotes_and_anchored_count_keys(text, want):
+    assert readscope.scrub(text) == want
+
+
+def test_a_partial_directory_scan_is_reported_not_silent(box, monkeypatch):
+    monkeypatch.setattr(observe, "DIR_ENTRY_CAP", 3)
+    proj = box.proj
+    for i in range(10):
+        (proj / f"n{i:02}.txt").write_text("x")
+    ctx = make_ctx(box)
+    res = call(ctx, "grep_files", {"root": str(proj), "pattern": "zzz-nothing"})
+    assert "incomplete" in res.content
+    res2 = call(ctx, "find_files", {"root": str(proj), "glob": "*.nope"})
+    assert "incomplete" in res2.content
+    res3 = call(ctx, "list_dir", {"path": str(proj)})
+    assert "incomplete" in res3.content
