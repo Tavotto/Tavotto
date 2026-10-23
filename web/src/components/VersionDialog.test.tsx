@@ -1781,9 +1781,12 @@ describe('对比小卡片（Codex #1349）', () => {
     await openModal('a1')
     await flush()
     expect(useTimelineStore.getState().preview?.meta.id).toBe('a1')
+    // 行上的展开态也是收起的（卡片的开关状态本身，不只看 DOM 在不在）
+    expect(rows()[0].getAttribute('aria-expanded')).toBe('false')
     expect($('[data-timeline-card]')).toBeNull()
     await act(async () => useTimelineStore.getState().setPreview(null))
     await flush()
+    expect(rows()[0].getAttribute('aria-expanded')).toBe('false')
     expect($('[data-timeline-card]')).toBeNull()
   })
 
