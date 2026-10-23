@@ -178,6 +178,7 @@
     "checkScopeCanvasNamed": "checks the whole canvas “{{name}}”",
     "checkScopeFigureNamed": "checks only the original “{{name}}”",
     "checkScopeOffCanvas": "“{{name}}” is not on the canvas, so this export gets no spec check",
+    "checkingFigure": "Checking this figure…",
     "conflict": "The export folder already has {{files}}.",
     "conflictRename": "Save a copy",
     "conflictReplace": "Replace",

@@ -154,19 +154,19 @@ describe('scope', () => {
     expect(a.reason).toBe('source_stale')
   })
 
-  it('runtime 图：素材清单没有它（被磁盘同名原件让位 / 清单还没取到）但后端注册表认它 → 原图口径可用', () => {
+  it('runtime 图：素材清单没有它——后端注册表说了算；未知不判假', () => {
     const rt: PanelObject = { ...panel, id: 'r1', fileId: 'runtime:fig.py#F', fileKind: 'runtime' } as never
     useAssetStore.setState({ byId: {} } as never)
-    useRuntimeAssetStore.setState({ assets: [], byId: {} } as never)
+    // 后端明确回「不认」：不可用
+    useRuntimeAssetStore.setState({ assets: [], byId: { 'runtime:fig.py#F': { registered: false, checked: true } } } as never)
     expect(originalAvailability('runtime:fig.py#F', { panel: rt })).toMatchObject({ ok: false, reason: 'source_stale' })
-    useRuntimeAssetStore.setState({
-      assets: null,
-      byId: { 'runtime:fig.py#F': { registered: true, checked: true } },
-    } as never)
+    // 未知（清单没取到 / 失效后）：不判 source_stale，由对话框去问
+    useRuntimeAssetStore.setState({ assets: null, byId: {} } as never)
     expect(originalAvailability('runtime:fig.py#F', { panel: rt }).ok).toBe(true)
-    // 注册表不认（脚本被移出登记）：仍不可用
-    useRuntimeAssetStore.setState({ byId: { 'runtime:fig.py#F': { registered: false, checked: true } } } as never)
-    expect(originalAvailability('runtime:fig.py#F', { panel: rt }).ok).toBe(false)
+    useRuntimeAssetStore.setState({ byId: { 'runtime:fig.py#F': { registered: null, checked: false } } } as never)
+    expect(originalAvailability('runtime:fig.py#F', { panel: rt }).ok).toBe(true)
+    useRuntimeAssetStore.setState({ byId: { 'runtime:fig.py#F': { registered: true, checked: true } } } as never)
+    expect(originalAvailability('runtime:fig.py#F', { panel: rt }).ok).toBe(true)
   })
 
   it('判据是「够不够得着」而不是 `spec.stale`', () => {

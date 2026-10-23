@@ -41,7 +41,10 @@ let root: Root
 let el: HTMLDivElement
 beforeEach(() => {
   useAssetStore.setState({ byId: {} } as never)
-  useRuntimeAssetStore.setState({ assets: [], byId: {} } as never)
+  useRuntimeAssetStore.setState({
+    assets: [],
+    byId: { [ID]: { registered: false, checked: true, status: 'needs_rerun', cached: false, profile: 'safe' } },
+  } as never)
   el = document.createElement('div')
   document.body.appendChild(el)
   root = createRoot(el)
