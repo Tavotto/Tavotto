@@ -155,6 +155,9 @@ export function TimelinePanel() {
   )
   // 「全部 / 命名」两个视图（用户 2026-09-27 反馈：命名节点要有自己的视图）
   const [filter, setFilter] = useState<'all' | 'named'>('all')
+  // 「这张画布 / 全部画布」：每张画布各有自己的时间线（打开一张图 = 它自己的画布，ADR 0028），
+  // 来回编辑不同脚本的图时彼此不混。归属只认节点自己记的 `canvasId`（R-03）；多于一张画布才分
+  const [scope, setScope] = useState<'canvas' | 'all'>('canvas')
   // 用户正在编辑的输入按上下文记账（Codex #679）：换了项目 / 排版，旧排版的草稿与
   // 改名框当场不再显示——提交发生在切换之后，`afterAwait` 管不到，而交上去的名字会在
   // 新排版里建出一个名不副实的命名节点。在 render 里按 ctx 派生，不等晚一帧的 effect
@@ -178,6 +181,8 @@ export function TimelinePanel() {
   const nameRef = useRef<HTMLInputElement>(null)
   const restoreFocus = useRef<HTMLElement | null>(null)
   const previewing = preview?.docId === docId ? preview.meta.id : null
+  const multiCanvas = canvases.length > 1
+  const scopeByCanvas = multiCanvas && scope === 'canvas'
   // 单击行 = 在该行旁弹出对比小卡片（那一刻 vs 当前，一句话 + 一个主按钮「恢复到这里」）。
   // 卡片只读：不开模态、不占预览槽，所以双击的第二下仍落在这一行上（双击改名，Codex #679）。
   // 卡片按上下文记账（换了排版 / 项目就不认）
@@ -344,9 +349,13 @@ export function TimelinePanel() {
     }
   }
 
+  const scoped = useMemo(
+    () => (scopeByCanvas ? versions.filter((v) => v.canvasId === activeCanvasId) : versions),
+    [scopeByCanvas, versions, activeCanvasId],
+  )
   const groups = useMemo(
-    () => groupTimeline(versions, { namedOnly: filter === 'named', now: Date.now() }),
-    [versions, filter],
+    () => groupTimeline(scoped, { namedOnly: filter === 'named', now: Date.now() }),
+    [scoped, filter],
   )
 
   return (
@@ -429,6 +438,21 @@ export function TimelinePanel() {
           ]}
         />
       </div>
+      {multiCanvas && (
+        <div className="flex shrink-0 px-3 pb-1.5">
+          <Segmented
+            value={scope}
+            onChange={setScope}
+            ariaLabel={vd('scopeLabel')}
+            data-timeline-scope
+            className="w-full"
+            items={[
+              { value: 'canvas', label: vd('scopeCanvas') },
+              { value: 'all', label: vd('scopeAll') },
+            ]}
+          />
+        </div>
+      )}
       {budget?.namedOver && (
         // 命名节点超出字节上限：**不删**，照实说，请用户自己删（ADR 0101）
         <Notice tone="warn" role="alert" data-timeline-budget className="mx-3 mb-2">
@@ -457,6 +481,12 @@ export function TimelinePanel() {
           )
         ) : versions.length === 0 ? (
           <EmptyState icon={RotateCcwClock} title={vd('emptyTitle')} hint={vd('emptyBody')} />
+        ) : scoped.length === 0 ? (
+          <EmptyState
+            icon={RotateCcwClock}
+            title={vd('noneHere')}
+            hint={vd('noneHereHint', { n: versions.length })}
+          />
         ) : groups.length === 0 ? (
           <EmptyState icon={Bookmark} title={vd('noNamed')} />
         ) : (
@@ -475,7 +505,8 @@ export function TimelinePanel() {
                       setCard((c) => (on ? { ctx, id: v.id } : c?.ctx === ctx && c.id === v.id ? null : c))
                     }
                     renaming={renaming === v.id}
-                    showCanvas={canvases.length > 1 || v.canvasId !== activeCanvasId}
+                    // 只看这张画布时「来自画布 X」是废话；看全部（或只有一张画布但节点来自别处）才说
+                    showCanvas={scopeByCanvas ? false : canvases.length > 1 || v.canvasId !== activeCanvasId}
                     onEnlarge={(doc) => openPreview(v, doc)}
                     onRestore={() => restoreFromRow(v)}
                     onRename={(on) => setRenaming(on ? v.id : null)}

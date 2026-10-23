@@ -1943,15 +1943,83 @@ describe('来自哪张画布：只在它能区分什么的时候才说', () => {
     expect(rows()[0].textContent).not.toContain('Fig 1')
   })
 
-  it('项目里不止一张画布：每个节点都说自己来自哪张', async () => {
-    const pd = useDocumentStore.getState()
-    await act(async () => {
-      useDocumentStore.setState({
-        canvases: [...pd.canvases, { ...pd.canvases[0], id: 'c_two', name: 'Fig 2' }],
-      })
-    })
+  it('项目里不止一张画布：看「全部画布」时每个节点都说自己来自哪张', async () => {
+    await twoCanvases()
     await mount([meta()])
+    await showAllCanvases()
     expect(rows()[0].textContent).toContain('Fig 1')
+  })
+})
+
+/** 项目里有两张画布：当前是 CANVAS_ID（Fig 1），另一张 c_two（Fig 2） */
+const twoCanvases = async () => {
+  const pd = useDocumentStore.getState()
+  await act(async () => {
+    useDocumentStore.setState({
+      canvases: [...pd.canvases, { ...pd.canvases[0], id: 'c_two', name: 'Fig 2' }],
+    })
+  })
+}
+const showAllCanvases = () =>
+  act(async () => $<HTMLElement>('[data-timeline-scope] [data-value="all"]')!.click())
+
+describe('每张画布各有自己的时间线（beta 0.19.0b3 反馈：不同脚本的版本别混在一条里）', () => {
+  const mixed = () => [
+    meta({ id: 'mine1', canvasId: CANVAS_ID, canvasName: 'Fig 1', ts: NOW }),
+    meta({ id: 'theirs', canvasId: 'c_two', canvasName: 'Fig 2', ts: NOW - 60_000 }),
+    meta({ id: 'mine2', canvasId: CANVAS_ID, canvasName: 'Fig 1', ts: NOW - 120_000 }),
+    meta({ id: 'legacy', canvasId: undefined, canvasName: undefined, ts: NOW - 180_000 }),
+  ]
+  const nodeIds = () =>
+    [...document.querySelectorAll('[data-timeline-node]')].map((n) => n.getAttribute('data-timeline-node'))
+
+  it('单画布项目：没有范围切换，所有节点都在（含旧节点）', async () => {
+    await mount(mixed())
+    expect($('[data-timeline-scope]')).toBeNull()
+    expect(nodeIds()).toEqual(['mine1', 'theirs', 'mine2', 'legacy'])
+  })
+
+  it('多画布：默认只显示当前画布的节点，别的画布与来源不明的不混进来、也不重复说「来自画布」', async () => {
+    await twoCanvases()
+    await mount(mixed())
+    expect($('[data-timeline-scope]')).not.toBeNull()
+    expect(nodeIds()).toEqual(['mine1', 'mine2'])
+    expect(rows()[0].textContent).not.toContain('Fig 1')
+  })
+
+  it('一行的「上一版」仍取同一张画布上最近的那一版，不受筛选影响', async () => {
+    await twoCanvases()
+    await mount(mixed())
+    // mine1 的摘要与 mine2 比（同一张画布），不是与夹在中间的 theirs 比
+    expect(node('mine1').textContent).not.toContain('Fig 2')
+  })
+
+  it('切到「全部画布」：全部节点回来，并说各自来自哪张', async () => {
+    await twoCanvases()
+    await mount(mixed())
+    await showAllCanvases()
+    expect(nodeIds()).toEqual(['mine1', 'theirs', 'mine2', 'legacy'])
+    expect(node('theirs').textContent).toContain('Fig 2')
+    expect(node('legacy').textContent).toContain('画布未知')
+  })
+
+  it('当前画布一个节点都没有：说清楚，并指给用户全部画布里有多少', async () => {
+    await twoCanvases()
+    await mount([meta({ id: 'theirs', canvasId: 'c_two', canvasName: 'Fig 2' })])
+    expect(nodeIds()).toEqual([])
+    expect($('[data-timeline-panel]')!.textContent).toContain('这张画布还没有节点')
+    expect($('[data-timeline-panel]')!.textContent).toContain('1')
+    await showAllCanvases()
+    expect(nodeIds()).toEqual(['theirs'])
+  })
+
+  it('切换当前画布：列表跟着换成那张画布自己的节点', async () => {
+    await twoCanvases()
+    await mount(mixed())
+    expect(nodeIds()).toEqual(['mine1', 'mine2'])
+    await act(async () => useDocumentStore.setState({ activeCanvasId: 'c_two' }))
+    await flush()
+    expect(nodeIds()).toEqual(['theirs'])
   })
 })
 

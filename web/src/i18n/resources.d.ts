@@ -2433,6 +2433,8 @@ export default interface Resources {
       "namePlaceholder": "给现在起个名字，如「投稿前」",
       "noDiff": "与当前画布没有差异",
       "noNamed": "还没有命名节点。给任意节点起个名字，它就不会被自动清理。",
+      "noneHere": "这张画布还没有节点",
+      "noneHereHint": "项目里另有 {{n}} 个节点（来自其他画布或来源未知），切到「全部画布」可以看到。",
       "overlayHint": "底图 = 那一刻；描边 = 当前画布",
       "previewApproximate": "图内修改预览不可用，面板显示的是磁盘上的原图。",
       "previewTitle": "预览：{{time}} {{name}}",
@@ -2451,6 +2453,9 @@ export default interface Resources {
       "restored": "已恢复到「{{name}}」。恢复前的排版已存成节点，也可以按 {{undo}} 撤销。",
       "save": "存为命名节点",
       "saved": "已把现在存为命名节点「{{name}}」",
+      "scopeAll": "全部画布",
+      "scopeCanvas": "这张画布",
+      "scopeLabel": "显示哪张画布的节点",
       "sideCurrent": "当前",
       "sideMoment": "那一刻",
       "summary": {

@@ -107,3 +107,22 @@ for (const [locale, width] of [['zh-CN', 320], ['en-US', 320], ['zh-CN', 480]] a
 }
 
 const row = (node: Locator) => node.locator('[data-timeline-row]')
+
+test('多张画布：时间线默认只显示当前画布自己的节点，切到「全部画布」才混在一起', async ({ app, page }) => {
+  const a = await app()
+  await page.goto(a.baseURL)
+  const { drawer } = await drawerWithOneNode(page)
+  // 只有一张画布：没有范围切换
+  await expect(drawer.locator('[data-timeline-scope]')).toHaveCount(0)
+  await page.getByRole('button', { name: '新建画布', exact: true }).first().click()
+  const scope = await only(drawer.locator('[data-timeline-scope]'), 15_000)
+  // 新画布还没有自己的节点：第一张画布的那条「打开项目」不混进来
+  await expect(drawer.locator('[data-timeline-node]')).toHaveCount(0)
+  const shots = process.env.TAVOTTO_SHOTS
+  if (shots) await page.screenshot({ path: `${shots}/timeline-scope-new-canvas.png` })
+  await (await only(scope.locator('[data-value="all"]'))).click()
+  const node = await only(drawer.locator('[data-timeline-node]'))
+  // 看全部时，每个节点说自己来自哪张画布
+  await expect(node).toContainText('Figure 1')
+  if (shots) await page.screenshot({ path: `${shots}/timeline-scope-all.png` })
+})
