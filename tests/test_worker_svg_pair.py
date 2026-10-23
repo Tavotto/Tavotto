@@ -87,7 +87,7 @@ boot = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(boot)
 pkg = boot.load_engine_modules(engine, ("figcapture", "patchspec", "pathgeom", "axestraversal",
     "spinemodel", "tickmodel", "colorbarmodel", "legendmodel", "overrides", "manifest",
-    "preview_hybrid", "figsession", "wireproto"))
+    "preview_hybrid", "teedraw", "figsession", "wireproto"))
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -128,6 +128,14 @@ def apply(state, values):
     calls.append(values)
     return real_apply(state, values)
 
+if mode == "failure":
+    # 单次绘制下 SVG 那一路在 draw 里失败：先把自检跑完（自检不该被注入影响），再让 SVG renderer 画路径时抛错
+    assert pkg.teedraw.status() == (True, "ok")
+    from matplotlib.backends import backend_svg
+    def boom(self, *args, **kwargs):
+        raise RuntimeError("companion save failed")
+    backend_svg.RendererSVG.draw_path = boom
+
 def observe_savefig(frame, event, value):
     # Observe the real serializer without replacing the method pair eligibility checks.
     if frame.f_code is not real_savefig.__func__.__code__:
@@ -143,8 +151,6 @@ def observe_savefig(frame, event, value):
                       "pdf_fonttype": matplotlib.rcParams["pdf.fonttype"]})
     elif event == "return":
         saves[-1]["axes_after"] = list(ax.get_position().bounds)
-        if mode == "failure" and kw["format"] == "svg":
-            raise RuntimeError("companion save failed")
 
 def forbid_preview(*args, **kw):
     raise AssertionError("full-quality export used preview_hybrid")
@@ -247,6 +253,8 @@ elif mode == "fixed_labels":
 elif mode == "mkdir_failure":
     (out / "blocker").write_text("not a directory")
     svg = out / "blocker" / "pair.svg"
+DYNAMIC = {"callback", "custom_draw", "formatter", "locator", "scale", "transform", "annotation", "effect"}
+DYNAMIC |= {"snapshot_" + name for name in ("callback", "custom", "formatter", "locator", "scale", "transform", "annotation", "effect")}
 result = None
 if mode == "invalid":
     handler = pkg.wireproto.V1Handler(session)
@@ -283,22 +291,21 @@ else:
         "cmd": "export", "stem": "F", "payload": {"patches": patches, "path": str(pdf),
         "format": "pdf", "dpi": 300, "svg_path": str(svg),
         "require_built": True, "snapshot_only": mode.startswith("snapshot_"),
-        **({"svg_text_path": str(out / "pair.text.svg")} if mode == "pair_text" else {})}})
-    if mode.startswith("snapshot_") and mode != "snapshot_ok":
-        assert not response["ok"] and response["error"]["code"] == "svg_source_unavailable", response
-        assert response["error"]["retryable"] is False
-        assert not saves and not pdf.exists() and not svg.exists()
-    else:
-        assert response["ok"], response
-        assert response["worker_generation"] == 7 and response["render_revision"] == 12
-        assert response["unrestored"] == 0
-    if mode in {"failure", "mkdir_failure", "callback", "custom_draw", "formatter", "locator", "scale", "transform", "annotation", "effect"}:
+        **({"svg_text_path": str(out / "pair.text.svg")} if mode == "pair_text" or (mode in DYNAMIC and not mode.startswith("snapshot_")) else {})}})
+    assert response["ok"], response
+    assert response["worker_generation"] == 7 and response["render_revision"] == 12
+    assert response["unrestored"] == 0
+    if mode in {"failure", "mkdir_failure"}:
         assert "svg" not in response and response["svg_error"]["code"] == "svg_export_failed", response
         assert pdf.is_file() and not svg.is_file()
+    elif mode in DYNAMIC:
+        # ADR 0149：回调不再挡 SVG——PDF 与 SVG 出自同一次 draw
+        assert "svg_error" not in response and response["svg"]["path"] == str(svg), response
+        assert response["svg_pairing"] == "single_draw"
     result = response
     assert calls == [patches, previous], calls
 if mode in {"snapshot_formatter", "snapshot_locator", "snapshot_scale", "snapshot_transform", "snapshot_annotation", "snapshot_effect"}:
-    assert counter[0] == 0
+    assert counter[0] > 0  # 单次绘制：画了，而且只画一次的结果同时进 PDF 与 SVG
 assert session.snapshot("F") == previous
 assert title.get_text() == "Hot title"
 assert dict(matplotlib.rcParams) == before_rc
@@ -340,12 +347,11 @@ def _probe(tmp_path, mode):
 )
 def test_paired_export_keeps_frame_full_quality_and_state(tmp_path, mode):
     result = _probe(tmp_path, mode)
-    assert [save["format"] for save in result["saves"]] == ["pdf", "svg"]
+    # ADR 0149：PDF 与 SVG 出自同一次 draw，只有一次 savefig
+    assert [save["format"] for save in result["saves"]] == ["pdf"]
     assert {save["title"] for save in result["saves"]} == {"Export title"}
     assert {save["dpi"] for save in result["saves"]} == {300}
-    assert result["saves"][0]["frame"] == result["saves"][1]["frame"]
-    assert result["saves"][0]["axes_after"] == result["saves"][1]["axes_after"]
-    assert result["saves"][1]["fonttype"] == "path"
+    assert result["result"]["svg_pairing"] == "single_draw"
     assert result["saves"][0]["pdf_fonttype"] == (3 if mode == "snapshot_ok" else 42)
     svg = tmp_path / "pair.svg"
     data = svg.read_bytes()
@@ -355,6 +361,7 @@ def test_paired_export_keeps_frame_full_quality_and_state(tmp_path, mode):
         "size_bytes": len(data),
     }
     root = ET.fromstring(data)
+    # 脚本把 svg.fonttype 设成了 none，SVG 目标自己的 rc 仍把它写成 path（基准字节是 path）
     assert not root.findall(".//{http://www.w3.org/2000/svg}text")
     assert root.findall(".//{http://www.w3.org/2000/svg}path")
     assert root.findall(".//{http://www.w3.org/2000/svg}image")
@@ -388,10 +395,24 @@ def test_svg_failure_preserves_pdf_and_restores_state(tmp_path, mode):
         "effect",
     ],
 )
-def test_dynamic_draw_is_not_certified_as_a_paired_snapshot(tmp_path, mode):
+def test_dynamic_draw_is_paired_from_one_draw(tmp_path, mode):
+    """ADR 0149（取代「动态回调不授予 SVG 资格」）：回调的副作用再不纯，PDF 与 SVG 看到的也是同一个场景。"""
     result = _probe(tmp_path, mode)
     assert [save["format"] for save in result["saves"]] == ["pdf"]
-    assert "svg" not in result["result"]
+    assert result["result"]["svg"]["path"] == str(tmp_path / "pair.svg")
+    assert "svg_error" not in result["result"]
+    with pymupdf.open(tmp_path / "pair.pdf") as pdf:
+        pdf_words = sorted(
+            "".join(pdf[0].get_text().split())
+        )  # 按字符：密集刻度标签在 PDF 抽文字时会粘在一起
+    root = ET.fromstring((tmp_path / "pair.text.svg").read_bytes())
+    svg_words = sorted(
+        "".join(
+            "".join("".join(node.itertext()).split())
+            for node in root.iter("{http://www.w3.org/2000/svg}text")
+        )
+    )
+    assert pdf_words == svg_words, (pdf_words, svg_words)
 
 
 @needs_user_python
@@ -428,9 +449,7 @@ def test_export_svg_bytes_do_not_translate_newlines(tmp_path, mode):
     data = (tmp_path / "pair.svg").read_bytes()
     assert b"\n" in data and b"\r\n" not in data
     assert result["svg_opens"] == [{"encoding": "utf-8", "newline": ""}]
-    assert [save["format"] for save in result["saves"]] == (
-        ["pdf", "svg"] if mode == "pair" else ["svg"]
-    )
+    assert [save["format"] for save in result["saves"]] == (["pdf"] if mode == "pair" else ["svg"])
     if mode == "pair":
         assert result["result"]["svg"]["size_bytes"] == len(data)
         assert result["result"]["svg"]["sha256"] == hashlib.sha256(data).hexdigest()
@@ -537,9 +556,10 @@ def test_capture_export_never_reopens_expired_workerd_session(monkeypatch, tmp_p
         "snapshot_effect",
     ],
 )
-def test_automatic_snapshot_declines_dynamic_draw_without_drawing(tmp_path, mode):
+def test_automatic_snapshot_pairs_dynamic_draw_from_one_draw(tmp_path, mode):
     result = _probe(tmp_path, mode)
-    assert result["saves"] == []
+    assert [save["format"] for save in result["saves"]] == ["pdf"]
+    assert result["result"]["svg"]["path"] == str(tmp_path / "pair.svg")
 
 
 @needs_user_python
@@ -590,11 +610,8 @@ def test_cold_execution_worker_never_runs_script_for_capture(tmp_path, legacy):
 def test_text_variant_is_a_separate_serialization_and_the_path_baseline_is_untouched(tmp_path):
     """ADR 0144：`svg_text_path` 另写一份 `svg.fonttype=none`；path 基准字节（#1185 等价证人）仍是 path。"""
     result = _probe(tmp_path, "pair_text")
-    assert [save["format"] for save in result["saves"]] == ["pdf", "svg", "svg"]
-    assert [save["fonttype"] for save in result["saves"][1:]] == ["path", "none"]
-    # 同一份布局：三次保存之后坐标轴位置、取景框一字不差
-    assert len({tuple(save["axes_after"]) for save in result["saves"]}) == 1
-    assert len({tuple(save["frame"]) for save in result["saves"]}) == 1
+    # ADR 0149：一次 draw 同时出 PDF / path 基准 / 保留文字三份，不再有「三次保存」
+    assert [save["format"] for save in result["saves"]] == ["pdf"]
     baseline = (tmp_path / "pair.svg").read_bytes()
     text = (tmp_path / "pair.text.svg").read_bytes()
     ns = "{http://www.w3.org/2000/svg}text"

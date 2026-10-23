@@ -274,6 +274,7 @@ _ENGINE_MODULES = (
     "previewbudget",
     "preview_complexity",
     "preview_hybrid",
+    "teedraw",
     "figsession",
     "wireproto",
     "scriptinput",

@@ -5,6 +5,8 @@
 [0072 默认渲染后端切换](0072-default-render-backend-cutover-and-pymupdf-retirement.md)；X03（`svgwriter` 模块 docstring）；
 规则全文 `docs/rules/backend/rendercore.md`「SVG 写入」、`export-pipeline.md`「SVG（X03）」。
 
+> 2026-10-23 补注（[ADR 0149](0149-pdf-svg-pair-from-one-draw.md)）：Figure 面板的 PDF / SVG（含本 ADR 的 text 变体）现在出自**同一次 draw**，不再是「PDF 之后再画两遍 SVG」；text 变体与 path 基准的语义不变。
+
 ## 动机
 
 用户要把导出的 SVG 插进 Word / PowerPoint，用「转换为形状」后**直接改文字**。X03 起 SVG 一律把文字画成字形轮廓（`text_policy=outlines`），

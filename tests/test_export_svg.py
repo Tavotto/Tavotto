@@ -578,7 +578,7 @@ def test_project_package_contains_only_referenced_portable_snapshots(project, mo
         assert outputs["pdf"]["status"] == "done"
 
 
-def test_single_original_svg_supports_live_custom_formatter_without_pairing(project):
+def test_single_original_svg_supports_live_custom_formatter_with_single_draw_pairing(project):
     client, root = project
     (root / "plot.py").write_text(
         SCRIPT.replace(
@@ -594,11 +594,11 @@ def test_single_original_svg_supports_live_custom_formatter_without_pairing(proj
     assert response.status_code == 200, response.get_json()
     body, outputs = output(client, spec(source, scope="original", strict=True))
     assert_svg(body, outputs["svg"], text=True)
-    # Cross-backend pairing has a stronger contract and explicitly declines it.
+    # ADR 0149：PDF 与 SVG 出自同一次 draw，自定义刻度回调不再挡配对
     body, outputs = output(client, spec(source, scope="original", formats=("pdf", "svg")))
-    assert body["status"] == "partial", body
+    assert body["status"] == "done", body
     assert outputs["pdf"]["status"] == "done"
-    assert outputs["svg"]["status"] == "failed"
+    assert outputs["svg"]["status"] == "done"
 
 
 def test_expired_live_handle_uses_verified_snapshot_without_reopening(project, monkeypatch):
@@ -950,15 +950,53 @@ def test_canvas_live_figure_panel_falls_back_to_outlines_on_old_worker(project, 
 FORMATTER_SCRIPT = SCRIPT.replace(
     '    ax.set_title("Source title")',
     "    from matplotlib.ticker import FuncFormatter\n"
-    "    ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _p: f'{v:.1f}'))\n"
+    "    calls = [0]\n"
+    "    def label(v, _p):\n"
+    "        calls[0] += 1\n"
+    "        return f'tick{calls[0]}'\n"
+    "    ax.xaxis.set_major_formatter(FuncFormatter(label))\n"
+    '    ax.set_title("Source title")',
+)
+
+#: 自定义 canvas 打印方法：单次绘制接不了（`print_pdf` 必须是 matplotlib 自己的），仍是被保留的阻断
+CUSTOM_CANVAS_SCRIPT = SCRIPT.replace(
+    '    ax.set_title("Source title")',
+    "    import functools\n"
+    "    native = fig.canvas.print_figure\n"
+    "    fig.canvas.print_figure = functools.wraps(native)(lambda *a, **k: native(*a, **k))\n"
     '    ax.set_title("Source title")',
 )
 
 
-def test_canvas_svg_of_a_script_figure_without_svg_pairing_says_so_in_user_words(project):
-    """脚本里的自定义刻度函数让 worker 不给 SVG 配对：该项失败，但错误码是面向用户的，不是 `imported_page: …` 内部串。"""
+def test_canvas_svg_of_a_script_figure_with_counter_formatter_matches_the_pdf(project):
+    """ADR 0149 的端到端：带计数器 FuncFormatter 的脚本图，画布导 SVG 成功，文字与同一次导出的 PDF 一致。"""
+    import pymupdf
+
     client, root = project
     (root / "plot.py").write_text(FORMATTER_SCRIPT, encoding="utf-8")
+    source = run_script(client)
+    body, outputs = output(client, spec(source, scope="canvas", formats=("svg", "pdf")))
+    assert body["status"] == "done", body
+    export = Path(body["export_dir"])
+    with pymupdf.open(export / outputs["pdf"]["name"]) as pdf:
+        pdf_text = pdf[0].get_text()
+    ns = "{http://www.w3.org/2000/svg}text"
+    svg_text = " ".join(
+        "".join(t.itertext())
+        for t in ET.fromstring((export / outputs["svg"]["name"]).read_bytes()).iter(ns)
+    )
+    import re
+
+    # 计数器每画一遍就变：两份产物里的刻度标签必须是同一串（同一次 draw），而不是各自画一遍的 tick1.. / tick121..
+    pdf_ticks = re.findall(r"tick\d+", pdf_text)
+    svg_ticks = re.findall(r"tick\d+", svg_text)
+    assert pdf_ticks and sorted(pdf_ticks) == sorted(svg_ticks), (pdf_ticks, svg_ticks)
+
+
+def test_canvas_svg_of_a_script_figure_without_svg_pairing_says_so_in_user_words(project):
+    """被保留的阻断（自定义 canvas 打印）：该项失败，错误码是面向用户的，不是 `imported_page: …` 内部串（#1348）。"""
+    client, root = project
+    (root / "plot.py").write_text(CUSTOM_CANVAS_SCRIPT, encoding="utf-8")
     source = run_script(client)
     body, outputs = output(client, spec(source, scope="canvas", formats=("svg", "pdf")))
     assert body["status"] == "partial", body
@@ -966,5 +1004,5 @@ def test_canvas_svg_of_a_script_figure_without_svg_pairing_says_so_in_user_words
     error = outputs["svg"]["error"]
     assert error["code"] == "svg_figure_unavailable", error
     assert error["params"]["figure"] == source
-    assert "tick-formatting" in error["params"]["reason"]  # 技术原因进参数 / 诊断，不进文案
+    assert "custom" in error["params"]["reason"]  # 技术原因进参数 / 诊断，不进文案
     assert "imported_page" in error["params"]["detail"]  # 原文留作详情

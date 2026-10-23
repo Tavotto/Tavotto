@@ -21,7 +21,7 @@ boot = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(boot)
 pkg = boot.load_engine_modules(engine, ("figcapture", "patchspec", "pathgeom", "axestraversal",
     "spinemodel", "tickmodel", "colorbarmodel", "legendmodel", "overrides", "manifest",
-    "preview_hybrid", "figsession", "wireproto"))
+    "preview_hybrid", "teedraw", "figsession", "wireproto"))
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -373,7 +373,7 @@ def test_standard_canvases_still_export_verified_pairs(tmp_path, mode, hook, can
     assert result["result"]["ok"] is True
     assert "svg" in result["result"]
     assert "svg_error" not in result["result"]
-    assert result["saves"] == ["pdf", "svg"]
+    assert result["saves"] == ["pdf"]  # ADR 0149：同一次 draw 同时出 PDF 与 SVG
     assert _pdf_title(tmp_path / "pair.pdf") == _svg_title(tmp_path / "pair.svg") == "Export title"
 
 

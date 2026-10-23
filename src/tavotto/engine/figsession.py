@@ -84,6 +84,7 @@ import overrides as overrides_mod
 import pathgeom
 import preview_hybrid
 import previewbudget
+import teedraw
 from axestraversal import ordered_axes
 
 
@@ -529,6 +530,22 @@ EXPORT_FONTTYPE = 42
 SVG_FONTTYPES = ("path", "none")
 
 
+def svg_rc(svg_fonttype: str) -> dict:
+    """SVG 导出的 rc：常规二次绘制（`export_font_context`）与单次绘制的 SVG 目标（`teedraw`）读同一份。"""
+    assert svg_fonttype in SVG_FONTTYPES, svg_fonttype
+    return {"svg.fonttype": svg_fonttype, "svg.image_inline": True}
+
+
+def _text_sink(path: Path):
+    """`teedraw` 的 SVG 目标落盘：按 UTF-8 / 不转换换行写（与二次绘制里 `open(..., newline="")` 同字节）。"""
+
+    def write(text: str) -> None:
+        with path.open("w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
+
+    return write
+
+
 def export_font_context(fmt: str, svg_fonttype: str = "path"):
     """临时导出字体策略：PDF / PS / EPS 嵌入字体，SVG 默认用自包含字形路径。
 
@@ -539,7 +556,7 @@ def export_font_context(fmt: str, svg_fonttype: str = "path"):
     fmt = str(fmt).lower()
     if fmt == "svg":
         assert svg_fonttype in SVG_FONTTYPES, svg_fonttype
-        return matplotlib.rc_context({"svg.fonttype": svg_fonttype, "svg.image_inline": True})
+        return matplotlib.rc_context(svg_rc(svg_fonttype))
     if fmt not in ("pdf", "ps", "eps"):
         return contextlib.nullcontext()
 
@@ -754,17 +771,26 @@ def _svg_pair_canvas_blocker(canvas) -> str | None:
     return None
 
 
-def _svg_pair_blocker(fig) -> str | None:
-    """Known draw-time code can change the scene between two serializers.
+def _svg_pair_env_blocker(fig) -> str | None:
+    """The one draw must go through Matplotlib's own `print_pdf`: custom savefig / canvas / backends can't be teed.
 
-    Never label a second draw as a frozen companion when user callbacks or custom
-    draw implementations can mutate it. The primary PDF retains its existing behavior.
+    This is all that blocks pairing when the single-draw path (`teedraw`, ADR 0149) is available — user callbacks
+    no longer matter there because PDF and SVG come out of the same draw.
     """
     if not _svg_pair_standard_savefig(fig):
         return "SVG pairing is unavailable for custom Figure saving methods."
-    canvas_blocker = _svg_pair_canvas_blocker(fig.canvas)
-    if canvas_blocker is not None:
-        return canvas_blocker
+    return _svg_pair_canvas_blocker(fig.canvas)
+
+
+def _svg_pair_blocker(fig) -> str | None:
+    """Two-pass fallback only: known draw-time code can change the scene between two serializers.
+
+    Used when the single-draw self-test failed (`teedraw.status()`): never label a second draw as a frozen
+    companion when user callbacks or custom draw implementations can mutate it.
+    """
+    env_blocker = _svg_pair_env_blocker(fig)
+    if env_blocker is not None:
+        return env_blocker
     if fig.canvas.callbacks.callbacks.get("draw_event"):
         return "SVG pairing is unavailable for figures with draw-event callbacks."
     pending, seen, seen_transforms = [fig], set(), set()
@@ -1908,13 +1934,38 @@ class LiveFigureSession:
             )
             out.parent.mkdir(parents=True, exist_ok=True)
             blocker = None
+            single_draw = False
             if companion is not None:
+                # ADR 0149：PDF 与 SVG 出自**同一次 draw**（`teedraw`），用户回调不再需要被证明是纯的；
+                # 自检不过才退回二次绘制 + 回调阻断，并把自检结论带进原因（进诊断）。
+                single_ok, single_why = teedraw.status()
+                single_draw = single_ok
                 try:
-                    blocker = _svg_pair_blocker(state.fig)
+                    blocker = (
+                        _svg_pair_env_blocker(state.fig)
+                        if single_ok
+                        else _svg_pair_blocker(state.fig)
+                    )
                 except Exception as exc:  # noqa: BLE001 — a companion check cannot block the PDF
                     blocker = f"SVG pairing state could not be verified: {type(exc).__name__}"
+                if blocker is not None and not single_ok:
+                    blocker = f"{blocker} (single-draw pairing unavailable: {single_why})"
                 if snapshot_only and blocker is not None:
                     raise SvgSnapshotUnavailable(blocker)
+            tee_targets: list = []
+            tee_results: list = []
+            prep_error: OSError | None = None
+            if single_draw and blocker is None:
+                try:
+                    companion.parent.mkdir(parents=True, exist_ok=True)
+                    targets = [teedraw.SvgTarget(svg_rc("path"), _text_sink(companion))]
+                    if svg_text_path is not None:
+                        text_out = Path(svg_text_path)
+                        text_out.parent.mkdir(parents=True, exist_ok=True)
+                        targets.append(teedraw.SvgTarget(svg_rc("none"), _text_sink(text_out)))
+                    tee_targets = targets
+                except OSError as exc:  # 目录建不出来只是 SVG 这一项的失败，PDF 照常
+                    prep_error = exc
             # 两份产物共用一次 override 应用和同一个 owner-thread 命令；不走编辑预览，
             # 也不在两次独立请求之间重新应用 patches / 运行脚本。发布与失败清理由导出事务负责。
             with self.real_output():
@@ -1930,17 +1981,30 @@ class LiveFigureSession:
                         if str(fmt).lower() == "svg"
                         else nullcontext(out)
                     ) as fh:
-                        state.fig.savefig(
-                            fh,
-                            format=fmt,
-                            dpi=int(dpi),
-                            **export_format_kwargs(fmt),
-                            **pathgeom.output_kwargs(state.fig),
-                        )
+                        with (
+                            teedraw.single_draw(tee_targets) if tee_targets else nullcontext()
+                        ) as tee_session:
+                            state.fig.savefig(
+                                fh,
+                                format=fmt,
+                                dpi=int(dpi),
+                                **export_format_kwargs(fmt),
+                                **pathgeom.output_kwargs(state.fig),
+                            )
+                        if tee_session is not None:
+                            tee_results = tee_session.errors()
             if companion is not None:
                 try:
                     if blocker is not None:
                         raise ValueError(blocker)
+                    if prep_error is not None:
+                        raise prep_error
+                    if tee_targets:
+                        if tee_results[0] is not None:
+                            raise ValueError(f"single-draw SVG failed: {tee_results[0]}")
+                        result["svg_pairing"] = "single_draw"
+                    else:
+                        result["svg_pairing"] = "two_pass"
                     companion.parent.mkdir(parents=True, exist_ok=True)
 
                     # The PDF draw has already established the layout. Re-running
@@ -1955,18 +2019,19 @@ class LiveFigureSession:
                             else _NULL_CTX
                         )
 
-                    with (
-                        self.real_output(),
-                        export_font_context("svg"),
-                        layout_context(),
-                        companion.open("w", encoding="utf-8", newline="") as fh,
-                    ):
-                        state.fig.savefig(
-                            fh,
-                            format="svg",
-                            dpi=int(dpi),
-                            **pathgeom.output_kwargs(state.fig),
-                        )
+                    if not tee_targets:
+                        with (
+                            self.real_output(),
+                            export_font_context("svg"),
+                            layout_context(),
+                            companion.open("w", encoding="utf-8", newline="") as fh,
+                        ):
+                            state.fig.savefig(
+                                fh,
+                                format="svg",
+                                dpi=int(dpi),
+                                **pathgeom.output_kwargs(state.fig),
+                            )
                     digest = hashlib.sha256()
                     size_bytes = 0
                     with companion.open("rb") as stream:
@@ -1984,18 +2049,22 @@ class LiveFigureSession:
                         try:
                             text_out = Path(svg_text_path)
                             text_out.parent.mkdir(parents=True, exist_ok=True)
-                            with (
-                                self.real_output(),
-                                export_font_context("svg", "none"),
-                                layout_context(),
-                                text_out.open("w", encoding="utf-8", newline="") as fh,
-                            ):
-                                state.fig.savefig(
-                                    fh,
-                                    format="svg",
-                                    dpi=int(dpi),
-                                    **pathgeom.output_kwargs(state.fig),
-                                )
+                            if tee_targets:
+                                if tee_results[1] is not None:
+                                    raise ValueError(str(tee_results[1]))
+                            else:
+                                with (
+                                    self.real_output(),
+                                    export_font_context("svg", "none"),
+                                    layout_context(),
+                                    text_out.open("w", encoding="utf-8", newline="") as fh,
+                                ):
+                                    state.fig.savefig(
+                                        fh,
+                                        format="svg",
+                                        dpi=int(dpi),
+                                        **pathgeom.output_kwargs(state.fig),
+                                    )
                             raw = text_out.read_bytes()
                             result["svg_text"] = {
                                 "path": str(text_out),

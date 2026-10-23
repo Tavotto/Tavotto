@@ -2043,7 +2043,25 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
                     project_root=root,
                     execution_owner=identity,
                 )
-            _bind_svg_asset(freeze, root, stem, svg, identity)
+            # #1185 的等价证人必须是**独立** savefig 出的 SVG（脚本自己存下的 `<stem>.svg` 也是这样来的）：
+            # PDF/SVG 配对现在出自单次绘制（ADR 0149），文字坐标按 PDF 的度量排，与独立保存有亚点级差，
+            # 拿它去比磁盘文件会让绑定无故落空。所以这一处不走 tee，沿用原来的阻断条件（独立导出过不了就不绑）。
+            if (Path(root) / f"{stem}.svg").is_file():
+                witness = Path(temporary) / "witness.svg"
+                worker.export(
+                    stem,
+                    [],
+                    str(witness),
+                    "svg",
+                    engine_exportreq.PPI_DEFAULT,
+                    require_built=True,
+                )
+                if (
+                    _execution_receipt(worker, str(desc.get("script", ""))).receipt_id
+                    == rcpt.receipt_id
+                ):
+                    _normalize_worker_svg(witness)
+                    _bind_svg_asset(freeze, root, stem, witness, identity)
         except Exception:
             # An unsupported SVG or a non-matching static artifact does not
             # invalidate a successful explicit script run. Export reports the gap.

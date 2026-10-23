@@ -2767,7 +2767,7 @@ export default interface Resources {
       "stale_write": "自动保存冲突：磁盘上已有更新的版本",
       "svg_asset_export_unsupported": "SVG 素材目前支持预览、摆放和原图 SVG 导出；画布与跨格式导出尚未支持。请先将该素材转换为 PDF 后导入。",
       "svg_asset_unsupported": "此 SVG 暂不支持导入。请使用尺寸明确的独立静态 SVG；不支持脚本、外部资源或 DTD。",
-      "svg_figure_unavailable": "{{figure}} 暂时无法导出为 SVG：脚本里有自定义的绘制或刻度函数等，Tavotto 无法保证 SVG 与 PDF 完全一致。其余格式已照常导出，也可用 PDF 在矢量软件里转换。",
+      "svg_figure_unavailable": "{{figure}} 暂时无法导出为 SVG：这张图的脚本替换了 matplotlib 自己的保存 / 画布方式（或当前环境暂不支持），Tavotto 无法保证 SVG 与 PDF 完全一致。其余格式已照常导出，也可用 PDF 在矢量软件里转换。",
       "svg_snapshot_missing": "{{id}} 暂时无法导出为 SVG：请先重新运行这张图的脚本，或改用 PDF 导出。",
       "svg_source_unsupported": "{{id}} 的当前来源无法安全转换为 SVG。请改用 PDF 格式导出。",
       "sync_different_scripts": "两张图不属于同一个脚本，无法同步",

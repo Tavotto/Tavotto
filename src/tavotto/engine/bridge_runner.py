@@ -114,6 +114,7 @@ _PHASE2 = (
     "previewbudget",
     "preview_complexity",
     "preview_hybrid",
+    "teedraw",
     "figsession",
     "wireproto",
 )
