@@ -1159,6 +1159,9 @@ def test_bwrap_blocks_a_c_level_write_the_tripwire_cannot_see(box):
     assert not outside.exists() and "os_sandbox: bwrap" in r.content
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="sandbox-exec 只在 macOS；目录名里的引号在 Windows 上不合法"
+)
 def test_macos_profile_text_is_exactly_the_narrow_write_allowlist(tmp_path):
     d = tmp_path / 'we"ird'
     d.mkdir()
@@ -1263,7 +1266,10 @@ def test_scrub_is_linear_on_a_very_long_word_run():
 
 
 def test_bounded_read_keeps_line_semantics(box):
-    f = put(box.proj / "l.txt", "one\ntwo\nthree\n" + "x" * 300_000 + "\nlast\n")
+    f = box.proj / "l.txt"
+    f.write_bytes(
+        b"one\ntwo\nthree\n" + b"x" * 300_000 + b"\nlast\n"
+    )  # 按字节写：Windows 上 write_text 会写成 CRLF
     ctx = make_ctx(box)
     r = call(ctx, "read_file", {"path": str(f), "max_lines": 2})
     assert r.content.startswith("one\ntwo\n") and "three" not in r.content.split("[truncated")[0]
