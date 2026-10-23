@@ -373,7 +373,7 @@ def test_standard_canvases_still_export_verified_pairs(tmp_path, mode, hook, can
     assert result["result"]["ok"] is True
     assert "svg" in result["result"]
     assert "svg_error" not in result["result"]
-    assert result["saves"] == ["pdf"]  # ADR 0149：同一次 draw 同时出 PDF 与 SVG
+    assert result["saves"] == ["pdf"]  # ADR 0150：同一次 draw 同时出 PDF 与 SVG
     assert _pdf_title(tmp_path / "pair.pdf") == _svg_title(tmp_path / "pair.svg") == "Export title"
 
 

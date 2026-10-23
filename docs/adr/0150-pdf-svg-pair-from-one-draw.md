@@ -1,4 +1,4 @@
-# ADR 0149：PDF / SVG 配对出自**同一次 draw**（`teedraw`），回调类阻断取消
+# ADR 0150：PDF / SVG 配对出自**同一次 draw**（`teedraw`），回调类阻断取消
 
 日期：2026-10-23 · 状态：**Accepted**（用户 2026-10-23 裁决方案 B「一次绘制同时出 PDF 和 SVG」；beta 0.19.0b3 反馈「脚本图导 SVG 报内部错」的根治）
 相关：[0144 SVG 默认保留可编辑文字](0144-svg-export-keeps-text-by-default.md)（配对导出的 text 变体）、[0098 savefig frame 即图](0098-savefig-frame-is-the-figure.md)；

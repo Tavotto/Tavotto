@@ -2044,7 +2044,7 @@ def _capture_svg_snapshot_best_effort(worker, desc) -> None:
                     execution_owner=identity,
                 )
             # #1185 的等价证人必须是**独立** savefig 出的 SVG（脚本自己存下的 `<stem>.svg` 也是这样来的）：
-            # PDF/SVG 配对现在出自单次绘制（ADR 0149），文字坐标按 PDF 的度量排，与独立保存有亚点级差，
+            # PDF/SVG 配对现在出自单次绘制（ADR 0150），文字坐标按 PDF 的度量排，与独立保存有亚点级差，
             # 拿它去比磁盘文件会让绑定无故落空。所以这一处不走 tee，沿用原来的阻断条件（独立导出过不了就不绑）。
             if (Path(root) / f"{stem}.svg").is_file():
                 witness = Path(temporary) / "witness.svg"

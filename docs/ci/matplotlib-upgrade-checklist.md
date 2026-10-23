@@ -112,7 +112,7 @@ python scripts/build_mcp_widget.py --check     # 只有动过 web/src 才需要�
 
 然后到网站仓库 `pnpm sync-playground`。
 
-## 9. PDF / SVG 单次绘制（`engine/teedraw`，ADR 0149）
+## 9. PDF / SVG 单次绘制（`engine/teedraw`，ADR 0150）
 
 升级 matplotlib 后先跑 `tests/test_teedraw.py`（含自检）。它依赖两处内部：`backend_pdf` 模块里的 `MixedModeRenderer` 名字，
 以及 renderer 协议（`draw_*` 集合、`flipy`、`start/stop_rasterizing`、`copy_properties` 方向）。新增了 `draw_*` 方法时要补进

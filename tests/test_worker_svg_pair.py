@@ -299,7 +299,7 @@ else:
         assert "svg" not in response and response["svg_error"]["code"] == "svg_export_failed", response
         assert pdf.is_file() and not svg.is_file()
     elif mode in DYNAMIC:
-        # ADR 0149：回调不再挡 SVG——PDF 与 SVG 出自同一次 draw
+        # ADR 0150：回调不再挡 SVG——PDF 与 SVG 出自同一次 draw
         assert "svg_error" not in response and response["svg"]["path"] == str(svg), response
         assert response["svg_pairing"] == "single_draw"
     result = response
@@ -347,7 +347,7 @@ def _probe(tmp_path, mode):
 )
 def test_paired_export_keeps_frame_full_quality_and_state(tmp_path, mode):
     result = _probe(tmp_path, mode)
-    # ADR 0149：PDF 与 SVG 出自同一次 draw，只有一次 savefig
+    # ADR 0150：PDF 与 SVG 出自同一次 draw，只有一次 savefig
     assert [save["format"] for save in result["saves"]] == ["pdf"]
     assert {save["title"] for save in result["saves"]} == {"Export title"}
     assert {save["dpi"] for save in result["saves"]} == {300}
@@ -396,7 +396,7 @@ def test_svg_failure_preserves_pdf_and_restores_state(tmp_path, mode):
     ],
 )
 def test_dynamic_draw_is_paired_from_one_draw(tmp_path, mode):
-    """ADR 0149（取代「动态回调不授予 SVG 资格」）：回调的副作用再不纯，PDF 与 SVG 看到的也是同一个场景。"""
+    """ADR 0150（取代「动态回调不授予 SVG 资格」）：回调的副作用再不纯，PDF 与 SVG 看到的也是同一个场景。"""
     result = _probe(tmp_path, mode)
     assert [save["format"] for save in result["saves"]] == ["pdf"]
     assert result["result"]["svg"]["path"] == str(tmp_path / "pair.svg")
@@ -610,7 +610,7 @@ def test_cold_execution_worker_never_runs_script_for_capture(tmp_path, legacy):
 def test_text_variant_is_a_separate_serialization_and_the_path_baseline_is_untouched(tmp_path):
     """ADR 0144：`svg_text_path` 另写一份 `svg.fonttype=none`；path 基准字节（#1185 等价证人）仍是 path。"""
     result = _probe(tmp_path, "pair_text")
-    # ADR 0149：一次 draw 同时出 PDF / path 基准 / 保留文字三份，不再有「三次保存」
+    # ADR 0150：一次 draw 同时出 PDF / path 基准 / 保留文字三份，不再有「三次保存」
     assert [save["format"] for save in result["saves"]] == ["pdf"]
     baseline = (tmp_path / "pair.svg").read_bytes()
     text = (tmp_path / "pair.text.svg").read_bytes()

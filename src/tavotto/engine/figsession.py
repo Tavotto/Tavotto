@@ -774,7 +774,7 @@ def _svg_pair_canvas_blocker(canvas) -> str | None:
 def _svg_pair_env_blocker(fig) -> str | None:
     """The one draw must go through Matplotlib's own `print_pdf`: custom savefig / canvas / backends can't be teed.
 
-    This is all that blocks pairing when the single-draw path (`teedraw`, ADR 0149) is available — user callbacks
+    This is all that blocks pairing when the single-draw path (`teedraw`, ADR 0150) is available — user callbacks
     no longer matter there because PDF and SVG come out of the same draw.
     """
     if not _svg_pair_standard_savefig(fig):
@@ -1936,7 +1936,7 @@ class LiveFigureSession:
             blocker = None
             single_draw = False
             if companion is not None:
-                # ADR 0149：PDF 与 SVG 出自**同一次 draw**（`teedraw`），用户回调不再需要被证明是纯的；
+                # ADR 0150：PDF 与 SVG 出自**同一次 draw**（`teedraw`），用户回调不再需要被证明是纯的；
                 # 自检不过才退回二次绘制 + 回调阻断，并把自检结论带进原因（进诊断）。
                 single_ok, single_why = teedraw.status()
                 single_draw = single_ok

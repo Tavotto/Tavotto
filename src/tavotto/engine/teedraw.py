@@ -1,4 +1,4 @@
-"""一次 `Figure.draw` 同时出 PDF 与 SVG（ADR 0149）。
+"""一次 `Figure.draw` 同时出 PDF 与 SVG（ADR 0150）。
 
 为什么存在：PDF / SVG 配对导出原来是「PDF 画一遍、SVG 再画一遍」，所以用户的**非纯**回调（带计数器的
 `FuncFormatter`、`draw_event` 里改文字、自定义 Artist……）会让两份产物出自两个不同的场景；`figsession` 的

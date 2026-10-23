@@ -1,4 +1,4 @@
-"""`teedraw`：一次 draw 同时出 PDF 与 SVG（ADR 0149）。纯 matplotlib，不起 worker——跑在 CI 的每一档 matplotlib 上。"""
+"""`teedraw`：一次 draw 同时出 PDF 与 SVG（ADR 0150）。纯 matplotlib，不起 worker——跑在 CI 的每一档 matplotlib 上。"""
 
 from __future__ import annotations
 

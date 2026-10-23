@@ -5,7 +5,7 @@
 [0072 默认渲染后端切换](0072-default-render-backend-cutover-and-pymupdf-retirement.md)；X03（`svgwriter` 模块 docstring）；
 规则全文 `docs/rules/backend/rendercore.md`「SVG 写入」、`export-pipeline.md`「SVG（X03）」。
 
-> 2026-10-23 补注（[ADR 0149](0149-pdf-svg-pair-from-one-draw.md)）：Figure 面板的 PDF / SVG（含本 ADR 的 text 变体）现在出自**同一次 draw**，不再是「PDF 之后再画两遍 SVG」；text 变体与 path 基准的语义不变。
+> 2026-10-23 补注（[ADR 0150](0150-pdf-svg-pair-from-one-draw.md)）：Figure 面板的 PDF / SVG（含本 ADR 的 text 变体）现在出自**同一次 draw**，不再是「PDF 之后再画两遍 SVG」；text 变体与 path 基准的语义不变。
 
 ## 动机
 

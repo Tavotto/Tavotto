@@ -594,7 +594,7 @@ def test_single_original_svg_supports_live_custom_formatter_with_single_draw_pai
     assert response.status_code == 200, response.get_json()
     body, outputs = output(client, spec(source, scope="original", strict=True))
     assert_svg(body, outputs["svg"], text=True)
-    # ADR 0149：PDF 与 SVG 出自同一次 draw，自定义刻度回调不再挡配对
+    # ADR 0150：PDF 与 SVG 出自同一次 draw，自定义刻度回调不再挡配对
     body, outputs = output(client, spec(source, scope="original", formats=("pdf", "svg")))
     assert body["status"] == "done", body
     assert outputs["pdf"]["status"] == "done"
@@ -969,7 +969,7 @@ CUSTOM_CANVAS_SCRIPT = SCRIPT.replace(
 
 
 def test_canvas_svg_of_a_script_figure_with_counter_formatter_matches_the_pdf(project):
-    """ADR 0149 的端到端：带计数器 FuncFormatter 的脚本图，画布导 SVG 成功，文字与同一次导出的 PDF 一致。"""
+    """ADR 0150 的端到端：带计数器 FuncFormatter 的脚本图，画布导 SVG 成功，文字与同一次导出的 PDF 一致。"""
     import pymupdf
 
     client, root = project
