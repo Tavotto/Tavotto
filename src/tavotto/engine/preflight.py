@@ -550,6 +550,11 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
 
     hidden_legends = _hidden_legends(manifest)
     legend_sizes = legend_entry_sizes(manifest)
+    barred_series = {
+        str(el.get("gid", "")).rpartition(".")[0]
+        for el in manifest.get("elements") or []
+        if el.get("role") == "bar"
+    }
 
     tick_labels: dict[str, int] = {}
     lines_by_axes: dict[str, list[dict]] = {}
@@ -665,7 +670,18 @@ def _check_panel_axes(panel: dict, profile: dict, sink: _Sink) -> None:
                     detail={"text": text.strip()[:60]},
                 )
 
-        if role in ("line", "scatter", "fill", "bar_series", "bar", "errorbar", "arrow_patch"):
+        if role in (
+            "line",
+            "scatter",
+            "fill",
+            "bar_series",
+            "bar",
+            "errorbar",
+            "arrow_patch",
+        ) and not (role == "bar_series" and gid in barred_series):
+            # 柱形系列容器的 linewidth 是设置器（广播到每根柱）；柱已各自登记成 `bar`
+            # 元素、各报各的，再量容器是同一处墨迹报两遍。茎叶 / 误差棒的成员没有登记成
+            # 元素，容器就是唯一的被量对象，照旧量
             lw = _num(_field(el, "linewidth"))
             if lw is not None and presets and lw > 0:
                 eff = lw * scale

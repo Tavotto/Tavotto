@@ -616,6 +616,10 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
 
   const hidden = hiddenLegends(manifest)
   const legendSizes = legendEntrySizes(manifest, hidden)
+  const barredSeries = new Set<string>()
+  for (const el of manifest.elements ?? []) {
+    if (el.role === 'bar') barredSeries.add(parentGid(el.gid))
+  }
 
   const tickLabels = new Map<string, number>()
   const linesByAxes = new Map<string, ManifestElement[]>()
@@ -713,8 +717,12 @@ function checkPanelAxes(panel: PreflightPanelSpec, profile: PublicationProfile, 
       }
     }
 
+    // 柱形系列容器的 linewidth 是设置器（广播到每根柱）；柱已各自登记成 `bar` 元素、
+    // 各报各的，再量容器是同一处墨迹报两遍。茎叶 / 误差棒的成员没有登记成元素，
+    // 容器就是唯一的被量对象，照旧量
     if (
-      ['line', 'scatter', 'fill', 'bar_series', 'bar', 'errorbar', 'arrow_patch'].includes(role)
+      ['line', 'scatter', 'fill', 'bar_series', 'bar', 'errorbar', 'arrow_patch'].includes(role) &&
+      !(role === 'bar_series' && barredSeries.has(gid))
     ) {
       const lw = num(field(el, 'linewidth'))
       if (lw != null && presets.length && lw > 0) {

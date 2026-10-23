@@ -800,6 +800,22 @@ def cases() -> list[dict]:
             "spec": _spec([_panel("p1", manifest=m)]),
         }
     )
+
+    # 18f. 柱形系列：容器 linewidth 是设置器（广播到每根柱），柱各自是 `bar` 元素。
+    #      数字取自真 worker 探针：容器与三根柱都是 0.3pt（不在档位）——只报在柱上，
+    #      容器不报（茎叶 / 误差棒系列的线宽规则另有出处，不在此列）
+    m = _clean_manifest()
+    m["elements"] += [
+        _el("axes_1.barseries_0", "bar_series", linewidth=0.3),
+        *(_el(f"axes_1.barseries_0.bar_{k}", "bar", linewidth=0.3) for k in range(3)),
+    ]
+    out.append(
+        {
+            "name": "bar-series-container-linewidth-not-measured",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec([_panel("p1", manifest=m)]),
+        }
+    )
     return out
 
 
