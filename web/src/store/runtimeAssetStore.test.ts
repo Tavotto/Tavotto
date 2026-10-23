@@ -172,3 +172,19 @@ describe('runtimeAssetStore', () => {
     expect(useRuntimeAssetStore.getState().byId).toEqual({})
   })
 })
+
+describe('registered：未知 ≠ 假（#1348 Codex）', () => {
+  it('invalidate() 把注册状态一并作废成未知；markFresh() 不保留旧的 false', () => {
+    const id = 'runtime:s.py#F'
+    useRuntimeAssetStore.setState({
+      byId: { [id]: { registered: false, checked: true, status: 'needs_rerun', cached: false, profile: 'safe' } },
+    } as never)
+    useRuntimeAssetStore.getState().invalidate([id])
+    expect(useRuntimeAssetStore.getState().byId[id]).toMatchObject({ registered: null, checked: false })
+    useRuntimeAssetStore.setState({
+      byId: { [id]: { registered: false, checked: true, status: 'needs_rerun', cached: false, profile: 'safe' } },
+    } as never)
+    useRuntimeAssetStore.getState().markFresh(id)
+    expect(useRuntimeAssetStore.getState().byId[id]).toMatchObject({ registered: true, status: 'fresh' })
+  })
+})

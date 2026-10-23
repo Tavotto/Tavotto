@@ -46,6 +46,7 @@ import { currentFigureOf } from '@/lib/problemContext'
 import { effectiveScope, issuesInScope } from '@/lib/problemList'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
+import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { seedExactRender } from '@/test/renderFixtures'
 
@@ -104,6 +105,9 @@ let jobStatusSeq: string[] | null = null
 /** `/api/export/validate` 回包前先等多久（模拟 route 慢：冻结段每张最多等它 1.5 s） */
 let routeDelayMs = 0
 let routeOf: ((req: Record<string, any>) => Record<string, unknown>) | null = null
+/** `/api/runtime/status` 的回答（null = 走兜底）；`runtimeStatusGate` 非 null 时先等它再回（模拟 ensure() 往返） */
+let runtimeStatus: Record<string, unknown> | null = null
+let runtimeStatusGate: Promise<void> | null = null
 
 function stubFetch() {
   exportBodies = []
@@ -139,6 +143,10 @@ function stubFetch() {
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       )
+    }
+    if (url.includes('/api/runtime/status') && runtimeStatus) {
+      if (runtimeStatusGate) await runtimeStatusGate
+      return new Response(JSON.stringify(runtimeStatus), { status: 200, headers: { 'Content-Type': 'application/json' } })
     }
     if (url.includes('/api/export/validate') && routeOf) {
       if (routeDelayMs) await new Promise((r) => setTimeout(r, routeDelayMs))
@@ -3190,5 +3198,71 @@ describe('预览信息完善（PR3）：结果块', () => {
     await click(q('[data-export-start]')!)
     expect(q('[data-export-result]')).toBeTruthy()
     expect(q('[data-export-partial-summary]')).toBeNull()
+  })
+})
+
+
+describe('runtime 图：打开对话框主动确认注册状态（#1348 Codex）', () => {
+  const ID = 'runtime:fig.py#F'
+  async function openRuntime() {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_rt')
+    useDocumentStore.getState().commit(literal('准备'), (d) => {
+      d.page = { w: 80, h: 60 }
+      d.objects = [
+        {
+          ...panel,
+          id: 'rp',
+          fileId: ID,
+          fileKind: 'runtime',
+          source: { script: 'fig.py', stem: 'F' },
+        } as never,
+      ]
+    })
+    useAssetStore.setState({ byId: {} } as never)
+    useRuntimeAssetStore.setState({ assets: [], byId: {} } as never)
+    useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'rp' })
+    useUiStore.getState().setExportOpen(false)
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+  }
+  afterEach(() => {
+    runtimeStatus = null
+    runtimeStatusGate = null
+  })
+
+  it('清单缺 id、注册状态未知：先显示「正在确认」且不放行，ensure 回 registered 后可用（EPS 亮、按原图导）', async () => {
+    let release!: () => void
+    runtimeStatusGate = new Promise<void>((r) => (release = r))
+    runtimeStatus = { status: 'fresh', cached: true, registered: true, execution_profile: 'safe' }
+    await setup(9) // 先把组件挂上、store 铺好
+    await openRuntime()
+    expect(document.body.querySelector('[data-export-figure-checking]'), '确认中').toBeTruthy()
+    expect(button('开始导出')!.hasAttribute('disabled'), '确认完之前不放行').toBe(true)
+    await act(async () => release())
+    await act(async () => {})
+    expect(document.body.querySelector('[data-export-figure-checking]')).toBeNull()
+    expect(formatBox('EPS').disabled, '单图原图口径可用 → EPS 亮').toBe(false)
+  })
+
+  it('旧的 registered:false（重跑注册之前问的）：打开对话框重新问，拿到 true 后可用', async () => {
+    runtimeStatus = { status: 'fresh', cached: true, registered: true, execution_profile: 'safe' }
+    await setup(9)
+    await openRuntime()
+    const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 30))))
+    await settle()
+    // 用户重跑脚本之前问过一次得到 false，之后重跑注册了——store 里还留着旧的 false
+    useRuntimeAssetStore.setState({
+      byId: { [ID]: { registered: false, checked: true, status: 'needs_rerun', cached: false, profile: 'safe' } },
+    } as never)
+    await act(async () => {
+      useUiStore.getState().setExportOpen(false)
+    })
+    await act(async () => {
+      useUiStore.getState().setExportOpen(true)
+    })
+    await settle()
+    expect(useRuntimeAssetStore.getState().byId[ID]?.registered).toBe(true)
+    expect(formatBox('EPS').disabled).toBe(false)
   })
 })

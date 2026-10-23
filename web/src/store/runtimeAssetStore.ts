@@ -23,7 +23,8 @@ import { isRuntimePanel } from '@/types/document'
 export interface RuntimeAssetState {
   status: RuntimeStaleStatus
   cached: boolean
-  registered: boolean
+  /** 后端注册表认不认这张图。`null` = 未知（失效后 / 还没问过）：**未知 ≠ 假**，不得据此判「源文件不可用」 */
+  registered: boolean | null
   /** 上一次这张图是怎么产生的（`native` = 用户自己的 Python，ADR 0021 §9）。
    *  老后端不给这个字段 → `safe`：**未知不等于 native**，把未知当 native 会让
    *  一个普通面板挂上「会话已结束」的角标。 */
@@ -150,9 +151,11 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
       byId: {
         ...s.byId,
         [fileId]: {
-          ...(s.byId[fileId] ?? { registered: true, checked: true, profile: 'safe' as const }),
+          ...(s.byId[fileId] ?? { checked: true, profile: 'safe' as const }),
           status: 'fresh',
           cached: true,
+          // 刚渲染出权威图 = 脚本刚跑过、注册表认它：不保留可能是旧的 false
+          registered: true,
           checked: true,
         },
       },
@@ -171,7 +174,8 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
       let changed = false
       for (const id of fileIds) {
         if (byId[id]) {
-          byId[id] = { ...byId[id], checked: false }
+          // 脚本 / 注册表变了：注册状态一并作废成「未知」，不留旧的 false（重跑注册后它就是错的）
+          byId[id] = { ...byId[id], checked: false, registered: null }
           changed = true
         }
       }

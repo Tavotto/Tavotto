@@ -458,6 +458,7 @@ export default interface Resources {
       "checkScopeCanvasNamed": "查整个画布「{{name}}」",
       "checkScopeFigureNamed": "仅查原图「{{name}}」",
       "checkScopeOffCanvas": "「{{name}}」不在画布上，这次导出不做规范检查",
+      "checkingFigure": "正在确认这张图……",
       "chipError_other": "项要改",
       "chipNotVerifiable_other": "项无法核验",
       "chipSuggestion_other": "条建议",
