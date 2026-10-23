@@ -121,6 +121,24 @@ def change_ctx(box, env: FakeEnv | None = None, *, ask="yes", **kw) -> FixContex
     return ctx
 
 
+@pytest.fixture(autouse=True)
+def _fake_sandbox(request, monkeypatch):
+    """多数 run_command 用例不是在测沙盒本身：换成「有沙盒但不隔离」的替身，让它们在没有 sandbox-exec / bwrap 的平台也能跑。
+    要真沙盒的用例请求 `real_sandbox`（这台机器没有就 skip）。"""
+    if "real_sandbox" in request.fixturenames:
+        return
+    monkeypatch.setattr(trial, "_os_sandbox_kind", lambda: ("fake", ""))
+    monkeypatch.setattr(trial, "_sandbox_args", lambda *a, **k: [])
+
+
+@pytest.fixture
+def real_sandbox():
+    kind = trial._os_sandbox_kind()
+    if kind is None:
+        pytest.skip("no operating-system sandbox (sandbox-exec / bwrap) on this machine")
+    return kind[0]
+
+
 def audit_lines(box) -> list[dict]:
     p = box.data / "ai" / "fix_audit.jsonl"
     return [json.loads(x) for x in p.read_text("utf-8").splitlines()] if p.is_file() else []
@@ -584,7 +602,8 @@ def test_run_command_always_asks_runs_in_the_project_and_scrubs_the_environment(
     monkeypatch.setenv("TAVOTTO_PLAIN_FLAG", "kept")
     ctx = change_ctx(box)
     code = (
-        "import os; print('cwd=' + os.getcwd()); "
+        "import os; print('cwd_is_scratch=%s' % ('fix_commands' in os.getcwd() and os.getcwd() == os.environ['TMPDIR'])); "
+        "print('projname=' + os.path.basename(os.environ['TAVOTTO_PROJECT'])); "
         "print('leak=' + str([k for k in os.environ if 'TOKEN' in k or 'SECRET' in k])); "
         "print('flag=' + os.environ.get('TAVOTTO_PLAIN_FLAG', '-'))"
     )
@@ -592,9 +611,11 @@ def test_run_command_always_asks_runs_in_the_project_and_scrubs_the_environment(
     assert not r.is_error, r.content
     assert len(ctx.asker.cards) == 1 and ctx.asker.cards[0]["tool"] == "run_command"
     assert "exit code: 0" in r.content and "leak=[]" in r.content and "flag=kept" in r.content
-    assert (
-        os.path.realpath(box.proj) in r.content.replace("\\\\", "\\") or box.proj.name in r.content
-    )
+    # cwd 与 TMPDIR 是命令自己的临时工作目录（Tavotto 缓存下），项目路径经 TAVOTTO_PROJECT 给；用完即删
+    assert "cwd_is_scratch=True" in r.content and "projname=proj" in r.content
+    from tavotto.engine.fixtools import change
+
+    assert list(change.commands_root().iterdir()) == []
     line = audit_lines(box)[-1]
     assert line["approved_by"] == "user" and line["snapshot"] and line["tier"] == "user_env"
 
@@ -997,122 +1018,6 @@ def test_unreadable_link_targets_are_not_recorded_as_reads(box):
 
 
 # =========================================================================== P1：用户脚本永不被 run_command 改
-def _writer(rel: str, text: str = "CHANGED") -> list[str]:
-    return _py(f"open({rel!r}, 'w').write({text!r})")
-
-
-def test_user_script_criterion_reuses_the_repos_source_languages():
-    for name in ("a.py", "a.R", "a.r", "a.m"):
-        assert snapshots.is_user_script(name), name
-    for name in ("a.txt", "a.pyc", "a.ipynb", "a.csv", "py"):
-        assert not snapshots.is_user_script(name), name
-
-
-def test_run_command_cannot_leave_a_user_script_changed(box):
-    fig = put(box.proj / "fig.py", b"A = 1\r\n")
-    rscript = put(box.proj / "sub" / "plot.R", b"x <- 1\n")
-    data = put(box.proj / "data.csv", b"1,2\n")
-    ctx = change_ctx(box)
-    code = (
-        "import os\n"
-        "open('fig.py', 'w').write('CHANGED')\n"
-        "os.remove('sub/plot.R')\n"
-        "open('data.csv', 'w').write('NEW')\n"
-    )
-    r = call(ctx, "run_command", {"argv": _py(code)}, AuditLog())
-    assert not r.is_error, r.content
-    assert fig.read_bytes() == b"A = 1\r\n" and rscript.read_bytes() == b"x <- 1\n"
-    assert data.read_bytes() == b"NEW"  # 非脚本文件不归这道护栏管
-    assert (
-        "scripts_restored: 2" in r.content and "fig.py" in r.content and "sub/plot.R" in r.content
-    )
-
-
-def test_run_command_leaves_untouched_scripts_alone_and_reports_nothing(box):
-    fig = put(box.proj / "fig.py", b"A = 1\n")
-    before = fig.stat().st_mtime_ns
-    ctx = change_ctx(box)
-    r = call(ctx, "run_command", {"argv": _py("print(1)")})
-    assert "scripts_restored" not in r.content and fig.stat().st_mtime_ns == before
-
-
-def test_a_script_reached_through_a_link_outside_the_project_is_protected_too(box):
-    real = put(box.home / "shared" / "fig.py", b"A = 1\n")
-    (box.proj / "linked.py").symlink_to(real)
-    ctx = change_ctx(box)
-    r = call(ctx, "run_command", {"argv": _py("open('linked.py', 'w').write('CHANGED')")})
-    assert real.read_bytes() == b"A = 1\n" and "scripts_restored: 1" in r.content
-    assert str(box.home) not in r.content  # 项目外的只报文件名
-
-
-def test_a_timed_out_command_still_gets_its_scripts_checked(box):
-    fig = put(box.proj / "fig.py", b"A = 1\n")
-    ctx = change_ctx(box)
-    code = "import time\nopen('fig.py', 'w').write('CHANGED')\ntime.sleep(60)"
-    r = call(ctx, "run_command", {"argv": _py(code), "timeout_s": 1})
-    assert (
-        r.code == "timeout" and fig.read_bytes() == b"A = 1\n" and "scripts_restored" in r.content
-    )
-
-
-def test_run_command_refuses_when_the_scripts_cannot_be_backed_up(box, monkeypatch):
-    put(box.proj / "fig.py", b"A = 1\n")
-    put(box.proj / "other.py", b"B = 2\n")
-    marker = box.tmp / "ran.txt"
-    ctx = change_ctx(box)
-    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_BYTES", 8)
-    r = call(ctx, "run_command", {"argv": _py(f"open({str(marker)!r}, 'w').write('x')")})
-    assert r.is_error and r.code == "scripts_too_large" and not marker.exists()
-    assert ctx.asker.cards == []
-    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_BYTES", 10**6)
-    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_FILES", 1)
-    assert call(ctx, "run_command", {"argv": _py("print(1)")}).code == "scripts_too_large"
-
-
-def test_backups_skip_environment_and_vcs_folders(box):
-    put(box.proj / "fig.py", b"A = 1\n")
-    put(box.proj / ".venv" / "lib" / "x.py", b"junk")
-    put(box.proj / "node_modules" / "y.py", b"junk")
-    got = snapshots.list_scripts(box.proj)
-    assert [Path(k).name for k in got] == ["fig.py"]
-
-
-def test_the_snapshot_holds_the_script_bytes_and_rollback_retries_an_unrestored_one(
-    box, monkeypatch
-):
-    fig = put(box.proj / "fig.py", b"A = 1\n")
-    ctx = change_ctx(box)
-    real_restore = snapshots.restore_script
-    monkeypatch.setattr(snapshots, "restore_script", lambda path, data: False)  # 恢复失败
-    r = call(ctx, "run_command", {"argv": _py("open('fig.py', 'w').write('CHANGED')")})
-    assert r.is_error and r.code == "scripts_unrestored" and "scripts_unrestored" in r.content
-    assert fig.read_bytes() == b"CHANGED"
-    snap = ctx.call_meta["snapshot"]
-    doc = snapshots.load(ctx, snap)
-    assert doc["scripts"][0]["sha256"] and doc["unrestored"] == [os.path.realpath(fig)]
-    monkeypatch.setattr(snapshots, "restore_script", real_restore)
-    # 用户之后自己改了另一个脚本：回滚不碰它
-    other = put(box.proj / "mine.py", b"USER EDIT\n")
-    rb = call(ctx, "rollback", {"snapshot": snap})
-    assert not rb.is_error, rb.content
-    assert fig.read_bytes() == b"A = 1\n" and other.read_bytes() == b"USER EDIT\n"
-
-
-def test_restore_goes_through_the_script_lock(box, monkeypatch):
-    fig = put(box.proj / "fig.py", b"A = 1\n")
-    from tavotto.engine import scriptlock
-
-    held_during: list[bool] = []
-    real = scriptlock.write_script
-
-    def spy(path, data, **kw):
-        held_during.append(scriptlock.held(path))
-        return real(path, data, **kw)
-
-    monkeypatch.setattr(scriptlock, "write_script", spy)
-    ctx = change_ctx(box)
-    call(ctx, "run_command", {"argv": _py("open('fig.py', 'w').write('CHANGED')")})
-    assert held_during == [True] and fig.read_bytes() == b"A = 1\n"
 
 
 # =========================================================================== P1：空环境的 freeze 是有效快照
@@ -1138,7 +1043,7 @@ def test_a_failed_freeze_is_still_unavailable_not_empty(box):
     assert doc["envs"]["e"]["freeze_available"] is False
 
 
-# =========================================================================== 第三轮：持锁的基线（用户并发保存不被当成破坏）
+# =========================================================================== convert_script：持锁的基线与副本清理
 def _ui_save(path: Path, data: bytes, done: dict) -> threading.Thread:
     """界面保存脚本走的写入口：持脚本锁 + write_script（与 scriptbackup.replace 同一把锁）。"""
     from tavotto.engine import scriptlock
@@ -1151,83 +1056,6 @@ def _ui_save(path: Path, data: bytes, done: dict) -> threading.Thread:
     t = threading.Thread(target=go, daemon=True)
     t.start()
     return t
-
-
-def test_a_script_saved_while_the_approval_card_is_open_is_not_rolled_back(box):
-    fig = put(box.proj / "fig.py", b"OLD\n")
-
-    def ask(card):  # 用户在审批卡开着时在界面里保存了脚本，然后点 yes
-        fig.write_bytes(b"USER SAVED\n")
-        return {"answer": "yes"}
-
-    ctx = change_ctx(box, ask=ask)
-    r = call(ctx, "run_command", {"argv": _py("print(1)")})
-    assert not r.is_error and fig.read_bytes() == b"USER SAVED\n"
-    assert "scripts_restored" not in r.content
-    doc = snapshots.load(ctx, ctx.call_meta["snapshot"])
-    assert doc["scripts"][0]["sha256"] == __import__("hashlib").sha256(b"USER SAVED\n").hexdigest()
-
-
-def test_a_ui_save_during_the_command_waits_for_it_and_survives(box):
-    import time
-
-    fig = put(box.proj / "fig.py", b"OLD\n")
-    started = box.tmp / "started.txt"
-    code = f"import time\nopen({str(started)!r}, 'w').write('x')\ntime.sleep(1.5)"
-    ctx = change_ctx(box)
-    result: dict = {}
-    runner = threading.Thread(
-        target=lambda: result.setdefault("r", call(ctx, "run_command", {"argv": _py(code)})),
-        daemon=True,
-    )
-    runner.start()
-    for _ in range(300):
-        if started.exists():
-            break
-        time.sleep(0.05)
-    assert started.exists()
-    t0 = time.monotonic()
-    done: dict = {}
-    saver = _ui_save(fig, b"USER NEW\n", done)
-    saver.join(30)
-    runner.join(30)
-    assert not saver.is_alive() and not runner.is_alive()
-    assert done["at"] - t0 >= 0.8, "the UI save must wait for the command to finish"
-    r = result["r"]
-    assert not r.is_error and "scripts_restored" not in r.content
-    assert fig.read_bytes() == b"USER NEW\n"  # 用户的新版本落盘了，没被恢复成旧版
-
-
-def test_scripts_behind_a_directory_link_are_protected_and_cycles_terminate(box):
-    shared = box.home / "shared"
-    lib = put(shared / "lib.py", b"X = 1\n")
-    (box.proj / "shared").symlink_to(shared, target_is_directory=True)
-    (box.proj / "loop").symlink_to(box.proj, target_is_directory=True)  # 环
-    got = snapshots.list_scripts(box.proj)
-    assert os.path.realpath(lib) in got
-    ctx = change_ctx(box)
-    r = call(ctx, "run_command", {"argv": _py("open('shared/lib.py', 'w').write('CHANGED')")})
-    assert lib.read_bytes() == b"X = 1\n" and "scripts_restored: 1" in r.content
-
-
-def test_linked_folders_in_sensitive_places_are_not_walked(box):
-    secret = put(box.home / ".ssh" / "evil.py", b"S = 1\n")
-    (box.proj / "ssh").symlink_to(box.home / ".ssh", target_is_directory=True)
-    outside = put(box.tmp / "outside_home" / "o.py", b"O = 1\n")
-    (box.proj / "out").symlink_to(box.tmp / "outside_home", target_is_directory=True)
-    got = snapshots.list_scripts(box.proj, make_ctx(box).scope)
-    assert os.path.realpath(secret) not in got and os.path.realpath(outside) not in got
-
-
-def test_directory_links_count_against_the_size_limits(box, monkeypatch):
-    put(box.home / "shared" / "a.py", b"A\n")
-    put(box.home / "shared" / "b.py", b"B\n")
-    (box.proj / "shared").symlink_to(box.home / "shared", target_is_directory=True)
-    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_FILES", 1)
-    assert snapshots.list_scripts(box.proj) is None
-    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_FILES", 10)
-    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_ENTRIES", 2)
-    assert snapshots.list_scripts(box.proj) is None
 
 
 def test_a_ui_save_during_the_conversion_waits_and_is_not_treated_as_tampering(box):
@@ -1270,43 +1098,130 @@ def test_converter_scratch_copy_cleanup_failure_is_reported_and_swept_later(box,
     assert list(change.convert_root().iterdir()) == []
 
 
-def test_holding_all_scripts_does_not_deadlock_with_a_nested_fixed_order_holder(tmp_path):
-    """`ai_convert.adopt` 先持原脚本、再持兄弟脚本；`hold_scripts` 一次要两把——全拿到或全不占，两边都能走完。"""
-    import threading
-    import time
+# =========================================================================== run_command：操作系统沙盒（项目目录只读）
+def _write_probe(path: str, text: str = "CHANGED") -> str:
+    return (
+        "try:\n"
+        f"    open({path!r}, 'w').write({text!r})\n"
+        "    print('WROTE')\n"
+        "except OSError as e:\n"
+        "    print('DENIED')\n"
+    )
 
-    from tavotto.engine import scriptlock
-    from tavotto.engine.fixtools import snapshots
 
-    a, b = tmp_path / "a_fig.py", tmp_path / "b_fig.py"
-    a.write_bytes(b"x = 1\n")
-    b.write_bytes(b"y = 2\n")
-    # 让「嵌套持有者」先拿外层那把（排序靠后的 b），再去要 a；hold_scripts 按排序会先拿 a
-    outer_taken, go_inner, done = threading.Event(), threading.Event(), []
+def test_a_sandboxed_command_cannot_write_the_project_but_can_write_its_scratch_and_the_env(
+    box, real_sandbox
+):
+    fig = put(box.proj / "fig.py", b"A = 1\r\n")
+    data = put(box.proj / "data.csv", b"1,2\n")
+    prefix = box.tmp / "venvs" / "lab"
+    outside = box.home / "elsewhere.txt"
+    ctx = change_ctx(box, env_prefixes=[prefix])
+    code = (
+        "import os\n"
+        "def w(p):\n"
+        "    try:\n"
+        "        open(p, 'w').write('X'); return 'WROTE'\n"
+        "    except OSError:\n"
+        "        return 'DENIED'\n"
+        "proj = os.environ['TAVOTTO_PROJECT']\n"
+        "print('r_script', w(os.path.join(proj, 'fig.py')))\n"
+        "print('r_data', w(os.path.join(proj, 'data.csv')))\n"
+        "print('r_newfile', w(os.path.join(proj, 'new.py')))\n"
+        "print('r_scratch', w('scratch.txt'))\n"
+        "print('r_tmpdir', w(os.path.join(os.environ['TMPDIR'], 't.txt')))\n"
+        f"print('r_envprefix', w({str(prefix / 'marker.txt')!r}))\n"
+        f"print('r_elsewhere', w({str(outside)!r}))\n"
+    )
+    r = call(ctx, "run_command", {"argv": _py(code)})
+    assert not r.is_error, r.content
+    out = dict(x.split(" ", 1) for x in r.content.splitlines() if x.startswith("r_"))
+    assert out == {
+        "r_script": "DENIED",
+        "r_data": "DENIED",
+        "r_newfile": "DENIED",
+        "r_scratch": "WROTE",
+        "r_tmpdir": "WROTE",
+        "r_envprefix": "WROTE",
+        "r_elsewhere": "DENIED",
+    }, r.content
+    assert fig.read_bytes() == b"A = 1\r\n" and data.read_bytes() == b"1,2\n"
+    assert not (box.proj / "new.py").exists() and not outside.exists()
+    assert (prefix / "marker.txt").read_text() == "X"
+    assert f"os_sandbox: {real_sandbox}" in r.content
 
-    def nested():
-        with scriptlock.script_guard(b):
-            outer_taken.set()
-            go_inner.wait(5)
-            time.sleep(0.3)  # 给 holder 时间先拿到 a、再去要 b——逐把阻塞地拿就会在这里死等
-            with scriptlock.script_guard(a):
-                done.append("nested")
 
-    def holder():
-        outer_taken.wait(5)
-        go_inner.set()
-        with snapshots.hold_scripts([str(a), str(b)]):
-            assert scriptlock.held(a) and scriptlock.held(b)
-            done.append("holder")
+def test_a_venv_inside_the_project_is_writable_but_its_scripts_next_door_are_not(box, real_sandbox):
+    fig = put(box.proj / "fig.py", b"A = 1\n")
+    venv_py = box.proj / ".venv" / "bin" / "python"
+    put(venv_py, b"")
+    ctx = change_ctx(box, environments={"e": str(venv_py)}, env_prefixes=[box.proj / ".venv"])
+    code = _write_probe(str(box.proj / ".venv" / "lib.txt")) + _write_probe(str(fig))
+    r = call(ctx, "run_command", {"argv": _py(code)})
+    assert r.content.count("WROTE") == 1 and r.content.count("DENIED") == 1, r.content
+    assert (box.proj / ".venv" / "lib.txt").is_file() and fig.read_bytes() == b"A = 1\n"
 
-    ts = [
-        threading.Thread(target=nested, daemon=True),
-        threading.Thread(target=holder, daemon=True),
-    ]
-    for t in ts:
-        t.start()
-    for t in ts:
-        t.join(10)
-    assert not any(t.is_alive() for t in ts), "deadlocked"
-    assert sorted(done) == ["holder", "nested"]
-    assert not scriptlock.held(a) and not scriptlock.held(b)
+
+@pytest.mark.parametrize("which", ["home", "project", "parent_of_python"])
+def test_a_writable_prefix_that_contains_the_project_is_refused(box, which):
+    marker = box.tmp / "ran.txt"
+    if which == "home":
+        ctx = change_ctx(box, env_prefixes=[box.home])
+    elif which == "project":
+        ctx = change_ctx(box, env_prefixes=[box.proj])
+    else:  # 已登记环境的解释器就放在主目录下：前缀 = 主目录
+        py = box.home / "python"
+        put(py, b"")
+        ctx = change_ctx(box, environments={"e": str(py)})
+    r = call(ctx, "run_command", {"argv": _py(f"open({str(marker)!r}, 'w').write('x')")})
+    assert r.is_error and r.code == "env_contains_project" and not marker.exists()
+    assert ctx.asker.cards == []
+
+
+def test_without_a_sandbox_run_command_refuses_before_asking_and_runs_nothing(box, monkeypatch):
+    marker = box.tmp / "ran.txt"
+    monkeypatch.setattr(trial, "_os_sandbox_kind", lambda: None)
+    ctx = change_ctx(box)
+    r = call(
+        ctx, "run_command", {"argv": _py(f"open({str(marker)!r}, 'w').write('x')")}, AuditLog()
+    )
+    assert r.is_error and r.code == "no_sandbox" and not marker.exists()
+    assert "install_packages" in r.content  # 告诉模型改用专用工具
+    assert ctx.asker.cards == []
+    assert not (box.data / "cache" / "fix_snapshots").exists()  # 没跑，也没快照
+
+
+def test_the_command_scratch_folder_is_cleaned_and_a_failed_cleanup_is_reported(box, monkeypatch):
+    from tavotto.engine.fixtools import change
+
+    ctx = change_ctx(box)
+    r = call(ctx, "run_command", {"argv": _py("print(1)")})
+    assert "cleanup_pending" not in r.content
+    assert list(change.commands_root().iterdir()) == []
+    monkeypatch.setattr(trial, "_rmtree_once", lambda path: (_ for _ in ()).throw(OSError("busy")))
+    monkeypatch.setattr(trial, "CLEANUP_DELAY_S", 0)
+    r = call(ctx, "run_command", {"argv": _py("print(1)")})
+    assert "cleanup_pending" in r.content
+    (left,) = list(change.commands_root().iterdir())
+    assert (left / trial.PENDING_MARKER).exists()
+
+
+def test_a_failed_scratch_copy_with_a_failed_cleanup_is_reported_honestly(box, monkeypatch):
+    from tavotto.engine.fixtools import change
+
+    orig = put(box.proj / "fig.py", b"print(1)\n")
+    ctx = change_ctx(box, script_path=orig, script_converter=_converter())
+    real_write = Path.write_bytes
+
+    def broken(self, data):
+        if "fix_convert" in str(self):
+            raise OSError("disk full")
+        return real_write(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", broken)
+    monkeypatch.setattr(trial, "_rmtree_once", lambda path: (_ for _ in ()).throw(OSError("busy")))
+    monkeypatch.setattr(trial, "CLEANUP_DELAY_S", 0)
+    r = call(ctx, "convert_script", {})
+    assert r.is_error and r.code == "copy_failed" and "cleanup_pending" in r.content
+    (left,) = list(change.convert_root().iterdir())
+    assert (left / trial.PENDING_MARKER).exists()

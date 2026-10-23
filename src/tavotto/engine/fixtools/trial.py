@@ -26,6 +26,7 @@ import tempfile
 import threading
 import time
 from collections import deque
+from collections.abc import Sequence
 from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
@@ -236,28 +237,37 @@ def _sbpl_quote(path: str) -> str:
     return '"' + path.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def macos_profile(trial_dir: str) -> str:
-    """只许写本次试跑目录（含专用 TMPDIR / mpl 配置 / 副本，均在其下）与 /dev/null、/dev/tty；其余写一律拒绝。读、网络不动。"""
+def macos_profile(trial_dir: str, extra_writable: Sequence[str] = ()) -> str:
+    """只许写本次试跑目录（含专用 TMPDIR / mpl 配置 / 副本，均在其下）与 /dev/null、/dev/tty；其余写一律拒绝。读、网络不动。
+    `extra_writable`：`run_command` 另给的可写目录清单（目标环境前缀、pip / conda 缓存）。"""
     real = os.path.realpath(trial_dir)  # /var → /private/var
+    subpaths = "".join(
+        f"(subpath {_sbpl_quote(os.path.realpath(d))}) " for d in (real, *extra_writable)
+    )
     return (
         "(version 1)(allow default)(deny file-write*)"
-        f"(allow file-write* (subpath {_sbpl_quote(real)}) "
+        f"(allow file-write* {subpaths}"
         '(literal "/dev/null") (literal "/dev/tty"))'
     )
 
 
-def _sandbox_args(kind: str, tool: str, trial_dir: str) -> list[str]:
+def _sandbox_args(
+    kind: str, tool: str, trial_dir: str, extra_writable: Sequence[str] = ()
+) -> list[str]:
     real = os.path.realpath(trial_dir)
     if kind == "macos-sandbox-exec":
-        return [tool, "-p", macos_profile(trial_dir)]
-    # bwrap：整盘只读，/tmp 换成空 tmpfs，仅试跑目录可写；不动网络命名空间
+        return [tool, "-p", macos_profile(trial_dir, extra_writable)]
+    # bwrap：整盘只读，/tmp 换成空 tmpfs，仅试跑目录（+ 额外可写目录）可写；不动网络命名空间
+    binds: list[str] = []
+    for d in (real, *(os.path.realpath(x) for x in extra_writable)):
+        binds += ["--bind", d, d]
     return [
         tool,
         "--ro-bind", "/", "/",
         "--dev", "/dev",
         "--proc", "/proc",
         "--tmpfs", "/tmp",
-        "--bind", real, real,
+        *binds,
         "--die-with-parent",
     ]  # fmt: skip
 
@@ -289,13 +299,23 @@ def _probe(kind: str, tool: str) -> bool:
     return _PROBE_CACHE[key]
 
 
-def _os_sandbox_prefix(trial_dir: Path) -> tuple[str, list[str]]:
-    """(名字, 命令前缀)。没有可用沙盒 → ("none", [])，调用方退回进程内绊线。"""
+def _os_sandbox_kind() -> tuple[str, str] | None:
+    """这台机器上可用的沙盒 `(名字, 工具路径)`，没有回 None（测试里 monkeypatch 它）。"""
     for kind in ("macos-sandbox-exec", "bwrap"):
         tool = _find_tool(kind)
         if tool and _probe(kind, tool):
-            return kind, _sandbox_args(kind, tool, str(trial_dir))
-    return "none", []
+            return kind, tool
+    return None
+
+
+def _os_sandbox_prefix(
+    trial_dir: Path, extra_writable: Sequence[str] = ()
+) -> tuple[str, list[str]]:
+    """(名字, 命令前缀)。没有可用沙盒 → ("none", [])，调用方退回进程内绊线（`run_command` 则直接不跑）。"""
+    found = _os_sandbox_kind()
+    if found is None:
+        return "none", []
+    return found[0], _sandbox_args(found[0], found[1], str(trial_dir), extra_writable)
 
 
 def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empty) -> dict:

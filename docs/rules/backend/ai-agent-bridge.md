@@ -455,15 +455,12 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `rollback` 只认本会话 + 本项目的快照、id 形状固定（`snap_<时间>_<6 位十六进制>`）；设置**精确恢复**（原来没有的键清掉，并 `projectenv.reset_cache`）；包按 freeze 差异——快照后新装的卸掉
   （`pip` / `setuptools` / `wheel` 不卸），被改版本 / 被卸掉的装回快照里的版本，走同一条 `executors`。
 - **`run_command`**：先过 `hard_block_reason`（硬拦：sudo 类、磁盘 / 关机类、起 shell、管道进 shell、shell 语法、`dd of=/dev/…`、对根 / 盘符 / 主目录的递归删除与改权限、指向 `ReadScope` 硬拦区的参数）——**命中不问用户直接 `hard_blocked`**；
-  再 `ask`（一律问）→ 快照 → `Popen`（不用 shell，`shlex` 拆；cwd=项目；`clean_env` 去掉名字带 KEY / TOKEN / SECRET / PASSWORD / AUTH 等的环境变量；超时默认 60 s、上限 300 s；输出沿用 `trial._Capture` 的 64 KiB 尾部 + 8 MiB 总量叫停，并过 `scrub`）。
-- **`convert_script`**：原脚本**绝不动**——只许写 `<原名>_matplotlib.py`（已存在则 `_matplotlib_2`…，不覆盖）；脚本必须在项目内（解析符号链接后）；执行器返回后核原脚本 sha256，变了即 `original_modified`。
+  **结构性地保证用户脚本不被命令改掉：命令在操作系统沙盒里跑，项目目录不可写**（复用 `trial._os_sandbox_prefix`：macOS `sandbox-exec` / Linux `bwrap`，可写目录推广成清单）。可写的只有：本次命令的临时工作目录
+  （`data_dir()/cache/fix_commands/<随机>/`，cwd 与 TMPDIR / TEMP / TMP 都指向它，用完 `trial._remove_tree` + `.cleanup_pending` + `sweep_stale_trials(root=…)`，删不掉结果报 `cleanup_pending`）、本项目所用环境的前缀（`ctx.env_prefixes`）与已登记 env id 的前缀、
+  pip / conda 的用户缓存（标准位置 `~/.cache/pip`、`~/Library/Caches/pip`、`~/.conda`，不读用户配置）；项目里的 `.venv` 若是目标环境前缀，只放那个子目录。项目路径经环境变量 `TAVOTTO_PROJECT` 给命令（只读）。
+  任一可写前缀是项目根或其上级 → `env_contains_project`，不跑。**没有可用沙盒（Windows、Linux 没装 bwrap / 起不来）→ `no_sandbox`，不问用户、不执行**（关联 #1358）；工具描述如实写。
+  顺序：硬拦表 → 沙盒与可写前缀检查 → `ask`（一律问）→ 快照（设置 + 环境包清单）→ 沙盒里 `Popen`（不用 shell，`shlex` 拆；`clean_env` 去掉名字带 KEY / TOKEN / SECRET / PASSWORD / AUTH 等的环境变量；超时默认 60 s、上限 300 s；输出沿用 `trial._Capture` 的 64 KiB 尾部 + 8 MiB 总量叫停，并过 `scrub`），结果带 `os_sandbox: …`。
+- **`convert_script`**：原脚本**绝不动**——只许写 `<原名>_matplotlib.py`（已存在则 `_matplotlib_2`…，不覆盖）；脚本必须在项目内（解析符号链接后）；转换器拿原脚本的**临时副本**（`data_dir()/cache/fix_convert/`），「读基线 → 转换器 → 核对 / 必要时恢复」整段持原脚本的 `script_guard`（单个脚本，没有枚举竞态），返回后核原脚本 sha256，变了用执行前读到的原字节经 `snapshots.restore_script` 写回并报 `original_modified`；副本用 `_remove_tree` 带重试清理（建 / 写副本失败时的清理结果同样如实报），删不掉报 `cleanup_pending`。
 - **#1361 三条**：`_copy_project` 只复制普通文件（FIFO / socket / 设备及指向它们的链接跳过、记 `skipped["special"]`、结果 `copy_incomplete`，复制前再 `S_ISREG` 核一次防枚举后被换成 FIFO）；
   `list_environments` 列满 30 条时如实报 `[showing 30 of N …]`，本项目当前 / 选过的环境排前，`match` 参数按名字 / 来源 / 路径片段筛（被列出的才登记 id）；`_copy_project(…, reads)` 回传实际复制了内容的链接目标，`try_run` 逐个 `ctx.note_read(…, "try_run")`。
-- **用户脚本永不被「改」组改掉（#1371 P1）**：`run_command` 执行前 `snapshots.collect_scripts` 把项目里的用户脚本（`.py` + `sourcelang.extension_hint` 认的 R / MATLAB 后缀；符号链接解析到真实路径；跳过 `.venv` / `.git` / `node_modules` / `tavottofile` 等）字节备份进快照（`<id>.files/`，索引含 sha256）；超 `SCRIPTS_MAX_FILES` / `SCRIPTS_MAX_BYTES` 备份不了就不跑（`scripts_too_large`，先于问用户）。
-  命令结束（含超时）后 `verify_scripts` 逐个核对，被改 / 被删的经 `snapshots.restore_script`（`scriptlock.script_guard` + `write_script`，持有者清单已登记）写回原字节，结果带 `scripts_restored`；写回失败 → `scripts_unrestored`，并把路径记进快照的 `unrestored`，`rollback` 再试一次（只恢复这些，不碰用户后来自己改的）。命令运行期间用户在界面里改同一脚本会被一并写回（已知取舍）。
-  `convert_script` 的转换器拿到的是原脚本的**临时副本**（`data_dir()/cache/fix_convert/`，用完即删）；返回后仍核原脚本哈希，变了用执行前读到的原字节经同一条路径恢复并报 `original_modified`。
 - **freeze 的「可用」按成败判（#1371 P1）**：`default_freezer` 成功回文本（全新空环境是 `""`）、失败回 `None`；快照的 `freeze_available` = 拿到了没有，不按输出是否为空。
-- **持锁的基线（#1371 第三轮）**：「取基线 → 执行 → 核对 / 恢复」中间有窗口，用户的合法保存会被当成命令的改动写回旧版——所以不补窗口，改结构：`run_command` 审批前只做规模预检（`snapshots.list_scripts`，超限 `scripts_too_large` 不问用户），
-  用户点 yes 之后 `snapshots.hold_scripts` 按规范化真实路径排序依次持有全部用户脚本的 `script_guard`（`ExitStack`），在锁内读基线、打快照、跑命令、核对恢复，全程不放。界面保存走同一把锁（`scriptbackup.replace` 等），是**阻塞等待**不是失败：
-  命令跑的这段时间（最长 300 s）保存请求会挂着，命令结束才落盘，内容是用户的新版本。`convert_script` 同理，原脚本的锁从读基线持到核对完。`list_scripts` 跟随目录符号链接（按真实路径去重防环），受 `ReadScope`（允许范围 + DENY）与 1000 个 / 32 MiB / 20 万目录条目上限约束。
-  转换器临时副本（`data_dir()/cache/fix_convert/`）用 `trial._remove_tree` 带重试清理，删不掉如实报 `cleanup_pending` 并留 `.cleanup_pending` 标记，下次 `trial.sweep_stale_trials(root=…)` 清。

@@ -425,7 +425,54 @@ def _project_env_ids(ctx: FixContext) -> list[str]:
     return out
 
 
+#: pip / conda 的用户缓存目录（相对主目录的**标准位置**；不读用户的 pip.conf / condarc）
+_CACHE_DIRS = (".cache/pip", "Library/Caches/pip", ".conda")
+
+
+def _python_prefix(python: str) -> str:
+    p = Path(os.path.abspath(python)).parent
+    return str(p.parent if p.name.lower() in ("bin", "scripts") else p)
+
+
+def command_writable_dirs(ctx: FixContext) -> list[str]:
+    """`run_command` 在沙盒里除了自己的临时工作目录之外**可写**的目录清单（真实路径、去重）：
+    本项目所用环境的前缀（`ctx.env_prefixes`）+ 已登记 env id 的前缀 + pip / conda 的用户缓存。项目目录与其余一切都不可写。"""
+    found: list[str] = []
+    candidates = [str(p) for p in ctx.env_prefixes]
+    candidates += [_python_prefix(py) for py in ctx.environments.values()]
+    candidates += [str(ctx.home / rel) for rel in _CACHE_DIRS]
+    for c in candidates:
+        if not os.path.isdir(c):
+            continue
+        real = os.path.realpath(c)
+        if real not in found:
+            found.append(real)
+    return found
+
+
+def _contains(outer: str, inner: str) -> bool:
+    outer, inner = os.path.normcase(outer), os.path.normcase(inner)
+    return inner == outer or inner.startswith(outer.rstrip(os.sep) + os.sep)
+
+
+def commands_root() -> Path:
+    """命令的临时工作目录的家：Tavotto 的缓存目录（`trial._remove_tree` + `.cleanup_pending` + sweep 的同一套清理）。"""
+    from .. import config
+
+    return config.data_dir() / "cache" / "fix_commands"
+
+
+_NO_SANDBOX = (
+    "Running arbitrary commands is not possible on this computer: it needs an operating-system sandbox "
+    "(macOS sandbox-exec or Linux bwrap) so that the command cannot write to your project, and none is "
+    "available here. Nothing was run. Use a dedicated tool instead (install_packages, select_environment, "
+    "switch_execution, change_python, convert_script), or ask the user to run the command."
+)
+
+
 def run_command(ctx: FixContext, args: dict) -> ToolResult:
+    from . import trial
+
     argv = _command_argv(args)
     if isinstance(argv, ToolResult):
         return argv
@@ -438,60 +485,82 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
         if isinstance(timeout, int | float) and not isinstance(timeout, bool)
         else COMMAND_TIMEOUT_DEFAULT_S
     )
-    cwd = str(ctx.project_root)
-    if not os.path.isdir(cwd):
+    project = str(ctx.project_root)
+    if not os.path.isdir(project):
         return err("no_project", "The project folder is not there.")
-    # 用户脚本永不被改。审批前只做规模预检（超限不问用户）；用户点了 yes 之后才在**持锁**状态下取基线（见 `_run_locked`）
-    if snapshots.list_scripts(ctx.project_root, ctx.scope) is None:
-        return _too_many_scripts()
+    # 结构性保证「用户脚本不会被命令改」：命令在操作系统沙盒里跑，可写的只有自己的临时工作目录 + 目标环境前缀 + pip / conda 缓存，
+    # 项目目录本身不可写——所以不需要备份 / 核对 / 恢复。没有沙盒就不跑（不问用户）
+    writable = command_writable_dirs(ctx)
+    real_project = os.path.realpath(project)
+    if any(_contains(w, real_project) for w in writable):
+        return err(
+            "env_contains_project",
+            "A Python environment's folder contains the project folder, so the project could not be kept "
+            "read-only while a command runs. Nothing was run.",
+        )
+    work = commands_root() / uuid.uuid4().hex
+    if trial._os_sandbox_kind() is None:
+        return err("no_sandbox", _NO_SANDBOX)
     shown = shlex.join(argv) if os.name != "nt" else subprocess.list2cmdline(argv)
     denied = approve(
         ctx,
         "run_command",
-        f"Run this command in the project folder: {shown[:400]}",
+        f"Run this command (the project folder is read-only for it): {shown[:400]}",
         argv=[scrub(t)[:200] for t in argv[:16]],
     )
     if denied is not None:
         return denied
-    paths = snapshots.list_scripts(ctx.project_root, ctx.scope)
-    if paths is None:
-        return _too_many_scripts()
-    # 「取基线 → 执行 → 核对 / 恢复」整段持有这些脚本的锁：界面里的保存走同一把锁，会等命令结束再落盘，
-    # 所以审批卡开着时、命令运行中用户做的合法编辑既不会进基线、也不会被当成命令的改动写回旧版
-    with snapshots.hold_scripts(paths):
-        saved_files = snapshots.read_scripts(paths)
-        if saved_files is None:
-            return _too_many_scripts()
-        return _run_locked(ctx, argv, cwd, timeout, saved_files)
-
-
-def _too_many_scripts() -> ToolResult:
-    return err(
-        "scripts_too_large",
-        "The project has too many or too large script files to protect while a command runs, "
-        "so the command was not run. Run it yourself, or use a more specific tool.",
-    )
-
-
-def _run_locked(
-    ctx: FixContext, argv: list[str], cwd: str, timeout: float, saved_files: dict[str, bytes]
-) -> ToolResult:
-    from . import trial
-
-    if snapshots.take(ctx, "run_command", _project_env_ids(ctx), saved_files) is None:
+    if snapshots.take(ctx, "run_command", _project_env_ids(ctx)) is None:
         return err(
             "snapshot_failed", "Could not save a snapshot to roll back to, so nothing was changed."
         )
-    from .. import runtime
+    trial.sweep_stale_trials(root=commands_root())
+    try:
+        work.mkdir(parents=True)
+    except OSError:
+        trial._remove_tree(work)
+        return err("scratch_failed", _with_snapshot(ctx, "Could not make a scratch folder."))
+    kind, prefix = trial._os_sandbox_prefix(work, writable)
+    if kind == "none":  # 审批期间沙盒不见了（极少见）
+        trial._remove_tree(work)
+        return err("no_sandbox", _NO_SANDBOX)
+    try:
+        res = _spawn_sandboxed(ctx, argv, work, prefix, timeout, project)
+    finally:
+        pending = not trial._remove_tree(work)
+    if pending:
+        res.content += (
+            "\ncleanup_pending: the scratch folder could not be fully deleted; it is kept in Tavotto's "
+            "cache folder and will be removed later."
+        )
+    res.content += f"\nos_sandbox: {kind}"
+    res.mutated = True  # 命令可能改了环境
+    return res
 
+
+def _spawn_sandboxed(
+    ctx: FixContext, argv: list[str], work: Path, prefix: list[str], timeout: float, project: str
+) -> ToolResult:
+    from .. import runtime
+    from . import trial
+
+    env = clean_env()
+    scratch = str(work)
+    env.update(
+        TMPDIR=scratch,
+        TEMP=scratch,
+        TMP=scratch,
+        PYTHONDONTWRITEBYTECODE="1",  # 项目只读：别让 Python 往 __pycache__ 写
+        TAVOTTO_PROJECT=project,  # 命令的 cwd 是临时目录；项目在这儿（只读）
+    )
     try:
         proc = subprocess.Popen(
-            argv,
+            [*prefix, *argv],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
-            cwd=cwd,
-            env=clean_env(),
+            cwd=scratch,
+            env=env,
             creationflags=runtime.CREATE_NO_WINDOW,
             start_new_session=(os.name != "nt"),
         )
@@ -524,20 +593,6 @@ def _run_locked(
         pass
     tail = "\n".join(cap.text().splitlines()[-OUTPUT_LINES:])
     notes = ""
-    # 命令结束后逐个核对用户脚本：被改 / 被删的经 scriptlock 的写入路径恢复原字节，并如实报告
-    restored, failed = snapshots.verify_scripts(saved_files)
-    if restored:
-        notes += (
-            f"\nscripts_restored: {len(restored)} user script(s) were changed or deleted by the command "
-            f"and put back to their original bytes ({snapshots.display_names(ctx, restored)}); "
-            "user scripts are never modified"
-        )
-    if failed:
-        snapshots.mark_unrestored(ctx, ctx.call_meta["snapshot"], failed)
-        notes += (
-            f"\nscripts_unrestored: {len(failed)} user script(s) were changed by the command and could NOT "
-            f"be put back ({snapshots.display_names(ctx, failed)}); rollback will try again. Tell the user."
-        )
     if overflow.is_set():
         notes += (
             f"\noutput_truncated: more than {trial.OUTPUT_LIMIT_BYTES // (1024 * 1024)} MiB of output, "
@@ -546,17 +601,12 @@ def _run_locked(
     body = _with_snapshot(
         ctx, f"exit code: {proc.returncode}{notes}\n--- output (last lines) ---\n{tail}"
     )
-    if failed:
-        res = err("scripts_unrestored", body)
-    elif timed_out and not overflow.is_set():
-        res = err(
+    if timed_out and not overflow.is_set():
+        return err(
             "timeout",
             f"The command did not finish within {int(timeout)} s and was stopped.\n{body}",
         )
-    else:
-        res = ok(body, f"exit {proc.returncode}")
-    res.mutated = True  # 命令可能改了任何东西
-    return res
+    return ok(body, f"exit {proc.returncode}")
 
 
 # --------------------------------------------------------------------------- convert_script
@@ -641,8 +691,18 @@ def convert_script(ctx: FixContext, args: dict) -> ToolResult:
             copy_path = work / script.name
             copy_path.write_bytes(original)
         except OSError:
-            trial._remove_tree(work)
-            return err("copy_failed", "Could not make a scratch copy of the script.")
+            # 建 / 写副本失败：清理的结果不能丢，删不掉照样留 .cleanup_pending 并如实报
+            left = not trial._remove_tree(work)
+            return err(
+                "copy_failed",
+                "Could not make a scratch copy of the script."
+                + (
+                    "\ncleanup_pending: the partial scratch copy could not be fully deleted; it is kept in "
+                    "Tavotto's cache folder and will be removed later."
+                    if left
+                    else ""
+                ),
+            )
         try:
             res = executors.call_executor(
                 ctx.script_converter,
@@ -744,10 +804,16 @@ CHANGE_TOOLS: tuple[FixTool, ...] = (
     ),
     FixTool(
         "run_command",
-        "Run one program with arguments in the project folder, after the user approves it. Give `argv` (a list) or "
-        "`command` (split into words; no shell: no pipes, redirects, `&&`, substitutions). Never runs sudo, shells, "
-        "disk tools, piping into a shell or recursive deletes of the root or home folder; secret-looking "
-        "environment variables are removed; output is cut and masked; there is a time limit. Takes a snapshot.",
+        "Run one program with arguments after the user approves it. It runs inside an operating-system sandbox: "
+        "the project folder is READ-ONLY for it (it can read your files, never write them), and it can only write "
+        "to its own scratch folder (the working directory and TMPDIR, deleted afterwards), the Python environment "
+        "of this project and pip / conda caches. The project path is in the environment variable TAVOTTO_PROJECT; "
+        "use absolute paths to read project files. If this computer has no sandbox (Windows, or Linux without bwrap) "
+        "the tool answers `no_sandbox` and runs nothing: use install_packages, select_environment, switch_execution, "
+        "change_python or convert_script instead. Give `argv` (a list) or `command` (split into words; no shell: no "
+        "pipes, redirects, `&&`, substitutions). Never runs sudo, shells, disk tools, piping into a shell or recursive "
+        "deletes of the root or home folder; secret-looking environment variables are removed; output is cut and "
+        "masked; there is a time limit. Takes a snapshot of the settings and the environment's packages.",
         obj(
             {
                 "argv": {"type": "array", "items": {"type": "string"}},
