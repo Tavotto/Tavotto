@@ -123,6 +123,15 @@ try:
     spec.loader.exec_module(wt)
     wt.install([root])
     wt.arm(True)
+    # 写入绊线只管本解释器；子进程不在它的视野里（writetripwire 头注的盲区）。试跑不许再起进程——
+    # subprocess / os.system / exec* / spawn* / posix_spawn / fork 一律拦，记进 blocked_spawns
+    _spawns = []
+    _SPAWN_EVENTS = ("subprocess.Popen", "os.system", "os.exec", "os.spawn", "os.posix_spawn", "os.fork", "os.forkpty", "pty.spawn", "os.startfile")
+    def _no_spawn(event, args):
+        if event in _SPAWN_EVENTS:
+            _spawns.append(event)
+            raise PermissionError("Tavotto trial: starting other processes is not allowed")
+    sys.addaudithook(_no_spawn)
     with open(out, "w", encoding="utf-8") as f:
         json.dump({"guarded": True}, f)
 except BaseException:
@@ -145,7 +154,7 @@ if "matplotlib.pyplot" in sys.modules:
         figs = None
 try:
     with open(out, "w", encoding="utf-8") as f:
-        json.dump({"guarded": True, "figures": figs, "blocked_writes": wt.violations()}, f)
+        json.dump({"guarded": True, "figures": figs, "blocked_writes": wt.violations(), "blocked_spawns": _spawns}, f)
 except OSError:
     pass
 sys.exit(code)
@@ -295,8 +304,15 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
         "output_bytes": out.total + err_.total,
         "figures": info.get("figures"),
         "blocked_writes": info.get("blocked_writes") or [],
+        "blocked_spawns": info.get("blocked_spawns") or [],
         "cleanup_pending": False,
     }
+
+
+_SPAWN_NOTE = (
+    "\nblocked_spawns: {n} attempt(s) to start another process were blocked ({events}); trial runs may not "
+    "start processes because their writes could not be guarded"
+)
 
 
 def guard_note(res: dict) -> str:
@@ -309,6 +325,9 @@ def guard_note(res: dict) -> str:
             f"\nblocked_writes: {len(blocked)} attempt(s) to write outside the scratch folder were "
             f"blocked and nothing was written there ({shown})"
         )
+    spawns = res.get("blocked_spawns") or []
+    if spawns:
+        note += _SPAWN_NOTE.format(n=len(spawns), events=", ".join(sorted(set(spawns))))
     if res.get("cleanup_pending"):
         note += (
             "\ncleanup_pending: the scratch folder could not be fully deleted; it is kept in Tavotto's cache "
@@ -366,25 +385,41 @@ def try_import(ctx: FixContext, args: dict) -> ToolResult:
 # --------------------------------------------------------------------------- try_run
 def _copy_project(src_dir: Path, script: Path, dest: Path) -> tuple[str, bool]:
     """把脚本所在目录复制到 `dest`（有上限，超了只复制脚本）。回 (脚本在 dest 里的相对名, 是否整目录复制)。"""
-    total = files = 0
+    total = files = seen = 0
     plan: list[Path] = []
-    for root, dirs, names in os.walk(src_dir):
-        dirs[:] = [
-            d for d in dirs if d not in _COPY_SKIP and not os.path.islink(os.path.join(root, d))
-        ]
-        for n in names:
-            p = Path(root, n)
-            if p.is_symlink():
-                continue
-            try:
-                total += p.stat().st_size
-            except OSError:
-                continue
-            files += 1
-            plan.append(p)
-            if total > COPY_MAX_BYTES or files > COPY_MAX_FILES:
-                shutil.copy2(script, dest / script.name)
-                return script.name, False
+    stack = [src_dir]
+    too_big = False
+    # 惰性 scandir：边读边数（含目录条目），一过上限立刻停——不让 os.walk 先把超大目录整个读进内存
+    while stack and not too_big:
+        cur = stack.pop()
+        try:
+            with os.scandir(cur) as it:
+                for e in it:
+                    seen += 1
+                    if seen > COPY_MAX_FILES * 4:
+                        too_big = True
+                        break
+                    if e.is_symlink():
+                        continue
+                    if e.is_dir(follow_symlinks=False):
+                        if e.name not in _COPY_SKIP:
+                            stack.append(Path(e.path))
+                        continue
+                    try:
+                        total += e.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+                    files += 1
+                    plan.append(Path(e.path))
+                    if total > COPY_MAX_BYTES or files > COPY_MAX_FILES:
+                        too_big = True
+                        break
+        except OSError:
+            continue
+    if too_big:
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(script, dest / script.name)
+        return script.name, False
     for p in plan:
         target = dest / p.relative_to(src_dir)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -514,16 +549,31 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
     except OSError:
         return err("copy_failed", "Could not make a scratch copy of the script.")
     pending = False
+    copy_failed = False
+    res: dict = {}
     try:
         try:
             name, whole = _copy_project(src_dir, script, trial_dir / "work")
         except OSError:
-            return err("copy_failed", "Could not make a scratch copy of the script.")
-        runner = ctx.runner or _default_runner
-        res = runner(python, str(trial_dir / "work"), name, mode, timeout)
+            copy_failed = True
+        else:
+            runner = ctx.runner or _default_runner
+            res = runner(python, str(trial_dir / "work"), name, mode, timeout)
     finally:
         # 副本里的一切（含脚本写出的文件）随它去；用户目录从未被写。删不掉（Windows 文件占用）就如实报 cleanup_pending
         pending = not _remove_tree(trial_dir)
+    if copy_failed:
+        # 结果在清理之后才组装：复制到一半失败、又删不掉时也要报 cleanup_pending
+        return err(
+            "copy_failed",
+            "Could not make a scratch copy of the script."
+            + (
+                " cleanup_pending: a partial copy could not be deleted; it is kept in Tavotto's cache folder "
+                "and will be removed later."
+                if pending
+                else ""
+            ),
+        )
     note = (
         "\ncleanup_pending: the scratch copy could not be fully deleted; it is kept in Tavotto's cache "
         "folder and will be removed later."
@@ -555,6 +605,9 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
             f"\nblocked_writes: {len(blocked)} attempt(s) to write outside the scratch copy were "
             f"blocked and nothing was written there ({shown})"
         )
+    spawns = res.get("blocked_spawns") or []
+    if spawns:
+        extra += _SPAWN_NOTE.format(n=len(spawns), events=", ".join(sorted(set(spawns))))
     if res.get("output_truncated"):
         extra += (
             f"\noutput_truncated: the script printed more than {OUTPUT_LIMIT_BYTES // (1024 * 1024)} MiB, "

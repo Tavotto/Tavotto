@@ -1022,3 +1022,55 @@ def test_a_partial_directory_scan_is_reported_not_silent(box, monkeypatch):
     assert "incomplete" in res2.content
     res3 = call(ctx, "list_dir", {"path": str(proj)})
     assert "incomplete" in res3.content
+
+
+# --------------------------------------------------------------------------- Codex #1353 第五轮
+def test_try_run_refuses_to_start_other_processes(box):
+    """写入绊线只管本解释器：子进程不在视野里，所以试跑里起进程一律拦（写不出去的路就断了）。"""
+    outside = put(box.tmp / "elsewhere" / "p.txt", "ORIGINAL")
+    child = f"open({str(outside)!r}, 'w').write('CLOBBER')"
+    script = (
+        "import os, subprocess, sys\n"
+        "for fn in (\n"
+        f"    lambda: subprocess.run([sys.executable, '-c', {child!r}]),\n"
+        f"    lambda: os.system(sys.executable + ' -c \"pass\"'),\n"
+        "):\n"
+        "    try:\n"
+        "        fn()\n"
+        "    except PermissionError:\n"
+        "        pass\n"
+    )
+    r = call(_guarded_ctx(box, script), "try_run", {"env": "e"})
+    assert not r.is_error, r.content
+    assert "blocked_spawns: 2" in r.content
+    assert outside.read_bytes() == b"ORIGINAL"
+
+
+def test_a_copy_failure_whose_cleanup_also_fails_reports_cleanup_pending(box, monkeypatch):
+    ctx = make_ctx(box, environments={"e": "py"}, script_path=put(box.proj / "s.py"))
+
+    def half_copy(src_dir, script, dest):
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "partial.txt").write_text("x")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(trial, "_copy_project", half_copy)
+    monkeypatch.setattr(
+        trial, "_rmtree_once", lambda path: (_ for _ in ()).throw(OSError("in use"))
+    )
+    monkeypatch.setattr(trial, "CLEANUP_DELAY_S", 0)
+    r = call(ctx, "try_run", {"env": "e"})
+    assert r.is_error and r.code == "copy_failed" and "cleanup_pending" in r.content
+
+
+def test_copy_enumeration_stops_early_on_a_huge_folder(tmp_path, monkeypatch):
+    src = tmp_path / "proj"
+    src.mkdir()
+    script = put(src / "fig.py", "print(1)\n")
+    for i in range(40):
+        (src / f"d{i:02}.txt").write_text("x")
+    monkeypatch.setattr(trial, "COPY_MAX_FILES", 5)
+    dest = tmp_path / "dest"
+    name, whole = trial._copy_project(src, script, dest)
+    assert (name, whole) == ("fig.py", False)
+    assert sorted(p.name for p in dest.iterdir()) == ["fig.py"]

@@ -333,7 +333,7 @@ def list_environments(ctx: FixContext, args: dict) -> ToolResult:
 
 _INSPECT_SRC = r"""
 import json, platform, sys
-out = {"python_version": platform.python_version(), "platform": platform.platform(),
+out = {"python_version": platform.python_version(), "platform": "-".join((platform.system(), platform.release(), platform.machine())),
        "implementation": platform.python_implementation()}
 try:
     from importlib import metadata

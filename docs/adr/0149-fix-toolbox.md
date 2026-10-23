@@ -72,3 +72,5 @@
 * AI 查问题的能力有了边界：能看什么、能试什么、查了什么都有据可查；以后加改动类工具只是往同一张表里登记新档。
 * 代价：脱敏是形状规则，认不出的私有格式会漏——所以拦的是**位置**（DENY）在先，脱敏是第二道。
 * 规则全文：`docs/rules/backend/ai-agent-bridge.md`「AI 修复工具箱」一节；看护 `tests/test_fixtools.py`。
+
+**修订（2026-10-23，Codex #1353 第五轮）**：写入绊线只管本解释器，子进程不在它的视野里，所以「试」的子进程里**一律不许再起进程**（`subprocess.Popen` / `os.system` / `os.exec*` / `os.spawn*` / `os.posix_spawn` / `os.fork` / `pty.spawn` / `os.startfile` 由第二个 audit hook 拦下、记进 `blocked_spawns` 并告诉模型）。体检探测代码本身也不起进程（不用 `platform.platform()`，它会起 `uname` / `file`）。仍有的盲区：C 扩展在 C 层直接写文件——要彻底关住只能靠操作系统级沙盒，不在本 PR 范围内。复制副本改为惰性枚举、过上限即只复制脚本；复制到一半失败时结果在清理之后才组装（照样报 `cleanup_pending`）。
