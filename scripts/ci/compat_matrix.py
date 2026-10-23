@@ -148,7 +148,38 @@ def materialize(group: list[dict], workdir: Path) -> tuple[Path, str, str]:
 # --------------------------------------------------------------------------
 # 阶段 1：发现（discover → probe → registry）
 # --------------------------------------------------------------------------
-def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
+class LaunchNotExpressible(ValueError):
+    """The registered launch cannot be handed to the product's own run settings."""
+
+
+def registered_launch(project: Path, script_rel: str, case: dict):
+    """Hand a registered `reference_invocation` to the product, as a user would.
+
+    argv becomes a product run configuration; cwd becomes the project's working-directory
+    mode (script directory or project root). The product has no arbitrary-cwd mode, so any
+    other directory is a measurement gap and raises instead of silently running elsewhere.
+    Returns the `RunSelection` (None for empty argv / no registration).
+    """
+    launch = case.get("reference_invocation")
+    if launch is None:
+        return None
+    from tavotto.engine import execspec, runconfig, workdir
+
+    root = project.resolve()
+    cwd = (root / launch["cwd"]).resolve()
+    if cwd == (root / script_rel).resolve().parent:
+        mode = execspec.CWD_PROJECT
+    elif cwd == root:
+        mode = execspec.CWD_PROJECT_ROOT
+    else:
+        raise LaunchNotExpressible(
+            f"launch cwd {launch['cwd']!r} is neither the script directory nor the project root"
+        )
+    workdir.set_mode(project, mode)
+    return runconfig.selection_for(project, script_rel, launch["argv"])
+
+
+def stage_discover(project: Path, script_rel: str, case: dict, run=None) -> dict:
     """走产品自己的发现链，**不允许 runner 直接把 script/entry 塞给 worker**。
 
     用户的真实体验不是手写注册表。一个「本该能自动发现」的 case 只有靠清单
@@ -189,7 +220,7 @@ def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
         return {"ok": False, "detail": detail, "entry": None, "registry": reg}
 
     # 试运行探测：stem 只有运行期才知道时的那条路。
-    result = engine_probe.probe_and_register(project, script_rel)
+    result = engine_probe.probe_and_register(project, script_rel, run=run)
     detail["probe"] = {
         "entry": result.get("entry"),
         "tried": result.get("tried"),
@@ -211,10 +242,10 @@ def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
 # --------------------------------------------------------------------------
 # 阶段 2~8：真实 worker
 # --------------------------------------------------------------------------
-def _fresh_worker(script_rel: str, project: Path, entry: str):
+def _fresh_worker(script_rel: str, project: Path, entry: str, run=None):
     from tavotto.engine import pool
 
-    w = pool.one_shot(script_rel, str(project), entry)
+    w = pool.one_shot(script_rel, str(project), entry, run=run)
     w.ensure_built()
     return w
 
@@ -1366,7 +1397,8 @@ def run_group(
     hot = fresh = None
     try:
         # ── 发现 ────────────────────────────────────────────────
-        disc = stage_discover(project, script_rel, lead)
+        run = registered_launch(project, script_rel, lead)
+        disc = stage_discover(project, script_rel, lead, run=run)
         entry = disc["entry"] or declared_entry
         for ca in group:
             r = results[ca["id"]]
@@ -1377,7 +1409,7 @@ def run_group(
 
         # ── 执行 + 捕获 ──────────────────────────────────────────
         try:
-            hot = _fresh_worker(script_rel, project, entry)
+            hot = _fresh_worker(script_rel, project, entry, run=run)
             built = hot.ensure_built()
             stems = built.get("stems") or {}
             # 计时**只记录、不设阈值**：性能回归归 scripts/ci/benchmark.py。
@@ -1488,7 +1520,7 @@ def run_group(
 
             if patches:
                 if fresh is None:
-                    fresh = _fresh_worker(script_rel, project, entry)
+                    fresh = _fresh_worker(script_rel, project, entry, run=run)
                 try:
                     rep = stage_replay(hot, fresh, stem, patches)
                     r["stages"]["replay"] = rep["ok"]
@@ -1514,7 +1546,7 @@ def run_group(
             ).get("restore_warnings"):
                 r["dirty"] = True
                 pool.discard(hot)
-                hot = _fresh_worker(script_rel, project, entry)
+                hot = _fresh_worker(script_rel, project, entry, run=run)
 
         # ── artist 普查（纯诊断，不参与 pass/fail）─────────────
         census = run_driver(
