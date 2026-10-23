@@ -85,32 +85,41 @@ DENY_HOME_RELATIVE: tuple[str, ...] = (
     "AppData/Roaming/Mozilla",
 )
 
-#: 任意位置、按文件名判的私钥 / 环境文件形状。
+#: 任意位置、按**文件名**判的明确凭据文件形状（整名或固定后缀；Codex #1353 第九轮：不再用 `*token*` / `*secret*` 这类
+#: 子串通配——`token_counts.csv`、`password_strength.py` 是普通文件）。**目录不按名拦**（`tokenized-data/` 可读、可当 find / grep 的根），
+#: 目录只由 `DENY_HOME_RELATIVE` 的固定位置拦。内容里的密钥由 `scrub()` 抹，不靠文件名猜。
 DENY_NAME_PATTERNS: tuple[str, ...] = (
-    ".env",
-    ".env.*",
+    ".env*",
     "*.pem",
     "*.key",
     "*.p12",
     "*.pfx",
-    "id_*",
-    "token",
-    "*token*",
-    "*credential*",
-    "*secret*",
-    "*password*",
     "*.keystore",
     "*.jks",
+    "*.kdbx",
+    "id_*",
+    "token",
+    ".token",
+    "*.token",
+    "credentials",
+    "credentials.json",
+    "credentials.toml",
+    "credentials.yml",
+    "credentials.yaml",
+    "*-credentials.json",
+    "client_secret*.json",
+    "secrets.json",
+    "secrets.yaml",
+    "secrets.yml",
+    "secrets.toml",
+    "*.secret",
+    "*.secrets",
+    "service-account*.json",
+    "password.txt",
+    "passwords.txt",
 )
 #: `id_rsa.pub` 之类公钥不是秘密
 _NAME_EXEMPT_SUFFIX = (".pub",)
-#: 名字含 token 但不是凭据：模型的分词器文件（`tokenizer.json` / `tokenizer_config.json` / `special_tokens_map.json`）
-_NAME_EXEMPT_PATTERNS = (
-    "tokenizer*",
-    "*tokenizer.*",
-    "special_tokens_map.json",
-    "added_tokens.json",
-)
 
 REASON_DENIED = "denied"
 REASON_OUTSIDE = "outside_scope"
@@ -147,7 +156,9 @@ def scrub(text: str) -> str:
     text = _HTTP_CRED.sub(_mask_http_cred, text)
     text = _SECRET_ASSIGN.sub(_mask_secret, text)
     text = _BEARER.sub("Bearer ***", text)
-    return _TOKEN_SHAPES.sub("***", text)
+    text = _TOKEN_SHAPES.sub("***", text)
+    text = _URL_USERINFO.sub(r"\g<pre>***@", text)
+    return _HIGH_ENTROPY.sub(_mask_entropy, text)
 
 
 #: HTTP 凭据头：整行（冒号后到行尾；JSON 形则是那一个字符串值；`curl -H '…'` 则到包着它的引号）换成 `***`。
@@ -199,6 +210,10 @@ SENSITIVE_KEYS: tuple[str, ...] = (
 )
 _KEY_ALT = "|".join(re.escape(k).replace(r"\-", "[_-]") for k in SENSITIVE_KEYS)
 _KEY = rf"(?:(?:{_KEY_ALT})[\w-]*|auth(?:[_-](?:token|key))?(?![A-Za-z0-9]))"
+#: **后缀族**（Codex #1353 第九轮：不再逐个列名）：键名（驼峰 / 下划线 / 连字符 / 点分，大小写不敏感）**以**这些词结尾就是凭据键，
+#: `AccountKey` / `SharedAccessKey` / `clientSecret` / `aws_secret_access_key` / `x-ms-signature` / `sas_sig` 一网打尽。
+#: 紧跟其后必须是引号 / 空白 / `=` `:`（规则本身要求），所以 `keyboard`、`signal` 不会命中；以 `key` 结尾的常见非凭据走 `_BENIGN_KEY`。
+_SUFFIX_KEY = r"(?:key|tokens?|secrets?|passwords?|passwd|pwd|credentials?|auth|signature|sig)"
 
 
 #: 引号值：认反斜杠转义（`"abc\"def"` 是一整个值，不在转义的引号处截断）
@@ -218,12 +233,12 @@ def _value(sfx: str, min_bare: int) -> str:
 #:  * `cli`：命令行旗标 `--password x` / `-token=x` / `--api-key "a b"`（旗标后空白或 `=`）；整个值（含引号）换成 `***`，只留旗标。
 #:    另有短旗标 `-p 'x'`（`cliP`）：`-p` 常是端口 / 路径，所以**只在值带引号时**当密码处理。
 #:  * `kv`：`password = x` / `"password": "x"` / `token: x`（`=` 或 `:`）；引号保留、内容换成 `***`；裸值**不论长短**都抹（键名已说明是凭据）。
-#:    键名前缀（命名空间）最多回溯 80 个字符：超长单词串上不会二次方扫描（读文件的超长单行）。
+#:    键名从**词首**起匹配（`(?<![\w.-])`，前缀最多 400 字符）：超长单词串上每个词只试一次，不会二次方扫描（读文件的超长单行）。
 #:    计数类键名（`max_tokens` / `num_tokens` / `token_count` / `tokenizer` …，见 `_BENIGN_KEY`）不是凭据，原样保留。
 _SECRET_ASSIGN = re.compile(
-    rf"(?i)(?:(?P<cli>(?<![\w-])-{{1,2}}{_KEY}(?:\s+|\s*=\s*)){_value('C', 1)}"
+    rf"(?i)(?:(?P<cli>(?<![\w-])-{{1,2}}(?P<cname>{_KEY}|[\w-]{{0,80}}?{_SUFFIX_KEY})(?:\s+|\s*=\s*)){_value('C', 1)}"
     rf"|(?P<cliP>(?<![\w-])-p\s+)(?:{_DQ}|{_SQ})"
-    rf"|(?P<kv>(?P<kname>[\w.-]{{0,80}}?{_KEY})[\"']?\s*[:=]\s*){_value('K', 1)})"
+    rf"|(?P<kv>(?P<kname>(?<![\w.-])[\w.-]{{0,400}}?(?:{_KEY}|{_SUFFIX_KEY}))[\"']?\s*[:=]\s*){_value('K', 1)})"
 )
 
 
@@ -234,17 +249,27 @@ _BENIGN_KEY = re.compile(
     r"(?:max|min|num|n|total|count|limit|budget|used|prompt|completion|input|output)[_-]?tokens?"
     r"|tokens?[_-](?:count|limit|budget|used|usage)"
     r"|tokeni[sz]er(?:[_-](?:name|path|type))?"
+    # 以 key 结尾但不是凭据：数据库 / 缓存 / 排序用的键，和几个碰巧以 key 结尾的英文词（整键匹配）
+    r"|(?:primary|foreign|sort|cache|partition|hot|unique|group|join|lookup|index|row|map|dict|shortcut|"
+    r"composite|natural|surrogate|order|range|hash|shard|s3[_-]?object)[_-]?keys?"
+    r"|monkey|turkey|hockey|donkey|whiskey|jockey|lackey|keyboard\w*"
     r")"
 )
 
 
 def _mask_secret(m: re.Match) -> str:
     if m.group("cli") is not None:
+        if _BENIGN_KEY.fullmatch(m.group("cname") or ""):
+            return m.group(0)
         return m.group("cli") + "***"
     if m.group("cliP") is not None:
         return m.group("cliP") + "***"
     head = m.group("kv")
-    if _BENIGN_KEY.fullmatch(m.group("kname") or ""):
+    kname = m.group("kname") or ""
+    if _BENIGN_KEY.fullmatch(kname):
+        return m.group(0)
+    # 光秃秃的 `key`：代码里 `sorted(x, key=len)` / `key=lambda …` 远多于真密钥，只在值是引号字符串时才当凭据
+    if kname.lower().rsplit(".", 1)[-1] == "key" and m.group("bareK") is not None:
         return m.group(0)
     if m.group("dqK") is not None:
         return head + '"***"'
@@ -311,14 +336,15 @@ class ReadScope:
         name = os.path.basename(path)
         if self._ci:
             name = name.casefold()
-        if name.endswith(_NAME_EXEMPT_SUFFIX) or any(
-            fnmatch.fnmatchcase(name, pat) for pat in _NAME_EXEMPT_PATTERNS
-        ):
+        if name.endswith(_NAME_EXEMPT_SUFFIX):
             return False
         return any(fnmatch.fnmatchcase(name, pat) for pat in DENY_NAME_PATTERNS)
 
-    def _path_denied(self, norm_path: str) -> bool:
-        return any(self._under(norm_path, d) for d in self._deny) or self._name_denied(norm_path)
+    def _path_denied(self, norm_path: str, *, is_dir: bool = False) -> bool:
+        """固定位置表整棵拦；文件名形状只对**文件**生效（目录不按名拦）。"""
+        if any(self._under(norm_path, d) for d in self._deny):
+            return True
+        return not is_dir and self._name_denied(norm_path)
 
     # ---- 对外 -------------------------------------------------------------
     def expand(self, raw: object) -> str | None:
@@ -336,18 +362,21 @@ class ReadScope:
         lexical = self.expand(raw)
         if lexical is None:
             return Resolved(False, reason=REASON_BAD_PATH)
-        if self._path_denied(self._norm(lexical)):
+        is_dir = os.path.isdir(lexical)
+        if self._path_denied(self._norm(lexical), is_dir=is_dir):
             return Resolved(False, reason=REASON_DENIED)
         real_raw = os.path.realpath(lexical)
         real = self._norm(real_raw)
-        if self._path_denied(real):
+        if self._path_denied(real, is_dir=is_dir):
             return Resolved(False, reason=REASON_DENIED)
         if not any(self._under(real, r) for r in self._roots):
             return Resolved(False, reason=REASON_OUTSIDE)
         return Resolved(True, real=real_raw, in_project=self._under(real, self.project_root))
 
     def is_denied(self, real_path: str) -> bool:
-        return self._path_denied(self._norm(os.path.realpath(real_path)))
+        return self._path_denied(
+            self._norm(os.path.realpath(real_path)), is_dir=os.path.isdir(real_path)
+        )
 
 
 # --------------------------------------------------------------------------- 读文件
@@ -480,3 +509,28 @@ def _binary_kind(head: bytes, real: str) -> str:
             return name
     ext = os.path.splitext(real)[1].lower()
     return f"binary data ({ext or 'no extension'})"
+
+
+#: `scheme://user:password@host`（数据库 / 代理 / 镜像 URL）：抹掉 password。各段都有长度上限，线性。
+_URL_USERINFO = re.compile(
+    r"(?P<pre>\b[A-Za-z][A-Za-z0-9+.-]{0,30}://[^\s:/@?#*]{0,100}:)(?!\*\*\*@)[^\s@/?#]{1,200}@"
+)
+
+#: 高熵兜底：长度 ≥ 32、字符集 `[A-Za-z0-9+/=_-]`、**同时含大写、小写、数字**的连续串。小写十六进制哈希 / UUID / 纯小写路径片段
+#: 不命中（对诊断有用）；单个正则扫描、无回溯，线性。
+_HIGH_ENTROPY = re.compile(r"(?<![A-Za-z0-9+/=_-])[A-Za-z0-9+/=_-]{32,}")
+
+
+def _mask_entropy(m: re.Match) -> str:
+    tok = m.group(0)
+    if not (
+        any(c.isupper() for c in tok)
+        and any(c.islower() for c in tok)
+        and any(c.isdigit() for c in tok)
+    ):
+        return tok
+    # 路径 / 标识符：被 `/` `_` `-` 切开后有 ≥3 个纯字母单词（`/Users/alice/Library/...`、`test_export_SVGRenderer_dpi300_ok`）
+    # 不是密钥——真密钥（base64 / base64url）被分隔符切出纯字母单词的概率极低
+    if sum(1 for seg in re.split(r"[_/-]", tok) if len(seg) >= 3 and seg.isalpha()) >= 3:
+        return tok
+    return "***"

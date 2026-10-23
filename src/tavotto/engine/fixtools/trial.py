@@ -29,6 +29,7 @@ from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
 from .base import FixContext, FixTool, err, obj, ok
+from .readscope import ReadScope
 
 INSPECT_TIMEOUT_S = 40.0
 IMPORT_TIMEOUT_S = 40.0
@@ -489,10 +490,24 @@ def try_import(ctx: FixContext, args: dict) -> ToolResult:
 
 
 # --------------------------------------------------------------------------- try_run
-def _copy_project(src_dir: Path, script: Path, dest: Path) -> tuple[str, bool]:
-    """把脚本所在目录复制到 `dest`（有上限，超了只复制脚本）。回 (脚本在 dest 里的相对名, 是否整目录复制)。"""
+def _copy_project(
+    src_dir: Path,
+    script: Path,
+    dest: Path,
+    scope: ReadScope | None = None,
+    skipped: dict[str, list[str]] | None = None,
+) -> tuple[str, bool]:
+    """把脚本所在目录复制到 `dest`（有上限，超了只复制脚本）。回 (脚本在 dest 里的相对名, 是否整目录复制)。
+
+    **文件符号链接**：目标经 `scope.check` 可读（不在拦截区、在允许范围内）就复制目标内容到副本里的同名位置（`copy2` 跟随链接），
+    脚本读 `data.csv -> ../shared/data.csv` 照样读得到；目标不可读 / 在拦截区 / 悬空 / 没给 `scope` → 不复制。
+    **目录符号链接**不跟随。两类没复制的都记进 `skipped["files"]` / `skipped["dirs"]`（相对名），由调用方写进结果的 `copy_incomplete`。"""
+    skipped = skipped if skipped is not None else {}
+    skipped.setdefault("files", [])
+    skipped.setdefault("dirs", [])
     total = files = seen = 0
-    plan: list[Path] = []
+    plan: list[tuple[Path, Path]] = []  # (读哪里, 副本里的相对位置)
+    linked: set[Path] = set()
     stack = [src_dir]
     too_big = False
     # 惰性 scandir：边读边数（含目录条目），一过上限立刻停——不让 os.walk 先把超大目录整个读进内存
@@ -506,6 +521,25 @@ def _copy_project(src_dir: Path, script: Path, dest: Path) -> tuple[str, bool]:
                         too_big = True
                         break
                     if e.is_symlink():
+                        rel = Path(e.path).relative_to(src_dir)
+                        if os.path.isdir(e.path):
+                            skipped["dirs"].append(str(rel))
+                            continue
+                        r = scope.check(e.path) if scope is not None else None
+                        if r is None or not r.ok or not os.path.isfile(r.real):
+                            skipped["files"].append(str(rel))
+                            continue
+                        try:
+                            total += os.stat(r.real).st_size
+                        except OSError:
+                            skipped["files"].append(str(rel))
+                            continue
+                        files += 1
+                        plan.append((Path(r.real), rel))
+                        linked.add(rel)
+                        if total > COPY_MAX_BYTES or files > COPY_MAX_FILES:
+                            too_big = True
+                            break
                         continue
                     if e.is_dir(follow_symlinks=False):
                         if e.name not in _COPY_SKIP:
@@ -516,7 +550,7 @@ def _copy_project(src_dir: Path, script: Path, dest: Path) -> tuple[str, bool]:
                     except OSError:
                         continue
                     files += 1
-                    plan.append(Path(e.path))
+                    plan.append((Path(e.path), Path(e.path).relative_to(src_dir)))
                     if total > COPY_MAX_BYTES or files > COPY_MAX_FILES:
                         too_big = True
                         break
@@ -526,11 +560,35 @@ def _copy_project(src_dir: Path, script: Path, dest: Path) -> tuple[str, bool]:
         dest.mkdir(parents=True, exist_ok=True)
         shutil.copy2(script, dest / script.name)
         return script.name, False
-    for p in plan:
-        target = dest / p.relative_to(src_dir)
+    for p, rel in plan:
+        target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(p, target)
+        try:
+            shutil.copy2(p, target)
+        except OSError:
+            if rel not in linked:
+                raise
+            skipped["files"].append(str(rel))  # 链接目标读不了（刚被删 / 权限）：不让整次复制失败
+            target.unlink(missing_ok=True)
     return str(script.relative_to(src_dir)), True
+
+
+def _copy_incomplete_note(skipped: dict[str, list[str]]) -> str:
+    """副本里缺了哪些符号链接（只写项目内的相对名，不写目标路径）；全复制了就是空串。"""
+    note = ""
+    files, dirs = skipped.get("files") or [], skipped.get("dirs") or []
+    if files:
+        note += (
+            f"\ncopy_incomplete: {len(files)} linked file(s) were not copied ({', '.join(files[:8])}"
+            f"{', ...' if len(files) > 8 else ''}); their targets are unreadable, blocked or missing, "
+            "so a script that reads them may fail here for that reason"
+        )
+    if dirs:
+        note += (
+            f"\ncopy_incomplete: {len(dirs)} linked folder(s) were not copied ({', '.join(dirs[:8])}"
+            f"{', ...' if len(dirs) > 8 else ''}); folder links are never followed"
+        )
+    return note
 
 
 def trial_root() -> Path:
@@ -656,10 +714,13 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
         return err("copy_failed", "Could not make a scratch copy of the script.")
     pending = False
     copy_failed = False
+    link_skipped: dict[str, list[str]] = {}
     res: dict = {}
     try:
         try:
-            name, whole = _copy_project(src_dir, script, trial_dir / "work")
+            name, whole = _copy_project(
+                src_dir, script, trial_dir / "work", ctx.scope, link_skipped
+            )
         except OSError:
             copy_failed = True
         else:
@@ -703,7 +764,7 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
         f"{figures if figures is not None else 'unknown'}"
         + ("" if whole else " (only the script file was copied; the folder was too large)")
     )
-    extra = ""
+    extra = _copy_incomplete_note(link_skipped) if whole else ""
     blocked = res.get("blocked_writes") or []
     if blocked:
         shown = ", ".join(f"{b.get('event')} {b.get('path')}" for b in blocked[:8])

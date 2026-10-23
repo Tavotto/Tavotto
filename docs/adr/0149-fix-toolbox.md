@@ -38,12 +38,13 @@
 * **允许**：用户主目录下任意路径 + 项目根 + 当前项目所用 Python 环境的前缀（可能在主目录外：`/opt`、`/usr/local` 的 conda / venv）。其余（系统目录等）拒绝。
 * **硬拦 `DENY`**（规范化 + 解析符号链接后判定；词法路径与解析后路径各判一次；macOS / Windows 上大小写不敏感）：
   `~/.ssh`、`~/.gnupg`、`~/.aws`、`~/.azure`、`~/.kube`、`~/.docker/config.json`、`~/.config/gcloud`、`~/Library/Keychains`、`~/.netrc`、`~/.pypirc`、
-  `~/.git-credentials`、`~/.codex/auth.json`、`~/.claude/.credentials.json`、Tavotto 自己存 API key 的 `config.json`、任意 `.env` / `.env.*`、
-  `*.pem` / `*.key` / `*.p12` / `id_*`（私钥形状；`.pub` 公钥除外）、Chrome / Chromium / Edge / Brave / Firefox / Safari 的 profile 目录。符号链接指向拦截区也拦。
+  `~/.git-credentials`、`~/.codex/auth.json`、`~/.claude/.credentials.json`、Tavotto 自己存 API key 的 `config.json`、任意 `.env*`、
+  **按文件名只拦明确的凭据文件形状**（整名或固定后缀，**不用 `*token*` / `*secret*` 这类子串通配**，`token_counts.csv`、`password_strength.py` 可读）：`token` / `.token` / `*.token`、`credentials` / `credentials.{json,toml,yml,yaml}` / `*-credentials.json`、`client_secret*.json`、`secrets.{json,yaml,yml,toml}`、`*.secret` / `*.secrets`、`service-account*.json`、`password.txt` / `passwords.txt`、`*.kdbx`、`*.pem` / `*.key` / `*.p12` / `*.pfx` / `*.keystore` / `*.jks` / `id_*`（私钥形状；`.pub` 公钥除外）；**目录不按名拦**（`tokenized-data/` 可读、可当 find / grep 的根），目录只由上面的固定位置表拦；Chrome / Chromium / Edge / Brave / Firefox / Safari 的 profile 目录。符号链接指向拦截区也拦。
 * **单次读取上限 256 KiB**：更大的给前 N 行 + 截断说明（可用 `start_line` / `max_lines` 续读）；二进制只给类型与大小。
 * **项目外的读取记入会话的 `reads` 清单**，供卡片详情列出（「AI 看过项目外的哪些位置」）；跟随文件符号链接时记**解析后的目标**（项目内目标不记）。
-* **读到的内容一律先脱敏**：诊断包同一套文本脱敏（`diagnostics.redact_text`：密钥形状、主目录、用户名、邮箱）+ 私钥块、`key=value` / 命令行旗标形的密钥（一张敏感键名表 × 值形状：裸值 / 单引号 / 双引号，含内部空格，整体抹掉）、`Bearer` 令牌。
+* **读到的内容一律先脱敏**：诊断包同一套文本脱敏（`diagnostics.redact_text`：密钥形状、主目录、用户名、邮箱）+ 私钥块、`key=value` / 命令行旗标形的密钥（**键名后缀族** × 值形状：裸值 / 单引号 / 双引号，含内部空格，整体抹掉。键名——驼峰 / 下划线 / 连字符 / 点分、大小写不敏感——以 `key` / `token` / `secret` / `password` / `passwd` / `pwd` / `credential(s)` / `auth` / `signature` / `sig` 结尾即凭据：`AccountKey`、`SharedAccessKey`、`clientSecret`、`aws_secret_access_key`、`x-ms-signature`、`sas_sig`；`primary_key` / `sort_key` / `cache_key` / `monkey`、`max_tokens` 等整键匹配的非凭据豁免，光秃秃的 `key` 只在值带引号时才抹）、`;` 分隔的连接串（同一规则逐项处理，`AccountName` 保留、`AccountKey` 抹）与 `scheme://user:password@host` 的 password、`Bearer` 令牌，最后一道**高熵兜底**：长度 ≥ 32、字符集 `[A-Za-z0-9+/=_-]`、同时含大写 / 小写 / 数字、且不是路径 / 标识符（被 `/` `_` `-` 切开后纯字母单词 ≥ 3 个）的连续串抹成 `***`（小写十六进制哈希、UUID、路径、包文件名保留）。
   find / grep 有条数与墙钟上限，跳过拦截区、`node_modules`、`.git`、`site-packages` 深层，且不跟随目录符号链接；
+  **试跑副本**对项目里的**文件**符号链接：目标经 `ReadScope.check` 可读就把目标内容复制成副本里的同名普通文件（脚本照常读得到），目标在拦截区 / 不可读 / 悬空则不复制；目录符号链接不跟随。没复制的在结果里写 `copy_incomplete: N linked file(s) were not copied (…)`（目录同样一行），不写链接目标；
   `grep_files` 是**字面量**搜索（不接受正则，从根上没有灾难性回溯）。
 * **fixtools 启动的每个子进程**（`try_run` / `try_import` / `inspect_environment`）都走同一条受守卫的执行路径：safe 写入根绊线 + 缓存目录下的专用临时目录 + 统一的重试清理与残留清扫；守卫装不上就不执行。
 
