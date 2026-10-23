@@ -792,7 +792,8 @@ def _svg_pair_blocker(fig, *, single_draw: bool = False) -> str | None:
     * Two-pass (`single_draw=False`, the legacy pairing and the #1185 witness): any user callback can differ between the
       PDF pass and the SVG pass, so every kind is a blocker.
     * Single draw (`teedraw`, ADR 0150): PDF and SVG come out of one draw, so callbacks that only compute *values*
-      (tick formatters, locators, scale / transform functions, image filters) are fine. Callbacks that can **see the
+      (tick formatters, locators, scale / transform functions) are fine. Image filters (`agg_filter`) are NOT: the tee forwards
+      `stop_filter` to every renderer, so the callback would run once per target. Callbacks that can **see the
       renderer** stay blocked — `draw_event` handlers, custom `Artist.draw` / `get_tightbbox`, axes locators, annotation
       coordinate callables, path effects: they may dispatch on the renderer's class and the tee is a different class
       from the PDF renderer the figure would normally get, so even the PDF could change.
@@ -822,13 +823,12 @@ def _svg_pair_blocker(fig, *, single_draw: bool = False) -> str | None:
                 return "SVG pairing is unavailable for custom artist drawing methods."
         # every getter below is called by this walk: check it is Matplotlib's own *before* calling it, so deciding
         # eligibility never runs user code that a plain savefig would not run (an instance-level override would)
-        walked = ["get_path_effects"]
+        walked = ["get_path_effects", "get_agg_filter"]
         if isinstance(artist, Axes):
             walked.append("get_axes_locator")
         if isinstance(artist, Annotation):
             walked.append("get_anncoords")
         if values:
-            walked.append("get_agg_filter")
             if isinstance(artist, Axis):
                 walked += [
                     "get_major_formatter",
@@ -868,10 +868,11 @@ def _svg_pair_blocker(fig, *, single_draw: bool = False) -> str | None:
             locator = artist.get_axes_locator()
             if locator is not None and not _svg_pair_standard_method(locator):
                 return "SVG pairing is unavailable for user axes-location callbacks."
-        if values:
-            agg_filter = artist.get_agg_filter()
-            if agg_filter is not None and not _svg_pair_standard_method(agg_filter):
-                return "SVG pairing is unavailable for user image-filter callbacks."
+        # An image filter is run by `renderer.stop_filter()` — once per renderer the tee forwards to (PDF and every SVG),
+        # so a stateful filter would yield different content in each while reporting one draw: always a blocker.
+        agg_filter = artist.get_agg_filter()
+        if agg_filter is not None and not _svg_pair_standard_method(agg_filter):
+            return "SVG pairing is unavailable for user image-filter callbacks."
         if isinstance(artist, Annotation):
             coordinates = [artist.xycoords, artist.get_anncoords()]
             while coordinates:

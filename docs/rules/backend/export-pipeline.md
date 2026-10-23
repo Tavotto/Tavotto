@@ -53,7 +53,7 @@
     执行回执与 generation；**PDF 与 SVG（path 基准 + 保留文字）出自同一次 `Figure.draw`**（ADR 0150，`engine/teedraw`：
     `print_pdf` 里的 `MixedModeRenderer` 换成 `TeeRenderer`，版面度量取自 PDF），只算值的用户回调（计数器 FuncFormatter / Locator / scale / transform）不再需要被证明是纯的，
     对应的 `_svg_pair_blocker` 检查在单次绘制路径上取消；**能看到 renderer 的回调仍阻断**（`draw_event`、自定义 Artist.draw / get_tightbbox、axes locator、
-    注解坐标回调、path effect——它们可能按 renderer 的类分派，tee 不是 PDF 本来的那个类）；另保留 `_svg_pair_env_blocker`（自定义 `Figure.savefig` / canvas / 打印方法 / 注册后端）。`teedraw.status()` 自检先于任何导出，
+    注解坐标回调、path effect、`agg_filter`（`stop_filter` 会被每个目标各跑一次）——它们可能按 renderer 的类分派，tee 不是 PDF 本来的那个类）；另保留 `_svg_pair_env_blocker`（自定义 `Figure.savefig` / canvas / 打印方法 / 注册后端）。`teedraw.status()` 自检先于任何导出，
     不过就退回「二次绘制 + 完整回调阻断」并把自检结论带进原因。响应里 `svg_pairing` = `single_draw` | `two_pass`。
     **#1185 SVG 素材字节绑定的等价证人不走 tee**（独立 savefig，见 ADR 0150「为什么不走 tee」），且**有任何用户回调就不绑**（响应 `svg_strict_blocker`）。
     **自动捕获和导出要求 `require_built`**：只用已经运行并接纳的 Figure 或已验证的冻结对，冷 worker /
