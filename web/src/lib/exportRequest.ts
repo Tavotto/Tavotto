@@ -131,18 +131,19 @@ export function originalAvailability(
   return { ok: true, reason: 'none', spec }
 }
 
-/** runtime 图的注册状态：`true` / `false` 是后端的回答，`null` = 未知（清单里有它也算已知为真，由调用方先判） */
+/** runtime 图的注册状态：`true` / `false` 是后端的回答（逐面板问来的先于清单），`null` = 未知（清单里有它也算已知为真） */
 export function runtimeRegistration(figureId: string): boolean | null {
   const rt = useRuntimeAssetStore.getState()
+  // 逐面板问来的结果（打开对话框时刚问过的）优先于缓存的素材清单：清单可能还留着旧条目，而注册表已经变了
+  const asked = rt.byId[figureId]?.registered
+  if (asked === true || asked === false) return asked
   if ((rt.assets ?? []).some((a) => a.id === figureId)) return true
-  return rt.byId[figureId]?.registered ?? null
+  return null
 }
 
 /** Guarded hidden PNGs still require the exact-source export preflight before publication. */
 function canValidateOriginalSource(figureId: string, panel?: PanelObject | null): boolean {
   if (figureId.startsWith('runtime:')) {
-    const rt = useRuntimeAssetStore.getState()
-    if ((rt.assets ?? []).some((a) => a.id === figureId)) return true
     // 素材清单（`/api/runtime/assets`）会把「磁盘上已有同名原件」的 runtime 图让给 FileAsset，清单也可能还没取到；
     // 但后端解析 runtime id 只看注册表（`runtimeasset.resolve`）。面板渲染时 `ensure()` 问来的 `registered` 就是同一判据，
     // 认它，否则脚本跑出来的图被静默按画布导（EPS 灰、SVG 走画布合成）。

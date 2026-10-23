@@ -3210,7 +3210,7 @@ describe('预览信息完善（PR3）：结果块', () => {
 
 describe('runtime 图：打开对话框主动确认注册状态（#1348 Codex）', () => {
   const ID = 'runtime:fig.py#F'
-  async function openRuntime() {
+  async function openRuntime(assets: unknown[] = []) {
     await useDocumentStore.getState().switchDocument(emptyProject(), 'd_rt')
     useDocumentStore.getState().commit(literal('准备'), (d) => {
       d.page = { w: 80, h: 60 }
@@ -3225,7 +3225,7 @@ describe('runtime 图：打开对话框主动确认注册状态（#1348 Codex）
       ]
     })
     useAssetStore.setState({ byId: {} } as never)
-    useRuntimeAssetStore.setState({ assets: [], byId: {} } as never)
+    useRuntimeAssetStore.setState({ assets, byId: {} } as never)
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'rp' })
     useUiStore.getState().setExportOpen(false)
     await act(async () => {
@@ -3301,5 +3301,15 @@ describe('runtime 图：打开对话框主动确认注册状态（#1348 Codex）
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     expect(exportBodies[0].scope, '用户显式选了才走画布').toBe('canvas')
+  })
+
+  it('缓存清单里还有旧条目、但刚问来的结果明确 false：显示 refused 提示、不发原图导出', async () => {
+    runtimeStatus = { status: 'needs_rerun', cached: false, registered: false, execution_profile: 'safe' }
+    await setup(9)
+    await openRuntime([{ id: ID, script: 'fig.py', stem: 'F', cached: true, status: 'fresh', size_mm: [80, 60] }])
+    await settle()
+    expect(document.body.querySelector('[data-export-runtime-refused]'), '新鲜的「不认」优先于旧清单').toBeTruthy()
+    expect(button('开始导出')!.hasAttribute('disabled')).toBe(true)
+    expect(exportBodies).toHaveLength(0)
   })
 })
