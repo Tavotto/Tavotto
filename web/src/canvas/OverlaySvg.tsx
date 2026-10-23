@@ -269,7 +269,8 @@ export function OverlaySvg() {
               stroke={SEL}
               strokeWidth={2}
               style={DASH}
-              className="motion-safe:animate-attention"
+              // 舞台灯（`IssueSpotlight`）的光圈锚点：动效开着时不画出来；reduced motion 下照旧显示
+              className="motion-safe:invisible"
             />
           )
         })()}

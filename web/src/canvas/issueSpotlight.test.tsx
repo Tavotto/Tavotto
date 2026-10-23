@@ -1,6 +1,6 @@
 /**
  * 定位舞台灯（`IssueSpotlight`）：跟着定位高亮框亮起，放完一段自己撤；没有高亮框就不亮；
- * 光圈外那一层的 clip-path 真的挖掉了高亮框那一块（evenodd 的第二个矩形）。
+ * 光圈外那一层的柔边遮罩圆心对准高亮框中心。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -63,9 +63,9 @@ describe('定位舞台灯', () => {
     await act(async () => useUiStore.getState().setIssueHighlight({ objectId: 'p1', gid: 'axes_0.legend.title' }))
     await frame()
     expect(spot()).not.toBeNull()
-    const shade = host.querySelector<HTMLElement>('.bg-spotlight-shade')!
-    // 光圈 = 高亮框各边外扩 8px
-    expect(shade.style.clipPath).toContain('M92 112h56v36h-56Z')
+    const shade = host.querySelector<HTMLElement>('[data-spotlight-shade]')!
+    // 光圈中心 = 高亮框中心，半径 = 半宽 / 半高 × 1.5 + 28（柔边，中心透明）
+    expect(shade.style.maskImage).toContain('58px 43px at 120px 130px')
     await frame(SPOTLIGHT_MS)
     expect(spot()).toBeNull()
   })

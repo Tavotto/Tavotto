@@ -27,8 +27,8 @@ import { PIN_COLORS, tokenVar } from './issuePinColors'
  *   等级色小圆 + 项数；点它 = `openProblemAt`（定位 + 问题面板点开它所在的那一支、落游标）——
  *   与左栏样式面板直达走同一个入口，不另写第二套「跳到问题」。
  *
- * 定位之后那一下闪（`issueHighlight`）仍由 `OverlaySvg` 挂（token 关键帧 `animate-attention`）；问题带 gid 时
- * 描图内那个元素，画法在这里（`IssueElementHighlight`，与悬停轮廓共用 `useElementRect`）。
+ * 定位高亮框（`issueHighlight`）仍由 `OverlaySvg` 挂；问题带 gid 时框图内那个元素，画法在这里
+ * （`IssueElementHighlight`，与悬停轮廓共用 `useElementRect`）。动效开着时它只当舞台灯的光圈锚点。
  */
 export function IssueOverlay({ objects, t }: { objects: readonly CanvasObject[]; t: ViewTransform }) {
   const hover = useUiStore((s) => s.issueHover)
@@ -115,10 +115,9 @@ function useElementRect(panel: PanelObject, gid: string, t: ViewTransform, pad: 
 }
 
 /**
- * 定位之后那一下闪（`uiStore.issueHighlight`）落在**图内元素**上的那一种：描那个元素的框，
- * 不是整张图（`OverlaySvg` 只在问题带 gid 时挂它）。此前定位到「图例标题」时闪的是整张图的外框，
- * 图内被带到哪儿根本看不出来（2026-10-23 用户反馈「提醒不够明显」）。画法与整图那一圈相同：
- * sel 色加粗虚线 + 淡底，`animate-attention` 闪三下；解不出元素框时退回整张图。
+ * 定位高亮框落在**图内元素**上的那一种：框的是那个元素，不是整张图（`OverlaySvg` 只在问题带 gid 时
+ * 挂它）。它是舞台灯（`IssueSpotlight`）的光圈锚点：动效开着时不画出来，光圈读它的屏幕外接框；
+ * reduced motion 下没有舞台灯，它以 sel 虚线 + 淡底静静显示。解不出元素框时退回整张图。
  */
 export function IssueElementHighlight({ panel, gid, t }: { panel: PanelObject; gid: string; t: ViewTransform }) {
   const rect = useElementRect(panel, gid, t, 3)
@@ -135,7 +134,8 @@ export function IssueElementHighlight({ panel, gid, t }: { panel: PanelObject; g
       strokeWidth={2}
       style={{ strokeDasharray: 'var(--sel-dash)' }}
       pointerEvents="none"
-      className="motion-safe:animate-attention"
+      // 动效开着时它只当舞台灯的光圈锚点、不画出来（用户：不要突兀的粗蓝框）；reduced motion 下没有舞台灯，它照旧亮
+      className="motion-safe:invisible"
     />
   )
 }

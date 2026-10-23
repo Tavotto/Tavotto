@@ -72,7 +72,7 @@ preflight.runSpec()      规则求值（两份求值器，golden vectors 对齐�
   摘要行里时属性页据此打开那一折（`inspector/useLocateReveal`，收起的折不挂控件）；落到了那一行亮一下
   （`[data-locate-flash]`，sel 内环 + 淡底，与画布同一个 `--animate-attention`），画布上那一下闪在问题带 gid 时
   描**那个图内元素**（`IssueOverlay.IssueElementHighlight`，与悬停轮廓同一份换算），不是整张图；两处都亮
-  `HIGHLIGHT_MS`（2700，够闪完三次）。同时放一段**舞台灯**（`canvas/IssueSpotlight`，2026-10-23 用户提出）：画布上光圈外高斯模糊 + 压暗、光圈里稍提亮，约一秒后淡出；光圈读覆盖层里那个高亮框的屏幕外接框（不另算几何，视口平移中每帧跟着），挂在选框覆盖层之下，reduced motion 下不放。看护 `lib/issueFocus.test.ts`、`components/inspector/locateField.test.tsx`、`canvas/issueSpotlight.test.tsx`。
+  `HIGHLIGHT_MS`（2700）。同时放一段**舞台灯**（`canvas/IssueSpotlight`，2026-10-23 用户提出）：像一束手电——椭圆柔边光圈外高斯模糊 + 压暗、光圈里稍提亮，约一秒后复原，不画描边（动效开着时高亮框只当光圈锚点、不可见）；光圈读覆盖层里那个高亮框的屏幕外接框（不另算几何，视口平移中每帧跟着），挂在选框覆盖层之下，reduced motion 下不放。看护 `lib/issueFocus.test.ts`、`components/inspector/locateField.test.tsx`、`canvas/issueSpotlight.test.tsx`。
 * **普通界面不出现 gid / 对象 id**：措辞唯一实现 `lib/validationText.ts`，
   主语取 manifest 的 `label`（过 `engineLabel()`），精确名词只在每行收起的
   「技术详情」里。它是行尾 88px **尾随格**里的 ⓘ（`data-issue-tech-toggle`），点开是一个 popover
