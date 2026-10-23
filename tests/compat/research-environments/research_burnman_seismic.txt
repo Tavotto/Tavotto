@@ -1,0 +1,4 @@
+# S0 additional scientific prerequisites; render-critical pins come from runtime-lock.json.
+sympy==1.14.0
+cvxpy==1.9.3
+numba==0.68.0

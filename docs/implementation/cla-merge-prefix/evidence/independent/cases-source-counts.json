@@ -1,0 +1,86 @@
+[
+  {
+    "name": "independent prefix exact environment capability",
+    "locations": 1
+  },
+  {
+    "name": "independent prefix disabled before any I/O",
+    "locations": 1
+  },
+  {
+    "name": "independent prefix shared invocation budget",
+    "locations": 1
+  },
+  {
+    "name": "independent complete prefix rather than current entry only",
+    "locations": 1
+  },
+  {
+    "name": "independent every contributor is qualified",
+    "locations": 1
+  },
+  {
+    "name": "independent queue repository identity",
+    "locations": 1
+  },
+  {
+    "name": "independent complete queue positions",
+    "locations": 1
+  },
+  {
+    "name": "independent exact candidate base",
+    "locations": 1
+  },
+  {
+    "name": "independent queue member head matches live PR",
+    "locations": 1
+  },
+  {
+    "name": "independent first snapshot queue recheck",
+    "locations": 1
+  },
+  {
+    "name": "independent final full binding recheck",
+    "locations": 1
+  },
+  {
+    "name": "independent trusted source remains in assessment binding",
+    "locations": 1
+  },
+  {
+    "name": "independent prefix digest authenticates ordered entries",
+    "locations": 1
+  },
+  {
+    "name": "independent final SQL revision cannot reuse old revision",
+    "locations": 1
+  },
+  {
+    "name": "independent final SQL strict assessment deadline",
+    "locations": 1
+  },
+  {
+    "name": "independent grant deadline caps assessment",
+    "locations": 1
+  },
+  {
+    "name": "independent contributor raw evidence hash",
+    "locations": 1
+  },
+  {
+    "name": "independent all coauthor identities enter prefix union",
+    "locations": 1
+  },
+  {
+    "name": "independent contributor capacity before fanout",
+    "locations": 1
+  },
+  {
+    "name": "independent final shared work deadline",
+    "locations": 1
+  },
+  {
+    "name": "independent explicit complete prefix cap",
+    "locations": 1
+  }
+]

@@ -4872,6 +4872,18 @@ def api_contact_messages():
     )
 
 
+@app.get("/api/contact/replies/<mid>/<rid>/doc")
+def api_contact_reply_doc(mid: str, rid: str):
+    """一封带 HTML 的回信的完整文档（CSP + 基础样式 + 附图内联成 data: URI），给界面的沙盒 iframe 当 srcdoc。
+    纯本机读盘、不联网；没有 HTML 的回信 / 不存在 = 404（纯文字回信直接用列表里的 body）。"""
+    if not engine_contactsend.enabled():
+        return _contact_error(engine_contactsend.ContactError("disabled", 404))
+    doc = engine_contactinbox.reply_doc(mid, rid)
+    if doc is None:
+        return _contact_error(engine_contactsend.ContactError("not_found", 404))
+    return _contact_json({"doc": doc})
+
+
 @app.post("/api/contact/refresh")
 def api_contact_refresh():
     """用户点了「检查回信」：立刻问一遍服务端（至多每 30 秒一次，没有已发的信时不联网）。"""
@@ -4916,6 +4928,7 @@ def api_shutdown():
     LOG.info("收到关闭请求，正在收尾")
     reset_projects(wait=True)  # 停 watcher + 关 worker（等它们真的收完）
     engine_ai.interrupt_all()  # AI 任务终止，快照保留
+    engine_ai.stop_logins()  # 后台官方登录进程（及其回调监听）随应用一起收掉
 
     def _bye():
         time.sleep(0.3)  # 先把响应送出去
@@ -9066,7 +9079,16 @@ def api_engine_svg():
 # 任何一条路由分支。全部端点照旧走 ADR 0008 的会话认证，没有旁路。
 def _agent_error(exc: "engine_ai.AgentError"):
     """AgentError → 稳定 code 的 JSON。未知 id 是「请求畸形」，其余是状态冲突。"""
-    status = 400 if exc.code in ("ai_agent_unknown", "ai_agent_install_unsupported") else 409
+    status = (
+        400
+        if exc.code
+        in (
+            "ai_agent_unknown",
+            "ai_agent_install_unsupported",
+            "ai_agent_login_unsupported",
+        )
+        else 409
+    )
     return jsonify({"error": str(exc), "code": exc.code, "params": exc.params}), status
 
 
@@ -9147,6 +9169,29 @@ def api_ai_agent_install_status(agent_id):
     except engine_ai.AgentError as exc:
         return _agent_error(exc)
     resp = jsonify(engine_ai.install_status(agent_id))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.post("/api/ai/agents/<agent_id>/login")
+def api_ai_agent_login(agent_id):
+    """启动该 Agent 的**官方登录命令**（codex 后台 / claude 在系统终端里）。
+
+    命令只来自适配器写死的 `login_spec()`，请求体里没有、也不接受任何命令字段；
+    Tavotto 不读、不存任何登录凭据，完成与否仍只看就绪检查。
+    """
+    try:
+        return jsonify(engine_ai.start_login(agent_id))
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
+
+
+@app.get("/api/ai/agents/<agent_id>/login")
+def api_ai_agent_login_status(agent_id):
+    try:
+        resp = jsonify(engine_ai.login_status(agent_id))
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

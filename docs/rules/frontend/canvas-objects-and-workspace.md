@@ -221,3 +221,14 @@
   栏宽解析与属性栏预设同一判据 `lib/pageColumns.resolvePageColumns`：跟随全局清单的绑定在 `profileStore.loaded` 之前
   `ready=false`，这一次手势不吸附（每帧现读，目录到了就开始吸）。
   看护：`lib/pageEdgeResize.test.ts`、`canvas/pageEdgeResize.test.tsx`。
+- **单图编辑拖图的四条边改图幅（2026-10-23）**：与拖页面边同一套命中区 / 尺寸标注 / 栏宽吸附（`PageEdgeResize.EdgeStrips` /
+  `EdgeDimensions` 两处共用，不复制），但改的是**图幅** `figure.size_mm` override（属性栏「图幅」W / H 同一条），
+  **内容不缩放、字号线宽不变、图重渲染**——不是面板 w / h 的缩放（那是缩放手柄的事）。手势 `canvas/figureEdgeDrag.startFigureEdgeResize`：
+  拖动中**不写文档、不发渲染**，只在 `interaction.figureEdgeBox` 放虚线预览框并画标注；松手才 `actions.setFigureFrame` 一次
+  （一条历史「修改 图幅」+ 一次渲染）。拖左 / 上边时同一次提交里把 x / y 挪好（对侧边不动），渲染回来后 `useEngineSync`
+  以左上角为锚点静默校正 w / h。夹取 / 吸附在**页面 mm** 上做（`lib/pageEdgeResize.planFigureFrame` → `resizeFigureEdge`，
+  最小 10 mm），再按缩放比换回图幅 mm（0.01 一格、夹进引擎给 `size_mm` 的界）。**权威只认精确 manifest**（ADR 0017，
+  `lib/figureEdgeFrame.figureFrameFacts`）：缺席 / 被裁过 / 旋转过 / `size_mm` 只读，整组命中区不挂。松手到新图回来之间
+  （`interaction.figureFramePending`，不随 `end()` 清）旧图与背纸收起、只留虚线框占位，免得旧图错位闪一下；新图回来 / 撤销 / 20 s 超时即撤。
+  拖动是对视口的直接操纵（每帧 `setPan` 退出「适应画布」，Esc 还原）。命中区图内编辑里也可用，压进图里只有 2 px（其余 8 px 在图外：贴着图框的 figure 级文字 / 轴标题要点得到，`multi-select-geometry.spec.ts` 看护）。
+  看护：`canvas/figureEdgeResize.test.tsx`、`lib/pageEdgeResize.test.ts`（`planFigureFrame`）、`e2e/figure-edge-resize.spec.ts`（`@feature:canvas.single-figure-edge-resize`）。

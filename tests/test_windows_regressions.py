@@ -1459,7 +1459,9 @@ def _spawn_sites() -> list[tuple[str, ast.Call]]:
 #: 判据按**常量名**判（`value.rsplit(".", 1)[-1]`），不按整串：模块别名各处
 #: 不同（`runtime.` / `engine_runtime.` / 裸名），把别名也钉进闭集只会让这条
 #: 用例在下一次改 import 时假红。
-_ALLOWED_CREATIONFLAGS = {"CREATE_NO_WINDOW", "INHERIT_CONSOLE"}
+#: * `CREATE_NEW_CONSOLE` —— **要让用户看见并操作的新控制台**（官方登录按钮在 Windows 上
+#:   为 `claude auth login` 开的窗口）；全仓库只许 `ai_bridge.py` 一处，见下面的钉子。
+_ALLOWED_CREATIONFLAGS = {"CREATE_NO_WINDOW", "INHERIT_CONSOLE", "CREATE_NEW_CONSOLE"}
 #: 只认**具名常量**（可带模块前缀）。字面量 `0`、`A | B` 这类表达式一律拒——
 #: 那是绕过声明的写法。
 _CREATIONFLAGS_SHAPE = re.compile(r"^(?:\w+\.)?[A-Z_]+$")
@@ -1481,7 +1483,7 @@ def test_every_backend_subprocess_declares_its_console_ownership():
     它买到的是**可读性与可审查性**——下一个人在一个 GUI 路径里看到
     `INHERIT_CONSOLE` 会知道那不对，而看到一个空白的 kwargs 不会。
     """
-    checked, console_owned = [], []
+    checked, console_owned, visible_console = [], [], []
     for where, call in _spawn_sites():
         kwargs = {kw.arg: ast.unparse(kw.value) for kw in call.keywords if kw.arg}
         assert "creationflags" in kwargs, (
@@ -1499,11 +1501,15 @@ def test_every_backend_subprocess_declares_its_console_ownership():
         checked.append(where)
         if value.endswith("INHERIT_CONSOLE"):
             console_owned.append(where)
+        if value.endswith("CREATE_NEW_CONSOLE"):
+            visible_console.append(where)
     # 一个都没扫到 = 匹配逻辑坏了，别让空断言冒充通过
     assert len(checked) >= 10, f"只扫到 {checked}，AST 匹配逻辑可能失效了"
     # **CLI 拥有的那一类只有一处**：`tavotto run` 起用户的 Python。多出来一处
     # 就要有人解释为什么——这不是可以顺手复制的写法。
     assert [w.split(":")[0] for w in console_owned] == ["runcli.py"], console_owned
+    # **用户可见的新控制台同样只有一处**：官方登录按钮的 Windows 终端（ai_bridge）。
+    assert [w.split(":")[0] for w in visible_console] == ["ai_bridge.py"], visible_console
 
 
 def test_the_user_python_is_never_detached_from_the_terminal():

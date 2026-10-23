@@ -37,6 +37,23 @@
   通用设置走 `PATCH /api/ai/agents/<id>`（`enabled` / `path_override`），
   安装走 `POST|GET /api/ai/agents/<id>/install`；自定义路径**不允许硬编码私人
   路径**（pytest 看护）。run 可带 model/effort。
+- **登录按钮（设置页「用 Codex / Claude Code 自己的登录」那一行，`needs_auth` 时的唯一主按钮）只启动
+  官方命令，不碰凭据**：命令由适配器的 `login_spec()`（`LoginSpec(argv_suffix, mode, account)`）写死——
+  Codex = `login`（background，官方命令自己开浏览器、自己在本机起回调）、Claude = `auth login`
+  （terminal，需要交互，只许在用户的系统终端里打开：macOS 写一个自删的 `.command` 交给
+  `open -a Terminal`，Windows `CREATE_NEW_CONSOLE` 直接运行不经 cmd.exe，Linux 依次试
+  x-terminal-emulator / gnome-terminal / konsole / xfce4-terminal / xterm，全没有就返回
+  `reason: terminal_unavailable` + 要手动运行的命令，用已解析的真实 argv 引号化，不是 `command_names[0]`；macOS `.command` 与 Linux `sh -c` 脚本只 export 闭集 `_TERMINAL_ENV_NAMES`（PATH / HOME / CLAUDE_CONFIG_DIR / CODEX_HOME / 代理 / CA 等），**不含任何密钥**，已运行的 Terminal 不继承 `open` 传的 env）。设置页：支持第三方接口的 agent 登录按钮在「模型服务」首行，否则在「账号」区块，二者择一。**绝不发全局按键、不用 System Events**；默认实现
+  `None` = 不支持，capabilities 的 `features.login` / `login_account` 据此给出，通用层
+  （`start_login` / `login_status`）不写 `if agent == ...`（`tests/test_ai_login.py` 用 Fake Adapter 与
+  源码扫描双重反证）。`POST|GET /api/ai/agents/<id>/login` 与 install 同组、同一会话认证；argv =
+  探测通过的真实启动 argv + 写死的子命令，环境与探测同一份 `spawn_env()`，请求体里没有也不接受
+  任何命令字段。后台命令的输出走管道，读线程（上限 64 KB，超出丢弃）**只取第一条主机精确命中适配器 `LoginSpec.url_hosts`（Codex = auth.openai.com）的 https 授权地址**存进登记、经 `GET /login` 的 `auth_url` 交给前端（浏览器没打开时给用户点；只含 state / PKCE，不是凭据），其余行一个字节都不存、不进日志。background 同一 Agent 同时只有一个进程（再点返回 `already_running`），守护线程在
+  `LOGIN_TIMEOUT_S` 后结束**它自己起的那一个**；输出一律 DEVNULL，不读。**Tavotto 不读、不存、不刷新、
+  不转发 Claude / Codex 的任何登录凭据**；登录成不成仍只看就绪检查（`codex login status` /
+  `claude auth status`，一个字不变）——前端在进程结束 / 用户点「我已登录」/ 窗口重新聚焦时重新探测。
+  新错误码 `ai_agent_login_unsupported`（400）/ `ai_agent_login_failed`（409）。测试里**绝不**对真实
+  `~/.codex` / `~/.claude` 执行 login，一律桩 Popen。
 - **CLI 子进程一律用 `ai_agents.spawn_env()` 的增强 PATH**（探测与运行同一份）：
   桌面壳从 Finder / 开始菜单启动时继承 GUI 的最小 PATH，npm shim 的
   `#!/usr/bin/env node` 解析不到 node（`env: node: No such file or directory`）
@@ -384,3 +401,39 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   - 系统提示是英文（要求用用户指令的语言回复）；产品要求三条（保留数据读取与计算 / 必须 Matplotlib 出图 / 图幅字号对齐）**引用 `ai_prompt_pack.convert_requirements()` 的同一份文字**（CLI 路径的 `convert_prompt` 也用它，不各抄一份），
     执行器特有的部分（只写一个新文件、不运行脚本、check ≤ 3 次）写在 `tools.py`。`ai_prompt_pack` 是纯标准库，所以 `agent_runner` 对它的 import 不破坏依赖方向（`test_import_architecture` 兜底）。
   - 看护 `tests/test_agent_runner_convert.py`（Demo 协议端到端 + 单元）。
+
+## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
+
+脚本跑不起来时让 AI 去查的工具集。**一张注册表、两种接法**：`REGISTRY: dict[str, FixTool]`（`__init__.py`）与接法无关，内置执行器经
+`build_agent_tools(ctx)`，CLI 经 MCP（D3）都走同一个 `run_tool`（档位检查 → handler → 脱敏 → 审计）。看护 `tests/test_fixtools.py`。
+
+- **边界**：本包 import `agent_runner.tools / wires`（取 `Tool` / `ToolResult`），**`agent_runner` 不 import 本包**（它是独立子进程，保持纯标准库）。
+  不 import app / Flask：工具拿注入的 `FixContext`（`base.py`：项目根、主目录、环境 id → 解释器表、报告回调、环境清单回调、日志路径、脚本、执行器、`reads`）。
+  测试里 `home` 一律给 `tmp_path` 假主目录。
+- **档位**：`ToolSpec.tier ∈ observe | run | tavotto | listed | user_env | outward`（默认 `observe`）+ `waits_for_user`（默认 `False`），**不序列化给模型**
+  （`tests/test_fixtools.py::test_tier_is_never_sent_to_the_model` 钉三种 wire 的请求体）。`FixContext.allowed_tiers` 之外的工具 `run_tool` 拒绝（`tier_not_allowed`）；裸构造默认只放行 `observe`，修复会话创建方用 `FixContext.for_fix_session(...)`（放行 `observe` + `run`）。
+  D1 有两档：`observe` 看（`read_run_report` / `read_file` / `list_dir` / `find_files` / `grep_files` / `list_environments` / `read_logs` / `lookup_package`）；
+  `run` 试（`try_import` / `try_run` / `inspect_environment`）——**运行用户代码，不承诺「什么都不改」**，保护范围与盲区见下条。
+- **读取范围**（`readscope.py`，判据只有 `ReadScope.check`）：主目录 + 项目根 + 环境前缀内可读，其余 `outside_scope`；`DENY_HOME_RELATIVE` / `DENY_NAME_PATTERNS` 命中
+  `denied`（**文件名表只列明确的凭据文件形状**：整名或固定后缀，不用 `*token*` / `*secret*` 子串通配；**目录不按名拦**，`ReadScope._path_denied` 对目录只比固定位置表）（词法与 `realpath` 后各判一次；大小写不敏感于 macOS / Windows；Tavotto 自己的 `config.json` 在内）。单次读 ≤ 256 KiB（**按 64 KiB 块读、自己切行，当前行只留前 256 KiB**，所以任何文件大小下内存都有界；单行超限就截断该行并说明；截断给说明，`start_line` / `max_lines` 续读），
+  二进制只给类型与大小。项目外的读取进 `ctx.reads`；**跟随的文件符号链接按解析后的目标记**（`_walk` 与 `resolve_or_error` 都用 `ReadScope.check` 的结果：目标在项目外就记目标路径，在项目内不记）。
+  **所有给模型的文本过 `readscope.scrub`**（`run_tool` 对返回内容再过一遍）；「键 + 值」类密钥只有**一条规则**（`_SECRET_ASSIGN`），由**键名后缀族**（`_SUFFIX_KEY`：键名以 key / token(s) / secret(s) / password(s) / passwd / pwd / credential(s) / auth / signature / sig 结尾，驼峰 / 下划线 / 连字符 / 点分、大小写不敏感）加旧表 `SENSITIVE_KEYS`（前缀形，如 `password_hint`）
+  与值形状（裸值 / 单引号 / 双引号，含内部空格）驱动：命令行旗标后（空白或 `=`）的值整体换成 `***` 只留旗标，`key = value` / JSON 形保留引号换内容；`-p` 只在值带引号时当密码；非敏感旗标（`--output "my file.png"`）不动。**HTTP 凭据头**（`Authorization` / `Proxy-Authorization` / `Cookie` / `Set-Cookie` / `X-Api-Key` / `X-Auth-Token`）走单独一条 `_HTTP_CRED`：冒号后到行尾（JSON 形是那个字符串值，`curl -H '…'` 到包着它的引号）整体 `***`，因为值里有空格。非凭据的同尾词键名（`primary_key` / `sort_key` / `cache_key` / `monkey` / `max_tokens` …）只在 `_BENIGN_KEY` 里**整键**登记；光秃秃的 `key` 只在值带引号时抹（`sorted(x, key=len)` 不动）。键名匹配从词首起、前缀 ≤ 400 字符，保证单个超长词线性。`;` 分隔的连接串由同一条规则逐项处理；`scheme://user:password@host` 由 `_URL_USERINFO` 抹 password；最后一道 `_HIGH_ENTROPY` 兜底（≥ 32 字符、`[A-Za-z0-9+/=_-]`、含大写 + 小写 + 数字、且不是路径 / 标识符）。**试跑副本的文件符号链接**（`trial._copy_project(…, scope, skipped)`）：目标 `ReadScope.check` 可读才复制内容，否则跳过并在结果里写 `copy_incomplete`；目录链接不跟随。新增敏感位置：加进两张表并补 `test_fixtools.py::DENIED_REL`。
+- **find / grep**：条数 + 墙钟（`SCAN_SECONDS`）上限；跳过 `SKIP_DIRS`、拦截区，`site-packages` 只下探两层，不跟随目录符号链接。
+  **`grep_files` 是字面量搜索**（`in`，可选 `ignore_case`），不接受正则——没有正则就没有灾难性回溯；工具描述与 schema 如实告诉模型。
+- **「试」的子进程**（`trial.run_python`）：与体检同一纪律——`runtime.probe_args`（`-B`）、`runtime.probe_env` + `launcher.activate_env`、`stdin=DEVNULL`、
+  `creationflags=CREATE_NO_WINDOW`、UTF-8 解码（`errors="replace"`）、超时、cwd 为一次性临时目录。环境只认会话的**环境 id**（`list_environments` 登记），不接受解释器路径。
+  模块名走 `fullmatch` 的点分标识符校验，并作为 `argv` 传入（不拼进 `-c`）。`try_run` 把脚本所在目录复制到临时目录（超 64 MiB / 5000 个文件只复制脚本）跑一次，
+  MPLBACKEND=Agg；`FixContext.runner` 可注入执行器（接准备会话 / 运行器的现成路径留给后续 PR）。
+  **fixtools 起的每个子进程只有 `run_python` 这一条执行路径，全部在 safe 守卫下跑**（`try_run` 的脚本、`try_import` 的 import 副作用、`inspect_environment` 的探测代码一视同仁；
+  不再有系统临时目录里的 `tavotto-fixtool-*`，临时目录一律建在 `fix_trials/` 下，清理一律走 `_remove_tree` + `.cleanup_pending` + `sweep_stale_trials`，清不掉如实报 `cleanup_pending`）。
+  **守卫的做法**：子进程按文件加载 `engine/writetripwire.py`（worker 的 safe 执行同一个写入根绊线，ADR 0141），写入根只有本次试跑目录
+  `data_dir()/cache/fix_trials/<会话>-<随机>/`（`work/` 副本 + `tmp/` 专用 TMPDIR + `mpl/` + `out/`），读不限；越界写（`open` / `Path.write_text` / `os.remove` 等）当场 `PermissionError`，
+  违规记进结果的 `blocked_writes`（脚本吞掉异常也在）。**绊线不是沙盒**，盲区见 `writetripwire` 头注。守卫装不上（握手文件没出现 / 退出码 97）→ `trial_unguarded`，不退化成裸跑。
+  **操作系统沙盒（纵深）**：`trial._os_sandbox_prefix` 在 macOS 有 `/usr/bin/sandbox-exec`、Linux 有 `bwrap` 且探测能起时把子进程套进去（只许写试跑目录；macOS profile 原文在 `trial.macos_profile`，ADR 0149 §四）；找不到 / 探测失败退回绊线。工具结果带 `os_sandbox: macos-sandbox-exec|bwrap|none`（`inspect_environment` 是 JSON 里的 `os_sandbox` 字段）。
+  `none`（含 Windows）时 C 层 / `ctypes` 的写不被拦；读与网络始终不受限。工具描述（给模型看）如实写这些，不得再写 "changes nothing"。
+  `mode=native` 不属于 observe / run 档，直接 `native_trial_not_observe`（归 D2 的 `user_env` 档 + 用户确认）。
+  **输出上限**：`run_python` 用 `Popen` + 两个读线程，每路只留 `OUTPUT_TAIL_BYTES`（64 KiB）尾部并数总字节，两路合计超 `OUTPUT_LIMIT_BYTES`（8 MiB）就结束子进程（POSIX 按自己的进程组，绝不按名字杀），结果 `output_truncated`。
+  **副本清理**：删除带有限次重试（Windows 文件占用）；仍失败 → 结果如实报 `cleanup_pending`、目录留 `.cleanup_pending` 标记；`sweep_stale_trials()` 在每次 `run_python` 开头清标记目录与超过 1 小时的残留。
+- **审计**（`audit.py`）：`data_dir()/ai/fix_audit.jsonl`，字段 `ts / session / step / tool / tier / args / approved_by / result{ok,code,summary}`；路径类参数保留、其余只记长度，
+  内容不落盘；1 MiB 滚成 `.1`；失败不影响调用。

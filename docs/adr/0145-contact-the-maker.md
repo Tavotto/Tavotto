@@ -80,3 +80,32 @@ COS 上传地址复用 `diagsend.validate_upload_url`（同一条 `_COS_HOST` �
 - 未验证（NOT_RUN）：真实服务器 / COS / SMTP；Worker 转发；真机 Tauri WebView 里的拖放附件与窗口拖动区点击；Windows 真机（窗口按钮让位、0600 在 Windows 只管只读位）；
   `src-tauri/src/sidecar.rs` 的一行环境变量在本机没法 `cargo check`（缺 `dist/Tavotto` 资源，build.rs 先挂），靠 `tests/test_contact_send.py` 的结构断言兜底，需要 CI 的 cargo 一轮确认。
 - 图标：按图标集流程补画了 `Mail`（`defs.ts` / `index.ts` / `ICONOGRAPHY.md` 三处）。
+
+## 第二期修订（2026-10-23）：本机留原文、回信可带 HTML 与图片
+
+服务端 API 1.3.0（infra #32）让作者的回信可以带排版与附图。客户端相应改了三处，其余（线路、主机白名单、令牌、365 天保留、会话认证、不联网打开）不变。
+
+1. **本机留一份用户写的原文。** `contactinbox.add()` 增存 `subject`（≤120）、`body`（≤5000）与 `attachment_names`（≤5 个、每个 ≤120 字，**只存文件名**，不存附件内容与回信邮箱）。「我的来信」把它放在每封信最上面（灰色引用块，长正文折前 4 行 +「展开」），回信在它下面。
+   旧记录没有这些字段：读出来是空串 / 空表，界面不画引用块。保留、`forget`、`prune` 行为不变，原文随记录一起删。这**推翻**了第一期「不存用户写的任何东西」的承诺——`docs/privacy.md` 同步改写；理由是用户要在同一处对照「我写了什么 / 作者答了什么」，且这份数据本来就只在用户自己的数据目录里（0600，尽力而为）。
+2. **回信 HTML 与附图由引擎取、本机存。** `apply_replies` 存服务端已 nh3 清洗的 `html`（≤256 KiB，超了只留纯文字 `body`）与 `assets` 元数据（≤20 张、类型 png/jpeg/gif/webp、单张 ≤10 MiB，元数据不合规的那张丢掉）。`poll_once` 取到回信后由 `contactsend._fetch_assets` 逐张下载 `GET /v1/messages/{id}/replies/{rid}/assets/{n}`：
+   与问回信**同一套**线路（`CONTACT_HOSTS` 白名单、`tlstrust`、`_NoRedirect`、`User-Agent` + Bearer、API 版本头）；响应 `Content-Type` 必须等于元数据里的类型且在四种之内、`_sniff_ok` 魔数核对（与发信附件同一个函数）、字节数必须等于元数据且 ≤10 MiB，任何一项不符就丢这一张；
+   落 `data_dir()/contact_assets/<message_id>/<reply_id>/<n>`（目录 0700、文件 0600、`atomicio` 原子写）；失败（含 404 / 5xx / 线路断）下一轮再试、不阻塞其它回信；每轮预算 64 MiB / 80 次请求防失控；已 `closed` 但图没下完的信只补图、不再问回信。
+   `forget` / 保留期到期 / 条数上限挤掉记录时连带 `rmtree` 对应目录。路径只由 `_MESSAGE_ID` / `_REPLY_ID` / 数字下标三段正则合成。
+   为此 `diagsend._send` 多一个 `limit` 参数（默认仍 64 KiB）：带 HTML 的回信列表取 8 MiB，附图取 10 MiB + 1 字节；错误体仍按默认封顶。
+3. **信纸：沙盒 iframe 显示回信。** 本机端点 `GET /api/contact/replies/<mid>/<rid>/doc`（会话认证内、不联网、`no-store`）由引擎拼出完整文档：`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'">`、`<base target="_blank">`、一段基础样式（白底深字、图 / 表不超宽、`pre` 折行），然后是回信 HTML，其中 `asset:<n>` 换成本机文件的 `data:` URI（文件未下完的那张换成 1×1 透明 GIF，`alt` 保留）。没有 HTML 的回信 404，界面照旧显示纯文字。
+   前端 `ReplyPaper` 把文档放进 `<iframe sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" srcDoc>`，白色圆角信纸（`bg-paper` + 1px `border-border`，不用阴影：常驻表面不投影，foundation 规则；两套主题同值，**深色模式也是白纸**，用户裁决）。
+
+**取舍。**
+- **无脚本 + 无网络，两道独立的墙。** `sandbox` 不含 `allow-scripts`（回信里混进脚本也不执行）；文档自带 CSP 禁一切网络（图只认 `data:`），所以即使服务端清洗有漏洞，也既跑不了脚本、也发不出请求（追踪像素 / 外链图都不会加载）——这正是图要先下载到本机再内联的原因，也是「打开回信不联网」的依据。
+- **为什么要 `allow-same-origin`。** 只为父页面能读 `contentDocument.documentElement.scrollHeight` 自适应高度。没有脚本，同源在 iframe 内无从利用；CSP 禁网络；文档内容来自引擎自己拼的 `srcdoc`，不是第三方源。不用它就只能给固定高度 + 内部滚动条，一封长信读起来很差。
+- **链接。** 服务器强制 `target=_blank`（我们再加 `<base target="_blank">` 兜底），`allow-popups` 让它走新窗口；桌面壳的 `on_new_window`（`src-tauri/src/main.rs`）是 WebView 级别的钩子，对任何 frame 里的 `target=_blank` 都触发，外部 http(s) / mailto 交给系统浏览器、其余一律 Deny。**这条路径只靠读代码判断，真机未验。**
+- **`mailto:` 链接。** 作者回信里的签名可能带 `mailto:`；那是服务器内容，不是应用自己的链接，`test_contact_no_mailto` 扫的是应用源码，不受影响。
+- **体积。** HTML ≤256 KiB / 张 ≤10 MiB / 每封 ≤20 张是契约上限的镜像，本机再封一次顶；一封信本机最坏约 200 MiB 附图，保留期内随记录删除。
+- **评审后补的五个上限（PR #1344 Codex 评审）。**
+  - **持久化配额**：每封来信附图落盘合计 ≤100 MiB、全部来信合计 ≤500 MiB（`contactinbox.MAX_ASSET_BYTES_PER_MESSAGE` / `_TOTAL`）。每轮 64 MiB 的下载预算每 6 小时重置，只能减慢写盘；配额按**已落盘字节**判（下载前：已落盘 + 本张元数据大小），超了不发请求，元数据标 `skipped: "quota"`（不再重试），信纸里这张是占位，`alt` 为中英双语短句。
+  - **信纸聚合渲染上限**：一封信纸内联图片的原始字节合计 ≤24 MiB（`MAX_REPLY_DOC_IMAGE_BYTES`），按出现顺序内联，超出的用占位（`alt`「图片较大，未在这里显示 / Image too large to show here」）。否则 20×10 MiB 会经 base64、JSON、`srcDoc` 复制出数百 MiB 的 HTML。
+  - **回信列表读取上限按最坏线缆编码推出**（服务端无分页；量的是 JSON 文本字节，不是原文字节）：`50 ×（2 ×（256 KiB HTML + 20000 字 × 4 字节）+ 1 KiB 固定开销 + 20 × 256 B 附图元数据）+ 1 MiB` ≈ 36 MB（`contactsend.REPLIES_MAX_BYTES`），多读 1 字节来识别超限。2 倍是 JSON 转义的最坏膨胀。**这个上界依赖服务端的两条保证**：每封来信最多 50 条回信（客户端 `MAX_REPLIES_PER_MESSAGE` = 50 同值，超过只存前 50 条）、回信 HTML 与正文存库前去掉除 `\n` `\t` 外的控制字符且响应 `ensure_ascii=False`（否则一个控制字符会膨胀成 6 字节、非 ASCII 字符也会）；任一条变了，这里必须同步改。超限或 JSON 不合法**不当成功**：这封信记 `poll_error: "too_large" | "bad_response"`（日志只记编号与原因），下一轮照常再试，成功即清；`public_messages` 带出该字段，界面在那封信上显示一句说明。
+  - **轮次预算按实际读到的字节扣**（不论类型 / 魔数是否通过），单次读取上限 `min(10 MiB, 剩余预算) + 1`，预算耗尽即停本轮——否则白名单服务对每个小图返回 10 MiB+1 的垃圾，80 次请求都读完又丢弃，绕过 64 MiB 边界。故障转移时首选线路被换掉的 5xx 错误体同样实际读了，`_failover(…, spent)` 累计每次尝试的读取量，附图循环按累计值扣。
+  - **附图目录删除失败由有界扫尾重新发现**：`rmtree` 不再 `ignore_errors`；失败只记日志（编号与异常类型），**不再记“待删队列”**（队列要截断，截断就会丢凭据；旧 JSON 里的 `pending_asset_deletes` 容忍并忽略）。磁盘本身就是凭据：每次 `_load_pruned_locked`（含 `poll_once`）列出 `contact_assets/`，名字合规却不属于现存记录的 `<mid>`、以及现存记录里已不存在的回信 `<mid>/<rid>`，每次最多尝试删 20 个（起点逐次轮转，持续失败的不会饿死其余）；名字不合规的不碰。`forget` 的返回与界面不变。
+
+未验证（NOT_RUN）：真实服务器的附图端点与 Worker 放行；Tauri 真机里 srcdoc iframe 内 `target=_blank` 是否确实交给系统浏览器（macOS WKWebView / Windows WebView2）；真实 nh3 输出里 `asset:` 之外的写法。

@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import net from 'node:net'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { expect, test } from './fixtures'
 import { horizontalOffenders } from './overflow'
@@ -155,4 +156,82 @@ test('窄窗口：从已打开项目回到主页，「返回当前项目」与�
     expect(hit).toBe(true)
   }
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'home-narrow.png') })
+})
+
+test('我的来信：收到 HTML 回信显示成白色信纸（沙盒 iframe、无 allow-scripts、附图本机内联），上面是自己写的原文', { tag: '@feature:contact.maker' }, async ({ app, page }) => {
+  test.setTimeout(240_000)
+  const a = await app({
+    noProject: true,
+    env: {
+      TAVOTTO_NO_CONTACT: '0',
+      TAVOTTO_DIAG_DEV_LOOPBACK: '1',
+      TAVOTTO_CONTACT_ENDPOINT: 'https://127.0.0.1:9', // 不会被连：回信与附图是预先落在本机数据目录里的
+    },
+  })
+  // 本机收件记录与附图（引擎每次请求都重读文件）：模拟“已经收到过一封 HTML 回信、附图已下载”
+  const mid = 'TVM-ABCD-EFGH-JKMN-PQRS'
+  const html = readFileSync(path.resolve(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'contact', 'reply_sanitized.html'), 'utf8')
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
+  const assets = [0, 1, 2, 3].map((n) => ({ n, content_type: 'image/png', size: png.length }))
+  writeFileSync(
+    path.join(a.dataDir, 'contact_messages.json'),
+    JSON.stringify({
+      version: 1,
+      messages: [
+        {
+          message_id: mid,
+          reply_token: 'a'.repeat(64),
+          route: 'cn',
+          sent_at: Date.now() / 1000 - 3600,
+          delivered: true,
+          state: 'replied',
+          subject: '导出报错',
+          body: '导出 PDF 时提示字体缺失。\n第二行\n第三行\n第四行\n第五行',
+          attachment_names: ['shot.png'],
+          replies: [{ id: 'r_AAAA', created_at: '2026-10-22T08:00:00Z', body: '纯文字版', html, assets }],
+          read: [],
+        },
+      ],
+    }),
+  )
+  const dir = path.join(a.dataDir, 'contact_assets', mid, 'r_AAAA')
+  mkdirSync(dir, { recursive: true })
+  for (const n of [0, 1, 2, 3]) writeFileSync(path.join(dir, String(n)), png)
+
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.goto(a.baseURL)
+  await page.locator('[data-contact-button="home"]').click({ timeout: 30_000 })
+  const dialog = page.locator('[data-dialog="contact"]')
+  // 有未读回信时入口直接打开「我的来信」
+
+  // 自己写的原文在上面：主题、折叠的正文（5 行 > 4 行）、附件名
+  await expect(dialog.locator('[data-contact-letter-subject]')).toHaveText('导出报错')
+  await expect(dialog.locator('[data-contact-letter-toggle]')).toBeVisible()
+  await expect(dialog.locator('[data-contact-letter-files]')).toContainText('shot.png')
+
+  // 信纸：白底、沙盒里没有 allow-scripts、文档自带 CSP、附图是内联的 data: URI
+  const iframe = dialog.locator('[data-contact-reply-paper] iframe')
+  await expect(iframe).toBeVisible({ timeout: 30_000 })
+  const sandbox = (await iframe.getAttribute('sandbox')) ?? ''
+  expect(sandbox.split(' ')).not.toContain('allow-scripts')
+  const srcdoc = (await iframe.getAttribute('srcdoc')) ?? ''
+  expect(srcdoc).toContain("default-src 'none'")
+  expect(srcdoc).not.toContain('asset:')
+  expect(srcdoc.match(/data:image\/png;base64,/g)?.length).toBe(4)
+  const inner = page.frameLocator('[data-contact-reply-paper] iframe')
+  await expect(inner.locator('table').first()).toBeVisible()
+  expect(await dialog.locator('[data-contact-reply-paper]').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(255, 255, 255)')
+  // 自适应高度：不是初始的 120px，也没有内部滚动条
+  expect((await iframe.boundingBox())!.height).toBeGreaterThan(150)
+  // 回信文档本身没有发出任何请求（CSP 禁网络；图是 data:）
+  expect(await horizontalOffenders(page, '[data-dialog="contact"]')).toEqual([])
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'letters-html-reply.png') })
+
+  // 深色模式下信纸仍是白的
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'))
+  expect(await dialog.locator('[data-contact-reply-paper]').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(255, 255, 255)')
+  if (SHOTS) {
+    await page.waitForTimeout(400) // 按钮颜色有过渡动画：切主题后立刻截会截到半途
+    await page.screenshot({ path: path.join(SHOTS, 'letters-html-reply-dark.png') })
+  }
 })

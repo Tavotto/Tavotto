@@ -526,6 +526,15 @@ pip install "tavotto[worker]"
 tavotto
 ```
 
+> **装了 astropy 8 的科学环境，别把 Tavotto `pip install` 进去。** Tavotto 依赖
+> uharfbuzz，而目前所有 uharfbuzz 0.56.x 的 wheel 都和 astropy 8 的编译模块冲突
+> （Cython 3.3.0 的缺陷，[cython/cython#7914](https://github.com/cython/cython/issues/7914)）。
+> 在那样的环境里，只要导入过 `astropy.table`，你**自己**脚本的 `savefig(..., format="pdf")`
+> 就会报 `TypeError: Shared Cython type cython_function_or_method has the wrong size`，
+> 跟 Tavotto 有没有在运行无关。请用上面的 `pipx` 装 Tavotto，再按下面的方法让它使用那个环境。
+> 上游跟踪：[uharfbuzz#318](https://github.com/harfbuzz/uharfbuzz/issues/318)、
+> [fonttools#4354](https://github.com/fonttools/fonttools/issues/4354)。
+
 **复用画图时用的那套环境**：去掉 `[worker]` 只装本体，再指定你自己的解释器——
 这样渲染用的就是脚本当初依赖的那一套。（这是轻量 CLI 形态：没有 `[worker]` 就
 没有随装的渲染栈，渲染——包括 Codex 的 MCP 集成——完全依赖你指定的那个解释器）：

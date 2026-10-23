@@ -4,8 +4,8 @@
 它不是第二条渲染路径——兼容判定（execute/capture/open/edit/replay/export）
 一律走真实 worker 协议。这里只做那三件真实 worker **按设计**不该做的事：
 
-* `native` —— **原生对照**。用普通 matplotlib 跑一遍用户脚本（cwd = 脚本
-  目录，就是 `python figure.py` 的语义），`savefig` 只**记录**、随后**照常
+* `native` —— **原生对照**。用普通 matplotlib 跑一遍用户脚本（缺省 cwd = 脚本
+  目录；登记 case 可声明启动 cwd/argv），`savefig` 只**记录**、随后**照常
   调用真实实现**（这一点与 Tavotto 的拦截正相反：拦截是为了不写用户的文件，
   对照是为了拿到「没有 Tavotto 时这张图长什么样」）。然后按目标像素宽出 PNG。
 * `census` —— **artist 普查**。instrument 之后走一遍 artist 树，统计每个类
@@ -32,6 +32,7 @@ import os
 import runpy
 import sys
 import traceback
+from pathlib import Path, PureWindowsPath
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # 同 compat_matrix：中文输出在 Windows 的 cp1252 stdout 上会打死进程。
@@ -62,6 +63,38 @@ def _ok(**payload) -> int:
 
 def _tail(text: str, limit: int = 4000) -> str:
     return text if len(text) <= limit else "[truncated]\n" + text[-limit:]
+
+
+class ReferenceInvocationError(ValueError):
+    """The registered native-control invocation is not project-local."""
+
+
+def _reference_invocation(req: dict, default_cwd: str) -> tuple[str, list[str]]:
+    """Resolve only cwd/argv; the registered script and entry remain authoritative."""
+    if "reference_invocation" not in req:
+        return default_cwd, [req["script"]]
+    invocation = req["reference_invocation"]
+    if not isinstance(invocation, dict) or set(invocation) != {"cwd", "argv"}:
+        raise ReferenceInvocationError("reference_invocation requires only cwd and argv")
+    relative, argv = invocation["cwd"], invocation["argv"]
+    if not isinstance(relative, str) or not relative:
+        raise ReferenceInvocationError("reference_invocation.cwd must be a relative directory")
+    if (
+        Path(relative).is_absolute()
+        or PureWindowsPath(relative).drive
+        or PureWindowsPath(relative).root
+    ):
+        raise ReferenceInvocationError("reference_invocation.cwd must be project-relative")
+    if not isinstance(argv, list) or any(not isinstance(arg, str) for arg in argv):
+        raise ReferenceInvocationError("reference_invocation.argv must be a list of strings")
+    project = Path(req["project"]).resolve()
+    try:
+        cwd = (project / relative).resolve(strict=True)
+    except (OSError, ValueError) as exc:
+        raise ReferenceInvocationError("reference_invocation.cwd must exist") from exc
+    if not cwd.is_relative_to(project) or not cwd.is_dir():
+        raise ReferenceInvocationError("reference_invocation.cwd must be a directory in project")
+    return str(cwd), [req["script"], *argv]
 
 
 # ---------------------------------------------------------------- 原生对照
@@ -96,6 +129,7 @@ def run_native(req: dict) -> int:
     之后**照常调用原始 savefig**。像 Tavotto 那样阻止真实输出的话，对照组
     就不再是「没有 Tavotto 时会发生什么」，而是「Tavotto 的另一个实现」。
     """
+    cwd, argv = _reference_invocation(req, os.path.dirname(req["script"]))
     import matplotlib
 
     matplotlib.use("Agg")
@@ -145,9 +179,9 @@ def run_native(req: dict) -> int:
 
     mfigure.Figure.savefig = recording_savefig
     plt.show = lambda *a, **k: None
-    # cwd = 脚本目录：`python figure.py` 就是这个语义，对照组必须是它。
-    os.chdir(os.path.dirname(req["script"]))
-    sys.argv = [req["script"]]
+    # Default remains script-local; registered research cases may specify their launch cwd.
+    os.chdir(cwd)
+    sys.argv = argv
 
     log = io.StringIO()
     try:
@@ -264,6 +298,44 @@ def _ref_readable(path: str) -> bool:
         return False
 
 
+def _line_xy_digests(figure) -> list[str] | None:
+    """Sorted per-Line2D `get_xydata()` digests (shape + little-endian float64, as `manifest.canonical_digest`).
+
+    Read-only and independent of the product: the control must not borrow the product's code path.
+    """
+    import hashlib  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    digests = []
+    try:
+        for ax in figure.axes:
+            for line in ax.lines:
+                arr = np.ma.filled(np.ma.asarray(line.get_xydata(), dtype=float), np.nan)
+                arr = arr.astype("<f8", copy=True)
+                arr[np.isnan(arr)] = np.nan
+                head = ("x".join(str(n) for n in arr.shape) + ":").encode()
+                digests.append(hashlib.sha256(head + arr.tobytes(order="C")).hexdigest())
+    except Exception:  # noqa: BLE001 - a diagnostic must never fail the control run
+        return None
+    return sorted(digests)
+
+
+def _line_xy_incomparable(figure) -> int:
+    """Curves the plain-Line2D comparison cannot speak for: errorbar / stem containers, 3D axes and
+    any line that is not exactly a `Line2D` (the product stores those under other fingerprint parts)."""
+    from matplotlib.container import ErrorbarContainer, StemContainer  # noqa: PLC0415
+    from matplotlib.lines import Line2D  # noqa: PLC0415
+
+    count = 0
+    for ax in figure.axes:
+        if getattr(ax, "name", "") == "3d":
+            count += 1
+        count += sum(isinstance(c, (ErrorbarContainer, StemContainer)) for c in ax.containers)
+        count += sum(type(line) is not Line2D for line in ax.lines)
+    return count
+
+
 def run_native_ref(req: dict) -> int:
     """Guardian 的原生参照：普通 `python script.py`，只观测、不干预。
 
@@ -280,6 +352,7 @@ def run_native_ref(req: dict) -> int:
 
     `entry` 与 `run_native` 同义：`__main__` 走 runpy，其余 import 模块后调用该函数。
     """
+    cwd, argv = _reference_invocation(req, os.path.dirname(req["script"]))
     import matplotlib
 
     matplotlib.use("Agg")
@@ -322,8 +395,8 @@ def run_native_ref(req: dict) -> int:
 
     mfigure.Figure.savefig = recording_savefig
     plt.show = recording_show
-    os.chdir(os.path.dirname(script))
-    sys.argv = [script]
+    os.chdir(cwd)
+    sys.argv = argv
 
     log = io.StringIO()
     entries = 0
@@ -396,6 +469,8 @@ def run_native_ref(req: dict) -> int:
             f"figure{i}": {"titles": [ax.get_title() for ax in fig.axes]}
             for i, fig in enumerate(figures)
         },
+        line_xy=[_line_xy_digests(fig) for fig in figures],
+        line_xy_incomparable=[_line_xy_incomparable(fig) for fig in figures],
         log=_tail(log.getvalue()),
     )
 
@@ -451,6 +526,7 @@ def run_census(req: dict) -> int:
     产品路线图。真正的 pass/fail 一律走生产路径的 worker——诊断探针替代不了
     门禁，那会变成「我们自己写的尺子量自己」。
     """
+    cwd, argv = _reference_invocation(req, req["sandbox"])
     import matplotlib
 
     matplotlib.use("Agg")
@@ -476,9 +552,10 @@ def run_census(req: dict) -> int:
     mfigure.Figure.savefig = quiet_savefig
     plt.show = lambda *a, **k: None
     os.makedirs(req["sandbox"], exist_ok=True)
-    os.chdir(req["sandbox"])
-    figcapture.install_relative_read_fallback(os.path.dirname(req["script"]), req["project"])
-    sys.argv = [req["script"]]
+    os.chdir(cwd)
+    if "reference_invocation" not in req:
+        figcapture.install_relative_read_fallback(os.path.dirname(req["script"]), req["project"])
+    sys.argv = argv
 
     try:
         with contextlib.redirect_stdout(sys.stderr):
@@ -676,6 +753,8 @@ def main(argv: list[str] | None = None) -> int:
         req = json.load(fh)
     try:
         return MODES[args.mode](req)
+    except ReferenceInvocationError as exc:
+        return _fail("invalid_reference_invocation", str(exc))
     except BaseException:  # noqa: BLE001
         return _fail(
             "driver_crashed", f"{args.mode} 驱动自身崩溃", traceback=_tail(traceback.format_exc())

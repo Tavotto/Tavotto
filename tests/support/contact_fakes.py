@@ -3,7 +3,8 @@
 只按契约独立写成（不 import infra 的任何代码）：
 
 * `POST /v1/messages/init|complete|cancel`、`GET /v1/messages/{id}/replies`（`Authorization: Bearer <reply_token>`，
-  token 不对或信不存在一律 404）；
+  token 不对或信不存在一律 404）；API 1.3.0 起回信可带清洗过的 `html` 与 `assets` 元数据（没有 HTML 时这两个键不出现），
+  附图走 `GET /v1/messages/{id}/replies/{rid}/assets/{n}`（同一个 Bearer，`Cache-Control: no-store`，错令牌 / 不存在 404）；
 * 错误体是 reports 一族的实际形状：顶层 `{"ok": false, "code", "error"}`（客户端只认这一种）；
 * 所有请求要带 `Tavotto-Diagnostics-Api: 1`，缺了回 400 `missing_api_header`（契约“公共”一节）；
 * 幂等：同一个 `client_message_id` 重放返回同一个 message_id / reply_token；
@@ -67,9 +68,11 @@ class Forced:
         code: str = "internal",
         location: str = "",
         event: threading.Event | None = None,
+        raw: bytes = b"",
     ):
         self.kind, self.status, self.code, self.location = kind, status, code, location
         self.event = event
+        self.raw = raw
 
 
 class Message:
@@ -82,6 +85,7 @@ class Message:
         self.state = "pending"
         self.uploads: dict[int, bytes] = {}
         self.replies: list[dict] = []
+        self.asset_bytes: dict[str, list[tuple[str, bytes]]] = {}
         self.complete_runs = 0
 
 
@@ -95,6 +99,7 @@ class FakeContactServer:
         self.messages: dict[str, Message] = share_with.messages if share_with else {}
         self.by_key: dict[str, str] = share_with.by_key if share_with else {}
         self.forced: dict[str, deque[Forced]] = {}
+        self.asset_override: dict[tuple[str, int], tuple[str, bytes]] = {}
         self.upload_url: str | None = None  # 覆盖 init 响应里的 upload.url（SSRF 用例）
         self.lock = share_with.lock if share_with else threading.RLock()
         self._server: http.server.ThreadingHTTPServer | None = None
@@ -119,18 +124,43 @@ class FakeContactServer:
     def redirect(self, endpoint: str, location: str, *, status: int = 307, times: int = 1) -> None:
         self._force(endpoint, Forced("redirect", status=status, location=location), times)
 
+    def raw_200(self, endpoint: str, raw: bytes, *, times: int = 1) -> None:
+        """让该端点回 200 + 这段原样字节（截断 / 坏 JSON 用例）。"""
+        self._force(endpoint, Forced("raw_200", raw=raw), times)
+
     def hold_early(self, endpoint: str, event: threading.Event) -> None:
         """读请求体之前先停住，直到 `event` 被置位：客户端的大块发送会在内核缓冲写满后阻塞（取消用例）。"""
         self._force(endpoint, Forced("hold_early", event=event), 1)
 
-    def reply(self, mid: str, body: str, rid: str | None = None) -> str:
-        """作者在 admin CLI 里回信。"""
+    def reply(
+        self,
+        mid: str,
+        body: str,
+        rid: str | None = None,
+        *,
+        html: str | None = None,
+        assets: list[tuple[str, bytes]] | None = None,
+    ) -> str:
+        """作者在 admin CLI 里回信。`html` + `assets`（[(content_type, 字节)]，下标即 n）= 带图的 HTML 回信。"""
         with self.lock:
             msg = self.messages[mid]
             rid = rid or "r_" + _crockford(10)
-            msg.replies.append({"id": rid, "created_at": "2026-10-22T08:00:00Z", "body": body})
+            item: dict = {"id": rid, "created_at": "2026-10-22T08:00:00Z", "body": body}
+            if html is not None:
+                item["html"] = html
+                item["assets"] = [
+                    {"n": i, "content_type": ct, "size": len(b)}
+                    for i, (ct, b) in enumerate(assets or [])
+                ]
+                msg.asset_bytes[rid] = list(assets or [])
+            msg.replies.append(item)
             msg.state = "replied"
             return rid
+
+    def serve_asset_as(self, rid: str, n: int, content_type: str, data: bytes) -> None:
+        """让附图端点对 (rid, n) 回这份内容与头（元数据不变）：造“类型 / 魔数 / 大小与元数据不符”。"""
+        with self.lock:
+            self.asset_override[(rid, n)] = (content_type, data)
 
     def paths(self) -> list[str]:
         with self.lock:
@@ -224,6 +254,8 @@ class FakeContactServer:
         }.get(path)
         if endpoint is None and re.match(r"^/v1/messages/[^/]+/replies$", path):
             endpoint = "replies"
+        if endpoint is None and re.match(r"^/v1/messages/[^/]+/replies/[^/]+/assets/\d+$", path):
+            endpoint = "asset"
         with self.lock:
             q = self.forced.get(endpoint or "")
             early = q.popleft() if q and q[0].kind == "hold_early" else None
@@ -237,7 +269,7 @@ class FakeContactServer:
             "headers": {k.lower(): v for k, v in h.headers.items()},
             "len": len(body),
         }
-        if endpoint not in ("upload", "replies"):
+        if endpoint not in ("upload", "replies", "asset"):
             try:
                 record["json"] = json.loads(body.decode("utf-8")) if body else None
             except ValueError:
@@ -257,6 +289,15 @@ class FakeContactServer:
             if forced.kind == "drop_before":
                 self._drop(h)
                 return
+            if forced.kind == "raw_200":
+                h.send_response(200)
+                h.send_header("Tavotto-Diagnostics-Api", "1.0.0")
+                h.send_header("Content-Type", "application/json")
+                h.send_header("Content-Length", str(len(forced.raw)))
+                h.end_headers()
+                h.wfile.write(forced.raw)
+                h.wfile.flush()
+                return
             if forced.kind == "redirect":
                 h.send_response(forced.status)
                 h.send_header("Location", forced.location)
@@ -272,6 +313,9 @@ class FakeContactServer:
             return
         if endpoint == "replies":
             self._replies(h, record)
+            return
+        if endpoint == "asset":
+            self._asset(h)
             return
         req = record.get("json")
         if not isinstance(req, dict):
@@ -410,6 +454,31 @@ class FakeContactServer:
                     "replies": list(msg.replies),
                 },
             )
+
+    # -- 附图
+    def _asset(self, h) -> None:
+        _, _, _, mid, _, rid, _, n = h.path.split("/")
+        auth = h.headers.get("Authorization", "")
+        with self.lock:
+            msg = self.messages.get(mid)
+            ok = (
+                msg is not None
+                and auth.startswith("Bearer ")
+                and secrets.compare_digest(msg.reply_token, auth[7:])
+            )
+            items = msg.asset_bytes.get(rid, []) if ok and msg is not None else []
+            if not ok or int(n) >= len(items):
+                self._error(h, 404, "not_found")
+                return
+            ctype, data = self.asset_override.get((rid, int(n))) or items[int(n)]
+        h.send_response(200)
+        h.send_header("Tavotto-Diagnostics-Api", "1.0.0")
+        h.send_header("Content-Type", ctype)
+        h.send_header("Cache-Control", "no-store")
+        h.send_header("Content-Length", str(len(data)))
+        h.end_headers()
+        h.wfile.write(data)
+        h.wfile.flush()
 
     # -- 上传
     def _upload(self, h, body: bytes, record: dict, after_drop: bool) -> None:

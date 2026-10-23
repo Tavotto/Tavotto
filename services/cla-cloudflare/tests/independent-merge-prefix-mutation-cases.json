@@ -1,0 +1,212 @@
+[
+  {
+    "name": "independent prefix exact environment capability",
+    "file": "src/native/worker.ts",
+    "before": "mergePrefixAssessmentEnabled:env.CLA_MERGE_PREFIX_ASSESSMENT_ENABLED==='true'",
+    "after": "mergePrefixAssessmentEnabled:!!env.CLA_MERGE_PREFIX_ASSESSMENT_ENABLED",
+    "pattern": "^independent merge prefix default switch requires exact environment true$",
+    "selectedTitle": "independent merge prefix default switch requires exact environment true",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent prefix disabled before any I/O",
+    "file": "src/native/service.ts",
+    "before": "if(this.c.mergePrefixAssessmentEnabled!==true)throw new Rejected('merge_prefix_disabled');",
+    "after": "// mutation: omit early capability check",
+    "pattern": "^independent merge prefix disabled refuses before database or transport$",
+    "selectedTitle": "independent merge prefix disabled refuses before database or transport",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent prefix shared invocation budget",
+    "file": "src/native/service.ts",
+    "before": "if(!this.store.budget || this.github.budget!==this.store.budget)throw new Rejected('invocation_budget_required');",
+    "after": "// mutation: omit shared budget check",
+    "pattern": "^independent merge prefix requires shared budget different$",
+    "selectedTitle": "independent merge prefix requires shared budget different",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent complete prefix rather than current entry only",
+    "file": "src/native/merge-prefix.ts",
+    "before": "const prefix=entries.slice(0,matches[0]!.position);",
+    "after": "const prefix=entries.slice(matches[0]!.position-1,matches[0]!.position);",
+    "pattern": "^independent merge prefix unsigned predecessor blocks signed current PR$",
+    "selectedTitle": "independent merge prefix unsigned predecessor blocks signed current PR",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent every contributor is qualified",
+    "file": "src/native/service.ts",
+    "before": "for(const person of people)if(!await this.qualified(person.id,ceiling,now))eligible=false;",
+    "after": "for(const person of people.slice(1))if(!await this.qualified(person.id,ceiling,now))eligible=false;",
+    "pattern": "^independent merge prefix unsigned predecessor blocks signed current PR$",
+    "selectedTitle": "independent merge prefix unsigned predecessor blocks signed current PR",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent queue repository identity",
+    "file": "src/native/merge-prefix.ts",
+    "before": "if(repo.databaseId!==repositoryId)throw new Rejected('repository_mismatch');",
+    "after": "// mutation: omit repository pin",
+    "pattern": "^independent merge prefix queue malformed pagination rejects repo$",
+    "selectedTitle": "independent merge prefix queue malformed pagination rejects repo",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent complete queue positions",
+    "file": "src/native/merge-prefix.ts",
+    "before": "entries.some((e,i)=>e.position!==i+1))",
+    "after": "false)",
+    "pattern": "^independent merge prefix queue positions must be complete from one$",
+    "selectedTitle": "independent merge prefix queue positions must be complete from one",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent exact candidate base",
+    "file": "src/native/merge-prefix.ts",
+    "before": "e.headCommit?.oid===target.headSha && e.baseCommit?.oid===target.baseSha",
+    "after": "e.headCommit?.oid===target.headSha",
+    "pattern": "^independent merge prefix exact candidate base is required$",
+    "selectedTitle": "independent merge prefix exact candidate base is required",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent queue member head matches live PR",
+    "file": "src/native/github.ts",
+    "before": "if(pr.headSha!==entry.pullRequest.headRefOid)throw new Rejected('merge_prefix_changed');prs.push(pr);",
+    "after": "prs.push(pr);",
+    "pattern": "^independent merge prefix adapter rejects PR head disagreeing with queue entry$",
+    "selectedTitle": "independent merge prefix adapter rejects PR head disagreeing with queue entry",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent first snapshot queue recheck",
+    "file": "src/native/github.ts",
+    "before": "canonical(entries)!==canonical(await queue())",
+    "after": "false",
+    "pattern": "^independent merge prefix queue drift within first snapshot rejects$",
+    "selectedTitle": "independent merge prefix queue drift within first snapshot rejects",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent final full binding recheck",
+    "file": "src/native/service.ts",
+    "before": "if(canonical(first)!==canonical(last))throw new Rejected('merge_prefix_changed');",
+    "after": "// mutation: omit final full binding comparison",
+    "pattern": "^independent merge prefix final full snapshot rejects source$",
+    "selectedTitle": "independent merge prefix final full snapshot rejects source",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent trusted source remains in assessment binding",
+    "file": "src/native/merge-prefix.ts",
+    "before": "trusted_source_sha:snapshot.trustedSourceSha",
+    "after": "trusted_source_sha:c.referenceSha",
+    "pattern": "^independent merge prefix final full snapshot rejects source$",
+    "selectedTitle": "independent merge prefix final full snapshot rejects source",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent prefix digest authenticates ordered entries",
+    "file": "src/native/merge-prefix.ts",
+    "before": "prefix_sha256:await sha256(canonical({target,entries:prefix}))",
+    "after": "prefix_sha256:await sha256(canonical({target,entries:[]}))",
+    "pattern": "^independent merge prefix all preceding and current real personal evidence qualify without writes$",
+    "selectedTitle": "independent merge prefix all preceding and current real personal evidence qualify without writes",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent final SQL revision cannot reuse old revision",
+    "file": "src/native/service.ts",
+    "before": "if(final.revision!==revision || final.now<now || final.now>=expires)",
+    "after": "if(revision!==revision || final.now<now || final.now>=expires)",
+    "pattern": "^independent merge prefix hold before final SQL invalidates prior eligibility$",
+    "selectedTitle": "independent merge prefix hold before final SQL invalidates prior eligibility",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent final SQL strict assessment deadline",
+    "file": "src/native/service.ts",
+    "before": "if(final.revision!==revision || final.now<now || final.now>=expires)",
+    "after": "if(final.revision!==revision || final.now<now)",
+    "pattern": "^independent merge prefix final SQL at assessment deadline rejects$",
+    "selectedTitle": "independent merge prefix final SQL at assessment deadline rejects",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent grant deadline caps assessment",
+    "file": "src/native/service.ts",
+    "before": "const final=await this.store.assessmentState(),expires=Math.min(now+120,ceiling.expires);",
+    "after": "const final=await this.store.assessmentState(),expires=now+120;",
+    "pattern": "^independent merge prefix delegated authorization deadline caps assessment$",
+    "selectedTitle": "independent merge prefix delegated authorization deadline caps assessment",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent contributor raw evidence hash",
+    "file": "src/native/service.ts",
+    "before": "if (await sha256(raw)!==row.evidence_hash) throw new Rejected('evidence_unavailable');",
+    "after": "// mutation: omit raw evidence hash",
+    "pattern": "^independent merge prefix evidence hash corruption is rejected$",
+    "selectedTitle": "independent merge prefix evidence hash corruption is rejected",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent all coauthor identities enter prefix union",
+    "file": "src/core/identity.ts",
+    "before": "for(const line of commit.message.split(/\\r?\\n/))if(/^\\s*Co-authored-by\\s*:/i.test(line)) {",
+    "after": "for(const line of commit.message.split(/\\r?\\n/))if(false) {",
+    "pattern": "^independent merge prefix author commit author and noreply coauthor all require actual signatures$",
+    "selectedTitle": "independent merge prefix author commit author and noreply coauthor all require actual signatures",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent contributor capacity before fanout",
+    "file": "src/native/service.ts",
+    "before": "if(people.length>successCapacity(this.c))throw new Rejected('contributor_capacity_exceeded');",
+    "after": "// mutation: omit contributor capacity admission",
+    "pattern": "^independent merge prefix contributor capacity is checked before qualification fanout$",
+    "selectedTitle": "independent merge prefix contributor capacity is checked before qualification fanout",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent final shared work deadline",
+    "file": "src/native/service.ts",
+    "before": "this.store.budget.checkWork();",
+    "after": "// mutation: omit final work deadline",
+    "pattern": "^independent merge prefix final cryptographic work cannot outlive shared work deadline$",
+    "selectedTitle": "independent merge prefix final cryptographic work cannot outlive shared work deadline",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "independent explicit complete prefix cap",
+    "file": "src/native/merge-prefix.ts",
+    "before": "if(prefix.length>100 || prefix.some(e=>e.pullRequest.baseRefName!=='main'))",
+    "after": "if(prefix.some(e=>e.pullRequest.baseRefName!=='main'))",
+    "pattern": "^independent merge prefix cannot truncate a prefix beyond its explicit size cap$",
+    "selectedTitle": "independent merge prefix cannot truncate a prefix beyond its explicit size cap",
+    "testFile": "tests/independent-merge-prefix.test.mjs",
+    "assertionError": true
+  }
+]

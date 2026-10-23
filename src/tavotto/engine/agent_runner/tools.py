@@ -21,7 +21,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from ..ai_prompt_pack import convert_requirements
 from .redact import NO_REDACTION, Redactor
@@ -90,9 +90,18 @@ class Tool:
     description: str
     schema: dict
     handler: Callable[[dict], ToolResult]
+    #: 风险档与是否等用户（ADR 0149）；默认值保证既有工具不变，且不进 wire
+    tier: Literal["observe", "run", "tavotto", "listed", "user_env", "outward"] = "observe"
+    waits_for_user: bool = False
 
     def spec(self) -> ToolSpec:
-        return ToolSpec(self.name, self.description, self.schema)
+        return ToolSpec(
+            self.name,
+            self.description,
+            self.schema,
+            tier=self.tier,
+            waits_for_user=self.waits_for_user,
+        )
 
 
 # --------------------------------------------------------------------------- 系统提示

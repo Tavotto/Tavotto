@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Pencil, Plus, RefreshCw, Trash2 } from '@/components/ui/icons'
 import { Details, Summary } from '@/components/ui/Details'
@@ -8,11 +8,13 @@ import {
   backendErrorText,
   deleteAiEndpoint,
   fetchAiInstallStatus,
+  fetchAiLoginStatus,
   patchAiAgent,
   migrateAiEndpoint,
   saveAiEndpoint,
   setAiEndpointActive,
   startAiInstall,
+  startAiLogin,
   type AiAgentCaps,
   type AiCapabilities,
   type AiInstallState,
@@ -35,6 +37,9 @@ import { ag, AgentStateBadge, agentVersionLabel } from './agentState'
 import { CopyButton } from './CopyButton'
 import { EndpointDialog } from './EndpointDialog'
 import { useSettingsCrumb } from './settingsPageContext'
+
+/** 「改动后重新拉能力」回调。返回 `false` = 刷新失败（父级 reload 自己吞掉错误，只用它告知）。 */
+type OnRefreshed = (next?: AiCapabilities) => Promise<boolean | void> | boolean | void
 
 /**
  * 单个编码 Agent 的详情。
@@ -65,7 +70,7 @@ export function AgentDetailView({
   caps: AiCapabilities
   onBack: () => void
   /** 任何改动之后重新拉能力（父级负责 loadCaps） */
-  onRefreshed: (next?: AiCapabilities) => Promise<void> | void
+  onRefreshed: OnRefreshed
 }) {
   useTranslation('dialogs')
   const [busy, setBusy] = useState(false)
@@ -76,7 +81,7 @@ export function AgentDetailView({
   useSettingsCrumb({ current: agent.display_name, onBack, backLabel: ag('backAria'), backAnchor: 'data-agent-back' })
 
   /** 跑一个改动，然后重新拉能力。`fn` 自己就是重探测时不再多跑一次。 */
-  const run = async (fn: () => Promise<AiCapabilities | unknown> | void) => {
+  const run = async (fn: () => Promise<unknown> | unknown) => {
     setError(null)
     setBusy(true)
     try {
@@ -103,6 +108,68 @@ export function AgentDetailView({
     })
     if (ok) void run(() => deleteAiEndpoint(id))
   }
+
+  // 官方登录按钮：只在「未登录」且适配器声明了官方登录命令时出现
+  const login = useAgentLogin(agent, onRefreshed, setError)
+  const showLogin = agent.state === 'needs_auth' && agent.features.login
+
+  const loginButton = (
+    showLogin && (
+      <Button
+        data-agent-login={login.phase}
+        variant="primary"
+        size="sm"
+        loading={login.phase === 'waiting'}
+        disabled={login.phase === 'waiting'}
+        onClick={() =>
+          login.phase === 'terminal' || login.phase === 'manual' || login.phase === 'retry'
+            ? login.confirm()
+            : login.begin()
+        }
+      >
+        {login.phase === 'waiting'
+          ? ag('login.waiting')
+          : login.phase === 'retry'
+            ? ag('login.retry')
+            : login.phase === 'terminal' || login.phase === 'manual'
+              ? ag('login.done')
+            : ag('login.action', { account: agent.login_account ?? agent.display_name })}
+      </Button>
+    )
+  )
+  const loginHints = (
+    <>
+      {showLogin && login.phase === 'waiting' && login.authUrl && (
+        <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+          {ag('login.browserHint')}{' '}
+          <a
+            data-agent-login-link
+            href={login.authUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2"
+          >
+            {ag('login.openLink')}
+          </a>
+        </p>
+      )}
+      {showLogin && login.phase === 'retry' && (
+        <p data-agent-login-hint role="alert" className="text-xs leading-relaxed text-danger">
+          {ag('login.refreshFailed')}
+        </p>
+      )}
+      {showLogin && login.phase === 'terminal' && (
+        <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+          {ag('login.terminalHint')}
+        </p>
+      )}
+      {showLogin && login.phase === 'manual' && (
+        <p data-agent-login-hint className="text-xs leading-relaxed text-ink-3">
+          {ag('login.manualHint', { command: login.command })}
+        </p>
+      )}
+    </>
+  )
 
   const mine = (caps.endpoints ?? []).filter((e) => e.agent === agent.id)
   const activeId = agent.active_endpoint_id ?? ''
@@ -156,6 +223,21 @@ export function AgentDetailView({
         </FormSection>
       )}
 
+      {/* ---------------- 账号：不支持第三方接口的 agent 的官方登录（支持的在「模型服务」那一行，不重复） ---------------- */}
+      {showLogin && !agent.features.third_party_endpoints && (
+        <FormSection title={ag('detail.account')}>
+          <FieldGroup>
+            <div data-agent-account className="flex min-h-7 items-center gap-3">
+              <span className="min-w-0 flex-1 text-base text-ink">
+                {ag('detail.useAgentLogin', { name: agent.display_name })}
+              </span>
+              {loginButton}
+            </div>
+            {loginHints}
+          </FieldGroup>
+        </FormSection>
+      )}
+
       {/* ---------------- 模型服务 ---------------- */}
       {agent.features.third_party_endpoints && (
         <FormSection
@@ -168,16 +250,21 @@ export function AgentDetailView({
           }
         >
           <FieldGroup role="radiogroup" aria-label={ag('detail.serviceAria', { name: agent.display_name })}>
-            <label className="flex min-h-7 items-center gap-3">
-              <Radio
-                name={radioName}
-                checked={!usingEndpoint}
-                onChange={() => void run(() => setAiEndpointActive(agent.id, ''))}
-              />
-              <span className="min-w-0 flex-1 text-base text-ink">
-                {ag('detail.useAgentLogin', { name: agent.display_name })}
-              </span>
-            </label>
+            <div className="flex min-h-7 items-center gap-3">
+              <label className="flex min-w-0 flex-1 items-center gap-3">
+                <Radio
+                  name={radioName}
+                  checked={!usingEndpoint}
+                  onChange={() => void run(() => setAiEndpointActive(agent.id, ''))}
+                />
+                <span className="min-w-0 flex-1 text-base text-ink">
+                  {ag('detail.useAgentLogin', { name: agent.display_name })}
+                </span>
+              </label>
+              {/* 一句话 + 一个主按钮：未登录时这一行的行尾就是「登录 ChatGPT / Claude」 */}
+              {loginButton}
+            </div>
+            {loginHints}
             {mine.map((e) => (
               <EndpointRow
                 key={e.id}
@@ -258,6 +345,109 @@ export function AgentDetailView({
       )}
     </div>
   )
+}
+
+type LoginPhase = 'idle' | 'waiting' | 'terminal' | 'manual' | 'retry'
+
+/** 后台登录最多等多久（与后端 `LOGIN_TIMEOUT_S` 同量级）；到点不再轮询，按钮回到可点 */
+const LOGIN_MAX_WAIT_MS = 10 * 60 * 1000
+const LOGIN_POLL_MS = 3000
+
+/**
+ * 官方登录按钮的状态机。**Tavotto 只启动官方命令**（codex 后台、claude 开在系统终端里），
+ * 不读、不存任何登录凭据；是否登录成功仍只看重新探测出来的就绪检查结论。
+ *
+ *   * background：轮询后端「登录进程还在不在」（3 s，最多 10 分钟，卸载即停），进程一结束就
+ *     重新探测 capabilities 一次；
+ *   * terminal：不轮询——用户回来点「我已登录」，或窗口重新聚焦时重新探测。
+ */
+function useAgentLogin(
+  agent: AiAgentCaps,
+  onRefreshed: OnRefreshed,
+  onError: (message: string | null) => void,
+) {
+  const [phase, setPhase] = useState<LoginPhase>('idle')
+  const [command, setCommand] = useState('')
+  const [authUrl, setAuthUrl] = useState<string | null>(null)
+  const refreshRef = useRef(onRefreshed)
+  useEffect(() => {
+    refreshRef.current = onRefreshed
+  }, [onRefreshed])
+  /** 刷新是否成功：父级 `reload` 自己吞掉失败，只用返回值 `false` 表达；抛错同样算失败。 */
+  const refreshOk = async () => {
+    try {
+      return (await refreshRef.current()) !== false
+    } catch {
+      return false
+    }
+  }
+
+  useEffect(() => {
+    if (phase !== 'waiting') return
+    const started = Date.now()
+    let stopped = false
+    const timer = window.setInterval(() => {
+      void (async () => {
+        if (stopped) return
+        if (Date.now() - started > LOGIN_MAX_WAIT_MS) {
+          stopped = true
+          window.clearInterval(timer)
+          setPhase('idle')
+          return
+        }
+        try {
+          const s = await fetchAiLoginStatus(agent.id)
+          if (stopped) return
+          if (s.status === 'running') {
+            if (s.auth_url) setAuthUrl(s.auth_url)
+            return
+          }
+          stopped = true
+          window.clearInterval(timer)
+          setAuthUrl(null)
+          // 登录进程已结束；刷新失败就停在「没能刷新」+ 重试，不回到初始登录按钮
+          setPhase((await refreshOk()) ? 'idle' : 'retry')
+        } catch {
+          /* 网络抖动：下一轮再问 */
+        }
+      })()
+    }, LOGIN_POLL_MS)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
+  }, [phase, agent.id])
+
+  // 终端模式：用户从终端切回 Tavotto 时重新探测一次
+  useEffect(() => {
+    if (phase !== 'terminal' && phase !== 'manual') return
+    const onFocus = () => void refreshRef.current()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [phase])
+
+  const begin = useCallback(async () => {
+    onError(null)
+    try {
+      const r = await startAiLogin(agent.id)
+      if (r.mode === 'background') {
+        setPhase('waiting') // started 与 already_running 都是「等它结束」
+      } else if (r.started) {
+        setPhase('terminal')
+      } else {
+        setCommand(r.command ?? '')
+        setPhase('manual')
+      }
+    } catch (e) {
+      onError(backendErrorText(e))
+    }
+  }, [agent.id, onError])
+
+  const confirm = async () => {
+    setPhase((await refreshOk()) ? 'idle' : 'retry')
+  }
+
+  return { phase, command, authUrl, begin: () => void begin(), confirm: () => void confirm() }
 }
 
 /**
@@ -342,7 +532,7 @@ function CustomExecutable({
   onRefreshed,
 }: {
   agent: AiAgentCaps
-  onRefreshed: (next?: AiCapabilities) => Promise<void> | void
+  onRefreshed: OnRefreshed
 }) {
   useTranslation('dialogs')
   // null = 没在编辑（显示当前值）；字符串 = 正在编辑的草稿
@@ -518,7 +708,7 @@ function InstallPanel({
   onRefreshed,
 }: {
   agent: AiAgentCaps
-  onRefreshed: (next?: AiCapabilities) => Promise<void> | void
+  onRefreshed: OnRefreshed
 }) {
   useTranslation('dialogs')
   const info = agent.install

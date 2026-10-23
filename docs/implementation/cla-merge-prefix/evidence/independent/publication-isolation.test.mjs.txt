@@ -1,0 +1,20 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {fixture} from '/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare/tests/delegation-fixture.mjs';
+import {GitHub} from '/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare/src/native/github.ts';
+import {LiveService} from '/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare/src/native/service.ts';
+import {InvocationBudget} from '/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare/src/native/budget.ts';
+import {verification} from '/workspace/Tavotto-cla-queue-prefix/services/cla-cloudflare/src/native/verification.ts';
+let calls=0;globalThis.fetch=async()=>assert.fail('GLOBAL FETCH FORBIDDEN');
+test('all existing send adapters reject group shape before any synthetic transport',async()=>{
+ const f=await fixture(false);try{
+  const c={...f.c,githubEnabled:true,checkPublishingEnabled:true,backgroundEnabled:true,automaticPublishingEnabled:true,automaticVerificationEnabled:true,mergePrefixAssessmentEnabled:true},budget=new InvocationBudget(()=>0,()=>f.now()*1000),gh=new GitHub(c,{pkcs8:'',clientSecret:'',evidenceKey:''},async()=>{calls++;assert.fail('ANY TRANSPORT FORBIDDEN');},f.now,budget);
+  const head='a'.repeat(40),check={name:c.checkName,appId:c.appId,appSlug:c.appSlug,headSha:head,conclusion:'success',proof:{protocol:'tavotto-cla-v1',repository_id:707,kind:'merge_group',head_sha:head,base_sha:'b'.repeat(40),members:[{pr:9,head_sha:'c'.repeat(40)}]},text:'SYNTHETIC INVALID GROUP PROPOSAL'};
+  await assert.rejects(gh.publish(check,'d'.repeat(43)),e=>e.code==='check_invalid');
+  await assert.rejects(gh.publishNew(check,async()=>assert.fail('ISSUED JOURNAL FORBIDDEN')),e=>e.code==='check_invalid');
+  await assert.rejects(gh.publishFresh(check,{head_sha:head,phase:'resolved',run_id:77},async()=>assert.fail('ISSUED JOURNAL FORBIDDEN')),e=>e.code==='refresh_predecessor_unavailable');
+  assert.equal(calls,0);assert.deepEqual(budget.snapshot(),{sql:0,external:0});
+ }finally{f.close();}
+});
+test('existing PR authority cannot authorize a group head with no PR publication journal',async()=>{
+ const f=await fixture(false);try{await assert.rejects(verification(f.s,9,'a'.repeat(40),77,'d'.repeat(43)),e=>e.code==='proof_not_confirmed');assert.equal(calls,0);}finally{f.close();}
+});

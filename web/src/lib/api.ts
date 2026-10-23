@@ -3051,7 +3051,11 @@ export interface AiAgentCaps {
     /** 第三方接口属 OpenAI 族（Codex，只认 Responses 协议，界面不再让选协议） */
     wire_api_selection: boolean
     readiness_probe: boolean
+    /** 有官方登录命令（设置页在 needs_auth 时给「登录 …」按钮） */
+    login: boolean
   }
+  /** 登录按钮上的账号名（「登录 ChatGPT」）；不支持登录 = null */
+  login_account: string | null
 
   diagnostics: AiAgentDiagnostics
 
@@ -3260,6 +3264,29 @@ export const startAiInstall = (agent: AiAgentId) =>
 
 export const fetchAiInstallStatus = (agent: AiAgentId) =>
   jsonFetch<AiInstallState>(`/api/ai/agents/${encodeURIComponent(agent)}/install`)
+
+/** 官方登录按钮：只启动官方命令，Tavotto 不读不存任何登录凭据 */
+export interface AiLoginStart {
+  started: boolean
+  /** background = 官方命令自己开浏览器；terminal = 在系统终端里交互 */
+  mode: 'background' | 'terminal'
+  already_running?: boolean
+  /** 找不到终端：started=false，界面请用户自己运行 `command` */
+  reason?: 'terminal_unavailable'
+  command?: string
+}
+
+export const startAiLogin = (agent: AiAgentId) =>
+  jsonFetch<AiLoginStart>(`/api/ai/agents/${encodeURIComponent(agent)}/login`, { method: 'POST' })
+
+export interface AiLoginStatus {
+  status: 'idle' | 'running'
+  /** 官方命令打出来的授权地址（只含 state / PKCE，不是凭据）；浏览器没自动打开时给用户点 */
+  auth_url?: string
+}
+
+export const fetchAiLoginStatus = (agent: AiAgentId) =>
+  jsonFetch<AiLoginStatus>(`/api/ai/agents/${encodeURIComponent(agent)}/login`)
 
 export interface AiHistoryEntry {
   id: string
@@ -5788,6 +5815,8 @@ export interface ContactReply {
   id: string
   created_at: string
   body: string
+  /** 有清洗过的 HTML 版本：用 `fetchContactReplyDoc` 取信纸文档；没有就只显示 `body` 纯文字 */
+  has_html: boolean
   read: boolean
 }
 
@@ -5797,6 +5826,12 @@ export interface ContactMessage {
   route: 'cn' | 'global'
   state: 'new' | 'replied' | 'closed'
   unread: number
+  /** 用户自己写的主题 / 正文 / 附件文件名（本机存的那一份；旧记录没有就是空） */
+  subject: string
+  body: string
+  attachment_names: string[]
+  /** 这一轮没取全回信的原因（引擎写，下一轮重试成功即清）；空串 = 正常 */
+  poll_error?: '' | 'too_large' | 'bad_response'
   replies: ContactReply[]
 }
 
@@ -5824,6 +5859,11 @@ export const dismissContact = () => jsonFetch<ContactStatus>('/api/contact/dismi
 export const fetchContactMessages = () =>
   jsonFetch<{ messages: ContactMessage[]; unread: number }>('/api/contact/messages')
 /** 用户点了「检查回信」：引擎立刻问一遍服务器（至多每 30 秒一次；没有已发的信时不联网）。 */
+/** 一封 HTML 回信的完整文档（引擎拼：CSP + 基础样式 + 附图已内联），给沙盒 iframe 的 srcDoc；纯本机读盘，不联网。 */
+export const fetchContactReplyDoc = (messageId: string, replyId: string) =>
+  jsonFetch<{ doc: string }>(
+    `/api/contact/replies/${encodeURIComponent(messageId)}/${encodeURIComponent(replyId)}/doc`,
+  )
 export const refreshContactMessages = () =>
   jsonFetch<{ polled: number; throttled?: boolean; unread: number }>('/api/contact/refresh', { method: 'POST' })
 export const markContactRead = (id: string) =>

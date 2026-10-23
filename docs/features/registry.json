@@ -284,6 +284,22 @@
       ]
     },
     {
+      "id": "canvas.single-figure-edge-resize",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "单图编辑里直接拖图的四条边改图幅（内容不缩放、重新渲染）：虚线框 + 机械制图式尺寸标注、栏宽吸附，松手一步撤销",
+        "en-US": "In single-figure editing, drag any of the figure's four edges to change its size, with dimension lines, column-width snapping and a single undo step"
+      },
+      "entry": "画布 → 单图编辑 → 悬停并拖图的上 / 下 / 左 / 右边",
+      "e2e": [
+        {
+          "spec": "figure-edge-resize.spec.ts",
+          "title": "单图编辑拖右边：拖动中只有虚线框与标注，松手图幅变宽（重渲染）、左边不动，撤销一步回到原样"
+        }
+      ]
+    },
+    {
       "id": "canvas.single-context-bar",
       "status": "active",
       "platform": "both",
@@ -1162,14 +1178,18 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "右上角「联系作者」：不登录邮箱就能写信给作者，可附截图 / 诊断信息，回信经邮件或应用内收到",
-        "en-US": "\"Contact the maker\" in the top-right corner: write to the maker without signing in to any mailbox, attach screenshots or diagnostics, and get replies by email or in the app"
+        "zh-CN": "右上角「联系作者」：不登录邮箱就能写信给作者，可附截图 / 诊断信息，回信经邮件或应用内收到（带图排版的回信显示成信纸）",
+        "en-US": "\"Contact the maker\" in the top-right corner: write to the maker without signing in to any mailbox, attach screenshots or diagnostics, and get replies by email or in the app (formatted replies with images are shown as a letter)"
       },
       "entry": "主页 / 编辑器右上角 → 联系作者",
       "e2e": [
         {
           "spec": "contact.spec.ts",
           "title": "主页：入口在右上角；点发送前零连接；失败有人话、草稿还在、只有复制（没有邮件链接）"
+        },
+        {
+          "spec": "contact.spec.ts",
+          "title": "我的来信：收到 HTML 回信显示成白色信纸（沙盒 iframe、无 allow-scripts、附图本机内联），上面是自己写的原文"
         }
       ],
       "desktop_manual": [

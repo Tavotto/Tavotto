@@ -331,6 +331,7 @@ class SidecarServer:
                 lambda: engine_pool.shutdown_all(wait=True),
             ),  # 同步等 worker 真的退了再走
             ("AI 中断", engine_ai.interrupt_all),
+            ("AI 登录进程收尾", engine_ai.stop_logins),
         ):
             try:
                 step()

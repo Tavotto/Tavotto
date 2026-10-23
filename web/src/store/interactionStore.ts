@@ -5,7 +5,7 @@ import type { Rect } from '@/lib/geometry'
 
 export type DragKind =
   | 'none' | 'move' | 'resize' | 'marquee' | 'pan'
-  | 'guide' | 'draw' | 'crop' | 'endpoint' | 'element' | 'pageedge'
+  | 'guide' | 'draw' | 'crop' | 'endpoint' | 'element' | 'pageedge' | 'figureedge'
 
 export type DraftPreview = Rect & {
   tool: string
@@ -90,6 +90,18 @@ interface InteractionState {
    * 只是画布叠加层的读数，不进文档；尺寸本身读文档（手势事务里每帧在写）。
    */
   pageEdge: { edge: 'l' | 'r' | 't' | 'b'; snapLabel: string | null; rolls: boolean } | null
+  /** 单图编辑拖图边中的虚线预览框（页面 mm）：拖动中不写文档，松手才一次 `setFigureFrame` */
+  figureEdgeBox: { x: number; y: number; w: number; h: number } | null
+  /**
+   * 拖图边松手后、新图幅的渲染回来之前：这张图的目标框（页面 mm）。画布上旧图与背纸先收起来、只留虚线框占位
+   * （旧图按旧尺寸画在新位置上会错位闪一下）；新图回来**且面板几何已追上目标图幅**（或撤销 / 超时 / 面板没了）才清掉；期间该面板的选区轮廓与缩放手柄也压住。**不随 `end()` 清**，由 `figureEdgeDrag` 管。
+   */
+  figureFramePending: {
+    id: string
+    box: { x: number; y: number; w: number; h: number }
+    /** 目标图幅（脚本 mm）：面板的 nativeW / nativeH 追上它才算新图落定 */
+    sizeMm: [number, number]
+  } | null
 
   begin: (kind: DragKind) => void
   end: () => void
@@ -105,6 +117,8 @@ interface InteractionState {
   setNudge: (n: { dx: number; dy: number } | null) => void
   setPendingGuide: (g: { axis: 'x' | 'y'; pos: number } | null) => void
   setPageEdge: (p: InteractionState['pageEdge']) => void
+  setFigureEdgeBox: (b: InteractionState['figureEdgeBox']) => void
+  setFigureFramePending: (p: InteractionState['figureFramePending']) => void
 }
 
 export const useInteractionStore = create<InteractionState>((set) => ({
@@ -123,6 +137,8 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   nudge: null,
   pendingGuide: null,
   pageEdge: null,
+  figureEdgeBox: null,
+  figureFramePending: null,
 
   // 一次拖动 = 性能探针的一个片段（ADR 0075）；没在录制时两个调用都是空转
   begin: (kind) => {
@@ -140,6 +156,7 @@ export const useInteractionStore = create<InteractionState>((set) => ({
       snapFeedback: [],
       pendingGuide: null,
       pageEdge: null,
+      figureEdgeBox: null,
       gidDrag: null,
       arrowPreview: null,
       elementPreview: null,
@@ -166,4 +183,6 @@ export const useInteractionStore = create<InteractionState>((set) => ({
   setNudge: (nudge) => set({ nudge }),
   setPendingGuide: (pendingGuide) => set({ pendingGuide }),
   setPageEdge: (pageEdge) => set({ pageEdge }),
+  setFigureEdgeBox: (figureEdgeBox) => set({ figureEdgeBox }),
+  setFigureFramePending: (figureFramePending) => set({ figureFramePending }),
 }))

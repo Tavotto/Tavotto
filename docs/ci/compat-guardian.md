@@ -1,5 +1,20 @@
 # Compatibility Guardian —— 兼容性证据 runner、Agent 接口与缺口报告
 
+S0 的取样与观测见 [S0_BASELINE.md](../implementation/script-compat/S0_BASELINE.md)。
+科研任务登记在独立的 `research-manifest.json`，普通 CompatBench 保持 149 项；只有显式选择科研 case
+时才加载科研登记。上游源文件按完整提交 SHA 拉取到仓库外，并逐文件核对 `research-cohort.json` 的
+SHA-256。Guardian 同时核验登记与 HEAD 一致、缓存字节一致，之后复用已有 worker 测量路径。
+
+`compat_guardian_research.py verify` 只核验元数据；`fetch --case ... --cache ...` 显式下载，不执行脚本。
+每个项目的依赖在独立 hosted job 中准备。原始 `research-baseline.json` 保留，完整证据由 Actions
+artifact / 外部归档保存；`verify-snapshot --evidence-directory ...` 可从归档重算快照。
+`runner_error` 保留为 unknown 观测及原始异常，不进入产品六分类；SVG 校验使用标准库 XML。
+
+研究 case 的产品腿按登记的 `reference_invocation` 起脚本：argv 经 `runconfig.selection_for` 成为产品的运行配置，
+cwd 经 `workdir.set_mode` 成为项目的工作目录模式（脚本目录或项目根），与原生腿同源。脚本、原生腿与 worker 跑在 `TAVOTTO_SCIENCE_PYTHON` 指定的科研 venv（未设则用当前解释器），Guardian 与 Tavotto 依赖留在自己的 venv，对应产品的进程边界；`verify-science-environment` 断言科研 venv 没有 RenderCore 包。登记的目录两者都不是时，
+产品腿在 discover 阶段以 `launch_context_unsupported`（`cwd_or_data_path`）失败，报告带登记的 cwd 与可表达的模式，不在别处运行，也不是 `runner_error`。报告的 `raw.line_data` 只读比较原生曲线数组与产品 manifest 的
+`data_fingerprint.parts.xy`，是诊断证据，不影响 Guardian 的成功判据，也不代替桌面/CLI/native 用户路径验收。
+
 本文件是 Guardian 的**唯一**架构/接口文档：CG-00 审计汇总、CG-01 runner 的契约、给 Agent 的调用
 接口都在这里，后续 PR（CG-02 起）引用本文，不再另写总架构文档。
 
@@ -163,7 +178,7 @@ expectation_mismatch`。比声明更好的结果同样是不等：它可能是�
 
 ## 4. 原生参照（`compat_driver.py --mode native_ref`，M1）
 
-普通 `python script.py` 语义（cwd = 脚本目录），只观测不干预；**独立实现，不 import 产品的
+普通 `python script.py` 语义（缺省 cwd = 脚本目录），只观测不干预；**独立实现，不 import 产品的
 `figcapture`**，图的身份只用 Figure 对象本身、文件按原样记路径。事实：
 
 `exit_status`（自然结束 0；`SystemExit(code)` 记 code；异常 1）、`error`（类型 + 截断 traceback）、
@@ -172,6 +187,11 @@ savefig_calls`、`same_path_distinct_figures`（不同 Figure 写同一路径—
 `artifacts[]`（新增/改动文件的字节数、sha256、**能否读回**：图像用 PIL 完整解码，PDF 验头，SVG 验 XML）、
 `side_effects{created,modified,deleted}`（项目目录整体快照的前后差）、`semantics`（各图标题）、
 `script_entries`（驱动自己数到的入口次数，仅作交叉核对）。
+
+S0 的已登记真实项目可声明 `reference_invocation: {cwd, argv}`。`cwd` 是物化项目内已存在的
+相对目录，`argv` 只含脚本名之后的字符串参数；绝对/越界目录、shell 启动器和任意入口路径均不接受。
+它仅转交原生参照及诊断腿，不替产品传启动参数或修补用户脚本。原生通过而产品不能沿用这份启动
+语义，仍是可观测差异。没有该字段时，既有夹具行为保持原样。
 
 判定（`_native_status`）：`exit_status != 0` → `invalid_fixture`（缺模块 → `environment_unavailable`）；
 图类产物读不回来 → `invalid_fixture`；`figure_count == 0` 是合法的原生结果（脚本不画图），仍为 `passed`，由对侧判：Tavotto 捕获了原生没有产生的图 →

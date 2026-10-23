@@ -34,6 +34,8 @@ import tempfile
 import time
 import traceback
 import uuid
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 
 HERE = Path(__file__).resolve().parent
@@ -170,8 +172,119 @@ def contained(root: Path, name: str) -> Path:
     return candidate
 
 
+def science_python() -> str:
+    """Interpreter that runs scripts and workers (ADR process boundary: the scientific stack is not
+    Tavotto's own venv). `TAVOTTO_SCIENCE_PYTHON` selects a separate research venv; unset = this one."""
+    return os.environ.get("TAVOTTO_SCIENCE_PYTHON") or sys.executable
+
+
+@dataclass(frozen=True)
+class ScienceInterpreter:
+    """The scientific interpreter, probed once: usable + its facts, or unusable + the reason."""
+
+    python: str
+    usable: bool
+    reason: str | None = None
+    facts: dict | None = None
+    missing: tuple[str, ...] = ()
+
+
+#: Modules the scripts/workers need in the scientific interpreter (see GUARDIAN_MODULES for the other side).
+SCIENCE_MODULES = ("matplotlib", "numpy")
+_PROBE = (
+    "import importlib.util as u, json, sys; sys.path.insert(0, sys.argv[1]);"
+    "from guardian_exec_observer import actual_environment;"
+    "print(json.dumps({'env': actual_environment(),"
+    " 'missing': [m for m in sys.argv[2:] if u.find_spec(m) is None]}))"
+)
+_SCIENCE_CACHE: dict[str, ScienceInterpreter] = {}
+
+
+def reset_science_cache() -> None:
+    _SCIENCE_CACHE.clear()
+
+
+def science_interpreter() -> ScienceInterpreter:
+    """The one place that starts the scientific interpreter to learn about it (cached per path).
+
+    Environment fingerprint, preflight and `_execute()` all read this; none starts its own checked
+    subprocess, so a missing / non-executable / failing interpreter becomes `usable=False` with a
+    reason instead of an exception raised before preflight can report it.
+    """
+    python = science_python()
+    cached = _SCIENCE_CACHE.get(python)
+    if cached is not None:
+        return cached
+    if python == sys.executable:
+        result = ScienceInterpreter(
+            python,
+            True,
+            facts=actual_environment(),
+            missing=tuple(m for m in SCIENCE_MODULES if importlib.util.find_spec(m) is None),
+        )
+    else:
+        try:
+            done = subprocess.run(
+                [python, "-I", "-c", _PROBE, str(HERE), *SCIENCE_MODULES],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if done.returncode != 0:
+                result = ScienceInterpreter(
+                    python, False, f"exit {done.returncode}: {done.stderr.strip()[-300:]}"
+                )
+            else:
+                data = json.loads(done.stdout)
+                result = ScienceInterpreter(
+                    python, True, facts=data["env"], missing=tuple(data["missing"])
+                )
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
+            result = ScienceInterpreter(python, False, f"{type(exc).__name__}: {str(exc)[-300:]}")
+    _SCIENCE_CACHE[python] = result
+    return result
+
+
+def science_distribution_file(distribution: str, relative: str) -> str:
+    """Where a distribution's file lives in the scientific interpreter (for `verify-environment`)."""
+    science = science_interpreter()
+    if not science.usable:
+        raise EvidenceError(f"scientific interpreter unusable: {science.reason}")
+    done = subprocess.run(
+        [
+            science.python,
+            "-I",
+            "-c",
+            "import importlib.metadata as m, sys;"
+            "print(m.distribution(sys.argv[1]).locate_file(sys.argv[2]))",
+            distribution,
+            relative,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if done.returncode != 0:
+        raise EvidenceError(f"cannot locate {distribution} in the scientific interpreter")
+    return done.stdout.strip()
+
+
 def environment() -> dict:
-    return actual_environment()
+    """Identity of the environment the measurement ran in; never raises for a bad interpreter.
+
+    With a separate scientific interpreter both are bound: the top-level facts are the scientific
+    interpreter's (where scripts and workers run) and `facts.guardian` is Tavotto's own, so a change
+    on either side changes the fingerprint. An unusable interpreter is recorded as such.
+    """
+    science = science_interpreter()
+    if science.python == sys.executable:
+        return science.facts
+    base = (
+        science.facts["facts"]
+        if science.facts is not None
+        else {"science_interpreter": {"usable": False, "reason": science.reason}}
+    )
+    facts = {**base, "guardian": actual_environment()["facts"]}
+    return {"fingerprint": canonical(facts), "facts": facts}
 
 
 def fonts_dir() -> Path:
@@ -180,8 +293,48 @@ def fonts_dir() -> Path:
     return Path(override) if override else ROOT / "src/tavotto/resources/fonts"
 
 
+#: What each side really imports. The Guardian process uses numpy/Pillow for the pixel comparison
+#: (`pixelcompare`) and RenderCore for the product; scripts and workers need matplotlib/numpy.
+GUARDIAN_MODULES = tuple(m for m in REQUIRED_MODULES if m != "matplotlib")
+
+
 def preflight() -> list[str]:
-    missing = [f"module:{m}" for m in REQUIRED_MODULES if importlib.util.find_spec(m) is None]
+    science = science_interpreter()
+    if science.python == sys.executable:
+        return [f"module:{m}" for m in REQUIRED_MODULES if importlib.util.find_spec(m) is None] + (
+            _font_gaps()
+        )
+    remote = (
+        [f"module:{m}@science" for m in science.missing]
+        if science.usable
+        else ["science_python:unusable"]
+    )
+    local = [
+        f"module:{m}@guardian" for m in GUARDIAN_MODULES if importlib.util.find_spec(m) is None
+    ]
+    return local + remote + _font_gaps()
+
+
+#: Modules whose absence makes the native leg meaningless (scripts/workers need matplotlib/numpy; the
+#: pixel comparison needs numpy/Pillow in the Guardian process). Either side blocks execution.
+BLOCKING_MODULES = ("matplotlib", "numpy", "PIL")
+
+
+def parse_prerequisite(item: str) -> tuple[str, str, str | None]:
+    """`module:numpy@science` -> ("module", "numpy", "science"); `font:x` -> ("font", "x", None)."""
+    kind, _, rest = item.partition(":")
+    name, _, side = rest.partition("@")
+    return kind, name, side or None
+
+
+def blocks_execution(item: str) -> bool:
+    """Single authority: does this `preflight()` item make running the native leg pointless?"""
+    kind, name, _side = parse_prerequisite(item)
+    return (kind == "module" and name in BLOCKING_MODULES) or item == "science_python:unusable"
+
+
+def _font_gaps() -> list[str]:
+    missing: list[str] = []
     allowlist = json.loads(
         (ROOT / "src/tavotto/rendercore/fonts_allowlist.json").read_text(encoding="utf-8")
     )
@@ -205,15 +358,41 @@ def matches_head(root: Path, rel: str, path: Path | None = None) -> bool:
     return work == head
 
 
-def staged_source_hashes(root: Path, fixture: dict[str, str], script: str) -> list[str]:
+def staged_source_hashes(root: Path, fixture: dict[str, str], script: str, case=None) -> list[str]:
     """执行观测器（`CG_EXEC_HASHES`）要认的入口脚本摘要：按**实际拷进沙盒的工作区字节**算，不用 `fixture` 里按 HEAD blob
     记的语料身份——materialize / V2 staging 原样拷工作区文件，Windows `core.autocrlf` checkout 下是 CRLF，两者不同
     （Codex #1118 r4310318506）。内容与 HEAD 等价已由 `fixture_files` 核过。"""
     return [
-        digest(contained(root, k).read_bytes())
-        for k in fixture
-        if k.endswith(".py") and Path(k).name == Path(script).name
+        digest(fixture_bytes(root, k, case)) for k in fixture if Path(k).name == Path(script).name
     ]
+
+
+def fixture_path(root: Path, relative: str, case: dict | None = None) -> Path:
+    if case and case.get("research_project_id"):
+        import compat_research_sources as sources
+
+        return sources.source_file(case, relative, root=root)
+    return contained(root, relative)
+
+
+def fixture_bytes(root: Path, relative: str, case: dict | None = None) -> bytes:
+    if case and case.get("research_project_id"):
+        import compat_research_sources as sources
+
+        return sources.source_bytes(case, relative, root=root)
+    return contained(root, relative).read_bytes()
+
+
+#: Executable code in a fixture inventory: a plain script, or the archived `<name>.py.source` form the
+#: research corpus stores upstream scripts under (kept un-importable inside the repository).
+SOURCE_SUFFIXES = (".py", ".py.source")
+
+
+def fixture_digests(files: dict[str, str]) -> dict:
+    """The one split of a fixture inventory into code and data, used when producing and validating."""
+    code = {k: v for k, v in files.items() if k.endswith(SOURCE_SUFFIXES)}
+    data = {k: v for k, v in files.items() if not k.endswith(SOURCE_SUFFIXES)}
+    return {"files": files, "source_sha256": canonical(code), "data_sha256": canonical(data)}
 
 
 def registered(suite: str) -> dict[str, dict]:
@@ -235,7 +414,42 @@ def registered(suite: str) -> dict[str, dict]:
     raise EvidenceError(f"unregistered suite: {suite}")
 
 
+def selected_registry(suite: str, case_ids) -> dict[str, dict]:
+    cases = registered(suite)
+    if suite == "compat_engine":
+        if any(cid.startswith("research_") for cid in set(case_ids) - cases.keys()):
+            import compat_guardian_research as research
+            import compat_research_sources as sources
+
+            for rel in (sources.COHORT_REL, sources.MANIFEST_REL):
+                if not matches_head(ROOT, rel):
+                    raise EvidenceError(f"research registration differs from reviewed HEAD: {rel}")
+            research.load_cohort(root=ROOT)
+            external = {c["id"]: c for c in research.load_cases(ROOT)}
+            cases.update({cid: external[cid] for cid in case_ids if cid in external})
+    return cases
+
+
 def fixture_files(suite: str, case: dict) -> dict[str, str]:
+    if suite == "compat_engine" and case.get("research_project_id"):
+        import compat_research_sources as sources
+
+        project = sources.project_for_case(case, root=ROOT)
+        result = {
+            rel: digest(sources.source_bytes(case, rel, root=ROOT))
+            for rel in project["staged_files"]
+        }
+        # Reuse the ordinary case validator after resolving the pinned external bytes.
+        resolved = {
+            **case,
+            "script": str(fixture_path(ROOT, "tests/compat/" + case["script"], case)),
+        }
+        resolved["extra_files"] = {
+            dest: str(fixture_path(ROOT, "tests/compat/" + rel, case))
+            for dest, rel in case.get("extra_files", {}).items()
+        }
+        CC._validate_case(resolved, CC.COMPAT_DIR)
+        return result
     if suite == "compat_v2":
         base = ROOT / "tests/fixtures/compat_v2" / case["id"]
         paths = sorted(p for p in base.rglob("*") if p.is_file())
@@ -321,7 +535,10 @@ def isolated_env(work: Path, audit_log: Path | None = None, hashes=()) -> dict:
         )
     env["PYTHONPATH"] = os.pathsep.join(roots)
     # Explicit user-selected test interpreter; never let native/worker choose different stacks.
-    env["TAVOTTO_WORKER_PYTHON"] = sys.executable
+    env["TAVOTTO_WORKER_PYTHON"] = science_python()
+    for key in ("TAVOTTO_RESEARCH_CACHE", "TAVOTTO_SCIENCE_PYTHON"):
+        if key in os.environ:
+            env[key] = os.environ[key]
     return env
 
 
@@ -384,6 +601,43 @@ def finalize_row(row: dict) -> dict:
     return row
 
 
+#: Product-side refusals decided before anything is launched (a capability boundary, not a crash).
+REFUSAL_CODES = ("launch_context_unsupported",)
+
+
+def refused_before_launch(row: dict) -> bool:
+    """The product leg failed at discover with a refusal code and, by construction, never executed.
+
+    Such a row has native child records but no Tavotto ones; that absence is the evidence, so it is
+    judged on the native leg's proof plus "Tavotto executed zero times", not on a full launch pair.
+    """
+    raw = row.get("raw") or {}
+    code = (((raw.get("detail") or {}).get("discover")) or {}).get("code")
+    return (
+        code in REFUSAL_CODES
+        and row["stages"].get("discover", {}).get("status") == "failed"
+        and row["executions"].get("tavotto") in (None, 0)
+        and not (raw.get("launch_environments") or {}).get("tavotto")
+        and (row["executions"].get("native") or 0) > 0
+        and row["environment_before"] == row["environment_after"]
+    )
+
+
+def native_eligible(row: dict) -> bool:
+    """The one test for "this row belongs in the native-qualified denominator".
+
+    Native passed with a real figure and an execution proof, and the two legs are comparable (which
+    already means the environment did not move) -- or the product refused before launching (`refused_before_launch`),
+    where a comparable pair cannot exist but the refusal is itself the product outcome.
+    """
+    return bool(
+        row["native"]["status"] == "passed"
+        and (row["figures"]["native"] or 0) > 0
+        and (row["executions"]["native"] or 0) > 0
+        and (row["comparable"] or refused_before_launch(row))
+    )
+
+
 def case_status(row: dict) -> str:
     native = row["native"]["status"]
     if native != "passed":
@@ -391,6 +645,8 @@ def case_status(row: dict) -> str:
     raw = row.get("raw") or {}
     if "runner_error" in raw:
         return "unknown"  # a crashed runner is never evidence about the product
+    if refused_before_launch(row):
+        return "failed"
     if not row["comparable"] or not (row["executions"]["native"] or 0):
         return "unknown"
     statuses = [s["status"] for s in row["stages"].values()]
@@ -595,6 +851,66 @@ def _trim_native(result: dict) -> dict:
     return trimmed
 
 
+def line_data_agreement(native_line_xy, result: dict, native_incomparable=None) -> dict:
+    """Read-only comparison of curve data: native `Line2D.get_xydata()` vs the product manifest.
+
+    Both sides are digests of shape + little-endian float64 (`manifest.canonical_digest`); duplicates
+    are kept. The product opens only the target figure, so it is compared with every native figure
+    and the closest one is reported. Diagnostic only: it never changes a stage verdict.
+    """
+    opened = (result.get("detail") or {}).get("open") or {}
+    product = opened.get("line_xy")
+    if not isinstance(native_line_xy, list) or product is None:
+        return {"status": "not_observed"}
+
+    def summary(digests):
+        return {
+            "lines": len(digests),
+            "sha256": hashlib.sha256("\n".join(digests).encode()).hexdigest(),
+        }
+
+    target = Counter(product)
+    scored = []
+    for index, digests in enumerate(native_line_xy):
+        if digests is None:
+            continue
+        have = Counter(digests)
+        gap = sum((have - target).values()) + sum((target - have).values())
+        # Smallest curve-set difference first (an exact match wins), then most shared, then order.
+        scored.append((gap, -sum((have & target).values()), index, digests))
+    if not scored:
+        return {"status": "not_observed"}
+    _gap, _shared, index, digests = min(scored)
+    only_native = sum((Counter(digests) - target).values())
+    only_product = sum((target - Counter(digests)).values())
+    incomparable_product = opened.get("line_xy_incomparable") or 0
+    incomparable_native = (
+        native_incomparable[index]
+        if isinstance(native_incomparable, list) and index < len(native_incomparable)
+        else 0
+    ) or 0
+    unobserved_product = opened.get("line_xy_unobserved") or 0
+    unobserved_native = sum(1 for d in native_line_xy if d is None)
+    if unobserved_product or unobserved_native or incomparable_product or incomparable_native:
+        # Only plain Line2D curves on both sides are comparable; an unmeasured or differently stored
+        # curve (errorbar, stem, 3D, ...) can neither agree nor differ: say so, never a false "different".
+        status = "unknown"
+    else:
+        status = "equal" if not only_native and not only_product else "different"
+    return {
+        "status": status,
+        "incomparable_product_lines": incomparable_product,
+        "incomparable_native_curves": incomparable_native,
+        "unobserved_product_lines": unobserved_product,
+        "unobserved_native_figures": unobserved_native,
+        "native_figures": [d if d is None else summary(d) for d in native_line_xy],
+        "closest_native_figure": index,
+        "product": summary(product),
+        "only_native": only_native,
+        "only_product": only_product,
+    }
+
+
 def _count(path: Path) -> int | None:
     """Lines in an append-only counter; None when the counter was never opened."""
     return len(path.read_text(encoding="utf-8").splitlines()) if path.exists() else None
@@ -622,7 +938,7 @@ def _execute(request: dict) -> dict:
 
     t_total = time.monotonic()
     suite, cid = request["suite"], request["case"]
-    case = registered(suite)[cid]
+    case = selected_registry(suite, (cid,))[cid]
     work = Path(request["work"])
     evidence = Path(request["evidence"])
     before = environment()
@@ -631,9 +947,12 @@ def _execute(request: dict) -> dict:
     )
     scenario_absent: tuple = ()
     missing = preflight()
-    if any(f"module:{name}" in missing for name in ("matplotlib", "numpy", "PIL")):
+    if any(blocks_execution(item) for item in missing):
         row["native"]["status"] = "environment_unavailable"
         row["raw"] = {"missing_prerequisites": missing}
+        science = science_interpreter()
+        if not science.usable:
+            row["raw"]["science_python_unusable"] = science.reason
         row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
         return finalize_row(row)
     native_root = work / "native-control"
@@ -649,13 +968,25 @@ def _execute(request: dict) -> dict:
     # The already installed audit hook opened its file at process start; the child
     # native driver receives this separate leg's counter via sitecustomize.
     t0 = time.monotonic()
+    native_request = {"project": str(project), "script": str(project / script), "entry": entry}
+    if "reference_invocation" in case:
+        native_request["reference_invocation"] = case["reference_invocation"]
     native = cm.run_driver(
-        sys.executable,
+        science_python(),
         "native_ref",
-        {"project": str(project), "script": str(project / script), "entry": entry},
+        native_request,
     )
     row["timings_s"]["native"] = round(time.monotonic() - t0, 3)
-    row["native"] = {"status": _native_status(native), "result": _trim_native(native)}
+    native_line_xy = native.get("line_xy")
+    native_incomparable = native.get("line_xy_incomparable")
+    row["native"] = {
+        "status": _native_status(native),
+        "result": {
+            k: v
+            for k, v in _trim_native(native).items()
+            if k not in ("line_xy", "line_xy_incomparable")
+        },
+    }
     row["executions"]["native"] = _count(work / "native-execs.jsonl")
     row["figures"]["native"] = native.get("figure_count") if native.get("ok") else None
     # Native fixture invalidity never enters the product-defect population.
@@ -679,6 +1010,8 @@ def _execute(request: dict) -> dict:
             previous = os.environ["CG_EXEC_LOG"]
             os.environ["CG_EXEC_LOG"] = str(work / f"diagnostic-{mode}-execs.jsonl")
             try:
+                if mode in {"native_ref", "native", "census"} and "reference_invocation" in case:
+                    request = {**request, "reference_invocation": case["reference_invocation"]}
                 return original_driver(python, mode, request, timeout)
             finally:
                 os.environ["CG_EXEC_LOG"] = previous
@@ -697,7 +1030,7 @@ def _execute(request: dict) -> dict:
         try:
             result = cm.run_group(
                 [engine_case],
-                python=sys.executable,
+                python=science_python(),
                 root=work,
                 out_dir=evidence,
                 want_fidelity=True,
@@ -709,6 +1042,7 @@ def _execute(request: dict) -> dict:
             row["timings_s"]["total"] = round(time.monotonic() - t_total, 3)
             return finalize_row(row)
         row["raw"] = result
+        row["raw"]["line_data"] = line_data_agreement(native_line_xy, result, native_incomparable)
         if "runner_error" in (result.get("detail") or {}):
             row["raw"]["runner_error"] = str(result["detail"]["runner_error"])[-1500:]
         for s in CC.STAGES:
@@ -990,7 +1324,10 @@ def check_row_proof(row: dict, mismatch: bool) -> None:
         if set(launches) != {"native", "tavotto"}:
             raise EvidenceError("missing actual child environment evidence")
         fps = set()
+        refused = refused_before_launch(row)
         for role, records in launches.items():
+            if refused and role == "tavotto":
+                continue  # nothing was launched on the product leg; its absence is checked above
             if not records or len(records) != row["executions"][role]:
                 raise EvidenceError("execution count does not match actual child records")
             for item in records:
@@ -1039,7 +1376,7 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
     rows = report["cases"]
     if sorted(r["id"] for r in rows) != sorted(ids):
         raise EvidenceError("case set is incomplete/duplicated")
-    registry = registered(report["suite"])
+    registry = selected_registry(report["suite"], ids)
     entries = EX.load_entries()
     if report["expectations_sha256"] != EX.file_digest():
         raise EvidenceError("expectations digest does not match the committed declaration file")
@@ -1048,11 +1385,7 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
         if row["id"] not in registry:
             raise EvidenceError("case does not belong to registered suite")
         files = fixture_files(report["suite"], registry[row["id"]])
-        fixture = {
-            "files": files,
-            "source_sha256": canonical({k: v for k, v in files.items() if k.endswith(".py")}),
-            "data_sha256": canonical({k: v for k, v in files.items() if not k.endswith(".py")}),
-        }
+        fixture = fixture_digests(files)
         if row["fixture"] != fixture:
             raise EvidenceError("fixture/source/data digest mismatch")
         fixture_map[row["id"]] = files
@@ -1129,7 +1462,7 @@ def run(args) -> int:
         and os.environ.get("GITHUB_SHA", expected_sha) != expected_sha
     ):
         raise EvidenceError("GITHUB_SHA disagrees with actual HEAD")
-    registry = registered(args.suite)
+    registry = selected_registry(args.suite, args.case.split(",") if args.case else ())
     entries = EX.load_entries()
     ids = args.case.split(",") if args.case else list(registry)
     if not ids or len(set(ids)) != len(ids) or any(i not in registry for i in ids):
@@ -1153,7 +1486,7 @@ def run(args) -> int:
             # 观测器认的是**实际拷进沙盒的字节**（materialize / V2 staging 原样拷工作区文件）：Windows checkout 下是 CRLF，
             # 与报告里按 HEAD blob 记的语料身份（跨平台一致）不同。内容与 HEAD 等价已由 fixture_files 核过（Codex r4310318506）
             source_hashes = staged_source_hashes(
-                ROOT, fixtures[cid], registry[cid].get("script", "script.py")
+                ROOT, fixtures[cid], registry[cid].get("script", "script.py"), registry[cid]
             )
             env = isolated_env(work, work / "adapter-execs.jsonl", source_hashes)
             try:
@@ -1187,15 +1520,7 @@ def run(args) -> int:
                 finalize_row(row)
             finally:
                 preserve_execution_logs(work, dest)
-            row["fixture"] = {
-                "files": fixtures[cid],
-                "source_sha256": canonical(
-                    {k: v for k, v in fixtures[cid].items() if k.endswith(".py")}
-                ),
-                "data_sha256": canonical(
-                    {k: v for k, v in fixtures[cid].items() if not k.endswith(".py")}
-                ),
-            }
+            row["fixture"] = fixture_digests(fixtures[cid])
             entry = EX.find(entries, args.suite, cid)
             if entry is not None:
                 resolved = EX.evaluate(row, entry)
@@ -1440,7 +1765,10 @@ def main(argv=None) -> int:
             print("valid current-checkout evidence")
             return 0
         request = json.loads(Path(args.request).read_text(encoding="utf-8"))
-        fixture_files(request["suite"], registered(request["suite"])[request["case"]])
+        fixture_files(
+            request["suite"],
+            selected_registry(request["suite"], (request["case"],))[request["case"]],
+        )
         row = _execute(request)
         (Path(request["evidence"]) / "result.json").write_text(
             json.dumps(row, indent=2), encoding="utf-8"

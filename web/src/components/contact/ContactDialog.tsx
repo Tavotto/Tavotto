@@ -17,6 +17,7 @@ import { ProgressBar } from '../ui/ProgressBar'
 import { X } from '../ui/icons'
 import { ICON_SIZE } from '../ui/Icon'
 import { CopyButton } from '../settings/CopyButton'
+import { ReplyPaper } from './ReplyPaper'
 
 const cs = (key: string, values?: Record<string, unknown>) =>
   translate(`contact.${key}`, { ns: 'dialogs', ...(values ?? {}) })
@@ -48,6 +49,47 @@ function failureText(f: ContactFailure): string {
     return cs('diagFailure', { reason })
   }
   return cs(`failure.${f.code}`, { defaultValue: cs('failure.unexpected_response') })
+}
+
+/** 「我的来信」里用户自己写的那一份：灰色引用块；正文长了折叠成前 4 行 +「展开」。 */
+function YourLetter({ subject, body, names }: { subject: string; body: string; names: string[] }) {
+  const [open, setOpen] = useState(false)
+  if (!subject && !body && names.length === 0) return null // 旧记录没存原文
+  const long = body.split('\n').length > 4 || body.length > 240
+  return (
+    <blockquote
+      className="flex flex-col gap-1 border-l-2 border-border pl-3 text-sm text-ink-2"
+      data-contact-letter-yours
+    >
+      <span className="type-caption">{cs('lettersYouWrote')}</span>
+      {subject && <span className="break-words font-medium" data-contact-letter-subject>{subject}</span>}
+      {body && (
+        <p
+          className={cn('whitespace-pre-wrap break-words', long && !open && 'line-clamp-4')}
+          data-contact-letter-body
+        >
+          {body}
+        </p>
+      )}
+      {long && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="self-start"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          data-contact-letter-toggle
+        >
+          {open ? cs('lettersCollapse') : cs('lettersExpand')}
+        </Button>
+      )}
+      {names.length > 0 && (
+        <span className="type-caption break-words" data-contact-letter-files>
+          {cs('lettersAttachments', { names: names.join('、') })}
+        </span>
+      )}
+    </blockquote>
+  )
 }
 
 /**
@@ -416,8 +458,14 @@ export function ContactDialog() {
                 {cs('lettersForget')}
               </Button>
             </div>
+            <YourLetter subject={m.subject ?? ''} body={m.body ?? ''} names={m.attachment_names ?? []} />
+            {m.poll_error && (
+              <p className="type-caption" data-contact-poll-error={m.poll_error}>
+                {cs(m.poll_error === 'too_large' ? 'pollTooLarge' : 'pollBad')}
+              </p>
+            )}
             {m.replies.map((r) => (
-              <div key={r.id} className="flex flex-col gap-0.5 rounded-md bg-surface px-3 py-2" data-contact-reply={r.id}>
+              <div key={r.id} className="flex flex-col gap-1 rounded-md bg-surface px-3 py-2" data-contact-reply={r.id}>
                 <div className="flex items-center gap-2 type-caption">
                   <span>{cs('replyFrom')}</span>
                   <span>{formatDateTime(Date.parse(r.created_at) || 0)}</span>
@@ -427,7 +475,11 @@ export function ContactDialog() {
                     </span>
                   )}
                 </div>
-                <p className="whitespace-pre-wrap break-words text-sm text-ink">{r.body}</p>
+                {r.has_html ? (
+                  <ReplyPaper messageId={m.message_id} replyId={r.id} fallback={r.body} />
+                ) : (
+                  <p className="whitespace-pre-wrap break-words text-sm text-ink">{r.body}</p>
+                )}
               </div>
             ))}
           </li>
@@ -475,7 +527,7 @@ export function ContactDialog() {
           <Button variant="ghost" size="lg" onClick={s.reset} data-contact-another>
             {cs('sentAnother')}
           </Button>
-        ) : (
+        ) : view === 'letters' ? null : ( // 「我的来信」只有主按钮「关闭」，不再并排两个「关闭」
           <Button variant="ghost" size="lg" onClick={() => s.setOpen(false)} data-contact-dismiss>
             {cs('close')}
           </Button>

@@ -103,6 +103,28 @@ UPLOAD_TIMEOUT_S = 60
 COMPLETE_TIMEOUT_S = 70
 CANCEL_TIMEOUT_S = 5
 POLL_TIMEOUT_S = 15
+#: 带 HTML 的回信列表的响应体上限，按**最坏线缆编码**（JSON 文本的字节数，不是原文字节数）推出（服务端回信列表没有分页）：
+#: 一封信最多 `MAX_REPLIES_PER_MESSAGE`（50）条回信，每条 =
+#:   2 ×（HTML 256 KiB + 正文 20000 字 × 4 字节（UTF-8 最坏））——JSON 转义最坏 2 倍：服务端响应是 `ensure_ascii=False`
+#:     （非 ASCII 字符原样输出，不膨胀成 6 字节的 \uXXXX），且存库前已去掉除 \n \t 外的控制字符（否则一个控制字符会膨胀成
+#:     6 字节 \u00XX）；剩下需要转义的只有 `"` 和 `\\`（1 字节 -> 2 字节）与 \n \t（同为 1 -> 2），所以最坏 2 倍；
+#:   + 固定开销 1 KiB（id / created_at / 键名 / 引号）+ 20 张附图元数据 × 256 B；
+#: 再加 1 MiB 余量（外层 message_id / state 等）。约 36 MB 是上限不是常态（真实回信几 KiB）。
+#: **这个上界依赖服务端的两条保证**（infra）：单封信 ≤ 50 条回信、回信 HTML 与正文存库前去控制字符。任一条变了，这里必须同步改
+#: （ADR 0145「第二期修订」同样写明）。超过它或 JSON 解析不了都**不当成功**：标 `poll_error`，下一轮再试。
+REPLIES_MAX_BYTES = (
+    contactinbox.MAX_REPLIES_PER_MESSAGE
+    * (
+        2 * (contactinbox.MAX_REPLY_HTML_BYTES + contactinbox.MAX_REPLY_CHARS * 4)
+        + 1024
+        + contactinbox.MAX_ASSETS_PER_REPLY * 256
+    )
+    + 1024 * 1024
+)
+ASSET_TIMEOUT_S = 60
+#: 一轮轮询最多下多少字节 / 最多发多少次附图请求（防服务端异常或被劫持时失控；下一轮继续）
+ASSET_ROUND_BYTES = 64 * 1024 * 1024
+ASSET_ROUND_REQUESTS = 80
 COMPLETE_ATTEMPTS = 4
 COMPLETE_BACKOFF_S = (1.0, 2.0, 4.0)
 #: 后台轮询回信的间隔（契约：客户端启动时 + 每 6 小时一次）与界面「刷新」的最小间隔。
@@ -403,18 +425,26 @@ def _post(target: diagsend.Target, path: str, payload: dict, timeout: float):
     return diagsend._send(req, timeout)
 
 
-def _get(target: diagsend.Target, path: str, bearer: str, timeout: float):
+def _get(
+    target: diagsend.Target,
+    path: str,
+    bearer: str,
+    timeout: float,
+    *,
+    accept: str = "application/json",
+    limit: int = diagsend.MAX_RESPONSE_BYTES,
+):
     req = urllib.request.Request(  # noqa: S310 — 同上
         target.base + path,
         method="GET",
         headers={
-            "Accept": "application/json",
+            "Accept": accept,
             "Authorization": f"Bearer {bearer}",
             API_VERSION_HEADER: str(API_MAJOR),
             "User-Agent": _UA,
         },
     )
-    return diagsend._send(req, timeout)
+    return diagsend._send(req, timeout, limit)
 
 
 #: 传输层失败（响应没拿到）与 5xx：这条线路这会儿不通，换另一条。其余（含 429 / 4xx）是服务端明确的答复，不换。
@@ -429,9 +459,10 @@ def _ordered(
     return [prefer] + [t for t in targets if t != prefer]
 
 
-def _failover(targets, prefer, call):
+def _failover(targets, prefer, call, spent: list[int] | None = None):
     """按顺序在各线路上做 `call(target) -> _Response`；传输失败 / 5xx 换下一条，最后一条的结果（或失败）交回。
-    返回 (响应, 作答的线路)。"""
+    返回 (响应, 作答的线路)。`spent`（可选，单元素列表）累计**每次尝试**实际读到的响应体字节（含被换掉的线路的错误体），
+    调用方据此扣预算；不传则行为不变。"""
     last_fail: _Failure | None = None
     last_resp = None
     for tgt in _ordered(targets, prefer):
@@ -442,6 +473,8 @@ def _failover(targets, prefer, call):
                 raise
             last_fail, last_resp = fail, None
             continue
+        if spent is not None:
+            spent[0] += len(resp.body)
         if resp.status >= 500:
             last_fail, last_resp = None, (resp, tgt)
             continue
@@ -642,7 +675,11 @@ def _settle(sess: Session, targets, code, retry_after, cancelled) -> None:
             sess.state = "done"
             # 信已送达的事实不能撤回；令牌存不下就如实标出来，界面换一句话，不再承诺「回信出现在这里」
             sess.inbox_saved = contactinbox.add(
-                sess.message_id, sess.reply_token, sess.route, delivered=True
+                sess.message_id,
+                sess.reply_token,
+                sess.route,
+                delivered=True,
+                **_local_copy(sess.draft),
             )
         # 附件字节与令牌到此为止：重试由前端重新带稿、重新 init 拿回同一个 reply_token
         sess.draft = None
@@ -652,6 +689,17 @@ def _settle(sess: Session, targets, code, retry_after, cancelled) -> None:
             "ok" if sess.state == "done" else ("cancelled" if sess.state == "cancelled" else code),
             stage,
         )
+
+
+def _local_copy(draft: Draft | None) -> dict:
+    """本机留一份用户写的主题 / 正文 / 附件**文件名**（不含附件内容与邮箱；ADR 0145 第二期修订）。"""
+    if draft is None:
+        return {}
+    return {
+        "subject": draft.subject,
+        "body": draft.body,
+        "attachment_names": [a.name for a in draft.attachments],
+    }
 
 
 def _flow(sess: Session, targets: list[diagsend.Target]) -> None:
@@ -828,7 +876,13 @@ def _complete(sess: Session, targets: list[diagsend.Target]) -> None:
         sess.complete_sent = (
             True  # 从这一刻起服务端那份可能已经 complete：取消不再生效，回信令牌先存下
         )
-    contactinbox.add(sess.message_id, sess.reply_token, sess.route, delivered=False)
+    contactinbox.add(
+        sess.message_id,
+        sess.reply_token,
+        sess.route,
+        delivered=False,
+        **_local_copy(sess.draft),
+    )
     last: _Failure | None = None
     for attempt in range(COMPLETE_ATTEMPTS):
         if attempt:
@@ -886,30 +940,111 @@ _LAST_POLL = 0.0
 _POLL_LOCK = threading.Lock()
 
 
-def _poll_one(rec: dict, targets: list[diagsend.Target]) -> bool:
-    """问一封信的回信；返回 False = 线路都不通（本轮到此为止）。"""
+@dataclass
+class _AssetBudget:
+    """一轮轮询的附图下载预算。"""
+
+    bytes_left: int = field(default_factory=lambda: ASSET_ROUND_BYTES)
+    requests_left: int = field(default_factory=lambda: ASSET_ROUND_REQUESTS)
+
+
+def _asset_content_type(resp: diagsend._Response) -> str:
+    return resp.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+
+
+def _fetch_assets(rec: dict, targets: list[diagsend.Target], budget: _AssetBudget) -> bool:
+    """下载这封信里还没落盘的回信附图。每张独立：失败（404 / 类型或魔数不符 / 大小不符）只跳过这一张，下一轮再试。
+    返回 False = 线路不通或被限流（本轮到此为止）。线路 / TLS / 重定向 / UA / Bearer 与问回信同一套（`_get`）。"""
+    mid = rec["message_id"]
+    prefer = next((t for t in targets if route_label(t) == rec["route"]), None)
+    for a in contactinbox.pending_assets(mid):
+        if budget.requests_left <= 0 or budget.bytes_left <= 0 or budget.bytes_left < a["size"]:
+            return True
+        rid, n = a["reply_id"], a["n"]
+        if not contactinbox.quota_allows(mid, a["size"]):
+            # 本机落盘配额（每封 / 全部）已满：不下载、不再重试，信纸里这张显示占位
+            contactinbox.mark_asset_skipped(mid, rid, n, "quota")
+            continue
+        budget.requests_left -= 1
+        # 单次读取 ≤ min(单张上限, 本轮剩余预算) + 1：多出的 1 字节用来识别「超限」而不是被静默截断
+        read_cap = min(contactinbox.MAX_ASSET_BYTES, budget.bytes_left) + 1
+        spent = [0]
+        try:
+            resp, _ = _failover(
+                targets,
+                prefer,
+                lambda t: _get(
+                    t,
+                    f"/v1/messages/{mid}/replies/{rid}/assets/{n}",
+                    rec["reply_token"],
+                    ASSET_TIMEOUT_S,
+                    accept="image/*",
+                    limit=read_cap,
+                ),
+                spent,
+            )
+        except _Failure:
+            budget.bytes_left -= spent[0]  # 失败前已读到的（被换掉的线路的错误体）也要扣
+            return False
+        budget.bytes_left -= spent[
+            0
+        ]  # 按每条线路实际读到的字节扣（含备用前首选的错误体），不论后面校验过不过
+        if resp.status == 429:
+            return False
+        if resp.status != 200:
+            continue
+        data = resp.body
+        if (
+            _asset_content_type(resp) != a["content_type"]
+            or len(data) != a["size"]
+            or len(data) > contactinbox.MAX_ASSET_BYTES
+            or not _sniff_ok(a["content_type"], data)
+        ):
+            continue
+        contactinbox.save_asset(mid, rid, n, data)
+    return True
+
+
+def _poll_failed(message_id: str, error: str) -> bool:
+    """这封信这一轮没取到（响应超上限 / 不是合法回信 JSON）：不当成功，记下原因给界面，下一轮照常再试。
+    日志只记编号与原因，不记响应内容。"""
+    LOG.warning("联系作者: 取回信失败 (%s, %s)", message_id, error)
+    contactinbox.set_poll_error(message_id, error)
+    return True
+
+
+def _poll_one(rec: dict, targets: list[diagsend.Target], budget: _AssetBudget) -> bool:
+    """问一封信的回信并补下附图；返回 False = 线路都不通（本轮到此为止）。"""
     prefer = next((t for t in targets if route_label(t) == rec["route"]), None)
     try:
         resp, _ = _failover(
             targets,
             prefer,
             lambda t: _get(
-                t, f"/v1/messages/{rec['message_id']}/replies", rec["reply_token"], POLL_TIMEOUT_S
+                t,
+                f"/v1/messages/{rec['message_id']}/replies",
+                rec["reply_token"],
+                POLL_TIMEOUT_S,
+                limit=REPLIES_MAX_BYTES
+                + 1,  # 多读 1 字节：读满上限 + 1 = 超限，而不是被静默截成坏 JSON
             ),
         )
     except _Failure:
         _log("network", "poll")
         return False
     if resp.status == 200:
+        mid = rec["message_id"]
+        if len(resp.body) > REPLIES_MAX_BYTES:
+            return _poll_failed(mid, "too_large")
         try:
             obj = diagsend._json_body(resp)
         except _Failure:
-            return True
+            return _poll_failed(mid, "bad_response")
         replies, state = obj.get("replies"), obj.get("state")
-        if obj.get("message_id") == rec["message_id"] and isinstance(replies, list):
-            contactinbox.apply_replies(
-                rec["message_id"], state if isinstance(state, str) else "", replies
-            )
+        if obj.get("message_id") == mid and isinstance(replies, list):
+            contactinbox.apply_replies(mid, state if isinstance(state, str) else "", replies)
+            return _fetch_assets(rec, targets, budget)
+        return _poll_failed(mid, "bad_response")
     elif resp.status == 429:
         return False
     return True
@@ -920,7 +1055,9 @@ def poll_once(force: bool = False) -> dict:
     global _LAST_POLL
     targets = resolve_targets()
     recs = contactinbox.pollable() if targets else []
-    if not recs:
+    # closed 的信不再问回信，但附图没下完的要补（只发附图请求）
+    stale = contactinbox.with_pending_assets({r["message_id"] for r in recs}) if targets else []
+    if not recs and not stale:
         return {"polled": 0}
     with _POLL_LOCK:
         now = time.monotonic()
@@ -928,10 +1065,15 @@ def poll_once(force: bool = False) -> dict:
             return {"polled": 0, "throttled": True}
         _LAST_POLL = now
         n = 0
+        budget = _AssetBudget()
         for rec in recs:
-            if not _poll_one(rec, targets):
+            if not _poll_one(rec, targets, budget):
                 break
             n += 1
+        else:
+            for rec in stale:
+                if not _fetch_assets(rec, targets, budget):
+                    break
     _log("ok", "poll")
     return {"polled": n}
 

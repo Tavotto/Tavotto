@@ -309,3 +309,28 @@ e2e 把间隔**注入**调小（`window.__TAVOTTO_TIMELINE_TIMING__ = { debounce
 看护：`components/layoutSnapshotSharpness.test.tsx`（档位像素宽 ≥ 显示宽 × DPR、字号随显示宽，变异反证过）、
 `VersionDialog.test.tsx`、`inspector/inspectorRedesign.test.tsx`（页签顺序与时间线页签内容）、`store/uiStore.test.ts`
 （open / toggle / 不持久化）、`e2e/timeline-row-actions.spec.ts`（右栏内、320 / 480 不溢出）、`e2e/layout-timeline.spec.ts`。
+
+### 修订（2026-10-23，beta 0.19.0b3 用户反馈）：点一行弹对比小卡片，悬停不再冒按钮
+
+- 悬停 / 选中的那一行下面不再露「预览 · 恢复到这里」两颗按钮（用户觉得丑）；悬停只有轻微底色。
+- **单击行 = 在该行左侧弹出锚定的小卡片**（`CompareCard`，`ui/Popover`）：自动取那一刻的正文，左「那一刻」右「当前」并排
+  （两格各按 `LayoutSnapshot` 的 `displayWidth` 取档），一句话（与行上同一份摘要 `versionSummaryText`）、一个主按钮
+  「恢复到这里」+ 取消；Esc / 点外面 / 再点该行收起。卡片只读，不开模态、不占 `timelineStore.preview` 槽，
+  所以双击改名仍成立（双击进改名时卡片收起）。
+- 「恢复到这里」仍走 `restoreFromRow` → `restoreUnderLock` → `restoreNode`：同一把锁、同一个恢复动作，语义不变
+  （恢复在飞时的模态锁照旧）。
+- ⋯ 菜单里的「预览」删掉（与卡片重复）；缩放 / 差异列表的大预览对话框保留，入口改为卡片角上的「放大查看」小图标，
+  并把卡片已取回的正文直接交给它，不重复取。
+- 看护：`VersionDialog.test.tsx`（卡片自动取正文、不开模态、Esc 收起、无悬停条）、`e2e/timeline-row-actions.spec.ts`、
+  `e2e/layout-timeline.spec.ts`（卡片里那一刻只有甲、当前格里有乙）。
+
+### 修订（2026-10-23，beta 0.19.0b3 用户反馈）：每张画布各有自己的时间线
+
+- 版本按 documentId（整个项目）归档，但每个节点自己记着 `canvasId`（R-03）；「打开」一张图 = 它自己的画布（ADR 0028），
+  所以来回编辑不同脚本的图，节点就是按画布混在同一条里。**不改存储、不迁移**：只在面板里按 `canvasId` 过滤。
+- 项目里多于一张画布时，筛选器下面多一个「这张画布 / 全部画布」（`data-timeline-scope`），默认「这张画布」，
+  只显示 `canvasId === 激活画布` 的节点；缺 `canvasId` 的旧节点与来自已删画布的节点只在「全部画布」里（缺席就是缺席，不猜归属）。
+  单画布项目不出这个开关、不过滤。当前画布没有节点时说明并告诉用户另有多少。
+- 「这张画布」下行上不再重复「来自画布 X」；「上一版」仍由 `comparableEarlier` 在**完整**列表里取同画布最近一版，摘要不受过滤影响。
+- 单图编辑 = 这张图自己的画布；多图排版 = 该排版画布。同一画布里按「哪张图」再分组需要节点元信息带面板 / 脚本 id，
+  属存储格式变更，未做。

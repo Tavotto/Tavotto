@@ -9,6 +9,8 @@ import { GitHub } from './github.ts';
 import { LiveStore, type SignatureRow } from './store.ts';
 import { Delegation } from './delegation.ts';
 import { qualificationSQL, successCapacity } from './budget.ts';
+import { mergePrefixBinding } from './merge-prefix.ts';
+import type { MergePrefixAssessment, MergePrefixTarget } from './merge-prefix.ts';
 
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 export interface EvidenceInput { name:string; address:string; signature:string; attestations:Record<string,boolean> }
@@ -230,6 +232,26 @@ export class LiveService {
     return {name:this.c.checkName,appId:this.c.appId,appSlug:this.c.appSlug,headSha:bound.head_sha,
       conclusion:good?'success':'failure',proof,text:'tavotto-cla-v1\n'+canonical(proof),
       ...(ceiling.expires<Number.MAX_SAFE_INTEGER?{authorityExpires:ceiling.expires}:{})};
+  }
+  async assessMergePrefix(input:MergePrefixTarget):Promise<MergePrefixAssessment> {
+    if(this.c.mergePrefixAssessmentEnabled!==true)throw new Rejected('merge_prefix_disabled');
+    if(!this.store.budget || this.github.budget!==this.store.budget)throw new Rejected('invocation_budget_required');
+    const target=structuredClone(input),revision=await this.store.revision();
+    const first=await mergePrefixBinding(this.c,this.github,target,await this.github.mergePrefixSnapshot(target));
+    const now=await this.store.databaseNow(),exempt=new Set(Object.values(this.c.exemptionIds));
+    const people=first.binding.contributors.filter(person=>!exempt.has(person.id));
+    if(people.length>successCapacity(this.c))throw new Rejected('contributor_capacity_exceeded');
+    this.store.budget.reserveWorkSQL(qualificationSQL(this.c)*people.length+1);
+    let eligible=this.c.policy.provider.configured===true;const ceiling={expires:Number.MAX_SAFE_INTEGER};
+    for(const person of people)if(!await this.qualified(person.id,ceiling,now))eligible=false;
+    const last=await mergePrefixBinding(this.c,this.github,target,await this.github.mergePrefixSnapshot(target));
+    if(canonical(first)!==canonical(last))throw new Rejected('merge_prefix_changed');
+    // Revision and database time belong to one final SQL snapshot. A hold/revoke
+    // committed while the closing read waits cannot hide behind an earlier revision.
+    const final=await this.store.assessmentState(),expires=Math.min(now+120,ceiling.expires);
+    this.store.budget.checkWork();
+    if(final.revision!==revision || final.now<now || final.now>=expires)throw new Rejected('state_changed');
+    return {...first,protocol:'cla-merge-prefix-assessment-v1',eligible,revision,observed_at:final.now,valid_until:expires,publication:'not_attempted'};
   }
   async check(pr:number,expectedHead?:string):Promise<{disposition:string;check:CheckProposal}> {
     // Track before evaluation: each later evidence/hold revision enqueues a durable notification intent.

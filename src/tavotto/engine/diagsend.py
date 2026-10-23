@@ -478,11 +478,14 @@ def _lower(headers) -> dict[str, str]:
     return {k.lower(): v for k, v in (headers.items() if headers else [])}
 
 
-def _send(req: urllib.request.Request, timeout: float) -> _Response:
-    """发一次请求。2xx / 3xx / 4xx / 5xx 都回 `_Response`（重定向不跟）；传输层失败抛 `_Failure`。"""
+def _send(
+    req: urllib.request.Request, timeout: float, limit: int = MAX_RESPONSE_BYTES
+) -> _Response:
+    """发一次请求。2xx / 3xx / 4xx / 5xx 都回 `_Response`（重定向不跟）；传输层失败抛 `_Failure`。
+    `limit`：成功响应体的字节上限（默认 64 KiB；「联系作者」取带 HTML 的回信与附图时调大，错误体仍按默认封顶）。"""
     try:
         with _opener().open(req, timeout=timeout) as resp:
-            return _Response(resp.status, _lower(resp.headers), resp.read(MAX_RESPONSE_BYTES))
+            return _Response(resp.status, _lower(resp.headers), resp.read(limit))
     except urllib.error.HTTPError as err:
         try:
             body = err.read(MAX_RESPONSE_BYTES)

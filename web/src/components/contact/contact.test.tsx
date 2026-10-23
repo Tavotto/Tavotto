@@ -19,6 +19,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   cancelContact: vi.fn(),
   dismissContact: vi.fn(),
   fetchContactMessages: vi.fn(),
+  fetchContactReplyDoc: vi.fn(),
   refreshContactMessages: vi.fn(),
   markContactRead: vi.fn(),
   forgetContactMessage: vi.fn(),
@@ -37,6 +38,7 @@ import {
   dismissContact,
   fetchContactCapability,
   fetchContactMessages,
+  fetchContactReplyDoc,
   fetchContactStatus,
   fetchDiagSendStatus,
   markContactRead,
@@ -54,6 +56,7 @@ import enDialogs from '@/i18n/locales/en-US/dialogs.json'
 import zhDialogs from '@/i18n/locales/zh-CN/dialogs.json'
 import { ContactButton } from '@/components/contact/ContactButton'
 import { ContactHost } from '@/components/contact/ContactHost'
+import { REPLY_PAPER_SANDBOX } from '@/components/contact/ReplyPaper'
 import { NotificationRail } from '@/components/StatusBar'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { TopBar } from '@/components/TopBar'
@@ -109,7 +112,10 @@ const message = (over: Partial<ContactMessage> = {}): ContactMessage => ({
   route: 'cn',
   state: 'replied',
   unread: 1,
-  replies: [{ id: 'r_1', created_at: '2026-10-22T08:00:00Z', body: '收到，下周修复。', read: false }],
+  subject: '',
+  body: '',
+  attachment_names: [],
+  replies: [{ id: 'r_1', created_at: '2026-10-22T08:00:00Z', body: '收到，下周修复。', has_html: false, read: false }],
   ...over,
 })
 
@@ -638,6 +644,123 @@ describe('未读回信：小圆点、通知轨胶囊、我的来信', () => {
     expect(q('[data-contact-reply-new]')).not.toBeNull()
     expect(markContactRead).toHaveBeenCalledWith(MSG)
     expect(useContactStore.getState().unread).toBe(0)
+  })
+
+  it('每封信先显示用户自己写的主题、正文与附件名；没存原文的旧记录不画这一块', async () => {
+    vi.mocked(fetchContactMessages).mockResolvedValue({
+      messages: [
+        message({ subject: '导出报错', body: '第一行\n第二行', attachment_names: ['shot.png', '日志.pdf'] }),
+        message({ message_id: 'TVM-0000-0000-0000-0001' }),
+      ],
+      unread: 0,
+    })
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true, 'letters'))
+    await settle(10)
+    const yours = document.body.querySelectorAll('[data-contact-letter-yours]')
+    expect(yours).toHaveLength(1)
+    expect(q('[data-contact-letter-subject]')!.textContent).toBe('导出报错')
+    expect(q('[data-contact-letter-body]')!.textContent).toBe('第一行\n第二行')
+    expect(q('[data-contact-letter-files]')!.textContent).toContain('shot.png')
+    expect(q('[data-contact-letter-files]')!.textContent).toContain('日志.pdf')
+    expect(q('[data-contact-letter-toggle]')).toBeNull() // 短正文不折叠
+  })
+
+  it('长正文折叠成前 4 行，「展开」后全部显示、可再收起', async () => {
+    const long = Array.from({ length: 9 }, (_, i) => `line ${i}`).join('\n')
+    vi.mocked(fetchContactMessages).mockResolvedValue({ messages: [message({ body: long })], unread: 0 })
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true, 'letters'))
+    await settle(10)
+    const body = () => q('[data-contact-letter-body]')!
+    expect(body().className).toContain('line-clamp-4')
+    await click(q('[data-contact-letter-toggle]'))
+    expect(body().className).not.toContain('line-clamp-4')
+    expect(q('[data-contact-letter-toggle]')!.getAttribute('aria-expanded')).toBe('true')
+    await click(q('[data-contact-letter-toggle]'))
+    expect(body().className).toContain('line-clamp-4')
+  })
+
+  it('纯文字回信照旧显示文字、不取信纸文档；HTML 回信用沙盒信纸', async () => {
+    vi.mocked(fetchContactReplyDoc).mockResolvedValue({ doc: '<!doctype html><p>排版版</p>' })
+    vi.mocked(fetchContactMessages).mockResolvedValue({
+      messages: [
+        message({
+          replies: [
+            { id: 'r_1', created_at: '2026-10-22T08:00:00Z', body: '纯文字回信', has_html: false, read: true },
+            { id: 'r_2', created_at: '2026-10-22T09:00:00Z', body: '纯文字版', has_html: true, read: true },
+          ],
+        }),
+      ],
+      unread: 0,
+    })
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true, 'letters'))
+    await settle(10)
+    expect(q('[data-contact-reply="r_1"]')!.textContent).toContain('纯文字回信')
+    expect(q('[data-contact-reply="r_1"] iframe')).toBeNull()
+    expect(fetchContactReplyDoc).toHaveBeenCalledTimes(1)
+    expect(fetchContactReplyDoc).toHaveBeenCalledWith(MSG, 'r_2')
+    const frame = q<HTMLIFrameElement>('[data-contact-reply="r_2"] iframe')!
+    expect(frame.getAttribute('srcdoc')).toContain('排版版')
+  })
+
+  it('这封信这一轮没取全回信时，信上显示一句说明；正常则没有', async () => {
+    vi.mocked(fetchContactMessages).mockResolvedValue({
+      messages: [message({ poll_error: 'too_large' }), message({ message_id: 'TVM-2222-2222-2222-2222', poll_error: '' })],
+      unread: 0,
+    })
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true, 'letters'))
+    await settle(10)
+    const notes = document.body.querySelectorAll('[data-contact-poll-error]')
+    expect(notes).toHaveLength(1)
+    expect(notes[0].getAttribute('data-contact-poll-error')).toBe('too_large')
+    expect(notes[0].textContent).toContain('回信太多')
+  })
+
+  it('信纸 iframe 的 sandbox 不含 allow-scripts；深色主题下仍是白纸（paper 令牌，无 dark: 覆盖）', async () => {
+    document.documentElement.dataset.theme = 'dark'
+    try {
+      vi.mocked(fetchContactReplyDoc).mockResolvedValue({ doc: '<p>x</p>' })
+      vi.mocked(fetchContactMessages).mockResolvedValue({
+        messages: [
+          message({ replies: [{ id: 'r_2', created_at: '2026-10-22T09:00:00Z', body: 'b', has_html: true, read: true }] }),
+        ],
+        unread: 0,
+      })
+      await render(<ContactHost />)
+      await act(async () => useContactStore.getState().setOpen(true, 'letters'))
+      await settle(10)
+      const frame = q<HTMLIFrameElement>('[data-contact-reply-paper] iframe')!
+      const flags = (frame.getAttribute('sandbox') ?? '').split(/\s+/)
+      expect(flags).not.toContain('allow-scripts')
+      expect(flags).toEqual(REPLY_PAPER_SANDBOX.split(' '))
+      const paper = q('[data-contact-reply-paper]')!
+      expect(paper.className).toContain('bg-paper')
+      expect(paper.className).not.toMatch(/dark:/)
+      // 令牌：paper 在浅 / 深两张表里同值
+      const css = readFileSync(resolve(__dirname, '../../index.css'), 'utf8')
+      const defs = [...css.matchAll(/--color-paper:\s*([^;]+);/g)].map((m) => m[1].trim())
+      expect(new Set(defs).size).toBe(1)
+    } finally {
+      delete document.documentElement.dataset.theme
+    }
+  })
+
+  it('信纸文档取不到：退回纯文字并说明，不留空白', async () => {
+    vi.mocked(fetchContactReplyDoc).mockRejectedValue(new Error('x'))
+    vi.mocked(fetchContactMessages).mockResolvedValue({
+      messages: [
+        message({ replies: [{ id: 'r_2', created_at: '2026-10-22T09:00:00Z', body: '后备正文', has_html: true, read: true }] }),
+      ],
+      unread: 0,
+    })
+    await render(<ContactHost />)
+    await act(async () => useContactStore.getState().setOpen(true, 'letters'))
+    await settle(10)
+    expect(q('[data-contact-reply-fallback]')!.textContent).toContain('后备正文')
+    expect(q('iframe')).toBeNull()
   })
 
   it('没有信时说明去向，而不是空白', async () => {

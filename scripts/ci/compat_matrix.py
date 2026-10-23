@@ -111,15 +111,31 @@ def materialize(group: list[dict], workdir: Path) -> tuple[Path, str, str]:
     project = workdir / "project"
     project.mkdir(parents=True, exist_ok=True)
 
+    # Recorded upstream launch preparation (empty output directories are not Git blobs).
+    for relative in case.get("project_directories", []):
+        directory = (project / relative).resolve()
+        if not directory.is_relative_to(project.resolve()):
+            raise ValueError("project directory must stay inside the materialized project")
+        directory.mkdir(parents=True, exist_ok=True)
+
     dest_rel = case.get("script_dest") or Path(case["script"]).name
     dest = project / dest_rel
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(CC.COMPAT_DIR / case["script"], dest)
+
+    def copy_source(relative, target):
+        if case.get("research_project_id"):
+            import compat_research_sources as sources
+
+            target.write_bytes(sources.source_bytes(case, "tests/compat/" + relative))
+        else:
+            shutil.copy2(CC.COMPAT_DIR / relative, target)
+
+    copy_source(case["script"], dest)
 
     for rel, src in (case.get("extra_files") or {}).items():
         target = project / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(CC.COMPAT_DIR / src, target)
+        copy_source(src, target)
 
     for asset in case.get("assets") or []:
         # 素材放在**脚本自己的目录**旁边——`pd.read_csv("data.csv")` 的语义
@@ -132,7 +148,49 @@ def materialize(group: list[dict], workdir: Path) -> tuple[Path, str, str]:
 # --------------------------------------------------------------------------
 # 阶段 1：发现（discover → probe → registry）
 # --------------------------------------------------------------------------
-def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
+#: Working directories the product can give a script (`execspec.CWD_PROJECT` = the script's directory,
+#: `execspec.CWD_PROJECT_ROOT` = the project root). Anything else is a product capability boundary.
+LAUNCH_CONTEXT_UNSUPPORTED = "launch_context_unsupported"
+
+
+class LaunchNotExpressible(ValueError):
+    """The registered launch cannot be handed to the product's own run settings."""
+
+    def __init__(self, cwd: str, modes: list[str]) -> None:
+        super().__init__(f"launch cwd {cwd!r} is neither the script directory nor the project root")
+        self.detail = {
+            "code": LAUNCH_CONTEXT_UNSUPPORTED,
+            "launch_cwd": cwd,
+            "expressible_modes": modes,
+        }
+
+
+def registered_launch(project: Path, script_rel: str, case: dict):
+    """Hand a registered `reference_invocation` to the product, as a user would.
+
+    argv becomes a product run configuration; cwd becomes the project's working-directory
+    mode (script directory or project root). The product has no arbitrary-cwd mode, so any
+    other directory is a measurement gap and raises instead of silently running elsewhere.
+    Returns the `RunSelection` (None for empty argv / no registration).
+    """
+    launch = case.get("reference_invocation")
+    if launch is None:
+        return None
+    from tavotto.engine import execspec, runconfig, workdir
+
+    root = project.resolve()
+    cwd = (root / launch["cwd"]).resolve()
+    if cwd == (root / script_rel).resolve().parent:
+        mode = execspec.CWD_PROJECT
+    elif cwd == root:
+        mode = execspec.CWD_PROJECT_ROOT
+    else:
+        raise LaunchNotExpressible(launch["cwd"], [execspec.CWD_PROJECT, execspec.CWD_PROJECT_ROOT])
+    workdir.set_mode(project, mode)
+    return runconfig.selection_for(project, script_rel, launch["argv"])
+
+
+def stage_discover(project: Path, script_rel: str, case: dict, run=None) -> dict:
     """走产品自己的发现链，**不允许 runner 直接把 script/entry 塞给 worker**。
 
     用户的真实体验不是手写注册表。一个「本该能自动发现」的 case 只有靠清单
@@ -173,7 +231,7 @@ def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
         return {"ok": False, "detail": detail, "entry": None, "registry": reg}
 
     # 试运行探测：stem 只有运行期才知道时的那条路。
-    result = engine_probe.probe_and_register(project, script_rel)
+    result = engine_probe.probe_and_register(project, script_rel, run=run)
     detail["probe"] = {
         "entry": result.get("entry"),
         "tried": result.get("tried"),
@@ -195,10 +253,10 @@ def stage_discover(project: Path, script_rel: str, case: dict) -> dict:
 # --------------------------------------------------------------------------
 # 阶段 2~8：真实 worker
 # --------------------------------------------------------------------------
-def _fresh_worker(script_rel: str, project: Path, entry: str):
+def _fresh_worker(script_rel: str, project: Path, entry: str, run=None):
     from tavotto.engine import pool
 
-    w = pool.one_shot(script_rel, str(project), entry)
+    w = pool.one_shot(script_rel, str(project), entry, run=run)
     w.ensure_built()
     return w
 
@@ -304,6 +362,46 @@ def stage_edit(worker, stem: str, case: dict, base_man: dict) -> dict:
         },
         "full_patches": applied,
     }
+
+
+def manifest_xy_digests(man: dict) -> list[str]:
+    """Sorted `data_fingerprint.parts.xy` digests of the opened figure (duplicates kept)."""
+    out = []
+    for el in man.get("elements", []):
+        fingerprint = el.get("data_fingerprint") or {}
+        part = (fingerprint.get("parts") or {}).get("xy")
+        if fingerprint.get("status") == "ok" and part:
+            out.append(part["sha256"])
+    return sorted(out)
+
+
+#: Roles whose curves live in a container or under other fingerprint parts (`points`, `xyz`).
+_LINE_CONTAINER_ROLES = ("errorbar", "stem_series")
+
+
+def manifest_incomparable_lines(man: dict) -> int:
+    """Line-related elements the plain `xy` comparison cannot cover (grouped / 3D / non-xy parts)."""
+    count = 0
+    for el in man.get("elements", []):
+        fingerprint = el.get("data_fingerprint") or {}
+        if el.get("role") in _LINE_CONTAINER_ROLES:
+            count += 1
+        elif (
+            el.get("role") == "line"
+            and fingerprint.get("status") == "ok"
+            and set(fingerprint.get("parts") or {}) != {"xy"}
+        ):
+            count += 1
+    return count
+
+
+def manifest_unobserved_lines(man: dict) -> int:
+    """Line elements whose fingerprint is `over_budget` / `unavailable` / missing: not observed."""
+    return sum(
+        1
+        for el in man.get("elements", [])
+        if el.get("role") == "line" and (el.get("data_fingerprint") or {}).get("status") != "ok"
+    )
 
 
 def _editable_snapshot(man: dict) -> dict:
@@ -1350,7 +1448,15 @@ def run_group(
     hot = fresh = None
     try:
         # ── 发现 ────────────────────────────────────────────────
-        disc = stage_discover(project, script_rel, lead)
+        try:
+            run = registered_launch(project, script_rel, lead)
+        except LaunchNotExpressible as exc:
+            # A product capability boundary, not a runner fault: the product leg fails at discover.
+            for ca in group:
+                results[ca["id"]]["stages"]["discover"] = False
+                results[ca["id"]]["detail"]["discover"] = exc.detail
+            return _finish(results, group, t0)
+        disc = stage_discover(project, script_rel, lead, run=run)
         entry = disc["entry"] or declared_entry
         for ca in group:
             r = results[ca["id"]]
@@ -1361,7 +1467,7 @@ def run_group(
 
         # ── 执行 + 捕获 ──────────────────────────────────────────
         try:
-            hot = _fresh_worker(script_rel, project, entry)
+            hot = _fresh_worker(script_rel, project, entry, run=run)
             built = hot.ensure_built()
             stems = built.get("stems") or {}
             # 计时**只记录、不设阈值**：性能回归归 scripts/ci/benchmark.py。
@@ -1422,6 +1528,9 @@ def run_group(
                 "warnings": opened.get("warnings") or [],
                 "size_mm": base_man.get("size_mm"),
                 "render_ms": ot.get("total_ms"),
+                "line_xy": manifest_xy_digests(base_man),
+                "line_xy_unobserved": manifest_unobserved_lines(base_man),
+                "line_xy_incomparable": manifest_incomparable_lines(base_man),
             }
             if not r["stages"]["open"]:
                 continue
@@ -1472,7 +1581,7 @@ def run_group(
 
             if patches:
                 if fresh is None:
-                    fresh = _fresh_worker(script_rel, project, entry)
+                    fresh = _fresh_worker(script_rel, project, entry, run=run)
                 try:
                     rep = stage_replay(hot, fresh, stem, patches)
                     r["stages"]["replay"] = rep["ok"]
@@ -1498,7 +1607,7 @@ def run_group(
             ).get("restore_warnings"):
                 r["dirty"] = True
                 pool.discard(hot)
-                hot = _fresh_worker(script_rel, project, entry)
+                hot = _fresh_worker(script_rel, project, entry, run=run)
 
         # ── artist 普查（纯诊断，不参与 pass/fail）─────────────
         census = run_driver(

@@ -70,6 +70,13 @@ CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 #: 控制台子进程，而不是"漏传就当成前者"。
 INHERIT_CONSOLE = 0
 
+#: **第三类子进程**：要让用户**看见并操作**的新控制台窗口（官方登录按钮在 Windows 上
+#: 为 `claude auth login` 开的那个，`ai_bridge._open_in_terminal`）。值是 Windows 的
+#: `CREATE_NEW_CONSOLE`，**所有平台同值**——只有 Windows 分支会把它传给 Popen
+#: （POSIX 上传 creationflags 会抛 ValueError），常量本身不随平台变，这样用例在 POSIX
+#: 上也能断言“Windows 分支传的就是它”。
+CREATE_NEW_CONSOLE = 0x00000010
+
 
 def is_frozen() -> bool:
     """是否跑在 PyInstaller 打出的独立应用里（.app / .exe）。"""

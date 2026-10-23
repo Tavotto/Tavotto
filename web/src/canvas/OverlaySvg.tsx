@@ -161,7 +161,9 @@ export function OverlaySvg() {
     }
   }, [objects, linePanelIds])
 
-  const selected = objects.filter((o) => selectedIds.includes(o.id) && !o.hidden)
+  // 拖图边改图幅松手后、新图落定之前：该面板只留虚线占位，选区轮廓与缩放手柄一并压住（旧 w/h 的手柄不可见也不可点）
+  const pendingFrameId = useInteractionStore((s) => s.figureFramePending?.id)
+  const selected = objects.filter((o) => selectedIds.includes(o.id) && !o.hidden && o.id !== pendingFrameId)
   // 主选 = 选区末位（对齐 / 等宽等高的「主选」参照）。多选时它的轮廓略粗——
   // 联合框只说「选了这一片」，说不出「以谁为基准」
   const primaryId = selectedIds.at(-1) ?? null

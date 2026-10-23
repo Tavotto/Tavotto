@@ -1,0 +1,11 @@
+{
+  "provenance": "Reconstructed original closing method from the initial read-only diff and exact f73 base Store; not a byte copy captured before author repair. Other current files are copied but original race uses a GitHub stub. Original initial actual-red log remains separately preserved.",
+  "source_sha256": {
+    "src/native/service.ts": "f113c2c2f0d647019da1ceaddf28ff786d5b4a5c25e62978ab8918710385d43a",
+    "src/native/store.ts": "eaeba99f908d736d56552cdaa1e8f315b33287c1ed57f548f21af6840b815730",
+    "closing-hold-race.test.mjs": "2cd7a2e615ebe540b5b8eadfe8fecb0c33747bcc8620a23c4146455f67f6dd4a"
+  },
+  "exit_code": 1,
+  "actual_assertion_error": true,
+  "log": "/tmp/cla-merge-prefix-independent/closing-hold-race-replayed-red.log"
+}

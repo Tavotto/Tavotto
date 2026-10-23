@@ -1,0 +1,227 @@
+name: Research S0 baseline (hosted observation)
+
+on:
+  workflow_dispatch:
+    inputs:
+      case_id:
+        description: Frozen development case id, or all
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-s0-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TAVOTTO_NO_TELEMETRY: '1'
+  TAVOTTO_NO_DIAG_UPLOAD: '1'
+  TAVOTTO_NO_UPDATE_CHECK: '1'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.cohort.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Verify frozen registration without downloading or running projects
+        id: cohort
+        env:
+          CASE_ID: ${{ inputs.case_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/compat_guardian_research.py verify
+          args=()
+          if [[ "$CASE_ID" != 'all' ]]; then args=(--case "$CASE_ID"); fi
+          matrix="$(python scripts/ci/compat_guardian_research.py matrix "${args[@]}")"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  baseline:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    # Environment setup (up to 40 min of TeX), observation (18 min), receipt and evidence upload.
+    timeout-minutes: 90
+    env:
+      TAVOTTO_RESEARCH_CACHE: ${{ github.workspace }}/../research-sources
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Fetch upstream files at frozen commits and verify SHA-256
+        env:
+          CASE_ID: ${{ matrix.case_id }}
+        run: python scripts/ci/compat_guardian_research.py fetch --case "$CASE_ID"
+      # Two interpreters, as in the product (docs/rules/backend/process-boundaries.md): Tavotto's own
+      # venv (Flask + RenderCore packages) and the scientific venv that runs scripts and workers.
+      # Sharing one venv lets RenderCore's uharfbuzz clash with a research package's abi3 Cython
+      # extension (e.g. astropy), which breaks matplotlib's PDF backend in the measurement only.
+      - name: Install fixed measurement environments
+        id: core
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/tavotto-venv"
+          # Both venvs follow the runtime lock, so neither drifts with upstream releases.
+          python scripts/ci/runtime_pins.py --format lines > "$RUNNER_TEMP/tavotto-constraints.txt"
+          "$RUNNER_TEMP/tavotto-venv/bin/python" -m pip install -c "$RUNNER_TEMP/tavotto-constraints.txt" -e '.[dev,ci]'
+          python scripts/ci/runtime_pins.py --include-corpus --format lines > "$RUNNER_TEMP/runtime-constraints.txt"
+          python -m venv "$RUNNER_TEMP/science-venv"
+          "$RUNNER_TEMP/science-venv/bin/python" -m pip install -r "$RUNNER_TEMP/runtime-constraints.txt"
+          echo "TAVOTTO_SCIENCE_PYTHON=$RUNNER_TEMP/science-venv/bin/python" >> "$GITHUB_ENV"
+          echo "TAVOTTO_PYTHON=$RUNNER_TEMP/tavotto-venv/bin/python" >> "$GITHUB_ENV"
+      - name: Approved fonts
+        id: fonts
+        shell: bash
+        run: |
+          "$TAVOTTO_PYTHON" scripts/fetch_fonts.py
+          "$TAVOTTO_PYTHON" scripts/fetch_fonts.py --check
+      - name: Prepare original scientific prerequisites
+        id: scientific
+        env:
+          CASE_ID: ${{ matrix.case_id }}
+          SOURCE_PACKAGE: ${{ matrix.source_package }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CASE_ID" =~ ^research_[a-z0-9_]+$ ]]
+          "$TAVOTTO_SCIENCE_PYTHON" -m pip install -c "$RUNNER_TEMP/runtime-constraints.txt" \
+            -r "tests/compat/research-environments/$CASE_ID.txt"
+          if [[ "$SOURCE_PACKAGE" == 'true' ]]; then
+            python scripts/ci/compat_guardian_research.py stage-dependency \
+              --case "$CASE_ID" --out "$RUNNER_TEMP/scientific-source"
+            "$TAVOTTO_SCIENCE_PYTHON" -m pip install -c "$RUNNER_TEMP/runtime-constraints.txt" "$RUNNER_TEMP/scientific-source"
+          fi
+          "$TAVOTTO_SCIENCE_PYTHON" -m pip check
+          "$TAVOTTO_PYTHON" scripts/ci/compat_guardian_research.py verify-environment --case "$CASE_ID"
+          # Process boundary: the scientific interpreter must not carry Tavotto's RenderCore packages.
+          "$TAVOTTO_PYTHON" scripts/ci/compat_guardian_research.py verify-science-environment \
+            --python "$TAVOTTO_SCIENCE_PYTHON"
+      - name: Prepare original TeX prerequisites
+        id: tex
+        if: ${{ !cancelled() && matrix.tex }}
+        timeout-minutes: 45
+        shell: bash
+        run: |
+          set -uo pipefail
+          # An own, shorter limit so a stuck install leaves a marker the receipt can report.
+          timeout 2400 bash -c '
+            set -euo pipefail
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends \
+              texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra texlive-science cm-super dvipng
+          '
+          code=$?
+          if [[ "$code" == 124 ]]; then echo timeout > "$RUNNER_TEMP/tex-setup.txt"; fi
+          exit "$code"
+      - name: Observe native and Tavotto without rewriting the research script
+        if: ${{ !cancelled() && steps.core.outcome == 'success' && steps.fonts.outcome == 'success' && steps.scientific.outcome == 'success' && (steps.tex.outcome == 'success' || steps.tex.outcome == 'skipped') }}
+        timeout-minutes: 18
+        env:
+          CASE_ID: ${{ matrix.case_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$CASE_ID" =~ ^research_[a-z0-9_]+$ ]]
+          set +e
+          "$TAVOTTO_PYTHON" scripts/ci/compat_guardian.py run --suite compat_engine \
+            --case "$CASE_ID" --expected-sha "$GITHUB_SHA" --timeout 900 \
+            --out "$RUNNER_TEMP/research-s0" > "$RUNNER_TEMP/research-s0.out" 2>&1
+          code=$?
+          set -e
+          grep -E '^[A-Za-z0-9_]+: [a-z_]+$' "$RUNNER_TEMP/research-s0.out" || true
+          if [[ "$code" != 0 ]]; then
+            echo "::error::S0 observation exited $code; non-passing outcomes remain visible"
+            tail -n 30 "$RUNNER_TEMP/research-s0.out"
+          fi
+          exit "$code"
+      - name: Record prerequisite outcomes even when observation could not start
+        if: ${{ !cancelled() }}
+        env:
+          CASE_ID: ${{ matrix.case_id }}
+          CORE_OUTCOME: ${{ steps.core.outcome }}
+          FONTS_OUTCOME: ${{ steps.fonts.outcome }}
+          SCIENTIFIC_OUTCOME: ${{ steps.scientific.outcome }}
+          TEX_OUTCOME: ${{ steps.tex.outcome }}
+        shell: bash
+        run: |
+          if [[ -n "${TAVOTTO_SCIENCE_PYTHON:-}" ]]; then
+            "$TAVOTTO_SCIENCE_PYTHON" -m pip freeze --all > "$RUNNER_TEMP/research-installed.txt"
+          else
+            python -m pip freeze --all > "$RUNNER_TEMP/research-installed.txt"
+          fi
+          if [[ -n "${TAVOTTO_PYTHON:-}" ]]; then
+            "$TAVOTTO_PYTHON" -m pip freeze --all > "$RUNNER_TEMP/tavotto-installed.txt"
+          else
+            : > "$RUNNER_TEMP/tavotto-installed.txt"
+          fi
+          python - <<'PY'
+          import hashlib, json, os, platform
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          receipt = {
+              'schema': 'tavotto-research-setup/1',
+              'case_id': os.environ['CASE_ID'],
+              'source_sha': os.environ['GITHUB_SHA'],
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'python': platform.python_version(),
+              'steps': {k: os.environ[k.upper() + '_OUTCOME'] for k in ('core', 'fonts', 'scientific', 'tex')},
+              'tex_setup': (root / 'tex-setup.txt').read_text().strip() if (root / 'tex-setup.txt').exists() else None,
+              'installed_sha256': hashlib.sha256((root / 'research-installed.txt').read_bytes()).hexdigest(),
+              'tavotto_installed_sha256': hashlib.sha256((root / 'tavotto-installed.txt').read_bytes()).hexdigest(),
+          }
+          (root / 'setup-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+      - name: Validate complete evidence in its producing checkout
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          reports=("$RUNNER_TEMP"/research-s0/*/reports/guardian.json)
+          [[ ${#reports[@]} -eq 1 ]]
+          "${TAVOTTO_PYTHON:-python}" scripts/ci/compat_guardian.py validate "${reports[0]}"
+          cat "$(dirname "${reports[0]}")/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      # The report references every file under evidence/ by SHA-256 (json, jsonl, svg, png, pdf, ...), so
+      # the artifact is the staged run directory, not a filtered subset; the staged copy is validated.
+      - name: Stage the artifact and validate that exact copy
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          stage="$RUNNER_TEMP/s0-artifact"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          for name in setup-receipt.json research-installed.txt tavotto-installed.txt; do
+            if [[ -f "$RUNNER_TEMP/$name" ]]; then cp "$RUNNER_TEMP/$name" "$stage/"; fi
+          done
+          if [[ -d "$RUNNER_TEMP/research-s0" ]]; then cp -R "$RUNNER_TEMP/research-s0" "$stage/research-s0"; fi
+          reports=("$stage"/research-s0/*/reports/guardian.json)
+          [[ ${#reports[@]} -eq 1 ]]
+          "${TAVOTTO_PYTHON:-python}" scripts/ci/compat_guardian.py validate "${reports[0]}"
+      - name: Preserve the validated observation artifact including failures
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: research-s0-${{ matrix.case_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/s0-artifact
+          retention-days: 30
+          if-no-files-found: error

@@ -1,0 +1,133 @@
+"""注册表的公共件：`FixTool`、会话上下文 `FixContext`、结果构造（ADR 0149 §六）。
+
+注册表与「接法」无关：内置执行器经 `build_agent_tools` 适配成原生工具调用；CLI 经 MCP 的接法（D3）读同一张 `REGISTRY`。
+工具拿到的是**注入的上下文对象**，不 import app / Flask。
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Literal
+
+from ..agent_runner.wires import ToolResult
+from . import readscope
+
+#: `observe` = 只读；`run` = 以与准备会话 safe 运行同等的保护运行用户代码（写入绊线 + 禁起进程 + 只在专用目录里跑 + 审计 + 有则加操作系统沙盒）。
+#: 用户点「使用你的 AI 来修复」开启修复会话即视为授权 `run` 这一档；它**不是**「什么都不改」的承诺，盲区见 ADR 0149。
+Tier = Literal["observe", "run", "tavotto", "listed", "user_env", "outward"]
+TIERS: tuple[str, ...] = ("observe", "run", "tavotto", "listed", "user_env", "outward")
+
+#: 修复会话（D2 创建方）默认放行的档
+FIX_SESSION_TIERS: frozenset[str] = frozenset({"observe", "run"})
+
+#: 这些错误码 = 「被拦」：审计里记 approved_by=blocked
+BLOCKED_CODES = frozenset(
+    {readscope.REASON_DENIED, readscope.REASON_OUTSIDE, "tier_not_allowed", "env_unknown"}
+)
+
+
+@dataclass
+class FixContext:
+    session_id: str
+    project_root: Path
+    #: 用户主目录；测试里一律给 tmp_path 假主目录，不碰真实的
+    home: Path = field(default_factory=Path.home)
+    #: 当前项目所用 Python 环境的前缀（可能在主目录外）
+    env_prefixes: list[Path] = field(default_factory=list)
+    #: 环境 id → 解释器路径。`inspect_environment` / `try_*` 只认这张表里的 id，不接受任意解释器路径
+    environments: dict[str, str] = field(default_factory=dict)
+    #: 当前准备会话的报告（原始 dict）；没有会话就是 None
+    report: Callable[[], dict | None] | None = None
+    #: 候选环境清单 `() -> [evaluate() 结果形状的 entry]`；None = 用 `userenvs.discover(project_root)`
+    environment_source: Callable[[], list[dict]] | None = None
+    #: 日志来源 → 文件路径；缺省 app = `data_dir()/cache/app.log`
+    log_paths: dict[str, Path] = field(default_factory=dict)
+    #: 被诊断的脚本（`try_run` 复制它去跑）
+    script_path: Path | None = None
+    #: `try_run` 的执行器 `(python, work_dir, script_name, mode, timeout) -> dict`；None = 内置的一次性子进程
+    runner: Callable[..., dict] | None = None
+    #: 本会话允许的档；裸构造只放行 observe（只读），修复会话用 `for_fix_session` 加上 run
+    allowed_tiers: frozenset[str] = frozenset({"observe"})
+    #: 项目外的读取清单（供卡片详情列出）
+    reads: list[dict] = field(default_factory=list)
+    step: int = 0
+    case_insensitive: bool | None = None
+    extra_deny: list[Path] | None = None
+
+    def __post_init__(self) -> None:
+        self.project_root = Path(self.project_root)
+        self.home = Path(self.home)
+        self.scope = readscope.ReadScope(
+            home=self.home,
+            project_root=self.project_root,
+            env_prefixes=self.env_prefixes,
+            extra_deny=self.extra_deny,
+            case_insensitive=self.case_insensitive,
+        )
+
+    @classmethod
+    def for_fix_session(cls, session_id: str, project_root: Path, **kw) -> FixContext:
+        """修复会话的构造帮手：用户点「使用你的 AI 来修复」即授权 `observe` + `run`；其余字段同构造。"""
+        kw.setdefault("allowed_tiers", FIX_SESSION_TIERS)
+        return cls(session_id=session_id, project_root=project_root, **kw)
+
+    def python_of(self, env_id: object) -> str | None:
+        return self.environments.get(env_id) if isinstance(env_id, str) else None
+
+    def note_read(self, resolved: readscope.Resolved, tool: str) -> None:
+        """项目外的读取才记；项目内不记。"""
+        if resolved.in_project:
+            return
+        self.reads.append({"tool": tool, "path": resolved.real, "step": self.step})
+
+
+@dataclass(frozen=True)
+class FixTool:
+    name: str
+    description: str
+    schema: dict
+    handler: Callable[[FixContext, dict], ToolResult]
+    tier: Tier = "observe"
+    waits_for_user: bool = False
+
+
+def ok(text: str, summary: str = "", *, compact: str | None = None) -> ToolResult:
+    return ToolResult("", "", readscope.scrub(text), summary=summary, compact=compact)
+
+
+def err(code: str, message: str) -> ToolResult:
+    return ToolResult("", "", message, is_error=True, code=code, summary=f"error: {code}")
+
+
+def obj(props: dict, required: list[str] | None = None) -> dict:
+    return {
+        "type": "object",
+        "properties": props,
+        "required": required or [],
+        "additionalProperties": False,
+    }
+
+
+def resolve_or_error(ctx: FixContext, raw: object, tool: str) -> readscope.Resolved | ToolResult:
+    r = ctx.scope.check(raw)
+    if r.ok:
+        ctx.note_read(r, tool)
+        return r
+    msg = {
+        readscope.REASON_DENIED: "That location holds credentials or private browser data and cannot be read.",
+        readscope.REASON_OUTSIDE: "That path is outside the folders you may read (your home folder, "
+        "the project, and the Python environment in use).",
+        readscope.REASON_BAD_PATH: "`path` must be a non-empty string.",
+    }[r.reason]
+    return err(r.reason, msg)
+
+
+def home_relative(ctx: FixContext, real: str) -> str:
+    """给模型看的路径：主目录下的写成 `~/…`（少带一层本机用户名）。"""
+    home = os.path.realpath(ctx.home)
+    if real == home or real.startswith(home + os.sep):
+        return "~" + real[len(home) :].replace(os.sep, "/")
+    return real.replace(os.sep, "/")

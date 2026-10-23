@@ -20,7 +20,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from .. import tlstrust
 
@@ -44,6 +44,10 @@ class ToolSpec:
     name: str
     description: str
     schema: dict
+    #: 风险档（ADR 0149）：只给 Tavotto 自己的策略层看，**绝不序列化给模型**（三种 wire 只发 name / description / schema）
+    tier: Literal["observe", "run", "tavotto", "listed", "user_env", "outward"] = "observe"
+    #: 这个工具会停下来等用户点头（策略层用；同样不发给模型）
+    waits_for_user: bool = False
 
 
 @dataclass
