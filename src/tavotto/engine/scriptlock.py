@@ -23,6 +23,8 @@
   **新建**兄弟脚本；锁序固定：原脚本在外、目标兄弟脚本在内，两步之间别处的编辑被锁挡住。
 * `ai_convert._adopt_locked`（`adopt` 的锁内部分）：逐个候选名持**目标兄弟脚本**的锁 `create_script`
   （`<名>.py` / `<名>_2.py` …，已存在换下一个号，永不覆盖）。
+* `snapshots.restore_script`（AI 修复工具箱，ADR 0149 §七）：`run_command` / `convert_script` 事后核对发现用户脚本被改 / 被删，
+  或 `rollback` 重试未恢复的脚本时，持这份脚本的锁、`write_script` 把**执行前备份的原字节**写回；从不写新内容。
 
 写脚本字节只经 `write_script()` / `create_script()`：没持有这份脚本的锁就抛——门禁落在写的那一刻，不靠调用方记得。
 纯标准库 + `atomicio`；Flask 父进程 import。

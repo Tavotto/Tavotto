@@ -459,3 +459,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 - **`convert_script`**：原脚本**绝不动**——只许写 `<原名>_matplotlib.py`（已存在则 `_matplotlib_2`…，不覆盖）；脚本必须在项目内（解析符号链接后）；执行器返回后核原脚本 sha256，变了即 `original_modified`。
 - **#1361 三条**：`_copy_project` 只复制普通文件（FIFO / socket / 设备及指向它们的链接跳过、记 `skipped["special"]`、结果 `copy_incomplete`，复制前再 `S_ISREG` 核一次防枚举后被换成 FIFO）；
   `list_environments` 列满 30 条时如实报 `[showing 30 of N …]`，本项目当前 / 选过的环境排前，`match` 参数按名字 / 来源 / 路径片段筛（被列出的才登记 id）；`_copy_project(…, reads)` 回传实际复制了内容的链接目标，`try_run` 逐个 `ctx.note_read(…, "try_run")`。
+- **用户脚本永不被「改」组改掉（#1371 P1）**：`run_command` 执行前 `snapshots.collect_scripts` 把项目里的用户脚本（`.py` + `sourcelang.extension_hint` 认的 R / MATLAB 后缀；符号链接解析到真实路径；跳过 `.venv` / `.git` / `node_modules` / `tavottofile` 等）字节备份进快照（`<id>.files/`，索引含 sha256）；超 `SCRIPTS_MAX_FILES` / `SCRIPTS_MAX_BYTES` 备份不了就不跑（`scripts_too_large`，先于问用户）。
+  命令结束（含超时）后 `verify_scripts` 逐个核对，被改 / 被删的经 `snapshots.restore_script`（`scriptlock.script_guard` + `write_script`，持有者清单已登记）写回原字节，结果带 `scripts_restored`；写回失败 → `scripts_unrestored`，并把路径记进快照的 `unrestored`，`rollback` 再试一次（只恢复这些，不碰用户后来自己改的）。命令运行期间用户在界面里改同一脚本会被一并写回（已知取舍）。
+  `convert_script` 的转换器拿到的是原脚本的**临时副本**（`data_dir()/cache/fix_convert/`，用完即删）；返回后仍核原脚本哈希，变了用执行前读到的原字节经同一条路径恢复并报 `original_modified`。
+- **freeze 的「可用」按成败判（#1371 P1）**：`default_freezer` 成功回文本（全新空环境是 `""`）、失败回 `None`；快照的 `freeze_available` = 拿到了没有，不按输出是否为空。

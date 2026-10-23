@@ -21,8 +21,10 @@ import hashlib
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import threading
+import uuid
 from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
@@ -442,6 +444,14 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
     cwd = str(ctx.project_root)
     if not os.path.isdir(cwd):
         return err("no_project", "The project folder is not there.")
+    # 用户脚本永不被改：执行前把项目里的用户脚本字节备份进快照，备份不了（太多 / 太大 / 读不了）就不让命令去跑
+    saved_files = snapshots.collect_scripts(ctx.project_root)
+    if saved_files is None:
+        return err(
+            "scripts_too_large",
+            "The project has too many or too large script files to protect while a command runs, "
+            "so the command was not run. Run it yourself, or use a more specific tool.",
+        )
     shown = shlex.join(argv) if os.name != "nt" else subprocess.list2cmdline(argv)
     denied = approve(
         ctx,
@@ -451,9 +461,10 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
     )
     if denied is not None:
         return denied
-    bad = _snapshot_or_error(ctx, "run_command", _project_env_ids(ctx))
-    if bad is not None:
-        return bad
+    if snapshots.take(ctx, "run_command", _project_env_ids(ctx), saved_files) is None:
+        return err(
+            "snapshot_failed", "Could not save a snapshot to roll back to, so nothing was changed."
+        )
     from .. import runtime
 
     try:
@@ -496,6 +507,20 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
         pass
     tail = "\n".join(cap.text().splitlines()[-OUTPUT_LINES:])
     notes = ""
+    # 命令结束后逐个核对用户脚本：被改 / 被删的经 scriptlock 的写入路径恢复原字节，并如实报告
+    restored, failed = snapshots.verify_scripts(saved_files)
+    if restored:
+        notes += (
+            f"\nscripts_restored: {len(restored)} user script(s) were changed or deleted by the command "
+            f"and put back to their original bytes ({snapshots.display_names(ctx, restored)}); "
+            "user scripts are never modified"
+        )
+    if failed:
+        snapshots.mark_unrestored(ctx, ctx.call_meta["snapshot"], failed)
+        notes += (
+            f"\nscripts_unrestored: {len(failed)} user script(s) were changed by the command and could NOT "
+            f"be put back ({snapshots.display_names(ctx, failed)}); rollback will try again. Tell the user."
+        )
     if overflow.is_set():
         notes += (
             f"\noutput_truncated: more than {trial.OUTPUT_LIMIT_BYTES // (1024 * 1024)} MiB of output, "
@@ -504,7 +529,9 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
     body = _with_snapshot(
         ctx, f"exit code: {proc.returncode}{notes}\n--- output (last lines) ---\n{tail}"
     )
-    if timed_out and not overflow.is_set():
+    if failed:
+        res = err("scripts_unrestored", body)
+    elif timed_out and not overflow.is_set():
         res = err(
             "timeout",
             f"The command did not finish within {int(timeout)} s and was stopped.\n{body}",
@@ -572,18 +599,42 @@ def convert_script(ctx: FixContext, args: dict) -> ToolResult:
     bad = _snapshot_or_error(ctx, "convert_script")
     if bad is not None:
         return bad
-    before = _sha256(script)
-    res = executors.call_executor(
-        ctx.script_converter,
-        {"script": str(script), "output": str(out), "project": str(ctx.project_root)},
-    )
-    # 原脚本绝对不动：无论执行器说什么，字节变了就是失败（用户的文件永远是原样）
-    if _sha256(script) != before:
+    try:
+        original = script.read_bytes()
+    except OSError:
+        return err("no_script", "That script file could not be read.")
+    # 转换器拿到的是原脚本的**临时副本**，不是原路径：它没有任何理由去写原脚本
+    from .. import config
+
+    work = config.data_dir() / "cache" / "fix_convert" / uuid.uuid4().hex
+    try:
+        work.mkdir(parents=True)
+        copy_path = work / script.name
+        copy_path.write_bytes(original)
+    except OSError:
+        shutil.rmtree(work, ignore_errors=True)
+        return err("copy_failed", "Could not make a scratch copy of the script.")
+    try:
+        res = executors.call_executor(
+            ctx.script_converter,
+            {"script": str(copy_path), "output": str(out), "project": str(ctx.project_root)},
+        )
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    # 原脚本绝对不动：无论执行器说什么，字节变了就用执行前读到的原字节经 scriptlock 恢复，并报错
+    if _sha256(script) != hashlib.sha256(original).hexdigest():
+        back = snapshots.restore_script(script, original)
         return err(
             "original_modified",
             _with_snapshot(
                 ctx,
-                "The conversion changed the original script, which must never happen. Tell the user.",
+                "The conversion changed the original script, which must never happen. "
+                + (
+                    "The original bytes were put back."
+                    if back
+                    else "The original could NOT be put back."
+                )
+                + " Tell the user.",
             ),
         )
     if not res.get("ok") or not out.is_file():

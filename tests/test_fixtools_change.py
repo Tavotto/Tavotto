@@ -67,6 +67,8 @@ class FakeEnv:
         self.uninstalls: list[list[str]] = []
 
     def freezer(self, python):
+        if not self.pkgs:
+            return ""  # 全新空环境：freeze 成功但没有输出
         return "\n".join(f"{k}=={v}" for k, v in sorted(self.pkgs.items())) + "\n-e /home/x/proj\n"
 
     def installer(self, python, reqs):
@@ -341,7 +343,7 @@ def test_default_uninstaller_and_freezer_use_the_existing_helpers(monkeypatch):
     monkeypatch.setattr(
         deprepair, "_pip_uninstall", lambda p, d, c, log: seen.append(d) or ("", "")
     )
-    monkeypatch.setattr(deprepair, "_freeze", lambda python: "numpy==1.0\n")
+    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, "numpy==1.0\n"))
     assert executors._default_uninstaller("/x/python", ["a", "b"])["done"] == [
         "a",
         "b",
@@ -350,6 +352,11 @@ def test_default_uninstaller_and_freezer_use_the_existing_helpers(monkeypatch):
         "b",
     ]
     assert snapshots.default_freezer("/x/python") == "numpy==1.0\n"
+    # 成功但输出为空（全新空环境）= ""；退出码非 0 = None——两者不能混
+    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (0, ""))
+    assert snapshots.default_freezer("/x/python") == ""
+    monkeypatch.setattr(deprepair, "_run", lambda argv, timeout: (1, "boom"))
+    assert snapshots.default_freezer("/x/python") is None
 
 
 # =========================================================================== 快照与回滚
@@ -449,7 +456,7 @@ def test_a_forged_snapshot_outside_the_session_folder_is_never_loaded(box):
 
 def test_rollback_reports_when_the_package_list_was_unavailable(box):
     ctx = change_ctx(box)
-    ctx.freezer = lambda python: ""
+    ctx.freezer = lambda python: None
     call(ctx, "install_packages", {"env": "e", "packages": ["seaborn"]})
     snap = ctx.call_meta["snapshot"]
     r = call(ctx, "rollback", {"snapshot": snap})
@@ -733,8 +740,10 @@ def _converter(content=b"import matplotlib\n", ok_=True, tamper=False, write=Tru
     def run(req):
         if seen is not None:
             seen.append(req)
-        if tamper:
-            Path(req["script"]).write_bytes(b"CHANGED")
+        if tamper == "copy":
+            Path(req["script"]).write_bytes(b"CHANGED")  # 写临时副本：原脚本不受影响
+        elif tamper:
+            (Path(req["project"]) / "fig.py").write_bytes(b"CHANGED")  # 误写原路径
         if write:
             Path(req["output"]).write_bytes(content)
         return {"ok": ok_, "message": "x", "code": "" if ok_ else "convert_error"}
@@ -757,7 +766,11 @@ def test_convert_script_saves_next_to_the_original_and_never_touches_it(box):
     assert orig.read_bytes() == b"from PIL import Image\r\n"
     out = box.proj / "fig_matplotlib.py"
     assert out.read_bytes() == b"import matplotlib\n" and "fig_matplotlib.py" in r.content
-    assert seen[0]["output"] == str(out) and seen[0]["script"] == str(orig)
+    assert seen[0]["output"] == str(out)
+    assert (
+        seen[0]["script"] != str(orig) and Path(seen[0]["script"]).name == "fig.py"
+    )  # 拿到的是临时副本
+    assert not Path(seen[0]["script"]).exists()  # 临时副本用完即删
     # 再转一次不覆盖上一份
     r = call(ctx, "convert_script", {"target": "fig.py"})
     assert not r.is_error and (box.proj / "fig_matplotlib_2.py").is_file() and out.is_file()
@@ -768,7 +781,23 @@ def test_convert_script_fails_loudly_if_the_executor_touches_the_original(box):
     orig = put(box.proj / "fig.py", b"print(1)\n")
     ctx = change_ctx(box, script_path=orig, script_converter=_converter(tamper=True))
     r = call(ctx, "convert_script", {})
-    assert r.is_error and r.code == "original_modified"
+    assert r.is_error and r.code == "original_modified" and "put back" in r.content
+    assert orig.read_bytes() == b"print(1)\n"  # 用执行前读到的原字节恢复了
+
+
+def test_the_converter_gets_a_copy_so_writing_it_never_reaches_the_original(box):
+    orig = put(box.proj / "fig.py", b"print(1)\n")
+    ctx = change_ctx(box, script_path=orig, script_converter=_converter(tamper="copy"))
+    r = call(ctx, "convert_script", {})
+    assert not r.is_error and orig.read_bytes() == b"print(1)\n"
+
+
+def test_a_failed_restore_of_the_original_is_reported_honestly(box, monkeypatch):
+    orig = put(box.proj / "fig.py", b"print(1)\n")
+    ctx = change_ctx(box, script_path=orig, script_converter=_converter(tamper=True))
+    monkeypatch.setattr(snapshots, "restore_script", lambda path, data: False)
+    r = call(ctx, "convert_script", {})
+    assert r.code == "original_modified" and "NOT be put back" in r.content
 
 
 def test_convert_script_failure_and_missing_output(box):
@@ -965,3 +994,145 @@ def test_unreadable_link_targets_are_not_recorded_as_reads(box):
     ctx = _guarded_ctx(box, "print(1)\n")
     call(ctx, "try_run", {"env": "e"})
     assert ctx.reads == []
+
+
+# =========================================================================== P1：用户脚本永不被 run_command 改
+def _writer(rel: str, text: str = "CHANGED") -> list[str]:
+    return _py(f"open({rel!r}, 'w').write({text!r})")
+
+
+def test_user_script_criterion_reuses_the_repos_source_languages():
+    for name in ("a.py", "a.R", "a.r", "a.m"):
+        assert snapshots.is_user_script(name), name
+    for name in ("a.txt", "a.pyc", "a.ipynb", "a.csv", "py"):
+        assert not snapshots.is_user_script(name), name
+
+
+def test_run_command_cannot_leave_a_user_script_changed(box):
+    fig = put(box.proj / "fig.py", b"A = 1\r\n")
+    rscript = put(box.proj / "sub" / "plot.R", b"x <- 1\n")
+    data = put(box.proj / "data.csv", b"1,2\n")
+    ctx = change_ctx(box)
+    code = (
+        "import os\n"
+        "open('fig.py', 'w').write('CHANGED')\n"
+        "os.remove('sub/plot.R')\n"
+        "open('data.csv', 'w').write('NEW')\n"
+    )
+    r = call(ctx, "run_command", {"argv": _py(code)}, AuditLog())
+    assert not r.is_error, r.content
+    assert fig.read_bytes() == b"A = 1\r\n" and rscript.read_bytes() == b"x <- 1\n"
+    assert data.read_bytes() == b"NEW"  # 非脚本文件不归这道护栏管
+    assert (
+        "scripts_restored: 2" in r.content and "fig.py" in r.content and "sub/plot.R" in r.content
+    )
+
+
+def test_run_command_leaves_untouched_scripts_alone_and_reports_nothing(box):
+    fig = put(box.proj / "fig.py", b"A = 1\n")
+    before = fig.stat().st_mtime_ns
+    ctx = change_ctx(box)
+    r = call(ctx, "run_command", {"argv": _py("print(1)")})
+    assert "scripts_restored" not in r.content and fig.stat().st_mtime_ns == before
+
+
+def test_a_script_reached_through_a_link_outside_the_project_is_protected_too(box):
+    real = put(box.home / "shared" / "fig.py", b"A = 1\n")
+    (box.proj / "linked.py").symlink_to(real)
+    ctx = change_ctx(box)
+    r = call(ctx, "run_command", {"argv": _py("open('linked.py', 'w').write('CHANGED')")})
+    assert real.read_bytes() == b"A = 1\n" and "scripts_restored: 1" in r.content
+    assert str(box.home) not in r.content  # 项目外的只报文件名
+
+
+def test_a_timed_out_command_still_gets_its_scripts_checked(box):
+    fig = put(box.proj / "fig.py", b"A = 1\n")
+    ctx = change_ctx(box)
+    code = "import time\nopen('fig.py', 'w').write('CHANGED')\ntime.sleep(60)"
+    r = call(ctx, "run_command", {"argv": _py(code), "timeout_s": 1})
+    assert (
+        r.code == "timeout" and fig.read_bytes() == b"A = 1\n" and "scripts_restored" in r.content
+    )
+
+
+def test_run_command_refuses_when_the_scripts_cannot_be_backed_up(box, monkeypatch):
+    put(box.proj / "fig.py", b"A = 1\n")
+    put(box.proj / "other.py", b"B = 2\n")
+    marker = box.tmp / "ran.txt"
+    ctx = change_ctx(box)
+    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_BYTES", 8)
+    r = call(ctx, "run_command", {"argv": _py(f"open({str(marker)!r}, 'w').write('x')")})
+    assert r.is_error and r.code == "scripts_too_large" and not marker.exists()
+    assert ctx.asker.cards == []
+    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_BYTES", 10**6)
+    monkeypatch.setattr(snapshots, "SCRIPTS_MAX_FILES", 1)
+    assert call(ctx, "run_command", {"argv": _py("print(1)")}).code == "scripts_too_large"
+
+
+def test_backups_skip_environment_and_vcs_folders(box):
+    put(box.proj / "fig.py", b"A = 1\n")
+    put(box.proj / ".venv" / "lib" / "x.py", b"junk")
+    put(box.proj / "node_modules" / "y.py", b"junk")
+    got = snapshots.collect_scripts(box.proj)
+    assert [Path(k).name for k in got] == ["fig.py"]
+
+
+def test_the_snapshot_holds_the_script_bytes_and_rollback_retries_an_unrestored_one(
+    box, monkeypatch
+):
+    fig = put(box.proj / "fig.py", b"A = 1\n")
+    ctx = change_ctx(box)
+    real_restore = snapshots.restore_script
+    monkeypatch.setattr(snapshots, "restore_script", lambda path, data: False)  # 恢复失败
+    r = call(ctx, "run_command", {"argv": _py("open('fig.py', 'w').write('CHANGED')")})
+    assert r.is_error and r.code == "scripts_unrestored" and "scripts_unrestored" in r.content
+    assert fig.read_bytes() == b"CHANGED"
+    snap = ctx.call_meta["snapshot"]
+    doc = snapshots.load(ctx, snap)
+    assert doc["scripts"][0]["sha256"] and doc["unrestored"] == [os.path.realpath(fig)]
+    monkeypatch.setattr(snapshots, "restore_script", real_restore)
+    # 用户之后自己改了另一个脚本：回滚不碰它
+    other = put(box.proj / "mine.py", b"USER EDIT\n")
+    rb = call(ctx, "rollback", {"snapshot": snap})
+    assert not rb.is_error, rb.content
+    assert fig.read_bytes() == b"A = 1\n" and other.read_bytes() == b"USER EDIT\n"
+
+
+def test_restore_goes_through_the_script_lock(box, monkeypatch):
+    fig = put(box.proj / "fig.py", b"A = 1\n")
+    from tavotto.engine import scriptlock
+
+    held_during: list[bool] = []
+    real = scriptlock.write_script
+
+    def spy(path, data, **kw):
+        held_during.append(scriptlock.held(path))
+        return real(path, data, **kw)
+
+    monkeypatch.setattr(scriptlock, "write_script", spy)
+    ctx = change_ctx(box)
+    call(ctx, "run_command", {"argv": _py("open('fig.py', 'w').write('CHANGED')")})
+    assert held_during == [True] and fig.read_bytes() == b"A = 1\n"
+
+
+# =========================================================================== P1：空环境的 freeze 是有效快照
+def test_an_empty_environment_snapshot_lets_rollback_remove_the_first_package(box):
+    env = FakeEnv()
+    env.pkgs.clear()
+    ctx = change_ctx(box, env)
+    assert not call(ctx, "install_packages", {"env": "e", "packages": ["seaborn"]}).is_error
+    snap = ctx.call_meta["snapshot"]
+    doc = snapshots.load(ctx, snap)
+    assert doc["envs"]["e"]["freeze_available"] is True and doc["envs"]["e"]["packages"] == {}
+    assert env.pkgs == {"seaborn": "9.9"}
+    r = call(ctx, "rollback", {"snapshot": snap})
+    assert not r.is_error, r.content
+    assert env.pkgs == {} and env.uninstalls == [["seaborn"]]
+
+
+def test_a_failed_freeze_is_still_unavailable_not_empty(box):
+    ctx = change_ctx(box)
+    ctx.freezer = lambda python: None
+    call(ctx, "install_packages", {"env": "e", "packages": ["seaborn"]})
+    doc = snapshots.load(ctx, ctx.call_meta["snapshot"])
+    assert doc["envs"]["e"]["freeze_available"] is False
