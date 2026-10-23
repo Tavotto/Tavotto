@@ -601,6 +601,28 @@ def finalize_row(row: dict) -> dict:
     return row
 
 
+#: Product-side refusals decided before anything is launched (a capability boundary, not a crash).
+REFUSAL_CODES = ("launch_context_unsupported",)
+
+
+def refused_before_launch(row: dict) -> bool:
+    """The product leg failed at discover with a refusal code and, by construction, never executed.
+
+    Such a row has native child records but no Tavotto ones; that absence is the evidence, so it is
+    judged on the native leg's proof plus "Tavotto executed zero times", not on a full launch pair.
+    """
+    raw = row.get("raw") or {}
+    code = (((raw.get("detail") or {}).get("discover")) or {}).get("code")
+    return (
+        code in REFUSAL_CODES
+        and row["stages"].get("discover", {}).get("status") == "failed"
+        and row["executions"].get("tavotto") in (None, 0)
+        and not (raw.get("launch_environments") or {}).get("tavotto")
+        and (row["executions"].get("native") or 0) > 0
+        and row["environment_before"] == row["environment_after"]
+    )
+
+
 def case_status(row: dict) -> str:
     native = row["native"]["status"]
     if native != "passed":
@@ -608,6 +630,8 @@ def case_status(row: dict) -> str:
     raw = row.get("raw") or {}
     if "runner_error" in raw:
         return "unknown"  # a crashed runner is never evidence about the product
+    if refused_before_launch(row):
+        return "failed"
     if not row["comparable"] or not (row["executions"]["native"] or 0):
         return "unknown"
     statuses = [s["status"] for s in row["stages"].values()]
@@ -1285,7 +1309,10 @@ def check_row_proof(row: dict, mismatch: bool) -> None:
         if set(launches) != {"native", "tavotto"}:
             raise EvidenceError("missing actual child environment evidence")
         fps = set()
+        refused = refused_before_launch(row)
         for role, records in launches.items():
+            if refused and role == "tavotto":
+                continue  # nothing was launched on the product leg; its absence is checked above
             if not records or len(records) != row["executions"][role]:
                 raise EvidenceError("execution count does not match actual child records")
             for item in records:

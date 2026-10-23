@@ -151,3 +151,51 @@ def test_without_registered_launch_the_ordinary_path_is_unchanged(fake_project, 
     case = _case("plot.py", {"cwd": ".", "argv": []})
     del case["reference_invocation"]
     assert _captured(_run(case, tmp_path))
+
+
+def _hosted_row():
+    """Trimmed real row from hosted run 39928055867 (Cantera: launch cwd `data` not expressible)."""
+    import json
+
+    return json.loads(
+        (Path(__file__).parent / "compat" / "launch-context-unsupported-row.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+
+def test_refused_launch_projects_to_a_product_failure_with_its_own_category():
+    import compat_guardian as guardian
+
+    row = _hosted_row()
+    assert row["observed_before_fix"]["status"] == "unknown"  # what the hosted run produced
+    row["comparable"] = False  # the product leg never launched, so no launch pair exists
+    guardian.finalize_row(row)
+    assert row["status"] == "failed"
+    assert (row["failure_category"]["category"], row["failure_category"]["source_code"]) == (
+        "cwd_or_data_path",
+        "launch_context_unsupported",
+    )
+    assert row["stages"]["discover"]["status"] == "failed"
+    assert {s["status"] for n, s in row["stages"].items() if n != "discover"} == {"not_run"}
+    guardian.check_row_proof(row, mismatch=False)  # accepted by the validator, not only projected
+
+
+def test_refusal_needs_native_proof_and_a_never_launched_product_leg():
+    import copy
+
+    import compat_guardian as guardian
+
+    base = _hosted_row()
+    for mutate in (
+        lambda r: r["executions"].update(native=0),
+        lambda r: r["executions"].update(tavotto=1),
+        lambda r: r["raw"]["launch_environments"].update(
+            tavotto=r["raw"]["launch_environments"]["native"]
+        ),
+        lambda r: r["raw"]["detail"]["discover"].update(code="other"),
+        lambda r: r["stages"]["discover"].update(status="passed"),
+    ):
+        row = copy.deepcopy(base)
+        mutate(row)
+        assert not guardian.refused_before_launch(row)
