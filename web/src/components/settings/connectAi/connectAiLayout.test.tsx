@@ -84,7 +84,7 @@ describe('版式：宽矩形 + 左侧品牌画', () => {
     expect(content.style.height).toBe('480px')
     const brand = q('[data-connect-brand]')!
     expect(brand.className).toContain('w-[40%]')
-    expect(brand.className).toContain('hidden')
+    expect(brand.classList.contains('hidden')).toBe(true)
     expect(brand.className).toContain('min-[700px]:block')
     expect(brand.textContent).toContain(PRODUCT_NAME)
     expect(brand.querySelector('canvas[data-brand-lines]')).toBeTruthy()
