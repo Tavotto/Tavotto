@@ -74,3 +74,9 @@ AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可
 * 用户有了不依赖 CLI 的改图路径；代价是我们自己维护三种协议的字段细节，需要用真实服务做兼容性回归（单独、显式计费的命令，不进 CI）。
 * 模型生成 / 影响的文件改动仍不当作可信：候选目录 + 指纹 + 提交前检查（0138 §四）一个不少。
 * 规则全文：`docs/rules/backend/ai-agent-bridge.md`「内置执行器」与「连接」两节；看护 `tests/test_agent_runner.py`、`tests/test_ai_connections.py`。
+
+### 八、按厂商合并接入方式（2026-10-25 用户裁决）
+
+界面上不再同时出现「OpenAI」和「Codex / ChatGPT」两个条目：`vendors` 每家一条，订阅登录、账号登录、API Key 作为该厂商的 `methods`，同时支持几种就出二级卡片让用户自己选。
+OpenAI = ChatGPT 订阅（codex 登录）+ 官方 API Key；Claude = Claude 订阅 + Anthropic 官方 API Key；Kimi / 百炼各自合并两种 Key；MiniMax（国内）= 账号登录 + API Key。
+官方 API Key 经路由可由内置执行器直接跑（有 CLI 且 `builtin_default` 为 false 时仍走 CLI + 注入），且带目录确认的思考强度档位（§七）。

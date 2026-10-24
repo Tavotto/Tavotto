@@ -431,17 +431,22 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 （`ai.active_provider` 只作旧字段兼容，连接的解析不看它）。依赖方向 `ai_agents ← ai_providers ← ai_connections ← ai_bridge`。
 
 - **`capabilities` 新字段**（旧字段一个不动，`agents[]` 仍只有 codex / claude）：`vendors[]`（厂商目录）、`connections[]`（已连接 / 需重新登录）、`locale_region`。
-  - `vendors` 由 `ai_catalog.json` 生成：同 `brand` 的 Claude 行（Anthropic Messages）与 Codex 行（Responses）合成**一家**（id 取首选的 Anthropic 行；`custom` 两行合成一家），
-    官方登录行（`base_url` 为空）不进来；再加订阅类 `chatgpt`（codex 登录，logo `openai`）、`claude`（claude 登录，logo `anthropic`，`available` = 对应 CLI 装了）
-    与账号登录类 `<provider>-oauth`（`ai_oauth` 的 client_id 配了才出现）。`label` 是品牌名兜底，`label_key` 是前端既有的 `dialogs:settings.agents.endpoint.<label_key>` 文案键（订阅 / custom 为 null）。
-    排序：中文系统（`LC_ALL`/`LC_MESSAGES`/`LANG`，Windows 取 UI 语言）国内组在前，否则订阅与海外在前；`locale_region` 是这个提示，前端以自己的界面语言为准。
+  - `vendors` **按厂商合并接入方式**，每家一条，怎么接入放进 `methods[]`（订阅 / 账号登录在前，API Key 在后）：`{id, kind: key|login|oauth, label_key, catalog_id?, agent?, connection_id?, key_url?, key_hint_key?, needs_base_url?, available}`。
+    login 方式 id `<厂商>:login`（`agent` = 对应 CLI，`connection_id` = `sub:codex` / `sub:claude`，`available` = CLI 已装）；oauth 方式 `<provider>:oauth`（`ai_oauth` 的 client_id 配了才出现，`connection_id` = `minimax-oauth`）；
+    key 方式 `<catalog_id>:key`（`catalog_id` 就是 `POST /connections` 的 `vendor`）。旧字段保留：`connect` = `methods[0].kind`，`key_url` / `key_hint_key` / `needs_base_url` 取自第一个 Key 方式，`available` = 任一方式可用。
+    合并来自目录：同 `brand` 的 Claude 行与 Codex 行成一个 Key 方式；行上的 `vendor` 把几个方式并进一家（OpenAI = `openai:login` + `openai-api:key`（`https://api.openai.com/v1`，Responses）；
+    Claude（厂商 id `anthropic`）= `anthropic:login` + `anthropic-api:key`（`https://api.anthropic.com`）；Kimi（`moonshot`）= `moonshot:key` + `kimi-code:key`；百炼（`dashscope`）= `dashscope:key` + `dashscope-coding:key`；
+    MiniMax（国内，`minimax`）= `minimax:oauth` + `minimax:key`）。**不跨 region 合并**（`minimax-global`、`zai` 各自一家）。官方 API Key 行带 `"preset": false`（不进旧版预设列表）。
+    厂商显示名：行上的 `vendor_label`（OpenAI / Claude / Kimi / Alibaba Bailian），`vendor_label_key` 是它的 i18n 键（没有则 null，前端直接用 `label`）；方式的 `label_key`：`method.subscription` / `method.account` / `method.apiKey` / 行上的 `method_key`（`method.kimiCode` / `method.codingPlan`）。
+    旧厂商 id → 现在：`chatgpt` → `openai`，`claude` → `anthropic`，`kimi-code` → `moonshot`（方式 `kimi-code:key`），`dashscope-coding` → `dashscope`，`minimax-oauth` → `minimax`（方式 `minimax:oauth`，连接 id 仍是 `minimax-oauth`）。
+    排序：中文系统国内厂商在前，其后是有订阅登录的海外厂商（OpenAI / Claude），再是其余海外，最后 custom；非中文反之。
   - `connections`：订阅类 `sub:codex` / `sub:claude`（CLI 装了且启用才列；`needs_auth` 只看就绪检查的 `needs_auth`）+ 每条 provider 记录一条（Key 类 id = provider id；`auth: "oauth"` 类同）。
-    多条可同时 `ready`，同厂商多条时 `label` 带用户起的名字 / 密钥尾四位。没有地址的旧记录（官方 Key）不进视图。`state`：缺 Key → `needs_auth`；
+    每条带 `vendor`（合并后的厂商 id）与 `method`（接入方式 id）；logo 取它自己那一行的图标。多条可同时 `ready`，同厂商多条时 `label` 带用户起的名字 / 密钥尾四位；OpenAI / Claude 的官方 Key 连接名带「 API」后缀以便和订阅那条分开。没有地址的旧记录（官方 Key）不进视图。`state`：缺 Key → `needs_auth`；
     不兼容旧记录 / 保存时被服务商拒绝（`last_error: unauthorized` 落盘）/ 路由走不通 / 内置路由缺型号 → `error` 且带原因码 `error`。
   - **路由 `route_for`**（`route` 只给诊断与测试，界面不显示）：订阅 → `cli:<agent>`；Key 类：该家族 CLI 可用且 `ai.builtin_default` 不为 true（默认 false，FigureBench 过线后改 true）→ `cli:<家族>` + 注入；
     否则 → `builtin`（内置循环必须能用该记录：`ai_providers.builtin_conn`，不行则退回可用的 CLI）。账号登录类：CLI 装了且启用就走 CLI（不看 CLI 自己的官方登录，凭据由我们注入）；没装走内置，anthropic wire 只发 Bearer（`--auth bearer`），令牌在 spawn 前 `ensure_fresh`、只进环境变量。
     `TAVOTTO_AI_BUILTIN=1` 强制内置、`=0` 强制不用（没 CLI 即走不通）。
-- **管理接口**（照常过会话守卫与 Host/Origin 校验）：`POST /api/ai/connections`（`{vendor, api_key, base_url?, model?, label?, wire?, id?}` → `{ok, connection}`；Key 形状 = 可打印 ASCII 无空白 ≤ 4096；
+- **管理接口**（照常过会话守卫与 Host/Origin 校验）：`POST /api/ai/connections`（`{vendor | method, api_key, base_url?, model?, label?, wire?, id?}` → `{ok, connection}`；Key 形状 = 可打印 ASCII 无空白 ≤ 4096；
   `base_url` 须 https 或回环 http；保存前 `live_models` 试取一次，**失败也保存**，返回的连接 `state:"error"` + `error` 原因码，只有 `unauthorized` 才落盘；`custom` 必须给 `base_url` 与 `wire`
   （`anthropic` | `openai-responses`）；带已存在的 `id` = 换 Key / 型号并清掉错误）、`DELETE /api/ai/connections/<id>`（订阅类 `connection_not_deletable`）、
   `POST /api/ai/connections/<id>/login`（订阅类走 `start_login`；`<provider>-oauth` 走设备码流程，返回 `flow_id`，进度仍用 `/api/ai/oauth/flows/<id>`）。错 body 一律 400 `endpoint_invalid{reason}` 且什么都不保存、不碰网络；
