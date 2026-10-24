@@ -2091,9 +2091,10 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     await openWith(report(STATES.completed))
     expect(primary()?.dataset.prepPrimary).toBe('enter_edit')
     await act(async () => primary()!.click())
-    // 素材清单里还没有这张新图：先用这次捕获的描述符加进画布，再进入编辑
-    expect(vi.mocked(addRuntimePanelToCanvas)).toHaveBeenCalledWith(fig('a'))
-    expect(vi.mocked(openFastEdit)).toHaveBeenCalledWith('runtime:plot.py#a')
+    // 素材清单里还没有这张新图：把这次捕获的描述符交给 openFastEdit（它按「打开 = 换看那一张」新建画布放它），
+    // 不先加进当前画布
+    expect(vi.mocked(addRuntimePanelToCanvas)).not.toHaveBeenCalled()
+    expect(vi.mocked(openFastEdit)).toHaveBeenCalledWith('runtime:plot.py#a', expect.objectContaining({ descriptor: fig('a') }))
     expect(mockAct).not.toHaveBeenCalled()
     expect(vi.mocked(probeScript)).not.toHaveBeenCalled()
     expect(mockCreate).toHaveBeenCalledTimes(1) // 只有打开时那一次只读检查
@@ -2320,8 +2321,11 @@ describe('进入编辑：清单请求在途时连点', () => {
       button.click()
     })
     await act(async () => release())
-    expect(vi.mocked(addRuntimePanelToCanvas)).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(openFastEdit)).toHaveBeenCalledWith('runtime:plot.py#a')
+    expect(vi.mocked(addRuntimePanelToCanvas)).not.toHaveBeenCalled()
+    // 第一次点击带描述符放进一个面板；第二次已经在文档里找到它，不再带描述符
+    const calls = vi.mocked(openFastEdit).mock.calls
+    expect(calls[0][1]?.descriptor).toEqual(fig('a'))
+    expect(calls[1][1]?.descriptor).toBeUndefined()
   })
 })
 

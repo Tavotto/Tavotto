@@ -243,9 +243,11 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     mockGet.mockResolvedValueOnce(done(['a'], 'att-2', 4))
     await store().refresh(KEY)
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    // 描述符交给 openFastEdit（新建画布放它），不先加进当前画布；mock 的 openFastEdit 放一个面板
+    expect(vi.mocked(openFastEdit).mock.calls[0][1]?.descriptor).toEqual(fig('a'))
+    expect(addRuntimePanelToCanvas).not.toHaveBeenCalled()
     const panels = useDocumentStore.getState().doc.objects.filter((o) => o.type === 'panel')
     expect(panels).toHaveLength(1)
-    expect(addRuntimePanelToCanvas).toHaveBeenCalledTimes(1)
   })
 
   it('这次运行替换掉了旧图名（unlinked_stems）：不自动进入——卡片详情里的恢复提示是用户必须看到的', async () => {
@@ -321,7 +323,8 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     mockGet.mockResolvedValueOnce(done(['a']))
     await store().refresh(KEY)
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
-    expect(addRuntimePanelToCanvas).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(openFastEdit).mock.calls[0][1]?.descriptor).toEqual(fig('a'))
+    expect(addRuntimePanelToCanvas).not.toHaveBeenCalled()
   })
 
   it('重跑已缓存的图、合并进来的旧清单带的是上一次的非空描述符：以这次报告的描述符插入（Codex #1044 r4285970263）', async () => {
@@ -332,8 +335,8 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     mockGet.mockResolvedValueOnce(done(['a']))
     await store().refresh(KEY)
     await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
-    expect(addRuntimePanelToCanvas).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(addRuntimePanelToCanvas).mock.calls[0][0]).toEqual(fig('a'))
+    expect(addRuntimePanelToCanvas).not.toHaveBeenCalled()
+    expect(vi.mocked(openFastEdit).mock.calls[0][1]?.descriptor).toEqual(fig('a'))
   })
 
   it('清单里已有与这次一致的描述符：不重复插入', async () => {

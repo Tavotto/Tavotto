@@ -143,18 +143,18 @@ def test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets(live_workflo
     assert "backend-fast" in fast["needs"] and "backend-fast" not in heavy["needs"]
     # 2026-09-25 从 40 抬到 60 止血（#636）；2026-10-09 套件继续变大、合并组每片实测近 60，再抬到 90
     assert live_workflow["backend-fast"]["timeout_minutes"] == 90
-    # backend-platforms（macOS / Windows 各 4 片）同档：2026-10-10 Windows 单片贴着 60 被取消，抬到 90
+    # backend-platforms（macOS / Windows 各 8 片）同档：2026-10-10 Windows 单片贴着 60 被取消，抬到 90
     assert live_workflow["backend-platforms"]["timeout_minutes"] == 90
     # CI03a 起 matrix 是轴（python × shard），解析器回的是 {轴: 值}，不再是 include 列表
     assert live_workflow["backend-fast"]["matrix"] == {
         "python": ["3.10", "3.13", "3.14"],
-        "shard": ["1", "2", "3", "4"],
+        "shard": ["1", "2", "3", "4", "5", "6"],
     }
-    # backend-fast 2026-10-12 起 4 片、backend-platforms 2026-10-21 起 4 片；两个 job
+    # backend-fast 2026-10-24 起 6 片、backend-platforms 2026-10-24 起 8 片；两个 job
     # 片数不必相同，理由见 docs/rules/ci/pytest-shards.md。
     assert live_workflow["backend-platforms"]["matrix"] == {
         "os": ["macos-latest", "windows-latest"],
-        "shard": ["1", "2", "3", "4"],
+        "shard": ["1", "2", "3", "4", "5", "6", "7", "8"],
     }
 
 

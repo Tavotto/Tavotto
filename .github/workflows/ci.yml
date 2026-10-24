@@ -36,7 +36,7 @@ name: CI
 # 真实合并组的实测（资格中位 56.9 → 26.4 分钟）也在那里。
 #
 # pytest 分片（CI03a，2026-09-16）：backend-fast / backend-platforms 的 matrix 各加一根
-# `shard` 轴，目前 backend-fast 与 backend-platforms 都是 `[1, 2, 3, 4]`（`--shard=K/4`），
+# `shard` 轴，目前 backend-fast 是 `[1..6]`（`--shard=K/6`）、backend-platforms 是 `[1..8]`（`--shard=K/8`），
 # 每档全量 pytest 拆成并行 job（按文件分、不拆文件、
 # 每个进程先算全部各片并自验并集 == 全集）。**覆盖一条没减**：漏片在进程里
 # 就是 rc 4；任一片不 success，`needs.backend-fast.result` 就不是 success，Gate
@@ -547,7 +547,7 @@ jobs:
   #   * 为什么 4 片：2026-10-09 两个合并组（#853，run 37900187745 / 37906698476）
   #     的 Linux 3.10 / 3.14 分片 1 分别撞上 60 分钟，当时由 2 片改为 3 片；3 片后合并组
   #     每片仍实测 46–59.5 分钟（#896），2026-10-12 再加到 4 片。不加 -n。
-  #   * 自验做了什么：`--shard=K/4` 在**同一进程 collection 之后**做（tests/conftest.py
+  #   * 自验做了什么：`--shard=K/6` 在**同一进程 collection 之后**做（tests/conftest.py
   #     → tests/support/shard.py），每个进程都算出全部四片，断言 nodeid 集合的并集 ==
   #     全集、两两不交、每片非空、无重复，任一条不成立 rc 4——不是静默跑全集，也不是
   #     静默跑空集。
@@ -569,7 +569,7 @@ jobs:
       # os 固定 ubuntu-24.04，写在 runs-on 上，不再是 matrix 的一维。
       matrix:
         python: ["3.10", "3.13", "3.14"]
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     # 分片后每片实测 10–20 分钟（合入后三个真实合并组 35061049078 / 35069266028 /
     # 35073686963 的 18 片：610–1201s）；分片前整档中位 29–35 分钟、max 36。
     # 2026-09-25 用例增长后分片 1 在 hosted runner 上实测 35–40 分钟，两个合并组
@@ -584,6 +584,10 @@ jobs:
     # #882 / #860 的 3.14 / 3.10 分片 1 在 57–60 分钟处撞点被取消（日志里没有失败用例，只是超时）。
     # 加片摊薄每片总量；超时**暂不收回**，等四片在 main 合并组上有实测再定（目标是每片落在
     # 45 分钟内再降到 60）。按 runner 实测重算权重表（#636）仍是下一步。
+    # 2026-10-24 由 4 片加到 6 片（与 backend-platforms 改 8 片、权重表改按 Windows 中位重算同一 PR）：
+    # backend-platforms 压到约 38 分钟后，合并组最长腿是这里（4 片实测 62–63 分钟 / 片）。按三个合并组
+    # 的 junit 用新表模拟最重片：3.10 4 片 38/52/54 → 6 片 28/38/35，3.14 49/56/50 → 34/38/34，与 Windows
+    # 8 片持平；再加到 8 片（~30）就被 Windows 那条腿盖住、只多耗 runner。超时仍不收回，等实测。
     timeout-minutes: 90
     runs-on: ubuntu-24.04
     steps:
@@ -629,7 +633,7 @@ jobs:
         run: |
           python scripts/fetch_fonts.py
           python scripts/fetch_fonts.py --check
-      # `--shard=K/4` 的 4 与上面 matrix.shard 的长度必须是同一个数
+      # `--shard=K/6` 的 6 与上面 matrix.shard 的长度必须是同一个数
       # （tests/test_merge_queue_workflows.py 对拍）；`-rs` 让 skip 理由进日志
       # （CI00 记录：三条腿都没带，CI 侧 skip 理由拿不到）。
       # **两个 conftest 选项必须写成 `--opt=值`**（本机实测，rc 4）：它们在 tests/conftest.py
@@ -647,7 +651,7 @@ jobs:
         env:
           TAVOTTO_TEST_HANG_SECONDS: "900"
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/4
+          python -m pytest --shard=${{ matrix.shard }}/6
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs
@@ -686,6 +690,13 @@ jobs:
   # Windows 1 片 82 分钟，离上限 8 分钟。按权重表重平衡只能把中位的最重片从 73.6 压到 67，
   # 压不住 runner 快慢；runner 排队等待实测 0 分钟、每片固定开销 2–3 分钟，加片是余量最大的
   # 做法：4 片按 Windows 中位 ≈ 50 分钟 / 片、macOS ≈ 44。
+  #
+  # **2026-10-24 从 4 片改到 8 片，权重表改按 Windows 8 次合并组的中位重算（90 分钟上限不动）**：
+  # 10-23～24 的 10 个合并组里 Windows 四片 39–88 分钟，最慢片中位 74；Windows 套件中位 256 分钟
+  # （10-21 时 171–221），合并组整体被这一片拖到 75–80 分钟，其余 job 早已跑完、runner 空着。按 8 次运行
+  # 留一法交叉验证（用其余 7 次的中位权重分片、拿第 8 次的真实耗时量）：Windows 最重片 pytest
+  # 4 片现表 74 / 新表 68、8 片新表 38（最坏 39）；macOS 8 片新表 21。macOS 与 Windows 共用一个片数，
+  # 合同测试与基线解析器都按「一个 job 一个 N」写。公开仓库 + Enterprise，并发不是约束。
   backend-platforms:
     if: >-
       github.event_name == 'merge_group'
@@ -696,7 +707,7 @@ jobs:
       # 写成轴（`include` 不做笛卡尔积）。python 固定 3.13，写在 setup-python 上。
       matrix:
         os: [macos-latest, windows-latest]
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ${{ matrix.os }}
     # 2 片时实测（合入后三个真实合并组 35061049078 / 35069266028 / 35073686963）：
     # Windows 19–26 分钟（1138–1533s）、macOS 14–17 分钟（833–1006s），套件 4686 条
@@ -745,7 +756,7 @@ jobs:
       # worker 复用的决定要从这份名单来，不从猜。
       # 路径用 `${{ runner.temp }}`（runner 替换，与 shell 无关）：Windows 腿默认 pwsh、
       # macOS 腿 bash，`$RUNNER_TEMP` / `$env:RUNNER_TEMP` 两种写法只有一种能同时成立。
-      # `--shard=K/4` 的 4 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
+      # `--shard=K/8` 的 8 与 matrix.shard 的长度必须是同一个数（合同测试对拍）；
       # 两个 conftest 选项写成 `--opt=值` 的理由见 backend-fast 那一步。
       # 挂死看门狗（#1226）：任一用例超过 900 秒 → 打 nodeid + 所有线程栈 + 子进程并以退出码 1 结束，
       # 变成一个点名的红灯，而不是整片跑满 90 分钟被取消。900 的取法：本仓库单条最慢的正常用例
@@ -756,7 +767,7 @@ jobs:
         env:
           TAVOTTO_TEST_HANG_SECONDS: "900"
         run: >-
-          python -m pytest --shard=${{ matrix.shard }}/4
+          python -m pytest --shard=${{ matrix.shard }}/8
           --shard-manifest="${{ runner.temp }}/shard-manifest.json"
           --junitxml "${{ runner.temp }}/junit.xml"
           --durations=50 -rs -vv

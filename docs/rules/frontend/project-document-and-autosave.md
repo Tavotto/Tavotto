@@ -309,6 +309,9 @@ order: 200
   **入口形态（ADR 0101 2026-10-21 修订）**：时间线是右栏第四个页签（`RightTab 'timeline'`），不再有盖在画布上的浮板；
   打开只有 `actions.openTimeline()`、「亮着」只有 `uiStore.isTimelineOpen`，`TimelinePanel` 挂载即打开；页签是会话态不持久化。
   预览里的位图取档 / 文字字号按显示宽 × DPR（`snapshotBucket`），不许写死档位（看护 `components/layoutSnapshotSharpness.test.tsx`）。
+  时间线的范围：多画布时「这张画布 / 全部画布」（按节点的 `canvasId`）；当前是单图编辑（或图内编辑某张图）且有别的图的版本时「这张图 / 全部」
+  （按后端读时派生的 `figures` = 那一版画布上面板的 `fileId`，不落盘；ADR 0101 2026-10-24 修订）。打开第二个脚本的图必须落在自己的画布上
+  （`enterEdit` 把描述符交给 `openFastEdit`，不先 `addRuntimePanelToCanvas`；仅「重建为可编辑版」`host.beside` 例外），看护 `store/enterEditCanvas.test.ts`。
   时间线行内动作的 e2e 看护 `e2e/timeline-row-actions.spec.ts`；整条时间线 e2e 看护 `e2e/layout-timeline.spec.ts`。
   存盘与帧迁移的补充看护：`lib/figureFrame.test.ts`、`e2e/savefig-frame-migration.spec.ts`、`e2e/save-to-project.spec.ts`、`e2e/cross-tab-paste.spec.ts`。
   文档与会话的补充看护：`store/layoutSession.restart.test.ts`、`e2e/layout-session.spec.ts`、`e2e/layout-project-isolation.spec.ts`、`store/projectSave.test.ts`、`lib/overrideIdentity.test.ts`、`store/layoutAutoReflow.test.ts`。

@@ -126,3 +126,54 @@ test('多张画布：时间线默认只显示当前画布自己的节点，切�
   await expect(node).toContainText('Figure 1')
   if (shots) await page.screenshot({ path: `${shots}/timeline-scope-all.png` })
 })
+
+test('单图编辑：先开图 A 存个节点、再开图 B 存个节点——时间线默认只见当前这张图，切「全部」才见两者', async ({ app, page }) => {
+  test.setTimeout(120_000)
+  const a = await app()
+  await page.goto(a.baseURL)
+  const cardA = page.locator('[data-card="Fig1_kinetics.pdf"]')
+  const cardB = page.locator('[data-card="Fig2_yield.pdf"]')
+  await expect(cardA).toBeVisible({ timeout: 30_000 })
+  // 慢机器（Windows 打包版）上，打开图之后右栏会晚一点才切回属性页：先等图在图内编辑态里就位，
+  // 再点时间线页签，否则抽屉在 DOM 里被换掉（点击一直 detached 重试）
+  const settled = async (name: string) => {
+    // 画布标签上出现这张图的名字（新画布以图名命名）= 打开已经落地；再等图内编辑的 SVG
+    await expect(page.getByText(name, { exact: true }).first()).toBeVisible({ timeout: 60_000 })
+    await expect(page.locator('[data-element-svg] svg').first()).toBeVisible({ timeout: 120_000 })
+  }
+  await cardA.dblclick()
+  await settled('Fig1_kinetics')
+  await (await only(page.locator('[data-inspector-tab="timeline"]'), 30_000)).click()
+  await expect(page.locator('[data-inspector-tab="timeline"]')).toHaveAttribute('aria-selected', 'true')
+  const drawer = await only(page.locator('[data-timeline-panel]'))
+  const saveNamed = async (name: string) => {
+    // 右栏会在打开图的收尾里自己切回属性页（选中新面板）：每次存之前都确认时间线页签亮着，没亮就点回来，再重取抽屉
+    const tab = page.locator('[data-inspector-tab="timeline"]')
+    await expect(async () => {
+      if ((await tab.getAttribute('aria-selected')) !== 'true') await tab.click()
+      await expect(page.locator('[data-timeline-panel] [data-timeline-name-open]')).toBeVisible({ timeout: 2_000 })
+    }).toPass({ timeout: 30_000 })
+    await (await only(drawer.locator('[data-timeline-name-open]'))).click()
+    const input = await only(drawer.locator('[data-timeline-name-input]'))
+    await input.fill(name)
+    await input.press('Enter')
+  }
+  await saveNamed('甲图版')
+  await expect(drawer.locator('[data-timeline-node][data-timeline-named]')).toHaveCount(1, { timeout: 15_000 })
+  // 左栏现在是图内元素：回到素材库再开 B（切回素材库的左轨钮）
+  await page.getByRole('button', { name: '素材', exact: true }).first().click()
+  await cardB.dblclick()
+  await settled('Fig2_yield')
+  await (await only(page.locator('[data-inspector-tab="timeline"]'))).click() // 打开图会把右栏切回属性
+  await expect(page.locator('[data-inspector-tab="timeline"]')).toHaveAttribute('aria-selected', 'true')
+  await saveNamed('乙图版')
+  const named = drawer.locator('[data-timeline-node][data-timeline-named]')
+  const scope = await only(drawer.locator('[data-timeline-scope]'), 15_000)
+  await expect(named).toHaveCount(1, { timeout: 15_000 })
+  await expect(named.locator('[data-timeline-name]')).toHaveText('乙图版')
+  const shots = process.env.TAVOTTO_SHOTS
+  if (shots) await page.screenshot({ path: `${shots}/timeline-per-figure-current.png` })
+  await (await only(scope.locator('[data-value="all"]'))).click()
+  await expect(named).toHaveCount(2)
+  if (shots) await page.screenshot({ path: `${shots}/timeline-per-figure-all.png` })
+})

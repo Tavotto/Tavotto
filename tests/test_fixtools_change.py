@@ -945,3 +945,43 @@ def test_a_failed_scratch_copy_with_a_failed_cleanup_is_reported_honestly(box, m
     assert r.is_error and r.code == "copy_failed" and "cleanup_pending" in r.content
     (left,) = list(change.convert_root().iterdir())
     assert (left / trial.PENDING_MARKER).exists()
+
+
+def _fake_plan_factory(pyversionfix):
+    def fake_plan(failure, project):
+        return pyversionfix.PythonChangePlan(
+            from_version="3.14",
+            to_version="3.12",
+            base=pyversionfix.BASE_SYSTEM,
+            download_bytes=0,
+            code=failure["code"],
+            project=str(project),
+            script=failure["script"],
+            base_python="/sys/python3.12",
+        )
+
+    return fake_plan
+
+
+def test_change_python_cancelled_after_planning_does_not_start_the_change(box, monkeypatch):
+    """规划期间用户点了取消：不动手（不调 apply），如实报 cancelled。"""
+    import threading
+
+    from tavotto.engine import projectenv, pyversionfix
+
+    ctx = change_ctx(box)
+    ctx.cancel = threading.Event()
+    plan = _fake_plan_factory(pyversionfix)
+
+    def plan_then_cancel(failure, project):
+        ctx.cancel.set()
+        return plan(failure, project)
+
+    applied = []
+    monkeypatch.setattr(pyversionfix, "plan_python_change", plan_then_cancel)
+    monkeypatch.setattr(
+        pyversionfix, "apply_python_change", lambda *a: applied.append(a) or {"ok": True}
+    )
+    monkeypatch.setattr(projectenv, "remembered", lambda root: None)
+    r = call(ctx, "change_python", {"version": "3.12"})
+    assert r.is_error and r.code == "cancelled" and applied == []

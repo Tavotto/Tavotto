@@ -41,6 +41,8 @@ export interface EnterEditHost {
    * 不满足就放弃（回 `'stale'`，什么都没做）；用户手点「进入编辑」不传它，中途切走仍按原行为。
    */
   stillWanted?: () => boolean
+  /** 「重建为可编辑版」：新面板摆在当前画布上原图旁边，不新建画布 */
+  beside?: boolean
 }
 
 /**
@@ -79,12 +81,16 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
   const known = (useRuntimeAssetStore.getState().assets ?? []).some(
     (a) => a.id === d.asset_id && !!a.descriptor && JSON.stringify(a.descriptor) === fresh,
   )
-  if (!known && !findFigurePanel(d.asset_id)) {
-    // 与下面的 `openFastEdit` 同一个守卫：恢复期间两者都是排队的副作用（插入面板 + 取景 / 进入编辑 / 收卡片），切走后一个都不许执行
+  const missing = !known && !findFigurePanel(d.asset_id)
+  // 默认是普通「打开」：描述符交给 `openFastEdit`，它按「换看那一张」的规则新建画布放它。先
+  // `addRuntimePanelToCanvas` 会把第二个脚本的图加进**当前**画布，A、B 同在一张画布上（时间线分不开）。
+  // 只有「重建为可编辑版」（`host.beside`）要把新面板摆在原 PNG 旁边，保留那条加图路径
+  if (missing && host.beside) {
     if (host.stillWanted) addRuntimePanelToCanvas(d, undefined, undefined, { guard: host.stillWanted })
     else addRuntimePanelToCanvas(d)
   }
-  const outcome = host.stillWanted ? openFastEdit(d.asset_id, { guard: host.stillWanted }) : openFastEdit(d.asset_id)
+  const descriptor = missing && !host.beside ? d : undefined
+  const outcome = openFastEdit(d.asset_id, { guard: host.stillWanted, descriptor })
   // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个；
   // 进入编辑之后卡片自动收起，不留角标（工作区自己的「渲染完成」说结果）
   const landed = () => {

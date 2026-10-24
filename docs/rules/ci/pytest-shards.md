@@ -35,6 +35,15 @@ order: 50
   （`shard: [1, 2, 3, 4]`，命令 `--shard=K/4`；90 分钟上限不动）：#1219 合入后的 6 个合并组里 Windows
   三片 46–80 分钟、#1219 自己那组 82 分钟；同一文件在不同 runner 上能差一倍，重平衡权重只能把中位最重片
   从 73.6 压到 67 分钟、压不住 runner 快慢，而 runner 排队等待实测 0 分钟、每片固定开销 2–3 分钟，所以加片。
+  **2026-10-24 起 `backend-platforms` 是 8 片**（`shard: [1..8]`，命令 `--shard=K/8`；90 分钟上限不动），权重表同时改按
+  **Windows 8 次合并组逐文件中位数**重算（`python tests/support/shard.py --from-junit-runs RUN_DIR …`：每个目录一次运行，
+  先按次累加、再逐文件取中位——直接 `--from-junit` 喂多次运行是累加，一台慢 runner 会把它跑过的那批文件整体抬重）。
+  起因：10-23～24 的合并组 Windows 四片 39–88 分钟、最慢片中位 74，套件中位涨到 256 分钟，合并组被这一片拖到
+  75–80 分钟而其余 job 早已跑完。留一法交叉验证（7 次的中位权重分片、量第 8 次的真实耗时）：Windows 最重片
+  4 片新表 68、8 片新表 38（最坏 39），macOS 8 片 21；同一张表下 backend-fast（Ubuntu 4 片）的最重片持平或变轻
+  （3.10：61 → 54）。macOS 与 Windows 共用一个片数（合同与基线解析器按「一个 job 一个 N」写）；公开仓库 + Enterprise，
+  并发不是约束。同一 PR 里 **`backend-fast` 由 4 片改 6 片**（`--shard=K/6`）：platforms 压下去之后它是合并组最长腿
+  （4 片实测 62–63 分钟），新表模拟 6 片最重片 3.10 28–38、3.14 34–38，与 Windows 8 片持平；8 片会被 Windows 那条腿盖住。
   改任一个 job 的片数
   要同步改：`tests/test_merge_queue_workflows.py::test_pytest_shards_agree_between_the_matrix_and_the_command`
   按 job_id 各自的期望片数、`tests/test_ci_baseline.py` 里对 `live_workflow[...]["matrix"]`

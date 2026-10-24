@@ -538,3 +538,17 @@ def test_the_unreadable_file_named_is_the_one_the_reader_actually_read(
     assert legacy.read_bytes() == _CORRUPT
     assert not target.exists(), "新历史写进了项目里的旧单文件"
     assert vs.store_dir(target.parent, target.stem).is_dir()
+
+
+def test_the_list_says_which_figures_each_version_has_derived_not_stored(client):
+    """`figures` = 那一版画布上面板的 fileId（读时从整份文档派生，旧节点同样有；没有图就不带）。"""
+    client.post("/api/versions/d1", json={"doc": _doc_with([_text(0)])})
+    client.post("/api/versions/d1", json={"doc": _doc_with([_panel(0, "a.pdf"), _text(0)])})
+    client.post(
+        "/api/versions/d1",
+        json={"doc": _doc_with([_panel(0, "b.pdf"), _panel(1, "a.pdf"), _panel(2, "b.pdf")])},
+    )
+    metas = client.get("/api/versions/d1").get_json()["versions"]
+    got = {tuple(m.get("figures") or ()) for m in metas}
+    assert got == {(), ("a.pdf",), ("b.pdf", "a.pdf")}
+    assert [m for m in metas if "figures" not in m]  # 没有图的那一版不带这个键

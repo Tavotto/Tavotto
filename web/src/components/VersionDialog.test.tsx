@@ -2056,6 +2056,82 @@ describe('每张画布各有自己的时间线（beta 0.19.0b3 反馈：不同�
   })
 })
 
+describe('每张图各有自己的时间线：同一张画布上先后放过几张图也分得开（beta 0.19.0b3 反馈）', () => {
+  const nodeIds = () =>
+    [...document.querySelectorAll('[data-timeline-node]')].map((n) => n.getAttribute('data-timeline-node'))
+  const withFigures = (...fileIds: string[]) =>
+    act(async () => {
+      useDocumentStore.setState((st) => ({
+        doc: {
+          ...st.doc,
+          objects: fileIds.map((fileId, i) => ({
+            id: `p_${fileId}`,
+            type: 'panel',
+            fileId,
+            fileKind: 'pdf',
+            name: fileId,
+            x: i * 50,
+            y: 0,
+            w: 40,
+            h: 30,
+            rotation: 0,
+            opacity: 1,
+            overrides: [],
+          })) as never,
+        },
+      }))
+    })
+  const list = () => [
+    meta({ id: 'vA2', ts: NOW, figures: ['a'] }),
+    meta({ id: 'vB', ts: NOW - 60_000, figures: ['b'] }),
+    meta({ id: 'vA1', ts: NOW - 120_000, figures: ['a'] }),
+    meta({ id: 'vAB', ts: NOW - 180_000, figures: ['a', 'b'] }),
+    meta({ id: 'vOld', ts: NOW - 240_000 }), // 没有 figures：不知道有哪些图
+  ]
+  const showAll = () => act(async () => $<HTMLElement>('[data-timeline-scope] [data-value="all"]')!.click())
+
+  it('单图编辑：默认只显示含当前这张图的节点；开关写「这张图 / 全部」，切到全部才都在', async () => {
+    await withFigures('a')
+    await mount(list())
+    expect(nodeIds()).toEqual(['vA2', 'vA1', 'vAB'])
+    expect($('[data-timeline-scope]')!.textContent).toContain('这张图')
+    await showAll()
+    expect(nodeIds()).toEqual(['vA2', 'vB', 'vA1', 'vAB', 'vOld'])
+  })
+
+  it('换成另一张图：列表跟着换', async () => {
+    await withFigures('a')
+    await mount(list())
+    await withFigures('b')
+    await flush()
+    expect(nodeIds()).toEqual(['vB', 'vAB'])
+  })
+
+  it('没有别的图的版本：不出开关、不过滤（含没有 figures 的旧节点）', async () => {
+    await withFigures('a')
+    await mount([meta({ id: 'x1', ts: NOW, figures: ['a'] }), meta({ id: 'x0', ts: NOW - 60_000 })])
+    expect($('[data-timeline-scope]')).toBeNull()
+    expect(nodeIds()).toEqual(['x1', 'x0'])
+  })
+
+  it('多图排版（没有「当前这张图」）：不出这个开关，显示排版级的全部节点', async () => {
+    await withFigures('a', 'b')
+    await mount(list())
+    expect($('[data-timeline-scope]')).toBeNull()
+    expect(nodeIds()).toHaveLength(5)
+  })
+
+  it('这张图还没有节点：只说一句，不加解释', async () => {
+    await withFigures('c')
+    await mount([meta({ id: 'vA', figures: ['a'] })])
+    expect(nodeIds()).toEqual([])
+    expect($('[data-timeline-panel]')!.textContent).toContain('这张图还没有节点')
+    expect($('[data-timeline-panel]')!.textContent).not.toContain('另有')
+    await showAll()
+    expect(nodeIds()).toEqual(['vA'])
+  })
+})
+
 describe('后端迁移到新存储后列表多出的字段（ADR 0140）', () => {
   it('旧文件读不出来的标记与坏信封的 damaged 不让抽屉崩，也不触发任何删除', async () => {
     await mount(

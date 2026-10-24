@@ -157,7 +157,7 @@ export function TimelinePanel() {
   const [filter, setFilter] = useState<'all' | 'named'>('all')
   // 「这张画布 / 全部画布」：每张画布各有自己的时间线（打开一张图 = 它自己的画布，ADR 0028），
   // 来回编辑不同脚本的图时彼此不混。归属只认节点自己记的 `canvasId`（R-03）；多于一张画布才分
-  const [scope, setScope] = useState<'canvas' | 'all'>('canvas')
+  const [scope, setScope] = useState<'current' | 'all'>('current')
   // 用户正在编辑的输入按上下文记账（Codex #679）：换了项目 / 排版，旧排版的草稿与
   // 改名框当场不再显示——提交发生在切换之后，`afterAwait` 管不到，而交上去的名字会在
   // 新排版里建出一个名不副实的命名节点。在 render 里按 ctx 派生，不等晚一帧的 effect
@@ -182,7 +182,22 @@ export function TimelinePanel() {
   const restoreFocus = useRef<HTMLElement | null>(null)
   const previewing = preview?.docId === docId ? preview.meta.id : null
   const multiCanvas = canvases.length > 1
-  const scopeByCanvas = multiCanvas && scope === 'canvas'
+  // 「当前这张图」：画布上恰好一张图（单图编辑），或排版里正在图内编辑的那一张。
+  // 「打开」另一个脚本的图 = 另一张画布（ADR 0028），但同一张画布上先后放过几张图的项目里，
+  // 只按画布分不开——节点自己带的 `figures`（读时派生的面板 fileId 列表）才分得开
+  const docObjects = useDocumentStore((s) => s.doc.objects)
+  const elementPanelId = useUiStore((s) => s.elementPanelId)
+  const currentFigure = useMemo(() => {
+    const panels = docObjects.filter((o): o is PanelObject => o.type === 'panel')
+    if (panels.length === 1) return panels[0].fileId
+    return panels.find((p) => p.id === elementPanelId)?.fileId ?? null
+  }, [docObjects, elementPanelId])
+  // 只在确实有别的图的版本时出现；没有开关时一律不过滤
+  const figureScope =
+    currentFigure != null &&
+    versions.some((v) => !!v.figures?.length && !v.figures.includes(currentFigure))
+  const scopeKind: 'figure' | 'canvas' | null = figureScope ? 'figure' : multiCanvas ? 'canvas' : null
+  const scopeActive = scopeKind !== null && scope === 'current'
   // 单击行 = 在该行旁弹出对比小卡片（那一刻 vs 当前，一句话 + 一个主按钮「恢复到这里」）。
   // 卡片只读：不开模态、不占预览槽，所以双击的第二下仍落在这一行上（双击改名，Codex #679）。
   // 卡片按上下文记账（换了排版 / 项目就不认）
@@ -350,8 +365,13 @@ export function TimelinePanel() {
   }
 
   const scoped = useMemo(
-    () => (scopeByCanvas ? versions.filter((v) => v.canvasId === activeCanvasId) : versions),
-    [scopeByCanvas, versions, activeCanvasId],
+    () =>
+      !scopeActive
+        ? versions
+        : scopeKind === 'figure'
+          ? versions.filter((v) => !!currentFigure && !!v.figures?.includes(currentFigure))
+          : versions.filter((v) => v.canvasId === activeCanvasId),
+    [scopeActive, scopeKind, currentFigure, versions, activeCanvasId],
   )
   const groups = useMemo(
     () => groupTimeline(scoped, { namedOnly: filter === 'named', now: Date.now() }),
@@ -438,7 +458,7 @@ export function TimelinePanel() {
           ]}
         />
       </div>
-      {multiCanvas && (
+      {scopeKind && (
         <div className="flex shrink-0 px-3 pb-1.5">
           <Segmented
             value={scope}
@@ -447,8 +467,8 @@ export function TimelinePanel() {
             data-timeline-scope
             className="w-full"
             items={[
-              { value: 'canvas', label: vd('scopeCanvas') },
-              { value: 'all', label: vd('scopeAll') },
+              { value: 'current', label: vd(scopeKind === 'figure' ? 'scopeFigure' : 'scopeCanvas') },
+              { value: 'all', label: vd(scopeKind === 'figure' ? 'scopeAllFigures' : 'scopeAll') },
             ]}
           />
         </div>
@@ -484,8 +504,8 @@ export function TimelinePanel() {
         ) : scoped.length === 0 ? (
           <EmptyState
             icon={RotateCcwClock}
-            title={vd('noneHere')}
-            hint={vd('noneHereHint', { n: versions.length })}
+            title={vd(scopeKind === 'figure' ? 'noneHereFigure' : 'noneHere')}
+            hint={scopeKind === 'figure' ? undefined : vd('noneHereHint', { n: versions.length })}
           />
         ) : groups.length === 0 ? (
           <EmptyState icon={Bookmark} title={vd('noNamed')} />
@@ -506,7 +526,7 @@ export function TimelinePanel() {
                     }
                     renaming={renaming === v.id}
                     // 只看这张画布时「来自画布 X」是废话；看全部（或只有一张画布但节点来自别处）才说
-                    showCanvas={scopeByCanvas ? false : canvases.length > 1 || v.canvasId !== activeCanvasId}
+                    showCanvas={scopeActive ? false : canvases.length > 1 || v.canvasId !== activeCanvasId}
                     onEnlarge={(doc) => openPreview(v, doc)}
                     onRestore={() => restoreFromRow(v)}
                     onRename={(on) => setRenaming(on ? v.id : null)}

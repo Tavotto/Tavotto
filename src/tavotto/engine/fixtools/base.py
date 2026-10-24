@@ -71,7 +71,7 @@ class FixContext:
     uninstaller: Callable[[str, list[str]], dict] | None = None
     #: `pip freeze` 文本 `(python) -> str | None`：成功回文本（全新空环境成功是 `""`），问不出来（退出码非 0 / 起不来）回 `None`
     freezer: Callable[[str], str | None] | None = None
-    #: 另建合适版本的 Tavotto 私有环境 `({"version", "project"}) -> {"ok", "code", "message", "python"?}`；None = 暂不可用（#1342 未合入）
+    #: 另建合适版本的 Tavotto 私有环境 `({"version", "project"}) -> {"ok", "code", "message", "python"?}`；None = 缺省走 `pyversionfix`（`executors._default_python_changer`）；请求另带 `script`（项目相对，可缺）
     python_changer: Callable[[dict], dict] | None = None
     #: 转成 matplotlib `({"script", "output", "project"}) -> {"ok", "code", "message"}`，只许写 `output`；None = 暂不可用（D2b 接转换任务）
     script_converter: Callable[[dict], dict] | None = None

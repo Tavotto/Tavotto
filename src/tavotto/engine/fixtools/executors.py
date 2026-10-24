@@ -55,6 +55,12 @@ def _default_python_changer(req: dict, cancel: threading.Event | None = None) ->
     from .. import managedenv, pyversionfix
 
     cancel = cancel or threading.Event()
+    if not pyversionfix.auto_change_enabled():  # 运维开关（#1381）
+        return {
+            "ok": False,
+            "code": pyversionfix.ERROR_UNAVAILABLE,
+            "message": "Switching Python versions is turned off on this computer.",
+        }
     version = req.get("version")
     failure: dict = {"code": pyversionfix.CODE_UNSUPPORTED, "script": str(req.get("script") or "")}
     if isinstance(version, str) and version:

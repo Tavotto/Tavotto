@@ -325,6 +325,79 @@ def test_weights_from_junit_refuses_an_empty_junit(tmp_path):
         shard.weights_from_junit([xml], tmp_path)
 
 
+def _junit(path: Path, cases: dict[str, float]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = "".join(f'<testcase classname="{c}" name="x" time="{t}"/>' for c, t in cases.items())
+    path.write_text(f"<testsuites><testsuite>{body}</testsuite></testsuites>", encoding="utf-8")
+    return path
+
+
+def test_median_weights_of_runs_takes_the_median_not_the_sum(tmp_path):
+    """三次运行里一次特别慢：中位数不被它抬高；累加（旧入口）会。片内多份 junit 先按次累加。"""
+    (tmp_path / "tests").mkdir()
+    for name in ("test_a", "test_b", "test_new"):
+        (tmp_path / "tests" / f"{name}.py").write_text("", encoding="utf-8")
+    runs = [
+        [
+            _junit(tmp_path / "r1" / "s1" / "junit.xml", {"tests.test_a": 10}),
+            _junit(tmp_path / "r1" / "s2" / "junit.xml", {"tests.test_b": 4}),
+        ],
+        [_junit(tmp_path / "r2" / "junit.xml", {"tests.test_a": 12, "tests.test_b": 5})],
+        [
+            _junit(
+                tmp_path / "r3" / "junit.xml",
+                {"tests.test_a": 90, "tests.test_b": 6, "tests.test_new": 3},
+            )
+        ],
+    ]
+    assert shard.median_weights_of_runs(runs, tmp_path) == {
+        "tests/test_a.py": 12.0,  # 不是 (10+12+90)/3 或 112
+        "tests/test_b.py": 5.0,
+        "tests/test_new.py": 3.0,  # 只出现过一次：按出现过的那几次取
+    }
+
+
+def test_median_weights_of_runs_averages_the_middle_pair(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text("", encoding="utf-8")
+    runs = [
+        [_junit(tmp_path / f"r{i}" / "junit.xml", {"tests.test_a": t})]
+        for i, t in enumerate((2, 4, 6, 100))
+    ]
+    assert shard.median_weights_of_runs(runs, tmp_path) == {"tests/test_a.py": 5.0}
+
+
+def test_main_from_junit_runs_writes_median_table(tmp_path, capsys):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text("", encoding="utf-8")
+    for i, t in enumerate((1, 3, 50)):
+        _junit(tmp_path / f"run{i}" / "shard1" / "junit.xml", {"tests.test_a": t})
+    rc = shard.main(
+        [
+            "--from-junit-runs",
+            *(str(tmp_path / f"run{i}") for i in range(3)),
+            "--root",
+            str(tmp_path),
+            "--source",
+            "s",
+            "--measured",
+            "m",
+        ]
+    )
+    assert rc == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["weights"] == {"tests/test_a.py": 3.0}
+    assert "median" in doc["unit"]
+
+
+def test_main_from_junit_runs_refuses_a_run_without_junit(tmp_path):
+    (tmp_path / "empty").mkdir()
+    with pytest.raises(shard.ShardError, match="没有 junit.xml"):
+        shard.main(
+            ["--from-junit-runs", str(tmp_path / "empty"), "--source", "s", "--measured", "m"]
+        )
+
+
 # ---------------------------------------------------------------- conftest 那一层（真子进程）
 
 _TWO_FILES = ("tests/test_aggregate_gate.py", "tests/test_pixel_compare.py")

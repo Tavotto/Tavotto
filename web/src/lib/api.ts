@@ -1405,6 +1405,11 @@ export interface LayoutVersionMeta {
   canvasId?: string
   canvasName?: string
   /**
+   * 这一版那张画布上有哪些图（面板的 `fileId`，后端读时从整份文档派生，不落盘；旧节点同样有）。
+   * 时间线按「当前这张图」分开靠它；缺席 = 没有图 / 老后端，不猜。
+   */
+  figures?: string[]
+  /**
    * 够画一行缩略图的**草图**，只有请求里要了才有（见 `fetchVersions`）。
    * 画不出来的那些版本**没有这个字段**——空草图与「这一版真的什么都没有」
    * 是两件事，前者该显示占位、后者该显示一张空白页。

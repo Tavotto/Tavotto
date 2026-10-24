@@ -84,7 +84,7 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
   }
   if (!origin.still()) return abandon()
   const outcome = await enterEdit(
-    { epoch: () => useScriptRunStore.getState().epoch, note: () => {}, stillWanted: () => origin.still() },
+    { epoch: () => useScriptRunStore.getState().epoch, note: () => {}, stillWanted: () => origin.still(), beside: true },
     matches[0],
   )
   if (outcome === 'entered') {
