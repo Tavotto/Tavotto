@@ -20,7 +20,7 @@ import json
 import sys
 
 #: 认得的子命令。放在这里是为了让「它是不是子命令」这个判断只有一处。
-COMMANDS = ("open", "run", "doctor", "codex", "fix-mcp")
+COMMANDS = ("open", "run", "doctor", "codex", "fix-mcp", "agent-run")
 
 
 def use_utf8_streams() -> None:
@@ -76,6 +76,12 @@ def dispatch(argv: list[str]) -> int | None:
         from . import fixmcp
 
         return fixmcp.cli(argv[1:])
+    if argv[0] == "agent-run":
+        # ADR 0147 第二阶段：改图助手的内置执行器子进程（= `python -m tavotto.engine.agent_runner`；冻结产物里没有 `-m`，
+        # 所以同一个入口也挂在这里）。纯标准库；stdout 归事件流独占，提示词走 stdin，密钥只读环境变量。
+        from .agent_runner import __main__ as agent_runner_main
+
+        return agent_runner_main.main(argv[1:])
     return doctor(argv[1:])
 
 
