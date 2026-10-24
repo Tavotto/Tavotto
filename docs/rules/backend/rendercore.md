@@ -158,7 +158,7 @@ order: 330
 - **接 ExportJob 只给 `produce`**（`rendercore/job.py`）：作业生命周期一字不改；给不出的格式逐项 `format_failed`
   且 `error.params.unsupported` 带操作与理由，写入器的 `WriterError` 与 child 的 `RenderChildError` 也落到这一档；
   编译期事实（缺字 / cjk 脸 / hidden）进 `job.warnings`；冻结源在写入前 `read_frozen()`。U06 / U07 里 `app.py` 不 import 它。
-- **facade 接线（U08 接入、U10 起是唯一实现即默认，ADR 0067 / 0072）**：`rendercore/facade.py` 是 pdfbackend 契约的实现（19 项同签名 +
+- **facade 接线（U08 接入、U10 起是唯一实现即默认，ADR 0067 / 0072）**：`rendercore/facade.py` 是 pdfbackend 契约的实现（20 项同签名 +
   Canvas 面适配器；对拍表在模块头），由契约层 `pdfbackend/__init__.py` 按 `TAVOTTO_RENDER_BACKEND` 选中；
   进程级共享三样：字体注册表 `facade.provider()`、render child `facade.host()`（= `renderhost.shared()`）、
   预览缓存 `facade.preview_cache()`。产品导出路（`app._export_produce`）的 `scope=canvas` 走
@@ -196,7 +196,7 @@ order: 330
 - **默认就是它（U10，ADR 0072）**：`pdfbackend.BACKEND_DEFAULT = rendercore`、`BACKENDS` 闭集只有这一项；
   旧实现模块 `pymupdf_backend`（`pdfbackend/` 下）已删除，`TAVOTTO_RENDER_BACKEND=pymupdf` 是 `backend_retired` 错误不是回退。
   前端读的覆盖表就是这里的表；产品包（wheel artifacts / PyInstaller `resources/` datas + `collect_dynamic_libs("pypdfium2_raw")`
-  + `collect_all("pikepdf")`，冻结入口 `packaging/entry.py` 先分派 `--render-child`）带全部依赖与字体；facade 19 项
+  + `collect_all("pikepdf")`，冻结入口 `packaging/entry.py` 先分派 `--render-child`）带全部依赖与字体；facade 20 项
   的终态记在 `docs/implementation/tavotto-foundation/U00_FACADE_LEDGER.md`。旧默认字体（Times-Roman 等 base-14）
   到 Liberation 的布局政策在 ADR 0073：位置 / 内容 / 框尺寸保持、advance 相同、基线按批准量变、旧项目不重排。
 
@@ -224,7 +224,7 @@ order: 330
 - 预览缓存键 = 内容身份 + 后端 build + 字体政策 + 像素参数，异常不给空白图
 - 派生值按文件指纹复用、不当身份
 - PDFium PNG 按平台分基线
-- `facade.py` 是契约的唯一实现、U10 起即默认（19 项同签名，ADR 0072），`TAVOTTO_RENDER_BACKEND=pymupdf` 报 `backend_retired`、不静默回退
+- `facade.py` 是契约的唯一实现、U10 起即默认（20 项同签名，ADR 0072），`TAVOTTO_RENDER_BACKEND=pymupdf` 报 `backend_retired`、不静默回退
 - 「不可用」只经 `UNAVAILABLE_ERRORS` / `pdfbackend.is_backend_unavailable` 暴露
 - 执行侧源经 `ExecutionSourceResolver` 附回执、`origin=execution` 必核
 - 覆盖表 / 向量与退役前旧表（`evidence/u10/*.pymupdf.json`）的差异是闭集

@@ -526,7 +526,7 @@
         },
         {
           "stage": "U08",
-          "test": "tests/test_rendercore_facade.py::test_the_contract_names_in_all_are_the_ledger_nineteen"
+          "test": "tests/test_rendercore_facade.py::test_the_contract_names_in_all_are_the_ledger_names"
         },
         {
           "stage": "U10",
@@ -727,6 +727,50 @@
         {
           "stage": "U10",
           "test": "tests/test_retirement_scan.py::test_every_main_path_runs_in_a_clean_process_with_the_blocker_installed"
+        }
+      ]
+    },
+    {
+      "name": "concat_pdf",
+      "kind": "function",
+      "category": "original_vector_copy",
+      "signature": "concat_pdf(singles, out) -> 页数（输入不是恰好一页的可读 PDF → PdfConcatError）",
+      "callers": [
+        {
+          "file": "src/tavotto/app.py",
+          "symbol": "_export_produce_merged_pdf",
+          "role": "scope=original 的多页 PDF（#1370）：每页先走单页 PDF 导出，再按页序拼成一个文件，不重画"
+        }
+      ],
+      "tests": [
+        {
+          "file": "tests/test_export_multipage_pdf.py",
+          "symbol": "test_merge_keeps_order_and_repeats",
+          "contains": "def test_merge_keeps_order_and_repeats",
+          "class": "user_contract",
+          "note": "页序跟请求走、同一页可重复"
+        },
+        {
+          "file": "tests/test_export_multipage_pdf.py",
+          "symbol": "test_merge_rejects_a_multipage_or_missing_input",
+          "contains": "def test_merge_rejects_a_multipage_or_missing_input",
+          "class": "user_contract",
+          "note": "输入必须恰好一页，否则受控报错"
+        },
+        {
+          "file": "tests/test_export_multipage_pdf.py",
+          "symbol": "test_three_figures_become_three_pages_in_request_order",
+          "contains": "def test_three_figures_become_three_pages_in_request_order",
+          "class": "user_contract",
+          "note": "经端点合成 3 页、页序与尺寸"
+        }
+      ],
+      "status": "public_contract",
+      "migration_criterion": "#1370：新后端拼出的文件页数 = 输入数，第 i 页的尺寸与文字 = 第 i 个输入那一页（独立读取器比）；不重画；输入不是恰好一页 → PdfConcatError。",
+      "migration_evidence": [
+        {
+          "stage": "U08",
+          "test": "tests/test_export_multipage_pdf.py::test_merge_keeps_order_and_repeats"
         }
       ]
     },

@@ -1,4 +1,4 @@
-"""RenderCore 面的 pdfbackend 契约实现——19 个导出项 + Canvas 面，同签名同返回结构（统一实施包 U08 候选、
+"""RenderCore 面的 pdfbackend 契约实现——20 个导出项 + Canvas 面，同签名同返回结构（统一实施包 U08 候选、
 U10 起唯一实现，ADR 0067 / 0072）。
 
 `pdfbackend/__init__.py` 是契约层：它按 `TAVOTTO_RENDER_BACKEND` 选实现（今天闭集里只有本模块；U08–U09 时
