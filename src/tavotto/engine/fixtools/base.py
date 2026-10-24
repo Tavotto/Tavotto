@@ -76,6 +76,9 @@ class FixContext:
     python_changer: Callable[[dict], dict] | None = None
     #: 转成 matplotlib `({"script", "output", "project"}) -> {"ok", "code", "message"}`，只许写 `output`；None = 暂不可用（D2b 接转换任务）
     script_converter: Callable[[dict], dict] | None = None
+    #: 数据改指表被 AI 修复改了 / 回滚了 `(新状态, "added"|"restored") -> None`：应用侧据此收掉这个项目的会话、取消在跑的试运行、
+    #: 告诉开着这个项目的窗口（与数据失联弹窗的端点同一串）。None = 没有应用（测试 / 无界面），规则照写
+    on_input_remap_changed: Callable[[dict, str], None] | None = None
     #: 环境 id → 叠加环境（`list_environments` 登记；`select_environment` 记住环境时要带上）
     environment_overlays: dict[str, dict] = field(default_factory=dict)
     #: 本次调用的元信息：`run_tool` 每次调用前清空，工具写 `approved_by`（"user"）与 `snapshot`（快照 id），审计读它
@@ -84,6 +87,9 @@ class FixContext:
     allowed_tiers: frozenset[str] = frozenset({"observe"})
     #: 用户在 `propose_fix` 卡上已同意安装的包：规范名 -> 同意它的那一步（`install_packages` 名单外的包只要都在这里就不再问第二遍）
     approved_installs: dict = field(default_factory=dict)
+    #: 用户亲手选过的路径：真实路径 -> 选它的那一步（`pick_file` 的回答、`ask_user` 选中的选项里写着的存在的路径）。
+    #: `link_data_file` 的 `chosen` 在这里就不再弹第二张卡（选择本身就是确认）
+    user_chosen_paths: dict = field(default_factory=dict)
     #: 本会话持有的环境租约 `[(解释器, 租约 id)]`：`change_python` 动手前给项目当前用的受管环境那一代加租约（`envlease`），
     #: 换到新一代后 `retire_unused` 才不会删掉旧代、`rollback` 才有地方回去；会话收尾时 `release_leases()`
     leases: list = field(default_factory=list)

@@ -2,7 +2,7 @@
 
 `listed` / `user_env` / `tavotto` 三档的改动**执行前**自动打一个快照，存 `data_dir()/cache/fix_snapshots/<会话>/<id>.json`：
 
-* **本项目相关设置**：项目设置里的 `execution_policy`（运行方式）与 `environment`（项目用哪个环境）两个键，原值整段照存（含「没有这个键」）；
+* **本项目相关设置**：项目设置里的 `execution_policy`（运行方式）、`environment`（项目用哪个环境）与 `input_remap`（数据改指表，`link_data_file` 写它）三个键，原值整段照存（含「没有这个键」）；
 * **环境包清单**：目标环境的 `pip freeze` 解析成 `{规范名: 版本}`（只留 `名==版本` 行，URL / 路径行的内容一概不存，免得带进机器路径与凭据），
   外加环境目录顶层的条目名（只存名字）。
 
@@ -40,9 +40,10 @@ _SESSION_SAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
 
 def settings_keys() -> tuple[str, ...]:
-    from .. import execpolicy, projectenv
+    """快照覆盖的项目设置键：运行方式、项目用哪个环境、数据改指表（`link_data_file` 会写它）。"""
+    from .. import execpolicy, inputremap, projectenv
 
-    return (execpolicy.SETTINGS_KEY, projectenv.SETTINGS_KEY)
+    return (execpolicy.SETTINGS_KEY, projectenv.SETTINGS_KEY, inputremap.SETTINGS_KEY)
 
 
 def snapshot_root(session_id: str) -> Path:
@@ -189,14 +190,42 @@ def list_ids(ctx: FixContext) -> list[str]:
 
 # --------------------------------------------------------------------------- 回滚
 def _restore_settings(ctx: FixContext, saved: dict) -> bool:
-    from .. import config, projectenv
+    from .. import config, inputremap, projectenv
 
-    patch = {k: copy.deepcopy(saved.get(k)) for k in settings_keys()}  # None = 清掉这个键
+    # None = 清掉这个键；快照里没有的键（旧格式）不动
+    patch = {
+        k: copy.deepcopy(saved.get(k))
+        for k in settings_keys()
+        if k in saved and k != inputremap.SETTINGS_KEY
+    }
     try:
         config.set_project_settings(str(ctx.project_root), patch)
     except OSError:
         return False
     projectenv.reset_cache(ctx.project_root)  # 进程内缓存的「项目用哪个环境」也要跟着回去
+    return _restore_input_remap(ctx, saved)
+
+
+def _restore_input_remap(ctx: FixContext, saved: dict) -> bool:
+    """数据改指表走自己的恢复（`inputremap.restore_raw`：项目锁 + 换代）。只在它真的变了才动——回滚别的改动不该让
+    改指表换代、把项目的会话收掉。"""
+    from .. import inputremap
+
+    if inputremap.SETTINGS_KEY not in saved:
+        return True
+    root = str(ctx.project_root)
+    wanted = saved.get(inputremap.SETTINGS_KEY)
+    if inputremap.raw_setting(root) == wanted:
+        return True
+    try:
+        state = inputremap.restore_raw(root, copy.deepcopy(wanted))
+    except OSError:
+        return False
+    if ctx.on_input_remap_changed is not None:
+        try:
+            ctx.on_input_remap_changed(state, "restored")
+        except Exception:  # noqa: BLE001 - 通知窗口失败不影响已恢复的设置
+            pass
     return True
 
 
