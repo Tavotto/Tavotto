@@ -16,11 +16,14 @@ import { VendorKeyForm } from './VendorKeyForm'
 function MethodConnect({
   vendor,
   method,
+  connection,
   onConnected,
   onCancel,
 }: {
   vendor: AiVendor
   method: AiVendorMethod
+  /** 这种方式已有的连接（error / needs_auth 的也算）：改 Key 要更新它，不是另建一条 */
+  connection?: AiConnection
   onConnected: (c: AiConnection) => void
   onCancel: () => void
 }) {
@@ -31,14 +34,14 @@ function MethodConnect({
     if (method.kind === 'login') begin()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  if (method.kind === 'key') return <VendorKeyForm vendor={vendor} method={method} onConnected={onConnected} />
+  if (method.kind === 'key') return <VendorKeyForm vendor={vendor} method={method} connectionId={connection?.id} onConnected={onConnected} />
   if (method.kind === 'oauth') {
     return (
       <OAuthLoginDialog
         provider={vendor.logo}
         name={vendorName(vendor)}
         onClose={onCancel}
-        onSignedIn={() => void refreshAndFind(vendor.id).then((r) => r.conn && onConnected(r.conn))}
+        onSignedIn={() => void refreshAndFind(vendor, method).then((r) => r.conn && onConnected(r.conn))}
       />
     )
   }
@@ -115,7 +118,7 @@ export function MethodList({
               (ready && conn ? (
                 <ConnectionManage vendor={vendor} connection={conn} method={m} />
               ) : (
-                <MethodConnect vendor={vendor} method={m} onConnected={onConnected} onCancel={() => setPicked(null)} />
+                <MethodConnect vendor={vendor} method={m} connection={conn} onConnected={onConnected} onCancel={() => setPicked(null)} />
               ))}
           </div>
         )

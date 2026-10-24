@@ -46,6 +46,8 @@ const CLAUDE: AiVendor = vendor('anthropic', {
 const DS: AiVendor = vendor('deepseek', { label: 'DeepSeek' })
 
 let calls: { url: string; method: string; body: Record<string, unknown> | null }[]
+/** 「后端」当前的 capabilities（登录用例里按需换成连好之后的版本） */
+let serverCaps: ReturnType<typeof connectCapsOf> | null
 let host: HTMLDivElement
 let root: Root
 beforeEach(() => {
@@ -53,8 +55,11 @@ beforeEach(() => {
   calls = []
   globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
     calls.push({ url: String(url), method: (init?.method ?? 'GET').toUpperCase(), body: init?.body ? JSON.parse(String(init.body)) : null })
+    if (String(url).startsWith('/api/ai/capabilities') && serverCaps) return json(serverCaps)
+    if (String(url).endsWith('/agents/codex/login') && init?.method === 'POST') return json({ started: true, mode: 'terminal' })
     return json({})
   }) as typeof fetch
+  serverCaps = null
   useAiStore.setState({ caps: { ...connectCapsOf(), vendors: [DS, OPENAI, CLAUDE] } })
 })
 afterEach(async () => {
@@ -326,5 +331,54 @@ describe('多方式厂商：一种连好了不堵另一种的入口', () => {
     await click(q('[data-connect-vendor="minimax"] [data-connect-action="methods"]'))
     expect(q('[data-connect-method="o"]')!.dataset.connectMethodState).toBe('ready')
     expect(q('[data-connect-method="k"]')!.dataset.connectMethodState).toBe('none')
+  })
+})
+
+describe('登录只认所选方式的连接', () => {
+  const KEY = connection('p_openai', { vendor: 'openai', label: 'OpenAI API', method: 'api' })
+  const SUB = connection('sub:codex', { vendor: 'openai', label: 'ChatGPT', route: 'cli:codex' })
+  const caps = (...c: ReturnType<typeof connection>[]) => ({ ...connectCapsOf(c), vendors: [DS, OPENAI, CLAUDE] })
+
+  it('已有 Key 连接时做订阅登录：登录没成功就点「我已登录」不算成功（不回调、不关窗、留在卡上给失败那句）；订阅真的 ready 了才算', async () => {
+    const onClose = vi.fn()
+    const onConnected = vi.fn()
+    useAiStore.setState({ caps: caps(KEY) })
+    serverCaps = caps(KEY) // 登录没成：后端仍只有那条 Key 连接
+    await render(<ConnectAiDialog open onClose={onClose} onConnected={onConnected} />)
+    await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
+    await click(q('[data-connect-method="sub"]'))
+    await click(q('[data-connect-login="terminal"]'))
+    expect(onConnected).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(q('[data-connect-login="retry"]')).toBeTruthy()
+    expect(q('[data-connect-login-hint]')!.textContent).toBe(t('settings.agents.login.refreshFailed', { ns: 'dialogs' }))
+    // 这回登录真的成了
+    serverCaps = caps(KEY, SUB)
+    await click(q('[data-connect-login="retry"]'))
+    expect(onConnected).toHaveBeenCalledTimes(1)
+    expect(onConnected.mock.calls[0][0].id).toBe('sub:codex')
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('error 状态的 Key 连接：改 Key 是更新不是新建', () => {
+  it('二级卡片里的 Key 表单带原连接 id', async () => {
+    useAiStore.setState({
+      caps: { ...connectCapsOf([connection('p_openai', { vendor: 'openai', method: 'api', state: 'error', error: 'unauthorized' })]), vendors: [DS, OPENAI, CLAUDE] },
+    })
+    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
+    await click(q('[data-connect-method="api"]'))
+    const input = q<HTMLInputElement>('[data-connect-key-input]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'sk-fix')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await click(q('[data-connect-key-submit]'))
+    expect(calls.find((c) => c.url === '/api/ai/connections' && c.method === 'POST')?.body).toEqual({
+      id: 'p_openai',
+      vendor: 'openai',
+      api_key: 'sk-fix',
+    })
   })
 })

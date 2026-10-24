@@ -5,17 +5,24 @@ import { Button } from '../../ui/Button'
 import { ag } from '../agentState'
 import { useAgentLogin } from '../useAgentLogin'
 import { cx } from './copy'
-import { loginAgentOf } from './vendors'
+import { connectionForMethod, connectionsOf, loginAgentOf } from './vendors'
 
-/** 重读 capabilities，看这家厂商有没有 ready 的连接；读失败 = 没刷新成功（`ok:false`） */
-export async function refreshAndFind(vendorId: string): Promise<{ ok: boolean; conn?: AiConnection }> {
+/**
+ * 重读 capabilities，看**所选方式**对应的连接 ready 了没有；读失败 = 没刷新成功（`ok:false`）。
+ * 只认这一种方式的连接（`connectionForMethod`）：这家厂商另一种方式早就连好的（比如已有 API Key 连接），
+ * 不算这次登录成功的证据。
+ */
+export async function refreshAndFind(
+  vendor: AiVendor,
+  method: AiVendorMethod,
+): Promise<{ ok: boolean; conn?: AiConnection }> {
   try {
     await useAiStore.getState().loadCaps(true)
   } catch {
     return { ok: false }
   }
-  const conn = useAiStore.getState().caps?.connections?.find((x) => x.vendor === vendorId && x.state === 'ready')
-  return { ok: true, conn }
+  const c = connectionForMethod(connectionsOf(useAiStore.getState().caps, vendor), vendor, method)
+  return { ok: true, conn: c?.state === 'ready' ? c : undefined }
 }
 
 /**
@@ -32,9 +39,11 @@ export function useLoginFlow(
   const login = useAgentLogin(
     { id: loginAgentOf(vendor, method) },
     async () => {
-      const r = await refreshAndFind(vendor.id)
+      const r = await refreshAndFind(vendor, method)
       if (r.conn) onConnected(r.conn)
-      return r.ok
+      // 刷新成功但这种方式还没 ready（登录失败退出 / 没登完就点了「我已登录」）：按没成功处理，
+      // 留在这里显示登录失败那句，用户可以再点
+      return r.ok && !!r.conn
     },
     setLoginError,
   )

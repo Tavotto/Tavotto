@@ -87,7 +87,8 @@ export function connectionForMethod(
   let own: AiConnection[]
   if (method.kind !== 'key') {
     const id = method.connection_id ?? (method.kind === 'login' ? `sub:${method.agent ?? loginAgentOf(vendor)}` : null)
-    own = id ? connections.filter((c) => c.id === id) : []
+    // 账号登录类老后端没给 connection_id：连接 id 形如 `<provider>-oauth`
+    own = id ? connections.filter((c) => c.id === id) : connections.filter((c) => c.id.endsWith('-oauth'))
   } else {
     const sameKind = methodsOf(vendor).filter((m) => m.kind === 'key')
     own = connections.filter((c) => {

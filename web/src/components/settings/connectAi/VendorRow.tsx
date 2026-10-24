@@ -165,7 +165,7 @@ export function VendorRow({
           onClose={() => setOauth(false)}
           onSignedIn={() => {
             setOauth(false)
-            void refreshAndFind(vendor.id).then((r) => r.conn && onConnected(r.conn))
+            void refreshAndFind(vendor, method).then((r) => r.conn && onConnected(r.conn))
           }}
         />
       )}
