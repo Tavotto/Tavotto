@@ -425,6 +425,60 @@ def test_the_probe_reports_the_hint_when_it_ran_through_without_a_figure(figs):
     assert result["error"]["workdir_hint"]["recommended"] == workdir.MODE_PROJECT
 
 
+# --------------------------------------------------------------- 回退救回来的读不是「落空」
+#: 读到了存在的数据（相对路径只读回退救回来的）、内容不对才失败——跟运行目录无关，不该问「在哪个目录运行」
+RESCUED_READ_SCRIPT = """\
+import numpy as np
+import matplotlib.pyplot as plt
+
+d = np.loadtxt("data/run_1.txt")
+print("[loaded]", d.shape)
+raise ValueError("the content is wrong")
+"""
+
+PLAIN_OPEN_SCRIPT = """\
+import matplotlib.pyplot as plt
+
+with open("data/run_1.txt", encoding="utf-8") as f:
+    text = f.read()
+raise ValueError("the content is wrong: " + text)
+"""
+
+
+def test_a_read_the_fallback_rescues_is_not_recorded_as_a_sandbox_miss(figs, monkeypatch):
+    """回退自己问「沙盒里有没有这份」不经观察器：被救回来的读不留 `probe_misses`（in-process，不用 worker）。"""
+    sandbox = figs / "sandbox"
+    sandbox.mkdir()
+    monkeypatch.chdir(sandbox)
+    misses = figcapture.ProbeMisses()
+    undo_obs = figcapture.install_probe_observer(misses, str(sandbox))
+    undo_fb = figcapture.install_relative_read_fallback(str(figs), str(figs), str(sandbox))
+    try:
+        with open("data/run_1.txt", encoding="utf-8") as f:
+            assert f.read() == "1 2 3"
+        assert Path("data/run_1.txt").read_text(encoding="utf-8") == "1 2 3"
+        assert misses.items == []
+        # 脚本自己问的探路照记（观察层没被关）
+        assert os.path.exists("data/never.txt") is False
+        assert [m["target"] for m in misses.items] == ["data/never.txt"]
+    finally:
+        undo_fb()
+        undo_obs()
+
+
+@needs_worker
+@pytest.mark.parametrize("script", [RESCUED_READ_SCRIPT, PLAIN_OPEN_SCRIPT])
+def test_a_failure_after_a_successful_read_carries_no_workdir_hint(figs, script):
+    (figs / "fig.py").write_text(script, encoding="utf-8")
+    workdir.set_mode(figs, workdir.MODE_SANDBOX)
+    with pytest.raises(engine_pool.WorkerError) as err:
+        engine_pool.build("fig.py", str(figs), "__main__")
+    assert err.value.code == "script_error"
+    assert "wrong" in str(err.value)
+    assert err.value.workdir_hint is None
+    assert not (err.value.extra or {}).get("probe_misses")
+
+
 # --------------------------------------------------------------- C++ 读取器：extra.enoent 点名的相对路径也是证据
 PARQUET_SCRIPT = """\
 import matplotlib.pyplot as plt

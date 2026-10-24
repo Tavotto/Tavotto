@@ -5026,6 +5026,20 @@ def install_relative_read_fallback(
         rel = os.path.relpath(real, box)
         return None if rel.startswith("..") or rel == "." else rel
 
+    def _present(path) -> bool:
+        """回退自己的「这条路径在不在」——走 `os.stat`，**不经** `os.path.exists`。
+
+        `os.path.exists` 在沙盒会话里已被 `install_probe_observer` 换成记账版（观察器先装、回退后装）：
+        回退每问一次「沙盒里有没有这份」就会被记成脚本在沙盒里落空了一次探路，哪怕随后正是回退把读救回来、
+        脚本读到了数据——于是「在脚本目录里运行」的引导会挂到与目录无关的失败上（读到的文件内容不对 →
+        ValueError，准备卡标题「运行出错了」却问选运行目录）。证据必须只来自**脚本自己**的探路。
+        """
+        try:
+            os.stat(path)
+        except (OSError, ValueError):
+            return False
+        return True
+
     def _fallback_path(file) -> str | None:
         if not isinstance(file, (str, os.PathLike)):
             return None  # 已经是 fd / 文件对象
@@ -5049,7 +5063,7 @@ def install_relative_read_fallback(
         # 存在性**按真正的 open 会用的那条路径判**：相对的按 cwd 解（脚本
         # 可能 `os.chdir()` 进了子目录），绝对的就用它自己。拿沙盒根去拼的话，
         # chdir 之后脚本自己写出来的那份会被无视、读到项目里的原件。
-        if os.path.exists(name):
+        if _present(name):
             return None  # 已经有了——脚本自己写出来的那份优先
         cand = os.path.abspath(os.path.join(script_dir, rel))
         try:
@@ -5134,7 +5148,7 @@ def install_relative_read_fallback(
             names = _datasource_candidates(self, path)
             # 这串名字里只要有一个在 cwd（沙盒）下存在，numpy 自己就会读到它——不改道
             # （`_fallback_path` 对单个名字已经是这条判据，这里把它扩到整串）
-            if not any(isinstance(n, str) and os.path.exists(n) for n in names):
+            if not any(isinstance(n, str) and _present(n) for n in names):
                 for n in names:
                     alt = _fallback_path(n)
                     if alt is not None:

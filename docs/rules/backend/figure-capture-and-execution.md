@@ -105,7 +105,9 @@ order: 50
     `glob.glob|iglob` / `os.listdir|scandir` / `os.path.exists|isfile|isdir` / `Path.glob|rglob|iterdir|exists|is_file|is_dir`
     在沙盒 cwd 下回空 / 目录不存在 / 为假、目标是相对路径时记 `{kind, target, recursive, hidden}`
     （去重、`MAX_PROBE_MISSES=16`；stdlib 内部的逐段探路不记；`scandir` 的迭代器不包，只记目录不存在；列 cwd 本身不记）。
-    **返回值逐项不变**（迭代器换成逐项转发的生成器，元素与异常原样），这一条是硬约束。build 失败（`script_error`）、
+    **返回值逐项不变**（迭代器换成逐项转发的生成器，元素与异常原样），这一条是硬约束。
+    **证据只来自脚本自己的探路**：相对路径只读回退（观察器先装、回退后装）自己问「沙盒里有没有这份」走 `os.stat`（`_present`），
+    不经被观察的 `os.path.exists`——否则每个被回退救回来的读都会记成落空，读到了数据、内容不对才失败的脚本也会被问「在哪个目录运行」。build 失败（`script_error`）、
     没出图（`no_figures_captured*`）、先判空再 exit（`script_exited`）时，记录随错误 `extra.probe_misses` 到父进程
     （build 响应在有记录时也带 `probe_misses`），`workdir.probe_hint` 拿**首开同一把尺子**（`databinding._probe_hit`，项目外不看、
     glob 有预算）按脚本目录再判，至少一条找得到才在错误上挂 **`workdir_hint`**——载荷与首开确认框同形
