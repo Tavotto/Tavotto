@@ -101,7 +101,7 @@ def real_transaction(monkeypatch):
             needed_imports=(),
             record=(),
             reason="test",
-            identity="b" * 12,
+            identity=_PROJECT.get("identity", "b" * 12),
             emit=lambda state, **kw: kw.get("result") or {},
             on_log=lambda text: None,
         )
@@ -175,7 +175,7 @@ def test_without_the_lease_the_real_retire_deletes_the_old_generation(box, real_
     from tavotto.engine.fixtools import change
 
     real = change._lease_current_environment
-    change._lease_current_environment = lambda c: None  # type: ignore[assignment]
+    change._lease_current_environment = lambda c: []  # type: ignore[assignment]
     try:
         assert not call(ctx, "change_python", {}).is_error
     finally:
@@ -277,3 +277,33 @@ def test_the_lease_is_released_when_the_session_ends(box, real_transaction):
     assert s.state == fixsession.STATE_FINISHED
     assert not envlease.retained_on(old)  # 会话结束，租约放了
     assert managedenv.generation_python(box.proj, "ga").is_file()
+
+
+def test_a_failed_second_change_keeps_the_lease_an_earlier_change_needs(box, real_transaction):
+    """同一会话：A → B 成功，再换一次失败，再换 B → C 成功。失败只撤销它自己新加的租约，A 的保留要留到会话收尾——
+    否则第三次换代开头的 retire_unused 会删掉 A，第一步的快照就回滚不了（Codex #1383）。"""
+    old = make_generation(box.proj, "ga", active=True)
+    good = real_changer(box, real_transaction)
+    outcomes = iter(["ok", "fail", "ok"])
+
+    def changer(req):
+        if next(outcomes) == "fail":
+            return {"ok": False, "code": "boom"}
+        return good(req)
+
+    ctx = ctx_for(box, real_transaction, python_changer=changer)
+    assert not call(ctx, "change_python", {}).is_error
+    first_snap = ctx.call_meta["snapshot"]
+    assert call(ctx, "change_python", {}).is_error
+    assert envlease.retained_on(old), "失败的那次换代不能放掉 A 的保留"
+    _PROJECT["identity"] = "c" * 12
+    try:
+        assert not call(ctx, "change_python", {}).is_error
+    finally:
+        _PROJECT.pop("identity", None)
+    assert managedenv.generation_python(box.proj, "ga").is_file()
+    r = call(ctx, "rollback", {"snapshot": first_snap})
+    assert not r.is_error, r.content
+    assert managedenv.active_generation(box.proj) == "ga"
+    ctx.release_leases()
+    assert not envlease.retained_on(old)

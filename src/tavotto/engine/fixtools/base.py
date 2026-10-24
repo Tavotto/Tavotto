@@ -109,11 +109,16 @@ class FixContext:
         kw.setdefault("allowed_tiers", FIX_SESSION_TIERS)
         return cls(session_id=session_id, project_root=project_root, **kw)
 
-    def release_leases(self) -> None:
-        """释放本会话的全部环境租约（幂等）。会话任何一种收尾（finish / 取消 / 失败 / 自动取消）都要调。"""
+    def release_leases(self, only: list[tuple[str, str]] | None = None) -> None:
+        """释放本会话的环境租约（幂等）。不带参数 = 全部，会话任何一种收尾（finish / 取消 / 失败 / 自动取消）都要调；
+        `only` = 只放这几条（一次换代失败时撤销它自己新加的，此前成功换代保留的不动）。"""
         from .. import envlease
 
-        leases, self.leases = self.leases, []
+        if only is None:
+            leases, self.leases = self.leases, []
+        else:
+            leases = [x for x in only if x in self.leases]
+            self.leases = [x for x in self.leases if x not in leases]
         for python, owner in leases:
             envlease.release_retain(python, owner)
 

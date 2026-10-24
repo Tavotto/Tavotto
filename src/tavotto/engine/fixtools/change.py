@@ -216,7 +216,7 @@ def _script_rel(ctx: FixContext) -> str:
         return ""
 
 
-def _lease_current_environment(ctx: FixContext) -> ToolResult | None:
+def _lease_current_environment(ctx: FixContext) -> list[tuple[str, str]]:
     """项目当前用的受管环境那一代，在本修复会话结束前加**保留型**租约（`envlease.acquire_retain`）：
     换到新一代后 `managedenv.retire_unused` 经 `deprepair._generation_in_use` 看到它就不删旧代，`rollback` 才能把项目指回去。
     保留型不挡换代事务自己的 `envlease.mutating()`（用 native 租约会把 `change_python` 自己挡死）。"""
@@ -234,10 +234,14 @@ def _lease_current_environment(ctx: FixContext) -> ToolResult | None:
     if remembered and managedenv.is_managed_python(root, remembered):
         targets.append(str(remembered))
     owner = f"fix:{ctx.session_id}"
+    added: list[tuple[str, str]] = []
     for python in dict.fromkeys(targets):
+        if (python, owner) in ctx.leases:
+            continue  # 本会话此前的换代已经保留着它
         envlease.acquire_retain(python, owner)
         ctx.leases.append((python, owner))
-    return None
+        added.append((python, owner))
+    return added
 
 
 def change_python(ctx: FixContext, args: dict) -> ToolResult:
@@ -250,9 +254,7 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
     bad = _snapshot_or_error(ctx, "change_python")
     if bad is not None:
         return bad
-    busy = _lease_current_environment(ctx)
-    if busy is not None:
-        return busy
+    added = _lease_current_environment(ctx)
     res = executors.run_python_changer(
         ctx,
         {
@@ -262,7 +264,8 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
         },
     )
     if not res.get("ok"):
-        ctx.release_leases()  # 没换成：旧环境照旧在用，不必再占着租约（也免得挡住后面往旧环境装包）
+        # 没换成：只撤销**这一次**新加的租约；本会话此前成功换代保留的旧代要留到会话收尾，否则它的快照回滚不了
+        ctx.release_leases(added)
         return err(
             str(res.get("code") or "change_python_failed")[:60],
             _with_snapshot(
