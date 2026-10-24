@@ -61,6 +61,8 @@ export function CodingAgentsSection() {
   const caps = useAiStore((s) => s.caps)
   const preferred = useAiStore((s) => s.agent)
   const [detailId, setDetailId] = useState<AiAgentId | null>(null)
+  // 页底「高级」的展开态放在这里而不是 <details> 自己：进详情再返回时整块会重新挂载，不记着就又收起来了
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [busyAgent, setBusyAgent] = useState<AiAgentId | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -246,7 +248,12 @@ export function CodingAgentsSection() {
           {announce}
         </p>
         <ConnectionsList caps={caps} />
-        <Details data-connect-advanced className="flex flex-col gap-6">
+        <Details
+          data-connect-advanced
+          open={advancedOpen}
+          onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
+          className="flex flex-col gap-6"
+        >
           <Summary className="w-fit text-base font-medium text-ink">{cx('advanced')}</Summary>
           <div className="mt-3 flex flex-col gap-6">{legacy}</div>
         </Details>
