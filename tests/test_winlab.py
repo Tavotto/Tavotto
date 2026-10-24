@@ -938,11 +938,13 @@ def test_installer_check_is_ascii_and_mirrors_the_nightly_checks():
     ps = (WINLAB / "installer-check.ps1").read_bytes()
     assert all(b < 128 for b in ps)
     text = ps.decode()
+    # Lab 按「父进程 + 可执行文件路径」认 sidecar：非管理员 SSH 会话读不到命令行（PS 7 的
+    # CommandLine 也走 WMI）；nightly 按命令行里的 desktop-sidecar 认，同一件事两种取法
     for needle in (
         "runtime\\python.exe",
         "tavotto-workerd.exe",
         "GNU AFFERO",
-        "desktop-sidecar",
+        "$_.Path -ieq $exePath",
         "--expect-source bundled",
     ):
         assert needle in text, needle
