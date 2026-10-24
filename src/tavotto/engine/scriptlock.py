@@ -26,6 +26,9 @@
 * `snapshots.restore_script`（AI 修复工具箱，ADR 0149 §七）：`convert_script` 事后核对发现原脚本被转换器改了，持这份脚本的锁、`write_script` 把**执行前读到的原字节**写回；从不写新内容。
 * `change.convert_script`（同上）：持原脚本的锁做完「读基线 → 转换器（只拿临时副本）→ 核对 / 必要时恢复」（单个脚本，没有枚举竞态）。
 
+`script_guards`（复数）一次持有**多份**脚本的锁，只给 AI 修复工具箱 `run_command` 第②档（沙盒外执行）用：不论调用方怎么列，按规范化真实路径排序、
+逐把**非阻塞**抢，抢不齐就全放掉退避重来，超时抛 `TimeoutError`——绝不阻塞等待一把锁，所以不会与「持 A 等 B」的入口互等死锁。它不写任何字节；恢复仍经 `write_script`。
+
 写脚本字节只经 `write_script()` / `create_script()`：没持有这份脚本的锁就抛——门禁落在写的那一刻，不靠调用方记得。
 纯标准库 + `atomicio`；Flask 父进程 import。
 """
@@ -35,6 +38,7 @@ from __future__ import annotations
 import contextlib
 import os
 import threading
+import time
 from pathlib import Path
 
 from . import atomicio
@@ -60,6 +64,36 @@ def script_guard(script_path: str | os.PathLike):
             yield
         finally:
             _OWNERS[key].pop()
+
+
+@contextlib.contextmanager
+def script_guards(script_paths, *, timeout: float = 30.0):
+    """一次持有多份脚本的锁（见模块说明）：非阻塞抢全、抢不齐全放掉再试，超时 `TimeoutError`。同一线程可重入。"""
+    keys = sorted({script_key(p) for p in script_paths})
+    deadline = time.monotonic() + timeout
+    while True:
+        got: list[tuple[str, threading.RLock]] = []
+        with _GUARD:
+            locks = [(k, _LOCKS.setdefault(k, threading.RLock())) for k in keys]
+        for key, lock in locks:
+            if not lock.acquire(blocking=False):
+                break
+            got.append((key, lock))
+        if len(got) == len(locks):
+            break
+        for _key, lock in reversed(got):
+            lock.release()
+        if time.monotonic() >= deadline:
+            raise TimeoutError("scripts are busy")
+        time.sleep(0.05)
+    for key, _lock in got:
+        _OWNERS.setdefault(key, []).append(threading.get_ident())
+    try:
+        yield
+    finally:
+        for key, lock in reversed(got):
+            _OWNERS[key].pop()
+            lock.release()
 
 
 def held(script_path: str | os.PathLike) -> bool:

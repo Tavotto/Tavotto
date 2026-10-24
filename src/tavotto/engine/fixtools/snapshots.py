@@ -106,12 +106,13 @@ def _current_settings(ctx: FixContext) -> dict:
 
 
 # --------------------------------------------------------------------------- 恢复用户脚本的原字节（convert_script 用）
-def restore_script(path: str | os.PathLike, data: bytes) -> bool:
-    """把一份用户脚本恢复成给定字节：**只经 `scriptlock`**（持这份脚本的锁、`write_script` 原子写）。成功回 True。"""
+def restore_script(path: str | os.PathLike, data: bytes, *, mode: int | None = None) -> bool:
+    """把一份用户脚本恢复成给定字节：**只经 `scriptlock`**（持这份脚本的锁、`write_script` 原子写）。成功回 True。
+    `mode`：原来的权限位（保留可执行位）。"""
     try:
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         with scriptlock.script_guard(path):
-            scriptlock.write_script(path, data)
+            scriptlock.write_script(path, data, mode=mode)
     except OSError:
         return False
     return True

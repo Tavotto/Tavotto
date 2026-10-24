@@ -27,6 +27,8 @@ ID_KEYS = frozenset({"env", "snapshot"})
 _ID_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 KEEP_KEYS = PATH_KEYS | frozenset(ENUM_KEYS) | ID_KEYS
 _MAX_STR = 300
+#: `run_command` 审计行的 `sandbox`：hardened = 第①档加固沙盒内；outside = 第②档沙盒外（用户单独点头）；none = 没有执行（被拒 / 没有沙盒 / 未获同意）
+SANDBOX_VALUES = frozenset({"hardened", "outside", "none"})
 _lock = threading.Lock()
 
 
@@ -79,6 +81,8 @@ class AuditLog:
         result: dict,
         snapshot: str | None = None,
         approved_step: int | None = None,
+        sandbox: str | None = None,
+        command_tier: int | None = None,
     ) -> None:
         line = {
             "ts": round(time.time(), 3),
@@ -98,6 +102,10 @@ class AuditLog:
             line["approved_step"] = int(approved_step)  # 名单外的包是被哪一步 propose_fix 同意的
         if snapshot:
             line["snapshot"] = str(snapshot)[:64]  # 改动前打的快照 id（「改」组）
+        if sandbox in SANDBOX_VALUES:  # `run_command`：沙盒形态与档位（闭集）
+            line["sandbox"] = sandbox
+        if command_tier in (1, 2):
+            line["command_tier"] = command_tier
         try:
             with _lock:
                 p = self.path

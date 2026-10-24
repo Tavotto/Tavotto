@@ -243,7 +243,7 @@ def test_tool_call_goes_through_run_tool_so_it_is_audited_and_unknown_tools_are_
     base = f"{served.url}/api/ai/fix/{s.id}/tool"
     status, out = http(base, token, body={"name": "read_run_report", "arguments": {}})
     assert status == 200 and "content" in out and "is_error" in out
-    status, out = http(base, token, body={"name": "run_command", "arguments": {}})
+    status, out = http(base, token, body={"name": "no_such_fix_tool", "arguments": {}})
     assert status == 200 and out["is_error"] is True
     status, out = http(base, token, body={"name": "read_file", "arguments": "nope"})
     assert out["is_error"] is True  # 参数不是对象：run_tool 的 bad_arguments
