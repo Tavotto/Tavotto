@@ -8,17 +8,17 @@
   全是 D2b 修复会话那一份，这里不另做一套。用户还没点卡片时这个调用就一直等（上限与卡片超时一致），会话取消时应用端立刻回错误。
 
 令牌（本次会话的 scoped token）只经环境变量 `TAVOTTO_FIX_TOKEN` 传入，**不进 argv**、不进日志；请求头 `X-Tavotto-Fix-Token`。
-回环请求显式绕开系统代理（`HTTP_PROXY` 不该把本机请求带出去）。**纯标准库**：stdout 归协议独占，别的一律写 stderr，且不写任何内容。
+回环请求走字面量 `http.client.HTTPConnection("127.0.0.1", 端口)`（与 `session_client.loopback_request` 同一条纪律，#1132）：不读任何代理设置、不跟随重定向，令牌不会被带给代理。**纯标准库**：stdout 归协议独占，别的一律写 stderr，且不写任何内容。
 """
 
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import sys
-import urllib.error
-import urllib.request
+import urllib.parse
 
 ENV_TOKEN = "TAVOTTO_FIX_TOKEN"
 TOKEN_HEADER = "X-Tavotto-Fix-Token"
@@ -41,34 +41,45 @@ class FixMcpError(Exception):
     pass
 
 
-def _opener() -> urllib.request.OpenerDirector:
-    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+def _loopback_port(base_url: str) -> int:
+    """只认 `http://127.0.0.1:<端口>`：修复回调只回本机应用，别的地址一律拒（不会被拿去连外部）。"""
+    u = urllib.parse.urlsplit(base_url)
+    if u.scheme != "http" or u.hostname != "127.0.0.1" or not u.port or u.path not in ("", "/"):
+        raise FixMcpError("bad_url")
+    return u.port
+
+
+def _loopback_transport(
+    port: int, method: str, path: str, body: bytes | None, headers: dict, timeout: float
+) -> tuple[int, bytes]:
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        conn.request(method, path, body=body, headers=headers)
+        resp = conn.getresponse()
+        return resp.status, resp.read(_MAX_RESPONSE + 1)
+    finally:
+        conn.close()
 
 
 class Callback:
-    """对应用修复端点的两个回环请求。`opener` 可注入（测试用）。"""
+    """对应用修复端点的两个回环请求。`transport` 可注入（测试用），形状同 `_loopback_transport`。"""
 
-    def __init__(self, base_url: str, fix_id: str, token: str, opener=None) -> None:
-        self.base = base_url.rstrip("/")
+    def __init__(self, base_url: str, fix_id: str, token: str, transport=None) -> None:
+        self.port = _loopback_port(base_url)
         self.fix_id = fix_id
         self.token = token
-        self.opener = opener or _opener()
+        self.transport = transport or _loopback_transport
 
     def _request(self, method: str, suffix: str, body: dict | None, timeout: float) -> dict:
         data = None if body is None else json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(
-            f"{self.base}/api/ai/fix/{self.fix_id}/{suffix}",
-            data=data,
-            method=method,
-            headers={TOKEN_HEADER: self.token, "Content-Type": "application/json"},
-        )
+        path = f"/api/ai/fix/{urllib.parse.quote(self.fix_id, safe='')}/{suffix}"
+        headers = {TOKEN_HEADER: self.token, "Content-Type": "application/json"}
         try:
-            with self.opener.open(req, timeout=timeout) as resp:
-                raw = resp.read(_MAX_RESPONSE + 1)
-        except urllib.error.HTTPError as exc:
-            raise FixMcpError(f"http_{exc.code}") from None
-        except (urllib.error.URLError, OSError, TimeoutError):
+            status, raw = self.transport(self.port, method, path, data, headers, timeout)
+        except (http.client.HTTPException, OSError, TimeoutError, ValueError):
             raise FixMcpError("unreachable") from None
+        if status != 200:
+            raise FixMcpError(f"http_{status}")
         if len(raw) > _MAX_RESPONSE:
             raise FixMcpError("response_too_large")
         try:
@@ -186,9 +197,13 @@ def cli(argv: list[str]) -> int:
     except SystemExit:
         return 2
     token = os.environ.get(ENV_TOKEN, "")
-    if not token or not args.url.startswith("http://127.0.0.1:"):
+    try:
+        callback = Callback(args.url, args.fix_id, token) if token else None
+    except (FixMcpError, ValueError):
+        callback = None
+    if callback is None:
         sys.stderr.write("tavotto fix-mcp: missing token or non-loopback url\n")
         return 2
     out = sys.stdout.buffer
     sys.stdout = sys.stderr
-    return FixMcpServer(Callback(args.url, args.fix_id, token), sys.stdin.buffer, out).serve()
+    return FixMcpServer(callback, sys.stdin.buffer, out).serve()

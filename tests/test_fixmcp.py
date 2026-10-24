@@ -396,11 +396,10 @@ def test_mcp_server_refuses_to_start_without_a_token_or_with_a_remote_url(monkey
 
 
 def test_mcp_callback_failures_become_tool_errors_not_protocol_errors():
-    class Down:
-        def open(self, *_a, **_k):
-            raise urllib.error.URLError("down")
+    def down(*_a, **_k):
+        raise ConnectionRefusedError("down")
 
-    cb = fixmcp.Callback("http://127.0.0.1:9", "fx", "t", opener=Down())
+    cb = fixmcp.Callback("http://127.0.0.1:9", "fx", "t", transport=down)
     out = _Pipe()
     server = fixmcp.FixMcpServer(cb, _Lines(), out)
     server.handle(
@@ -510,3 +509,36 @@ def test_cancel_waits_for_an_in_flight_tool_before_publishing_the_final_state(
         if how == "cancel"
         else (fixsession.OUTCOME_FAILED, "budget")
     )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://127.0.0.1:8080",
+        "http://localhost:8080",
+        "http://127.0.0.1.evil.example:80",
+        "http://example.com:80",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8080/elsewhere",
+        "http://127.0.0.1:notaport",
+    ],
+)
+def test_callback_only_accepts_a_literal_loopback_base_url(url, monkeypatch):
+    """回调只回本机应用：别的地址（含看起来像本机的）一律拒，令牌不会被发去别处。"""
+    with pytest.raises((fixmcp.FixMcpError, ValueError)):
+        fixmcp.Callback(url, "fx", "t")
+    monkeypatch.setenv(fixmcp.ENV_TOKEN, "t")
+    assert fixmcp.cli(["--url", url, "--fix-id", "fx"]) == 2
+
+
+def test_callback_requests_go_to_the_loopback_port_with_the_token_header():
+    seen = []
+
+    def transport(port, method, path, body, headers, timeout):
+        seen.append((port, method, path, headers.get(fixmcp.TOKEN_HEADER)))
+        return 200, b'{"tools": []}'
+
+    assert (
+        fixmcp.Callback("http://127.0.0.1:4321/", "fx/1", "tok", transport=transport).tools() == []
+    )
+    assert seen == [(4321, "GET", "/api/ai/fix/fx%2F1/tools", "tok")]
