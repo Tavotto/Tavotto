@@ -1141,11 +1141,15 @@ _OK_TRUE = re.compile(r'"ok"\s*:\s*true')
 
 
 def opened_session_id(facts: dict) -> str | None:
-    for c in _ok_calls(facts, "tavotto_open_figure"):
-        m = SESSION_ID_RE.search(c.get("result", ""))
-        if m:
-            return m.group(1)
-    return None
+    """会话 id：open 的结果可能大到被宿主转存成文件（模型只拿到一句提示），所以看所有成功的 Tavotto 结果，
+    最后才退回模型自己写的 `SESSION s-…` 那一行。"""
+    for c in facts["calls"]:
+        if c["name"].startswith("mcp__tavotto__") and c.get("is_error") is False:
+            m = SESSION_ID_RE.search(c.get("result", ""))
+            if m:
+                return m.group(1)
+    m = re.search(r"SESSION\s+(s-[0-9a-f]{12})", facts.get("final", ""))
+    return m.group(1) if m else None
 
 
 def journal_has_edits(data_dir: Path, sid: str | None) -> bool:

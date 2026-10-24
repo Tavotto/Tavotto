@@ -649,3 +649,17 @@ def test_an_agent_crash_still_produces_an_error_report(tmp_path, monkeypatch):
     assert rep["result"] == "error" and "kaput" in rep["summary"]
     assert (tmp_path / "reports" / f"{rep['run_id']}.json").exists()
     assert not (tmp_path / "state" / "job.lock").exists()
+
+
+def test_session_id_falls_back_to_other_results_and_the_final_line():
+    s = A.parse_stream(
+        _stream(
+            _use("2", "tavotto_open_figure"),
+            _res("2", "Error: result exceeds maximum allowed tokens. Output has been saved"),
+            _use("3", "tavotto_apply_overrides"),
+            _res("3", '{"ok":true,"session_id":"s-aaaaaaaaaaaa"}'),
+        )
+    )
+    assert A.opened_session_id(s) == "s-aaaaaaaaaaaa"
+    s = A.parse_stream(_stream({"type": "result", "result": "all good\nSESSION s-bbbbbbbbbbbb"}))
+    assert A.opened_session_id(s) == "s-bbbbbbbbbbbb"
