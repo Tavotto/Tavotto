@@ -148,9 +148,9 @@ def test_the_real_ci_yml_yields_the_two_gates_and_their_closed_sets(live_workflo
     # CI03a 起 matrix 是轴（python × shard），解析器回的是 {轴: 值}，不再是 include 列表
     assert live_workflow["backend-fast"]["matrix"] == {
         "python": ["3.10", "3.13", "3.14"],
-        "shard": ["1", "2", "3", "4"],
+        "shard": ["1", "2", "3", "4", "5", "6"],
     }
-    # backend-fast 2026-10-12 起 4 片、backend-platforms 2026-10-24 起 8 片；两个 job
+    # backend-fast 2026-10-24 起 6 片、backend-platforms 2026-10-24 起 8 片；两个 job
     # 片数不必相同，理由见 docs/rules/ci/pytest-shards.md。
     assert live_workflow["backend-platforms"]["matrix"] == {
         "os": ["macos-latest", "windows-latest"],

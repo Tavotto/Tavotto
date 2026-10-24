@@ -42,7 +42,8 @@ order: 50
   75–80 分钟而其余 job 早已跑完。留一法交叉验证（7 次的中位权重分片、量第 8 次的真实耗时）：Windows 最重片
   4 片新表 68、8 片新表 38（最坏 39），macOS 8 片 21；同一张表下 backend-fast（Ubuntu 4 片）的最重片持平或变轻
   （3.10：61 → 54）。macOS 与 Windows 共用一个片数（合同与基线解析器按「一个 job 一个 N」写）；公开仓库 + Enterprise，
-  并发不是约束。之后合并组的最长腿是 backend-fast（实测 62–63 分钟）。
+  并发不是约束。同一 PR 里 **`backend-fast` 由 4 片改 6 片**（`--shard=K/6`）：platforms 压下去之后它是合并组最长腿
+  （4 片实测 62–63 分钟），新表模拟 6 片最重片 3.10 28–38、3.14 34–38，与 Windows 8 片持平；8 片会被 Windows 那条腿盖住。
   改任一个 job 的片数
   要同步改：`tests/test_merge_queue_workflows.py::test_pytest_shards_agree_between_the_matrix_and_the_command`
   按 job_id 各自的期望片数、`tests/test_ci_baseline.py` 里对 `live_workflow[...]["matrix"]`
