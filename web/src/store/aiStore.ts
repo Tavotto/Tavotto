@@ -547,7 +547,7 @@ export const useAiStore = create<AiState>((set, get) => ({
       )
       const efforts = prunePrefs(
         s.efforts,
-        (a) => agentById(caps, a)?.efforts ?? caps.connections?.find((c) => c.id === a)?.efforts ?? [],
+        (a) => allEffortsOf(agentById(caps, a) ?? caps.connections?.find((c) => c.id === a)),
       )
       if (models !== s.models || efforts !== s.efforts) persistPrefs(models, efforts)
       // **首选值不动**：暂时不可用不等于用户改了主意，恢复后它还该是默认项。
@@ -1434,6 +1434,12 @@ async function runDataFigure(
   }
 }
 
+/** 一个 Agent / 连接下所有型号可能出现的档位（Agent 级 + 各型号自己的并集）：清理记忆时只丢任何型号都没有的值 */
+function allEffortsOf(info: { efforts?: string[]; model_details?: { efforts?: string[] }[] } | null | undefined): string[] {
+  if (!info) return []
+  return [...new Set([...(info.efforts ?? []), ...(info.model_details ?? []).flatMap((d) => d.efforts ?? [])])]
+}
+
 /** 某个型号的详情；后端没带 `model_details`（旧后端 / 第三方接口）时为 undefined */
 export function modelDetail(info: AiAgentCaps | null | undefined, model: string | null | undefined) {
   return model ? info?.model_details?.find((d) => d.id === model) : undefined
@@ -1481,7 +1487,7 @@ async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
   const info = conn ? connectionInfo(conn) : agentById(caps, agent)
   const key = conn ? conn.id : agent
   const model = get().models[key] ?? info?.default_model ?? null
-  const effort = info?.efforts.length ? resolveEffort(info, model, get().efforts[key]) || null : null
+  const effort = effortsForModel(info, model).length ? resolveEffort(info, model, get().efforts[key]) || null : null
   set((s) => ({ submissions: { ...s.submissions, [rid]: { ...s.submissions[rid], phase: 'sending' } } }))
   let res
   try {

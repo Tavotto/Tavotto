@@ -151,6 +151,49 @@ describe('强度档位：明确无档位的型号不带 effort', () => {
   })
 })
 
+describe('强度档位：换型号按该型号自己的 model_details', () => {
+  const caps = () =>
+    ({
+      agents: [
+        {
+          id: 'codex',
+          name: 'Codex',
+          usable: true,
+          models: ['plain', 'deep'],
+          default_model: 'plain',
+          efforts: [],
+          default_effort: null,
+          model_details: [
+            { id: 'plain', display_name: 'P', description: '', efforts: [], efforts_known: true, default_effort: null },
+            { id: 'deep', display_name: 'D', description: '', efforts: ['low', 'xhigh'], efforts_known: true, default_effort: 'xhigh' },
+          ],
+        },
+      ],
+    }) as never
+  const effortOf = () => (runBodies.at(-1) as { effort?: string | null } | undefined)?.effort ?? null
+
+  it('默认型号没有档位、所选型号有：带该型号的默认档（不被 Agent 级空清单挡掉）', async () => {
+    useAiStore.setState({ caps: caps(), models: { codex: 'deep' }, efforts: {} })
+    await send()
+    expect(effortOf()).toBe('xhigh')
+  })
+
+  it('记着的档位在新型号里不存在：回到该型号的默认档；存在就沿用', async () => {
+    useAiStore.setState({ caps: caps(), models: { codex: 'deep' }, efforts: { codex: 'high' } })
+    await send()
+    expect(effortOf()).toBe('xhigh')
+    useAiStore.setState({ efforts: { codex: 'low' } })
+    await send('再来一次')
+    expect(effortOf()).toBe('low')
+  })
+
+  it('换到明确无档位的型号：不带 effort', async () => {
+    useAiStore.setState({ caps: caps(), models: { codex: 'plain' }, efforts: { codex: 'low' } })
+    await send()
+    expect(effortOf()).toBeNull()
+  })
+})
+
 describe('连接视图：请求带 connection + model', () => {
   const view = (extra: object = {}) =>
     ({
