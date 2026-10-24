@@ -1622,3 +1622,17 @@ def test_desktop_host_passed_window_with_failed_final_uninstall_is_error(monkeyp
 def test_desktop_host_clean_pass_stays_passed(monkeypatch, tmp_path):
     r = _FakeDesktopLab(monkeypatch, tmp_path, entries=[]).run()
     assert r["result"] == "passed", r
+
+
+def test_installer_that_exits_nonzero_returns_at_once_instead_of_waiting_for_the_timeout(tmp_path):
+    t0 = __import__("time").monotonic()
+    step = A._run_until(
+        [sys.executable, "-c", "raise SystemExit(3)"],
+        tmp_path,
+        dict(os.environ),
+        tmp_path / "x",
+        lambda: False,
+        60,
+    )
+    assert step["exit_code"] == 3 and "timed_out" not in step
+    assert __import__("time").monotonic() - t0 < 20

@@ -2574,13 +2574,16 @@ def _command_argv(cmd: str) -> list[str]:
 
 def _run_until(argv: list[str], cwd: Path, env: dict, log: Path, done, timeout: float) -> dict:
     """跑安装 / 卸载器：主进程退出**且** `done()` 成立才算完——NSIS 卸载器会把自己拷进 %TEMP% 再起一份，
-    主进程一退就关 Job 会把真正干活的那份杀掉。"""
+    主进程一退就关 Job 会把真正干活的那份杀掉。主进程**非 0** 退出就是失败，立刻返回，不等到超时。"""
     t0 = time.monotonic()
     with open(f"{log}.log", "wb") as out:
         tree = ProcessTree(argv, cwd=cwd, env=env, stdout=out, stderr=out)
         try:
             while time.monotonic() - t0 < timeout:
-                if tree.proc.poll() is not None and done():
+                rc = tree.proc.poll()
+                if rc not in (None, 0):
+                    return {"exit_code": rc, "seconds": round(time.monotonic() - t0, 1)}
+                if rc is not None and done():
                     return {
                         "exit_code": tree.proc.returncode,
                         "seconds": round(time.monotonic() - t0, 1),
