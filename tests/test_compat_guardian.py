@@ -601,6 +601,65 @@ class GuardianContract(GuardianBase):
             jsonschema.validate(self.report, schema)
 
 
+class WorkflowProvenance(GuardianBase):
+    """#1363：报告的 `workflow` 出处是可选字段，缺席 = 旧报告；有则形状必须正确，并与 receipt 配对。"""
+
+    WF = {"run_id": "100", "run_attempt": "1", "job": "baseline", "case_id": None}
+
+    def receipt(self, workflow):
+        value = {"case_id": self.cid}
+        if workflow is not cg.PV.ABSENT:
+            value["workflow"] = workflow
+        return value
+
+    def test_report_without_workflow_is_still_valid_legacy(self):
+        self.assertNotIn("workflow", self.report)
+        self.valid()
+
+    def test_report_workflow_null_or_object_is_valid(self):
+        for value in (None, self.WF):
+            self.report["workflow"] = value
+            self.valid()
+
+    def test_malformed_report_workflow_is_rejected(self):
+        for bad in ({"run_id": "1"}, {**self.WF, "job": ""}, {**self.WF, "extra": 1}, "x"):
+            self.report["workflow"] = bad
+            self.rejected()
+
+    def test_current_reads_the_actions_environment_and_is_none_elsewhere(self):
+        env = {"GITHUB_RUN_ID": "7", "GITHUB_RUN_ATTEMPT": "2", "GITHUB_JOB": "baseline"}
+        self.assertEqual(
+            cg.PV.current("c1", env),
+            {"run_id": "7", "run_attempt": "2", "job": "baseline", "case_id": "c1"},
+        )
+        self.assertIsNone(cg.PV.current("c1", {}))
+        self.assertIsNone(cg.PV.current("c1", {**env, "GITHUB_RUN_ATTEMPT": ""}))
+
+    def test_validate_pairing_accepts_same_run_legacy_and_both_null(self):
+        self.report["workflow"] = {**self.WF, "case_id": self.cid}
+        cg.check_receipt_pairing(self.report, self.receipt(dict(self.WF, case_id=self.cid)))
+        self.report["workflow"] = None
+        cg.check_receipt_pairing(self.report, self.receipt(None))
+        del self.report["workflow"]
+        cg.check_receipt_pairing(self.report, self.receipt(cg.PV.ABSENT))
+
+    def test_validate_pairing_rejects_other_run_attempt_job_or_one_sided(self):
+        self.report["workflow"] = dict(self.WF, case_id=self.cid)
+        for key, other in (("run_id", "101"), ("run_attempt", "2"), ("job", "other")):
+            with self.assertRaises(cg.EvidenceError, msg=key):
+                cg.check_receipt_pairing(
+                    self.report, self.receipt(dict(self.WF, case_id=self.cid, **{key: other}))
+                )
+        for other in (None, cg.PV.ABSENT):
+            with self.assertRaises(cg.EvidenceError):
+                cg.check_receipt_pairing(self.report, self.receipt(other))
+        self.report["workflow"] = None
+        with self.assertRaises(cg.EvidenceError):
+            cg.check_receipt_pairing(self.report, self.receipt(dict(self.WF, case_id=self.cid)))
+        with self.assertRaises(cg.EvidenceError):
+            cg.check_receipt_pairing(self.report, {"case_id": "elsewhere", "workflow": None})
+
+
 if __name__ == "__main__":
     unittest.main()
 

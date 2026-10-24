@@ -46,6 +46,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 
 import compat_corpus as CC  # noqa: E402
 import compat_guardian_taxonomy as TX  # noqa: E402
+import compat_provenance as PV  # noqa: E402
 import package_smoke  # noqa: E402
 from _common import write_report  # noqa: E402
 from guardian_exec_observer import actual_environment  # noqa: E402
@@ -1358,8 +1359,14 @@ def validate_report(report: dict, evidence_root: Path, expected: dict | None = N
         "unverified",
         "duration_s",
     }
-    if set(report) != required or report["schema_version"] != SCHEMA_VERSION:
+    # `workflow`（工作流出处）是后加的可选字段：缺席 = 旧报告，按旧规则验证。
+    if set(report) - {"workflow"} != required or report["schema_version"] != SCHEMA_VERSION:
         raise EvidenceError("missing/unknown report field or schema version")
+    if "workflow" in report:
+        try:
+            PV.check_shape(report["workflow"])
+        except PV.ProvenanceError as exc:
+            raise EvidenceError(str(exc)) from exc
     if not re.fullmatch(r"[0-9a-f]{32}", report["run_id"]):
         raise EvidenceError("missing unique run_id")
     src = report["source"]
@@ -1452,6 +1459,17 @@ def launch_adapter(
         raise EvidenceError("adapter failure; retained stdout/stderr/process evidence")
 
 
+def check_receipt_pairing(report: dict, receipt: dict) -> None:
+    """报告与它的 setup receipt 必须来自同一次 workflow 运行（run id / attempt / job / case）。"""
+    cid = receipt.get("case_id")
+    if cid not in report["expected_cases"]:
+        raise EvidenceError("setup receipt case is not in the report")
+    try:
+        PV.check_pair(report.get("workflow", PV.ABSENT), receipt.get("workflow", PV.ABSENT), cid)
+    except PV.ProvenanceError as exc:
+        raise EvidenceError(str(exc)) from exc
+
+
 def run(args) -> int:
     initial = source_state()
     expected_sha = args.expected_sha or initial["commit"]
@@ -1536,6 +1554,7 @@ def run(args) -> int:
     report = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
+        "workflow": PV.current(args.case),
         "source": initial,
         "expected_sha": expected_sha,
         "suite": args.suite,
@@ -1600,6 +1619,10 @@ def main(argv=None) -> int:
     runner.add_argument("--timeout", type=float, default=600)
     checker = subs.add_parser("validate")
     checker.add_argument("report")
+    checker.add_argument(
+        "--setup-receipt",
+        help="研究语料：该报告配对的 setup receipt；两者的工作流出处必须一致",
+    )
     summarizer = subs.add_parser("summarize", help="aggregate reports (never invents a rate)")
     summarizer.add_argument("reports", nargs="+")
     summarizer.add_argument("--json-out")
@@ -1757,11 +1780,11 @@ def main(argv=None) -> int:
             return 0
         if args.command == "validate":
             path = Path(args.report)
-            validate_report(
-                json.loads(path.read_text(encoding="utf-8")),
-                path.parent.parent / "evidence",
-                source_state(),
-            )
+            report = json.loads(path.read_text(encoding="utf-8"))
+            validate_report(report, path.parent.parent / "evidence", source_state())
+            if args.setup_receipt:
+                receipt = json.loads(Path(args.setup_receipt).read_text(encoding="utf-8"))
+                check_receipt_pairing(report, receipt)
             print("valid current-checkout evidence")
             return 0
         request = json.loads(Path(args.request).read_text(encoding="utf-8"))

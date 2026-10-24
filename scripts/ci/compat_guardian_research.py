@@ -20,6 +20,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import compat_corpus as cc
 import compat_guardian as cg
 import compat_guardian_summary as summary
+import compat_provenance as pv
 import compat_research_sources as sources
 
 # Windows runners fall back to the code page when stdout/stderr are pipes; pin both
@@ -239,18 +240,23 @@ def project_reports(cohort: dict, reports: list[dict], expected_sha: str) -> dic
     """Project verified Guardian rows; missing rows remain visible and never pass."""
     projects = {p["case_id"]: p for p in cohort["development"]}
     rows = {}
+    workflows = {}
     report_sources = []
     for report in reports:
         if report["source"]["commit"] != expected_sha or report["source"]["dirty"]:
             raise cg.EvidenceError("report is not from the selected clean enrollment commit")
         if report["suite"] != "compat_engine":
             raise cg.EvidenceError("S0 engine projection requires compat_engine evidence")
-        report_sources.append({"run_id": report["run_id"], "source": report["source"]})
+        entry = {"run_id": report["run_id"], "source": report["source"]}
+        if "workflow" in report:  # 旧报告没有该字段：投影保持原样，旧快照逐字复现
+            entry["workflow"] = report["workflow"]
+        report_sources.append(entry)
         for row in report["cases"]:
             cid = row["id"]
             if cid not in projects or cid in rows:
                 raise cg.EvidenceError(f"unexpected or duplicate report case: {cid}")
             rows[cid] = row
+            workflows[cid] = report.get("workflow", pv.ABSENT)
     projected = []
     for cid, p in projects.items():
         row = rows.get(cid)
@@ -291,6 +297,8 @@ def project_reports(cohort: dict, reports: list[dict], expected_sha: str) -> dic
             "unverified": row["unverified"],
             "requires_tex": p["requires_tex"],
         }
+        if workflows[cid] is not pv.ABSENT:
+            item["workflow"] = workflows[cid]
         projected.append(item)
     data = {
         "schema": "tavotto-research-baseline/1",
@@ -355,6 +363,17 @@ def check_setup_receipts(data: dict, paths: list[Path]) -> None:
         if receipt["source_sha"] != data["enrollment_sha"] or cid in receipts:
             raise cg.EvidenceError("setup receipt has wrong SHA or duplicate case")
         receipts[cid] = receipt
+    for p in data["projects"]:
+        receipt = receipts.get(p["case_id"])
+        # 无报告行的项目没有报告出处，也就没有可配对的对象（它本来就是 not_run）。
+        if receipt is None or p.get("source_code") == "report_missing":
+            continue
+        try:
+            pv.check_pair(
+                p.get("workflow", pv.ABSENT), receipt.get("workflow", pv.ABSENT), p["case_id"]
+            )
+        except pv.ProvenanceError as exc:
+            raise cg.EvidenceError(f"{exc}: {p['case_id']}") from exc
     data["missing_setup_receipts"] = sorted(expected - set(receipts))
     for p in data["projects"]:
         receipt = receipts.get(p["case_id"])

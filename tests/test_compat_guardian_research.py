@@ -999,3 +999,151 @@ def test_unlaunched_rows_without_a_refusal_code_are_not_eligible():
     row["raw"]["detail"]["discover"]["code"] = "something_else"
     row["comparable"] = False
     assert not cg.native_eligible(row)
+
+
+# ---- #1363：receipt 与报告按工作流出处绑定 ----------------------------------------------------
+
+
+def wf(run_id="100", attempt="1", job="baseline", case_id=None):
+    return {"run_id": run_id, "run_attempt": attempt, "job": job, "case_id": case_id}
+
+
+def provenance_pair(cohort, tmp_path, report_wf, receipt_wf):
+    """16 个项目的投影；报告与每份 receipt 的出处由参数给定（`research.pv.ABSENT` = 不写该字段）。"""
+    report = report_for([report_row(p["case_id"]) for p in cohort["development"]])
+    if report_wf is not research.pv.ABSENT:
+        report["workflow"] = report_wf
+    out = research.project_reports(cohort, [report], SHA)
+    receipts = setup_receipts(cohort, tmp_path)
+    if receipt_wf is not research.pv.ABSENT:
+        for path in receipts:
+            data = json.loads(path.read_text())
+            data["workflow"] = dict(receipt_wf, case_id=data["case_id"])
+            path.write_text(json.dumps(data))
+    return out, receipts
+
+
+def test_legacy_report_and_receipt_without_workflow_use_the_old_rule(cohort, tmp_path):
+    out, receipts = provenance_pair(cohort, tmp_path, research.pv.ABSENT, research.pv.ABSENT)
+    research.check_setup_receipts(out, receipts)
+    assert out["n_eligible"] == 16
+    assert all("workflow" not in p for p in out["projects"])
+    assert all("workflow" not in r for r in out["reports"])
+
+
+def test_same_run_report_and_receipts_pair(cohort, tmp_path):
+    out, receipts = provenance_pair(cohort, tmp_path, wf(), wf())
+    research.check_setup_receipts(out, receipts)
+    assert out["n_eligible"] == 16
+    assert out["reports"][0]["workflow"] == wf()
+
+
+def test_local_runs_with_null_provenance_on_both_sides_use_the_old_rule(cohort, tmp_path):
+    out, receipts = provenance_pair(cohort, tmp_path, None, research.pv.ABSENT)
+    for path in receipts:
+        data = json.loads(path.read_text())
+        data["workflow"] = None
+        path.write_text(json.dumps(data))
+    research.check_setup_receipts(out, receipts)
+    assert out["n_eligible"] == 16
+
+
+@pytest.mark.parametrize(
+    "report_wf, receipt_wf",
+    [
+        (wf("100"), wf("101")),  # 两次运行交叉配对
+        (wf(attempt="1"), wf(attempt="2")),  # 同一次运行的两次 attempt
+        (wf(job="baseline"), wf(job="other")),
+        (wf(), None),  # receipt 无出处（null）
+        (wf(), research.pv.ABSENT),  # receipt 来自旧版 workflow
+        (None, wf()),
+        (research.pv.ABSENT, wf()),  # 报告来自旧版
+    ],
+)
+def test_receipt_and_report_from_different_or_one_sided_provenance_fail(
+    cohort, tmp_path, report_wf, receipt_wf
+):
+    out, receipts = provenance_pair(cohort, tmp_path, report_wf, research.pv.ABSENT)
+    for path in receipts:
+        data = json.loads(path.read_text())
+        if receipt_wf is research.pv.ABSENT:
+            pass
+        elif receipt_wf is None:
+            data["workflow"] = None
+        else:
+            data["workflow"] = dict(receipt_wf, case_id=data["case_id"])
+        path.write_text(json.dumps(data))
+    with pytest.raises(cg.EvidenceError, match="workflow"):
+        research.check_setup_receipts(out, receipts)
+
+
+def test_receipt_case_in_provenance_must_match_its_case(cohort, tmp_path):
+    out, receipts = provenance_pair(cohort, tmp_path, wf(), wf())
+    data = json.loads(receipts[0].read_text())
+    data["workflow"]["case_id"] = "research_contract_09"
+    receipts[0].write_text(json.dumps(data))
+    with pytest.raises(cg.EvidenceError, match="case"):
+        research.check_setup_receipts(out, receipts)
+
+
+def test_one_cross_paired_receipt_among_sixteen_fails(cohort, tmp_path):
+    out, receipts = provenance_pair(cohort, tmp_path, wf(), wf())
+    data = json.loads(receipts[5].read_text())
+    data["workflow"]["run_id"] = "999"
+    receipts[5].write_text(json.dumps(data))
+    with pytest.raises(cg.EvidenceError, match="run_id"):
+        research.check_setup_receipts(out, receipts)
+
+
+def test_snapshot_verification_rejects_cross_paired_runs_and_accepts_matching(snapshot_inputs):
+    root, _, snapshot, report_path, save = snapshot_inputs
+    evidence = snapshot["evidence"]
+    receipts = [root / name for name in evidence["setup_receipts"]]
+    report = json.loads(report_path.read_text())
+    report["workflow"] = wf()
+    report_path.write_text(json.dumps(report))
+    for path in receipts:
+        data = json.loads(path.read_text())
+        data["workflow"] = wf(case_id=data["case_id"])
+        path.write_text(json.dumps(data))
+
+    def rebuild():
+        for changed in (report_path, *receipts):
+            evidence["sha256"][changed.relative_to(root).as_posix()] = hashlib.sha256(
+                changed.read_bytes()
+            ).hexdigest()
+        cohort_ = research.load_cohort(root / "tests/compat/research-cohort.json", root=root)
+        observed = research.project_reports(
+            cohort_, [research.summary.load_report(report_path)], SHA
+        )
+        research.check_setup_receipts(observed, receipts)
+        observed["evidence"] = evidence
+        snapshot.clear()
+        snapshot.update(observed)
+        save()
+
+    rebuild()
+    assert research.verify_snapshot(root=root) == snapshot
+
+    # 把一份 receipt 换成另一次运行的（哈希同步更新，快照其余部分不变）：验证必须失败
+    data = json.loads(receipts[0].read_text())
+    data["workflow"]["run_attempt"] = "2"
+    receipts[0].write_text(json.dumps(data))
+    evidence["sha256"][receipts[0].relative_to(root).as_posix()] = hashlib.sha256(
+        receipts[0].read_bytes()
+    ).hexdigest()
+    save()
+    with pytest.raises(cg.EvidenceError, match="workflow"):
+        research.verify_snapshot(root=root)
+
+
+def test_committed_first_round_snapshot_is_legacy_and_carries_no_provenance():
+    """历史快照永不改写：它的报告与 receipt 都没有 `workflow`，所以走旧规则（见 verify_snapshot 的旧快照用例）。"""
+    committed = json.loads(
+        (Path(__file__).resolve().parents[1] / research.SNAPSHOT).read_text(encoding="utf-8")
+    )
+    assert all("workflow" not in report for report in committed["reports"])
+    assert all("workflow" not in project for project in committed["projects"])
+    assert all("workflow" not in (project["setup"] or {}) for project in committed["projects"])
+    for project in committed["projects"]:
+        research.pv.check_pair(research.pv.ABSENT, research.pv.ABSENT, project["case_id"])

@@ -79,6 +79,10 @@
     },
     "expectations_sha256": {
       "$ref": "#/$defs/sha256"
+    },
+    "workflow": {
+      "description": "Optional workflow provenance; absent in reports from before it existed, null outside Actions.",
+      "type": ["object", "null"]
     }
   },
   "required": [

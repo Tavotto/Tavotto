@@ -110,3 +110,12 @@ python scripts/ci/compat_guardian_research.py verify-snapshot --evidence-directo
 ```
 
 后续验收以真实入口、数组一致性、编辑效果、保存重开和目标平台为准；不扩充领域特例来掩盖启动上下文问题。
+
+## 工作流出处绑定（#1363）
+
+setup receipt 与 Guardian 报告都写 `workflow`（`run_id`、`run_attempt`、`job`、`case_id`），两处都由
+`scripts/ci/compat_provenance.py` 从 `GITHUB_RUN_ID` / `GITHUB_RUN_ATTEMPT` / `GITHUB_JOB` 取值。
+`compat_guardian.py validate --setup-receipt` 与 `compat_guardian_research.py verify-snapshot` / `summarize`
+要求配对一致：缺任一环境变量（本地 / 非 Actions）时字段写 `null`，两边都为 `null` 才按旧规则放行；
+一边有一边没有、或 run id / attempt / job / case 任一不同都失败。字段缺席的旧快照（含首轮
+`research-baseline.json`）两边都缺席，按旧规则验证，原样保留。

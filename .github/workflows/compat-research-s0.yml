@@ -172,8 +172,10 @@ jobs:
             : > "$RUNNER_TEMP/tavotto-installed.txt"
           fi
           python - <<'PY'
-          import hashlib, json, os, platform
+          import hashlib, json, os, platform, sys
           from pathlib import Path
+          sys.path.insert(0, 'scripts/ci')
+          import compat_provenance
           root = Path(os.environ['RUNNER_TEMP'])
           receipt = {
               'schema': 'tavotto-research-setup/1',
@@ -181,6 +183,8 @@ jobs:
               'source_sha': os.environ['GITHUB_SHA'],
               'run_id': os.environ['GITHUB_RUN_ID'],
               'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              # 与 Guardian 报告同源（compat_provenance.current）；两边一致才算同一次运行
+              'workflow': compat_provenance.current(os.environ['CASE_ID']),
               'python': platform.python_version(),
               'steps': {k: os.environ[k.upper() + '_OUTCOME'] for k in ('core', 'fonts', 'scientific', 'tex')},
               'tex_setup': (root / 'tex-setup.txt').read_text().strip() if (root / 'tex-setup.txt').exists() else None,
@@ -197,7 +201,8 @@ jobs:
           shopt -s nullglob
           reports=("$RUNNER_TEMP"/research-s0/*/reports/guardian.json)
           [[ ${#reports[@]} -eq 1 ]]
-          "${TAVOTTO_PYTHON:-python}" scripts/ci/compat_guardian.py validate "${reports[0]}"
+          "${TAVOTTO_PYTHON:-python}" scripts/ci/compat_guardian.py validate "${reports[0]}" \
+            --setup-receipt "$RUNNER_TEMP/setup-receipt.json"
           cat "$(dirname "${reports[0]}")/summary.md" >> "$GITHUB_STEP_SUMMARY"
       # The report references every file under evidence/ by SHA-256 (json, jsonl, svg, png, pdf, ...), so
       # the artifact is the staged run directory, not a filtered subset; the staged copy is validated.
@@ -216,7 +221,8 @@ jobs:
           if [[ -d "$RUNNER_TEMP/research-s0" ]]; then cp -R "$RUNNER_TEMP/research-s0" "$stage/research-s0"; fi
           reports=("$stage"/research-s0/*/reports/guardian.json)
           [[ ${#reports[@]} -eq 1 ]]
-          "${TAVOTTO_PYTHON:-python}" scripts/ci/compat_guardian.py validate "${reports[0]}"
+          "${TAVOTTO_PYTHON:-python}" scripts/ci/compat_guardian.py validate "${reports[0]}" \
+            --setup-receipt "$stage/setup-receipt.json"
       - name: Preserve the validated observation artifact including failures
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v6
