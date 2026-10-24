@@ -30,7 +30,7 @@ order: 140
 * **「连接 AI」是改图助手页的主入口**（后端给了 `vendors` / `connections` 时）：厂商同级列表（国内 / 海外，中文界面国内在前）、
   连接弹窗 `ConnectAiDialog`（`store/connectAiStore` 唯一开关，所有入口走 `requestConnectAi()`；老后端没有这两个字段 → 退回打开设置页）。
   Codex / Claude Code 的清单、详情、诊断整体收进页底「高级」（`data-connect-advanced`，`<details>`；旧 e2e 先展开它）。
-  厂商名走 `label_key`，彩色标志走 `logo`（`BrandLogo`：浅色圆角底 `bg-paper`、数据在 `brandLogoData.ts`，来源见 `THIRD_PARTY_NOTICES.md`），
+  厂商名走 `label_key`，彩色标志走 `logo`（`BrandLogo`：无底直接画，单色标志 currentColor 跟随 text-ink，数据在 `brandLogoData.ts`，来源见 `THIRD_PARTY_NOTICES.md`），
   不在前端硬编码厂商 id。锚点：`data-connect-vendor` / `-action` / `-key-form` / `-more` / `-other` / `-group`、`data-ai-connect-more`。
   看护：`settings/connectAi/connectAi.test.tsx`、`ai/connectionPicker.test.tsx`、`store/aiFixStore.test.ts`。
 * **编码 Agent 的 e2e 锚点是稳定 `data-*`，不是小标题上那句话**（2026-09-07，#299 posix-e2e

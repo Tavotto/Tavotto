@@ -1880,7 +1880,8 @@
         "unauthorized": "Key 无效或已过期。",
         "network": "连不上服务商。",
         "timeout": "连接超时。"
-      }
+      },
+      "subtitle": "连接一个 AI，用于改图或修复环境。"
     }
   },
   "style": {

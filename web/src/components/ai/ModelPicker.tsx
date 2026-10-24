@@ -149,7 +149,7 @@ const logoTypes = new Map<string, () => ReactElement>()
 const logoFor = (logo: string) => {
   let c = logoTypes.get(logo)
   if (!c) {
-    c = () => <BrandLogo logo={logo} size={20} />
+    c = () => <BrandLogo logo={logo} size={16} />
     logoTypes.set(logo, c)
   }
   return c
@@ -192,7 +192,7 @@ export function ConnectionModelPicker({
           aria-label={ai('panel.aiModel')}
           className="focus-visible:focus-ring flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-left text-xs text-ink outline-none hover:bg-surface-hover data-[state=open]:bg-surface-hover"
         >
-          <BrandLogo logo={cur.logo} size={18} />
+          <BrandLogo logo={cur.logo} size={16} />
           <span className="min-w-0 flex-1 truncate">
             {model ? `${cur.label} · ${modelDetail(connectionInfo(cur), model)?.display_name || model}` : cur.label}
           </span>
