@@ -192,7 +192,7 @@ Miniforge 26.9 建环境需要把 `conda-launchers` 一起装进目标环境（�
 | 档 | run | 结论 |
 | --- | --- | --- |
 | smoke（与 CI compat-smoke 同口径） | `20261024T153724Z-04d1e4` | PASS：24 case 全部过 discover → execute → capture → open → semantic → edit → replay |
-| all | `20261024T161630Z-be2456` | __CORPUS_ALL__ |
+| all | `20261024T161630Z-be2456` | PASS：160 case，执行 159/160，之后各阶段 159/159；分类 full 149 / partial 2 / unsupported_by_design 2 / environment_dependency 7；`product_bugs: []`、worker 崩溃 0；1220 s |
 
 ### G4 AI 宿主（`test hosts-live --mode …`，DeepSeek，Direct；判定按 `mcp_recorder` 记下的服务端事实）
 
