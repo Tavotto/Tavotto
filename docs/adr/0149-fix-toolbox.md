@@ -82,15 +82,14 @@
 ## 七、D2a：「改」组、快照与回滚（2026-10-23）
 
 「改」组六个工具登记进同一张注册表（`engine/fixtools/change.py`）：`install_packages`（`listed`：常见大包名单内不问、名单外 `ctx.ask`）、`switch_execution`（`tavotto`）、`change_python`（`tavotto`）、
-`select_environment`（`user_env`，一律问）、`convert_script`（`tavotto`，另存 `<原名>_matplotlib.py`，原脚本不动）、`rollback`（`tavotto`）。
+`select_environment`（`user_env`，一律问）、`convert_script`（`tavotto`，见文末 2026-10-24 修订：只交接、不写文件）、`rollback`（`tavotto`）。
 **同意由工具自己经 `FixContext.ask` 取得**：`FIX_SESSION_TIERS` 扩成 observe / run / tavotto / listed / user_env / outward（放行 ≠ 不问）；没有 `ask` 或回答不是 yes 一律 `needs_approval`、审计 `approved_by=blocked`，用户点了 yes 记 `user`。
 会改东西的工具执行前先打快照（项目设置两个键 + 目标环境 `pip freeze` + 环境目录清单，`data_dir()/cache/fix_snapshots/<会话>/`），审计行多 `snapshot`；打不出快照就不改；`rollback` 设置精确恢复、包按差异卸 / 装回。
-**不新写任何执行路径**：装 / 卸包走 `deprepair._pip_install` / `_pip_uninstall` + 环境独占锁，切运行方式走 `execpolicy.set_mode`，换环境走 `projectenv.remember`；`change_python` / `convert_script` 的执行器由 `FixContext` 注入（#1342 / D2b 接），没注入返回 `unavailable`。
+**不新写任何执行路径**：装 / 卸包走 `deprepair._pip_install` / `_pip_uninstall` + 环境独占锁，切运行方式走 `execpolicy.set_mode`，换环境走 `projectenv.remember`；`change_python` 的执行器由 `FixContext` 注入（#1342 / D2b 接）。
 `switch_execution` 的 `safe` / `native` 落在既有的项目级 `execution_policy`（`safe_only` / `compatible`，即「允许 safe 被自己的守卫拦下时回退 native」）上；放宽用户明确选过的 `safe_only` 要先问。
 同批修 #1361 三条（试跑副本跳过特殊文件、环境列表如实报截断并可筛、经链接复制的项目外读取记入 `reads`）。规则全文见 `docs/rules/backend/ai-agent-bridge.md` 的「D2a」一节。
 **`run_command` 不在 D2a，移到后续 PR（已由 #1374 的修订落地，见文末）**：它要在操作系统沙盒里跑任意命令，而沙盒逃逸面太大——Linux 桌面上 bwrap 只隔离挂载，`/run/user/<uid>/bus` 仍可连，命令能 `systemd-run --user` 让宿主的 user manager 改项目；macOS 同类（Apple Events 让 Finder 写、`launchctl` 等）。
 需要能抵御进程代理逃逸的沙盒后再做：Linux 隔离 `/run` 与 D-Bus 等、macOS 限制 mach-lookup / Apple Events，Windows 见 #1358。这台机器上要改东西只能用专用工具。
-`convert_script` 保留持锁结构（单个脚本，没有枚举竞态）：转换器只拿临时副本，原脚本哈希变了用执行前读到的原字节经 `scriptlock` 恢复。
 
 **修订（2026-10-23，D2b）**：「问与报」组落地（`fixtools/ask.py`）与修复会话（`engine/fixsession.py`）：`ctx.ask` 由会话实现，卡片经 SSE 提示 + `GET/POST /api/ai/fix/<id>[/answer|/cancel]` 与前端交互；
 `pick_file` 的路径过 `ReadScope.grant`（敏感硬拦照旧，只放被选的路径）；`prepare_diagnostics` 只弹「发送」卡，上传仍是 ADR 0118 的逐次确认流程，不附源码（用户在对话框里自己勾）。
@@ -125,3 +124,8 @@ macOS sandbox-exec 在「只许写清单内目录」之上 `deny appleevent-send
 **第②档 = 沙盒外执行（用户单独点头）**：触发只有两种——模型显式 `outside_sandbox: true` 加一句 `reason`，或第①档因沙盒拒写失败后结果里**提示**模型可以这样申请；**从不自动升级**（第①档失败后不会无卡执行第②档）。弹一张单独、红色强调的卡（approve 卡的 `danger: true`）：完整命令 + 「这条命令会在沙盒外运行，可以修改你电脑上的文件」+ 模型的理由；主按钮「在沙盒外运行」、次按钮「不了」；只对这一条命令有效，不记成长期授权。
 执行前备份项目内全部用户脚本（按后缀保守纳入、读原始字节不要求能解码，跟随链接按真实路径去重，**1000 个 / 32 MiB 封顶，超限直接拒绝第②档**），审批之后取基线、**持这些脚本的锁**（`scriptlock.script_guards`，非阻塞抢全、抢不齐退避）跑完命令，事后核对，被改 / 被删的经 `scriptlock` 恢复原字节并报 `scripts_restored`，恢复失败如实报 `scripts_restore_failed`。命令退出后先结束并确认整棵进程树再核对；放不下卡片的命令审批前就拒（用户看到的 = 实际执行的）。**这一层是尽力而为，不是保证**（盲区见规则文件的「run_command」一节）。
 Windows（#1358 无沙盒）与没有 bwrap 的 Linux 只有第②档，第①档返回 `sandbox_unavailable` 并说明。两档共同：不经 shell、cwd 默认临时目录（第②档可选项目目录并在卡上写明）、去掉密钥类环境变量、超时默认 60 s / 上限 300 s、输出有界并脱敏、执行前打快照、审计行多 `sandbox: hardened|outside|none` 与 `command_tier`、看门狗照旧（工具在跑不算卡住）。
+**修订（2026-10-24，convert_script 交接）**：`convert_script` 不再自己转写，改为**交接**给 ADR 0143 已有的「生成可编辑版本」流程。原设计要 `FixContext.script_converter` 同步写出 `<原名>_matplotlib.py`，但生产里从没人注入它，AI 永远拿到 `unavailable`。
+现在：工具只校验（项目内的 `.py`、`library` 取 `rasterhint.LIBRARIES` 或取报告里的位图提示、`ai_convert.enabled()`），在 `ctx.handoff` 记 `{kind, script, library}`，不写文件、不打快照；AI 随后 `finish(outcome="convert")`（`convert` 只有已交接才合法），
+会话公开状态带 `handoff`，前端（`aiFixStore.settle`）清掉修复条目、记下这张准备卡交接给了哪个脚本，并启动 `convertStore.start`，同一张卡接上 ADR 0143 的进度 / 对照 / 「采用」。
+理由：① 复用已验证的候选工作区、运行校验、对照视图与 O_EXCL 新建兄弟脚本，不再造第二条写脚本的路径；② 不在修复会话里嵌套第二个 AI（费用、取消与审计都只有一层）；③ 原脚本一个字节不动，用户在对照视图点「采用」才是同意。
+`script_converter` 字段与「临时副本 → 执行器 → 核对 / 恢复」整段删除（`snapshots.restore_script` 留给 `run_command` 第②档恢复脚本用）。规则细则见 `docs/rules/backend/ai-agent-bridge.md` 的 D2a 一节。

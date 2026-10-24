@@ -3242,8 +3242,10 @@ export interface AiFixState {
   script: string
   session_id: string
   card: AiFixCard | null
-  /** 结束后：`fixed | not_fixed`（AI 自己的说法，要由重跑准备会话验证）/ `cancelled` / `failed` */
-  outcome: 'fixed' | 'not_fixed' | 'cancelled' | 'failed' | null
+  /** 结束后：`fixed | not_fixed`（AI 自己的说法，要由重跑准备会话验证）/ `convert`（交接给「生成可编辑版本」，带 `handoff`）/ `cancelled` / `failed` */
+  outcome: 'fixed' | 'not_fixed' | 'convert' | 'cancelled' | 'failed' | null
+  /** 仅 `outcome === 'convert'`：要生成可编辑版本的脚本（项目相对路径）与画图用的位图库（ADR 0143 / 0149 §七） */
+  handoff?: { kind: 'convert'; script: string; library: string }
   summary: string
   /** `failed` 时 runner 的闭集原因码（`budget` / `auth` / `quota` / `network` …） */
   reason: string

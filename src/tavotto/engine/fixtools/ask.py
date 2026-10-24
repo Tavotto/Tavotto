@@ -269,10 +269,15 @@ def prepare_diagnostics(ctx: FixContext, args: dict) -> ToolResult:
 def finish(ctx: FixContext, args: dict) -> ToolResult:
     outcome = args.get("outcome")
     summary = _text(args.get("summary"), SUMMARY_MAX)
-    if outcome not in ("fixed", "not_fixed") or summary is None:
+    if outcome not in ("fixed", "not_fixed", "convert") or summary is None:
         return err(
             "bad_arguments",
-            "`outcome` (`fixed` or `not_fixed`) and `summary` (one sentence) are required.",
+            "`outcome` (`fixed`, `not_fixed` or `convert`) and `summary` (one sentence) are required.",
+        )
+    if outcome == "convert" and ctx.handoff is None:
+        return err(
+            "bad_arguments",
+            "`convert` is only valid after convert_script succeeded; otherwise finish with `fixed` or `not_fixed`.",
         )
     # 非阻塞：只是把结局交给会话；没有界面（None）也照样结束，只是没人记
     _ask(
@@ -392,10 +397,10 @@ ASK_TOOLS: tuple[FixTool, ...] = (
     FixTool(
         "finish",
         "End the session. Call it exactly once, last. `outcome` is `fixed` only if you saw the problem go away "
-        "(a trial run that now produces the figure); otherwise `not_fixed`. `summary` is one plain sentence for the user.",
+        "(a trial run that now produces the figure); `convert` only after convert_script succeeded; otherwise `not_fixed`. `summary` is one plain sentence for the user.",
         obj(
             {
-                "outcome": {"type": "string", "enum": ["fixed", "not_fixed"]},
+                "outcome": {"type": "string", "enum": ["fixed", "not_fixed", "convert"]},
                 "summary": {"type": "string"},
             },
             ["outcome", "summary"],
