@@ -2258,15 +2258,14 @@ def prepare_envs(lab: Lab, env: dict, log: Path) -> tuple[dict[str, Path], dict[
     if conda.exists() and "conda" not in bad:
         # Miniforge 26.9 的 base 里缺 conda-launchers：给 noarch 包（pip / wheel）生成入口时找不到 cli-64.exe
         # 而整个事务失败（10-24 实测）。先从同一个镜像补上
-        if not (mf / "Lib" / "site-packages" / "conda_launchers").exists() and not list(
-            (mf / "share" / "conda-launchers").glob("cli-64.exe")
-        ):
+        if not (mf / "share" / "conda-launchers" / "cli-64.exe").exists():
             _run_logged(
                 [
                     str(conda),
                     "install",
                     "-y",
                     "-q",
+                    "--force-reinstall",
                     "-p",
                     str(mf),
                     "--override-channels",
