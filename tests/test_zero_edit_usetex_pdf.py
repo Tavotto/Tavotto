@@ -25,7 +25,9 @@ def _has_cmbright():
     kpse = shutil.which("kpsewhich")
     if kpse is None:
         return False
-    out = subprocess.run([kpse, "cmbright.sty"], capture_output=True, text=True)
+    out = subprocess.run(
+        [kpse, "cmbright.sty"], capture_output=True, text=True, encoding="utf-8", errors="replace"
+    )
     return bool(out.stdout.strip())
 
 
@@ -71,7 +73,13 @@ def _facts(path):
 def test_zero_edit_pdf_matches_the_scripts_own_savefig(tmp_path):
     (tmp_path / "fig.py").write_text(SCRIPT, encoding="utf-8")
     subprocess.run(
-        [WORKER_PY, "fig.py"], cwd=tmp_path, check=True, capture_output=True, timeout=180
+        [WORKER_PY, "fig.py"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        timeout=180,
+        encoding="utf-8",
+        errors="replace",
     )
     native = _facts(tmp_path / "fig.pdf")
     (tmp_path / "fig.pdf").rename(tmp_path / "native.pdf")
