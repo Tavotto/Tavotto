@@ -79,6 +79,15 @@ PROBE_TARGETS = (
 EGRESS_URL = "https://api.ipify.org"
 STREAM_URL = "https://httpbin.org/drip?duration=4&numbytes=8&delay=0"
 PROBE_SAMPLES = 3
+#: 每个网络模式「必须可达」的目标集合（至少 1/3 样本通）。表里没有的目标只记录、不判：
+#: 直连下境外目标预期可能不可达或 403（区域限制、GitHub 直连不稳），代理模式下国内镜像不是代理的职责。
+PROBE_MUST_REACH = {
+    "trojan": frozenset({"anthropic_api", "openai_api", "github"}),
+    "hysteria2": frozenset({"anthropic_api", "openai_api", "github"}),
+    "direct": frozenset({"pypi_mirror"}),
+}
+#: 流式（分块到达）探测是否算判据：代理模式必须通；直连时 httpbin 不稳，只记录。
+PROBE_STREAM_REQUIRED = {"trojan": True, "hysteria2": True, "direct": False}
 
 
 def iso_now() -> str:
@@ -510,29 +519,47 @@ def _terminate(pid: int) -> None:
         os.kill(pid, signal.SIGKILL)
 
 
+#: 锁文件读不出持有者记录时，mtime 在这个秒数内就视为「正被写入的活锁」，不能当陈旧锁回收。
+LOCK_GRACE_S = 30
+
+
 @contextlib.contextmanager
 def job_lock(lab: Lab, run_id: str, task: str):
-    """同一时刻只有一个任务（4 核 8 GB；也保证 DMIT 上最多一个联网测试）。"""
+    """同一时刻只有一个任务（4 核 8 GB；也保证 DMIT 上最多一个联网测试）。
+    记录先完整写进同目录临时文件，再用硬链接（原子、目标已存在则失败）发布成 job.lock：
+    别的进程要么看不到锁，要么看到完整记录，不会读到写了一半的空文件。"""
     lab.state.mkdir(parents=True, exist_ok=True)
-    for _ in range(2):
-        try:
-            fd = os.open(lab.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            holder = read_lock(lab)
-            if holder and _pid_alive(int(holder.get("pid", 0))):
-                raise LabBusy(holder) from None
-            lab.lock_path.unlink(missing_ok=True)  # 持有者已不在：陈旧锁
-            continue
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"pid": os.getpid(), "run_id": run_id, "task": task, "started": iso_now()}, f)
-        try:
-            yield
-        finally:
-            # 只删自己的锁：持有者判定一旦出错、别的任务已经接手，不能把它的锁一起带走
-            if (read_lock(lab) or {}).get("run_id") == run_id:
+    record = {"pid": os.getpid(), "run_id": run_id, "task": task, "started": iso_now()}
+    tmp = lab.lock_path.with_name(f"{lab.lock_path.name}.{os.getpid()}.{run_id}.tmp")
+    tmp.write_text(json.dumps(record), encoding="utf-8")
+    try:
+        for _ in range(2):
+            try:
+                os.link(tmp, lab.lock_path)
+            except FileExistsError:
+                holder = read_lock(lab)
+                if holder is None:
+                    if not lab.lock_path.exists():
+                        continue  # 读的当口锁被释放了：重试发布
+                    if lock_is_fresh(lab):
+                        raise LabBusy({}) from None  # 读不出记录但刚写过：不能当持有者已退出
+                elif not _pid_alive(int(holder.get("pid", 0))):
+                    pass  # 持有者已不在：陈旧锁
+                else:
+                    raise LabBusy(holder) from None
                 lab.lock_path.unlink(missing_ok=True)
-        return
-    raise LabBusy(read_lock(lab) or {})
+                continue
+            break
+        else:
+            raise LabBusy(read_lock(lab) or {})
+    finally:
+        tmp.unlink(missing_ok=True)
+    try:
+        yield
+    finally:
+        # 只删自己的锁：持有者判定一旦出错、别的任务已经接手，不能把它的锁一起带走
+        if (read_lock(lab) or {}).get("run_id") == run_id:
+            lab.lock_path.unlink(missing_ok=True)
 
 
 class LabBusy(Exception):
@@ -541,9 +568,19 @@ class LabBusy(Exception):
 
 def read_lock(lab: Lab) -> dict | None:
     try:
-        return json.loads(lab.lock_path.read_text(encoding="utf-8"))
+        rec = json.loads(lab.lock_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    return rec if isinstance(rec, dict) else None
+
+
+def lock_is_fresh(lab: Lab) -> bool:
+    """锁文件存在、但读不出持有者记录，且 mtime 在宽限期内：当作正被写入的活锁。"""
+    try:
+        age = time.time() - lab.lock_path.stat().st_mtime
+    except OSError:
+        return False
+    return age < LOCK_GRACE_S
 
 
 # ----------------------------------------------------------------------------- 环境事实
@@ -727,7 +764,22 @@ def probe_mode(mode: str, expected_egress_sha: str | None) -> dict:
         }
     rec["targets"] = targets
     rec["stream"] = _stream_probe(mode)
-    rec["result"] = "passed"
+    must = PROBE_MUST_REACH[mode]
+    problems: list[str] = []
+    for name, t in targets.items():
+        if "tls_verify_failed" in t["errors"]:
+            problems.append(f"{name}: tls_verify_failed")
+        if name in must:
+            if not t["status"]:
+                problems.append(f"{name}: unreachable ({t['reachable']})")
+        elif mode == "direct" and (not t["status"] or 403 in t["status"]):
+            t["expected_unreachable"] = True
+    if PROBE_STREAM_REQUIRED[mode] and not rec["stream"].get("ok"):
+        problems.append(f"stream: {rec['stream']}")
+    if problems:
+        rec.update(result="failed", reason="; ".join(problems))
+    else:
+        rec["result"] = "passed"
     return rec
 
 
@@ -1138,6 +1190,13 @@ def _ok_calls(facts: dict, tool: str) -> list[dict]:
 
 SESSION_ID_RE = re.compile(r'"session_id"\s*:\s*"(s-[0-9a-f]{12})"')
 _OK_TRUE = re.compile(r'"ok"\s*:\s*true')
+_PATCH_HASH_RE = re.compile(r'"patch_hash"\s*:\s*"(sha256:[0-9a-f]+)"')
+_ANY_SESSION_ID_RE = re.compile(r'"session_id"\s*:\s*"(s-[0-9a-f]{12})"')
+
+
+def _first(rx: re.Pattern, text: str) -> str | None:
+    m = rx.search(text)
+    return m.group(1) if m else None
 
 
 def opened_session_id(facts: dict) -> str | None:
@@ -1171,9 +1230,10 @@ def journal_has_edits(data_dir: Path, sid: str | None) -> bool:
     return False
 
 
-def judge_live(s1: dict, s2: dict, pdf: Path | None, journal_ok: bool) -> dict:
+def judge_live(s1: dict, s2: dict, pdf: Path | None, journal_ok: bool, sid: str | None) -> dict:
     """L4 / L5 只看真实发生的事：工具调用要有成功的结果，PDF 要真在、是 PDF，修改要真落进会话日志，
-    全新宿主进程凭 session_id 恢复并从零重放要一致。"""
+    全新宿主进程凭 session_id 恢复后，会话 id 与 patch_hash 要和第一轮编辑后的一模一样
+    （只看 ok:true 不够：恢复丢了修改时，空 patch 集的重放同样一致）。解析不到字段就是失败。"""
     l4 = (
         "passed"
         if _ok_calls(s1, "tavotto_health") or _ok_calls(s1, "tavotto_open_figure")
@@ -1181,15 +1241,26 @@ def judge_live(s1: dict, s2: dict, pdf: Path | None, journal_ok: bool) -> dict:
     )
     replay1 = _ok_calls(s1, "tavotto_verify_replay")
     replay2 = _ok_calls(s2, "tavotto_verify_replay")
+    applies = _ok_calls(s1, "tavotto_apply_overrides")
+    edited_hash = _first(_PATCH_HASH_RE, applies[-1].get("result", "")) if applies else None
+
+    def restored_same(c: dict) -> bool:
+        text = c.get("result", "")
+        return bool(
+            sid
+            and edited_hash
+            and _OK_TRUE.search(text)
+            and _first(_ANY_SESSION_ID_RE, text) == sid
+            and _first(_PATCH_HASH_RE, text) == edited_hash
+        )
+
     checks = {
         "opened": bool(_ok_calls(s1, "tavotto_open_figure")),
-        "applied": bool(_ok_calls(s1, "tavotto_apply_overrides")),
+        "applied": bool(applies),
         "exported_pdf": bool(pdf and pdf.is_file() and pdf.read_bytes()[:5] == b"%PDF-"),
         "replay_verified": any(_OK_TRUE.search(c.get("result", "")) for c in replay1),
         "edits_in_session_journal": journal_ok,
-        "fresh_process_restored_and_replayed": any(
-            _OK_TRUE.search(c.get("result", "")) for c in replay2
-        ),
+        "fresh_process_restored_same_edits": any(restored_same(c) for c in replay2),
     }
     l5 = "passed" if all(checks.values()) else "failed"
     return {"L4": l4, "L5": l5, "checks": checks}
@@ -1284,7 +1355,7 @@ def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, model_conf: dict) ->
         Path(f"{ev / 'session-2'}.stdout.log").read_text(encoding="utf-8", errors="replace")
     )
     pdfs = sorted((proj / "out").glob("*.pdf"))
-    levels = judge_live(s1, s2, pdfs[0] if pdfs else None, journal_ok)
+    levels = judge_live(s1, s2, pdfs[0] if pdfs else None, journal_ok, sid)
     levels["session_id_from_session_1"] = bool(sid)
     if r1.get("timed_out") or r2.get("timed_out"):
         levels["L5"] = "error"
@@ -1441,6 +1512,13 @@ def _run_body(
     return run_hosts_task(lab, run_dir, env)
 
 
+def _write_report(lab: Lab, run_dir: Path, run_id: str, report: dict) -> None:
+    lab.reports.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(report, ensure_ascii=False, indent=2)
+    (run_dir / "report.json").write_text(payload, encoding="utf-8")
+    (lab.reports / f"{run_id}.json").write_text(payload, encoding="utf-8")
+
+
 def run_task(
     lab: Lab,
     task: Task,
@@ -1457,6 +1535,9 @@ def run_task(
     started = iso_now()
     t0 = time.monotonic()
     with job_lock(lab, run_id, task.id):
+        # 被测提交在执行 body 之前、锁内记下；报告也在锁内写盘：
+        # 锁一放，别的 prepare 可能已切走提交、clean 也可能删掉这个 run
+        commit = repo_head(lab)
         try:
             body = _run_body(lab, task, run_dir, tests, shard, network, model_conf)
         except Exception as exc:  # 执行器自己的缺陷也要落成一份 error 报告，而不是没有报告
@@ -1469,28 +1550,25 @@ def run_task(
                 "result": "error",
                 "summary": f"agent crashed: {type(exc).__name__}: {exc}"[:400],
             }
-    report = {
-        "schema": SCHEMA,
-        "kind": REPORT_KIND,
-        "run_id": run_id,
-        "task": task.id,
-        "args": {"tests": tests, "shard": shard, "network": network},
-        "commit": repo_head(lab),
-        "started": started,
-        "finished": iso_now(),
-        "duration_s": round(time.monotonic() - t0, 3),
-        "environment": windows_facts(),
-        "claim": task.claim,
-        "unverified": list(task.unverified),
-        **body,
-    }
-    report["result"] = body["result"]
-    report["exit_code"] = av.exit_code_for(report["result"])
-    report["evidence"] = _evidence_list(run_dir)
-    lab.reports.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(report, ensure_ascii=False, indent=2)
-    (run_dir / "report.json").write_text(payload, encoding="utf-8")
-    (lab.reports / f"{run_id}.json").write_text(payload, encoding="utf-8")
+        report = {
+            "schema": SCHEMA,
+            "kind": REPORT_KIND,
+            "run_id": run_id,
+            "task": task.id,
+            "args": {"tests": tests, "shard": shard, "network": network},
+            "commit": commit,
+            "started": started,
+            "finished": iso_now(),
+            "duration_s": round(time.monotonic() - t0, 3),
+            "environment": windows_facts(),
+            "claim": task.claim,
+            "unverified": list(task.unverified),
+            **body,
+        }
+        report["result"] = body["result"]
+        report["exit_code"] = av.exit_code_for(report["result"])
+        report["evidence"] = _evidence_list(run_dir)
+        _write_report(lab, run_dir, run_id, report)
     return report
 
 
@@ -1721,7 +1799,10 @@ def cmd_reports(lab: Lab, run_id: str | None) -> dict:
 
 def cmd_clean(lab: Lab, keep: int) -> dict:
     """只删 runs\\ 下最旧的 run 目录（报告 JSON 保留）；正在跑的那一个永远不删。"""
-    active = (read_lock(lab) or {}).get("run_id")
+    holder = read_lock(lab)
+    if holder is None and lock_is_fresh(lab):
+        return {"result": "error", "summary": "lock is being written; retry shortly", "removed": []}
+    active = (holder or {}).get("run_id")
     names = (
         sorted(n for n in os.listdir(lab.runs) if RUN_ID_RE.fullmatch(n))
         if lab.runs.exists()
@@ -1737,6 +1818,12 @@ def cmd_stop(lab: Lab) -> dict:
     只有确认进程已退出才释放锁；没确认就报 error、锁原样保留。"""
     holder = read_lock(lab)
     if not holder:
+        if lock_is_fresh(lab):
+            return {
+                "result": "error",
+                "summary": "lock is being written; retry shortly",
+                "stopped": None,
+            }
         return {"result": "passed", "summary": "no active job"}
     pid = int(holder.get("pid", 0))
     _terminate(pid)

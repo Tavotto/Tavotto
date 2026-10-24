@@ -151,6 +151,78 @@ def test_proxy_egress_must_be_the_dmit_node(monkeypatch):
     assert A.probe_mode("hysteria2", None)["result"] == "environment_unavailable"
 
 
+def _probe(monkeypatch, mode, outcome, stream_ok=True):
+    """outcome: 目标名 -> 单次请求结果（对 3 个样本都一样）；其余目标一律通。"""
+    monkeypatch.setattr(A, "_tcp_open", lambda *a, **k: True)
+    monkeypatch.setattr(
+        A, "egress_digest", lambda m: {"ok": True, "sha256": "0" * 64, "ttfb_ms": 1}
+    )
+    ok = {"ok": True, "status": 200, "ttfb_ms": 5}
+    by_url = {url: outcome.get(name, ok) for name, url in A.PROBE_TARGETS}
+    monkeypatch.setattr(A, "_timed_request", lambda opener, url, *a, **k: by_url[url])
+    monkeypatch.setattr(A, "_stream_probe", lambda m: {"ok": stream_ok})
+    return A.probe_mode(mode, "0" * 64)
+
+
+FAIL = {"ok": False, "error": "TimeoutError"}
+TLS = {"ok": False, "error": "tls_verify_failed"}
+
+
+@pytest.mark.parametrize("mode", ["trojan", "hysteria2"])
+def test_proxy_mode_passes_when_everything_is_reachable(monkeypatch, mode):
+    assert _probe(monkeypatch, mode, {})["result"] == "passed"
+
+
+@pytest.mark.parametrize("mode", ["trojan", "hysteria2"])
+@pytest.mark.parametrize("target", sorted(A.PROBE_MUST_REACH["trojan"]))
+def test_proxy_mode_failed_when_a_required_target_is_unreachable(monkeypatch, mode, target):
+    rec = _probe(monkeypatch, mode, {target: FAIL})
+    assert rec["result"] == "failed" and target in rec["reason"]
+
+
+@pytest.mark.parametrize("mode", ["trojan", "hysteria2"])
+def test_proxy_mode_all_targets_zero_of_three_is_failed(monkeypatch, mode):
+    rec = _probe(monkeypatch, mode, {n: FAIL for n, _ in A.PROBE_TARGETS})
+    assert rec["result"] == "failed"
+
+
+@pytest.mark.parametrize("mode", ["trojan", "hysteria2"])
+def test_proxy_mode_stream_failure_is_failed(monkeypatch, mode):
+    rec = _probe(monkeypatch, mode, {}, stream_ok=False)
+    assert rec["result"] == "failed" and "stream" in rec["reason"]
+
+
+@pytest.mark.parametrize("mode", ["direct", "trojan", "hysteria2"])
+def test_tls_verify_failure_is_failed_in_every_mode(monkeypatch, mode):
+    # chatgpt_web 直连时本就不要求可达，但证书校验失败仍是中间人信号
+    rec = _probe(monkeypatch, mode, {"chatgpt_web": TLS})
+    assert rec["result"] == "failed" and "tls_verify_failed" in rec["reason"]
+
+
+def test_direct_mode_tolerates_blocked_overseas_targets_but_records_it(monkeypatch):
+    rec = _probe(
+        monkeypatch,
+        "direct",
+        {"anthropic_api": {"ok": True, "status": 403, "ttfb_ms": 9}, "openai_api": FAIL},
+        stream_ok=False,
+    )
+    assert rec["result"] == "passed"
+    assert rec["targets"]["anthropic_api"]["expected_unreachable"] is True
+    assert rec["targets"]["openai_api"]["expected_unreachable"] is True
+    assert "expected_unreachable" not in rec["targets"]["pypi_mirror"]
+
+
+def test_direct_mode_needs_the_domestic_mirror(monkeypatch):
+    rec = _probe(monkeypatch, "direct", {"pypi_mirror": FAIL})
+    assert rec["result"] == "failed" and "pypi_mirror" in rec["reason"]
+
+
+def test_probe_expectations_cover_every_mode_and_known_target():
+    names = {n for n, _ in A.PROBE_TARGETS}
+    assert set(A.PROBE_MUST_REACH) == set(A.NETWORK_MODES) == set(A.PROBE_STREAM_REQUIRED)
+    assert all(v <= names for v in A.PROBE_MUST_REACH.values())
+
+
 def test_one_unavailable_mode_never_aggregates_to_passed(monkeypatch, tmp_path):
     monkeypatch.setattr(
         A,
@@ -303,6 +375,47 @@ def test_single_job_lock_and_stale_lock_recovery(tmp_path, monkeypatch):
     monkeypatch.setattr(A, "_pid_alive", lambda pid: False)
     with A.job_lock(lab, RUN, "pytest"):
         assert json.loads(lab.lock_path.read_text())["run_id"] == RUN
+
+
+def test_empty_fresh_lock_file_is_a_live_lock_not_a_stale_one(tmp_path):
+    # 另一进程刚建好文件、还没写完记录：读到空文件不能当成持有者已退出
+    lab = A.Lab(tmp_path)
+    lab.state.mkdir()
+    lab.lock_path.write_text("")
+    with pytest.raises(A.LabBusy):
+        with A.job_lock(lab, RUN, "pytest"):
+            pass
+    assert lab.lock_path.exists() and lab.lock_path.read_text() == ""
+    assert A.cmd_stop(lab)["result"] == "error" and lab.lock_path.exists()
+    assert A.cmd_clean(lab, keep=0)["result"] == "error"
+
+
+def test_empty_old_lock_file_is_recoverable(tmp_path):
+    lab = A.Lab(tmp_path)
+    lab.state.mkdir()
+    lab.lock_path.write_text("{trunc")
+    old = __import__("time").time() - 3600
+    os.utime(lab.lock_path, (old, old))
+    with A.job_lock(lab, RUN, "pytest"):
+        assert json.loads(lab.lock_path.read_text())["run_id"] == RUN
+    assert A.cmd_stop(lab) == {"result": "passed", "summary": "no active job"}
+
+
+def test_lock_is_published_complete_never_empty(tmp_path, monkeypatch):
+    # 发布瞬间锁文件就带完整记录（硬链接发布，而不是先建空文件再写）
+    lab = A.Lab(tmp_path)
+    seen = []
+    real_link = os.link
+
+    def spy(src, dst, *a, **k):
+        real_link(src, dst, *a, **k)
+        seen.append(json.loads(lab.lock_path.read_text(encoding="utf-8")))
+
+    monkeypatch.setattr(A.os, "link", spy)
+    with A.job_lock(lab, RUN, "pytest"):
+        pass
+    assert seen and seen[0]["run_id"] == RUN
+    assert not list(lab.state.glob("*.tmp"))
 
 
 def test_pytest_task_without_venv_is_environment_unavailable(tmp_path):
@@ -570,6 +683,68 @@ def test_bad_secrets_are_refused(raw):
     assert isinstance(A.read_model_conf(io.StringIO(raw.decode())), str)
 
 
+H1 = "a" * 64
+H2 = "b" * 64
+
+
+def _replay2(sid, patch_hash, ok="true"):
+    body = f'{{"ok": {ok}, "session_id": "{sid}"'
+    if patch_hash:
+        body += f', "patch_hash": "sha256:{patch_hash}"'
+    return A.parse_stream(_stream(_use("6", "tavotto_verify_replay"), _res("6", body + "}")))
+
+
+def _s1_with_hash(h):
+    return A.parse_stream(
+        _stream(
+            _use("2", "tavotto_open_figure"),
+            _res("2", '{"session_id": "s-0123456789ab"}'),
+            _use("3", "tavotto_apply_overrides"),
+            _res("3", '{"ok": true, "patch_hash": "sha256:' + h + '"}'),
+            _use("5", "tavotto_verify_replay"),
+            _res("5", '{"ok": true}'),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "s2",
+    [
+        _replay2("s-0123456789ab", H2),  # ok:true，但恢复出来的修改不是第一轮那一组
+        _replay2("s-ffffffffffff", H1),  # 恢复的是另一个会话
+        _replay2("s-0123456789ab", None),  # 结果里没有 patch_hash：解析不到就是失败
+    ],
+    ids=["other-patch-hash", "other-session", "no-patch-hash"],
+)
+def test_fresh_restore_must_match_session_and_edits_not_just_ok(tmp_path, s2):
+    pdf = tmp_path / "o.pdf"
+    pdf.write_bytes(b"%PDF-1.7 x")
+    out = A.judge_live(_s1_with_hash(H1), s2, pdf, True, "s-0123456789ab")
+    assert out["L5"] == "failed"
+    assert out["checks"]["fresh_process_restored_same_edits"] is False
+    assert out["checks"]["edits_in_session_journal"] is True
+
+
+def test_fresh_restore_uses_the_last_successful_apply(tmp_path):
+    pdf = tmp_path / "o.pdf"
+    pdf.write_bytes(b"%PDF-1.7 x")
+    s1 = A.parse_stream(
+        _stream(
+            _use("2", "tavotto_open_figure"),
+            _res("2", '{"session_id": "s-0123456789ab"}'),
+            _use("3", "tavotto_apply_overrides"),
+            _res("3", '{"ok": true, "patch_hash": "sha256:' + H2 + '"}'),
+            _use("4", "tavotto_apply_overrides"),
+            _res("4", '{"ok": true, "patch_hash": "sha256:' + H1 + '"}'),
+            _use("5", "tavotto_verify_replay"),
+            _res("5", '{"ok": true}'),
+        )
+    )
+    sid = "s-0123456789ab"
+    assert A.judge_live(s1, _replay2(sid, H1), pdf, True, sid)["L5"] == "passed"
+    assert A.judge_live(s1, _replay2(sid, H2), pdf, True, sid)["L5"] == "failed"
+
+
 def test_judge_live_requires_real_calls_pdf_journal_and_fresh_restore(tmp_path):
     pdf = tmp_path / "out.pdf"
     pdf.write_bytes(b"%PDF-1.7 x")
@@ -580,25 +755,26 @@ def test_judge_live_requires_real_calls_pdf_journal_and_fresh_restore(tmp_path):
             _use("2", "tavotto_open_figure"),
             _res("2", '{"session_id": "s-0123456789ab"}'),
             _use("3", "tavotto_apply_overrides"),
-            _res("3", "{}"),
+            _res("3", '{"ok": true, "patch_hash": "sha256:' + H1 + '"}'),
             _use("4", "tavotto_export"),
             _res("4", "{}"),
             _use("5", "tavotto_verify_replay"),
             _res("5", '{"ok": true, "divergence": []}'),
         )
     )
-    s2 = A.parse_stream(_stream(_use("6", "tavotto_verify_replay"), _res("6", '{"ok": true}')))
-    assert A.opened_session_id(s1) == "s-0123456789ab"
-    out = A.judge_live(s1, s2, pdf, True)
+    s2 = _replay2("s-0123456789ab", H1)
+    sid = "s-0123456789ab"
+    assert A.opened_session_id(s1) == sid
+    out = A.judge_live(s1, s2, pdf, True, sid)
     assert out["L4"] == "passed" and out["L5"] == "passed" and all(out["checks"].values())
     # 每一样缺了都让 L5 失败：日志里没修改、重开后重放不一致、PDF 不是 PDF、工具报错
-    assert A.judge_live(s1, s2, pdf, False)["L5"] == "failed"
+    assert A.judge_live(s1, s2, pdf, False, sid)["L5"] == "failed"
     s2_bad = A.parse_stream(_stream(_use("6", "tavotto_verify_replay"), _res("6", '{"ok": false}')))
-    assert A.judge_live(s1, s2_bad, pdf, True)["L5"] == "failed"
+    assert A.judge_live(s1, s2_bad, pdf, True, sid)["L5"] == "failed"
     pdf.write_bytes(b"<html>")
-    assert A.judge_live(s1, s2, pdf, True)["L5"] == "failed"
+    assert A.judge_live(s1, s2, pdf, True, sid)["L5"] == "failed"
     s1_err = A.parse_stream(_stream(_use("1", "tavotto_health"), _res("1", "boom", err=True)))
-    assert A.judge_live(s1_err, s2, None, True)["L4"] == "failed"
+    assert A.judge_live(s1_err, s2, None, True, sid)["L4"] == "failed"
 
 
 def test_journal_check_reads_the_real_record(tmp_path):
@@ -649,6 +825,47 @@ def test_an_agent_crash_still_produces_an_error_report(tmp_path, monkeypatch):
     assert rep["result"] == "error" and "kaput" in rep["summary"]
     assert (tmp_path / "reports" / f"{rep['run_id']}.json").exists()
     assert not (tmp_path / "state" / "job.lock").exists()
+
+
+def _fake_body_env(monkeypatch):
+    monkeypatch.setattr(A, "windows_facts", lambda: {})
+
+
+def test_report_commit_is_the_one_under_test_even_if_head_moves_mid_run(tmp_path, monkeypatch):
+    _fake_body_env(monkeypatch)
+    head = ["aaaa111"]
+    monkeypatch.setattr(A, "repo_head", lambda lab: head[0])
+
+    def body(*a, **k):
+        head[0] = "bbbb222"  # 别人在跑的当口切了提交
+        return {"result": "passed", "summary": "x"}
+
+    monkeypatch.setattr(A, "_run_body", body)
+    rep = A.run_task(A.Lab(tmp_path), A.TASKS["network"], [], None, "direct")
+    assert rep["commit"] == "aaaa111"
+    on_disk = json.loads((tmp_path / "reports" / f"{rep['run_id']}.json").read_text("utf-8"))
+    assert on_disk["commit"] == "aaaa111"
+
+
+def test_report_is_written_while_the_run_still_holds_the_lock(tmp_path, monkeypatch):
+    _fake_body_env(monkeypatch)
+    monkeypatch.setattr(A, "repo_head", lambda lab: None)
+    monkeypatch.setattr(A, "_run_body", lambda *a, **k: {"result": "passed", "summary": "x"})
+    lab = A.Lab(tmp_path)
+    held = []
+    real = A._write_report
+
+    def spy(lab_, run_dir, run_id, report):
+        held.append((A.read_lock(lab_) or {}).get("run_id") == run_id)
+        # 锁内 clean --keep 0 删不掉本 run
+        assert A.cmd_clean(lab_, keep=0)["removed"] == []
+        real(lab_, run_dir, run_id, report)
+
+    monkeypatch.setattr(A, "_write_report", spy)
+    rep = A.run_task(lab, A.TASKS["network"], [], None, "direct")
+    assert held == [True]
+    assert (lab.reports / f"{rep['run_id']}.json").exists()
+    assert not lab.lock_path.exists()
 
 
 def test_session_id_falls_back_to_other_results_and_the_final_line():
