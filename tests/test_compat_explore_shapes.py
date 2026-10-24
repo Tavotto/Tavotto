@@ -667,7 +667,7 @@ class RealExecution(unittest.TestCase):
                 self.assertGreaterEqual(diff["evidence"]["native_pages"], 2)
 
     def test_bytesio_close_is_the_known_gap_749(self):
-        """savefig 到 BytesIO 再 close：原生有一张图，Tavotto 一张都没捕获（script_no_figure）。登记已知、已看到。"""
+        """savefig 到 BytesIO 再 close：原生有一张图，Tavotto 一张都没捕获（script_no_figure）。登记已知、已看到（家族 G6-bytesio-close-zero-figures）。"""
         for case in self.PARENTS:
             with self.subTest(parent=case):
                 record = self.check_axis_changing("bytesio_close", case)

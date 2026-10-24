@@ -1,0 +1,81 @@
+{
+  "schema": "tavotto-guardian-family/1",
+  "id": "G6-bytesio-close-zero-figures",
+  "title": "savefig into an io.BytesIO and then close(): native has a figure, Tavotto captures zero",
+  "affected_script_shapes": [
+    "a script that renders into an in-memory io.BytesIO buffer with savefig(buf, format=...) and then closes the figure (typically to embed or post-process the bytes)"
+  ],
+  "root_cause": "The Safe worker captures a figure only through savefig to a file path (and show); a savefig to a file-like object writes no artifact on disk and the figure is closed right after, so nothing is registered and the probe ends with script_no_figure although `python script.py` rendered a figure (issue #749, split out of #739). Known product gap, not fixed: no fix_pr.",
+  "category": "figure_capture",
+  "signature": {
+    "behavior_kind": "zero_figures",
+    "call_site": [
+      "figure",
+      "savefig",
+      "close"
+    ],
+    "tavotto_error": "script_no_figure"
+  },
+  "repro": {
+    "script": "tests/compat_guardian/families/G6-bytesio-close-zero-figures/repro.py",
+    "sha256": "d1d325109f1d9191bd30deffbaa38abc0ad123d600eada597e30d23a96b9b865",
+    "entry": "main",
+    "derived_from": {
+      "parent": {
+        "suite": "compat_engine",
+        "case": "shape_oo_savefig"
+      },
+      "chain": [
+        "bytesio_close"
+      ],
+      "seed": 7
+    },
+    "minimized_by": "compat_guardian.py minimize",
+    "before": {
+      "statements": 13,
+      "lines": 13,
+      "bytes": 422,
+      "files": 1
+    },
+    "after": {
+      "statements": 7,
+      "lines": 7,
+      "bytes": 203,
+      "files": 1
+    },
+    "reproducibility": {
+      "confirmed": 3,
+      "total": 3
+    },
+    "runs": 45
+  },
+  "key_regression_tests": [
+    "tests/test_compat_guardian_families.py::RealRepro::test_g6_minimal_repro_still_captures_zero_figures_known_gap",
+    "tests/test_compat_explore_shapes.py::RealExecution::test_bytesio_close_is_the_known_gap_749"
+  ],
+  "environments": {
+    "verified": [
+      {
+        "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+        "python": "3.13.16",
+        "matplotlib": "3.11.2",
+        "route": "Safe engine path via the product discovery chain",
+        "revision": "main at a88fb452a (after CG-08 #1368)"
+      }
+    ],
+    "unverified": [
+      "Linux",
+      "Windows",
+      "the desktop (Native) route",
+      "other matplotlib / Python versions",
+      "a real user session through the UI"
+    ]
+  },
+  "recurrence": "1 of the 5 output_call candidates in a local explore (seed 7, parent shape_oo_savefig); also every bytesio_close candidate in the CG-08 RealExecution test (shape_oo_savefig, shape_entry_main)",
+  "in_corpus": false,
+  "fix_pr": null,
+  "promoted": false,
+  "issues": [
+    749
+  ]
+}

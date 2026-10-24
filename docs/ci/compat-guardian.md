@@ -448,6 +448,10 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 `families/G5-sandbox-empty-glob-empty-figure.json`（沙盒里 cwd 相对 `glob` 扫空 → 空图 / 下游报错，issue #1254，诊断修复 #1299）。
 记录里 `fix_pr` 分别是 1297 / 1299，`RealRepro` 钉的是「差异仍在」；根治（项目级「在脚本目录里运行」默认）落地时那两条会红，届时改成回归用例。
 
+CG-08 的 `bytesio_close` 变换稳定复现的未修缺口登记为 `families/G6-bytesio-close-zero-figures.json`（`savefig(io.BytesIO())` 后 `close` → 原生一张图、
+Tavotto 零张，issue #749，`fix_pr` 为空；`RealRepro` 钉「差异仍在」，修好时那条会红）。同一批的 `same_stem_two_figs` **没有**登记：
+它的 `same_path_content_mismatch` 是 compare 按 stem 键去比路径的误报（见下），口径修正后原生 / Tavotto 逐文件一致。
+
 最小化过程中暴露并修掉了 explore 比较里的一个误报：无标题的图（原生 `[""]` vs Tavotto `[]`）曾被当作同路径内容差异；
 最小化签名因此新增「原生确有多图写同一路径」这一条，缩减不能漂移到别的原因上。
 
