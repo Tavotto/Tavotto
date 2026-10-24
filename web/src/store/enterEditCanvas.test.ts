@@ -53,4 +53,16 @@ describe('enterEdit：第二个脚本的图要落在自己的画布上', () => {
     const perCanvas = st.canvases.map((c) => figuresOf(c.id === st.activeCanvasId ? st.doc.objects : c.objects))
     expect(perCanvas).toEqual([['runtime:a.py#fig_a'], ['runtime:b.py#fig_b']])
   })
+
+  it('资产缓存里是上一轮的旧描述符、enterEdit 传入新描述符：面板按新的尺寸建（显式传入 > 缓存）', async () => {
+    const fresh = { ...fig('a.py', 'fig_a'), size_mm: [120, 90] as [number, number], source_fingerprint: 'sha256:new' }
+    const stale = { ...fig('a.py', 'fig_a'), size_mm: [50, 40] as [number, number] }
+    useRuntimeAssetStore.setState({ assets: [{ id: stale.asset_id, descriptor: stale } as never], loadAssets: async () => {} })
+    await enterEdit(host, fresh)
+    const panel = useDocumentStore.getState().doc.objects.find((o) => o.type === 'panel') as unknown as {
+      nativeW: number
+      nativeH: number
+    }
+    expect([panel.nativeW, panel.nativeH]).toEqual([120, 90])
+  })
 })

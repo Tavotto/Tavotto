@@ -168,10 +168,11 @@ type FigureSource = { kind: 'file'; info: PanelInfo } | { kind: 'runtime'; desc:
 function figureSource(figureId: string, fallback?: CapturedFigureDescriptor): FigureSource | null {
   const info = useAssetStore.getState().byId[figureId]
   if (info) return { kind: 'file', info }
+  // 显式传入的描述符（`enterEdit` 带着这次捕获的）**优先于**资产缓存：缓存里可能是最新一次运行完成前
+  // 发出的清单请求合并进来的、上一轮的非空描述符（尺寸 / 来源已变，Codex #1389）
+  if (fallback?.asset_id === figureId) return { kind: 'runtime', desc: fallback }
   const runtime = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === figureId)
-  if (runtime?.descriptor) return { kind: 'runtime', desc: runtime.descriptor }
-  // 素材清单还没取到这张刚跑出来的图：用调用方手里这次捕获的描述符（`enterEdit`）
-  return fallback?.asset_id === figureId ? { kind: 'runtime', desc: fallback } : null
+  return runtime?.descriptor ? { kind: 'runtime', desc: runtime.descriptor } : null
 }
 
 /** 新画布的名字：图名（磁盘图的 `name`，runtime 图的 `stem`），不叫「新排版」 */
