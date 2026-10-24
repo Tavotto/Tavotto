@@ -18,7 +18,6 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
 import logging
 import os
@@ -31,7 +30,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from . import config, tlstrust
+from . import config, netpolicy, tlstrust
 
 log = logging.getLogger(__name__)
 
@@ -181,20 +180,11 @@ REASONS = (
 )
 
 
-def _host_is_loopback(host: str) -> bool:
-    """字面判回环：`localhost` 精确匹配 + 字面 IP（127.0.0.0/8、::1）。不做 DNS 解析。"""
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
 def url_refusal(base_url: str) -> str | None:
     """带密钥的请求能不能发往这个地址 → None（可以）或原因码。
 
-    只许 https；明文 http 只放行回环（本机开发网关），其余一律拒绝，免得密钥在网上裸奔。"""
+    只许 https；明文 http 只放本机回环与私网（实验室自建的模型服务器；判据只在 `netpolicy`：主机名要所有解析结果都在放行段），
+    其余一律拒绝，免得密钥在网上裸奔。"""
     try:
         parts = urllib.parse.urlsplit((base_url or "").strip())
         host = (parts.hostname or "").lower()
@@ -204,7 +194,7 @@ def url_refusal(base_url: str) -> str | None:
     if scheme == "https" and host:
         return None
     if scheme == "http" and host:
-        return None if _host_is_loopback(host) else "insecure_url"
+        return None if netpolicy.plain_http_allowed(host) else "insecure_url"
     return "bad_response"
 
 
@@ -276,9 +266,19 @@ def fetch_models(base_url: str, api_key: str) -> tuple[list[str] | None, str | N
     refusal = url_refusal(base_url)
     if refusal:
         return None, refusal
-    req = urllib.request.Request(  # noqa: S310 - 上面已限定 https / 回环 http
-        models_url(base_url),
+    url = models_url(base_url)
+    extra: dict[str, str] = {}
+    if urllib.parse.urlsplit(url).scheme.lower() == "http":
+        # 明文 http（回环 / 私网）：把判定时解析出的 IP 钉进 URL 直连，`Host` 头保留原主机名（防 DNS 重绑定）
+        try:
+            url, host_header = netpolicy.pin_url(url)
+        except ValueError:
+            return None, "insecure_url"
+        extra["Host"] = host_header
+    req = urllib.request.Request(  # noqa: S310 - 上面已限定 https / 回环或私网 http
+        url,
         headers={
+            **extra,
             # Anthropic 兼容网关认 x-api-key，OpenAI 系认 Bearer：两个都给，多给无副作用
             "x-api-key": api_key,
             "Authorization": f"Bearer {api_key}",

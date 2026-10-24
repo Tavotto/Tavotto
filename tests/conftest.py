@@ -695,3 +695,15 @@ def _write_shard_manifest(path: str, plan, config) -> None:
     target = pathlib.Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_dns_for_plain_http_policy(monkeypatch):
+    """明文 http 的放行判据（`netpolicy`）对主机名会做 DNS。测试里一律不查真 DNS：默认解析不出（= 拒绝）；
+    需要的用例自己 monkeypatch `netpolicy.resolve_host`。判定缓存每条用例前后清掉。"""
+    from tavotto.engine import netpolicy
+
+    monkeypatch.setattr(netpolicy, "resolve_host", lambda host: [])
+    netpolicy.clear_cache()
+    yield
+    netpolicy.clear_cache()

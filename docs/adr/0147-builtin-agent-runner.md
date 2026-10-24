@@ -50,8 +50,11 @@ CLI 的写入面（任意 shell、网络、绝对路径写）也比「改一个�
 4. 账号登录（OAuth 访问令牌，如 MiniMax）类：装了 CLI 就走 CLI（凭据由我们注入，不看 CLI 自己的官方登录）；没装则走内置执行器，
    anthropic wire 只发 `Authorization: Bearer`（`--auth bearer`，不发 `x-api-key`），令牌在 spawn 之前由 `ai_oauth.ensure_fresh` 刷新、只进子进程环境变量。
    内置循环不能用的记录（缺型号、非回环的明文 http 网关）退回可用的 CLI。
-5. 明文 http 只放本机回环（`http://127.0.0.1`、`http://localhost`、`http://[::1]`，含端口）；其余 http 一律拒绝。判据只在 `agent_runner.wires.check_base_url`，
-   连接时**不按 URL 里的主机解析**（一律直连字面量回环 IP），所以 DNS 重绑定到不了别处。
+5. 明文 http 只放本机回环与私网（2026-10-25 起放行局域网：实验室常有自建模型服务器）：`127.0.0.1` / `::1` / `localhost`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、
+   `100.64.0.0/10`（CGNAT / Tailscale）、`fc00::/7`；链路本地（`169.254/16` 含云元数据、`fe80::/10`）、`0.0.0.0/8`、组播 / 保留段、公网 http 一律拒绝。主机名在判定时解析，
+   **所有**解析结果都在放行段才放行（混了公网 / 解析失败都拒）。判据只在 `engine/netpolicy.py`，`agent_runner.wires.check_base_url`（内置执行器）与 `ai_catalog.url_refusal`
+   （保存连接 / 取型号清单）都问它；CLI 路由同一判据（它们自己能否连 http 由 CLI 决定，我们不额外拦）。连接时**钉住判定那次解析出的 IP 直连**（`Host` 头保留原主机名），
+   DNS 重绑定到不了别处。connections 上的可选 `insecure_lan: true` 标出放行的非回环 http 网关，前端据此提示「这个地址不加密」。
 
 AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可用的 Key 连接。
 

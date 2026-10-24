@@ -383,8 +383,8 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   系统提示与最后一个工具定义带 `cache_control: ephemeral`）、`openai-chat`（`{base}/chat/completions`）、`openai-responses`
   （`{base}/responses`，`store: false`）、`demo`（剧本回放，不联网，端到端测试用）。anthropic 的思考由**调用方声明** `--thinking {adaptive,budget,none}`（默认 `none`，runner 不猜：第三方兼容网关各不相同）：`adaptive` 发 `thinking:{type:adaptive}` + 有 effort 才发 `output_config.effort`（新模型，不发已弃用的 `budget_tokens`）；`budget` 发旧式 `budget_tokens`（必须配 `--effort low|medium|high|max`，`max` 映射到 high 档；缺省 effort 起跑即 `internal/bad_args`、0 次请求，不静默不发 thinking）；`none` 都不发。thinking 块按原样回放，不做 assistant prefill，工具参数一律 `json.loads`。openai-responses 只在给了 `--effort` 时传 `reasoning.effort`。`--wire openai-responses` 配 `--effort max` 起跑即 `internal/bad_args`、0 次请求（Responses 没有 max 档，不静默不发 reasoning）。
   系统提示 + 工具定义在请求最前且逐字稳定（吃提示缓存）；变化的东西（目标名、用户指令）只在第一条用户消息里。
-- **出站**：只许 https，或主机在 `wires.LOOPBACK_HOSTS`（`127.0.0.1` / `::1` / `localhost`）里的 http（连接时一律直连字面量回环 IP，不解析主机名）；URL 不带用户信息 / 查询 / 片段。https 走 `_opener()`（`build_opener(tlstrust.https_handler(tlstrust.client_context()))`
-  + 不跟随重定向，代理沿用环境变量）；回环 http 用字面量回环 IP 的 `HTTPConnection` 直连（`localhost` → `127.0.0.1`）、**不经代理**。响应体有上限；
+- **出站**：只许 https，或明文 http 但主机属本机回环 / 私网（`10/8`、`172.16/12`、`192.168/16`、`100.64/10`、`fc00::/7`；链路本地 / 公网 / 保留段拒；主机名要全部解析结果都在放行段）——判据只在 `engine/netpolicy.py`（`check_base_url` 与 `ai_catalog.url_refusal` 共用），连接时钉住判定那次解析出的 IP 直连、`Host` 头保留原主机名；URL 不带用户信息 / 查询 / 片段。https 走 `_opener()`（`build_opener(tlstrust.https_handler(tlstrust.client_context()))`
+  + 不跟随重定向，代理沿用环境变量）；明文 http 走 `netpolicy.pinned_connection` 直连已校验的 IP、**不经代理**（出站门禁只认这一处变量主机的 `HTTPConnection`）。响应体有上限；
   请求有超时；`tests/test_outbound_https_trust.py` 的 `OUTBOUND` 登记了 `engine/agent_runner/wires.py: _opener`。
 - **密钥**：只读环境变量 `TAVOTTO_AGENT_API_KEY`（读后从本进程环境删除），绝不进 argv / stdout / stderr / 事件 / 日志 / repr。
   提示词只经 `--prompt-file` 或 stdin。服务端错误体不进任何输出（可能回显提示词），只留 `detail` 短代码。
@@ -441,6 +441,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
     旧厂商 id → 现在：`chatgpt` → `openai`，`claude` → `anthropic`，`kimi-code` → `moonshot`（方式 `kimi-code:key`），`dashscope-coding` → `dashscope`，`minimax-oauth` → `minimax`（方式 `minimax:oauth`，连接 id 仍是 `minimax-oauth`）。
     排序：中文系统国内厂商在前，其后是有订阅登录的海外厂商（OpenAI / Claude），再是其余海外，最后 custom；非中文反之。
   - `connections`：订阅类 `sub:codex` / `sub:claude`（CLI 装了且启用才列；`needs_auth` 只看就绪检查的 `needs_auth`）+ 每条 provider 记录一条（Key 类 id = provider id；`auth: "oauth"` 类同）。
+    明文 http 的局域网网关（`netpolicy` 放行、非回环）带可选 `insecure_lan: true`。
     每条带 `vendor`（合并后的厂商 id）与 `method`（接入方式 id）；logo 取它自己那一行的图标。多条可同时 `ready`，同厂商多条时 `label` 带用户起的名字 / 密钥尾四位；OpenAI / Claude 的官方 Key 连接名带「 API」后缀以便和订阅那条分开。没有地址的旧记录（官方 Key）不进视图。`state`：缺 Key → `needs_auth`；
     不兼容旧记录 / 保存时被服务商拒绝（`last_error: unauthorized` 落盘）/ 路由走不通 / 内置路由缺型号 → `error` 且带原因码 `error`。
   - **路由 `route_for`**（`route` 只给诊断与测试，界面不显示）：订阅 → `cli:<agent>`；Key 类：该家族 CLI 可用且 `ai.builtin_default` 不为 true（默认 false，FigureBench 过线后改 true）→ `cli:<家族>` + 注入；

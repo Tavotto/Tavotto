@@ -13,7 +13,6 @@
 
 from __future__ import annotations
 
-import http.client
 import json
 import re
 import urllib.error
@@ -22,7 +21,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
-from .. import tlstrust
+from .. import netpolicy, tlstrust
 
 USER_AGENT = "tavotto-agent-runner/1"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -625,19 +624,9 @@ def _opener() -> urllib.request.OpenerDirector:
     return opener
 
 
-#: 明文 http 只放本机回环的三种写法：字面量 `127.0.0.1`、`::1`（urlsplit 去掉了方括号）、字面量 `localhost`。
-#: 其余（私网段、任意域名、`127.0.0.2`）一律拒绝。**连接时不按 URL 里的主机解析**，见 `loopback_connect_host`。
-LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
-
-
-def loopback_connect_host(host: str) -> str:
-    """回环 http 实际去连的地址：永远是字面量回环 IP（`localhost` → `127.0.0.1`，不做 DNS 解析，所以
-    DNS 重绑定到别的地址也到不了别处）。"""
-    return "::1" if host == "::1" else "127.0.0.1"
-
-
 def check_base_url(base_url: str) -> str | None:
-    """通过回 None；否则回短错误码。https，或主机在 `LOOPBACK_HOSTS` 里的 http；不带用户信息 / 查询 / 片段。"""
+    """通过回 None；否则回短错误码。https，或明文 http 但主机属于本机回环 / 私网（判据只在 `netpolicy`：IP 字面量直接判，
+    主机名解析出的**全部**IP 都在放行段才行）；不带用户信息 / 查询 / 片段。"""
     try:
         u = urllib.parse.urlsplit(base_url)
         host = u.hostname
@@ -648,7 +637,7 @@ def check_base_url(base_url: str) -> str | None:
         return "bad_base_url"
     if u.scheme == "https":
         return None
-    if u.scheme == "http" and host in LOOPBACK_HOSTS:
+    if u.scheme == "http" and netpolicy.plain_http_allowed(host):
         return None
     return "base_url_scheme"
 
@@ -678,11 +667,9 @@ def post_json(
     try:
         if u.scheme == "http":
             # 回环 http：直连 socket，不读代理设置
-            # 字面量回环 IP（`localhost` 也直连 127.0.0.1，不解析主机名）；两个分支各写字面量，供 test_outbound_https_trust 的 AST 门禁认
-            if loopback_connect_host(u.hostname or "") == "::1":
-                conn = http.client.HTTPConnection("::1", u.port or 80, timeout=timeout)
-            else:
-                conn = http.client.HTTPConnection("127.0.0.1", u.port or 80, timeout=timeout)
+            # 明文 http：判定与连接用同一次解析，直连已校验的 IP（`Host` 头保留原主机名），不读代理设置
+            conn, host_header = netpolicy.pinned_connection(url, timeout)
+            hdrs = {**hdrs, "Host": host_header}
             try:
                 path = u.path or "/"
                 conn.request("POST", path, body=payload, headers=hdrs)

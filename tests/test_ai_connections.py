@@ -1259,14 +1259,14 @@ def test_loopback_http_gateways_are_usable_by_the_builtin_executor(world, host):
 @pytest.mark.parametrize(
     "host",
     [
-        "10.0.0.5:8080",
-        "192.168.1.9",
-        "172.16.0.1",
         "127.0.0.2",
         "gateway.example.org",
         "localhost.evil.example",
         "[::2]:80",
         "169.254.169.254",
+        "[fe80::1]",
+        "8.8.8.8",
+        "0.0.0.0",
     ],
 )
 def test_other_plain_http_gateways_stay_refused(world, host):
@@ -1277,11 +1277,20 @@ def test_other_plain_http_gateways_stay_refused(world, host):
     assert c["state"] == "error" and c["error"] == "base_url_scheme"
 
 
-def test_posting_a_private_network_http_gateway_is_refused(client, world):
-    for url in ("http://10.0.0.5:8080", "http://192.168.1.2", "http://gw.example.org"):
+def test_posting_an_http_gateway_follows_the_network_policy(client, world):
+    for url in ("http://169.254.169.254", "http://gw.example.org", "http://8.8.8.8:80"):
         resp = _post(client, vendor="custom", api_key=KEY, base_url=url, wire="anthropic")
-        assert resp.status_code == 400 and resp.get_json()["params"]["reason"] == "insecure_url"
-    for url in ("http://127.0.0.1:9", "http://localhost:9", "http://[::1]:9"):
+        assert resp.status_code == 400 and resp.get_json()["params"]["reason"] == "insecure_url", (
+            url
+        )
+    for url in (
+        "http://127.0.0.1:9",
+        "http://localhost:9",
+        "http://[::1]:9",
+        "http://10.1.2.3:8000",
+        "http://192.168.0.7",
+        "http://100.64.1.1",
+    ):
         world["fetch"] = (["m"], None)
         resp = _post(client, vendor="custom", api_key=KEY, base_url=url, wire="anthropic")
         assert resp.status_code == 200, url

@@ -24,7 +24,7 @@ from __future__ import annotations
 import os
 import re
 
-from . import ai_agents, ai_catalog, ai_oauth, ai_providers, config
+from . import ai_agents, ai_catalog, ai_oauth, ai_providers, config, netpolicy
 from .agent_runner.wires import check_base_url
 
 #: 订阅类连接 id → (内部 agent, 厂商 id, 显示名（产品名，不翻译）, logo 键)
@@ -412,6 +412,8 @@ def _key_connection(
     }
     if error and state == "error":
         conn["error"] = error
+    if netpolicy.is_insecure_lan(str(rec.get("base_url") or "")):
+        conn["insecure_lan"] = True  # 明文 http 的局域网网关：前端据此提示「这个地址不加密」
     return conn
 
 
