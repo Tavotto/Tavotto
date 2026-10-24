@@ -176,6 +176,8 @@ class RunContext:
     #: 第三方接口的注入（由 ai_bridge 经 ai_providers 算好）
     endpoint_args: list[str] = field(default_factory=list)
     endpoint_env: dict[str, str] = field(default_factory=dict)
+    #: 目标脚本（相对 `cwd`）。只有内置执行器要（它的写权限收窄到这一个文件）；两家 CLI 靠提示词指目标，忽略它
+    target: str | None = None
 
 
 @dataclass(frozen=True)
@@ -483,6 +485,9 @@ class AgentDefinition:
     supports_wire_api: bool = False
     #: 有没有官方的、无副作用的本地登录状态命令
     supports_readiness_probe: bool = False
+    #: 内部执行器（Tavotto 自己的进程，没有可探测的 CLI）：不进 `AGENT_REGISTRY`、不出现在 capabilities 的 `agents[]`，
+    #: 只经 `get_agent` 被改图执行路径找到（ADR 0147 第二阶段）
+    internal: bool = False
 
     # -- 探测 --------------------------------------------------------------
     def extra_search_locations(self) -> list[SearchLocation]:
@@ -1209,6 +1214,86 @@ class ClaudeAgent(AgentDefinition):
         return []  # system / rate_limit 等噪音
 
 
+#: 内置执行器的 id。**不是用户可选的「执行器」**：界面只讲「连接」，它只经 connections 的 `route` 体现。
+BUILTIN_ID = "builtin"
+
+#: 内置执行器的密钥环境变量名（与 `agent_runner.__main__.ENV_API_KEY` 同值，`tests/test_ai_connections.py` 钉死）
+BUILTIN_KEY_ENV = "TAVOTTO_AGENT_API_KEY"
+
+
+def tavotto_launcher() -> list[str]:
+    """拉起 Tavotto 自己的子命令（`fix-mcp` / `agent-run`）的命令前缀。冻结产物里 `sys.executable` 就是 Tavotto 自己，
+    优先用同目录的 console 版 `tavotto-cli`（GUI 子系统的 exe 没有可靠的 stdio）；源码 / pip 形态走 `-m tavotto`。"""
+    if getattr(sys, "frozen", False):
+        from . import locate
+
+        cli = Path(sys.executable).with_name(locate.CLI_NAME)
+        return [str(cli if cli.is_file() else sys.executable)]
+    return [sys.executable, "-m", "tavotto"]
+
+
+class BuiltinAgent(AgentDefinition):
+    """内置执行器（ADR 0147）：`tavotto agent-run`（= `python -m tavotto.engine.agent_runner`）子进程，自己跑「模型 ↔ 工具」循环。
+
+    与两家 CLI 同一套会话生命周期（候选工作区 / TAF 校验 / 事件流 / 取消 / 历史库）；区别只在命令怎么拼：
+    提示词走 **stdin**，密钥只在子进程**环境变量**里，argv 里只有地址 / 型号 / 协议名。
+    `endpoint_args` / `endpoint_env` 由 `ai_providers.spawn_overrides("builtin", …)` 算好。"""
+
+    id = BUILTIN_ID
+    display_name = "Tavotto"
+    internal = True
+    supports_model_selection = True
+
+    def build_command(self, ctx: RunContext) -> SpawnSpec:
+        cmd = [
+            *tavotto_launcher(),
+            "agent-run",
+            "--cwd",
+            ctx.cwd,
+            "--target",
+            ctx.target or "",
+            *ctx.endpoint_args,
+        ]
+        return SpawnSpec(cmd, dict(ctx.endpoint_env))
+
+    #: `done.reason` → 给对话里看的一句话（不带内容、不带密钥）
+    _FAILURES = {
+        "auth": "密钥无效或已过期",
+        "quota": "额度不足或被限流",
+        "refused": "模型拒绝了这次请求",
+        "network": "连不上模型服务",
+        "budget": "这次修改用量超出上限，已停止",
+        "max_turns": "这次修改步骤过多，已停止",
+        "tool_error_loop": "反复失败，已停止",
+        "internal": "出错",
+    }
+
+    def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            return []
+        if not isinstance(ev, dict):
+            return []
+        t = ev.get("type")
+        if t == "text" and ev.get("text"):
+            return [("message", str(ev["text"]))]
+        if t == "thinking":
+            return [("thinking", "思考中…")]
+        if t == "tool":
+            summary = str(ev.get("summary") or "")
+            if len(summary) > 80:
+                summary = summary[:77] + "…"
+            return [("action", f"✎ {ev.get('name') or '工具'} {summary}".rstrip())]
+        if (
+            t == "done"
+            and not ev.get("ok")
+            and ev.get("reason") not in (None, "completed", "cancelled")
+        ):
+            return [("message", self._FAILURES.get(str(ev["reason"]), "出错"))]
+        return []
+
+
 #: **生产注册表**。顺序即界面顺序。
 #:
 #: 这里只放当前真的能跑起来的 Agent。架构允许再加第三个而不用改前后端的
@@ -1225,9 +1310,13 @@ def agent_ids() -> tuple[str, ...]:
     return tuple(a.id for a in AGENT_REGISTRY)
 
 
+#: 内部执行器：`get_agent` 找得到，`agents()` / `agent_ids()` / 注册表里没有（用户可选的 Agent 只在 `AGENT_REGISTRY`）
+INTERNAL_AGENTS: tuple[AgentDefinition, ...] = (BuiltinAgent(),)
+
+
 def get_agent(agent_id: str) -> AgentDefinition | None:
     """按 id 取适配器。**未知 id 一律回 None**，绝不把它继续往下传。"""
-    for a in AGENT_REGISTRY:
+    for a in (*AGENT_REGISTRY, *INTERNAL_AGENTS):
         if a.id == agent_id:
             return a
     return None

@@ -569,8 +569,7 @@ def test_available_needs_a_usable_api_connection(box, monkeypatch):
             "default_model": "m1",
         }
     )
-    assert fixsession.available() is False  # 存了但没选中 = 不是「连着」
-    ai_providers.set_active("claude", "x")
+    # 「连接」改造后：存了就是连着，不再要求每个家族「选中」一条（见 tests/test_ai_connections.py 的挑选顺序用例）
     conn = fixsession.connection()
     assert conn is not None and conn["wire"] == "anthropic" and conn["model"] == "m1"
     assert fixsession.available() is True

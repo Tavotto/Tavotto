@@ -40,6 +40,8 @@ _SOURCE_FILES = (
     "security.py",
     "desktop.py",
     "engine/ai_bridge.py",
+    # 「连接 AI」：`ConnectionRefused("<code>")` 由 app 的 `_connection_error` 漏斗转成 JSON
+    "engine/ai_connections.py",
     # 「生成可编辑版本」（ADR 0143）：`ConvertError("<code>")` 由 app 的 `_convert_error` 漏斗转成 JSON
     "engine/ai_convert.py",
     "engine/project_refresh.py",
@@ -107,6 +109,7 @@ def _registry_codes() -> set[str]:
 _CODE_PATTERNS = (
     r'"code":\s*"([a-z0-9_]+)"',
     r'AgentError\(\s*"([a-z0-9_]+)"',
+    r'ConnectionRefused\(\s*"([a-z0-9_]+)"',
     r'RefreshError\(\s*"([a-z0-9_]+)"',
     r'AtomicWriteError\(\s*"([a-z0-9_]+)"',
     r'ConvertError\(\s*"([a-z0-9_]+)"',
@@ -281,6 +284,9 @@ USER_VISIBLE_CODES = {
     "oauth_unavailable": set(),
     "oauth_start_failed": set(),
     "oauth_flow_not_found": set(),
+    # 「连接 AI」（ai_connections）：连接 id 不存在 / 订阅类不能在这里删
+    "connection_not_found": set(),
+    "connection_not_deletable": set(),
     "ai_start_failed": {"reason"},
     "ai_revert_failed": {"reason"},
     # QA STATE-09：脚本在这次 AI 修改之后又变过，回滚被拒（409，AgentError 漏斗）
@@ -530,6 +536,7 @@ def test_error_field_is_still_there_as_the_fallback():
                 re.search(rf'{name}(?:\.__init__)?\(\s*(?:self,\s*)?"{code}"', src)
                 for name in (
                     "AgentError",
+                    "ConnectionRefused",
                     "RefreshError",
                     "AtomicWriteError",
                     "ProfileStoreError",

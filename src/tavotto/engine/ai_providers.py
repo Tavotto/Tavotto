@@ -26,6 +26,7 @@ import re
 from urllib.parse import urlparse
 
 from . import ai_agents, ai_catalog, config
+from .agent_runner.wires import check_base_url
 
 # codex 侧临时覆盖用的 provider id 与密钥环境变量名。用 tavotto 前缀是为了
 # 不和用户自己 config.toml 里的 provider 撞名（`-c` 只在本次进程生效，但
@@ -106,6 +107,10 @@ def _clean(rec: dict, existing_ids: set[str] = frozenset()) -> dict:
     # `store_oauth` / `update_oauth` 写入（`save()` 会剥掉请求体里的这两个键）
     if rec.get("auth") == "oauth" and isinstance(rec.get("oauth"), dict):
         out_extra = {"auth": "oauth", "oauth": dict(rec["oauth"])}
+    # 保存时试取型号清单被服务商拒绝（密钥不对）：记下稳定原因码，连接视图据此给 state="error"；
+    # 只认目录里的原因码，且只有真被拒才留（断网这类暂时性失败不落盘，免得永远显示出错）
+    if rec.get("last_error") in ai_catalog.REASONS:
+        out_extra = {**out_extra, "last_error": rec["last_error"]}
     return {
         **out_extra,
         "id": pid,
@@ -435,6 +440,9 @@ def resolve(agent: str, pid: str | None = None) -> dict | None:
     """
     if pid == "":
         return None
+    if agent == ai_agents.BUILTIN_ID:
+        # 内置执行器没有「家族」：它能用任何一条 Key 连接，只认显式指定（没有「当前选中」这回事）
+        return get(pid) if pid else None
     rec = get(pid) if pid else get(active_id(agent))
     if rec is None or rec.get("agent") != agent:
         return None
@@ -453,6 +461,8 @@ def spawn_overrides(
     """→ (追加到命令行的参数, 追加到环境的变量)。rec 为 None 时两者都空。"""
     if rec is None:
         return [], {}
+    if agent == ai_agents.BUILTIN_ID:
+        return _builtin_overrides(rec, model)
     base_url = str(rec.get("base_url") or "").strip()
     api_key = str(rec.get("api_key") or "").strip()
 
@@ -507,6 +517,51 @@ def spawn_overrides(
         return args, env
 
     return [], {}
+
+
+#: 家族 → 内置执行器的线上协议名（`agent_runner.wires.WIRES` 的键）
+_BUILTIN_WIRE = {FAMILY_ANTHROPIC: "anthropic", FAMILY_OPENAI: "openai-responses"}
+
+
+def builtin_conn(rec: dict | None, model: str | None = None) -> dict | None:
+    """这条记录内置循环能不能直接用 → `{wire, base_url, api_key, model}`（带密钥，只给 spawn 注入 / `fixsession.build_model` 用）或 None。
+
+    **判据只在这一处**（改图的 `spawn_overrides("builtin")`、AI 修复的 `fixsession.connection()`、连接视图的路由都问它）：
+    有 Key（账号登录的令牌是 Bearer，内置循环不走它）、有型号、地址合规（`check_base_url`：https 或本机 127.0.0.1）、
+    不是不兼容的旧记录、协议族认得。"""
+    if not rec or rec.get("auth") == "oauth" or incompatibility(rec):
+        return None
+    wire = _BUILTIN_WIRE.get(str(_family(str(rec.get("agent") or ""))))
+    chosen = (
+        str(model or "").strip()
+        or str(rec.get("default_model") or "").strip()
+        or next(iter(rec.get("models") or []), "")
+    )
+    base, key = str(rec.get("base_url") or ""), str(rec.get("api_key") or "")
+    if wire and chosen and key and check_base_url(base) is None:
+        return {"wire": wire, "base_url": base, "api_key": key, "model": chosen}
+    return None
+
+
+def _builtin_overrides(rec: dict, model: str | None) -> tuple[list[str], dict[str, str]]:
+    """内置执行器的注入：地址 / 型号 / 协议名进 argv，**密钥只进环境变量**（不进 argv / 日志 / 事件）。不可用 → 两者皆空。"""
+    conn = builtin_conn(rec, model)
+    if conn is None:
+        return [], {}
+    args = ["--wire", conn["wire"], "--base-url", conn["base_url"], "--model", conn["model"]]
+    return args, {ai_agents.BUILTIN_KEY_ENV: conn["api_key"]}
+
+
+def create(rec: dict) -> dict:
+    """**新增**一条（不合并进同 id 的旧记录）：id 已被占用就顺延成 `<id>-2`。→ 规范化后的记录（带密钥，内部用）。"""
+    rec = {k: v for k, v in rec.items() if k not in ("auth", "oauth")}
+
+    def tx(ai: dict):
+        providers = _providers_in(ai)
+        created = _clean(rec, {p.get("id") for p in providers})
+        return {"providers": [*providers, created]}, created
+
+    return _update(tx)
 
 
 def models_for(agent: str, pid: str | None = None) -> list[str]:

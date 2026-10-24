@@ -61,6 +61,7 @@ from werkzeug.formparser import FormDataParser
 from . import pdfbackend, tiffprobe
 from .engine import (
     ai_bridge as engine_ai,
+    ai_connections as engine_ai_connections,
     ai_convert as engine_ai_convert,
     ai_data_figure as engine_ai_data_figure,
     ai_data_task as engine_ai_data_task,
@@ -11910,6 +11911,69 @@ def api_ai_oauth_cancel(flow_id):
     return jsonify(flow)
 
 
+# ------------------------- 「连接 AI」（接口约定 2026-10-24；视图见 engine/ai_connections.py） -------------------------
+def _connection_error(exc: "engine_ai_connections.ConnectionRefused"):
+    return jsonify({"error": exc.code, "code": exc.code, "params": exc.params}), exc.status
+
+
+@app.post("/api/ai/connections")
+def api_ai_connection_add():
+    """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, label?}`（`custom` 另需 `wire`：`anthropic` | `openai-responses`；
+    带已存在的 `id` = 换这条的 Key / 型号）。保存前试取一次型号清单，失败也保存，但返回的连接 `state="error"` 并带原因码 `error`。
+    返回 `{ok, connection}`；**密钥不回传**。"""
+    body = request.get_json(silent=True)
+    try:
+        cid, fetch_error = engine_ai_connections.add_connection(body)
+    except engine_ai_connections.ConnectionRefused as exc:
+        return _connection_error(exc)
+    except (ValueError, OSError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "endpoint_save_failed", "params": {"reason": str(exc)}}
+        ), 400
+    engine_ai.invalidate_capabilities()
+    conn = next(c for c in engine_ai.capabilities(refresh=True)["connections"] if c["id"] == cid)
+    if fetch_error and conn["state"] == "ready":
+        conn = {**conn, "state": "error", "error": fetch_error}
+    resp = jsonify({"ok": True, "connection": conn})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.delete("/api/ai/connections/<cid>")
+def api_ai_connection_delete(cid):
+    """断开一条 Key / 账号登录类连接（订阅类不可删，只能在对应的命令行里退出）。"""
+    try:
+        engine_ai_connections.delete_connection(cid)
+    except engine_ai_connections.ConnectionRefused as exc:
+        return _connection_error(exc)
+    engine_ai.invalidate_capabilities()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/ai/connections/<cid>/login")
+def api_ai_connection_login(cid):
+    """订阅类 → 该 CLI 的官方登录命令（沿用 `start_login`，进度轮询 `GET /api/ai/agents/<agent>/login`）；
+    账号登录类 → 设备码流程（沿用 `engine/ai_oauth.py`，返回 `flow_id`，进度轮询 `GET /api/ai/oauth/flows/<flow_id>`）。"""
+    try:
+        kind, target = engine_ai_connections.login_target(cid)
+    except engine_ai_connections.ConnectionRefused as exc:
+        return _connection_error(exc)
+    if kind == "cli":
+        try:
+            return jsonify({"ok": True, **engine_ai.start_login(target)})
+        except engine_ai.AgentError as exc:
+            return _agent_error(exc)
+    body = request.get_json(silent=True)
+    region = body.get("region") if isinstance(body, dict) else None
+    try:
+        flow = engine_ai_oauth.start(target, region if isinstance(region, str) else None)
+    except engine_ai_oauth.OAuthError as exc:
+        if exc.code == "oauth_unavailable":
+            return jsonify({"error": "该厂商暂不支持账号登录", "code": "oauth_unavailable"}), 400
+        return jsonify({"error": "无法发起账号登录", "code": "oauth_start_failed"}), 502
+    return jsonify({"ok": True, "flow_id": flow["flow_id"], "flow": flow})
+
+
 @app.post("/api/ai/endpoints/<pid>/logout")
 def api_ai_endpoint_logout(pid):
     """退出账号登录：只删这条记录里的令牌（记录与模型设置保留）。"""
@@ -12048,6 +12112,21 @@ def _ai_run_impl():
         "canvas": body.get("canvas"),
     }
     ctx = current_ctx()
+    model, endpoint_id = body.get("model") or None, body.get("endpoint")
+    if body.get("connection") is not None:
+        # 新字段 `connection`（AiConnection.id）：直接解析到那条 provider 与路由（订阅 → CLI；Key → CLI + 注入或内置），
+        # 不看 `ai.active_provider`；旧的 `agent` / `endpoint` 字段在没带它时照旧。放在去重**之后**（可变判断）
+        cid = body["connection"]
+        if not isinstance(cid, str):
+            abort(400)
+        try:
+            agent, picked = engine_ai.resolve_connection(cid)
+        except engine_ai_connections.ConnectionRefused as exc:
+            LOG.warning("AI 任务被拒: 连接解析失败 (%s)", exc.code)
+            return _connection_error(exc)
+        endpoint_id = picked["id"] if picked else ""  # "" = 明确用官方登录态（不是「没指定」）
+        if picked is not None and not model:
+            model = str(picked.get("default_model") or "").strip() or None
     try:
         sid = engine_ai.run(
             agent,
@@ -12062,9 +12141,9 @@ def _ai_run_impl():
                 {**data, "pj": ctx.id, **({"client_request_id": request_id} if request_id else {})},
             ),
             client_request_id=request_id,
-            model=body.get("model") or None,
+            model=model,
             effort=body.get("effort") or None,
-            endpoint_id=body.get("endpoint"),
+            endpoint_id=endpoint_id,
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
             task_hooks=_ai_task_hooks(ctx, info["script"], info["entry"]),
