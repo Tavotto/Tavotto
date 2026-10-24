@@ -1193,15 +1193,28 @@ jobs:
           # （实测 v0-rust-<key>-<job>-Linux-x64-…），原先那条 `key: ${{ matrix.os }}`
           # 是冗余的字面量（CI02 §4）。改成与 cache-seed 的两条 desktop-shell 腿同键。
           shared-key: desktop-shell
-      - name: 装 Tauri 在 Linux 上的系统依赖
+      # 这三步（识别镜像 / 缓存 .deb / 安装）三处必须逐字相同，只有 `if:` 不同（看护：
+      # tests/test_merge_queue_workflows.py::TestTauriAptCache）。Ubuntu 镜像偶发极慢（实测约 7% 吃满
+      # job 的 20 分钟），所以下载的 .deb 按 runner 镜像版本缓存，命中时不跑 apt-get update；
+      # 未命中时脚本自己限时、重试、换镜像。包列表只在 scripts/ci/tauri-linux-apt-packages.txt。
+      - name: 装 Tauri 在 Linux 上的系统依赖：识别 runner 镜像
         # macOS 腿不需要：WebKit 由系统提供，Tauri 直接用 WKWebView。
         if: runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
-            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+        run: echo "APT_IMAGE_KEY=${ImageOS}-${ImageVersion}" >> "$GITHUB_ENV"
+      - name: 缓存 Tauri 系统依赖的 .deb 下载
+        if: runner.os == 'Linux'
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/tauri-apt-debs/*.deb
+          key: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-${{ hashFiles('scripts/ci/tauri-linux-apt-packages.txt') }}
+          restore-keys: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-
+        id: tauri-apt-cache
+      - name: 装 Tauri 在 Linux 上的系统依赖
+        if: runner.os == 'Linux'
+        timeout-minutes: 12
+        env:
+          APT_CACHE_HIT: ${{ steps.tauri-apt-cache.outputs.cache-hit }}
+        run: scripts/ci/install_tauri_linux_deps.sh "${RUNNER_TEMP}/tauri-apt-debs"
       - name: 摆一个空的 sidecar 产物目录
         # `tauri.conf.json` 的 `bundle.resources` 指向 `../dist/Tavotto`，
         # tauri-build 校验它存在才肯生成命令清单。**空目录就够**——这一格不打包，
@@ -2521,15 +2534,28 @@ jobs:
         with:
           workspaces: ${{ matrix.workspace }}
           shared-key: ${{ matrix.rust }}
-      - name: 装 Tauri 在 Linux 上的系统依赖
-        # 与 desktop-shell 那一步逐字相同；macOS 腿不需要（WKWebView 由系统提供）。
+      # 这三步（识别镜像 / 缓存 .deb / 安装）三处必须逐字相同，只有 `if:` 不同（看护：
+      # tests/test_merge_queue_workflows.py::TestTauriAptCache）。Ubuntu 镜像偶发极慢（实测约 7% 吃满
+      # job 的 20 分钟），所以下载的 .deb 按 runner 镜像版本缓存，命中时不跑 apt-get update；
+      # 未命中时脚本自己限时、重试、换镜像。包列表只在 scripts/ci/tauri-linux-apt-packages.txt。
+      - name: 装 Tauri 在 Linux 上的系统依赖：识别 runner 镜像
+        # macOS 腿不需要（WKWebView 由系统提供）。
         if: matrix.workspace == 'src-tauri' && runner.os == 'Linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
-            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+        run: echo "APT_IMAGE_KEY=${ImageOS}-${ImageVersion}" >> "$GITHUB_ENV"
+      - name: 缓存 Tauri 系统依赖的 .deb 下载
+        if: matrix.workspace == 'src-tauri' && runner.os == 'Linux'
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/tauri-apt-debs/*.deb
+          key: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-${{ hashFiles('scripts/ci/tauri-linux-apt-packages.txt') }}
+          restore-keys: tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-
+        id: tauri-apt-cache
+      - name: 装 Tauri 在 Linux 上的系统依赖
+        if: matrix.workspace == 'src-tauri' && runner.os == 'Linux'
+        timeout-minutes: 12
+        env:
+          APT_CACHE_HIT: ${{ steps.tauri-apt-cache.outputs.cache-hit }}
+        run: scripts/ci/install_tauri_linux_deps.sh "${RUNNER_TEMP}/tauri-apt-debs"
       - name: 摆一个空的 sidecar 产物目录
         # `tauri.conf.json` 的 `bundle.resources` 指向 `../dist/Tavotto`，tauri-build 校验它
         # 存在才肯生成命令清单（与 desktop-shell 那一步同形；空目录就够）。

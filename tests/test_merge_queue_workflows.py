@@ -2046,6 +2046,15 @@ class TestBuildReuseAndCaches:
         "posix-e2e",
         "cache-seed",
     }
+    #: 第一类（下载 bytes）的第三种：Tauri 在 Linux 上的系统依赖的 .deb（Ubuntu 镜像偶发极慢，
+    #: 实测约 7% 吃满 job 的 20 分钟）。只缓存 .deb 本身；命中也是脚本里 apt 装本地文件，
+    #: 装不上就退回网络路径，缓存不是信任来源。key 逐项见 TestTauriAptCache。
+    APT_PATH = "${{ runner.temp }}/tauri-apt-debs/*.deb"
+    APT_KEY = (
+        "tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-"
+        "${{ hashFiles('scripts/ci/tauri-linux-apt-packages.txt') }}"
+    )
+    APT_JOBS = {"desktop-shell", "cache-seed"}
     CPYTHON_CACHE = {
         ("windows-exe-smoke", "build/runtime-cache", CPYTHON_KEY),
         ("macos-app-smoke", "build/runtime-cache", CPYTHON_KEY),
@@ -2063,15 +2072,17 @@ class TestBuildReuseAndCaches:
             found.add((job_id, w["path"], w["key"]))
             steps = _steps(_job(CI, job_id))
             me = next(i for i, s in enumerate(steps) if s == step)
-            command = (
-                "scripts/fetch_fonts.py"
-                if w["path"] == self.FONT_PATH
-                else "scripts/build_worker_runtime.py"
-            )
+            command = {
+                self.FONT_PATH: "scripts/fetch_fonts.py",
+                self.APT_PATH: "scripts/ci/install_tauri_linux_deps.sh",
+            }.get(w["path"], "scripts/build_worker_runtime.py")
             use = [i for i, s in enumerate(steps) if command in s and "run:" in s]
             assert len(use) == 1 and me < use[0], f"{job_id}：缓存恢复步不在 {command} 之前"
         fonts = {(job, self.FONT_PATH, self.FONT_KEY) for job in self.FONT_JOBS}
-        assert found == self.CPYTHON_CACHE | fonts, f"actions/cache 的清单变了：{sorted(found)}"
+        apt = {(job, self.APT_PATH, self.APT_KEY) for job in self.APT_JOBS}
+        assert found == self.CPYTHON_CACHE | fonts | apt, (
+            f"actions/cache 的清单变了：{sorted(found)}"
+        )
         for _job_id, path, key in self.CPYTHON_CACHE:
             for dim in (
                 "${{ runner.os }}",
@@ -2749,26 +2760,184 @@ class TestCacheSeed:
         )
 
     def test_the_linux_only_tauri_prerequisite_is_gated_like_the_consumer(self):
-        """desktop-shell 的 Linux 腿要先 apt 装 WebKit/GTK 才编得过；种子的对应步骤条件是
-        「src-tauri 且 Linux」，包名与消费者那一步逐字相同（枯了两处的其中一处就是白种）。"""
+        """desktop-shell 的 Linux 腿要先装 WebKit/GTK 才编得过；种子的对应步骤条件是
+        「src-tauri 且 Linux」，三步（识别镜像 / 缓存 .deb / 安装）与消费者逐字相同，只有 `if:` 不同
+        （枯了两处的其中一处就是白种）。包列表只有一份（TestTauriAptCache）。"""
         seed = _steps(_job(CI, self.SEED))
-        apt = [st for st in seed if "apt-get install" in st]
-        assert len(apt) == 1, "种子里应恰好一步 apt"
+        apt = [st for st in seed if "install_tauri_linux_deps.sh" in st]
+        assert len(apt) == 1, "种子里应恰好一步装 Tauri 系统依赖"
         assert re.search(
             r"(?m)^\s*if: matrix\.workspace == 'src-tauri' && runner\.os == 'Linux'$", apt[0]
         ), apt[0]
         assert "Linux" in _RUNNER_OS_LABEL and _RUNNER_OS_LABEL["Linux"] in {
             leg["os"] for leg in self._legs() if leg["workspace"] == "src-tauri"
         }, "没有一条 src-tauri 的 Linux 种子腿，这一步永远不执行"
-        consumer = [st for st in _steps(_job(CI, "desktop-shell")) if "apt-get install" in st]
+        consumer = [
+            st for st in _steps(_job(CI, "desktop-shell")) if "install_tauri_linux_deps.sh" in st
+        ]
         assert len(consumer) == 1
 
-        def pkgs(step: str) -> list[str]:
-            m = re.search(r"apt-get install[^\n]*\\\n((?:.*\\\n)*.*)$", step, re.M)
-            assert m, step
-            return sorted(re.sub(r"\\\n", " ", m.group(1)).split())
 
-        assert pkgs(apt[0]) == pkgs(consumer[0]), (pkgs(apt[0]), pkgs(consumer[0]))
+class TestTauriAptCache:
+    """Tauri 在 Linux 上的系统依赖不再依赖 Ubuntu 镜像的现场速度（实测 10-20 以来 57 次：中位 0.6 分钟，
+    约 12% 慢到 7–16 分钟，约 7% 吃满 20 分钟被取消，快速检查聚合门判红）。"""
+
+    SCRIPT = ROOT / "scripts" / "ci" / "install_tauri_linux_deps.sh"
+    PACKAGES = ROOT / "scripts" / "ci" / "tauri-linux-apt-packages.txt"
+
+    @staticmethod
+    def _site_steps(job_id: str) -> list[str]:
+        steps = _steps(_job(CI, job_id))
+        first = next(i for i, st in enumerate(steps) if "识别 runner 镜像" in _step_name(st))
+        return steps[first : first + 3]
+
+    @classmethod
+    def _without_if(cls, step: str) -> str:
+        return re.sub(r"(?m)^\s*if: .*\n", "", step)
+
+    def test_both_sites_are_the_same_three_steps_modulo_if(self):
+        desk = self._site_steps("desktop-shell")
+        seed = self._site_steps("cache-seed")
+        assert [_step_name(s) for s in desk] == [
+            "装 Tauri 在 Linux 上的系统依赖：识别 runner 镜像",
+            "缓存 Tauri 系统依赖的 .deb 下载",
+            "装 Tauri 在 Linux 上的系统依赖",
+        ]
+        assert [self._without_if(s) for s in desk] == [self._without_if(s) for s in seed]
+        assert {_if_of_step(s) for s in desk} == {"runner.os == 'Linux'"}
+        assert {_if_of_step(s) for s in seed} == {
+            "matrix.workspace == 'src-tauri' && runner.os == 'Linux'"
+        }
+
+    def test_key_pins_image_and_package_list_and_falls_back_within_the_same_image_os(self):
+        cache = self._site_steps("desktop-shell")[1]
+        w = _with_block(cache)
+        assert w["key"] == TestBuildReuseAndCaches.APT_KEY
+        assert w["path"] == TestBuildReuseAndCaches.APT_PATH
+        # restore-keys 只回落到同一 ImageOS（APT_IMAGE_KEY 里 ImageOS 在前，版本在后）
+        assert w["restore-keys"] == "tauri-apt-debs-v1-${{ env.APT_IMAGE_KEY }}-"
+        ident = self._site_steps("desktop-shell")[0]
+        assert 'APT_IMAGE_KEY=${ImageOS}-${ImageVersion}" >> "$GITHUB_ENV"' in ident
+
+    def test_install_step_is_bounded_and_told_whether_the_cache_hit(self):
+        install = self._site_steps("desktop-shell")[2]
+        assert re.search(r"(?m)^\s*timeout-minutes: 12$", install), install
+        assert "APT_CACHE_HIT: ${{ steps.tauri-apt-cache.outputs.cache-hit }}" in install
+        assert not re.search(r"(?m)^\s*continue-on-error:", install)
+        assert "apt-get" not in install, "apt 只在脚本里（限时 / 重试 / 换镜像都在那里）"
+
+    def test_no_workflow_still_runs_a_bare_apt_get_update_for_tauri(self):
+        assert "libwebkit2gtk" not in CI, "包列表只在 scripts/ci/tauri-linux-apt-packages.txt"
+        pkgs = self.PACKAGES.read_text(encoding="utf-8").split()
+        assert len(pkgs) == len(set(pkgs)) and "libwebkit2gtk-4.1-dev" in pkgs
+
+    def test_script_has_retries_timeouts_and_a_mirror_fallback(self):
+        text = self.SCRIPT.read_text(encoding="utf-8")
+        for needle in (
+            "Acquire::Retries=3",
+            "Acquire::http::Timeout=30",
+            "--download-only",
+            "--no-download",
+            "archive.ubuntu.com",
+            "mirrors.edge.kernel.org",
+            "attempt_seconds=180",
+        ):
+            assert needle in text, needle
+        assert text.index("APT_CACHE_HIT") < text.index('apt-get "${apt_opts[@]}" update'), (
+            "命中路径要排在 apt-get update 之前"
+        )
+
+    def test_script_paths_with_stubbed_apt(self, tmp_path):
+        """用桩 sudo / apt-get / timeout 跑真脚本：命中走本地不 update；未命中第一镜像超时后换镜像成功；
+        全部超时则非零退出；剪枝只留版本 == 已装版本的 .deb。"""
+        import shutil
+        import subprocess
+
+        if os.name == "nt":
+            pytest.skip("bash 脚本只在 Linux runner 上跑")
+        bindir = tmp_path / "bin"
+        bindir.mkdir()
+        log = tmp_path / "calls.log"
+        etc = tmp_path / "apt-sources"
+        etc.mkdir()
+        (etc / "ubuntu.sources").write_text("URIs: http://azure.archive.ubuntu.com/ubuntu/\n")
+
+        def stub(name: str, body: str) -> None:
+            f = bindir / name
+            f.write_text("#!/usr/bin/env bash\n" + body)
+            f.chmod(0o755)
+
+        stub(
+            "sudo",
+            'echo "sudo $*" >> "$LOG"\n'
+            'if [ "$1" = find ]; then shift; exec find "$APT_ETC" "${@:2}"; fi\nexec "$@"',
+        )
+        stub("timeout", 'shift; exec "$@"')
+        stub(
+            "apt-get",
+            'echo "apt-get $*" >> "$LOG"\n'
+            'case "$*" in *" update"*) [ "${FAIL_UPDATE:-0}" = 1 ] && exit 100 ;; esac\n'
+            'case "$*" in *--download-only*) touch "$DEB_DIR/new_1_amd64.deb" ;; esac\n'
+            "exit ${APT_RC:-0}",
+        )
+        stub(
+            "dpkg-deb",
+            'n="$(basename "$2" .deb)"\n'
+            'case "$3" in Package) echo "${n%%_*}" ;; Version) echo "$n" | cut -d_ -f2 ;; esac',
+        )
+        stub("dpkg-query", 'echo -n "${INSTALLED_VERSION:-1}"')
+        # BSD sed（本机 macOS）的 `-i` 要带后缀参数；Linux runner 上用真 sed，这里只做这一处适配。
+        stub(
+            "sed",
+            'if "$REAL_SED" --version >/dev/null 2>&1; then exec "$REAL_SED" "$@"; fi\n'
+            '[ "$1" = -i ] && shift && exec "$REAL_SED" -i "" "$@"\nexec "$REAL_SED" "$@"',
+        )
+        deb_dir = tmp_path / "debs"
+        deb_dir.mkdir()
+        (deb_dir / "old_0_amd64.deb").touch()
+
+        def run(**env):
+            e = {
+                **os.environ,
+                "PATH": f"{bindir}:{os.environ['PATH']}",
+                "LOG": str(log),
+                "DEB_DIR": str(deb_dir),
+                "APT_ETC": str(etc),
+                "REAL_SED": shutil.which("sed") or "sed",
+                **env,
+            }
+            log.write_text("")
+            return subprocess.run(
+                ["bash", str(self.SCRIPT), str(deb_dir)],
+                env=e,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+
+        hit = run(APT_CACHE_HIT="true")
+        assert hit.returncode == 0, hit.stderr
+        calls = log.read_text()
+        assert "--no-download" in calls and not [
+            ln for ln in calls.splitlines() if ln.endswith(" update")
+        ]
+
+        # 未命中：update 一直失败 → 三个镜像各试一次，最后非零；源文件被改写到最后一个镜像
+        bad = run(APT_CACHE_HIT="false", FAIL_UPDATE="1")
+        assert bad.returncode != 0
+        assert (
+            sum(
+                ln.startswith("apt-get ") and ln.endswith(" update")
+                for ln in log.read_text().splitlines()
+            )
+            == 3
+        )
+        assert "mirrors.edge.kernel.org" in (etc / "ubuntu.sources").read_text()
+
+        # 未命中且成功：已装版本是 1，old_0 被剪掉、new_1 留下
+        ok = run(APT_CACHE_HIT="false", INSTALLED_VERSION="1")
+        assert ok.returncode == 0, ok.stderr
+        assert sorted(p.name for p in deb_dir.glob("*.deb")) == ["new_1_amd64.deb"]
 
 
 # ============================================================ runner 信任区（CI04）
@@ -3221,6 +3390,11 @@ class TestApprovedFontArchiveCaches:
                 (job, step)
                 for job, step in _uses_steps("actions/cache", text)
                 if _with_block(step).get("path") != "build/runtime-cache"
+            ]
+            caches = [
+                (job, step)
+                for job, step in caches
+                if _with_block(step).get("path") != TestBuildReuseAndCaches.APT_PATH
             ]
             assert len(caches) == len(jobs) and {job for job, _ in caches} == jobs
             for job, step in caches:

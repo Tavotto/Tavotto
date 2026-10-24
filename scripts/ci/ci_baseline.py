@@ -311,7 +311,7 @@ _STEP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
         "setup",
         re.compile(
             r"^Run (actions/setup-python@|actions/setup-node@|pnpm/action-setup@|"
-            r"dtolnay/rust-toolchain@|Swatinem/rust-cache@|actions/cache@)|^缓存 CPython|^缓存字体|"
+            r"dtolnay/rust-toolchain@|Swatinem/rust-cache@|actions/cache@)|^缓存 CPython|^缓存字体|^缓存 Tauri|"
             r"^缓存批准字体归档"
         ),
     ),

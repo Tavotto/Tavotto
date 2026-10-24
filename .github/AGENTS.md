@@ -21,7 +21,7 @@
   它守的东西合并前一次都不验；`test_every_fast_lane_job_actually_runs_on_a_plain_pull_request` 看住。
 - **job id 不变、显示名可变**：矩阵化 / 分片只改显示名，`needs:` / `--required` / required
   contexts 读的都是 id，仓库设置不用重登记。
-- **缓存是枚举、产物不跨 job 抽取**：`actions/cache` 只有 CPython / 批准字体的下载归档，恢复后重核 SHA；pnpm store 按锁文件，
+- **缓存是枚举、产物不跨 job 抽取**：`actions/cache` 只有 CPython / 批准字体的下载归档（恢复后重核 SHA）与 Tauri 的 apt `.deb`；pnpm store 按锁文件，
   rust-cache 一条腿一把 `shared-key`；venv / site-packages / 测试结果 / Playwright 浏览器一律不缓存。
 - **runner 信任区**：监听 PR / merge_group / review / issue_comment 等不可信载荷事件的 workflow 只许 hosted runner；`tavotto-lab`
   只在 `_lab-qualification.yml`；未部署的池不进 `.github/actionlint.yaml`。
@@ -43,7 +43,7 @@
 | `windows-exe-smoke` matrix、`posix-e2e` 原生 `--shard`、`web/playwright.config.ts` 的 project 集 | Playwright 分片（CI03c）→ `playwright-shards.md` | 各片 projects 并集 == 全集、POSIX 按 planned list 对拍；必需步骤不加 `if:`；artifact 名带 shard；step 级 `timeout-minutes` |
 | 任何装本项目 / 打 wheel / PyInstaller 的 job 的「批准字体」步、`package` 与两条 app smoke 腿的「退役扫描」步、`scripts/ci/retirement_scan.py` | PDF 后端边界（后端侧细则）→ `../docs/rules/backend/pdf-backend-boundary.md` | U10（ADR 0072）：装项目的腿先 `fetch_fonts.py`；产物出来后扫原生库名单 + METADATA + 字体；没有 `pip install` 再点名 pymupdf |
 | `package` job 的冒烟步骤、`scripts/ci/package_smoke.py` | package 冒烟隔离（CI03b）→ `package-smoke-isolation.md` | venv / workdir 在 `runner.temp`；端口向系统租、就绪 = 版本端点 + 本实例凭据、终止 = 进程不存在；`/tmp/smoke` + `sleep 8` + curl 不许回来 |
-| 任何 `actions/cache` / setup-node / rust-cache、`cache-seed` job、artifact 传递、`scripts/ci/ci_baseline.py` | 构建复用与缓存（CI02）→ `build-reuse-and-caches.md` | 缓存是枚举（多一条就红）；字体仅归档、OS + allowlist / 下载器精确键、命中不跳校验；唯一数据边 `frontend → plugin-candidate` 按 content_digest 核；rust-cache 一条腿一把 `shared-key`；`cache-seed` 不是门禁、`full-ci` PR 上是首验 |
+| 任何 `actions/cache` / setup-node / rust-cache、`cache-seed` job、artifact 传递、`scripts/ci/ci_baseline.py` | 构建复用与缓存（CI02）→ `build-reuse-and-caches.md` | 缓存是枚举（多一条就红）；字体仅归档、精确键、命中不跳校验；Tauri apt 只缓存 .deb；唯一数据边 `frontend → plugin-candidate` 按 content_digest 核；rust-cache 一条腿一把 `shared-key`；`cache-seed` 不是门禁、`full-ci` PR 上是首验 |
 | `runs-on`、workflow 事件、`.github/actionlint.yaml`、可复用 workflow | runner 信任区（CI04）→ `runner-trust-zones.md` | PR / merge_group / review / issue_comment 只许 hosted；审查和评论事件只由只读的 `review-budget.yml` 消费；`tavotto-lab` 只在 `_lab-qualification.yml`；事件闭集；标签集合 == 实际用到的 |
 | 任何 `shell: pwsh` 步骤 | pwsh 退出码 → `pwsh-exit-codes.md` | 最后一条原生命令故意非零时显式 `exit 0`；失败路径全是 `throw` |
 | `tests/compat/`、`tests/test_equivalence_matrix.py`、`tests/test_invariants_engine.py`、`scripts/smoke_app.py`、`nightly.yml`、`scripts/bench_render.py`、`tests/desktop_windows/` | 验证链（按层）→ `verification-chain.md` | CompatBench 与 acceptance 不合并；未声明失败一律 `product_bug`；等价性与不变式不互相替代；冒烟带 `--expect-*`；改性能先指出基线数字 |
