@@ -1259,3 +1259,64 @@ def test_codex_config_uses_env_key_not_the_key_itself(tmp_path):
     toml = (tmp_path / "work" / "codex-home" / "config.toml").read_text(encoding="utf-8")
     assert conf["api_key"] not in toml and 'env_key = "WINLAB_MODEL_KEY"' in toml
     assert extra["WINLAB_MODEL_KEY"] == conf["api_key"] and 'wire_api = "responses"' in toml
+
+
+@pytest.mark.parametrize("host", ["codebuddy", "minimax-code", "dsh"])
+def test_new_host_configs_never_write_the_key_to_disk(tmp_path, monkeypatch, host):
+    key = "sk-" + "k" * 30
+    conf = {
+        "api_key": key,
+        "base_url": "https://api.deepseek.com/anthropic",
+        "provider": "deepseek",
+    }
+    monkeypatch.setattr(A, "_run_logged", lambda *a, **k: {"exit_code": 0})
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    extra = A.LIVE_HOSTS[host].configure(
+        A.Lab(tmp_path),
+        tmp_path,
+        proj,
+        tmp_path / "x.cmd",
+        ["py", "rec.py", "log", "--", "py", "server.py"],
+        {"TAVOTTO_MCP_ROOTS": str(proj)},
+        conf,
+        {},
+    )
+    for p in tmp_path.rglob("*"):
+        if p.is_file():
+            assert key not in p.read_text(encoding="utf-8", errors="replace"), p
+    assert key in extra.values()  # 只进宿主进程的环境
+    argv = A.LIVE_HOSTS[host].argv(tmp_path / "x.cmd", "PROMPT", extra)
+    assert argv[0].endswith("x.cmd") and "PROMPT" in argv
+
+
+def test_codebuddy_pre_authorizes_the_deferred_tool_path(tmp_path):
+    argv = A._codebuddy_argv(
+        tmp_path / "cb.cmd", "P", {"WINLAB_MODEL": "m", "WINLAB_MCP_CONFIG": "c.json"}
+    )
+    i = argv.index("--allowedTools")
+    assert {"mcp__tavotto", "ToolSearch", "DeferExecuteTool"} <= set(argv[i + 1 :])
+    assert argv.index("P") < i  # 提示词不在可变长选项之后
+
+
+def test_dsh_patch_uses_the_same_mcp_client_plugin_as_the_bundle(tmp_path):
+    A._dsh_configure(
+        A.Lab(tmp_path),
+        tmp_path,
+        tmp_path,
+        tmp_path / "dsh.cmd",
+        ["py", "rec.py"],
+        {},
+        {"api_key": "k" * 20},
+        {},
+    )
+    patch = json.loads((tmp_path / "work" / "dsh-tavotto.patch.yml").read_text(encoding="utf-8"))
+    bundle = (ROOT / "codex-plugin" / "dsh" / "cordis.patch.yml").read_text(encoding="utf-8")
+    name = patch[0]["insert"][0]["name"]
+    assert name == "@deepseek-ai/dsh-mcp-client" and name in bundle
+
+
+def test_login_wall_is_blocked_not_failed():
+    assert A.LOGIN_MARKERS.search("Error: Sign in to MiniMax to continue")
+    assert A.LOGIN_MARKERS.search("请先登录后再使用")
+    assert not A.LOGIN_MARKERS.search("opened the figure; logged 3 patches")

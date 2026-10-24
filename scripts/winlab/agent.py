@@ -1641,6 +1641,7 @@ def _dsh_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -> dict
     """DSH：隔离 DSH_HOME / DSH_AGENTS_HOME；模型走 DEEPSEEK_BASE_URL（Anthropic Messages，ADR 0104 同法）；
     MCP 用一层 --patch 插入官方 dsh-mcp-client（与 codex-plugin/dsh/cordis.patch.yml 同一个插件），命令写死不用 !!js。"""
     work = run_dir / "work"
+    work.mkdir(parents=True, exist_ok=True)
     patch = [
         {
             "insert": [
