@@ -359,8 +359,7 @@ CompatBench 的 `run_group` 之外 runner 崩溃目前会被 `compat_matrix.py:m
 `pdf_pages` 摘要里每份 `PdfPages` 的页数，每页是那份 PDF 路径的一次 occurrence）。
 #1370 PR1 起写进 `PdfPages` 的图**被认领**（不再 `script_no_figure` / `zero_figures`；stem 取 PDF 文件名、来源 pyplot，
 模板里同一张图写 N 页仍是 1 张图）；PR2 起产品知道页数，`page_count_mismatch` **消失**（`test_pdfpages_pages_are_known_since_pr2`）。
-该家族的判定因此是 `unknown`：保真层要共同 stem，而原生一侧按脚本入口名记图、Tavotto 按 PDF 文件名——harness 的 stem 口径差，不是产品差异。
-把编辑导回多页 PDF 不做（写回一律拒绝、引导去导出）。产品没观察到调用表的 stem 不在此比。
+该家族的判定是 `no_difference`：原生对照（`compat_driver.run_native`）也按产品的方式认领 PdfPages 的页（`PdfPagesLedger.note` + 先于 pyplot 兜底的 `adopt_pdf_pages`），两边 stem 都取 PDF 文件名，保真层能比。把编辑导回多页 PDF 不做（写回一律拒绝、引导去导出）。产品没观察到调用表的 stem 不在此比。
 去重键是「轴向量 + AST 签名 + 判定身份」：判定身份取父本用例的 `stem / entry / expected / expected_figures / semantic_expectations / mutations / export_formats`，
 同一脚本服务的多个 must 用例（如 `ca_basic_series.py`）各自保留候选，判定相同的孪生父本仍去重。
 Tavotto 侧走产品自己的发现链（静态注册表，不足时试运行探测）再起一次性 worker 取 manifest。

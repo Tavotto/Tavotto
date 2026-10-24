@@ -657,19 +657,16 @@ class RealExecution(unittest.TestCase):
         build 响应的 `pdf_pages` 摘要带页数；`page_count_mismatch` 消失（PR1 时它是唯一的差异）。图数仍等于原生的图数
         （模板把**同一张**图写 N 页，所以是 1 张），stem 取 PDF 文件名、来源 pyplot（多页 PDF 不是原件）。
 
-        判定因此不再是 `difference_found` 而是 `unknown`，原因如实是 harness 的：保真层要求原生与 Tavotto 有共同的 stem，
-        而原生一侧按脚本入口名记图（`entry_main`）、Tavotto 按 PDF 文件名（`shape_entry_main`）——这是 PdfPages 家族的
-        stem 口径不同，不是产品差异，也不是页数。把编辑导回多页 PDF（A）**不做**：写回对它一律拒绝、引导去导出。"""
+        原生对照（`compat_driver.run_native`）也按产品的方式认领 PdfPages 的页：保存成功之后记进同一个
+        `PdfPagesLedger`、脚本结束先于 pyplot 兜底 `adopt_pdf_pages`，所以两边 stem 都是 PDF 文件名，保真层能比，
+        判定是 `no_difference`。把编辑导回多页 PDF（A）**不做**：写回对它一律拒绝、引导去导出。"""
         for case in self.PARENTS:
             with self.subTest(parent=case):
                 record = self.check_axis_changing("pdfpages", case)
                 self.assertEqual(record["judgment"]["differences"], [], record["judgment"])
                 self.assertNotIn("page_count_mismatch", self.kinds(record))
-                self.assertEqual(record["judgment"]["outcome"], "unknown", record["judgment"])
-                self.assertTrue(
-                    any("no common stem" in layer for layer in record["unresolved_layers"]),
-                    record["unresolved_layers"],
-                )
+                self.assertEqual(record["judgment"]["outcome"], "no_difference", record["judgment"])
+                self.assertEqual(record["unresolved_layers"], [])
                 # 图数：认领了（不是 script_no_figure / 0 张），数量等于原生的图数
                 self.assertEqual(len(record["tavotto"]["stems"]), record["native"]["figure_count"])
                 (stem,) = record["tavotto"]["stems"]

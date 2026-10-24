@@ -151,6 +151,9 @@ def run_native(req: dict) -> int:
     calls: dict = {}
     extras: dict = {}
     crops: dict = {}
+    # 写进 `PdfPages` 的图：与产品三条入口同一个类、同一个位置（保存成功之后记，脚本结束先于 pyplot 兜底认领），
+    # 否则对照组没有 `all_samples` 这张图、两边 stem 对不上（#1370）
+    pdf_pages = figcapture.PdfPagesLedger()
 
     def recording_savefig(self, fname, *args, **kwargs):
         stem = figcapture.savefig_stem(fname)
@@ -176,6 +179,8 @@ def run_native(req: dict) -> int:
             # Keep the measured crop on this save event. frame_call selects the
             # actual recorded call, including writer changes and format aliases.
             crops[id(call)] = observed[0]
+        elif figcapture.is_pdf_pages(fname):
+            pdf_pages.note(fname, self)
         return result
 
     mfigure.Figure.savefig = recording_savefig
@@ -208,6 +213,9 @@ def run_native(req: dict) -> int:
     # 与产品三条入口同一个函数、同一个顺序——对照组也要有 `panel-2` 这张图，否则像素层只剩甲
     file_stems: dict = {}
     figcapture.adopt_displaced_writers(writers, captured, sources, calls, extras, file_stems)
+    figcapture.adopt_pdf_pages(
+        captured, sources, pdf_pages, os.path.splitext(os.path.basename(req["script"]))[0]
+    )
     fallback, _dropped = figcapture.collect_pyplot_figures(
         captured, os.path.splitext(os.path.basename(req["script"]))[0], plt
     )
