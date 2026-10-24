@@ -391,6 +391,25 @@ export async function revealExportedFile(dir: string, name: string): Promise<boo
   }
 }
 
+/** 项目根 + 相对路径（`/` 分隔）→ 绝对路径；根是 Windows 写法（只有反斜杠）时整条按反斜杠拼 */
+export function joinProjectPath(root: string, rel: string): string {
+  const win = root.includes('\\') && !root.includes('/')
+  const sep = win ? '\\' : '/'
+  return `${root.replace(/[\\/]+$/, '')}${sep}${win ? rel.replace(/\//g, '\\') : rel}`
+}
+
+/**
+ * 在系统文件管理器里选中项目里的一个文件（`rel` 相对项目根，`/` 分隔）。
+ * 走 `reveal_export` 同一条壳命令（目录 + 纯文件名，只 reveal 不 open），壳侧不加 ACL。
+ * 成功返回 true；浏览器模式或失败返回 false——调用方把完整路径告诉用户。
+ */
+export async function revealProjectFile(root: string, rel: string): Promise<boolean> {
+  if (!root || !rel) return false
+  const cut = rel.lastIndexOf('/')
+  const dir = cut < 0 ? root : joinProjectPath(root, rel.slice(0, cut))
+  return revealExportedFile(dir, rel.slice(cut + 1))
+}
+
 /**
  * 「在 Finder 中打开」这类入口能不能摆出来：只有桌面壳做得到。
  *

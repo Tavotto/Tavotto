@@ -24,6 +24,7 @@ import {
   pickScriptFile,
   relaunchDesktop,
   revealExportedFile,
+  joinProjectPath,
   revealProjectFolder,
   runCodexIntegration,
   showDesktopAppMenu,
@@ -602,5 +603,14 @@ describe('全屏状态（macOS overlay 窗框）：订阅与回读', () => {
     expect(tauri.invoke).toHaveBeenCalledWith('current_fullscreen')
     tauri.invoke.mockRejectedValueOnce(new Error('denied'))
     expect(await getFullscreen()).toBe(false)
+  })
+})
+
+describe('joinProjectPath', () => {
+  it('POSIX 根按 / 拼，去掉根尾部分隔符', () => {
+    expect(joinProjectPath('/p/', 'figs/a.pdf')).toBe('/p/figs/a.pdf')
+  })
+  it('Windows 根（只有反斜杠）整条按反斜杠拼', () => {
+    expect(joinProjectPath('C:\\proj', 'figs/a.pdf')).toBe('C:\\proj\\figs\\a.pdf')
   })
 })

@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Ban, Copy, CornerDownLeft, ImageOff, Play, SearchX, Settings, Square } from '@/components/ui/icons'
 import { listRowClass } from '@/components/ui/listRow'
 import { cn } from '@/lib/utils'
+import { joinProjectPath } from '@/lib/desktop'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
@@ -238,13 +239,6 @@ function SecondRow({ children, ...rest }: { children: React.ReactNode } & Record
       {children}
     </div>
   )
-}
-
-/** 项目根 + 相对脚本名 → 绝对路径；根是 Windows 写法（只有反斜杠）时整条按反斜杠拼 */
-function joinProjectPath(root: string, rel: string): string {
-  const win = root.includes('\\') && !root.includes('/')
-  const sep = win ? '\\' : '/'
-  return `${root.replace(/[\\/]+$/, '')}${sep}${win ? rel.replace(/\//g, '\\') : rel}`
 }
 
 /**

@@ -883,12 +883,17 @@
     "reprobe": "重新试运行",
     "rescan": "重新扫描",
     "retry": "重试",
+    "revealFailed": "没能打开文件管理器。这张图在：{{path}}",
+    "revealInExplorer": "在文件资源管理器中显示",
+    "revealInFileManager": "在文件管理器中显示",
+    "revealInFinder": "在 Finder 中显示",
     "running": "运行中…",
     "scanUnavailable": "没能读完项目里的脚本，状态可能不完整。",
     "scope": {
       "panel": "本图候选",
       "project": "项目脚本清单"
     },
+    "sourceMissingRevealHint": "生成它的脚本已经不在了。不再需要这张图的话，在文件夹里删掉它，这一行会自动消失。",
     "sourcePrefix": "记录位置：",
     "staleReport": "显示上次成功取回的状态，可能已过期。",
     "summary": {

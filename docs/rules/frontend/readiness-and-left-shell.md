@@ -48,6 +48,11 @@ order: 240
   先说「Tavotto 将运行这个脚本」）、手工关联走 `PUT /api/registry`（键是
   **`ReadinessPanel.stem`**，不是文件名）、重扫走 `/api/registry/scan`；
   每次成功之后只调一次统一刷新，不手拼状态。冲突**一个候选都不预选**。
+- **图不删，只「在 Finder 中显示」**（用户反馈 2026-10-24：脚本删了、图还在，接入状态里没有出口）：
+  `source_missing` 那一档的主按钮是它（重扫扫多少次都还是这一档，重扫留在对话框顶部），其余状态收在 ⋯ 里；
+  走 `lib/desktop.revealProjectFile` → 壳的 `reveal_export`（目录 + 纯文件名，只 reveal 不 open，不加 ACL）。
+  删不删由用户在文件管理器里做，删掉后 watcher → 统一刷新，那一行自己消失。只在桌面壳且素材清单里有这一项时摆出，
+  浏览器模式回落到重扫；失败把完整路径说出口。看护：`RegistryDialog.test.tsx` 那组「脚本删了、图还在」。
 - **`role="option"` 里不许再嵌可 Tab 的控件**：状态角标是 `<span>`，
   「查看接入状态」那个真按钮住在 listbox 外面的说明条里。
 - **侧栏的「偏好」与「此刻开着没开」是两件事**（`uiStore` 的模块级
