@@ -15,7 +15,9 @@ MCP stdio 帧是按行分隔的 JSON-RPC；解析不了的行照样转发、只�
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -103,24 +105,51 @@ def _pump(src, dst, observe) -> None:
         pass
 
 
+def _tail(path: str, child: subprocess.Popen, dst, observe) -> None:
+    """server 的 stdout 落在文件里（不开管道：写满 64 KiB 卡死的那类问题根本不存在），这里边写边读、
+    按整行原样转给宿主。子进程退出且读到文件末尾才停。"""
+    buf = b""
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(65536)
+            if chunk:
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line += b"\n"
+                    dst.write(line)
+                    dst.flush()
+                    try:
+                        observe(line)
+                    except Exception:  # noqa: BLE001
+                        pass
+                continue
+            if child.poll() is not None:
+                if buf:
+                    dst.write(buf)
+                    dst.flush()
+                return
+            time.sleep(0.005)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) < 3 or argv[1] != "--":
         sys.stderr.write("usage: mcp_recorder.py LOG.jsonl -- COMMAND...\n")
         return 2
     rec = Recorder(argv[0])
     rec.write({"event": "start"})
-    child = subprocess.Popen(argv[2:], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    out_path = argv[0] + f".server-stdout.{os.getpid()}"
+    with open(out_path, "wb") as out:
+        child = subprocess.Popen(argv[2:], stdin=subprocess.PIPE, stdout=out)
     up = threading.Thread(
         target=_pump, args=(sys.stdin.buffer, child.stdin, rec.from_host), daemon=True
     )
-    down = threading.Thread(
-        target=_pump, args=(child.stdout, sys.stdout.buffer, rec.from_server), daemon=True
-    )
     up.start()
-    down.start()
+    _tail(out_path, child, sys.stdout.buffer, rec.from_server)
     rc = child.wait()
-    down.join(5)
     rec.write({"event": "exit", "code": rc})
+    with contextlib.suppress(OSError):
+        os.unlink(out_path)
     return rc
 
 

@@ -1198,6 +1198,7 @@ def test_recorder_passes_bytes_through_and_records_only_bounded_facts(tmp_path):
         input=stdin,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
     )
     replies = [json.loads(x) for x in out.stdout.splitlines()]

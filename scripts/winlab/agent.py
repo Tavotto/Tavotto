@@ -1187,8 +1187,6 @@ def run_hosts_task(lab: Lab, run_dir: Path, env: dict) -> dict:
             henv = dict(env)
             henv[h["config_env"]] = str(cfg)
             server = [str(py), str(lab.repo / "codex-plugin" / "mcp" / "server.py")]
-            # Tavotto 的数据目录写进宿主的 MCP 配置（用户就是这么配的），不塞进宿主进程自己的环境
-            data = f"TAVOTTO_DATA_DIR={run_dir / 'work' / 'tavotto-data'}"
             if h["id"] == "claude-code":
                 add = [
                     str(exe),
@@ -1197,13 +1195,11 @@ def run_hosts_task(lab: Lab, run_dir: Path, env: dict) -> dict:
                     "tavotto",
                     "--scope",
                     "user",
-                    "-e",
-                    data,
                     "--",
                     *server,
                 ]
             else:
-                add = [str(exe), "mcp", "add", "tavotto", "--env", data, "--", *server]
+                add = [str(exe), "mcp", "add", "tavotto", "--", *server]
             _run_logged(add, lab.root, henv, ev / "mcp-add", 120)
             listed = _run_logged([str(exe), *h["mcp_list"]], lab.root, henv, ev / "mcp-list", 180)
             text = Path(f"{ev / 'mcp-list'}.stdout.log").read_text(
@@ -1577,7 +1573,9 @@ def run_hosts_live_task(
     proj = run_dir / "work" / "project"
     (proj / "out").mkdir(parents=True)
     (proj / "plot.py").write_text(LIVE_FIGURE, encoding="utf-8")
-    data_dir = run_dir / "work" / "tavotto-data"
+    data_dir = (
+        Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Tavotto"
+    )  # 产品默认（engine/config.data_dir）
     seed_env = dict(env, MPLCONFIGDIR=str(run_dir / "work" / "mpl"))
     seed = _run_logged([str(py), "plot.py"], proj, seed_env, ev / "seed-figure", 300)
     if seed.get("exit_code") != 0:
@@ -1596,12 +1594,9 @@ def run_hosts_live_task(
         str(py),
         str(lab.repo / "codex-plugin" / "mcp" / "server.py"),
     ]
-    # 只给 MCP 服务器它需要的 Tavotto 变量（写进宿主的 MCP 配置，用户就是这么配的）；模型凭据只进宿主进程
-    mcp_env = {
-        "TAVOTTO_MCP_ROOTS": str(proj),
-        "TAVOTTO_DATA_DIR": str(data_dir),
-        "TAVOTTO_NO_TELEMETRY": "1",
-    }
+    # 只给 MCP 服务器项目根与遥测开关（写进宿主的 MCP 配置）；模型凭据只进宿主进程。数据目录不指定：
+    # MCP server 用 tavotto-lab 自己的默认数据目录，与真实用户一致，会话日志按唯一的 session_id 去那里找
+    mcp_env = {"TAVOTTO_MCP_ROOTS": str(proj), "TAVOTTO_NO_TELEMETRY": "1"}
     henv = dict(env)
     henv.update(host.configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, model_conf, env))
     r1 = _run_logged(host.argv(exe, LIVE_SESSION_1), proj, henv, ev / "session-1", 1200)
