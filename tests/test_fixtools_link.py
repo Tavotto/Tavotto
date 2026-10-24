@@ -105,7 +105,9 @@ def test_the_user_is_always_asked_and_the_card_shows_the_path_and_the_evidence(b
     [card] = ctx.asker.cards
     assert card["kind"] == "approve" and card["tool"] == "link_data_file"
     assert card["summary"].startswith("I found x.csv")
-    assert "~/Downloads/data/x.csv" in card["details"] and "two numeric columns" in card["details"]
+    # 卡片里的路径用平台的分隔符（Windows 是反斜杠）；比较时统一斜杠
+    assert "~/Downloads/data/x.csv" in card["details"].replace("\\", "/")
+    assert "two numeric columns" in card["details"]
     assert _sha(script) == before  # 脚本字节不变
     assert (box.proj / "data").exists() is False  # 没有往项目里复制数据
 
@@ -364,6 +366,20 @@ def test_try_run_resolves_an_absolute_project_path_inside_the_copy(box):
     assert "exit code 0" in r.content and "figures: 1" in r.content, r.content
 
 
+def _canon(rules):
+    "规则的 from/to 按引擎比对用的同一个规范化（remap_parts：反斜杠即分隔符、盘符不分大小写）折成可比较形式。"
+    from tavotto.engine import figcapture
+
+    return [
+        {
+            **r,
+            "from": figcapture.remap_parts(r["from"]) if r["from"] else None,
+            "to": figcapture.remap_parts(r["to"]),
+        }
+        for r in rules
+    ]
+
+
 def test_trial_remap_rules_only_translate_absolute_paths_inside_the_copied_folder(tmp_path):
     src, work = tmp_path / "proj", tmp_path / "trial" / "work"
     rules = [
@@ -373,8 +389,10 @@ def test_trial_remap_rules_only_translate_absolute_paths_inside_the_copied_folde
         {"kind": "prefix", "from": (tmp_path / "other").as_posix(), "to": "/data4"},
     ]
     out = trial.trial_remap_rules(rules, [src], work)
-    assert out[:4] == rules  # 原规则一条不少（写死的绝对路径照旧命中）
-    assert out[4:] == [{"kind": "prefix", "from": (work / "data").as_posix(), "to": "/data3"}]
+    assert _canon(out[:4]) == _canon(rules)  # 原规则一条不少（写死的绝对路径照旧命中）
+    assert _canon(out[4:]) == _canon(
+        [{"kind": "prefix", "from": str(work / "data"), "to": "/data3"}]
+    )
 
 
 def test_a_custom_runner_gets_the_rules_only_when_there_are_some(box):
@@ -595,7 +613,9 @@ def test_try_run_translates_a_rule_whose_from_is_an_ancestor_of_the_copied_folde
     script = put(box.proj / "scripts" / "fig.py", _FILE_PLOT)
     data = put(box.home / "Downloads" / "scripts" / "data" / "x.csv", "1,2\n3,4\n")
     rule = inputremap.derive(str(script.parent / "data" / "x.csv"), str(data), chosen_is_dir=False)
-    assert rule["from"] == str(box.proj) and rule["to"] == str(box.home / "Downloads")
+    assert _canon([rule]) == _canon(
+        [{"kind": "prefix", "from": str(box.proj), "to": str(box.home / "Downloads")}]
+    )
     inputremap.add_rule(box.proj, rule)
     ctx = make_ctx(box, script_path=script, environments={"e": sys.executable})
     r = call(ctx, "try_run", {"env": "e"})
@@ -618,4 +638,6 @@ def test_trial_remap_rules_translate_ancestor_rules_and_leave_unrelated_ones(tmp
     anc = {"kind": "prefix", "from": (tmp_path / "proj").as_posix(), "to": "/dl"}
     other = {"kind": "prefix", "from": (tmp_path / "else").as_posix(), "to": "/dl2"}
     out = trial.trial_remap_rules([anc, other], [src], work)
-    assert out == [anc, other, {"kind": "prefix", "from": work.as_posix(), "to": "/dl/scripts"}]
+    assert _canon(out) == _canon(
+        [anc, other, {"kind": "prefix", "from": str(work), "to": "/dl/scripts"}]
+    )
