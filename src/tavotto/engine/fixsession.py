@@ -339,9 +339,13 @@ class FixSessions:
             "outcome": s.outcome,
             "summary": s.summary,
             "reason": s.reason,
-            #: 仅 outcome == convert：交给「生成可编辑版本」的 `{kind, script, library}`（项目相对路径）；其余结局没有这个键
+            #: 仅 outcome == convert：交给「生成可编辑版本」的 `{kind, script, library, path}`（项目相对路径；path = 报告里原输出图，可为 None）；其余结局没有这个键
             **(
-                {"handoff": {k: s.ctx.handoff.get(k) for k in ("kind", "script", "library")}}
+                {
+                    "handoff": {
+                        k: s.ctx.handoff.get(k) for k in ("kind", "script", "library", "path")
+                    }
+                }
                 if s.outcome == OUTCOME_CONVERT and s.ctx is not None and s.ctx.handoff
                 else {}
             ),

@@ -602,10 +602,35 @@ def test_convert_script_hands_off_without_writing_anything(box):
     before = _tree(box.proj)
     r = call(ctx, "convert_script", {}, AuditLog())
     assert not r.is_error, r.content
-    assert ctx.handoff == {"kind": "convert", "script": "fig.py", "library": "pillow"}
+    assert ctx.handoff == {"kind": "convert", "script": "fig.py", "library": "pillow", "path": None}
     assert _tree(box.proj) == before  # 项目里没多一个文件，原脚本一个字节不动
     assert "outcome `convert`" in r.content and not r.mutated
     assert "snapshot" not in audit_lines(box)[-1]  # 不写用户文件：不打快照
+
+
+def _report_for(script: str, path: str | None):
+    hint = {"kind": "raster_script", "library": "pillow", "in_project": True, "path": path}
+    return lambda: {"phase": "failed", "target": {"script": script}, "no_figure_hint": hint}
+
+
+def test_convert_script_handoff_carries_the_original_figure_path_of_the_same_script(box):
+    orig = put(box.proj / "fig.py", b"print(1)\n")
+    ctx = change_ctx(box, script_path=orig, report=_report_for("fig.py", "out/fig.png"))
+    assert not call(ctx, "convert_script", {}).is_error
+    assert ctx.handoff == {
+        "kind": "convert",
+        "script": "fig.py",
+        "library": "pillow",
+        "path": "out/fig.png",
+    }
+
+
+def test_convert_script_handoff_has_no_path_when_target_is_another_script(box):
+    orig = put(box.proj / "fig.py", b"print(1)\n")
+    put(box.proj / "other.py", b"print(2)\n")
+    ctx = change_ctx(box, script_path=orig, report=_report_for("fig.py", "out/fig.png"))
+    assert not call(ctx, "convert_script", {"target": "other.py"}).is_error
+    assert ctx.handoff["script"] == "other.py" and ctx.handoff["path"] is None
 
 
 def test_convert_script_target_and_explicit_library_beat_the_report(box):
