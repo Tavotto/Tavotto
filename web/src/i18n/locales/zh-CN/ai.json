@@ -158,7 +158,11 @@
     "techDetails": "技术详情",
     "unconfirmedBody": "这条指令可能已经在执行，先查询结果。",
     "unconfirmedGoneBody": "发起这条指令的图已不在画布上，仍可查询结果。",
-    "unconfirmedTitle": "已发出，尚未收到确认"
+    "unconfirmedTitle": "已发出，尚未收到确认",
+    "connectAi": "连接 AI",
+    "noAi": "还没有连接 AI。",
+    "connectMore": "连接更多 AI…",
+    "aiModel": "AI 与模型"
   },
   "process": {
     "thought": "已思考 {{duration}}",
