@@ -31,6 +31,21 @@ order: 50
     兜底**：show 时已被 savefig 认领的图（`figcapture.claimed_ids`，与 `collect_pyplot_figures` 去重同一判据）不占名额，
     之后才认领的在下一次 show 腾出名额；溢出且已关闭的图一旦丢了强引用就补不回（只计数），故「show 之后才 savefig 一张
     已溢出的已关闭图」不在保证内。native bridge 在 show 屏障本来就收，浏览器 playground 不传 `shown`。
+  * **写进 `PdfPages` 的图也要捕获（#1370 PR1，三条入口同源）**：`pdf.savefig(fig)` 最终是
+    `fig.savefig(<PdfPages>, format="pdf")`，第一个参数不是路径，stem 取不出来；逐页 `plt.close(fig)` /
+    结尾 `plt.close("all")` 的脚本跑完一张不剩（以前 `script_no_figure`）。保存**成功之后**记进有界账本
+    `figcapture.PdfPagesLedger`（safe worker 的 `_PDF_PAGES`、浏览器 `BrowserSession.pdf_pages`、native 的
+    `bridge_runner._PDF_PAGES`，每次 build 重建），脚本结束时 `figcapture.adopt_pdf_pages` **先于** pyplot 兜底认领
+    （native 在 show 屏障与脚本结束各调一次，且在「pyplot 已载入」判断之外——纯 OO 脚本也能用 PdfPages）。
+    stem 取 PDF 文件名（`all_samples.pdf` → `all_samples`、`-2`、`-3` 按页序；同名第二份 PDF 接着编号；缓冲区 / 取不到文件名
+    退回脚本名）；文件名读 PdfPages 的私有 `_filename`（matplotlib 3.8–3.11 都在，不包 `__init__`，不主动 import；
+    判型用 `sys.modules.get("matplotlib.backends.backend_pdf")` 取类 isinstance）。同一张 Figure 只认领一次（写多页也一个 stem，
+    取脚本结束时的状态）；强引用上限 `MAX_PDF_PAGES_LEDGER`（64，与 pyplot 兜底的 8 分开），超出只计数并在
+    `pdf_pages[].omitted` 里说明。**来源恒为 `pyplot`——多页 PDF 不是任何一张图的原件**：`find_original_artifact` / 写回不得指向它；
+    「把编辑导回多页 PDF」（A）**尚未做**。build 响应 / 探测结果加字段 `pdf_pages: [{name, pages, captured, stems, omitted?}]`
+    （没有时不出现），前端 `lib/pdfPagesNotice.ts` 在通知轨出一条无按钮胶囊。stem 取法变了，`DESCRIPTOR_VERSION` 升到 2
+    （旧指纹按设计失配一次）。浏览器同样传账（总数仍受 `MAX_FIGURES` 截断、如实进 `truncated_figures`），不像 `shown` 那样不传。
+    看护 `tests/test_capture_pdfpages.py`、`tests/bridge/test_bridge_pdfpages.py`。
   * **fallback stem 按「本次捕获里的第几张」编号**（`<脚本名>`、`-2`、`-3`），
     **不按 `plt.get_fignums()` 的 figure 号**：脚本中途 `plt.close()` 过一次
     号就跳，用户的 override 于是挂在一个不存在的 stem 上，表现是「打开是

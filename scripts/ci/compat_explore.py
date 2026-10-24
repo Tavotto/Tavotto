@@ -201,7 +201,9 @@ def output_call_differences(chain: list[str], nat: dict, tavotto: dict) -> list[
       the product recorded for that stem (`format_set_mismatch`);
     * `pdfpages`: the pages of the PDF the script wrote must equal the pdf saves the product
       recorded (`page_count_mismatch`; `PdfPages.savefig` is not a recorded savefig, so today the
-      product knows 0 pages — a real, registered gap, not a template artefact).
+      product knows 0 pages — a real, registered gap, not a template artefact). Since #1370 PR1 the
+      figures written to a PdfPages are captured (stem = the PDF's file name) but their pages are
+      still not recorded: writing the edits back as a multi-page PDF ("A") is not done yet.
 
     A stem whose calls the product did not observe is skipped here (`zero_figures` etc. cover it).
     """

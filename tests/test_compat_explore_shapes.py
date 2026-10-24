@@ -653,18 +653,26 @@ class RealExecution(unittest.TestCase):
         )
 
     def test_pdfpages_is_the_known_page_gap(self):
-        """多页 PDF：原生 PDF 有 N 页，产品只把那张图捕获一次、不记 `PdfPages.savefig`（它不是 Figure.savefig），
-        所以知道 0 页。口径是「产品记录的 pdf 保存次数」——产品没有页的概念，这是登记已知、已看到的缺口，不是模板的锅。"""
+        """多页 PDF（#1370 PR1 之后的口径）：写进 `PdfPages` 的图现在被认领——图数等于原生的图数（模板把**同一张**图
+        写 N 页，所以是 1 张；`zero_figures` / `fewer_figures` 都没了），stem 取 PDF 文件名、来源 pyplot（多页 PDF 不是原件）。
+        剩下的 `page_count_mismatch` 仍在：口径是「产品记录的 pdf 保存次数」，`PdfPages.savefig` 不进调用表（认领不等于记页），
+        所以产品知道 0 页。**A（把编辑导回多页 PDF）尚未做**——页数差异要等 A 才会消失；这里如实钉住「只剩它」，不是模板的锅。"""
         for case in self.PARENTS:
             with self.subTest(parent=case):
                 record = self.check_axis_changing("pdfpages", case)
                 self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
                 self.assertEqual(self.kinds(record), {"page_count_mismatch"}, record["judgment"])
+                # 图数：认领了（不是 script_no_figure / 0 张），数量等于原生的图数
+                self.assertEqual(len(record["tavotto"]["stems"]), record["native"]["figure_count"])
+                (stem,) = record["tavotto"]["stems"]
+                (artifact,) = record["native"]["artifacts"]
+                self.assertEqual(stem, Path(artifact["path"]).stem)  # stem 取 PDF 文件名
                 (diff,) = record["judgment"]["differences"]
                 self.assertEqual(
                     diff["evidence"]["native_pages"], ex.native_facts(record["native"])["pdf_pages"]
                 )
                 self.assertGreaterEqual(diff["evidence"]["native_pages"], 2)
+                self.assertEqual(diff["evidence"]["tavotto_pages"], 0)
 
     def test_bytesio_close_is_the_known_gap_749(self):
         """savefig 到 BytesIO 再 close：原生有一张图，Tavotto 一张都没捕获（script_no_figure）。登记已知、已看到。"""
