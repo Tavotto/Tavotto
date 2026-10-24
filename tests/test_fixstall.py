@@ -98,7 +98,9 @@ def test_a_begin_that_is_delivered_in_time_is_not_a_stall(box, monkeypatch):
     fixsession.SESSIONS.cancel(s.id, "pj")
 
 
-def test_cli_approval_request_names_the_tool_and_clears_when_a_callback_arrives(box):
+def test_cli_approval_request_names_the_tool_and_clears_when_a_callback_arrives(box, monkeypatch):
+    monkeypatch.setattr(fixsession, "STALL_HARD", 60.0)  # 不让自动取消把「卡住」清掉而冒充恢复
+    monkeypatch.setattr(fixsession, "STALL_IDLE", 60.0)
     parse = ai_agents.CodexAgent().fix_event_parser()
     s, token = start_session(box, sleeper(CODEX_APPROVAL), parse=parse)
     wait_until(lambda: public(s)["stalled"] is not None)
@@ -107,6 +109,8 @@ def test_cli_approval_request_names_the_tool_and_clears_when_a_callback_arrives(
         s.id, token, "read_run_report", {}
     )  # 用户在 CLI 里点了批准，调用送达
     wait_until(lambda: public(s)["stalled"] is None)
+    time.sleep(0.5)
+    assert public(s)["stalled"] is None and public(s)["state"] == "running"
     fixsession.SESSIONS.cancel(s.id, "pj")
 
 
