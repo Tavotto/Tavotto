@@ -59,7 +59,7 @@ TEST_SELECTOR_RE = re.compile(r"^tests/[A-Za-z0-9_./-]+\.py(::[A-Za-z0-9_\[\]./-
 SHARD_RE = re.compile(r"^([1-9][0-9]?)/([1-9][0-9]?)$")
 MAX_SELECTORS = 40
 #: hosts-live 的 --mode：真宿主的闭集（实现见 LIVE_HOSTS）
-LIVE_HOST_IDS = ("claude-code", "codex-cli", "codebuddy", "minimax-code")
+LIVE_HOST_IDS = ("claude-code", "codex-cli", "codebuddy", "minimax-code", "dsh")
 #: 依赖安装配方的版本：改了 prepare 的安装步骤就加一，已有 venv 随之重装（散列戳里含它）。
 DEPS_RECIPE = "2"
 
@@ -1637,6 +1637,46 @@ def _minimax_argv(exe: Path, prompt: str, henv: dict) -> list[str]:
     return [str(exe), "exec", prompt]
 
 
+def _dsh_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -> dict:
+    """DSH：隔离 DSH_HOME / DSH_AGENTS_HOME；模型走 DEEPSEEK_BASE_URL（Anthropic Messages，ADR 0104 同法）；
+    MCP 用一层 --patch 插入官方 dsh-mcp-client（与 codex-plugin/dsh/cordis.patch.yml 同一个插件），命令写死不用 !!js。"""
+    work = run_dir / "work"
+    patch = [
+        {
+            "insert": [
+                {
+                    "id": "tavotto-mcp",
+                    "name": "@deepseek-ai/dsh-mcp-client",
+                    "config": {
+                        "transport": "stdio",
+                        "serverName": "tavotto",
+                        "command": mcp_cmd[0],
+                        "args": mcp_cmd[1:],
+                        "cwd": str(proj),
+                        "toolCallTimeoutMs": 1800000,
+                    },
+                }
+            ]
+        }
+    ]
+    pf = work / "dsh-tavotto.patch.yml"
+    pf.write_text(json.dumps(patch, indent=2), encoding="utf-8")  # JSON 即合法 YAML
+    henv = {
+        "DSH_HOME": str(work / "dsh-home"),
+        "DSH_AGENTS_HOME": str(work / "dsh-agents"),
+        "DEEPSEEK_BASE_URL": conf.get("base_url") or "https://api.deepseek.com/anthropic",
+        "DEEPSEEK_API_KEY": conf["api_key"],
+        "WINLAB_DSH_PATCH": str(pf),
+    }
+    # dsh-mcp-client 不收 env：MCP server 继承宿主进程的环境
+    henv.update(mcp_env)
+    return henv
+
+
+def _dsh_argv(exe: Path, prompt: str, henv: dict) -> list[str]:
+    return [str(exe), "headless", "--patch", henv["WINLAB_DSH_PATCH"], prompt]
+
+
 #: 宿主自己说「要登录官方账户」的字样：出现且一次 Tavotto 工具都没调到 → BLOCKED（需要账户），不是 FAIL
 LOGIN_MARKERS = re.compile(r"sign in|log ?in to|please login|not logged in|请先登录|需要登录", re.I)
 
@@ -1655,6 +1695,7 @@ LIVE_HOSTS = {
     "minimax-code": LiveHost(
         "minimax-code", "@minimax-ai/code", "mcode.cmd", _minimax_configure, _minimax_argv
     ),
+    "dsh": LiveHost("dsh", "@deepseek-ai/dsh@next", "dsh.cmd", _dsh_configure, _dsh_argv),
 }
 
 
