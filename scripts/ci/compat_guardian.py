@@ -1554,7 +1554,7 @@ def run(args) -> int:
     report = {
         "schema_version": SCHEMA_VERSION,
         "run_id": run_id,
-        "workflow": PV.current(args.case),
+        "workflow": PV.current(PV.report_case(args.case)),
         "source": initial,
         "expected_sha": expected_sha,
         "suite": args.suite,

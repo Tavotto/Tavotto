@@ -36,6 +36,13 @@ def current(case_id: str | None, env=None) -> dict | None:
     }
 
 
+def report_case(selection: str | None) -> str | None:
+    """报告侧出处里的 case：`--case` 恰好选了一个登记 id 时就是它；逗号分隔的多个 / 未选（= 全部）为 None，
+    此时报告与每份 receipt 只按 run_id / run_attempt / job 配对（`check_pair` 允许报告 case 为 None）。"""
+    ids = [c.strip() for c in (selection or "").split(",") if c.strip()]
+    return ids[0] if len(ids) == 1 else None
+
+
 def check_shape(workflow) -> None:
     if workflow is None:
         return

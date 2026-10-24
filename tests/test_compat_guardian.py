@@ -635,6 +635,22 @@ class WorkflowProvenance(GuardianBase):
         self.assertIsNone(cg.PV.current("c1", {}))
         self.assertIsNone(cg.PV.current("c1", {**env, "GITHUB_RUN_ATTEMPT": ""}))
 
+    def test_report_case_is_the_single_selected_id_or_none_for_many_or_all(self):
+        self.assertEqual(cg.PV.report_case("c1"), "c1")
+        self.assertEqual(cg.PV.report_case(" c1 , "), "c1")
+        self.assertIsNone(cg.PV.report_case("c1,c2"))
+        self.assertIsNone(cg.PV.report_case(None))
+        self.assertIsNone(cg.PV.report_case(""))
+
+    def test_a_multi_case_report_pairs_with_each_of_its_receipts(self):
+        # `--case a,b`（run --help：逗号分隔）的报告：case 记 None，按 run / attempt / job 与每份 receipt 配对
+        self.report["workflow"] = cg.PV.current(
+            cg.PV.report_case(f"{self.cid},other"),
+            {"GITHUB_RUN_ID": "100", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_JOB": "baseline"},
+        )
+        self.assertIsNone(self.report["workflow"]["case_id"])
+        cg.check_receipt_pairing(self.report, self.receipt(dict(self.WF, case_id=self.cid)))
+
     def test_validate_pairing_accepts_same_run_legacy_and_both_null(self):
         self.report["workflow"] = {**self.WF, "case_id": self.cid}
         cg.check_receipt_pairing(self.report, self.receipt(dict(self.WF, case_id=self.cid)))
