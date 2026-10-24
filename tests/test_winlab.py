@@ -522,8 +522,14 @@ def test_font_zip_cannot_escape_the_fonts_dir(tmp_path, member):
     lab = A.Lab(tmp_path / "lab")
     lab.cache.mkdir(parents=True)
     out = A.receive_fonts(lab, buf.getvalue())
-    assert out["result"] == "error"
-    assert not lab.fonts.exists() and not (tmp_path / "evil.ttf").exists()
+    if member == "a\\b.ttf" and os.sep == "\\":
+        # Windows 上 zipfile 读写都把 os.sep 规范成 "/"：这个成员就是合法的 a/b.ttf，必须落在字体目录里面
+        assert out["result"] == "passed"
+        assert (lab.fonts / "a" / "b.ttf").read_bytes() == b"evil"
+    else:
+        assert out["result"] == "error"
+        assert not lab.fonts.exists()
+    assert not (tmp_path / "evil.ttf").exists()
 
 
 def test_font_zip_replaces_the_fonts_dir(tmp_path):
