@@ -476,7 +476,7 @@ def test_tier2_over_the_limit_is_refused_before_asking(box, monkeypatch):
     assert audit_lines(box) == [] or audit_lines(box)[-1]["sandbox"] == "none"
 
 
-def test_script_inventory_rules(box):
+def test_script_inventory_rules(box, monkeypatch):
     """哪些算用户脚本：sourcelang 认的 .py / .R / .m；Objective-C 的 .m、文本文件、环境和版本库目录不算；链接按真实路径去重。"""
     a = put(box.proj / "a.py", b"print(1)\n")
     put(box.proj / "readme.txt", b"hi")
@@ -490,8 +490,12 @@ def test_script_inventory_rules(box):
     ctx = change_ctx(box)
     got = command.list_scripts(ctx)
     names = sorted(p.name for p in got)
-    assert names == (["a.py", "empty.py"] if os.name != "nt" else ["a.py", "empty.py"])
+    assert names == ["a.py", "empty.py"]
     assert len(got) == 2
+    # 同一个文件的两个名字只算一份（也只计一份字节）：字节上限刚好够一份时仍可备份
+    if os.name != "nt":
+        monkeypatch.setattr(command, "SCRIPTS_MAX_BYTES", a.stat().st_size)
+        assert command.list_scripts(ctx) is not None
     # 判不出语言但很大的 .py 照样护着（超过 sourcelang 判定上限）
     put(box.proj / "huge.py", b"#" * (command.sourcelang.MAX_BYTES + 10))
     assert "huge.py" in [p.name for p in command.list_scripts(ctx)]
