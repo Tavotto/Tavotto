@@ -165,11 +165,13 @@ export { findFigurePanel } from './documentStore'
 /** 素材 id → 能加进画布的来源：磁盘图的 `PanelInfo`，或带描述符的 runtime 图 */
 type FigureSource = { kind: 'file'; info: PanelInfo } | { kind: 'runtime'; desc: CapturedFigureDescriptor }
 
-function figureSource(figureId: string): FigureSource | null {
+function figureSource(figureId: string, fallback?: CapturedFigureDescriptor): FigureSource | null {
   const info = useAssetStore.getState().byId[figureId]
   if (info) return { kind: 'file', info }
   const runtime = (useRuntimeAssetStore.getState().assets ?? []).find((a) => a.id === figureId)
-  return runtime?.descriptor ? { kind: 'runtime', desc: runtime.descriptor } : null
+  if (runtime?.descriptor) return { kind: 'runtime', desc: runtime.descriptor }
+  // 素材清单还没取到这张刚跑出来的图：用调用方手里这次捕获的描述符（`enterEdit`）
+  return fallback?.asset_id === figureId ? { kind: 'runtime', desc: fallback } : null
 }
 
 /** 新画布的名字：图名（磁盘图的 `name`，runtime 图的 `stem`），不叫「新排版」 */
@@ -200,6 +202,7 @@ function createPanel(src: FigureSource, layer: 'toCanvas' | 'docOnly' | 'newCanv
 function ensurePanel(
   figureId: string,
   layer: 'toCanvas' | 'docOnly' | 'newCanvas',
+  fallback?: CapturedFigureDescriptor,
 ): { panel: PanelObject; created: boolean } | null {
   const found = findFigurePanel(figureId)
   if (found) {
@@ -210,7 +213,7 @@ function ensurePanel(
     const fresh = useDocumentStore.getState().doc.objects.find((o) => o.id === found.panel.id)
     return fresh?.type === 'panel' ? { panel: fresh, created: false } : null
   }
-  const src = figureSource(figureId)
+  const src = figureSource(figureId, fallback)
   return src ? { panel: createPanel(src, layer), created: true } : null
 }
 
@@ -236,15 +239,22 @@ export type OpenFastEditOutcome = 'editing' | 'layout_only' | 'missing' | 'defer
  * （`ObjectView` 双击、`enterElementEdit`）。**不在这里另起一份判据**
  * ——状态与措辞归 `lib/readinessText.ts`，两者不是一件事。
  */
-export function openFastEdit(figureId: string, opts?: { guard?: () => boolean }): OpenFastEditOutcome {
+export function openFastEdit(
+  figureId: string,
+  opts?: {
+    guard?: () => boolean
+    /** 素材清单里还没有这张图时的来源（`enterEdit` 带着这次捕获的描述符）：照样走「新建画布放它」，不先加进当前画布 */
+    descriptor?: CapturedFigureDescriptor
+  },
+): OpenFastEditOutcome {
   // `guard`（只有自动进入编辑传）：入口在恢复期间排队时，真正执行前再核一次「用户还要这个入口」——
   // 不满足就整个不执行（不替换他此刻的工作区）；用户手动的入口不传，行为不变
   const entry = deferUserEntry(() => {
     if (opts?.guard && !opts.guard()) return
-    void openFastEdit(figureId)
+    void openFastEdit(figureId, { descriptor: opts?.descriptor })
   })
   if (entry !== 'run') return entry === 'deferred' ? 'deferred' : 'blocked'
-  const got = ensurePanel(figureId, 'newCanvas')
+  const got = ensurePanel(figureId, 'newCanvas', opts?.descriptor)
   if (!got) {
     useUiStore
       .getState()

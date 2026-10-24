@@ -126,3 +126,37 @@ test('多张画布：时间线默认只显示当前画布自己的节点，切�
   await expect(node).toContainText('Figure 1')
   if (shots) await page.screenshot({ path: `${shots}/timeline-scope-all.png` })
 })
+
+test('单图编辑：先开图 A 存个节点、再开图 B 存个节点——时间线默认只见当前这张图，切「全部」才见两者', async ({ app, page }) => {
+  test.setTimeout(120_000)
+  const a = await app()
+  await page.goto(a.baseURL)
+  const cardA = page.locator('[data-card="Fig1_kinetics.pdf"]')
+  const cardB = page.locator('[data-card="Fig2_yield.pdf"]')
+  await expect(cardA).toBeVisible({ timeout: 30_000 })
+  await cardA.dblclick()
+  await (await only(page.locator('[data-timeline-button]'), 30_000)).click()
+  const drawer = await only(page.locator('[data-timeline-panel]'))
+  const saveNamed = async (name: string) => {
+    await (await only(drawer.locator('[data-timeline-name-open]'))).click()
+    const input = await only(drawer.locator('[data-timeline-name-input]'))
+    await input.fill(name)
+    await input.press('Enter')
+  }
+  await saveNamed('甲图版')
+  await expect(drawer.locator('[data-timeline-node][data-timeline-named]')).toHaveCount(1, { timeout: 15_000 })
+  // 左栏现在是图内元素：回到素材库再开 B（切回素材库的左轨钮）
+  await page.getByRole('button', { name: '素材', exact: true }).first().click()
+  await cardB.dblclick()
+  await (await only(page.locator('[data-inspector-tab="timeline"]'))).click() // 打开图会把右栏切回属性
+  await saveNamed('乙图版')
+  const named = drawer.locator('[data-timeline-node][data-timeline-named]')
+  const scope = await only(drawer.locator('[data-timeline-scope]'), 15_000)
+  await expect(named).toHaveCount(1, { timeout: 15_000 })
+  await expect(named.locator('[data-timeline-name]')).toHaveText('乙图版')
+  const shots = process.env.TAVOTTO_SHOTS
+  if (shots) await page.screenshot({ path: `${shots}/timeline-per-figure-current.png` })
+  await (await only(scope.locator('[data-value="all"]'))).click()
+  await expect(named).toHaveCount(2)
+  if (shots) await page.screenshot({ path: `${shots}/timeline-per-figure-all.png` })
+})

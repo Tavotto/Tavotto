@@ -14323,6 +14323,42 @@ def _sweep_version_thumbs(doc_id: str, kept_ids: set) -> None:
             LOG.warning("版本缩略图删不掉（下次再试）: %s: %s", f, exc)
 
 
+#: 一条版本的 `figures` 最多列几张图（传输侧封顶，与「画几个」无关）
+VERSION_FIGURES_MAX = 64
+
+
+def _version_figures(v: dict) -> list[str]:
+    """这一版拍的那张画布上有哪些图（面板的 `fileId`，去重、保持文档顺序）。
+
+    **读时派生，不落盘**（ADR 0101 2026-10-24 修订）：版本里本来就存着整份文档，
+    `fileId` 就是「哪张图」的唯一身份（`findFigurePanel` 同一把尺子；runtime 图是
+    `runtime:<script>#<stem>`），所以旧节点也有，存储格式一个字节不变。隐藏的图也算在场
+    （单图编辑 / 多图排版的模式判据同样把隐藏图计入）。画布取不出来 → 空列表（不知道）。
+    """
+    doc = v.get("doc")
+    if not isinstance(doc, dict):
+        return []
+    if doc.get("schema") == engine_documents.SCHEMA_PROJECT:
+        canvases = [c for c in doc.get("canvases", []) if isinstance(c, dict)]
+        wanted = v.get("canvasId") or doc.get("activeCanvasId")
+        source = next(
+            (c for c in canvases if c.get("id") == wanted), canvases[0] if canvases else {}
+        )
+    else:
+        source = doc
+    objects = source.get("objects")
+    out: list[str] = []
+    for o in objects if isinstance(objects, list) else []:
+        if not isinstance(o, dict) or o.get("type") != "panel":
+            continue
+        fid = o.get("fileId")
+        if isinstance(fid, str) and fid and fid not in out:
+            out.append(fid)
+            if len(out) >= VERSION_FIGURES_MAX:
+                break
+    return out
+
+
 def _version_meta(v: dict) -> dict:
     doc = v.get("doc") or {}
     meta = {
@@ -14351,6 +14387,10 @@ def _version_meta(v: dict) -> dict:
         meta["canvasId"] = v["canvasId"]
     if v.get("canvasName"):
         meta["canvasName"] = v["canvasName"]
+    # 这一版画布上有哪些图（读时派生）：时间线按「当前这张图」分开靠它。没有图就不带这个键
+    figures = _version_figures(v)
+    if figures:
+        meta["figures"] = figures
     return meta
 
 
