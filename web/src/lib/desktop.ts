@@ -399,13 +399,13 @@ export function joinProjectPath(root: string, rel: string): string {
 }
 
 /**
- * 在系统文件管理器里选中项目里的一个文件（`rel` 相对项目根，`/` 分隔）。
+ * 在系统文件管理器里选中项目里的一个文件（`rel` 相对项目根；`/` 与 `\` 两种分隔符都认——后端在 Windows 上给的图 id 是反斜杠分隔）。
  * 走 `reveal_export` 同一条壳命令（目录 + 纯文件名，只 reveal 不 open），壳侧不加 ACL。
  * 成功返回 true；浏览器模式或失败返回 false——调用方把完整路径告诉用户。
  */
 export async function revealProjectFile(root: string, rel: string): Promise<boolean> {
   if (!root || !rel) return false
-  const cut = rel.lastIndexOf('/')
+  const cut = Math.max(rel.lastIndexOf('/'), rel.lastIndexOf('\\'))
   const dir = cut < 0 ? root : joinProjectPath(root, rel.slice(0, cut))
   return revealExportedFile(dir, rel.slice(cut + 1))
 }

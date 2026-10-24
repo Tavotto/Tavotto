@@ -26,6 +26,7 @@ import {
   revealExportedFile,
   joinProjectPath,
   revealProjectFolder,
+  revealProjectFile,
   runCodexIntegration,
   showDesktopAppMenu,
   onWindowMaximizedChange,
@@ -612,5 +613,25 @@ describe('joinProjectPath', () => {
   })
   it('Windows 根（只有反斜杠）整条按反斜杠拼', () => {
     expect(joinProjectPath('C:\\proj', 'figs/a.pdf')).toBe('C:\\proj\\figs\\a.pdf')
+  })
+})
+
+describe('revealProjectFile：图 id 两种分隔符都认（Windows 后端给反斜杠）', () => {
+  const w = window as unknown as Record<string, unknown>
+  afterEach(() => {
+    delete w.__TAURI_INTERNALS__
+    vi.clearAllMocks()
+  })
+
+  it.each([
+    ['C:\\proj', 'figs\\Gone.pdf', 'C:\\proj\\figs', 'Gone.pdf'],
+    ['C:\\proj', 'a/b\\Gone.pdf', 'C:\\proj\\a\\b', 'Gone.pdf'],
+    ['/p', 'figs/Gone.pdf', '/p/figs', 'Gone.pdf'],
+    ['/p', 'Top.pdf', '/p', 'Top.pdf'],
+    ['C:\\proj', 'Top.pdf', 'C:\\proj', 'Top.pdf'],
+  ])('%s + %s → reveal_export(%s, %s)', async (root, rel, dir, name) => {
+    w.__TAURI_INTERNALS__ = {}
+    expect(await revealProjectFile(root, rel)).toBe(true)
+    expect(tauri.invoke).toHaveBeenCalledWith('reveal_export', { dir, name })
   })
 })
