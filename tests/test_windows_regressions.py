@@ -3802,3 +3802,41 @@ def test_matplotlib_svg_with_crlf_line_endings_is_accepted_but_custom_dtds_still
         source.write_bytes(prolog + dtd + b"\r\n" + body)
         with pytest.raises(svgasset.UnsupportedSVG):
             svgasset.read(source)
+
+
+def test_nonadmin_windows_cannot_symlink_fixtures_skip_only_on_privilege_error_and_aliases_use_hardlinks(
+    tmp_path,
+):
+    """Windows Lab（非管理员）上 `os.symlink` 抛 WinError 1314，hosted windows-latest 是管理员所以 CI 看不到。
+    夹具 helper 的契约：只有 1314 才 skip；别的 OSError 原样抛（不把真故障吞成 skip）；
+    只需要「第二个目录项」的场景用硬链接，不依赖特权。"""
+    from support import linkkit
+
+    class _NoPrivilege(OSError):
+        winerror = 1314
+
+    target = tmp_path / "t.txt"
+    target.write_text("x")
+    real = os.symlink
+    try:
+        os.symlink = lambda *a, **k: (_ for _ in ()).throw(_NoPrivilege("1314"))
+        with pytest.raises(pytest.skip.Exception):
+            linkkit.symlink_or_skip(target, tmp_path / "l1")
+        os.symlink = lambda *a, **k: (_ for _ in ()).throw(PermissionError(13, "denied"))
+        with pytest.raises(PermissionError):
+            linkkit.symlink_or_skip(target, tmp_path / "l2")
+    finally:
+        os.symlink = real
+    linkkit.hardlink(target, tmp_path / "h")
+    assert os.path.samefile(target, tmp_path / "h")
+    # 两个用例不得再直接造符号链接（回到只在管理员账户下能跑）
+    import inspect
+
+    import test_capture_saved_facts_identity as ident
+    import test_layout_recovery_backend as layout
+
+    twin = inspect.getsource(
+        ident.TestUnicodeNormalization.test_two_symlinks_are_two_entries_not_normalization
+    )
+    assert "os.symlink" not in twin
+    assert "symlink_to" not in inspect.getsource(layout.test_a15_bad_files_do_not_block_the_listing)
