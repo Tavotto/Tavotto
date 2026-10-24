@@ -3553,6 +3553,8 @@ class PdfPagesLedger:
         self._kept_ids: set[int] = set()
         #: 超出上限、没留引用的（不同的）Figure 张数
         self.omitted = 0
+        #: 其中属于「第 `MAX_PDF_PAGES_FILES` 份之后的 PdfPages」的（每次写入算一次，不判重：没有组可挂）
+        self.unlisted = 0
 
     def _group(self, pdf) -> dict | None:
         for group in self.groups:
@@ -3576,7 +3578,9 @@ class PdfPagesLedger:
         """一次**成功**写进 `pdf` 的保存（失败的保存没有这一页，不记）。"""
         group = self._group(pdf)
         if group is None:
+            # 超过 PdfPages 份数上限：没有组可挂，计进「不点名」的溢出（summary 里单列一条）
             self.omitted += 1
+            self.unlisted += 1
             return
         group["pages"] += 1
         if id(fig) in self._kept_ids:
@@ -3603,6 +3607,17 @@ class PdfPagesLedger:
             if g["omitted"]:
                 item["omitted"] = g["omitted"]
             out.append(item)
+        if self.unlisted:
+            # 份数超限的 PDF 没有组：不点名的一条，只报省略数
+            out.append(
+                {
+                    "name": None,
+                    "pages": self.unlisted,
+                    "captured": 0,
+                    "stems": [],
+                    "omitted": self.unlisted,
+                }
+            )
         return out
 
 

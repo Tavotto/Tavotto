@@ -513,6 +513,8 @@ def _probe(
                 "error": None,
                 "timings": dict(resp.get("timings") or {}),
                 "dropped_figures": int(resp.get("dropped_figures") or 0),
+                # 写进多页 PDF 而被逐页认领的图（#1370）：没有时不出现；前端据此出通知轨胶囊
+                **({"pdf_pages": list(resp["pdf_pages"])} if resp.get("pdf_pages") else {}),
                 # 逐图隔离（P08a）：有图预览捕获失败时如实带出去——部分成功不是"一切正常"
                 **_partial_fields(resp),
                 # 这次试运行按哪一代改指表跑的（ADR 0106 §五）：登记 / 物化落地前核对

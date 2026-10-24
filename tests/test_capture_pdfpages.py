@@ -280,3 +280,46 @@ class TestBrowserSameAnswer:
         ]
         assert {d["capture_source"] for d in resp["descriptors"]} == {"pyplot"}
         assert [d["original_artifact"] for d in resp["descriptors"]] == [None] * 3
+
+
+def test_more_pdfs_than_the_file_limit_report_the_omitted_ones():
+    """第 33 份单页 PDF 没有组可挂：只捕获 32 张，省略数必须是 1（不能报 0）。"""
+    ledger = figcapture.PdfPagesLedger()
+    pdfs = [object() for _ in range(figcapture.MAX_PDF_PAGES_FILES + 1)]
+    for pdf in pdfs:
+        ledger.note(pdf, object())
+    capture: dict = {}
+    added = figcapture.adopt_pdf_pages(capture, {}, ledger, "repro")
+    assert len(added) == figcapture.MAX_PDF_PAGES_FILES == len(capture)
+    assert ledger.omitted == 1
+    summary = ledger.summary()
+    assert sum(item.get("omitted", 0) for item in summary) == 1
+    assert summary[-1] == {"name": None, "pages": 1, "captured": 0, "stems": [], "omitted": 1}
+
+
+def test_probe_result_carries_pdf_pages(tmp_path):
+    """worker → `probe.probe()` 的成功响应是逐字段构造的，`pdf_pages` 必须被带出来（前端胶囊靠它）。"""
+    from tavotto.engine import probe as engine_probe
+
+    figs = tmp_path / "figs"
+    write(figs, "repro.py", CLOSE_EACH)
+    from tavotto.engine import pool as engine_pool
+
+    try:
+        result = engine_probe.probe(str(figs), "repro.py")
+        plain = None
+        write(figs, "plain.py", "import matplotlib.pyplot as plt\nplt.plot([1])\nplt.show()\n")
+        plain = engine_probe.probe(str(figs), "plain.py")
+    finally:
+        engine_pool.shutdown_all(str(figs), wait=True)
+    assert result["error"] is None
+    assert result["pdf_pages"] == [
+        {
+            "name": "all_samples.pdf",
+            "pages": 3,
+            "captured": 3,
+            "stems": ["all_samples", "all_samples-2", "all_samples-3"],
+        }
+    ]
+    # 没写多页 PDF 的脚本：字段不出现
+    assert "pdf_pages" not in plain

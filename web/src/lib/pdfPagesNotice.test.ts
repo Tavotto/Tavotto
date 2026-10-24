@@ -50,6 +50,22 @@ describe('多页 PDF 提醒胶囊（#1370）', () => {
     expect(sentence).toContain('另有 6 张超出上限')
   })
 
+  it('份数超限的不点名条目（name 为 null、captured 为 0）：计入总数并说明省略', async () => {
+    await i18n.changeLanguage('zh-CN')
+    const d = deps()
+    noticePdfPages(
+      'o',
+      [
+        { name: 'a.pdf', pages: 1, captured: 1, stems: ['a'] },
+        { name: null, pages: 1, captured: 0, stems: [], omitted: 1 },
+      ],
+      d,
+    )
+    const sentence = text(d)
+    expect(sentence).toContain('2 张图')
+    expect(sentence).toContain('另有 1 张超出上限')
+  })
+
   it('同一份证据只提醒一次；没有多页 PDF 就撤掉', () => {
     const d = deps()
     const info = [{ name: 'a.pdf', pages: 2, captured: 2, stems: [] }]

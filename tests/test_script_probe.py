@@ -382,6 +382,32 @@ class TestProductApiProbe:
         finally:
             engine_pool.shutdown_all(str(figs), wait=True)
 
+    def test_pdf_pages_reach_the_http_response(self, client, tmp_path):
+        """#1370：写进多页 PDF 的图被逐页认领，`pdf_pages` 经产品 API 到达前端（胶囊靠它）。"""
+        figs = _make_project(tmp_path)
+        write(
+            figs,
+            "deck.py",
+            "import matplotlib.pyplot as plt\n"
+            "from matplotlib.backends.backend_pdf import PdfPages\n"
+            "with PdfPages('deck.pdf') as pdf:\n"
+            "    for i in range(2):\n"
+            "        fig = plt.figure(figsize=(2, 2))\n"
+            "        pdf.savefig(fig)\n"
+            "        plt.close(fig)\n",
+        )
+        client.post("/api/projects/open", json={"path": str(figs)})
+        try:
+            resp = client.post("/api/registry/probe", json={"script": "deck.py"})
+            assert resp.status_code == 200
+            result = resp.get_json()
+            assert result["stems"] == ["deck", "deck-2"]
+            assert result["pdf_pages"] == [
+                {"name": "deck.pdf", "pages": 2, "captured": 2, "stems": ["deck", "deck-2"]}
+            ]
+        finally:
+            engine_pool.shutdown_all(str(figs), wait=True)
+
 
 # ===========================================================================
 # 三、entry 选择与错误模型（真 worker）
