@@ -70,7 +70,8 @@ AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可
   与 CLI 路径是同一条流水，ADR 0143 一条不放松：原脚本永远不可写、只新建一个文件、R / MATLAB 来源同样可走。
 * **思考强度**：目录声明「来源 + 型号」确认支持——行级 `efforts`（该行所有型号）或顶层 `effort_origins[].models`（型号前缀，先中先得，`efforts: []` = 明确不支持；出处写在条目 `source`）；现有（2026-10-25 对照官方文档核对）：官方 Anthropic 的 5 系列（fable / mythos / opus / sonnet / haiku-5-5）与 `claude-opus-4-7` / `claude-opus-4-8` 给 `low/medium/high/xhigh/max`，
 `claude-opus-4-6` / `claude-sonnet-4-6` / `claude-mythos-preview` 给 `low/medium/high/max`（没有 xhigh），默认档位 opus-5-5 与 haiku-5-5 为 `medium`、其余 `high`；Haiku 4.5 及更早、`claude-opus-4-5`（只配合 budget_tokens 的 extended thinking，runner 不支持）不给。
-发 effort 时一并带 `thinking:{type:adaptive}`（这些型号都是自适应思考，合法；不发 `disabled`）。官方 OpenAI 的 gpt-5* / gpt-6* / o* 保守只给 `low/medium/high`（文档里 effort 取值按型号不同且没有完整清单，逐型号核实前不给 none/minimal/xhigh/max），`gpt-5-chat` / `o1-mini` / `o1-preview` 不给。`ai_catalog.efforts_for(agent, base_url, model)` 是唯一出处；connections 的每个型号自带 `model_details[].efforts`。
+发 effort 时一并带 `thinking:{type:adaptive}`（这些型号都是自适应思考，合法；不发 `disabled`）。官方 OpenAI 的 gpt-5* / gpt-6* / o* 兜底只给 `low/medium/high`（文档里 effort 取值按型号不同且没有完整清单，逐型号核实前不给 none/minimal/xhigh/max），`gpt-5-chat` / `o1-mini` / `o1-preview` 不给。
+**这两张文档表只是兜底**：官方来源的连接先查 CLI 自己的型号目录缓存（`CodexAgent._catalog()` 的 `supported_reasoning_levels` / `default_reasoning_level`、`ClaudeAgent._catalog()` 的 `effort_levels` / `default_effort`；现有代码已在只读这两份型号元数据，不涉及凭据、不新读别的文件），型号命中就原样用（含 minimal / xhigh；目录明确给空 = 没有档位），读不到 / 型号不在目录里才用兜底表；最后按线上协议能发的取值过滤（anthropic `low/medium/high/xhigh/max`，Responses `minimal/low/medium/high/xhigh`）。连接视图与发送前核对共用 `ai_providers.EffortResolver`；第三方网关一律不给。`ai_catalog.efforts_for(agent, base_url, model)` 是唯一出处；connections 的每个型号自带 `model_details[].efforts`。
   内置路由的连接才给 `efforts`（默认 `medium`），其余（含所有第三方网关）为空；改图请求带 effort 也只在目录确认支持时才传给 runner
   （anthropic：`output_config.effort` + `thinking:{type:adaptive}`；Responses：`reasoning.effort`，无 max 档）——宁可不发，也不发对方不认的字段。
 

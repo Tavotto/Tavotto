@@ -32,6 +32,8 @@ EFFORTS = ("low", "medium", "high")
 #: anthropic adaptive 的 `output_config.effort` 还多两档：xhigh（5 系列 / opus-4-7 / opus-4-8）与 max
 ANTHROPIC_EFFORTS = (*EFFORTS, "xhigh", "max")
 #: 调用方声明「思考怎么传」（不由 runner 猜；第三方兼容网关各不相同）：adaptive=新模型，budget=旧模型，none=都不发
+#: Responses 的 `reasoning.effort` 取值（CLI 型号目录可能给 minimal / xhigh；没有 max，也不发 none）
+RESPONSES_EFFORTS = ("minimal", *EFFORTS, "xhigh")
 THINKING_MODES = ("adaptive", "budget", "none")
 #: anthropic 旧式 `thinking.budget_tokens`（仅 `--thinking budget`；新模型上已弃用，不许发）
 _THINKING_BUDGET = {"low": 1024, "medium": 4096, "high": 12000}
@@ -537,7 +539,7 @@ class OpenAIResponsesWire:
                 }
                 for t in tools
             ]
-        if effort in EFFORTS:
+        if effort in RESPONSES_EFFORTS:
             body["reasoning"] = {"effort": effort}
             body["include"] = ["reasoning.encrypted_content"]
         return Request(

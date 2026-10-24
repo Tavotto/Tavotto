@@ -28,6 +28,7 @@ from .redact import Redactor
 from .tools import TOOLSETS, RunEnvelope
 from .wires import (
     ANTHROPIC_EFFORTS,
+    RESPONSES_EFFORTS,
     THINKING_MODES,
     WIRES,
     AnthropicWire,
@@ -65,7 +66,11 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--wire", required=True, choices=[*sorted(WIRES), "demo"])
     p.add_argument("--base-url", default="", help="模型服务根地址（https，或 http://127.0.0.1）")
     p.add_argument("--model", default="")
-    p.add_argument("--effort", choices=ANTHROPIC_EFFORTS, default=None)
+    p.add_argument(
+        "--effort",
+        choices=(*dict.fromkeys((*RESPONSES_EFFORTS, *ANTHROPIC_EFFORTS)),),
+        default=None,
+    )
     p.add_argument(
         "--thinking", choices=THINKING_MODES, default="none", help="思考怎么传（调用方声明）"
     )
@@ -225,8 +230,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.thinking == "budget" and args.effort is None and args.wire != "demo":
         # budget 要有档位：显式优于静默（缺省时旧实现悄悄不发 thinking）；不发任何请求
         model = _FailModel(RunnerFailure("internal", "bad_args"))
-    elif args.wire == "openai-responses" and args.effort == "max":
-        # Responses 没有 max 档：显式拒绝，不静默不发 reasoning；不发任何请求
+    elif (args.wire == "openai-responses" and args.effort not in (None, *RESPONSES_EFFORTS)) or (
+        args.wire == "anthropic" and args.effort not in (None, *ANTHROPIC_EFFORTS)
+    ):
+        # 这个协议不认的档位（Responses 没有 max；anthropic 没有 minimal）：显式拒绝，不静默不发；不发任何请求
         model = _FailModel(RunnerFailure("internal", "bad_args"))
     elif args.wire == "demo":
         try:

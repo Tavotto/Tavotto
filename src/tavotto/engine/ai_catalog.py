@@ -127,6 +127,21 @@ def _model_key(model: str | None) -> str:
     return (model or "").strip().lower().replace(".", "-")
 
 
+def is_effort_origin(agent: str, base_url: str) -> bool:
+    """这个地址是不是目录登记过的官方 API 来源（`effort_origins`）——只有它们才可能有思考强度档位。"""
+    want = origin_of(base_url)
+    if want is None:
+        return False
+    try:
+        raw = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return any(
+        o.get("agent") == agent and origin_of(o.get("origin", "")) == want
+        for o in (raw.get("effort_origins") if isinstance(raw, dict) else None) or []
+    )
+
+
 def efforts_for(agent: str, base_url: str, model: str | None = None) -> list[str]:
     """内置执行器在这个地址、这个型号上**确认支持**的思考强度档位；不确定 = `[]`（宁可不显示，也不发对方不认的字段）。
     细节见 `effort_support`。"""

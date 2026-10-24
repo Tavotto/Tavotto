@@ -1559,21 +1559,19 @@ def test_effort_args_are_sent_only_where_the_catalog_confirms_support(world):
     assert cmd[cmd.index("--thinking") + 1] == "adaptive"
 
 
-def test_effort_reaches_the_model_request_body(chain):
+def test_effort_reaches_the_model_request_body(chain, monkeypatch):
     server = chain["serve"]([END_TURN])
-    # 把测试网关当作「目录确认支持」的来源
+    # 把本机测试网关当作「官方来源」，支持 high
+    monkeypatch.setattr(ai_catalog, "is_effort_origin", lambda agent, base: base == server.url)
+    monkeypatch.setattr(
+        ai_catalog,
+        "effort_support",
+        lambda agent, base, model=None: {"efforts": ["low", "medium", "high"], "default": "medium"},
+    )
+    sid, _ = _run(chain, effort="high")
+    _wait(sid)
     import json as _json
 
-    origin = server.url
-    real = ai_catalog.efforts_for
-    ai_catalog.efforts_for = lambda agent, base, model=None: (
-        ["low", "medium", "high", "max"] if base == origin else real(agent, base, model)
-    )
-    try:
-        sid, _ = _run(chain, effort="high")
-        _wait(sid)
-    finally:
-        ai_catalog.efforts_for = real
     body = _json.loads(server.bodies[0])
     assert body["output_config"] == {"effort": "high"} and body["thinking"] == {"type": "adaptive"}
 
@@ -1964,3 +1962,159 @@ def test_fix_connection_skips_keys_the_provider_already_rejected(client, world, 
     world["fetch"] = (["glm-5.3"], None)
     _post(client, vendor="zhipu", id=bad["id"], api_key=KEY)
     assert fixsession.connection()["api_key"] == KEY
+
+
+# ---- 官方 Key 连接的档位：先查 CLI 自己的型号目录缓存，查不到再用文档核对过的兜底表
+def _write_codex_cache(rows):
+    home = Path(os.environ["CODEX_HOME"])
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "models_cache.json").write_text(json.dumps({"models": rows}), encoding="utf-8")
+
+
+def _write_claude_catalog(models):
+    d = Path(os.environ["CLAUDE_CONFIG_DIR"]) / "cache" / "model-catalog"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "acct.json").write_text(
+        json.dumps({"fetchedAt": 1, "catalog": {"config": {"models": models}}}), encoding="utf-8"
+    )
+
+
+def _codex_row(slug, levels, default):
+    return {
+        "slug": slug,
+        "visibility": "list",
+        "supported_reasoning_levels": [{"effort": e} for e in levels],
+        "default_reasoning_level": default,
+    }
+
+
+def test_official_openai_efforts_come_from_the_codex_model_cache_first(world):
+    _write_codex_cache(
+        [
+            _codex_row("gpt-5", ["minimal", "low", "medium", "high", "xhigh"], "high"),
+            _codex_row(
+                "gpt-9-future", ["low", "xhigh", "max", "none"], "low"
+            ),  # max / none 线上发不出去：被滤掉
+            _codex_row("gpt-no-effort", [], None),  # 目录明确说没有档位
+        ]
+    )
+    _save(
+        "o",
+        agent="codex",
+        base="https://api.openai.com/v1",
+        default_model="gpt-5",
+        models=["gpt-5", "gpt-9-future", "gpt-no-effort", "gpt-6.1-sol", "o3"],
+    )
+    world["cli"] = False
+    c = _conn(_caps(), "o")
+    per = {m["id"]: (m["efforts"], m["default_effort"]) for m in c["model_details"]}
+    assert per["gpt-5"] == (["minimal", "low", "medium", "high", "xhigh"], "high"), (
+        "原样用目录给的，含 minimal / xhigh"
+    )
+    assert per["gpt-9-future"] == (["low", "xhigh"], "low")
+    assert per["gpt-no-effort"] == ([], None), "目录明确给了空 = 没有档位，不退回兜底"
+    assert per["gpt-6.1-sol"] == (LMH, "medium") and per["o3"] == (LMH, "medium"), (
+        "不在目录里的型号用兜底表"
+    )
+    assert (c["efforts"], c["default_effort"]) == per["gpt-5"]
+    # 发送前核对用同一个函数
+    rec = ai_providers.get("o")
+    assert ai_providers.builtin_effort_args(rec, "xhigh", "gpt-5") == ["--effort", "xhigh"]
+    assert ai_providers.builtin_effort_args(rec, "minimal", "gpt-5") == ["--effort", "minimal"]
+    assert (
+        ai_providers.builtin_effort_args(rec, "xhigh", "gpt-6.1-sol") == []
+    )  # 兜底表只有 low/medium/high
+    assert ai_providers.builtin_effort_args(rec, "max", "gpt-9-future") == []
+    assert ai_providers.builtin_effort_args(rec, "low", "gpt-no-effort") == []
+
+
+def test_official_anthropic_efforts_come_from_the_claude_model_catalog_first(world):
+    _write_claude_catalog(
+        [
+            {
+                "id": "claude-opus-4-6",
+                "section": "main",
+                "runtime": {"effort_levels": ["low", "high"], "default_effort": "low"},
+            },
+            {
+                "id": "claude-haiku-4-5",
+                "section": "main",
+                "runtime": {
+                    "effort_levels": ["low", "medium", "minimal"],
+                    "default_effort": "medium",
+                },
+            },
+        ]
+    )
+    _save(
+        "a",
+        base="https://api.anthropic.com",
+        default_model="claude-opus-4-6",
+        models=["claude-opus-4-6", "claude-haiku-4-5", "claude-opus-5-5", "claude-sonnet-4-5"],
+    )
+    world["cli"] = False
+    c = _conn(_caps(), "a")
+    per = {m["id"]: (m["efforts"], m["default_effort"]) for m in c["model_details"]}
+    assert per["claude-opus-4-6"] == (["low", "high"], "low"), (
+        "目录说什么就是什么（压过文档兜底表的 M4）"
+    )
+    assert per["claude-haiku-4-5"] == (["low", "medium"], "medium"), (
+        "目录给的 minimal anthropic 协议发不了：滤掉"
+    )
+    assert per["claude-opus-5-5"] == (X5, "medium"), "不在目录里：文档核对过的兜底表"
+    assert per["claude-sonnet-4-5"] == ([], None)
+    rec = ai_providers.get("a")
+    assert ai_providers.builtin_effort_args(rec, "high", "claude-opus-4-6")[:2] == [
+        "--effort",
+        "high",
+    ]
+    assert ai_providers.builtin_effort_args(rec, "max", "claude-opus-4-6") == [], "目录没给 max"
+    assert ai_providers.builtin_effort_args(rec, "xhigh", "claude-opus-5-5")[:2] == [
+        "--effort",
+        "xhigh",
+    ]
+
+
+def test_catalogs_are_ignored_for_third_party_gateways_and_when_unreadable(world):
+    _write_codex_cache([_codex_row("gpt-5", ["low", "high"], "low")])
+    _write_claude_catalog(
+        [
+            {
+                "id": "claude-opus-4-6",
+                "section": "main",
+                "runtime": {"effort_levels": ["low"], "default_effort": "low"},
+            }
+        ]
+    )
+    _save("gw", base="https://api.deepseek.com/anthropic", default_model="claude-opus-4-6")
+    _save("gx", agent="codex", base="https://api.deepseek.com", default_model="gpt-5")
+    world["cli"] = False
+    for cid in ("gw", "gx"):
+        c = _conn(_caps(), cid)
+        assert c["efforts"] == [] and c["default_effort"] is None, "第三方网关即使型号重名也不给"
+    # 缓存损坏：退回兜底表，不抛
+    (Path(os.environ["CODEX_HOME"]) / "models_cache.json").write_text("{not json", encoding="utf-8")
+    _save("o", agent="codex", base="https://api.openai.com/v1", default_model="gpt-5", key=KEY2)
+    assert _conn(_caps(), "o")["efforts"] == LMH
+
+
+def test_runner_accepts_the_catalog_efforts_for_its_wire():
+    from tavotto.engine.agent_runner import wires as w
+
+    assert "xhigh" in w.ANTHROPIC_EFFORTS and "minimal" not in w.ANTHROPIC_EFFORTS
+    assert w.RESPONSES_EFFORTS == ("minimal", "low", "medium", "high", "xhigh")
+    body = (
+        w.OpenAIResponsesWire()
+        .build(
+            base_url="https://x.example",
+            api_key="K",
+            model="m",
+            system="s",
+            tools=[],
+            history=[],
+            effort="xhigh",
+            max_output_tokens=10,
+        )
+        .body
+    )
+    assert body["reasoning"] == {"effort": "xhigh"}
