@@ -1829,3 +1829,12 @@ def test_cancelling_during_a_builtin_check_aborts_the_validation(convert_chain):
     sess = _wait(sid)
     assert sess["status"] == "cancelled"
     assert not (box["figs"] / "fig_matplotlib.py").exists()
+
+
+def test_updating_a_catalog_connection_keeps_a_customised_address(client, world):
+    world["fetch"] = (["m1"], None)
+    _save("tuned", base="https://api.deepseek.com/my-proxy/anthropic")
+    resp = _post(client, vendor="deepseek", id="tuned", api_key=KEY2)
+    assert resp.status_code == 200, resp.get_json()
+    assert ai_providers.get("tuned")["base_url"] == "https://api.deepseek.com/my-proxy/anthropic"
+    assert world["fetched"][-1][0] == "https://api.deepseek.com/my-proxy/anthropic"
