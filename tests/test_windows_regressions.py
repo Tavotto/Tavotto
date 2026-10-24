@@ -4012,6 +4012,6 @@ def test_desktop_window_paste_test_compares_sizes_within_one_view():
     正确的量法：粘贴之后在同一个取景里量原对象与新对象，比它们的比值。"""
     src = (_DESKTOP_WINDOW_TESTS / "test_clipboard.py").read_text(encoding="utf-8")
     body = src[src.index("def test_paste_reads_what_another_app_put_there") :]
-    tail = body[body.index("pasted = rect(d, new[0])") :]
+    tail = body[body.index("assert len(new) == 1") :]
     assert "original[" not in tail, "粘贴后的尺寸不能和粘贴前量的原对象比：取景已经变了"
     assert "rect(d, oid)" in tail, "粘贴之后要在同一个取景里重新量原对象"

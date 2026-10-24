@@ -71,7 +71,6 @@ def test_copy_lands_on_the_system_clipboard(desktop_app, project_dir, win32):
 def test_paste_reads_what_another_app_put_there(desktop_app, project_dir, win32):
     d = desktop_app.launch("--open", str(project_dir))
     oid = place_figure(d, "Fig2_yield.pdf")
-    original = rect(d, oid)
     payload = json.loads(_copy_from_app(d, win32, oid))
 
     # 对照：别的应用放上一段普通文字 → ⌃V 不产生对象
@@ -99,9 +98,24 @@ def test_paste_reads_what_another_app_put_there(desktop_app, project_dir, win32)
         what="⌃V 之后画布上多出一个对象",
     )
     assert len(new) == 1, new
-    pasted = rect(d, new[0])
+    # 第二个对象进来画布就从单图编辑切到多图排版并重新取景（#1292），屏幕上的 px 尺度变了：
+    # 粘贴前量的 `original` 不能再比。在同一个取景里量原对象与新对象，比值才是文档尺寸之比；
+    # 取景有过渡，所以等比值稳到 1/2（粘贴出原样的一份则是 1，立刻不符）
+    ratios = d.wait_js(
+        "const [a, b] = arguments; const q = i => document.querySelector('[data-object-id=\"' + CSS.escape(i) + '\"]');"
+        " const o = q(a), p = q(b); if (!o || !p) return null;"
+        " const ro = o.getBoundingClientRect(), rp = p.getBoundingClientRect();"
+        " if (!ro.width || !ro.height) return null;"
+        " const r = {w: rp.width / ro.width, h: rp.height / ro.height};"
+        " return Math.abs(r.w - 0.5) <= 0.02 && Math.abs(r.h - 0.5) <= 0.02 ? r : null",
+        oid,
+        new[0],
+        timeout=10,
+        what="粘贴出来的对象宽高是原对象的一半（同一取景里量）",
+    )
+    pasted, base = rect(d, new[0]), rect(d, oid)
     for k in ("w", "h"):
-        assert abs(pasted[k] - original[k] / 2) <= 2, (
-            f"粘贴出来的对象 {k}={pasted[k]:.1f}，改写后的载荷要求约 {original[k] / 2:.1f}"
-            f"（原对象 {original[k]:.1f}）——粘贴没用系统剪贴板里的内容"
+        assert abs(pasted[k] / base[k] - 0.5) <= 0.02, (
+            f"粘贴出来的对象 {k}={pasted[k]:.1f}，原对象 {base[k]:.1f}（同一取景），"
+            f"改写后的载荷要求一半——粘贴没用系统剪贴板里的内容（{ratios}）"
         )
