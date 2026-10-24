@@ -78,6 +78,8 @@ export interface AiFixEntry {
 export interface AiFixHandoff {
   script: string
   library: string
+  /** 报告里的原输出图（项目相对）；对照视图左侧的参考图，可缺 */
+  path: string | null
 }
 
 interface AiFixStoreState {
@@ -143,10 +145,11 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
     if (st.outcome === 'cancelled') return get().clear(key)
     if (st.outcome === 'convert' && st.handoff) {
       const { script, library } = st.handoff
+      const path = st.handoff.path ?? null
       get().clear(key)
       if (!still()) return
-      set((s) => ({ handoffs: { ...s.handoffs, [key]: { script, library } } }))
-      void useConvertStore.getState().start(script, library, null, 'python')
+      set((s) => ({ handoffs: { ...s.handoffs, [key]: { script, library, path } } }))
+      void useConvertStore.getState().start(script, library, path, 'python')
       return
     }
     if (st.outcome === 'fixed') {

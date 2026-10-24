@@ -175,21 +175,21 @@ describe('结束', () => {
     const convertStart = vi.fn(async () => {})
     useConvertStore.setState({ start: convertStart } as never)
     vi.mocked(fetchAiFix).mockResolvedValue(
-      state({ state: 'finished', outcome: 'convert', summary: '生成可编辑版本', handoff: { kind: 'convert', script: 'plot.py', library: 'pillow' } }),
+      state({ state: 'finished', outcome: 'convert', summary: '生成可编辑版本', handoff: { kind: 'convert', script: 'plot.py', library: 'pillow', path: 'out/plot.png' } }),
     )
     await useAiFixStore.getState().refresh(KEY)
     expect(entry()).toBeUndefined()
-    expect(useAiFixStore.getState().handoffs[KEY]).toEqual({ script: 'plot.py', library: 'pillow' })
-    expect(convertStart).toHaveBeenCalledWith('plot.py', 'pillow', null, 'python')
+    expect(useAiFixStore.getState().handoffs[KEY]).toEqual({ script: 'plot.py', library: 'pillow', path: 'out/plot.png' })
+    expect(convertStart).toHaveBeenCalledWith('plot.py', 'pillow', 'out/plot.png', 'python')
     expect(open).not.toHaveBeenCalled()
   })
 
   it('交接记录随转换记录消失而清掉；切项目 / reset 也清', async () => {
-    useAiFixStore.setState({ handoffs: { [KEY]: { script: 'plot.py', library: 'pillow' } } })
+    useAiFixStore.setState({ handoffs: { [KEY]: { script: 'plot.py', library: 'pillow', path: null } } })
     useConvertStore.setState({ entries: { 'plot.py': { phase: 'ready' } } as never })
     useConvertStore.setState({ entries: {} })
     expect(useAiFixStore.getState().handoffs[KEY]).toBeUndefined()
-    useAiFixStore.setState({ handoffs: { [KEY]: { script: 'a.py', library: 'opencv' } } })
+    useAiFixStore.setState({ handoffs: { [KEY]: { script: 'a.py', library: 'opencv', path: null } } })
     useAiFixStore.getState().reset()
     expect(useAiFixStore.getState().handoffs).toEqual({})
   })

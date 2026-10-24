@@ -345,6 +345,32 @@ def _hinted_library(ctx: FixContext) -> str | None:
     return None
 
 
+def _hinted_path(ctx: FixContext, rel: str) -> str | None:
+    """报告里位图提示的原输出图路径（项目相对），仅当这份报告说的就是被交接的这个脚本；否则 None（不拿别的脚本的图当参考）。"""
+    try:
+        report = ctx.report() if ctx.report is not None else None
+    except Exception:  # noqa: BLE001 - 报告取不到 = 没有参考图
+        return None
+    report = report or {}
+    hint = report.get("no_figure_hint")
+    if not (isinstance(hint, dict) and hint.get("kind") == "raster_script"):
+        return None
+    path = hint.get("path")
+    if not (isinstance(path, str) and path):
+        return None
+    target = report.get("target")
+    said = target.get("script") if isinstance(target, dict) else None
+    if not isinstance(said, str) or not said:
+        return None
+    try:
+        said_rel = Path(os.path.realpath(ctx.project_root / said)).relative_to(
+            os.path.realpath(ctx.project_root)
+        )
+    except ValueError:
+        return None
+    return path if said_rel.as_posix() == rel else None
+
+
 def convert_script(ctx: FixContext, args: dict) -> ToolResult:
     """不写任何文件：只在 `ctx.handoff` 记一笔，会话收尾后界面把它交给「生成可编辑版本」（ADR 0143）。"""
     from .. import ai_convert
@@ -383,7 +409,12 @@ def convert_script(ctx: FixContext, args: dict) -> ToolResult:
         rel = Path(os.path.realpath(script)).relative_to(os.path.realpath(ctx.project_root))
     except ValueError:
         return err("outside_project", "Only a script inside the project can be converted.")
-    ctx.handoff = {"kind": "convert", "script": rel.as_posix(), "library": library}
+    ctx.handoff = {
+        "kind": "convert",
+        "script": rel.as_posix(),
+        "library": library,
+        "path": _hinted_path(ctx, rel.as_posix()),
+    }
     return ok(
         "Noted. Nothing was written. After this session Tavotto will make a Matplotlib version for the user to "
         "compare and accept; the original script is not changed. Now call finish with outcome `convert`.",

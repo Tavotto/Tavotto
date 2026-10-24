@@ -316,7 +316,7 @@ def test_finish_convert_is_only_valid_after_a_handoff(box):
     ctx, cards = make_ctx(box, {"answer": "ok"})
     r = call(ctx, "finish", {"outcome": "convert", "summary": "x"})
     assert r.code == "bad_arguments" and cards == []  # 被拒：卡片都没发出去
-    ctx.handoff = {"kind": "convert", "script": "fig.py", "library": "pillow"}
+    ctx.handoff = {"kind": "convert", "script": "fig.py", "library": "pillow", "path": None}
     assert not call(ctx, "finish", {"outcome": "convert", "summary": "已交接"}).is_error
     assert cards[0]["outcome"] == "convert"
     assert REGISTRY["finish"].schema["properties"]["outcome"]["enum"] == [
@@ -724,7 +724,12 @@ def test_builtin_loop_convert_outcome_carries_the_handoff_in_the_public_state(bo
     wait_for(lambda: fixsession.SESSIONS.get(s.id, "pj")["state"] == "finished")
     done = fixsession.SESSIONS.get(s.id, "pj")
     assert done["outcome"] == "convert" and done["reason"] == ""
-    assert done["handoff"] == {"kind": "convert", "script": "fig.py", "library": "pillow"}
+    assert done["handoff"] == {
+        "kind": "convert",
+        "script": "fig.py",
+        "library": "pillow",
+        "path": None,
+    }
     assert (box.proj / "fig.py").read_text("utf-8") == "print(1)"
     assert sorted(p.name for p in box.proj.iterdir()) == ["fig.py"]
     rows = [

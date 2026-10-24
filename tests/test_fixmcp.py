@@ -363,7 +363,12 @@ def test_cli_callback_convert_hands_off_and_publishes_the_handoff(box, served, m
     wait_finished(s, 15)
     assert (s.outcome, s.reason) == (fixsession.OUTCOME_CONVERT, "")
     pub = fixsession.SESSIONS.get(s.id, "pj")
-    assert pub["handoff"] == {"kind": "convert", "script": "fig.py", "library": "opencv"}
+    assert pub["handoff"] == {
+        "kind": "convert",
+        "script": "fig.py",
+        "library": "opencv",
+        "path": None,
+    }
     assert (box.proj / "fig.py").read_text("utf-8") == "print(1)"
     assert sorted(p.name for p in box.proj.iterdir()) == ["fig.py"]
     assert token not in json.dumps(pub)
