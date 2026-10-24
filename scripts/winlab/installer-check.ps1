@@ -26,8 +26,10 @@ function Emit($step, $ok, $detail) {
 
 # Child processes without WMI: Win32_Process (CIM) is denied to a non-admin SSH session;
 # PowerShell 7's Get-Process exposes Parent and CommandLine directly.
-function Get-Children([int]$parentId, [string]$pattern) {
-  @(Get-Process -EA SilentlyContinue | Where-Object { $_.Parent -and $_.Parent.Id -eq $parentId -and $_.CommandLine -match $pattern })
+function Get-Children([int]$parentId, [string]$exePath) {
+  # By parent + executable path only: Process.CommandLine also goes through WMI in PS 7.
+  @(Get-Process -EA SilentlyContinue | Where-Object {
+      $_.Parent -and $_.Parent.Id -eq $parentId -and $_.Path -and ($_.Path -ieq $exePath) })
 }
 
 function Get-Installs {
@@ -80,16 +82,22 @@ function Probe-Shell($paths, [string]$label) {
   $child = $null
   foreach ($i in 1..60) {
     Start-Sleep -Milliseconds 500
-    $child = Get-Children $p.Id 'desktop-sidecar' | Select-Object -First 1
+    $child = Get-Children $p.Id $paths.side | Select-Object -First 1
     if ($child) { break }
   }
   $alive = $null -ne (Get-Process -Id $p.Id -EA SilentlyContinue)
-  Emit "shell-starts-sidecar:$label" ([bool]$child) "shell_alive=$alive"
-  Stop-Process -Id $p.Id -Force -EA SilentlyContinue
+  Emit "shell-starts-sidecar:$label" ([bool]$child) "shell_pid=$($p.Id) alive=$alive sidecar_pid=$(if ($child) { $child.Id } else { 'none' })"
+  $killed = $true
+  try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch { $killed = $false; Emit "kill-shell:$label" $false $_.Exception.Message }
+  if ($killed) {
+    $shellGone = $false
+    foreach ($i in 1..20) { Start-Sleep -Milliseconds 250; if (-not (Get-Process -Id $p.Id -EA SilentlyContinue)) { $shellGone = $true; break } }
+    Emit "kill-shell:$label" $shellGone "TerminateProcess on pid $($p.Id)"
+  }
   if ($child) {
     $gone = $false
     foreach ($i in 1..30) { Start-Sleep -Milliseconds 500; if (-not (Get-Process -Id $child.Id -EA SilentlyContinue)) { $gone = $true; break } }
-    Emit "sidecar-follows-shell-exit:$label" $gone 'no orphan after the shell is killed'
+    Emit "sidecar-follows-shell-exit:$label" $gone "no orphan within 15 s after the shell is killed"
     if (-not $gone) { Stop-Process -Id $child.Id -Force -EA SilentlyContinue }
   }
 }
