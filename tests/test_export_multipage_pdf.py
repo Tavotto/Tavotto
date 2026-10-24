@@ -1,4 +1,4 @@
-"""把若干张图合成一个多页 PDF（#1370 PR3）：`merge_pdf` 请求、`pdfmerge`、`/api/export` 端到端。
+"""把若干张图合成一个多页 PDF（#1370 PR3）：`merge_pdf` 请求、`pdfbackend.concat_pdf`、`/api/export` 端到端。
 
 主语：**导出出来的那个文件**——页数、页序、每页的尺寸与文字（用 pymupdf 读回），不是请求的形状。
 每一页先走现有的单页 PDF 导出路径，所以这里不重测单页导出本身（`test_export_pipeline.py`），
@@ -12,8 +12,8 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from tavotto import app as m
-from tavotto.engine import exportjob, exportreq, pdfmerge
+from tavotto import app as m, pdfbackend
+from tavotto.engine import exportjob, exportreq
 
 # 每张图尺寸、文字都不同：页序错了、少了一页、页被复制成别的页，下面的读回都会不一样
 PAGES = {
@@ -138,6 +138,37 @@ def test_background_job_merges_too(env):
     assert [t for _, _, t in _read(body)] == ["SampleZero", "SampleTwo"]
 
 
+# ------------------------------ 逐页检查（Codex #1395 P1）------------------------------
+def test_a_bad_second_page_rejects_the_whole_file_before_publish(env, monkeypatch):
+    """产物检查器只读首页：第一页合规、第二页的事实对不上文件（报告 120 × 60 mm、实际 180 × 120 pt）——
+    只检查合并后的文件会放行；逐页检查要拦下，整份不发布，错误码指出是第几页。"""
+    client, _ = env
+    real = m._export_produce_original
+    seen = []
+
+    def tamper(job, tmp_dir, **kw):
+        produced = real(job, tmp_dir, **kw)
+        seen.append(job.request.original.figure_id)
+        if job.request.original.figure_id == "s1.pdf":
+            produced[0].width_mm, produced[0].height_mm = 120.0, 60.0
+        return produced
+
+    monkeypatch.setattr(m, "_export_produce_original", tamper)
+    status, body = _post(client, _spec(["s0.pdf", "s1.pdf", "s2.pdf"]))
+    assert seen == ["s0.pdf", "s1.pdf", "s2.pdf"]
+    (out,) = body["outputs"]
+    assert out["status"] == "failed" and out["error"]["code"] == "artifact_rejected", body
+    assert out["error"]["params"]["failed"] == "page 2: size"
+    assert not list(Path(body["export_dir"]).glob("all_samples*.pdf"))
+
+
+def test_all_pages_good_is_still_published_with_a_manifest(env):
+    client, _ = env
+    _, body = _post(client, _spec(["s0.pdf", "s1.pdf"]))
+    (out,) = body["outputs"]
+    assert out["status"] == "done" and out["manifest"]["verdict"] != "rejected"
+
+
 # ------------------------------- 非法请求 ---------------------------------------
 @pytest.mark.parametrize(
     "over",
@@ -174,7 +205,7 @@ def test_a_page_without_a_figure_reports_the_original_codes(env):
     assert status == 400 and body["code"] == "missing_figure"
 
 
-# ------------------------------- pdfmerge 本身 ----------------------------------
+# ------------------------------- concat_pdf 本身 ----------------------------------
 def _single(path: Path, text: str, w=100, h=50):
     doc = pymupdf.open()
     doc.new_page(width=w, height=h).insert_text((10, 30), text)
@@ -187,7 +218,7 @@ def test_merge_keeps_order_and_repeats(tmp_path):
     a = _single(tmp_path / "a.pdf", "AAA", 100, 50)
     b = _single(tmp_path / "b.pdf", "BBB", 120, 60)
     out = tmp_path / "out" / "m.pdf"
-    assert pdfmerge.merge_pdf_pages([a, b, a], out) == 3
+    assert pdfbackend.concat_pdf([a, b, a], out) == 3
     with pymupdf.open(out) as doc:
         assert [p.get_text().strip() for p in doc] == ["AAA", "BBB", "AAA"]
         assert [round(p.rect.width) for p in doc] == [100, 120, 100]
@@ -201,12 +232,12 @@ def test_merge_rejects_a_multipage_or_missing_input(tmp_path):
     doc.new_page()
     doc.save(two)
     doc.close()
-    with pytest.raises(pdfmerge.PdfMergeError):
-        pdfmerge.merge_pdf_pages([a, two], tmp_path / "o.pdf")
-    with pytest.raises(pdfmerge.PdfMergeError):
-        pdfmerge.merge_pdf_pages([tmp_path / "missing.pdf"], tmp_path / "o.pdf")
-    with pytest.raises(pdfmerge.PdfMergeError):
-        pdfmerge.merge_pdf_pages([], tmp_path / "o.pdf")
+    with pytest.raises(pdfbackend.PdfConcatError):
+        pdfbackend.concat_pdf([a, two], tmp_path / "o.pdf")
+    with pytest.raises(pdfbackend.PdfConcatError):
+        pdfbackend.concat_pdf([tmp_path / "missing.pdf"], tmp_path / "o.pdf")
+    with pytest.raises(pdfbackend.PdfConcatError):
+        pdfbackend.concat_pdf([], tmp_path / "o.pdf")
 
 
 # ------------------- 端到端：脚本用 PdfPages 写三页 → probe → 经 HTTP 合成 -------------------

@@ -213,6 +213,9 @@ class Produced:
     manifest: dict | None = None
     #: 这一项出自哪个基准（`Basis`）；只有声明了的才受 `enforce_one_basis` 的断言约束。
     basis: Basis | None = None
+    #: 多页 PDF（#1370）：每一页各自的单页产物（带尺寸与临时文件）。检查器只读首页，所以 `inspect` 钩子逐页检查它们；
+    #: 不发布，只是检查的输入。单页导出恒为 `None`。
+    parts: list["Produced"] | None = None
 
 
 class Cancelled(Exception):

@@ -128,7 +128,7 @@ order: 210
   （碰磁盘之前拒绝，文案两种语言）。SVG / PNG 没有「多页」，所以对话框的勾选只在 PDF 格式下出现，勾上后每张图的单页 PDF 不再单独出，其余格式照旧逐张导。
   页内的错误沿用 `original` 的码（`missing_figure` / `bad_overrides` …）。此时请求的 `original` 就是 `pages[0]`，所有只认单张图的消费者（route / 遥测）按首页读。
 - **合并只有一个调用点**：`app._export_produce` 在 `merge_pdf` 非空时转到 `_export_produce_merged_pdf`。每一页先走**现有的单页 PDF 导出**
-  （`_export_produce_original`，借 `_PageJob` 替身换成单页请求，`do_export` 与 #1355 的配对代码一字不动），再由 `engine/pdfmerge.merge_pdf_pages`
+  （`_export_produce_original`，借 `_PageJob` 替身换成单页请求，`do_export` 与 #1355 的配对代码一字不动），再由 `pdfbackend.concat_pdf`（实现在 `rendercore/facade.py`，应用不直接碰原生 PDF 库）
   用 pikepdf `pages.extend` 按页序拼成一个文件，合成**一个** `Produced`；同一来源 + 同样编辑的页只导一次、按页序重复放（不做快照，只提示）。
 - **任何一页失败 = 整个多页 PDF 失败**，带那一页自己的错误码，不交付缺页的文件。页数与页序写进回执 `request.merge_pdf = {page_count, figure_ids}`。
 - **已知代价**：字体每页各嵌一份（每个单页文件自带子集字体，搬运不跨页去重），文件比脚本里 `PdfPages` 直接写出的偏大，内容不变。

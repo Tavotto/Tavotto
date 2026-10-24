@@ -3473,13 +3473,15 @@ describe('合成一个多页 PDF（#1370，PdfPages 导出）', () => {
     ...over,
   })
   /** 两张图（Fig1 / Fig2）都是脚本 s.py 的 runtime 素材，s.py 这次运行写了一份两页的 PdfPages */
-  async function setupMerge(opts: { pdfPages?: unknown[]; assets?: unknown[]; formats?: string[] } = {}) {
+  async function setupMerge(
+    opts: { pdfPages?: unknown[]; assets?: unknown[]; formats?: string[]; ledgerConfig?: string } = {},
+  ) {
     await setupTwo({ select: [] })
     useRuntimeAssetStore.setState({
       assets: opts.assets ?? [RT('Fig1.pdf', 'a'), RT('Fig2.pdf', 'b')],
     } as never)
     useScriptRunStore.setState({
-      byScript: { 's.py': { pdfPages: opts.pdfPages ?? [pages()] } },
+      byScript: { 's.py': { pdfPages: opts.pdfPages ?? [pages()], pdfPagesRunConfig: opts.ledgerConfig ?? '' } },
     } as never)
     await click(originalRadio())
     for (const f of opts.formats ?? []) {
@@ -3544,6 +3546,25 @@ describe('合成一个多页 PDF（#1370，PdfPages 导出）', () => {
     expect(exportBodies.map((b) => b.filename)).toEqual(['Fig1', 'Fig2', 'all_samples'])
     expect(exportBodies[2].merge_pdf).toBeTruthy()
     expect(exportBodies[0].merge_pdf).toBeUndefined()
+  })
+
+  it('素材的运行配置与账本那次运行不一致：不出现（不拼混合 PDF）', async () => {
+    await setupMerge({ ledgerConfig: 'rc_x' }) // 素材没有 run_config，账本却是配置 x 那次
+    expect(mergeRow()).toBeNull()
+  })
+
+  it('只勾 PDF 并合成时，报告不丢：勾了报告 → 合成的那一项带报告，且含逐页证据', async () => {
+    await setupMerge()
+    for (const f of ['PNG', 'TIFF', 'SVG', 'EPS']) {
+      if (formatBox(f).checked) await click(formatBox(f))
+    }
+    await click(document.body.querySelector<HTMLInputElement>('[aria-label="生成样式检查报告"]')!)
+    await start()
+    await batchDone()
+    expect(exportBodies).toHaveLength(1)
+    const body = exportBodies[0] as Record<string, any>
+    expect(body.include_style_check_report).toBe(true)
+    expect(body.style_check_report.pages).toHaveLength(2) // Fig1 / Fig2 各一份
   })
 
   it('不勾：与从前一样，每张图各一个单页作业，请求里没有 merge_pdf', async () => {

@@ -6935,6 +6935,8 @@ export interface RuntimeAssetInfo {
   size_mm: [number, number] | null
   capture_source: 'savefig' | 'pyplot' | null
   descriptor: CapturedFigureDescriptor | null
+  /** 按参数配置跑出的变体素材才有（本机不透明引用，不含参数值）；无参数的那张没有 */
+  run_config?: string
 }
 
 /** runtime 素材清单。**只读**：后端绝不因此执行脚本。 */

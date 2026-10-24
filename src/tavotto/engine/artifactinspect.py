@@ -227,11 +227,9 @@ def inspect_produced(
 
     policy = job.request.inspection
     profile = inspection_profile(policy)
-    out: list[exportjob.Produced] = []
-    for p in produced:
-        if p.error_code is not None or p.tmp_path is None:
-            out.append(p)
-            continue
+
+    def inspect_file(p: exportjob.Produced) -> tuple[dict, list[str] | None]:
+        """一个封口文件的完整检查：回 (manifest, 拦住它的检查码；通过则 None)。"""
         plan = plan_half(job, p, backend=backend)
         try:
             manifest = inspector.inspect(
@@ -253,25 +251,46 @@ def inspect_produced(
                 reason=str(exc)[:200],
                 run_id=job.id,
             )
-        summary = inspector.summary(manifest)
-        if manifest["policy"]["verdict"] == inspector.REJECTED:
-            # 拦住这一项的是哪些检查：失败的；严格政策下必需 unknown 也算（D08）
-            blocked = list(manifest["policy"]["failed"])
-            if manifest["policy"]["mode"] == inspector.POLICY_STRICT or p.format == "svg":
-                blocked += manifest["policy"]["unknown"]
+        if manifest["policy"]["verdict"] != inspector.REJECTED:
+            return manifest, None
+        # 拦住这一项的是哪些检查：失败的；严格政策下必需 unknown 也算（D08）
+        blocked = list(manifest["policy"]["failed"])
+        if manifest["policy"]["mode"] == inspector.POLICY_STRICT or p.format == "svg":
+            blocked += manifest["policy"]["unknown"]
+        return manifest, blocked
+
+    out: list[exportjob.Produced] = []
+    for p in produced:
+        if p.error_code is not None or p.tmp_path is None:
+            out.append(p)
+            continue
+        # 多页 PDF（#1370）：检查器只读首页，所以**每一页**各自带着自己的单页文件走同一套检查，
+        # 任何一页不过整份不发布（码前加页号）；合并后的文件再整份检查一次（完整性 + 首页）
+        blocked: list[str] | None = None
+        checked: dict[str, list[str] | None] = {}
+        for n, part in enumerate(p.parts or [], start=1):
+            key = str(part.tmp_path)
+            if key not in checked:
+                checked[key] = inspect_file(part)[1]
+            if checked[key] and blocked is None:
+                blocked = [f"page {n}: {c}" for c in checked[key]]
+        manifest = None
+        if blocked is None:
+            manifest, blocked = inspect_file(p)
+        if blocked is not None:
             out.append(
                 exportjob.Produced(
                     format=p.format,
                     error_code="artifact_rejected",
                     error_params={
                         "failed": ", ".join(blocked),
-                        "policy": manifest["policy"]["mode"],
+                        "policy": policy.mode,
                     },
-                    manifest=summary,
+                    manifest=inspector.summary(manifest) if manifest else None,
                 )
             )
             continue
-        p.manifest = summary
+        p.manifest = inspector.summary(manifest)
         out.append(p)
     return out
 

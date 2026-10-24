@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import type { PdfPagesCapture, RuntimeAssetInfo } from '@/lib/api'
 import { mergePdfPlan, pdfPagesBaseName } from './pdfPagesMerge'
 
-const asset = (id: string, stem: string, script = 's.py'): RuntimeAssetInfo =>
-  ({ id, script, stem, entry: 'main', status: 'ready' }) as unknown as RuntimeAssetInfo
+const asset = (id: string, stem: string, script = 's.py', run_config?: string): RuntimeAssetInfo =>
+  ({ id, script, stem, entry: 'main', status: 'ready', ...(run_config ? { run_config } : {}) }) as unknown as RuntimeAssetInfo
 const entry = (over: Partial<PdfPagesCapture> = {}): PdfPagesCapture => ({
   name: 'all_samples.pdf',
   pages: 3,
@@ -16,7 +16,7 @@ const entry = (over: Partial<PdfPagesCapture> = {}): PdfPagesCapture => ({
   ...over,
 })
 const A = [asset('r:a', 'a'), asset('r:b', 'b'), asset('r:c', 'c')]
-const of = (...e: PdfPagesCapture[]) => () => e
+const of = (...e: PdfPagesCapture[]) => () => ({ pages: e, runConfig: '' })
 
 describe('mergePdfPlan', () => {
   it('页序取脚本的 page_stems，与所选图的顺序无关；名字取 PdfPages 的文件名', () => {
@@ -48,6 +48,23 @@ describe('mergePdfPlan', () => {
   it('第一项对不上就看下一项', () => {
     const other = entry({ path: 'x.pdf', page_stems: ['q', 'r'] })
     expect(mergePdfPlan(['r:a', 'r:b'], A, of(other, entry()))?.name).toBe('all_samples')
+  })
+})
+
+describe('账本只属于产出它的那次运行（Codex #1395 P1）', () => {
+  const ledger = (runConfig: string) => () => ({ pages: [entry()], runConfig })
+  it('素材与账本同一配置：提供', () => {
+    const X = [asset('r:a', 'a', 's.py', 'rc_x'), asset('r:b', 'b', 's.py', 'rc_x')]
+    expect(mergePdfPlan(['r:a', 'r:b'], X, ledger('rc_x'))?.figureIds).toEqual(['r:a', 'r:b'])
+  })
+  it('配置 X 的 a 与配置 Y 的 b：不提供（不拼两次运行都没产出过的混合 PDF）', () => {
+    const mixed = [asset('r:a', 'a', 's.py', 'rc_x'), asset('r:b', 'b', 's.py', 'rc_y')]
+    expect(mergePdfPlan(['r:a', 'r:b'], mixed, ledger('rc_x'))).toBeNull()
+  })
+  it('账本是别的配置那次运行的：不提供', () => {
+    const X = [asset('r:a', 'a', 's.py', 'rc_x'), asset('r:b', 'b', 's.py', 'rc_x')]
+    expect(mergePdfPlan(['r:a', 'r:b'], X, ledger(''))).toBeNull()
+    expect(mergePdfPlan(['r:a', 'r:b'], A, ledger('rc_x'))).toBeNull()
   })
 })
 

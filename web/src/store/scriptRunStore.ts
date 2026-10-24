@@ -86,6 +86,8 @@ export interface ScriptRunState {
   unlinkedStems?: string[]
   /** 成功那次里脚本用 `PdfPages` 写的多页 PDF（后端 `pdf_pages`；导出对话框据此提供「合成一个多页 PDF」，#1370） */
   pdfPages?: PdfPagesCapture[]
+  /** 产出这份 `pdfPages` 的那次运行的配置引用（无参数 = ''）：账本只属于那一次运行，不同配置的同名图不能混着拼页 */
+  pdfPagesRunConfig?: string
   /** 用户已点取消、原请求尚未落地 */
   cancelRequested: boolean
   gen: number
@@ -318,6 +320,7 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         descriptors: res.descriptors,
         droppedFigures: res.dropped_figures ?? 0,
         pdfPages: res.pdf_pages ?? [],
+        pdfPagesRunConfig: res.run_config ?? '',
         stems: res.stems,
         unlinkedStems: res.unlinked_stems ?? [],
         error: null,

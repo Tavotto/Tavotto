@@ -121,7 +121,6 @@ from .engine import (
     originalspec as engine_originalspec,
     originrecord as engine_originrecord,
     patchspec as engine_patchspec,
-    pdfmerge as engine_pdfmerge,
     perfprobe as engine_perfprobe,
     pool as engine_pool,
     preparation as engine_preparation,
@@ -2850,18 +2849,20 @@ class _PageJob:
 
 def _export_produce_merged_pdf(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     """`merge_pdf`（#1370）：每一页先走现有的单页 PDF 导出（`_export_produce_original`，一字不改），
-    再由 `pdfmerge.merge_pdf_pages` 按请求给的页序 pikepdf 拼成一个文件，合成**一个** `Produced`。
+    再由 `pdfbackend.concat_pdf` 按请求给的页序 pikepdf 拼成一个文件，合成**一个** `Produced`。
 
     * 任何一页失败 = 整个多页 PDF 失败，带那一页自己的错误码（缺一页的多页 PDF 页序就错了，不交付）；
     * 同一张图在页序里出现多次（同一来源、同样的编辑）只导一次，按页序重复放；
-    * 字体每页各嵌一份是已知代价（见 `engine/pdfmerge.py`）。
+    * 字体每页各嵌一份是已知代价（见 `rendercore/facade.concat_pdf`）。
     """
     req = job.request
     pages = req.merge_pdf.pages
     singles: list[Path] = []
     done: dict[str, Path] = {}
+    done_products: dict = {}
     first = None
     vectors: list[bool] = []
+    page_products: list = []
     for i, src in enumerate(pages):
         job.check_cancelled()
         key = json.dumps(
@@ -2891,12 +2892,14 @@ def _export_produce_merged_pdf(job, tmp_dir: Path, *, artifact_sources=None) -> 
             if first is None:
                 first = one
             vectors.append(one.vector)
+            done_products[key] = one
         singles.append(path)
+        page_products.append(done_products[key])
     job.check_cancelled()
     out = tmp_dir / "merged.pdf"
     try:
-        engine_pdfmerge.merge_pdf_pages(singles, out)
-    except engine_pdfmerge.PdfMergeError as exc:
+        pdfbackend.concat_pdf(singles, out)
+    except pdfbackend.PdfConcatError as exc:
         return [
             engine_exportjob.Produced(
                 format=engine_exportreq.FORMAT_PDF,
@@ -2914,6 +2917,8 @@ def _export_produce_merged_pdf(job, tmp_dir: Path, *, artifact_sources=None) -> 
             width_mm=first.width_mm,
             height_mm=first.height_mm,
             vector=all(vectors),
+            # 检查器只读首页：逐页的单页文件交给 inspect 钩子各检查一遍（见 artifactinspect.inspect_produced）
+            parts=page_products,
         )
     ]
 

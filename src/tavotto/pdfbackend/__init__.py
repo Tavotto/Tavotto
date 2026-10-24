@@ -28,6 +28,8 @@
   original_pdf(src, out, page_pt)   → 按原图尺寸出 PDF（矢量源整页搬运，不重画；
                                        位图源的页面尺寸由调用方给——密度的解析
                                        只有 engine/originalspec 一处）
+  concat_pdf(singles, out)          → 把若干单页 PDF 按顺序拼成一个多页 PDF（不重画；回页数；
+                                       输入不是恰好一页 → `PdfConcatError`；#1370）
   original_png(src, out, ppi, transparent)
                                     → 按原图出 PNG（位图**永远**保源像素网格；
                                        JPEG 源换容器不换像素）
@@ -220,6 +222,18 @@ def original_pdf(src, out, page_pt=None):
     return _impl().original_pdf(src, out, page_pt)
 
 
+class PdfConcatError(ValueError):
+    """`concat_pdf` 的输入不是「恰好一页的可读 PDF」，或没有输入（契约层的异常类，与实现无关）。"""
+
+
+def concat_pdf(singles, out):
+    impl = _impl()
+    try:
+        return impl.concat_pdf(singles, out)
+    except impl.PdfConcatError as exc:
+        raise PdfConcatError(str(exc)) from exc
+
+
 def original_png(src, out, ppi, transparent=False):
     return _impl().original_png(src, out, ppi, transparent)
 
@@ -261,6 +275,7 @@ __all__ = [
     "annotate_asset",
     "compare_png",
     "compose",
+    "concat_pdf",
     "coverage_ranges",
     "hex2rgb",
     "missing_glyphs",

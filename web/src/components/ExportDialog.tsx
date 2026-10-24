@@ -881,7 +881,10 @@ export function ExportDialog() {
         ? mergePdfPlan(
             canvasFigures.map((f) => f.figureId),
             runtimeAssets,
-            (script) => scriptPdfPages[script]?.pdfPages,
+            (script) => {
+              const run = scriptPdfPages[script];
+              return run?.pdfPages ? { pages: run.pdfPages, runConfig: run.pdfPagesRunConfig ?? "" } : undefined;
+            },
           )
         : null,
     [batchMode, formats, canvasFigures, runtimeAssets, scriptPdfPages],
