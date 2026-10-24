@@ -989,3 +989,105 @@ def test_pytest_env_leaves_data_isolation_to_conftest_like_ci(tmp_path, monkeypa
     )
     A.run_pytest_task(lab, A.TASKS["pytest"], tmp_path, ["tests/test_a.py"], None, {})
     assert "TAVOTTO_DATA_DIR" not in seen["env"] and "MPLCONFIGDIR" not in seen["env"]
+
+
+# --------------------------------------------------------------------------- 交互会话执行器
+import gui_host as G  # noqa: E402
+
+
+def test_gui_bridge_without_an_interactive_session_is_environment_unavailable(
+    tmp_path, monkeypatch
+):
+    lab = A.Lab(tmp_path)
+    lab.state.mkdir()
+    monkeypatch.setattr(A, "ensure_gui_task", lambda lab: {"exit_code": 0})
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(A, "GUI_START_WAIT_S", 0)
+    out = A.run_in_gui(lab, RUN, ["x"], tmp_path, {}, tmp_path / "p", 10)
+    assert out["gui"] == "no_interactive_session"
+    assert not (lab.state / "gui" / "request.json").exists()  # 没人接的请求不留着等下一次误跑
+
+
+def _write_request(lab, run_id, argv, written=None, timeout=30):
+    gui = lab.state / "gui"
+    gui.mkdir(parents=True, exist_ok=True)
+    (gui / "request.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "argv": argv,
+                "cwd": str(lab.root),
+                "env": dict(os.environ),
+                "timeout": timeout,
+                "out_prefix": str(lab.root / "out" / "p"),
+                "written": A.time.time() if written is None else written,
+            }
+        )
+    )
+
+
+@pytest.mark.parametrize("run_id,age", [("../evil", 0), (RUN, 10_000)])
+def test_gui_host_ignores_stale_or_malformed_requests(tmp_path, run_id, age):
+    lab = A.Lab(tmp_path)
+    _write_request(
+        lab, run_id, [sys.executable, "-c", "open('ran','w')"], written=A.time.time() - age
+    )
+    assert G.serve(lab) == 0
+    assert not (tmp_path / "ran").exists() and not list((lab.state / "gui").glob("*.result.json"))
+
+
+def test_gui_host_runs_the_request_and_writes_the_result(tmp_path):
+    lab = A.Lab(tmp_path)
+    _write_request(lab, RUN, [sys.executable, "-c", "print('hello from the desktop')"])
+    assert G.serve(lab) == 0
+    res = json.loads((lab.state / "gui" / f"{RUN}.result.json").read_text())
+    assert res["exit_code"] == 0 and res["timed_out"] is False
+    assert "hello from the desktop" in (lab.root / "out" / "p.stdout.log").read_text()
+    assert not (lab.state / "gui" / "request.json").exists()
+
+
+def test_gui_host_honours_the_stop_flag(tmp_path):
+    lab = A.Lab(tmp_path)
+    _write_request(lab, RUN, [sys.executable, "-c", "import time; time.sleep(60)"])
+    (lab.state / "gui" / f"{RUN}.stop").write_text("stop")
+    G.serve(lab)
+    res = json.loads((lab.state / "gui" / f"{RUN}.result.json").read_text())
+    assert res["timed_out"] is True and res["exit_code"] is None
+
+
+def test_desktop_result_from_session_zero_is_not_a_window_test(tmp_path, monkeypatch):
+    lab = A.Lab(tmp_path)
+    py = lab.venv_python()
+    py.parent.mkdir(parents=True)
+    py.write_text("")
+    monkeypatch.setattr(A, "package_path", lambda lab, name: (tmp_path / "s.exe", None))
+    monkeypatch.setattr(
+        A, "ensure_msedgedriver", lambda lab, env: (tmp_path / "d.exe", "155.0.0.1")
+    )
+    monkeypatch.setattr(A, "uninstall_all", lambda: True)
+    monkeypatch.setattr(
+        A, "install_package", lambda s: {"ok": True, "shell": str(tmp_path / "Tavotto.exe")}
+    )
+    monkeypatch.setattr(A, "webview2_policy_ok", lambda shell: True)
+    monkeypatch.setattr(
+        A, "run_in_gui", lambda *a, **k: {"gui": "ran", "exit_code": 0, "session_id": 0}
+    )
+    out = A.run_desktop_window_task(lab, RUN, tmp_path, {}, "x.exe")
+    assert out["result"] == "error" and "session 0" in out["summary"]
+
+
+def test_stop_also_signals_the_desktop_half(tmp_path, monkeypatch):
+    lab = A.Lab(tmp_path)
+    lab.state.mkdir()
+    lab.lock_path.write_text(json.dumps({"pid": 4242, "run_id": RUN}))
+    monkeypatch.setattr(A, "_terminate", lambda pid: None)
+    monkeypatch.setattr(A, "_pid_alive", lambda pid: False)
+    A.cmd_stop(lab)
+    assert (lab.state / "gui" / f"{RUN}.stop").exists()
+
+
+def test_gui_setup_keeps_the_password_out_of_the_registry():
+    ps = W.GUI_SETUP_PS
+    assert "LsaStorePrivateData" in ps and "Remove-ItemProperty $wl DefaultPassword" in ps
+    assert "Set-ItemProperty $wl DefaultPassword" not in ps
+    assert "'__PW__'" in ps  # 只在发送时替换，仓库里没有真值
