@@ -274,7 +274,6 @@
     "start": "Export",
     "targetNoFigure": "No current figure",
     "svgHint": "Vector · text stays editable by default",
-    "thumbNote": "Thumbnail is a sketch · not the final file",
     "tiffHint": "Raster · lossless",
     "title": "Export",
     "transparent": "Transparent background (PNG / TIFF only)",

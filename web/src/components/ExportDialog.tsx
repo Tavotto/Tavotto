@@ -1970,7 +1970,7 @@ function FigureThumbArt({
  * * 多图：顶部缩略图条「整版 / 每张图」，有检查提示的缩略图带橙点，下面是选中那一项的大预览。
  *
  * 点缩略图只是换预览（`onShow`）；是否同时改要导的那张由对话框按导出内容决定。
- * 预览不是最终文件（位图格式的像素、图内修改的合成不在这里），沿用 `thumbNote` 的克制说明。
+ * 预览不是最终文件（位图格式的像素、图内修改的合成不在这里），但不另加文字说明。
  */
 function ExportPreviewPane({
   single,
@@ -2077,14 +2077,10 @@ function ExportPreviewPane({
               <ImageOff size={ICON_SIZE.md} className="text-ink-3" aria-hidden />
             </div>
           )}
-          {/* 左下角一枚小标：这块预览的尺寸 + 「示意」。预览不是最终文件（位图格式的像素、页面合成不在这里），
-              说一句，克制：中性灰，不是警告 */}
+          {/* 左下角一枚小标：这块预览的尺寸。不加「示意」之类的说明（用户 10-24：别加字） */}
           <div className="pointer-events-none absolute bottom-2 left-2 flex max-w-[calc(100%-4rem)] items-center gap-1.5 rounded-full bg-surface/80 px-2.5 py-1 backdrop-blur">
             <span data-export-preview-size className="type-meta truncate tabular-nums">
               {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
-            </span>
-            <span data-export-thumb-note className="type-caption truncate text-ink-3">
-              {ex("thumbNote")}
             </span>
           </div>
         </div>

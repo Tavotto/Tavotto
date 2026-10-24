@@ -3108,17 +3108,15 @@ describe('预览信息完善（PR3）：缩略图说真话', () => {
   const target = () => q('[data-export-target]')!
   const stage = () => q('[data-export-preview-stage]')!
 
-  it('左栏预览角上有「示意 · 非最终文件」的标注（两种范围都有），且不是警告色', async () => {
+  it('预览角上只有尺寸，不带「示意 · 非最终文件」之类的说明（两种范围都没有）', async () => {
     await setup(9)
-    expect(stage().querySelector('[data-export-thumb-note]')?.textContent).toBe(
-      '缩略图仅为示意 · 非最终文件',
-    )
-    expect(stage().querySelector('[data-export-thumb-note]')?.className).not.toContain('warn')
-    expect(target().querySelector('[data-export-thumb-note]'), '一行头部不再带这句').toBeNull()
+    expect(document.body.textContent).not.toContain('仅为示意')
+    expect(stage().querySelector('[data-export-preview-size]')).toBeTruthy()
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await act(async () => useUiStore.getState().setExportOpen(false))
     await act(async () => useUiStore.getState().setExportOpen(true))
-    expect(stage().querySelector('[data-export-thumb-note]')).toBeTruthy()
+    expect(document.body.textContent).not.toContain('仅为示意')
+    expect(target()).toBeTruthy()
   })
 
   it('勾了透明背景（PNG 画布范围）：左栏大预览的页面画成棋盘格；不勾就是纸白', async () => {

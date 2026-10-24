@@ -21,17 +21,16 @@ async function openExport(page: Page, baseURL: string) {
   return dialog
 }
 
-test('导出预览角标：有「示意」标注，勾透明背景后页面是棋盘格', async ({ app, page }) => {
+test('导出预览角标：只有尺寸、没有「示意」说明，勾透明背景后页面是棋盘格', async ({ app, page }) => {
   test.setTimeout(180_000)
   const a = await app()
   const dialog = await openExport(page, a.baseURL)
-  // 顶部只有一行「名字 · 尺寸」，「示意」标注挂在左栏预览的角上
+  // 左栏预览角上只有尺寸小标，不带「示意」之类的说明
   const stage = dialog.locator('[data-export-preview-stage]')
-  const note = stage.locator('[data-export-thumb-note]')
+  const note = stage.locator('[data-export-preview-size]')
   await expect(note).toBeVisible()
-  await expect(note).not.toHaveText('')
-  await expect(dialog.locator('[data-export-target] [data-export-thumb-note]')).toHaveCount(0)
-  // 标注在对话框内、没有撑破它
+  await expect(dialog.locator('[data-export-thumb-note]')).toHaveCount(0)
+  // 小标在对话框内、没有撑破它
   const nb = (await note.boundingBox())!
   const db = (await dialog.boundingBox())!
   expect(nb.x).toBeGreaterThanOrEqual(db.x)

@@ -596,7 +596,6 @@ export default interface Resources {
       "strictToggle": "严格核验产物",
       "svgHint": "矢量 · 文字默认保留为文字",
       "targetNoFigure": "当前没有图",
-      "thumbNote": "缩略图仅为示意 · 非最终文件",
       "tiffHint": "位图 · 无损压缩",
       "title": "导出",
       "toast": {
