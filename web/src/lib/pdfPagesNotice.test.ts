@@ -10,7 +10,7 @@ const text = (d: ReturnType<typeof deps>) => formatMessage(d.ui.setStatus.mock.c
 beforeEach(() => resetPdfPagesNotices())
 
 describe('多页 PDF 提醒胶囊（#1370）', () => {
-  it('一句话点名 PDF、说清每页当一张图、导出是单页；产品名来自 brand 常量；无按钮', async () => {
+  it('一句话点名 PDF、说清每页当一张图、导出可合成回多页 PDF（PR3）；产品名来自 brand 常量；无按钮', async () => {
     await i18n.changeLanguage('zh-CN')
     const d = deps()
     noticePdfPages('o', [{ name: 'all_samples.pdf', pages: 3, captured: 3, stems: [] }], d)
@@ -18,7 +18,7 @@ describe('多页 PDF 提醒胶囊（#1370）', () => {
     expect(sentence).toContain('3 张图')
     expect(sentence).toContain('all_samples.pdf')
     expect(sentence).toContain(PRODUCT_NAME)
-    expect(sentence).toContain('单页文件')
+    expect(sentence).toContain('合成回一个多页 PDF')
     expect(d.ui.setStatus.mock.calls[0][2]).toEqual({ owner: 'o' }) // 没有 action
   })
 
