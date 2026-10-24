@@ -56,7 +56,9 @@ def test_status_admits_it_cannot_help_without_any_python(monkeypatch):
 @pytest.mark.parametrize(
     "code", ["explicit_python_unusable", "project_python_unusable", "conda_launcher_unavailable"]
 )
-def test_status_blames_the_users_environment_not_the_install_when_runtime_is_fine(monkeypatch, code):
+def test_status_blames_the_users_environment_not_the_install_when_runtime_is_fine(
+    monkeypatch, code
+):
     """桌面版（该带内置 runtime）里，用户自选的环境用不了 / Conda 激活失败，说的必须是真实原因：
     不能是「安装文件不完整，请重新安装」（Windows Lab 环境矩阵 conda-named 腿：bundled 腿全绿，却让用户去重装）。"""
 
