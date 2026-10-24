@@ -46,8 +46,13 @@ def box(tmp_path, monkeypatch):
 
 def _env_at(prefix: Path) -> Path:
     """在 prefix 里放一个假解释器文件（只用于分类 / is_file，不会被执行），回 prefix。"""
-    put(prefix / ("Scripts" if os.name == "nt" else "bin") / "python", b"")
+    put(_env_python(prefix), b"")
     return prefix
+
+
+def _env_python(prefix: Path) -> Path:
+    """假环境里解释器的位置：Windows 是 `Scripts/python.exe`（产品只认这个名字），其余 `bin/python`。"""
+    return prefix / "Scripts" / "python.exe" if os.name == "nt" else prefix / "bin" / "python"
 
 
 def _py(code: str) -> list[str]:
@@ -352,12 +357,8 @@ def test_system_and_builtin_environments_are_never_writable_whichever_list_they_
     builtin = _env_at(box.tmp / "envs" / "builtin")
     user = _env_at(box.tmp / "envs" / "user")
     kinds = {
-        os.path.join(
-            str(sysenv), "bin" if os.name != "nt" else "Scripts", "python"
-        ): convertdeps.KIND_SYSTEM,
-        os.path.join(
-            str(builtin), "bin" if os.name != "nt" else "Scripts", "python"
-        ): convertdeps.KIND_BUILTIN,
+        str(_env_python(sysenv)): convertdeps.KIND_SYSTEM,
+        str(_env_python(builtin)): convertdeps.KIND_BUILTIN,
     }
     monkeypatch.setattr(
         convertdeps,
@@ -369,8 +370,8 @@ def test_system_and_builtin_environments_are_never_writable_whichever_list_they_
         box,
         env_prefixes=[sysenv, builtin, user],  # 准备会话用的就是系统 / 内置解释器
         environments={
-            "s": str(sysenv / ("Scripts" if os.name == "nt" else "bin") / "python"),
-            "b": str(builtin / ("Scripts" if os.name == "nt" else "bin") / "python"),
+            "s": str(_env_python(sysenv)),
+            "b": str(_env_python(builtin)),
         },
     )
     dirs = command.command_writable_dirs(ctx)
@@ -723,7 +724,8 @@ def test_macos_profile_denies_the_agent_escapes_and_allows_only_the_listed_servi
     assert (
         "(deny signal)(allow signal (target self) (target children) (target same-sandbox))" in prof
     )
-    assert f'(deny file-read* (subpath "{os.path.realpath(tmp_path / "ssh")}"))' in prof
+    ssh = os.path.realpath(tmp_path / "ssh").replace("\\", "\\\\")  # SBPL 字符串里反斜杠要写两个
+    assert f'(deny file-read* (subpath "{ssh}"))' in prof
     # 可写：只有 scratch、env、/dev/null
     writes = prof.split("(allow file-write* ", 1)[1].split("(deny appleevent-send)", 1)[0]
     assert (
@@ -1032,9 +1034,7 @@ def test_the_snapshot_covers_every_environment_the_command_may_write(box):
     """P2：可写清单与快照同源——`change_python` 新建的环境（只进 environments）和只靠 env_prefixes 进来的环境都有基线。"""
     import json
 
-    new_py = str(
-        _env_at(box.tmp / "envs" / "new") / ("Scripts" if os.name == "nt" else "bin") / "python"
-    )
+    new_py = str(_env_python(_env_at(box.tmp / "envs" / "new")))
     via_prefix = _env_at(box.tmp / "envs" / "viaprefix")
     ctx = change_ctx(box, env_prefixes=[via_prefix])
     ctx.environments["new"] = new_py  # change_python 之后的样子
