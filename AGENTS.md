@@ -26,17 +26,11 @@
   改动一侧必须同步另一侧。二十来对**严格同源对**与各自的看护用例、以及
   出版规范 / 导出请求 / 用户样式 / 文字词汇四条「全产品只有一份」的结构，
   全文在 `docs/rules/repo/same-origin-pairs.md`——改到表里任一侧先开那张表。
-- **安全边界**：会话认证（ADR 0008）不许被任何新端点绕过；worker 沙盒与
-  `Path.unlink` 守卫不放松（safe 档的 cwd 可按项目显式切到脚本目录，ADR 0047——
-  守卫原样，变的只是相对路径写到哪，且要用户按项目确认；项目用的是用户自己的 Python 时默认即脚本目录，
-  那是他「像终端里那样跑」的意思表示，ADR 0107）。
-- **渲染闭包零 PyMuPDF（ADR 0072，2026-09-22 起）**：Tavotto 的应用 / 发行 / runtime 闭包里
-  没有 pymupdf / fitz——PDF 的读、写、栅格全经 `pdfbackend/` 契约层走 `rendercore/`
-  （pikepdf / HarfBuzz / PDFium render child 与批准字体）。看护是 `scripts/ci/retirement_scan.py`
-  的五把尺子（应用源码 AST / 声明依赖闭包 / 干净进程阻断器 / 产物 native 名单 + wheel METADATA /
-  SBOM，`tests/test_retirement_scan.py` + package / exe smoke 那三步）；主语是闭包不是硬盘：
-  测试的独立读取器、`scripts/dev/`、用户科学脚本自己的 fitz 都不算残留。`TAVOTTO_RENDER_BACKEND=pymupdf`
-  是明确的 `backend_retired` 错误，不是回退。
+- **安全边界**：会话认证（ADR 0008）不许被任何新端点绕过；worker 沙盒与 `Path.unlink` 守卫不放松
+  （cwd 切到脚本目录的条件见 ADR 0047 / 0107）。
+- **渲染闭包零 PyMuPDF（ADR 0072）**：应用 / 发行 / runtime 闭包里没有 pymupdf / fitz，PDF 全经
+  `pdfbackend/` 契约层走 `rendercore/`；`scripts/ci/retirement_scan.py` 看护；
+  `TAVOTTO_RENDER_BACKEND=pymupdf` 是 `backend_retired` 错误，不是回退。
 - **隐私**：遥测三档同意（unset ≠ 同意）、白名单结构性防线、
   `TAVOTTO_NO_TELEMETRY=1` 硬开关；用户脚本/路径/图内文字在结构上就发不出去。
   诊断包先脱敏再交出。
@@ -45,12 +39,10 @@
   一律 409 且原文件零改动。不许为省时间跳过 verify。
 - **运行时可写数据一律走 `engine/config.data_dir()`**，不往包目录、安装目录
   或仓库根写任何东西（macOS 上写 .app 会当场破坏代码签名）。
-- **1.0 收敛纪律**（退出条件与缺陷分级见 `docs/1.0-release-readiness.md`）：
-  除非 correctness / safety / compatibility / release blocker，禁止扩大产品
-  能力，禁止趁机重写已稳定模块。新增核心不变式测试提交前必须手工反证一次
-  （空门禁比没有门禁更坏）。统一实施包（`docs/implementation/tavotto-foundation/`）的
-  RenderCore / 首开两条主线是**登记例外**（ADR 0053/0072；全表见 1.0-release-readiness §1.8）：
-  它们替换的是渲染闭包与环境准备，按实施包的 registry / enrollment 逐项取得资格，不是「趁机重写」。
+- **1.0 收敛纪律**（`docs/1.0-release-readiness.md`）：除非 correctness / safety / compatibility /
+  release blocker，不扩大产品能力、不趁机重写已稳定模块；新增核心不变式测试提交前手工反证一次。
+  RenderCore / 首开两条主线是登记例外（ADR 0053 / 0072）。
+- 上面三条的全文（主语、看护、例外的边界）：`docs/rules/repo/invariants-detail.md`。
 - 许可证 AGPL-3.0-only；`docs/support-matrix.json` 是平台支持口径的唯一出处，
   README/网站/应用内文案必须与它一致。
 
@@ -78,25 +70,11 @@ cd workerd && cargo test && cargo clippy --all-targets -- -D warnings && cargo f
 python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 ```
 
-- **改完 Python 先过 Ruff，再跑针对性 pytest，最后才是完整验证。** 提交前那条
-  与 CI 那一格逐字相同；`--unsafe-fixes` 会动语义，要逐条看过再用。规则集在
-  `pyproject.toml` 的 `[tool.ruff]`，细节与取舍在 `docs/ci/ruff.md`。示例图库 /
-  playground 示例 / CompatBench 语料**不参与格式化**。**Ruff 不替代任何语义门禁。**
-- **新增 `sys.path` 源码根要同步审查 `[tool.ruff]` 的 `src`**，否则平铺 import 被判成第三方
-  （`docs/rules/ci/ruff-lint-lane.md`）。
-- 改了 `src/tavotto/rendercore/` 里字体 / 字形归属相关的东西、或换了批准字体集合
-  （`rendercore/fonts_allowlist.json`，先改 ADR 0060）：`python scripts/gen_canvas_coverage.py --write`
-  与 `python scripts/gen_glyph_plan_vectors.py --write`——那张覆盖表是前端「这个字
-  导出后是不是方框」的唯一依据。字体文件不进 git：跑用例 / 打包前先 `python scripts/fetch_fonts.py`。
-- 改了 `web/src` 或引擎四模块（manifest/overrides/pathgeom/patchspec）：
-  playground 产物 `python scripts/build_browser_playground.py`（网站仓库提交它，
-  `--check` 防漂移）；Codex 画布 `python scripts/build_mcp_widget.py` **只为本地
-  试用**——它不进 git（ADR 0043），CI 从每次 checkout 现建并验证。
-- 引擎改动后重启服务：`lsof -ti:5089 -sTCP:LISTEN | xargs kill; ./run.sh --no-browser`。
-- 完整验证链（CompatBench / 等价性矩阵 / 不变式 / nightly / E2E / 性能基线）
-  见 `docs/rules/ci/verification-chain.md`（`.github/AGENTS.md` 是速查表）。指导文档自身的门禁：`tests/test_agents_rules_index.py`
-  （速查表 ↔ 细则一一对应、引用都在、每份指令的棘轮上限、速查表每格 ≤ 300 B），
-  体积：`python scripts/dev/agents_budget.py --check`。
+- **改完 Python 先过 Ruff，再跑针对性 pytest，最后才是完整验证**；Ruff 不替代任何语义门禁。
+- 字体不进 git：跑用例 / 打包前先 `python scripts/fetch_fonts.py`。引擎改动后重启服务：
+  `lsof -ti:5089 -sTCP:LISTEN | xargs kill; ./run.sh --no-browser`。
+- 改了字体 / 字形归属、`web/src` 或引擎四模块、新增 `sys.path` 源码根，以及完整验证链与指导文档
+  门禁（`python scripts/dev/agents_budget.py --check`）：`docs/rules/repo/local-verification.md`。
 
 ## Review guidelines
 
@@ -122,5 +100,5 @@ python scripts/smoke_app.py --python .venv/bin/python   # 端到端冒烟
 | `packaging/` | `packaging/AGENTS.md` | wheel/sdist、内置渲染 runtime、PyInstaller、macOS 签名 |
 | `codex-plugin/` | `codex-plugin/AGENTS.md` → `docs/rules/plugin/` | Codex 插件、技能、MCP server、内嵌画布、首次使用契约 |
 | `.github/` | `.github/AGENTS.md`（速查表）→ `docs/rules/ci/` | CI 分层、门禁纪律、验证链、发布链 |
-| 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语、第三路径审查 |
+| 跨仓库 | `docs/rules/repo/` | 同源对总表、判据的主语、第三路径审查、不变量展开、本地验证 |
 | 架构决策 | `docs/adr/` | 改动前先读对应 ADR |
