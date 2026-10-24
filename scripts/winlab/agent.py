@@ -2688,14 +2688,15 @@ def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode
     base["preexisting_uninstall"] = uninstall_desktop_host(host, work, henv)
     inst = install_desktop_host(host, setup, work, henv)
     base["install"] = {k: v for k, v in inst.items() if k != "root"}
+    if not inst["ok"]:
+        levels["L2"] = "failed"
+        base["uninstall"] = uninstall_desktop_host(host, work, henv)  # 装了一半的也收掉，结果进报告
+        return {
+            **base,
+            "result": "failed",
+            "summary": "silent install did not register the host",
+        }
     try:
-        if not inst["ok"]:
-            levels["L2"] = "failed"
-            return {
-                **base,
-                "result": "failed",
-                "summary": "silent install did not register the host",
-            }
         extra = []
         if host.vscode_like:
             prof = run_dir / "work" / "profile"
