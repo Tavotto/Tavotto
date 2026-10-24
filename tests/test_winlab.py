@@ -1471,11 +1471,21 @@ def test_window_probe_is_deployed_with_the_agent():
     assert 'HERE / "window_probe.py"' in src
 
 
-def test_conda_legs_expect_the_python_pool_and_others_workerd():
+@pytest.mark.parametrize(
+    ("name", "plane"),
+    [
+        ("conda-prefix", "python"),
+        ("conda-named", "python"),
+        ("bundled", "workerd"),
+        ("cpython-3.13", "workerd"),
+        ("uv-3.12", "workerd"),
+    ],
+)
+def test_matrix_leg_control_plane_expectation(name, plane):
     # workerd 按设计不接需要 Conda 激活的启动（回退到 Python 渲染池）；其余腿必须真走 workerd
-    src = (WINLAB / "agent.py").read_text(encoding="utf-8")
-    assert '"python" if name.startswith("conda") else "workerd"' in src
-    assert {"conda-prefix", "conda-named"} <= set(re.findall(r'ok\["(conda-[a-z]+)"\]', src))
+    argv = A.matrix_leg_argv(Path("py"), Path("side.exe"), name, "env_override", "figs", ["--x"])
+    assert argv[argv.index("--expect-control-plane") + 1] == plane
+    assert argv[-1] == "--x"
 
 
 def test_host_exe_is_found_next_to_the_icon_or_uninstaller_when_install_location_is_empty(tmp_path):

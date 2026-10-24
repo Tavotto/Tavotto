@@ -2966,6 +2966,26 @@ def _find_sidecar(shell: Path) -> Path | None:
     return None
 
 
+def matrix_leg_argv(
+    py: Path, side: Path, name: str, expect: str, figs: str, extra: list[str]
+) -> list[str]:
+    """一条矩阵腿的 smoke argv。需要 Conda 激活的解释器 workerd 按设计不接，走 Python 渲染池
+    （用户 10-25 裁决，与 nightly 同）；其余腿必须真走 workerd。"""
+    return [
+        str(py),
+        "scripts/smoke_app.py",
+        "--exe",
+        str(side),
+        "--figures",
+        figs,
+        "--expect-source",
+        expect,
+        "--expect-control-plane",
+        "python" if name.startswith("conda") else "workerd",
+        *extra,
+    ]
+
+
 def run_env_matrix_task(lab: Lab, run_dir: Path, env: dict, package: str) -> dict:
     setup, err = package_path(lab, package)
     if err:
@@ -3010,20 +3030,7 @@ def run_env_matrix_task(lab: Lab, run_dir: Path, env: dict, package: str) -> dic
             lenv.pop("TAVOTTO_WORKER_PYTHON", None)
             if worker:
                 lenv["TAVOTTO_WORKER_PYTHON"] = worker
-            argv = [
-                str(lab.venv_python()),
-                "scripts/smoke_app.py",
-                "--exe",
-                str(side),
-                "--figures",
-                figs,
-                "--expect-source",
-                expect,
-                "--expect-control-plane",
-                # 需要 Conda 激活的解释器 workerd 按设计不接，走 Python 渲染池（用户 10-25 裁决，与 nightly 同）
-                "python" if name.startswith("conda") else "workerd",
-                *extra,
-            ]
+            argv = matrix_leg_argv(lab.venv_python(), side, name, expect, figs, extra)
             step = _run_logged(argv, lab.repo, lenv, run_dir / "evidence" / f"leg-{name}", 900)
             legs.append(
                 {
