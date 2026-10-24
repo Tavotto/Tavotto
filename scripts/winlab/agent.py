@@ -232,6 +232,22 @@ TASKS: dict[str, Task] = {
             ),
         ),
         Task(
+            id="desktop-window",
+            kind="desktop-window",
+            summary="真窗口：装包后在已登录的交互会话里跑 tests/desktop_windows（WebView2 + msedgedriver 附着），与 nightly 同一套用例",
+            timeout_s=2400,
+            accepts_package=True,
+            claim=(
+                "tests/desktop_windows 的真窗口用例在 Lab 的交互桌面（非管理员、zh-CN、Defender 开）上对这个安装包的 junit 结论；"
+                "任何 skip 都让结论降为 skipped"
+            ),
+            unverified=(
+                "交互会话是自动登录的控制台会话，不是 RDP、不是多显示器 / 高 DPI",
+                "键鼠经 CDP 与窗口消息投递，不是真实硬件输入（IME 不覆盖）",
+                "Server 2025 不是 Windows 10 / 11 客户端",
+            ),
+        ),
+        Task(
             id="hosts-live",
             kind="hosts-live",
             summary="AI 宿主 L4/L5：真 Claude Code（国内 Anthropic 兼容模型）调用 Tavotto MCP，改图、导出、重开核对",
@@ -1654,6 +1670,296 @@ def run_installer_task(lab: Lab, run_dir: Path, env: dict, package: str, frm: st
     }
 
 
+# ----------------------------------------------------------------------------- 交互会话
+GUI_TASK = "TavottoLab-GUI"
+GUI_START_WAIT_S = 60
+WEBVIEW2_RT_KEY = (
+    r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+)
+WEBVIEW2_POLICY_KEY = r"SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments"
+DEBUG_PORT = 9222
+
+
+def ensure_gui_task(lab: Lab) -> dict:
+    """tavotto-lab 名下的计划任务：只在它已登录的交互会话里运行（/IT），动作是 gui_host.py。幂等。"""
+    host = Path(__file__).resolve().parent / "gui_host.py"
+    tr = f'"{BASE_PYTHON}" -I "{host}"'
+    out = subprocess.run(
+        [
+            "schtasks",
+            "/Create",
+            "/TN",
+            GUI_TASK,
+            "/TR",
+            tr,
+            "/SC",
+            "ONCE",
+            "/ST",
+            "00:00",
+            "/IT",
+            "/RL",
+            "LIMITED",
+            "/F",
+        ],
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    return {"exit_code": out.returncode}
+
+
+def run_in_gui(
+    lab: Lab, run_id: str, argv: list[str], cwd: Path, env: dict, out_prefix: Path, timeout: float
+) -> dict:
+    """把一条登记过的命令交给交互会话执行（gui_host.py），等结果。会话不在就 environment_unavailable——
+    绝不退回 session 0 里假装跑过。"""
+    gui = lab.state / "gui"
+    gui.mkdir(parents=True, exist_ok=True)
+    reg = ensure_gui_task(lab)
+    if reg["exit_code"] != 0:
+        return {"exit_code": None, "gui": "task_register_failed"}
+    req = {
+        "run_id": run_id,
+        "argv": argv,
+        "cwd": str(cwd),
+        "env": env,
+        "timeout": timeout,
+        "out_prefix": str(out_prefix),
+        "written": time.time(),
+    }
+    tmp = gui / "request.json.tmp"
+    tmp.write_text(json.dumps(req), encoding="utf-8")
+    os.replace(tmp, gui / "request.json")
+    subprocess.run(["schtasks", "/Run", "/TN", GUI_TASK], capture_output=True)
+    started = gui / f"{run_id}.started"
+    deadline = time.monotonic() + GUI_START_WAIT_S
+    while not started.exists():
+        if time.monotonic() > deadline:
+            (gui / "request.json").unlink(missing_ok=True)
+            return {"exit_code": None, "gui": "no_interactive_session"}
+        time.sleep(1)
+    info = json.loads(started.read_text(encoding="utf-8"))
+    result_path = gui / f"{run_id}.result.json"
+    deadline = time.monotonic() + timeout + 120
+    while not result_path.exists():
+        if time.monotonic() > deadline:
+            (gui / f"{run_id}.stop").write_text("timeout", encoding="utf-8")
+            return {
+                "exit_code": None,
+                "timed_out": True,
+                "gui": "no_result",
+                "session_id": info.get("session_id"),
+            }
+        time.sleep(2)
+    res = json.loads(result_path.read_text(encoding="utf-8"))
+    for f in (started, result_path):
+        f.unlink(missing_ok=True)
+    res["gui"] = "ran"
+    return res
+
+
+def _hkcu_installs() -> list[dict]:
+    import winreg
+
+    out = []
+    base = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+    try:
+        root = winreg.OpenKey(winreg.HKEY_CURRENT_USER, base)
+    except OSError:
+        return out
+    with root:
+        i = 0
+        while True:
+            try:
+                name = winreg.EnumKey(root, i)
+            except OSError:
+                break
+            i += 1
+            with winreg.OpenKey(root, name) as k:
+                vals = {}
+                for v in ("DisplayName", "DisplayVersion", "InstallLocation"):
+                    with contextlib.suppress(OSError):
+                        vals[v] = winreg.QueryValueEx(k, v)[0]
+            if str(vals.get("DisplayName", "")).startswith("Tavotto") and vals.get(
+                "InstallLocation"
+            ):
+                vals["InstallLocation"] = str(vals["InstallLocation"]).strip('"')
+                out.append(vals)
+    return out
+
+
+def install_package(setup: Path) -> dict:
+    subprocess.run([str(setup), "/S"], capture_output=True, timeout=900)
+    found = _hkcu_installs()
+    if not found:
+        return {"ok": False}
+    inst = Path(found[-1]["InstallLocation"])
+    shells = [p for p in inst.glob("*.exe") if p.name.lower().startswith("tavotto")]
+    return {
+        "ok": bool(shells),
+        "shell": str(shells[0]) if shells else None,
+        "version": found[-1].get("DisplayVersion"),
+        "name": found[-1].get("DisplayName"),
+    }
+
+
+def uninstall_all() -> bool:
+    for ent in _hkcu_installs():
+        u = Path(ent["InstallLocation"]) / "uninstall.exe"
+        if u.exists():
+            subprocess.run([str(u), "/S"], capture_output=True, timeout=600)
+            for _ in range(120):  # NSIS 卸载器会从 %TEMP% 重新拉起自己：等目录真的没了
+                if not u.exists():
+                    break
+                time.sleep(0.5)
+    return not _hkcu_installs()
+
+
+def webview2_policy_ok(shell: Path) -> bool:
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, WEBVIEW2_POLICY_KEY) as k:
+            value = winreg.QueryValueEx(k, shell.name)[0]
+    except OSError:
+        return False
+    return f"--remote-debugging-port={DEBUG_PORT}" in str(value)
+
+
+def ensure_msedgedriver(lab: Lab, env: dict) -> tuple[Path | None, str]:
+    """与本机 WebView2 Runtime 同版本的 msedgedriver（微软下载点直连），核 Authenticode 与版本号后缓存。"""
+    import winreg
+    import zipfile
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, WEBVIEW2_RT_KEY) as k:
+            rt = str(winreg.QueryValueEx(k, "pv")[0])
+    except OSError:
+        return None, "cannot read the WebView2 Runtime version"
+    if not re.fullmatch(r"\d+(\.\d+){3}", rt):
+        return None, f"odd WebView2 version {rt!r}"
+    d = lab.cache / "msedgedriver" / rt
+    drv = d / "msedgedriver.exe"
+    if not drv.exists():
+        d.mkdir(parents=True, exist_ok=True)
+        z = d / "edgedriver_win64.zip"
+        with _opener("direct").open(
+            f"https://msedgedriver.microsoft.com/{rt}/edgedriver_win64.zip", timeout=300
+        ) as r:
+            z.write_bytes(r.read())
+        with zipfile.ZipFile(z) as zf:
+            zf.extract("msedgedriver.exe", d)
+        z.unlink()
+    pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe"
+    sig = subprocess.run(
+        [
+            pwsh,
+            "-NoProfile",
+            "-c",
+            f"$s=Get-AuthenticodeSignature '{drv}'; \"$($s.Status)|$($s.SignerCertificate.Subject)\"",
+        ],
+        capture_output=True,
+        text=True,
+        errors="replace",
+    ).stdout.strip()
+    if not (sig.startswith("Valid|") and "O=Microsoft Corporation" in sig):
+        drv.unlink(missing_ok=True)
+        return None, f"msedgedriver signature check failed: {sig[:120]}"
+    ver = _tool_version([str(drv), "--version"]) or ""
+    if rt not in ver:
+        return None, f"msedgedriver {ver!r} does not match WebView2 {rt}"
+    return drv, rt
+
+
+def run_desktop_window_task(lab: Lab, run_id: str, run_dir: Path, env: dict, package: str) -> dict:
+    setup, err = package_path(lab, package)
+    if err:
+        return {"result": "environment_unavailable", "summary": err}
+    py = lab.venv_python()
+    if not py.exists():
+        return {
+            "result": "environment_unavailable",
+            "summary": "venv missing: run `winlab prepare` first",
+        }
+    drv, rt = ensure_msedgedriver(lab, env)
+    if drv is None:
+        return {"result": "environment_unavailable", "summary": rt}
+    uninstall_all()
+    inst = install_package(setup)
+    if not inst.get("ok"):
+        return {
+            "result": "error",
+            "summary": "silent install did not produce a shell",
+            "install": inst,
+        }
+    shell = Path(inst["shell"])
+    try:
+        if not webview2_policy_ok(shell):
+            return {
+                "result": "environment_unavailable",
+                "summary": f"HKLM WebView2 debug-port policy missing for {shell.name}: run `winlab.py admin gui-setup`",
+            }
+        junit = run_dir / "evidence" / "junit.xml"
+        genv = dict(env)
+        genv.update(
+            {
+                "TAVOTTO_DESKTOP_EXE": str(shell),
+                "TAVOTTO_MSEDGEDRIVER": str(drv),
+                "TAVOTTO_DESKTOP_WINDOW_REQUIRED": "1",
+                "TAVOTTO_WEBVIEW2_DEBUG_PORT": str(DEBUG_PORT),
+                "TAVOTTO_DW_ARTIFACTS": str(run_dir / "evidence" / "desktop-window"),
+                # 与 nightly 那一步同：失败信息与 xfail 理由是中文，别让代码页把它们转成 \uXXXX
+                "PYTHONUTF8": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONPATH": str(lab.repo / "src"),
+                "TEMP": str(run_dir / "work" / "tmp"),
+                "TMP": str(run_dir / "work" / "tmp"),
+            }
+        )
+        (run_dir / "work" / "tmp").mkdir(parents=True, exist_ok=True)
+        argv = [
+            str(py),
+            "-m",
+            "pytest",
+            "tests/desktop_windows",
+            "-p",
+            "no:cacheprovider",
+            "-v",
+            "-rA",
+            f"--junitxml={junit}",
+        ]
+        step = run_in_gui(lab, run_id, argv, lab.repo, genv, run_dir / "evidence" / "pytest", 1800)
+    finally:
+        uninstall_all()
+    if step.get("gui") == "no_interactive_session":
+        return {
+            "result": "environment_unavailable",
+            "summary": "no interactive session for tavotto-lab (autologon off, or someone RDP'd in as it): run `winlab.py admin gui-setup` and reboot",
+        }
+    if step.get("gui") != "ran":
+        return {"result": "error", "summary": f"gui bridge: {step.get('gui')}", "step": step}
+    if not step.get("session_id"):
+        # 会话 0 = 服务会话，没有用户桌面：那就不是真窗口验收
+        return {
+            "result": "error",
+            "summary": f"gui host ran in session {step.get('session_id')}, not an interactive one",
+            "step": step,
+        }
+    if step.get("timed_out"):
+        return {"result": "error", "summary": "desktop window tests timed out", "step": step}
+    result, summary, counts = av.judge_pytest(step, junit)
+    return {
+        "result": result,
+        "summary": summary,
+        "counts": counts,
+        "step": step,
+        "webview2": rt,
+        "package": {"name": package, "version": inst.get("version"), "display": inst.get("name")},
+        "session_id": step.get("session_id"),
+        "failures": junit_failures(junit, lab.root),
+    }
+
+
 def _run_body(
     lab: Lab,
     task: Task,
@@ -1671,6 +1977,10 @@ def _run_body(
         return run_pytest_task(lab, task, run_dir, tests, shard, env)
     if task.kind == "hosts-live":
         return run_hosts_live_task(lab, run_dir, env, model_conf or {})
+    if task.kind == "desktop-window":
+        return run_desktop_window_task(
+            lab, run_dir.name, run_dir, env, (pkg or {}).get("package", "")
+        )
     if task.kind == "installer":
         return run_installer_task(
             lab, run_dir, env, (pkg or {}).get("package", ""), (pkg or {}).get("from")
@@ -1993,6 +2303,11 @@ def cmd_stop(lab: Lab) -> dict:
             }
         return {"result": "passed", "summary": "no active job"}
     pid = int(holder.get("pid", 0))
+    if RUN_ID_RE.fullmatch(str(holder.get("run_id", ""))):
+        # 交互会话里那一半不是本进程的子孙：留停止标记，gui_host 看到就结束它的 Job
+        gui = lab.state / "gui"
+        gui.mkdir(parents=True, exist_ok=True)
+        (gui / f"{holder['run_id']}.stop").write_text("stop", encoding="utf-8")
     _terminate(pid)
     deadline = time.monotonic() + 15
     while _pid_alive(pid) and time.monotonic() < deadline:
