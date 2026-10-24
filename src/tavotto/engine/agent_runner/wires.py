@@ -368,7 +368,7 @@ class OpenAIChatWire:
       回填为 `{"role": "tool", "tool_call_id", "content"}`。
     * 长度上限字段默认 `max_tokens`（兼容网关通用）；OpenAI 自家 o 系列只认 `max_completion_tokens`，
       由调用方声明（`--max-tokens-field`，将来来自厂商目录），runner 不按模型名猜。
-    * 不传推理强度（本阶段只在 responses 上传）。回复里的 `reasoning_content`（DeepSeek / Kimi 等思考模式）
+    * 不传推理强度（本阶段只在 responses 上传）。回复里的 `reasoning_content`（DeepSeek 等的思考模式）
       存进 `Turn.native = {"reasoning_content": …}`，回放该 assistant 轮时原样放回同名字段：这类厂商要求
       带工具调用的轮次（以及工具结果之后的那条回复）把思考内容带回，否则整个请求被拒
       （"The `reasoning_content` in the thinking mode must be passed back to the API"）。
