@@ -1728,6 +1728,10 @@ def run_hosts_live_task(
     s1 = parse_recorded(rec_log)
     split = _line_count(rec_log)
     sid = opened_session_id(s1)
+    # MCP server 继承宿主进程的环境：宿主的用户目录被隔离时（CodeBuddy / MiniMax），它的默认数据目录也跟着走
+    data_dir = (
+        Path(henv.get("LOCALAPPDATA") or os.environ.get("LOCALAPPDATA") or Path.home()) / "Tavotto"
+    )
     journal_ok = journal_has_edits(data_dir, sid)
     if sid:
         r2 = _run_logged(
