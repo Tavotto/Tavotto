@@ -639,6 +639,32 @@ class DriverNativeLastWriter(unittest.TestCase):
         self.assertEqual(only_first["size"], (200, 100))
 
 
+class DriverNativeRefTitles(unittest.TestCase):
+    """native_ref 记的标题要含左/右标题：Tavotto 清单把三个位置都列为 title，只读 get_title() 会造假差异。"""
+
+    def test_left_and_right_titles_are_recorded_with_the_centre_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp) / "p"
+            project.mkdir()
+            (project / "s.py").write_text(
+                "import matplotlib.pyplot as plt\n"
+                "fig, ax = plt.subplots()\n"
+                "ax.set_title('centre'); ax.set_title('(a)', loc='left'); ax.set_title('n', loc='right')\n"
+                "fig.savefig('o.png')\n",
+                encoding="utf-8",
+            )
+            out = cm.run_driver(
+                sys.executable,
+                "native_ref",
+                {"script": str(project / "s.py"), "project": str(project), "entry": "__main__"},
+            )
+            self.assertTrue(out["ok"], out)
+            titles = [t for t in out["savefig_last_writer"]["o.png"]["titles"] if t]
+            self.assertEqual(titles, ["centre", "(a)", "n"])
+            sem = out["semantics"]["figure0"]["titles"]
+            self.assertEqual([t for t in sem if t], ["centre", "(a)", "n"])
+
+
 class RealExecution(unittest.TestCase):
     """Real native + Tavotto execution (needs the scientific stack)."""
 

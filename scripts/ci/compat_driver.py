@@ -324,6 +324,11 @@ def _ref_readable(path: str) -> bool:
         return False
 
 
+def _axes_titles(axes) -> list[str]:
+    """每个轴的中/左/右三个标题（`get_title()` 只给中间那个）；Tavotto 侧清单把三者都列为 title。"""
+    return [ax.get_title(loc=loc) for ax in axes for loc in ("center", "left", "right")]
+
+
 def _line_xy_digests(figure) -> list[str] | None:
     """Sorted per-Line2D `get_xydata()` digests (shape + little-endian float64, as `manifest.canonical_digest`).
 
@@ -400,7 +405,7 @@ def run_native_ref(req: dict) -> int:
             {
                 "figure": next(i for i, f in enumerate(figures) if f is self),
                 "path": os.path.realpath(target) if target else None,
-                "titles": [ax.get_title() for ax in self.axes],
+                "titles": _axes_titles(self.axes),
             }
         )
         return real_savefig(self, fname, *args, **kwargs)
@@ -493,8 +498,7 @@ def run_native_ref(req: dict) -> int:
         artifacts=artifacts,
         side_effects={"created": created, "modified": modified, "deleted": deleted},
         semantics={
-            f"figure{i}": {"titles": [ax.get_title() for ax in fig.axes]}
-            for i, fig in enumerate(figures)
+            f"figure{i}": {"titles": _axes_titles(fig.axes)} for i, fig in enumerate(figures)
         },
         line_xy=[_line_xy_digests(fig) for fig in figures],
         line_xy_incomparable=[_line_xy_incomparable(fig) for fig in figures],
