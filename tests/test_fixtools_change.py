@@ -568,6 +568,67 @@ def test_default_python_changer_reports_a_failed_build(box, monkeypatch):
     assert "new environment id" not in r.content and list(ctx.environments) == ["e"]
 
 
+def _fake_plan_factory(pyversionfix):
+    def fake_plan(failure, project):
+        return pyversionfix.PythonChangePlan(
+            from_version="3.14",
+            to_version="3.12",
+            base=pyversionfix.BASE_SYSTEM,
+            download_bytes=0,
+            code=failure["code"],
+            project=str(project),
+            script=failure["script"],
+            base_python="/sys/python3.12",
+        )
+
+    return fake_plan
+
+
+def test_change_python_hands_the_session_cancel_event_to_pyversionfix(box, monkeypatch):
+    """取消要真的传下去：缺省执行器把 `ctx.cancel`（修复会话的 `s.cancel`）交给 `apply_python_change`。"""
+    import threading
+
+    from tavotto.engine import projectenv, pyversionfix
+
+    got = {}
+
+    def fake_apply(plan, progress, cancel):
+        got["cancel"] = cancel
+        return {"ok": False, "code": "x"}
+
+    monkeypatch.setattr(pyversionfix, "plan_python_change", _fake_plan_factory(pyversionfix))
+    monkeypatch.setattr(pyversionfix, "apply_python_change", fake_apply)
+    monkeypatch.setattr(projectenv, "remembered", lambda root: None)
+    ctx = change_ctx(box)
+    ctx.cancel = threading.Event()
+    call(ctx, "change_python", {"version": "3.12"})
+    assert got["cancel"] is ctx.cancel
+
+
+def test_change_python_cancelled_after_planning_does_not_start_the_change(box, monkeypatch):
+    """规划期间用户点了取消：不动手（不调 apply），如实报 cancelled。"""
+    import threading
+
+    from tavotto.engine import projectenv, pyversionfix
+
+    ctx = change_ctx(box)
+    ctx.cancel = threading.Event()
+    plan = _fake_plan_factory(pyversionfix)
+
+    def plan_then_cancel(failure, project):
+        ctx.cancel.set()
+        return plan(failure, project)
+
+    applied = []
+    monkeypatch.setattr(pyversionfix, "plan_python_change", plan_then_cancel)
+    monkeypatch.setattr(
+        pyversionfix, "apply_python_change", lambda *a: applied.append(a) or {"ok": True}
+    )
+    monkeypatch.setattr(projectenv, "remembered", lambda root: None)
+    r = call(ctx, "change_python", {"version": "3.12"})
+    assert r.is_error and r.code == "cancelled" and applied == []
+
+
 def test_change_python_calls_the_executor_registers_the_new_env_and_snapshots(box):
     seen = []
     newpy = fake_python(box, "py312")

@@ -265,6 +265,7 @@ class FixSessions:
             report=report,
             script_path=script_path,
             ask=lambda card: self._ask(s, card, redactor),
+            cancel=s.cancel,
             **(ctx_kwargs or {}),
         )
         envelope = RunEnvelope(

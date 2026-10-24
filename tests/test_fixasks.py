@@ -663,3 +663,20 @@ def test_bundle_audit_paths_are_hashed_not_spelled_out():
     doc = json.loads(text)["fix_audit"][0]
     assert doc["args"]["path"].startswith("<path ") and doc["args"]["path"].endswith(".py>")
     assert doc["args"]["start_line"] == 3
+
+
+def test_the_session_hands_its_cancel_event_to_the_tool_context(box, monkeypatch):
+    """耗时执行器（换 Python）要能被「取消」叫停：修复会话构造的 FixContext 带的就是会话自己的 `s.cancel`。"""
+    from tavotto.engine import fixtools
+
+    built = []
+    real = fixtools.FixContext.for_fix_session
+
+    def spy(*a, **kw):
+        ctx = real(*a, **kw)
+        built.append(ctx)
+        return ctx
+
+    monkeypatch.setattr(fixtools.FixContext, "for_fix_session", spy)
+    s = start(box, Scripted([]), background=False)
+    assert built and built[0].cancel is s.cancel

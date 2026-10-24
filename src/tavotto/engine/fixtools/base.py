@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -62,6 +63,8 @@ class FixContext:
     #: 入参 card: {"kind": "approve"|"choice"|"pick"|"send", "tool": str, "summary": str, ...}
     #: 返回 {"answer": "yes"|"no"|<选项 id>|<路径>|"sent"|"cancelled"|"timeout", ...}
     ask: Callable[[dict], dict] | None = None
+    #: 修复会话的取消信号（`fixsession` 传 `s.cancel`）；耗时的执行器（换 Python 的下载 / 建环境）据此中途停下。None = 不可取消
+    cancel: threading.Event | None = None
     #: 「改」组的执行器，全部可注入（测试一律用假的，绝不往真实环境装包）。None = 用应用里现有的那条路径（见 `change.py`）：
     #: 装 / 卸包 `(python, [需求串]) -> {"ok": bool, "code": str, "done": [需求串]}`
     installer: Callable[[str, list[str]], dict] | None = None

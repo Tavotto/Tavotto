@@ -48,16 +48,17 @@ def _default_uninstaller(python: str, distributions: list[str]) -> dict:
     return {"ok": True, "code": "", "done": done}
 
 
-def _default_python_changer(req: dict) -> dict:
+def _default_python_changer(req: dict, cancel: threading.Event | None = None) -> dict:
     """另建一个指定 Python 版本的 Tavotto 受管环境（`pyversionfix.plan_python_change` → `apply_python_change`）。
 
     只在 Tavotto 自己的受管环境里另建，用户的环境 / 系统 Python / conda 一个字节不碰；基础解释器的挑选、私有 Python 的
     下载（锁里没有的版本不会凭空下载）、联合计划补依赖、代事务全在 `pyversionfix` 里，这里只把「要这个版本」翻成它认的
     `failure`，不复制逻辑。请求 `{"version", "project", "script"?}`；返回 `{"ok", "code", "message", "python"?}`。
-    本函数不碰界面进度（修复会话没有对应的事件通道）。"""
-    import threading
-
+    本函数不碰界面进度（修复会话没有对应的事件通道）。`cancel` = 修复会话的取消信号：规划完、动手前先看一眼，
+    之后交给 `apply_python_change`（下载 / 建环境会按它中途停下）。"""
     from .. import projectenv, pyversionfix
+
+    cancel = cancel or threading.Event()
 
     version = str(req.get("version") or "").strip()
     project = str(req.get("project") or "")
@@ -81,7 +82,13 @@ def _default_python_changer(req: dict) -> dict:
             "message": f"Python {version} cannot be provided here: it is outside the supported range, "
             "conflicts with what the project declares, or no installable Python of that version is available.",
         }
-    result = pyversionfix.apply_python_change(plan, None, threading.Event())
+    if cancel.is_set():
+        return {
+            "ok": False,
+            "code": "cancelled",
+            "message": "The fix was cancelled; nothing was changed.",
+        }
+    result = pyversionfix.apply_python_change(plan, None, cancel)
     if not result.get("ok"):
         return {
             "ok": False,
@@ -117,4 +124,6 @@ def run_uninstaller(ctx: FixContext, python: str, distributions: list[str]) -> d
 
 
 def run_python_changer(ctx: FixContext, req: dict) -> dict:
-    return call_executor(ctx.python_changer or _default_python_changer, req)
+    if ctx.python_changer is not None:
+        return call_executor(ctx.python_changer, req)
+    return call_executor(_default_python_changer, req, ctx.cancel)
