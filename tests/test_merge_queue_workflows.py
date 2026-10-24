@@ -1047,9 +1047,9 @@ class TestGates:
         assert "python -m pytest" in _code(fast) and "python -m pytest" in _code(platforms)
 
     #: 各 job 现在定的片数——两个 job **不必相同**；backend-fast 2026-10-12 起 4 片（#896）、
-    #: backend-platforms 2026-10-21 起 4 片（docs/rules/ci/pytest-shards.md）。改一个 job
+    #: backend-platforms 2026-10-21 起 4 片、2026-10-24 起 8 片（docs/rules/ci/pytest-shards.md）。改一个 job
     #: 的片数要同时改这里与文档里的实测。
-    _EXPECTED_SHARD_COUNTS = {"backend-fast": 4, "backend-platforms": 4}
+    _EXPECTED_SHARD_COUNTS = {"backend-fast": 4, "backend-platforms": 8}
 
     @pytest.mark.parametrize("job_id", ["backend-fast", "backend-platforms"])
     def test_pytest_shards_agree_between_the_matrix_and_the_command(self, job_id):

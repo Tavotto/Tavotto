@@ -272,8 +272,32 @@ def weights_from_junit(xml_paths: Iterable[Path], root: Path) -> dict[str, float
     return {k: round(v, 2) for k, v in sorted(totals.items())}
 
 
+def median_weights_of_runs(runs: Sequence[Sequence[Path]], root: Path) -> dict[str, float]:
+    """多次运行 → 逐文件取**中位数**（秒，保留两位）。每个元素是一次运行的全部 junit.xml。
+
+    同一文件在不同 runner 上能差一倍（`docs/rules/ci/pytest-shards.md` 2026-10-21 那段），
+    把几次运行的 junit 直接喂给 `weights_from_junit` 是累加——等于取均值再乘次数，一台
+    特别慢的 runner 会把它碰巧跑过的那批文件整体抬重。中位数不吃单次离群值。
+    某次运行里没有的文件（那时还没写 / 已删）只按出现过的那几次取中位。
+    """
+    if not runs:
+        raise ShardError("一次运行都没有")
+    per_run = [weights_from_junit(xmls, root) for xmls in runs]
+    files = sorted(set().union(*per_run))
+    out: dict[str, float] = {}
+    for f in files:
+        vals = sorted(w[f] for w in per_run if f in w)
+        mid = len(vals) // 2
+        med = vals[mid] if len(vals) % 2 else (vals[mid - 1] + vals[mid]) / 2
+        out[f] = round(med, 2)
+    return out
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    """`python tests/support/shard.py --from-junit a.xml b.xml --source … --measured … > shard_weights.json`"""
+    """`python tests/support/shard.py --from-junit a.xml b.xml --source … --measured … > shard_weights.json`
+
+    多次运行取中位：`--from-junit-runs RUN_DIR …`，每个目录是一次运行（其下所有 `junit.xml` 算同一次）。
+    """
     # Windows 上 stdout 被重定向成管道 / 文件时退回系统区域编码（cp1252 / cp936），而这个
     # 入口打的是 `ensure_ascii=False` 的中文 JSON——第一行就 UnicodeEncodeError，退出码 1。
     # 与 tests/support/ 其它子进程入口同一写法（tests/test_windows_regressions.py 扫着）。
@@ -281,16 +305,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="从 junit.xml 重算 tests/support/shard_weights.json")
-    ap.add_argument("--from-junit", nargs="+", required=True, type=Path, metavar="XML")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--from-junit", nargs="+", type=Path, metavar="XML")
+    src.add_argument("--from-junit-runs", nargs="+", type=Path, metavar="RUN_DIR")
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
     ap.add_argument("--source", required=True, help="这些 junit 从哪来（run id / job / 本机命令）")
     ap.add_argument("--measured", required=True, help="哪天、哪台机器、哪个 HEAD 量的")
     args = ap.parse_args(argv)
-    table = weights_from_junit(args.from_junit, args.root)
+    if args.from_junit_runs:
+        runs = [sorted(d.rglob("junit.xml")) for d in args.from_junit_runs]
+        empty = [str(d) for d, xmls in zip(args.from_junit_runs, runs, strict=True) if not xmls]
+        if empty:
+            raise ShardError(f"这些运行目录下没有 junit.xml：{empty}")
+        table = median_weights_of_runs(runs, args.root)
+        unit = "seconds (setup+call+teardown per testcase, summed per file; median across runs)"
+    else:
+        table = weights_from_junit(args.from_junit, args.root)
+        unit = "seconds (setup+call+teardown per testcase, summed per file)"
     doc = {
         "source": args.source,
         "measured": args.measured,
-        "unit": "seconds (setup+call+teardown per testcase, summed per file)",
+        "unit": unit,
         "default_rule": "文件不在表里时取表中各值的第 75 百分位（nearest-rank）",
         "weights": table,
     }
