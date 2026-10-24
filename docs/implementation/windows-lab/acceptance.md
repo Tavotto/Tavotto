@@ -24,10 +24,10 @@
 | 非管理员账户跑测试 | PASS | `tavotto-lab`：`IsInRole(Administrators)=False`；全部任务以它执行 |
 | lab 钥匙拿不到 shell | PASS | ForceCommand 后 `whoami`、`powershell -c whoami` 都只得到 agent 的 `invalid choice`；`-L` 端口转发同样进 agent |
 | 测试账户读不到代理凭据 | PASS | `doctor.checks.secrets_not_readable_by_lab_user=true`（`secrets\sing-box.json` 存在时测） |
-| Tailscale 私有连接 | BLOCKED | 已装（unattended），未登录：需要用户批准登录链接；Mac 端 Tailscale 当时处于 stopped |
+| Tailscale 私有连接 | PASS | 用户批准登录后 Lab 入 tailnet；Mac 经 Surge 内置 Tailscale（Tailscale.app 停着也通）。tailnet 上 `ssh-keyscan` 拿到的 ed25519 主机密钥与公网地址已钉的同一把；两个别名改走 tailnet + `HostKeyAlias` 后 `doctor` passed，Lab 侧来源地址落在 `100.64.0.0/10` |
 | 重启后 SSH 自动恢复 | PASS | `Restart-Computer` 后约 30 s 回来；无任何交互式会话时 sshd / Tailscale 服务 / `TavottoLab-SingBox` 均 Running，7890/7891 仍只在回环，防火墙三档仍开，`doctor` passed；重启后 `network` run `20261024T104336Z-16f263` 三模式 passed |
 | 无需 RDP 完成无头测试 | PASS | 本页全部任务经 SSH 完成，开荒期间无 RDP 操作（首次放公钥除外） |
-| 公网无不必要的 SSH/RDP 暴露 | PASS（临时方案） | 镜像默认**防火墙三档全关**；已开启并把 22 / 3389 限到维护者出口 /24 + `100.64.0.0/10`。从外部主机测：22 / 3389 / 5985 / 445 均 closed。Tailscale 接入后应再收窄云防火墙 |
+| 公网无不必要的 SSH/RDP 暴露 | PASS（临时方案；待用户删云防火墙公网放行） | 镜像默认**防火墙三档全关**；已开启并把 22 / 3389 限到维护者出口 /24 + `100.64.0.0/10`。从外部主机测：22 / 3389 / 5985 / 445 均 closed。Tailscale 接入后应再收窄云防火墙 |
 
 开荒中实测到的两个坑（已在执行器里处理并有用例）：
 

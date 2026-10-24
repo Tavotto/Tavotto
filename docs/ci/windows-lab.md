@@ -69,8 +69,10 @@ Lab 上已装 Tailscale（unattended，重启后不登录桌面也在线）。�
 & 'C:\Program Files\Tailscale\tailscale.exe' up --unattended --hostname tavotto-win-lab
 ```
 
-加入后把 `~/.ssh/config` 两个别名的 `HostName` 换成 tailnet 地址，再在腾讯云防火墙把 22 / 3389
-的来源收窄（或删掉，只留控制台 VNC 作应急）。ACL / Grants 只放 Mac → Lab 的 22。
+加入后把 `~/.ssh/config` 两个别名的 `HostName` 换成 tailnet 地址，并加 `HostKeyAlias <公网地址>`：
+沿用开荒时人工核过的那把主机密钥，不重新信任（换前用 `ssh-keyscan <tailnet 地址>` 比对一次）。Mac 若用
+Surge 的内置 Tailscale（配置里的 `[Tailscale tailnet]`），Tailscale.app 停着也能连。之后在腾讯云防火墙
+删掉 22 / 3389 的公网放行，只留控制台 VNC 作应急；ACL / Grants 只放 Mac → Lab 的 22 / 3389。
 
 ### 防火墙与暴露面
 
