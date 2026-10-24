@@ -101,6 +101,39 @@ def _preset(row: dict) -> dict:
     return out
 
 
+#: 「思考强度」档位的合法取值（内置执行器 `agent_runner.wires`：anthropic 的 `output_config.effort` 多一档 max，Responses 的 `reasoning.effort` 只有三档）
+_EFFORT_VALUES = {"claude": ("low", "medium", "high", "max"), "codex": ("low", "medium", "high")}
+
+
+def _checked_efforts(owner: str, agent: str, efforts: object) -> list[str]:
+    if not isinstance(efforts, list) or any(
+        e not in _EFFORT_VALUES.get(agent, ()) for e in efforts
+    ):
+        raise CatalogError(f"{owner} 的 efforts 不合法: {efforts!r}")
+    return list(efforts)
+
+
+def efforts_for(agent: str, base_url: str) -> list[str]:
+    """内置执行器在这个地址上**确认支持**的思考强度档位；不确定 = `[]`（宁可不显示，也不发对方不认的字段）。
+
+    两处声明：目录行自带 `efforts`（地址和家族对上这一行），或顶层 `effort_origins`（官方 API 的来源：scheme + host + 端口对上）。"""
+    url = _norm_url(base_url)
+    if not url:
+        return []
+    for r in load_vendors(CATALOG_PATH):
+        if r["agent"] == agent and _norm_url(r["base_url"]) == url and r.get("efforts"):
+            return _checked_efforts(r["id"], agent, r["efforts"])
+    try:
+        raw = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    want = origin_of(base_url)
+    for o in (raw.get("effort_origins") if isinstance(raw, dict) else None) or []:
+        if o.get("agent") == agent and want is not None and origin_of(o.get("origin", "")) == want:
+            return _checked_efforts(str(o.get("origin")), agent, o.get("efforts"))
+    return []
+
+
 def presets() -> list[dict]:
     return [_preset(r) for r in load_vendors()]
 

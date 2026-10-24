@@ -456,13 +456,13 @@ def _toml(value: str) -> str:
 
 
 def spawn_overrides(
-    agent: str, rec: dict | None, model: str | None = None
+    agent: str, rec: dict | None, model: str | None = None, effort: str | None = None
 ) -> tuple[list[str], dict[str, str]]:
-    """→ (追加到命令行的参数, 追加到环境的变量)。rec 为 None 时两者都空。"""
+    """→ (追加到命令行的参数, 追加到环境的变量)。rec 为 None 时两者都空。`effort` 只有内置执行器用。"""
     if rec is None:
         return [], {}
     if agent == ai_agents.BUILTIN_ID:
-        return _builtin_overrides(rec, model)
+        return _builtin_overrides(rec, model, effort)
     base_url = str(rec.get("base_url") or "").strip()
     api_key = str(rec.get("api_key") or "").strip()
 
@@ -524,12 +524,13 @@ _BUILTIN_WIRE = {FAMILY_ANTHROPIC: "anthropic", FAMILY_OPENAI: "openai-responses
 
 
 def builtin_conn(rec: dict | None, model: str | None = None) -> dict | None:
-    """这条记录内置循环能不能直接用 → `{wire, base_url, api_key, model}`（带密钥，只给 spawn 注入 / `fixsession.build_model` 用）或 None。
+    """这条记录内置循环能不能直接用 → `{wire, base_url, api_key, model, auth}`（带密钥 / 令牌，只给 spawn 注入 /
+    `fixsession.build_model` 用）或 None。`auth` = `"key"`（x-api-key + Bearer 都给）| `"bearer"`（账号登录的访问令牌，只发 Bearer）。
 
     **判据只在这一处**（改图的 `spawn_overrides("builtin")`、AI 修复的 `fixsession.connection()`、连接视图的路由都问它）：
-    有 Key（账号登录的令牌是 Bearer，内置循环不走它）、有型号、地址合规（`check_base_url`：https 或本机 127.0.0.1）、
-    不是不兼容的旧记录、协议族认得。"""
-    if not rec or rec.get("auth") == "oauth" or incompatibility(rec):
+    有 Key（账号登录的记录看访问令牌）、有型号、地址合规（`check_base_url`：https 或本机回环）、不是不兼容的旧记录、家族认得。
+    账号登录记录的令牌可能快过期：spawn 之前由 `ai_oauth.ensure_fresh` 刷新（这里只看有没有令牌 + 刷新令牌）。"""
+    if not rec or incompatibility(rec):
         return None
     wire = _BUILTIN_WIRE.get(str(_family(str(rec.get("agent") or ""))))
     chosen = (
@@ -537,18 +538,43 @@ def builtin_conn(rec: dict | None, model: str | None = None) -> dict | None:
         or str(rec.get("default_model") or "").strip()
         or next(iter(rec.get("models") or []), "")
     )
-    base, key = str(rec.get("base_url") or ""), str(rec.get("api_key") or "")
+    if rec.get("auth") == "oauth":
+        oauth = rec.get("oauth") if isinstance(rec.get("oauth"), dict) else {}
+        key = str(oauth.get("access") or "") if oauth.get("refresh") else ""
+        auth = "bearer"
+    else:
+        key, auth = str(rec.get("api_key") or ""), "key"
+    base = str(rec.get("base_url") or "")
     if wire and chosen and key and check_base_url(base) is None:
-        return {"wire": wire, "base_url": base, "api_key": key, "model": chosen}
+        return {"wire": wire, "base_url": base, "api_key": key, "model": chosen, "auth": auth}
     return None
 
 
-def _builtin_overrides(rec: dict, model: str | None) -> tuple[list[str], dict[str, str]]:
-    """内置执行器的注入：地址 / 型号 / 协议名进 argv，**密钥只进环境变量**（不进 argv / 日志 / 事件）。不可用 → 两者皆空。"""
+def builtin_effort_args(rec: dict, effort: str | None) -> list[str]:
+    """思考强度 → 内置执行器的参数。只有目录**确认支持**的档位才发（`ai_catalog.efforts_for`），其余一律不发：
+    anthropic wire → `--effort X --thinking adaptive`（`output_config.effort` + `thinking:{type:adaptive}`）；
+    openai-responses → `--effort X`（`reasoning.effort`，无 max 档）。"""
+    if not effort:
+        return []
+    agent, base = str(rec.get("agent") or ""), str(rec.get("base_url") or "")
+    if effort not in ai_catalog.efforts_for(agent, base):
+        return []
+    if _BUILTIN_WIRE.get(str(_family(agent))) == "anthropic":
+        return ["--effort", effort, "--thinking", "adaptive"]
+    return ["--effort", effort] if effort in ("low", "medium", "high") else []
+
+
+def _builtin_overrides(
+    rec: dict, model: str | None, effort: str | None = None
+) -> tuple[list[str], dict[str, str]]:
+    """内置执行器的注入：地址 / 型号 / 协议名进 argv，**密钥（或账号登录的令牌）只进环境变量**（不进 argv / 日志 / 事件）。不可用 → 两者皆空。"""
     conn = builtin_conn(rec, model)
     if conn is None:
         return [], {}
     args = ["--wire", conn["wire"], "--base-url", conn["base_url"], "--model", conn["model"]]
+    if conn["auth"] == "bearer":
+        args += ["--auth", "bearer"]
+    args += builtin_effort_args(rec, effort)
     return args, {ai_agents.BUILTIN_KEY_ENV: conn["api_key"]}
 
 

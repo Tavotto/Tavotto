@@ -33,6 +33,7 @@ from tavotto.engine import (
     ai_bridge,
     ai_catalog,
     ai_connections,
+    ai_convert,
     ai_figure_edit,
     ai_history,
     ai_oauth,
@@ -104,7 +105,8 @@ def _conn(caps: dict, cid: str) -> dict | None:
 
 
 def _save(pid="k1", agent="claude", base="https://api.deepseek.com/anthropic", key=KEY, **kw):
-    return ai_providers.save(
+    """存一条 provider → `[那一条]`（单元素列表：沿用 `_save(...)[0]` 的写法，但永远是刚存的这条，不是列表里的第一条）。"""
+    ai_providers.save(
         {
             "id": pid,
             "label": kw.pop("label", pid),
@@ -116,6 +118,7 @@ def _save(pid="k1", agent="claude", base="https://api.deepseek.com/anthropic", k
             **kw,
         }
     )
+    return [ai_providers.get(pid)]
 
 
 # --------------------------------------------------------------------------- vendors
@@ -274,7 +277,7 @@ def test_incompatible_legacy_record_is_an_error_connection(world):
     assert c["state"] == "error" and c["error"] == ai_providers.INCOMPATIBLE_CODEX_CHAT
 
 
-def test_oauth_record_is_a_connection_routed_to_the_cli_only(world, monkeypatch):
+def test_oauth_record_prefers_the_cli_and_falls_back_to_the_builtin_executor(world, monkeypatch):
     monkeypatch.setenv("TAVOTTO_OAUTH_CLIENT_ID_MINIMAX", "placeholder-not-a-real-client-id")
     ai_providers.store_oauth(
         ai_oauth._record_defaults("minimax", "cn"),
@@ -284,10 +287,14 @@ def test_oauth_record_is_a_connection_routed_to_the_cli_only(world, monkeypatch)
     c = _conn(caps, "minimax-oauth")
     assert c["vendor"] == "minimax-oauth" and c["state"] == "ready" and c["route"] == "cli:claude"
     assert "tok-secret" not in json.dumps(caps)
-    world["cli"] = False
+    world["cli"] = False  # 没装 CLI：账号登录的连接走内置执行器（Bearer 令牌）
     ai_bridge.invalidate_capabilities()
     c = _conn(_caps(), "minimax-oauth")
-    assert c["state"] == "error" and c["error"] == "cli_unavailable"  # Bearer 令牌内置循环不走
+    assert c["state"] == "ready" and c["route"] == "builtin"
+    assert ai_bridge.resolve_connection("minimax-oauth")[0] == "builtin"
+    # 令牌没了（退出登录）→ 需要重新登录，不是 error
+    ai_providers.update_oauth("minimax-oauth", None)
+    assert _conn(_caps(), "minimax-oauth")["state"] == "needs_auth"
 
 
 # --------------------------------------------------------------------------- 路由矩阵
@@ -687,11 +694,7 @@ def test_fix_connection_takes_the_first_ready_key_connection(world, monkeypatch)
     assert fixsession.connection() is None
     _save("nokey", key="")
     _save("http", base="http://gw.example.org/anthropic")
-    ai_providers.store_oauth(
-        ai_oauth._record_defaults("minimax", "cn"),
-        {"provider": "minimax", "access": "tok", "refresh": "r", "expires_ms": 9 * 10**12},
-    )
-    assert fixsession.connection() is None  # 没 Key / 明文 http / 账号登录：都不算
+    assert fixsession.connection() is None  # 没 Key / 明文 http：都不算
     _save("good", base="https://api.moonshot.cn/anthropic", key=KEY2, default_model="kimi-k3")
     conn = fixsession.connection()
     assert conn == {
@@ -699,6 +702,7 @@ def test_fix_connection_takes_the_first_ready_key_connection(world, monkeypatch)
         "base_url": "https://api.moonshot.cn/anthropic",
         "api_key": KEY2,
         "model": "kimi-k3",
+        "auth": "key",
     }
     # 什么都没「选中」也算连着；老用户选中的那条仍排在最前
     _save("second", base="https://api.deepseek.com/anthropic", key=KEY)
@@ -904,6 +908,7 @@ class FakeModel:
     def __init__(self, responses):
         self.responses = list(responses)
         self.requests: list[tuple[str, dict]] = []
+        self.bodies: list[str] = []
         outer = self
 
         class H(BaseHTTPRequestHandler):
@@ -911,7 +916,8 @@ class FakeModel:
                 pass
 
             def do_POST(self):
-                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                outer.bodies.append(raw.decode("utf-8", errors="replace"))
                 outer.requests.append((self.path, {k.lower(): v for k, v in self.headers.items()}))
                 item = outer.responses[min(len(outer.requests), len(outer.responses)) - 1]
                 if callable(item):
@@ -954,9 +960,9 @@ def chain(world, monkeypatch, tmp_path):
     spawned: list[tuple[list[str], dict]] = []
     real_popen = ai_bridge._popen
 
-    def spy(cmd, cwd, env, stderr_log, stdin_text=None):
+    def spy(cmd, cwd, env, stderr_log, *rest):
         spawned.append((list(cmd), dict(env)))
-        return real_popen(cmd, cwd, env, stderr_log, stdin_text)
+        return real_popen(cmd, cwd, env, stderr_log, *rest)
 
     monkeypatch.setattr(ai_bridge, "_popen", spy)
     servers: list[FakeModel] = []
@@ -1073,13 +1079,6 @@ def test_builtin_requires_an_explicit_usable_connection(chain):
     assert (chain["figs"] / "fig1.py").read_text(encoding="utf-8") == SCRIPT
 
 
-def test_builtin_does_not_take_conversion_tasks(chain):
-    chain["serve"]([END_TURN])
-    with pytest.raises(ai_bridge.AgentError) as ei:
-        _run(chain, convert={"library": "x"})
-    assert ei.value.code == "ai_agent_not_usable" and chain["spawned"] == []
-
-
 # --------------------------------------------------------------------------- Codex 评审 #1404 的四条
 def test_updating_with_another_origin_requires_a_fresh_key(client, world):
     world["fetch"] = (["m1"], None)
@@ -1177,3 +1176,394 @@ def test_builtin_refuses_to_start_when_no_candidate_can_be_made(chain, monkeypat
         _run(chain)
     assert chain["spawned"] == [], "绝不把真实项目路径交给内置执行器"
     assert (chain["figs"] / "fig1.py").read_text(encoding="utf-8") == SCRIPT
+
+
+# --------------------------------------------------------------------------- 用户裁决（10-25）：转换任务 / 账号登录 / 回环 http / 思考强度
+def _loopback_gateway_conn(host: str):
+    return _save("lb", base=f"http://{host}/anthropic")[0]
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1:8080", "localhost:8080", "[::1]:8080", "localhost"])
+def test_loopback_http_gateways_are_usable_by_the_builtin_executor(world, host):
+    rec = _loopback_gateway_conn(host)
+    assert ai_providers.builtin_conn(rec) is not None
+    world["cli"] = False
+    c = _conn(_caps(), "lb")
+    assert c["state"] == "ready" and c["route"] == "builtin"
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "10.0.0.5:8080",
+        "192.168.1.9",
+        "172.16.0.1",
+        "127.0.0.2",
+        "gateway.example.org",
+        "localhost.evil.example",
+        "[::2]:80",
+        "169.254.169.254",
+    ],
+)
+def test_other_plain_http_gateways_stay_refused(world, host):
+    rec = _loopback_gateway_conn(host)
+    assert ai_providers.builtin_conn(rec) is None
+    world["cli"] = False
+    c = _conn(_caps(), "lb")
+    assert c["state"] == "error" and c["error"] == "base_url_scheme"
+
+
+def test_posting_a_private_network_http_gateway_is_refused(client, world):
+    for url in ("http://10.0.0.5:8080", "http://192.168.1.2", "http://gw.example.org"):
+        resp = _post(client, vendor="custom", api_key=KEY, base_url=url, wire="anthropic")
+        assert resp.status_code == 400 and resp.get_json()["params"]["reason"] == "insecure_url"
+    for url in ("http://127.0.0.1:9", "http://localhost:9", "http://[::1]:9"):
+        world["fetch"] = (["m"], None)
+        resp = _post(client, vendor="custom", api_key=KEY, base_url=url, wire="anthropic")
+        assert resp.status_code == 200, url
+
+
+def _oauth_rec(access="tok-CANARY-9d2", expires=9 * 10**12):
+    ai_providers.store_oauth(
+        ai_oauth._record_defaults("minimax", "cn"),
+        {"provider": "minimax", "access": access, "refresh": "r-CANARY", "expires_ms": expires},
+    )
+    return ai_providers.get("minimax-oauth")
+
+
+def test_oauth_token_goes_to_the_environment_with_bearer_auth_only(world):
+    rec = _oauth_rec()
+    cmd, env = ai_bridge._cmd("builtin", "p", "/c", endpoint=rec, target="a.py")
+    assert cmd[cmd.index("--auth") + 1] == "bearer"
+    assert env == {ai_agents.BUILTIN_KEY_ENV: "tok-CANARY-9d2"}
+    assert "tok-CANARY" not in " ".join(cmd) and "r-CANARY" not in " ".join(cmd)
+    # Key 类连接不带 --auth bearer
+    key_rec = _save("k")[0]
+    assert "--auth" not in ai_bridge._cmd("builtin", "p", "/c", endpoint=key_rec, target="a.py")[0]
+
+
+def test_bearer_wire_sends_authorization_only():
+    from tavotto.engine.agent_runner import wires
+
+    def headers(bearer_only):
+        wire = wires.AnthropicWire(bearer_only=bearer_only)
+        req = wire.build(
+            base_url="https://x.example",
+            api_key="T",
+            model="m",
+            system="s",
+            tools=[],
+            history=[],
+            effort=None,
+            max_output_tokens=10,
+        )
+        return req.headers
+
+    assert headers(True) == {"Authorization": "Bearer T", "anthropic-version": "2023-06-01"}
+    assert headers(False)["x-api-key"] == "T" and headers(False)["Authorization"] == "Bearer T"
+
+
+def test_fix_session_accepts_oauth_records_and_refreshes_expired_tokens(world, monkeypatch):
+    monkeypatch.setattr(ai_bridge, "agent_caps", lambda _id: None)
+    _oauth_rec(expires=1)  # 早已过期
+    calls = []
+
+    def fresh(rec):
+        calls.append(rec["id"])
+        return {
+            **rec,
+            "oauth": {**rec["oauth"], "access": "tok-NEW-0001", "expires_ms": 9 * 10**12},
+        }
+
+    monkeypatch.setattr(ai_oauth, "ensure_fresh", fresh)
+    # 只问「有没有」：不联网刷新
+    assert fixsession.available() is True and calls == []
+    conn = fixsession.connection()
+    assert calls == ["minimax-oauth"]
+    assert (
+        conn["api_key"] == "tok-NEW-0001"
+        and conn["auth"] == "bearer"
+        and conn["wire"] == "anthropic"
+    )
+    model, red = fixsession.build_model(conn)
+    assert red.contains("tok-NEW-0001") and "tok-NEW-0001" not in repr(model)
+
+    # 刷不动（要重新登录）→ 不算连着
+    def needs(rec):
+        raise ai_oauth.NeedsLogin("x")
+
+    monkeypatch.setattr(ai_oauth, "ensure_fresh", needs)
+    assert fixsession.connection() is None
+
+
+def test_builtin_run_refreshes_an_expiring_token_before_spawning(chain, monkeypatch):
+    server = chain["serve"]([READ_TURN, EDIT_TURN, END_TURN])
+    ai_providers.delete("k")
+    ai_providers.store_oauth(
+        {**ai_oauth._record_defaults("minimax", "cn"), "base_url": server.url},
+        {"provider": "minimax", "access": "tok-OLD", "refresh": "r", "expires_ms": 1},
+    )
+    ai_providers.save({"id": "minimax-oauth", "base_url": server.url, "default_model": "m1"})
+    refreshed = []
+
+    def fresh(rec):
+        refreshed.append(1)
+        return ai_providers.update_oauth(
+            rec["id"], {**rec["oauth"], "access": "tok-NEW-0001", "expires_ms": 9 * 10**12}
+        )
+
+    monkeypatch.setattr(ai_oauth, "ensure_fresh", fresh)
+    sid, _events = _run(chain, endpoint_id="minimax-oauth")
+    _wait(sid)
+    assert refreshed, "spawn 之前先刷新"
+    argv, env = chain["spawned"][0]
+    assert env[ai_agents.BUILTIN_KEY_ENV] == "tok-NEW-0001" and "tok-NEW-0001" not in " ".join(argv)
+    hdrs = server.requests[0][1]
+    assert hdrs.get("authorization") == "Bearer tok-NEW-0001" and "x-api-key" not in hdrs
+
+
+# ---- 思考强度
+def test_efforts_follow_the_catalog_only(world):
+    _save("a", base="https://api.anthropic.com")
+    _save("o", agent="codex", base="https://api.openai.com/v1")
+    _save("d", base="https://api.deepseek.com/anthropic")
+    world["cli"] = False
+    caps = _caps()
+    a, o, d = _conn(caps, "a"), _conn(caps, "o"), _conn(caps, "d")
+    assert a["efforts"] == ["low", "medium", "high", "max"] and a["default_effort"] == "medium"
+    assert o["efforts"] == ["low", "medium", "high"]
+    assert d["efforts"] == [] and d["default_effort"] is None, "没确认支持的网关不给"
+    assert ai_catalog.efforts_for("claude", "https://api.anthropic.com/") == a["efforts"]
+    assert ai_catalog.efforts_for("claude", "http://api.anthropic.com") == []  # 来源（scheme）不同
+    assert ai_catalog.efforts_for("codex", "https://api.anthropic.com") == []  # 家族不同
+
+
+def test_catalog_row_level_efforts_are_honoured_and_validated(tmp_path, monkeypatch):
+    import json as _json
+
+    raw = _json.loads(ai_catalog.CATALOG_PATH.read_text(encoding="utf-8"))
+    raw["vendors"][0]["efforts"] = ["low", "high"]
+    path = tmp_path / "cat.json"
+    path.write_text(_json.dumps(raw), encoding="utf-8")
+    monkeypatch.setattr(ai_catalog, "CATALOG_PATH", path)
+    row = raw["vendors"][0]
+    assert ai_catalog.efforts_for(row["agent"], row["base_url"]) == ["low", "high"]
+    raw["vendors"][0]["efforts"] = ["extreme"]
+    path.write_text(_json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ai_catalog.CatalogError):
+        ai_catalog.efforts_for(row["agent"], row["base_url"])
+
+
+def test_effort_args_are_sent_only_where_the_catalog_confirms_support(world):
+    a = _save("a", base="https://api.anthropic.com")[0]
+    d = _save("d", base="https://api.deepseek.com/anthropic")[0]
+    o = _save("o", agent="codex", base="https://api.openai.com/v1")[0]
+    assert ai_providers.builtin_effort_args(a, "high") == [
+        "--effort",
+        "high",
+        "--thinking",
+        "adaptive",
+    ]
+    assert ai_providers.builtin_effort_args(a, "max")[1] == "max"
+    assert ai_providers.builtin_effort_args(o, "medium") == ["--effort", "medium"]
+    assert ai_providers.builtin_effort_args(o, "max") == [], "Responses 没有 max 档"
+    assert ai_providers.builtin_effort_args(d, "high") == [], "网关不确定就不发"
+    assert ai_providers.builtin_effort_args(a, "bogus") == []
+    assert ai_providers.builtin_effort_args(a, None) == []
+    cmd, _ = ai_bridge._cmd("builtin", "p", "/c", effort="high", endpoint=a, target="x.py")
+    assert (
+        cmd[cmd.index("--effort") + 1] == "high" and cmd[cmd.index("--thinking") + 1] == "adaptive"
+    )
+    cmd, _ = ai_bridge._cmd("builtin", "p", "/c", effort="high", endpoint=d, target="x.py")
+    assert "--effort" not in cmd and "--thinking" not in cmd
+
+
+def test_effort_reaches_the_model_request_body(chain):
+    server = chain["serve"]([END_TURN])
+    # 把测试网关当作「目录确认支持」的来源
+    import json as _json
+
+    origin = server.url
+    real = ai_catalog.efforts_for
+    ai_catalog.efforts_for = lambda agent, base: (
+        ["low", "medium", "high", "max"] if base == origin else real(agent, base)
+    )
+    try:
+        sid, _ = _run(chain, effort="high")
+        _wait(sid)
+    finally:
+        ai_catalog.efforts_for = real
+    body = _json.loads(server.bodies[0])
+    assert body["output_config"] == {"effort": "high"} and body["thinking"] == {"type": "adaptive"}
+
+
+def test_effort_is_not_sent_to_an_unconfirmed_gateway(chain):
+    server = chain["serve"]([END_TURN])
+    sid, _ = _run(chain, effort="high")
+    _wait(sid)
+    import json as _json
+
+    body = _json.loads(server.bodies[0])
+    assert "output_config" not in body and "thinking" not in body
+
+
+# ---- 生成可编辑版本走内置执行器
+ORIGINAL_PIL = (
+    'from PIL import Image\nImg = Image.new("RGB", (40, 20), "white")\nImg.save("out.png")\n'
+)
+GOOD_MPL = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1, 2])\nfig.savefig('out.png')\n"
+
+
+def _tool_turn(tid, name, args):
+    return (
+        200,
+        {},
+        {
+            "content": [{"type": "tool_use", "id": tid, "name": name, "input": args}],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 30, "output_tokens": 5},
+        },
+    )
+
+
+@pytest.fixture
+def convert_chain(chain, monkeypatch, tmp_path):
+    monkeypatch.setattr(ai_convert, "CONVERT_DIR", tmp_path / "convert")
+    config.set_ai_settings({})
+    figs = chain["figs"]
+    (figs / "fig.py").write_bytes(ORIGINAL_PIL.encode())
+    (figs / "fig.R").write_bytes(b"png('out.png'); plot(1:3)\n")
+    runs: list[tuple] = []
+
+    def runner(figures_dir, rel, write_roots=None):
+        runs.append((rel, write_roots))
+        return {
+            "stems": ["out"],
+            "size_mm": [100.0, 50.0],
+            "svg": "<svg xmlns='http://www.w3.org/2000/svg'/>",
+        }
+
+    chain["runner"], chain["runs"] = runner, runs
+    yield chain
+    ai_tasks.unregister(ai_convert.TASK_TYPE)
+
+
+def _convert(box, script="fig.py", **conv):
+    events: list = []
+    sid = ai_bridge.run(
+        "builtin",
+        script,
+        "生成可编辑的 Matplotlib 版本",
+        str(box["figs"]),
+        on_event=lambda n, d: events.append((n, d)),
+        task_hooks={"runner": box["runner"]},
+        endpoint_id="k",
+        convert={"library": "pillow", "original_rel": None, **conv},
+    )
+    return sid, events
+
+
+@pytest.mark.parametrize(
+    ("script", "extra", "orig"),
+    [
+        ("fig.py", {}, ORIGINAL_PIL),
+        ("fig.R", {"library": None, "source_language": "r"}, "png('out.png'); plot(1:3)\n"),
+    ],
+    ids=["python", "r"],
+)
+def test_builtin_converts_to_an_editable_script_through_the_normal_pipeline(
+    convert_chain, script, extra, orig
+):
+    box = convert_chain
+    server = box["serve"](
+        [
+            _tool_turn("t1", "read_file", {"path": script}),
+            _tool_turn("t2", "create_file", {"content": GOOD_MPL}),
+            _tool_turn("t3", "check", {}),
+            END_TURN,
+        ]
+    )
+    sid, events = _convert(box, script, **extra)
+    sess = _wait(sid)
+    figs = box["figs"]
+    assert sess["status"] == "done", sess.get("transcript")
+    # check 回调真的走了校验流水（Agent 自己要的那一次 + 流水线提交前检查的那一次），且带着候选目录写入根
+    assert len(box["runs"]) >= 2 and all(r[1] for r in box["runs"])
+    assert "check passed" in server.bodies[3], "Agent 拿到了校验结论"
+    argv, env = box["spawned"][0]
+    assert argv[argv.index("--task") + 1] == "convert_to_editable" and "--check-ipc" in argv
+    assert argv[argv.index("--target") + 1] == script
+    assert argv[argv.index("--output") + 1] == "fig_matplotlib.py"
+    assert KEY not in " ".join(argv) and env[ai_agents.BUILTIN_KEY_ENV] == KEY
+    # 候选就绪、未采用：项目里原脚本字节不变、没有新文件
+    st = ai_convert.status(sid, str(figs.resolve()))
+    assert st["state"] == "ready", st
+    assert (figs / script).read_bytes() == orig.encode()
+    assert not (figs / "fig_matplotlib.py").exists()
+    assert ai_history.get(sid)["provider"] == "builtin"
+    # 采用：只新建兄弟脚本
+    made = ai_convert.adopt(sid, str(figs.resolve()))
+    assert made["name"] == "fig_matplotlib.py"
+    assert (figs / "fig_matplotlib.py").read_text(encoding="utf-8") == GOOD_MPL
+    assert (figs / script).read_bytes() == orig.encode()
+
+
+def test_builtin_convert_check_reports_failures_back_to_the_agent(convert_chain):
+    box = convert_chain
+    box["runner"] = lambda figures_dir, rel, write_roots=None: {
+        "error": {"code": "script_error", "message": "boom"}
+    }
+    server = box["serve"](
+        [
+            _tool_turn("t1", "create_file", {"content": GOOD_MPL}),
+            _tool_turn("t2", "check", {}),
+            END_TURN,
+        ]
+    )
+    sid, _ = _convert(box)
+    _wait(sid)
+    assert "check failed" in server.bodies[2]
+
+
+def test_builtin_convert_cannot_touch_the_original_or_project_files(convert_chain):
+    box = convert_chain
+    server = box["serve"](
+        [
+            _tool_turn("t1", "edit_file", {"path": "fig.py", "old": "Image", "new": "X"}),
+            _tool_turn("t2", "create_file", {"path": "../evil.py", "content": "x"}),
+            END_TURN,
+        ]
+    )
+    sid, _ = _convert(box)
+    _wait(sid)
+    figs = box["figs"]
+    assert (figs / "fig.py").read_bytes() == ORIGINAL_PIL.encode()
+    assert sorted(p.name for p in figs.iterdir() if p.is_file()) == ["fig.R", "fig.py", "fig1.py"]
+    assert "error" in server.bodies[1].lower()
+
+
+def test_convert_endpoint_accepts_a_connection(client, world, monkeypatch, tmp_path):
+    figs = tmp_path / "pj"
+    figs.mkdir()
+    (figs / "fig.py").write_text("print(1)\n", encoding="utf-8")
+    appmod.reset_projects()
+    appmod.open_project(str(figs))
+    seen = []
+    monkeypatch.setattr(
+        appmod.engine_ai, "run", lambda agent, *a, **kw: seen.append((agent, kw)) or "s1"
+    )
+    _save("a", default_model="m2")
+    world["cli"] = False
+    ai_bridge.invalidate_capabilities()
+    resp = client.post(
+        "/api/ai/convert", json={"script": "fig.py", "library": "pillow", "connection": "a"}
+    )
+    assert resp.status_code == 200, resp.get_json()
+    assert (seen[0][0], seen[0][1]["endpoint_id"], seen[0][1]["model"]) == ("builtin", "a", "m2")
+    assert (
+        client.post(
+            "/api/ai/convert", json={"script": "fig.py", "library": "pillow", "connection": "ghost"}
+        ).status_code
+        == 404
+    )
+    appmod.reset_projects()

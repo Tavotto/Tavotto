@@ -255,6 +255,10 @@ class AnthropicWire:
 
     name = "anthropic"
 
+    def __init__(self, bearer_only: bool = False):
+        #: 账号登录（OAuth）的访问令牌只认 `Authorization: Bearer`；同时发 `x-api-key` 会让部分网关 401（Kimi 社区报告）
+        self.bearer_only = bearer_only
+
     def build(
         self,
         *,
@@ -313,7 +317,7 @@ class AnthropicWire:
             body["max_tokens"] = max_output_tokens + budget
             body["thinking"] = {"type": "enabled", "budget_tokens": budget}
         headers = {
-            "x-api-key": api_key,
+            **({} if self.bearer_only else {"x-api-key": api_key}),
             "Authorization": f"Bearer {api_key}",
             "anthropic-version": ANTHROPIC_VERSION,
         }
@@ -621,8 +625,19 @@ def _opener() -> urllib.request.OpenerDirector:
     return opener
 
 
+#: 明文 http 只放本机回环的三种写法：字面量 `127.0.0.1`、`::1`（urlsplit 去掉了方括号）、字面量 `localhost`。
+#: 其余（私网段、任意域名、`127.0.0.2`）一律拒绝。**连接时不按 URL 里的主机解析**，见 `loopback_connect_host`。
+LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
+
+
+def loopback_connect_host(host: str) -> str:
+    """回环 http 实际去连的地址：永远是字面量回环 IP（`localhost` → `127.0.0.1`，不做 DNS 解析，所以
+    DNS 重绑定到别的地址也到不了别处）。"""
+    return "::1" if host == "::1" else "127.0.0.1"
+
+
 def check_base_url(base_url: str) -> str | None:
-    """通过回 None；否则回短错误码。https，或主机恰为字面量 127.0.0.1 的 http；不带用户信息 / 查询 / 片段。"""
+    """通过回 None；否则回短错误码。https，或主机在 `LOOPBACK_HOSTS` 里的 http；不带用户信息 / 查询 / 片段。"""
     try:
         u = urllib.parse.urlsplit(base_url)
         host = u.hostname
@@ -633,7 +648,7 @@ def check_base_url(base_url: str) -> str | None:
         return "bad_base_url"
     if u.scheme == "https":
         return None
-    if u.scheme == "http" and host == "127.0.0.1":
+    if u.scheme == "http" and host in LOOPBACK_HOSTS:
         return None
     return "base_url_scheme"
 
@@ -663,7 +678,9 @@ def post_json(
     try:
         if u.scheme == "http":
             # 回环 http：直连 socket，不读代理设置
-            conn = http.client.HTTPConnection("127.0.0.1", u.port or 80, timeout=timeout)
+            conn = http.client.HTTPConnection(
+                loopback_connect_host(u.hostname or ""), u.port or 80, timeout=timeout
+            )
             try:
                 path = u.path or "/"
                 conn.request("POST", path, body=payload, headers=hdrs)

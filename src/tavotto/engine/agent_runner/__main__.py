@@ -30,6 +30,7 @@ from .wires import (
     ANTHROPIC_EFFORTS,
     THINKING_MODES,
     WIRES,
+    AnthropicWire,
     OpenAIChatWire,
     RunnerFailure,
     check_base_url,
@@ -82,6 +83,17 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--prompt-file", default=None, help="提示词文件；缺省读 stdin")
     p.add_argument("--task", default="figure_edit", choices=sorted(TOOLSETS))
     p.add_argument("--demo-script", default=None, help="--wire demo 的剧本 JSON")
+    p.add_argument(
+        "--auth",
+        choices=("key", "bearer"),
+        default="key",
+        help="鉴权形态（调用方声明）：key = x-api-key + Bearer 都给；bearer = 只发 Authorization: Bearer（账号登录令牌）",
+    )
+    p.add_argument(
+        "--check-ipc",
+        action="store_true",
+        help='convert_to_editable：`check` 经 stdout/stdin 回调父进程。stdin 第一行是 {"prompt": …}，之后每行一个 {"ok": bool, "report": str}',
+    )
     p.add_argument("--retry-base", type=float, default=1.0, help="重试退避基数（秒）")
     return p
 
@@ -90,6 +102,39 @@ def _read_prompt(path: str | None) -> str:
     if path:
         return Path(path).read_text(encoding="utf-8")
     return sys.stdin.buffer.read().decode("utf-8", errors="replace")
+
+
+def _ipc_check(emit):
+    """`check` 回调：向父进程要一次校验运行（stdout 一条 `check_request`，stdin 等一行回复）。
+    父进程跑的是 Tavotto 自己的校验流水（ADR 0143 `run_validation`），本进程不碰候选以外的任何东西。
+    stdin 关了 / 回复畸形 → 不通过，报告只有稳定短码。"""
+
+    def check() -> tuple[bool, str]:
+        emit({"type": "check_request"})
+        try:
+            line = sys.stdin.buffer.readline().decode("utf-8", errors="replace")
+            msg = json.loads(line)
+        except (OSError, ValueError):
+            return False, "check_unavailable"
+        if not isinstance(msg, dict):
+            return False, "check_unavailable"
+        return bool(msg.get("ok")), str(msg.get("report") or "")[:4000]
+
+    return check
+
+
+def _read_first_line_prompt() -> str:
+    """`--check-ipc`：stdin 第一行是 `{"prompt": …}`（stdin 之后还要留给 check 的回复，所以不能读到 EOF）。"""
+    line = sys.stdin.buffer.readline().decode("utf-8", errors="replace")
+    try:
+        msg = json.loads(line)
+    except ValueError:
+        return ""
+    return (
+        msg.get("prompt", "")
+        if isinstance(msg, dict) and isinstance(msg.get("prompt"), str)
+        else ""
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -137,7 +182,9 @@ def main(argv: list[str] | None = None) -> int:
                 cancel.set()  # 父进程没了：别再跑
 
     try:
-        instruction = _read_prompt(args.prompt_file)
+        instruction = (
+            _read_first_line_prompt() if args.check_ipc else _read_prompt(args.prompt_file)
+        )
     except (OSError, ValueError):
         instruction = ""
     bad_prompt = not instruction.strip()  # 读不到 / 空白：不调模型（不拿空指令去花钱）
@@ -163,6 +210,7 @@ def main(argv: list[str] | None = None) -> int:
         limits=limits,
         redactor=redactor,
         output=args.output,
+        check=_ipc_check(emit) if args.check_ipc else None,
     )
 
     model: object
@@ -195,6 +243,8 @@ def main(argv: list[str] | None = None) -> int:
         wire = (
             OpenAIChatWire(token_field=args.max_tokens_field)
             if args.wire == OpenAIChatWire.name
+            else AnthropicWire(bearer_only=args.auth == "bearer")
+            if args.wire == AnthropicWire.name
             else WIRES[args.wire]
         )
         model = loop.HttpModel(

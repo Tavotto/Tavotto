@@ -566,27 +566,34 @@ script_guard = scriptlock.script_guard
 _REQUEST_LOCK = threading.RLock()
 
 
-def _feed_stdin(proc: subprocess.Popen, text: str) -> None:
+def _feed_stdin(proc: subprocess.Popen, text: str, keep_open: bool = False) -> None:
     """把提示词写进子进程的 stdin 再关掉（写不进去 = 子进程已经退了，不是错）。放线程里：提示词可能超过管道缓冲，
-    而子进程读 stdin 的时刻不由我们定，主线程不能被卡在 write 上。"""
+    而子进程读 stdin 的时刻不由我们定，主线程不能被卡在 write 上。`keep_open`：之后还要往 stdin 写 `check` 的回复（转换任务）。"""
 
     def feed() -> None:
         try:
             assert proc.stdin is not None
             proc.stdin.write(text)
+            proc.stdin.flush()
         except (OSError, ValueError):
             pass
         finally:
-            try:
-                proc.stdin.close()  # type: ignore[union-attr]
-            except (OSError, ValueError, AttributeError):
-                pass
+            if not keep_open:
+                try:
+                    proc.stdin.close()  # type: ignore[union-attr]
+                except (OSError, ValueError, AttributeError):
+                    pass
 
     threading.Thread(target=feed, daemon=True, name="ai-builtin-stdin").start()
 
 
 def _popen(
-    cmd: list[str], cwd: str, env: dict, stderr_log, stdin_text: str | None = None
+    cmd: list[str],
+    cwd: str,
+    env: dict,
+    stderr_log,
+    stdin_text: str | None = None,
+    keep_stdin_open: bool = False,
 ) -> subprocess.Popen:
     """起一次 Agent CLI。首次运行与 TAF 修正共用这一处，进程参数只有一份。
 
@@ -611,7 +618,7 @@ def _popen(
         start_new_session=os.name != "nt",
     )
     if stdin_text is not None:
-        _feed_stdin(proc, stdin_text)
+        _feed_stdin(proc, stdin_text, keep_stdin_open)
     return proc
 
 
@@ -1045,6 +1052,8 @@ def _cmd(
     effort: str | None = None,
     endpoint: dict | None = None,
     target: str | None = None,
+    task: str = "figure_edit",
+    output: str | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
     绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。
@@ -1053,7 +1062,7 @@ def _cmd(
     密钥只在返回的环境变量里。"""
     agent = require_agent(agent_id)
     if agent.internal:
-        extra_args, extra_env = ai_providers.spawn_overrides(agent_id, endpoint, model)
+        extra_args, extra_env = ai_providers.spawn_overrides(agent_id, endpoint, model, effort)
         if (
             not extra_args
         ):  # 记录不可用（没 Key / 没型号 / 地址不合规）：不起一个注定 `auth` 失败的进程
@@ -1064,6 +1073,8 @@ def _cmd(
                 prompt=prompt,
                 cwd=cwd,
                 target=target,
+                task=task,
+                output=output,
                 model=model,
                 endpoint_args=list(extra_args),
                 endpoint_env=dict(extra_env),
@@ -1251,8 +1262,8 @@ def run(
         if needs_login is not None:
             raise AgentError("ai_endpoint_needs_login", needs_login)
         if agent == ai_agents.BUILTIN_ID:
-            # 内置执行器只跑「改图」（ADR 0147 §四：转换任务的 `check` 回调本阶段没有注入方），且必须显式指到一条内置循环能用的 Key 连接
-            if convert is not None or ai_providers.builtin_conn(chosen, model) is None:
+            # 内置执行器必须显式指到一条内置循环能用的连接（没有「当前选中」这回事）
+            if ai_providers.builtin_conn(chosen, model) is None:
                 raise AgentError("ai_agent_not_usable", {"agent": agent})
         if not script_path.is_file():
             raise RuntimeError(f"脚本不存在: {script}")
@@ -1383,8 +1394,23 @@ def run(
         endpoint = ai_providers.resolve(agent, endpoint_id)
         builtin = agent == ai_agents.BUILTIN_ID
         # 内置执行器要知道目标脚本（写权限收窄到它）；提示词走 stdin 不进 argv。两家 CLI 的调用形状一个字节不变
-        cmd_kw = {"target": cand.target_name if cand is not None else script} if builtin else {}
-        stdin_text = prompt if builtin else None
+        # 转换任务（ADR 0143）：Agent 读候选里的原脚本副本、新建 `<原名>_matplotlib.py`；`check` 经 stdin/stdout 回调本进程的校验流水
+        builtin_convert = builtin and convert is not None
+        if builtin_convert:
+            cmd_kw = {
+                "target": Path(script).name,
+                "task": "convert_to_editable",
+                "output": cand.target_name,
+            }
+        else:
+            cmd_kw = {"target": cand.target_name if cand is not None else script} if builtin else {}
+
+        def stdin_for(text: str) -> str | None:
+            if not builtin:
+                return None
+            return json.dumps({"prompt": text}) + "\n" if builtin_convert else text
+
+        stdin_text = stdin_for(prompt)
         cmd, extra_env = _cmd(
             agent, prompt, agent_cwd, model=model, effort=effort, endpoint=endpoint, **cmd_kw
         )
@@ -1462,7 +1488,7 @@ def run(
                 from . import ai_tasks
 
                 task_run = ai_tasks.begin_registered(sid, envelope)
-            proc = _popen(cmd, agent_cwd, env, stderr_log, stdin_text)
+            proc = _popen(cmd, agent_cwd, env, stderr_log, stdin_text, builtin_convert)
             _SPAWN_MARK.started = True  # 进程已经起来了：此后任何异常都不能再清账本行
         except BaseException as exc:
             # 记录已落库而进程没起来：标成失败，不是删掉——「查询」要查得到它，且明确是没执行
@@ -1514,11 +1540,31 @@ def run(
 
     log_state = {"log": stderr_log}
 
+    def _answer_check() -> None:
+        """内置执行器的 `check`：跑 ADR 0143 的校验流水（`run_validation`，候选工作区里），把结论写回它的 stdin。"""
+        from . import ai_convert
+
+        try:
+            ok, report = ai_convert.agent_check(cand)
+        except Exception:  # noqa: BLE001 - 校验流水自身出错：告诉 Agent 不通过，不拖垮会话
+            LOG.exception("内置执行器的 check 回调出错（session %s）", sid)
+            ok, report = False, "check_failed"
+        reply = json.dumps({"ok": ok, "report": report}, ensure_ascii=True) + "\n"
+        try:
+            pipe = sess["proc"].stdin
+            pipe.write(reply)
+            pipe.flush()
+        except (OSError, ValueError, AttributeError):
+            pass  # 子进程已经退出
+
     def _consume():
         st: dict = {}
         for line in sess["proc"].stdout:
             line = line.rstrip("\n")
             if not line.strip():
+                continue
+            if builtin_convert and '"check_request"' in line:
+                _answer_check()
                 continue
             for kind, text in _classify(agent, line, st):
                 if not text:
@@ -1562,7 +1608,8 @@ def run(
                 agent_cwd,
                 _spawn_env(cmd2[0], extra2),
                 log_state["log"],
-                again if builtin else None,
+                stdin_for(again),
+                builtin_convert,
             )
         except BaseException:
             sess["exited"].set()  # 没起来：没有要等的进程

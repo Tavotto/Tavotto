@@ -11916,6 +11916,26 @@ def _connection_error(exc: "engine_ai_connections.ConnectionRefused"):
     return jsonify({"error": exc.code, "code": exc.code, "params": exc.params}), exc.status
 
 
+def _apply_connection(body: dict, agent: str, model: str | None, endpoint_id):
+    """改图 / 转换请求里的新字段 `connection`（AiConnection.id）：直接解析到那条 provider 与路由（订阅 → CLI；Key / 账号登录 →
+    CLI + 注入或内置），不看 `ai.active_provider`；旧的 `agent` / `endpoint` 字段在没带它时照旧。放在去重**之后**（可变判断）。
+    → `(agent, model, endpoint_id, 被拒时的响应 | None)`。"""
+    if body.get("connection") is None:
+        return agent, model, endpoint_id, None
+    cid = body["connection"]
+    if not isinstance(cid, str):
+        abort(400)
+    try:
+        agent, picked = engine_ai.resolve_connection(cid)
+    except engine_ai_connections.ConnectionRefused as exc:
+        LOG.warning("AI 任务被拒: 连接解析失败 (%s)", exc.code)
+        return agent, model, endpoint_id, _connection_error(exc)
+    endpoint_id = picked["id"] if picked else ""  # "" = 明确用官方登录态（不是「没指定」）
+    if picked is not None and not model:
+        model = str(picked.get("default_model") or "").strip() or None
+    return agent, model, endpoint_id, None
+
+
 @app.post("/api/ai/connections")
 def api_ai_connection_add():
     """连一个 Key 类 AI。body：`{vendor, api_key, base_url?, model?, label?}`（`custom` 另需 `wire`：`anthropic` | `openai-responses`；
@@ -12112,21 +12132,11 @@ def _ai_run_impl():
         "canvas": body.get("canvas"),
     }
     ctx = current_ctx()
-    model, endpoint_id = body.get("model") or None, body.get("endpoint")
-    if body.get("connection") is not None:
-        # 新字段 `connection`（AiConnection.id）：直接解析到那条 provider 与路由（订阅 → CLI；Key → CLI + 注入或内置），
-        # 不看 `ai.active_provider`；旧的 `agent` / `endpoint` 字段在没带它时照旧。放在去重**之后**（可变判断）
-        cid = body["connection"]
-        if not isinstance(cid, str):
-            abort(400)
-        try:
-            agent, picked = engine_ai.resolve_connection(cid)
-        except engine_ai_connections.ConnectionRefused as exc:
-            LOG.warning("AI 任务被拒: 连接解析失败 (%s)", exc.code)
-            return _connection_error(exc)
-        endpoint_id = picked["id"] if picked else ""  # "" = 明确用官方登录态（不是「没指定」）
-        if picked is not None and not model:
-            model = str(picked.get("default_model") or "").strip() or None
+    agent, model, endpoint_id, refused = _apply_connection(
+        body, agent, body.get("model") or None, body.get("endpoint")
+    )
+    if refused is not None:
+        return refused
     try:
         sid = engine_ai.run(
             agent,
@@ -12300,6 +12310,11 @@ def api_ai_convert():
         got = engine_projectenv.contained_path(ctx.path, str(near)) if near is not None else None
         if got is not None and Path(got).is_file():
             original_rel = Path(os.path.relpath(got, os.path.realpath(ctx.path))).as_posix()
+    agent, model, endpoint_id, refused = _apply_connection(
+        body, agent, body.get("model") or None, body.get("endpoint")
+    )
+    if refused is not None:
+        return refused
     try:
         sid = engine_ai.run(
             agent,
@@ -12313,9 +12328,9 @@ def api_ai_convert():
                 {**data, "pj": ctx.id, **({"client_request_id": request_id} if request_id else {})},
             ),
             client_request_id=request_id,
-            model=body.get("model") or None,
+            model=model,
             effort=body.get("effort") or None,
-            endpoint_id=body.get("endpoint"),
+            endpoint_id=endpoint_id,
             task_hooks={
                 "runner": _convert_runner(ctx, rel),
                 # R / MATLAB 转写的新脚本才会要 pandas / statsmodels 这类包：校验运行前按 `convertdeps` 的规则自动装（或停住等用户在依赖卡片上决定）

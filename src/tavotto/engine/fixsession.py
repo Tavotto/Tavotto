@@ -32,7 +32,7 @@ from . import fixtools
 from .agent_runner import loop
 from .agent_runner.redact import NO_REDACTION, Redactor
 from .agent_runner.tools import Limits, RunEnvelope, Tool
-from .agent_runner.wires import WIRES, Turn
+from .agent_runner.wires import WIRES, AnthropicWire, Turn
 from .fixtools.audit import AuditLog
 from .fixtools.observe import read_run_report
 
@@ -824,7 +824,7 @@ def connection() -> dict | None:
     返回里带密钥，**只给 `build_model` 用**。"""
     from . import ai_connections
 
-    return ai_connections.first_key_connection()
+    return ai_connections.first_key_connection(refresh=True)
 
 
 def cli_agent() -> str | None:
@@ -840,7 +840,10 @@ def cli_agent() -> str | None:
 def available() -> bool:
     """「使用你的 AI 来修复」能不能真的跑：有内置循环能用的 API 连接，或有可用的 Codex / Claude Code。"""
     try:
-        return connection() is not None or cli_agent() is not None
+        from . import ai_connections
+
+        # 只问「有没有」：不联网（账号登录令牌的刷新留到真要开跑的 `connection()`）
+        return ai_connections.first_key_connection() is not None or cli_agent() is not None
     except Exception:  # noqa: BLE001 - 探测失败 = 不可用
         return False
 
@@ -882,8 +885,13 @@ def cli_launcher(
 
 def build_model(conn: dict):
     """连接 → `HttpModel`。密钥只放进模型对象（`repr` 不含），返回的 `Redactor` 用于过滤卡片里的回显。"""
+    wire = (
+        AnthropicWire(bearer_only=True)
+        if conn.get("auth") == "bearer" and conn["wire"] == "anthropic"
+        else WIRES[conn["wire"]]
+    )
     model = loop.HttpModel(
-        WIRES[conn["wire"]],
+        wire,
         base_url=conn["base_url"],
         api_key=conn["api_key"],
         model=conn["model"],

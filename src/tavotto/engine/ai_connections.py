@@ -205,11 +205,13 @@ def route_for(rec: dict, agents_info: dict[str, dict]) -> tuple[str | None, str 
 
     route ∈ `cli:codex` / `cli:claude` / `builtin`。"""
     agent = str(rec.get("agent") or "")
-    cli = _cli_usable(agents_info, agent)
+    # 自带凭据的账号登录（令牌由我们注入）不看 CLI 自己有没有官方登录；Key 类沿用 CLI「可派活」的判据
+    cli = (
+        _cli_present(agents_info, agent)
+        if rec.get("auth") == "oauth"
+        else _cli_usable(agents_info, agent)
+    )
     cli_route = f"cli:{agent}"
-    if rec.get("auth") == "oauth":
-        # 令牌是 Bearer：内置循环不走，只能 CLI
-        return (cli_route, None) if _cli_present(agents_info, agent) else (None, "cli_unavailable")
     viable = ai_providers.builtin_conn(rec) is not None
     forced = builtin_forced()
     if forced is True:
@@ -327,6 +329,10 @@ def _key_connection(
     if route == "cli:codex":
         info = agents_info.get(agent_id) or {}
         efforts, default_effort = list(info.get("efforts") or []), info.get("default_effort")
+    elif route == ROUTE_BUILTIN:
+        # 内置执行器：只给目录确认支持的档位；第三方网关不确定就不给（宁可不显示，也不发对方不认的字段）
+        efforts = ai_catalog.efforts_for(agent_id, str(rec.get("base_url") or ""))
+        default_effort = "medium" if "medium" in efforts else None
     conn = {
         "id": rec["id"],
         "vendor": vid,
@@ -390,11 +396,21 @@ def resolve_connection(cid: str, agents_info: dict[str, dict]) -> tuple[str, dic
     return (ai_agents.BUILTIN_ID if route == ROUTE_BUILTIN else route.split(":", 1)[1]), rec
 
 
-def first_key_connection() -> dict | None:
-    """AI 修复用：第一个内置循环能直接用的 Key 连接 → `builtin_conn` 形状；没有 = None。旧版「选中」的接口排在前（老用户结论不变）。"""
+def first_key_connection(*, refresh: bool = False) -> dict | None:
+    """AI 修复用：第一个内置循环能直接用的连接（Key 或账号登录）→ `builtin_conn` 形状；没有 = None。旧版「选中」的接口排在前（老用户结论不变）。
+
+    `refresh=True`（真要开跑时）：账号登录的记录先 `ai_oauth.ensure_fresh`（联网，可能很慢），刷不动的跳过；
+    `False`（只问「有没有」，capabilities 用）绝不联网。"""
     recs = ai_providers.list_providers()
     active = {v for v in (config.ai_settings().get("active_provider") or {}).values() if v}
     for rec in sorted(recs, key=lambda r: r.get("id") not in active):
+        if ai_providers.builtin_conn(rec) is None:
+            continue
+        if refresh and rec.get("auth") == "oauth":
+            try:
+                rec = ai_oauth.ensure_fresh(rec) or rec
+            except ai_oauth.NeedsLogin:
+                continue
         conn = ai_providers.builtin_conn(rec)
         if conn is not None:
             return conn

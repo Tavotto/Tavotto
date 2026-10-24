@@ -426,6 +426,35 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
     }
 
 
+def agent_check(cand: ConvertCandidate) -> tuple[bool, str]:
+    """内置执行器 `check` 工具的回调（Agent 在候选里写完新脚本后自己要一次校验）→ `(是否通过, 给 Agent 看的一段报告)`。
+
+    与流水线的提交前检查同一套规则（ADR 0143）：新文件在不在 → 语法 → 静态上用了 Matplotlib → 在用户同一路由下真跑一遍
+    （`run_validation`，写入根绊线只开候选目录）。**不写任何用户文件**；报告只有稳定短码 + 校验运行的短消息。
+    runner 由 app 经 `task_hooks["runner"]` 注入（`cand.extras["runner"]`），没有 = 不通过。"""
+    try:
+        data = cand.target.read_bytes() if not cand.target.is_symlink() else None
+    except OSError:
+        data = None
+    if not data or not data.strip():
+        return False, f"target_missing: create {cand.target_name} first"
+    cand.new_bytes = data
+    tree, problem = discover.parse_source(data.decode("utf-8", errors="replace"))
+    if problem is not None:
+        return False, f"syntax_error: line {problem.get('lineno')}: {problem.get('detail')}"
+    if not _static_uses_matplotlib(tree):
+        return False, "no_matplotlib_import: the new script must draw with Matplotlib"
+    runner = cand.extras.get("runner")
+    if runner is None:
+        return False, "check_unavailable"
+    res = run_validation(cand, runner)
+    status = res.get("status")
+    if status == "ok":
+        return True, f"check passed: {len(res.get('stems') or [])} figure(s) captured"
+    detail = " ".join(str(res.get(k) or "") for k in ("code", "message")).strip()
+    return False, f"check failed ({status}): {detail}"[:1500]
+
+
 def _run_with_cancel(runner, cand: ConvertCandidate, rel: str, cancel) -> tuple[dict, bool]:
     """跑校验运行；运行中取消到来时，若 runner 带 `force_cancel(figures_dir, rel, write_roots)`（app 注入，= `pool.force_cancel`
     的同键硬杀）就当场结束在跑的探测。回 `(输出, 是否因取消被硬杀)`。runner 没有该入口（纯引擎单测）则等同直接调用。"""
