@@ -21,28 +21,24 @@ export interface AiFixFlowUi {
   ghost?: ReactNode
 }
 
-/** 卡片详情：AI 读过哪些项目外的位置，以及哪些绝不读 */
-function Reads({ reads, notRead }: { reads: string[]; notRead?: string }) {
+/** 卡片详情：AI 查看过哪些项目外的位置（没看过就整块不显示） */
+function Reads({ reads }: { reads: string[] }) {
+  if (!reads.length) return null
   return (
     <div data-ai-fix-reads className="flex flex-col gap-1.5">
       <p className="m-0 font-medium text-ink">{ft('readTitle')}</p>
-      {reads.length ? (
-        <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
-          {reads.map((r) => (
-            <li key={r} className="break-all font-mono text-sm">
-              {r}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="m-0">{ft('readNone')}</p>
-      )}
-      {notRead ? <p className="m-0 text-ink-3">{ft('notRead')}</p> : null}
+      <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
+        {reads.map((r) => (
+          <li key={r} className="font-mono text-sm [overflow-wrap:anywhere]">
+            {r}
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
 
-/** `run_command` 卡上的完整命令（等宽、可换行；第②档红底红框） */
+/** `run_command` 卡上的完整命令（等宽、中性底色；长行在词边界外才断，不把文件名从中间劈开） */
 function CommandBlock({ card }: { card: AiFixCard }) {
   return (
     <pre
@@ -50,8 +46,7 @@ function CommandBlock({ card }: { card: AiFixCard }) {
       data-danger={card.danger ? 'true' : undefined}
       aria-label={ft('commandAria')}
       className={cn(
-        'm-0 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md px-2.5 py-2 font-mono text-sm',
-        card.danger ? 'bg-danger-surface text-danger-content inset-ring inset-ring-danger-border' : 'bg-surface-2 text-ink',
+        'm-0 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface-2 px-2.5 py-2 font-mono text-sm text-ink [overflow-wrap:anywhere]',
       )}
     >
       {card.command}
@@ -137,7 +132,7 @@ const activityLine = (a: NonNullable<AiFixEntry['activity']>) => {
 
 /** 卡住的原因：一句话 + 折叠详情里多说一点 */
 const stalledLine = (st: NonNullable<AiFixEntry['stalled']>) =>
-  ft(`stalled.${st.reason}`, { tool: st.detail || '?', defaultValue: ft('stalled.stalled') })
+  ft(`stalled.${st.reason}`, { defaultValue: ft('stalled.stalled') })
 
 const failureLine = (reason: string | undefined) => {
   switch (reason) {
@@ -223,8 +218,8 @@ export function aiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null
               </p>
             ) : null}
             {isCommand && card.danger ? (
-              <p data-ai-fix-outside-note className="m-0 whitespace-pre-wrap break-words">
-                {card.cwd === 'project' ? ft('outsideCwdProject') : ft('outsideCwdScratch')} {ft('outsideBackup', { count: card.scripts ?? 0 })}
+              <p data-ai-fix-outside-note className="m-0 break-words">
+                {ft('outsideBackup')}
               </p>
             ) : null}
             {card.packages?.length ? (
@@ -233,7 +228,7 @@ export function aiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null
               </p>
             ) : null}
             {card.details && !isCommand ? <p className="m-0 whitespace-pre-wrap break-words">{card.details}</p> : null}
-            <Reads reads={card.reads ?? []} notRead={card.not_read} />
+            <Reads reads={card.reads ?? []} />
           </>
         ),
         primary: (
