@@ -1,6 +1,6 @@
 # ADR 0147：改图助手的内置执行器——自己跑「模型 ↔ 工具」循环
 
-日期：2026-10-23 · 状态：**提议**（1.0 豁免已由维护者给出；方案页已批准；第一阶段只落核心循环模块）
+日期：2026-10-23 · 状态：**第一阶段（核心循环）已落地；第二阶段（注册进改图执行路径）已接入改图**（2026-10-24，「连接 AI」改造；1.0 豁免已由维护者给出）
 相关：[0138 TAF](0138-tavotto-ai-foundation.md)（§三 默认只改表现形式、§四 执行面不扩大、§六 Harness² 只借思想）、
 [0015 Agent 注册表](0015-coding-agent-registry-and-settings.md)、[0143 生成可编辑版本](0143-convert-to-editable.md)。
 
@@ -36,13 +36,27 @@ CLI 的写入面（任意 shell、网络、绝对路径写）也比「改一个�
 最多 3 次（0143 的「校验运行 ≤ 3」），本阶段入口没有注入方。系统提示的产品要求引用 `ai_prompt_pack.convert_requirements()` 的同一份文字，不复制。
 没有 `write_file`、没有 shell / 网络。
 
-### 五、本阶段不做
+### 五、第二阶段：已接入改图（2026-10-24）
 
-接进 `ai_bridge` / `ai_agents` / 设置页（等在飞的 PR 合入后另起阶段）；`check` 回调的真实实现（复用 TAF 的候选检查）；
-流式回复；打包进冻结产物（`python -m` 在冻结包里怎么起，另一阶段决定）；默认开启。
+`ai_agents.BuiltinAgent`（id `builtin`）以**内部**执行器的身份接进 `ai_bridge.run`：不在 `AGENT_REGISTRY`、不出现在 capabilities 的 `agents[]`，
+界面上也没有「执行器」——用户只看到「连接」，`builtin` 只经连接的 `route` 体现。命令是 `tavotto agent-run`（冻结产物同目录 `tavotto-cli`，源码 `-m tavotto`，与 D3 的 `fix-mcp` 同一启动器出处），
+复用候选工作区 / TAF 校验与修正 / 事件流 / 取消 / 历史库，与 Codex / Claude Code 同一套会话生命周期；密钥只经环境变量，提示词经 stdin。
+
+**路由规则**（用户决策 2026-10-24，视图见 `engine/ai_connections.py`）：
+
+1. 订阅类连接（ChatGPT / Claude 的官方登录）→ 对应 CLI；
+2. Key 类连接：该连接家族的 CLI 装着且可用，并且 `ai.builtin_default` 不为 true → CLI + 注入 provider（现状）；否则 → 内置执行器。没装任何 CLI 的用户因此直接可用；
+3. `ai.builtin_default` 默认 false，**FigureBench 跑分不差于 Claude Code 之后改 true**；运维开关 `TAVOTTO_AI_BUILTIN=0|1` 强制；
+4. 账号登录（Bearer 令牌）类只走 CLI；内置循环不能用的记录（明文 http 网关、缺型号）退回可用的 CLI。
+
+AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可用的 Key 连接。
+
+### 六、仍然不做
+
+转换任务（`convert_to_editable`）经内置执行器——它的 `check` 回调还没有注入方（`convert` + `builtin` 直接拒绝）；流式回复；默认开启（`builtin_default` 先 false）。
 
 ## 后果
 
 * 用户有了不依赖 CLI 的改图路径；代价是我们自己维护三种协议的字段细节，需要用真实服务做兼容性回归（单独、显式计费的命令，不进 CI）。
 * 模型生成 / 影响的文件改动仍不当作可信：候选目录 + 指纹 + 提交前检查（0138 §四）一个不少。
-* 规则全文：`docs/rules/backend/ai-agent-bridge.md`「内置执行器」一节；看护 `tests/test_agent_runner.py`。
+* 规则全文：`docs/rules/backend/ai-agent-bridge.md`「内置执行器」与「连接」两节；看护 `tests/test_agent_runner.py`、`tests/test_ai_connections.py`。

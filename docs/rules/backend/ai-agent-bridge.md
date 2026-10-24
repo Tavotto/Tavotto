@@ -372,10 +372,10 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 - spawn 时注入、绝不改写用户的 settings / config.toml
 - 模型名不写进源码
 
-## 内置执行器（`engine/agent_runner/`，ADR 0147 提议，第一阶段：核心循环）
+## 内置执行器（`engine/agent_runner/`，ADR 0147，第一阶段核心循环 + 第二阶段已接入改图）
 
-改图助手自己跑「模型 ↔ 工具」循环的独立子进程，不借 Codex / Claude Code CLI。**本阶段只有核心循环**，还没接进 `ai_bridge` /
-`ai_agents` / 设置页（`AGENT_REGISTRY` 不变）。看护 `tests/test_agent_runner.py`、`tests/test_outbound_https_trust.py`。
+改图助手自己跑「模型 ↔ 工具」循环的独立子进程，不借 Codex / Claude Code CLI。第二阶段（「连接 AI」改造）已把它注册进改图执行路径，
+见下一节「连接」；`AGENT_REGISTRY` 仍只有两家 CLI。看护 `tests/test_agent_runner.py`、`tests/test_outbound_https_trust.py`、`tests/test_ai_connections.py`。
 
 - **边界**：纯标准库、3.10 可跑；不 import 科学栈，**不 import `ai_bridge` / `ai_agents` / `ai_tasks`**；内部依赖只有 `tlstrust` 与纯标准库的 `ai_prompt_pack`（convert 提示词的同一份文字）。
   只经 stdout 事件行与父进程说话。入口 `python -m tavotto.engine.agent_runner --cwd <候选目录> --target <相对路径> --wire <名> --base-url <url> --model <名>`。
@@ -424,6 +424,38 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   - 系统提示是英文（要求用用户指令的语言回复）；产品要求三条（保留数据读取与计算 / 必须 Matplotlib 出图 / 图幅字号对齐）**引用 `ai_prompt_pack.convert_requirements()` 的同一份文字**（CLI 路径的 `convert_prompt` 也用它，不各抄一份），
     执行器特有的部分（只写一个新文件、不运行脚本、check ≤ 3 次）写在 `tools.py`。`ai_prompt_pack` 是纯标准库，所以 `agent_runner` 对它的 import 不破坏依赖方向（`test_import_architecture` 兜底）。
   - 看护 `tests/test_agent_runner_convert.py`（Demo 协议端到端 + 单元）。
+
+### 连接（`engine/ai_connections.py`，ADR 0147 第二阶段）
+
+界面不讲「执行器 / CLI / agent」，只讲「连接 AI」。`ai_connections` 在 `ai.providers[]` 与两家 CLI 的官方登录态之上给一份**视图**，**不迁移存储**
+（`ai.active_provider` 只作旧字段兼容，连接的解析不看它）。依赖方向 `ai_agents ← ai_providers ← ai_connections ← ai_bridge`。
+
+- **`capabilities` 新字段**（旧字段一个不动，`agents[]` 仍只有 codex / claude）：`vendors[]`（厂商目录）、`connections[]`（已连接 / 需重新登录）、`locale_region`。
+  - `vendors` 由 `ai_catalog.json` 生成：同 `brand` 的 Claude 行（Anthropic Messages）与 Codex 行（Responses）合成**一家**（id 取首选的 Anthropic 行；`custom` 两行合成一家），
+    官方登录行（`base_url` 为空）不进来；再加订阅类 `chatgpt`（codex 登录，logo `openai`）、`claude`（claude 登录，logo `anthropic`，`available` = 对应 CLI 装了）
+    与账号登录类 `<provider>-oauth`（`ai_oauth` 的 client_id 配了才出现）。`label` 是品牌名兜底，`label_key` 是前端既有的 `dialogs:settings.agents.endpoint.<label_key>` 文案键（订阅 / custom 为 null）。
+    排序：中文系统（`LC_ALL`/`LC_MESSAGES`/`LANG`，Windows 取 UI 语言）国内组在前，否则订阅与海外在前；`locale_region` 是这个提示，前端以自己的界面语言为准。
+  - `connections`：订阅类 `sub:codex` / `sub:claude`（CLI 装了且启用才列；`needs_auth` 只看就绪检查的 `needs_auth`）+ 每条 provider 记录一条（Key 类 id = provider id；`auth: "oauth"` 类同）。
+    多条可同时 `ready`，同厂商多条时 `label` 带用户起的名字 / 密钥尾四位。没有地址的旧记录（官方 Key）不进视图。`state`：缺 Key → `needs_auth`；
+    不兼容旧记录 / 保存时被服务商拒绝（`last_error: unauthorized` 落盘）/ 路由走不通 / 内置路由缺型号 → `error` 且带原因码 `error`。
+  - **路由 `route_for`**（`route` 只给诊断与测试，界面不显示）：订阅 → `cli:<agent>`；Key 类：该家族 CLI 可用且 `ai.builtin_default` 不为 true（默认 false，FigureBench 过线后改 true）→ `cli:<家族>` + 注入；
+    否则 → `builtin`（内置循环必须能用该记录：`ai_providers.builtin_conn`，不行则退回可用的 CLI）。账号登录类（Bearer 令牌）内置循环不走，只能 CLI。
+    `TAVOTTO_AI_BUILTIN=1` 强制内置、`=0` 强制不用（没 CLI 即走不通）。
+- **管理接口**（照常过会话守卫与 Host/Origin 校验）：`POST /api/ai/connections`（`{vendor, api_key, base_url?, model?, label?, wire?, id?}` → `{ok, connection}`；Key 形状 = 可打印 ASCII 无空白 ≤ 4096；
+  `base_url` 须 https 或回环 http；保存前 `live_models` 试取一次，**失败也保存**，返回的连接 `state:"error"` + `error` 原因码，只有 `unauthorized` 才落盘；`custom` 必须给 `base_url` 与 `wire`
+  （`anthropic` | `openai-responses`）；带已存在的 `id` = 换 Key / 型号并清掉错误）、`DELETE /api/ai/connections/<id>`（订阅类 `connection_not_deletable`）、
+  `POST /api/ai/connections/<id>/login`（订阅类走 `start_login`；`<provider>-oauth` 走设备码流程，返回 `flow_id`，进度仍用 `/api/ai/oauth/flows/<id>`）。错 body 一律 400 `endpoint_invalid{reason}` 且什么都不保存、不碰网络；
+  密钥不在任何响应 / 日志里。旧 `endpoints*` 接口保留。
+- **改图请求**接受 `connection`（+ `model`）：`ai_bridge.resolve_connection(id) -> (agent_id, endpoint|None)`（= `ai_connections.resolve_connection` + 本机 CLI 探测结论，不 import 成环）直接解析到那条 provider 与路由（订阅 → `(codex|claude, None)`，请求里 `endpoint_id=""` = 明确用官方登录态）；
+  放在去重**之后**。没带 `connection` 时旧的 `agent` / `endpoint` 字段照旧。
+- **内置执行器进改图执行路径**：`ai_agents.BuiltinAgent`（id `builtin`，`internal=True`）在 `INTERNAL_AGENTS`——`get_agent` 找得到，**不在** `AGENT_REGISTRY` / `agents()` / `agent_ids()` / capabilities 的 `agents[]`
+  （旧前端会把它当执行器显示）。命令 = `ai_agents.tavotto_launcher()`（与 `fixsession.mcp_launcher` 同一出处：冻结产物同目录 `tavotto-cli`，否则 `-m tavotto`）+ `agent-run`（`engine/cli.py` 的子命令，等价 `python -m tavotto.engine.agent_runner`）
+  `--cwd <候选目录> --target <脚本> --wire --base-url --model`。**密钥只经环境变量** `TAVOTTO_AGENT_API_KEY`，提示词经 stdin（`_popen(stdin_text=…)`），argv / 日志 / 事件 / 历史库里都没有。
+  `ai_providers.builtin_conn(rec)` 是「内置循环能不能用这条记录」的**唯一判据**（有 Key、有型号、`check_base_url` 合规、非账号登录、非不兼容旧记录、家族认得），改图的 `spawn_overrides("builtin")`、
+  `fixsession.connection()`、路由三处共用。`require_usable("builtin")` = 有这样的 Key 连接且没被 `TAVOTTO_AI_BUILTIN=0` 关掉；`run("builtin")` 必须显式带 `endpoint_id`（没有「当前选中」）。
+  会话生命周期（候选工作区 / TAF 校验与修正 / 事件流 / 取消 / 历史库 `provider="builtin"`）与 CLI 完全同一套；`classify_event` 把 runner 的 `tool/text/thinking/done` 事件翻成 `action/message/thinking`。
+  **本阶段不接转换任务**（`convert` + `builtin` 直接 `ai_agent_not_usable`，ADR 0147 §四的 `check` 回调没有注入方）；遥测 `ai_assistant_invoked.agent` 对 `builtin` 落成 `other`。
+- **AI 修复**：`fixsession.connection()` 改为 `ai_connections.first_key_connection()`——第一个内置循环能直接用的 Key 连接（老用户旧版「选中」的接口排最前，其余按保存顺序），不再只看各家族的 active provider。
 
 ## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
 
