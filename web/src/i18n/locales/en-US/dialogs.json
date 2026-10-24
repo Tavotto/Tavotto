@@ -1897,7 +1897,8 @@
         "unauthorized": "The key is invalid or expired.",
         "network": "Can’t reach the provider.",
         "timeout": "The connection timed out."
-      }
+      },
+      "subtitle": "Connect an AI to edit figures or fix your environment."
     }
   },
   "style": {

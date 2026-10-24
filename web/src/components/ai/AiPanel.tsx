@@ -1173,7 +1173,7 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
                 <span className="shrink-0 text-xs text-ink-2">{view ? ai('panel.aiModel') : ai('panel.agentModel')}</span>
                 <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-ink" title={model}>
                   {activeConn ? (
-                    <BrandLogo logo={activeConn.logo} size={18} />
+                    <BrandLogo logo={activeConn.logo} size={16} />
                   ) : (
                     <FamilyIcon iconKey={cur.icon_key} />
                   )}

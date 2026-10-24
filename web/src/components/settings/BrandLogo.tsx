@@ -16,36 +16,34 @@ const ALIAS: Record<string, string> = {
 }
 
 /**
- * 厂商的真实彩色标志，坐在**浅色圆角底**上（像 App 图标）。
+ * 厂商的真实标志：直接画，没有底、没有边框（与 `VendorIcon` 同一姿态）。
  *
- * 底色用 `bg-paper`（纸：两套主题同值的白）：彩色标志是为浅底设计的，深色主题里直接画在深色表面上
- * 会糊掉（Kimi 的黑、OpenAI 的黑），所以底永远是浅的；没有彩色版的厂商（OpenAI / Anthropic 等）
- * 用单色图形画成纸墨色（`text-paper-ink`）。图形全部本地内联，没有远程图片。
- *
- * `logo` 来自后端厂商目录的 `logo` 键；表外的键（Synthetic、自定义接口）落到通用图标，不是空白。
- * 名字永远在旁边，所以这里不带可访问文本。
+ * 有彩色版的厂商画彩色，深浅主题下原样；单色 / 深色的标志（OpenAI、Anthropic、Kimi 的 K 等）一律
+ * `currentColor` 并跟随文字色 `text-ink`——深色主题下 ink 翻成浅色，标志自然反色，不写字面色。
+ * 没有彩色版的厂商用单色图形；表外的键（Synthetic、自定义接口）落到通用图标，不是空白。
+ * 图形全部本地内联，没有远程图片。名字永远在旁边，所以这里不带可访问文本。
  */
 export function BrandLogo({
   logo,
-  size = 32,
+  size = 20,
   className,
 }: {
   logo?: string | null
-  /** 底的边长（px） */
+  /** 图形边长（px） */
   size?: number
   className?: string
 }) {
   const key = logo ? (ALIAS[logo] ?? logo) : ''
   const color = BRAND_LOGOS[key]
   const mono = VENDOR_GLYPHS[key]
-  const glyph = Math.round(size * 0.62)
+  const glyph = size
   return (
     <span
       aria-hidden
       data-brand-logo={color || mono ? key : 'generic'}
       style={{ width: size, height: size }}
       className={cn(
-        'flex shrink-0 items-center justify-center rounded-lg border border-paper-ink/10 bg-paper text-paper-ink',
+        'flex shrink-0 items-center justify-center text-ink',
         className,
       )}
     >

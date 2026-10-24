@@ -1857,6 +1857,7 @@ export default interface Resources {
         "regionGlobal": "海外",
         "saveKey": "保存",
         "signIn": "登录",
+        "subtitle": "连接一个 AI，用于改图或修复环境。",
         "title": "连接一个 AI",
         "titleFix": "连接一个 AI 来修复"
       },

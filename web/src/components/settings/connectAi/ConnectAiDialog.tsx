@@ -46,6 +46,7 @@ export function ConnectAiDialog({
         open={open && !manual}
         onOpenChange={(v) => !v && onClose()}
         title={reason === 'fix' ? cx('titleFix') : cx('title')}
+        description={cx('subtitle')}
         size="sm"
         footer={{
           secondary: (

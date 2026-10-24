@@ -6,7 +6,7 @@
  * 品牌标志归各自商标所有人，这里仅用于在界面上指认该服务商。
  * 逐项来源文件：bailian / claude / deepseek / gemini / kimi / minimax / qwen / zhipu 均为同名 `-color.svg`。
  * lobe-icons 没有彩色版的厂商（openai / anthropic / moonshot / zai / vercel / opencode）用 `vendorIcons.ts`
- * 的单色图形、画成纸墨色；synthetic / 自定义接口没有可靠图形，落到通用图标。
+ * 的单色图形、画成 currentColor（跟随文字色）；synthetic / 自定义接口没有可靠图形，落到通用图标。
  * 本文件由脚本从上游 SVG 机械转换，不要手改图形数据。
  */
 export interface BrandPath {

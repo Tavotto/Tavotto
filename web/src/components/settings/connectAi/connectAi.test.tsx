@@ -123,6 +123,7 @@ describe('ConnectAiDialog：排序与个数', () => {
     const onClose = vi.fn()
     await render(<ConnectAiDialog open reason="fix" onClose={onClose} />)
     expect(document.body.textContent).toContain(cx('titleFix'))
+    expect(document.body.textContent).toContain(cx('subtitle'))
     await click(document.body.querySelector('[data-connect-later]')!)
     expect(onClose).toHaveBeenCalledTimes(1)
   })
@@ -333,14 +334,27 @@ describe('设置 → 改图助手：同级列表', () => {
 /* -------------------------------- 彩色 logo -------------------------------- */
 
 describe('BrandLogo', () => {
-  it('底是浅色圆角（纸色 token，两套主题同值），暗色模式也不跟着变黑', async () => {
-    document.documentElement.setAttribute('data-theme', 'dark')
+  it('没有底、没有边框：直接画标志（不再是白色圆角矩形）', async () => {
     await render(<BrandLogo logo="deepseek" />)
-    const tile = host.querySelector<HTMLElement>('[data-brand-logo]')!
-    expect(tile.className).toContain('bg-paper')
-    expect(tile.className).toContain('rounded-lg')
-    // 不用会随主题翻转的表面色
-    expect(tile.className).not.toMatch(/bg-surface|bg-group|bg-bg/)
+    const el = host.querySelector<HTMLElement>('[data-brand-logo]')!
+    expect(el.className).not.toMatch(/\bbg-|\bborder|rounded/)
+  })
+
+  it('深色主题：单色标志（OpenAI / Anthropic …）与 Kimi 的 K 用 currentColor 跟随 text-ink 反色，彩色部分原样', async () => {
+    document.documentElement.setAttribute('data-theme', 'dark')
+    await render(
+      <>
+        <BrandLogo logo="chatgpt" />
+        <BrandLogo logo="anthropic" />
+        <BrandLogo logo="kimi" />
+        <BrandLogo logo="deepseek" />
+      </>,
+    )
+    const [gpt, anth, kimi, ds] = [...host.querySelectorAll<HTMLElement>('[data-brand-logo]')]
+    for (const el of [gpt, anth, kimi, ds]) expect(el.className).toContain('text-ink')
+    for (const el of [gpt, anth]) expect(el.querySelector('svg')!.getAttribute('fill')).toBe('currentColor')
+    expect([...kimi.querySelectorAll('path')].map((p) => p.getAttribute('fill'))).toEqual(['#1783FF', 'currentColor'])
+    expect(ds.querySelector('path')!.getAttribute('fill')).toBe('#4D6BFE')
     document.documentElement.removeAttribute('data-theme')
   })
 
@@ -370,7 +384,6 @@ describe('BrandLogo', () => {
     )
     const [a, b] = [...host.querySelectorAll<HTMLElement>('[data-brand-logo]')]
     expect(a.dataset.brandLogo).toBe('openai')
-    expect(a.className).toContain('text-paper-ink')
     expect(b.dataset.brandLogo).toBe('generic')
     expect(b.querySelector('svg')).toBeTruthy()
     expect(host.querySelector('img, image, use')).toBeNull()
