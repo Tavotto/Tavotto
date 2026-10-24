@@ -141,8 +141,10 @@ interface DialogProps {
    * 自己决定哪一列滚。
    * `palette`：命令面板（2026-10-07 设计审计 §10.1）——钉在视口上方 18vh、标题只给读屏、没有右上角 ×
    * （Esc / 点外面就是关）、正文不带内边距也不滚（输入行与结果列表自己排）。焦点陷阱与归还照旧由本外壳给。
+   * `split`：整块自己排版的横向弹窗（连接 AI：左侧品牌画布 + 右侧列表）——居中、标题 / 说明只给读屏（可见的标题由正文自己画）、
+   * 正文不带内边距也不滚，右上角 × 照旧。
    */
-  chrome?: 'default' | 'shell' | 'palette'
+  chrome?: 'default' | 'shell' | 'palette' | 'split'
   /**
    * 打开时焦点落在哪个控件上。**默认落在容器上**（第一下 Tab 进正文第一个控件，
    * 2026-09-14 审计 S1）；只给「默认动作必须是安全的那一个」的对话框用——排版
@@ -180,8 +182,9 @@ export function Dialog({
   initialFocusRef,
 }: DialogProps) {
   const palette = chrome === 'palette'
+  const split = chrome === 'split'
   // 命令面板与 shell 一样自己管正文的排版与滚动
-  const shell = chrome === 'shell' || size === 'shell' || palette
+  const shell = chrome === 'shell' || size === 'shell' || palette || split
   const locked = busy || blockDismiss
   const ownsScrim = useScrimOwner(open && !covered)
   const slots = isSlots(footer) ? footer : null
@@ -388,7 +391,7 @@ export function Dialog({
           <div
             className={cn(
               'flex gap-3',
-              palette && 'sr-only',
+              (palette || split) && 'sr-only',
               // 右侧给关闭钮留位：它画在右上角，但 DOM 排在最后（见下）
               shell
                 ? 'h-11 shrink-0 items-center border-b border-border pl-4 pr-12'
@@ -446,7 +449,7 @@ export function Dialog({
                 tip={false}
                 className={cn(
                   'absolute text-ink-3 hover:text-ink',
-                  shell ? 'right-2.5 top-2' : 'right-3 top-3',
+                  shell && !split ? 'right-2.5 top-2' : 'right-3 top-3',
                 )}
               >
                 <X size={ICON_SIZE.md} />

@@ -19,6 +19,8 @@ import { BRAND_LOGOS } from '../brandLogoData'
 import { CONNECT_AI_VISIBLE, ConnectAiDialog } from './ConnectAiDialog'
 
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+// jsdom 没有 canvas：品牌画拿不到上下文就什么都不画（它的行为在 connectAiLayout.test 里测）
+HTMLCanvasElement.prototype.getContext = (() => null) as never
 declare global {
   // eslint-disable-next-line no-var
   var IS_REACT_ACT_ENVIRONMENT: boolean

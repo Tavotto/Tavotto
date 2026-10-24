@@ -1831,6 +1831,7 @@ export default interface Resources {
       },
       "connectAi": {
         "advanced": "高级",
+        "back": "返回",
         "changeKey": "换 Key",
         "connect": "连接",
         "connected": "已连接",
@@ -1850,6 +1851,15 @@ export default interface Resources {
         "keyPlaceholder": "粘贴 API Key",
         "later": "稍后",
         "loading": "正在读取…",
+        "method": {
+          "account": "账号登录",
+          "apiKey": "API Key",
+          "codingPlan": "Coding Plan",
+          "hintKey": "填写 {{name}} 的 Key",
+          "hintLogin": "用 {{name}} 登录",
+          "kimiCode": "Kimi Code 会员",
+          "subscription": "订阅登录"
+        },
         "more": "更多 AI…",
         "needsAuth": "需要重新登录",
         "needsInstall": "需先安装",
