@@ -1418,6 +1418,7 @@ def test_pinned_download_reuses_a_cached_file_only_when_the_hash_matches(tmp_pat
         id="x",
         name="X",
         version="1",
+        display_version="1",
         url="https://example.invalid/x/1/X-Setup.exe",
         sha256=hashlib.sha256(data).hexdigest(),
         network="direct",
