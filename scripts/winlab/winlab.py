@@ -710,7 +710,7 @@ def main(argv: list[str] | None = None) -> int:
             if rc != 0:
                 return rc
         stdin = None
-        if task.needs_secret:
+        if task.needs_model_conf:
             stdin = load_model_secret()
             if stdin is None:
                 return 3

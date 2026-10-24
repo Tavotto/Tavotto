@@ -124,7 +124,7 @@ class Task:
     accepts_shard: bool = False
     needs_venv: bool = True
     #: 需要一次性凭据：Mac 经 stdin 传入、只进被测宿主进程的环境，Lab 上不落盘
-    needs_secret: bool = False
+    needs_model_conf: bool = False
 
 
 #: Windows 回归 + 编码 / 路径 / 导出 / 保存重载这一组都是仓库里已有的用例，Lab 只负责在真
@@ -209,7 +209,7 @@ TASKS: dict[str, Task] = {
             kind="hosts-live",
             summary="AI 宿主 L4/L5：真 Claude Code（国内 Anthropic 兼容模型）调用 Tavotto MCP，改图、导出、重开核对",
             timeout_s=2400,
-            needs_secret=True,
+            needs_model_conf=True,
             claim=(
                 "L4 = 真 Claude Code CLI 在 Lab 上执行了 Tavotto MCP 工具调用并拿到成功结果；"
                 "L5 = 同一张真实 matplotlib 图经宿主打开、改线宽与图例、导出 PDF、重放校验，"
@@ -1080,13 +1080,13 @@ LIVE_SESSION_2 = (
 )
 
 
-def _secret_env(secret: dict) -> dict[str, str]:
+def _host_model_env(conf: dict) -> dict[str, str]:
     """国内 Anthropic 兼容接口（供应商官方给的 Claude Code 接入变量）+ 关掉 Claude Code 发往 Anthropic 的
     非必要流量：Lab 在中国大陆，不经代理、也不碰海外服务。"""
-    model = secret.get("model") or "deepseek-flash"
+    model = conf.get("model") or "deepseek-flash"
     return {
-        "ANTHROPIC_BASE_URL": secret["base_url"],
-        "ANTHROPIC_AUTH_TOKEN": secret["api_key"],
+        "ANTHROPIC_BASE_URL": conf["base_url"],
+        "ANTHROPIC_AUTH_TOKEN": conf["api_key"],
         "ANTHROPIC_MODEL": model,
         "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
         "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
@@ -1195,7 +1195,7 @@ def judge_live(s1: dict, s2: dict, pdf: Path | None, journal_ok: bool) -> dict:
     return {"L4": l4, "L5": l5, "checks": checks}
 
 
-def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, secret: dict) -> dict:
+def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, model_conf: dict) -> dict:
     exe = lab.cache / "npm-global" / "claude.cmd"
     py = lab.venv_python()
     if not exe.exists() or not py.exists():
@@ -1211,7 +1211,7 @@ def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, secret: dict) -> dic
     cfg = run_dir / "work" / "claude-config"
     cfg.mkdir(parents=True)
     henv = dict(env)
-    henv.update(_secret_env(secret))
+    henv.update(_host_model_env(model_conf))
     henv["CLAUDE_CONFIG_DIR"] = str(cfg)
     henv["TAVOTTO_DATA_DIR"] = str(run_dir / "work" / "tavotto-data")
     henv["TAVOTTO_MCP_ROOTS"] = str(proj)
@@ -1266,7 +1266,7 @@ def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, secret: dict) -> dic
         ]
 
     r1 = _run_logged(claude_print(LIVE_SESSION_1), proj, henv, ev / "session-1", 1200)
-    _scrub(ev, secret["api_key"])
+    _scrub(ev, model_conf["api_key"])
     s1 = parse_stream(
         Path(f"{ev / 'session-1'}.stdout.log").read_text(encoding="utf-8", errors="replace")
     )
@@ -1276,7 +1276,7 @@ def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, secret: dict) -> dic
         r2 = _run_logged(
             claude_print(LIVE_SESSION_2.format(sid=sid)), proj, henv, ev / "session-2", 900
         )
-        _scrub(ev, secret["api_key"])
+        _scrub(ev, model_conf["api_key"])
     else:
         r2 = {"exit_code": None, "skipped": "no session id from session 1"}
         Path(f"{ev / 'session-2'}.stdout.log").write_text("", encoding="utf-8")
@@ -1290,13 +1290,13 @@ def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, secret: dict) -> dic
         levels["L5"] = "error"
     return {
         "result": av.aggregate([levels["L4"], levels["L5"]]),
-        "summary": f"claude-code {version} via {secret.get('provider', '?')}/{secret.get('model') or 'deepseek-flash'}: "
+        "summary": f"claude-code {version} via {model_conf.get('provider', '?')}/{model_conf.get('model') or 'deepseek-flash'}: "
         f"L4={levels['L4']} L5={levels['L5']}",
         "host": {
             "id": "claude-code",
             "version": version,
-            "provider": secret.get("provider"),
-            "model": secret.get("model") or "deepseek-flash",
+            "provider": model_conf.get("provider"),
+            "model": model_conf.get("model") or "deepseek-flash",
             "network": "direct",
         },
         "levels": levels,
@@ -1324,20 +1324,20 @@ def _scrub(folder: Path, needle: str) -> None:
                 p.write_bytes(data.replace(raw, b"<redacted>"))
 
 
-SECRET_KEY_RE = re.compile(r"^[A-Za-z0-9_\-\.]{16,200}$")
+MODEL_KEY_SHAPE_RE = re.compile(r"^[A-Za-z0-9_\-\.]{16,200}$")
 
 
-def read_secret(stream) -> dict | str:
+def read_model_conf(stream) -> dict | str:
     """stdin 上一行 JSON：{"provider", "base_url", "api_key", "model"?}。返回 dict 或错误文本。"""
     raw = stream.read(8192)
     try:
         d = json.loads(raw)
     except ValueError:
-        return "secret on stdin is not JSON"
-    if not isinstance(d, dict) or not SECRET_KEY_RE.fullmatch(str(d.get("api_key", ""))):
-        return "secret needs a plausible api_key"
+        return "model config on stdin is not JSON"
+    if not isinstance(d, dict) or not MODEL_KEY_SHAPE_RE.fullmatch(str(d.get("api_key", ""))):
+        return "model config needs a plausible api_key"
     if not str(d.get("base_url", "")).startswith("https://"):
-        return "secret base_url must be https"
+        return "model config base_url must be https"
     return d
 
 
@@ -1429,7 +1429,7 @@ def receive_fonts(lab: Lab, data: bytes) -> dict:
 
 
 def _run_body(
-    lab: Lab, task: Task, run_dir: Path, tests, shard, network: str, secret: dict | None
+    lab: Lab, task: Task, run_dir: Path, tests, shard, network: str, model_conf: dict | None
 ) -> dict:
     if task.kind == "network":
         return run_network_task(lab, list(NETWORK_MODES) if network == "all" else [network])
@@ -1437,7 +1437,7 @@ def _run_body(
     if task.kind == "pytest":
         return run_pytest_task(lab, task, run_dir, tests, shard, env)
     if task.kind == "hosts-live":
-        return run_hosts_live_task(lab, run_dir, env, secret or {})
+        return run_hosts_live_task(lab, run_dir, env, model_conf or {})
     return run_hosts_task(lab, run_dir, env)
 
 
@@ -1447,7 +1447,7 @@ def run_task(
     tests: list[str],
     shard: str | None,
     network: str,
-    secret: dict | None = None,
+    model_conf: dict | None = None,
 ) -> dict:
     run_id = new_run_id()
     run_dir = lab.runs / run_id
@@ -1458,7 +1458,7 @@ def run_task(
     t0 = time.monotonic()
     with job_lock(lab, run_id, task.id):
         try:
-            body = _run_body(lab, task, run_dir, tests, shard, network, secret)
+            body = _run_body(lab, task, run_dir, tests, shard, network, model_conf)
         except Exception as exc:  # 执行器自己的缺陷也要落成一份 error 报告，而不是没有报告
             import traceback
 
@@ -1833,13 +1833,13 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
         sys.stdout.write(json.dumps({"result": "error", "summary": err}) + "\n")
         return av.EXIT_USAGE
     try:
-        secret = None
-        if task.needs_secret:
-            got = read_secret(sys.stdin)
-            if isinstance(got, str):
-                return _emit({"result": "environment_unavailable", "summary": got})
-            secret = got
-        return _emit(run_task(lab, task, ns.tests, ns.shard, network, secret))
+        model_conf = None
+        if task.needs_model_conf:
+            parsed = read_model_conf(sys.stdin)
+            if isinstance(parsed, str):
+                return _emit({"result": "environment_unavailable", "summary": parsed})
+            model_conf = parsed
+        return _emit(run_task(lab, task, ns.tests, ns.shard, network, model_conf))
     except LabBusy as busy:
         return _emit(
             {"result": "environment_unavailable", "summary": "lab busy", "lock": busy.args[0]}

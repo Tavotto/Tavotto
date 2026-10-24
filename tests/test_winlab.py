@@ -543,13 +543,13 @@ def _res(i, text, err=False):
 
 def test_live_task_is_direct_only_and_needs_a_secret():
     t = A.TASKS["hosts-live"]
-    assert t.networks == ("direct",) and t.needs_secret
+    assert t.networks == ("direct",) and t.needs_model_conf
     assert any("Anthropic / OpenAI" in u for u in t.unverified)
 
 
 def test_live_env_points_at_the_domestic_endpoint_and_silences_anthropic_traffic():
-    env = A._secret_env({"base_url": "https://api.deepseek.com/anthropic", "api_key": "k" * 20})
-    assert env["ANTHROPIC_BASE_URL"].startswith("https://api.deepseek.com")
+    env = A._host_model_env({"base_url": "https://api.deepseek.com/anthropic", "api_key": "k" * 20})
+    assert env["ANTHROPIC_BASE_URL"] == "https://api.deepseek.com/anthropic"
     assert env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
     assert not any("PROXY" in k for k in env)
 
@@ -567,7 +567,7 @@ def test_live_env_points_at_the_domestic_endpoint_and_silences_anthropic_traffic
 def test_bad_secrets_are_refused(raw):
     import io
 
-    assert isinstance(A.read_secret(io.StringIO(raw.decode())), str)
+    assert isinstance(A.read_model_conf(io.StringIO(raw.decode())), str)
 
 
 def test_judge_live_requires_real_calls_pdf_journal_and_fresh_restore(tmp_path):
