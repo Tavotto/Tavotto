@@ -8,7 +8,9 @@
   （`autoinstall_dists.txt`，PyPI 公开下载量生成）：名单内不问，名单外与 `select_environment` 经 `ctx.ask` 问用户。
 * 切运行方式：`execpolicy.set_mode`（项目级 `execution_policy`；`safe` = `safe_only`，`native` = `compatible`，即允许 safe 被自己的守卫拦下时回退 native）。
 * 换环境：`projectenv.remember(..., automatic=False)`（与界面「选择运行环境」同一个写入）。
-* 换 Python / 转写：执行器由 `FixContext` 注入（`python_changer` / `script_converter`），没有就 `unavailable`；本模块不自己造。
+* 换 Python：缺省执行器 = `pyversionfix`（`executors._default_python_changer`，只在 Tavotto 自己的受管环境里另建），
+  `FixContext.python_changer` 可注入替换（测试一律用假的）。
+* 转写：执行器由 `FixContext.script_converter` 注入，没有就 `unavailable`；本模块不自己造。
 
 所有会改东西的工具在执行前打快照（`snapshots.py`），快照 id 进审计行与工具返回，`rollback` 用它恢复。
 **没有 `ctx.ask`（无界面）= 未获同意**：需要点头的动作一律 `needs_approval`，审计记 `blocked`。
@@ -201,17 +203,15 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
     version = args.get("version")
     if not isinstance(version, str) or not _VERSION_RE.fullmatch(version.strip()):
         return err("bad_arguments", "`version` must look like `3.12` or `3.12.4`.")
-    if ctx.python_changer is None:
-        return err(
-            "unavailable",
-            "Creating a Tavotto environment with another Python version is not available yet.",
-        )
     bad = _snapshot_or_error(ctx, "change_python")
     if bad is not None:
         return bad
-    res = executors.call_executor(
-        ctx.python_changer, {"version": version.strip(), "project": str(ctx.project_root)}
-    )
+    req = {"version": version.strip(), "project": str(ctx.project_root)}
+    if ctx.script_path is not None and _inside(ctx.project_root, Path(ctx.script_path)):
+        # 脚本 / 项目声明的 requires-python 要与所要的版本求交（冲突就不换）
+        rel = os.path.relpath(os.path.realpath(ctx.script_path), os.path.realpath(ctx.project_root))
+        req["script"] = rel.replace(os.sep, "/")
+    res = executors.run_python_changer(ctx, req)
     if not res.get("ok"):
         return err(
             str(res.get("code") or "change_python_failed")[:60],
