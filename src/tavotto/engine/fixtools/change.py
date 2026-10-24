@@ -217,8 +217,9 @@ def _script_rel(ctx: FixContext) -> str:
 
 
 def _lease_current_environment(ctx: FixContext) -> ToolResult | None:
-    """项目当前用的受管环境那一代，在本修复会话结束前加租约（`envlease`，与 `deprepair._generation_in_use` 同一张表）：
-    换到新一代后 `managedenv.retire_unused` 看到租约就不删旧代，`rollback` 才能把项目指回去。拿不到（正在装包）就不换。"""
+    """项目当前用的受管环境那一代，在本修复会话结束前加**保留型**租约（`envlease.acquire_retain`）：
+    换到新一代后 `managedenv.retire_unused` 经 `deprepair._generation_in_use` 看到它就不删旧代，`rollback` 才能把项目指回去。
+    保留型不挡换代事务自己的 `envlease.mutating()`（用 native 租约会把 `change_python` 自己挡死）。"""
     from .. import envlease, managedenv, projectenv
 
     root = ctx.project_root
@@ -234,14 +235,7 @@ def _lease_current_environment(ctx: FixContext) -> ToolResult | None:
         targets.append(str(remembered))
     owner = f"fix:{ctx.session_id}"
     for python in dict.fromkeys(targets):
-        try:
-            envlease.acquire_native(python, owner)
-        except envlease.EnvironmentBusy:
-            ctx.release_leases()
-            return err(
-                "env_busy",
-                "The project's current environment is busy installing something. Try again in a moment.",
-            )
+        envlease.acquire_retain(python, owner)
         ctx.leases.append((python, owner))
     return None
 

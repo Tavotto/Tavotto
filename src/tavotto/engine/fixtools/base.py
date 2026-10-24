@@ -115,7 +115,7 @@ class FixContext:
 
         leases, self.leases = self.leases, []
         for python, owner in leases:
-            envlease.release_native(python, owner)
+            envlease.release_retain(python, owner)
 
     def python_of(self, env_id: object) -> str | None:
         return self.environments.get(env_id) if isinstance(env_id, str) else None

@@ -5299,7 +5299,13 @@ def _provider_receipt(
 
 
 def _generation_in_use(python: str) -> bool:
-    return pool.safe_workers_using(python) > 0 or bool(envlease.native_sessions_on(python))
+    return (
+        pool.safe_workers_using(python) > 0
+        or bool(envlease.native_sessions_on(python))
+        or bool(
+            envlease.retained_on(python)
+        )  # AI 修复会话保留的旧代（change_python 之后还要能回滚）
+    )
 
 
 def _private_runtime_in_use(runtime_id: str, python: str) -> bool:
