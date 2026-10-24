@@ -219,6 +219,9 @@ cn-prod 路由上不认，用 `provider add --use` 设的默认；Codex 走 `wir
   用 `taskkill /T`——与 F 节 `test_package_smoke` 的现象同源（非管理员会话里 `taskkill` 不可靠），第三次独立撞到。
 - 本 PR 自己的一条用例（字体 zip 成员 `a\b.ttf`）在 hosted Windows 上红、被合并队列踢出：Windows 上 zipfile 把
   反斜杠规范成 `/`。修复后先在 Lab 上跑过 `tests/test_winlab.py` 再推——Lab 用来验 Lab 自己。
+- `test_ci_qualification::test_kill_stale_actually_reaches_a_runner_workspace_process` 在 Lab 上红（run
+  `20261024T163857Z-c46c62`：runner 工作目录下的遗留进程没被收）——第四条「非管理员 Windows 上结束进程不可靠」的独立证据
+  （与 `taskkill` 那三条同源；hosted 是管理员，看不到）。建议合成一个 issue：进程收尾在非管理员 Windows 上的统一实现。
 
 ## E. 安全与仓库
 
