@@ -30,6 +30,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pymupdf
@@ -3840,3 +3841,91 @@ def test_nonadmin_windows_cannot_symlink_fixtures_skip_only_on_privilege_error_a
     )
     assert "os.symlink" not in twin
     assert "symlink_to" not in inspect.getsource(layout.test_a15_bad_files_do_not_block_the_listing)
+
+
+# ---------------------------------------------------------------------------------------------
+# 非管理员 Windows 上 `taskkill /T /F` 不可靠：scripts/ci 里结束进程树只许走 proctree
+# ---------------------------------------------------------------------------------------------
+_CI_DIR = Path(__file__).resolve().parents[1] / "scripts" / "ci"
+
+
+def _proctree_calls(path: Path) -> set[str]:
+    """`proctree.<name>(…)` 在这个文件里被调用的名字（AST，不是子串）。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        n.func.attr
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "proctree"
+    }
+
+
+def test_ci_scripts_never_spawn_taskkill_and_use_one_process_tree_implementation():
+    """主语：scripts/ci 里每个**构造 argv 的字面量**（不是 docstring）。
+
+    hosted windows-latest 是管理员账户，`taskkill /T /F` 在那里表现正常；非管理员（Windows Lab、
+    用户机器）上它既慢又枚举不全（agent_verify 的超时 30 s > 用例的 20 s 上限、package_smoke
+    的 worker 残留）。三处调用方必须共用 `proctree`，不再各自裸调 taskkill。"""
+    offenders = []
+    for path in sorted(_CI_DIR.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, (ast.List, ast.Tuple))
+                and node.elts
+                and isinstance(node.elts[0], ast.Constant)
+                and isinstance(node.elts[0].value, str)
+                and node.elts[0].value.lower().startswith("taskkill")
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert not offenders, f"scripts/ci 里还有裸 taskkill argv：{offenders}"
+
+    assert {"kill_tree", "spawn"} <= _proctree_calls(_CI_DIR / "agent_verify.py")
+    assert {"kill_tree", "tree_gone"} <= _proctree_calls(_CI_DIR / "package_smoke.py")
+    assert "terminate_pid" in _proctree_calls(_CI_DIR / "cleanup.py")
+
+
+def test_proctree_kills_a_grandchild_that_outlives_its_parent(tmp_path):
+    """行为：根进程已退出、孙进程还在时，`kill_tree` 仍然收得到孙进程（Windows 靠 Job Object）。
+    判据是孙进程的 pid **不存在**，不是「发过信号」。"""
+    sys.path.insert(0, str(_CI_DIR))
+    try:
+        import proctree
+    finally:
+        sys.path.remove(str(_CI_DIR))
+    pid_file = tmp_path / "grandchild.pid"
+    child = (
+        "import subprocess, sys, time\n"
+        "g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+        f"open({str(pid_file)!r}, 'w').write(str(g.pid))\n"
+        "time.sleep(600)\n"
+    )
+    kwargs = {"start_new_session": True} if os.name != "nt" else {}
+    proc = proctree.spawn(
+        [sys.executable, "-c", child],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **kwargs,
+    )
+    grandchild = None
+    try:
+        deadline = time.monotonic() + 30
+        while not pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        grandchild = int(pid_file.read_text(encoding="utf-8"))
+        assert proctree.is_alive(grandchild)
+        assert proctree.kill_tree(proc) is not None
+        proc.wait(timeout=20)
+        assert proctree.tree_gone(proc, 20)
+        deadline = time.monotonic() + 20
+        while proctree.is_alive(grandchild) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not proctree.is_alive(grandchild), "孙进程成了孤儿"
+    finally:
+        if grandchild is not None and proctree.is_alive(grandchild):
+            proctree.terminate_pid(grandchild)
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
