@@ -1,5 +1,5 @@
 /** 两个测试文件共用的 capabilities 造型器（真实形状，字段一个不少）。 */
-import type { AiAgentCaps, AiCapabilities } from '@/lib/api'
+import type { AiAgentCaps, AiCapabilities, AiConnection, AiVendor } from '@/lib/api'
 
 export const agentCaps = (over: Partial<AiAgentCaps> = {}): AiAgentCaps => ({
   id: 'codex',
@@ -75,5 +75,54 @@ export const capsOf = (
   endpoints: [],
   presets: [],
   checked_at_ms: 1_756_000_000_000,
+  ...over,
+})
+
+/* ----- 「连接 AI」视图（vendors / connections）的夹具 ----- */
+
+export const vendor = (id: string, over: Partial<AiVendor> = {}): AiVendor => ({
+  id,
+  label: id,
+  logo: id,
+  region: 'cn',
+  connect: 'key',
+  key_url: `https://keys.example/${id}`,
+  available: true,
+  ...over,
+})
+
+export const connection = (id: string, over: Partial<AiConnection> = {}): AiConnection => ({
+  id,
+  vendor: id,
+  label: id,
+  logo: id,
+  state: 'ready',
+  models: [],
+  default_model: null,
+  route: 'builtin',
+  ...over,
+})
+
+/** 故意打乱后端顺序（海外夹国内）：排序必须由前端按界面语言做 */
+export const VENDORS: AiVendor[] = [
+  vendor('chatgpt', { label: 'ChatGPT', region: 'global', connect: 'login', key_url: undefined }),
+  vendor('deepseek', { label: 'DeepSeek' }),
+  vendor('claude', { label: 'Claude', region: 'global', connect: 'login', key_url: undefined }),
+  vendor('kimi', { label: 'Kimi' }),
+  vendor('openai', { label: 'OpenAI', region: 'global' }),
+  vendor('qwen', { label: '通义千问' }),
+  vendor('zhipu', { label: '智谱' }),
+  vendor('gemini', { label: 'Gemini', region: 'global' }),
+  vendor('anthropic', { label: 'Anthropic', region: 'global' }),
+  vendor('custom', { label: '自定义', region: 'custom', key_url: undefined }),
+]
+
+export const connectCapsOf = (
+  connections: AiConnection[] = [],
+  over: Partial<AiCapabilities> = {},
+): AiCapabilities => ({
+  ...capsOf([]),
+  vendors: VENDORS,
+  connections,
   ...over,
 })

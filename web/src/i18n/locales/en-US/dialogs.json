@@ -1835,7 +1835,7 @@
       "style": "How figures look: fonts, sizes and line widths.",
       "spec": "What figures must meet: the rules checked before you submit.",
       "export": "What the export dialog starts with.",
-      "ai": "Figure assistants on this computer, and Tavotto inside Codex.",
+      "ai": "Connect an AI to edit figures and fix scripts with it.",
       "packages": "What is installed in this project’s Python environment.",
       "diagnostics": "Whether the runtime is healthy, and reports to send us.",
       "about": "Version, updates and privacy."
@@ -1865,6 +1865,38 @@
         "updates": "updates version upgrade",
         "telemetry": "privacy statistics telemetry data",
         "theme": "theme dark light mode appearance night colour color"
+      }
+    },
+    "connectAi": {
+      "title": "Connect an AI",
+      "titleFix": "Connect an AI to fix this",
+      "regionCn": "China",
+      "regionGlobal": "Global",
+      "connect": "Connect",
+      "signIn": "Sign in",
+      "connected": "Connected",
+      "needsAuth": "Sign in again",
+      "error": "Connection problem",
+      "later": "Later",
+      "more": "More AI…",
+      "other": "Other compatible endpoint…",
+      "getKey": "Get a key at {{name}} ↗",
+      "keyLabel": "API key",
+      "keyPlaceholder": "Paste your API key",
+      "needsInstall": "Install required",
+      "failed": "Couldn’t connect. Check the key and try again.",
+      "changeKey": "Change key",
+      "saveKey": "Save",
+      "defaultModel": "Default model",
+      "disconnect": "Disconnect",
+      "disconnectTitle": "Disconnect {{name}}?",
+      "disconnectBody": "The key saved on this computer will be deleted.",
+      "advanced": "Advanced",
+      "loading": "Loading…",
+      "err": {
+        "unauthorized": "The key is invalid or expired.",
+        "network": "Can’t reach the provider.",
+        "timeout": "The connection timed out."
       }
     }
   },
