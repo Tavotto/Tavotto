@@ -3013,7 +3013,7 @@ export default interface Resources {
       "pathAria": "渲染解释器路径",
       "pathPlaceholder": "/path/to/python",
       "pdfPagesNoticeAnon_other": "这个脚本把 {{count}} 张图写进了一个多页 PDF。{{product}} 把每页当成一张图；导出时是单页文件。{{omittedNote}}",
-      "pdfPagesNotice_other": "这个脚本把 {{count}} 张图写进了 {{name}}（多页）。{{product}} 把每页当成一张图；导出时是单页文件。{{omittedNote}}",
+      "pdfPagesNotice_other": "这个脚本把 {{count}} 张图写进了 {{name}}（多页）。{{product}} 把每页当成一张图；导出时可合成回一个多页 PDF。{{omittedNote}}",
       "pdfPagesOmittedNote_other": "另有 {{count}} 张超出上限，没有收进来。",
       "projectEnvAlsoMissing": "项目环境 {{venv}} 里也没有 {{module}}。",
       "projectEnvLabel": "项目环境",
