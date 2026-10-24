@@ -55,6 +55,7 @@ class ReferenceInvocationTests(unittest.TestCase):
         pyplot.get_fignums = lambda: []
         capture = types.ModuleType("figcapture")
         capture.collect_pyplot_figures = lambda *_a: ([], [])
+        capture.adopt_displaced_writers = lambda *_a: None
         capture.install_relative_read_fallback = mock.Mock()
         modules = {
             "matplotlib": matplotlib,
