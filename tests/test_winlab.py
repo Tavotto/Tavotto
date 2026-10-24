@@ -626,7 +626,7 @@ def test_secret_is_scrubbed_from_evidence(tmp_path):
 
 
 def test_live_test_without_local_secret_file_stops_before_ssh(tmp_path, monkeypatch):
-    monkeypatch.setattr(W, "MODEL_SECRET", tmp_path / "missing.json")
+    monkeypatch.setattr(W, "MODEL_CONF_PATH", tmp_path / "missing.json")
     monkeypatch.setattr(
         W, "remote_json", lambda *a, **k: pytest.fail("must not reach the Lab without a secret")
     )

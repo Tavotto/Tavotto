@@ -50,7 +50,7 @@ for _stream in (sys.stdout, sys.stderr):
 
 HOST = os.environ.get("TAVOTTO_WINLAB_HOST", "tavotto-win-lab")
 ADMIN_HOST = os.environ.get("TAVOTTO_WINLAB_ADMIN_HOST", "tavotto-win-lab-admin")
-SECRETS = Path(
+PROXY_CONF_PATH = Path(
     os.environ.get("TAVOTTO_WINLAB_SECRETS", "~/.config/tavotto-winlab/proxy.json")
 ).expanduser()
 TOOLS_DIR = r"C:\TavottoLab\tools\winlab"
@@ -313,8 +313,9 @@ def local_doctor() -> dict:
         "user": kv.get("user"),
         "strict_host_key_checking": kv.get("stricthostkeychecking"),
         "identity_file_present": bool(key and key.exists()),
-        "proxy_secrets_present": SECRETS.exists(),
-        "proxy_secrets_mode_0600": SECRETS.exists() and (SECRETS.stat().st_mode & 0o077) == 0,
+        "proxy_secrets_present": PROXY_CONF_PATH.exists(),
+        "proxy_secrets_mode_0600": PROXY_CONF_PATH.exists()
+        and (PROXY_CONF_PATH.stat().st_mode & 0o077) == 0,
     }
 
 
@@ -451,7 +452,7 @@ Restart-Service sshd
     return admin_ssh(ps)
 
 
-MODEL_SECRET = Path(
+MODEL_CONF_PATH = Path(
     os.environ.get("TAVOTTO_WINLAB_MODEL_SECRET", "~/.config/tavotto-winlab/model.json")
 ).expanduser()
 MODEL_PROVIDERS = {"deepseek": "https://api.deepseek.com/anthropic"}
@@ -459,16 +460,16 @@ MODEL_PROVIDERS = {"deepseek": "https://api.deepseek.com/anthropic"}
 
 def load_model_secret() -> bytes | None:
     """真实模型调用的凭据：本机 0600 文件，经 stdin 交给 Lab 的那一次运行，Lab 不落盘、不打印。"""
-    if not MODEL_SECRET.exists():
+    if not MODEL_CONF_PATH.exists():
         print(
-            f"missing {MODEL_SECRET}: run `python3 scripts/winlab/winlab.py secret-init deepseek` in your own terminal",
+            f"missing {MODEL_CONF_PATH}: run `python3 scripts/winlab/winlab.py secret-init deepseek` in your own terminal",
             file=sys.stderr,
         )
         return None
-    if MODEL_SECRET.stat().st_mode & 0o077:
-        print(f"{MODEL_SECRET} must be chmod 600", file=sys.stderr)
+    if MODEL_CONF_PATH.stat().st_mode & 0o077:
+        print(f"{MODEL_CONF_PATH} must be chmod 600", file=sys.stderr)
         return None
-    return MODEL_SECRET.read_bytes()
+    return MODEL_CONF_PATH.read_bytes()
 
 
 def secret_init(provider: str) -> int:
@@ -478,12 +479,12 @@ def secret_init(provider: str) -> int:
     key = getpass.getpass(f"{provider} API key (input hidden): ").strip()
     if not key:
         return 2
-    MODEL_SECRET.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(MODEL_SECRET, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    MODEL_CONF_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(MODEL_CONF_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump({"provider": provider, "base_url": MODEL_PROVIDERS[provider], "api_key": key}, f)
-    os.chmod(MODEL_SECRET, 0o600)
-    print(f"saved to {MODEL_SECRET} (0600)")
+    os.chmod(MODEL_CONF_PATH, 0o600)
+    print(f"saved to {MODEL_CONF_PATH} (0600)")
     return 0
 
 
@@ -517,9 +518,9 @@ def _sub_optional(template: dict, secrets: dict) -> dict:
 
 
 def admin_proxy_install() -> int:
-    if not SECRETS.exists():
+    if not PROXY_CONF_PATH.exists():
         print(
-            f"missing {SECRETS}. Create it yourself (chmod 600) with this shape, values from your own client config:\n"
+            f"missing {PROXY_CONF_PATH}. Create it yourself (chmod 600) with this shape, values from your own client config:\n"
             + json.dumps(
                 {
                     "trojan": {"server": "", "server_port": 0, "password": "", "server_name": ""},
@@ -538,10 +539,10 @@ def admin_proxy_install() -> int:
             file=sys.stderr,
         )
         return 3
-    if SECRETS.stat().st_mode & 0o077:
-        print(f"{SECRETS} must be chmod 600", file=sys.stderr)
+    if PROXY_CONF_PATH.stat().st_mode & 0o077:
+        print(f"{PROXY_CONF_PATH} must be chmod 600", file=sys.stderr)
         return 3
-    secrets = json.loads(SECRETS.read_text())
+    secrets = json.loads(PROXY_CONF_PATH.read_text())
     template = json.loads((HERE / "sing-box.template.json").read_text())
     try:
         cfg = render_proxy_config(secrets, _sub_optional(template, secrets))
