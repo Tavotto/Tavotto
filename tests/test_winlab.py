@@ -640,3 +640,21 @@ def test_live_test_without_local_secret_file_stops_before_ssh(tmp_path, monkeypa
         W, "remote_json", lambda *a, **k: pytest.fail("must not reach the Lab without a secret")
     )
     assert W.main(["test", "hosts-live"]) == 3
+
+
+def test_stream_events_with_string_messages_do_not_crash_the_parser():
+    text = _stream(
+        {"type": "system", "message": "init"}, {"type": "result", "result": "DONE"}, "not-a-dict"
+    )
+    assert A.parse_stream(text) == {"calls": [], "final": "DONE"}
+
+
+def test_an_agent_crash_still_produces_an_error_report(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("kaput")
+
+    monkeypatch.setattr(A, "_run_body", boom)
+    rep = A.run_task(A.Lab(tmp_path), A.TASKS["network"], [], None, "direct")
+    assert rep["result"] == "error" and "kaput" in rep["summary"]
+    assert (tmp_path / "reports" / f"{rep['run_id']}.json").exists()
+    assert not (tmp_path / "state" / "job.lock").exists()

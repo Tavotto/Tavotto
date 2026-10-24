@@ -1108,7 +1108,9 @@ def parse_stream(text: str) -> dict:
             ev = json.loads(line)
         except ValueError:
             continue
-        msg = ev.get("message") or {}
+        msg = ev.get("message") if isinstance(ev, dict) else None
+        if not isinstance(msg, dict):  # system / result 事件里 message 可以是字符串
+            msg = {}
         for block in msg.get("content") or [] if isinstance(msg.get("content"), list) else []:
             if block.get("type") == "tool_use":
                 calls[block["id"]] = {"name": block.get("name", ""), "input": block.get("input")}
@@ -1120,7 +1122,7 @@ def parse_stream(text: str) -> dict:
                 calls[block["tool_use_id"]].update(
                     is_error=bool(block.get("is_error")), result=str(content)[:4096]
                 )
-        if ev.get("type") == "result":
+        if isinstance(ev, dict) and ev.get("type") == "result":
             final = str(ev.get("result") or "")
     return {"calls": [calls[i] for i in order], "final": final[:4096]}
 
@@ -1379,6 +1381,19 @@ def receive_fonts(lab: Lab, data: bytes) -> dict:
     }
 
 
+def _run_body(
+    lab: Lab, task: Task, run_dir: Path, tests, shard, network: str, secret: dict | None
+) -> dict:
+    if task.kind == "network":
+        return run_network_task(lab, list(NETWORK_MODES) if network == "all" else [network])
+    env = network_env(network, base_env(lab))
+    if task.kind == "pytest":
+        return run_pytest_task(lab, task, run_dir, tests, shard, env)
+    if task.kind == "hosts-live":
+        return run_hosts_live_task(lab, run_dir, env, secret or {})
+    return run_hosts_task(lab, run_dir, env)
+
+
 def run_task(
     lab: Lab,
     task: Task,
@@ -1395,17 +1410,18 @@ def run_task(
     started = iso_now()
     t0 = time.monotonic()
     with job_lock(lab, run_id, task.id):
-        if task.kind == "network":
-            modes = list(NETWORK_MODES) if network == "all" else [network]
-            body = run_network_task(lab, modes)
-        else:
-            env = network_env(network, base_env(lab))
-            if task.kind == "pytest":
-                body = run_pytest_task(lab, task, run_dir, tests, shard, env)
-            elif task.kind == "hosts-live":
-                body = run_hosts_live_task(lab, run_dir, env, secret or {})
-            else:
-                body = run_hosts_task(lab, run_dir, env)
+        try:
+            body = _run_body(lab, task, run_dir, tests, shard, network, secret)
+        except Exception as exc:  # 执行器自己的缺陷也要落成一份 error 报告，而不是没有报告
+            import traceback
+
+            (run_dir / "evidence" / "agent-traceback.txt").write_text(
+                traceback.format_exc(), encoding="utf-8"
+            )
+            body = {
+                "result": "error",
+                "summary": f"agent crashed: {type(exc).__name__}: {exc}"[:400],
+            }
     report = {
         "schema": SCHEMA,
         "kind": REPORT_KIND,
