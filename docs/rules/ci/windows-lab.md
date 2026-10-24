@@ -86,6 +86,9 @@ Defender 实时防护开、`LongPathsEnabled=0` 的默认系统，以及真实 A
   `NO_PROXY` 固定包含回环、`::1`、`100.64.0.0/10`、`.ts.net`，本地 MCP 与 tailnet 流量不进代理。
 - 只有 `network` 任务（与将来获批的真实宿主联网验收）走代理；pytest、构建、依赖、安装包一律直连
   （国内镜像 + Authenticode 核签名）。一次只一个联网任务、小请求、有限样本。
+- 唯一例外是 `desktop-hosts` 的安装包（用户 2026-10-25 授权）：只有海外 CDN 上的固定版本安装包经 DMIT 下载，
+  国内 CDN 的（VS Code、TRAE CN、WorkBuddy）照旧直连；一次一个、每个有体积上限、下完先核散列再核签名，
+  缓存后不重复下载。走哪条线路写死在 `DESKTOP_HOSTS` 里，不经 `--network` 开放。
 - 代理模式下先核出口：经代理取到的出口 IP 的 sha256 必须等于 `proxy-install` 写下的那个散列，
   否则 `failed`；入口不在就是 `environment_unavailable`，不探测、不回落。
 - 凭据只在本机 `~/.config/tavotto-winlab/proxy.json`（0600）与 Lab 的 `secrets\`（仅 SYSTEM /
@@ -109,5 +112,10 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
 - **地区政策**：Lab 在中国大陆。Anthropic / OpenAI 的真实模型调用不在这台机器上做——经代理出口调用等于绕开服务商
   的地区限制，授权解决不了政策问题；这些格保持 BLOCKED。L4/L5 用国内合规的 Anthropic 兼容接口驱动**真宿主**
   （`hosts-live`），报告写明宿主与模型分别是谁，不把它写成「Claude 模型通过」。
+- **桌面宿主（`desktop-hosts --mode <id>`）只做 L2**：安装包的 URL 与 SHA-256 固定在 `agent.py` 的 `DESKTOP_HOSTS`
+  （取自 microsoft/winget-pkgs 的清单），下载后核散列、核 Authenticode 为 Valid；非管理员静默装（currentUser）；
+  `window_probe.py` 在交互会话里启动它，**主窗口**出现才算——可见、未被 DWM 隐藏、有标题、尺寸像窗口、属于安装目录
+  里的进程、连续稳定 5 s；然后结束它起的全部进程并卸载。VS Code 系用 run 目录里的 `--user-data-dir`。L3+ 要登录
+  各自账户、配 MCP，Lab 没有这些账户：一律 BLOCKED。Claude Desktop 只装、只起到登录页，不登录、不调用模型（地区政策同上）。
 - 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境，Lab 不落盘；证据落盘前抹掉凭据。证据字段按
 `docs/implementation/multi-host-mcp/acceptance.md`。
