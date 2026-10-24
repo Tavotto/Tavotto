@@ -41,15 +41,21 @@ _CACHE: dict[str, tuple[float, tuple[str, ...] | None]] = {}
 _CACHE_LOCK = threading.Lock()
 
 
-#: 云厂商的实例元数据 / 内部服务地址：**先于放行段判定、一律拒**（有的恰好落在放行段里，如 AWS 的 `fd00:ec2::254` 在 `fc00::/7`、
-#: 阿里云的 `100.100.100.200` 在 `100.64.0.0/10`）。实验室网关不会在这些地址上。出处（各家官方文档）：
-#: * AWS EC2 IMDS：`169.254.169.254`，IPv6 `fd00:ec2::254`（Instance metadata endpoints）；ECS 任务元数据 `169.254.170.2`；Amazon Time Sync `169.254.169.123`
-#: * GCP：`169.254.169.254` / 主机名 `metadata.google.internal`（Compute Engine metadata server）
-#: * Azure：IMDS `169.254.169.254`；WireServer / 虚拟公网 IP `168.63.129.16`（What is IP address 168.63.129.16）
-#: * 阿里云 ECS：`100.100.100.200`（实例元数据）
-#: * Oracle OCI：`169.254.169.254`（IMDS），旧版 `192.0.0.192`
-#: * 腾讯云 CVM：主机名 `metadata.tencentyun.com`（解析到 `169.254.0.23`）
-#: * DigitalOcean / Huawei / OpenStack：`169.254.169.254`
+#: 云厂商的实例元数据 / 内部服务地址：**先于放行段判定、一律拒**（有的恰好落在放行段里：`fc00::/7` 内的 IPv6 元数据端点、
+#: `100.64.0.0/10` 内的阿里云）。实验室网关不会在这些地址上。出处（官方文档 URL；标「未核对」的是凭记忆写的，排除方向安全所以保留）：
+#: * AWS EC2 IMDS `169.254.169.254` / IPv6 `fd00:ec2::254`：https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-data-retrieval.html
+#: * AWS ECS 任务元数据 / 凭据 `169.254.170.2`：https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-iam-roles.html
+#: * Amazon Time Sync `169.254.169.123`：https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/set-time.html （未核对）
+#: * GCP `169.254.169.254` / 主机名 `metadata.google.internal` / IPv6-only 实例 `fd20:ce::254`：
+#:   https://docs.cloud.google.com/compute/docs/metadata/querying-metadata
+#: * Azure IMDS `169.254.169.254`：https://learn.microsoft.com/azure/virtual-machines/instance-metadata-service ；
+#:   WireServer / 虚拟公网 IP `168.63.129.16`：https://learn.microsoft.com/azure/virtual-network/what-is-ip-address-168-63-129-16
+#: * 阿里云 ECS `100.100.100.200`：https://www.alibabacloud.com/help/en/ecs/user-guide/view-instance-metadata
+#: * Oracle OCI `169.254.169.254`：https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/gettingmetadata.htm ；
+#:   `192.0.0.192` 旧版地址（未核对）；OCI 没有查到 IPv6 元数据地址的出处，不加
+#: * 腾讯云 CVM 主机名 `metadata.tencentyun.com` / `169.254.0.23`（未核对）
+#: * Akamai / Linode IPv6 `fd00:a9fe:a9fe::1`：https://techdocs.akamai.com/cloud-computing/docs/metadata-service-api
+#: * DigitalOcean https://docs.digitalocean.com/reference/api/metadata/ ；Huawei / OpenStack `169.254.169.254`（未核对）
 METADATA_IPS = frozenset(
     ipaddress.ip_address(a)
     for a in (
@@ -58,6 +64,8 @@ METADATA_IPS = frozenset(
         "169.254.169.123",
         "169.254.0.23",
         "fd00:ec2::254",
+        "fd20:ce::254",
+        "fd00:a9fe:a9fe::1",
         "100.100.100.200",
         "168.63.129.16",
         "192.0.0.192",

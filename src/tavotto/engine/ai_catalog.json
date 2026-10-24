@@ -6,24 +6,158 @@
       "agent": "claude",
       "models": [
         {
+          "prefix": "claude-fable-5-1",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "high"
+        },
+        {
+          "prefix": "claude-fable-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "high"
+        },
+        {
+          "prefix": "claude-mythos-5-1",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "high"
+        },
+        {
+          "prefix": "claude-mythos-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "high"
+        },
+        {
+          "prefix": "claude-mythos-preview",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ],
+          "default": "high"
+        },
+        {
+          "prefix": "claude-opus-5-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "medium"
+        },
+        {
+          "prefix": "claude-opus-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "high"
+        },
+        {
+          "prefix": "claude-opus-4-8",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "high"
+        },
+        {
+          "prefix": "claude-opus-4-7",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "high"
+        },
+        {
           "prefix": "claude-opus-4-6",
           "efforts": [
             "low",
             "medium",
             "high",
             "max"
-          ]
+          ],
+          "default": "high"
+        },
+        {
+          "prefix": "claude-sonnet-5-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "high"
+        },
+        {
+          "prefix": "claude-sonnet-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "high"
         },
         {
           "prefix": "claude-sonnet-4-6",
           "efforts": [
             "low",
             "medium",
-            "high"
-          ]
+            "high",
+            "max"
+          ],
+          "default": "high"
+        },
+        {
+          "prefix": "claude-haiku-5-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "medium"
         }
       ],
-      "source": "https://docs.claude.com/en/docs/build-with-claude/effort ; https://docs.claude.com/en/docs/build-with-claude/adaptive-thinking（Opus / Sonnet 4.6 起支持自适应思考与 output_config.effort；其余型号不给）"
+      "source": "https://platform.claude.com/docs/en/build-with-claude/effort ; https://platform.claude.com/docs/en/about-claude/models/overview（2026-10-25 核对：xhigh 只有 5 系列 / opus-4-7 / opus-4-8；opus-4-6、sonnet-4-6、mythos-preview 到 max；Haiku 4.5 及更早不支持；claude-opus-4-5 只配合 budget_tokens 的 extended thinking，runner 不支持，故不给）"
     },
     {
       "origin": "https://api.openai.com",
@@ -47,7 +181,17 @@
             "low",
             "medium",
             "high"
-          ]
+          ],
+          "default": "medium"
+        },
+        {
+          "prefix": "gpt-6",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "medium"
         },
         {
           "prefix": "o1",
@@ -55,7 +199,8 @@
             "low",
             "medium",
             "high"
-          ]
+          ],
+          "default": "medium"
         },
         {
           "prefix": "o3",
@@ -63,7 +208,8 @@
             "low",
             "medium",
             "high"
-          ]
+          ],
+          "default": "medium"
         },
         {
           "prefix": "o4",
@@ -71,10 +217,11 @@
             "low",
             "medium",
             "high"
-          ]
+          ],
+          "default": "medium"
         }
       ],
-      "source": "https://platform.openai.com/docs/guides/reasoning（Responses 的 reasoning.effort 只有推理模型：o 系列与 gpt-5 系列；gpt-5-chat / o1-mini / o1-preview 不支持）"
+      "source": "https://developers.openai.com/api/docs/guides/reasoning（2026-10-25 核对：reasoning.effort 取值 none/minimal/low/medium/high/xhigh/max 且按型号不同，页面没有完整清单；保守取交集 low/medium/high，不给 none/minimal/xhigh/max，直到逐型号核实；gpt-5-chat 等非推理型号不给）"
     }
   ],
   "vendors": [
@@ -264,9 +411,10 @@
       "base_url": "https://api.anthropic.com",
       "key_url": "https://console.anthropic.com/settings/keys",
       "models_hint": [
-        "claude-sonnet-4-6",
-        "claude-opus-4-6",
-        "claude-haiku-4-5"
+        "claude-sonnet-5-5",
+        "claude-opus-5-5",
+        "claude-haiku-5-5",
+        "claude-fable-5-1"
       ],
       "source": "https://docs.claude.com/en/api/overview",
       "oauth": null,

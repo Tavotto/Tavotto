@@ -101,7 +101,10 @@ def _preset(row: dict) -> dict:
 
 
 #: 「思考强度」档位的合法取值（内置执行器 `agent_runner.wires`：anthropic 的 `output_config.effort` 多一档 max，Responses 的 `reasoning.effort` 只有三档）
-_EFFORT_VALUES = {"claude": ("low", "medium", "high", "max"), "codex": ("low", "medium", "high")}
+_EFFORT_VALUES = {
+    "claude": ("low", "medium", "high", "xhigh", "max"),
+    "codex": ("low", "medium", "high"),
+}
 
 
 def _checked_efforts(owner: str, agent: str, efforts: object) -> list[str]:
@@ -112,6 +115,13 @@ def _checked_efforts(owner: str, agent: str, efforts: object) -> list[str]:
     return list(efforts)
 
 
+def _support(owner: str, agent: str, efforts: object, default: object) -> dict:
+    checked = _checked_efforts(owner, agent, efforts)
+    if default is not None and default not in checked:
+        raise CatalogError(f"{owner} 的默认档位不在 efforts 里: {default!r}")
+    return {"efforts": checked, "default": default if checked else None}
+
+
 def _model_key(model: str | None) -> str:
     """型号名归一后拿来做前缀匹配：小写，`.` 与 `-` 视为同一个（`claude-opus-4.6` = `claude-opus-4-6`）。"""
     return (model or "").strip().lower().replace(".", "-")
@@ -119,34 +129,43 @@ def _model_key(model: str | None) -> str:
 
 def efforts_for(agent: str, base_url: str, model: str | None = None) -> list[str]:
     """内置执行器在这个地址、这个型号上**确认支持**的思考强度档位；不确定 = `[]`（宁可不显示，也不发对方不认的字段）。
+    细节见 `effort_support`。"""
+    return effort_support(agent, base_url, model)["efforts"]
+
+
+def effort_support(agent: str, base_url: str, model: str | None = None) -> dict:
+    """→ `{"efforts": [...], "default": 默认档位 | None}`。
 
     两处声明：目录行自带 `efforts`（地址和家族对上这一行，所有型号），或顶层 `effort_origins`（官方 API 的来源：scheme + host + 端口对上）。
     `effort_origins` 条目可带 `models: [{prefix, efforts}]`——**按型号前缀、先中先得**（`efforts: []` = 这个前缀明确不支持，写在更宽的前缀前面）；
     没有 `models` 的条目 = 该来源所有型号。带了 `models` 却没给型号（或没有前缀命中）= `[]`。
     出处（官方文档）写在条目的 `source` 里。"""
+    none: dict = {"efforts": [], "default": None}
     url = _norm_url(base_url)
     if not url:
-        return []
+        return none
     for r in load_vendors(CATALOG_PATH):
         if r["agent"] == agent and _norm_url(r["base_url"]) == url and r.get("efforts"):
-            return _checked_efforts(r["id"], agent, r["efforts"])
+            return _support(r["id"], agent, r["efforts"], r.get("default_effort"))
     try:
         raw = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
+        return none
     want = origin_of(base_url)
     for o in (raw.get("effort_origins") if isinstance(raw, dict) else None) or []:
         if o.get("agent") != agent or want is None or origin_of(o.get("origin", "")) != want:
             continue
         owner = str(o.get("origin"))
         if "models" not in o:
-            return _checked_efforts(owner, agent, o.get("efforts"))
+            return _support(owner, agent, o.get("efforts"), o.get("default"))
         key = _model_key(model)
         for rule in o["models"]:
             if key and key.startswith(_model_key(rule.get("prefix"))):
-                return _checked_efforts(f"{owner} {rule.get('prefix')}", agent, rule.get("efforts"))
-        return []
-    return []
+                return _support(
+                    f"{owner} {rule.get('prefix')}", agent, rule.get("efforts"), rule.get("default")
+                )
+        return none
+    return none
 
 
 def presets() -> list[dict]:

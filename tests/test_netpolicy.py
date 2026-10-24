@@ -244,6 +244,8 @@ METADATA_ADDRESSES = [
     "169.254.169.123",  # Amazon Time Sync
     "169.254.0.23",  # 腾讯云
     "[fd00:ec2::254]",  # AWS IMDS IPv6
+    "[fd20:ce::254]",  # GCP IPv6-only 实例的元数据端点
+    "[fd00:a9fe:a9fe::1]",  # Akamai / Linode IPv6
     "100.100.100.200",  # 阿里云
     "168.63.129.16",  # Azure WireServer
     "192.0.0.192",  # Oracle 旧版
@@ -293,6 +295,8 @@ def test_a_hostname_resolving_to_a_metadata_address_is_refused(monkeypatch):
     # 紧邻的合法地址不受影响
     assert wires.check_base_url("http://100.100.100.201") is None
     assert wires.check_base_url("http://[fd00:ec2::255]") is None
+    assert wires.check_base_url("http://[fd20:ce::255]") is None
+    assert wires.check_base_url("http://[fd00:a9fe:a9fe::2]") is None
     assert wires.check_base_url("http://100.64.0.1") is None
 
 

@@ -396,10 +396,13 @@ def _key_connection(
     elif route == ROUTE_BUILTIN:
         # 内置执行器：只给目录确认支持的档位；第三方网关不确定就不给（宁可不显示，也不发对方不认的字段）
         base = str(rec.get("base_url") or "")
-        efforts = ai_catalog.efforts_for(agent_id, base, default_model)
-        default_effort = "medium" if "medium" in efforts else None
-        # 档位按型号定：每个型号自己带 `efforts`（不支持的型号为空，前端就不显示）
-        details = [{"id": m, "efforts": ai_catalog.efforts_for(agent_id, base, m)} for m in models]
+        support = ai_catalog.effort_support(agent_id, base, default_model)
+        efforts, default_effort = support["efforts"], support["default"]
+        # 档位按型号定：每个型号自己带 `efforts` / `default_effort`（不支持的型号为空，前端就不显示）
+        details = []
+        for m in models:
+            sup = ai_catalog.effort_support(agent_id, base, m)
+            details.append({"id": m, "efforts": sup["efforts"], "default_effort": sup["default"]})
     conn = {
         "id": rec["id"],
         "vendor": vid,

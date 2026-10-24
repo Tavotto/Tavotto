@@ -29,8 +29,8 @@ ANTHROPIC_VERSION = "2023-06-01"
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 EFFORTS = ("low", "medium", "high")
-#: anthropic adaptive 的 `output_config.effort` 还多一档 max
-ANTHROPIC_EFFORTS = (*EFFORTS, "max")
+#: anthropic adaptive 的 `output_config.effort` 还多两档：xhigh（5 系列 / opus-4-7 / opus-4-8）与 max
+ANTHROPIC_EFFORTS = (*EFFORTS, "xhigh", "max")
 #: 调用方声明「思考怎么传」（不由 runner 猜；第三方兼容网关各不相同）：adaptive=新模型，budget=旧模型，none=都不发
 THINKING_MODES = ("adaptive", "budget", "none")
 #: anthropic 旧式 `thinking.budget_tokens`（仅 `--thinking budget`；新模型上已弃用，不许发）

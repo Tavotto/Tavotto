@@ -1402,40 +1402,58 @@ def test_builtin_run_refreshes_an_expiring_token_before_spawning(chain, monkeypa
 
 
 # ---- 思考强度
+X5 = ["low", "medium", "high", "xhigh", "max"]
+M4 = ["low", "medium", "high", "max"]
+LMH = ["low", "medium", "high"]
+ANTH_MODELS = [
+    "claude-opus-5-5",
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5",
+    "claude-opus-4-5-20251101",
+    "claude-fable-5-1",
+    "claude-mythos-preview",
+]
+
+
 def test_efforts_follow_the_catalog_origin_and_model(world):
     _save(
-        "a",
-        base="https://api.anthropic.com",
-        default_model="claude-opus-4-6",
-        models=["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-sonnet-4-5"],
+        "a", base="https://api.anthropic.com", default_model="claude-opus-5-5", models=ANTH_MODELS
     )
     _save(
         "o",
         agent="codex",
         base="https://api.openai.com/v1",
         default_model="gpt-5",
-        models=["gpt-5", "gpt-4o", "o3", "gpt-5-chat-latest"],
+        models=["gpt-5", "gpt-6.1-sol", "gpt-4o", "o3", "gpt-5-chat-latest"],
     )
     _save("d", base="https://api.deepseek.com/anthropic")
     world["cli"] = False
     caps = _caps()
     a, o, d = _conn(caps, "a"), _conn(caps, "o"), _conn(caps, "d")
-    assert a["efforts"] == ["low", "medium", "high", "max"] and a["default_effort"] == "medium"
-    assert o["efforts"] == ["low", "medium", "high"]
+    assert a["efforts"] == X5 and a["default_effort"] == "medium"  # 默认型号 opus-5-5：默认 medium
+    assert o["efforts"] == LMH and o["default_effort"] == "medium"
     assert d["efforts"] == [] and d["default_effort"] is None, "没确认支持的网关不给"
-    # 档位按型号：不支持的型号为空，前端就不显示
-    per = {m["id"]: m["efforts"] for m in a["model_details"]}
+    # 档位和默认档位都按型号（官方文档 2026-10-25 核对）：xhigh 只有 5 系列 / opus-4-7 / opus-4-8
+    per = {m["id"]: (m["efforts"], m["default_effort"]) for m in a["model_details"]}
     assert per == {
-        "claude-opus-4-6": ["low", "medium", "high", "max"],
-        "claude-sonnet-4-6": ["low", "medium", "high"],
-        "claude-haiku-4-5": [],
-        "claude-sonnet-4-5": [],
+        "claude-opus-5-5": (X5, "medium"),
+        "claude-opus-4-6": (M4, "high"),
+        "claude-sonnet-4-6": (M4, "high"),
+        "claude-haiku-4-5": ([], None),
+        "claude-opus-4-5-20251101": (
+            [],
+            None,
+        ),  # 只配合 budget_tokens 的 extended thinking：runner 不支持
+        "claude-fable-5-1": (X5, "high"),
+        "claude-mythos-preview": (M4, "high"),
     }
     per = {m["id"]: m["efforts"] for m in o["model_details"]}
     assert per == {
-        "gpt-5": ["low", "medium", "high"],
+        "gpt-5": LMH,
+        "gpt-6.1-sol": LMH,
         "gpt-4o": [],
-        "o3": ["low", "medium", "high"],
+        "o3": LMH,
         "gpt-5-chat-latest": [],
     }
     # 默认型号不支持 → 连接级 efforts 为空
@@ -1449,24 +1467,24 @@ def test_efforts_follow_the_catalog_origin_and_model(world):
     )
     assert _conn(_caps(), "a")["efforts"] == []
     f = ai_catalog.efforts_for
-    assert f("claude", "https://api.anthropic.com/", "claude-opus-4.6") == [
-        "low",
-        "medium",
-        "high",
-        "max",
-    ], "点与横线等价"
-    assert f("claude", "https://api.anthropic.com/", "claude-opus-4-6-20260101") == [
-        "low",
-        "medium",
-        "high",
-        "max",
-    ]
-    assert f("claude", "https://api.anthropic.com/") == [], "没给型号 = 不确定"
+    anth = "https://api.anthropic.com/"
+    assert f("claude", anth, "claude-opus-4.6") == M4, "点与横线等价"
+    assert f("claude", anth, "claude-opus-4-6-20260101") == M4
+    assert f("claude", anth, "claude-opus-4-7") == X5 and f("claude", anth, "claude-opus-4-8") == X5
+    assert (
+        f("claude", anth, "claude-sonnet-5-5") == X5 and f("claude", anth, "claude-haiku-5-5") == X5
+    )
+    assert (
+        f("claude", anth, "claude-opus-4-5") == [] and f("claude", anth, "claude-sonnet-4-5") == []
+    )
+    assert ai_catalog.effort_support("claude", anth, "claude-haiku-5-5")["default"] == "medium"
+    assert f("claude", anth) == [], "没给型号 = 不确定"
     assert f("claude", "http://api.anthropic.com", "claude-opus-4-6") == []  # 来源（scheme）不同
     assert f("codex", "https://api.anthropic.com", "gpt-5") == []  # 家族不同
-    assert f("codex", "https://api.openai.com/v1", "o1-mini") == [] and f(
-        "codex", "https://api.openai.com/v1", "o1"
-    ) == ["low", "medium", "high"]
+    assert (
+        f("codex", "https://api.openai.com/v1", "o1-mini") == []
+        and f("codex", "https://api.openai.com/v1", "o1") == LMH
+    )
 
 
 def test_catalog_row_level_efforts_are_honoured_and_validated(tmp_path, monkeypatch):
@@ -1515,9 +1533,16 @@ def test_effort_args_are_sent_only_where_the_catalog_confirms_support(world):
         )
         assert "--effort" not in cmd and "--thinking" not in cmd, (rec["id"], model)
     cmd, _ = ai_bridge._cmd(
-        "builtin", "p", "/c", model="claude-sonnet-4-6", effort="max", endpoint=a, target="x.py"
+        "builtin", "p", "/c", model="claude-sonnet-4-6", effort="xhigh", endpoint=a, target="x.py"
     )
-    assert "--effort" not in cmd, "sonnet-4-6 没有 max 档"
+    assert "--effort" not in cmd, "sonnet-4-6 没有 xhigh 档（只有 5 系列 / opus-4-7 / opus-4-8）"
+    cmd, _ = ai_bridge._cmd(
+        "builtin", "p", "/c", model="claude-opus-4-7", effort="xhigh", endpoint=a, target="x.py"
+    )
+    assert (
+        cmd[cmd.index("--effort") + 1] == "xhigh" and cmd[cmd.index("--thinking") + 1] == "adaptive"
+    )
+    assert ai_providers.builtin_effort_args(o, "xhigh") == [], "OpenAI 保守只给 low/medium/high"
     cmd, _ = ai_bridge._cmd(
         "builtin", "p", "/c", model="claude-sonnet-4-6", effort="high", endpoint=a, target="x.py"
     )
@@ -1764,14 +1789,14 @@ def test_login_and_oauth_methods_are_never_key_connections(client, world, body):
 
 
 def test_official_key_connections_carry_efforts_on_the_builtin_route(client, world):
-    world["fetch"] = (["claude-opus-4-6", "gpt-5"], None)
+    world["fetch"] = (["claude-opus-5-5", "gpt-5"], None)
     world["cli"] = False
     # 型号清单缓存按（地址、密钥指纹）落在数据目录里、跨用例共用：这里用独有的密钥，免得读到别的用例缓存的清单
     a = _post(client, vendor="anthropic-api", api_key="sk-conn-EFFORT-a1").get_json()["connection"]
     o = _post(client, vendor="openai-api", api_key="sk-conn-EFFORT-o1").get_json()["connection"]
     assert a["route"] == o["route"] == "builtin"
-    assert a["efforts"] == ["low", "medium", "high", "max"] and a["default_effort"] == "medium"
-    assert o["efforts"] == ["low", "medium", "high"]
+    assert a["efforts"] == X5 and a["default_effort"] == "medium"
+    assert o["efforts"] == LMH
     # 有 CLI 且 builtin_default=false：官方 Key 走 CLI + 注入，不给 Claude 之外的档位承诺
     world["cli"] = True
     ai_bridge.invalidate_capabilities()
