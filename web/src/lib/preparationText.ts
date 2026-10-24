@@ -235,6 +235,11 @@ const FAILURE_STATES = new Set([
   'not_registered',
 ])
 /** remedy 是 `ai_fix` / `connect_ai` 时，这几张卡的主按钮换成「使用你的 AI 来修复」（其余失败卡的主按钮是它自己的修法，照旧） */
+/**
+ * 不是失败卡、但也摆 AI 次按钮的状态：找不到要读的数据（`missing_data`）。主按钮仍是确定的「指认数据」，
+ * AI 只是次选（它会在可读范围里找文件、经用户确认后接上，不改脚本）。不并进 FAILURE_STATES：那会改掉它的 remedy / 主按钮行为。
+ */
+const AI_SECONDARY_ONLY_STATES = new Set(['missing_data'])
 const AI_PRIMARY_STATES = new Set(['failed', 'deps_failed', 'blocked', 'no_figure', 'not_registered'])
 
 /**
@@ -244,6 +249,7 @@ const AI_PRIMARY_STATES = new Set(['failed', 'deps_failed', 'blocked', 'no_figur
  */
 function withRemedy(view: PrepView, report: PreparationReport | null | undefined, ctx: PrepContext): PrepView {
   const remedy = report && isRemedy(report.remedy) ? report.remedy : null
+  if (!ctx.tutorial && AI_SECONDARY_ONLY_STATES.has(view.state)) return { ...view, remedy, aiFix: true }
   if (ctx.tutorial || !FAILURE_STATES.has(view.state)) return { ...view, remedy }
   let out: PrepView = { ...view, remedy }
   if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {
