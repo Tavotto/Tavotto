@@ -1236,7 +1236,8 @@
           "bad_response": "The provider's reply was not understood; enter models by hand.",
           "network": "Can't reach the provider; check your network or enter models by hand."
         },
-        "requiredAria": "required"
+        "requiredAria": "required",
+        "insecureLan": "This address isn't encrypted. Use it only on a network you trust."
       },
       "install": {
         "action": "Install {{name}} with npm",

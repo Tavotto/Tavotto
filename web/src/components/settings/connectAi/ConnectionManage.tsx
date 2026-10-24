@@ -6,7 +6,7 @@ import { useAiStore } from '@/store/aiStore'
 import { askConfirm } from '@/store/uiStore'
 import { Button } from '../../ui/Button'
 import { Select } from '../../ui/Select'
-import { cx } from './copy'
+import { ag, cx } from './copy'
 import { VendorKeyForm } from './VendorKeyForm'
 
 /**
@@ -63,6 +63,11 @@ export function ConnectionManage({ vendor, connection }: { vendor: AiVendor; con
             {cx('disconnect')}
           </Button>
         </div>
+      )}
+      {connection.insecure_lan && (
+        <p data-connect-insecure className="type-caption">
+          {ag('endpoint.insecureLan')}
+        </p>
       )}
       {error && (
         <p role="alert" className="text-xs text-danger">

@@ -431,3 +431,15 @@ describe('厂商目录：分组、申请 Key 链接、从服务商获取型号',
     )
   })
 })
+
+describe('明文 http 地址的提示', () => {
+  it('地址是 http:// 时地址框下一句提醒；https 或留空不显示', async () => {
+    await mount({ presets: [] })
+    const note = () => document.body.querySelector('[data-endpoint-insecure]')
+    expect(note()).toBeNull()
+    await type(ag('endpoint.baseUrl'), 'http://192.168.1.20:8000/v1')
+    expect(note()?.textContent).toBe(t('settings.agents.endpoint.insecureLan', { ns: 'dialogs' }))
+    await type(ag('endpoint.baseUrl'), 'https://api.example.com/v1')
+    expect(note()).toBeNull()
+  })
+})

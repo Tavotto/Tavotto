@@ -1682,6 +1682,7 @@ export default interface Resources {
           "fetchedHint": "点一下加入上面的模型列表",
           "fetchingModels": "获取中…",
           "getKey": "去申请 Key",
+          "insecureLan": "这个地址不加密，请只在可信的局域网里使用。",
           "keyNote": "密钥以明文存在本机配置文件里。启动 CLI 时用环境变量传入，不写进命令行或项目文件。",
           "keyNoteDiagnostics": "导出或复制诊断时，该字段会替换为 ***。",
           "keyNoteMore": "存在哪里、能被谁读到",

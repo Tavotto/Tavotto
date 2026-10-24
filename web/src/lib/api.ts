@@ -3262,6 +3262,8 @@ export interface AiConnection {
   default_model: string | null
   efforts?: string[]
   default_effort?: string | null
+  /** 连的是明文 http 的局域网模型服务器（只放行、界面提示一句） */
+  insecure_lan?: boolean
   /** state=error 时的原因码（unauthorized / network / timeout / …） */
   error?: string
   /** 只给诊断 / 测试看，界面不显示 */
