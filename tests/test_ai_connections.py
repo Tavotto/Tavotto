@@ -1995,7 +1995,7 @@ def test_official_openai_efforts_come_from_the_codex_model_cache_first(world):
             _codex_row(
                 "gpt-9-future", ["low", "xhigh", "max", "none"], "low"
             ),  # max / none 线上发不出去：被滤掉
-            _codex_row("gpt-no-effort", [], None),  # 目录明确说没有档位
+            _codex_row("gpt-5-noeffort", [], None),  # 目录明确说没有档位
         ]
     )
     _save(
@@ -2003,7 +2003,7 @@ def test_official_openai_efforts_come_from_the_codex_model_cache_first(world):
         agent="codex",
         base="https://api.openai.com/v1",
         default_model="gpt-5",
-        models=["gpt-5", "gpt-9-future", "gpt-no-effort", "gpt-6.1-sol", "o3"],
+        models=["gpt-5", "gpt-9-future", "gpt-5-noeffort", "gpt-6.1-sol", "o3"],
     )
     world["cli"] = False
     c = _conn(_caps(), "o")
@@ -2012,7 +2012,7 @@ def test_official_openai_efforts_come_from_the_codex_model_cache_first(world):
         "原样用目录给的，含 minimal / xhigh"
     )
     assert per["gpt-9-future"] == (["low", "xhigh"], "low")
-    assert per["gpt-no-effort"] == ([], None), "目录明确给了空 = 没有档位，不退回兜底"
+    assert per["gpt-5-noeffort"] == ([], None), "目录明确给了空 = 没有档位，不退回兜底"
     assert per["gpt-6.1-sol"] == (LMH, "medium") and per["o3"] == (LMH, "medium"), (
         "不在目录里的型号用兜底表"
     )
@@ -2025,7 +2025,7 @@ def test_official_openai_efforts_come_from_the_codex_model_cache_first(world):
         ai_providers.builtin_effort_args(rec, "xhigh", "gpt-6.1-sol") == []
     )  # 兜底表只有 low/medium/high
     assert ai_providers.builtin_effort_args(rec, "max", "gpt-9-future") == []
-    assert ai_providers.builtin_effort_args(rec, "low", "gpt-no-effort") == []
+    assert ai_providers.builtin_effort_args(rec, "low", "gpt-5-noeffort") == []
 
 
 def test_official_anthropic_efforts_come_from_the_claude_model_catalog_first(world):
