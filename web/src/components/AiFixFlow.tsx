@@ -109,8 +109,23 @@ function PastePath({ fixKey, entry }: { fixKey: string; entry: AiFixEntry }) {
   )
 }
 
+/** 进度那一句话：按工具名映射；没有映射的工具用通用一句。`install_packages` 带包名。 */
+const activityLine = (a: NonNullable<AiFixEntry['activity']>) => {
+  if (a.phase === 'denied') return ft('activity.denied')
+  const known = ft(`activity.${a.tool}`, { detail: a.detail || ft('activity.thePackages'), defaultValue: '' })
+  return known || ft('activity.generic')
+}
+
+/** 卡住的原因：一句话 + 折叠详情里多说一点 */
+const stalledLine = (st: NonNullable<AiFixEntry['stalled']>) =>
+  ft(`stalled.${st.reason}`, { tool: st.detail || '?', defaultValue: ft('stalled.stalled') })
+
 const failureLine = (reason: string | undefined) => {
   switch (reason) {
+    case 'cli_waiting_approval':
+    case 'cli_tool_not_delivered':
+    case 'stalled':
+      return ft(`failed.${reason}`)
     case 'budget':
     case 'max_turns':
     case 'tool_error_loop':
@@ -140,9 +155,25 @@ export function aiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null
   if (entry.phase === 'busy') {
     return { title: ft('busy'), primary: dismissButton(fixKey) }
   }
+  if (entry.phase === 'running' && entry.stalled) {
+    // 卡住：说原因 + 一个主按钮；不静默挂着（后端过一阵会自动取消，这里让用户先知道、能自己处理）
+    return {
+      title: stalledLine(entry.stalled),
+      details: (
+        <p className="m-0 whitespace-pre-wrap break-words">
+          {ft(`stalledWhy.${entry.stalled.reason}`, { defaultValue: ft('stalledWhy.stalled') })}
+        </p>
+      ),
+      primary: (
+        <Button variant="primary" size="md" data-ai-fix-stop onClick={() => void store.cancel(fixKey)}>
+          {ft('stop')}
+        </Button>
+      ),
+    }
+  }
   if (entry.phase === 'running') {
     return {
-      title: ft('running'),
+      title: entry.activity ? activityLine(entry.activity) : ft('running'),
       slot: <ProgressBar pct={null} label={ft('running')} data-prep-progress />,
       ghost: (
         <Button variant="ghost" size="md" className="text-ink-2" data-ai-fix-cancel onClick={() => void store.cancel(fixKey)}>

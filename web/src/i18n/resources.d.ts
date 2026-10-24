@@ -5466,6 +5466,33 @@ export default interface Resources {
     },
     "prep": {
       "aiFix": {
+        "activity": {
+          "ask_user": "正在问你一个问题",
+          "change_python": "正在新建 Python 环境",
+          "convert_script": "正在生成可编辑版本",
+          "denied": "AI 想用的一个功能被拦下了，它会换个办法",
+          "find_files": "正在找文件",
+          "finish": "正在收尾",
+          "generic": "AI 正在处理…",
+          "grep_files": "正在搜文件内容",
+          "inspect_environment": "正在检查 Python 环境",
+          "install_packages": "正在安装 {{detail}}",
+          "list_dir": "正在看文件夹",
+          "list_environments": "正在看有哪些 Python 环境",
+          "lookup_package": "正在查包名",
+          "pick_file": "正在请你选一个文件",
+          "prepare_diagnostics": "正在整理要发给我们的说明",
+          "propose_fix": "正在准备修复方案",
+          "read_file": "正在看文件",
+          "read_logs": "正在读日志",
+          "read_run_report": "正在读运行报告",
+          "rollback": "正在撤销刚才的改动",
+          "select_environment": "正在切换环境",
+          "switch_execution": "正在调整运行方式",
+          "thePackages": "需要的包",
+          "try_import": "正在试着导入",
+          "try_run": "正在试运行脚本"
+        },
         "busy": "已经有一个修复在进行",
         "cancel": "取消",
         "confirm": "确认修复",
@@ -5473,10 +5500,13 @@ export default interface Resources {
         "failed": {
           "auth": "AI 连接的密钥不对，请到设置里检查",
           "budget": "AI 在限定的步数内没能修好",
+          "cli_tool_not_delivered": "AI 的一次调用没送达，已自动停止",
+          "cli_waiting_approval": "AI 卡在它自己的审批上，已自动停止",
           "network": "连不上 AI 服务，稍后再试",
           "other": "AI 这次没能修好",
           "quota": "AI 的额度用完了",
-          "refused": "AI 服务拒绝了这次请求"
+          "refused": "AI 服务拒绝了这次请求",
+          "stalled": "AI 太久没有动静，已自动停止"
         },
         "gotIt": "知道了",
         "notFixed": "这次没能修好",
@@ -5495,6 +5525,17 @@ export default interface Resources {
         "sendSource": "AI 想看这个脚本；要不要附上，由你在发送窗口里勾选，默认不附。",
         "sendTitle": "没修好，发给我们看看？",
         "skip": "跳过",
+        "stalled": {
+          "cli_tool_not_delivered": "AI 想用的工具（{{tool}}）没送达，可能在等它自己的审批",
+          "cli_waiting_approval": "AI 在等它自己的审批（工具：{{tool}}），Tavotto 没法替你批准",
+          "stalled": "AI 好一阵没有动静了"
+        },
+        "stalledWhy": {
+          "cli_tool_not_delivered": "AI 发出了调用，但 Tavotto 这边没收到，多半卡在它自己的审批上。停止后可以重试。",
+          "cli_waiting_approval": "Codex 或 Claude Code 自己要求批准某个操作，这个提示只在它们那边出现，Tavotto 看不到也批不了。停止后可以重试。",
+          "stalled": "既没有工具在运行，也没有新的输出，可能是网络或 AI 服务卡住了。一段时间后会自动停止。"
+        },
+        "stop": "停止",
         "useIt": "用它"
       },
       "aria": "准备 {{script}}",

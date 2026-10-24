@@ -64,6 +64,11 @@ afterEach(async () => {
 
 const CARDS: Record<string, Partial<AiFixEntry>> = {
   running: { phase: 'running' },
+  activity: { phase: 'running', activity: { tool: 'install_packages', phase: 'start', detail: 'colorcet', at_ms: 1 } },
+  stalledApproval: { phase: 'running', stalled: { reason: 'cli_waiting_approval', detail: 'change_python' } },
+  stalledDelivery: { phase: 'running', stalled: { reason: 'cli_tool_not_delivered', detail: 'install_packages' } },
+  stalledIdle: { phase: 'running', stalled: { reason: 'stalled', detail: '' } },
+  autoStopped: { phase: 'done', outcome: 'failed', reason: 'cli_waiting_approval' },
   approve: { card: { id: 'c1', kind: 'approve', summary: '把 numpy 降到 1.26。', details: '因为 ABI', reads: ['~/Desktop/data.csv'], not_read: 'x' } },
   choice: { card: { id: 'c1', kind: 'choice', summary: 'data.csv 在哪个文件夹？', options: [{ id: 'a', label: '桌面' }, { id: 'b', label: '文档' }], allow_other: true } },
   pick: { card: { id: 'c1', kind: 'pick', summary: '请选一下数据文件。', pick: 'file' } },
@@ -164,5 +169,36 @@ describe('不出现「执行器」概念', () => {
       const card = await render(entry(CARDS[name]))
       expect(card.textContent ?? '', name).not.toMatch(/执行器|executor/i)
     }
+  })
+})
+
+
+describe('进度与卡住（D3）', () => {
+  it('运行中：显示后端给的那一句活动，包名带进去；没有活动时回到通用一句', async () => {
+    const card = await render(entry(CARDS.activity))
+    expect(card.querySelector('[data-title]')?.textContent).toBe('正在安装 colorcet')
+    expect((await render(entry({ phase: 'running' }))).querySelector('[data-title]')?.textContent).toBe('AI 正在查找原因…')
+    await setLocale('en-US')
+    expect((await render(entry(CARDS.activity))).querySelector('[data-title]')?.textContent).toBe('Installing colorcet')
+  })
+
+  it('卡住：一句话原因（点名工具）+ 一个「停止」主按钮；点它取消，详情默认折叠', async () => {
+    const cancel = vi.fn(async () => {})
+    useAiFixStore.setState({ cancel } as never)
+    const card = await render(entry(CARDS.stalledApproval))
+    expect(card.querySelector('[data-title]')?.textContent).toBe('AI 在等它自己的审批（工具：change_python），Tavotto 没法替你批准')
+    expect(card.querySelector('[data-ai-fix-stop]')?.textContent).toBe('停止')
+    expect(card.querySelector('details')?.open).toBe(false)
+    await click('[data-ai-fix-stop]')
+    expect(cancel).toHaveBeenCalledWith('script:plot.py')
+  })
+
+  it('三种卡住原因各有一句话；自动停止后落成失败的一句话', async () => {
+    for (const k of ['stalledApproval', 'stalledDelivery', 'stalledIdle'] as const) {
+      const t = (await render(entry(CARDS[k]))).querySelector('[data-title]')?.textContent
+      expect(t, k).toBeTruthy()
+      expect(t).not.toContain('prep.aiFix')
+    }
+    expect((await render(entry(CARDS.autoStopped))).querySelector('[data-title]')?.textContent).toBe('AI 卡在它自己的审批上，已自动停止')
   })
 })

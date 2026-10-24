@@ -284,3 +284,25 @@ describe('切项目竞态', () => {
     expect(answerAiFix).toHaveBeenCalledWith('fx_A', { card_id: 'c1', answer: 'yes' }, 'pjA')
   })
 })
+
+
+describe('进度与卡住的落地', () => {
+  it('重读时把 activity / stalled 带进条目；恢复后清掉', async () => {
+    await start()
+    const stalled = { reason: 'cli_waiting_approval', detail: 'change_python' } as const
+    const activity = { tool: 'try_run', phase: 'start', detail: '', at_ms: 5 } as const
+    vi.mocked(fetchAiFix).mockResolvedValue(state({ activity, stalled }))
+    await useAiFixStore.getState().refresh(KEY)
+    expect(entry()).toMatchObject({ phase: 'running', activity, stalled })
+    vi.mocked(fetchAiFix).mockResolvedValue(state({ activity, stalled: null }))
+    await useAiFixStore.getState().refresh(KEY)
+    expect(entry().stalled).toBeUndefined()
+  })
+
+  it('自动停止（failed + 卡住原因码）落成 done 并保留原因码', async () => {
+    await start()
+    vi.mocked(fetchAiFix).mockResolvedValue(state({ state: 'finished', outcome: 'failed', reason: 'cli_tool_not_delivered' }))
+    await useAiFixStore.getState().refresh(KEY)
+    expect(entry()).toMatchObject({ phase: 'done', outcome: 'failed', reason: 'cli_tool_not_delivered' })
+  })
+})

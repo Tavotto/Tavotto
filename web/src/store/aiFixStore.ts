@@ -64,6 +64,9 @@ export interface AiFixEntry {
   sendBase?: number
   /** 回答请求在途（按钮置忙，防连点） */
   answering?: boolean
+  /** 进度与卡住（后端公开状态原样带过来；界面按它说一句话） */
+  activity?: AiFixState['activity']
+  stalled?: AiFixState['stalled']
 }
 
 interface AiFixStoreState {
@@ -211,6 +214,8 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
           phase: st.state === 'waiting' && st.card ? 'waiting' : 'running',
           // 同一张卡不重置「发送」卡的计数基线
           card: st.card ?? undefined,
+          activity: st.activity ?? undefined,
+          stalled: st.stalled ?? undefined,
           sendBase: st.card && e.card?.id === st.card.id ? e.sendBase : undefined,
         }))
       } catch (e) {
