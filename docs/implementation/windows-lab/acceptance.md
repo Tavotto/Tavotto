@@ -27,7 +27,8 @@
 | Tailscale 私有连接 | PASS | 用户批准登录后 Lab 入 tailnet；Mac 经 Surge 内置 Tailscale（Tailscale.app 停着也通）。tailnet 上 `ssh-keyscan` 拿到的 ed25519 主机密钥与公网地址已钉的同一把；两个别名改走 tailnet + `HostKeyAlias` 后 `doctor` passed，Lab 侧来源地址落在 `100.64.0.0/10` |
 | 重启后 SSH 自动恢复 | PASS | `Restart-Computer` 后约 30 s 回来；无任何交互式会话时 sshd / Tailscale 服务 / `TavottoLab-SingBox` 均 Running，7890/7891 仍只在回环，防火墙三档仍开，`doctor` passed；重启后 `network` run `20261024T104336Z-16f263` 三模式 passed |
 | 无需 RDP 完成无头测试 | PASS | 本页全部任务经 SSH 完成，开荒期间无 RDP 操作（首次放公钥除外） |
-| 公网无不必要的 SSH/RDP 暴露 | PASS（临时方案；待用户删云防火墙公网放行） | 镜像默认**防火墙三档全关**；已开启并把 22 / 3389 限到维护者出口 /24 + `100.64.0.0/10`。从外部主机测：22 / 3389 / 5985 / 445 均 closed。Tailscale 接入后应再收窄云防火墙 |
+| 黄金系统快照 | PASS | 用户授权后：`clean --keep 0`、无任务无残留进程，`admin snapshot` 建 `tavotto-winlab-golden-20261024`（`lhsnap-b5p550zr`，NORMAL）；子账号只有查询 + 建快照权限，回滚 / 删除不经 Lab 工具 |
+| 公网无不必要的 SSH/RDP 暴露 | PASS | 镜像默认**防火墙三档全关**；已开启并把 22 / 3389 限到维护者出口 /24 + `100.64.0.0/10`；Tailscale 接入后用户删掉了云防火墙的公网放行。从外部主机测：22 / 3389 / 5985 / 445 均 closed |
 
 开荒中实测到的两个坑（已在执行器里处理并有用例）：
 
@@ -93,19 +94,34 @@
 没有为提速关 Defender——那会改掉 Lab「用户默认态」的意义；去掉 `PYTHONDONTWRITEBYTECODE`（与 CI 一致）后
 同一片未再出现挂起。
 
-## D. AI 集成（run `20261024T074956Z-79364f`）
+## D. AI 集成
 
 | 宿主 | 版本 | L1 | L2 | L3 | L4 | L5 |
 | --- | --- | --- | --- | --- | --- | --- |
-| Claude Code CLI | 2.1.310 | PASS（Trojan/Hy2） | PASS | PASS：宿主自己的 `claude mcp list` 拉起 Tavotto MCP，输出 `tavotto: … √ Connected` | BLOCKED | BLOCKED |
+| Claude Code CLI | 2.1.310 | PASS（Trojan/Hy2） | PASS | PASS：宿主自己的 `claude mcp list` 拉起 Tavotto MCP，`tavotto: … √ Connected` | PASS（模型 DeepSeek，见下） | PASS（模型 DeepSeek，见下） |
 | Codex CLI | codex-cli 0.164.0 | PASS | PASS | NOT TESTED（`codex mcp list` 只读配置不连接：config_tested） | BLOCKED | BLOCKED |
-| Tavotto Codex / Claude 插件 | — | — | NOT TESTED | NOT TESTED | BLOCKED | BLOCKED |
+| Tavotto Codex / Claude 插件 | — | — | NOT TESTED | NOT TESTED | NOT TESTED | NOT TESTED |
 | WorkBuddy / Cursor / Trae / VS Code | — | — | NOT TESTED | NOT TESTED | NOT TESTED | NOT TESTED |
 
-- L3 证明的是握手成功，不证明宿主列出了全部工具；MCP 由仓库 `server.py` 直接拉起，没经过插件的
-  `mcp/launch` 与插件安装路径。
-- L4 / L5 需要用户授权的账户、Lab 上的登录与真实模型调用，均未获授权：BLOCKED，不推定。
-- 网络模式：宿主安装与 L2/L3 均为 Direct（npmmirror）；L1 的 Trojan / Hy2 结论见 B 节。
+**L4 / L5 怎么做的**（`test hosts-live`，run `20261024T120811Z-57afdd`、复跑 `20261024T120915Z-5f7e49`，各约 55 s，两次都 passed）：
+
+- 宿主是真 Claude Code CLI 2.1.310；推理走 DeepSeek 的 Anthropic 兼容接口（`deepseek-flash`），网络 Direct。
+  **Lab 在中国大陆：Anthropic / OpenAI 的真实模型调用按服务商地区政策不在这台机器上做**（经 DMIT 出口调用等于绕开
+  地区限制），对应格仍是 BLOCKED；`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` 关掉宿主发往 Anthropic 的遥测 / 更新检查。
+- 凭据：本机 0600 文件，经 SSH stdin 交给那一次运行、只进宿主进程环境；Lab 不落盘，证据落盘前再抹一次。
+- L4：宿主执行了 `tavotto_health` / `tavotto_open_figure` / `tavotto_apply_overrides` 并拿到成功结果。
+- L5：真实 matplotlib 图（两条带误差带的曲线 + 图例）→ 宿主打开、线宽 3 + 图例移到左上 → 导出 PDF → 重放校验
+  `ok: true` → **第一个宿主进程退出**（MCP server 随之结束，内存里的会话没了）→ 全新宿主进程只凭 `session_id`
+  调 `tavotto_verify_replay`，服务端从会话日志恢复、从零重放一致。执行器独立核对：PDF 头是 `%PDF-`、会话日志
+  `mcp-sessions/<sid>.json` 里真有线宽 3 那条、两次重放结果都是 `ok: true`。
+
+调试中暴露、已记下的宿主兼容事实（不是 Lab 的缺陷）：
+
+- **结果超过 Claude Code 的单次 MCP 结果上限**：两条线的简单图，`tavotto_open_figure` / `tavotto_session_state` 的
+  结果（后者 84 KB）被 Claude Code 转存成文件、模型只拿到一句提示，要多花十来轮 `Grep` 去读；`--max-turns 16`
+  时有一轮因此没走完。值得在 MCP 侧给模型调用一个有界摘要（`apply_overrides` 已有 `summary=true`）。
+- **出版预检会挡住导出**（正确行为）：测试图 88.9 mm 宽不合默认规范，场景里明确写了「用户已确认」才带 `explicit_confirm`。
+- 重新 `tavotto_open_figure` 是**新会话**（从脚本原样开始）；「保存后重开」是凭 `session_id` 恢复。
 
 ## E. 安全与仓库
 

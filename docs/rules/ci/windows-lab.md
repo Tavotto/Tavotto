@@ -87,5 +87,9 @@ L1 网络可达（`network`）→ L2 官方客户端可装可启动 → L3 真�
 L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重开的闭环。低层通过不推出高层。
 `hosts` 任务只到 L3，且只认宿主 CLI 自己的连接检查（`claude mcp list`）；只读配置的
 （`codex mcp list`）记 `config_tested`，不升格。模拟 MCP client 永远不算宿主验收。L4/L5 需要
-用户授权的账户与真实模型调用，未授权就是 BLOCKED。证据字段按
+用户授权的账户与真实模型调用，未授权就是 BLOCKED。
+- **地区政策**：Lab 在中国大陆。Anthropic / OpenAI 的真实模型调用不在这台机器上做——经代理出口调用等于绕开服务商
+  的地区限制，授权解决不了政策问题；这些格保持 BLOCKED。L4/L5 用国内合规的 Anthropic 兼容接口驱动**真宿主**
+  （`hosts-live`），报告写明宿主与模型分别是谁，不把它写成「Claude 模型通过」。
+- 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境，Lab 不落盘；证据落盘前抹掉凭据。证据字段按
 `docs/implementation/multi-host-mcp/acceptance.md`。

@@ -92,6 +92,7 @@ python3 scripts/winlab/winlab.py test pytest --tests tests/test_windows_regressi
 python3 scripts/winlab/winlab.py test pytest-shard --shard 1/4
 python3 scripts/winlab/winlab.py network --mode all                  # L1：direct / trojan / hysteria2
 python3 scripts/winlab/winlab.py test hosts                          # L2/L3：Claude Code / Codex CLI
+python3 scripts/winlab/winlab.py test hosts-live                     # L4/L5：真 Claude Code + 国内模型（先 test hosts）
 python3 scripts/winlab/winlab.py status | reports [--id RUN] | clean --keep 20 | stop
 ```
 
@@ -117,6 +118,29 @@ python3 scripts/winlab/winlab.py status | reports [--id RUN] | clean --keep 20 |
 
 真正的边界在服务器端：`tavotto-lab` 的钥匙被 `ForceCommand` 锁在 agent 上，就算放行规则写宽了
 也拿不到 shell。云端 Claude 会话没有本机密钥，用不了 Lab。
+
+### 真实模型调用（L4/L5）
+
+只用国内合规的 Anthropic 兼容接口（当前登记 DeepSeek）；Lab 在中国大陆，Anthropic / OpenAI 不在这里调。
+密钥在**你自己的终端**里录入（不回显），写 `~/.config/tavotto-winlab/model.json`（0600）：
+
+```sh
+python3 scripts/winlab/winlab.py secret-init deepseek
+```
+
+建议给 Lab 单独建一把限额的 key。每次 `test hosts-live` 经 SSH stdin 交给那一次运行，Lab 不落盘。
+
+### 黄金快照
+
+腾讯云 CAM 子账号只授 `lighthouse:DescribeInstances` / `DescribeSnapshots` / `CreateInstanceSnapshot`
+（不能回滚、不能删），密钥存本机钥匙串（服务名 `tavotto-lab-tencent`，账户 `SecretId` / `SecretKey`）：
+
+```sh
+python3 scripts/winlab/winlab.py clean --keep 0                      # 先清 run 目录（报告保留）
+python3 scripts/winlab/winlab.py admin snapshot --name tavotto-winlab-golden-YYYYMMDD
+```
+
+快照含 `secrets\`（代理凭据）：不要共享或跨账号复制。回滚 / 删除快照只在控制台由你做。
 
 ## 三种状态（不是三台虚拟机）
 
