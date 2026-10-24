@@ -1466,6 +1466,16 @@ def test_efforts_follow_the_catalog_origin_and_model(world):
         }
     )
     assert _conn(_caps(), "a")["efforts"] == []
+    config.update_ai_settings(
+        lambda ai: {
+            "providers": [
+                {**p, "default_model": "claude-opus-4-6"} if p["id"] == "a" else p
+                for p in ai["providers"]
+            ]
+        }
+    )
+    c = _conn(_caps(), "a")
+    assert (c["efforts"], c["default_effort"]) == (M4, "high"), "默认档位跟默认型号走，不是一个常量"
     f = ai_catalog.efforts_for
     anth = "https://api.anthropic.com/"
     assert f("claude", anth, "claude-opus-4.6") == M4, "点与横线等价"
