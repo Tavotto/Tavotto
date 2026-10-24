@@ -81,7 +81,7 @@ order: 90
   `restore-keys` 只回落到同一 `ImageOS`、`ImageVersion` 之前的前缀。包列表唯一出处是那个文本文件，ci.yml 不再点名包。
   三步（识别镜像 / 缓存 / 安装）两处逐字相同、只有 `if:` 不同；逻辑在 `scripts/ci/install_tauri_linux_deps.sh`：**精确命中**
   （`cache-hit == 'true'`）→ `apt-get install --no-download ./*.deb`，不 update、不碰网络，装不上（镜像升级后版本冲突等）退回网络路径；
-  **未命中** → 三个镜像（runner 默认 / archive.ubuntu.com / mirrors.edge.kernel.org）各给 180 s，`Acquire::Retries=3`、
+  **未命中** → 三个镜像（runner 默认 / archive.ubuntu.com / mirrors.edge.kernel.org）各给一份 180 s 总预算（update 与下载共用，3 × 180 s < 安装步的 12 分钟），`Acquire::Retries=3`、
   `Acquire::http(s)::Timeout=30`，先 `--download-only` 进缓存目录再 `--no-download` 安装，装完剪掉版本 != 已装版本的旧 .deb
   （restore-keys 带回的旧版本会让命中路径同包装两版）；安装步自己 `timeout-minutes: 12`，慢下载早失败，不吃满 job 的 20 分钟。
   **缓存不是信任来源**：网络路径由 apt 按签名索引校验；PR / merge_group 读 push main 上 `cache-seed` 种的条目（默认分支作用域），

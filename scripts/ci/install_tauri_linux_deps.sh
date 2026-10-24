@@ -55,7 +55,9 @@ apt_opts=(
 )
 # 第一次用 runner 默认镜像；之后依次换到下面两个。
 mirrors=("" archive.ubuntu.com mirrors.edge.kernel.org)
-attempt_seconds=180
+# 每个镜像一份总预算（update + download 合计）。3 × 180 = 540 s，加上本地安装与剪枝的余量，
+# 必须小于 ci.yml 安装步的 timeout-minutes: 12（720 s），否则第三个镜像还没试完 step 就被砍。
+attempt_seconds="${TAURI_APT_ATTEMPT_SECONDS:-180}"
 
 for mirror in "${mirrors[@]}"; do
   if [ -n "$mirror" ]; then
@@ -63,9 +65,12 @@ for mirror in "${mirrors[@]}"; do
     sudo find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec \
       sed -i -E "s#//(azure\.archive\.ubuntu\.com|archive\.ubuntu\.com|mirrors\.edge\.kernel\.org)/#//$mirror/#g" {} +
   fi
-  # update 与下载各自限时：超时的是 timeout 的退出码 124，一并当作本次尝试失败。
+  # update 与下载共用这个镜像的预算：下载只拿 update 用剩的时间；超时是 timeout 的退出码 124，
+  # 一并当作本次尝试失败。
+  start=$SECONDS
   if sudo timeout "$attempt_seconds" apt-get "${apt_opts[@]}" update \
-    && sudo timeout "$attempt_seconds" apt-get "${apt_opts[@]}" install -y \
+    && remaining=$((attempt_seconds - (SECONDS - start))) && ((remaining > 0)) \
+    && sudo timeout "$remaining" apt-get "${apt_opts[@]}" install -y \
       --no-install-recommends --download-only "${pkgs[@]}"; then
     # 此刻 .deb 全在 $deb_dir 里，安装不再需要网络。
     sudo apt-get "${apt_opts[@]}" install -y --no-install-recommends --no-download "${pkgs[@]}"

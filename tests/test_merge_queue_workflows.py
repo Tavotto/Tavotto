@@ -2840,7 +2840,8 @@ class TestTauriAptCache:
             "--no-download",
             "archive.ubuntu.com",
             "mirrors.edge.kernel.org",
-            "attempt_seconds=180",
+            "attempt_seconds=",
+            "remaining=",
         ):
             assert needle in text, needle
         assert text.index("APT_CACHE_HIT") < text.index('apt-get "${apt_opts[@]}" update'), (
@@ -2872,11 +2873,11 @@ class TestTauriAptCache:
             'echo "sudo $*" >> "$LOG"\n'
             'if [ "$1" = find ]; then shift; exec find "$APT_ETC" "${@:2}"; fi\nexec "$@"',
         )
-        stub("timeout", 'shift; exec "$@"')
+        stub("timeout", 'echo "timeout $1" >> "$LOG"; shift; exec "$@"')
         stub(
             "apt-get",
             'echo "apt-get $*" >> "$LOG"\n'
-            'case "$*" in *" update"*) [ "${FAIL_UPDATE:-0}" = 1 ] && exit 100 ;; esac\n'
+            'case "$*" in *" update"*) sleep "${UPDATE_SLEEP:-0}"; [ "${FAIL_UPDATE:-0}" = 1 ] && exit 100 ;; esac\n'
             'case "$*" in *--download-only*) touch "$DEB_DIR/new_1_amd64.deb" ;; esac\n'
             "exit ${APT_RC:-0}",
         )
@@ -2933,6 +2934,14 @@ class TestTauriAptCache:
             == 3
         )
         assert "mirrors.edge.kernel.org" in (etc / "ubuntu.sources").read_text()
+
+        # 预算共享：update 吃掉大半预算，download 的 timeout 只拿剩余
+        slow = run(APT_CACHE_HIT="false", UPDATE_SLEEP="2", TAURI_APT_ATTEMPT_SECONDS="4")
+        assert slow.returncode == 0, slow.stderr
+        budgets = [
+            int(ln.split()[1]) for ln in log.read_text().splitlines() if ln.startswith("timeout ")
+        ]
+        assert budgets[0] == 4 and budgets[1] < 4, budgets
 
         # 未命中且成功：已装版本是 1，old_0 被剪掉、new_1 留下
         ok = run(APT_CACHE_HIT="false", INSTALLED_VERSION="1")
