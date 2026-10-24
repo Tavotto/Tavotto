@@ -245,16 +245,23 @@ def _path_owner_matches(path: str, stems: dict, calls: dict | None, native_title
     the second figure belongs to Tavotto's `s-2`, not to `s` (which owns `s.pdf`): the owners of a path are
     the stems `s` / `s-N` that recorded a savefig in that path's format. When the product recorded no
     format for any of them (or none matches), fall back to the stem `s` itself, which is the old reading.
+
+    `s` itself wins when it recorded that format: `s-N` is only a displaced writer of `s.png` when `s` did
+    not save a png, otherwise `s-2` is an independent `s-2.png` and must not vouch for `s.png` (Codex #1382).
     """
     base, fmt = Path(path).stem, Path(path).suffix.lstrip(".").lower()
     calls = calls or {}
-    owners = [
-        name
-        for name in stems
-        if (name == base or re.fullmatch(re.escape(base) + r"-\d+", name))
-        and fmt in {str(f).lower() for f in calls.get(name) or [] if f}
-    ]
-    return any(stems[name]["titles"] == native_titles for name in (owners or [base]))
+
+    def saved(name: str) -> bool:
+        return fmt in {str(f).lower() for f in calls.get(name) or [] if f}
+
+    if base in stems and saved(base):
+        owners = [base]
+    else:
+        owners = [
+            name for name in stems if re.fullmatch(re.escape(base) + r"-\d+", name) and saved(name)
+        ] or [base]
+    return any(stems[name]["titles"] == native_titles for name in owners if name in stems)
 
 
 def compare(

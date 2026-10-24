@@ -365,6 +365,25 @@ class Judgment(unittest.TestCase):
         kinds = [d["kind"] for d in ex.compare("axis_changing", native, blind, None)["differences"]]
         self.assertIn("same_path_content_mismatch", kinds)
 
+    def test_an_explicit_numbered_file_does_not_vouch_for_the_base_file(self):
+        """脚本自己写了 `s.png` 和 `s-2.png`：`s` 存过 png，`s.png` 就归 `s`；`s-2` 是独立文件，
+        它的标题不得替 `s.png` 的错误捕获作保（Codex #1382 r4366222254）。"""
+        native = native_result(
+            figure_count=2,
+            semantics={"f0": {"titles": ["A"]}, "f1": {"titles": ["B"]}},
+            savefig_last_writer={
+                "s.png": {"figure": 1, "titles": ["B"]},
+                "s-2.png": {"figure": 1, "titles": ["B"]},
+            },
+        )
+        tav = {
+            "stems": {"s": {"titles": ["A"]}, "s-2": {"titles": ["B"]}},
+            "error": None,
+            "savefig_calls": {"s": ["png"], "s-2": ["png"]},
+        }
+        kinds = [d["kind"] for d in ex.compare("axis_changing", native, tav, None)["differences"]]
+        self.assertIn("same_path_content_mismatch", kinds)
+
     def test_tavotto_error_after_partial_observation_is_never_clean(self):
         """部分图观察成功后 worker 报错：已观察部分与原生一致也不得判 no_difference（Codex #1135 r4310366048）。"""
         tav = {
