@@ -48,6 +48,7 @@
 | 任何 `shell: pwsh` 步骤 | pwsh 退出码 → `pwsh-exit-codes.md` | 最后一条原生命令故意非零时显式 `exit 0`；失败路径全是 `throw` |
 | `tests/compat/`、`tests/test_equivalence_matrix.py`、`tests/test_invariants_engine.py`、`scripts/smoke_app.py`、`nightly.yml`、`scripts/bench_render.py`、`tests/desktop_windows/` | 验证链（按层）→ `verification-chain.md` | CompatBench 与 acceptance 不合并；未声明失败一律 `product_bug`；等价性与不变式不互相替代；冒烟带 `--expect-*` |
 | `scripts/ci/agent_verify.py` 的 `SCENARIOS`、新增给开发 Agent 调用的验证场景 | Agent 统一验证入口（ADR 0131）→ `agent-verification.md` | 只认登记场景、argv 只调已有验证器；写 `claim` / `unverified`；非 passed 永不聚合成 passed；不进 CI、不改基线 |
+| `scripts/winlab/` | Windows Lab 常驻真机 → `windows-lab.md` | 只跑维护者代码、不注册 runner；ForceCommand 只放行登记任务；构建只直连、代理无 direct 出站；凭据不进仓库 |
 | `release.yml` / `release-publish.yml`、`codex-plugin.json`、`latest.json`、遥测代理部署 | 发布链 → `release-chain.md` | 第一段不等 lab；`trust2` 不信任载荷、publish 只能压成 false；插件清单由 `build` 生成；先发代理再发客户端 |
 | `desktop-shell` job、`src-tauri` 的 cargo 三件、fast 档 job 的 `if:` | desktop-shell 与 Gate 闭集 → `desktop-shell-lane.md` | 两条腿（ubuntu + macos）都跑 fmt / clippy / test；`bundle.resources` 空目录就够；改 fast 档条件先看闭集用例 |
 | `frontend` / `plugin-candidate` job、`scripts/plugin_stage.py`、`scripts/plugin_publish.py`、`plugin-stable.yml` | Codex 插件候选（ADR 0043）→ `codex-plugin-candidate.md` | 候选只验证不发布；有产物时 `test_plugin_candidate.py` 不许 skip；`plugin_stable` 投影同一份 zip；发行分支不触发源码 CI |
