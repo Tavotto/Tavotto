@@ -144,6 +144,17 @@ def _tavotto_secret_paths() -> list[Path]:
         return []
 
 
+def deny_spec() -> dict:
+    """硬拦表的机器可读投影（D3：CLI 自带「读文件」工具的权限规则从这里生成，不手抄第二份）。
+    `home_relative` = `DENY_HOME_RELATIVE`；`names` = `DENY_NAME_PATTERNS`；`absolute` = Tavotto 自己存密钥的文件。
+    每次调用现读模块属性，所以改表的一侧，生成物跟着变。"""
+    return {
+        "home_relative": list(DENY_HOME_RELATIVE),
+        "names": list(DENY_NAME_PATTERNS),
+        "absolute": [str(p) for p in _tavotto_secret_paths()],
+    }
+
+
 def scrub(text: str) -> str:
     """给模型看的内容一律先过这里：诊断包同一套文本脱敏 + 常见密钥形状。幂等。"""
     from .. import diagnostics

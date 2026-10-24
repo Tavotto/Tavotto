@@ -30,6 +30,7 @@ import sys
 import threading
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 
 from . import ai_agents, ai_history, ai_oauth, ai_providers, config, projectenv, scriptlock
@@ -1009,6 +1010,38 @@ def _cmd(
             endpoint_env=dict(extra_env),
         )
     )
+    return list(spec.argv), dict(spec.env)
+
+
+def fix_cli_agent() -> str | None:
+    """AI 修复会话（ADR 0149 D3）能用的 CLI：第一个「可派活」且适配器支持修复命令的编码 Agent。
+    只看能力缓存（`agent_caps`），不重新探测；没有 = None。"""
+    for agent in ai_agents.agents():
+        if type(agent).build_fix_command is ai_agents.AgentDefinition.build_fix_command:
+            continue  # 适配器没覆写 = 不支持
+        info = agent_caps(agent.id)
+        if info and info.get("usable"):
+            return agent.id
+    return None
+
+
+def fix_cli_command(
+    agent_id: str, ctx: ai_agents.FixRunContext
+) -> tuple[list[str], dict[str, str]]:
+    """→ (命令行, 需要追加到环境的变量)。与 `_cmd` 同一套：CLI 启动 argv 取自探测结果，第三方接口（若用户给这个 Agent 选了）
+    照常注入，**不改写用户自己的 ~/.claude 或 ~/.codex**。`ctx.argv` / `endpoint_*` 由这里填。"""
+    agent = require_agent(agent_id)
+    res = ai_agents.resolve(agent)
+    if res.argv is None:
+        raise AgentError("ai_agent_not_installed", {"agent": agent_id})
+    extra_args, extra_env = ai_providers.spawn_overrides(agent_id, ai_providers.resolve(agent_id))
+    spec = agent.build_fix_command(
+        replace(
+            ctx, argv=list(res.argv), endpoint_args=list(extra_args), endpoint_env=dict(extra_env)
+        )
+    )
+    if spec is None:
+        raise AgentError("ai_agent_not_usable", {"agent": agent_id})
     return list(spec.argv), dict(spec.env)
 
 

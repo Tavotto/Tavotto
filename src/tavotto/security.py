@@ -31,7 +31,8 @@ rebinding。Host 只认 `127.0.0.1:<port>` 一种写法；带 Origin 的请求�
 桌面 sidecar 另有一枚**只读、只对 `GET /api/handoff/render-status` 有效**的 scoped token
 （`SessionState.status_token`，随机、与 nonce / secret 无关），发布在 0600 文件里供 `tavotto open`
 查询「某项目某 stem 最近一次渲染成败」（ADR 0008 修订 2026-10-16）。它换不到 relaunch nonce，
-带去任何其它端点都是 401。
+带去任何其它端点都是 401。AI 修复会话（ADR 0149 D3）的 MCP 回调同理：每个会话一枚 scoped token（`X-Tavotto-Fix-Token`），
+只对该会话的 `GET …/tools` 与 `POST …/tool` 有效，会话结束 / 取消即失效；Host / Origin 校验照旧在它之前。
 
 测试 / 开发旁路：app.config 里没有 `TAVOTTO_SESSION_STATE` 时 guard 全部
 放行（test_client、`--insecure-no-auth`、vite dev proxy 的后端就是这一档）。
@@ -41,6 +42,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import re
 import secrets as _secrets
 import threading
 import time
@@ -59,6 +61,9 @@ RELAUNCH_PATH = session_client.RELAUNCH_PATH
 PING_PATH = "/api/session/ping"
 #: scoped 只读 token 唯一有效的路径（ADR 0008 修订 2026-10-16 / ADR 0131 第六节）
 HANDOFF_STATUS_PATH = session_client.HANDOFF_STATUS_PATH
+#: AI 修复会话的 MCP 回调头（ADR 0149 D3）：每个修复会话一枚 scoped token，只对该会话的 `tools` / `tool` 两个路径有效
+FIX_TOKEN_HEADER = "X-Tavotto-Fix-Token"
+_FIX_CALLBACK_RE = re.compile(r"^/api/ai/fix/([^/]+)/(tools|tool)$")
 
 # 浏览器模式 cookie 的 Max-Age：服务器进程常驻、浏览器会整个重开，
 # 会话级 cookie 会让「第二天再打开标签页」全是 401。token 只在进程内存里，
@@ -234,6 +239,13 @@ def install(flask_app) -> None:
             and state.valid_status_token(request.headers.get(session_client.AUTH_HEADER))
         ):
             return None
+        # AI 修复的 MCP 回调：scoped token，只认「该会话的 tools（GET）/ tool（POST）」两个路径，其它路径一律不认
+        m = _FIX_CALLBACK_RE.match(p)
+        if m and request.method == ("GET" if m.group(2) == "tools" else "POST"):
+            from .engine import fixsession
+
+            if fixsession.SESSIONS.token_valid(m.group(1), request.headers.get(FIX_TOKEN_HEADER)):
+                return None
         return jsonify({"error": "会话未建立或已失效", "code": "session_auth_required"}), 401
 
 

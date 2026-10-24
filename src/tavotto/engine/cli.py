@@ -20,7 +20,7 @@ import json
 import sys
 
 #: 认得的子命令。放在这里是为了让「它是不是子命令」这个判断只有一处。
-COMMANDS = ("open", "run", "doctor", "codex")
+COMMANDS = ("open", "run", "doctor", "codex", "fix-mcp")
 
 
 def use_utf8_streams() -> None:
@@ -70,6 +70,12 @@ def dispatch(argv: list[str]) -> int | None:
         from . import codexinstall
 
         return codexinstall.cli(argv[1:])
+    if argv[0] == "fix-mcp":
+        # ADR 0149 D3：AI 修复会话里 Codex / Claude Code 拉起的 stdio MCP 服务（纯翻译，工具在应用进程里执行）。
+        # stdout 归协议独占，所以不走上面的 `use_utf8_streams` 之外的任何输出。
+        from . import fixmcp
+
+        return fixmcp.cli(argv[1:])
     return doctor(argv[1:])
 
 

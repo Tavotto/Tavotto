@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from tavotto.engine import ai_providers, fixsession, prepsession
+from tavotto.engine import ai_bridge, ai_providers, fixsession, prepsession
 from tavotto.engine.agent_runner.redact import Redactor
 from tavotto.engine.agent_runner.wires import ToolCall, Turn
 from test_preparation_api import client, fake_pool  # noqa: F401 — 夹具复用
@@ -29,6 +29,8 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(data))
     (cfg / "config.json").write_bytes(b'{"ai": {"providers": []}}')
     monkeypatch.setattr(prepsession.SESSIONS, "ai_connected", lambda: False)
+    # 默认：这台机器上没有可用的 Codex / Claude Code（装没装都不该影响判据）；CLI 用例自己放开
+    monkeypatch.setattr(ai_bridge, "agent_caps", lambda _agent_id: None)
     fixsession.SESSIONS.reset_for_tests()
     yield
     fixsession.SESSIONS.reset_for_tests()
@@ -213,3 +215,52 @@ def test_a_symlinked_script_escaping_the_project_is_refused(
     resp = client.post("/api/ai/fix", json={"session_id": report["session_id"], "script": "fig.py"})
     assert resp.status_code == 400 and resp.get_json()["code"] == "fix_script_outside_project"
     assert fixsession.SESSIONS.active() is None
+
+
+# =========================================================================== CLI 连接（D3）
+def test_with_only_a_cli_the_endpoint_starts_a_cli_session_not_the_builtin_loop(
+    client, tmp_path, fake_pool, sessions, monkeypatch
+):
+    import sys
+
+    _root, _pj, report = _create_ready(client, tmp_path)
+    monkeypatch.setattr(
+        ai_bridge, "agent_caps", lambda agent_id: {"id": agent_id, "usable": agent_id == "codex"}
+    )
+    assert client.get("/api/ai/capabilities").get_json()["ai_fix_available"] is True
+    started: dict = {}
+
+    def launcher(agent_id, *, callback_url, project_root):
+        started.update(agent=agent_id, url=callback_url)
+
+        def build(fix_id, token, prompt):
+            started.update(fix_id=fix_id, prompt=prompt)
+            return fixsession.CliLaunch([sys.executable, "-c", "pass"], {}, str(project_root))
+
+        return build
+
+    monkeypatch.setattr(fixsession, "cli_launcher", launcher)
+    resp = client.post("/api/ai/fix", json={"session_id": report["session_id"], "script": "fig.py"})
+    body = resp.get_json()
+    assert resp.status_code == 200 and body["ok"] is True
+    assert started["agent"] == "codex" and started["url"].startswith("http://127.0.0.1:")
+    # 同一份提示词：内置循环的系统提示 + CLI 补充
+    end = poll(client, body["fix_id"], lambda b: b["state"] == "finished")
+    assert (end["outcome"], end["reason"]) == ("failed", "cli_no_finish")
+    assert started["prompt"].startswith(fixsession.SYSTEM_PROMPT)
+
+
+def test_an_api_connection_still_wins_over_a_cli(
+    client, tmp_path, fake_pool, sessions, monkeypatch
+):
+    _root, _pj, report = _create_ready(client, tmp_path)
+    connect(monkeypatch, Scripted([("finish", {"outcome": "fixed", "summary": "好了"})]))
+    monkeypatch.setattr(ai_bridge, "agent_caps", lambda agent_id: {"id": agent_id, "usable": True})
+    monkeypatch.setattr(
+        fixsession, "cli_launcher", lambda *a, **k: pytest.fail("the builtin loop must be used")
+    )
+    body = client.post(
+        "/api/ai/fix", json={"session_id": report["session_id"], "script": "fig.py"}
+    ).get_json()
+    assert body["ok"] is True
+    assert poll(client, body["fix_id"], lambda b: b["state"] == "finished")["outcome"] == "fixed"

@@ -9,12 +9,19 @@
   回答按卡种类校验（`approve` → yes/no；`choice` → 选项 id / other / skip；`pick` → skip 或路径；`send` → sent/no）。
 * **预算**：步数 / 墙钟（用户思考的时间也算在墙钟里）/ token；`finish` 之后不再请求模型。
 * 结束后由前端重跑准备会话验证——本模块不替用户判「修好了」，`finish(fixed)` 只是 AI 的说法。
+
+**CLI 连接（D3，ADR 0149 修订）**：只连了 Codex / Claude Code 时，同一个会话改为起那个 CLI（`ai_bridge.fix_cli_command`），
+它经 MCP 修复模式（`fixmcp.py`）回调本会话的 `call_tool` / `tool_list`——工具仍在**本进程**里由 `run_tool` 执行
+（卡片、快照、审计、项目作用域与内置循环是同一份）。回调凭本次会话的 scoped token（`secrets` 生成、`compare_digest`、
+只认本会话、会话结束 / 取消即失效）。CLI 的 stdout 一个字不当结论，结论只认 `finish` 工具；退出时没调 `finish` = `failed`。
 """
 
 from __future__ import annotations
 
 import logging
 import secrets
+import subprocess
+import sys
 import threading
 import time
 from collections import OrderedDict
@@ -94,6 +101,25 @@ def _first_message(ctx: fixtools.FixContext, script: str) -> str:
     )
 
 
+#: CLI 没有「系统提示」入口（Codex 没有、Claude 有但各家不一），所以和内置循环**同一份**提示词放在最前面，后面补这一段
+CLI_ADDENDUM = """\
+
+You are running inside a command-line AI tool. Your repair tools are the MCP tools of the server `tavotto_fix` \
+(read_run_report, read_file, try_run, propose_fix, finish, ...): use them for everything, and above all for every change. \
+Your own shell and editor are read-only here and anything done with them is neither recorded nor undoable. \
+What you write in your reply is not shown to the user: the only way to report the result is the `finish` tool.
+"""
+#: 提示词进命令行（Windows 约 32 KB 上限）：准备报告太长就截断，让模型自己调 read_run_report 读全文
+CLI_PROMPT_MAX = 12000
+
+
+def cli_prompt(ctx: fixtools.FixContext, script: str) -> str:
+    text = SYSTEM_PROMPT + CLI_ADDENDUM + "\n" + _first_message(ctx, script)
+    if len(text) > CLI_PROMPT_MAX:
+        text = text[:CLI_PROMPT_MAX] + "\n[truncated; call read_run_report for the full report]"
+    return text
+
+
 class FixToolset:
     """`loop.run` 要的任务工具集：每次会话现建，工具带本次会话的 `FixContext`。"""
 
@@ -139,6 +165,19 @@ class _Pending:
 
 
 @dataclass
+class CliLaunch:
+    """起 CLI 所需的一切（命令行里没有令牌；令牌只在 `env` 里）。"""
+
+    argv: list[str]
+    env: dict[str, str]
+    cwd: str
+
+
+#: `finish` 之后给 CLI 自己收尾退出的时间（秒），到点就结束它自己起的那个进程
+FINISH_GRACE = 20.0
+
+
+@dataclass
 class FixSession:
     id: str
     scope: str  # 项目 id
@@ -157,6 +196,12 @@ class FixSession:
     pending: _Pending | None = None
     thread: threading.Thread | None = None
     reported: tuple[str, str] | None = None  # `finish` 交来的 (outcome, summary)
+    #: CLI 连接才有：MCP 回调凭它认本会话（不进 `public()`、日志、事件）
+    token: str = ""
+    ctx: fixtools.FixContext | None = None
+    audit: AuditLog | None = None
+    #: MCP 回调的工具调用串行（`run_tool` 改 `ctx.step` / `call_meta`，不是线程安全的）
+    tool_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 def _same(a: str, b: object) -> bool:
@@ -230,7 +275,8 @@ class FixSessions:
         prep_session_id: str,
         script: str,
         project_root: Path,
-        model: object,
+        model: object | None = None,
+        cli: Callable[[str, str, str], CliLaunch] | None = None,
         report: Callable[[], dict | None] | None = None,
         redactor: Redactor = NO_REDACTION,
         audit: AuditLog | None = None,
@@ -250,6 +296,7 @@ class FixSessions:
                 scope=scope,
                 script=script,
                 prep_session_id=prep_session_id,
+                token=secrets.token_urlsafe(32) if cli is not None else "",
             )
             self._by_id[s.id] = s
             while len(self._by_id) > KEEP_SESSIONS:
@@ -276,10 +323,21 @@ class FixSessions:
             redactor=redactor,
         )
         toolset = FixToolset(ctx, script, audit)
-        wrapped = _FinishAware(model, s.finished)
+        s.ctx, s.audit = ctx, audit if audit is not None else AuditLog()
 
-        def work() -> None:
-            self._work(s, wrapped, toolset, envelope)
+        if cli is not None:
+            prompt = cli_prompt(ctx, script)
+
+            def work() -> None:
+                self._work_cli(
+                    s, cli, prompt, str(project_root), (limits or FIX_LIMITS).max_seconds
+                )
+
+        else:
+            wrapped = _FinishAware(model, s.finished)
+
+            def work() -> None:
+                self._work(s, wrapped, toolset, envelope)
 
         if background:
             s.thread = threading.Thread(target=work, name=f"fix-{s.id}", daemon=True)
@@ -305,6 +363,10 @@ class FixSessions:
             LOG.exception("fix session crashed")
             done.setdefault("ok", False)
             done.setdefault("reason", "internal")
+        self._settle(s, str(done.get("reason") or "internal"))
+
+    def _settle(self, s: FixSession, failed_reason: str) -> None:
+        """会话收尾：`finish` 交来了结论就采用，取消就是 cancelled，否则 failed（原因码是闭集，界面按它选一句话）。"""
         with self._lock:
             reported = s.reported
             if s.cancel.is_set() and reported is None:
@@ -313,11 +375,113 @@ class FixSessions:
                 s.outcome, s.summary = reported
                 s.reason = ""
             else:
-                # AI 没调 finish 就停了（预算 / 网络 / 额度 / 认证…）：按没修好算，原因码给界面选一句话
+                # AI 没调 finish 就停了（预算 / 网络 / 额度 / 认证…）：按没修好算
                 s.outcome = OUTCOME_FAILED
-                s.reason = str(done.get("reason") or "internal")[:24]
+                s.reason = failed_reason[:24]
             s.state, s.card, s.pending = STATE_FINISHED, None, None
         self._notify(s)
+
+    # ---- CLI 连接（D3） -------------------------------------------------
+    def _work_cli(
+        self,
+        s: FixSession,
+        build: Callable[[str, str, str], CliLaunch],
+        prompt: str,
+        cwd: str,
+        max_seconds: float,
+    ) -> None:
+        """起 CLI、等它退出。只结束**自己起的**那个进程（`ai_bridge._terminate` 的进程组 / `taskkill /T`）。
+        stdout 读掉丢弃（不读会把管道写满），内容不当结论、不入日志。"""
+        from . import ai_bridge
+
+        reason = "cli_exit"
+        sess: dict = {"exited": threading.Event()}
+        try:
+            launch = build(s.id, s.token, prompt)
+            proc = ai_bridge._popen(launch.argv, launch.cwd, launch.env, subprocess.DEVNULL)
+        except Exception:  # noqa: BLE001 - 起不来（没装 / 参数 / 权限）：按没修好算
+            LOG.warning("fix cli failed to start", exc_info=True)
+            self._settle(s, "cli_start")
+            return
+        sess["proc"] = proc
+        drain = threading.Thread(target=self._drain, args=(proc,), daemon=True)
+        drain.start()
+        started = time.monotonic()
+        finish_seen: float | None = None
+        while proc.poll() is None:
+            now = time.monotonic()
+            if s.cancel.is_set():
+                break
+            if s.finished.is_set():
+                finish_seen = finish_seen or now
+                if now - finish_seen > FINISH_GRACE:
+                    break
+            if now - started > max_seconds:
+                reason = "budget"
+                break
+            time.sleep(0.1)
+        code = proc.poll()
+        if code is None:
+            ai_bridge._terminate(sess)
+        ai_bridge._await_exit(sess)
+        drain.join(timeout=2)
+        if reason != "budget":
+            reason = "cli_exit" if (code or 0) != 0 else "cli_no_finish"
+        self._settle(s, reason)
+
+    @staticmethod
+    def _drain(proc) -> None:
+        try:
+            for _ in proc.stdout:
+                pass
+        except (OSError, ValueError):
+            pass
+
+    def _authorized(self, fix_id: object, token: object) -> FixSession:
+        """MCP 回调的认证：会话存在、令牌对、会话没结束没取消。别的一律同一个 403（不泄漏哪一项错了）。"""
+        with self._lock:
+            for s in self._by_id.values():
+                if _same(s.id, fix_id):
+                    if (
+                        s.token
+                        and _same(s.token, token)
+                        and s.state != STATE_FINISHED
+                        and not s.cancel.is_set()
+                    ):
+                        return s
+                    break
+        raise FixError("fix_tool_forbidden", 403)
+
+    def token_valid(self, fix_id: object, token: object) -> bool:
+        """会话认证 guard 的 scoped token 检查（`security.py`）。"""
+        try:
+            self._authorized(fix_id, token)
+        except FixError:
+            return False
+        return True
+
+    def tool_list(self, fix_id: object, token: object) -> list[dict]:
+        """MCP `tools/list`：注册表里的名字 / 描述 / schema。**不含 tier / waits_for_user**（与 `build_agent_tools` 同口径）。"""
+        self._authorized(fix_id, token)
+        return [
+            {"name": t.name, "description": t.description, "inputSchema": t.schema}
+            for t in fixtools.REGISTRY.values()
+        ]
+
+    def call_tool(self, fix_id: object, token: object, name: object, args: object) -> dict:
+        """MCP `tools/call`：在本进程里 `run_tool`（档位 / 同意卡 / 快照 / 审计全在里面）。阻塞到工具结束；
+        卡片等用户的上限是 `ASK_TIMEOUT`，取消立即返回。"""
+        s = self._authorized(fix_id, token)
+        tool = fixtools.REGISTRY.get(name) if isinstance(name, str) else None
+        if tool is None:
+            return {"content": "Unknown tool.", "is_error": True}
+        with s.tool_lock:
+            if s.cancel.is_set() or s.finished.is_set() or s.ctx is None:
+                return {"content": "The repair session has ended.", "is_error": True}
+            result = fixtools.run_tool(tool, s.ctx, args, s.audit)
+        s.steps += 1
+        self._notify(s)
+        return {"content": result.content, "is_error": bool(result.is_error)}
 
     # ---- 弹卡 -----------------------------------------------------------
     def _ask(self, s: FixSession, card: dict, redactor: Redactor) -> dict:
@@ -413,7 +577,7 @@ SESSIONS = FixSessions()
 # --------------------------------------------------------------------------- 连接（API 连接 → 内置执行器的模型）
 def connection() -> dict | None:
     """用户连着的、内置执行器能直接用的 API 连接：该 agent 当前选中的第三方接口，有地址 / 密钥 / 型号、地址合规。
-    只连了 CLI（官方登录态）时返回 None——CLI 经 MCP 的接法是 D3，此处暂不可用。返回里带密钥，**只给 `build_model` 用**。"""
+    只连了 CLI（官方登录态）时返回 None——那条路走 `cli_agent()` + MCP 接法（D3）。返回里带密钥，**只给 `build_model` 用**。"""
     from . import ai_agents, ai_providers
 
     for agent in ai_providers.agents():
@@ -431,11 +595,58 @@ def connection() -> dict | None:
     return None
 
 
-def available() -> bool:
+def cli_agent() -> str | None:
+    """没有可用的 API 连接时，能经 MCP 接法修复的 CLI（Codex / Claude Code）；没有 = None。"""
+    from . import ai_bridge
+
     try:
-        return connection() is not None
+        return ai_bridge.fix_cli_agent()
+    except Exception:  # noqa: BLE001 - 探测失败 = 不可用
+        return None
+
+
+def available() -> bool:
+    """「使用你的 AI 来修复」能不能真的跑：有内置循环能用的 API 连接，或有可用的 Codex / Claude Code。"""
+    try:
+        return connection() is not None or cli_agent() is not None
     except Exception:  # noqa: BLE001 - 探测失败 = 不可用
         return False
+
+
+def mcp_launcher() -> list[str]:
+    """本地 MCP 修复模式服务的启动命令（`tavotto fix-mcp`）。冻结产物里 `sys.executable` 就是 Tavotto 自己，
+    优先用同目录的 console 版 `tavotto-cli`（GUI 子系统的 exe 没有可靠的 stdio）；源码 / pip 形态走 `-m tavotto`。"""
+    if getattr(sys, "frozen", False):
+        from . import locate
+
+        cli = Path(sys.executable).with_name(locate.CLI_NAME)
+        return [str(cli if cli.is_file() else sys.executable), "fix-mcp"]
+    return [sys.executable, "-m", "tavotto", "fix-mcp"]
+
+
+def cli_launcher(
+    agent_id: str, *, callback_url: str, project_root: Path
+) -> Callable[[str, str, str], CliLaunch]:
+    """→ `SESSIONS.start(cli=…)` 要的构造器 `(fix_id, token, prompt) -> CliLaunch`。令牌只放进子进程环境。"""
+
+    def build(fix_id: str, token: str, prompt: str) -> CliLaunch:
+        from . import ai_agents, ai_bridge, fixmcp
+
+        run_ctx = ai_agents.FixRunContext(
+            argv=[],
+            prompt=prompt,
+            cwd=str(project_root),
+            mcp_command=[*mcp_launcher(), "--url", callback_url, "--fix-id", fix_id],
+            mcp_name=fixmcp.SERVER_NAME,
+            token_env=fixmcp.ENV_TOKEN,
+            tool_timeout_s=int(ASK_TIMEOUT) + 120,
+            deny=fixtools.readscope.deny_spec(),
+        )
+        argv, extra_env = ai_bridge.fix_cli_command(agent_id, run_ctx)
+        env = ai_bridge._spawn_env(argv[0], {**extra_env, fixmcp.ENV_TOKEN: token})
+        return CliLaunch(argv=argv, env=env, cwd=str(project_root))
+
+    return build
 
 
 def build_model(conn: dict):
@@ -476,8 +687,14 @@ __all__ = [
     "FixError",
     "FixSessions",
     "FixToolset",
+    "NO_REDACTION",
+    "CliLaunch",
     "audit_tail",
     "available",
     "build_model",
+    "cli_agent",
+    "cli_launcher",
+    "cli_prompt",
     "connection",
+    "mcp_launcher",
 ]

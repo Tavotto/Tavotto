@@ -552,8 +552,10 @@ def test_concurrent_answers_resolve_a_card_exactly_once(box):
 
 
 def test_available_needs_a_usable_api_connection(box, monkeypatch):
-    from tavotto.engine import ai_providers
+    from tavotto.engine import ai_bridge, ai_providers
 
+    # 只看 API 连接这一半：这台机器上装没装 Codex / Claude Code 不该影响（CLI 那一半见 test_fixcli.py）
+    monkeypatch.setattr(ai_bridge, "agent_caps", lambda _agent_id: None)
     assert fixsession.available() is False and fixsession.connection() is None
     ai_providers.save(
         {

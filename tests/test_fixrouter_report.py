@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import diagdetail, fixrouter, pool as engine_pool, prepsession
+from tavotto.engine import ai_bridge, diagdetail, fixrouter, pool as engine_pool, prepsession
 from test_preparation_api import client, fake_pool  # noqa: F401 — 夹具复用
 from test_preparation_session import (  # noqa: F401
     _act,
@@ -90,7 +90,10 @@ def test_a_remedy_in_the_report_is_always_a_known_shape(client, tmp_path, fake_p
 # ---------------------------------------------------------------- 端点占位契约
 
 
-def test_ai_fix_endpoint_is_a_stable_unavailable_stub(client):
+def test_ai_fix_endpoint_is_a_stable_unavailable_stub(client, monkeypatch):
+    monkeypatch.setattr(
+        ai_bridge, "agent_caps", lambda _agent_id: None
+    )  # 这台机器装没装 Codex / Claude 都不该影响判据
     resp = client.post("/api/ai/fix", json={"session_id": "s1", "script": "fig.py"})
     assert resp.status_code == 200
     assert resp.get_json() == {"ok": False, "reason": "ai_fix_unavailable"}
@@ -102,7 +105,8 @@ def test_ai_fix_endpoint_refuses_malformed_bodies(client, body):
     assert resp.status_code == 400
 
 
-def test_capabilities_say_ai_fix_is_not_available_yet(client):
+def test_capabilities_say_ai_fix_is_not_available_without_any_connection(client, monkeypatch):
+    monkeypatch.setattr(ai_bridge, "agent_caps", lambda _agent_id: None)
     resp = client.get("/api/ai/capabilities")
     assert resp.status_code == 200
     assert resp.get_json()["ai_fix_available"] is False

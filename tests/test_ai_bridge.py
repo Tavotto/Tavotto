@@ -40,7 +40,7 @@ def test_capabilities_shape(client, monkeypatch):
     _installed(monkeypatch)
     body = client.get("/api/ai/capabilities?refresh=1").get_json()
     # taf_enabled：TAF 实验开关，只在 app 层并入（不在 engine_ai.capabilities 的缓存里）；默认关
-    # ai_fix_available：AI 环境修复任务能不能跑（ADR 0148，同样只在 app 层并入；任务落地前恒 false）
+    # ai_fix_available：AI 环境修复任务能不能跑（ADR 0148 / 0149，同样只在 app 层并入；有可用的 API 连接或 Codex / Claude Code 即 true）
     assert set(body) == {
         "agents",
         "endpoints",
@@ -50,7 +50,7 @@ def test_capabilities_shape(client, monkeypatch):
         "taf_enabled",
         "ai_fix_available",
     }
-    assert body["ai_fix_available"] is False
+    assert body["ai_fix_available"] is True  # 上面装了（假的）Codex / Claude Code：D3 起 CLI 也能修
     assert body["taf_enabled"] is False
     assert isinstance(body["checked_at_ms"], int) and body["checked_at_ms"] > 0
     codex = _agent(body, "codex")

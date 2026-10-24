@@ -9108,8 +9108,8 @@ def api_ai_capabilities():
         {
             **engine_ai.capabilities(refresh=refresh),
             "taf_enabled": engine_ai_figure_edit.enabled(),
-            # 「使用你的 AI 来修复」的 AI 环境修复任务能不能真的跑（ADR 0148 / 0149）：有内置执行器能直接用的 API 连接时为 true。
-            # 只连了 CLI 时为 false（CLI 经 MCP 的接法是 D3）：按钮照常出现，点击走「这个问题 AI 暂时还不会修」降级
+            # 「使用你的 AI 来修复」的 AI 环境修复任务能不能真的跑（ADR 0148 / 0149）：有内置执行器能直接用的 API 连接，
+            # 或有可用的 Codex / Claude Code（经 MCP 修复模式，D3）时为 true；都没有则按钮照常出现，点击走「这个问题 AI 暂时还不会修」降级
             "ai_fix_available": engine_fixsession.available(),
         }
     )
@@ -9135,7 +9135,8 @@ def _fix_session_env(sess) -> dict:
 def api_ai_fix():
     """「使用你的 AI 来修复」（智能修复主线，ADR 0148 / 0149）。body：`{session_id, script}`（准备会话 id 与脚本项目相对路径）。
 
-    起一个修复会话（`engine/fixsession`）：`200 {ok: true, fix_id}`；没有内置执行器能用的 API 连接 ->
+    起一个修复会话（`engine/fixsession`）：`200 {ok: true, fix_id}`；有 API 连接走内置循环，否则有可用的 Codex / Claude Code
+    就起那个 CLI（经 MCP 修复模式回调本会话，D3）；两者都没有 ->
     `200 {ok: false, reason: "ai_fix_unavailable"}`（前端落成「这个问题 AI 暂时还不会修」）；已有别的修复在跑 ->
     `{ok: false, reason: "ai_fix_busy"}`。会话认证照常（ADR 0008），畸形请求体 400。"""
     body = request.get_json(silent=True)
@@ -9146,7 +9147,8 @@ def api_ai_fix():
     ):
         abort(400)
     conn = engine_fixsession.connection()
-    if conn is None:
+    cli_agent = engine_fixsession.cli_agent() if conn is None else None
+    if conn is None and cli_agent is None:
         return jsonify({"ok": False, "reason": "ai_fix_unavailable"})
     ctx = current_ctx()
     try:
@@ -9164,7 +9166,17 @@ def api_ai_fix():
     if os.path.isabs(script) or os.path.commonpath([root_real, cand]) != root_real:
         return _fix_error(engine_fixsession.FixError("fix_script_outside_project", 400))
     script_path = Path(cand) if os.path.isfile(cand) else None
-    model, redactor = engine_fixsession.build_model(conn)
+    if conn is not None:
+        model, redactor = engine_fixsession.build_model(conn)
+        cli = None
+    else:
+        # CLI 连接（D3）：MCP 子进程回调的是本进程这个端口（回环；会话认证的 Host 校验只认 127.0.0.1:<port>）
+        model, redactor = None, engine_fixsession.NO_REDACTION
+        cli = engine_fixsession.cli_launcher(
+            cli_agent,
+            callback_url=f"http://127.0.0.1:{request.environ.get('SERVER_PORT') or '5089'}",
+            project_root=ctx.path,
+        )
     try:
         fx = engine_fixsession.SESSIONS.start(
             scope=ctx.id,
@@ -9172,6 +9184,7 @@ def api_ai_fix():
             script=script,
             project_root=ctx.path,
             model=model,
+            cli=cli,
             report=lambda: _session_report(ctx, sess),
             redactor=redactor,
             audit=engine_fixsession.AuditLog(),
@@ -9220,6 +9233,35 @@ def api_ai_fix_cancel(fix_id):
     except engine_fixsession.FixError as exc:
         return _fix_error(exc)
     return jsonify(out)
+
+
+# ---- MCP 修复模式的回调（D3，ADR 0149）：Codex / Claude Code 拉起的 `tavotto fix-mcp` 子进程打回来的两个端点 ----
+# 认证：scoped token（`X-Tavotto-Fix-Token`，只对这两个路径、只对对应的修复会话有效，会话结束 / 取消即失效），见 security.py。
+# 工具在本进程里 `run_tool`，卡片 / 快照 / 审计与内置循环是同一份；这里不做第二套档位或同意。
+@app.get("/api/ai/fix/<fix_id>/tools")
+def api_ai_fix_tools(fix_id):
+    token = request.headers.get(security.FIX_TOKEN_HEADER)
+    try:
+        return jsonify({"tools": engine_fixsession.SESSIONS.tool_list(fix_id, token)})
+    except engine_fixsession.FixError as exc:
+        return _fix_error(exc)
+
+
+@app.post("/api/ai/fix/<fix_id>/tool")
+def api_ai_fix_tool(fix_id):
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("name"), str):
+        abort(400)
+    token = request.headers.get(security.FIX_TOKEN_HEADER)
+    try:
+        out = engine_fixsession.SESSIONS.call_tool(
+            fix_id, token, body["name"], body.get("arguments", {})
+        )
+    except engine_fixsession.FixError as exc:
+        return _fix_error(exc)
+    resp = jsonify(out)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 def _publish_fix_hint(scope: str, fix_id: str) -> None:

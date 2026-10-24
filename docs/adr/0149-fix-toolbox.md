@@ -94,5 +94,17 @@
 
 **修订（2026-10-23，D2b）**：「问与报」组落地（`fixtools/ask.py`）与修复会话（`engine/fixsession.py`）：`ctx.ask` 由会话实现，卡片经 SSE 提示 + `GET/POST /api/ai/fix/<id>[/answer|/cancel]` 与前端交互；
 `pick_file` 的路径过 `ReadScope.grant`（敏感硬拦照旧，只放被选的路径）；`prepare_diagnostics` 只弹「发送」卡，上传仍是 ADR 0118 的逐次确认流程，不附源码（用户在对话框里自己勾）。
-`ai_fix_available` 仅在有可用的 API 连接时为真，CLI 经 MCP 的接法仍是 D3。内置执行器的循环在本进程线程里跑（工具要碰应用状态），不起 `agent_runner` 子进程。
+`ai_fix_available` 在 D2b 仅在有可用的 API 连接时为真（CLI 经 MCP 的接法见下一条 D3 修订）。内置执行器的循环在本进程线程里跑（工具要碰应用状态），不起 `agent_runner` 子进程。
+
+**修订（2026-10-24，D3）**：只连了 Codex / Claude Code（没有 API 连接）的用户也能用「使用你的 AI 来修复」：CLI 经 Tavotto 自己的 MCP 服务的**修复模式**调用同一张 `REGISTRY`。
+`ai_fix_available` = 有内置循环能用的 API 连接**或**有可用的 Codex / Claude Code；`POST /api/ai/fix` 先看 API 连接（走 D2b 的内置循环，不变），没有才起 CLI。
+**结构**：MCP 服务（`tavotto fix-mcp`，`engine/fixmcp.py`，纯标准库）一个工具也不自己执行——`tools/list` 与 `tools/call` 经本机回环 HTTP 回调应用进程里正在跑的修复会话
+（`GET …/tools`、`POST …/tool`），由 `run_tool(tool, 会话上下文, 参数, 审计)` 执行，所以 `ctx.ask` 弹卡、改动前快照、审计、项目作用域全是 D2b 那一份，MCP 层没有第二套档位 / 同意。
+回调凭**每个修复会话一枚的 scoped token**（`secrets` 生成、`compare_digest`、只对该会话的这两个路径有效，会话结束 / 取消即失效，同 `status_token` 的做法，`security.py`）；
+令牌只经环境变量传（CLI 自己的环境 → MCP 子进程），不进 argv / 日志 / 事件 / 审计。CLI 的 stdout 读掉丢弃，**结论只认 `finish` 工具**；退出时没调 `finish` = `failed`（闭集原因 `cli_no_finish` / `cli_exit` / `cli_start` / `budget`）。
+**只读口径（维护者裁决：接受 Codex 这边的风险，两边都开放）**：修复会话里 Claude 与 Codex 的自带命令行都只许**只读**。Claude Code 经本次启动参数 `--settings` 的 `permissions`：
+`Read(...)` deny 规则从 `readscope` 硬拦表**现生成**（不手抄第二份），写类 / 联网工具全 deny，只允许 MCP 工具、`Read` / `Grep` / `Glob` 与一小张只读命令白名单，`--permission-mode dontAsk`（没明确允许的一律拒、不弹确认）；
+Codex 用 `--sandbox read-only`——它的自带命令行**读不受限**（凭据位置的 DENY 管不到它），写被沙盒拦。这是已知并接受的风险，不是遗漏。
+所有改动只能经 MCP 工具（fixtools）。MCP 配置只出现在本次启动参数里，**不写 `~/.codex`、`~/.claude`**；Tavotto 不读、不存 CLI 的登录凭据。
+**不在 D3**：Windows 沙盒、让 CLI 自带命令行也走审计（做不到，它不经 `run_tool`）。规则全文：`docs/rules/backend/ai-agent-bridge.md` 的「D3」一节。
 
