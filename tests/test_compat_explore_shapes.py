@@ -694,13 +694,15 @@ class RealExecution(unittest.TestCase):
                 self.assertEqual(len(formats), 2, record["tavotto"])
                 self.assertEqual(len(set(formats)), 2, record["tavotto"])
 
-    def test_bbox_tight_dpi_capture_is_right_and_pixels_are_reported_as_observed(self):
-        """图的捕获没问题（一张、无 zero / fewer）。像素层本机观察到 pixel_mismatch（原生按 tight 裁切、
-        Tavotto 零 patch 渲染的尺寸不同）：这是**新差异，不登记为已知**——这里只钉「若有差异只能是它」。"""
-        record = self.check_axis_changing("bbox_tight_dpi")
-        self.assertLessEqual(self.kinds(record), {"pixel_mismatch"}, record["judgment"])
-        self.assertIn(record["judgment"]["outcome"], ("no_difference", "difference_found"))
-        self.assertIn(record["stages"]["fidelity"]["status"], ("passed", "failed"))
+    def test_bbox_tight_dpi_native_and_tavotto_pixels_agree(self):
+        """tight 裁切下原生与 Tavotto 的像素必须一致（ADR 0098：frame 就是图幅）。曾观察到的
+        `pixel_mismatch`（原生 [640, 416] / [640, 426]、Tavotto [640, 494] / [640, 502]）成因是 #1321 之前
+        原生参考图没有回放脚本原 savefig 的 tight 裁切，是比对口径问题，不是产品缺口；回退 #1321 这条会红。"""
+        for case in self.PARENTS:
+            with self.subTest(parent=case):
+                record = self.check_axis_changing("bbox_tight_dpi", case)
+                self.assertEqual(record["judgment"]["outcome"], "no_difference", record["judgment"])
+                self.assertEqual(record["stages"]["fidelity"]["status"], "passed", record["stages"])
 
 
 #: 已知缺口的差异种类（Tavotto 产品侧，不是模板 bug；这里只登记「已知、已看到」，不替产品掩盖）
