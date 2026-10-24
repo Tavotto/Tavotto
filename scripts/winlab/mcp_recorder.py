@@ -93,12 +93,12 @@ class Recorder:
 
 def _pump(src, dst, observe) -> None:
     for line in iter(src.readline, b""):
-        dst.write(line)
-        dst.flush()
-        try:
+        try:  # 先登记请求 id 再转发：server 回得快时 from_server 才认得出这条回复
             observe(line)
         except Exception:  # noqa: BLE001 — 记录器出错不许打断宿主与 server 的通信
             pass
+        dst.write(line)
+        dst.flush()
     try:
         dst.close()
     except OSError:

@@ -1213,6 +1213,27 @@ def test_recorder_passes_bytes_through_and_records_only_bounded_facts(tmp_path):
     assert "SECRET-PATH" not in text and "C:/x" not in text  # 参数与结果正文不进记录
 
 
+def test_recorder_registers_request_before_forwarding_it(tmp_path):
+    import io
+
+    import mcp_recorder as R
+
+    rec = R.Recorder(str(tmp_path / "rec.jsonl"))
+    seen = []
+
+    class Dst(io.BytesIO):
+        def write(self, b):
+            seen.append(1 in rec._pending)  # 转发那一刻 id 必须已登记，否则快回复会被丢
+            return super().write(b)
+
+        def close(self):
+            pass
+
+    line = (json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n").encode()
+    R._pump(io.BytesIO(line), Dst(), rec.from_host)
+    assert seen == [True]
+
+
 def test_recorded_split_separates_the_fresh_process(tmp_path):
     log = tmp_path / "r.jsonl"
     rows = [
