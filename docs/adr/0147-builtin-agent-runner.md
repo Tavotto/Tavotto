@@ -54,7 +54,7 @@ CLI 的写入面（任意 shell、网络、绝对路径写）也比「改一个�
    `100.64.0.0/10`（CGNAT / Tailscale）、`fc00::/7`；链路本地（`169.254/16` 含云元数据、`fe80::/10`）、`0.0.0.0/8`、组播 / 保留段、公网 http 一律拒绝。主机名在判定时解析，
    **所有**解析结果都在放行段才放行（混了公网 / 解析失败都拒）。判据只在 `engine/netpolicy.py`，`agent_runner.wires.check_base_url`（内置执行器）与 `ai_catalog.url_refusal`
    （保存连接 / 取型号清单）都问它；CLI 路由同一判据（它们自己能否连 http 由 CLI 决定，我们不额外拦）。连接时**钉住判定那次解析出的 IP 直连**（`Host` 头保留原主机名），
-   DNS 重绑定到不了别处。connections 上的可选 `insecure_lan: true` 标出放行的非回环 http 网关，前端据此提示「这个地址不加密」。
+   DNS 重绑定到不了别处。云厂商元数据地址（`169.254.169.254` / `169.254.170.2` / `fd00:ec2::254` / `100.100.100.200` / `168.63.129.16` / `192.0.0.192` 等，及 `metadata.google.internal` / `metadata.tencentyun.com` 等主机名）**先于放行段排除**（有的恰落在 `fc00::/7`、`100.64/10` 里）。connections 上的可选 `insecure_lan: true` 标出放行的非回环 http 网关，前端据此提示「这个地址不加密」。
 
 AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可用的 Key 连接。
 
@@ -68,7 +68,7 @@ AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可
   回调父进程——runner 发 `check_request`，`ai_bridge` 在候选工作区里跑 ADR 0143 的同一套校验（`ai_convert.agent_check`：新文件在不在 → 语法 → 静态用了 Matplotlib →
   `run_validation` 真跑，写入根只有候选目录），把 `{ok, report}` 写回 runner 的 stdin；提示词因此是 stdin 的第一行 JSON。其余（候选 / 提交前检查 / 修正 / 留存待采用 / adopt）
   与 CLI 路径是同一条流水，ADR 0143 一条不放松：原脚本永远不可写、只新建一个文件、R / MATLAB 来源同样可走。
-* **思考强度**：目录声明哪里确认支持——行级 `efforts` 或顶层 `effort_origins`（现有官方 Anthropic `low/medium/high/max`、官方 OpenAI `low/medium/high`）；`ai_catalog.efforts_for` 是唯一出处。
+* **思考强度**：目录声明「来源 + 型号」确认支持——行级 `efforts`（该行所有型号）或顶层 `effort_origins[].models`（型号前缀，先中先得，`efforts: []` = 明确不支持；出处写在条目 `source`）；现有：官方 Anthropic 的 `claude-opus-4-6`（`low/medium/high/max`）与 `claude-sonnet-4-6`（`low/medium/high`）——不支持自适应思考的型号（4.5 及更早、Haiku）不给，否则带 `thinking` 会 400；官方 OpenAI 的 o 系列与 gpt-5 系列（`low/medium/high`，`gpt-5-chat` / `o1-mini` / `o1-preview` 除外）。`ai_catalog.efforts_for(agent, base_url, model)` 是唯一出处；connections 的每个型号自带 `model_details[].efforts`。
   内置路由的连接才给 `efforts`（默认 `medium`），其余（含所有第三方网关）为空；改图请求带 effort 也只在目录确认支持时才传给 runner
   （anthropic：`output_config.effort` + `thinking:{type:adaptive}`；Responses：`reasoning.effort`，无 max 档）——宁可不发，也不发对方不认的字段。
 

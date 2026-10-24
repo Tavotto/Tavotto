@@ -383,7 +383,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   系统提示与最后一个工具定义带 `cache_control: ephemeral`）、`openai-chat`（`{base}/chat/completions`）、`openai-responses`
   （`{base}/responses`，`store: false`）、`demo`（剧本回放，不联网，端到端测试用）。anthropic 的思考由**调用方声明** `--thinking {adaptive,budget,none}`（默认 `none`，runner 不猜：第三方兼容网关各不相同）：`adaptive` 发 `thinking:{type:adaptive}` + 有 effort 才发 `output_config.effort`（新模型，不发已弃用的 `budget_tokens`）；`budget` 发旧式 `budget_tokens`（必须配 `--effort low|medium|high|max`，`max` 映射到 high 档；缺省 effort 起跑即 `internal/bad_args`、0 次请求，不静默不发 thinking）；`none` 都不发。thinking 块按原样回放，不做 assistant prefill，工具参数一律 `json.loads`。openai-responses 只在给了 `--effort` 时传 `reasoning.effort`。`--wire openai-responses` 配 `--effort max` 起跑即 `internal/bad_args`、0 次请求（Responses 没有 max 档，不静默不发 reasoning）。
   系统提示 + 工具定义在请求最前且逐字稳定（吃提示缓存）；变化的东西（目标名、用户指令）只在第一条用户消息里。
-- **出站**：只许 https，或明文 http 但主机属本机回环 / 私网（`10/8`、`172.16/12`、`192.168/16`、`100.64/10`、`fc00::/7`；链路本地 / 公网 / 保留段拒；主机名要全部解析结果都在放行段）——判据只在 `engine/netpolicy.py`（`check_base_url` 与 `ai_catalog.url_refusal` 共用），连接时钉住判定那次解析出的 IP 直连、`Host` 头保留原主机名；URL 不带用户信息 / 查询 / 片段。https 走 `_opener()`（`build_opener(tlstrust.https_handler(tlstrust.client_context()))`
+- **出站**：只许 https，或明文 http 但主机属本机回环 / 私网（`10/8`、`172.16/12`、`192.168/16`、`100.64/10`、`fc00::/7`；链路本地 / 公网 / 保留段拒；云元数据地址与主机名先于放行段排除（`netpolicy.METADATA_IPS` / `METADATA_HOSTS`，出处写在注释里）；主机名要全部解析结果都在放行段）——判据只在 `engine/netpolicy.py`（`check_base_url` 与 `ai_catalog.url_refusal` 共用），连接时钉住判定那次解析出的 IP 直连、`Host` 头保留原主机名；URL 不带用户信息 / 查询 / 片段。https 走 `_opener()`（`build_opener(tlstrust.https_handler(tlstrust.client_context()))`
   + 不跟随重定向，代理沿用环境变量）；明文 http 走 `netpolicy.pinned_connection` 直连已校验的 IP、**不经代理**（出站门禁只认这一处变量主机的 `HTTPConnection`）。响应体有上限；
   请求有超时；`tests/test_outbound_https_trust.py` 的 `OUTBOUND` 登记了 `engine/agent_runner/wires.py: _opener`。
 - **密钥**：只读环境变量 `TAVOTTO_AGENT_API_KEY`（读后从本进程环境删除），绝不进 argv / stdout / stderr / 事件 / 日志 / repr。
@@ -461,7 +461,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `fixsession.connection()`、路由三处共用。`require_usable("builtin")` = 有这样的 Key 连接且没被 `TAVOTTO_AI_BUILTIN=0` 关掉；`run("builtin")` 必须显式带 `endpoint_id`（没有「当前选中」）。
   会话生命周期（候选工作区 / TAF 校验与修正 / 事件流 / 取消 / 历史库 `provider="builtin"`）与 CLI 完全同一套；`classify_event` 把 runner 的 `tool/text/thinking/done` 事件翻成 `action/message/thinking`。
   **转换任务**（`convert`）同样走内置：`--task convert_to_editable --check-ipc`，`check` 经 stdout `check_request` / stdin 回复回调 `ai_convert.agent_check`（stdin 第一行是 `{"prompt":…}`）；
-  `/api/ai/convert` 与 `/api/ai/run` 一样接受 `connection`。**思考强度**：`ai_catalog.efforts_for(agent, base_url)` 声明哪里确认支持（行级 `efforts` / 顶层 `effort_origins`），内置路由才给 `efforts`，传 runner 前再核一遍。遥测 `ai_assistant_invoked.agent` 对 `builtin` 落成 `other`。
+  `/api/ai/convert` 与 `/api/ai/run` 一样接受 `connection`。**思考强度**：`ai_catalog.efforts_for(agent, base_url, model)` 声明「来源 + 型号」确认支持（行级 `efforts` / 顶层 `effort_origins[].models` 型号前缀），内置路由才给 `efforts`（默认型号的档位；每个型号的在 `model_details[].efforts`），传 runner 前按实际型号再核一遍。AI 修复的 `first_key_connection` 跳过 `last_error: unauthorized` 的记录。遥测 `ai_assistant_invoked.agent` 对 `builtin` 落成 `other`。
 - **AI 修复**：`fixsession.connection()` 改为 `ai_connections.first_key_connection()`——第一个内置循环能直接用的 Key 连接（老用户旧版「选中」的接口排最前，其余按保存顺序），不再只看各家族的 active provider。
 
 ## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
