@@ -59,7 +59,7 @@ TEST_SELECTOR_RE = re.compile(r"^tests/[A-Za-z0-9_./-]+\.py(::[A-Za-z0-9_\[\]./-
 SHARD_RE = re.compile(r"^([1-9][0-9]?)/([1-9][0-9]?)$")
 MAX_SELECTORS = 40
 #: hosts-live 的 --mode：真宿主的闭集（实现见 LIVE_HOSTS）
-LIVE_HOST_IDS = ("claude-code", "codex-cli")
+LIVE_HOST_IDS = ("claude-code", "codex-cli", "codebuddy", "minimax-code")
 #: 依赖安装配方的版本：改了 prepare 的安装步骤就加一，已有 venv 随之重装（散列戳里含它）。
 DEPS_RECIPE = "2"
 
@@ -1461,7 +1461,7 @@ def _claude_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -> d
     return henv
 
 
-def _claude_argv(exe: Path, prompt: str) -> list[str]:
+def _claude_argv(exe: Path, prompt: str, henv: dict) -> list[str]:
     return [
         str(exe),
         "-p",
@@ -1513,7 +1513,7 @@ def _codex_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -> di
     return {"CODEX_HOME": str(home), "WINLAB_MODEL_KEY": conf["api_key"]}
 
 
-def _codex_argv(exe: Path, prompt: str) -> list[str]:
+def _codex_argv(exe: Path, prompt: str, henv: dict) -> list[str]:
     return [
         str(exe),
         "exec",
@@ -1525,11 +1525,132 @@ def _codex_argv(exe: Path, prompt: str) -> list[str]:
     ]
 
 
+def _isolated_home(run_dir: Path) -> dict[str, str]:
+    """宿主的用户级配置落在本次 run 的目录里：不碰 tavotto-lab 的真实配置，也不在两次 run 之间串味。"""
+    home = run_dir / "work" / "home"
+    for sub in ("AppData/Roaming", "AppData/Local"):
+        (home / sub).mkdir(parents=True, exist_ok=True)
+    return {
+        "USERPROFILE": str(home),
+        "HOME": str(home),
+        "APPDATA": str(home / "AppData" / "Roaming"),
+        "LOCALAPPDATA": str(home / "AppData" / "Local"),
+    }
+
+
+def _mcp_servers_json(mcp_cmd: list[str], mcp_env: dict) -> dict:
+    return {"mcpServers": {"tavotto": {"command": mcp_cmd[0], "args": mcp_cmd[1:], "env": mcp_env}}}
+
+
+def _codebuddy_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -> dict:
+    """CodeBuddy CLI：models.json 指向 OpenAI 兼容的 Chat Completions（密钥只以 ${变量} 引用），MCP 走 --mcp-config。"""
+    henv = _isolated_home(run_dir)
+    cfg = Path(henv["USERPROFILE"]) / ".codebuddy"
+    cfg.mkdir(parents=True, exist_ok=True)
+    model = conf.get("openai_model") or "deepseek-flash"
+    base = (conf.get("openai_base_url") or "https://api.deepseek.com/").rstrip("/")
+    models = {
+        "models": [
+            {
+                "id": model,
+                "name": model,
+                "vendor": conf.get("provider") or "lab",
+                "url": f"{base}/v1/chat/completions",
+                "apiKey": "${WINLAB_MODEL_KEY}",
+                "maxInputTokens": 128000,
+                "maxOutputTokens": 8192,
+                "supportsToolCall": True,
+                "supportsImages": False,
+            }
+        ],
+        "availableModels": [model],
+    }
+    (cfg / "models.json").write_text(json.dumps(models, indent=2), encoding="utf-8")  # 无 BOM
+    mcp = run_dir / "work" / "codebuddy-mcp.json"
+    mcp.write_text(json.dumps(_mcp_servers_json(mcp_cmd, mcp_env), indent=2), encoding="utf-8")
+    henv.update(
+        {
+            "CODEBUDDY_CONFIG_DIR": str(cfg),
+            "WINLAB_MODEL_KEY": conf["api_key"],
+            "WINLAB_MCP_CONFIG": str(mcp),
+            "WINLAB_MODEL": model,
+        }
+    )
+    return henv
+
+
+def _codebuddy_argv(exe: Path, prompt: str, henv: dict) -> list[str]:
+    return [
+        str(exe),
+        "-p",
+        prompt,
+        "--output-format",
+        "stream-json",
+        "--model",
+        henv["WINLAB_MODEL"],
+        "--mcp-config",
+        henv["WINLAB_MCP_CONFIG"],
+        "--strict-mcp-config",
+        "--allowedTools",
+        "mcp__tavotto",
+    ]
+
+
+def _minimax_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -> dict:
+    """MiniMax Code：自定义供应商（OpenAI 兼容 completions，密钥经 --api-key-env 引用），MCP 走项目根 .mcp.json。"""
+    henv = _isolated_home(run_dir)
+    model = conf.get("openai_model") or "deepseek-flash"
+    henv.update({"WINLAB_MODEL_KEY": conf["api_key"], "WINLAB_MODEL": f"lab/{model}"})
+    (proj / ".mcp.json").write_text(
+        json.dumps(_mcp_servers_json(mcp_cmd, mcp_env), indent=2), encoding="utf-8"
+    )
+    _run_logged(
+        [
+            str(exe),
+            "provider",
+            "add",
+            "--name",
+            "lab",
+            "--base-url",
+            (conf.get("openai_base_url") or "https://api.deepseek.com/").rstrip("/"),
+            "--api-format",
+            "openai-completions",
+            "--model",
+            model,
+            "--api-key-env",
+            "WINLAB_MODEL_KEY",
+            "--use",
+        ],
+        proj,
+        {**env, **henv},
+        run_dir / "evidence" / "live" / "provider-add",
+        300,
+    )
+    return henv
+
+
+def _minimax_argv(exe: Path, prompt: str, henv: dict) -> list[str]:
+    return [str(exe), "exec", prompt, "--model", henv["WINLAB_MODEL"]]
+
+
+#: 宿主自己说「要登录官方账户」的字样：出现且一次 Tavotto 工具都没调到 → BLOCKED（需要账户），不是 FAIL
+LOGIN_MARKERS = re.compile(r"sign in|log ?in to|please login|not logged in|请先登录|需要登录", re.I)
+
 LIVE_HOSTS = {
     "claude-code": LiveHost(
         "claude-code", "@anthropic-ai/claude-code", "claude.cmd", _claude_configure, _claude_argv
     ),
     "codex-cli": LiveHost("codex-cli", "@openai/codex", "codex.cmd", _codex_configure, _codex_argv),
+    "codebuddy": LiveHost(
+        "codebuddy",
+        "@tencent-ai/codebuddy-code",
+        "codebuddy.cmd",
+        _codebuddy_configure,
+        _codebuddy_argv,
+    ),
+    "minimax-code": LiveHost(
+        "minimax-code", "@minimax-ai/code", "mcode.cmd", _minimax_configure, _minimax_argv
+    ),
 }
 
 
@@ -1559,7 +1680,7 @@ def run_hosts_live_task(
                 "--no-audit",
             ],
             lab.root,
-            env,
+            dict(env, npm_config_better_sqlite3_binary_host=SQLITE_BINARY_MIRROR),
             ev / "npm-install",
             900,
         )
@@ -1599,20 +1720,36 @@ def run_hosts_live_task(
     mcp_env = {"TAVOTTO_MCP_ROOTS": str(proj), "TAVOTTO_NO_TELEMETRY": "1"}
     henv = dict(env)
     henv.update(host.configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, model_conf, env))
-    r1 = _run_logged(host.argv(exe, LIVE_SESSION_1), proj, henv, ev / "session-1", 1200)
+    r1 = _run_logged(host.argv(exe, LIVE_SESSION_1, henv), proj, henv, ev / "session-1", 1200)
     s1 = parse_recorded(rec_log)
     split = _line_count(rec_log)
     sid = opened_session_id(s1)
     journal_ok = journal_has_edits(data_dir, sid)
     if sid:
         r2 = _run_logged(
-            host.argv(exe, LIVE_SESSION_2.format(sid=sid)), proj, henv, ev / "session-2", 900
+            host.argv(exe, LIVE_SESSION_2.format(sid=sid), henv), proj, henv, ev / "session-2", 900
         )
     else:
         r2 = {"exit_code": None, "skipped": "no session id from session 1"}
     _scrub(ev, model_conf["api_key"])
     _scrub(run_dir / "work", model_conf["api_key"])
     s2 = parse_recorded(rec_log, split)
+    host_text = ""
+    for f in ev.glob("session-1.*.log"):
+        host_text += f.read_text(encoding="utf-8", errors="replace")[-20000:]
+    if not s1["calls"] and LOGIN_MARKERS.search(host_text):
+        return {
+            "result": "environment_unavailable",
+            "summary": f"{host.id} {version}: the host requires signing in to its own account before any tool call (L4/L5 blocked)",
+            "host": {"id": host.id, "version": version},
+            "levels": {
+                "L2": "passed",
+                "L3": "passed" if "tavotto_open_figure" in s1["listed_tools"] else "not_run",
+                "L4": "environment_unavailable",
+                "L5": "environment_unavailable",
+            },
+            "blocked_reason": "host login required",
+        }
     pdfs = sorted((proj / "out").glob("*.pdf"))
     levels = judge_live(s1, s2, pdfs[0] if pdfs else None, journal_ok, sid)
     levels["L2"] = "passed"
@@ -2121,6 +2258,8 @@ def run_desktop_window_task(lab: Lab, run_id: str, run_dir: Path, env: dict, pac
 
 
 # ----------------------------------------------------------------------------- 环境矩阵
+#: better-sqlite3 等原生模块的预编译件默认从 GitHub release 取（这台机器取不到）→ npmmirror 的二进制镜像
+SQLITE_BINARY_MIRROR = "https://registry.npmmirror.com/-/binary/better-sqlite3"
 UV_PYTHON_MIRROR = "https://registry.npmmirror.com/-/binary/python-build-standalone"
 CONDA_FORGE_MIRROR = "https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge"
 MINIFORGE_URL = (
