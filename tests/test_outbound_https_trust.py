@@ -296,9 +296,9 @@ _BANNED_CALLS = {"HTTPSConnection", "HTTPConnection", "urlretrieve", "inject_int
 
 
 def _is_loopback_connection(call: ast.Call) -> bool:
-    """`HTTPConnection("127.0.0.1", ...)`：主机是字面量回环（HTTPSConnection / 变量主机仍被拦）。"""
+    """`HTTPConnection("127.0.0.1", ...)` / `HTTPConnection("::1", ...)`：主机是字面量回环（HTTPSConnection / 变量主机仍被拦）。"""
     first = call.args[0] if call.args else None
-    return isinstance(first, ast.Constant) and first.value == "127.0.0.1"
+    return isinstance(first, ast.Constant) and first.value in ("127.0.0.1", "::1")
 
 
 def _modules():

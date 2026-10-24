@@ -678,9 +678,11 @@ def post_json(
     try:
         if u.scheme == "http":
             # 回环 http：直连 socket，不读代理设置
-            conn = http.client.HTTPConnection(
-                loopback_connect_host(u.hostname or ""), u.port or 80, timeout=timeout
-            )
+            # 字面量回环 IP（`localhost` 也直连 127.0.0.1，不解析主机名）；两个分支各写字面量，供 test_outbound_https_trust 的 AST 门禁认
+            if loopback_connect_host(u.hostname or "") == "::1":
+                conn = http.client.HTTPConnection("::1", u.port or 80, timeout=timeout)
+            else:
+                conn = http.client.HTTPConnection("127.0.0.1", u.port or 80, timeout=timeout)
             try:
                 path = u.path or "/"
                 conn.request("POST", path, body=payload, headers=hdrs)
