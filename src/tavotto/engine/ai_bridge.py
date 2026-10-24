@@ -1162,6 +1162,15 @@ def _build_prompt(
     )
 
 
+def _endpoint_backed(agent_id: str, endpoint_id: str | None) -> bool:
+    """显式指定的接口会不会真的接管这次调用（`spawn_overrides` 真产出了注入）。"""
+    if not endpoint_id:
+        return False
+    rec = ai_providers.resolve(agent_id, endpoint_id)
+    args, env = ai_providers.spawn_overrides(agent_id, rec)
+    return bool(args or env)
+
+
 def run(
     agent: str,
     script: str,
@@ -1200,7 +1209,12 @@ def run(
     重发一条已经在跑的请求得到的是既有会话，不是 409。同脚本上另一个会话还在跑（不同请求）
     则 409 `ai_script_busy`——后端不能只靠前端的 `runningHere` 挡并发。
     """
-    require_usable(agent)
+    try:
+        require_usable(agent)
+    except AgentError as exc:
+        # 被选中的连接自带凭据（第三方 Key / 账号登录令牌注入）时，CLI 自己有没有官方登录与这次运行无关
+        if exc.code != "ai_agent_needs_auth" or not _endpoint_backed(agent, endpoint_id):
+            raise
     # 账号登录的接口：令牌剩余不足 10 分钟就在 spawn **之前**刷新并写回。刷新要联网（最多数次 30 s），
     # 所以放在脚本锁 / 请求锁**之外**做，不卡住别的请求；刷不动的结论先记下，等去重查找之后再抛——
     # 已受理请求的重发仍得到既有会话（ADR 0132，去重先于其他可变判断）
@@ -1213,7 +1227,9 @@ def run(
             needs_login = {"endpoint": pre_chosen.get("label") or pre_chosen.get("id") or ""}
     script_path = Path(figures_dir) / script
     project_key = str(Path(figures_dir).resolve())
-    taf = _taf_enabled()
+    # 内置执行器**一律**走候选工作区 + 提交前检查 + 事务写回（与 TAF 实验开关无关）：它不是用户装的 CLI，
+    # 没有理由拿到真实项目路径；候选建不起来就整条拒绝（见下），绝不退回原地修改
+    taf = _taf_enabled() or agent == ai_agents.BUILTIN_ID
     # 从「脚本在不在」到登记进 SESSIONS 整段持脚本锁：改写 / 复原的事务要么在这之前落地（这里快照的
     # 就是改后的脚本），要么在这之后看到 running 的会话而让路
     with script_guard(script_path), _REQUEST_LOCK:

@@ -1078,3 +1078,102 @@ def test_builtin_does_not_take_conversion_tasks(chain):
     with pytest.raises(ai_bridge.AgentError) as ei:
         _run(chain, convert={"library": "x"})
     assert ei.value.code == "ai_agent_not_usable" and chain["spawned"] == []
+
+
+# --------------------------------------------------------------------------- Codex 评审 #1404 的四条
+def test_updating_with_another_origin_requires_a_fresh_key(client, world):
+    world["fetch"] = (["m1"], None)
+    cid = _post(client, vendor="deepseek", api_key=KEY).get_json()["connection"]["id"]
+    world["fetched"].clear()
+    # 换了来源又不给新密钥：拒绝，不发请求、不保存（旧密钥不能被送到新主机）
+    resp = _post(client, vendor="deepseek", id=cid, base_url="https://evil.example.org/anthropic")
+    assert resp.status_code == 400 and resp.get_json()["params"]["reason"] == "key_origin_mismatch"
+    assert world["fetched"] == []
+    assert ai_providers.get(cid)["base_url"] == "https://api.deepseek.com/anthropic"
+    # 同源（换路径）可以复用旧密钥
+    ok = _post(client, vendor="deepseek", id=cid, base_url="https://api.deepseek.com/other")
+    assert ok.status_code == 200 and world["fetched"] == [("https://api.deepseek.com/other", KEY)]
+    # 换来源并给了新密钥：只把新密钥发往新主机
+    world["fetched"].clear()
+    ok = _post(client, vendor="deepseek", id=cid, api_key=KEY2, base_url="https://gw.example.org/x")
+    assert ok.status_code == 200 and world["fetched"] == [("https://gw.example.org/x", KEY2)]
+
+
+def test_changing_the_key_keeps_the_chosen_model(client, world):
+    world["fetch"] = (["a", "b", "c"], None)
+    cid = _post(client, vendor="deepseek", api_key=KEY, model="b").get_json()["connection"]["id"]
+    assert ai_providers.get(cid)["default_model"] == "b"
+    again = _post(client, vendor="deepseek", id=cid, api_key=KEY2).get_json()["connection"]
+    assert again["default_model"] == "b"
+    assert (
+        _post(client, vendor="deepseek", id=cid, api_key=KEY2, model="c").get_json()["connection"][
+            "default_model"
+        ]
+        == "c"
+    )
+
+
+def _needs_cli_login(monkeypatch):
+    monkeypatch.setattr(
+        ai_agents.ClaudeAgent,
+        "readiness",
+        lambda self, argv: ai_agents.ReadinessResult("needs_auth", "x"),
+    )
+    monkeypatch.setattr(ai_agents.ClaudeAgent, "supports_readiness_probe", True)
+    ai_bridge.invalidate_capabilities()
+
+
+def test_oauth_connection_does_not_depend_on_the_clis_own_login(world, monkeypatch, tmp_path):
+    monkeypatch.setenv("TAVOTTO_OAUTH_CLIENT_ID_MINIMAX", "placeholder-not-a-real-client-id")
+    _needs_cli_login(monkeypatch)
+    ai_providers.store_oauth(
+        ai_oauth._record_defaults("minimax", "cn"),
+        {"provider": "minimax", "access": "tok", "refresh": "r", "expires_ms": 9 * 10**12},
+    )  # 登录后没有被激活：旧判据下 CLI usable=false
+    assert _caps()["agents"][1]["usable"] is False
+    c = _conn(_caps(), "minimax-oauth")
+    assert c["state"] == "ready" and c["route"] == "cli:claude"
+    assert ai_bridge.resolve_connection("minimax-oauth")[0] == "claude"
+    # run() 的可用性闸也按「所选连接自带凭据」放行：走到「脚本不存在」才停（还没 spawn）
+    with pytest.raises(RuntimeError, match="脚本不存在"):
+        ai_bridge.run("claude", "nope.py", "p", str(tmp_path), endpoint_id="minimax-oauth")
+    # 没指定连接 = 只有 CLI 自己的登录态，照旧被拒
+    with pytest.raises(ai_bridge.AgentError) as ei:
+        ai_bridge.run("claude", "nope.py", "p", str(tmp_path))
+    assert ei.value.code == "ai_agent_needs_auth"
+
+
+def test_builtin_always_runs_in_a_candidate_even_when_taf_is_off(chain):
+    config.set_ai_settings({"taf": {"enabled": False}})
+    chain["serve"]([READ_TURN, EDIT_TURN, END_TURN])
+    sid, _events = _run(chain)
+    sess = _wait(sid)
+    argv, _env = chain["spawned"][0]
+    cwd = argv[argv.index("--cwd") + 1]
+    assert Path(cwd).parent == ai_figure_edit.CANDIDATE_DIR, "子进程只拿到候选目录"
+    assert str(chain["figs"]) not in " ".join(argv)
+    assert sess["status"] == "done" and ai_history.get(sid)["task_type"] == "figure_edit"
+
+
+def test_builtin_failing_midway_never_touches_the_original_script(chain):
+    config.set_ai_settings({"taf": {"enabled": False}})
+    # 模型已经在候选里改了脚本，下一轮才 401
+    chain["serve"]([READ_TURN, EDIT_TURN, (401, {}, {"error": {"type": "authentication_error"}})])
+    sid, _events = _run(chain)
+    sess = _wait(sid)
+    assert sess["status"] == "failed"
+    assert (chain["figs"] / "fig1.py").read_text(encoding="utf-8") == SCRIPT
+
+
+def test_builtin_refuses_to_start_when_no_candidate_can_be_made(chain, monkeypatch):
+    config.set_ai_settings({"taf": {"enabled": False}})
+    chain["serve"]([END_TURN])
+
+    def boom(*a, **k):
+        raise OSError("no space")
+
+    monkeypatch.setattr(ai_figure_edit, "create_candidate", boom)
+    with pytest.raises(OSError):
+        _run(chain)
+    assert chain["spawned"] == [], "绝不把真实项目路径交给内置执行器"
+    assert (chain["figs"] / "fig1.py").read_text(encoding="utf-8") == SCRIPT

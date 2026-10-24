@@ -190,6 +190,12 @@ def builtin_default() -> bool:
     return config.ai_settings().get("builtin_default") is True
 
 
+def _cli_present(agents_info: dict[str, dict], agent: str) -> bool:
+    """CLI 装了且启用（不看它自己有没有官方登录）：用于自带凭据的连接——凭据由我们注入，与官方登录态无关。"""
+    info = agents_info.get(agent) or {}
+    return bool(info.get("installed") and info.get("enabled"))
+
+
 def _cli_usable(agents_info: dict[str, dict], agent: str) -> bool:
     return bool((agents_info.get(agent) or {}).get("usable"))
 
@@ -203,7 +209,7 @@ def route_for(rec: dict, agents_info: dict[str, dict]) -> tuple[str | None, str 
     cli_route = f"cli:{agent}"
     if rec.get("auth") == "oauth":
         # 令牌是 Bearer：内置循环不走，只能 CLI
-        return (cli_route, None) if cli else (None, "cli_unavailable")
+        return (cli_route, None) if _cli_present(agents_info, agent) else (None, "cli_unavailable")
     viable = ai_providers.builtin_conn(rec) is not None
     forced = builtin_forced()
     if forced is True:
@@ -420,7 +426,8 @@ def add_connection(body: object) -> tuple[str, str | None]:
         if existing is None or existing.get("auth") == "oauth":
             raise ConnectionRefused("connection_not_found", {}, 404)
     key = body.get("api_key")
-    if key is None and existing is not None:
+    reused_key = key is None and existing is not None
+    if reused_key:
         key = existing.get("api_key")
     if not isinstance(key, str) or not _KEY_RE.fullmatch(key.strip()):
         raise _invalid("api_key_invalid")
@@ -440,10 +447,19 @@ def add_connection(body: object) -> tuple[str, str | None]:
     refusal = ai_catalog.url_refusal(base_url)
     if refusal:
         raise _invalid(refusal)
+    if reused_key and ai_catalog.origin_of(base_url) != ai_catalog.origin_of(
+        str(existing.get("base_url") or "")
+    ):
+        # 已存密钥只发往已存地址的同源（与 `ai_providers.live_models` 同一条规则）：换了来源就必须重新输入密钥
+        raise _invalid("key_origin_mismatch")
     model = body.get("model")
     if model is not None and not (isinstance(model, str) and len(model) <= _MODEL_MAX):
         raise _invalid("bad_model")
     model = (model or "").strip() or None
+    if model is None and existing is not None:
+        model = (
+            str(existing.get("default_model") or "").strip() or None
+        )  # 换 Key 不改用户选过的型号
     label = body.get("label")
     if label is not None and not isinstance(label, str):
         raise _invalid("bad_label")
