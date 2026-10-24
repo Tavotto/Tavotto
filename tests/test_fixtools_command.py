@@ -494,8 +494,9 @@ def test_script_inventory_rules(box, monkeypatch):
     assert len(got) == 2
     # 同一个文件的两个名字只算一份（也只计一份字节）：字节上限刚好够一份时仍可备份
     if os.name != "nt":
-        monkeypatch.setattr(command, "SCRIPTS_MAX_BYTES", a.stat().st_size)
-        assert command.list_scripts(ctx) is not None
+        with monkeypatch.context() as m:
+            m.setattr(command, "SCRIPTS_MAX_BYTES", a.stat().st_size)
+            assert command.list_scripts(ctx) is not None
     # 判不出语言但很大的 .py 照样护着（超过 sourcelang 判定上限）
     put(box.proj / "huge.py", b"#" * (command.sourcelang.MAX_BYTES + 10))
     assert "huge.py" in [p.name for p in command.list_scripts(ctx)]
