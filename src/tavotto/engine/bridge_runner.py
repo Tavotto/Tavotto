@@ -142,6 +142,8 @@ _TEMP_SAVES: dict = {}
 _PROMOTED: dict = {}
 #: pyplot 兜底因上限丢掉的张数
 _DROPPED = 0
+#: 写进 `PdfPages` 的 Figure 账（`figcapture.PdfPagesLedger`，与 safe worker 同一个类）。一个 runner 进程只跑一个脚本
+_PDF_PAGES = figcapture.PdfPagesLedger()
 #: 引擎自己写盘（预览 / 导出）时暂停捕获——否则 export 到任意路径会被
 #: 当成用户脚本的一次 savefig，凭空多出一个 stem。
 _CAPTURING = True
@@ -244,6 +246,12 @@ def _install_savefig_hook(mfigure) -> None:
                     locked=stem in _CAPTURE_LOCKED,
                 )
                 figcapture.mark_saved(self)
+            except Exception:  # noqa: BLE001
+                pass
+        if _CAPTURING and figcapture.is_pdf_pages(fname):
+            # 写进 PdfPages 的一页（真写成功之后才记）；尽力而为，失败不改变用户 savefig 的结果
+            try:
+                _PDF_PAGES.note(fname, self)
             except Exception:  # noqa: BLE001
                 pass
         if _CAPTURING:
@@ -393,6 +401,7 @@ def collect_pyplot(plt) -> None:
         _CAPTURE_WRITERS, _CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS
     )
     figcapture.note_modified_after_save(_CAPTURE, _CAPTURE_SOURCE)
+    adopt_pdf_pages()
     stems, dropped = figcapture.collect_pyplot_figures(_CAPTURE, _SCRIPT_STEM[0], plt)
     for stem in stems:
         _CAPTURE_SOURCE[stem] = figcapture.SOURCE_PYPLOT
@@ -404,6 +413,12 @@ def collect_pyplot(plt) -> None:
             f"（显式 savefig 的不受此限）",
             file=sys.stderr,
         )
+
+
+def adopt_pdf_pages() -> None:
+    """写进 `PdfPages` 的图补进捕获表（与 safe worker 同一个函数、同一个位置：先于 pyplot 兜底）。
+    不依赖脚本有没有 import pyplot（纯 OO 脚本也能用 PdfPages），所以脚本结束处在 pyplot 判断之外也调一次；重复调用无害。"""
+    figcapture.adopt_pdf_pages(_CAPTURE, _CAPTURE_SOURCE, _PDF_PAGES, _SCRIPT_STEM[0])
 
 
 #: 兜底 stem 的基名（`<脚本名>`、`<脚本名>-2`…）。列表包一层是因为钩子闭包
@@ -1479,6 +1494,7 @@ def main(argv: list | None = None) -> int:
         _CAPTURE_WRITERS, _CAPTURE, _CAPTURE_SOURCE, _CAPTURE_SAVEFIG, _CAPTURE_EXTRAS
     )
     figcapture.note_modified_after_save(_CAPTURE, _CAPTURE_SOURCE)
+    adopt_pdf_pages()
     plt = sys.modules.get("matplotlib.pyplot")
     if plt is not None:
         collect_pyplot(plt)
@@ -1570,6 +1586,7 @@ def _write_report(run, args, exit_code: int) -> None:
         "rel_target": args.rel_target,
         "figures": [{"stem": s, "capture_source": _CAPTURE_SOURCE[s]} for s in _CAPTURE],
         "dropped_figures": _DROPPED,
+        "pdf_pages": _PDF_PAGES.summary(),
         "savefig_observations": _SAVEFIG_OBSERVATIONS.report(),
         "script_error": run.script_error,
         "engine_dir_was_on_sys_path": _ENGINE_DIR_WAS_ON_PATH,

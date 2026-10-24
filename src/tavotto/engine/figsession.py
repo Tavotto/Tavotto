@@ -1418,7 +1418,7 @@ class LiveFigureSession:
         """离开屏障之后调用：脚本接着跑，失败过的图下一次 `instrument_all` 再试一次。"""
         self._retry_failed = True
 
-    def stems_summary(self, dropped_figures: int = 0) -> dict:
+    def stems_summary(self, dropped_figures: int = 0, pdf_pages: list | None = None) -> dict:
         """build 响应的 stems 表。
 
         `source` 回答的是「这张图有没有原始产物」——`pyplot` 的那些从没存过
@@ -1435,6 +1435,9 @@ class LiveFigureSession:
         }
         if dropped_figures:
             out["dropped_figures"] = dropped_figures
+        if pdf_pages:
+            # 写进多页 PDF 而被逐页认领的图（`figcapture.PdfPagesLedger.summary`）；加字段，没有时一个字节都不多
+            out["pdf_pages"] = pdf_pages
         if self.failures:
             # 加字段，不升协议版本（ADR 0003 §1）：没有失败时一个字节都不多
             out["failed_figures"] = [

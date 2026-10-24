@@ -205,6 +205,9 @@ __all__ = [
     "OBSERVATION_PARTIAL",
     "MAX_PYPLOT_FALLBACK",
     "ShownFigures",
+    "PdfPagesLedger",
+    "MAX_PDF_PAGES_LEDGER",
+    "adopt_pdf_pages",
     "SOURCE_SAVEFIG",
     "SOURCE_PYPLOT",
     "PROFILE_SAFE",
@@ -315,7 +318,8 @@ ARTIFACT_EXTS = (".pdf", ".png", ".svg", ".jpg", ".jpeg", ".eps", ".tif", ".tiff
 #: 捕获描述符的 schema 版本。**捕获语义改变时才升**（stem 取法、去重、
 #: fingerprint 构成……）；它参与 fingerprint，所以升版 = 所有旧 fingerprint
 #: 自然失配 = 「按旧语义捕的图可能已过时」这句 stale hint 如实成立。
-DESCRIPTOR_VERSION = 1
+#: v2（2026-10-24）：写进 `PdfPages` 的图也被认领，stem 取 PDF 文件名（见 `PdfPagesLedger`）。
+DESCRIPTOR_VERSION = 2
 
 #: 预览发布账本（P01b，EX12）：会话产物目录里的这份文件逐 stem 记着
 #: 「**本次运行**已经完整发布过的预览」。`<stem>.svg` 文件存在**不是**完成事实——
@@ -3494,6 +3498,149 @@ def collect_pyplot_figures(
     for stem, fig in zip(stems, pending):
         capture[stem] = fig
     return stems, dropped
+
+
+#: `PdfPages` 账本的强引用上限（张）。与 pyplot 兜底的 8 张分开设：一份多页 PDF 动辄几十页，
+#: 8 张会把「三十页的 all_samples.pdf」截成一个令人困惑的前八页。超出的只计数、不留 Figure。
+MAX_PDF_PAGES_LEDGER = 64
+#: 账本里最多同时记几份不同的 PdfPages（每份有一个强引用的 PdfPages 对象；同样有界）。
+MAX_PDF_PAGES_FILES = 32
+
+
+def pdf_pages_filename(pdf) -> str | None:
+    """`PdfPages` 实例写的那个文件名（str，原样）；缓冲区 / 取不到 / 不是 PdfPages 返回 None。
+
+    读 PdfPages 的私有 `_filename`，不包 `PdfPages.__init__`：包 `__init__` 要在用户 import
+    `matplotlib.backends.backend_pdf` 那一刻装 import 钩子（native bridge 启动阶段绝不 import matplotlib，
+    钩子要另装一套），而 `_filename` 在 matplotlib 3.8–3.11 都是 `__init__` 的第一行赋值；
+    读不到就退回脚本名——`tests/test_capture_pdfpages.py` 在 CI 的每个 matplotlib 版本上钉着这个属性仍在。
+    """
+    mod = sys.modules.get("matplotlib.backends.backend_pdf")
+    cls = getattr(mod, "PdfPages", None)
+    if cls is None or not isinstance(pdf, cls):
+        return None
+    name = getattr(pdf, "_filename", None)
+    if isinstance(name, (str, bytes, os.PathLike)):
+        try:
+            return os.fsdecode(name)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def is_pdf_pages(obj) -> bool:
+    """`obj` 是不是 matplotlib 的 `PdfPages`（只看已经载入的模块，不主动 import matplotlib）。"""
+    cls = getattr(sys.modules.get("matplotlib.backends.backend_pdf"), "PdfPages", None)
+    return cls is not None and isinstance(obj, cls)
+
+
+class PdfPagesLedger:
+    """写进 `PdfPages`（`pdf.savefig(fig)` → `fig.savefig(<PdfPages>, format="pdf")`）的 Figure 的账（有界）。
+
+    `plt.close(fig)` 之后图就不在 pyplot 里，而 `savefig` 的第一个参数不是路径，stem 取不出来：
+    三种常见写法（逐页关图、结尾 `plt.close("all")`、一直开着）里前两种以前一张都捕获不到。
+    保存那一刻记下来，脚本结束时由 `adopt_pdf_pages` 一起补进捕获表。
+
+    * 按 PdfPages 实例分组，组内按写入顺序；**同一张 Figure 只认一次**（多页写同一张、写进两份 PDF 都只留第一次）。
+    * 有界：强引用 Figure ≤ `limit`，PdfPages 实例 ≤ `MAX_PDF_PAGES_FILES`；超出的只在 `omitted` 里计数。
+    * 来源仍是 pyplot：多页 PDF **不是**任何一张图的原件，绝不能被当成写回目标（见 `adopt_pdf_pages`）。
+    """
+
+    def __init__(self, limit: int = MAX_PDF_PAGES_LEDGER):
+        self.limit = max(0, int(limit))
+        #: 每份 PdfPages 一组：{"pdf", "name", "pages", "figs", "adopted", "stems", "omitted"}
+        self.groups: list[dict] = []
+        self._kept_ids: set[int] = set()
+        #: 超出上限、没留引用的（不同的）Figure 张数
+        self.omitted = 0
+
+    def _group(self, pdf) -> dict | None:
+        for group in self.groups:
+            if group["pdf"] is pdf:
+                return group
+        if len(self.groups) >= MAX_PDF_PAGES_FILES:
+            return None
+        group = {
+            "pdf": pdf,
+            "name": pdf_pages_filename(pdf),
+            "pages": 0,
+            "figs": [],
+            "adopted": 0,
+            "stems": [],
+            "omitted": 0,
+        }
+        self.groups.append(group)
+        return group
+
+    def note(self, pdf, fig) -> None:
+        """一次**成功**写进 `pdf` 的保存（失败的保存没有这一页，不记）。"""
+        group = self._group(pdf)
+        if group is None:
+            self.omitted += 1
+            return
+        group["pages"] += 1
+        if id(fig) in self._kept_ids:
+            return
+        if sum(len(g["figs"]) for g in self.groups) >= self.limit:
+            self.omitted += 1
+            group["omitted"] += 1
+            return
+        self._kept_ids.add(id(fig))
+        group["figs"].append(fig)
+
+    def summary(self) -> list[dict]:
+        """给界面的一句话用：`[{name, pages, captured, stems, omitted?}]`（只含真认领了或有省略的组）。"""
+        out = []
+        for g in self.groups:
+            if not g["stems"] and not g["omitted"]:
+                continue
+            item = {
+                "name": os.path.basename(g["name"]) if g["name"] else None,
+                "pages": g["pages"],
+                "captured": len(g["stems"]),
+                "stems": list(g["stems"]),
+            }
+            if g["omitted"]:
+                item["omitted"] = g["omitted"]
+            out.append(item)
+        return out
+
+
+def adopt_pdf_pages(
+    capture: dict, capture_source: dict, ledger: PdfPagesLedger | None, script_stem: str
+) -> list[str]:
+    """把 `ledger` 里还没被认领的 Figure 补进 `capture`（就地），返回新增的 stem（保序）。
+
+    先于 pyplot 兜底调用（三条入口同一个位置）：一张图既写进了 PdfPages、又还开在 pyplot 里时，
+    只有一个 stem，而且是 PDF 文件名而不是脚本名。stem 取 PDF 的文件名（`all_samples.pdf` →
+    `all_samples`、`all_samples-2`…按页序，重名的第二份 PDF 接着往下编）；缓冲区 / 取不到文件名
+    退回 `script_stem`。来源一律 `SOURCE_PYPLOT`：**多页 PDF 不是这些图的原件**，
+    `find_original_artifact` / 写回只对 savefig 来源的 stem 查，这里绝不登记 savefig 来源。
+    """
+    if ledger is None:
+        return []
+    claimed = claimed_ids(capture)
+    added: list[str] = []
+    for group in ledger.groups:
+        fresh = []
+        for fig in group["figs"][group["adopted"] :]:
+            if id(fig) in claimed:
+                continue
+            claimed.add(id(fig))
+            fresh.append(fig)
+        group["adopted"] = len(group["figs"])
+        if not fresh:
+            continue
+        base = ""
+        if group["name"]:
+            base = os.path.splitext(os.path.basename(group["name"]))[0]
+        stems = fallback_stems(capture.keys(), base or script_stem, len(fresh))
+        for stem, fig in zip(stems, fresh):
+            capture[stem] = fig
+            capture_source[stem] = SOURCE_PYPLOT
+        group["stems"].extend(stems)
+        added.extend(stems)
+    return added
 
 
 #: 输入观察（统一实施包 U09，ADR 0070）：脚本经 Python 的 `open`（与 numpy 的 `DataSource.open`）读到的项目内文件最多记这么多条；

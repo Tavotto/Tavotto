@@ -313,6 +313,8 @@ _REAL_SAVEFIG = mfigure.Figure.savefig
 #: （装在 pyplot 模块上，拿不到 Worker 实例）；**每次 build 开始时重新建一本**（`_install_show_capture`）——
 #: build 失败的会话会被复用、重跑脚本，上一次留下的已关闭 Figure 不许带进这一次。
 _SHOWN = figcapture.ShownFigures()
+#: 本次 build 里写进 `PdfPages` 的 Figure 账（`figcapture.PdfPagesLedger`）。同 `_SHOWN`：模块级、每次 build 重建。
+_PDF_PAGES = figcapture.PdfPagesLedger()
 _SAVEFIG_METADATA = figcapture.savefig_metadata_reader(mfigure)
 #: 正在用户的 `paper_style.save(fig, stem)` 里：其间的 savefig 一律记到这个 stem 名下
 #: （`save` 里存成 `f"{stem}_final.pdf"` 的图库，按文件名取 stem 会让已有 override 挂空）
@@ -382,6 +384,12 @@ class SafeSession(figsession.LiveFigureSession):
 
     def real_output(self):
         return _real_output()
+
+
+def _reset_pdf_pages() -> None:
+    """每次 build 开始时重建 PdfPages 账（build 失败的会话会被复用重跑，上一次的页不许带进这一次）。"""
+    global _PDF_PAGES
+    _PDF_PAGES = figcapture.PdfPagesLedger()
 
 
 def _install_show_capture() -> None:
@@ -487,7 +495,11 @@ def _patched_savefig(self, fname, *args, **kwargs):
     if not to_path:
         if SESSION is not None:
             SESSION.passthrough_figures.add(id(self))
-        return _REAL_SAVEFIG(self, fname, *args, **kwargs)
+        result = _REAL_SAVEFIG(self, fname, *args, **kwargs)
+        # 写进 PdfPages 的一页：真写成功之后才记（失败的保存没有这一页）
+        if figcapture.is_pdf_pages(fname):
+            _PDF_PAGES.note(fname, self)
+        return result
     return None
 
 
@@ -896,6 +908,8 @@ class Worker(wireproto.V1Handler):
         self._source_sha256: str | None = None
         #: pyplot 兜底因上限丢掉的张数（0 = 一张没丢）。build 响应带出去。
         self.dropped_figures = 0
+        #: 写进 PdfPages 而被认领的图的摘要（`figcapture.PdfPagesLedger.summary`），build 响应带出去
+        self.pdf_pages: list[dict] = []
         #: 每张捕获 Figure 的结构化描述（figcapture.CapturedFigureDescriptor
         #: 的 payload，捕获顺序）。**build 那一刻算好钉死**：fingerprint 里的
         #: 脚本内容哈希必须是「实际被执行的那份」，之后脚本再被改，本会话
@@ -1256,6 +1270,7 @@ class Worker(wireproto.V1Handler):
         mfigure.Figure.savefig = _patched_savefig
         figcapture.install_colorbar_capture(mfigure)
         _install_show_capture()
+        _reset_pdf_pages()
 
         # 脚本看到的 argv 必须是它自己的，不是 worker 的。不换的话
         # `sys.argv[1:]` 拿到的是 --script/--out-dir/--entry 这串内部参数，
@@ -1417,6 +1432,11 @@ class Worker(wireproto.V1Handler):
         )
         # 存盘后又被脚本改过的图（ADR 0139 §八）：脚本刚跑完、Tavotto 还没碰任何一张图，此刻判
         figcapture.note_modified_after_save(self.session.capture, self.session.capture_source)
+        # 写进 PdfPages 的图（逐页关图的脚本跑完时一张都不剩）：先于 pyplot 兜底认领，来源 pyplot（不是原件）
+        figcapture.adopt_pdf_pages(
+            self.session.capture, self.session.capture_source, _PDF_PAGES, self.script.stem
+        )
+        self.pdf_pages = _PDF_PAGES.summary()
         _plt = sys.modules.get("matplotlib.pyplot")
         if _plt is not None:
             fallback, dropped = figcapture.collect_pyplot_figures(
@@ -1501,7 +1521,7 @@ class Worker(wireproto.V1Handler):
         # `source` / `source_sha256` 是加字段，不升协议版本（ADR 0003 §1：两侧容忍未知字段）。
         # `source_sha256` 是**本进程当初执行的版本**：去重回旧会话时二次 build 拿到的也是它，不是磁盘现状。
         return {
-            **self.session.stems_summary(self.dropped_figures),
+            **self.session.stems_summary(self.dropped_figures, self.pdf_pages),
             "source_sha256": self._source_sha256,
         }
 

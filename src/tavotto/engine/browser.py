@@ -101,7 +101,11 @@ def _patched_savefig(self, fname, *args, **kwargs):
     if not figcapture.savefig_targets_path(fname):
         if _ACTIVE is not None:
             _ACTIVE.passthrough_figures.add(id(self))
-        return _REAL_SAVEFIG(self, fname, *args, **kwargs)
+        result = _REAL_SAVEFIG(self, fname, *args, **kwargs)
+        # 写进 PdfPages 的一页：真写成功之后才记（与 worker 同语义）
+        if _ACTIVE is not None and figcapture.is_pdf_pages(fname):
+            _ACTIVE.pdf_pages.note(fname, self)
+        return result
     stem = figcapture.savefig_stem(fname)
     call = figcapture.savefig_call(fname, kwargs) if stem else None
     if _ACTIVE is not None:
@@ -219,6 +223,8 @@ class BrowserSession:
         #: stem → 认领它的 savefig 调用（与 worker 同一条记账：`figcapture.record_savefig_call`）
         self.savefig_calls: dict[str, list | None] = {}
         self.passthrough_figures: set[int] = set()
+        #: 写进 `PdfPages` 的 Figure 账（与 worker 的 `_PDF_PAGES` 同一个类；一个会话只跑一个文件，不必重建）
+        self.pdf_pages = figcapture.PdfPagesLedger()
         self.savefig_observations = figcapture.SavefigObservations(
             execution_root=workspace, metadata=_SAVEFIG_METADATA
         )
@@ -317,6 +323,9 @@ class BrowserSession:
             self.savefig_extras,
         )
         figcapture.note_modified_after_save(self.capture, self.capture_source)
+        # 与 worker 同一个位置：写进 PdfPages 的图先于 pyplot 兜底认领（浏览器同样传账——同一份脚本两个入口一个答案；
+        # 总数仍受下面的 MAX_FIGURES 截断，如实进 truncated_figures）
+        figcapture.adopt_pdf_pages(self.capture, self.capture_source, self.pdf_pages, base)
         fallback, dropped = figcapture.collect_pyplot_figures(
             self.capture, base, plt, limit=MAX_FIGURES
         )
