@@ -58,6 +58,8 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 TEST_SELECTOR_RE = re.compile(r"^tests/[A-Za-z0-9_./-]+\.py(::[A-Za-z0-9_\[\]./-]+)*$")
 SHARD_RE = re.compile(r"^([1-9][0-9]?)/([1-9][0-9]?)$")
 MAX_SELECTORS = 40
+#: hosts-live 的 --mode：真宿主的闭集（实现见 LIVE_HOSTS）
+LIVE_HOST_IDS = ("claude-code", "codex-cli")
 #: 依赖安装配方的版本：改了 prepare 的安装步骤就加一，已有 venv 随之重装（散列戳里含它）。
 DEPS_RECIPE = "2"
 
@@ -283,6 +285,7 @@ TASKS: dict[str, Task] = {
             summary="AI 宿主 L4/L5：真 Claude Code（国内 Anthropic 兼容模型）调用 Tavotto MCP，改图、导出、重开核对",
             timeout_s=2400,
             needs_model_conf=True,
+            modes=tuple(LIVE_HOST_IDS),
             claim=(
                 "L4 = 真 Claude Code CLI 在 Lab 上执行了 Tavotto MCP 工具调用并拿到成功结果；"
                 "L5 = 同一张真实 matplotlib 图经宿主打开、改线宽与图例、导出 PDF、重放校验，"
@@ -1401,116 +1404,245 @@ def judge_live(s1: dict, s2: dict, pdf: Path | None, journal_ok: bool, sid: str 
     return {"L4": l4, "L5": l5, "checks": checks}
 
 
-def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, model_conf: dict) -> dict:
-    exe = lab.cache / "npm-global" / "claude.cmd"
+def parse_recorded(path: Path, start_line: int = 0) -> dict:
+    """mcp_recorder 的 jsonl（服务端事实）→ 与 parse_stream 同形：判定只认 Tavotto 这一侧真发生了什么，
+    不认宿主怎么转述。`start_line` 之后的记录属于这一轮。"""
+    calls, listed = [], []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()[start_line:]
+    except OSError:
+        lines = []
+    for line in lines:
+        with contextlib.suppress(ValueError):
+            rec = json.loads(line)
+            if rec.get("dir") != "server":
+                continue
+            if rec.get("method") == "tools/list" and not rec.get("error"):
+                listed += rec.get("tools") or []
+            if rec.get("method") == "tools/call":
+                calls.append(
+                    {
+                        "name": f"mcp__tavotto__{rec.get('tool')}",
+                        "is_error": bool(rec.get("error")),
+                        "result": json.dumps(rec.get("facts") or {}, separators=(",", ":")),
+                    }
+                )
+    return {"calls": calls, "final": "", "listed_tools": sorted(set(listed))}
+
+
+def _line_count(path: Path) -> int:
+    try:
+        return len(path.read_text(encoding="utf-8").splitlines())
+    except OSError:
+        return 0
+
+
+@dataclass
+class LiveHost:
+    id: str
+    npm: str
+    bin: str
+    #: (lab, run_dir, proj, exe, mcp_command, mcp_env, model_conf, env) → 宿主进程的额外环境（配置写在 run 自己的目录里）
+    configure: object
+    #: prompt → argv（无头模式，提示词紧跟在前面，避免被可变长选项吞掉）
+    argv: object
+
+
+def _claude_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -> dict:
+    cfg = run_dir / "work" / "claude-config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    henv = dict(_host_model_env(conf), CLAUDE_CONFIG_DIR=str(cfg))
+    add = [str(exe), "mcp", "add", "tavotto", "--scope", "user"]
+    for k, v in mcp_env.items():
+        add += ["-e", f"{k}={v}"]
+    _run_logged(
+        [*add, "--", *mcp_cmd],
+        proj,
+        {**env, **henv},
+        run_dir / "evidence" / "live" / "mcp-add",
+        120,
+    )
+    return henv
+
+
+def _claude_argv(exe: Path, prompt: str) -> list[str]:
+    return [
+        str(exe),
+        "-p",
+        prompt,
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--max-turns",
+        "30",
+        "--allowedTools",
+        "mcp__tavotto",
+    ]
+
+
+def _toml_str(s: str) -> str:
+    return json.dumps(s, ensure_ascii=False)
+
+
+def _codex_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -> dict:
+    """Codex：隔离的 CODEX_HOME + 自定义供应商（DeepSeek 的 OpenAI 兼容 Responses 接口，env_key 取密钥，不走登录）。"""
+    home = run_dir / "work" / "codex-home"
+    home.mkdir(parents=True, exist_ok=True)
+    env_lines = ", ".join(f"{k} = {_toml_str(v)}" for k, v in mcp_env.items())
+    toml = "\n".join(
+        [
+            f"model = {_toml_str(conf.get('openai_model') or 'deepseek-flash')}",
+            'model_provider = "lab"',
+            'forced_login_method = "api"',
+            'approval_policy = "never"',
+            'sandbox_mode = "workspace-write"',
+            "",
+            "[model_providers.lab]",
+            'name = "lab"',
+            f"base_url = {_toml_str(conf.get('openai_base_url') or 'https://api.deepseek.com/')}",
+            'wire_api = "responses"',
+            'env_key = "WINLAB_MODEL_KEY"',
+            "",
+            "[mcp_servers.tavotto]",
+            f"command = {_toml_str(mcp_cmd[0])}",
+            "args = [" + ", ".join(_toml_str(a) for a in mcp_cmd[1:]) + "]",
+            f"env = {{ {env_lines} }}",
+            "startup_timeout_sec = 60",
+            "tool_timeout_sec = 1800",
+            'default_tools_approval_mode = "approve"',
+            "",
+        ]
+    )
+    (home / "config.toml").write_text(toml, encoding="utf-8")
+    return {"CODEX_HOME": str(home), "WINLAB_MODEL_KEY": conf["api_key"]}
+
+
+def _codex_argv(exe: Path, prompt: str) -> list[str]:
+    return [
+        str(exe),
+        "exec",
+        prompt,
+        "--skip-git-repo-check",
+        "--json",
+        "--sandbox",
+        "workspace-write",
+    ]
+
+
+LIVE_HOSTS = {
+    "claude-code": LiveHost(
+        "claude-code", "@anthropic-ai/claude-code", "claude.cmd", _claude_configure, _claude_argv
+    ),
+    "codex-cli": LiveHost("codex-cli", "@openai/codex", "codex.cmd", _codex_configure, _codex_argv),
+}
+
+
+def run_hosts_live_task(
+    lab: Lab, run_dir: Path, env: dict, model_conf: dict, host_id: str = "claude-code"
+) -> dict:
+    host = LIVE_HOSTS[host_id]
     py = lab.venv_python()
-    if not exe.exists() or not py.exists():
+    if not py.exists():
         return {
             "result": "environment_unavailable",
-            "summary": "run `test hosts` first (installs Claude Code CLI)",
+            "summary": "venv missing: run `winlab prepare` first",
         }
-    version = _tool_version([str(exe), "--version"])
-    ev = run_dir / "evidence" / "claude-code-live"
+    ev = run_dir / "evidence" / "live"
+    prefix = lab.cache / "npm-global"
+    exe = prefix / host.bin
+    if not exe.exists():
+        _run_logged(
+            [
+                str(Path(NODE_DIR) / "npm.cmd"),
+                "install",
+                "-g",
+                "--prefix",
+                str(prefix),
+                host.npm,
+                "--no-fund",
+                "--no-audit",
+            ],
+            lab.root,
+            env,
+            ev / "npm-install",
+            900,
+        )
+    version = _tool_version([str(exe), "--version"]) if exe.exists() else None
+    if not version:
+        return {
+            "result": "failed",
+            "summary": f"{host.id}: official CLI did not install or start (L2)",
+            "levels": {"L2": "failed"},
+        }
     proj = run_dir / "work" / "project"
     (proj / "out").mkdir(parents=True)
     (proj / "plot.py").write_text(LIVE_FIGURE, encoding="utf-8")
-    cfg = run_dir / "work" / "claude-config"
-    cfg.mkdir(parents=True)
-    henv = dict(env)
-    henv.update(_host_model_env(model_conf))
-    henv["CLAUDE_CONFIG_DIR"] = str(cfg)
-    henv["TAVOTTO_MCP_ROOTS"] = str(proj)
-    henv["MPLCONFIGDIR"] = str(run_dir / "work" / "mpl")
-    seed = _run_logged([str(py), "plot.py"], proj, henv, ev / "seed-figure", 300)
+    data_dir = run_dir / "work" / "tavotto-data"
+    seed_env = dict(env, MPLCONFIGDIR=str(run_dir / "work" / "mpl"))
+    seed = _run_logged([str(py), "plot.py"], proj, seed_env, ev / "seed-figure", 300)
     if seed.get("exit_code") != 0:
         return {
             "result": "error",
             "summary": "seeding the figure script failed",
             "host_version": version,
         }
-    server = [str(py), str(lab.repo / "codex-plugin" / "mcp" / "server.py")]
-    _run_logged(
-        [
-            str(exe),
-            "mcp",
-            "add",
-            "tavotto",
-            "--scope",
-            "user",
-            # `-e` 是可变长选项：名字必须在它之前，`--` 截断后才是命令（实测放在名字前会把名字当成变量吞掉）
-            # 只给 MCP 服务器它需要的 Tavotto 变量；模型凭据只在宿主自己的环境里
-            "-e",
-            f"TAVOTTO_MCP_ROOTS={proj}",
-            "-e",
-            f"TAVOTTO_DATA_DIR={run_dir / 'work' / 'tavotto-data'}",
-            "-e",
-            "TAVOTTO_NO_TELEMETRY=1",
-            "--",
-            *server,
-        ],
-        proj,
-        henv,
-        ev / "mcp-add",
-        120,
-    )
-
-    def claude_print(prompt: str) -> list[str]:
-        # 提示词紧跟 `-p`：`--allowedTools` 是可变长选项，放在它后面的提示词会被当成工具名吞掉
-        return [
-            str(exe),
-            "-p",
-            prompt,
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--max-turns",
-            # Tavotto 的 open 结果超过 Claude Code 单次 MCP 结果上限时会被转存成文件，模型要多花几轮去读
-            "30",
-            "--allowedTools",
-            "mcp__tavotto",
-        ]
-
-    r1 = _run_logged(claude_print(LIVE_SESSION_1), proj, henv, ev / "session-1", 1200)
-    _scrub(ev, model_conf["api_key"])
-    s1 = parse_stream(
-        Path(f"{ev / 'session-1'}.stdout.log").read_text(encoding="utf-8", errors="replace")
-    )
+    rec_log = ev / "mcp-recorder.jsonl"
+    recorder = Path(__file__).resolve().parent / "mcp_recorder.py"
+    mcp_cmd = [
+        str(py),
+        str(recorder),
+        str(rec_log),
+        "--",
+        str(py),
+        str(lab.repo / "codex-plugin" / "mcp" / "server.py"),
+    ]
+    # 只给 MCP 服务器它需要的 Tavotto 变量（写进宿主的 MCP 配置，用户就是这么配的）；模型凭据只进宿主进程
+    mcp_env = {
+        "TAVOTTO_MCP_ROOTS": str(proj),
+        "TAVOTTO_DATA_DIR": str(data_dir),
+        "TAVOTTO_NO_TELEMETRY": "1",
+    }
+    henv = dict(env)
+    henv.update(host.configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, model_conf, env))
+    r1 = _run_logged(host.argv(exe, LIVE_SESSION_1), proj, henv, ev / "session-1", 1200)
+    s1 = parse_recorded(rec_log)
+    split = _line_count(rec_log)
     sid = opened_session_id(s1)
-    journal_ok = journal_has_edits(run_dir / "work" / "tavotto-data", sid)
+    journal_ok = journal_has_edits(data_dir, sid)
     if sid:
         r2 = _run_logged(
-            claude_print(LIVE_SESSION_2.format(sid=sid)), proj, henv, ev / "session-2", 900
+            host.argv(exe, LIVE_SESSION_2.format(sid=sid)), proj, henv, ev / "session-2", 900
         )
-        _scrub(ev, model_conf["api_key"])
     else:
         r2 = {"exit_code": None, "skipped": "no session id from session 1"}
-        Path(f"{ev / 'session-2'}.stdout.log").write_text("", encoding="utf-8")
-    s2 = parse_stream(
-        Path(f"{ev / 'session-2'}.stdout.log").read_text(encoding="utf-8", errors="replace")
-    )
+    _scrub(ev, model_conf["api_key"])
+    _scrub(run_dir / "work", model_conf["api_key"])
+    s2 = parse_recorded(rec_log, split)
     pdfs = sorted((proj / "out").glob("*.pdf"))
     levels = judge_live(s1, s2, pdfs[0] if pdfs else None, journal_ok, sid)
+    levels["L2"] = "passed"
+    # L3：宿主自己发了 tools/list 并拿到了 Tavotto 的工具（服务端看到的，不是宿主的自述）
+    levels["L3"] = "passed" if "tavotto_open_figure" in s1["listed_tools"] else "failed"
     levels["session_id_from_session_1"] = bool(sid)
     if r1.get("timed_out") or r2.get("timed_out"):
         levels["L5"] = "error"
     return {
-        "result": av.aggregate([levels["L4"], levels["L5"]]),
-        "summary": f"claude-code {version} via {model_conf.get('provider', '?')}/{model_conf.get('model') or 'deepseek-flash'}: "
-        f"L4={levels['L4']} L5={levels['L5']}",
+        "result": av.aggregate([levels["L2"], levels["L3"], levels["L4"], levels["L5"]]),
+        "summary": f"{host.id} {version} via {model_conf.get('provider', '?')}: "
+        f"L3={levels['L3']} L4={levels['L4']} L5={levels['L5']}",
         "host": {
-            "id": "claude-code",
+            "id": host.id,
             "version": version,
             "provider": model_conf.get("provider"),
-            "model": model_conf.get("model") or "deepseek-flash",
             "network": "direct",
         },
         "levels": levels,
-        "tool_calls": {
+        "server_side_calls": {
             "session_1": [
-                {"name": c["name"], "ok": c.get("is_error") is False} for c in s1["calls"]
+                {"tool": c["name"].split("__")[-1], "ok": not c["is_error"]} for c in s1["calls"]
             ],
             "session_2": [
-                {"name": c["name"], "ok": c.get("is_error") is False} for c in s2["calls"]
+                {"tool": c["name"].split("__")[-1], "ok": not c["is_error"]} for c in s2["calls"]
             ],
         },
         "exit_codes": {"session_1": r1.get("exit_code"), "session_2": r2.get("exit_code")},
@@ -2353,7 +2485,9 @@ def _run_body(
     if task.kind == "pytest":
         return run_pytest_task(lab, task, run_dir, tests, shard, env)
     if task.kind == "hosts-live":
-        return run_hosts_live_task(lab, run_dir, env, model_conf or {})
+        return run_hosts_live_task(
+            lab, run_dir, env, model_conf or {}, (pkg or {}).get("mode") or "claude-code"
+        )
     if task.kind == "env-matrix":
         return run_env_matrix_task(lab, run_dir, env, (pkg or {}).get("package", ""))
     if task.kind == "corpus":

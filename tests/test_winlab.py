@@ -1155,3 +1155,106 @@ def test_sidecar_is_found_by_layout_not_by_the_shell_name(tmp_path):
     (side.parent / "_internal").mkdir(parents=True)
     side.write_text("")
     assert A._find_sidecar(shell) == side
+
+
+# --------------------------------------------------------------------------- MCP 记录器 + 多宿主
+
+
+def test_recorder_passes_bytes_through_and_records_only_bounded_facts(tmp_path):
+    import subprocess as sp
+
+    server = tmp_path / "server.py"
+    server.write_text(
+        "import sys, json\n"
+        "for line in sys.stdin:\n"
+        "    m = json.loads(line)\n"
+        "    if m.get('method') == 'tools/list':\n"
+        "        r = {'tools': [{'name': 'tavotto_open_figure'}, {'name': 'tavotto_health'}]}\n"
+        "    else:\n"
+        "        r = {'content': [{'type': 'text', 'text': json.dumps({'ok': True, 'session_id': 's-0123456789ab', 'patch_hash': 'sha256:ab', 'svg': '<svg>SECRET-PATH</svg>'})}], 'isError': False}\n"
+        "    sys.stdout.write(json.dumps({'jsonrpc': '2.0', 'id': m['id'], 'result': r}) + '\\n'); sys.stdout.flush()\n",
+        encoding="utf-8",
+    )
+    log = tmp_path / "rec.jsonl"
+    reqs = [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "tavotto_verify_replay", "arguments": {"path": "C:/x"}},
+        },
+    ]
+    stdin = "".join(json.dumps(r) + "\n" for r in reqs)
+    out = sp.run(
+        [
+            sys.executable,
+            str(WINLAB / "mcp_recorder.py"),
+            str(log),
+            "--",
+            sys.executable,
+            str(server),
+        ],
+        input=stdin,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    replies = [json.loads(x) for x in out.stdout.splitlines()]
+    assert [r["id"] for r in replies] == [1, 2]  # 宿主拿到的就是 server 原样的回复
+    facts = A.parse_recorded(log)
+    assert facts["listed_tools"] == ["tavotto_health", "tavotto_open_figure"]
+    assert (
+        facts["calls"][0]["name"] == "mcp__tavotto__tavotto_verify_replay"
+        and not facts["calls"][0]["is_error"]
+    )
+    text = log.read_text(encoding="utf-8")
+    assert "SECRET-PATH" not in text and "C:/x" not in text  # 参数与结果正文不进记录
+
+
+def test_recorded_split_separates_the_fresh_process(tmp_path):
+    log = tmp_path / "r.jsonl"
+    rows = [
+        {
+            "dir": "server",
+            "method": "tools/call",
+            "tool": "tavotto_open_figure",
+            "error": False,
+            "facts": {"session_id": "s-aaaaaaaaaaaa"},
+        },
+        {
+            "dir": "server",
+            "method": "tools/call",
+            "tool": "tavotto_verify_replay",
+            "error": False,
+            "facts": {"ok": True},
+        },
+    ]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    assert len(A.parse_recorded(log)["calls"]) == 2
+    assert [c["name"] for c in A.parse_recorded(log, 1)["calls"]] == [
+        "mcp__tavotto__tavotto_verify_replay"
+    ]
+
+
+def test_live_hosts_are_a_closed_set_matching_the_modes():
+    assert set(A.LIVE_HOSTS) == set(A.LIVE_HOST_IDS) == set(A.TASKS["hosts-live"].modes)
+    assert A.validate_test_args(A.TASKS["hosts-live"], [], None, "direct", mode="codex-cli") is None
+    assert A.validate_test_args(A.TASKS["hosts-live"], [], None, "direct", mode="anything")
+
+
+def test_codex_config_uses_env_key_not_the_key_itself(tmp_path):
+    conf = {"api_key": "sk-" + "x" * 30, "base_url": "https://api.deepseek.com/anthropic"}
+    extra = A._codex_configure(
+        A.Lab(tmp_path),
+        tmp_path,
+        tmp_path,
+        tmp_path / "codex.cmd",
+        ["py", "rec.py"],
+        {"TAVOTTO_MCP_ROOTS": "C:/p"},
+        conf,
+        {},
+    )
+    toml = (tmp_path / "work" / "codex-home" / "config.toml").read_text(encoding="utf-8")
+    assert conf["api_key"] not in toml and 'env_key = "WINLAB_MODEL_KEY"' in toml
+    assert extra["WINLAB_MODEL_KEY"] == conf["api_key"] and 'wire_api = "responses"' in toml
