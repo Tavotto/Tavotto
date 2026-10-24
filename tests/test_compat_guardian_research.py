@@ -1147,3 +1147,31 @@ def test_committed_first_round_snapshot_is_legacy_and_carries_no_provenance():
     assert all("workflow" not in (project["setup"] or {}) for project in committed["projects"])
     for project in committed["projects"]:
         research.pv.check_pair(research.pv.ABSENT, research.pv.ABSENT, project["case_id"])
+
+
+def test_committed_second_round_snapshot_is_complete_and_carries_provenance():
+    """第二轮快照（run 40111589396）：16 项齐全、报告与 receipt 都带出处，聚合与行自洽。
+
+    证据文件不在仓库里（见 S0_BASELINE.md），所以这里只校验快照自身的结构与出处配对；
+    逐字复算用 `verify-snapshot --evidence-directory <归档根>`。
+    """
+    root = Path(__file__).resolve().parents[1]
+    committed = json.loads(
+        (root / "tests/compat/research-baseline-2026-10-24.json").read_text(encoding="utf-8")
+    )
+    first = json.loads((root / research.SNAPSHOT).read_text(encoding="utf-8"))
+    assert committed["schema"] == first["schema"]
+    assert [p["case_id"] for p in committed["projects"]] == [
+        p["case_id"] for p in first["projects"]
+    ]
+    assert committed["missing_cases"] == [] and committed["missing_setup_receipts"] == []
+    assert committed["enrollment_sha"] == "fb36427d99b437be0da00cff7480dcbb43cbaf3d"
+    for project in committed["projects"]:
+        assert "workflow" in project and "workflow" in project["setup"]
+        research.pv.check_pair(
+            project["workflow"], project["setup"]["workflow"], project["case_id"]
+        )
+    before = json.dumps(committed, sort_keys=True)
+    research.refresh_accounting(committed)
+    assert json.dumps(committed, sort_keys=True) == before
+    assert committed["status_counts"] == {"passed": 14, "failed": 1, "invalid_fixture": 1}
