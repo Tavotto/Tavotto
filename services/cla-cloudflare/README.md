@@ -88,9 +88,13 @@ live GitHub/Cloudflare acceptance or actual CPU evidence. The default-off native
 merge-group path now has synthetic positive publication, recovery, authority and
 CI coverage as described in that evidence. It reuses the complete-prefix reader,
 existing outbox/journal and shared confirmation slot; no workflow is activated.
-Group publication reserves 17 fixed/withdrawal work SQL plus qualification cost,
-so currently admits one non-exempt contributor while retaining every prefix
-member. Larger eligible groups can be resource-deferred before sending. Real
+Group publication reserves 14 fixed/withdrawal work SQL plus qualification cost;
+the SQL ceiling is three personal or two delegated non-exempt contributors, with
+the full two-person lifecycle verified in both modes and every prefix member
+retained. These are whole-group bounds, not per-wakeup batches. Unissued SQL/HTTP
+capacity exhaustion now uses three bounded retries and retains the exhausted
+outbox; a busy shared slot remains a durable wait. No stale qualification cache
+is reused across wakeups. Real
 queue-schema/permission, CPU, D1, OAuth and timing acceptance remain separate gates.
 
 ### Public endpoints: abuse limits and pinned agreement asset

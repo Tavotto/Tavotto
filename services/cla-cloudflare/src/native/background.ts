@@ -31,7 +31,7 @@ async function one(s:LiveService,job:Job,p:Publication,revision:number,target:Ta
   // reason to restore confirmation, evaluate eligibility or replay a send.
   let valid=!slotRecoveryOnly(job,p) && p.conclusion==='success' && revision===p.revision && await s.store.databaseNow()<p.expires;
   if(valid) {
-    try {const current=await s.evaluateTarget(target,target.kind==='merge_group'?2:0);
+    try {const current=await s.evaluateTarget(target,target.kind==='merge_group'?2:0,revision);
       valid=current.conclusion==='success' && current.proof.revision===p.revision && sameBinding(previous,current.proof);}
     catch(error){if(error instanceof Rejected && (target.kind==='merge_group' && !(error instanceof BudgetDeferred) || ['trusted_policy_changed','agreement_hash_mismatch','pr_mismatch'].includes(error.code)))valid=false;else throw error;}
   }
@@ -56,7 +56,7 @@ async function refreshOne(s:LiveService,job:Job,request:RefreshRequest):Promise<
     if(target.kind==='merge_group'){
       const predecessor=await s.store.refreshPredecessor(job.target_key,target.headSha);
       if(!predecessor || predecessor.id!==request.source_attempt)throw new Rejected('refresh_predecessor_unavailable');
-      return await publishGroup(s,job,target,{request,predecessor});
+      return await publishGroup(s,job,target,request.revision,{request,predecessor});
     }
     // After evaluate: predecessor read (1), final clock (1), issued batch (4; slot mode 5).
     // Slot mode reserves one additional intent statement; qualification cost depends on mode.
@@ -113,9 +113,9 @@ export async function reconcileOne(s:LiveService):Promise<{disposition:string;bu
   try {
     const refresh=await s.store.refreshRequest(job);
     if(refresh)return result(await refreshOne(s,job,refresh));
-    const target=await s.store.target(job.target_key);
-    if(target.kind==='merge_group' && !await s.store.latestPublication(job.target_key))return result(await publishGroup(s,job,target));
-    revision=initialRevision;const progress=await s.store.openProgress(job,revision);
+    const {target,published}=await s.store.reconciliationTarget(job.target_key);
+    if(target.kind==='merge_group' && !published)return result(await publishGroup(s,job,target,initialRevision));
+    revision=initialRevision;const progress=await s.store.openProgress(job,revision,target.kind==='merge_group');
     const records=await s.store.publicationBatch(job,progress);let disposition='no_due_publication';
     for(const p of records) {
       selected=p;

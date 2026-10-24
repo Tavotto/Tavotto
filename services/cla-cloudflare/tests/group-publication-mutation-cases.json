@@ -99,18 +99,18 @@
   {
     "name": "group refresh evaluation",
     "file": "src/native/group.ts",
-    "before": "s.evaluateTarget(target,7)",
-    "after": "s.evaluateTarget({kind:'pr',number:9},7)",
+    "before": "s.evaluateTarget(target,0,revision)",
+    "after": "s.evaluateTarget({kind:'pr',number:9},0,revision)",
     "pattern": "group expiry withdraws with exact failure GET",
     "testFile": "tests/group-publication-lifecycle.test.mjs"
   },
   {
-    "name": "group confirmation and correction admission",
+    "name": "two-person group fits actual confirmation capacity",
     "file": "src/native/group.ts",
-    "before": "if(17+qualificationSQL",
-    "after": "if(16+qualificationSQL",
-    "pattern": "group admission reserves confirmation",
-    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "before": "if(14+qualificationSQL",
+    "after": "if(15+qualificationSQL",
+    "pattern": "two independently signed contributors complete group across wakeups delegated=true",
+    "testFile": "tests/group-multi-lifecycle.test.mjs",
     "assertionError": true
   },
   {

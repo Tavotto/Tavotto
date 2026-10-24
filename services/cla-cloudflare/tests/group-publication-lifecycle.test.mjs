@@ -97,7 +97,10 @@ for(const field of ['kind','members','head_sha','base_sha','group'])test('group 
 test('group publication keeps the unchanged 35 external work cap for a larger full prefix',()=>isolated(async f=>{
  f.entries[1].headCommit.oid='6'.repeat(40);f.entries.push({id:'SYNTHETIC_QUEUE_3',position:3,headCommit:{oid:f.groupTarget.headSha},baseCommit:{oid:f.groupTarget.baseSha},pullRequest:{number:13,headRefOid:'7'.repeat(40),baseRefName:'main'}});
  f.members.set(13,{...f.members.get(12),number:13,head:{sha:'7'.repeat(40)}});
- await f.admit();assert.equal((await f.recover()).disposition,'budget_deferred');assert.equal(await f.owned(),null);assert.equal(f.mutations().length,0);
+ await f.admit();assert.equal((await f.recover()).disposition,'target_retry_pending_or_exhausted');assert.equal(await f.owned(),null);assert.equal(f.mutations().length,0);
+ assert.equal((await f.get('SELECT attempts FROM outbox')).attempts,1);
+ for(let n=0;n<2;n++){f.advance(60);assert.equal((await f.recover()).disposition,'target_retry_pending_or_exhausted');}
+ f.advance(60);assert.equal((await f.recover()).disposition,'idle');assert.equal((await f.get('SELECT attempts FROM outbox')).attempts,3);
  assert.ok(f.invocations.at(-1).budget.snapshot().external<=35);
 },{group:true}));
 
@@ -169,14 +172,15 @@ for(const field of ['action','repository','installation','base_ref','head_sha'])
 },{group:true}));
 
 
-test('group admission reserves confirmation and withdrawal SQL before sending a two-person personal success',()=>isolated(async f=>{
+test('group admission keeps full two-person qualification before sending',()=>isolated(async f=>{
  const token=randomToken(),csrf=randomToken();await f.store.addSession({token_hash:await sha256(token),actor:3,login:'user3',csrf_hash:await sha256(csrf),expires:f.now()+86400});
  const args=[token,csrf,f.c.origin],packet=await f.s.packet(...args,'individual');
  await f.s.sign(...args,packet.id,await f.s.intent(...args,packet.id,'contributor'),'contributor',f.evidence('contributor'));await f.sign(packet,'holder');
  f.members.get(11).user={id:3,login:'user3',type:'User'};
  const assessment=await f.invocation().service.evaluateTarget({kind:'merge_group',headSha:f.groupTarget.headSha,baseSha:f.groupTarget.baseSha});
  assert.equal(assessment.conclusion,'success');assert.equal(assessment.proof.contributors.length,2);
- await f.admit();assert.equal((await f.recover()).disposition,'budget_deferred');assert.equal(await f.owned(),null);assert.equal(f.mutations().length,0);
+ await f.admit();assert.equal((await f.recover()).disposition,'group_publication_requires_reconciliation');assert.equal(f.mutations().length,1);
+ assert.equal((await f.recover()).disposition,'verified_read_only');assert.equal((await f.ci()).status,'success');
 },{group:true,delegated:false}));
 
 

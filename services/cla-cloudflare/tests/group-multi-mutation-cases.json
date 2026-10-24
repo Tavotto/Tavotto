@@ -1,0 +1,56 @@
+[
+  {
+    "name": "multi group keeps invocation epoch fence",
+    "file": "src/native/service.ts",
+    "before": "const revision=expectedRevision ?? await this.store.revision();",
+    "after": "const revision=await this.store.revision();",
+    "pattern": "group evaluator cannot replace an invocation supplied revision",
+    "testFile": "tests/group-multi-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "multi group keeps durable horizon",
+    "file": "src/native/store.ts",
+    "before": "0) ELSE horizon END",
+    "after": "0) ELSE horizon+1 END",
+    "pattern": "group progress RETURNING preserves",
+    "testFile": "tests/group-multi-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "multi group resumes existing journal",
+    "file": "src/native/store.ts",
+    "before": "published:row.published===1",
+    "after": "published:false",
+    "pattern": "two independently signed contributors complete group across wakeups delegated=true",
+    "testFile": "tests/group-multi-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "multi group progress lease fence",
+    "file": "src/native/store.ts",
+    "before": "this.db.batch<Progress>([...this.leaseGuard(job,revision),",
+    "after": "this.db.batch<Progress>([...[],",
+    "pattern": "group progress RETURNING preserves",
+    "testFile": "tests/group-multi-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "multi group avoids redundant progress read",
+    "file": "src/native/background.ts",
+    "before": "openProgress(job,revision,target.kind==='merge_group')",
+    "after": "openProgress(job,revision,false)",
+    "pattern": "two independently signed contributors complete group across wakeups delegated=true",
+    "testFile": "tests/group-multi-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group resource exhaustion has bounded durable retries",
+    "file": "src/native/group.ts",
+    "before": "if(error instanceof BudgetDeferred && ['sql','external'].includes(error.reason))throw new Rejected('group_resource_capacity_exhausted');",
+    "after": "// MUTANT repeatedly defer an unfinishable resource request",
+    "pattern": "group publication keeps the unchanged 35 external work cap",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
+    "assertionError": true
+  }
+]

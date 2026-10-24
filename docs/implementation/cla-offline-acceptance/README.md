@@ -68,7 +68,7 @@ withdrawal, exact failure GET/private negative witness, held-owner drain and
 same-run fresh attempts reuse the existing journal and global slot. A group
 cannot enter the PR proof/journal/send path. PR proof parsing remains strict.
 
-The 38 group scenarios include partial/replaced prefixes, unsigned predecessors,
+The 46 group scenarios include partial/replaced prefixes, unsigned predecessors,
 member/base/provenance tampering, exact expiry during the second CI authority
 read, revoked evidence, stale lease generation, duplicate/conflicting delivery,
 concurrent claims, PR/group slot competition, future revocation revisions, durable
@@ -78,15 +78,50 @@ and forged/malformed group rejection checks. The CI consumer handles a strict
 group locator and two independent group authority reads; no workflow is activated.
 
 Budgets stay at 20 work / 40 total SQL and 35 work / 40 total external requests.
-Group reconciliation has one more target-history read than PR reconciliation.
-Its pre-send admission reserves 17 fixed/withdrawal SQL plus qualification cost
-(2 per personal or 3 per delegated non-exempt contributor): at present only one
-non-exempt contributor can be admitted to automatic group success. This does not
-truncate a multi-PR prefix or exempt another contributor. A larger eligible
-prefix or two personally qualified contributors can be refused as BudgetDeferred
-before any journal/send; eligibility and resource admission remain distinct.
-The offline two-member, one-contributor success case fits; the three-member
-external-budget counterexample rejects. Platform CPU is not measured by these tests.
+The earlier one-contributor limit applied to the **whole group**, not a per-wakeup
+batch. Two genuinely signed contributors (personal and delegated) both qualified,
+but five successive wakeups produced no journal and no progress. Personal wakes
+used 14 total SQL / 31 external; delegated wakes used 9 / 19. Changing due alone
+could never make that fixed workload fit. It was not a recoverable progress path.
+
+The repair combines target/history reads, returns the durable progress horizon
+from its guarded UPDATE, and reuses the current invocation's already-read revision.
+The closing assessment revision/time and journal lease/generation/revision guards
+remain. No qualification result or partial prefix is cached across wakeups; every
+issue, confirmation and authority request requalifies all contributors. The existing
+outbox/journal persists pending → issued → reconcile/unknown → confirmed, then exact
+withdrawal and a new fresh attempt. A lost response resumes by observing that journal.
+
+Group confirmation admission now reserves 14 fixed/withdrawal work SQL plus conservative
+qualification reservations (2 per personal or 3 per delegated non-exempt contributor).
+This is still a whole-group capacity boundary: its SQL ceiling is three personal or
+two delegated contributors, not an accumulating cursor. The regression proves the
+full two-person lifecycle in both modes, including two CI authority reads before
+expiry and two more after refresh. It does not prove arbitrary-sized groups can
+complete. Complete prefix enumeration and the external-request budget still apply.
+
+| Two-person scenario | Dispatch work / total SQL; external | Confirmation work / total SQL; external | Each authority SQL; external |
+| --- | --- | --- | --- |
+| Personal | 18 / 22; 32 | 16 / 32; 31 | 11; 31 |
+| Delegated | 20 / 24; 32 | 18 / 34; 31 | 13; 31 |
+
+Confirmation additionally reserves two withdrawal SQL reads within the 20 work
+ceiling. Expiry withdrawal uses 12 work / 29 total SQL and 8 external requests;
+fresh dispatch uses 16 / 20 SQL (personal) or 18 / 22 (delegated), both 32 external.
+These are actual ledger measurements from synthetic adapter/SQLite invocations,
+not CPU or real D1 measurements.
+
+An unissued group that cannot fit the fixed SQL/HTTP budget now consumes the
+existing bounded target failure budget: three attempts, retained outbox at the
+retry cap, and no positive publication. It no longer wakes forever with attempts=0.
+A changed generation may be reevaluated by the existing policy; exhaustion is a
+resource/capability outcome, never a negative legal qualification. A busy global
+slot remains a temporary durable wait without consuming those attempts; a two-person
+group is tested completing after its PR predecessor's exact observed withdrawal.
+Supporting groups beyond these bounds is not implemented by splitting/omitting
+contributors. Larger-scale qualification/remote-read checkpoints would need a
+separately specified freshness and recovery contract; no new architecture, tables,
+permissions or deployment are introduced here.
 
 ## Reproduction and counterexamples
 
@@ -105,7 +140,7 @@ CLA offline workflow installs the unchanged lockfile with `npm ci --ignore-scrip
 and runs the complete `npm run check`; no extra workflow, token or deployment is
 needed. Report missing tools as missing, never as compiler/build success.
 
-The mutation harness adds 14 group counterexamples and retains the earlier 11
+The mutation harness adds 20 group counterexamples and retains the earlier 11
 lifecycle counterexamples in `tests/lifecycle-acceptance-mutation-cases.json`. They test
 premature confirmation, failure to withdraw an expired success, treating a PATCH
 receipt as a release witness, losing durable backoff, omitting the second live

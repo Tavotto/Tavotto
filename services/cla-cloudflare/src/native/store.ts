@@ -1,4 +1,4 @@
-import type { CheckProposal, D1Database, D1Statement, Job, Packet, Role, Session } from '../core/types.ts';
+import type { CheckProposal, D1Database, D1Statement, Job, Packet, Role, Session, Target } from '../core/types.ts';
 import type {LiveConfig} from './config.ts';
 import {parseProof} from '../core/proof.ts';
 import {policyMaterial,packetAgreementMatches} from '../core/policy.ts';
@@ -257,7 +257,22 @@ export class LiveStore extends Store {
     return this.guard(`EXISTS(SELECT 1 FROM outbox WHERE target_key=? AND lease=? AND lease_until>${DB_NOW} AND generation=?)
       AND (SELECT revision FROM state WHERE id=1)=?`,job.target_key,job.lease,job.generation,revision);
   }
-  async openProgress(job:Job,revision:number):Promise<Progress> {
+  async reconciliationTarget(key:string):Promise<{target:Target;published:boolean}> {
+    const row=await this.stmt(`SELECT target_json,EXISTS(SELECT 1 FROM publication_attempts p WHERE p.target_key=t.target_key) AS published
+      FROM targets t WHERE target_key=?`,key).first<{target_json:string;published:number}>();
+    if(!row)throw new Rejected('target_unavailable');return {target:JSON.parse(row.target_json),published:row.published===1};
+  }
+  async openProgress(job:Job,revision:number,group=false):Promise<Progress> {
+    if(group){
+      // Same lease/revision guard and durable horizon. RETURNING avoids a second read;
+      // an existing horizon stays fixed while this pass is resumed after a crash.
+      const results=await this.db.batch<Progress>([...this.leaseGuard(job,revision),
+        this.stmt('INSERT OR IGNORE INTO reconciliation_progress(target_key) VALUES(?)',job.target_key),
+        this.stmt(`UPDATE reconciliation_progress SET horizon=CASE WHEN horizon=0 THEN
+          coalesce((SELECT max(rowid) FROM publication_attempts WHERE target_key=?),0) ELSE horizon END
+          WHERE target_key=? RETURNING cursor,horizon`,job.target_key,job.target_key)]);
+      const progress=results.at(-1)?.results[0];if(results.some(r=>!r.success) || !progress)throw new Rejected('progress_unavailable');return progress;
+    }
     await this.batch([...this.leaseGuard(job,revision),
       this.stmt('INSERT OR IGNORE INTO reconciliation_progress(target_key) VALUES(?)',job.target_key),
       this.stmt('UPDATE reconciliation_progress SET horizon=coalesce((SELECT max(rowid) FROM publication_attempts WHERE target_key=?),0) WHERE target_key=? AND horizon=0',job.target_key,job.target_key)]);

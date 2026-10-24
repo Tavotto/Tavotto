@@ -14,7 +14,7 @@ export async function verification(s:LiveService,input:number|Target,head:string
   if(!p || p.conclusion!=='success')throw new Rejected('proof_not_confirmed');
   const proof=parseProof(p.proof_text,await s.store.databaseNow());
   if(p.revision!==proof.revision || p.expires!==proof.expires_at)throw new Rejected('proof_not_confirmed');
-  const current=await s.evaluateTarget(target,VERIFICATION_FINAL_SQL);
+  const current=await s.evaluateTarget(target,VERIFICATION_FINAL_SQL,proof.revision);
   if(proof.kind!==target.kind || proof.pr!==pr || proof.head_sha!==head || proof.repository_id!==s.c.repositoryId || current.conclusion!=='success' ||
     current.proof.revision!==proof.revision || !sameBinding(proof,current.proof))throw new Rejected('qualification_changed');
   await s.github.readPublication(p);
