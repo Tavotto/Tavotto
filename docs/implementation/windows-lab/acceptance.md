@@ -225,6 +225,28 @@ cn-prod 路由上不认，用 `provider add --use` 设的默认；Codex 走 `wir
   runner 工作目录下的进程；本机设同一变量同样红。用例不封闭（自托管 `_lab-qualification` 也设这个变量），与 taskkill
   无关，修复在 `fix/win-nonadmin-process-kill`。「结束进程不可靠」的独立证据是前三处。
 
+## H. 桌面宿主 L2（`test desktop-hosts --mode …`，2026-10-25）
+
+固定版本安装包取自 winget-pkgs 清单（URL + SHA-256），Lab 上下载后核散列、核 Authenticode；非管理员 currentUser 静默装，
+`window_probe.py` 在会话 1 里等主窗口（可见、未 cloaked、有标题、属于安装目录进程、稳定 5 s），截图后结束进程、卸载。
+海外 CDN 经 DMIT（用户 10-25 授权，一次一个），国内 CDN 直连。
+
+| 宿主 | 版本 | 下载线路 | 签名 | 主窗口 | L2 | L3+ | run |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| VS Code | 1.141.2 | 直连 | Valid · Microsoft Corporation | 「Visual Studio Code」8.4 s | PASS | BLOCKED（Copilot 账户） | `20261024T173951Z-271d2a` |
+| TRAE CN | 3.4.4 | 直连 | Valid · 北京引力弹弓科技有限公司 | 「TRAE CN」20.0 s | PASS | BLOCKED（TRAE 账户） | `20261024T174527Z-78c4b7` |
+| WorkBuddy 桌面 | 5.8.3 | 直连 | Valid · Tencent Technology (Shenzhen) | 「WorkBuddy」7.2 s | PASS | BLOCKED（腾讯账户；其 CLI 已 L5，见 G4） | `20261024T174804Z-f024cc` |
+| Cursor | 3.20.14 | DMIT Trojan | Valid · Anysphere, Inc. | 「Cursor Agents」35.4 s | PASS | BLOCKED（Cursor 账户） | `20261024T175152Z-c549e6` |
+| ZCode | 3.14.1 | DMIT Trojan | Valid · 北京智谱华章科技股份有限公司 | 「ZCode」8.0 s | PASS | BLOCKED（Z.AI 账户） | `20261024T181616Z-2c6296` |
+| Claude Desktop | 2.42304.2 | DMIT Trojan | Valid · Anthropic, PBC | 「Claude」6.9 s（登录页） | PASS | BLOCKED（Anthropic 账户 + 地区政策） | `20261024T181003Z-e8f7d3` |
+
+六个都卸载干净、无残留进程。过程中记下的事实：ZCode（electron-builder NSIS）卸载项的 `InstallLocation` 为空、
+`DisplayIcon` 指向 `.ico`，第一次 run `20261024T175426Z-2f5c94` 因此找不到主程序判 FAIL（执行器缺陷，不是宿主问题），
+改成在图标 / 卸载器目录里找后通过。Server 2025 上没装 VC++ 2015+ 运行库（winget 记为 ZCode 的依赖），ZCode 照样起得来。
+
+**下一步（用户 10-25：下周做）**：桌面版 L3–L5 只对「底下跑 Claude Code / Codex」的路径可做——VS Code / Cursor / TRAE
+里的 Claude Code 扩展与 Codex 扩展，隔离配置接 DeepSeek，判定仍按 `mcp_recorder`；另加 CC-Switch 的 MCP 同步路径一条。
+
 ## E. 安全与仓库
 
 | 验收项 | 状态 | 说明 |
