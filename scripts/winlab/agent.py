@@ -1191,8 +1191,10 @@ def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, secret: dict) -> dic
             str(exe),
             "mcp",
             "add",
+            "tavotto",
             "--scope",
             "user",
+            # `-e` 是可变长选项：名字必须在它之前，`--` 截断后才是命令（实测放在名字前会把名字当成变量吞掉）
             # 只给 MCP 服务器它需要的 Tavotto 变量；模型凭据只在宿主自己的环境里
             "-e",
             f"TAVOTTO_MCP_ROOTS={proj}",
@@ -1200,7 +1202,6 @@ def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, secret: dict) -> dic
             f"TAVOTTO_DATA_DIR={run_dir / 'work' / 'tavotto-data'}",
             "-e",
             "TAVOTTO_NO_TELEMETRY=1",
-            "tavotto",
             "--",
             *server,
         ],
@@ -1209,19 +1210,24 @@ def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, secret: dict) -> dic
         ev / "mcp-add",
         120,
     )
-    base = [
-        str(exe),
-        "-p",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--max-turns",
-        "16",
-        "--allowedTools",
-        "mcp__tavotto",
-    ]
-    r1 = _run_logged([*base, LIVE_SESSION_1], proj, henv, ev / "session-1", 1200)
-    r2 = _run_logged([*base, LIVE_SESSION_2], proj, henv, ev / "session-2", 600)
+
+    def claude_print(prompt: str) -> list[str]:
+        # 提示词紧跟 `-p`：`--allowedTools` 是可变长选项，放在它后面的提示词会被当成工具名吞掉
+        return [
+            str(exe),
+            "-p",
+            prompt,
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--max-turns",
+            "16",
+            "--allowedTools",
+            "mcp__tavotto",
+        ]
+
+    r1 = _run_logged(claude_print(LIVE_SESSION_1), proj, henv, ev / "session-1", 1200)
+    r2 = _run_logged(claude_print(LIVE_SESSION_2), proj, henv, ev / "session-2", 600)
     _scrub(ev, secret["api_key"])
     s1 = parse_stream(
         Path(f"{ev / 'session-1'}.stdout.log").read_text(encoding="utf-8", errors="replace")
