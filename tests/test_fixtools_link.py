@@ -563,3 +563,19 @@ def test_trailing_punctuation_is_stripped_but_the_extension_dot_stays(box, tail)
     ctx, script, data = _setup(box, ask=None)
     _ask_with(ctx, [{"id": "a", "label": f"see ~/Downloads/data/x.csv{tail} for details"}])
     assert len(ctx.user_chosen_paths) == 1
+
+
+def test_try_run_reaches_numpy_loadtxt_that_is_imported_only_inside_the_script(box):
+    # numpy 在脚本里才 import：改指装得太早就包不到 DataSource.open，np.loadtxt 先查存在性会绕过
+    src = (
+        "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+        "import numpy as np\n"
+        "a = np.loadtxt('data/x.txt', delimiter=',')\n"
+        "plt.plot(a[:, 0], a[:, 1])\n"
+    )
+    script = put(box.proj / "fig.py", src)
+    data = put(box.home / "Downloads" / "data" / "x.txt", "1,2\n3,4\n")
+    inputremap.add_rule(box.proj, {"kind": "prefix", "from": "", "to": str(data.parent.parent)})
+    ctx = make_ctx(box, script_path=script, environments={"e": sys.executable})
+    r = call(ctx, "try_run", {"env": "e"})
+    assert "exit code 0" in r.content and "figures: 1" in r.content, r.content
