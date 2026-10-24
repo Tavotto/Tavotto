@@ -26,7 +26,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from . import fixtools
@@ -47,6 +47,16 @@ FIX_LIMITS = Limits(
 )
 KEEP_SESSIONS = 8
 CARD_KINDS = ("approve", "choice", "pick", "send")
+
+#: 卡住检测（秒；测试里改小）。ADR 0149 D3：任何一种模式都不许静默挂着
+DELIVER_WAIT = 20.0  # CLI 报「MCP 工具调用开始」后应用这边这么久没收到回调 = 工具没送达（多半在等 CLI 自己的审批）
+STALL_IDLE = 120.0  # 没有工具在跑、没有 CLI 输出 / 模型事件这么久 = 卡住
+STALL_HARD = 300.0  # 卡住持续这么久自动取消，outcome=failed，原因码 = 卡住的原因
+FORCE_SETTLE = 10.0  # 自动取消后内置循环（模型请求挂住）还没返回，这么久后强行收尾
+WATCH_TICK = 0.5
+STALL_APPROVAL = "cli_waiting_approval"
+STALL_NOT_DELIVERED = "cli_tool_not_delivered"
+STALL_IDLE_CODE = "stalled"
 
 STATE_RUNNING = "running"
 STATE_WAITING = "waiting"
@@ -99,6 +109,19 @@ more than twice.
 """
 
 
+def activity_detail(args: object) -> str:
+    """进度那一句话里点名的东西（包名 / 模块名）：只取这几个键、短、脱敏；其余参数不进进度。"""
+    if not isinstance(args, dict):
+        return ""
+    for key in ("packages", "package", "module", "name"):
+        v = args.get(key)
+        if isinstance(v, list):
+            v = ", ".join(str(x) for x in v[:4])
+        if isinstance(v, str) and v.strip():
+            return fixtools.scrub(v.strip())[:60]
+    return ""
+
+
 def _first_message(ctx: fixtools.FixContext, script: str) -> str:
     report = read_run_report(ctx, {})
     body = report.content if not report.is_error else "(no report available; call read_run_report)"
@@ -133,11 +156,34 @@ class FixToolset:
     task_type = "fix_environment"
     default_limits = FIX_LIMITS
 
-    def __init__(self, ctx: fixtools.FixContext, script: str, audit: AuditLog | None = None):
+    def __init__(
+        self,
+        ctx: fixtools.FixContext,
+        script: str,
+        audit: AuditLog | None = None,
+        on_activity: Callable[[str, str, str], None] | None = None,
+    ):
         self.ctx, self.script, self.audit = ctx, script, audit
+        self.on_activity = on_activity
 
     def tools(self, envelope: RunEnvelope) -> list[Tool]:
-        return fixtools.build_agent_tools(self.ctx, self.audit)
+        tools = fixtools.build_agent_tools(self.ctx, self.audit)
+        if self.on_activity is None:
+            return tools
+        note = self.on_activity
+
+        def wrap(t: Tool) -> Tool:
+            def handler(args: dict, _inner=t.handler, _name=t.name):
+                detail = activity_detail(args)
+                note(_name, "start", detail)
+                try:
+                    return _inner(args)
+                finally:
+                    note(_name, "end", detail)
+
+            return replace(t, handler=handler)
+
+        return [wrap(t) for t in tools]
 
     def first_message(self, envelope: RunEnvelope) -> str:
         return _first_message(self.ctx, self.script)
@@ -178,6 +224,8 @@ class CliLaunch:
     argv: list[str]
     env: dict[str, str]
     cwd: str
+    #: CLI 结构化输出的逐行解析器（`AgentDefinition.fix_event_parser()`）；只用来显示进度 / 发现卡住，从不当结论
+    parse: Callable[[str], list[dict]] | None = None
 
 
 #: 收尾时等在途工具结束的第一档上限（秒）；到点还没结束就如实记一条警告，**仍不发布终态**，继续等到它结束
@@ -214,6 +262,20 @@ class FixSession:
     tool_lock: threading.Lock = field(default_factory=threading.Lock)
     #: CLI 会话收尾中（取消 / 超时 / 进程退出）：不再接受新的工具调用，在途的那个等结束后才发布终态
     closing: threading.Event = field(default_factory=threading.Event)
+    cli: bool = False
+    done: threading.Event = field(default_factory=threading.Event)
+    #: 进度与卡住（D3）：`activity` 是最近一次工具活动；`stalled` 非空 = 现在卡住了，界面要说原因
+    activity: dict | None = None
+    stalled: dict | None = None
+    stall_since: float | None = None
+    stall_code: str = ""  # 自动取消时记下的原因码；收尾时据此判 failed
+    last_progress: float = field(default_factory=time.monotonic)
+    inflight: int = 0
+    #: CLI 报告的 MCP 工具调用开始时刻 / 应用实际收到的回调次数（按工具名）；开始数多于回调数 = 有调用没送达
+    begins: dict = field(default_factory=dict)
+    cbs: dict = field(default_factory=dict)
+    approval: str | None = None  # CLI 自己在等审批（值 = 工具名，可空串）
+    denied: set = field(default_factory=set)
 
 
 def _same(a: str, b: object) -> bool:
@@ -268,6 +330,10 @@ class FixSessions:
             "reason": s.reason,
             "steps": s.steps,
             "seq": s.seq,
+            #: 最近一次工具活动 `{tool, phase: start|end|denied, detail, at_ms}`（界面按 tool 映射成一句话）；还没有 = None
+            "activity": dict(s.activity) if s.activity else None,
+            #: 现在卡住了：`{reason: cli_waiting_approval|cli_tool_not_delivered|stalled, detail}`；没卡住 = None
+            "stalled": dict(s.stalled) if s.stalled else None,
         }
 
     def _notify(self, s: FixSession) -> None:
@@ -334,8 +400,11 @@ class FixSessions:
             limits=limits or FIX_LIMITS,
             redactor=redactor,
         )
-        toolset = FixToolset(ctx, script, audit)
         s.ctx, s.audit = ctx, audit if audit is not None else AuditLog()
+        s.cli = cli is not None
+        toolset = FixToolset(
+            ctx, script, audit, on_activity=lambda t, ph, d: self._activity(s, t, ph, d)
+        )
 
         if cli is not None:
             prompt = cli_prompt(ctx, script)
@@ -351,6 +420,9 @@ class FixSessions:
             def work() -> None:
                 self._work(s, wrapped, toolset, envelope)
 
+        threading.Thread(
+            target=self._watch, args=(s,), name=f"fixwatch-{s.id}", daemon=True
+        ).start()
         if background:
             s.thread = threading.Thread(target=work, name=f"fix-{s.id}", daemon=True)
             s.thread.start()
@@ -362,6 +434,7 @@ class FixSessions:
         done: dict = {}
 
         def emit(event: dict) -> None:
+            s.last_progress = time.monotonic()  # 模型有任何事件 = 活着
             kind = event.get("type")
             if kind == "tool":
                 s.steps += 1
@@ -380,8 +453,12 @@ class FixSessions:
     def _settle(self, s: FixSession, failed_reason: str) -> None:
         """会话收尾：`finish` 交来了结论就采用，取消就是 cancelled，否则 failed（原因码是闭集，界面按它选一句话）。"""
         with self._lock:
+            if s.state == STATE_FINISHED:
+                return  # 已收尾（看门狗强行收尾后，卡住的循环线程迟到的那次不再改结局）
             reported = s.reported
-            if s.cancel.is_set() and reported is None:
+            if s.stall_code and reported is None:
+                s.outcome, s.summary, s.reason = OUTCOME_FAILED, "", s.stall_code
+            elif s.cancel.is_set() and reported is None:
                 s.outcome, s.summary, s.reason = OUTCOME_CANCELLED, "", "cancelled"
             elif reported is not None:
                 s.outcome, s.summary = reported
@@ -390,8 +467,123 @@ class FixSessions:
                 # AI 没调 finish 就停了（预算 / 网络 / 额度 / 认证…）：按没修好算
                 s.outcome = OUTCOME_FAILED
                 s.reason = failed_reason[:24]
-            s.state, s.card, s.pending = STATE_FINISHED, None, None
+            s.state, s.card, s.pending, s.stalled = STATE_FINISHED, None, None, None
+            s.done.set()
         self._notify(s)
+
+    # ---- 进度与卡住（D3） -------------------------------------------------
+    def _activity(self, s: FixSession, tool: str, phase: str, detail: str = "") -> None:
+        now = time.monotonic()
+        with self._lock:
+            s.activity = {
+                "tool": tool,
+                "phase": phase,
+                "detail": detail,
+                "at_ms": int(time.time() * 1000),
+            }
+            s.last_progress = now
+            if phase == "start":
+                s.inflight += 1
+            elif phase == "end":
+                s.inflight = max(0, s.inflight - 1)
+        self._notify(s)
+
+    def _audit_event(self, s: FixSession, code: str, summary: str, tool: str = "") -> None:
+        """会话级事件（卡住 / 自动取消 / CLI 权限拒绝）进 `fix_audit.jsonl`，诊断包「修复经过」随之可见。不抛。"""
+        if s.audit is None:
+            return
+        try:
+            s.audit.record(
+                session=s.id,
+                step=s.ctx.step if s.ctx else 0,
+                tool="_session",
+                tier="observe",
+                args={"tool": tool},
+                approved_by="blocked",
+                result={"ok": False, "code": code, "summary": summary},
+            )
+        except Exception:  # noqa: BLE001 - 审计失败不影响会话
+            LOG.debug("fix audit event failed", exc_info=True)
+
+    def _cli_event(self, s: FixSession, ev: dict) -> None:
+        kind, tool = str(ev.get("kind") or ""), str(ev.get("tool") or "")[:60]
+        now = time.monotonic()
+        audit = None
+        with self._lock:
+            s.last_progress = now
+            if kind == "mcp_begin":
+                s.begins.setdefault(tool, []).append(now)
+            elif kind == "approval":
+                s.approval = tool
+                audit = ("cli_waiting_approval", "the CLI is waiting for its own approval")
+            elif kind == "denied" and tool not in s.denied:
+                s.denied.add(tool)
+                s.activity = {
+                    "tool": tool,
+                    "phase": "denied",
+                    "detail": "",
+                    "at_ms": int(time.time() * 1000),
+                }
+                audit = ("cli_permission_denied", "the CLI refused one of its own tools")
+        if audit is not None:
+            self._audit_event(s, audit[0], audit[1], tool)
+            self._notify(s)
+
+    def _watch(self, s: FixSession) -> None:
+        """看门狗（两种模式共用）：发现卡住就写进会话状态让界面说出原因，卡得太久自动取消。等用户点卡片不算卡住。"""
+        forced_at: float | None = None
+        while not s.done.wait(WATCH_TICK):
+            now = time.monotonic()
+            new_stall = auto_cancel = None
+            changed = False
+            with self._lock:
+                if s.state == STATE_FINISHED:
+                    return
+                code, detail = "", ""
+                if s.state == STATE_WAITING:
+                    s.last_progress = now
+                elif s.approval is not None:
+                    code, detail = STALL_APPROVAL, s.approval
+                else:
+                    for name, times in s.begins.items():
+                        got = s.cbs.get(name, 0)
+                        if len(times) > got and now - times[got] > DELIVER_WAIT:
+                            code, detail = STALL_NOT_DELIVERED, name
+                            break
+                    else:
+                        if s.inflight == 0 and now - s.last_progress > STALL_IDLE:
+                            code = STALL_IDLE_CODE
+                if code and (s.stalled is None or s.stalled["reason"] != code):
+                    s.stalled = {"reason": code, "detail": detail}
+                    s.stall_since = now
+                    new_stall, changed = (code, detail), True
+                elif not code and s.stalled is not None:
+                    s.stalled, s.stall_since, changed = None, None, True
+                if (
+                    s.stalled
+                    and s.stall_since is not None
+                    and now - s.stall_since > STALL_HARD
+                    and not s.cancel.is_set()
+                ):
+                    s.stall_code = s.stalled["reason"]
+                    auto_cancel = (s.stall_code, s.stalled["detail"])
+            if new_stall:
+                self._audit_event(s, new_stall[0], "the repair AI looks stuck", new_stall[1])
+            if auto_cancel:
+                self._audit_event(
+                    s, auto_cancel[0], "stopped automatically after being stuck", auto_cancel[1]
+                )
+                s.cancel.set()
+                forced_at = now
+            if changed:
+                self._notify(s)
+            if (
+                forced_at is not None
+                and not s.cli
+                and now - forced_at > FORCE_SETTLE
+                and s.inflight == 0
+            ):
+                self._settle(s, s.stall_code)  # 模型请求挂住、循环线程回不来：不能让会话永远占着位
 
     # ---- CLI 连接（D3） -------------------------------------------------
     def _work_cli(
@@ -416,7 +608,9 @@ class FixSessions:
             self._settle(s, "cli_start")
             return
         sess["proc"] = proc
-        drain = threading.Thread(target=self._drain, args=(proc,), daemon=True)
+        drain = threading.Thread(
+            target=self._read_events, args=(s, proc, launch.parse), daemon=True
+        )
         drain.start()
         started = time.monotonic()
         finish_seen: float | None = None
@@ -458,11 +652,19 @@ class FixSessions:
         s.tool_lock.acquire()
         s.tool_lock.release()
 
-    @staticmethod
-    def _drain(proc) -> None:
+    def _read_events(self, s: FixSession, proc, parse) -> None:
+        """读 CLI 的结构化输出：逐行解析成进度 / 卡住的线索，**不当结论、不入日志**（不读会把管道写满）。"""
         try:
-            for _ in proc.stdout:
-                pass
+            for line in proc.stdout:
+                s.last_progress = time.monotonic()  # CLI 有输出 = 活着
+                if parse is None:
+                    continue
+                try:
+                    events = parse(line.strip())
+                except Exception:  # noqa: BLE001 - 解析器的缺陷不拖垮会话
+                    continue
+                for ev in events:
+                    self._cli_event(s, ev)
         except (OSError, ValueError):
             pass
 
@@ -505,10 +707,18 @@ class FixSessions:
         tool = fixtools.REGISTRY.get(name) if isinstance(name, str) else None
         if tool is None:
             return {"content": "Unknown tool.", "is_error": True}
-        with s.tool_lock:
-            if s.cancel.is_set() or s.closing.is_set() or s.finished.is_set() or s.ctx is None:
-                return {"content": "The repair session has ended.", "is_error": True}
-            result = fixtools.run_tool(tool, s.ctx, args, s.audit)
+        detail = activity_detail(args)
+        with self._lock:  # 回调到了：CLI 报告的这次调用送达了，它自己的「在等审批」也解除了
+            s.cbs[name] = s.cbs.get(name, 0) + 1
+            s.approval = None
+        self._activity(s, name, "start", detail)
+        try:
+            with s.tool_lock:
+                if s.cancel.is_set() or s.closing.is_set() or s.finished.is_set() or s.ctx is None:
+                    return {"content": "The repair session has ended.", "is_error": True}
+                result = fixtools.run_tool(tool, s.ctx, args, s.audit)
+        finally:
+            self._activity(s, name, "end", detail)
         s.steps += 1
         self._notify(s)
         return {"content": result.content, "is_error": bool(result.is_error)}
@@ -674,7 +884,9 @@ def cli_launcher(
         )
         argv, extra_env = ai_bridge.fix_cli_command(agent_id, run_ctx)
         env = ai_bridge._spawn_env(argv[0], {**extra_env, fixmcp.ENV_TOKEN: token})
-        return CliLaunch(argv=argv, env=env, cwd=str(project_root))
+        agent = ai_agents.get_agent(agent_id)
+        parse = agent.fix_event_parser() if agent else None
+        return CliLaunch(argv=argv, env=env, cwd=str(project_root), parse=parse)
 
     return build
 

@@ -525,4 +525,13 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   结束只用 `ai_bridge._terminate` / `_await_exit`（POSIX `killpg` 自己的进程组、Windows `taskkill /T /PID`），**绝不按名字杀**。没调 `finish` 就退出 = `failed`，`reason ∈ {cli_no_finish, cli_exit, cli_start, budget}`（前端落到「AI 这次没能修好」那句，无需新文案）。
 - **卫生**：MCP 配置只在本次启动参数里，**不写 `~/.codex`、`~/.claude`**（用例用假主目录断言）；Tavotto 不读、不存 CLI 的登录凭据；回环请求显式绕开系统代理；`fix-mcp` 的 stdout 归协议独占，没有令牌或 URL 不是 `http://127.0.0.1:` 就退出码 2。
 - **真机核实（2026-10-24，Codex 0.163.0 / Claude Code 2.1.310，隔离数据目录 + 假执行器）**：两边整链都走通（CLI → `tavotto fix-mcp` → 回调 → `run_tool` → 弹卡 → `finish`），`env_vars` 转令牌、`${VAR}` 展开、`--strict-mcp-config`、`dontAsk` 均生效，`~/.codex` / `~/.claude` 未被写。真机发现并已修：Codex exec 模式下 MCP 工具默认要它自己的审批、没人点就一直挂着 → 本服务加 `default_tools_approval_mode="approve"`（要用户点头的改动仍由 Tavotto 弹卡）；Claude Code 2.1 已没有 `MultiEdit`（deny 里写它会报 matches no known tool）。仍知：Codex 没有 `--strict-mcp-config` 的对应项，用户自己在 `~/.codex/config.toml` 配的其它 MCP 服务也会出现在修复会话里（它们的工具仍走 Codex 默认审批，exec 模式下不会自动执行）。
+- **没有可用环境的路（D3 真机后）**：`SYSTEM_PROMPT` 的 3b 条（内置循环与 CLI 共用）；`change_python` 的 `version` 可省，`FixContext.python_changer` 由应用注入 `executors.default_python_changer`
+  （`pyversionfix.plan_python_change` 推范围 + `apply_python_change` 在受管环境另建一代并按联合计划补脚本依赖，建好后 `managedenv.python_of` 给新解释器、登记成环境 id）；`list_environments` 为空时文字里点名 `change_python`。看护 `tests/test_fixflow_noenv.py`。
+- **进度与卡住**（`fixsession.py`，看护 `tests/test_fixstall.py`）：公开状态 `activity = {tool, phase: start|end|denied, detail, at_ms}`（`detail` 只取 packages / package / module / name、脱敏、≤60 字，路径与其它参数不进）、
+  `stalled = {reason, detail}`（`reason ∈ cli_waiting_approval | cli_tool_not_delivered | stalled`）。来源：内置循环包装工具 handler 的开始 / 结束；CLI 每次 `/tool` 回调；CLI 结构化输出
+  （Codex `exec --json`、Claude `-p --output-format stream-json --verbose`）经适配器的 `fix_event_parser()` 逐行解析成 `mcp_begin / mcp_end / approval / denied / output`——**只用于进度与卡住线索，从不当结论**。
+  看门狗线程（每会话一个，`_watch`）：`DELIVER_WAIT`=20 s 内 CLI 报告的调用没收到回调 → `cli_tool_not_delivered`；出现 CLI 审批请求 → `cli_waiting_approval`（回调一到即解除）；`STALL_IDLE`=120 s 无工具在跑、无 CLI 输出 / 模型事件 → `stalled`；
+  等卡片（`state=waiting`）与在途工具都不算。卡住持续 `STALL_HARD`=300 s 自动取消：`stall_code` 记下，`_settle` 判 `failed` + 该原因码；内置循环的模型请求挂住、循环线程回不来时 `FORCE_SETTLE`=10 s 后看门狗强行收尾（`_settle` 幂等，迟到的循环线程不再改结局）。
+  卡住与自动取消、Claude 的权限拒绝（`cli_permission_denied`）都写 `fix_audit.jsonl`（`tool=_session`）。
+- **Codex 的取舍**：`--ignore-user-config` 仅在 `endpoint_args` 非空（Tavotto 显式给了 provider）时加并带 `-m <接口型号>`；官方登录态不加。**没核实的**：Codex `--json` 里 MCP 调用 / 审批事件的确切字段名（解析器按 `item.*` 的 `type` 含 `mcp` / `approval` 写，且对未知事件一律当「有输出」）。
 

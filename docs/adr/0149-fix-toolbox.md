@@ -108,3 +108,12 @@ Codex 用 `--sandbox read-only`——它的自带命令行**读不受限**（凭
 所有改动只能经 MCP 工具（fixtools）。MCP 配置只出现在本次启动参数里，**不写 `~/.codex`、`~/.claude`**；Tavotto 不读、不存 CLI 的登录凭据。
 **不在 D3**：Windows 沙盒、让 CLI 自带命令行也走审计（做不到，它不经 `run_tool`）。规则全文：`docs/rules/backend/ai-agent-bridge.md` 的「D3」一节。
 
+**修订（2026-10-24，D3 真机后）**：① 「项目还没有可用环境」不许直接放弃：提示词（内置循环与 CLI 同一份）规定先 `propose_fix` 一句话说清整套方案，用户确认后
+`change_python`（新建 Tavotto 受管环境，`version` 可省，缺省按脚本 / 项目声明与支持区间挑；执行器是 `pyversionfix` 的计划 + 执行，应用侧默认注入）→ `install_packages` 到新环境 id → `try_run` → `finish(fixed)`。
+② 三种模式（Codex CLI / Claude CLI / 内置循环）都**看得见在干什么、卡住时用户知道原因**：会话公开状态多 `activity`（最近一次工具活动）与 `stalled`（现在卡住了及原因）；
+看门狗发现「CLI 报告 MCP 调用开始而应用 20 秒没收到回调」（`cli_tool_not_delivered`）、「CLI 在等它自己的审批」（`cli_waiting_approval`）、「120 秒既无工具活动也无输出」（`stalled`），
+卡住持续 5 分钟自动取消，`outcome=failed`、原因码即上述之一，并进 `fix_audit.jsonl`（`tool=_session`）与诊断包「修复经过」。等用户点卡片、工具自己在跑都不算卡住。
+③ 从源头减少 CLI 审批：Codex 对本服务 `default_tools_approval_mode="approve"`；**`--ignore-user-config` 只在 Tavotto 已显式给了 provider + 型号（用户为 Codex 选了第三方接口）时加**，
+去掉用户自己的 MCP 服务与 hooks；官方登录态不加（默认型号 / 认证方式可能就写在用户的 config.toml 里，忽略它会换掉用户的设定），那种情况靠看门狗兜底。Tavotto 仍不读 CLI 的凭据文件。
+Claude 的 `--permission-mode dontAsk` 下未放行的工具直接拒绝（不等待），stream-json 里的拒绝读出来进 `activity` 与审计，不算卡住。
+

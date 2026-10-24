@@ -1034,10 +1034,20 @@ def fix_cli_command(
     res = ai_agents.resolve(agent)
     if res.argv is None:
         raise AgentError("ai_agent_not_installed", {"agent": agent_id})
-    extra_args, extra_env = ai_providers.spawn_overrides(agent_id, ai_providers.resolve(agent_id))
+    rec = ai_providers.resolve(agent_id)
+    model = None
+    if rec:
+        model = str(rec.get("default_model") or "").strip() or next(
+            iter(rec.get("models") or []), None
+        )
+    extra_args, extra_env = ai_providers.spawn_overrides(agent_id, rec, model)
     spec = agent.build_fix_command(
         replace(
-            ctx, argv=list(res.argv), endpoint_args=list(extra_args), endpoint_env=dict(extra_env)
+            ctx,
+            argv=list(res.argv),
+            endpoint_args=list(extra_args),
+            endpoint_env=dict(extra_env),
+            model=model if (extra_args or extra_env) else None,
         )
     )
     if spec is None:

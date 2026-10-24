@@ -511,6 +511,8 @@ def test_session_exposes_no_card_once_it_is_not_waiting(box):
         "reason",
         "steps",
         "seq",
+        "activity",
+        "stalled",
     }
 
 

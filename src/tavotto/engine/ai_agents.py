@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -233,6 +234,8 @@ class FixRunContext:
     deny: dict = field(default_factory=dict)
     endpoint_args: list[str] = field(default_factory=list)
     endpoint_env: dict[str, str] = field(default_factory=dict)
+    #: 用户给这个 Agent 选了第三方接口时的型号（接口自己的型号名）；官方登录态为 None（CLI 用自己的默认）
+    model: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -525,6 +528,12 @@ class AgentDefinition:
         """AI 修复会话里起 CLI 的命令（MCP 接法，ADR 0149 D3）。**默认 None = 不支持**。"""
         return None
 
+    def fix_event_parser(self) -> Callable[[str], list[dict]] | None:
+        """修复会话读 CLI 结构化输出（stdout 一行一个事件）用的解析器工厂；每次会话取一个新的（可带状态）。
+        解析器把一行变成 0..n 个 `{"kind": "mcp_begin"|"mcp_end"|"approval"|"denied"|"output", "tool": 工具名(不带前缀)}`。
+        **事件只用来显示进度和发现卡住，从不当结论**（结论只认 `finish` 工具）。默认 None = 不解析。"""
+        return None
+
     def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
         raise NotImplementedError
 
@@ -749,6 +758,7 @@ class CodexAgent(AgentDefinition):
             "exec",
             "-C",
             ctx.cwd,
+            "--json",  # JSONL 事件：只用来显示进度 / 发现卡住，不当结论
             "--sandbox",
             "read-only",
             "--skip-git-repo-check",
@@ -770,7 +780,38 @@ class CodexAgent(AgentDefinition):
             'approval_policy="never"',
         ]
         cmd += ctx.endpoint_args
+        if ctx.endpoint_args:
+            # Tavotto 已把 provider（-c model_provider…）和型号都显式给了：不再加载用户的 config.toml——
+            # 去掉用户自己的 MCP 服务与 hooks（它们会被拉进修复会话），登录态仍在 CODEX_HOME，Tavotto 不读。
+            # 官方登录态（没有 endpoint_args）不加：默认型号 / 认证方式可能就写在用户 config.toml 里，忽略它会换掉用户的设定
+            cmd += ["--ignore-user-config"]
+            if ctx.model:
+                cmd += ["-m", ctx.model]
         return SpawnSpec(cmd + [ctx.prompt], dict(ctx.endpoint_env))
+
+    def fix_event_parser(self) -> Callable[[str], list[dict]] | None:
+        def parse(line: str) -> list[dict]:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                return []
+            if not isinstance(ev, dict):
+                return []
+            etype = str(ev.get("type", ""))
+            item = ev.get("item") if isinstance(ev.get("item"), dict) else {}
+            itype = str(item.get("type") or item.get("item_type") or "")
+            tool = str(item.get("tool") or ev.get("tool") or "")
+            low = (etype + " " + itype).lower()
+            if "approval" in low or "elicitation" in low:
+                return [{"kind": "approval", "tool": tool}]
+            if "mcp" in itype.lower() and str(item.get("server") or "tavotto_fix") == "tavotto_fix":
+                if etype.endswith(".started") or etype.endswith("begin"):
+                    return [{"kind": "mcp_begin", "tool": tool}]
+                if etype.endswith(".completed") or etype.endswith("end"):
+                    return [{"kind": "mcp_end", "tool": tool}]
+            return [{"kind": "output", "tool": ""}]
+
+        return parse
 
     def classify_event(self, line: str, state: dict) -> list[tuple[str, str]]:
         try:
@@ -1062,6 +1103,9 @@ class ClaudeAgent(AgentDefinition):
             *ctx.argv,
             "-p",
             ctx.prompt,
+            "--output-format",
+            "stream-json",  # 一行一个事件：只用来显示进度 / 发现权限拒绝，不当结论
+            "--verbose",
             "--permission-mode",
             "dontAsk",
             "--allowedTools=mcp__" + ctx.mcp_name + "__*",
@@ -1073,7 +1117,55 @@ class ClaudeAgent(AgentDefinition):
         ]
         cmd += ctx.endpoint_args
         env = {"MCP_TOOL_TIMEOUT": str(int(ctx.tool_timeout_s) * 1000), **ctx.endpoint_env}
+        if ctx.model and ctx.endpoint_env:
+            cmd += ["--model", ctx.model]
         return SpawnSpec(cmd, env)
+
+    def fix_event_parser(self) -> Callable[[str], list[dict]] | None:
+        prefix = "mcp__tavotto_fix__"
+        names: dict[str, str] = {}  # tool_use id -> 工具名
+
+        def parse(line: str) -> list[dict]:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                return []
+            if not isinstance(ev, dict):
+                return []
+            out: list[dict] = []
+            t = str(ev.get("type", ""))
+            content = (
+                (ev.get("message") or {}).get("content")
+                if isinstance(ev.get("message"), dict)
+                else None
+            )
+            for block in content if isinstance(content, list) else ():
+                if not isinstance(block, dict):
+                    continue
+                if t == "assistant" and block.get("type") == "tool_use":
+                    name = str(block.get("name") or "")
+                    names[str(block.get("id") or "")] = name
+                    if name.startswith(prefix):
+                        out.append({"kind": "mcp_begin", "tool": name[len(prefix) :]})
+                elif t == "user" and block.get("type") == "tool_result":
+                    name = names.get(str(block.get("tool_use_id") or ""), "")
+                    text = block.get("content")
+                    text = text if isinstance(text, str) else json.dumps(text)[:400]
+                    if block.get("is_error") and "permission" in text.lower():
+                        out.append({"kind": "denied", "tool": name.removeprefix(prefix)})
+                    elif name.startswith(prefix):
+                        out.append({"kind": "mcp_end", "tool": name[len(prefix) :]})
+            for d in ev.get("permission_denials") or ():
+                if isinstance(d, dict):
+                    out.append(
+                        {
+                            "kind": "denied",
+                            "tool": str(d.get("tool_name") or "").removeprefix(prefix),
+                        }
+                    )
+            return out or [{"kind": "output", "tool": ""}]
+
+        return parse
 
     def _effort_ok(self, ctx: RunContext) -> bool:
         details, _families, _aliases = self._catalog()

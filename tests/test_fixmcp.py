@@ -82,7 +82,9 @@ FAKE_CLI_SLEEP = (
 )
 
 
-def start_session(box, argv: list[str], *, scope: str = "pj", env_extra: dict | None = None, **kw):
+def start_session(
+    box, argv: list[str], *, scope: str = "pj", env_extra: dict | None = None, parse=None, **kw
+):
     """起一个 CLI 会话；`argv` 是假 CLI 的命令行。返回 (session, token)。"""
     seen: dict = {}
 
@@ -90,7 +92,10 @@ def start_session(box, argv: list[str], *, scope: str = "pj", env_extra: dict | 
         seen.update(fix_id=fix_id, token=token, prompt=prompt)
         env = {**os.environ, TOKEN_ENV: token, **(env_extra or {})}
         return fixsession.CliLaunch(
-            argv=[a.replace("{FIX_ID}", fix_id) for a in argv], env=env, cwd=str(box.proj)
+            argv=[a.replace("{FIX_ID}", fix_id) for a in argv],
+            env=env,
+            cwd=str(box.proj),
+            parse=parse,
         )
 
     s = fixsession.SESSIONS.start(
