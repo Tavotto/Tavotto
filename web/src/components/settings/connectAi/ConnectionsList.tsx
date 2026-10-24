@@ -7,7 +7,7 @@ import { FieldGroup, FormSection } from '../../ui/FormSection'
 import { CompatibleEndpoint } from './CompatibleEndpoint'
 import { cx } from './copy'
 import { ConnectionManage } from './ConnectionManage'
-import { connectionOf, isCnFirst, listedVendors } from './vendors'
+import { connectionOf, connectionsOf, isCnFirst, listedVendors } from './vendors'
 import { VendorRow } from './VendorRow'
 
 const HAIRLINE = 'relative before:absolute before:inset-x-4 before:top-0 before:h-px before:bg-border'
@@ -36,6 +36,7 @@ export function ConnectionsList({ caps }: { caps: AiCapabilities }) {
                   vendor={v}
                   className={cn(i > 0 && HAIRLINE)}
                   connection={connectionOf(caps, v)}
+                  connections={connectionsOf(caps, v)}
                   onConnected={() => undefined}
                   manage={(c) => <ConnectionManage vendor={v} connection={c} />}
                 />

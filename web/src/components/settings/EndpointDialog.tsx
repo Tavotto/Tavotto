@@ -124,6 +124,7 @@ export function EndpointDialog({
   presets,
   onClose,
   onSave,
+  saveError,
 }: {
   agent: AiAgentId
   agentLabel: string
@@ -133,6 +134,8 @@ export function EndpointDialog({
   presets: AiEndpointPreset[]
   onClose: () => void
   onSave: (rec: Parameters<typeof saveAiEndpoint>[0]) => void
+  /** 保存失败的一句原因（调用方给；显示在表单底部的状态区） */
+  saveError?: string | null
 }) {
   const { t } = useTranslation(['dialogs', 'common'])
   const [label, setLabel] = useState(existing?.label ?? '')
@@ -349,6 +352,13 @@ export function EndpointDialog({
           : ag('endpoint.addTitle', { name: agentLabel })
       }
       size="md"
+      status={
+        saveError ? (
+          <p role="alert" data-endpoint-save-error className="text-sm text-danger">
+            {saveError}
+          </p>
+        ) : undefined
+      }
       footer={
         <>
           <Button variant="ghost" size="md" onClick={onClose}>

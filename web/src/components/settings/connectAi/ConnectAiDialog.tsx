@@ -13,7 +13,7 @@ import { BrandLines } from './BrandLines'
 import { CompatibleEndpoint } from './CompatibleEndpoint'
 import { cx } from './copy'
 import { MethodList } from './MethodList'
-import { connectionOf, listedVendors, vendorName } from './vendors'
+import { connectionOf, connectionsOf, listedVendors, vendorName } from './vendors'
 import { VendorRow } from './VendorRow'
 
 /** 卡上默认露几家（用户决策：5 家，其余在「更多 AI…」里） */
@@ -99,7 +99,7 @@ export function ConnectAiDialog({
             <div data-connect-scroll className="min-h-0 flex-1 overflow-y-auto px-6 pb-2">
               {step ? (
                 <div className="pt-2">
-                  <MethodList vendor={step} onConnected={done} />
+                  <MethodList vendor={step} connections={connectionsOf(caps, step)} onConnected={done} />
                 </div>
               ) : (
                 <>
@@ -109,6 +109,7 @@ export function ConnectAiDialog({
                         key={v.id}
                         vendor={v}
                         connection={connectionOf(caps, v)}
+                        connections={connectionsOf(caps, v)}
                         onConnected={done}
                         onChooseMethods={setStep}
                       />

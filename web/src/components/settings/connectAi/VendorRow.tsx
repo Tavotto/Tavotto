@@ -26,6 +26,7 @@ import { VendorKeyForm } from './VendorKeyForm'
 export function VendorRow({
   vendor,
   connection,
+  connections,
   onConnected,
   manage,
   onChooseMethods,
@@ -33,6 +34,8 @@ export function VendorRow({
 }: {
   vendor: AiVendor
   connection?: AiConnection
+  /** 这家厂商的全部连接（多方式厂商按方式各自看状态）；没给就只有 `connection` 那一条 */
+  connections?: AiConnection[]
   onConnected: (c: AiConnection) => void
   /** 设置页：已连接时点行展开的管理区 */
   manage?: (c: AiConnection) => ReactNode
@@ -48,20 +51,43 @@ export function VendorRow({
   const method = methods[0]
   const flow = useLoginFlow(vendor, method, onConnected)
 
+  const all = connections ?? (connection ? [connection] : [])
+  const anyReady = all.some((c) => c.state === 'ready')
   const ready = connection?.state === 'ready'
   const needsAuth = connection?.state === 'needs_auth'
-  const canManage = ready && !!manage && connection?.route !== 'cli:codex' && connection?.route !== 'cli:claude' && !connection?.id.startsWith('sub:')
+  const canManage = !multi && ready && !!manage && connection?.route !== 'cli:codex' && connection?.route !== 'cli:claude' && !connection?.id.startsWith('sub:')
   const unavailable = !multi && !method.available
 
   const status =
-    connection && !ready ? (
+    !multi && connection && !ready ? (
       <StatusPill tone={needsAuth ? 'warn' : 'danger'} dot data-connect-state={connection.state}>
         {needsAuth ? cx('needsAuth') : connectionErrorText(connection)}
       </StatusPill>
     ) : null
 
   let action: ReactNode
-  if (ready) {
+  if (multi) {
+    // 多种方式：「已连接」只是说有一种连好了——入口仍在，点开二级卡片可以加另一种 / 管理已连的
+    action = (
+      <span className="flex items-center gap-2">
+        {anyReady && (
+          <StatusPill tone="ok" dot data-connect-state="ready">
+            {cx('connected')}
+          </StatusPill>
+        )}
+        <Button
+          variant={anyReady ? 'ghost' : 'secondary'}
+          size="sm"
+          data-connect-action="methods"
+          aria-expanded={onChooseMethods ? undefined : open}
+          aria-label={anyReady ? cx('connect') : undefined}
+          onClick={() => (onChooseMethods ? onChooseMethods(vendor) : setOpen((v) => !v))}
+        >
+          {anyReady ? <ChevronRight size={ICON_SIZE.xs} aria-hidden /> : cx('connect')}
+        </Button>
+      </span>
+    )
+  } else if (ready) {
     action = (
       <StatusPill tone="ok" dot data-connect-state="ready">
         {cx('connected')}
@@ -69,18 +95,6 @@ export function VendorRow({
     )
   } else if (unavailable) {
     action = <span className="type-caption">{cx('needsInstall')}</span>
-  } else if (multi) {
-    action = (
-      <Button
-        variant="secondary"
-        size="sm"
-        data-connect-action="methods"
-        aria-expanded={onChooseMethods ? undefined : open}
-        onClick={() => (onChooseMethods ? onChooseMethods(vendor) : setOpen((v) => !v))}
-      >
-        {cx('connect')}
-      </Button>
-    )
   } else if (method.kind === 'key') {
     action = (
       <Button variant="secondary" size="sm" data-connect-action="key" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
@@ -138,9 +152,9 @@ export function VendorRow({
           <VendorKeyForm vendor={vendor} method={method} connectionId={connection?.id} onConnected={onConnected} />
         </div>
       )}
-      {open && !ready && multi && !onChooseMethods && (
+      {open && multi && !onChooseMethods && (
         <div className="pl-9 pt-2">
-          <MethodList vendor={vendor} onConnected={onConnected} />
+          <MethodList vendor={vendor} connections={all} onConnected={onConnected} />
         </div>
       )}
       {open && canManage && connection && <div className="pl-9 pt-2">{manage!(connection)}</div>}

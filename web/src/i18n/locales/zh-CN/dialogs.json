@@ -1330,7 +1330,9 @@
         "opencodeGo": "OpenCode Go",
         "openai": "OpenAI 官方",
         "customClaude": "自定义（Anthropic 兼容）",
-        "customCodex": "自定义（OpenAI Responses 兼容）"
+        "customCodex": "自定义（OpenAI Responses 兼容）",
+        "kimi": "Kimi",
+        "bailian": "百炼"
       },
       "vendorKey": {
         "kimiCode": "Kimi Code 会员专属 Key，与开放平台 Key 不通用",
@@ -1897,7 +1899,9 @@
         "hintChatgpt": "用 ChatGPT 订阅登录",
         "hintClaude": "用 Claude 订阅登录"
       },
-      "back": "返回"
+      "back": "返回",
+      "savedRefreshFailed": "已保存，但没能刷新状态。",
+      "retryRefresh": "重试刷新"
     }
   },
   "style": {

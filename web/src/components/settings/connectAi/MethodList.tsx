@@ -4,9 +4,11 @@ import { KeyRound, Sparkles } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AiConnection, AiVendor, AiVendorMethod } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { StatusPill } from '../../ui/StatusPill'
 import { OAuthLoginDialog } from '../OAuthLoginDialog'
+import { ConnectionManage } from './ConnectionManage'
 import { cx } from './copy'
-import { methodHint, methodName, vendorName } from './vendors'
+import { connectionErrorText, connectionForMethod, methodHint, methodName, vendorName } from './vendors'
 import { refreshAndFind, useLoginFlow } from './useLoginFlow'
 import { VendorKeyForm } from './VendorKeyForm'
 
@@ -50,9 +52,19 @@ function MethodConnect({
 
 /**
  * 二级卡片：一家厂商有多种连接方式（API Key / 订阅登录 …）时，每种方式一张可点的选项卡
- * （图标 + 方式名 + 一句短说明）；不可用的置灰并给一句原因。选中一张，它下面展开该方式的表单 / 登录。
+ * （图标 + 方式名 + 一句短说明）；不可用的置灰并给一句原因。
+ * **状态落在每种方式上**：每张卡自己显示「已连接」或异常；点没连的卡，它下面展开该方式的表单 / 登录；
+ * 点已连的 Key 类卡，展开管理（换 Key / 默认型号 / 断开）——所以一种连好了也不会堵住另一种的入口。
  */
-export function MethodList({ vendor, onConnected }: { vendor: AiVendor; onConnected: (c: AiConnection) => void }) {
+export function MethodList({
+  vendor,
+  connections = [],
+  onConnected,
+}: {
+  vendor: AiVendor
+  connections?: AiConnection[]
+  onConnected: (c: AiConnection) => void
+}) {
   useTranslation('dialogs')
   const [picked, setPicked] = useState<string | null>(null)
   const methods = vendor.methods ?? []
@@ -61,19 +73,25 @@ export function MethodList({ vendor, onConnected }: { vendor: AiVendor; onConnec
       {methods.map((m) => {
         const on = picked === m.id
         const Icon = m.kind === 'key' ? KeyRound : Sparkles
+        const conn = connectionForMethod(connections, vendor, m)
+        const ready = conn?.state === 'ready'
+        // 已连的订阅类没有可管理的东西（只能在命令行里退出登录）：卡片只显示状态，不展开
+        const clickable = m.available && !(ready && m.kind !== 'key')
         return (
           <div key={m.id} className="flex flex-col gap-2">
             <button
               type="button"
               data-connect-method={m.id}
               data-connect-method-kind={m.kind}
+              data-connect-method-state={ready ? 'ready' : (conn?.state ?? 'none')}
               aria-pressed={on}
-              disabled={!m.available}
+              disabled={!clickable}
               onClick={() => setPicked(on ? null : m.id)}
               className={cn(
                 'focus-visible:focus-ring flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-colors',
                 on ? 'border-ink-3 bg-surface-hover' : 'border-border bg-surface hover:bg-surface-hover',
                 !m.available && 'cursor-not-allowed opacity-40 hover:bg-surface',
+                m.available && !clickable && 'cursor-default hover:bg-surface',
               )}
             >
               <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-group text-ink-2">
@@ -83,8 +101,22 @@ export function MethodList({ vendor, onConnected }: { vendor: AiVendor; onConnec
                 <span className="truncate text-base font-medium text-ink">{methodName(m)}</span>
                 <span className="type-caption truncate">{m.available ? methodHint(vendor, m) : cx('needsInstall')}</span>
               </span>
+              {conn && (
+                <StatusPill
+                  tone={ready ? 'ok' : conn.state === 'needs_auth' ? 'warn' : 'danger'}
+                  dot
+                  data-connect-state={conn.state}
+                >
+                  {ready ? cx('connected') : conn.state === 'needs_auth' ? cx('needsAuth') : connectionErrorText(conn)}
+                </StatusPill>
+              )}
             </button>
-            {on && <MethodConnect vendor={vendor} method={m} onConnected={onConnected} onCancel={() => setPicked(null)} />}
+            {on &&
+              (ready && conn ? (
+                <ConnectionManage vendor={vendor} connection={conn} method={m} />
+              ) : (
+                <MethodConnect vendor={vendor} method={m} onConnected={onConnected} onCancel={() => setPicked(null)} />
+              ))}
           </div>
         )
       })}

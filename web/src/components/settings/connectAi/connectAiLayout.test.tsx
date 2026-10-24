@@ -10,7 +10,7 @@ import { t } from '@/i18n'
 import type { AiVendor } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { useAiStore } from '@/store/aiStore'
-import { connectCapsOf, vendor } from '../testCaps'
+import { connection, connectCapsOf, vendor } from '../testCaps'
 import { BrandLines } from './BrandLines'
 import { ConnectAiDialog } from './ConnectAiDialog'
 import { methodHint } from './vendors'
@@ -30,7 +30,7 @@ const OPENAI: AiVendor = vendor('openai', {
   region: 'global',
   connect: 'login',
   methods: [
-    { id: 'sub', kind: 'login', label_key: 'method.subscription', agent: 'codex', available: true },
+    { id: 'sub', kind: 'login', label_key: 'method.subscription', agent: 'codex', connection_id: 'sub:codex', available: true },
     { id: 'api', kind: 'key', label_key: 'method.apiKey', catalog_id: 'openai', key_url: 'https://keys.example/openai', available: true },
   ],
 })
@@ -245,5 +245,86 @@ describe('BrandLines：rAF 循环', () => {
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => false })
     document.dispatchEvent(new Event('visibilitychange'))
     expect(raf.mock.calls.length).toBeGreaterThan(started)
+  })
+})
+
+/* ----------------- P2：连接状态落在每种方式上 ----------------- */
+
+describe('多方式厂商：一种连好了不堵另一种的入口', () => {
+  const SUB = connection('sub:codex', { vendor: 'openai', label: 'ChatGPT', route: 'cli:codex' })
+  const KEY = connection('p_openai', { vendor: 'openai', label: 'OpenAI API', method: 'api', models: ['m1'], default_model: 'm1' })
+  const withConns = (...c: ReturnType<typeof connection>[]) =>
+    useAiStore.setState({ caps: { ...connectCapsOf(c), vendors: [DS, OPENAI, CLAUDE] } })
+
+  it('已用订阅连接：行上显示「已连接」，入口仍在；二级页里订阅卡已连接、API Key 卡仍可连', async () => {
+    withConns(SUB)
+    await render(<ConnectAiDialog open onClose={() => {}} />)
+    const row = q('[data-connect-vendor="openai"]')!
+    expect(row.querySelector('[data-connect-state="ready"]')?.textContent).toBe(cx('connected'))
+    await click(row.querySelector('[data-connect-action="methods"]'))
+    expect(q('[data-connect-method="sub"]')!.dataset.connectMethodState).toBe('ready')
+    expect(q('[data-connect-method="sub"] [data-connect-state="ready"]')).toBeTruthy()
+    const api = q<HTMLButtonElement>('[data-connect-method="api"]')!
+    expect(api.dataset.connectMethodState).toBe('none')
+    expect(api.disabled).toBe(false)
+    await click(api)
+    expect(q('[data-connect-key-form]')).toBeTruthy()
+  })
+
+  it('反过来：已连 API Key，订阅卡照常可登录；已连的 Key 卡展开是管理（换 Key / 断开）', async () => {
+    withConns(KEY)
+    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
+    expect(q('[data-connect-method="api"]')!.dataset.connectMethodState).toBe('ready')
+    expect(q('[data-connect-method="sub"]')!.dataset.connectMethodState).toBe('none')
+    await click(q('[data-connect-method="api"]'))
+    expect(q('[data-connect-manage="p_openai"]')).toBeTruthy()
+    expect(q('[data-connect-change-key]')).toBeTruthy()
+    expect(q('[data-connect-disconnect]')).toBeTruthy()
+    await click(q('[data-connect-method="sub"]'))
+    expect(calls.some((c) => c.url.endsWith('/api/ai/agents/codex/login') && c.method === 'POST')).toBe(true)
+  })
+
+  it('已连的订阅卡只显示状态，不展开', async () => {
+    withConns(SUB)
+    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
+    expect(q<HTMLButtonElement>('[data-connect-method="sub"]')!.disabled).toBe(true)
+  })
+
+  it('同一厂商两种 Key 方式：连接只算到它自己的方式上（method 字段 / catalog_id），不串', async () => {
+    const kimi = vendor('moonshot', {
+      label: 'Kimi',
+      region: 'cn',
+      methods: [
+        { id: 'moonshot:key', kind: 'key', label_key: 'method.apiKey', catalog_id: 'moonshot', available: true },
+        { id: 'kimi-code:key', kind: 'key', label_key: 'method.kimiCode', catalog_id: 'kimi-code', available: true },
+      ],
+    })
+    useAiStore.setState({
+      caps: { ...connectCapsOf([connection('p_k', { vendor: 'moonshot', method: 'kimi-code:key' })]), vendors: [kimi] },
+    })
+    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await click(q('[data-connect-vendor="moonshot"] [data-connect-action="methods"]'))
+    expect(q('[data-connect-method="moonshot:key"]')!.dataset.connectMethodState).toBe('none')
+    expect(q('[data-connect-method="kimi-code:key"]')!.dataset.connectMethodState).toBe('ready')
+    // 老后端没给 method / catalog_id、又分不出是哪种 Key：都不认
+    useAiStore.setState({ caps: { ...connectCapsOf([connection('p_k', { vendor: 'moonshot' })]), vendors: [kimi] } })
+    await click(q('[data-connect-back]'))
+    await click(q('[data-connect-vendor="moonshot"] [data-connect-action="methods"]'))
+    expect(q('[data-connect-method="moonshot:key"]')!.dataset.connectMethodState).toBe('none')
+    expect(q('[data-connect-method="kimi-code:key"]')!.dataset.connectMethodState).toBe('none')
+  })
+
+  it('账号登录类方式按 connection_id 认连接', async () => {
+    const mm = vendor('minimax', {
+      label: 'MiniMax',
+      methods: [{ id: 'o', kind: 'oauth', label_key: 'method.account', connection_id: 'minimax-oauth', available: true }, { id: 'k', kind: 'key', label_key: 'method.apiKey', catalog_id: 'minimax', available: true }],
+    })
+    useAiStore.setState({ caps: { ...connectCapsOf([connection('minimax-oauth', { vendor: 'minimax' })]), vendors: [mm] } })
+    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await click(q('[data-connect-vendor="minimax"] [data-connect-action="methods"]'))
+    expect(q('[data-connect-method="o"]')!.dataset.connectMethodState).toBe('ready')
+    expect(q('[data-connect-method="k"]')!.dataset.connectMethodState).toBe('none')
   })
 })

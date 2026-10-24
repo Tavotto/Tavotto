@@ -16,6 +16,7 @@ import { useUiStore } from '@/store/uiStore'
 import { agentCaps, capsOf, connection, connectCapsOf } from '../testCaps'
 import { BrandLogo } from '../BrandLogo'
 import { BRAND_LOGOS } from '../brandLogoData'
+import { CompatibleEndpoint } from './CompatibleEndpoint'
 import { CONNECT_AI_VISIBLE, ConnectAiDialog } from './ConnectAiDialog'
 
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
@@ -389,5 +390,62 @@ describe('BrandLogo', () => {
     expect(b.dataset.brandLogo).toBe('generic')
     expect(b.querySelector('svg')).toBeTruthy()
     expect(host.querySelector('img, image, use')).toBeNull()
+  })
+})
+
+/* ---------------------- 其他兼容接口：保存失败 / 刷新失败 ---------------------- */
+
+describe('CompatibleEndpoint', () => {
+  const ag = (k: string) => t(`settings.agents.${k}`, { ns: 'dialogs' })
+  const puts = () => calls.filter((c) => c.url === '/api/ai/endpoints' && c.method === 'PUT')
+  const fill = async () => {
+    await type(document.body.querySelector<HTMLInputElement>(`[aria-label="${ag('endpoint.name')}"]`)!, 'LAN model')
+    await type(document.body.querySelector<HTMLInputElement>(`[aria-label="${ag('endpoint.baseUrl')}"]`)!, 'https://llm.example/v1')
+  }
+  const saveBtn = () => [...document.body.querySelectorAll('button')].find((b) => b.textContent === t('common:actions.save'))!
+
+  it('保存失败：表单里显示一句原因，不关、不调 onSaved；改完能再存', async () => {
+    const onSaved = vi.fn()
+    let fail = true
+    onPost = (c) =>
+      c.url === '/api/ai/endpoints' && c.method === 'PUT'
+        ? fail
+          ? json({ code: 'endpoint_invalid', error: 'bad' }, 400)
+          : json(serverCaps)
+        : null
+    await render(<CompatibleEndpoint onClose={() => {}} onSaved={onSaved} />)
+    await fill()
+    await click(saveBtn())
+    expect(document.body.querySelector('[data-endpoint-save-error]')?.textContent).toBeTruthy()
+    expect(onSaved).not.toHaveBeenCalled()
+    expect(puts()).toHaveLength(1)
+    fail = false
+    await click(saveBtn())
+    expect(puts()).toHaveLength(2)
+    expect(onSaved).toHaveBeenCalledTimes(1)
+    expect(document.body.querySelector('[data-endpoint-save-error]')).toBeNull()
+  })
+
+  it('保存成功但刷新失败：只提示并给「重试刷新」，重试只重读、绝不再发新建', async () => {
+    const onSaved = vi.fn()
+    let capsOk = false
+    onPost = (c) => {
+      if (c.url === '/api/ai/endpoints' && c.method === 'PUT') return json(serverCaps)
+      if (c.url.startsWith('/api/ai/capabilities') && !capsOk) return json({ code: 'boom' }, 500)
+      return null
+    }
+    await render(<CompatibleEndpoint onClose={() => {}} onSaved={onSaved} />)
+    await fill()
+    await click(saveBtn())
+    expect(puts()).toHaveLength(1)
+    expect(document.body.querySelector('[data-endpoint-saved-notice]')).toBeTruthy()
+    expect(onSaved).not.toHaveBeenCalled()
+    // 再失败一次也还是只重读
+    await click(document.body.querySelector('[data-endpoint-retry-refresh]')!)
+    expect(puts()).toHaveLength(1)
+    capsOk = true
+    await click(document.body.querySelector('[data-endpoint-retry-refresh]')!)
+    expect(puts()).toHaveLength(1)
+    expect(onSaved).toHaveBeenCalledTimes(1)
   })
 })

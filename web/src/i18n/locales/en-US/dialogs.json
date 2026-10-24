@@ -1344,7 +1344,9 @@
         "opencodeGo": "OpenCode Go",
         "openai": "OpenAI (official)",
         "customClaude": "Custom (Anthropic-compatible)",
-        "customCodex": "Custom (OpenAI Responses-compatible)"
+        "customCodex": "Custom (OpenAI Responses-compatible)",
+        "kimi": "Kimi",
+        "bailian": "Alibaba Bailian"
       },
       "vendorKey": {
         "kimiCode": "Kimi Code membership key; not interchangeable with Open Platform keys",
@@ -1915,7 +1917,9 @@
         "hintChatgpt": "Sign in with your ChatGPT subscription",
         "hintClaude": "Sign in with your Claude subscription"
       },
-      "back": "Back"
+      "back": "Back",
+      "savedRefreshFailed": "Saved, but the status couldn’t be refreshed.",
+      "retryRefresh": "Retry refresh"
     }
   },
   "style": {

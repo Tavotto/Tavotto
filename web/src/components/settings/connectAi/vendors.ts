@@ -2,7 +2,7 @@ import { currentLocale } from '@/i18n'
 import { ag, cx } from './copy'
 import { sortVendors, type AiCapabilities, type AiConnection, type AiVendor, type AiVendorMethod } from '@/lib/api'
 
-/** 订阅登录类厂商 → 内部登录用的家族 id（订阅连接 id = `sub:<家族>`）；表外的厂商 id 即家族 id */
+/** 只给没有 `methods` 的老后端兜底：订阅登录类厂商 → 登录家族 id；有 methods 时一律读 `method.agent` */
 const LOGIN_AGENT: Record<string, string> = { chatgpt: 'codex', claude: 'claude' }
 export const loginAgentOf = (v: AiVendor, m?: AiVendorMethod): string => m?.agent ?? LOGIN_AGENT[v.id] ?? v.id
 
@@ -66,4 +66,36 @@ export function methodHint(v: AiVendor, m: AiVendorMethod): string {
   if (m.agent === 'codex') return cx('method.hintChatgpt')
   if (m.agent === 'claude') return cx('method.hintClaude')
   return cx('method.hintLogin', { name })
+}
+
+/** 这家厂商的全部连接（订阅、Key、账号登录各一条 / 多条） */
+export const connectionsOf = (caps: AiCapabilities | null | undefined, vendor: AiVendor): AiConnection[] =>
+  (caps?.connections ?? []).filter((c) => c.vendor === vendor.id)
+
+/**
+ * 这一种连接方式对应哪一条连接（连接状态落在**方式**上，不是整家厂商一份）：
+ * login / oauth 方式 = 方式自己带的 `connection_id`（`sub:codex`、`minimax-oauth`）；key 方式 = 连接上的 `method`（方式 id）。
+ * 后端没给这些字段（老后端）时才退回推断：登录看 `sub:<登录家族>`，Key 看 `catalog_id`，再不行按 vendor + 类型——
+ * 这家厂商只有一种同类型方式才认（有两种 Key 方式又分不出是哪条时宁可都不认，也不把 A 的连接算到 B 头上）。
+ * 多条同方式连接时 ready 的优先。
+ */
+export function connectionForMethod(
+  connections: AiConnection[],
+  vendor: AiVendor,
+  method: AiVendorMethod,
+): AiConnection | undefined {
+  let own: AiConnection[]
+  if (method.kind !== 'key') {
+    const id = method.connection_id ?? (method.kind === 'login' ? `sub:${method.agent ?? loginAgentOf(vendor)}` : null)
+    own = id ? connections.filter((c) => c.id === id) : []
+  } else {
+    const sameKind = methodsOf(vendor).filter((m) => m.kind === 'key')
+    own = connections.filter((c) => {
+      if (c.id.startsWith('sub:') || c.id.endsWith('-oauth')) return false
+      if (c.method) return c.method === method.id
+      if (c.catalog_id && method.catalog_id) return c.catalog_id === method.catalog_id
+      return sameKind.length === 1
+    })
+  }
+  return own.find((c) => c.state === 'ready') ?? own[0]
 }

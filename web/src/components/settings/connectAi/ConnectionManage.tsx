@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { backendErrorText, disconnectAi, type AiConnection, type AiVendor } from '@/lib/api'
+import { backendErrorText, disconnectAi, type AiConnection, type AiVendor, type AiVendorMethod } from '@/lib/api'
 import { msg } from '@/i18n'
 import { useAiStore } from '@/store/aiStore'
 import { askConfirm } from '@/store/uiStore'
@@ -13,7 +13,16 @@ import { VendorKeyForm } from './VendorKeyForm'
  * 已连接的 Key 类连接的管理区（设置页里点开那一行）：默认型号、换 Key、断开。
  * 默认型号只是本机的记忆选择（`aiStore.models[连接 id]`，与模型选择器同一份）；断开先确认——Key 删了找不回。
  */
-export function ConnectionManage({ vendor, connection }: { vendor: AiVendor; connection: AiConnection }) {
+export function ConnectionManage({
+  vendor,
+  connection,
+  method,
+}: {
+  vendor: AiVendor
+  connection: AiConnection
+  /** 多方式厂商里这条连接对应的方式（决定换 Key 时的目录行 / 获取链接） */
+  method?: AiVendorMethod
+}) {
   useTranslation('dialogs')
   const model = useAiStore((s) => s.models[connection.id]) ?? connection.default_model ?? ''
   const [changing, setChanging] = useState(false)
@@ -53,7 +62,7 @@ export function ConnectionManage({ vendor, connection }: { vendor: AiVendor; con
         </div>
       )}
       {changing ? (
-        <VendorKeyForm vendor={vendor} connectionId={connection.id} submitLabel={cx('saveKey')} onConnected={() => setChanging(false)} />
+        <VendorKeyForm vendor={vendor} method={method} connectionId={connection.id} submitLabel={cx('saveKey')} onConnected={() => setChanging(false)} />
       ) : (
         <div className="flex items-center gap-2">
           <Button variant="secondary" size="sm" data-connect-change-key onClick={() => setChanging(true)}>

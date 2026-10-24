@@ -3222,6 +3222,8 @@ export interface AiVendorMethod {
   catalog_id?: string
   /** login 类：登录用的家族（codex / claude） */
   agent?: string
+  /** login / oauth 类：这种方式对应的连接 id（`sub:codex` / `sub:claude` / `minimax-oauth`） */
+  connection_id?: string
   key_url?: string
   key_hint_key?: string
   needs_base_url?: boolean
@@ -3262,6 +3264,10 @@ export interface AiConnection {
   default_model: string | null
   efforts?: string[]
   default_effort?: string | null
+  /** key 类连接对应的连接方式 id（`AiVendorMethod.id`，如 `openai-api:key`）；老后端没有，前端按 catalog_id / vendor + 类型推断 */
+  method?: string
+  /** key 类连接对应的目录行 id（同 `AiVendorMethod.catalog_id`） */
+  catalog_id?: string
   /** 连的是明文 http 的局域网模型服务器（只放行、界面提示一句） */
   insecure_lan?: boolean
   /** state=error 时的原因码（unauthorized / network / timeout / …） */
