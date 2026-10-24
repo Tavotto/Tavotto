@@ -5,7 +5,7 @@
   没有可用沙盒（Windows、没有 bwrap 的 Linux）→ 不执行，返回 `sandbox_unavailable` 并说明只能走第②档。
 * **第②档：沙盒外执行（用户单独点头）**。模型显式 `outside_sandbox: true` + 一句理由才进；第①档因沙盒拒写失败时只在结果里**提示**可以改用，**不自动升级**。
   弹一张单独、醒目的卡（`danger: true`）：完整命令 + 风险一句话 + 理由；只对这一条命令有效。执行前备份项目内全部用户脚本
-  （判据复用 `sourcelang`，1000 个 / 32 MiB 封顶，超限直接拒绝第②档），**持这些脚本的锁**跑完命令，事后核对，被改 / 被删的经 `scriptlock` 恢复原字节并报 `scripts_restored`。
+  （按后缀保守纳入、读原始字节，1000 个 / 32 MiB 封顶，超限直接拒绝第②档），**持这些脚本的锁**跑完命令，事后核对，被改 / 被删的经 `scriptlock` 恢复原字节并报 `scripts_restored`。
   这一层是**尽力而为**，不是绝对保证（见 `docs/rules/backend/ai-agent-bridge.md`「run_command」的已知盲区）。
 
 两档共同：`tier=user_env`；不经 shell（`shlex` 拆）；cwd 默认是命令自己的临时目录（第②档可选项目目录，卡上写明）；去掉密钥类与宿主代理类环境变量；
@@ -14,16 +14,20 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shlex
+import signal
 import stat
 import subprocess
+import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 
-from .. import scriptlock, sourcelang
+from .. import scriptlock
 from ..agent_runner.wires import ToolResult
 from . import cmdsandbox, snapshots, trial
 from .base import FixContext, FixTool, err, obj, ok
@@ -43,7 +47,7 @@ WALK_ENTRIES_MAX = 200_000
 #: 等脚本的锁最长多久（别处正占着某份脚本的锁时）
 SCRIPTS_LOCK_WAIT_S = 30.0
 REASON_MAX_CHARS = 300
-CARD_COMMAND_CHARS = 2000
+CARD_COMMAND_CHARS = 8000
 
 # --------------------------------------------------------------------------- 硬拦表
 _SHELLS = frozenset(
@@ -261,29 +265,71 @@ def _contains(outer: str, inner: str) -> bool:
     return inner == outer or inner.startswith(outer.rstrip(os.sep) + os.sep)
 
 
-def _writable_env_prefixes(ctx: FixContext) -> list[str]:
-    """目标 Python 环境的前缀（真实路径、去重）：本项目所用环境（`ctx.env_prefixes`）+ 已登记 env id 的前缀。
-    系统自带 / 内置 runtime 的解释器不放（与 `install_packages` 同口径）；浅到只有一两级的路径（`/usr`、`/opt`）也不放。"""
+def _prefix_python(prefix: str) -> str | None:
+    """环境前缀里的解释器（分类要拿解释器判种类）；找不到回 None。"""
+    for rel in ("bin/python", "bin/python3", "Scripts/python.exe", "python.exe"):
+        cand = os.path.join(prefix, rel)
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def _protected_roots() -> list[str]:
+    """Tavotto 自己的安装目录 / 应用包 / 内置 runtime（根 AGENTS.md：不往包目录、安装目录写任何东西）。"""
+    from .. import runtime
+
+    roots = [str(Path(__file__).resolve().parents[2])]  # tavotto 包目录
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(str(meipass))
+    try:
+        rt = runtime.runtime_root()
+        if rt:
+            roots.append(rt)
+        bundled = runtime.bundled_python()
+        if bundled:
+            roots.append(_python_prefix(bundled))
+    except Exception:  # noqa: BLE001 - 取不到只是少一个保护根
+        pass
+    return [os.path.realpath(r) for r in roots if r]
+
+
+def writable_envs(ctx: FixContext) -> list[tuple[str, str]]:
+    """命令获准写入的 Python 环境 `[(真实前缀, 解释器)]`（去重）：来源是 `ctx.env_prefixes`（取前缀里的解释器）与 `ctx.environments`，
+    **所有候选统一**按 `convertdeps.describe_env` 判种类——系统自带 / 内置 runtime 一律不可写；落在 Tavotto 安装目录 / 应用包 / 内置 runtime 里
+    （或盖住它们）的前缀不可写；找不到解释器的前缀（分不出种类）不可写；浅到只有一两级的路径（`/usr`、`/opt`）不可写。"""
     from .. import convertdeps
 
-    out: list[str] = []
-    cands = [str(p) for p in ctx.env_prefixes]
+    cands: list[tuple[str, str]] = []
+    for p in ctx.env_prefixes:
+        if os.path.isdir(str(p)):
+            py = _prefix_python(str(p))
+            if py:
+                cands.append((str(p), py))
     for py in ctx.environments.values():
+        cands.append((_python_prefix(py), py))
+    protected = _protected_roots()
+    out: list[tuple[str, str]] = []
+    for prefix, py in cands:
+        if not os.path.isdir(prefix):
+            continue
+        real = os.path.realpath(prefix)
+        if len(Path(real).parts) <= 2 or any(r == real for r, _ in out):
+            continue
+        if any(_contains(real, r) or _contains(r, real) for r in protected):
+            continue
         try:
             kind = convertdeps.describe_env(py, "")["kind"]
         except Exception:  # noqa: BLE001 - 分不出种类就按不可写
             continue
         if kind in (convertdeps.KIND_SYSTEM, convertdeps.KIND_BUILTIN):
             continue
-        cands.append(_python_prefix(py))
-    for c in cands:
-        if not os.path.isdir(c):
-            continue
-        real = os.path.realpath(c)
-        if len(Path(real).parts) <= 2 or real in out:
-            continue
-        out.append(real)
+        out.append((real, py))
     return out
+
+
+def _writable_env_prefixes(ctx: FixContext) -> list[str]:
+    return [prefix for prefix, _py in writable_envs(ctx)]
 
 
 def command_writable_dirs(ctx: FixContext) -> list[str]:
@@ -317,27 +363,35 @@ def commands_root() -> Path:
     return config.data_dir() / "cache" / "fix_commands"
 
 
-def _project_env_ids(ctx: FixContext) -> list[str]:
-    """本项目当前所用的环境（前缀在 `env_prefixes` 里的）：命令可能改它，所以一并打快照。"""
+def _snapshot_env_ids(ctx: FixContext) -> list[str]:
+    """快照要覆盖的环境 id：**命令实际获准写入的所有环境**（与可写清单 `writable_envs` 同源）。
+    没登记过 id 的（例如 `change_python` 之外靠 `env_prefixes` 进来的）现场登记一个，快照才拿得到它的 freeze。"""
     out: list[str] = []
-    for eid, py in ctx.environments.items():
-        norm = os.path.normcase(os.path.abspath(py))
-        if any(
-            norm.startswith(os.path.normcase(os.path.abspath(str(p))) + os.sep)
-            for p in ctx.env_prefixes
-        ):
-            out.append(eid)
+    for prefix, py in writable_envs(ctx):
+        eid = next(
+            (
+                e
+                for e, p in ctx.environments.items()
+                if os.path.realpath(_python_prefix(p)) == prefix
+            ),
+            None,
+        )
+        if eid is None:
+            eid = "cmd_env_" + hashlib.sha1(prefix.encode("utf-8", "replace")).hexdigest()[:8]
+            ctx.environments[eid] = py
+        out.append(eid)
     return out
 
 
 # --------------------------------------------------------------------------- 第②档：备份项目内的用户脚本
-_SCRIPT_SUFFIXES = frozenset({".py", ".r", ".m"})
+_SCRIPT_SUFFIXES = frozenset({".py", ".pyw", ".r", ".m"})
 #: 枚举时不进的目录名（环境 / 缓存 / 版本库——不是用户脚本，也会把个数撑爆）
 _WALK_SKIP = trial._COPY_SKIP | {".tox", "site-packages", ".mypy_cache", ".pytest_cache", ".idea"}
 
 
 def list_scripts(ctx: FixContext) -> list[Path] | None:
-    """项目内的用户脚本（真实路径、去重；`.py` / `.R` / `.r` / `.m`，内容经 `sourcelang.detect_file` 认定；判不出的 `.m`/二进制不算）。
+    """项目内的用户脚本（真实路径、去重）：**按后缀保守纳入**（`.py` / `.pyw` / `.R` / `.r` / `.m`，读原始字节、不要求能解码——
+    cp1252 / GBK 等声明了编码的合法 `.py` 同样护着；判不出语言的 `.m` 也备份，宁多勿漏）。
     跟随目录符号链接（按真实路径去重防环；指向 `ReadScope` 硬拦区的不进）。超过个数 / 字节 / 目录项上限回 None（调用方只能拒绝第②档）。"""
     root = os.path.realpath(str(ctx.project_root))
     env_dirs = [os.path.realpath(str(p)) for p in ctx.env_prefixes]
@@ -374,8 +428,6 @@ def list_scripts(ctx: FixContext) -> list[Path] | None:
                 size = os.stat(real).st_size
             except OSError:
                 continue
-            if 0 < size <= sourcelang.MAX_BYTES and sourcelang.detect_file(real) is None:
-                continue  # 判不出是脚本（例如 Objective-C 的 .m）；空文件与超过判定上限的一律按脚本护着
             if real in found:
                 continue
             found[real] = Path(real)
@@ -453,6 +505,131 @@ _NEEDS_OUTSIDE = (
 )
 
 
+# --------------------------------------------------------------------------- 进程树
+#: 命令退出后，等它起的后台进程被结束并确认退出的上限
+TREE_REAP_S = 5.0
+
+
+class _WinJob:
+    """Windows：把命令放进 Job Object（`KILL_ON_JOB_CLOSE`），收尾时 `TerminateJobObject` 并等 `ActiveProcesses` 归零——
+    后台孙进程在直接进程退出之后也在作业里。**未在 Windows 上实测**（本机是 macOS）；起不来就退回 `taskkill /T`。
+    已知窗口：进程从起来到被放进作业之间的瞬间起的子进程不在作业里。"""
+
+    def __init__(self, proc: subprocess.Popen) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        self._k = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        self._ct = ctypes
+        k = self._k
+        k.CreateJobObjectW.restype = wintypes.HANDLE
+        self.handle = k.CreateJobObjectW(None, None)
+        if not self.handle:
+            raise OSError("CreateJobObject failed")
+
+        class _Basic(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class _IO(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_uint64) for n in ("r", "w", "o", "rb", "wb", "ob")]
+
+        class _Ext(ctypes.Structure):
+            _fields_ = [
+                ("Basic", _Basic),
+                ("IO", _IO),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        info = _Ext()
+        info.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not k.SetInformationJobObject(
+            self.handle, 9, ctypes.byref(info), ctypes.sizeof(info)
+        ) or not k.AssignProcessToJobObject(self.handle, int(proc._handle)):  # type: ignore[attr-defined]
+            k.CloseHandle(self.handle)
+            raise OSError("job setup failed")
+
+    def active(self) -> int:
+        ct = self._ct
+
+        class _Acct(ct.Structure):
+            _fields_ = [
+                ("t", ct.c_int64 * 4),
+                ("faults", ct.c_uint32),
+                ("total", ct.c_uint32),
+                ("active", ct.c_uint32),
+                ("term", ct.c_uint32),
+            ]
+
+        a = _Acct()
+        if not self._k.QueryInformationJobObject(self.handle, 1, ct.byref(a), ct.sizeof(a), None):
+            return 1
+        return int(a.active)
+
+    def terminate_and_wait(self, limit_s: float) -> bool:
+        self._k.TerminateJobObject(self.handle, 1)
+        deadline = time.monotonic() + limit_s
+        while self.active() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        gone = self.active() == 0
+        self._k.CloseHandle(self.handle)
+        return gone
+
+
+def _attach_job(proc: subprocess.Popen) -> _WinJob | None:
+    if os.name != "nt":
+        return None
+    try:
+        return _WinJob(proc)
+    except Exception:  # noqa: BLE001 - 退回 taskkill /T
+        return None
+
+
+def _reap_tree(proc: subprocess.Popen, job: _WinJob | None) -> bool:
+    """命令的直接进程退出（或被叫停）之后，**结束并确认整个受管进程树退出**，回是否确认干净。
+    POSIX：命令在自己的新会话 / 进程组里（`start_new_session`），`killpg(SIGKILL)` 到组里一个都不剩（`ProcessLookupError`）才算；
+    Windows：Job Object 终止并等活动进程归零，作业建不起来就 `taskkill /T`（只确认直接进程）。
+    不然后台孙进程会绕过时限，并在第②档核对、放锁之后才去改脚本。
+    已知盲区：自己 `setsid` / 再开新会话逃出进程组的进程 POSIX 上追不到（Linux 的 bwrap 有 `--unshare-pid`，沙盒里随 init 退出全部被收掉）。"""
+    if os.name == "nt":
+        if job is not None:
+            return job.terminate_and_wait(TREE_REAP_S)
+        try:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return proc.poll() is not None
+    deadline = time.monotonic() + TREE_REAP_S
+    while True:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return True  # 组里一个都不剩
+        except OSError:
+            return False
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+
+
 def _spawn(
     ctx: FixContext,
     argv: list[str],
@@ -493,6 +670,7 @@ def _spawn(
             ),
             None,
         )
+    job = _attach_job(proc)
     overflow = threading.Event()
 
     def stop() -> None:
@@ -510,6 +688,7 @@ def _spawn(
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             pass
+    clean = _reap_tree(proc, job)  # 后台子进程一并结束并确认，再收输出、再让调用方核对 / 放锁
     cap.thread.join(timeout=5)
     try:
         proc.stdout.close()
@@ -521,6 +700,11 @@ def _spawn(
         notes += (
             f"\noutput_truncated: more than {trial.OUTPUT_LIMIT_BYTES // (1024 * 1024)} MiB of output, "
             "the program was stopped; only the last part is kept"
+        )
+    if not clean:
+        notes += (
+            "\nprocesses_left: some background processes the command started could not be confirmed "
+            "stopped; tell the user"
         )
     body = _with_snapshot(
         ctx, f"exit code: {proc.returncode}{notes}\n--- output (last lines) ---\n{tail}"
@@ -569,6 +753,16 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
         return err(
             "bad_arguments", "`outside_sandbox` needs a one-sentence `reason` the user will read."
         )
+    shown = _shown(argv)
+    if len(shown) > CARD_COMMAND_CHARS:
+        return err(
+            "command_too_long_to_show",
+            f"The command is longer than the {CARD_COMMAND_CHARS} characters the approval card can show in full, "
+            "so it was not run (the user must see exactly what runs). Put the long part in a file inside the "
+            "environment or the scratch folder, or split the command.",
+        )
+    if isinstance(reason, str) and len(reason.strip()) > REASON_MAX_CHARS:
+        return err("bad_arguments", f"`reason` must be at most {REASON_MAX_CHARS} characters.")
     why = hard_block_reason(ctx, argv, " ".join(argv))
     if why is not None:
         return err("hard_blocked", f"Refused: {why}.")
@@ -601,13 +795,13 @@ def _run_hardened(ctx: FixContext, argv: list[str], timeout: float, project: str
         "run_command",
         "Run this command in a protected environment: it can read your files but cannot change your "
         "project or the rest of your computer.",
-        command=scrub(shown)[:CARD_COMMAND_CHARS],
+        command=scrub(shown),
         cwd="scratch",
         sandbox="hardened",
     )
     if denied is not None:
         return denied
-    if snapshots.take(ctx, "run_command", _project_env_ids(ctx)) is None:
+    if snapshots.take(ctx, "run_command", _snapshot_env_ids(ctx)) is None:
         return err(
             "snapshot_failed", "Could not save a snapshot to roll back to, so nothing was changed."
         )
@@ -679,8 +873,8 @@ def _run_outside(
         "run_command",
         "This command will run OUTSIDE the safety sandbox and can change files on your computer.",
         danger=True,
-        command=scrub(shown)[:CARD_COMMAND_CHARS],
-        reason=scrub(reason)[:REASON_MAX_CHARS],
+        command=scrub(shown),
+        reason=scrub(reason),
         cwd=cwd_mode,
         scripts=len(scripts),
         sandbox="outside",
@@ -688,7 +882,7 @@ def _run_outside(
     )
     if denied is not None:
         return denied
-    if snapshots.take(ctx, "run_command", _project_env_ids(ctx)) is None:
+    if snapshots.take(ctx, "run_command", _snapshot_env_ids(ctx)) is None:
         return err(
             "snapshot_failed", "Could not save a snapshot to roll back to, so nothing was changed."
         )
@@ -762,7 +956,8 @@ COMMAND_TOOLS: tuple[FixTool, ...] = (
         "mode. Give `argv` (a list) or `command` (split into words; no shell: no pipes, redirects, `&&`, "
         "substitutions). Never runs sudo, shells, disk tools, desktop/launchd/service tools, piping into a shell or "
         "recursive deletes of the root or home folder; secret-looking environment variables are removed; output is "
-        "cut and masked; there is a time limit. Takes a snapshot of the settings and the environment's packages.",
+        "cut and masked; there is a time limit. A command longer than 8000 characters is refused with "
+        "`command_too_long_to_show` (the user always sees exactly what runs). Takes a snapshot of the settings and the environment's packages.",
         obj(
             {
                 "argv": {"type": "array", "items": {"type": "string"}},

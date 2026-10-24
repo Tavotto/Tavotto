@@ -44,6 +44,12 @@ def box(tmp_path, monkeypatch):
     return type("Box", (), {"home": home, "proj": proj, "cfg": cfg, "data": data, "tmp": tmp_path})
 
 
+def _env_at(prefix: Path) -> Path:
+    """在 prefix 里放一个假解释器文件（只用于分类 / is_file，不会被执行），回 prefix。"""
+    put(prefix / ("Scripts" if os.name == "nt" else "bin") / "python", b"")
+    return prefix
+
+
 def _py(code: str) -> list[str]:
     return [sys.executable, "-c", code]
 
@@ -307,18 +313,16 @@ def test_windows_has_only_tier2(box, monkeypatch):
 
 
 def test_a_python_environment_that_contains_the_project_is_refused_before_asking(box):
-    ctx = change_ctx(box, env_prefixes=[box.home])  # 环境前缀 = 项目的上级
+    ctx = change_ctx(box, env_prefixes=[_env_at(box.home)])  # 环境前缀 = 项目的上级
     r = call(ctx, "run_command", {"argv": _py("pass")})
     assert r.code == "env_contains_project" and ctx.asker.cards == []
-    ctx2 = change_ctx(box, env_prefixes=[box.proj])  # 前缀 = 项目本身
+    ctx2 = change_ctx(box, env_prefixes=[_env_at(box.proj)])  # 前缀 = 项目本身
     assert call(ctx2, "run_command", {"argv": _py("pass")}).code == "env_contains_project"
 
 
 def test_writable_dirs_are_env_prefixes_and_caches_only_and_a_project_venv_is_just_its_folder(box):
-    venv = box.proj / ".venv"
-    (venv / "bin").mkdir(parents=True)
-    other = box.tmp / "envs" / "lab"
-    other.mkdir(parents=True)
+    venv = _env_at(box.proj / ".venv")
+    other = _env_at(box.tmp / "envs" / "lab2")
     pipcache = box.home / ".cache" / "pip"
     pipcache.mkdir(parents=True)
     ctx = change_ctx(box, env_prefixes=[venv, other])
@@ -330,6 +334,65 @@ def test_writable_dirs_are_env_prefixes_and_caches_only_and_a_project_venv_is_ju
     # 浅到只有一两级的前缀（/usr、/opt）永远不放
     shallow = change_ctx(box, env_prefixes=[Path("/usr"), Path("/")])
     assert all(len(Path(d).parts) > 2 for d in command.command_writable_dirs(shallow))
+    # 找不到解释器的前缀分不出种类，不放
+    bare = box.tmp / "envs" / "bare"
+    bare.mkdir(parents=True)
+    assert os.path.realpath(bare) not in command.command_writable_dirs(
+        change_ctx(box, env_prefixes=[bare])
+    )
+
+
+def test_system_and_builtin_environments_are_never_writable_whichever_list_they_came_from(
+    box, monkeypatch
+):
+    """P1：`ctx.env_prefixes` 与 `ctx.environments` 统一按 describe_env 判种类，系统自带 / 内置 runtime 一律不放。"""
+    from tavotto.engine import convertdeps
+
+    sysenv = _env_at(box.tmp / "envs" / "sys")
+    builtin = _env_at(box.tmp / "envs" / "builtin")
+    user = _env_at(box.tmp / "envs" / "user")
+    kinds = {
+        os.path.join(
+            str(sysenv), "bin" if os.name != "nt" else "Scripts", "python"
+        ): convertdeps.KIND_SYSTEM,
+        os.path.join(
+            str(builtin), "bin" if os.name != "nt" else "Scripts", "python"
+        ): convertdeps.KIND_BUILTIN,
+    }
+    monkeypatch.setattr(
+        convertdeps,
+        "describe_env",
+        lambda py, src: {"kind": kinds.get(py, convertdeps.KIND_OTHER), "name": "", "key": ""},
+    )
+    real = os.path.realpath
+    ctx = change_ctx(
+        box,
+        env_prefixes=[sysenv, builtin, user],  # 准备会话用的就是系统 / 内置解释器
+        environments={
+            "s": str(sysenv / ("Scripts" if os.name == "nt" else "bin") / "python"),
+            "b": str(builtin / ("Scripts" if os.name == "nt" else "bin") / "python"),
+        },
+    )
+    dirs = command.command_writable_dirs(ctx)
+    assert real(user) in dirs and real(sysenv) not in dirs and real(builtin) not in dirs
+
+
+def test_a_prefix_inside_or_over_tavottos_own_install_is_never_writable(box, monkeypatch):
+    from tavotto.engine import runtime
+
+    app = box.tmp / "App" / "runtime"
+    inner = _env_at(app / "py312")
+    outer = _env_at(box.tmp / "App")  # 盖住应用包的前缀
+    monkeypatch.setattr(runtime, "runtime_root", lambda: str(app))
+    ctx = change_ctx(box, env_prefixes=[inner, outer], environments={})
+    real = os.path.realpath
+    assert command.command_writable_dirs(ctx) == []
+    ok_env = _env_at(box.tmp / "envs" / "fine")
+    ctx2 = change_ctx(box, env_prefixes=[inner, ok_env], environments={})
+    assert command.command_writable_dirs(ctx2) == [real(ok_env)]
+    assert (
+        str(Path(command.__file__).resolve().parents[2]) in command._protected_roots()
+    )  # 包目录本身也在保护根里
 
 
 def test_a_refused_write_in_the_sandbox_suggests_tier2_but_never_runs_it(box, monkeypatch):
@@ -477,7 +540,7 @@ def test_tier2_over_the_limit_is_refused_before_asking(box, monkeypatch):
 
 
 def test_script_inventory_rules(box, monkeypatch):
-    """哪些算用户脚本：sourcelang 认的 .py / .R / .m；Objective-C 的 .m、文本文件、环境和版本库目录不算；链接按真实路径去重。"""
+    """哪些算用户脚本：按后缀保守纳入 .py / .R / .m（不要求能解码）；文本文件、环境和版本库目录不算；链接按真实路径去重。"""
     a = put(box.proj / "a.py", b"print(1)\n")
     put(box.proj / "readme.txt", b"hi")
     put(box.proj / "objc.m", b"#import <Foundation/Foundation.h>\n@interface X\n@end\n")
@@ -490,15 +553,19 @@ def test_script_inventory_rules(box, monkeypatch):
     ctx = change_ctx(box)
     got = command.list_scripts(ctx)
     names = sorted(p.name for p in got)
-    assert names == ["a.py", "empty.py"]
-    assert len(got) == 2
+    assert names == ["a.py", "empty.py", "objc.m"]  # 判不出语言的 .m 也护着（宁多勿漏）
+    assert len(got) == 3
     # 同一个文件的两个名字只算一份（也只计一份字节）：字节上限刚好够一份时仍可备份
     if os.name != "nt":
         with monkeypatch.context() as m:
-            m.setattr(command, "SCRIPTS_MAX_BYTES", a.stat().st_size)
+            m.setattr(
+                command,
+                "SCRIPTS_MAX_BYTES",
+                a.stat().st_size + (box.proj / "objc.m").stat().st_size,
+            )
             assert command.list_scripts(ctx) is not None
-    # 判不出语言但很大的 .py 照样护着（超过 sourcelang 判定上限）
-    put(box.proj / "huge.py", b"#" * (command.sourcelang.MAX_BYTES + 10))
+    # 很大的 .py 照样护着
+    put(box.proj / "huge.py", b"#" * (2 * 1024 * 1024))
     assert "huge.py" in [p.name for p in command.list_scripts(ctx)]
 
 
@@ -693,8 +760,7 @@ def test_real_sandbox_writes_to_scratch_and_the_env_work_everything_else_is_refu
 ):
     fig = put(box.proj / "fig.py", b"original\n")
     other = box.home / "elsewhere.txt"
-    env_prefix = box.tmp / "envs" / "lab"
-    env_prefix.mkdir(parents=True)
+    env_prefix = _env_at(box.tmp / "envs" / "lab3")
     ctx = change_ctx(box, env_prefixes=[env_prefix])
     code = (
         "import os, sys\n"
@@ -891,3 +957,92 @@ def test_real_tier1_failure_does_not_escalate_to_tier2(box, real_sandbox, monkey
     r = _run_in(box, ctx, _py(f"open({str(fig)!r}, 'ab').write(b'x')"))
     assert "sandbox_denied" in r.content and len(seen) == 1 and len(ctx.asker.cards) == 1
     assert fig.read_bytes() == b"original\n"
+
+
+# =========================================================================== Codex #1393 四 P1 + 一 P2
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 进程组")
+@pytest.mark.parametrize("outside", [False, True])
+def test_a_background_grandchild_is_stopped_before_the_tool_returns(box, outside):
+    """P1：命令起了后台孙进程后自己正常退出——工具返回前整棵树已结束，孙进程稍后改不了脚本（第②档核对放锁之后也改不了）。"""
+    fig = put(box.proj / "plot.py", b"original\n")
+    bg = (
+        "import subprocess, sys\n"
+        f"subprocess.Popen([sys.executable, '-c', \"import time; time.sleep(1.2); open({str(fig)!r}, 'ab').write(b'late')\"])\n"
+    )
+    ctx = change_ctx(box)
+    args = {"argv": _py(bg), "timeout_s": 30}
+    if outside:
+        args.update(outside_sandbox=True, reason="r")
+    t0 = time.monotonic()
+    r = call(ctx, "run_command", args)
+    assert not r.is_error and "processes_left" not in r.content, r.content
+    assert time.monotonic() - t0 < 1.0  # 没有等后台任务跑完
+    time.sleep(2.5)
+    assert fig.read_bytes() == b"original\n"
+
+
+def test_reap_tree_reports_a_group_it_cannot_clear(monkeypatch):
+    if os.name == "nt":
+        pytest.skip("POSIX")
+    proc = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
+    proc.wait()
+    monkeypatch.setattr(command.os, "killpg", lambda *a: None)  # 杀不掉：一直在
+    monkeypatch.setattr(command, "TREE_REAP_S", 0.1)
+    assert command._reap_tree(proc, None) is False
+
+
+@pytest.mark.parametrize("outside", [False, True])
+def test_a_command_the_card_cannot_show_in_full_is_refused_before_asking(box, outside):
+    """P1：用户看到的 = 实际执行的。卡上放不下完整命令就不问、不跑。"""
+    marker = box.tmp / "ran.txt"
+    ctx = change_ctx(box)
+    n = command.CARD_COMMAND_CHARS // 2
+    long_argv = _py(f"open({str(marker)!r}, 'w')") + ["x" * n, "y" * n]
+    extra = {"outside_sandbox": True, "reason": "r"} if outside else {}
+    r = call(ctx, "run_command", {"argv": long_argv, **extra}, AuditLog())
+    assert r.code == "command_too_long_to_show" and not marker.exists() and ctx.asker.cards == []
+    assert audit_lines(box)[-1]["sandbox"] == "none"
+    # 刚好放得下的：卡上的命令与执行的逐字相同
+    fits = _py("pass") + ["z" * 1000]
+    r2 = call(ctx, "run_command", {"argv": fits, **extra})
+    assert not r2.is_error and ctx.asker.cards[-1]["command"] == command._shown(fits)
+    assert (
+        call(ctx, "run_command", {"argv": fits, "outside_sandbox": True, "reason": "r" * 301}).code
+        == "bad_arguments"
+    )
+    assert "command_too_long_to_show" in REGISTRY["run_command"].description
+
+
+def test_scripts_in_other_encodings_are_backed_up_and_restored_byte_for_byte(box):
+    """P1：cp1252 / GBK 声明编码的合法 .py 不能被排除在备份与持锁之外。"""
+    cp = put(box.proj / "plot.py", b"# -*- coding: cp1252 -*-\nprint('caf\xe9')\n")
+    gbk = put(box.proj / "sub" / "fig.py", "# -*- coding: gbk -*-\nprint('中文')\n".encode("gbk"))
+    ctx = change_ctx(box)
+    assert {p.name for p in command.list_scripts(ctx)} == {"plot.py", "fig.py"}
+    before = (cp.read_bytes(), gbk.read_bytes())
+    code = f"open({str(cp)!r}, 'wb').write(b'x'); import os; os.remove({str(gbk)!r})"
+    r = _run_outside(ctx, code)
+    assert (cp.read_bytes(), gbk.read_bytes()) == before
+    assert "scripts_restored: 2" in r.content and "scripts_backed_up: 2" in r.content
+
+
+def test_the_snapshot_covers_every_environment_the_command_may_write(box):
+    """P2：可写清单与快照同源——`change_python` 新建的环境（只进 environments）和只靠 env_prefixes 进来的环境都有基线。"""
+    import json
+
+    new_py = str(
+        _env_at(box.tmp / "envs" / "new") / ("Scripts" if os.name == "nt" else "bin") / "python"
+    )
+    via_prefix = _env_at(box.tmp / "envs" / "viaprefix")
+    ctx = change_ctx(box, env_prefixes=[via_prefix])
+    ctx.environments["new"] = new_py  # change_python 之后的样子
+    r = call(ctx, "run_command", {"argv": _py("pass")}, AuditLog())
+    assert not r.is_error, r.content
+    doc = json.loads(
+        (
+            box.data / "cache" / "fix_snapshots" / "s1" / f"{ctx.call_meta['snapshot']}.json"
+        ).read_text("utf-8")
+    )
+    assert {"e", "new"} <= set(doc["envs"])
+    assert any(k.startswith("cmd_env_") for k in doc["envs"])  # 没登记过 id 的前缀现场登记
+    assert len(doc["envs"]) == 3
