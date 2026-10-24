@@ -1488,6 +1488,10 @@ def run(
                 from . import ai_tasks
 
                 task_run = ai_tasks.begin_registered(sid, envelope)
+                if builtin_convert:
+                    # 内置执行器的 `check` 在 spawn 之后、消费它的输出期间就会跑校验（早于编排器的 `_render` 挂取消标记）：
+                    # 会话的取消标记要在 spawn 前就挂到候选上，取消才会中止校验的 worker 与依赖安装
+                    cand.extras["cancel"] = task_run.cancel_event
             proc = _popen(cmd, agent_cwd, env, stderr_log, stdin_text, builtin_convert)
             _SPAWN_MARK.started = True  # 进程已经起来了：此后任何异常都不能再清账本行
         except BaseException as exc:

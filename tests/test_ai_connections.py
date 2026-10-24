@@ -1730,3 +1730,93 @@ def test_login_accepts_method_ids_too(client, world, monkeypatch):
         ai_oauth, "start", lambda provider, region=None: {"flow_id": "f", "provider": provider}
     )
     assert client.post("/api/ai/connections/minimax:oauth/login").get_json()["flow_id"] == "f"
+
+
+# --------------------------------------------------------------------------- Codex 评审：更新保留省略字段 / 转换 check 可取消
+def test_updating_a_custom_connection_keeps_its_address_and_wire(client, world):
+    world["fetch"] = (["m"], None)
+    cid = _post(
+        client,
+        vendor="custom",
+        api_key=KEY,
+        base_url="https://llm.example.org/v1",
+        wire="openai-responses",
+        model="my-model",
+        label="我的网关",
+    ).get_json()["connection"]["id"]
+    resp = _post(client, vendor="custom", id=cid, api_key=KEY2)  # 只换 Key
+    assert resp.status_code == 200, resp.get_json()
+    stored = ai_providers.get(cid)
+    assert (stored["api_key"], stored["base_url"], stored["agent"]) == (
+        KEY2,
+        "https://llm.example.org/v1",
+        "codex",
+    )
+    assert (stored["default_model"], stored["label"]) == ("my-model", "我的网关")
+    # 省略 vendor 也行（还是它自己的方式）；显式给了才覆盖
+    assert _post(client, id=cid, api_key=KEY).status_code == 200
+    assert ai_providers.get(cid)["agent"] == "codex"
+    _post(client, vendor="custom", id=cid, api_key=KEY, wire="anthropic")
+    assert ai_providers.get(cid)["agent"] == "claude"
+
+
+def test_updating_a_catalog_connection_keeps_its_protocol_family_and_address(client, world):
+    world["fetch"] = (["deepseek-flash"], None)
+    _save(
+        "cx",
+        agent="codex",
+        base="https://api.deepseek.com",
+        wire_api="responses",
+        default_model="deepseek-flash",
+    )
+    resp = _post(client, vendor="deepseek", id="cx", api_key=KEY2)
+    assert resp.status_code == 200, resp.get_json()
+    stored = ai_providers.get("cx")
+    assert (stored["agent"], stored["base_url"], stored["wire_api"]) == (
+        "codex",
+        "https://api.deepseek.com",
+        "responses",
+    )
+    assert world["fetched"][-1] == ("https://api.deepseek.com", KEY2)
+    # 换成别家的方式 = 不是同一条：拒绝，不动已存记录
+    resp = _post(client, vendor="zhipu", id="cx", api_key=KEY)
+    assert resp.status_code == 400 and resp.get_json()["params"]["reason"] == "vendor_mismatch"
+    assert ai_providers.get("cx")["api_key"] == KEY2
+
+
+def test_cancelling_during_a_builtin_check_aborts_the_validation(convert_chain):
+    box = convert_chain
+    entered, released, killed = threading.Event(), threading.Event(), []
+
+    def runner(figures_dir, rel, write_roots=None):
+        entered.set()
+        released.wait(30)
+        return {"stems": ["out"], "size_mm": [1.0, 1.0], "svg": None}
+
+    def force_cancel(figures_dir, rel, write_roots=None):
+        killed.append(rel)
+        released.set()
+        return True
+
+    runner.force_cancel = force_cancel
+    box["runner"] = runner
+    box["serve"](
+        [
+            _tool_turn("t1", "create_file", {"content": GOOD_MPL}),
+            _tool_turn("t2", "check", {}),
+            END_TURN,
+        ]
+    )
+    sid, _events = _convert(box)
+    try:
+        assert entered.wait(30), "判据的前提：校验运行已经在跑"
+        assert ai_bridge.cancel(sid) is True
+        deadline = time.monotonic() + 15
+        while not killed and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert killed, "取消到来时在跑的校验 worker 被中止"
+    finally:
+        released.set()
+    sess = _wait(sid)
+    assert sess["status"] == "cancelled"
+    assert not (box["figs"] / "fig_matplotlib.py").exists()
