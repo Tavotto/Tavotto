@@ -2642,6 +2642,8 @@ export default interface Resources {
       "bad_validation": "检查设置格式有误，请刷新页面后重试。",
       "batch_start_failed": "{{message}}",
       "conda_launcher_unavailable": "Conda 环境激活失败（取不到激活后的环境变量），这次没有运行任何东西。通常是暂时的：稍后再试；如果一直这样，请检查这个环境的 conda 安装和 activate.d 脚本。",
+      "connection_not_deletable": "订阅登录请在对应的命令行里退出。",
+      "connection_not_found": "找不到这个连接，可能已被断开。",
       "convert_candidate_changed": "待采用的新版本文件被改动过，已拒绝采用。请重新生成。",
       "convert_disabled": "「生成可编辑版本」已被关闭。",
       "convert_name_exhausted": "同名的新版本文件太多了（已有 99 个），请先清理再试。",
