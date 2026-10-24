@@ -579,3 +579,43 @@ def test_try_run_reaches_numpy_loadtxt_that_is_imported_only_inside_the_script(b
     ctx = make_ctx(box, script_path=script, environments={"e": sys.executable})
     r = call(ctx, "try_run", {"env": "e"})
     assert "exit code 0" in r.content and "figures: 1" in r.content, r.content
+
+
+_FILE_PLOT = (
+    "import matplotlib\nmatplotlib.use('Agg')\nimport matplotlib.pyplot as plt\n"
+    "from pathlib import Path\n"
+    "rows = [l.split(',') for l in (Path(__file__).parent / 'data' / 'x.csv').read_text().split()]\n"
+    "plt.plot([float(a) for a, b in rows], [float(b) for a, b in rows])\n"
+)
+
+
+def test_try_run_translates_a_rule_whose_from_is_an_ancestor_of_the_copied_folder(box):
+    # 项目 <proj>、脚本在 scripts/ 下用 __file__ 拼路径；用户选了另一棵树里同构的位置：
+    # derive 推出 prefix <proj> -> <Downloads>，from 是脚本目录的祖先
+    script = put(box.proj / "scripts" / "fig.py", _FILE_PLOT)
+    data = put(box.home / "Downloads" / "scripts" / "data" / "x.csv", "1,2\n3,4\n")
+    rule = inputremap.derive(str(script.parent / "data" / "x.csv"), str(data), chosen_is_dir=False)
+    assert rule["from"] == str(box.proj) and rule["to"] == str(box.home / "Downloads")
+    inputremap.add_rule(box.proj, rule)
+    ctx = make_ctx(box, script_path=script, environments={"e": sys.executable})
+    r = call(ctx, "try_run", {"env": "e"})
+    assert "exit code 0" in r.content and "figures: 1" in r.content, r.content
+
+
+def test_try_run_translates_a_rule_whose_from_is_exactly_the_copied_folder(box):
+    script = put(box.proj / "scripts" / "fig.py", _FILE_PLOT)
+    data = put(box.home / "Downloads" / "elsewhere" / "data" / "x.csv", "1,2\n3,4\n")
+    inputremap.add_rule(
+        box.proj, {"kind": "prefix", "from": str(script.parent), "to": str(data.parent.parent)}
+    )
+    ctx = make_ctx(box, script_path=script, environments={"e": sys.executable})
+    r = call(ctx, "try_run", {"env": "e"})
+    assert "exit code 0" in r.content and "figures: 1" in r.content, r.content
+
+
+def test_trial_remap_rules_translate_ancestor_rules_and_leave_unrelated_ones(tmp_path):
+    src, work = tmp_path / "proj" / "scripts", tmp_path / "trial" / "work"
+    anc = {"kind": "prefix", "from": (tmp_path / "proj").as_posix(), "to": "/dl"}
+    other = {"kind": "prefix", "from": (tmp_path / "else").as_posix(), "to": "/dl2"}
+    out = trial.trial_remap_rules([anc, other], [src], work)
+    assert out == [anc, other, {"kind": "prefix", "from": work.as_posix(), "to": "/dl/scripts"}]

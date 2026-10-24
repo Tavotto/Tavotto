@@ -770,9 +770,14 @@ def _default_runner(
 def trial_remap_rules(rules: list[dict], src_dirs: list[Path], work: Path) -> list[dict]:
     """项目的改指规则 → 试跑副本里要用的规则。
 
-    规则的 `from` 是**脚本写的那一串**：相对的（`data/x.csv`）与副本无关，原样用；绝对的若落在被复制的脚本目录里
-    （脚本用 `__file__` 拼出 `<项目>/data/x.csv`），副本里同一个读取写出来的是 `<副本>/data/x.csv`——
-    规则按原项目路径记，不加一条换算过的，接上的数据在试跑里就永远找不到。原规则留着（写死的绝对路径照旧能命中）。"""
+    副本结构：复制的是**脚本所在目录** B（`_copy_project(src_dir, …)`），副本根 W 与 B 一一对应——B/rel 在副本里是 W/rel。
+    规则的 `from` F 是**脚本写的那一串**：相对的（`data/x.csv`）与副本无关，原样用；绝对的按它与 B 的包含关系换算
+    （脚本用 `__file__` 拼路径，副本里同一个读取写出来的是 W/rel，而规则按原项目路径记，不换算就永远找不到）：
+
+    * F 在 B 之内或等于 B（F = B/s）→ 另加 `from = W/s`，`to` 不变；`file` 规则同理（`from` 是文件，必在 B 之内）。
+    * F 是 B 的祖先（B = F/t，如脚本在 `<项目>/scripts/`、规则 `<项目>` → `<另一棵树>`）→ 另加 `prefix` 规则
+      `from = W`、`to = <原 to>/t`：W/rel 对应原来的 F/t/rel，改指后落到 to/t/rel。
+    * 与 B 没有包含关系 → 不动。原规则一律留着（写死的绝对路径照旧能命中）。"""
     from .. import figcapture
 
     out = list(rules)
@@ -785,9 +790,20 @@ def trial_remap_rules(rules: list[dict], src_dirs: list[Path], work: Path) -> li
         if parsed is None or not parsed[0]:
             continue
         for base in bases:  # 脚本目录的真实路径与未解析的写法（macOS 的 /var → /private/var）都认
-            if parsed[1][: len(base[1])] != base[1]:
+            if parsed[1][: len(base[1])] == base[1]:  # F 在 B 之内（含相等）
+                moved = {
+                    **r,
+                    "from": figcapture._join_parts(new_base[1] + parsed[1][len(base[1]) :]),
+                }
+            elif r["kind"] == figcapture.REMAP_PREFIX and base[1][: len(parsed[1])] == parsed[1]:
+                tail = base[1][len(parsed[1]) :]  # F 是 B 的祖先：B = F/tail
+                moved = {
+                    **r,
+                    "from": figcapture._join_parts(new_base[1]),
+                    "to": r["to"].replace("\\", "/").rstrip("/") + "/" + "/".join(tail),
+                }
+            else:
                 continue
-            moved = {**r, "from": figcapture._join_parts(new_base[1] + parsed[1][len(base[1]) :])}
             if moved not in out:
                 out.append(moved)
             break
