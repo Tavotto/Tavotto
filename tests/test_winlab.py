@@ -1476,3 +1476,16 @@ def test_conda_legs_expect_the_python_pool_and_others_workerd():
     src = (WINLAB / "agent.py").read_text(encoding="utf-8")
     assert '"python" if name.startswith("conda") else "workerd"' in src
     assert {"conda-prefix", "conda-named"} <= set(re.findall(r'ok\["(conda-[a-z]+)"\]', src))
+
+
+def test_host_exe_is_found_next_to_the_icon_or_uninstaller_when_install_location_is_empty(tmp_path):
+    # ZCode（electron-builder NSIS）10-25 实测：InstallLocation 空、DisplayIcon 指向 uninstallerIcon.ico
+    root = tmp_path / "Programs" / "ZCode"
+    root.mkdir(parents=True)
+    (root / "ZCode.exe").write_bytes(b"")
+    host = A.DESKTOP_HOSTS["zcode"]
+    by_icon = {"DisplayIcon": str(root / "uninstallerIcon.ico"), "InstallLocation": ""}
+    by_uninstaller = {"UninstallString": f'"{root / "Uninstall ZCode.exe"}" /currentuser'}
+    assert A._host_exe(host, by_icon) == root / "ZCode.exe"
+    assert A._host_exe(host, by_uninstaller) == root / "ZCode.exe"
+    assert A._host_exe(host, {"DisplayIcon": str(tmp_path / "x.ico")}) is None

@@ -2536,12 +2536,20 @@ def _uninstall_entries(display_re: str) -> list[dict]:
 
 
 def _host_exe(host: DesktopHost, ent: dict) -> Path | None:
+    """主程序：DisplayIcon 就是 .exe 时直接用；否则在 InstallLocation、图标所在目录、卸载器所在目录里找
+    `exe_name`——electron-builder 的 NSIS 包（ZCode）InstallLocation 留空、DisplayIcon 指向 .ico。"""
     icon = ent.get("DisplayIcon", "").split(",")[0].strip().strip('"')
     if icon.lower().endswith(".exe") and Path(icon).exists():
         return Path(icon)
-    loc = ent.get("InstallLocation", "").strip().strip('"')
-    if loc and (Path(loc) / host.exe_name).exists():
-        return Path(loc) / host.exe_name
+    dirs = [ent.get("InstallLocation", "").strip().strip('"')]
+    if icon:
+        dirs.append(str(Path(icon).parent))
+    for key in ("QuietUninstallString", "UninstallString"):
+        if ent.get(key):
+            dirs.append(str(Path(_command_argv(ent[key])[0]).parent))
+    for d in dirs:
+        if d and (Path(d) / host.exe_name).exists():
+            return Path(d) / host.exe_name
     return None
 
 
