@@ -3255,6 +3255,7 @@ export default interface Resources {
         "system": "系统 Python / Conda",
         "unknown": "已配置的环境"
       },
+      "unusableTitle": "选定的渲染环境用不了",
       "useOther": "使用其他 Python 环境",
       "useOtherHintAfter": "，只是启动它来渲染。",
       "useOtherHintBefore": "脚本需要内置环境里没有的包时，换用你自己的环境。留空并应用即可恢复默认。{{product}}",
