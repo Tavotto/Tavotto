@@ -36,18 +36,26 @@ export function useLoginFlow(
   onConnected: (c: AiConnection) => void,
 ): { button: ReactNode; hint: ReactNode; begin: () => void } {
   const [loginError, setLoginError] = useState<string | null>(null)
+  /** 读到了状态、但所选连接仍没 ready（登录进程失败退出 / 没登完）：入口回到「登录」，可以再发起 */
+  const [notDone, setNotDone] = useState(false)
   const login = useAgentLogin(
     { id: loginAgentOf(vendor, method) },
     async () => {
       const r = await refreshAndFind(vendor, method)
       if (r.conn) onConnected(r.conn)
-      // 刷新成功但这种方式还没 ready（登录失败退出 / 没登完就点了「我已登录」）：按没成功处理，
-      // 留在这里显示登录失败那句，用户可以再点
-      return r.ok && !!r.conn
+      // 没能读到状态（ok:false）：返回 false → 重试刷新；读到了但这种方式还没 ready：
+      // 不是刷新问题，回到初始「登录」按钮（再点 = 重新发起登录）并给失败那句
+      setNotDone(r.ok && !r.conn)
+      return r.ok
     },
     setLoginError,
   )
   const confirming = login.phase === 'terminal' || login.phase === 'manual' || login.phase === 'retry'
+
+  const begin = () => {
+    setNotDone(false)
+    login.begin()
+  }
 
   const button = (
     <Button
@@ -57,7 +65,7 @@ export function useLoginFlow(
       data-connect-login={login.phase}
       loading={login.phase === 'waiting'}
       disabled={login.phase === 'waiting'}
-      onClick={() => (confirming ? login.confirm() : login.begin())}
+      onClick={() => (confirming ? login.confirm() : begin())}
     >
       {login.phase === 'waiting' ? ag('login.waiting') : confirming ? ag('login.done') : cx('signIn')}
     </Button>
@@ -81,11 +89,15 @@ export function useLoginFlow(
           ag('login.manualHint', { command: login.command })
         ) : null}
       </p>
+    ) : notDone ? (
+      <p role="alert" data-connect-login-hint="failed" className="text-xs text-danger">
+        {ag('oauth.state.failed')}
+      </p>
     ) : loginError ? (
       <p role="alert" className="text-xs text-danger">
         {loginError}
       </p>
     ) : null
 
-  return { button, hint, begin: login.begin }
+  return { button, hint, begin }
 }

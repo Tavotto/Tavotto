@@ -350,11 +350,19 @@ describe('登录只认所选方式的连接', () => {
     await click(q('[data-connect-login="terminal"]'))
     expect(onConnected).not.toHaveBeenCalled()
     expect(onClose).not.toHaveBeenCalled()
-    expect(q('[data-connect-login="retry"]')).toBeTruthy()
-    expect(q('[data-connect-login-hint]')!.textContent).toBe(t('settings.agents.login.refreshFailed', { ns: 'dialogs' }))
+    // 读到了状态但订阅没 ready：不是刷新问题——回到「登录」按钮并给失败那句（不进「重试刷新」）
+    expect(q('[data-connect-login="retry"]')).toBeNull()
+    expect(q('[data-connect-login="idle"]')).toBeTruthy()
+    expect(q('[data-connect-login-hint]')!.textContent).toBe(t('settings.agents.oauth.state.failed', { ns: 'dialogs' }))
+    // 再点 = 重新发起登录（又一次 POST login）
+    const loginPosts = () => calls.filter((c) => c.url.endsWith('/agents/codex/login') && c.method === 'POST').length
+    const before = loginPosts()
+    await click(q('[data-connect-login="idle"]'))
+    expect(loginPosts()).toBe(before + 1)
+    expect(q('[data-connect-login="terminal"]')).toBeTruthy()
     // 这回登录真的成了
     serverCaps = caps(KEY, SUB)
-    await click(q('[data-connect-login="retry"]'))
+    await click(q('[data-connect-login="terminal"]'))
     expect(onConnected).toHaveBeenCalledTimes(1)
     expect(onConnected.mock.calls[0][0].id).toBe('sub:codex')
     expect(onClose).toHaveBeenCalledTimes(1)
@@ -380,5 +388,35 @@ describe('error 状态的 Key 连接：改 Key 是更新不是新建', () => {
       vendor: 'openai',
       api_key: 'sk-fix',
     })
+  })
+})
+
+describe('登录后读不到状态：重试的是刷新，不是重新登录', () => {
+  it('capabilities 读取失败进「重试」；点重试只再读 capabilities，不再发起登录', async () => {
+    const SUB = connection('sub:codex', { vendor: 'openai', label: 'ChatGPT', route: 'cli:codex' })
+    useAiStore.setState({ caps: { ...connectCapsOf([]), vendors: [DS, OPENAI, CLAUDE] } })
+    const base = globalThis.fetch
+    let fail = true
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      if (String(url).startsWith('/api/ai/capabilities') && fail) {
+        calls.push({ url: String(url), method: 'GET', body: null })
+        return new Response('{}', { status: 500, headers: { 'Content-Type': 'application/json' } })
+      }
+      return base(url as string, init)
+    }) as typeof fetch
+    const onConnected = vi.fn()
+    await render(<ConnectAiDialog open onClose={() => {}} onConnected={onConnected} />)
+    await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
+    await click(q('[data-connect-method="sub"]'))
+    await click(q('[data-connect-login="terminal"]'))
+    expect(q('[data-connect-login="retry"]')).toBeTruthy()
+    expect(q('[data-connect-login-hint]')!.textContent).toBe(t('settings.agents.login.refreshFailed', { ns: 'dialogs' }))
+    const loginPosts = () => calls.filter((c) => c.url.endsWith('/agents/codex/login') && c.method === 'POST').length
+    const before = loginPosts()
+    fail = false
+    serverCaps = { ...connectCapsOf([SUB]), vendors: [DS, OPENAI, CLAUDE] }
+    await click(q('[data-connect-login="retry"]'))
+    expect(loginPosts()).toBe(before)
+    expect(onConnected).toHaveBeenCalledTimes(1)
   })
 })
