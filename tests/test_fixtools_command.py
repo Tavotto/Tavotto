@@ -356,14 +356,22 @@ def test_system_and_builtin_environments_are_never_writable_whichever_list_they_
     sysenv = _env_at(box.tmp / "envs" / "sys")
     builtin = _env_at(box.tmp / "envs" / "builtin")
     user = _env_at(box.tmp / "envs" / "user")
+
+    def norm(p):
+        return os.path.normcase(os.path.normpath(str(p)))
+
     kinds = {
-        str(_env_python(sysenv)): convertdeps.KIND_SYSTEM,
-        str(_env_python(builtin)): convertdeps.KIND_BUILTIN,
+        norm(_env_python(sysenv)): convertdeps.KIND_SYSTEM,
+        norm(_env_python(builtin)): convertdeps.KIND_BUILTIN,
     }
     monkeypatch.setattr(
         convertdeps,
         "describe_env",
-        lambda py, src: {"kind": kinds.get(py, convertdeps.KIND_OTHER), "name": "", "key": ""},
+        lambda py, src: {
+            "kind": kinds.get(norm(py), convertdeps.KIND_OTHER),
+            "name": "",
+            "key": "",
+        },
     )
     real = os.path.realpath
     ctx = change_ctx(

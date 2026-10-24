@@ -268,7 +268,7 @@ def _contains(outer: str, inner: str) -> bool:
 def _prefix_python(prefix: str) -> str | None:
     """环境前缀里的解释器（分类要拿解释器判种类）；找不到回 None。"""
     for rel in ("bin/python", "bin/python3", "Scripts/python.exe", "python.exe"):
-        cand = os.path.join(prefix, rel)
+        cand = os.path.join(prefix, *rel.split("/"))  # 按段拼：Windows 上不留混合分隔符
         if os.path.isfile(cand):
             return cand
     return None
