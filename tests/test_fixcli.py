@@ -104,7 +104,7 @@ def test_claude_denies_every_write_and_network_tool_and_allows_only_read_only_co
     box, monkeypatch
 ):
     perms = claude_settings(launch(box, monkeypatch, "claude").argv)["permissions"]
-    for tool in ("Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch"):
+    for tool in ("Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"):
         assert tool in perms["deny"]
         assert tool not in perms["allow"]
     assert "Bash" not in perms["allow"] and not any(a.startswith("Bash(*") for a in perms["allow"])
@@ -152,6 +152,8 @@ def test_codex_runs_read_only_with_the_mcp_server_given_only_on_this_command_lin
     assert (
         f"mcp_servers.tavotto_fix.tool_timeout_sec={int(fixsession.ASK_TIMEOUT) + 120}" in overrides
     )
+    # 10-24 真机：不放行的话 exec 模式里 Codex 自己的 MCP 审批没人点，工具调用一直挂着、根本不发给服务
+    assert 'mcp_servers.tavotto_fix.default_tools_approval_mode="approve"' in overrides
     assert argv[-1] == "PROMPT"
 
 

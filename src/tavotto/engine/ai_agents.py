@@ -762,6 +762,10 @@ class CodexAgent(AgentDefinition):
             f"{pre}.tool_timeout_sec={int(ctx.tool_timeout_s)}",
             "-c",
             f"{pre}.startup_timeout_sec=60",
+            # 本服务的工具一律免 Codex 自己的审批（exec 模式没人点，不放行就一直挂着——10-24 真机跑出来的）；
+            # 要用户点头的改动由 Tavotto 自己弹卡（fixtools 的档位 + ctx.ask），不靠 Codex 这一层
+            "-c",
+            f'{pre}.default_tools_approval_mode="approve"',
             "-c",
             'approval_policy="never"',
         ]
@@ -1025,7 +1029,13 @@ class ClaudeAgent(AgentDefinition):
             rules += [f"Read(**/{pat})", f"Read(//**/{pat})"]
         for ab in deny.get("absolute", ()):
             rules.append("Read(//" + str(ab).replace("\\", "/").lstrip("/") + ")")
-        rules += ["Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch"]
+        rules += [
+            "Edit",
+            "Write",
+            "NotebookEdit",
+            "WebFetch",
+            "WebSearch",
+        ]  # Claude Code 2.1 已没有 MultiEdit（写了会报「matches no known tool」）
         rules += ["Bash(*>*)", "Bash(*tee *)", "Bash(*sed -i*)", "Bash(*-exec*)"]
         allow = [f"mcp__{mcp_name}__*", "Read", "Grep", "Glob"]
         for c in self.FIX_READONLY_COMMANDS:

@@ -524,5 +524,5 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 - **会话**：`SESSIONS.start(cli=构造器)`；`_work_cli` 起进程、读掉 stdout 丢弃（不入日志、不当结论）、轮询：取消 → 结束；`finish` 之后给 `FINISH_GRACE`（20 秒）收尾，到点结束；超 `FIX_LIMITS.max_seconds` → `budget`。
   结束只用 `ai_bridge._terminate` / `_await_exit`（POSIX `killpg` 自己的进程组、Windows `taskkill /T /PID`），**绝不按名字杀**。没调 `finish` 就退出 = `failed`，`reason ∈ {cli_no_finish, cli_exit, cli_start, budget}`（前端落到「AI 这次没能修好」那句，无需新文案）。
 - **卫生**：MCP 配置只在本次启动参数里，**不写 `~/.codex`、`~/.claude`**（用例用假主目录断言）；Tavotto 不读、不存 CLI 的登录凭据；回环请求显式绕开系统代理；`fix-mcp` 的 stdout 归协议独占，没有令牌或 URL 不是 `http://127.0.0.1:` 就退出码 2。
-- **没核实的**：`-c mcp_servers.<名>.env_vars` / `tool_timeout_sec`（Codex）、`${VAR}` 在 `--mcp-config` 内联 JSON 里展开与 `dontAsk` 模式名（Claude）是按各家文档写的，用例只验证命令行**形状**，没有跑真实 CLI；Codex 在 `approval_policy="never"` 下对 MCP 工具是否免确认也待真机验证。
+- **真机核实（2026-10-24，Codex 0.163.0 / Claude Code 2.1.310，隔离数据目录 + 假执行器）**：两边整链都走通（CLI → `tavotto fix-mcp` → 回调 → `run_tool` → 弹卡 → `finish`），`env_vars` 转令牌、`${VAR}` 展开、`--strict-mcp-config`、`dontAsk` 均生效，`~/.codex` / `~/.claude` 未被写。真机发现并已修：Codex exec 模式下 MCP 工具默认要它自己的审批、没人点就一直挂着 → 本服务加 `default_tools_approval_mode="approve"`（要用户点头的改动仍由 Tavotto 弹卡）；Claude Code 2.1 已没有 `MultiEdit`（deny 里写它会报 matches no known tool）。仍知：Codex 没有 `--strict-mcp-config` 的对应项，用户自己在 `~/.codex/config.toml` 配的其它 MCP 服务也会出现在修复会话里（它们的工具仍走 Codex 默认审批，exec 模式下不会自动执行）。
 
