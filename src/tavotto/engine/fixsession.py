@@ -173,6 +173,9 @@ class CliLaunch:
     cwd: str
 
 
+#: 收尾时等在途工具结束的第一档上限（秒）；到点还没结束就如实记一条警告，**仍不发布终态**，继续等到它结束
+TOOL_DRAIN = 120.0
+
 #: `finish` 之后给 CLI 自己收尾退出的时间（秒），到点就结束它自己起的那个进程
 FINISH_GRACE = 20.0
 
@@ -202,6 +205,8 @@ class FixSession:
     audit: AuditLog | None = None
     #: MCP 回调的工具调用串行（`run_tool` 改 `ctx.step` / `call_meta`，不是线程安全的）
     tool_lock: threading.Lock = field(default_factory=threading.Lock)
+    #: CLI 会话收尾中（取消 / 超时 / 进程退出）：不再接受新的工具调用，在途的那个等结束后才发布终态
+    closing: threading.Event = field(default_factory=threading.Event)
 
 
 def _same(a: str, b: object) -> bool:
@@ -420,14 +425,31 @@ class FixSessions:
                 reason = "budget"
                 break
             time.sleep(0.1)
+        s.closing.set()  # 先拒新调用；卡片上阻塞的在途工具由 `_ask` 看到它而醒来
         code = proc.poll()
         if code is None:
             ai_bridge._terminate(sess)
         ai_bridge._await_exit(sess)
         drain.join(timeout=2)
+        self._drain_inflight(s)
         if reason != "budget":
             reason = "cli_exit" if (code or 0) != 0 else "cli_no_finish"
         self._settle(s, reason)
+
+    @staticmethod
+    def _drain_inflight(s: FixSession) -> None:
+        """等应用进程里在途的工具调用（`call_tool` 持着 `tool_lock`）结束，之后才发布终态、释放 `active()`：
+        否则界面可以重跑验证或起下一次修复，而 `install_packages` 之类还在改环境。上限到了仍未结束就记警告并继续等（会话保持占位）。"""
+        if s.tool_lock.acquire(timeout=TOOL_DRAIN):
+            s.tool_lock.release()
+            return
+        LOG.warning(
+            "fix session %s: a tool call is still running after %ss; keeping the slot",
+            s.id,
+            TOOL_DRAIN,
+        )
+        s.tool_lock.acquire()
+        s.tool_lock.release()
 
     @staticmethod
     def _drain(proc) -> None:
@@ -447,6 +469,7 @@ class FixSessions:
                         and _same(s.token, token)
                         and s.state != STATE_FINISHED
                         and not s.cancel.is_set()
+                        and not s.closing.is_set()
                     ):
                         return s
                     break
@@ -476,7 +499,7 @@ class FixSessions:
         if tool is None:
             return {"content": "Unknown tool.", "is_error": True}
         with s.tool_lock:
-            if s.cancel.is_set() or s.finished.is_set() or s.ctx is None:
+            if s.cancel.is_set() or s.closing.is_set() or s.finished.is_set() or s.ctx is None:
                 return {"content": "The repair session has ended.", "is_error": True}
             result = fixtools.run_tool(tool, s.ctx, args, s.audit)
         s.steps += 1
@@ -508,7 +531,7 @@ class FixSessions:
         self._notify(s)
         deadline = time.monotonic() + ASK_TIMEOUT
         while not p.event.wait(0.2):
-            if s.cancel.is_set():
+            if s.cancel.is_set() or s.closing.is_set():
                 p.result = {"answer": "cancelled"}
                 break
             if time.monotonic() >= deadline:

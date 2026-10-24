@@ -227,3 +227,41 @@ def test_prompt_is_the_same_text_as_the_builtin_loop_plus_a_cli_note(box):
     text = fixsession.cli_prompt(ctx, "fig.py")
     assert text.startswith(fixsession.SYSTEM_PROMPT) and "finish" in text and "tavotto_fix" in text
     assert "fig.py" in text and len(text) <= fixsession.CLI_PROMPT_MAX + 100
+
+
+# =========================================================================== TOML 字符串编码（Codex #1383 P2）
+@pytest.mark.parametrize(
+    "text",
+    [
+        "/tmp/plain",
+        "/tmp/🧪 实验/数据",
+        "中文 路径/图.py",
+        "C:\\Users\\me\\proj\\fig.py",
+        '\\\\server\\share "quoted"\\x',
+        "tab\there\nnewline\rcr\x00nul\x1b\x7f\x08\x0c",
+        'a"b\\"c',
+    ],
+)
+def test_toml_strings_round_trip_through_tomllib(text):
+    import tomllib
+
+    assert tomllib.loads(f"v = {ai_agents.toml_value(text)}")["v"] == text
+    assert tomllib.loads(f"v = {ai_agents.toml_value([text, text])}")["v"] == [text, text]
+
+
+def test_codex_overrides_for_an_emoji_windows_path_parse_back(box, monkeypatch):
+    from dataclasses import replace
+
+    import tomllib
+
+    weird = "C:\\Users\\张三\\🧪 proj\\tavotto-cli.exe"
+    fake_resolution(monkeypatch, "codex")
+    run = replace(_run_ctx(), mcp_command=[weird, "fix-mcp", "--fix-id", 'x"y'])
+    argv, _env = ai_bridge.fix_cli_command("codex", run)
+    overrides = [argv[i + 1] for i, a in enumerate(argv) if a == "-c"]
+    parsed = {}
+    for o in overrides:
+        k, v = o.split("=", 1)
+        parsed[k] = tomllib.loads(f"v = {v}")["v"]
+    assert parsed["mcp_servers.tavotto_fix.command"] == weird
+    assert parsed["mcp_servers.tavotto_fix.args"][-1] == 'x"y'

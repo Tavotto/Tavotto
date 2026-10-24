@@ -185,6 +185,34 @@ class SpawnSpec:
     env: dict[str, str] = field(default_factory=dict)
 
 
+def toml_string(text: str) -> str:
+    """TOML 基本字符串。不用 `json.dumps`：它对非 BMP 字符（🧪）输出 UTF-16 代理对转义，TOML 不接受。
+    这里：`\\` `"` 与全部控制字符（含 DEL）转义，其余 Unicode 原样（命令行经 UTF-8 传递）。"""
+    out = ['"']
+    for ch in text:
+        o = ord(ch)
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif o in (8, 9, 10, 12, 13):
+            out.append({8: "\\b", 9: "\\t", 10: "\\n", 12: "\\f", 13: "\\r"}[o])
+        elif o < 0x20 or o == 0x7F:
+            out.append(f"\\u{o:04X}")
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def toml_value(value: object) -> str:
+    if isinstance(value, str):
+        return toml_string(value)
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(toml_value(v) for v in value) + "]"
+    raise TypeError(type(value).__name__)
+
+
 @dataclass(frozen=True)
 class FixRunContext:
     """「使用你的 AI 来修复」经 MCP 起 CLI 的输入（ADR 0149 D3）。**这里没有任何密钥**：令牌只以环境变量**名**出现，
@@ -713,8 +741,8 @@ class CodexAgent(AgentDefinition):
         `env_vars` 只列变量**名**，值由 Codex 从它自己的环境转给 MCP 子进程。"""
         pre = f"mcp_servers.{ctx.mcp_name}"
 
-        def toml(value: object) -> str:  # JSON 字符串 / 数组是合法的 TOML 基本字符串 / 数组
-            return json.dumps(value)
+        def toml(value: object) -> str:
+            return toml_value(value)
 
         cmd = [
             *ctx.argv,

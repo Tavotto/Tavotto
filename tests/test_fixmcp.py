@@ -449,3 +449,64 @@ def test_launcher_is_the_tavotto_cli_subcommand():
     cmd = fixsession.mcp_launcher()
     assert cmd[-1] == "fix-mcp" and (Path(cmd[0]).name or cmd[0])
     assert "fix-mcp" in __import__("tavotto.engine.cli", fromlist=["COMMANDS"]).COMMANDS
+
+
+# =========================================================================== 收尾要等在途工具（Codex #1383 P2）
+@pytest.mark.parametrize("how", ["cancel", "budget"])
+def test_cancel_waits_for_an_in_flight_tool_before_publishing_the_final_state(
+    box, served, monkeypatch, how
+):
+    from tavotto.engine.fixtools import FixTool
+    from tavotto.engine.fixtools.base import obj, ok
+
+    entered, release = threading.Event(), threading.Event()
+
+    def slow(_ctx, _args):  # 像 install_packages：不看卡片、不看取消，自己做完才返回
+        entered.set()
+        release.wait(30)
+        return ok("done", "slow")
+
+    monkeypatch.setitem(
+        REGISTRY, "slow_tool", FixTool("slow_tool", "d", obj({}), slow, tier="observe")
+    )
+    monkeypatch.setattr(fixsession, "TOOL_DRAIN", 0.3)  # 上限很短：到点后仍要继续占位
+    extra = (
+        {"limits": fixsession.Limits(1, 1, 2.0, 1)} if how == "budget" else {}
+    )  # 超预算：没有取消也要走同一条收尾
+    s, token = start_session(box, [sys.executable, "-c", "import time; time.sleep(25)"], **extra)
+    result: dict = {}
+    body = {"name": "slow_tool", "arguments": {}}
+    t = threading.Thread(
+        target=lambda: result.update(
+            r=http(f"{served.url}/api/ai/fix/{s.id}/tool", token, body=body)
+        )
+    )
+    t.start()
+    assert entered.wait(10)
+    queued: dict = {}
+    q = threading.Thread(
+        target=lambda: queued.update(
+            r=fixsession.SESSIONS.call_tool(s.id, token, "read_run_report", {})
+        )
+    )
+    q.start()  # 授权时会话还开着、此刻在 tool_lock 上排队的第二个调用
+    time.sleep(0.3)
+    if how == "cancel":
+        fixsession.SESSIONS.cancel(s.id, "pj")
+    time.sleep(3.5 if how == "budget" else 1.5)  # 进程早已被结束，TOOL_DRAIN 也早过了
+    assert s.state != fixsession.STATE_FINISHED  # 终态要等工具返回之后
+    assert fixsession.SESSIONS.active() is s  # 占位不释放：起不了下一次修复
+    with pytest.raises(fixsession.FixError):  # 新的调用立即被拒，不排队
+        fixsession.SESSIONS.call_tool(s.id, token, "read_run_report", {})
+    release.set()
+    t.join(10)
+    q.join(10)
+    assert queued["r"]["is_error"] is True  # 排队的那个在锁释放后也不执行
+    assert "read_run_report" not in [r["tool"] for r in audit_rows(box) if r["session"] == s.id]
+    wait_finished(s, 10)
+    assert fixsession.SESSIONS.active() is None
+    assert (s.outcome, s.reason) == (
+        (fixsession.OUTCOME_CANCELLED, "cancelled")
+        if how == "cancel"
+        else (fixsession.OUTCOME_FAILED, "budget")
+    )
