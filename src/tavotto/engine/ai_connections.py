@@ -518,14 +518,24 @@ def add_connection(body: object) -> tuple[str, str | None]:
     （`anthropic` | `openai-responses`）；带已存在的 `id` = 换这条的 Key / 型号（其余字段缺省沿用）。"""
     if not isinstance(body, dict):
         raise _invalid("bad_body")
-    vid = _key_method_id(body)
-    groups = _groups()
-    rows = groups[vid]
     existing = None
     if body.get("id") is not None:
         existing = ai_providers.get(body["id"]) if isinstance(body["id"], str) else None
         if existing is None or existing.get("auth") == "oauth":
             raise ConnectionRefused("connection_not_found", {}, 404)
+    if existing is not None and body.get("vendor") is None and body.get("method") is None:
+        vid = _vendor_for_record(existing)[1][
+            : -len(":key")
+        ]  # 更新时省略厂商 = 还是这一条自己的方式
+    else:
+        vid = _key_method_id(body)
+    if existing is not None:
+        # 已存记录的地址对得上目录里别家的方式：不是同一条，拒绝（地址被改成目录外的 = 用户自填，不算冲突）
+        have = _vendor_for_record(existing)[1]
+        if have != "custom:key" and have != f"{vid}:key":
+            raise _invalid("vendor_mismatch")
+    groups = _groups()
+    rows = groups[vid]
     key = body.get("api_key")
     reused_key = key is None and existing is not None
     if reused_key:
@@ -537,14 +547,23 @@ def add_connection(body: object) -> tuple[str, str | None]:
     if base_url is not None and not isinstance(base_url, str):
         raise _invalid("bad_base_url")
     base_url = (base_url or "").strip().rstrip("/")
+    # 带 id 的更新以已存记录为底：请求里没给的字段（地址 / 协议 / 型号 / 名字）一律保留，只有显式给了才覆盖
+    kept_url = str((existing or {}).get("base_url") or "").strip().rstrip("/")
     if vid == "custom":
         wire = body.get("wire")
+        if wire is None and existing is not None:
+            wire = {"claude": "anthropic", "codex": "openai-responses"}.get(existing.get("agent"))
+        base_url = base_url or kept_url
         if wire not in _WIRE_AGENT or not base_url:
             raise _invalid("custom_needs_base_url_and_wire")
         row = next(r for r in rows if r["agent"] == _WIRE_AGENT[wire])
     else:
-        row = rows[0]
-        base_url = base_url or row["base_url"]
+        # 保留已存记录的协议族（别把 Responses 连接换回目录第一行的 Anthropic 协议）
+        row = next(
+            (r for r in rows if existing is not None and r["agent"] == existing.get("agent")),
+            rows[0],
+        )
+        base_url = base_url or kept_url or row["base_url"]
     refusal = ai_catalog.url_refusal(base_url)
     if refusal:
         raise _invalid(refusal)
