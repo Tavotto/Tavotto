@@ -33,7 +33,6 @@ import importlib.util
 import json
 import os
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
@@ -42,6 +41,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import proctree
 from _common import run_metadata
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -549,14 +549,9 @@ def expand(argv: tuple[str, ...], mapping: dict[str, str]) -> list[str]:
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:
-    try:
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=30
-            )
-        else:
-            os.killpg(proc.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
-    except (OSError, subprocess.TimeoutExpired):
+    """超时后让整棵树消失。Windows 走 Job Object / 进程快照（`proctree`），不起 taskkill：
+    非管理员账户上它既慢又枚举不全，曾经把「超时 1 秒」拖成 30 秒。"""
+    if proctree.kill_tree(proc) is None:
         proc.kill()
 
 
@@ -572,7 +567,7 @@ def run_step(argv: list[str], env: dict, log_prefix: Path, timeout: float) -> di
     t0 = time.monotonic()
     with open(out_path, "wb") as out, open(err_path, "wb") as err:
         try:
-            proc = subprocess.Popen(
+            proc = proctree.spawn(
                 argv, cwd=ROOT, env=env, stdout=out, stderr=err, stdin=subprocess.DEVNULL, **kwargs
             )
         except OSError as exc:
@@ -592,6 +587,7 @@ def run_step(argv: list[str], env: dict, log_prefix: Path, timeout: float) -> di
         except subprocess.TimeoutExpired:
             _kill_tree(proc)
             proc.wait()
+            proctree.tree_gone(proc, 5.0)  # 返回前确认后代已消失，别把残留带进下一步
             rc, timed_out = None, True
     return {
         "exit_code": rc,

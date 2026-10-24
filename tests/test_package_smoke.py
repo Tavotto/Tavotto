@@ -392,7 +392,8 @@ def test_termination_leaves_neither_the_server_nor_its_worker(tmp_path):
     assert _wait_gone(pids["worker"]), "桩起的 worker 成了孤儿"
     term = res["history"][0]["terminate"]
     if os.name == "nt":
-        assert term["how"] == "taskkill", term
+        assert term["how"] in ("job", "snapshot"), term
+        assert term["group_gone"] is True, term
     else:
         # 恰好一次 SIGTERM 就退，组里也没剩人——`+kill` / `+kill-group` 出现说明有人不理 SIGTERM
         assert term == {
