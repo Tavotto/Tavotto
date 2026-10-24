@@ -509,3 +509,134 @@ def test_pytest_tasks_run_with_the_ci_hang_watchdog(tmp_path, monkeypatch):
     A.run_pytest_task(lab, A.TASKS["pytest"], tmp_path, ["tests/test_a.py"], None, {})
     assert seen["env"]["TAVOTTO_TEST_HANG_SECONDS"] == "900"
     assert "-vv" in seen["argv"] and "-rs" in seen["argv"]
+
+
+# --------------------------------------------------------------------------- hosts-live（L4/L5）
+def _stream(*events):
+    return "\n".join(json.dumps(e) for e in events)
+
+
+def _use(i, name):
+    return {
+        "type": "assistant",
+        "message": {
+            "content": [{"type": "tool_use", "id": i, "name": f"mcp__tavotto__{name}", "input": {}}]
+        },
+    }
+
+
+def _res(i, text, err=False):
+    return {
+        "type": "user",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": i,
+                    "content": [{"type": "text", "text": text}],
+                    "is_error": err,
+                }
+            ]
+        },
+    }
+
+
+def test_live_task_is_direct_only_and_needs_a_secret():
+    t = A.TASKS["hosts-live"]
+    assert t.networks == ("direct",) and t.needs_secret
+    assert any("Anthropic / OpenAI" in u for u in t.unverified)
+
+
+def test_live_env_points_at_the_domestic_endpoint_and_silences_anthropic_traffic():
+    env = A._secret_env({"base_url": "https://api.deepseek.com/anthropic", "api_key": "k" * 20})
+    assert env["ANTHROPIC_BASE_URL"].startswith("https://api.deepseek.com")
+    assert env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
+    assert not any("PROXY" in k for k in env)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"",
+        b"not json",
+        b'{"api_key": "short", "base_url": "https://x"}',
+        b'{"api_key": "' + b"a" * 20 + b'", "base_url": "http://x"}',
+        b'{"api_key": "has space in it here", "base_url": "https://x"}',
+    ],
+)
+def test_bad_secrets_are_refused(raw):
+    import io
+
+    assert isinstance(A.read_secret(io.StringIO(raw.decode())), str)
+
+
+def test_judge_live_requires_real_successful_calls_pdf_and_reopen(tmp_path):
+    pdf = tmp_path / "out.pdf"
+    pdf.write_bytes(b"%PDF-1.7 x")
+    s1 = A.parse_stream(
+        _stream(
+            _use("1", "tavotto_health"),
+            _res("1", "{}"),
+            _use("2", "tavotto_open_figure"),
+            _res("2", "{}"),
+            _use("3", "tavotto_apply_overrides"),
+            _res("3", "{}"),
+            _use("4", "tavotto_export"),
+            _res("4", "{}"),
+            _use("5", "tavotto_verify_replay"),
+            _res("5", "{}"),
+        )
+    )
+    s2 = A.parse_stream(
+        _stream(
+            _use("6", "tavotto_open_figure"),
+            _res("6", "{}"),
+            _use("7", "tavotto_session_state"),
+            _res("7", '{"patches": [{"gid": "line0", "prop": "linewidth", "value": 3}]}'),
+        )
+    )
+    assert A.judge_live(s1, s2, pdf) == {
+        "L4": "passed",
+        "L5": "passed",
+        "checks": {
+            "opened": True,
+            "applied": True,
+            "exported_pdf": True,
+            "replay_verified": True,
+            "reopened_in_fresh_process": True,
+            "edits_survive_reopen": True,
+        },
+    }
+    # 重开读不到修改、PDF 不是 PDF、工具报错——每一样都让 L5 失败
+    s2_empty = A.parse_stream(
+        _stream(
+            _use("6", "tavotto_open_figure"),
+            _res("6", "{}"),
+            _use("7", "tavotto_session_state"),
+            _res("7", '{"patches": []}'),
+        )
+    )
+    assert A.judge_live(s1, s2_empty, pdf)["L5"] == "failed"
+    pdf.write_bytes(b"<html>")
+    assert A.judge_live(s1, s2, pdf)["L5"] == "failed"
+    s1_err = A.parse_stream(_stream(_use("1", "tavotto_health"), _res("1", "boom", err=True)))
+    assert A.judge_live(s1_err, s2, None)["L4"] == "failed"
+
+
+def test_a_tool_use_without_any_result_is_not_a_success():
+    s = A.parse_stream(_stream(_use("1", "tavotto_health")))
+    assert A._ok_calls(s, "tavotto_health") == []
+
+
+def test_secret_is_scrubbed_from_evidence(tmp_path):
+    (tmp_path / "log.txt").write_bytes(b"token=sk-abcdefghijklmnop end")
+    A._scrub(tmp_path, "sk-abcdefghijklmnop")
+    assert (tmp_path / "log.txt").read_bytes() == b"token=<redacted> end"
+
+
+def test_live_test_without_local_secret_file_stops_before_ssh(tmp_path, monkeypatch):
+    monkeypatch.setattr(W, "MODEL_SECRET", tmp_path / "missing.json")
+    monkeypatch.setattr(
+        W, "remote_json", lambda *a, **k: pytest.fail("must not reach the Lab without a secret")
+    )
+    assert W.main(["test", "hosts-live"]) == 3

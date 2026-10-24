@@ -451,6 +451,42 @@ Restart-Service sshd
     return admin_ssh(ps)
 
 
+MODEL_SECRET = Path(
+    os.environ.get("TAVOTTO_WINLAB_MODEL_SECRET", "~/.config/tavotto-winlab/model.json")
+).expanduser()
+MODEL_PROVIDERS = {"deepseek": "https://api.deepseek.com/anthropic"}
+
+
+def load_model_secret() -> bytes | None:
+    """真实模型调用的凭据：本机 0600 文件，经 stdin 交给 Lab 的那一次运行，Lab 不落盘、不打印。"""
+    if not MODEL_SECRET.exists():
+        print(
+            f"missing {MODEL_SECRET}: run `python3 scripts/winlab/winlab.py secret-init deepseek` in your own terminal",
+            file=sys.stderr,
+        )
+        return None
+    if MODEL_SECRET.stat().st_mode & 0o077:
+        print(f"{MODEL_SECRET} must be chmod 600", file=sys.stderr)
+        return None
+    return MODEL_SECRET.read_bytes()
+
+
+def secret_init(provider: str) -> int:
+    """在用户自己的终端里录入（getpass 不回显），写 0600 文件；值从不进聊天或命令行参数。"""
+    import getpass
+
+    key = getpass.getpass(f"{provider} API key (input hidden): ").strip()
+    if not key:
+        return 2
+    MODEL_SECRET.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(MODEL_SECRET, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump({"provider": provider, "base_url": MODEL_PROVIDERS[provider], "api_key": key}, f)
+    os.chmod(MODEL_SECRET, 0o600)
+    print(f"saved to {MODEL_SECRET} (0600)")
+    return 0
+
+
 def render_proxy_config(secrets: dict, template: dict) -> dict:
     """`${section.key}` 占位符 → 凭据文件里的值（保留类型）。缺值即报错，绝不留占位符。"""
 
@@ -536,6 +572,81 @@ Get-NetTCPConnection -State Listen -LocalPort 7890,7891 -EA SilentlyContinue | %
     return admin_ssh(ps)
 
 
+#: 腾讯云 CAM 子账号（只授轻量快照 + 只读）：密钥只在本机钥匙串，经环境变量交给 tccli、不进命令行参数。
+TENCENT_KEYCHAIN_SERVICE = "tavotto-lab-tencent"
+LIGHTHOUSE_REGION = os.environ.get("TAVOTTO_WINLAB_REGION", "ap-guangzhou")
+
+
+def _keychain(account: str) -> str | None:
+    out = subprocess.run(
+        ["security", "find-generic-password", "-s", TENCENT_KEYCHAIN_SERVICE, "-a", account, "-w"],
+        capture_output=True,
+        text=True,
+    )
+    return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else None
+
+
+def _tccli(*args: str) -> dict:
+    sid, skey = _keychain("SecretId"), _keychain("SecretKey")
+    if not (sid and skey):
+        raise SystemExit(
+            f"keychain service {TENCENT_KEYCHAIN_SERVICE!r} needs SecretId and SecretKey "
+            f"(security add-generic-password -s {TENCENT_KEYCHAIN_SERVICE} -a SecretId -w)"
+        )
+    env = {**os.environ, "TENCENTCLOUD_SECRET_ID": sid, "TENCENTCLOUD_SECRET_KEY": skey}
+    out = subprocess.run(
+        ["tccli", "lighthouse", *args, "--region", LIGHTHOUSE_REGION, "--output", "json"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if out.returncode != 0:
+        raise SystemExit(f"tccli lighthouse {args[0]} failed: {out.stderr.strip()[-400:]}")
+    return json.loads(out.stdout)
+
+
+def lab_public_ip() -> str:
+    cfg = subprocess.run(
+        ["ssh", "-G", f"{ADMIN_HOST}-public"], capture_output=True, text=True
+    ).stdout
+    kv = dict(line.split(" ", 1) for line in cfg.splitlines() if " " in line)
+    return kv["hostname"]
+
+
+def admin_snapshot(name: str) -> int:
+    ip = lab_public_ip()
+    found = _tccli(
+        "DescribeInstances",
+        "--Filters",
+        json.dumps([{"Name": "public-ip-address", "Values": [ip]}]),
+    )
+    insts = found.get("InstanceSet") or []
+    if len(insts) != 1:
+        raise SystemExit(
+            f"expected exactly one Lighthouse instance with the Lab's public IP, got {len(insts)}"
+        )
+    iid = insts[0]["InstanceId"]
+    made = _tccli("CreateInstanceSnapshot", "--InstanceId", iid, "--SnapshotName", name)
+    sid = made["SnapshotId"]
+    print(f"[winlab] snapshot {sid} of {iid} requested", file=sys.stderr)
+    deadline = time.monotonic() + 3600
+    while time.monotonic() < deadline:
+        time.sleep(30)
+        snaps = (
+            _tccli("DescribeSnapshots", "--SnapshotIds", json.dumps([sid])).get("SnapshotSet") or []
+        )
+        state = snaps[0].get("SnapshotState") if snaps else "UNKNOWN"
+        pct = snaps[0].get("Percent") if snaps else None
+        print(f"[winlab] {sid} {state} {pct}%", file=sys.stderr)
+        if state == "NORMAL":
+            return show(
+                0, {"result": "passed", "snapshot_id": sid, "instance_id": iid, "name": name}
+            )
+        if state in ("CREATE_FAILED", "FAILED"):
+            return show(1, {"result": "failed", "snapshot_id": sid, "state": state})
+    return show(1, {"result": "error", "summary": f"snapshot {sid} not NORMAL within an hour"})
+
+
 # ----------------------------------------------------------------------------- CLI
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="winlab", description=__doc__.splitlines()[0])
@@ -557,12 +668,16 @@ def build_parser() -> argparse.ArgumentParser:
     c = sub.add_parser("clean")
     c.add_argument("--keep", type=int, default=20)
     sub.add_parser("stop")
+    si = sub.add_parser("secret-init", help="（在你自己的终端里）录入真实模型调用的 API key")
+    si.add_argument("provider", choices=sorted(MODEL_PROVIDERS))
     a = sub.add_parser("admin")
     asub = a.add_subparsers(dest="admin_verb", required=True)
     b = asub.add_parser("bootstrap")
     b.add_argument("--with-build-tools", action="store_true")
     asub.add_parser("deploy-agent")
     asub.add_parser("proxy-install")
+    sn = asub.add_parser("snapshot", help="黄金快照（腾讯云轻量；不做回滚 / 删除）")
+    sn.add_argument("--name", required=True)
     return ap
 
 
@@ -593,17 +708,26 @@ def main(argv: list[str] | None = None) -> int:
             rc = cmd_prepare(ns.ref)
             if rc != 0:
                 return rc
+        stdin = None
+        if task.needs_secret:
+            stdin = load_model_secret()
+            if stdin is None:
+                return 3
         argv = ["test", ns.task, "--network", network]
         if ns.tests:
             argv += ["--tests", *ns.tests]
         if ns.shard:
             argv += ["--shard", ns.shard]
-        return show(*remote_json(argv))
+        return show(*remote_json(argv, stdin=stdin))
+    if ns.verb == "secret-init":
+        return secret_init(ns.provider)
     if ns.verb == "admin":
         if ns.admin_verb == "bootstrap":
             return admin_bootstrap(ns.with_build_tools)
         if ns.admin_verb == "deploy-agent":
             return admin_deploy_agent()
+        if ns.admin_verb == "snapshot":
+            return admin_snapshot(ns.name)
         return admin_proxy_install()
     return 2
 

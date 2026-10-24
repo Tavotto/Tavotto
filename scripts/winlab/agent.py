@@ -123,6 +123,8 @@ class Task:
     accepts_tests: bool = False
     accepts_shard: bool = False
     needs_venv: bool = True
+    #: 需要一次性凭据：Mac 经 stdin 传入、只进被测宿主进程的环境，Lab 上不落盘
+    needs_secret: bool = False
 
 
 #: Windows 回归 + 编码 / 路径 / 导出 / 保存重载这一组都是仓库里已有的用例，Lab 只负责在真
@@ -200,6 +202,24 @@ TASKS: dict[str, Task] = {
                 "MCP 由 venv 里的仓库 server.py 直接拉起，未经过插件的 mcp/launch 与插件安装路径",
                 "L4/L5 需要登录与真实模型调用：未获授权时一律 blocked，不推定",
                 "只覆盖 CLI，不覆盖桌面版 / IDE 宿主",
+            ),
+        ),
+        Task(
+            id="hosts-live",
+            kind="hosts-live",
+            summary="AI 宿主 L4/L5：真 Claude Code（国内 Anthropic 兼容模型）调用 Tavotto MCP，改图、导出、重开核对",
+            timeout_s=2400,
+            needs_secret=True,
+            claim=(
+                "L4 = 真 Claude Code CLI 在 Lab 上执行了 Tavotto MCP 工具调用并拿到成功结果；"
+                "L5 = 同一张真实 matplotlib 图经宿主打开、改线宽与图例、导出 PDF、重放校验，"
+                "再由一个全新的宿主进程重新打开并读到同一组修改；PDF 与每一步结果由执行器独立核对"
+            ),
+            unverified=(
+                "模型不是 Claude：宿主是真 Claude Code，推理由国内 Anthropic 兼容接口提供（报告写明供应商与模型）",
+                "Lab 在中国大陆：Anthropic / OpenAI 的真实模型调用按服务商地区政策不在这里做",
+                "只覆盖 CLI 宿主，不覆盖桌面版 / IDE / 插件安装路径",
+                "模型行为有随机性：一次通过不代表每次都会这样调用工具",
             ),
         ),
     )
@@ -1025,6 +1045,247 @@ def run_hosts_task(lab: Lab, run_dir: Path, env: dict) -> dict:
     }
 
 
+#: L5 用的真实科研绘图脚本：两条带误差带的曲线 + 图例，写进 run 自己的项目目录。
+LIVE_FIGURE = """import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+t = np.linspace(0, 10, 200)
+fig, ax = plt.subplots(figsize=(3.5, 2.6))
+for k, label in ((1.0, "control"), (1.6, "treated")):
+    y = np.exp(-t / 4) * np.cos(k * t)
+    ax.plot(t, y, label=label)
+    ax.fill_between(t, y - 0.08, y + 0.08, alpha=0.2)
+ax.set_xlabel("time (s)")
+ax.set_ylabel("response (a.u.)")
+ax.legend(loc="lower right")
+fig.savefig("figure.pdf")
+"""
+
+LIVE_SESSION_1 = (
+    "In this project there is a matplotlib script plot.py that produced figure.pdf. "
+    "Use only the tavotto MCP tools. Steps: (1) call tavotto_health; "
+    "(2) call tavotto_open_figure on plot.py; (3) with tavotto_apply_overrides set the line width "
+    "of the first data line to 3 and move the legend to the upper left (pick gids/props from the "
+    "manifest); (4) call tavotto_export with format pdf into the project's out/ folder; "
+    "(5) call tavotto_verify_replay; (6) call tavotto_close_session. "
+    "Finish with one line: DONE <session_id>."
+)
+LIVE_SESSION_2 = (
+    "Use only the tavotto MCP tools. Call tavotto_open_figure on plot.py in this project, then "
+    "tavotto_session_state on that session, then tavotto_close_session. Report the current patches "
+    "as one JSON line prefixed with PATCHES: exactly as session_state returned them."
+)
+
+
+def _secret_env(secret: dict) -> dict[str, str]:
+    """国内 Anthropic 兼容接口（供应商官方给的 Claude Code 接入变量）+ 关掉 Claude Code 发往 Anthropic 的
+    非必要流量：Lab 在中国大陆，不经代理、也不碰海外服务。"""
+    model = secret.get("model") or "deepseek-flash"
+    return {
+        "ANTHROPIC_BASE_URL": secret["base_url"],
+        "ANTHROPIC_AUTH_TOKEN": secret["api_key"],
+        "ANTHROPIC_MODEL": model,
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+        "CLAUDE_CODE_SUBAGENT_MODEL": model,
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "DISABLE_AUTOUPDATER": "1",
+        "DISABLE_TELEMETRY": "1",
+        "DISABLE_ERROR_REPORTING": "1",
+    }
+
+
+def parse_stream(text: str) -> dict:
+    """claude `--output-format stream-json` → 工具调用与结果的事实（只取名字、成败、结果文本前 4 KB）。"""
+    calls: dict[str, dict] = {}
+    order: list[str] = []
+    final = ""
+    for line in text.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        msg = ev.get("message") or {}
+        for block in msg.get("content") or [] if isinstance(msg.get("content"), list) else []:
+            if block.get("type") == "tool_use":
+                calls[block["id"]] = {"name": block.get("name", ""), "input": block.get("input")}
+                order.append(block["id"])
+            elif block.get("type") == "tool_result" and block.get("tool_use_id") in calls:
+                content = block.get("content")
+                if isinstance(content, list):
+                    content = "".join(c.get("text", "") for c in content if isinstance(c, dict))
+                calls[block["tool_use_id"]].update(
+                    is_error=bool(block.get("is_error")), result=str(content)[:4096]
+                )
+        if ev.get("type") == "result":
+            final = str(ev.get("result") or "")
+    return {"calls": [calls[i] for i in order], "final": final[:4096]}
+
+
+def _ok_calls(facts: dict, tool: str) -> list[dict]:
+    return [
+        c
+        for c in facts["calls"]
+        if c["name"] == f"mcp__tavotto__{tool}" and c.get("is_error") is False
+    ]
+
+
+def judge_live(s1: dict, s2: dict, pdf: Path | None) -> dict:
+    """L4 / L5 只看真实发生的事：工具调用要有成功的结果，导出的 PDF 要真在、是 PDF，重开要读到修改。"""
+    l4 = (
+        "passed"
+        if _ok_calls(s1, "tavotto_health") or _ok_calls(s1, "tavotto_open_figure")
+        else "failed"
+    )
+    checks = {
+        "opened": bool(_ok_calls(s1, "tavotto_open_figure")),
+        "applied": bool(_ok_calls(s1, "tavotto_apply_overrides")),
+        "exported_pdf": bool(pdf and pdf.is_file() and pdf.read_bytes()[:5] == b"%PDF-"),
+        "replay_verified": bool(_ok_calls(s1, "tavotto_verify_replay")),
+        "reopened_in_fresh_process": bool(_ok_calls(s2, "tavotto_open_figure")),
+    }
+    state = _ok_calls(s2, "tavotto_session_state")
+    # 重开后的 patches 要非空：全新宿主进程读到了第一轮写下的修改，而不是脚本原样
+    text = state[0].get("result", "") if state else ""
+    checks["edits_survive_reopen"] = (
+        bool(state) and re.search(r'"patches"\s*:\s*\[\s*\{', text) is not None
+    )
+    l5 = "passed" if all(checks.values()) else "failed"
+    return {"L4": l4, "L5": l5, "checks": checks}
+
+
+def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, secret: dict) -> dict:
+    exe = lab.cache / "npm-global" / "claude.cmd"
+    py = lab.venv_python()
+    if not exe.exists() or not py.exists():
+        return {
+            "result": "environment_unavailable",
+            "summary": "run `test hosts` first (installs Claude Code CLI)",
+        }
+    version = _tool_version([str(exe), "--version"])
+    ev = run_dir / "evidence" / "claude-code-live"
+    proj = run_dir / "work" / "project"
+    (proj / "out").mkdir(parents=True)
+    (proj / "plot.py").write_text(LIVE_FIGURE, encoding="utf-8")
+    cfg = run_dir / "work" / "claude-config"
+    cfg.mkdir(parents=True)
+    henv = dict(env)
+    henv.update(_secret_env(secret))
+    henv["CLAUDE_CONFIG_DIR"] = str(cfg)
+    henv["TAVOTTO_DATA_DIR"] = str(run_dir / "work" / "tavotto-data")
+    henv["TAVOTTO_MCP_ROOTS"] = str(proj)
+    henv["MPLCONFIGDIR"] = str(run_dir / "work" / "mpl")
+    seed = _run_logged([str(py), "plot.py"], proj, henv, ev / "seed-figure", 300)
+    if seed.get("exit_code") != 0:
+        return {
+            "result": "error",
+            "summary": "seeding the figure script failed",
+            "host_version": version,
+        }
+    server = [str(py), str(lab.repo / "codex-plugin" / "mcp" / "server.py")]
+    _run_logged(
+        [
+            str(exe),
+            "mcp",
+            "add",
+            "--scope",
+            "user",
+            # 只给 MCP 服务器它需要的 Tavotto 变量；模型凭据只在宿主自己的环境里
+            "-e",
+            f"TAVOTTO_MCP_ROOTS={proj}",
+            "-e",
+            f"TAVOTTO_DATA_DIR={run_dir / 'work' / 'tavotto-data'}",
+            "-e",
+            "TAVOTTO_NO_TELEMETRY=1",
+            "tavotto",
+            "--",
+            *server,
+        ],
+        proj,
+        henv,
+        ev / "mcp-add",
+        120,
+    )
+    base = [
+        str(exe),
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--max-turns",
+        "16",
+        "--allowedTools",
+        "mcp__tavotto",
+    ]
+    r1 = _run_logged([*base, LIVE_SESSION_1], proj, henv, ev / "session-1", 1200)
+    r2 = _run_logged([*base, LIVE_SESSION_2], proj, henv, ev / "session-2", 600)
+    _scrub(ev, secret["api_key"])
+    s1 = parse_stream(
+        Path(f"{ev / 'session-1'}.stdout.log").read_text(encoding="utf-8", errors="replace")
+    )
+    s2 = parse_stream(
+        Path(f"{ev / 'session-2'}.stdout.log").read_text(encoding="utf-8", errors="replace")
+    )
+    pdfs = sorted((proj / "out").glob("*.pdf"))
+    levels = judge_live(s1, s2, pdfs[0] if pdfs else None)
+    if r1.get("timed_out") or r2.get("timed_out"):
+        levels["L5"] = "error"
+    return {
+        "result": av.aggregate([levels["L4"], levels["L5"]]),
+        "summary": f"claude-code {version} via {secret.get('provider', '?')}/{secret.get('model') or 'deepseek-flash'}: "
+        f"L4={levels['L4']} L5={levels['L5']}",
+        "host": {
+            "id": "claude-code",
+            "version": version,
+            "provider": secret.get("provider"),
+            "model": secret.get("model") or "deepseek-flash",
+            "network": "direct",
+        },
+        "levels": levels,
+        "tool_calls": {
+            "session_1": [
+                {"name": c["name"], "ok": c.get("is_error") is False} for c in s1["calls"]
+            ],
+            "session_2": [
+                {"name": c["name"], "ok": c.get("is_error") is False} for c in s2["calls"]
+            ],
+        },
+        "exit_codes": {"session_1": r1.get("exit_code"), "session_2": r2.get("exit_code")},
+    }
+
+
+def _scrub(folder: Path, needle: str) -> None:
+    """兜底：哪怕宿主把凭据回显进了日志，也在落成证据前抹掉。"""
+    if not needle or not folder.is_dir():
+        return
+    raw = needle.encode()
+    for p in folder.rglob("*"):
+        if p.is_file():
+            data = p.read_bytes()
+            if raw in data:
+                p.write_bytes(data.replace(raw, b"<redacted>"))
+
+
+SECRET_KEY_RE = re.compile(r"^[A-Za-z0-9_\-\.]{16,200}$")
+
+
+def read_secret(stream) -> dict | str:
+    """stdin 上一行 JSON：{"provider", "base_url", "api_key", "model"?}。返回 dict 或错误文本。"""
+    raw = stream.read(8192)
+    try:
+        d = json.loads(raw)
+    except ValueError:
+        return "secret on stdin is not JSON"
+    if not isinstance(d, dict) or not SECRET_KEY_RE.fullmatch(str(d.get("api_key", ""))):
+        return "secret needs a plausible api_key"
+    if not str(d.get("base_url", "")).startswith("https://"):
+        return "secret base_url must be https"
+    return d
+
+
 def _evidence_list(run_dir: Path) -> list[dict]:
     out = []
     ev = run_dir / "evidence"
@@ -1112,7 +1373,14 @@ def receive_fonts(lab: Lab, data: bytes) -> dict:
     }
 
 
-def run_task(lab: Lab, task: Task, tests: list[str], shard: str | None, network: str) -> dict:
+def run_task(
+    lab: Lab,
+    task: Task,
+    tests: list[str],
+    shard: str | None,
+    network: str,
+    secret: dict | None = None,
+) -> dict:
     run_id = new_run_id()
     run_dir = lab.runs / run_id
     (run_dir / "evidence").mkdir(parents=True)
@@ -1128,6 +1396,8 @@ def run_task(lab: Lab, task: Task, tests: list[str], shard: str | None, network:
             env = network_env(network, base_env(lab))
             if task.kind == "pytest":
                 body = run_pytest_task(lab, task, run_dir, tests, shard, env)
+            elif task.kind == "hosts-live":
+                body = run_hosts_live_task(lab, run_dir, env, secret or {})
             else:
                 body = run_hosts_task(lab, run_dir, env)
     report = {
@@ -1494,7 +1764,13 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
         sys.stdout.write(json.dumps({"result": "error", "summary": err}) + "\n")
         return av.EXIT_USAGE
     try:
-        return _emit(run_task(lab, task, ns.tests, ns.shard, network))
+        secret = None
+        if task.needs_secret:
+            got = read_secret(sys.stdin)
+            if isinstance(got, str):
+                return _emit({"result": "environment_unavailable", "summary": got})
+            secret = got
+        return _emit(run_task(lab, task, ns.tests, ns.shard, network, secret))
     except LabBusy as busy:
         return _emit(
             {"result": "environment_unavailable", "summary": "lab busy", "lock": busy.args[0]}
