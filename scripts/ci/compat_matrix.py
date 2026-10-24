@@ -153,30 +153,19 @@ def materialize(group: list[dict], workdir: Path) -> tuple[Path, str, str]:
 LAUNCH_CONTEXT_UNSUPPORTED = "launch_context_unsupported"
 
 
-class LaunchNotExpressible(ValueError):
-    """The registered launch cannot be handed to the product's own run settings."""
+def resolve_launch_context(project: Path, script_rel: str, case: dict) -> dict | None:
+    """Which working-directory mode the product leg runs in, and whether it differs from the registration.
 
-    def __init__(self, cwd: str, modes: list[str]) -> None:
-        super().__init__(f"launch cwd {cwd!r} is neither the script directory nor the project root")
-        self.detail = {
-            "code": LAUNCH_CONTEXT_UNSUPPORTED,
-            "launch_cwd": cwd,
-            "expressible_modes": modes,
-        }
-
-
-def registered_launch(project: Path, script_rel: str, case: dict):
-    """Hand a registered `reference_invocation` to the product, as a user would.
-
-    argv becomes a product run configuration; cwd becomes the project's working-directory
-    mode (script directory or project root). The product has no arbitrary-cwd mode, so any
-    other directory is a measurement gap and raises instead of silently running elsewhere.
-    Returns the `RunSelection` (None for empty argv / no registration).
+    A registered cwd that is the script directory or the project root maps onto the same product mode.
+    Any other directory cannot be expressed (the product has no arbitrary-cwd mode), so the leg runs the
+    way the product itself would: the script directory, the first-open default for a user interpreter
+    (ADR 0107 section 2) and what dragging the .py into Tavotto gives. The substitution is recorded, never
+    hidden. Returns None when nothing is registered.
     """
     launch = case.get("reference_invocation")
     if launch is None:
         return None
-    from tavotto.engine import execspec, runconfig, workdir
+    from tavotto.engine import execspec
 
     root = project.resolve()
     cwd = (root / launch["cwd"]).resolve()
@@ -185,9 +174,42 @@ def registered_launch(project: Path, script_rel: str, case: dict):
     elif cwd == root:
         mode = execspec.CWD_PROJECT_ROOT
     else:
-        raise LaunchNotExpressible(launch["cwd"], [execspec.CWD_PROJECT, execspec.CWD_PROJECT_ROOT])
-    workdir.set_mode(project, mode)
-    return runconfig.selection_for(project, script_rel, launch["argv"])
+        return {
+            "registered_cwd": launch["cwd"],
+            "product_mode": execspec.CWD_PROJECT,
+            "substituted": True,
+        }
+    return {"registered_cwd": launch["cwd"], "product_mode": mode, "substituted": False}
+
+
+def registered_launch(project: Path, script_rel: str, case: dict, context: dict | None = None):
+    """Hand a registered `reference_invocation` to the product, as a user would.
+
+    argv becomes a product run configuration; cwd becomes the project's working-directory mode
+    (`resolve_launch_context`). Returns the `RunSelection` (None for no registration).
+    """
+    context = context or resolve_launch_context(project, script_rel, case)
+    if context is None:
+        return None
+    from tavotto.engine import runconfig, workdir
+
+    workdir.set_mode(project, context["product_mode"])
+    return runconfig.selection_for(project, script_rel, case["reference_invocation"]["argv"])
+
+
+def _attribute_substituted_launch(r: dict) -> None:
+    """A run in the substituted mode that failed is `launch_context_unsupported`, keeping the stage and error."""
+    context = r["detail"].get("launch_context")
+    if not (context and context.get("substituted")):
+        return
+    stage = next((name for name, ok in r["stages"].items() if ok is False), None)
+    if stage is None:
+        return
+    detail = r["detail"].get(stage)
+    if not isinstance(detail, dict):
+        detail = r["detail"][stage] = {}
+    detail["code"] = LAUNCH_CONTEXT_UNSUPPORTED
+    context["failed_stage"] = stage
 
 
 def stage_discover(project: Path, script_rel: str, case: dict, run=None) -> dict:
@@ -1448,14 +1470,11 @@ def run_group(
     hot = fresh = None
     try:
         # ── 发现 ────────────────────────────────────────────────
-        try:
-            run = registered_launch(project, script_rel, lead)
-        except LaunchNotExpressible as exc:
-            # A product capability boundary, not a runner fault: the product leg fails at discover.
+        context = resolve_launch_context(project, script_rel, lead)
+        run = registered_launch(project, script_rel, lead, context)
+        if context is not None:
             for ca in group:
-                results[ca["id"]]["stages"]["discover"] = False
-                results[ca["id"]]["detail"]["discover"] = exc.detail
-            return _finish(results, group, t0)
+                results[ca["id"]]["detail"]["launch_context"] = dict(context)
         disc = stage_discover(project, script_rel, lead, run=run)
         entry = disc["entry"] or declared_entry
         for ca in group:
@@ -1865,6 +1884,7 @@ def _finish(results: dict, group: list[dict], t0: float, crash_tb: str | None = 
                 stage = f"route:{bad_routes[0]}" if bad_routes else ""
             r["stage"] = stage
             r["follow_up"] = str(case.get("follow_up", "")).strip()
+            _attribute_substituted_launch(r)
     return results
 
 

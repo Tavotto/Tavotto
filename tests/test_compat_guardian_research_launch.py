@@ -111,20 +111,55 @@ def test_script_directory_cwd_glob(fake_project, tmp_path):
     assert _captured(_run(_case("sub/plot.py", {"cwd": "sub", "argv": []}), tmp_path))
 
 
-def test_launch_cwd_the_product_cannot_express_fails_the_product_leg_at_discover(
+def test_launch_cwd_the_product_cannot_express_runs_in_the_product_default_mode(
     fake_project, tmp_path
 ):
+    """Cantera shape: the registered cwd `data` is neither mode; the data is found without the cwd."""
+    script = NEEDS_RELATIVE_GLOB.format(pattern="*.txt")
+    fake_project({"sub/plot.py": script, "sub/a.txt": "1\n2\n", "data/b.txt": "1\n"}, "sub/plot.py")
+    result = _run(_case("sub/plot.py", {"cwd": "data", "argv": []}), tmp_path)
+    assert _captured(result), result["detail"]
+    assert result["detail"]["launch_context"] == {
+        "registered_cwd": "data",
+        "product_mode": "project",
+        "substituted": True,
+    }
+    assert "code" not in result["detail"]["execute"]
+
+
+def test_expressible_cwd_is_recorded_without_substitution(fake_project, tmp_path):
+    script = NEEDS_RELATIVE_GLOB.format(pattern="data/*.txt")
+    fake_project({"src/plot.py": script, "data/a.txt": "1\n2\n"}, "src/plot.py")
+    result = _run(_case("src/plot.py", {"cwd": ".", "argv": []}), tmp_path)
+    assert result["detail"]["launch_context"] == {
+        "registered_cwd": ".",
+        "product_mode": "project_root",
+        "substituted": False,
+    }
+
+
+def test_substituted_mode_that_also_fails_reports_launch_context_unsupported(
+    fake_project, tmp_path
+):
+    """The script needs the registered `data` directory; the substitute cannot see its files."""
     script = NEEDS_RELATIVE_GLOB.format(pattern="*.txt")
     fake_project({"sub/plot.py": script, "data/a.txt": "1\n2\n"}, "sub/plot.py")
     result = _run(_case("sub/plot.py", {"cwd": "data", "argv": []}), tmp_path)
     assert result["classification"] == "product_bug"
-    assert result["stages"] == {"discover": False}
-    assert result["detail"]["discover"] == {
-        "code": "launch_context_unsupported",
-        "launch_cwd": "data",
-        "expressible_modes": ["project", "project_root"],
-    }
-    assert "runner_error" not in result["detail"]
+    assert result["stages"] == {"discover": True, "execute": False}
+    assert result["detail"]["execute"]["code"] == "launch_context_unsupported"
+    assert "need at least one array" in result["detail"]["execute"]["error"]
+    assert result["detail"]["launch_context"]["failed_stage"] == "execute"
+    assert result["detail"]["launch_context"]["substituted"] is True
+
+
+def test_expressible_cwd_failure_is_not_blamed_on_the_launch_context(fake_project, tmp_path):
+    script = NEEDS_RELATIVE_GLOB.format(pattern="*.txt")
+    fake_project({"sub/plot.py": script}, "sub/plot.py")
+    result = _run(_case("sub/plot.py", {"cwd": "sub", "argv": []}), tmp_path)
+    assert result["stages"] == {"discover": True, "execute": False}
+    assert "code" not in result["detail"]["execute"]
+    assert "failed_stage" not in result["detail"]["launch_context"]
 
 
 def test_that_failure_is_attributed_to_the_launch_directory_not_the_runner():

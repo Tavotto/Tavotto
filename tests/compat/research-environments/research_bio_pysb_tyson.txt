@@ -1,4 +1,4 @@
 # S0 additional scientific prerequisites; render-critical pins come from runtime-lock.json.
 pysb @ git+https://github.com/pysb/pysb.git@9fc6bcb118683ad851e0a4d5604abe646f77cae3
-sympy==1.11.1
+sympy==1.12.1
 bionetgen==0.8.7

@@ -49,9 +49,9 @@ export/fidelity 各 10。历史机器快照 `tests/compat/research-baseline.json
 | Celerite | 5 次执行的 26 条曲线数据、RNG、末次协方差矩阵一致；原生对照丢失 `bbox_inches` 已由 #1321 修正。同尺寸 PDF 仍有布局偏移。 | 用新对照重跑；定位零编辑布局重算。详见下节。 |
 | Leaf | 登记入口 `plot.py hppc`；首轮产品腿没传 argv。真实入口复测通过。 | 用新测量重跑。 |
 | Qudit | 登记 cwd 为项目根，相对 glob；首轮产品腿用了 sandbox。真实入口复测通过。 | 用新测量重跑。 |
-| Cantera | 登记 cwd 为 `data`，既不是脚本目录也不是项目根；产品只能用这两档，没有任意工作目录。这是产品当前能力边界的一个真实数据点。 | 产品腿在 discover 阶段明确失败，失败码 `launch_context_unsupported`（分类 `cwd_or_data_path`，报告带登记的 cwd 与可表达的模式）；原生成功，留在合格分母内。暂不加产品功能。 |
+| Cantera | 登记 cwd 为 `data`，既不是脚本目录也不是项目根。实测（2026-10-24，本机 cantera 3.2.0 pip wheel）：`ct.Interface("sofc.yaml", "tpb")` 会在 cantera 包自带数据目录（`site-packages/cantera/data/sofc.yaml`）里找到文件，从脚本目录运行 exit 0，受保护试跑捕获 1 张图。首轮的 `launch_context_unsupported` 是测量方式，不是产品能力缺口。 | 新测量规则：登记 cwd 不可表达时，产品腿不再提前拒绝，而按产品真实行为跑（脚本目录，用户 Python 的首开默认，与把 .py 拖进 Tavotto 同源），并在报告 `detail.launch_context` 记 `{registered_cwd, product_mode, substituted: true}`；只有这样跑失败时才归 `launch_context_unsupported`（`cwd_or_data_path`），失败 stage 与原始错误一并保留。原生腿不变。待用新测量重跑。 |
 | Gala | PDF 报 Cython 共享类型尺寸错误：测量环境把 Tavotto（RenderCore 的 uharfbuzz，abi3 Cython）与科研依赖（astropy 的 abi3 Cython 扩展）装进同一 venv，matplotlib PDF 后端 → `fontTools.subset` → `import uharfbuzz` 与 astropy 的同名共享类型冲突；原生在同一 venv 里存 PDF 同样失败。最小复现 `python -c "import astropy.table, uharfbuzz"`。真实产品的 worker 经 bridgeboot 私有包加载引擎，不带 Tavotto 的 site-packages，不受影响。 | 非产品问题。workflow 已拆成两个 venv（Tavotto / 科研），并断言科研 venv 无 uharfbuzz、pikepdf、pypdfium2；用新测量重跑。 |
-| PySB | 我们的配方固定 SymPy 1.11.1，上游要求 >=1.12。 | 准备配方错误，产品未运行；修配方不能记成产品修复。 |
+| PySB | 我们的配方固定 SymPy 1.11.1，上游（固定提交的 setup.py）要求 `sympy>=1.12`。 | 准备配方错误，产品未运行；修配方不能记成产品修复。配方已改为 `sympy==1.12.1`（满足上游下限的最低稳定补丁版），待重跑。 |
 | SGWB | TeX 准备超过 35 分钟。 | 原生和产品都未运行；准备完成后另记一次观测。 |
 | Vitay | 原始 NPZ 的 r 为 2×2，脚本 delays 有 10 个。 | 保留 invalid_fixture，不改数据凑通过。 |
 

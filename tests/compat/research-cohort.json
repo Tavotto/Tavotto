@@ -2086,7 +2086,7 @@
       "source_package_files": {},
       "environment_recipe": {
         "path": "tests/compat/research-environments/research_bio_pysb_tyson.txt",
-        "sha256": "3408c5c39531de5f2cc49e8e3419f04e71c5b7f9bcd0af172108c85a8831248e"
+        "sha256": "24f9a11742931f17893642a0013843d8e3d4dd82a465e02173f0419bfdb15331"
       },
       "tasks": [
         {
