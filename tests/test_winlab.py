@@ -965,3 +965,21 @@ def test_deploy_ships_the_installer_check():
     import inspect
 
     assert "installer-check.ps1" in inspect.getsource(W.admin_deploy_agent)
+
+
+def test_pytest_env_leaves_data_isolation_to_conftest_like_ci(tmp_path, monkeypatch):
+    # CI 跑 pytest 不在外层设 TAVOTTO_DATA_DIR / MPLCONFIGDIR（tests/conftest.py 自己隔离）；Lab 同口径
+    lab = A.Lab(tmp_path)
+    py = lab.venv_python()
+    py.parent.mkdir(parents=True)
+    py.write_text("")
+    (lab.repo / "tests").mkdir(parents=True)
+    (lab.repo / "tests" / "test_a.py").write_text("")
+    seen = {}
+    monkeypatch.setattr(
+        A,
+        "_run_logged",
+        lambda argv, cwd, env, prefix, timeout, **k: seen.update(env=env) or {"exit_code": 0},
+    )
+    A.run_pytest_task(lab, A.TASKS["pytest"], tmp_path, ["tests/test_a.py"], None, {})
+    assert "TAVOTTO_DATA_DIR" not in seen["env"] and "MPLCONFIGDIR" not in seen["env"]

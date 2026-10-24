@@ -990,8 +990,7 @@ def run_pytest_task(
     env = dict(env)
     env.update(
         {
-            "TAVOTTO_DATA_DIR": str(work / "data"),
-            "MPLCONFIGDIR": str(work / "mpl"),
+            # 不设 TAVOTTO_DATA_DIR / MPLCONFIGDIR：与 CI 同口径，用例的隔离由 tests/conftest.py 自己做
             "TAVOTTO_CI_STATE_ROOT": str(work / "ci-state"),
             "TEMP": str(work / "tmp"),
             "TMP": str(work / "tmp"),
@@ -1135,12 +1134,24 @@ def run_hosts_task(lab: Lab, run_dir: Path, env: dict) -> dict:
             cfg.mkdir(parents=True, exist_ok=True)
             henv = dict(env)
             henv[h["config_env"]] = str(cfg)
-            henv["TAVOTTO_DATA_DIR"] = str(run_dir / "work" / "tavotto-data")
             server = [str(py), str(lab.repo / "codex-plugin" / "mcp" / "server.py")]
+            # Tavotto 的数据目录写进宿主的 MCP 配置（用户就是这么配的），不塞进宿主进程自己的环境
+            data = f"TAVOTTO_DATA_DIR={run_dir / 'work' / 'tavotto-data'}"
             if h["id"] == "claude-code":
-                add = [str(exe), "mcp", "add", "--scope", "user", "tavotto", "--", *server]
+                add = [
+                    str(exe),
+                    "mcp",
+                    "add",
+                    "tavotto",
+                    "--scope",
+                    "user",
+                    "-e",
+                    data,
+                    "--",
+                    *server,
+                ]
             else:
-                add = [str(exe), "mcp", "add", "tavotto", "--", *server]
+                add = [str(exe), "mcp", "add", "tavotto", "--env", data, "--", *server]
             _run_logged(add, lab.root, henv, ev / "mcp-add", 120)
             listed = _run_logged([str(exe), *h["mcp_list"]], lab.root, henv, ev / "mcp-list", 180)
             text = Path(f"{ev / 'mcp-list'}.stdout.log").read_text(
@@ -1359,7 +1370,6 @@ def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, model_conf: dict) ->
     henv = dict(env)
     henv.update(_host_model_env(model_conf))
     henv["CLAUDE_CONFIG_DIR"] = str(cfg)
-    henv["TAVOTTO_DATA_DIR"] = str(run_dir / "work" / "tavotto-data")
     henv["TAVOTTO_MCP_ROOTS"] = str(proj)
     henv["MPLCONFIGDIR"] = str(run_dir / "work" / "mpl")
     seed = _run_logged([str(py), "plot.py"], proj, henv, ev / "seed-figure", 300)
