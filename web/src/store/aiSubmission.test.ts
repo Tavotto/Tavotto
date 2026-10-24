@@ -151,6 +151,49 @@ describe('强度档位：明确无档位的型号不带 effort', () => {
   })
 })
 
+describe('连接视图：请求带 connection + model', () => {
+  const view = (extra: object = {}) =>
+    ({
+      agents: [],
+      vendors: [],
+      connections: [
+        { id: 'sub:codex', vendor: 'chatgpt', label: 'ChatGPT', logo: 'chatgpt', state: 'ready', models: ['gpt-x'], default_model: 'gpt-x', route: 'cli:codex' },
+        { id: 'p_ds', vendor: 'deepseek', label: 'DeepSeek', logo: 'deepseek', state: 'ready', models: ['ds-chat', 'ds-reason'], default_model: 'ds-chat', route: 'builtin' },
+      ],
+      ...extra,
+    }) as never
+
+  it('选了 DeepSeek 的 ds-reason：body 带 connection=p_ds、model=ds-reason', async () => {
+    useAiStore.setState({ caps: view(), agent: null, connection: 'p_ds', models: { p_ds: 'ds-reason' } })
+    await send()
+    expect(runBodies.at(-1)).toMatchObject({ connection: 'p_ds', model: 'ds-reason' })
+  })
+
+  it('没选过型号：用连接的默认型号；订阅类连接的 agent 填内部家族 codex', async () => {
+    useAiStore.setState({ caps: view(), agent: null, connection: 'sub:codex', models: {} })
+    await send()
+    expect(runBodies.at(-1)).toMatchObject({ connection: 'sub:codex', model: 'gpt-x', agent: 'codex' })
+  })
+
+  it('记着的连接不再 ready：落到第一个 ready 的，不改用户存着的首选', async () => {
+    useAiStore.setState({ caps: view(), agent: null, connection: 'gone', models: {} })
+    await send()
+    expect(runBodies.at(-1)).toMatchObject({ connection: 'sub:codex' })
+    expect(useAiStore.getState().connection).toBe('gone')
+  })
+
+  it('连接视图下一个 ready 的连接都没有：start 抛 no-usable-agent，不发请求', async () => {
+    useAiStore.setState({ caps: view({ connections: [] }) })
+    await expect(send()).rejects.toThrow('no-usable-agent')
+    expect(runCalls()).toBe(0)
+  })
+
+  it('降级：没有 connections 字段时请求体照旧（只有 agent，没有 connection）', async () => {
+    await send()
+    expect(runBodies.at(-1)).not.toHaveProperty('connection')
+  })
+})
+
 describe('超时 → 「已发出未确认」，不是失败', () => {
   it('30 s 没有任何答复：start 回 unconfirmed（不抛）、会话没建、提交记录进 unconfirmed、草稿带着 rid', async () => {
     vi.useFakeTimers()
