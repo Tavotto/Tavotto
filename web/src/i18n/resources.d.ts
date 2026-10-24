@@ -1401,7 +1401,6 @@ export default interface Resources {
         "panel": "本图候选",
         "project": "项目脚本清单"
       },
-      "sourceMissingRevealHint": "生成它的脚本已经不在了。不再需要这张图的话，在文件夹里删掉它，这一行会自动消失。",
       "sourcePrefix": "记录位置：",
       "staleReport": "显示上次成功取回的状态，可能已过期。",
       "summary": {

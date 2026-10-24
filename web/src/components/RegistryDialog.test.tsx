@@ -1241,14 +1241,13 @@ describe('脚本删了、图还在：在文件管理器中显示（用户反馈 
     useProjectStore.setState({ project: null })
   })
 
-  it('主按钮从「重新扫描」换成在文件管理器中显示，并说清删掉之后这一行会消失', async () => {
+  it('主按钮从「重新扫描」换成在文件管理器中显示', async () => {
     withAssets('Gone.pdf')
     await open(reportOf(SIX))
     const row = rowOf('Gone.pdf')!
     expect(buttonsIn(row)).toContain('在文件管理器中显示')
     // 扫多少次都还是这一档：行里不再摆它（对话框顶部那颗照旧在）
     expect(buttonsIn(row)).not.toContain('重新扫描')
-    expect(row.textContent).toContain('在文件夹里删掉它')
     await clickIn(row, '在文件管理器中显示')
     // 选中，不删：Tavotto 自己不碰用户的文件
     expect(tauriInvoke).toHaveBeenCalledWith('reveal_export', { dir: '/p', name: 'Gone.pdf' })
@@ -1294,13 +1293,12 @@ describe('脚本删了、图还在：在文件管理器中显示（用户反馈 
     expect(buttonsIn(row)).not.toContain('在文件管理器中显示')
   })
 
-  it('浏览器模式没有文件管理器：不摆入口、不说那句提示', async () => {
+  it('浏览器模式没有文件管理器：不摆入口', async () => {
     delete w.__TAURI_INTERNALS__
     withAssets('Gone.pdf', 'Ok.pdf')
     await open(reportOf(SIX))
     const row = rowOf('Gone.pdf')!
     expect(buttonsIn(row)).toContain('重新扫描')
-    expect(row.textContent).not.toContain('在文件夹里删掉它')
     const menu = await openMore(rowOf('Ok.pdf')!)
     expect(menu.textContent).not.toContain('文件管理器')
   })

@@ -906,7 +906,6 @@
       "panel": "candidates for this figure",
       "project": "scripts found in the project"
     },
-    "sourceMissingRevealHint": "The script that made it is gone. If you no longer need this figure, delete it from the folder and this row will disappear.",
     "sourcePrefix": "Stored in: ",
     "staleReport": "Showing the last state we could load. It may be out of date.",
     "summary": {

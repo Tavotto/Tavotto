@@ -699,11 +699,6 @@ function PanelRow({
         <p className="type-caption mt-1 pl-19">{rd('probeWarning')}</p>
       )}
 
-      {/* 脚本删了、图还在：说清主按钮之后那一步（删不删在文件管理器里由用户做），同 probeWarning 是「点下去之后」的话 */}
-      {panel.status === 'source_missing' && onReveal && (
-        <p className="type-caption mt-1 pl-19">{rd('sourceMissingRevealHint')}</p>
-      )}
-
       {note && (
         <div className="pl-19">
           <ProbeNoteView note={note} />
