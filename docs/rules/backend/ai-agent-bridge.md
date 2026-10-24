@@ -471,19 +471,20 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   需求串先过 `depresolve.parse_requirement`（`-r` / URL / 路径 / extras / 标记死在那里）；**名单** = `convertdeps.in_allowlist`（`autoinstall_dists.txt`，PyPI 公开下载量生成）：名单内不问、名单外 `ask`；
   `convertdeps.describe_env` 判为系统自带 / 内置 runtime 的解释器永不装（`env_not_installable`）。切运行方式 = `execpolicy.set_mode`（`safe` → `safe_only`，`native` → `compatible`；
   把用户明确选过的 `safe_only` 放宽要先问）。换环境 = `projectenv.remember(..., automatic=False, trigger="user_selected")`。
-  执行器全部可经 `FixContext` 注入（`installer` / `uninstaller` / `freezer` / `python_changer` / `script_converter`）；**测试一律注入假的，不往真实环境装包**。
-  `change_python` 缺省接 `executors._default_python_changer`（#1342 `pyversionfix` 的公开入口 `plan_python_change` → `apply_python_change`：只在 Tavotto 受管环境另建、不碰用户环境、私有 Python 锁里没有的版本不下载；本机关了 `TAVOTTO_AUTO_PYTHON_CHANGE` 或版本推不出就如实报错，不换；修复会话暂无进度事件通道，下载进度不推前端），可经 `python_changer` 注入替换；`convert_script` 的执行器（D2b 接转换任务）没注入时返回 `unavailable`。
+  执行器全部可经 `FixContext` 注入（`installer` / `uninstaller` / `freezer` / `python_changer`）；**测试一律注入假的，不往真实环境装包**。
+  `change_python` 缺省接 `executors._default_python_changer`（#1342 `pyversionfix` 的公开入口 `plan_python_change` → `apply_python_change`：只在 Tavotto 受管环境另建、不碰用户环境、私有 Python 锁里没有的版本不下载；本机关了 `TAVOTTO_AUTO_PYTHON_CHANGE` 或版本推不出就如实报错，不换；修复会话暂无进度事件通道，下载进度不推前端），可经 `python_changer` 注入替换；`convert_script` 没有执行器（见下，只记交接）。
 - **快照**（`snapshots.py`）：除 `rollback` 外每个会改东西的工具执行前先 `snapshots.take`，存 `data_dir()/cache/fix_snapshots/<会话>/<id>.json`：项目设置里 `execution_policy` / `environment` 两个键的原值（含「没有」）+
   目标环境的 `pip freeze` 解析成 `{规范名: 版本}`（只留 `名==版本` 行，URL / 路径行不存）+ 环境目录顶层条目名。**打不出快照就不改**（`snapshot_failed`）；快照 id 进工具返回与审计行 `snapshot` 字段；每会话留最近 30 份。
   `rollback` 只认本会话 + 本项目的快照、id 形状固定（`snap_<时间>_<6 位十六进制>`）；设置**精确恢复**（原来没有的键清掉，并 `projectenv.reset_cache`）；包按 freeze 差异——快照后新装的卸掉
   （`pip` / `setuptools` / `wheel` 不卸），被改版本 / 被卸掉的装回快照里的版本，走同一条 `executors`。
 - **`run_command`**：D2a 拆出、#1374 以两档落地，见 D2a 之后的「`run_command`」一节。
-- **`convert_script`**：原脚本**绝不动**——只许写 `<原名>_matplotlib.py`（已存在则 `_matplotlib_2`…，不覆盖）；脚本必须在项目内（解析符号链接后）；转换器拿原脚本的**临时副本**（`data_dir()/cache/fix_convert/`），「读基线 → 转换器 → 核对 / 必要时恢复」整段持原脚本的 `script_guard`（单个脚本，没有枚举竞态），返回后核原脚本 sha256，变了用执行前读到的原字节经 `snapshots.restore_script` 写回并报 `original_modified`；副本用 `_remove_tree` 带重试清理（建 / 写副本失败时的清理结果同样如实报），删不掉报 `cleanup_pending`。
+- **`convert_script`（交接，ADR 0149 §七 2026-10-24 修订）**：不写任何文件、不打快照、不弹卡，只在 `ctx.handoff` 记 `{kind:"convert", script:<项目相对 posix 路径>, library}`，让会话收尾后界面接上 ADR 0143 的「生成可编辑版本」流程（校验 / 对照 / 采用，原脚本不动）。
+  脚本必须在项目内（解析符号链接后）、是 `.py` 文件；`library` 取 `rasterhint.LIBRARIES`，缺省取准备报告里 `no_figure_hint`（`raster_script`）指认的库，两者都没有 = `bad_arguments`；`ai_convert.enabled()` 为假 = `unavailable`。
+  `finish` 的 outcome 多一个 `convert`：只有 `ctx.handoff` 已设置才合法（否则 `bad_arguments`）；会话公开状态在 outcome 为 `convert` 时带 `handoff`（只 `kind` / `script` / `library` 三键），审计照记 `finished: convert`。内置循环与 CLI 的 MCP 回调共用同一个 `finish`。
 - **#1361 三条**：`_copy_project` 只复制普通文件（FIFO / socket / 设备及指向它们的链接跳过、记 `skipped["special"]`、结果 `copy_incomplete`，复制前再 `S_ISREG` 核一次防枚举后被换成 FIFO）；
   `list_environments` 列满 30 条时如实报 `[showing 30 of N …]`，本项目当前 / 选过的环境排前，`match` 参数按名字 / 来源 / 路径片段筛（被列出的才登记 id）；`_copy_project(…, reads)` 回传实际复制了内容的链接目标，`try_run` 逐个 `ctx.note_read(…, "try_run")`。
 - **freeze 的「可用」按成败判（#1371 P1）**：`default_freezer` 成功回文本（全新空环境是 `""`）、失败回 `None`；快照的 `freeze_available` = 拿到了没有，不按输出是否为空。
 
-- **转换器临时副本**（`data_dir()/cache/fix_convert/`）用 `trial._remove_tree` 带重试清理，删不掉如实报 `cleanup_pending` 并留 `.cleanup_pending` 标记，下次 `trial.sweep_stale_trials(root=…)` 清。
 
 ### `run_command`：任意命令，两档（`fixtools/command.py` / `fixtools/cmdsandbox.py`，#1374，ADR 0149 §七修订）
 
