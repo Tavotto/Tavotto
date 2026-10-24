@@ -69,6 +69,12 @@ def read_run_report(ctx: FixContext, args: dict) -> ToolResult:
     picked = {
         k: _precis(report[k]) for k in _REPORT_KEYS if report.get(k) not in (None, "", [], {})
     }
+    for item in report.get("requirements") or []:
+        # 数据失联（ADR 0106）：脚本要的那串和脚本里别处写着、此刻也找不到的路径——`link_data_file` 的 `requested` 就取自这里
+        if isinstance(item, dict) and item.get("kind") == "input_location":
+            if isinstance(item.get("payload"), dict):
+                picked["missing_input"] = _precis(item["payload"])
+            break
     text = json.dumps(picked, ensure_ascii=False, indent=1, default=str)
     if len(text) > REPORT_MAX_CHARS:
         text = text[:REPORT_MAX_CHARS] + "\n[truncated]"

@@ -1342,6 +1342,7 @@
           "switch_execution": "正在调整运行方式",
           "select_environment": "正在切换环境",
           "convert_script": "正在生成可编辑版本",
+          "link_data_file": "正在接入数据文件",
           "run_command": "正在运行命令…",
           "rollback": "正在撤销刚才的改动",
           "propose_fix": "正在准备修复方案",

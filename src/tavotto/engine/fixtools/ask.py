@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 from ..agent_runner.wires import ToolResult
 from . import readscope
@@ -150,7 +151,14 @@ def _options(raw: object) -> list[dict] | None:
         if oid is None or label is None or oid in ids or oid in ("other", "skip"):
             return None
         ids.add(oid)
-        out.append({"id": oid, "label": readscope.scrub(label)})
+        opt = {"id": oid, "label": readscope.scrub(label)}
+        path = o.get("path")
+        if path is not None:
+            if not isinstance(path, str) or "\x00" in path or len(path) > 1000:
+                return None
+            if path.strip():
+                opt["path"] = path.strip()
+        out.append(opt)
     return out
 
 
@@ -170,7 +178,8 @@ def ask_user(ctx: FixContext, args: dict) -> ToolResult:
             "kind": "choice",
             "tool": "ask_user",
             "summary": readscope.scrub(question),
-            "options": options,
+            # 候选文件的 `path` 只留在后端（用户选中它才记为「亲手选的」）；公开卡片只有 id + label
+            "options": [{"id": o["id"], "label": o["label"]} for o in options],
             "allow_other": allow_other,
         },
     )
@@ -187,6 +196,9 @@ def ask_user(ctx: FixContext, args: dict) -> ToolResult:
             return ok("The user skipped this question.", "question skipped")
         return ok(f"The user typed: {readscope.scrub(typed)}", "answered (typed)")
     if answer in {o["id"] for o in options}:
+        chosen = next(o for o in options if o["id"] == answer)
+        _remember_chosen_path(ctx, [chosen.get("path")], literal=True)
+        _remember_chosen_path(ctx, [chosen.get("label"), chosen.get("id")])
         return ok(f"The user chose: {answer}", "answered")
     return err(
         "bad_answer", "The answer did not match any option; ask again or continue without it."
@@ -194,6 +206,25 @@ def ask_user(ctx: FixContext, args: dict) -> ToolResult:
 
 
 # --------------------------------------------------------------------------- pick_file
+_PATH_START = re.compile(r"^(~|/|[A-Za-z]:[\\/]|\\\\)")
+
+
+def _remember_chosen_path(ctx: FixContext, texts: list, *, literal: bool = False) -> None:
+    """用户选中的选项里写着一个存在的、读得了的路径（整段文字或其中一个词，`~` 展开）：记为「用户亲手选的」。"""
+    for text in texts:
+        if not isinstance(text, str):
+            continue
+        # 词尾不属于路径的标点（`path: 说明` 的冒号、句号、括号、引号）先剥掉再判存在；`.csv` 的点在词中间，不受影响
+        words = [t.strip("`'\"([").rstrip("`'\"):,;.]}") for t in text.split()]
+        for cand in [text.strip()] if literal else [text.strip(), *words]:
+            if not _PATH_START.match(cand):
+                continue
+            r = ctx.scope.check(cand)
+            if r.ok and os.path.exists(r.real):
+                ctx.user_chosen_paths[os.path.normcase(r.real)] = ctx.step
+                return
+
+
 def pick_file(ctx: FixContext, args: dict) -> ToolResult:
     purpose = _text(args.get("purpose"), QUESTION_MAX)
     kind = args.get("kind", "file")
@@ -227,6 +258,7 @@ def pick_file(ctx: FixContext, args: dict) -> ToolResult:
     if (kind == "dir") != os.path.isdir(real):
         return err("wrong_kind", f"A {'folder' if kind == 'dir' else 'file'} was expected.")
     ctx.note_read(granted, "pick_file")
+    ctx.user_chosen_paths[os.path.normcase(real)] = ctx.step
     shown = home_relative(ctx, real)
     return ok(
         f"The user picked {shown}. You may read it now with read_file / list_dir / find_files.",
@@ -326,15 +358,24 @@ ASK_TOOLS: tuple[FixTool, ...] = (
     FixTool(
         "ask_user",
         "Ask the user a multiple-choice question when you cannot find the answer yourself (for example which folder "
-        "holds the data file). 2-6 short options are best. Returns the chosen option id. Do not ask for things you "
-        "can look up with the read tools.",
+        "holds the data file). 2-6 short options are best. Returns the chosen option id. When the options are "
+        "candidate files or folders, fill each option's `path` (the user's choice then counts as their confirmation "
+        "for link_data_file). Do not ask for things you can look up with the read tools.",
         obj(
             {
                 "question": {"type": "string"},
                 "options": {
                     "type": "array",
                     "items": obj(
-                        {"id": {"type": "string"}, "label": {"type": "string"}}, ["id", "label"]
+                        {
+                            "id": {"type": "string"},
+                            "label": {"type": "string"},
+                            "path": {
+                                "type": "string",
+                                "description": "Optional. Absolute (or ~/) path of the file or folder this option stands for.",
+                            },
+                        },
+                        ["id", "label"],
                     ),
                     "description": f"1-{OPTIONS_MAX} options; ids `other` and `skip` are reserved.",
                 },

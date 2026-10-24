@@ -129,3 +129,9 @@ Windows（#1358 无沙盒）与没有 bwrap 的 Linux 只有第②档，第①�
 会话公开状态带 `handoff`，前端（`aiFixStore.settle`）清掉修复条目、记下这张准备卡交接给了哪个脚本，并启动 `convertStore.start`，同一张卡接上 ADR 0143 的进度 / 对照 / 「采用」。
 理由：① 复用已验证的候选工作区、运行校验、对照视图与 O_EXCL 新建兄弟脚本，不再造第二条写脚本的路径；② 不在修复会话里嵌套第二个 AI（费用、取消与审计都只有一层）；③ 原脚本一个字节不动，用户在对照视图点「采用」才是同意。
 `script_converter` 字段与「临时副本 → 执行器 → 核对 / 恢复」整段删除（`snapshots.restore_script` 留给 `run_command` 第②档恢复脚本用）。规则细则见 `docs/rules/backend/ai-agent-bridge.md` 的 D2a 一节。
+
+**修订（2026-10-24，`link_data_file`：缺数据时 AI 找、用户点头、接上）**：新工具 `link_data_file`（`fixtools/link.py`，`tier=tavotto`，`waits_for_user`）。缺数据（报告 `missing_input`）时 AI 用 `find_files` / `read_file` 在项目、往上的各级目录与主目录里找同名文件并与脚本用法对照；
+唯一且确定就直接 `link_data_file`（卡片里写依据），多个或不确定先 `ask_user` 列候选（带「都不是，我自己选」→ `pick_file`），再接上、`try_run`、`finish`。**一律弹 approve 卡**，没有界面 = `needs_approval`；
+同意后先打快照（项目设置新增 `input_remap` 键）再走与数据失联弹窗**同一个** `inputremap.link`（ADR 0106 修订）。`requested` 只认报告 `missing_input` 载荷与脚本源码里找不到的常量，且必须是改指救得回的读取；`chosen` 过 `ctx.scope`；脚本永不改。
+`try_run` 的守卫进程里装上同一份规则（`figcapture.install_input_remap`，按文件加载），否则接上的数据在试跑里验证不了。规则应用后通过 `FixContext.on_input_remap_changed` 通知应用（收会话、取消试运行、告诉窗口，与端点同一串）。
+

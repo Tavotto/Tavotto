@@ -1212,6 +1212,37 @@ def test_http_add_list_and_remove(client, figs, tmp_path):
             m.close_project(pid, wait=True)
 
 
+def test_the_endpoint_and_ai_repair_share_one_link_function(client, figs, tmp_path, monkeypatch):
+    """数据失联弹窗的端点与 AI 修复的 `link_data_file` 只调 `inputremap.link`：校验与推导不复制第二份。"""
+    from tavotto import app as m
+
+    m.open_project(str(figs))
+    try:
+        seen = []
+        real = inputremap.link
+
+        def spy(root, requested, chosen, kind):
+            seen.append((requested, kind))
+            return real(root, requested, chosen, kind)
+
+        monkeypatch.setattr(inputremap, "link", spy)
+        chosen = _touch(tmp_path / "moved" / "data" / "values.txt")
+        resp = client.post(
+            "/api/engine/input-remap",
+            json={"requested": "data/values.txt", "chosen": str(chosen), "chosen_kind": "auto"},
+        )
+        assert resp.status_code == 200, resp.get_json()
+        assert seen == [("data/values.txt", "auto")]
+        bad = client.post(
+            "/api/engine/input-remap", json={"requested": 1, "chosen": "x", "chosen_kind": "file"}
+        )
+        assert bad.status_code == 400
+        assert bad.get_json()["code"] == inputremap.ERROR_REQUESTED_INVALID
+    finally:
+        for pid in [p for p, ctx in list(m.PROJECTS.items()) if str(ctx.path) == str(figs)]:
+            m.close_project(pid, wait=True)
+
+
 def test_every_window_of_the_project_hears_that_the_remap_table_changed(client, figs, tmp_path):
     """两个窗口开着同一个项目（两条事件流）：A 改指 / 删指，B 同样收到 `input_remap_changed`（带代次），
     据此作废按旧表画的东西（Codex 评 #716 P1）。事件带的代次与接口响应里的一致，前端据此去重。"""

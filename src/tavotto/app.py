@@ -9297,6 +9297,19 @@ def _fix_session_env(sess) -> dict:
     return out
 
 
+def _fix_remap_notifier(ctx: "ProjectCtx"):
+    """修复会话（工作线程，没有请求上下文）改了 / 回滚了数据改指表之后做的事：与 `POST /api/engine/input-remap` 同一串
+    ——收掉这个项目的会话、取消在跑的试运行、经项目事件流告诉开着它的窗口（ADR 0106 §五）。"""
+
+    def notify(state: dict, reason: str) -> None:
+        root = str(ctx.path)
+        with bound_project(ctx):
+            _stop_remap_dependent_work(root)
+            _publish_remap_changed(root, reason, state["generation"])
+
+    return notify
+
+
 @app.post("/api/ai/fix")
 def api_ai_fix():
     """「使用你的 AI 来修复」（智能修复主线，ADR 0148 / 0149）。body：`{session_id, script}`（准备会话 id 与脚本项目相对路径）。
@@ -9355,7 +9368,10 @@ def api_ai_fix():
             redactor=redactor,
             audit=engine_fixsession.AuditLog(),
             script_path=script_path,
-            ctx_kwargs=_fix_session_env(sess),
+            ctx_kwargs={
+                **_fix_session_env(sess),
+                "on_input_remap_changed": _fix_remap_notifier(ctx),
+            },
         )
     except engine_fixsession.FixError as exc:
         if exc.code == "fix_busy":
@@ -9761,23 +9777,11 @@ def api_engine_input_remap_add():
     """
     root = str(require_project())
     body = request.get_json(force=True) or {}
-    requested = body.get("requested")
-    chosen = body.get("chosen")
-    kind = str(body.get("chosen_kind") or "")
-    if kind == "auto" and isinstance(chosen, str):
-        # 浏览器模式里用户粘贴的路径：是文件夹就按文件夹推，其余按文件（不存在由 derive 报）
-        kind = "dir" if os.path.isdir(chosen) else "file"
-    if not isinstance(requested, str) or not isinstance(chosen, str) or kind not in ("file", "dir"):
-        return jsonify(
-            {
-                "error": "需要 requested、chosen 与 chosen_kind（file / dir）",
-                "code": engine_inputremap.ERROR_REQUESTED_INVALID,
-                "params": {},
-            }
-        ), 400
     try:
-        rule = engine_inputremap.derive(requested, chosen, chosen_is_dir=kind == "dir")
-        state = engine_inputremap.add_rule(root, rule)
+        # 校验、`auto` 的文件 / 文件夹判定、推规则、落盘都在 `inputremap.link`：AI 修复的 `link_data_file` 与这里同一处
+        rule, state = engine_inputremap.link(
+            root, body.get("requested"), body.get("chosen"), body.get("chosen_kind")
+        )
     except engine_inputremap.RemapError as exc:
         return _input_remap_error(exc)
     _stop_remap_dependent_work(root)

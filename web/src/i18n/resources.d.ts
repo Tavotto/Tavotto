@@ -5487,6 +5487,7 @@ export default interface Resources {
           "grep_files": "正在搜文件内容",
           "inspect_environment": "正在检查 Python 环境",
           "install_packages": "正在安装 {{detail}}",
+          "link_data_file": "正在接入数据文件",
           "list_dir": "正在看文件夹",
           "list_environments": "正在看有哪些 Python 环境",
           "lookup_package": "正在查包名",

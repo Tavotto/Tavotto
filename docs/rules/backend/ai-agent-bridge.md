@@ -560,6 +560,19 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   - 第②档的备份**只覆盖项目内的用户脚本**：其它文件、项目外、环境、数据文件不保护。命令期间用户在**外部编辑器**里保存同一份脚本（不走 `scriptlock`）会被当成命令的改动，结束后恢复成命令前的版本；命令把脚本换成同名目录 / 链接则恢复失败（如实报）；命令新建的文件不删；基线在内存里，Tavotto 在命令期间被杀就无法恢复。
   - 第②档持锁期间，界面里保存这些脚本会**阻塞等待**（不是失败），命令结束才落盘（最长 300 s 加快照时间）；锁只管走 `scriptlock` 的入口。审批卡开着期间的编辑不是盲区——基线在点头之后才取。
 
+### `link_data_file`：缺数据时把 AI 找到的文件接上（`fixtools/link.py`，ADR 0106 修订 / ADR 0149 §七修订，2026-10-24）
+
+看护 `tests/test_fixtools_link.py`（含真子进程的整链用例）、`tests/test_missing_input.py::test_the_endpoint_and_ai_repair_share_one_link_function`。
+
+- **一律问**：approve 卡 = 模型给的一句话 `summary` + 折叠 `details`（脚本要的串、完整路径、`evidence`、规则含义）。没有 `ctx.ask` / 非 yes = `needs_approval`，规则与快照都不写。
+- **判据都在弹卡之前**：`requested` 必须在 `inputremap.known_requests`（报告 `missing_input` 载荷 ∪ 脚本里以常量出现且此刻找不到的路径）里，否则 `requested_unknown`；其 `via` 不是 `open`（探路 / glob / C++ 读取器）→ `link_unreachable`（要改脚本，AI 不改）。
+  `chosen` 过 `ctx.scope.check`（凭据位置 `denied`、范围外 `outside`）、存在、`inputremap.rule_for_choice` 当场推得出规则，才打扰用户。
+- **同一套推导与落盘**：写入只经 `inputremap.link`（= `rule_for_choice` + `add_rule`；`POST /api/engine/input-remap` 调的也是它）。快照先于写入，`settings_keys()` 含 `input_remap`；
+  回滚经 `inputremap.restore_raw`（项目锁 + 换代），**只在改指表真的变了才动**，别的回滚不让它换代。应用侧通知 `FixContext.on_input_remap_changed(state, "added"|"restored")` 由 `app._fix_remap_notifier` 在 `bound_project` 下做收会话 / 取消试运行 / SSE（工作线程没有请求上下文）。
+- **`try_run` 带规则**：副本里的守卫进程按文件加载 `figcapture`（`TAVOTTO_TRIAL_ENGINE_DIR`，用完摘掉 `sys.path` 与模块）并 `install_input_remap(rules_for(项目))`；规则里落在被复制脚本目录内的绝对 `from` 另加一条换算到副本路径的（`trial_remap_rules`，脚本用 `__file__` 拼路径时才命中）。
+  装不上如实报 `input_remap: …could not load…`，不静默当没有。自定义 runner 仅在有规则时多收一个 `input_remap` 关键字。
+- **已知取舍**：同一处的旧 `file` 规则（`remap_target` 里 `file` 优先）会盖住后来的 `prefix` 规则——与弹窗行为一致，没有为此改规则优先级；`known_requests` 不含已被现有规则救回的 `open` 读取。
+
 ### D2b：「问与报」组 + 修复会话 + `POST /api/ai/fix`（`fixtools/ask.py`、`engine/fixsession.py`）
 
 - **五个工具都 `waits_for_user=True`**：`propose_fix`（`approve` 卡，详情列 `ctx.reads` 的 `~/…` 写法与「没读：敏感目录」）、`ask_user`（`choice` 卡，回选项 id；`other` / `skip` 是保留 id）、
