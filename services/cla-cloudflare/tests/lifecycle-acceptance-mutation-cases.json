@@ -1,0 +1,112 @@
+[
+  {
+    "name": "lifecycle send receipt is not confirmation",
+    "file": "src/native/automatic.ts",
+    "before": "await s.store.settleAutomaticPublication(issued!,'reconcile',receipt.id);",
+    "after": "await s.store.settleAutomaticPublication(issued!,'confirmed',receipt.id);",
+    "pattern": "^native\\ successful\\ publication\\ confirms\\ independently,\\ expires,\\ withdraws\\ and\\ refreshes\\ delegated=false$",
+    "selectedTitle": "native successful publication confirms independently, expires, withdraws and refreshes delegated=false",
+    "testFile": "tests/publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "lifecycle expired positive must withdraw",
+    "file": "src/native/background.ts",
+    "before": "revision===p.revision && await s.store.databaseNow()<p.expires;",
+    "after": "revision===p.revision;",
+    "pattern": "^native\\ late\\ wakeup\\ withdraws\\ expired\\ success\\ instead\\ of\\ confirming\\ or\\ renewing\\ it$",
+    "selectedTitle": "native late wakeup withdraws expired success instead of confirming or renewing it",
+    "testFile": "tests/publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "lifecycle release needs post-patch GET",
+    "file": "src/native/github.ts",
+    "before": "began=this.now();const after=await this.api(path,token);this.own(after,p);",
+    "after": "began=this.now();const after=data;this.own(after,p);",
+    "pattern": "^native\\ withdrawal\\ acknowledgement\\ alone\\ cannot\\ release\\ held\\ capacity$",
+    "selectedTitle": "native withdrawal acknowledgement alone cannot release held capacity",
+    "testFile": "tests/publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "lifecycle durable manual backoff",
+    "file": "src/native/store.ts",
+    "before": "reconcile_due=${DB_NOW}+60,reconcile_attempts=min(3,reconcile_attempts+1),observed_generation=?",
+    "after": "reconcile_due=${DB_NOW},reconcile_attempts=min(3,reconcile_attempts+1),observed_generation=?",
+    "pattern": "^native\\ missing\\ unknown\\ owner\\ stays\\ manual\\ and\\ its\\ durable\\ backoff\\ does\\ not\\ replay\\ success$",
+    "selectedTitle": "native missing unknown owner stays manual and its durable backoff does not replay success",
+    "testFile": "tests/publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "lifecycle second live authority read",
+    "file": "src/ci/consumer.ts",
+    "before": "try{receipt(await read(url,'authority'));}catch(error){if(error instanceof CIPending)throw new Rejected('ci_live_state_changed');throw error;}",
+    "after": "// mutation: omit the second live authority read",
+    "pattern": "^native\\ second\\ CI\\ authority\\ read\\ cannot\\ return\\ an\\ expired\\ earlier\\ success$",
+    "selectedTitle": "native second CI authority read cannot return an expired earlier success",
+    "testFile": "tests/publication-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "OAuth exact consumption expiry",
+    "file": "src/native/store.ts",
+    "before": "browser_hash=? AND expires>${DB_NOW} AND used=0 RETURNING verifier_cipher",
+    "after": "browser_hash=? AND expires>=${DB_NOW} AND used=0 RETURNING verifier_cipher",
+    "pattern": "^OAuth\\ exact\\ state\\ expiry\\ rejects\\ without\\ exchange\\ or\\ session$",
+    "selectedTitle": "OAuth exact state expiry rejects without exchange or session",
+    "testFile": "tests/oauth-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "OAuth single-use consumed state",
+    "file": "src/native/store.ts",
+    "before": "UPDATE oauth_states SET used=1",
+    "after": "UPDATE oauth_states SET used=0",
+    "pattern": "^OAuth\\ full\\ callback\\ binds\\ PKCE,\\ sets\\ session\\ cookies\\ and\\ rejects\\ replay$",
+    "selectedTitle": "OAuth full callback binds PKCE, sets session cookies and rejects replay",
+    "testFile": "tests/oauth-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "OAuth correct browser binding",
+    "file": "src/native/store.ts",
+    "before": "browser_hash=? AND expires>${DB_NOW} AND used=0 RETURNING verifier_cipher",
+    "after": "browser_hash!=? AND expires>${DB_NOW} AND used=0 RETURNING verifier_cipher",
+    "pattern": "^OAuth\\ wrong\\ browser\\ cannot\\ consume\\ the\\ original\\ browser\\ state$",
+    "selectedTitle": "OAuth wrong browser cannot consume the original browser state",
+    "testFile": "tests/oauth-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "OAuth response never expands scope",
+    "file": "src/native/github.ts",
+    "before": "data.token_type !== 'bearer' || data.scope !== ''",
+    "after": "data.token_type !== 'bearer'",
+    "pattern": "^OAuth\\ token\\ response\\ rejects\\ extra\\ authority\\ scope$",
+    "selectedTitle": "OAuth token response rejects extra authority scope",
+    "testFile": "tests/oauth-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "group cannot parse as PR proof",
+    "file": "src/core/proof.ts",
+    "before": "p.kind!=='pr' ||",
+    "after": "false ||",
+    "pattern": "^native\\ group\\ cannot\\ enter\\ the\\ PR\\ proof\\ parser\\ or\\ positive\\ journal/send\\ path$",
+    "selectedTitle": "native group cannot enter the PR proof parser or positive journal/send path",
+    "testFile": "tests/group-publication-boundaries.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "OAuth consume-time semantics is not a completion deadline",
+    "file": "src/native/service.ts",
+    "before": "const user=await this.github.oauthIdentity(code,await open(this.key,cipher,'oauth:'+hash));",
+    "after": "const user=await this.github.oauthIdentity(code,await open(this.key,cipher,'oauth:'+hash));const admitted=await this.store.stmt('SELECT expires FROM oauth_states WHERE state_hash=?',hash).first<{expires:number}>();if(!admitted || await this.store.databaseNow()>=admitted.expires)throw new Rejected('oauth_rejected');",
+    "pattern": "^OAuth\\ state\\ is\\ valid\\ at\\ consumption,\\ not\\ bounded\\ by\\ callback\\ completion$",
+    "selectedTitle": "OAuth state is valid at consumption, not bounded by callback completion",
+    "testFile": "tests/oauth-lifecycle.test.mjs",
+    "assertionError": true
+  }
+]
