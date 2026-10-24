@@ -570,7 +570,7 @@ def test_bad_secrets_are_refused(raw):
     assert isinstance(A.read_secret(io.StringIO(raw.decode())), str)
 
 
-def test_judge_live_requires_real_successful_calls_pdf_and_reopen(tmp_path):
+def test_judge_live_requires_real_calls_pdf_journal_and_fresh_restore(tmp_path):
     pdf = tmp_path / "out.pdf"
     pdf.write_bytes(b"%PDF-1.7 x")
     s1 = A.parse_stream(
@@ -578,49 +578,40 @@ def test_judge_live_requires_real_successful_calls_pdf_and_reopen(tmp_path):
             _use("1", "tavotto_health"),
             _res("1", "{}"),
             _use("2", "tavotto_open_figure"),
-            _res("2", "{}"),
+            _res("2", '{"session_id": "s-0123456789ab"}'),
             _use("3", "tavotto_apply_overrides"),
             _res("3", "{}"),
             _use("4", "tavotto_export"),
             _res("4", "{}"),
             _use("5", "tavotto_verify_replay"),
-            _res("5", "{}"),
+            _res("5", '{"ok": true, "divergence": []}'),
         )
     )
-    s2 = A.parse_stream(
-        _stream(
-            _use("6", "tavotto_open_figure"),
-            _res("6", "{}"),
-            _use("7", "tavotto_session_state"),
-            _res("7", '{"patches": [{"gid": "line0", "prop": "linewidth", "value": 3}]}'),
-        )
-    )
-    assert A.judge_live(s1, s2, pdf) == {
-        "L4": "passed",
-        "L5": "passed",
-        "checks": {
-            "opened": True,
-            "applied": True,
-            "exported_pdf": True,
-            "replay_verified": True,
-            "reopened_in_fresh_process": True,
-            "edits_survive_reopen": True,
-        },
-    }
-    # 重开读不到修改、PDF 不是 PDF、工具报错——每一样都让 L5 失败
-    s2_empty = A.parse_stream(
-        _stream(
-            _use("6", "tavotto_open_figure"),
-            _res("6", "{}"),
-            _use("7", "tavotto_session_state"),
-            _res("7", '{"patches": []}'),
-        )
-    )
-    assert A.judge_live(s1, s2_empty, pdf)["L5"] == "failed"
+    s2 = A.parse_stream(_stream(_use("6", "tavotto_verify_replay"), _res("6", '{"ok": true}')))
+    assert A.opened_session_id(s1) == "s-0123456789ab"
+    out = A.judge_live(s1, s2, pdf, True)
+    assert out["L4"] == "passed" and out["L5"] == "passed" and all(out["checks"].values())
+    # 每一样缺了都让 L5 失败：日志里没修改、重开后重放不一致、PDF 不是 PDF、工具报错
+    assert A.judge_live(s1, s2, pdf, False)["L5"] == "failed"
+    s2_bad = A.parse_stream(_stream(_use("6", "tavotto_verify_replay"), _res("6", '{"ok": false}')))
+    assert A.judge_live(s1, s2_bad, pdf, True)["L5"] == "failed"
     pdf.write_bytes(b"<html>")
-    assert A.judge_live(s1, s2, pdf)["L5"] == "failed"
+    assert A.judge_live(s1, s2, pdf, True)["L5"] == "failed"
     s1_err = A.parse_stream(_stream(_use("1", "tavotto_health"), _res("1", "boom", err=True)))
-    assert A.judge_live(s1_err, s2, None)["L4"] == "failed"
+    assert A.judge_live(s1_err, s2, None, True)["L4"] == "failed"
+
+
+def test_journal_check_reads_the_real_record(tmp_path):
+    d = tmp_path / "data" / "mcp-sessions"
+    d.mkdir(parents=True)
+    sid = "s-0123456789ab"
+    (d / f"{sid}.json").write_text(
+        json.dumps({"patches": [{"gid": "axes_0.lines_0", "prop": "linewidth", "value": 3}]})
+    )
+    assert A.journal_has_edits(tmp_path / "data", sid)
+    (d / f"{sid}.json").write_text(json.dumps({"patches": []}))
+    assert not A.journal_has_edits(tmp_path / "data", sid)
+    assert not A.journal_has_edits(tmp_path / "data", None)
 
 
 def test_a_tool_use_without_any_result_is_not_a_success():

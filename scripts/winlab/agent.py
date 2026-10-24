@@ -1068,14 +1068,15 @@ LIVE_SESSION_1 = (
     "Use only the tavotto MCP tools. Steps: (1) call tavotto_health; "
     "(2) call tavotto_open_figure on plot.py; (3) with tavotto_apply_overrides set the line width "
     "of the first data line to 3 and move the legend to the upper left (pick gids/props from the "
-    "manifest); (4) call tavotto_export with format pdf into the project's out/ folder; "
-    "(5) call tavotto_verify_replay; (6) call tavotto_close_session. "
-    "Finish with one line: DONE <session_id>."
+    "manifest); (4) call tavotto_export with format pdf into the project's out/ folder. The user has "
+    "explicitly confirmed exporting even if preflight reports issues, so pass explicit_confirm=true; "
+    "(5) call tavotto_verify_replay. Do NOT close the session. "
+    "Finish with one line: SESSION <session_id>."
 )
+#: 第二轮是全新的宿主进程，只拿到第一轮的 session_id：服务端得从会话日志恢复、从零重放同一组修改
 LIVE_SESSION_2 = (
-    "Use only the tavotto MCP tools. Call tavotto_open_figure on plot.py in this project, then "
-    "tavotto_session_state on that session, then tavotto_close_session. Report the current patches "
-    "as one JSON line prefixed with PATCHES: exactly as session_state returned them."
+    "Use only the tavotto MCP tools. Call tavotto_verify_replay with session_id {sid}, then call "
+    "tavotto_close_session with session_id {sid}. Finish with one line: REPLAY <ok field of verify_replay>."
 )
 
 
@@ -1135,26 +1136,57 @@ def _ok_calls(facts: dict, tool: str) -> list[dict]:
     ]
 
 
-def judge_live(s1: dict, s2: dict, pdf: Path | None) -> dict:
-    """L4 / L5 只看真实发生的事：工具调用要有成功的结果，导出的 PDF 要真在、是 PDF，重开要读到修改。"""
+SESSION_ID_RE = re.compile(r'"session_id"\s*:\s*"(s-[0-9a-f]{12})"')
+_OK_TRUE = re.compile(r'"ok"\s*:\s*true')
+
+
+def opened_session_id(facts: dict) -> str | None:
+    for c in _ok_calls(facts, "tavotto_open_figure"):
+        m = SESSION_ID_RE.search(c.get("result", ""))
+        if m:
+            return m.group(1)
+    return None
+
+
+def journal_has_edits(data_dir: Path, sid: str | None) -> bool:
+    """执行器自己读 Tavotto 的会话日志（`mcp-sessions/<sid>.json`），不信模型的转述：线宽 3 那一条要真在里面。"""
+    if not sid:
+        return False
+    for p in data_dir.rglob(f"{sid}.json"):
+        try:
+            rec = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for patch in rec.get("patches") or []:
+            if (
+                isinstance(patch, dict)
+                and str(patch.get("prop", "")).lower() in ("linewidth", "lw")
+                and float(patch.get("value", 0) or 0) == 3
+            ):
+                return True
+    return False
+
+
+def judge_live(s1: dict, s2: dict, pdf: Path | None, journal_ok: bool) -> dict:
+    """L4 / L5 只看真实发生的事：工具调用要有成功的结果，PDF 要真在、是 PDF，修改要真落进会话日志，
+    全新宿主进程凭 session_id 恢复并从零重放要一致。"""
     l4 = (
         "passed"
         if _ok_calls(s1, "tavotto_health") or _ok_calls(s1, "tavotto_open_figure")
         else "failed"
     )
+    replay1 = _ok_calls(s1, "tavotto_verify_replay")
+    replay2 = _ok_calls(s2, "tavotto_verify_replay")
     checks = {
         "opened": bool(_ok_calls(s1, "tavotto_open_figure")),
         "applied": bool(_ok_calls(s1, "tavotto_apply_overrides")),
         "exported_pdf": bool(pdf and pdf.is_file() and pdf.read_bytes()[:5] == b"%PDF-"),
-        "replay_verified": bool(_ok_calls(s1, "tavotto_verify_replay")),
-        "reopened_in_fresh_process": bool(_ok_calls(s2, "tavotto_open_figure")),
+        "replay_verified": any(_OK_TRUE.search(c.get("result", "")) for c in replay1),
+        "edits_in_session_journal": journal_ok,
+        "fresh_process_restored_and_replayed": any(
+            _OK_TRUE.search(c.get("result", "")) for c in replay2
+        ),
     }
-    state = _ok_calls(s2, "tavotto_session_state")
-    # 重开后的 patches 要非空：全新宿主进程读到了第一轮写下的修改，而不是脚本原样
-    text = state[0].get("result", "") if state else ""
-    checks["edits_survive_reopen"] = (
-        bool(state) and re.search(r'"patches"\s*:\s*\[\s*\{', text) is not None
-    )
     l5 = "passed" if all(checks.values()) else "failed"
     return {"L4": l4, "L5": l5, "checks": checks}
 
@@ -1229,16 +1261,26 @@ def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, secret: dict) -> dic
         ]
 
     r1 = _run_logged(claude_print(LIVE_SESSION_1), proj, henv, ev / "session-1", 1200)
-    r2 = _run_logged(claude_print(LIVE_SESSION_2), proj, henv, ev / "session-2", 600)
     _scrub(ev, secret["api_key"])
     s1 = parse_stream(
         Path(f"{ev / 'session-1'}.stdout.log").read_text(encoding="utf-8", errors="replace")
     )
+    sid = opened_session_id(s1)
+    journal_ok = journal_has_edits(run_dir / "work" / "tavotto-data", sid)
+    if sid:
+        r2 = _run_logged(
+            claude_print(LIVE_SESSION_2.format(sid=sid)), proj, henv, ev / "session-2", 900
+        )
+        _scrub(ev, secret["api_key"])
+    else:
+        r2 = {"exit_code": None, "skipped": "no session id from session 1"}
+        Path(f"{ev / 'session-2'}.stdout.log").write_text("", encoding="utf-8")
     s2 = parse_stream(
         Path(f"{ev / 'session-2'}.stdout.log").read_text(encoding="utf-8", errors="replace")
     )
     pdfs = sorted((proj / "out").glob("*.pdf"))
-    levels = judge_live(s1, s2, pdfs[0] if pdfs else None)
+    levels = judge_live(s1, s2, pdfs[0] if pdfs else None, journal_ok)
+    levels["session_id_from_session_1"] = bool(sid)
     if r1.get("timed_out") or r2.get("timed_out"):
         levels["L5"] = "error"
     return {
