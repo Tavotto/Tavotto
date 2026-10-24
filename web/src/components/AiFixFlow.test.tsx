@@ -71,6 +71,10 @@ const CARDS: Record<string, Partial<AiFixEntry>> = {
   autoStopped: { phase: 'done', outcome: 'failed', reason: 'cli_waiting_approval' },
   approve: { card: { id: 'c1', kind: 'approve', summary: '把 numpy 降到 1.26。', details: '因为 ABI', reads: ['~/Desktop/data.csv'], not_read: 'x' } },
   approvePkgs: { card: { id: 'c1', kind: 'approve', summary: '建一个环境并装上 colorcet。', packages: ['colorcet'] } },
+  command: { card: { id: 'c1', kind: 'approve', tool: 'run_command', summary: 'Run this command', command: 'python -m pip install colorcet', cwd: 'scratch' } },
+  commandOutside: {
+    card: { id: 'c1', kind: 'approve', tool: 'run_command', summary: 'x', command: 'make install', danger: true, reason: 'It writes to /opt/tools.', cwd: 'project', scripts: 3 },
+  },
   choice: { card: { id: 'c1', kind: 'choice', summary: 'data.csv 在哪个文件夹？', options: [{ id: 'a', label: '桌面' }, { id: 'b', label: '文档' }], allow_other: true } },
   pick: { card: { id: 'c1', kind: 'pick', summary: '请选一下数据文件。', pick: 'file' } },
   send: { card: { id: 'c1', kind: 'send', summary: 'AI 写的说明', wants_source: true } },
@@ -208,4 +212,49 @@ it('确认卡的详情里列出将要安装的包（默认折叠）', async () =
   const card = await render(entry(CARDS.approvePkgs))
   expect(card.querySelector('[data-ai-fix-packages]')?.textContent).toBe('将要安装：colorcet')
   expect(card.querySelector('details')?.open).toBe(false)
+})
+
+describe.each(['zh-CN', 'en-US'] as const)('run_command 的卡（%s）', (lang) => {
+  it('第①档：完整命令在可见区（等宽块），主按钮是普通的确认', async () => {
+    await setLocale(lang)
+    const card = await render(entry(CARDS.command))
+    const block = card.querySelector('[data-ai-fix-command]')
+    expect(block?.textContent).toBe('python -m pip install colorcet')
+    expect(block?.getAttribute('data-danger')).toBeNull()
+    expect(card.querySelector('[data-ai-fix-confirm]')?.getAttribute('data-variant')).toBe('primary')
+    expect(card.querySelector('[data-title]')?.textContent).not.toContain('prep.aiFix')
+  })
+
+  it('第②档：红色强调、完整命令、「在沙盒外运行」/「不了」；理由与备份说明在折叠详情里；点了才回 yes / no', async () => {
+    await setLocale(lang)
+    const answer = vi.fn(async () => {})
+    useAiFixStore.setState({ answer } as never)
+    const card = await render(entry(CARDS.commandOutside))
+    expect(card.querySelector('[data-ai-fix-command]')?.getAttribute('data-danger')).toBe('true')
+    expect(card.querySelector('[data-ai-fix-command]')?.textContent).toBe('make install')
+    const confirm = card.querySelector('[data-ai-fix-confirm]')!
+    expect(confirm.getAttribute('data-ai-fix-danger')).toBe('true')
+    expect(confirm.getAttribute('data-variant')).toBe('danger-tinted')
+    expect(confirm.textContent).toBe(lang === 'zh-CN' ? '在沙盒外运行' : 'Run outside the sandbox')
+    expect(card.querySelector('[data-ai-fix-skip]')?.textContent).toBe(lang === 'zh-CN' ? '不了' : 'No thanks')
+    expect(card.querySelector('[data-title]')?.textContent).toContain(lang === 'zh-CN' ? '沙盒外' : 'outside the sandbox')
+    // 理由、备份说明默认折叠：不在可见文字块里
+    const visible = visibleBlocks(card).map((b) => b.text).join('\n')
+    expect(visible).not.toContain('/opt/tools')
+    expect(card.querySelector('details')?.open).toBe(false)
+    expect(card.querySelector('[data-ai-fix-reason]')?.textContent).toContain('/opt/tools')
+    expect(card.querySelector('[data-ai-fix-outside-note]')?.textContent).toContain('3')
+    expect(visibleSentenceCount(card, lang)).toBeLessThanOrEqual(1)
+    expect(answer).not.toHaveBeenCalled() // 渲染本身不答
+    await click('[data-ai-fix-confirm]')
+    expect(answer).toHaveBeenCalledWith('script:plot.py', 'yes')
+    await click('[data-ai-fix-skip]')
+    expect(answer).toHaveBeenLastCalledWith('script:plot.py', 'no')
+  })
+
+  it('进行中显示「正在运行命令…」', async () => {
+    await setLocale(lang)
+    const card = await render(entry({ phase: 'running', activity: { tool: 'run_command', phase: 'start', detail: '', at_ms: 1 } }))
+    expect(card.querySelector('[data-title]')?.textContent).toBe(lang === 'zh-CN' ? '正在运行命令…' : 'Running a command…')
+  })
 })
