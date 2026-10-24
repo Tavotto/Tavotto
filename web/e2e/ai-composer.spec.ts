@@ -5,7 +5,7 @@ import { expect, test, waitForFigureEdit, type RunningApp } from './fixtures'
  * 改图助手输入框（2026-10-16）：推理强度是底栏胶囊 + 带说明的菜单；输入框空态即完整高度。
  *
  * 能力探测（本机装没装 codex/claude）不能决定这条用例红绿：capabilities 在浏览器侧被换成一个固定的
- * codex（五档，默认 medium）。语言无关写法，chromium（zh-CN）与 chromium-en 各走一遍。
+ * codex（agents 与 connections 两份都换）（五档，默认 medium）。语言无关写法，chromium（zh-CN）与 chromium-en 各走一遍。
  */
 
 const EFFORTS = ['minimal', 'low', 'medium', 'high', 'max']
@@ -29,7 +29,20 @@ async function openAssistant(page: Page, a: RunningApp) {
       default_effort: 'medium',
       features: { ...(base.features ?? {}), model_selection: true, effort_selection: true },
     }
-    await route.fulfill({ json: { ...real, agents: [agent] } })
+    // 真后端现在下发 vendors / connections：界面走「连接」视图，只换 agents 会在没装 CLI 的机器上看到「还没连接 AI」
+    const connection = {
+      id: 'chatgpt',
+      vendor: 'chatgpt',
+      label: 'ChatGPT',
+      logo: 'chatgpt',
+      state: 'ready',
+      route: 'cli:codex',
+      models: agent.models,
+      default_model: agent.default_model,
+      efforts: EFFORTS,
+      default_effort: 'medium',
+    }
+    await route.fulfill({ json: { ...real, agents: [agent], connections: [connection] } })
   })
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })

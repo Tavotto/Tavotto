@@ -229,7 +229,7 @@ test('导出目录不可写：导出失败给英文报错，且不丢项目', as
   chmodSync(deny, 0o755)
 })
 
-test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app, page }) => {
+test('没有任何 AI 连接（CLI 不可用）：英文说明 + 「Connect AI」入口', async ({ app, page }) => {
   const a = await app({ env: { PATH: path.join(os.tmpdir(), 'empty-path') } })
   await openFigures(page, a.baseURL)
 
@@ -237,11 +237,13 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   // 这台机器上真装了 codex/claude 的话「都没找到」状态触发不了——如实跳过
   // （CI runner 上没有这两个 CLI，这条在那儿真实运行）
   const caps = await (await fetch(`${a.baseURL}/api/ai/capabilities?refresh=1`)).json()
-  const usable = (caps.agents ?? []).some((x: { usable?: boolean }) => x.usable)
+  const usable =
+    (caps.agents ?? []).some((x: { usable?: boolean }) => x.usable) ||
+    (caps.connections ?? []).some((x: { state?: string }) => x.state === 'ready')
   test.skip(usable, '本机在惯例位置装有改图助手，「一个都没有」状态触发不了')
 
-  // 选中一个可参数化面板后打开助手 → 英文说明「两个 CLI 都没找到」+ 设置入口。
-  // noCli 提示在「作用范围与执行器」弹层里（AiPanel 的 agent 分区）；面板顶层输入框上方另有一条中性说明条。
+  // 选中一个可参数化面板后打开助手 → 英文说明「还没连接 AI」+ 连接入口（连接视图下取代旧的「两个 CLI 都没找到」+ 设置入口）。
+  // 提示在「作用范围与 AI」弹层里（AiPanel 的 agent 分区）；面板顶层输入框上方另有一条中性说明条。
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
   await waitForFigureEdit(page)
   // 2026-09-14 起助手是右栏 tablist 里的第三个页签（ADR 0010 修订），不再是头部按钮
@@ -253,11 +255,11 @@ test('AI CLI 不可用：设置里英文说明找过哪些位置', async ({ app,
   // 弹层 portal 到文档根部的 dialog，不在 Right panel 子树里
   const scopeDialog = page.getByRole('dialog')
   await expect(
-    scopeDialog.getByText(/No figure assistant available/i).first(),
+    scopeDialog.getByText(/No AI connected yet/i).first(),
   ).toBeVisible({ timeout: 30_000 })
   // 可执行的下一步：打开改图助手设置
   await expect(
-    scopeDialog.getByRole('button', { name: /Open Figure assistant settings/i }).first(),
+    scopeDialog.getByRole('button', { name: /Connect AI/i }).first(),
   ).toBeVisible()
   await expectNoCjk(panel, 'AI 面板')
   await expectNoCjk(scopeDialog, 'Scope and agent 弹层')

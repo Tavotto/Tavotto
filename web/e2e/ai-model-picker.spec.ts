@@ -51,7 +51,22 @@ async function openAssistant(page: Page, a: RunningApp) {
       default_effort: null,
       features: { ...(base.features ?? {}), model_selection: true, effort_selection: false },
     }
-    await route.fulfill({ json: { ...real, agents: [codex, claude] } })
+    // 真后端现在下发 vendors / connections：界面走「连接」视图，一级是连接（ChatGPT / Claude），不再是执行器家族
+    const conn = (id: string, label: string, a: typeof codex | typeof claude, route: string) => ({
+      id,
+      vendor: id,
+      label,
+      logo: id,
+      state: 'ready',
+      route,
+      models: a.models,
+      model_details: a.model_details,
+      default_model: a.default_model,
+      efforts: a.efforts,
+      default_effort: a.default_effort,
+    })
+    const connections = [conn('chatgpt', 'ChatGPT', codex, 'cli:codex'), conn('claude', 'Claude', claude, 'cli:claude')]
+    await route.fulfill({ json: { ...real, agents: [codex, claude], connections } })
   })
   await page.goto(a.baseURL)
   await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
@@ -68,13 +83,13 @@ test('两级选择：家族带图标，→ 进型号，选中后推理强度只�
   await expect(trigger).toBeVisible()
   await trigger.click()
 
-  const families = page.locator('[data-ai-family]')
+  const families = page.locator('[data-ai-connection]')
   await expect(families).toHaveCount(2)
   await expect(families.nth(0).locator('svg').first()).toBeVisible()
   await expect(families.nth(1).locator('svg').first()).toBeVisible()
 
   // 键盘：→ 打开第二级
-  await page.locator('[data-ai-family="codex"]').focus()
+  await page.locator('[data-ai-connection="chatgpt"]').focus()
   await page.keyboard.press('ArrowRight')
   const items = page.locator('[data-ai-model-item]')
   await expect(items).toHaveCount(3)
@@ -98,13 +113,13 @@ test('Esc 逐层退出：先收子菜单（←）再关菜单，选择器不改�
   const trigger = page.locator('[data-ai-model-picker="trigger"]')
   const before = await trigger.textContent()
   await trigger.click()
-  await page.locator('[data-ai-family="claude"]').focus()
+  await page.locator('[data-ai-connection="claude"]').focus()
   await page.keyboard.press('ArrowRight')
   await expect(page.locator('[data-ai-model-item]')).toHaveCount(3)
   await page.keyboard.press('ArrowLeft')
   await expect(page.locator('[data-ai-model-item]')).toHaveCount(0)
-  await expect(page.locator('[data-ai-family]')).toHaveCount(2)
+  await expect(page.locator('[data-ai-connection]')).toHaveCount(2)
   await page.keyboard.press('Escape')
-  await expect(page.locator('[data-ai-family]')).toHaveCount(0)
+  await expect(page.locator('[data-ai-connection]')).toHaveCount(0)
   await expect(trigger).toHaveText(before ?? '')
 })
