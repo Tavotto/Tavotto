@@ -16,10 +16,7 @@ test('问题列表的组头被关在抽屉的层叠上下文里，右缘不越�
   const rail = page.locator('[data-rail="problems"]')
   if ((await rail.getAttribute('aria-expanded')) !== 'true') await rail.click()
   const heads = page.locator('[data-issue-group-head]')
-  for (let i = 0; i < 6 && !(await heads.count()); i++) {
-    await page.locator('li[data-problem-card] > button:first-child').first().click()
-    await page.waitForTimeout(300)
-  }
+  // 这张单图会直接列出组头；渲染期间的「无法核验」卡片随后会被替换，不能点它等就绪。
   await expect(heads.first()).toBeVisible({ timeout: 60_000 })
 
   const r = await page.evaluate(() => {
