@@ -28,6 +28,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -2933,7 +2934,13 @@ class TestTauriAptCache:
             )
             == 3
         )
-        assert "mirrors.edge.kernel.org" in (etc / "ubuntu.sources").read_text()
+        hosts = {
+            urlsplit(word).hostname
+            for ln in (etc / "ubuntu.sources").read_text().splitlines()
+            if ln.startswith("URIs:")
+            for word in ln.split()[1:]
+        }
+        assert hosts == {"mirrors.edge.kernel.org"}
 
         # 预算共享：update 吃掉大半预算，download 的 timeout 只拿剩余
         slow = run(APT_CACHE_HIT="false", UPDATE_SLEEP="2", TAURI_APT_ATTEMPT_SECONDS="4")
