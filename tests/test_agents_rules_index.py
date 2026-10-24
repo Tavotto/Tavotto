@@ -44,6 +44,8 @@ SHEETS: dict[str, Path] = {
     "web/AGENTS.md": RULES / "frontend",
     ".github/AGENTS.md": RULES / "ci",
     "codex-plugin/AGENTS.md": RULES / "plugin",
+    "packaging/AGENTS.md": RULES / "packaging",
+    "src-tauri/AGENTS.md": RULES / "desktop",
 }
 #: 细则目录 = 速查表点名的那些（加一层只改上表）。
 LAYERS = tuple(dict.fromkeys(v.name for v in SHEETS.values()))
@@ -165,11 +167,15 @@ def test_the_rules_corpus_is_actually_there():
     repo = _rules_files(RULES / "repo")
     ci = _rules_files(RULES / "ci")
     plugin = _rules_files(RULES / "plugin")
+    packaging = _rules_files(RULES / "packaging")
+    desktop = _rules_files(RULES / "desktop")
     assert len(backend) >= 25, f"backend 细则只有 {len(backend)} 份"
     assert len(frontend) >= 25, f"frontend 细则只有 {len(frontend)} 份"
     assert len(repo) >= 2, f"repo 细则只有 {len(repo)} 份"
     assert len(ci) >= 10, f"ci 细则只有 {len(ci)} 份"
     assert len(plugin) >= 10, f"plugin 细则只有 {len(plugin)} 份"
+    assert len(packaging) >= 6, f"packaging 细则只有 {len(packaging)} 份"
+    assert len(desktop) >= 9, f"desktop 细则只有 {len(desktop)} 份"
     for sheet in SHEETS:
         assert (ROOT / sheet).is_file(), sheet
 

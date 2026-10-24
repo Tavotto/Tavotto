@@ -17,11 +17,15 @@ src/tavotto/AGENTS.md           后端速查表：本层不可破坏 + 「改到
 web/AGENTS.md                   前端速查表：同上
 .github/AGENTS.md               CI / 发布 / 验证链速查表：同上（2026-09-18 纳入）
 codex-plugin/AGENTS.md          插件 / 技能 / MCP server 速查表：同上（2026-09-25 纳入，#608）
+packaging/AGENTS.md             打包 / 内置 runtime / 签名速查表：同上（2026-10-24 纳入）
+src-tauri/AGENTS.md             Tauri 桌面壳速查表：同上（2026-10-24 纳入）
 docs/rules/repo/                跨仓库：同源对总表、判据的主语、第三路径审查
 docs/rules/backend/<主题>.md    后端各主题的全文（33 份，各 1–34 KB）
 docs/rules/frontend/<主题>.md   前端各主题的全文（30 份，各 2–14 KB）
 docs/rules/ci/<主题>.md         CI / 发布 / 验证链各主题的全文（13 份，各 1–7 KB）
 docs/rules/plugin/<主题>.md     插件各主题的全文（13 份，各 1–8 KB）
+docs/rules/packaging/<主题>.md  打包各主题的全文（6 份，各 2–8 KB）
+docs/rules/desktop/<主题>.md    桌面壳各主题的全文（9 份，各 1–4 KB）
 docs/adr/                       架构决策（细则里点名哪份就读哪份）
 ```
 
@@ -69,8 +73,8 @@ gstack（`test/context-budget-ratchet.test.ts` + 一份上限 fixture）改成�
   `python scripts/dev/agents_budget.py --write-ceilings` 并提交那份 JSON、PR 正文写明理由；
   缩小了也重写一次，把上限降下来。上限沿每条拼接链加起来也不许越过 32 KiB——棘轮本身不能被
   「按规矩」推过硬线。
-- **路由表由细则生成，不再手写**：四份速查表（`src/tavotto/` / `web/` / `.github/` /
-  `codex-plugin/`）里「改到 | 主题 | 必守要点」那张表，每一行住在对应细则**头部**（出处引用块之后）的一个
+- **路由表由细则生成，不再手写**：六份速查表（`src/tavotto/` / `web/` / `.github/` /
+  `codex-plugin/` / `packaging/` / `src-tauri/`）里「改到 | 主题 | 必守要点」那张表，每一行住在对应细则**头部**（出处引用块之后）的一个
   `<!-- agents-route … -->` 块里（键：`sheet` / `order` / `改到` / `主题` / `必守要点`；一份细则
   可有多个块，分别路由到不同速查表），`scripts/dev/gen_agents_sheets.py --write` 重写速查表里
   BEGIN/END GENERATED 两行标记之间的整段。功能 PR 只改自己那份细则，不再碰速查表——207 个提交
@@ -81,9 +85,11 @@ gstack（`test/context-budget-ratchet.test.ts` + 一份上限 fixture）改成�
   `test_generated_route_tables_are_not_stale`、`test_agents_route_blocks_are_well_formed`）
   与 `agents_budget.py --check`（含 `gen_agents_sheets.py --check`）。
 
-仍高于试行预算的：根 `AGENTS.md`（约 10 KB，每一串都带）、`packaging/AGENTS.md`（约 19 KB）、
-`src-tauri/AGENTS.md`（约 15 KB）。后两份没有路由表、主要是打包 / 签名 / 验收的操作步骤，下一步
-按需加载的 skill 是更合适的载体；在那之前它们同样被上限钉住，不再长。
+仍高于试行预算的只剩根 `AGENTS.md`（约 10 KB，每一串都带）。`packaging/AGENTS.md`（原约 19 KB）与
+`src-tauri/AGENTS.md`（原约 15 KB）已在 2026-10-24 按同一套做法拆成速查表 + 细则
+（`docs/rules/packaging/`、`docs/rules/desktop/`）：根 + packaging 这条 Codex 拼接链原是全仓最长
+（29.9 KB），拆完留出余量。当初设想过「按需加载的 skill」，没有采用：仓库没有跟踪的 skill 目录，
+`.agents/skills` 与 `.claude/skills` 在维护者本机是私人目录，而「速查表 → 细则」两个宿主都会走、门禁现成。
 
 ## 加一条规则
 

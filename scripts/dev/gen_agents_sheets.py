@@ -42,6 +42,8 @@ SHEET_LAYERS: dict[str, str] = {
     "web/AGENTS.md": "frontend",
     ".github/AGENTS.md": "ci",
     "codex-plugin/AGENTS.md": "plugin",
+    "packaging/AGENTS.md": "packaging",
+    "src-tauri/AGENTS.md": "desktop",
 }
 
 BEGIN_MARK = "<!-- BEGIN GENERATED: agents-routes -->"

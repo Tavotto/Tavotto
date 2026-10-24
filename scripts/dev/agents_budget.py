@@ -88,6 +88,8 @@ SHEETS_WITH_TABLE = (
     "web/AGENTS.md",
     ".github/AGENTS.md",
     "codex-plugin/AGENTS.md",
+    "packaging/AGENTS.md",
+    "src-tauri/AGENTS.md",
 )
 
 #: 速查表、细则层、Codex 拼接的 cwd 都从仓库现状推出来（`agents_files()` / `rule_layers()`），

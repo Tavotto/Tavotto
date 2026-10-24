@@ -1,191 +1,34 @@
-# packaging/ — 打包、内置渲染 runtime 与签名规则
+# packaging/ — 打包、内置渲染 runtime 与签名规则（速查表）
 
-仓库级路由与不变量在根 `AGENTS.md`。桌面壳与安装器在 `src-tauri/AGENTS.md`；
-引擎侧在 `src/tavotto/AGENTS.md`。
+仓库级路由与不变量在根 `AGENTS.md`；桌面壳与安装器在 `src-tauri/AGENTS.md`，引擎侧在
+`src/tavotto/AGENTS.md`。本层规则的**全文按主题**在 `docs/rules/packaging/`：先在下表按
+改动路径找到主题，读那一份细则（各 2–8 KB）与它点名的 ADR，再动手。看护用例在细则头部与正文里。
+下表是生成的：改细则头部的 `agents-route` 块，再 `python scripts/dev/gen_agents_sheets.py --write`，
+别手改；这里不放第二份全文。
 
-## 打包与启动（src layout，2026-08-16）
+## 本层不可破坏
 
-- 代码在 `src/tavotto/`，`pyproject.toml`（hatchling）声明依赖与
-  `tavotto = "tavotto.cli_entry:main"` 入口（**纯标准库的轻量入口**：
-  `open`/`doctor` 要在 import Flask 之前分派掉，见 `src/tavotto/AGENTS.md`
-  的「外部交接」）。`run.sh` = 自建 `.venv` + `pip install -e .` + 批准字体（`fetch_fonts.py --check`，缺了才取，取不到就停）+
-  `exec .venv/bin/tavotto`；**不要再写 `python app.py`**，
-  根目录已无该文件（旧进程内存里的老路径正是「worker 进程崩溃（无响应）」的成因）。
-- extras：`worker`（matplotlib/numpy，装了就用同解释器渲染）、`dev`（pytest/build + 经自引用 extra 带进测试读取器）、`legacy-pymupdf`（退役的 PyMuPDF，只给测试读取器与维护者资产脚本，绝不进 dependencies，ADR 0072）。
-- 前端产物 `src/tavotto/web/` 由 `scripts/build_frontend.py` 从 `web/dist` 拷入，
-  进 .gitignore；hatchling 默认跳过 VCS 忽略的文件，**必须靠 pyproject 的
-  `[tool.hatch.build] artifacts` 收回**，否则 wheel 里没有界面（首页 404）。
-  开发态包内无 `web/` 时 `app.py` 自动回退到 `web/dist`。
-- CI 的 package job 看护这条链路：build_frontend → wheel → 断言含
-  `tavotto/web/index.html` + entry point → 干净 venv 装 wheel 跑 `tavotto --help`。
-- 打包卫生：wheel/sdist 不含 `src-tauri/`、`workerd/`、`codex-plugin/`、
-  `.agents/`、`services/telemetry_proxy/`、仓库根 `runtime/`（pyproject 的
-  exclude 是权威，多处 pytest 看护）。
+- **版本锁是唯一输入**：内置 runtime 只认 `packaging/runtime-lock.json`，三个目标的科学栈闭包逐字相同，不手写闭包。
+- **路径判断只有一处**：`engine/runtime.py` 全程 os.path、不用 pathlib；`TAVOTTO_RUNTIME_DIR` 覆盖是排他的。
+- **不往安装目录写**：`-B` 是硬保证，macOS 往签过名的 `.app` 写一个 `__pycache__` 就破坏签名；`child_env()` 摘掉 `PYTHON*`。
+- **缺失 / 损坏报专用 code**（`bundled_runtime_missing` / `_invalid`），提示重装；绝不按 ModuleNotFoundError 自动 pip install。
+- **macOS 签名与验收只走 `scripts/codesign_macos.py`**；构建链三道闸、冒烟真启动真渲染一道都不许漏、不许「借一个解释器」。
+- **冻结产物的内容要显式声明**：按名字 / 延后装载的模块进 hiddenimports，包内数据与原生库进 `tavotto.spec`；字体不进 git、构建机先 `fetch_fonts.py`。
+- **wheel / sdist 卫生**：不含 `src-tauri/`、`workerd/`、`codex-plugin/`、`runtime/`（pyproject exclude 是权威）；前端产物靠 artifacts 收回。
 
-## 内置渲染 runtime（Windows 2026-08-17；macOS 2026-08-18）
+<!-- BEGIN GENERATED: agents-routes -->
+| 改到 | 主题（细则在 `docs/rules/packaging/`） | 必守要点 |
+| --- | --- | --- |
+| `pyproject.toml`、`run.sh`、`scripts/build_frontend.py`、`[tool.hatch.build]` 的 artifacts / exclude、extras | 打包与启动（src layout）、wheel / sdist 卫生 → `src-layout-and-wheel.md` | `src/tavotto/web/` 靠 artifacts 收回否则 wheel 无界面；wheel/sdist 不含 `src-tauri/`、`workerd/`、`codex-plugin/`、`runtime/` 等（pyproject exclude 为准）；入口是纯标准库轻量入口，不再有 `python app.py` |
+| `packaging/runtime-lock.json`、`engine/runtime.py`、`pool._prioritized_candidates()`、`child_env()` / `child_args()`、`bundled_runtime_*` code | 内置渲染 runtime：版本锁、路径判断、解释器优先级、不往安装目录写 → `bundled-runtime-contract.md` | 锁是唯一输入且三个目标闭包逐字相同；`engine/runtime.py` 全程 os.path；`TAVOTTO_RUNTIME_DIR` 排他；`-B` + 摘掉 `PYTHON*`，macOS 往 .app 写 `__pycache__` 会破坏签名；缺失报专用 code、绝不自动 pip install |
+| `scripts/build_worker_runtime.py`、`scripts/codesign_macos.py`、`packaging/tavotto.spec`、`scripts/smoke_app.py`、`tavotto-cli` | 内置 runtime 的构建链、macOS 签名、CLI 双入口、冒烟 → `bundled-runtime-build-and-signing.md` | 构建三道闸（构建机自检 / spec 同尺 / 打包后冒烟）漏一道就发出不能渲染的包；签名验收只走 `codesign_macos.py`（`--deep` 签不到也验不出）；GUI exe 不当 CLI 调；冒烟不许「借一个解释器」 |
+| `src/tavotto/resources/private_python_lock.json`、`scripts/stage_private_python.py`、`build/private-python-bundle/`、`TAVOTTO_REQUIRE_PRIVATE_PYTHON` | 私有 Python 的锁（ADR 0063）与随桌面安装包的归档（ADR 0111） → `private-python-lock-and-bundle.md` | 两个 macOS 目标的 CPython 块与 `runtime-lock.json` 逐字相同、升级一起改；它不是渲染 runtime；归档不是解释器，运行时 sha256 等于锁才用；wheel/sdist 绝不带 |
+| `packaging/tavotto.spec`、`packaging/playground-runtime.json`、`scripts/frozen_ssl_gate.py`、`engine/tlstrust.py`、`pdfbackend/__init__.py` | 冻结产物：按名字 / 延后装载的模块、OpenSSL DLL 同源、包内数据文件 → `pyinstaller-hiddenimports-and-datas.md` | 按名字或延后 import 的模块必须显式进 hiddenimports（清单从契约层取、不手写）；Windows OpenSSL DLL 与 `_ssl.pyd` 同源；新增包内数据目录要在 spec 的 datas 加一行；playground 锁钉死 Pyodide |
+| `src/tavotto/resources/fonts/`、`scripts/fetch_fonts.py`、`fonts_allowlist.json`、`packaging/entry.py`、`scripts/ci/retirement_scan.py` | 批准字体（ADR 0060）与 RenderCore 原生闭包（ADR 0072） → `fonts-and-rendercore-closure.md` | 字体不进 git，构建机先跑 `fetch_fonts.py`、缺字体拒绝打包；PDFium / qpdf 原生库显式收进冻结产物；`entry.py` 最先分派 `--render-child`；产物用 `retirement_scan.py --dist` 扫 |
+<!-- END GENERATED: agents-routes -->
 
-**每个桌面安装包都自带一套 Tavotto 私有的 Python 渲染环境**，用户不需要先装
-Python，首次渲染也不联网：
+## 验证
 
-    Windows: Tavotto.exe → _internal\runtime\python.exe    → engine/worker.py → 用户的脚本
-    macOS:   Tavotto.app → …/_internal/runtime/bin/python3.13 → engine/worker.py → 用户的脚本
-
-- **上游发行版按平台分，理由不同**：Windows 用官方 embeddable（Python 官方就把它
-  定位成「应用私有的运行时」）；macOS 用 **python-build-standalone 的 install_only**
-  ——官方 macOS 安装器装的是 `/Library/Frameworks` 下的固定路径、**不可重定位**，
-  嵌不进 `.app`，而 Homebrew/Conda 是用户的环境，不碰。pbs 的 prefix 由解释器
-  自身路径推导，且是逐个可 codesign 的普通 Mach-O（公证要求每个嵌套二进制都签到）。
-- **版本锁 `packaging/runtime-lock.json`（schema 2）是唯一输入**，**按目标分层**
-  （`windows-amd64` / `macos-arm64` / `macos-x86_64`）：CPython 下载地址 + SHA-256，
-  以及科学栈的**完整传递闭包**（精确版本，不允许范围/latest）。分层不是洁癖——
-  一个平台的 wheel 绝不能被另一个平台复用。**三个目标的闭包刻意保持逐字相同**：
-  同版本的 matplotlib/numpy 才能让同一个脚本在两个平台画出同一张图
-  （`test_all_targets_pin_the_same_versions` 看护）。构建脚本
-  `scripts/build_worker_runtime.py` 只执行、不做版本决策（`--resolve` 是维护者
-  更新锁文件时才跑的那一档）。**别手写闭包**——漏掉的传递依赖会在用户机器上以
-  ModuleNotFoundError 出现。产物在仓库根的 `runtime/`，进 .gitignore，并在
-  pyproject 里显式 exclude（wheel/sdist 绝不能被它污染）。
-- **架构范围如实记录**（ADR 0076）：macOS **按架构各发一个 dmg**——arm64 与
-  x86_64 都 `shipped: true`，Intel 那份只在原生 Intel runner（`macos-26-intel`）上
-  构建与冒烟。不产出 universal2——科学栈 wheel 分架构发布，硬拼没验证过。
-  shipped 的 macOS 目标 == 发行矩阵里的 macOS 腿架构（`test_every_shipped_macos_target_has_a_native_desktop_leg`）。
-- **`engine/runtime.py` 是路径判断的唯一出处**（frozen 的 `_MEIPASS` / exe 同级 /
-  源码树 / `TAVOTTO_RUNTIME_DIR` 覆盖）。这一段**全程 os.path 拼字符串，一个
-  pathlib 都不用**：`Path()` 按 `os.name` 分派，在别的平台上构造另一半直接抛
-  UnsupportedOperation，连在 macOS 上单测 Windows 分支都做不到
-  （test_runtime_path_logic_never_instantiates_a_foreign_pathlib 看护）。
-  两种布局（`python.exe` / `bin/python3*`）都要认——构建机会交叉产出另一平台的
-  runtime，只认本平台那种会误报「不完整」。**版本化实体名按 glob 找，不写死
-  3.13**：写死的话升到 CPython 3.14 会突然「找不到解释器」，而提示是
-  「安装文件不完整」——与真实原因毫不相干。
-- **`TAVOTTO_RUNTIME_DIR` 覆盖是排他的**：指了就只认这一个，指到空处即等于
-  「没有」。「覆盖了却被别处那份悄悄顶掉」是最难查的一种——你以为在验刚构建的
-  产物，实际验的是上一次留下的，两边日志一模一样。
-- **manifest schema 2 会校验平台/架构**（`platform_mismatch()`）：装错架构的包
-  启动时就报 `bundled_runtime_invalid`，而不是等第一次渲染甩一句
-  "incompatible architecture"。宿主平台经 `host_os()`/`host_arch()` 取，
-  做成函数是为了能在任何一台机器上单测另一台的分支。
-- **探测解释器要和真起 worker 用同一套 env/args**（`_has_matplotlib(bundled=)` →
-  `child_env()`/`child_args()`）：macOS 上没有 `._pth` 挡着，用户 shell 里的
-  `PYTHONHOME`/`PYTHONPATH` 会让探测那句 `import matplotlib` 失败，一个好用的
-  内置 runtime 被判成不可用（只在「从终端启动」时复现）。
-- **解释器优先级（`pool._prioritized_candidates()` 是唯一出处）**：
-  `TAVOTTO_WORKER_PYTHON` → 用户在设置里指定的 → **内置 runtime** → 自身
-  （非 frozen）→ 系统 Python/Conda 探测。用户显式指定的永远优先；
-  第 5 条是兼容回退，不是摆设（脚本要 rdkit 这类内置环境没有的包时靠它）。
-  来源标签 `env_override/configured/managed_venv/bundled/current_process/system`
-  经环境状态 API、诊断包与冒烟断言一路暴露出来。
-- **不往安装目录写任何东西**：`child_args()` 的 `-B` 是硬保证，
-  `child_env()` 再注入 `MPLCONFIGDIR`（改道到数据目录）+ `PYTHONNOUSERSITE`。
-  **刻意不设 `PYTHONPYCACHEPREFIX`**——它连**读**的位置一起改道，而 `-B` 又
-  禁止写，两条合起来让随包发的预编译字节码一份都用不上，每次冷启动重编
-  整个科学栈（只在 macOS 上发作：Windows 的 `._pth` 忽略环境变量）。Windows 上安装目录可能在 Program Files（没写权限）；
-  **macOS 上后果更硬——`.app` 是签过名的，往里写一个 `__pycache__` 当场破坏
-  代码签名，用户下次启动看到「应用已损坏」**。非内置解释器（项目 .venv / 系统 /
-  `TAVOTTO_WORKER_PYTHON`）不加 `-B`，由引擎装载窗口里的 `sys.dont_write_bytecode` 挡
-  （`docs/rules/backend/execution-entries.md`，看护 `tests/test_install_dir_bytecode_free.py`）。
-- **`child_env()` 还要摘掉 `PYTHONHOME`/`PYTHONPATH`/`PYTHONSTARTUP`/
-  `PYTHONUSERBASE`**：Windows 上 `._pth` 的隔离模式顺手挡住了它们，
-  **macOS 上没有任何东西挡**。用户从终端启动 Tavotto 时，shell 里为 Conda 或
-  自家项目设的那几个会原样传给内置解释器——轻则 import 到别的 numpy，重则
-  解释器起不来；而且只在「从终端启动」时复现，Finder 双击一切正常。
-- **缺失/损坏/架构不符报专用 code**（`bundled_runtime_missing` /
-  `bundled_runtime_invalid`），提示「安装文件不完整，请重新安装」——**不是**
-  「请先安装 Python」。那时 `can_install` 必须为 false：embeddable 里连 pip 都
-  没有，现场建 venv 只是把包装问题伪装成用户的环境问题。pip / 源码 / Linux
-  不带 runtime，那里 runtime 缺失是正常状态，两个 code 都不给
-  （`ships_bundled_runtime()` 是这条判断的唯一出处）。
-- **本阶段不做包管理**：脚本缺包时报结构化的 `missing_dependency` + 包名，
-  引导用户换成自己的环境；**绝不按 ModuleNotFoundError 自动 pip install**——
-  那会让内置环境不再可复现，也让「重装就能修」这条退路失效。
-  内置环境覆盖的是常用科学栈，不承诺覆盖任意用户脚本的依赖。
-- **构建链的三道闸**（漏一道就会安静地发出「装完不能渲染」的包）：
-  ① 构建脚本自己逐个 import + 画真图，不过就失败在构建机；
-  ② `TAVOTTO_REQUIRE_RUNTIME=1` 时 `tavotto.spec` 经
-  `build_worker_runtime.check_runtime_dir()`（**与 build_desktop.py 共用同一把尺**）
-  确认 schema / 平台架构 / 冒烟状态；③ 打包后 `smoke_app.py
-  --expect-source bundled --expect-runtime` 真启动真渲染。
-- **macOS 签名**：内置 runtime 让嵌套 Mach-O 从几十个变成五百多个，且全在
-  `Contents/Resources` 下——**`codesign --deep` 既签不到也验不出**（它们被当作
-  *资源*封进签名，封条本身合法）。签名与验收统一走 `scripts/codesign_macos.py`
-  （读魔数找 Mach-O、深度降序自内向外、只给可执行文件挂 entitlements、
-  最后逐个 `--verify` 并核对架构）。私有 Python tar.gz 同样要展开签里面的 Mach-O、保留模式/链接重打包，
-  最终再展开验同 sidecar Team ID、timestamp/runtime、架构/minOS；生成固定资源 manifest 后才能封 .app
-  （ADR 0111 2026-10-04 修订）。原产品锁不改，重试原料仍核原 SHA / size。最终 .app 冒烟还必须从 frozen
-  sidecar 真供应这份归档并建 managed venv / ensurepip，不能拿内置渲染 runtime 的冒烟替它交差。
-- **CLI 双入口**：`packaging/tavotto.spec` 从同一个 Analysis 产出 GUI 的
-  `Tavotto` 与 `console=True` 的 `tavotto-cli`（共用 `_internal/`）。GUI exe
-  不能当 CLI 调（无终端时 stdout 落日志），交接与安装清单都指 `tavotto-cli`
-  （见 `docs/rules/backend/external-handoff.md`）。
-- 验证：`tests/test_bundled_runtime.py`（定位/优先级/布局/架构/失败路径，
-  **全部平台无关**）+ `tests/test_runtime_build.py`（锁文件分层、布局、
-  `._pth`、构建判据、打包卫生，另有几条只在本机构建过 runtime 时才跑的
-  **真 import + 真绘图**用例）+ CI 的 `windows-exe-smoke` 与 desktop-tauri 的
-  三条腿（Windows / macOS arm64 / macOS x86_64，见 `.github/AGENTS.md`）。
-- **别把「借一个解释器」加回冒烟**：macOS 这条腿一度现建 worker-env 再设
-  `TAVOTTO_WORKER_PYTHON`，于是「runtime 根本没打进去」全程绿灯——空转的门禁比
-  没有门禁更坏（`test_macos_ci_no_longer_fakes_a_worker_env` 看护）。
-- **私有完整 Python 的锁是另一份、但同源**（U05，ADR 0063）：`src/tavotto/resources/private_python_lock.json`
-  钉的是受管环境**基础解释器**的来源（pbs install_only，五个目标），放在包内 `resources/` 是因为产品
-  运行时要读它（`engine/privatepython.py` 的唯一输入；冻结产物经 `tavotto.spec` 的 `resources/` datas）。
-  两个 macOS 目标的 CPython 块**必须**与本锁文件的 `macos-*` 逐字段相同（`tests/test_private_python.py`
-  钉着，同源对表登记）——升级内置 runtime 的 CPython 时两份一起改。它**不是**渲染 runtime：内置那份
-  仍不可污染，私有 Python 只当 `python -m venv` 的 base，落在用户数据目录 `<data_dir>/private-python/`。
-  Windows 那边分工明确：embeddable 继续当渲染 runtime，pbs 当 base（embeddable 没有 venv / ensurepip）。
-  每个目标的 `enabled` 在无系统 Python 的目标资格取得前保持 false。
-- **私有 Python 归档随桌面安装包附带**（2026-09-29，ADR 0111）：`scripts/stage_private_python.py` 按**产品读的同一份锁**
-  取本目标的 pbs 归档（经 `build_worker_runtime.download`，同一个缓存 `build/runtime-cache/`：macOS 两目标与内置 runtime
-  同一份、缓存命中；Windows 另下 ~47 MB）放进 `build/private-python-bundle/`（只许一份）；`build_desktop.py` 在 PyInstaller
-  之前调它（`--skip-private-python` 跳过并删掉上次备好的那份）；`tavotto.spec` 用同一把尺 `check_bundle()` 收进 `_internal/private-python/`
-  （目的地与 `runtime.PRIVATE_PYTHON_BUNDLE_DIR_NAME` 同源），`TAVOTTO_REQUIRE_PRIVATE_PYTHON=1`（`desktop-tauri.yml`
-  打开）时缺了拒绝打包。增量 macOS +25 MB、Windows +47 MB。它是**归档不是解释器**：运行时 sha256 等于锁才用、解到
-  用户数据目录。wheel / sdist 绝不带（pyproject `exclude` 挡 `build/private-python-bundle/**`）。看护
-  `tests/test_private_python_bundle.py`。
-- **浏览器 playground 的运行时锁**：`packaging/playground-runtime.json`
-  钉死 Pyodide 版本与包白名单（前端 JSON import + 构建脚本共读），
-  细节见 `docs/rules/frontend/browser-playground.md`。
-- **按名字装载的模块要显式进 PyInstaller 的 hiddenimports**（2026-09-22，U08 / ADR 0067；U10 / ADR 0072）：
-  `pdfbackend/__init__.py` 用 `importlib` 按 `TAVOTTO_RENDER_BACKEND` 装载实现，静态分析看不见这条
-  边——冻结产物里没有那个模块，`probe_asset` 一调就 ModuleNotFoundError、「一个面板都没扫到」，
-  而源码模式一切正常（#476 三条冒烟腿）。`tavotto.spec` 从契约层 `_IMPL_MODULES` 取清单铺进
-  hiddenimports，**不手写模块名**（U10 起闭集只剩 `rendercore/facade.py`，退役模块的 hidden import
-  随模块一起消失）；`tests/test_runtime_build.py::test_spec_ships_every_backend_the_contract_layer_can_select` 看护。
-- **延后 import 的 truststore 要显式进 PyInstaller 的 hiddenimports**（2026-09-28）：出站 HTTPS 的平台原生证书
-  校验在 `engine/tlstrust.py` 里**延后** `import truststore`（Flask 进程启动不为它付代价），静态分析看不见这条边。
-  漏收的表现是冻结产物里退回 OpenSSL 默认信任库（app.log 一条 WARNING）——干净 Windows 缺 ISRG Root X1 时私有
-  Python 下载以 `private_python_tls` 失败，而源码树 / wheel 一切正常。`tavotto.spec` 用 `collect_submodules("truststore")`
-  把整包子模块铺进 hiddenimports（`_windows` / `_macos` / `_openssl` 按平台条件 import），打包环境里没装它就拒绝打包；
-  wheel 那边它是 `dependencies` 的一员（`requirements.txt` 钉死镜像）。看护 `tests/test_private_python_tls.py::
-  TestStructure`。
-- **Windows 冻结产物里 OpenSSL 的 DLL 必须与 `_ssl.pyd` 同源**（2026-10-15，#1051）：内置 runtime（两个平台）于 Analysis **之后**以 `Tree` 加入（不进 `datas`，否则里面的 PE 被重新归类为二进制、它的 `libcrypto-3.dll` / `libssl-3.dll` 作为依赖抢先占住顶层，打包 Python 一升 OpenSSL 就 `DLL load failed while importing _ssl`）；spec 在 Analysis 后跑 `scripts/frozen_ssl_gate.py`，构建后 `tavotto-cli --ssl-selftest`（`build_desktop.py` 与 `smoke_app.py --exe` 都跑）。macOS 同一机制会把扩展模块改写成指回 `_internal/` 的 `@rpath`、openblas 等复制到顶层（v0.18.0 多 ≈ 48 MB）；打包后 `build_worker_runtime.diff_collected_runtime()` 逐字节核对 runtime（`build_desktop.py` 与 CI 两条冒烟腿）。看护 `tests/test_frozen_ssl_gate.py`、`tests/test_runtime_build.py`。
-- **包内数据文件要显式进 PyInstaller 的 datas**（2026-09-02，ADR 0039）：
-  `Analysis` 只把 .py 编进 PYZ，`tavotto/profiles/publication.json` 与
-  `tavotto/resources/tutorial_project/` 这类数据在冻结产物里**本来是没有的**
-  （源码树 / wheel 里都在，所以 lab_acceptance 那条结构检查看不出来）。
-  `tavotto.spec` 的 datas 现在列了 `profiles/` 与 `resources/` 两条；新增包内数据
-  目录时在那里加一行，`importlib.resources.files("tavotto")` 在冻结产物里落在
-  `_MEIPASS/tavotto`，datas 的目的地就写 `tavotto/<目录>`。wheel / sdist 那边
-  `packages = ["src/tavotto"]` 自然收进，前提是文件不被 `.gitignore` 挡
-  （`tests/test_tutorial.py` 读产物成员对账，不在源码树上断言）。桌面冒烟①带
-  `--tutorial`：教程两张图在内置 runtime 上真渲染一次再重置。
-- **批准字体随包走（2026-09-21，统一实施包 U06，ADR 0060）**：`src/tavotto/resources/fonts/`
-  由 `scripts/fetch_fonts.py` 按 `src/tavotto/rendercore/fonts_allowlist.json` 的 sha256 取下来
-  （Liberation 2.1.5 × 12 + Noto Sans SC 子集，OFL 1.1，许可证全文同目录）；**不进 git**
-  （`.gitignore` 挡、`tests/test_font_provenance.py` 看护）。wheel 靠 pyproject 的
-  `[tool.hatch.build] artifacts` 收回（与 `src/tavotto/web/**` 同一条理由），PyInstaller 靠上面那条
-  `resources/` datas 整棵带走——**构建机先跑一次 `fetch_fonts.py`**，否则冻结产物里没有字体、
-  RenderCore 报 `fonts_dir_missing`。U10 切默认后（ADR 0072）这一步已接进 `build_desktop.py`
-  （PyInstaller 之前）、ci.yml 的每条装项目 / 打 wheel / PyInstaller 的腿（`tests/test_merge_queue_workflows.py::
-  TestApprovedFontsAndRetirementScan` 钉着闭集）、`tavotto.spec`（缺字体拒绝打包，判据与 `fetch_fonts.py --check`
-  同源）与 `lab_acceptance.py` 的结构检查（13 张脸 + 覆盖表 + 依赖闭包零 pymupdf）。运行时定位
-  `TAVOTTO_FONTS_DIR` 排他覆盖 → 包内 `tavotto/resources/fonts`；下载缓存在 `build/fonts-cache/`，
-  不在字体目录里（字体目录整棵进包）。
-- **RenderCore 的原生闭包随冻结产物走（U10，ADR 0072）**：PDFium 的共享库住在 `pypdfium2_raw` 的包目录里、
-  pikepdf 的 qpdf 库同理——PyInstaller 的依赖分析看不见，`tavotto.spec` 显式 `collect_dynamic_libs("pypdfium2_raw")`
-  + `collect_all("pikepdf")`（配方与 `scripts/dev/u07_freeze_child.py` 同源，四平台验过 child 自起 / 真渲染）；
-  `PIL` 从 excludes 拿掉（Pillow 是 `rasterio` 的直接依赖），退役的 `pymupdf` / `fitz` 反过来进 excludes。
-  冻结入口 `packaging/entry.py` **最先**分派 `--render-child`（父进程用同一个 exe 起 PDFium 子进程，
-  在 stdin / stdout 上说 JSON，不能先经 `_redirect_streams`）。打包依赖装的是 `requirements.txt` 那份钉死的
-  运行时闭包（不再手写 `flask + pymupdf`）；产物出来之后 `scripts/ci/retirement_scan.py --dist dist/Tavotto`
-  扫原生库名单（零 mupdf、PDFium / qpdf 在、字体 13 张）。看护 `tests/test_runtime_build.py::
-  test_spec_ships_the_rendercore_closure_and_refuses_to_freeze_without_the_fonts`。
+- 内置 runtime：`tests/test_bundled_runtime.py`（全部平台无关）+ `tests/test_runtime_build.py`；私有 Python：`tests/test_private_python_bundle.py`。
+- 改了 `tavotto.spec` / 打包链：另跑 `tests/test_frozen_ssl_gate.py`、`tests/test_merge_queue_workflows.py`；其余看护用例见细则。
+- 完整验证链见 `.github/AGENTS.md`。
