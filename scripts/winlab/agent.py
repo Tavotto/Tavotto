@@ -2256,29 +2256,6 @@ def prepare_envs(lab: Lab, env: dict, log: Path) -> tuple[dict[str, Path], dict[
         except (urllib.error.URLError, OSError, AttributeError) as exc:
             bad["conda"] = f"miniforge download failed: {type(exc).__name__}"
     if conda.exists() and "conda" not in bad:
-        # Miniforge 26.9 的 base 里缺 conda-launchers：给 noarch 包（pip / wheel）生成入口时找不到 cli-64.exe
-        # 而整个事务失败（10-24 实测）。先从同一个镜像补上
-        if not (mf / "share" / "conda-launchers" / "cli-64.exe").exists():
-            _run_logged(
-                [
-                    str(conda),
-                    "install",
-                    "-y",
-                    "-q",
-                    "--force-reinstall",
-                    "-p",
-                    str(mf),
-                    "--override-channels",
-                    "-c",
-                    CONDA_FORGE_MIRROR,
-                    "conda-launchers",
-                ],
-                lab.root,
-                env,
-                log / "conda-launchers",
-                900,
-            )
-
         cenv = envs / "conda-mpl"
         if not (cenv / "python.exe").exists():
             r = _run_logged(
@@ -2294,6 +2271,9 @@ def prepare_envs(lab: Lab, env: dict, log: Path) -> tuple[dict[str, Path], dict[
                     CONDA_FORGE_MIRROR,
                     "python=3.12",
                     "matplotlib",
+                    # conda 26.9：新环境里给 noarch 包（pip / wheel）生成入口要目标环境自带 conda-launchers，
+                    # 否则整个事务失败（10-24 实测：FileNotFoundError cli-64.exe）
+                    "conda-launchers",
                 ],
                 lab.root,
                 env,
