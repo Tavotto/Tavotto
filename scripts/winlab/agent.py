@@ -1580,6 +1580,7 @@ def _codebuddy_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -
 
 
 def _codebuddy_argv(exe: Path, prompt: str, henv: dict) -> list[str]:
+    # MCP 工具是延迟加载的：经 ToolSearch 找到、经 DeferExecuteTool 执行——无头模式下三者都要预先授权
     return [
         str(exe),
         "-p",
@@ -1593,6 +1594,8 @@ def _codebuddy_argv(exe: Path, prompt: str, henv: dict) -> list[str]:
         "--strict-mcp-config",
         "--allowedTools",
         "mcp__tavotto",
+        "ToolSearch",
+        "DeferExecuteTool",
     ]
 
 
@@ -1630,7 +1633,8 @@ def _minimax_configure(lab, run_dir, proj, exe, mcp_cmd, mcp_env, conf, env) -> 
 
 
 def _minimax_argv(exe: Path, prompt: str, henv: dict) -> list[str]:
-    return [str(exe), "exec", prompt, "--model", henv["WINLAB_MODEL"]]
+    # `provider add --use` 已把它设成默认；`--model lab/<id>` 在 cn-prod 路由上不认（10-24 实测）
+    return [str(exe), "exec", prompt]
 
 
 #: 宿主自己说「要登录官方账户」的字样：出现且一次 Tavotto 工具都没调到 → BLOCKED（需要账户），不是 FAIL
