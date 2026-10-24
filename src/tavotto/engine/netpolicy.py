@@ -41,10 +41,45 @@ _CACHE: dict[str, tuple[float, tuple[str, ...] | None]] = {}
 _CACHE_LOCK = threading.Lock()
 
 
+#: 云厂商的实例元数据 / 内部服务地址：**先于放行段判定、一律拒**（有的恰好落在放行段里，如 AWS 的 `fd00:ec2::254` 在 `fc00::/7`、
+#: 阿里云的 `100.100.100.200` 在 `100.64.0.0/10`）。实验室网关不会在这些地址上。出处（各家官方文档）：
+#: * AWS EC2 IMDS：`169.254.169.254`，IPv6 `fd00:ec2::254`（Instance metadata endpoints）；ECS 任务元数据 `169.254.170.2`；Amazon Time Sync `169.254.169.123`
+#: * GCP：`169.254.169.254` / 主机名 `metadata.google.internal`（Compute Engine metadata server）
+#: * Azure：IMDS `169.254.169.254`；WireServer / 虚拟公网 IP `168.63.129.16`（What is IP address 168.63.129.16）
+#: * 阿里云 ECS：`100.100.100.200`（实例元数据）
+#: * Oracle OCI：`169.254.169.254`（IMDS），旧版 `192.0.0.192`
+#: * 腾讯云 CVM：主机名 `metadata.tencentyun.com`（解析到 `169.254.0.23`）
+#: * DigitalOcean / Huawei / OpenStack：`169.254.169.254`
+METADATA_IPS = frozenset(
+    ipaddress.ip_address(a)
+    for a in (
+        "169.254.169.254",
+        "169.254.170.2",
+        "169.254.169.123",
+        "169.254.0.23",
+        "fd00:ec2::254",
+        "100.100.100.200",
+        "168.63.129.16",
+        "192.0.0.192",
+    )
+)
+METADATA_HOSTS = frozenset(
+    {
+        "metadata.google.internal",
+        "metadata",
+        "metadata.tencentyun.com",
+        "instance-data",
+        "instance-data.ec2.internal",
+    }
+)
+
+
 def ip_allowed(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     mapped = getattr(ip, "ipv4_mapped", None)
     if mapped is not None:
         ip = mapped  # ::ffff:10.0.0.1 按它背后的 IPv4 判
+    if ip in METADATA_IPS:
+        return False
     return ip in _LOOPBACK_IPS or any(ip in net for net in ALLOWED_NETWORKS)
 
 
@@ -66,6 +101,8 @@ def _verdict(host: str) -> tuple[str, ...] | None:
     """→ 放行时的 IP 列表（连接时钉其中之一），拒绝 = None。每次都重新解析。"""
     host = (host or "").strip().lower().rstrip(".")
     if not host:
+        return None
+    if host in METADATA_HOSTS:
         return None
     if host == "localhost":
         return ("127.0.0.1",)
@@ -90,6 +127,8 @@ def plain_http_allowed(host: str) -> bool:
     host = (host or "").strip().lower().rstrip(".")
     if not host or host == "localhost":
         return host == "localhost"
+    if host in METADATA_HOSTS:
+        return False
     try:
         return ip_allowed(ipaddress.ip_address(host))
     except ValueError:

@@ -550,14 +550,20 @@ def builtin_conn(rec: dict | None, model: str | None = None) -> dict | None:
     return None
 
 
-def builtin_effort_args(rec: dict, effort: str | None) -> list[str]:
-    """思考强度 → 内置执行器的参数。只有目录**确认支持**的档位才发（`ai_catalog.efforts_for`），其余一律不发：
+def builtin_effort_args(rec: dict, effort: str | None, model: str | None = None) -> list[str]:
+    """思考强度 → 内置执行器的参数。只有目录对「这个地址 + 这个型号」**确认支持**的档位才发（`ai_catalog.efforts_for`），其余一律不发
+    （不支持 adaptive thinking 的型号带上 `thinking` 会 400）：
     anthropic wire → `--effort X --thinking adaptive`（`output_config.effort` + `thinking:{type:adaptive}`）；
     openai-responses → `--effort X`（`reasoning.effort`，无 max 档）。"""
     if not effort:
         return []
     agent, base = str(rec.get("agent") or ""), str(rec.get("base_url") or "")
-    if effort not in ai_catalog.efforts_for(agent, base):
+    chosen = (
+        str(model or "").strip()
+        or str(rec.get("default_model") or "").strip()
+        or next(iter(rec.get("models") or []), "")
+    )
+    if effort not in ai_catalog.efforts_for(agent, base, chosen):
         return []
     if _BUILTIN_WIRE.get(str(_family(agent))) == "anthropic":
         return ["--effort", effort, "--thinking", "adaptive"]
@@ -574,7 +580,7 @@ def _builtin_overrides(
     args = ["--wire", conn["wire"], "--base-url", conn["base_url"], "--model", conn["model"]]
     if conn["auth"] == "bearer":
         args += ["--auth", "bearer"]
-    args += builtin_effort_args(rec, effort)
+    args += builtin_effort_args(rec, effort, conn["model"])
     return args, {ai_agents.BUILTIN_KEY_ENV: conn["api_key"]}
 
 

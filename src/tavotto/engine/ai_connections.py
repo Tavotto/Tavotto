@@ -389,13 +389,17 @@ def _key_connection(
     agent_id = str(rec.get("agent") or "")
     efforts = []
     default_effort = None
+    details = _details(models)
     if route == "cli:codex":
         info = agents_info.get(agent_id) or {}
         efforts, default_effort = list(info.get("efforts") or []), info.get("default_effort")
     elif route == ROUTE_BUILTIN:
         # 内置执行器：只给目录确认支持的档位；第三方网关不确定就不给（宁可不显示，也不发对方不认的字段）
-        efforts = ai_catalog.efforts_for(agent_id, str(rec.get("base_url") or ""))
+        base = str(rec.get("base_url") or "")
+        efforts = ai_catalog.efforts_for(agent_id, base, default_model)
         default_effort = "medium" if "medium" in efforts else None
+        # 档位按型号定：每个型号自己带 `efforts`（不支持的型号为空，前端就不显示）
+        details = [{"id": m, "efforts": ai_catalog.efforts_for(agent_id, base, m)} for m in models]
     conn = {
         "id": rec["id"],
         "vendor": vid,
@@ -403,7 +407,7 @@ def _key_connection(
         "logo": logo,
         "state": state,
         "models": models,
-        "model_details": _details(models),
+        "model_details": details,
         "default_model": default_model,
         "efforts": efforts,
         "default_effort": default_effort,
@@ -467,10 +471,12 @@ def first_key_connection(*, refresh: bool = False) -> dict | None:
     """AI 修复用：第一个内置循环能直接用的连接（Key 或账号登录）→ `builtin_conn` 形状；没有 = None。旧版「选中」的接口排在前（老用户结论不变）。
 
     `refresh=True`（真要开跑时）：账号登录的记录先 `ai_oauth.ensure_fresh`（联网，可能很慢），刷不动的跳过；
-    `False`（只问「有没有」，capabilities 用）绝不联网。"""
+    `False`（只问「有没有」，capabilities 用）绝不联网。已知被服务商拒绝（`last_error: unauthorized`）的记录一律跳过。"""
     recs = ai_providers.list_providers()
     active = {v for v in (config.ai_settings().get("active_provider") or {}).values() if v}
     for rec in sorted(recs, key=lambda r: r.get("id") not in active):
+        if rec.get("last_error") == "unauthorized":
+            continue  # 保存时就被服务商拒绝的密钥：不挑它去修复（会反复认证失败）；全被拒 = None，由 CLI 兜底 / 给「密钥无效」结论
         if ai_providers.builtin_conn(rec) is None:
             continue
         if refresh and rec.get("auth") == "oauth":

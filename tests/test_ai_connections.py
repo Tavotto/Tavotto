@@ -24,6 +24,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -92,6 +93,12 @@ def client():
     appmod.reset_projects()
 
 
+def _https_host(url: str) -> str | None:
+    """URL 解析后的主机名（非 https 返回 None）：断言用解析比对，不用 startswith / in 的子串判断。"""
+    parts = urlparse(url)
+    return parts.hostname if parts.scheme == "https" else None
+
+
 def _caps(refresh=True) -> dict:
     return ai_bridge.capabilities(refresh=refresh)
 
@@ -142,7 +149,7 @@ def test_vendors_are_one_entry_per_vendor_with_their_access_methods(world):
     expect = {p.get("vendor") or p["id"] for p in primary.values()} | {"custom"}
     assert set(ids) == expect
     assert ds["connect"] == "key" and ds["region"] == "cn" and ds["logo"] == "deepseek"
-    assert ds["key_url"].startswith("https://") and ds["available"] is True
+    assert _https_host(ds["key_url"]) == "platform.deepseek.com" and ds["available"] is True
     assert ds["label"] == "DeepSeek" and ds["label_key"] == "vendor.deepseek"
     assert ds["methods"][0]["catalog_id"] == "deepseek" and ds["methods"][0]["kind"] == "key"
     assert ds["methods"][0]["label_key"] == "method.apiKey"
@@ -166,9 +173,8 @@ def test_vendors_merge_login_and_api_key_methods_of_one_vendor(world):
         "sub:codex",
         "method.subscription",
     )
-    assert key["catalog_id"] == "openai-api" and key["key_url"].startswith(
-        "https://platform.openai"
-    )
+    assert key["catalog_id"] == "openai-api"
+    assert _https_host(key["key_url"]) == "platform.openai.com"
     assert (openai["label"], openai["logo"], openai["connect"]) == ("OpenAI", "openai", "login")
     assert (anthropic["label"], anthropic["logo"]) == ("Claude", "anthropic")
     assert openai["label_key"] is None and anthropic["label_key"] is None
@@ -1396,9 +1402,20 @@ def test_builtin_run_refreshes_an_expiring_token_before_spawning(chain, monkeypa
 
 
 # ---- 思考强度
-def test_efforts_follow_the_catalog_only(world):
-    _save("a", base="https://api.anthropic.com")
-    _save("o", agent="codex", base="https://api.openai.com/v1")
+def test_efforts_follow_the_catalog_origin_and_model(world):
+    _save(
+        "a",
+        base="https://api.anthropic.com",
+        default_model="claude-opus-4-6",
+        models=["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-sonnet-4-5"],
+    )
+    _save(
+        "o",
+        agent="codex",
+        base="https://api.openai.com/v1",
+        default_model="gpt-5",
+        models=["gpt-5", "gpt-4o", "o3", "gpt-5-chat-latest"],
+    )
     _save("d", base="https://api.deepseek.com/anthropic")
     world["cli"] = False
     caps = _caps()
@@ -1406,9 +1423,50 @@ def test_efforts_follow_the_catalog_only(world):
     assert a["efforts"] == ["low", "medium", "high", "max"] and a["default_effort"] == "medium"
     assert o["efforts"] == ["low", "medium", "high"]
     assert d["efforts"] == [] and d["default_effort"] is None, "没确认支持的网关不给"
-    assert ai_catalog.efforts_for("claude", "https://api.anthropic.com/") == a["efforts"]
-    assert ai_catalog.efforts_for("claude", "http://api.anthropic.com") == []  # 来源（scheme）不同
-    assert ai_catalog.efforts_for("codex", "https://api.anthropic.com") == []  # 家族不同
+    # 档位按型号：不支持的型号为空，前端就不显示
+    per = {m["id"]: m["efforts"] for m in a["model_details"]}
+    assert per == {
+        "claude-opus-4-6": ["low", "medium", "high", "max"],
+        "claude-sonnet-4-6": ["low", "medium", "high"],
+        "claude-haiku-4-5": [],
+        "claude-sonnet-4-5": [],
+    }
+    per = {m["id"]: m["efforts"] for m in o["model_details"]}
+    assert per == {
+        "gpt-5": ["low", "medium", "high"],
+        "gpt-4o": [],
+        "o3": ["low", "medium", "high"],
+        "gpt-5-chat-latest": [],
+    }
+    # 默认型号不支持 → 连接级 efforts 为空
+    config.update_ai_settings(
+        lambda ai: {
+            "providers": [
+                {**p, "default_model": "claude-haiku-4-5"} if p["id"] == "a" else p
+                for p in ai["providers"]
+            ]
+        }
+    )
+    assert _conn(_caps(), "a")["efforts"] == []
+    f = ai_catalog.efforts_for
+    assert f("claude", "https://api.anthropic.com/", "claude-opus-4.6") == [
+        "low",
+        "medium",
+        "high",
+        "max",
+    ], "点与横线等价"
+    assert f("claude", "https://api.anthropic.com/", "claude-opus-4-6-20260101") == [
+        "low",
+        "medium",
+        "high",
+        "max",
+    ]
+    assert f("claude", "https://api.anthropic.com/") == [], "没给型号 = 不确定"
+    assert f("claude", "http://api.anthropic.com", "claude-opus-4-6") == []  # 来源（scheme）不同
+    assert f("codex", "https://api.anthropic.com", "gpt-5") == []  # 家族不同
+    assert f("codex", "https://api.openai.com/v1", "o1-mini") == [] and f(
+        "codex", "https://api.openai.com/v1", "o1"
+    ) == ["low", "medium", "high"]
 
 
 def test_catalog_row_level_efforts_are_honoured_and_validated(tmp_path, monkeypatch):
@@ -1428,9 +1486,10 @@ def test_catalog_row_level_efforts_are_honoured_and_validated(tmp_path, monkeypa
 
 
 def test_effort_args_are_sent_only_where_the_catalog_confirms_support(world):
-    a = _save("a", base="https://api.anthropic.com")[0]
+    a = _save("a", base="https://api.anthropic.com", default_model="claude-opus-4-6")[0]
     d = _save("d", base="https://api.deepseek.com/anthropic")[0]
-    o = _save("o", agent="codex", base="https://api.openai.com/v1")[0]
+    o = _save("o", agent="codex", base="https://api.openai.com/v1", default_model="gpt-5")[0]
+    old = _save("old", base="https://api.anthropic.com", default_model="claude-sonnet-4-5")[0]
     assert ai_providers.builtin_effort_args(a, "high") == [
         "--effort",
         "high",
@@ -1449,6 +1508,20 @@ def test_effort_args_are_sent_only_where_the_catalog_confirms_support(world):
     )
     cmd, _ = ai_bridge._cmd("builtin", "p", "/c", effort="high", endpoint=d, target="x.py")
     assert "--effort" not in cmd and "--thinking" not in cmd
+    # 同一官方地址、不支持 adaptive 的型号（包括请求里临时换的型号）：不带 effort 也不带 thinking
+    for rec, model in ((old, None), (a, "claude-haiku-4-5"), (o, "gpt-4o")):
+        cmd, _ = ai_bridge._cmd(
+            "builtin", "p", "/c", model=model, effort="high", endpoint=rec, target="x.py"
+        )
+        assert "--effort" not in cmd and "--thinking" not in cmd, (rec["id"], model)
+    cmd, _ = ai_bridge._cmd(
+        "builtin", "p", "/c", model="claude-sonnet-4-6", effort="max", endpoint=a, target="x.py"
+    )
+    assert "--effort" not in cmd, "sonnet-4-6 没有 max 档"
+    cmd, _ = ai_bridge._cmd(
+        "builtin", "p", "/c", model="claude-sonnet-4-6", effort="high", endpoint=a, target="x.py"
+    )
+    assert cmd[cmd.index("--thinking") + 1] == "adaptive"
 
 
 def test_effort_reaches_the_model_request_body(chain):
@@ -1458,8 +1531,8 @@ def test_effort_reaches_the_model_request_body(chain):
 
     origin = server.url
     real = ai_catalog.efforts_for
-    ai_catalog.efforts_for = lambda agent, base: (
-        ["low", "medium", "high", "max"] if base == origin else real(agent, base)
+    ai_catalog.efforts_for = lambda agent, base, model=None: (
+        ["low", "medium", "high", "max"] if base == origin else real(agent, base, model)
     )
     try:
         sid, _ = _run(chain, effort="high")
@@ -1691,10 +1764,11 @@ def test_login_and_oauth_methods_are_never_key_connections(client, world, body):
 
 
 def test_official_key_connections_carry_efforts_on_the_builtin_route(client, world):
-    world["fetch"] = (["m"], None)
+    world["fetch"] = (["claude-opus-4-6", "gpt-5"], None)
     world["cli"] = False
-    a = _post(client, vendor="anthropic-api", api_key=KEY).get_json()["connection"]
-    o = _post(client, vendor="openai-api", api_key=KEY2).get_json()["connection"]
+    # 型号清单缓存按（地址、密钥指纹）落在数据目录里、跨用例共用：这里用独有的密钥，免得读到别的用例缓存的清单
+    a = _post(client, vendor="anthropic-api", api_key="sk-conn-EFFORT-a1").get_json()["connection"]
+    o = _post(client, vendor="openai-api", api_key="sk-conn-EFFORT-o1").get_json()["connection"]
     assert a["route"] == o["route"] == "builtin"
     assert a["efforts"] == ["low", "medium", "high", "max"] and a["default_effort"] == "medium"
     assert o["efforts"] == ["low", "medium", "high"]
@@ -1838,3 +1912,20 @@ def test_updating_a_catalog_connection_keeps_a_customised_address(client, world)
     assert resp.status_code == 200, resp.get_json()
     assert ai_providers.get("tuned")["base_url"] == "https://api.deepseek.com/my-proxy/anthropic"
     assert world["fetched"][-1][0] == "https://api.deepseek.com/my-proxy/anthropic"
+
+
+def test_fix_connection_skips_keys_the_provider_already_rejected(client, world, monkeypatch):
+    monkeypatch.setattr(ai_bridge, "agent_caps", lambda _id: None)
+    world["fetch"] = (None, "unauthorized")
+    bad = _post(client, vendor="zhipu", api_key=KEY).get_json()["connection"]
+    assert bad["state"] == "error" and ai_providers.get(bad["id"])["last_error"] == "unauthorized"
+    ai_providers.set_active("claude", bad["id"])  # 旧版还把它「选中」着：照样不能挑它
+    assert fixsession.connection() is None and fixsession.available() is False, (
+        "全被拒：交给 CLI 兜底"
+    )
+    _save("good", base="https://api.moonshot.cn/anthropic", key=KEY2, default_model="kimi-k3")
+    assert fixsession.connection()["api_key"] == KEY2
+    # 换了新 Key（清掉 last_error）后它又能被挑中
+    world["fetch"] = (["glm-5.3"], None)
+    _post(client, vendor="zhipu", id=bad["id"], api_key=KEY)
+    assert fixsession.connection()["api_key"] == KEY

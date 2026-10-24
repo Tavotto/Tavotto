@@ -234,3 +234,63 @@ def test_builtin_conn_and_connections_follow_the_same_judge(monkeypatch):
     assert ai_providers.builtin_conn(rec) is not None
     assert ai_providers.builtin_conn({**rec, "base_url": "http://169.254.169.254/x"}) is None
     assert ai_providers.builtin_conn({**rec, "base_url": "http://8.8.8.8/x"}) is None
+
+
+#: 云厂商元数据地址（出处见 `netpolicy.METADATA_IPS` 的注释）。其中 AWS 的 IPv6 `fd00:ec2::254` 落在 `fc00::/7`、
+#: 阿里云 `100.100.100.200` 落在 `100.64.0.0/10`——不先排除就会被放行段放过去。
+METADATA_ADDRESSES = [
+    "169.254.169.254",  # AWS / GCP / Azure / Oracle / DigitalOcean / Huawei IMDS
+    "169.254.170.2",  # AWS ECS 任务元数据
+    "169.254.169.123",  # Amazon Time Sync
+    "169.254.0.23",  # 腾讯云
+    "[fd00:ec2::254]",  # AWS IMDS IPv6
+    "100.100.100.200",  # 阿里云
+    "168.63.129.16",  # Azure WireServer
+    "192.0.0.192",  # Oracle 旧版
+    "[::ffff:100.100.100.200]",  # IPv4 映射写法也一样
+]
+METADATA_NAMES = [
+    "metadata.google.internal",
+    "metadata.tencentyun.com",
+    "instance-data",
+    "METADATA.google.internal.",
+]
+
+
+@pytest.mark.parametrize("host", METADATA_ADDRESSES)
+def test_cloud_metadata_addresses_are_refused_even_inside_allowed_ranges(host):
+    url = f"http://{host}/latest/meta-data"
+    assert wires.check_base_url(url) == "base_url_scheme"
+    assert ai_catalog.url_refusal(url) == "insecure_url"
+    with pytest.raises(ValueError):
+        netpolicy.pin_url(url)
+    with pytest.raises(ValueError):
+        netpolicy.pinned_connection(url, 1)
+
+
+@pytest.mark.parametrize("name", METADATA_NAMES)
+def test_cloud_metadata_hostnames_are_refused_without_asking_dns(monkeypatch, name):
+    def boom(host):
+        raise AssertionError("元数据主机名不该走到 DNS")
+
+    monkeypatch.setattr(netpolicy, "resolve_host", boom)
+    url = f"http://{name}/computeMetadata/v1/"
+    assert wires.check_base_url(url) == "base_url_scheme"
+    assert ai_catalog.url_refusal(url) == "insecure_url"
+
+
+def test_a_hostname_resolving_to_a_metadata_address_is_refused(monkeypatch):
+    monkeypatch.setattr(
+        netpolicy,
+        "resolve_host",
+        lambda host: ["fd00:ec2::254"] if host == "lab.local" else ["10.0.0.5", "100.100.100.200"],
+    )
+    for name in ("lab.local", "sneaky.lab"):
+        netpolicy.clear_cache()
+        assert wires.check_base_url(f"http://{name}") == "base_url_scheme", name
+        with pytest.raises(ValueError):
+            netpolicy.pin_url(f"http://{name}/x")
+    # 紧邻的合法地址不受影响
+    assert wires.check_base_url("http://100.100.100.201") is None
+    assert wires.check_base_url("http://[fd00:ec2::255]") is None
+    assert wires.check_base_url("http://100.64.0.1") is None

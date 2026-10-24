@@ -4,23 +4,77 @@
     {
       "origin": "https://api.anthropic.com",
       "agent": "claude",
-      "efforts": [
-        "low",
-        "medium",
-        "high",
-        "max"
+      "models": [
+        {
+          "prefix": "claude-opus-4-6",
+          "efforts": [
+            "low",
+            "medium",
+            "high",
+            "max"
+          ]
+        },
+        {
+          "prefix": "claude-sonnet-4-6",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
       ],
-      "source": "https://docs.claude.com/en/docs/build-with-claude/effort"
+      "source": "https://docs.claude.com/en/docs/build-with-claude/effort ; https://docs.claude.com/en/docs/build-with-claude/adaptive-thinking（Opus / Sonnet 4.6 起支持自适应思考与 output_config.effort；其余型号不给）"
     },
     {
       "origin": "https://api.openai.com",
       "agent": "codex",
-      "efforts": [
-        "low",
-        "medium",
-        "high"
+      "models": [
+        {
+          "prefix": "gpt-5-chat",
+          "efforts": []
+        },
+        {
+          "prefix": "o1-mini",
+          "efforts": []
+        },
+        {
+          "prefix": "o1-preview",
+          "efforts": []
+        },
+        {
+          "prefix": "gpt-5",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        {
+          "prefix": "o1",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        {
+          "prefix": "o3",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        {
+          "prefix": "o4",
+          "efforts": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
       ],
-      "source": "https://platform.openai.com/docs/api-reference/responses/create"
+      "source": "https://platform.openai.com/docs/guides/reasoning（Responses 的 reasoning.effort 只有推理模型：o 系列与 gpt-5 系列；gpt-5-chat / o1-mini / o1-preview 不支持）"
     }
   ],
   "vendors": [
@@ -210,8 +264,8 @@
       "base_url": "https://api.anthropic.com",
       "key_url": "https://console.anthropic.com/settings/keys",
       "models_hint": [
-        "claude-sonnet-4-5",
-        "claude-opus-4-1",
+        "claude-sonnet-4-6",
+        "claude-opus-4-6",
         "claude-haiku-4-5"
       ],
       "source": "https://docs.claude.com/en/api/overview",

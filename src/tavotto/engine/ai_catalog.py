@@ -112,10 +112,18 @@ def _checked_efforts(owner: str, agent: str, efforts: object) -> list[str]:
     return list(efforts)
 
 
-def efforts_for(agent: str, base_url: str) -> list[str]:
-    """内置执行器在这个地址上**确认支持**的思考强度档位；不确定 = `[]`（宁可不显示，也不发对方不认的字段）。
+def _model_key(model: str | None) -> str:
+    """型号名归一后拿来做前缀匹配：小写，`.` 与 `-` 视为同一个（`claude-opus-4.6` = `claude-opus-4-6`）。"""
+    return (model or "").strip().lower().replace(".", "-")
 
-    两处声明：目录行自带 `efforts`（地址和家族对上这一行），或顶层 `effort_origins`（官方 API 的来源：scheme + host + 端口对上）。"""
+
+def efforts_for(agent: str, base_url: str, model: str | None = None) -> list[str]:
+    """内置执行器在这个地址、这个型号上**确认支持**的思考强度档位；不确定 = `[]`（宁可不显示，也不发对方不认的字段）。
+
+    两处声明：目录行自带 `efforts`（地址和家族对上这一行，所有型号），或顶层 `effort_origins`（官方 API 的来源：scheme + host + 端口对上）。
+    `effort_origins` 条目可带 `models: [{prefix, efforts}]`——**按型号前缀、先中先得**（`efforts: []` = 这个前缀明确不支持，写在更宽的前缀前面）；
+    没有 `models` 的条目 = 该来源所有型号。带了 `models` 却没给型号（或没有前缀命中）= `[]`。
+    出处（官方文档）写在条目的 `source` 里。"""
     url = _norm_url(base_url)
     if not url:
         return []
@@ -128,8 +136,16 @@ def efforts_for(agent: str, base_url: str) -> list[str]:
         return []
     want = origin_of(base_url)
     for o in (raw.get("effort_origins") if isinstance(raw, dict) else None) or []:
-        if o.get("agent") == agent and want is not None and origin_of(o.get("origin", "")) == want:
-            return _checked_efforts(str(o.get("origin")), agent, o.get("efforts"))
+        if o.get("agent") != agent or want is None or origin_of(o.get("origin", "")) != want:
+            continue
+        owner = str(o.get("origin"))
+        if "models" not in o:
+            return _checked_efforts(owner, agent, o.get("efforts"))
+        key = _model_key(model)
+        for rule in o["models"]:
+            if key and key.startswith(_model_key(rule.get("prefix"))):
+                return _checked_efforts(f"{owner} {rule.get('prefix')}", agent, rule.get("efforts"))
+        return []
     return []
 
 
