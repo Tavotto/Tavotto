@@ -71,6 +71,7 @@
     "bad_formats": "导出格式需要是列表。",
     "bad_geometry": "{{field}} 需要是正的有限数。",
     "bad_inspection": "不认识的导出检查设置：{{value}}。",
+    "bad_merge": "多页 PDF 的导出设置有误，请刷新页面后重试。",
     "bad_objects": "画布内容格式有误，请刷新页面后重试。",
     "bad_overrides": "图内修改格式有误，请刷新页面后重试。",
     "bad_overwrite": "无法识别覆盖方式：{{value}}。",

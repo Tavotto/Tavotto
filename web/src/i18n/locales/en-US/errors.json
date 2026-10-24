@@ -71,6 +71,7 @@
     "bad_formats": "Export formats must be a list.",
     "bad_geometry": "{{field}} must be a positive, finite number.",
     "bad_inspection": "Unknown export inspection setting: {{value}}.",
+    "bad_merge": "The multi-page PDF settings were malformed. Reload the page and try again.",
     "bad_objects": "The canvas contents were malformed. Reload the page and try again.",
     "bad_overrides": "The in-figure edits were malformed. Reload the page and try again.",
     "bad_overwrite": "Unknown overwrite policy: {{value}}.",

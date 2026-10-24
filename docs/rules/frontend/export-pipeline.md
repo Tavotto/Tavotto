@@ -125,6 +125,12 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
     整批读的是同一个时刻的状态，等价于快照，不混两个文档版本、也不作废。「点击那一刻」的语义是「route 齐了那一刻」：等待期间用户改了东西，
     整批一致地用改后的。`buildBatchInput` 与单张导出的 memo 链是**同一批库函数**的两种调用方式（单张等渲染、批同步算），
     由「批里某张的请求体 == 同一张单张导出的请求体」「冻结是一个同步块」两条用例钉住。发送段只读冻结好的输入；冻结段里表单整块禁用。
+  * **合成一个多页 PDF（#1370）**：多图档 + 勾着 PDF + 这几张图都是同一个脚本的 runtime 素材、且该脚本这次运行的 `pdf_pages` 里有一项含它们的 stem、
+    `complete` 为真、有项目内路径时，`lib/pdfPagesMerge.mergePdfPlan` 给出方案（名字取 PdfPages 的文件名，页序取 `page_stems`、同一张图写多页就重复；
+    用户不能改页序），对话框 PDF 行下出现一个默认勾上的勾选，不加横条。`pdf_pages` 由 `scriptRunStore.byScript[脚本].pdfPages` 留下（试运行响应；重开项目后
+    没有跑过就没有，勾选不出现——宁可不提供也不凭旧页序猜）。勾着：每张图的 PDF 不再单出，其余格式照旧逐张发，最后追加一项 `buildMergedPdfInput`
+    （`ExportRequestInput.mergePages` → 请求 `merge_pdf: {pages}`，无 `original`），与逐张项在同一个同步块里冻结。看护 `ExportDialog.test.tsx`
+    「合成一个多页 PDF」、`lib/pdfPagesMerge.test.ts`、`lib/exportRequest.test.ts`。
   * **「每张图」只指当前激活画布上的图面板**（2026-10-21 用户裁决）：隐藏的图也算在画布上（与「隐藏的图也计数」一致）；素材库里还没上画布的图、别的画布上的图
     既不在左栏缩略图条里，也不进批（`canvasFigures`）。看护：`ExportDialog.test.tsx`「素材库里另有一张还没上画布的图」、`guardedExport.test.tsx`「changed bytes」整批零 start。
   * **「每张图单独导出」= 一次点击把每张图各导一份**：后端协议不变（一次作业仍只导一张原图，`buildExportRequest` / 同源对不动），

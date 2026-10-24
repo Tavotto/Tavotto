@@ -118,6 +118,24 @@ order: 210
     带 `Output.manifest`（`inspector.summary()` 投影，旧字段一个不动）。请求可带 `inspection: {mode: standard|strict,
     profile_id}`（缺省 standard，老客户端等价）；strict 的阈值只从 `profilestore.resolve_spec` 来。细则在 `rendercore.md`。
 
+## 多页 PDF：把同一份 PdfPages 的几张图合成一个文件（#1370 PR3）
+
+- **请求**：`merge_pdf: {pages: [<original 段>, …]}`（`exportreq.MergePdf`）。`pages` 按页序给每一页的来源，形状与 `original` 完全相同
+  （各带自己的 overrides / 快照引用 / 来源上下文）；页序由请求定、后端不改——前端按 `pdf_pages.page_stems` 的顺序传，同一张图写了多页就重复。
+  `filename` 就是多页 PDF 的基名（默认取 PdfPages 的文件名），走**既有**命名规则，没有新规则，`exportName.ts` ↔ `filename_vectors.json` 不动。
+  加字段不升协议版本。
+- **只在 `scope=original` 且 `formats` 恰为 `["pdf"]` 时合法**；同时带 `original`、页数为 0 或超过 `MERGE_PAGES_MAX`、非 pdf 格式、canvas 范围一律 `bad_merge`
+  （碰磁盘之前拒绝，文案两种语言）。SVG / PNG 没有「多页」，所以对话框的勾选只在 PDF 格式下出现，勾上后每张图的单页 PDF 不再单独出，其余格式照旧逐张导。
+  页内的错误沿用 `original` 的码（`missing_figure` / `bad_overrides` …）。此时请求的 `original` 就是 `pages[0]`，所有只认单张图的消费者（route / 遥测）按首页读。
+- **合并只有一个调用点**：`app._export_produce` 在 `merge_pdf` 非空时转到 `_export_produce_merged_pdf`。每一页先走**现有的单页 PDF 导出**
+  （`_export_produce_original`，借 `_PageJob` 替身换成单页请求，`do_export` 与 #1355 的配对代码一字不动），再由 `engine/pdfmerge.merge_pdf_pages`
+  用 pikepdf `pages.extend` 按页序拼成一个文件，合成**一个** `Produced`；同一来源 + 同样编辑的页只导一次、按页序重复放（不做快照，只提示）。
+- **任何一页失败 = 整个多页 PDF 失败**，带那一页自己的错误码，不交付缺页的文件。页数与页序写进回执 `request.merge_pdf = {page_count, figure_ids}`。
+- **已知代价**：字体每页各嵌一份（每个单页文件自带子集字体，搬运不跨页去重），文件比脚本里 `PdfPages` 直接写出的偏大，内容不变。
+  产物检查器按首页核页面尺寸；`vector` 取各页的与。
+- MCP 的 `tavotto_export` 走 `bridge.export`（按会话里的图直出、没有 `original` 段），不接这个字段。
+- 看护：`tests/test_export_multipage_pdf.py`（页数 / 页序 / 重复页 / 非法组合 / 失败不交付 / 单页不变）；前端 `lib/pdfPagesMerge.test.ts`、`ExportDialog.test.tsx`。
+
 ## 位图像素预算：两条路径各一份，互不替代
 
 - **worker 直出位图**（`figsession.do_export` → `Figure.savefig`，写回事务的 600 dpi PNG 目标走这条）：

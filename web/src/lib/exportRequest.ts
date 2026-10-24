@@ -24,7 +24,7 @@ import { artifactRequestFields, artifactValidationIssue, isAdoptedPanel, origina
  * 被忽略的变换逐项进 `ignored`：**忽略而不说等于骗人**（ADR 0028）。
  */
 import { t as translate } from '@/i18n'
-import type { ExportObject, ExportRequest } from './api'
+import type { ExportObject, ExportOriginalSource, ExportRequest } from './api'
 import { checkFilename, stripOutputExtension, type FilenameReason } from './exportName'
 import { epsFromRoute, type ExportRoute } from './exportRoute'
 import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
@@ -216,6 +216,11 @@ export interface ExportRequestInput {
   doc: FigureDocument
   /** `scope=original` 时是哪一张图 */
   figureId?: string | null
+  /**
+   * 合成一个多页 PDF（#1370）：按页序的每一页来源。给了它请求就是 `merge_pdf: {pages}`、没有 `original`；
+   * `figureId` / `panel` / `spec` 仍是第一页的（检查与预览按它读）。格式必须恰为 `pdf`。
+   */
+  mergePages?: readonly { figureId: string; panel: PanelObject | null; spec: OriginalOutputSpec | null }[]
   panel?: PanelObject | null
   spec?: OriginalOutputSpec | null
   /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
@@ -281,21 +286,27 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       objects: toExportObjects(input.doc.objects) as ExportObject[],
     }
   } else {
-    const spec = input.spec ?? null
-    const patches = input.panel ? originalArtifactOverrides(input.panel) : []
-    request.original = {
-      figure_id: input.figureId ?? '',
-      ...(input.panel && input.panel.fileId === input.figureId &&
-          JSON.stringify(patches) === JSON.stringify(input.panel.overrides) && figureSnapshotFor(input.panel)
-        ? { figure_snapshot: figureSnapshotFor(input.panel) } : {}),
-      ...(input.panel ? artifactRequestFields(input.panel) : {}),
-      overrides: patches.length ? patches : undefined,
-      w_mm: spec?.widthMm ?? null,
-      h_mm: spec?.heightMm ?? null,
-      px_w: spec?.pixelWidth ?? null,
-      px_h: spec?.pixelHeight ?? null,
-      source_kind: spec?.sourceKind ?? 'unknown',
-      ignored: spec?.ignored ? [...spec.ignored] : [],
+    const sourceOf = (figureId: string, panel: PanelObject | null, spec: OriginalOutputSpec | null): ExportOriginalSource => {
+      const patches = panel ? originalArtifactOverrides(panel) : []
+      return {
+        figure_id: figureId,
+        ...(panel && panel.fileId === figureId &&
+            JSON.stringify(patches) === JSON.stringify(panel.overrides) && figureSnapshotFor(panel)
+          ? { figure_snapshot: figureSnapshotFor(panel) } : {}),
+        ...(panel ? artifactRequestFields(panel) : {}),
+        overrides: patches.length ? patches : undefined,
+        w_mm: spec?.widthMm ?? null,
+        h_mm: spec?.heightMm ?? null,
+        px_w: spec?.pixelWidth ?? null,
+        px_h: spec?.pixelHeight ?? null,
+        source_kind: spec?.sourceKind ?? 'unknown',
+        ignored: spec?.ignored ? [...spec.ignored] : [],
+      }
+    }
+    if (input.mergePages?.length) {
+      request.merge_pdf = { pages: input.mergePages.map((p) => sourceOf(p.figureId, p.panel, p.spec)) }
+    } else {
+      request.original = sourceOf(input.figureId ?? '', input.panel ?? null, input.spec ?? null)
     }
   }
   if (input.report) request.style_check_report = input.report
@@ -329,6 +340,7 @@ export function snapshotRevision(request: ExportRequest): string {
     scope: request.scope,
     canvas: request.canvas ?? null,
     original: request.original ?? null,
+    ...(request.merge_pdf ? { merge_pdf: request.merge_pdf } : {}),
   })
   // FNV-1a 32 位，两轮不同种子拼成 64 位：短、稳定、跨平台逐字节一致
   return `${fnv1a(material, 0x811c9dc5)}${fnv1a(material, 0x01000193)}`
