@@ -987,6 +987,8 @@ def test_reap_tree_reports_a_group_it_cannot_clear(monkeypatch):
     proc = subprocess.Popen([sys.executable, "-c", "pass"], start_new_session=True)
     proc.wait()
     monkeypatch.setattr(command.os, "killpg", lambda *a: None)  # 杀不掉：一直在
+    # 两个替身描述同一个组状态：组还在、且里面有能执行的进程（不是只剩僵尸）——否则 Linux 上扫真实 /proc 会判成已清空
+    monkeypatch.setattr(command, "_group_has_live_members", lambda pgid, proc_root="/proc": True)
     monkeypatch.setattr(command, "TREE_REAP_S", 0.1)
     assert command._reap_tree(proc, None) is False
 
