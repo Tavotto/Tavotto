@@ -156,6 +156,70 @@
 | 需要真窗口的项（#276 #1071 #1387 #1320 #1315 #1308 #1306 #1304 #1301 #82） | — | NOT TESTED：需要交互会话执行器（尚无） |
 | Win10 / Win11 / ARM / Anthropic 真模型（#1200 #1392 等） | — | 这台机器做不到 |
 
+## G. 交互会话、环境矩阵、脚本语料、全部宿主（2026-10-25）
+
+### G1 交互会话执行器（`test desktop-window`，b4）
+
+`admin gui-setup` 后重启：`quser` 见 `tavotto-lab console 1 运行中`，注册表无明文密码。run `20261024T144637Z-d59511`：
+`tests/desktop_windows` 13 条**在会话 1 里**真跑（WebView2 155.0.4283.62 + 同版本 msedgedriver），11 passed / 2 failed：
+
+| 用例 | 结论 | 对照 |
+| --- | --- | --- |
+| `test_clipboard::test_paste_reads_what_another_app_put_there` | FAIL：粘贴没用系统剪贴板里的内容 | hosted nightly（10-23 run 40024588949，main 构建）**同一条、同一句失败** |
+| `test_file_picker::test_open_a_script_through_the_system_file_dialog` | FAIL：`element click intercepted`，被新版主页那块「从绘图脚本到可直接编辑的图」挡住 | 同上，nightly 同样失败 |
+
+两条都是产品 / 用例的真问题，不是 Lab 环境：Lab 与 hosted 逐条一致。**没有 issue 在跟踪**——nightly 的「无 Python」腿
+至少从 10-21 起一直红着。
+
+### G2 环境矩阵（`test env-matrix`，b4；项目在 `张三 的论文\figures`）
+
+| 腿 | 解释器 | 期望来源 | 结论 |
+| --- | --- | --- | --- |
+| bundled | 不指定 | bundled + 全科学栈 | PASS |
+| cpython-3.13 | python.org 3.13.17 venv | env_override | PASS |
+| cpython-3.13-cjk-path | 解释器本身在 `张三 的环境\venv` | env_override | PASS |
+| uv-3.10 / 3.12 / 3.14 | python-build-standalone（npmmirror） | env_override | PASS ×3 |
+| conda-prefix | Miniforge `conda create -p <任意目录>` | env_override | **FAIL**：没识别出要激活，workerd 直接裸起 worker，渲染进程 `0xC06D007F`（延迟加载找不到 DLL 函数）崩溃 |
+| conda-named | Miniforge `conda create -n mpl`（envs\ 下） | env_override | **FAIL**：报「Tavotto 的安装文件不完整（内置渲染环境缺失或损坏）」——同一安装包 bundled 腿是绿的，**归因错误** |
+
+run `20261024T153250Z-94de7e`。对照：conda-prefix 正是 **#1018**（`-p` 建在任意目录的环境要显式信任才激活）/ **#985**
+（外部 conda 环境找不到 conda 可执行文件、依赖激活的脚本会裸起）的具体复现，Lab 给出了崩溃码；hosted nightly 的 Conda 腿（10-23）
+是第三种表现：识别出要激活 → workerd 不接 → 静默回退到 Python 池 → 冒烟按 `--expect-control-plane workerd` 判红，未见 issue。
+Miniforge 26.9 建环境需要把 `conda-launchers` 一起装进目标环境（不然事务失败），已写进任务。
+
+### G3 脚本语料（`test corpus`）
+
+| 档 | run | 结论 |
+| --- | --- | --- |
+| smoke（与 CI compat-smoke 同口径） | `20261024T153724Z-04d1e4` | PASS：24 case 全部过 discover → execute → capture → open → semantic → edit → replay |
+| all | `20261024T161630Z-be2456` | __CORPUS_ALL__ |
+
+### G4 AI 宿主（`test hosts-live --mode …`，DeepSeek，Direct；判定按 `mcp_recorder` 记下的服务端事实）
+
+| 宿主 | 版本 | L2 | L3 | L4 | L5 | run |
+| --- | --- | --- | --- | --- | --- | --- |
+| Claude Code CLI | 2.1.310 | PASS | PASS | PASS | PASS | `20261024T154720Z-faa22c` |
+| Codex CLI | 0.164.0 | PASS | PASS | PASS | PASS | `20261024T154552Z-0a58d0` |
+| CodeBuddy CLI（WorkBuddy 背后的 CLI） | 2.174.0 | PASS | PASS | PASS | PASS | `20261024T160218Z-f46d21` |
+| MiniMax Code | 0.6.12 | PASS | PASS | PASS | PASS | `20261024T160337Z-ed8412` |
+| DSH | 0.2.1-rc.3 | PASS | PASS | PASS | PASS | `20261024T161209Z-ed3a7c` |
+| ZCode | — | NOT TESTED | — | BLOCKED | BLOCKED | 无官方 npm；`-p` 与会话都要 Z.AI 账户 |
+| Cursor / Trae / VS Code（Copilot） | — | NOT TESTED | NOT TESTED | BLOCKED | BLOCKED | 桌面 GUI + 各自账户；交互会话执行器已就绪，L2（装得上、起得来）可做 |
+| Claude Desktop | — | NOT TESTED | — | BLOCKED | BLOCKED | Anthropic 账户 + 地区政策 |
+
+L5 每行同一组检查：打开、改线宽 / 图例、导出 PDF（`%PDF-`）、第一轮重放 `ok:true`、会话日志里有线宽 3、**全新进程只凭
+session_id** 调 `verify_replay` 得到同一 `session_id` 与同一 `patch_hash`。宿主侧调试中记下的接入事实（不是缺陷）：
+CodeBuddy 的 MCP 工具是延迟加载的，无头要预授权 `ToolSearch` + `DeferExecuteTool`；MiniMax 的 `--model lab/<id>` 在
+cn-prod 路由上不认，用 `provider add --use` 设的默认；Codex 走 `wire_api = "responses"` + `env_key`；DSH 走
+`DEEPSEEK_BASE_URL` + `--patch` 插 `dsh-mcp-client`。
+
+### G5 本轮另记
+
+- `test_agent_verify::test_timeout_kills_and_reports_error` 在 Lab 上红（结束进程树用了 30 s > 20 s）：`agent_verify.py`
+  用 `taskkill /T`——与 F 节 `test_package_smoke` 的现象同源（非管理员会话里 `taskkill` 不可靠），第三次独立撞到。
+- 本 PR 自己的一条用例（字体 zip 成员 `a\b.ttf`）在 hosted Windows 上红、被合并队列踢出：Windows 上 zipfile 把
+  反斜杠规范成 `/`。修复后先在 Lab 上跑过 `tests/test_winlab.py` 再推——Lab 用来验 Lab 自己。
+
 ## E. 安全与仓库
 
 | 验收项 | 状态 | 说明 |

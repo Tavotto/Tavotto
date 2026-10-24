@@ -57,6 +57,17 @@ Defender 实时防护开、`LongPathsEnabled=0` 的默认系统，以及真实 A
 - 测试进程不设 `PYTHONUTF8`、不设 `PYTHONDONTWRITEBYTECODE`（与 CI 一致）：在用户默认态下跑——ANSI 代码页、
   照常写 `.pyc`——正是 Lab 的价值之一；要「不留字节码」的验证器在自己的子进程里设。
 
+## 交互会话执行器（真窗口）
+
+- SSH 在 session 0，没有用户桌面：真窗口、WebView2 渲染、窗口消息一律交给**已登录的交互会话**。
+  `tavotto-lab` 开机自动登录控制台（密码在 LSA 机密 `DefaultPassword`，**不进注册表**）；它名下的计划任务
+  `TavottoLab-GUI`（`/IT`，只在交互会话运行）拉起 `gui_host.py`，按 agent 写进 `state\gui\` 的请求、用同一套
+  Job Object 跑登记任务的 argv，结果写回。会话不在 → `environment_unavailable`，**绝不退回 session 0 假装跑过**；
+  结果里的 `session_id` 为 0 也判 error。`stop` 同时给交互会话那一半留停止标记。
+- 不要以 `tavotto-lab` 身份 RDP：会抢走控制台会话（断开后桌面不渲染）。人工维护用 administrator 的独立会话。
+- WebView2 调试端口（127.0.0.1:9222）由 HKLM 策略为 `Tavotto.exe` / `Tavotto beta.exe` 常开——与 nightly 同一条
+  策略，只是在专用机上不每次删。msedgedriver 按本机 WebView2 版本从微软下载点取，核 Authenticode 与版本号。
+
 ## 资源与清理
 
 - 同一时刻只有一个任务（`state\job.lock`，持有者进程已不在才回收）。
@@ -82,6 +93,13 @@ Defender 实时防护开、`LongPathsEnabled=0` 的默认系统，以及真实 A
   不改配置、不重启、不升级。
 
 ## AI 宿主分层
+
+**判定只认 Tavotto 这一侧的事实**：`hosts-live` 把宿主的 MCP 配置指向 `mcp_recorder.py`（透明转发字节、只记方法名 /
+工具名 / 成败 / `session_id`·`patch_hash`·`ok` 三个有界字段，参数与结果正文不记），L3 = 宿主自己发了 `tools/list`
+并拿到 Tavotto 工具，L4 = 有成功的 `tools/call`，L5 = 改图 → 导出 PDF（执行器核 `%PDF-`）→ 重放一致 → 会话日志里
+真有修改 → **全新宿主进程**只凭 `session_id` 恢复，`session_id` 与 `patch_hash` 都与第一轮编辑后一致。各宿主同一套判据，
+不解析宿主各自的输出格式。宿主的用户级配置隔离在 run 目录（`CODEX_HOME` / `CLAUDE_CONFIG_DIR` / 隔离的
+`USERPROFILE` / `DSH_HOME`），宿主自报「要登录官方账户」且一次工具都没调到 → BLOCKED，不是 FAIL。
 
 L1 网络可达（`network`）→ L2 官方客户端可装可启动 → L3 真宿主自己连上 Tavotto MCP →
 L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重开的闭环。低层通过不推出高层。

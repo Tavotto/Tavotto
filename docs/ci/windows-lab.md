@@ -82,6 +82,16 @@ Surge 的内置 Tailscale（配置里的 `[Tailscale tailnet]`），Tailscale.ap
 （`TavottoLab-FirewallDeadman`），新连接验证通过再撤掉——锁在门外时控制台 VNC 是最后的入口。
 从 Mac 探测公网端口无效（Surge 增强模式会在本机假接住任何 TCP 连接），要从外部主机测。
 
+### 交互会话（真窗口）
+
+```sh
+python3 scripts/winlab/winlab.py admin gui-setup     # 自动登录 tavotto-lab（LSA 机密）+ 不锁屏 + WebView2 调试端口策略
+ssh tavotto-win-lab-admin 'Restart-Computer -Force'  # 重启后 quser 应见 tavotto-lab console 运行中
+```
+
+之后 `test desktop-window --package <包>` 在那个桌面里跑 `tests/desktop_windows`。**别用 tavotto-lab 去 RDP**
+（会抢走控制台会话）；要看桌面用腾讯云控制台 VNC，或以 administrator 另开 RDP 会话。
+
 ## 日常
 
 ```sh
@@ -92,7 +102,10 @@ python3 scripts/winlab/winlab.py test pytest --tests tests/test_windows_regressi
 python3 scripts/winlab/winlab.py test pytest-shard --shard 1/4
 python3 scripts/winlab/winlab.py network --mode all                  # L1：direct / trojan / hysteria2
 python3 scripts/winlab/winlab.py test hosts                          # L2/L3：Claude Code / Codex CLI
-python3 scripts/winlab/winlab.py test hosts-live                     # L4/L5：真 Claude Code + 国内模型（先 test hosts）
+python3 scripts/winlab/winlab.py test hosts-live --mode <宿主>         # L3–L5：claude-code / codex-cli / codebuddy / minimax-code / dsh（DeepSeek）
+python3 scripts/winlab/winlab.py test desktop-window --package <包>    # 交互会话里的真窗口用例
+python3 scripts/winlab/winlab.py test env-matrix --package <包>        # 内置 / CPython 3.13 / uv 3.10·3.12·3.14 / conda -p·-n / 中文空格路径
+python3 scripts/winlab/winlab.py test corpus --mode smoke|all         # CompatBench 语料（smoke 与 CI 同口径）
 python3 scripts/winlab/winlab.py status | reports [--id RUN] | clean --keep 20 | stop
 ```
 
