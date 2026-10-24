@@ -2,8 +2,10 @@
 
 界面不讲「执行器 / CLI / agent」，只讲「连接 AI」（用户裁决 2026-10-23）。所以这里把底下的三种来源摊平成两张表：
 
-* `vendors()`：能连的厂商目录（设置页 / 连接弹窗的列表）。由 `ai_catalog.json` 生成——同一家的 Claude 行（Anthropic Messages）
-  与 Codex 行（Responses）按 `brand` 合成**一家**；再加订阅类 `chatgpt` / `claude`（官方登录）与账号登录类（MiniMax，client_id 配了才出现）；
+* `vendors()`：能连的**厂商**（设置页 / 连接弹窗的列表），每家一条，怎么接入放在 `methods`：订阅登录（`<厂商>:login`，对应 CLI 的官方登录）、
+  账号登录（`<provider>:oauth`，client_id 配了才出现）、API Key（`<catalog_id>:key`，由 `ai_catalog.json` 的行生成）。同一家的 Claude 行与 Codex 行
+  按 `brand` 合成一个 Key 方式；目录行上的 `vendor` 把几个方式并进同一厂商（OpenAI = ChatGPT 订阅 + 官方 API Key；Claude = Claude 订阅 + Anthropic 官方 API Key；
+  Kimi = 开放平台 Key + Kimi Code 会员 Key；百炼 = 按量 Key + Coding Plan；MiniMax（国内）= 账号登录 + API Key）。不跨 region 合并；
 * `connections()`：已连接 / 需要重新登录的连接（模型选择器的一级）。订阅类 = 每个 CLI 的官方登录态（`sub:codex` / `sub:claude`）；
   Key 类 = 每条 provider 记录（一条一个连接，多条可同时连着，不再要求「每家族只激活一个」）；账号登录类 = `auth: "oauth"` 的记录。
 
@@ -11,7 +13,7 @@
 
 **路由**（`route_for`，接口约定「路由」一节）：订阅 → 对应 CLI；Key 类 → 该家族 CLI 装着且可用、并且 `ai.builtin_default` 不为 true
 （默认 false，FigureBench 过线后改 true）→ CLI + 注入 provider（现状）；否则 → 内置执行器（`agent_runner`，ADR 0147 第二阶段）。
-没装任何 CLI 的用户因此直接可用。运维开关 `TAVOTTO_AI_BUILTIN=0|1` 强制。账号登录类（Bearer 令牌）内置循环不走，只能 CLI。
+没装任何 CLI 的用户因此直接可用。运维开关 `TAVOTTO_AI_BUILTIN=0|1` 强制。账号登录类：CLI 装了就走 CLI，没装走内置（Bearer 令牌）。
 
 依赖方向 `ai_agents ← ai_providers ← ai_connections ← ai_bridge`；谁家 CLI 可用由调用方把 `agents[]` 的探测结论传进来
 （`ai_bridge.resolve_connection` 是带探测结论的入口，这里**不** import `ai_bridge`，免得成环）。纯标准库。
@@ -27,9 +29,12 @@ from .agent_runner.wires import check_base_url
 
 #: 订阅类连接 id → (内部 agent, 厂商 id, 显示名（产品名，不翻译）, logo 键)
 SUBSCRIPTIONS: dict[str, tuple[str, str, str, str]] = {
-    "sub:codex": ("codex", "chatgpt", "ChatGPT", "openai"),
-    "sub:claude": ("claude", "claude", "Claude", "anthropic"),
+    "sub:codex": ("codex", "openai", "ChatGPT", "openai"),
+    "sub:claude": ("claude", "anthropic", "Claude", "anthropic"),
 }
+
+#: 账号登录（OAuth）的 provider → 它并入的厂商 id（同一家的 API Key 厂商）；表外的 provider 自成一个厂商
+_OAUTH_VENDOR = {"minimax": "minimax"}
 
 ROUTE_BUILTIN = "builtin"
 ENV_BUILTIN = "TAVOTTO_AI_BUILTIN"
@@ -78,18 +83,6 @@ def _groups() -> dict[str, list[dict]]:
     return out
 
 
-def _vendor_of_row_match(agent: str, base_url: str) -> str | None:
-    """已存记录 → 厂商 id：地址（忽略末尾斜杠与大小写）和家族都对上目录某一行才算（与 `ai_catalog.icon_for` 同判据）。"""
-    url = (base_url or "").strip().rstrip("/").lower()
-    if not url:
-        return None
-    for vid, rows in _groups().items():
-        for r in rows:
-            if r["agent"] == agent and r["base_url"].strip().rstrip("/").lower() == url:
-                return vid
-    return None
-
-
 def locale_region() -> str:
     """系统语言给的排序提示：中文系统 → `cn`（国内厂商在前），其余 `global`。前端取自己的界面语言为准。"""
     for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
@@ -111,72 +104,134 @@ def locale_region() -> str:
     return "cn" if (lang or "").lower().startswith("zh") else "global"
 
 
-def vendors(agents_info: dict[str, dict]) -> list[dict]:
-    """能连的厂商（见模块说明）。`agents_info` = `capabilities()["agents"]` 按 id 索引（订阅类的 `available` 看对应 CLI 装没装）。"""
-    keyed: list[dict] = []
-    for vid, rows in _groups().items():
-        first = rows[0]
-        v = {
-            "id": vid,
-            "label": "Custom" if vid == "custom" else first["brand"],
-            "label_key": None if vid == "custom" else first["label_key"],
-            "logo": first["icon_key"],
-            "region": first["region"],
-            "connect": "key",
-            "available": True,
-        }
-        if first["key_url"]:
-            v["key_url"] = first["key_url"]
-        if first.get("key_hint_key"):
-            v["key_hint_key"] = first["key_hint_key"]
-        if vid == "custom":
-            v["needs_base_url"] = True
-        keyed.append(v)
-    subs = []
-    for agent_id, vid, label, logo in SUBSCRIPTIONS.values():
-        info = agents_info.get(agent_id) or {}
-        subs.append(
-            {
-                "id": vid,
-                "label": label,
-                "label_key": None,
-                "logo": logo,
-                "region": "global",
-                "connect": "login",
-                "available": bool(info.get("installed")),
-            }
-        )
-    oauth = [
-        {
-            "id": _oauth_vendor_id(provider),
-            "label": spec["label"],
-            "label_key": None,
-            "logo": provider,
-            "region": spec["default_region"]
-            if spec["default_region"] in ("cn", "global")
-            else "global",
-            "connect": "oauth",
-            "available": True,
-        }
-        for provider, spec in ai_oauth.available().items()
-        if spec.get("oauth_available")
-    ]
-    cn = [v for v in keyed if v["region"] == "cn"] + [v for v in oauth if v["region"] == "cn"]
-    glob = [v for v in keyed if v["region"] == "global"] + [
-        v for v in oauth if v["region"] == "global"
-    ]
-    custom = [v for v in keyed if v["region"] == "custom"]
-    if locale_region() == "cn":
-        return [*cn, *subs, *glob, *custom]
-    return [*subs, *glob, *cn, *custom]
+def _method_vendor(mid: str, groups: dict[str, list[dict]] | None = None) -> str:
+    """Key 接入方式（目录行分组的首选行 id）→ 它所属的厂商 id：行上声明了 `vendor` 就并入那一家，否则自成一家。"""
+    if mid == "custom":
+        return "custom"
+    rows = (groups or _groups())[mid]
+    return rows[0].get("vendor") or mid
+
+
+def _match_method(agent: str, base_url: str) -> str | None:
+    """已存记录 → Key 接入方式 id：地址（忽略末尾斜杠与大小写）和家族都对上目录某一行才算（与 `ai_catalog.icon_for` 同判据）。"""
+    url = (base_url or "").strip().rstrip("/").lower()
+    if not url:
+        return None
+    for mid, rows in _groups().items():
+        for r in rows:
+            if r["agent"] == agent and r["base_url"].strip().rstrip("/").lower() == url:
+                return mid
+    return None
 
 
 def _oauth_vendor_id(provider: str) -> str:
+    return _OAUTH_VENDOR.get(provider, provider)
+
+
+def _oauth_connection_id(provider: str) -> str:
+    """账号登录连接的 id（= `ai_oauth` 写下的那条 provider 记录的 id）。"""
     return f"{provider}-oauth"
 
 
-def _vendor(vid: str) -> dict | None:
-    return next((v for v in vendors({}) if v["id"] == vid), None)
+def vendors(agents_info: dict[str, dict]) -> list[dict]:
+    """能连的**厂商**，每家一条，接入方式放在 `methods`（订阅 / 账号登录在前，API Key 在后；见模块说明）。
+
+    旧字段保留：`connect` = 首选方式（`methods[0].kind`）、`key_url` / `key_hint_key` / `needs_base_url` 取自第一个 Key 方式、
+    `available` = 任一方式可用。`agents_info` = `capabilities()["agents"]` 按 id 索引（login 方式的 `available` 看对应 CLI 装没装）。"""
+    groups = _groups()
+    by_vendor: dict[str, dict] = {}
+    keys: dict[str, list[dict]] = {}
+    lead: dict[str, list[dict]] = {}
+    for mid, rows in groups.items():
+        vid = _method_vendor(mid, groups)
+        first = rows[0]
+        if vid not in by_vendor:
+            # 厂商的显示名：行上的 `vendor_label`（合并后的厂商名，如 Claude / Kimi），否则品牌名；i18n 键同理
+            named = bool(first.get("vendor_label"))
+            by_vendor[vid] = {
+                "id": vid,
+                "label": first["vendor_label"]
+                if named
+                else ("Custom" if vid == "custom" else first["brand"]),
+                "label_key": (first.get("vendor_label_key") if named else first["label_key"])
+                if vid != "custom"
+                else None,
+                "logo": first["icon_key"],
+                "region": first["region"],
+            }
+        method = {
+            "id": f"{mid}:key",
+            "kind": "key",
+            "label_key": first.get("method_key") or "method.apiKey",
+            "catalog_id": mid,
+            "available": True,
+        }
+        if first["key_url"]:
+            method["key_url"] = first["key_url"]
+        if first.get("key_hint_key"):
+            method["key_hint_key"] = first["key_hint_key"]
+        if mid == "custom":
+            method["needs_base_url"] = True
+        keys.setdefault(vid, []).append(method)
+    for cid, (agent_id, vid, label, logo) in SUBSCRIPTIONS.items():
+        by_vendor.setdefault(
+            vid,
+            {"id": vid, "label": label, "label_key": None, "logo": logo, "region": "global"},
+        )
+        lead.setdefault(vid, []).append(
+            {
+                "id": f"{vid}:login",
+                "kind": "login",
+                "label_key": "method.subscription",
+                "agent": agent_id,
+                "connection_id": cid,
+                "available": bool((agents_info.get(agent_id) or {}).get("installed")),
+            }
+        )
+    for provider, spec in ai_oauth.available().items():
+        if not spec.get("oauth_available"):
+            continue  # client_id 没配：入口不出现
+        vid = _oauth_vendor_id(provider)
+        by_vendor.setdefault(
+            vid,
+            {
+                "id": vid,
+                "label": spec["label"],
+                "label_key": None,
+                "logo": provider,
+                "region": spec["default_region"]
+                if spec["default_region"] in ("cn", "global")
+                else "global",
+            },
+        )
+        lead.setdefault(vid, []).append(
+            {
+                "id": f"{provider}:oauth",
+                "kind": "oauth",
+                "label_key": "method.account",
+                "connection_id": _oauth_connection_id(provider),
+                "available": True,
+            }
+        )
+    out: list[dict] = []
+    for vid, v in by_vendor.items():
+        methods = [*lead.get(vid, []), *keys.get(vid, [])]
+        first_key = next((m for m in methods if m["kind"] == "key"), None)
+        v = {**v, "connect": methods[0]["kind"], "available": any(m["available"] for m in methods)}
+        for k in ("key_url", "key_hint_key", "needs_base_url"):
+            if first_key and k in first_key:
+                v[k] = first_key[k]
+        v["methods"] = methods
+        out.append(v)
+    cn = [v for v in out if v["region"] == "cn"]
+    login_global = [
+        v for v in out if v["region"] == "global" and v["methods"][0]["kind"] == "login"
+    ]
+    other_global = [v for v in out if v["region"] == "global" and v not in login_global]
+    custom = [v for v in out if v["region"] == "custom"]
+    if locale_region() == "cn":
+        return [*cn, *login_global, *other_global, *custom]
+    return [*login_global, *other_global, *cn, *custom]
 
 
 # --------------------------------------------------------------------------- 路由
@@ -236,25 +291,23 @@ def _why_not_builtin(rec: dict) -> str:
 
 
 # --------------------------------------------------------------------------- 连接视图
-def _vendor_for_record(rec: dict) -> str:
+def _vendor_for_record(rec: dict) -> tuple[str, str]:
+    """provider 记录 → (厂商 id, 接入方式 id)。"""
     if rec.get("auth") == "oauth":
         provider = (rec.get("oauth") or {}).get("provider")
-        return _oauth_vendor_id(str(provider)) if provider else "custom"
-    return (
-        _vendor_of_row_match(str(rec.get("agent") or ""), str(rec.get("base_url") or ""))
-        or "custom"
-    )
+        if not provider:
+            return "custom", "custom:key"
+        return _oauth_vendor_id(str(provider)), f"{provider}:oauth"
+    mid = _match_method(str(rec.get("agent") or ""), str(rec.get("base_url") or ""))
+    if mid is None:
+        return "custom", "custom:key"
+    return _method_vendor(mid), f"{mid}:key"
 
 
-def _vendor_meta(vid: str) -> tuple[str, str]:
-    """→ (显示名, logo 键)。"""
-    if vid.endswith("-oauth"):
-        spec = ai_oauth.available().get(vid[: -len("-oauth")])
-        return (spec["label"] if spec else vid), vid[: -len("-oauth")]
-    rows = _groups().get(vid)
-    if rows is None:
-        return "Custom", ai_catalog.GENERIC_ICON_KEY
-    return ("Custom" if vid == "custom" else rows[0]["brand"]), rows[0]["icon_key"]
+def _row_icon(method_id: str) -> str | None:
+    mid = method_id[: -len(":key")] if method_id.endswith(":key") else None
+    rows = _groups().get(mid) if mid else None
+    return rows[0]["icon_key"] if rows else None
 
 
 def _details(models: list[str]) -> list[dict]:
@@ -292,16 +345,26 @@ def _subscription_connections(agents_info: dict[str, dict]) -> list[dict]:
                 "efforts": list(caps.efforts) if agent and agent.supports_effort_selection else [],
                 "default_effort": caps.default_effort,
                 "route": f"cli:{agent_id}",
+                "method": f"{vid}:login",
             }
         )
     return out
 
 
 def _key_connection(
-    rec: dict, agents_info: dict[str, dict], transient_error: str | None = None
+    rec: dict,
+    agents_info: dict[str, dict],
+    vindex: dict[str, dict],
+    transient_error: str | None = None,
 ) -> dict:
-    vid = _vendor_for_record(rec)
-    vlabel, logo = _vendor_meta(vid)
+    vid, method = _vendor_for_record(rec)
+    vendor = vindex.get(vid) or {}
+    vlabel = vendor.get("label") or "Custom"
+    logo = _row_icon(method) or vendor.get("logo") or ai_catalog.GENERIC_ICON_KEY
+    if rec.get("auth") != "oauth" and vid in {v for _a, v, _l, _g in SUBSCRIPTIONS.values()}:
+        vlabel += (
+            " API"  # 同一厂商还有订阅登录（OpenAI / Claude）：官方 Key 连接的名字要和订阅那条分得开
+        )
     route, why = route_for(rec, agents_info)
     models = [str(m) for m in (rec.get("models") or [])]
     default_model = str(rec.get("default_model") or "").strip() or (models[0] if models else None)
@@ -345,6 +408,7 @@ def _key_connection(
         "efforts": efforts,
         "default_effort": default_effort,
         "route": route or f"cli:{agent_id}",
+        "method": method,
     }
     if error and state == "error":
         conn["error"] = error
@@ -356,12 +420,13 @@ def connections(
 ) -> list[dict]:
     """已连接 / 需要重新登录的连接，订阅类在前。`transient` = `{连接 id: 原因码}`：刚保存时试取型号清单失败的那一次（不落盘）。"""
     out = _subscription_connections(agents_info)
+    vindex = {v["id"]: v for v in vendors(agents_info)}
     keys = []
     for rec in ai_providers.list_providers():
         # 没有地址的旧记录（官方 Key 留给 CLI 自己的登录态）不是一个可独立连着的 AI：不进连接视图
         if rec.get("auth") != "oauth" and not str(rec.get("base_url") or "").strip():
             continue
-        keys.append(_key_connection(rec, agents_info, (transient or {}).get(rec["id"])))
+        keys.append(_key_connection(rec, agents_info, vindex, (transient or {}).get(rec["id"])))
     # 同厂商多条：显示名带上区分（用户起的名字 / 密钥尾四位）
     by_vendor: dict[str, int] = {}
     for c in keys:
@@ -423,6 +488,28 @@ def builtin_usable() -> bool:
 
 
 # --------------------------------------------------------------------------- 写入口
+def _key_method_id(body: dict) -> str:
+    """请求里的 `method`（`<catalog_id>:key`）/ `vendor` → Key 接入方式 id（目录行分组的首选行 id）。
+    `vendor` 可以是接入方式的 catalog_id（如 `kimi-code`；合并前的旧厂商 id `deepseek` / `kimi-code` / `dashscope-coding` 等就是它们）
+    或厂商 id（取它的第一个 Key 方式，如 `openai` → `openai-api`）。订阅 / 账号登录方式不是 Key，旧版的 `chatgpt` / `claude` /
+    `minimax-oauth` 同样一律 `unknown_vendor`。"""
+    groups = _groups()
+    method = body.get("method")
+    if method is not None:
+        if not isinstance(method, str) or not method.endswith(":key") or method[:-4] not in groups:
+            raise _invalid("unknown_vendor")
+        return method[:-4]
+    vid = body.get("vendor")
+    if not isinstance(vid, str):
+        raise _invalid("unknown_vendor")
+    if vid in groups:
+        return vid
+    for mid in groups:
+        if _method_vendor(mid, groups) == vid:
+            return mid
+    raise _invalid("unknown_vendor")
+
+
 def add_connection(body: object) -> tuple[str, str | None]:
     """`POST /api/ai/connections`：保存一条 Key 连接 → `(连接 id, 试取型号清单失败的原因码|None)`。
 
@@ -431,10 +518,8 @@ def add_connection(body: object) -> tuple[str, str | None]:
     （`anthropic` | `openai-responses`）；带已存在的 `id` = 换这条的 Key / 型号（其余字段缺省沿用）。"""
     if not isinstance(body, dict):
         raise _invalid("bad_body")
-    vid = body.get("vendor")
+    vid = _key_method_id(body)
     groups = _groups()
-    if not isinstance(vid, str) or vid not in groups:
-        raise _invalid("unknown_vendor")
     rows = groups[vid]
     existing = None
     if body.get("id") is not None:
@@ -526,10 +611,15 @@ def delete_connection(cid: str) -> None:
 
 def login_target(cid: str) -> tuple[str, str]:
     """`POST /api/ai/connections/<id>/login` 该走哪条流程 → `("cli", agent_id)` 或 `("oauth", provider)`。"""
+    cid = {f"{v}:login": c for c, (_a, v, _l, _g) in SUBSCRIPTIONS.items()}.get(
+        cid, cid
+    )  # 方式 id 也认
     if cid in SUBSCRIPTIONS:
         return "cli", SUBSCRIPTIONS[cid][0]
     for provider, spec in ai_oauth.available().items():
-        if cid == _oauth_vendor_id(provider) and spec.get("oauth_available"):
+        if cid in (_oauth_connection_id(provider), f"{provider}:oauth") and spec.get(
+            "oauth_available"
+        ):
             return "oauth", provider
     raise ConnectionRefused("connection_not_found", {}, 404)
 

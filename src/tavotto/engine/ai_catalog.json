@@ -4,13 +4,22 @@
     {
       "origin": "https://api.anthropic.com",
       "agent": "claude",
-      "efforts": ["low", "medium", "high", "max"],
+      "efforts": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ],
       "source": "https://docs.claude.com/en/docs/build-with-claude/effort"
     },
     {
       "origin": "https://api.openai.com",
       "agent": "codex",
-      "efforts": ["low", "medium", "high"],
+      "efforts": [
+        "low",
+        "medium",
+        "high"
+      ],
       "source": "https://platform.openai.com/docs/api-reference/responses/create"
     }
   ],
@@ -62,7 +71,9 @@
       ],
       "source": "https://platform.kimi.com/docs/guide/claude-code-kimi",
       "oauth": null,
-      "icon_key": "moonshot"
+      "icon_key": "moonshot",
+      "vendor_label": "Kimi",
+      "vendor_label_key": "vendor.kimi"
     },
     {
       "id": "kimi-code",
@@ -78,7 +89,9 @@
       ],
       "source": "openclaw docs/providers/moonshot.md#L196",
       "oauth": null,
-      "icon_key": "kimi"
+      "icon_key": "kimi",
+      "vendor": "moonshot",
+      "method_key": "method.kimiCode"
     },
     {
       "id": "kimi-code-codex",
@@ -96,7 +109,9 @@
       ],
       "oauth": null,
       "source": "https://www.kimi.com/code/docs/en/third-party-tools/codex",
-      "icon_key": "kimi"
+      "icon_key": "kimi",
+      "vendor": "moonshot",
+      "method_key": "method.kimiCode"
     },
     {
       "id": "zhipu",
@@ -144,7 +159,9 @@
       ],
       "source": "https://help.aliyun.com/zh/model-studio/claude-code",
       "oauth": null,
-      "icon_key": "bailian"
+      "icon_key": "bailian",
+      "vendor_label": "Alibaba Bailian",
+      "vendor_label_key": "vendor.bailian"
     },
     {
       "id": "dashscope-coding",
@@ -160,7 +177,49 @@
       ],
       "source": "https://help.aliyun.com/zh/model-studio/claude-code",
       "oauth": null,
-      "icon_key": "bailian"
+      "icon_key": "bailian",
+      "vendor": "dashscope",
+      "method_key": "method.codingPlan"
+    },
+    {
+      "id": "openai-api",
+      "label_key": "vendor.openai",
+      "brand": "OpenAI",
+      "region": "global",
+      "agent": "codex",
+      "base_url": "https://api.openai.com/v1",
+      "wire_api": "responses",
+      "key_url": "https://platform.openai.com/api-keys",
+      "models_hint": [
+        "gpt-5",
+        "gpt-5-mini"
+      ],
+      "source": "https://platform.openai.com/docs/api-reference/responses",
+      "oauth": null,
+      "icon_key": "openai",
+      "vendor": "openai",
+      "vendor_label": "OpenAI",
+      "preset": false
+    },
+    {
+      "id": "anthropic-api",
+      "label_key": "vendor.anthropic",
+      "brand": "Anthropic",
+      "region": "global",
+      "agent": "claude",
+      "base_url": "https://api.anthropic.com",
+      "key_url": "https://console.anthropic.com/settings/keys",
+      "models_hint": [
+        "claude-sonnet-4-5",
+        "claude-opus-4-1",
+        "claude-haiku-4-5"
+      ],
+      "source": "https://docs.claude.com/en/api/overview",
+      "oauth": null,
+      "icon_key": "anthropic",
+      "vendor": "anthropic",
+      "vendor_label": "Claude",
+      "preset": false
     },
     {
       "id": "anthropic",

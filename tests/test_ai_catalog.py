@@ -46,7 +46,11 @@ def _locale_value(loc: str, dotted: str):
 
 def test_presets_come_from_the_catalog_file():
     rows = ai_catalog.load_vendors()
-    assert [p["id"] for p in ai_providers.PRESETS] == [r["id"] for r in rows]
+    # `preset: false` 的行（官方 API Key，只作「连接」视图里某厂商的一种接入方式）不进旧版预设列表
+    assert [p["id"] for p in ai_providers.PRESETS] == [
+        r["id"] for r in rows if r.get("preset", True) is not False
+    ]
+    assert {r["id"] for r in rows if r.get("preset") is False} == {"openai-api", "anthropic-api"}
     assert len(rows) >= 13
 
 
@@ -70,9 +74,13 @@ def test_catalog_rows_are_complete_unique_and_wired():
             assert r["key_url"].startswith("https://"), r["id"]
         if r["agent"] == "codex":
             # Codex 只认 Responses：只有官方文档写明原生支持 Responses 的厂商才许挂在它下面
-            assert r["id"] in ("openai", "custom-codex", "deepseek-codex", "kimi-code-codex"), r[
-                "id"
-            ]
+            assert r["id"] in (
+                "openai",
+                "openai-api",
+                "custom-codex",
+                "deepseek-codex",
+                "kimi-code-codex",
+            ), r["id"]
             assert r.get("wire_api") == "responses", r["id"]
         # 界面文案：label_key / key_hint_key 在中英 locale 都有
         for key in [r["label_key"], r.get("key_hint_key")]:

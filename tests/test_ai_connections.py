@@ -122,25 +122,75 @@ def _save(pid="k1", agent="claude", base="https://api.deepseek.com/anthropic", k
 
 
 # --------------------------------------------------------------------------- vendors
-def test_vendors_merge_rows_of_the_same_brand_into_one(world):
+def test_vendors_are_one_entry_per_vendor_with_their_access_methods(world):
     caps = _caps()
     ids = [v["id"] for v in caps["vendors"]]
     assert len(ids) == len(set(ids))
-    # DeepSeek 在目录里有 claude 行与 codex 行（deepseek / deepseek-codex）：界面上只有一家，且 id 取首选的 Anthropic 行
-    assert "deepseek" in ids and "deepseek-codex" not in ids
-    assert "kimi-code" in ids and "kimi-code-codex" not in ids
-    # 独立算一遍期望：不同 brand 的数量（不含官方登录行与自定义行）+ 1 个 custom
-    rows = ai_catalog.load_vendors()
-    brands = {r["brand"] for r in rows if r["region"] != "custom" and r["base_url"]}
-    keyed = [v for v in caps["vendors"] if v["connect"] == "key"]
-    assert len(keyed) == len(brands) + 1
-    assert [v["id"] for v in keyed].count("custom") == 1
+    # 同一家的 Claude 行与 Codex 行合成一个 Key 方式（DeepSeek 有 deepseek / deepseek-codex 两行）
     ds = _vendor(caps, "deepseek")
+    assert [m["id"] for m in ds["methods"]] == ["deepseek:key"]
+    assert "deepseek-codex" not in ids
+    # 行上声明了 `vendor` 的方式并进那一家：每家一条
+    assert "kimi-code" not in ids and "dashscope-coding" not in ids
+    assert "anthropic-api" not in ids and "openai-api" not in ids
+    assert "chatgpt" not in ids and "minimax-oauth" not in ids
+    # 独立算一遍期望：厂商数 = 目录里 (vendor 字段 或 brand 首选行 id) 的去重数 + custom
+    rows = [r for r in ai_catalog.load_vendors() if r["region"] != "custom" and r["base_url"]]
+    primary: dict[str, dict] = {}
+    for r in sorted(rows, key=lambda r: r["agent"] != "claude"):
+        primary.setdefault(r["brand"], r)
+    expect = {p.get("vendor") or p["id"] for p in primary.values()} | {"custom"}
+    assert set(ids) == expect
     assert ds["connect"] == "key" and ds["region"] == "cn" and ds["logo"] == "deepseek"
     assert ds["key_url"].startswith("https://") and ds["available"] is True
     assert ds["label"] == "DeepSeek" and ds["label_key"] == "vendor.deepseek"
-    # 官方登录行（base_url 为空）不是 Key 厂商——它们由订阅类承担
-    assert "anthropic" not in ids and "openai" not in ids
+    assert ds["methods"][0]["catalog_id"] == "deepseek" and ds["methods"][0]["kind"] == "key"
+    assert ds["methods"][0]["label_key"] == "method.apiKey"
+
+
+def test_vendors_merge_login_and_api_key_methods_of_one_vendor(world):
+    caps = _caps()
+    openai, anthropic = _vendor(caps, "openai"), _vendor(caps, "anthropic")
+    # 订阅在前、API Key 在后
+    assert [(m["id"], m["kind"]) for m in openai["methods"]] == [
+        ("openai:login", "login"),
+        ("openai-api:key", "key"),
+    ]
+    assert [(m["id"], m["kind"]) for m in anthropic["methods"]] == [
+        ("anthropic:login", "login"),
+        ("anthropic-api:key", "key"),
+    ]
+    login, key = openai["methods"]
+    assert (login["agent"], login["connection_id"], login["label_key"]) == (
+        "codex",
+        "sub:codex",
+        "method.subscription",
+    )
+    assert key["catalog_id"] == "openai-api" and key["key_url"].startswith(
+        "https://platform.openai"
+    )
+    assert (openai["label"], openai["logo"], openai["connect"]) == ("OpenAI", "openai", "login")
+    assert (anthropic["label"], anthropic["logo"]) == ("Claude", "anthropic")
+    assert openai["label_key"] is None and anthropic["label_key"] is None
+    assert openai["key_url"] == key["key_url"], "旧字段取自第一个 Key 方式"
+    # Kimi / 百炼：两种 Key 并成一家
+    kimi, bailian = _vendor(caps, "moonshot"), _vendor(caps, "dashscope")
+    assert [(m["catalog_id"], m["label_key"]) for m in kimi["methods"]] == [
+        ("moonshot", "method.apiKey"),
+        ("kimi-code", "method.kimiCode"),
+    ]
+    assert [(m["catalog_id"], m["label_key"]) for m in bailian["methods"]] == [
+        ("dashscope", "method.apiKey"),
+        ("dashscope-coding", "method.codingPlan"),
+    ]
+    assert kimi["label"] == "Kimi" and kimi["label_key"] == "vendor.kimi"
+    assert any(m.get("key_hint_key") == "vendorKey.kimiCode" for m in kimi["methods"])
+    # 不跨 region 合并
+    assert (
+        _vendor(caps, "minimax")["region"] == "cn"
+        and _vendor(caps, "minimax-global")["region"] == "global"
+    )
+    assert _vendor(caps, "zai") is not None and _vendor(caps, "zhipu")["region"] == "cn"
 
 
 def test_each_vendor_has_the_contract_fields_and_a_known_connect_kind(world):
@@ -151,23 +201,32 @@ def test_each_vendor_has_the_contract_fields_and_a_known_connect_kind(world):
         assert v["logo"]
 
 
-def test_subscription_vendors_follow_whether_the_cli_is_installed(world):
+def test_login_method_availability_follows_whether_the_cli_is_installed(world):
     caps = _caps()
-    chatgpt, claude = _vendor(caps, "chatgpt"), _vendor(caps, "claude")
-    assert (chatgpt["connect"], chatgpt["logo"], chatgpt["available"]) == ("login", "openai", True)
-    assert (claude["connect"], claude["logo"], claude["available"]) == ("login", "anthropic", True)
+    for vid in ("openai", "anthropic"):
+        v = _vendor(caps, vid)
+        assert v["methods"][0]["available"] is True and v["available"] is True
     world["cli"] = False
     ai_bridge.invalidate_capabilities()
     caps = _caps()
-    assert _vendor(caps, "chatgpt")["available"] is False  # 仍列出（前端另给安装提示），但不可用
-    assert _vendor(caps, "claude")["available"] is False
+    for vid in ("openai", "anthropic"):
+        v = _vendor(caps, vid)
+        assert v["methods"][0]["available"] is False  # 仍列出（前端另给安装提示），但不可用
+        assert v["methods"][1]["available"] is True and v["available"] is True  # API Key 照样能连
 
 
-def test_oauth_vendor_only_appears_when_a_client_id_is_configured(world, monkeypatch):
+def test_oauth_method_only_appears_when_a_client_id_is_configured(world, monkeypatch):
+    assert [m["kind"] for m in _vendor(_caps(), "minimax")["methods"]] == ["key"]
     assert _vendor(_caps(), "minimax-oauth") is None
     monkeypatch.setenv("TAVOTTO_OAUTH_CLIENT_ID_MINIMAX", "placeholder-not-a-real-client-id")
-    v = _vendor(_caps(), "minimax-oauth")
-    assert v["connect"] == "oauth" and v["logo"] == "minimax" and v["available"] is True
+    v = _vendor(_caps(), "minimax")
+    assert [(m["id"], m["kind"]) for m in v["methods"]] == [
+        ("minimax:oauth", "oauth"),
+        ("minimax:key", "key"),
+    ]
+    oauth = v["methods"][0]
+    assert oauth["connection_id"] == "minimax-oauth" and oauth["label_key"] == "method.account"
+    assert (v["connect"], v["logo"], v["available"]) == ("oauth", "minimax", True)
 
 
 def test_vendor_order_follows_the_system_language(world, monkeypatch):
@@ -205,8 +264,12 @@ def test_legacy_agents_list_never_contains_the_builtin_executor(world):
 def test_subscription_connections_come_from_the_installed_clis(world):
     caps = _caps()
     codex, claude = _conn(caps, "sub:codex"), _conn(caps, "sub:claude")
-    assert (codex["vendor"], codex["route"], codex["state"]) == ("chatgpt", "cli:codex", "ready")
-    assert (claude["vendor"], claude["route"], claude["state"]) == ("claude", "cli:claude", "ready")
+    assert (codex["vendor"], codex["route"], codex["state"]) == ("openai", "cli:codex", "ready")
+    assert (claude["vendor"], claude["route"], claude["state"]) == (
+        "anthropic",
+        "cli:claude",
+        "ready",
+    )
     world["cli"] = False
     ai_bridge.invalidate_capabilities()
     assert _caps()["connections"] == []  # 没装 CLI、没存 Key：没有任何连接
@@ -285,7 +348,8 @@ def test_oauth_record_prefers_the_cli_and_falls_back_to_the_builtin_executor(wor
     )
     caps = _caps()
     c = _conn(caps, "minimax-oauth")
-    assert c["vendor"] == "minimax-oauth" and c["state"] == "ready" and c["route"] == "cli:claude"
+    assert c["vendor"] == "minimax" and c["method"] == "minimax:oauth"
+    assert c["state"] == "ready" and c["route"] == "cli:claude"
     assert "tok-secret" not in json.dumps(caps)
     world["cli"] = False  # 没装 CLI：账号登录的连接走内置执行器（Bearer 令牌）
     ai_bridge.invalidate_capabilities()
@@ -1567,3 +1631,102 @@ def test_convert_endpoint_accepts_a_connection(client, world, monkeypatch, tmp_p
         == 404
     )
     appmod.reset_projects()
+
+
+# --------------------------------------------------------------------------- 按厂商合并接入方式（用户裁决 10-25）
+def test_post_by_a_methods_catalog_id_creates_that_connection(client, world):
+    world["fetch"] = (["gpt-5"], None)
+    conn = _post(client, vendor="openai-api", api_key=KEY).get_json()["connection"]
+    assert conn["vendor"] == "openai" and conn["method"] == "openai-api:key"
+    assert conn["logo"] == "openai" and conn["label"] == "OpenAI API"
+    stored = ai_providers.get(conn["id"])
+    assert stored["agent"] == "codex" and stored["base_url"] == "https://api.openai.com/v1"
+    assert world["fetched"][-1][0] == "https://api.openai.com/v1"
+    kimi_code = _post(client, vendor="kimi-code", api_key=KEY2).get_json()["connection"]
+    assert kimi_code["vendor"] == "moonshot" and kimi_code["method"] == "kimi-code:key"
+    assert ai_providers.get(kimi_code["id"])["base_url"] == "https://api.kimi.com/coding"
+    # 用 `method` 字段（`<catalog_id>:key`）同样可以
+    anth = _post(client, method="anthropic-api:key", api_key=KEY).get_json()["connection"]
+    assert anth["vendor"] == "anthropic" and anth["label"] == "Claude API"
+
+
+def test_post_by_a_vendor_id_takes_its_first_key_method(client, world):
+    world["fetch"] = (["m"], None)
+    for vendor, method in (
+        ("openai", "openai-api:key"),
+        ("anthropic", "anthropic-api:key"),
+        ("moonshot", "moonshot:key"),
+        ("minimax", "minimax:key"),
+    ):
+        assert (
+            _post(client, vendor=vendor, api_key=KEY).get_json()["connection"]["method"] == method
+        )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"vendor": "chatgpt"},
+        {"vendor": "claude"},
+        {"vendor": "minimax-oauth"},
+        {"method": "openai:login"},
+        {"method": "minimax:oauth"},
+        {"method": "nope:key"},
+        {"method": 3},
+    ],
+)
+def test_login_and_oauth_methods_are_never_key_connections(client, world, body):
+    resp = _post(client, api_key=KEY, **body)
+    assert resp.status_code == 400 and resp.get_json()["code"] == "endpoint_invalid"
+    assert ai_providers.list_providers() == []
+
+
+def test_official_key_connections_carry_efforts_on_the_builtin_route(client, world):
+    world["fetch"] = (["m"], None)
+    world["cli"] = False
+    a = _post(client, vendor="anthropic-api", api_key=KEY).get_json()["connection"]
+    o = _post(client, vendor="openai-api", api_key=KEY2).get_json()["connection"]
+    assert a["route"] == o["route"] == "builtin"
+    assert a["efforts"] == ["low", "medium", "high", "max"] and a["default_effort"] == "medium"
+    assert o["efforts"] == ["low", "medium", "high"]
+    # 有 CLI 且 builtin_default=false：官方 Key 走 CLI + 注入，不给 Claude 之外的档位承诺
+    world["cli"] = True
+    ai_bridge.invalidate_capabilities()
+    assert _conn(_caps(), a["id"])["route"] == "cli:claude"
+
+
+def test_connections_report_their_vendor_and_method_for_all_sources(world, monkeypatch):
+    monkeypatch.setenv("TAVOTTO_OAUTH_CLIENT_ID_MINIMAX", "placeholder-not-a-real-client-id")
+    _save("a", base="https://api.anthropic.com")
+    _save("kc", base="https://api.kimi.com/coding/")
+    _save("mm", base="https://api.minimaxi.com/anthropic")
+    _oauth_rec()
+    caps = _caps()
+    got = {c["id"]: (c["vendor"], c["method"]) for c in caps["connections"]}
+    assert got == {
+        "sub:codex": ("openai", "openai:login"),
+        "sub:claude": ("anthropic", "anthropic:login"),
+        "a": ("anthropic", "anthropic-api:key"),
+        "kc": ("moonshot", "kimi-code:key"),
+        "mm": ("minimax", "minimax:key"),
+        "minimax-oauth": ("minimax", "minimax:oauth"),
+    }
+    assert _conn(caps, "kc")["logo"] == "kimi", "logo 取自它自己那一行，不是厂商的"
+    # 每条连接的 vendor 都在 vendors 里，method 都在该厂商的 methods 里
+    index = {v["id"]: {m["id"] for m in v["methods"]} for v in caps["vendors"]}
+    assert all(c["method"] in index[c["vendor"]] for c in caps["connections"])
+
+
+def test_login_accepts_method_ids_too(client, world, monkeypatch):
+    started = []
+    monkeypatch.setattr(
+        ai_bridge, "start_login", lambda agent: started.append(agent) or {"started": True}
+    )
+    assert client.post("/api/ai/connections/openai:login/login").status_code == 200
+    assert client.post("/api/ai/connections/anthropic:login/login").status_code == 200
+    assert started == ["codex", "claude"]
+    monkeypatch.setenv("TAVOTTO_OAUTH_CLIENT_ID_MINIMAX", "placeholder-not-a-real-client-id")
+    monkeypatch.setattr(
+        ai_oauth, "start", lambda provider, region=None: {"flow_id": "f", "provider": provider}
+    )
+    assert client.post("/api/ai/connections/minimax:oauth/login").get_json()["flow_id"] == "f"

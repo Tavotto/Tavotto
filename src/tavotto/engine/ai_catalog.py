@@ -135,7 +135,8 @@ def efforts_for(agent: str, base_url: str) -> list[str]:
 
 
 def presets() -> list[dict]:
-    return [_preset(r) for r in load_vendors()]
+    """旧版设置页的预设列表。`preset: false` 的行（官方 API Key：只作「连接」视图里某厂商的一种接入方式）不在其中。"""
+    return [_preset(r) for r in load_vendors() if r.get("preset", True) is not False]
 
 
 #: 不在目录里的接口（自定义）用的图标键；前端 `VendorIcon` 对表外 key 落到通用图标
