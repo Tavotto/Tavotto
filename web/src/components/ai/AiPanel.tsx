@@ -1154,10 +1154,10 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
           {/* 执行器与模型：两级选择器（第一级执行器家族，第二级型号；`ModelPicker`）。
               **只是呈现**：底下仍是 aiStore 的两个字段（agent / models[agent]），选中一项时
               各写各的，切回另一个 Agent 时它自己的模型记忆还在。
-              只有一项可选时不摆一个选不动的选择器：**但那一项写的是什么仍要看得见**，
+              只有一项可选时不摆一个选不动的选择器（旧执行器视图；连接视图的选择器底部有「连接更多 AI…」，要常驻）：**但那一项写的是什么仍要看得见**，
               退成一行静态文字。连模型名都没有（跟随 CLI 默认）时整块不出现——执行器是谁，
               工具行的胶囊上已经写着了 */}
-          {optionCount > 1 ? (
+          {optionCount > 1 || view ? (
             <div data-ai-agent-model="select" className="flex min-w-0 items-center gap-2">
               <span className="shrink-0 text-xs text-ink-2">{view ? ai('panel.aiModel') : ai('panel.agentModel')}</span>
               {view ? (

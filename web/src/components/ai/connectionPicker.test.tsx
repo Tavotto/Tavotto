@@ -123,6 +123,18 @@ describe('模型选择器：一级连接、二级型号', () => {
     expect(useUiStore.getState().settingsOpen).toBe(false)
   })
 
+  it('只有一个连接且只有一个型号（或没有型号清单）：选择器仍在，里面仍有「连接更多 AI…」', async () => {
+    for (const only of [CG, { ...CG, models: [], default_model: null }]) {
+      useAiStore.setState({ caps: connectCapsOf([only]), connection: 'sub:codex' })
+      await mount(scope())
+      expect(trigger()).toBeTruthy()
+      await openMenu()
+      expect(document.body.querySelector('[data-ai-connect-more]')).toBeTruthy()
+      await act(async () => root.unmount())
+      document.body.innerHTML = ''
+    }
+  })
+
   it('记着的连接不再 ready：显示第一个 ready 的，不静默改用户的首选值', async () => {
     useAiStore.setState({ caps: connectCapsOf([DS, { ...CG, state: 'needs_auth' }]), connection: 'sub:codex' })
     await mount(scope())
