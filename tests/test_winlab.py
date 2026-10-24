@@ -880,3 +880,24 @@ def test_session_id_falls_back_to_other_results_and_the_final_line():
     assert A.opened_session_id(s) == "s-aaaaaaaaaaaa"
     s = A.parse_stream(_stream({"type": "result", "result": "all good\nSESSION s-bbbbbbbbbbbb"}))
     assert A.opened_session_id(s) == "s-bbbbbbbbbbbb"
+
+
+def test_reclaiming_never_takes_away_a_lock_published_after_the_stale_judgement(tmp_path):
+    # 两个回收者都判了同一把陈旧锁：先到者回收并发布新锁后，后到者手里的「陈旧」判断已过期，不能动新锁
+    lab = A.Lab(tmp_path)
+    lab.state.mkdir()
+    stale = {"pid": 999999, "run_id": "dead"}
+    fresh = {"pid": os.getpid(), "run_id": "winner"}
+    lab.lock_path.write_text(json.dumps(fresh))
+    assert A._reclaim_stale(lab, stale) is False
+    assert json.loads(lab.lock_path.read_text()) == fresh
+    assert not list(lab.state.glob("*.stale"))
+
+
+def test_reclaiming_the_judged_stale_lock_succeeds(tmp_path):
+    lab = A.Lab(tmp_path)
+    lab.state.mkdir()
+    stale = {"pid": 999999, "run_id": "dead"}
+    lab.lock_path.write_text(json.dumps(stale))
+    assert A._reclaim_stale(lab, stale) is True
+    assert not lab.lock_path.exists() and not list(lab.state.glob("*.stale"))

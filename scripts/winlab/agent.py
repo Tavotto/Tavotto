@@ -547,7 +547,8 @@ def job_lock(lab: Lab, run_id: str, task: str):
                     pass  # 持有者已不在：陈旧锁
                 else:
                     raise LabBusy(holder) from None
-                lab.lock_path.unlink(missing_ok=True)
+                if not _reclaim_stale(lab, holder):
+                    raise LabBusy(read_lock(lab) or {}) from None
                 continue
             break
         else:
@@ -560,6 +561,31 @@ def job_lock(lab: Lab, run_id: str, task: str):
         # 只删自己的锁：持有者判定一旦出错、别的任务已经接手，不能把它的锁一起带走
         if (read_lock(lab) or {}).get("run_id") == run_id:
             lab.lock_path.unlink(missing_ok=True)
+
+
+def _reclaim_stale(lab: Lab, judged: dict | None) -> bool:
+    """回收陈旧锁：不 `unlink`（两个回收者同时判陈旧时，后删的那个会删掉先到者刚发布的新锁），而是原子改名成
+    唯一的墓碑——只有一个回收者改得走；再核墓碑里就是刚才判陈旧的那份记录，不是就放回原处并报忙。"""
+    tomb = lab.lock_path.with_name(
+        f"{lab.lock_path.name}.{os.getpid()}.{secrets.token_hex(4)}.stale"
+    )
+    try:
+        os.rename(lab.lock_path, tomb)
+    except FileNotFoundError:
+        return True  # 别人已经回收了：重试发布
+    except OSError:
+        return False
+    try:
+        got = json.loads(tomb.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        got = None
+    if got != judged:
+        with contextlib.suppress(OSError):
+            os.link(tomb, lab.lock_path)  # 改走的是别人刚发布的新锁：放回去
+        tomb.unlink(missing_ok=True)
+        return False
+    tomb.unlink(missing_ok=True)
+    return True
 
 
 class LabBusy(Exception):
