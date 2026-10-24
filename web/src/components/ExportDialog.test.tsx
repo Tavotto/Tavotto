@@ -454,9 +454,9 @@ describe('输出范围', () => {
     expect(radios[1].getAttribute('aria-checked')).toBe('true')
   })
 
-  it('单图编辑固定按原图，没有「输出范围」；并说出这次忽略了画布上的哪些变换', async () => {
+  it('单图编辑固定按原图，没有「输出范围」；画布上的缩放不另起一行说明', async () => {
     await setup(9)
-    // 面板在画布上被缩小过 → 原图导出不套用这个缩放，界面必须说出来
+    // 面板在画布上被缩小过 → 原图导出不套用这个缩放；用户不要这句说明（beta 0.19.0b4 反馈）
     useDocumentStore.getState().commit(literal('缩小'), (d) => {
       const p0 = d.objects[0] as PanelObject
       p0.w = 40
@@ -473,7 +473,7 @@ describe('输出范围', () => {
     // 单图编辑隐藏范围选择，固定 original（请求体里的 scope 由下面「单图」组钉住）
     expect(scopeRadios()).toHaveLength(0)
     expect(text()).toContain('80 × 60 mm')
-    expect(text()).toContain('缩放')
+    expect(text()).not.toContain('不会带进导出')
   })
 
   it('渲染回来之后尺寸跟着变：对话框开着时 manifest 到位，说的必须是渲染回来的图幅', async () => {

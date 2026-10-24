@@ -503,13 +503,6 @@ export default interface Resources {
       "groupChecks": "检查",
       "groupFormat": "格式",
       "groupOutput": "输出",
-      "ignored": {
-        "crop": "裁剪",
-        "flip": "翻转",
-        "opacity": "透明度",
-        "rotation": "旋转",
-        "scale": "缩放"
-      },
       "inspection": {
         "check": {
           "carrier": "矢量构成",
@@ -585,7 +578,6 @@ export default interface Resources {
       "routeNeedsScript": "这些图带着编辑，但找不到它们的脚本，画布导出画不出来：{{files}}。请先恢复脚本或撤销这些图的编辑。",
       "savedTo": "已保存到 {{dir}}",
       "scopeCanvas": "当前画布",
-      "scopeIgnored": "画布上的{{list}}不会带进导出。",
       "scopeLabel": "输出范围",
       "scopeOriginal": "原图尺寸",
       "scopeOriginalFallback": "这张图的尺寸暂时读不到，用的是占位值——导出后请核对。",

@@ -209,13 +209,6 @@
     "filenameLabel": "文件名",
     "filenamePlaceholder": "图 1",
     "formatLabel": "格式",
-    "ignored": {
-      "crop": "裁剪",
-      "flip": "翻转",
-      "opacity": "透明度",
-      "rotation": "旋转",
-      "scale": "缩放"
-    },
     "jobLost": "找不到这次导出的作业。文件可能已写出，请检查导出目录或重新导出。",
     "mmSize": "{{w}} × {{h}} mm",
     "openProblems": "在问题面板中查看",
@@ -259,7 +252,6 @@
     "revealFailed": "无法在文件管理器中定位，文件在：{{path}}",
     "savedTo": "已保存到 {{dir}}",
     "scopeCanvas": "当前画布",
-    "scopeIgnored": "画布上的{{list}}不会带进导出。",
     "scopeLabel": "输出范围",
     "scopeOriginal": "原图尺寸",
     "scopeOriginalFallback": "这张图的尺寸暂时读不到，用的是占位值——导出后请核对。",

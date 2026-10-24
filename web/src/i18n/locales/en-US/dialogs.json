@@ -217,13 +217,6 @@
     "filenameLabel": "File name",
     "filenamePlaceholder": "Figure 1",
     "formatLabel": "Format",
-    "ignored": {
-      "crop": "cropping",
-      "flip": "flipping",
-      "opacity": "opacity",
-      "rotation": "rotation",
-      "scale": "scaling"
-    },
     "jobLost": "This export job is no longer on the server. The files may have been written; check the folder or export again.",
     "mmSize": "{{w}} × {{h}} mm",
     "openProblems": "Open problems panel",
@@ -267,7 +260,6 @@
     "revealFailed": "Couldn’t reveal it in the file manager. The file is at: {{path}}",
     "savedTo": "Saved to {{dir}}",
     "scopeCanvas": "Current canvas",
-    "scopeIgnored": "The {{list}} on the canvas won’t carry into this export.",
     "scopeLabel": "Output size",
     "scopeOriginal": "Original size",
     "scopeOriginalFallback": "This figure’s size can’t be read right now, so a placeholder is used — check the result.",

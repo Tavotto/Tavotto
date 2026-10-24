@@ -1618,7 +1618,6 @@ export function ExportDialog() {
                   available={availability.ok || (batchMode && availability.reason === "no_figure")}
                   reason={availability.reason}
                   originalSelectable={originalSelectable}
-                  ignored={availability.spec?.ignored ?? []}
                   fallback={availability.spec?.fallback ?? false}
                 />
               )}
@@ -2193,7 +2192,6 @@ function ScopeNote({
   available,
   reason,
   originalSelectable,
-  ignored,
   fallback,
 }: {
   scope: ExportScope;
@@ -2201,19 +2199,18 @@ function ScopeNote({
   reason: string;
   /** 「原图尺寸」按钮此刻能不能选（项目里有没有图可挑） */
   originalSelectable: boolean;
-  ignored: readonly string[];
   fallback: boolean;
 }) {
   useTranslation("dialogs");
   // 「按画布尺寸出图」「按这张图自己的尺寸出图」这两句只是把选中的范围再说一遍
   // （2026-09-14 审计 B4：三句解释同一件事）——删掉；留下的是范围本身说不出的事实：
-  // 画布上的哪些变换不带进导出、磁盘原件与图幅不一致、尺寸读不到用了占位值、为什么灰
+  // 磁盘原件与图幅不一致、尺寸读不到用了占位值、为什么灰
   // 没话说就不渲染这一行（连它占的 gap 一起消失）。此前靠 `:empty` 选择器把空行藏掉，
   // 而 `<input>` 也是「空元素」——把「文件名」整行一起藏了（2026-09-15 审计 D01）
   const hasNote =
     scope === "canvas"
       ? !originalSelectable
-      : !available || fallback || ignored.length > 0;
+      : !available || fallback;
   if (!hasNote) return null;
   if (scope === "canvas") {
     return (
@@ -2252,13 +2249,6 @@ function ScopeNote({
           <>
             {fallback && (
               <span className="text-warn-content">{ex("scopeOriginalFallback")}</span>
-            )}
-            {ignored.length > 0 && (
-              <span>
-                {ex("scopeIgnored", {
-                  list: ignored.map((k) => ex(`ignored.${k}`)).join("、"),
-                })}
-              </span>
             )}
           </>
         )}
