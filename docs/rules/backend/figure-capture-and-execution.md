@@ -537,7 +537,7 @@ reconstruction_sha256, metrics}`；④ 真实编辑（结构性 `figure.frame` �
   **只激活用户自己的 conda 安装里的环境**：安装根本身（base）或它的 `envs/<名字>`；安装根来自 `CONDA_EXE` / `PATH` 上的 conda
   与常见安装位置（`launcher._STANDARD_ROOTS`；Windows 另含安装程序写的注册表卸载项 / PEP 514 InstallPath，仅作候选）。须确实是安装根：`conda-meta/` + 可执行的 conda 可执行文件（POSIX `bin/conda`，Windows `Scripts\conda.exe`，不认 `.bat` / `.cmd`）。激活会 source prefix
   自己的 `activate.d`；任何凭登记 / 路径形状的推断（environments.txt、项目标记）都可能被项目目录冒充，所以不用——其它位置的
-  Conda 环境（`conda create -p` 到任意目录、克隆项目自带的 `.venv/conda-meta/`）一律直接启动（与 P09 之前一致），
+  Conda 环境（`conda create -p` 到任意目录、克隆项目自带的 `.venv/conda-meta/`）一律直接启动（与 P09 之前一致；Windows 上仅在 PATH 前补该 prefix 的 DLL 目录 `launcher.with_prefix_dll_path`，不执行 `activate.d`，ADR 0142 修订），
   直接启动失败也不当成对环境的结论（`unlocated_conda_prefix`）。
   计划 / 钉下的决定 / 热会话比的是完整启动上下文 `launcher.context_key`（直接启动 ↔ 激活、conda、prefix、环境版本）。
   conda 可执行文件的候选：prefix 所属安装根的 conda 可执行文件（POSIX `bin/conda`，Windows `Scripts\conda.exe`），再是 `CONDA_EXE` / `PATH`（不读 `conda-meta/history`、不读 environments.txt：

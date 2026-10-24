@@ -781,13 +781,57 @@ def activated_delta(
         gate.release()
 
 
+def prefix_dll_dirs(python: str | os.PathLike) -> list[str]:
+    """**不会被激活**的 Conda 形状 prefix（`conda create -p <任意目录>`、不在用户 conda 安装里）需要补进 PATH 的目录。
+
+    Windows 上这类环境的 numpy / scipy 靠 PATH 上的 `Library\\bin` 找 MKL / BLAS 的 DLL；裸起时没有它，
+    渲染进程以 `0xC06D007F` 崩溃（Windows Lab 环境矩阵 conda-prefix 腿）。这里只回目录——**不执行** `etc/conda/activate.d`
+    （那是环境里的代码，不可信 prefix 不许跑，ADR 0142 决策 8 不变）。目录与顺序同 conda 自己激活时往 PATH 前面加的，不存在的不加。
+    可信环境（走激活捕获）、非 Windows、非 Conda 形状、关了激活开关，一律回空表。"""
+    if not _is_windows():
+        return []
+    prefix = _conda_shaped(python)  # 关开关 / 相对路径 / 没有 conda-meta → None
+    if prefix is None or _trusted_prefix(prefix):
+        return []
+    candidates = [
+        prefix,
+        os.path.join(prefix, "Library", "mingw-w64", "bin"),
+        os.path.join(prefix, "Library", "usr", "bin"),
+        os.path.join(prefix, "Library", "bin"),
+        os.path.join(prefix, "Scripts"),
+    ]
+    return [d for d in candidates if os.path.isdir(d)]
+
+
+def with_prefix_dll_path(python, base: dict | None, *, delta: bool = False) -> dict | None:
+    """`base` 上叠 `prefix_dll_dirs` 到 PATH 最前（已在 PATH 里的不重复加，所以多处叠加是幂等的）。没有要加的原样返回 `base`。
+
+    `delta=True`（workerd 的 spawn 规格只收增量）：只回要额外注入的那一个 PATH 变量（接在当前进程 PATH 前），不带整份环境。"""
+    dirs = prefix_dll_dirs(python)
+    if not dirs:
+        return base
+    source = base if base is not None else (None if delta else os.environ)
+    key = next((k for k in (source or {}) if k.upper() == "PATH"), "PATH")
+    current = (source or {}).get(key)
+    if current is None:
+        current = os.environ.get("PATH", "")
+    nc = os.path.normcase
+    present = {nc(p) for p in current.split(os.pathsep) if p}
+    add = [d for d in dirs if nc(d) not in present]
+    if not add:
+        return base
+    out = dict(source or {})
+    out[key] = os.pathsep.join([*add, current]) if current else os.pathsep.join(add)
+    return out
+
+
 def merge_env(
     lau: CondaLauncher | None, python, base: dict | None = None, *, timeout: float | None = None
 ) -> dict | None:
-    """起子进程用的 env：没有 launcher 原样返回 `base`（None = 继承）；有就是 `base`（或当前环境）叠上激活增量。
+    """起子进程用的 env：没有 launcher 返回 `base`（None = 继承；不可信 Conda prefix 另补 DLL 搜索 PATH，见 `with_prefix_dll_path`）；有就是 `base`（或当前环境）叠上激活增量。
     调用方传进来的就是它原来要用的 env（`worker_env` / `runtime.probe_env` / `owned_env`），Tavotto 自己的增量保留。"""
     if lau is None:
-        return base
+        return with_prefix_dll_path(python, base)
     env = dict(base if base is not None else os.environ)
     for key, value in activated_delta(str(python), lau, timeout=timeout).items():
         if value is None:

@@ -1572,7 +1572,10 @@ def worker_env(python: str, source: str, *, base: dict | None = None) -> dict | 
     （原样继承）。`base={}` 回增量（workerd 只收增量）。"""
     if source == SOURCE_BUNDLED:
         return runtime.child_env(base=base)
-    return runtime.owned_env(python, base)
+    # 不会被激活的 Conda 形状 prefix 另补 DLL 搜索 PATH（workerd 规格只收增量：`base` 给了就按增量补）
+    return launcher_mod.with_prefix_dll_path(
+        python, runtime.owned_env(python, base), delta=base is not None
+    )
 
 
 #: 选解释器预检（`_has_matplotlib`）的总预算：Conda 激活捕获 + import 探针共用

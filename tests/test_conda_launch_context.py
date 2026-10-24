@@ -2996,18 +2996,22 @@ def test_windows_trusted_root_with_missing_conda_exe_fails_closed_not_bare(
 def test_conda_shaped_dirs_without_any_trusted_root_still_start_directly(
     tmp_path, as_windows, monkeypatch
 ):
-    """既定行为不变：克隆项目自带的 `conda-meta/` / `conda create -p` 到任意目录，找不到任何可信根 → 直接启动，不报错。"""
+    """既定行为不变：克隆项目自带的 `conda-meta/` / `conda create -p` 到任意目录，找不到任何可信根 → 不激活、直接启动，不报错。
+    唯一的变化（ADR 0142 修订）：Windows 上 PATH 前面补上 prefix 自己的 DLL 目录（`test_conda_prefix_dll_path.py`），其余变量原样。"""
     monkeypatch.setattr(launcher, "_read_registry_candidates", lambda: [])
     clone = tmp_path / "project" / ".venv"
     (clone / "conda-meta").mkdir(parents=True)
     (clone / "python.exe").write_text("#!/bin/sh\n", encoding="utf-8")
-    assert launcher.activate_env(str(clone / "python.exe"), {"A": "1"}) == {"A": "1"}
+    started = launcher.activate_env(str(clone / "python.exe"), {"A": "1"})
+    assert started["A"] == "1" and set(started) == {"A", "PATH"}
+    assert started["PATH"].split(os.pathsep)[0] == str(clone)
     launcher.prewarm(str(clone / "python.exe"))  # 什么都不做
     # 可信根存在但环境在别处（不在 envs/ 下一层）：同样直接启动
     prefix, conda, _ = make_fake_win_conda(tmp_path, sys.executable)
     conda.unlink()
     monkeypatch.setattr(launcher, "_read_registry_candidates", lambda: [str(prefix.parent.parent)])
-    assert launcher.activate_env(str(clone / "python.exe"), {"A": "1"}) == {"A": "1"}
+    again = launcher.activate_env(str(clone / "python.exe"), {"A": "1"})
+    assert set(again) == {"A", "PATH"} and again["A"] == "1"
 
 
 @posix_only

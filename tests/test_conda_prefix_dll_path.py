@@ -86,7 +86,9 @@ def test_delta_mode_for_workerd_spec_carries_only_path(tmp_path, as_windows, mon
     assert delta["PATH"].split(os.pathsep) == [*_expected(prefix), "PARENT"]
 
 
-def test_trusted_prefix_still_activates_and_its_path_is_untouched(tmp_path, as_windows, monkeypatch):
+def test_trusted_prefix_still_activates_and_its_path_is_untouched(
+    tmp_path, as_windows, monkeypatch
+):
     root = tmp_path / "conda 安装"
     prefix = root / "envs" / "mpl"
     (prefix / "conda-meta").mkdir(parents=True)
@@ -109,7 +111,9 @@ def test_trusted_prefix_still_activates_and_its_path_is_untouched(tmp_path, as_w
 def test_non_windows_and_non_conda_and_disabled_are_untouched(tmp_path, monkeypatch):
     prefix = _prefix(tmp_path)
     monkeypatch.setattr(launcher, "_raw_conda_roots", lambda: [])
-    assert launcher.merge_env(None, prefix / "python.exe", {"PATH": "OLD"}) == {"PATH": "OLD"}  # 非 Windows
+    assert launcher.merge_env(None, prefix / "python.exe", {"PATH": "OLD"}) == {
+        "PATH": "OLD"
+    }  # 非 Windows
     monkeypatch.setattr(launcher, "_is_windows", lambda: True)
     plain = tmp_path / "venv"
     plain.mkdir()
