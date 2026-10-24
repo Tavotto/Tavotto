@@ -1469,3 +1469,10 @@ def test_window_probe_only_counts_processes_inside_the_install_dir():
 def test_window_probe_is_deployed_with_the_agent():
     src = (WINLAB / "winlab.py").read_text(encoding="utf-8")
     assert 'HERE / "window_probe.py"' in src
+
+
+def test_conda_legs_expect_the_python_pool_and_others_workerd():
+    # workerd 按设计不接需要 Conda 激活的启动（回退到 Python 渲染池）；其余腿必须真走 workerd
+    src = (WINLAB / "agent.py").read_text(encoding="utf-8")
+    assert '"python" if name.startswith("conda") else "workerd"' in src
+    assert {"conda-prefix", "conda-named"} <= set(re.findall(r'ok\["(conda-[a-z]+)"\]', src))

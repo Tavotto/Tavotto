@@ -3011,7 +3011,8 @@ def run_env_matrix_task(lab: Lab, run_dir: Path, env: dict, package: str) -> dic
                 "--expect-source",
                 expect,
                 "--expect-control-plane",
-                "workerd",
+                # 需要 Conda 激活的解释器 workerd 按设计不接，走 Python 渲染池（用户 10-25 裁决，与 nightly 同）
+                "python" if name.startswith("conda") else "workerd",
                 *extra,
             ]
             step = _run_logged(argv, lab.repo, lenv, run_dir / "evidence" / f"leg-{name}", 900)
