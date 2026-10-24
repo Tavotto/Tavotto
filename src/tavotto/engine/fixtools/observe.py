@@ -10,6 +10,7 @@ import json
 import os
 import time
 from collections import deque
+from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
 from . import readscope
@@ -298,9 +299,30 @@ def grep_files(ctx: FixContext, args: dict) -> ToolResult:
 def _environment_entries(ctx: FixContext) -> list[dict]:
     if ctx.environment_source is not None:
         return list(ctx.environment_source())
-    from .. import userenvs
+    from .. import projectenv, userenvs
 
-    return userenvs.discover(ctx.project_root, ask_login_shell=None)
+    # 项目自己的 venv 排第一（与准备会话 `deprepair.user_environment_candidates` 同一个找法）：`userenvs.discover` 不含它，
+    # 漏掉时 AI 看不见「项目 .venv 只缺一个包」，只会另建受管环境（10-24 真机整链发现）
+    root = str(ctx.project_root)
+    script = None
+    if ctx.script_path is not None:
+        try:
+            script = Path(ctx.script_path).relative_to(ctx.project_root).as_posix()
+        except ValueError:
+            script = None
+    out: list[dict] = []
+    for venv in projectenv.discover(root, script):
+        py = projectenv.interpreter_of(venv, root=root)
+        if py:
+            out.append(
+                {"python": py, "source": userenvs.SOURCE_PROJECT_VENV, "label": Path(venv).name}
+            )
+    seen = {userenvs._key(e["python"]) for e in out}
+    for e in userenvs.discover(root, script, ask_login_shell=None):
+        if userenvs._key(e["python"]) not in seen:
+            seen.add(userenvs._key(e["python"]))
+            out.append(e)
+    return out
 
 
 #: `list_environments` 一次最多列这么多；超出如实报总数（#1361），按 `match` 筛
