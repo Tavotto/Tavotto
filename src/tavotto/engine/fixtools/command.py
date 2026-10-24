@@ -597,6 +597,31 @@ def _attach_job(proc: subprocess.Popen) -> _WinJob | None:
         return None
 
 
+def _group_has_live_members(pgid: int, proc_root: str = "/proc") -> bool | None:
+    """Linux：进程组 `pgid` 里还有没有**能执行**的进程（扫 `/proc/<pid>/stat`，僵尸 `Z` / 已死 `X` 不算）。
+    PID 1 不回收孤儿的容器里，被 SIGKILL 的后台子进程会以僵尸留在组里，`killpg` 永远不报 `ProcessLookupError`——
+    僵尸改不了任何文件，不能当成「还有进程在跑」。没有 `/proc`（macOS 等）回 None，由调用方照旧按 `killpg` 判。"""
+    try:
+        entries = os.listdir(proc_root)
+    except OSError:
+        return None
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            with open(os.path.join(proc_root, name, "stat"), "rb") as fh:
+                raw = fh.read().decode("ascii", "replace")
+        except OSError:
+            continue  # 刚好退出了
+        rest = raw[raw.rfind(")") + 1 :].split()
+        if len(rest) < 3:
+            continue
+        state, pgrp = rest[0], rest[2]
+        if pgrp == str(pgid) and state not in ("Z", "X", "x"):
+            return True
+    return False
+
+
 def _reap_tree(proc: subprocess.Popen, job: _WinJob | None) -> bool:
     """命令的直接进程退出（或被叫停）之后，**结束并确认整个受管进程树退出**，回是否确认干净。
     POSIX：命令在自己的新会话 / 进程组里（`start_new_session`），`killpg(SIGKILL)` 到组里一个都不剩（`ProcessLookupError`）才算；
@@ -625,6 +650,8 @@ def _reap_tree(proc: subprocess.Popen, job: _WinJob | None) -> bool:
             return True  # 组里一个都不剩
         except OSError:
             return False
+        if _group_has_live_members(proc.pid) is False:
+            return True  # 组里只剩僵尸（不回收孤儿的容器）：没有能再改文件的进程了
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.02)

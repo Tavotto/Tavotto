@@ -1046,3 +1046,47 @@ def test_the_snapshot_covers_every_environment_the_command_may_write(box):
     assert {"e", "new"} <= set(doc["envs"])
     assert any(k.startswith("cmd_env_") for k in doc["envs"])  # 没登记过 id 的前缀现场登记
     assert len(doc["envs"]) == 3
+
+
+def _fake_proc(tmp_path, procs):
+    root = tmp_path / "proc"
+    for pid, (comm, state, ppid, pgrp) in procs.items():
+        d = root / str(pid)
+        d.mkdir(parents=True)
+        (d / "stat").write_bytes(f"{pid} ({comm}) {state} {ppid} {pgrp} {pgrp} 0 -1 0".encode())
+    (root / "self").mkdir()
+    return str(root)
+
+
+def test_a_group_holding_only_zombies_has_no_live_members(tmp_path):
+    """PID 1 不回收孤儿的容器：被杀的后台子进程以僵尸留在组里，不能算「还有进程在跑」（Codex #1393）。"""
+    root = _fake_proc(
+        tmp_path,
+        {
+            500: ("python3", "Z", 1, 400),
+            501: ("odd ) name", "Z", 1, 400),
+            900: ("bash", "S", 1, 900),
+        },
+    )
+    assert command._group_has_live_members(400, root) is False
+    root2 = _fake_proc(tmp_path / "b", {500: ("python3", "S", 1, 400)})
+    assert command._group_has_live_members(400, root2) is True
+    assert command._group_has_live_members(400, str(tmp_path / "nope")) is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 进程组")
+def test_reap_tree_returns_once_only_zombies_remain(monkeypatch):
+    """killpg 一直成功（组里留着僵尸）时不空等到时限、也不误报 processes_left。"""
+    calls = []
+    monkeypatch.setattr(command.os, "killpg", lambda pgid, sig: calls.append(pgid))
+    monkeypatch.setattr(command, "_group_has_live_members", lambda pgid, proc_root="/proc": False)
+
+    class P:
+        pid = 4242
+
+        def poll(self):
+            return 0
+
+    t = time.monotonic()
+    assert command._reap_tree(P(), None) is True
+    assert time.monotonic() - t < 1.0 and calls == [4242]
