@@ -119,6 +119,18 @@ python3 scripts/winlab/winlab.py status | reports [--id RUN] | clean --keep 20 |
 真正的边界在服务器端：`tavotto-lab` 的钥匙被 `ForceCommand` 锁在 agent 上，就算放行规则写宽了
 也拿不到 shell。云端 Claude 会话没有本机密钥，用不了 Lab。
 
+### 安装包验收
+
+```sh
+# Mac：核散列后送进 Lab 的 cache\packages\（管理员 scp；同名 .sha256 一起送，Lab 端执行前再核一次）
+python3 scripts/winlab/winlab.py test installer --package <新包>.exe [--from <旧包>.exe] --ref <新包的源码提交>
+```
+
+检查与 nightly `windows-install` 同一组（`scripts/winlab/installer-check.ps1`，nightly 是权威），另加升级保留
+用户数据与卸载干净。**`--ref` 要指向与安装包同源的提交**：冒烟用的是仓库里的 `scripts/smoke_app.py`，新脚本会
+调旧 sidecar 不认识的参数（0.18.0 不认 `--ssl-selftest`，2026-10-24 实测）。源码在不可信分支（如带他人
+cherry-pick 的 beta 分支）上时用 main 的冒烟脚本，报告的 `commit` 如实记下。
+
 ### 真实模型调用（L4/L5）
 
 只用国内合规的 Anthropic 兼容接口（当前登记 DeepSeek）；Lab 在中国大陆，Anthropic / OpenAI 不在这里调。
@@ -147,7 +159,7 @@ python3 scripts/winlab/winlab.py admin snapshot --name tavotto-winlab-golden-YYY
 - **Regression**：在 `tavotto-lab` 账户里跑已审查的回归用例（`render-roundtrip` / `pytest`）。
 - **Fresh**：每个 run 的 `TAVOTTO_DATA_DIR` / `MPLCONFIGDIR` / `TEMP` 都在新建的 run 目录下；
   这只是「全新的 Tavotto 配置」，**不是**全新的 Windows——系统、已装软件、注册表都还是那一份。
-- **Upgrade**：保留 `profiles\` 里的旧版程序与项目状态再装新版。安装包任务尚未登记（见验收记录）。
+- **Upgrade**：`test installer --from <旧包>`：先装旧包、冒烟、在应用数据里放标记，再装新包，核版本号变化与标记仍在。
 
 需要真正的全新 Windows（首次启动、无 Python、用户名含中文……）仍以 nightly `windows-install` 矩阵与
 一次性 VM 为准。

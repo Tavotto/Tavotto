@@ -74,7 +74,7 @@
 | `render-roundtrip`（真渲染 + PDF/SVG/PNG 导出 + 保存重载 + MCP 往返，9 个文件） | skipped（按闭集记 NOT TESTED；0 失败） | run `20261024T073541Z-3c0f2b`：366 条，359 passed / 0 failed / 7 skipped，804 s。7 条 skip 都是用例按平台设计的（2 条 POSIX 专属语义、2 条 Windows 默认不许普通用户建符号链接、3 条 POSIX 权限位）；按闭集 skip 不算 PASS |
 | 首轮暴露的问题 | — | run `20261024T072957Z-18fef6`：46 failed。① 新加的 `scripts/winlab/*.py` 没钉 UTF-8 输出——`test_windows_regressions` 在真 cp936 上抓到，已修；② venv 少装 matplotlib（CI 在 `[dev]` 之外单独装）——Lab 配方问题，已按 CI 补齐 |
 | 后端全量分片 `--shard 1/8`（CI 同口径：`-rs -vv --durations=50` + 900 s 挂死看门狗） | FAIL | run `20261024T092639Z-ea46b3`：3693 条，3610 passed / 13 failed（8 个用例，含子测试）/ 70 skipped，4296 s。定性见下 |
-| 安装包静默安装 / 升级 | NOT TESTED | 安装包任务未登记（需要 release 产物的下载路径；GitHub release 资产在这台机器上取不到） |
+| 安装包静默安装 / 升级 / 卸载 | PASS | 见 F 节：b4 全新 21/21、b3→b4 升级 32/32、v0.18.0 全新 21/21 |
 | 测试报告可重现 | PASS | 每次 run 一份 `report.json`（提交 SHA、环境事实、证据 sha256），`reports --id` 可取回 |
 | 卡住任务可结束 | PASS | 见 A 节「单任务锁」：`stop` 实机结束整棵进程树并释放锁 |
 | 工作区安全清理 | PASS | 不跟随 junction / 符号链接、父目录校验、跳过活动 run 都有用例；实机 `clean --keep 6` 删 4 个最旧 run 目录、报告 JSON 全留 |
@@ -122,6 +122,39 @@
   时有一轮因此没走完。值得在 MCP 侧给模型调用一个有界摘要（`apply_overrides` 已有 `summary=true`）。
 - **出版预检会挡住导出**（正确行为）：测试图 88.9 mm 宽不合默认规范，场景里明确写了「用户已确认」才带 `explicit_confirm`。
 - 重新 `tavotto_open_figure` 是**新会话**（从脚本原样开始）；「保存后重开」是凭 `session_id` 恢复。
+
+## F. 最新包验收与 issue 对照（2026-10-24）
+
+包：beta **0.19.0b4**（source `163bab5a7`，只在本机归档、未发布到 GitHub）、beta 0.19.0b3、正式版 **v0.18.0**
+（GitHub release）。Mac 按归档 / release 的 `SHA256SUMS` 核过再送进 Lab，Lab 执行前再核一次。
+`test installer`（`scripts/winlab/installer-check.ps1`，与 nightly `windows-install` 同一组检查）：
+
+| run | 包 | 结论 | 说明 |
+| --- | --- | --- | --- |
+| `20261024T125822Z-94e117` | b4 全新 | PASS 21/21 | 注册表安装位置、sidecar + 内置 runtime + workerd + AGPL、壳→sidecar、杀壳后 sidecar 15 s 内跟随退出、内置 runtime 冒烟（`--expect-source bundled --expect-control-plane workerd` + 全科学栈）、覆盖安装再冒烟、卸载后注册表干净 |
+| `20261024T131211Z-5b0382` | b3 → b4 升级 | PASS 32/32 | 另证 `0.19.0-beta.3 → 0.19.0-beta.4`、应用数据里的标记跨升级保留 |
+| `20261024T131735Z-2e770b` | v0.18.0 全新（`--ref v0.18.0`） | PASS 21/21 | 用 main 的冒烟脚本时失败：它调 0.18.0 不认识的 `--ssl-selftest`（run `…131458Z-cbe649`）——冒烟脚本要与包同源，已写进运维手册 |
+
+开荒期间顺带确认：SSH 会话（session 0、无交互桌面）里壳也能起 WebView 并拉起 sidecar（sidecar 日志里有前端发出的
+`/api/projects`、`/api/engine/environment` 请求），渲染解释器为内置 runtime。
+
+**issue 对照**（pytest 两轮：run `20261024T122601Z-b8a167` 422 条、`20261024T131959Z-c66fd8` 237 条；Lab 是非管理员、cp936、Defender 开）：
+
+| issue | 在 Lab 上 | 结论 |
+| --- | --- | --- |
+| #35 Windows 安装 / 升级链路 | 静默安装、升级、覆盖、卸载 | PASS（安装界面那几屏与 SmartScreen、Win10/11 客户端仍未验） |
+| #1331 布局会话并发写丢条目 | `test_layout_session` 两轮 | 两轮均通过（flaky 类，未复现，不代表已修） |
+| #1122 / #603 渲染子进程预算 / 超时恢复 | `test_rendercore_renderchild` 两轮 | 两轮均通过（未复现） |
+| #1310 / #1198 AI 会话 / 历史库并发 `database is locked` | `test_ai_session_rev` / `test_ai_history` 两轮 | 两轮均通过（未复现） |
+| #1112 跨进程会话锁 c34 负载饿死 | `test_layout_recovery_backend` | c34 两轮通过；同文件的 `test_a15` 因非管理员无符号链接特权失败（下条） |
+| #1123 package_smoke 回退实例 | `test_package_smoke` 两轮 | **复现到相邻问题**：`test_termination_leaves_neither_the_server_nor_its_worker` 两轮都红——期望 `taskkill`，实际 `taskkill` 返回 1、退到 `terminate`；与本 PR 执行器早先撞到的「非管理员会话里 `taskkill /T` 不可靠」同一现象 |
+| #1264 / #1150 文件身份（大小写 / 硬链接 / Unicode） | `test_capture_saved_facts_identity` / `test_export_identity` / `test_override_identity` | 通过，唯 `test_two_symlinks_are_two_entries_not_normalization` 因无符号链接特权失败 |
+| #1213 versionstore | `test_versionstore` | 通过（LongPaths=0） |
+| #1256 Guardian data_source（中文文件名） | `test_compat_guardian_families` | 通过（cp936） |
+| #1294 自动采用用户 Python | `test_environment_adoption` | 通过（Lab 的 Python 3.13 作用户 Python） |
+| 非管理员 Windows（新发现） | 三条用例需要符号链接特权 | **CI 盲区**：hosted windows-latest 是管理员；`test_a15…`、`test_two_symlinks…`、`test_qa_first_open…` 在非管理员下失败 |
+| 需要真窗口的项（#276 #1071 #1387 #1320 #1315 #1308 #1306 #1304 #1301 #82） | — | NOT TESTED：需要交互会话执行器（尚无） |
+| Win10 / Win11 / ARM / Anthropic 真模型（#1200 #1392 等） | — | 这台机器做不到 |
 
 ## E. 安全与仓库
 
