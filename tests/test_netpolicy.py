@@ -294,3 +294,14 @@ def test_a_hostname_resolving_to_a_metadata_address_is_refused(monkeypatch):
     assert wires.check_base_url("http://100.100.100.201") is None
     assert wires.check_base_url("http://[fd00:ec2::255]") is None
     assert wires.check_base_url("http://100.64.0.1") is None
+
+
+@pytest.mark.parametrize("name", METADATA_NAMES)
+def test_metadata_hostnames_stay_refused_even_if_dns_says_private(monkeypatch, name):
+    monkeypatch.setattr(netpolicy, "resolve_host", lambda host: ["10.0.0.5"])
+    url = f"http://{name}/x"
+    assert wires.check_base_url(url) == "base_url_scheme"
+    with pytest.raises(ValueError):
+        netpolicy.pin_url(url)
+    with pytest.raises(ValueError):
+        netpolicy.pinned_connection(url, 1)
