@@ -69,11 +69,17 @@ def test_all_three_writing_styles_capture_one_stem_per_page(tmp_path, source):
     assert stems_of(resp) == ["all_samples", "all_samples-2", "all_samples-3"]
     assert {v["source"] for v in resp["stems"].values()} == {"pyplot"}
     (summary,) = resp["pdf_pages"]
+    stems = ["all_samples", "all_samples-2", "all_samples-3"]
+    # PR2 起摘要还带目的地 / 页序 stem / 完整性（safe 档脚本跑在沙盒里：scope=execution）
     assert summary == {
         "name": "all_samples.pdf",
         "pages": 3,
         "captured": 3,
-        "stems": ["all_samples", "all_samples-2", "all_samples-3"],
+        "stems": stems,
+        "path": "all_samples.pdf",
+        "scope": "execution",
+        "page_stems": stems,
+        "complete": True,
     }
 
 
@@ -98,7 +104,14 @@ plt.close(fig)
     write(tmp_path / "figs", "repro.py", src)
     resp = desktop_build(tmp_path / "figs", "repro.py")
     assert stems_of(resp) == ["one"]
-    assert resp["pdf_pages"] == [{"name": "one.pdf", "pages": 4, "captured": 1, "stems": ["one"]}]
+    (summary,) = resp["pdf_pages"]
+    assert (summary["name"], summary["pages"], summary["captured"], summary["stems"]) == (
+        "one.pdf",
+        4,
+        1,
+        ["one"],
+    )
+    assert summary["page_stems"] == ["one"] * 4  # 同一张图写 4 页：stem 重复，页序保留
 
 
 def test_ledger_limit_counts_the_rest_and_says_so():
@@ -196,7 +209,10 @@ plt.close(fig)
     resp = desktop_build(tmp_path / "figs", "repro.py")
     assert stems_of(resp) == ["single"]
     assert resp["stems"]["single"]["source"] == "savefig"
-    assert "pdf_pages" not in resp
+    # 这份 PDF 的图都已被 savefig 认领：`captured == 0`（界面那句话不提它），但摘要里仍有它——写回守卫要知道所有 PdfPages 写过的路径
+    (summary,) = resp["pdf_pages"]
+    assert (summary["captured"], summary["stems"], summary["page_stems"]) == (0, [], ["single"])
+    assert (summary["path"], summary["pages"]) == ("deck.pdf", 1)
 
 
 def test_failed_page_write_is_not_recorded(tmp_path):
@@ -294,7 +310,17 @@ def test_more_pdfs_than_the_file_limit_report_the_omitted_ones():
     assert ledger.omitted == 1
     summary = ledger.summary()
     assert sum(item.get("omitted", 0) for item in summary) == 1
-    assert summary[-1] == {"name": None, "pages": 1, "captured": 0, "stems": [], "omitted": 1}
+    assert summary[-1] == {
+        "name": None,
+        "pages": 1,
+        "captured": 0,
+        "stems": [],
+        "path": None,
+        "scope": "unresolved",
+        "page_stems": [],
+        "complete": False,
+        "omitted": 1,
+    }
 
 
 def test_probe_result_carries_pdf_pages(tmp_path):
@@ -313,13 +339,18 @@ def test_probe_result_carries_pdf_pages(tmp_path):
     finally:
         engine_pool.shutdown_all(str(figs), wait=True)
     assert result["error"] is None
-    assert result["pdf_pages"] == [
-        {
-            "name": "all_samples.pdf",
-            "pages": 3,
-            "captured": 3,
-            "stems": ["all_samples", "all_samples-2", "all_samples-3"],
-        }
-    ]
+    (summary,) = result["pdf_pages"]
+    stems = ["all_samples", "all_samples-2", "all_samples-3"]
+    assert (summary["name"], summary["pages"], summary["captured"], summary["stems"]) == (
+        "all_samples.pdf",
+        3,
+        3,
+        stems,
+    )
+    assert (summary["path"], summary["page_stems"], summary["complete"]) == (
+        "all_samples.pdf",
+        stems,
+        True,
+    )
     # 没写多页 PDF 的脚本：字段不出现
     assert "pdf_pages" not in plain

@@ -1437,7 +1437,7 @@ class Worker(wireproto.V1Handler):
         figcapture.adopt_pdf_pages(
             self.session.capture, self.session.capture_source, _PDF_PAGES, self.script.stem
         )
-        self.pdf_pages = _PDF_PAGES.summary()
+        self.pdf_pages = _PDF_PAGES.summary(self.session.savefig_observations)
         _plt = sys.modules.get("matplotlib.pyplot")
         if _plt is not None:
             fallback, dropped = figcapture.collect_pyplot_figures(

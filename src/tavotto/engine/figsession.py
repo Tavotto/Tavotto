@@ -1291,8 +1291,12 @@ class LiveFigureSession:
         if self.artifact_source is None:
             return
         row = self.savefig_observations.observation(observation)
-        if row is None or row["destination"]["scope"] not in ("project", "execution"):
-            return
+        if (
+            row is None
+            or "pdf_page" in row
+            or row["destination"]["scope"] not in ("project", "execution")
+        ):
+            return  # PdfPages 的一页不是这张图的 savefig，多页 PDF 也不是单图来源（#1370）
         destination = row["destination"]["path"]
         selected = self.artifact_source["source_id"]
         if destination != selected:

@@ -103,6 +103,7 @@ def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dic
                 manifests[stem] = manifest
                 obs["stems"][stem] = {"titles": _titles(manifest)}
             obs["savefig_calls"] = _savefig_calls(worker)
+            obs["pdf_pages"] = _pdf_pages(worker)
             if deep:
                 _observe_deep(obs, worker, manifests, deep, project, script, entry)
         finally:
@@ -111,6 +112,16 @@ def tavotto_observe(project: Path, script: str, deep: dict | None = None) -> dic
         code = getattr(exc, "code", None) or type(exc).__name__
         obs["error"] = {"code": str(code), "message": str(exc)[:300]}
     return obs
+
+
+def _pdf_pages(worker) -> list[dict]:
+    """The pages the product recorded for each PDF the script wrote through `PdfPages` (#1370 PR2): `[{path, pages}]`,
+    straight from the build response's `pdf_pages` summary — the same fact the write-back guard reads."""
+    return [
+        {"path": p.get("path"), "pages": int(p.get("pages") or 0)}
+        for p in getattr(worker, "last_build_pdf_pages", None) or []
+        if isinstance(p, dict)
+    ]
 
 
 def _savefig_calls(worker) -> dict:
@@ -201,10 +212,12 @@ def output_call_differences(chain: list[str], nat: dict, tavotto: dict) -> list[
     * `multi_format`: every format the script wrote for a stem must be among the savefig formats
       the product recorded for that stem (`format_set_mismatch`);
     * `pdfpages`: the pages of the PDF the script wrote must equal the pdf saves the product
-      recorded (`page_count_mismatch`; `PdfPages.savefig` is not a recorded savefig, so today the
-      product knows 0 pages — a real, registered gap, not a template artefact). Since #1370 PR1 the
-      figures written to a PdfPages are captured (stem = the PDF's file name) but their pages are
-      still not recorded: writing the edits back as a multi-page PDF ("A") is not done yet.
+      recorded (`page_count_mismatch`). `PdfPages.savefig` is not a recorded savefig call, so the
+      product's page count is the pdf `savefig_calls` plus the pages of the `PdfPages` files it
+      recorded itself (#1370 PR2: each page is an occurrence of that PDF's path, summarised in
+      `pdf_pages`); before PR2 the product knew 0 pages. Writing the edits back as a multi-page PDF
+      ("A") is deliberately refused (the guard sends the user to export), so the page count is a
+      fact about the capture, not a promise of write-back.
 
     A stem whose calls the product did not observe is skipped here (`zero_figures` etc. cover it).
     """
@@ -227,6 +240,7 @@ def output_call_differences(chain: list[str], nat: dict, tavotto: dict) -> list[
                 )
     if "pdfpages" in chain and nat["pdf_pages"] > 1:
         pages = sum(1 for calls in seen.values() for f in calls if f and str(f).lower() == "pdf")
+        pages += sum(int(p.get("pages") or 0) for p in tavotto.get("pdf_pages") or [])
         if pages != nat["pdf_pages"]:
             diffs.append(
                 _diff(

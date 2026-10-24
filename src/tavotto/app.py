@@ -8060,6 +8060,43 @@ class WriteBackForeignFileError(WriteBackFormatError):
         self.name = name
 
 
+class WriteBackMultipagePdfError(WriteBackForeignFileError):
+    """要写的文件是这次运行里脚本用 `PdfPages` 写的 PDF（多页 PDF 不是任何一张图的 savefig 原件，#1370）。
+    写回只会把**一张图**刻进去：覆盖它等于丢掉其余各页。对所有 stem 一视同仁地拒绝（包括认领了它某一页的那些
+    stem），原件零改动；是 `WriteBackForeignFileError` 的子类，响应在 `_write_back_error_response` 里先于父类判。"""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        RuntimeError.__init__(self, f"{name} 是脚本用 PdfPages 写的 PDF，写回不会覆盖它；请用导出")
+
+
+def _pdf_pages_paths(worker, root: Path) -> set[str]:
+    """这次运行里脚本用 `PdfPages` 写的那些文件在项目里的位置（绝对路径，已 normcase）。来源是 build 响应的 `pdf_pages`
+    摘要（`figcapture.PdfPagesLedger.summary`）。`scope` 为 `project` 与 `execution` 的相对路径都认：safe 档默认把脚本
+    放在沙盒目录里跑，PdfPages 写进的是沙盒（`execution`），但用户自己在终端里跑同一份脚本，写出的就是项目里**同一个
+    相对路径**——那份文件才是写回会碰到的东西（找原件也是按项目目录里的名字找，`find_original_artifact`）。
+    `unresolved`（根外路径 / 没有后缀的目的地）不外发路径，也就没有可核对的位置。
+
+    不看页数：只写了 1 页的 `PdfPages` 同样不是任何图的 savefig 原件，覆盖它抹掉的是脚本的整份输出，一并拒绝。
+    """
+    out = set()
+    for item in getattr(worker, "last_build_pdf_pages", None) or []:
+        if not isinstance(item, dict) or item.get("scope") not in ("project", "execution"):
+            continue
+        if not item.get("path"):
+            continue
+        out.add(os.path.normcase(os.path.abspath(root / str(item["path"]))))
+    return out
+
+
+def _refuse_pdf_pages_source(worker, src: Path) -> None:
+    """热会话的 build 已经知道 `src` 是 `PdfPages` 写的就在这里拒绝——不必先起一次性 worker 把脚本全量重跑一遍
+    （重放后的 `_own_write_back_targets` 是同一条规则的第二道，覆盖热会话没有这份摘要的情形）。"""
+    root = Path(getattr(worker, "figures_dir", None) or src.parent)
+    if os.path.normcase(os.path.abspath(src)) in _pdf_pages_paths(worker, root):
+        raise WriteBackMultipagePdfError(src.name)
+
+
 def _own_write_back_targets(worker, stem: str, src: Path, targets: list[Path]) -> list[Path]:
     """写回目标里去掉**另一张捕获图**的原件（它在这次运行里写的文件，热会话的 build 描述符）。
 
@@ -8072,12 +8109,20 @@ def _own_write_back_targets(worker, stem: str, src: Path, targets: list[Path]) -
         if d.get("stem") != stem and art:
             foreign.add(os.path.normcase(os.path.abspath(root / art)))
 
+    pdf_pages = _pdf_pages_paths(worker, root)
+
     def is_foreign(p: Path) -> bool:
         return os.path.normcase(os.path.abspath(p)) in foreign
 
+    def is_pdf_pages(p: Path) -> bool:
+        return os.path.normcase(os.path.abspath(p)) in pdf_pages
+
+    if is_pdf_pages(src):
+        # 先于「别的图的原件」判：这条要引导去导出，不是「换个图」
+        raise WriteBackMultipagePdfError(src.name)
     if is_foreign(src):
         raise WriteBackForeignFileError(src.name)
-    return [p for p in targets if not is_foreign(p)]
+    return [p for p in targets if not is_foreign(p) and not is_pdf_pages(p)]
 
 
 def _write_back_format_error(src: Path) -> WriteBackFormatError | None:
@@ -8550,6 +8595,7 @@ def _write_source_files(
         # 唯一的扼流点：调用方忘了早检，也绝不「零个目标、报成功、记基线」
         raise fmt_err
     _write_back_prepare(src, worker, expected_mtime)
+    _refuse_pdf_pages_source(worker, src)
 
     targets = [p for p in (src.with_suffix(ext) for ext in WRITE_BACK_EXT) if p.exists()]
     man_hot = _hot_manifest(worker, stem, patches)
@@ -8811,6 +8857,14 @@ def _write_back_error_response(exc):
                 "updated": exc.updated,
                 "rolled_back": exc.rolled_back,
                 "rollback_failed": exc.rollback_failed,
+            }
+        ), 409
+    if isinstance(exc, WriteBackMultipagePdfError):
+        return jsonify(
+            {
+                "error": str(exc),
+                "code": "write_back_multipage_pdf",
+                "params": {"file": exc.name},
             }
         ), 409
     if isinstance(exc, WriteBackForeignFileError):

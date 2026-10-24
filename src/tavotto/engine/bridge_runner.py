@@ -1060,7 +1060,7 @@ class BridgeRun:
     def build_result(self) -> dict:
         self._ensure_session()
         _resolve_module_source(self.args)
-        out = self.session.stems_summary(_DROPPED)
+        out = self.session.stems_summary(_DROPPED, _PDF_PAGES.summary(_SAVEFIG_OBSERVATIONS))
         out["savefig_observations"] = _SAVEFIG_OBSERVATIONS.report()
         # 逐图的实际完成事实（P08a）：活图 / 失败图 / 只读原件各自声明，不由一个总成功数代替
         facts = self.session.figure_facts(_SAVEFIG_OBSERVATIONS)
@@ -1599,7 +1599,7 @@ def _write_report(run, args, exit_code: int) -> None:
         "rel_target": args.rel_target,
         "figures": [{"stem": s, "capture_source": _CAPTURE_SOURCE[s]} for s in _CAPTURE],
         "dropped_figures": _DROPPED,
-        "pdf_pages": _PDF_PAGES.summary(),
+        "pdf_pages": _PDF_PAGES.summary(_SAVEFIG_OBSERVATIONS),
         "savefig_observations": _SAVEFIG_OBSERVATIONS.report(),
         "script_error": run.script_error,
         "engine_dir_was_on_sys_path": _ENGINE_DIR_WAS_ON_PATH,

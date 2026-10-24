@@ -56,6 +56,27 @@ native 原保存只调用一次，返回值 / 异常不变；引擎自己的预�
 尺寸/DPI 只读受信任标准 Figure/Bbox/数组的原始数字存储，不调用用户 getter。自定义 Figure、
 被替换/遮蔽的元数据 getter 或未知数值仍记 occurrence/身份/result，元数据为 null 且 complete=false。
 
+## 补充（2026-10-24，#1370）：PdfPages：一个路径、多次 occurrence、带页号
+
+只增补，不改上面任何条款。`pdf.savefig(fig)` 最终是 `fig.savefig(<PdfPages>, format="pdf")`，第一个参数不是路径，
+所以原条款（stream 不算磁盘产物）不记它。多页 PDF 是一份真实的磁盘产物，且写回会碰到它，因此补：
+
+- **一页 = 那份 PDF 路径的一次 occurrence**，记录多一个 `pdf_page`（这份 PDF 的第几次写入，从 1 起；只有 PdfPages 的记录有这个键），
+  `stem` 恒 `null`（它不是某个 savefig 的 stem），`options.format` 恒 `pdf`，`backend` 恒 `default`（PdfPages 自己传 `backend="pdf"`，
+  不是用户换了后端）。occurrence 与 savefig 的记录共用一条递增序号。
+- **目的地规则一字不改**：`_destination` 同一份——按调用当刻的 cwd，scope 取 `project` / `execution` / `unresolved`，
+  根外路径不外发、不把 basename 当身份。同一份 PDF 的目的地以**第一页**为准（matplotlib 在第一次 savefig 才真正打开文件）。
+  缓冲区目标（没有文件名）仍不记。
+- **结果语义照旧**：safe 补 `intercepted`，native 补 `saved` / `failed`（异常原样透传），记录在真写之前建。
+- **页的预算与 savefig 的 128 分开**（上限 = `MAX_PDF_PAGES_LEDGER`）：一份几十页的 PDF 不能把别的图的观察挤成 `complete=false`
+  （`complete` / `observed_count` 只管 savefig 自己的）；超出的页只让这份 PDF 的摘要 `complete=false`。
+- **不是原件**：`saved_originals`（只读降级依据）与 `note_artifact`（选中产物匹配）都不认 `pdf_page` 记录，也不对它算内容摘要。
+  多页 PDF 不是任何一张图的 savefig 原件，写回对它一律拒绝（409 `write_back_multipage_pdf`，引导去导出）。
+- **协议**：build 响应 / 探测结果里 PR1 已有的 `pdf_pages` 项加 `path` / `scope` / `page_stems`（按页序，同一张图写多页时重复）/ `complete`；
+  加字段，不升协议版本（ADR 0003 §1）。stem 取法与描述符都没变，`DESCRIPTOR_VERSION` 不再升。
+
+看护 `tests/test_pdfpages_record_pages.py`（safe / 浏览器 / 写回守卫）、`tests/bridge/test_bridge_pdfpages_pages.py`（native）。
+
 ## 后续启用的门槛
 
 1. 验证选中的真实产物路径与保存记录；不完整或无法确认的来源必须说明，不能猜
