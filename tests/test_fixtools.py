@@ -1670,3 +1670,24 @@ def test_site_initialization_runs_under_the_guard(box, monkeypatch):
     res = trial.run_python(vpy, code="print('ok')", timeout=60, session_id="s1")
     assert outside.read_bytes() == b"ORIGINAL"
     assert res.get("status") == "ok" and res.get("blocked_writes"), res
+
+
+def test_list_environments_default_includes_project_venv(box, monkeypatch):
+    """缺省环境来源要含项目自己的 venv（`userenvs.discover` 不含它）；排在机器级候选之前、不重复（10-24 真机整链发现）。"""
+    from tavotto.engine import userenvs
+
+    venv_py = put(
+        box.proj / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python"), ""
+    )
+    if os.name != "nt":
+        venv_py.chmod(0o755)
+    put(box.proj / ".venv" / "pyvenv.cfg", "home = /usr/bin\n")
+    other = {"python": sys.executable, "source": "conda", "label": "base"}
+    dup = {"python": str(venv_py), "source": "vscode", "label": ""}
+    monkeypatch.setattr(userenvs, "discover", lambda *a, **k: [dup, other])
+    ctx = make_ctx(box, script_path=put(box.proj / "fig.py", "print(1)\n"))
+    from tavotto.engine.fixtools import observe
+
+    got = observe._environment_entries(ctx)
+    assert [e["source"] for e in got] == ["project_venv", "conda"]
+    assert os.path.normcase(got[0]["python"]) == os.path.normcase(str(venv_py))
