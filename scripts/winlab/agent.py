@@ -1259,7 +1259,8 @@ def run_hosts_live_task(lab: Lab, run_dir: Path, env: dict, secret: dict) -> dic
             "stream-json",
             "--verbose",
             "--max-turns",
-            "16",
+            # Tavotto 的 open 结果超过 Claude Code 单次 MCP 结果上限时会被转存成文件，模型要多花几轮去读
+            "30",
             "--allowedTools",
             "mcp__tavotto",
         ]
