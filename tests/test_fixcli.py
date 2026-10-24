@@ -36,6 +36,15 @@ def box(tmp_path, monkeypatch):
     return type("Box", (), {"home": home, "proj": proj, "tmp": tmp_path})
 
 
+def _tomllib():
+    """TOML 解析器：3.11+ 用标准库 `tomllib`；3.10 用 `tomli`（同一份实现），都没有就跳过。"""
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        return pytest.importorskip("tomli")
+    return tomllib
+
+
 def fake_resolution(monkeypatch, agent_id: str):
     cli = f"/fake/bin/{agent_id}"
     res = ai_agents.Resolution(
@@ -243,7 +252,7 @@ def test_prompt_is_the_same_text_as_the_builtin_loop_plus_a_cli_note(box):
     ],
 )
 def test_toml_strings_round_trip_through_tomllib(text):
-    import tomllib
+    tomllib = _tomllib()
 
     assert tomllib.loads(f"v = {ai_agents.toml_value(text)}")["v"] == text
     assert tomllib.loads(f"v = {ai_agents.toml_value([text, text])}")["v"] == [text, text]
@@ -252,7 +261,7 @@ def test_toml_strings_round_trip_through_tomllib(text):
 def test_codex_overrides_for_an_emoji_windows_path_parse_back(box, monkeypatch):
     from dataclasses import replace
 
-    import tomllib
+    tomllib = _tomllib()
 
     weird = "C:\\Users\\张三\\🧪 proj\\tavotto-cli.exe"
     fake_resolution(monkeypatch, "codex")
