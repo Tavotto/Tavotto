@@ -47,13 +47,27 @@ CLI 的写入面（任意 shell、网络、绝对路径写）也比「改一个�
 1. 订阅类连接（ChatGPT / Claude 的官方登录）→ 对应 CLI；
 2. Key 类连接：该连接家族的 CLI 装着且可用，并且 `ai.builtin_default` 不为 true → CLI + 注入 provider（现状）；否则 → 内置执行器。没装任何 CLI 的用户因此直接可用；
 3. `ai.builtin_default` 默认 false，**FigureBench 跑分不差于 Claude Code 之后改 true**；运维开关 `TAVOTTO_AI_BUILTIN=0|1` 强制；
-4. 账号登录（Bearer 令牌）类只走 CLI；内置循环不能用的记录（明文 http 网关、缺型号）退回可用的 CLI。
+4. 账号登录（OAuth 访问令牌，如 MiniMax）类：装了 CLI 就走 CLI（凭据由我们注入，不看 CLI 自己的官方登录）；没装则走内置执行器，
+   anthropic wire 只发 `Authorization: Bearer`（`--auth bearer`，不发 `x-api-key`），令牌在 spawn 之前由 `ai_oauth.ensure_fresh` 刷新、只进子进程环境变量。
+   内置循环不能用的记录（缺型号、非回环的明文 http 网关）退回可用的 CLI。
+5. 明文 http 只放本机回环（`http://127.0.0.1`、`http://localhost`、`http://[::1]`，含端口）；其余 http 一律拒绝。判据只在 `agent_runner.wires.check_base_url`，
+   连接时**不按 URL 里的主机解析**（一律直连字面量回环 IP），所以 DNS 重绑定到不了别处。
 
 AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可用的 Key 连接。
 
 ### 六、仍然不做
 
-转换任务（`convert_to_editable`）经内置执行器——它的 `check` 回调还没有注入方（`convert` + `builtin` 直接拒绝）；流式回复；默认开启（`builtin_default` 先 false）。
+流式回复；默认开启（`builtin_default` 先 false）。
+
+### 七、转换任务与思考强度（2026-10-25 用户裁决）
+
+* **转换任务走内置执行器**：`--task convert_to_editable --target <候选里的原脚本副本> --output <原名>_matplotlib.py --check-ipc`。`check` 工具经 stdout/stdin
+  回调父进程——runner 发 `check_request`，`ai_bridge` 在候选工作区里跑 ADR 0143 的同一套校验（`ai_convert.agent_check`：新文件在不在 → 语法 → 静态用了 Matplotlib →
+  `run_validation` 真跑，写入根只有候选目录），把 `{ok, report}` 写回 runner 的 stdin；提示词因此是 stdin 的第一行 JSON。其余（候选 / 提交前检查 / 修正 / 留存待采用 / adopt）
+  与 CLI 路径是同一条流水，ADR 0143 一条不放松：原脚本永远不可写、只新建一个文件、R / MATLAB 来源同样可走。
+* **思考强度**：目录声明哪里确认支持——行级 `efforts` 或顶层 `effort_origins`（现有官方 Anthropic `low/medium/high/max`、官方 OpenAI `low/medium/high`）；`ai_catalog.efforts_for` 是唯一出处。
+  内置路由的连接才给 `efforts`（默认 `medium`），其余（含所有第三方网关）为空；改图请求带 effort 也只在目录确认支持时才传给 runner
+  （anthropic：`output_config.effort` + `thinking:{type:adaptive}`；Responses：`reasoning.effort`，无 max 档）——宁可不发，也不发对方不认的字段。
 
 ## 后果
 

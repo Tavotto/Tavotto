@@ -383,8 +383,8 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   系统提示与最后一个工具定义带 `cache_control: ephemeral`）、`openai-chat`（`{base}/chat/completions`）、`openai-responses`
   （`{base}/responses`，`store: false`）、`demo`（剧本回放，不联网，端到端测试用）。anthropic 的思考由**调用方声明** `--thinking {adaptive,budget,none}`（默认 `none`，runner 不猜：第三方兼容网关各不相同）：`adaptive` 发 `thinking:{type:adaptive}` + 有 effort 才发 `output_config.effort`（新模型，不发已弃用的 `budget_tokens`）；`budget` 发旧式 `budget_tokens`（必须配 `--effort low|medium|high|max`，`max` 映射到 high 档；缺省 effort 起跑即 `internal/bad_args`、0 次请求，不静默不发 thinking）；`none` 都不发。thinking 块按原样回放，不做 assistant prefill，工具参数一律 `json.loads`。openai-responses 只在给了 `--effort` 时传 `reasoning.effort`。`--wire openai-responses` 配 `--effort max` 起跑即 `internal/bad_args`、0 次请求（Responses 没有 max 档，不静默不发 reasoning）。
   系统提示 + 工具定义在请求最前且逐字稳定（吃提示缓存）；变化的东西（目标名、用户指令）只在第一条用户消息里。
-- **出站**：只许 https，或主机恰为字面量 `127.0.0.1` 的 http；URL 不带用户信息 / 查询 / 片段。https 走 `_opener()`（`build_opener(tlstrust.https_handler(tlstrust.client_context()))`
-  + 不跟随重定向，代理沿用环境变量）；回环 http 用字面量 `HTTPConnection("127.0.0.1", …)` 直连、**不经代理**。响应体有上限；
+- **出站**：只许 https，或主机在 `wires.LOOPBACK_HOSTS`（`127.0.0.1` / `::1` / `localhost`）里的 http（连接时一律直连字面量回环 IP，不解析主机名）；URL 不带用户信息 / 查询 / 片段。https 走 `_opener()`（`build_opener(tlstrust.https_handler(tlstrust.client_context()))`
+  + 不跟随重定向，代理沿用环境变量）；回环 http 用字面量回环 IP 的 `HTTPConnection` 直连（`localhost` → `127.0.0.1`）、**不经代理**。响应体有上限；
   请求有超时；`tests/test_outbound_https_trust.py` 的 `OUTBOUND` 登记了 `engine/agent_runner/wires.py: _opener`。
 - **密钥**：只读环境变量 `TAVOTTO_AGENT_API_KEY`（读后从本进程环境删除），绝不进 argv / stdout / stderr / 事件 / 日志 / repr。
   提示词只经 `--prompt-file` 或 stdin。服务端错误体不进任何输出（可能回显提示词），只留 `detail` 短代码。
@@ -439,7 +439,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
     多条可同时 `ready`，同厂商多条时 `label` 带用户起的名字 / 密钥尾四位。没有地址的旧记录（官方 Key）不进视图。`state`：缺 Key → `needs_auth`；
     不兼容旧记录 / 保存时被服务商拒绝（`last_error: unauthorized` 落盘）/ 路由走不通 / 内置路由缺型号 → `error` 且带原因码 `error`。
   - **路由 `route_for`**（`route` 只给诊断与测试，界面不显示）：订阅 → `cli:<agent>`；Key 类：该家族 CLI 可用且 `ai.builtin_default` 不为 true（默认 false，FigureBench 过线后改 true）→ `cli:<家族>` + 注入；
-    否则 → `builtin`（内置循环必须能用该记录：`ai_providers.builtin_conn`，不行则退回可用的 CLI）。账号登录类（Bearer 令牌）内置循环不走，只能 CLI。
+    否则 → `builtin`（内置循环必须能用该记录：`ai_providers.builtin_conn`，不行则退回可用的 CLI）。账号登录类：CLI 装了且启用就走 CLI（不看 CLI 自己的官方登录，凭据由我们注入）；没装走内置，anthropic wire 只发 Bearer（`--auth bearer`），令牌在 spawn 前 `ensure_fresh`、只进环境变量。
     `TAVOTTO_AI_BUILTIN=1` 强制内置、`=0` 强制不用（没 CLI 即走不通）。
 - **管理接口**（照常过会话守卫与 Host/Origin 校验）：`POST /api/ai/connections`（`{vendor, api_key, base_url?, model?, label?, wire?, id?}` → `{ok, connection}`；Key 形状 = 可打印 ASCII 无空白 ≤ 4096；
   `base_url` 须 https 或回环 http；保存前 `live_models` 试取一次，**失败也保存**，返回的连接 `state:"error"` + `error` 原因码，只有 `unauthorized` 才落盘；`custom` 必须给 `base_url` 与 `wire`
@@ -454,7 +454,8 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `ai_providers.builtin_conn(rec)` 是「内置循环能不能用这条记录」的**唯一判据**（有 Key、有型号、`check_base_url` 合规、非账号登录、非不兼容旧记录、家族认得），改图的 `spawn_overrides("builtin")`、
   `fixsession.connection()`、路由三处共用。`require_usable("builtin")` = 有这样的 Key 连接且没被 `TAVOTTO_AI_BUILTIN=0` 关掉；`run("builtin")` 必须显式带 `endpoint_id`（没有「当前选中」）。
   会话生命周期（候选工作区 / TAF 校验与修正 / 事件流 / 取消 / 历史库 `provider="builtin"`）与 CLI 完全同一套；`classify_event` 把 runner 的 `tool/text/thinking/done` 事件翻成 `action/message/thinking`。
-  **本阶段不接转换任务**（`convert` + `builtin` 直接 `ai_agent_not_usable`，ADR 0147 §四的 `check` 回调没有注入方）；遥测 `ai_assistant_invoked.agent` 对 `builtin` 落成 `other`。
+  **转换任务**（`convert`）同样走内置：`--task convert_to_editable --check-ipc`，`check` 经 stdout `check_request` / stdin 回复回调 `ai_convert.agent_check`（stdin 第一行是 `{"prompt":…}`）；
+  `/api/ai/convert` 与 `/api/ai/run` 一样接受 `connection`。**思考强度**：`ai_catalog.efforts_for(agent, base_url)` 声明哪里确认支持（行级 `efforts` / 顶层 `effort_origins`），内置路由才给 `efforts`，传 runner 前再核一遍。遥测 `ai_assistant_invoked.agent` 对 `builtin` 落成 `other`。
 - **AI 修复**：`fixsession.connection()` 改为 `ai_connections.first_key_connection()`——第一个内置循环能直接用的 Key 连接（老用户旧版「选中」的接口排最前，其余按保存顺序），不再只看各家族的 active provider。
 
 ## AI 修复工具箱（`engine/fixtools/`，ADR 0149 提议，D1：注册表 + 「看」「试」）
