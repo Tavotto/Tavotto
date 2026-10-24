@@ -2281,9 +2281,36 @@ def prepare_envs(lab: Lab, env: dict, log: Path) -> tuple[dict[str, Path], dict[
                 1800,
             )
             if r.get("exit_code") != 0:
-                bad["conda"] = "conda create failed"
+                bad["conda-prefix"] = "conda create -p failed"
         if (cenv / "python.exe").exists():
-            ok["conda"] = cenv / "python.exe"
+            ok["conda-prefix"] = cenv / "python.exe"
+        # 第二种布局：`-n` 建在 Miniforge 自己的 envs\\ 下（用户最常见的用法）——两种布局走的是不同的识别 / 激活路径
+        named = mf / "envs" / "mpl"
+        if not (named / "python.exe").exists():
+            r = _run_logged(
+                [
+                    str(conda),
+                    "create",
+                    "-y",
+                    "-q",
+                    "-n",
+                    "mpl",
+                    "--override-channels",
+                    "-c",
+                    CONDA_FORGE_MIRROR,
+                    "python=3.12",
+                    "matplotlib",
+                    "conda-launchers",
+                ],
+                lab.root,
+                env,
+                log / "conda-create-named",
+                1800,
+            )
+            if r.get("exit_code") != 0:
+                bad["conda-named"] = "conda create -n failed"
+        if (named / "python.exe").exists():
+            ok["conda-named"] = named / "python.exe"
     elif "conda" not in bad:
         bad["conda"] = "miniforge install failed"
     return ok, bad
