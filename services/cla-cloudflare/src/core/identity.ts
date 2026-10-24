@@ -68,6 +68,6 @@ export async function binding(c: Config, port: Pick<GitHubPort,'resolveLogin'>, 
 }
 export const sameBinding = (a: Binding, b: Binding) => {
   const fields = (x: Binding) => ({repository_id:x.repository_id,head_sha:x.head_sha,base_sha:x.base_sha,kind:x.kind,
-    ...(x.pr===undefined?{}:{pr:x.pr}),members:x.members,contributors:x.contributors,policy_sha256:x.policy_sha256});
+    ...(x.pr===undefined?{}:{pr:x.pr}),...('group' in x?{group:(x as Binding & {group:unknown}).group}:{}),members:x.members,contributors:x.contributors,policy_sha256:x.policy_sha256});
   return canonical(fields(a)) === canonical(fields(b));
 };

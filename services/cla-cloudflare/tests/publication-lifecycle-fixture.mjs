@@ -19,15 +19,18 @@ async function appKey(){
  keyPromise??=crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']).then(async pair=>({publicKey:pair.publicKey,pkcs8:Buffer.from(await crypto.subtle.exportKey('pkcs8',pair.privateKey)).toString('base64')}));
  return keyPromise;
 }
-export async function fixture({delegated=true,grantLifetime}={}){
+export async function fixture({delegated=true,grantLifetime,group=false}={}){
  const f=await signingFixture(delegated);
  if(grantLifetime!==undefined)f.grant.expires_at=f.now()+grantLifetime;
  if(delegated)await f.install();
  const packet=await f.create();await f.sign(packet);if(!delegated)await f.sign(packet,'holder');
- const c={...f.c,githubEnabled:true,backgroundEnabled:true,checkPublishingEnabled:true,automaticVerificationEnabled:true,automaticPublishingEnabled:true,confirmationSlotEnabled:true};
+ const c={...f.c,githubEnabled:true,backgroundEnabled:true,checkPublishingEnabled:true,automaticVerificationEnabled:true,automaticPublishingEnabled:true,confirmationSlotEnabled:true,...(group?{mergePrefixAssessmentEnabled:true,mergePrefixReadSessionEnabled:true}:{})};
  const credentials=await appKey(),tokens=new Map(),runs=new Map(),calls=[],invocations=[],hooks={};
  let tick=0,sequence=100,authorityReads=0,hidden=false;
  const head=()=>f.gh.head,pr=()=>({number:9,state:'open',user:{id:2,login:'contributor',type:'User'},commits:1,head:{sha:head()},base:{repo:{id:c.repositoryId},ref:'main',sha:'d'.repeat(40)}});
+ const groupTarget={headSha:'e'.repeat(40),baseSha:'d'.repeat(40),baseRef:'refs/heads/main'};
+ const entries=[1,2].map(n=>({id:'SYNTHETIC_QUEUE_'+n,position:n,baseCommit:{oid:groupTarget.baseSha},headCommit:{oid:n===2?groupTarget.headSha:'f'.repeat(40)},pullRequest:{number:10+n,headRefOid:(n===1?'b':'c').repeat(40),baseRefName:'main'}}));
+ const members=new Map(entries.map(e=>[e.pullRequest.number,{...pr(),number:e.pullRequest.number,head:{sha:e.pullRequest.headRefOid}}]));
  const get=(sql,...args)=>f.store.stmt(sql,...args).first();
  const transport=async(url,init)=>{
   const u=new URL(url),path=u.pathname,body=init.body===undefined?undefined:JSON.parse(init.body);
@@ -51,13 +54,21 @@ export async function fixture({delegated=true,grantLifetime}={}){
    if(token.expires<=f.now())return Response.json({message:'synthetic expired token'},{status:401});
   }else assert.equal(init.method,'GET');
   const base='/repos/'+c.repository;let data;
-  if(path===base)data={id:c.repositoryId,full_name:c.repository,default_branch:'main'};
+  if(group && path==='/graphql'){
+   assert.equal(init.method,'POST');assert.ok(body.query.startsWith('query('));assert.equal(body.variables.cursor,null);
+   data={data:{repository:{databaseId:c.repositoryId,mergeQueue:{entries:{totalCount:entries.length,nodes:structuredClone(entries),pageInfo:{hasNextPage:false,endCursor:null}}}}}};
+  }else if(path===base)data={id:c.repositoryId,full_name:c.repository,default_branch:'main'};
   else if(path===base+'/commits/main')data={sha:c.referenceSha};
   else if(path.startsWith(base+'/contents/')){
    const name=path.slice((base+'/contents/').length);assert.equal(u.searchParams.get('ref'),c.referenceSha);
    const content=name==='.github/cla-policy.json'?JSON.stringify(c.policy):name===c.policy.agreements.individual.path?'SYNTHETIC DELEGATED CLA ONLY':name===c.policy.agreements.corporate.path?'SYNTHETIC CORPORATE CLA':undefined;
    assert.notEqual(content,undefined);data={type:'file',path:name,encoding:'base64',content:Buffer.from(content).toString('base64')};
   }else if(path===base+'/pulls/9')data=pr();
+  else if(group && path.startsWith(base+'/pulls/')){data=members.get(Number(path.split('/').at(-1)));assert.ok(data);}
+  else if(group && path.startsWith(base+'/compare/')){
+   const member=[...members.values()].find(p=>path===base+'/compare/'+p.base.sha+'...'+p.head.sha);assert.ok(member);
+   data={total_commits:1,base_commit:{sha:member.base.sha},commits:[{sha:member.head.sha,author:member.user,commit:{author:{email:'2+contributor@users.noreply.github.com'},message:'SYNTHETIC GROUP MEMBER'}}]};
+  }
   else if(path===base+'/compare/'+'d'.repeat(40)+'...'+head()){
    assert.equal(u.searchParams.get('per_page'),'100');assert.equal(u.searchParams.get('page'),'1');
    data={total_commits:1,base_commit:{sha:'d'.repeat(40)},commits:[{sha:head(),author:pr().user,commit:{author:{email:'2+contributor@users.noreply.github.com'},message:'SYNTHETIC COMMIT'}}]};
@@ -85,24 +96,24 @@ export async function fixture({delegated=true,grantLifetime}={}){
   const budget=new InvocationBudget(()=>tick,()=>f.now()*1000),store=new LiveStore(f.db,budget,c),github=new GitHub(c,{pkcs8:credentials.pkcs8,clientSecret:'',evidenceKey:''},transport,f.now,budget,()=>tick),service=new LiveService(c,store,github,f.key);
   const result={service,budget};invocations.push(result);return result;
  };
- const admit=async()=>{
-  const raw=bytes(JSON.stringify({action:'opened',number:9,repository:{id:c.repositoryId,full_name:c.repository},installation:{id:c.installationId},pull_request:pr()}));
+ const admit=async({groupEvent=group,delivery=crypto.randomUUID(),change=x=>x}={})=>{
+  const raw=bytes(JSON.stringify(change({action:groupEvent?'checks_requested':'opened',number:9,repository:{id:c.repositoryId,full_name:c.repository},installation:{id:c.installationId},...(groupEvent?{merge_group:{head_sha:groupTarget.headSha,base_sha:groupTarget.baseSha,base_ref:groupTarget.baseRef}}:{pull_request:pr()})})));
   const secret='SYNTHETIC_WEBHOOK_SECRET_NOT_A_REAL_CREDENTIAL',key=await crypto.subtle.importKey('raw',bytes(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);
   const signature='sha256='+Buffer.from(await crypto.subtle.sign('HMAC',key,raw)).toString('hex');
-  return admitHead(invocation().service,raw,signature,crypto.randomUUID(),'pull_request',secret);
+  return admitHead(invocation().service,raw,signature,delivery,groupEvent?'merge_group':'pull_request',secret);
  };
  const ci=async()=>{
   const config={enabled:true,repository:c.repository,repositoryId:c.repositoryId,origin:c.origin,appId:c.appId,appSlug:c.appSlug,checkName:c.checkName};
-  const event={repository:{id:c.repositoryId},number:9,pull_request:{number:9,head:{sha:head()}}};
-  return candidate(config,event,'pull_request','SYNTHETIC_CI_READ_ONLY',{clock:f.now,transport:async(url,init)=>{
+  const event={repository:{id:c.repositoryId},...(group?{action:'checks_requested',merge_group:{head_sha:groupTarget.headSha,base_sha:groupTarget.baseSha,base_ref:groupTarget.baseRef}}:{number:9,pull_request:{number:9,head:{sha:head()}}})};
+  return candidate(config,event,group?'merge_group':'pull_request','SYNTHETIC_CI_READ_ONLY',{clock:f.now,transport:async(url,init)=>{
    if(new URL(url).origin!==c.origin)return transport(url,init);
    assert.equal(init.method,'GET');assert.equal(init.headers.authorization,undefined);authorityReads++;await hooks.authority?.(authorityReads);
-   const u=new URL(url);assert.equal(u.pathname,'/verification/pr');
-   try{return Response.json(await verification(invocation().service,9,u.searchParams.get('head'),Number(u.searchParams.get('run')),u.searchParams.get('attempt')));}
+   const u=new URL(url);assert.equal(u.pathname,group?'/verification/group':'/verification/pr');
+   try{return Response.json(await verification(invocation().service,group?{kind:'merge_group',headSha:groupTarget.headSha,baseSha:groupTarget.baseSha}:9,u.searchParams.get('head'),Number(u.searchParams.get('run')),u.searchParams.get('attempt')));}
    catch(e){return Response.json({error:e.code??'request_unavailable'},{status:403});}
   }});
  };
- return {...f,c,packet,runs,calls,hooks,invocations,invocation,transport,admit,ci,get,
+ return {...f,c,packet,groupTarget,entries,members,runs,calls,hooks,invocations,invocation,transport,admit,ci,get,
   get authorityReads(){return authorityReads;},setHidden:value=>{hidden=value;},
   advance:n=>{f.advance(n);tick+=n*1000;},advanceDatabase:f.advance,
   dispatch:()=>verifyHeadOne(invocation().service),recover:()=>reconcileOne(invocation().service),

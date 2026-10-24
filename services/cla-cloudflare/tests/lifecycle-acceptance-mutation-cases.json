@@ -90,13 +90,13 @@
     "assertionError": true
   },
   {
-    "name": "group cannot parse as PR proof",
+    "name": "group discriminator keeps PR and complete group proofs distinct",
     "file": "src/core/proof.ts",
-    "before": "p.kind!=='pr' ||",
-    "after": "false ||",
-    "pattern": "^native\\ group\\ cannot\\ enter\\ the\\ PR\\ proof\\ parser\\ or\\ positive\\ journal/send\\ path$",
-    "selectedTitle": "native group cannot enter the PR proof parser or positive journal/send path",
-    "testFile": "tests/group-publication-boundaries.test.mjs",
+    "before": "const group=p?.kind==='merge_group';",
+    "after": "const group=false;",
+    "pattern": "legal complete-prefix group publishes once",
+    "selectedTitle": "legal complete-prefix group publishes once, independently confirms and passes both CI authority reads",
+    "testFile": "tests/group-publication-lifecycle.test.mjs",
     "assertionError": true
   },
   {

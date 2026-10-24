@@ -1,5 +1,6 @@
 import type { CheckProposal, D1Database, D1Statement, Job, Packet, Role, Session } from '../core/types.ts';
 import type {LiveConfig} from './config.ts';
+import {parseProof} from '../core/proof.ts';
 import {policyMaterial,packetAgreementMatches} from '../core/policy.ts';
 import {activationProjection,verifyActivationRecord} from './activation-record.ts';
 import {GitHub} from './github.ts';import type {NegativeWitness} from './github.ts';
@@ -142,6 +143,23 @@ export class LiveStore extends Store {
         wanted_revision=excluded.wanted_revision,generation=outbox.generation+1,due=0,attempts=0`,key,check.proof.revision),
     ]);return id;
   }
+  async beginGroupPublication(job:Job,check:CheckProposal):Promise<string> {
+    const proof=parseProof(check.text,await this.databaseNow()),target={kind:'merge_group' as const,headSha:proof.head_sha,baseSha:proof.base_sha};
+    if(!this.budget || this.expectedConfig?.automaticPublishingEnabled!==true || proof.kind!=='merge_group' || proof.repository_id!==this.expectedConfig.repositoryId || check.proof.expires_at>(check.authorityExpires ?? Number.MAX_SAFE_INTEGER) || check.conclusion!=='success' ||
+      check.headSha!==proof.head_sha || canonical(proof)!==canonical(check.proof) || job.target_key!==this.targetKey(this.expectedConfig.repositoryId,target))throw new Rejected('fresh_proof_unavailable');
+    const id=randomToken();
+    await this.batch([...this.leaseGuard(job,proof.revision),
+      ...this.guard(`EXISTS(SELECT 1 FROM targets WHERE target_key=? AND target_json=?) AND ?<=${DB_NOW} AND ${DB_NOW}<?
+        AND NOT EXISTS(SELECT 1 FROM publication_attempts WHERE target_key=?) AND (${this.positiveAdmission()})`,job.target_key,canonical(target),proof.issued_at,proof.expires_at,job.target_key),
+      ...(this.expectedConfig.confirmationSlotEnabled===true?[this.stmt('INSERT INTO _guards(id,ok) VALUES(?,1)','confirmation-slot:'+id)]:[]),
+      this.stmt(`INSERT INTO publication_attempts(id,target_key,head_sha,revision,expires,phase,created,updated,conclusion,proof_text,send_until)
+        VALUES(?,?,?,?,?,'issued',${DB_NOW},${DB_NOW},'success',?,?)`,id,job.target_key,check.headSha,proof.revision,proof.expires_at,check.text,job.lease_until)]);return id;
+  }
+  async settleGroupPublication(job:Job,id:string,phase:'reconcile'|'unknown',run:number|null=null):Promise<void> {
+    await this.batch([this.stmt(`UPDATE publication_attempts SET phase=?,run_id=coalesce(?,run_id),updated=${DB_NOW},reconcile_due=0,send_until=0
+      WHERE id=? AND target_key=? AND phase='issued' AND (run_id IS NULL OR run_id=?)`,phase,run,id,job.target_key,run),...this.guard('changes()=1'),
+      this.stmt(`UPDATE outbox SET due=0,lease='',lease_until=0,attempts=0 WHERE target_key=? AND lease=? AND generation=?`,job.target_key,job.lease,job.generation)]);
+  }
   async saveDocument(d:Document):Promise<void> {
     await this.batch([this.stmt('INSERT OR IGNORE INTO agreement_documents VALUES(?,?,?,?,?)',d.digest,d.kind,d.version,d.source_sha,d.content),
       ...this.guard('EXISTS(SELECT 1 FROM agreement_documents WHERE digest=? AND kind=? AND version=? AND content=?)',d.digest,d.kind,d.version,d.content)]);
@@ -188,6 +206,8 @@ export class LiveStore extends Store {
       check.proof.expires_at>(check.authorityExpires ?? Number.MAX_SAFE_INTEGER) || check.text!=='tavotto-cla-v1\n'+canonical(check.proof))throw new Rejected('fresh_proof_unavailable');
     if(predecessor.id!==r.source_attempt || predecessor.target_key!==job.target_key || predecessor.head_sha!==check.headSha ||
       predecessor.phase!=='resolved' || predecessor.run_id===null || !Number.isSafeInteger(predecessor.run_id) || predecessor.run_id<=0)throw new Rejected('fresh_predecessor_unavailable');
+    const proof=parseProof(check.text,check.proof.issued_at);
+    if(proof.kind==='merge_group' && job.target_key!==this.targetKey(proof.repository_id,{kind:'merge_group',headSha:proof.head_sha,baseSha:proof.base_sha}))throw new Rejected('fresh_proof_unavailable');
     const id=randomToken();
     // The request and the exact resolved source are consumed in the same transaction
     // as the new issued journal. A fresh attempt never mutates the old proof or expiry.

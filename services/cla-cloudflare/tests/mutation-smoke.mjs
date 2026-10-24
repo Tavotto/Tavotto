@@ -8,6 +8,7 @@ const root=fileURLToPath(new URL('../',import.meta.url));
 // Each mutation changes one asserted source location in an isolated copy; a
 // nonzero test exit proves the named behavioral regression is actually detected.
 const cases=[
+ ...JSON.parse(readFileSync(new URL('./group-publication-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./lifecycle-acceptance-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./independent-prefix-read-session-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./prefix-read-session-mutation-cases.json',import.meta.url),'utf8')),
@@ -26,8 +27,8 @@ const cases=[
  ...JSON.parse(readFileSync(new URL('./independent-review-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./inflight-mutation-cases.json',import.meta.url),'utf8')),
  ...JSON.parse(readFileSync(new URL('./ci-wait-mutation-cases.json',import.meta.url),'utf8')),
- {name:'head admission capacity',file:'src/native/automatic.ts',before:'LIMIT 100))<100',after:'LIMIT 100))<101',pattern:'head request admission rejects the 101st distinct head',testFile:'tests/automatic.test.mjs'},
- {name:'delivery admission capacity',file:'src/native/automatic.ts',before:'LIMIT 1000))<1000',after:'LIMIT 1000))<1001',pattern:'delivery admission rejects the 1001st record while exact duplicate remains idempotent',testFile:'tests/automatic.test.mjs'},
+ {name:'head admission capacity',file:'src/native/automatic.ts',before:'FROM head_requests LIMIT 100))<100',after:'FROM head_requests LIMIT 100))<101',pattern:'head request admission rejects the 101st distinct head',testFile:'tests/automatic.test.mjs'},
+ {name:'delivery admission capacity',file:'src/native/automatic.ts',before:'FROM head_deliveries LIMIT 1000))<1000',after:'FROM head_deliveries LIMIT 1000))<1001',pattern:'delivery admission rejects the 1001st record while exact duplicate remains idempotent',testFile:'tests/automatic.test.mjs'},
  {name:'delegated disabled direct operation',file:'src/native/delegation.ts',before:"if(this.s.c.delegatedCountersigningEnabled!==true || !this.s.c.signingEnabled)throw new Rejected('delegated_countersigning_disabled');",after:'// mutation: skip delegation capability guard',pattern:'disabled delegated operation cannot use an existing personally signed packet',testFile:'tests/delegation.test.mjs'},
  {name:'delegated receipt hash',file:'src/native/delegation.ts',before:'await sha256(raw)!==r.hash || ',after:'',pattern:'authentic receipt ciphertext with wrong stored hash is rejected',testFile:'tests/delegation.test.mjs'},
  {name:'delegated holder identity',file:'src/native/delegation.ts',before:'g.holder_id!==c.holderId ||',after:'',pattern:'authorization rejects exact scope mismatch holder_id',testFile:'tests/delegation.test.mjs'},

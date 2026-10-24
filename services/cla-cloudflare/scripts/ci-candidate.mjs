@@ -8,7 +8,7 @@ export async function candidate(config,event,eventName,token,{transport,clock,wa
   // Reject disabled or unsupported events before constructing a reader. Configuration
   // and this source must come from a trusted main commit, never from the PR checkout.
   if(config?.enabled!==true)throw Error('ci_provider_disabled');
-  if(eventName!=='pull_request')throw Error('ci_candidate_event_rejected');
+  if(eventName!=='pull_request' && eventName!=='merge_group')throw Error('ci_candidate_event_rejected');
   const locator=eventLocator(event,eventName);
   const trusted=structuredClone(config);Object.freeze(trusted.wait);Object.freeze(trusted);Object.freeze(locator);
   const enabled=!!waiting(trusted);

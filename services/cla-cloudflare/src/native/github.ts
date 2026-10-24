@@ -1,3 +1,4 @@
+import {parseProof} from '../core/proof.ts';
 import type { Candidate, CheckProposal, CheckReceipt, GitHubPort, Identity, Job, Policy, PrSnapshot, Target } from '../core/types.ts';
 import { Rejected } from '../core/types.ts';
 import { appJwtWithKey, importAppSigningKey, bytes, canonical, sha256, unbase64 } from '../core/crypto.ts';
@@ -390,11 +391,17 @@ export class GitHub implements GitHubPort {
       throw new Rejected('check_source_mismatch');
     if(data.conclusion==='success' && (p.conclusion!=='success' || data.output?.summary!==p.proof_text))throw new Rejected('check_source_mismatch');
   }
+  private groupPublicationKey(p:Publication):string|undefined {
+    try{const raw=JSON.parse(p.proof_text.slice('tavotto-cla-v1\n'.length)),proof=parseProof(p.proof_text,raw.issued_at);
+      if(proof.kind==='merge_group' && proof.repository_id===this.c.repositoryId && proof.head_sha===p.head_sha)
+        return `merge:${proof.repository_id}:${proof.head_sha}:${proof.base_sha}`;
+    }catch{}return undefined;
+  }
   #negativeWitness(p:Publication,run:number,context:NegativeContext|undefined,began:number,source:NegativeRelease['source']):NegativeWitness {
     const now=this.now(),job=context?.job,revision=context?.revision;
     if(!this.budget || !job || !Number.isSafeInteger(revision) || revision!<0 || !validId(run) ||
       p.confirmation_slot!==1 || p.conclusion!=='success' || !/^[A-Za-z0-9_-]{43}$/.test(p.id) ||
-      job.target_key!==p.target_key || !p.target_key.startsWith('pr:'+this.c.repositoryId+':') ||
+      job.target_key!==p.target_key || !(p.target_key.startsWith('pr:'+this.c.repositoryId+':') || this.groupPublicationKey(p)===p.target_key) ||
       !/^[A-Za-z0-9_-]{43}$/.test(job.lease) || !validId(job.generation) || !Number.isSafeInteger(job.lease_until) ||
       !Number.isSafeInteger(began) || !Number.isSafeInteger(now) || now<began || now>=began+10 || now>=job.lease_until)
       throw new Rejected('fresh_negative_witness_unavailable');
@@ -478,6 +485,33 @@ export class GitHub implements GitHubPort {
         completed_at:new Date(this.now()*1000).toISOString(),output:{title:check.name,summary:check.text}});
     if(data.id!==old.id || data.external_id!==attempt || data.status!=='completed' || data.conclusion!==check.conclusion ||
       data.output?.summary!==check.text)throw new Rejected('check_source_mismatch');
+    return this.receipt(data,check);
+  }
+  async publishGroup(target:Extract<Target,{kind:'merge_group'}>,prepare:(withdrawnRevision?:number)=>Promise<{check:CheckProposal;attempt:string}>,predecessor?:Publication):Promise<CheckReceipt> {
+    if(!this.c.automaticPublishingEnabled || !this.c.checkPublishingEnabled || this.c.mergePrefixAssessmentEnabled!==true || !validSha(target.headSha) || !validSha(target.baseSha))throw new Rejected('publication_disabled');
+    const token=await this.installationToken(true),runs=await this.runs(target.headSha,token);
+    const own=runs.filter(x=>x.app?.id===this.c.appId && x.app?.slug===this.c.appSlug && x.name===this.c.checkName && x.head_sha===target.headSha);
+    let withdrawnRevision:number|undefined;
+    if(predecessor){
+      const old=own[0];
+      if(own.length!==1 || !old || predecessor.phase!=='resolved' || predecessor.target_key!==`merge:${this.c.repositoryId}:${target.headSha}:${target.baseSha}` ||
+        predecessor.head_sha!==target.headSha || old.id!==predecessor.run_id || old.conclusion!=='failure')throw new Rejected('refresh_predecessor_unavailable');
+      this.own(old,predecessor);
+      let revoked;try{revoked=JSON.parse(old.output?.summary?.slice('tavotto-cla-revocation-v1\n'.length));}catch{}
+      if(!old.output?.summary?.startsWith('tavotto-cla-revocation-v1\n') || canonical(revoked)!==old.output.summary.slice('tavotto-cla-revocation-v1\n'.length) ||
+        revoked.repository_id!==this.c.repositoryId || revoked.head_sha!==target.headSha || revoked.attempt!==predecessor.id ||
+        revoked.reason!=='eligibility_requires_review' || !Number.isSafeInteger(revoked.revision) || revoked.revision<predecessor.revision)throw new Rejected('refresh_predecessor_unavailable');
+      withdrawnRevision=revoked.revision;
+    }else if(own.length)throw new Rejected('new_head_run_already_exists');
+    const {check,attempt}=await prepare(withdrawnRevision),proof=parseProof(check.text,this.now());
+    if(proof.kind!=='merge_group' || proof.repository_id!==this.c.repositoryId || proof.head_sha!==target.headSha || proof.base_sha!==target.baseSha ||
+      check.appId!==this.c.appId || check.appSlug!==this.c.appSlug || check.name!==this.c.checkName || check.headSha!==target.headSha ||
+      check.conclusion!=='success' || canonical(proof)!==canonical(check.proof) || !/^[A-Za-z0-9_-]{43}$/.test(attempt))throw new Rejected('check_invalid');
+    const data=await this.json(`https://api.github.com/repos/${this.c.repository}/check-runs`+(predecessor?'/'+predecessor.run_id:''),predecessor?'PATCH':'POST',token,
+      {name:check.name,...(predecessor?{}:{head_sha:check.headSha}),status:'completed',conclusion:check.conclusion,external_id:attempt,
+        completed_at:new Date(this.now()*1000).toISOString(),output:{title:check.name,summary:check.text}});
+    if(data.external_id!==attempt || data.status!=='completed' || data.conclusion!==check.conclusion || data.output?.summary!==check.text ||
+      predecessor && data.id!==predecessor.run_id)throw new Rejected('check_source_mismatch');
     return this.receipt(data,check);
   }
   // New heads only. All authentication and reads precede the durable send intent.

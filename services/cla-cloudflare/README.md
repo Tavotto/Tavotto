@@ -84,8 +84,14 @@ withdrawal, exact negative-witness release, fresh same-head publication and both
 CI authority reads, with personal and delegated evidence. It also covers lost
 responses without replay and OAuth consume-time expiry. The native adapter,
 journal and verifiers execute against an in-process peer and SQLite; this is not
-live GitHub/Cloudflare acceptance, actual CPU evidence or a native merge-group
-publication/authority/CI implementation. Those remain separate activation gates.
+live GitHub/Cloudflare acceptance or actual CPU evidence. The default-off native
+merge-group path now has synthetic positive publication, recovery, authority and
+CI coverage as described in that evidence. It reuses the complete-prefix reader,
+existing outbox/journal and shared confirmation slot; no workflow is activated.
+Group publication reserves 17 fixed/withdrawal work SQL plus qualification cost,
+so currently admits one non-exempt contributor while retaining every prefix
+member. Larger eligible groups can be resource-deferred before sending. Real
+queue-schema/permission, CPU, D1, OAuth and timing acceptance remain separate gates.
 
 ### Public endpoints: abuse limits and pinned agreement asset
 

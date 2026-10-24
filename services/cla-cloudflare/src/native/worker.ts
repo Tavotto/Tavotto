@@ -118,6 +118,16 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
     if(req.method==='GET' && url.pathname==='/capabilities' && !url.search)return json({oauthEnabled:c.oauthEnabled,signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled});
     if (req.method==='GET' && url.pathname==='/health' && !url.search)
       return json({runtime:'workers-d1',signingEnabled:c.signingEnabled,checkPublishingEnabled:c.checkPublishingEnabled});
+    if(req.method==='GET' && url.pathname==='/verification/group') {
+      if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
+      if([...url.searchParams.keys()].sort().join(',')!=='attempt,base,head,run' || !/^[1-9][0-9]*$/.test(url.searchParams.get('run') ?? ''))throw new Rejected('verification_invalid');
+      const head=url.searchParams.get('head')!,base=url.searchParams.get('base')!,run=Number(url.searchParams.get('run')),attempt=url.searchParams.get('attempt')!;
+      if(!validSha(head) || !validSha(base) || !validId(run) || !/^[A-Za-z0-9_-]{43}$/.test(attempt))throw new Rejected('verification_invalid');
+      if(!env.CLA_VERIFICATION_LIMITER)return json({error:'verification_abuse_control_required'},503);
+      let admitted=false;try{admitted=(await env.CLA_VERIFICATION_LIMITER.limit({key:'verification-group'})).success===true;}catch{return json({error:'verification_abuse_control_unavailable'},503);}
+      if(!admitted)return json({error:'verification_busy'},429,{'retry-after':'60'});
+      return json(await verification(await service(env,new InvocationBudget()),{kind:'merge_group',headSha:head,baseSha:base},head,run,attempt));
+    }
     if(req.method==='GET' && url.pathname==='/verification/pr') {
       if(env.CLA_CI_VERIFICATION_ENABLED!=='true')throw new Rejected('ci_verification_disabled');
       if([...url.searchParams.keys()].sort().join(',')!=='attempt,head,pr,run' || !/^[1-9][0-9]*$/.test(url.searchParams.get('pr') ?? '') ||

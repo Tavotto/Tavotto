@@ -1,16 +1,22 @@
+import {publishGroup} from './group.ts';
+import {parseProof} from '../core/proof.ts';
 import { canonical } from '../core/crypto.ts';
 import { sameBinding } from '../core/identity.ts';
-import type { Job, Proof } from '../core/types.ts';
+import type { Job, Proof, Target } from '../core/types.ts';
 import { Rejected } from '../core/types.ts';
 import type { LiveService } from './service.ts';
 import type { Publication, RefreshRequest } from './store.ts';
 import {slotRecoveryOnly} from './store.ts';
 import { BudgetDeferred, FREE_BUDGET, qualificationSQL } from './budget.ts';
 
-async function one(s:LiveService,job:Job,p:Publication,revision:number,pr:number):Promise<string> {
+async function one(s:LiveService,job:Job,p:Publication,revision:number,target:Target):Promise<string> {
   let previous:Proof;try{previous=JSON.parse(p.proof_text.split('\n').slice(1).join('\n'));}catch{throw new Rejected('stored_proof_unavailable');}
   if(previous.protocol!=='tavotto-cla-v1' || previous.repository_id!==s.c.repositoryId || previous.head_sha!==p.head_sha ||
     previous.revision!==p.revision || previous.expires_at!==p.expires || canonical(previous)!==p.proof_text.slice('tavotto-cla-v1\n'.length))throw new Rejected('stored_proof_unavailable');
+  if(target.kind==='merge_group'){
+    const proof=parseProof(p.proof_text,previous.issued_at);
+    if(proof.kind!=='merge_group' || proof.head_sha!==target.headSha || proof.base_sha!==target.baseSha)throw new Rejected('stored_proof_unavailable');
+  }
   const remote=await s.github.observe(p,{job,revision});
   if(!remote){s.store.budget!.settlement();
     if(p.confirmation_slot===1)await s.store.deferHeldRecovery(job,p,revision,'slot_recovery_not_observed');
@@ -25,9 +31,9 @@ async function one(s:LiveService,job:Job,p:Publication,revision:number,pr:number
   // reason to restore confirmation, evaluate eligibility or replay a send.
   let valid=!slotRecoveryOnly(job,p) && p.conclusion==='success' && revision===p.revision && await s.store.databaseNow()<p.expires;
   if(valid) {
-    try {const current=await s.evaluate(pr);
+    try {const current=await s.evaluateTarget(target,target.kind==='merge_group'?2:0);
       valid=current.conclusion==='success' && current.proof.revision===p.revision && sameBinding(previous,current.proof);}
-    catch(error){if(error instanceof Rejected && ['trusted_policy_changed','agreement_hash_mismatch','pr_mismatch'].includes(error.code))valid=false;else throw error;}
+    catch(error){if(error instanceof Rejected && (target.kind==='merge_group' && !(error instanceof BudgetDeferred) || ['trusted_policy_changed','agreement_hash_mismatch','pr_mismatch'].includes(error.code)))valid=false;else throw error;}
   }
   if(valid){s.store.budget!.settlement();await s.store.recordReconciliation(job,p,'confirmed',remote.id,'verified_read_only',revision,p.expires);return 'verified_read_only';}
   if(!s.c.checkPublishingEnabled)throw new Rejected('withdrawal_pending_publication_disabled');
@@ -47,7 +53,11 @@ async function refreshOne(s:LiveService,job:Job,request:RefreshRequest):Promise<
     if(request.capacity_blocked){budget.settlement();await s.store.deferRefreshCapacity(job,request);return 'refresh_waiting_for_confirmation_capacity';}
     if(!s.c.checkPublishingEnabled)throw new Rejected('publication_disabled');
     const target=await s.store.target(job.target_key);
-    if(target.kind!=='pr')throw new Rejected('merge_queue_not_implemented');
+    if(target.kind==='merge_group'){
+      const predecessor=await s.store.refreshPredecessor(job.target_key,target.headSha);
+      if(!predecessor || predecessor.id!==request.source_attempt)throw new Rejected('refresh_predecessor_unavailable');
+      return await publishGroup(s,job,target,{request,predecessor});
+    }
     // After evaluate: predecessor read (1), final clock (1), issued batch (4; slot mode 5).
     // Slot mode reserves one additional intent statement; qualification cost depends on mode.
     const check=await s.evaluate(target.number,s.c.confirmationSlotEnabled===true?7:6);
@@ -104,12 +114,12 @@ export async function reconcileOne(s:LiveService):Promise<{disposition:string;bu
     const refresh=await s.store.refreshRequest(job);
     if(refresh)return result(await refreshOne(s,job,refresh));
     const target=await s.store.target(job.target_key);
-    if(target.kind!=='pr')throw new Rejected('merge_queue_not_implemented');
+    if(target.kind==='merge_group' && !await s.store.latestPublication(job.target_key))return result(await publishGroup(s,job,target));
     revision=initialRevision;const progress=await s.store.openProgress(job,revision);
     const records=await s.store.publicationBatch(job,progress);let disposition='no_due_publication';
     for(const p of records) {
       selected=p;
-      try{disposition=await one(s,job,p,revision,target.number);committed=true;}
+      try{disposition=await one(s,job,p,revision,target);committed=true;}
       catch(error){if(error instanceof BudgetDeferred)throw error;budget.settlement();
         if(slotRecoveryOnly(job,p) || p.confirmation_slot===1 && (p.reconcile_attempts ?? 0)>=2)
           await s.store.deferHeldRecovery(job,p,revision,'slot_recovery_observation_unavailable');

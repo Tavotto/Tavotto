@@ -11,9 +11,21 @@ interface HeadRequest {request_key:string;pr:number;head:string;status:string;at
 export const AUTOMATIC_CRON='7-59/15 * * * *';
 export async function admitHead(s:LiveService,raw:Uint8Array<ArrayBuffer>,signature:string,delivery:string,event:string,secret:string):Promise<void> {
   if(s.c.automaticVerificationEnabled!==true)throw new Rejected('automatic_verification_disabled');
-  if(raw.length>262144 || !/^[A-Za-z0-9-]{1,100}$/.test(delivery) || event!=='pull_request' || secret.length<32 || secret.length>256 ||
+  if(raw.length>262144 || !/^[A-Za-z0-9-]{1,100}$/.test(delivery) || !['pull_request','merge_group'].includes(event) || secret.length<32 || secret.length>256 ||
     !await validWebhook(bytes(secret),raw,signature))throw new Rejected('webhook_rejected');
   let data;try{data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(raw));}catch{throw new Rejected('webhook_rejected');}
+  if(event==='merge_group'){
+    const g=data?.merge_group;
+    if(s.c.mergePrefixAssessmentEnabled!==true || data?.action!=='checks_requested' || data?.repository?.id!==s.c.repositoryId || data.repository.full_name!==s.c.repository ||
+      data?.installation?.id!==s.c.installationId || g?.base_ref!=='refs/heads/main' || !validSha(g?.head_sha) || !validSha(g?.base_sha))throw new Rejected('webhook_rejected');
+    await s.store.assertReady();const target={kind:'merge_group' as const,headSha:g.head_sha,baseSha:g.base_sha},key=s.store.targetKey(s.c.repositoryId,target);
+    const hash=await sha256(raw),now=await s.store.databaseNow();
+    await s.store.batch([...s.store.guard(`(EXISTS(SELECT 1 FROM targets WHERE target_key=?) OR (SELECT count(*) FROM (SELECT 1 FROM targets LIMIT 100))<100)
+      AND (EXISTS(SELECT 1 FROM deliveries WHERE id=?) OR (SELECT count(*) FROM (SELECT 1 FROM deliveries LIMIT 1000))<1000)`,key,delivery),
+      s.store.stmt('INSERT OR IGNORE INTO targets VALUES(?,?)',key,canonical(target)),
+      ...s.store.guard('EXISTS(SELECT 1 FROM targets WHERE target_key=? AND target_json=?) AND NOT EXISTS(SELECT 1 FROM deliveries WHERE id=? AND (body_sha!=? OR target_key!=?))',key,canonical(target),delivery,hash,key),
+      s.store.stmt('INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?)',delivery,hash,key,now)]);return;
+  }
   const pr=data?.pull_request,head=pr?.head?.sha;
   if(!['opened','reopened','synchronize'].includes(data?.action) || data?.repository?.id!==s.c.repositoryId || data.repository.full_name!==s.c.repository ||
     data?.installation?.id!==s.c.installationId || !validId(data?.number) || data.number!==pr?.number || pr?.state!=='open' ||
