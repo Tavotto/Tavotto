@@ -88,7 +88,7 @@
 **不新写任何执行路径**：装 / 卸包走 `deprepair._pip_install` / `_pip_uninstall` + 环境独占锁，切运行方式走 `execpolicy.set_mode`，换环境走 `projectenv.remember`；`change_python` / `convert_script` 的执行器由 `FixContext` 注入（#1342 / D2b 接），没注入返回 `unavailable`。
 `switch_execution` 的 `safe` / `native` 落在既有的项目级 `execution_policy`（`safe_only` / `compatible`，即「允许 safe 被自己的守卫拦下时回退 native」）上；放宽用户明确选过的 `safe_only` 要先问。
 同批修 #1361 三条（试跑副本跳过特殊文件、环境列表如实报截断并可筛、经链接复制的项目外读取记入 `reads`）。规则全文见 `docs/rules/backend/ai-agent-bridge.md` 的「D2a」一节。
-**`run_command` 不在 D2a，移到后续 PR**：它要在操作系统沙盒里跑任意命令，而沙盒逃逸面太大——Linux 桌面上 bwrap 只隔离挂载，`/run/user/<uid>/bus` 仍可连，命令能 `systemd-run --user` 让宿主的 user manager 改项目；macOS 同类（Apple Events 让 Finder 写、`launchctl` 等）。
+**`run_command` 不在 D2a，移到后续 PR（已由 #1374 的修订落地，见文末）**：它要在操作系统沙盒里跑任意命令，而沙盒逃逸面太大——Linux 桌面上 bwrap 只隔离挂载，`/run/user/<uid>/bus` 仍可连，命令能 `systemd-run --user` 让宿主的 user manager 改项目；macOS 同类（Apple Events 让 Finder 写、`launchctl` 等）。
 需要能抵御进程代理逃逸的沙盒后再做：Linux 隔离 `/run` 与 D-Bus 等、macOS 限制 mach-lookup / Apple Events，Windows 见 #1358。这台机器上要改东西只能用专用工具。
 `convert_script` 保留持锁结构（单个脚本，没有枚举竞态）：转换器只拿临时副本，原脚本哈希变了用执行前读到的原字节经 `scriptlock` 恢复。
 
@@ -117,3 +117,11 @@ Codex 用 `--sandbox read-only`——它的自带命令行**读不受限**（凭
 去掉用户自己的 MCP 服务与 hooks；官方登录态不加（默认型号 / 认证方式可能就写在用户的 config.toml 里，忽略它会换掉用户的设定），那种情况靠看门狗兜底。Tavotto 仍不读 CLI 的凭据文件。
 Claude 的 `--permission-mode dontAsk` 下未放行的工具直接拒绝（不等待），stream-json 里的拒绝读出来进 `activity` 与审计，不算卡住。
 
+**修订（2026-10-24，#1374：`run_command` 回来，两档）**：D2a 拆掉的 `run_command` 按用户裁决「两档都要」落地（`fixtools/command.py` + `fixtools/cmdsandbox.py`），`tier=user_env`，每条命令一张 approve 卡（卡上是完整命令）。
+**第①档（默认）= 加固沙盒内执行**：可写只有命令自己的临时目录（cwd 与 TMPDIR）、目标 Python 环境前缀、pip / conda 的用户缓存；项目与其余一切只读，凭据位置（`readscope.DENY_HOME_RELATIVE`）连读都拒；**允许联网**（pip / conda / R 装包要用）。
+#1371 评审点名的「沙盒只管文件、管不住宿主里本来就有权限的代理进程」逐条堵：Linux bwrap 把 `/run`（含 `/run/user/<uid>/bus`、docker.sock）与 `/tmp`（X11 路径套接字）换成空 tmpfs，`--unshare-ipc/pid/uts`、`--new-session`、`--die-with-parent`，环境里清掉 `DBUS_*` / `XDG_RUNTIME_DIR` / `DISPLAY` / `WAYLAND_DISPLAY` / `SSH_AUTH_SOCK` / `GPG_AGENT_INFO` 等；
+macOS sandbox-exec 在「只许写清单内目录」之上 `deny appleevent-send`、`deny mach-lookup`（只放行一张来自 Apple `system.sb` 的最小只读白名单）、`deny process-exec`（osascript / launchctl / open 等代理入口）、`deny network-outbound (remote unix-socket)`（只放 mDNSResponder）、`deny signal`（只放 self / children / same-sandbox）。硬拦表照旧并补上代理入口（`osascript` `launchctl` `open` `systemd-run` `systemctl` `busctl` `docker` `crontab` `schtasks` …）与包装器看穿（`env sudo x`）。
+**如实写下的盲区**：Linux 上**抽象命名空间 unix 套接字**仍可达（不 `--unshare-net`，要联网装包）。评估过 bwrap 的 `--seccomp`：BPF 读不到 `connect` 的地址（在用户内存里），所以无法「只拦抽象地址」；只能整个禁 `socket(AF_UNIX)`，那会弄坏 asyncio / multiprocessing，`socketpair` 加数据报 `connect` 还能绕——**不做**；要在沙盒外做事走第②档。
+**第②档 = 沙盒外执行（用户单独点头）**：触发只有两种——模型显式 `outside_sandbox: true` 加一句 `reason`，或第①档因沙盒拒写失败后结果里**提示**模型可以这样申请；**从不自动升级**（第①档失败后不会无卡执行第②档）。弹一张单独、红色强调的卡（approve 卡的 `danger: true`）：完整命令 + 「这条命令会在沙盒外运行，可以修改你电脑上的文件」+ 模型的理由；主按钮「在沙盒外运行」、次按钮「不了」；只对这一条命令有效，不记成长期授权。
+执行前备份项目内全部用户脚本（按后缀保守纳入、读原始字节不要求能解码，跟随链接按真实路径去重，**1000 个 / 32 MiB 封顶，超限直接拒绝第②档**），审批之后取基线、**持这些脚本的锁**（`scriptlock.script_guards`，非阻塞抢全、抢不齐退避）跑完命令，事后核对，被改 / 被删的经 `scriptlock` 恢复原字节并报 `scripts_restored`，恢复失败如实报 `scripts_restore_failed`。命令退出后先结束并确认整棵进程树再核对；放不下卡片的命令审批前就拒（用户看到的 = 实际执行的）。**这一层是尽力而为，不是保证**（盲区见规则文件的「run_command」一节）。
+Windows（#1358 无沙盒）与没有 bwrap 的 Linux 只有第②档，第①档返回 `sandbox_unavailable` 并说明。两档共同：不经 shell、cwd 默认临时目录（第②档可选项目目录并在卡上写明）、去掉密钥类环境变量、超时默认 60 s / 上限 300 s、输出有界并脱敏、执行前打快照、审计行多 `sandbox: hardened|outside|none` 与 `command_tier`、看门狗照旧（工具在跑不算卡住）。

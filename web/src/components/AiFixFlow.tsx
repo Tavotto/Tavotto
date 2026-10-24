@@ -2,6 +2,8 @@ import { useState, type ReactNode } from 'react'
 import { t as translate } from '@/i18n'
 import { isDesktop, pickAnyFile, pickDirectory } from '@/lib/desktop'
 import { useAiFixStore, type AiFixEntry } from '@/store/aiFixStore'
+import { cn } from '@/lib/utils'
+import type { AiFixCard } from '@/lib/api'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
 import { ProgressBar } from './ui/ProgressBar'
@@ -37,6 +39,23 @@ function Reads({ reads, notRead }: { reads: string[]; notRead?: string }) {
       )}
       {notRead ? <p className="m-0 text-ink-3">{ft('notRead')}</p> : null}
     </div>
+  )
+}
+
+/** `run_command` 卡上的完整命令（等宽、可换行；第②档红底红框） */
+function CommandBlock({ card }: { card: AiFixCard }) {
+  return (
+    <pre
+      data-ai-fix-command
+      data-danger={card.danger ? 'true' : undefined}
+      aria-label={ft('commandAria')}
+      className={cn(
+        'm-0 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md px-2.5 py-2 font-mono text-sm',
+        card.danger ? 'bg-danger-surface text-danger-content inset-ring inset-ring-danger-border' : 'bg-surface-2 text-ink',
+      )}
+    >
+      {card.command}
+    </pre>
   )
 }
 
@@ -191,27 +210,48 @@ export function aiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null
   if (entry.phase !== 'waiting' || !entry.card) return null
   const card = entry.card
   switch (card.kind) {
-    case 'approve':
+    case 'approve': {
+      const isCommand = card.tool === 'run_command' && !!card.command
       return {
-        title: card.summary,
+        title: isCommand ? (card.danger ? ft('outsideTitle') : ft('commandTitle')) : card.summary,
+        slot: isCommand ? <CommandBlock card={card} /> : undefined,
         details: (
           <>
+            {isCommand && card.reason ? (
+              <p data-ai-fix-reason className="m-0 break-words font-medium text-ink">
+                {ft('reasonLabel', { reason: card.reason })}
+              </p>
+            ) : null}
+            {isCommand && card.danger ? (
+              <p data-ai-fix-outside-note className="m-0 whitespace-pre-wrap break-words">
+                {card.cwd === 'project' ? ft('outsideCwdProject') : ft('outsideCwdScratch')} {ft('outsideBackup', { count: card.scripts ?? 0 })}
+              </p>
+            ) : null}
             {card.packages?.length ? (
               <p data-ai-fix-packages className="m-0 break-words font-medium text-ink">
                 {ft('willInstall', { packages: card.packages.join(', ') })}
               </p>
             ) : null}
-            {card.details ? <p className="m-0 whitespace-pre-wrap break-words">{card.details}</p> : null}
+            {card.details && !isCommand ? <p className="m-0 whitespace-pre-wrap break-words">{card.details}</p> : null}
             <Reads reads={card.reads ?? []} notRead={card.not_read} />
           </>
         ),
         primary: (
-          <Button variant="primary" size="md" data-ai-fix-confirm loading={busy} disabled={busy} onClick={() => void store.answer(fixKey, 'yes')}>
-            {ft('confirm')}
+          <Button
+            variant={card.danger ? 'danger-tinted' : 'primary'}
+            size="md"
+            data-ai-fix-confirm
+            data-ai-fix-danger={card.danger ? 'true' : undefined}
+            loading={busy}
+            disabled={busy}
+            onClick={() => void store.answer(fixKey, 'yes')}
+          >
+            {card.danger ? ft('confirmOutside') : ft('confirm')}
           </Button>
         ),
         ghost: skip(ft('decline'), 'no'),
       }
+    }
     case 'choice':
       return { title: card.summary, slot: <Choices fixKey={fixKey} entry={entry} />, ghost: skip(ft('skip')) }
     case 'pick': {

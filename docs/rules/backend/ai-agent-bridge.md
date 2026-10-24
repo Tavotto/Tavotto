@@ -463,7 +463,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 
 ### D2a：「改」组（`change.py` / `snapshots.py` / `executors.py`，ADR 0149 §七）
 
-六个工具：`install_packages`（`listed`）、`switch_execution` / `change_python` / `convert_script` / `rollback`（`tavotto`）、`select_environment`（`user_env`）。`run_command` 已拆出 D2a，移到后续 PR（本机分支 `feat/fixtools-run-command` 存着当时的实现）。
+六个工具：`install_packages`（`listed`）、`switch_execution` / `change_python` / `convert_script` / `rollback`（`tavotto`）、`select_environment`（`user_env`）。`run_command` 已拆出 D2a，由 #1374 落地（见下面「`run_command`」一节）。
 看护 `tests/test_fixtools_change.py`。`FIX_SESSION_TIERS` 放行 observe / run / tavotto / listed / user_env / outward，**放行 ≠ 不问**：要不要问用户由各工具自己经 `FixContext.ask` 把关
 （`change.approve`：没有 `ask`、回答不是 `yes`、`ask` 抛了、超时，一律 `needs_approval` 且审计记 `blocked`；通过则审计记 `approved_by=user`）。
 
@@ -477,19 +477,48 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   目标环境的 `pip freeze` 解析成 `{规范名: 版本}`（只留 `名==版本` 行，URL / 路径行不存）+ 环境目录顶层条目名。**打不出快照就不改**（`snapshot_failed`）；快照 id 进工具返回与审计行 `snapshot` 字段；每会话留最近 30 份。
   `rollback` 只认本会话 + 本项目的快照、id 形状固定（`snap_<时间>_<6 位十六进制>`）；设置**精确恢复**（原来没有的键清掉，并 `projectenv.reset_cache`）；包按 freeze 差异——快照后新装的卸掉
   （`pip` / `setuptools` / `wheel` 不卸），被改版本 / 被卸掉的装回快照里的版本，走同一条 `executors`。
-- **`run_command` 不在 D2a**：任意命令的沙盒逃逸面太大（Linux 桌面上 bwrap 只隔离挂载，`/run/user/<uid>/bus` 仍可连，命令能 `systemd-run --user` 让宿主的 user manager 改项目；macOS 同类：Apple Events 让 Finder 写、`launchctl` 等），
-  需要能抵御进程代理逃逸的沙盒后再做：Linux 隔离 `/run` 与 D-Bus 等、macOS 限制 mach-lookup / Apple Events，Windows 见 #1358。在那之前改东西只走本节的专用工具。
+- **`run_command`**：D2a 拆出、#1374 以两档落地，见 D2a 之后的「`run_command`」一节。
 - **`convert_script`**：原脚本**绝不动**——只许写 `<原名>_matplotlib.py`（已存在则 `_matplotlib_2`…，不覆盖）；脚本必须在项目内（解析符号链接后）；转换器拿原脚本的**临时副本**（`data_dir()/cache/fix_convert/`），「读基线 → 转换器 → 核对 / 必要时恢复」整段持原脚本的 `script_guard`（单个脚本，没有枚举竞态），返回后核原脚本 sha256，变了用执行前读到的原字节经 `snapshots.restore_script` 写回并报 `original_modified`；副本用 `_remove_tree` 带重试清理（建 / 写副本失败时的清理结果同样如实报），删不掉报 `cleanup_pending`。
 - **#1361 三条**：`_copy_project` 只复制普通文件（FIFO / socket / 设备及指向它们的链接跳过、记 `skipped["special"]`、结果 `copy_incomplete`，复制前再 `S_ISREG` 核一次防枚举后被换成 FIFO）；
   `list_environments` 列满 30 条时如实报 `[showing 30 of N …]`，本项目当前 / 选过的环境排前，`match` 参数按名字 / 来源 / 路径片段筛（被列出的才登记 id）；`_copy_project(…, reads)` 回传实际复制了内容的链接目标，`try_run` 逐个 `ctx.note_read(…, "try_run")`。
 - **freeze 的「可用」按成败判（#1371 P1）**：`default_freezer` 成功回文本（全新空环境是 `""`）、失败回 `None`；快照的 `freeze_available` = 拿到了没有，不按输出是否为空。
 
-- **持锁的基线（#1371 第三轮）**：「取基线 → 执行 → 核对 / 恢复」中间有窗口，用户的合法保存会被当成命令的改动写回旧版——所以不补窗口，改结构：`run_command` 审批前只做规模预检（`snapshots.list_scripts`，超限 `scripts_too_large` 不问用户），
-  用户点 yes 之后 `snapshots.hold_scripts` 按规范化真实路径排序依次持有全部用户脚本的 `script_guard`（`ExitStack`），在锁内读基线、打快照、跑命令、核对恢复，全程不放。界面保存走同一把锁（`scriptbackup.replace` 等），是**阻塞等待**不是失败：
-  命令跑的这段时间（最长 300 s）保存请求会挂着，命令结束才落盘，内容是用户的新版本。`convert_script` 同理，原脚本的锁从读基线持到核对完。`list_scripts` 跟随目录符号链接（按真实路径去重防环），受 `ReadScope`（允许范围 + DENY）与 1000 个 / 32 MiB / 20 万目录条目上限约束。
-  转换器临时副本（`data_dir()/cache/fix_convert/`）用 `trial._remove_tree` 带重试清理，删不掉如实报 `cleanup_pending` 并留 `.cleanup_pending` 标记，下次 `trial.sweep_stale_trials(root=…)` 清。
+- **转换器临时副本**（`data_dir()/cache/fix_convert/`）用 `trial._remove_tree` 带重试清理，删不掉如实报 `cleanup_pending` 并留 `.cleanup_pending` 标记，下次 `trial.sweep_stale_trials(root=…)` 清。
 
+### `run_command`：任意命令，两档（`fixtools/command.py` / `fixtools/cmdsandbox.py`，#1374，ADR 0149 §七修订）
 
+`tier=user_env`、`waits_for_user`。看护 `tests/test_fixtools_command.py`。参数：`argv`（列表）或 `command`（字符串，`shlex` 拆，**不经 shell**）二选一；`timeout_s`（默认 60、上限 300）；`outside_sandbox`（布尔，第②档开关，必须配 `reason`）；`reason`（一句给用户看的话，≤300 字）；`cwd`（`scratch` 默认 / `project`，`project` 只给第②档）。
+先过**硬拦表**（`hard_block_reason`，命中**不问用户**直接 `hard_blocked`，审计 `blocked`，两档都适用）：sudo 类、磁盘 / 关机类、起 shell（先剥掉 `env` / `nohup` / `timeout` / `nice` 等包装器再判）、管道进 shell、shell 语法、`dd of=/dev/…`、对根 / 盘符 / 主目录的递归删改权限、
+**宿主代理入口**（`osascript` `launchctl` `open` `systemd-run` `systemctl` `loginctl` `busctl` `gdbus` `dbus-send` `xdg-open` `xdotool` `docker` `podman` `nsenter` `crontab` `at` `schtasks` `reg` `wmic` …）、指向 `ReadScope` 硬拦区的参数。硬拦表是**第一道**，不是安全边界——沙盒才是（`env_contains_project` 之类的结构检查也在问用户之前）。
+
+- **第①档（默认，加固沙盒内）**：`cmdsandbox.sandbox_kind()` 找 sandbox-exec / bwrap 并**探一次**（加固后的沙盒里真能跑 Python 才算可用）；没有 → `sandbox_unavailable`（**不问、不跑**，文字说明只能申请第②档）。可写清单 `command_writable_dirs`：命令自己的临时目录（`data_dir()/cache/fix_commands/<uuid>`，cwd 与 TMPDIR / TEMP / TMP 都是它，用完 `trial._remove_tree` 带重试清理）、
+  目标 Python 环境前缀（`writable_envs`：`ctx.env_prefixes`（取前缀里的解释器）+ 已登记 env id 的解释器前缀，**所有候选统一**按 `convertdeps.describe_env` 判种类，系统自带 / 内置 runtime 一律不放；落在或盖住 Tavotto 安装目录 / 应用包 / 内置 runtime 的前缀、找不到解释器的前缀、浅到只有一两级的路径也不放；**项目内的 `.venv` 只放那个子目录**）、pip / conda 用户缓存（标准位置 `~/.cache/pip`、`~/Library/Caches/pip`、`~/.conda`，不读 pip.conf）。
+  **可写前缀若是项目根或其上级 → `env_contains_project`**（问用户之前拒）。**允许联网**。凭据位置（`DENY_HOME_RELATIVE` 里实际存在的）在沙盒里连读都拒（bwrap 目录换空 tmpfs、文件盖 `/dev/null`；macOS `deny file-read*`）。
+  环境：`cmdsandbox.clean_env` 去掉密钥类变量（名字带 KEY / TOKEN / SECRET / PASSWORD / AUTH …）与宿主代理入口变量（`DBUS_SESSION_BUS_ADDRESS` `DBUS_SYSTEM_BUS_ADDRESS` `XDG_RUNTIME_DIR` `DISPLAY` `WAYLAND_DISPLAY` `XAUTHORITY` `SSH_AUTH_SOCK` `GPG_AGENT_INFO` `DOCKER_HOST` …），`TMPDIR` 指向临时目录，`TAVOTTO_PROJECT` 给项目路径（项目只读）。
+  卡：`{kind:"approve", tool:"run_command", summary, command(完整、已脱敏), cwd:"scratch", sandbox:"hardened"}`。沙盒拒写失败（退出码非 0 且输出含 `Operation not permitted` / `Read-only file system` / `PermissionError` …）→ 结果末尾加 `sandbox_denied:` 提示，说明可以申请第②档，**不替模型申请**。
+- **第①档逃逸面与对策**（#1371 评审点名）：Linux：`/run` 空 tmpfs（user D-Bus 总线、`systemd-run --user`、docker.sock、`/run/dbus` 全不可见；`/var/run` 若是独立目录同样覆盖，常见情形是指向 `/run` 的链接）、`/tmp` 空 tmpfs（X11 路径套接字）、`--unshare-ipc/pid/uts`、`--new-session`（没有控制终端，无法 TIOCSTI 注入按键）、`--die-with-parent`；
+  `/etc/resolv.conf` 常是指向 `/run/systemd/resolve/…` 的链接，所以 `/run` 清空后把那几个 resolv 文件只读放回（**只放文件**，不放带 varlink 套接字的目录）。项目恰在 `/tmp` 下时只读挂回。
+  macOS：见下面的 profile 与白名单。
+- **macOS profile**（`cmdsandbox.macos_profile`）：`allow default` 基线 + `deny file-write*` 只放清单内目录与 `/dev/null`（不放 `/dev/tty`）+ `deny appleevent-send` + `deny mach-lookup` 后**只放** `MACH_LOOKUP_ALLOW` + `deny process-exec` 指向 `EXEC_DENY` + `deny network-outbound (remote unix-socket)` 只放 `/private/var/run/mDNSResponder` + `(deny signal)` 只放 `self` / `children` / `same-sandbox`
+  （写成 `(deny signal (target others))` 实测拦不住同用户的别的进程）。**mach-lookup 白名单来源**：Apple 自带 `/System/Library/Sandbox/Profiles/system.sb` 的基础块与 `(system-network)` 块，取其中只读查询的最小子集——DNS `com.apple.dnssd.service`；系统代理与网络配置 `com.apple.SystemConfiguration.configd` / `.DNSConfiguration` / `.SCNetworkReachability`、`com.apple.networkd`
+  （Python 的 `_scproxy` 靠 configd 读系统代理，国内常见的系统代理 / TUN 环境下 pip 要它）；证书链校验 `com.apple.trustd` / `.agent`（curl / git 等系统 TLS 客户端）；用户与组查询 `com.apple.system.opendirectoryd.libinfo` / `.membership`、`com.apple.system.DirectoryService.libinfo_v1`。
+  **刻意不放**：`cfprefsd`（能代写用户偏好 = 宿主代写）、`launchservicesd`、`pasteboard`、`securityd` / `SecurityServer`（钥匙串）、`tccd`、任何 XPC 应用服务。先严再按用例放。真机核实：Python 联网 / DNS、pip download、curl HTTPS、uv 在此 profile 下可用，`bootstrap_look_up` 对 launchservicesd 返回拒绝而 trustd 通过。
+- **第②档（沙盒外执行，用户单独点头）**：`outside_sandbox: true` + `reason`。顺序固定：参数 / 硬拦表 → **规模预检**（`list_scripts`：项目内 `.py` / `.pyw` / `.R` / `.r` / `.m`，**按后缀保守纳入、读原始字节、不要求能解码**（cp1252 / GBK 声明编码的合法 `.py` 同样护着，判不出语言的 `.m` 也备份）；跟随目录链接按真实路径去重防环、不进 `ReadScope` 硬拦区 / 环境前缀 / `.git` `node_modules` `.venv` 等；
+  **1000 个 / 32 MiB / 20 万目录项封顶，超限 `scripts_too_large`，不问用户**）→ 弹**单独的 danger 卡** → 点了才打快照 → `scriptlock.script_guards`（排序、非阻塞抢全、抢不齐退避，30 s 超时 `scripts_busy`，不起命令）→ **锁内读基线** → 起命令 → **锁内核对**，被改 / 被删的经 `snapshots.restore_script`（持锁、`write_script` 原子写、保留权限位）写回原字节。
+  卡：`{kind:"approve", tool:"run_command", danger:true, summary:"…会在沙盒外运行，可以修改你电脑上的文件", command, reason, cwd, scripts:<备份个数>, sandbox:"outside", details}`；前端红色强调（`danger-tinted` 主按钮「在沙盒外运行」、次按钮「不了」，完整命令在可见区，理由与备份说明在折叠详情里以守「一句话读懂」）。只对这一条命令有效，不记成长期授权（再来一次照样问）。
+  结果多 `scripts_backed_up: N` / `scripts_restored: N (…)` / `scripts_not_backed_up` / `scripts_restore_failed`（后者 `is_error`，`code=scripts_restore_failed`，让模型告诉用户）。**不自动升级**：第①档任何失败都不会让第②档无卡执行（`test_a_refused_write_in_the_sandbox_suggests_tier2_but_never_runs_it`）。
+- **用户看到的 = 实际执行的**：命令（`argv` 拼成一行）超过 `CARD_COMMAND_CHARS`（8000）字符，或 `reason` 超 300 字，审批**之前**就拒（`command_too_long_to_show` / `bad_arguments`），两档都适用；卡上的 `command` 不截断（脱敏只会让它更短）。
+- **进程树**：命令的直接进程退出（或超时被叫停）后，`_reap_tree` 结束并**确认**整棵受管进程树退出，才收输出、才核对 / 放锁。POSIX：命令在自己的新会话 / 进程组里，`killpg(SIGKILL)` 到 `ProcessLookupError`（组里一个不剩）才算干净；Windows：Job Object（`KILL_ON_JOB_CLOSE`）终止并等活动进程归零，起不来退回 `taskkill /T`（Windows 路径未在 Windows 上实测）。确认不了时结果带 `processes_left`。这样后台孙进程既绕不过时限，也不会在第②档核对、放锁之后才去改脚本。盲区：自己 `setsid` 逃出进程组的进程 POSIX 上追不到（Linux 沙盒内有 `--unshare-pid`，随 init 退出全被收掉）。
+- **快照与可写清单同源**：快照覆盖 `writable_envs` 里**每一个**命令获准写入的环境（`change_python` 新建、只靠 `env_prefixes` 进来的都算；没登记 id 的现场登记 `cmd_env_<hash>`），不只会话创建时的前缀。
+- **Windows / 无沙盒**：#1358 之前没有沙盒，第①档直接 `sandbox_unavailable`，只有第②档（备份 + 单独点头照旧）。
+- **审计行**：多 `sandbox ∈ {hardened, outside, none}`（`none` = 没执行：被拒 / 没沙盒 / 未获同意）与 `command_tier ∈ {1, 2}`；命令、理由的文字**不进审计**（只记长度），`outside_sandbox` 布尔照记。执行前打快照（设置 + 目标环境 freeze）。
+- **活动与看门狗**：前端把 `activity.tool=run_command` 映射成「正在运行命令…」；命令在跑是在途工具，不算卡住；等卡片也不算。
+- **已知盲区（如实）**：
+  - 第①档 Linux：**抽象命名空间 unix 套接字**仍可达（X11 在 Linux 上也走抽象地址；不 `--unshare-net` 才能联网装包）。seccomp-bpf 看不到 `connect` 的地址，不能「只拦抽象地址」；整个禁 `socket(AF_UNIX)` 会弄坏 asyncio / multiprocessing 且可用 `socketpair` 绕——不做。
+  - 第①档：联网 + 能读项目与主目录 = 命令可以**外传它读得到的东西**；只有 `DENY_HOME_RELATIVE` 里的凭据位置被藏起来，项目里的 `.env` 之类靠硬拦表挡参数、挡不住命令自己去读。环境前缀与 pip / conda 缓存可写 = 命令能在用户环境里放任何东西（装包的本意），缓存可被投毒。
+  - 第①档 macOS：sandbox-exec 是 Apple 标 deprecated 但仍可用的接口，`allow default` 基线只显式拒了上面几类；mach 白名单外的服务一律拒，个别系统工具可能因此异常，需要时走第②档或按用例放。沙盒内允许起子进程（包括 shell），硬拦表只看 argv[0]，所以 `python -c` 之类能做的事都在沙盒里。
+  - 第②档的备份**只覆盖项目内的用户脚本**：其它文件、项目外、环境、数据文件不保护。命令期间用户在**外部编辑器**里保存同一份脚本（不走 `scriptlock`）会被当成命令的改动，结束后恢复成命令前的版本；命令把脚本换成同名目录 / 链接则恢复失败（如实报）；命令新建的文件不删；基线在内存里，Tavotto 在命令期间被杀就无法恢复。
+  - 第②档持锁期间，界面里保存这些脚本会**阻塞等待**（不是失败），命令结束才落盘（最长 300 s 加快照时间）；锁只管走 `scriptlock` 的入口。审批卡开着期间的编辑不是盲区——基线在点头之后才取。
 
 ### D2b：「问与报」组 + 修复会话 + `POST /api/ai/fix`（`fixtools/ask.py`、`engine/fixsession.py`）
 

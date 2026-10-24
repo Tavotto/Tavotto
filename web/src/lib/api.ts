@@ -3215,6 +3215,8 @@ export const requestAiFix = (body: { session_id: string; script: string }) =>
 export interface AiFixCard {
   id: string
   kind: 'approve' | 'choice' | 'pick' | 'send'
+  /** 触发这张卡的工具名（后端已有；`run_command` 的卡按它渲染完整命令） */
+  tool?: string
   summary: string
   details?: string
   reads?: string[]
@@ -3225,6 +3227,13 @@ export interface AiFixCard {
   allow_other?: boolean
   pick?: 'file' | 'dir'
   wants_source?: boolean
+  /** `run_command` 的卡：完整命令（后端已脱敏）；`danger` = 第②档（沙盒外执行，红色强调）；`reason` 是模型给的理由；
+   *  `cwd` 命令的工作目录；`scripts` 第②档会备份的脚本个数 */
+  command?: string
+  danger?: boolean
+  reason?: string
+  cwd?: 'scratch' | 'project'
+  scripts?: number
 }
 
 export interface AiFixState {

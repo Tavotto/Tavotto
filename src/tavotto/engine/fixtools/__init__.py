@@ -13,12 +13,13 @@ from .ask import ASK_TOOLS
 from .audit import AuditLog
 from .base import BLOCKED_CODES, FIX_SESSION_TIERS, TIERS, FixContext, FixTool
 from .change import CHANGE_TOOLS
+from .command import COMMAND_TOOLS
 from .observe import OBSERVE_TOOLS
 from .readscope import scrub
 from .trial import TRIAL_TOOLS
 
 REGISTRY: dict[str, FixTool] = {
-    t.name: t for t in (*OBSERVE_TOOLS, *TRIAL_TOOLS, *CHANGE_TOOLS, *ASK_TOOLS)
+    t.name: t for t in (*OBSERVE_TOOLS, *TRIAL_TOOLS, *CHANGE_TOOLS, *COMMAND_TOOLS, *ASK_TOOLS)
 }
 
 
@@ -63,6 +64,8 @@ def run_tool(
             result={"ok": not result.is_error, "code": result.code, "summary": result.summary},
             snapshot=ctx.call_meta.get("snapshot"),
             approved_step=ctx.call_meta.get("approved_step"),
+            sandbox=ctx.call_meta.get("sandbox"),
+            command_tier=ctx.call_meta.get("command_tier"),
         )
     return result
 
