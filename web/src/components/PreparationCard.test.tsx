@@ -2733,6 +2733,24 @@ describe('准备出错：后端本地详情接到已有恢复动作（P05a，AC-
     await toggleDetails()
     expect(details()!.querySelector('[data-prep-traceback]')).not.toBeNull()
   })
+
+  it('读不到数据：也有「使用你的 AI 来修复」次按钮，点击起修复，主按钮不变', async () => {
+    const mockFix = vi.mocked(requestAiFix)
+    mockFix.mockReset()
+    mockFix.mockResolvedValue({ ok: false, reason: 'ai_fix_busy' } as never)
+    useAiFixStore.getState().reset()
+    useAiStore.setState({ caps: { agents: [{ id: 'claude', usable: true }], endpoints: [], presets: [], checked_at_ms: 0 } as never })
+    await mount()
+    await openWith(report(fromBackend('missing_input_file')))
+    const btn = panel().querySelector('[data-prep-ai-fix]') as HTMLButtonElement | null
+    expect(btn?.textContent).toBe('使用你的 AI 来修复')
+    expect(primary()?.dataset.prepPrimary).toBe('missing_input')
+    await act(async () => btn!.click())
+    expect(mockFix).toHaveBeenCalledWith({ session_id: 'psess-1', script: 'plot.py' })
+    mockFix.mockReset()
+    useAiFixStore.getState().reset()
+    useAiStore.setState({ caps: null })
+  })
 })
 
 describe('沙盒里落空、脚本目录里找得到的引导（#1254）', () => {
