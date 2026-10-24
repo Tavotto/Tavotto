@@ -402,9 +402,16 @@ class TestProductApiProbe:
             assert resp.status_code == 200
             result = resp.get_json()
             assert result["stems"] == ["deck", "deck-2"]
-            assert result["pdf_pages"] == [
-                {"name": "deck.pdf", "pages": 2, "captured": 2, "stems": ["deck", "deck-2"]}
-            ]
+            (item,) = result["pdf_pages"]
+            assert {k: item[k] for k in ("name", "pages", "captured", "stems")} == {
+                "name": "deck.pdf",
+                "pages": 2,
+                "captured": 2,
+                "stems": ["deck", "deck-2"],
+            }
+            # PR2：页序与路径（safe 档写在沙盒里，scope 为 execution）
+            assert item["page_stems"] == ["deck", "deck-2"]
+            assert item["path"] == "deck.pdf" and item["complete"] is True
         finally:
             engine_pool.shutdown_all(str(figs), wait=True)
 
