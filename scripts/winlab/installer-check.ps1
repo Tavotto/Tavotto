@@ -18,8 +18,16 @@ param(
 $ErrorActionPreference = 'Stop'
 $Uninst = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
 
+# Write straight to the console stream: functions below also return values, and anything
+# put on the pipeline inside them would be swallowed into those return values.
 function Emit($step, $ok, $detail) {
-  [pscustomobject]@{ step = $step; ok = [bool]$ok; detail = "$detail" } | ConvertTo-Json -Compress | Write-Output
+  [Console]::Out.WriteLine(([pscustomobject]@{ step = $step; ok = [bool]$ok; detail = "$detail" } | ConvertTo-Json -Compress))
+}
+
+# Child processes without WMI: Win32_Process (CIM) is denied to a non-admin SSH session;
+# PowerShell 7's Get-Process exposes Parent and CommandLine directly.
+function Get-Children([int]$parentId, [string]$pattern) {
+  @(Get-Process -EA SilentlyContinue | Where-Object { $_.Parent -and $_.Parent.Id -eq $parentId -and $_.CommandLine -match $pattern })
 }
 
 function Get-Installs {
@@ -72,7 +80,7 @@ function Probe-Shell($paths, [string]$label) {
   $child = $null
   foreach ($i in 1..60) {
     Start-Sleep -Milliseconds 500
-    $child = Get-CimInstance Win32_Process -Filter "ParentProcessId=$($p.Id)" | Where-Object { $_.CommandLine -match 'desktop-sidecar' }
+    $child = Get-Children $p.Id 'desktop-sidecar' | Select-Object -First 1
     if ($child) { break }
   }
   $alive = $null -ne (Get-Process -Id $p.Id -EA SilentlyContinue)
@@ -80,9 +88,9 @@ function Probe-Shell($paths, [string]$label) {
   Stop-Process -Id $p.Id -Force -EA SilentlyContinue
   if ($child) {
     $gone = $false
-    foreach ($i in 1..30) { Start-Sleep -Milliseconds 500; if (-not (Get-Process -Id $child.ProcessId -EA SilentlyContinue)) { $gone = $true; break } }
+    foreach ($i in 1..30) { Start-Sleep -Milliseconds 500; if (-not (Get-Process -Id $child.Id -EA SilentlyContinue)) { $gone = $true; break } }
     Emit "sidecar-follows-shell-exit:$label" $gone 'no orphan after the shell is killed'
-    if (-not $gone) { Stop-Process -Id $child.ProcessId -Force -EA SilentlyContinue }
+    if (-not $gone) { Stop-Process -Id $child.Id -Force -EA SilentlyContinue }
   }
 }
 
