@@ -3972,3 +3972,46 @@ def test_proctree_job_reaches_a_descendant_whose_parents_are_all_gone(tmp_path):
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+# --- 真窗口用例（tests/desktop_windows/）随产品改版失效的两处前提 -------------------------
+# 真窗口用例只在 nightly / Windows Lab 里跑，普通 CI 看不到它们过期（10-21 起一直红、没人发现）。
+# 这里在普通 CI 上钉住两处前提：用例引用的选择器必须仍在前端源码里，且用例不再拿「放大
+# 取景前量到的尺寸」去比「取景改变之后量到的尺寸」。
+
+_DESKTOP_WINDOW_TESTS = Path(__file__).parent / "desktop_windows"
+_WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
+
+
+def test_desktop_window_picker_test_leaves_the_tutorial_welcome_first():
+    """全新配置目录的第一屏是新手教程欢迎页（`NativeTutorial`：`aria-modal` 的整屏 fixed 层，
+    底下的主页 inert 且被盖住），用户必须先点「打开工作区」才点得到主页的「导入我的脚本」。
+    真窗口用例若直接点主页按钮就是 `element click intercepted`——点不到不是用例的毛病，
+    是用户也点不到，所以用例要走用户走的那条路。"""
+    exit_selector = "data-tutorial-open-workspace"
+    welcome = (_WEB_SRC / "components" / "onboarding" / "TutorialWelcome.tsx").read_text(
+        encoding="utf-8"
+    )
+    shell = (_WEB_SRC / "components" / "onboarding" / "NativeTutorial.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert exit_selector in welcome, "欢迎页的出口选择器改了：真窗口用例要跟着改"
+    assert 'aria-modal="true"' in shell and "fixed inset-0" in shell, (
+        "教程层不再整屏盖住主页：这条前提（以及用例里先离开欢迎页）可以重新评估"
+    )
+    picker = (_DESKTOP_WINDOW_TESTS / "test_file_picker.py").read_text(encoding="utf-8")
+    click_home = picker.index("d.click(d.find(IMPORT_BUTTON[variant]))")
+    assert exit_selector in picker[:click_home], (
+        "test_file_picker 在点主页按钮之前没有先离开教程欢迎页（全新配置目录的第一屏）"
+    )
+
+
+def test_desktop_window_paste_test_compares_sizes_within_one_view():
+    """粘贴第二个对象会让画布从单图编辑切到多图排版并重新取景（#1292），屏幕上的 px 尺度随之变。
+    用例若拿粘贴前量的 `original` 去比粘贴后量的对象，就把取景缩放当成了「粘贴没读系统剪贴板」。
+    正确的量法：粘贴之后在同一个取景里量原对象与新对象，比它们的比值。"""
+    src = (_DESKTOP_WINDOW_TESTS / "test_clipboard.py").read_text(encoding="utf-8")
+    body = src[src.index("def test_paste_reads_what_another_app_put_there") :]
+    tail = body[body.index("pasted = rect(d, new[0])") :]
+    assert "original[" not in tail, "粘贴后的尺寸不能和粘贴前量的原对象比：取景已经变了"
+    assert "rect(d, oid)" in tail, "粘贴之后要在同一个取景里重新量原对象"
