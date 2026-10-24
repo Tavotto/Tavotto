@@ -25,7 +25,8 @@ import {
   cancelAiFix,
   fetchAiFix,
   requestAiFix,
-  usableAgents,
+  hasConnectionView,
+  hasUsableAi,
   type AiFixCard,
   type AiFixState,
 } from '@/lib/api'
@@ -33,6 +34,7 @@ import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { onCurrentProjectChange } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
 import { useConvertStore } from '@/store/convertStore'
+import { requestConnectAi, useConnectAiStore } from '@/store/connectAiStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useUiStore } from '@/store/uiStore'
@@ -188,9 +190,9 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
         // 探测在途时用户切走了项目：这次点击属于原项目，不落 store、不起修复（A→B→A 也算作废）
         if (!guard.still()) return
       }
-      if (usableAgents(caps).length === 0) {
+      if (!hasUsableAi(caps)) {
         set((s) => ({ entries: { ...s.entries, [key]: { phase: 'awaiting_connect', ref } } }))
-        useUiStore.getState().setSettingsOpen(true, 'ai')
+        requestConnectAi({ reason: 'fix' })
         return
       }
       await get().startAiFix(key, ref)
@@ -306,13 +308,22 @@ const waiting = () => Object.entries(useAiFixStore.getState().entries).filter(([
 
 // 连好 AI 回来自动接着修：caps 里出现可用的 AI，就把所有在等的条目接着走 startAiFix
 useAiStore.subscribe((s, prev) => {
-  if (s.caps === prev.caps || usableAgents(s.caps).length === 0) return
+  if (s.caps === prev.caps || !hasUsableAi(s.caps)) return
   for (const [key, e] of waiting()) void useAiFixStore.getState().startAiFix(key, e.ref)
 })
 
-// 设置关了还没连上：放弃等待（之后偶然连上 AI 不该冷不丁开始修）。连上了的那条已由上面的订阅接走
+// 老后端（没有连接视图）走的是设置页：设置关了还没连上同样放弃等待
 useUiStore.subscribe((s, prev) => {
   if (!prev.settingsOpen || s.settingsOpen) return
+  if (hasConnectionView(useAiStore.getState().caps)) return
+  for (const [key] of waiting()) useAiFixStore.getState().clear(key)
+})
+
+// 连接弹窗关了还没连上：放弃等待（之后偶然连上 AI 不该冷不丁开始修）。连上了的那条已由上面的订阅接走
+// （连好时 caps 先于弹窗关闭刷新，那条已离开 `awaiting_connect`）
+useConnectAiStore.subscribe((s, prev) => {
+  if (!prev.open || s.open) return
+  if (hasUsableAi(useAiStore.getState().caps)) return
   for (const [key] of waiting()) useAiFixStore.getState().clear(key)
 })
 

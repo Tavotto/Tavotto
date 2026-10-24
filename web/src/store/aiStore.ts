@@ -12,6 +12,11 @@ import {
   ApiError,
   backendErrorText,
   effectiveAgent,
+  effectiveConnection,
+  connectionAgent,
+  hasConnectionView,
+  hasUsableAi,
+  type AiConnection,
   fetchAiCapabilities,
   fetchAiChanges,
   fetchAiHistory,
@@ -20,7 +25,6 @@ import {
   fetchAiRequest,
   fetchAiSession,
   isDefiniteRunFailure,
-  usableAgents,
   type AiSessionDetail,
   type AiAgentId,
   type AiAgentCaps,
@@ -178,6 +182,12 @@ interface AiState {
    * 它还该是默认项，悄悄改掉等于替用户做了决定。
    */
   agent: AiAgentId | null
+  /**
+   * 用户首选的**连接**（「连接 AI」视图：订阅类 `sub:codex` / Key 类 provider id）。与 `agent` 同一规矩：
+   * 暂时不可用时实际派活的是 `effectiveConnection`，这里保持原样。型号 / 强度的记忆仍在 `models` / `efforts`，
+   * 以连接 id 为键。
+   */
+  connection: string | null
   /** 用户选择的作用范围；目标不支持时由面板降级，不改这里 */
   scope: AiScope
   sessions: AiSession[]
@@ -195,6 +205,7 @@ interface AiState {
   efforts: Record<AiAgentId, string>
   loadCaps: (refresh?: boolean) => Promise<void>
   setAgent: (a: AiAgentId) => void
+  setConnection: (id: string) => void
   setScope: (s: AiScope) => void
   setModel: (agent: AiAgentId, model: string) => void
   setEffort: (agent: AiAgentId, effort: string) => void
@@ -440,6 +451,7 @@ const toStatus = (s: string): AiStatus => ((KNOWN_STATUS as string[]).includes(s
 
 const LS_AGENT = 'tavotto.ai.agent'
 const LS_PREFS = 'tavotto.ai.prefs'
+const LS_CONN = 'tavotto.ai.connection'
 
 /**
  * 记住的首选 Agent。**不再拿硬编码联合类型校验**：合法性只有后端的注册表
@@ -449,6 +461,16 @@ const LS_PREFS = 'tavotto.ai.prefs'
 function readAgent(): AiAgentId | null {
   try {
     const v = localStorage.getItem(LS_AGENT)
+    if (typeof v === 'string' && v.trim()) return v
+  } catch {
+    /* 用默认值 */
+  }
+  return null
+}
+
+function readConnection(): string | null {
+  try {
+    const v = localStorage.getItem(LS_CONN)
     if (typeof v === 'string' && v.trim()) return v
   } catch {
     /* 用默认值 */
@@ -502,6 +524,7 @@ function persistPrefs(models: AiState['models'], efforts: AiState['efforts']): v
 
 export const useAiStore = create<AiState>((set, get) => ({
   agent: readAgent(),
+  connection: readConnection(),
   scope: 'element',
   sessions: [],
   generation: 0,
@@ -517,8 +540,15 @@ export const useAiStore = create<AiState>((set, get) => ({
     const caps = await fetchAiCapabilities(refresh)
     set((s) => {
       // 记忆里的模型/强度若已不在该 Agent 当前的清单里就丢弃，回落到默认值
-      const models = prunePrefs(s.models, (a) => agentById(caps, a)?.models ?? [])
-      const efforts = prunePrefs(s.efforts, (a) => agentById(caps, a)?.efforts ?? [])
+      // 键可能是执行器 id，也可能是连接 id（「连接 AI」视图）：各查各的清单
+      const models = prunePrefs(
+        s.models,
+        (a) => agentById(caps, a)?.models ?? caps.connections?.find((c) => c.id === a)?.models ?? [],
+      )
+      const efforts = prunePrefs(
+        s.efforts,
+        (a) => agentById(caps, a)?.efforts ?? caps.connections?.find((c) => c.id === a)?.efforts ?? [],
+      )
       if (models !== s.models || efforts !== s.efforts) persistPrefs(models, efforts)
       // **首选值不动**：暂时不可用不等于用户改了主意，恢复后它还该是默认项。
       // 实际派活的 Agent 由 effectiveAgent 现算（见 start / AiPanel）。
@@ -533,6 +563,18 @@ export const useAiStore = create<AiState>((set, get) => ({
     } catch {
       /* 忽略存储失败 */
     }
+  },
+
+  setConnection: (connection) => {
+    set({ connection })
+    try {
+      localStorage.setItem(LS_CONN, connection)
+    } catch {
+      /* 忽略存储失败 */
+    }
+    // 订阅类连接同时把旧的 agent 首选对齐过去，依赖 agent 的老入口（胶囊、历史标签）不会指到别家
+    const a = connectionAgent(get().caps?.connections?.find((c) => c.id === connection))
+    if (a) get().setAgent(a)
   },
 
   setScope: (scope) => set({ scope }),
@@ -557,7 +599,7 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   start: async ({ project, generation, prompt, fileId, panelId, gid, label, scope, target, overrides, canvas, script = null, draftStamp = null }) => {
     // 发任务前再确认一次：首选那个可能刚被关掉 / 刚被检测成不可用
-    if (!effectiveAgent(get().agent, get().caps)) throw new Error('no-usable-agent')
+    if (!canDispatch(get())) throw new Error('no-usable-agent')
     if (get().generation !== generation) throw new ProjectChangedError()
     // 同一面板、或同一份脚本的别的面板上还有没落定的提交（在路上 / 未确认 / 待重发）：不许再发。
     // 界面已经锁了；这是 store 层的兜底（直接调、竞态都过不去）
@@ -687,7 +729,7 @@ export const useAiStore = create<AiState>((set, get) => ({
     const sub = get().submissions[rid]
     // 只有「后端明确说没收到」才允许用同一个 id 重发；其余相位的重发就是盲目重复执行
     if (!sub || sub.phase !== 'not_received') return 'unconfirmed'
-    if (!effectiveAgent(get().agent, get().caps)) throw new Error('no-usable-agent')
+    if (!canDispatch(get())) throw new Error('no-usable-agent')
     return dispatch(rid, get().generation)
   },
 
@@ -1432,10 +1474,14 @@ async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
   const sub = get().submissions[rid]
   if (!sub) return 'unconfirmed'
   const caps = get().caps
-  const agent = effectiveAgent(get().agent, caps) as AiAgentId
-  const info = agentById(caps, agent)
-  const model = get().models[agent] ?? info?.default_model ?? null
-  const effort = info?.efforts.length ? resolveEffort(info, model, get().efforts[agent]) || null : null
+  // 有连接视图时按连接派活（请求带 `connection` + `model`）；`agent` 仍填内部家族（订阅类 / 走命令行的连接），
+  // builtin 路由没有家族时退回旧的首选，后端以 `connection` 为准
+  const conn = hasConnectionView(caps) ? effectiveConnection(get().connection, caps) : null
+  const agent = ((conn ? connectionAgent(conn) : null) ?? effectiveAgent(get().agent, caps) ?? '') as AiAgentId
+  const info = conn ? connectionInfo(conn) : agentById(caps, agent)
+  const key = conn ? conn.id : agent
+  const model = get().models[key] ?? info?.default_model ?? null
+  const effort = info?.efforts.length ? resolveEffort(info, model, get().efforts[key]) || null : null
   set((s) => ({ submissions: { ...s.submissions, [rid]: { ...s.submissions[rid], phase: 'sending' } } }))
   let res
   try {
@@ -1447,6 +1493,7 @@ async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
         gid: sub.target.gid,
         label: sub.target.label,
         overrides: sub.overrides,
+        ...(conn ? { connection: conn.id } : {}),
         model,
         effort,
         scope: sub.target.scope,
@@ -1499,7 +1546,11 @@ async function dispatch(rid: string, born: number): Promise<SubmitOutcome> {
     }
     return 'accepted'
   }
-  accept(rid, res.session, res.script, { kind: 'fresh', agent, agentLabel: agentDisplayName(caps, agent) })
+  accept(rid, res.session, res.script, {
+    kind: 'fresh',
+    agent,
+    agentLabel: conn ? conn.label : agentDisplayName(caps, agent),
+  })
   return 'accepted'
 }
 
@@ -1657,14 +1708,29 @@ function accept(
 export const sessionAgentLabel = (
   caps: AiCapabilities | null,
   session: Pick<AiSession, 'agent' | 'agentLabel'>,
-): string => (session.agent === DATA_FIGURE_AGENT ? PRODUCT_NAME : agentDisplayName(caps, session.agent, session.agentLabel))
+): string => (session.agent === DATA_FIGURE_AGENT ? PRODUCT_NAME : (session.agent === 'builtin' ? session.agentLabel || 'AI' : agentDisplayName(caps, session.agent, session.agentLabel)))
 
 /** 是不是「从数据出图」那一类本地会话（无脚本、无后端会话、同步 HTTP） */
 export const isDataFigureSession = (x: Pick<AiSession, 'agent'>): boolean => x.agent === DATA_FIGURE_AGENT
 
 /** 一个可用的 Agent 都没有 = AI 面板要给设置入口，而不是一个死掉的选择器 */
-export const hasUsableAgent = (caps: AiCapabilities | null): boolean =>
-  usableAgents(caps).length > 0
+export const hasUsableAgent = (caps: AiCapabilities | null): boolean => hasUsableAi(caps)
+
+/** 能不能发任务：有连接视图看有没有 ready 的连接，否则看旧的首选执行器 */
+const canDispatch = (s: Pick<AiState, 'agent' | 'caps'>): boolean =>
+  hasConnectionView(s.caps) ? hasUsableAi(s.caps) : !!effectiveAgent(s.agent, s.caps)
+
+/** 把连接伪装成 `AiAgentCaps` 形状的只读视图：型号 / 强度的解析函数（`modelDetail` / `resolveEffort`）只认这几个字段 */
+export const connectionInfo = (c: AiConnection): AiAgentCaps =>
+  ({
+    id: c.id,
+    display_name: c.label,
+    models: c.models,
+    model_details: c.model_details,
+    default_model: c.default_model,
+    efforts: c.efforts ?? [],
+    default_effort: c.default_effort ?? null,
+  }) as unknown as AiAgentCaps
 
 /** 作用域名；是函数不是常量表——常量在模块求值时就把语言定死了 */
 export const scopeLabel = (scope: AiScope): string => t(`scope.${scope}`, { ns: 'ai' })

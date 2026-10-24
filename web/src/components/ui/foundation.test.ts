@@ -321,6 +321,7 @@ const RULES: Rule[] = [
       '/src/components/inspector/controls/TypographyControls.tsx': { count: 1, why: '文档数据：文字颜色缺省 #000000' },
       '/src/components/settings/StyleSamplePreview.tsx': { count: 9, why: '文档数据：样式样张是一张小图（印刷色，跟纸一起不随主题变）' },
       '/src/components/settings/AgentIcon.tsx': { count: 1, why: '第三方品牌色（编码助手的标）' },
+      '/src/components/settings/brandLogoData.ts': { count: 21, why: '第三方品牌色（厂商彩色标志，取自 lobe-icons 的 -color 版）' },
       '/src/canvas/context-bar/ElementBar.tsx': { count: 1, why: '文档数据：取色框没有值时的 #000000' },
       '/src/canvas/context-bar/textQuick.tsx': { count: 1, why: '文档数据：文字颜色缺省 #000000' },
       '/src/canvas/interactions.ts': { count: 2, why: '文档数据：新画的标注 / 文字的缺省颜色' },

@@ -16,6 +16,8 @@ import { answerAiFix, ApiError, cancelAiFix, fetchAiFix, requestAiFix, type AiFi
 import { useAiFixStore } from '@/store/aiFixStore'
 import { useAiStore } from '@/store/aiStore'
 import { useConvertStore } from '@/store/convertStore'
+import { useConnectAiStore } from '@/store/connectAiStore'
+import { useUiStore } from '@/store/uiStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { setCurrentProjectId } from '@/lib/session'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -331,5 +333,62 @@ describe('进度与卡住的落地', () => {
     vi.mocked(fetchAiFix).mockResolvedValue(state({ state: 'finished', outcome: 'failed', reason: 'cli_tool_not_delivered' }))
     await useAiFixStore.getState().refresh(KEY)
     expect(entry()).toMatchObject({ phase: 'done', outcome: 'failed', reason: 'cli_tool_not_delivered' })
+  })
+})
+
+describe('没连 AI → 连接小弹窗（不再打开设置页）', () => {
+  const CONNECT_VIEW = { agents: [], endpoints: [], presets: [], vendors: [], connections: [], checked_at_ms: 0 } as never
+  const connected = {
+    ...(CONNECT_VIEW as object),
+    connections: [{ id: 'deepseek', vendor: 'deepseek', label: 'DeepSeek', logo: 'deepseek', state: 'ready', models: [], default_model: null }],
+  } as never
+
+  beforeEach(() => {
+    useConnectAiStore.setState({ open: false, reason: 'general', onConnected: null })
+    useUiStore.setState({ settingsOpen: false, settingsSection: null })
+    useAiStore.setState({ caps: CONNECT_VIEW })
+  })
+  afterEach(() => useConnectAiStore.setState({ open: false, onConnected: null }))
+
+  it('打开的是连接弹窗（reason=fix），设置页不开；条目停在 awaiting_connect', async () => {
+    await useAiFixStore.getState().request(KEY, REF)
+    expect(useConnectAiStore.getState()).toMatchObject({ open: true, reason: 'fix' })
+    expect(useUiStore.getState().settingsOpen).toBe(false)
+    expect(entry().phase).toBe('awaiting_connect')
+    expect(requestAiFix).not.toHaveBeenCalled()
+  })
+
+  it('连好（出现 ready 的连接）后自动续跑，请求入参不变', async () => {
+    await useAiFixStore.getState().request(KEY, REF)
+    vi.mocked(requestAiFix).mockResolvedValue({ ok: true, fix_id: 'fx_1' })
+    vi.mocked(fetchAiFix).mockResolvedValue(state({}))
+    useAiStore.setState({ caps: connected })
+    await vi.waitFor(() => expect(requestAiFix).toHaveBeenCalledWith({ session_id: 'psess-1', script: 'plot.py' }))
+    expect(entry().phase).toBe('running')
+  })
+
+  it('弹窗关了仍没连上：放弃等待，之后偶然连上也不会冷不丁开始修', async () => {
+    await useAiFixStore.getState().request(KEY, REF)
+    useConnectAiStore.getState().close()
+    expect(entry()).toBeUndefined()
+    useAiStore.setState({ caps: connected })
+    await Promise.resolve()
+    expect(requestAiFix).not.toHaveBeenCalled()
+  })
+
+  it('弹窗关闭时已经连上了：等待的那条不被清掉（由 caps 订阅接走）', async () => {
+    await useAiFixStore.getState().request(KEY, REF)
+    vi.mocked(requestAiFix).mockResolvedValue({ ok: true, fix_id: 'fx_1' })
+    vi.mocked(fetchAiFix).mockResolvedValue(state({}))
+    useAiStore.setState({ caps: connected })
+    useConnectAiStore.getState().close()
+    await vi.waitFor(() => expect(entry()?.phase).toBe('running'))
+  })
+
+  it('降级：老后端没有连接视图 → 仍打开设置页的 AI 分区，不开空弹窗', async () => {
+    useAiStore.setState({ caps: { agents: [], endpoints: [], presets: [], checked_at_ms: 0 } as never })
+    await useAiFixStore.getState().request(KEY, REF)
+    expect(useConnectAiStore.getState().open).toBe(false)
+    expect(useUiStore.getState()).toMatchObject({ settingsOpen: true, settingsSection: 'ai' })
   })
 })
