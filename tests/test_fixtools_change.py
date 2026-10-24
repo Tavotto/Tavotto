@@ -584,91 +584,95 @@ def test_select_environment_unknown_or_vanished(box):
     assert ctx.asker.cards == []
 
 
-# =========================================================================== convert_script
-def _converter(content=b"import matplotlib\n", ok_=True, tamper=False, write=True, seen=None):
-    def run(req):
-        if seen is not None:
-            seen.append(req)
-        if tamper == "copy":
-            Path(req["script"]).write_bytes(b"CHANGED")  # 写临时副本：原脚本不受影响
-        elif tamper:
-            (Path(req["project"]) / "fig.py").write_bytes(b"CHANGED")  # 误写原路径
-        if write:
-            Path(req["output"]).write_bytes(content)
-        return {"ok": ok_, "message": "x", "code": "" if ok_ else "convert_error"}
-
-    return run
+# =========================================================================== convert_script（交接，不写文件）
+def _tree(root: Path) -> dict[str, bytes]:
+    return {
+        str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()
+    }
 
 
-def test_convert_script_is_unavailable_without_an_executor(box):
-    put(box.proj / "fig.py", b"print(1)\n")
-    ctx = change_ctx(box, script_path=box.proj / "fig.py")
-    assert call(ctx, "convert_script", {}).code == "unavailable"
+def _report(lib: str | None):
+    hint = {"kind": "raster_script", "library": lib, "in_project": False, "path": None}
+    return lambda: {"phase": "failed", "no_figure_hint": hint if lib else None}
 
 
-def test_convert_script_saves_next_to_the_original_and_never_touches_it(box):
+def test_convert_script_hands_off_without_writing_anything(box):
     orig = put(box.proj / "fig.py", b"from PIL import Image\r\n")
-    seen: list = []
-    ctx = change_ctx(box, script_path=orig, script_converter=_converter(seen=seen))
+    ctx = change_ctx(box, script_path=orig, report=_report("pillow"))
+    before = _tree(box.proj)
     r = call(ctx, "convert_script", {}, AuditLog())
     assert not r.is_error, r.content
-    assert orig.read_bytes() == b"from PIL import Image\r\n"
-    out = box.proj / "fig_matplotlib.py"
-    assert out.read_bytes() == b"import matplotlib\n" and "fig_matplotlib.py" in r.content
-    assert seen[0]["output"] == str(out)
-    assert (
-        seen[0]["script"] != str(orig) and Path(seen[0]["script"]).name == "fig.py"
-    )  # 拿到的是临时副本
-    assert not Path(seen[0]["script"]).exists()  # 临时副本用完即删
-    # 再转一次不覆盖上一份
-    r = call(ctx, "convert_script", {"target": "fig.py"})
-    assert not r.is_error and (box.proj / "fig_matplotlib_2.py").is_file() and out.is_file()
-    assert audit_lines(box)[-1]["snapshot"]
+    assert ctx.handoff == {"kind": "convert", "script": "fig.py", "library": "pillow", "path": None}
+    assert _tree(box.proj) == before  # 项目里没多一个文件，原脚本一个字节不动
+    assert "outcome `convert`" in r.content and not r.mutated
+    assert "snapshot" not in audit_lines(box)[-1]  # 不写用户文件：不打快照
 
 
-def test_convert_script_fails_loudly_if_the_executor_touches_the_original(box):
+def _report_for(script: str, path: str | None):
+    hint = {"kind": "raster_script", "library": "pillow", "in_project": True, "path": path}
+    return lambda: {"phase": "failed", "target": {"script": script}, "no_figure_hint": hint}
+
+
+def test_convert_script_handoff_carries_the_original_figure_path_of_the_same_script(box):
     orig = put(box.proj / "fig.py", b"print(1)\n")
-    ctx = change_ctx(box, script_path=orig, script_converter=_converter(tamper=True))
-    r = call(ctx, "convert_script", {})
-    assert r.is_error and r.code == "original_modified" and "put back" in r.content
-    assert orig.read_bytes() == b"print(1)\n"  # 用执行前读到的原字节恢复了
+    ctx = change_ctx(box, script_path=orig, report=_report_for("fig.py", "out/fig.png"))
+    assert not call(ctx, "convert_script", {}).is_error
+    assert ctx.handoff == {
+        "kind": "convert",
+        "script": "fig.py",
+        "library": "pillow",
+        "path": "out/fig.png",
+    }
 
 
-def test_the_converter_gets_a_copy_so_writing_it_never_reaches_the_original(box):
+def test_convert_script_handoff_has_no_path_when_target_is_another_script(box):
     orig = put(box.proj / "fig.py", b"print(1)\n")
-    ctx = change_ctx(box, script_path=orig, script_converter=_converter(tamper="copy"))
-    r = call(ctx, "convert_script", {})
-    assert not r.is_error and orig.read_bytes() == b"print(1)\n"
+    put(box.proj / "other.py", b"print(2)\n")
+    ctx = change_ctx(box, script_path=orig, report=_report_for("fig.py", "out/fig.png"))
+    assert not call(ctx, "convert_script", {"target": "other.py"}).is_error
+    assert ctx.handoff["script"] == "other.py" and ctx.handoff["path"] is None
 
 
-def test_a_failed_restore_of_the_original_is_reported_honestly(box, monkeypatch):
-    orig = put(box.proj / "fig.py", b"print(1)\n")
-    ctx = change_ctx(box, script_path=orig, script_converter=_converter(tamper=True))
-    monkeypatch.setattr(snapshots, "restore_script", lambda path, data: False)
-    r = call(ctx, "convert_script", {})
-    assert r.code == "original_modified" and "NOT be put back" in r.content
+def test_convert_script_target_and_explicit_library_beat_the_report(box):
+    put(box.proj / "sub" / "fig.py", b"print(1)\n")
+    ctx = change_ctx(box, report=_report("pillow"))
+    r = call(ctx, "convert_script", {"target": "sub/fig.py", "library": "opencv"})
+    assert not r.is_error and ctx.handoff["script"] == "sub/fig.py"
+    assert ctx.handoff["library"] == "opencv"
 
 
-def test_convert_script_failure_and_missing_output(box):
-    orig = put(box.proj / "fig.py", b"print(1)\n")
-    ctx = change_ctx(box, script_path=orig, script_converter=_converter(ok_=False, write=False))
-    assert call(ctx, "convert_script", {}).code == "convert_error"
-    ctx = change_ctx(box, script_path=orig, script_converter=_converter(write=False))
-    assert call(ctx, "convert_script", {}).code == "convert_failed"
-    assert orig.read_bytes() == b"print(1)\n"
-
-
-def test_convert_script_stays_inside_the_project(box):
+def test_convert_script_rejects_what_it_cannot_hand_off(box):
     other = put(box.home / "elsewhere" / "fig.py", b"print(1)\n")
-    ctx = change_ctx(box, script_converter=_converter())
+    ctx = change_ctx(box, report=_report("pillow"))
     assert call(ctx, "convert_script", {"target": str(other)}).code == "outside_project"
-    link = box.proj / "fig.py"
-    link.symlink_to(other)  # 项目里的链接指向项目外：解析后在项目外，也不转
-    assert call(ctx, "convert_script", {"target": "fig.py"}).code == "outside_project"
-    assert not (box.home / "elsewhere" / "fig_matplotlib.py").exists()
+    (box.proj / "linked.py").symlink_to(other)  # 项目里的链接指向项目外：解析后在项目外
+    assert call(ctx, "convert_script", {"target": "linked.py"}).code == "outside_project"
+    put(box.proj / "run.R", b"x\n")
+    assert call(ctx, "convert_script", {"target": "run.R"}).code == "bad_arguments"
     assert call(ctx, "convert_script", {"target": "nope.py"}).code == "no_script"
     assert call(ctx, "convert_script", {}).code == "no_script"
     assert call(ctx, "convert_script", {"target": 3}).code == "bad_arguments"
+    put(box.proj / "fig.py", b"print(1)\n")
+    assert (
+        call(ctx, "convert_script", {"target": "fig.py", "library": "gimp"}).code == "bad_arguments"
+    )
+    assert ctx.handoff is None  # 任何一条被拒都不留交接
+
+
+@pytest.mark.parametrize("report", [None, _report(None), lambda: {"no_figure_hint": {"kind": "x"}}])
+def test_convert_script_without_a_hint_needs_the_library_from_the_model(box, report):
+    orig = put(box.proj / "fig.py", b"print(1)\n")
+    ctx = change_ctx(box, script_path=orig, report=report)
+    r = call(ctx, "convert_script", {})
+    assert r.code == "bad_arguments" and "library" in r.content and ctx.handoff is None
+    assert not call(ctx, "convert_script", {"library": "plotly"}).is_error
+
+
+def test_convert_script_is_unavailable_when_the_feature_is_switched_off(box, monkeypatch):
+    orig = put(box.proj / "fig.py", b"print(1)\n")
+    monkeypatch.setenv("TAVOTTO_NO_CONVERT_TO_EDITABLE", "1")
+    ctx = change_ctx(box, script_path=orig, report=_report("pillow"))
+    assert call(ctx, "convert_script", {}).code == "unavailable" and ctx.handoff is None
 
 
 # =========================================================================== #1361
@@ -866,85 +870,6 @@ def test_a_failed_freeze_is_still_unavailable_not_empty(box):
     call(ctx, "install_packages", {"env": "e", "packages": ["seaborn"]})
     doc = snapshots.load(ctx, ctx.call_meta["snapshot"])
     assert doc["envs"]["e"]["freeze_available"] is False
-
-
-# =========================================================================== convert_script：持锁的基线与副本清理
-def _ui_save(path: Path, data: bytes, done: dict) -> threading.Thread:
-    """界面保存脚本走的写入口：持脚本锁 + write_script（与 scriptbackup.replace 同一把锁）。"""
-    from tavotto.engine import scriptlock
-
-    def go():
-        with scriptlock.script_guard(path):
-            scriptlock.write_script(path, data)
-        done["at"] = __import__("time").monotonic()
-
-    t = threading.Thread(target=go, daemon=True)
-    t.start()
-    return t
-
-
-def test_a_ui_save_during_the_conversion_waits_and_is_not_treated_as_tampering(box):
-    import time
-
-    orig = put(box.proj / "fig.py", b"print(1)\n")
-    done: dict = {}
-    state: dict = {}
-
-    def converter(req):
-        state["saver"] = _ui_save(orig, b"USER NEW\n", done)
-        time.sleep(0.6)
-        state["converter_returned_at"] = time.monotonic()
-        Path(req["output"]).write_bytes(b"import matplotlib\n")
-        return {"ok": True}
-
-    ctx = change_ctx(box, script_path=orig, script_converter=converter)
-    r = call(ctx, "convert_script", {})
-    state["saver"].join(30)
-    assert not r.is_error, r.content
-    assert done["at"] >= state["converter_returned_at"]
-    assert orig.read_bytes() == b"USER NEW\n"
-
-
-def test_converter_scratch_copy_cleanup_failure_is_reported_and_swept_later(box, monkeypatch):
-    orig = put(box.proj / "fig.py", b"print(1)\n")
-    ctx = change_ctx(box, script_path=orig, script_converter=_converter())
-    real = trial._rmtree_once
-    monkeypatch.setattr(
-        trial, "_rmtree_once", lambda path: (_ for _ in ()).throw(OSError("in use"))
-    )
-    monkeypatch.setattr(trial, "CLEANUP_DELAY_S", 0)
-    r = call(ctx, "convert_script", {})
-    assert not r.is_error and "cleanup_pending" in r.content
-    left = [d for d in change.convert_root().iterdir()]
-    assert len(left) == 1 and (left[0] / trial.PENDING_MARKER).exists()
-    monkeypatch.setattr(trial, "_rmtree_once", real)
-    r = call(ctx, "convert_script", {})  # 下一次开头扫掉残留
-    assert not r.is_error and "cleanup_pending" not in r.content
-    assert list(change.convert_root().iterdir()) == []
-
-
-# =========================================================================== convert_script：建副本失败时的清理
-
-
-def test_a_failed_scratch_copy_with_a_failed_cleanup_is_reported_honestly(box, monkeypatch):
-    from tavotto.engine.fixtools import change
-
-    orig = put(box.proj / "fig.py", b"print(1)\n")
-    ctx = change_ctx(box, script_path=orig, script_converter=_converter())
-    real_write = Path.write_bytes
-
-    def broken(self, data):
-        if "fix_convert" in str(self):
-            raise OSError("disk full")
-        return real_write(self, data)
-
-    monkeypatch.setattr(Path, "write_bytes", broken)
-    monkeypatch.setattr(trial, "_rmtree_once", lambda path: (_ for _ in ()).throw(OSError("busy")))
-    monkeypatch.setattr(trial, "CLEANUP_DELAY_S", 0)
-    r = call(ctx, "convert_script", {})
-    assert r.is_error and r.code == "copy_failed" and "cleanup_pending" in r.content
-    (left,) = list(change.convert_root().iterdir())
-    assert (left / trial.PENDING_MARKER).exists()
 
 
 def _fake_plan_factory(pyversionfix):

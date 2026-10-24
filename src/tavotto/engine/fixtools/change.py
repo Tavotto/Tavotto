@@ -8,7 +8,7 @@
   （`autoinstall_dists.txt`，PyPI 公开下载量生成）：名单内不问，名单外与 `select_environment` 经 `ctx.ask` 问用户。
 * 切运行方式：`execpolicy.set_mode`（项目级 `execution_policy`；`safe` = `safe_only`，`native` = `compatible`，即允许 safe 被自己的守卫拦下时回退 native）。
 * 换环境：`projectenv.remember(..., automatic=False)`（与界面「选择运行环境」同一个写入）。
-* 换 Python / 转写：执行器由 `FixContext` 注入（`python_changer` / `script_converter`），没有就 `unavailable`；本模块不自己造。
+* 换 Python：执行器由 `FixContext` 注入（`python_changer`），缺省走 `executors`；转写 `convert_script` 不执行任何东西，只记 `ctx.handoff`，会话收尾后交给「生成可编辑版本」（ADR 0143）。
 
 所有会改东西的工具在执行前打快照（`snapshots.py`），快照 id 进审计行与工具返回，`rollback` 用它恢复。
 **没有 `ctx.ask`（无界面）= 未获同意**：需要点头的动作一律 `needs_approval`，审计记 `blocked`。
@@ -16,12 +16,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
-import uuid
 from pathlib import Path
 
+from .. import rasterhint
 from ..agent_runner.wires import ToolResult
 from . import executors, snapshots
 from .base import FixContext, FixTool, err, obj, ok
@@ -324,24 +323,6 @@ def select_environment(ctx: FixContext, args: dict) -> ToolResult:
 
 
 # --------------------------------------------------------------------------- convert_script
-def convert_root() -> Path:
-    """转换器临时副本的家：Tavotto 自己的缓存目录（清不掉的残留要找得到、扫得到）。"""
-    from .. import config
-
-    return config.data_dir() / "cache" / "fix_convert"
-
-
-def _sha256(path: Path) -> str | None:
-    h = hashlib.sha256()
-    try:
-        with open(path, "rb") as f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
-    except OSError:
-        return None
-    return h.hexdigest()
-
-
 def _inside(root: Path, path: Path) -> bool:
     try:
         r, p = os.path.realpath(root), os.path.realpath(path)
@@ -350,21 +331,57 @@ def _inside(root: Path, path: Path) -> bool:
     return p == r or p.startswith(r + os.sep)
 
 
-def _free_output(script: Path) -> Path | None:
-    for i in range(1, 50):
-        suffix = "_matplotlib" if i == 1 else f"_matplotlib_{i}"
-        out = script.with_name(script.stem + suffix + ".py")
-        if not os.path.lexists(out):
-            return out
+def _hinted_library(ctx: FixContext) -> str | None:
+    """准备报告里「跑完没出图」的位图提示（`no_figure_hint`，`rasterhint.detect` 的形状）指认的库；没有 / 不合法 = None。"""
+    try:
+        report = ctx.report() if ctx.report is not None else None
+    except Exception:  # noqa: BLE001 - 报告取不到 = 没有提示
+        return None
+    hint = (report or {}).get("no_figure_hint")
+    if isinstance(hint, dict) and hint.get("kind") == "raster_script":
+        lib = hint.get("library")
+        if lib in rasterhint.LIBRARIES:
+            return lib
     return None
 
 
+def _hinted_path(ctx: FixContext, rel: str) -> str | None:
+    """报告里位图提示的原输出图路径（项目相对），仅当这份报告说的就是被交接的这个脚本；否则 None（不拿别的脚本的图当参考）。"""
+    try:
+        report = ctx.report() if ctx.report is not None else None
+    except Exception:  # noqa: BLE001 - 报告取不到 = 没有参考图
+        return None
+    report = report or {}
+    hint = report.get("no_figure_hint")
+    if not (isinstance(hint, dict) and hint.get("kind") == "raster_script"):
+        return None
+    path = hint.get("path")
+    if not (isinstance(path, str) and path):
+        return None
+    target = report.get("target")
+    said = target.get("script") if isinstance(target, dict) else None
+    if not isinstance(said, str) or not said:
+        return None
+    try:
+        said_rel = Path(os.path.realpath(ctx.project_root / said)).relative_to(
+            os.path.realpath(ctx.project_root)
+        )
+    except ValueError:
+        return None
+    return path if said_rel.as_posix() == rel else None
+
+
 def convert_script(ctx: FixContext, args: dict) -> ToolResult:
-    target = args.get("target")
+    """不写任何文件：只在 `ctx.handoff` 记一笔，会话收尾后界面把它交给「生成可编辑版本」（ADR 0143）。"""
+    from .. import ai_convert
+
+    target, library = args.get("target"), args.get("library")
     if target is not None and not (isinstance(target, str) and target.strip()):
         return err(
             "bad_arguments", "`target` must be a script path inside the project, or omitted."
         )
+    if library is not None and library not in rasterhint.LIBRARIES:
+        return err("bad_arguments", f"`library` must be one of: {', '.join(rasterhint.LIBRARIES)}.")
     if isinstance(target, str):
         script = Path(target.strip())
         if not script.is_absolute():
@@ -377,90 +394,31 @@ def convert_script(ctx: FixContext, args: dict) -> ToolResult:
         return err("no_script", "That script file is not there.")
     if not _inside(ctx.project_root, script):
         return err("outside_project", "Only a script inside the project can be converted.")
-    out = _free_output(script)
-    if out is None:
-        return err("target_exists", "Too many converted copies already exist next to the script.")
-    if ctx.script_converter is None:
+    if script.suffix.lower() != ".py":
+        return err("bad_arguments", "Only a Python script (.py) can be converted.")
+    library = library or _hinted_library(ctx)
+    if library is None:
         return err(
-            "unavailable", "Converting a script to matplotlib is not available in this session yet."
+            "bad_arguments",
+            "Say which library draws the figure: `library` is one of "
+            f"{', '.join(rasterhint.LIBRARIES)}.",
         )
-    bad = _snapshot_or_error(ctx, "convert_script")
-    if bad is not None:
-        return bad
-    from .. import scriptlock
-    from . import trial
-
-    trial.sweep_stale_trials(root=convert_root())  # 上次没删干净的临时副本
-    work = convert_root() / uuid.uuid4().hex
-    pending = False
-    # 「读基线 → 转换器 → 核对 / 恢复」整段持原脚本的锁：用户在界面里并发保存会等这一段结束，不会被当成转换器的篡改写回旧版
-    with scriptlock.script_guard(script):
-        try:
-            original = script.read_bytes()
-        except OSError:
-            return err("no_script", "That script file could not be read.")
-        # 转换器拿到的是原脚本的**临时副本**，不是原路径：它没有任何理由去写原脚本
-        try:
-            work.mkdir(parents=True)
-            copy_path = work / script.name
-            copy_path.write_bytes(original)
-        except OSError:
-            # 建 / 写副本失败：清理的结果不能丢，删不掉照样留 .cleanup_pending 并如实报
-            left = not trial._remove_tree(work)
-            return err(
-                "copy_failed",
-                "Could not make a scratch copy of the script."
-                + (
-                    "\ncleanup_pending: the partial scratch copy could not be fully deleted; it is kept in "
-                    "Tavotto's cache folder and will be removed later."
-                    if left
-                    else ""
-                ),
-            )
-        try:
-            res = executors.call_executor(
-                ctx.script_converter,
-                {"script": str(copy_path), "output": str(out), "project": str(ctx.project_root)},
-            )
-        finally:
-            # 带重试；删不掉留 .cleanup_pending 标记，下次 sweep
-            pending = not trial._remove_tree(work)
-        # 原脚本绝对不动：无论执行器说什么，字节变了就用执行前读到的原字节经 scriptlock 恢复，并报错
-        modified = _sha256(script) != hashlib.sha256(original).hexdigest()
-        back = snapshots.restore_script(script, original) if modified else True
-    note = (
-        "\ncleanup_pending: the scratch copy could not be fully deleted; it is kept in Tavotto's cache "
-        "folder and will be removed later."
-        if pending
-        else ""
-    )
-    if modified:
-        return err(
-            "original_modified",
-            _with_snapshot(
-                ctx,
-                "The conversion changed the original script, which must never happen. "
-                + (
-                    "The original bytes were put back."
-                    if back
-                    else "The original could NOT be put back."
-                )
-                + " Tell the user."
-                + note,
-            ),
-        )
-    if not res.get("ok") or not out.is_file():
-        return err(
-            str(res.get("code") or "convert_failed")[:60],
-            _with_snapshot(
-                ctx, str(res.get("message") or "The conversion did not produce a script.") + note
-            ),
-        )
-    return _done(
-        ctx,
-        f"Converted. The new script was saved next to the original as `{out.name}`; the original is untouched."
-        + note,
-        "script converted",
+    if not ai_convert.enabled():
+        return err("unavailable", "Making an editable version is switched off on this computer.")
+    try:
+        rel = Path(os.path.realpath(script)).relative_to(os.path.realpath(ctx.project_root))
+    except ValueError:
+        return err("outside_project", "Only a script inside the project can be converted.")
+    ctx.handoff = {
+        "kind": "convert",
+        "script": rel.as_posix(),
+        "library": library,
+        "path": _hinted_path(ctx, rel.as_posix()),
+    }
+    return ok(
+        "Noted. Nothing was written. After this session Tavotto will make a Matplotlib version for the user to "
+        "compare and accept; the original script is not changed. Now call finish with outcome `convert`.",
+        "editable version handed off",
     )
 
 
@@ -523,10 +481,17 @@ CHANGE_TOOLS: tuple[FixTool, ...] = (
     ),
     FixTool(
         "convert_script",
-        "Convert a script that does not draw with matplotlib into one that does, saved next to it as "
-        "`<name>_matplotlib.py`. The original script is never changed. `target` is a script path inside the project "
-        "(default: the script being fixed).",
-        obj({"target": {"type": "string", "description": "Script path inside the project."}}),
+        "Use when the script runs but draws its figure with Pillow, OpenCV, imageio, scikit-image, plotly or ROOT "
+        '(so Tavotto cannot edit it). Writes nothing: it hands the script to Tavotto\'s own "make an editable version" '
+        "flow, which the user reviews and accepts after this session; the original script is never changed. Then "
+        "call finish with outcome `convert`. `target` is a .py path inside the project (default: the script being "
+        "fixed); `library` is the drawing library (default: what the run report points at).",
+        obj(
+            {
+                "target": {"type": "string", "description": "Script path inside the project."},
+                "library": {"type": "string", "enum": list(rasterhint.LIBRARIES)},
+            }
+        ),
         convert_script,
         tier="tavotto",
     ),

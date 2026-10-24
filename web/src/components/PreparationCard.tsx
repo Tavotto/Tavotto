@@ -1220,9 +1220,17 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
   }
 
   const details = ownsInput ? <InputOutput /> : <SessionDetails entry={entry} view={view} />
-  const convertScript = p?.kind === 'convert' ? p.script : null
+  // 脚本能跑、只是用位图库画的图：AI 修复会话交接给「生成可编辑版本」（ADR 0149 §七）——同一张卡接上既有的进度 / 对照 / 采用
+  const handoff = useAiFixStore((s) => s.handoffs[entry.key])
+  // 交接优先于卡片原有的 convert 目标：AI 交接的可能是另一个脚本，用户要看的是刚发起的那条转换
+  const convertPrimary: Extract<PrepPrimary, { kind: 'convert' }> | null = handoff
+    ? { kind: 'convert', script: handoff.script, library: handoff.library, path: handoff.path ?? null, language: 'python' }
+    : p?.kind === 'convert'
+      ? p
+      : null
+  const convertScript = convertPrimary?.script ?? null
   const convert = useConvertStore((s) => (convertScript ? s.entries[convertScript] : undefined))
-  const convertUi = convertScript && p?.kind === 'convert' && convert ? convertFlow(convert, p, entry) : null
+  const convertUi = convertPrimary && convert ? convertFlow(convert, convertPrimary, entry) : null
   if (convertUi) {
     return (
       <Shell

@@ -65,6 +65,7 @@ STATE_FINISHED = "finished"
 #: 终局 outcome（`finish` 之外的结局）
 OUTCOME_FIXED = "fixed"
 OUTCOME_NOT_FIXED = "not_fixed"
+OUTCOME_CONVERT = "convert"  # 已交接给「生成可编辑版本」（`ctx.handoff`，ADR 0143 / 0149 §七）
 OUTCOME_CANCELLED = "cancelled"
 OUTCOME_FAILED = "failed"
 
@@ -103,11 +104,14 @@ Python environment and pip/conda caches; it has network access). Only if the com
 call it again with `outside_sandbox: true` and a one-sentence `reason` in plain words: the user is asked in a \
 separate, prominent card and may say no. Never ask for it first, and never to avoid a sandbox refusal you could \
 work around.
+3d. THE SCRIPT RUNS BUT DRAWS WITH ANOTHER LIBRARY. If the script itself runs but its figure is drawn with Pillow, \
+OpenCV, imageio, scikit-image, plotly or ROOT (so Tavotto cannot edit it), call convert_script, then finish with \
+outcome `convert`. Do not install matplotlib or change the environment for this.
 4. If you need something only the user knows, use ask_user (a multiple-choice question) or pick_file (the system file \
 chooser). Never ask for a password, key or token.
 5. If you cannot fix it, call prepare_diagnostics with a short note of what you found and tried (the user decides \
 whether to send), then finish with outcome not_fixed.
-6. ALWAYS end by calling finish exactly once: outcome `fixed` only if a trial run now succeeds, otherwise `not_fixed`, \
+6. ALWAYS end by calling finish exactly once: outcome `fixed` only if a trial run now succeeds, `convert` after convert_script, otherwise `not_fixed`, \
 plus one plain sentence for the user.
 
 Hard rules: never edit or delete the user's scripts or data; never read credential locations (they are blocked \
@@ -335,6 +339,16 @@ class FixSessions:
             "outcome": s.outcome,
             "summary": s.summary,
             "reason": s.reason,
+            #: 仅 outcome == convert：交给「生成可编辑版本」的 `{kind, script, library, path}`（项目相对路径；path = 报告里原输出图，可为 None）；其余结局没有这个键
+            **(
+                {
+                    "handoff": {
+                        k: s.ctx.handoff.get(k) for k in ("kind", "script", "library", "path")
+                    }
+                }
+                if s.outcome == OUTCOME_CONVERT and s.ctx is not None and s.ctx.handoff
+                else {}
+            ),
             "steps": s.steps,
             "seq": s.seq,
             #: 最近一次工具活动 `{tool, phase: start|end|denied, detail, at_ms}`（界面按 tool 映射成一句话）；还没有 = None
@@ -738,8 +752,11 @@ class FixSessions:
         card = redactor.redact_obj(card)
         if card.get("kind") == "done":
             with self._lock:
+                said = card.get("outcome")
+                if said == "convert" and (s.ctx is None or s.ctx.handoff is None):
+                    said = None  # 没有交接记录就不算 convert（`finish` 已拒，这里是第二道）
                 s.reported = (
-                    OUTCOME_FIXED if card.get("outcome") == "fixed" else OUTCOME_NOT_FIXED,
+                    said if said in (OUTCOME_FIXED, OUTCOME_CONVERT) else OUTCOME_NOT_FIXED,
                     str(card.get("summary") or "")[:300],
                 )
                 s.finished.set()

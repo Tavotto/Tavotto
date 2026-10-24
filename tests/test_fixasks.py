@@ -312,6 +312,20 @@ def test_finish_hands_the_outcome_to_the_session_even_without_an_interface(box):
     assert call(bare, "finish", {"outcome": "maybe", "summary": "x"}).code == "bad_arguments"
 
 
+def test_finish_convert_is_only_valid_after_a_handoff(box):
+    ctx, cards = make_ctx(box, {"answer": "ok"})
+    r = call(ctx, "finish", {"outcome": "convert", "summary": "x"})
+    assert r.code == "bad_arguments" and cards == []  # 被拒：卡片都没发出去
+    ctx.handoff = {"kind": "convert", "script": "fig.py", "library": "pillow", "path": None}
+    assert not call(ctx, "finish", {"outcome": "convert", "summary": "已交接"}).is_error
+    assert cards[0]["outcome"] == "convert"
+    assert REGISTRY["finish"].schema["properties"]["outcome"]["enum"] == [
+        "fixed",
+        "not_fixed",
+        "convert",
+    ]
+
+
 # =========================================================================== 修复会话
 class Scripted:
     """按剧本回放的假模型：每次 `complete` 吐下一条；用完就给终止回复。"""
@@ -684,3 +698,63 @@ def test_the_session_hands_its_cancel_event_to_the_tool_context(box, monkeypatch
     monkeypatch.setattr(fixtools.FixContext, "for_fix_session", spy)
     s = start(box, Scripted([]), background=False)
     assert built and built[0].cancel is s.cancel
+
+
+def _convert_session(box, model):
+    put(box.proj / "fig.py", "print(1)")
+    hint = {"kind": "raster_script", "library": "pillow", "in_project": False, "path": None}
+    return fixsession.SESSIONS.start(
+        scope="pj",
+        prep_session_id="prep1",
+        script="fig.py",
+        project_root=box.proj,
+        script_path=box.proj / "fig.py",
+        model=model,
+        report=lambda: {"phase": "failed", "no_figure_hint": hint},
+        audit=AuditLog(box.data / "ai" / "fix_audit.jsonl"),
+    )
+
+
+def test_builtin_loop_convert_outcome_carries_the_handoff_in_the_public_state(box):
+    model = Scripted(
+        [("convert_script", {})],
+        [("finish", {"outcome": "convert", "summary": "我会生成一份可编辑版本"})],
+    )
+    s = _convert_session(box, model)
+    wait_for(lambda: fixsession.SESSIONS.get(s.id, "pj")["state"] == "finished")
+    done = fixsession.SESSIONS.get(s.id, "pj")
+    assert done["outcome"] == "convert" and done["reason"] == ""
+    assert done["handoff"] == {
+        "kind": "convert",
+        "script": "fig.py",
+        "library": "pillow",
+        "path": None,
+    }
+    assert (box.proj / "fig.py").read_text("utf-8") == "print(1)"
+    assert sorted(p.name for p in box.proj.iterdir()) == ["fig.py"]
+    rows = [
+        json.loads(x) for x in (box.data / "ai" / "fix_audit.jsonl").read_text("utf-8").splitlines()
+    ]
+    assert [r["tool"] for r in rows] == ["convert_script", "finish"]
+    assert rows[-1]["result"]["summary"] == "finished: convert"  # 审计照记 outcome
+
+
+def test_builtin_loop_finish_convert_without_a_handoff_is_refused_and_not_convert(box):
+    model = Scripted(
+        [("finish", {"outcome": "convert", "summary": "x"})],
+        [("finish", {"outcome": "not_fixed", "summary": "不行"})],
+    )
+    s = _convert_session(box, model)
+    wait_for(lambda: fixsession.SESSIONS.get(s.id, "pj")["state"] == "finished")
+    done = fixsession.SESSIONS.get(s.id, "pj")
+    assert done["outcome"] == "not_fixed" and "handoff" not in done
+
+
+def test_a_handoff_that_ends_not_fixed_is_not_published(box):
+    model = Scripted(
+        [("convert_script", {})], [("finish", {"outcome": "not_fixed", "summary": "算了"})]
+    )
+    s = _convert_session(box, model)
+    wait_for(lambda: fixsession.SESSIONS.get(s.id, "pj")["state"] == "finished")
+    done = fixsession.SESSIONS.get(s.id, "pj")
+    assert done["outcome"] == "not_fixed" and "handoff" not in done

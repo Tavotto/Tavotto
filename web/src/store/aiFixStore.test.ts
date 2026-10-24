@@ -15,6 +15,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 import { answerAiFix, ApiError, cancelAiFix, fetchAiFix, requestAiFix, type AiFixState } from '@/lib/api'
 import { useAiFixStore } from '@/store/aiFixStore'
 import { useAiStore } from '@/store/aiStore'
+import { useConvertStore } from '@/store/convertStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { setCurrentProjectId } from '@/lib/session'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
@@ -165,6 +166,32 @@ describe('结束', () => {
     await useAiFixStore.getState().refresh(KEY)
     expect(entry()).toBeUndefined()
     expect(open).toHaveBeenCalledWith(target, { run: true, rerun: true })
+  })
+
+  it('convert：清掉修复条目、记下交接、启动既有的「生成可编辑版本」；不重跑准备会话', async () => {
+    await start()
+    const open = vi.fn(async () => {})
+    useProjectPreparationStore.setState({ open } as never)
+    const convertStart = vi.fn(async () => {})
+    useConvertStore.setState({ start: convertStart } as never)
+    vi.mocked(fetchAiFix).mockResolvedValue(
+      state({ state: 'finished', outcome: 'convert', summary: '生成可编辑版本', handoff: { kind: 'convert', script: 'plot.py', library: 'pillow', path: 'out/plot.png' } }),
+    )
+    await useAiFixStore.getState().refresh(KEY)
+    expect(entry()).toBeUndefined()
+    expect(useAiFixStore.getState().handoffs[KEY]).toEqual({ script: 'plot.py', library: 'pillow', path: 'out/plot.png' })
+    expect(convertStart).toHaveBeenCalledWith('plot.py', 'pillow', 'out/plot.png', 'python')
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('交接记录随转换记录消失而清掉；切项目 / reset 也清', async () => {
+    useAiFixStore.setState({ handoffs: { [KEY]: { script: 'plot.py', library: 'pillow', path: null } } })
+    useConvertStore.setState({ entries: { 'plot.py': { phase: 'ready' } } as never })
+    useConvertStore.setState({ entries: {} })
+    expect(useAiFixStore.getState().handoffs[KEY]).toBeUndefined()
+    useAiFixStore.setState({ handoffs: { [KEY]: { script: 'a.py', library: 'opencv', path: null } } })
+    useAiFixStore.getState().reset()
+    expect(useAiFixStore.getState().handoffs).toEqual({})
   })
 
   it('not_fixed / failed：落成 done 带一句话，不自动重跑；知道了 = 清掉', async () => {

@@ -1847,6 +1847,7 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ['setTimeout'] })
       useConvertStore.setState({ entries: {} })
+      useAiFixStore.setState({ handoffs: {} })
       vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 'sid1', script: 'plot.py' })
       vi.mocked(fetchAiSession).mockReset().mockResolvedValue(done as never)
       vi.mocked(fetchConvert).mockReset().mockResolvedValue(ready)
@@ -1899,6 +1900,40 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       await act(async () => (panel().querySelector('[data-convert-discard]') as HTMLButtonElement).click())
       expect(discardConvert).toHaveBeenCalledWith('sid1', expect.anything())
       expect(primary()?.textContent).toBe('生成可编辑版本')
+    })
+
+    it('AI 修复交接过来（没有 no_figure_hint 的失败卡）：同一张卡接上进度 → 对照；放弃后交接记录清掉、回到原卡', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      await openWith(report(STATES.errPlain))
+      const key = useProjectPreparationStore.getState().focus!
+      expect(panel().dataset.convertPhase).toBeUndefined()
+      await act(async () => {
+        useAiFixStore.setState({ handoffs: { [key]: { script: 'plot.py', library: 'pillow', path: null } } })
+        void useConvertStore.getState().start('plot.py', 'pillow', null, 'python')
+      })
+      expect(startConvert).toHaveBeenCalledWith(expect.objectContaining({ script: 'plot.py', library: 'pillow' }), expect.anything())
+      expect(panel().dataset.convertPhase).toBe('running')
+      await settle()
+      expect(panel().dataset.convertPhase).toBe('ready')
+      expect(primary()?.textContent).toBe('采用新版本')
+      await act(async () => (panel().querySelector('[data-convert-discard]') as HTMLButtonElement).click())
+      expect(panel().dataset.convertPhase).toBeUndefined()
+      expect(useAiFixStore.getState().handoffs[key]).toBeUndefined()
+    })
+
+    it('卡片本来有 convert 目标（plot.py）、AI 交接到另一个脚本：以交接为准，渲染交接脚本的转换条目', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      const key = useProjectPreparationStore.getState().focus!
+      vi.mocked(startConvert).mockResolvedValue({ session: 'sidB', script: 'other.py' })
+      await act(async () => {
+        useAiFixStore.setState({ handoffs: { [key]: { script: 'other.py', library: 'opencv', path: 'o.png' } } })
+        void useConvertStore.getState().start('other.py', 'opencv', 'o.png', 'python')
+      })
+      expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
+      expect(panel().dataset.convertPhase).toBe('running')
     })
 
     it('失败：一句话原因 + 「重试」；重试再发起一次', async () => {

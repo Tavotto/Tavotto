@@ -12,6 +12,10 @@
  * * 结束（`finished`）：`fixed` → 清掉条目并**重跑准备会话**验证（不信 AI 的一面之词）；`not_fixed` / `failed` →
  *   `done`，卡片说结果、用户点「知道了」回到原来的失败卡；`cancelled` → 直接清掉。
  *
+ * * `convert`（AI 判断脚本能跑、只是用位图库画的图）：清掉修复条目，把「这张卡交接给了哪个脚本 / 库」记进 `handoffs`，
+ *   并启动既有的「生成可编辑版本」流程（`convertStore.start`，ADR 0143）；准备卡据 `handoffs` 把同一张卡接上它的进度 / 对照 / 采用；
+ *   那条转换记录一消失（放弃 / 采用后清掉）交接记录随之清，卡片回到原来的失败卡。
+ *
  * 不存任何用户内容以外的东西：卡片文字只在内存里（后端已脱敏），不持久化。
  */
 import { create } from 'zustand'
@@ -28,6 +32,7 @@ import {
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { onCurrentProjectChange } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
+import { useConvertStore } from '@/store/convertStore'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useUiStore } from '@/store/uiStore'
@@ -69,8 +74,18 @@ export interface AiFixEntry {
   stalled?: AiFixState['stalled']
 }
 
+/** 一张准备卡（entry key）交接给「生成可编辑版本」的脚本与库 */
+export interface AiFixHandoff {
+  script: string
+  library: string
+  /** 报告里的原输出图（项目相对）；对照视图左侧的参考图，可缺 */
+  path: string | null
+}
+
 interface AiFixStoreState {
   entries: Record<string, AiFixEntry>
+  /** 准备卡 entry key → 交接记录；对应的转换记录消失 / 切项目时清掉 */
+  handoffs: Record<string, AiFixHandoff>
   /** 点「✦ 使用你的 AI 来修复」：没连 AI 去设置里连，已连就开始修复 */
   request: (key: string, ref: AiFixRef) => Promise<void>
   /** 已连 AI：开始修复（`ai_fix_available === false` 或端点回 `ai_fix_unavailable` 都落成 `unavailable`） */
@@ -128,6 +143,15 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
     const entry = get().entries[key]
     if (!entry) return
     if (st.outcome === 'cancelled') return get().clear(key)
+    if (st.outcome === 'convert' && st.handoff) {
+      const { script, library } = st.handoff
+      const path = st.handoff.path ?? null
+      get().clear(key)
+      if (!still()) return
+      set((s) => ({ handoffs: { ...s.handoffs, [key]: { script, library, path } } }))
+      void useConvertStore.getState().start(script, library, path, 'python')
+      return
+    }
     if (st.outcome === 'fixed') {
       get().clear(key)
       // 重跑准备会话：这一次是验证，不是用户新点的「运行」之外的东西——只重新检查并按报告说话
@@ -148,6 +172,7 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
 
   return {
     entries: {},
+    handoffs: {},
 
     request: async (key, ref) => {
       const guard = captureProjectEpoch()
@@ -271,7 +296,7 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
 
     reset: () => {
       for (const key of [...timers.keys()]) stop(key)
-      set({ entries: {} })
+      set({ entries: {}, handoffs: {} })
     },
   }
 })
@@ -289,6 +314,16 @@ useAiStore.subscribe((s, prev) => {
 useUiStore.subscribe((s, prev) => {
   if (!prev.settingsOpen || s.settingsOpen) return
   for (const [key] of waiting()) useAiFixStore.getState().clear(key)
+})
+
+// 交接出去的转换记录一消失（放弃 / 采用后清掉）：交接记录随之清，准备卡回到原来的失败卡
+useConvertStore.subscribe((s, prev) => {
+  const { handoffs } = useAiFixStore.getState()
+  const gone = Object.entries(handoffs).filter(([, h]) => prev.entries[h.script] && !s.entries[h.script])
+  if (gone.length === 0) return
+  const next = { ...handoffs }
+  for (const [key] of gone) delete next[key]
+  useAiFixStore.setState({ handoffs: next })
 })
 
 // 「发送」卡：用户在发送对话框里真的点了「发送」并成功（发送计数增加）→ 回答 `sent`

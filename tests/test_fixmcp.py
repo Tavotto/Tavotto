@@ -340,6 +340,40 @@ def test_finish_tool_is_the_only_conclusion(box, served, monkeypatch):
     assert (s.outcome, s.summary, s.reason) == (fixsession.OUTCOME_FIXED, "装好了 numpy", "")
 
 
+def test_cli_callback_convert_hands_off_and_publishes_the_handoff(box, served, monkeypatch):
+    (box.proj / "fig.py").write_text("print(1)", encoding="utf-8")
+    hint = {"kind": "raster_script", "library": "opencv", "in_project": False, "path": None}
+    s, token = start_session(
+        box,
+        [sys.executable, "-c", "import time; time.sleep(25)"],
+        script_path=box.proj / "fig.py",
+        report=lambda: {"phase": "failed", "no_figure_hint": hint},
+    )
+    early = fixsession.SESSIONS.call_tool(
+        s.id, token, "finish", {"outcome": "convert", "summary": "x"}
+    )
+    assert early["is_error"] is True and s.reported is None  # 没有交接：拒绝
+    out = fixsession.SESSIONS.call_tool(s.id, token, "convert_script", {})
+    assert out["is_error"] is False
+    out = fixsession.SESSIONS.call_tool(
+        s.id, token, "finish", {"outcome": "convert", "summary": "生成可编辑版本"}
+    )
+    assert out["is_error"] is False
+    monkeypatch.setattr(fixsession, "FINISH_GRACE", 0.3)
+    wait_finished(s, 15)
+    assert (s.outcome, s.reason) == (fixsession.OUTCOME_CONVERT, "")
+    pub = fixsession.SESSIONS.get(s.id, "pj")
+    assert pub["handoff"] == {
+        "kind": "convert",
+        "script": "fig.py",
+        "library": "opencv",
+        "path": None,
+    }
+    assert (box.proj / "fig.py").read_text("utf-8") == "print(1)"
+    assert sorted(p.name for p in box.proj.iterdir()) == ["fig.py"]
+    assert token not in json.dumps(pub)
+
+
 def test_a_cli_that_overruns_the_budget_is_stopped_and_failed(box):
     s, _ = start_session(
         box,
