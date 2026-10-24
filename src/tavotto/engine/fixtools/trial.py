@@ -143,6 +143,13 @@ try:
     remap = "none"
     _rules, _eng = os.environ.pop("TAVOTTO_TRIAL_INPUT_REMAP", None), os.environ.pop("TAVOTTO_TRIAL_ENGINE_DIR", None)
     if _rules and _eng:
+        # worker 装改指时 numpy 早已被 matplotlib 载入，`install_input_remap` 才包得到 `numpy.lib._datasource.DataSource.open`
+        # （`np.loadtxt` / `np.genfromtxt` 先查存在性再开文件，只包 Python open 不够）；试跑里脚本才 import numpy，
+        # 所以这里先载入它——与 worker 同一前提。没装 numpy 就没有这条通道，照常继续
+        try:
+            import numpy.lib._datasource
+        except BaseException:
+            pass
         sys.path.insert(0, _eng)  # figcapture 按 worker 的方式平铺 import 同目录的 axestraversal / patchspec
         try:
             _spec = importlib.util.spec_from_file_location("_tavotto_trial_figcapture", os.path.join(_eng, "figcapture.py"))
