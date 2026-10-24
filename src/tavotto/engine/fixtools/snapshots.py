@@ -117,6 +117,18 @@ def restore_script(path: str | os.PathLike, data: bytes) -> bool:
     return True
 
 
+def _managed_state(ctx: FixContext) -> dict | None:
+    """项目受管环境此刻的 active 代（回滚要把它指回来；`change_python` 切代后旧代只靠租约保着）。没有受管环境 = None。"""
+    from .. import managedenv
+
+    try:
+        python = managedenv.python_of(ctx.project_root)
+        gen = managedenv.active_generation(ctx.project_root)
+    except Exception:  # noqa: BLE001 - 问不出来 = 快照里没有这一项
+        return None
+    return {"generation": gen} if (python and gen) else None
+
+
 def take(ctx: FixContext, tool: str, env_ids: list[str] | None = None) -> str | None:
     """打一个快照，回快照 id；写不出来回 None（调用方据此拒绝这次改动：没有退路就不改）。"""
     snap_id = f"snap_{time.strftime('%Y%m%dT%H%M%S')}_{uuid.uuid4().hex[:6]}"
@@ -139,6 +151,7 @@ def take(ctx: FixContext, tool: str, env_ids: list[str] | None = None) -> str | 
             "project": os.path.normcase(os.path.abspath(str(ctx.project_root))),
             "settings": _current_settings(ctx),
             "envs": envs,
+            "managed": _managed_state(ctx),
         }
         root = snapshot_root(ctx.session_id)
         root.mkdir(parents=True, exist_ok=True)
@@ -238,6 +251,63 @@ def _restore_packages(ctx: FixContext, eid: str, saved: dict, lines: list[str]) 
     return good
 
 
+def _gone(what: str) -> ToolResult:
+    return err(
+        "rollback_target_gone",
+        f"{what} no longer exists on this computer (it was cleaned up), so the project cannot be pointed back at it. "
+        "Create a new environment (change_python) or choose another one instead.",
+    )
+
+
+def _managed_target_gone(ctx: FixContext, managed: object) -> ToolResult | None:
+    """快照里记的受管环境那一代还在不在（解释器文件真的在）。不在就**一个字都不改**，如实报错，不报成功。"""
+    if not isinstance(managed, dict) or not managed.get("generation"):
+        return None
+    from .. import managedenv
+
+    gen = str(managed["generation"])
+    try:
+        known = gen in managedenv.generations(ctx.project_root)
+        python = managedenv.generation_python(ctx.project_root, gen)
+        present = known and python.is_file()
+    except Exception:  # noqa: BLE001
+        present = False
+    return None if present else _gone("The project's previous Tavotto environment")
+
+
+def _restore_managed(ctx: FixContext, managed: object, lines: list[str]) -> bool:
+    """把受管环境的 active 指回快照时的那一代（`managedenv.activate`，manifest 的既有提交点），并让池 / 缓存放弃新一代。"""
+    if not isinstance(managed, dict) or not managed.get("generation"):
+        return True
+    from .. import managedenv, pool, projectenv
+
+    gen = str(managed["generation"])
+    if managedenv.active_generation(ctx.project_root) != gen:
+        try:
+            managedenv.activate(ctx.project_root, gen)
+        except (OSError, ValueError):
+            lines.append("the previous Tavotto environment could not be made active again")
+            return False
+        pool.reset_worker_python()
+        pool.invalidate_project(str(ctx.project_root))
+        projectenv.reset_cache(ctx.project_root)
+        lines.append("the project uses its previous Tavotto environment again")
+    return True
+
+
+def _remembered_target_gone(ctx: FixContext) -> ToolResult | None:
+    """恢复设置之后核对：项目设置里记着的解释器真的在（显式选择失效要说出来，不静默当成功）。"""
+    from .. import projectenv
+
+    try:
+        rec = projectenv.remembered_record(ctx.project_root)
+    except Exception:  # noqa: BLE001
+        return None
+    if rec and rec.get("path") and rec.get("exists") is False:
+        return _gone("The environment the project was set to use")
+    return None
+
+
 def rollback(ctx: FixContext, args: dict) -> ToolResult:
     snap_id = args.get("snapshot")
     doc = load(ctx, snap_id)
@@ -252,8 +322,13 @@ def rollback(ctx: FixContext, args: dict) -> ToolResult:
                 else " No snapshots were taken yet."
             ),
         )
+    gone = _managed_target_gone(ctx, doc.get("managed"))
+    if gone is not None:
+        return gone
     lines: list[str] = []
     good = _restore_settings(ctx, doc.get("settings") or {})
+    if good:
+        good = _restore_managed(ctx, doc.get("managed"), lines)
     lines.append(
         "project settings restored to the state of the snapshot"
         if good
@@ -263,6 +338,9 @@ def rollback(ctx: FixContext, args: dict) -> ToolResult:
         if isinstance(saved, dict):
             good &= _restore_packages(ctx, str(eid), saved, lines)
     text = "\n".join(lines)
+    gone = _remembered_target_gone(ctx)
+    if gone is not None:
+        return gone
     if not good:
         return err("rollback_incomplete", "The rollback did not fully succeed:\n" + text)
     res = ok(f"Rolled back to {snap_id}:\n{text}", "rolled back")

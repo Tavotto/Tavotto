@@ -216,6 +216,36 @@ def _script_rel(ctx: FixContext) -> str:
         return ""
 
 
+def _lease_current_environment(ctx: FixContext) -> ToolResult | None:
+    """项目当前用的受管环境那一代，在本修复会话结束前加租约（`envlease`，与 `deprepair._generation_in_use` 同一张表）：
+    换到新一代后 `managedenv.retire_unused` 看到租约就不删旧代，`rollback` 才能把项目指回去。拿不到（正在装包）就不换。"""
+    from .. import envlease, managedenv, projectenv
+
+    root = ctx.project_root
+    targets: list[str] = []
+    active = managedenv.python_of(root)
+    if active:
+        targets.append(str(active))
+    try:
+        remembered = projectenv.remembered(root)
+    except Exception:  # noqa: BLE001 - 取不到只是少租一个
+        remembered = None
+    if remembered and managedenv.is_managed_python(root, remembered):
+        targets.append(str(remembered))
+    owner = f"fix:{ctx.session_id}"
+    for python in dict.fromkeys(targets):
+        try:
+            envlease.acquire_native(python, owner)
+        except envlease.EnvironmentBusy:
+            ctx.release_leases()
+            return err(
+                "env_busy",
+                "The project's current environment is busy installing something. Try again in a moment.",
+            )
+        ctx.leases.append((python, owner))
+    return None
+
+
 def change_python(ctx: FixContext, args: dict) -> ToolResult:
     version = args.get("version")
     if version is not None and (
@@ -223,16 +253,14 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
     ):
         return err("bad_arguments", "`version` must look like `3.12` or `3.12.4`, or be left out.")
     version = version.strip() if isinstance(version, str) else None
-    if ctx.python_changer is None:
-        return err(
-            "unavailable",
-            "Creating a Tavotto environment with another Python version is not available yet.",
-        )
     bad = _snapshot_or_error(ctx, "change_python")
     if bad is not None:
         return bad
-    res = executors.call_executor(
-        ctx.python_changer,
+    busy = _lease_current_environment(ctx)
+    if busy is not None:
+        return busy
+    res = executors.run_python_changer(
+        ctx,
         {
             "version": version,  # None = 由执行器按脚本 / 项目声明和 Tavotto 支持区间挑
             "project": str(ctx.project_root),
@@ -240,6 +268,7 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
         },
     )
     if not res.get("ok"):
+        ctx.release_leases()  # 没换成：旧环境照旧在用，不必再占着租约（也免得挡住后面往旧环境装包）
         return err(
             str(res.get("code") or "change_python_failed")[:60],
             _with_snapshot(

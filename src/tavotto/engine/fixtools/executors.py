@@ -47,13 +47,14 @@ def _default_uninstaller(python: str, distributions: list[str]) -> dict:
     return {"ok": True, "code": "", "done": done}
 
 
-def default_python_changer(req: dict) -> dict:
+def _default_python_changer(req: dict, cancel: threading.Event | None = None) -> dict:
     """`change_python` 的缺省执行器（D3 补）：走 `pyversionfix` 的计划 + 执行（只在 Tavotto 受管环境里另建一代，
     基础解释器只有 `managedenv.base_pick` 一个挑选处；用户的环境一个字节不碰），建好后按现有联合计划补脚本要的依赖。
     `req = {"version": 可省, "project", "script"}`。`version` 省略 = 取脚本 / 项目声明的 `requires-python` 与 Tavotto 支持区间的交集；
     指定了就把范围钉成这个小版本。推不出 / 没有可供应的基础解释器 → `python_change_unavailable`。返回里 `python` 是新环境的解释器。"""
     from .. import managedenv, pyversionfix
 
+    cancel = cancel or threading.Event()
     version = req.get("version")
     failure: dict = {"code": pyversionfix.CODE_UNSUPPORTED, "script": str(req.get("script") or "")}
     if isinstance(version, str) and version:
@@ -67,7 +68,13 @@ def default_python_changer(req: dict) -> dict:
             "message": "Tavotto could not find a Python version to build an environment with here "
             "(no suitable Python on this computer and none it may download).",
         }
-    res = pyversionfix.apply_python_change(plan, None, threading.Event())
+    if cancel.is_set():  # 规划完、动手前先看一眼（与 #1381 同一处）
+        return {
+            "ok": False,
+            "code": "cancelled",
+            "message": "The fix was cancelled; nothing was changed.",
+        }
+    res = pyversionfix.apply_python_change(plan, None, cancel)
     if not res.get("ok"):
         return {"ok": False, "code": str(res.get("code") or pyversionfix.ERROR_FAILED)[:60]}
     python = managedenv.python_of(project)
@@ -87,6 +94,12 @@ def call_executor(fn, *a) -> dict:
     return (
         out if isinstance(out, dict) else {"ok": False, "code": "executor_bad_result", "done": []}
     )
+
+
+def run_python_changer(ctx: FixContext, req: dict) -> dict:
+    if ctx.python_changer is not None:
+        return call_executor(ctx.python_changer, req)
+    return call_executor(_default_python_changer, req, ctx.cancel)
 
 
 def run_installer(ctx: FixContext, python: str, requirements: list[str]) -> dict:

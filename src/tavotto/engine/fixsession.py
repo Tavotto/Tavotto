@@ -390,6 +390,7 @@ class FixSessions:
             report=report,
             script_path=script_path,
             ask=lambda card: self._ask(s, card, redactor),
+            cancel=s.cancel,
             **(ctx_kwargs or {}),
         )
         envelope = RunEnvelope(
@@ -469,6 +470,8 @@ class FixSessions:
                 s.reason = failed_reason[:24]
             s.state, s.card, s.pending, s.stalled = STATE_FINISHED, None, None, None
             s.done.set()
+        if s.ctx is not None:
+            s.ctx.release_leases()  # change_python 持的旧代租约：会话结束才放（之后旧代才可能被清理）
         self._notify(s)
 
     # ---- 进度与卡住（D3） -------------------------------------------------

@@ -9123,8 +9123,8 @@ def _fix_error(exc: "engine_fixsession.FixError"):
 
 def _fix_session_env(sess) -> dict:
     """修复会话上下文里能从准备会话拿到的环境事实：当前解释器所在的前缀（可能在主目录外，读取范围要带上它）；
-    另注入 `change_python` 的缺省执行器（没有可用环境时新建 Tavotto 受管环境，D3 补）。"""
-    out: dict = {"python_changer": engine_fixsession.fixtools.executors.default_python_changer}
+    `change_python` 用缺省执行器（`executors._default_python_changer`，带会话取消信号）。"""
+    out: dict = {}
     env = getattr(sess.plan, "environment", None) or {}
     py = env.get("python") or env.get("interpreter") or env.get("executable")
     if isinstance(py, str) and py:

@@ -399,20 +399,19 @@ def test_rollback_restores_a_removed_package(box):
 
 
 def test_rollback_restores_project_settings_exactly(box):
-    config.set_project_settings(
-        str(box.proj), {"environment": {"python": "/old/python", "automatic": True}}
-    )
+    old = fake_python(box, "old")  # 回滚后核对解释器真的在：旧环境得是个真文件
+    config.set_project_settings(str(box.proj), {"environment": {"python": old, "automatic": True}})
     before = dict(project_settings(box))
     ctx = change_ctx(box)
     assert not call(ctx, "switch_execution", {"mode": "safe"}).is_error
     snap_a = ctx.call_meta["snapshot"]
     assert not call(ctx, "select_environment", {"env": "e"}).is_error
     snap_b = ctx.call_meta["snapshot"]
-    assert project_settings(box)["environment"]["python"] != "/old/python"
+    assert project_settings(box)["environment"]["python"] != old
     assert project_settings(box)["execution_policy"] == {"mode": "safe_only"}
     # 回到 select 之前（= safe 已设）：environment 精确回来，execution_policy 仍是 safe_only
     assert not call(ctx, "rollback", {"snapshot": snap_b}).is_error
-    assert project_settings(box)["environment"] == {"python": "/old/python", "automatic": True}
+    assert project_settings(box)["environment"] == {"python": old, "automatic": True}
     # 回到最初：execution_policy 这个键原本不存在，回滚后也不存在
     assert not call(ctx, "rollback", {"snapshot": snap_a}).is_error
     assert project_settings(box) == before
@@ -503,11 +502,26 @@ def test_switch_execution_rejects_other_modes(box):
 
 
 # =========================================================================== change_python
-def test_change_python_is_unavailable_without_an_injected_executor(box):
-    ctx = change_ctx(box)
+def test_change_python_without_an_injected_executor_uses_the_default_one_and_passes_the_cancel_signal(
+    box, monkeypatch
+):
+    import threading
+
+    from tavotto.engine.fixtools import executors
+
+    seen = []
+
+    def default(req, cancel=None):
+        seen.append((req, cancel))
+        return {"ok": False, "code": "python_change_unavailable"}
+
+    monkeypatch.setattr(executors, "_default_python_changer", default)
+    cancel = threading.Event()
+    ctx = change_ctx(box, cancel=cancel)
     r = call(ctx, "change_python", {"version": "3.12"})
-    assert r.is_error and r.code == "unavailable"
-    assert not (box.data / "cache" / "fix_snapshots").exists()
+    assert r.is_error and r.code == "python_change_unavailable"
+    assert seen[0][1] is cancel  # 修复会话的取消信号传到了执行器（与 #1381 同一件事）
+    assert ctx.leases == []  # 没换成：租约不留
 
 
 def test_change_python_calls_the_executor_registers_the_new_env_and_snapshots(box):
