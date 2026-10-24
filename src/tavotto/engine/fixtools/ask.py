@@ -80,6 +80,23 @@ def _reads_for_card(ctx: FixContext) -> list[str]:
 
 
 # --------------------------------------------------------------------------- propose_fix
+def _packages(raw: object) -> list[tuple[str, str]] | None:
+    """`propose_fix` 的 `packages`：缺省 = 空；每项过 `depresolve.parse_requirement`（与 install_packages 同一窄文法）。"""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > 20 or not all(isinstance(x, str) for x in raw):
+        return None
+    from .. import depresolve
+
+    out: list[tuple[str, str]] = []
+    for item in raw:
+        parsed = depresolve.parse_requirement(item.strip())
+        if parsed is None:
+            return None
+        out.append((parsed[0], parsed[1]))
+    return out
+
+
 def propose_fix(ctx: FixContext, args: dict) -> ToolResult:
     summary = _text(args.get("summary"), SUMMARY_MAX)
     if summary is None:
@@ -87,22 +104,32 @@ def propose_fix(ctx: FixContext, args: dict) -> ToolResult:
     details = args.get("details")
     if details is not None and not isinstance(details, str):
         return err("bad_arguments", "`details` must be a string.")
-    res = _ask(
-        ctx,
-        {
-            "kind": "approve",
-            "tool": "propose_fix",
-            "summary": readscope.scrub(summary),
-            "details": readscope.scrub(_text(details, DETAILS_MAX) or ""),
-            "reads": _reads_for_card(ctx),
-            "not_read": SENSITIVE_NOTE,
-        },
-    )
+    packages = _packages(args.get("packages"))
+    if packages is None:
+        return err(
+            "bad_requirement",
+            "`packages` must be a list of plain package names such as `colorcet` or `numpy==1.26.4`.",
+        )
+    card = {
+        "kind": "approve",
+        "tool": "propose_fix",
+        "summary": readscope.scrub(summary),
+        "details": readscope.scrub(_text(details, DETAILS_MAX) or ""),
+        "reads": _reads_for_card(ctx),
+        "not_read": SENSITIVE_NOTE,
+    }
+    if packages:
+        card["packages"] = [f"{n}{v}" for n, v in packages]
+    res = _ask(ctx, card)
     if res is None:
         return _needs_approval("propose_fix")
     if res["answer"] in _NO_ANSWER:
         return _no_answer(res)
     if res["answer"] == "yes":
+        from .change import canonical_name
+
+        for name, _v in packages:  # 用户点头的包：install_packages 对完全同名的不再问第二遍
+            ctx.approved_installs[canonical_name(name)] = ctx.step
         return ok("The user approved this fix. Carry it out now.", "fix approved")
     return ok(
         "The user declined this fix. Do not apply it; propose something different or finish.",
@@ -277,6 +304,12 @@ ASK_TOOLS: tuple[FixTool, ...] = (
                 "details": {
                     "type": "string",
                     "description": "Optional longer explanation, folded by default.",
+                },
+                "packages": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Packages this fix will install (for example `colorcet`). They are listed on the card; "
+                    "if the user confirms, install_packages will not ask again for exactly these names.",
                 },
             },
             ["summary"],

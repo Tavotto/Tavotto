@@ -3214,6 +3214,8 @@ export interface AiFixCard {
   details?: string
   reads?: string[]
   not_read?: string
+  /** `propose_fix` 说明将要安装的包（规范名 + 版本约束）；用户确认后同名的包不再二次确认 */
+  packages?: string[]
   options?: { id: string; label: string }[]
   allow_other?: boolean
   pick?: 'file' | 'dir'

@@ -1298,6 +1298,7 @@
       "skip": "跳过",
       "useIt": "用它",
       "other": "我自己填…",
+      "willInstall": "将要安装：{{packages}}",
       "readTitle": "AI 看过",
       "readNone": "没有读过项目以外的文件",
       "notRead": "没读：敏感目录（密钥、钥匙串、.env 等）直接拦",

@@ -70,6 +70,7 @@ const CARDS: Record<string, Partial<AiFixEntry>> = {
   stalledIdle: { phase: 'running', stalled: { reason: 'stalled', detail: '' } },
   autoStopped: { phase: 'done', outcome: 'failed', reason: 'cli_waiting_approval' },
   approve: { card: { id: 'c1', kind: 'approve', summary: '把 numpy 降到 1.26。', details: '因为 ABI', reads: ['~/Desktop/data.csv'], not_read: 'x' } },
+  approvePkgs: { card: { id: 'c1', kind: 'approve', summary: '建一个环境并装上 colorcet。', packages: ['colorcet'] } },
   choice: { card: { id: 'c1', kind: 'choice', summary: 'data.csv 在哪个文件夹？', options: [{ id: 'a', label: '桌面' }, { id: 'b', label: '文档' }], allow_other: true } },
   pick: { card: { id: 'c1', kind: 'pick', summary: '请选一下数据文件。', pick: 'file' } },
   send: { card: { id: 'c1', kind: 'send', summary: 'AI 写的说明', wants_source: true } },
@@ -201,4 +202,10 @@ describe('进度与卡住（D3）', () => {
     }
     expect((await render(entry(CARDS.autoStopped))).querySelector('[data-title]')?.textContent).toBe('AI 卡在它自己的审批上，已自动停止')
   })
+})
+
+it('确认卡的详情里列出将要安装的包（默认折叠）', async () => {
+  const card = await render(entry(CARDS.approvePkgs))
+  expect(card.querySelector('[data-ai-fix-packages]')?.textContent).toBe('将要安装：colorcet')
+  expect(card.querySelector('details')?.open).toBe(false)
 })

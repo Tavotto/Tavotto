@@ -196,6 +196,11 @@ export function aiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null
         title: card.summary,
         details: (
           <>
+            {card.packages?.length ? (
+              <p data-ai-fix-packages className="m-0 break-words font-medium text-ink">
+                {ft('willInstall', { packages: card.packages.join(', ') })}
+              </p>
+            ) : null}
             {card.details ? <p className="m-0 whitespace-pre-wrap break-words">{card.details}</p> : null}
             <Reads reads={card.reads ?? []} notRead={card.not_read} />
           </>

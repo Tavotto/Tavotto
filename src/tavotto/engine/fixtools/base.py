@@ -78,6 +78,8 @@ class FixContext:
     call_meta: dict = field(default_factory=dict)
     #: 本会话允许的档；裸构造只放行 observe（只读），修复会话用 `for_fix_session` 加上 run
     allowed_tiers: frozenset[str] = frozenset({"observe"})
+    #: 用户在 `propose_fix` 卡上已同意安装的包：规范名 -> 同意它的那一步（`install_packages` 名单外的包只要都在这里就不再问第二遍）
+    approved_installs: dict = field(default_factory=dict)
     #: 项目外的读取清单（供卡片详情列出）
     reads: list[dict] = field(default_factory=list)
     step: int = 0

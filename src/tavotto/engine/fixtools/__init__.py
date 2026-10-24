@@ -62,6 +62,7 @@ def run_tool(
             approved_by=_approved_by(result, ctx),
             result={"ok": not result.is_error, "code": result.code, "summary": result.summary},
             snapshot=ctx.call_meta.get("snapshot"),
+            approved_step=ctx.call_meta.get("approved_step"),
         )
     return result
 

@@ -1364,6 +1364,7 @@
       "skip": "Skip",
       "useIt": "Use it",
       "other": "Type your own…",
+      "willInstall": "Will install: {{packages}}",
       "readTitle": "What the AI looked at",
       "readNone": "Nothing outside the project was read",
       "notRead": "Not read: sensitive places (keys, keychains, .env and similar) are blocked",

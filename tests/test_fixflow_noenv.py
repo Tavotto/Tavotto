@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -181,3 +182,89 @@ def test_full_chain_without_any_environment_builtin_loop(box):
         "try_run",
         "finish",
     ]
+
+
+# =========================================================================== propose_fix 点过头的包，install_packages 不再问第二遍
+def agreed_ctx(box, answers):
+    """`answers`：按顺序给每张卡的回答；返回 (ctx, 卡片列表, 假环境 id)。"""
+    python = fake_python(box)
+    cards: list[dict] = []
+    it = iter(answers)
+
+    def ask(card):
+        cards.append(card)
+        return {"answer": next(it, "no")}
+
+    ctx = FixContext.for_fix_session(
+        "s",
+        box.proj,
+        home=box.home,
+        ask=ask,
+        case_insensitive=False,
+        environments={"e": python},
+        freezer=lambda _p: "pip==24.0\n",
+        installer=lambda py, reqs: {"ok": True, "code": "", "done": list(reqs)},
+    )
+    return ctx, cards
+
+
+UNLISTED = "zzz-not-on-any-list"
+
+
+def test_packages_the_user_agreed_to_are_not_asked_again_and_audit_says_user(box):
+    ctx, cards = agreed_ctx(box, ["yes"])
+    audit = AuditLog()
+    r = run_tool(
+        REGISTRY["propose_fix"], ctx, {"summary": "装包", "packages": [UNLISTED + "==1.0"]}, audit
+    )
+    assert not r.is_error and cards[0]["packages"] == [UNLISTED + "==1.0"]
+    step = ctx.step
+    r = run_tool(
+        REGISTRY["install_packages"],
+        ctx,
+        {"env": "e", "packages": [UNLISTED.upper().replace("-", "_")]},
+        audit,
+    )
+    assert (
+        not r.is_error and len(cards) == 1
+    )  # 没有第二张卡（规范名同名即可：大小写 / 连字符 / 下划线不分）
+    row = [
+        json.loads(x) for x in (box.data / "ai" / "fix_audit.jsonl").read_text("utf-8").splitlines()
+    ][-1]
+    assert (
+        row["tool"] == "install_packages"
+        and row["approved_by"] == "user"
+        and row["approved_step"] == step
+    )
+
+
+def test_a_package_that_was_not_listed_still_asks(box):
+    ctx, cards = agreed_ctx(box, ["yes", "yes"])
+    run_tool(REGISTRY["propose_fix"], ctx, {"summary": "装包", "packages": [UNLISTED]})
+    r = run_tool(
+        REGISTRY["install_packages"],
+        ctx,
+        {"env": "e", "packages": [UNLISTED, "another-unlisted-pkg"]},
+    )
+    assert len(cards) == 2 and cards[1]["tool"] == "install_packages"  # 多出来的包照旧问
+    assert not r.is_error
+
+
+def test_declining_the_proposal_agrees_to_nothing(box):
+    ctx, cards = agreed_ctx(box, ["no", "no"])
+    run_tool(REGISTRY["propose_fix"], ctx, {"summary": "装包", "packages": [UNLISTED]})
+    assert ctx.approved_installs == {}
+    r = run_tool(REGISTRY["install_packages"], ctx, {"env": "e", "packages": [UNLISTED]})
+    assert r.is_error and r.code == "needs_approval" and len(cards) == 2
+
+
+def test_propose_fix_packages_must_be_plain_requirements(box):
+    ctx, cards = agreed_ctx(box, ["yes"])
+    for bad in (["-r evil.txt"], ["pkg @ https://x"], "colorcet", [1]):
+        r = run_tool(REGISTRY["propose_fix"], ctx, {"summary": "x", "packages": bad})
+        assert r.is_error and r.code == "bad_requirement"
+    assert cards == []
+
+
+def test_prompt_asks_for_packages_on_the_proposal():
+    assert "`packages`" in fixsession.SYSTEM_PROMPT

@@ -87,10 +87,10 @@ inspect_environment, list_environments, read_logs, lookup_package) until you kno
 2. TRY next. try_import and try_run run things in a throw-away copy and change nothing. Use them to confirm a theory \
 before you change anything.
 3. CHANGE only what you must, and only with the tools you are given. Before any change to the user's environment \
-or files, call propose_fix with ONE plain sentence and wait: if the user declines, do not do it. Tavotto takes a \
+or files, call propose_fix with ONE plain sentence (and, if it installs anything, the package names in `packages`) and wait: if the user declines, do not do it. Tavotto takes a \
 snapshot before each change so it can be rolled back; if a change did not help, roll it back.
 3b. NO USABLE ENVIRONMENT. If list_environments shows none, or no environment can run this script, do NOT give up. \
-First call propose_fix with ONE plain sentence that states the whole plan, for example "This project has no Python \
+First call propose_fix with ONE plain sentence that states the whole plan, and put every package you will install in `packages` (the user confirms once; install_packages will not ask again for those exact names), for example "This project has no Python \
 environment that works yet. I will create one just for it and install colorcet." If the user agrees: call \
 change_python (it creates a Tavotto-managed environment and installs what the script imports; leave `version` out \
 unless you know one is needed), then install_packages for anything still missing into the environment id that \

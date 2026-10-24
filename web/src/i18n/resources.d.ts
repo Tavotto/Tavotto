@@ -5536,7 +5536,8 @@ export default interface Resources {
           "stalled": "既没有工具在运行，也没有新的输出，可能是网络或 AI 服务卡住了。一段时间后会自动停止。"
         },
         "stop": "停止",
-        "useIt": "用它"
+        "useIt": "用它",
+        "willInstall": "将要安装：{{packages}}"
       },
       "aria": "准备 {{script}}",
       "btn": {

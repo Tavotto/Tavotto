@@ -78,6 +78,7 @@ class AuditLog:
         approved_by: str,
         result: dict,
         snapshot: str | None = None,
+        approved_step: int | None = None,
     ) -> None:
         line = {
             "ts": round(time.time(), 3),
@@ -93,6 +94,8 @@ class AuditLog:
                 "summary": str(result.get("summary") or "")[:120],
             },
         }
+        if approved_step is not None:
+            line["approved_step"] = int(approved_step)  # 名单外的包是被哪一步 propose_fix 同意的
         if snapshot:
             line["snapshot"] = str(snapshot)[:64]  # 改动前打的快照 id（「改」组）
         try:
