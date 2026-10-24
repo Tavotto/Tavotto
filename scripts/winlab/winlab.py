@@ -433,6 +433,7 @@ def admin_deploy_agent() -> int:
             HERE / "installer-check.ps1",
             HERE / "gui_host.py",
             HERE / "mcp_recorder.py",
+            HERE / "window_probe.py",
             *(ROOT / "scripts" / "ci" / n for n in DEPLOYED_CI_MODULES),
             cmdf,
         ):

@@ -1341,3 +1341,131 @@ def test_login_wall_is_blocked_not_failed():
     assert A.LOGIN_MARKERS.search("Error: Sign in to MiniMax to continue")
     assert A.LOGIN_MARKERS.search("请先登录后再使用")
     assert not A.LOGIN_MARKERS.search("opened the figure; logged 3 patches")
+
+
+# --------------------------------------------------------------------------- 桌面宿主 L2
+def test_desktop_hosts_are_a_closed_set_matching_the_modes():
+    assert tuple(A.DESKTOP_HOSTS) == A.DESKTOP_HOST_IDS == A.TASKS["desktop-hosts"].modes
+    assert A.TASKS["desktop-hosts"].networks == ("direct",)  # --network 不开放：线路由固定清单决定
+
+
+def test_desktop_host_pins_are_https_sha256_and_route_domestic_cdns_direct():
+    from urllib.parse import urlsplit
+
+    for h in A.DESKTOP_HOSTS.values():
+        u = urlsplit(h.url)
+        assert u.scheme == "https" and u.hostname, h.id
+        assert re.fullmatch(r"[0-9a-f]{64}", h.sha256), h.id
+        assert h.network in A.NETWORK_MODES, h.id
+        assert h.installer in ("inno", "nsis", "squirrel"), h.id
+        assert h.version in h.url, h.id  # 改版本必须同时改 URL 与散列
+        # 国内 CDN 一律直连：只有海外 CDN 才允许经 DMIT（用户 10-25 授权的范围）
+        if u.hostname.endswith(".cn"):
+            assert h.network == "direct", h.id
+
+
+def test_pinned_download_refuses_when_the_proxy_is_down_instead_of_going_direct(
+    tmp_path, monkeypatch
+):
+    lab = A.Lab(root=tmp_path)
+    host = A.DESKTOP_HOSTS["cursor"]
+    assert host.network != "direct"
+    monkeypatch.setattr(A, "_tcp_open", lambda *a, **k: False)
+    opened = []
+    monkeypatch.setattr(A, "_opener", lambda mode: opened.append(mode))
+    path, info = A.fetch_pinned(lab, host)
+    assert path is None and "not listening" in info["unavailable"]
+    assert opened == []
+
+
+class _Resp:
+    def __init__(self, data: bytes):
+        self._data = [data]
+
+    def read(self, _n):
+        return self._data.pop() if self._data else b""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_pinned_download_with_wrong_hash_leaves_nothing_behind(tmp_path, monkeypatch):
+    lab = A.Lab(root=tmp_path)
+    host = A.DESKTOP_HOSTS["vscode"]
+    modes = []
+
+    class Opener:
+        def open(self, req, timeout):
+            return _Resp(b"not the installer")
+
+    monkeypatch.setattr(A, "_opener", lambda mode: modes.append(mode) or Opener())
+    path, info = A.fetch_pinned(lab, host)
+    assert path is None and "sha256_mismatch" in info
+    assert modes == [host.network]
+    d = lab.cache / "desktop-hosts" / host.id / host.version
+    assert not any(d.iterdir())
+
+
+def test_pinned_download_reuses_a_cached_file_only_when_the_hash_matches(tmp_path, monkeypatch):
+    import hashlib
+
+    lab = A.Lab(root=tmp_path)
+    data = b"installer-bytes"
+    host = A.DesktopHost(
+        id="x",
+        name="X",
+        version="1",
+        url="https://example.invalid/x/1/X-Setup.exe",
+        sha256=hashlib.sha256(data).hexdigest(),
+        network="direct",
+        installer="nsis",
+        display_re="^X",
+        exe_name="X.exe",
+    )
+    d = lab.cache / "desktop-hosts" / "x" / "1"
+    d.mkdir(parents=True)
+    (d / "X-Setup.exe").write_bytes(data)
+    monkeypatch.setattr(A, "_opener", lambda mode: pytest.fail("must not download"))
+    path, info = A.fetch_pinned(lab, host)
+    assert path == d / "X-Setup.exe" and info["cached"] is True
+
+
+@pytest.mark.parametrize(
+    "cmd,argv",
+    [
+        (
+            '"C:\\Users\\u\\AppData\\Local\\Programs\\Microsoft VS Code\\unins000.exe"',
+            ["C:\\Users\\u\\AppData\\Local\\Programs\\Microsoft VS Code\\unins000.exe"],
+        ),
+        (
+            '"C:\\P\\Uninstall ZCode.exe" /currentuser /S',
+            ["C:\\P\\Uninstall ZCode.exe", "/currentuser", "/S"],
+        ),
+        (
+            "C:\\Users\\u\\AppData\\Local\\AnthropicClaude\\Update.exe --uninstall",
+            ["C:\\Users\\u\\AppData\\Local\\AnthropicClaude\\Update.exe", "--uninstall"],
+        ),
+    ],
+)
+def test_uninstall_command_lines_split_like_windows(cmd, argv):
+    assert A._command_argv(cmd) == argv
+
+
+def test_window_probe_only_counts_processes_inside_the_install_dir():
+    import window_probe as P
+
+    root = (
+        Path("C:/Users/u/AppData/Local/Programs/cursor") if os.name == "nt" else Path("/opt/cursor")
+    )
+    assert P.under(str(root / "Cursor.exe"), root)
+    assert P.under(str(root / "resources" / "app" / "x.exe"), root)
+    assert not P.under(str(root.parent / "cursor-other" / "Cursor.exe"), root)
+    assert not P.under(None, root)
+
+
+def test_window_probe_is_deployed_with_the_agent():
+    src = (WINLAB / "winlab.py").read_text(encoding="utf-8")
+    assert 'HERE / "window_probe.py"' in src
