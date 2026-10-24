@@ -368,7 +368,13 @@ class OpenAIChatWire:
       回填为 `{"role": "tool", "tool_call_id", "content"}`。
     * 长度上限字段默认 `max_tokens`（兼容网关通用）；OpenAI 自家 o 系列只认 `max_completion_tokens`，
       由调用方声明（`--max-tokens-field`，将来来自厂商目录），runner 不按模型名猜。
-    * 不传推理强度（本阶段只在 responses 上传；`reasoning_content` 若回了，只数字符、不回放）。
+    * 不传推理强度（本阶段只在 responses 上传）。回复里的 `reasoning_content`（DeepSeek / Kimi 等思考模式）
+      存进 `Turn.native = {"reasoning_content": …}`，回放该 assistant 轮时原样放回同名字段：这类厂商要求
+      带工具调用的轮次（以及工具结果之后的那条回复）把思考内容带回，否则整个请求被拒
+      （"The `reasoning_content` in the thinking mode must be passed back to the API"）。
+      规则：**这一轮存过非空 `reasoning_content` 才放回，否则不加该键**（请求字节不变，拒收多余字段的
+      厂商如 Mistral 不受影响）。runner 整个会话只用同一个模型，思考模式是整场会话的属性，不会出现
+      「别的轮有、这一轮没有」，所以不做空格占位。
     """
 
     name = "openai-chat"
@@ -410,6 +416,8 @@ class OpenAIChatWire:
                         }
                         for c in m.turn.tool_calls
                     ]
+                if isinstance(m.turn.native, dict) and m.turn.native.get("reasoning_content"):
+                    a["reasoning_content"] = m.turn.native["reasoning_content"]
                 msgs.append(a)
             elif m.role == "tool":
                 msgs += [
@@ -462,6 +470,8 @@ class OpenAIChatWire:
                 )
         rc = msg.get("reasoning_content")
         turn.thinking_chars = len(rc) if isinstance(rc, str) else 0
+        if isinstance(rc, str) and rc:
+            turn.native = {"reasoning_content": rc}
         turn.usage = _chat_usage(body)
         fin = choices[0].get("finish_reason")
         if fin == "content_filter":

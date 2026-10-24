@@ -2097,3 +2097,115 @@ def test_a_retry_wait_that_would_reach_the_deadline_stops_without_another_reques
         )
     assert (exc.value.reason, exc.value.detail) == ("budget", "time")
     assert len(srv.requests) == 1
+
+
+def _chat_tool_reply(reasoning=None):
+    msg = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": '{"path": "fig.py"}'},
+            }
+        ],
+    }
+    if reasoning is not None:
+        msg["reasoning_content"] = reasoning
+    return (
+        200,
+        {},
+        {
+            "choices": [{"finish_reason": "tool_calls", "message": msg}],
+            "usage": {"prompt_tokens": 70, "completion_tokens": 10},
+        },
+    )
+
+
+_CHAT_FINAL = (
+    200,
+    {},
+    {
+        "choices": [
+            {"finish_reason": "stop", "message": {"role": "assistant", "content": "Done."}}
+        ],
+        "usage": {"prompt_tokens": 80, "completion_tokens": 5},
+    },
+)
+
+
+class TestChatReasoningReplay:
+    """openai-chat：思考模式厂商（DeepSeek / Kimi）要求带工具调用的 assistant 轮把 reasoning_content 带回。"""
+
+    def test_reasoning_content_is_replayed_on_the_tool_turn(self, cand, serve):
+        srv, res, _ = http_run(
+            cand, serve, "openai-chat", [_chat_tool_reply("let me read it"), _CHAT_FINAL]
+        )
+        assert res.ok
+        asst = srv.requests[1][2]["messages"][2]
+        assert asst["role"] == "assistant" and asst["tool_calls"]
+        assert asst["reasoning_content"] == "let me read it"
+
+    def test_turn_without_reasoning_gets_no_key(self, cand, serve):
+        srv, res, _ = http_run(cand, serve, "openai-chat", [_chat_tool_reply(), _CHAT_FINAL])
+        assert res.ok
+        asst = srv.requests[1][2]["messages"][2]
+        assert asst["role"] == "assistant" and "reasoning_content" not in asst
+        # 空串同样不算思考内容
+        srv, res, _ = http_run(cand, serve, "openai-chat", [_chat_tool_reply(""), _CHAT_FINAL])
+        assert "reasoning_content" not in srv.requests[1][2]["messages"][2]
+
+    def test_deepseek_style_endpoint_rejects_without_replay(self, cand):
+        err = {
+            "error": {
+                "message": "The `reasoning_content` in the thinking mode must be passed back to the API.",
+                "type": "invalid_request_error",
+            }
+        }
+        seen: list[dict] = []
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+                seen.append(body)
+                bad = any(
+                    m.get("role") == "assistant"
+                    and m.get("tool_calls")
+                    and "reasoning_content" not in m
+                    for m in body["messages"]
+                )
+                status, _, payload = (
+                    (400, {}, err)
+                    if bad
+                    else (_chat_tool_reply("think") if len(seen) == 1 else _CHAT_FINAL)
+                )
+                data = json.dumps(payload).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        httpd.daemon_threads = True
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            model = loop.HttpModel(
+                wires.WIRES["openai-chat"],
+                base_url=f"http://127.0.0.1:{httpd.server_address[1]}",
+                api_key=KEY_CANARY,
+                model="deepseek-x",
+                retry_base=0.0,
+                max_attempts=1,
+                request_timeout=5,
+            )
+            res, _ = run_demo(cand, {"turns": []}, model=model)
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        assert res.ok, res
+        assert len(seen) == 2 and seen[1]["messages"][2]["reasoning_content"] == "think"
