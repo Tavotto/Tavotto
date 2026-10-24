@@ -134,6 +134,8 @@ class Task:
     needs_venv: bool = True
     #: 需要一次性凭据：Mac 经 stdin 传入、只进被测宿主进程的环境，Lab 上不落盘
     needs_model_conf: bool = False
+    #: 安装包：`--package` / `--from` 只收 cache\packages\ 里带 .sha256 的文件名
+    accepts_package: bool = False
 
 
 #: Windows 回归 + 编码 / 路径 / 导出 / 保存重载这一组都是仓库里已有的用例，Lab 只负责在真
@@ -214,6 +216,22 @@ TASKS: dict[str, Task] = {
             ),
         ),
         Task(
+            id="installer",
+            kind="installer",
+            summary="安装包验收：静默安装（可先装 --from 旧包再升级）、布局、壳→sidecar、内置 runtime 冒烟、覆盖安装、卸载",
+            timeout_s=3600,
+            accepts_package=True,
+            claim=(
+                "与 nightly windows-install 同一组检查，在 Lab（非管理员 currentUser 安装、zh-CN、Defender 开）上对"
+                "这个具体安装包成立；给了 --from 时另证升级保留用户数据、版本号变化"
+            ),
+            unverified=(
+                "安装界面那几屏（非 /S）与 SmartScreen 体验不在内",
+                "SSH 会话在 session 0：壳能拉起 sidecar 不代表真窗口能显示",
+                "Server 2025 不是 Windows 10 / 11 客户端",
+            ),
+        ),
+        Task(
             id="hosts-live",
             kind="hosts-live",
             summary="AI 宿主 L4/L5：真 Claude Code（国内 Anthropic 兼容模型）调用 Tavotto MCP，改图、导出、重开核对",
@@ -235,8 +253,39 @@ TASKS: dict[str, Task] = {
 }
 
 
-def validate_test_args(task: Task, tests: list[str], shard: str | None, network: str) -> str | None:
+PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.exe$")
+
+
+def package_path(lab: Lab, name: str) -> tuple[Path | None, str | None]:
+    """安装包只认 cache\\packages\\ 下名字合规、带 .sha256 且散列吻合的文件（Mac 端核过、经管理员送进来的）。"""
+    if not PACKAGE_NAME_RE.fullmatch(name):
+        return None, f"bad package name {name!r}"
+    p = lab.cache / "packages" / name
+    want = lab.cache / "packages" / f"{name}.sha256"
+    if not p.is_file() or not want.is_file():
+        return None, f"package {name} not staged"
+    got = hashlib.sha256(p.read_bytes()).hexdigest()
+    if got != want.read_text(encoding="ascii").strip().lower():
+        return None, f"package {name} sha256 mismatch"
+    return p, None
+
+
+def validate_test_args(
+    task: Task,
+    tests: list[str],
+    shard: str | None,
+    network: str,
+    package: str | None = None,
+    frm: str | None = None,
+) -> str | None:
     """返回错误文本；None = 合法。所有参数都可审计：没有透传通道。"""
+    if (package or frm) and not task.accepts_package:
+        return f"task {task.id} does not accept --package / --from"
+    if task.accepts_package and not package:
+        return f"task {task.id} requires --package"
+    for name in (package, frm):
+        if name and not PACKAGE_NAME_RE.fullmatch(name):
+            return f"bad package name {name!r}"
     allowed = TASKS["network"].networks if task.kind == "network" else task.networks
     if network not in allowed:
         return f"task {task.id} does not accept network={network} (allowed: {', '.join(allowed)})"
@@ -1525,8 +1574,85 @@ def receive_fonts(lab: Lab, data: bytes) -> dict:
     }
 
 
+def run_installer_task(lab: Lab, run_dir: Path, env: dict, package: str, frm: str | None) -> dict:
+    setup, err = package_path(lab, package)
+    if err:
+        return {"result": "environment_unavailable", "summary": err}
+    old = None
+    if frm:
+        old, err = package_path(lab, frm)
+        if err:
+            return {"result": "environment_unavailable", "summary": err}
+    py = lab.venv_python()
+    if not py.exists():
+        return {
+            "result": "environment_unavailable",
+            "summary": "venv missing: run `winlab prepare` first",
+        }
+    pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe"
+    script = Path(__file__).resolve().parent / "installer-check.ps1"
+    ev = run_dir / "evidence" / "installer"
+    argv = [
+        pwsh,
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        str(script),
+        "-Setup",
+        str(setup),
+        "-Repo",
+        str(lab.repo),
+        "-Python",
+        str(py),
+        "-Evidence",
+        str(ev),
+    ]
+    if old:
+        argv += ["-From", str(old)]
+    step = _run_logged(argv, lab.repo, env, run_dir / "evidence" / "installer-check", 3500)
+    steps = []
+    for line in (
+        Path(f"{run_dir / 'evidence' / 'installer-check'}.stdout.log")
+        .read_text(encoding="utf-8", errors="replace")
+        .splitlines()
+    ):
+        line = line.strip()
+        if line.startswith("{"):
+            with contextlib.suppress(ValueError):
+                steps.append(json.loads(line))
+    if step.get("timed_out"):
+        return {"result": "error", "summary": "installer check timed out", "steps": steps}
+    if not steps:
+        return {"result": "error", "summary": "installer check produced no steps", "step": step}
+    bad = [s for s in steps if not s.get("ok")]
+    result = (
+        "passed"
+        if not bad
+        else (
+            "error"
+            if any(s.get("step") == "aborted" for s in bad) and len(bad) == 1 and len(steps) < 4
+            else "failed"
+        )
+    )
+    return {
+        "result": result,
+        "summary": f"{len(steps) - len(bad)}/{len(steps)} steps ok"
+        + (f"; failed: {[s['step'] for s in bad]}" if bad else ""),
+        "package": package,
+        "from": frm,
+        "steps": steps,
+    }
+
+
 def _run_body(
-    lab: Lab, task: Task, run_dir: Path, tests, shard, network: str, model_conf: dict | None
+    lab: Lab,
+    task: Task,
+    run_dir: Path,
+    tests,
+    shard,
+    network: str,
+    model_conf: dict | None,
+    pkg: dict | None = None,
 ) -> dict:
     if task.kind == "network":
         return run_network_task(lab, list(NETWORK_MODES) if network == "all" else [network])
@@ -1535,6 +1661,10 @@ def _run_body(
         return run_pytest_task(lab, task, run_dir, tests, shard, env)
     if task.kind == "hosts-live":
         return run_hosts_live_task(lab, run_dir, env, model_conf or {})
+    if task.kind == "installer":
+        return run_installer_task(
+            lab, run_dir, env, (pkg or {}).get("package", ""), (pkg or {}).get("from")
+        )
     return run_hosts_task(lab, run_dir, env)
 
 
@@ -1552,6 +1682,7 @@ def run_task(
     shard: str | None,
     network: str,
     model_conf: dict | None = None,
+    pkg: dict | None = None,
 ) -> dict:
     run_id = new_run_id()
     run_dir = lab.runs / run_id
@@ -1565,7 +1696,7 @@ def run_task(
         # 锁一放，别的 prepare 可能已切走提交、clean 也可能删掉这个 run
         commit = repo_head(lab)
         try:
-            body = _run_body(lab, task, run_dir, tests, shard, network, model_conf)
+            body = _run_body(lab, task, run_dir, tests, shard, network, model_conf, pkg)
         except Exception as exc:  # 执行器自己的缺陷也要落成一份 error 报告，而不是没有报告
             import traceback
 
@@ -1581,7 +1712,7 @@ def run_task(
             "kind": REPORT_KIND,
             "run_id": run_id,
             "task": task.id,
-            "args": {"tests": tests, "shard": shard, "network": network},
+            "args": {"tests": tests, "shard": shard, "network": network, **(pkg or {})},
             "commit": commit,
             "started": started,
             "finished": iso_now(),
@@ -1876,6 +2007,8 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--tests", nargs="+", default=[])
     t.add_argument("--shard")
     t.add_argument("--network")
+    t.add_argument("--package")
+    t.add_argument("--from", dest="frm")
     r = sub.add_parser("reports")
     r.add_argument("--id")
     c = sub.add_parser("clean")
@@ -1941,7 +2074,7 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
             )
     task = TASKS[ns.task]
     network = ns.network or task.networks[0]
-    err = validate_test_args(task, ns.tests, ns.shard, network)
+    err = validate_test_args(task, ns.tests, ns.shard, network, ns.package, ns.frm)
     if err:
         sys.stdout.write(json.dumps({"result": "error", "summary": err}) + "\n")
         return av.EXIT_USAGE
@@ -1952,7 +2085,8 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
             if isinstance(parsed, str):
                 return _emit({"result": "environment_unavailable", "summary": parsed})
             model_conf = parsed
-        return _emit(run_task(lab, task, ns.tests, ns.shard, network, model_conf))
+        pkg = {"package": ns.package, "from": ns.frm} if task.accepts_package else None
+        return _emit(run_task(lab, task, ns.tests, ns.shard, network, model_conf, pkg))
     except LabBusy as busy:
         return _emit(
             {"result": "environment_unavailable", "summary": "lab busy", "lock": busy.args[0]}

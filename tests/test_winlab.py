@@ -901,3 +901,65 @@ def test_reclaiming_the_judged_stale_lock_succeeds(tmp_path):
     lab.lock_path.write_text(json.dumps(stale))
     assert A._reclaim_stale(lab, stale) is True
     assert not lab.lock_path.exists() and not list(lab.state.glob("*.stale"))
+
+
+# --------------------------------------------------------------------------- installer
+@pytest.mark.parametrize(
+    "name", ["..\\x.exe", "a/b.exe", "x.msi", "-x.exe", "x.exe;calc", "C:x.exe", ""]
+)
+def test_package_names_are_a_closed_shape(name):
+    err = A.validate_test_args(A.TASKS["installer"], [], None, "direct", name or None)
+    assert err
+
+
+def test_installer_requires_a_package_and_other_tasks_refuse_one():
+    assert "requires --package" in A.validate_test_args(A.TASKS["installer"], [], None, "direct")
+    assert A.validate_test_args(A.TASKS["installer"], [], None, "direct", "a.exe", "b.exe") is None
+    assert "does not accept --package" in A.validate_test_args(
+        A.TASKS["render-roundtrip"], [], None, "direct", "a.exe"
+    )
+
+
+def test_staged_package_must_match_its_pinned_hash(tmp_path):
+    lab = A.Lab(tmp_path)
+    d = lab.cache / "packages"
+    d.mkdir(parents=True)
+    (d / "a.exe").write_bytes(b"MZ payload")
+    assert A.package_path(lab, "a.exe")[1] == "package a.exe not staged"
+    (d / "a.exe.sha256").write_text("0" * 64)
+    assert "mismatch" in A.package_path(lab, "a.exe")[1]
+    import hashlib
+
+    (d / "a.exe.sha256").write_text(hashlib.sha256(b"MZ payload").hexdigest())
+    assert A.package_path(lab, "a.exe") == (d / "a.exe", None)
+
+
+def test_installer_check_is_ascii_and_mirrors_the_nightly_checks():
+    ps = (WINLAB / "installer-check.ps1").read_bytes()
+    assert all(b < 128 for b in ps)
+    text = ps.decode()
+    for needle in (
+        "runtime\\python.exe",
+        "tavotto-workerd.exe",
+        "GNU AFFERO",
+        "desktop-sidecar",
+        "--expect-source bundled",
+    ):
+        assert needle in text, needle
+    nightly = (ROOT / ".github" / "workflows" / "nightly.yml").read_text(encoding="utf-8")
+    for needle in (
+        "runtime\\python.exe",
+        "tavotto-workerd.exe",
+        "GNU AFFERO",
+        "desktop-sidecar",
+        "--expect-source bundled",
+    ):
+        assert needle in nightly, (
+            f"nightly no longer checks {needle}: update installer-check.ps1 to match"
+        )
+
+
+def test_deploy_ships_the_installer_check():
+    import inspect
+
+    assert "installer-check.ps1" in inspect.getsource(W.admin_deploy_agent)
