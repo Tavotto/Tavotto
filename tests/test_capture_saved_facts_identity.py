@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from support import linkkit
+
 ENGINE_DIR = str(Path(__file__).resolve().parents[1] / "src" / "tavotto" / "engine")
 if ENGINE_DIR not in sys.path:
     sys.path.insert(0, ENGINE_DIR)
@@ -238,8 +240,9 @@ class TestUnicodeNormalization:
         d = str(tmp_path.resolve())
         nfc, nfd = (unicodedata.normalize(f, "é.pdf") for f in ("NFC", "NFD"))
         (tmp_path / "target.pdf").write_bytes(b"x")
-        os.symlink(tmp_path / "target.pdf", tmp_path / nfc)
-        os.symlink(tmp_path / "target.pdf", tmp_path / nfd)
+        # 硬链接：同样是「两个独立的目录项」（见 `_unicode_evidence` 文档），NTFS 上不要符号链接特权
+        linkkit.hardlink(tmp_path / "target.pdf", tmp_path / nfc)
+        linkkit.hardlink(tmp_path / "target.pdf", tmp_path / nfd)
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)
         assert figcapture._dir_folds_unicode(d, nfc) is False
         figcapture._UNICODE_FOLD_CACHE.pop(d, None)

@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 
+from support import linkkit
 from tavotto import app as m
 from tavotto.engine import atomicio, documents, layoutsession, project_watch as engine_watch
 
@@ -783,13 +784,21 @@ def test_a15_bad_files_do_not_block_the_listing(client, tmp_path):
     (m.AUTOSAVE_DIR / "d_new.json").write_text(json.dumps({"schema": 99, "project": {"name": "n"}}))
     (m.AUTOSAVE_DIR / "not a docid.json").write_text("{}")
     (m.AUTOSAVE_DIR / "readme.txt").write_text("x")
-    link = m.AUTOSAVE_DIR / "d_link.json"
-    link.symlink_to(_slot("d_ok"))
     listing = _candidates(client, a, "unknown")
     by_id = {i["doc_id"]: i for i in listing["items"]}
     assert set(by_id) == {"d_bad", "d_nan", "d_new"}
     assert by_id["d_bad"]["status"] == "invalid" and by_id["d_nan"]["status"] == "invalid"
     assert by_id["d_new"]["status"] == "too_new" and by_id["d_new"]["schema"] == 99
+    assert [i["doc_id"] for i in _candidates(client, a, "project")["items"]] == ["d_ok"]
+
+
+def test_a15_symlinked_slot_is_not_a_candidate(client, tmp_path):
+    """符号链接槽位不是候选。场景离不开文件符号链接本身，无特权账户（非管理员 Windows）上 skip。"""
+    a = _project(client, tmp_path, "a", default=True)
+    _put(client, "d_ok", _doc(5), a)
+    linkkit.symlink_or_skip(_slot("d_ok"), m.AUTOSAVE_DIR / "d_link.json")
+    by_id = {i["doc_id"]: i for i in _candidates(client, a, "unknown")["items"]}
+    assert "d_link" not in by_id
     assert [i["doc_id"] for i in _candidates(client, a, "project")["items"]] == ["d_ok"]
 
 
