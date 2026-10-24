@@ -6,6 +6,7 @@ import {
   agentById,
   backendErrorText,
   effectiveAgent,
+  hasConnectionView,
   patchAiAgent,
   type AiAgentId,
 } from '@/lib/api'
@@ -17,6 +18,9 @@ import { Select } from '../ui/Select'
 import { GroupNotice, SettingRow } from './SettingRow'
 import { AgentDetailView } from './AgentDetailView'
 import { AgentList } from './AgentList'
+import { ConnectionsList } from './connectAi/ConnectionsList'
+import { cx } from './connectAi/copy'
+import { Details, Summary } from '../ui/Details'
 import { CodexIntegrationPanel } from './CodexIntegrationPanel'
 import { ag } from './agentState'
 
@@ -165,13 +169,8 @@ export function CodingAgentsSection() {
   const usable = caps ? caps.agents.filter((a) => a.usable) : []
 
   // 两组是两件事，标题按**用户想完成什么**命名（审计 T44）；分组之间的间距由外壳给
-  return (
-    <div ref={rootRef} className="contents">
-      {/* 检测结果的播报：完成 / 失败都要说一声，不能只有视觉上的变化 */}
-      <p aria-live="polite" className="sr-only">
-        {announce}
-      </p>
-
+  const legacy = (
+    <>
       <FormSection title={ag('useInProduct')} action={rescanAction} data-settings-anchor="ai.agents">
         <FieldGroup data-agent-section="in-app">
           {error && (
@@ -235,6 +234,33 @@ export function CodingAgentsSection() {
           <CodexIntegrationPanel />
         </FieldGroup>
       </FormSection>
+    </>
+  )
+
+  // 「连接 AI」视图（后端给了 vendors / connections）：厂商同级列表是主入口；原来的 Codex / Claude Code
+  // 清单、详情、诊断与「在 Codex 里用 Tavotto」整体收进页底「高级」。老后端没有这些字段 → 原样显示旧页面
+  if (hasConnectionView(caps) && caps) {
+    return (
+      <div ref={rootRef} className="contents">
+        <p aria-live="polite" className="sr-only">
+          {announce}
+        </p>
+        <ConnectionsList caps={caps} />
+        <Details data-connect-advanced className="flex flex-col gap-6">
+          <Summary className="w-fit text-base font-medium text-ink">{cx('advanced')}</Summary>
+          <div className="mt-3 flex flex-col gap-6">{legacy}</div>
+        </Details>
+      </div>
+    )
+  }
+
+  return (
+    <div ref={rootRef} className="contents">
+      {/* 检测结果的播报：完成 / 失败都要说一声，不能只有视觉上的变化 */}
+      <p aria-live="polite" className="sr-only">
+        {announce}
+      </p>
+      {legacy}
     </div>
   )
 }

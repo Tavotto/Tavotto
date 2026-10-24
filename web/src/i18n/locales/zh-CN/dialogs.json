@@ -1818,7 +1818,7 @@
       "style": "图长什么样：字体、字号与线宽。",
       "spec": "图要满足什么：投稿前检查用的规则。",
       "export": "导出对话框打开时的默认选择。",
-      "ai": "本机的改图助手，以及在 Codex 里用 Tavotto。",
+      "ai": "连接一个 AI，就能用它改图和修复脚本。",
       "packages": "这个项目的 Python 环境里装了什么。",
       "diagnostics": "运行环境是否正常，以及给我们的诊断报告。",
       "about": "版本、更新与隐私。"
@@ -1848,6 +1848,38 @@
         "updates": "更新 版本 升级",
         "telemetry": "隐私 统计 遥测 数据",
         "theme": "主题 深色 浅色 暗色 夜间 外观 模式 颜色"
+      }
+    },
+    "connectAi": {
+      "title": "连接一个 AI",
+      "titleFix": "连接一个 AI 来修复",
+      "regionCn": "国内",
+      "regionGlobal": "海外",
+      "connect": "连接",
+      "signIn": "登录",
+      "connected": "已连接",
+      "needsAuth": "需要重新登录",
+      "error": "连接异常",
+      "later": "稍后",
+      "more": "更多 AI…",
+      "other": "其他兼容接口…",
+      "getKey": "去 {{name}} 获取 ↗",
+      "keyLabel": "API Key",
+      "keyPlaceholder": "粘贴 API Key",
+      "needsInstall": "需先安装",
+      "failed": "没能连上，请检查 Key 后重试。",
+      "changeKey": "换 Key",
+      "saveKey": "保存",
+      "defaultModel": "默认型号",
+      "disconnect": "断开",
+      "disconnectTitle": "断开 {{name}}？",
+      "disconnectBody": "本机保存的 Key 会被删除。",
+      "advanced": "高级",
+      "loading": "正在读取…",
+      "err": {
+        "unauthorized": "Key 无效或已过期。",
+        "network": "连不上服务商。",
+        "timeout": "连接超时。"
       }
     }
   },

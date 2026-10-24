@@ -20,6 +20,7 @@ import { RegistryDialog } from '@/components/RegistryDialog'
 import { RelinkDialog } from '@/components/RelinkDialog'
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { TelemetryConsentDialog } from '@/components/TelemetryConsentDialog'
+import { ConnectAiHost } from '@/components/ConnectAiHost'
 import { DiagnosticsSendHost } from '@/components/DiagnosticsSendHost'
 import { ContactHost } from '@/components/contact/ContactHost'
 import { useContactStore } from '@/store/contactStore'
@@ -129,6 +130,7 @@ export function App() {
         <NativeTutorial />
         <TelemetryConsentDialog />
         <DiagnosticsSendHost />
+        <ConnectAiHost />
         <ContactHost />
         {/* 「有新版本」也在这一层问：还没开项目的人一样该知道 */}
         <UpdateNoticeDialog />
@@ -356,6 +358,7 @@ function Workspace() {
       <RelinkDialog />
         <TelemetryConsentDialog />
         <DiagnosticsSendHost />
+        <ConnectAiHost />
         <ContactHost />
         {/* 意外错误 / 上次没正常退出的反馈卡：贴窗口右下角（不在画布的通知轨里） */}
         <FeedbackCorner />
