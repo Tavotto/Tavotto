@@ -4,13 +4,14 @@
 > 决策与取舍见 `docs/adr/0131-agent-verification-entry.md`；代码事实表见
 > `docs/implementation/agent-verification/code-facts.md`。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_agent_verify.py`
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：只认登记场景、argv 只调已有验证器；写 `claim` / `unverified`；非 passed 永不聚合成 passed；隔离数据目录与环境；报告无绝对路径；不进 CI、不改基线
 
 <!-- agents-route
 sheet: .github/AGENTS.md
 order: 130
 改到: `scripts/ci/agent_verify.py` 的 `SCENARIOS`、新增给开发 Agent 调用的验证场景
 主题: Agent 统一验证入口（ADR 0131）→ `agent-verification.md`
-必守要点: 只认登记场景、argv 只调已有验证器；写 `claim` / `unverified`；非 passed 永不聚合成 passed；隔离数据目录与环境；报告无绝对路径；不进 CI、不改基线
+必守要点: 只认登记场景、argv 只调已有验证器；写 `claim` / `unverified`；非 passed 永不聚合成 passed；不进 CI、不改基线
 -->
 
 ## 怎么用

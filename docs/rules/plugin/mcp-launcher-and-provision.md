@@ -5,13 +5,14 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_resolver.py`、`tests/test_mcp_stdio.py`、`tests/test_codex_install_cli.py`、`tests/test_pip_config_pair.py`
 > `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：启动器对的形态约束（cmd 半边第一行 `@echo off`、stdout 首帧前零字节）；每个候选都真的验证 `import tavotto.engine`；venv 只在区间内的解释器上建；自管环境落后时后台重装（Windows 用 `CREATE_NO_WINDOW` 不用 DETACHED；Popen 返回且记号写入后退避 30 分钟，spawn 失败不计）、互斥只用内核文件锁；子进程除交棒外都带 `CREATE_NO_WINDOW`；它的 pip / matplotlib 缓存在 `mcp-runtime/cache`；pip 索引让 pip 自己在目标解释器里解析 install 选项（探测脚本与引擎同源），问不到报 unknown 不猜
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：stdout 首帧前零字节；每个候选真验证 `import tavotto.engine`；自管环境后台重装、互斥只用内核文件锁；子进程带 `CREATE_NO_WINDOW`
 
 <!-- agents-route
 sheet: codex-plugin/AGENTS.md
 order: 20
 改到: `mcp/launch` 与 `mcp/launch.cmd`、`codex.mcp.json`（Codex 的 MCP 配置，ADR 0109 起不叫 `.mcp.json`）的 `command`、`mcp/server.py` 的 resolver 与 `--provision`
 主题: MCP 启动器、运行时解析与自管环境 → `mcp-launcher-and-provision.md`
-必守要点: stdout 首帧前零字节；每个候选真验证 `import tavotto.engine`；自管环境后台重装、互斥只用内核文件锁；子进程带 `CREATE_NO_WINDOW`
+必守要点: stdout 首帧前零字节；每个候选真验证 `import tavotto.engine`；自管环境后台重装、互斥只用内核文件锁
 -->
 
 ## 启动器对（原「首次使用契约」一节的「双语启动器」）

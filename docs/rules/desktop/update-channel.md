@@ -2,13 +2,14 @@
 
 > 原文出自 `src-tauri/AGENTS.md`「更新通道（桌面归壳，2026-08-18）」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src-tauri/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `src-tauri/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：桌面关掉 `/api/update/*`、只查一条通道；webview 不拿 `updater:*`；第一个答上来的来源说「无更新」即终局，下载失败换来源重新 check；验签永远用内置公钥；macOS 更新包签名公证后重做
 
 <!-- agents-route
 sheet: src-tauri/AGENTS.md
 order: 60
 改到: `src-tauri/src/app_update.rs`、`tauri.conf.json`、`capabilities/main.json`、`scripts/make_updater_manifest.py`、`MIRROR_MANIFEST_URL`
 主题: 桌面更新：tauri-plugin-updater 与来源编排（ADR 0121） → `update-channel.md`
-必守要点: 桌面关掉 `/api/update/*`、只查一条通道；webview 不拿 `updater:*`；第一个答上来的来源说「无更新」即终局，下载失败换来源重新 check；验签永远用内置公钥；macOS 更新包签名公证后重做
+必守要点: 桌面关掉 `/api/update/*`；webview 不拿 `updater:*`；验签永远用内置公钥；首个来源说「无更新」即终局
 -->
 
 - **桌面版走 `tauri-plugin-updater`**：下载签名过的安装包就地替换，装完

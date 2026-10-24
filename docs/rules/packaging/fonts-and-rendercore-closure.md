@@ -2,13 +2,14 @@
 
 > 原文出自 `packaging/AGENTS.md`「内置渲染 runtime（Windows 2026-08-17；macOS 2026-08-18）」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`packaging/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `packaging/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：字体不进 git，构建机先跑 `fetch_fonts.py`、缺字体拒绝打包；PDFium / qpdf 原生库显式收进冻结产物；`entry.py` 最先分派 `--render-child`；产物用 `retirement_scan.py --dist` 扫
 
 <!-- agents-route
 sheet: packaging/AGENTS.md
 order: 60
 改到: `src/tavotto/resources/fonts/`、`scripts/fetch_fonts.py`、`fonts_allowlist.json`、`packaging/entry.py`、`scripts/ci/retirement_scan.py`
 主题: 批准字体（ADR 0060）与 RenderCore 原生闭包（ADR 0072） → `fonts-and-rendercore-closure.md`
-必守要点: 字体不进 git，构建机先跑 `fetch_fonts.py`、缺字体拒绝打包；PDFium / qpdf 原生库显式收进冻结产物；`entry.py` 最先分派 `--render-child`；产物用 `retirement_scan.py --dist` 扫
+必守要点: 字体不进 git，构建机先跑 `fetch_fonts.py`；PDFium / qpdf 原生库显式收进冻结产物；`entry.py` 最先分派 `--render-child`
 -->
 
 - **批准字体随包走（2026-09-21，统一实施包 U06，ADR 0060）**：`src/tavotto/resources/fonts/`

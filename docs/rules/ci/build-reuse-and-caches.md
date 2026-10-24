@@ -3,13 +3,14 @@
 > 原文出自 `.github/AGENTS.md`「门禁纪律」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestBuildReuseAndCaches` / `::TestCacheSeed` / `::TestLandingAudit`、`tests/test_ci_baseline.py`
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：缓存是枚举（多一条就红）；字体仅归档、精确键、命中不跳校验；Tauri apt 只缓存 .deb；唯一数据边 `frontend → plugin-candidate` 按 content_digest 核；rust-cache 一条腿一把 `shared-key`；`cache-seed` 不是门禁、`full-ci` PR 上是首验
 
 <!-- agents-route
 sheet: .github/AGENTS.md
 order: 90
 改到: 任何 `actions/cache` / setup-node / rust-cache、`cache-seed` job、artifact 传递、`scripts/ci/ci_baseline.py`
 主题: 构建复用与缓存（CI02）→ `build-reuse-and-caches.md`
-必守要点: 缓存是枚举（多一条就红）；字体仅归档、精确键、命中不跳校验；Tauri apt 只缓存 .deb；唯一数据边 `frontend → plugin-candidate` 按 content_digest 核；rust-cache 一条腿一把 `shared-key`；`cache-seed` 不是门禁、`full-ci` PR 上是首验
+必守要点: 缓存是枚举（多一条就红）；字体仅归档、命中不跳校验；Tauri apt 只缓存 .deb；跨 job 数据边按 content_digest 核
 -->
 
 - **构建产物不跨 job 抽取、缓存按下载 / 编译分类（CI02，2026-09-16；字体归档补充见下）**：九种 recipe（web 应用 / MCP 画布 / 插件候选 / playground /

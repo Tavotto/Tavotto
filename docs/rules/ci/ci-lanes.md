@@ -3,13 +3,14 @@
 > 原文出自 `.github/AGENTS.md`「CI 分层（1.0 稳定化，2026-08-21 起）」（2026-09-18 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py`、`tests/test_aggregate_gate.py`
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：时机分工与覆盖面不变；三个稳定 Gate；`cancel-in-progress` 只对 PR 开；顶层 `TAVOTTO_NO_TELEMETRY=1`；目录里每个监听 `pull_request` 的 workflow 都带 `branches: [main]`（`TestPullRequestBaseFilter`，算出来的集合、不用登记）
 
 <!-- agents-route
 sheet: .github/AGENTS.md
 order: 10
 改到: `.github/workflows/ci.yml` 的事件 / `needs` / Gate 闭集、`scripts/ci/aggregate_gate.py`
 主题: CI 分层 → `ci-lanes.md`
-必守要点: 时机分工与覆盖面不变；三个稳定 Gate；`cancel-in-progress` 只对 PR 开；顶层 `TAVOTTO_NO_TELEMETRY=1`；目录里每个监听 `pull_request` 的 workflow 都带 `branches: [main]`（`TestPullRequestBaseFilter`，算出来的集合、不用登记）
+必守要点: 时机分工与覆盖面不变；三个稳定 Gate；`cancel-in-progress` 只对 PR 开；监听 `pull_request` 的 workflow 都带 `branches: [main]`
 -->
 
 CI 按**发生时机**分工（`.github/workflows/ci.yml` 抬头有全图，2026-08-25

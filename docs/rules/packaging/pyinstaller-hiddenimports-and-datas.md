@@ -2,13 +2,15 @@
 
 > 原文出自 `packaging/AGENTS.md`「内置渲染 runtime（Windows 2026-08-17；macOS 2026-08-18）」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`packaging/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `packaging/AGENTS.md`「主题」压缩前原文（2026-10-24，与正文同等有效）：冻结产物：按名字 / 延后装载的模块、OpenSSL DLL 同源、包内数据文件 → `pyinstaller-hiddenimports-and-datas.md`
+> `packaging/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：按名字或延后 import 的模块必须显式进 hiddenimports（清单从契约层取、不手写）；Windows OpenSSL DLL 与 `_ssl.pyd` 同源；新增包内数据目录要在 spec 的 datas 加一行；playground 锁钉死 Pyodide
 
 <!-- agents-route
 sheet: packaging/AGENTS.md
 order: 50
 改到: `packaging/tavotto.spec`、`packaging/playground-runtime.json`、`scripts/frozen_ssl_gate.py`、`engine/tlstrust.py`、`pdfbackend/__init__.py`
-主题: 冻结产物：按名字 / 延后装载的模块、OpenSSL DLL 同源、包内数据文件 → `pyinstaller-hiddenimports-and-datas.md`
-必守要点: 按名字或延后 import 的模块必须显式进 hiddenimports（清单从契约层取、不手写）；Windows OpenSSL DLL 与 `_ssl.pyd` 同源；新增包内数据目录要在 spec 的 datas 加一行；playground 锁钉死 Pyodide
+主题: 冻结产物：延后装载的模块、包内数据文件 → `pyinstaller-hiddenimports-and-datas.md`
+必守要点: 按名字或延后 import 的模块必须显式进 hiddenimports；Windows OpenSSL DLL 与 `_ssl.pyd` 同源；新增包内数据目录要加 datas
 -->
 
 - **浏览器 playground 的运行时锁**：`packaging/playground-runtime.json`

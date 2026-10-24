@@ -6,12 +6,13 @@
 > 这里是这一主题规则的**唯一全文**；速查表只留一行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_execution_receipt.py`、`test_preparation_api.py`、`test_worker_runtime_report.py`、`tests/bridge/test_bridge_e2e.py`、`tests/test_foundation_harness.py`、`tests/test_foundation_first_open.py`、`tests/test_trace.py`、`tests/test_foundation_join.py`、`tests/test_preparation_session.py`、`tests/test_preparation_session_e2e.py`、`tests/test_preparation_session_dependencies.py`、`tests/test_dialogscan.py`
 > `src/tavotto/AGENTS.md`「改到」压缩前原文（2026-10-23）：`engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`databinding.binding_for`、`figcapture.InputObserver`、`execspec.launch_context`、`workdir.grant_for`、`depresolve.DependencyIntent`、`figcapture.SourceArtifact`、`exportreq.render_plan_ref`、`/api/engine/preparation*`
+> `src/tavotto/AGENTS.md`「主题」压缩前原文（2026-10-24，与正文同等有效）：准备计划、执行回执与源图产物（ADR 0053 / 0057 / 0070 / 0071）、准备会话（T01） → `preparation-and-receipts.md`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 320
 改到: `engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`/api/engine/preparation*`（完整清单见细则）
-主题: 准备计划、执行回执与源图产物（ADR 0053 / 0057 / 0070 / 0071）、准备会话（T01） → `preparation-and-receipts.md`
+主题: 准备计划、执行回执与源图产物、准备会话 → `preparation-and-receipts.md`
 必守要点: 计划与观测分开；过期不执行
 -->
 

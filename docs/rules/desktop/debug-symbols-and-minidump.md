@@ -2,13 +2,14 @@
 
 > 原文出自 `src-tauri/AGENTS.md`「构建、验收与安装界面」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src-tauri/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `src-tauri/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：符号另存 `debug-symbols-*` artifact、不进安装包与更新清单；MSVC 腿用 `CARGO_PROFILE_RELEASE_STRIP=none`；`main()` 第一句装过滤器、过滤器内不分配堆不加锁；不写 WER LocalDumps 注册表
 
 <!-- agents-route
 sheet: src-tauri/AGENTS.md
 order: 80
 改到: `src-tauri/Cargo.toml` 的 `[profile.release]`、`crash_dump.rs`、`desktop-tauri.yml`、`workerd/Cargo.toml`
 主题: 调试符号与 Windows 小型转储 → `debug-symbols-and-minidump.md`
-必守要点: 符号另存 `debug-symbols-*` artifact、不进安装包与更新清单；MSVC 腿用 `CARGO_PROFILE_RELEASE_STRIP=none`；`main()` 第一句装过滤器、过滤器内不分配堆不加锁；不写 WER LocalDumps 注册表
+必守要点: 符号另存 `debug-symbols-*` artifact、不进安装包与更新清单；`main()` 第一句装过滤器、过滤器内不分配堆不加锁
 -->
 
 - **调试符号与小型转储**：`[profile.release]` 的 `debug = "line-tables-only"` + `split-debuginfo = "packed"` 让 macOS 产出 .dSYM、

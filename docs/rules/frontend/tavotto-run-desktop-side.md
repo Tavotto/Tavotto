@@ -3,13 +3,14 @@
 > 原文出自 `web/AGENTS.md`「`tavotto run` 的桌面面（2026-08-28，Compatibility Bridge Session 9B；ADR 0021）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`nativeSessionStore.test.ts`、`renderStore.test.ts`、`NativeConfirmDialog.test.tsx`、`openRequest.test.ts`、`tests/native/test_run_beta_claims.py`
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：前端只提交不透明 `native_id`；交接 ID 两条入口都必须带；确认屏是闸（`blockDismiss`）、两条 → 排队；事件按 `sequence` 判序；屏障处的 build 由界面显式发；未知不等于 native；`clear()` 不杀用户的脚本
 
 <!-- agents-route
 sheet: web/AGENTS.md
 order: 230
 改到: `NativeConfirmDialog`、`nativeSessionStore`、`nativePanelState`、`?native=` / `tavotto:open` 的 `native`
 主题: `tavotto run` 的桌面面 → `tavotto-run-desktop-side.md`
-必守要点: 前端只提交不透明 `native_id`；交接 ID 两条入口都必须带；确认屏是闸（`blockDismiss`）、两条 → 排队；事件按 `sequence` 判序；屏障处的 build 由界面显式发；未知不等于 native；`clear()` 不杀用户的脚本
+必守要点: 前端只提交不透明 `native_id`；确认屏是闸（`blockDismiss`）；事件按 `sequence` 判序；未知不等于 native
 -->
 
 CLI 拥有用户的 Python，**桌面只是渲染面与那一道闸**。前端能提交的只有一个

@@ -4,13 +4,14 @@
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_server.py`、`tests/test_mcp_compat.py`
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：与桌面 / HTTP 是同一份决定；不替用户猜、不替用户授权；批量 open 不接受准备参数；引擎没宣告能力就拒、不先无参数试；新模块只经 `_optional_engine`
 
 <!-- agents-route
 sheet: codex-plugin/AGENTS.md
 order: 110
 改到: `_bridge_error_from_worker`、`workdir=` / `prepare_dependencies=` / `argv=` / `adopt_environment=` 参数、`requirements`
 主题: 首开的「需要输入」与跑前依赖准备 → `first-open-questions.md`
-必守要点: 与桌面 / HTTP 是同一份决定；不替用户猜、不替用户授权；批量 open 不接受准备参数；引擎没宣告能力就拒、不先无参数试；新模块只经 `_optional_engine`
+必守要点: 与桌面 / HTTP 是同一份决定；不替用户猜、不替用户授权；批量 open 不接受准备参数；新模块只经 `_optional_engine`
 -->
 
 - **首开的「需要输入」与它的回答（U03，ADR 0057）**：`session.acquire()` 走的 `pool.get()` 在起第一个

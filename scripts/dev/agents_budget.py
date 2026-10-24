@@ -11,8 +11,8 @@
    每份 `AGENTS.md` 与每份 `SKILL.md` 各有一个上限，要长大就在同一个 PR 里
    `--write-ceilings` 并提交那份 JSON——增长在 diff 里看得见、评审要问理由，而不是一路涨到
    撞上第 1 条才临时腾字。
-3. **速查表每格不越过 `SHEET_CELL_MAX` 字节**：「改到」写目录 / 入口文件，「必守要点」写一句
-   索引；完整清单与全文放细则。
+3. **速查表每格不越过 `SHEET_CELL_MAX` 那一列的字节数**：「改到」写目录 / 入口文件，「主题」
+   只写短标题 + 文件名，「必守要点」写一句索引；完整清单与全文放细则。
 
 两种加载方式各量一份：
 
@@ -40,12 +40,14 @@ BUDGET_ROOT = (4_000, 6_000)
 BUDGET_SHEET = (6_000, 10_000)
 BUDGET_CHAIN = (16_000, 24_000)
 CODEX_DEFAULT_CAP = 32 * 1024
-#: 速查表一格的上限（UTF-8 字节，约 100 个汉字）。
-SHEET_CELL_MAX = 300
+#: 速查表各列一格的上限（UTF-8 字节；汉字 3 字节）。「改到」是路由本身给得宽，「主题」只写短标题 +
+#: 文件名（ADR 清单在细则里），「必守要点」是一句索引（2026-10-24 收紧，原 300 / 300 / 300）。
+SHEET_CELL_MAX = {"改到": 300, "主题": 120, "必守要点": 150}
 #: 每份常驻指令的棘轮上限（CRLF 口径字节）；`--write-ceilings` 重写。
 CEILINGS_FILE = ROOT / "tests" / "fixtures" / "agents_ceilings.json"
-#: `--write-ceilings` 在现状上留的余量：小修小补不必每次改 JSON，成段加料必须改。
-CEILING_SLACK = 256
+#: `--write-ceilings` 在现状上留的余量：改几格措辞、加一行不必改 JSON，成段加料必须改
+#: （2026-10-24 由 256 放到 1024：余量太小，人人顺手重写上限，棘轮就成了走过场）。
+CEILING_SLACK = 1024
 
 #: 审计基线（main @ 6fe6e38d，2026-09-17）量到的原始字节数，用来给出「治理前后」的差。
 AUDIT_BASELINE_BYTES = {
@@ -226,8 +228,8 @@ def oversized_cells(sheets: list[str]) -> list[str]:
         for line, cells in sheet_rows(rel):
             for name, cell in zip(("改到", "主题", "必守要点"), cells):
                 n = len(cell.encode("utf-8"))
-                if n > SHEET_CELL_MAX:
-                    out.append(f"{rel}:{line}「{name}」{n} B > {SHEET_CELL_MAX} B")
+                if n > SHEET_CELL_MAX[name]:
+                    out.append(f"{rel}:{line}「{name}」{n} B > {SHEET_CELL_MAX[name]} B")
     return out
 
 

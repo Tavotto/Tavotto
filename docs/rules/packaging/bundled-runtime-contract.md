@@ -2,13 +2,15 @@
 
 > 原文出自 `packaging/AGENTS.md`「内置渲染 runtime（Windows 2026-08-17；macOS 2026-08-18）」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`packaging/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `packaging/AGENTS.md`「主题」压缩前原文（2026-10-24，与正文同等有效）：内置渲染 runtime：版本锁、路径判断、解释器优先级、不往安装目录写 → `bundled-runtime-contract.md`
+> `packaging/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：锁是唯一输入且三个目标闭包逐字相同；`engine/runtime.py` 全程 os.path；`TAVOTTO_RUNTIME_DIR` 排他；`-B` + 摘掉 `PYTHON*`，macOS 往 .app 写 `__pycache__` 会破坏签名；缺失报专用 code、绝不自动 pip install
 
 <!-- agents-route
 sheet: packaging/AGENTS.md
 order: 20
 改到: `packaging/runtime-lock.json`、`engine/runtime.py`、`pool._prioritized_candidates()`、`child_env()` / `child_args()`、`bundled_runtime_*` code
-主题: 内置渲染 runtime：版本锁、路径判断、解释器优先级、不往安装目录写 → `bundled-runtime-contract.md`
-必守要点: 锁是唯一输入且三个目标闭包逐字相同；`engine/runtime.py` 全程 os.path；`TAVOTTO_RUNTIME_DIR` 排他；`-B` + 摘掉 `PYTHON*`，macOS 往 .app 写 `__pycache__` 会破坏签名；缺失报专用 code、绝不自动 pip install
+主题: 内置渲染 runtime → `bundled-runtime-contract.md`
+必守要点: 锁是唯一输入且三个目标闭包逐字相同；`engine/runtime.py` 全程 os.path；`-B` + 摘掉 `PYTHON*`；缺失绝不自动 pip install
 -->
 
 **每个桌面安装包都自带一套 Tavotto 私有的 Python 渲染环境**，用户不需要先装

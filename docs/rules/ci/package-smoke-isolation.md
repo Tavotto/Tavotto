@@ -3,13 +3,14 @@
 > 原文出自 `.github/AGENTS.md`「门禁纪律」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_merge_queue_workflows.py::TestPackageSmokeIsolation`
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：venv / workdir 在 `runner.temp`；端口向系统租、就绪 = 版本端点 + 本实例凭据、终止 = 进程不存在；`/tmp/smoke` + `sleep 8` + curl 不许回来
 
 <!-- agents-route
 sheet: .github/AGENTS.md
 order: 80
 改到: `package` job 的冒烟步骤、`scripts/ci/package_smoke.py`
 主题: package 冒烟隔离（CI03b）→ `package-smoke-isolation.md`
-必守要点: venv / workdir 在 `runner.temp`；端口向系统租、就绪 = 版本端点 + 本实例凭据、终止 = 进程不存在；`/tmp/smoke` + `sleep 8` + curl 不许回来
+必守要点: venv / workdir 在 `runner.temp`；端口向系统租、就绪 = 版本端点 + 本实例凭据；`/tmp/smoke` + `sleep 8` + curl 不许回来
 -->
 
 - **`package` job 的冒烟按实例隔离（CI03b，2026-09-16）**：venv 在 `${{ runner.temp }}/smoke-venv`（两步共用

@@ -2,13 +2,14 @@
 
 > 原文出自 `src-tauri/AGENTS.md`「进程关系与安全边界（2026-08-17，与浏览器模式并行）」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src-tauri/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `src-tauri/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：只在「从未进入编辑态」时可用；只许主窗口壳自带 `error.html` 调用，`main.json` / `remote-*.json` 不得出现 `allow-rescue-*`；重新尝试 = 重启整个应用；只有 `rescue_diag_send` 联网
 
 <!-- agents-route
 sheet: src-tauri/AGENTS.md
 order: 30
 改到: `src-tauri/src/rescue.rs`、`src-tauri/src/shell_report.rs`、`shell/error.html`、`capabilities/rescue-page.json`、`tests/golden/diag_shell_report.json`
 主题: sidecar 起不来时的原生救援页 → `rescue-page.md`
-必守要点: 只在「从未进入编辑态」时可用；只许主窗口壳自带 `error.html` 调用，`main.json` / `remote-*.json` 不得出现 `allow-rescue-*`；重新尝试 = 重启整个应用；只有 `rescue_diag_send` 联网
+必守要点: 只在「从未进入编辑态」时可用；只许主窗口壳自带 `error.html` 调用，`remote-*.json` 不得出现 `allow-rescue-*`
 -->
 
 - **原生救援页**（ADR 0130，`src-tauri/src/rescue.rs` + `src-tauri/src/shell_report.rs` + `shell/error.html`）：sidecar 起不来时由壳自己检查修复版本、重新尝试、发送最小启动诊断。

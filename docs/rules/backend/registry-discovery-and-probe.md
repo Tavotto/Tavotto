@@ -3,13 +3,14 @@
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_registry.py`、`test_discover.py`、`test_discover_problems.py`、`test_script_probe.py`、`test_asset_library.py`、`test_project_scan.py`、`test_project_scan_zero_exec.py`
+> `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：冲突只报告不裁决；probe 失败不写注册表、取得会话后复查取消且只退役当次实例；导入即扫描只读零执行、看不全 = partial 不是「没有」
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 130
 改到: `engine/registry.py`、`discover.py`、`probe.py`、`projscan.py`、`/api/registry/*`、`/api/project/scan*`
 主题: 注册表、静态扫描与试运行探测 → `registry-discovery-and-probe.md`
-必守要点: 冲突只报告不裁决；probe 失败不写注册表、取得会话后复查取消且只退役当次实例；导入即扫描只读零执行、看不全 = partial 不是「没有」
+必守要点: 冲突只报告不裁决；probe 失败不写注册表；导入即扫描只读零执行、看不全 = partial 不是「没有」
 -->
 
 - 素材扫描用 `os.walk` 当场剪枝隐藏目录（.venv/.git/.rendered/.qa_*）与隐藏文件，

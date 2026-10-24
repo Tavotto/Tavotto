@@ -6,12 +6,13 @@
 > 改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_rendercore_*.py` 及导出核验 / 身份 / 退役扫描等九份，全名单见细则末节
 > `src/tavotto/AGENTS.md`「改到」压缩前原文（2026-10-23）：`rendercore/`（`ir` / `geometry` / `typography` / `fonts` / `sources` / `plan` / `placement` / `raster` 纯模型；`hbshaper` / `pdfwriter` / `svgwriter` / `rasterio` / `renderchild` / `renderhost` / `preview` / `job` / `facade` / `inspector` native 适配与入口；`identity` 四身份）、`fonts_allowlist.json`、`pdfbackend/canvas_coverage.json`、`scripts/fetch_fonts.py`、pyproject 的 `dependencies`（五个 native 包，U10 起）
+> `src/tavotto/AGENTS.md`「主题」压缩前原文（2026-10-24，与正文同等有效）：RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成、栅格、facade 接线与有限产物验证（ADR 0059 / 0060 / 0065 / 0066 / 0067 / 0068 / 0070 / 0071 / 0072 / 0077） → `rendercore.md`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 330
 改到: `rendercore/`、`fonts_allowlist.json`、`pdfbackend/canvas_coverage.json`、`scripts/fetch_fonts.py`、pyproject 的 native 依赖（模块分层见细则）
-主题: RenderCore：Render IR、RenderPlan、字体政策、可检索文字、合成、栅格、facade 接线与有限产物验证（ADR 0059 / 0060 / 0065 / 0066 / 0067 / 0068 / 0070 / 0071 / 0072 / 0077） → `rendercore.md`
+主题: RenderCore → `rendercore.md`
 必守要点: 纯模型只许标准库、整包零 `import pymupdf`；`facade.py` 是契约的唯一实现；离开本机的只有 `inspector.public_projection()`
 -->
 

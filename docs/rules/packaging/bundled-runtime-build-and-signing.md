@@ -2,13 +2,14 @@
 
 > 原文出自 `packaging/AGENTS.md`「内置渲染 runtime（Windows 2026-08-17；macOS 2026-08-18）」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`packaging/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `packaging/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：构建三道闸（构建机自检 / spec 同尺 / 打包后冒烟）漏一道就发出不能渲染的包；签名验收只走 `codesign_macos.py`（`--deep` 签不到也验不出）；GUI exe 不当 CLI 调；冒烟不许「借一个解释器」
 
 <!-- agents-route
 sheet: packaging/AGENTS.md
 order: 30
 改到: `scripts/build_worker_runtime.py`、`scripts/codesign_macos.py`、`packaging/tavotto.spec`、`scripts/smoke_app.py`、`tavotto-cli`
 主题: 内置 runtime 的构建链、macOS 签名、CLI 双入口、冒烟 → `bundled-runtime-build-and-signing.md`
-必守要点: 构建三道闸（构建机自检 / spec 同尺 / 打包后冒烟）漏一道就发出不能渲染的包；签名验收只走 `codesign_macos.py`（`--deep` 签不到也验不出）；GUI exe 不当 CLI 调；冒烟不许「借一个解释器」
+必守要点: 构建三道闸漏一道就发出不能渲染的包；签名验收只走 `codesign_macos.py`；GUI exe 不当 CLI 调；冒烟不许借解释器
 -->
 
 - **构建链的三道闸**（漏一道就会安静地发出「装完不能渲染」的包）：

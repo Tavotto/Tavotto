@@ -1,14 +1,14 @@
 {
   "_说明": "每份常驻指令的棘轮上限（CRLF 口径字节）。要长大就在同一个 PR 里跑 `python scripts/dev/agents_budget.py --write-ceilings` 并提交本文件，PR 正文写明为什么；缩小了也重写一次把上限降下来。见 docs/rules/README.md。",
   "ceilings": {
-    "AGENTS.md": 8448,
-    ".github/AGENTS.md": 8960,
-    "codex-plugin/AGENTS.md": 7424,
-    "packaging/AGENTS.md": 5632,
+    "AGENTS.md": 9472,
+    ".github/AGENTS.md": 9216,
+    "codex-plugin/AGENTS.md": 7936,
+    "packaging/AGENTS.md": 5888,
     "src-tauri/AGENTS.md": 6400,
-    "web/AGENTS.md": 14336,
-    "workerd/AGENTS.md": 4096,
-    "src/tavotto/AGENTS.md": 15360,
-    "codex-plugin/skills/tavotto-figure/SKILL.md": 15104
+    "web/AGENTS.md": 14592,
+    "workerd/AGENTS.md": 4864,
+    "src/tavotto/AGENTS.md": 15616,
+    "codex-plugin/skills/tavotto-figure/SKILL.md": 15872
   }
 }

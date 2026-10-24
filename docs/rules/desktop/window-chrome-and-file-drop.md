@@ -2,13 +2,14 @@
 
 > 原文出自 `src-tauri/AGENTS.md`「进程关系与安全边界（2026-08-17，与浏览器模式并行）」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src-tauri/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `src-tauri/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：`disable_drag_drop_handler()` 必须留着；路径分派只在 `drop_paths::classify`；全屏事件以 NSWindow 通知为主信号；Windows 主窗口 `decorations(false)`、窗口命令只在 `main.json`
 
 <!-- agents-route
 sheet: src-tauri/AGENTS.md
 order: 40
 改到: `window_chrome.rs`、`fullscreen_observer.rs`、`native_drop.rs`、`drop_paths::classify`、`tests/golden/drop_script_rule.json`
 主题: 窗框与拖放（ADR 0092） → `window-chrome-and-file-drop.md`
-必守要点: `disable_drag_drop_handler()` 必须留着；路径分派只在 `drop_paths::classify`；全屏事件以 NSWindow 通知为主信号；Windows 主窗口 `decorations(false)`、窗口命令只在 `main.json`
+必守要点: `disable_drag_drop_handler()` 必须留着；路径分派只在 `drop_paths::classify`；Windows 主窗口 `decorations(false)`
 -->
 
 - **macOS 全屏收起顶栏让位**（`window_chrome.rs`）：主信号是 `fullscreen_observer.rs` 听的 NSWindow will/did 全屏通知（will-exit 立刻发 false、did-enter 才发 true：红绿灯在屏上时绝不收回占位；`Resized` 只作兜底且观察者在位时只许报 false）；`FullscreenTracker` 去重，真变了才向主窗口发

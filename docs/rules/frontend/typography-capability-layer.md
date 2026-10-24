@@ -3,13 +3,14 @@
 > 原文出自 `web/AGENTS.md`「属性能力层与 Typography 控件（2026-09-01，ADR 0032）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/pagePtLens.test.ts`、`inspector/pagePtInspector.test.tsx`、`lib/typography.test.ts`、`typographyAdapter.test.tsx`、`lib/canvasTextFont.test.ts`、`tests/test_typography_families.py`
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：不许按对象类型 switch 写属性；值四档不压扁；`propertyPathOf` 唯一；图内 pt 量按页面值进出、换算只在 `pagePtLens`（ADR 0082）
 
 <!-- agents-route
 sheet: web/AGENTS.md
 order: 80
 改到: `lib/typography.ts`、`typographyAdapter.ts`、`TypographyControls.tsx`、`lib/glyphPlan.ts`、图内 pt 量的写入器
 主题: 属性能力层与 Typography 控件 → `typography-capability-layer.md`
-必守要点: 不许按对象类型 switch 写属性；值四档不压扁；`propertyPathOf` 唯一；图内 pt 量按页面值进出、换算只在 `pagePtLens`（ADR 0082）
+必守要点: 不许按对象类型 switch 写属性；值四档不压扁；`propertyPathOf` 唯一；图内 pt 量换算只在 `pagePtLens`
 -->
 
 完整版在 `docs/adr/0032-typography-capability-layer.md`，改动前先读。

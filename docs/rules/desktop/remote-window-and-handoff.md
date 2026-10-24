@@ -2,13 +2,14 @@
 
 > 原文出自 `src-tauri/AGENTS.md`「进程关系与安全边界（2026-08-17，与浏览器模式并行）」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src-tauri/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `src-tauri/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：远程窗口权限是闭集，不许加本机文件类权限、不装 native_drop；`--open <目录> [--stem]` 生产者与消费者唯一、改一边同步另一边；wheel/sdist 不含 `src-tauri/`
 
 <!-- agents-route
 sheet: src-tauri/AGENTS.md
 order: 50
 改到: `capabilities/remote-*.json`、`REMOTE_WINDOW_MARKER`、`main.rs::parse_open_args()`、`handoff.desktop_argv()`
 主题: 远程实例窗口（ADR 0105）与 `--open` 交接契约 → `remote-window-and-handoff.md`
-必守要点: 远程窗口权限是闭集，不许加本机文件类权限、不装 native_drop；`--open <目录> [--stem]` 生产者与消费者唯一、改一边同步另一边；wheel/sdist 不含 `src-tauri/`
+必守要点: 远程窗口权限是闭集，不许加本机文件类权限、不装 native_drop；`--open <目录> [--stem]` 改一边同步另一边
 -->
 
 - **远程实例窗口**（ADR 0105）：label `remote`，加载 `ssh -L` 转发过来的服务器引擎。

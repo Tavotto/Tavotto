@@ -4,13 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scripts/ci/compat_matrix.py`、`tests/test_equivalence_matrix.py`、`tests/test_invariants_engine.py`、`tests/test_e2e_leg_topology.py`、`tests/test_desktop_window_harness_scope.py`
 > `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：CompatBench 与 acceptance 问的不是同一个问题、corpus 不许合并；未声明的失败一律 `product_bug`、Tier 1 不许有；四路等价性与五条不变式三者不能互相替代；冒烟必须 `--expect-source bundled` / `--expect-control-plane workerd`；改性能前先在 `docs/perf-baseline.md` 指出一个数字；真窗口用例只在 nightly「无 Python」档真跑、缺前提即红、不注入全局输入，驱动不到的格写进盲点表
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：CompatBench 与 acceptance 不合并；未声明失败一律 `product_bug`；等价性与不变式不互相替代；冒烟带 `--expect-*`；改性能先指出基线数字
 
 <!-- agents-route
 sheet: .github/AGENTS.md
 order: 120
 改到: `tests/compat/`、`tests/test_equivalence_matrix.py`、`tests/test_invariants_engine.py`、`scripts/smoke_app.py`、`nightly.yml`、`scripts/bench_render.py`、`tests/desktop_windows/`
 主题: 验证链（按层）→ `verification-chain.md`
-必守要点: CompatBench 与 acceptance 不合并；未声明失败一律 `product_bug`；等价性与不变式不互相替代；冒烟带 `--expect-*`；改性能先指出基线数字
+必守要点: CompatBench 与 acceptance 不合并；未声明失败一律 `product_bug`；等价性与不变式不互相替代；冒烟带 `--expect-*`
 -->
 
 - **Matplotlib CompatBench**（`tests/compat/` + `scripts/ci/compat_matrix.py`，

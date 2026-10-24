@@ -3,13 +3,14 @@
 > 原文出自 `.github/AGENTS.md`「发布链」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_plugin_candidate.py`、`tests/test_plugin_publish.py::test_fixture_git_mirrors_the_publisher_maintenance_settings`、`docs/ci/plugin-stable-channel.md`
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：候选只验证不发布；有产物时 `tests/test_plugin_candidate.py` 不许 skip；`plugin_stable` 投影同一份 zip；发行分支不触发源码 CI；发布器与夹具的 git 不起后台维护（#604，同源对）
 
 <!-- agents-route
 sheet: .github/AGENTS.md
 order: 160
 改到: `frontend` / `plugin-candidate` job、`scripts/plugin_stage.py`、`scripts/plugin_publish.py`、`plugin-stable.yml`
 主题: Codex 插件候选（ADR 0043）→ `codex-plugin-candidate.md`
-必守要点: 候选只验证不发布；有产物时 `tests/test_plugin_candidate.py` 不许 skip；`plugin_stable` 投影同一份 zip；发行分支不触发源码 CI；发布器与夹具的 git 不起后台维护（#604，同源对）
+必守要点: 候选只验证不发布；有产物时 `test_plugin_candidate.py` 不许 skip；`plugin_stable` 投影同一份 zip；发行分支不触发源码 CI
 -->
 
 - **完整 Codex 插件（ADR 0043，2026-09-05）**：ci.yml 的 `frontend` job 从本次 checkout 真构建

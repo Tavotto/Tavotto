@@ -4,13 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/svgStyle.test.ts`、`store/svgPreviewStore.test.ts`、`canvas/fakeRealtimeDrag.test.tsx`、`e2e/fake-realtime.spec.ts`、`canvas/renderSwapFeel.test.tsx`、`canvas/dragGestureLifecycle.test.tsx`、`e2e/drag-gesture-lifecycle.spec.ts`
 > `web/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：临时 transform 从 base 现算；`pointercancel` 与 `pointerup` 分开；样式预览与 `applyStyleEdit` 共用 `styleTargets`；手势不许比它的依据活得更久（拖动中 Esc 先 `cancelActivePointerGesture()`、等图时依据不在文档里就 `settleUnbackedCommit` 还原、改倍率重建基准）
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：临时 transform 从 base 现算；`pointercancel` 与 `pointerup` 分开；样式预览与 `applyStyleEdit` 共用 `styleTargets`；手势不许比它的依据活得更久
 
 <!-- agents-route
 sheet: web/AGENTS.md
 order: 60
 改到: `store/svgPreviewStore.ts`、`lib/svgStyle.ts`、`trackPointer`、`useFieldGesture`
 主题: 假实时预览：预览平面与历史平面严格分开 → `fake-realtime-preview.md`
-必守要点: 临时 transform 从 base 现算；`pointercancel` 与 `pointerup` 分开；样式预览与 `applyStyleEdit` 共用 `styleTargets`；手势不许比它的依据活得更久
+必守要点: 临时 transform 从 base 现算；`pointercancel` 与 `pointerup` 分开；样式预览与 `applyStyleEdit` 共用 `styleTargets`
 -->
 
 预览平面（`web/src/store/svgPreviewStore.ts` + `lib/svgStyle.ts`）只活在内存与

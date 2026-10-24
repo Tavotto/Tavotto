@@ -2,13 +2,14 @@
 
 > 原文出自 `packaging/AGENTS.md`「内置渲染 runtime（Windows 2026-08-17；macOS 2026-08-18）」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`packaging/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `packaging/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：两个 macOS 目标的 CPython 块与 `runtime-lock.json` 逐字相同、升级一起改；它不是渲染 runtime；归档不是解释器，运行时 sha256 等于锁才用；wheel/sdist 绝不带
 
 <!-- agents-route
 sheet: packaging/AGENTS.md
 order: 40
 改到: `src/tavotto/resources/private_python_lock.json`、`scripts/stage_private_python.py`、`build/private-python-bundle/`、`TAVOTTO_REQUIRE_PRIVATE_PYTHON`
 主题: 私有 Python 的锁（ADR 0063）与随桌面安装包的归档（ADR 0111） → `private-python-lock-and-bundle.md`
-必守要点: 两个 macOS 目标的 CPython 块与 `runtime-lock.json` 逐字相同、升级一起改；它不是渲染 runtime；归档不是解释器，运行时 sha256 等于锁才用；wheel/sdist 绝不带
+必守要点: 两个 macOS 目标的 CPython 块与 `runtime-lock.json` 逐字相同、升级一起改；它不是渲染 runtime；wheel/sdist 绝不带
 -->
 
 - **私有完整 Python 的锁是另一份、但同源**（U05，ADR 0063）：`src/tavotto/resources/private_python_lock.json`

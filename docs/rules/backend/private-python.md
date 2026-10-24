@@ -3,13 +3,14 @@
 > 随 U05 新增；`src/tavotto/AGENTS.md` 只留速查行。这里是这一主题规则的**唯一全文**。改规则改这里，并同步那一行。
 > 架构决策在 `docs/adr/0063-private-python-provisioning.md`；目标资格另立一份 ADR（0064，随 PR C）。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_private_python.py`、`tests/test_private_python_tls.py`、`tests/test_private_python_transaction.py`、`tests/test_private_python_bundle.py`
+> `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：只补基础解释器来源、安装器仍是 pip；校验先于一切执行；下载 / 缓存认原锁 SHA；证书按平台原生校验、失败报 `private_python_tls`；`enabled` 全 false 直到目标资格取得（来源链与签名细节见细则）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 170
 改到: `engine/privatepython.py`、`engine/tlstrust.py`、`resources/private_python_lock.json`、`managedenv.base_python` 的末级、代记录的 `base_runtime`
 主题: 私有完整 Python（ADR 0063 / 0111 / 0112）→ `private-python.md`
-必守要点: 只补基础解释器来源、安装器仍是 pip；校验先于一切执行；下载 / 缓存认原锁 SHA；证书按平台原生校验、失败报 `private_python_tls`；`enabled` 全 false 直到目标资格取得（来源链与签名细节见细则）
+必守要点: 安装器仍是 pip；校验先于一切执行；下载 / 缓存认原锁 SHA；失败报 `private_python_tls`；`enabled` 全 false 到资格取得
 -->
 
 它只回答一个问题：**受管环境的基础解释器从哪来**（这台机器没有合格 Python 时）。装包仍是 U04 的代事务

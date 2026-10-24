@@ -4,13 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_compat_capture_parity.py`、`test_missing_input.py`、`test_run_argv.py`、`test_run_argv_e2e.py`、`test_script_args.py`、`test_execspec.py`、`test_workdir_mode.py`、`test_databinding.py`；其余看护用例见细则
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-23，与正文同等有效）：捕获与显式 cax 宿主三条入口同源；selected 队列替换不退役共享 worker；`safe_spec()` / `worker_argv()` 唯一出处；argv 非空只经 `safe_spec(argv,run_config)`、缺引用显式拒绝（T03）；argparse 表单 schema 只读源码、是建议不是门槛（T07）；首开问不问由 `workdir.resolve_mode` 定；数据改指见 ADR 0106
+> `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：捕获三条入口同源；`safe_spec()` / `worker_argv()` 唯一出处、argv 只经 `safe_spec`；表单 schema 是建议不是门槛；数据改指见 ADR 0106
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 50
 改到: `engine/figcapture.py`、`artifactcontext.py`、`execspec.py`、`runconfig.py`、`scriptargs.py`、`workdir.py`、`databinding.py`、`inputremap.py`、`worker.py` 的 savefig 拦截与 sys.argv
 主题: Figure 捕获、执行描述与 live-figure 会话 → `figure-capture-and-execution.md`
-必守要点: 捕获三条入口同源；`safe_spec()` / `worker_argv()` 唯一出处、argv 只经 `safe_spec`；表单 schema 是建议不是门槛；数据改指见 ADR 0106
+必守要点: 捕获三条入口同源；`safe_spec()` / `worker_argv()` 唯一出处、argv 只经 `safe_spec`；表单 schema 是建议不是门槛
 -->
 
 - **Figure 捕获策略是共享语义（`engine/figcapture.py`，2026-08-21）**：

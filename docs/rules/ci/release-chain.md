@@ -3,13 +3,14 @@
 > 原文出自 `.github/AGENTS.md`「发布链」（2026-09-18 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`.github/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`.github/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_release_workflow_contract.py`、`tests/test_update_chain_gates.py`
+> `.github/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：第一段不等 lab；`trust2` 不信任载荷、publish 只能压成 false、读一次 `lab/release` status；插件清单由 `build` 生成、不进 `desktop-tauri.yml`；先发代理再发客户端
 
 <!-- agents-route
 sheet: .github/AGENTS.md
 order: 140
 改到: `release.yml` / `release-publish.yml`、`codex-plugin.json`、`latest.json`、遥测代理部署
 主题: 发布链 → `release-chain.md`
-必守要点: 第一段不等 lab；`trust2` 不信任载荷、publish 只能压成 false、读一次 `lab/release` status；插件清单由 `build` 生成、不进 `desktop-tauri.yml`；先发代理再发客户端
+必守要点: 第一段不等 lab；`trust2` 不信任载荷、publish 只能压成 false；插件清单由 `build` 生成；先发代理再发客户端
 -->
 
 - **两段链（F.2，2026-09-16 起）**：实验室 runner 注册在私有仓库 `Tavotto/ci-infra`，

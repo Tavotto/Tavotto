@@ -2,13 +2,14 @@
 
 > 原文出自 `src-tauri/AGENTS.md`「进程关系与安全边界（2026-08-17，与浏览器模式并行）」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src-tauri/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `src-tauri/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：前端仍由 sidecar Flask 提供、不走 frontendDist；组件不得 import `@tauri-apps/*`；新增 command 必须 build.rs / capabilities / generate_handler 三处同步，漏前两处被静默拒绝；opener 必须 `open_js_links_on_click(false)`
 
 <!-- agents-route
 sheet: src-tauri/AGENTS.md
 order: 10
 改到: `src-tauri/src/main.rs`、`build.rs`、`capabilities/`、`src/tavotto/desktop.py`、`web/src/lib/desktop.ts`、`sidecar/port_memory.rs`
 主题: 壳 → sidecar 进程关系、外链、`#[tauri::command]` 的 ACL 三处同步 → `process-and-acl.md`
-必守要点: 前端仍由 sidecar Flask 提供、不走 frontendDist；组件不得 import `@tauri-apps/*`；新增 command 必须 build.rs / capabilities / generate_handler 三处同步，漏前两处被静默拒绝；opener 必须 `open_js_links_on_click(false)`
+必守要点: 前端仍由 sidecar Flask 提供；组件不得 import `@tauri-apps/*`；新增 command 必须 build.rs / capabilities / generate_handler 同步
 -->
 
 - **进程关系**：Tauri 壳（`src-tauri/`）→ spawn `tavotto --desktop-sidecar`

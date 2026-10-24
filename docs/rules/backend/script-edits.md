@@ -2,13 +2,14 @@
 
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_script_edit.py`、`tests/test_script_lock.py`、`tests/test_ai_revert_stale.py`
+> `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：只有用户在界面里看过 diff、勾选确认才写；两处备份落盘才替换；令牌绑会话 cookie；「判一次再写」整段持 `scriptlock.script_guard`，写脚本字节只经 `write_script`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 290
 改到: `engine/scriptbackup.py`、`scriptedit.py`、`scriptlock.py`、`/api/script-edit/*`、`/api/script-backups*`、AI 回滚
 主题: 改用户脚本：经确认的改写、备份与复原（ADR 0110 / 0094） → `script-edits.md`
-必守要点: 只有用户在界面里看过 diff、勾选确认才写；两处备份落盘才替换；令牌绑会话 cookie；「判一次再写」整段持 `scriptlock.script_guard`，写脚本字节只经 `write_script`
+必守要点: 只有用户在界面看过 diff、勾选确认才写；两处备份落盘才替换；「判一次再写」整段持 `scriptlock.script_guard`
 -->
 
 - **原则不变：Tavotto 为了兼容、在用户没要求时绝不动脚本。** 改脚本只有一种来由：用户在界面里

@@ -419,7 +419,7 @@ def test_ceilings_along_every_codex_chain_fit_the_default_cap():
 
 @pytest.mark.parametrize("sheet", sorted(set(SHEETS) - {"AGENTS.md"}))
 def test_sheet_rows_are_three_short_cells(sheet: str):
-    """速查表每行三格「改到 | 主题 | 必守要点」，每格 ≤ `SHEET_CELL_MAX` 字节。
+    """速查表每行三格「改到 | 主题 | 必守要点」，每格 ≤ `SHEET_CELL_MAX` 里那一列的字节数（改到 300 / 主题 120 / 必守要点 150）。
 
     #608 之后表格又涨回八成体积：每个功能 PR 往「改到」「看护」里追加文件名与用例名。
     「看护」列已整列迁进细则头部引用块；「改到」写目录与入口文件、「必守要点」写一句索引，

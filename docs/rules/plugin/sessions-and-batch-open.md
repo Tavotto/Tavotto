@@ -4,13 +4,14 @@
 > 正文一字未改。速查行在 `codex-plugin/AGENTS.md` 的「按改动路径找细则」表里；这里是这一主题的**唯一全文**，
 > 改规则改这里，并同步那一行。
 > 看护用例（`codex-plugin/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_mcp_server.py`
+> `codex-plugin/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：一张失败不回滚整批、「没尝试」是第三个桶；open 之后每一步都不许把已登记会话带走；会话不抱 worker 引用、渲染成功后才登记
 
 <!-- agents-route
 sheet: codex-plugin/AGENTS.md
 order: 120
 改到: `stems` / `discover_stems`、`_safe_preflight()`、`_live_session_for()`、`Session.acquire()`
 主题: 批量打开与会话账本 → `sessions-and-batch-open.md`
-必守要点: 一张失败不回滚整批、「没尝试」是第三个桶；open 之后每一步都不许把已登记会话带走；会话不抱 worker 引用、渲染成功后才登记
+必守要点: 一张失败不回滚整批、「没尝试」是第三个桶；open 之后每一步都不许把已登记会话带走；渲染成功后才登记
 -->
 
 - **批量打开（issue #174）**：`tavotto_open_figure` 的 `stems` / `discover_stems`

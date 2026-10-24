@@ -4,13 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`store/projectReadinessStore.test.ts`、`store/projectScanStore.test.ts`、`RegistryDialog.test.tsx`、`topBarAnchors.test.tsx`、`WorkdirConfirmDialog.test.tsx`、`WorkdirRow.test.tsx`、`DependencyPrepareDialog.test.tsx`、`store/envAdvice.test.ts`、`notificationRail.test.tsx`、`canvas/drawerViewportResize.test.tsx`、`store/uiStore.test.ts`、`components/left/elementTreeRerender.test.tsx`、`components/left/workspaceList.test.tsx`、`store/projectSwitchSerial.test.ts`、`lib/importOrigin.test.ts`、`lib/importOrigin.structure.test.ts`、`components/ImportOriginDialog.test.tsx`、`tests/test_import_origin_ui_facts.py`、`components/left/stylePanel.test.tsx`、`lib/stylePresets.test.ts`、`store/styleBinding.test.ts`、`inspector/colorScalePanels.test.tsx`
 > `web/AGENTS.md`「改到」压缩前原文（2026-10-23）：`lib/readinessText.ts`、`store/projectReadinessStore.ts`、`store/projectScanStore.ts`、`PreparationCard` / `projectPreparationStore`、`RegistryDialog`、左栏偏好、左栏样式面板 `components/left/StylePanel.tsx` / `store/styleBinding.ts` / `store/styleWork.ts` / `lib/stylePanelModel.ts`、`ElementTree` 的行、`WorkdirConfirmDialog` / `WorkdirRow`、`envStore.setWorkdirMode`、`DependencyPrepareDialog` / `depRepairStore.prepare` / `adoptUserEnvironment`、`envStore.checkEnvironment` / `adoptCandidate`、`lib/userEnvironmentText.ts`、通知轨「已改用你的环境」、`lib/importOrigin.ts` / `ImportOriginDialog` / `OriginDetails` / `depRepairStore.openOrigin·bindOrigin·confirmOrigin`
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：句子只有 `statusLabel()` / `reasonText()`；界面不执行动作、冲突不预选；元素归属只读声明；自动让位绝不写回偏好；来源未定的 import 前端零解析，确认页标「未经核实」
 
 <!-- agents-route
 sheet: web/AGENTS.md
 order: 240
 改到: `lib/readinessText.ts`、项目接入 / 扫描 / 准备 store、左栏（偏好、样式面板、`ElementTree`）、工作目录与依赖准备对话框、`lib/importOrigin.ts`（完整清单见细则）
 主题: 接入状态与左侧外壳 → `readiness-and-left-shell.md`
-必守要点: 句子只有 `statusLabel()` / `reasonText()`；界面不执行动作、冲突不预选；元素归属只读声明；自动让位绝不写回偏好；来源未定的 import 前端零解析，确认页标「未经核实」
+必守要点: 句子只有 `statusLabel()` / `reasonText()`；界面不执行动作；自动让位绝不写回偏好；来源未定的 import 前端零解析
 -->
 
 「这张图能不能编辑」的**事实**只有后端 `engine/readiness.py` 一个出处

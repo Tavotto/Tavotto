@@ -4,13 +4,14 @@
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`lib/artifactValidation.test.ts`、`store/documentStore.test.ts`、`store/panelSourceSync.test.ts`、`hooks/useEngineSync.test.ts`、`lib/projectDocs.test.ts`、`store/projectDocOwnership.test.ts`、`e2e/cross-tab-paste.spec.ts`、`lib/autosave/diskWriter.test.ts`、`lib/timelineCheckpoint.test.ts`、`store/documentRestore.test.ts`、`store/restoreGate.test.ts`、`store/recovery.acceptance.test.ts`、`lib/recoveryCandidates.test.ts`
 > `web/AGENTS.md`「改到」压缩前原文（2026-10-23）：`lib/session.ts`、`types/document.ts`、`documentStore` 的 `loadSeq` / `derivedSeq` / `registerTxnFinalizer`、`lib/autosave/diskWriter.ts`、`panelSourceSync.ts`、`assetStore`、`lib/projectDocs.ts`、`lib/docOwnership.ts`、恢复门与判决 `store/documentRestore.ts`、找回入口 `LayoutRecover` / `lib/recoveryCandidates.ts`、排版时间线（`lib/timelineCheckpoint.ts` / `VersionDialog.tsx`）
+> `web/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：schema 3 只在持久化边界；外部派生唯一写入口 `applyDerivedUpdate()`；手势中不许写；文档 ready 只看恢复门、新写入口必须看门（ADR 0120）
 
 <!-- agents-route
 sheet: web/AGENTS.md
 order: 200
 改到: `lib/session.ts`、`types/document.ts`、`documentStore`、`lib/autosave/`、`assetStore`、`lib/projectDocs.ts`、`store/documentRestore.ts`、排版时间线（完整清单见细则）
 主题: 项目、文档模型与自动保存 → `project-document-and-autosave.md`
-必守要点: schema 3 只在持久化边界；外部派生唯一写入口 `applyDerivedUpdate()`；手势中不许写；文档 ready 只看恢复门、新写入口必须看门（ADR 0120）
+必守要点: schema 3 只在持久化边界；外部派生唯一写入口 `applyDerivedUpdate()`；手势中不许写；文档 ready 只看恢复门（ADR 0120）
 -->
 
 - 前端把 pj 存 **sessionStorage**（`lib/session.ts`，按标签页隔离，「不同

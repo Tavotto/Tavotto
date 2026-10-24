@@ -2,13 +2,14 @@
 
 > 原文出自 `src-tauri/AGENTS.md`「进程关系与安全边界（2026-08-17，与浏览器模式并行）」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src-tauri/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `src-tauri/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：关窗闸默认不拦、必须留看门狗、`CloseAsk` 四档；绕过 `RunEvent::Exit` 的退出必须先写 clean（`e2e_exit` / `updater_builder()`）；`restart_engine` 仅主窗口
 
 <!-- agents-route
 sheet: src-tauri/AGENTS.md
 order: 20
 改到: `CloseGate`、`CloseAsk`、`hold_window()`、`Sidecar::poll_exit()`、`boot_engine`、`session-state.json`、`exit_guard_tests.rs`
 主题: 关窗询问闸（issue #223）与引擎意外退出标记（ADR 0129） → `close-gate-and-engine-exit.md`
-必守要点: 关窗闸默认不拦、必须留看门狗、`CloseAsk` 四档；绕过 `RunEvent::Exit` 的退出必须先写 clean（`e2e_exit` / `updater_builder()`）；`restart_engine` 仅主窗口
+必守要点: 关窗闸默认不拦、必须留看门狗；绕过 `RunEvent::Exit` 的退出必须先写 clean（`e2e_exit` / `updater_builder()`）
 -->
 
 - **关窗询问闸**（issue #223，ADR 0002 的「关窗询问闸」一节）：

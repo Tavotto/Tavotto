@@ -2,13 +2,14 @@
 
 > 原文出自 `src-tauri/AGENTS.md`「构建、验收与安装界面」（2026-10-24 迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src-tauri/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
+> `src-tauri/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：`desktop-tauri.yml` 是唯一桌面发行链；NSIS 首次安装三页、覆盖安装 / `/UPDATE` / `/P` 跳过目录页；`@tauri-apps/cli` 钉死 2.11.4，模板与打包器同源，升级要重打补丁并同步四处
 
 <!-- agents-route
 sheet: src-tauri/AGENTS.md
 order: 70
 改到: `scripts/build_desktop.py`、`scripts/smoke_desktop.py`、`desktop-tauri.yml`、`src-tauri/windows/installer.nsi`、`assets/brand/dmg-background.png`
 主题: 桌面构建 / 验收、dmg 与 NSIS 安装界面 → `build-acceptance-and-installer.md`
-必守要点: `desktop-tauri.yml` 是唯一桌面发行链；NSIS 首次安装三页、覆盖安装 / `/UPDATE` / `/P` 跳过目录页；`@tauri-apps/cli` 钉死 2.11.4，模板与打包器同源，升级要重打补丁并同步四处
+必守要点: `desktop-tauri.yml` 是唯一桌面发行链；NSIS 覆盖安装 / `/UPDATE` / `/P` 跳过目录页；`@tauri-apps/cli` 钉死 2.11.4
 -->
 
 - 构建：`python scripts/build_desktop.py`；验收：`python scripts/smoke_desktop.py
