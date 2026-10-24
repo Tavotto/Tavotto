@@ -1602,6 +1602,22 @@ def test_desktop_host_wrong_registered_version_is_failed_with_both_versions(monk
     assert "9.9.9" in r["summary"] and f.host.display_version in r["summary"]
 
 
+def test_desktop_host_passed_window_with_failed_final_uninstall_is_error(monkeypatch, tmp_path):
+    f = _FakeDesktopLab(monkeypatch, tmp_path, entries=[])
+    orig = f._run_until
+
+    def run_until(argv, cwd, env, log, done, timeout):
+        r = orig(argv, cwd, env, log, done, timeout)
+        f.stuck = Path(argv[0]).name == "setup.exe"  # 安装之后的卸载都卸不掉
+        return r
+
+    monkeypatch.setattr(A, "_run_until", run_until)
+    r = f.run()
+    assert r["levels"]["L2"] == "passed"
+    assert r["result"] == "error"
+    assert "L2 通过但清理失败" in r["summary"]
+
+
 def test_desktop_host_clean_pass_stays_passed(monkeypatch, tmp_path):
     r = _FakeDesktopLab(monkeypatch, tmp_path, entries=[]).run()
     assert r["result"] == "passed", r

@@ -2655,6 +2655,10 @@ def uninstall_desktop_host(host: DesktopHost, work: Path, env: dict) -> dict:
     return {"ok": not _uninstall_entries(host.display_re), "steps": steps}
 
 
+def _cleanup_note(base: dict) -> str:
+    return "" if base.get("uninstall", {}).get("ok", True) else "；清理失败：最终卸载未卸干净"
+
+
 def _install_failure_summary(host: DesktopHost, inst: dict) -> str:
     step = inst.get("step", {})
     if step.get("timed_out"):
@@ -2725,7 +2729,7 @@ def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode
         return {
             **base,
             "result": "failed",
-            "summary": _install_failure_summary(host, inst),
+            "summary": _install_failure_summary(host, inst) + _cleanup_note(base),
         }
     try:
         extra = []
@@ -2762,13 +2766,15 @@ def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode
         return {
             **base,
             "result": "environment_unavailable",
-            "summary": "no interactive session for tavotto-lab: run `winlab.py admin gui-setup` and reboot",
+            "summary": "no interactive session for tavotto-lab: run `winlab.py admin gui-setup` and reboot"
+            + _cleanup_note(base),
         }
     if step.get("gui") != "ran" or not step.get("session_id"):
         return {
             **base,
             "result": "error",
-            "summary": f"gui bridge: {step.get('gui')} session={step.get('session_id')}",
+            "summary": f"gui bridge: {step.get('gui')} session={step.get('session_id')}"
+            + _cleanup_note(base),
             "step": step,
         }
     try:
@@ -2777,23 +2783,24 @@ def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode
         return {
             **base,
             "result": "error",
-            "summary": "window probe wrote no result",
+            "summary": "window probe wrote no result" + _cleanup_note(base),
             "step": step,
         }
     base["window"] = win
     base["session_id"] = step["session_id"]
     if win.get("window"):
         levels["L2"] = "passed"
-        return {
-            **base,
-            "result": "passed",
-            "summary": f"{host.name} {inst.get('version')}: main window {win['window']['title']!r} in session {step['session_id']} after {win['seconds_to_window']} s",
-        }
+        seen = f"{host.name} {inst.get('version')}: main window {win['window']['title']!r} in session {step['session_id']} after {win['seconds_to_window']} s"
+        if not base["uninstall"]["ok"]:
+            # 常驻机器上留着残余安装会污染后续运行：L2 如实记 passed，但整次不报 passed
+            return {**base, "result": "error", "summary": f"L2 通过但清理失败：{seen}"}
+        return {**base, "result": "passed", "summary": seen}
     levels["L2"] = "failed"
     return {
         **base,
         "result": "failed",
-        "summary": f"{host.name} started but no main window within the probe timeout",
+        "summary": f"{host.name} started but no main window within the probe timeout"
+        + _cleanup_note(base),
     }
 
 
