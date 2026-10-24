@@ -125,3 +125,9 @@ macOS sandbox-exec 在「只许写清单内目录」之上 `deny appleevent-send
 **第②档 = 沙盒外执行（用户单独点头）**：触发只有两种——模型显式 `outside_sandbox: true` 加一句 `reason`，或第①档因沙盒拒写失败后结果里**提示**模型可以这样申请；**从不自动升级**（第①档失败后不会无卡执行第②档）。弹一张单独、红色强调的卡（approve 卡的 `danger: true`）：完整命令 + 「这条命令会在沙盒外运行，可以修改你电脑上的文件」+ 模型的理由；主按钮「在沙盒外运行」、次按钮「不了」；只对这一条命令有效，不记成长期授权。
 执行前备份项目内全部用户脚本（按后缀保守纳入、读原始字节不要求能解码，跟随链接按真实路径去重，**1000 个 / 32 MiB 封顶，超限直接拒绝第②档**），审批之后取基线、**持这些脚本的锁**（`scriptlock.script_guards`，非阻塞抢全、抢不齐退避）跑完命令，事后核对，被改 / 被删的经 `scriptlock` 恢复原字节并报 `scripts_restored`，恢复失败如实报 `scripts_restore_failed`。命令退出后先结束并确认整棵进程树再核对；放不下卡片的命令审批前就拒（用户看到的 = 实际执行的）。**这一层是尽力而为，不是保证**（盲区见规则文件的「run_command」一节）。
 Windows（#1358 无沙盒）与没有 bwrap 的 Linux 只有第②档，第①档返回 `sandbox_unavailable` 并说明。两档共同：不经 shell、cwd 默认临时目录（第②档可选项目目录并在卡上写明）、去掉密钥类环境变量、超时默认 60 s / 上限 300 s、输出有界并脱敏、执行前打快照、审计行多 `sandbox: hardened|outside|none` 与 `command_tier`、看门狗照旧（工具在跑不算卡住）。
+
+**修订（2026-10-24，`link_data_file`：缺数据时 AI 找、用户点头、接上）**：新工具 `link_data_file`（`fixtools/link.py`，`tier=tavotto`，`waits_for_user`）。缺数据（报告 `missing_input`）时 AI 用 `find_files` / `read_file` 在项目、往上的各级目录与主目录里找同名文件并与脚本用法对照；
+唯一且确定就直接 `link_data_file`（卡片里写依据），多个或不确定先 `ask_user` 列候选（带「都不是，我自己选」→ `pick_file`），再接上、`try_run`、`finish`。**一律弹 approve 卡**，没有界面 = `needs_approval`；
+同意后先打快照（项目设置新增 `input_remap` 键）再走与数据失联弹窗**同一个** `inputremap.link`（ADR 0106 修订）。`requested` 只认报告 `missing_input` 载荷与脚本源码里找不到的常量，且必须是改指救得回的读取；`chosen` 过 `ctx.scope`；脚本永不改。
+`try_run` 的守卫进程里装上同一份规则（`figcapture.install_input_remap`，按文件加载），否则接上的数据在试跑里验证不了。规则应用后通过 `FixContext.on_input_remap_changed` 通知应用（收会话、取消试运行、告诉窗口，与端点同一串）。
+

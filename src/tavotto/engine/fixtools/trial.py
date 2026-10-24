@@ -138,8 +138,38 @@ try:
     # 两个守卫都装好之后才做 site 初始化：site-packages、.pth、sitecustomize / usercustomize 都在守卫之下执行
     import site
     site.main()
+    # 数据改指（ADR 0106）：项目里记着的规则要在试跑里也生效，否则接上的数据在这里读不到、验证不了。
+    # 与 worker 同一份实现（`figcapture.install_input_remap`，纯标准库，按文件加载）；加载不了如实标 unavailable，不静默当没有
+    remap = "none"
+    _rules, _eng = os.environ.pop("TAVOTTO_TRIAL_INPUT_REMAP", None), os.environ.pop("TAVOTTO_TRIAL_ENGINE_DIR", None)
+    if _rules and _eng:
+        # worker 装改指时 numpy 早已被 matplotlib 载入，`install_input_remap` 才包得到 `numpy.lib._datasource.DataSource.open`
+        # （`np.loadtxt` / `np.genfromtxt` 先查存在性再开文件，只包 Python open 不够）；试跑里脚本才 import numpy，
+        # 所以这里先载入它——与 worker 同一前提。没装 numpy 就没有这条通道，照常继续
+        try:
+            import numpy.lib._datasource
+        except BaseException:
+            pass
+        sys.path.insert(0, _eng)  # figcapture 按 worker 的方式平铺 import 同目录的 axestraversal / patchspec
+        try:
+            _spec = importlib.util.spec_from_file_location("_tavotto_trial_figcapture", os.path.join(_eng, "figcapture.py"))
+            _mod = importlib.util.module_from_spec(_spec)
+            sys.modules["_tavotto_trial_figcapture"] = _mod
+            _spec.loader.exec_module(_mod)
+            try:
+                _src = open(target, encoding="utf-8", errors="replace").read()
+            except OSError:
+                _src = ""
+            _mod.install_input_remap(json.loads(_rules), _mod.InputMisses(), os.getcwd(), script_source=_src)
+            remap = "applied"
+        except BaseException:
+            remap = "unavailable"
+        finally:
+            sys.path.remove(_eng)
+            for _n in ("_tavotto_trial_figcapture", "axestraversal", "patchspec"):
+                sys.modules.pop(_n, None)
     with open(out, "w", encoding="utf-8") as f:
-        json.dump({"guarded": True}, f)
+        json.dump({"guarded": True, "remap": remap}, f)
 except BaseException:
     sys.exit(97)
 sys.modules.pop("_tavotto_trial_guard", None)
@@ -160,7 +190,7 @@ if "matplotlib.pyplot" in sys.modules:
         figs = None
 try:
     with open(out, "w", encoding="utf-8") as f:
-        json.dump({"guarded": True, "figures": figs, "blocked_writes": wt.violations(), "blocked_spawns": _spawns}, f)
+        json.dump({"guarded": True, "remap": remap, "figures": figs, "blocked_writes": wt.violations(), "blocked_spawns": _spawns}, f)
 except OSError:
     pass
 sys.exit(code)
@@ -184,6 +214,7 @@ def run_python(
     session_id: str = "fixtool",
     trial_dir: Path | None = None,
     extra_env: dict | None = None,
+    input_remap: list | None = None,
 ) -> dict:
     """fixtools 唯一的起 Python 子进程的入口：目标（`code` 源码，或 `trial_dir/work` 里的 `script`）一律在写入根绊线下执行。
 
@@ -209,6 +240,14 @@ def run_python(
         except OSError:
             return {"status": "scratch_failed", **empty}
     assert trial_dir is not None
+    if input_remap:
+        from .. import figcapture
+
+        extra_env = {
+            **(extra_env or {}),
+            "TAVOTTO_TRIAL_INPUT_REMAP": json.dumps(input_remap),
+            "TAVOTTO_TRIAL_ENGINE_DIR": str(Path(figcapture.__file__).resolve().parent),
+        }
     try:
         res = _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empty)
     finally:
@@ -402,6 +441,7 @@ def _run_guarded(python, trial_dir, timeout, code, script, argv, extra_env, empt
         "output_truncated": overflow.is_set(),
         "output_bytes": out.total + err_.total,
         "figures": info.get("figures"),
+        "input_remap": info.get("remap") or "none",
         "blocked_writes": info.get("blocked_writes") or [],
         "blocked_spawns": info.get("blocked_spawns") or [],
         "cleanup_pending": False,
@@ -709,14 +749,65 @@ def _make_trial_dir(session_id: str) -> Path:
     return d
 
 
-def _default_runner(python: str, work: str, script_name: str, mode: str, timeout: float) -> dict:
+def _default_runner(
+    python: str,
+    work: str,
+    script_name: str,
+    mode: str,
+    timeout: float,
+    input_remap: list | None = None,
+) -> dict:
     """在 safe 的写入根绊线下跑副本。`work` 是 `<试跑目录>/work`；写入根 = 整个试跑目录（副本 + 专用 TMPDIR + mpl 配置）。"""
     return run_python(
         python,
         script=str(Path(work) / script_name),
         timeout=timeout,
         trial_dir=Path(work).parent,
+        input_remap=input_remap,
     )
+
+
+def trial_remap_rules(rules: list[dict], src_dirs: list[Path], work: Path) -> list[dict]:
+    """项目的改指规则 → 试跑副本里要用的规则。
+
+    副本结构：复制的是**脚本所在目录** B（`_copy_project(src_dir, …)`），副本根 W 与 B 一一对应——B/rel 在副本里是 W/rel。
+    规则的 `from` F 是**脚本写的那一串**：相对的（`data/x.csv`）与副本无关，原样用；绝对的按它与 B 的包含关系换算
+    （脚本用 `__file__` 拼路径，副本里同一个读取写出来的是 W/rel，而规则按原项目路径记，不换算就永远找不到）：
+
+    * F 在 B 之内或等于 B（F = B/s）→ 另加 `from = W/s`，`to` 不变；`file` 规则同理（`from` 是文件，必在 B 之内）。
+    * F 是 B 的祖先（B = F/t，如脚本在 `<项目>/scripts/`、规则 `<项目>` → `<另一棵树>`）→ 另加 `prefix` 规则
+      `from = W`、`to = <原 to>/t`：W/rel 对应原来的 F/t/rel，改指后落到 to/t/rel。
+    * 与 B 没有包含关系 → 不动。原规则一律留着（写死的绝对路径照旧能命中）。"""
+    from .. import figcapture
+
+    out = list(rules)
+    new_base = figcapture.remap_parts(str(work))
+    bases = [b for b in (figcapture.remap_parts(str(d)) for d in src_dirs) if b is not None]
+    if new_base is None:
+        return out
+    for r in rules:
+        parsed = figcapture.remap_parts(r["from"]) if r["from"] else None
+        if parsed is None or not parsed[0]:
+            continue
+        for base in bases:  # 脚本目录的真实路径与未解析的写法（macOS 的 /var → /private/var）都认
+            if parsed[1][: len(base[1])] == base[1]:  # F 在 B 之内（含相等）
+                moved = {
+                    **r,
+                    "from": figcapture._join_parts(new_base[1] + parsed[1][len(base[1]) :]),
+                }
+            elif r["kind"] == figcapture.REMAP_PREFIX and base[1][: len(parsed[1])] == parsed[1]:
+                tail = base[1][len(parsed[1]) :]  # F 是 B 的祖先：B = F/tail
+                moved = {
+                    **r,
+                    "from": figcapture._join_parts(new_base[1]),
+                    "to": r["to"].replace("\\", "/").rstrip("/") + "/" + "/".join(tail),
+                }
+            else:
+                continue
+            if moved not in out:
+                out.append(moved)
+            break
+    return out
 
 
 def try_run(ctx: FixContext, args: dict) -> ToolResult:
@@ -763,8 +854,17 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
         except OSError:
             copy_failed = True
         else:
+            from .. import inputremap
+
+            rules = inputremap.rules_for(ctx.project_root)
+            if rules:
+                rules = trial_remap_rules(
+                    rules, [src_dir, Path(ctx.script_path).parent], trial_dir / "work"
+                )
             runner = ctx.runner or _default_runner
-            res = runner(python, str(trial_dir / "work"), name, mode, timeout)
+            # 注入的执行器沿用原来的五个参数；有规则时才多带 `input_remap`（缺省执行器永远收得到）
+            extra = {"input_remap": rules} if rules or ctx.runner is None else {}
+            res = runner(python, str(trial_dir / "work"), name, mode, timeout, **extra)
     finally:
         for target in link_reads:  # 副本跟随链接读了的项目外文件：记进读取清单（#1361）
             ctx.note_read(target, "try_run")
@@ -822,6 +922,14 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
             "so it was stopped; only the last part of the output is kept"
         )
     extra += sandbox_note(res)
+    remap_state = res.get("input_remap")
+    if remap_state == "applied":
+        extra += "\ninput_remap: this project's data links were applied to the trial run"
+    elif remap_state == "unavailable":
+        extra += (
+            "\ninput_remap: this project has data links, but this Python could not load them for the trial run, "
+            "so the linked files may still look missing here (the real run is not affected)"
+        )
     tail = _tail(res.get("stderr") or "")
     summary = "trial run done" + (" (writes blocked)" if blocked else "")
     summary += " (cleanup_pending)" if pending else ""

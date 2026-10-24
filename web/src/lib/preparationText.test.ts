@@ -170,6 +170,18 @@ describe('智能修复（ADR 0148）：主按钮读 remedy，每张失败卡都�
     }
   })
 
+  it('读不到数据的卡（missing_data）：主按钮仍是「指认数据」，AI 次按钮也在；教程层里没有', () => {
+    const r = failed(undefined, {
+      outcome: { kind: 'failed', code: 'missing_input' },
+      requirements: [{ id: 'data', kind: 'input_location', code: 'missing_input', origin: 'last_attempt', blocking: false, payload: { script: 'a.py' } }],
+    })
+    const v = view(r)
+    expect(v.state).toBe('missing_data')
+    expect(v.primary).toMatchObject({ kind: 'missing_input' })
+    expect(v.aiFix).toBe(true)
+    expect(view(r, { tutorial: true }).aiFix).toBe(false)
+  })
+
   it('不是失败卡就没有：ready / 运行中 / 成功', () => {
     const ready = { phase: 'ready_to_run', outcome: { kind: 'pending' }, target: { kind: 'script', script: 'a.py' }, checks: [], requirements: [], actions: [action('run')], provider: { plan_id: 'p', attempt_id: null, attempts: 0, dependency: null } } as unknown as PreparationReport
     expect(view(ready).aiFix).toBe(false)

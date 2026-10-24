@@ -753,6 +753,8 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "select_environment",
         "convert_script",
         "rollback",
+        # 数据找不到时把 AI 找到的文件接上（细节见 tests/test_fixtools_link.py）
+        "link_data_file",
         # #1374：任意命令，两档（细节见 tests/test_fixtools_command.py）
         "run_command",
         # D2b 的「问与报」组（细节见 tests/test_fixasks.py）
@@ -788,6 +790,7 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "install_packages",
         "switch_execution",
         "select_environment",
+        "link_data_file",
         "run_command",
     }
 

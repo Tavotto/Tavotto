@@ -14,12 +14,14 @@ from .audit import AuditLog
 from .base import BLOCKED_CODES, FIX_SESSION_TIERS, TIERS, FixContext, FixTool
 from .change import CHANGE_TOOLS
 from .command import COMMAND_TOOLS
+from .link import LINK_TOOLS
 from .observe import OBSERVE_TOOLS
 from .readscope import scrub
 from .trial import TRIAL_TOOLS
 
 REGISTRY: dict[str, FixTool] = {
-    t.name: t for t in (*OBSERVE_TOOLS, *TRIAL_TOOLS, *CHANGE_TOOLS, *COMMAND_TOOLS, *ASK_TOOLS)
+    t.name: t
+    for t in (*OBSERVE_TOOLS, *TRIAL_TOOLS, *CHANGE_TOOLS, *LINK_TOOLS, *COMMAND_TOOLS, *ASK_TOOLS)
 }
 
 
