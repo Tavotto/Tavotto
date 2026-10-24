@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -236,6 +237,26 @@ def output_call_differences(chain: list[str], nat: dict, tavotto: dict) -> list[
     return diffs
 
 
+def _path_owner_matches(path: str, stems: dict, calls: dict | None, native_titles: list) -> bool:
+    """Does the Tavotto figure that owns the file `path` carry the titles of the native last writer?
+
+    Tavotto keys figures by stem and gives a second figure with the same stem but another format its own
+    stem (`s`, `s-2`; #1250), binding each to the formats it saved (#1309). So the native `s.png` written by
+    the second figure belongs to Tavotto's `s-2`, not to `s` (which owns `s.pdf`): the owners of a path are
+    the stems `s` / `s-N` that recorded a savefig in that path's format. When the product recorded no
+    format for any of them (or none matches), fall back to the stem `s` itself, which is the old reading.
+    """
+    base, fmt = Path(path).stem, Path(path).suffix.lstrip(".").lower()
+    calls = calls or {}
+    owners = [
+        name
+        for name in stems
+        if (name == base or re.fullmatch(re.escape(base) + r"-\d+", name))
+        and fmt in {str(f).lower() for f in calls.get(name) or [] if f}
+    ]
+    return any(stems[name]["titles"] == native_titles for name in (owners or [base]))
+
+
 def compare(
     candidate_class: str,
     native: dict,
@@ -315,7 +336,13 @@ def compare(
             stem = Path(path).stem
             native_titles = [t for t in writer["titles"] if t]
             # An untitled figure carries no content to compare; [""] vs [] is not a difference.
-            if stem in stems and native_titles and stems[stem]["titles"] != native_titles:
+            if (
+                stem in stems
+                and native_titles
+                and not _path_owner_matches(
+                    path, stems, tavotto.get("savefig_calls"), native_titles
+                )
+            ):
                 diffs.append(
                     _diff(
                         "same_path_content_mismatch",

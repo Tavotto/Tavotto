@@ -204,6 +204,10 @@ def run_native(req: dict) -> int:
     finally:
         mfigure.Figure.savefig = real_savefig
 
+    # 写了文件却因 stem 被别的图持有而没认领的图（`panel.png` 甲 / `panel.pdf` 乙）：先于 pyplot 兜底补进来，
+    # 与产品三条入口同一个函数、同一个顺序——对照组也要有 `panel-2` 这张图，否则像素层只剩甲
+    file_stems: dict = {}
+    figcapture.adopt_displaced_writers(writers, captured, sources, calls, extras, file_stems)
     fallback, _dropped = figcapture.collect_pyplot_figures(
         captured, os.path.splitext(os.path.basename(req["script"]))[0], plt
     )
@@ -214,7 +218,12 @@ def run_native(req: dict) -> int:
     width = int(req.get("width", 800))
     for stem, fig in captured.items():
         call = figcapture.frame_call(
-            calls.get(stem), figcapture.find_original_artifact(req["project"], stem)
+            calls.get(stem),
+            figcapture.find_original_artifact(
+                req["project"],
+                file_stems.get(stem, stem),
+                formats=figcapture.saved_formats(calls.get(stem)),
+            ),
         )
         crop = crops.get(id(call)) if call else None
         if call and call.get("bbox_inches") is not None and crop is None:

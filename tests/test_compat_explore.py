@@ -339,6 +339,32 @@ class Judgment(unittest.TestCase):
         self.assertEqual(kinds, ["same_path_content_mismatch"])
         self.assertIn("Tavotto kept ['t0']", wrong["differences"][0]["summary"])
 
+    def test_same_stem_other_format_is_owned_by_the_figure_that_saved_that_format(self):
+        """原生 `o.pdf` 第一张、`o.png` 第二张（同 stem 不同格式）：Tavotto 是 `o`（pdf）与 `o-2`（png），
+        `o.png` 的归属是 `o-2`，不是 `o`——按 stem 键去比会把它误判成 same_path_content_mismatch。"""
+        native = native_result(
+            figure_count=2,
+            semantics={"f0": {"titles": ["t0"]}, "f1": {"titles": ["t1"]}},
+            savefig_last_writer={
+                "o.pdf": {"figure": 0, "titles": ["t0"]},
+                "o.png": {"figure": 1, "titles": ["t1"]},
+            },
+        )
+        tav = {
+            "stems": {"o": {"titles": ["t0"]}, "o-2": {"titles": ["t1"]}},
+            "error": None,
+            "savefig_calls": {"o": ["pdf"], "o-2": ["png"]},
+        }
+        self.assertEqual(ex.compare("axis_changing", native, tav, None)["outcome"], "no_difference")
+        # 归属错了仍然要报：png 那张其实是第一张的内容
+        wrong = dict(tav, stems={"o": {"titles": ["t0"]}, "o-2": {"titles": ["t0"]}})
+        found = ex.compare("axis_changing", native, wrong, None)
+        self.assertIn("same_path_content_mismatch", [d["kind"] for d in found["differences"]])
+        # 没记到格式（描述符里没有 savefig_calls）：退回按 stem 比，原先的读法不变
+        blind = {k: v for k, v in tav.items() if k != "savefig_calls"}
+        kinds = [d["kind"] for d in ex.compare("axis_changing", native, blind, None)["differences"]]
+        self.assertIn("same_path_content_mismatch", kinds)
+
     def test_tavotto_error_after_partial_observation_is_never_clean(self):
         """部分图观察成功后 worker 报错：已观察部分与原生一致也不得判 no_difference（Codex #1135 r4310366048）。"""
         tav = {

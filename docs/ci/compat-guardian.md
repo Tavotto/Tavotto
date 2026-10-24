@@ -451,6 +451,9 @@ CG-02 的 27 条真实差异聚成恰好两簇：G1（show 后 close，11 条）
 最小化过程中暴露并修掉了 explore 比较里的一个误报：无标题的图（原生 `[""]` vs Tavotto `[]`）曾被当作同路径内容差异；
 最小化签名因此新增「原生确有多图写同一路径」这一条，缩减不能漂移到别的原因上。
 
+另一个同类误报在 `same_stem_two_figs`：同 stem 不同格式的两张图（`s.pdf` 第一张、`s.png` 第二张），Tavotto 是 `s`（pdf）与 `s-2`（png）（#1250 / #1309 按格式绑定归属），
+`compare` 现在按「写这个路径的格式」找拥有它的 `s` / `s-N` 再比标题（`_path_owner_matches`）；产品没记到格式时退回按 stem 比，G2 的检出不变。
+
 ## 13. 自动化（CG-05）
 
 同一个 workflow（`.github/workflows/compat-guardian.yml`），三档，**观察优先**：只出报告与注解，不改任何东西。
