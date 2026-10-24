@@ -4,41 +4,31 @@ import { ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import type { AiConnection, AiVendor } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { useAiStore } from '@/store/aiStore'
 import { Button } from '../../ui/Button'
 import { StatusPill } from '../../ui/StatusPill'
-import { ag } from '../agentState'
 import { BrandLogo } from '../BrandLogo'
 import { OAuthLoginDialog } from '../OAuthLoginDialog'
-import { useAgentLogin } from '../useAgentLogin'
 import { cx } from './copy'
-import { connectionErrorText, loginAgentOf, vendorName } from './vendors'
+import { MethodList } from './MethodList'
+import { connectionErrorText, methodsOf, vendorName } from './vendors'
+import { refreshAndFind, useLoginFlow } from './useLoginFlow'
 import { VendorKeyForm } from './VendorKeyForm'
 
-/** 重读 capabilities，看这家厂商有没有 ready 的连接；读失败 = 没刷新成功（`false`） */
-async function refreshAndFind(vendorId: string): Promise<{ ok: boolean; conn?: AiConnection }> {
-  try {
-    await useAiStore.getState().loadCaps(true)
-  } catch {
-    return { ok: false }
-  }
-  const conn = useAiStore.getState().caps?.connections?.find((x) => x.vendor === vendorId && x.state === 'ready')
-  return { ok: true, conn }
-}
-
 /**
- * 「连接 AI」列表的一行（连接弹窗与设置页共用）：`[彩色 logo] 厂商名 ……… [状态 / 按钮]`。
+ * 「连接 AI」列表的一行（连接弹窗与设置页共用）：`[logo] 厂商名 ……… [状态 / 按钮]`。
  *
- * 右侧只有一个动作，按厂商的 `connect` 类型定：Key 类「连接」（就地展开 Key 表单）、订阅类「登录」
- * （沿用官方登录进度与「我已登录」）、账号登录类「登录」（设备码小对话框）。已连接显示「已连接」；
- * 设置页里已连接的 Key 类行可展开（`manage`：换 Key / 默认型号 / 断开），弹窗里不展开。
- * 连好之后重读 capabilities，再调 `onConnected`。
+ * 只有一种连接方式的厂商：右侧一个动作，按方式的类型定——Key 类「连接」（就地展开 Key 表单）、订阅类「登录」
+ * （沿用官方登录进度与「我已登录」）、账号登录类「登录」（设备码小对话框）。
+ * 有多种方式（API Key + 订阅登录等）的厂商：「连接」打开二级卡片让用户自己选——弹窗里由 `onChooseMethods`
+ * 换成二级页，设置页（没传它）就在行下展开同一份卡片。已连接显示「已连接」；设置页里已连接的 Key 类行可展开
+ * （`manage`：换 Key / 默认型号 / 断开）。连好之后重读 capabilities，再调 `onConnected`。
  */
 export function VendorRow({
   vendor,
   connection,
   onConnected,
   manage,
+  onChooseMethods,
   className,
 }: {
   vendor: AiVendor
@@ -46,28 +36,22 @@ export function VendorRow({
   onConnected: (c: AiConnection) => void
   /** 设置页：已连接时点行展开的管理区 */
   manage?: (c: AiConnection) => ReactNode
+  /** 弹窗：多种方式时进二级页 */
+  onChooseMethods?: (v: AiVendor) => void
   className?: string
 }) {
   useTranslation('dialogs')
   const [open, setOpen] = useState(false)
   const [oauth, setOauth] = useState(false)
-  const [loginError, setLoginError] = useState<string | null>(null)
-
-  // 登录结束 / 用户点「我已登录」：重读 capabilities，看对应订阅连接是不是 ready 了
-  const login = useAgentLogin(
-    { id: loginAgentOf(vendor) },
-    async () => {
-      const r = await refreshAndFind(vendor.id)
-      if (r.conn) onConnected(r.conn)
-      return r.ok
-    },
-    setLoginError,
-  )
+  const methods = methodsOf(vendor)
+  const multi = methods.length > 1
+  const method = methods[0]
+  const flow = useLoginFlow(vendor, method, onConnected)
 
   const ready = connection?.state === 'ready'
   const needsAuth = connection?.state === 'needs_auth'
-  const canManage = ready && !!manage && vendor.connect === 'key'
-  const unavailable = vendor.connect === 'login' && !vendor.available
+  const canManage = ready && !!manage && connection?.route !== 'cli:codex' && connection?.route !== 'cli:claude' && !connection?.id.startsWith('sub:')
+  const unavailable = !multi && !method.available
 
   const status =
     connection && !ready ? (
@@ -75,7 +59,6 @@ export function VendorRow({
         {needsAuth ? cx('needsAuth') : connectionErrorText(connection)}
       </StatusPill>
     ) : null
-  const confirming = login.phase === 'terminal' || login.phase === 'manual' || login.phase === 'retry'
 
   let action: ReactNode
   if (ready) {
@@ -86,63 +69,33 @@ export function VendorRow({
     )
   } else if (unavailable) {
     action = <span className="type-caption">{cx('needsInstall')}</span>
-  } else if (vendor.connect === 'key') {
+  } else if (multi) {
     action = (
       <Button
         variant="secondary"
         size="sm"
-        data-connect-action="key"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        data-connect-action="methods"
+        aria-expanded={onChooseMethods ? undefined : open}
+        onClick={() => (onChooseMethods ? onChooseMethods(vendor) : setOpen((v) => !v))}
       >
         {cx('connect')}
       </Button>
     )
-  } else if (vendor.connect === 'oauth') {
+  } else if (method.kind === 'key') {
+    action = (
+      <Button variant="secondary" size="sm" data-connect-action="key" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        {cx('connect')}
+      </Button>
+    )
+  } else if (method.kind === 'oauth') {
     action = (
       <Button variant="secondary" size="sm" data-connect-action="oauth" onClick={() => setOauth(true)}>
         {cx('signIn')}
       </Button>
     )
   } else {
-    action = (
-      <Button
-        variant="secondary"
-        size="sm"
-        data-connect-action="login"
-        data-connect-login={login.phase}
-        loading={login.phase === 'waiting'}
-        disabled={login.phase === 'waiting'}
-        onClick={() => (confirming ? login.confirm() : login.begin())}
-      >
-        {login.phase === 'waiting' ? ag('login.waiting') : confirming ? ag('login.done') : cx('signIn')}
-      </Button>
-    )
+    action = flow.button
   }
-
-  const hint =
-    vendor.connect === 'login' && login.phase !== 'idle' ? (
-      <p data-connect-login-hint className="type-caption" role={login.phase === 'retry' ? 'alert' : undefined}>
-        {login.phase === 'waiting' && login.authUrl ? (
-          <>
-            {ag('login.browserHint')}{' '}
-            <a href={login.authUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2">
-              {ag('login.openLink')}
-            </a>
-          </>
-        ) : login.phase === 'retry' ? (
-          ag('login.refreshFailed')
-        ) : login.phase === 'terminal' ? (
-          ag('login.terminalHint')
-        ) : login.phase === 'manual' ? (
-          ag('login.manualHint', { command: login.command })
-        ) : null}
-      </p>
-    ) : loginError ? (
-      <p role="alert" className="text-xs text-danger">
-        {loginError}
-      </p>
-    ) : null
 
   const rowBody = (
     <>
@@ -152,7 +105,11 @@ export function VendorRow({
   )
 
   return (
-    <li data-connect-vendor={vendor.id} data-connect-kind={vendor.connect} className={cn('flex flex-col px-4 py-2', className)}>
+    <li
+      data-connect-vendor={vendor.id}
+      data-connect-kind={multi ? 'multi' : method.kind}
+      className={cn('flex flex-col px-4 py-2', className)}
+    >
       <div className="flex min-h-9 items-center gap-3">
         {canManage ? (
           <button
@@ -171,21 +128,22 @@ export function VendorRow({
           {status}
           {action}
           {canManage && (
-            <ChevronRight
-              size={ICON_SIZE.xs}
-              aria-hidden
-              className={cn('text-ink-3 transition-transform', open && 'rotate-90')}
-            />
+            <ChevronRight size={ICON_SIZE.xs} aria-hidden className={cn('text-ink-3 transition-transform', open && 'rotate-90')} />
           )}
         </span>
       </div>
-      {hint && <div className="pl-11 pt-1">{hint}</div>}
-      {open && !ready && vendor.connect === 'key' && (
-        <div className="pl-11 pt-2">
-          <VendorKeyForm vendor={vendor} connectionId={connection?.id} onConnected={onConnected} />
+      {!multi && method.kind === 'login' && flow.hint && <div className="pl-9 pt-1">{flow.hint}</div>}
+      {open && !ready && !multi && method.kind === 'key' && (
+        <div className="pl-9 pt-2">
+          <VendorKeyForm vendor={vendor} method={method} connectionId={connection?.id} onConnected={onConnected} />
         </div>
       )}
-      {open && canManage && connection && <div className="pl-11 pt-2">{manage!(connection)}</div>}
+      {open && !ready && multi && !onChooseMethods && (
+        <div className="pl-9 pt-2">
+          <MethodList vendor={vendor} onConnected={onConnected} />
+        </div>
+      )}
+      {open && canManage && connection && <div className="pl-9 pt-2">{manage!(connection)}</div>}
       {oauth && (
         <OAuthLoginDialog
           provider={vendor.logo}

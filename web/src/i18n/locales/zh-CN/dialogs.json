@@ -1881,7 +1881,17 @@
         "network": "连不上服务商。",
         "timeout": "连接超时。"
       },
-      "subtitle": "连接一个 AI，用于改图或修复环境。"
+      "subtitle": "连接一个 AI，用于改图或修复环境。",
+      "method": {
+        "subscription": "订阅登录",
+        "apiKey": "API Key",
+        "kimiCode": "Kimi Code 会员",
+        "codingPlan": "Coding Plan",
+        "account": "账号登录",
+        "hintKey": "填写 {{name}} 的 Key",
+        "hintLogin": "用 {{name}} 登录"
+      },
+      "back": "返回"
     }
   },
   "style": {

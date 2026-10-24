@@ -3212,6 +3212,22 @@ export interface AiCapabilities {
 
 /* --- 「连接 AI」：厂商目录与连接视图（接口约定见 docs/implementation 的连接 AI 方案；旧后端没有这些字段 → 沿用旧界面） --- */
 
+/** 一家厂商的一种连接方式（同一厂商的 API Key 与订阅登录合并成一个厂商时有多种） */
+export interface AiVendorMethod {
+  id: string
+  kind: 'key' | 'login' | 'oauth'
+  /** 方式名的 i18n 键（`method.subscription` / `method.apiKey` / `method.kimiCode` / `method.codingPlan` / `method.account`） */
+  label_key?: string | null
+  /** key 类：对应的目录行 id（保存连接时作为厂商 id） */
+  catalog_id?: string
+  /** login 类：登录用的家族（codex / claude） */
+  agent?: string
+  key_url?: string
+  key_hint_key?: string
+  needs_base_url?: boolean
+  available: boolean
+}
+
 /** 可连接的厂商（设置页 / 连接弹窗的一行）。`connect`：key = 填 API Key；login = 订阅登录；oauth = 账号登录（设备码） */
 export interface AiVendor {
   id: string
@@ -3222,6 +3238,8 @@ export interface AiVendor {
   key_hint_key?: string
   /** 只有自定义为 true */
   needs_base_url?: boolean
+  /** 这家厂商的连接方式；缺省（老后端）= 只有 `connect` 那一种 */
+  methods?: AiVendorMethod[]
   /** 彩色标志的键（`BrandLogo`）；表外 = 通用图标 */
   logo: string
   region: 'cn' | 'global' | 'custom'

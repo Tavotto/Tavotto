@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { connectAi, type AiConnection, type AiVendor } from '@/lib/api'
+import { connectAi, type AiConnection, type AiVendor, type AiVendorMethod } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { Button } from '../../ui/Button'
 import { TextInput } from '../../ui/Input'
@@ -15,11 +15,14 @@ import { vendorName } from './vendors'
  */
 export function VendorKeyForm({
   vendor,
+  method,
   submitLabel,
   connectionId,
   onConnected,
 }: {
   vendor: AiVendor
+  /** 厂商有多种方式时，当前选的这一种（决定目录行 / 获取链接 / 提示） */
+  method?: AiVendorMethod
   /** 给了 = 换 Key（带已有连接 id，不先删后建） */
   connectionId?: string
   submitLabel?: string
@@ -35,7 +38,7 @@ export function VendorKeyForm({
     setBusy(true)
     setError(null)
     try {
-      const res = await connectAi({ ...(connectionId ? { id: connectionId } : {}), vendor: vendor.id, api_key: key.trim() })
+      const res = await connectAi({ ...(connectionId ? { id: connectionId } : {}), vendor: method?.catalog_id ?? vendor.id, api_key: key.trim() })
       if (!res.ok || !res.connection) {
         setError(cx('failed'))
         return
@@ -79,10 +82,10 @@ export function VendorKeyForm({
           {submitLabel ?? cx('connect')}
         </Button>
       </div>
-      {vendor.key_url && (
+      {(method?.key_url ?? vendor.key_url) && (
         <a
           data-connect-key-link
-          href={vendor.key_url}
+          href={method?.key_url ?? vendor.key_url}
           target="_blank"
           rel="noreferrer"
           className="focus-visible:focus-ring w-fit rounded-sm text-xs text-ink-2 underline-offset-2 outline-none hover:text-ink hover:underline"
@@ -90,9 +93,9 @@ export function VendorKeyForm({
           {cx('getKey', { name: vendorName(vendor) })}
         </a>
       )}
-      {vendor.key_hint_key && (
+      {(method?.key_hint_key ?? vendor.key_hint_key) && (
         <p data-connect-key-hint className="type-caption">
-          {ag(vendor.key_hint_key)}
+          {ag((method?.key_hint_key ?? vendor.key_hint_key)!)}
         </p>
       )}
       {error && (

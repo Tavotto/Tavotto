@@ -1,10 +1,10 @@
 import { currentLocale } from '@/i18n'
 import { ag, cx } from './copy'
-import { sortVendors, type AiCapabilities, type AiConnection, type AiVendor } from '@/lib/api'
+import { sortVendors, type AiCapabilities, type AiConnection, type AiVendor, type AiVendorMethod } from '@/lib/api'
 
 /** 订阅登录类厂商 → 内部登录用的家族 id（订阅连接 id = `sub:<家族>`）；表外的厂商 id 即家族 id */
 const LOGIN_AGENT: Record<string, string> = { chatgpt: 'codex', claude: 'claude' }
-export const loginAgentOf = (v: AiVendor): string => LOGIN_AGENT[v.id] ?? v.id
+export const loginAgentOf = (v: AiVendor, m?: AiVendorMethod): string => m?.agent ?? LOGIN_AGENT[v.id] ?? v.id
 
 /** 中文界面国内在前，其余海外在前（以界面语言为准，不看后端的 `locale_region` 提示） */
 export const isCnFirst = (): boolean => currentLocale() === 'zh-CN'
@@ -27,3 +27,30 @@ export const vendorName = (v: AiVendor): string => (v.label_key ? ag(v.label_key
 /** 连接异常的一句人话（只认几个常见原因码，其余统一一句） */
 export const connectionErrorText = (c: AiConnection): string =>
   c.error && ['unauthorized', 'network', 'timeout'].includes(c.error) ? cx(`err.${c.error}`) : cx('error')
+
+/** 这家厂商的连接方式；没有 `methods`（老后端）就按旧的 `connect` 合成唯一一种 */
+export const methodsOf = (v: AiVendor): AiVendorMethod[] =>
+  v.methods && v.methods.length > 0
+    ? v.methods
+    : [{ id: v.connect, kind: v.connect, key_url: v.key_url, key_hint_key: v.key_hint_key, available: v.available }]
+
+/** 方式名：后端给的 `label_key` 认得就用它，否则按类型兜底（每个键都写成字面量，i18n 检查才数得到） */
+export function methodName(m: AiVendorMethod): string {
+  switch (m.label_key) {
+    case 'method.kimiCode':
+      return cx('method.kimiCode')
+    case 'method.codingPlan':
+      return cx('method.codingPlan')
+    case 'method.subscription':
+      return cx('method.subscription')
+    case 'method.apiKey':
+      return cx('method.apiKey')
+    case 'method.account':
+      return cx('method.account')
+  }
+  return m.kind === 'key' ? cx('method.apiKey') : m.kind === 'login' ? cx('method.subscription') : cx('method.account')
+}
+
+/** 方式的一句说明（「用 ChatGPT 登录」「填写 OpenAI 的 Key」） */
+export const methodHint = (v: AiVendor, m: AiVendorMethod): string =>
+  m.kind === 'key' ? cx('method.hintKey', { name: vendorName(v) }) : cx('method.hintLogin', { name: vendorName(v) })

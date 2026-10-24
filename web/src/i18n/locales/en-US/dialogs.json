@@ -1899,7 +1899,17 @@
         "network": "Can’t reach the provider.",
         "timeout": "The connection timed out."
       },
-      "subtitle": "Connect an AI to edit figures or fix your environment."
+      "subtitle": "Connect an AI to edit figures or fix your environment.",
+      "method": {
+        "subscription": "Subscription",
+        "apiKey": "API key",
+        "kimiCode": "Kimi Code plan",
+        "codingPlan": "Coding Plan",
+        "account": "Account sign-in",
+        "hintKey": "Enter your {{name}} key",
+        "hintLogin": "Sign in with {{name}}"
+      },
+      "back": "Back"
     }
   },
   "style": {
