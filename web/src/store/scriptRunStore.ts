@@ -17,6 +17,7 @@ import { observeFigureExecution } from '@/lib/figureExecutionEvents'
 import { useAssetStore } from '@/store/assetStore'
 import '@/store/figureSnapshotInvalidation'
 import { msg, t as translate } from '@/i18n'
+import { noticePdfPages, pdfPagesNoticeOwner } from '@/lib/pdfPagesNotice'
 import { noticeWorkdirHint, workdirHintOwner } from '@/lib/workdirHintNotice'
 import { useEnvStore } from '@/store/envStore'
 import { useRenderStore, workdirHintDeps } from '@/store/renderStore'
@@ -316,6 +317,10 @@ export const useScriptRunStore = create<ScriptRunStore>((set, get) => ({
         stems: res.stems,
         unlinkedStems: res.unlinked_stems ?? [],
         error: null,
+      })
+      // 脚本把图写进了多页 PDF：每页被认领成一张图，通知轨一条胶囊说清楚（#1370）
+      noticePdfPages(pdfPagesNoticeOwner(projectAtStart, script), res.pdf_pages, {
+        ui: useUiStore.getState(),
       })
       // 跑通了有图，但沙盒里 glob 回空、脚本目录里有文件（图可能缺数据，#1254）：通知轨一条胶囊（同渲染入口）
       noticeWorkdirHint(

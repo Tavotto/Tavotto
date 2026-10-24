@@ -6064,6 +6064,19 @@ export interface ProbeError {
   workdir_hint?: WorkdirConfirmation
 }
 
+/**
+ * 脚本把图写进了多页 PDF（`PdfPages`）：每页被认领成一张图（#1370）。`captured` = 认领的张数；`pages` = 写进去的页数
+ * （同一张图写多页只认一次，所以可以更大）；`omitted` = 超出账本上限没收的张数。没写过时整个字段不出现
+ */
+export interface PdfPagesCapture {
+  /** PDF 的文件名；写进缓冲区 / 取不到文件名时为 null */
+  name: string | null
+  pages: number
+  captured: number
+  stems: string[]
+  omitted?: number
+}
+
 export interface ProbeResult {
   figure_snapshot_invalidation?: FigureSnapshotInvalidation
   /** 跑通且有图，但沙盒里 glob 回空而脚本目录里有文件（图可能缺数据，#1254） */
@@ -6078,6 +6091,8 @@ export interface ProbeResult {
   timings?: Record<string, number>
   /** pyplot 兜底超过上限被丢掉的张数（0 = 没丢） */
   dropped_figures?: number
+  /** 写进多页 PDF 而被逐页认领的图（没有时不出现；#1370） */
+  pdf_pages?: PdfPagesCapture[]
   /** multiple_stem_conflict 时：stem → 现登记的归属脚本 */
   stem_conflicts?: Record<string, string>
   /** 给了参数的那次运行：它的运行配置引用（T03；不含参数值） */

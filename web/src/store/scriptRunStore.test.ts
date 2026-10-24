@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, cancelProbe, probeScript, type CapturedFigureDescriptor, type FigureSnapshotInvalidation, type ProbeResult } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
+import { formatMessage } from '@/i18n'
+import { resetPdfPagesNotices } from '@/lib/pdfPagesNotice'
 import { useUiStore } from './uiStore'
 import { useEnvStore } from './envStore'
 import { useScriptArgvStore } from './scriptArgvStore'
@@ -243,6 +245,29 @@ describe('scriptRunStore 状态机', () => {
     expect(state().phase).toBe('captured_many')
     expect(state().descriptors.map((d) => d.stem)).toEqual(['a', 'b', 'c'])
     expect(state().droppedFigures).toBe(2)
+  })
+
+  it('写进多页 PDF 的图：通知轨一条胶囊（一句话、无按钮），同一份证据只提醒一次（#1370）', async () => {
+    const pdf_pages = [{ name: 'all_samples.pdf', pages: 3, captured: 3, stems: ['a', 'a-2', 'a-3'] }]
+    useUiStore.getState().setStatus(null)
+    mockProbe.mockResolvedValue({ ...ok([desc('a'), desc('a-2'), desc('a-3')]), pdf_pages })
+    await useScriptRunStore.getState().run('fig.py')
+    expect(useUiStore.getState().statusOwner).toMatch(/^pdfpages\.notice:/)
+    expect(useUiStore.getState().statusAction ?? null).toBeNull()
+    const first = useUiStore.getState().status
+    expect(first && formatMessage(first)).toContain('all_samples.pdf')
+    // 重跑出同样的结果：不再重发
+    useUiStore.getState().setStatus(null)
+    mockProbe.mockResolvedValue({ ...ok([desc('a'), desc('a-2'), desc('a-3')]), pdf_pages })
+    await useScriptRunStore.getState().run('fig.py')
+    expect(useUiStore.getState().status).toBeNull()
+    // 之后不再写多页 PDF：撤掉它的提醒
+    resetPdfPagesNotices()
+    await useScriptRunStore.getState().run('fig.py')
+    expect(useUiStore.getState().statusOwner).toMatch(/^pdfpages\.notice:/)
+    mockProbe.mockResolvedValue(ok([desc('a')]))
+    await useScriptRunStore.getState().run('fig.py')
+    expect(useUiStore.getState().status).toBeNull()
   })
 
   it('错误码 → 相位映射（missing_dependency / timeout / no_figure / cancelled / failed）', async () => {
