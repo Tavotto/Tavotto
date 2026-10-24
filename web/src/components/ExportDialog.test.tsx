@@ -47,6 +47,7 @@ import { effectiveScope, issuesInScope } from '@/lib/problemList'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useScriptRunStore } from '@/store/scriptRunStore'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { seedExactRender } from '@/test/renderFixtures'
 
@@ -3453,5 +3454,104 @@ describe('导出页改版（beta 0.19.0b3 反馈）', () => {
     await act(async () => { release(); await done })
     settingsGate = null
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
+  })
+})
+
+describe('合成一个多页 PDF（#1370，PdfPages 导出）', () => {
+  const start = () => click(button('开始导出')!)
+  const mergeRow = () => document.body.querySelector('[data-export-merge-pdf]')
+  const RT = (id: string, stem: string, script = 's.py') => ({ id, script, stem, entry: 'main', status: 'ready' })
+  const pages = (over: Record<string, unknown> = {}) => ({
+    name: 'all_samples.pdf',
+    pages: 2,
+    captured: 2,
+    stems: ['a', 'b'],
+    path: 'all_samples.pdf',
+    scope: 'execution',
+    page_stems: ['a', 'b'],
+    complete: true,
+    ...over,
+  })
+  /** 两张图（Fig1 / Fig2）都是脚本 s.py 的 runtime 素材，s.py 这次运行写了一份两页的 PdfPages */
+  async function setupMerge(opts: { pdfPages?: unknown[]; assets?: unknown[]; formats?: string[] } = {}) {
+    await setupTwo({ select: [] })
+    useRuntimeAssetStore.setState({
+      assets: opts.assets ?? [RT('Fig1.pdf', 'a'), RT('Fig2.pdf', 'b')],
+    } as never)
+    useScriptRunStore.setState({
+      byScript: { 's.py': { pdfPages: opts.pdfPages ?? [pages()] } },
+    } as never)
+    await click(originalRadio())
+    for (const f of opts.formats ?? []) {
+      if (!formatBox(f).checked) await click(formatBox(f))
+    }
+  }
+  afterEach(() => {
+    useRuntimeAssetStore.setState({ assets: null, byId: {} } as never)
+    useScriptRunStore.setState({ byScript: {} } as never)
+  })
+
+  it('两张图出自同一份 PdfPages、勾着 PDF：出现勾选，写明文件名与页数，默认勾上', async () => {
+    await setupMerge()
+    expect(mergeRow()).toBeTruthy()
+    expect(mergeRow()!.textContent).toContain('all_samples.pdf')
+    expect(mergeRow()!.textContent).toContain('2 页')
+    expect(mergeRow()!.querySelector<HTMLInputElement>('input')!.checked).toBe(true)
+  })
+
+  it.each([
+    ['页没认全（complete=false）', { pdfPages: [pages({ complete: false })] }],
+    ['PDF 路径取不到', { pdfPages: [pages({ path: null })] }],
+    ['两张图不在同一份 PdfPages 里', { pdfPages: [pages({ page_stems: ['a', 'zzz'] })] }],
+    ['图不是同一个脚本的', { assets: [RT('Fig1.pdf', 'a'), RT('Fig2.pdf', 'b', 'other.py')] }],
+    ['没有 PdfPages 记录', { pdfPages: [] }],
+  ])('%s：不出现', async (_name, opts) => {
+    await setupMerge(opts)
+    expect(mergeRow()).toBeNull()
+  })
+
+  it('取消 PDF 格式：勾选消失（SVG / PNG 没有多页）', async () => {
+    await setupMerge()
+    await click(formatBox('PDF'))
+    expect(mergeRow()).toBeNull()
+  })
+
+  it('勾着：只发一个作业，merge_pdf 按 page_stems 的页序（同一张图写多页就重复），不带 original', async () => {
+    await setupMerge({ pdfPages: [pages({ page_stems: ['b', 'a', 'b'] })] })
+    for (const f of ['PNG', 'TIFF', 'SVG', 'EPS']) {
+      if (formatBox(f).checked) await click(formatBox(f))
+    }
+    await start()
+    await batchDone()
+    expect(exportBodies).toHaveLength(1)
+    const body = exportBodies[0] as Record<string, any>
+    expect(body.formats).toEqual(['pdf'])
+    expect(body.filename).toBe('all_samples')
+    expect(body.original).toBeUndefined()
+    expect(body.merge_pdf.pages.map((p: { figure_id: string }) => p.figure_id)).toEqual([
+      'Fig2.pdf',
+      'Fig1.pdf',
+      'Fig2.pdf',
+    ])
+  })
+
+  it('勾着 + 还有别的格式：逐张导其余格式（不再含 pdf），再发合成的那一个', async () => {
+    await setupMerge()
+    if (!formatBox('PNG').checked) await click(formatBox('PNG'))
+    await start()
+    await batchDone()
+    expect(exportBodies.map((b) => b.formats)).toEqual([['png'], ['png'], ['pdf']])
+    expect(exportBodies.map((b) => b.filename)).toEqual(['Fig1', 'Fig2', 'all_samples'])
+    expect(exportBodies[2].merge_pdf).toBeTruthy()
+    expect(exportBodies[0].merge_pdf).toBeUndefined()
+  })
+
+  it('不勾：与从前一样，每张图各一个单页作业，请求里没有 merge_pdf', async () => {
+    await setupMerge()
+    await click(mergeRow()!.querySelector('input')!)
+    await start()
+    await batchDone()
+    expect(exportBodies.map((b) => b.filename)).toEqual(['Fig1', 'Fig2'])
+    expect(exportBodies.every((b) => b.merge_pdf === undefined)).toBe(true)
   })
 })

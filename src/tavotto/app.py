@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import errno
 import functools
 import hashlib
@@ -120,6 +121,7 @@ from .engine import (
     originalspec as engine_originalspec,
     originrecord as engine_originrecord,
     patchspec as engine_patchspec,
+    pdfmerge as engine_pdfmerge,
     perfprobe as engine_perfprobe,
     pool as engine_pool,
     preparation as engine_preparation,
@@ -2834,10 +2836,94 @@ def _export_inspect(job, produced: list) -> list:
     )
 
 
+class _PageJob:
+    """多页 PDF 里「导其中一页」用的作业替身：请求换成这一页的单页请求，其余（取消位 / 警告 / 轨迹）原样委托真作业，
+    这样每一页走的就是 `_export_produce_original` 本身，没有第二套单页导出。"""
+
+    def __init__(self, job, request) -> None:
+        self._job = job
+        self.request = request
+
+    def __getattr__(self, name):
+        return getattr(self._job, name)
+
+
+def _export_produce_merged_pdf(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+    """`merge_pdf`（#1370）：每一页先走现有的单页 PDF 导出（`_export_produce_original`，一字不改），
+    再由 `pdfmerge.merge_pdf_pages` 按请求给的页序 pikepdf 拼成一个文件，合成**一个** `Produced`。
+
+    * 任何一页失败 = 整个多页 PDF 失败，带那一页自己的错误码（缺一页的多页 PDF 页序就错了，不交付）；
+    * 同一张图在页序里出现多次（同一来源、同样的编辑）只导一次，按页序重复放；
+    * 字体每页各嵌一份是已知代价（见 `engine/pdfmerge.py`）。
+    """
+    req = job.request
+    pages = req.merge_pdf.pages
+    singles: list[Path] = []
+    done: dict[str, Path] = {}
+    first = None
+    vectors: list[bool] = []
+    for i, src in enumerate(pages):
+        job.check_cancelled()
+        key = json.dumps(
+            [src.figure_id, src.overrides, src.figure_snapshot], sort_keys=True, default=str
+        )
+        path = done.get(key)
+        if path is None:
+            page_dir = tmp_dir / f"page-{i + 1}"
+            page_dir.mkdir()
+            sub = dataclasses.replace(
+                req, formats=(engine_exportreq.FORMAT_PDF,), original=src, merge_pdf=None
+            )
+            produced = _export_produce_original(
+                _PageJob(job, sub), page_dir, artifact_sources=artifact_sources
+            )
+            one = produced[0]
+            if one.error_code is not None or one.tmp_path is None:
+                return [
+                    engine_exportjob.Produced(
+                        format=engine_exportreq.FORMAT_PDF,
+                        error_code=one.error_code or "no_output",
+                        error_params=one.error_params,
+                    )
+                ]
+            path = one.tmp_path
+            done[key] = path
+            if first is None:
+                first = one
+            vectors.append(one.vector)
+        singles.append(path)
+    job.check_cancelled()
+    out = tmp_dir / "merged.pdf"
+    try:
+        engine_pdfmerge.merge_pdf_pages(singles, out)
+    except engine_pdfmerge.PdfMergeError as exc:
+        return [
+            engine_exportjob.Produced(
+                format=engine_exportreq.FORMAT_PDF,
+                error_code="format_failed",
+                error_params={"error": str(exc)[:200]},
+            )
+        ]
+    return [
+        engine_exportjob.Produced(
+            format=engine_exportreq.FORMAT_PDF,
+            tmp_path=out,
+            # 页面尺寸取第一页（检查器按首页核）；各页尺寸以文件为准
+            width_px=first.width_px,
+            height_px=first.height_px,
+            width_mm=first.width_mm,
+            height_mm=first.height_mm,
+            vector=all(vectors),
+        )
+    ]
+
+
 def _export_produce(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     for context in (artifact_sources or {}).values():
         _assert_artifact_current(context)
     pdfbackend.selected()  # 退役 / 写错的后端名在这里就报错（BackendSelectionError），不进作业再说
+    if job.request.merge_pdf is not None:
+        return _export_produce_merged_pdf(job, tmp_dir, artifact_sources=artifact_sources)
     if job.request.scope == engine_exportreq.SCOPE_ORIGINAL:
         return _export_produce_original(
             job, tmp_dir, **({"artifact_sources": artifact_sources} if artifact_sources else {})
@@ -2975,20 +3061,23 @@ def _classify_export_error(exc: BaseException):
     return None
 
 
+def _artifact_object(src) -> dict:
+    return {
+        "id": src.figure_id,
+        "source_policy": src.source_policy,
+        "expected_source": src.expected_source,
+        "overrides": src.overrides,
+        "confirmed_reconstruction_sha256": src.confirmed_reconstruction_sha256,
+    }
+
+
 def _export_artifact_sources(req):
-    objects = (
-        req.canvas.objects
-        if req.canvas
-        else [
-            {
-                "id": req.original.figure_id,
-                "source_policy": req.original.source_policy,
-                "expected_source": req.original.expected_source,
-                "overrides": req.original.overrides,
-                "confirmed_reconstruction_sha256": req.original.confirmed_reconstruction_sha256,
-            }
-        ]
-    )
+    if req.canvas:
+        objects = req.canvas.objects
+    elif req.merge_pdf:
+        objects = [_artifact_object(p) for p in req.merge_pdf.pages]  # 每一页各有自己的来源上下文
+    else:
+        objects = [_artifact_object(req.original)]
     contexts = {}
     for obj in objects:
         if obj.get("hidden") or (

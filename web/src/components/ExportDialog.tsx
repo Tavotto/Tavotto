@@ -110,7 +110,9 @@ import {
 } from "@/lib/exportRequest";
 import { copiesSourceVerbatim as copiesVerbatimFromRoute, unavailablePanels, type ExportRoute } from "@/lib/exportRoute";
 import { fetchExportRoute, routeKeyOf, useExportRouteStore } from "@/store/exportRouteStore";
-import { buildBatchInput, type BatchShared } from "@/lib/exportBatchInput";
+import { buildBatchInput, buildMergedPdfInput, type BatchShared } from "@/lib/exportBatchInput";
+import { mergePdfPlan } from "@/lib/pdfPagesMerge";
+import { useScriptRunStore } from "@/store/scriptRunStore";
 import type { OverwritePolicy } from "@/lib/exportRequest";
 import { DEFAULT_PROFILE_ID, type PublicationProfile } from "@/lib/profile";
 import { profileName } from "@/lib/profileText";
@@ -224,6 +226,9 @@ function startFailureRaw(code: string, message: UiMessage): FailureRaw {
   if (known?.inline) return { id, title: known.inline, text: known.detail ?? "", code, detailOnly: true };
   return { id, title: ex("failTitle"), text, code };
 }
+
+/** 批里「合成的多页 PDF」那一项的占位 id（不是任何一张图的 figureId） */
+const MERGED_PDF_ID = "merged-pdf";
 
 const ex = (key: string, values?: Record<string, unknown>) =>
   translate(`export.${key}`, { ns: "dialogs", ...(values ?? {}) });
@@ -865,6 +870,24 @@ export function ExportDialog() {
    * 走的就是单张导出的那条路，没有第二套。
    */
   const batchMode = !single && scope === "original";
+  /**
+   * 「合成一个多页 PDF」（#1370）：多图档 + 勾着 PDF + 这几张图都出自脚本的同一份 `PdfPages` 才提供；
+   * 页序跟脚本走、界面上不能改；SVG 没有多页，所以只在 PDF 格式下出现。默认勾上，不勾 = 照旧每张图一个单页文件。
+   */
+  const scriptPdfPages = useScriptRunStore((s) => s.byScript);
+  const mergePlan = useMemo(
+    () =>
+      batchMode && formats.includes("pdf")
+        ? mergePdfPlan(
+            canvasFigures.map((f) => f.figureId),
+            runtimeAssets,
+            (script) => scriptPdfPages[script]?.pdfPages,
+          )
+        : null,
+    [batchMode, formats, canvasFigures, runtimeAssets, scriptPdfPages],
+  );
+  const [mergePdfChoice, setMergePdfChoice] = useState(true);
+  const mergeOn = mergePlan !== null && mergePdfChoice;
   const canStartBatch = batchMode && canvasFigures.length > 0 && formats.length > 0 && !busy && !locationUpdating;
   /**
    * 「每张图单独导出」的**冻结**：点「导出」之后分两步，且两步之间没有任何交错——
@@ -880,15 +903,15 @@ export function ExportDialog() {
     if (locationUpdating) return;
     writeExportDefaults({ formats, dpi: String(ppi), withProof: withReport, strictInspection: strict });
     const figs = canvasFigures;
-    if (
-      !beginExportBatch(
-        figs.map((f) => f.figureId),
-        figs.map((f) => f.name),
-      )
-    )
-      return;
+    // 合成多页 PDF：每张图的单页 PDF 不再单独出（并进那一个文件），其余格式照旧逐张导；只勾了 PDF 时批里只剩那一项
+    const merge = mergeOn ? mergePlan : null;
+    const otherFormats = merge ? formats.filter((f) => f !== "pdf") : [...formats];
+    const perFigure = otherFormats.length > 0 ? figs : [];
+    const jobIds = [...perFigure.map((f) => f.figureId), ...(merge ? [MERGED_PDF_ID] : [])];
+    const jobNames = [...perFigure.map((f) => f.name), ...(merge ? [`${merge.name}.pdf`] : [])];
+    if (!beginExportBatch(jobIds, jobNames)) return;
     const shared: BatchShared = {
-      formats: [...formats],
+      formats: otherFormats,
       ppi: String(ppi),
       transparent,
       strict,
@@ -896,9 +919,13 @@ export function ExportDialog() {
       profileId,
       catalog,
     };
-    void freezeBatch(figs, shared);
+    void freezeBatch(perFigure, shared, merge ? { plan: merge, figs } : null);
   };
-  const freezeBatch = async (figs: readonly ExportableFigure[], shared: BatchShared) => {
+  const freezeBatch = async (
+    figs: readonly ExportableFigure[],
+    shared: BatchShared,
+    merge: { plan: { name: string; figureIds: string[] }; figs: readonly ExportableFigure[] } | null,
+  ) => {
     const alive = () => {
       const b = useExportStore.getState().batch;
       return !!b && !b.done && b.phase === "prepare";
@@ -918,6 +945,12 @@ export function ExportDialog() {
       routes.set(f.figureId, { route, key: probe.ok ? routeKeyOf(probe.input) : null });
     }
     if (!alive()) return;
+    const failure = (why: Extract<ReturnType<typeof buildBatchInput>, { ok: false }>["reason"]) =>
+      why.kind === "unavailable"
+        ? ex(`scopeUnavailable.${why.code}`)
+        : why.kind === "filename"
+          ? ex(`filenameError.${why.code}`)
+          : formatMessage(engineErrorMsg(why.error as never));
     // ② 同一个同步块：下面到 `recordBatchFrozen` 之间没有 await
     const items = figs.map((f, pos) => {
       const got = routes.get(f.figureId);
@@ -925,15 +958,18 @@ export function ExportDialog() {
       // route 回答的是取它那一刻的面板编辑；等待期间编辑变了（键对不上）就按退路再建一次，不拿旧答案配新内容
       if (res.ok && got?.route && routeKeyOf(res.input) !== got.key) res = buildBatchInput(f, shared, null);
       if (res.ok) return { ok: true as const, pos, name: f.name, input: res.input };
-      const why = res.reason;
-      const reason =
-        why.kind === "unavailable"
-          ? ex(`scopeUnavailable.${why.code}`)
-          : why.kind === "filename"
-            ? ex(`filenameError.${why.code}`)
-            : formatMessage(engineErrorMsg(why.error as never));
-      return { ok: false as const, name: f.name, reason };
+      return { ok: false as const, name: f.name, reason: failure(res.reason) };
     });
+    if (merge) {
+      // 合成的那一项排在最后，与逐张项在同一个同步块里冻结（读的是同一个时刻的 store）
+      const name = `${merge.plan.name}.pdf`;
+      const res = buildMergedPdfInput(merge.figs, merge.plan, shared);
+      items.push(
+        res.ok
+          ? { ok: true as const, pos: items.length, name, input: res.input }
+          : { ok: false as const, name, reason: failure(res.reason) },
+      );
+    }
     recordBatchFrozen(items);
   };
 
@@ -1704,6 +1740,15 @@ export function ExportDialog() {
                   </div>
                 </FormRow>
               </fieldset>
+              {/* 合成一个多页 PDF（#1370）：只在这几张图出自脚本同一份 PdfPages、且勾着 PDF 时出现；页序跟脚本走 */}
+              {mergePlan && (
+                <FormRow>
+                  <label data-export-merge-pdf className="flex min-h-7 items-center gap-2 text-ink">
+                    <Checkbox checked={mergePdfChoice} onChange={() => setMergePdfChoice((v) => !v)} />
+                    <span>{ex("mergePdf", { name: `${mergePlan.name}.pdf`, count: mergePlan.figureIds.length })}</span>
+                  </label>
+                </FormRow>
+              )}
               {/* 勾着 EPS 却给不出（切回了画布 / 这张图没有脚本）：原因摆成可见的一行，
                   不只藏在灰掉的复选框的 title 里——一个灰掉的复选框解释不了自己 */}
               {formats.includes("eps") && !eps.ok && (

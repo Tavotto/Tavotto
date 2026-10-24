@@ -75,6 +75,8 @@ native 原保存只调用一次，返回值 / 异常不变；引擎自己的预�
 - **协议**：build 响应 / 探测结果里 PR1 已有的 `pdf_pages` 项加 `path` / `scope` / `page_stems`（按页序，同一张图写多页时重复）/ `complete`；
   加字段，不升协议版本（ADR 0003 §1）。stem 取法与描述符都没变，`DESCRIPTOR_VERSION` 不再升。
 
+导出：同一份 `PdfPages` 的几张图可在导出对话框里合成一个多页 PDF（页序取 `page_stems`），请求形状与合并细则见 `docs/rules/backend/export-pipeline.md`「多页 PDF」，不改本节任何条款。
+
 看护 `tests/test_pdfpages_record_pages.py`（safe / 浏览器 / 写回守卫）、`tests/bridge/test_bridge_pdfpages_pages.py`（native）。
 
 ## 后续启用的门槛

@@ -1771,6 +1771,20 @@ export type ExportObject =
  * 也不许在第二个 API 上把同一批参数再抄一遍——那正是"预检按一套规矩、
  * 导出按另一套"的来源。
  */
+/** `scope=original` 的一张图的来源（`original` 段，以及多页 PDF 里每一页）。**没有 x/y/w/h，也没有页面尺寸** */
+export type ExportOriginalSource = ArtifactRequestFields & {
+  figure_id: string
+  figure_snapshot?: FigureSnapshot
+  overrides?: { gid: string; prop: string; value: unknown }[]
+  w_mm?: number | null
+  h_mm?: number | null
+  px_w?: number | null
+  px_h?: number | null
+  source_kind?: string
+  /** 画布上设了、原图导出**不套用**的变换（说出来，不静默忽略） */
+  ignored?: string[]
+}
+
 export interface ExportRequest {
   scope: 'original' | 'canvas'
   formats: string[]
@@ -1788,18 +1802,12 @@ export interface ExportRequest {
   /** `scope=canvas`：页面 + z 序对象（底 → 顶） */
   canvas?: { page_w_mm: number; page_h_mm: number; objects: ExportObject[] }
   /** `scope=original`：那一张图自己。**没有 x/y/w/h，也没有页面尺寸** */
-  original?: ArtifactRequestFields & {
-    figure_id: string
-    figure_snapshot?: FigureSnapshot
-    overrides?: { gid: string; prop: string; value: unknown }[]
-    w_mm?: number | null
-    h_mm?: number | null
-    px_w?: number | null
-    px_h?: number | null
-    source_kind?: string
-    /** 画布上设了、原图导出**不套用**的变换（说出来，不静默忽略） */
-    ignored?: string[]
-  }
+  original?: ExportOriginalSource
+  /**
+   * `scope=original` 且格式恰为 `pdf`：把若干张图合成**一个多页 PDF**（#1370，PdfPages 导出）。`pages` 按页序给每一页
+   * 的来源（形状同 `original`；同一张图出现多次 = 这一页重复放）。此时**不带** `original`（第一页的来源只有 `pages[0]` 一处）。
+   */
+  merge_pdf?: { pages: ExportOriginalSource[] }
   /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
   style_check_report?: Record<string, unknown>
   /**

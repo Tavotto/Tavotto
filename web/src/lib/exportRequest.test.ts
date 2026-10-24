@@ -408,3 +408,32 @@ describe('SVG（X03）', () => {
     expect(built.request.ppi).toBe(300)
   })
 })
+
+describe('合成多页 PDF（#1370）', () => {
+  const pages = [
+    { figureId: 'A.pdf', panel: null, spec: null },
+    { figureId: 'B.pdf', panel: null, spec: null },
+    { figureId: 'A.pdf', panel: null, spec: null },
+  ]
+
+  it('mergePages 变成 merge_pdf.pages（按页序、重复保留），请求里没有 original', () => {
+    const { request } = buildExportRequest(
+      inputOf({ scope: 'original', figureId: 'A.pdf', formats: ['pdf'], filename: 'all_samples', mergePages: pages }),
+    )
+    expect(request.original).toBeUndefined()
+    expect(request.merge_pdf?.pages.map((p) => p.figure_id)).toEqual(['A.pdf', 'B.pdf', 'A.pdf'])
+    expect(request.filename).toBe('all_samples')
+  })
+
+  it('不给 mergePages：与从前一样，只有 original', () => {
+    const { request } = buildExportRequest(inputOf({ scope: 'original', figureId: 'A.pdf', formats: ['pdf'] }))
+    expect(request.merge_pdf).toBeUndefined()
+    expect(request.original?.figure_id).toBe('A.pdf')
+  })
+
+  it('页序进快照指纹：换了页序就是另一个导出', () => {
+    const mk = (m: typeof pages) =>
+      buildExportRequest(inputOf({ scope: 'original', figureId: 'A.pdf', formats: ['pdf'], mergePages: m })).revision
+    expect(mk(pages)).not.toBe(mk([pages[1], pages[0], pages[2]]))
+  })
+})
