@@ -119,6 +119,9 @@ order: 300
 是它的被去掉，同目录的普通 savefig 原件照常写回。两道：`_write_source_files` 在 `_write_back_prepare` 之后用**热会话**的摘要
 早拒（连一次性 worker 都不起，不必把脚本全量重放），`_own_write_back_targets` 用重放 worker 的摘要再核（热会话没有摘要的情形），
 都在任何临时文件产生之前、原件零改动。**只写了 1 页的 PdfPages 同样拒绝**：它不是任何图的 savefig 原件，覆盖它抹掉的是脚本的整份输出。
+带画布标注的写回要先画在 PDF 上、PNG 再由它栅格化：同名 PDF 被守卫（或「别的图的原件」那条）去掉后没有载体，
+`_own_write_back_targets(need_pdf=True)` 抛对应的 409（`write_back_multipage_pdf` / `write_back_foreign_file`，指向被去掉的 PDF），
+**不是**只写 PNG 并丢标注——前端写回成功后会把标注对象从画布摘掉，等于静默丢编辑；以前这里走到 `assert pdf_tmp is not None` 成 500（Codex #1394 P2）。
 保守取舍：不分辨「PdfPages 之后又被同路径 savefig 覆盖」的病态顺序，一律拒（引导去导出，不丢数据）。前端在 `UpdateSourceButton`
 的失败出口挂一条通知轨胶囊（`lib/writeBackMultipageNotice.ts`：一句话 + 「导出」，打开现有导出对话框；不是横条）。
 看护 `tests/test_pdfpages_record_pages.py`、`web/src/lib/writeBackMultipageNotice.test.ts`。

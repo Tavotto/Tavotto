@@ -8097,7 +8097,9 @@ def _refuse_pdf_pages_source(worker, src: Path) -> None:
         raise WriteBackMultipagePdfError(src.name)
 
 
-def _own_write_back_targets(worker, stem: str, src: Path, targets: list[Path]) -> list[Path]:
+def _own_write_back_targets(
+    worker, stem: str, src: Path, targets: list[Path], *, need_pdf: bool = False
+) -> list[Path]:
     """写回目标里去掉**另一张捕获图**的原件（它在这次运行里写的文件，热会话的 build 描述符）。
 
     主语是「别的图写的」，不是「这张图没存过的格式」：磁盘上与它同名、但这次运行里没有任何图写过的文件
@@ -8122,7 +8124,19 @@ def _own_write_back_targets(worker, stem: str, src: Path, targets: list[Path]) -
         raise WriteBackMultipagePdfError(src.name)
     if is_foreign(src):
         raise WriteBackForeignFileError(src.name)
-    return [p for p in targets if not is_foreign(p) and not is_pdf_pages(p)]
+    kept = [p for p in targets if not is_foreign(p) and not is_pdf_pages(p)]
+    if need_pdf and not any(p.suffix.lower() == ".pdf" for p in kept):
+        # 带画布标注的写回要先画在 PDF 上、PNG 再由它栅格化：同名 PDF 被上面的守卫去掉了，就没有可画的载体。
+        # 不能只写 PNG 并丢掉标注——前端写回成功后会把这些标注对象从画布摘掉，等于静默丢用户的编辑；
+        # 受控 409（原件零改动、还没建任何临时文件），文案同样指向被去掉的那份 PDF
+        dropped = next((p for p in targets if p.suffix.lower() == ".pdf"), None)
+        if dropped is not None:
+            raise (
+                WriteBackMultipagePdfError(dropped.name)
+                if is_pdf_pages(dropped)
+                else WriteBackForeignFileError(dropped.name)
+            )
+    return kept
 
 
 def _write_back_format_error(src: Path) -> WriteBackFormatError | None:
@@ -8619,7 +8633,7 @@ def _write_source_files(
         resp = fresh.override(stem, patches)
         # 同一 stem 下别的图写的文件不是写回目标：按这次全量重放（一次性 worker 刚 build）的描述符收窄，
         # 在任何临时文件产生之前
-        targets = _own_write_back_targets(fresh, stem, src, targets)
+        targets = _own_write_back_targets(fresh, stem, src, targets, need_pdf=bool(annotations))
         for w in resp.get("warnings") or []:
             if w not in warnings:
                 warnings.append(str(w))

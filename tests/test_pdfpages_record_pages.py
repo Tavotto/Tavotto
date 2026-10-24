@@ -398,3 +398,50 @@ def test_write_back_unaffected_when_the_script_wrote_no_pdf_pages(client, tmp_pa
     resp = client.post("/api/engine/update_source", json={"id": "Fig1.pdf", "patches": []})
     assert resp.status_code == 200, resp.get_json()
     assert (figs / "Fig1.pdf").read_bytes() == b"NEW-pdf"
+
+
+ANNOTATION = [{"type": "text", "text": "a", "x_mm": 1, "y_mm": 1, "size_pt": 8, "color": "#000000"}]
+
+
+def test_annotated_png_write_back_beside_a_multipage_pdf_is_a_controlled_409(
+    client, tmp_path, monkeypatch
+):
+    """Codex #1394 P2：PNG 是自己的原件、同 stem 的 PDF 是 PdfPages 写的。带标注写回要先画在 PDF 上，
+    守卫把 PDF 去掉后没有载体——以前走到 `assert pdf_tmp is not None` 成 500；现在是受控 409，不建任何临时文件，
+    PNG / PDF 都零改动（不能只写 PNG 而丢标注：前端写回成功后会把标注对象从画布摘掉）。"""
+    figs, hot, fresh, discarded, wb = _pair(tmp_path, monkeypatch, fresh_pages=MULTI)
+    before = {p: (figs / p).read_bytes() for p in ("Fig1.pdf", "Fig1.png")}
+    resp = client.post(
+        "/api/engine/update_source",
+        json={"id": "Fig1.png", "patches": [], "annotations": ANNOTATION},
+    )
+    assert resp.status_code == 409, resp.get_data(as_text=True)
+    body = resp.get_json()
+    assert body["code"] == "write_back_multipage_pdf" and body["params"] == {"file": "Fig1.pdf"}
+    assert {p: (figs / p).read_bytes() for p in before} == before
+    assert wb._leftovers(figs) == []
+    assert "pdf" not in fresh.calls and "png" not in fresh.calls, "一个临时文件都不该导出"
+    assert discarded == [fresh]
+
+
+def test_annotated_png_write_back_beside_another_figures_pdf_is_a_controlled_409_too(
+    client, tmp_path, monkeypatch
+):
+    """同一处断言的另一条路：PDF 是同脚本里另一张图的原件（`write_back_foreign_file`），以前同样 500。"""
+    import test_write_back as wb
+
+    figs = wb._figs(tmp_path)
+    hot, fresh = wb._pair(figs, tmp_path)
+    fresh.last_build_descriptors = [
+        {"stem": "Fig1", "original_artifact": "Fig1.png", "savefig_calls": [{"format": "png"}]},
+        {"stem": "Fig1-2", "original_artifact": "Fig1.pdf", "savefig_calls": [{"format": "pdf"}]},
+    ]
+    wb._use(monkeypatch, hot, fresh)
+    resp = client.post(
+        "/api/engine/update_source",
+        json={"id": "Fig1.png", "patches": [], "annotations": ANNOTATION},
+    )
+    assert resp.status_code == 409, resp.get_data(as_text=True)
+    assert resp.get_json()["code"] == "write_back_foreign_file"
+    assert wb._leftovers(figs) == []
+    assert "png" not in fresh.calls
