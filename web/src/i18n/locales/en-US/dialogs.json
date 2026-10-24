@@ -1907,8 +1907,13 @@
         "kimiCode": "Kimi Code plan",
         "codingPlan": "Coding Plan",
         "account": "Account sign-in",
-        "hintKey": "Enter your {{name}} key",
-        "hintLogin": "Sign in with {{name}}"
+        "hintKey": "Enter your {{name}} API key",
+        "hintLogin": "Sign in with {{name}}",
+        "hintKimiCode": "Use your Kimi Code plan key",
+        "hintCodingPlan": "Use your Coding Plan key",
+        "hintAccount": "Sign in with your {{name}} account",
+        "hintChatgpt": "Sign in with your ChatGPT subscription",
+        "hintClaude": "Sign in with your Claude subscription"
       },
       "back": "Back"
     }

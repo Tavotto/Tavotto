@@ -13,6 +13,7 @@ import { useAiStore } from '@/store/aiStore'
 import { connectCapsOf, vendor } from '../testCaps'
 import { BrandLines } from './BrandLines'
 import { ConnectAiDialog } from './ConnectAiDialog'
+import { methodHint } from './vendors'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -100,6 +101,26 @@ describe('版式：宽矩形 + 左侧品牌画', () => {
   })
 })
 
+describe('二级卡片的说明写产品名', () => {
+  const hint = (v: AiVendor, i: number) => methodHint(v, v.methods![i])
+  it('订阅看登录家族、Key 看 label_key、账号登录写厂商名；不按厂商 id', () => {
+    expect(hint(OPENAI, 0)).toBe('用 ChatGPT 订阅登录')
+    expect(hint(CLAUDE, 0)).toBe('用 Claude 订阅登录')
+    expect(hint(OPENAI, 1)).toBe('填写 OpenAI API Key')
+    const kimi = vendor('moonshot', { label: 'Kimi', methods: [
+      { id: 'a', kind: 'key', label_key: 'method.apiKey', available: true },
+      { id: 'c', kind: 'key', label_key: 'method.kimiCode', available: true },
+    ] })
+    expect(hint(kimi, 1)).toBe('用 Kimi Code 会员的 Key')
+    const bailian = vendor('dashscope', { methods: [{ id: 'p', kind: 'key', label_key: 'method.codingPlan', available: true }] })
+    expect(hint(bailian, 0)).toBe('用 Coding Plan 的 Key')
+    const mm = vendor('minimax', { label: 'MiniMax', methods: [{ id: 'o', kind: 'oauth', label_key: 'method.account', available: true }] })
+    expect(hint(mm, 0)).toBe('用 MiniMax 账号登录')
+    // 同样是订阅登录、换一个厂商 id，只要家族是 codex 仍写 ChatGPT
+    expect(hint(vendor('whatever', { methods: [{ id: 's', kind: 'login', agent: 'codex', available: true }] }), 0)).toBe('用 ChatGPT 订阅登录')
+  })
+})
+
 describe('二级卡片：一家厂商有多种连接方式', () => {
   it('多种方式：点「连接」进二级页（大 logo + 厂商名 + 返回），每种方式一张卡；返回回到列表', async () => {
     await render(<ConnectAiDialog open onClose={() => {}} />)
@@ -111,9 +132,9 @@ describe('二级卡片：一家厂商有多种连接方式', () => {
     const cards = [...document.body.querySelectorAll<HTMLButtonElement>('[data-connect-method]')]
     expect(cards.map((c) => c.dataset.connectMethod)).toEqual(['sub', 'api'])
     expect(cards[0].textContent).toContain(cx('method.subscription'))
-    expect(cards[0].textContent).toContain(cx('method.hintLogin', { name: 'OpenAI' }))
+    expect(cards[0].textContent).toContain('用 ChatGPT 订阅登录')
     expect(cards[1].textContent).toContain(cx('method.apiKey'))
-    expect(cards[1].textContent).toContain(cx('method.hintKey', { name: 'OpenAI' }))
+    expect(cards[1].textContent).toContain('填写 OpenAI API Key')
     expect(q('[data-connect-vendor]')).toBeNull()
     await click(q('[data-connect-back]'))
     expect(q('[data-connect-step]')).toBeNull()
@@ -166,7 +187,12 @@ describe('二级卡片：一家厂商有多种连接方式', () => {
 
 function stubCanvas() {
   const ctx = new Proxy(
-    { getImageData: () => ({ data: new Uint8ClampedArray(96 * 96 * 4).fill(255) }), clearRect: vi.fn() } as Record<string, unknown>,
+    {
+      getImageData: () => ({ data: new Uint8ClampedArray(96 * 96 * 4).fill(255) }),
+      createLinearGradient: () => ({ addColorStop() {} }),
+      measureText: () => ({ width: 10 }),
+      clearRect: vi.fn(),
+    } as Record<string, unknown>,
     { get: (t, k) => (k in t ? t[k as string] : () => undefined), set: () => true },
   )
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as never)

@@ -1889,8 +1889,13 @@
         "kimiCode": "Kimi Code 会员",
         "codingPlan": "Coding Plan",
         "account": "账号登录",
-        "hintKey": "填写 {{name}} 的 Key",
-        "hintLogin": "用 {{name}} 登录"
+        "hintKey": "填写 {{name}} API Key",
+        "hintLogin": "用 {{name}} 登录",
+        "hintKimiCode": "用 Kimi Code 会员的 Key",
+        "hintCodingPlan": "用 Coding Plan 的 Key",
+        "hintAccount": "用 {{name}} 账号登录",
+        "hintChatgpt": "用 ChatGPT 订阅登录",
+        "hintClaude": "用 Claude 订阅登录"
       },
       "back": "返回"
     }

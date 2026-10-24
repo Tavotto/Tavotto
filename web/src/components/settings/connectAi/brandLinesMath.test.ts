@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest'
 import {
   TIER_COUNT,
   brightestRegions,
+  lineCount,
+  logoBox,
+  smoothstep,
   flowNoise,
   lumaAt,
   lumaFromRgba,
@@ -101,10 +104,28 @@ describe('springStep / repelTarget', () => {
     expect(Math.abs(v)).toBeLessThan(0.05)
   })
   it('鼠标左边的线往左、右边的往右，越近推得越远，超出半径为 0', () => {
-    expect(repelTarget(90, 100, 70, 26)).toBeLessThan(0)
-    expect(repelTarget(110, 100, 70, 26)).toBeGreaterThan(0)
-    expect(Math.abs(repelTarget(105, 100, 70, 26))).toBeGreaterThan(Math.abs(repelTarget(150, 100, 70, 26)))
-    expect(repelTarget(300, 100, 70, 26)).toBe(0)
+    expect(repelTarget(90, 100, 44, 12)).toBeLessThan(0)
+    expect(repelTarget(110, 100, 44, 12)).toBeGreaterThan(0)
+    expect(Math.abs(repelTarget(105, 100, 44, 12))).toBeGreaterThan(Math.abs(repelTarget(130, 100, 44, 12)))
+    expect(repelTarget(300, 100, 44, 12)).toBe(0)
+  })
+  it('位移有上限（线被拨开、不是被推空），并随距离平滑衰减', () => {
+    for (let x = 100; x < 150; x += 0.5) expect(Math.abs(repelTarget(x, 100, 44, 12))).toBeLessThanOrEqual(12)
+    expect(repelTarget(100, 100, 44, 12)).toBe(12)
+    expect(smoothstep(0)).toBe(0)
+    expect(smoothstep(1)).toBe(1)
+    expect(smoothstep(0.5)).toBe(0.5)
+  })
+  it('弹回有轻微过冲（欠阻尼），但很快收住', () => {
+    let p = 12
+    let v = 0
+    let min = 0
+    for (let i = 0; i < 120; i++) {
+      ;[p, v] = springStep(p, v, 0, 1 / 60)
+      min = Math.min(min, p)
+    }
+    expect(min).toBeLessThan(0)
+    expect(min).toBeGreaterThan(-4)
   })
 })
 
@@ -120,5 +141,31 @@ describe('flowNoise', () => {
     expect(lo).toBeGreaterThanOrEqual(0)
     expect(hi).toBeLessThanOrEqual(1)
     expect(flowNoise(1, 2, 0)).not.toBe(flowNoise(1, 2, 1))
+  })
+})
+
+describe('logoBox：标志的版式', () => {
+  it('保持正方形（品牌 viewBox 的宽高比）、水平居中、中心在中部偏上，标志本身占左栏宽的约 60–65%', () => {
+    const b = logoBox(320, 480)
+    expect(b.x + b.s / 2).toBeCloseTo(160, 5)
+    expect(b.y + b.s / 2).toBeLessThan(240)
+    // 标志只占 viewBox 的约 79%
+    const ratio = (b.s * 0.79) / 320
+    expect(ratio).toBeGreaterThan(0.58)
+    expect(ratio).toBeLessThan(0.66)
+    expect(b.y).toBeGreaterThan(0)
+    expect(b.y + b.s).toBeLessThan(480)
+  })
+  it('画布很矮时按高度收小，不顶出边', () => {
+    const b = logoBox(320, 200)
+    expect(b.s).toBeLessThanOrEqual(160)
+  })
+})
+
+describe('lineCount：28–34 根', () => {
+  it('随画布宽自适应并夹在范围内', () => {
+    expect(lineCount(320)).toBe(30)
+    expect(lineCount(100)).toBe(28)
+    expect(lineCount(900)).toBe(34)
   })
 })

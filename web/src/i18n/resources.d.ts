@@ -1856,7 +1856,12 @@ export default interface Resources {
           "account": "账号登录",
           "apiKey": "API Key",
           "codingPlan": "Coding Plan",
-          "hintKey": "填写 {{name}} 的 Key",
+          "hintAccount": "用 {{name}} 账号登录",
+          "hintChatgpt": "用 ChatGPT 订阅登录",
+          "hintClaude": "用 Claude 订阅登录",
+          "hintCodingPlan": "用 Coding Plan 的 Key",
+          "hintKey": "填写 {{name}} API Key",
+          "hintKimiCode": "用 Kimi Code 会员的 Key",
           "hintLogin": "用 {{name}} 登录",
           "kimiCode": "Kimi Code 会员",
           "subscription": "订阅登录"

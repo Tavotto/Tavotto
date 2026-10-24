@@ -51,6 +51,19 @@ export function methodName(m: AiVendorMethod): string {
   return m.kind === 'key' ? cx('method.apiKey') : m.kind === 'login' ? cx('method.subscription') : cx('method.account')
 }
 
-/** 方式的一句说明（「用 ChatGPT 登录」「填写 OpenAI 的 Key」） */
-export const methodHint = (v: AiVendor, m: AiVendorMethod): string =>
-  m.kind === 'key' ? cx('method.hintKey', { name: vendorName(v) }) : cx('method.hintLogin', { name: vendorName(v) })
+/**
+ * 方式的一句说明：说**产品**而不是厂商（「用 ChatGPT 订阅登录」「用 Kimi Code 会员的 Key」）。
+ * 产品由方式自己决定——订阅登录看它的登录家族（`agent`），Key 类看 `label_key`——不按厂商 id 硬编码。
+ */
+export function methodHint(v: AiVendor, m: AiVendorMethod): string {
+  const name = vendorName(v)
+  if (m.kind === 'key') {
+    if (m.label_key === 'method.kimiCode') return cx('method.hintKimiCode')
+    if (m.label_key === 'method.codingPlan') return cx('method.hintCodingPlan')
+    return cx('method.hintKey', { name })
+  }
+  if (m.kind === 'oauth') return cx('method.hintAccount', { name })
+  if (m.agent === 'codex') return cx('method.hintChatgpt')
+  if (m.agent === 'claude') return cx('method.hintClaude')
+  return cx('method.hintLogin', { name })
+}
