@@ -161,7 +161,11 @@
     "techDetails": "Technical details",
     "unconfirmedBody": "This request may already be running. Check the result first.",
     "unconfirmedGoneBody": "The figure that sent this is no longer on the canvas. You can still check the result.",
-    "unconfirmedTitle": "Sent, not yet confirmed"
+    "unconfirmedTitle": "Sent, not yet confirmed",
+    "connectAi": "Connect AI",
+    "noAi": "No AI connected yet.",
+    "connectMore": "Connect more AI…",
+    "aiModel": "AI & model"
   },
   "process": {
     "thought": "Thought for {{duration}}",

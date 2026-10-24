@@ -8,6 +8,10 @@ Tavotto 自身的许可见 `LICENSE`。下面是随源码内联的第三方素�
 [lobehub/lobe-icons](https://github.com/lobehub/lobe-icons)（`packages/static-svg/icons/*.svg` 的单色版，
 只取 path 数据）。涉及：anthropic、bailian、deepseek、kimi、minimax、moonshot、openai、opencode、vercel、zai、zhipu。
 
+「连接 AI」界面用的**彩色**标志在 `web/src/components/settings/brandLogoData.ts`，取自同一仓库同一提交（ab8cbcc）的
+`packages/static-svg/icons/<name>-color.svg`（path 与渐变），涉及：bailian、claude、deepseek、gemini、kimi、
+minimax、qwen、zhipu；许可证文本同下。这些标志是各厂商的商标，仅用于在界面上指认对应服务，不表示与其有任何关联或背书。
+
 ```
 MIT License
 

@@ -27,6 +27,10 @@ async function openAgentSettings(page: Page, baseURL: string) {
   // 分区 id 是持久化格式的一部分（AiPanel 的「打开设置」按它跳转），
   // 比导航项上那句会被改名的文案稳得多
   await dialog.getByRole('navigation').locator('[data-section="ai"]').click()
+  // 「连接 AI」视图（后端给了 vendors / connections）下，执行器清单与诊断收在页底「高级」里：
+  // 先展开它。老后端没有这块，`count()` 为 0 就原样往下走（这是导航，不是断言）
+  const advanced = dialog.locator('[data-connect-advanced] > summary')
+  if ((await advanced.count()) > 0) await advanced.click()
   return dialog
 }
 

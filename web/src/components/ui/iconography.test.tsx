@@ -58,6 +58,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/canvas/PageEdgeResize.tsx': 1, // 拖页面边的尺寸标注（引出线 + 双箭头，画布叠加层）
   '/src/canvas/IssueSpotlight.tsx': 1, // 定位舞台灯的暗幕与受光遮罩（画布叠加层）
   '/src/components/ui/BrandMark.tsx': 1, // 品牌标（唯一出处 lib/brand.ts 的图形侧）
+  '/src/components/settings/BrandLogo.tsx': 2, // 厂商标志（多色 / 渐变，图形数据在 brandLogoData.ts）+ 没有彩色版的厂商的单色图形
   '/src/components/inspector/controls/TickAndSpineDiagram.tsx': 1, // 四边刻度示意图（网格开关那枚小 svg 已随 Toggle 回收）
   '/src/components/inspector/controls/TickTaskCard.tsx': 1, // 刻度朝向示意（in/out/both）
   '/src/components/inspector/controls/HatchPicker.tsx': 1, // 填充纹样样本
@@ -87,7 +88,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
 }
 
 /** `size` 是别的意思（外框边长 / 加载器尺寸）的组件，数字字面量放行 */
-const NON_ICON_SIZED = new Set(['BrandMark', 'AgentIcon', 'VendorIcon'])
+const NON_ICON_SIZED = new Set(['BrandMark', 'AgentIcon', 'VendorIcon', 'BrandLogo'])
 
 /** 图标集里不是图标、但允许引入的名字 */
 const NON_ICON_EXPORTS = new Set(['ICON_DEFS', 'IconComponent', 'IconProps', 'IconDef', 'IconName'])

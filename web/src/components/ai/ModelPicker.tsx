@@ -2,12 +2,14 @@ import type { ReactElement } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AgentIcon } from '@/components/settings/AgentIcon'
 import { VendorIcon } from '@/components/settings/VendorIcon'
-import { ChevronDown } from '@/components/ui/icons'
+import { ChevronDown, Plus } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSub } from '@/components/ui/Menu'
+import { Menu, MenuItem, MenuRadioGroup, MenuRadioItem, MenuSeparator, MenuSub } from '@/components/ui/Menu'
+import { BrandLogo } from '@/components/settings/BrandLogo'
 import { t as translate } from '@/i18n'
-import type { AiAgentCaps } from '@/lib/api'
-import { modelDetail, useAiStore } from '@/store/aiStore'
+import type { AiAgentCaps, AiConnection } from '@/lib/api'
+import { connectionInfo, modelDetail, useAiStore } from '@/store/aiStore'
+import { requestConnectAi } from '@/store/connectAiStore'
 
 /**
  * 「执行器与模型」两级选择器（beta 0.19 反馈）。
@@ -138,6 +140,111 @@ export function ModelPicker({
           )
         })}
       </div>
+    </Menu>
+  )
+}
+
+/** 连接的图标：彩色 logo 坐在浅色圆角底上；菜单项与触发器各用一个稳定的组件类型（避免每次渲染重建） */
+const logoTypes = new Map<string, () => ReactElement>()
+const logoFor = (logo: string) => {
+  let c = logoTypes.get(logo)
+  if (!c) {
+    c = () => <BrandLogo logo={logo} size={16} />
+    logoTypes.set(logo, c)
+  }
+  return c
+}
+
+/** 一个连接下可选的型号 id；当前值（记忆或默认）不在清单里时照实放在最前，不静默换掉 */
+function connectionModels(c: AiConnection, current: string | null): string[] {
+  const list = [...c.models]
+  if (current && !list.includes(current)) list.unshift(current)
+  return list
+}
+
+/**
+ * 「连接 AI」视图下的两级选择器：一级 = 已连接的 AI（彩色 logo + 厂商名），二级 = 该连接的型号；
+ * 底部「＋ 连接更多 AI…」打开连接小弹窗。**只是呈现**：选中一项写 aiStore 的 `connection` 与
+ * `models[连接 id]`（与旧选择器同一套记忆机制，切回另一个连接时它自己的型号记忆还在）。
+ * 型号清单为空 = 跟随默认：这一家没有第二级，选中即切换连接，绝不伪造型号。
+ */
+export function ConnectionModelPicker({
+  connections,
+  active,
+  model,
+}: {
+  connections: AiConnection[]
+  active: string
+  model: string
+}) {
+  useTranslation('ai')
+  const cur = connections.find((c) => c.id === active)
+  if (!cur) return null
+  return (
+    <Menu
+      align="start"
+      side="bottom"
+      width={248}
+      trigger={
+        <button
+          type="button"
+          data-ai-model-picker="trigger"
+          aria-label={ai('panel.aiModel')}
+          className="focus-visible:focus-ring flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-left text-xs text-ink outline-none hover:bg-surface-hover data-[state=open]:bg-surface-hover"
+        >
+          <BrandLogo logo={cur.logo} size={16} />
+          <span className="min-w-0 flex-1 truncate">
+            {model ? `${cur.label} · ${modelDetail(connectionInfo(cur), model)?.display_name || model}` : cur.label}
+          </span>
+          <ChevronDown size={ICON_SIZE.xs} aria-hidden className="shrink-0 opacity-70" />
+        </button>
+      }
+    >
+      <div data-ai-model-menu="connections">
+        {connections.map((c) => {
+          const isActive = c.id === active
+          const Icon = logoFor(c.logo)
+          if (c.models.length === 0 && !(isActive && model)) {
+            return (
+              <MenuItem
+                key={c.id}
+                icon={Icon}
+                data-ai-connection={c.id}
+                onSelect={() => useAiStore.getState().setConnection(c.id)}
+              >
+                {c.label}
+              </MenuItem>
+            )
+          }
+          return (
+            <MenuSub key={c.id} label={c.label} icon={Icon} width={264} data-ai-connection={c.id}>
+              <MenuRadioGroup
+                data-ai-model-menu={c.id}
+                value={isActive ? model : ''}
+                onValueChange={(m) => {
+                  useAiStore.getState().setConnection(c.id)
+                  useAiStore.getState().setModel(c.id, m)
+                }}
+              >
+                {connectionModels(c, isActive ? model : null).map((m) => (
+                  <MenuRadioItem
+                    key={m}
+                    value={m}
+                    data-ai-model-item={m}
+                    tag={m === c.default_model ? ai('panel.effortDefault') : undefined}
+                  >
+                    {modelDetail(connectionInfo(c), m)?.display_name || m}
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuSub>
+          )
+        })}
+      </div>
+      <MenuSeparator />
+      <MenuItem icon={Plus} data-ai-connect-more onSelect={() => requestConnectAi()}>
+        {ai('panel.connectMore')}
+      </MenuItem>
     </Menu>
   )
 }

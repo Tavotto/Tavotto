@@ -22,10 +22,13 @@ import { describeRequestFailure } from '@/lib/noticeText'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import {
   agentById,
-  agentDisplayName,
   effectiveAgent,
+  effectiveConnection,
+  hasConnectionView,
+  hasUsableAi,
+  readyConnections,
   usableAgents,
-  type AiCapabilities,
+  type AiAgentCaps,
   type ManifestElement,
 } from '@/lib/api'
 import { cn, modKey } from '@/lib/utils'
@@ -33,7 +36,7 @@ import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
 import { ApiError } from '@/lib/api'
-import { AiLedgerError, effortsForModel, isDataFigureSession, isOpenSession, isSessionOf, modelDetail, resolveEffort, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
+import { AiLedgerError, connectionInfo, effortsForModel, isDataFigureSession, isOpenSession, isSessionOf, modelDetail, resolveEffort, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
@@ -49,7 +52,9 @@ import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
 import { Tip } from '../ui/Tooltip'
 import { TaskHistory } from './TaskHistory'
-import { FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
+import { BrandLogo } from '@/components/settings/BrandLogo'
+import { requestConnectAi } from '@/store/connectAiStore'
+import { ConnectionModelPicker, FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
 import { INSTRUCTION_MAX_BYTES } from '@/lib/aiDraft'
 import { currentProjectId } from '@/lib/session'
 import { useAiDraft } from './useAiDraft'
@@ -231,16 +236,21 @@ function useAgentChoice() {
   const caps = useAiStore((s) => s.caps)
   const models = useAiStore((s) => s.models)
   const efforts = useAiStore((s) => s.efforts)
-  const usable = usableAgents(caps)
-  const active = effectiveAgent(agent, caps)
-  const cur = agentById(caps, active)
+  const connection = useAiStore((s) => s.connection)
+  // 「连接 AI」视图（后端给了 connections）：按连接选；老后端退回按执行器选
+  const view = hasConnectionView(caps)
+  const conns = view ? readyConnections(caps) : []
+  const activeConn = view ? effectiveConnection(connection, caps) : null
+  const usable = view ? [] : usableAgents(caps)
+  const active = activeConn ? activeConn.id : view ? null : effectiveAgent(agent, caps)
+  const cur = activeConn ? connectionInfo(activeConn) : agentById(caps, active)
   const model = (active && models[active]) ?? cur?.default_model ?? ''
   // 档位清单、当前档都跟着**型号**走：型号自己声明了就用它的，切型号时记着的档位不被
   // 新型号支持就回落到新型号的默认档；永远不产出清单外的值
   const effortList: string[] = effortsForModel(cur, model)
   const effort = resolveEffort(cur, model, active ? efforts[active] : undefined)
   const effortIndex = Math.max(0, effortList.indexOf(effort))
-  return { caps, usable, active, cur, model, effortList, effortIndex }
+  return { caps, usable, conns, activeConn, active, cur, model, effortList, effortIndex }
 }
 
 /**
@@ -376,7 +386,7 @@ function AssistantPanelBody() {
   const finishingHere = !runningHere && mine.some(isOpenSession)
   // 一个可用的编码 Agent 都没有：**探测出结果之后**才这么说
   // （caps 还是 null 时是「正在检测」，那时不该把输入区锁上）
-  const noAgent = caps !== null && usableAgents(caps).length === 0
+  const noAgent = caps !== null && !hasUsableAi(caps)
   // 有一条提交还没落定（在路上 / 未确认 / 没收到待重发）= 不许再发新的：未确认时后端可能已经在执行它
   // 账本恢复没成功之前（读着 / 读失败）不许发：原任务可能已结束，放行会用新 id 把同一条修改再执行一遍
   const canSend = !!panel && !noAgent && !submission && !runningHere && !finishingHere && ledgerState === 'ok'
@@ -824,12 +834,12 @@ function AssistantPanelBody() {
               data-ai-no-agent
               className="mb-2"
               action={
-                <Button size="sm" onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}>
-                  {ai('panel.openAiSettings')}
+                <Button size="sm" onClick={() => requestConnectAi()}>
+                  {hasConnectionView(caps) ? ai('panel.connectAi') : ai('panel.openAiSettings')}
                 </Button>
               }
             >
-              {ai('panel.noCli')}
+              {hasConnectionView(caps) ? ai('panel.noAi') : ai('panel.noCli')}
             </Notice>
           )}
           {/* 草稿提示：安静的一行字，不是横条——不挤页面，打字或发送即消失 */}
@@ -1019,7 +1029,7 @@ const COMPOSER_PILL_CLASS = cn(
 
 function AgentPills({ panel, ...rest }: Omit<TargetProps, 'panel'> & { panel: PanelObject | null }) {
   useTranslation('ai')
-  const { caps, active, cur, model } = useAgentChoice()
+  const { active, cur, model } = useAgentChoice()
   if (!panel || !active || !cur) return null
   return (
     <>
@@ -1029,7 +1039,7 @@ function AgentPills({ panel, ...rest }: Omit<TargetProps, 'panel'> & { panel: Pa
         side="top"
         trigger={
           <button type="button" data-ai-pill="model" aria-label={ai('panel.agentModel')} className={COMPOSER_PILL_CLASS}>
-            <span className="min-w-0 truncate">{modelText(caps, active, model)}</span>
+            <span className="min-w-0 truncate">{modelText(cur, model)}</span>
             <ChevronDown size={ICON_SIZE.xs} aria-hidden className="shrink-0 opacity-70" />
           </button>
         }
@@ -1087,18 +1097,17 @@ export function EffortPill() {
   )
 }
 
-const modelText = (caps: AiCapabilities | null, active: string, model: string) =>
-  model
-    ? `${agentDisplayName(caps, active)} · ${modelLabel(agentById(caps, active), model)}`
-    : agentDisplayName(caps, active)
+const modelText = (info: AiAgentCaps, model: string) =>
+  model ? `${info.display_name} · ${modelLabel(info, model)}` : info.display_name
 
 export function ScopeAgentContent({ panel, element, axes, scope, scopes }: TargetProps) {
   useTranslation('ai')
-  const { caps, usable, active, cur, model } = useAgentChoice()
+  const { caps, usable, conns, activeConn, active, cur, model } = useAgentChoice()
+  const view = hasConnectionView(caps)
 
   // 候选总数：每个执行器的型号数（清单为空 = 跟随 CLI 默认，算一项），记忆里已下架的当前值再算一项。
   // 只有一项可选时不摆一个选不动的选择器（见下）。
-  const optionCount = usable.reduce((n, a) => {
+  const optionCount = (view ? conns : usable).reduce((n, a) => {
     const stale = a.id === active && model && !a.models.includes(model) ? 1 : 0
     return n + Math.max(1, a.models.length) + stale
   }, 0)
@@ -1124,18 +1133,19 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
       </div>
       {caps == null ? (
         <p className="text-xs text-ink-3">{ai('panel.probing')}</p>
-      ) : usable.length === 0 ? (
+      ) : (view ? conns.length === 0 : usable.length === 0) ? (
         /* 缺件是**错误恢复路径**，不能因为「减负」被折叠掉 */
         <div className="flex flex-col gap-1">
-          <p className="text-xs leading-relaxed text-ink-3">{ai('panel.noCli')}</p>
+          <p className="text-xs leading-relaxed text-ink-3">{view ? ai('panel.noAi') : ai('panel.noCli')}</p>
           <div>
             <Button
               data-ai-open-settings
+              data-ai-connect-open={view ? '' : undefined}
               variant="secondary"
               size="sm"
-              onClick={() => useUiStore.getState().setSettingsOpen(true, 'ai')}
+              onClick={() => requestConnectAi()}
             >
-              {ai('panel.openAiSettings')}
+              {view ? ai('panel.connectAi') : ai('panel.openAiSettings')}
             </Button>
           </div>
         </div>
@@ -1149,16 +1159,24 @@ export function ScopeAgentContent({ panel, element, axes, scope, scopes }: Targe
               工具行的胶囊上已经写着了 */}
           {optionCount > 1 ? (
             <div data-ai-agent-model="select" className="flex min-w-0 items-center gap-2">
-              <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
-              <ModelPicker usable={usable} active={active ?? ''} model={model} />
+              <span className="shrink-0 text-xs text-ink-2">{view ? ai('panel.aiModel') : ai('panel.agentModel')}</span>
+              {view ? (
+                <ConnectionModelPicker connections={conns} active={active ?? ''} model={model} />
+              ) : (
+                <ModelPicker usable={usable} active={active ?? ''} model={model} />
+              )}
             </div>
           ) : (
             cur &&
             model && (
               <div data-ai-agent-model="static" className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 text-xs text-ink-2">{ai('panel.agentModel')}</span>
+                <span className="shrink-0 text-xs text-ink-2">{view ? ai('panel.aiModel') : ai('panel.agentModel')}</span>
                 <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-ink" title={model}>
-                  <FamilyIcon iconKey={cur.icon_key} />
+                  {activeConn ? (
+                    <BrandLogo logo={activeConn.logo} size={16} />
+                  ) : (
+                    <FamilyIcon iconKey={cur.icon_key} />
+                  )}
                   <span className="truncate">{`${cur.display_name} · ${modelLabel(cur, model)}`}</span>
                 </span>
               </div>
