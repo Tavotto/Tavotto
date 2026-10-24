@@ -56,6 +56,10 @@ class ReferenceInvocationTests(unittest.TestCase):
         capture = types.ModuleType("figcapture")
         capture.collect_pyplot_figures = lambda *_a: ([], [])
         capture.adopt_displaced_writers = lambda *_a: None
+        # run_native 的 PdfPages 认领（#1370）：与产品同名的三个函数，替身里什么都不认领
+        capture.PdfPagesLedger = mock.Mock
+        capture.is_pdf_pages = lambda _obj: False
+        capture.adopt_pdf_pages = lambda *_a: []
         capture.install_relative_read_fallback = mock.Mock()
         modules = {
             "matplotlib": matplotlib,

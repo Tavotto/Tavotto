@@ -13,6 +13,7 @@ import {
   type PanelAnnotations,
 } from '@/lib/writeBackAnnotations'
 import { dirTail } from '@/lib/pathDisplay'
+import { noticeWriteBackMultipage } from '@/lib/writeBackMultipageNotice'
 import { isJustBakedBaseline } from '@/store/actions'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -107,6 +108,11 @@ async function runWriteBack(
       // 走 backendErrorMsg：有稳定 code 时取当前语言的那句，没有才用后端原文，
       // 与 NativeConfirmDialog / ScriptLibrary / RegistryDialog 同一条出口。
       const detail = formatMessage(backendErrorMsg(e))
+      // 目标是脚本用 PdfPages 写的 PDF：写回一律拒绝，通知轨挂一条带「导出」的胶囊（#1370）
+      if (e instanceof ApiError && e.body?.code === 'write_back_multipage_pdf') {
+        const params = (e.body.params ?? {}) as { file?: string }
+        noticeWriteBackMultipage(params.file ?? stemOf(p.fileId), { ui: useUiStore.getState() })
+      }
       throw new WriteBackFailure(
         updated.length
           ? wb('failedPartial', {

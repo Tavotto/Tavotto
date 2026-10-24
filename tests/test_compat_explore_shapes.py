@@ -652,27 +652,33 @@ class RealExecution(unittest.TestCase):
             record["tavotto"],
         )
 
-    def test_pdfpages_is_the_known_page_gap(self):
-        """多页 PDF（#1370 PR1 之后的口径）：写进 `PdfPages` 的图现在被认领——图数等于原生的图数（模板把**同一张**图
-        写 N 页，所以是 1 张；`zero_figures` / `fewer_figures` 都没了），stem 取 PDF 文件名、来源 pyplot（多页 PDF 不是原件）。
-        剩下的 `page_count_mismatch` 仍在：口径是「产品记录的 pdf 保存次数」，`PdfPages.savefig` 不进调用表（认领不等于记页），
-        所以产品知道 0 页。**A（把编辑导回多页 PDF）尚未做**——页数差异要等 A 才会消失；这里如实钉住「只剩它」，不是模板的锅。"""
+    def test_pdfpages_pages_are_known_since_pr2(self):
+        """多页 PDF（#1370 PR2 之后的口径）：产品现在**知道页数**——每一页记成那份 PDF 路径的一次 occurrence，
+        build 响应的 `pdf_pages` 摘要带页数；`page_count_mismatch` 消失（PR1 时它是唯一的差异）。图数仍等于原生的图数
+        （模板把**同一张**图写 N 页，所以是 1 张），stem 取 PDF 文件名、来源 pyplot（多页 PDF 不是原件）。
+
+        原生对照（`compat_driver.run_native`）也按产品的方式认领 PdfPages 的页：保存成功之后记进同一个
+        `PdfPagesLedger`、脚本结束先于 pyplot 兜底 `adopt_pdf_pages`，所以两边 stem 都是 PDF 文件名，保真层能比，
+        判定是 `no_difference`。把编辑导回多页 PDF（A）**不做**：写回对它一律拒绝、引导去导出。"""
         for case in self.PARENTS:
             with self.subTest(parent=case):
                 record = self.check_axis_changing("pdfpages", case)
-                self.assertEqual(record["judgment"]["outcome"], "difference_found", record)
-                self.assertEqual(self.kinds(record), {"page_count_mismatch"}, record["judgment"])
+                self.assertEqual(record["judgment"]["differences"], [], record["judgment"])
+                self.assertNotIn("page_count_mismatch", self.kinds(record))
+                self.assertEqual(record["judgment"]["outcome"], "no_difference", record["judgment"])
+                self.assertEqual(record["unresolved_layers"], [])
                 # 图数：认领了（不是 script_no_figure / 0 张），数量等于原生的图数
                 self.assertEqual(len(record["tavotto"]["stems"]), record["native"]["figure_count"])
                 (stem,) = record["tavotto"]["stems"]
                 (artifact,) = record["native"]["artifacts"]
                 self.assertEqual(stem, Path(artifact["path"]).stem)  # stem 取 PDF 文件名
-                (diff,) = record["judgment"]["differences"]
+                # 页数：产品记的页数 == 原生 PDF 的页数（≥ 2），路径就是那份 PDF
+                native_pages = ex.native_facts(record["native"])["pdf_pages"]
+                self.assertGreaterEqual(native_pages, 2)
                 self.assertEqual(
-                    diff["evidence"]["native_pages"], ex.native_facts(record["native"])["pdf_pages"]
+                    record["tavotto"]["pdf_pages"],
+                    [{"path": artifact["path"], "pages": native_pages}],
                 )
-                self.assertGreaterEqual(diff["evidence"]["native_pages"], 2)
-                self.assertEqual(diff["evidence"]["tavotto_pages"], 0)
 
     def test_bytesio_close_is_the_known_gap_749(self):
         """savefig 到 BytesIO 再 close：原生有一张图，Tavotto 一张都没捕获（script_no_figure）。登记已知、已看到（家族 G6-bytesio-close-zero-figures）。"""

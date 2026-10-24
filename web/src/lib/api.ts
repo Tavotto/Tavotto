@@ -6152,6 +6152,13 @@ export interface PdfPagesCapture {
   captured: number
   stems: string[]
   omitted?: number
+  /** 这份 PDF 的目的地：项目相对路径（`scope` 为 `unresolved` 时为 null，根外路径不外发） */
+  path?: string | null
+  scope?: 'project' | 'execution' | 'unresolved'
+  /** 按页序的 stem（同一张图写多页时重复；没收进来的页是 null） */
+  page_stems?: (string | null)[]
+  /** 每一页都有 stem 且都记上了观察 */
+  complete?: boolean
 }
 
 export interface ProbeResult {

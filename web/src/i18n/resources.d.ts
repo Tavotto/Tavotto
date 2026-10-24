@@ -2907,6 +2907,7 @@ export default interface Resources {
       "write_back_disabled": "项目是只读的：无法写回原始文件。可在项目设置里恢复可写。",
       "write_back_foreign_file": "{{file}} 是这个脚本里另一张图保存的，写回不会覆盖它，原文件没有改动。",
       "write_back_format_unsupported": "写回只支持 PDF 和 PNG 素材，这张是 {{format}}。",
+      "write_back_multipage_pdf": "{{file}} 是脚本用 PdfPages 写的 PDF，写回不会覆盖它，原文件没有改动。要拿到编辑后的结果，请用导出。",
       "write_back_persist_failed": "无法写回：备份或新文件没能写入磁盘（{{reason}}）。原文件未做任何改动，请检查磁盘空间与目录权限后重试。",
       "write_back_warnings": "无法写回：重放时出现了警告。",
       "write_failed": "无法写入磁盘。本机副本仍在，可重试：{{reason}}",
@@ -3321,7 +3322,9 @@ export default interface Resources {
       "workdirRootConfirmOk": "在项目根目录里运行",
       "workdirRootConfirmTitle": "改为在项目根目录里运行？",
       "workdirSuggest": "如果脚本先检查文件在不在，或用专门的读取库读数据，这些在沙盒里找不到项目数据；可以改在脚本所在的目录运行。",
-      "workdirSuggestButton": "改为在脚本目录里运行"
+      "workdirSuggestButton": "改为在脚本目录里运行",
+      "writeBackMultipagePdfExport": "导出",
+      "writeBackMultipagePdfNotice": "{{file}} 是脚本用 PdfPages 写的多页 PDF，写回只能写进一张图，不会覆盖它，原文件没有改动。编辑后的图请从导出里拿。"
     },
     "preflight": {
       "axisLabelFormat": "坐标轴标题「{{label}}」不是规范的「{{want}}」形式",

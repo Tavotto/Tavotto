@@ -14,7 +14,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { WriteBackDialog } from '@/components/inspector/UpdateSourceButton'
-import { i18n } from '@/i18n'
+import { formatMessage, i18n } from '@/i18n'
+import { writeBackMultipageOwner } from '@/lib/writeBackMultipageNotice'
+import { useUiStore } from '@/store/uiStore'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
@@ -204,6 +206,37 @@ describe('写回被阻断时的文案', () => {
     // 文案表那句以「文件被其他程序占用」起头；后端原句是「Fig1.pdf 被其他程序占用」
     expect(text()).toContain('文件被其他程序占用')
     expect(text()).not.toContain('Fig1.pdf 被其他程序占用')
+  })
+
+  describe('目标是脚本用 PdfPages 写的多页 PDF（#1370）', () => {
+    const MULTIPAGE = {
+      error: 'Fig1.pdf 是脚本用 PdfPages 写的 PDF，写回不会覆盖它；请用导出',
+      code: 'write_back_multipage_pdf',
+      params: { file: 'Fig1.pdf' },
+    }
+
+    it('对话框里说清楚（文案表那句），并在通知轨挂一条带「导出」的胶囊；按钮打开导出对话框', async () => {
+      stubFetch(409, MULTIPAGE)
+      useUiStore.setState({ status: null, statusAction: null, exportOpen: false } as never)
+      render()
+      await confirm()
+      expect(text()).toContain('写回不会覆盖它')
+      const ui = useUiStore.getState()
+      expect(ui.statusOwner).toBe(writeBackMultipageOwner('Fig1.pdf'))
+      expect(ui.statusTone).toBe('info')
+      expect(formatMessage(ui.statusAction!.label)).toBe('导出')
+      expect(ui.exportOpen).toBe(false)
+      act(() => ui.statusAction!.run())
+      expect(useUiStore.getState().exportOpen).toBe(true)
+    })
+
+    it('别的 409 不挂这条胶囊', async () => {
+      stubFetch(409, { error: 'x', code: 'write_back_foreign_file', params: { file: 'Fig1.pdf' } })
+      useUiStore.setState({ status: null, statusAction: null, statusOwner: null } as never)
+      render()
+      await confirm()
+      expect(useUiStore.getState().statusOwner).toBeNull()
+    })
   })
 
   it('未知错误仍旧原样呈现，不吞掉后端说了什么', async () => {

@@ -101,6 +101,10 @@ def _patched_savefig(self, fname, *args, **kwargs):
     if not figcapture.savefig_targets_path(fname):
         if _ACTIVE is not None:
             _ACTIVE.passthrough_figures.add(id(self))
+            if figcapture.is_pdf_pages(fname):
+                # 写进 PdfPages 的一页：记成那份 PDF 路径的一次 occurrence（与 worker 同一处语义：写之前建、补 intercepted）
+                observation = _ACTIVE.savefig_observations.record(self, fname, "", None)
+                _ACTIVE.savefig_observations.complete(observation, "intercepted")
         result = _REAL_SAVEFIG(self, fname, *args, **kwargs)
         # 写进 PdfPages 的一页：真写成功之后才记（与 worker 同语义）
         if _ACTIVE is not None and figcapture.is_pdf_pages(fname):
@@ -376,6 +380,12 @@ class BrowserSession:
             "log": log.text(),
             "descriptors": self._descriptors(source.encode("utf-8")),
             "savefig_observations": self.savefig_observations.report(),
+            # 写进多页 PDF 的图（与 worker 同一份摘要；没有时不出现）
+            **(
+                {"pdf_pages": pages}
+                if (pages := self.pdf_pages.summary(self.savefig_observations))
+                else {}
+            ),
             "truncated_figures": truncated,
             "script": self.script_name,
             "source_sha256": status.get("sha256", ""),

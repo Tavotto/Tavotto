@@ -43,10 +43,21 @@ order: 50
     判型用 `sys.modules.get("matplotlib.backends.backend_pdf")` 取类 isinstance）。同一张 Figure 只认领一次（写多页也一个 stem，
     取脚本结束时的状态）；强引用上限 `MAX_PDF_PAGES_LEDGER`（64，与 pyplot 兜底的 8 分开），超出只计数并在
     `pdf_pages[].omitted` 里说明。**来源恒为 `pyplot`——多页 PDF 不是任何一张图的原件**：`find_original_artifact` / 写回不得指向它；
-    「把编辑导回多页 PDF」（A）**尚未做**。build 响应 / 探测结果加字段 `pdf_pages: [{name, pages, captured, stems, omitted?}]`
-    （没有时不出现），前端 `lib/pdfPagesNotice.ts` 在通知轨出一条无按钮胶囊。stem 取法变了，`DESCRIPTOR_VERSION` 升到 2
+    「把编辑导回多页 PDF」不做（#1370 PR2：写回一律拒绝，见下条）。build 响应 / 探测结果加字段
+    `pdf_pages: [{name, pages, captured, stems, path, scope, page_stems, complete, omitted?}]`（没写过 PdfPages 时不出现；
+    每份写过页的 PDF 一项，包括它的图都已被 savefig 认领的），前端 `lib/pdfPagesNotice.ts` 在通知轨出一条无按钮胶囊
+    （只提 `captured > 0` 或有省略的）。stem 取法变了，`DESCRIPTOR_VERSION` 升到 2
     （旧指纹按设计失配一次）。浏览器同样传账（总数仍受 `MAX_FIGURES` 截断、如实进 `truncated_figures`），不像 `shown` 那样不传。
     看护 `tests/test_capture_pdfpages.py`、`tests/bridge/test_bridge_pdfpages.py`。
+  * **PdfPages 的每一页记成那份 PDF 路径的一次 occurrence（#1370 PR2，ADR 0113 补充条款）**：`SavefigObservations.record`
+    认得 PdfPages（`pdf_page` 页号、`stem` null、目的地规则与 savefig 同一份 `_destination`、以第一页为准；缓冲区不记；
+    页的预算 = `MAX_PDF_PAGES_LEDGER`，与 savefig 的 128 分开，不让 `report()["complete"]` 变假）。三条入口各在原有的记录位置
+    接入（worker `_patched_savefig` 的 record 本来就在写之前；浏览器在透传分支里补；native 的钩子本来就记），safe / 浏览器
+    补 `intercepted`，native 补 `saved` / `failed`。摘要的 `path` / `scope` 由观察器解出（`unresolved` 时 `path` 为 null，
+    根外路径不外发），`page_stems` 按页序，`complete` = 每页都有 stem 且都记上。`saved_originals` / `note_artifact` 不认页记录。
+    pool 把 build 响应的 `pdf_pages` 存成 `last_build_pdf_pages`（`EngineWorker` / `WorkerdWorker`），写回守卫读它
+    （`writeback-transaction.md`「不写多页 PDF」）。不改描述符、stem 取法与指纹，`DESCRIPTOR_VERSION` 不升。
+    看护 `tests/test_pdfpages_record_pages.py`、`tests/bridge/test_bridge_pdfpages_pages.py`。
   * **fallback stem 按「本次捕获里的第几张」编号**（`<脚本名>`、`-2`、`-3`），
     **不按 `plt.get_fignums()` 的 figure 号**：脚本中途 `plt.close()` 过一次
     号就跳，用户的 override 于是挂在一个不存在的 stem 上，表现是「打开是

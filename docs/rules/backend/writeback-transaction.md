@@ -109,6 +109,23 @@ order: 300
 曾按格式收窄，把这类项目的写回误拦成 409（`tests/test_hatch_rc_context_writeback.py`）。
 看护 `tests/test_same_stem_other_figure.py`。
 
+## 不写脚本用 PdfPages 写的 PDF（#1370 PR2）
+
+多页 PDF 不是任何一张图的 savefig 原件，写回只能把**一张图**刻进文件，覆盖它会丢掉其余各页。`app._pdf_pages_paths` 从 build
+响应的 `pdf_pages` 摘要（pool 存为 `last_build_pdf_pages`）取这次运行里 PdfPages 写过的位置（`scope` 为 `project` / `execution`
+的相对路径，换算到项目目录里的同名位置——safe 档的 PdfPages 写在沙盒里，而用户自己跑同一份脚本写出的就是项目里这个路径；
+`unresolved` 不外发路径、也就不核）。`src` 是它 → 409 `write_back_multipage_pdf`（`{file}`，`WriteBackMultipagePdfError`，
+`WriteBackForeignFileError` 的子类、响应先于父类判），对**所有 stem** 一视同仁（包括认领了它某一页的 stem）；其余目标里
+是它的被去掉，同目录的普通 savefig 原件照常写回。两道：`_write_source_files` 在 `_write_back_prepare` 之后用**热会话**的摘要
+早拒（连一次性 worker 都不起，不必把脚本全量重放），`_own_write_back_targets` 用重放 worker 的摘要再核（热会话没有摘要的情形），
+都在任何临时文件产生之前、原件零改动。**只写了 1 页的 PdfPages 同样拒绝**：它不是任何图的 savefig 原件，覆盖它抹掉的是脚本的整份输出。
+带画布标注的写回要先画在 PDF 上、PNG 再由它栅格化：同名 PDF 被守卫（或「别的图的原件」那条）去掉后没有载体，
+`_own_write_back_targets(need_pdf=True)` 抛对应的 409（`write_back_multipage_pdf` / `write_back_foreign_file`，指向被去掉的 PDF），
+**不是**只写 PNG 并丢标注——前端写回成功后会把标注对象从画布摘掉，等于静默丢编辑；以前这里走到 `assert pdf_tmp is not None` 成 500（Codex #1394 P2）。
+保守取舍：不分辨「PdfPages 之后又被同路径 savefig 覆盖」的病态顺序，一律拒（引导去导出，不丢数据）。前端在 `UpdateSourceButton`
+的失败出口挂一条通知轨胶囊（`lib/writeBackMultipageNotice.ts`：一句话 + 「导出」，打开现有导出对话框；不是横条）。
+看护 `tests/test_pdfpages_record_pages.py`、`web/src/lib/writeBackMultipageNotice.test.ts`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

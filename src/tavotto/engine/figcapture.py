@@ -3181,6 +3181,9 @@ class SavefigObservations:
         self._records: list[dict] = []
         self._figures: list = []
         self._observed_count = 0
+        #: 所有记录（含 PdfPages 的页）共用的次序号；`_observed_count` 只数 savefig 自己的，PdfPages 的页有自己的预算
+        self._occurrences = 0
+        self._pdf_files: list[dict] = []
         self._complete = True
         #: 记录下标 -> 保存完成那一刻的事实（时刻、字节数、mtime）。**不进 `report()`**：
         #: 观察报告的形状是既有合同，这是 P08a 给「只读原件」做核对用的内部旁证。
@@ -3192,24 +3195,21 @@ class SavefigObservations:
         call 是已有 savefig_call 生成的 JSON 值；不再次解析用户参数或调用 repr。
         stream 不算磁盘产物。native 调用后再 complete，safe 拦截后标 intercepted。
         """
+        if is_pdf_pages(fname):
+            return self._record_pdf_page(fig, fname, call)
         if not savefig_targets_path(fname):
             return None
         self._observed_count += 1
         if self._observed_count > MAX_SAVEFIG_OBSERVATIONS:
             self._complete = False
             return None
+        self._occurrences += 1
         if call is None:
             self._complete = False  # 旧入口没有解析参数；不为观察而新增任意 repr / 用户代码调用
         try:
             options = dict(call or {})  # 下方 JSON 往返复制嵌套值；目的地判据只修正这份格式事实
-            try:
-                values = self.metadata(fig) if self.metadata is not None else None
-                if values is None:
-                    raise ValueError("unknown figure metadata")
-                size = [self._number(value) for value in values[0]]
-                dpi, original_dpi = (self._number(value) for value in values[1:])
-            except Exception:  # noqa: BLE001 - custom metadata must not affect a native save
-                size = dpi = original_dpi = None
+            size, dpi, original_dpi = self._figure_metadata(fig)
+            if size is None:
                 self._complete = False
             resolved_dpi = original_dpi if options.get("dpi") == "figure" else options.get("dpi")
             figure_ordinal = next(
@@ -3220,7 +3220,7 @@ class SavefigObservations:
                 self._figures.append(weakref.ref(fig))
             destination = self._destination(fname, options, explicit_format)
             record = {
-                "occurrence": self._observed_count,
+                "occurrence": self._occurrences,
                 "figure_ordinal": figure_ordinal,
                 "stem": None
                 if destination["scope"] == "unresolved"
@@ -3246,6 +3246,105 @@ class SavefigObservations:
         except Exception:  # noqa: BLE001 - 观察失败不能改变用户保存的行为，也不记录用户对象 / 路径
             self._complete = False
             return None
+
+    def _figure_metadata(self, fig):
+        """`(size_inches, dpi, original_dpi)`；读不到 = `(None, None, None)`（自定义 metadata 不许影响一次原生保存）。"""
+        try:
+            values = self.metadata(fig) if self.metadata is not None else None
+            if values is None:
+                raise ValueError("unknown figure metadata")
+            size = [self._number(value) for value in values[0]]
+            dpi, original_dpi = (self._number(value) for value in values[1:])
+            return size, dpi, original_dpi
+        except Exception:  # noqa: BLE001
+            return None, None, None
+
+    def _pdf_entry(self, pdf):
+        """这份 `PdfPages` 的账（找不到就新建；超过 `MAX_PDF_PAGES_FILES` 份返回 None）。"""
+        for entry in self._pdf_files:
+            if entry["ref"]() is pdf:
+                return entry
+        if len(self._pdf_files) >= MAX_PDF_PAGES_FILES:
+            return None
+        entry = {
+            "ref": weakref.ref(pdf),
+            "destination": None,
+            "recorded": 0,
+            "complete": True,
+        }
+        self._pdf_files.append(entry)
+        return entry
+
+    def _record_pdf_page(self, fig, pdf, call):
+        """写进 `PdfPages` 的一页，记成**那份 PDF 路径**的一次 occurrence（带页号 = 这份 PDF 的第几次写入，从 1 起；ADR 0113 补充条款）。
+        与 savefig 的记录一样在真写之前建、由入口按自己的语义补结果（safe `intercepted` / native `saved`、`failed`）。
+
+        目的地的解析规则与 savefig 的完全相同（`_destination`，按此刻的 cwd、scope 取 project / execution /
+        unresolved，根外路径不外发），且**以这份 PDF 的第一页为准**（matplotlib 在第一次 savefig 才真正打开文件）。
+        缓冲区目标（没有文件名）不记。页自己的预算（`MAX_PDF_PAGES_LEDGER`）与 savefig 的 128 分开：
+        一份多页 PDF 不能把别的图的观察挤成不完整（`report()["complete"]` 只管 savefig 自己的）；超出的页只让这份 PDF
+        的 `pdf_file_facts()["complete"]` 变假。是**页**的次序事实，不是 Figure 快照，也不是原件：`saved_originals` 不认它。
+        """
+        name = pdf_pages_filename(pdf)
+        if name is None:
+            return None
+        entry = self._pdf_entry(pdf)
+        if entry is None:
+            return None
+        if entry["recorded"] >= MAX_PDF_PAGES_LEDGER:
+            entry["complete"] = False
+            return None
+        try:
+            options = dict(call or {})
+            options["format"] = "pdf"  # PdfPages 恒写 pdf
+            size, dpi, original_dpi = self._figure_metadata(fig)
+            if size is None:
+                entry["complete"] = False
+            if entry["destination"] is None:
+                entry["destination"] = self._destination(name, options, True)
+            resolved_dpi = original_dpi if options.get("dpi") == "figure" else options.get("dpi")
+            figure_ordinal = next(
+                (i + 1 for i, ref in enumerate(self._figures) if ref() is fig), None
+            )
+            if figure_ordinal is None:
+                figure_ordinal = len(self._figures) + 1
+                self._figures.append(weakref.ref(fig))
+            self._occurrences += 1
+            record = {
+                "occurrence": self._occurrences,
+                "figure_ordinal": figure_ordinal,
+                "stem": None,
+                "pdf_page": entry["recorded"] + 1,
+                "destination": dict(entry["destination"]),
+                "options": options,
+                "figure_size_inches": size,
+                "figure_dpi": dpi,
+                "resolved_dpi": resolved_dpi,
+                "backend": "default",  # PdfPages 自己传 backend="pdf"，不是用户选了别的后端
+                "result": "pending",
+            }
+            encoded = json.dumps(record, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if len(encoded) + 4 > MAX_SAVEFIG_OBSERVATION_BYTES:
+                entry["complete"] = False
+                return None
+            self._records.append(json.loads(encoded))
+            entry["recorded"] += 1
+            return len(self._records) - 1
+        except Exception:  # noqa: BLE001 - 观察失败不能改变用户保存的行为，也不记录用户对象 / 路径
+            entry["complete"] = False
+            return None
+
+    def pdf_file_facts(self, pdf) -> dict | None:
+        """这份 `PdfPages` 的观察事实 `{scope, path, recorded, complete}`（没有记录过 = None）。给 `PdfPagesLedger.summary`。"""
+        for entry in self._pdf_files:
+            if entry["ref"]() is pdf and entry["destination"] is not None:
+                return {
+                    "scope": entry["destination"]["scope"],
+                    "path": entry["destination"]["path"],
+                    "recorded": entry["recorded"],
+                    "complete": bool(entry["complete"]),
+                }
+        return None
 
     @staticmethod
     def _number(value):
@@ -3288,7 +3387,7 @@ class SavefigObservations:
     def complete(self, index, result):
         if index is not None:
             self._records[index]["result"] = result
-            if result == "saved":
+            if result == "saved" and "pdf_page" not in self._records[index]:
                 self._saved_facts[index] = self._stat_saved(self._records[index])
 
     def _original_path(self, record):
@@ -3324,8 +3423,8 @@ class SavefigObservations:
         out = []
         for index, record in enumerate(self._records):
             facts = self._saved_facts.get(index)
-            if record.get("result") != "saved" or facts is None:
-                continue
+            if record.get("result") != "saved" or facts is None or "pdf_page" in record:
+                continue  # PdfPages 的页不是这张图的原件
             ordinal = record.get("figure_ordinal")
             if type(ordinal) is not int or not 0 < ordinal <= len(self._figures):
                 continue
@@ -3567,6 +3666,10 @@ class PdfPagesLedger:
             "name": pdf_pages_filename(pdf),
             "pages": 0,
             "figs": [],
+            #: 按页序：每一页写的是哪张 Figure（`id`，已留强引用的才有；超出上限没留的页是 None）
+            "page_ids": [],
+            #: 按页序的 stem（`adopt_pdf_pages` 认领后才填；同一张图写多页时 stem 重复；没留的页是 None）
+            "page_stems": [],
             "adopted": 0,
             "stems": [],
             "omitted": 0,
@@ -3574,35 +3677,56 @@ class PdfPagesLedger:
         self.groups.append(group)
         return group
 
-    def note(self, pdf, fig) -> None:
-        """一次**成功**写进 `pdf` 的保存（失败的保存没有这一页，不记）。"""
+    def note(self, pdf, fig) -> int | None:
+        """一次**成功**写进 `pdf` 的保存（失败的保存没有这一页，不记）。返回这一页的页号（从 1 起）；账满了没地方记返回 None。"""
         group = self._group(pdf)
         if group is None:
             # 超过 PdfPages 份数上限：没有组可挂，计进「不点名」的溢出（summary 里单列一条）
             self.omitted += 1
             self.unlisted += 1
-            return
+            return None
         group["pages"] += 1
+        page = group["pages"]
         if id(fig) in self._kept_ids:
-            return
+            group["page_ids"].append(id(fig))
+            return page
         if sum(len(g["figs"]) for g in self.groups) >= self.limit:
             self.omitted += 1
             group["omitted"] += 1
-            return
+            group["page_ids"].append(None)
+            return page
         self._kept_ids.add(id(fig))
         group["figs"].append(fig)
+        group["page_ids"].append(id(fig))
+        return page
 
-    def summary(self) -> list[dict]:
-        """给界面的一句话用：`[{name, pages, captured, stems, omitted?}]`（只含真认领了或有省略的组）。"""
+    def summary(self, observations: "SavefigObservations | None" = None) -> list[dict]:
+        """`[{name, pages, captured, stems, path, scope, page_stems, complete, omitted?}]`，每份写过页的 PDF 一项
+        （包括它的图都已被 savefig 认领、`captured == 0` 的：写回守卫要知道**所有**脚本写过的多页 PDF；界面那句话
+        只提 `captured > 0` 或有省略的）。
+
+        `name` / `pages` / `captured` / `stems` / `omitted` 是界面那句话用的（PR1）；`path` / `scope` 是这份 PDF 的
+        目的地（`observations` 按 ADR 0113 的规则解出：项目相对路径，`unresolved` 时 `path` 为 null、不外发根外路径），
+        `page_stems` 按页序（同一张图写多页时 stem 重复，没收进来的页是 null），`complete` = 每一页都有 stem 且都记上了观察。
+        写回守卫（`app._own_write_back_targets`）认 `project` 与 `execution` 的 `path`（按项目目录里的同名位置核对）。
+        """
         out = []
         for g in self.groups:
-            if not g["stems"] and not g["omitted"]:
-                continue
+            facts = observations.pdf_file_facts(g["pdf"]) if observations is not None else None
             item = {
                 "name": os.path.basename(g["name"]) if g["name"] else None,
                 "pages": g["pages"],
                 "captured": len(g["stems"]),
                 "stems": list(g["stems"]),
+                "path": facts["path"] if facts else None,
+                "scope": facts["scope"] if facts else "unresolved",
+                "page_stems": list(g["page_stems"]),
+                # 缓冲区目标没有文件，不要求有观察；有文件名的要每一页都记上
+                "complete": not g["omitted"]
+                and (
+                    g["name"] is None
+                    or (facts is not None and facts["complete"] and facts["recorded"] == g["pages"])
+                ),
             }
             if g["omitted"]:
                 item["omitted"] = g["omitted"]
@@ -3615,6 +3739,10 @@ class PdfPagesLedger:
                     "pages": self.unlisted,
                     "captured": 0,
                     "stems": [],
+                    "path": None,
+                    "scope": "unresolved",
+                    "page_stems": [],
+                    "complete": False,
                     "omitted": self.unlisted,
                 }
             )
@@ -3645,6 +3773,7 @@ def adopt_pdf_pages(
             fresh.append(fig)
         group["adopted"] = len(group["figs"])
         if not fresh:
+            _fill_page_stems(group, capture)
             continue
         base = ""
         if group["name"]:
@@ -3655,7 +3784,16 @@ def adopt_pdf_pages(
             capture_source[stem] = SOURCE_PYPLOT
         group["stems"].extend(stems)
         added.extend(stems)
+        _fill_page_stems(group, capture)
     return added
+
+
+def _fill_page_stems(group: dict, capture: dict) -> None:
+    """页序的 stem：每一页写的那张 Figure 现在在捕获表里叫什么（别处先认领的图用它自己的 stem）。"""
+    by_id: dict[int, str] = {}
+    for stem, fig in capture.items():
+        by_id.setdefault(id(fig), stem)
+    group["page_stems"] = [None if i is None else by_id.get(i) for i in group["page_ids"]]
 
 
 #: 输入观察（统一实施包 U09，ADR 0070）：脚本经 Python 的 `open`（与 numpy 的 `DataSource.open`）读到的项目内文件最多记这么多条；
