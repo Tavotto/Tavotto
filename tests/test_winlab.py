@@ -1499,3 +1499,109 @@ def test_host_exe_is_found_next_to_the_icon_or_uninstaller_when_install_location
     assert A._host_exe(host, by_icon) == root / "ZCode.exe"
     assert A._host_exe(host, by_uninstaller) == root / "ZCode.exe"
     assert A._host_exe(host, {"DisplayIcon": str(tmp_path / "x.ico")}) is None
+
+
+def test_every_desktop_host_pins_a_display_version():
+    assert all(h.display_version for h in A.DESKTOP_HOSTS.values())
+
+
+class _FakeDesktopLab:
+    """run_desktop_hosts_task 的纯逻辑夹具：登记表、安装器、GUI 桥全部假的。"""
+
+    def __init__(self, monkeypatch, tmp_path, *, entries, installer_exit=0, window=True):
+        host = A.DESKTOP_HOSTS["zcode"]
+        self.host = host
+        self.version = host.display_version  # 安装器登记的版本
+        self.entries = list(entries)  # 当前登记项；卸载按 uninstall_ok 决定是否清空
+        self.stuck = False  # 为真：卸载器跑完登记项仍在
+        self.installer_exit = installer_exit
+        root = tmp_path / "ZCode"
+        root.mkdir()
+        (root / host.exe_name).write_bytes(b"")
+        self.root = root
+        setup = tmp_path / "setup.exe"
+        setup.write_bytes(b"")
+        lab = type("L", (), {})()
+        lab.venv_python = lambda: tmp_path / "py"
+        (tmp_path / "py").write_bytes(b"")
+        self.lab = lab
+        monkeypatch.setattr(A, "fetch_pinned", lambda lab, host: (setup, {}))
+        monkeypatch.setattr(A, "authenticode", lambda p: {"status": "Valid", "org": "x"})
+        monkeypatch.setattr(A, "_uninstall_entries", lambda rx: list(self.entries))
+        monkeypatch.setattr(A, "_run_until", self._run_until)
+
+        def gui(lab, run_id, argv, work, env, log, timeout):
+            out = Path(argv[argv.index("--out") + 1])
+            payload = {"window": {"title": "w"}, "seconds_to_window": 1.0} if window else {}
+            out.write_text(json.dumps(payload), encoding="utf-8")
+            return {"gui": "ran", "session_id": 1}
+
+        monkeypatch.setattr(A, "run_in_gui", gui)
+        self.tmp = tmp_path
+
+    def _run_until(self, argv, cwd, env, log, done, timeout):
+        if Path(argv[0]).name == "setup.exe":
+            if self.installer_exit == 0:
+                self.entries.append(self._entry(self.version))
+            else:  # 安装器失败，登记表里却留着旧版本
+                self.entries.append(_stale(self.host, self.tmp))
+            done()  # 真实的 _run_until 在主进程退出后轮询它
+            return {"exit_code": self.installer_exit, "seconds": 0.1}
+        if not self.stuck:
+            self.entries.clear()
+        return {"exit_code": 0, "seconds": 0.1}
+
+    def _entry(self, version):
+        return {
+            "key": "k",
+            "DisplayName": "ZCode",
+            "DisplayVersion": version,
+            "InstallLocation": str(self.root),
+            "UninstallString": f'"{self.root / "Uninstall ZCode.exe"}" /currentuser',
+        }
+
+    def run(self):
+        run_dir = self.tmp / "run"
+        run_dir.mkdir()
+        return A.run_desktop_hosts_task(self.lab, "rid", run_dir, {}, "zcode")
+
+
+def _stale(host, tmp_path):
+    root = tmp_path / "ZCode"
+    return {
+        "key": "old",
+        "DisplayName": "ZCode",
+        "DisplayVersion": "0.0.1",
+        "InstallLocation": str(root),
+        "UninstallString": f'"{root / "Uninstall ZCode.exe"}" /currentuser',
+    }
+
+
+def test_desktop_host_stale_install_that_cannot_be_removed_is_unavailable(monkeypatch, tmp_path):
+    f = _FakeDesktopLab(monkeypatch, tmp_path, entries=[])
+    f.entries.append(_stale(f.host, tmp_path))
+    f.stuck = True
+    r = f.run()
+    assert r["result"] == "environment_unavailable"
+    assert "旧安装卸不掉" in r["summary"]
+    assert "install" not in r
+
+
+def test_desktop_host_failed_installer_is_not_passed_by_a_stale_registration(monkeypatch, tmp_path):
+    f = _FakeDesktopLab(monkeypatch, tmp_path, entries=[], installer_exit=1)
+    r = f.run()
+    assert r["result"] == "failed"
+    assert r["levels"]["L2"] == "failed"
+
+
+def test_desktop_host_wrong_registered_version_is_failed_with_both_versions(monkeypatch, tmp_path):
+    f = _FakeDesktopLab(monkeypatch, tmp_path, entries=[])
+    f.version = "9.9.9"
+    r = f.run()
+    assert r["result"] == "failed"
+    assert "9.9.9" in r["summary"] and f.host.display_version in r["summary"]
+
+
+def test_desktop_host_clean_pass_stays_passed(monkeypatch, tmp_path):
+    r = _FakeDesktopLab(monkeypatch, tmp_path, entries=[]).run()
+    assert r["result"] == "passed", r

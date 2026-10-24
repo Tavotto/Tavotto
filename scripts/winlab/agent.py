@@ -2335,6 +2335,8 @@ class DesktopHost:
     id: str
     name: str
     version: str
+    #: 登记在 HKCU 卸载项里的 DisplayVersion（Lab 实测）；与 URL 里的 `version` 可以不同（TRAE 的构建号 ≠ 3.4.4）
+    display_version: str
     url: str
     sha256: str
     #: 下载走哪条线路：国内 CDN 直连；海外 CDN 经 DMIT（用户 10-25 授权，只限这些安装包、一次一个）
@@ -2364,6 +2366,7 @@ DESKTOP_HOSTS: dict[str, DesktopHost] = {
             id="vscode",
             name="Visual Studio Code",
             version="1.141.2",
+            display_version="1.141.2",
             url="https://vscode.download.prss.microsoft.com/dbazure/download/stable/16507d91be0dc1ce4f94c04d4d0430210b8685d9/VSCodeUserSetup-x64-1.141.2.exe",
             sha256="9b9e7305bc5f2d9176dff8263ba146fc7b0d65ce1fb499271fd7746ec53d66ed",
             network="direct",
@@ -2376,6 +2379,7 @@ DESKTOP_HOSTS: dict[str, DesktopHost] = {
             id="cursor",
             name="Cursor",
             version="3.20.14",
+            display_version="3.20.14",
             url="https://downloads.cursor.com/production/67ac8ff8cc118b1eddcb5f2de564c20cffcae94d/win32/x64/user-setup/CursorUserSetup-x64-3.20.14.exe",
             sha256="67508e9be8187996f48328f16297b411487a2a74d9acff5625c90e656e7502dd",
             network="trojan",
@@ -2388,6 +2392,7 @@ DESKTOP_HOSTS: dict[str, DesktopHost] = {
             id="trae-cn",
             name="TRAE CN",
             version="2.3.93438",
+            display_version="3.4.4",
             url="https://lf-cdn.trae.com.cn/obj/trae-com-cn/pkg/app/releases/stable/2.3.93438/win32/TRAE_CN-Setup-x64.exe",
             sha256="518d939b4715bf238fc54e2bd9f0373e2602e0fd3f69af2e812a0cbe157ef20f",
             network="direct",
@@ -2400,6 +2405,7 @@ DESKTOP_HOSTS: dict[str, DesktopHost] = {
             id="workbuddy",
             name="WorkBuddy",
             version="5.8.3",
+            display_version="5.8.3",
             url="https://download.codebuddy.cn/workbuddy/saas/win32-x64-user/WorkBuddy-win32-x64-user-5.8.3.41334564-db0e9b51.exe",
             sha256="824de10f3196c501004f540eb84ee881292fef2f5df9fb3fc48af9ea5366c03c",
             network="direct",
@@ -2411,6 +2417,7 @@ DESKTOP_HOSTS: dict[str, DesktopHost] = {
             id="zcode",
             name="ZCode",
             version="3.14.1",
+            display_version="3.14.1",
             url="https://cdn-zcode.z.ai/zcode/electron/releases/3.14.1/windows-x64/ZCode-3.14.1-win-x64.exe",
             sha256="f5216f6df1d5f5cf69d55d732c64927533fe9eeb31e8b39bed2493fac09ed9a0",
             network="trojan",
@@ -2422,6 +2429,7 @@ DESKTOP_HOSTS: dict[str, DesktopHost] = {
             id="claude-desktop",
             name="Claude Desktop",
             version="2.42304.2",
+            display_version="2.42304.2",
             url="https://downloads.claude.ai/releases/win32/x64/2.42304.2/Claude-af65c0e384c1657459441aac3083c6e622789afe.exe",
             sha256="9eff78c6fd1fde2035806401bd3933578842d9a377b76dacfdb7b14571a002b0",
             network="trojan",
@@ -2592,15 +2600,20 @@ def install_desktop_host(host: DesktopHost, setup: Path, work: Path, env: dict) 
     found: dict = {}
 
     def done() -> bool:
-        ents = _uninstall_entries(host.display_re)
-        exe = _host_exe(host, ents[-1]) if ents else None
-        if exe:
-            found.update(entry=ents[-1], exe=exe)
-        return exe is not None
+        # 只认登记版本等于固定版本的那一条：残留的旧版本不算装好
+        for ent in reversed(_uninstall_entries(host.display_re)):
+            if ent.get("DisplayVersion") != host.display_version:
+                continue
+            exe = _host_exe(host, ent)
+            if exe:
+                found.update(entry=ent, exe=exe)
+                return True
+        return False
 
     step = _run_until([str(setup), *args], work, env, work / "install", done, 900)
-    if not found:
-        return {"ok": False, "step": step}
+    registered = [e.get("DisplayVersion") for e in _uninstall_entries(host.display_re)]
+    if not found or step.get("exit_code") != 0 or step.get("timed_out"):
+        return {"ok": False, "step": step, "registered_versions": registered}
     ent = found["entry"]
     return {
         "ok": True,
@@ -2640,6 +2653,18 @@ def uninstall_desktop_host(host: DesktopHost, work: Path, env: dict) -> dict:
             )
         )
     return {"ok": not _uninstall_entries(host.display_re), "steps": steps}
+
+
+def _install_failure_summary(host: DesktopHost, inst: dict) -> str:
+    step = inst.get("step", {})
+    if step.get("timed_out"):
+        return "silent install timed out"
+    if step.get("exit_code") not in (0, None):
+        return f"installer exited with code {step['exit_code']}"
+    seen = [v for v in inst.get("registered_versions", []) if v]
+    if seen and host.display_version not in seen:
+        return f"installed version {', '.join(seen)} != pinned {host.display_version}"
+    return "silent install did not register the host"
 
 
 def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode: str) -> dict:
@@ -2686,6 +2711,12 @@ def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode
     henv = network_env("direct", env)
     henv.update({"TEMP": str(work), "TMP": str(work)})
     base["preexisting_uninstall"] = uninstall_desktop_host(host, work, henv)
+    if not base["preexisting_uninstall"]["ok"]:
+        return {
+            **base,
+            "result": "environment_unavailable",
+            "summary": "残留的旧安装卸不掉",
+        }
     inst = install_desktop_host(host, setup, work, henv)
     base["install"] = {k: v for k, v in inst.items() if k != "root"}
     if not inst["ok"]:
@@ -2694,7 +2725,7 @@ def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode
         return {
             **base,
             "result": "failed",
-            "summary": "silent install did not register the host",
+            "summary": _install_failure_summary(host, inst),
         }
     try:
         extra = []
@@ -2743,7 +2774,12 @@ def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode
     try:
         win = json.loads(out.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {**base, "result": "error", "summary": "window probe wrote no result", "step": step}
+        return {
+            **base,
+            "result": "error",
+            "summary": "window probe wrote no result",
+            "step": step,
+        }
     base["window"] = win
     base["session_id"] = step["session_id"]
     if win.get("window"):
