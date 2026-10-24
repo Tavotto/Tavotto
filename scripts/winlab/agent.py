@@ -136,6 +136,8 @@ class Task:
     needs_model_conf: bool = False
     #: 安装包：`--package` / `--from` 只收 cache\packages\ 里带 .sha256 的文件名
     accepts_package: bool = False
+    #: corpus：`--mode` 只收登记值
+    modes: tuple[str, ...] = ()
 
 
 #: Windows 回归 + 编码 / 路径 / 导出 / 保存重载这一组都是仓库里已有的用例，Lab 只负责在真
@@ -248,6 +250,34 @@ TASKS: dict[str, Task] = {
             ),
         ),
         Task(
+            id="env-matrix",
+            kind="env-matrix",
+            summary="环境矩阵：装包后对每个解释器环境跑 nightly 同款冒烟（内置 / 官方 CPython / uv 3.10·3.12·3.14 / conda / 中文空格路径 venv）",
+            timeout_s=5400,
+            accepts_package=True,
+            claim=(
+                "每条腿：装好的 sidecar 在中文 + 空格的项目路径下渲染导出成功，且渲染解释器来源与期望一致"
+                "（不指定 → bundled 并带全科学栈；TAVOTTO_WORKER_PYTHON 指定 → env_override 压过内置）"
+            ),
+            unverified=(
+                "uv 装的是 python-build-standalone，不是 python.org 安装器（只有 3.13 是官方安装器）",
+                "不覆盖 Microsoft Store Python、pyenv-win、企业代理 / 证书拦截环境",
+                "项目自带 .venv 的自动采用（project_venv）不在本任务",
+            ),
+        ),
+        Task(
+            id="corpus",
+            kind="corpus",
+            summary="脚本语料：CompatBench（scripts/ci/compat_matrix.py）在 Lab 上跑——smoke 与 CI compat-smoke 同口径，all 跑全部 case",
+            timeout_s=5400,
+            modes=("smoke", "all"),
+            claim="经评审的 CompatBench 语料在真 Windows（cp936、非管理员、Defender 开）上的结论；不比像素保真度",
+            unverified=(
+                "只跑仓库里经评审的语料，不跑用户提交的脚本（那要一次性隔离环境）",
+                "--no-fidelity：不比像素基线",
+            ),
+        ),
+        Task(
             id="hosts-live",
             kind="hosts-live",
             summary="AI 宿主 L4/L5：真 Claude Code（国内 Anthropic 兼容模型）调用 Tavotto MCP，改图、导出、重开核对",
@@ -293,8 +323,11 @@ def validate_test_args(
     network: str,
     package: str | None = None,
     frm: str | None = None,
+    mode: str | None = None,
 ) -> str | None:
     """返回错误文本；None = 合法。所有参数都可审计：没有透传通道。"""
+    if mode and mode not in task.modes:
+        return f"task {task.id} does not accept --mode {mode} (allowed: {', '.join(task.modes) or 'none'})"
     if (package or frm) and not task.accepts_package:
         return f"task {task.id} does not accept --package / --from"
     if task.accepts_package and not package:
@@ -1960,6 +1993,350 @@ def run_desktop_window_task(lab: Lab, run_id: str, run_dir: Path, env: dict, pac
     }
 
 
+# ----------------------------------------------------------------------------- 环境矩阵
+UV_PYTHON_MIRROR = "https://registry.npmmirror.com/-/binary/python-build-standalone"
+CONDA_FORGE_MIRROR = "https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge"
+MINIFORGE_URL = (
+    "https://mirrors.tuna.tsinghua.edu.cn/github-release/conda-forge/miniforge/LatestRelease"
+)
+UV_PYTHONS = ("3.10", "3.12", "3.14")
+MATRIX_FIGURES_DIR = "张三 的论文"
+
+
+def _py_in(venv: Path) -> Path:
+    return venv / "Scripts" / "python.exe"
+
+
+def prepare_envs(lab: Lab, env: dict, log: Path) -> tuple[dict[str, Path], dict[str, str]]:
+    """各解释器环境（幂等、缓存在 cache\\envs\\）：每个都是一个装了 matplotlib 的环境。返回 (可用, 失败原因)。"""
+    envs = lab.cache / "envs"
+    envs.mkdir(parents=True, exist_ok=True)
+    ok: dict[str, Path] = {}
+    bad: dict[str, str] = {}
+    py = str(lab.venv_python())
+
+    def pip_mpl(target: Path, name: str) -> bool:
+        if (target.parent.parent / ".winlab-mpl").exists():
+            return True
+        r = _run_logged(
+            [
+                str(target),
+                "-m",
+                "pip",
+                "install",
+                "-q",
+                "--disable-pip-version-check",
+                "--only-binary=matplotlib",
+                "matplotlib",
+            ],
+            lab.root,
+            env,
+            log / f"pip-{name}",
+            1200,
+        )
+        if r.get("exit_code") == 0:
+            (target.parent.parent / ".winlab-mpl").write_text("ok")
+            return True
+        return False
+
+    def venv_from(base: str, venv: Path, name: str) -> None:
+        if not _py_in(venv).exists():
+            r = _run_logged(
+                [base, "-m", "venv", str(venv)], lab.root, env, log / f"venv-{name}", 300
+            )
+            if r.get("exit_code") != 0:
+                bad[name] = "venv creation failed"
+                return
+        if pip_mpl(_py_in(venv), name):
+            ok[name] = _py_in(venv)
+        else:
+            bad[name] = "pip install matplotlib failed"
+
+    venv_from(BASE_PYTHON, envs / "cpython-3.13", "cpython-3.13")
+    venv_from(BASE_PYTHON, envs / "张三 的环境" / "venv", "cpython-3.13-cjk-path")
+
+    # uv（PyPI 镜像装进 Lab venv）→ python-build-standalone（npmmirror），不写注册表、不进 PATH
+    uv = lab.venv_python().parent / "uv.exe"
+    if not uv.exists():
+        _run_logged(
+            [py, "-m", "pip", "install", "-q", "--disable-pip-version-check", "uv"],
+            lab.root,
+            env,
+            log / "pip-uv",
+            600,
+        )
+    uenv = dict(
+        env,
+        UV_PYTHON_INSTALL_MIRROR=UV_PYTHON_MIRROR,
+        UV_PYTHON_INSTALL_DIR=str(lab.cache / "uv-python"),
+        UV_INDEX_URL=PIP_INDEX,
+        UV_NO_CONFIG="1",
+    )
+    for ver in UV_PYTHONS:
+        name = f"uv-{ver}"
+        venv = envs / name
+        if not _py_in(venv).exists():
+            r = _run_logged(
+                [str(uv), "venv", "--python", ver, "--seed", str(venv)],
+                lab.root,
+                uenv,
+                log / f"uv-{ver}",
+                900,
+            )
+            if r.get("exit_code") != 0:
+                bad[name] = "uv venv failed"
+                continue
+        if pip_mpl(_py_in(venv), name):
+            ok[name] = _py_in(venv)
+        else:
+            bad[name] = "pip install matplotlib failed"
+
+    # Miniforge：TUNA 镜像，核同目录的 .sha256；JustMe 装进 cache，不注册、不进 PATH
+    mf = envs / "miniforge"
+    conda = mf / "Scripts" / "conda.exe"
+    if not conda.exists():
+        try:
+            with _opener("direct").open(MINIFORGE_URL + "/", timeout=60) as r:
+                listing = r.read().decode("utf-8", "replace")
+            exe = re.search(r"Miniforge3-[0-9.]+-\d+-Windows-x86_64\.exe(?=[\"'])", listing).group(
+                0
+            )
+            inst = lab.cache / "installers" / exe
+            inst.parent.mkdir(parents=True, exist_ok=True)
+            if not inst.exists():
+                with _opener("direct").open(f"{MINIFORGE_URL}/{exe}", timeout=900) as r:
+                    inst.write_bytes(r.read())
+            with _opener("direct").open(f"{MINIFORGE_URL}/{exe}.sha256", timeout=60) as r:
+                want = r.read().decode("ascii", "replace").split()[0].lower()
+            if hashlib.sha256(inst.read_bytes()).hexdigest() != want:
+                inst.unlink()
+                bad["conda"] = "miniforge sha256 mismatch"
+            else:
+                _run_logged(
+                    [
+                        str(inst),
+                        "/InstallationType=JustMe",
+                        "/RegisterPython=0",
+                        "/AddToPath=0",
+                        "/S",
+                        f"/D={mf}",
+                    ],
+                    lab.root,
+                    env,
+                    log / "miniforge",
+                    1800,
+                )
+        except (urllib.error.URLError, OSError, AttributeError) as exc:
+            bad["conda"] = f"miniforge download failed: {type(exc).__name__}"
+    if conda.exists() and "conda" not in bad:
+        cenv = envs / "conda-mpl"
+        if not (cenv / "python.exe").exists():
+            r = _run_logged(
+                [
+                    str(conda),
+                    "create",
+                    "-y",
+                    "-q",
+                    "-p",
+                    str(cenv),
+                    "--override-channels",
+                    "-c",
+                    CONDA_FORGE_MIRROR,
+                    "python=3.12",
+                    "matplotlib",
+                ],
+                lab.root,
+                env,
+                log / "conda-create",
+                1800,
+            )
+            if r.get("exit_code") != 0:
+                bad["conda"] = "conda create failed"
+        if (cenv / "python.exe").exists():
+            ok["conda"] = cenv / "python.exe"
+    elif "conda" not in bad:
+        bad["conda"] = "miniforge install failed"
+    return ok, bad
+
+
+def _find_sidecar(shell: Path) -> Path | None:
+    for p in shell.parent.rglob("Tavotto.exe"):
+        if p != shell and p.parent.name.lower() == "tavotto" and (p.parent / "_internal").is_dir():
+            return p
+    return None
+
+
+def run_env_matrix_task(lab: Lab, run_dir: Path, env: dict, package: str) -> dict:
+    setup, err = package_path(lab, package)
+    if err:
+        return {"result": "environment_unavailable", "summary": err}
+    if not lab.venv_python().exists():
+        return {
+            "result": "environment_unavailable",
+            "summary": "venv missing: run `winlab prepare` first",
+        }
+    log = run_dir / "evidence" / "envs"
+    ready, broken = prepare_envs(lab, env, log)
+    uninstall_all()
+    inst = install_package(setup)
+    legs = []
+    try:
+        side = _find_sidecar(Path(inst["shell"])) if inst.get("ok") else None
+        if side is None:
+            return {
+                "result": "error",
+                "summary": "install produced no sidecar",
+                "install": inst,
+                "env_problems": broken,
+            }
+        figures = run_dir / "work" / MATRIX_FIGURES_DIR / "figures"
+        shutil.copytree(lab.repo / "examples" / "figures", figures)
+        plan = [
+            (
+                "bundled",
+                None,
+                "bundled",
+                "examples\\runtime_check",
+                ["--expect-packages", "numpy,pandas,scipy,seaborn,PIL,matplotlib"],
+            )
+        ]
+        plan += [
+            (name, str(pyexe), "env_override", str(figures), [])
+            for name, pyexe in sorted(ready.items())
+        ]
+        for name, worker, expect, figs, extra in plan:
+            lenv = dict(env)
+            lenv["PYTHONUTF8"] = "0"  # 与 nightly 冒烟同：中文区域的默认值
+            lenv.pop("TAVOTTO_WORKER_PYTHON", None)
+            if worker:
+                lenv["TAVOTTO_WORKER_PYTHON"] = worker
+            argv = [
+                str(lab.venv_python()),
+                "scripts/smoke_app.py",
+                "--exe",
+                str(side),
+                "--figures",
+                figs,
+                "--expect-source",
+                expect,
+                "--expect-control-plane",
+                "workerd",
+                *extra,
+            ]
+            step = _run_logged(argv, lab.repo, lenv, run_dir / "evidence" / f"leg-{name}", 900)
+            legs.append(
+                {
+                    "leg": name,
+                    "expect_source": expect,
+                    "result": "passed"
+                    if step.get("exit_code") == 0
+                    else ("error" if step.get("timed_out") else "failed"),
+                    "exit_code": step.get("exit_code"),
+                    "duration_s": step.get("duration_s"),
+                }
+            )
+    finally:
+        uninstall_all()
+    for name, why in sorted(broken.items()):
+        legs.append({"leg": name, "result": "environment_unavailable", "reason": why})
+    overall = av.aggregate([leg["result"] for leg in legs])
+    return {
+        "result": overall,
+        "summary": ", ".join(f"{leg['leg']}={leg['result']}" for leg in legs),
+        "legs": legs,
+        "package": {"name": package, "version": inst.get("version")},
+    }
+
+
+# ----------------------------------------------------------------------------- 脚本语料
+def corpus_venv(lab: Lab) -> Path:
+    return lab.cache / "venvs" / "py313-corpus" / "Scripts" / "python.exe"
+
+
+def run_corpus_task(lab: Lab, run_dir: Path, env: dict, mode: str) -> dict:
+    py = corpus_venv(lab)
+    log = run_dir / "evidence" / "setup"
+    stamp = py.parents[1] / "winlab-corpus.sha256"
+    pins = subprocess.run(
+        [BASE_PYTHON, "scripts/ci/runtime_pins.py", "--include-corpus"],
+        cwd=lab.repo,
+        capture_output=True,
+        text=True,
+        errors="replace",
+    )
+    if pins.returncode != 0:
+        return {"result": "error", "summary": "runtime_pins.py failed"}
+    digest = hashlib.sha256(
+        (pins.stdout + (lab.repo / "pyproject.toml").read_text(encoding="utf-8")).encode()
+    ).hexdigest()
+    if not py.exists():
+        _run_logged(
+            [BASE_PYTHON, "-m", "venv", str(py.parents[1])], lab.root, env, log / "venv", 300
+        )
+    if not stamp.exists() or stamp.read_text().strip() != digest:
+        # 与 CI compat-smoke 同：项目 [dev,ci] + 锁定的语料依赖
+        for i, args in enumerate((["-e", ".[dev,ci]"], pins.stdout.split())):
+            r = _run_logged(
+                [str(py), "-m", "pip", "install", "-q", "--disable-pip-version-check", *args],
+                lab.repo,
+                env,
+                log / f"pip-{i}",
+                2400,
+            )
+            if r.get("exit_code") != 0:
+                return {"result": "error", "summary": "installing the corpus environment failed"}
+        stamp.write_text(digest)
+    else:
+        _run_logged(
+            [
+                str(py),
+                "-m",
+                "pip",
+                "install",
+                "-q",
+                "--disable-pip-version-check",
+                "--no-deps",
+                "-e",
+                ".",
+            ],
+            lab.repo,
+            env,
+            log / "pip-nodeps",
+            900,
+        )
+    out = run_dir / "evidence" / "compat"
+    scope = ["--smoke", "--gate", "pr"] if mode == "smoke" else ["--all"]
+    argv = [str(py), "scripts/ci/compat_matrix.py", *scope, "--no-fidelity", "--out", str(out)]
+    step = _run_logged(
+        argv,
+        lab.repo,
+        dict(env, PYTHONPATH=str(lab.repo / "src")),
+        run_dir / "evidence" / "compat_matrix",
+        5000,
+    )
+    reports = sorted(out.rglob("compat-report.json")) if out.exists() else []
+    summary = {}
+    if reports:
+        with contextlib.suppress(OSError, ValueError):
+            rep = json.loads(reports[-1].read_text(encoding="utf-8"))
+            summary = {k: rep.get(k) for k in ("summary", "counts", "totals", "gate") if k in rep}
+    if step.get("timed_out"):
+        result = "error"
+    elif step.get("exit_code") == 0:
+        result = "passed"
+    elif reports:
+        result = "failed"
+    else:
+        result = "error"
+    return {
+        "result": result,
+        "summary": f"compat_matrix --{mode} exit={step.get('exit_code')}",
+        "mode": mode,
+        "report": summary,
+        "step": step,
+    }
+
+
 def _run_body(
     lab: Lab,
     task: Task,
@@ -1977,6 +2354,10 @@ def _run_body(
         return run_pytest_task(lab, task, run_dir, tests, shard, env)
     if task.kind == "hosts-live":
         return run_hosts_live_task(lab, run_dir, env, model_conf or {})
+    if task.kind == "env-matrix":
+        return run_env_matrix_task(lab, run_dir, env, (pkg or {}).get("package", ""))
+    if task.kind == "corpus":
+        return run_corpus_task(lab, run_dir, env, (pkg or {}).get("mode") or "smoke")
     if task.kind == "desktop-window":
         return run_desktop_window_task(
             lab, run_dir.name, run_dir, env, (pkg or {}).get("package", "")
@@ -2334,6 +2715,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--network")
     t.add_argument("--package")
     t.add_argument("--from", dest="frm")
+    t.add_argument("--mode")
     r = sub.add_parser("reports")
     r.add_argument("--id")
     c = sub.add_parser("clean")
@@ -2399,7 +2781,7 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
             )
     task = TASKS[ns.task]
     network = ns.network or task.networks[0]
-    err = validate_test_args(task, ns.tests, ns.shard, network, ns.package, ns.frm)
+    err = validate_test_args(task, ns.tests, ns.shard, network, ns.package, ns.frm, ns.mode)
     if err:
         sys.stdout.write(json.dumps({"result": "error", "summary": err}) + "\n")
         return av.EXIT_USAGE
@@ -2411,6 +2793,8 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
                 return _emit({"result": "environment_unavailable", "summary": parsed})
             model_conf = parsed
         pkg = {"package": ns.package, "from": ns.frm} if task.accepts_package else None
+        if task.modes:
+            pkg = {"mode": ns.mode or task.modes[0]}
         return _emit(run_task(lab, task, ns.tests, ns.shard, network, model_conf, pkg))
     except LabBusy as busy:
         return _emit(

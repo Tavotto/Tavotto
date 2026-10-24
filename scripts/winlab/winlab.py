@@ -723,6 +723,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--network")
     t.add_argument("--package", help="installer：cache\\packages\\ 里的安装包名")
     t.add_argument("--from", dest="frm", help="installer：先装这个旧包再升级")
+    t.add_argument("--mode", help="corpus：smoke | all")
     t.add_argument("--ref", help="先 prepare 到这个提交（经可信度检查）")
     n = sub.add_parser("network")
     n.add_argument("--mode", default="all", choices=["all", *lab_agent.NETWORK_MODES])
@@ -767,7 +768,9 @@ def main(argv: list[str] | None = None) -> int:
     if ns.verb == "test":
         task = lab_agent.TASKS[ns.task]
         network = ns.network or task.networks[0]
-        err = lab_agent.validate_test_args(task, ns.tests, ns.shard, network, ns.package, ns.frm)
+        err = lab_agent.validate_test_args(
+            task, ns.tests, ns.shard, network, ns.package, ns.frm, ns.mode
+        )
         if err:
             print(err, file=sys.stderr)
             return 2
@@ -789,6 +792,8 @@ def main(argv: list[str] | None = None) -> int:
             argv += ["--package", ns.package]
         if ns.frm:
             argv += ["--from", ns.frm]
+        if ns.mode:
+            argv += ["--mode", ns.mode]
         return show(*remote_json(argv, stdin=stdin))
     if ns.verb == "secret-init":
         return secret_init(ns.provider)

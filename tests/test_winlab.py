@@ -1091,3 +1091,67 @@ def test_gui_setup_keeps_the_password_out_of_the_registry():
     assert "LsaStorePrivateData" in ps and "Remove-ItemProperty $wl DefaultPassword" in ps
     assert "Set-ItemProperty $wl DefaultPassword" not in ps
     assert "'__PW__'" in ps  # 只在发送时替换，仓库里没有真值
+
+
+# --------------------------------------------------------------------------- 环境矩阵 / 脚本语料
+def test_corpus_modes_are_a_closed_set():
+    assert A.validate_test_args(A.TASKS["corpus"], [], None, "direct", mode="smoke") is None
+    assert A.validate_test_args(A.TASKS["corpus"], [], None, "direct", mode="all") is None
+    assert "does not accept --mode" in A.validate_test_args(
+        A.TASKS["corpus"], [], None, "direct", mode="--pdb"
+    )
+    assert "does not accept --mode" in A.validate_test_args(
+        A.TASKS["pytest"], ["tests/test_a.py"], None, "direct", mode="smoke"
+    )
+
+
+def test_matrix_and_corpus_never_route_through_the_proxy():
+    for tid in ("env-matrix", "corpus", "desktop-window", "installer"):
+        assert A.TASKS[tid].networks == ("direct",), tid
+
+
+def test_env_matrix_aggregates_unavailable_envs_honestly(tmp_path, monkeypatch):
+    lab = A.Lab(tmp_path)
+    py = lab.venv_python()
+    py.parent.mkdir(parents=True)
+    py.write_text("")
+    (lab.repo / "examples" / "figures").mkdir(parents=True)
+    shell = tmp_path / "inst" / "Tavotto beta.exe"
+    side = tmp_path / "inst" / "sidecar" / "Tavotto" / "Tavotto.exe"
+    (side.parent / "_internal").mkdir(parents=True)
+    shell.write_text("")
+    side.write_text("")
+    monkeypatch.setattr(A, "package_path", lambda lab, name: (tmp_path / "s.exe", None))
+    monkeypatch.setattr(
+        A,
+        "prepare_envs",
+        lambda lab, env, log: (
+            {"cpython-3.13": tmp_path / "py.exe"},
+            {"conda": "miniforge download failed"},
+        ),
+    )
+    monkeypatch.setattr(A, "uninstall_all", lambda: True)
+    monkeypatch.setattr(
+        A, "install_package", lambda s: {"ok": True, "shell": str(shell), "version": "x"}
+    )
+    monkeypatch.setattr(
+        A, "_run_logged", lambda argv, cwd, env, prefix, timeout, **k: {"exit_code": 0, "env": env}
+    )
+    out = A.run_env_matrix_task(lab, tmp_path / "run", {}, "x.exe")
+    legs = {leg["leg"]: leg["result"] for leg in out["legs"]}
+    assert legs == {
+        "bundled": "passed",
+        "cpython-3.13": "passed",
+        "conda": "environment_unavailable",
+    }
+    assert out["result"] == "environment_unavailable"  # 一条腿没环境，整体就不能读成通过
+
+
+def test_sidecar_is_found_by_layout_not_by_the_shell_name(tmp_path):
+    shell = tmp_path / "Tavotto.exe"
+    shell.write_text("")
+    assert A._find_sidecar(shell) is None
+    side = tmp_path / "sidecar" / "Tavotto" / "Tavotto.exe"
+    (side.parent / "_internal").mkdir(parents=True)
+    side.write_text("")
+    assert A._find_sidecar(shell) == side
