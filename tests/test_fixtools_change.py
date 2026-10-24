@@ -520,12 +520,12 @@ def test_change_python_calls_the_executor_registers_the_new_env_and_snapshots(bo
 
     ctx = change_ctx(box, python_changer=changer)
     r = call(ctx, "change_python", {"version": "3.12"})
-    assert not r.is_error and seen == [{"version": "3.12", "project": str(box.proj)}]
+    assert not r.is_error and seen == [{"version": "3.12", "project": str(box.proj), "script": ""}]
     new_id = r.content.split("new environment id: ")[1].split()[0]
     assert ctx.environments[new_id] == newpy and "snap_" in r.content
 
 
-@pytest.mark.parametrize("bad", ["3", "3.x", "2.7", "3.12; rm", "", None, "3.123.4.5", "latest"])
+@pytest.mark.parametrize("bad", ["3", "3.x", "2.7", "3.12; rm", "", 3.12, "3.123.4.5", "latest"])
 def test_change_python_validates_the_version(box, bad):
     ctx = change_ctx(box, python_changer=lambda req: {"ok": True})
     assert call(ctx, "change_python", {"version": bad}).code == "bad_arguments"

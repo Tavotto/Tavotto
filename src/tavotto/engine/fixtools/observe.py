@@ -378,7 +378,11 @@ def list_environments(ctx: FixContext, args: dict) -> ToolResult:
                 f"(none of the {total} environments matches `{match.strip()[:60]}`)",
                 "0 environments",
             )
-        return ok("(no Python environments found)", "0 environments")
+        return ok(
+            "(no Python environments found). This project has no environment that can run scripts yet: "
+            "after the user agrees (propose_fix), create a Tavotto-managed one with change_python.",
+            "0 environments",
+        )
     text = json.dumps(rows, ensure_ascii=False, indent=1)
     note = ""
     if len(valid) > len(rows):

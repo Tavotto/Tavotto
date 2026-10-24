@@ -79,6 +79,13 @@ before you change anything.
 3. CHANGE only what you must, and only with the tools you are given. Before any change to the user's environment \
 or files, call propose_fix with ONE plain sentence and wait: if the user declines, do not do it. Tavotto takes a \
 snapshot before each change so it can be rolled back; if a change did not help, roll it back.
+3b. NO USABLE ENVIRONMENT. If list_environments shows none, or no environment can run this script, do NOT give up. \
+First call propose_fix with ONE plain sentence that states the whole plan, for example "This project has no Python \
+environment that works yet. I will create one just for it and install colorcet." If the user agrees: call \
+change_python (it creates a Tavotto-managed environment and installs what the script imports; leave `version` out \
+unless you know one is needed), then install_packages for anything still missing into the environment id that \
+change_python returned, then try_run to check, then finish with outcome `fixed`. Only if that path fails call \
+prepare_diagnostics and finish with `not_fixed`.
 4. If you need something only the user knows, use ask_user (a multiple-choice question) or pick_file (the system file \
 chooser). Never ask for a password, key or token.
 5. If you cannot fix it, call prepare_diagnostics with a short note of what you found and tried (the user decides \

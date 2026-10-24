@@ -197,10 +197,23 @@ def switch_execution(ctx: FixContext, args: dict) -> ToolResult:
 
 
 # --------------------------------------------------------------------------- change_python
+def _script_rel(ctx: FixContext) -> str:
+    """被诊断脚本的项目相对路径（执行器据此读脚本声明的 `requires-python`）；没有脚本回空串。"""
+    if ctx.script_path is None:
+        return ""
+    try:
+        return Path(ctx.script_path).relative_to(ctx.project_root).as_posix()
+    except ValueError:
+        return ""
+
+
 def change_python(ctx: FixContext, args: dict) -> ToolResult:
     version = args.get("version")
-    if not isinstance(version, str) or not _VERSION_RE.fullmatch(version.strip()):
-        return err("bad_arguments", "`version` must look like `3.12` or `3.12.4`.")
+    if version is not None and (
+        not isinstance(version, str) or not _VERSION_RE.fullmatch(version.strip())
+    ):
+        return err("bad_arguments", "`version` must look like `3.12` or `3.12.4`, or be left out.")
+    version = version.strip() if isinstance(version, str) else None
     if ctx.python_changer is None:
         return err(
             "unavailable",
@@ -210,7 +223,12 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
     if bad is not None:
         return bad
     res = executors.call_executor(
-        ctx.python_changer, {"version": version.strip(), "project": str(ctx.project_root)}
+        ctx.python_changer,
+        {
+            "version": version,  # None = 由执行器按脚本 / 项目声明和 Tavotto 支持区间挑
+            "project": str(ctx.project_root),
+            "script": _script_rel(ctx),
+        },
     )
     if not res.get("ok"):
         return err(
@@ -219,7 +237,8 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
                 ctx, str(res.get("message") or "The new environment could not be created.")
             ),
         )
-    text = str(res.get("message") or f"Created a Tavotto environment with Python {version}.")
+    shown = version or str(res.get("to") or "")
+    text = str(res.get("message") or f"Created a Tavotto environment with Python {shown}.")
     python = res.get("python")
     if isinstance(python, str) and python:
         from .. import userenvs
@@ -230,7 +249,7 @@ def change_python(ctx: FixContext, args: dict) -> ToolResult:
         )
         text += f"\nnew environment id: {eid}"
     _forget_env_caches(ctx)
-    return _done(ctx, text, f"python {version}")
+    return _done(ctx, text, f"python {shown or 'new'}")
 
 
 # --------------------------------------------------------------------------- select_environment
@@ -447,9 +466,14 @@ CHANGE_TOOLS: tuple[FixTool, ...] = (
     ),
     FixTool(
         "change_python",
-        "Create a Tavotto-managed environment with another Python version for this project (for example when "
-        "the packages need Python 3.12). Does not touch the user's own Pythons. Takes a snapshot.",
-        obj({"version": {"type": "string", "description": "For example `3.12`."}}, ["version"]),
+        "Create a Tavotto-managed Python environment for this project, also installing what the script imports. Use it "
+        "when there is no usable environment (list_environments is empty, or none can run the script) or when the "
+        "packages need another Python version. Does not touch the user's own Pythons. Takes a snapshot; the result "
+        "gives the new environment id for install_packages / try_run. `version` is optional (for example `3.12`): "
+        "leave it out and Tavotto picks one that suits the script and the project.",
+        obj(
+            {"version": {"type": "string", "description": "Optional, for example `3.12`."}},
+        ),
         change_python,
         tier="tavotto",
     ),
