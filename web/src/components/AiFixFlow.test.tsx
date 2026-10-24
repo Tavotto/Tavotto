@@ -96,13 +96,13 @@ describe.each(['zh-CN', 'en-US'] as const)('一句话读懂（%s）', (lang) => 
 })
 
 describe('回答', () => {
-  it('确认修复 / 不了：回 yes / no；详情里有读过哪些文件与「没读」', async () => {
+  it('修复 / 取消：回 yes / no；详情里有查看过哪些文件，没有「没读」固定行', async () => {
     const answer = vi.fn(async () => {})
     useAiFixStore.setState({ answer } as never)
     const card = await render(entry(CARDS.approve))
-    expect(card.querySelector('[data-ai-fix-confirm]')?.textContent).toBe('确认修复')
+    expect(card.querySelector('[data-ai-fix-confirm]')?.textContent).toBe('修复')
     expect(card.querySelector('[data-ai-fix-reads]')?.textContent).toContain('~/Desktop/data.csv')
-    expect(card.querySelector('[data-ai-fix-reads]')?.textContent).toContain('没读')
+    expect(card.querySelector('[data-ai-fix-reads]')?.textContent).not.toContain('没读')
     await click('[data-ai-fix-confirm]')
     expect(answer).toHaveBeenCalledWith('script:plot.py', 'yes')
     await click('[data-ai-fix-skip]')
@@ -187,11 +187,11 @@ describe('进度与卡住（D3）', () => {
     expect((await render(entry(CARDS.activity))).querySelector('[data-title]')?.textContent).toBe('Installing colorcet')
   })
 
-  it('卡住：一句话原因（点名工具）+ 一个「停止」主按钮；点它取消，详情默认折叠', async () => {
+  it('卡住：一句话原因 + 一个「停止」主按钮；点它取消，详情默认折叠', async () => {
     const cancel = vi.fn(async () => {})
     useAiFixStore.setState({ cancel } as never)
     const card = await render(entry(CARDS.stalledApproval))
-    expect(card.querySelector('[data-title]')?.textContent).toBe('AI 在等它自己的审批（工具：change_python），Tavotto 没法替你批准')
+    expect(card.querySelector('[data-title]')?.textContent).toBe('AI 在等待批准')
     expect(card.querySelector('[data-ai-fix-stop]')?.textContent).toBe('停止')
     expect(card.querySelector('details')?.open).toBe(false)
     await click('[data-ai-fix-stop]')
@@ -225,7 +225,7 @@ describe.each(['zh-CN', 'en-US'] as const)('run_command 的卡（%s）', (lang) 
     expect(card.querySelector('[data-title]')?.textContent).not.toContain('prep.aiFix')
   })
 
-  it('第②档：红色强调、完整命令、「在沙盒外运行」/「不了」；理由与备份说明在折叠详情里；点了才回 yes / no', async () => {
+  it('第②档：完整命令、「允许运行」/「取消」；理由与备份说明在折叠详情里；点了才回 yes / no', async () => {
     await setLocale(lang)
     const answer = vi.fn(async () => {})
     useAiFixStore.setState({ answer } as never)
@@ -235,15 +235,15 @@ describe.each(['zh-CN', 'en-US'] as const)('run_command 的卡（%s）', (lang) 
     const confirm = card.querySelector('[data-ai-fix-confirm]')!
     expect(confirm.getAttribute('data-ai-fix-danger')).toBe('true')
     expect(confirm.getAttribute('data-variant')).toBe('danger-tinted')
-    expect(confirm.textContent).toBe(lang === 'zh-CN' ? '在沙盒外运行' : 'Run outside the sandbox')
-    expect(card.querySelector('[data-ai-fix-skip]')?.textContent).toBe(lang === 'zh-CN' ? '不了' : 'No thanks')
-    expect(card.querySelector('[data-title]')?.textContent).toContain(lang === 'zh-CN' ? '沙盒外' : 'outside the sandbox')
+    expect(confirm.textContent).toBe(lang === 'zh-CN' ? '允许运行' : 'Allow')
+    expect(card.querySelector('[data-ai-fix-skip]')?.textContent).toBe(lang === 'zh-CN' ? '取消' : 'Cancel')
+    expect(card.querySelector('[data-title]')?.textContent).toContain(lang === 'zh-CN' ? '项目以外' : 'outside your project')
     // 理由、备份说明默认折叠：不在可见文字块里
     const visible = visibleBlocks(card).map((b) => b.text).join('\n')
     expect(visible).not.toContain('/opt/tools')
     expect(card.querySelector('details')?.open).toBe(false)
     expect(card.querySelector('[data-ai-fix-reason]')?.textContent).toContain('/opt/tools')
-    expect(card.querySelector('[data-ai-fix-outside-note]')?.textContent).toContain('3')
+    expect(card.querySelector('[data-ai-fix-outside-note]')?.textContent).toContain(lang === 'zh-CN' ? '备份' : 'backed up')
     expect(visibleSentenceCount(card, lang)).toBeLessThanOrEqual(1)
     expect(answer).not.toHaveBeenCalled() // 渲染本身不答
     await click('[data-ai-fix-confirm]')
