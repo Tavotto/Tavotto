@@ -95,6 +95,35 @@ class Asker:
         return {"answer": self.answer}
 
 
+@pytest.mark.parametrize(
+    "action,pip_name", [("run_installer", "_pip_install"), ("run_uninstaller", "_pip_uninstall")]
+)
+def test_package_process_receives_session_cancel_and_does_not_start_next_item(
+    box, monkeypatch, action, pip_name
+):
+    from contextlib import nullcontext
+
+    from tavotto.engine import deprepair, pool
+
+    cancel = threading.Event()
+    ctx = change_ctx(box, cancel=cancel)
+    ctx.installer = ctx.uninstaller = None
+    calls = []
+
+    def pip(python, requirement, signal, _event):
+        calls.append(requirement)
+        assert signal is cancel
+        cancel.set()
+        return "dependency_install_cancelled", ""
+
+    monkeypatch.setattr(pool, "mutating_environment", lambda *a: nullcontext())
+    monkeypatch.setattr(deprepair, pip_name, pip)
+    result = getattr(executors, action)(ctx, ctx.environments["e"], ["one", "two"])
+    assert result["ok"] is False and calls == ["one"]
+    again = getattr(executors, action)(ctx, ctx.environments["e"], ["three"])
+    assert again["code"] == "cancelled" and calls == ["one"]
+
+
 def fake_python(box, name="lab") -> str:
     """一个存在但不会被当作系统 / 内置的「解释器」文件（只用于分类与 `is_file`，不会被执行）。"""
     p = box.tmp / "venvs" / name / ("Scripts" if os.name == "nt" else "bin") / "python"

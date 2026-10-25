@@ -86,3 +86,9 @@ AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可
 界面上不再同时出现「OpenAI」和「Codex / ChatGPT」两个条目：`vendors` 每家一条，订阅登录、账号登录、API Key 作为该厂商的 `methods`，同时支持几种就出二级卡片让用户自己选。
 OpenAI = ChatGPT 订阅（codex 登录）+ 官方 API Key；Claude = Claude 订阅 + Anthropic 官方 API Key；Kimi / 百炼各自合并两种 Key；MiniMax（国内）= 账号登录 + API Key。
 官方 API Key 经路由可由内置执行器直接跑（有 CLI 且 `builtin_default` 为 false 时仍走 CLI + 注入），且带目录确认的思考强度档位（§七）。
+
+### 修订：可核对的视觉证据与分块写入（2026-10-25）
+
+`figure_edit` / `convert_to_editable` 增加候选范围内的 `read_image`（PNG/JPEG/GIF/WebP ≤ 4 MiB）；转换的 `check` 将同次 live figure 渲染的 PNG 经 IPC 回传（≤ 16 张且合计 ≤ 4 MiB，不完整时明确说明）。三种 wire 发送各自原生图像内容；事件与审计不带图像字节。旧图像随历史压缩移除，图像估算计入预算。该证据只供模型检查，不把运行通过升级成保真证明。
+
+长转换可先 `create_file` 再 `append_file(content, expected_sha256)`；重复/过期追加拒绝，仍只写那个新文件、核完整文件大小和秘密串。不新增 shell、网络或默认路由。

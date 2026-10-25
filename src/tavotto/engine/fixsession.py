@@ -51,6 +51,7 @@ CARD_KINDS = ("approve", "choice", "pick", "send")
 DELIVER_WAIT = 20.0  # CLI 报「MCP 工具调用开始」后应用这边这么久没收到回调 = 工具没送达（多半在等 CLI 自己的审批）
 STALL_IDLE = 120.0  # 没有工具在跑、没有 CLI 输出 / 模型事件这么久 = 卡住
 STALL_HARD = 300.0  # 卡住持续这么久自动取消，outcome=failed，原因码 = 卡住的原因
+TOOL_TIMEOUT = FIX_LIMITS.max_seconds  # A blocked tool must also obey the task's time bound.
 FORCE_SETTLE = 10.0  # 自动取消后内置循环（模型请求挂住）还没返回，这么久后强行收尾
 WATCH_TICK = 0.5
 STALL_APPROVAL = "cli_waiting_approval"
@@ -119,8 +120,13 @@ sandbox, inspect the current launch context and consider switch_workdir: it asks
 real working directory while keeping safe guards. Then verify with try_run in the application.
 4. If you need something only the user knows, use ask_user (a multiple-choice question) or pick_file (the system file \
 chooser). Never ask for a password, key or token.
-5. If you cannot fix it, call prepare_diagnostics with a short note of what you found and tried (the user decides \
-whether to send), then finish with outcome not_fixed.
+5. If you cannot fix it, distinguish missing user inputs/environment failures from a product defect. If evidence \
+points to a product defect, call prepare_diagnostics with an issue draft: title, reproduction, expected, actual, \
+evidence, attempts and product_reason. Include exact relevant commands/errors and the application-versus-direct-run \
+comparison when available; never infer a product defect just because one attempt failed. State uncertainty. \
+Keep the whole draft under 1000 characters; the reviewed diagnostics package carries full logs. The user reviews \
+the draft and package before sending through private feedback. Otherwise send a short summary of findings. \
+Only the user can choose to send; then finish with outcome not_fixed.
 6. ALWAYS end by calling finish exactly once: outcome `fixed` only if the current application run succeeds after the last change, `convert` after convert_script, otherwise `not_fixed`, \
 plus one plain sentence for the user.
 
@@ -292,6 +298,7 @@ class FixSession:
     stall_code: str = ""  # 自动取消时记下的原因码；收尾时据此判 failed
     last_progress: float = field(default_factory=time.monotonic)
     inflight: int = 0
+    tool_started: float | None = None
     #: CLI 报告的 MCP 工具调用开始时刻 / 应用实际收到的回调次数（按工具名）；开始数多于回调数 = 有调用没送达
     begins: dict = field(default_factory=dict)
     cbs: dict = field(default_factory=dict)
@@ -517,9 +524,13 @@ class FixSessions:
             }
             s.last_progress = now
             if phase == "start":
+                if s.inflight == 0:
+                    s.tool_started = now
                 s.inflight += 1
             elif phase == "end":
                 s.inflight = max(0, s.inflight - 1)
+                if s.inflight == 0:
+                    s.tool_started = None
         self._notify(s)
 
     def _audit_event(self, s: FixSession, code: str, summary: str, tool: str = "") -> None:
@@ -576,6 +587,14 @@ class FixSessions:
                 code, detail = "", ""
                 if s.state == STATE_WAITING:
                     s.last_progress = now
+                    # Human review time is not executable tool time.
+                    s.tool_started = now if s.inflight else None
+                elif (
+                    s.inflight
+                    and s.tool_started is not None
+                    and now - s.tool_started > TOOL_TIMEOUT
+                ):
+                    code, detail = STALL_IDLE_CODE, (s.activity or {}).get("tool", "")
                 elif s.approval is not None:
                     code, detail = STALL_APPROVAL, s.approval
                 else:
@@ -596,7 +615,14 @@ class FixSessions:
                 if (
                     s.stalled
                     and s.stall_since is not None
-                    and now - s.stall_since > STALL_HARD
+                    and (
+                        now - s.stall_since > STALL_HARD
+                        or (
+                            s.inflight
+                            and s.tool_started is not None
+                            and now - s.tool_started > TOOL_TIMEOUT
+                        )
+                    )
                     and not s.cancel.is_set()
                 ):
                     s.stall_code = s.stalled["reason"]

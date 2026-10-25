@@ -415,7 +415,7 @@ def normalize_outputs(cand: ConvertCandidate) -> dict | None:
     return None
 
 
-def run_validation(cand: ConvertCandidate, runner) -> dict:
+def run_validation(cand: ConvertCandidate, runner, *, evidence: list | None = None) -> dict:
     """在用户同一解释器 / 同一路由下跑候选脚本一遍。
 
     `runner(figures_dir: str, script_rel: str, write_roots: tuple[str, ...]) -> {"stems": [...], "size_mm": [w, h] | None, "svg": str | None,
@@ -441,7 +441,10 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
                 if cancel is not None and cancel.is_set():
                     # 依赖旁路没报取消（调研 none / skipped / 不缺包）而取消已置位：不启动校验运行
                     return {"status": "cancelled"}
-                out, killed = _run_with_cancel(runner, cand, rel, cancel)
+                checked_runner = (
+                    getattr(runner, "with_images", runner) if evidence is not None else runner
+                )
+                out, killed = _run_with_cancel(checked_runner, cand, rel, cancel)
                 if killed:
                     return {"status": "cancelled"}
             finally:
@@ -452,6 +455,10 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
     except OSError as exc:
         code = "exists" if isinstance(exc, FileExistsError) else "write_failed"
         return {"status": "error", "code": f"stage_{code}", "message": str(exc)}
+    if evidence is not None:
+        from .agent_runner.media import from_wire
+
+        evidence.extend(from_wire(out.get("images")))
     err = out.get("error")
     if err:
         code = str(err.get("code") or "run_failed")
@@ -492,7 +499,7 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
     }
 
 
-def agent_check(cand: ConvertCandidate) -> tuple[bool, str]:
+def agent_check(cand: ConvertCandidate, *, evidence: list | None = None) -> tuple[bool, str]:
     """内置执行器 `check` 工具的回调（Agent 在候选里写完新脚本后自己要一次校验）→ `(是否通过, 给 Agent 看的一段报告)`。
 
     与流水线的提交前检查同一套规则（ADR 0143）：新文件在不在 → 语法 → 静态上用了 Matplotlib → 在用户同一路由下真跑一遍
@@ -517,12 +524,19 @@ def agent_check(cand: ConvertCandidate) -> tuple[bool, str]:
     runner = cand.extras.get("runner")
     if runner is None:
         return False, "check_unavailable"
-    res = run_validation(cand, runner)
+    res = run_validation(cand, runner, evidence=evidence)
     if not convertcontext.unchanged(cand.project_root, cand.context, snapshot_dir=cand.dir):
         return False, "convert_context_changed"
     status = res.get("status")
     if status == "ok":
-        return True, f"check passed: {len(res.get('stems') or [])} figure(s) captured"
+        count = len(res.get("stems") or [])
+        message = f"check passed: {count} figure(s) captured"
+        if evidence is not None:
+            message += f"; {len(evidence)} rendered preview(s) attached in capture order."
+            if len(evidence) != count:
+                message += " Visual evidence is incomplete (preview unavailable or image budget reached). Do not claim full visual verification."
+            message += " Compare the previews to the original source and reference; this runtime result does not certify fidelity."
+        return True, message
     detail = " ".join(str(res.get(k) or "") for k in ("code", "message")).strip()
     return False, f"check failed ({status}): {detail}"[:1500]
 

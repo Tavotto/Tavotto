@@ -297,6 +297,52 @@ def test_prepare_diagnostics_without_an_answer_never_claims_it_was_sent(box):
     assert r.is_error and "sent" not in r.content.replace("send", "")
 
 
+def test_product_issue_card_contains_reviewable_evidence_and_denial_never_sends(box):
+    issue = {
+        "title": "Original succeeds; application capture fails",
+        "reproduction": "Open the project, run the selected script, inspect the capture error.",
+        "expected": "The same 2 figures as the original run.",
+        "actual": "Application reports capture_incomplete.",
+        "evidence": "Direct run exit 0; application attempt reports a failed second figure.",
+        "attempts": "Rechecked environment; ran python figure.py; repeated application run.",
+        "product_reason": "Both runs use the same interpreter and inputs; failure is in capture.",
+    }
+    ctx, cards = make_ctx(box, {"answer": "no"})
+    result = call(ctx, "prepare_diagnostics", {"summary": "Capture failure", "issue": issue})
+    assert "not to send" in result.content
+    assert len(cards) == 1 and cards[0]["kind"] == "send"
+    assert all(value in cards[0]["summary"] for value in issue.values())
+    assert cards[0]["wants_source"] is False
+    assert not call(
+        ctx, "prepare_diagnostics", {"summary": "x", "issue": {**issue, "evidence": "token=" + KEY}}
+    ).is_error
+    assert KEY not in cards[-1]["summary"]
+
+
+@pytest.mark.parametrize(
+    "issue",
+    [
+        {"title": "just a guess"},
+        {
+            k: "x" * 1000
+            for k in (
+                "title",
+                "reproduction",
+                "expected",
+                "actual",
+                "evidence",
+                "attempts",
+                "product_reason",
+            )
+        },
+    ],
+)
+def test_incomplete_or_oversized_issue_is_not_silently_truncated(box, issue):
+    ctx, cards = make_ctx(box)
+    result = call(ctx, "prepare_diagnostics", {"summary": "x", "issue": issue})
+    assert result.code == "bad_arguments" and cards == []
+
+
 # =========================================================================== finish
 def test_finish_hands_the_outcome_to_the_session_even_without_an_interface(box):
     ctx, cards = make_ctx(box, {"answer": "ok"})

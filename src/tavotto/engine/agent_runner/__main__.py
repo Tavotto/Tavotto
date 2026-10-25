@@ -24,6 +24,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from . import loop
+from .media import MAX_CHECK_BYTES, CheckResult, from_wire
 from .redact import Redactor
 from .tools import TOOLSETS, RunEnvelope
 from .wires import (
@@ -114,16 +115,22 @@ def _ipc_check(emit):
     父进程跑的是 Tavotto 自己的校验流水（ADR 0143 `run_validation`），本进程不碰候选以外的任何东西。
     stdin 关了 / 回复畸形 → 不通过，报告只有稳定短码。"""
 
-    def check() -> tuple[bool, str]:
+    def check() -> tuple[bool, str] | CheckResult:
         emit({"type": "check_request"})
         try:
-            line = sys.stdin.buffer.readline().decode("utf-8", errors="replace")
+            line = sys.stdin.buffer.readline(MAX_CHECK_BYTES * 2 + 16_384).decode(
+                "utf-8", errors="replace"
+            )
+            if not line.endswith("\n"):
+                return False, "check_unavailable"
             msg = json.loads(line)
         except (OSError, ValueError):
             return False, "check_unavailable"
         if not isinstance(msg, dict):
             return False, "check_unavailable"
-        return bool(msg.get("ok")), str(msg.get("report") or "")[:4000]
+        return CheckResult(
+            msg.get("ok") is True, str(msg.get("report") or "")[:4000], from_wire(msg.get("images"))
+        )
 
     return check
 

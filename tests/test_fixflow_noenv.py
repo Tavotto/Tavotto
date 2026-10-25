@@ -222,7 +222,7 @@ def test_packages_the_user_agreed_to_are_not_asked_again_and_audit_says_user(box
     r = run_tool(
         REGISTRY["install_packages"],
         ctx,
-        {"env": "e", "packages": [UNLISTED.upper().replace("-", "_")]},
+        {"env": "e", "packages": [UNLISTED.upper().replace("-", "_") + "==1.0"]},
         audit,
     )
     assert (
@@ -248,6 +248,22 @@ def test_a_package_that_was_not_listed_still_asks(box):
     )
     assert len(cards) == 2 and cards[1]["tool"] == "install_packages"  # 多出来的包照旧问
     assert not r.is_error
+
+
+@pytest.mark.parametrize("requested", [UNLISTED, UNLISTED + "==2.0", UNLISTED + ">=1.0"])
+def test_approved_pin_cannot_authorize_another_requirement(box, requested):
+    ctx, cards = agreed_ctx(box, ["yes", "no"])
+    calls = []
+    ctx.installer = lambda py, reqs: calls.append(reqs)
+    run_tool(
+        REGISTRY["propose_fix"],
+        ctx,
+        {"summary": "Install the pinned version", "packages": [UNLISTED + "==1.0"]},
+    )
+    result = run_tool(REGISTRY["install_packages"], ctx, {"env": "e", "packages": [requested]})
+    assert result.code == "needs_approval"
+    assert cards[-1]["packages"] == [requested] and len(cards) == 2
+    assert calls == []
 
 
 def test_declining_the_proposal_agrees_to_nothing(box):

@@ -110,6 +110,7 @@ def install_packages(ctx: FixContext, args: dict) -> ToolResult:
         )
     reqs: list[str] = []
     names: list[str] = []
+    requirements: list[tuple[str, str]] = []
     for item in raw:
         parsed = depresolve.parse_requirement(item.strip())
         if parsed is None:
@@ -120,6 +121,7 @@ def install_packages(ctx: FixContext, args: dict) -> ToolResult:
             )
         reqs.append(f"{parsed[0]}{parsed[1]}")
         names.append(parsed[0])
+        requirements.append((canonical_name(parsed[0]), parsed[1]))
     kind = convertdeps.describe_env(python, "")["kind"]
     if kind in (convertdeps.KIND_SYSTEM, convertdeps.KIND_BUILTIN):
         return err(
@@ -128,9 +130,11 @@ def install_packages(ctx: FixContext, args: dict) -> ToolResult:
             "Choose another environment (list_environments) or create one with change_python.",
         )
     outside = sorted({n for n in names if not convertdeps.in_allowlist(n)})
-    agreed = [ctx.approved_installs.get(canonical_name(n)) for n in outside]
+    outside_names = {canonical_name(n) for n in outside}
+    agreed = [ctx.approved_installs.get(req) for req in requirements if req[0] in outside_names]
     if outside and all(a is not None for a in agreed):
-        # 这些包用户已在 propose_fix 卡上点过头（完全同名才算）：不再弹第二张卡，审计记 user 与同意它的那一步
+        # Same normalized name AND version constraint: a pin cannot authorize
+        # an unpinned upgrade/downgrade or a different range.
         ctx.call_meta["approved_by"] = "user"
         ctx.call_meta["approved_step"] = max(a for a in agreed if a is not None)
     elif outside:  # 名单外 = user_env：一律问

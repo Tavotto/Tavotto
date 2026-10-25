@@ -1548,12 +1548,19 @@ def run(
         """内置执行器的 `check`：跑 ADR 0143 的校验流水（`run_validation`，候选工作区里），把结论写回它的 stdin。"""
         from . import ai_convert
 
+        evidence = []
         try:
-            ok, report = ai_convert.agent_check(cand)
+            ok, report = ai_convert.agent_check(cand, evidence=evidence)
         except Exception:  # noqa: BLE001 - 校验流水自身出错：告诉 Agent 不通过，不拖垮会话
             LOG.exception("内置执行器的 check 回调出错（session %s）", sid)
             ok, report = False, "check_failed"
-        reply = json.dumps({"ok": ok, "report": report}, ensure_ascii=True) + "\n"
+        reply = (
+            json.dumps(
+                {"ok": ok, "report": report, "images": [img.as_dict() for img in evidence]},
+                ensure_ascii=True,
+            )
+            + "\n"
+        )
         try:
             pipe = sess["proc"].stdin
             pipe.write(reply)
@@ -1563,24 +1570,38 @@ def run(
 
     def _consume():
         st: dict = {}
-        for line in sess["proc"].stdout:
-            line = line.rstrip("\n")
-            if not line.strip():
-                continue
-            if builtin_convert and '"check_request"' in line:
-                _answer_check()
-                continue
-            for kind, text in _classify(agent, line, st):
-                if not text:
-                    continue
-                if kind != "delta":  # delta 只走 SSE，transcript 存终稿
-                    sess["transcript"].append({"kind": kind, "text": text})
-                emit("ai.delta", {"session": sid, "kind": kind, "text": text})
-            if time.time() - sess["started"] > TIMEOUT_S:
-                _terminate(sess)
+        proc = sess["proc"]
+        complete = threading.Event()
+
+        def expire():
+            # A silent process (or one holding a partial line) never reaches a
+            # timeout check inside the stdout iterator. Watch independently.
+            if not complete.is_set() and sess["proc"] is proc and sess["status"] == "running":
                 sess["status"] = "timeout"
-        _await_exit(sess)
-        log_state["log"].close()
+                _terminate(sess)
+
+        timer = threading.Timer(max(0.0, TIMEOUT_S - (time.time() - sess["started"])), expire)
+        timer.daemon = True
+        timer.start()
+        try:
+            for line in proc.stdout:
+                line = line.rstrip("\n")
+                if not line.strip():
+                    continue
+                if builtin_convert and '"check_request"' in line:
+                    _answer_check()
+                    continue
+                for kind, text in _classify(agent, line, st):
+                    if not text:
+                        continue
+                    if kind != "delta":  # delta only streams; transcript keeps final text
+                        sess["transcript"].append({"kind": kind, "text": text})
+                    emit("ai.delta", {"session": sid, "kind": kind, "text": text})
+            _await_exit(sess)
+        finally:
+            complete.set()
+            timer.cancel()
+            log_state["log"].close()
 
     def _respawn(note: str) -> None:
         """TAF 有界修正：在同一个候选目录里、带着原提示词 + 修正指令再起一次 CLI（Phase 4，`ai_tasks._admit_correction`

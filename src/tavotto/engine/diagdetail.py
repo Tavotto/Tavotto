@@ -44,6 +44,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import config, diagnostics, layoutsession, logsafe, perfprobe, pool, runtime, updater
+from .diagnostictext import _SECRET_VALUE, _install_id
 
 LOG = logging.getLogger("tavotto.diagdetail")
 
@@ -691,7 +692,7 @@ class Scrubber:
             if names
             else None
         )
-        self._install_id = diagnostics._install_id()
+        self._install_id = _install_id()
 
     # ---- 文本 ----
     def json_or_text(self, text: str) -> str:
@@ -782,7 +783,7 @@ class Scrubber:
         text = _JWT.sub(_REDACTED, text)
         text = _redact_pem(text)
         text = _PROVIDER_TOKEN.sub(_REDACTED, text)
-        text = diagnostics._SECRET_VALUE.sub("***", text)
+        text = _SECRET_VALUE.sub("***", text)
         if self._install_id:
             text = text.replace(self._install_id, "***")
         if self._home is not None:

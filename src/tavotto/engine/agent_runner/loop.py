@@ -331,6 +331,9 @@ def estimate_tokens(system: str, tools: list[ToolSpec], history: list[Msg]) -> i
                 # 回放时原样带回的原生内容（签名 thinking、加密 reasoning）也占上下文
                 n += _tok(json.dumps(m.turn.native, ensure_ascii=False, default=str))
         n += sum(_tok(r.content) for r in m.results)
+        # Conservative fallback when the endpoint omits usage. Images must not
+        # disappear from the context/total budget just because they aren't text.
+        n += sum(img.estimated_tokens for r in m.results for img in r.images)
     return n
 
 
@@ -360,8 +363,9 @@ def compress(history: list[Msg]) -> int:
     n = 0
     for m in tool_msgs[:-1]:
         for r in m.results:
-            if r.compact is not None and r.content != r.compact:
+            if r.compact is not None and (r.content != r.compact or r.images):
                 r.content = r.compact
+                r.images = []
                 n += 1
     return n
 

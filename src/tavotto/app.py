@@ -12475,7 +12475,13 @@ def _convert_error(exc: "engine_ai_convert.ConvertError"):
 def _convert_runner(ctx: "ProjectCtx", source_script: str):
     """校验运行（注入 `ai_convert`）：走现有 probe 路径，**用户同一解释器 / 同一路由**；返回前退役它起的 worker。"""
 
-    def runner(figures_dir: str, rel: str, write_roots: tuple[str, ...] | None = None) -> dict:
+    def runner(
+        figures_dir: str,
+        rel: str,
+        write_roots: tuple[str, ...] | None = None,
+        *,
+        with_images: bool = False,
+    ) -> dict:
         # `write_roots`：写入根绊线（ADR 0141 / 0143）——候选只许写候选目录（与 worker 基础设施目录），写项目文件在事件发生时失败
         roots_kw = {"write_roots": tuple(write_roots)} if write_roots else {}
         try:
@@ -12500,6 +12506,7 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
             descs = result.get("descriptors") or []
             size = descs[0].get("size_mm") if descs and isinstance(descs[0], dict) else None
             svg = None
+            images = []
             worker = engine_pool.peek(rel, figures_dir, **run_kw, **roots_kw) if stems else None
             if worker is not None:
                 try:
@@ -12510,10 +12517,39 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
                         svg = p.read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     svg = None
+            if worker is not None and with_images:
+                from .engine.agent_runner import media
+
+                total = 0
+                for index, stem in enumerate(stems[: media.MAX_CHECK_IMAGES]):
+                    try:
+                        p = Path(worker.render_png(stem, 1000))
+                        if (
+                            not p.is_file()
+                            or p.is_symlink()
+                            or p.stat().st_size > media.MAX_IMAGE_BYTES
+                        ):
+                            continue
+                        with p.open("rb") as handle:
+                            raw = handle.read(media.MAX_IMAGE_BYTES + 1)
+                        if total + len(raw) > media.MAX_CHECK_BYTES:
+                            break
+                        img = media.from_bytes(raw, f"Captured figure {index + 1}: {stem}")
+                        if img is not None:
+                            images.append(img.as_dict())
+                            total += len(raw)
+                    except Exception:  # noqa: BLE001 - failed live rendering cannot pass a visual check
+                        return {
+                            "error": {
+                                "code": "preview_render_failed",
+                                "message": f"Captured figure {index + 1} could not be rendered as an image.",
+                            }
+                        }
             return {
                 "stems": stems,
                 "size_mm": size,
                 "svg": svg,
+                "images": images,
                 "partial": result.get("partial", False),
                 "failed_figures": result.get("failed_figures") or [],
                 "dropped_figures": result.get("dropped_figures", 0),
@@ -12539,6 +12575,12 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
         return engine_pool.force_cancel(rel, figures_dir, **run_kw, **roots_kw)
 
     runner.force_cancel = force_cancel  # type: ignore[attr-defined]
+
+    def with_images(figures_dir, rel, write_roots):
+        return runner(figures_dir, rel, write_roots, with_images=True)
+
+    with_images.force_cancel = force_cancel
+    runner.with_images = with_images
     return runner
 
 

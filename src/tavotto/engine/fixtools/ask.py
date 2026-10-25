@@ -30,6 +30,15 @@ OPTIONS_MAX = 8
 OTHER_MAX = 300
 READS_MAX = 30
 DIAG_SUMMARY_MAX = 600
+ISSUE_FIELDS = (
+    "title",
+    "reproduction",
+    "expected",
+    "actual",
+    "evidence",
+    "attempts",
+    "product_reason",
+)
 
 #: 用户没给出有效回答的几种结局
 _NO_ANSWER = frozenset({"cancelled", "timeout"})
@@ -129,8 +138,8 @@ def propose_fix(ctx: FixContext, args: dict) -> ToolResult:
     if res["answer"] == "yes":
         from .change import canonical_name
 
-        for name, _v in packages:  # 用户点头的包：install_packages 对完全同名的不再问第二遍
-            ctx.approved_installs[canonical_name(name)] = ctx.step
+        for name, version in packages:
+            ctx.approved_installs[(canonical_name(name), version)] = ctx.step
         return ok("The user approved this fix. Carry it out now.", "fix approved")
     return ok(
         "The user declined this fix. Do not apply it; propose something different or finish.",
@@ -276,6 +285,26 @@ def prepare_diagnostics(ctx: FixContext, args: dict) -> ToolResult:
             "`summary` (what you found and what you tried, for the maintainers) is required; "
             "`include_source` is an optional boolean.",
         )
+    issue = args.get("issue")
+    if issue is not None:
+        from ..diagsend import NOTE_MAX_CHARS
+
+        if not isinstance(issue, dict) or any(
+            not isinstance(issue.get(k), str) or not issue[k].strip() for k in ISSUE_FIELDS
+        ):
+            return err(
+                "bad_arguments",
+                "A product issue needs title, reproduction, expected, actual, evidence, attempts and product_reason. Cite observed errors and commands; distinguish unknowns from facts.",
+            )
+        # Reuse the existing reviewed note + immutable diagnostics upload. The
+        # detailed draft stays in memory, not the audit/telemetry or a public URL.
+        summary = "\n\n".join(f"{key}: {issue[key].strip()}" for key in ISSUE_FIELDS)
+        summary = readscope.scrub(summary)
+        if len(summary) > NOTE_MAX_CHARS:
+            return err(
+                "bad_arguments",
+                f"Issue draft is {len(summary)} characters; the reviewed feedback note supports {NOTE_MAX_CHARS}. Shorten prose, retain reproduction, errors, attempted commands and evidence. Full logs are in the diagnostics package.",
+            )
     res = _ask(
         ctx,
         {
@@ -438,6 +467,16 @@ ASK_TOOLS: tuple[FixTool, ...] = (
                     "type": "boolean",
                     "description": "Only mentions that the script would help; the user decides in the dialog.",
                 },
+                "issue": obj(
+                    {
+                        key: {
+                            "type": "string",
+                            "description": "Observed evidence, not guesses. Keep the entire issue concise (under 1000 characters including field names).",
+                        }
+                        for key in ISSUE_FIELDS
+                    },
+                    list(ISSUE_FIELDS),
+                ),
             },
             ["summary"],
         ),

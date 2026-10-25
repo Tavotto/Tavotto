@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 from .. import netpolicy, tlstrust
+from .media import Image
 
 USER_AGENT = "tavotto-agent-runner/1"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -111,6 +112,8 @@ class ToolResult:
     compact: str | None = None
     #: 这次调用改了文件
     mutated: bool = False
+    #: Bounded visual evidence; only wire adapters consume it, never emit().
+    images: list[Image] = field(default_factory=list)
 
 
 @dataclass
@@ -292,7 +295,26 @@ class AnthropicWire:
                             {
                                 "type": "tool_result",
                                 "tool_use_id": r.call_id,
-                                "content": r.content,
+                                "content": (
+                                    [{"type": "text", "text": r.content}]
+                                    + [
+                                        block
+                                        for img in r.images
+                                        for block in (
+                                            {"type": "text", "text": img.label or "Image"},
+                                            {
+                                                "type": "image",
+                                                "source": {
+                                                    "type": "base64",
+                                                    "media_type": img.mime_type,
+                                                    "data": img.data,
+                                                },
+                                            },
+                                        )
+                                    ]
+                                    if r.images
+                                    else r.content
+                                ),
                                 **({"is_error": True} if r.is_error else {}),
                             }
                             for r in m.results
@@ -429,6 +451,19 @@ class OpenAIChatWire:
                     {"role": "tool", "tool_call_id": r.call_id, "content": r.content}
                     for r in m.results
                 ]
+                # Chat's tool messages are text-only. Close every tool call
+                # before adding the corresponding images as a user message.
+                images = [
+                    block
+                    for r in m.results
+                    for img in r.images
+                    for block in (
+                        {"type": "text", "text": f"Tool {r.call_id}: {img.label or 'Image'}"},
+                        {"type": "image_url", "image_url": {"url": img.url}},
+                    )
+                ]
+                if images:
+                    msgs.append({"role": "user", "content": images})
         body: dict[str, Any] = {
             "model": model,
             self.token_field: max_output_tokens,
@@ -529,7 +564,23 @@ class OpenAIResponsesWire:
                 items += list(m.turn.native or [])
             elif m.role == "tool":
                 items += [
-                    {"type": "function_call_output", "call_id": r.call_id, "output": r.content}
+                    {
+                        "type": "function_call_output",
+                        "call_id": r.call_id,
+                        "output": (
+                            [{"type": "input_text", "text": r.content}]
+                            + [
+                                block
+                                for img in r.images
+                                for block in (
+                                    {"type": "input_text", "text": img.label or "Image"},
+                                    {"type": "input_image", "image_url": img.url, "detail": "auto"},
+                                )
+                            ]
+                            if r.images
+                            else r.content
+                        ),
+                    }
                     for r in m.results
                 ]
         body: dict[str, Any] = {

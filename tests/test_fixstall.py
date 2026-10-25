@@ -156,6 +156,37 @@ def test_a_tool_that_is_still_running_is_not_a_stall(box, monkeypatch):
     fixsession.SESSIONS.cancel(s.id, "pj")
 
 
+@pytest.mark.parametrize("cli", [False, True])
+def test_tool_over_total_budget_is_visible_and_cancellation_reaches_it(box, monkeypatch, cli):
+    monkeypatch.setattr(fixsession, "TOOL_TIMEOUT", 0.4)
+    entered, exited = threading.Event(), threading.Event()
+
+    def cooperative(ctx, _args):
+        entered.set()
+        assert ctx.cancel.wait(8), "the watchdog never cancelled the tool"
+        exited.set()
+        return ok("cancelled")
+
+    monkeypatch.setitem(
+        REGISTRY, "hung_install", FixTool("hung_install", "d", obj({}), cooperative)
+    )
+    if cli:
+        s, token = start_session(box, sleeper())
+        thread = threading.Thread(
+            target=lambda: fixsession.SESSIONS.call_tool(s.id, token, "hung_install", {}),
+            daemon=True,
+        )
+        thread.start()
+    else:
+        s = start_builtin(box, Scripted([("hung_install", {})]))
+    assert entered.wait(5)
+    assert exited.wait(8)
+    wait_finished(s, 10)
+    assert (s.outcome, s.reason) == (fixsession.OUTCOME_FAILED, "stalled")
+    assert "stalled" in codes(box, s)
+    assert fixsession.SESSIONS.active() is None
+
+
 # =========================================================================== activity：三种模式各一条
 def test_activity_follows_tool_calls_in_cli_mode(box, monkeypatch):
     entered, release = threading.Event(), threading.Event()

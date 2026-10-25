@@ -335,7 +335,11 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "ggplot 的 geom_point / geom_line / geom_col / geom_errorbar / geom_boxplot / geom_histogram → ax.scatter / plot / bar / errorbar / boxplot / hist；"
         'geom_smooth(method = "loess") → statsmodels.nonparametric.smoothers_lowess.lowess（把 span 对应到 frac，并在代码注释里写明）；'
         "facet_wrap / facet_grid → plt.subplots 的多个子图；scale_*_log10 → ax.set_xscale / set_yscale('log')；"
-        "ggsave(width, height, dpi) → figsize 与 dpi（英寸）。",
+        "ggsave(width, height, dpi) → figsize 与 dpi（英寸）。"
+        "plotmath 要翻译实际显示的表达式，不能按源码字符串猜：函数调用中 `name=value` 是参数标签，"
+        "标签本身不成为显示的数学等式，`name==value` 才是等式表达式；求和/乘积/积分的上下限只取实际操作数。"
+        "保留 plain/italic/bold、上下标、分式、间距及括号语义，不能补入原图没有的变量或下限；"
+        "使用 Matplotlib 支持的 mathtext 语法，并检查每页实际渲染。",
     ),
     "rule_foreign_mapping_matlab": (
         frozenset(),
@@ -344,7 +348,12 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "xlabel / ylabel / title / legend / xlim / ylim / grid → ax.set_xlabel / set_ylabel / set_title / legend / set_xlim / set_ylim / grid；"
         "subplot / tiledlayout → plt.subplots；polyfit / polyval → numpy.polyfit / polyval；"
         "fitlm → statsmodels.formula.api.ols；linspace / meshgrid → numpy 同名函数；"
-        "MATLAB 的下标从 1 开始、矩阵按列优先、`.^` `.*` 是逐元素运算——搬运时逐处核对下标与形状。",
+        "MATLAB 的下标从 1 开始、矩阵按列优先、`.^` `.*` 是逐元素运算——搬运时逐处核对下标与形状。"
+        "颜色不能直接照抄同名快捷色：MATLAB 的 g/green 是 RGB(0,1,0)，不同于 Matplotlib 的 g；"
+        "线条颜色顺序、每个 axes 的 colormap、LUT 行数、CLim、CDataMapping 及 alpha 均要独立保留。"
+        "默认色表随 MATLAB 版本变化（R2019b 起默认长度 256，之前 64；parula 本身也有版本差异），"
+        "优先使用项目提供的原始 RGB 数组/运行时信息，不能用几枚控制点、viridis 或近似色表冒充原始 parula；"
+        "无法确定所需的原始色表或版本时说明缺哪份证据，不能宣称配色已保真。",
     ),
     "rule_foreign_needs_input": (
         frozenset(),

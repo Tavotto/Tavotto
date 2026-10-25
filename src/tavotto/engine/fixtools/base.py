@@ -93,7 +93,7 @@ class FixContext:
     call_meta: dict = field(default_factory=dict)
     #: 本会话允许的档；裸构造只放行 observe（只读），修复会话用 `for_fix_session` 加上 run
     allowed_tiers: frozenset[str] = frozenset({"observe"})
-    #: 用户在 `propose_fix` 卡上已同意安装的包：规范名 -> 同意它的那一步（`install_packages` 名单外的包只要都在这里就不再问第二遍）
+    #: Reviewed (canonical name, exact version constraint) -> approval step.
     approved_installs: dict = field(default_factory=dict)
     #: 用户亲手选过的路径：真实路径 -> 选它的那一步（`pick_file` 的回答、`ask_user` 选中的选项里写着的存在的路径）。
     #: `link_data_file` 的 `chosen` 在这里就不再弹第二张卡（选择本身就是确认）

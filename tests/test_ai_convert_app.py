@@ -108,6 +108,47 @@ def _start(client, **over):
     return client.post("/api/ai/convert", json=body)
 
 
+def test_agent_check_reads_current_live_pngs_before_worker_retirement(project):
+    import base64
+
+    m, _client, figs, state = project
+    # App/worker evidence: two differently colored live figures, not a guessed
+    # .png pathname beside an SVG/manifest generation.
+    script = figs / "visual_check.py"
+    script.write_text(
+        "import matplotlib.pyplot as plt\nfor color in ('red', 'blue'):\n    fig = plt.figure(figsize=(2, 2), facecolor=color)\n    plt.plot([0, 1])\n"
+    )
+    with m.app.test_request_context("/"):
+        runner = m._convert_runner(m.current_ctx(), "fig.py")
+    result = runner.with_images(str(figs), script.name, (str(figs),))
+    assert not result.get("error"), result
+    assert len(result["images"]) == len(result["stems"]) == 2
+    decoded = [base64.b64decode(img["data"]) for img in result["images"]]
+    assert all(b.startswith(b"\x89PNG\r\n\x1a\n") for b in decoded)
+    assert decoded[0] != decoded[1]
+    assert [img["label"].split(":")[0] for img in result["images"]] == [
+        "Captured figure 1",
+        "Captured figure 2",
+    ]
+    assert pool.peek(script.name, str(figs), write_roots=(str(figs),)) is None
+
+
+@pytest.mark.parametrize("output", ["", "partial line without newline"])
+def test_silent_conversion_cli_times_out_without_waiting_for_a_stdout_line(
+    project, monkeypatch, output
+):
+    _m, client, figs, state = project
+    monkeypatch.setattr(ai_bridge, "TIMEOUT_S", 0.5)
+    state["code"] = f"import time; sys.stdout.write({output!r}); sys.stdout.flush(); time.sleep(30)"
+    before = (figs / "fig.py").read_bytes()
+    sid = _start(client).get_json()["session"]
+    sess = _wait_final(client, sid, timeout=8)
+    assert sess["status"] == "timeout" and sess["final"] is True
+    assert (figs / "fig.py").read_bytes() == before
+    assert not (figs / "fig_matplotlib.py").exists()
+    assert ai_bridge.SESSIONS[sid]["exited"].is_set()
+
+
 def test_convert_runs_validates_compares_and_adopts_without_touching_the_original(project):
     m, client, figs, state = project
     before = (figs / "fig.py").read_bytes()

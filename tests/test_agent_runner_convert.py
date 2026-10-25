@@ -144,7 +144,15 @@ class TestNormalFlow:
 
     def test_toolset_has_no_shell_network_or_write_file(self, cand):
         names = [t.name for t in TASK.tools(envelope(cand))]
-        assert names == ["read_file", "list_dir", "create_file", "edit_file", "check"]
+        assert names == [
+            "read_image",
+            "read_file",
+            "list_dir",
+            "create_file",
+            "append_file",
+            "edit_file",
+            "check",
+        ]
 
     def test_first_message_names_both_files_and_prompt_is_stable(self, cand):
         msg = TASK.first_message(envelope(cand))

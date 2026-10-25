@@ -330,7 +330,7 @@ class TestWires:
         assert h["x-api-key"] == KEY_CANARY and h["authorization"] == f"Bearer {KEY_CANARY}"
         assert h["anthropic-version"] == "2023-06-01"
         names = [t["name"] for t in body["tools"]]
-        assert names == ["read_file", "list_dir", "edit_file", "write_file", "check"]
+        assert names == ["read_image", "read_file", "list_dir", "edit_file", "write_file", "check"]
         assert all("input_schema" in t for t in body["tools"])
         # 缓存断点：系统提示块与最后一个工具定义
         assert body["system"][0]["cache_control"] == {"type": "ephemeral"}
@@ -672,6 +672,7 @@ class TestToolSafety:
 
     def test_no_shell_network_or_mcp_tools(self, cand):
         assert [t.name for t in tools.TOOLSETS["figure_edit"].tools(envelope(cand))] == [
+            "read_image",
             "read_file",
             "list_dir",
             "edit_file",

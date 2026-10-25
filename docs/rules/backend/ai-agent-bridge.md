@@ -418,12 +418,12 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `done.ledger_mismatch=true`（不抛）。每轮记账后立刻复查 token：**终止答复**（`end` 且无工具调用）累计 `>` 上限才拒，恰好用满上限仍 `completed`；带工具调用 / 要开下一轮的答复累计 `>=` 上限即 `budget/tokens`，工具不执行、不开新轮。估计上下文超阈值时把早先的 `read_file` 结果换成「已读过 X（第 a–b 行，sha 前缀）」。
 - **`convert_to_editable` 工具集**（`tools.py` 的 `ConvertToEditableToolset` / `ConvertSession`，ADR 0147 §四；入口 `--task convert_to_editable --target <原脚本> --output <原名>_matplotlib.py`，
   默认任务仍是 `figure_edit`）。权限边界即 ADR 0143 §二：**原脚本永远不可写，Agent 只写候选目录顶层的那一个新文件**。
-  - 工具只有 `read_file` / `list_dir`（候选内只读，与 figure_edit **同一个** `_resolve`，没有第二份路径判据）、`create_file(content)`、`edit_file(old, new)`、`check`；
+  - 工具含 `read_image`、`read_file` / `list_dir`（候选内只读，与 figure_edit **同一个** `_resolve`，没有第二份路径判据）、`create_file(content)`、`append_file(content, expected_sha256)`、`edit_file(old, new)`、`check`；
     没有 `write_file`、没有 shell / 网络 / MCP。`create_file` 的可选 `path` 与 `edit_file` 的可选 `path` 只能是 `--output`：指向原脚本 → `source_readonly`，
     其它路径 → `not_output`，越界 → `path_outside`；一律工具错误、磁盘字节不变。第一次 `create_file` 用 `O_CREAT|O_EXCL` 新建（此刻已存在含悬空链接 → `output_exists`，不覆盖），
     之后允许整份覆盖这个新文件（模型自我修正）；`edit_file` 必须在本次运行里已 `create_file`（否则 `not_created`），`old` 恰好出现一次。含密钥的内容 → `secret_in_content`（新建 / 覆盖 / edit 三处）。
   - `--output` 起跑即校验：必须恰为 `<原名>_matplotlib.py`（原名 = `--target` 的 stem）、只有文件名（无目录、无反斜杠）、尚不存在（`lexists`）；不合格 → `done{ok:false, reason:"internal", detail:"bad_output"}`，**0 次模型请求**、磁盘不动。
-  - `check`：同 figure_edit 的注入回调，语义是 ADR 0143 的 `run_validation`（用户同一路由下跑新脚本，必须捕获到 Matplotlib 图），回调返回 `(ok, 报告)`；**本阶段 CLI 入口没有注入方 → `not_available`**。
+  - `check`：同 figure_edit 的注入回调，语义是 ADR 0143 的 `run_validation`（用户同一路由下跑新脚本，必须捕获到 Matplotlib 图），回调可返回 `(ok, 报告)` 或 `CheckResult`（报告 + 有界图像）；转换入口经 IPC 调用应用同一校验，实时渲染 PNG 后才退役 worker。未注入回调则 `not_available`。
     新文件还没写出就 `check` → `not_created`（不调回调、不计数）。**回调最多被调 3 次**（ADR 0143「校验运行 ≤ 3」），第 4 次 `check_budget`。
   - 预算默认值由工具集给（`default_limits`；命令行不给 `--max-turns` 等就用它）：convert 为 20 轮 / 900 s / 400k token / 单轮输出 16384（整份脚本可能很长；20 轮 ≈ 读 1–3 + 写 1 + 至多 3 轮 check/修 + 收尾，留余量）；figure_edit 不变。
   - 系统提示是英文（要求用用户指令的语言回复）；产品要求三条（保留数据读取与计算 / 必须 Matplotlib 出图 / 图幅字号对齐）**引用 `ai_prompt_pack.convert_requirements()` 的同一份文字**（CLI 路径的 `convert_prompt` 也用它，不各抄一份），
@@ -626,11 +626,11 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `stalled = {reason, detail}`（`reason ∈ cli_waiting_approval | cli_tool_not_delivered | stalled`）。来源：内置循环包装工具 handler 的开始 / 结束；CLI 每次 `/tool` 回调；CLI 结构化输出
   （Codex `exec --json`、Claude `-p --output-format stream-json --verbose`）经适配器的 `fix_event_parser()` 逐行解析成 `mcp_begin / mcp_end / approval / denied / output`——**只用于进度与卡住线索，从不当结论**。
   看门狗线程（每会话一个，`_watch`）：`DELIVER_WAIT`=20 s 内 CLI 报告的调用没收到回调 → `cli_tool_not_delivered`；出现 CLI 审批请求 → `cli_waiting_approval`（回调一到即解除）；`STALL_IDLE`=120 s 无工具在跑、无 CLI 输出 / 模型事件 → `stalled`；
-  等卡片（`state=waiting`）与在途工具都不算。卡住持续 `STALL_HARD`=300 s 自动取消：`stall_code` 记下，`_settle` 判 `failed` + 该原因码；内置循环的模型请求挂住、循环线程回不来时 `FORCE_SETTLE`=10 s 后看门狗强行收尾（`_settle` 幂等，迟到的循环线程不再改结局）。
+  等卡片（`state=waiting`）不算；在途工具有独立的 `TOOL_TIMEOUT`（任务总时限）上限，到点显示 `stalled` 并传取消，工具真正退出前不释放占位。卡住持续 `STALL_HARD`=300 s 自动取消：`stall_code` 记下，`_settle` 判 `failed` + 该原因码；内置循环的模型请求挂住、循环线程回不来时 `FORCE_SETTLE`=10 s 后看门狗强行收尾（`_settle` 幂等，迟到的循环线程不再改结局）。
   卡住与自动取消、Claude 的权限拒绝（`cli_permission_denied`）都写 `fix_audit.jsonl`（`tool=_session`）。
 - **Codex 的取舍**：`--ignore-user-config` 仅在 `endpoint_args` 非空（Tavotto 显式给了 provider）时加并带 `-m <接口型号>`；官方登录态不加。**没核实的**：Codex `--json` 里 MCP 调用 / 审批事件的确切字段名（解析器按 `item.*` 的 `type` 含 `mcp` / `approval` 写，且对未知事件一律当「有输出」）。
 - **`change_python` 的旧代租约与回滚（Codex #1383 P2）**：换到新一代后 `deprepair._run_generation` 会 `managedenv.retire_unused` 删掉没人占着的旧代，所以 `change_python` 动手前给项目当前用的受管环境那一代
   （`managedenv.python_of` 与设置里记着的受管解释器）加 **保留型**租约 `envlease.acquire_retain`（`fix:<会话>`；与 native 占用在同一模块、两种用途：保留型只让 `deprepair._generation_in_use` 不清这一代，**不**被 `envlease.mutating()` 当成 native 会话拒绝——用 native 租约会把换代事务自己挡死；真正的 native 会话仍照旧拒绝换代），换成功则持到会话收尾（`_settle` → `ctx.release_leases()`，finish / 取消 / 失败 / 自动取消都走），没换成立即放（`release_retain`）。
   快照多存 `managed = {generation}`；`rollback` 先核旧代解释器真的在（不在 = `rollback_target_gone`，**一个字不改**），再恢复设置、`managedenv.activate` 指回旧代并让池 / 缓存放弃新一代，恢复后核设置里记着的解释器在不在（不在同样 `rollback_target_gone`，不报成功）。
-  `FixContext.cancel`（= 会话的 `s.cancel`）传给缺省换 Python 执行器 `_default_python_changer(req, cancel)`，规划完、动手前先看一眼（与 #1381 同一件事）。看护 `tests/test_fixrollback_managed.py`。
+  `FixContext.cancel`（= 会话的 `s.cancel`）同样传给 pip 安装/卸载执行器（含逐项执行前复查），并传给缺省换 Python 执行器 `_default_python_changer(req, cancel)`，规划完、动手前先看一眼（与 #1381 同一件事）。看护 `tests/test_fixrollback_managed.py`。
 
