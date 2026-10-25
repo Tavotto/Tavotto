@@ -300,6 +300,7 @@ class FixSession:
     inflight: int = 0
     tool_started: float | None = None
     tool_timeout: float = TOOL_TIMEOUT
+    deadline: float | None = None
     #: CLI 报告的 MCP 工具调用开始时刻 / 应用实际收到的回调次数（按工具名）；开始数多于回调数 = 有调用没送达
     begins: dict = field(default_factory=dict)
     cbs: dict = field(default_factory=dict)
@@ -415,6 +416,7 @@ class FixSessions:
                 prep_session_id=prep_session_id,
                 token=secrets.token_urlsafe(32) if cli is not None else "",
                 tool_timeout=min(TOOL_TIMEOUT, (limits or FIX_LIMITS).max_seconds),
+                deadline=time.monotonic() + (limits or FIX_LIMITS).max_seconds,
             )
             self._by_id[s.id] = s
             while len(self._by_id) > KEEP_SESSIONS:
@@ -582,12 +584,25 @@ class FixSessions:
         while not s.done.wait(WATCH_TICK):
             now = time.monotonic()
             new_stall = auto_cancel = None
+            budget_expired = False
             changed = False
             with self._lock:
                 if s.state == STATE_FINISHED:
                     return
                 code, detail = "", ""
-                if s.state == STATE_WAITING:
+                if (
+                    s.deadline is not None
+                    and now >= s.deadline
+                    and not s.cancel.is_set()
+                    and s.reported is None
+                ):
+                    s.stall_code = "budget"
+                    s.cancel.set()
+                    forced_at = now
+                    budget_expired = changed = True
+                if s.cancel.is_set() or s.closing.is_set():
+                    pass  # Do not relabel an intentional shutdown while tools drain.
+                elif s.state == STATE_WAITING:
                     s.last_progress = now
                     # Human review time is not executable tool time.
                     s.tool_started = now if s.inflight else None
@@ -629,6 +644,8 @@ class FixSessions:
                 ):
                     s.stall_code = s.stalled["reason"]
                     auto_cancel = (s.stall_code, s.stalled["detail"])
+            if budget_expired:
+                self._audit_event(s, "budget", "the repair session reached its time limit")
             if new_stall:
                 self._audit_event(s, new_stall[0], "the repair AI looks stuck", new_stall[1])
             if auto_cancel:
@@ -686,6 +703,11 @@ class FixSessions:
                     break
             if now - started > max_seconds:
                 reason = "budget"
+                with self._lock:
+                    if not s.cancel.is_set():
+                        s.stall_code = "budget"
+                        s.cancel.set()
+                        self._audit_event(s, "budget", "the repair session reached its time limit")
                 break
             time.sleep(0.1)
         s.closing.set()  # 先拒新调用；卡片上阻塞的在途工具由 `_ask` 看到它而醒来

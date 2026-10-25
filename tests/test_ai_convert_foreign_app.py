@@ -90,6 +90,20 @@ def test_python_default_is_unchanged_and_needs_a_library_and_gets_no_deps_hook(p
     }
     assert "deps" not in call["task_hooks"], "Python 来源的转换不接自动安装"
     assert _post(client, script="fig.py").status_code == 400, "python 缺 library 仍是 400"
+
+
+def test_explicit_references_are_checked_before_starting_the_model(project):
+    client, figs, calls = project
+    (figs / "colormap.csv").write_text("0,0,0\n1,1,1\n")
+    r = _post(client, script="fig.m", source_language="matlab", reference_files=["colormap.csv"])
+    assert r.status_code == 200
+    assert calls[-1]["convert"]["reference_files"] == ("colormap.csv",)
+    calls.clear()
+    for refs in (["../outside.csv"], [".env"], ["missing.csv"], "colormap.csv"):
+        r = _post(client, script="fig.m", source_language="matlab", reference_files=refs)
+        assert r.status_code == 400
+        assert r.get_json()["code"] == "convert_reference_invalid"
+    assert not calls
     assert _post(client, script="fig.py", library="nope").status_code == 400
     assert _post(client, script="fig.R", library="pillow").status_code == 400, (
         "python 缺省时 .R 不收"

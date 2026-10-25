@@ -2222,3 +2222,73 @@ class TestChatReasoningReplay:
             httpd.server_close()
         assert res.ok, res
         assert len(seen) == 2 and seen[1]["messages"][2]["reasoning_content"] == "think"
+
+
+@pytest.mark.parametrize(
+    ("task", "extra", "expected"),
+    [
+        ("figure_edit", [], 120.0),
+        ("convert_to_editable", [], 300.0),
+        ("convert_to_editable", ["--request-timeout", "7"], 7.0),
+        ("convert_to_editable", ["--max-seconds", "1"], 1.0),
+    ],
+)
+def test_cli_long_conversion_request_stays_within_total_deadline(
+    tmp_path, monkeypatch, task, extra, expected
+):
+    import logging
+
+    from tavotto.engine.agent_runner import __main__ as runner_main
+
+    (tmp_path / "plot.py").write_text("print(1)\n")
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("convert the complete script")
+    observed = []
+    actual_model = loop.HttpModel
+
+    def post(url, headers, body, *, timeout):
+        observed.append(timeout)
+        return (
+            200,
+            {},
+            json.dumps(
+                {"content": [{"type": "text", "text": "done"}], "stop_reason": "end_turn"}
+            ).encode(),
+        )
+
+    def model(*args, **kwargs):
+        return actual_model(*args, **kwargs, post=post)
+
+    monkeypatch.setattr(loop, "HttpModel", model)
+    monkeypatch.setenv("TAVOTTO_AGENT_API_KEY", KEY_CANARY)
+    product = logging.getLogger("tavotto")
+    saved = (list(product.handlers), product.propagate)
+    try:
+        assert (
+            runner_main.main(
+                [
+                    "--cwd",
+                    str(tmp_path),
+                    "--target",
+                    "plot.py",
+                    "--output",
+                    "plot_matplotlib.py",
+                    "--task",
+                    task,
+                    "--wire",
+                    "anthropic",
+                    "--base-url",
+                    "https://example.invalid",
+                    "--model",
+                    "fake",
+                    "--prompt-file",
+                    str(prompt),
+                    *extra,
+                ]
+            )
+            == 0
+        )
+    finally:
+        product.handlers, product.propagate = saved
+    assert len(observed) == 1
+    assert expected - 0.5 < observed[0] <= expected

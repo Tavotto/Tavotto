@@ -12632,6 +12632,18 @@ def api_ai_convert():
         ), 400
     rel = Path(os.path.relpath(real, os.path.realpath(ctx.path))).as_posix()
     original = body.get("path")
+    try:
+        reference_files = engine_ai_convert.convertcontext.selected_paths(
+            Path(ctx.path), body.get("reference_files")
+        )
+    except ValueError:
+        return jsonify(
+            {
+                "error": "convert_reference_invalid",
+                "code": "convert_reference_invalid",
+                "params": {},
+            }
+        ), 400
     original_rel = None
     if isinstance(original, str) and original:
         got = engine_projectenv.contained_path(ctx.path, original)
@@ -12673,6 +12685,7 @@ def api_ai_convert():
                 "library": library,
                 "source_language": language,
                 "original_rel": original_rel,
+                **({"reference_files": reference_files} if reference_files else {}),
             },
         )
     except engine_ai.DuplicateRequest as dup:

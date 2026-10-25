@@ -1325,6 +1325,12 @@
           "continue": "Continue",
           "chooseEnv": "Choose a runtime environment"
         }
+      },
+      "references": {
+        "label": "Additional reference files",
+        "placeholder": "One project-relative path per line",
+        "disclosure": "When you retry, these files will be provided to your selected AI as references.",
+        "retry": "Retry with references"
       }
     },
     "envNotUsed": {

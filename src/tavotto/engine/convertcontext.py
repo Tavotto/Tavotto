@@ -26,6 +26,7 @@ MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_BYTES = 16 * 1024 * 1024
 MAX_DEPTH = 4
 MAX_REFERENCES = 512
+MAX_SELECTED_FILES = 16
 _SOURCE_EXT = frozenset({".py", ".r", ".m"})
 _STRINGS = re.compile(r"'((?:[^'\n]|'')*)'|\"((?:[^\"\n]|\"\")*)\"")
 _CALL = re.compile(r"\b([A-Za-z]\w*)\s*\(")
@@ -139,8 +140,55 @@ def _references(text: str, suffix: str) -> tuple[list[str], list[str]]:
     return literals, calls
 
 
-def snapshot(root: Path, script_rel: str, source: bytes, destination: Path) -> dict:
+def selected_paths(root: Path, value: object) -> tuple[str, ...]:
+    """Validate explicit project references through the same bounded read policy.
+
+    An explicit selection must be available in full; silently omitting it would
+    send the agent back into the same missing-evidence loop.
+    """
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)) or len(value) > MAX_SELECTED_FILES:
+        raise ValueError("convert_reference_invalid")
     root = root.absolute()
+    scope = readscope.ReadScope(home=Path.home(), project_root=root)
+    paths: list[str] = []
+    total = 0
+    for item in value:
+        if (
+            not isinstance(item, str)
+            or not item.strip()
+            or len(item) > 1024
+            or any(ord(c) < 32 for c in item)
+            or Path(item).is_absolute()
+        ):
+            raise ValueError("convert_reference_invalid")
+        path, _ = _path(root, root / item)
+        if path is None:
+            raise ValueError("convert_reference_invalid")
+        rel = path.relative_to(root).as_posix()
+        if rel in paths:
+            continue
+        data, _ = _read(root, path, scope)
+        if data is None:
+            raise ValueError("convert_reference_invalid")
+        total += max(len(data), len(_disclosed(data)))
+        if total > MAX_BYTES:
+            raise ValueError("convert_reference_invalid")
+        paths.append(rel)
+    return tuple(paths)
+
+
+def snapshot(
+    root: Path,
+    script_rel: str,
+    source: bytes,
+    destination: Path,
+    *,
+    reference_files: tuple[str, ...] = (),
+) -> dict:
+    root = root.absolute()
+    selected = selected_paths(root, reference_files)
     scope = readscope.ReadScope(home=Path.home(), project_root=root)
     entry = Path(script_rel)
     manifest: dict = {
@@ -148,6 +196,7 @@ def snapshot(root: Path, script_rel: str, source: bytes, destination: Path) -> d
         "source": entry.as_posix(),
         "directory": DIRECTORY,
         "coverage": "static_partial",
+        "user_selected": list(selected),
         "files": [],
         "omitted": [],
         "limitations": [
@@ -198,6 +247,10 @@ def snapshot(root: Path, script_rel: str, source: bytes, destination: Path) -> d
             if safe is not None and safe.is_file():
                 nominate(proposed, depth + 1)
 
+    # Explicit references have priority over inferred dependencies within the
+    # shared budget. All still go through _read and _disclosed below.
+    for rel in selected:
+        nominate(root / rel, 0)
     if entry.suffix.lower() == ".py":
         result = importscan.scan(root, script_rel, no_follow=True)
         for rel in result.files:
@@ -209,16 +262,22 @@ def snapshot(root: Path, script_rel: str, source: bytes, destination: Path) -> d
         path, depth = pending.pop(0)
         rel = path.relative_to(root).as_posix()
         if depth > MAX_DEPTH or len(manifest["files"]) >= MAX_FILES or total >= MAX_BYTES:
+            if rel in selected:
+                raise ValueError("convert_reference_invalid")
             manifest["omitted"].append({"path": rel, "reason": "context_budget"})
             continue
         data, reason = _read(root, path, scope)
         if data is not None and total + len(data) > MAX_BYTES:
             data, reason = None, "context_budget"
         if data is None:
+            if rel in selected:
+                raise ValueError("convert_reference_invalid")
             manifest["omitted"].append({"path": rel, "reason": reason})
             continue
         disclosed = _disclosed(data)
         if len(disclosed) > MAX_FILE_BYTES or total + len(disclosed) > MAX_BYTES:
+            if rel in selected:
+                raise ValueError("convert_reference_invalid")
             manifest["omitted"].append({"path": rel, "reason": "context_budget"})
             continue
         copy = destination / DIRECTORY / rel

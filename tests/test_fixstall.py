@@ -190,8 +190,9 @@ def test_tool_over_total_budget_is_visible_and_cancellation_reaches_it(
     assert entered.wait(5)
     assert exited.wait(8)
     wait_finished(s, 10)
-    assert (s.outcome, s.reason) == (fixsession.OUTCOME_FAILED, "stalled")
-    assert "stalled" in codes(box, s)
+    reason = "budget" if custom_limit else "stalled"
+    assert (s.outcome, s.reason) == (fixsession.OUTCOME_FAILED, reason)
+    assert reason in codes(box, s)
     assert fixsession.SESSIONS.active() is None
 
 

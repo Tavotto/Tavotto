@@ -345,7 +345,8 @@
     "data_ragged": "数据里有几行的列数和表头不一致。",
     "figure_name_exhausted": "同名的图太多了，没能给新图找到可用的名字。",
     "convert_not_awaiting_dependencies": "这份新版本现在不在等你决定装包，请刷新后再看。",
-    "convert_resume_busy": "正在装包并接着生成，请稍等。"
+    "convert_resume_busy": "正在装包并接着生成，请稍等。",
+    "convert_reference_invalid": "参考文件不可用。请使用当前项目内可读取的普通文件；不接受凭据、链接或超出大小限制的文件。"
   },
   "engine": {
     "apply": "应用",

@@ -57,6 +57,11 @@ check、留存、续跑、采用核同一份起跑基线，资源变化即拒绝
 或续跑时的新基线替代。已有无 context 的持久候选仍按旧契约处理。生成代码沿用原项目位置，不能依赖本次缓存；
 采用后清掉候选目录、从其他 cwd 新起进程仍须能读取原 helper / 数据。看护：`tests/test_convert_context.py`。
 
+用户可在缺少输入的原因卡中填写项目内参考文件（`reference_files`），点击「带参考文件重试」后才创建新会话。
+Python、R、MATLAB 共用这条路径；无效路径返回 `convert_reference_invalid`，保留输入框供更正，不发模型请求。
+最多 16 个文件；显式参考优先占用既有快照预算，并沿用同一脱敏、文件身份、完整摘要和采用前复查。
+明确选择的文件若不可读或超预算，整次请求失败，不能默默丢掉后继续生成。项目切换不带走未发送输入。
+
 共享转换提示允许读取原字体度量，并先注册项目字体再按真实族名绘制，保留逐字形回退；强调 Pillow anchor、
 独立输出/页面、统计定义与分类顺序。依据：[Pillow anchors](https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html)、
 [Matplotlib addfont](https://matplotlib.org/stable/api/font_manager_api.html)。提示词和成功出图都不是科学保真证明；
@@ -70,7 +75,7 @@ check、留存、续跑、采用核同一份起跑基线，资源变化即拒绝
 
 ### 四、端点
 
-`POST /api/ai/convert`（`{script, library, path?, agent?, client_request_id?}`；`library` 取 `rasterhint.LIBRARIES`；`script` / `path` 经
+`POST /api/ai/convert`（`{script, library, path?, reference_files?, agent?, client_request_id?}`；`library` 取 `rasterhint.LIBRARIES`；`script` / `path` 经
 `contained_path`）、`GET /api/ai/convert/<sid>`、`GET /api/ai/convert/<sid>/preview.svg`、`POST /api/ai/convert/<sid>/adopt`、
 `POST /api/ai/convert/<sid>/discard`。全部过会话认证，候选按**项目**隔离（别的项目的 sid 一律 `convert_not_found`）。
 

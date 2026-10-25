@@ -345,7 +345,8 @@
     "data_ragged": "Some rows have a different number of columns from the header.",
     "figure_name_exhausted": "Too many figures share this name; no free name was found for the new one.",
     "convert_not_awaiting_dependencies": "This new version isn't waiting for a package decision right now. Refresh and look again.",
-    "convert_resume_busy": "Packages are being installed and the new version is still being generated. Please wait."
+    "convert_resume_busy": "Packages are being installed and the new version is still being generated. Please wait.",
+    "convert_reference_invalid": "Reference files are unavailable. Choose readable regular files inside this project; credentials, links and oversized files are not accepted."
   },
   "engine": {
     "apply": "Apply",

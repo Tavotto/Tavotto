@@ -1547,6 +1547,42 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(foreignCard()?.querySelector('[data-convert-retry]')?.textContent).toBe('重试')
     })
 
+    it('补充参考文件后由用户点击重试才发送，新的提议不继承未发送路径', async () => {
+      vi.mocked(fetchAiSession).mockResolvedValue({
+        status: 'done', final: true, task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'needs_input', detail: '缺少原始色表' }] },
+      } as never)
+      await mountBoth()
+      await offer('fig.R', 'r')
+      await act(async () => startBtn()!.click())
+      await settle()
+      const input = foreignCard()?.querySelector('[data-convert-references]') as HTMLTextAreaElement
+      const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      await act(async () => {
+        set.call(input, ' colors.csv\nruntime.json ')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      expect(startConvert).toHaveBeenCalledTimes(1)
+      const retry = foreignCard()?.querySelector('[data-convert-references-retry]') as HTMLButtonElement
+      expect(retry.textContent).toBe('带参考文件重试')
+      vi.mocked(startConvert).mockRejectedValueOnce(new ApiError('invalid reference', 400, { code: 'convert_reference_invalid' }))
+      await act(async () => retry.click())
+      await settle()
+      expect(startConvert).toHaveBeenCalledTimes(2)
+      expect(vi.mocked(startConvert).mock.calls[1]![0]).toMatchObject({ reference_files: ['colors.csv', 'runtime.json'] })
+      const corrected = foreignCard()?.querySelector('[data-convert-references]') as HTMLTextAreaElement
+      expect(corrected.value).toBe(' colors.csv\nruntime.json ')
+      await act(async () => {
+        set.call(corrected, 'valid-colors.csv')
+        corrected.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await act(async () => (foreignCard()?.querySelector('[data-convert-references-retry]') as HTMLButtonElement).click())
+      await settle()
+      expect(vi.mocked(startConvert).mock.calls[2]![0]).toMatchObject({ reference_files: ['valid-colors.csv'] })
+      expect(vi.mocked(startConvert).mock.calls[2]![0].client_request_id).not.toBe(vi.mocked(startConvert).mock.calls[1]![0].client_request_id)
+      await offer('fig.R', 'r')
+      expect((foreignCard()?.querySelector('[data-convert-references]') as HTMLTextAreaElement).value).toBe('')
+    })
+
     it('采用后提议结束（不会退回“生成可编辑版本”再提议一遍）', async () => {
       await mountBoth()
       mockCreate.mockResolvedValue(report({ ...STATES.noFigure, no_figure_hint: null }))
@@ -1949,6 +1985,27 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       await act(async () => primary()!.click())
       expect(startConvert).toHaveBeenCalledTimes(2)
       expect(adoptConvert).not.toHaveBeenCalled()
+    })
+
+    it('Python 转换缺少参考时也能显式补充文件再重试', async () => {
+      await mount()
+      useUiStore.setState({ guideCard: 'card' })
+      vi.mocked(fetchAiSession).mockResolvedValue({
+        status: 'done', final: true, task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'needs_input', detail: '缺少字体文件' }] },
+      } as never)
+      await openWith(report({ ...STATES.noFigure, no_figure_hint: hint }))
+      await act(async () => primary()!.click())
+      await settle()
+      const input = panel().querySelector('[data-convert-references]') as HTMLTextAreaElement
+      expect(input).not.toBeNull()
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, 'assets/font.ttf')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      expect(startConvert).toHaveBeenCalledTimes(1)
+      await act(async () => (panel().querySelector('[data-convert-references-retry]') as HTMLButtonElement).click())
+      await settle()
+      expect(vi.mocked(startConvert).mock.calls[1]![0]).toMatchObject({ reference_files: ['assets/font.ttf'], library: hint.library })
     })
 
     it('后端拒绝（总开关关了）：落成失败卡，不进入采用', async () => {

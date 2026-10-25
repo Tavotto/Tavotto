@@ -357,6 +357,8 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "MATLAB 的下标从 1 开始、矩阵按列优先、`.^` `.*` 是逐元素运算——搬运时逐处核对下标与形状。"
         "颜色不能直接照抄同名快捷色：MATLAB 的 g/green 是 RGB(0,1,0)，不同于 Matplotlib 的 g；"
         "线条颜色顺序、每个 axes 的 colormap、LUT 行数、CLim、CDataMapping 及 alpha 均要独立保留。"
+        "自动 CLim 取实际被绘图对象用于映射的 CData 范围；等高线按其实际绘制的 level 着色，不能直接拿全部 Z 矩阵的极值。"
+        "保留三维对象的 XData/YData/ZData 和投影：即使原图使用俯视图，也不能把 ZData 换成二维 zorder 或删掉高度维。"
         "默认色表随 MATLAB 版本变化（R2019b 起默认长度 256，之前 64；parula 本身也有版本差异），"
         "优先使用项目提供的原始 RGB 数组/运行时信息，不能用几枚控制点、viridis 或近似色表冒充原始 parula；"
         "无法确定所需的原始色表或版本时走下面的 TAVOTTO_NEEDS_INPUT 分支，禁止先生成替代配色再仅在代码注释中说明。"

@@ -634,3 +634,10 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   快照多存 `managed = {generation}`；`rollback` 先核旧代解释器真的在（不在 = `rollback_target_gone`，**一个字不改**），再恢复设置、`managedenv.activate` 指回旧代并让池 / 缓存放弃新一代，恢复后核设置里记着的解释器在不在（不在同样 `rollback_target_gone`，不报成功）。
   `FixContext.cancel`（= 会话的 `s.cancel`）同样传给 pip 安装/卸载执行器（含逐项执行前复查），并传给缺省换 Python 执行器 `_default_python_changer(req, cancel)`，规划完、动手前先看一眼（与 #1381 同一件事）。看护 `tests/test_fixrollback_managed.py`。
 
+
+### 2026-10-25 补充参考与会话期限
+
+转换缺少输入时，用户在原因卡补充项目相对路径，显式重试提交 `reference_files`；全流程见 ADR 0143。
+`convertcontext.selected_paths` 是读策略的共同入口，不能绕过敏感路径、链接、脱敏和摘要校验。
+修复会话的总期限从创建开始计时（包括等卡片确认），与单工具期限分开。总期限到达记 `budget` 并传播取消；
+工具收尾期间保留占用，不把已有取消/期限结局重新标成 stalled。看护 `test_fixstall.py`、`test_fixmcp.py`。

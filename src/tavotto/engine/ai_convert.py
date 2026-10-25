@@ -297,6 +297,7 @@ def create_candidate(
     source_language: str = sourcelang.PYTHON,
     original_path: Path | None = None,
     original_rel: str | None = None,
+    reference_files: tuple[str, ...] = (),
 ) -> ConvertCandidate:
     """建候选目录并**复制**原脚本（与大小合适的原输出图，当参考）；拍原项目指纹基线。失败时不留半个目录。"""
     project_root = Path(project_root)
@@ -319,7 +320,9 @@ def create_candidate(
             (cdir / REFERENCE_DIR).mkdir()
             reference_name = original_path.name
             (cdir / REFERENCE_DIR / reference_name).write_bytes(original_path.read_bytes())
-        context = convertcontext.snapshot(project_root, script_rel, base, cdir)
+        context = convertcontext.snapshot(
+            project_root, script_rel, base, cdir, reference_files=reference_files
+        )
         cand = ConvertCandidate(
             sid=sid,
             dir=cdir,
@@ -369,6 +372,7 @@ def prompt_for(cand: ConvertCandidate) -> str:
     return prompt + (
         f"\n\n只读项目上下文：先读 {convertcontext.MANIFEST}，其中 source 是原脚本的项目相对路径，"
         f"files 的逐项路径映射到 {convertcontext.DIRECTORY}/。这些是有界静态依赖快照，"
+        "user_selected 是用户明确补充的参考文件；先读取其中的原始色表、数据或运行时信息，不能忽略后继续猜测。"
         "不是完整项目；omitted / limitations 表示未提供的证据，不能据此认定依赖不存在。"
         "redacted=true 表示只读快照已脱敏，sha256 是原资源摘要，snapshot_sha256 是所见副本摘要；"
         "脱敏占位符不是原始数据，不能把占位符当作常量搬进新代码。"

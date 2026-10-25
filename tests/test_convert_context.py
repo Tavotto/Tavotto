@@ -70,6 +70,51 @@ def test_snapshot_preserves_nested_resource_paths_and_import_provenance(project)
     assert convertcontext.MANIFEST in prompt and "Path(__file__)" in prompt
 
 
+def test_selected_reference_is_visible_and_bound_to_adoption(project):
+    reference = project / "assets" / "colormap.csv"
+    reference.write_text("0.2422,0.1504,0.6603\n0.9769,0.9839,0.0805\n")
+    cand = ai_convert.create_candidate(
+        "abcdef012345",
+        project / "plots" / "fig.py",
+        project,
+        "plots/fig.py",
+        library="pillow",
+        reference_files=("assets/colormap.csv",),
+    )
+    assert cand.context["user_selected"] == ["assets/colormap.csv"]
+    assert (
+        cand.dir / convertcontext.DIRECTORY / "assets/colormap.csv"
+    ).read_bytes() == reference.read_bytes()
+    assert "user_selected" in ai_convert.prompt_for(cand)
+    ready(cand)
+    reference.write_text("1,0,0\n")
+    with pytest.raises(ai_convert.ConvertError) as exc:
+        ai_convert.adopt(cand.sid, str(project.resolve()))
+    assert exc.value.code == "convert_context_changed"
+    assert not (project / "plots/fig_matplotlib.py").exists()
+
+
+@pytest.mark.parametrize(
+    "value", ["colors.csv", [None], ["../outside.csv"], [".env"], ["missing.csv"], ["assets"]]
+)
+def test_selected_references_fail_closed_instead_of_disappearing(project, value):
+    with pytest.raises(ValueError, match="convert_reference_invalid"):
+        convertcontext.selected_paths(project, value)
+
+
+def test_selected_reference_uses_privacy_and_size_policy(project, tmp_path, monkeypatch):
+    secret = project / "assets" / "credentials.json"
+    secret.write_text('{"password":"private"}')
+    link = project / "assets" / "linked.csv"
+    link.symlink_to(project / "assets" / "values.csv")
+    for rel in ("assets/credentials.json", "assets/linked.csv"):
+        with pytest.raises(ValueError, match="convert_reference_invalid"):
+            convertcontext.selected_paths(project, [rel])
+    monkeypatch.setattr(convertcontext, "MAX_FILE_BYTES", 1)
+    with pytest.raises(ValueError, match="convert_reference_invalid"):
+        convertcontext.selected_paths(project, ["assets/values.csv"])
+
+
 @pytest.mark.parametrize(
     ("name", "source", "helper"),
     [

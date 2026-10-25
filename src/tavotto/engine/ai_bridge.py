@@ -1332,6 +1332,7 @@ def run(
                     source_language=str(convert.get("source_language") or "python"),
                     original_path=original_path,
                     original_rel=original_rel,
+                    reference_files=convert.get("reference_files") or (),
                 )
                 cand.extras.update(task_hooks or {})
                 convert_prompt = ai_convert.prompt_for(cand)

@@ -3994,6 +3994,7 @@ export const startConvert = (
     library?: string
     /** 缺省 = python */
     source_language?: Exclude<ConvertSourceLanguage, 'python'>
+    reference_files?: string[]
     path?: string | null
     agent?: string
     model?: string | null

@@ -2713,6 +2713,7 @@ export default interface Resources {
       "convert_not_ready": "新版本还没生成好，或没有通过检查。",
       "convert_outside_project": "新版本的位置不在项目里，已拒绝写入。",
       "convert_project_changed": "项目里的文件在生成之后被改动过，已拒绝继续。请重新生成。",
+      "convert_reference_invalid": "参考文件不可用。请使用当前项目内可读取的普通文件；不接受凭据、链接或超出大小限制的文件。",
       "convert_resume_busy": "正在装包并接着生成，请稍等。",
       "convert_source_changed": "原脚本在生成之后被改过，这份新版本是按旧版本写的。请重新生成。",
       "convert_source_language_mismatch": "{{script}} 的内容看起来不是 R 或 MATLAB 脚本，没有生成。",
@@ -5733,6 +5734,12 @@ export default interface Resources {
         "original": "原图",
         "ready": "新版本生成好了，对照一下再决定",
         "redrawn": "重画的新版本",
+        "references": {
+          "disclosure": "点击重试后，这些文件将作为参考提供给你选用的 AI。",
+          "label": "补充参考文件",
+          "placeholder": "项目内相对路径，每行一个",
+          "retry": "带参考文件重试"
+        },
         "running": "正在生成可编辑版本…",
         "stoppedLate": "转换已经完成，停止来得太晚。对照一下，要用就采用",
         "unverified": "{{product}} 没有运行 R / MATLAB，请并排看一眼再采用"

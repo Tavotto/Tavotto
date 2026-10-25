@@ -85,7 +85,7 @@ import { SendReportButton } from './SendReportButton'
 import { CopyButton } from './settings/CopyButton'
 import { Button, IconButton } from './ui/Button'
 import { Details, Summary } from './ui/Details'
-import { TextInput } from './ui/Input'
+import { TextArea, TextInput } from './ui/Input'
 import { Menu, MenuItem } from './ui/Menu'
 import { ProgressBar } from './ui/ProgressBar'
 import { Radio } from './ui/Radio'
@@ -969,8 +969,8 @@ function convertFlow(
         ),
       }
     case 'failed': {
-      // Agent 停下说明“Python 里没有可靠对应”：再试一次是同样的结论，主按钮是“知道了”（收起），不是重试
-      const needsInput = c.reason === 'needs_input'
+      // Missing evidence needs an explicit reference selection before another attempt.
+      const needsInput = c.reason === 'needs_input' || c.reason === 'convert_reference_invalid'
       return {
         title:
           c.error ??
@@ -1004,6 +1004,50 @@ function convertFlow(
   void entry
 }
 
+/** Reference input is shared by Python and foreign conversions, and stays local until retry. */
+function useConvertFlow(
+  c: Parameters<typeof convertFlow>[0] | undefined,
+  p: Parameters<typeof convertFlow>[1] | null,
+  entry: PrepEntry | undefined,
+  identity: unknown,
+): ReturnType<typeof convertFlow> | null {
+  const [draft, setDraft] = useState<{ identity: unknown; text: string } | null>(null)
+  const flow = c && p ? convertFlow(c, p, entry) : null
+  if (!flow || !p || c?.phase !== 'failed' || !['needs_input', 'convert_reference_invalid'].includes(c.reason ?? '')) return flow
+  const text = draft && draft.identity === identity ? draft.text : ''
+  const files = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  return {
+    ...flow,
+    slot: (
+      <div className="flex flex-col gap-2">
+        {flow.slot}
+        <label className="type-caption text-ink-2">
+          {pt('convert.references.label')}
+          <TextArea
+            aria-label={pt('convert.references.label')}
+            data-convert-references
+            rows={2}
+            value={text}
+            onChange={(e) => setDraft({ identity, text: e.target.value })}
+            placeholder={pt('convert.references.placeholder')}
+          />
+        </label>
+        <p className="type-caption text-ink-3">{pt('convert.references.disclosure')}</p>
+      </div>
+    ),
+    primary: files.length ? (
+      <Button
+        variant="primary"
+        size="md"
+        data-convert-references-retry
+        onClick={() => void useConvertStore.getState().start(p.script, p.library, p.path, p.language, files)}
+      >
+        {pt('convert.references.retry')}
+      </Button>
+    ) : flow.primary,
+  }
+}
+
 /**
  * R / MATLAB 脚本的入口卡（ADR 0143 修订）：项目里 / 拖入 / 打开的是 `.R` / `.r` / `.m` 时，一句话 + 一个主按钮。
  * 点「生成可编辑版本」后同一张卡接着走既有的生成 / 对照 / 采用流水（`convertFlow`）；原脚本不动。
@@ -1031,10 +1075,10 @@ export function ForeignScriptCard() {
       setClosing(false)
     } else if (!convert.stopping) setClosing(false)
   }, [closing, convert])
+  const p: Extract<PrepPrimary, { kind: 'convert' }> | null = offer ? { kind: 'convert', script: offer.script, library: null, path: null, language: offer.language } : null
+  const flow = useConvertFlow(convert, p, undefined, offer)
   if (!offer || hidden) return null
   const language = offer.language
-  const p: Extract<PrepPrimary, { kind: 'convert' }> = { kind: 'convert', script: offer.script, library: null, path: null, language }
-  const flow = convert ? convertFlow(convert, p, undefined) : null
   const title = flow?.title ?? pt(`convert.foreign.${language}`, { product: PRODUCT_NAME })
   return (
     <div
@@ -1230,7 +1274,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
       : null
   const convertScript = convertPrimary?.script ?? null
   const convert = useConvertStore((s) => (convertScript ? s.entries[convertScript] : undefined))
-  const convertUi = convertPrimary && convert ? convertFlow(convert, convertPrimary, entry) : null
+  const convertUi = useConvertFlow(convert, convertPrimary, entry, entry)
   if (convertUi) {
     return (
       <Shell

@@ -85,7 +85,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--max-turns", type=int, default=None)
     p.add_argument("--max-seconds", type=float, default=None)
     p.add_argument("--max-total-tokens", type=int, default=None)
-    p.add_argument("--request-timeout", type=float, default=120.0)
+    p.add_argument("--request-timeout", type=float, default=None)
     p.add_argument("--prompt-file", default=None, help="提示词文件；缺省读 stdin")
     p.add_argument("--task", default="figure_edit", choices=sorted(TOOLSETS))
     p.add_argument("--demo-script", default=None, help="--wire demo 的剧本 JSON")
@@ -268,7 +268,16 @@ def main(argv: list[str] | None = None) -> int:
             model=args.model,
             effort=args.effort,
             thinking=args.thinking,
-            request_timeout=args.request_timeout,
+            # Conversion emits substantially more code than a figure edit.
+            # A 120s read timeout repeatedly discarded long generations; the
+            # overall deadline and cancellation still bound every request.
+            request_timeout=(
+                args.request_timeout
+                if args.request_timeout is not None
+                else 300.0
+                if args.task == "convert_to_editable"
+                else 120.0
+            ),
             retry_base=args.retry_base,
         )
     del api_key

@@ -1259,6 +1259,12 @@
           "continue": "继续",
           "chooseEnv": "选择运行环境"
         }
+      },
+      "references": {
+        "label": "补充参考文件",
+        "placeholder": "项目内相对路径，每行一个",
+        "disclosure": "点击重试后，这些文件将作为参考提供给你选用的 AI。",
+        "retry": "带参考文件重试"
       }
     },
     "envNotUsed": {
