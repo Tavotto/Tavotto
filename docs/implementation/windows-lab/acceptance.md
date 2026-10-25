@@ -84,7 +84,7 @@
 | 用例 | 非管理员（tavotto-lab） | 管理员同一检出同一 venv | 定性 |
 | --- | --- | --- | --- |
 | `test_layout_recovery_backend::test_a15_bad_files_do_not_block_the_listing` | FAIL：`WinError 1314` 建符号链接无特权 | PASS | **CI 盲区**：hosted windows-latest 以管理员运行，非管理员用户的 Windows 从没被跑过；用例假设能建符号链接 |
-| `test_qa_first_open_env_and_data::test_project_venv_and_same_name_decoy_…` | FAIL：项目 venv 跑 `scripts/entry.py` 退出 1（stderr 被用例捕获，报告里看不到） | PASS | 同上，随权限变化；具体是夹具还是产品路径依赖特权待定 |
+| `test_qa_first_open_env_and_data::test_project_venv_and_same_name_decoy_…` | FAIL：项目 venv 跑 `scripts/entry.py` 退出 1（stderr 被用例捕获，报告里看不到） | PASS | **更正（10-25）**：与权限无关——夹具没有符号链接调用；main 与 #1413 分支上整文件在 Lab 均通过（run `20261024T173833Z-6eabd8` / `20261024T173647Z-f21b80`），原失败未复现，分片内顺序 / 状态相关未排除；用例已改为失败时把 stderr 带进断言 |
 | `test_compat_explore_data::RealExecution` 6 条 | FAIL：`parent_native` 执行数为 None | FAIL | 与权限无关；待查（Server 2025 / cp936 / 该组在 hosted Windows 上是否真跑） |
 
 以上是本次开荒**发现**的问题，不在本 PR 修：本 PR 只交付 Lab 本身。按 `.github/AGENTS.md`，
@@ -152,7 +152,7 @@
 | #1213 versionstore | `test_versionstore` | 通过（LongPaths=0） |
 | #1256 Guardian data_source（中文文件名） | `test_compat_guardian_families` | 通过（cp936） |
 | #1294 自动采用用户 Python | `test_environment_adoption` | 通过（Lab 的 Python 3.13 作用户 Python） |
-| 非管理员 Windows（新发现） | 三条用例需要符号链接特权 | **CI 盲区**：hosted windows-latest 是管理员；`test_a15…`、`test_two_symlinks…`、`test_qa_first_open…` 在非管理员下失败 |
+| 非管理员 Windows（新发现） | 三条用例需要符号链接特权 | **CI 盲区**：hosted windows-latest 是管理员；`test_a15…`、`test_two_symlinks…` 在非管理员下失败（夹具依赖特权，产品无问题，#1413 修）；`test_qa_first_open…` 后查与权限无关、未复现 |
 | 需要真窗口的项（#276 #1071 #1387 #1320 #1315 #1308 #1306 #1304 #1301 #82） | — | NOT TESTED：需要交互会话执行器（尚无） |
 | Win10 / Win11 / ARM / Anthropic 真模型（#1200 #1392 等） | — | 这台机器做不到 |
 
