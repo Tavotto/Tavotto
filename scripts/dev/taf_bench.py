@@ -51,7 +51,16 @@ ROW_FIELDS = (
     "error",
     "prompt_sha256",
     "rep",
+    "input_tokens",
+    "output_tokens",
+    "cached_input_tokens",
+    "cost_usd",
 )
+#: `--real builtin`：内置执行器臂（ADR 0147）。走产品同一条 `/api/ai/run`，只是请求带 `connection` 并由路由选到 builtin
+BUILTIN_ARM = "builtin"
+#: 内置臂的连接：官方 Anthropic Key（目录行 `anthropic-api`，地址 https://api.anthropic.com）
+BUILTIN_VENDOR = "anthropic-api"
+DEFAULT_KEY_FILE = Path.home() / ".tavotto-test-anthropic-key"
 #: `--real` 一次最多跑多少次**实际 Agent CLI 调用**（真实模型要花用户的额度；开跑前按「场景数 × 每任务最大调用数」
 #: 拒绝，运行中按真实调用次数封顶，不悄悄截断）
 DEFAULT_MAX_REAL_RUNS = 30
@@ -169,7 +178,19 @@ def _metrics(rows: list[dict], aggregate_only: bool = False) -> dict:
         ),
         "wall_s_median": walls[len(walls) // 2] if walls else None,
         "wall_s_p95": walls[min(len(walls) - 1, int(len(walls) * 0.95))] if walls else None,
+        **_usage_metrics(ran),
     }
+
+
+def _usage_metrics(ran: list[dict]) -> dict:
+    """用量只来自 CLI / 内置执行器**自报**（没报 = None，不估算）；每任务均值的分母是报了用量的行。"""
+    out: dict = {}
+    for key in ("input_tokens", "output_tokens", "cached_input_tokens", "cost_usd"):
+        vals = [r[key] for r in ran if r.get(key) is not None]
+        if vals:
+            out[f"{key}_total"] = round(sum(vals), 6)
+            out[f"{key}_per_task"] = round(sum(vals) / len(vals), 6)
+    return out
 
 
 def _agent_resolution(agent: str):
@@ -256,6 +277,7 @@ def run(
     effort: str | None = None,
     max_runs: int | None = None,
     repeat: int = 1,
+    api_key: str | None = None,
 ) -> dict:
     """在 `work` 下逐场景跑，回 `{environment, rows, metrics}`。调用方负责 `TAVOTTO_DATA_DIR` 等已指向隔离目录。
 
@@ -263,10 +285,14 @@ def run(
     那一档（反例是回放专用）。`pack`：本次运行改用这份候选 Prompt Pack（`ai_prompt_pack.load` 校验；只在本进程里替换
     `DEFAULT`，跑完恢复——产品默认值不由工具改）。
     `model` / `effort`：透传进 `/api/ai/run`，两臂钉住同一个。`max_runs`：实际 Agent CLI 调用次数上限（含修正那次），
-    到了之后再来的调用不 spawn，该次任务记 `max_runs_reached`。"""
+    到了之后再来的调用不 spawn，该次任务记 `max_runs_reached`。
+    `real_agent="builtin"`：内置执行器臂——在隔离配置目录里用 `api_key` 经产品的 `ai_connections.add_connection` 新建一条官方
+    Anthropic Key 连接，请求带 `connection`、`TAVOTTO_AI_BUILTIN=1`（产品自己的路由开关）让路由选 builtin；跑完删掉这条连接。
+    密钥只进产品的连接存储与子进程环境变量，不进报告 / 日志 / argv。"""
     from tavotto import app as m
     from tavotto.engine import (
         ai_bridge,
+        ai_connections,
         ai_figure_edit,
         ai_tasks,
         config,
@@ -299,6 +325,11 @@ def run(
     edits_box: dict = {}
 
     calls = {"n": 0, "executable": None, "endpoint": None}
+    usage_box: dict = {}
+    real_classify = ai_bridge._classify
+    builtin = real_agent == BUILTIN_ARM
+    conn_id: str | None = None
+    prev_builtin_env = os.environ.get(ai_connections.ENV_BUILTIN)
 
     def count_call():
         if max_runs is not None and calls["n"] >= max_runs:
@@ -311,10 +342,12 @@ def run(
         edits_box["prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         return [sys.executable, "-c", _REPLAY, cwd, edits_box["path"]], {}
 
-    def real_cmd_recording(agent_id, prompt, cwd, model=None, effort=None, endpoint=None):
+    def real_cmd_recording(agent_id, prompt, cwd, model=None, effort=None, endpoint=None, **kw):
         count_call()
         edits_box["prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-        cmd, env = real_cmd(agent_id, prompt, cwd, model=model, effort=effort, endpoint=endpoint)
+        cmd, env = real_cmd(
+            agent_id, prompt, cwd, model=model, effort=effort, endpoint=endpoint, **kw
+        )
         calls["executable"] = cmd[0]  # 实际 spawn 的那一个
         calls["endpoint"] = _endpoint_identity(endpoint)
         return cmd, env
@@ -324,7 +357,23 @@ def run(
         base = real_settings() or {}
         return {**base, "taf": {**(base.get("taf") or {}), "enabled": True}}
 
+    def classify_recording(agent_id, line, st):
+        _take_usage(line, usage_box)
+        return real_classify(agent_id, line, st)
+
+    if builtin:
+        if not api_key:
+            raise RuntimeError("--real builtin 需要 API Key（--key-file）")
+        # 先建连接、后覆盖设置：连接写进隔离配置目录；overlay 之后的读照常看得到它
+        try:
+            conn_id, _fetch_error = ai_connections.add_connection(
+                {"vendor": BUILTIN_VENDOR, "api_key": api_key, "model": model}
+            )
+        except ai_connections.ConnectionRefused as exc:  # 只报原因码，绝不带密钥
+            raise RuntimeError(f"内置臂的连接建不起来：{exc.code} {exc.params}") from None
+        os.environ[ai_connections.ENV_BUILTIN] = "1"
     config.ai_settings = overlay_settings
+    ai_bridge._classify = classify_recording
     if pack is not None:
         ai_prompt_pack.DEFAULT = ai_prompt_pack.load(pack)
     replay = real_agent is None
@@ -363,6 +412,8 @@ def run(
                     model=model,
                     effort=effort,
                     rep=rep,
+                    connection=conn_id,
+                    usage_box=usage_box,
                 )
                 row["rep"] = rep
                 if edits_box.pop("blocked", False):
@@ -373,13 +424,26 @@ def run(
                 project_watch.stop()
     finally:
         ai_prompt_pack.DEFAULT = real_pack
+        ai_bridge._classify = real_classify
         config.ai_settings, ai_bridge._cmd = real_settings, real_cmd
         ai_bridge.require_usable = real_usable
         ai_bridge.ai_providers.resolve = real_resolve
         ai_bridge._spawn_env = real_env
         ai_tasks.unregister(ai_figure_edit.TASK_TYPE)
+        if builtin:
+            if prev_builtin_env is None:
+                os.environ.pop(ai_connections.ENV_BUILTIN, None)
+            else:
+                os.environ[ai_connections.ENV_BUILTIN] = prev_builtin_env
+            if conn_id:  # 跑完删掉连接（密钥只在隔离配置目录里，不留）
+                try:
+                    ai_connections.delete_connection(conn_id)
+                except ai_connections.ConnectionRefused:
+                    pass
     res = _agent_resolution(agent) if real_agent else None
     version = res.version if res is not None else None
+    if builtin:  # 内置执行器是 Tavotto 自己的子命令：版本 = 本仓库提交
+        version = f"tavotto@{(_environment(m)['git_sha'] or '?')[:12]}"
     env = _environment(m, f"real:{agent} {version or '?'}" if real_agent else "replay")
     env.update(
         {
@@ -394,6 +458,34 @@ def run(
     if pack is not None:
         env["pack"] = {"id": pack["pack_id"], "version": pack["version"], "source": pack["source"]}
     return {"environment": env, "rows": rows, "metrics": _metrics(rows)}
+
+
+USAGE_KEYS = ("input_tokens", "output_tokens", "cached_input_tokens", "cost_usd")
+
+
+def _take_usage(line: str, box: dict) -> None:
+    """从 Agent 输出的事件行里累计**自报**用量：内置执行器的 `done.usage`、Claude Code 的 `result`（含 `total_cost_usd`）、
+    Codex 的 `turn.completed`。一个任务内多次 spawn（修正那次）累加。不带内容、不碰密钥。"""
+    if not line.lstrip().startswith("{"):
+        return
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        return
+    if not isinstance(ev, dict) or not isinstance(ev.get("usage"), dict):
+        return
+    t, u = ev.get("type"), ev["usage"]
+    if t not in ("done", "result", "turn.completed"):
+        return
+    got = {
+        "input_tokens": u.get("input_tokens"),
+        "output_tokens": u.get("output_tokens"),
+        "cached_input_tokens": u.get("cached_input_tokens", u.get("cache_read_input_tokens")),
+        "cost_usd": ev.get("total_cost_usd"),
+    }
+    for k, v in got.items():
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            box[k] = box.get(k, 0) + v
 
 
 def _row(s, variant, **kw) -> dict:
@@ -418,6 +510,8 @@ def _one(
     model=None,
     effort=None,
     rep=1,
+    connection=None,
+    usage_box=None,
 ) -> dict:
     # 重复跑（`--repeat`）各用自己的项目目录；rep=1 时目录名与以前相同
     proj = work / (f"{s['id']}__{variant}" if rep == 1 else f"{s['id']}__{variant}__r{rep}")
@@ -482,6 +576,12 @@ def _one(
             body["model"] = model
         if effort:
             body["effort"] = effort
+        if connection:
+            body["connection"] = (
+                connection  # 路由由产品决定（`ai_connections.route_for`），这里不指定执行器
+            )
+        if usage_box is not None:
+            usage_box.clear()
         r = client.post("/api/ai/run", json=body)
         if r.status_code != 200:
             return _row(s, variant, error=f"run {r.status_code}")
@@ -515,6 +615,7 @@ def _one(
         rounds=len(attempts) + 1,
         prompt_sha256=edits_box.get("prompt_sha256"),
         wall_s=wall,
+        **{k: (usage_box or {}).get(k) for k in USAGE_KEYS},
         error=sess.get("error"),
     )
 
@@ -524,7 +625,15 @@ def compare(a: dict, b: dict) -> str:
     ea, eb = a.get("environment", {}), b.get("environment", {})
     lines = []
     keys = ("model", "effort", "executable", "version", "endpoint")
-    if any(ea.get(k) != eb.get(k) for k in keys):
+    kinds = {str(e.get("executor") or "").split(" ")[0] for e in (ea, eb)}
+    cross_executor = len(kinds) == 2 and f"real:{BUILTIN_ARM}" in kinds
+    if cross_executor:
+        # 内置执行器 vs CLI：比的就是执行器，可执行 / 版本 / 接口天然不同；模型与 effort 必须相同，否则差值不可归因
+        if any(ea.get(k) != eb.get(k) for k in ("model", "effort")):
+            lines += ["⚠ 两臂模型 / effort 不同，差值不可归因于执行器", ""]
+        else:
+            lines += ["ℹ 两臂是不同执行器（比较对象就是执行器）；模型 / effort 相同", ""]
+    elif any(ea.get(k) != eb.get(k) for k in keys):
         lines += ["⚠ 两臂执行配置不同，差值不可归因于 Pack", ""]
     lines += [
         "| | A | B |",
@@ -595,6 +704,12 @@ def main(argv=None) -> int:
         default=DEFAULT_MAX_REAL_RUNS,
         help="--real 时最多起多少次**实际 Agent CLI 调用**（含修正那次）；开跑前按 场景数 × 每任务最大调用数 检查",
     )
+    ap.add_argument(
+        "--key-file",
+        type=Path,
+        default=DEFAULT_KEY_FILE,
+        help="--real builtin 的 Anthropic API Key 文件（只在进程内读取，不进 argv / 报告）",
+    )
     ap.add_argument("--model", default=None, help="钉住模型（--real 必填；两臂必须相同）")
     ap.add_argument("--effort", default=None, help="钉住推理强度（可选；两臂必须相同）")
     ap.add_argument(
@@ -615,6 +730,13 @@ def main(argv=None) -> int:
             file=sys.stderr,
         )
         return 2
+    api_key = None
+    if args.real == BUILTIN_ARM:
+        try:
+            api_key = args.key_file.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            print(f"读不到 API Key 文件：{type(exc).__name__}", file=sys.stderr)
+            return 2
     pack = None
     if args.pack:
         raw = args.pack.read_text(encoding="utf-8")
@@ -656,6 +778,7 @@ def main(argv=None) -> int:
             effort=args.effort,
             max_runs=args.max_runs if args.real else None,
             repeat=args.repeat,
+            api_key=api_key,
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)

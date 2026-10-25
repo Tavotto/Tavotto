@@ -508,3 +508,166 @@ def test_the_real_run_cap_counts_repeats(tmp_path, monkeypatch, capsys):
     ]
     assert bench.main([*argv, "--max-runs", str(3 * per - 1)]) == 2 and called == []
     assert "重复 3" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- 内置执行器臂（`--real builtin`，不调真模型）
+def _builtin_arm_env(monkeypatch, tmp_path):
+    """隔离配置目录 + 假的型号清单（不联网）；`_cmd` 换成回放替身并记下路由结果。"""
+    import sys
+
+    from tavotto.engine import ai_bridge, ai_providers, config
+
+    cfg = tmp_path / "cfg"
+    monkeypatch.setenv("TAVOTTO_CONFIG_DIR", str(cfg))
+    monkeypatch.setattr(config, "CONFIG_DIR", cfg, raising=False)
+    monkeypatch.setattr(
+        ai_providers, "live_models", lambda *a, **k: {"source": "none", "reason": "network"}
+    )
+    # 没有任何 CLI：路由只能凭 TAVOTTO_AI_BUILTIN=1 / Key 连接走 builtin
+    monkeypatch.setattr(ai_bridge, "capabilities", lambda refresh=False: {"agents": []})
+    box = {"agents": [], "endpoints": [], "models": [], "n": 0, "env": []}
+    secret = tmp_path / "secret"
+    secret.mkdir()
+    (secret / "edits.json").write_text("[]", encoding="utf-8")
+
+    def fake_cmd(agent_id, prompt, cwd, model=None, effort=None, endpoint=None, **kw):
+        box["n"] += 1
+        box["agents"].append(agent_id)
+        box["endpoints"].append(endpoint)
+        box["models"].append(model)
+        box["env"].append(__import__("os").environ.get("TAVOTTO_AI_BUILTIN"))
+        return [sys.executable, "-c", bench._REPLAY, cwd, str(secret / "edits.json")], {}
+
+    monkeypatch.setattr(ai_bridge, "_cmd", fake_cmd)
+    monkeypatch.setattr(ai_bridge, "_spawn_env", lambda cmd0, extra: dict(__import__("os").environ))
+    return box
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_builtin_arm_routes_through_the_product_to_builtin_and_cleans_up(tmp_path, monkeypatch):
+    import os
+
+    from tavotto.engine import ai_providers
+
+    monkeypatch.delenv("TAVOTTO_AI_BUILTIN", raising=False)
+    box = _builtin_arm_env(monkeypatch, tmp_path)
+    s02 = next(s for s in bench.load_scenarios("dev") if s["id"] == "FB-S02")
+    report = bench.run(
+        [s02],
+        tmp_path / "run" / "projects",
+        real_agent="builtin",
+        model="claude-sonnet-5-5",
+        api_key="sk-ant-SECRETSECRETSECRET0123456789",
+    )
+    # 产品自己的路由把请求送到了 builtin，连接是官方 Anthropic Key 连接，型号照 --model
+    assert box["agents"] == ["builtin"]
+    ep = box["endpoints"][0]
+    assert ep["base_url"] == "https://api.anthropic.com" and ep["agent"] == "claude"
+    assert box["models"] == ["claude-sonnet-5-5"] and box["env"] == ["1"]
+    env = report["environment"]
+    assert env["executor"].startswith("real:builtin") and env["model"] == "claude-sonnet-5-5"
+    assert env["endpoint"]["host"] == "api.anthropic.com"
+    assert "SECRETSECRET" not in json.dumps(report, ensure_ascii=False)
+    # 跑完：连接已删、运维开关已还原
+    assert ai_providers.list_providers() == []
+    assert "TAVOTTO_AI_BUILTIN" not in os.environ
+
+
+def test_builtin_arm_still_requires_a_pinned_model_and_a_readable_key(
+    tmp_path, monkeypatch, capsys
+):
+    called = []
+    monkeypatch.setattr(bench, "run", lambda *a, **k: called.append(1))
+    assert bench.main(["--work", str(tmp_path / "w"), "--real", "builtin"]) == 2
+    assert "--model" in capsys.readouterr().err
+    argv = ["--work", str(tmp_path / "w"), "--real", "builtin", "--model", "m"]
+    assert bench.main([*argv, "--key-file", str(tmp_path / "missing")]) == 2
+    assert called == []
+
+
+def test_builtin_arm_key_goes_to_run_only_never_through_argv_or_stdout(
+    tmp_path, monkeypatch, capsys
+):
+    import os
+
+    monkeypatch.setenv("TAVOTTO_DATA_DIR", os.environ.get("TAVOTTO_DATA_DIR", str(tmp_path / "d")))
+    monkeypatch.setenv(
+        "TAVOTTO_CONFIG_DIR", os.environ.get("TAVOTTO_CONFIG_DIR", str(tmp_path / "c"))
+    )
+    kf = tmp_path / "key"
+    kf.write_text("sk-ant-FILEKEY0123456789\n", encoding="utf-8")
+    got = {}
+    monkeypatch.setattr(
+        bench,
+        "run",
+        lambda *a, **k: got.update(k) or {"environment": {}, "rows": [], "metrics": {}},
+    )
+    rc = bench.main(
+        [
+            "--work",
+            str(tmp_path / "w"),
+            "--real",
+            "builtin",
+            "--model",
+            "m",
+            "--only",
+            "FB-S02",
+            "--key-file",
+            str(kf),
+            "--out",
+            str(tmp_path / "r.json"),
+        ]
+    )
+    assert (
+        rc == 0 and got["api_key"] == "sk-ant-FILEKEY0123456789" and got["real_agent"] == "builtin"
+    )
+    assert "FILEKEY" not in capsys.readouterr().out + (tmp_path / "r.json").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_compare_across_executors_requires_the_same_model_and_effort():
+    cli = {
+        "environment": {
+            "executor": "real:claude 2.1",
+            "model": "m",
+            "effort": None,
+            "executable": "/bin/claude",
+            "version": "2.1",
+            "endpoint": {"kind": "cli_default"},
+        }
+    }
+    blt = {
+        "environment": {
+            "executor": "real:builtin tavotto@abc",
+            "model": "m",
+            "effort": None,
+            "executable": "/py",
+            "version": "tavotto@abc",
+            "endpoint": {"kind": "provider"},
+        }
+    }
+    first = bench.compare(cli, blt).splitlines()[0]
+    assert first.startswith("ℹ") and "⚠" not in first  # 执行器不同是预期，模型 / effort 相同
+    other = {"environment": {**blt["environment"], "model": "m2"}}
+    assert bench.compare(cli, other).splitlines()[0].startswith("⚠ 两臂模型 / effort 不同")
+
+
+def test_usage_is_taken_only_from_self_reported_events():
+    box: dict = {}
+    bench._take_usage('{"type":"text","usage":{"input_tokens":9}}', box)  # 非终结事件不计
+    bench._take_usage("not json", box)
+    assert box == {}
+    bench._take_usage(
+        '{"type":"done","usage":{"input_tokens":10,"output_tokens":2,"cached_input_tokens":4}}', box
+    )
+    bench._take_usage(
+        '{"type":"result","total_cost_usd":0.5,"usage":{"input_tokens":5,"output_tokens":1,"cache_read_input_tokens":3}}',
+        box,
+    )
+    assert box == {
+        "input_tokens": 15,
+        "output_tokens": 3,
+        "cached_input_tokens": 7,
+        "cost_usd": 0.5,
+    }
