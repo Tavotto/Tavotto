@@ -302,6 +302,8 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "- ImageDraw.text + ImageFont → ax.text；字号按 px 换算成 pt：pt = px × 72 / dpi。"
         "保留原 anchor 的含义：横排默认 la 是 left-ascender，不等于可见字形的左上角，不能直接换成 va='top'。"
         "用原字体的 getmetrics / getbbox 或 textbbox 测量基线与字形偏移，再定位 Matplotlib 文字；"
+        "横排单行文字可比较同一文本在原 anchor 和 ls（left-baseline）下的 getbbox，"
+        "x/y 两方向都用对应边界的差恢复基线原点，不能只用 getlength 的浮点 advance 猜整数锚点位置。"
         "允许 Pillow 读取图片和测量字体，但文字与形状仍须是 Matplotlib 可编辑对象，不能先画成位图再嵌入。\n"
         "- Image.new((w, h), color) → fig = plt.figure(figsize=(w / dpi, h / dpi), dpi=dpi)，背景色设到 figure / axes，"
         'ax.axis("off")，fig.subplots_adjust(0, 0, 1, 1)，让坐标轴铺满整张图。\n'
@@ -343,6 +345,9 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "不能凭数据集名称、标签字母序或出现顺序猜原 factor 顺序。若原脚本依赖这些属性，"
         "先读取项目提供的元数据；缺失时用 TAVOTTO_NEEDS_INPUT 请求原 R 对象的 levels/is.ordered，"
         "给出针对该变量的 dput 导出命令，让用户把结果作为参考文件补充后再转写。"
+        "boxplot.stats 使用 fivenum 的 Tukey hinges，并非所有样本量都等于默认 quantile；"
+        "离群点判断只调整两端 whisker，不剔除后重算中位数、hinges 或 conf；"
+        "conf 使用原非缺失样本数和原 hinges 的 IQR，保留原公式与计算顺序。"
         "plotmath 要翻译实际显示的表达式，不能按源码字符串猜：函数调用中 `name=value` 是参数标签，"
         "标签本身不成为显示的数学等式，`name==value` 才是等式表达式；求和/乘积/积分的上下限只取实际操作数。"
         "保留 plain/italic/bold、上下标、分式、间距及括号语义，不能补入原图没有的变量或下限；"
