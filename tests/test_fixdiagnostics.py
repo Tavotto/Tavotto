@@ -170,6 +170,40 @@ def test_try_run_and_try_import_failures_carry_the_shadow_note(box):
     assert "project_package_shadow:" in r2.content
 
 
+def test_try_import_without_project_on_path_needs_provenance_evidence(box):
+    celerite_project(box)
+    script = box.proj / "paper" / "figures" / "sho.py"
+    site_tb = (
+        "Traceback (most recent call last):\n"
+        '  File "<string>", line 1, in <module>\n'
+        '  File "/venv/lib/python3.13/site-packages/celerite/__init__.py", line 3, in <module>\n'
+        "    from .celerite_version import __version__\n"
+        "ModuleNotFoundError: No module named 'celerite.celerite_version'"
+    )
+    from tavotto.engine.fixtools import trial
+
+    def imp(stderr):
+        ctx = make_ctx(box, environments={"e": "py"}, script_path=script)
+        orig = trial.run_python
+        trial.run_python = lambda *a, **k: {
+            "status": "ok",
+            "returncode": 1,
+            "stdout": "",
+            "stderr": stderr,
+        }
+        try:
+            return run_tool(REGISTRY["try_import"], ctx, {"env": "e", "module": "celerite"}).content
+        finally:
+            trial.run_python = orig
+
+    assert "project_package_shadow" not in imp(
+        site_tb
+    )  # 失败来自 site-packages，项目里同名目录不算数
+    assert "project_package_shadow" in imp(
+        CELERITE_TB.format(root=box.proj)
+    )  # 帧落在项目的 celerite/ 里
+
+
 def test_system_prompt_has_the_shadow_rule_for_both_wires():
     for text in (
         fixsession.SYSTEM_PROMPT,
@@ -212,6 +246,24 @@ def test_wheelless_package_is_requires_build_not_not_found(monkeypatch):
     res, _ = _run_default_installer(monkeypatch, PIP_NONE, lambda py, name, ev: True)
     assert res["code"] == deprepair.ERROR_REQUIRES_BUILD == "dependency_requires_build"
     assert "No matching distribution found for celerite" in res["detail"]
+
+
+def test_transitive_dependency_missing_probes_that_dependency_not_the_requested_package(
+    monkeypatch,
+):
+    out = (
+        "ERROR: Could not find a version that satisfies the requirement ghost-dep>=1 (from versions: none)\n"
+        "ERROR: No matching distribution found for ghost-dep>=1\n"
+    )
+    probed = []
+
+    def probe(py, name, ev):
+        probed.append(name)
+        return name == "celerite"  # 请求的包 A 在索引上有；传递依赖 B 没有
+
+    res, _ = _run_default_installer(monkeypatch, out, probe)
+    assert probed == ["ghost-dep"]
+    assert res["code"] == "dependency_not_found"
 
 
 def test_package_absent_from_the_index_stays_not_found(monkeypatch):

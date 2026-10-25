@@ -30,6 +30,17 @@ def failure_detail(out: str, limit: int = 2) -> str:
     return scrub("\n".join(lines[-limit:]))
 
 
+def unresolved_name(out: str) -> str:
+    """pip 输出里最后一个「找不到」的发行版名（与 `deprepair.not_found_detail` 同一批正则）；取不出回空串。"""
+    from .. import deprepair
+
+    name = ""
+    for rx in deprepair._NOT_FOUND_NAME_RES:
+        for m in rx.finditer(out or ""):
+            name = m.group(1)
+    return name
+
+
 def index_has_project(python: str, name: str, cancel: threading.Event) -> bool | None:
     """索引上有没有叫 `name` 的项目（含只有源码包的）：`pip index versions`，**不带** `--only-binary`。
     True / False；探不出（pip 太旧没有 `index`、没网、超时）回 None。
@@ -58,7 +69,7 @@ def index_has_project(python: str, name: str, cancel: threading.Event) -> bool |
 
 
 def _default_installer(python: str, requirements: list[str]) -> dict:
-    from .. import deprepair, depresolve, pool
+    from .. import deprepair, pool
 
     cancel = threading.Event()
     done: list[str] = []
@@ -70,8 +81,9 @@ def _default_installer(python: str, requirements: list[str]) -> dict:
                 if code:
                     if code == deprepair.ERROR_NOT_FOUND:
                         # 「没有这个包」与「有，但没有能装的轮子」输出一样；索引上查得到就改报后者
-                        name = depresolve.parse_requirement(req)
-                        if name and index_has_project(python, name[0], cancel):
+                        # 探**真正没解析到的那个发行版**：装 A 失败可能是传递依赖 B 找不到，req 仍是 A
+                        unresolved = unresolved_name(out)
+                        if unresolved and index_has_project(python, unresolved, cancel):
                             code = deprepair.ERROR_REQUIRES_BUILD
                     res = {"ok": False, "code": str(code), "done": done}
                     if detail := failure_detail(out):

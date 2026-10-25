@@ -119,8 +119,25 @@ def describe(fact: dict) -> str:
     return head + tail
 
 
-def detect(text: str | None, roots: list[Path | str | None]) -> dict | None:
-    """错误文本 → 遮蔽事实；不是这一类（含读不出来）回 `None`。`roots`：项目根、脚本所在目录（按 `sys.path` 的先后）。"""
+_FRAME_PATH_RE = re.compile(r'File "(?P<path>[^"\n]+)"')
+
+
+def _frame_in(text: str, pkg_dir: Path) -> bool:
+    """traceback 里是否有一帧的文件落在 `pkg_dir` 之内——失败的进程真的从项目里加载过这个包的证据。"""
+    for m in _FRAME_PATH_RE.finditer(text):
+        if _within(Path(m.group("path")), pkg_dir):
+            return True
+    return False
+
+
+def detect(
+    text: str | None, roots: list[Path | str | None], *, project_on_path: bool = True
+) -> dict | None:
+    """错误文本 → 遮蔽事实；不是这一类（含读不出来）回 `None`。`roots`：项目根、脚本所在目录（按 `sys.path` 的先后）。
+
+    `project_on_path`：失败的那个进程是否把项目放在 `sys.path` 上（真实运行 / 试运行副本：是；`try_import` 在全新
+    scratch 目录里跑：否）。**不在路径上时，项目里有同名目录说明不了什么**——失败可能完全来自 site-packages——
+    所以只在 traceback 里确有一帧落在项目的那个包目录内（来源证据）时才下结论。"""
     if not text:
         return None
     candidates = [Path(r) for r in roots if r]
@@ -135,6 +152,8 @@ def detect(text: str | None, roots: list[Path | str | None]) -> dict | None:
             for root in candidates:
                 pdir = root.joinpath(*parent.split("."))
                 if pdir.is_dir() and not _child_exists(pdir, child):
+                    if not project_on_path and not _frame_in(text, pdir):
+                        continue
                     return _fact(root, parent, name, relation="missing_submodule")
     m = None
     for m in _CANNOT_IMPORT_RE.finditer(text):
@@ -142,7 +161,7 @@ def detect(text: str | None, roots: list[Path | str | None]) -> dict | None:
     if m is not None:
         path = Path(m.group("path").strip())
         for root in candidates:
-            if _within(path, root):
+            if _within(path, root):  # 括号里的路径本身就是来源证据
                 pkg = m.group("pkg")
                 if root.joinpath(*pkg.split(".")).is_dir():
                     return _fact(root, pkg, f"{pkg}.{m.group('attr')}", relation="missing_name")

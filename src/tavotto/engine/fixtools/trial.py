@@ -530,7 +530,7 @@ def try_import(ctx: FixContext, args: dict) -> ToolResult:
         )
     return ok(
         f"import {module}: FAILED (exit {res['returncode']})\n{_tail(res['stderr'])}{note}"
-        + shadow_note(ctx, res["stderr"]),
+        + shadow_note(ctx, res["stderr"], project_on_path=False),
         "import failed",
     )
 
