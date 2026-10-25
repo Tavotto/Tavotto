@@ -221,3 +221,9 @@ Every output contains one logical editable Text run. Builtin and Codex PNGs are 
 Third-path review A–F: preserve source data, complete canvas, editable logical text and true 3D geometry; identify native geometry/raster coverage and ambient/project runtime as distinct facts; reject zero-Z sorting, bitmap substitution and whitespace-dominated averages; carry explicit native evidence and the selected worker context; falsify protocol/runtime and glyph oracles independently; retain failed visual results without switching default routing. The structural runtime/protocol fixes are verified. Universal fidelity is not.
 
 The final-head remote CI result is reported in the PR Checks/body after the report commit; this document does not turn an in-progress checkpoint into an all-green claim. No production private feedback was submitted.
+
+### Large reference text access
+
+The final controls supplied identical 667,133-byte native SVGs, but builtin `read_file` could only read an entire file of at most 200 KiB. The final builtin trace did not attempt this SVG read, so this limitation is **not asserted as the sole cause of its wrong ticks**. It is a reproduced resource-access difference from the CLI control.
+
+Third-path A–F: retain both approved project resources and bounded tool reads; distinguish a per-response bound from total resource size; remove the assumption that text must be read all at once; permit UTF-8 byte windows with returned continuation offsets, stable open-file identity and existing path containment; reject traversal, invalid limits, binary/split-start reads, concurrent file change and partial-read write grants; verify the old implementation fails the large-resource regression before measuring new model trials. Full-target read/write limits remain 200 KiB. Each optional window is at most 64 KiB, defaults to 16 KiB and never authorizes an edit. No shell, network, new read root or default-routing change is introduced.

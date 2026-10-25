@@ -403,6 +403,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `write_file`（整份覆盖，兜底）、`check`（调用方注入的回调，没注入 = `not_available` 工具错误）。**没有 shell、网络、MCP 工具。**
   路径判据只有一处 `FigureEditSession._resolve`：`realpath` 后须在候选目录内（符号链接先解开再判，链出界即越界）；写只许目标脚本，
   目标本身是符号链接也拒写。越界 / 写非目标 / 超大 / 非文本一律返回**工具错误结果**，不抛、不执行、文件零改动。
+  大型只读资源可用 `read_file.byte_offset/byte_limit` 分段查看（单次 ≤ 64 KiB，默认 16 KiB）；返回完整 UTF-8 字符边界的 `next_byte_offset` / `eof`。打开前后核对文件身份与路径；分段读取不授予目标写权限，完整目标读取及写入的 200 KiB 限制不变。看护 `tests/test_agent_read_windows.py`。
   换行：读出时统一成 `\n`，写回恢复文件原有的 `\r\n`（混合换行的文件会被统一成首见的那种）。
   将来 `data_to_figure` 的工具集**没有写文件工具**（只出结构化列映射，ADR 0138 §四）。
 - **事件**（stdout 每行一条 JSON，ASCII 转义）：`thinking`（只有字符数）、`tool`（工具名、成败、一句话摘要，**不带文件内容 / 提示词 / 密钥**）、

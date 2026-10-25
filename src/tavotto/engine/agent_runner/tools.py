@@ -13,8 +13,10 @@
 
 from __future__ import annotations
 
+import codecs
 import difflib
 import hashlib
+import json
 import os
 import shutil
 import stat
@@ -30,7 +32,13 @@ from .redact import NO_REDACTION, Redactor
 from .wires import ToolResult, ToolSpec
 
 READ_LIMIT_BYTES = 200 * 1024
+READ_WINDOW_BYTES = 64 * 1024
 LIST_LIMIT = 200
+
+
+def _file_identity(st, *, change_time=True):
+    values = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    return (*values, st.st_ctime_ns) if change_time else values
 
 
 # --------------------------------------------------------------------------- 契约
@@ -257,11 +265,17 @@ class FigureEditSession:
         real = self._resolve(args.get("path"))
         if real is None:
             return _err(name, call_id, "path_outside", "Path is not inside the project directory.")
+        if "byte_offset" in args or "byte_limit" in args:
+            return self._read_window(real, args, call_id)
         got = self._read_text(real)
         if isinstance(got, str):
             msg = {
                 "not_a_file": "Not a regular file (use list_dir to see what exists).",
-                "too_large": f"File is larger than {READ_LIMIT_BYTES // 1024} KB; reading it is refused.",
+                "too_large": (
+                    f"File is larger than {READ_LIMIT_BYTES // 1024} KB. "
+                    "Read bounded UTF-8 windows with byte_offset=0 and byte_limit=16384, "
+                    "then continue at the returned next_byte_offset."
+                ),
                 "not_text": "File is not UTF-8 text.",
             }[got]
             return _err(name, call_id, got, msg)
@@ -279,15 +293,84 @@ class FigureEditSession:
             compact=f"[already read {rel} (lines 1-{n}, sha {sha}); read it again if you need the text]",
         )
 
+    def _read_window(self, real: str, args: dict, call_id: str) -> ToolResult:
+        """Inspect large snapshotted text without loading it whole or granting edits."""
+        name = "read_file"
+        offset, limit = args.get("byte_offset", 0), args.get("byte_limit", 16 * 1024)
+        if (
+            type(offset) is not int
+            or offset < 0
+            or type(limit) is not int
+            or not 4 <= limit <= READ_WINDOW_BYTES
+        ):
+            return _err(
+                name, call_id, "bad_arguments", "Use a nonnegative byte offset and 4–65536 bytes."
+            )
+        try:
+            before = os.stat(real, follow_symlinks=False)
+            if not stat.S_ISREG(before.st_mode):
+                return _err(name, call_id, "not_a_file", "Only regular UTF-8 files can be read.")
+            if offset > before.st_size:
+                return _err(name, call_id, "bad_arguments", "Byte offset is beyond the file size.")
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+                | getattr(os, "O_BINARY", 0)
+            )
+            with os.fdopen(os.open(real, flags), "rb") as handle:
+                opened = os.fstat(handle.fileno())
+                if (
+                    not stat.S_ISREG(opened.st_mode)
+                    or _file_identity(opened, change_time=os.name != "nt")
+                    != _file_identity(before, change_time=os.name != "nt")
+                    or self._resolve(args.get("path")) != real
+                ):
+                    return _err(name, call_id, "file_changed", "File changed while opening it.")
+                handle.seek(offset)
+                raw = handle.read(limit)
+                if (
+                    _file_identity(os.fstat(handle.fileno())) != _file_identity(opened)
+                    or _file_identity(os.stat(real, follow_symlinks=False))
+                    != _file_identity(before)
+                    or self._resolve(args.get("path")) != real
+                ):
+                    return _err(name, call_id, "file_changed", "File changed while reading it.")
+        except OSError:
+            return _err(name, call_id, "file_unavailable", "File could not be read.")
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        try:
+            text = decoder.decode(raw, final=offset + len(raw) == opened.st_size)
+        except UnicodeDecodeError:
+            return _err(
+                name,
+                call_id,
+                "not_text",
+                "Window is not valid UTF-8; use a returned next_byte_offset to avoid splitting a character.",
+            )
+        next_offset = offset + len(raw) - len(decoder.getstate()[0])
+        meta = {
+            "byte_offset": offset,
+            "next_byte_offset": next_offset,
+            "file_size": opened.st_size,
+            "eof": next_offset == opened.st_size,
+        }
+        rel = os.path.relpath(real, self.root).replace(os.sep, "/")
+        # A partial read never sets read_target: editing still requires the full
+        # original read, and the existing target/write size limits remain intact.
+        return ToolResult(
+            call_id,
+            name,
+            json.dumps(meta) + "\n" + text,
+            summary=f"read bytes {offset}-{next_offset} of {opened.st_size}",
+            compact=f"[already read {rel} bytes {offset}-{next_offset}; next_byte_offset={next_offset}]",
+        )
+
     def list_dir(self, args: dict, call_id: str = "") -> ToolResult:
         return self._list_dir(self.root, call_id)
 
     def read_image(self, args: dict, call_id: str = "") -> ToolResult:
         name = "read_image"
-
-        def identity(st, *, change_time=True):
-            values = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
-            return (*values, st.st_ctime_ns) if change_time else values
 
         rel = args.get("path")
         real = self._resolve(rel)
@@ -313,15 +396,16 @@ class FigureEditSession:
                     not stat.S_ISREG(opened.st_mode)
                     # Windows stat/fstat may expose creation/change time under
                     # the same ctime name. Compare ctime within each API below.
-                    or identity(opened, change_time=os.name != "nt")
-                    != identity(before, change_time=os.name != "nt")
+                    or _file_identity(opened, change_time=os.name != "nt")
+                    != _file_identity(before, change_time=os.name != "nt")
                     or self._resolve(rel) != real
                 ):
                     return _err(name, call_id, "image_changed", "Image changed while opening it.")
                 raw = handle.read(media.MAX_IMAGE_BYTES + 1)
                 if (
-                    identity(os.fstat(handle.fileno())) != identity(opened)
-                    or identity(os.stat(real, follow_symlinks=False)) != identity(before)
+                    _file_identity(os.fstat(handle.fileno())) != _file_identity(opened)
+                    or _file_identity(os.stat(real, follow_symlinks=False))
+                    != _file_identity(before)
                     or self._resolve(rel) != real
                 ):
                     return _err(name, call_id, "image_changed", "Image changed while reading it.")
@@ -523,6 +607,33 @@ def _obj(props: dict, required: list[str]) -> dict:
     }
 
 
+def _read_schema() -> dict:
+    return _obj(
+        {
+            "path": {"type": "string", "description": _PATH_DESC},
+            "byte_offset": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Optional UTF-8 window start; continue at returned next_byte_offset.",
+            },
+            "byte_limit": {
+                "type": "integer",
+                "minimum": 4,
+                "maximum": READ_WINDOW_BYTES,
+                "description": "Optional window size, defaults to 16384 bytes; never reads the whole file.",
+            },
+        },
+        ["path"],
+    )
+
+
+_READ_WINDOW_HELP = (
+    " For large text/SVG resources, use byte_offset and byte_limit to read bounded UTF-8 windows "
+    "(at most 64 KB). The response reports next_byte_offset and eof. A window read does not "
+    "authorize editing the target; read the whole target before editing."
+)
+
+
 def _image_tool(session: FigureEditSession) -> Tool:
     return Tool(
         "read_image",
@@ -556,8 +667,9 @@ class FigureEditToolset:
                 "read_file",
                 "Read a text file in the project directory (at most 200 KB). Use it on the target script before "
                 "you edit it, and on helper files such as a shared style module. Do not use it to look for files "
-                "(use list_dir) and do not re-read a file you already have unless it changed.",
-                _obj({"path": {"type": "string", "description": _PATH_DESC}}, ["path"]),
+                "(use list_dir) and do not re-read a file you already have unless it changed."
+                + _READ_WINDOW_HELP,
+                _read_schema(),
                 bind(s.read_file),
             ),
             Tool(
@@ -915,8 +1027,9 @@ class ConvertToEditableToolset:
                 "read_file",
                 "Read a text file in the project directory (at most 200 KB). Use it on the original script first, "
                 "and on helper modules or small data files the script uses. Do not use it to look for files "
-                "(use list_dir) and do not re-read a file you already have unless it changed.",
-                _obj({"path": {"type": "string", "description": _PATH_DESC}}, ["path"]),
+                "(use list_dir) and do not re-read a file you already have unless it changed."
+                + _READ_WINDOW_HELP,
+                _read_schema(),
                 s.read_file,
             ),
             Tool(
