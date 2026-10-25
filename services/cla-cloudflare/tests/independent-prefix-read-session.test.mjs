@@ -13,20 +13,20 @@ test('independent read session switch uses exact environment true',()=>{
 test('independent read session disabled before callback or I/O',()=>isolated(async f=>{
  let callbacks=0;await assert.rejects(f.reads(async()=>{callbacks++;}),e=>e.code==='prefix_read_session_disabled');assert.equal(callbacks,0);assert.equal(f.calls.length,0);
 },{session:false}));
-for(const [prefix,external]of [[2,28],[3,34]])test('independent read session complete prefix measured cost '+prefix,()=>isolated(async f=>{
+for(const [prefix,external]of [[2,24],[3,26],[4,28]])test('independent read session complete prefix measured cost '+prefix,()=>isolated(async f=>{
  const before=await f.digest(),r=await succeeds(f.assess);assert.equal(r.eligible,true);assert.equal(r.publication,'not_attempted');assert.equal(r.binding.members.length,prefix);assert.equal(await f.digest(),before);
  assert.equal(f.budget.snapshot().external,external);assert.equal(f.state.installationReads,2);assert.equal(f.state.tokenReads,1);assert.equal(f.calls.filter(c=>c.path.includes('/contents/')).length,3);assert.equal(f.queries.length,4);
  for(const n of f.prs.keys()){assert.equal(f.state.prReads.get(n),4);assert.equal(f.state.compareReads.get(n),2);}
 },{prefix}));
-test('independent read session fourth prefix member cannot exceed unchanged35 work cap',()=>isolated(async f=>{
+test('independent read session eighth prefix member cannot exceed unchanged35 work cap',()=>isolated(async f=>{
  const before=await f.digest();await assert.rejects(f.assess(),e=>e.code==='budget_deferred');assert.equal(f.calls.length,35);assert.equal(f.state.tokenReads,1);assert.equal(await f.digest(),before);
-},{prefix:4}));
+},{prefix:8}));
 test('independent read session disabled assessment preserves ordinary32 path',()=>isolated(async f=>{
  assert.equal((await f.assess()).eligible,true);assert.equal(f.budget.snapshot().external,32);assert.equal(f.state.tokenReads,2);assert.equal(f.calls.filter(c=>c.path.includes('/contents/')).length,6);
 },{prefix:2,session:false}));
 test('independent read session identity stays fresh twice with four installation checks',()=>isolated(async f=>{
  f.commits.get(11)[0].commit.message='Co-authored-by: Synthetic <3+user3@users.noreply.github.com>';assert.equal((await f.assess()).eligible,false);
- assert.equal(f.state.userReads,2);assert.equal(f.state.installationReads,4);assert.equal(f.state.tokenReads,1);assert.equal(f.budget.snapshot().external,32);
+ assert.equal(f.state.userReads,2);assert.equal(f.state.installationReads,4);assert.equal(f.state.tokenReads,1);assert.equal(f.budget.snapshot().external,28);
 },{prefix:2}));
 test('independent read session identity change on second read rejects',()=>isolated(async f=>{
  f.commits.get(11)[0].commit.message='Co-authored-by: Synthetic <3+user3@users.noreply.github.com>';f.hooks.user=(data,login,state)=>{if(state.userReads===2)data.id=4;};await assert.rejects(f.assess(),e=>e.code==='identity_resolution_mismatch');assert.equal(f.state.tokenReads,1);

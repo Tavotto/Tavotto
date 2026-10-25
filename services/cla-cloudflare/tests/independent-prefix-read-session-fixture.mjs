@@ -66,7 +66,12 @@ export async function fixture({prefix=1,tail=0,pageSize=100,signed=true,enabled=
    assert.equal(init.headers.Authorization,'Bearer '+token);
    if(init.method!=='GET' && !(u.pathname==='/graphql' && init.method==='POST')){forbidden.push(call);throw Error('PUBLICATION_FORBIDDEN');}
    const base='/repos/'+c.repository;
-   if(u.pathname==='/graphql'){
+   if(u.pathname==='/graphql'&&body.query.startsWith('query NativePrefixPRMetadata(')){
+    assert.equal(body.variables.owner,c.repository.split('/')[0]);assert.equal(body.variables.name,c.repository.split('/')[1]);assert.equal(Object.keys(body.variables).length,2);
+    const pairs=[...body.query.matchAll(/p([0-9]+):pullRequest\(number:([0-9]+)\)/g)];assert.ok(pairs.length>=2&&pairs.length<=100);
+    const repository={databaseId:c.repositoryId},seen=new Set();for(const pair of pairs){assert.equal(pair[1],pair[2]);const number=Number(pair[1]);assert.ok(!seen.has(number)&&prs.has(number));seen.add(number);const p=structuredClone(prs.get(number));state.prReads.set(number,(state.prReads.get(number)??0)+1);if(hooks.pr)await hooks.pr(p,{number,read:state.prReads.get(number)},state);repository[pair[0].slice(0,pair[0].indexOf(':'))]={number:p.number,state:p.state.toUpperCase(),headRefOid:p.head.sha,baseRefOid:p.base.sha,baseRefName:p.base.ref,baseRepository:{databaseId:p.base.repo.id},author:{__typename:p.user.type,login:p.user.login,databaseId:p.user.id},commits:{totalCount:p.commits}};}
+    data={data:{repository}};if(hooks.prMetadata)await hooks.prMetadata(data,[...seen],state);
+   }else if(u.pathname==='/graphql'){
     assert.match(body.query,/^query\(/);assert.ok(body.query.includes('mergeQueue(branch:$branch)'));
     assert.deepEqual(Object.keys(body).sort(),['query','variables']);
     assert.equal(body.variables.owner,c.repository.split('/')[0]);assert.equal(body.variables.name,c.repository.split('/')[1]);assert.equal(body.variables.branch,'main');

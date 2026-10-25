@@ -204,8 +204,8 @@
     "file": "src/native/budget.ts",
     "before": "externalWork:35",
     "after": "externalWork:40",
-    "pattern": "^independent read session fourth prefix member cannot exceed unchanged35 work cap$",
-    "selectedTitle": "independent read session fourth prefix member cannot exceed unchanged35 work cap",
+    "pattern": "^independent\\ read\\ session\\ eighth\\ prefix\\ member\\ cannot\\ exceed\\ unchanged35\\ work\\ cap$",
+    "selectedTitle": "independent read session eighth prefix member cannot exceed unchanged35 work cap",
     "testFile": "tests/independent-prefix-read-session.test.mjs",
     "assertionError": true
   }

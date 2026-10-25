@@ -65,7 +65,13 @@ export async function fixture({prefix=2,tail=0,pageSize=100,signed=true,enabled=
    assert.equal(init.headers.Authorization,'Bearer '+token);
    if(init.method!=='GET' && !(u.pathname==='/graphql' && init.method==='POST')){forbidden.push(call);throw Error('PUBLICATION_FORBIDDEN');}
    const base='/repos/'+c.repository;
-   if(u.pathname==='/graphql'){
+   if(u.pathname==='/graphql'&&body.query.startsWith('query NativePrefixPRMetadata(')){
+    assert.deepEqual(body.variables,{owner:c.repository.split('/')[0],name:c.repository.split('/')[1]});
+    const numbers=[...body.query.matchAll(/p([0-9]+):pullRequest\(number:([0-9]+)\)/g)].map(m=>{assert.equal(m[1],m[2]);return Number(m[1]);});
+    assert.ok(numbers.length>=2&&numbers.length<=100);assert.equal(new Set(numbers).size,numbers.length);
+    const repository={databaseId:c.repositoryId};for(const number of numbers){assert.ok(prs.has(number));state.prReads.set(number,(state.prReads.get(number)??0)+1);const p=structuredClone(prs.get(number));if(hooks.pr)await hooks.pr(p,{number,read:state.prReads.get(number)},state);repository['p'+number]={number:p.number,state:p.state.toUpperCase(),headRefOid:p.head.sha,baseRefOid:p.base.sha,baseRefName:p.base.ref,baseRepository:{databaseId:p.base.repo.id},author:{__typename:p.user.type,login:p.user.login,databaseId:p.user.id},commits:{totalCount:p.commits}};}
+    data={data:{repository}};if(hooks.prMetadata)await hooks.prMetadata(data,numbers,state);
+   }else if(u.pathname==='/graphql'){
     assert.match(body.query,/^query\(/);assert.ok(body.query.includes('mergeQueue(branch:$branch)'));
     assert.deepEqual(Object.keys(body).sort(),['query','variables']);
     assert.equal(body.variables.owner,c.repository.split('/')[0]);assert.equal(body.variables.name,c.repository.split('/')[1]);assert.equal(body.variables.branch,'main');

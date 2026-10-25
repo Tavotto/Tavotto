@@ -97,6 +97,13 @@ outbox; a busy shared slot remains a durable wait. No stale qualification cache
 is reused across wakeups. Real
 queue-schema/permission, CPU, D1, OAuth and timing acceptance remain separate gates.
 
+The [complete-prefix metadata transport fix](../../docs/implementation/cla-prefix-metadata-budget/README.md)
+batches fresh member metadata only within the enabled prefix read session. Its
+single-page synthetic P1/P2/P3/P4 dispatch costs are 26/28/30/32 external calls,
+with full prefix, two snapshots and independent confirmation retained. More
+pages/coauthors can still exceed the unchanged budget; the whole-group SQL
+limits above remain unchanged. This is offline evidence, not live acceptance.
+
 ### Public endpoints: abuse limits and pinned agreement asset
 
 The two-person same-head refresh limit above applies with delegation disabled.
