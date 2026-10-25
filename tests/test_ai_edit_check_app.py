@@ -59,11 +59,11 @@ def world(tmp_path, monkeypatch):
         project_watch.stop()
 
 
-def _check(m, figs, base_src, new_src, sid="s1"):
+def _check(m, figs, base_src, new_src, sid="s1", entry=None):
     script = figs / "plot.py"
     script.write_text(base_src, encoding="utf-8")
     ctx = next(iter(m.PROJECTS.values())) if hasattr(m, "PROJECTS") else None
-    runner = m._convert_runner(ctx, "plot.py", with_manifests=True)
+    runner = m._convert_runner(ctx, "plot.py", with_manifests=True, entry=entry)
     # 基线 = 原脚本自己的校验运行（stem 是 plot）；只测数据指纹的比对口径，不动热会话
     baseline = runner(str(figs), "plot.py", None).get("manifests")
     assert baseline and "plot" in baseline, baseline
@@ -114,3 +114,28 @@ def test_convert_validation_gives_the_write_hint_for_a_relative_output_script(wo
         ai_figure_edit.remove_candidate(cand.dir)
     assert res["status"] == "error" and res["code"] == ai_convert.WRITE_OUTSIDE_ROOTS_CODE, res
     assert res["message"] == ai_convert.WRITE_OUTSIDE_HINT
+
+
+TWO_PLOTS = (
+    "import matplotlib.pyplot as plt\n\n\ndef main():\n"
+    "    plt.plot([5, 6, 7], [5, 6, 7])\n    plt.title('first')\n    plt.show()\n\n\n"
+    "def publication():\n"
+    "    plt.plot([1, 2, 3], [1, 4, 9])\n    plt.title('second')\n    plt.show()\n"
+)
+
+
+def test_check_renders_the_registered_entry_not_the_first_inferred_one(world):
+    m, figs = world
+    ok, report = _check(
+        m, figs, TWO_PLOTS, TWO_PLOTS.replace("'second'", "'renamed'"), entry="publication"
+    )
+    assert ok and "data unchanged" in report, report
+    ok, report = _check(
+        m,
+        figs,
+        TWO_PLOTS,
+        TWO_PLOTS.replace("[1, 4, 9]", "[1, 4, 10]"),
+        sid="s2",
+        entry="publication",
+    )
+    assert not ok and "data_changed" in report, report

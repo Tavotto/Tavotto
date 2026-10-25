@@ -3910,7 +3910,7 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
         "retire": retire,
         "after": after,
         # 内置执行器的 `check`（`ai_figure_edit.agent_check`）：候选在用户同一路由下的校验运行 + 数据指纹基线
-        "runner": _convert_runner(ctx, script, with_manifests=True),
+        "runner": _convert_runner(ctx, script, with_manifests=True, entry=entry),
         "check_before": check_before,
     }
 
@@ -12383,7 +12383,9 @@ def _convert_error(exc: "engine_ai_convert.ConvertError"):
     return jsonify({"error": exc.code, "code": exc.code, "params": {}}), exc.status
 
 
-def _convert_runner(ctx: "ProjectCtx", source_script: str, *, with_manifests: bool = False):
+def _convert_runner(
+    ctx: "ProjectCtx", source_script: str, *, with_manifests: bool = False, entry: str | None = None
+):
     """校验运行（注入 `ai_convert`）：走现有 probe 路径，**用户同一解释器 / 同一路由**；返回前退役它起的 worker。"""
 
     def runner(figures_dir: str, rel: str, write_roots: tuple[str, ...] | None = None) -> dict:
@@ -12394,7 +12396,10 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str, *, with_manifests: bo
         except Exception:  # noqa: BLE001 —— 配置读不出来就按不带参数跑
             run = None
         run_kw = {"run": run} if run is not None else {}
-        result = engine_probe.probe(figures_dir, rel, **run_kw, **roots_kw)
+        # `entry`：只有改图 `check` 传——被改的是登记的那张图，不是静态推断的第一个能出图的入口。转换任务的新脚本没有登记入口，
+        # 仍交给探测自己推断（语义不变）
+        entries_kw = {"entries": [entry]} if entry else {}
+        result = engine_probe.probe(figures_dir, rel, **entries_kw, **run_kw, **roots_kw)
         try:
             if result.get("error"):
                 err = result["error"]
