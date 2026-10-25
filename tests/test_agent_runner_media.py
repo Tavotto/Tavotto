@@ -181,8 +181,9 @@ def test_text_only_tool_protocol_is_unchanged():
         assert "image" not in json.dumps(request.body)
 
 
-@pytest.mark.parametrize("thinking", ["adaptive", "budget"])
-def test_compression_respects_thinking_prefix_binding(tmp_path, thinking):
+@pytest.mark.parametrize("thinking", ["none", "adaptive", "budget"])
+@pytest.mark.parametrize("block_type", ["thinking", "redacted_thinking"])
+def test_compression_respects_thinking_prefix_binding(tmp_path, thinking, block_type):
     from dataclasses import replace
 
     (tmp_path / "plot.py").write_text("# input\n" * 500)
@@ -196,14 +197,18 @@ def test_compression_respects_thinking_prefix_binding(tmp_path, thinking):
         for i, msg in enumerate(messages):
             for block in msg["content"]:
                 if block["type"] in ("thinking", "redacted_thinking"):
-                    if messages[:i] != prefixes[block["signature"]]:
+                    if messages[:i] != prefixes[block.get("signature", block.get("data"))]:
                         return 400, {}, b'{"error":{"type":"invalid_request_error"}}'
         turn = len(requests)
         if turn < 3:
             signature = "signed-" + str(turn)
             prefixes[signature] = copy.deepcopy(messages)
             content = [
-                {"type": "thinking", "thinking": "private reasoning", "signature": signature},
+                (
+                    {"type": "thinking", "thinking": "private reasoning", "signature": signature}
+                    if block_type == "thinking"
+                    else {"type": "redacted_thinking", "data": signature}
+                ),
                 {
                     "type": "tool_use",
                     "id": "read" + str(turn),
@@ -237,15 +242,20 @@ def test_compression_respects_thinking_prefix_binding(tmp_path, thinking):
     result = loop.run(model, tools.FigureEditToolset(), envelope, events.append)
     assert result.ok and len(requests) == 3
     last = requests[-1]["messages"]
-    if thinking == "adaptive":
+    if thinking != "budget":
         assert result.compressions == 1
         assert not any(
             block["type"] in ("thinking", "redacted_thinking")
             for msg in last
             for block in msg["content"]
         )
-        assert requests[-1]["thinking"] == {"type": "adaptive"}
-        assert requests[-1]["output_config"] == {"effort": "high"}
+        if thinking == "adaptive":
+            assert requests[-1]["thinking"] == {"type": "adaptive"}
+            assert requests[-1]["output_config"] == {"effort": "high"}
+        else:
+            # No request option does not guarantee that an endpoint returns no
+            # signed blocks. Preserve the caller's mode while compacting safely.
+            assert "thinking" not in requests[-1] and "output_config" not in requests[-1]
     else:
         assert result.compressions == 0
         assert requests[-1]["messages"][: len(requests[-2]["messages"])] == requests[-2]["messages"]

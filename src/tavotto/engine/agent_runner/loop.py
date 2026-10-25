@@ -120,11 +120,13 @@ class HttpModel:
         if self.wire.name == "anthropic" and self.thinking == "budget":
             return 0
         count = compress(history)
-        if count and self.wire.name == "anthropic" and self.thinking == "adaptive":
+        if count and self.wire.name == "anthropic":
             # A thinking signature is bound to the preceding conversation.
             # Editing old tool results invalidates every later signed block.
-            # Adaptive thinking permits omitting these blocks; tool calls and
-            # results remain paired and the requested effort stays unchanged.
+            # Some endpoints return signed/redacted blocks even when no thinking
+            # option was requested. Omit stale blocks in both modes; manual
+            # budget mode remains append-only above. Tool calls/results stay
+            # paired and the requested thinking mode and effort stay unchanged.
             for msg in history:
                 if msg.turn is not None and isinstance(msg.turn.native, list):
                     msg.turn.native = [
