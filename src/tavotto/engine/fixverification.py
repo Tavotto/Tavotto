@@ -12,11 +12,26 @@ import threading
 import time
 
 from .interpreterpath import same_python
+from .prepsession import (
+    OUTCOME_NO_FIGURE,
+    OUTCOME_SUCCEEDED,
+    PHASE_COMPLETED,
+    PHASE_PARTIAL,
+)
 
 
 def evidence(report: dict | None) -> dict | None:
-    """Only a completed current application attempt is repair evidence."""
+    """Verify a successful current application run, including a no-figure handoff."""
     if not isinstance(report, dict) or not (report.get("facts") or {}).get("execution_finished"):
+        return None
+    # A finished attempt can still need dependencies, fail registration or capture
+    # only some figures. Consume the preparation service's authoritative result;
+    # no editable figures is the intentional successful-script handoff to conversion.
+    result = (report.get("phase"), (report.get("outcome") or {}).get("kind"))
+    if result not in (
+        (PHASE_COMPLETED, OUTCOME_SUCCEEDED),
+        (PHASE_PARTIAL, OUTCOME_NO_FIGURE),
+    ):
         return None
     provider = report.get("provider") or {}
     if not provider.get("attempt_id") or not provider.get("plan_id"):

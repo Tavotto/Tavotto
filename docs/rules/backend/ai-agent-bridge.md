@@ -596,8 +596,10 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   check → 单次运行批准卡 → 原 action id/config_revision → launch/finalize/report；不自批安装或运行意图，不切解释器。
   卡片披露真实 cwd/写入范围/执行方式，旧临时副本授权不代替这次批准；取消只管本次 action，过期/被替代即拒。
   `switch_workdir` 经明确批准与快照走已有 `workdir.set_mode`，改动/回滚后退役旧 worker，守卫不变。
-  `finish(fixed)` 须匹配本会话最后一次实际 `execution_finished` 的 session/revision/plan/attempt；任何可能改执行结果的
-  工具（含失败后的部分改动）使证据与依赖缓存失效。`no_figures` 允许证明脚本已执行完，不证明可编辑；转写仍另行交接。
+  `finish(fixed)` 须匹配本会话最后一次实际成功执行的 session/revision/plan/attempt；`execution_finished` 不能单独证明修好，
+  还须是准备会话的 `completed/succeeded` 或 `partial/execution_finished_no_figure`。缺包待重跑、登记失败、部分图捕获失败
+  均不算证据。任何可能改执行结果的工具（含失败后的部分改动）使证据与依赖缓存失效。`no_figures` 允许证明脚本已执行完，
+  不证明可编辑；转写仍另行交接。
   `read_run_report` 保留 nested `result.error` 与实际 launch/workdir。前端收尾复查照旧；诊断包仍只记审计摘要。
   看护 `tests/test_fix_application_verification.py`、`tests/test_fixasks.py`、`tests/test_ai_fix_endpoint.py`。
 

@@ -56,6 +56,16 @@ This round retains **6 model repair attempts plus 1 harness setup failure**. The
 
 The previous three-executor exact Pillow-version and missing-image comparisons remain in [FIDELITY-FOLLOWUP.md](FIDELITY-FOLLOWUP.md). Together these cover several real faults, not arbitrary user environments. Native R package installation and MATLAB toolbox repair are **not** product-supported paths; these trials repair their converted **Python** environments. Builtin uses Sonnet 5.5 and Codex uses subscription GPT-6 Astra, so the paired success does not establish general non-inferiority.
 
+## Review follow-up: completed attempts are not necessarily successful repairs
+
+[Review comment 4371332802](https://github.com/Tavotto/Tavotto/pull/1421#discussion_r4371332802) exposed a false-success predicate: a runtime missing dependency sets `execution_finished=true` while its authoritative outcome is `needs_dependencies`. Repair evidence now additionally requires `completed/succeeded` or the intentional `partial/execution_finished_no_figure` conversion handoff. Missing dependencies, failed registration, partial capture and absent outcomes cannot authorize `finish(fixed)`.
+
+All five new negative regression cases failed against the previous implementation. A real preparation-action integration test reproduces the missing-package report; the existing real pip/worker round trip now also verifies that installing the dependency is insufficient until a new successful script attempt completes. Real Pillow font/output-directory tests retain the successful no-figure handoff.
+
+The focused repair/preparation/MCP/import-architecture gate passed **797 tests, with 2 Linux-only sandbox skips** on macOS. The first invocation incorrectly pinned the worker interpreter and supplied a relative source path to child processes, causing 15 dependency-fixture failures and one MCP child failure; correcting the invocation passed without weakening those checks. Full-repository Ruff/format and rule-document budgets also passed.
+
+The six archived model-repair reports above were re-evaluated with the stricter predicate: four have `completed/succeeded`, and the two font attempts have `partial/execution_finished_no_figure`. All six remain valid execution evidence. This is a re-audit of the frozen reports, not six new model trials; their revisions and attempt counts are unchanged.
+
 ## Verification and remaining limits
 
 - Backend: **722 passed, 2 skipped** at `aeaee3895` (opt-in real CLI discovery and Linux-only bwrap). Guidance follow-up: **200 passed, zero skipped**.

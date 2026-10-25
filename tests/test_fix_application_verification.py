@@ -63,7 +63,12 @@ def _report(*, finished=False, captured=False, revision=1, action=True):
     return {
         "session_id": "psess-one",
         "config_revision": revision,
-        "phase": "completed" if finished else "ready_to_run",
+        "phase": ("completed" if captured else "partial") if finished else "ready_to_run",
+        "outcome": {
+            "kind": (prepsession.OUTCOME_SUCCEEDED if captured else prepsession.OUTCOME_NO_FIGURE)
+            if finished
+            else prepsession.OUTCOME_PENDING
+        },
         "facts": {"execution_finished": finished, "figure_captured": captured},
         "provider": {"plan_id": "plan-one", "attempt_id": "attempt-one" if finished else None},
         "plan": {
@@ -143,6 +148,70 @@ def test_application_verification_distinguishes_execution_from_figure_capture():
     assert result["verification"]["attempt_id"] == "attempt-one"
     assert claims == [("run-one", 1)]
     assert result["report"]["facts"] == {"execution_finished": True, "figure_captured": False}
+
+
+@pytest.mark.parametrize(
+    "attempt",
+    [
+        {"status": "error", "error": {"code": "missing_dependency"}, "missing_installable": True},
+        {"status": "ready", "captured_count": 1, "finalize": {"registered": False}},
+        {
+            "status": "ready",
+            "captured_count": 2,
+            "finalize": {
+                "registered": True,
+                "failed_figures": [{"stem": "lost", "code": "render_failed"}],
+            },
+        },
+    ],
+    ids=["runtime_missing_dependency", "registration_failed", "partial_capture"],
+)
+def test_finished_failed_attempt_cannot_verify_or_finish_fixed(box, attempt):
+    from tavotto.engine.fixverification import evidence, run_preparation
+
+    # Consume the real preparation projection: all three attempts have finished,
+    # but execution-finished alone does not establish a successful repair.
+    derived = prepsession.derive(
+        {
+            "target_kind": "script",
+            "has_script": True,
+            "attempt": {**attempt, "finalized": True},
+        }
+    )
+    report = _report(finished=True, captured=derived["figure_captured"])
+    report.update(phase=derived["phase"], outcome=derived["outcome"])
+    assert derived["execution_finished"] is True
+    result = run_preparation(
+        python="/venv/bin/python",
+        selected_python=lambda: "/venv/bin/python",
+        timeout=1,
+        cancel=None,
+        approve=lambda *_: True,
+        check=lambda: _report(),
+        claim=lambda *_: True,
+        read=lambda _: report,
+        stop=lambda _: pytest.fail("a terminal failure must not wait for a timeout"),
+    )
+    assert result["code"] == "application_run_failed"
+    assert "verification" not in result and evidence(report) is None
+
+    ctx = make_ctx(box, application_runner=lambda *_: None, application_check=lambda: report)
+    # Even a previous proof with the same identity fields cannot authorize a
+    # failed current outcome. finish must revalidate the authoritative report.
+    ctx.verification = evidence(_report(finished=True, captured=True))
+    assert ctx.verification is not None
+    assert (
+        call(ctx, "finish", {"outcome": "fixed", "summary": "Done"}).code
+        == "application_verification_required"
+    )
+
+
+def test_missing_outcome_cannot_be_inferred_from_execution_finished():
+    from tavotto.engine.fixverification import evidence
+
+    report = _report(finished=True, captured=True)
+    report.pop("outcome")
+    assert evidence(report) is None
 
 
 def test_timeout_cancels_only_the_claimed_action():
@@ -263,6 +332,44 @@ def test_application_callback_success_is_bound_to_revision(client, tmp_path, fak
         call(ctx, "finish", {"outcome": "fixed", "summary": "Done"}).code
         == "application_verification_required"
     )
+
+
+def test_application_callback_rejects_installable_runtime_dependency(
+    client, tmp_path, fake_pool, sessions, monkeypatch
+):
+    ctx, _project, session = _application_ctx(client, tmp_path)
+    cards = []
+    ctx.ask = lambda card: cards.append(card) or {"answer": "yes"}
+    fake_pool["error"] = engine_pool.WorkerError(
+        "No module named colorcet", code="missing_dependency", module="colorcet"
+    )
+    # Only worker execution and dependency resolution are fixtures; action
+    # ownership, provider finalization and preparation reports are real.
+    monkeypatch.setattr(
+        prepsession.SESSIONS,
+        "_observe_missing",
+        lambda *_: {
+            "module": "colorcet",
+            "installable": True,
+            "rounds_remaining": 1,
+            "requirement": {"name": "colorcet"},
+            "impact": {},
+            "impact_digest": "missing-colorcet",
+        },
+    )
+    result = call(ctx, "try_run", {"env": "e"})
+    current = ctx.report()
+    assert current["facts"]["execution_finished"] is True
+    assert current["outcome"]["kind"] == prepsession.OUTCOME_NEEDS_DEPENDENCIES
+    assert current["outcome"]["reason"] == "rerun_required"
+    assert result.code == "application_run_failed", result.content
+    assert ctx.verification is None
+    assert (
+        call(ctx, "finish", {"outcome": "fixed", "summary": "Done"}).code
+        == "application_verification_required"
+    )
+    assert fake_pool["build_calls"] == len(session.attempts) == 1
+    assert [card["tool"] for card in cards] == ["try_run"]
 
 
 def test_settings_changed_while_run_card_open_do_not_run_new_plan(

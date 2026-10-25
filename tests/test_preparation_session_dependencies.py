@@ -642,6 +642,8 @@ class TestRealRoundTrip:
     ):
         """动态缺包：脚本跑到函数里才 import 的包，静态扫描看不见。原执行已经发生（事实保留），差异计划在同一个
         会话里呈现；补齐之后要**新的一次尝试**（不叫"从异常点继续"），新增集合另行授权。"""
+        from tavotto.engine.fixverification import evidence
+
         proj = opened(
             [],
             script_body=(
@@ -670,6 +672,7 @@ class TestRealRoundTrip:
             "reason": "rerun_required",
         }
         assert missing["facts"] == {"execution_finished": True, "figure_captured": False}
+        assert evidence(missing) is None  # 跑到缺包那一行不能证明已修复
         reqs = [r for r in missing["requirements"] if r.get("origin") == "runtime_missing"]
         assert len(reqs) == 1
         req = reqs[0]
@@ -683,6 +686,7 @@ class TestRealRoundTrip:
         assert ready["dependency_delta"]["origin"] == "runtime_missing"
         assert ready["dependency_delta"]["rerun_required"] is True
         assert ready["provider"]["attempts"] == 1  # 第一次尝试的记录还在，没被改写
+        assert evidence(ready) is None  # 真 pip 安装成功后仍须运行原脚本
         assert _act(client, ready, "run").status_code == 202
         done = _wait(
             client, sid, lambda r: r["phase"] in ("completed", "partial", "action_required")
@@ -691,6 +695,8 @@ class TestRealRoundTrip:
         assert done["provider"]["attempts"] == 2
         assert done["provider"]["attempt_id"] != first_attempt  # 新的 attempt，不是从异常点继续
         assert done["dependency_delta"] is None  # 新的一次尝试消费了上次的差额
+        proof = evidence(done)
+        assert proof is not None and proof["attempt_id"] == done["provider"]["attempt_id"]
 
 
 # ---------------------------------------------------------------------------
