@@ -15,7 +15,7 @@ test('转换缺少输入：确认前不发送参考，更正错误路径后能�
     status: 'completed', currentStep: null, completedSteps: [], skippedSteps: [], hintSeen: {},
     startedAt: 1, completedAt: 2, tutorialProjectId: null, tutorialDocumentId: null, pausedBy: null,
   })))
-  await page.route('**/api/ai/convert', async (route) => {
+  await page.route(/\/api\/ai\/convert(?:\?|$)/, async (route) => {
     if (route.request().method() !== 'POST') return route.continue()
     posts.push(route.request().postDataJSON())
     if (posts.length === 2) return route.fulfill({ status: 400, json: { code: 'convert_reference_invalid', error: 'convert_reference_invalid' } })
@@ -40,6 +40,7 @@ test('转换缺少输入：确认前不发送参考，更正错误路径后能�
     await zone.dispatchEvent('drop', { dataTransfer: dt })
     const card = page.locator('[data-foreign-card="r"]')
     await expect(card).toBeVisible()
+    await page.getByRole('button', { name: '直接进入工作台', exact: true }).click()
     await card.locator('[data-foreign-start]').click()
     const input = card.locator('[data-convert-references]')
     await expect(input).toBeVisible()

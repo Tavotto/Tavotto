@@ -629,7 +629,7 @@ CONVERT_WRITE_HINT = (
 )
 #: 一份完整重画脚本可能很长：输出上限比 figure_edit 大；轮数按「读 1–3 + 写 1 + check/修 ≤ 3 轮 + 收尾」留余量。
 CONVERT_LIMITS = Limits(
-    max_turns=20, max_total_tokens=400_000, max_seconds=900.0, max_output_tokens=16384
+    max_turns=20, max_total_tokens=400_000, max_seconds=900.0, max_output_tokens=32768
 )
 
 # 要求的正文来自 ai_prompt_pack（CLI 路径用的同一份），这里只加执行器特有的部分（工具、不运行脚本、check 的预算）。

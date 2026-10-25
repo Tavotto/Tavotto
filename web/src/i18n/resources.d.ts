@@ -5704,6 +5704,15 @@ export default interface Resources {
           "uncommon": "{{names}} 这个包不常见，确认是你要的再装。"
         },
         "fail": {
+          "agent_auth": "模型凭据无效或已过期，请检查 AI 连接。",
+          "agent_budget": "转换达到时间或用量上限，已停止；没有采用候选。",
+          "agent_internal": "转换执行器出错，可以审阅并发送私密问题报告。",
+          "agent_max_turns": "转换达到步骤上限，已停止。",
+          "agent_network": "模型服务请求失败，可以重试。",
+          "agent_output_truncated": "模型达到单次响应上限，未能写完脚本；没有采用候选。",
+          "agent_quota": "模型服务额度不足或正在限流。",
+          "agent_refused": "模型拒绝了这次转换。",
+          "agent_tool_error_loop": "转换工具反复报错，已停止。",
           "budget_exhausted": "尝试次数用完了",
           "convert_candidate_changed": "待采用的新版本文件被改动过，请重新生成",
           "convert_context_changed": "生成时使用的资源已改变，请重新生成。",
@@ -5717,6 +5726,7 @@ export default interface Resources {
           "no_matplotlib_import": "生成的脚本没有用 Matplotlib",
           "other_file_changed": "助手改动了不该动的文件，已丢弃",
           "project_files_changed": "校验运行改动了项目文件，已丢弃",
+          "raster_drawing": "生成的脚本仍把文字或形状画成位图",
           "render_not_wired": "暂时无法校验新版本",
           "resume_error": "接着生成时出错了，请重试",
           "resume_unreachable": "暂时连不上，请稍后重试",

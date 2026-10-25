@@ -37,6 +37,15 @@ describe('convertStore', () => {
     vi.useRealTimers()
   })
 
+  it('模型响应截断保留明确原因，不落成未知失败', async () => {
+    vi.mocked(startConvert).mockResolvedValue({ session: 'truncated', script: 'plot.py' })
+    vi.mocked(fetchAiSession).mockResolvedValue({ status: 'failed', final: true, error: 'agent_output_truncated', task: { outcome: 'failed', unmet: [] } } as never)
+    const pending = start()
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await pending
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'failed', reason: 'agent_output_truncated' })
+  })
+
   it('未决请求 id 按项目分作用域：B 的同名脚本成功不会冲掉 A 的未决 id', async () => {
     vi.mocked(startConvert).mockRejectedValueOnce(new Error('network down'))
     await start()

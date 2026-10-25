@@ -40,6 +40,8 @@ GOOD = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nax.plot([1, 2
 #: Agent 在 cwd 里写那一个新文件
 WRITE_GOOD = f"(d / 'fig_matplotlib.py').write_text({GOOD!r}, encoding='utf-8')"
 WRITE_NO_MPL = "(d / 'fig_matplotlib.py').write_text('print(1)\\n', encoding='utf-8')"
+RASTER = "import matplotlib.pyplot as plt\nfrom PIL import ImageDraw\nImageDraw.Draw(mask).ellipse((0,0,10,10))\n"
+WRITE_RASTER = f"(d / 'fig_matplotlib.py').write_text({RASTER!r}, encoding='utf-8')"
 WRITE_SYNTAX = "(d / 'fig_matplotlib.py').write_text('def f(:\\n', encoding='utf-8')"
 WRITE_NOTHING = "pass"
 #: 额外还动了副本里的原脚本 / 多建了一个文件
@@ -83,7 +85,7 @@ def env(monkeypatch, tmp_path):
     (figs / "data.csv").write_text("x,y\n1,2\n", encoding="utf-8")
     state = {"code": WRITE_GOOD, "cwd": [], "prompts": [], "figs": figs, "runner": ok_runner}
 
-    def _cmd(agent_id, prompt, cwd, model=None, effort=None, endpoint=None):
+    def _cmd(agent_id, prompt, cwd, model=None, effort=None, endpoint=None, **_kwargs):
         state["cwd"].append(cwd)
         state["prompts"].append(prompt)
         pre = f"import pathlib, sys; d = pathlib.Path(sys.argv[1]); proj = pathlib.Path({str(figs)!r}); "
@@ -206,6 +208,36 @@ def test_revert_of_a_convert_session_is_refused(env):
     assert ai_bridge.get(sid)["revert_available"] is False
 
 
+@pytest.mark.parametrize(
+    ("reason", "detail", "expected"),
+    [
+        ("budget", "output_truncated", "agent_output_truncated"),
+        ("network", "provider echoed private source", "agent_network"),
+        ("unknown-secret", "secret", "agent_exit_nonzero"),
+    ],
+)
+def test_builtin_terminal_reason_survives_task_failure_without_provider_text(
+    env, monkeypatch, reason, detail, expected
+):
+    import json
+
+    monkeypatch.setattr(ai_bridge.ai_providers, "builtin_conn", lambda *_args: {"id": "test"})
+    event = json.dumps({"type": "done", "ok": False, "reason": reason, "detail": detail})
+    env["code"] = f"print({event!r}, flush=True); sys.exit(1)"
+    sid = ai_bridge.run(
+        "builtin",
+        "fig.py",
+        "convert",
+        str(env["figs"]),
+        task_hooks={"runner": env["runner"]},
+        convert={"library": "pillow", "original_rel": "out.png"},
+    )
+    sess = _wait(sid)
+    assert sess["status"] == "failed" and sess["error"] == expected
+    assert "provider echoed" not in str(sess) and "unknown-secret" not in str(sess)
+    assert not (env["figs"] / "fig_matplotlib.py").exists()
+
+
 # --------------------------------------------------------------------------- 检查失败路径
 @pytest.mark.parametrize(
     ("code", "failed"),
@@ -213,6 +245,7 @@ def test_revert_of_a_convert_session_is_refused(env):
         (WRITE_NOTHING, ("candidate.target", "target_missing")),
         (WRITE_SYNTAX, ("candidate.syntax", "syntax_error")),
         (WRITE_NO_MPL, ("candidate.matplotlib", "no_matplotlib_import")),
+        (WRITE_RASTER, ("candidate.editable", "raster_drawing")),
         (TOUCH_COPY, ("candidate.tree", "other_file_changed")),
         (EXTRA_FILE, ("candidate.tree", "other_file_changed")),
         (WRITE_PROJECT, ("project.untouched", "project_files_changed")),

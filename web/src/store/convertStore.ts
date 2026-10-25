@@ -120,9 +120,9 @@ const set1 = (script: string, patch: Partial<ConvertEntry>) =>
   }))
 
 /** 后端失败原因 → 一句话（任务的 unmet 里挑第一条能说清的；说不清就笼统一句，由卡片的文案键给） */
-function failureCode(unmet: { constraint_id: string; reason_code: string }[] | undefined): string {
+function failureCode(unmet: { constraint_id: string; reason_code: string }[] | undefined, error?: string | null): string {
   const first = (unmet ?? []).find((u) => u.constraint_id !== 'correction') ?? unmet?.[0]
-  return first ? first.reason_code : 'unknown'
+  return first ? first.reason_code : error ?? 'unknown'
 }
 
 /** 任务结局里的依赖卡片事实（`unmet[].reason_code === 'dependency_decision'` 的那条的 `data`） */
@@ -481,7 +481,7 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           acceptedSessions.delete(key) // 任务明确终局失败：重试起新会话
           set1(script, {
             phase: 'failed',
-            reason: failureCode(sess.task?.unmet as { constraint_id: string; reason_code: string }[] | undefined),
+            reason: failureCode(sess.task?.unmet as { constraint_id: string; reason_code: string }[] | undefined, sess.error),
             stopping: false,
           })
         }

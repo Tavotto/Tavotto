@@ -641,3 +641,18 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 `convertcontext.selected_paths` 是读策略的共同入口，不能绕过敏感路径、链接、脱敏和摘要校验。
 修复会话的总期限从创建开始计时（包括等卡片确认），与单工具期限分开。总期限到达记 `budget` 并传播取消；
 工具收尾期间保留占用，不把已有取消/期限结局重新标成 stalled。看护 `test_fixstall.py`、`test_fixmcp.py`。
+
+### 转换的保真失败与协议回放
+
+`convertfidelity.raster_drawing` 只报告候选 AST 中能静态指认的 Pillow 像素绘制调用；
+字体度量与照片读取放行，存在重绑定的不明确接收者不据此判错。内置 `check` 与最终采用前检查共用判据；
+`raster_drawing` 阻止把“Pillow 画完再 imshow”称为可编辑转写。没有命中不是全面保真证明。
+看护 `test_convert_fidelity.py` 和 `test_ai_convert.py` 的真实会话收尾用例。
+
+长转换允许单响应 32768 token（含模型思考），单次文件块仍为 6000 字符；总 token、时间和轮数预算不变。
+默认单次请求 300 秒，总期限仍会截断它，用户取消仍随时生效。
+Anthropic adaptive thinking 的签名绑定历史前缀；客户端压缩工具结果后删除历史内全部 thinking / redacted_thinking 块，
+保留工具调用及结果，不改用户推理强度。manual/budget 模式要求末轮思考块，保持追加历史并沿用总预算。
+依据：[官方排错规则](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting)。
+看护 `test_agent_runner_media.py` 的接收端前缀验证，不能只断言请求 JSON 形状。
+内置失败只把闭集短码沿 Task Core 传给卡片；不传供应商错误体、模型思考或用户内容。

@@ -1571,6 +1571,7 @@ def run(
 
     def _consume():
         st: dict = {}
+        sess.pop("runner_error", None)
         proc = sess["proc"]
         complete = threading.Event()
 
@@ -1599,6 +1600,8 @@ def run(
                         sess["transcript"].append({"kind": kind, "text": text})
                     emit("ai.delta", {"session": sid, "kind": kind, "text": text})
             _await_exit(sess)
+            if agent == ai_agents.BUILTIN_ID and st.get("runner_error"):
+                sess["runner_error"] = st["runner_error"]
         finally:
             complete.set()
             timer.cancel()
@@ -1746,7 +1749,9 @@ def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str, re
             # 再看退出码：Windows 上被杀的进程退出码非零，且这一刻 `cancel` 可能还没来得及把会话改成 cancelled
             return
         if sess["proc"].returncode != 0:
-            raise ai_tasks.TaskError("agent_exit_nonzero", str(sess["proc"].returncode))
+            raise ai_tasks.TaskError(
+                sess.get("runner_error") or "agent_exit_nonzero", str(sess["proc"].returncode)
+            )
 
     from . import ai_convert
 

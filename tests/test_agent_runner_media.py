@@ -179,3 +179,77 @@ def test_text_only_tool_protocol_is_unchanged():
             max_output_tokens=100,
         )
         assert "image" not in json.dumps(request.body)
+
+
+@pytest.mark.parametrize("thinking", ["adaptive", "budget"])
+def test_compression_respects_thinking_prefix_binding(tmp_path, thinking):
+    from dataclasses import replace
+
+    (tmp_path / "plot.py").write_text("# input\n" * 500)
+    requests = []
+    prefixes = {}
+
+    def post(_url, _headers, body, *, timeout):
+        request = copy.deepcopy(body)
+        requests.append(request)
+        messages = request["messages"]
+        for i, msg in enumerate(messages):
+            for block in msg["content"]:
+                if block["type"] in ("thinking", "redacted_thinking"):
+                    if messages[:i] != prefixes[block["signature"]]:
+                        return 400, {}, b'{"error":{"type":"invalid_request_error"}}'
+        turn = len(requests)
+        if turn < 3:
+            signature = "signed-" + str(turn)
+            prefixes[signature] = copy.deepcopy(messages)
+            content = [
+                {"type": "thinking", "thinking": "private reasoning", "signature": signature},
+                {
+                    "type": "tool_use",
+                    "id": "read" + str(turn),
+                    "name": "read_file",
+                    "input": {"path": "plot.py"},
+                },
+            ]
+            stop = "tool_use"
+        else:
+            content = [{"type": "text", "text": "done"}]
+            stop = "end_turn"
+        return 200, {}, json.dumps({"content": content, "stop_reason": stop}).encode()
+
+    model = loop.HttpModel(
+        wires.AnthropicWire(),
+        base_url="https://example.invalid",
+        api_key="test",
+        model="test",
+        thinking=thinking,
+        effort="high",
+        post=post,
+    )
+    envelope = tools.RunEnvelope(
+        task_type="figure_edit",
+        cwd=tmp_path,
+        target="plot.py",
+        instruction="inspect",
+        limits=replace(tools.Limits(), compress_at_tokens=1),
+    )
+    events = []
+    result = loop.run(model, tools.FigureEditToolset(), envelope, events.append)
+    assert result.ok and len(requests) == 3
+    last = requests[-1]["messages"]
+    if thinking == "adaptive":
+        assert result.compressions == 1
+        assert not any(
+            block["type"] in ("thinking", "redacted_thinking")
+            for msg in last
+            for block in msg["content"]
+        )
+        assert requests[-1]["thinking"] == {"type": "adaptive"}
+        assert requests[-1]["output_config"] == {"effort": "high"}
+    else:
+        assert result.compressions == 0
+        assert requests[-1]["messages"][: len(requests[-2]["messages"])] == requests[-2]["messages"]
+    calls = [b["id"] for m in last for b in m["content"] if b["type"] == "tool_use"]
+    results = [b["tool_use_id"] for m in last for b in m["content"] if b["type"] == "tool_result"]
+    assert calls == results == ["read1", "read2"]
+    assert "private reasoning" not in str(events)

@@ -42,6 +42,7 @@ from . import (
     atomicio,
     config,
     convertcontext,
+    convertfidelity,
     convertoutputs,
     discover,
     projectenv,
@@ -521,6 +522,13 @@ def agent_check(cand: ConvertCandidate, *, evidence: list | None = None) -> tupl
         return False, f"syntax_error: line {problem.get('lineno')}: {problem.get('detail')}"
     if not _static_uses_matplotlib(tree):
         return False, "no_matplotlib_import: the new script must draw with Matplotlib"
+    if convertfidelity.raster_drawing(tree):
+        return False, (
+            "raster_drawing: the candidate still paints text or shapes with Pillow. "
+            "Use editable Matplotlib Text/Line/Patch objects, including mask geometry; "
+            "reading photographs and measuring fonts are allowed. If exact conversion "
+            "is unavailable, report TAVOTTO_NEEDS_INPUT instead of embedding the bitmap."
+        )
     if convertcontext.transient_reference(tree, cand.dir):
         return False, "transient_resource_path: use the original project resource location"
     if not convertcontext.unchanged(cand.project_root, cand.context, snapshot_dir=cand.dir):
@@ -775,6 +783,8 @@ class ConvertAdapter:
             out.append(
                 _check("candidate.resources", st, "integrity", FAILED, "transient_resource_path")
             )
+        if tree_ is not None and convertfidelity.raster_drawing(tree_):
+            out.append(_check("candidate.editable", st, "goal", FAILED, "raster_drawing"))
         out += self._project_untouched(cand, st)
         if any(c.verdict != VERIFIED for c in out):
             return out  # 静态检查都没过就不浪费一次真运行

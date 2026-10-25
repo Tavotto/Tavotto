@@ -1296,6 +1296,14 @@ class BuiltinAgent(AgentDefinition):
             and not ev.get("ok")
             and ev.get("reason") not in (None, "completed", "cancelled")
         ):
+            # Preserve only closed short codes, never model/provider error text.
+            reason = str(ev["reason"])
+            if reason in self._FAILURES:
+                state["runner_error"] = (
+                    "agent_output_truncated"
+                    if reason == "budget" and ev.get("detail") == "output_truncated"
+                    else "agent_" + reason
+                )
             return [("message", self._FAILURES.get(str(ev["reason"]), "出错"))]
         return []
 

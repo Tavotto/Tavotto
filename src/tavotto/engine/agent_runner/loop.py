@@ -114,6 +114,26 @@ class HttpModel:
     def __repr__(self) -> str:  # 密钥不进 repr / 日志
         return f"HttpModel({self.wire.name}, model={self.model!r})"
 
+    def compress_history(self, history: list[Msg]) -> int:
+        # Manual thinking requires its last signed block during tool use. Keep
+        # that conversation append-only; the existing total budget still holds.
+        if self.wire.name == "anthropic" and self.thinking == "budget":
+            return 0
+        count = compress(history)
+        if count and self.wire.name == "anthropic" and self.thinking == "adaptive":
+            # A thinking signature is bound to the preceding conversation.
+            # Editing old tool results invalidates every later signed block.
+            # Adaptive thinking permits omitting these blocks; tool calls and
+            # results remain paired and the requested effort stays unchanged.
+            for msg in history:
+                if msg.turn is not None and isinstance(msg.turn.native, list):
+                    msg.turn.native = [
+                        block
+                        for block in msg.turn.native
+                        if block.get("type") not in ("thinking", "redacted_thinking")
+                    ]
+        return count
+
     def complete(
         self,
         *,
@@ -443,7 +463,7 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                 res, False, "budget", "time" if time.monotonic() >= deadline else "tokens"
             )
         if estimate_tokens(system, specs, history) > limits.compress_at_tokens:
-            res.compressions += compress(history)
+            res.compressions += getattr(model, "compress_history", compress)(history)
 
         request_tokens = estimate_tokens(system, specs, history)
         started = time.monotonic()
