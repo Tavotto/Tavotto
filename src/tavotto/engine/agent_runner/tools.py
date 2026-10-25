@@ -620,6 +620,13 @@ class FigureEditToolset:
 CONVERT_SUFFIX = "_matplotlib.py"
 #: ADR 0143：校验运行 ≤ 3（Agent ≤ 1 + 一轮有界修正）。第 4 次 `check` 是工具错误 `check_budget`。
 CONVERT_MAX_CHECKS = 3
+CONVERT_CHUNK_CHARS = 6000
+CONVERT_WRITE_HINT = (
+    f"Each create_file/append_file content is limited to {CONVERT_CHUNK_CHARS} characters. "
+    "For a long script, first create imports and helpers only, then append one figure or logical section "
+    "per call. Do not plan or generate the entire script in one response. Copy the returned sha256 into "
+    "the next append call. Finish all sections before check."
+)
 #: 一份完整重画脚本可能很长：输出上限比 figure_edit 大；轮数按「读 1–3 + 写 1 + check/修 ≤ 3 轮 + 收尾」留余量。
 CONVERT_LIMITS = Limits(
     max_turns=20, max_total_tokens=400_000, max_seconds=900.0, max_output_tokens=16384
@@ -636,6 +643,8 @@ You work in a candidate directory with bounded read-only project context; the us
 The product's requirements follow verbatim (they are written in Chinese; follow them exactly):
 """
     + "\n".join(convert_requirements())
+    + "\n"
+    + CONVERT_WRITE_HINT
     + """
 
 Additional rules for this session (not negotiable):
@@ -727,6 +736,8 @@ class ConvertSession(FigureEditSession):
             return _err(name, call_id, "empty_content", "`content` must not be empty.")
         if len(content.encode("utf-8")) > READ_LIMIT_BYTES:
             return _err(name, call_id, "too_large", "Content is larger than the allowed size.")
+        if len(content) > CONVERT_CHUNK_CHARS:
+            return _err(name, call_id, "chunk_too_large", CONVERT_WRITE_HINT)
         text = content.replace("\r\n", "\n")
         if not self.created:
             # 新建前没有「写入前的文本」：整份内容含密钥就拒，且必须在建文件之前（零改动）
@@ -776,6 +787,8 @@ class ConvertSession(FigureEditSession):
                 "bad_arguments",
                 "Supply content and the sha256 returned by the previous write.",
             )
+        if len(content) > CONVERT_CHUNK_CHARS:
+            return _err(name, call_id, "chunk_too_large", CONVERT_WRITE_HINT)
         got = self._read_text(real)
         if isinstance(got, str):
             return _err(name, call_id, got, "The new file can no longer be read as text.")
@@ -869,6 +882,12 @@ class ConvertSession(FigureEditSession):
 class ConvertToEditableToolset:
     task_type = "convert_to_editable"
     default_limits = CONVERT_LIMITS
+    truncation_hint = (
+        "Your previous response reached the output limit. NONE of its tool calls ran; no file changed. "
+        "The existing files and successful earlier tool results are still current. "
+        "Continue from the last successful write; do not repeat an already appended section. "
+        + CONVERT_WRITE_HINT
+    )
 
     def first_message(self, envelope: RunEnvelope) -> str:
         return (
@@ -921,6 +940,7 @@ class ConvertToEditableToolset:
                         "content": {
                             "type": "string",
                             "description": "First section or complete new script.",
+                            "maxLength": CONVERT_CHUNK_CHARS,
                         },
                     },
                     ["content"],
@@ -935,7 +955,7 @@ class ConvertToEditableToolset:
                 _obj(
                     {
                         "path": {"type": "string"},
-                        "content": {"type": "string"},
+                        "content": {"type": "string", "maxLength": CONVERT_CHUNK_CHARS},
                         "expected_sha256": {"type": "string"},
                     },
                     ["content", "expected_sha256"],

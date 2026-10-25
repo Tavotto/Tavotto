@@ -308,6 +308,7 @@ class RunResult:
     #: 至少一轮服务端没报用量、按字符数估算记账
     usage_estimated: bool = False
     compressions: int = 0
+    output_recoveries: int = 0
     elapsed_ms: int = 0
 
 
@@ -408,6 +409,7 @@ def run(
             "ledger_mismatch": res.ledger_mismatch,
             "usage_estimated": res.usage_estimated,
             "compressions": res.compressions,
+            "output_recoveries": res.output_recoveries,
         }
     )
     return res
@@ -503,10 +505,23 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
             emit({"type": "text", "text": turn.text})
         if cancel.is_set():
             return _finish(res, False, "cancelled")
-        history.append(Msg("assistant", turn=turn))
-
         if turn.stop == "max_tokens":  # 被截断的一轮：带不带工具调用都一个不执行
+            hint = getattr(toolset, "truncation_hint", "")
+            if (
+                hint
+                and not res.output_recoveries
+                and used < limits.max_total_tokens
+                and res.turns < limits.max_turns
+                and time.monotonic() < deadline
+            ):
+                # Discard the entire incomplete response, including tool calls
+                # and protocol-specific thinking. Its usage remains in the
+                # ledger; recovery consumes the same turn/token/time budget.
+                res.output_recoveries += 1
+                history.append(Msg("user", text=hint))
+                continue
             return _finish(res, False, "budget", "output_truncated")
+        history.append(Msg("assistant", turn=turn))
         if not turn.tool_calls:
             if turn.stop != "end":  # 未知停止原因 / 声称要调工具却没有可用调用：不是完成
                 return _finish(res, False, "network", f"bad_stop_{turn.stop_value or turn.stop}")

@@ -21,6 +21,7 @@ import pytest
 from tavotto.engine import ai_prompt_pack
 from tavotto.engine.agent_runner import loop, tools
 from tavotto.engine.agent_runner.redact import Redactor
+from tavotto.engine.agent_runner.wires import ToolCall, Turn, Usage
 
 SRC = Path(__file__).resolve().parent.parent / "src"
 
@@ -88,6 +89,79 @@ class CountingCheck:
     def __call__(self):
         self.calls += 1
         return self.ok, self.report
+
+
+def test_truncated_conversion_recovers_without_executing_or_replaying_partial_calls(cand):
+    class Model:
+        calls = 0
+
+        def complete(self, *, history, **kw):
+            self.calls += 1
+            assert kw["max_output_tokens"] == TASK.default_limits.max_output_tokens
+            if self.calls == 1:
+                return Turn(
+                    text="INCOMPLETE_PRIVATE_TEXT",
+                    native=[{"type": "tool_use", "id": "partial"}],
+                    tool_calls=[ToolCall("partial", "create_file", {"content": "BAD"})],
+                    stop="max_tokens",
+                    usage=Usage(100, 200),
+                )
+            if self.calls == 2:
+                assert not (cand / "fig_matplotlib.py").exists()
+                assert history[-1].role == "user" and "NONE" in history[-1].text
+                assert all(m.turn is None for m in history)
+                return Turn(
+                    tool_calls=[ToolCall("safe", "create_file", {"content": NEW})],
+                    stop="tool_use",
+                    usage=Usage(120, 40),
+                )
+            return Turn(text="done", stop="end", usage=Usage(90, 10))
+
+    res, events = run_demo(cand, {}, model=Model())
+    assert res.ok and res.output_recoveries == 1 and res.turns == 3
+    assert (res.ledger.total_in, res.ledger.total_out) == (310, 250)
+    assert res.ledger.check()
+    assert (cand / "fig_matplotlib.py").read_text() == NEW
+    assert (cand / "fig.py").read_text() == ORIG
+    assert "INCOMPLETE_PRIVATE_TEXT" not in json.dumps(events)
+    assert tool_events(events) == [("create_file", True)]
+
+
+@pytest.mark.parametrize("token_budget,expected_calls", [(1000, 2), (15, 1)])
+def test_truncation_recovery_is_once_and_never_expands_budget(cand, token_budget, expected_calls):
+    class Model:
+        calls = 0
+
+        def complete(self, **kw):
+            self.calls += 1
+            return Turn(
+                stop="max_tokens",
+                usage=Usage(10, 10),
+                tool_calls=[ToolCall("partial", "create_file", {"content": NEW})],
+            )
+
+    model = Model()
+    before = _tree(cand)
+    res, _ = run_demo(cand, {}, model=model, limits=tools.Limits(max_total_tokens=token_budget))
+    assert (res.reason, res.detail) == ("budget", "output_truncated")
+    assert model.calls == expected_calls and res.ledger.total_out == 10 * expected_calls
+    assert _tree(cand) == before
+
+
+def test_conversion_chunk_limit_refuses_without_touching_files(cand):
+    session = tools.ConvertSession(envelope(cand))
+    too_big = "#" * (tools.CONVERT_CHUNK_CHARS + 1)
+    before = _tree(cand)
+    assert session.create_file({"content": too_big}).code == "chunk_too_large"
+    assert _tree(cand) == before
+    created = session.create_file({"content": NEW})
+    digest = created.content.split("sha256: ")[1]
+    before = _tree(cand)
+    assert (
+        session.append_file({"content": too_big, "expected_sha256": digest}).code
+        == "chunk_too_large"
+    )
+    assert _tree(cand) == before
 
 
 # ================================================================ 正常流
@@ -569,7 +643,16 @@ class TestOutputSizeLimit:
         assert out.read_bytes() == NEW.encode()
         # 用例各行互异：difflib 对海量相同行是二次方的
         near = "".join(f"x{i:05d} = 1\n" for i in range(tools.READ_LIMIT_BYTES // 11 - 5))
-        assert not ts["create_file"].handler({"content": near}).is_error
+        result = ts["create_file"].handler({"content": near[: tools.CONVERT_CHUNK_CHARS]})
+        assert not result.is_error
+        for offset in range(tools.CONVERT_CHUNK_CHARS, len(near), tools.CONVERT_CHUNK_CHARS):
+            result = ts["append_file"].handler(
+                {
+                    "content": near[offset : offset + tools.CONVERT_CHUNK_CHARS],
+                    "expected_sha256": result.content.split("sha256: ")[1],
+                }
+            )
+            assert not result.is_error
         size = out.stat().st_size
         r = ts["edit_file"].handler({"old": "x00000 = 1", "new": "x00000 = 1  # " + "y" * 200})
         assert (r.is_error, r.code) == (True, "too_large")

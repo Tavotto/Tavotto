@@ -92,3 +92,5 @@ OpenAI = ChatGPT 订阅（codex 登录）+ 官方 API Key；Claude = Claude 订�
 `figure_edit` / `convert_to_editable` 增加候选范围内的 `read_image`（PNG/JPEG/GIF/WebP ≤ 4 MiB）；转换的 `check` 将同次 live figure 渲染的 PNG 经 IPC 回传（≤ 16 张且合计 ≤ 4 MiB，不完整时明确说明）。三种 wire 发送各自原生图像内容；事件与审计不带图像字节。旧图像随历史压缩移除，图像估算计入预算。该证据只供模型检查，不把运行通过升级成保真证明。
 
 长转换可先 `create_file` 再 `append_file(content, expected_sha256)`；重复/过期追加拒绝，仍只写那个新文件、核完整文件大小和秘密串。不新增 shell、网络或默认路由。
+
+Conversion output recovery remains within the existing budget: each create/append carries at most 6,000 characters; one truncated response can be discarded and retried as a smaller section. The whole incomplete response is withheld from execution and protocol replay; its usage stays in the ledger. A second truncation or exhausted budget stops the task. Other toolsets do not opt into this recovery.
