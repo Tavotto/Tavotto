@@ -573,6 +573,8 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   装不上如实报 `input_remap: …could not load…`，不静默当没有。自定义 runner 仅在有规则时多收一个 `input_remap` 关键字。
 - **已知取舍**：同一处的旧 `file` 规则（`remap_target` 里 `file` 优先）会盖住后来的 `prefix` 规则——与弹窗行为一致，没有为此改规则优先级；`known_requests` 不含已被现有规则救回的 `open` 读取。
 
+- **诊断三缺口（覆盖率测量补）**：① 项目内同名包遮蔽——`engine/importshadow.py`（纯函数、只读文件系统）对 `No module named 'a.b'` / `cannot import name … (项目内路径)` 判「父包目录在项目根 / 脚本目录下、缺的子模块不在里面」，`read_run_report`（`project_package_shadow` 放最前）与 `try_run` / `try_import` 失败输出都带 `base.shadow_note`；`regular`（有 `__init__.py`）装同名包不管用、`namespace`（无 `__init__.py`）装真包能修，提示词 3f 同此；② 安装失败：`--only-binary=:all:` 下「只有源码包」与「没这个包」同样是 `(from versions: none)`，`executors._default_installer` 对 `dependency_not_found` 追一次 `pip index versions`（`index_has_project`），索引里有就改报 `dependency_requires_build`，并带脱敏后的 `ERROR:` 一两行（`detail`），`install_packages` 回给模型；③ `read_logs(worker)` 从前没人填 `ctx.log_paths["worker"]` 恒 `no_log`，现按 `diagnostics.owned_worker_logs(项目)` 取当前项目最近一份。看护 `tests/test_fixdiagnostics.py`。
+
 ### D2b：「问与报」组 + 修复会话 + `POST /api/ai/fix`（`fixtools/ask.py`、`engine/fixsession.py`）
 
 - **五个工具都 `waits_for_user=True`**：`propose_fix`（`approve` 卡，详情列 `ctx.reads` 的 `~/…` 写法与「没读：敏感目录」）、`ask_user`（`choice` 卡，回选项 id；`other` / `skip` 是保留 id）、
