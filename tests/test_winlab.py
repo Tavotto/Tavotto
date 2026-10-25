@@ -465,6 +465,32 @@ def test_deployed_modules_cover_agent_verify_local_imports():
     assert local | {"agent_verify.py"} <= set(W.DEPLOYED_CI_MODULES)
 
 
+def test_deployed_files_alone_can_import_the_agent(tmp_path):
+    # 结构保证：只把 admin_deploy_agent 实际部署的 .py 放进一个目录、隔离模式下 import agent 必须成功。
+    # 上一条只认 `from X import`，漏掉 `import proctree` 这类写法（Lab 上 agent 启动即 ModuleNotFoundError）。
+    import shutil
+    import subprocess as sp
+
+    for src in (
+        WINLAB / "agent.py",
+        *(ROOT / "scripts" / "ci" / n for n in W.DEPLOYED_CI_MODULES),
+    ):
+        shutil.copy(src, tmp_path / src.name)
+    r = sp.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; sys.path[:0] = [sys.argv[1]]; import agent",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert r.returncode == 0, r.stderr
+
+
 def test_lab_ssh_never_multiplexes():
     # Win32-OpenSSH + ForceCommand：复用连接上的后续会话拿到的是第一条命令的 SSH_ORIGINAL_COMMAND
     base = " ".join(W.SSH_BASE)

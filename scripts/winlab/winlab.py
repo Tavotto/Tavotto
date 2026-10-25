@@ -56,7 +56,7 @@ PROXY_CONF_PATH = Path(
 TOOLS_DIR = r"C:\TavottoLab\tools\winlab"
 AGENT_CMD = '@"C:\\Program Files\\Python313\\python.exe" -I "%~dp0agent.py" --ssh\r\n'
 #: agent.py 复用的结果闭集（agent_verify.py）与它的同目录依赖；改 agent_verify 的 import 时同步这里。
-DEPLOYED_CI_MODULES = ("agent_verify.py", "_common.py")
+DEPLOYED_CI_MODULES = ("agent_verify.py", "_common.py", "proctree.py")
 #: 不复用连接：Win32-OpenSSH 在一条复用的连接上只设一次 `SSH_ORIGINAL_COMMAND`，后续会话拿到的是
 #: 第一条命令（2026-10-24 在 Lab 上实测：先 doctor 再 status，第二次执行的仍是 doctor）。
 #: 保活放宽到 30 s × 10：大下载（首次 clone、pip）把 12 Mbps 链路占满时，保活回包会排队几十秒。
