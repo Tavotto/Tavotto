@@ -278,10 +278,13 @@ class FigureEditSession:
         )
 
     def list_dir(self, args: dict, call_id: str = "") -> ToolResult:
+        return self._list_dir(self.root, call_id)
+
+    def _list_dir(self, directory: str, call_id: str) -> ToolResult:
         name = "list_dir"
         rows = []
         try:
-            entries = sorted(os.scandir(self.root), key=lambda e: e.name)
+            entries = sorted(os.scandir(directory), key=lambda e: e.name)
         except OSError:
             return _err(name, call_id, "list_failed", "Could not list the project directory.")
         for e in entries[:LIST_LIMIT]:
@@ -548,7 +551,7 @@ CONVERT_SYSTEM_PROMPT = (
 You are the conversion assistant built into Tavotto, a desktop editor for scientific figures.
 You turn ONE plotting script that draws its figure as a bitmap (Pillow, OpenCV, plotly, ROOT, ...) into an editable
 Matplotlib version, so the figure can be edited element by element afterwards.
-You work in a scratch copy of the project directory; the user reviews the new file before it is added to the project.
+You work in a candidate directory with bounded read-only project context; the user reviews the new file before it is added to the project.
 
 The product's requirements follow verbatim (they are written in Chinese; follow them exactly):
 """
@@ -595,6 +598,14 @@ class ConvertSession(FigureEditSession):
             raise BadEnvelope("bad_output")
         self.created = False  # 本次运行里新文件已由 create_file 写出
         self.checks_run = 0
+
+    def list_dir(self, args: dict, call_id: str = "") -> ToolResult:
+        directory = self._resolve(args.get("path", "."))
+        if directory is None:
+            return _err(
+                "list_dir", call_id, "path_outside", "Path is not inside the candidate directory."
+            )
+        return self._list_dir(directory, call_id)
 
     def _is_output(self, real: str) -> bool:
         return os.path.normcase(real) == os.path.normcase(self.output_path or "")
@@ -754,9 +765,17 @@ class ConvertToEditableToolset:
             ),
             Tool(
                 "list_dir",
-                "List the files directly inside the project directory (one level, no recursion). Use it when you "
-                "are unsure which files exist. It cannot list anything outside the project directory.",
-                _obj({}, []),
+                "List one directory in the candidate, including read-only project_context subdirectories. "
+                "No paths outside the candidate are accessible.",
+                _obj(
+                    {
+                        "path": {
+                            "type": "string",
+                            "description": "Optional candidate-relative directory, default .",
+                        }
+                    },
+                    [],
+                ),
                 s.list_dir,
             ),
             Tool(

@@ -1220,6 +1220,7 @@
         "needs_input": "这份脚本里有一步在 Python 里没有可靠的对应，没有生成新版本",
         "needs_input_reason": "没有生成新版本：{{reason}}",
         "convert_source_changed": "原脚本在这期间被改过，这份新版本是按旧版本写的，请重新生成",
+        "convert_context_changed": "生成时使用的资源已改变，请重新生成。",
         "convert_project_changed": "项目里的文件在这期间被改动过，请重新生成",
         "convert_candidate_changed": "待采用的新版本文件被改动过，请重新生成",
         "resume_unreachable": "暂时连不上，请稍后重试",

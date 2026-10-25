@@ -53,6 +53,7 @@
     "convert_not_found": "That new version can’t be found (it may have been discarded, expired, or belong to another project).",
     "convert_not_ready": "The new version isn’t ready yet, or it didn’t pass the checks.",
     "convert_source_changed": "The original script changed after this was generated, so the new version was written for an older script. Generate it again.",
+    "convert_context_changed": "Resources used for this conversion changed. Generate it again.",
     "convert_project_changed": "Project files changed after this was generated, so it was not continued. Generate it again.",
     "convert_candidate_changed": "The new version file was modified, so it was not adopted. Generate it again.",
     "convert_outside_project": "The new version’s location is outside the project, so nothing was written.",

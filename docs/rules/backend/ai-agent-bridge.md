@@ -337,6 +337,11 @@ order: 240
 永不覆盖），采用前再核原脚本 sha256 与候选摘要。校验 = 在用户同一路由下 probe 一遍（紧挨原脚本的 `tavotto_convert_probe_<sid>.py`
 临时文件，后端建、跑完删），必须捕获到 Matplotlib 图。看护：`tests/test_ai_convert.py`、`tests/test_ai_convert_app.py`。
 
+**项目依赖上下文（2026-10-25，ADR 0143）**：`convertcontext` 只读静态提名 helper/字体/数据，按预算复制到
+`project_context/`；`context.json` 记原项目相对路径、来源/视图各自完整 SHA256 与未覆盖项，不扫描拷贝整个项目、
+不跟随链接、不读敏感路径或环境；文本视图经同一 `readscope` 脱敏并标注。内置 `list_dir(path)` 可浏览子目录，写仍只有一个候选；check/留存/续跑/采用均核
+起跑资源与快照摘要。生成代码使用原项目资源位置；看护 `tests/test_convert_context.py`（含读时换链接、资源漂移与删缓存后重开）。
+
 **R / MATLAB 来源（ADR 0143 修订，2026-10-23）**：`POST /api/ai/convert` 多一个可选 `source_language`（`python` 缺省 | `r` | `matlab`）。
 r / matlab 时 `library` 必须缺省，后端用 `sourcelang.detect`（纯标准库；`.R` / `.r` / `.m` 纯文本、≤ 1 MB、UTF-8；`.m` 带 Objective-C 特征或
 MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `convert_source_language_mismatch`。**不运行 R / MATLAB**：对照只用请求给的 `path` 或脚本旁
@@ -486,7 +491,8 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 - **「试」的子进程**（`trial.run_python`）：与体检同一纪律——`runtime.probe_args`（`-B`）、`runtime.probe_env` + `launcher.activate_env`、`stdin=DEVNULL`、
   `creationflags=CREATE_NO_WINDOW`、UTF-8 解码（`errors="replace"`）、超时、cwd 为一次性临时目录。环境只认会话的**环境 id**（`list_environments` 登记），不接受解释器路径。
   模块名走 `fullmatch` 的点分标识符校验，并作为 `argv` 传入（不拼进 `-c`）。`try_run` 把脚本所在目录复制到临时目录（超 64 MiB / 5000 个文件只复制脚本）跑一次，
-  MPLBACKEND=Agg；`FixContext.runner` 可注入执行器（接准备会话 / 运行器的现成路径留给后续 PR）。
+  MPLBACKEND=Agg；这是 `mode=diagnostic`（或无应用回调时）的诊断路径，不能证明应用修好。生产 `mode=script`
+  走注入的 `application_runner`（下节），不再以副本执行代替应用验证。
   **fixtools 起的每个子进程只有 `run_python` 这一条执行路径，全部在 safe 守卫下跑**（`try_run` 的脚本、`try_import` 的 import 副作用、`inspect_environment` 的探测代码一视同仁；
   不再有系统临时目录里的 `tavotto-fixtool-*`，临时目录一律建在 `fix_trials/` 下，清理一律走 `_remove_tree` + `.cleanup_pending` + `sweep_stale_trials`，清不掉如实报 `cleanup_pending`）。
   **守卫的做法**：子进程按文件加载 `engine/writetripwire.py`（worker 的 safe 执行同一个写入根绊线，ADR 0141），写入根只有本次试跑目录
@@ -502,7 +508,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 
 ### D2a：「改」组（`change.py` / `snapshots.py` / `executors.py`，ADR 0149 §七）
 
-六个工具：`install_packages`（`listed`）、`switch_execution` / `change_python` / `convert_script` / `rollback`（`tavotto`）、`select_environment`（`user_env`）。`run_command` 已拆出 D2a，由 #1374 落地（见下面「`run_command`」一节）。
+工具：`install_packages`（`listed`）、`switch_execution` / `switch_workdir` / `change_python` / `convert_script` / `rollback`（`tavotto`）、`select_environment`（`user_env`）。`run_command` 见下面专节。
 看护 `tests/test_fixtools_change.py`。`FIX_SESSION_TIERS` 放行 observe / run / tavotto / listed / user_env / outward，**放行 ≠ 不问**：要不要问用户由各工具自己经 `FixContext.ask` 把关
 （`change.approve`：没有 `ask`、回答不是 `yes`、`ask` 抛了、超时，一律 `needs_approval` 且审计记 `blocked`；通过则审计记 `approved_by=user`）。
 
@@ -513,7 +519,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   执行器全部可经 `FixContext` 注入（`installer` / `uninstaller` / `freezer` / `python_changer`）；**测试一律注入假的，不往真实环境装包**。
   `change_python` 缺省接 `executors._default_python_changer`（#1342 `pyversionfix` 的公开入口 `plan_python_change` → `apply_python_change`：只在 Tavotto 受管环境另建、不碰用户环境、私有 Python 锁里没有的版本不下载；本机关了 `TAVOTTO_AUTO_PYTHON_CHANGE` 或版本推不出就如实报错，不换；修复会话暂无进度事件通道，下载进度不推前端），可经 `python_changer` 注入替换；`convert_script` 没有执行器（见下，只记交接）。
 - **快照**（`snapshots.py`）：除 `rollback` 外每个会改东西的工具执行前先 `snapshots.take`，存 `data_dir()/cache/fix_snapshots/<会话>/<id>.json`：项目设置里 `execution_policy` / `environment` 两个键的原值（含「没有」）+
-  目标环境的 `pip freeze` 解析成 `{规范名: 版本}`（只留 `名==版本` 行，URL / 路径行不存）+ 环境目录顶层条目名。**打不出快照就不改**（`snapshot_failed`）；快照 id 进工具返回与审计行 `snapshot` 字段；每会话留最近 30 份。
+  数据改指与工作目录设置、目标环境的 `pip freeze` 解析成 `{规范名: 版本}`（只留 `名==版本` 行，URL / 路径行不存）+ 环境目录顶层条目名。**打不出快照就不改**（`snapshot_failed`）；快照 id 进工具返回与审计行 `snapshot` 字段；每会话留最近 30 份。
   `rollback` 只认本会话 + 本项目的快照、id 形状固定（`snap_<时间>_<6 位十六进制>`）；设置**精确恢复**（原来没有的键清掉，并 `projectenv.reset_cache`）；包按 freeze 差异——快照后新装的卸掉
   （`pip` / `setuptools` / `wheel` 不卸），被改版本 / 被卸掉的装回快照里的版本，走同一条 `executors`。
 - **`run_command`**：D2a 拆出、#1374 以两档落地，见 D2a 之后的「`run_command`」一节。
@@ -583,7 +589,14 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   模型只有 `HttpModel` 一条出站路径；密钥只在内存，卡片文字过 `Redactor` + `readscope.scrub`，SSE `ai.fix` 只带 `{pj, fix_id}`（「重读」提示），状态以 `GET /api/ai/fix/<id>` 为准。
   卡片回答 `POST …/answer {card_id, answer, text?}` 按卡种类校验（坏回答 400、过期卡 409）；`POST …/cancel` 唤醒阻塞中的工具。预算：40 轮 / 30 分钟（含用户思考时间）/ 60 万 token；`finish` 之后不再请求模型。
 - **连接**：`connection()` 只认当前选中的第三方 API 接口（有地址 / 密钥 / 型号、地址过 `check_base_url`）；只连了 CLI 时由 D3 的 MCP 接法接手（见下一节），`ai_fix_available` 随之为真。
-- **验证**：会话结束后由前端重跑准备会话；`finish(fixed)` 只是 AI 的说法。诊断包 `detail-runs.json` 多 `fix_audit`（审计尾部，本来就不含内容）。看护 `tests/test_fixasks.py`、`tests/test_ai_fix_endpoint.py`。
+- **应用验证（2026-10-25，ADR 0149 修订）**：生产 `try_run` 的 `script` 模式经 `fixverification` 消费同一准备会话的
+  check → 单次运行批准卡 → 原 action id/config_revision → launch/finalize/report；不自批安装或运行意图，不切解释器。
+  卡片披露真实 cwd/写入范围/执行方式，旧临时副本授权不代替这次批准；取消只管本次 action，过期/被替代即拒。
+  `switch_workdir` 经明确批准与快照走已有 `workdir.set_mode`，改动/回滚后退役旧 worker，守卫不变。
+  `finish(fixed)` 须匹配本会话最后一次实际 `execution_finished` 的 session/revision/plan/attempt；任何可能改执行结果的
+  工具（含失败后的部分改动）使证据与依赖缓存失效。`no_figures` 允许证明脚本已执行完，不证明可编辑；转写仍另行交接。
+  `read_run_report` 保留 nested `result.error` 与实际 launch/workdir。前端收尾复查照旧；诊断包仍只记审计摘要。
+  看护 `tests/test_fix_application_verification.py`、`tests/test_fixasks.py`、`tests/test_ai_fix_endpoint.py`。
 
 ### D3：CLI 经 MCP 修复模式（`engine/fixmcp.py`、`fixsession.py` 的 CLI 分支、`ai_agents` 的 `build_fix_command`）
 

@@ -19,7 +19,7 @@
 
 1. **绝不修改用户的任何脚本**。原脚本字节在整条流程里不变（`tests/test_ai_convert.py::test_original_script_bytes_never_change_through_the_whole_flow`）；
    转换会话的回滚入口被拒（`ai_revert_not_applicable`，回滚会重写用户脚本）。
-2. **Agent 只写候选工作区里的一个新文件**。候选 `data_dir()/cache/ai_convert/<sid>/` 只**复制**原脚本（与 ≤ 8 MB 的原输出图当参考），
+2. **Agent 只写候选工作区里的一个新文件**。候选 `data_dir()/cache/ai_convert/<sid>/` **复制**原脚本、≤ 8 MB 的原输出图与下述有界只读依赖快照，
    不建链接；提交前检查：除这一个新文件外候选树逐字节不变（含原脚本副本）、原项目指纹不变、项目里原脚本仍是起跑那一版。
    CLI 把写入挡在 cwd 之外是 CLI 的行为，指纹只能发现、不能阻止（同 `figure_edit`，R-03）。
    **完整性闸门先于依赖等待（Codex #1330 P1）**：校验运行前的依赖调查期间项目文件被改（`project.untouched` / `project.target` 失败）→ 不进入依赖等待、
@@ -41,6 +41,26 @@
 5. 对照数据（`comparison`）：原图像素宽高 / 字节 / 摘要（PNG / JPEG / GIF 头部）、新版图幅 mm 与图个数、宽高比相对差、新版 SVG 预览
    （沙盒 CSP + nosniff 的 `GET /api/ai/convert/<sid>/preview.svg`，只给 `<img>`）。**不做像素差**（`pixel_diff: null`）：
    原件是位图而新版是矢量重画，逐像素差没有可辩护的含义，交给用户并排看。
+
+### 项目资源上下文修订（2026-10-25）
+
+外部语料复现了“原项目有字体 / helper，但模型只见入口脚本，因而替换字体或放弃转写”。
+`engine/convertcontext.py` 在不运行源码的前提下提名依赖：Python 本地 import 复用 `importscan`，
+文字中的文件引用及 MATLAB 同目录 helper 调用只作提名，不宣称完成运行时依赖解析。按该模块的文件数、
+单文件/总字节与递归预算提供普通文件，保留项目相对路径；敏感路径拒绝，文本视图用 `fixtools.readscope` 脱敏，
+不进入 Python 环境，不跟随链接 / 重解析点，不触发云端占位文件下载。打开时及读后核文件身份，
+防检查后换成链接或特殊文件。未提供与超限项写进 `context.json`，覆盖度明确为 `static_partial`。
+
+`project_context/` 与清单只读，内置工具沿既有路径判据浏览子目录；create/edit 仍只许写顶层一个新候选。
+来源与视图分别记完整 SHA256，脱敏项标 `redacted`；执行仍读取原项目资源，脱敏文本不能当成原始数据或直接采用。
+check、留存、续跑、采用核同一份起跑基线，资源变化即拒绝，不能用 size/mtime
+或续跑时的新基线替代。已有无 context 的持久候选仍按旧契约处理。生成代码沿用原项目位置，不能依赖本次缓存；
+采用后清掉候选目录、从其他 cwd 新起进程仍须能读取原 helper / 数据。看护：`tests/test_convert_context.py`。
+
+共享转换提示允许读取原字体度量，并先注册项目字体再按真实族名绘制，保留逐字形回退；强调 Pillow anchor、
+独立输出/页面、统计定义与分类顺序。依据：[Pillow anchors](https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html)、
+[Matplotlib addfont](https://matplotlib.org/stable/api/font_manager_api.html)。提示词和成功出图都不是科学保真证明；
+原生参照与数值/几何复测另行记录，不改变 `side_by_side` / `unknown` 的含义。默认执行器路由不变。
 
 ### 三、默认开与逃生口
 

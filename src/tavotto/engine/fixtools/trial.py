@@ -1,4 +1,7 @@
-"""「试」组工具（tier=run）：在指定环境里起一次性子进程**以与 safe 运行同等的保护**试一下（ADR 0149 §四）。**不是「什么都不改」的承诺**：进程内绊线有盲区（C 层写 / ctypes），所以再叠操作系统沙盒（有就用）。
+"""「试」组工具（tier=run）：生产 try_run 经用户单次批准后消费应用准备会话的 run 动作；不另造执行器。
+
+显式 diagnostic（或独立工具上下文没有应用 runner）才复制脚本；它不能作为应用修好的证据。
+以下保护描述只属于诊断子进程：在指定环境里起一次性子进程**以与 safe 运行同等的保护**试一下（ADR 0149 §四）。**不是「什么都不改」的承诺**：进程内绊线有盲区（C 层写 / ctypes），所以再叠操作系统沙盒（有就用）。
 
 子进程封装与体检同一纪律（`projectenv._probe_environment`）：`runtime.probe_args`（`-B`，不往用户解释器目录写 .pyc）、
 `runtime.probe_env` + `launcher.activate_env`（Conda 环境按激活后的环境起）、`stdin=DEVNULL`、`creationflags=CREATE_NO_WINDOW`、
@@ -52,7 +55,7 @@ STALE_TRIAL_AGE_S = 3600.0
 PENDING_MARKER = ".cleanup_pending"
 
 _MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
-RUN_MODES = ("script",)
+RUN_MODES = ("script", "diagnostic")
 
 
 def valid_dotted_module(name: object) -> bool:
@@ -834,6 +837,33 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
         if isinstance(timeout, int | float) and not isinstance(timeout, bool)
         else RUN_TIMEOUT_DEFAULT_S
     )
+    if mode == "script" and ctx.application_runner is not None:
+        from .change import approve
+        from .observe import project_run_report
+
+        ctx.verification = None
+
+        def approve_run(summary, details):
+            return approve(ctx, "try_run", summary, details=details) is None
+
+        result = ctx.application_runner(python, timeout, ctx.cancel, approve_run)
+        report = result.get("report") or {}
+        rendered = project_run_report(report).content
+        code = result.get("code")
+        if code:
+            guidance = (
+                " Select that environment explicitly before verifying it, or use mode=diagnostic."
+                if code == "environment_not_selected"
+                else " Review the current application report before changing anything."
+            )
+            return err(
+                str(code), "Application verification did not succeed." + guidance + "\n" + rendered
+            )
+        ctx.verification = result.get("verification")
+        return ok(
+            "Application verification (not a diagnostic copy):\n" + rendered,
+            "application execution finished",
+        )
     script = Path(script).resolve()
     src_dir = script.parent
     try:
@@ -901,7 +931,7 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
         )
     figures = res.get("figures")
     head = (
-        f"trial run: exit code {res.get('returncode')}, figures: "
+        f"diagnostic trial run (not application verification): exit code {res.get('returncode')}, figures: "
         f"{figures if figures is not None else 'unknown'}"
         + ("" if whole else " (only the script file was copied; the folder was too large)")
     )
@@ -963,13 +993,13 @@ TRIAL_TOOLS: tuple[FixTool, ...] = (
     ),
     FixTool(
         "try_run",
-        "Run a copy of the user's script once in one environment with a non-interactive matplotlib backend, and "
-        "report the exit code, the number of figures and the last 40 lines of the error output. It runs the "
-        "user's code, protected as follows: it runs in a temporary copy that is deleted afterwards; attempts to "
-        "write outside that copy are blocked and reported; starting other processes is blocked; and where the "
-        "operating system offers a sandbox (macOS sandbox-exec, Linux bwrap) it also only allows writes inside "
-        "that copy. The result says `os_sandbox: macos-sandbox-exec|bwrap|none`. Known gaps: with `none`, writes "
-        "from native extensions (C code, ctypes) are not caught; reads and the network are not restricted.",
+        "Verify the repaired script through Tavotto's current preparation session and execution settings. "
+        "Always asks the user to approve the exact application run; this may write in the approved cwd and register figures. "
+        "Only the project's selected environment can be verified; use select_environment to change it explicitly. "
+        "mode=diagnostic instead runs a guarded throw-away copy in a candidate environment. A diagnostic copy "
+        "cannot prove the application is fixed. Without an application session all runs are diagnostic. "
+        "Diagnostic guards block writes outside the copy and spawning processes, with OS sandboxing when available; "
+        "without it C-extension writes are not caught. Reads and network are not restricted.",
         obj(
             {
                 "env": _ENV,
@@ -983,5 +1013,6 @@ TRIAL_TOOLS: tuple[FixTool, ...] = (
         ),
         try_run,
         tier="run",
+        waits_for_user=True,
     ),
 )

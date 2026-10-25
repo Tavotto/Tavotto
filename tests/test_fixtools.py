@@ -749,6 +749,7 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         # D2a 的「改」组（细节见 tests/test_fixtools_change.py）
         "install_packages",
         "switch_execution",
+        "switch_workdir",
         "change_python",
         "select_environment",
         "convert_script",
@@ -780,8 +781,9 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
     for name in ("try_run", "try_import", "inspect_environment"):
         assert "changes nothing" not in REGISTRY[name].description
         assert "never touched" not in REGISTRY[name].description
-    # 会弹卡等用户点的：「问与报」五个 + 可能问同意的「改」组三个 + `run_command`；「看」「试」一个都不等
+    # Application try_run and workdir changes require explicit user approval.
     assert {n for n, t in REGISTRY.items() if t.waits_for_user} == {
+        "try_run",
         "propose_fix",
         "ask_user",
         "pick_file",
@@ -789,6 +791,7 @@ def test_registry_contains_the_look_and_try_groups_with_run_tier_for_code_runnin
         "finish",
         "install_packages",
         "switch_execution",
+        "switch_workdir",
         "select_environment",
         "link_data_file",
         "run_command",

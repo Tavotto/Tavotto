@@ -1286,6 +1286,7 @@
         "needs_input": "One step in this script has no reliable Python equivalent, so no new version was made",
         "needs_input_reason": "No new version was made: {{reason}}",
         "convert_source_changed": "The original script changed in the meantime, so this new version was written against an older one. Please generate it again",
+        "convert_context_changed": "Resources used for this conversion changed. Generate it again.",
         "convert_project_changed": "Project files changed in the meantime. Please generate it again",
         "convert_candidate_changed": "The new version's file was modified. Please generate it again",
         "resume_unreachable": "Can’t connect right now. Try again in a moment",

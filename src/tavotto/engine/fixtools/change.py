@@ -204,6 +204,49 @@ def switch_execution(ctx: FixContext, args: dict) -> ToolResult:
     return _done(ctx, note, f"execution set to {mode}")
 
 
+# --------------------------------------------------------------------------- switch_workdir
+def switch_workdir(ctx: FixContext, args: dict) -> ToolResult:
+    from .. import workdir
+
+    mode = args.get("mode")
+    if mode not in workdir.MODES:
+        return err("bad_arguments", f"`mode` must be one of {list(workdir.MODES)}.")
+    root = str(ctx.project_root)
+    if workdir.decided(root) and workdir.mode_for(root) == mode:
+        return ok("The project already uses that working directory.", "no change")
+    locations = {
+        "sandbox": "Tavotto's temporary sandbox",
+        "project": "the script's own folder",
+        "project_root": "the project root folder",
+    }
+    denied = approve(
+        ctx,
+        "switch_workdir",
+        f"Run this project's scripts in {locations[mode]}? Relative reads and writes use that folder. "
+        "Safe-mode guards remain enabled; the script's intermediate files may be written there.",
+        details=f"Project: {root}\nWorking directory mode: {mode}",
+    )
+    if denied is not None:
+        return denied
+    if ctx.cancel is not None and ctx.cancel.is_set():
+        return err("cancelled", "The repair was cancelled; the working directory was not changed.")
+    bad = _snapshot_or_error(ctx, "switch_workdir")
+    if bad is not None:
+        return bad
+    try:
+        workdir.set_mode(root, mode)
+    except (OSError, ValueError):
+        return err("settings_not_saved", "The working directory setting could not be saved.")
+    ctx.verification = None
+    if ctx.on_workdir_changed is not None:
+        ctx.on_workdir_changed()
+    return _done(
+        ctx,
+        "The project's working directory was updated. Verify it with try_run.",
+        "working directory selected",
+    )
+
+
 # --------------------------------------------------------------------------- change_python
 def _script_rel(ctx: FixContext) -> str:
     """被诊断脚本的项目相对路径（执行器据此读脚本声明的 `requires-python`）；没有脚本回空串。"""
@@ -454,6 +497,17 @@ CHANGE_TOOLS: tuple[FixTool, ...] = (
         'user first only when it would undo a choice of "safe only" the user made. Takes a snapshot.',
         obj({"mode": {"type": "string", "enum": ["safe", "native"]}}, ["mode"]),
         switch_execution,
+        tier="tavotto",
+        waits_for_user=True,
+    ),
+    FixTool(
+        "switch_workdir",
+        "Choose the project's working directory using Tavotto's existing setting: sandbox, project "
+        "(the script's folder), or project_root. Use when a relative font/input/output path works in "
+        "the project but fails in the application's sandbox. Always asks the user about real-folder "
+        "reads and writes and takes a rollback snapshot. Does not relax safe-mode guards or edit scripts.",
+        obj({"mode": {"type": "string", "enum": ["sandbox", "project", "project_root"]}}, ["mode"]),
+        switch_workdir,
         tier="tavotto",
         waits_for_user=True,
     ),

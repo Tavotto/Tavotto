@@ -109,7 +109,7 @@ def test_full_flow_start_card_answer_finish(client, tmp_path, fake_pool, session
     model = Scripted(
         [("read_run_report", {})],
         [("ask_user", {"question": "数据在哪？", "options": [{"id": "a", "label": "A"}]})],
-        [("finish", {"outcome": "fixed", "summary": "好了"})],
+        [("finish", {"outcome": "not_fixed", "summary": "还没修好"})],
     )
     connect(monkeypatch, model)
     pokes: list[dict] = []
@@ -151,7 +151,7 @@ def test_full_flow_start_card_answer_finish(client, tmp_path, fake_pool, session
             == 200
         )
         done = poll(client, fid, lambda b: b["state"] == "finished")
-        assert done["outcome"] == "fixed" and done["summary"] == "好了"
+        assert done["outcome"] == "not_fixed" and done["summary"] == "还没修好"
         # SSE 只有「重读」提示：事件名 + 项目 + 会话 id，没有卡片内容
         while not q.empty():
             pokes.append(q.get_nowait())
@@ -254,7 +254,7 @@ def test_an_api_connection_still_wins_over_a_cli(
     client, tmp_path, fake_pool, sessions, monkeypatch
 ):
     _root, _pj, report = _create_ready(client, tmp_path)
-    connect(monkeypatch, Scripted([("finish", {"outcome": "fixed", "summary": "好了"})]))
+    connect(monkeypatch, Scripted([("finish", {"outcome": "not_fixed", "summary": "还没修好"})]))
     monkeypatch.setattr(ai_bridge, "agent_caps", lambda agent_id: {"id": agent_id, "usable": True})
     monkeypatch.setattr(
         fixsession, "cli_launcher", lambda *a, **k: pytest.fail("the builtin loop must be used")
@@ -263,4 +263,6 @@ def test_an_api_connection_still_wins_over_a_cli(
         "/api/ai/fix", json={"session_id": report["session_id"], "script": "fig.py"}
     ).get_json()
     assert body["ok"] is True
-    assert poll(client, body["fix_id"], lambda b: b["state"] == "finished")["outcome"] == "fixed"
+    assert (
+        poll(client, body["fix_id"], lambda b: b["state"] == "finished")["outcome"] == "not_fixed"
+    )

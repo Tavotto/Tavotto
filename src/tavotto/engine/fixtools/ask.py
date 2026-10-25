@@ -311,6 +311,16 @@ def finish(ctx: FixContext, args: dict) -> ToolResult:
             "bad_arguments",
             "`convert` is only valid after convert_script succeeded; otherwise finish with `fixed` or `not_fixed`.",
         )
+    if outcome == "fixed" and ctx.application_runner is not None:
+        from ..fixverification import evidence
+
+        current = ctx.application_check() if ctx.application_check else None
+        if ctx.verification is None or evidence(current) != ctx.verification:
+            return err(
+                "application_verification_required",
+                "Run try_run in the project's selected environment after the last change. "
+                "Only a successful current application run verifies a repair; a diagnostic copy does not.",
+            )
     # 非阻塞：只是把结局交给会话；没有界面（None）也照样结束，只是没人记
     _ask(
         ctx,

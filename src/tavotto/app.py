@@ -9288,8 +9288,8 @@ def _fix_session_env(sess) -> dict:
     """修复会话上下文里能从准备会话拿到的环境事实：当前解释器所在的前缀（可能在主目录外，读取范围要带上它）；
     `change_python` 用缺省执行器（`executors._default_python_changer`，带会话取消信号）。"""
     out: dict = {}
-    env = getattr(sess.plan, "environment", None) or {}
-    py = env.get("python") or env.get("interpreter") or env.get("executable")
+    # The public environment payload deliberately omits absolute paths.
+    py = getattr(sess.plan, "interpreter", None)
     if isinstance(py, str) and py:
         prefix = Path(py).parent.parent
         if prefix.is_dir():
@@ -9308,6 +9308,115 @@ def _fix_remap_notifier(ctx: "ProjectCtx"):
             _publish_remap_changed(root, reason, state["generation"])
 
     return notify
+
+
+def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> dict:
+    """Bind repair verification to the same preparation session and run action API.
+
+    These callbacks run off the request thread. The original desktop identity is
+    captured by the endpoint; a model cannot manufacture it or select another
+    project/session. Recheck is read-only, never an automatic run-intent advance.
+    """
+    from .engine import fixverification
+
+    def current():
+        if PROJECTS.get(ctx.id) is not ctx:
+            raise engine_prepsession.SessionError(
+                "fix_project_closed", "The project was closed or reopened", 409
+            )
+        found = engine_prepsession.SESSIONS.session(sess.session_id, ctx.id)
+        if found is not sess:
+            raise engine_prepsession.SessionError(
+                "fix_session_changed", "Repair session changed", 409
+            )
+        return found
+
+    def check():
+        with bound_project(ctx):
+            current()
+            checked, _ = engine_prepsession.SESSIONS.check(
+                project_id=ctx.id,
+                project_root=str(ctx.path),
+                target=sess.target,
+                force=True,
+            )
+            if checked is not sess:
+                raise engine_prepsession.SessionError(
+                    "fix_session_changed", "Repair session changed", 409
+                )
+            return _session_report(ctx, sess)
+
+    def claim(action_id, revision):
+        with bound_project(ctx):
+            current()
+            _, claimed, kind = engine_prepsession.SESSIONS.act(
+                sess.session_id,
+                ctx.id,
+                action_id,
+                revision,
+                launch=lambda plan, on_done: _launch_session_attempt(ctx, plan, on_done),
+                finalize=lambda plan, result: _finalize_script_attempt(ctx, plan, result),
+                desktop_initiated=desktop,
+            )
+            return claimed and kind == engine_prepsession.ACTION_RUN
+
+    def owned(action_id):
+        current()
+        if not sess.attempts or sess.attempts[-1].action_id != action_id:
+            raise engine_prepsession.SessionError(
+                "fix_run_superseded", "Another run replaced this repair's run", 409
+            )
+
+    def read(action_id):
+        with bound_project(ctx), sess.lock:
+            owned(action_id)
+            return _session_report(ctx, sess)
+
+    def stop(action_id):
+        with bound_project(ctx), sess.lock:
+            owned(action_id)
+            report = _session_report(ctx, sess)
+            action = next(
+                (a for a in report["actions"] if a["kind"] == engine_prepsession.ACTION_CANCEL),
+                None,
+            )
+            if action is not None:
+                engine_prepsession.SESSIONS.act(
+                    sess.session_id,
+                    ctx.id,
+                    action["id"],
+                    report["config_revision"],
+                    launch=lambda plan, on_done: _launch_session_attempt(ctx, plan, on_done),
+                    finalize=lambda plan, result: _finalize_script_attempt(ctx, plan, result),
+                    desktop_initiated=desktop,
+                )
+
+    def run(python, timeout, cancel, approve):
+        with bound_project(ctx):
+            try:
+                return fixverification.run_preparation(
+                    python=python,
+                    timeout=timeout,
+                    cancel=cancel,
+                    approve=approve,
+                    check=check,
+                    selected_python=lambda: sess.plan.interpreter,
+                    claim=claim,
+                    read=read,
+                    stop=stop,
+                )
+            except engine_prepsession.SessionError as exc:
+                return {"code": exc.code}
+
+    def cwd_changed():
+        with bound_project(ctx):
+            engine_pool.shutdown_all(str(ctx.path))
+
+    return {
+        "application_runner": run,
+        "application_check": check,
+        "on_workdir_changed": cwd_changed,
+    }
 
 
 @app.post("/api/ai/fix")
@@ -9370,6 +9479,7 @@ def api_ai_fix():
             script_path=script_path,
             ctx_kwargs={
                 **_fix_session_env(sess),
+                **_fix_application_verification(ctx, sess, desktop=_desktop_initiated()),
                 "on_input_remap_changed": _fix_remap_notifier(ctx),
             },
         )

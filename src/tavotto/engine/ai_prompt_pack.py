@@ -276,12 +276,15 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
     "rule_matplotlib": (
         frozenset(),
         "2. 图必须用 matplotlib 生成，并经 Figure.savefig(...) 落盘（沿用原脚本的输出文件名与格式）。"
+        "逐一保留原脚本的出图数量、独立页面和顺序，不把几张图合成一张子图，也不省略后续输出。"
         "禁止再用 PIL / OpenCV / plotly / ROOT 画布出图。",
     ),
     "rule_size": (
         frozenset(),
-        "3. 输出图幅（figsize × dpi）与字号尽量对齐原图。字体用字体族名（rcParams['font.family']），"
-        "不要用 FontProperties(fname=...) 指定字体文件。",
+        "3. 输出图幅（figsize × dpi）、字号、文字位置与原图对齐。原脚本指定了字体文件时，沿用该文件，"
+        "先用 font_manager.fontManager.addfont 注册，再用 FontProperties(fname=...).get_name() 读取真实族名，"
+        "绘制时按族名及原字重/样式选择字体，保留逐字形回退，不把 fname 属性绑定到绘制的文字。"
+        "字体路径相对原脚本位置解析，不写入临时候选目录的绝对路径；不要用近似字体或猜测字体度量替代已有字体。",
     ),
     "rule_scope": (
         frozenset(),
@@ -293,7 +296,10 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "Pillow → Matplotlib 对照（原脚本是 Pillow 直接画的；Pillow 的原点在左上角、y 向下，搬运时务必处理坐标翻转）：\n"
         "- ImageDraw.line / rectangle / ellipse / polygon → ax.plot / matplotlib.patches.Rectangle / Ellipse / Polygon；"
         "坐标翻转：画布像素坐标直接沿用，并设 ax.set_xlim(0, W); ax.set_ylim(H, 0)（或自行换算 y = H - y）。\n"
-        "- ImageDraw.text + ImageFont → ax.text；字号按 px 换算成 pt：pt = px × 72 / dpi。\n"
+        "- ImageDraw.text + ImageFont → ax.text；字号按 px 换算成 pt：pt = px × 72 / dpi。"
+        "保留原 anchor 的含义：横排默认 la 是 left-ascender，不等于可见字形的左上角，不能直接换成 va='top'。"
+        "用原字体的 getmetrics / getbbox 或 textbbox 测量基线与字形偏移，再定位 Matplotlib 文字；"
+        "允许 Pillow 读取图片和测量字体，但文字与形状仍须是 Matplotlib 可编辑对象，不能先画成位图再嵌入。\n"
         "- Image.new((w, h), color) → fig = plt.figure(figsize=(w / dpi, h / dpi), dpi=dpi)，背景色设到 figure / axes，"
         'ax.axis("off")，fig.subplots_adjust(0, 0, 1, 1)，让坐标轴铺满整张图。\n'
         "- 已有照片 / Image.open / paste → ax.imshow(np.asarray(img), extent=...)，extent 按像素位置给。\n"
@@ -315,7 +321,11 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
     "rule_foreign_steps": (
         frozenset(),
         "1. 按原脚本的顺序逐步搬运：读数据 → 整理 / 筛选 / 分组 → 统计与拟合 → 绘图。数据文件沿用原脚本里的路径写法"
-        "（相对路径照旧）；每一步用 Python 里最直接、可核对的对应物，不要“顺便优化”或改动计算的科学含义。",
+        "（相对路径照旧）；每一步用 Python 里最直接、可核对的对应物，不要“顺便优化”或改动计算的科学含义。"
+        "先读提供的本地 helper 定义再转写；逐项核对默认参数、分位数定义、样本/总体方差、缺失值、"
+        "筛选和汇总的先后次序、分类水平及图例顺序，不能假定同名函数默认等价。"
+        "数学标注、求和上下限、坐标轴、透明度及二维/三维几何也保留原语义；"
+        "check 通过只说明新脚本可运行和出图，不证明计算或图像保真。",
     ),
     "rule_foreign_mapping_r": (
         frozenset(),

@@ -2704,6 +2704,7 @@ export default interface Resources {
       "connection_not_deletable": "订阅登录请在对应的命令行里退出。",
       "connection_not_found": "找不到这个连接，可能已被断开。",
       "convert_candidate_changed": "待采用的新版本文件被改动过，已拒绝采用。请重新生成。",
+      "convert_context_changed": "生成时使用的资源已改变，请重新生成。",
       "convert_disabled": "「生成可编辑版本」已被关闭。",
       "convert_name_exhausted": "同名的新版本文件太多了（已有 99 个），请先清理再试。",
       "convert_no_preview": "这份新版本没有预览。",
@@ -5704,6 +5705,7 @@ export default interface Resources {
         "fail": {
           "budget_exhausted": "尝试次数用完了",
           "convert_candidate_changed": "待采用的新版本文件被改动过，请重新生成",
+          "convert_context_changed": "生成时使用的资源已改变，请重新生成。",
           "convert_project_changed": "项目里的文件在这期间被改动过，请重新生成",
           "convert_source_changed": "原脚本在这期间被改过，这份新版本是按旧版本写的，请重新生成",
           "dependency_install_failed": "新版本要用的 Python 包没装成功，请稍后重试",

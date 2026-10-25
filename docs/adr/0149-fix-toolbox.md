@@ -77,6 +77,26 @@
 * 代价：脱敏是形状规则，认不出的私有格式会漏——所以拦的是**位置**（DENY）在先，脱敏是第二道。
 * 规则全文：`docs/rules/backend/ai-agent-bridge.md`「AI 修复工具箱」一节；看护 `tests/test_fixtools.py`。
 
+### 修订：验证应用实际执行，而非临时副本（2026-10-25）
+
+外部语料实测：字体/输出目录修好后，临时副本 `try_run` 和原生 Python 都成功，Tavotto 的 sandbox cwd 仍失败。
+这不是放宽 safe 守卫的理由。原有 `run` 档副本授权保留给 `mode=diagnostic`、`try_import` 和环境体检；
+副本成功不再能据以报告生产应用已修好。
+
+生产 `try_run(mode=script)` 由应用注入同一准备会话的校验器，`fixverification` 仅编排既有 check/action/report，
+不另写执行器或复制执行规则。先重新检查，再把真实执行方式、cwd、可写范围及可能的 native 重试披露在单次批准卡中；
+批准后只认领该 action id 与 config_revision。不代用户批准安装、创建运行意图或切换环境；环境 id 必须是项目当前选择。
+取消/超时只取消本次 action，其他运行接管即停止等待，不能取消别人的执行。所有操作绑定发起项目与准备会话。
+
+缺的是工作目录选择时，`switch_workdir` 让用户明确批准，调用现有 `workdir.set_mode`；它不扩大 safe 守卫权限，
+不修改原脚本。快照记录工作目录，改动与回滚均退役旧 cwd 的 worker。`finish(fixed)` 必须匹配本修复会话在最后一次改动后
+取得的应用执行证据（session/revision/plan/attempt），任何可改动状态的工具均撤销旧证据并清依赖事实缓存，包括失败后的
+部分改动。读报告取真正的 nested `result.error` 与 launch/workdir，不把缺少顶层 error 当成功。
+
+`execution_finished` 与 `figure_captured` 分别判：Pillow 原脚本无 Matplotlib 图可以表示环境已修好，仍需独立转写流程。
+诊断副本、模型 `finish` 自述或 pip exit 0 都不替代应用证据。默认 AI 路由不变。
+看护：`tests/test_fix_application_verification.py`，含旧实现反证、审批/取消/过期边界与真实 worker 回归。
+
 **修订（2026-10-23，Codex #1353 第五轮）**：写入绊线只管本解释器，子进程不在它的视野里，所以「试」的子进程里**一律不许再起进程**（`subprocess.Popen` / `os.system` / `os.exec*` / `os.spawn*` / `os.posix_spawn` / `os.fork` / `pty.spawn` / `os.startfile` 由第二个 audit hook 拦下、记进 `blocked_spawns` 并告诉模型）。体检探测代码本身也不起进程（不用 `platform.platform()`，它会起 `uname` / `file`）。仍有的盲区：C 扩展在 C 层直接写文件——要彻底关住只能靠操作系统级沙盒，不在本 PR 范围内。复制副本改为惰性枚举、过上限即只复制脚本；复制到一半失败时结果在清理之后才组装（照样报 `cleanup_pending`）。
 
 ## 七、D2a：「改」组、快照与回滚（2026-10-23）

@@ -16,8 +16,8 @@ from typing import Literal
 from ..agent_runner.wires import ToolResult
 from . import readscope
 
-#: `observe` = 只读；`run` = 以与准备会话 safe 运行同等的保护运行用户代码（写入绊线 + 禁起进程 + 只在专用目录里跑 + 审计 + 有则加操作系统沙盒）。
-#: 用户点「使用你的 AI 来修复」开启修复会话即视为授权 `run` 这一档；它**不是**「什么都不改」的承诺，盲区见 ADR 0149。
+#: `observe` = 只读；`run` = 诊断子进程的 safe 保护。生产 try_run 另外逐次批准应用的真实 run 动作；
+#: 开启修复会话不隐含授权真实项目写入或 native 执行。诊断子进程也不是「什么都不改」的承诺，盲区见 ADR 0149。
 Tier = Literal["observe", "run", "tavotto", "listed", "user_env", "outward"]
 TIERS: tuple[str, ...] = ("observe", "run", "tavotto", "listed", "user_env", "outward")
 
@@ -56,10 +56,17 @@ class FixContext:
     environment_source: Callable[[], list[dict]] | None = None
     #: 日志来源 → 文件路径；缺省 app = `data_dir()/cache/app.log`
     log_paths: dict[str, Path] = field(default_factory=dict)
-    #: 被诊断的脚本（`try_run` 复制它去跑）
+    #: 被诊断的脚本（仅 diagnostic try_run 复制它去跑）
     script_path: Path | None = None
     #: `try_run` 的执行器 `(python, work_dir, script_name, mode, timeout) -> dict`；None = 内置的一次性子进程
     runner: Callable[..., dict] | None = None
+    #: Application verification `(python, timeout, cancel, approve) -> dict`; never a scratch executor.
+    application_runner: Callable[..., dict] | None = None
+    #: Read-only fresh preparation check, used to reject stale completion evidence.
+    application_check: Callable[[], dict] | None = None
+    verification: dict | None = None
+    #: Cwd setting changes retire workers spawned with the old cwd.
+    on_workdir_changed: Callable[[], None] | None = None
     #: 弹卡并阻塞等用户点（D2b 的修复会话实现；None = 没有界面，需要用户点的一律按「未获同意」处理）。
     #: 入参 card: {"kind": "approve"|"choice"|"pick"|"send", "tool": str, "summary": str, ...}
     #: 返回 {"answer": "yes"|"no"|<选项 id>|<路径>|"sent"|"cancelled"|"timeout", ...}

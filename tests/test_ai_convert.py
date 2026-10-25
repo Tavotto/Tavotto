@@ -164,7 +164,15 @@ def test_agent_runs_in_a_candidate_workspace_and_only_one_new_file_is_staged(env
     assert sess["task"]["outcome"] == "completed", sess["task"]
     # 候选留存待采用：目标文件 + meta + 预览；原脚本副本与参考图原样
     names = sorted(p.name for p in cand_dir.iterdir())
-    assert names == ["fig.py", "fig_matplotlib.py", "meta.json", "preview.svg", "reference"]
+    assert names == [
+        "context.json",
+        "fig.py",
+        "fig_matplotlib.py",
+        "meta.json",
+        "preview.svg",
+        "project_context",
+        "reference",
+    ]
     assert (cand_dir / "fig.py").read_text(encoding="utf-8") == ORIGINAL
     # 项目里什么都没多、什么都没少
     assert sorted(_project_files(env["figs"])) == ["data.csv", "fig.py", "out.png"]

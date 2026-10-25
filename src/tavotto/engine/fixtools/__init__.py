@@ -48,12 +48,27 @@ def run_tool(
     elif not isinstance(args, dict):
         result = _failed(tool.name, "bad_arguments", "Arguments must be a JSON object.")
     else:
+        changes_execution = tool.tier in {"tavotto", "listed", "user_env", "outward"}
+        if changes_execution:
+            # Even a failed command/install can have made a partial change. A
+            # previous application run must never certify that new state.
+            ctx.verification = None
         try:
             result = tool.handler(ctx, args)
         except Exception as exc:  # noqa: BLE001 - 工具缺陷不抛出会话；只报类型名
             result = _failed(
                 tool.name, "tool_crashed", f"The tool failed unexpectedly ({type(exc).__name__})."
             )
+        finally:
+            if changes_execution:
+                from .. import depplan, projectenv
+
+                # Arbitrary approved commands can touch any registered/current
+                # environment. Retire facts and distribution indexes together.
+                depplan.reset_cache()
+                projectenv.reset_cache(ctx.project_root)
+    if result.mutated:
+        ctx.verification = None
     result.content = scrub(result.content)
     if audit is not None:
         audit.record(

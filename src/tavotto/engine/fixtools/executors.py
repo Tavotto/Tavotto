@@ -109,8 +109,24 @@ def run_python_changer(ctx: FixContext, req: dict) -> dict:
 
 
 def run_installer(ctx: FixContext, python: str, requirements: list[str]) -> dict:
-    return call_executor(ctx.installer or _default_installer, python, requirements)
+    from .. import depplan, projectenv
+
+    ctx.verification = None
+    try:
+        return call_executor(ctx.installer or _default_installer, python, requirements)
+    finally:
+        # Pip may have changed some packages before failing. Both facts and the
+        # distribution index must describe the post-operation environment.
+        depplan.reset_cache(python)
+        projectenv.reset_cache(ctx.project_root)
 
 
 def run_uninstaller(ctx: FixContext, python: str, distributions: list[str]) -> dict:
-    return call_executor(ctx.uninstaller or _default_uninstaller, python, distributions)
+    from .. import depplan, projectenv
+
+    ctx.verification = None
+    try:
+        return call_executor(ctx.uninstaller or _default_uninstaller, python, distributions)
+    finally:
+        depplan.reset_cache(python)
+        projectenv.reset_cache(ctx.project_root)

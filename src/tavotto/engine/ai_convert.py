@@ -3,7 +3,7 @@
 
 权限边界（逐条有看护用例，`tests/test_ai_convert.py`）：
 
-* 候选工作区 `data_dir()/cache/ai_convert/<sid>/`：**只复制**原脚本（与原输出图的参考副本），不建链接；Agent 的 cwd 在这里，
+* 候选工作区 `data_dir()/cache/ai_convert/<sid>/`：复制原脚本、原图参考与有界依赖快照，不建链接；Agent 的 cwd 在这里，
   它能写的只有候选目录里的**一个新文件** `<原名>_matplotlib.py`。提交前检查：除这一个新文件外候选树逐字节不变（含原脚本副本）、
   原项目指纹不变、原脚本字节不变；
 * Agent **从不**写项目目录：任务的 `commit` 只是把通过检查的候选“留存待采用”（候选目录 + `meta.json`，不碰用户文件）；
@@ -40,6 +40,7 @@ from . import (
     ai_tasks,
     atomicio,
     config,
+    convertcontext,
     discover,
     projectenv,
     rasterhint,
@@ -218,6 +219,7 @@ class ConvertCandidate:
     project_before: dict
     #: 来源语言（`sourcelang.LANGUAGES`）
     source_language: str = sourcelang.PYTHON
+    context: dict = field(default_factory=dict)
     #: 校验运行前自动装上的发行包（`convertdeps.ensure`）
     installed: list = field(default_factory=list)
     #: 校验运行前停住等用户决定时的卡片事实（`convertdeps` 的 `card`）；非 None = 候选要留着等 `resume`
@@ -315,6 +317,7 @@ def create_candidate(
             (cdir / REFERENCE_DIR).mkdir()
             reference_name = original_path.name
             (cdir / REFERENCE_DIR / reference_name).write_bytes(original_path.read_bytes())
+        context = convertcontext.snapshot(project_root, script_rel, base, cdir)
         cand = ConvertCandidate(
             sid=sid,
             dir=cdir,
@@ -326,6 +329,7 @@ def create_candidate(
             base_mode=script_path.stat().st_mode & 0o7777,
             library=library or None,
             source_language=source_language,
+            context=context,
             original_rel=original_rel,
             reference_name=reference_name,
             tree_before=ai_figure_edit._tree(cdir) or {},
@@ -352,13 +356,27 @@ def release(cand: ConvertCandidate) -> None:
 
 
 def prompt_for(cand: ConvertCandidate) -> str:
-    return ai_prompt_pack.convert_prompt(
+    prompt = ai_prompt_pack.convert_prompt(
         script=Path(cand.script_rel).name,
         target=cand.target_name,
         library=cand.library,
         source_language=cand.source_language,
         reference=f"{REFERENCE_DIR}/{cand.reference_name}" if cand.reference_name else None,
         project_root=cand.project_root,
+    )
+    return prompt + (
+        f"\n\n只读项目上下文：先读 {convertcontext.MANIFEST}，其中 source 是原脚本的项目相对路径，"
+        f"files 的逐项路径映射到 {convertcontext.DIRECTORY}/。这些是有界静态依赖快照，"
+        "不是完整项目；omitted / limitations 表示未提供的证据，不能据此认定依赖不存在。"
+        "redacted=true 表示只读快照已脱敏，sha256 是原资源摘要，snapshot_sha256 是所见副本摘要；"
+        "脱敏占位符不是原始数据，不能把占位符当作常量搬进新代码。"
+        "可用 list_dir(path=...) 浏览快照子目录并 read_file 读 helper / 数据。二进制字体可见其路径与摘要，"
+        "校验时仍从原项目加载；沿用原项目字体，不因工具不能读取二进制而改用近似字体。"
+        "候选采用后位于原脚本同目录。新代码必须保持原项目的相对路径语义：manifest 的 source"
+        " 与 files[].path 都相对项目根，先计算资源相对 source 所在目录的路径，再以"
+        " Path(__file__).resolve().parent 定位脚本相对资源；"
+        "不能引用本次快照映射路径或候选缓存绝对路径。原项目本就存在的同名目录仍可使用。"
+        "只能写指定的新 .py；快照、来源和清单都只读。"
     )
 
 
@@ -444,10 +462,16 @@ def agent_check(cand: ConvertCandidate) -> tuple[bool, str]:
         return False, f"syntax_error: line {problem.get('lineno')}: {problem.get('detail')}"
     if not _static_uses_matplotlib(tree):
         return False, "no_matplotlib_import: the new script must draw with Matplotlib"
+    if convertcontext.transient_reference(tree, cand.dir):
+        return False, "transient_resource_path: use the original project resource location"
+    if not convertcontext.unchanged(cand.project_root, cand.context, snapshot_dir=cand.dir):
+        return False, "convert_context_changed"
     runner = cand.extras.get("runner")
     if runner is None:
         return False, "check_unavailable"
     res = run_validation(cand, runner)
+    if not convertcontext.unchanged(cand.project_root, cand.context, snapshot_dir=cand.dir):
+        return False, "convert_context_changed"
     status = res.get("status")
     if status == "ok":
         return True, f"check passed: {len(res.get('stems') or [])} figure(s) captured"
@@ -681,6 +705,10 @@ class ConvertAdapter:
                 if _static_uses_matplotlib(tree_)
                 else _check("candidate.matplotlib", st, "goal", FAILED, "no_matplotlib_import")
             )
+        if tree_ is not None and convertcontext.transient_reference(tree_, cand.dir):
+            out.append(
+                _check("candidate.resources", st, "integrity", FAILED, "transient_resource_path")
+            )
         out += self._project_untouched(cand, st)
         if any(c.verdict != VERIFIED for c in out):
             return out  # 静态检查都没过就不浪费一次真运行
@@ -697,6 +725,10 @@ class ConvertAdapter:
 
     def _project_untouched(self, cand: ConvertCandidate, st: str) -> list[CheckResult]:
         out = []
+        if not convertcontext.unchanged(cand.project_root, cand.context, snapshot_dir=cand.dir):
+            out.append(
+                _check("project.context", st, "integrity", FAILED, "convert_context_changed")
+            )
         try:
             now = cand.script_path.read_bytes()
         except OSError:
@@ -892,6 +924,7 @@ def stage(cand: ConvertCandidate) -> None:
         "target_name": cand.target_name,
         "library": cand.library,
         "source_language": cand.source_language,
+        "context": cand.context,
         "installed": list(cand.installed),
         "original_rel": cand.original_rel,
         "comparison": cand.comparison,
@@ -920,6 +953,7 @@ def _hold_meta(cand: ConvertCandidate, state: str) -> dict:
         "target_name": cand.target_name,
         "library": cand.library,
         "source_language": cand.source_language,
+        "context": cand.context,
         "installed": list(cand.installed),
         "original_rel": cand.original_rel,
         "reference_name": cand.reference_name,
@@ -1087,6 +1121,10 @@ def _adopt_locked(cdir: Path, meta: dict, root: Path, script_rel: str, script_pa
         raise ConvertError("convert_source_changed", 409) from None
     if _sha256(data) != meta["candidate_sha256"]:
         raise ConvertError("convert_candidate_changed", 409)
+    if meta.get("context") is not None and not convertcontext.unchanged(
+        root, meta["context"], snapshot_dir=cdir
+    ):
+        raise ConvertError("convert_context_changed", 409)
     parent_rel = Path(script_rel).parent
     stem = Path(meta["target_name"]).stem
     for n in range(1, MAX_NUMBERED + 1):
@@ -1186,6 +1224,9 @@ def _rebuild(cdir: Path, meta: dict, project: Path) -> ConvertCandidate:
         raise ConvertError("convert_source_changed", 409)
     if _sha256(new) != meta["candidate_sha256"]:
         raise ConvertError("convert_candidate_changed", 409)
+    context = meta.get("context")
+    if context is not None and not convertcontext.unchanged(project, context, snapshot_dir=cdir):
+        raise ConvertError("convert_context_changed", 409)
     baseline = meta.get("project_before")
     if not isinstance(baseline, dict):
         raise ConvertError("convert_project_changed", 409)
@@ -1209,6 +1250,7 @@ def _rebuild(cdir: Path, meta: dict, project: Path) -> ConvertCandidate:
         reference_name=meta.get("reference_name"),
         tree_before=ai_figure_edit._tree(cdir) or {},
         project_before=baseline,
+        context=context or {"version": 1, "files": []},
         source_language=str(meta.get("source_language") or sourcelang.PYTHON),
         installed=list(meta.get("installed") or []),
         new_bytes=new,
@@ -1273,7 +1315,11 @@ def run_resume(
         try:
             cand = _rebuild(cdir, meta, root)
         except ConvertError as exc:
-            if exc.code in ("convert_project_changed", "convert_source_changed"):
+            if exc.code in (
+                "convert_project_changed",
+                "convert_source_changed",
+                "convert_context_changed",
+            ):
                 _drop_candidate_files(cdir, meta)  # 完整性失败：候选不可再被采用
             _set_state(cdir, meta, STATE_FAILED, failure={"reason": exc.code})
             return {"state": STATE_FAILED, "reason": exc.code}
