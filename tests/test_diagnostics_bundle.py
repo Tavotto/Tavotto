@@ -1049,6 +1049,18 @@ NOT_EMAILS = [
 ]
 
 
+@pytest.mark.parametrize("repeats", [16, 50_000])
+def test_json_email_redaction_preserves_escaped_literals_and_duplicate_keys(repeats):
+    from tavotto.engine import diagnostictext
+
+    literal = json.dumps('escaped \\" quote ' * repeats)
+    address = '"\\u0078\\u0040example.com"'
+    line = '{ "same": ' + literal + ', "same" : ' + address + ', "dep": "numpy@1.26.4" }'
+    redacted = diagnostictext._redact_json_line(line)
+    assert redacted == line.replace(address, '"<email>"')
+    assert json.loads(redacted)["same"] == "<email>"
+
+
 def _assert_no_fragment_left(raw: str, out: str) -> None:
     """含 @ 的 token 在输出里一个非空白字符都不剩：输出里不含 `<email>` 的每个 token，都得是原文里
     某个**不含** @ 的 token（JSON 行按字符串内容切，这里把引号与 `{}[],:` 也当成分隔再比）。"""

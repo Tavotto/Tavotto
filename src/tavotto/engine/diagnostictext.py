@@ -43,7 +43,6 @@ _EMAIL_DOTS = ".。．｡"
 #: 放行：`pkg@1.2.3` / `matplotlib@3.10` / `pkg@2.0.0-beta`——域名一侧是版本号（数字段 + 可选的
 #: 预发布 / 构建后缀），不是域名。只认 ASCII 数字：`\d` 会认全角与其他文字的数字。
 _VERSION_AFTER_AT = re.compile(r"v?[0-9]+(?:\.[0-9]+)*(?:[-+][0-9A-Za-z.+-]*)?")
-_JSON_STRING = re.compile(r'"(?:[^"\\\n]|\\.)*"')
 _JSON_ESCAPE = re.compile(r"\\u([0-9A-Fa-f]{4})")
 
 
@@ -132,7 +131,18 @@ def _redact_json_line(line: str) -> str | None:
         json.loads(line)
     except ValueError:
         return None
-    return _JSON_STRING.sub(lambda m: f'"{_redact_email_tokens(m.group()[1:-1])}"', line)
+    # The standard decoder consumes each complete literal, including escaped
+    # quotes, once. Keep its original spelling and all surrounding JSON bytes;
+    # re-serializing would lose whitespace, escapes and duplicate object keys.
+    decoder = json.JSONDecoder()
+    out: list[str] = []
+    cursor = 0
+    while (start := line.find('"', cursor)) >= 0:
+        _, end = decoder.raw_decode(line, start)
+        out.extend((line[cursor : start + 1], _redact_email_tokens(line[start + 1 : end - 1]), '"'))
+        cursor = end
+    out.append(line[cursor:])
+    return "".join(out)
 
 
 def _redact_emails(text: str) -> str:
