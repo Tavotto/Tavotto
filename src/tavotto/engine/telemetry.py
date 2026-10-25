@@ -355,9 +355,9 @@ def settings() -> dict:
     consent = cfg.get("consent")
     if consent not in _CONSENTS:
         consent = CONSENT_UNSET
-    install_id = cfg.get("install_id")
-    if not isinstance(install_id, str) or not install_id:
-        install_id = None
+    from . import telemetryid
+
+    install_id = telemetryid.from_settings(cfg)
     return {
         "consent": consent,
         "install_id": install_id,
@@ -427,7 +427,9 @@ def install_id() -> str | None:
 
     只有 `_deliver()` 会用它。任何对外接口都不回它。
     """
-    return settings()["install_id"]
+    from . import telemetryid
+
+    return telemetryid.current()
 
 
 def set_consent(consent: str, source: str = "settings") -> dict:

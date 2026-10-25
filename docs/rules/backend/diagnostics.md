@@ -13,6 +13,9 @@ order: 280
 必守要点: 先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外是用户逐次确认）
 -->
 
+- 文本脱敏的唯一实现下沉在 `engine/diagnostictext.py`；`diagnostics.redact_text` 保留公开入口，
+  `fixtools.readscope.scrub` 共用同一实现，避免转换上下文反向依赖整份诊断采集器。
+  假名标识的只读解析由 `telemetryid` 共用，不生成标识、不改变同意态、不发送事件。
 - `engine/diagnostics.py` 出**一键诊断包**（`GET /api/diagnostics/bundle`）：
   版本 / 系统与编码 / 安装方式 / 数据目录 / 渲染解释器 + matplotlib /
   AI CLI 探测 / 项目概况 / 最近错误 + app.log + 用户配置。

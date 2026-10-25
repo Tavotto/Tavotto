@@ -839,7 +839,7 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
     )
     if mode == "script" and ctx.application_runner is not None:
         from .change import approve
-        from .observe import project_run_report
+        from .runreport import project_run_report
 
         ctx.verification = None
 

@@ -157,10 +157,10 @@ def deny_spec() -> dict:
 
 def scrub(text: str) -> str:
     """给模型看的内容一律先过这里：诊断包同一套文本脱敏 + 常见密钥形状。幂等。"""
-    from .. import diagnostics
+    from .. import diagnostictext
 
     try:
-        text = diagnostics.redact_text(text)
+        text = diagnostictext.redact_text(text)
     except Exception:  # noqa: BLE001 - 脱敏不该被它拖垮，退到下面的形状规则
         pass
     text = _PRIVATE_KEY_BLOCK.sub("[redacted private key]", text)
