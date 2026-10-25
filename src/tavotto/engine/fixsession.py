@@ -122,7 +122,7 @@ fail or change the environment for nothing), and do not roll back or reinstall i
 missing something that is normally produced when the project is built or installed; tell the user to follow the \
 project's own build/install instructions (for example its README or setup.py), never edit the script, and if \
 no tool here can do that safely, call prepare_diagnostics if useful and finish `not_fixed` with the reason in plain words. \
-If the note says the folder has no `__init__.py`, installing the real package can fix it as usual.
+If the note says the folder is not a regular package (no `__init__.py`, or one that extends the package path), installing the real package can fix it as usual.
 4. If you need something only the user knows, use ask_user (a multiple-choice question) or pick_file (the system file \
 chooser). Never ask for a password, key or token.
 5. If you cannot fix it, call prepare_diagnostics with a short note of what you found and tried (the user decides \

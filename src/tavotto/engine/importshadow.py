@@ -28,6 +28,7 @@ _CANNOT_IMPORT_RE = re.compile(
 )
 _EXT_SUFFIXES = (".py", ".pyc", ".so", ".pyd", ".dylib")
 _INIT_READ_BYTES = 64 * 1024
+_EXTENDS_PATH_RE = re.compile(r"\b(?:extend_path|declare_namespace)\s*\(")
 _BUILD_FILES = ("setup.py", "pyproject.toml", "setup.cfg", "CMakeLists.txt", "meson.build")
 
 
@@ -61,9 +62,12 @@ def _read_init(init: Path) -> str:
 def _fact(root: Path, parent: str, missing: str, *, relation: str) -> dict:
     parent_dir = root.joinpath(*parent.split("."))
     init = parent_dir / "__init__.py"
-    regular = init.is_file()
+    init_text = _read_init(init) if init.is_file() else ""
+    # `pkgutil.extend_path` / `declare_namespace` 的 `__init__.py` 会把 sys.path 上其它同名目录并进来：
+    # 装上的发行版里的子模块照样能导入，行为上等同 namespace，不能说「装了也没用」
+    regular = init.is_file() and not _EXTENDS_PATH_RE.search(init_text)
     leaf = missing.rsplit(".", 1)[-1]
-    imports_it = bool(regular and re.search(rf"\b{re.escape(leaf)}\b", _read_init(init)))
+    imports_it = bool(regular and re.search(rf"\b{re.escape(leaf)}\b", init_text))
     try:
         rel = parent_dir.relative_to(root).as_posix() + "/"
     except ValueError:
@@ -113,7 +117,7 @@ def describe(fact: dict) -> str:
         )
     else:
         tail = (
-            f" That folder has no `__init__.py`, so an installed regular `{pkg}` package takes precedence over it: "
+            f" That folder is not a regular package (it has no `__init__.py`, or its `__init__.py` extends the package path), so the installed `{pkg}` package can still be found: "
             f"installing the distribution that provides `{pkg}` can fix this."
         )
     return head + tail

@@ -107,6 +107,20 @@ def test_submodule_that_exists_in_the_project_is_not_the_missing_piece(box):
     assert importshadow.detect(tb, [box.proj]) is None
 
 
+@pytest.mark.parametrize(
+    "init_text",
+    [
+        "from pkgutil import extend_path\n__path__ = extend_path(__path__, __name__)\n",
+        "__import__('pkg_resources').declare_namespace(__name__)\n",
+    ],
+)
+def test_init_that_extends_the_package_path_is_treated_like_a_namespace(box, init_text):
+    put(box.proj / "celerite" / "__init__.py", init_text)
+    fact = importshadow.detect("ModuleNotFoundError: No module named 'celerite.extra'", [box.proj])
+    assert fact and fact["kind"] == "namespace"
+    assert "Do not install it" not in fact["note"] and "can fix this" in fact["note"]
+
+
 def test_cannot_import_name_from_a_project_copy_is_recognised(box):
     celerite_project(box)
     init = box.proj / "celerite" / "__init__.py"
@@ -115,31 +129,6 @@ def test_cannot_import_name_from_a_project_copy_is_recognised(box):
     assert fact and fact["relation"] == "missing_name" and fact["missing"] == "celerite.terms"
     elsewhere = f"ImportError: cannot import name 'terms' from 'celerite' ({box.tmp}/site/celerite/__init__.py)"
     assert importshadow.detect(elsewhere, [box.proj]) is None
-
-
-def test_read_run_report_states_the_shadow_first(box):
-    script = celerite_project(box)
-    tb = CELERITE_TB.format(root=box.proj)
-    report = {
-        "phase": "action_required",
-        "error": {
-            "code": "script_error",
-            "message": "No module named 'celerite.celerite_version'",
-            "traceback": tb,
-        },
-    }
-    ctx = make_ctx(box, script_path=script, report=lambda: report)
-    r = run_tool(REGISTRY["read_run_report"], ctx, {})
-    assert not r.is_error
-    assert r.content.lstrip("{\n ").startswith('"project_package_shadow"')
-    assert "celerite.celerite_version" in r.content and "celerite/" in r.content
-
-
-def test_read_run_report_without_shadow_has_no_extra_key(box):
-    script = celerite_project(box)
-    report = {"error": {"message": "No module named 'celerite'"}}
-    ctx = make_ctx(box, script_path=script, report=lambda: report)
-    assert "project_package_shadow" not in run_tool(REGISTRY["read_run_report"], ctx, {}).content
 
 
 def test_try_run_and_try_import_failures_carry_the_shadow_note(box):

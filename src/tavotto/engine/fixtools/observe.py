@@ -76,9 +76,15 @@ def read_run_report(ctx: FixContext, args: dict) -> ToolResult:
                 picked["missing_input"] = _precis(item["payload"])
             break
     # 同名包遮蔽（`importshadow`）：报告里的 `No module named 'a.b'` 实际是项目里的 `a/` 缺了 `b`，写明
+    # 真实准备会话报告（`prepsession.report`）把异常放在 `result.error`（code / message / traceback），顶层没有
+    # `error` / `error_tail`；两种位置都读。`result` 不在 `_REPORT_KEYS` 里，模型原先看不到异常文本，这里把 `result.error` 补成 `error`
+    result = report.get("result")
+    nested = result.get("error") if isinstance(result, dict) else None
+    if nested and "error" not in picked:
+        picked["error"] = _precis(nested)
     err_text = "\n".join(
         v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
-        for v in (report.get(k) for k in ("error", "error_tail", "attempt_history"))
+        for v in [report.get(k) for k in ("error", "error_tail", "attempt_history")] + [nested]
         if v
     )
     note = shadow_note(ctx, err_text).removeprefix("\nproject_package_shadow: ")
