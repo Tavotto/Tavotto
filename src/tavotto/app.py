@@ -12493,7 +12493,13 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
         try:
             if result.get("error"):
                 err = result["error"]
-                return {"error": {"code": err.get("code"), "message": err.get("message")}}
+                return {
+                    "error": {
+                        "code": err.get("code"),
+                        "message": err.get("message"),
+                        "worker_code": (err.get("params") or {}).get("worker_code"),
+                    }
+                }
             stems = list(result.get("stems") or [])
             conflicts = engine_probe._live_stem_conflicts(figures_dir, rel, stems)
             if conflicts:

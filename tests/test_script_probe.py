@@ -508,6 +508,7 @@ class TestEntrySelection:
         result = engine_probe.probe(figs, "allfail.py")
         err = result["error"]
         assert err["code"] == engine_probe.ERROR_PROBE_FAILED
+        assert err["params"]["worker_code"] == "script_error"
         assert "first boom" in err["message"]
         assert "first boom" in err.get("traceback", "")
         assert result["entry"] is None and result["stems"] == []

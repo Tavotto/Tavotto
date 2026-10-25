@@ -403,6 +403,37 @@ def test_existing_output_directories_do_not_block_conversion_validation(project,
     assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200
 
 
+def test_new_output_directory_failure_gives_conversion_scope_and_keeps_savefig(
+    project, monkeypatch
+):
+    """Real worker denial must survive probe wrapping and guide a safe correction."""
+    _m, client, figs, state = project
+    worker_tmp = figs.parent / "worker-tmp"
+    worker_tmp.mkdir()
+    for var in ("TMPDIR", "TEMP", "TMP"):
+        monkeypatch.setenv(var, str(worker_tmp))
+    monkeypatch.setenv("LOCALAPPDATA", str(figs.parent / "localappdata"))
+    bad = (
+        "from pathlib import Path\n"
+        "(Path(__file__).parent / 'new-output').mkdir(exist_ok=True)\n" + GOOD
+    )
+    state["code"] = (
+        "p = d / 'fig_matplotlib.py'; "
+        f"p.write_text({GOOD!r} if p.exists() else {bad!r}, encoding='utf-8')"
+    )
+    before = (figs / "out.png").read_bytes()
+    sid = _start(client).get_json()["session"]
+    session = _wait_final(client, sid)
+    assert len(state["prompts"]) == 2
+    assert ai_convert.WRITE_OUTSIDE_HINT in state["prompts"][1]
+    assert "保留 Matplotlib savefig" in state["prompts"][1]
+    assert session["task"]["outcome"] == "completed", session
+    assert not (figs / "new-output").exists()
+    assert (figs / "out.png").read_bytes() == before
+    assert (figs / "fig.py").read_bytes() == ORIGINAL.encode()
+    assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200
+
+
 def test_discard_endpoint_removes_the_candidate(project):
     m, client, figs, state = project
     sid = _start(client).get_json()["session"]

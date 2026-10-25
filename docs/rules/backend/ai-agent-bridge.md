@@ -337,6 +337,10 @@ order: 240
 永不覆盖），采用前再核原脚本 sha256 与候选摘要。校验 = 在用户同一路由下 probe 一遍（紧挨原脚本的 `tavotto_convert_probe_<sid>.py`
 临时文件，后端建、跑完删），必须捕获到 Matplotlib 图。看护：`tests/test_ai_convert.py`、`tests/test_ai_convert_app.py`。
 
+校验的写入绊线错误沿 `probe.error.params.worker_code` 传给转换层，不能被通用
+`script_probe_failed` 丢掉原因。转换层统一提示候选 / 临时目录的写入边界，删除仅为输出准备的
+目录创建，保留正常 Matplotlib `savefig` 捕获；不沿用「改写到项目里」的通用 MCP 指导，也不按错误文本猜原因。
+
 **项目依赖上下文（2026-10-25，ADR 0143）**：`convertcontext` 只读静态提名 helper/字体/数据，按预算复制到
 `project_context/`；`context.json` 记原项目相对路径、来源/视图各自完整 SHA256 与未覆盖项，不扫描拷贝整个项目、
 不跟随链接、不读敏感路径或环境；文本视图经同一 `readscope` 脱敏并标注。内置 `list_dir(path)` 可浏览子目录，写仍只有一个候选；check/留存/续跑/采用均核

@@ -317,6 +317,19 @@ def test_validation_run_is_isolated_by_write_roots_and_user_out_png_is_untouched
     }
 
 
+def test_write_guard_guidance_requires_a_structured_cause(env):
+    """A script's error text must not masquerade as a sandbox diagnosis."""
+    message = "User exception mentioning write_outside_roots is not a write denial"
+    env["runner"] = lambda figures_dir, rel, write_roots=None: {
+        "error": {"code": "script_probe_failed", "message": message, "worker_code": "script_error"}
+    }
+    sid = _run(env)
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "failed"
+    assert message in env["prompts"][1]
+    assert all(ai_convert.WRITE_OUTSIDE_HINT not in prompt for prompt in env["prompts"])
+
+
 def test_no_figure_captured_is_a_failure_with_a_reason(env):
     env["runner"] = lambda figures_dir, rel, write_roots=None: {
         "error": {"code": "no_figures_captured", "message": "x"}

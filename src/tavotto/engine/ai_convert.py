@@ -109,8 +109,10 @@ NO_FIGURE_CODES = frozenset(
 #: 绊线拦下候选写项目文件的稳定码（`writetripwire.CODE` 的镜像）与写给 Agent 的一句
 WRITE_OUTSIDE_ROOTS_CODE = "write_outside_roots"
 WRITE_OUTSIDE_HINT = (
-    "校验运行里脚本想写项目目录里的文件（例如 savefig('out.png') / to_csv），被拦下了；"
-    "新脚本只许读原数据，不要保存任何文件，让 Tavotto 自己导出图。"
+    "转换校验只允许写候选目录和运行时临时目录，不能写原项目。"
+    "删除仅为输出准备的 mkdir / makedirs；中间数据放内存，确需临时文件时使用 tempfile。"
+    "保留 Matplotlib savefig 调用，Tavotto 会捕获图像，不需要预建输出目录；"
+    "不要把写入改到项目的其他位置。"
 )
 _SID = re.compile(r"[0-9a-f]{12}")
 _STATES = (
@@ -405,7 +407,7 @@ def run_validation(cand: ConvertCandidate, runner, *, evidence: list | None = No
     """在用户同一解释器 / 同一路由下跑候选脚本一遍。
 
     `runner(figures_dir: str, script_rel: str, write_roots: tuple[str, ...]) -> {"stems": [...], "size_mm": [w, h] | None, "svg": str | None,
-    "error": None | {"code": str, "message": str}}`（app 注入，走现有 probe 路径并在返回前退役它起的 worker）。
+    "error": None | {"code": str, "message": str, "worker_code": str | None}}`（app 注入，走现有 probe 路径并在返回前退役它起的 worker）。
     **隔离写入（Codex #1277 P1）**：运行带写入根绊线（ADR 0141 的 `write_roots`，现有机制）——根只有候选目录（加 worker 自己的
     基础设施目录），所以候选脚本把相对路径输出（`out.png` / `data.csv`）写进项目目录时，在**写发生的那一刻**失败
     （`write_outside_roots`），用户文件根本没被打开写过；跑完的指纹复核只是兜底（绊线挡不住 C 层写）。
@@ -450,8 +452,12 @@ def run_validation(cand: ConvertCandidate, runner, *, evidence: list | None = No
         code = str(err.get("code") or "run_failed")
         if code in NO_FIGURE_CODES:
             return {"status": "no_figure", "code": code}
-        if code == WRITE_OUTSIDE_ROOTS_CODE:
-            return {"status": "error", "code": code, "message": WRITE_OUTSIDE_HINT}
+        if code == WRITE_OUTSIDE_ROOTS_CODE or err.get("worker_code") == WRITE_OUTSIDE_ROOTS_CODE:
+            return {
+                "status": "error",
+                "code": WRITE_OUTSIDE_ROOTS_CODE,
+                "message": WRITE_OUTSIDE_HINT,
+            }
         return {"status": "error", "code": code, "message": str(err.get("message") or "")[:400]}
     # Probe isolates per-figure failures so other pages remain usable. A
     # conversion, however, must not certify a candidate which lost some pages.
