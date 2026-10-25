@@ -138,3 +138,52 @@ def test_adopted_output_does_not_take_original_owner_and_reopens_without_cache(p
     assert report["facts"]["execution_finished"] and report["facts"]["figure_captured"]
     assert (root / "fig.py").read_bytes() == original
     assert (root / "out.png").read_bytes() == original_image
+
+
+@pytest.mark.parametrize(
+    "constructor",
+    [
+        "PdfPages('Rplots.pdf')",
+        "PdfPages(filename=Path('Rplots.pdf'))",
+        "pages('Rplots.pdf')",
+        "backend_pdf.PdfPages('Rplots.pdf')",
+    ],
+)
+def test_multipage_pdf_keeps_original_and_all_pages(tmp_path, monkeypatch, constructor):
+    import pypdfium2
+
+    monkeypatch.chdir(tmp_path)
+    original = tmp_path / "Rplots.pdf"
+    original.write_bytes(b"original native output")
+    source = f"""from pathlib import Path
+import matplotlib.pyplot as plt
+from matplotlib.backends import backend_pdf
+from matplotlib.backends.backend_pdf import PdfPages, PdfPages as pages
+with {constructor} as pdf:
+    for n in range(2):
+        fig, ax = plt.subplots()
+        ax.text(.5, .5, str(n))
+        fig.savefig(pdf, format='pdf')
+        plt.close(fig)
+""".encode()
+    converted = convertoutputs.normalize(source, SID)
+    assert convertoutputs.normalize(converted, SID) == converted
+    exec(compile(converted, "converted.py", "exec"), {})
+    assert original.read_bytes() == b"original native output"
+    with pypdfium2.PdfDocument(str(tmp_path / f"Rplots_matplotlib_{SID}.pdf")) as pdf:
+        assert len(pdf) == 2
+
+
+def test_unrelated_pdfpages_constructor_and_stream_remain_unchanged():
+    from io import BytesIO
+
+    seen = []
+
+    class Other:
+        def PdfPages(self, value):
+            seen.append(value)
+
+    source = b"other.PdfPages(stream)\n"
+    stream = BytesIO()
+    exec(convertoutputs.normalize(source, SID), {"other": Other(), "stream": stream})
+    assert seen == [stream]

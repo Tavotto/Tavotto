@@ -46,22 +46,45 @@ def {name}(_savefig, /, *args, **kwargs):
 """
 
 
-def _aliases(tree: ast.AST) -> set[str]:
+def pdf_helper_source(name: str, suffix: str) -> str:
+    return f"""# Keep multi-page PDF output separate from the original script's file.
+def {name}(_constructor, /, *args, **kwargs):
+    import os as _os
+    from matplotlib.backends.backend_pdf import PdfPages as _PdfPages
+
+    if _constructor is _PdfPages:
+        def _output(_value):
+            if not isinstance(_value, (str, bytes, _os.PathLike)):
+                return _value
+            _base, _ext = _os.path.splitext(_os.fsdecode(_value))
+            if not _base.endswith({suffix!r}):
+                _base += {suffix!r}
+            return _base + _ext
+        if args:
+            args = (_output(args[0]), *args[1:])
+        elif "filename" in kwargs:
+            kwargs["filename"] = _output(kwargs["filename"])
+    return _constructor(*args, **kwargs)
+
+"""
+
+
+def _aliases(tree: ast.AST, method: str, module: str) -> set[str]:
     aliases = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "matplotlib.pyplot":
-            aliases.update(a.asname or a.name for a in node.names if a.name == "savefig")
+        if isinstance(node, ast.ImportFrom) and node.module == module:
+            aliases.update(a.asname or a.name for a in node.names if a.name == method)
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             value = node.value
-            if isinstance(value, ast.Attribute) and value.attr == "savefig":
+            if isinstance(value, ast.Attribute) and value.attr == method:
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 aliases.update(t.id for t in targets if isinstance(t, ast.Name))
     return aliases
 
 
-def _save_call(func: ast.AST, aliases: set[str]) -> bool:
+def _save_call(func: ast.AST, aliases: set[str], method: str) -> bool:
     if isinstance(func, ast.Attribute):
-        return func.attr == "savefig"
+        return func.attr == method
     if isinstance(func, ast.Name):
         return func.id in aliases
     return (
@@ -70,32 +93,41 @@ def _save_call(func: ast.AST, aliases: set[str]) -> bool:
         and func.func.id == "getattr"
         and len(func.args) >= 2
         and isinstance(func.args[1], ast.Constant)
-        and func.args[1].value == "savefig"
+        and func.args[1].value == method
     )
 
 
 def normalize(data: bytes, sid: str) -> bytes:
     """Idempotent source-preserving rewrite; no user project is read or changed."""
+    # A stream passed to Figure.savefig has already been opened. Give PdfPages
+    # its identity at construction, before it can truncate an original PDF.
+    return _normalize(_normalize(data, sid, pdf_pages=True), sid, pdf_pages=False)
+
+
+def _normalize(data: bytes, sid: str, *, pdf_pages: bool) -> bytes:
     if re.fullmatch(r"[0-9a-f]{12}", sid) is None:
         raise ValueError("invalid_output_identity")
     text = data.decode("utf-8-sig")
     raw = text.encode("utf-8")
     tree = ast.parse(raw)
-    name = f"_tavotto_editable_savefig_{sid}"
+    kind = "pdfpages" if pdf_pages else "savefig"
+    name = f"_tavotto_editable_{kind}_{sid}"
     suffix = f"_matplotlib_{sid}"
-    helper = helper_source(name, suffix)
+    helper = (pdf_helper_source if pdf_pages else helper_source)(name, suffix)
     canonical = ast.parse(helper).body[0]
     existing = next(
         (n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name), None
     )
     if existing is not None and ast.dump(existing) != ast.dump(canonical):
         raise ValueError("output_helper_changed")
-    aliases = _aliases(tree)
+    method = "PdfPages" if pdf_pages else "savefig"
+    module = "matplotlib.backends.backend_pdf" if pdf_pages else "matplotlib.pyplot"
+    aliases = _aliases(tree, method, module)
     calls = [
         n
         for n in ast.walk(tree)
         if isinstance(n, ast.Call)
-        and _save_call(n.func, aliases)
+        and _save_call(n.func, aliases, method)
         and not (existing is not None and existing.lineno <= n.lineno <= existing.end_lineno)
     ]
     if not calls:
