@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "recorded_at_utc": "2026-10-25T12:53:33.335119+00:00",
-  "report_code_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+  "recorded_at_utc": "2026-10-25T13:34:01.565465+00:00",
+  "report_code_sha": "a56bd5cf75d8a1172c926ceb78ff094c2d5e3cb0",
   "decision": {
     "default_routing_changed": false,
     "full_fidelity_accepted": false,
@@ -4153,6 +4153,84 @@
         "elapsed_ms": null,
         "usage_estimated": null
       }
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-window-a56",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "a56bd5cf75d8a1172c926ceb78ff094c2d5e3cb0",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "7e1519127a1926165d9ec8e8bcf06a473f714a70234d6d9ffa5ce68bbbaf9691",
+      "start_http": 200,
+      "adopt_http": null,
+      "wall_seconds": 499.506,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": null,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "usage": {
+        "input_tokens": 349448,
+        "output_tokens": 57933,
+        "cached_input_tokens": 31702
+      },
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_budget",
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "74ac36ae2aed3609a41445a7b7e340e4df520eee745b70eb366052b9119bd3d7",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 12,
+        "compressions": 9,
+        "output_recoveries": 0,
+        "elapsed_ms": 497067,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "matlab_airy_surface-codex-window-a56",
+      "case_id": "matlab_airy_surface",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": null,
+      "git_sha": "a56bd5cf75d8a1172c926ceb78ff094c2d5e3cb0",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "7e1519127a1926165d9ec8e8bcf06a473f714a70234d6d9ffa5ce68bbbaf9691",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 205.515,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "usage": {},
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage_reported": false,
+      "candidate_sha256": "2a9cb36a189bfc27b1b84cbd6f4bb83722bc8f14f050f8765e5fdc4f953b7412",
+      "result_record_sha256": "44eadb3e50e504a5c8edabcdd0ea3b8a2af4d60415a3d0ec46742be3030b1427",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": null,
+        "compressions": null,
+        "output_recoveries": null,
+        "elapsed_ms": null,
+        "usage_estimated": null
+      }
     }
   ],
   "repair_attempts": [
@@ -7276,6 +7354,34 @@
         202
       ],
       "result_record_sha256": "9a2b582f86144b0e77bd6b0f51581ef58bfd4ce23c72192afb50e2ef9bda1f33"
+    },
+    {
+      "producer_sha": "a56bd5cf75d8a1172c926ceb78ff094c2d5e3cb0",
+      "verification_sha": "a56bd5cf75d8a1172c926ceb78ff094c2d5e3cb0",
+      "model_used": false,
+      "script_sha256": "2a9cb36a189bfc27b1b84cbd6f4bb83722bc8f14f050f8765e5fdc4f953b7412",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "worker_source": "managed_project_env",
+      "run_id": "matlab_airy_surface-codex-window-a56",
+      "verification_run": "fresh-style",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "7e6b841ca9cdabcc949ef72a1002aea02bfbf42dc90933aa698077cab6ec3c23"
     }
   ],
   "native_oracle_measurements": {
@@ -7654,6 +7760,14 @@
       "all_output_dimensions_match": true,
       "worst_visible_rgb_mae_0_255": 2.094525462962963,
       "all_whole_editable_texts": true,
+      "full_fidelity": "not_established"
+    },
+    "matlab_airy_surface-codex-window-a56": {
+      "outputs_measured": 1,
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 4.932714364070367,
+      "tick_endpoint_max_px": 2.5421149729252077e-13,
+      "surface_border_rgb_mae_0_255": 20.30995148136678,
       "full_fidelity": "not_established"
     }
   },
@@ -8205,6 +8319,12 @@
       "code_sha": "21152e1d6",
       "passed": 234,
       "skipped": 0
+    },
+    {
+      "scope": "bounded reference windows, agent/conversion/media, error taxonomy and rules index",
+      "code_sha": "a56bd5cf7",
+      "passed": 585,
+      "skipped": 0
     }
   ],
   "counterfactuals": {
@@ -8274,10 +8394,18 @@
         "svg"
       ],
       "full_cross_renderer_acceptance": false
+    },
+    "bounded_reference_read": {
+      "subject": "Both task toolsets read large approved UTF-8 resources in bounded windows without data loss or new edit grants",
+      "before_code": "c3c5d0b6e085967a4c65d9b5c1f9396a7e3aa531",
+      "old_exit_code": 1,
+      "old_failed_variants": 2,
+      "fixed_exit_code": 0,
+      "old_log_sha256": "3a55cfaa8aa5f97c81b33398e1bfea0e478e8c82f85cb8b66c9c0098b3413c31"
     }
   },
   "remaining_gaps": [
-    "Final corrected Airy SVG-assisted builtin/Codex outputs are both 1343x810, but builtin tick endpoints still differ by up to 9.0764 px. Codex native-SVG tick endpoints agree within 2e-12 px, while its surface has incorrect occlusion and missing/incorrect mesh edges. Both retain antialiasing differences; full surface fidelity and other cameras remain unaccepted.",
+    "Final corrected Airy SVG-assisted builtin/Codex outputs are both 1343x810, but builtin tick endpoints still differ by up to 9.0764 px. Codex native-SVG tick endpoints agree within 2e-12 px, while its surface has incorrect occlusion and missing/incorrect mesh edges. Both retain antialiasing differences; full surface fidelity and other cameras remain unaccepted. The subsequent same-input a56 builtin trial reads the SVG windows but exhausts its token budget; it is not adopted. Codex again matches frame/ticks and fails surface occlusion (whole RGB MAE 4.93271).",
     "New Arabic/bidi/ligature/combining/Khmer matched runs preserve whole editable logical runs and match each other, but all four still differ from native Pillow (whole-frame RGB MAE 0.3565..2.0945/255). Whole-run PNG/SVG regression passes versus uninstrumented Matplotlib, not versus Pillow. Earlier near-exact Latin anchor result is not extended to complex shaping.",
     "R math pages now execute and reviewed bounds/fractions are corrected, but full glyph geometry is not independently certified.",
     "R interval final paired runs match native numeric results and factor order; page layout/font geometry remains unaccepted.",
@@ -8885,6 +9013,120 @@
       "All four final complex outputs are one logical editable Text each and builtin/Codex pixel-identical to each other; they still differ from native Pillow.",
       "Counterfactual shaping tests use uninstrumented Matplotlib in the same runtime as the oracle; they do not certify cross-renderer Pillow identity.",
       "Claude automatic permission denials are retained; the sandbox and user global configuration were not weakened."
+    ]
+  },
+  "bounded_reference_read_followup": {
+    "code_sha": "a56bd5cf75d8a1172c926ceb78ff094c2d5e3cb0",
+    "runs": [
+      "matlab_airy_surface-builtin-window-a56",
+      "matlab_airy_surface-codex-window-a56"
+    ],
+    "input_bytes_equal": true,
+    "resource_bytes_equal_to_corrected_211": true,
+    "initial_input_bytes_equal_to_corrected_211": false,
+    "cross_version_context_difference": "context.json lists the same reference files in a different order; no source, asset or reference bytes differ",
+    "initial_input_sha256": {
+      "test_airy_disc_kernel.m": "dba08fd36ddb8263ffe30307e787120a95362259b0650b738413b30ae48b6e0f",
+      "context.json": "bb0c7d9fbd9e4b2ba56b60f6e5ce780b6200608b04a5c7164d11afc0e9bdf847",
+      "project_context/matlab_airy_surface_geometry.json": "459f1c29b2af4612df45d3c082bce2a395294da1c4417e59e8e0ef595d7ad1ee",
+      "project_context/airy_disc_kernel.m": "c1b61d7119a19e7525906d6e7d3ab4e03d581d36c4fd2eaffa88a22aefbe3c27",
+      "project_context/native_runtime_facts.json": "7e1519127a1926165d9ec8e8bcf06a473f714a70234d6d9ffa5ce68bbbaf9691",
+      "project_context/native_airy_full.svg": "029aac383e962782d89fe3f97b533574232cb874ce2c89d94c9648b7f568815e",
+      "project_context/native_airy_style.json": "9fa21fd4fb2cdc0d1a919ade732087000193f1b961d1572ffc29a50004706e12",
+      "reference/_native_reference.png": "a1730b112fd0e81c14263e33c9e35e3200f24851a2103d485b89d31317a0a5d0"
+    },
+    "candidate_environment_shared": true,
+    "models": {
+      "builtin": "claude-sonnet-5-5",
+      "codex": "gpt-6-astra"
+    },
+    "probe": {
+      "source_size": 667133,
+      "full_read_code": "too_large",
+      "windows": [
+        {
+          "byte_offset": 0,
+          "next_byte_offset": 16384,
+          "file_size": 667133,
+          "eof": false,
+          "payload_sha256": "d6d68882a25be69ab53537991c508dabae1694f6c41394085e52c37959ea5318",
+          "payload_bytes": 16384
+        },
+        {
+          "byte_offset": 650749,
+          "next_byte_offset": 667133,
+          "file_size": 667133,
+          "eof": true,
+          "payload_sha256": "5d3fddb37d5a0bf8e00e424489613cb87f735e5e902d15fe13bbecfa825dcc5b",
+          "payload_bytes": 16384
+        }
+      ]
+    },
+    "builtin_read_summaries": [
+      "read bytes 0-9000 of 667133",
+      "read bytes 650500-667133 of 667133",
+      "read bytes 0-6000 of 14213"
+    ],
+    "builtin_outcome": "failed: token budget; no candidate adopted",
+    "codex_outcome": "adopted and fresh application captured, but independently failed surface fidelity",
+    "codex_measurement": {
+      "run_id": "matlab_airy_surface-codex-window-a56",
+      "canvas": [
+        1343,
+        810
+      ],
+      "expected_canvas": [
+        1343,
+        810
+      ],
+      "tick_candidates": 24,
+      "expected_ticks": 24,
+      "geometry_oracle": "native SVG viewport mapped to native PNG dimensions; raster coverage measured separately",
+      "tick_endpoint_max_px": 2.5421149729252077e-13,
+      "tick_endpoint_rms_px": 1.5983263607498078e-13,
+      "matched_ticks": 24,
+      "tick_widths_pt": [
+        0.5
+      ],
+      "tick_rgba": [
+        [
+          0.12941176470588237,
+          0.12941176470588237,
+          0.12941176470588237,
+          1
+        ]
+      ],
+      "raster_size_match": true,
+      "rgb_mae": 4.932714364070367,
+      "rgb_changed_gt20_fraction": 0.07863452929226074,
+      "rgb_max": 222.0,
+      "surface_interior": {
+        "pixels": 48855,
+        "rgb_mae": 34.279869000102345,
+        "changed_gt20_fraction": 0.37942892232115444
+      },
+      "surface_border": {
+        "pixels": 58122,
+        "rgb_mae": 20.30995148136678,
+        "changed_gt20_fraction": 0.5488111214342246
+      },
+      "native_background_rgb8": [
+        255,
+        255,
+        255
+      ],
+      "candidate_background_rgb8": [
+        255,
+        255,
+        255
+      ]
+    },
+    "codex_review_image_sha256": "66cbd8b5aa2fb4c7be8833d4cf79b9b51e4bdd7c58588ff83cf2dbc2d24e52ac",
+    "fidelity_accepted": false,
+    "limits": [
+      "Resource access is fixed; this pair does not establish fidelity or non-inferiority.",
+      "A custom mesh renderer retains XYZ arrays but still misorders visible surfaces; standard surface property editing was not independently certified.",
+      "A finite token-budget failure after 499.506 seconds is not a successful conversion or an adopted candidate."
     ]
   }
 }

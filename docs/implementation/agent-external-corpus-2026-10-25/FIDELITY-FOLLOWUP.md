@@ -2,7 +2,7 @@
 
 Status: corrective implementation and external-corpus retesting. **Full-fidelity acceptance and non-inferiority are not established; default routing remains unchanged.**
 
-Latest follow-up: the final section records MATLAB frame/tick/surface measurements, four complex-text groups, project-runtime context and default-mode signature fixes through `21152e1d6`. All older attempts remain historical evidence. The new outputs still fail full visual acceptance.
+Latest follow-up: the final sections record MATLAB frame/tick/surface measurements, four complex-text groups, project-runtime context and default-mode signature fixes, then bounded large-reference reads through `a56bd5cf7`. All older attempts remain historical evidence. The new outputs still fail full visual acceptance.
 
 ## Acceptance subjects
 
@@ -227,3 +227,11 @@ The final-head remote CI result is reported in the PR Checks/body after the repo
 The final controls supplied identical 667,133-byte native SVGs, but builtin `read_file` could only read an entire file of at most 200 KiB. The final builtin trace did not attempt this SVG read, so this limitation is **not asserted as the sole cause of its wrong ticks**. It is a reproduced resource-access difference from the CLI control.
 
 Third-path A–F: retain both approved project resources and bounded tool reads; distinguish a per-response bound from total resource size; remove the assumption that text must be read all at once; permit UTF-8 byte windows with returned continuation offsets, stable open-file identity and existing path containment; reject traversal, invalid limits, binary/split-start reads, concurrent file change and partial-read write grants; verify the old implementation fails the large-resource regression before measuring new model trials. Full-target read/write limits remain 200 KiB. Each optional window is at most 64 KiB, defaults to 16 KiB and never authorizes an edit. No shell, network, new read root or default-routing change is introduced.
+
+Restoring `c3c5d0b6e` makes the new large-file regression fail in both task toolsets (exit 1). The final fixed gate passes **585 tests, zero skipped**, including media, agent/conversion, error taxonomy and guidance index. A direct product-tool probe reads the real SVG's first and last 16 KiB, returns correct continuation/end metadata and leaves the whole-file size limit intact.
+
+Two further real-model trials on `a56bd5cf7` have identical input bytes to each other. Source/assets/reference bytes match the corrected `21152e1d6` arm, but `context.json` lists the same references in a different order; the cross-version serialized input is not claimed byte-identical. The builtin trace now explicitly reads SVG bytes **0–9000** and **650500–667133**. It later exhausts the existing token budget after **499.506 s**, 12 turns and 9 compactions; the task ends as failed and **no candidate is adopted**. No signature HTTP 400 occurs. This verifies access and bounded failure, not successful conversion.
+
+Codex completes in **205.515 s**, with 1343 × 810 pixels and all 24 native-SVG tick endpoints aligned within 3e-13 px. Its custom mesh renderer still draws major surfaces in the wrong order: whole-frame RGB MAE **4.93271**, surface interior **34.27987**, surface border **20.30995**. [Exact failed output](style-v3/codex-airy-window.png). It retains XYZ arrays but standard surface-property editing was not independently certified. A fresh application run captures successfully and leaves its script unchanged; visual fidelity still fails.
+
+The cumulative record now contains **108 conversion attempts, 22 repair attempts and 23 fresh-application conversion verifications**. No older failure is replaced. Bounded large-resource access is repaired, while surface occlusion/coverage, builtin tick fidelity, complex native glyph metrics and repeated same-model capability acceptance remain open. Default routing is unchanged.
