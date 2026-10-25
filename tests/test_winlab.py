@@ -1619,6 +1619,26 @@ def test_desktop_host_passed_window_with_failed_final_uninstall_is_error(monkeyp
     assert "L2 通过但清理失败" in r["summary"]
 
 
+@pytest.mark.parametrize(
+    "bad_step", [{"exit_code": None, "timed_out": True}, {"exit_code": 1, "seconds": 0.1}]
+)
+def test_desktop_host_final_uninstall_step_failure_is_error_even_if_entries_are_gone(
+    monkeypatch, tmp_path, bad_step
+):
+    f = _FakeDesktopLab(monkeypatch, tmp_path, entries=[])
+    orig = f._run_until
+
+    def run_until(argv, cwd, env, log, done, timeout):
+        r = orig(argv, cwd, env, log, done, timeout)  # 登记项照常被清空
+        return r if Path(argv[0]).name == "setup.exe" else dict(bad_step)
+
+    monkeypatch.setattr(A, "_run_until", run_until)
+    r = f.run()
+    assert r["levels"]["L2"] == "passed"
+    assert r["uninstall"]["ok"] is False
+    assert r["result"] == "error"
+
+
 def test_desktop_host_clean_pass_stays_passed(monkeypatch, tmp_path):
     r = _FakeDesktopLab(monkeypatch, tmp_path, entries=[]).run()
     assert r["result"] == "passed", r

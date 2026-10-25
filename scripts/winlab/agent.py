@@ -2655,7 +2655,8 @@ def uninstall_desktop_host(host: DesktopHost, work: Path, env: dict) -> dict:
                 600,
             )
         )
-    return {"ok": not _uninstall_entries(host.display_re), "steps": steps}
+    steps_ok = all(not st.get("timed_out") and st.get("exit_code") == 0 for st in steps)
+    return {"ok": steps_ok and not _uninstall_entries(host.display_re), "steps": steps}
 
 
 def _cleanup_note(base: dict) -> str:
