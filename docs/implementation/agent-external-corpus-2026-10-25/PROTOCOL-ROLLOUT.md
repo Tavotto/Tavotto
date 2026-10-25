@@ -30,6 +30,8 @@ The preferred-route repair trial deliberately removed pandas from an isolated en
 
 Two FigureBench cases (`FB-S02`, `FB-S03`) also used preferred routing and a real Anthropic model: both completed in one round with goal and preservation verified, and no unintended change. The sample is intentionally small and does not independently justify a default switch.
 
+After adding the dispatch-identity guard at `1f46e4ff071dac2e0e865ada3c7f7a64f6b09ac0`, both cases were repeated with the same model and preference mode. Both again passed in one round; `routed_agents=["builtin"]` and two actual agent calls were recorded. The earlier two attempts are retained separately. This benchmark-only guard does not change the runtime code used for the conversion and repair evidence at `b48a1a42d`.
+
 [PROTOCOL-RESULTS.json](PROTOCOL-RESULTS.json) records every attempt, producer revision, input/candidate/report/harness hashes, corrections, confirmation counts and fresh-process outcomes. Raw prompts, logs, absolute paths and credentials remain local.
 
 ## Protocol coverage and its limits

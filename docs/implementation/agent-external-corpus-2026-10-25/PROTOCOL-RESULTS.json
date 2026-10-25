@@ -491,5 +491,77 @@
     "conversion auto-install disabled; package repair measured separately",
     "real protocol cancellation, quota and OAuth service failures were not injected; local subprocess and HTTP tests cover those boundaries",
     "no universal fidelity or non-inferiority claim; no Responses/Chat real-model acceptance"
-  ]
+  ],
+  "figure_edit_dispatch_check": {
+    "environment": {
+      "git_sha": "1f46e4ff071dac2e0e865ada3c7f7a64f6b09ac0",
+      "model": "claude-sonnet-5-5",
+      "wire": "anthropic",
+      "routing": "preferred",
+      "routed_agents": [
+        "builtin"
+      ],
+      "agent_calls": 2,
+      "python": "3.13.16",
+      "matplotlib": "3.11.2",
+      "os": "darwin"
+    },
+    "rows": [
+      {
+        "id": "FB-S02",
+        "variant": "ref",
+        "outcome": "completed",
+        "figure_verdict": "verified",
+        "goal": "verified",
+        "preserve": "verified",
+        "unintended": false,
+        "rounds": 1,
+        "wall_s": 10.338,
+        "error": null,
+        "prompt_sha256": "c8a404e73985beee930224c1bb60a0378a4cac5c3ebb64505dac999095081678",
+        "rep": 1,
+        "input_tokens": 9431,
+        "output_tokens": 377,
+        "cached_input_tokens": 3912,
+        "cost_usd": null
+      },
+      {
+        "id": "FB-S03",
+        "variant": "ref",
+        "outcome": "completed",
+        "figure_verdict": "verified",
+        "goal": "verified",
+        "preserve": "verified",
+        "unintended": false,
+        "rounds": 1,
+        "wall_s": 8.476,
+        "error": null,
+        "prompt_sha256": "f7a5cd89165f2409b0f9f366d4007afeda10abdff55edc181402a2cefc9c44ad",
+        "rep": 1,
+        "input_tokens": 9260,
+        "output_tokens": 243,
+        "cached_input_tokens": 5868,
+        "cost_usd": null
+      }
+    ],
+    "metrics": {
+      "scenarios_run": 2,
+      "not_run": [],
+      "first_attempt_verified_rate": 1.0,
+      "final_verified_completion_rate": 1.0,
+      "scientific_preservation_rate": 1.0,
+      "unintended_modification_rate": 0.0,
+      "negatives_caught_rate": null,
+      "taf_overclaim_rate": null,
+      "wall_s_median": 10.338,
+      "wall_s_p95": 10.338,
+      "input_tokens_total": 18691,
+      "input_tokens_per_task": 9345.5,
+      "output_tokens_total": 620,
+      "output_tokens_per_task": 310.0,
+      "cached_input_tokens_total": 9780,
+      "cached_input_tokens_per_task": 4890.0
+    },
+    "raw_result_sha256": "f3a75e077b885323759a691ceb86129aa0ed86b0f97d3418616ba5cec0b062c5"
+  }
 }
