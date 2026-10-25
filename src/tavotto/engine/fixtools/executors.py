@@ -73,12 +73,10 @@ def _default_installer(python: str, requirements: list[str]) -> dict:
                         name = depresolve.parse_requirement(req)
                         if name and index_has_project(python, name[0], cancel):
                             code = deprepair.ERROR_REQUIRES_BUILD
-                    return {
-                        "ok": False,
-                        "code": str(code),
-                        "done": done,
-                        "detail": failure_detail(out),
-                    }
+                    res = {"ok": False, "code": str(code), "done": done}
+                    if detail := failure_detail(out):
+                        res["detail"] = detail
+                    return res
                 done.append(req)
     except pool.EnvironmentBusy:
         return {"ok": False, "code": "env_busy", "done": done}
