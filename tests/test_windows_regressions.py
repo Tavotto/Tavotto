@@ -3886,9 +3886,8 @@ def test_ci_scripts_never_spawn_taskkill_and_use_one_process_tree_implementation
     assert "terminate_pid" in _proctree_calls(_CI_DIR / "cleanup.py")
 
 
-def test_proctree_kills_a_grandchild_that_outlives_its_parent(tmp_path):
-    """行为：根进程已退出、孙进程还在时，`kill_tree` 仍然收得到孙进程（Windows 靠 Job Object）。
-    判据是孙进程的 pid **不存在**，不是「发过信号」。"""
+def test_proctree_kills_a_live_tree_including_grandchild(tmp_path):
+    """行为：根进程还活着时，`kill_tree` 收得到整棵树（含孙进程）。判据是孙进程的 pid **不存在**，不是「发过信号」。"""
     sys.path.insert(0, str(_CI_DIR))
     try:
         import proctree
@@ -3926,6 +3925,50 @@ def test_proctree_kills_a_grandchild_that_outlives_its_parent(tmp_path):
     finally:
         if grandchild is not None and proctree.is_alive(grandchild):
             proctree.terminate_pid(grandchild)
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="Job Object 语义：POSIX 的进程组随根进程被回收后无从寻址"
+)
+def test_proctree_job_reaches_a_descendant_whose_parents_are_all_gone(tmp_path):
+    """行为：根进程与中间进程都**已退出**、叶子仍在时，`kill_tree` 靠 Job Object 仍收得到叶子。
+    叶子的父进程（中间进程）已死，进程快照回退顺着父子链从根往下找不到它——只有 Job 路径能过。"""
+    sys.path.insert(0, str(_CI_DIR))
+    try:
+        import proctree
+    finally:
+        sys.path.remove(str(_CI_DIR))
+    pid_file = tmp_path / "leaf.pid"
+    mid = (
+        "import subprocess, sys\n"
+        "g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+        f"open({str(pid_file)!r}, 'w').write(str(g.pid))\n"
+    )
+    root = f"import subprocess, sys\nsubprocess.Popen([sys.executable, '-c', {mid!r}]).wait()\n"
+    proc = proctree.spawn(
+        [sys.executable, "-c", root],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    leaf = None
+    try:
+        proc.wait(timeout=30)  # 根与中间进程都已退出
+        leaf = int(pid_file.read_text(encoding="utf-8"))
+        assert proc.tavotto_job is not None, "进程没放进 Job，这条用例没有意义"
+        assert proctree.is_alive(leaf), "前提：叶子必须在根进程退出后仍然活着"
+        assert proctree.kill_tree(proc) == "job"
+        assert proctree.tree_gone(proc, 20)
+        deadline = time.monotonic() + 20
+        while proctree.is_alive(leaf) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not proctree.is_alive(leaf), "叶子成了孤儿"
+    finally:
+        if leaf is not None and proctree.is_alive(leaf):
+            proctree.terminate_pid(leaf)
         if proc.poll() is None:
             proc.kill()
             proc.wait()
