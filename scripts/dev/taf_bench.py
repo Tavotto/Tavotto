@@ -329,6 +329,7 @@ def run(
     edits_box: dict = {}
 
     calls = {"n": 0, "executable": None, "endpoint": None}
+    routed_agents: set[str] = set()
     usage_box: dict = {}
     real_classify = ai_bridge._classify
     builtin = real_agent == BUILTIN_ARM
@@ -347,6 +348,13 @@ def run(
         return [sys.executable, "-c", _REPLAY, cwd, edits_box["path"]], {}
 
     def real_cmd_recording(agent_id, prompt, cwd, model=None, effort=None, endpoint=None, **kw):
+        routed_agents.add(agent_id)
+        if agent_id != real_agent:
+            # A preferred route may fall back to a CLI. That is useful product
+            # behavior, but cannot qualify the requested executor or spend its
+            # benchmark budget under a misleading label.
+            edits_box["route_mismatch"] = True
+            raise ai_bridge.AgentError("executor_mismatch")
         count_call()
         edits_box["prompt_sha256"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
         cmd, env = real_cmd(
@@ -432,6 +440,8 @@ def run(
                 row["rep"] = rep
                 if edits_box.pop("blocked", False):
                     row["error"] = "max_runs_reached"
+                if edits_box.pop("route_mismatch", False):
+                    row["error"] = "executor_mismatch"
                 rows.append(row)
                 m.reset_projects()
                 pool.shutdown_all(wait=True)
@@ -467,6 +477,7 @@ def run(
             "model": model,
             "effort": effort,
             "agent_calls": calls["n"],
+            "routed_agents": sorted(routed_agents),
             **(
                 {"wire": builtin_wire, "routing": "preferred" if prefer_builtin else "forced"}
                 if builtin

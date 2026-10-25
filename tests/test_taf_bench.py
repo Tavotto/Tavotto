@@ -586,7 +586,7 @@ def test_builtin_arm_routes_through_the_product_to_builtin_and_cleans_up(
         base_url=base,
         prefer_builtin=prefer,
     )
-    # 产品自己的路由把请求送到了 builtin，连接是官方 Anthropic Key 连接，型号照 --model
+    # 产品自己的路由把请求送到了 builtin，连接协议与地址按选择，型号照 --model。
     assert box["agents"] == ["builtin"]
     ep = box["endpoints"][0]
     assert ep["base_url"] == (base or official) and ep["agent"] == agent
@@ -605,6 +605,44 @@ def test_builtin_arm_routes_through_the_product_to_builtin_and_cleans_up(
     assert ai_providers.list_providers() == []
     assert "TAVOTTO_AI_BUILTIN" not in os.environ
     assert config.ai_settings()["builtin_default"] is before["builtin_default"] is False
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_builtin_acceptance_does_not_credit_a_cli_fallback(tmp_path, monkeypatch):
+    from tavotto.engine import ai_bridge, ai_providers
+
+    box = _builtin_arm_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        ai_bridge,
+        "capabilities",
+        lambda refresh=False: {
+            "agents": [
+                {
+                    "id": "claude",
+                    "installed": True,
+                    "enabled": True,
+                    "usable": True,
+                    "state": "ready",
+                },
+            ]
+        },
+    )
+    monkeypatch.setattr(ai_providers, "builtin_conn", lambda rec: None)
+    scenario = next(s for s in bench.load_scenarios("dev") if s["id"] == "FB-S02")
+    report = bench.run(
+        [scenario],
+        tmp_path / "projects",
+        real_agent="builtin",
+        model="test-model",
+        api_key="test-key",
+        prefer_builtin=True,
+    )
+    assert box["agents"] == [], "A different executor must not spend quota on builtin acceptance"
+    assert report["rows"][0]["outcome"] != "completed"
+    assert report["rows"][0]["error"] == "executor_mismatch"
+    assert report["environment"]["agent_calls"] == 0
+    assert report["environment"]["routed_agents"] == ["claude"]
+    assert ai_providers.list_providers() == []
 
 
 def test_builtin_arm_still_requires_a_pinned_model_and_a_readable_key(

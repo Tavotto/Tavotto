@@ -46,10 +46,11 @@ CLI 的写入面（任意 shell、网络、绝对路径写）也比「改一个�
 
 1. 订阅类连接（ChatGPT / Claude 的官方登录）→ 对应 CLI；
 2. Key 类连接：该连接家族的 CLI 装着且可用，并且 `ai.builtin_default` 不为 true → CLI + 注入 provider（现状）；否则 → 内置执行器。没装任何 CLI 的用户因此直接可用；
-3. `ai.builtin_default` 默认 false，**FigureBench 跑分不差于 Claude Code 之后改 true**；运维开关 `TAVOTTO_AI_BUILTIN=0|1` 强制；
-4. 账号登录（OAuth 访问令牌，如 MiniMax）类：装了 CLI 就走 CLI（凭据由我们注入，不看 CLI 自己的官方登录）；没装则走内置执行器，
+3. `ai.builtin_default` 默认 false。扩大默认覆盖须按实际接入协议验收真模型改图、外部脚本转换和环境修复的完整应用流程，并检查确认、取消及卡住后的终止；FigureBench 单次跑分不足以决定默认切换。
+   定向试用可在独立配置中设为 true，保留 CLI 连接与撤回入口；不把一个协议的通过外推到其他协议。运维开关 `TAVOTTO_AI_BUILTIN=0|1` 强制；
+4. 账号登录（OAuth 访问令牌，如 MiniMax）类也遵循 `builtin_default` 与强制开关；默认 false 且 CLI 装了、启用时走 CLI（凭据由我们注入，不看 CLI 自己的官方登录）；没有可用 CLI 或偏好内置时走内置执行器，
    anthropic wire 只发 `Authorization: Bearer`（`--auth bearer`，不发 `x-api-key`），令牌在 spawn 之前由 `ai_oauth.ensure_fresh` 刷新、只进子进程环境变量。
-   内置循环不能用的记录（缺型号、非回环的明文 http 网关）退回可用的 CLI。
+   内置循环不能用的记录（如缺型号）退回可用的 CLI。
 5. 明文 http 只放本机回环与私网（2026-10-25 起放行局域网：实验室常有自建模型服务器）：`127.0.0.1` / `::1` / `localhost`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、
    `100.64.0.0/10`（CGNAT / Tailscale）、`fc00::/7`；链路本地（`169.254/16` 含云元数据、`fe80::/10`）、`0.0.0.0/8`、组播 / 保留段、公网 http 一律拒绝。主机名在判定时解析，
    **所有**解析结果都在放行段才放行（混了公网 / 解析失败都拒）。判据只在 `engine/netpolicy.py`，`agent_runner.wires.check_base_url`（内置执行器）与 `ai_catalog.url_refusal`
@@ -57,6 +58,8 @@ CLI 的写入面（任意 shell、网络、绝对路径写）也比「改一个�
    DNS 重绑定到不了别处。云厂商元数据地址（`169.254.169.254` / `169.254.170.2` / `fd00:ec2::254` / `100.100.100.200` / `168.63.129.16` / `192.0.0.192` 等，及 `metadata.google.internal` / `metadata.tencentyun.com` 等主机名）**先于放行段排除**（有的恰落在 `fc00::/7`、`100.64/10` 里）。connections 上的可选 `insecure_lan: true` 标出放行的非回环 http 网关，前端据此提示「这个地址不加密」。
 
 AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可用的 Key 连接。
+
+这里的 CLI 回退发生在派发前；任务中途失败不会自动换执行器重放。`openai-chat` 是 runner 层协议，当前应用连接只开放 `anthropic` 与 `openai-responses`；验收必须分别标注 runner 测试、应用连接测试和真实服务测试。当前证据及定向试用记录见 [协议验收报告](../implementation/agent-external-corpus-2026-10-25/PROTOCOL-ROLLOUT.md)。
 
 ### 六、仍然不做
 
