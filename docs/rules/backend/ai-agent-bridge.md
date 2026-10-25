@@ -424,7 +424,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
     没有 `write_file`、没有 shell / 网络 / MCP。`create_file` 的可选 `path` 与 `edit_file` 的可选 `path` 只能是 `--output`：指向原脚本 → `source_readonly`，
     其它路径 → `not_output`，越界 → `path_outside`；一律工具错误、磁盘字节不变。第一次 `create_file` 用 `O_CREAT|O_EXCL` 新建（此刻已存在含悬空链接 → `output_exists`，不覆盖），
     之后允许整份覆盖这个新文件（模型自我修正）；`edit_file` 必须在本次运行里已 `create_file`（否则 `not_created`），`old` 恰好出现一次。含密钥的内容 → `secret_in_content`（新建 / 覆盖 / edit 三处）。
-  - `--output` 起跑即校验：必须恰为 `<原名>_matplotlib.py`（原名 = `--target` 的 stem）、只有文件名（无目录、无反斜杠）、尚不存在（`lexists`）；不合格 → `done{ok:false, reason:"internal", detail:"bad_output"}`，**0 次模型请求**、磁盘不动。
+  - `--output` 起跑即校验：必须恰为 `<原名>_matplotlib.py`（原名 = `--target` 的 stem）、只有文件名（无目录、无反斜杠）、尚不存在（`lexists`）；不合格 → `done{ok:false, reason:"internal", detail:"bad_output"}`，**0 次模型请求**、磁盘不动。外层修正续跑只接受父进程传入的上次候选字节 SHA-256，拒绝链接、非普通文件、字节变化及超读限文件；`checks_used` 继承已用次数，子进程重启不重置校验预算。
   - `check`：同 figure_edit 的注入回调，语义是 ADR 0143 的 `run_validation`（用户同一路由下跑新脚本，必须捕获到 Matplotlib 图），回调可返回 `(ok, 报告)` 或 `CheckResult`（报告 + 有界图像）；转换入口经 IPC 调用应用同一校验，实时渲染 PNG 后才退役 worker。未注入回调则 `not_available`。
     新文件还没写出就 `check` → `not_created`（不调回调、不计数）。**回调最多被调 3 次**（ADR 0143「校验运行 ≤ 3」），第 4 次 `check_budget`。
   - 预算默认值由工具集给（`default_limits`；命令行不给 `--max-turns` 等就用它）：convert 为 20 轮 / 900 s / 400k token / 单轮输出 32768（含模型思考；20 轮 ≈ 读 1–3 + 写 1 + 至多 3 轮 check/修 + 收尾，留余量）；figure_edit 不变。
@@ -556,6 +556,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   卡：`{kind:"approve", tool:"run_command", danger:true, summary:"…会在沙盒外运行，可以修改你电脑上的文件", command, reason, cwd, scripts:<备份个数>, sandbox:"outside", details}`；前端红色强调（`danger-tinted` 主按钮「在沙盒外运行」、次按钮「不了」，完整命令在可见区，理由与备份说明在折叠详情里以守「一句话读懂」）。只对这一条命令有效，不记成长期授权（再来一次照样问）。
   结果多 `scripts_backed_up: N` / `scripts_restored: N (…)` / `scripts_not_backed_up` / `scripts_restore_failed`（后者 `is_error`，`code=scripts_restore_failed`，让模型告诉用户）。**不自动升级**：第①档任何失败都不会让第②档无卡执行（`test_a_refused_write_in_the_sandbox_suggests_tier2_but_never_runs_it`）。
 - **用户看到的 = 实际执行的**：命令（`argv` 拼成一行）超过 `CARD_COMMAND_CHARS`（8000）字符，或 `reason` 超 300 字，审批**之前**就拒（`command_too_long_to_show` / `bad_arguments`），两档都适用；卡上的 `command` 不截断（脱敏只会让它更短）。
+  参数开头的 `~/`（只读工具脱敏后的主目录路径）在政策检查、审批和执行之前统一展开；不启用 shell，也不展开变量、通配符或命令替换。
 - **进程树**：命令的直接进程退出（或超时被叫停）后，`_reap_tree` 结束并**确认**整棵受管进程树退出，才收输出、才核对 / 放锁。POSIX：命令在自己的新会话 / 进程组里，`killpg(SIGKILL)` 到 `ProcessLookupError`（组里一个不剩）才算干净；Windows：Job Object（`KILL_ON_JOB_CLOSE`）终止并等活动进程归零，起不来退回 `taskkill /T`（Windows 路径未在 Windows 上实测）。确认不了时结果带 `processes_left`。这样后台孙进程既绕不过时限，也不会在第②档核对、放锁之后才去改脚本。盲区：自己 `setsid` 逃出进程组的进程 POSIX 上追不到（Linux 沙盒内有 `--unshare-pid`，随 init 退出全被收掉）。
 - **快照与可写清单同源**：快照覆盖 `writable_envs` 里**每一个**命令获准写入的环境（`change_python` 新建、只靠 `env_prefixes` 进来的都算；没登记 id 的现场登记 `cmd_env_<hash>`），不只会话创建时的前缀。
 - **Windows / 无沙盒**：#1358 之前没有沙盒，第①档直接 `sandbox_unavailable`，只有第②档（备份 + 单独点头照旧）。
@@ -639,7 +640,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 
 ### 2026-10-25 补充参考与会话期限
 
-转换缺少输入时，用户在原因卡补充项目相对路径，显式重试提交 `reference_files`；全流程见 ADR 0143。
+转换缺少输入时，用户在原因卡补充项目相对路径，显式重试提交 `reference_files`；原因中的多行代码完整保留在卡片正文，超限不截断命令；全流程见 ADR 0143。
 `convertcontext.selected_paths` 是读策略的共同入口，不能绕过敏感路径、链接、脱敏和摘要校验。
 修复会话的总期限从创建开始计时（包括等卡片确认），与单工具期限分开。总期限到达记 `budget` 并传播取消；
 工具收尾期间保留占用，不把已有取消/期限结局重新标成 stalled。看护 `test_fixstall.py`、`test_fixmcp.py`。

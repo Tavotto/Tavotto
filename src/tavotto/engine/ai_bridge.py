@@ -1054,6 +1054,8 @@ def _cmd(
     target: str | None = None,
     task: str = "figure_edit",
     output: str | None = None,
+    resume_output_sha256: str = "",
+    checks_used: int = 0,
 ) -> tuple[list[str], dict[str, str]]:
     """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
     绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。
@@ -1075,6 +1077,8 @@ def _cmd(
                 target=target,
                 task=task,
                 output=output,
+                resume_output_sha256=resume_output_sha256,
+                checks_used=checks_used,
                 model=model,
                 endpoint_args=list(extra_args),
                 endpoint_env=dict(extra_env),
@@ -1544,14 +1548,21 @@ def run(
     emit = on_event or (lambda *_: None)
 
     log_state = {"log": stderr_log}
+    convert_checks = 0
 
     def _answer_check() -> None:
         """内置执行器的 `check`：跑 ADR 0143 的校验流水（`run_validation`，候选工作区里），把结论写回它的 stdin。"""
         from . import ai_convert
+        from .agent_runner.tools import CONVERT_MAX_CHECKS
 
+        nonlocal convert_checks
         evidence = []
         try:
-            ok, report = ai_convert.agent_check(cand, evidence=evidence)
+            if convert_checks >= CONVERT_MAX_CHECKS:
+                ok, report = False, "check_budget"
+            else:
+                convert_checks += 1
+                ok, report = ai_convert.agent_check(cand, evidence=evidence)
         except Exception:  # noqa: BLE001 - 校验流水自身出错：告诉 Agent 不通过，不拖垮会话
             LOG.exception("内置执行器的 check 回调出错（session %s）", sid)
             ok, report = False, "check_failed"
@@ -1623,8 +1634,17 @@ def run(
             {"session": sid, "task_type": sess["task"]["task_type"], "phase": "correcting"},
         )
         again = prompt + "\n\n" + note
+        correction_kw = dict(cmd_kw)
+        if builtin_convert:
+            correction_kw.update(
+                resume_output_sha256=(
+                    hashlib.sha256(cand.new_bytes).hexdigest() if cand.new_bytes is not None else ""
+                ),
+                checks_used=convert_checks,
+            )
+            again += "\n继续修正现有候选文件，先读取它；此前已用的 check 次数不会重置。"
         cmd2, extra2 = _cmd(
-            agent, again, agent_cwd, model=model, effort=effort, endpoint=endpoint, **cmd_kw
+            agent, again, agent_cwd, model=model, effort=effort, endpoint=endpoint, **correction_kw
         )
         LOG.info(
             "AI 任务修正命令: %s", " ".join("<prompt>" if part == again else part for part in cmd2)

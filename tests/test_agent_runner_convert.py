@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -522,6 +523,71 @@ def run_cli(cand, *extra, stdin="make it editable"):
 
 
 class TestCli:
+    def test_correction_reopens_only_the_parent_authorized_candidate(self, cand, tmp_path):
+        old = NEW.replace("plt.plot([1, 2])", "plt.plot([1, 3])")
+        (cand / "fig_matplotlib.py").write_bytes(old.encode())
+        script = tmp_path / "correction.json"
+        script.write_text(
+            json.dumps(
+                {
+                    "turns": [
+                        step(call("read_file", path="fig_matplotlib.py")),
+                        step(
+                            call("edit_file", path="fig_matplotlib.py", old="[1, 3]", new="[1, 2]")
+                        ),
+                        step(text="corrected"),
+                    ]
+                }
+            )
+        )
+        args = (
+            "--task",
+            "convert_to_editable",
+            "--output",
+            "fig_matplotlib.py",
+            "--demo-script",
+            str(script),
+        )
+        refused = run_cli(cand, *args)
+        assert refused.returncode == 1
+        assert (cand / "fig_matplotlib.py").read_bytes() == old.encode()
+        resumed = run_cli(
+            cand, *args, "--resume-output-sha256", hashlib.sha256(old.encode()).hexdigest()
+        )
+        assert resumed.returncode == 0, resumed.stderr
+        assert (cand / "fig_matplotlib.py").read_bytes() == NEW.encode()
+        assert (cand / "fig.py").read_bytes() == ORIG.encode()
+        stale = run_cli(
+            cand, *args, "--resume-output-sha256", hashlib.sha256(old.encode()).hexdigest()
+        )
+        assert stale.returncode == 1
+        assert (cand / "fig_matplotlib.py").read_bytes() == NEW.encode()
+
+    def test_correction_does_not_reset_tool_check_budget(self, cand):
+        (cand / "fig_matplotlib.py").write_bytes(NEW.encode())
+        checks = []
+        session = tools.ConvertSession(
+            envelope(
+                cand,
+                resume_output_sha256=hashlib.sha256(NEW.encode()).hexdigest(),
+                checks_used=tools.CONVERT_MAX_CHECKS,
+                check=lambda: checks.append(True) or (True, "ok"),
+            )
+        )
+        assert session.check({}).is_error
+        assert not checks
+
+    def test_correction_refuses_a_symlink_even_with_matching_content(self, cand):
+        (cand / "data.csv").write_bytes(NEW.encode())
+        try:
+            (cand / "fig_matplotlib.py").symlink_to(cand / "data.csv")
+        except OSError:
+            pytest.skip("symlinks unavailable")
+        with pytest.raises(tools.BadEnvelope):
+            tools.ConvertSession(
+                envelope(cand, resume_output_sha256=hashlib.sha256(NEW.encode()).hexdigest())
+            )
+
     def test_task_flag_end_to_end_without_check_injector(self, cand, tmp_path):
         script = tmp_path / "demo.json"
         script.write_text(

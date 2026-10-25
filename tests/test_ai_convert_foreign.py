@@ -319,6 +319,25 @@ def test_marker_is_read_from_assistant_messages_only_at_line_start():
     assert ai_convert.needs_input_reason([msg("TAVOTTO_NEEDS_INPUT:")]) == ""
 
 
+def test_needs_input_card_preserves_following_multiline_commands(env):
+    reason = (
+        "Missing source data and factor levels.\n\n```r\n"
+        "library(lattice)\nwrite.csv(singer, 'singer.csv', row.names=FALSE)\n"
+        "dput(levels(singer$voice.part))\n```\nAttach both files."
+    )
+    event = {
+        "type": "item.completed",
+        "item": {"type": "agent_message", "text": "TAVOTTO_NEEDS_INPUT: " + reason},
+    }
+    env["code"] = f"import json; print(json.dumps({event!r}))"
+    sid = _run(env)
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "needs_input"
+    assert sess["task"]["unmet"][0]["detail"] == reason
+    assert not (env["figs"] / "fig_matplotlib.py").exists()
+    assert "write.csv" not in ai_convert.clean_needs_input_reason(reason + "x" * 2000)
+
+
 # --------------------------------------------------------------------------- 校验前的依赖步骤
 def test_installed_packages_are_recorded_and_the_run_proceeds(env):
     calls = []

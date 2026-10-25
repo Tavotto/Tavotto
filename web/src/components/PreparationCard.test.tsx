@@ -1532,6 +1532,24 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(useConvertStore.getState().entries['fig.R']).toBeUndefined()
     })
 
+    it('补充输入的多行命令完整显示在正文，保持换行且不自动重试', async () => {
+      const detail = '请导出实际数据和分类顺序：\n```r\nlibrary(lattice)\nwrite.csv(singer, "singer.csv", row.names = FALSE)\ndput(levels(singer$voice.part))\n```'
+      vi.mocked(fetchAiSession).mockResolvedValue({
+        status: 'done', final: true,
+        task: { outcome: 'needs_input', unmet: [{ constraint_id: 'intent', reason_code: 'needs_input', detail }] },
+      } as never)
+      await mountBoth()
+      await offer('fig.R', 'r')
+      await act(async () => startBtn()!.click())
+      await settle()
+      const body = foreignCard()?.querySelector('[data-convert-input-reason]')
+      expect(body?.textContent).toBe(detail)
+      expect(body?.classList.contains('whitespace-pre-wrap')).toBe(true)
+      expect(line()).not.toContain('write.csv')
+      expect(foreignCard()?.querySelector('[data-convert-retry]')).toBeNull()
+      expect(foreignCard()?.querySelector('[data-convert-dismiss]')?.textContent).toBe('知道了')
+    })
+
     it.each([
       ['missing_dependency', '新版本要用的 Python 包没装上（自动安装已关闭，或这些包没法自动装），请手动装好后重试'],
       ['dependency_install_failed', '新版本要用的 Python 包没装成功，请稍后重试'],

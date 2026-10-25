@@ -761,6 +761,9 @@ def run_command(ctx: FixContext, args: dict) -> ToolResult:
     argv = _command_argv(args)
     if isinstance(argv, ToolResult):
         return argv
+    # Read tools display home-relative paths. Resolve the same spelling before
+    # policy checks, approval and spawn; shell=False does not expand it for us.
+    argv = [_expand(ctx, token) for token in argv]
     outside = args.get("outside_sandbox")
     if outside is not None and not isinstance(outside, bool):
         return err("bad_arguments", "`outside_sandbox` must be true or false.")
@@ -981,7 +984,8 @@ COMMAND_TOOLS: tuple[FixTool, ...] = (
         "up the project's scripts and puts back any the command changed, as a best-effort safeguard. Ask for it only "
         "when the command must write outside the environment, and say why. `cwd: project` is only for the second "
         "mode. Give `argv` (a list) or `command` (split into words; no shell: no pipes, redirects, `&&`, "
-        "substitutions). Never runs sudo, shells, disk tools, desktop/launchd/service tools, piping into a shell or "
+        "substitutions). Leading ~/ in a whole argument resolves to the user's home before approval and execution; "
+        "other shell expansion is not performed. Never runs sudo, shells, disk tools, desktop/launchd/service tools, piping into a shell or "
         "recursive deletes of the root or home folder; secret-looking environment variables are removed; output is "
         "cut and masked; there is a time limit. A command longer than 8000 characters is refused with "
         "`command_too_long_to_show` (the user always sees exactly what runs). Takes a snapshot of the settings and the environment's packages.",

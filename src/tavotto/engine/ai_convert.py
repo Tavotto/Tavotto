@@ -906,7 +906,16 @@ def convert_fix_text(key: tuple[str, str | None], observed: dict) -> str | None:
 
 # --------------------------------------------------------------------------- 执行器（AI 桥的那一次 CLI 运行）
 def clean_needs_input_reason(text: str) -> str:
-    """Agent 给的“换不了”原因 → 一行干净的短句：去控制字符 / 换行折叠 / 去首尾标点装饰，截到 `NEEDS_INPUT_REASON_MAX`。"""
+    """清洗补充输入原因；有代码围栏时保留换行，超长命令不截断后交给用户。"""
+    if re.search(r"(?m)^\s*(?:```|~~~)", text):
+        # Newlines are executable syntax in R/Python/MATLAB examples. Never
+        # flatten a fenced command into a different command or truncate it.
+        clean = re.sub(
+            r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", text.replace("\r\n", "\n").replace("\r", "\n")
+        )
+        if len(clean.strip()) <= NEEDS_INPUT_REASON_MAX:
+            return clean.strip()
+        return "Additional input is required. The agent's explanation exceeds the display limit; request a shorter explanation with complete commands."
     one = re.sub(r"[\x00-\x1f\x7f]+", " ", str(text or ""))
     one = re.sub(r"\s+", " ", one).strip()
     # Strip only a balanced wrapper; stripping individual backticks corrupts a
@@ -932,8 +941,9 @@ def needs_input_reason(transcript) -> str | None:
     for item in transcript or []:
         if not isinstance(item, dict) or item.get("kind") != "message":
             continue
-        for m in _NEEDS_INPUT_RE.finditer(str(item.get("text") or "")):
-            found = clean_needs_input_reason(m.group(1))
+        text = str(item.get("text") or "")
+        for m in _NEEDS_INPUT_RE.finditer(text):
+            found = clean_needs_input_reason(text[m.start(1) :])
     return found
 
 

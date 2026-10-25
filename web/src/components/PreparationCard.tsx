@@ -971,12 +971,18 @@ function convertFlow(
     case 'failed': {
       // Missing evidence needs an explicit reference selection before another attempt.
       const needsInput = c.reason === 'needs_input' || c.reason === 'convert_reference_invalid'
+      const multiline = needsInput && c.detail?.includes('\n')
       return {
         title:
           c.error ??
-          (needsInput && c.detail
+          (needsInput && c.detail && !multiline
             ? pt('convert.fail.needs_input_reason', { reason: c.detail })
             : pt(`convert.fail.${c.reason}`, { defaultValue: pt('convert.fail.unknown') })),
+        slot: multiline ? (
+          <p data-convert-input-reason className="whitespace-pre-wrap break-words text-sm text-ink-2">
+            {c.detail}
+          </p>
+        ) : undefined,
         primary: needsInput ? (
           <Button
             variant="primary"

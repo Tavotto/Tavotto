@@ -181,6 +181,8 @@ class RunContext:
     #: 内置执行器的任务（`figure_edit` | `convert_to_editable`）与转换任务要新建的文件名
     task: str = "figure_edit"
     output: str | None = None
+    resume_output_sha256: str = ""
+    checks_used: int = 0
 
 
 @dataclass(frozen=True)
@@ -1260,6 +1262,10 @@ class BuiltinAgent(AgentDefinition):
         if ctx.task == "convert_to_editable":
             # 转换任务：`check` 经 stdin/stdout 回调父进程的校验流水（提示词是 stdin 的第一行 JSON）
             cmd += ["--task", ctx.task, "--output", ctx.output or "", "--check-ipc"]
+            if ctx.resume_output_sha256:
+                cmd += ["--resume-output-sha256", ctx.resume_output_sha256]
+            if ctx.checks_used:
+                cmd += ["--checks-used", str(ctx.checks_used)]
         return SpawnSpec(cmd, dict(ctx.endpoint_env))
 
     #: `done.reason` → 给对话里看的一句话（不带内容、不带密钥）

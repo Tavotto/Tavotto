@@ -88,6 +88,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--request-timeout", type=float, default=None)
     p.add_argument("--prompt-file", default=None, help="提示词文件；缺省读 stdin")
     p.add_argument("--task", default="figure_edit", choices=sorted(TOOLSETS))
+    p.add_argument("--resume-output-sha256", default="")
+    p.add_argument("--checks-used", type=int, default=0)
     p.add_argument("--demo-script", default=None, help="--wire demo 的剧本 JSON")
     p.add_argument(
         "--auth",
@@ -222,6 +224,8 @@ def main(argv: list[str] | None = None) -> int:
         limits=limits,
         redactor=redactor,
         output=args.output,
+        resume_output_sha256=args.resume_output_sha256,
+        checks_used=args.checks_used,
         check=_ipc_check(emit) if args.check_ipc else None,
     )
 

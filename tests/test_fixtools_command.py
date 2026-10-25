@@ -155,6 +155,35 @@ def test_tier1_without_consent_never_starts_the_process(box):
         assert "command_tier" not in line
 
 
+@pytest.mark.parametrize("outside", [False, True])
+def test_home_relative_resource_path_survives_approval_and_real_execution(box, outside):
+    source = box.home / "数据 空格" / "font.txt"
+    put(source, b"resource bytes")
+    marker = box.proj / "copied.txt"
+    # Fake OS sandbox only in this test; the real process must read the exact
+    # home-relative resource. No shell or blanket $variable expansion.
+    ctx = change_ctx(box)
+    code = "import pathlib,sys; pathlib.Path(sys.argv[2]).write_bytes(pathlib.Path(sys.argv[1]).read_bytes())"
+    argv = [*_py(code), "~/数据 空格/font.txt", str(marker)]
+    args = {
+        "argv": argv,
+        **({"outside_sandbox": True, "reason": "Copy this project resource"} if outside else {}),
+    }
+    result = call(ctx, "run_command", args)
+    assert not result.is_error and "exit code: 0" in result.content
+    assert marker.read_bytes() == b"resource bytes"
+    assert ctx.asker.cards[-1]["command"] == command.scrub(
+        command._shown([*_py(code), str(source), str(marker)])
+    )
+
+
+def test_home_expansion_still_refuses_secrets_before_approval(box):
+    ctx = change_ctx(box)
+    result = call(ctx, "run_command", {"argv": [*_py("pass"), "~/.ssh/id_rsa"]})
+    assert result.code == "hard_blocked"
+    assert not ctx.asker.cards
+
+
 def test_output_is_masked_bounded_and_the_clock_is_enforced(box, monkeypatch):
     ctx = change_ctx(box)
     r = call(ctx, "run_command", {"argv": _py(f"print({CANARY!r})")})

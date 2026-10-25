@@ -149,6 +149,69 @@ def test_conversion_runtime_hint_does_not_start_or_select_a_python(project, monk
     assert runner.runtime_hint() == {"status": "not_selected", "verified": False}
 
 
+def test_builtin_correction_continues_existing_bytes_without_resetting_checks(
+    project, monkeypatch, tmp_path
+):
+    """Real child CLI + real safe worker; only the model responses are scripted."""
+    from tavotto.engine import ai_agents
+
+    m, client, figs, state = project
+    broken = GOOD.replace(
+        "ax.plot([0, 1, 2], [0, 1, 4])", "raise RuntimeError('fixture correction needed')"
+    )
+    plans = []
+    for index, code in enumerate((broken, GOOD)):
+        turns = [{"tool_calls": [{"name": "create_file", "args": {"content": code}}]}]
+        turns += [{"tool_calls": [{"name": "check", "args": {}}]}] * (3 if index == 0 else 1)
+        turns += [
+            {
+                "text": "candidate",
+                **({"expect": [{"name": "check", "is_error": True}]} if index else {}),
+            }
+        ]
+        path = tmp_path / f"model-{index}.json"
+        path.write_text(json.dumps({"turns": turns}))
+        plans.append(path)
+    calls = []
+
+    def cmd(agent, prompt, cwd, **kw):
+        calls.append(kw)
+        spec = ai_agents.BuiltinAgent().build_command(
+            ai_agents.RunContext(
+                argv=[],
+                prompt=prompt,
+                cwd=cwd,
+                target=kw["target"],
+                task=kw["task"],
+                output=kw["output"],
+                resume_output_sha256=kw.get("resume_output_sha256", ""),
+                checks_used=kw.get("checks_used", 0),
+                endpoint_args=["--wire", "demo", "--demo-script", str(plans[len(calls) - 1])],
+            )
+        )
+        return list(spec.argv), {"PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+
+    monkeypatch.setattr(ai_bridge, "_cmd", cmd)
+    monkeypatch.setattr(ai_bridge, "_spawn_env", lambda _cmd, extra: {**os.environ, **extra})
+    monkeypatch.setattr(ai_bridge.ai_providers, "builtin_conn", lambda *_: {"id": "test"})
+    with m.app.test_request_context("/"):
+        runner = m._convert_runner(m.current_ctx(), "fig.py")
+    sid = ai_bridge.run(
+        "builtin",
+        "fig.py",
+        "convert",
+        str(figs),
+        task_hooks={"runner": runner},
+        convert={"library": "pillow", "original_rel": "out.png"},
+    )
+    sess = _wait_final(client, sid)
+    assert sess["task"]["outcome"] == "completed", sess
+    assert len(calls) == 2 and calls[1]["checks_used"] == 3
+    assert len(calls[1]["resume_output_sha256"]) == 64
+    assert (figs / "fig.py").read_bytes() == ORIGINAL.encode()
+    assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200
+
+
 def test_agent_check_reads_current_live_pngs_before_worker_retirement(project):
     import base64
 
