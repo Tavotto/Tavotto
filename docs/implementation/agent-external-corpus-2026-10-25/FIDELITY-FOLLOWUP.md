@@ -2,7 +2,7 @@
 
 Status: corrective implementation and external-corpus retesting. **Full-fidelity acceptance and non-inferiority are not established; default routing remains unchanged.**
 
-Latest follow-up: MATLAB camera/layout and font-pixel measurements, Windows/WebP context fixes, operational Codex repair comparisons and CI repairs are recorded in the final section. All older attempts remain historical evidence.
+Latest follow-up: the final section records MATLAB frame/tick/surface measurements, four complex-text groups, project-runtime context and default-mode signature fixes through `21152e1d6`. All older attempts remain historical evidence. The new outputs still fail full visual acceptance.
 
 ## Acceptance subjects
 
@@ -157,3 +157,67 @@ Three later Claude conversion processes were observed waiting on an inherited de
 - Remote CI is tied to its exact head. At this report's measurement checkpoint, `02bac2f89` had 29 successful checks, 38 still running, one skipped and no failures; this is **not** an all-green claim. The PR exposes the current live result, including later report-only commits.
 
 **Default routing stays unchanged.** The current result supports specific context/Windows/liveness repairs and measured improvement in these MATLAB/font cases. It does not certify every conversion, complete math glyph fidelity, arbitrary MATLAB cameras, all fonts, platform release packages or general superiority over Claude Code/Codex. Private product-feedback drafts still require user review and confirmation; no production feedback was submitted. The earlier unavailable Codex baseline is now operational and is no longer listed as an unresolved integration blocker.
+
+## Frame, ticks, surface coverage and complex shaping through `21152e1d6`
+
+The two supplied Airy pictures differed in actual tick direction/endpoints, grid and mesh coverage, and text appearance. Matching camera corners was insufficient. This follow-up retains **17 additional real-model attempts**, giving **106 conversion attempts**, **22 repair attempts** and **22 fresh-application conversion verifications** in the cumulative record. These are development attempts with retries, not independent samples. The external corpus remains 23 cases / 22 upstream files / 10 repositories; the additional complex-text fixture is one synthetic case with four script groups, derived from Pillow's public text APIs and test fonts.
+
+### Confirmed product corrections
+
+- `cef5b69ca`: the shared conversion guidance separates export pixels from figure screen dimensions and point rounding, projected tick endpoints from accepted `tick_params` keywords, and face/edge coverage from a vaguely similar surface. It requires original surface depth, face colors, actual font/shaping and antialiasing evidence. Whole Arabic/bidi/combining/ligature runs remain logical editable text; reversing or splitting Unicode is not an accepted substitute.
+- `db49c5912`: conversion now supplies the selected project's worker interpreter as an **unverified context hint**. Codex had probed its ambient Matplotlib 3.10.8 and incorrectly requested a newer environment even though the product selected 3.11.2. Reading the hint neither resolves/probes an environment nor adopts a candidate. Actual product checking remains authoritative. The controlled follow-up used the indicated runtime and completed.
+- `21152e1d6`: signed `redacted_thinking` can arrive even when the requested Anthropic thinking mode is `none`. Compaction had only removed stale signatures in adaptive mode, causing a real provider HTTP 400. Non-budget compaction now removes invalidated signed blocks in both modes while retaining tool calls/results; manual budget mode stays append-only. The real same-input rerun no longer returned HTTP 400 but exhausted its total token budget, so it is retained as a failure. Subsequent SVG-assisted runs completed through eight compactions without changing requested mode or effort.
+
+### Native evidence and fixture correction
+
+The native R2025a export is 1343 × 810 pixels. The light theme is set only in the measurement process. The native style has 0.5 pt lines, RGB (33,33,33) axes/mesh edges, grid alpha 0.15, outward ticks and Helvetica 11 pt. Its 24 tick segments are independently extracted from the supplied native SVG. SVG coordinates are mapped into the PNG viewport for **geometry**; the original PNG remains the raster/antialiasing oracle.
+
+The first collector incorrectly labeled an omitted `exportgraphics` background option as `figure`, conflicting with the actual white PNG/SVG. This was a fixture defect. The original images remain unchanged; old trials and both metadata hashes are retained. The final paired arm uses the corrected observed white background and a compact native facts file containing the same parula values, excluding unused color tables. It is a separate evidence arm, not a silent replacement of earlier failures. The gray-background diagnostic is not counted as a full-fidelity acceptance result.
+
+### Final matched inputs, different models
+
+Both final executors used product `21152e1d6`, the same source/context/reference bytes and Matplotlib 3.11.2 worker. The original/native SVG, style and palette were explicitly supplied through the real `reference_files` interface. Builtin used key-backed Sonnet 5.5; Codex used subscription GPT-6 Astra. This controls inputs and runtime, **not model/authentication/tool differences**, and cannot establish non-inferiority.
+
+| Final corrected Airy measurement | Builtin | Codex |
+| --- | --- | --- |
+| Actual canvas | 1343 × 810 | 1343 × 810 |
+| Native tick segments matched | 24/24 | 24/24 |
+| Maximum tick endpoint error | 9.0764 px | < 2e-12 px |
+| Tick width | 0.5 pt | 0.5 pt |
+| Whole-frame RGB MAE, 0–255 | 1.77154 | 3.46464 |
+| Colored surface interior RGB MAE | 2.09422 | 7.94485 |
+| Colored surface border RGB MAE | 6.39597 | 14.71563 |
+| Independent visual acceptance | **Fail**: tick direction, mesh/coverage and text differences remain | **Fail**: incorrect occlusion, yellow back-face slivers and missing/incorrect edges |
+
+The Codex tick result uses supplied native SVG geometry; it is not a claim that arbitrary MATLAB tick projection was solved. Its surface preserves nonzero Z but centroid painter sorting still draws incorrect faces/edges. The builtin band ordering is also not a general occlusion solution. Antialiasing is enabled in both outputs; that flag alone does not prove matching edge coverage. No tolerance was relaxed, no candidate was manually repaired before measurement, and neither result is certified by its low whole-frame average error.
+
+The exact captured images are included for review: [native](style-v3/native-airy.png), [builtin](style-v3/builtin-airy.png), [Codex](style-v3/codex-airy.png). They are unmodified outputs, not composites or resized acceptance inputs.
+
+Both final Airy candidates and both final complex-text candidates were then opened in fresh Tavotto application processes with their own project state, no model call and no forced worker. The test client explicitly confirmed the offered preparation/run cards. All four completed execution and figure capture with unchanged adopted scripts. This verifies the application loop, separately from the failed visual acceptance.
+
+### Complex glyph coverage
+
+The synthetic source renders four separate 960 × 180 outputs with Pillow 12.3.0 / RAQM 0.10.5: Arabic with combining marks (Aref Ruqaa), mixed Hebrew/Arabic/Latin and digits (DejaVu Sans), ffi/fl ligatures plus combining marks (DejaVu Sans), and Khmer (Khmer OS Battambang). Font blobs, source, native metrics and candidate hashes are recorded. Fonts are local fixtures and are not committed to Git.
+
+| Group | Whole-frame RGB MAE against native Pillow, both executors | Ink-union RGB MAE, both executors |
+| --- | --- | --- |
+| Arabic marks | 0.35649 | 23.27900 |
+| Mixed bidi | 0.84755 | 20.00192 |
+| Ligatures and combining marks | 1.64763 | 59.26676 |
+| Khmer | 2.09453 | 67.86210 |
+
+Every output contains one logical editable Text run. Builtin and Codex PNGs are pixel-identical to each other, but **not** to Pillow. The ink mask is the union of native/candidate pixels with any RGB channel below 250; the whole-frame measure has no mask. Thus whitespace cannot hide the remaining glyph-spacing and coverage differences. Matching strings and output dimensions is insufficient to certify the glyphs.
+
+`tests/test_complex_text_fidelity.py` separately compares Tavotto capture/edit/restore with **uninstrumented Matplotlib in a separate process using the same runtime/font**. It requires exact PNG pixels and positioned SVG outlines. Negative fixtures split Arabic, reverse mixed bidi, and disable ligatures; both oracles reject them. These six tests pass on 3.11.2. A runtime lacking the whole-run API explicitly skips instead of certifying support. This regression covers Tavotto's preservation of Matplotlib shaping, not native Pillow equality or every font. The Khmer real-model fixture is additional coverage, not a falsely claimed bundled-font CI test.
+
+### Controls, counterfactuals and remaining work
+
+- The original runtime hint makes the new regression exit 1; restoring the fix exits 0. The signed-prefix HTTP receiver fails both default-mode variants before the fix, while adaptive/manual controls already pass; all six variants pass afterwards. Signed block contents are never published.
+- Targeted gates: **122 passed** for shaped capture and conversion, **194 passed** for project-runtime/app conversion, and **234 passed** for agent/media/signature/conversion. They overlap and are not summed. Full-repository Ruff and formatting passed at each product commit.
+- The final assessment sandbox also denies the stored native oracle, other candidates and prior measurement directories. A negative shell probe reads its own approved work with exit 0 and is denied the native oracle/another candidate with exit 1. This strengthened assessment guard is only claimed for the new assessments, not retroactively for older harnesses.
+- Claude's isolated controls were blocked by automatic permission review: the cached candidate was classified as a sensitive file, and a compound probe could not be approved before execution. These outcomes are retained as permission/integration failures, not model-fidelity failures. No global setting or sandbox was weakened to obtain a pass.
+- Remaining acceptance blockers are MATLAB tick direction in builtin output, general surface occlusion/edge coverage, native-to-Matplotlib complex glyph metrics, R full math/layout fidelity, and repeated independent same-model comparisons. The previous Codex environment-context blocker is closed; the capability comparison is still bounded.
+
+Third-path review A–F: preserve source data, complete canvas, editable logical text and true 3D geometry; identify native geometry/raster coverage and ambient/project runtime as distinct facts; reject zero-Z sorting, bitmap substitution and whitespace-dominated averages; carry explicit native evidence and the selected worker context; falsify protocol/runtime and glyph oracles independently; retain failed visual results without switching default routing. The structural runtime/protocol fixes are verified. Universal fidelity is not.
+
+The final-head remote CI result is reported in the PR Checks/body after the report commit; this document does not turn an in-progress checkpoint into an all-green claim. No production private feedback was submitted.

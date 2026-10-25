@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "recorded_at_utc": "2026-10-25T11:30:44.430200+00:00",
-  "report_code_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+  "recorded_at_utc": "2026-10-25T12:53:33.335119+00:00",
+  "report_code_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
   "decision": {
     "default_routing_changed": false,
     "full_fidelity_accepted": false,
@@ -34,7 +34,8 @@
     "Codex used a different model and subscription. Source-bound repair runs now reach actual Tavotto MCP callbacks; earlier setup failures remain separate.",
     "Repeated samples share sources and development feedback; no population success-rate or speed/non-inferiority claim.",
     "Tests overlap and are tied to listed code versions; counts must not be summed.",
-    "Fresh app checks include explicit test-client confirmation of offered dependency/run impacts, not automatic production consent."
+    "Fresh app checks include explicit test-client confirmation of offered dependency/run impacts, not automatic production consent.",
+    "style-v3 adds 17 retained attempts on Airy and one synthetic four-script-group text fixture, not 17 independent external cases. Corrected native background metadata/compact facts define a separate paired arm; original PNG/SVG are unchanged."
   ],
   "frozen_batch": {
     "code_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
@@ -3473,6 +3474,685 @@
         "elapsed_ms": 86226,
         "usage_estimated": false
       }
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-style-cef5",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "cef5b69ca2e7b17abb113e6012ecc838bc85c9ed",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": null,
+      "wall_seconds": 228.884,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": null,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "usage": {
+        "input_tokens": 271146,
+        "output_tokens": 25694,
+        "cached_input_tokens": 18767
+      },
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_network",
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "cab93b6d01bdabe4cb41c992e9121287e1ce25b0bfa5fdf3c1a012fbbdc96791",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 8,
+        "compressions": 9,
+        "output_recoveries": 0,
+        "elapsed_ms": 226869,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "matlab_airy_surface-claude-style-cef5",
+      "case_id": "matlab_airy_surface",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "cef5b69ca2e7b17abb113e6012ecc838bc85c9ed",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": null,
+      "wall_seconds": 326.148,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": null,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "usage": {},
+      "task_outcome": "failed",
+      "failure_reason_codes": [
+        "target_missing",
+        "no_new_failure"
+      ],
+      "task_error_code": "precommit_not_verified",
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "d410c04c03d107c21488e8535530a333e0786a9467bf1de4e4928b9c301a7cef",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": null,
+        "compressions": null,
+        "output_recoveries": null,
+        "elapsed_ms": null,
+        "usage_estimated": null
+      },
+      "comparison_limit": "Automatic permission review rejected candidate writes or a compound probe in the isolated CLI control; not a model-fidelity result."
+    },
+    {
+      "run_id": "pillow_complex_text-builtin-cef5",
+      "case_id": "pillow_complex_text",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "cef5b69ca2e7b17abb113e6012ecc838bc85c9ed",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 35.324,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "usage": {
+        "input_tokens": 53768,
+        "output_tokens": 2781,
+        "cached_input_tokens": 13405
+      },
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage_reported": true,
+      "candidate_sha256": "e474c307c618539f7740c4d8d94618c174ffbedf0a5ed22716659488fc6a6a4f",
+      "result_record_sha256": "bbe02e88aab395f0c21735a246ca85f33fcb2a836de61235f7f610dd5ebc9d8a",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 6,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 32330,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "pillow_complex_text-claude-cef5",
+      "case_id": "pillow_complex_text",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "cef5b69ca2e7b17abb113e6012ecc838bc85c9ed",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": null,
+      "wall_seconds": 83.714,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": null,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "usage": {},
+      "task_outcome": "failed",
+      "failure_reason_codes": [
+        "target_missing",
+        "no_new_failure"
+      ],
+      "task_error_code": "precommit_not_verified",
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "4b99ab8a7a82e6cfe1680410df67553641413a771b27e66d75fa96f0bdd81788",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": null,
+        "compressions": null,
+        "output_recoveries": null,
+        "elapsed_ms": null,
+        "usage_estimated": null
+      },
+      "comparison_limit": "Automatic permission review rejected candidate writes or a compound probe in the isolated CLI control; not a model-fidelity result."
+    },
+    {
+      "run_id": "pillow_complex_text-codex-cef5",
+      "case_id": "pillow_complex_text",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": null,
+      "git_sha": "cef5b69ca2e7b17abb113e6012ecc838bc85c9ed",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": null,
+      "wall_seconds": 49.916,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": null,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "usage": {},
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "d09ce0c795277bd1a9d62275802f11e35ad89bad1752388a36268c89fc48a452",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": null,
+        "compressions": null,
+        "output_recoveries": null,
+        "elapsed_ms": null,
+        "usage_estimated": null
+      }
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-style-db49",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "db49c5912af006d0a95261e715769cdfd2101bce",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": null,
+      "wall_seconds": 264.915,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": null,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "usage": {
+        "input_tokens": 116985,
+        "output_tokens": 32059,
+        "cached_input_tokens": 10724
+      },
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_network",
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "a7fd52d9dc23c1292db1b990013007fb51d427fb84274ecd8add56d88771c75d",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 5,
+        "compressions": 7,
+        "output_recoveries": 0,
+        "elapsed_ms": 262680,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "pillow_complex_text-builtin-db49",
+      "case_id": "pillow_complex_text",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "db49c5912af006d0a95261e715769cdfd2101bce",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 45.01,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "usage": {
+        "input_tokens": 66614,
+        "output_tokens": 3031,
+        "cached_input_tokens": 16086
+      },
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage_reported": true,
+      "candidate_sha256": "6c9cad4dc7b56a373ec9f9f8c3166c212f1b575d4ec57311dd1524197b76d355",
+      "result_record_sha256": "36b2229d33d4ee0a2a0dc98fa7cfc9d688e1bb6975cc3c4a39d32f71e53b8f35",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 7,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 42100,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "pillow_complex_text-codex-db49",
+      "case_id": "pillow_complex_text",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": null,
+      "git_sha": "db49c5912af006d0a95261e715769cdfd2101bce",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 104.149,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "usage": {},
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage_reported": false,
+      "candidate_sha256": "a9c8c3699e16fd1d7fe8bb98dfb2c7adbdbcb169847b950b063e85ffa1095663",
+      "result_record_sha256": "32f6c5b4fa46cbeb10fe6293bbdc661f1e956d3f13631c46418ab68d6d9e294b",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": null,
+        "compressions": null,
+        "output_recoveries": null,
+        "elapsed_ms": null,
+        "usage_estimated": null
+      }
+    },
+    {
+      "run_id": "pillow_complex_text-claude-db49",
+      "case_id": "pillow_complex_text",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "db49c5912af006d0a95261e715769cdfd2101bce",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": null,
+      "wall_seconds": 65.449,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": null,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "usage": {},
+      "task_outcome": "failed",
+      "failure_reason_codes": [
+        "target_missing",
+        "no_new_failure"
+      ],
+      "task_error_code": "precommit_not_verified",
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "c99ddb4873fffa0f43c9356ab8c944185d6286c8b3215dc40a14345ed29e1c04",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": null,
+        "compressions": null,
+        "output_recoveries": null,
+        "elapsed_ms": null,
+        "usage_estimated": null
+      },
+      "comparison_limit": "Automatic permission review rejected candidate writes or a compound probe in the isolated CLI control; not a model-fidelity result."
+    },
+    {
+      "run_id": "matlab_airy_surface-codex-style-db49",
+      "case_id": "matlab_airy_surface",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": null,
+      "git_sha": "db49c5912af006d0a95261e715769cdfd2101bce",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": null,
+      "wall_seconds": 210.361,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": null,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "usage": {},
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "03827f661600e359821ca58f153ac958b6e445443edc2df0cda3712e776696c1",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": null,
+        "compressions": null,
+        "output_recoveries": null,
+        "elapsed_ms": null,
+        "usage_estimated": null
+      }
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-style-211",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": null,
+      "wall_seconds": 455.479,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": null,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "usage": {
+        "input_tokens": 369620,
+        "output_tokens": 53233,
+        "cached_input_tokens": 29491
+      },
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_budget",
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "77fdecaf06ff0f098656a24411bef474c4f14933a2e8fa2527a971d6dbb00a1f",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 12,
+        "compressions": 7,
+        "output_recoveries": 0,
+        "elapsed_ms": 453640,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-svg-211",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 244.936,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "usage": {
+        "input_tokens": 302510,
+        "output_tokens": 26376,
+        "cached_input_tokens": 24129
+      },
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage_reported": true,
+      "candidate_sha256": "173c9a3e9a87ee7d049eaae37f7afac96cc622c2f82442c83d8fb0ff983301f7",
+      "result_record_sha256": "68cd69339000869bb5c43a52c08ed3eecb623cf0520423a67a696b291ccb913f",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 10,
+        "compressions": 8,
+        "output_recoveries": 0,
+        "elapsed_ms": 240905,
+        "usage_estimated": false
+      },
+      "fixture_limit": "Background metadata conflicted with the unchanged native white PNG/SVG; retained diagnostic, not full-fidelity acceptance."
+    },
+    {
+      "run_id": "matlab_airy_surface-codex-svg-211",
+      "case_id": "matlab_airy_surface",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": null,
+      "git_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 174.396,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "usage": {},
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage_reported": false,
+      "candidate_sha256": "999baf403e794da45844572d9b3cc3e9558c83adcf720f88d6161b6bf83b8ddf",
+      "result_record_sha256": "15edf3cf421dad76441b748f05fbe830a157f92b3f4fbadd44c418a7b99e7b66",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": null,
+        "compressions": null,
+        "output_recoveries": null,
+        "elapsed_ms": null,
+        "usage_estimated": null
+      },
+      "fixture_limit": "Background metadata conflicted with the unchanged native white PNG/SVG; retained diagnostic, not full-fidelity acceptance."
+    },
+    {
+      "run_id": "pillow_complex_text-builtin-211",
+      "case_id": "pillow_complex_text",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 37.89,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "usage": {
+        "input_tokens": 55247,
+        "output_tokens": 2595,
+        "cached_input_tokens": 16086
+      },
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage_reported": true,
+      "candidate_sha256": "d188f361338fcf0085ef8a64525b905da048462d4dfdbdda83807f90dc44f936",
+      "result_record_sha256": "22eec0f8d4e1d1c8a1518c32e6071f7c79734080a1688f924d26ab7eeabec681",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 6,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 34004,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "pillow_complex_text-codex-211",
+      "case_id": "pillow_complex_text",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": null,
+      "git_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 100.492,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "usage": {},
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage_reported": false,
+      "candidate_sha256": "33fe8cd78a5b7878e38ada94f12e00f0c1b19623bd2e004a7dc69c94393ab782",
+      "result_record_sha256": "28abcbea7614a914cfe89cadf0e21b4c98023faebcd562a158cf497df2ac36d5",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": null,
+        "compressions": null,
+        "output_recoveries": null,
+        "elapsed_ms": null,
+        "usage_estimated": null
+      }
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-svg-corrected-211",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": null,
+      "git_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "7e1519127a1926165d9ec8e8bcf06a473f714a70234d6d9ffa5ce68bbbaf9691",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 290.047,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "usage": {
+        "input_tokens": 227422,
+        "output_tokens": 33248,
+        "cached_input_tokens": 24129
+      },
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage_reported": true,
+      "candidate_sha256": "ccfbad8c8c759eab37af4ee42d784a8c6d143683583ee5105b1e29cc89a9c476",
+      "result_record_sha256": "6b54e1886ec0a30dea65cc97192544e68fd8151811833d120b91bf1723c3cb31",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 9,
+        "compressions": 8,
+        "output_recoveries": 0,
+        "elapsed_ms": 286676,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "matlab_airy_surface-codex-svg-corrected-211",
+      "case_id": "matlab_airy_surface",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": null,
+      "git_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "7e1519127a1926165d9ec8e8bcf06a473f714a70234d6d9ffa5ce68bbbaf9691",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 199.311,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "usage": {},
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage_reported": false,
+      "candidate_sha256": "577aa360da36667d8d2a282f47d1a65f671f51c9e07a80264d24c63773f80ef1",
+      "result_record_sha256": "50df1cd12ea25a4e0529c0d6dbd5d34e7236bd473c37115c1c40a043d451edac",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": null,
+        "compressions": null,
+        "output_recoveries": null,
+        "elapsed_ms": null,
+        "usage_estimated": null
+      }
     }
   ],
   "repair_attempts": [
@@ -6484,6 +7164,118 @@
         202
       ],
       "result_record_sha256": "a4599e7f0a2c9017b5d49eef7ddc9ad252e41f25a43981263711f07d7328a22b"
+    },
+    {
+      "producer_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "verification_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "model_used": false,
+      "script_sha256": "d188f361338fcf0085ef8a64525b905da048462d4dfdbdda83807f90dc44f936",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "worker_source": "current_process",
+      "run_id": "pillow_complex_text-builtin-211",
+      "verification_run": "fresh-style",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "3988a5e2433a8eab4047da0bb556a42d4cfba4cb7f7a36e0b70d22ab998ee5ea"
+    },
+    {
+      "producer_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "verification_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "model_used": false,
+      "script_sha256": "33fe8cd78a5b7878e38ada94f12e00f0c1b19623bd2e004a7dc69c94393ab782",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "worker_source": "current_process",
+      "run_id": "pillow_complex_text-codex-211",
+      "verification_run": "fresh-style",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "70c4335b2c99d8d5182d83069390c51c1a6f9d3db3549eccc592bcb6436bfe2f"
+    },
+    {
+      "producer_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "verification_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "model_used": false,
+      "script_sha256": "ccfbad8c8c759eab37af4ee42d784a8c6d143683583ee5105b1e29cc89a9c476",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "worker_source": "managed_project_env",
+      "run_id": "matlab_airy_surface-builtin-svg-corrected-211",
+      "verification_run": "fresh-style",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "625b9ffde2cd58ce1ef670250b0566d507f99efd5ce00bf132b28ad35ae0bb03"
+    },
+    {
+      "producer_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "verification_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+      "model_used": false,
+      "script_sha256": "577aa360da36667d8d2a282f47d1a65f671f51c9e07a80264d24c63773f80ef1",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "worker_source": "managed_project_env",
+      "run_id": "matlab_airy_surface-codex-svg-corrected-211",
+      "verification_run": "fresh-style",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "9a2b582f86144b0e77bd6b0f51581ef58bfd4ce23c72192afb50e2ef9bda1f33"
     }
   ],
   "native_oracle_measurements": {
@@ -6816,6 +7608,52 @@
       "missing_native_images": [],
       "all_output_dimensions_match": true,
       "worst_visible_rgb_mae_0_255": 4.657240740740741,
+      "full_fidelity": "not_established"
+    },
+    "matlab_airy_surface-builtin-svg-211": {
+      "outputs_measured": 1,
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 10.570534611719356,
+      "tick_endpoint_max_px": 9.076436989407105,
+      "surface_border_rgb_mae_0_255": 9.357277221476664,
+      "full_fidelity": "not_established"
+    },
+    "matlab_airy_surface-codex-svg-211": {
+      "outputs_measured": 1,
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 3.6224419256685327,
+      "tick_endpoint_max_px": 2.5421149729252077e-13,
+      "surface_border_rgb_mae_0_255": 16.661373203491507,
+      "full_fidelity": "not_established"
+    },
+    "matlab_airy_surface-builtin-svg-corrected-211": {
+      "outputs_measured": 1,
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 1.7715442670270172,
+      "tick_endpoint_max_px": 9.076390377337304,
+      "surface_border_rgb_mae_0_255": 6.395971691728892,
+      "full_fidelity": "not_established"
+    },
+    "matlab_airy_surface-codex-svg-corrected-211": {
+      "outputs_measured": 1,
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 3.4646439854266444,
+      "tick_endpoint_max_px": 1.5294999738073e-12,
+      "surface_border_rgb_mae_0_255": 14.715632634802656,
+      "full_fidelity": "not_established"
+    },
+    "pillow_complex_text-builtin-211": {
+      "outputs_measured": 4,
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 2.094525462962963,
+      "all_whole_editable_texts": true,
+      "full_fidelity": "not_established"
+    },
+    "pillow_complex_text-codex-211": {
+      "outputs_measured": 4,
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 2.094525462962963,
+      "all_whole_editable_texts": true,
       "full_fidelity": "not_established"
     }
   },
@@ -7349,6 +8187,24 @@
       "passed": 350,
       "skipped": 0,
       "log_sha256": "dcd59bcc39aeb29eb0a8c54c26c429af7e81fde72231aa916383f5bc3b5239dc"
+    },
+    {
+      "scope": "whole-run capture/edit/restore PNG and SVG fidelity, foreign conversion and executor",
+      "code_sha": "cef5b69ca",
+      "passed": 122,
+      "skipped": 0
+    },
+    {
+      "scope": "project-runtime prompt and no eager resolution, app/foreign conversion/executor",
+      "code_sha": "db49c5912",
+      "passed": 194,
+      "skipped": 0
+    },
+    {
+      "scope": "signed-prefix HTTP receiver in none/adaptive/budget modes, media/agent/conversion",
+      "code_sha": "21152e1d6",
+      "passed": 234,
+      "skipped": 0
     }
   ],
   "counterfactuals": {
@@ -7392,14 +8248,643 @@
       "fixed_exit_code": 0,
       "old_log_sha256": "69902b43f572b65f42fff2b3f7476092622a7151930fc3d6e1e2a9bd23c5d5d4",
       "fixed_log_sha256": "6b9ffd6b9a3baa1f0f65b43fd8e9939ac47909d796917593222ef0ccd5a23556"
+    },
+    "conversion_runtime_hint": {
+      "subject": "The prompt reports the selected project worker rather than the CLI ambient Python, without resolve/probe/adoption",
+      "before_code": "cef5b69ca2e7b17abb113e6012ecc838bc85c9ed",
+      "old_exit_code": 1,
+      "fixed_exit_code": 0,
+      "live_result": "Codex complex-text false needs_input at ambient Matplotlib 3.10.8 closed with the selected 3.11.2 worker hint."
+    },
+    "default_signed_history": {
+      "subject": "HTTP receiver rejects signatures bound to the uncompressed prefix, including signed redacted blocks returned under requested thinking none",
+      "before_code": "db49c5912af006d0a95261e715769cdfd2101bce",
+      "old_failed_variants": 2,
+      "old_passed_variants": 4,
+      "fixed_passed_variants": 6,
+      "old_exit_code": 1,
+      "fixed_exit_code": 0,
+      "live_result": "Original-input 211 exhausted its token budget without signature HTTP 400; subsequent SVG 211 runs completed through eight compactions. Requested thinking mode remained none."
+    },
+    "whole_shaped_runs": {
+      "subject": "Native PNG pixels and positioned SVG glyph outlines separately reject split Arabic, reversed mixed bidi, and disabled ffi/fl ligatures",
+      "negative_mutations": 3,
+      "formats": [
+        "png",
+        "svg"
+      ],
+      "full_cross_renderer_acceptance": false
     }
   },
   "remaining_gaps": [
-    "The final builtin Airy and top-view contour projections are close to native geometry, but Claude Airy is far outside the frame and its contour is displaced. Both executors still export 1342x808 versus native 1343x810; ticks, antialiasing and other cameras remain unaccepted.",
-    "With supplied native font metrics the builtin Latin anchor raw PNG error is at most 1/255; source/reference-only candidates still show the older error. This is not a general Unicode/shaping proof, zero-error identity, or a pass for all photographic operations. Text remains editable glyph objects with finer edit granularity.",
+    "Final corrected Airy SVG-assisted builtin/Codex outputs are both 1343x810, but builtin tick endpoints still differ by up to 9.0764 px. Codex native-SVG tick endpoints agree within 2e-12 px, while its surface has incorrect occlusion and missing/incorrect mesh edges. Both retain antialiasing differences; full surface fidelity and other cameras remain unaccepted.",
+    "New Arabic/bidi/ligature/combining/Khmer matched runs preserve whole editable logical runs and match each other, but all four still differ from native Pillow (whole-frame RGB MAE 0.3565..2.0945/255). Whole-run PNG/SVG regression passes versus uninstrumented Matplotlib, not versus Pillow. Earlier near-exact Latin anchor result is not extended to complex shaping.",
     "R math pages now execute and reviewed bounds/fractions are corrected, but full glyph geometry is not independently certified.",
     "R interval final paired runs match native numeric results and factor order; page layout/font geometry remains unaccepted.",
-    "Broad same-model repeated validation remains absent; Codex repair is operational but uses a different model/authentication and cannot establish model non-inferiority.",
+    "Codex repair and conversion comparisons now execute, but models/authentication/effort differ from the builtin executor. Claude controls in this follow-up were blocked by automatic permission review, not counted as model-fidelity failures. Broad repeated same-model validation remains absent.",
     "Windows/Linux release-package execution and combined integration with PRs 1418 and 1419 were not validated locally."
-  ]
+  ],
+  "style_and_shaping_followup": {
+    "code_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+    "attempts": [
+      "matlab_airy_surface-builtin-style-cef5",
+      "matlab_airy_surface-claude-style-cef5",
+      "pillow_complex_text-builtin-cef5",
+      "pillow_complex_text-claude-cef5",
+      "pillow_complex_text-codex-cef5",
+      "matlab_airy_surface-builtin-style-db49",
+      "pillow_complex_text-builtin-db49",
+      "pillow_complex_text-codex-db49",
+      "pillow_complex_text-claude-db49",
+      "matlab_airy_surface-codex-style-db49",
+      "matlab_airy_surface-builtin-style-211",
+      "matlab_airy_surface-builtin-svg-211",
+      "matlab_airy_surface-codex-svg-211",
+      "pillow_complex_text-builtin-211",
+      "pillow_complex_text-codex-211",
+      "matlab_airy_surface-builtin-svg-corrected-211",
+      "matlab_airy_surface-codex-svg-corrected-211"
+    ],
+    "attempt_count": 17,
+    "new_synthetic_fixture": {
+      "case_id": "pillow_complex_text",
+      "case_count": 1,
+      "groups": [
+        "arabic_marks",
+        "mixed_bidi",
+        "ligatures_combining_marks",
+        "khmer"
+      ],
+      "independent_upstream_case": false,
+      "source_sha256": "cbcedf08e6a1cd07a5b9ab08946af47b03a7bbaaaa7e9c85681a4b159515627b",
+      "font_provenance": [
+        {
+          "name": "ArefRuqaa-Regular.ttf",
+          "source_url": "https://raw.githubusercontent.com/python-pillow/Pillow/main/Tests/fonts/ArefRuqaa-Regular.ttf",
+          "git_blob_sha1": "940cb58f4dc98952eeb849904b1a3870963a622c",
+          "sha256": "a8f0c27667bfaec627d7e1c2abfe22ddb753430ae8a673877c14e4e960f7f828"
+        },
+        {
+          "name": "KhmerOSBattambang-Regular.ttf",
+          "source_url": "https://raw.githubusercontent.com/python-pillow/Pillow/main/Tests/fonts/KhmerOSBattambang-Regular.ttf",
+          "git_blob_sha1": "b812c0af1bcc1a0fa5421f39acd86646d968a6a0",
+          "sha256": "d75e03b55d024edc8fc5cdd96d487ff457ad4852802d2f2c242feffb3a8932eb"
+        },
+        {
+          "name": "NotoSans-Regular.ttf",
+          "source_url": "https://raw.githubusercontent.com/python-pillow/Pillow/main/Tests/fonts/NotoSans-Regular.ttf",
+          "git_blob_sha1": "a1b8994edeacd70067de843a4691b15a0ce5921b",
+          "sha256": "6b04c8dd65af6b73eb4279472ed1580b29102d6496a377340e80a40cdb3b22c9"
+        },
+        {
+          "name": "LICENSE.txt",
+          "source_url": "https://raw.githubusercontent.com/python-pillow/Pillow/main/Tests/fonts/LICENSE.txt",
+          "git_blob_sha1": "94989af9035ae7a277b6a5a923dcdb37f2abb0fc",
+          "sha256": "b79f6f6a2fc060b2e0a6e7a6946c446ae199bec07b92a3df1295975e25c4d96b"
+        }
+      ],
+      "native_facts": {
+        "pillow": "12.3.0",
+        "raqm": "0.10.5",
+        "baseline_anchor": "ls",
+        "origin": [
+          40,
+          104
+        ],
+        "canvas": [
+          960,
+          180
+        ],
+        "font_size_px": 48,
+        "cases": [
+          {
+            "name": "arabic",
+            "logical_text": "السَّلَامُ عَلَيْكُمْ",
+            "font": "ArefRuqaa-Regular.ttf",
+            "font_sha256": "a8f0c27667bfaec627d7e1c2abfe22ddb753430ae8a673877c14e4e960f7f828",
+            "features": [
+              "kern",
+              "liga"
+            ],
+            "language": "ar",
+            "direction": "rtl",
+            "bbox_ls": [
+              0,
+              -62,
+              188,
+              18
+            ],
+            "advance": 188.015625
+          },
+          {
+            "name": "bidi",
+            "logical_text": "Report 12: שלום 34 / مرحبا 56",
+            "font": "DejaVuSans.ttf",
+            "font_sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22",
+            "features": [
+              "kern",
+              "liga"
+            ],
+            "language": null,
+            "direction": "ltr",
+            "bbox_ls": [
+              0,
+              -37,
+              684,
+              12
+            ],
+            "advance": 683.578125
+          },
+          {
+            "name": "ligatures",
+            "logical_text": "office ffi fl é Å x̣",
+            "font": "DejaVuSans.ttf",
+            "font_sha256": "3fdf69cabf06049ea70a00b5919340e2ce1e6d02b0cc3c4b44fb6801bd1e0d22",
+            "features": [
+              "kern",
+              "liga"
+            ],
+            "language": "en",
+            "direction": "ltr",
+            "bbox_ls": [
+              0,
+              -45,
+              375,
+              9
+            ],
+            "advance": 375.453125
+          },
+          {
+            "name": "khmer",
+            "logical_text": "ភាសាខ្មែរ សួស្តី",
+            "font": "KhmerOSBattambang-Regular.ttf",
+            "font_sha256": "d75e03b55d024edc8fc5cdd96d487ff457ad4852802d2f2c242feffb3a8932eb",
+            "features": [
+              "kern",
+              "liga"
+            ],
+            "language": "km",
+            "direction": "ltr",
+            "bbox_ls": [
+              0,
+              -54,
+              292,
+              16
+            ],
+            "advance": 292.25
+          }
+        ]
+      }
+    },
+    "matched_pairs": [
+      {
+        "runs": [
+          "pillow_complex_text-builtin-211",
+          "pillow_complex_text-codex-211"
+        ],
+        "code_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+        "initial_input_sha256": {
+          "complex_text.py": "cbcedf08e6a1cd07a5b9ab08946af47b03a7bbaaaa7e9c85681a4b159515627b",
+          "context.json": "de682ae1479b0a3f0b0cabebccaf241cc21d2dc7f2e1b0ed456db7d4341d5e78",
+          "project_context/native_ligatures.png": "3969ae65901c9e1fbe3b512c39301a79636678ee1b8aad7bc4e87469a453e051",
+          "project_context/native_khmer.png": "b329c9ea95094c4651068adadf6679cef4dadb22ace7b74b51c1ff27889184d5",
+          "project_context/native_bidi.png": "9afe0a822f6faaff00216439b93e68f46a876583c3d21deaad06563e862cbcdb",
+          "project_context/complex_native_facts.json": "5e3e0a8f22aaa48e521c14902f248aee18553ea6cbde6136a0e53a4d89805ec3",
+          "reference/_native_reference.png": "a56b9f6007b5a00474935d8b4d4f9c9f5b95a78a4a5e1ec219379e605b8bc016"
+        },
+        "input_bytes_equal": true,
+        "candidate_environment_shared": true,
+        "models": {
+          "builtin": "claude-sonnet-5-5",
+          "codex": "gpt-6-astra"
+        },
+        "efforts": {
+          "builtin": null,
+          "codex": null
+        },
+        "limit": "Matched inputs/runtime/product, different models, authentication and executor tools; one development trial each, not same-model non-inferiority."
+      },
+      {
+        "runs": [
+          "matlab_airy_surface-builtin-svg-corrected-211",
+          "matlab_airy_surface-codex-svg-corrected-211"
+        ],
+        "code_sha": "21152e1d6da77427a2656ff6a35a0ea768437fc1",
+        "initial_input_sha256": {
+          "test_airy_disc_kernel.m": "dba08fd36ddb8263ffe30307e787120a95362259b0650b738413b30ae48b6e0f",
+          "context.json": "ffad8d65476d2d82cdb3af4850c0b802ce8235a64ab381c702808b6f3d0bf566",
+          "project_context/matlab_airy_surface_geometry.json": "459f1c29b2af4612df45d3c082bce2a395294da1c4417e59e8e0ef595d7ad1ee",
+          "project_context/airy_disc_kernel.m": "c1b61d7119a19e7525906d6e7d3ab4e03d581d36c4fd2eaffa88a22aefbe3c27",
+          "project_context/native_runtime_facts.json": "7e1519127a1926165d9ec8e8bcf06a473f714a70234d6d9ffa5ce68bbbaf9691",
+          "project_context/native_airy_full.svg": "029aac383e962782d89fe3f97b533574232cb874ce2c89d94c9648b7f568815e",
+          "project_context/native_airy_style.json": "9fa21fd4fb2cdc0d1a919ade732087000193f1b961d1572ffc29a50004706e12",
+          "reference/_native_reference.png": "a1730b112fd0e81c14263e33c9e35e3200f24851a2103d485b89d31317a0a5d0"
+        },
+        "input_bytes_equal": true,
+        "candidate_environment_shared": true,
+        "models": {
+          "builtin": "claude-sonnet-5-5",
+          "codex": "gpt-6-astra"
+        },
+        "efforts": {
+          "builtin": null,
+          "codex": null
+        },
+        "limit": "Matched inputs/runtime/product, different models, authentication and executor tools; one development trial each, not same-model non-inferiority."
+      }
+    ],
+    "fixture_correction": {
+      "reason": "collector incorrectly labelled omitted exportgraphics BackgroundColor option as figure; actual native PNG and SVG background are white",
+      "old_sha256": "f1f354ed74f93c87f5d9cced3ab9bf0ad960b670fb67a6d92cc3deffd505c221",
+      "new_sha256": "9fa21fd4fb2cdc0d1a919ade732087000193f1b961d1572ffc29a50004706e12",
+      "pixels_changed": false,
+      "old_trials_retained": true,
+      "compact_facts": "Removed unused jet/copper and duplicate parula tables; parula bytes decoded to identical values"
+    },
+    "matlab_native": {
+      "version": "R2025a",
+      "theme": "light, process-local",
+      "pixel_sha256": "fe048e32cd2f8f1af233ba06465669be4e544b7e516a557db14caab64a9f3b2d",
+      "svg_sha256": "029aac383e962782d89fe3f97b533574232cb874ce2c89d94c9648b7f568815e",
+      "png_size": [
+        1343,
+        810
+      ],
+      "svg_viewbox": [
+        806,
+        486
+      ],
+      "axes_color_rgb8": [
+        33,
+        33,
+        33
+      ],
+      "grid_alpha": 0.15,
+      "line_width_pt": 0.5,
+      "ticks": 24,
+      "font": "Helvetica, 11 pt",
+      "graphics_smoothing": true
+    },
+    "style_measurements": [
+      {
+        "run_id": "matlab_airy_surface-builtin-svg-211",
+        "canvas": [
+          1343,
+          810
+        ],
+        "expected_canvas": [
+          1343,
+          810
+        ],
+        "tick_candidates": 24,
+        "expected_ticks": 24,
+        "geometry_oracle": "native SVG viewport mapped to native PNG dimensions; raster coverage measured separately",
+        "tick_endpoint_max_px": 9.076436989407105,
+        "tick_endpoint_rms_px": 5.829878452632481,
+        "matched_ticks": 24,
+        "tick_widths_pt": [
+          0.5
+        ],
+        "tick_rgba": [
+          [
+            0.12941176470588237,
+            0.12941176470588237,
+            0.12941176470588237,
+            1.0
+          ]
+        ],
+        "raster_size_match": true,
+        "rgb_mae": 10.570534611719356,
+        "rgb_changed_gt20_fraction": 0.043918626991349755,
+        "rgb_max": 222.0,
+        "surface_interior": {
+          "pixels": 48855,
+          "rgb_mae": 2.0107870228226385,
+          "changed_gt20_fraction": 0.030457476205096715
+        },
+        "surface_border": {
+          "pixels": 58122,
+          "rgb_mae": 9.357277221476664,
+          "changed_gt20_fraction": 0.35139878187261275
+        },
+        "native_background_rgb8": [
+          255,
+          255,
+          255
+        ],
+        "candidate_background_rgb8": [
+          245,
+          245,
+          245
+        ]
+      },
+      {
+        "run_id": "matlab_airy_surface-codex-svg-211",
+        "canvas": [
+          1343,
+          810
+        ],
+        "expected_canvas": [
+          1343,
+          810
+        ],
+        "tick_candidates": 24,
+        "expected_ticks": 24,
+        "geometry_oracle": "native SVG viewport mapped to native PNG dimensions; raster coverage measured separately",
+        "tick_endpoint_max_px": 2.5421149729252077e-13,
+        "tick_endpoint_rms_px": 1.7180839111879828e-13,
+        "matched_ticks": 24,
+        "tick_widths_pt": [
+          0.5
+        ],
+        "tick_rgba": [
+          [
+            0.12941176470588237,
+            0.12941176470588237,
+            0.12941176470588237,
+            1
+          ]
+        ],
+        "raster_size_match": true,
+        "rgb_mae": 3.6224419256685327,
+        "rgb_changed_gt20_fraction": 0.06907696974711122,
+        "rgb_max": 222.0,
+        "surface_interior": {
+          "pixels": 48855,
+          "rgb_mae": 8.151809777231945,
+          "changed_gt20_fraction": 0.17083205403745777
+        },
+        "surface_border": {
+          "pixels": 58122,
+          "rgb_mae": 16.661373203491507,
+          "changed_gt20_fraction": 0.5290595643646123
+        },
+        "native_background_rgb8": [
+          255,
+          255,
+          255
+        ],
+        "candidate_background_rgb8": [
+          255,
+          255,
+          255
+        ]
+      },
+      {
+        "run_id": "matlab_airy_surface-builtin-svg-corrected-211",
+        "canvas": [
+          1343,
+          810
+        ],
+        "expected_canvas": [
+          1343,
+          810
+        ],
+        "tick_candidates": 24,
+        "expected_ticks": 24,
+        "geometry_oracle": "native SVG viewport mapped to native PNG dimensions; raster coverage measured separately",
+        "tick_endpoint_max_px": 9.076390377337304,
+        "tick_endpoint_rms_px": 5.8298297804891055,
+        "matched_ticks": 24,
+        "tick_widths_pt": [
+          0.5
+        ],
+        "tick_rgba": [
+          [
+            0.12941176470588237,
+            0.12941176470588237,
+            0.12941176470588237,
+            1
+          ]
+        ],
+        "raster_size_match": true,
+        "rgb_mae": 1.7715442670270172,
+        "rgb_changed_gt20_fraction": 0.03680170614893871,
+        "rgb_max": 228.0,
+        "surface_interior": {
+          "pixels": 48855,
+          "rgb_mae": 2.0942175826425133,
+          "changed_gt20_fraction": 0.03184935011769522
+        },
+        "surface_border": {
+          "pixels": 58122,
+          "rgb_mae": 6.395971691728892,
+          "changed_gt20_fraction": 0.267489074704931
+        },
+        "native_background_rgb8": [
+          255,
+          255,
+          255
+        ],
+        "candidate_background_rgb8": [
+          255,
+          255,
+          255
+        ]
+      },
+      {
+        "run_id": "matlab_airy_surface-codex-svg-corrected-211",
+        "canvas": [
+          1343,
+          810
+        ],
+        "expected_canvas": [
+          1343,
+          810
+        ],
+        "tick_candidates": 24,
+        "expected_ticks": 24,
+        "geometry_oracle": "native SVG viewport mapped to native PNG dimensions; raster coverage measured separately",
+        "tick_endpoint_max_px": 1.5294999738073e-12,
+        "tick_endpoint_rms_px": 1.1402974955077528e-12,
+        "matched_ticks": 24,
+        "tick_widths_pt": [
+          0.5
+        ],
+        "tick_rgba": [
+          [
+            0.12941176470588237,
+            0.12941176470588237,
+            0.12941176470588237,
+            1
+          ]
+        ],
+        "raster_size_match": true,
+        "rgb_mae": 3.4646439854266444,
+        "rgb_changed_gt20_fraction": 0.06485664120312916,
+        "rgb_max": 228.0,
+        "surface_interior": {
+          "pixels": 48855,
+          "rgb_mae": 7.944850407668953,
+          "changed_gt20_fraction": 0.1327397400470781
+        },
+        "surface_border": {
+          "pixels": 58122,
+          "rgb_mae": 14.715632634802656,
+          "changed_gt20_fraction": 0.48496266473968547
+        },
+        "native_background_rgb8": [
+          255,
+          255,
+          255
+        ],
+        "candidate_background_rgb8": [
+          255,
+          255,
+          255
+        ]
+      }
+    ],
+    "complex_measurements": [
+      {
+        "run_id": "pillow_complex_text-builtin-211",
+        "executor": "builtin",
+        "name": "arabic",
+        "shape": [
+          180,
+          960,
+          3
+        ],
+        "mae": 0.35648726851851853,
+        "ink_union_mae": 23.278999241849885,
+        "max": 198.0,
+        "changed_gt20": 0.005567129629629629,
+        "whole_editable_texts": 1,
+        "pixel_sha256": "80e41bf48e22108d038c47d098f0406b241b7706ef0a762feee49135968b4f07"
+      },
+      {
+        "run_id": "pillow_complex_text-builtin-211",
+        "executor": "builtin",
+        "name": "bidi",
+        "shape": [
+          180,
+          960,
+          3
+        ],
+        "mae": 0.8475462962962963,
+        "ink_union_mae": 20.001917020402573,
+        "max": 215.0,
+        "changed_gt20": 0.011689814814814814,
+        "whole_editable_texts": 1,
+        "pixel_sha256": "7ebac68cd1d2a1dda9f9781fe8e87bf8b8a9f0a2f9887539f80ed0005ee36129"
+      },
+      {
+        "run_id": "pillow_complex_text-builtin-211",
+        "executor": "builtin",
+        "name": "ligatures",
+        "shape": [
+          180,
+          960,
+          3
+        ],
+        "mae": 1.6476273148148148,
+        "ink_union_mae": 59.2667638483965,
+        "max": 222.0,
+        "changed_gt20": 0.012118055555555556,
+        "whole_editable_texts": 1,
+        "pixel_sha256": "ddb6a00bdadf6e65f48b248bdd7d759129126bcc4bb6fc10ee0880ae989daa1e"
+      },
+      {
+        "run_id": "pillow_complex_text-builtin-211",
+        "executor": "builtin",
+        "name": "khmer",
+        "shape": [
+          180,
+          960,
+          3
+        ],
+        "mae": 2.094525462962963,
+        "ink_union_mae": 67.86210131332082,
+        "max": 222.0,
+        "changed_gt20": 0.01659722222222222,
+        "whole_editable_texts": 1,
+        "pixel_sha256": "54555f451e92c3c779de301def7ce34b5436908c61c7b5725d1d7099ac38cae8"
+      },
+      {
+        "run_id": "pillow_complex_text-codex-211",
+        "executor": "codex",
+        "name": "arabic",
+        "shape": [
+          180,
+          960,
+          3
+        ],
+        "mae": 0.35648726851851853,
+        "ink_union_mae": 23.278999241849885,
+        "max": 198.0,
+        "changed_gt20": 0.005567129629629629,
+        "whole_editable_texts": 1,
+        "pixel_sha256": "80e41bf48e22108d038c47d098f0406b241b7706ef0a762feee49135968b4f07"
+      },
+      {
+        "run_id": "pillow_complex_text-codex-211",
+        "executor": "codex",
+        "name": "bidi",
+        "shape": [
+          180,
+          960,
+          3
+        ],
+        "mae": 0.8475462962962963,
+        "ink_union_mae": 20.001917020402573,
+        "max": 215.0,
+        "changed_gt20": 0.011689814814814814,
+        "whole_editable_texts": 1,
+        "pixel_sha256": "7ebac68cd1d2a1dda9f9781fe8e87bf8b8a9f0a2f9887539f80ed0005ee36129"
+      },
+      {
+        "run_id": "pillow_complex_text-codex-211",
+        "executor": "codex",
+        "name": "ligatures",
+        "shape": [
+          180,
+          960,
+          3
+        ],
+        "mae": 1.6476273148148148,
+        "ink_union_mae": 59.2667638483965,
+        "max": 222.0,
+        "changed_gt20": 0.012118055555555556,
+        "whole_editable_texts": 1,
+        "pixel_sha256": "ddb6a00bdadf6e65f48b248bdd7d759129126bcc4bb6fc10ee0880ae989daa1e"
+      },
+      {
+        "run_id": "pillow_complex_text-codex-211",
+        "executor": "codex",
+        "name": "khmer",
+        "shape": [
+          180,
+          960,
+          3
+        ],
+        "mae": 2.094525462962963,
+        "ink_union_mae": 67.86210131332082,
+        "max": 222.0,
+        "changed_gt20": 0.01659722222222222,
+        "whole_editable_texts": 1,
+        "pixel_sha256": "54555f451e92c3c779de301def7ce34b5436908c61c7b5725d1d7099ac38cae8"
+      }
+    ],
+    "complex_ink_mask": "Union of native/candidate pixels whose minimum RGB channel is <250; whole-frame metrics have no mask. RGB errors use 0..255.",
+    "review_images": {
+      "native-airy.png": "fe048e32cd2f8f1af233ba06465669be4e544b7e516a557db14caab64a9f3b2d",
+      "builtin-airy.png": "ceeffbfb93a5b918a574627bea97d4dabbff5b9aa7d0f6a6b95ef8d051e914e7",
+      "codex-airy.png": "f0ca60763635d0fc85e44084ec78aeb2dd8ab84902fbf54fec7af8b6bd437192"
+    },
+    "qa_guard": {
+      "candidate_may_read_own_work": true,
+      "candidate_oracle_read_exit": 1,
+      "candidate_other_run_read_exit": 1,
+      "own_work_read_exit": 0,
+      "scope": "New final 211 assessments only; not a retrospective claim about older assessment harnesses."
+    },
+    "fidelity_accepted": false,
+    "limitations": [
+      "The SVG is explicitly supplied native geometric evidence, not evidence of source-only conversion capability.",
+      "Neither camera/tick agreement nor successful fresh capture certifies surface occlusion or edge antialiasing.",
+      "All four final complex outputs are one logical editable Text each and builtin/Codex pixel-identical to each other; they still differ from native Pillow.",
+      "Counterfactual shaping tests use uninstrumented Matplotlib in the same runtime as the oracle; they do not certify cross-renderer Pillow identity.",
+      "Claude automatic permission denials are retained; the sandbox and user global configuration were not weakened."
+    ]
+  }
 }
