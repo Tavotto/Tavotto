@@ -233,8 +233,8 @@ def test_no_marker_and_no_file_is_still_an_ordinary_failure(env):
     }
 
 
-def test_reported_fidelity_gap_blocks_even_a_runnable_draft(env):
-    """模型在写草稿后发现保真证据缺失：不能以能跑为由允许采用。"""
+def test_reported_semantic_gap_blocks_even_a_runnable_draft(env):
+    """A missing statistical equivalent still blocks, even after writing runnable code."""
     before = _files(env["figs"])
     ran = []
     env["runner"] = lambda *a, **k: ran.append(1) or ok_runner(*a)
@@ -247,6 +247,21 @@ def test_reported_fidelity_gap_blocks_even_a_runnable_draft(env):
     assert len(env["prompts"]) == 1
     with pytest.raises(ai_convert.ConvertError):
         ai_convert.adopt(sid, _project(env))
+
+
+def test_visual_review_note_does_not_claim_fidelity_or_block_runtime_validation(env):
+    note = "已生成候选。使用目标库的默认网格；字体像素和相机布局尚未对照验证。"
+    event = {"type": "item.completed", "item": {"type": "agent_message", "text": note}}
+    env["code"] = WRITE_GOOD + f"; import json; print(json.dumps({event!r}))"
+    before = _files(env["figs"])
+    sid = _run(env, original=None)
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "completed", sess["task"]
+    st = ai_convert.status(sid, _project(env))
+    assert st["state"] == "ready"
+    assert st["comparison"]["verification"] == "unknown"
+    assert st["comparison"]["pixel_diff"] is None
+    assert _files(env["figs"]) == before
 
 
 def test_marker_after_the_correction_round_also_ends_in_needs_input(env):

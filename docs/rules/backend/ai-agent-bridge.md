@@ -348,7 +348,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 同名位图（`ai_convert.sibling_original`），没有原图时 `comparison.reference=null`、`verification="unknown"`（界面说一句“请并排看一眼再采用”）。
 提示词是 `ai_prompt_pack` convert 一节的变体（逐步搬运 + R→Python / MATLAB→Python 对照表）。Python 里没有可靠对应时 Agent 首行写
 `TAVOTTO_NEEDS_INPUT: <原因>` → `ConvertExecutor` 抛 `ai_tasks.NeedsInput` → 结局 `needs_input`（原因清洗后限长 2,000 字，只进 `unmet[].detail`，
-不进日志 / 遥测）；已写出可运行草稿也不能覆盖明确报告的保真缺口，不进入采用。缺色表/数据/可靠对应时同样适用；无标记照旧检查候选。新脚本缺包：校验运行前 `convertdeps.ensure(project, rel, cancel)`（app 注入 `task_hooks["deps"]`，仅 r / matlab；`cancel` = `TaskRun.cancel_event`）
+不进日志 / 遥测）；已写出可运行草稿也不能覆盖明确报告的数据/计算语义缺口，不进入采用。纯视觉未知项独立验收，见 ADR 0143「流程验收与视觉验收分开」；无标记照旧检查候选。新脚本缺包：校验运行前 `convertdeps.ensure(project, rel, cancel)`（app 对所有来源注入 `task_hooks["deps"]`；`cancel` = `TaskRun.cancel_event`）
 走 `deprepair.joint_plan_for` → `create_joint_plan` → `prepare`（不新写 pip 路径；取消经 `deprepair.cancel_status` 传到安装）。**名单**：只装 `engine/autoinstall_dists.txt`
 （PEP 503 名；14 个种子 ∪ 30 个常见大包 ∪ PyPI 30 天下载前 1000（ClickHouse 公开 PyPI 数据集）− 排除名单（pip/setuptools/wheel 等管理环境与打包工具），`scripts/dev/refresh_autoinstall_list.py` 生成，spec datas 带上）里的包；名单外的包不自动装。**每个环境问一次**：
 `project_venv` / 已存在的受管一代名单内直接装；系统 Python / 内置 runtime 永不装；其余环境（Conda / 指定 / 环境变量 / 用户采用）第一次出卡片，点主按钮才记
@@ -428,7 +428,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   - `check`：同 figure_edit 的注入回调，语义是 ADR 0143 的 `run_validation`（用户同一路由下跑新脚本，必须捕获到 Matplotlib 图），回调可返回 `(ok, 报告)` 或 `CheckResult`（报告 + 有界图像）；转换入口经 IPC 调用应用同一校验，实时渲染 PNG 后才退役 worker。未注入回调则 `not_available`。
     新文件还没写出就 `check` → `not_created`（不调回调、不计数）。**回调最多被调 3 次**（ADR 0143「校验运行 ≤ 3」），第 4 次 `check_budget`。
   - 预算默认值由工具集给（`default_limits`；命令行不给 `--max-turns` 等就用它）：convert 为 20 轮 / 900 s / 400k token / 单轮输出 32768（含模型思考；20 轮 ≈ 读 1–3 + 写 1 + 至多 3 轮 check/修 + 收尾，留余量）；figure_edit 不变。
-  - 系统提示是英文（要求用用户指令的语言回复）；产品要求三条（保留数据读取与计算 / 必须 Matplotlib 出图 / 图幅字号对齐）**引用 `ai_prompt_pack.convert_requirements()` 的同一份文字**（CLI 路径的 `convert_prompt` 也用它，不各抄一份），
+  - 系统提示是英文（要求用用户指令的语言回复）；共同验收顺序及要求（数据计算 / 完整可编辑出图 / 视觉另验）**引用 `ai_prompt_pack.convert_requirements()` 的同一份文字**（CLI 路径的 `convert_prompt` 也用它，不各抄一份），
     执行器特有的部分（只写一个新文件、不运行脚本、check ≤ 3 次）写在 `tools.py`。`ai_prompt_pack` 是纯标准库，所以 `agent_runner` 对它的 import 不破坏依赖方向（`test_import_architecture` 兜底）。
   - 看护 `tests/test_agent_runner_convert.py`（Demo 协议端到端 + 单元）。
 

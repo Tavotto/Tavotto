@@ -12690,8 +12690,9 @@ def api_ai_convert():
             endpoint_id=endpoint_id,
             task_hooks={
                 "runner": _convert_runner(ctx, rel),
-                # R / MATLAB 转写的新脚本才会要 pandas / statsmodels 这类包：校验运行前按 `convertdeps` 的规则自动装（或停住等用户在依赖卡片上决定）
-                **({"deps": engine_convertdeps.ensure} if foreign else {}),
+                # Every source can introduce Python dependencies. Reuse the same
+                # environment/consent policy and resumable candidate for all of them.
+                "deps": engine_convertdeps.ensure,
             },
             convert={
                 "library": library,

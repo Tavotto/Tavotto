@@ -78,7 +78,7 @@ def test_r_and_matlab_scripts_start_a_convert_session_without_a_library(
     assert label in call["prompt"]
 
 
-def test_python_default_is_unchanged_and_needs_a_library_and_gets_no_deps_hook(project):
+def test_python_default_needs_a_library_and_uses_shared_dependency_preparation(project):
     client, figs, calls = project
     r = _post(client, script="fig.py", library="pillow", path="out.png")
     assert r.status_code == 200
@@ -88,7 +88,7 @@ def test_python_default_is_unchanged_and_needs_a_library_and_gets_no_deps_hook(p
         "source_language": "python",
         "original_rel": "out.png",
     }
-    assert "deps" not in call["task_hooks"], "Python 来源的转换不接自动安装"
+    assert call["task_hooks"]["deps"] is convertdeps.ensure
     assert _post(client, script="fig.py").status_code == 400, "python 缺 library 仍是 400"
 
 

@@ -226,15 +226,26 @@ def test_convert_runs_validates_compares_and_adopts_without_touching_the_origina
     assert again.status_code == 200 and again.get_json()["script"] == "fig_matplotlib.py"
 
 
-def test_r_script_converts_end_to_end_without_running_r_and_reports_the_install_step(
-    project, monkeypatch
+@pytest.mark.parametrize(
+    "language,suffix,source",
+    [
+        ("python", "py", ORIGINAL.encode()),
+        ("r", "R", b'df <- read.csv("data.csv")\nplot(df)\n'),
+        ("matlab", "m", b"% curve\nx = linspace(0,1,20);\nfigure;\nplot(x,x.^2);\n"),
+    ],
+)
+def test_every_conversion_source_prepares_target_python_dependencies(
+    project, monkeypatch, language, suffix, source
 ):
-    """R 来源（ADR 0143 修订）：真 safe worker 跑 Agent 写的 Python 候选；R 脚本字节不变；依赖钩子（自动安装）被调用且结果进对照数据。
-    安装入口被替换（不装任何真包）。"""
+    """All source languages reach the same dependency hook before the real worker.
+
+    Only the model and installer are stubbed; this does not certify real package installation.
+    """
     from tavotto.engine import convertdeps
 
     m, client, figs, state = project
-    (figs / "fig.R").write_bytes(b'df <- read.csv("data.csv")\nplot(df)\n')
+    script = f"fig.{suffix}"
+    (figs / script).write_bytes(source)
     seen = []
 
     def fake_ensure(proj, rel, cancel=None):
@@ -244,18 +255,25 @@ def test_r_script_converts_end_to_end_without_running_r_and_reports_the_install_
     monkeypatch.setattr(convertdeps, "ensure", fake_ensure)
     r = client.post(
         "/api/ai/convert",
-        json={"script": "fig.R", "source_language": "r", "path": "out.png", "agent": "codex"},
+        json={
+            "script": script,
+            "source_language": language,
+            "path": "out.png",
+            "agent": "codex",
+            **({"library": "pillow"} if language == "python" else {}),
+        },
     )
     assert r.status_code == 200, r.get_json()
     sid = r.get_json()["session"]
     sess = _wait_final(client, sid)
     assert sess["task"]["outcome"] == "completed", sess.get("task")
     st = client.get(f"/api/ai/convert/{sid}").get_json()
-    assert st["source_language"] == "r" and st["library"] is None
+    assert st["source_language"] == language
+    assert st["library"] == ("pillow" if language == "python" else None)
     assert st["installed"] == ["pandas"]
     assert st["comparison"]["verification"] == "side_by_side"
     assert seen and seen[0][1].startswith(ai_convert.STAGE_PREFIX)
-    assert (figs / "fig.R").read_bytes() == b'df <- read.csv("data.csv")\nplot(df)\n'
+    assert (figs / script).read_bytes() == source
     a = client.post(f"/api/ai/convert/{sid}/adopt")
     assert a.status_code == 200 and a.get_json()["script"] == "fig_matplotlib.py"
 
@@ -329,15 +347,22 @@ def test_the_master_switch_turns_the_endpoint_off(project, monkeypatch):
     assert Path(figs / "fig.py").read_text(encoding="utf-8") == ORIGINAL
 
 
+@pytest.mark.parametrize("language", ["python", "r", "matlab"])
 def test_replan_endpoint_rechecks_the_same_candidate_with_the_current_environment(
-    project, monkeypatch
+    project, monkeypatch, language
 ):
     """系统 Python 卡 → 用户换了环境 → `POST …/dependencies {action: replan}`：不带摘要、不重跑 Agent，按此刻环境（`convertdeps.ensure`）
     重新判定同一个候选；再换回仍是系统 Python 就仍回系统卡；非法动作 400。"""
     from tavotto.engine import convertdeps
 
     m, client, figs, state = project
-    (figs / "fig.R").write_bytes(b'df <- read.csv("data.csv")\nplot(df)\n')
+    script = {"python": "fig.py", "r": "fig.R", "matlab": "fig.m"}[language]
+    source = {
+        "python": ORIGINAL.encode(),
+        "r": b'df <- read.csv("data.csv")\nplot(df)\n',
+        "matlab": b"% curve\nx = linspace(0,1,20);\nfigure;\nplot(x,x.^2);\n",
+    }[language]
+    (figs / script).write_bytes(source)
     system_card = {
         "kind": "system",
         "packages": ["pandas"],
@@ -364,11 +389,20 @@ def test_replan_endpoint_rechecks_the_same_candidate_with_the_current_environmen
     monkeypatch.setattr(convertdeps, "ensure", fake_ensure)
     r = client.post(
         "/api/ai/convert",
-        json={"script": "fig.R", "source_language": "r", "path": "out.png", "agent": "codex"},
+        json={
+            "script": script,
+            "source_language": language,
+            "path": "out.png",
+            "agent": "codex",
+            **({"library": "pillow"} if language == "python" else {}),
+        },
     )
     sid = r.get_json()["session"]
     _wait_final(client, sid)
     assert client.get(f"/api/ai/convert/{sid}").get_json()["state"] == "awaiting_dependencies"
+    candidate = ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py"
+    generated = candidate.read_bytes()
+    assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 409
 
     for body in ({"action": "nope"}, {"action": "install"}, {}):
         assert client.post(f"/api/ai/convert/{sid}/dependencies", json=body).status_code == 400
@@ -392,6 +426,12 @@ def test_replan_endpoint_rechecks_the_same_candidate_with_the_current_environmen
     got = settle()
     assert got["state"] == "ready" and got["installed"] == ["pandas"], got
     assert len(seen) == 3 and all(rel.startswith(ai_convert.STAGE_PREFIX) for rel in seen)
+    assert len(state["prompts"]) == 1, "Resuming dependencies must not ask the model to regenerate"
+    assert candidate.read_bytes() == generated
+    assert (figs / script).read_bytes() == source
+    adopted = client.post(f"/api/ai/convert/{sid}/adopt")
+    assert adopted.status_code == 200
+    assert (figs / adopted.get_json()["script"]).read_bytes() == generated
     # 已经不在等依赖了：再 replan = 409
     late = client.post(f"/api/ai/convert/{sid}/dependencies", json={"action": "replan"})
     assert late.status_code == 409

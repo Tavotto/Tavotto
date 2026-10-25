@@ -782,10 +782,11 @@ How to work:
    (aim for under 150 lines per call). Copy the returned sha256 into the next append call.
    Finish all sections before check. Fix details with edit_file (small exact replacements).
 3. Call check. It runs the new file the way the user would and returns captured figures for visual inspection.
-   Compare every returned page with the source and available references: math bounds, font metrics, colors,
-   axis labels/ranges, legends, transparency and 3D geometry. A runtime pass is not a fidelity pass.
-   If it reports a problem, fix it and call check again. You have at most 3 check calls.
-4. Finish with one or two sentences saying what you built. Reply in the language of the user's instruction.
+   Verify all expected pages, data/math semantics and editable objects. Fix execution or semantic errors,
+   then check again, at most 3 times. Follow the shared acceptance order above for visual differences;
+   a runtime pass is not a fidelity pass. Do not spend all check calls polishing edge pixels.
+4. Finish with what runs, any unresolved visual differences and what still needs review.
+   Reply in the language of the user's instruction.
 """
 )
 

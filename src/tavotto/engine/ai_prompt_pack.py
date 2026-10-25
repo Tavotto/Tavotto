@@ -267,6 +267,21 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "原脚本画出的图片的参考副本：{reference}（只读）。让新图的尺寸、字号、配色、标注位置尽量与它一致。",
     ),
     "rules_heading": (frozenset(), "硬性要求："),
+    "acceptance": (
+        frozenset(),
+        "交付与验收顺序（所有来源语言共用）：先交付可运行的可编辑候选，再独立评价视觉保真。"
+        "先读入口与必要的项目数据/helper，完成整份代码，然后用 check 验证实际执行及全部输出；"
+        "缺 Python 包交给应用的依赖准备/确认/续跑，不删掉依赖对应的计算来绕过错误。"
+        "数据读取、计算定义、单位、分类顺序、数学含义、原始逻辑文字与出图数量必须保留；"
+        "真实数据缺失、科学方法无可靠对应时仍须明确请求输入，不能伪造数据或相似结果。"
+        "视觉验收独立：沿用源码和已提供参考里的尺寸、字体、配色、布局及相机信息；"
+        "未提供的渲染器默认值、字形像素、刻度端点和抗锯齿不是可运行候选的前置条件。"
+        "这些未知项使用目标库的公开 API 和明确命名的默认值，在候选注释及最终回复中列出待核对差异；"
+        "不能把替代色表冒充原色表，也不能宣称已经逐像素或科学保真通过。"
+        "不要为消除边缘像素差反复重写已通过运行检查的代码，或自行复刻整个原生渲染器。"
+        "如果颜色/几何本身编码科学数据，须保留数据、归一化范围、类别映射和三维深度；"
+        "不能以视觉待核对为由改动这些含义。全部候选仍由用户查看对照并确认后采用。",
+    ),
     "rule_keep_data": (
         frozenset(),
         "1. 保留原脚本的数据读取与计算部分（读文件、拟合、统计……）原样沿用，只把「绘图」换成 Matplotlib。"
@@ -281,7 +296,7 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
     ),
     "rule_size": (
         frozenset(),
-        "3. 输出图幅（figsize × dpi）、字号、文字位置与原图对齐。原脚本指定了字体文件时，沿用该文件，"
+        "3. 按已知信息设置输出图幅（figsize × dpi）、字号、文字位置；像素差异按独立视觉验收处理。原脚本指定了字体文件时，沿用该文件，"
         "先用 font_manager.fontManager.addfont 注册，再用 FontProperties(fname=...).get_name() 读取真实族名，"
         "绘制时按族名及原字重/样式选择字体，保留逐字形回退，不把 fname 属性绑定到绘制的文字。"
         "字体路径相对原脚本位置解析，不写入临时候选目录的绝对路径；不要用近似字体或猜测字体度量替代已有字体。",
@@ -304,10 +319,8 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "用原字体的 getmetrics / getbbox 或 textbbox 测量基线与字形偏移，再定位 Matplotlib 文字；"
         "横排单行文字可比较同一文本在原 anchor 和 ls（left-baseline）下的 getbbox，"
         "x/y 两方向都用对应边界的差恢复基线原点，不能只用 getlength 的浮点 advance 猜整数锚点位置。"
-        "同一字体文件、字号和基线仍可能有字形像素差：Pillow 对 shaping 后每个 glyph 的位置按 floor(x+0.5) 取整，"
-        "Matplotlib 的文字渲染可能保留亚像素位置。先核对真实字体文件、原 shaping/kerning、hinting 和输出编码，"
-        "不要为贴图任意平移整段文字。若已确认是独立的横排拉丁字形，可用原字体测得的、含相邻 kerning 的 advance，"
-        "按原取整位置排布普通可编辑 Text 片段并保留原始完整标签；不能把复杂文字、组合字符或联字按 Unicode 字符盲拆。"
+        "同一字体文件、字号和基线仍可能因 shaping/kerning、hinting 和亚像素取整产生字形像素差，"
+        "这些差异单独记为待视觉核对，不为贴图任意平移或拆分原文。"
         "必须保留原字形与阅读顺序，不得用禁用原 shaping、换字体或嵌入字形位图来消除像素差。"
         "阿拉伯连写、双向文字、组合附标及 OpenType 联字须保留完整逻辑文本 run；不反转字符串，"
         "不按字符分别测量排版，也不把已塑形的显示字符串再次交给 shaping。"
@@ -319,7 +332,9 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "- Image.new((w, h), color) → fig = plt.figure(figsize=(w / dpi, h / dpi), dpi=dpi)，背景色设到 figure / axes，"
         'ax.axis("off")，fig.subplots_adjust(0, 0, 1, 1)，让坐标轴铺满整张图。\n'
         "- 已有照片 / Image.open / paste → ax.imshow(np.asarray(img), extent=...)，extent 按像素位置给。\n"
-        "- 遇到没有可靠对应的 Pillow 操作（滤镜、混合模式、复杂变换……）：不要近似替换。此时停下，"
+        "- 原始照片的 crop/resize/rotate、滤镜、透明度蒙版与混合仍可用 Pillow 处理像素后 imshow，"
+        "保留实际参数；这不等于把文字/形状或整张成品图栅格化后当成可编辑转换。"
+        "只有无法保留计算/内容语义或必要可编辑对象时停下，"
         "你的回答第一行写 `TAVOTTO_NEEDS_INPUT: ` 紧跟一句话说清是哪一步换不了、为什么，并且不要写任何新文件。",
     ),
     "note": (
@@ -382,43 +397,31 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "线条颜色顺序、每个 axes 的 colormap、LUT 行数、CLim、CDataMapping 及 alpha 均要独立保留。"
         "自动 CLim 取实际被绘图对象用于映射的 CData 范围；等高线按其实际绘制的 level 着色，不能直接拿全部 Z 矩阵的极值。"
         "保留三维对象的 XData/YData/ZData 和投影：即使原图使用俯视图，也不能把 ZData 换成二维 zorder 或删掉高度维。"
-        "布局与相机不能靠截图猜数值：先核对 figure 的 Units/Position、导出尺寸与是否裁边，"
-        "以及各 axes 的 Units/Position、View/Projection、CameraPosition/Target/UpVector/ViewAngle、"
-        "DataAspectRatio/PlotBoxAspectRatio 和对应 Mode。MATLAB 的三个比例/视角 Mode 均为 auto 时会 stretch-to-fill，"
-        "仅抄数值会丢失这个拉伸；Matplotlib Axes3D 又会把活动 viewport 缩成正方形，不能把两者的 position 直接等同。"
-        "按完整的相机/viewport 变换保持投影后角点、轴端点和数据点的位置，同时仍使用可编辑的三维对象；"
-        "不能用猜的 box_aspect/zoom、tight_layout 或 bbox_inches='tight' 修补大小差异。"
+        "布局与相机使用源码/参考已知的 figure/axes Units/Position、View/Projection、"
+        "DataAspectRatio/PlotBoxAspectRatio 和相机信息；缺少原生自动布局事实时用目标库公开默认值并列为待核对。"
+        "MATLAB 的 stretch-to-fill 与 Matplotlib Axes3D viewport 不等价，不把相近布局称为精确匹配。"
         "MATLAB 与 Matplotlib 的方位角零点不同；普通 z-up 视图的 Matplotlib azim=MATLAB azimuth-90，"
         "自定义相机/反向坐标轴则应从实际方向与 up vector 求变换。二维 pcolor 不要擅自设 equal aspect。"
-        "若原图依赖缺失的布局/相机信息，请用户在原图 drawnow 后导出这些 axes/figure 属性及 Mode，"
-        "并用 exportgraphics(gcf,'reference.png','Resolution',120,'Padding','figure')（版本支持时）保留完整画幅；"
-        "不支持该选项时请求说明实际导出方法与裁边范围，不能把裁边后的图片尺寸当作原 figure 的 Position。"
-        "FontName/FontSize/FontUnits 也从原 axes 获取，像素与 points 按原 ScreenPixelsPerInch 换算，不能猜小一号字体。"
-        "导出画幅以参考文件的实际像素宽高与导出 viewport 为准：Position 的屏幕像素、导出器的 points 取整"
-        "和输出 dpi 是不同的量，直接 figsize=Position/ScreenPixelsPerInch 不一定得到同样的输出像素。"
-        "分别核对轴框、刻度线的两端、标签基线与网格；相机角点相近不代表它们相同。"
-        "读取 TickDir/TickLength、各轴颜色、LineWidth、GridColor/GridAlpha/GridLineStyle、Box/BoxStyle/Layer，"
-        "保留原主题的实际解析颜色；不要套用目标库的 pane 边线和默认字体/网格。"
-        "MATLAB TickLength 的第二个值用于 3D，按最长可见轴归一化，并非 points；"
-        "3D tick_params 的 direction/length 可能不控制实际投影后的线段。优先公开 API，但必须核对实际刻度端点，"
-        "必要时从原投影计算可编辑 Line3D，不能猜 _axinfo 等私有字典的键与版本结构。"
-        "曲面还须保留 FaceColor/EdgeColor、MeshStyle、LineWidth、Face/EdgeAlpha、Lighting 与实际光源。"
-        "flat 面色取 MATLAB 规定的首顶点 CData，不取四角平均；非共面网格核对三角化、面片遮挡和边线覆盖。"
-        "不能为改变遮挡而删除高度的深度贡献。共享边重复描画、pane 边框与抗锯齿会改变线宽和颜色；"
-        "需在相同尺寸、dpi、背景和输出编码下检查边缘像素，不能以关闭抗锯齿、模糊整图或栅格贴图掩盖差异。"
+        "画幅优先采用参考文件的实际宽高；屏幕 Position、points 和导出 dpi 不混为同一量。"
+        "保留显式 FontName/FontSize/FontUnits、TickDir/TickLength、网格及曲面 FaceColor/EdgeColor/alpha。"
+        "先用 Axes3D/Poly3DCollection 等常规对象保留 XYZ、拓扑和深度遮挡，不为匹配刻度像素改写投影或自制 painter。"
+        "flat 面色的首顶点规则与四角平均不同；原生三角化、边线覆盖、字体像素和抗锯齿差异单独列出，"
+        "不能以关闭抗锯齿、模糊整图或栅格贴图掩盖差异。"
         "默认色表随 MATLAB 版本变化（R2019b 起默认长度 256，之前 64；parula 本身也有版本差异），"
         "优先使用项目提供的原始 RGB 数组/运行时信息，不能用几枚控制点、viridis 或近似色表冒充原始 parula；"
-        "无法确定所需的原始色表或版本时走下面的 TAVOTTO_NEEDS_INPUT 分支，禁止先生成替代配色再仅在代码注释中说明。"
+        "无法确定原始色表时，不为外观默认值阻塞候选；明确使用的是哪种目标色表并列为待核对，"
+        "保留原 CData、CLim 和 colorbar 数值，不能谎称 parula 已精确复现。"
         "可请用户在原 MATLAB 图窗口中用 version('-release') 和 cmap=colormap(ax) 获取版本和实际 axes 色表，"
         "再用 writematrix(cmap,'colormap.csv') 导出；ax 必须是原图对应坐标轴，多 axes 分别导出，不能用全局默认值替代。",
     ),
     "rule_foreign_needs_input": (
         frozenset(),
-        "3. 缺少保真必需的原始数据/色表/运行时信息，或 Python 里没有可靠逐一对应的统计方法或函数"
+        "3. 缺少数据或计算语义必需的输入，或 Python 里没有可靠逐一对应的统计方法或函数"
         "（例如特定的混合效应模型、专用的非参数检验、某个包独有的拟合器），"
         "不要用近似方法替换，也不要编一个相似的结果。此时停下：你的回答第一行写 `TAVOTTO_NEEDS_INPUT: ` 紧跟一句话，"
         "说清是哪一步（原脚本里的函数名）换不了、缺少什么证据或可靠实现、下一步如何获取；不要写替代结果。"
-        "若在已写草稿或 check 后才发现，也必须用这个标记结束；草稿可运行不能把未解决的差异变成成功。",
+        "若在已写草稿或 check 后才发现，也必须用这个标记结束；草稿可运行不能把未解决的语义差异变成成功。"
+        "只有视觉默认值或像素差异未知时，按共同验收顺序交付候选并说明，不使用此阻断标记。",
     ),
     "fix_no_matplotlib": (
         frozenset({"target"}),
@@ -466,10 +469,11 @@ _FOREIGN_NAMES = {"r": "R", "matlab": "MATLAB"}
 
 
 def convert_requirements() -> list[str]:
-    """convert 任务里与「谁来执行」无关的三条硬性要求（保留数据与计算 / 必须 Matplotlib 出图 / 图幅字号对齐）。
+    """convert 任务里与执行器无关的验收顺序与要求；运行通过不代表视觉保真。
 
     CLI 提示词（`convert_prompt`）与内置执行器（`agent_runner` 的 convert 系统提示）共用这一份文字，不各抄一份。"""
     return [
+        _convert_render("acceptance"),
         _convert_render("rule_keep_data"),
         _convert_render("rule_matplotlib"),
         _convert_render("rule_size"),
@@ -503,6 +507,7 @@ def convert_prompt(
     lines += ["", _convert_render("rules_heading")]
     if foreign:
         lines += [
+            _convert_render("acceptance"),
             _convert_render("rule_foreign_steps"),
             _convert_render(f"rule_foreign_mapping_{source_language}"),
             _convert_render("rule_foreign_needs_input"),
