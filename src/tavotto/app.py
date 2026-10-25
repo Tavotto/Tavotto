@@ -12581,6 +12581,18 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
 
     with_images.force_cancel = force_cancel
     runner.with_images = with_images
+
+    def runtime_hint():
+        # Planning evidence only: do not launch Python, adopt an environment or
+        # confuse the CLI's ambient `python` with the project's validation worker.
+        selected = engine_pool.peek_worker_python(ctx.path)
+        return (
+            {"python": selected[0], "source": selected[1], "verified": False}
+            if selected is not None
+            else {"status": "not_selected", "verified": False}
+        )
+
+    runner.runtime_hint = runtime_hint
     return runner
 
 

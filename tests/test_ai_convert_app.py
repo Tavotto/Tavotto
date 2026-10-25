@@ -4,6 +4,7 @@ Matplotlib 版脚本 → 后端在用户同一路由下真的跑一遍（probe�
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import threading
@@ -68,6 +69,7 @@ def project(tmp_path, monkeypatch):
     state = {"code": WRITE_GOOD}
 
     def _cmd(agent_id, prompt, cwd, model=None, effort=None, endpoint=None):
+        state.setdefault("prompts", []).append(prompt)
         pre = "import pathlib, sys; d = pathlib.Path(sys.argv[1]); "
         return [sys.executable, "-c", pre + state["code"], cwd], {}
 
@@ -106,6 +108,45 @@ def _wait_final(client, sid, timeout=90.0):
 def _start(client, **over):
     body = {"script": "fig.py", "library": "pillow", "path": "out.png", "agent": "codex", **over}
     return client.post("/api/ai/convert", json=body)
+
+
+def test_conversion_prompt_uses_bound_project_runtime_hint_without_probing(project, monkeypatch):
+    m, client, figs, state = project
+    selected = str(figs / "selected env" / "python")
+    seen = []
+
+    def peek(root):
+        seen.append(Path(root))
+        return selected, "project_explicit"
+
+    monkeypatch.setattr(pool, "peek_worker_python", peek)
+    # The CLI stops before producing a candidate: any runtime probe here would
+    # be an eager side effect of preparing the prompt, not candidate validation.
+    state["code"] = (
+        "import json; print(json.dumps({'type': 'item.completed', "
+        "'item': {'type': 'agent_message', 'text': 'TAVOTTO_NEEDS_INPUT: native reference needed'}}))"
+    )
+    sid = _start(client).get_json()["session"]
+    sess = _wait_final(client, sid)
+    assert sess["task"]["outcome"] == "needs_input"
+    assert seen == [figs]
+    prompt = state["prompts"][0]
+    assert json.dumps(selected, ensure_ascii=False) in prompt
+    assert '"verified": false' in prompt and '"source": "project_explicit"' in prompt
+
+
+def test_conversion_runtime_hint_does_not_start_or_select_a_python(project, monkeypatch):
+    m, _client, figs, _state = project
+    monkeypatch.setattr(pool, "peek_worker_python", lambda root: None)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Planning the conversion must not resolve or probe an interpreter")
+
+    monkeypatch.setattr(pool, "resolve_worker_python", forbidden)
+    monkeypatch.setattr(pool, "select_worker_python", forbidden)
+    with m.app.test_request_context("/"):
+        runner = m._convert_runner(m.current_ctx(), "fig.py")
+    assert runner.runtime_hint() == {"status": "not_selected", "verified": False}
 
 
 def test_agent_check_reads_current_live_pngs_before_worker_retirement(project):

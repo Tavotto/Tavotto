@@ -340,6 +340,17 @@ def prompt_for(cand: ConvertCandidate) -> str:
         reference=f"{REFERENCE_DIR}/{cand.reference_name}" if cand.reference_name else None,
         project_root=cand.project_root,
     )
+    hint = getattr(cand.extras.get("runner"), "runtime_hint", None)
+    runtime = hint() if callable(hint) else {"status": "unknown", "verified": False}
+    prompt += (
+        "\n\n候选校验环境的只读规划线索（未启动解释器，未验证能力）："
+        + json.dumps(runtime, ensure_ascii=False)
+        + "\nCLI 的 PATH/python、Agent 自身解释器与候选校验 worker 可能不同。"
+        "不能根据裸 python 的版本就认定用户的校验环境不支持；若检查能力，只针对这里指明的解释器。"
+        "没有选定解释器时能力仍未知，不要猜版本或要求用户修复 CLI 自己的环境。"
+        "新候选的实际 check/后端校验才是执行证据，环境也可能在用户确认准备后变化；"
+        "保留必要能力检查，不能静默降级排版。"
+    )
     return prompt + (
         f"\n\n只读项目上下文：先读 {convertcontext.MANIFEST}，其中 source 是原脚本的项目相对路径，"
         f"files 的逐项路径映射到 {convertcontext.DIRECTORY}/。这些是有界静态依赖快照，"
