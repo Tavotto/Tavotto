@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "recorded_at_utc": "2026-10-25T10:02:27.485995+00:00",
-  "report_code_sha": "01b444e7c57896f5e2f98010053cc9e5ac3933e0",
+  "recorded_at_utc": "2026-10-25T11:30:44.430200+00:00",
+  "report_code_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
   "decision": {
     "default_routing_changed": false,
     "full_fidelity_accepted": false,
@@ -22,12 +22,16 @@
     "selection": "targeted related public examples, not a random sample or independent holdout"
   },
   "experimental_boundaries": [
-    "70 conversion attempt records include preflight failures and retries; not 70 independent model trials.",
+    "89 conversion attempt records include preflight failures and retries; not independent model trials.",
     "Reference images were supplied to 17 Pillow/MATLAB cases; R initially had no reference image.",
     "Later MATLAB runtime LUT facts and R CSV/factor metadata use the product reference_files API and are a separate evidence-assisted arm.",
+    "The 02bac geometry arm also supplied the measured full-frame viewport and RNG seed to both executors; final contour CData is independently matched, unlike the earlier d9d arm.",
+    "The font-facts arm supplied original Pillow draw-call metrics, font hash and shaping advances to both executors through reference_files; it is separate from the source/reference-image-only arm.",
+    "Claude bare invocations isolate a confirmed inherited desktop hook stall without modifying user settings; prior stalled/interrupted attempts remain visible.",
+    "Repair wall times can include manual confirmation waits; builtin, Claude and Codex thinking settings differ, so elapsed totals are not a speed ranking.",
     "Case oracles and prior candidates were withheld from model projects. Shared general semantic prompt corrections are development on this corpus, not held-out evaluation.",
     "Conversion workers used preinstalled scientific packages; environment repair was tested separately.",
-    "Codex used a different model and subscription; repair comparison is blocked before MCP tool delivery.",
+    "Codex used a different model and subscription. Source-bound repair runs now reach actual Tavotto MCP callbacks; earlier setup failures remain separate.",
     "Repeated samples share sources and development feedback; no population success-rate or speed/non-inferiority claim.",
     "Tests overlap and are tied to listed code versions; counts must not be summed.",
     "Fresh app checks include explicit test-client confirmation of offered dependency/run impacts, not automatic production consent."
@@ -49,7 +53,127 @@
       "completed": 3
     }
   },
+  "same_commit_conversion_pairs": [
+    {
+      "runs": [
+        "pillow_official_anchors-builtin-02bac",
+        "pillow_official_anchors-claude-bare"
+      ],
+      "code_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "model": "claude-sonnet-5-5",
+      "effort": "high",
+      "initial_input_sha256": {
+        "anchors.py": "898ca206089d8a266b294bdc574dbdd48481f4688b76f3a22dd3968e7fb3b4a6",
+        "project_context/Tests/fonts/NotoSans-Regular.ttf": "6b04c8dd65af6b73eb4279472ed1580b29102d6496a377340e80a40cdb3b22c9",
+        "reference/_native_reference.webp": "bb7b52cf7dfb0f9effab94c4b0d5456ed91909eae96507aaccbc36e6d572ab5e"
+      },
+      "input_bytes_equal": true,
+      "candidate_environment_shared": true,
+      "limit": "Same external inputs/model/effort/version; executor tools and provider call strategy still differ. One development trial per arm, not a held-out non-inferiority test."
+    },
+    {
+      "runs": [
+        "pillow_official_anchors-builtin-nativefacts",
+        "pillow_official_anchors-claude-nativefacts-bare"
+      ],
+      "code_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "model": "claude-sonnet-5-5",
+      "effort": "high",
+      "initial_input_sha256": {
+        "anchors.py": "898ca206089d8a266b294bdc574dbdd48481f4688b76f3a22dd3968e7fb3b4a6",
+        "project_context/pillow_anchor_native_font_facts.json": "5f7a8db5f4f2018cf2c5db71f3437bd5a81d9da947014863d71837b4e311924e",
+        "project_context/Tests/fonts/NotoSans-Regular.ttf": "6b04c8dd65af6b73eb4279472ed1580b29102d6496a377340e80a40cdb3b22c9",
+        "reference/_native_reference.webp": "bb7b52cf7dfb0f9effab94c4b0d5456ed91909eae96507aaccbc36e6d572ab5e"
+      },
+      "input_bytes_equal": true,
+      "candidate_environment_shared": true,
+      "limit": "Same external inputs/model/effort/version; executor tools and provider call strategy still differ. One development trial per arm, not a held-out non-inferiority test."
+    },
+    {
+      "runs": [
+        "matlab_airy_surface-builtin-02bac",
+        "matlab_airy_surface-claude-bare"
+      ],
+      "code_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "model": "claude-sonnet-5-5",
+      "effort": "high",
+      "initial_input_sha256": {
+        "test_airy_disc_kernel.m": "dba08fd36ddb8263ffe30307e787120a95362259b0650b738413b30ae48b6e0f",
+        "project_context/matlab_airy_surface_geometry.json": "459f1c29b2af4612df45d3c082bce2a395294da1c4417e59e8e0ef595d7ad1ee",
+        "project_context/airy_disc_kernel.m": "c1b61d7119a19e7525906d6e7d3ab4e03d581d36c4fd2eaffa88a22aefbe3c27",
+        "project_context/native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "reference/_native_reference.png": "a1730b112fd0e81c14263e33c9e35e3200f24851a2103d485b89d31317a0a5d0"
+      },
+      "input_bytes_equal": true,
+      "candidate_environment_shared": true,
+      "limit": "Same external inputs/model/effort/version; executor tools and provider call strategy still differ. One development trial per arm, not a held-out non-inferiority test."
+    },
+    {
+      "runs": [
+        "matlab_contour_over_image-builtin-02bac",
+        "matlab_contour_over_image-claude-02bac-bare"
+      ],
+      "code_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "model": "claude-sonnet-5-5",
+      "effort": "high",
+      "initial_input_sha256": {
+        "contourOverImage.m": "febedc1b3c6267035701273e2b40bb10d87efb19820e445f10520869f30fa725",
+        "project_context/matlab_contour_over_image_geometry.json": "e24a9a2d2c51c3be3bdc0d4885dd3077801086380ece7074bddbae0849e5326e",
+        "project_context/native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "project_context/matlab_contour_over_image_full_figure_02.png": "cbdb9df4f22830a36fec25e6e842a6fc200cc0f9efbbb52cd68a37fa9e252bac",
+        "reference/_native_reference.png": "61d6e4e8e954786034afd848c2745975edbbcd03d7027c9634274f892aad1803"
+      },
+      "input_bytes_equal": true,
+      "candidate_environment_shared": true,
+      "limit": "Same external inputs/model/effort/version; executor tools and provider call strategy still differ. One development trial per arm, not a held-out non-inferiority test."
+    }
+  ],
   "conversion_attempts": [
+    {
+      "run_id": "matlab_airy_surface-builtin-02bac",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 250.7,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 162810,
+        "output_tokens": 29154,
+        "cached_input_tokens": 18767
+      },
+      "usage_reported": true,
+      "candidate_sha256": "9835380c02ebfa53d8cc66317d79aa826d74e1de456f6decbdb4358ea9b5ce3e",
+      "result_record_sha256": "470288fa9b4b12f956d8e129dea8d974220c463c3e3fbbe530dce35985c686d1",
+      "reference_files_sha256": {
+        "native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "matlab_airy_surface_geometry.json": "459f1c29b2af4612df45d3c082bce2a395294da1c4417e59e8e0ef595d7ad1ee"
+      },
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 7,
+        "compressions": 7,
+        "output_recoveries": 0,
+        "elapsed_ms": 247212,
+        "usage_estimated": false
+      }
+    },
     {
       "run_id": "matlab_airy_surface-builtin-800",
       "case_id": "matlab_airy_surface",
@@ -64,6 +188,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "needs_input",
       "failure_reason_codes": [
         "needs_input"
@@ -77,7 +203,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "5df1b7758f5757b3d8cb517034d1bb027a94ff9d2046538860f0237933bfaa9b",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 3,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 10625,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "matlab_airy_surface-builtin-8bb",
@@ -95,6 +228,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -106,7 +241,14 @@
       "usage_reported": true,
       "candidate_sha256": "88d4ce54a379fe7be47c504e99a04a29affcc1a182c86de297b1d57a8842491a",
       "result_record_sha256": "1ac9ace80b86dae2c2e387971c874f9bc7e8b14666448fdf4414036d4c1b852b",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 6,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 40755,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "matlab_airy_surface-builtin-d1c",
@@ -125,6 +267,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "needs_input",
       "failure_reason_codes": [
         "needs_input"
@@ -138,7 +282,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "a729515f932864dc7a84b8bce7d18a6d39f179a73e08122c66487b0d1f2d8366",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 4,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 17057,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "matlab_airy_surface-builtin-d1c-reference",
@@ -159,6 +310,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -171,6 +324,13 @@
       "candidate_sha256": "2dbd8fd8932372cdbe8cb2fb7f3623a0b145d95c5a488a25f8fa72fc0ea3e9b7",
       "result_record_sha256": "68cbb0d75f64f79c116f58aa9dc1ec4f614724a9eb3e7efa9eef1055d96670ac",
       "default_routing_changed": false,
+      "loop": {
+        "turns": 8,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 89136,
+        "usage_estimated": false
+      },
       "experimental_caveat": "test-only injected native facts; separate from product reference_files arm"
     },
     {
@@ -192,6 +352,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -203,7 +365,132 @@
       "usage_reported": true,
       "candidate_sha256": "90aeac69f24592d18eedbc6b8393e771fdbe340a6a7fe2c5956e3ea4860da1df",
       "result_record_sha256": "2a6ad28cb9eeec93ab3d6c01adecb75720ff568e56317efa6769b2e06e3ebd15",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 5,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 53069,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-geometry",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "3cf845fdeca788dd8b8a40304c50384efb4dc2dd",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 271.547,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 251333,
+        "output_tokens": 28991,
+        "cached_input_tokens": 21448
+      },
+      "usage_reported": true,
+      "candidate_sha256": "9901fd6f060a9b3935addf89d149dca8c53011b2fbd7659e474a741fbe679ba9",
+      "result_record_sha256": "299f9a2c6d668761f9e7a05466c7a1a0ba42c1d4971445b6fb7af10e6cdd6b16",
+      "reference_files_sha256": {
+        "native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "matlab_airy_surface_geometry.json": "459f1c29b2af4612df45d3c082bce2a395294da1c4417e59e8e0ef595d7ad1ee"
+      },
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 9,
+        "compressions": 7,
+        "output_recoveries": 0,
+        "elapsed_ms": 268337,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "matlab_airy_surface-claude-02bac",
+      "case_id": "matlab_airy_surface",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "wall_seconds": 197.068,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "91f5e104e823c9b69210e94aa5555e96b24eb15ebb7b0c265202c4c30c28e5dc",
+      "reference_files_sha256": {
+        "native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "matlab_airy_surface_geometry.json": "459f1c29b2af4612df45d3c082bce2a395294da1c4417e59e8e0ef595d7ad1ee"
+      },
+      "default_routing_changed": false,
+      "loop": {},
+      "operator_intervention": {
+        "record_sha256": "edd2f32218f272557ed05afc405c31661b7a10d0961e6bb04872405a3213311f",
+        "reason": "Owned benchmark child stopped after an inherited desktop integration hook blocked the CLI; retained as a setup-confounded attempt."
+      }
+    },
+    {
+      "run_id": "matlab_airy_surface-claude-bare",
+      "case_id": "matlab_airy_surface",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 117.729,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "375f13b04fad8f0b6bc5bd94efe9e7ab7a912c6691f2b35d281623c8cb7328a3",
+      "result_record_sha256": "3c4839751f621beedada08959d9cfd038b46bbdde696ba91fd873216a120871b",
+      "reference_files_sha256": {
+        "native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "matlab_airy_surface_geometry.json": "459f1c29b2af4612df45d3c082bce2a395294da1c4417e59e8e0ef595d7ad1ee"
+      },
+      "default_routing_changed": false,
+      "loop": {},
+      "cli_isolation": "Per-invocation bare mode, empty user setting sources and empty strict MCP config; no global files changed. Same product prompt and oracle read guard."
     },
     {
       "run_id": "matlab_airy_surface-claude-d1c",
@@ -222,6 +509,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "needs_input",
       "failure_reason_codes": [
         "needs_input"
@@ -231,7 +520,77 @@
       "usage_reported": false,
       "candidate_sha256": null,
       "result_record_sha256": "ef3948463e73958d18e00c7f4f4220c289a0b18a7348c0e4c4c46350c691d900",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
+    },
+    {
+      "run_id": "matlab_airy_surface-claude-geometry",
+      "case_id": "matlab_airy_surface",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "3cf845fdeca788dd8b8a40304c50384efb4dc2dd",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "wall_seconds": 166.362,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
+      "task_outcome": "failed",
+      "failure_reason_codes": [
+        "run_failed",
+        "no_new_failure"
+      ],
+      "task_error_code": "precommit_not_verified",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "d1dab8dfc57ac16c05f37e9b8321f33335a6bac7b8b38bed56f7b7301343c60e",
+      "reference_files_sha256": {
+        "native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "matlab_airy_surface_geometry.json": "459f1c29b2af4612df45d3c082bce2a395294da1c4417e59e8e0ef595d7ad1ee"
+      },
+      "default_routing_changed": false,
+      "loop": {}
+    },
+    {
+      "run_id": "matlab_airy_surface-claude-geometry94",
+      "case_id": "matlab_airy_surface",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "wall_seconds": 902.17,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "timeout",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "70297bb89989efb131f60f96a16f44d6e66a48529fab5d76170dbb5460915329",
+      "reference_files_sha256": {
+        "native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "matlab_airy_surface_geometry.json": "459f1c29b2af4612df45d3c082bce2a395294da1c4417e59e8e0ef595d7ad1ee"
+      },
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "matlab_bounded_nan-builtin-d1c",
@@ -252,6 +611,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -263,7 +624,14 @@
       "usage_reported": true,
       "candidate_sha256": "5e0e395d241e1abd2b966561285df90bcca50ef0ff22b23d149da87f162bafbf",
       "result_record_sha256": "bdc05522d55cc96e7832c05971569a022209484939e33cd386d8bb54d8bfc0cb",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 6,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 59037,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "matlab_bounded_syntax-builtin-d1c",
@@ -284,6 +652,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -295,7 +665,60 @@
       "usage_reported": true,
       "candidate_sha256": "3a0579007ab6b20e48e7ec50a42e46a2e3f5467f1282a8c164b60189eef16542",
       "result_record_sha256": "6f61cd3097565b271a1baed7ee64d2631f6132dc347e3d8a4d4b0c6dcbfa2283",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 7,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 73010,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "matlab_contour_over_image-builtin-02bac",
+      "case_id": "matlab_contour_over_image",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 122.14,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 176920,
+        "output_tokens": 13099,
+        "cached_input_tokens": 16086
+      },
+      "usage_reported": true,
+      "candidate_sha256": "dc3fc398b07f7260d88c0614772eb46d77982f0d27bc4783249bc7240880079c",
+      "result_record_sha256": "036c6d64493466a683606c7457f126942c5c6e3a7e9db63e90066ea6673aabd0",
+      "reference_files_sha256": {
+        "native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "matlab_contour_over_image_geometry.json": "e24a9a2d2c51c3be3bdc0d4885dd3077801086380ece7074bddbae0849e5326e",
+        "matlab_contour_over_image_full_figure_02.png": "cbdb9df4f22830a36fec25e6e842a6fc200cc0f9efbbb52cd68a37fa9e252bac"
+      },
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 6,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 118550,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "matlab_contour_over_image-builtin-800",
@@ -311,6 +734,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "needs_input",
       "failure_reason_codes": [
         "needs_input"
@@ -324,7 +749,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "05c36c3e226a0ce60716192b360463838ac88dba67ddab24d230aea97512b857",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 4,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 15150,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "matlab_contour_over_image-builtin-8bb",
@@ -342,6 +774,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -353,7 +787,14 @@
       "usage_reported": true,
       "candidate_sha256": "2dcf8eee85c4e558354d5174a82d5dcc85908c271806ca90b5f63a0eeddef1d8",
       "result_record_sha256": "d75e78d54344e3c881ec5435ad017faba8e3de5d85670521e269310aff2457d3",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 3,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 38879,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "matlab_contour_over_image-builtin-d1c",
@@ -372,6 +813,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "needs_input",
       "failure_reason_codes": [
         "needs_input"
@@ -385,7 +828,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "1f61897aa8caa67b309dc87bd55a86d7ee5cada706b99fdb02567ac4eb961d6f",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 4,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 13375,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "matlab_contour_over_image-builtin-d1c-reference",
@@ -406,6 +856,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -418,6 +870,13 @@
       "candidate_sha256": "be394c1609810bc8c52a2d6710820e7a9b646c1b6bae0fc2d54b5628f6d2b98f",
       "result_record_sha256": "7768d38e7c73cba030e55163f367fba0bdc532bad6808818c19fb171082b40fb",
       "default_routing_changed": false,
+      "loop": {
+        "turns": 6,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 80336,
+        "usage_estimated": false
+      },
       "experimental_caveat": "test-only injected native facts; separate from product reference_files arm"
     },
     {
@@ -439,6 +898,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -450,7 +911,130 @@
       "usage_reported": true,
       "candidate_sha256": "92587e1715c8e55afd31b25bca288669f2dd4c9a17d37ee118d68b6ce639ce7c",
       "result_record_sha256": "c37737eaae6a4e13e451e50596486bbcc6061856c85ccfd2d908de7ec2a4a227",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 7,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 138870,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "matlab_contour_over_image-builtin-geometry",
+      "case_id": "matlab_contour_over_image",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 208.008,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 305758,
+        "output_tokens": 25446,
+        "cached_input_tokens": 26810
+      },
+      "usage_reported": true,
+      "candidate_sha256": "08f3a5c464e3ebcc757dc611876fac864229ac769a7820c7ce32d8e8771fbac3",
+      "result_record_sha256": "41af5898d84a4f77be8b244896acee2a6b027dab645f7fcbef23816ad5ddae7a",
+      "reference_files_sha256": {
+        "native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "matlab_contour_over_image_geometry.json": "e24a9a2d2c51c3be3bdc0d4885dd3077801086380ece7074bddbae0849e5326e",
+        "matlab_contour_over_image_full_figure_02.png": "cbdb9df4f22830a36fec25e6e842a6fc200cc0f9efbbb52cd68a37fa9e252bac"
+      },
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 10,
+        "compressions": 6,
+        "output_recoveries": 0,
+        "elapsed_ms": 203632,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "matlab_contour_over_image-claude-02bac-bare",
+      "case_id": "matlab_contour_over_image",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 169.752,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "89d5d8e54079d4365de9979a2d39b5fdc3958cfd935b60c87a4aec105dcb4b65",
+      "result_record_sha256": "9cbdb6c1ec7720ee0606625737878fa127df92387aa4f3e5199fb0ec57c8f235",
+      "reference_files_sha256": {
+        "native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "matlab_contour_over_image_geometry.json": "e24a9a2d2c51c3be3bdc0d4885dd3077801086380ece7074bddbae0849e5326e",
+        "matlab_contour_over_image_full_figure_02.png": "cbdb9df4f22830a36fec25e6e842a6fc200cc0f9efbbb52cd68a37fa9e252bac"
+      },
+      "default_routing_changed": false,
+      "loop": {},
+      "cli_isolation": "Per-invocation bare mode, empty user setting sources and empty strict MCP config; no global files changed. Same product prompt and oracle read guard."
+    },
+    {
+      "run_id": "matlab_contour_over_image-claude-geometry94",
+      "case_id": "matlab_contour_over_image",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "wall_seconds": 901.732,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "timeout",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "7f75d97d09ba8473d000d1df3fe78f95c4985923db61580e26de349425056e9c",
+      "reference_files_sha256": {
+        "native_runtime_facts.json": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+        "matlab_contour_over_image_geometry.json": "e24a9a2d2c51c3be3bdc0d4885dd3077801086380ece7074bddbae0849e5326e"
+      },
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "matlab_multi_colormap-builtin-8bb",
@@ -468,6 +1052,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -479,7 +1065,14 @@
       "usage_reported": true,
       "candidate_sha256": "2c846e9c2b037cb619a20b00e0edff1c0bedb2b0a39d8e302458838a01b30d1b",
       "result_record_sha256": "377ba31094e79cbddfcb182746600df2e0e8b3c7c89a019dd05a20fdeeb22fcf",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 4,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 36843,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "matlab_multi_colormap-builtin-d1c",
@@ -500,6 +1093,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -511,7 +1106,14 @@
       "usage_reported": true,
       "candidate_sha256": "a5d9751f61aa63e5433725e695cedff2a9e3388b976afe4a2a74baed394c747d",
       "result_record_sha256": "dadbadb849f382a7d9fc539862ef92b7e899482a91443997d30c269b86d25bfa",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 6,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 42879,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "matlab_multi_colormap-claude-d1c",
@@ -530,6 +1132,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "timeout",
@@ -537,7 +1141,8 @@
       "usage_reported": false,
       "candidate_sha256": null,
       "result_record_sha256": "c51749294d282cf8185a513d836be974324f72f518e212a80e156d203d44a18e",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "matlab_shaded_errorbar-builtin-d1c",
@@ -558,6 +1163,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -569,7 +1176,14 @@
       "usage_reported": true,
       "candidate_sha256": "236814a40edebbec4b8924811e0c303988d7232293de8a33bcdc6e86de53ae08",
       "result_record_sha256": "05283a754c1c0e69631c9a4725f23124b91f987d4bdc2a7424376cbcc4bd527e",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 6,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 73011,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_book_pieslice-builtin-d1c",
@@ -590,6 +1204,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -601,7 +1217,14 @@
       "usage_reported": true,
       "candidate_sha256": "c50075fd40c5fe61262d1dc11b12e0aafacf2e09c5d9b0b297d3119fa473825b",
       "result_record_sha256": "e8bb09caefe637311a104c5092801d10b390fe1620b7ba9f3b121c8085b99f9a",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 4,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 25606,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_book_polygon-builtin-d1c",
@@ -622,6 +1245,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -633,7 +1258,14 @@
       "usage_reported": true,
       "candidate_sha256": "23c63e3234d657f50b10b51bb7a61edba353695a32e5f214034f95e1d9413c56",
       "result_record_sha256": "34c21f226aad7e588dfe9c25ae9fa199252dab25e7b4065232061bf70c8d621c",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 3,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 12610,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_book_polygon-claude-d1c",
@@ -654,6 +1286,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -661,7 +1295,8 @@
       "usage_reported": false,
       "candidate_sha256": "474d11dd9bdb3bf5a1d24c17f8c9950880440ffdb89e8d26376084737706bd15",
       "result_record_sha256": "2a1d88f0aa5718d7ac5cc1da6365a0c5246272ca7a11b9ba4a68b0aa93eec40b",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "pillow_book_polygon-codex-isolated",
@@ -677,6 +1312,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "agent_exit_nonzero",
@@ -685,6 +1322,7 @@
       "candidate_sha256": null,
       "result_record_sha256": "f57aebb80fc1003baae41f11f0794eb7a0e8181f0f4be938a240e589b9c51d3d",
       "default_routing_changed": false,
+      "loop": {},
       "experimental_caveat": "preflight or harness configuration failure; do not count as model capability failure",
       "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
     },
@@ -702,6 +1340,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "agent_exit_nonzero",
@@ -710,6 +1350,7 @@
       "candidate_sha256": null,
       "result_record_sha256": "f6930915f0fb4295dfb36f40bddb29ed1f0d6468705f3a9b10a4ec134ffb6e2d",
       "default_routing_changed": false,
+      "loop": {},
       "experimental_caveat": "preflight or harness configuration failure; do not count as model capability failure",
       "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
     },
@@ -727,6 +1368,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "agent_exit_nonzero",
@@ -735,6 +1378,7 @@
       "candidate_sha256": null,
       "result_record_sha256": "a2d8d8f4d0e99364cb6c3431037bb3c556dba9e2bfddfd76d05162795365bfa9",
       "default_routing_changed": false,
+      "loop": {},
       "experimental_caveat": "preflight or harness configuration failure; do not count as model capability failure",
       "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
     },
@@ -754,6 +1398,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -762,6 +1408,7 @@
       "candidate_sha256": "4fb405d776c6d99b1bda4f775b8ba18ee49a8d382a52506672206d7859074257",
       "result_record_sha256": "f6bbf4834c88b7f2808006223645c9ba499d62d82683212b934813b37a168568",
       "default_routing_changed": false,
+      "loop": {},
       "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
     },
     {
@@ -783,6 +1430,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -794,7 +1443,14 @@
       "usage_reported": true,
       "candidate_sha256": "2ebd7a7b2cb3c691d559d7cea351c8c85e3c88920053fb41e2d64f71c121fbef",
       "result_record_sha256": "6df7114b6a03e27164d586be4375f8214329bfae02488c585fbdc4b915864174",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 3,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 22358,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_book_text_opacity-claude-d1c",
@@ -815,6 +1471,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -822,7 +1480,8 @@
       "usage_reported": false,
       "candidate_sha256": "8ca3ae8a98b9fe0ce931e6aae3103aa902f7a4f78baaeaea1e75df67cdfe19fc",
       "result_record_sha256": "7b16aa242049ccc1751e9ea18f3c0aca6ee6da623a3271b92874c401f21c746b",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "pillow_circular_thumbnail-builtin-d1c",
@@ -843,6 +1502,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -854,7 +1515,14 @@
       "usage_reported": true,
       "candidate_sha256": "cd8f2b025db2a9926e0b28648885dbb602ceaa48aa459a88bec1a7689b7cbb95",
       "result_record_sha256": "c51f9000002e29205e4ece3ca82159a0dbee4a6cf12a628ceafdfa76eb3faf12",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 4,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 22733,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_nkmk_absolute_font-builtin-d1c",
@@ -875,6 +1543,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -886,7 +1556,14 @@
       "usage_reported": true,
       "candidate_sha256": "74cef30f048a246785c0f10a74f279e71693c162a08e28a9aa3ad5a043d084c4",
       "result_record_sha256": "1f71db33f5f1281a3e21c585358ef6d660c23c5296229e36db88278d16accac1",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 5,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 29040,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_nkmk_composite-builtin-734",
@@ -905,6 +1582,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "needs_input",
       "failure_reason_codes": [
         "needs_input"
@@ -918,7 +1597,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "efcddcd663fa37d645860b9e300fa63040bd2d46832400282a4b090fd58a642a",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 4,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 22532,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_nkmk_composite-builtin-d1c",
@@ -939,6 +1625,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -950,7 +1638,14 @@
       "usage_reported": true,
       "candidate_sha256": "c60d54f3d256f92c99fce0bbfe21c0fdc6e4723ad2db77c3cb013c42f82c3876",
       "result_record_sha256": "4a8542ee24f12d2928a09c28d79fb5b02b6f95e190e7f246c01cc7d025770992",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 5,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 32978,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_nkmk_paste-builtin-d1c",
@@ -969,6 +1664,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "needs_input",
       "failure_reason_codes": [
         "needs_input"
@@ -982,7 +1679,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "2449afc071310144e8663c1a4939ee8cdd7b5f7fd2c4c8f1ec0af13a69a2b785",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 2,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 7855,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_nkmk_paste-claude-d1c",
@@ -1001,6 +1705,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "needs_input",
       "failure_reason_codes": [
         "needs_input"
@@ -1010,7 +1716,8 @@
       "usage_reported": false,
       "candidate_sha256": null,
       "result_record_sha256": "eaa58c3f5fb267d05903a41e110fd65b380b2b3b03ce78acd97c7fe37fa2a679",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "pillow_nkmk_putalpha-builtin-d1c",
@@ -1031,6 +1738,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1042,7 +1751,14 @@
       "usage_reported": true,
       "candidate_sha256": "d597ce110c43e28a2ab1d9c325403f63b6351236ef4bcfcf78e5c5ffe38accdd",
       "result_record_sha256": "9ed1858ebff6a20757abb1175199a209259ea463eec8a258c81de0697f5896bf",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 6,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 32695,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_nkmk_rotate-builtin-d1c",
@@ -1061,6 +1777,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "agent_exit_nonzero",
@@ -1072,7 +1790,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "45ff393ab096737c8627219c2cb7c2c980301da30b2d70ac45c817d32615d0a7",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 6,
+        "compressions": 3,
+        "output_recoveries": 0,
+        "elapsed_ms": 32873,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_nkmk_rotate-builtin-reference-http-probe",
@@ -1091,6 +1816,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "needs_input",
       "failure_reason_codes": [
         "needs_input"
@@ -1104,7 +1831,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "5ee99e89e6958b2379dfce630043cd866788f20cc18df76c88b43a030c918f5e",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 3,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 9119,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_nkmk_shapes-builtin-d1c",
@@ -1125,6 +1859,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1136,7 +1872,55 @@
       "usage_reported": true,
       "candidate_sha256": "dc5bd0149b3031118cc0abd84e063fb55cf83bc3b0415193a0807e396a37f28f",
       "result_record_sha256": "818b587ce23580476ae209971f87917aa32980265d4a1b5593f74f2aa0867efb",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 6,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 42694,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "pillow_official_anchors-builtin-02bac",
+      "case_id": "pillow_official_anchors",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 45.884,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 40404,
+        "output_tokens": 4455,
+        "cached_input_tokens": 10724
+      },
+      "usage_reported": true,
+      "candidate_sha256": "35d8e12251b1da3cc757c84b2c8ff093b19a12bc3d7ed5afede5705c3c0a7e42",
+      "result_record_sha256": "735e86e5f20858b737449c536e92fe7e2830c3f5902617a25af01f2f85166ccf",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 5,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 42892,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_official_anchors-builtin-734",
@@ -1157,6 +1941,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1168,7 +1954,14 @@
       "usage_reported": true,
       "candidate_sha256": "4c48c1cd088537c3b04c567f984512218b5f5ad97af49ee9e338496be6aad30c",
       "result_record_sha256": "7f8734a09a29fb4ee92ee299360a70ce7f8429cf66c22cc9c9bc49ce2a9bcc95",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 9,
+        "compressions": 7,
+        "output_recoveries": 0,
+        "elapsed_ms": 59452,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_official_anchors-builtin-bf85",
@@ -1189,6 +1982,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1200,7 +1995,55 @@
       "usage_reported": true,
       "candidate_sha256": "b2955a6af34a490c4fa2657396f7cccb778865c070c3f52c317f9e6d33442d79",
       "result_record_sha256": "f3ca695c7ed1ef6caacea4f804e71b33ce809a69aa2d39171a54f66a613efd23",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 8,
+        "compressions": 7,
+        "output_recoveries": 0,
+        "elapsed_ms": 69333,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "pillow_official_anchors-builtin-context-probe",
+      "case_id": "pillow_official_anchors",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 152.007,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 140192,
+        "output_tokens": 13658,
+        "cached_input_tokens": 48258
+      },
+      "usage_reported": true,
+      "candidate_sha256": "102c92b35193acdcfa7193525d6547f98b3a5508a924c784bf4b321dc8ef9979",
+      "result_record_sha256": "8d930fd220337cadf865a1722019d8b98448391bfe27d32297a47e3991bf1c58",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 18,
+        "compressions": 18,
+        "output_recoveries": 0,
+        "elapsed_ms": 148510,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_official_anchors-builtin-d1c",
@@ -1219,6 +2062,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "agent_exit_nonzero",
@@ -1230,7 +2075,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "6a7eb493adb1157f3af15cad56c2efb7c77f59aa9df81d86f03eb197ebf9d289",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 2,
+        "compressions": 3,
+        "output_recoveries": 0,
+        "elapsed_ms": 32128,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_official_anchors-builtin-final",
@@ -1251,6 +2103,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1262,7 +2116,99 @@
       "usage_reported": true,
       "candidate_sha256": "7ff1296fa67b08413e595bd841be7400126f8c5b3147c0af768dfddba50f8c24",
       "result_record_sha256": "d24a14305f2e14c096425cb3aef90ff27cf7e54f69642f3095e5ffa0f713cc67",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 7,
+        "compressions": 6,
+        "output_recoveries": 0,
+        "elapsed_ms": 58036,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "pillow_official_anchors-builtin-glyph",
+      "case_id": "pillow_official_anchors",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 75.258,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 64972,
+        "output_tokens": 7332,
+        "cached_input_tokens": 21448
+      },
+      "usage_reported": true,
+      "candidate_sha256": "4e5228dd925fd2bc09adc563a140bdba83e47bbe2ce0fd713d74da440100109e",
+      "result_record_sha256": "746c301d07b24fe4ea0b9211ecab57a07c802623bf52ffcc53793383a8b55825",
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 8,
+        "compressions": 7,
+        "output_recoveries": 0,
+        "elapsed_ms": 72332,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "pillow_official_anchors-builtin-nativefacts",
+      "case_id": "pillow_official_anchors",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 90.829,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 100600,
+        "output_tokens": 9032,
+        "cached_input_tokens": 21448
+      },
+      "usage_reported": true,
+      "candidate_sha256": "ad5fa1cad152b1960ad67b1a0eff8f049259432c6f143638c42c02bd3099ee15",
+      "result_record_sha256": "7a5c981626b8ab5ca9f2609151a66ae77523741af7d95f1611a6f4f451959b26",
+      "reference_files_sha256": {
+        "pillow_anchor_native_font_facts.json": "bfe82cec7721d6ff037bdb539e58346e978c479cb418a77f5c93acc92dbffa99"
+      },
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 8,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 87885,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "pillow_official_anchors-builtin-reference-http-probe",
@@ -1283,6 +2229,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1294,7 +2242,79 @@
       "usage_reported": true,
       "candidate_sha256": "c0591d2b8b4e5b429e0f571354540db66b1f6630f7787c591fc2b5aa181001db",
       "result_record_sha256": "3277dacad14200057bd82f62d7448ab759989ef9f550c636f7f8d6fd864f6be5",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 10,
+        "compressions": 3,
+        "output_recoveries": 0,
+        "elapsed_ms": 65848,
+        "usage_estimated": false
+      }
+    },
+    {
+      "run_id": "pillow_official_anchors-claude-02bac",
+      "case_id": "pillow_official_anchors",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 376.222,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "334db29d752bb2e6de784c0465cebf6e7af69c850550b9ded7cbdc184aa3f58d",
+      "default_routing_changed": false,
+      "loop": {},
+      "operator_intervention": {
+        "record_sha256": "4805fb8848adb5642fc43abe10371dd51bfddf2a506ef253afd995c8df061b58",
+        "reason": "Owned benchmark child stopped after an inherited desktop integration hook blocked the CLI; retained as a setup-confounded attempt."
+      }
+    },
+    {
+      "run_id": "pillow_official_anchors-claude-bare",
+      "case_id": "pillow_official_anchors",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 32.812,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "00622377745a886e8bcad4e066c70c2159abb9a9e5283f1496dfaaab78cf0ce8",
+      "result_record_sha256": "63c40e2f4cfcdb94c0b4ed078e9e5c0c50cae9400ab36c5d3264c95122c7dd0d",
+      "default_routing_changed": false,
+      "loop": {},
+      "cli_isolation": "Per-invocation bare mode, empty user setting sources and empty strict MCP config; no global files changed. Same product prompt and oracle read guard."
     },
     {
       "run_id": "pillow_official_anchors-claude-bf85",
@@ -1315,6 +2335,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1322,7 +2344,8 @@
       "usage_reported": false,
       "candidate_sha256": "74330a5423ab65455fe2103ba5d78ee04ff4163b0684a3c62919a5aae7761388",
       "result_record_sha256": "2830125cc70b45e45cd1b54f700f14aaca904f584f46618a5d7593b2302fce80",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "pillow_official_anchors-claude-d1c",
@@ -1343,6 +2366,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1350,7 +2375,110 @@
       "usage_reported": false,
       "candidate_sha256": "66fb21f902164dba94305c3a78b6aa101e0b7a3bebad8a739584fb66e49c72f2",
       "result_record_sha256": "0d705f660198fefb7ea39ea9b67721fd3b8ad85bf060cd260e41c80741e574f1",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
+    },
+    {
+      "run_id": "pillow_official_anchors-claude-glyph",
+      "case_id": "pillow_official_anchors",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 74.037,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "061eb4f101530d354b844937adbddf7800143a7c601a99fc8109e54687eb83d8",
+      "result_record_sha256": "993994330f97613f2c291453d5c3c0e1970dff7f40e0d2ccb4775238838c7072",
+      "default_routing_changed": false,
+      "loop": {}
+    },
+    {
+      "run_id": "pillow_official_anchors-claude-nativefacts",
+      "case_id": "pillow_official_anchors",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 94.774,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "c5e2bceb1cf715f5b34b4b8f4f0a67b6dc5a6e2abd96a6a785695a1c7e844982",
+      "reference_files_sha256": {
+        "pillow_anchor_native_font_facts.json": "bfe82cec7721d6ff037bdb539e58346e978c479cb418a77f5c93acc92dbffa99"
+      },
+      "default_routing_changed": false,
+      "loop": {},
+      "operator_intervention": {
+        "record_sha256": "2ec4e63b5663ec0b76da3867aefb6e427db4e8e0a806a10adc660284e111fd60",
+        "reason": "Owned benchmark child stopped after an inherited desktop integration hook blocked the CLI; retained as a setup-confounded attempt."
+      }
+    },
+    {
+      "run_id": "pillow_official_anchors-claude-nativefacts-bare",
+      "case_id": "pillow_official_anchors",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 63.549,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "1a4b27f21d085d8e0ba86e52914947ca0a94add0c0a7873215af7e91330b87bd",
+      "result_record_sha256": "cf5283c2bad283f4e512151ce3bcf9c660dcebf442c2c76539f7ca5955ab1864",
+      "reference_files_sha256": {
+        "pillow_anchor_native_font_facts.json": "bfe82cec7721d6ff037bdb539e58346e978c479cb418a77f5c93acc92dbffa99"
+      },
+      "default_routing_changed": false,
+      "loop": {},
+      "cli_isolation": "Per-invocation bare mode, empty user setting sources and empty strict MCP config; no global files changed. Same product prompt and oracle read guard."
     },
     {
       "run_id": "r_base_plotmath-builtin-734",
@@ -1371,6 +2499,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1382,7 +2512,14 @@
       "usage_reported": true,
       "candidate_sha256": "8a9a2e429016cf3905233794a0c1aefed4cf9eb8391183ad308aeeeac99d2e50",
       "result_record_sha256": "e37bfc2fc8146c8b24dbf5574e557c2d724698408b10d5e1ed21d37bd5cbd272",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 10,
+        "compressions": 4,
+        "output_recoveries": 0,
+        "elapsed_ms": 349294,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_base_plotmath-builtin-8bb",
@@ -1400,6 +2537,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1411,7 +2550,14 @@
       "usage_reported": true,
       "candidate_sha256": "04bf015a4ae173899ec77acf8e22ce1a86c731bc46ccfe19a378b8765cdb695a",
       "result_record_sha256": "ef0e7c49f2d885adfe2a6c0610bd539a621b806639aaff3d0ae27fdef2cad871",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 5,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 126928,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_base_plotmath-builtin-d1c",
@@ -1430,6 +2576,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "agent_exit_nonzero",
@@ -1441,7 +2589,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "0959c6d5c97424092400df30d9f673dac640fb8f5f319fb7d50b44239af58425",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 1,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 492135,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_base_plotmath-builtin-d1c-network-retry",
@@ -1460,6 +2615,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "agent_exit_nonzero",
@@ -1471,7 +2628,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "c3953346a386adf4e7a7b98c5585aeacc3d8b6a57b9290a725fad3b4490ecfc4",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 1,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 492770,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_base_plotmath-builtin-d9d",
@@ -1490,6 +2654,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "agent_exit_nonzero",
@@ -1501,7 +2667,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "c790e4f856a0c21c4755cae86bb48d667d4a77690c9fc25ec76c8a708993e864",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 3,
+        "compressions": 0,
+        "output_recoveries": 1,
+        "elapsed_ms": 277035,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_base_plotmath-builtin-d9d-output32k",
@@ -1520,6 +2693,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "agent_exit_nonzero",
@@ -1532,6 +2707,7 @@
         "product_default": false
       },
       "default_routing_changed": false,
+      "loop": {},
       "experimental_caveat": "preflight or harness configuration failure; do not count as model capability failure"
     },
     {
@@ -1551,6 +2727,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "agent_exit_nonzero",
@@ -1566,7 +2744,14 @@
         "max_output_tokens": 32768,
         "product_default": false
       },
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 8,
+        "compressions": 4,
+        "output_recoveries": 0,
+        "elapsed_ms": 255789,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_base_plotmath-builtin-pilot",
@@ -1583,6 +2768,7 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1594,7 +2780,13 @@
       "usage_reported": true,
       "candidate_sha256": "1d0d3ce128063eda8175f807619f271fe0cb6532810f5c391c6404ca73195dc3",
       "result_record_sha256": "764ec5a5846ead9be0ee83ce0502a7320eb9614a3702461725c63e2a05b7e296",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 3,
+        "compressions": 0,
+        "elapsed_ms": 98406,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_base_plotmath-builtin-v2",
@@ -1610,6 +2802,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "agent_exit_nonzero",
@@ -1621,7 +2815,13 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "861fc9dd1c81b344981f446e921ffebe214f4b94bb614418341cfb8de8b1526d",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 2,
+        "compressions": 0,
+        "elapsed_ms": 116310,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_base_plotmath-claude-d1c",
@@ -1640,6 +2840,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "timeout",
@@ -1647,7 +2849,8 @@
       "usage_reported": false,
       "candidate_sha256": null,
       "result_record_sha256": "52eb64ec812431e86fd16a559ad7bf080606fe17e1e49e11be1ec2d94594d500",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "r_base_plotmath-claude-pilot",
@@ -1662,6 +2865,7 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "request_count": 0,
       "task_outcome": "failed",
       "failure_reason_codes": [
         "run_failed",
@@ -1672,7 +2876,8 @@
       "usage_reported": false,
       "candidate_sha256": null,
       "result_record_sha256": "333c0e1c6c57f692d1ce2d9f46882ed24cd809a8792f5eabe585ff646301268e",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "r_base_plotmath-claude-v2",
@@ -1688,6 +2893,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "timeout",
@@ -1695,7 +2902,8 @@
       "usage_reported": false,
       "candidate_sha256": null,
       "result_record_sha256": "aec6b0a1ad821f5d1b0f327302eda12790f1d559a8820060663efc2c89620123",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "r_base_plotmath-codex-8bb",
@@ -1713,6 +2921,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1721,6 +2931,7 @@
       "candidate_sha256": "fe9f186163e563924c5975514dd4376e0febba953cee9ced40562dc8cdbf2995",
       "result_record_sha256": "e92575d1387289b26fe3769b4adba2c4e022d69dba7fac0180706b84df7d4f69",
       "default_routing_changed": false,
+      "loop": {},
       "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
     },
     {
@@ -1736,6 +2947,7 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "request_count": 0,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "timeout",
@@ -1744,6 +2956,7 @@
       "candidate_sha256": null,
       "result_record_sha256": "95e003374d5f5ba1124012f0ed2a372eaa305cd2f2aa9cc99faeb1e5bf60dac8",
       "default_routing_changed": false,
+      "loop": {},
       "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
     },
     {
@@ -1765,6 +2978,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1776,7 +2991,14 @@
       "usage_reported": true,
       "candidate_sha256": "257b16f9e90f028d56217eb26038a5cb93656d0be27ff28b049e798299624e2f",
       "result_record_sha256": "655d1da810d601fc45b69e27c55ed50af6489cb7202b7a10fb17ce32b2365ea5",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 3,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 44179,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_gallery_bar-builtin-d1c",
@@ -1797,6 +3019,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1808,7 +3032,14 @@
       "usage_reported": true,
       "candidate_sha256": "53bfb2ccbb9a0f5d15c6cbd2407dd60b1679e085545c3aaeafa5794914fc4652",
       "result_record_sha256": "52fd7ea1e710c4aee2db50f03f2e5a1f58ef6b7b2c5e46eaad9046584d5096eb",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 4,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 24681,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_gallery_percent_stack-builtin-d1c",
@@ -1829,6 +3060,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1840,7 +3073,14 @@
       "usage_reported": true,
       "candidate_sha256": "3dc8c67ad884d39c83a32216e89cf402bde138bb59281bdb80da3d36720d98b2",
       "result_record_sha256": "80f25ce2b2c4ffed9e9f1cdf9ca5f6e4ef59830999df1302cfd63854f2dae56d",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 3,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 25421,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_lattice_intervals-builtin-bf85-csv",
@@ -1859,6 +3099,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "needs_input",
       "failure_reason_codes": [
         "needs_input"
@@ -1875,7 +3117,14 @@
       "reference_files_sha256": {
         "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908"
       },
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 3,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 12597,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_lattice_intervals-builtin-bf85-metadata",
@@ -1896,6 +3145,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1911,7 +3162,14 @@
         "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908",
         "singer-factor-metadata.txt": "ab0198d5b07d74bda1146fa14118382b911b9d50851b5cb80c23ba704a0823a1"
       },
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 4,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 61689,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_lattice_intervals-builtin-d1c",
@@ -1930,6 +3188,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "needs_input",
       "failure_reason_codes": [
         "needs_input"
@@ -1943,7 +3203,14 @@
       "usage_reported": true,
       "candidate_sha256": null,
       "result_record_sha256": "490975f217d899dc60f73988c4794302906b276f12da8f3bebfaf855a0cebe4e",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 3,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 8938,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_lattice_intervals-builtin-d9d-reference",
@@ -1964,6 +3231,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -1978,7 +3247,14 @@
       "reference_files_sha256": {
         "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908"
       },
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 5,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 56809,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_lattice_intervals-builtin-final",
@@ -1999,6 +3275,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -2014,7 +3292,14 @@
         "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908",
         "singer-factor-metadata.txt": "ab0198d5b07d74bda1146fa14118382b911b9d50851b5cb80c23ba704a0823a1"
       },
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 8,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 76041,
+        "usage_estimated": false
+      }
     },
     {
       "run_id": "r_lattice_intervals-claude-d1c",
@@ -2033,6 +3318,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "failed",
       "failure_reason_codes": [],
       "task_error_code": "timeout",
@@ -2040,7 +3327,8 @@
       "usage_reported": false,
       "candidate_sha256": null,
       "result_record_sha256": "2973c45ff3bd2c7d415a22458be0267a29a143dac541bcc59bde00b5c23bda60",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "r_lattice_intervals-claude-d9d-reference",
@@ -2058,6 +3346,8 @@
       "wall_seconds": 1.387,
       "builtin_default": false,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": true,
+      "request_count": 0,
       "task_outcome": null,
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -2069,6 +3359,8 @@
         "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908"
       },
       "default_routing_changed": false,
+      "loop": {},
+      "cli_isolation": "Per-invocation bare mode, empty user setting sources and empty strict MCP config; no global files changed. Same product prompt and oracle read guard.",
       "experimental_caveat": "preflight or harness configuration failure; do not count as model capability failure"
     },
     {
@@ -2088,6 +3380,8 @@
       "builtin_default": false,
       "original_files_unchanged_before_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "failed",
       "failure_reason_codes": [
         "run_failed",
@@ -2101,7 +3395,8 @@
       "reference_files_sha256": {
         "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908"
       },
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "r_lattice_intervals-claude-final",
@@ -2122,6 +3417,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 0,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -2133,7 +3430,8 @@
         "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908",
         "singer-factor-metadata.txt": "ab0198d5b07d74bda1146fa14118382b911b9d50851b5cb80c23ba704a0823a1"
       },
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {}
     },
     {
       "run_id": "r_lattice_labels-builtin-d1c",
@@ -2154,6 +3452,8 @@
       "original_files_unchanged_before_adopt": true,
       "original_source_unchanged_after_adopt": true,
       "protected_files_unchanged_after_run": true,
+      "isolated_cli_config": false,
+      "request_count": 1,
       "task_outcome": "completed",
       "failure_reason_codes": [],
       "task_error_code": null,
@@ -2165,10 +3465,199 @@
       "usage_reported": true,
       "candidate_sha256": "e17454dee5a0bbeaa7a1d9077f04f42a0215fe6a6b0ee3e0f45e04127a33bfae",
       "result_record_sha256": "c9b4f75d6db186c7245ce5f0bb49723ef582989bb3910eb92d02436cca6d80d5",
-      "default_routing_changed": false
+      "default_routing_changed": false,
+      "loop": {
+        "turns": 5,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "elapsed_ms": 86226,
+        "usage_estimated": false
+      }
     }
   ],
   "repair_attempts": [
+    {
+      "run_id": "missing-image-builtin-02bac",
+      "condition": "missing_image",
+      "product_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 97.453,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "cli_isolation": null,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "convert",
+      "reason": "",
+      "steps": 16,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "switch_workdir",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "choice",
+          "tool": "ask_user",
+          "answer": "pick",
+          "http": 200
+        },
+        {
+          "kind": "pick",
+          "tool": "pick_file",
+          "answer": "selected case-local resource (host path omitted)",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "36c1381367fb665235aec298c8fb123a010c114f582ce85b2dec9e5a053a61b9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {
+        "input_tokens": 229873,
+        "output_tokens": 1622,
+        "cached_input_tokens": 116662
+      },
+      "result_record_sha256": "ee857263a82b064fb50d37cf6536737bd17825dea7f990960eae43c447ff5b38",
+      "fresh_application": {
+        "model_used": false,
+        "product_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+        "execution_finished": true,
+        "figure_captured": false,
+        "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+        "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a"
+      }
+    },
     {
       "run_id": "missing-image-builtin-v2",
       "condition": "missing_image",
@@ -2185,6 +3674,7 @@
       "independent_repair_pass": true,
       "same_process_app_execution_finished": true,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_nkmk_paste",
       "outcome": "convert",
       "reason": "",
@@ -2337,6 +3827,178 @@
       "result_record_sha256": "dfa8970af023eac9a787c4eb6df20e365ca2dae702677691371207fcab0fe2f2"
     },
     {
+      "run_id": "missing-image-claude-02bac",
+      "condition": "missing_image",
+      "product_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 41.659,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "cli_isolation": "Per-invocation bare mode; explicit Tavotto MCP and permission settings retained. No global configuration change.",
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "convert",
+      "reason": "",
+      "steps": 15,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "switch_workdir",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "pick",
+          "tool": "pick_file",
+          "answer": "selected case-local resource (host path omitted)",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "36c1381367fb665235aec298c8fb123a010c114f582ce85b2dec9e5a053a61b9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "b3f92d0942ab9a342712982c216c80413a06c877739d35a666cdc6807c136762",
+      "fresh_application": {
+        "model_used": false,
+        "product_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+        "execution_finished": true,
+        "figure_captured": false,
+        "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+        "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a"
+      }
+    },
+    {
       "run_id": "missing-image-claude-v2",
       "condition": "missing_image",
       "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
@@ -2352,6 +4014,7 @@
       "independent_repair_pass": false,
       "same_process_app_execution_finished": false,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_nkmk_paste",
       "outcome": "failed",
       "reason": "cli_exit",
@@ -2481,6 +4144,7 @@
       "independent_repair_pass": false,
       "same_process_app_execution_finished": false,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_nkmk_paste",
       "outcome": "failed",
       "reason": "cli_exit",
@@ -2609,6 +4273,7 @@
       "independent_repair_pass": false,
       "same_process_app_execution_finished": false,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_nkmk_paste",
       "outcome": "failed",
       "reason": "budget",
@@ -2741,6 +4406,191 @@
       "result_record_sha256": "5c38b479d6e981bb8fbac6321449835d209da805b88ff5be2f7bf4798bc977ed"
     },
     {
+      "run_id": "missing-image-codex-02bac",
+      "condition": "missing_image",
+      "product_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "wall_seconds": 281.602,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "cli_isolation": null,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "convert",
+      "reason": "",
+      "steps": 23,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "propose_fix",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "switch_workdir",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "link_data_file",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "36c1381367fb665235aec298c8fb123a010c114f582ce85b2dec9e5a053a61b9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "3800e8ef59645e60d614a429dc1ffe34ef0c22c3d76e9b738ac0927afdbcd85e",
+      "fresh_application": {
+        "model_used": false,
+        "product_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+        "execution_finished": true,
+        "figure_captured": false,
+        "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+        "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a"
+      },
+      "comparison_caveat": "Subscription GPT-6 Astra; model/authentication/effort are not matched to the Sonnet repair executors.",
+      "mcp_callback_count": 23,
+      "mcp_source_binding": {
+        "mechanism": "per-invocation MCP environment",
+        "repo_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+        "fixmcp_sha256": "cef4e05090e9fcae5930ab0ae9cb504157e4b4ace083989742517534809db42e"
+      }
+    },
+    {
       "run_id": "missing-image-codex-v2",
       "condition": "missing_image",
       "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
@@ -2756,6 +4606,7 @@
       "independent_repair_pass": false,
       "same_process_app_execution_finished": false,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_nkmk_paste",
       "outcome": "failed",
       "reason": "cli_no_finish",
@@ -2867,7 +4718,9 @@
       ],
       "model_usage": {},
       "result_record_sha256": "dea9cd90de0c8a45e0fea694efe25053dbdd17f57d1e8c36d78496a98fcd692e",
-      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+      "comparison_caveat": "Subscription GPT-6 Astra; model/authentication/effort are not matched to the Sonnet repair executors.",
+      "mcp_callback_count": 0,
+      "experimental_caveat": "No Tavotto MCP callbacks reached in this historical attempt. Later source-bound runs identify the inherited Python import path as a harness defect; unrelated authentication warnings were not the local MCP cause."
     },
     {
       "run_id": "missing-image-codex-v3",
@@ -2885,6 +4738,7 @@
       "independent_repair_pass": false,
       "same_process_app_execution_finished": false,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_nkmk_paste",
       "outcome": "failed",
       "reason": "cli_no_finish",
@@ -2996,7 +4850,9 @@
       ],
       "model_usage": {},
       "result_record_sha256": "5ed1103594a4d37e3aa26f5242f67d6a903eef59cd0775df1aaa72974b335616",
-      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+      "comparison_caveat": "Subscription GPT-6 Astra; model/authentication/effort are not matched to the Sonnet repair executors.",
+      "mcp_callback_count": 0,
+      "experimental_caveat": "No Tavotto MCP callbacks reached in this historical attempt. Later source-bound runs identify the inherited Python import path as a harness defect; unrelated authentication warnings were not the local MCP cause."
     },
     {
       "run_id": "missing-image-codex-v4",
@@ -3014,6 +4870,7 @@
       "independent_repair_pass": false,
       "same_process_app_execution_finished": false,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_nkmk_paste",
       "outcome": "failed",
       "reason": "cli_no_finish",
@@ -3125,7 +4982,9 @@
       ],
       "model_usage": {},
       "result_record_sha256": "5294f54668d6abb7a38f63ea84842126a0807f894f9810d62b7d8f0e5cf06c68",
-      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+      "comparison_caveat": "Subscription GPT-6 Astra; model/authentication/effort are not matched to the Sonnet repair executors.",
+      "mcp_callback_count": 0,
+      "experimental_caveat": "No Tavotto MCP callbacks reached in this historical attempt. Later source-bound runs identify the inherited Python import path as a harness defect; unrelated authentication warnings were not the local MCP cause."
     },
     {
       "run_id": "missing-image-codex-v5",
@@ -3143,6 +5002,7 @@
       "independent_repair_pass": false,
       "same_process_app_execution_finished": false,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_nkmk_paste",
       "outcome": "failed",
       "reason": "cli_no_finish",
@@ -3254,7 +5114,9 @@
       ],
       "model_usage": {},
       "result_record_sha256": "5e2017032dbc0c15c43765d5a44f2b8e90c61b6b8b6d03119f6265773d006d69",
-      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+      "comparison_caveat": "Subscription GPT-6 Astra; model/authentication/effort are not matched to the Sonnet repair executors.",
+      "mcp_callback_count": 0,
+      "experimental_caveat": "No Tavotto MCP callbacks reached in this historical attempt. Later source-bound runs identify the inherited Python import path as a harness defect; unrelated authentication warnings were not the local MCP cause."
     },
     {
       "run_id": "missing-image-codex-v6",
@@ -3272,6 +5134,7 @@
       "independent_repair_pass": false,
       "same_process_app_execution_finished": false,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_nkmk_paste",
       "outcome": "failed",
       "reason": "cli_no_finish",
@@ -3383,7 +5246,9 @@
       ],
       "model_usage": {},
       "result_record_sha256": "717410119cbb297597694ef35647f8047eca67680e45ea769543e783f3703595",
-      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+      "comparison_caveat": "Subscription GPT-6 Astra; model/authentication/effort are not matched to the Sonnet repair executors.",
+      "mcp_callback_count": 0,
+      "experimental_caveat": "No Tavotto MCP callbacks reached in this historical attempt. Later source-bound runs identify the inherited Python import path as a harness defect; unrelated authentication warnings were not the local MCP cause."
     },
     {
       "run_id": "missing-image-codex-v7",
@@ -3401,6 +5266,7 @@
       "independent_repair_pass": false,
       "same_process_app_execution_finished": false,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_nkmk_paste",
       "outcome": "failed",
       "reason": "cli_no_finish",
@@ -3512,7 +5378,9 @@
       ],
       "model_usage": {},
       "result_record_sha256": "ecf8ebfd1223488901132aa6a1386fe33c061ff1a1e0e5a6c5ab04d4c10c380b",
-      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+      "comparison_caveat": "Subscription GPT-6 Astra; model/authentication/effort are not matched to the Sonnet repair executors.",
+      "mcp_callback_count": 0,
+      "experimental_caveat": "No Tavotto MCP callbacks reached in this historical attempt. Later source-bound runs identify the inherited Python import path as a harness defect; unrelated authentication warnings were not the local MCP cause."
     },
     {
       "run_id": "pillow-version-builtin",
@@ -3530,6 +5398,7 @@
       "independent_repair_pass": true,
       "same_process_app_execution_finished": true,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_circular_thumbnail",
       "outcome": "cancelled",
       "reason": "cancelled",
@@ -3605,6 +5474,7 @@
       "independent_repair_pass": true,
       "same_process_app_execution_finished": true,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_circular_thumbnail",
       "outcome": "convert",
       "reason": "",
@@ -3672,6 +5542,81 @@
       }
     },
     {
+      "run_id": "pillow-version-builtin-matched-3cf",
+      "condition": "pillow_api_version",
+      "product_sha": "3cf845fdeca788dd8b8a40304c50384efb4dc2dd",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 28.73,
+      "source_before_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_after_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "cli_isolation": null,
+      "case_id": "pillow_circular_thumbnail",
+      "outcome": "convert",
+      "reason": "",
+      "steps": 10,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "propose_fix",
+          "packages": [
+            "pillow==9.5.0"
+          ],
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "output.png",
+          "exists": true,
+          "size": [
+            120,
+            120
+          ],
+          "reference_size": [
+            120,
+            120
+          ],
+          "pixels_equal": true,
+          "sha256": "a0a133eb4f4465ad3509b82ac89cd92b44172cbe45063b02e50e4fc8bdf2a93b"
+        },
+        {
+          "output": "overlap.png",
+          "exists": true,
+          "size": [
+            418,
+            149
+          ],
+          "reference_size": [
+            418,
+            149
+          ],
+          "pixels_equal": true,
+          "sha256": "6dc64088990da90e156e63d042cafc56810212364486f286c723539cad87e99f"
+        }
+      ],
+      "model_usage": {
+        "input_tokens": 85855,
+        "output_tokens": 849,
+        "cached_input_tokens": 53844
+      },
+      "result_record_sha256": "e1167aaacc60ac2651e1edd22eba31e55077ef5de38c7ba40d2af9736a70a62c"
+    },
+    {
       "run_id": "pillow-version-claude",
       "condition": "pillow_api_version",
       "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
@@ -3687,6 +5632,7 @@
       "independent_repair_pass": true,
       "same_process_app_execution_finished": true,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_circular_thumbnail",
       "outcome": "failed",
       "reason": "budget",
@@ -3757,6 +5703,7 @@
       "independent_repair_pass": true,
       "same_process_app_execution_finished": true,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_circular_thumbnail",
       "outcome": "convert",
       "reason": "",
@@ -3820,6 +5767,77 @@
       }
     },
     {
+      "run_id": "pillow-version-claude-matched-3cf",
+      "condition": "pillow_api_version",
+      "product_sha": "3cf845fdeca788dd8b8a40304c50384efb4dc2dd",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 37.977,
+      "source_before_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_after_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "cli_isolation": null,
+      "case_id": "pillow_circular_thumbnail",
+      "outcome": "convert",
+      "reason": "",
+      "steps": 9,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "propose_fix",
+          "packages": [
+            "pillow==9.5.0"
+          ],
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "output.png",
+          "exists": true,
+          "size": [
+            120,
+            120
+          ],
+          "reference_size": [
+            120,
+            120
+          ],
+          "pixels_equal": true,
+          "sha256": "a0a133eb4f4465ad3509b82ac89cd92b44172cbe45063b02e50e4fc8bdf2a93b"
+        },
+        {
+          "output": "overlap.png",
+          "exists": true,
+          "size": [
+            418,
+            149
+          ],
+          "reference_size": [
+            418,
+            149
+          ],
+          "pixels_equal": true,
+          "sha256": "6dc64088990da90e156e63d042cafc56810212364486f286c723539cad87e99f"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "ae4dadccf14d3ea100bf439b9f60117958ca10c5ce3dcf4d2dbba3425ba072ad"
+    },
+    {
       "run_id": "pillow-version-codex-800",
       "condition": "pillow_api_version",
       "product_sha": "800cdb33dbfc1cad24bf13bf851ee8cf017ce886",
@@ -3835,6 +5853,7 @@
       "independent_repair_pass": false,
       "same_process_app_execution_finished": false,
       "same_process_app_figure_captured": false,
+      "cli_isolation": null,
       "case_id": "pillow_circular_thumbnail",
       "outcome": "failed",
       "reason": "cli_no_finish",
@@ -3852,10 +5871,195 @@
       ],
       "model_usage": {},
       "result_record_sha256": "5b3a3dce4a28ec01937f7c6d95aac66e7c5d7543036f0205acd6d3150b40017f",
-      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+      "comparison_caveat": "Subscription GPT-6 Astra; model/authentication/effort are not matched to the Sonnet repair executors.",
+      "mcp_callback_count": 0,
+      "experimental_caveat": "No Tavotto MCP callbacks reached in this historical attempt. Later source-bound runs identify the inherited Python import path as a harness defect; unrelated authentication warnings were not the local MCP cause."
+    },
+    {
+      "run_id": "pillow-version-codex-matched-3cf",
+      "condition": "pillow_api_version",
+      "product_sha": "3cf845fdeca788dd8b8a40304c50384efb4dc2dd",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "wall_seconds": 58.261,
+      "source_before_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_after_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "cli_isolation": null,
+      "case_id": "pillow_circular_thumbnail",
+      "outcome": "convert",
+      "reason": "",
+      "steps": 12,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "propose_fix",
+          "packages": [
+            "Pillow==9.5.0"
+          ],
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "output.png",
+          "exists": true,
+          "size": [
+            120,
+            120
+          ],
+          "reference_size": [
+            120,
+            120
+          ],
+          "pixels_equal": true,
+          "sha256": "a0a133eb4f4465ad3509b82ac89cd92b44172cbe45063b02e50e4fc8bdf2a93b"
+        },
+        {
+          "output": "overlap.png",
+          "exists": true,
+          "size": [
+            418,
+            149
+          ],
+          "reference_size": [
+            418,
+            149
+          ],
+          "pixels_equal": true,
+          "sha256": "6dc64088990da90e156e63d042cafc56810212364486f286c723539cad87e99f"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "65aebf2da2540f8dc0f83231ec60b07e30cd090195270d7853ce823c0b3910d8",
+      "comparison_caveat": "Subscription GPT-6 Astra; model/authentication/effort are not matched to the Sonnet repair executors.",
+      "mcp_callback_count": 12,
+      "mcp_source_binding": {
+        "mechanism": "per-invocation MCP environment",
+        "repo_sha": "3cf845fdeca788dd8b8a40304c50384efb4dc2dd",
+        "fixmcp_sha256": "cef4e05090e9fcae5930ab0ae9cb504157e4b4ace083989742517534809db42e"
+      }
+    },
+    {
+      "run_id": "pillow-version-codex-sourcebound",
+      "condition": "pillow_api_version",
+      "product_sha": "106867b201ea395b832ab48ae36d9bb7eb3a64cb",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "wall_seconds": 214.112,
+      "source_before_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_after_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "cli_isolation": null,
+      "case_id": "pillow_circular_thumbnail",
+      "outcome": "convert",
+      "reason": "",
+      "steps": 11,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "propose_fix",
+          "packages": [
+            "Pillow==9.5.0"
+          ],
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "output.png",
+          "exists": true,
+          "size": [
+            120,
+            120
+          ],
+          "reference_size": [
+            120,
+            120
+          ],
+          "pixels_equal": true,
+          "sha256": "a0a133eb4f4465ad3509b82ac89cd92b44172cbe45063b02e50e4fc8bdf2a93b"
+        },
+        {
+          "output": "overlap.png",
+          "exists": true,
+          "size": [
+            418,
+            149
+          ],
+          "reference_size": [
+            418,
+            149
+          ],
+          "pixels_equal": true,
+          "sha256": "6dc64088990da90e156e63d042cafc56810212364486f286c723539cad87e99f"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "a6b545ed5a94a450baf8b32b106e664c48e16d255efb6f2c7c224928e1b8cf83",
+      "comparison_caveat": "Subscription GPT-6 Astra; model/authentication/effort are not matched to the Sonnet repair executors.",
+      "mcp_callback_count": 11,
+      "mcp_source_binding": {
+        "mechanism": "per-invocation MCP environment",
+        "repo_sha": "106867b201ea395b832ab48ae36d9bb7eb3a64cb",
+        "fixmcp_sha256": "cef4e05090e9fcae5930ab0ae9cb504157e4b4ace083989742517534809db42e"
+      }
     }
   ],
   "fresh_application_verification": [
+    {
+      "run_id": "matlab_airy_surface-builtin-02bac",
+      "verification_run": "fresh-geometry",
+      "producer_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "verification_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "model_used": false,
+      "script_sha256": "9835380c02ebfa53d8cc66317d79aa826d74e1de456f6decbdb4358ea9b5ce3e",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "22bfe389c414be6ce5d48c158b8f39eb7cf3ee053d78f012f6514f48ff187073"
+    },
     {
       "run_id": "matlab_airy_surface-builtin-d9d",
       "verification_run": "fresh-confirmed-v2",
@@ -3903,6 +6107,87 @@
       "result_record_sha256": "f7e605d78b8a295705198259db398e3de75fabff6b7300124b4b071f101d38e5"
     },
     {
+      "run_id": "matlab_airy_surface-builtin-geometry",
+      "verification_run": "fresh-geometry",
+      "producer_sha": "3cf845fdeca788dd8b8a40304c50384efb4dc2dd",
+      "verification_sha": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "model_used": false,
+      "script_sha256": "9901fd6f060a9b3935addf89d149dca8c53011b2fbd7659e474a741fbe679ba9",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "9f484a385b321cc72281cec89b7f83d8981324db75a8b42c3759834e5b95381c"
+    },
+    {
+      "run_id": "matlab_airy_surface-claude-bare",
+      "verification_run": "fresh-geometry",
+      "producer_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "verification_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "model_used": false,
+      "script_sha256": "375f13b04fad8f0b6bc5bd94efe9e7ab7a912c6691f2b35d281623c8cb7328a3",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "450044a1da4d5ac8dcfe112c54dd9b3d55b1a5fdb6579900ec843a0b35b8863b"
+    },
+    {
+      "run_id": "matlab_contour_over_image-builtin-02bac",
+      "verification_run": "fresh-geometry",
+      "producer_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "verification_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "model_used": false,
+      "script_sha256": "dc3fc398b07f7260d88c0614772eb46d77982f0d27bc4783249bc7240880079c",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "927277dde2bee78efab7a8aaefed1180feb247574afa95e1e4f4a17fbb82391b"
+    },
+    {
       "run_id": "matlab_contour_over_image-builtin-d9d",
       "verification_run": "fresh-reopen",
       "producer_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
@@ -3919,6 +6204,60 @@
       "confirmed_action_kinds": [],
       "confirmation_http": [],
       "result_record_sha256": "725898734e443542e43b5d20dc7af3786f186dc1a4a44bb4cb6d969fe5797d4a"
+    },
+    {
+      "run_id": "matlab_contour_over_image-builtin-geometry",
+      "verification_run": "fresh-geometry",
+      "producer_sha": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "verification_sha": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "model_used": false,
+      "script_sha256": "08f3a5c464e3ebcc757dc611876fac864229ac769a7820c7ce32d8e8771fbac3",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "9c005b053d055d880a1e2442628f285ad62e79310f7a35ec2f5edc30df132a86"
+    },
+    {
+      "run_id": "matlab_contour_over_image-claude-02bac-bare",
+      "verification_run": "fresh-geometry",
+      "producer_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "verification_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "model_used": false,
+      "script_sha256": "89d5d8e54079d4365de9979a2d39b5fdc3958cfd935b60c87a4aec105dcb4b65",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "fbbc1572b0a6937c58b7f99baba06b9d0a12bec56c09599246828eeb044acbde"
     },
     {
       "run_id": "pillow_official_anchors-builtin-final",
@@ -3946,6 +6285,87 @@
         202
       ],
       "result_record_sha256": "9fec1bde0425bf75eb767517355c16842792e7152fedc9c50a03281d0dd334e2"
+    },
+    {
+      "run_id": "pillow_official_anchors-builtin-nativefacts",
+      "verification_run": "fresh-geometry",
+      "producer_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "verification_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "model_used": false,
+      "script_sha256": "ad5fa1cad152b1960ad67b1a0eff8f049259432c6f143638c42c02bd3099ee15",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "e76432eb48b73160e77af03ee37c85062a594cb924ed176ea95c32eee52f80f8"
+    },
+    {
+      "run_id": "pillow_official_anchors-claude-glyph",
+      "verification_run": "fresh-geometry",
+      "producer_sha": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "verification_sha": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "model_used": false,
+      "script_sha256": "061eb4f101530d354b844937adbddf7800143a7c601a99fc8109e54687eb83d8",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "304e3cd902da54fb87bc23190160977232a5ed5d83e88e2f049389fe4f87110c"
+    },
+    {
+      "run_id": "pillow_official_anchors-claude-nativefacts-bare",
+      "verification_run": "fresh-geometry",
+      "producer_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "verification_sha": "02bac2f89ae736575bae52d6be8a5347aa25a28a",
+      "model_used": false,
+      "script_sha256": "1a4b27f21d085d8e0ba86e52914947ca0a94add0c0a7873215af7e91330b87bd",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "34593bb75f474a56079e1efaf89e03811a94593ddede9cdea798bc7ce080fbf4"
     },
     {
       "run_id": "r_base_plotmath-builtin-734",
@@ -4433,6 +6853,412 @@
       ]
     ]
   },
+  "geometry_and_glyph_followup": {
+    "airy_camera": {
+      "native_size": [
+        1343,
+        810
+      ],
+      "candidate_size": [
+        1342,
+        808
+      ],
+      "native_marker_pixel_counts": [
+        109,
+        100,
+        93,
+        109,
+        109,
+        109,
+        109,
+        109
+      ],
+      "native_pixel_centroids": [
+        [
+          626.0,
+          720.0
+        ],
+        [
+          1214.21,
+          591.95
+        ],
+        [
+          174.67741935483872,
+          553.0430107526881
+        ],
+        [
+          763.0,
+          425.0
+        ],
+        [
+          626.0,
+          356.0
+        ],
+        [
+          1214.0,
+          228.0
+        ],
+        [
+          175.0,
+          189.0
+        ],
+        [
+          763.0,
+          61.0
+        ]
+      ],
+      "candidate_pixel_centroids": [
+        [
+          626.2556522707071,
+          719.7874999999999
+        ],
+        [
+          1214.9625,
+          591.7618192205007
+        ],
+        [
+          174.52499999999998,
+          552.9411844328879
+        ],
+        [
+          763.2318477292932,
+          424.9155036533887
+        ],
+        [
+          626.2556522707071,
+          355.5282463466112
+        ],
+        [
+          1214.9625,
+          227.50256556711201
+        ],
+        [
+          174.52499999999998,
+          188.6819307794991
+        ],
+        [
+          763.2318477292932,
+          60.656249999999886
+        ]
+      ],
+      "delta_xy": [
+        [
+          0.25565227070705987,
+          -0.21250000000009095
+        ],
+        [
+          0.7525000000000546,
+          -0.18818077949936196
+        ],
+        [
+          -0.15241935483874158,
+          -0.10182631980023871
+        ],
+        [
+          0.23184772929323572,
+          -0.08449634661127448
+        ],
+        [
+          0.25565227070705987,
+          -0.4717536533888165
+        ],
+        [
+          0.962500000000091,
+          -0.49743443288798517
+        ],
+        [
+          -0.47500000000002274,
+          -0.31806922050088815
+        ],
+        [
+          0.23184772929323572,
+          -0.3437500000001137
+        ]
+      ],
+      "max_corner_distance_px": 1.0834423219640104,
+      "rms_corner_distance_px": 0.5881265987999623,
+      "geometry_unchanged_by_native_markers": true,
+      "no_resizing": true,
+      "candidate_sha256": "9901fd6f060a9b3935addf89d149dca8c53011b2fbd7659e474a741fbe679ba9"
+    },
+    "contour_camera": {
+      "native_color_bounds_xyxy_px": [
+        176,
+        62,
+        1213,
+        719
+      ],
+      "candidate_plane_corners_px": [
+        [
+          174.5250000000002,
+          719.6798663931143
+        ],
+        [
+          1214.9624999999996,
+          719.6798663931143
+        ],
+        [
+          174.5250000000002,
+          60.76388360688543
+        ],
+        [
+          1214.9624999999996,
+          60.76388360688543
+        ]
+      ],
+      "candidate_plane_bounds_xyxy_px": [
+        174.5250000000002,
+        60.76388360688543,
+        1214.9624999999996,
+        719.6798663931143
+      ],
+      "difference_xyxy_px": [
+        -1.4749999999997954,
+        -1.236116393114571,
+        1.9624999999996362,
+        0.6798663931142528
+      ],
+      "native_size": [
+        1343,
+        810
+      ],
+      "candidate_size": [
+        1342,
+        808
+      ],
+      "limit": "Color bounds measure visible pcolor support, not matched noise; random states differ. No resizing."
+    },
+    "font_deterministic_diagnosis": {
+      "raw_rgb_mae": 0.0003611111111111111,
+      "raw_rgb_max": 1.0,
+      "webp_rgb_mae": 0.07022037037037036,
+      "editable_text_count": 90,
+      "lines": 30,
+      "limitation": "These labels have single-character LTR glyphs; not a general shaping decomposition.",
+      "model_trial": false,
+      "method": "Reviewer experiment on a copied candidate; never counted as a model pass."
+    },
+    "airy_same_commit_pair": [
+      {
+        "run": "airy-builtin-02bac",
+        "native_size": [
+          1343,
+          810
+        ],
+        "candidate_size": [
+          1342,
+          808
+        ],
+        "max_corner_distance_px": 1.0834423219340295,
+        "rms_corner_distance_px": 0.5881265985957849,
+        "candidate_pixel_centroids": [
+          [
+            626.2556522701009,
+            719.7875000000382
+          ],
+          [
+            1214.9624999992463,
+            591.7618192205484
+          ],
+          [
+            174.52500000003215,
+            552.941184432886
+          ],
+          [
+            763.2318477291776,
+            424.91550365339623
+          ],
+          [
+            626.2556522708221,
+            355.52824634660413
+          ],
+          [
+            1214.9624999999676,
+            227.5025655671144
+          ],
+          [
+            174.52500000075338,
+            188.68193077945193
+          ],
+          [
+            763.2318477298988,
+            60.65624999996214
+          ]
+        ],
+        "no_resize_or_crop": true
+      },
+      {
+        "run": "airy-claude-bare",
+        "native_size": [
+          1343,
+          810
+        ],
+        "candidate_size": [
+          1342,
+          808
+        ],
+        "max_corner_distance_px": 5483.93797769385,
+        "rms_corner_distance_px": 4184.573389751889,
+        "candidate_pixel_centroids": [
+          [
+            -31.60815112749242,
+            3944.1863175675676
+          ],
+          [
+            6332.790202702706,
+            2560.124903735144
+          ],
+          [
+            -4915.18277027027,
+            2140.442365490681
+          ],
+          [
+            1449.2155835599265,
+            756.3809516582569
+          ],
+          [
+            -31.60815112749242,
+            6.248440233634938
+          ],
+          [
+            6332.790202702706,
+            -1377.8129735987886
+          ],
+          [
+            -4915.18277027027,
+            -1797.4955118432522
+          ],
+          [
+            1449.2155835599265,
+            -3181.5569256756758
+          ]
+        ],
+        "no_resize_or_crop": true
+      }
+    ],
+    "contour_same_commit_pair": [
+      {
+        "run_id": "matlab_contour_over_image-builtin-02bac",
+        "candidate_sha256": "dc3fc398b07f7260d88c0614772eb46d77982f0d27bc4783249bc7240880079c",
+        "native_rng_seed": 20261025.0,
+        "source_geometry_seed_provided": true,
+        "cdata_shape": [
+          60,
+          60
+        ],
+        "cdata_max_absolute_error": 0.0,
+        "contour_z_max_absolute_error": 8.326672684688674e-17,
+        "rendered_lut_max_absolute_error": 0.0,
+        "clim_max_absolute_error": 2.7755575615628914e-17,
+        "image_plane_z_range": [
+          150.0,
+          150.0
+        ],
+        "native_color_bounds_xyxy_px": [
+          175,
+          61,
+          1214,
+          720
+        ],
+        "candidate_plane_bounds_xyxy_px": [
+          174.52500000000032,
+          60.65625000000023,
+          1214.9625,
+          719.7874999999999
+        ],
+        "difference_xyxy_px": [
+          -0.4749999999996817,
+          -0.3437499999997726,
+          0.962500000000091,
+          -0.21250000000009095
+        ],
+        "native_size": [
+          1343,
+          810
+        ],
+        "candidate_size": [
+          1342,
+          808
+        ],
+        "no_resize_or_crop": true,
+        "limit": "Visible colored support includes rasterized stroke edges; plane-bound difference is a layout diagnostic, not full pixel fidelity. Seed was provided to both candidates in this new arm."
+      },
+      {
+        "run_id": "matlab_contour_over_image-claude-02bac-bare",
+        "candidate_sha256": "89d5d8e54079d4365de9979a2d39b5fdc3958cfd935b60c87a4aec105dcb4b65",
+        "native_rng_seed": 20261025.0,
+        "source_geometry_seed_provided": true,
+        "cdata_shape": [
+          60,
+          60
+        ],
+        "cdata_max_absolute_error": 0.0,
+        "contour_z_max_absolute_error": 8.326672684688674e-17,
+        "rendered_lut_max_absolute_error": 0.0,
+        "clim_max_absolute_error": 2.7755575615628914e-17,
+        "image_plane_z_range": [
+          150.0,
+          150.0
+        ],
+        "native_color_bounds_xyxy_px": [
+          175,
+          61,
+          1214,
+          720
+        ],
+        "candidate_plane_bounds_xyxy_px": [
+          197.02094594594598,
+          38.16030405405422,
+          1237.458445945946,
+          697.2915540540541
+        ],
+        "difference_xyxy_px": [
+          22.020945945945982,
+          -22.839695945945778,
+          23.458445945946096,
+          -22.70844594594587
+        ],
+        "native_size": [
+          1343,
+          810
+        ],
+        "candidate_size": [
+          1342,
+          808
+        ],
+        "no_resize_or_crop": true,
+        "limit": "Visible colored support includes rasterized stroke edges; plane-bound difference is a layout diagnostic, not full pixel fidelity. Seed was provided to both candidates in this new arm."
+      }
+    ],
+    "font_same_commit_pair": [
+      {
+        "run_id": "pillow_official_anchors-builtin-nativefacts",
+        "candidate_sha256": "ad5fa1cad152b1960ad67b1a0eff8f049259432c6f143638c42c02bd3099ee15",
+        "native_png_sha256": "50bb957b4e9e3df5928fd3a494874fcc13302ed573b1e2dc28fe6ab8901dbf2a",
+        "raw_rgb_mae": 0.0003611111111111111,
+        "raw_rgb_max": 1.0,
+        "same_dimensions": true,
+        "alpha_equal": true,
+        "pixel_fraction_any_rgb_difference": 0.0003611111111111111,
+        "method": "Independently captured unmodified candidate PNG versus same-runtime unchanged original Pillow script PNG. No resizing, cropping or postprocessing.",
+        "encoded_webp_rgb_mae": 0.07022037037037036,
+        "encoded_alpha_max_error": 0.0
+      },
+      {
+        "run_id": "pillow_official_anchors-claude-nativefacts-bare",
+        "candidate_sha256": "1a4b27f21d085d8e0ba86e52914947ca0a94add0c0a7873215af7e91330b87bd",
+        "native_png_sha256": "50bb957b4e9e3df5928fd3a494874fcc13302ed573b1e2dc28fe6ab8901dbf2a",
+        "raw_rgb_mae": 1.0621444444444443,
+        "raw_rgb_max": 246.0,
+        "same_dimensions": true,
+        "alpha_equal": true,
+        "pixel_fraction_any_rgb_difference": 0.009983333333333334,
+        "method": "Independently captured unmodified candidate PNG versus same-runtime unchanged original Pillow script PNG. No resizing, cropping or postprocessing.",
+        "encoded_webp_rgb_mae": 1.1833685185185185,
+        "encoded_alpha_max_error": 0.0
+      }
+    ]
+  },
   "diagnostic_parser_validation": {
     "same_redaction_randomized_cases": 2000,
     "escaped_pairs": 1000000,
@@ -4504,6 +7330,25 @@
       "scope": "Chromium private-feedback consent, loopback only",
       "passed": 6,
       "production_uploads": 0
+    },
+    {
+      "scope": "Windows resource identity, error-code/source hygiene and application verification",
+      "code_sha": "3cf845fde",
+      "passed": 494,
+      "log_sha256": "9387eb02920c52d509298fec82197da3a1ddb170a08e684a8371756de062fd2b"
+    },
+    {
+      "scope": "native glyph and camera guidance",
+      "code_sha": "94f3a324f",
+      "passed": 169,
+      "log_sha256": "ee9aaaff6c45dacd8e66305afc4900f152f3b357d88af2c3a8e216ef37a87e68"
+    },
+    {
+      "scope": "shared image headers, HTTP transport-boundary context preservation, Windows image identity and agent/conversion regressions",
+      "code_sha": "02bac2f89",
+      "passed": 350,
+      "skipped": 0,
+      "log_sha256": "dcd59bcc39aeb29eb0a8c54c26c429af7e81fde72231aa916383f5bc3b5239dc"
     }
   ],
   "counterfactuals": {
@@ -4535,14 +7380,26 @@
     "pdf": {
       "regressed_exit": 1,
       "restored_exit": 0
+    },
+    "windows-ctime": {
+      "regressed": 1,
+      "restored": 0
+    },
+    "webp": {
+      "subject": "HTTP transport-boundary receiver retains source and WebP across tool turns; Windows image reads preserve stable identity and reject later changes",
+      "before_code": "94f3a324ff4507b756668196fc14b2b0335f6fd0",
+      "old_exit_code": 1,
+      "fixed_exit_code": 0,
+      "old_log_sha256": "69902b43f572b65f42fff2b3f7476092622a7151930fc3d6e1e2a9bd23c5d5d4",
+      "fixed_log_sha256": "6b9ffd6b9a3baa1f0f65b43fd8e9939ac47909d796917593222ef0ccd5a23556"
     }
   },
   "remaining_gaps": [
-    "MATLAB axes position/camera geometry is not fully matched despite exact LUTs, verified CLim upper bound and preserved Z coordinates.",
-    "Pillow fonts/raster edge coverage and photographic operations are not universally pixel-equivalent; editable output must not be replaced by a finished bitmap.",
+    "The final builtin Airy and top-view contour projections are close to native geometry, but Claude Airy is far outside the frame and its contour is displaced. Both executors still export 1342x808 versus native 1343x810; ticks, antialiasing and other cameras remain unaccepted.",
+    "With supplied native font metrics the builtin Latin anchor raw PNG error is at most 1/255; source/reference-only candidates still show the older error. This is not a general Unicode/shaping proof, zero-error identity, or a pass for all photographic operations. Text remains editable glyph objects with finer edit granularity.",
     "R math pages now execute and reviewed bounds/fractions are corrected, but full glyph geometry is not independently certified.",
     "R interval final paired runs match native numeric results and factor order; page layout/font geometry remains unaccepted.",
-    "Broad same-model paired repeated validation and a functioning comparable Codex repair baseline remain absent.",
+    "Broad same-model repeated validation remains absent; Codex repair is operational but uses a different model/authentication and cannot establish model non-inferiority.",
     "Windows/Linux release-package execution and combined integration with PRs 1418 and 1419 were not validated locally."
   ]
 }

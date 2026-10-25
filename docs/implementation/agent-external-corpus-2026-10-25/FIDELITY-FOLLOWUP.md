@@ -2,6 +2,8 @@
 
 Status: corrective implementation and external-corpus retesting. **Full-fidelity acceptance and non-inferiority are not established; default routing remains unchanged.**
 
+Latest follow-up: MATLAB camera/layout and font-pixel measurements, Windows/WebP context fixes, operational Codex repair comparisons and CI repairs are recorded in the final section. All older attempts remain historical evidence.
+
 ## Acceptance subjects
 
 - Conversion: independently measured values, annotations, dimensions, colors, alpha, geometry and every output page of the adopted script, both in a clean interpreter and a fresh Tavotto application. Runtime success alone is insufficient.
@@ -42,7 +44,7 @@ Codex comparison preflight failures (wrong option position, nested macOS sandbox
 CodeQL's quoted-string finding initially did not reproduce a hang with 10,000, 100,000 and 1,000,000 escaped-quote repetitions. The final implementation removes that expression: the standard JSON decoder consumes each literal once, while preserving original escapes, whitespace and duplicate keys. Existing redaction rules remain unchanged. Two thousand randomized JSON inputs matched the previous output exactly; one million escaped pairs completed in 0.0484 seconds on this host. The diagnostic privacy/context gate passed 1,232 tests. This local timing is supporting evidence, not an all-platform performance guarantee.
 
 
-## Final corrective work and acceptance boundaries
+## Previous corrective work through `106867b20`
 
 The additional product changes address confirmed failures rather than interpreting successful rendering as fidelity:
 
@@ -65,11 +67,11 @@ The invariant is that a runnable image must not masquerade as an editable recons
 
 `d9d91f6d3` tests the product `reference_files` endpoint. The MATLAB file contains only generic R2025a version/default colors and full lookup tables, not case answers. The R interval arm supplies the real singer CSV. Prior runs marked `test-only snapshot injection` remain a separate exploratory arm. Native RNG seed 20261025 is an evaluation control; random MATLAB scripts that do not specify their own seed did not receive that seed, so their noise pixel arrays cannot be scored as matched deterministic data.
 
-Codex conversion ran with an isolated native permissions profile, GPT-6 Astra and the existing subscription; builtin/Claude used Sonnet 5.5. Codex repair never reached Tavotto's MCP callbacks even after isolated configuration attempts and showed unrelated MCP authentication errors. This baseline is blocked by integration/setup evidence and is not evidence that the builtin agent is better. Non-inferiority requires comparable completed runs, repeated trials and fidelity oracles; this PR does not establish it.
+Codex conversion ran with an isolated native permissions profile, GPT-6 Astra and the existing subscription; builtin/Claude used Sonnet 5.5. At that checkpoint Codex repair had not reached Tavotto's MCP callbacks, and unrelated authentication warnings were present. The operational baseline and corrected causal diagnosis appear in the `02bac2f89` follow-up below; those warnings did not prove a model-capability defect. Non-inferiority requires comparable completed runs, repeated trials and fidelity oracles; this PR does not establish it.
 
 The package-version repair comparison did complete for builtin and Claude: 31.451 s and 34.793 s, nine steps each, exact reviewed `pillow==9.5.0`, explicit run confirmation, native outputs matching, original bytes unchanged, and a fresh Tavotto application completing execution. Both correctly handed a Pillow script to conversion instead of claiming a Matplotlib capture. Manual-wait timeout attempts and the unsuccessful Codex repair attempt are retained separately.
 
-### Latest real-model results
+### Previous real-model checkpoint
 
 The machine-readable inventory contains **70 conversion attempt records and 15 repair attempt records**, including preflight failures, development retries and comparison setup failures. These are not independent trials. The frozen `d1c077044` batch remains 16 adopted / four needs-input / three failed for 23 builtin cases; its eight Claude cases remain three adopted / two needs-input / three failed. Adoption is not a fidelity verdict, and later successes do not replace those rows.
 
@@ -87,9 +89,9 @@ Nine new-application verification records are retained, including the initial tw
 
 The final R statistical correction follows the [native `boxplot.stats` contract](https://stat.ethz.ch/R-manual/R-devel/library/grDevices/html/boxplot.stats.html). Independent measurements compare group-aligned medians/intervals separately from category order. Matplotlib axes-coordinate guide lines are not confidence intervals. Pillow RGB is compared after compositing against black and white, so invisible RGB under alpha zero does not become a false failure; missing outputs produce an unavailable dimension verdict, never `all([]) == true`.
 
-### Release decision
+### Previous release checkpoint
 
-**No-go for a general full-fidelity or non-inferiority claim.** The fixes close verified context, execution, protocol, consent, output-identity and liveness defects. They do not prove that all 23 scripts preserve all visual semantics. Remaining work includes MATLAB camera/axes geometry, Pillow font and raster edges, complete math glyph comparison, repeated matched trials and a functioning Codex repair baseline. The chosen private-feedback path is implemented and consent-tested; real production submission was not performed. Default routing remains unchanged.
+**No-go for a general full-fidelity or non-inferiority claim.** The fixes close verified context, execution, protocol, consent, output-identity and liveness defects. They do not prove that all 23 scripts preserve all visual semantics. Remaining work at that checkpoint included MATLAB camera/axes geometry, Pillow font and raster edges, complete math glyph comparison, repeated matched trials and a functioning Codex repair baseline. The later section updates these items without replacing the earlier results. The chosen private-feedback path is implemented and consent-tested; real production submission was not performed. Default routing remains unchanged.
 
 ### Validation
 
@@ -102,3 +104,56 @@ The final R statistical correction follows the [native `boxplot.stats` contract]
 - Exact model/candidate hashes, code versions, failures, numerical measurements and validation log hashes are in [LATEST-RESULTS.json](LATEST-RESULTS.json). The original [REPORT.md](REPORT.md) and `results.json` remain historical snapshots.
 
 Raw local benchmark directories contain credentials/configuration artifacts and are not publication payloads. Only selected metadata, hashes, numerical measurements and sanitized findings are committed. Earlier failures, rather than only successful retries, remain in the local evidence inventory.
+
+## MATLAB geometry, font pixels and operational Codex repair (`02bac2f89`)
+
+This follow-up contains **89 conversion attempts, 22 repair attempts and 18 fresh-application conversion checks**, including historical failures, interrupted/configuration-confounded attempts and retries. They are not independent samples. The earlier frozen batch and its negative results remain unchanged. The latest paired runs use product commit `02bac2f89ae736575bae52d6be8a5347aa25a28a`.
+
+### Confirmed causes and corrections
+
+- A 600 × 300 WebP reference had no dimension parser, so the builtin loop charged the unknown-image fallback of 65,536 tokens. This exceeded its 60,000-token compression threshold despite actual provider inputs around 6–8k tokens in the affected turns. Repeated compression evicted source/resource context. A shared pure-stdlib header reader now supplies PNG/JPEG/GIF/WebP dimensions to both comparison metadata and model budgeting. VP8, VP8L and VP8X, odd RIFF padding and extended canvas dimensions are covered; unknown/truncated input retains the conservative fallback. Header recognition does not replace image decoding or file validation. [WebP container specification](https://developers.google.com/speed/webp/docs/riff_container).
+- The real `HttpModel` transport-boundary regression proves later request bodies retain source and image bytes; its injected POST receiver is deterministic, while separate wire tests exercise loopback HTTP. The pre-fix real-model diagnostic used 18 turns and 18 compressions (152.007 s); the post-fix source/reference-only attempt used five turns and zero compressions (45.884 s). These are individual diagnostic trials, not a latency benchmark. Font pixels did **not** automatically improve from this context fix alone.
+- On Windows, `stat` and `fstat` can expose different meanings for `ctime`. Comparing that field across the two APIs falsely rejected unchanged files. Cross-API comparison now uses device/inode/size/mtime; before/after comparisons within each API still include ctime, and reads use binary mode. Both project-resource and model-image reads retain replacement/change checks. [CPython issue and platform semantics](https://github.com/python/cpython/issues/157671).
+- Shared conversion guidance now preserves actual figure units/export crop, camera/up vector, projection and both aspect ratios **with their Modes**. MATLAB auto stretch-to-fill and Matplotlib's square active 3D viewport cannot be equated by copying position numbers. Font guidance uses actual font bytes, anchor bounding boxes, kerning/shaping and glyph-origin rounding, with editable glyph placement limited to proven independent LTR Latin text. It does not prescribe splitting complex scripts or embedding text bitmaps. [MATLAB automatic resize behavior](https://www.mathworks.com/help/matlab/creating_plots/automatic-axes-resize.html), [Pillow FreeType implementation](https://github.com/python-pillow/Pillow/blob/main/src/_imagingft.c).
+
+The prior CI failures were corrected: Windows resource-identity assertions, platform-dependent test text encodings, and missing classification entries for `convert_reference_invalid` / `preview_render_failed`. No route/default-setting file changed in this follow-up.
+
+### Same-version, same-input model comparisons
+
+Builtin and Claude Code used Sonnet 5.5, high effort, the same product commit and candidate interpreter/packages. Every staged source/resource byte hash is checked equal for each pair in `same_commit_conversion_pairs`. CLI tools/provider call strategy still differ. These are development cases used to improve the shared prompt, one latest trial per arm; they are not held-out repeated evidence of non-inferiority.
+
+The geometry arm supplies unchanged native full-frame exports, figure/axes/camera attributes and actual R2025a LUT through the real `reference_files` endpoint. Its geometry metadata explicitly supplies seed **20261025** to both executors. Unlike the earlier `d9d` arm, the final contour CData is therefore a valid matched deterministic comparison. The font-facts arm supplies observational metrics from the unchanged original Pillow draw calls, font SHA and kerning advances; it is separate from the source/reference-image-only arm. No model received a prior converted candidate or evaluator oracle directory.
+
+| Paired arm | Builtin | Claude Code | Independent acceptance result |
+| --- | --- | --- | --- |
+| Airy full-frame geometry | Adopted; 250.700 s; eight projected corners max error **1.0834 px**, RMS 0.5881 px | Adopted; 117.729 s; max corner error **5483.94 px**, visibly outside the frame | Builtin camera greatly improved; Claude fidelity failure despite execution/capture. Neither is a full pixel pass |
+| Two-page contour, supplied geometry + seed | Adopted; 122.140 s; second-plane boundary maximum difference **0.9625 px** | Adopted; 169.752 s; maximum difference **23.4584 px** | Both CData errors **0**, actual artist LUT errors **0**, CLim error 2.78e-17, contour-data error 8.33e-17, image plane Z remains **150**. Layout is better in this builtin trial |
+| Pillow anchors, original source + reference image only | Adopted; 45.884 s; WebP RGB MAE **1.02524/255** | Adopted; 32.812 s; **1.02524/255** | Context correction alone does not remove glyph positioning error |
+| Pillow anchors, supplied original font metrics | Adopted; 90.829 s; raw PNG RGB MAE **0.000361/255**, maximum **1/255**; WebP MAE **0.070220/255** | Adopted; 63.549 s; raw PNG MAE **1.06214/255**, maximum **246/255**; WebP MAE **1.18337/255** | Dimensions 600 × 300 and alpha agree. Builtin near-equivalence is limited to these nine Latin labels; exact equality and general shaping are unproven |
+
+All six geometry/font-facts candidates independently execute and reopen in a new application process with unchanged adopted source, actual figure capture and no forced-worker override. Offered dependency/run actions are explicitly confirmed by the test client. This proves the application loop, **not** the failed Claude geometry's fidelity. The standalone source/reference-only anchor pair is also independently executed, but is not included in those six fresh-app checks.
+
+Airy native calibration adds colored corner markers only after freezing the native camera/aspect/axes/limits; their equality is asserted before and after. Candidate points use the drawn projection matrix and display transform. Contour uses native colored support (`max(R,G,B)-min(R,G,B)>20`) versus the projected image plane, so rasterized stroke edges remain a measurement limitation. Neither comparison resizes or crops output. Both executors still export **1342 × 808** against **1343 × 810** native frames; ticks, final antialiasing, export-edge rounding and other camera configurations remain unaccepted. The builtin Airy heightfield's depth-order choice is not proof for arbitrary intersecting 3D geometry.
+
+The final font measurement executes the real model candidate unchanged, separately from the earlier reviewer-only quantization experiment. Ordinary editable `Text` glyphs preserve the visual labels, with finer edit granularity than whole-label text. Its success cannot be extended to ligatures, combining marks, RTL shaping or other fonts. Lossy WebP error is recorded separately from pre-encoding PNG error.
+
+### Codex repair baseline and CLI configuration confounders
+
+Codex's local MCP child did not inherit the parent's source `PYTHONPATH`, so it loaded a different checkout that lacked the required repair endpoint. A per-invocation `mcp_servers.tavotto_fix.env.PYTHONPATH` binding makes the child load the measured commit; its module digest is recorded. No global Codex configuration or authentication was changed. A read-only MCP probe completed, followed by real repair callbacks and actual application runs. Earlier unrelated OAuth warnings were **not** evidence of the local MCP root cause.
+
+| Controlled repair | Builtin | Claude Code | Codex | Required outcome |
+| --- | --- | --- | --- | --- |
+| Exact `pillow==9.5.0`, shared product `3cf845fde` | 28.730 s / 10 steps | 37.977 s / 9 steps | 58.261 s / 12 steps | All confirm the exact version and run; source unchanged; **2/2** native outputs pixel-identical; actual app execution completes |
+| Missing case image, shared product `02bac2f89` | 97.453 s / 16 steps | 41.659 s / 15 steps | 281.602 s / 23 steps | All use reviewed case-local data actions; source unchanged; **8/8** native outputs pixel-identical; actual app execution and separate fresh-app reopens complete |
+
+Pillow is not a Matplotlib capture: all six repairs correctly end with `execution_finished=true`, `figure_captured=false` and the conversion handoff. This is not reported as a captured editable figure. Codex reaches 12 and 23 real Tavotto tool callbacks in the final version/missing-image runs. Its subscription GPT-6 Astra differs from key-backed Sonnet 5.5; repair thinking settings also differ. Wall totals include manual card waits in some runs and cannot rank speed.
+
+Three later Claude conversion processes were observed waiting on an inherited desktop integration hook; those test-owned children were stopped and each intervention retained. Per-invocation `--bare --setting-sources ""` isolates hooks/plugins for the control, with strict empty MCP configuration for conversion and explicit Tavotto MCP for repair. The product's tool permissions, oracle read guard and repair cards remain enforced. User settings are untouched. The two earlier geometry attempts that reached the 900-second deadline remain separate failures; the later observed hook cause is not retroactively asserted for every older timeout.
+
+### Verification and remaining decision
+
+- `3cf845fde`: **494 passed** for resource identity, CI hygiene/error-code classification, prompt and current-app verification. `94f3a324f`: **169 passed** for glyph/camera contracts. `02bac2f89`: **350 passed, zero skipped** for shared image headers, HTTP transport-boundary context retention, Windows image identity and agent/conversion regressions. These overlap; do not sum them.
+- Counterfactuals restore the old Windows identity check / old WebP budgeting and image-read behavior: regressions exit **1**. Restoring the fixes exits **0**. Ruff, diff checks and the repository's documentation ratchet/index checks pass.
+- Remote CI is tied to its exact head. At this report's measurement checkpoint, `02bac2f89` had 29 successful checks, 38 still running, one skipped and no failures; this is **not** an all-green claim. The PR exposes the current live result, including later report-only commits.
+
+**Default routing stays unchanged.** The current result supports specific context/Windows/liveness repairs and measured improvement in these MATLAB/font cases. It does not certify every conversion, complete math glyph fidelity, arbitrary MATLAB cameras, all fonts, platform release packages or general superiority over Claude Code/Codex. Private product-feedback drafts still require user review and confirmation; no production feedback was submitted. The earlier unavailable Codex baseline is now operational and is no longer listed as an unresolved integration blocker.
