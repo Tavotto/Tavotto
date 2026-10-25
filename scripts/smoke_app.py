@@ -390,6 +390,17 @@ def _check_control_plane(base: str, expect: str | None) -> None:
     print(f"✓ 渲染控制面: selected={selected} sessions={sessions}")
     if not expect:
         return
+    if expect == "conda-fallback":
+        # 需要 Conda 激活的解释器，workerd 按设计不接（spawn 规格不带激活增量）：
+        # 二进制照常在（selected 仍是 workerd），但这次渲染必须落在 Python 池上。
+        # 这是「预期内的回退」，与 workerd 起不来的「静默回退」是两回事。
+        if selected != "workerd":
+            raise SmokeError(
+                f"conda-fallback 要求产物自带 workerd（selected=workerd），实际是 {selected}"
+            )
+        if "python" not in sessions or "workerd" in sessions:
+            raise SmokeError(f"需要 Conda 激活的解释器应只走 Python 渲染池，实际会话是 {sessions}")
+        return
     if selected != expect:
         raise SmokeError(
             f"渲染控制面应为 {expect}，实际是 {selected}（产物里没打进 tavotto-workerd？）"
@@ -693,9 +704,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--expect-control-plane",
         default=None,
-        choices=["workerd", "python"],
+        choices=["workerd", "python", "conda-fallback"],
         help="断言渲染控制面（workerd = Rust supervisor）。"
-        "桌面产物用 workerd：回退是静默的，不断言就发现不了",
+        "桌面产物用 workerd：回退是静默的，不断言就发现不了。"
+        "conda-fallback：产物自带 workerd（selected=workerd），但需要 Conda 激活的"
+        "解释器按设计只走 Python 池（sessions 有 python、无 workerd）",
     )
     ap.add_argument(
         "--expect-runtime",
