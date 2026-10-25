@@ -41,7 +41,9 @@ def unresolved_name(out: str) -> str:
     return name
 
 
-def index_has_project(python: str, name: str, cancel: threading.Event) -> bool | None:
+def index_has_project(
+    python: str, name: str, cancel: threading.Event, *, ignore_requires_python: bool = False
+) -> bool | None:
     """索引上有没有叫 `name` 的项目（含只有源码包的）：`pip index versions`，**不带** `--only-binary`。
     True / False；探不出（pip 太旧没有 `index`、没网、超时）回 None。
 
@@ -57,8 +59,12 @@ def index_has_project(python: str, name: str, cancel: threading.Event) -> bool |
         "versions",
         "--disable-pip-version-check",
         "--no-input",
-        name,
     ]
+    if ignore_requires_python:
+        # pip 默认按 Requires-Python 过滤：所有发布版本都排除当前 Python 时「查不到」。带上它才看得到包本身；
+        # pip 不认这个选项（太旧）时输出里没有 `available versions`，落到「探不出」（None）
+        argv.append("--ignore-requires-python")
+    argv.append(name)
     code, out = deprepair._run_pip(argv, cancel, None, deadline=time.time() + INDEX_PROBE_S)
     low = (out or "").lower()
     if not code and "available versions" in low:
@@ -78,15 +84,32 @@ def _default_installer(python: str, requirements: list[str]) -> dict:
         with pool.mutating_environment(key, python):
             for req in requirements:
                 code, out = deprepair._pip_install(python, req, cancel, None)
+                py_unsupported = False
+                unresolved = ""
                 if code:
                     if code == deprepair.ERROR_NOT_FOUND:
                         # 「没有这个包」与「有，但没有能装的轮子」输出一样；索引上查得到就改报后者
                         # 探**真正没解析到的那个发行版**：装 A 失败可能是传递依赖 B 找不到，req 仍是 A
                         unresolved = unresolved_name(out)
-                        if unresolved and index_has_project(python, unresolved, cancel):
+                        present = bool(unresolved) and index_has_project(python, unresolved, cancel)
+                        if unresolved and present is False:
+                            # 默认探测按 Requires-Python 过滤：再不过滤地看一次，区分「没这个包」与「不支持当前 Python」
+                            py_unsupported = (
+                                index_has_project(
+                                    python, unresolved, cancel, ignore_requires_python=True
+                                )
+                                is True
+                            )
+                        if present or py_unsupported:
                             code = deprepair.ERROR_REQUIRES_BUILD
                     res = {"ok": False, "code": str(code), "done": done}
-                    if detail := failure_detail(out):
+                    if py_unsupported:
+                        note = (
+                            f"Every release of {unresolved} on the index requires a different Python "
+                            "version than this environment's: the package does not support this Python."
+                        )
+                        res["detail"] = note + "\n" + failure_detail(out)
+                    elif detail := failure_detail(out):
                         res["detail"] = detail
                     return res
                 done.append(req)

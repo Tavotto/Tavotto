@@ -939,7 +939,13 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
         + extra
         + note
         + (f"\n--- last lines of the error output ---\n{tail}" if tail else "")
-        + shadow_note(ctx, res.get("stderr")),
+        + shadow_note(
+            ctx,
+            res.get("stderr"),
+            # 试运行只复制脚本所在目录并从副本里跑：能被它导入的项目内容只有这个目录（没复制整个目录时一个都没有）；
+            # 原项目根不在副本的导入路径上，根下的同名包不算「已加载」
+            roots=[src_dir] if whole else [],
+        ),
         summary,
     )
 

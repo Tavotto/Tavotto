@@ -149,9 +149,17 @@ def test_try_run_and_try_import_failures_carry_the_shadow_note(box):
     def fake_runner(python, work, name, mode, timeout, **kw):
         return {"status": "ok", "returncode": 1, "figures": 0, "stderr": stderr}
 
-    ctx = make_ctx(box, environments={"e": "py"}, script_path=script, runner=fake_runner)
+    root_script = put(
+        box.proj / "sho_root.py", "import celerite\n"
+    )  # 脚本与 celerite/ 同在项目根：副本里有它
+    ctx = make_ctx(box, environments={"e": "py"}, script_path=root_script, runner=fake_runner)
     r = run_tool(REGISTRY["try_run"], ctx, {"env": "e"})
     assert "project_package_shadow:" in r.content and "Do not install it" in r.content
+    # Codex 形状：脚本在子目录，试运行只复制那个目录，根下的包不在副本的导入路径上 → 不下遮蔽结论
+    ctx_sub = make_ctx(box, environments={"e": "py"}, script_path=script, runner=fake_runner)
+    assert (
+        "project_package_shadow" not in run_tool(REGISTRY["try_run"], ctx_sub, {"env": "e"}).content
+    )
 
     from tavotto.engine.fixtools import trial
 
@@ -243,7 +251,7 @@ def _run_default_installer(monkeypatch, pip_out, probe):
 
 
 def test_wheelless_package_is_requires_build_not_not_found(monkeypatch):
-    res, _ = _run_default_installer(monkeypatch, PIP_NONE, lambda py, name, ev: True)
+    res, _ = _run_default_installer(monkeypatch, PIP_NONE, lambda py, name, ev, **kw: True)
     assert res["code"] == deprepair.ERROR_REQUIRES_BUILD == "dependency_requires_build"
     assert "No matching distribution found for celerite" in res["detail"]
 
@@ -257,7 +265,7 @@ def test_transitive_dependency_missing_probes_that_dependency_not_the_requested_
     )
     probed = []
 
-    def probe(py, name, ev):
+    def probe(py, name, ev, **kw):
         probed.append(name)
         return name == "celerite"  # 请求的包 A 在索引上有；传递依赖 B 没有
 
@@ -266,13 +274,50 @@ def test_transitive_dependency_missing_probes_that_dependency_not_the_requested_
     assert res["code"] == "dependency_not_found"
 
 
+def test_every_release_excluded_by_requires_python_is_reported_as_unsupported_python(monkeypatch):
+    calls = []
+
+    def probe(py, name, ev, *, ignore_requires_python=False):
+        calls.append(ignore_requires_python)
+        return True if ignore_requires_python else False  # 默认过滤后查不到，不过滤才看得到
+
+    res, _ = _run_default_installer(monkeypatch, PIP_NONE, probe)
+    assert calls == [False, True]
+    assert res["code"] == "dependency_requires_build"
+    assert "does not support this Python" in res["detail"]
+
+
+def test_index_probe_passes_ignore_requires_python_only_when_asked(monkeypatch):
+    argvs = []
+
+    def fake_run_pip(argv, cancel, on_log, **kw):
+        argvs.append(argv)
+        if "--ignore-requires-python" in argv:
+            return "", "celerite (0.4.3)\nAvailable versions: 0.4.3\n"
+        return "x", "ERROR: No matching distribution found for celerite"
+
+    monkeypatch.setattr(deprepair, "_run_pip", fake_run_pip)
+    ev = threading.Event()
+    assert executors.index_has_project("py", "celerite", ev) is False
+    assert executors.index_has_project("py", "celerite", ev, ignore_requires_python=True) is True
+    assert argvs[0].count("--ignore-requires-python") == 0 and argvs[1][-2:] == [
+        "--ignore-requires-python",
+        "celerite",
+    ]
+    # 太旧的 pip 不认这个选项：探不出，保持原分类
+    monkeypatch.setattr(
+        deprepair, "_run_pip", lambda *a, **k: ("x", "no such option: --ignore-requires-python")
+    )
+    assert executors.index_has_project("py", "c", ev, ignore_requires_python=True) is None
+
+
 def test_package_absent_from_the_index_stays_not_found(monkeypatch):
-    res, _ = _run_default_installer(monkeypatch, PIP_NONE, lambda py, name, ev: False)
+    res, _ = _run_default_installer(monkeypatch, PIP_NONE, lambda py, name, ev, **kw: False)
     assert res["code"] == "dependency_not_found"
 
 
 def test_unknown_index_state_keeps_the_original_classification(monkeypatch):
-    res, _ = _run_default_installer(monkeypatch, PIP_NONE, lambda py, name, ev: None)
+    res, _ = _run_default_installer(monkeypatch, PIP_NONE, lambda py, name, ev, **kw: None)
     assert res["code"] == "dependency_not_found"
 
 
