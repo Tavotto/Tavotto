@@ -12398,7 +12398,15 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str, *, with_manifests: bo
         try:
             if result.get("error"):
                 err = result["error"]
-                return {"error": {"code": err.get("code"), "message": err.get("message")}}
+                # `cause`：探测把底层码折成 script_probe_failed 之前的细分码（写入绊线等），只给要区分的调用方（改图 `check`）
+                cause = (err.get("params") or {}).get("worker_code")
+                return {
+                    "error": {
+                        "code": err.get("code"),
+                        "message": err.get("message"),
+                        **({"cause": cause} if cause else {}),
+                    }
+                }
             stems = list(result.get("stems") or [])
             descs = result.get("descriptors") or []
             size = descs[0].get("size_mm") if descs and isinstance(descs[0], dict) else None

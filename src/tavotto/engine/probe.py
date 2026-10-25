@@ -272,7 +272,9 @@ def _error_from_worker(
     out = _err(
         ERROR_PROBE_FAILED,
         f"试运行失败（入口 {entry}）：{reason}",
-        params={"entry": entry, "reason": reason},
+        # `worker_code`：底层细分码（`script_error` / `write_outside_roots` …）。只多一个键，码与文案不变；
+        # 需要区分“脚本坏了”与“写入绊线”的调用方（改图 `check`）读它
+        params={"entry": entry, "reason": reason, "worker_code": str(exc.code or "")},
         traceback_text=exc.traceback_text,
     )
     # C++ 读取器找不到数据（ADR 0110 §一）：码照旧是「试运行失败」，载荷原样带出——素材库弹同一个

@@ -415,7 +415,12 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
             return {"status": "no_figure", "code": code}
         if code == WRITE_OUTSIDE_ROOTS_CODE:
             return {"status": "error", "code": code, "message": WRITE_OUTSIDE_HINT}
-        return {"status": "error", "code": code, "message": str(err.get("message") or "")[:400]}
+        return {
+            "status": "error",
+            "code": code,
+            "message": str(err.get("message") or "")[:400],
+            **({"cause": str(err["cause"])} if err.get("cause") else {}),
+        }
     if not out.get("stems"):
         return {"status": "no_figure", "code": "no_figures_captured"}
     return {

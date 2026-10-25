@@ -604,6 +604,8 @@ def _call_hook(hook):
 # --------------------------------------------------------------------------- 内置执行器的 `check`
 #: 渲染这一步量不了、但不是 Agent 的错的运行错误码：写入根绊线（候选脚本把文件写到候选目录以外，如相对路径的 `savefig` /
 #: `to_csv`；校验运行只许写候选目录）。这类结论是“没量到”，不是“坏了”——真正的渲染验证在提交后的 L2 里照常做
+#: `ai_convert.STAGE_PREFIX` 的镜像（import 会成环）；`tests/test_ai_edit_check_app.py` 看护两者一致
+STAGE_PREFIX = "tavotto_convert_probe_"
 NOT_MEASURABLE_CODES = frozenset({"write_outside_roots"})
 
 
@@ -649,6 +651,20 @@ def _data_lines(after: dict[str, dict], before: dict[str, dict | None]) -> list[
     return out
 
 
+def _with_original_names(manifests, cand: Candidate):
+    """校验运行的是临时文件 `tavotto_convert_probe_<sid>.py`；只 show 不 savefig 的图 worker 按脚本 stem 兜底命名（`fallback_stems`：
+    `<stem>`、`<stem>-2`…），于是叫临时文件名。把这个前缀换回原脚本的 stem，才和基线（原脚本）同名可比。savefig 命名的图不受影响。"""
+    if not isinstance(manifests, dict):
+        return manifests
+    staged, orig = f"{STAGE_PREFIX}{cand.sid}", Path(cand.script_rel).stem
+    out = {}
+    for stem, man in manifests.items():
+        if stem == staged or stem.startswith(staged + "-"):
+            stem = orig + stem[len(staged) :]
+        out[stem] = man
+    return out
+
+
 def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
     """内置执行器改图任务里 `check` 工具的回调（Agent 在候选里改完自己要一次校验）→ `(是否通过, 给 Agent 看的一段报告)`。
 
@@ -683,7 +699,8 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
         return False, "check failed: the edited script ran but no Matplotlib figure was captured."
     if status == "error":
         code = str(res.get("code") or "")
-        if code in NOT_MEASURABLE_CODES:
+        # 生产 runner 经探测把写入绊线折成 script_probe_failed，底层码在 `cause`
+        if code in NOT_MEASURABLE_CODES or str(res.get("cause") or "") in NOT_MEASURABLE_CODES:
             notes.append(
                 "rendering not measured: the script writes files outside the work directory (such as savefig/to_csv with a "
                 "relative path); that is checked again after your change is applied"
@@ -696,7 +713,7 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
     if baseline == "unset":
         baseline = _call_hook(cand.extras.get("check_before"))  # 只读；整个会话取一次
         cand.extras["check_baseline"] = baseline
-    after = res.get("manifests")
+    after = _with_original_names(res.get("manifests"), cand)
     if not baseline or not isinstance(after, dict) or not after:
         notes.append(
             "data fingerprint not measured (no baseline render of the original in this session)"
