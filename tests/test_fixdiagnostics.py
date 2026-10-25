@@ -270,7 +270,7 @@ def test_transitive_dependency_missing_probes_that_dependency_not_the_requested_
         return name == "celerite"  # 请求的包 A 在索引上有；传递依赖 B 没有
 
     res, _ = _run_default_installer(monkeypatch, out, probe)
-    assert probed == ["ghost-dep"]
+    assert set(probed) == {"ghost-dep"}  # 默认探测 + 不过滤 Requires-Python 各一次，都探 B
     assert res["code"] == "dependency_not_found"
 
 
