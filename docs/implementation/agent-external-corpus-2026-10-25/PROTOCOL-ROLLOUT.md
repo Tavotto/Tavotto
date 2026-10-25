@@ -12,6 +12,8 @@ The routing matrix covers Anthropic Key, Responses Key and Tavotto-direct OAuth,
 
 A new real-model Pillow failure exposed a common worker defect: `Path.mkdir(parents=True, exist_ok=True)` on an existing project directory was rejected as an outside-root mutation. The audit hook now raises `FileExistsError(EEXIST)` before the syscall for this no-op, preserving normal `exist_ok` behavior. It never permits that mkdir syscall. Even if the directory disappears after inspection, nothing is created. New outside-root directories and other writes remain rejected; no write roots or per-script exceptions were added.
 
+DeepSeek then exposed a second shared defect: a real write denial lost its structured cause inside `script_probe_failed`. The model received generic advice to write into the project, although conversion deliberately allows only the candidate and infrastructure roots. At `fd6ab0f3d630f262653d7ca0e7c91f4cd778fb6f`, probe preserves `params.worker_code` and conversion provides the appropriate guidance: remove output-only directory creation, use memory or temporary files for intermediates, and retain Matplotlib `savefig` capture. The original project remains protected. Error-message substrings cannot trigger this diagnosis.
+
 ## Real-model evidence
 
 The same three frozen external inputs, Sonnet 5.5, macOS source checkout and preinstalled conversion worker were used without supplying an additional oracle. Input tree hashes match across each case's attempts. The baseline at `336109aee77e5fe704d748d237ea6c4c284fb2d5` forced builtin; the fixed runs at **`b48a1a42dd0796b110611ec094b73f59dd527f22`** used the ordinary preference route and all actually dispatched builtin. This change in routing mode is recorded, not hidden as an identical setting.
@@ -34,17 +36,37 @@ After adding the dispatch-identity guard at `1f46e4ff071dac2e0e865ada3c7f7a64f6b
 
 [PROTOCOL-RESULTS.json](PROTOCOL-RESULTS.json) records every attempt, producer revision, input/candidate/report/harness hashes, corrections, confirmation counts and fresh-process outcomes. Raw prompts, logs, absolute paths and credentials remain local.
 
+## DeepSeek native Responses evidence
+
+The user supplied an API key in a local file. The application used a custom Responses connection to `api.deepseek.com`, model `deepseek-flash`, through the ordinary builtin preference route. No subscription credential or persistent user setting was changed. The external inputs, preinstalled worker and product budgets were unchanged; the model differs from the Anthropic trials, so this is protocol/task coverage, not a model-controlled comparison.
+
+At `30a07e92eebc912652a8948eb3d6bd6dc154db5f`:
+
+- FigureBench `FB-S02` and `FB-S03`: 2/2 completed in one round, goal and preservation verified, zero unintended changes; actual `routed_agents=["builtin"]`.
+- R percent stack: completed, adopted and reopened in a fresh application process with one captured figure and unchanged source bytes.
+- Missing pandas in the same adopted R candidate: the initial application failure was observed, then two reviewed cards authorized installation and actual execution. The agent finished `fixed` only after `completed/succeeded` with a captured figure; a new application process also succeeded with the same project environment and unchanged source.
+- Pillow composite: the first attempt and one diagnostic repeat both reached `agent_max_turns`. The diagnostic repeat exposed the incorrect write-denial guidance after the editable-output check rejected raster drawing. Neither attempt was adopted.
+- MATLAB Airy surface: the first attempt reached the token budget after 14 turns. An internal check had captured a figure, but the task did not complete or adopt; it remains a failure.
+
+After the guidance fix, the bounded Pillow repeat still failed: after rejecting raster drawing, the agent made repeated invalid `edit_file` calls and terminated with `tool_error_loop/bad_arguments` after 18 turns. It never reached a new write-denial check, so this attempt does **not** demonstrate a real-model success caused by the guidance fix. Empty replacement strings are supported by the tool; the retained trace does not include raw arguments, so the exact malformed argument is not established. No further retries are being counted as independent cases.
+
+The MATLAB diagnostic repeat on the same fixed revision reached the token budget after 17 turns (213.198 s). Two internal checks captured a figure, but the agent continued editing and did not complete or adopt. This remains a second failed attempt, not a successful conversion. The original attempt and repeat used the same model, inputs and unchanged product budgets.
+
+The DeepSeek ledger therefore contains **6 conversion attempts across 3 distinct cases: 1 completed/adopted/reopened, 5 failed** (Pillow three attempts, MATLAB two, R one). The initial three-case batch was 1/3; diagnostic and post-fix repeats are shown separately, not substituted for those initial results. Figure editing and the separate package-repair trial passed as described above.
+
+All completed and failed attempts retained the original protected files. Content-free transport traces record successful HTTP 200 requests containing image inputs and multi-turn tool results. This establishes use of the real Responses protocol, not success of every task. DeepSeek's [native Responses documentation](https://api-docs.deepseek.com/guides/responses_api/) describes its full-history model; these traces confirm full-history requests. It does not certify OpenAI-specific service behavior, real OAuth refresh, pixel fidelity or readiness to switch every API connection.
+
 ## Protocol coverage and its limits
 
 | Connection / adapter | Local protocol and lifecycle tests | Real service acceptance in this follow-up |
 | --- | --- | --- |
 | Anthropic API Key | Passed | Selected conversion, repair and figure-edit workflows above |
-| OpenAI Responses API Key | Passed, including the application preference route | **Not run: no authorized API connection** |
+| Responses API Key | Passed, including the application preference route | DeepSeek native Responses: selected workflows passed; complex conversion failures above retained. OpenAI service not tested. |
 | Anthropic Bearer / Tavotto-direct OAuth | Routing, Bearer headers and refresh regressions passed | No real OAuth refresh/service trial |
 | OpenAI Chat Completions | Runner-level request/tool/media tests passed | Not run; not an application connection |
 | ChatGPT / Claude subscription | Retained CLI routing and cancellation regressions | Historical CLI evidence remains in the functional report; no new comparison here |
 
-An API test connection is an ordinary provider endpoint, API model and key, not a special testing URL. A working Codex/ChatGPT subscription does not supply evidence for the builtin Responses adapter. No subscription credentials were copied or repurposed. When an authorized API connection becomes available, the benchmark supports the following explicit paid invocation (replace placeholders and choose a new output directory):
+An API test connection is an ordinary provider endpoint, API model and key, not a special testing URL. A working Codex/ChatGPT subscription does not supply evidence for the builtin Responses adapter. No subscription credentials were copied or repurposed. The benchmark supports this explicit paid invocation (replace placeholders and choose a new output directory):
 
 ```sh
 PYTHONPATH=src .venv/bin/python scripts/dev/taf_bench.py \
@@ -67,7 +89,7 @@ The activation contract is [ADR 0147 §五](../../adr/0147-builtin-agent-runner.
 - Trial records include revision, protocol, task family and closed outcome codes. Use local reports or consented private feedback with a reviewed, redacted diagnostic bundle. No new telemetry, automatic source upload or public issue submission was introduced.
 - A false `fixed`, protected-file mutation, unexpected executor, stuck cancellation or unusable repair card stops expansion and requires a reproducible fix. Compare builtin and CLI on the same inputs, model and budget before claiming non-inferiority; different-model paired successes are not that comparison.
 
-These controls make a scoped trial reviewable. They do not substitute for the missing Responses/OAuth service evidence, installed-platform qualification or observed user results. No production rollout success is claimed.
+These controls make a scoped trial reviewable. They do not substitute for resolving the observed complex-conversion failures, real OAuth service evidence, installed-platform qualification or observed user results. Do not expand the default to all API connections based on the passing tasks. No production rollout success is claimed.
 
 ## Deterministic verification and counterfactuals
 
@@ -78,11 +100,14 @@ These controls make a scoped trial reviewable. They do not substitute for the mi
 | Repair stalls, confirmation asks, authoritative application verification and architecture/rule index | 153 passed |
 | Expanded benchmark preference matrix after its fixture refinement | 8 passed |
 | Complete benchmark and rule-index suites after adding dispatch verification | 71 passed |
+| Structured write-denial correction, conversion/probe/write guards and architecture/rule index | 202 passed |
 | Full repository Ruff and formatting | Passed, 1,226 Python files formatted |
 | Diff whitespace and rule-document budgets | Passed |
 
 Removing the existing-directory fix makes five new worker/application/race tests fail (exit 1), while the new-directory rejection control still passes. Restoring it passes all 60 tests. Removing the benchmark's preference overlay makes all four preferred-route cases dispatch the available CLI and fail, while four forced-route controls pass; restoring it passes all eight. These are deliberate negative tests, not evidence inferred from a green implementation-mirroring assertion.
 
 The dispatch-identity negative test first reproduced a real route selection of `claude` under a requested builtin benchmark (exit 1). With the guard, the report records `routed_agents=["claude"]`, `executor_mismatch` and zero agent calls; the test and complete benchmark suite pass. A requested executor label alone is not accepted as execution evidence.
+
+The new real-worker correction test failed against the old diagnostic mapping because the conversion-specific hint was absent. With the structured-cause fix it corrects, captures and adopts, while the denied directory is never created and original files remain unchanged. A separate negative test confirms that a user exception merely mentioning `write_outside_roots` keeps its actual script-error diagnosis.
 
 Cancellation, stalled-model termination, authentication/quota failures and media/tool protocol behavior use local HTTP fixtures and real subprocess lifecycle tests; the remote services were not deliberately faulted. CI must be checked on the actual latest PR head; older green runs do not certify a later report or code commit.
