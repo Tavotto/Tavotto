@@ -187,3 +187,18 @@ def home_relative(ctx: FixContext, real: str) -> str:
     if real == home or real.startswith(home + os.sep):
         return "~" + real[len(home) :].replace(os.sep, "/")
     return real.replace(os.sep, "/")
+
+
+def shadow_note(ctx: FixContext, text: str | None) -> str:
+    """错误文本里若是「项目内同名包遮蔽」（`importshadow`），回一段说明（以换行开头）；不是回空串。
+    候选根 = 项目根 + 脚本所在目录；只读文件系统，不执行任何用户代码。"""
+    from .. import importshadow
+
+    roots = [ctx.project_root]
+    if ctx.script_path is not None:
+        roots.append(Path(ctx.script_path).parent)
+    try:
+        fact = importshadow.detect(text, roots)
+    except Exception:  # noqa: BLE001 - 说明是锦上添花，判不出不能让工具失败
+        return ""
+    return f"\nproject_package_shadow: {fact['note']}" if fact else ""

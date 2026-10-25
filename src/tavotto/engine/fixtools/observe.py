@@ -14,7 +14,7 @@ from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
 from . import readscope
-from .base import FixContext, FixTool, err, home_relative, obj, ok, resolve_or_error
+from .base import FixContext, FixTool, err, home_relative, obj, ok, resolve_or_error, shadow_note
 
 LIST_LIMIT = 200
 FIND_LIMIT_MAX = 500
@@ -75,6 +75,15 @@ def read_run_report(ctx: FixContext, args: dict) -> ToolResult:
             if isinstance(item.get("payload"), dict):
                 picked["missing_input"] = _precis(item["payload"])
             break
+    # 同名包遮蔽（`importshadow`）：报告里的 `No module named 'a.b'` 实际是项目里的 `a/` 缺了 `b`，写明
+    err_text = "\n".join(
+        v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
+        for v in (report.get(k) for k in ("error", "error_tail", "attempt_history"))
+        if v
+    )
+    note = shadow_note(ctx, err_text).removeprefix("\nproject_package_shadow: ")
+    if note:
+        picked = {"project_package_shadow": note, **picked}  # 放最前：超长截断先丢后面的
     text = json.dumps(picked, ensure_ascii=False, indent=1, default=str)
     if len(text) > REPORT_MAX_CHARS:
         text = text[:REPORT_MAX_CHARS] + "\n[truncated]"
@@ -502,15 +511,6 @@ def _log_path(ctx: FixContext, source: str):
         from .. import config
 
         return config.data_dir() / "cache" / "app.log"
-    return None
-
-
-def read_logs(ctx: FixContext, args: dict) -> ToolResult:
-    source = args.get("source")
-    if source not in _LOG_SOURCES:
-        return err("bad_arguments", f"`source` must be one of {list(_LOG_SOURCES)}.")
-    n = _int(args.get("lines"), 80, 1, LOG_LINES_MAX) or 80
-    path = _log_path(ctx, source)
     if source == "worker":
         # 渲染 worker 的日志不在固定位置：每个 (项目, 脚本) 一个缓存目录 `<项目哈希>-<脚本名>/worker.log`。
         # 之前没人填 `ctx.log_paths["worker"]`，这个来源永远 no_log（真实语料 9/9 会话）。取**当前项目**名下
@@ -522,6 +522,15 @@ def read_logs(ctx: FixContext, args: dict) -> ToolResult:
         except Exception:  # noqa: BLE001 - 找不到日志不是修复会话的故障
             return None
         return owned[0][1] if owned else None
+    return None
+
+
+def read_logs(ctx: FixContext, args: dict) -> ToolResult:
+    source = args.get("source")
+    if source not in _LOG_SOURCES:
+        return err("bad_arguments", f"`source` must be one of {list(_LOG_SOURCES)}.")
+    n = _int(args.get("lines"), 80, 1, LOG_LINES_MAX) or 80
+    path = _log_path(ctx, source)
     if path is None or not os.path.isfile(path):
         hint = (
             " Tavotto's render worker has not written a log for this project yet (it only exists "

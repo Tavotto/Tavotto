@@ -29,7 +29,7 @@ from collections import deque
 from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
-from .base import FixContext, FixTool, err, obj, ok
+from .base import FixContext, FixTool, err, obj, ok, shadow_note
 from .readscope import ReadScope, Resolved
 
 INSPECT_TIMEOUT_S = 40.0
@@ -529,7 +529,8 @@ def try_import(ctx: FixContext, args: dict) -> ToolResult:
             "import ok",
         )
     return ok(
-        f"import {module}: FAILED (exit {res['returncode']})\n{_tail(res['stderr'])}{note}",
+        f"import {module}: FAILED (exit {res['returncode']})\n{_tail(res['stderr'])}{note}"
+        + shadow_note(ctx, res["stderr"]),
         "import failed",
     )
 
@@ -934,7 +935,11 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
     summary = "trial run done" + (" (writes blocked)" if blocked else "")
     summary += " (cleanup_pending)" if pending else ""
     return ok(
-        head + extra + note + (f"\n--- last lines of the error output ---\n{tail}" if tail else ""),
+        head
+        + extra
+        + note
+        + (f"\n--- last lines of the error output ---\n{tail}" if tail else "")
+        + shadow_note(ctx, res.get("stderr")),
         summary,
     )
 
