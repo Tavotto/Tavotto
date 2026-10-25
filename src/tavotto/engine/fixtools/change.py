@@ -93,7 +93,9 @@ _INSTALL_HINTS = {
     "dependency_requires_build": "The package exists on the index but has no ready-made wheel for this Python "
     "(source-only or built for other Python versions); Tavotto never compiles packages. Do not try another "
     "name: use a different Python version/environment, or tell the user it must be built or installed by hand.",
-    "dependency_not_found": "The index has no package with that name; check the name with lookup_package.",
+    "dependency_not_found": "pip found no version it can install on this Python and platform. The name may be "
+    "wrong, or the package may only be published for other Python versions or platforms. Check the name with "
+    "lookup_package first; if the name is right, try another Python version or environment, or tell the user.",
     "dependency_network_unavailable": "The package index could not be reached; this is a network problem, not a "
     "problem with the package. Do not change the package name.",
 }

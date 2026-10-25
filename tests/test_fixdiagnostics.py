@@ -316,6 +316,27 @@ def test_package_absent_from_the_index_stays_not_found(monkeypatch):
     assert res["code"] == "dependency_not_found"
 
 
+def test_other_platform_wheels_only_stays_not_found_and_the_hint_asserts_no_nonexistence(box):
+    from tests.test_fixtools_change import change_ctx
+
+    out = (
+        "ERROR: Could not find a version that satisfies the requirement exotic (from versions: none)\n"
+        "ERROR: No matching distribution found for exotic\n"
+    )
+    ctx = change_ctx(box, ask="yes")
+    ctx.installer = lambda python, reqs: {
+        "ok": False,
+        "code": "dependency_not_found",
+        "done": [],
+        "detail": out.strip(),
+    }
+    r = run_tool(REGISTRY["install_packages"], ctx, {"env": "e", "packages": ["seaborn"]})
+    assert r.code == "dependency_not_found"
+    assert "only be published for other Python versions or platforms" in r.content
+    low = r.content.lower()
+    assert "does not exist" not in low and "no package with that name" not in low
+
+
 def test_unknown_index_state_keeps_the_original_classification(monkeypatch):
     res, _ = _run_default_installer(monkeypatch, PIP_NONE, lambda py, name, ev, **kw: None)
     assert res["code"] == "dependency_not_found"
