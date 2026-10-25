@@ -1,8 +1,11 @@
 # 外部脚本复测：项目上下文与环境修复闭环
 
+本文件是第一阶段的历史快照；最新实现、配对复测及仍未通过的项目见
+[FIDELITY-FOLLOWUP.md](FIDELITY-FOLLOWUP.md) 和 [LATEST-RESULTS.json](LATEST-RESULTS.json)。
+
 日期：2026-10-25。基线 `d22b61a92e25d69c0e446e6276c13f5860e04b32`，最终产品代码
 `4420cdce9cfea854866e4b0925d989e2fc3a263e`，macOS arm64，真实模型
-`claude-sonnet-5-5`，Anthropic 协议。后续提交只补本报告。
+`claude-sonnet-5-5`，Anthropic 协议。以下结论仅对应这一阶段。
 
 **这次修复了项目资源不可见、诊断副本成功却被当成应用修好、转换采用后输出归属冲突，以及多页捕获不完整却能采用的问题。环境修复的五个受控案例均通过应用执行复查；跨语言转写仍有已证实的保真缺口。因此保持默认路由不变，不据此批准所有 API Key 用户默认切换。**
 

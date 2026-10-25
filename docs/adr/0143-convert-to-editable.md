@@ -236,6 +236,9 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 `convertoutputs` 用 AST 封装调用，运行时只对实际 Matplotlib savefig 改名；
 同名的其他对象方法、文件流、参数求值顺序保持原样。动态别名未能覆盖时，
 真实捕获仍由现有 `probe._live_stem_conflicts` 判归属冲突，不会默默采用。
+多页 PDF 在 `PdfPages` 构造时就打开路径，必须在构造前赋予独立输出名，不能等
+savefig 收到已打开的流时再处理。已识别的构造调用同样在运行时核对实际类，
+其他同名构造器及 BytesIO 不变；真实两页/五页执行验证原 PDF 字节保留、页数完整。
 回归含多种调用形态、幂等、篡改拒绝和删缓存后的真实应用重开
 （`tests/test_convert_outputs.py`）。
 

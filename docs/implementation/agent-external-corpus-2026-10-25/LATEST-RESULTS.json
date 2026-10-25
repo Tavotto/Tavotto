@@ -1,0 +1,4548 @@
+{
+  "schema_version": 1,
+  "recorded_at_utc": "2026-10-25T10:02:27.485995+00:00",
+  "report_code_sha": "01b444e7c57896f5e2f98010053cc9e5ac3933e0",
+  "decision": {
+    "default_routing_changed": false,
+    "full_fidelity_accepted": false,
+    "non_inferiority_established": false,
+    "feedback_destination": "private in-app feedback, user review and confirmation required",
+    "production_feedback_submitted": false
+  },
+  "corpus": {
+    "cases": 23,
+    "upstream_files": 22,
+    "repositories": 10,
+    "languages": {
+      "pillow": 11,
+      "r": 6,
+      "matlab": 6
+    },
+    "sources": "sources.json",
+    "selection": "targeted related public examples, not a random sample or independent holdout"
+  },
+  "experimental_boundaries": [
+    "70 conversion attempt records include preflight failures and retries; not 70 independent model trials.",
+    "Reference images were supplied to 17 Pillow/MATLAB cases; R initially had no reference image.",
+    "Later MATLAB runtime LUT facts and R CSV/factor metadata use the product reference_files API and are a separate evidence-assisted arm.",
+    "Case oracles and prior candidates were withheld from model projects. Shared general semantic prompt corrections are development on this corpus, not held-out evaluation.",
+    "Conversion workers used preinstalled scientific packages; environment repair was tested separately.",
+    "Codex used a different model and subscription; repair comparison is blocked before MCP tool delivery.",
+    "Repeated samples share sources and development feedback; no population success-rate or speed/non-inferiority claim.",
+    "Tests overlap and are tied to listed code versions; counts must not be summed.",
+    "Fresh app checks include explicit test-client confirmation of offered dependency/run impacts, not automatic production consent."
+  ],
+  "frozen_batch": {
+    "code_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+    "builtin_cases": 23,
+    "builtin_adopted": 16,
+    "builtin_outcomes": {
+      "needs_input": 4,
+      "completed": 16,
+      "failed": 3
+    },
+    "claude_pairs": 8,
+    "claude_adopted": 3,
+    "claude_outcomes": {
+      "needs_input": 2,
+      "failed": 3,
+      "completed": 3
+    }
+  },
+  "conversion_attempts": [
+    {
+      "run_id": "matlab_airy_surface-builtin-800",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "800cdb33dbfc1cad24bf13bf851ee8cf017ce886",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "wall_seconds": 12.559,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 18495,
+        "output_tokens": 687,
+        "cached_input_tokens": 5362
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "5df1b7758f5757b3d8cb517034d1bb027a94ff9d2046538860f0237933bfaa9b",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-8bb",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 43.574,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 47188,
+        "output_tokens": 3247,
+        "cached_input_tokens": 13405
+      },
+      "usage_reported": true,
+      "candidate_sha256": "88d4ce54a379fe7be47c504e99a04a29affcc1a182c86de297b1d57a8842491a",
+      "result_record_sha256": "1ac9ace80b86dae2c2e387971c874f9bc7e8b14666448fdf4414036d4c1b852b",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-d1c",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 19.49,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 26556,
+        "output_tokens": 1067,
+        "cached_input_tokens": 10724
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "a729515f932864dc7a84b8bce7d18a6d39f179a73e08122c66487b0d1f2d8366",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-d1c-reference",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "test-only snapshot injection; product UI not covered",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 92.401,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 210916,
+        "output_tokens": 10507,
+        "cached_input_tokens": 18767
+      },
+      "usage_reported": true,
+      "candidate_sha256": "2dbd8fd8932372cdbe8cb2fb7f3623a0b145d95c5a488a25f8fa72fc0ea3e9b7",
+      "result_record_sha256": "68cbb0d75f64f79c116f58aa9dc1ec4f614724a9eb3e7efa9eef1055d96670ac",
+      "default_routing_changed": false,
+      "experimental_caveat": "test-only injected native facts; separate from product reference_files arm"
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-d9d",
+      "case_id": "matlab_airy_surface",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 56.186,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 98854,
+        "output_tokens": 4997,
+        "cached_input_tokens": 13405
+      },
+      "usage_reported": true,
+      "candidate_sha256": "90aeac69f24592d18eedbc6b8393e771fdbe340a6a7fe2c5956e3ea4860da1df",
+      "result_record_sha256": "2a6ad28cb9eeec93ab3d6c01adecb75720ff568e56317efa6769b2e06e3ebd15",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_airy_surface-claude-d1c",
+      "case_id": "matlab_airy_surface",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 16.967,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "ef3948463e73958d18e00c7f4f4220c289a0b18a7348c0e4c4c46350c691d900",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_bounded_nan-builtin-d1c",
+      "case_id": "matlab_bounded_nan",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 63.027,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 100477,
+        "output_tokens": 5949,
+        "cached_input_tokens": 16086
+      },
+      "usage_reported": true,
+      "candidate_sha256": "5e0e395d241e1abd2b966561285df90bcca50ef0ff22b23d149da87f162bafbf",
+      "result_record_sha256": "bdc05522d55cc96e7832c05971569a022209484939e33cd386d8bb54d8bfc0cb",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_bounded_syntax-builtin-d1c",
+      "case_id": "matlab_bounded_syntax",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 76.461,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 111494,
+        "output_tokens": 7466,
+        "cached_input_tokens": 18767
+      },
+      "usage_reported": true,
+      "candidate_sha256": "3a0579007ab6b20e48e7ec50a42e46a2e3f5467f1282a8c164b60189eef16542",
+      "result_record_sha256": "6f61cd3097565b271a1baed7ee64d2631f6132dc347e3d8a4d4b0c6dcbfa2283",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_contour_over_image-builtin-800",
+      "case_id": "matlab_contour_over_image",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "800cdb33dbfc1cad24bf13bf851ee8cf017ce886",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "wall_seconds": 17.028,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 24563,
+        "output_tokens": 761,
+        "cached_input_tokens": 8043
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "05c36c3e226a0ce60716192b360463838ac88dba67ddab24d230aea97512b857",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_contour_over_image-builtin-8bb",
+      "case_id": "matlab_contour_over_image",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 41.756,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 23907,
+        "output_tokens": 3935,
+        "cached_input_tokens": 5362
+      },
+      "usage_reported": true,
+      "candidate_sha256": "2dcf8eee85c4e558354d5174a82d5dcc85908c271806ca90b5f63a0eeddef1d8",
+      "result_record_sha256": "d75e78d54344e3c881ec5435ad017faba8e3de5d85670521e269310aff2457d3",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_contour_over_image-builtin-d1c",
+      "case_id": "matlab_contour_over_image",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 14.956,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 24571,
+        "output_tokens": 581,
+        "cached_input_tokens": 10724
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "1f61897aa8caa67b309dc87bd55a86d7ee5cada706b99fdb02567ac4eb961d6f",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_contour_over_image-builtin-d1c-reference",
+      "case_id": "matlab_contour_over_image",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "test-only snapshot injection; product UI not covered",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 83.712,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 135171,
+        "output_tokens": 9812,
+        "cached_input_tokens": 13405
+      },
+      "usage_reported": true,
+      "candidate_sha256": "be394c1609810bc8c52a2d6710820e7a9b646c1b6bae0fc2d54b5628f6d2b98f",
+      "result_record_sha256": "7768d38e7c73cba030e55163f367fba0bdc532bad6808818c19fb171082b40fb",
+      "default_routing_changed": false,
+      "experimental_caveat": "test-only injected native facts; separate from product reference_files arm"
+    },
+    {
+      "run_id": "matlab_contour_over_image-builtin-d9d",
+      "case_id": "matlab_contour_over_image",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": "806141650ba1a92bec7404261594c59bf5668b8bc3108c4fa2189bde21517ff3",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 143.072,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 174171,
+        "output_tokens": 11490,
+        "cached_input_tokens": 18767
+      },
+      "usage_reported": true,
+      "candidate_sha256": "92587e1715c8e55afd31b25bca288669f2dd4c9a17d37ee118d68b6ce639ce7c",
+      "result_record_sha256": "c37737eaae6a4e13e451e50596486bbcc6061856c85ccfd2d908de7ec2a4a227",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_multi_colormap-builtin-8bb",
+      "case_id": "matlab_multi_colormap",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 39.623,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 32279,
+        "output_tokens": 3221,
+        "cached_input_tokens": 8043
+      },
+      "usage_reported": true,
+      "candidate_sha256": "2c846e9c2b037cb619a20b00e0edff1c0bedb2b0a39d8e302458838a01b30d1b",
+      "result_record_sha256": "377ba31094e79cbddfcb182746600df2e0e8b3c7c89a019dd05a20fdeeb22fcf",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_multi_colormap-builtin-d1c",
+      "case_id": "matlab_multi_colormap",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 45.415,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 52249,
+        "output_tokens": 3738,
+        "cached_input_tokens": 16086
+      },
+      "usage_reported": true,
+      "candidate_sha256": "a5d9751f61aa63e5433725e695cedff2a9e3388b976afe4a2a74baed394c747d",
+      "result_record_sha256": "dadbadb849f382a7d9fc539862ef92b7e899482a91443997d30c269b86d25bfa",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_multi_colormap-claude-d1c",
+      "case_id": "matlab_multi_colormap",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 902.065,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "timeout",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "c51749294d282cf8185a513d836be974324f72f518e212a80e156d203d44a18e",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "matlab_shaded_errorbar-builtin-d1c",
+      "case_id": "matlab_shaded_errorbar",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 76.502,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 80242,
+        "output_tokens": 7617,
+        "cached_input_tokens": 16086
+      },
+      "usage_reported": true,
+      "candidate_sha256": "236814a40edebbec4b8924811e0c303988d7232293de8a33bcdc6e86de53ae08",
+      "result_record_sha256": "05283a754c1c0e69631c9a4725f23124b91f987d4bdc2a7424376cbcc4bd527e",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_book_pieslice-builtin-d1c",
+      "case_id": "pillow_book_pieslice",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 28.05,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 24662,
+        "output_tokens": 2049,
+        "cached_input_tokens": 10724
+      },
+      "usage_reported": true,
+      "candidate_sha256": "c50075fd40c5fe61262d1dc11b12e0aafacf2e09c5d9b0b297d3119fa473825b",
+      "result_record_sha256": "e8bb09caefe637311a104c5092801d10b390fe1620b7ba9f3b121c8085b99f9a",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_book_polygon-builtin-d1c",
+      "case_id": "pillow_book_polygon",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 14.909,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 18069,
+        "output_tokens": 944,
+        "cached_input_tokens": 8043
+      },
+      "usage_reported": true,
+      "candidate_sha256": "23c63e3234d657f50b10b51bb7a61edba353695a32e5f214034f95e1d9413c56",
+      "result_record_sha256": "34c21f226aad7e588dfe9c25ae9fa199252dab25e7b4065232061bf70c8d621c",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_book_polygon-claude-d1c",
+      "case_id": "pillow_book_polygon",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 21.664,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "474d11dd9bdb3bf5a1d24c17f8c9950880440ffdb89e8d26376084737706bd15",
+      "result_record_sha256": "2a1d88f0aa5718d7ac5cc1da6365a0c5246272ca7a11b9ba4a68b0aa93eec40b",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_book_polygon-codex-isolated",
+      "case_id": "pillow_book_polygon",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": "high",
+      "git_sha": "eed35a2ace78bb0ba61f0c07de4b1e47738f9d52",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "wall_seconds": 0.681,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "f57aebb80fc1003baae41f11f0794eb7a0e8181f0f4be938a240e589b9c51d3d",
+      "default_routing_changed": false,
+      "experimental_caveat": "preflight or harness configuration failure; do not count as model capability failure",
+      "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
+    },
+    {
+      "run_id": "pillow_book_polygon-codex-isolated-v2",
+      "case_id": "pillow_book_polygon",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": "high",
+      "git_sha": "eed35a2ace78bb0ba61f0c07de4b1e47738f9d52",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "wall_seconds": 0.77,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "f6930915f0fb4295dfb36f40bddb29ed1f0d6468705f3a9b10a4ec134ffb6e2d",
+      "default_routing_changed": false,
+      "experimental_caveat": "preflight or harness configuration failure; do not count as model capability failure",
+      "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
+    },
+    {
+      "run_id": "pillow_book_polygon-codex-isolated-v3",
+      "case_id": "pillow_book_polygon",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": "high",
+      "git_sha": "eed35a2ace78bb0ba61f0c07de4b1e47738f9d52",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "wall_seconds": 0.652,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "a2d8d8f4d0e99364cb6c3431037bb3c556dba9e2bfddfd76d05162795365bfa9",
+      "default_routing_changed": false,
+      "experimental_caveat": "preflight or harness configuration failure; do not count as model capability failure",
+      "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
+    },
+    {
+      "run_id": "pillow_book_polygon-codex-isolated-v4",
+      "case_id": "pillow_book_polygon",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": "high",
+      "git_sha": "eed35a2ace78bb0ba61f0c07de4b1e47738f9d52",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 46.088,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "4fb405d776c6d99b1bda4f775b8ba18ee49a8d382a52506672206d7859074257",
+      "result_record_sha256": "f6bbf4834c88b7f2808006223645c9ba499d62d82683212b934813b37a168568",
+      "default_routing_changed": false,
+      "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
+    },
+    {
+      "run_id": "pillow_book_text_opacity-builtin-d1c",
+      "case_id": "pillow_book_text_opacity",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 25.36,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 20466,
+        "output_tokens": 1883,
+        "cached_input_tokens": 8043
+      },
+      "usage_reported": true,
+      "candidate_sha256": "2ebd7a7b2cb3c691d559d7cea351c8c85e3c88920053fb41e2d64f71c121fbef",
+      "result_record_sha256": "6df7114b6a03e27164d586be4375f8214329bfae02488c585fbdc4b915864174",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_book_text_opacity-claude-d1c",
+      "case_id": "pillow_book_text_opacity",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 26.768,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "8ca3ae8a98b9fe0ce931e6aae3103aa902f7a4f78baaeaea1e75df67cdfe19fc",
+      "result_record_sha256": "7b16aa242049ccc1751e9ea18f3c0aca6ee6da623a3271b92874c401f21c746b",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_circular_thumbnail-builtin-d1c",
+      "case_id": "pillow_circular_thumbnail",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 26.232,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 26216,
+        "output_tokens": 2081,
+        "cached_input_tokens": 10724
+      },
+      "usage_reported": true,
+      "candidate_sha256": "cd8f2b025db2a9926e0b28648885dbb602ceaa48aa459a88bec1a7689b7cbb95",
+      "result_record_sha256": "c51f9000002e29205e4ece3ca82159a0dbee4a6cf12a628ceafdfa76eb3faf12",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_nkmk_absolute_font-builtin-d1c",
+      "case_id": "pillow_nkmk_absolute_font",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 31.995,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 33687,
+        "output_tokens": 2620,
+        "cached_input_tokens": 13405
+      },
+      "usage_reported": true,
+      "candidate_sha256": "74cef30f048a246785c0f10a74f279e71693c162a08e28a9aa3ad5a043d084c4",
+      "result_record_sha256": "1f71db33f5f1281a3e21c585358ef6d660c23c5296229e36db88278d16accac1",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_nkmk_composite-builtin-734",
+      "case_id": "pillow_nkmk_composite",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "734cb1d8e66a00e47d56335a1b13c01ae6dedf7e",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 24.464,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 27259,
+        "output_tokens": 2093,
+        "cached_input_tokens": 8043
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "efcddcd663fa37d645860b9e300fa63040bd2d46832400282a4b090fd58a642a",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_nkmk_composite-builtin-d1c",
+      "case_id": "pillow_nkmk_composite",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 35.672,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 41732,
+        "output_tokens": 3056,
+        "cached_input_tokens": 13405
+      },
+      "usage_reported": true,
+      "candidate_sha256": "c60d54f3d256f92c99fce0bbfe21c0fdc6e4723ad2db77c3cb013c42f82c3876",
+      "result_record_sha256": "4a8542ee24f12d2928a09c28d79fb5b02b6f95e190e7f246c01cc7d025770992",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_nkmk_paste-builtin-d1c",
+      "case_id": "pillow_nkmk_paste",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 9.743,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 11485,
+        "output_tokens": 613,
+        "cached_input_tokens": 5362
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "2449afc071310144e8663c1a4939ee8cdd7b5f7fd2c4c8f1ec0af13a69a2b785",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_nkmk_paste-claude-d1c",
+      "case_id": "pillow_nkmk_paste",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 16.741,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "eaa58c3f5fb267d05903a41e110fd65b380b2b3b03ce78acd97c7fe37fa2a679",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_nkmk_putalpha-builtin-d1c",
+      "case_id": "pillow_nkmk_putalpha",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 36.116,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 45838,
+        "output_tokens": 2559,
+        "cached_input_tokens": 16086
+      },
+      "usage_reported": true,
+      "candidate_sha256": "d597ce110c43e28a2ab1d9c325403f63b6351236ef4bcfcf78e5c5ffe38accdd",
+      "result_record_sha256": "9ed1858ebff6a20757abb1175199a209259ea463eec8a258c81de0697f5896bf",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_nkmk_rotate-builtin-d1c",
+      "case_id": "pillow_nkmk_rotate",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 34.974,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {
+        "input_tokens": 43226,
+        "output_tokens": 2330,
+        "cached_input_tokens": 16086
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "45ff393ab096737c8627219c2cb7c2c980301da30b2d70ac45c817d32615d0a7",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_nkmk_rotate-builtin-reference-http-probe",
+      "case_id": "pillow_nkmk_rotate",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "917f10344ff093caf1adaa29e81ceb46acb055f6ee365683910171904bf5547a",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 11.186,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 18475,
+        "output_tokens": 480,
+        "cached_input_tokens": 8043
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "5ee99e89e6958b2379dfce630043cd866788f20cc18df76c88b43a030c918f5e",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_nkmk_shapes-builtin-d1c",
+      "case_id": "pillow_nkmk_shapes",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 45.688,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 52122,
+        "output_tokens": 4359,
+        "cached_input_tokens": 16086
+      },
+      "usage_reported": true,
+      "candidate_sha256": "dc5bd0149b3031118cc0abd84e063fb55cf83bc3b0415193a0807e396a37f28f",
+      "result_record_sha256": "818b587ce23580476ae209971f87917aa32980265d4a1b5593f74f2aa0867efb",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_official_anchors-builtin-734",
+      "case_id": "pillow_official_anchors",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "734cb1d8e66a00e47d56335a1b13c01ae6dedf7e",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 62.13,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 79099,
+        "output_tokens": 5420,
+        "cached_input_tokens": 21448
+      },
+      "usage_reported": true,
+      "candidate_sha256": "4c48c1cd088537c3b04c567f984512218b5f5ad97af49ee9e338496be6aad30c",
+      "result_record_sha256": "7f8734a09a29fb4ee92ee299360a70ce7f8429cf66c22cc9c9bc49ce2a9bcc95",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_official_anchors-builtin-bf85",
+      "case_id": "pillow_official_anchors",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "bf85a215a65eddbc45645b66d87132d620b19ece",
+      "repo_dirty_diff_sha256": "7bdddf513232d26181596f22e63ad4d3ac1ce471e166e83cda6c0257b1de5629",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 72.154,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 58125,
+        "output_tokens": 6772,
+        "cached_input_tokens": 21448
+      },
+      "usage_reported": true,
+      "candidate_sha256": "b2955a6af34a490c4fa2657396f7cccb778865c070c3f52c317f9e6d33442d79",
+      "result_record_sha256": "f3ca695c7ed1ef6caacea4f804e71b33ce809a69aa2d39171a54f66a613efd23",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_official_anchors-builtin-d1c",
+      "case_id": "pillow_official_anchors",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 34.311,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {
+        "input_tokens": 10918,
+        "output_tokens": 3770,
+        "cached_input_tokens": 5362
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "6a7eb493adb1157f3af15cad56c2efb7c77f59aa9df81d86f03eb197ebf9d289",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_official_anchors-builtin-final",
+      "case_id": "pillow_official_anchors",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "c1747f06d07e5aa43fc010ed5c86e17c517c534e",
+      "repo_dirty_diff_sha256": "7bdddf513232d26181596f22e63ad4d3ac1ce471e166e83cda6c0257b1de5629",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 60.686,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 52912,
+        "output_tokens": 5800,
+        "cached_input_tokens": 18767
+      },
+      "usage_reported": true,
+      "candidate_sha256": "7ff1296fa67b08413e595bd841be7400126f8c5b3147c0af768dfddba50f8c24",
+      "result_record_sha256": "d24a14305f2e14c096425cb3aef90ff27cf7e54f69642f3095e5ffa0f713cc67",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_official_anchors-builtin-reference-http-probe",
+      "case_id": "pillow_official_anchors",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "f3115acb4ee1b22ca36b5f9236482bc5f4edb15dbcb9d4f26ff5bc96fed5eb68",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 70.087,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 93699,
+        "output_tokens": 6073,
+        "cached_input_tokens": 24129
+      },
+      "usage_reported": true,
+      "candidate_sha256": "c0591d2b8b4e5b429e0f571354540db66b1f6630f7787c591fc2b5aa181001db",
+      "result_record_sha256": "3277dacad14200057bd82f62d7448ab759989ef9f550c636f7f8d6fd864f6be5",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_official_anchors-claude-bf85",
+      "case_id": "pillow_official_anchors",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "bf85a215a65eddbc45645b66d87132d620b19ece",
+      "repo_dirty_diff_sha256": "7bdddf513232d26181596f22e63ad4d3ac1ce471e166e83cda6c0257b1de5629",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 52.038,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "74330a5423ab65455fe2103ba5d78ee04ff4163b0684a3c62919a5aae7761388",
+      "result_record_sha256": "2830125cc70b45e45cd1b54f700f14aaca904f584f46618a5d7593b2302fce80",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "pillow_official_anchors-claude-d1c",
+      "case_id": "pillow_official_anchors",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 35.327,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "66fb21f902164dba94305c3a78b6aa101e0b7a3bebad8a739584fb66e49c72f2",
+      "result_record_sha256": "0d705f660198fefb7ea39ea9b67721fd3b8ad85bf060cd260e41c80741e574f1",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-builtin-734",
+      "case_id": "r_base_plotmath",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "734cb1d8e66a00e47d56335a1b13c01ae6dedf7e",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 353.723,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 243273,
+        "output_tokens": 42122,
+        "cached_input_tokens": 24129
+      },
+      "usage_reported": true,
+      "candidate_sha256": "8a9a2e429016cf3905233794a0c1aefed4cf9eb8391183ad308aeeeac99d2e50",
+      "result_record_sha256": "e37bfc2fc8146c8b24dbf5574e557c2d724698408b10d5e1ed21d37bd5cbd272",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-builtin-8bb",
+      "case_id": "r_base_plotmath",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 132.27,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 92328,
+        "output_tokens": 15849,
+        "cached_input_tokens": 10724
+      },
+      "usage_reported": true,
+      "candidate_sha256": "04bf015a4ae173899ec77acf8e22ce1a86c731bc46ccfe19a378b8765cdb695a",
+      "result_record_sha256": "ef0e7c49f2d885adfe2a6c0610bd539a621b806639aaff3d0ae27fdef2cad871",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-builtin-d1c",
+      "case_id": "r_base_plotmath",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 494.445,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {
+        "input_tokens": 5290,
+        "output_tokens": 98,
+        "cached_input_tokens": 0
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "0959c6d5c97424092400df30d9f673dac640fb8f5f319fb7d50b44239af58425",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-builtin-d1c-network-retry",
+      "case_id": "r_base_plotmath",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 494.993,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {
+        "input_tokens": 5295,
+        "output_tokens": 76,
+        "cached_input_tokens": 2681
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "c3953346a386adf4e7a7b98c5585aeacc3d8b6a57b9290a725fad3b4490ecfc4",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-builtin-d9d",
+      "case_id": "r_base_plotmath",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 278.855,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {
+        "input_tokens": 25862,
+        "output_tokens": 32844,
+        "cached_input_tokens": 8043
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "c790e4f856a0c21c4755cae86bb48d667d4a77690c9fc25ec76c8a708993e864",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-builtin-d9d-output32k",
+      "case_id": "r_base_plotmath",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 2.236,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "f54b4a08bf7ed026a138e428d1db1d184554b36deb90ad72ace13cd464c177c3",
+      "budget_override": {
+        "max_output_tokens": 32768,
+        "product_default": false
+      },
+      "default_routing_changed": false,
+      "experimental_caveat": "preflight or harness configuration failure; do not count as model capability failure"
+    },
+    {
+      "run_id": "r_base_plotmath-builtin-d9d-output32k-v2",
+      "case_id": "r_base_plotmath",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 258.029,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {
+        "input_tokens": 259054,
+        "output_tokens": 33856,
+        "cached_input_tokens": 18767
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "2679e8bc14755987e441dbfbb5a9b75f8480dc2e3599932262dfda5e03b7be35",
+      "budget_override": {
+        "max_output_tokens": 32768,
+        "product_default": false
+      },
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-builtin-pilot",
+      "case_id": "r_base_plotmath",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "git_sha": "39ed97a99516c2046b3007e1886d3353ea25ab9f",
+      "repo_dirty_diff_sha256": "6a11a8031d2abbffff60f8ddc4b7577b76f75f6cbea515845081e126e2841857",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 103.797,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 36610,
+        "output_tokens": 13336,
+        "cached_input_tokens": 5142
+      },
+      "usage_reported": true,
+      "candidate_sha256": "1d0d3ce128063eda8175f807619f271fe0cb6532810f5c391c6404ca73195dc3",
+      "result_record_sha256": "764ec5a5846ead9be0ee83ce0502a7320eb9614a3702461725c63e2a05b7e296",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-builtin-v2",
+      "case_id": "r_base_plotmath",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "eed35a2ace78bb0ba61f0c07de4b1e47738f9d52",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "wall_seconds": 118.349,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "agent_exit_nonzero",
+      "usage": {
+        "input_tokens": 14425,
+        "output_tokens": 16460,
+        "cached_input_tokens": 2571
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "861fc9dd1c81b344981f446e921ffebe214f4b94bb614418341cfb8de8b1526d",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-claude-d1c",
+      "case_id": "r_base_plotmath",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 901.734,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "timeout",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "52eb64ec812431e86fd16a559ad7bf080606fe17e1e49e11be1ec2d94594d500",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-claude-pilot",
+      "case_id": "r_base_plotmath",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "git_sha": "39ed97a99516c2046b3007e1886d3353ea25ab9f",
+      "repo_dirty_diff_sha256": "6a11a8031d2abbffff60f8ddc4b7577b76f75f6cbea515845081e126e2841857",
+      "start_http": 200,
+      "wall_seconds": 118.965,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [
+        "run_failed",
+        "no_new_failure"
+      ],
+      "task_error_code": "precommit_not_verified",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "333c0e1c6c57f692d1ce2d9f46882ed24cd809a8792f5eabe585ff646301268e",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-claude-v2",
+      "case_id": "r_base_plotmath",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "eed35a2ace78bb0ba61f0c07de4b1e47738f9d52",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "wall_seconds": 901.708,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "timeout",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "aec6b0a1ad821f5d1b0f327302eda12790f1d559a8820060663efc2c89620123",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_base_plotmath-codex-8bb",
+      "case_id": "r_base_plotmath",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "effort": "high",
+      "git_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 311.866,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "fe9f186163e563924c5975514dd4376e0febba953cee9ced40562dc8cdbf2995",
+      "result_record_sha256": "e92575d1387289b26fe3769b4adba2c4e022d69dba7fac0180706b84df7d4f69",
+      "default_routing_changed": false,
+      "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
+    },
+    {
+      "run_id": "r_base_plotmath-codex-pilot",
+      "case_id": "r_base_plotmath",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "git_sha": "39ed97a99516c2046b3007e1886d3353ea25ab9f",
+      "repo_dirty_diff_sha256": "6a11a8031d2abbffff60f8ddc4b7577b76f75f6cbea515845081e126e2841857",
+      "start_http": 200,
+      "wall_seconds": 941.172,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "timeout",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "95e003374d5f5ba1124012f0ed2a372eaa305cd2f2aa9cc99faeb1e5bf60dac8",
+      "default_routing_changed": false,
+      "comparison_caveat": "subscription GPT-6 Astra, not a same-model comparison to Sonnet 5.5"
+    },
+    {
+      "run_id": "r_base_sinc-builtin-d1c",
+      "case_id": "r_base_sinc",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 46.877,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 24166,
+        "output_tokens": 4938,
+        "cached_input_tokens": 8043
+      },
+      "usage_reported": true,
+      "candidate_sha256": "257b16f9e90f028d56217eb26038a5cb93656d0be27ff28b049e798299624e2f",
+      "result_record_sha256": "655d1da810d601fc45b69e27c55ed50af6489cb7202b7a10fb17ce32b2365ea5",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_gallery_bar-builtin-d1c",
+      "case_id": "r_gallery_bar",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 27.643,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 27142,
+        "output_tokens": 2139,
+        "cached_input_tokens": 10724
+      },
+      "usage_reported": true,
+      "candidate_sha256": "53bfb2ccbb9a0f5d15c6cbd2407dd60b1679e085545c3aaeafa5794914fc4652",
+      "result_record_sha256": "52fd7ea1e710c4aee2db50f03f2e5a1f58ef6b7b2c5e46eaad9046584d5096eb",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_gallery_percent_stack-builtin-d1c",
+      "case_id": "r_gallery_percent_stack",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 27.837,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 20655,
+        "output_tokens": 2696,
+        "cached_input_tokens": 8043
+      },
+      "usage_reported": true,
+      "candidate_sha256": "3dc8c67ad884d39c83a32216e89cf402bde138bb59281bdb80da3d36720d98b2",
+      "result_record_sha256": "80f25ce2b2c4ffed9e9f1cdf9ca5f6e4ef59830999df1302cfd63854f2dae56d",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_lattice_intervals-builtin-bf85-csv",
+      "case_id": "r_lattice_intervals",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "bf85a215a65eddbc45645b66d87132d620b19ece",
+      "repo_dirty_diff_sha256": "7bdddf513232d26181596f22e63ad4d3ac1ce471e166e83cda6c0257b1de5629",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 14.922,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 21927,
+        "output_tokens": 905,
+        "cached_input_tokens": 5362
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "4d2b768d9531d9e7dc0f249c25a10a2c55ff5ef11131c42c9972227ccd9f4238",
+      "reference_files_sha256": {
+        "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908"
+      },
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_lattice_intervals-builtin-bf85-metadata",
+      "case_id": "r_lattice_intervals",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "bf85a215a65eddbc45645b66d87132d620b19ece",
+      "repo_dirty_diff_sha256": "7bdddf513232d26181596f22e63ad4d3ac1ce471e166e83cda6c0257b1de5629",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 64.522,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 41726,
+        "output_tokens": 7094,
+        "cached_input_tokens": 8043
+      },
+      "usage_reported": true,
+      "candidate_sha256": "6b9f71502f47e689ab0aa83e40b9a491e627c19d810976ecc401c62ce61a3adc",
+      "result_record_sha256": "46f4efb6b5de53f9ea4f80d2c0919a9694e7ab0877542065df05680fc258585a",
+      "reference_files_sha256": {
+        "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908",
+        "singer-factor-metadata.txt": "ab0198d5b07d74bda1146fa14118382b911b9d50851b5cb80c23ba704a0823a1"
+      },
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_lattice_intervals-builtin-d1c",
+      "case_id": "r_lattice_intervals",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 11.005,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "needs_input",
+      "failure_reason_codes": [
+        "needs_input"
+      ],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 18229,
+        "output_tokens": 446,
+        "cached_input_tokens": 8043
+      },
+      "usage_reported": true,
+      "candidate_sha256": null,
+      "result_record_sha256": "490975f217d899dc60f73988c4794302906b276f12da8f3bebfaf855a0cebe4e",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_lattice_intervals-builtin-d9d-reference",
+      "case_id": "r_lattice_intervals",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 60.04,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 53811,
+        "output_tokens": 6122,
+        "cached_input_tokens": 13405
+      },
+      "usage_reported": true,
+      "candidate_sha256": "6c5bfd0ba4da0a7d2dc94b74240dbefc3c0acc69fad0a29812ad31bf789985a7",
+      "result_record_sha256": "46b4b62dbcd1ec8a9c91f6d81c810c4ff42ac884636dd71e8a4883a86b4f90c5",
+      "reference_files_sha256": {
+        "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908"
+      },
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_lattice_intervals-builtin-final",
+      "case_id": "r_lattice_intervals",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "c1747f06d07e5aa43fc010ed5c86e17c517c534e",
+      "repo_dirty_diff_sha256": "7bdddf513232d26181596f22e63ad4d3ac1ce471e166e83cda6c0257b1de5629",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 79.609,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 113090,
+        "output_tokens": 6839,
+        "cached_input_tokens": 21448
+      },
+      "usage_reported": true,
+      "candidate_sha256": "26cd9a5afc03f4bf13d31f0a1ee06c0c3c8573b81a87d3749e25bb95eab13f19",
+      "result_record_sha256": "948b556d7d9ffa82848594f1f3aa6a5eb1f6f5741aa4e3ff618f47f0efa5413c",
+      "reference_files_sha256": {
+        "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908",
+        "singer-factor-metadata.txt": "ab0198d5b07d74bda1146fa14118382b911b9d50851b5cb80c23ba704a0823a1"
+      },
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_lattice_intervals-claude-d1c",
+      "case_id": "r_lattice_intervals",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 901.788,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [],
+      "task_error_code": "timeout",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "2973c45ff3bd2c7d415a22458be0267a29a143dac541bcc59bde00b5c23bda60",
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_lattice_intervals-claude-d9d-reference",
+      "case_id": "r_lattice_intervals",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 500,
+      "wall_seconds": 1.387,
+      "builtin_default": false,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": null,
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "ffbb6ad2957b00e16036ea1eb557b41fb3c45ae865015d574237e81eb179a980",
+      "reference_files_sha256": {
+        "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908"
+      },
+      "default_routing_changed": false,
+      "experimental_caveat": "preflight or harness configuration failure; do not count as model capability failure"
+    },
+    {
+      "run_id": "r_lattice_intervals-claude-d9d-reference-v2",
+      "case_id": "r_lattice_intervals",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "wall_seconds": 87.056,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "failed",
+      "failure_reason_codes": [
+        "run_failed",
+        "no_new_failure"
+      ],
+      "task_error_code": "precommit_not_verified",
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": null,
+      "result_record_sha256": "796fb1ea8278728290a1d41fe08270735f6d4a9f2a1d4646d8409a8e37b4ca3c",
+      "reference_files_sha256": {
+        "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908"
+      },
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_lattice_intervals-claude-final",
+      "case_id": "r_lattice_intervals",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "c1747f06d07e5aa43fc010ed5c86e17c517c534e",
+      "repo_dirty_diff_sha256": "7bdddf513232d26181596f22e63ad4d3ac1ce471e166e83cda6c0257b1de5629",
+      "reference_assisted": true,
+      "reference_delivery": "POST /api/ai/convert reference_files; browser flow tested separately",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 50.017,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {},
+      "usage_reported": false,
+      "candidate_sha256": "97d47180e8f61d5377319fd175a4bcb87b0cab957524a8a7f6fda042456579cc",
+      "result_record_sha256": "cb551c52b6572b0a310cf839548e1be2f67e7014241d71935beed09f4a8dd5ad",
+      "reference_files_sha256": {
+        "singer.csv": "43f40fc5d1cc033f2ecbdea44b04565e480a2b6a0b746d20647b4d38c099e908",
+        "singer-factor-metadata.txt": "ab0198d5b07d74bda1146fa14118382b911b9d50851b5cb80c23ba704a0823a1"
+      },
+      "default_routing_changed": false
+    },
+    {
+      "run_id": "r_lattice_labels-builtin-d1c",
+      "case_id": "r_lattice_labels",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "effort": "high",
+      "git_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+      "repo_dirty_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "reference_assisted": false,
+      "reference_delivery": "existing product source/reference delivery",
+      "native_facts_sha256": null,
+      "start_http": 200,
+      "adopt_http": 200,
+      "wall_seconds": 88.874,
+      "builtin_default": false,
+      "original_files_unchanged_before_adopt": true,
+      "original_source_unchanged_after_adopt": true,
+      "protected_files_unchanged_after_run": true,
+      "task_outcome": "completed",
+      "failure_reason_codes": [],
+      "task_error_code": null,
+      "usage": {
+        "input_tokens": 63659,
+        "output_tokens": 9640,
+        "cached_input_tokens": 13405
+      },
+      "usage_reported": true,
+      "candidate_sha256": "e17454dee5a0bbeaa7a1d9077f04f42a0215fe6a6b0ee3e0f45e04127a33bfae",
+      "result_record_sha256": "c9b4f75d6db186c7245ce5f0bb49723ef582989bb3910eb92d02436cca6d80d5",
+      "default_routing_changed": false
+    }
+  ],
+  "repair_attempts": [
+    {
+      "run_id": "missing-image-builtin-v2",
+      "condition": "missing_image",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 304.451,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "convert",
+      "reason": "",
+      "steps": 18,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "switch_workdir",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "link_data_file",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "36c1381367fb665235aec298c8fb123a010c114f582ce85b2dec9e5a053a61b9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {
+        "input_tokens": 201214,
+        "output_tokens": 1576,
+        "cached_input_tokens": 116662
+      },
+      "result_record_sha256": "dfa8970af023eac9a787c4eb6df20e365ca2dae702677691371207fcab0fe2f2"
+    },
+    {
+      "run_id": "missing-image-claude-v2",
+      "condition": "missing_image",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 10.34,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": false,
+      "independent_repair_pass": false,
+      "same_process_app_execution_finished": false,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "failed",
+      "reason": "cli_exit",
+      "steps": 0,
+      "cards": [],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": false
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "260b8912cf2f32ce9be7e936c3a0b4745de017c9ffc53357ec61cdd7f3da5ed9",
+      "experimental_caveat": "CLI subscription quota failure; not comparable to key-backed builtin"
+    },
+    {
+      "run_id": "missing-image-claude-v3",
+      "condition": "missing_image",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 12.227,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": false,
+      "independent_repair_pass": false,
+      "same_process_app_execution_finished": false,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "failed",
+      "reason": "cli_exit",
+      "steps": 0,
+      "cards": [],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": false
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "8c651193b41c7a1b0d8c64b09737cc7b138789f9d6b0d8c0e2ccb67e0963b20a"
+    },
+    {
+      "run_id": "missing-image-claude-v4",
+      "condition": "missing_image",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 307.587,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": false,
+      "independent_repair_pass": false,
+      "same_process_app_execution_finished": false,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "failed",
+      "reason": "budget",
+      "steps": 11,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "switch_workdir",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "pick",
+          "tool": "pick_file",
+          "answer": null,
+          "http": null
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": false
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "5c38b479d6e981bb8fbac6321449835d209da805b88ff5be2f7bf4798bc977ed"
+    },
+    {
+      "run_id": "missing-image-codex-v2",
+      "condition": "missing_image",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "anthropic",
+      "wall_seconds": 34.119,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": false,
+      "independent_repair_pass": false,
+      "same_process_app_execution_finished": false,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "failed",
+      "reason": "cli_no_finish",
+      "steps": 0,
+      "cards": [],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": false
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "dea9cd90de0c8a45e0fea694efe25053dbdd17f57d1e8c36d78496a98fcd692e",
+      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+    },
+    {
+      "run_id": "missing-image-codex-v3",
+      "condition": "missing_image",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "anthropic",
+      "wall_seconds": 39.136,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": false,
+      "independent_repair_pass": false,
+      "same_process_app_execution_finished": false,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "failed",
+      "reason": "cli_no_finish",
+      "steps": 0,
+      "cards": [],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": false
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "5ed1103594a4d37e3aa26f5242f67d6a903eef59cd0775df1aaa72974b335616",
+      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+    },
+    {
+      "run_id": "missing-image-codex-v4",
+      "condition": "missing_image",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "wall_seconds": 42.147,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": false,
+      "independent_repair_pass": false,
+      "same_process_app_execution_finished": false,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "failed",
+      "reason": "cli_no_finish",
+      "steps": 0,
+      "cards": [],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": false
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "5294f54668d6abb7a38f63ea84842126a0807f894f9810d62b7d8f0e5cf06c68",
+      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+    },
+    {
+      "run_id": "missing-image-codex-v5",
+      "condition": "missing_image",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "wall_seconds": 33.109,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": false,
+      "independent_repair_pass": false,
+      "same_process_app_execution_finished": false,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "failed",
+      "reason": "cli_no_finish",
+      "steps": 0,
+      "cards": [],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": false
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "5e2017032dbc0c15c43765d5a44f2b8e90c61b6b8b6d03119f6265773d006d69",
+      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+    },
+    {
+      "run_id": "missing-image-codex-v6",
+      "condition": "missing_image",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "wall_seconds": 32.106,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": false,
+      "independent_repair_pass": false,
+      "same_process_app_execution_finished": false,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "failed",
+      "reason": "cli_no_finish",
+      "steps": 0,
+      "cards": [],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": false
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "717410119cbb297597694ef35647f8047eca67680e45ea769543e783f3703595",
+      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+    },
+    {
+      "run_id": "missing-image-codex-v7",
+      "condition": "missing_image",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "wall_seconds": 49.867,
+      "source_before_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_after_sha256": "66c7deedbb2a7cdb996eefe4407751d6ac9b55c43f230459152dc91f13f8eb4a",
+      "source_unchanged": true,
+      "native_reference_pass": false,
+      "independent_repair_pass": false,
+      "same_process_app_execution_finished": false,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_nkmk_paste",
+      "outcome": "failed",
+      "reason": "cli_no_finish",
+      "steps": 0,
+      "cards": [],
+      "output_checks": [
+        {
+          "output": "data/dst/rocket_pillow_paste_out.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "7d0a2aceb3a7b789e2a906f719e969ebbb682f23b01f45744953b473153afb11"
+        },
+        {
+          "output": "data/dst/mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "64094c857da195c6788bc85b5a8d910d2e267881f8f1e9796b3814f58e312eba"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle_blur.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "87a676364f23560cdd5e0ef8aef8728a773b60579f1fa551d2504f3033674a7e"
+        },
+        {
+          "output": "data/dst/mask_circle.jpg",
+          "exists": true,
+          "size": [
+            400,
+            225
+          ],
+          "reference_size": [
+            400,
+            225
+          ],
+          "pixels_equal": true,
+          "sha256": "ed269a1c7e256dcaee993ebbbf78ce9e0b7f801c8eb149a60052a38066572717"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "3bc44e84ad6cef8dfa1ad1b0809ad0ed324aca773d7453ae53b1772a14b839e9"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_circle.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "ea6f25053b8683bf5bb31abe661aefee35d1144709908b7b29acf85d6c24a3b3"
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_mask_horse.jpg",
+          "exists": false
+        },
+        {
+          "output": "data/dst/rocket_pillow_paste_pos.jpg",
+          "exists": true,
+          "size": [
+            640,
+            427
+          ],
+          "reference_size": [
+            640,
+            427
+          ],
+          "pixels_equal": true,
+          "sha256": "4fc184f6932ac979c657d6a9315bf84f0b6c8fea3dba0e7273dc1533411e71d3"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "ecf8ebfd1223488901132aa6a1386fe33c061ff1a1e0e5a6c5ab04d4c10c380b",
+      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+    },
+    {
+      "run_id": "pillow-version-builtin",
+      "condition": "pillow_api_version",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 317.989,
+      "source_before_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_after_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_circular_thumbnail",
+      "outcome": "cancelled",
+      "reason": "cancelled",
+      "steps": 9,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "propose_fix",
+          "packages": [
+            "pillow==9.5.0"
+          ],
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "select_environment",
+          "answer": null,
+          "http": null
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "output.png",
+          "exists": true,
+          "size": [
+            120,
+            120
+          ],
+          "reference_size": [
+            120,
+            120
+          ],
+          "pixels_equal": true,
+          "sha256": "a0a133eb4f4465ad3509b82ac89cd92b44172cbe45063b02e50e4fc8bdf2a93b"
+        },
+        {
+          "output": "overlap.png",
+          "exists": true,
+          "size": [
+            418,
+            149
+          ],
+          "reference_size": [
+            418,
+            149
+          ],
+          "pixels_equal": true,
+          "sha256": "6dc64088990da90e156e63d042cafc56810212364486f286c723539cad87e99f"
+        }
+      ],
+      "model_usage": {
+        "input_tokens": 96141,
+        "output_tokens": 893,
+        "cached_input_tokens": 53844
+      },
+      "result_record_sha256": "9ca80a85868573cc98ae2de3cdad843c45e94fc0097ddf701d15c7c275bf0441",
+      "experimental_caveat": "Operator confirmation wait exhausted the experimental timeout; retained separately from automated case-local confirmation"
+    },
+    {
+      "run_id": "pillow-version-builtin-800",
+      "condition": "pillow_api_version",
+      "product_sha": "800cdb33dbfc1cad24bf13bf851ee8cf017ce886",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "builtin",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 31.451,
+      "source_before_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_after_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_circular_thumbnail",
+      "outcome": "convert",
+      "reason": "",
+      "steps": 9,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "propose_fix",
+          "packages": [
+            "pillow==9.5.0"
+          ],
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "output.png",
+          "exists": true,
+          "size": [
+            120,
+            120
+          ],
+          "reference_size": [
+            120,
+            120
+          ],
+          "pixels_equal": true,
+          "sha256": "a0a133eb4f4465ad3509b82ac89cd92b44172cbe45063b02e50e4fc8bdf2a93b"
+        },
+        {
+          "output": "overlap.png",
+          "exists": true,
+          "size": [
+            418,
+            149
+          ],
+          "reference_size": [
+            418,
+            149
+          ],
+          "pixels_equal": true,
+          "sha256": "6dc64088990da90e156e63d042cafc56810212364486f286c723539cad87e99f"
+        }
+      ],
+      "model_usage": {
+        "input_tokens": 79850,
+        "output_tokens": 922,
+        "cached_input_tokens": 53844
+      },
+      "result_record_sha256": "2aa16184de68ea17407602cf1d441f18ae400e6aa3c7a16c5df4f122f2ac0760",
+      "fresh_application": {
+        "model_used": false,
+        "product_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+        "execution_finished": true,
+        "figure_captured": false,
+        "source_before_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+        "source_after_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431"
+      }
+    },
+    {
+      "run_id": "pillow-version-claude",
+      "condition": "pillow_api_version",
+      "product_sha": "8bb74a783d5afe26aa1b4c74e8b711ffbd606943",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 308.061,
+      "source_before_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_after_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_circular_thumbnail",
+      "outcome": "failed",
+      "reason": "budget",
+      "steps": 8,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "propose_fix",
+          "packages": [
+            "pillow==9.5.0"
+          ],
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": null,
+          "http": null
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "output.png",
+          "exists": true,
+          "size": [
+            120,
+            120
+          ],
+          "reference_size": [
+            120,
+            120
+          ],
+          "pixels_equal": true,
+          "sha256": "a0a133eb4f4465ad3509b82ac89cd92b44172cbe45063b02e50e4fc8bdf2a93b"
+        },
+        {
+          "output": "overlap.png",
+          "exists": true,
+          "size": [
+            418,
+            149
+          ],
+          "reference_size": [
+            418,
+            149
+          ],
+          "pixels_equal": true,
+          "sha256": "6dc64088990da90e156e63d042cafc56810212364486f286c723539cad87e99f"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "0173ad6f5309993e3b8547602c0c7727acce5c7812b235f242199d86f7d5d351"
+    },
+    {
+      "run_id": "pillow-version-claude-800",
+      "condition": "pillow_api_version",
+      "product_sha": "800cdb33dbfc1cad24bf13bf851ee8cf017ce886",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "claude",
+      "model": "claude-sonnet-5-5",
+      "protocol": "anthropic",
+      "wall_seconds": 34.793,
+      "source_before_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_after_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_unchanged": true,
+      "native_reference_pass": true,
+      "independent_repair_pass": true,
+      "same_process_app_execution_finished": true,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_circular_thumbnail",
+      "outcome": "convert",
+      "reason": "",
+      "steps": 9,
+      "cards": [
+        {
+          "kind": "approve",
+          "tool": "propose_fix",
+          "packages": [
+            "pillow==9.5.0"
+          ],
+          "answer": "yes",
+          "http": 200
+        },
+        {
+          "kind": "approve",
+          "tool": "try_run",
+          "answer": "yes",
+          "http": 200
+        }
+      ],
+      "output_checks": [
+        {
+          "output": "output.png",
+          "exists": true,
+          "size": [
+            120,
+            120
+          ],
+          "reference_size": [
+            120,
+            120
+          ],
+          "pixels_equal": true,
+          "sha256": "a0a133eb4f4465ad3509b82ac89cd92b44172cbe45063b02e50e4fc8bdf2a93b"
+        },
+        {
+          "output": "overlap.png",
+          "exists": true,
+          "size": [
+            418,
+            149
+          ],
+          "reference_size": [
+            418,
+            149
+          ],
+          "pixels_equal": true,
+          "sha256": "6dc64088990da90e156e63d042cafc56810212364486f286c723539cad87e99f"
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "be1511a8914fa7241db513aba69d805559d3782817cf58516dfcfed57b506cfe",
+      "fresh_application": {
+        "model_used": false,
+        "product_sha": "d1c0770443d48fe8462bed7eca576082ebffdc89",
+        "execution_finished": true,
+        "figure_captured": false,
+        "source_before_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+        "source_after_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431"
+      }
+    },
+    {
+      "run_id": "pillow-version-codex-800",
+      "condition": "pillow_api_version",
+      "product_sha": "800cdb33dbfc1cad24bf13bf851ee8cf017ce886",
+      "product_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "executor": "codex",
+      "model": "gpt-6-astra",
+      "protocol": "codex-subscription",
+      "wall_seconds": 41.648,
+      "source_before_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_after_sha256": "306324ee58cae53424c66b8e8af54d525ba8a9365464a668e6b7671a66159431",
+      "source_unchanged": true,
+      "native_reference_pass": false,
+      "independent_repair_pass": false,
+      "same_process_app_execution_finished": false,
+      "same_process_app_figure_captured": false,
+      "case_id": "pillow_circular_thumbnail",
+      "outcome": "failed",
+      "reason": "cli_no_finish",
+      "steps": 0,
+      "cards": [],
+      "output_checks": [
+        {
+          "output": "output.png",
+          "exists": false
+        },
+        {
+          "output": "overlap.png",
+          "exists": false
+        }
+      ],
+      "model_usage": {},
+      "result_record_sha256": "5b3a3dce4a28ec01937f7c6d95aac66e7c5d7543036f0205acd6d3150b40017f",
+      "experimental_caveat": "No Tavotto MCP callbacks reached; unrelated MCP authentication/setup errors; not evidence of model inferiority"
+    }
+  ],
+  "fresh_application_verification": [
+    {
+      "run_id": "matlab_airy_surface-builtin-d9d",
+      "verification_run": "fresh-confirmed-v2",
+      "producer_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "verification_sha": "734cb1d8e66a00e47d56335a1b13c01ae6dedf7e",
+      "model_used": false,
+      "script_sha256": "90aeac69f24592d18eedbc6b8393e771fdbe340a6a7fe2c5956e3ea4860da1df",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "ffd0b8a8b91a22985f83d50a27bffa27b42122275a1753b7272f188ae34771d7"
+    },
+    {
+      "run_id": "matlab_airy_surface-builtin-d9d",
+      "verification_run": "fresh-reopen",
+      "producer_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "verification_sha": "734cb1d8e66a00e47d56335a1b13c01ae6dedf7e",
+      "model_used": false,
+      "script_sha256": "90aeac69f24592d18eedbc6b8393e771fdbe340a6a7fe2c5956e3ea4860da1df",
+      "execution_finished": false,
+      "figure_captured": false,
+      "script_unchanged": true,
+      "phase": "awaiting_confirmation",
+      "outcome": {
+        "code": "dependency_preparation_required",
+        "kind": "pending"
+      },
+      "confirmed_action_kinds": [],
+      "confirmation_http": [],
+      "result_record_sha256": "f7e605d78b8a295705198259db398e3de75fabff6b7300124b4b071f101d38e5"
+    },
+    {
+      "run_id": "matlab_contour_over_image-builtin-d9d",
+      "verification_run": "fresh-reopen",
+      "producer_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "verification_sha": "734cb1d8e66a00e47d56335a1b13c01ae6dedf7e",
+      "model_used": false,
+      "script_sha256": "92587e1715c8e55afd31b25bca288669f2dd4c9a17d37ee118d68b6ce639ce7c",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [],
+      "confirmation_http": [],
+      "result_record_sha256": "725898734e443542e43b5d20dc7af3786f186dc1a4a44bb4cb6d969fe5797d4a"
+    },
+    {
+      "run_id": "pillow_official_anchors-builtin-final",
+      "verification_run": "fresh-final",
+      "producer_sha": "c1747f06d07e5aa43fc010ed5c86e17c517c534e",
+      "verification_sha": "c1747f06d07e5aa43fc010ed5c86e17c517c534e",
+      "model_used": false,
+      "script_sha256": "7ff1296fa67b08413e595bd841be7400126f8c5b3147c0af768dfddba50f8c24",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "9fec1bde0425bf75eb767517355c16842792e7152fedc9c50a03281d0dd334e2"
+    },
+    {
+      "run_id": "r_base_plotmath-builtin-734",
+      "verification_run": "fresh-reopen",
+      "producer_sha": "734cb1d8e66a00e47d56335a1b13c01ae6dedf7e",
+      "verification_sha": "734cb1d8e66a00e47d56335a1b13c01ae6dedf7e",
+      "model_used": false,
+      "script_sha256": "8a9a2e429016cf3905233794a0c1aefed4cf9eb8391183ad308aeeeac99d2e50",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [],
+      "confirmation_http": [],
+      "result_record_sha256": "7b5dcb09ed2f4679be287242a335552387c641a1abbe47534893d03328f246a2"
+    },
+    {
+      "run_id": "r_lattice_intervals-builtin-d9d-reference",
+      "verification_run": "fresh-confirmed-v2",
+      "producer_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "verification_sha": "734cb1d8e66a00e47d56335a1b13c01ae6dedf7e",
+      "model_used": false,
+      "script_sha256": "6c5bfd0ba4da0a7d2dc94b74240dbefc3c0acc69fad0a29812ad31bf789985a7",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "d0c9c4b9e7129020bdd1eadff5a3e6183d91bdb038d993f51de6e639a6a063ff"
+    },
+    {
+      "run_id": "r_lattice_intervals-builtin-d9d-reference",
+      "verification_run": "fresh-reopen",
+      "producer_sha": "d9d91f6d3c72e850777803f5f626df39e7bc86f2",
+      "verification_sha": "734cb1d8e66a00e47d56335a1b13c01ae6dedf7e",
+      "model_used": false,
+      "script_sha256": "6c5bfd0ba4da0a7d2dc94b74240dbefc3c0acc69fad0a29812ad31bf789985a7",
+      "execution_finished": false,
+      "figure_captured": false,
+      "script_unchanged": true,
+      "phase": "awaiting_confirmation",
+      "outcome": {
+        "code": "dependency_preparation_required",
+        "kind": "pending"
+      },
+      "confirmed_action_kinds": [],
+      "confirmation_http": [],
+      "result_record_sha256": "334229bf2c4518cb0182f44f0ef68c81033360e9ee09a71f5c4f4e80144edaf8"
+    },
+    {
+      "run_id": "r_lattice_intervals-builtin-final",
+      "verification_run": "fresh-final",
+      "producer_sha": "c1747f06d07e5aa43fc010ed5c86e17c517c534e",
+      "verification_sha": "c1747f06d07e5aa43fc010ed5c86e17c517c534e",
+      "model_used": false,
+      "script_sha256": "26cd9a5afc03f4bf13d31f0a1ee06c0c3c8573b81a87d3749e25bb95eab13f19",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "82629680eea406fff6c75fa6a53bef265bb2510d6a50e66739c830c2f28e1046"
+    },
+    {
+      "run_id": "r_lattice_intervals-claude-final",
+      "verification_run": "fresh-final",
+      "producer_sha": "c1747f06d07e5aa43fc010ed5c86e17c517c534e",
+      "verification_sha": "c1747f06d07e5aa43fc010ed5c86e17c517c534e",
+      "model_used": false,
+      "script_sha256": "97d47180e8f61d5377319fd175a4bcb87b0cab957524a8a7f6fda042456579cc",
+      "execution_finished": true,
+      "figure_captured": true,
+      "script_unchanged": true,
+      "confirmation_policy": "explicit test-client confirmation of offered impact only",
+      "phase": "completed",
+      "outcome": {
+        "kind": "succeeded"
+      },
+      "confirmed_action_kinds": [
+        "recheck",
+        "run_when_ready",
+        "run"
+      ],
+      "confirmation_http": [
+        200,
+        202,
+        202
+      ],
+      "result_record_sha256": "a4599e7f0a2c9017b5d49eef7ddc9ad252e41f25a43981263711f07d7328a22b"
+    }
+  ],
+  "native_oracle_measurements": {
+    "matlab_airy_surface-builtin-d9d": {
+      "full_fidelity": "not_established",
+      "reference_lut_max_absolute_error": 0.0,
+      "candidate_sha256": "90aeac69f24592d18eedbc6b8393e771fdbe340a6a7fe2c5956e3ea4860da1df",
+      "surface_z_max_absolute_error": 2.7755575615628914e-17,
+      "native_axes_position": [
+        0.13,
+        0.11,
+        0.775,
+        0.8150000000000001
+      ],
+      "candidate_axes_position": [
+        0.19576719576719576,
+        0.0,
+        0.6084656084656084,
+        1.0
+      ]
+    },
+    "matlab_contour_over_image-builtin-d9d": {
+      "full_fidelity": "not_established",
+      "reference_lut_max_absolute_error": 0.0,
+      "candidate_sha256": "92587e1715c8e55afd31b25bca288669f2dd4c9a17d37ee118d68b6ce639ce7c",
+      "rendered_lut_max_absolute_error": 0.0,
+      "candidate_clim": [
+        3.414622181389104e-05,
+        0.14
+      ],
+      "native_clim": [
+        3.407671645263566e-05,
+        0.13999999999999999
+      ],
+      "clim_upper_absolute_error": 2.7755575615628914e-17,
+      "rng_comparison": "unmatched states; source does not specify the native evaluator seed",
+      "image_plane_z_max_absolute_error": 0.0
+    },
+    "r_lattice_intervals-claude-final": {
+      "pages": [
+        {
+          "group_aligned_median_max_absolute_error": 0.0,
+          "group_aligned_ci_max_absolute_error": 4.973799150320701e-14,
+          "factor_order_matches": true,
+          "labels": [
+            "Bass 2",
+            "Bass 1",
+            "Tenor 2",
+            "Tenor 1",
+            "Alto 2",
+            "Alto 1",
+            "Soprano 2",
+            "Soprano 1"
+          ]
+        },
+        {
+          "group_aligned_median_max_absolute_error": 0.0,
+          "group_aligned_ci_max_absolute_error": 4.973799150320701e-14,
+          "factor_order_matches": true,
+          "labels": [
+            "Bass 2",
+            "Bass 1",
+            "Tenor 2",
+            "Tenor 1",
+            "Alto 2",
+            "Alto 1",
+            "Soprano 2",
+            "Soprano 1"
+          ]
+        }
+      ],
+      "native_group_order": [
+        "Bass 2",
+        "Bass 1",
+        "Tenor 2",
+        "Tenor 1",
+        "Alto 2",
+        "Alto 1",
+        "Soprano 2",
+        "Soprano 1"
+      ],
+      "full_fidelity": "not_established; geometry and font rendering require separate review"
+    },
+    "r_lattice_intervals-builtin-bf85-metadata": {
+      "pages": [
+        {
+          "group_aligned_median_max_absolute_error": 0.0,
+          "group_aligned_ci_max_absolute_error": 0.13353437224706965,
+          "factor_order_matches": true,
+          "labels": [
+            "Bass 2",
+            "Bass 1",
+            "Tenor 2",
+            "Tenor 1",
+            "Alto 2",
+            "Alto 1",
+            "Soprano 2",
+            "Soprano 1"
+          ]
+        },
+        {
+          "group_aligned_median_max_absolute_error": 0.0,
+          "group_aligned_ci_max_absolute_error": 0.13353437224706965,
+          "factor_order_matches": true,
+          "labels": [
+            "Bass 2",
+            "Bass 1",
+            "Tenor 2",
+            "Tenor 1",
+            "Alto 2",
+            "Alto 1",
+            "Soprano 2",
+            "Soprano 1"
+          ]
+        }
+      ],
+      "native_group_order": [
+        "Bass 2",
+        "Bass 1",
+        "Tenor 2",
+        "Tenor 1",
+        "Alto 2",
+        "Alto 1",
+        "Soprano 2",
+        "Soprano 1"
+      ],
+      "full_fidelity": "not_established; geometry and font rendering require separate review"
+    },
+    "r_lattice_intervals-builtin-d9d-reference": {
+      "pages": [
+        {
+          "group_aligned_median_max_absolute_error": 0.0,
+          "group_aligned_ci_max_absolute_error": 4.973799150320701e-14,
+          "factor_order_matches": false,
+          "labels": [
+            "Bass 2",
+            "Bass 1",
+            "Tenor 1",
+            "Tenor 2",
+            "Alto 1",
+            "Alto 2",
+            "Soprano 1",
+            "Soprano 2"
+          ]
+        },
+        {
+          "group_aligned_median_max_absolute_error": 0.0,
+          "group_aligned_ci_max_absolute_error": 4.973799150320701e-14,
+          "factor_order_matches": false,
+          "labels": [
+            "Bass 2",
+            "Bass 1",
+            "Tenor 1",
+            "Tenor 2",
+            "Alto 1",
+            "Alto 2",
+            "Soprano 1",
+            "Soprano 2"
+          ]
+        }
+      ],
+      "native_group_order": [
+        "Bass 2",
+        "Bass 1",
+        "Tenor 2",
+        "Tenor 1",
+        "Alto 2",
+        "Alto 1",
+        "Soprano 2",
+        "Soprano 1"
+      ],
+      "full_fidelity": "not_established; geometry and font rendering require separate review"
+    },
+    "r_lattice_intervals-builtin-final": {
+      "pages": [
+        {
+          "group_aligned_median_max_absolute_error": 0.0,
+          "group_aligned_ci_max_absolute_error": 4.973799150320701e-14,
+          "factor_order_matches": true,
+          "labels": [
+            "Bass 2",
+            "Bass 1",
+            "Tenor 2",
+            "Tenor 1",
+            "Alto 2",
+            "Alto 1",
+            "Soprano 2",
+            "Soprano 1"
+          ]
+        },
+        {
+          "group_aligned_median_max_absolute_error": 0.0,
+          "group_aligned_ci_max_absolute_error": 4.973799150320701e-14,
+          "factor_order_matches": true,
+          "labels": [
+            "Bass 2",
+            "Bass 1",
+            "Tenor 2",
+            "Tenor 1",
+            "Alto 2",
+            "Alto 1",
+            "Soprano 2",
+            "Soprano 1"
+          ]
+        }
+      ],
+      "native_group_order": [
+        "Bass 2",
+        "Bass 1",
+        "Tenor 2",
+        "Tenor 1",
+        "Alto 2",
+        "Alto 1",
+        "Soprano 2",
+        "Soprano 1"
+      ],
+      "full_fidelity": "not_established; geometry and font rendering require separate review"
+    },
+    "pillow_book_text_opacity-claude-d1c": {
+      "outputs_measured": 1,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 0.14484592013888886,
+      "full_fidelity": "not_established"
+    },
+    "pillow_nkmk_composite-builtin-d1c": {
+      "outputs_measured": 5,
+      "missing_native_images": [
+        "data/src/rocket_resize.jpg"
+      ],
+      "all_output_dimensions_match": null,
+      "worst_visible_rgb_mae_0_255": 0.0,
+      "full_fidelity": "not_established"
+    },
+    "pillow_nkmk_shapes-builtin-d1c": {
+      "outputs_measured": 4,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 1.0556044444444443,
+      "full_fidelity": "not_established"
+    },
+    "pillow_book_text_opacity-builtin-d1c": {
+      "outputs_measured": 1,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 0.14484592013888886,
+      "full_fidelity": "not_established"
+    },
+    "pillow_official_anchors-builtin-final": {
+      "outputs_measured": 1,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 1.0252425925925925,
+      "full_fidelity": "not_established"
+    },
+    "pillow_nkmk_absolute_font-builtin-d1c": {
+      "outputs_measured": 1,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 3.551752726236979,
+      "full_fidelity": "not_established"
+    },
+    "pillow_nkmk_putalpha-builtin-d1c": {
+      "outputs_measured": 4,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 0.007045442240012381,
+      "full_fidelity": "not_established"
+    },
+    "pillow_book_polygon-claude-d1c": {
+      "outputs_measured": 1,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 0.2741041666666667,
+      "full_fidelity": "not_established"
+    },
+    "pillow_book_pieslice-builtin-d1c": {
+      "outputs_measured": 1,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 1.0982229166666664,
+      "full_fidelity": "not_established"
+    },
+    "pillow_book_polygon-builtin-d1c": {
+      "outputs_measured": 1,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 0.37847291666666666,
+      "full_fidelity": "not_established"
+    },
+    "pillow_circular_thumbnail-builtin-d1c": {
+      "outputs_measured": 2,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 0.007771105616389961,
+      "full_fidelity": "not_established"
+    },
+    "pillow_official_anchors-builtin-bf85": {
+      "outputs_measured": 1,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 1.5048777777777773,
+      "full_fidelity": "not_established"
+    },
+    "pillow_official_anchors-claude-bf85": {
+      "outputs_measured": 1,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 1.0252425925925925,
+      "full_fidelity": "not_established"
+    },
+    "pillow_official_anchors-builtin-734": {
+      "outputs_measured": 1,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 9.5977,
+      "full_fidelity": "not_established"
+    },
+    "pillow_official_anchors-builtin-reference-http-probe": {
+      "outputs_measured": 0,
+      "missing_native_images": [
+        "docs/example/anchors.webp"
+      ],
+      "all_output_dimensions_match": null,
+      "worst_visible_rgb_mae_0_255": null,
+      "full_fidelity": "not_established"
+    },
+    "pillow_official_anchors-claude-d1c": {
+      "outputs_measured": 1,
+      "missing_native_images": [],
+      "all_output_dimensions_match": true,
+      "worst_visible_rgb_mae_0_255": 4.657240740740741,
+      "full_fidelity": "not_established"
+    }
+  },
+  "multipage_output_identity_verification": {
+    "kind": "deterministic product postprocessing, no new model trial",
+    "producer_sha": "734cb1d8e66a00e47d56335a1b13c01ae6dedf7e",
+    "verification_sha": "bf85a215a65eddbc45645b66d87132d620b19ece",
+    "source_sha256": "8a9a2e429016cf3905233794a0c1aefed4cf9eb8391183ad308aeeeac99d2e50",
+    "postprocessed_sha256": "e521efb798b8893b7d9908f630d026e8184561d41830d60f00935560b46e6ade",
+    "execution_exit": 0,
+    "original_pdf_unchanged": true,
+    "original_pdf_sha256": "e87e92c7166278a268b7874a37203b71a092c1f3b4d5d25f97190a8f09df2b16",
+    "output_exists": true,
+    "pages": 5,
+    "page_sizes_pt": [
+      [
+        504.0,
+        504.0
+      ],
+      [
+        504.0,
+        504.0
+      ],
+      [
+        504.0,
+        504.0
+      ],
+      [
+        504.0,
+        504.0
+      ],
+      [
+        504.0,
+        504.0
+      ]
+    ]
+  },
+  "diagnostic_parser_validation": {
+    "same_redaction_randomized_cases": 2000,
+    "escaped_pairs": 1000000,
+    "seconds": 0.04839108407031745,
+    "privacy_canary_removed": true
+  },
+  "validation": [
+    {
+      "scope": "broad backend",
+      "code_sha": "d9d91f6d3",
+      "passed": 4056,
+      "skipped": 4,
+      "log_sha256": "f15654ad5e0b7d73ad8eb2cf71ed4ca2cb5b2cba995abd1ff58fa5f1822301bc"
+    },
+    {
+      "scope": "frontend suite",
+      "code_sha": "d9d91f6d3",
+      "test_files": 600,
+      "passed": 11354,
+      "log_sha256": "f798ccdef75beb9c2f5e95d4a48015e9ab8e0ea11d2a5e1dd907d32df31bb44f"
+    },
+    {
+      "scope": "conversion card/store after error reason changes",
+      "passed": 342,
+      "log_sha256": "66689958e514d87ba9e1466a6c2843a4ce31c20b08c8e2f39d4524ea5e6ccc3a"
+    },
+    {
+      "scope": "agent/conversion backend",
+      "code_sha": "bf85a215a",
+      "passed": 450,
+      "skipped": 1,
+      "log_sha256": "9bc2f8eb1cffa53bdbb9194ebf102f4ec31a1cae118a5d10e41a56ef7cb79260"
+    },
+    {
+      "scope": "shared semantic prompt contracts",
+      "code_sha": "c1747f06d",
+      "passed": 171,
+      "log_sha256": "d0f6538792f6b7629446a3541bcb9917d3b87f06ab577237f2d90c1a8e4cec19"
+    },
+    {
+      "scope": "diagnostic privacy/parser and reference context",
+      "code_sha": "01b444e7c",
+      "passed": 1232,
+      "log_sha256": "8eb332a511297061b0b58bf201a332d633577f405038be513ea3088039380db7"
+    },
+    {
+      "scope": "real service smoke, cold/hot render, PDF export, diagnostics and clean exit",
+      "code_sha": "01b444e7c",
+      "exit_code": 0,
+      "log_sha256": "315739bc5065512a5e503bb8f2b10d6136494fbd21264a2cfbb608d8d1d0d246"
+    },
+    {
+      "scope": "i18n resource/type/lint checks",
+      "code_sha": "bf85a215a",
+      "exit_code": 0,
+      "log_sha256": "5cad8a003e2c257a631f7dca7fee61e9ce4eeaadb012cf99cd6cfc0c701d18ae"
+    },
+    {
+      "scope": "frontend TypeScript/Vite build after error reasons",
+      "exit_code": 0,
+      "log_sha256": "67a1e5514ff7696315cf5e3126123d85f31fddbcc25bcb3bcaa3bc703f4a3701"
+    },
+    {
+      "scope": "Chromium reference selection/retry",
+      "passed": 1,
+      "log_sha256": "039bcf6211ddae15abc3b35025436aec214651c755c3f123926de1595aea0bf7"
+    },
+    {
+      "scope": "Chromium private-feedback consent, loopback only",
+      "passed": 6,
+      "production_uploads": 0
+    }
+  ],
+  "counterfactuals": {
+    "reference": [
+      {
+        "subject": "references",
+        "regressed_exit": 1,
+        "restored_exit": 0
+      },
+      {
+        "subject": "deadline",
+        "regressed_exit": 1,
+        "restored_exit": 0
+      },
+      {
+        "subject": "request_time",
+        "regressed_exit": 1,
+        "restored_exit": 0
+      }
+    ],
+    "raster-gate": {
+      "regressed_exit": 1,
+      "restored_exit": 0
+    },
+    "thinking-prefix": {
+      "regressed_exit": 1,
+      "restored_exit": 0
+    },
+    "pdf": {
+      "regressed_exit": 1,
+      "restored_exit": 0
+    }
+  },
+  "remaining_gaps": [
+    "MATLAB axes position/camera geometry is not fully matched despite exact LUTs, verified CLim upper bound and preserved Z coordinates.",
+    "Pillow fonts/raster edge coverage and photographic operations are not universally pixel-equivalent; editable output must not be replaced by a finished bitmap.",
+    "R math pages now execute and reviewed bounds/fractions are corrected, but full glyph geometry is not independently certified.",
+    "R interval final paired runs match native numeric results and factor order; page layout/font geometry remains unaccepted.",
+    "Broad same-model paired repeated validation and a functioning comparable Codex repair baseline remain absent.",
+    "Windows/Linux release-package execution and combined integration with PRs 1418 and 1419 were not validated locally."
+  ]
+}
