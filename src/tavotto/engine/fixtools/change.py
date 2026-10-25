@@ -88,6 +88,17 @@ def canonical_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+#: 安装失败码 → 给模型的一句话（它看不到完整 stderr，靠这句分清下一步）
+_INSTALL_HINTS = {
+    "dependency_requires_build": "The package exists on the index but has no ready-made wheel for this Python "
+    "(source-only or built for other Python versions); Tavotto never compiles packages. Do not try another "
+    "name: use a different Python version/environment, or tell the user it must be built or installed by hand.",
+    "dependency_not_found": "The index has no package with that name; check the name with lookup_package.",
+    "dependency_network_unavailable": "The package index could not be reached; this is a network problem, not a "
+    "problem with the package. Do not change the package name.",
+}
+
+
 def install_packages(ctx: FixContext, args: dict) -> ToolResult:
     from .. import convertdeps, depresolve
 
@@ -151,15 +162,18 @@ def install_packages(ctx: FixContext, args: dict) -> ToolResult:
     _forget_env_caches(ctx)
     if not res.get("ok"):
         done = [d for d in (res.get("done") or []) if isinstance(d, str)]
-        return err(
-            str(res.get("code") or "install_failed")[:60],
-            _with_snapshot(
-                ctx,
-                "The installation did not finish"
-                + (f" (installed before it stopped: {', '.join(done)})" if done else "")
-                + ".",
-            ),
+        code = str(res.get("code") or "install_failed")[:60]
+        detail = res.get("detail")
+        text = (
+            "The installation did not finish"
+            + (f" (installed before it stopped: {', '.join(done)})" if done else "")
+            + "."
         )
+        if code in _INSTALL_HINTS:
+            text += " " + _INSTALL_HINTS[code]
+        if isinstance(detail, str) and detail.strip():
+            text += "\nInstaller said: " + scrub(detail.strip())[:500]
+        return err(code, _with_snapshot(ctx, text))
     return _done(ctx, f"Installed: {', '.join(reqs)}.", "packages installed")
 
 

@@ -6,13 +6,59 @@
 
 from __future__ import annotations
 
+import re
 import threading
+import time
 
 from .base import FixContext
 
+#: 探「索引上有没有这个包」的预算（秒）。探不出来 = 保持原来的分类，不猜。
+INDEX_PROBE_S = 30.0
+_ERROR_LINE_RE = re.compile(r"^\s*(?:ERROR|error)\b[:\s].*", re.M)
+
+
+def failure_detail(out: str, limit: int = 2) -> str:
+    """pip / 安装器输出里最能说明原因的一两行（`ERROR:` 开头的），脱敏、单行截断；没有回空串。
+    给修复会话里的模型看：它看不到完整 stderr，只靠一个 code 分不清「没轮子」与「没这个包」。"""
+    from .readscope import scrub
+
+    lines: list[str] = []
+    for m in _ERROR_LINE_RE.finditer(out or ""):
+        line = m.group(0).strip()
+        if line and line not in lines:
+            lines.append(line[:240])
+    return scrub("\n".join(lines[-limit:]))
+
+
+def index_has_project(python: str, name: str, cancel: threading.Event) -> bool | None:
+    """索引上有没有叫 `name` 的项目（含只有源码包的）：`pip index versions`，**不带** `--only-binary`。
+    True / False；探不出（pip 太旧没有 `index`、没网、超时）回 None。
+
+    要它是因为 `pip install --only-binary=:all:` 在「只有源码包 / 没有适合当前 Python 的轮子」时也说
+    `(from versions: none)`，和「根本没这个包」一个样；不分开，模型会去换包名而不是换环境。"""
+    from .. import deprepair
+
+    argv = [
+        str(python),
+        "-m",
+        "pip",
+        "index",
+        "versions",
+        "--disable-pip-version-check",
+        "--no-input",
+        name,
+    ]
+    code, out = deprepair._run_pip(argv, cancel, None, deadline=time.time() + INDEX_PROBE_S)
+    low = (out or "").lower()
+    if not code and "available versions" in low:
+        return True
+    if "no matching distribution" in low or "could not find a version" in low:
+        return False
+    return None
+
 
 def _default_installer(python: str, requirements: list[str]) -> dict:
-    from .. import deprepair, pool
+    from .. import deprepair, depresolve, pool
 
     cancel = threading.Event()
     done: list[str] = []
@@ -20,9 +66,19 @@ def _default_installer(python: str, requirements: list[str]) -> dict:
     try:
         with pool.mutating_environment(key, python):
             for req in requirements:
-                code, _out = deprepair._pip_install(python, req, cancel, None)
+                code, out = deprepair._pip_install(python, req, cancel, None)
                 if code:
-                    return {"ok": False, "code": str(code), "done": done}
+                    if code == deprepair.ERROR_NOT_FOUND:
+                        # 「没有这个包」与「有，但没有能装的轮子」输出一样；索引上查得到就改报后者
+                        name = depresolve.parse_requirement(req)
+                        if name and index_has_project(python, name[0], cancel):
+                            code = deprepair.ERROR_REQUIRES_BUILD
+                    return {
+                        "ok": False,
+                        "code": str(code),
+                        "done": done,
+                        "detail": failure_detail(out),
+                    }
                 done.append(req)
     except pool.EnvironmentBusy:
         return {"ok": False, "code": "env_busy", "done": done}
