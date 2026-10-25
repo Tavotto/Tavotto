@@ -28,7 +28,6 @@ import json
 import os
 import re
 import shutil
-import struct
 import threading
 import time
 import tokenize
@@ -52,6 +51,7 @@ from . import (
     sourcelang,
 )
 from .ai_tasks import FAILED, UNKNOWN, VERIFIED, CheckResult, NeedsInput, TaskError
+from .imageheader import image_dimensions
 
 TASK_TYPE = "convert_to_editable"
 CONVERT_DIR = config.data_dir() / "cache" / "ai_convert"
@@ -167,36 +167,6 @@ def sibling_original(script_path: Path) -> Path | None:
         hit = names.get(f"{script_path.stem}{ext}".lower())
         if hit is not None and hit.is_file() and not hit.is_symlink():
             return hit
-    return None
-
-
-# --------------------------------------------------------------------------- 原图事实（对照用）
-def image_dimensions(data: bytes) -> tuple[int, int] | None:
-    """PNG / JPEG / GIF 的像素宽高（只读头部，纯标准库）；认不出回 None。"""
-    try:
-        if data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR":
-            w, h = struct.unpack(">II", data[16:24])
-            return int(w), int(h)
-        if data[:6] in (b"GIF87a", b"GIF89a"):
-            w, h = struct.unpack("<HH", data[6:10])
-            return int(w), int(h)
-        if data[:2] == b"\xff\xd8":
-            i = 2
-            while i + 9 < len(data):
-                if data[i] != 0xFF:
-                    i += 1
-                    continue
-                marker = data[i + 1]
-                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
-                    i += 2
-                    continue
-                (seg,) = struct.unpack(">H", data[i + 2 : i + 4])
-                if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB):
-                    h, w = struct.unpack(">HH", data[i + 5 : i + 9])
-                    return int(w), int(h)
-                i += 2 + seg
-    except (struct.error, IndexError):
-        return None
     return None
 
 

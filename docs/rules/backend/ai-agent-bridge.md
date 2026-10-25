@@ -656,3 +656,13 @@ Anthropic adaptive thinking 的签名绑定历史前缀；客户端压缩工具�
 依据：[官方排错规则](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting)。
 看护 `test_agent_runner_media.py` 的接收端前缀验证，不能只断言请求 JSON 形状。
 内置失败只把闭集短码沿 Task Core 传给卡片；不传供应商错误体、模型思考或用户内容。
+
+### 参考图尺寸与上下文预算
+
+`imageheader.image_dimensions` 是 PNG / JPEG / GIF / WebP 画布尺寸的标准库只读入口，
+转换对照与内置模型图片预算共用。WebP 的 VP8 / VP8L / VP8X 分别读取图像或扩展画布头；
+不解码像素、不把头部识别当作完整文件校验，未知 / 截断头继续保守估算。
+`read_image` 向模型交付实际像素宽高；不能把小 WebP 当作未知大图触发压缩、反复丢掉源码与参考。
+Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同一 API 内比较变化时间，
+跨 API 仍比较设备、inode、大小和 mtime；读取前后的身份校验与拒绝替换不变。
+看护 `test_image_header.py`、`test_agent_runner_media.py`；后者直接断言接收端后续请求仍带源码和图像。

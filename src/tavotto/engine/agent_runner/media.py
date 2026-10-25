@@ -10,6 +10,8 @@ import base64
 import binascii
 from dataclasses import dataclass, field
 
+from ..imageheader import image_dimensions
+
 MAX_IMAGE_BYTES = 4 * 1024 * 1024
 MAX_CHECK_IMAGES = 16
 MAX_CHECK_BYTES = 4 * 1024 * 1024
@@ -30,35 +32,6 @@ class Image:
         return {"mime_type": self.mime_type, "data": self.data, "label": self.label}
 
 
-def _pixels(raw: bytes, mime: str) -> int | None:
-    if mime == "image/png" and len(raw) >= 24 and raw[12:16] == b"IHDR":
-        return int.from_bytes(raw[16:20], "big") * int.from_bytes(raw[20:24], "big")
-    if mime == "image/gif" and len(raw) >= 10:
-        return int.from_bytes(raw[6:8], "little") * int.from_bytes(raw[8:10], "little")
-    if mime == "image/jpeg":
-        offset = 2
-        while offset + 4 <= len(raw) and raw[offset] == 255:
-            marker = raw[offset + 1]
-            if marker == 255:
-                offset += 1
-                continue
-            if marker in (0xD9, 0xDA):
-                break
-            length = int.from_bytes(raw[offset + 2 : offset + 4], "big")
-            if length < 2 or offset + length + 2 > len(raw):
-                break
-            if (
-                marker
-                in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF)
-                and length >= 7
-            ):
-                return int.from_bytes(raw[offset + 5 : offset + 7], "big") * int.from_bytes(
-                    raw[offset + 7 : offset + 9], "big"
-                )
-            offset += length + 2
-    return None
-
-
 def from_bytes(raw: bytes, label: str = "") -> Image | None:
     if not raw or len(raw) > MAX_IMAGE_BYTES:
         return None
@@ -72,7 +45,8 @@ def from_bytes(raw: bytes, label: str = "") -> Image | None:
         mime = "image/webp"
     else:
         return None
-    pixels = _pixels(raw, mime)
+    dims = image_dimensions(raw)
+    pixels = dims[0] * dims[1] if dims else None
     # Image tokenization is spatial, not base64 text tokenization. Keep a
     # deliberately generous fallback; reported endpoint usage remains authority.
     estimate = max(4096, 1024 + (pixels + 255) // 256) if pixels else 65536
