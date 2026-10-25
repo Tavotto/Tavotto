@@ -9128,5 +9128,15 @@
       "A custom mesh renderer retains XYZ arrays but still misorders visible surfaces; standard surface property editing was not independently certified.",
       "A finite token-budget failure after 499.506 seconds is not a successful conversion or an adopted candidate."
     ]
+  },
+  "functional_workflow_followup": {
+    "report": "FUNCTIONAL-FOLLOWUP.md",
+    "ledger": "FUNCTIONAL-RESULTS.json",
+    "product_sha": "022a026bef9a4e6d541fadf43b9da25aa575fe06",
+    "frozen_matrix": "21 completed/adopted/fresh, 1 failed, 1 needs input; 23 cases at 77f865a3c",
+    "followups": "Pillow composite completes with 6 figures; R intervals completes with 2 figures after actual data and factor metadata; both fresh reopen",
+    "default_routing_changed": false,
+    "visual_fidelity_accepted": false,
+    "universal_command_accuracy_accepted": false
   }
 }

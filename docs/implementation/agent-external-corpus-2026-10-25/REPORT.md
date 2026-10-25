@@ -1,7 +1,7 @@
 # 外部脚本复测：项目上下文与环境修复闭环
 
-本文件是第一阶段的历史快照；最新实现、配对复测及仍未通过的项目见
-[FIDELITY-FOLLOWUP.md](FIDELITY-FOLLOWUP.md) 和 [LATEST-RESULTS.json](LATEST-RESULTS.json)。
+本文件是第一阶段的历史快照；最新流程优先的验收与复测见 [FUNCTIONAL-FOLLOWUP.md](FUNCTIONAL-FOLLOWUP.md)。
+历史保真缺口仍见 [FIDELITY-FOLLOWUP.md](FIDELITY-FOLLOWUP.md) 和 [LATEST-RESULTS.json](LATEST-RESULTS.json)，默认路由不变。
 
 日期：2026-10-25。基线 `d22b61a92e25d69c0e446e6276c13f5860e04b32`，最终产品代码
 `4420cdce9cfea854866e4b0925d989e2fc3a263e`，macOS arm64，真实模型

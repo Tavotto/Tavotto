@@ -1,5 +1,7 @@
 # Conversion fidelity and repair follow-up
 
+Latest acceptance order and functional results: [FUNCTIONAL-FOLLOWUP.md](FUNCTIONAL-FOLLOWUP.md). The user prioritized complete conversion/repair workflows before pixel matching. The visual failures below remain open evidence; default routing remains unchanged.
+
 Status: corrective implementation and external-corpus retesting. **Full-fidelity acceptance and non-inferiority are not established; default routing remains unchanged.**
 
 Latest follow-up: the final sections record MATLAB frame/tick/surface measurements, four complex-text groups, project-runtime context and default-mode signature fixes, then bounded large-reference reads through `a56bd5cf7`. All older attempts remain historical evidence. The new outputs still fail full visual acceptance.
