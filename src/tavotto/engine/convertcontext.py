@@ -75,19 +75,28 @@ def _read(root: Path, path: Path, scope: readscope.ReadScope) -> tuple[bytes | N
             return None, "not_local_regular_file"
         if st.st_size > MAX_FILE_BYTES:
             return None, "file_budget"
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
         fd = os.open(path, flags)
         with os.fdopen(fd, "rb") as handle:
             opened = os.fstat(handle.fileno())
             if (
                 not stat.S_ISREG(opened.st_mode)
-                or _identity(opened) != _identity(st)
+                # Windows stat reports creation time while fstat can report
+                # change time (CPython #157671). Compare that field only within
+                # the same API below; file identity, size and mtime still agree.
+                or _identity(opened, change_time=os.name != "nt")
+                != _identity(st, change_time=os.name != "nt")
                 or scanbudget.redirected_component(root, path)
             ):
                 return None, "not_local_regular_file"
             data = handle.read(MAX_FILE_BYTES + 1)
             if (
-                _identity(os.fstat(handle.fileno())) != _identity(st)
+                _identity(os.fstat(handle.fileno())) != _identity(opened)
                 or scanbudget.redirected_component(root, path)
                 or _identity(path.lstat()) != _identity(st)
             ):
@@ -99,8 +108,9 @@ def _read(root: Path, path: Path, scope: readscope.ReadScope) -> tuple[bytes | N
     return data, ""
 
 
-def _identity(st: os.stat_result) -> tuple:
-    return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
+def _identity(st: os.stat_result, *, change_time: bool = True) -> tuple:
+    stable = st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns
+    return (*stable, st.st_ctime_ns) if change_time else stable
 
 
 def _disclosed(data: bytes) -> bytes:

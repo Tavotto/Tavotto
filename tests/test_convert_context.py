@@ -70,6 +70,42 @@ def test_snapshot_preserves_nested_resource_paths_and_import_provenance(project)
     assert convertcontext.MANIFEST in prompt and "Path(__file__)" in prompt
 
 
+@pytest.mark.parametrize("changed", [None, "st_ctime_ns", "st_ino", "st_mtime_ns"])
+def test_windows_resource_read_compares_change_times_within_the_same_api(
+    project, monkeypatch, changed
+):
+    """Actual bytes are readable despite Windows' stat/fstat ctime disagreement;
+    a change on the open handle during that read is still rejected.
+    """
+    from types import SimpleNamespace
+
+    real_fstat = os.fstat
+    calls = 0
+
+    def windows_fstat(fd):
+        nonlocal calls
+        calls += 1
+        st = real_fstat(fd)
+        fields = {name: getattr(st, name) for name in dir(st) if name.startswith("st_")}
+        fields["st_ctime_ns"] += 1_000_000_000
+        if changed and calls > 1:
+            fields[changed] += 1
+        return SimpleNamespace(**fields)
+
+    # Local proxy: changing the process-wide os.name would change pathlib itself.
+    monkeypatch.setattr(
+        convertcontext, "os", SimpleNamespace(**{**vars(os), "name": "nt", "fstat": windows_fstat})
+    )
+    path = project / "assets" / "face.ttf"
+    scope = convertcontext.readscope.ReadScope(home=project.parent, project_root=project)
+    data, reason = convertcontext._read(project, path, scope)
+    assert calls == 2
+    if changed:
+        assert (data, reason) == (None, "resource_changed")
+    else:
+        assert data == path.read_bytes() and reason == ""
+
+
 def test_selected_reference_is_visible_and_bound_to_adoption(project):
     reference = project / "assets" / "colormap.csv"
     reference.write_text("0.2422,0.1504,0.6603\n0.9769,0.9839,0.0805\n")
@@ -276,6 +312,7 @@ print([int(v) for v in ax.lines[0].get_ydata()])
         cwd=tmp_path,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
     )

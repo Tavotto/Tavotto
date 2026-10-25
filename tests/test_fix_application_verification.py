@@ -366,6 +366,7 @@ def test_real_worker_project_cwd_repair_requires_approval_and_preserves_source(
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     root = tmp_path / condition

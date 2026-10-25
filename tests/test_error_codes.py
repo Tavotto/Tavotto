@@ -302,6 +302,7 @@ USER_VISIBLE_CODES = {
     "convert_not_ready": set(),
     "convert_source_changed": set(),
     "convert_context_changed": set(),
+    "convert_reference_invalid": set(),
     "convert_project_changed": set(),
     "convert_candidate_changed": set(),
     "convert_outside_project": set(),
@@ -643,6 +644,7 @@ NON_UI_CODES = {
     # existing UI reason run_failed; they are not HTTP response codes.
     "capture_incomplete",
     "convert_output_identity",
+    "preview_render_failed",
     "telemetry_rejected",
     "invalid_telemetry_event",
     "bad_nonce",
