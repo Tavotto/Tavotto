@@ -347,8 +347,8 @@ r / matlab 时 `library` 必须缺省，后端用 `sourcelang.detect`（纯标�
 MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `convert_source_language_mismatch`。**不运行 R / MATLAB**：对照只用请求给的 `path` 或脚本旁
 同名位图（`ai_convert.sibling_original`），没有原图时 `comparison.reference=null`、`verification="unknown"`（界面说一句“请并排看一眼再采用”）。
 提示词是 `ai_prompt_pack` convert 一节的变体（逐步搬运 + R→Python / MATLAB→Python 对照表）。Python 里没有可靠对应时 Agent 首行写
-`TAVOTTO_NEEDS_INPUT: <原因>` 且不写新文件 → `ConvertExecutor` 抛 `ai_tasks.NeedsInput` → 结局 `needs_input`（原因清洗后限长 200 字，只进 `unmet[].detail`，
-不进日志 / 遥测）；写了文件则按文件走，无标记照旧 `target_missing`。新脚本缺包：校验运行前 `convertdeps.ensure(project, rel, cancel)`（app 注入 `task_hooks["deps"]`，仅 r / matlab；`cancel` = `TaskRun.cancel_event`）
+`TAVOTTO_NEEDS_INPUT: <原因>` → `ConvertExecutor` 抛 `ai_tasks.NeedsInput` → 结局 `needs_input`（原因清洗后限长 200 字，只进 `unmet[].detail`，
+不进日志 / 遥测）；已写出可运行草稿也不能覆盖明确报告的保真缺口，不进入采用。缺色表/数据/可靠对应时同样适用；无标记照旧检查候选。新脚本缺包：校验运行前 `convertdeps.ensure(project, rel, cancel)`（app 注入 `task_hooks["deps"]`，仅 r / matlab；`cancel` = `TaskRun.cancel_event`）
 走 `deprepair.joint_plan_for` → `create_joint_plan` → `prepare`（不新写 pip 路径；取消经 `deprepair.cancel_status` 传到安装）。**名单**：只装 `engine/autoinstall_dists.txt`
 （PEP 503 名；14 个种子 ∪ 30 个常见大包 ∪ PyPI 30 天下载前 1000（ClickHouse 公开 PyPI 数据集）− 排除名单（pip/setuptools/wheel 等管理环境与打包工具），`scripts/dev/refresh_autoinstall_list.py` 生成，spec datas 带上）里的包；名单外的包不自动装。**每个环境问一次**：
 `project_venv` / 已存在的受管一代名单内直接装；系统 Python / 内置 runtime 永不装；其余环境（Conda / 指定 / 环境变量 / 用户采用）第一次出卡片，点主按钮才记
@@ -626,7 +626,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `stalled = {reason, detail}`（`reason ∈ cli_waiting_approval | cli_tool_not_delivered | stalled`）。来源：内置循环包装工具 handler 的开始 / 结束；CLI 每次 `/tool` 回调；CLI 结构化输出
   （Codex `exec --json`、Claude `-p --output-format stream-json --verbose`）经适配器的 `fix_event_parser()` 逐行解析成 `mcp_begin / mcp_end / approval / denied / output`——**只用于进度与卡住线索，从不当结论**。
   看门狗线程（每会话一个，`_watch`）：`DELIVER_WAIT`=20 s 内 CLI 报告的调用没收到回调 → `cli_tool_not_delivered`；出现 CLI 审批请求 → `cli_waiting_approval`（回调一到即解除）；`STALL_IDLE`=120 s 无工具在跑、无 CLI 输出 / 模型事件 → `stalled`；
-  等卡片（`state=waiting`）不算；在途工具有独立的 `TOOL_TIMEOUT`（任务总时限）上限，到点显示 `stalled` 并传取消，工具真正退出前不释放占位。卡住持续 `STALL_HARD`=300 s 自动取消：`stall_code` 记下，`_settle` 判 `failed` + 该原因码；内置循环的模型请求挂住、循环线程回不来时 `FORCE_SETTLE`=10 s 后看门狗强行收尾（`_settle` 幂等，迟到的循环线程不再改结局）。
+  等卡片（`state=waiting`）不算；在途工具有独立上限（`TOOL_TIMEOUT` 与本会话 `limits.max_seconds` 的较小值），到点显示 `stalled` 并传取消，工具真正退出前不释放占位。卡住持续 `STALL_HARD`=300 s 自动取消：`stall_code` 记下，`_settle` 判 `failed` + 该原因码；内置循环的模型请求挂住、循环线程回不来时 `FORCE_SETTLE`=10 s 后看门狗强行收尾（`_settle` 幂等，迟到的循环线程不再改结局）。
   卡住与自动取消、Claude 的权限拒绝（`cli_permission_denied`）都写 `fix_audit.jsonl`（`tool=_session`）。
 - **Codex 的取舍**：`--ignore-user-config` 仅在 `endpoint_args` 非空（Tavotto 显式给了 provider）时加并带 `-m <接口型号>`；官方登录态不加。**没核实的**：Codex `--json` 里 MCP 调用 / 审批事件的确切字段名（解析器按 `item.*` 的 `type` 含 `mcp` / `approval` 写，且对未知事件一律当「有输出」）。
 - **`change_python` 的旧代租约与回滚（Codex #1383 P2）**：换到新一代后 `deprepair._run_generation` 会 `managedenv.retire_unused` 删掉没人占着的旧代，所以 `change_python` 动手前给项目当前用的受管环境那一代

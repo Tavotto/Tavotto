@@ -12,6 +12,7 @@ import json
 import sys
 import threading
 import time
+from dataclasses import replace
 
 import pytest
 
@@ -157,8 +158,15 @@ def test_a_tool_that_is_still_running_is_not_a_stall(box, monkeypatch):
 
 
 @pytest.mark.parametrize("cli", [False, True])
-def test_tool_over_total_budget_is_visible_and_cancellation_reaches_it(box, monkeypatch, cli):
-    monkeypatch.setattr(fixsession, "TOOL_TIMEOUT", 0.4)
+@pytest.mark.parametrize("custom_limit", [False, True])
+def test_tool_over_total_budget_is_visible_and_cancellation_reaches_it(
+    box, monkeypatch, cli, custom_limit
+):
+    if custom_limit:
+        limits = replace(fixsession.FIX_LIMITS, max_seconds=0.4)
+    else:
+        monkeypatch.setattr(fixsession, "TOOL_TIMEOUT", 0.4)
+        limits = fixsession.FIX_LIMITS
     entered, exited = threading.Event(), threading.Event()
 
     def cooperative(ctx, _args):
@@ -171,14 +179,14 @@ def test_tool_over_total_budget_is_visible_and_cancellation_reaches_it(box, monk
         REGISTRY, "hung_install", FixTool("hung_install", "d", obj({}), cooperative)
     )
     if cli:
-        s, token = start_session(box, sleeper())
+        s, token = start_session(box, sleeper(), limits=limits)
         thread = threading.Thread(
             target=lambda: fixsession.SESSIONS.call_tool(s.id, token, "hung_install", {}),
             daemon=True,
         )
         thread.start()
     else:
-        s = start_builtin(box, Scripted([("hung_install", {})]))
+        s = start_builtin(box, Scripted([("hung_install", {})]), limits=limits)
     assert entered.wait(5)
     assert exited.wait(8)
     wait_finished(s, 10)
@@ -228,7 +236,7 @@ class Scripted:
         return Turn(tool_calls=[ToolCall("c", n, a)], stop="tool_use")
 
 
-def start_builtin(box, model):
+def start_builtin(box, model, **kwargs):
     return fixsession.SESSIONS.start(
         scope="pj",
         prep_session_id="p1",
@@ -236,6 +244,7 @@ def start_builtin(box, model):
         project_root=box.proj,
         model=model,
         ctx_kwargs={"home": box.home, "case_insensitive": False},
+        **kwargs,
     )
 
 

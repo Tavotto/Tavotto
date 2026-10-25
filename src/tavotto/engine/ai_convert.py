@@ -69,7 +69,7 @@ MAX_NUMBERED = 99
 META_NAME = "meta.json"
 PREVIEW_NAME = "preview.svg"
 
-#: Agent 判定“Python 里没有可靠对应”时的固定标记句式：首行 `TAVOTTO_NEEDS_INPUT: <原因>`，并且不写新文件
+#: Agent 判定缺少保真所需证据或可靠对应时：首行 `TAVOTTO_NEEDS_INPUT: <原因>`；已写出的草稿也不能采用
 NEEDS_INPUT_MARKER = "TAVOTTO_NEEDS_INPUT:"
 NEEDS_INPUT_REASON_MAX = 200
 _NEEDS_INPUT_RE = re.compile(r"^[ \t>*`_-]*TAVOTTO_NEEDS_INPUT:[ \t]*(.*)$", re.M)
@@ -932,8 +932,8 @@ def needs_input_reason(transcript) -> str | None:
 class ConvertExecutor(ai_figure_edit.BridgeExecutor):
     """`commit` = 把通过检查的候选留存待采用（候选目录 + meta.json）；**不写任何用户文件**。
 
-    Agent 运行结束后若**没有写出新文件**而回答里带着 `TAVOTTO_NEEDS_INPUT:` 标记 → `NeedsInput`（任务结局 `needs_input`，
-    不生成新脚本）；没有标记照旧交给提交前检查（`target_missing`，可修正一次）。"""
+    Agent 运行结束后的回答带着 `TAVOTTO_NEEDS_INPUT:` 标记 → `NeedsInput`，即使已写出草稿。
+    运行成功不能覆盖 Agent 明确报告的保真缺口；没有标记照旧交给提交前检查。"""
 
     writes_user_files = False
 
@@ -945,8 +945,6 @@ class ConvertExecutor(ai_figure_edit.BridgeExecutor):
         if self._transcript is None:
             return
         try:
-            if cand.target.exists() or cand.target.is_symlink():
-                return  # 写了新文件就按新文件走：标记只在“没写文件”时算数
             reason = needs_input_reason(self._transcript())
         except Exception:  # noqa: BLE001 —— 读转录失败当作没有标记
             return

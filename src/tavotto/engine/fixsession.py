@@ -299,6 +299,7 @@ class FixSession:
     last_progress: float = field(default_factory=time.monotonic)
     inflight: int = 0
     tool_started: float | None = None
+    tool_timeout: float = TOOL_TIMEOUT
     #: CLI 报告的 MCP 工具调用开始时刻 / 应用实际收到的回调次数（按工具名）；开始数多于回调数 = 有调用没送达
     begins: dict = field(default_factory=dict)
     cbs: dict = field(default_factory=dict)
@@ -413,6 +414,7 @@ class FixSessions:
                 script=script,
                 prep_session_id=prep_session_id,
                 token=secrets.token_urlsafe(32) if cli is not None else "",
+                tool_timeout=min(TOOL_TIMEOUT, (limits or FIX_LIMITS).max_seconds),
             )
             self._by_id[s.id] = s
             while len(self._by_id) > KEEP_SESSIONS:
@@ -592,7 +594,7 @@ class FixSessions:
                 elif (
                     s.inflight
                     and s.tool_started is not None
-                    and now - s.tool_started > TOOL_TIMEOUT
+                    and now - s.tool_started > s.tool_timeout
                 ):
                     code, detail = STALL_IDLE_CODE, (s.activity or {}).get("tool", "")
                 elif s.approval is not None:
@@ -620,7 +622,7 @@ class FixSessions:
                         or (
                             s.inflight
                             and s.tool_started is not None
-                            and now - s.tool_started > TOOL_TIMEOUT
+                            and now - s.tool_started > s.tool_timeout
                         )
                     )
                     and not s.cancel.is_set()

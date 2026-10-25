@@ -353,13 +353,17 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "线条颜色顺序、每个 axes 的 colormap、LUT 行数、CLim、CDataMapping 及 alpha 均要独立保留。"
         "默认色表随 MATLAB 版本变化（R2019b 起默认长度 256，之前 64；parula 本身也有版本差异），"
         "优先使用项目提供的原始 RGB 数组/运行时信息，不能用几枚控制点、viridis 或近似色表冒充原始 parula；"
-        "无法确定所需的原始色表或版本时说明缺哪份证据，不能宣称配色已保真。",
+        "无法确定所需的原始色表或版本时走下面的 TAVOTTO_NEEDS_INPUT 分支，禁止先生成替代配色再仅在代码注释中说明。"
+        "可请用户在原 MATLAB 图窗口中用 version('-release') 和 cmap=colormap(ax) 获取版本和实际 axes 色表，"
+        "再用 writematrix(cmap,'colormap.csv') 导出；ax 必须是原图对应坐标轴，多 axes 分别导出，不能用全局默认值替代。",
     ),
     "rule_foreign_needs_input": (
         frozenset(),
-        "3. 遇到 Python 里没有可靠逐一对应的统计方法或函数（例如特定的混合效应模型、专用的非参数检验、某个包独有的拟合器），"
+        "3. 缺少保真必需的原始数据/色表/运行时信息，或 Python 里没有可靠逐一对应的统计方法或函数"
+        "（例如特定的混合效应模型、专用的非参数检验、某个包独有的拟合器），"
         "不要用近似方法替换，也不要编一个相似的结果。此时停下：你的回答第一行写 `TAVOTTO_NEEDS_INPUT: ` 紧跟一句话，"
-        "说清是哪一步（原脚本里的函数名）换不了、为什么；并且不要写任何新文件。",
+        "说清是哪一步（原脚本里的函数名）换不了、缺少什么证据或可靠实现、下一步如何获取；不要写替代结果。"
+        "若在已写草稿或 check 后才发现，也必须用这个标记结束；草稿可运行不能把未解决的差异变成成功。",
     ),
     "fix_no_matplotlib": (
         frozenset({"target"}),

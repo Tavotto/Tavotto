@@ -233,12 +233,20 @@ def test_no_marker_and_no_file_is_still_an_ordinary_failure(env):
     }
 
 
-def test_marker_next_to_a_written_file_does_not_stop_the_task(env):
-    """标记只在“没写新文件”时算数：写了文件就按文件走检查。"""
+def test_reported_fidelity_gap_blocks_even_a_runnable_draft(env):
+    """模型在写草稿后发现保真证据缺失：不能以能跑为由允许采用。"""
+    before = _files(env["figs"])
+    ran = []
+    env["runner"] = lambda *a, **k: ran.append(1) or ok_runner(*a)
     env["code"] = SAY_NEEDS_INPUT + "; " + WRITE_GOOD
     sid = _run(env)
     sess = _wait(sid)
-    assert sess["task"]["outcome"] == "completed"
+    assert sess["task"]["outcome"] == "needs_input"
+    assert not ran
+    assert _files(env["figs"]) == before
+    assert len(env["prompts"]) == 1
+    with pytest.raises(ai_convert.ConvertError):
+        ai_convert.adopt(sid, _project(env))
 
 
 def test_marker_after_the_correction_round_also_ends_in_needs_input(env):
