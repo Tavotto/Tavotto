@@ -3017,7 +3017,8 @@ def matrix_leg_argv(
     py: Path, side: Path, name: str, expect: str, figs: str, extra: list[str]
 ) -> list[str]:
     """一条矩阵腿的 smoke argv。需要 Conda 激活的解释器 workerd 按设计不接，走 Python 渲染池
-    （用户 10-25 裁决，与 nightly 同）；其余腿必须真走 workerd。"""
+    （用户 10-25 裁决，与 nightly 同）：`conda-fallback` = 产物带 workerd、这次渲染只走了 Python 池
+    （smoke_app 的这个取值随 #1410 进 main）；其余腿必须真走 workerd。"""
     return [
         str(py),
         "scripts/smoke_app.py",
@@ -3028,7 +3029,7 @@ def matrix_leg_argv(
         "--expect-source",
         expect,
         "--expect-control-plane",
-        "python" if name.startswith("conda") else "workerd",
+        "conda-fallback" if name.startswith("conda") else "workerd",
         *extra,
     ]
 

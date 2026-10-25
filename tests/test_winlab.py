@@ -1475,8 +1475,8 @@ def test_window_probe_is_deployed_with_the_agent():
 @pytest.mark.parametrize(
     ("name", "plane"),
     [
-        ("conda-prefix", "python"),
-        ("conda-named", "python"),
+        ("conda-prefix", "conda-fallback"),
+        ("conda-named", "conda-fallback"),
         ("bundled", "workerd"),
         ("cpython-3.13", "workerd"),
         ("uv-3.12", "workerd"),
