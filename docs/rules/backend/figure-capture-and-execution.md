@@ -110,6 +110,10 @@ order: 50
     常量相对目标认成**探路证据**；只在脚本目录找得到 → 结论 `script_parent` → 首开问
     （`script_dir_evidence`，推荐 `project`），沙盒那档的 `found` 不列探路目标。列 cwd 本身
     （`listdir()`）只记脚本目录那档。用户选「继续沙盒」后盲区如实保留，走上面的零张图路径。
+    **探路目标会折常量（2026-10-25，qudit_tomography）**：实参是 `_fold_str` 折得出的字符串表达式也算——字符串常量、
+    模块顶层**整棵树里只绑定过一次**的常量名、`a + b`、`os.path.join(…)`、f-string；f-string 的动态片段只在 glob 且只落在
+    **文件名那一段**时换成 `*`（`data_dir + f"times_{tag}_d*.txt"` → `./data/times_*_d*.txt`），目录部分动态 / 名字重绑定 /
+    `{x!r}` / 列目录与问路径里的动态片段一律不说话。折出来的模式照样只在脚本目录 / 项目根下**找得到**才说话。
     **运行时证据（#1254，ADR 0084 §运行时证据）**：模式是参数、不是写在调用里的常量时（`def read_parts(pattern):
     glob.glob(pattern)`），静态探测认不出。沙盒会话里 worker 多装一层**只记不改**的观察
     （`figcapture.install_probe_observer`，装在改指之后、账本之前，cwd 已是脚本目录 / 项目根时不装）：

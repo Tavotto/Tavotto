@@ -16,7 +16,7 @@ safe worker 默认把 cwd 切到会话沙盒，只读的 `open` 回退到**脚�
 * 一个字面量都没有 / 一个都找不到 → `none` / `unknown`：这里说不出话，按默认走，
   真跑出来的失败仍然看得见（`no_figures_captured` 那条既有路径）。
 
-判据刻意窄：只认字符串常量（f-string / `%` / `.format` 是动态的，一律不算），打开类字面量
+判据刻意窄：打开类字面量只认字符串常量（f-string / `%` / `.format` 是动态的，一律不算；探路目标另可折模块常量，见 `_fold_str`），打开类字面量
 只认带**数据类扩展名**或带目录分隔符的相对路径，存图调用（`discover.SAVE_FUNCS`）的
 实参归输出不归输入。glob 模式 / `listdir` / `exists` 这类**探路调用**另成一类证据
 （`probe_literals`，ADR 0084）：沙盒的只读回退救不回它们，只在脚本目录找得到时结论是
@@ -281,6 +281,112 @@ def _const_str(node: ast.expr | None) -> str | None:
     return None
 
 
+#: 折叠表达式时一个动态片段（f-string 里的 `{tag}`）的占位符（NUL 不会出现在源码字面量里）；`probe_literals` 把它
+#: 换成 glob 的 `*`，且只在**文件名那一段**里放行——目录部分有动态片段（`f"{root}/*.csv"`）匹配面太宽，不说话。
+_WILD = "\x00"
+
+
+def _module_str_consts(tree: ast.Module) -> dict[str, ast.expr]:
+    """模块顶层 `NAME = <表达式>`（或带注解）里「整棵树里只被绑定过这一次」的名字 → 右值表达式。
+
+    探路调用的实参常写成 `glob.glob(data_dir + "x_*.txt")`、`os.listdir(DATA)`——模块顶层的常量路径前缀是
+    脚本里最常见的写法。只收**唯一**绑定的名字（赋值、参数、`for` / `with` / `global` / `import` 任何一种
+    绑定都计数），所以同名的局部变量 / 重新赋值 / `global` 改写都让它出局：折叠不替变量做流分析，
+    说不准就不折叠（不折叠 = 与以前一样不说话）。"""
+    counts: dict[str, int] = {}
+    for node in ast.walk(tree):
+        names = _bound_names(node)
+        if isinstance(node, ast.Import):
+            names = [(a.asname or a.name.split(".")[0]) for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [(a.asname or a.name) for a in node.names]
+        for name in names:
+            counts[name] = counts.get(name, 0) + 1
+    out: dict[str, ast.expr] = {}
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+            target, value = stmt.targets[0], stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            target, value = stmt.target, stmt.value
+        else:
+            continue
+        if isinstance(target, ast.Name) and counts.get(target.id) == 1:
+            out[target.id] = value
+    return out
+
+
+def _fold_str(
+    node: ast.expr | None,
+    consts: dict[str, ast.expr],
+    *,
+    wild_ok: bool = False,
+    _depth: int = 0,
+) -> tuple[str, bool] | None:
+    """把「由字符串常量拼出来」的表达式折成 `(文本, 含通配替身)`；折不出（有任何动态成分）回 None。
+
+    认得：字符串常量、模块顶层唯一绑定的常量名（`_module_str_consts`）、`a + b`、`os.path.join(a, b, …)`、
+    f-string。f-string 里的 `{expr}` 先试着折成常量；折不出时，`wild_ok`（只有 glob 模式放行）把它换成
+    占位符 `_WILD`（调用方换成 `*`）——模式 `./data/times_{tag}_d*.txt` 变成 `./data/times_*_d*.txt`，用来问「脚本目录 / 项目根下有没有
+    匹配的文件」：多匹配了顶多多问一次，匹配不到仍然不说话。不放行（路径 / 列目录）时动态片段 = 折不出。
+    带转换符 / 格式说明符的 `{x!r}` / `{x:>5}` 一律折不出（改写了文本）。"""
+    if _depth > 8 or node is None:
+        return None
+    if isinstance(node, ast.Constant):
+        return (node.value, False) if isinstance(node.value, str) else None
+    if isinstance(node, ast.Name):
+        return _fold_str(consts.get(node.id), consts, wild_ok=wild_ok, _depth=_depth + 1)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _fold_str(node.left, consts, wild_ok=wild_ok, _depth=_depth + 1)
+        right = _fold_str(node.right, consts, wild_ok=wild_ok, _depth=_depth + 1)
+        if left is None or right is None:
+            return None
+        return left[0] + right[0], left[1] or right[1]
+    if isinstance(node, ast.JoinedStr):
+        text, wild = "", False
+        for part in node.values:
+            if isinstance(part, ast.Constant) and isinstance(part.value, str):
+                text += part.value
+            elif (
+                isinstance(part, ast.FormattedValue)
+                and part.conversion == -1
+                and not part.format_spec
+            ):
+                inner = _fold_str(part.value, consts, wild_ok=wild_ok, _depth=_depth + 1)
+                if inner is not None:
+                    text, wild = text + inner[0], wild or inner[1]
+                elif wild_ok:
+                    text, wild = text + _WILD, True
+                else:
+                    return None
+            else:
+                return None
+        return text, wild
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "join"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "path"
+        and isinstance(node.func.value.value, ast.Name)
+        and node.func.value.value.id == "os"
+        and node.args
+        and not node.keywords
+    ):
+        pieces = [_fold_str(a, consts, wild_ok=wild_ok, _depth=_depth + 1) for a in node.args]
+        if any(p is None for p in pieces):
+            return None
+        out = ""
+        for text, _w in pieces:  # type: ignore[misc]
+            if PurePosixPath(text).is_absolute() or PureWindowsPath(text).is_absolute():
+                out = text  # os.path.join：后一段是绝对路径就丢掉前面的（之后 _relative_probe_target 会拒掉绝对的）
+            elif out and not out.endswith(("/", "\\")):
+                out += "/" + text
+            else:
+                out += text
+        return out, any(p[1] for p in pieces)  # type: ignore[index]
+    return None
+
+
 class _Aliases:
     """脚本里 import 进来的别名（整棵 AST 里的 `import` / `from … import`，不分作用域）：
 
@@ -368,7 +474,9 @@ def _bound_names(node: ast.AST) -> list[str]:
     return []
 
 
-def _path_receiver(node: ast.expr, aliases: _Aliases) -> str | None:
+def _path_receiver(
+    node: ast.expr, aliases: _Aliases, consts: dict[str, ast.expr] | None = None
+) -> str | None:
     """`Path("d")` / `Path()` / `Path.cwd()` / `pathlib.Path("d")` → 相对 cwd 的目录（`.` 是 cwd 本身）；
     别的接收者（`Path(__file__).parent`、变量）回 None——那是绝对的，或说不出话。"""
     if not isinstance(node, ast.Call):
@@ -385,7 +493,8 @@ def _path_receiver(node: ast.expr, aliases: _Aliases) -> str | None:
         return "."
     if len(node.args) != 1:
         return None
-    text = _const_str(node.args[0])
+    folded = _fold_str(node.args[0], consts or {})
+    text = folded[0] if folded else None
     if text is None or not _relative_probe_target(text) or any(ch in text for ch in _GLOB_CHARS):
         return None
     return text
@@ -418,6 +527,19 @@ def probe_literals(source: str) -> list[dict]:
         return []
     out: list[dict] = []
     aliases = _Aliases(tree)
+    consts = _module_str_consts(tree)
+
+    def fold(node: ast.expr | None, *, wild_ok: bool = False) -> str | None:
+        folded = _fold_str(node, consts, wild_ok=wild_ok)
+        if folded is None:
+            return None
+        text = folded[0]
+        if _WILD in text:
+            # 动态片段只许落在最后一段（文件名）里，替成 `*`；目录部分动态 = 说不出话
+            if _WILD in text.replace("\\", "/").rpartition("/")[0]:
+                return None
+            text = text.replace(_WILD, "*")
+        return text
 
     def add(kind: str, target: str, **flags: bool) -> None:
         item = {"kind": kind, "target": target, **flags}
@@ -438,7 +560,7 @@ def probe_literals(source: str) -> list[dict]:
         name = _func_name(node.func)
         first = node.args[0] if node.args else None
         receiver = (
-            _path_receiver(node.func.value, aliases)
+            _path_receiver(node.func.value, aliases, consts)
             if isinstance(node.func, ast.Attribute)
             else None
         )
@@ -446,7 +568,7 @@ def probe_literals(source: str) -> list[dict]:
             if not node.keywords:
                 add("dir" if name == "iterdir" else "path", receiver)
         elif receiver is not None and name in PATH_METHOD_GLOBS:
-            pattern = _const_str(first if first is not None else kw(node, "pattern"))
+            pattern = fold(first if first is not None else kw(node, "pattern"), wild_ok=True)
             if (
                 pattern is not None
                 and _relative_probe_target(pattern)
@@ -458,13 +580,13 @@ def probe_literals(source: str) -> list[dict]:
         elif aliases.glob_call(node.func) is not None:
             if not only_kw(node, _GLOB_KWARGS):
                 continue
-            pattern = _const_str(first if first is not None else kw(node, "pathname"))
+            pattern = fold(first if first is not None else kw(node, "pathname"), wild_ok=True)
             if pattern is None or not _relative_probe_target(pattern):
                 continue
             # `root_dir=` 换了起算点：常量相对的拼进目标；动态的 / 绝对的说不出话，不判
             root_dir = kw(node, "root_dir")
             if root_dir is not None:
-                base = _const_str(root_dir)
+                base = fold(root_dir)
                 if (
                     base is None
                     or not _relative_probe_target(base)
@@ -500,15 +622,13 @@ def probe_literals(source: str) -> list[dict]:
             if arg is None:
                 add("dir", ".")
             else:
-                target = _const_str(arg)
+                target = fold(arg)
                 if target is not None and _relative_probe_target(target):
                     add("dir", target)
         elif name in PATH_PROBE_FUNCS:
             if name != "import_file" and not only_kw(node, frozenset({"path"})):
                 continue
-            target = _const_str(
-                first if first is not None or name == "import_file" else kw(node, "path")
-            )
+            target = fold(first if first is not None or name == "import_file" else kw(node, "path"))
             if (
                 target is not None
                 and _relative_probe_target(target)
