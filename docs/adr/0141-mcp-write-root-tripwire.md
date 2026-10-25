@@ -23,6 +23,8 @@ MCP 的 `argv` 是 Agent 自己给的 token，会原样成为脚本的 `sys.argv
 2. **机制**：`engine/writetripwire.py`，`sys.addaudithook` 的 `open` 事件（写标志）与 `os.rename|remove|rmdir|mkdir|truncate|symlink|link`、`shutil.copy*|move|rmtree` 事件，
    在事件发生时按**真实 cwd** 做 `realpath` 后比对白名单；根外 → `PermissionError`。窗口 = 脚本 build（`arm(True)` … `finally` 里 `arm(False)`）；窗口之外引擎自己要导出到任意临时目录，不拦。
    脚本即使 `except PermissionError` 吞掉，build 结束时也以 `write_outside_roots` 失败——越界的**尝试**发生过，这次不算成功。
+   2026-10-26 兼容修订：对已存在的根外目录，`mkdir` 审计钩子直接抛 `FileExistsError(EEXIST)`、不进入创建系统调用。
+   `Path.mkdir` / `os.makedirs(exist_ok=True)` 因而保留无操作语义，不记录越界写；目录检查后被删除也仍抛错，不允许竞态创建。不存在的目录与其余写入照常拒绝。
 3. **身份**：根经 `execspec.worker_argv` 的 `--write-roots`（唯一出处）进 worker 命令行，所以 workerd 的 spawn 规格哈希（`argv + env + cwd`）天然不同；
    池键 / 缓存目录再并入 `execspec.write_roots_key`（`pool._worker_key` / `_worker_base`）。MCP 与 GUI 取同一脚本得到**不同**会话（实验发现的必要条件：否则 GUI 取到带绊线的会话，或 MCP 取到没有绊线的会话）。
    不用环境变量传：env 在 workerd 路径下只是增量，易遗漏，池键也不感知。

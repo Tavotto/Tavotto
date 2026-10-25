@@ -202,6 +202,70 @@ def test_the_error_reaches_the_bridge_with_the_recovery_and_no_absolute_paths(wo
 
 # ============================================================ 正向：合法的写不误拦
 @needs_worker
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "Path(target).mkdir(parents=True, exist_ok=True)",
+        "os.makedirs(target, exist_ok=True)",
+        "try:\n    os.mkdir(target)\nexcept FileExistsError:\n    pass\nelse:\n    raise AssertionError('existing directory must still raise EEXIST')",
+    ],
+)
+def test_existing_directory_creation_is_a_noop_without_authorizing_writes(world, operation):
+    before = world.outside.stat()
+    world.script(
+        "existing.py",
+        f"import os\nfrom pathlib import Path\ntarget={str(world.outside)!r}\n"
+        + operation
+        + "\n"
+        + PLOT,
+    )
+    assert world.mcp_worker("existing.py").ensure_built()["stems"]
+    assert world.outside.stat().st_mtime_ns == before.st_mtime_ns
+    assert list(world.outside.iterdir()) == []
+
+
+@needs_worker
+def test_mkdir_still_refuses_new_outside_directories_even_with_exist_ok(world):
+    missing = world.outside / "new"
+    world.script(
+        "newdir.py",
+        f"from pathlib import Path\nPath({str(missing)!r}).mkdir(parents=True, exist_ok=True)\n"
+        + PLOT,
+    )
+    assert _refused(world, "newdir.py").code == CODE
+    assert not missing.exists()
+
+
+def test_existing_directory_race_aborts_the_mkdir_before_any_creation(tmp_path, monkeypatch):
+    """An existing-directory observation is an EEXIST result, never permission to execute mkdir."""
+    target = tmp_path / "outside"
+    target.mkdir()
+    monkeypatch.setattr(
+        writetripwire,
+        "_state",
+        {
+            "armed": True,
+            "roots": (),
+            "violations": [],
+            "display_base": str(tmp_path),
+        },
+    )
+    original_isdir = os.path.isdir
+
+    def disappeared(path):
+        if os.fspath(path) == str(target):
+            target.rmdir()
+            return True
+        return original_isdir(path)
+
+    monkeypatch.setattr(os.path, "isdir", disappeared)
+    with pytest.raises(FileExistsError):
+        writetripwire._hook("os.mkdir", (str(target), 0o777, -1))
+    assert not target.exists()
+    assert writetripwire.violations() == []
+
+
+@needs_worker
 def test_legitimate_writes_are_not_refused(world, tmp_path):
     (world.ws / "other").mkdir()
     world.script(

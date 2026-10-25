@@ -544,13 +544,37 @@ def _builtin_arm_env(monkeypatch, tmp_path):
 
 
 @pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
-def test_builtin_arm_routes_through_the_product_to_builtin_and_cleans_up(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "wire,agent,official",
+    [
+        ("anthropic", "claude", "https://api.anthropic.com"),
+        ("openai-responses", "codex", "https://api.openai.com/v1"),
+    ],
+)
+@pytest.mark.parametrize("prefer", [False, True])
+@pytest.mark.parametrize("custom", [False, True])
+def test_builtin_arm_routes_through_the_product_to_builtin_and_cleans_up(
+    tmp_path, monkeypatch, wire, agent, official, prefer, custom
+):
     import os
 
-    from tavotto.engine import ai_providers
+    from tavotto.engine import ai_bridge, ai_providers, config
 
     monkeypatch.delenv("TAVOTTO_AI_BUILTIN", raising=False)
     box = _builtin_arm_env(monkeypatch, tmp_path)
+    # 可用 CLI 不能掩盖优先开关失效；本进程临时启用必须覆盖原先的 false，结束后恢复。
+    monkeypatch.setattr(
+        ai_bridge,
+        "capabilities",
+        lambda refresh=False: {
+            "agents": [
+                {"id": agent, "installed": True, "enabled": True, "usable": True, "state": "ready"},
+            ]
+        },
+    )
+    config.set_ai_settings({"builtin_default": False})
+    before = config.ai_settings()
+    base = "https://gateway.example.org/v1" if custom else None
     s02 = next(s for s in bench.load_scenarios("dev") if s["id"] == "FB-S02")
     report = bench.run(
         [s02],
@@ -558,19 +582,29 @@ def test_builtin_arm_routes_through_the_product_to_builtin_and_cleans_up(tmp_pat
         real_agent="builtin",
         model="claude-sonnet-5-5",
         api_key="sk-ant-SECRETSECRETSECRET0123456789",
+        builtin_wire=wire,
+        base_url=base,
+        prefer_builtin=prefer,
     )
     # 产品自己的路由把请求送到了 builtin，连接是官方 Anthropic Key 连接，型号照 --model
     assert box["agents"] == ["builtin"]
     ep = box["endpoints"][0]
-    assert ep["base_url"] == "https://api.anthropic.com" and ep["agent"] == "claude"
-    assert box["models"] == ["claude-sonnet-5-5"] and box["env"] == ["1"]
+    assert ep["base_url"] == (base or official) and ep["agent"] == agent
+    assert ai_providers.builtin_conn(ep)["wire"] == wire
+    assert box["models"] == ["claude-sonnet-5-5"] and box["env"] == [None if prefer else "1"]
     env = report["environment"]
     assert env["executor"].startswith("real:builtin") and env["model"] == "claude-sonnet-5-5"
-    assert env["endpoint"]["host"] == "api.anthropic.com"
+    assert env["wire"] == wire and env["routing"] == ("preferred" if prefer else "forced")
+    assert env["endpoint"]["host"] == (
+        "gateway.example.org"
+        if custom
+        else ("api.anthropic.com" if agent == "claude" else "api.openai.com")
+    )
     assert "SECRETSECRET" not in json.dumps(report, ensure_ascii=False)
     # 跑完：连接已删、运维开关已还原
     assert ai_providers.list_providers() == []
     assert "TAVOTTO_AI_BUILTIN" not in os.environ
+    assert config.ai_settings()["builtin_default"] is before["builtin_default"] is False
 
 
 def test_builtin_arm_still_requires_a_pinned_model_and_a_readable_key(

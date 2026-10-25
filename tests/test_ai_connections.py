@@ -372,18 +372,25 @@ def _route(rec_id: str) -> str:
     return _conn(_caps(), rec_id)["route"]
 
 
-@pytest.mark.parametrize("agent", ["claude", "codex"])
+@pytest.mark.parametrize("agent,auth", [("claude", "key"), ("codex", "key"), ("claude", "oauth")])
 @pytest.mark.parametrize("cli", [True, False])
-@pytest.mark.parametrize("default_builtin", [False, True])
+@pytest.mark.parametrize("default_builtin", [None, False, True])
 @pytest.mark.parametrize("env", [None, "0", "1"])
-def test_routing_matrix(world, monkeypatch, agent, cli, default_builtin, env):
+def test_routing_matrix(world, monkeypatch, agent, auth, cli, default_builtin, env):
     base = "https://api.deepseek.com/anthropic" if agent == "claude" else "https://api.deepseek.com"
-    _save("k", agent=agent, base=base)
+    if auth == "oauth":
+        cid = _oauth_rec()["id"]
+    else:
+        _save("k", agent=agent, base=base)
+        cid = "k"
     world["cli"] = cli
     config.set_ai_settings({"builtin_default": default_builtin})
     if env is not None:
         monkeypatch.setenv(ai_connections.ENV_BUILTIN, env)
     ai_bridge.invalidate_capabilities()
+    # Subscription identity is independent of the Key/OAuth rollout and forced overrides.
+    assert ai_bridge.resolve_connection("sub:codex") == ("codex", None)
+    assert ai_bridge.resolve_connection("sub:claude") == ("claude", None)
     if env == "1":
         want = "builtin"
     elif env == "0":
@@ -392,16 +399,16 @@ def test_routing_matrix(world, monkeypatch, agent, cli, default_builtin, env):
         want = f"cli:{agent}"
     else:
         want = "builtin"
-    c = _conn(_caps(), "k")
+    c = _conn(_caps(), cid)
     if want is None:
         assert c["state"] == "error" and c["error"] == "cli_unavailable"
         with pytest.raises(ai_connections.ConnectionRefused) as ei:
-            ai_bridge.resolve_connection("k")
+            ai_bridge.resolve_connection(cid)
         assert ei.value.code == "ai_agent_not_usable"
         return
     assert c["route"] == want and c["state"] == "ready"
-    got_agent, rec = ai_bridge.resolve_connection("k")
-    assert got_agent == ("builtin" if want == "builtin" else agent) and rec["id"] == "k"
+    got_agent, rec = ai_bridge.resolve_connection(cid)
+    assert got_agent == ("builtin" if want == "builtin" else agent) and rec["id"] == cid
 
 
 def test_no_cli_means_the_builtin_executor_is_used_by_default(world):

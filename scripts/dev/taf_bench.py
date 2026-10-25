@@ -58,8 +58,8 @@ ROW_FIELDS = (
 )
 #: `--real builtin`：内置执行器臂（ADR 0147）。走产品同一条 `/api/ai/run`，只是请求带 `connection` 并由路由选到 builtin
 BUILTIN_ARM = "builtin"
-#: 内置臂的连接：官方 Anthropic Key（目录行 `anthropic-api`，地址 https://api.anthropic.com）
-BUILTIN_VENDOR = "anthropic-api"
+#: 应用连接支持的协议；默认地址仍由产品目录提供，不在基准里复制。
+BUILTIN_VENDORS = {"anthropic": "anthropic-api", "openai-responses": "openai-api"}
 DEFAULT_KEY_FILE = Path.home() / ".tavotto-test-anthropic-key"
 #: `--real` 一次最多跑多少次**实际 Agent CLI 调用**（真实模型要花用户的额度；开跑前按「场景数 × 每任务最大调用数」
 #: 拒绝，运行中按真实调用次数封顶，不悄悄截断）
@@ -278,6 +278,9 @@ def run(
     max_runs: int | None = None,
     repeat: int = 1,
     api_key: str | None = None,
+    builtin_wire: str = "anthropic",
+    base_url: str | None = None,
+    prefer_builtin: bool = False,
 ) -> dict:
     """在 `work` 下逐场景跑，回 `{environment, rows, metrics}`。调用方负责 `TAVOTTO_DATA_DIR` 等已指向隔离目录。
 
@@ -286,8 +289,9 @@ def run(
     `DEFAULT`，跑完恢复——产品默认值不由工具改）。
     `model` / `effort`：透传进 `/api/ai/run`，两臂钉住同一个。`max_runs`：实际 Agent CLI 调用次数上限（含修正那次），
     到了之后再来的调用不 spawn，该次任务记 `max_runs_reached`。
-    `real_agent="builtin"`：内置执行器臂——在隔离配置目录里用 `api_key` 经产品的 `ai_connections.add_connection` 新建一条官方
-    Anthropic Key 连接，请求带 `connection`、`TAVOTTO_AI_BUILTIN=1`（产品自己的路由开关）让路由选 builtin；跑完删掉这条连接。
+    `real_agent="builtin"`：在隔离配置目录里经产品的 `add_connection` 建立指定协议的连接；可指定自定义地址。
+    默认强制内置；`prefer_builtin` 改为在本进程叠加 `ai.builtin_default=true`，验证小范围启用时的真实路由与回退。
+    跑完删连接并还原环境；不修改用户配置或产品默认值。
     密钥只进产品的连接存储与子进程环境变量，不进报告 / 日志 / argv。"""
     from tavotto import app as m
     from tavotto.engine import (
@@ -355,7 +359,11 @@ def run(
     def overlay_settings():
         """叠加而不是替换：用户配置的第三方接口等其余设置原样保留，只在本进程里把 TAF 打开（不写配置）。"""
         base = real_settings() or {}
-        return {**base, "taf": {**(base.get("taf") or {}), "enabled": True}}
+        return {
+            **base,
+            "taf": {**(base.get("taf") or {}), "enabled": True},
+            **({"builtin_default": True} if builtin and prefer_builtin else {}),
+        }
 
     def classify_recording(agent_id, line, st):
         _take_usage(line, usage_box)
@@ -364,14 +372,20 @@ def run(
     if builtin:
         if not api_key:
             raise RuntimeError("--real builtin 需要 API Key（--key-file）")
+        if builtin_wire not in BUILTIN_VENDORS:
+            raise RuntimeError("该协议尚不支持应用连接，不能用此基准宣称应用验收通过")
+        connection = {"vendor": BUILTIN_VENDORS[builtin_wire], "api_key": api_key, "model": model}
+        if base_url is not None:
+            connection.update(vendor="custom", wire=builtin_wire, base_url=base_url)
         # 先建连接、后覆盖设置：连接写进隔离配置目录；overlay 之后的读照常看得到它
         try:
-            conn_id, _fetch_error = ai_connections.add_connection(
-                {"vendor": BUILTIN_VENDOR, "api_key": api_key, "model": model}
-            )
+            conn_id, _fetch_error = ai_connections.add_connection(connection)
         except ai_connections.ConnectionRefused as exc:  # 只报原因码，绝不带密钥
             raise RuntimeError(f"内置臂的连接建不起来：{exc.code} {exc.params}") from None
-        os.environ[ai_connections.ENV_BUILTIN] = "1"
+        if prefer_builtin:
+            os.environ.pop(ai_connections.ENV_BUILTIN, None)
+        else:
+            os.environ[ai_connections.ENV_BUILTIN] = "1"
     config.ai_settings = overlay_settings
     ai_bridge._classify = classify_recording
     if pack is not None:
@@ -453,6 +467,11 @@ def run(
             "model": model,
             "effort": effort,
             "agent_calls": calls["n"],
+            **(
+                {"wire": builtin_wire, "routing": "preferred" if prefer_builtin else "forced"}
+                if builtin
+                else {}
+            ),
         }
     )
     if pack is not None:
@@ -708,7 +727,16 @@ def main(argv=None) -> int:
         "--key-file",
         type=Path,
         default=DEFAULT_KEY_FILE,
-        help="--real builtin 的 Anthropic API Key 文件（只在进程内读取，不进 argv / 报告）",
+        help="--real builtin 的 API Key 文件（只在进程内读取，不进 argv / 报告）",
+    )
+    ap.add_argument("--builtin-wire", choices=tuple(BUILTIN_VENDORS), default="anthropic")
+    ap.add_argument(
+        "--base-url", default=None, help="内置臂的自定义服务地址；省略则使用该协议的官方目录地址"
+    )
+    ap.add_argument(
+        "--prefer-builtin",
+        action="store_true",
+        help="仅在隔离测试进程优先内置，保留产品的 CLI 回退逻辑",
     )
     ap.add_argument("--model", default=None, help="钉住模型（--real 必填；两臂必须相同）")
     ap.add_argument("--effort", default=None, help="钉住推理强度（可选；两臂必须相同）")
@@ -729,6 +757,11 @@ def main(argv=None) -> int:
             "--real 必须用 --model 钉住模型（两臂用同一个，否则差值不可归因于 Pack）",
             file=sys.stderr,
         )
+        return 2
+    if args.real != BUILTIN_ARM and (
+        args.base_url or args.prefer_builtin or args.builtin_wire != "anthropic"
+    ):
+        print("协议、地址和优先内置选项只用于 --real builtin", file=sys.stderr)
         return 2
     api_key = None
     if args.real == BUILTIN_ARM:
@@ -779,6 +812,9 @@ def main(argv=None) -> int:
             max_runs=args.max_runs if args.real else None,
             repeat=args.repeat,
             api_key=api_key,
+            builtin_wire=args.builtin_wire,
+            base_url=args.base_url,
+            prefer_builtin=args.prefer_builtin,
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)

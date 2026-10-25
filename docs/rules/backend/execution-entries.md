@@ -83,6 +83,7 @@ order: 180
 **绊线，不是沙盒。** 只对 **MCP 来源**的 safe 运行装（桥 `_spawn_worker` 传 `write_roots=allowed_roots()`）；GUI / native / CLI 完全不动。
 worker 在脚本 build 期间用 `sys.addaudithook` 的 `open` 事件（及 `os.rename|remove|mkdir…`、`shutil.copy*|move|rmtree`）按**事件发生时的真实 cwd** 解开符号链接后比对白名单，
 根外 → `PermissionError`；脚本吞掉它，build 结束时也以稳定码 `write_outside_roots` 失败（越界的尝试发生过）。静态读源码证不了的 `os.chdir` / `contextlib.chdir` / 跨文件 helper 切目录再写，靠它在运行期兜住。
+根外 `mkdir` 的目标已是目录时，钩子直接抛 `FileExistsError`，**不执行创建系统调用**，让 `exist_ok=True` 正常完成无写入操作；检查后目录消失也不会获准创建。新目录与其他写入仍拒绝。
 
 - **配置唯一出处** `execspec.worker_argv` 的 `--write-roots`（JSON 数组）；`safe_spec(write_roots=)` 是唯一构造入口，三条 spawn 路径（`EngineWorker` / `WorkerdWorker` / `_spawn_spec`）同源。
   绊线是 worker 的**身份**：workerd 规格哈希（`argv + env + cwd`）因 argv 不同而不同，Python 池键 / 缓存目录并入 `execspec.write_roots_key`——MCP 与 GUI 取同一脚本是两条会话。不用环境变量传。

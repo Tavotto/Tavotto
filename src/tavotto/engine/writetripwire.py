@@ -259,6 +259,16 @@ def _hook(event: str, args: tuple) -> None:
                 continue
             real = _norm(raw)
             if not allowed(real, _state["roots"], event):
+                if event == "os.mkdir" and os.path.isdir(raw):
+                    # Preserve mkdir's EEXIST result without allowing the syscall.
+                    # Path.mkdir/os.makedirs(exist_ok=True) can then finish their
+                    # no-op. Even if the directory disappears after this check,
+                    # raising here cannot create anything outside the roots.
+                    raise FileExistsError(
+                        errno.EEXIST,
+                        os.strerror(errno.EEXIST),
+                        display(real, _state["display_base"]),
+                    )
                 _violation(event, real)
     finally:
         _tls.busy = False

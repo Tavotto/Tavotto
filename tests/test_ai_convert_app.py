@@ -377,6 +377,32 @@ def test_candidate_that_writes_a_project_file_is_stopped_by_the_write_tripwire(
     assert sorted(p.name for p in figs.iterdir() if p.is_file()) == state["initial"]
 
 
+def test_existing_output_directories_do_not_block_conversion_validation(project, monkeypatch):
+    """Actual conversion worker: idempotent mkdir preserves project directories and source bytes."""
+    _m, client, figs, state = project
+    worker_tmp = figs.parent / "worker-tmp"
+    worker_tmp.mkdir()
+    for var in ("TMPDIR", "TEMP", "TMP"):
+        monkeypatch.setenv(var, str(worker_tmp))
+    monkeypatch.setenv("LOCALAPPDATA", str(figs.parent / "localappdata"))
+    outputs = figs / "data" / "dst"
+    outputs.mkdir(parents=True)
+    before = outputs.stat().st_mtime_ns
+    code = (
+        "from pathlib import Path\n"
+        "(Path(__file__).parent / 'data' / 'dst').mkdir(parents=True, exist_ok=True)\n" + GOOD
+    )
+    state["code"] = f"(d / 'fig_matplotlib.py').write_text({code!r}, encoding='utf-8')"
+    sid = _start(client).get_json()["session"]
+    session = _wait_final(client, sid)
+    assert session["task"]["outcome"] == "completed", session["task"]
+    assert client.get(f"/api/ai/convert/{sid}").get_json()["state"] == "ready"
+    assert outputs.stat().st_mtime_ns == before and list(outputs.iterdir()) == []
+    assert (figs / "fig.py").read_bytes() == ORIGINAL.encode()
+    assert (figs / "out.png").read_bytes() == PNG
+    assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200
+
+
 def test_discard_endpoint_removes_the_candidate(project):
     m, client, figs, state = project
     sid = _start(client).get_json()["session"]
