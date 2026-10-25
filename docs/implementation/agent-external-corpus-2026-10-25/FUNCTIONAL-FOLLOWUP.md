@@ -66,6 +66,8 @@ The focused repair/preparation/MCP/import-architecture gate passed **797 tests, 
 
 The six archived model-repair reports above were re-evaluated with the stricter predicate: four have `completed/succeeded`, and the two font attempts have `partial/execution_finished_no_figure`. All six remain valid execution evidence. This is a re-audit of the frozen reports, not six new model trials; their revisions and attempt counts are unchanged.
 
+Windows CI then exposed two test portability assumptions: a fixture written with native CRLF was compared with LF bytes, and a valid forward-slash command argument was compared with an assumed backslash spelling. The conversion process and resource copy had already succeeded. The tests now exercise both LF and CRLF originals with byte preservation at rejection, correction and stale-authorization stages, and compare the confirmation card with the actual spawned argv while independently checking file identity and copied bytes. The CRLF case reproduced the original assertion failure on macOS before the assertion fix. The conversion-runner, command-tool and Windows-regression suites pass **360 tests, with 6 platform-specific skips** on macOS; production behavior and routing are unchanged by this test-only follow-up.
+
 ## Verification and remaining limits
 
 - Backend: **722 passed, 2 skipped** at `aeaee3895` (opt-in real CLI discovery and Linux-only bwrap). Guidance follow-up: **200 passed, zero skipped**.

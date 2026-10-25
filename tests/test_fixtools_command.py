@@ -156,13 +156,16 @@ def test_tier1_without_consent_never_starts_the_process(box):
 
 
 @pytest.mark.parametrize("outside", [False, True])
-def test_home_relative_resource_path_survives_approval_and_real_execution(box, outside):
+def test_home_relative_resource_path_survives_approval_and_real_execution(
+    box, monkeypatch, outside
+):
     source = box.home / "数据 空格" / "font.txt"
     put(source, b"resource bytes")
     marker = box.proj / "copied.txt"
     # Fake OS sandbox only in this test; the real process must read the exact
     # home-relative resource. No shell or blanket $variable expansion.
     ctx = change_ctx(box)
+    processes = _spawn_counter(monkeypatch)
     code = "import pathlib,sys; pathlib.Path(sys.argv[2]).write_bytes(pathlib.Path(sys.argv[1]).read_bytes())"
     argv = [*_py(code), "~/数据 空格/font.txt", str(marker)]
     args = {
@@ -172,9 +175,12 @@ def test_home_relative_resource_path_survives_approval_and_real_execution(box, o
     result = call(ctx, "run_command", args)
     assert not result.is_error and "exit code: 0" in result.content
     assert marker.read_bytes() == b"resource bytes"
-    assert ctx.asker.cards[-1]["command"] == command.scrub(
-        command._shown([*_py(code), str(source), str(marker)])
-    )
+    (actual_argv,) = processes
+    assert actual_argv[:-2] == _py(code)
+    assert Path(actual_argv[-2]) == source and Path(actual_argv[-1]) == marker
+    # Windows accepts both separators; compare the card to the real process
+    # arguments, without assuming expansion rewrites the user's slash spelling.
+    assert ctx.asker.cards[-1]["command"] == command.scrub(command._shown(actual_argv))
 
 
 def test_home_expansion_still_refuses_secrets_before_approval(box):

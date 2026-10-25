@@ -523,7 +523,10 @@ def run_cli(cand, *extra, stdin="make it editable"):
 
 
 class TestCli:
-    def test_correction_reopens_only_the_parent_authorized_candidate(self, cand, tmp_path):
+    @pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+    def test_correction_reopens_only_the_parent_authorized_candidate(self, cand, tmp_path, newline):
+        original = ORIG.replace("\n", newline).encode("utf-8")
+        (cand / "fig.py").write_bytes(original)
         old = NEW.replace("plt.plot([1, 2])", "plt.plot([1, 3])")
         (cand / "fig_matplotlib.py").write_bytes(old.encode())
         script = tmp_path / "correction.json"
@@ -550,17 +553,19 @@ class TestCli:
         )
         refused = run_cli(cand, *args)
         assert refused.returncode == 1
+        assert (cand / "fig.py").read_bytes() == original
         assert (cand / "fig_matplotlib.py").read_bytes() == old.encode()
         resumed = run_cli(
             cand, *args, "--resume-output-sha256", hashlib.sha256(old.encode()).hexdigest()
         )
         assert resumed.returncode == 0, resumed.stderr
         assert (cand / "fig_matplotlib.py").read_bytes() == NEW.encode()
-        assert (cand / "fig.py").read_bytes() == ORIG.encode()
+        assert (cand / "fig.py").read_bytes() == original
         stale = run_cli(
             cand, *args, "--resume-output-sha256", hashlib.sha256(old.encode()).hexdigest()
         )
         assert stale.returncode == 1
+        assert (cand / "fig.py").read_bytes() == original
         assert (cand / "fig_matplotlib.py").read_bytes() == NEW.encode()
 
     def test_correction_does_not_reset_tool_check_budget(self, cand):
