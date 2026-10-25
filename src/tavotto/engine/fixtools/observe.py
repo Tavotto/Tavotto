@@ -511,8 +511,25 @@ def read_logs(ctx: FixContext, args: dict) -> ToolResult:
         return err("bad_arguments", f"`source` must be one of {list(_LOG_SOURCES)}.")
     n = _int(args.get("lines"), 80, 1, LOG_LINES_MAX) or 80
     path = _log_path(ctx, source)
+    if source == "worker":
+        # 渲染 worker 的日志不在固定位置：每个 (项目, 脚本) 一个缓存目录 `<项目哈希>-<脚本名>/worker.log`。
+        # 之前没人填 `ctx.log_paths["worker"]`，这个来源永远 no_log（真实语料 9/9 会话）。取**当前项目**名下
+        # 最近的一份——判据与诊断包同一个（`diagnostics.owned_worker_logs`），别的项目的日志不会漏进来。
+        from .. import diagnostics
+
+        try:
+            owned = diagnostics.owned_worker_logs(ctx.project_root)
+        except Exception:  # noqa: BLE001 - 找不到日志不是修复会话的故障
+            return None
+        return owned[0][1] if owned else None
     if path is None or not os.path.isfile(path):
-        return err("no_log", f"There is no {source} log to read.")
+        hint = (
+            " Tavotto's render worker has not written a log for this project yet (it only exists "
+            "after the script was started at least once); use read_run_report for the error instead."
+            if source == "worker"
+            else ""
+        )
+        return err("no_log", f"There is no {source} log to read.{hint}")
     # 日志读取也进「项目外读过的文件」清单（日志是 Tavotto 自己的文件，不受主目录范围限制，但照样告诉用户）
     seen = ctx.scope.check(path)
     if not seen.ok:  # 日志在主目录 / 项目范围之外也照记（不 ok 只是范围判据，不是「没读」）
