@@ -89,7 +89,7 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 2. **不运行**用户的 R / MATLAB：对照只用脚本旁已有的原图（沿用本 ADR 的 `path` / `original_rel`；请求没给时取脚本旁同主干名的位图）。没有原图时
    `comparison` 带 `reference: null`、`verification: "unknown"`（有原图为 `side_by_side`，只是并排给人看，不是判定），界面一句话说明。
 3. **没有逐一对应的统计方法时停下**：Agent 首行写 `TAVOTTO_NEEDS_INPUT: <原因>` 并且不写新文件 → 任务结局 `needs_input`（`ai_tasks.NeedsInput`，在 Agent 运行结束后判，
-   与 `Plan.needs_input` 的“执行前”不同），不生成新脚本。标记只在“没有新文件”时算数、只认 Agent 的完整回答、行首；原因清洗 + 限长 200 字，只随结局给界面，不进日志 / 遥测。
+   与 `Plan.needs_input` 的“执行前”不同），不生成新脚本。标记只在“没有新文件”时算数、只认 Agent 的完整回答、行首；原因清洗 + 限长 2,000 字，只随结局给界面，不进日志 / 遥测。
    没有标记且没写文件仍是原来的 `target_missing` 失败。
 4. **新脚本缺的 Python 包自动装进用户环境**（用户改了默认值）：不新写 pip 路径，缺什么由 `deprepair.joint_plan_for`（`importscan` 静态扫 + `depplan`）算，装由
    `create_joint_plan` + `prepare`。装好的包进结果 `installed`（界面一句“已为这个项目装好 pandas、statsmodels”）；装失败是不可修正的失败（`dependency_install_failed`）。

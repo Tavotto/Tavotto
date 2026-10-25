@@ -71,7 +71,7 @@ PREVIEW_NAME = "preview.svg"
 
 #: Agent 判定缺少保真所需证据或可靠对应时：首行 `TAVOTTO_NEEDS_INPUT: <原因>`；已写出的草稿也不能采用
 NEEDS_INPUT_MARKER = "TAVOTTO_NEEDS_INPUT:"
-NEEDS_INPUT_REASON_MAX = 200
+NEEDS_INPUT_REASON_MAX = 2000
 _NEEDS_INPUT_RE = re.compile(r"^[ \t>*`_-]*TAVOTTO_NEEDS_INPUT:[ \t]*(.*)$", re.M)
 #: 对照数据里 `verification` 的取值：没有原图 = `unknown`（Tavotto 没运行 R / MATLAB，也没有原图可比）；有原图 = 并排给人看
 VERIFICATION_UNKNOWN = "unknown"
@@ -913,8 +913,21 @@ def convert_fix_text(key: tuple[str, str | None], observed: dict) -> str | None:
 def clean_needs_input_reason(text: str) -> str:
     """Agent 给的“换不了”原因 → 一行干净的短句：去控制字符 / 换行折叠 / 去首尾标点装饰，截到 `NEEDS_INPUT_REASON_MAX`。"""
     one = re.sub(r"[\x00-\x1f\x7f]+", " ", str(text or ""))
-    one = re.sub(r"\s+", " ", one).strip(" \t*_`>-")
-    return one[:NEEDS_INPUT_REASON_MAX].rstrip()
+    one = re.sub(r"\s+", " ", one).strip()
+    # Strip only a balanced wrapper; stripping individual backticks corrupts a
+    # leading function/command followed by explanatory text.
+    for wrapper in ("**", "__", "`", "*", "_"):
+        if one.startswith(wrapper) and one.endswith(wrapper) and len(one) > 2 * len(wrapper):
+            one = one[len(wrapper) : -len(wrapper)].strip()
+    if len(one) > NEEDS_INPUT_REASON_MAX:
+        # Never offer a silently chopped command as executable guidance. Keep
+        # complete sentences only, or a plain bounded explanation if none fit.
+        prefix = one[:NEEDS_INPUT_REASON_MAX]
+        boundary = max(prefix.rfind("。"), prefix.rfind(". "), prefix.rfind("; "))
+        if boundary >= 0 and prefix[: boundary + 1].count("`") % 2 == 0:
+            return prefix[: boundary + 1].rstrip()
+        return "Additional input is required. The agent's explanation exceeds the display limit; request a shorter explanation with complete commands."
+    return one
 
 
 def needs_input_reason(transcript) -> str | None:

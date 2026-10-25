@@ -339,7 +339,13 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         "plotmath 要翻译实际显示的表达式，不能按源码字符串猜：函数调用中 `name=value` 是参数标签，"
         "标签本身不成为显示的数学等式，`name==value` 才是等式表达式；求和/乘积/积分的上下限只取实际操作数。"
         "保留 plain/italic/bold、上下标、分式、间距及括号语义，不能补入原图没有的变量或下限；"
-        "使用 Matplotlib 支持的 mathtext 语法，并检查每页实际渲染。",
+        "plotmath 的默认字形跟随 R 当前 font/family，不能套用 TeX 默认全斜体。"
+        "核对 frac/over/atop 的实际字号和 display/text/script style；Matplotlib 的 \\frac 常会缩小操作数，"
+        "需要全尺寸时使用 \\dfrac 或指定 style 的 \\genfrac。phantom 保留被隐藏表达式的实际宽、高和深度，"
+        "不能用几个空格替代，分数线也不能丢掉；用普通可编辑 Text/Line/Patch 组合，不能只在自定义 Artist.draw 中临时画字。"
+        "使用 Matplotlib 支持的 mathtext 语法，并检查每页实际渲染。"
+        "R 的颜色名按 col2rgb 解析，不能直接交给 Matplotlib 同名颜色：例如 grey/gray 是 #BEBEBE，"
+        "green 是 #00FF00，grey50 是 #7F7F7F；数字颜色还取决于 R 的当前 palette。",
     ),
     "rule_foreign_mapping_matlab": (
         frozenset(),

@@ -262,13 +262,27 @@ def test_marker_after_the_correction_round_also_ends_in_needs_input(env):
     [
         ("  换\n行\t和  空格  ", "换 行 和 空格"),
         ("**加粗的原因**", "加粗的原因"),
-        ("x" * 500, "x" * ai_convert.NEEDS_INPUT_REASON_MAX),
+        ("x" * 500, "x" * 500),
         ("控制\x00字\x1b符", "控制 字 符"),
         ("", ""),
     ],
 )
 def test_needs_input_reason_is_cleaned_and_bounded(raw, expected):
     assert ai_convert.clean_needs_input_reason(raw) == expected
+
+
+def test_needs_input_keeps_complete_diagnostic_commands_and_inline_code():
+    reason = (
+        "`surf(z)` requires the original axes colormap. "
+        + "The version and actual axes matter for reproducing the plot. " * 4
+        + "Run `cmap=colormap(ax); writematrix(cmap,'colormap.csv')` in the original MATLAB figure."
+    )
+    assert len(reason) > 200
+    assert ai_convert.clean_needs_input_reason(reason) == reason
+    overlong = "Command `" + "x" * ai_convert.NEEDS_INPUT_REASON_MAX + "`"
+    result = ai_convert.clean_needs_input_reason(overlong)
+    assert len(result) <= ai_convert.NEEDS_INPUT_REASON_MAX
+    assert "exceeds the display limit" in result
 
 
 def test_marker_is_read_from_assistant_messages_only_at_line_start():
