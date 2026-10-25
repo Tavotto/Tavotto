@@ -111,6 +111,7 @@ def test_trusted_prefix_still_activates_and_its_path_is_untouched(
 def test_non_windows_and_non_conda_and_disabled_are_untouched(tmp_path, monkeypatch):
     prefix = _prefix(tmp_path)
     monkeypatch.setattr(launcher, "_raw_conda_roots", lambda: [])
+    monkeypatch.setattr(launcher, "_is_windows", lambda: False)  # 不依赖宿主平台
     assert launcher.merge_env(None, prefix / "python.exe", {"PATH": "OLD"}) == {
         "PATH": "OLD"
     }  # 非 Windows
