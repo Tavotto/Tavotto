@@ -181,6 +181,8 @@ class RunContext:
     #: 内置执行器的任务（`figure_edit` | `convert_to_editable`）与转换任务要新建的文件名
     task: str = "figure_edit"
     output: str | None = None
+    #: 内置执行器：`check` 经 stdout/stdin 回调父进程（改图任务只在有 TAF 候选时才给；转换任务恒给）
+    check_ipc: bool = False
 
 
 @dataclass(frozen=True)
@@ -1260,6 +1262,10 @@ class BuiltinAgent(AgentDefinition):
         if ctx.task == "convert_to_editable":
             # 转换任务：`check` 经 stdin/stdout 回调父进程的校验流水（提示词是 stdin 的第一行 JSON）
             cmd += ["--task", ctx.task, "--output", ctx.output or "", "--check-ipc"]
+        elif ctx.check_ipc:
+            # 改图任务：同一条 IPC，父进程在候选副本上跑提交前同一套检查（`ai_figure_edit.agent_check`）。
+            # 两家 CLI 没有这个入口——它们的 Agent 看不到校验结果，只有提交后被 TAF 拦下时的有界修正一轮
+            cmd += ["--check-ipc"]
         return SpawnSpec(cmd, dict(ctx.endpoint_env))
 
     #: `done.reason` → 给对话里看的一句话（不带内容、不带密钥）

@@ -2118,3 +2118,125 @@ def test_runner_accepts_the_catalog_efforts_for_its_wire():
         .body
     )
     assert body["reasoning"] == {"effort": "xhigh"}
+
+
+# ---- 改图任务的内置执行器也有 `check`（与转换任务同一条 IPC，回调是提交前同一套检查）
+def _plot_parts(text: str) -> dict:
+    """假渲染：把脚本里 `ax.plot(...)` 那一行当作“数据”，指纹 = 它的哈希；真正的指纹比较是 `figureverify.data_unchanged`。"""
+    import hashlib
+
+    line = next((ln for ln in text.splitlines() if "ax.plot(" in ln), "")
+    return {"y": hashlib.sha256(line.encode()).hexdigest()[:12]}
+
+
+def _manifest_of(text: str) -> dict:
+    return {
+        "elements": [
+            {
+                "gid": "axes_0.line_0",
+                "identity": "line",
+                "data_fingerprint": {"status": "ok", "parts": _plot_parts(text)},
+            }
+        ]
+    }
+
+
+@pytest.fixture
+def edit_check_chain(chain):
+    runs: list[tuple] = []
+
+    def runner(figures_dir, rel, write_roots=None):
+        runs.append((rel, write_roots))
+        text = (Path(figures_dir) / rel).read_text(encoding="utf-8")  # 临时校验文件，紧挨原脚本
+        return {
+            "stems": ["Fig1"],
+            "size_mm": None,
+            "svg": None,
+            "manifests": {"Fig1": _manifest_of(text)},
+        }
+
+    chain["runs"] = runs
+    chain["hooks"] = {"runner": runner, "check_before": lambda: {"Fig1": _manifest_of(SCRIPT)}}
+    yield chain
+
+
+def _edit(tid, old, new):
+    return _tool_turn(tid, "edit_file", {"old": old, "new": new})
+
+
+def _edit_check_run(box):
+    return _run(box, task_hooks=box["hooks"])
+
+
+def test_builtin_edit_check_reports_real_findings_then_passes(edit_check_chain):
+    box = edit_check_chain
+    server = box["serve"](
+        [
+            READ_TURN,
+            _edit("e1", "[1, 4, 9]", "[1, 4, 10]"),  # 破坏数据
+            _tool_turn("c1", "check", {}),
+            _edit("e2", "[1, 4, 10]", "[1, 4, 9]"),  # 改回
+            _edit("e3", '"old"', '"new"'),
+            _tool_turn("c2", "check", {}),
+            END_TURN,
+        ]
+    )
+    sid, _ = _edit_check_run(box)
+    sess = _wait(sid)
+    assert sess["status"] == "done", sess.get("transcript")
+    argv = box["spawned"][0][0]
+    assert "--check-ipc" in argv
+    assert "not_available" not in " ".join(server.bodies)
+    first = json.loads(server.bodies[3])["messages"][-1]["content"][0]["content"]
+    first = first if isinstance(first, str) else json.dumps(first)
+    assert "data_changed" in first and "axes_0.line_0" in first and "Fig1" in first, first
+    second = json.loads(server.bodies[6])["messages"][-1]["content"][0]["content"]
+    second = second if isinstance(second, str) else json.dumps(second)
+    assert "check passed" in second and "data unchanged" in second, second
+    assert len(box["runs"]) == 2 and all(r[1] for r in box["runs"]), "两次都真渲染，且带写入根绊线"
+    assert '"new"' in (box["figs"] / "fig1.py").read_text(encoding="utf-8")
+    assert not list(box["figs"].glob("tavotto_convert_probe_*")), "校验临时文件已删"
+
+
+def test_builtin_edit_check_catches_a_syntax_error_without_rendering(edit_check_chain):
+    box = edit_check_chain
+    server = box["serve"](
+        [
+            READ_TURN,
+            _edit("e1", 'ax.set_title("old")', 'ax.set_title("old"'),
+            _tool_turn("c1", "check", {}),
+            _edit("e2", 'ax.set_title("old"', 'ax.set_title("old")'),
+            END_TURN,
+        ]
+    )
+    sid, _ = _edit_check_run(box)
+    _wait(sid)
+    got = json.loads(server.bodies[3])["messages"][-1]["content"][0]["content"]
+    assert got.startswith("check failed") and "第 7 行有语法错误" in got, got
+    assert box["runs"] == [], "语法都过不了，不渲染"
+
+
+def test_builtin_edit_check_is_capped_at_three_runs(edit_check_chain):
+    box = edit_check_chain
+    server = box["serve"](
+        [READ_TURN, _edit("e1", '"old"', '"new"')]
+        + [_tool_turn(f"c{i}", "check", {}) for i in range(4)]
+        + [END_TURN]
+    )
+    sid, _ = _edit_check_run(box)
+    _wait(sid)
+    assert len(box["runs"]) == 3, "第 4 次不再调回调"
+    last = json.loads(server.bodies[6])["messages"][-1]["content"][0]
+    assert last["is_error"] is True and "already called 3 times" in last["content"], last
+
+
+def test_builtin_edit_check_without_a_render_hook_still_runs_the_l1_checks(edit_check_chain):
+    box = edit_check_chain
+    box["hooks"] = {}
+    server = box["serve"](
+        [READ_TURN, _edit("e1", '"old"', '"new"'), _tool_turn("c1", "check", {}), END_TURN]
+    )
+    sid, _ = _edit_check_run(box)
+    _wait(sid)
+    got = json.dumps(json.loads(server.bodies[3])["messages"][-1]["content"])
+    assert "check passed" in got and "rendering is not available" in got, got

@@ -601,6 +601,114 @@ def _call_hook(hook):
         return None
 
 
+# --------------------------------------------------------------------------- 内置执行器的 `check`
+#: 渲染这一步量不了、但不是 Agent 的错的运行错误码：写入根绊线（候选脚本把文件写到候选目录以外，如相对路径的 `savefig` /
+#: `to_csv`；校验运行只许写候选目录）。这类结论是“没量到”，不是“坏了”——真正的渲染验证在提交后的 L2 里照常做
+NOT_MEASURABLE_CODES = frozenset({"write_outside_roots"})
+
+
+def _l1_lines(checks: list[CheckResult]) -> tuple[list[str], list[str]]:
+    """提交前 L1 检查 → `(没过的一句话, 量不出来的一句话)`。可修的失败用 Prompt Pack 的同一份修正文字（CLI 路径的修正指令用它），
+    其余只给稳定的 `检查 id: 原因码`；文字只引用检查自己的观察（行号、stem、候选里的文件名），不回显项目路径。"""
+    pack = ai_prompt_pack.DEFAULT
+    failed, unknown = [], []
+    for c in checks:
+        if c.verdict == FAILED:
+            key = (c.id, c.reason_code)
+            failed.append(
+                ai_prompt_pack.fix_text(pack, key, c.observed)
+                if key in ai_prompt_pack.CORRECTABLE
+                else f"{c.id}: {c.reason_code}"
+            )
+        elif c.verdict == UNKNOWN:
+            unknown.append(f"{c.id}: {c.reason_code}")
+    return failed, unknown
+
+
+def _data_lines(after: dict[str, dict], before: dict[str, dict | None]) -> list[str]:
+    """数据指纹（L2 `figureverify.data_unchanged`，与提交后同一函数）：改后每个 stem 对改前基线。回没过的一句话。"""
+    out: list[str] = []
+    for stem, man in sorted(before.items()):
+        if man is None:
+            continue
+        if stem not in after:
+            out.append(
+                f"figure '{stem}' was not produced any more; keep every figure the script drew."
+            )
+            continue
+        for c in figureverify.data_unchanged(after[stem], man, stage="precommit"):
+            if c.verdict != FAILED:
+                continue
+            gid = str(c.id).split(".", 1)[-1]
+            parts = ", ".join(str(x) for x in (c.observed or {}).get("parts") or [])
+            out.append(
+                f"{c.reason_code} in figure '{stem}', element {gid}"
+                + (f" (parts: {parts})" if parts else "")
+                + ": the plotted data differs from the original. Only presentation may change; restore the data."
+            )
+    return out
+
+
+def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
+    """内置执行器改图任务里 `check` 工具的回调（Agent 在候选里改完自己要一次校验）→ `(是否通过, 给 Agent 看的一段报告)`。
+
+    **与产品提交前同一套**，不另写判据：
+    1. 提交前 L1（`FigureEditAdapter._precommit`）：目标还在且改过 / 语法 / 静态输出名集合不变 / 候选里没有别的文件被改 / 原项目没被动；
+    2. 都过了再真渲染：候选字节以紧挨原脚本的临时文件在用户同一路由下跑一遍（`run_validation` = `ai_convert.run_validation`，由桥注入以免 import 成环，写入根绊线只开候选目录，
+       **不写任何用户文件、不运行原脚本本身**），要求仍捕获到图；
+    3. 数据指纹（`figureverify.data_unchanged`，提交后 L2 用的同一个函数）对基线——基线是池里已 build 的那个会话落盘的 manifest（只读，
+       不重放不退役，`check_before` 钩子）；没有基线 = 这一项没量（报告里说明），不影响通过与否。
+    “范围外有没有被改”（`changes_outside_target`）需要无 override 的重放基线，那会动用户正在看的热会话，所以不在这里量，仍由提交后 L2 兜底。
+
+    没有 `check` 的两家 CLI（Codex / Claude Code）看不到任何校验结果：它们改完就结束，被提交前检查拦下时才由 TAF 有界修正再跑一轮
+    （`FigureEditAdapter.correction`）。内置执行器多这一步，是把同一套检查前移到 Agent 手里（≤ 3 次，见 `agent_runner.tools.MAX_CHECKS`）。"""
+    checks = ADAPTER._precommit(cand)
+    failed, unknown = _l1_lines(checks)
+    if failed:
+        return False, "check failed: " + " ".join(failed)[:1400]
+    if cand.new_bytes is None or cand.new_bytes == cand.base_bytes:
+        return False, "no_change: the target script is not modified yet."
+    notes = [f"not measured ({u})" for u in unknown]
+    runner = cand.extras.get("runner")
+    if runner is None:
+        return (
+            True,
+            "check passed: syntax, figure names and project integrity are fine; rendering is not available here.",
+        )
+    res = run_validation(cand, runner)
+    status = res.get("status")
+    if status == "cancelled":
+        return False, "check_cancelled"
+    if status == "no_figure":
+        return False, "check failed: the edited script ran but no Matplotlib figure was captured."
+    if status == "error":
+        code = str(res.get("code") or "")
+        if code in NOT_MEASURABLE_CODES:
+            notes.append(
+                "rendering not measured: the script writes files outside the work directory (such as savefig/to_csv with a "
+                "relative path); that is checked again after your change is applied"
+            )
+            return True, "check passed (partly): " + "; ".join(notes)
+        detail = " ".join(str(res.get(k) or "") for k in ("code", "message")).strip()
+        return False, f"check failed (the edited script does not run): {detail}"[:1500]
+    stems = list(res.get("stems") or [])
+    baseline = cand.extras.get("check_baseline", "unset")
+    if baseline == "unset":
+        baseline = _call_hook(cand.extras.get("check_before"))  # 只读；整个会话取一次
+        cand.extras["check_baseline"] = baseline
+    after = res.get("manifests")
+    if not baseline or not isinstance(after, dict) or not after:
+        notes.append(
+            "data fingerprint not measured (no baseline render of the original in this session)"
+        )
+    else:
+        bad = _data_lines(after, baseline)
+        if bad:
+            return False, "check failed: " + " ".join(bad)[:1400]
+        notes.append("data unchanged")
+    return True, f"check passed: {len(stems)} figure(s) rendered; " + "; ".join(notes)
+
+
 def envelope_for(
     *, agent: str, project_key: str, script_rel: str, prompt: str, rid: str | None, base_sha256: str
 ) -> ai_tasks.TaskEnvelope:

@@ -423,6 +423,8 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
         "stems": list(out["stems"]),
         "size_mm": out.get("size_mm"),
         "svg": out.get("svg"),
+        # 改图任务的 `check` 要数据指纹：runner 愿意给 manifest 就原样带上（转换任务不读）
+        "manifests": out.get("manifests"),
     }
 
 

@@ -394,7 +394,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   提示词读不到或为空白 → 不调模型，`done{ok:false, reason:"internal", detail:"bad_prompt"}`、退出码 1。
 - **工具与路径判据**（`tools.py`，ADR 0138 §四）：`read_file`（≤ 200 KB 的 UTF-8 文本）、`list_dir`（一层，符号链接只标注不跟随）、
   `edit_file`（`old` 必须在目标脚本里**恰好出现一次**，0 次 / 多次都是带说明的工具错误；本会话必须先 `read_file` 过目标）、
-  `write_file`（整份覆盖，兜底）、`check`（调用方注入的回调，没注入 = `not_available` 工具错误）。**没有 shell、网络、MCP 工具。**
+  `write_file`（整份覆盖，兜底）、`check`（调用方注入的回调，没注入 = `not_available` 工具错误；**最多 3 次**，第 4 次 `check_budget`，改图与转换同一处 `tools.MAX_CHECKS`）。**没有 shell、网络、MCP 工具。**
   路径判据只有一处 `FigureEditSession._resolve`：`realpath` 后须在候选目录内（符号链接先解开再判，链出界即越界）；写只许目标脚本，
   目标本身是符号链接也拒写。越界 / 写非目标 / 超大 / 非文本一律返回**工具错误结果**，不抛、不执行、文件零改动。
   换行：读出时统一成 `\n`，写回恢复文件原有的 `\r\n`（混合换行的文件会被统一成首见的那种）。
@@ -461,6 +461,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `fixsession.connection()`、路由三处共用。`require_usable("builtin")` = 有这样的 Key 连接且没被 `TAVOTTO_AI_BUILTIN=0` 关掉；`run("builtin")` 必须显式带 `endpoint_id`（没有「当前选中」）。
   会话生命周期（候选工作区 / TAF 校验与修正 / 事件流 / 取消 / 历史库 `provider="builtin"`）与 CLI 完全同一套；`classify_event` 把 runner 的 `tool/text/thinking/done` 事件翻成 `action/message/thinking`。
   **转换任务**（`convert`）同样走内置：`--task convert_to_editable --check-ipc`，`check` 经 stdout `check_request` / stdin 回复回调 `ai_convert.agent_check`（stdin 第一行是 `{"prompt":…}`）；
+  **改图任务**有 TAF 候选时同样带 `--check-ipc`（`ai_agents.RunContext.check_ipc`，桥里的 `builtin_ipc`），回调 `ai_figure_edit.agent_check` = 提交前 L1（`FigureEditAdapter._precommit`）→ 候选在用户同一路由下真渲染（`ai_convert.run_validation`，写入根绊线只开候选目录；`write_outside_roots` 记“没量到”不判坏）→ 数据指纹（`figureverify.data_unchanged`，基线 = `task_hooks["check_before"]` 读已 build 会话落盘的 manifest，纯读）；hooks `runner` / `check_before` 由 `app._ai_task_hooks` 给，缺哪个就少量哪项并在报告里说明。无候选（TAF 关）不装 check。两家 CLI 没有这个入口。看护 `tests/test_ai_connections.py::test_builtin_edit_check_*`。
   `/api/ai/convert` 与 `/api/ai/run` 一样接受 `connection`。**思考强度**：`ai_catalog.efforts_for(agent, base_url, model)` 声明「来源 + 型号」确认支持（行级 `efforts` / 顶层 `effort_origins[].models` 型号前缀），内置路由才给 `efforts`（默认型号的档位；每个型号的在 `model_details[].efforts`），传 runner 前按实际型号再核一遍。AI 修复的 `first_key_connection` 跳过 `last_error: unauthorized` 的记录。遥测 `ai_assistant_invoked.agent` 对 `builtin` 落成 `other`。
 - **AI 修复**：`fixsession.connection()` 改为 `ai_connections.first_key_connection()`——第一个内置循环能直接用的 Key 连接（老用户旧版「选中」的接口排最前，其余按保存顺序），不再只看各家族的 active provider。
 

@@ -68,6 +68,12 @@ AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可
   回调父进程——runner 发 `check_request`，`ai_bridge` 在候选工作区里跑 ADR 0143 的同一套校验（`ai_convert.agent_check`：新文件在不在 → 语法 → 静态用了 Matplotlib →
   `run_validation` 真跑，写入根只有候选目录），把 `{ok, report}` 写回 runner 的 stdin；提示词因此是 stdin 的第一行 JSON。其余（候选 / 提交前检查 / 修正 / 留存待采用 / adopt）
   与 CLI 路径是同一条流水，ADR 0143 一条不放松：原脚本永远不可写、只新建一个文件、R / MATLAB 来源同样可走。
+* **改图任务也有 `check`（2026-10-25，FigureBench 真跑发现：此前改图路径没装回调，`check` 恒 `not_available`，模型改完看不到结果，只能靠提交后的 TAF 验证兜底）**：
+  有 TAF 候选工作区的内置改图同样带 `--check-ipc`（同一条 stdout `check_request` / stdin 回复），回调是 `ai_figure_edit.agent_check`——**提交前同一套检查前移到 Agent 手里**，不另写判据：
+  `FigureEditAdapter._precommit`（改过没有 / 语法 / 静态输出名 / 候选里别的文件 / 原项目没被动）→ 都过了在用户同一路由下真渲染候选（`ai_convert.run_validation`：候选字节写成紧挨原脚本的临时文件、写入根绊线只开候选目录、
+  跑完即删，不运行原脚本本身、不写用户文件）→ 数据指纹（`figureverify.data_unchanged`，提交后 L2 用的同一个函数）对基线（池里已 build 会话落盘的 manifest，只读；没有基线就如实说“没量”，不阻止通过）。
+  次数上限与转换同一处（`tools.MAX_CHECKS = 3`，第 4 次 `check_budget` 且回调不再被调）。范围外有没有被改（`changes_outside_target`）需要无 override 的重放基线、会动用户的热会话，所以仍只在提交后 L2 量。
+  Codex / Claude Code 两条 CLI 路径没有这个入口（Agent 看不到校验结果），被提交前检查拦下时才由 TAF 有界修正再跑一轮；没有候选目录（TAF 关）的内置改图不装 check（`not_available`，与旧行为一致）。
 * **思考强度**：目录声明「来源 + 型号」确认支持——行级 `efforts`（该行所有型号）或顶层 `effort_origins[].models`（型号前缀，先中先得，`efforts: []` = 明确不支持；出处写在条目 `source`）；现有（2026-10-25 对照官方文档核对）：官方 Anthropic 的 5 系列（fable / mythos / opus / sonnet / haiku-5-5）与 `claude-opus-4-7` / `claude-opus-4-8` 给 `low/medium/high/xhigh/max`，
 `claude-opus-4-6` / `claude-sonnet-4-6` / `claude-mythos-preview` 给 `low/medium/high/max`（没有 xhigh），默认档位 opus-5-5 与 haiku-5-5 为 `medium`、其余 `high`；Haiku 4.5 及更早、`claude-opus-4-5`（只配合 budget_tokens 的 extended thinking，runner 不支持）不给。
 发 effort 时一并带 `thinking:{type:adaptive}`（这些型号都是自适应思考，合法；不发 `disabled`）。官方 OpenAI 的 gpt-5* / gpt-6* / o* 兜底只给 `low/medium/high`（文档里 effort 取值按型号不同且没有完整清单，逐型号核实前不给 none/minimal/xhigh/max），`gpt-5-chat` / `o1-mini` / `o1-preview` 不给。
