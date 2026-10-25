@@ -12489,6 +12489,14 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
                 err = result["error"]
                 return {"error": {"code": err.get("code"), "message": err.get("message")}}
             stems = list(result.get("stems") or [])
+            conflicts = engine_probe._live_stem_conflicts(figures_dir, rel, stems)
+            if conflicts:
+                return {
+                    "error": {
+                        "code": engine_probe.ERROR_STEM_CONFLICT,
+                        "message": "Converted outputs still belong to another script; choose independent output names.",
+                    }
+                }
             descs = result.get("descriptors") or []
             size = descs[0].get("size_mm") if descs and isinstance(descs[0], dict) else None
             svg = None
@@ -12502,7 +12510,14 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
                         svg = p.read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     svg = None
-            return {"stems": stems, "size_mm": size, "svg": svg}
+            return {
+                "stems": stems,
+                "size_mm": size,
+                "svg": svg,
+                "partial": result.get("partial", False),
+                "failed_figures": result.get("failed_figures") or [],
+                "dropped_figures": result.get("dropped_figures", 0),
+            }
         finally:
             try:
                 engine_pool.invalidate(

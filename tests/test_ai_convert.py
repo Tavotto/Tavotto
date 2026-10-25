@@ -344,7 +344,9 @@ def test_adopt_creates_the_file_and_never_overwrites(env):
     made = ai_convert.adopt(sid, _project(env))
     assert made == {"script": "fig_matplotlib_2.py", "name": "fig_matplotlib_2.py"}
     assert (figs / "fig_matplotlib.py").read_text(encoding="utf-8") == "# user's own file\n"
-    assert (figs / "fig_matplotlib_2.py").read_text(encoding="utf-8") == GOOD
+    assert (figs / "fig_matplotlib_2.py").read_bytes() == (
+        ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py"
+    ).read_bytes()
     # 重入：不再写第二个文件
     assert ai_convert.adopt(sid, _project(env)) == made
     assert sorted(p.name for p in figs.glob("fig_matplotlib*")) == [

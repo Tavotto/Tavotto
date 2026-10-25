@@ -31,6 +31,7 @@ import shutil
 import struct
 import threading
 import time
+import tokenize
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,6 +42,7 @@ from . import (
     atomicio,
     config,
     convertcontext,
+    convertoutputs,
     discover,
     projectenv,
     rasterhint,
@@ -62,7 +64,7 @@ PREVIEW_MAX_BYTES = 6 * 1024 * 1024
 RETAIN_S = 24 * 3600
 NAME_SUFFIX = "_matplotlib"
 #: 校验运行用的临时文件名前缀。worker 按 `importlib.import_module(stem)` 加载脚本，stem 必须是合法模块名（不能以点开头）
-STAGE_PREFIX = "tavotto_convert_probe_"
+STAGE_PREFIX = "_tavotto_convert_probe_"
 MAX_NUMBERED = 99
 META_NAME = "meta.json"
 PREVIEW_NAME = "preview.svg"
@@ -392,6 +394,27 @@ def _static_uses_matplotlib(tree: ast.AST) -> bool:
     return False
 
 
+def normalize_outputs(cand: ConvertCandidate) -> dict | None:
+    """Give this reviewable candidate its own output identity before any execution."""
+    try:
+        data = convertoutputs.normalize(cand.new_bytes or b"", cand.sid)
+        if data != cand.new_bytes:
+            if cand.target.is_symlink():
+                raise ValueError("candidate_symlink")
+            atomicio.write_bytes(cand.target, data)
+            cand.new_bytes = data
+    except (
+        OSError,
+        UnicodeError,
+        SyntaxError,
+        ValueError,
+        StopIteration,
+        tokenize.TokenError,
+    ) as exc:
+        return {"status": "error", "code": "convert_output_identity", "message": str(exc)}
+    return None
+
+
 def run_validation(cand: ConvertCandidate, runner) -> dict:
     """在用户同一解释器 / 同一路由下跑候选脚本一遍。
 
@@ -400,8 +423,11 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
     **隔离写入（Codex #1277 P1）**：运行带写入根绊线（ADR 0141 的 `write_roots`，现有机制）——根只有候选目录（加 worker 自己的
     基础设施目录），所以候选脚本把相对路径输出（`out.png` / `data.csv`）写进项目目录时，在**写发生的那一刻**失败
     （`write_outside_roots`），用户文件根本没被打开写过；跑完的指纹复核只是兜底（绊线挡不住 C 层写）。
-    候选以紧挨原脚本的**临时文件**（`tavotto_convert_probe_<sid>.py`）形式存在（O_EXCL 新建、跑完即删）：相对路径的数据读取与 cwd 判据同原脚本。
+    候选以紧挨原脚本的**临时文件**（`_tavotto_convert_probe_<sid>.py`）形式存在（O_EXCL 新建、跑完即删）：相对路径的数据读取与 cwd 判据同原脚本。
     回 `{"status": "ok" | "no_figure" | "error", ...}`。"""
+    issue = normalize_outputs(cand)
+    if issue is not None:
+        return issue
     stage_path = cand.script_path.parent / f"{STAGE_PREFIX}{cand.sid}.py"
     rel = stage_path.relative_to(cand.project_root).as_posix()
     try:
@@ -434,6 +460,28 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
         if code == WRITE_OUTSIDE_ROOTS_CODE:
             return {"status": "error", "code": code, "message": WRITE_OUTSIDE_HINT}
         return {"status": "error", "code": code, "message": str(err.get("message") or "")[:400]}
+    # Probe isolates per-figure failures so other pages remain usable. A
+    # conversion, however, must not certify a candidate which lost some pages.
+    if out.get("partial") or out.get("failed_figures") or out.get("dropped_figures"):
+        failures = out.get("failed_figures") or []
+        detail = "; ".join(
+            f"{f.get('stem', 'figure')}: {f.get('code', 'capture_failed')}"
+            for f in failures
+            if isinstance(f, dict)
+        )
+        return {
+            "status": "error",
+            "code": "capture_incomplete",
+            "message": (
+                "Not all figures could be captured. "
+                + detail
+                + (
+                    f" Dropped figures: {out['dropped_figures']}."
+                    if out.get("dropped_figures")
+                    else ""
+                )
+            )[:400],
+        }
     if not out.get("stems"):
         return {"status": "no_figure", "code": "no_figures_captured"}
     return {

@@ -1683,7 +1683,9 @@ def test_builtin_converts_to_an_editable_script_through_the_normal_pipeline(
     # 采用：只新建兄弟脚本
     made = ai_convert.adopt(sid, str(figs.resolve()))
     assert made["name"] == "fig_matplotlib.py"
-    assert (figs / "fig_matplotlib.py").read_text(encoding="utf-8") == GOOD_MPL
+    assert (figs / "fig_matplotlib.py").read_bytes() == (
+        ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py"
+    ).read_bytes()
     assert (figs / script).read_bytes() == orig.encode()
 
 

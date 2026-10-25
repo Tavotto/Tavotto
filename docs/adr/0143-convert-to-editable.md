@@ -212,3 +212,24 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 ## 回滚
 
 关总开关即回到 D 的纯提示卡；采用产生的只是项目里一个新文件，删掉即恢复。
+
+### 外部语料复测发现的校验闭环（2026-10-25）
+
+候选校验复用 probe 的逐图隔离能力，但其接受条件更严格：只要本次运行带
+`partial`、非空 `failed_figures` 或 `dropped_figures`，即使已有其他图成功捕获，也以
+`capture_incomplete` 拒绝 check / precommit / resume；应用适配层须原样传递这些事实。
+不能把“至少一张可用”当作“这份转换通过”。语义保真仍由原生参照另验。
+
+临时校验脚本仍放在原脚本同目录，文件名使用有效 Python 私有模块前缀 `_tavotto_convert_probe_`，
+因此相对资源解析不变，而项目发现沿用其既有的基础设施脚本规则，不会把短暂的
+校验副本登记成用户脚本或输出归属。每次运行的 finally 仍负责移除它；不删除
+原项目的任何归属记录来解决冲突。回归：`tests/test_convert_capture_completeness.py`。
+
+新生成的 Matplotlib 候选在真实校验之前，把 savefig 路径规范化为本次转换的
+独立输出名（原目录、扩展名保留，主干追加稳定转换标识）。这是候选文件本身的
+可审阅代码，采用时不再改写；不修改原脚本、原图或抢占原注册表归属。
+`convertoutputs` 用 AST 封装调用，运行时只对实际 Matplotlib savefig 改名；
+同名的其他对象方法、文件流、参数求值顺序保持原样。动态别名未能覆盖时，
+真实捕获仍由现有 `probe._live_stem_conflicts` 判归属冲突，不会默默采用。
+回归含多种调用形态、幂等、篡改拒绝和删缓存后的真实应用重开
+（`tests/test_convert_outputs.py`）。

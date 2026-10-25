@@ -130,6 +130,7 @@ def test_convert_runs_validates_compares_and_adopts_without_touching_the_origina
     # 采用前项目里什么都没多：校验用的临时文件已删
     assert sorted(p.name for p in figs.iterdir() if p.is_file()) == state["initial"]
     assert not any(p.name.startswith(ai_convert.STAGE_PREFIX) for p in figs.iterdir())
+    verified_bytes = (ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py").read_bytes()
     a = client.post(f"/api/ai/convert/{sid}/adopt")
     assert a.status_code == 200, a.get_json()
     body = a.get_json()
@@ -137,7 +138,7 @@ def test_convert_runs_validates_compares_and_adopts_without_touching_the_origina
         "ok",
         "not_wired",
     )
-    assert (figs / "fig_matplotlib.py").read_text(encoding="utf-8") == GOOD
+    assert (figs / "fig_matplotlib.py").read_bytes() == verified_bytes
     assert (figs / "fig.py").read_bytes() == before
     again = client.post(f"/api/ai/convert/{sid}/adopt")
     assert again.status_code == 200 and again.get_json()["script"] == "fig_matplotlib.py"
