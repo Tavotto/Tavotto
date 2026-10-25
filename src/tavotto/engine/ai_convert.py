@@ -413,8 +413,13 @@ def run_validation(cand: ConvertCandidate, runner) -> dict:
         code = str(err.get("code") or "run_failed")
         if code in NO_FIGURE_CODES:
             return {"status": "no_figure", "code": code}
-        if code == WRITE_OUTSIDE_ROOTS_CODE:
-            return {"status": "error", "code": code, "message": WRITE_OUTSIDE_HINT}
+        if ai_figure_edit.tripped_write_roots(code, err.get("cause")):
+            # 生产 runner 里码被探测折成 script_probe_failed，绊线的码在 `cause`：两种来源同一个结论、同一句提示
+            return {
+                "status": "error",
+                "code": WRITE_OUTSIDE_ROOTS_CODE,
+                "message": WRITE_OUTSIDE_HINT,
+            }
         return {
             "status": "error",
             "code": code,

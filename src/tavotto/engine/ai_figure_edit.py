@@ -609,6 +609,12 @@ STAGE_PREFIX = "tavotto_convert_probe_"
 NOT_MEASURABLE_CODES = frozenset({"write_outside_roots"})
 
 
+def tripped_write_roots(code: object, cause: object = None) -> bool:
+    """校验运行的错误是不是“写入根绊线”：生产 runner 经探测把它折成 `script_probe_failed`，底层码在 `cause`，所以两处都看。
+    改图 `check`（`agent_check`）与转换 `run_validation` 共用这一个判据。"""
+    return str(code or "") in NOT_MEASURABLE_CODES or str(cause or "") in NOT_MEASURABLE_CODES
+
+
 def _l1_lines(checks: list[CheckResult]) -> tuple[list[str], list[str]]:
     """提交前 L1 检查 → `(没过的一句话, 量不出来的一句话)`。可修的失败用 Prompt Pack 的同一份修正文字（CLI 路径的修正指令用它），
     其余只给稳定的 `检查 id: 原因码`；文字只引用检查自己的观察（行号、stem、候选里的文件名），不回显项目路径。"""
@@ -700,7 +706,7 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
     if status == "error":
         code = str(res.get("code") or "")
         # 生产 runner 经探测把写入绊线折成 script_probe_failed，底层码在 `cause`
-        if code in NOT_MEASURABLE_CODES or str(res.get("cause") or "") in NOT_MEASURABLE_CODES:
+        if tripped_write_roots(code, res.get("cause")):
             notes.append(
                 "rendering not measured: the script writes files outside the work directory (such as savefig/to_csv with a "
                 "relative path); that is checked again after your change is applied"

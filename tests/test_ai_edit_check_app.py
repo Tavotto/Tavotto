@@ -98,3 +98,19 @@ def test_relative_output_write_is_reported_as_not_measured_not_as_a_broken_scrip
 
 def test_stage_prefix_mirrors_the_convert_module():
     assert ai_figure_edit.STAGE_PREFIX == ai_convert.STAGE_PREFIX
+
+
+def test_convert_validation_gives_the_write_hint_for_a_relative_output_script(world):
+    """转换任务的校验运行走同一条真链路：绊线的码被探测折成 script_probe_failed，也要走到设计好的“写到项目内”提示。"""
+    m, figs = world
+    script = figs / "plot.py"
+    script.write_text(SHOW_ONLY, encoding="utf-8")
+    ctx = next(iter(m.PROJECTS.values()))
+    cand = ai_figure_edit.create_candidate("c1", script, figs, "plot.py")
+    cand.new_bytes = WRITES_CSV.encode()
+    try:
+        res = ai_convert.run_validation(cand, m._convert_runner(ctx, "plot.py"))
+    finally:
+        ai_figure_edit.remove_candidate(cand.dir)
+    assert res["status"] == "error" and res["code"] == ai_convert.WRITE_OUTSIDE_ROOTS_CODE, res
+    assert res["message"] == ai_convert.WRITE_OUTSIDE_HINT
