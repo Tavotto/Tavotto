@@ -135,6 +135,48 @@ def test_script_dir_package_wins_over_project_root_package(box):
     assert "Do not install it" not in note and "can fix this" in note
 
 
+_INIT_EXTEND = "from pkgutil import extend_path\n__path__ = extend_path(__path__, __name__)\n"
+_MISSING = "ModuleNotFoundError: No module named 'foo.bar'"
+
+
+@pytest.mark.parametrize(
+    ("layout", "expect"),
+    [
+        # PathFinder：第一个有 __init__.py 的位置胜出，哪怕更前面有无 __init__ 的目录（Codex 形状）
+        ({"scripts/foo": None, "foo": "x = 1\n"}, ("regular", "foo/")),
+        ({"scripts/foo": "x = 1\n", "foo": None}, ("regular", "foo/")),
+        ({"scripts/foo": "x = 1\n", "foo": "y = 1\n"}, ("regular", "foo/")),
+        # 胜出的 regular 包用 extend_path：按 namespace 说（装上能修）
+        ({"scripts/foo": _INIT_EXTEND, "foo": "x = 1\n"}, ("namespace", None)),
+        ({"foo": "__import__('pkg_resources').declare_namespace(__name__)\n"}, ("namespace", None)),
+        # 都没有 __init__：namespace，装真包能修
+        ({"scripts/foo": None, "foo": None}, ("namespace", None)),
+        ({"foo": None}, ("namespace", None)),
+        # 项目里没有这个包：不下结论
+        ({"other": "x = 1\n"}, None),
+    ],
+)
+def test_package_selection_follows_pathfinder_and_pep420(box, layout, expect):
+    for rel, init in layout.items():
+        if init is None:
+            (box.proj / rel).mkdir(parents=True, exist_ok=True)
+        else:
+            put(box.proj / rel / "__init__.py", init)
+    script = put(box.proj / "scripts" / "fig.py", "import foo.bar\n")
+    ctx = make_ctx(box, script_path=script)
+    fact = importshadow.detect(_MISSING, [script.parent, box.proj])
+    if expect is None:
+        assert fact is None
+        assert base.shadow_note(ctx, _MISSING) == ""
+        return
+    kind, path = expect
+    assert fact is not None and fact["kind"] == kind
+    note = base.shadow_note(ctx, _MISSING)
+    assert ("Do not install it" in note) == (kind == "regular")
+    if path:
+        assert fact["project_path"] == path
+
+
 def test_cannot_import_name_from_a_project_copy_is_recognised(box):
     celerite_project(box)
     init = box.proj / "celerite" / "__init__.py"
@@ -312,6 +354,36 @@ def test_index_probe_passes_ignore_requires_python_only_when_asked(monkeypatch):
         deprepair, "_run_pip", lambda *a, **k: ("x", "no such option: --ignore-requires-python")
     )
     assert executors.index_has_project("py", "c", ev, ignore_requires_python=True) is None
+
+
+@pytest.mark.parametrize(
+    "req", ["reviewprobe==2.0", "reviewprobe>=2", "reviewprobe~=2.0", "reviewprobe>=1,<2"]
+)
+def test_versioned_requests_are_never_probed_and_stay_not_found(monkeypatch, req):
+    out = (
+        "ERROR: Could not find a version that satisfies the requirement reviewprobe==2.0 (from versions: none)\n"
+        "ERROR: No matching distribution found for reviewprobe==2.0\n"
+    )
+
+    def fake_pip_install(python, r, cancel, on_log, **kw):
+        return deprepair.classify_pip_failure(out), out
+
+    def boom(*a, **k):
+        raise AssertionError("must not probe a versioned request")
+
+    monkeypatch.setattr(deprepair, "_pip_install", fake_pip_install)
+    monkeypatch.setattr(executors, "index_has_project", boom)
+
+    class _Lock:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(pool, "mutating_environment", lambda key, python: _Lock())
+    res = executors._default_installer("py", [req])
+    assert res["code"] == "dependency_not_found"
 
 
 def test_package_absent_from_the_index_stays_not_found(monkeypatch):

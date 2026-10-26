@@ -59,6 +59,30 @@ def _read_init(init: Path) -> str:
         return ""
 
 
+def select_package(parent: str, roots: list[Path]) -> tuple[Path, list[Path]] | None:
+    """Python 会用项目 `roots`（按 `sys.path` 先后）里的哪一份 `parent` 包？回 `(代表根, 全部相关根)`；项目里没有回 `None`。
+
+    对应 `importlib.machinery.PathFinder` 与 PEP 420 的规则：沿 `sys.path` 逐项找，**第一个**含 `parent/__init__.py`
+    的位置胜出（regular 包），哪怕更前面有没有 `__init__.py` 的同名目录（那只是 namespace 的一个 portion，
+    记下来继续找）；只有所有位置都没有 regular 包时，才由全部 portion 合成 namespace 包。项目根都排在
+    site-packages 之前，所以项目里没有 regular 包时，已安装的 regular 包仍会胜出过 namespace portion——这时
+    安装能修，代表根取第一个 portion。胜出的 regular 包的 `__init__.py` 若用 `extend_path` / `declare_namespace`，
+    它的 `__path__` 会并入其它同名目录（`_fact` 据此把它按 namespace 说）：这里把其余含该目录的根也算作相关根。"""
+    rel = parent.split(".")
+    portions: list[Path] = []
+    for root in roots:
+        pdir = root.joinpath(*rel)
+        if not pdir.is_dir():
+            continue
+        if (pdir / "__init__.py").is_file():
+            others = [r for r in roots if r.joinpath(*rel).is_dir()]
+            return root, (
+                others if _EXTENDS_PATH_RE.search(_read_init(pdir / "__init__.py")) else [root]
+            )
+        portions.append(root)
+    return (portions[0], portions) if portions else None
+
+
 def _fact(root: Path, parent: str, missing: str, *, relation: str) -> dict:
     parent_dir = root.joinpath(*parent.split("."))
     init = parent_dir / "__init__.py"
@@ -153,16 +177,17 @@ def detect(
         name = hits[-1].group("name")
         if "." in name:
             parent, child = name.rsplit(".", 1)
-            for root in candidates:
-                pdir = root.joinpath(*parent.split("."))
-                if not pdir.is_dir():
-                    continue
-                if not project_on_path and not _frame_in(text, pdir):
-                    continue
-                # `roots` 按 sys.path 的先后：第一个有这个包目录的根就是 Python 会用的那份，只由它下结论
-                if _child_exists(pdir, child):
-                    break
-                return _fact(root, parent, name, relation="missing_submodule")
+            winner = select_package(parent, candidates)
+            if winner is not None:
+                root, portions = winner
+                # 没有来源证据就不下结论：项目不在 sys.path 上时，失败可能完全来自 site-packages
+                if project_on_path or any(
+                    _frame_in(text, root.joinpath(*parent.split("."))) for root in portions
+                ):
+                    if not any(
+                        _child_exists(r.joinpath(*parent.split(".")), child) for r in portions
+                    ):
+                        return _fact(root, parent, name, relation="missing_submodule")
     m = None
     for m in _CANNOT_IMPORT_RE.finditer(text):
         pass

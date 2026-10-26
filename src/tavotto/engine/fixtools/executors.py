@@ -75,7 +75,7 @@ def index_has_project(
 
 
 def _default_installer(python: str, requirements: list[str]) -> dict:
-    from .. import deprepair, pool
+    from .. import deprepair, depresolve, pool
 
     cancel = threading.Event()
     done: list[str] = []
@@ -90,7 +90,10 @@ def _default_installer(python: str, requirements: list[str]) -> dict:
                     if code == deprepair.ERROR_NOT_FOUND:
                         # 「没有这个包」与「有，但没有能装的轮子」输出一样；索引上查得到就改报后者
                         # 探**真正没解析到的那个发行版**：装 A 失败可能是传递依赖 B 找不到，req 仍是 A
-                        unresolved = unresolved_name(out)
+                        # 请求带版本约束（==、>=、~= 等）时，「索引上有这个名字」说明不了「没有满足约束的版本」：
+                        # 不做存在性探测，保持 dependency_not_found（提示文字不断言「不存在」）
+                        parsed = depresolve.parse_requirement(req)
+                        unresolved = unresolved_name(out) if parsed and not parsed[1] else ""
                         present = bool(unresolved) and index_has_project(python, unresolved, cancel)
                         if unresolved and present is False:
                             # 默认探测按 Requires-Python 过滤：再不过滤地看一次，区分「没这个包」与「不支持当前 Python」
