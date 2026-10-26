@@ -148,7 +148,7 @@ def describe(fact: dict) -> str:
         )
     if fact["kind"] == "regular":
         tail = (
-            " That folder is a regular package, so it is found before anything installed: installing a package named "
+            " That folder belongs to a regular package in the project, so it is found before anything installed: installing a package named "
             f"`{pkg}` with pip will NOT change this. Do not install it."
         )
         if fact["init_imports_it"]:
