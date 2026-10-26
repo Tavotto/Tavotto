@@ -80,9 +80,10 @@ let root: Root
 let host: HTMLDivElement
 
 /** 面板当前的结构 manifest：曲线 + 绑定它的图例项（`bound` = 图例项绑定的曲线 gid） */
-function seedManifest(p: PanelObject, bound: string | null = GID) {
+function seedManifest(p: PanelObject, bound: string | null = GID, extra: object[] = []) {
   const elements = [
     { gid: GID, role: 'line', editable: [{ prop: 'label', value: 'B' }] },
+    ...extra,
     ...(bound
       ? [{ gid: LEGEND, role: 'legend_text', legend_entry: { index: 0, source_gid: bound }, editable: [{ prop: 'text', value: 'B' }] }]
       : []),
@@ -90,10 +91,10 @@ function seedManifest(p: PanelObject, bound: string | null = GID) {
   useRenderStore.setState({ byKey: { [renderKeyOf(p)]: { manifest: { elements } } }, latest: {} } as never)
 }
 
-async function mount(sessions: AiSession[], objects: PanelObject[] = [panel()], bound: string | null = GID) {
+async function mount(sessions: AiSession[], objects: PanelObject[] = [panel()], bound: string | null = GID, extra: object[] = []) {
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_legend_label_notice')
   useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects } }) as never)
-  seedManifest(objects[0], bound)
+  seedManifest(objects[0], bound, extra)
   useSelectionStore.setState({ ids: ['p1'] } as never)
   useUiStore.setState({ elementPanelId: null, selectedGids: [] } as never)
   useAiStore.setState({ sessions } as never)
@@ -172,6 +173,15 @@ describe('图例文字跟进卡', () => {
   it('后端给的 legend_gid 与面板 manifest 按 source_gid 找到的图例项不一致：不出卡', async () => {
     await mount([session({ task: { task_type: 'figure_edit', outcome: 'completed', suggestions: [{ ...SUGGESTION, legend_gid: 'axes_0.legend.texts_5' }] } })])
     expect(q(CARD)).toBeNull()
+  })
+
+  it('同一条曲线绑着多个图例项、排在前面的另有其文：按后端给的 legend_gid 取那一项，照常出卡', async () => {
+    // 另一份图例里的项（文字不同）同样绑着这条曲线，在 manifest 里排在前面
+    const other = { gid: 'axes_1.legend.texts_0', role: 'legend_text', legend_entry: { index: 0, source_gid: GID }, editable: [{ prop: 'text', value: '别的' }] }
+    await mount([session()], [panel()], GID, [other])
+    expect(q(CARD)).not.toBeNull()
+    await act(async () => q<HTMLButtonElement>('[data-ai-suggestion-apply]')!.click())
+    expect(setOverride).toHaveBeenCalledWith('p1', LEGEND, 'text', 'B: treated (n=6)', true)
   })
 
   it('对曲线自己的 label override 不算已应用（图例不会因此变）', async () => {

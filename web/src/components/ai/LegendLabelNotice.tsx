@@ -30,10 +30,11 @@ export function LegendLabelNotice({ session, suggestion }: { session: AiSession;
       objects.filter((o): o is PanelObject => {
         if (o.type !== 'panel' || !o.script) return false
         if (!sameScript(o.script, session.script) || panelStemOfFileId(o.fileId) !== stem) return false
+        // 同一条曲线可能绑着多个图例项：按后端给的 legend_gid 取那一项，再核它确实绑着这条曲线
         const bound = structuralPanelManifest({ byKey, latest }, o)?.elements.find(
-          (e) => e.role === 'legend_text' && e.legend_entry?.source_gid === gid,
+          (e) => e.gid === legendGid && e.role === 'legend_text' && e.legend_entry?.source_gid === gid,
         )
-        if (!bound || bound.gid !== legendGid) return false
+        if (!bound) return false
         return effectiveOverride(o.overrides, legendGid, 'text')?.value !== to
       }),
     [objects, byKey, latest, session.script, stem, gid, legendGid, to],
