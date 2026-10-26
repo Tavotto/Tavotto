@@ -51,6 +51,12 @@ LOG = logging.getLogger("tavotto.engine")
 ENGINE_CACHE = config.data_dir() / "cache" / "engine"
 WORKER_PY = Path(__file__).resolve().parent / "worker.py"
 MAX_ALIVE = 3  # 同时存活的 worker 会话数（每个都端着整套 Figure 的内存）
+#: 取到会话（`acquire`）到它第一次真正拿到 `w.lock` 发请求之间的**租约**（秒）。
+#: 租约期内的会话不被 LRU 淘汰：调用方已经拿着它的引用，淘汰线程的 `shutdown()` 与
+#: 调用方的请求在 `w.lock` 上竞争，淘汰一赢，调用方读到的就是「自己以退出码 0 结束了」
+#: ——其实是池自己刚把它优雅关掉（4 张图同时渲染、`MAX_ALIVE=3` 时稳定出现一张）。
+#: 有界：取了会话却始终不发请求的调用方（只读属性、中途出错）不能让会话永远淘汰不掉。
+ACQUIRE_LEASE = 30.0
 
 # ---- 引擎缓存治理（对照 app.prune_render_cache / prune_backups） ------------
 #: cache/engine/ 全部会话目录的总预算。比渲染缓存的 500MB 宽：这里躺着
@@ -2570,6 +2576,12 @@ class EngineWorker:
     #: 消除的竞态。workerd 那侧的会话本来就用逻辑标记（`alive() → not _dead`），
     #: 两条控制面在「还活着吗」这件事上必须给出同一个答案。
     _dead = False
+    #: **池自己**正在 / 已经把这条会话收掉（优雅关停、LRU 淘汰、失效重建）。与 `_dead` 的差别：
+    #: 它在 `shutdown` 命令发出**之前**就置上，所以排在 `w.lock` 后面的老引用持有者拿到锁时
+    #: 能认出「不是 worker 自己死的」，不去解释一个退出码 0（见 `_request_observed`）。
+    _retired = False
+    #: `acquire` 刚交出去、调用方还没发第一条请求时有效的租约截止（`time.monotonic()`）；见 `ACQUIRE_LEASE`。
+    _lease_until = 0.0
     #: 脚本 `input()` 怎么答（ADR 0099 §五）：None = 池会话（记住的答案 / 问界面 / 立即报错）；
     #: `inputbroker.ReplayAnswers` = 写回的一次性重放，只按热态用过的答案严格重放。
     script_input_policy = None
@@ -2850,6 +2862,20 @@ class EngineWorker:
             # 拿到锁的那一刻 = 这条请求真正开始被处理。Python 池没有队列，
             # 「排队」全表现为在这把锁上等——所以它就是 queue_wait 的量法。
             t_lock = time.perf_counter()
+            self._lease_until = 0.0  # 调用方的请求已经到手：租约（`ACQUIRE_LEASE`）完成使命
+            if self._retired and obj.get("cmd") != "shutdown":
+                # 池在这个调用方取到会话之后、拿到锁之前把它收掉了（失效重建 / 淘汰 / 关停）：
+                # 请求一个字节都没写出去。这不是 worker 自己退出——**别去解释它的退出码**
+                # （优雅关停的退出码恒为 0，曾被读成「渲染进程自己以退出码 0 结束了」）。
+                # 带 `extra["retired"]`，调用方重新取会话再来一次是安全的（什么都没执行过）。
+                err = WorkerError(
+                    "这条渲染会话刚被收掉（同时存活的会话超出上限，或环境 / 设置刚变过），"
+                    "这一步还没有执行；重新取会话再来一次即可。",
+                    "",
+                    code="session_dead",
+                )
+                err.extra = {"retired": True}
+                raise err
             # worker 在两次请求之间死掉（被杀、OOM）是**同一个故障**，不许按时间窗落进不同的分类
             # （QA LONG-03-B1）：拿锁时已看得见它死了、写管道时撞上 BrokenPipe、写进去之后读到 EOF，
             # 三处都走同一条 `session_dead`（带退出状态与 worker.log 指引）。
@@ -3116,6 +3142,8 @@ class EngineWorker:
         全程**不碰模块级 `_lock`**——等子进程退出时把全局锁攥在手里，
         等于让一个卡住的脚本冻结整个池。
         """
+        # 先于 shutdown 命令置上（命令要等 `w.lock`，排在前面的老引用持有者会先看到它）
+        self._retired = True
         if graceful and self.alive():
             try:
                 self.request({"cmd": "shutdown"}, SHUTDOWN_TIMEOUT)
@@ -4622,11 +4650,12 @@ def acquire(
                 _workers[key] = w
                 created = True
             w.last_used = time.time()
+            w._lease_until = time.monotonic() + ACQUIRE_LEASE
             alive = [(k, x) for k, x in _workers.items() if x.alive()]
             if len(alive) > MAX_ALIVE:
                 stale = sorted(alive, key=lambda kv: kv[1].last_used)
                 for vkey, victim in stale[: len(alive) - MAX_ALIVE]:
-                    if victim is not w and not _is_fence_holder(victim):
+                    if victim is not w and not _is_fence_holder(victim) and not _is_leased(victim):
                         LOG.info("worker LRU 淘汰: %s", victim.script_name)
                         _workers.pop(vkey, None)
                         threading.Thread(target=victim.shutdown, daemon=True).start()
@@ -4640,6 +4669,11 @@ def acquire(
 #: 本线程最近一次 `acquire()` 的结果 `(worker, created)`（T09b）。只经 `get()` 取会话的老入口（`build()`、试运行）
 #: 据此在**同一线程**、取到之后立刻问「这条是不是我建的」——不拿 `peek()` 的快照去猜（两个调用方都会以为是自己）。
 _last_acquired = threading.local()
+
+
+def _is_leased(worker) -> bool:
+    """调用方刚取到这条会话、还没发第一条请求（`ACQUIRE_LEASE` 内）：LRU 淘汰先放过它。"""
+    return getattr(worker, "_lease_until", 0.0) > time.monotonic()
 
 
 def _is_fence_holder(worker) -> bool:
