@@ -26,6 +26,8 @@ KINDS: dict[str, str] = {
     "line_property": "L3",
     "line_property_unchanged": "L3",
     "series_data_unchanged": "L2",
+    "line_label": "L3",
+    "line_data_unchanged": "L2",
     "series_count_unchanged": "L2",
     "text_equals": "L3",
     "text_contains": "L3",
@@ -154,6 +156,8 @@ def _subject_gids(a: dict, man: dict) -> list[str]:
     """断言指名的对象在这张 manifest 里是哪些 gid（只用来判「改前在不在」，判不出就空）。"""
     try:
         k = a["kind"]
+        if k in ("line_label", "line_data_unchanged"):
+            return [_el(man, f"axes_{a['axes']}.lines_{a['index']}")["gid"]]
         if "series" in a:
             return [_series(man, a["axes"], a["series"])["gid"]]
         if "which" in a and isinstance(a.get("axes"), int):
@@ -179,20 +183,73 @@ def _subject_gids(a: dict, man: dict) -> list[str]:
     return []
 
 
+#: 同一 gid 上身份（ADR 0083）变了时的三种结论（`_identity_change`）
+RENAMED = (
+    "renamed"  # 数据逐部件相同、新名字没被别的数据元素用过 = 只是改了名（用户点名改图例也是这样）
+)
+SWAPPED = "swapped"  # 数据相同，但新名字是同图里另一个数据元素的旧名字 = 名字对调 / 抢了别人的名字（贴错标签）
+REPLACED = "replaced"  # 数据也不同（或量不了）= 主体被删、后面的对象重编号顶了上来
+
+
+#: 按 `lines_N` 序号定位的两类断言：用户点名改图例名字时，名字是被改的东西、数据是要保持的东西，两者都不能靠 label 找曲线
+RENAME_AWARE_KINDS = frozenset({"line_label", "line_data_unchanged"})
+
+
+def _identity_of(el: dict | None) -> str | None:
+    v = (el or {}).get("identity")
+    return v if isinstance(v, str) and v else None
+
+
+def _same_data(old: dict, new: dict) -> bool:
+    """两侧数据指纹都量到了（`ok`）且逐部件相同。任一侧没量到 / 不是数据元素 = 不能说「数据没变」。"""
+    bfp, afp = old.get("data_fingerprint"), new.get("data_fingerprint")
+    return (
+        isinstance(bfp, dict)
+        and isinstance(afp, dict)
+        and bfp.get("status") == "ok"
+        and afp.get("status") == "ok"
+        and afp.get("parts") == bfp.get("parts")
+    )
+
+
+def _identity_change(
+    gid: str, old: dict, new: dict, before_els: dict[str, dict]
+) -> tuple[str, list[str]] | None:
+    """同一 gid 在改前 / 改后的身份冲突怎么定性：`(RENAMED | SWAPPED | REPLACED, 被抢名字的 gid)`；没有冲突回 None。
+
+    两侧都有 identity 且不同才算冲突；任一侧缺 identity（没有显式 label 的对象，ADR 0083 §二「已知边界」）不比，维持
+    按位置匹配的现状——不因缺字段把结论变严或变松。身份 = 显式 label 的摘要，所以「身份变了」有两种来源：改了名（数据没动），
+    或后面的对象重编号顶上了这个 gid（数据也变了）；数据指纹是把两者分开的独立证据（ADR 0083 §五）。
+    被抢名字的判据只看**改前**的数据元素：新名字等于改前另一个数据元素的旧名字 = 这个数据现在顶着别人的名字。"""
+    o, n = _identity_of(old), _identity_of(new)
+    if o is None or n is None or o == n:
+        return None
+    if not _same_data(old, new):
+        return REPLACED, []
+    taken = sorted(
+        h
+        for h, el in before_els.items()
+        if h != gid and isinstance(el.get("data_fingerprint"), dict) and _identity_of(el) == n
+    )
+    return (SWAPPED, taken) if taken else (RENAMED, [])
+
+
 def _subject_replaced(a: dict, after: dict, before: dict) -> bool:
     """改前主体的 gid 在改后还在，但身份（ADR 0083）变了 = 主体被删、后面的对象重编号顶了上来。
 
-    两侧都有 identity 且不同才算；任一侧缺 identity（没有显式 label 的对象，ADR 0083 §二「已知边界」）
-    不比，维持按位置匹配的现状——不因缺字段把结论变严或变松。
+    只有**按序号定位、本来就在谈改名**的两类断言（`RENAME_AWARE_KINDS`：曲线名字 / 曲线数据）把「只改名」（数据逐部件相同、
+    名字没被别的数据元素用过，`RENAMED`）当成主体还在；其余断言（按 label 找曲线、按位置的样式 / 文字断言……）身份一变仍算顶替，
+    与引入改名判定之前逐字相同。缺 identity 的一侧不比（见 `_identity_change`）。
     """
+    aware = a.get("kind") in RENAME_AWARE_KINDS
     after_els = _elements(after)
     before_els = _elements(before)
     for gid in _subject_gids(a, before):
         new, old = after_els.get(gid), before_els.get(gid)
         if new is None or old is None:
             continue
-        o, n = old.get("identity"), new.get("identity")
-        if isinstance(o, str) and isinstance(n, str) and o and n and o != n:
+        change = _identity_change(gid, old, new, before_els)
+        if change is not None and not (aware and change[0] == RENAMED):
             return True
     return False
 
@@ -235,6 +292,12 @@ def _holds(a: dict, after: dict, before: dict) -> bool:
         return _field(_series(after, a["axes"], a["series"]), a["prop"]) == _field(
             _series(before, a["axes"], a["series"]), a["prop"]
         )
+    if k == "line_label":
+        # 按 gid 序号定位（不按 label——label 正是被改的东西）：这条线现在的显式名字
+        return _field(_el(after, f"axes_{a['axes']}.lines_{a['index']}"), "label") == a["expected"]
+    if k == "line_data_unchanged":
+        gid = f"axes_{a['axes']}.lines_{a['index']}"
+        return _same_part(_el(after, gid), _el(before, gid), "xy")
     if k == "series_data_unchanged":
         return _same_part(
             _series(after, a["axes"], a["series"]), _series(before, a["axes"], a["series"]), "xy"
@@ -401,11 +464,16 @@ def _issue_keys(man: dict, profile: dict) -> set[tuple[str, tuple[str, ...]]]:
 def data_unchanged(after: dict, before: dict, *, stage: str = "postcommit") -> list[CheckResult]:
     """figure_edit 的默认保持断言「数据不变」（`03-contracts.md` §四）：改前每个带 `data_fingerprint` 的元素，改后同 gid
     （且 identity 不冲突）的指纹逐部件相同 → verified；不同 → failed（`data_changed`）；改后没了 / 被别的对象顶替 →
-    failed（`subject_removed`）；任一侧这次没量（over_budget / unavailable）→ unknown。改后新出现的数据元素不在这里判
+    failed（`subject_removed`）；任一侧这次没量（over_budget / unavailable）→ unknown。
+
+    **改名不是顶替**（ADR 0083 §五）：同 gid 的 identity（显式 label 的摘要）变了，但数据指纹逐部件相同 → verified，
+    并在 `observed.relabeled` 记 `{from_identity, to_identity}`；identity 变了且数据也变 → `subject_removed`；新名字等于
+    改前另一个数据元素的旧名字（名字对调 / 抢名字，数据顶着别人的名字）→ failed（`label_swapped`）。改后新出现的数据元素不在这里判
     （新增一条曲线可以就是用户要的）。改前一个数据元素都没有 → 空列表（调用方据此记 not_applicable）。"""
     out: list[CheckResult] = []
     after_els = _elements(after)
-    for gid, old in sorted(_elements(before).items()):
+    before_els = _elements(before)
+    for gid, old in sorted(before_els.items()):
         bfp = old.get("data_fingerprint")
         if not isinstance(bfp, dict):
             continue
@@ -417,9 +485,38 @@ def data_unchanged(after: dict, before: dict, *, stage: str = "postcommit") -> l
             "method": "data_fingerprint",
         }
         new = after_els.get(gid)
-        o, n = old.get("identity"), (new or {}).get("identity")
-        if new is None or (isinstance(o, str) and isinstance(n, str) and o and n and o != n):
+        if new is None:
             out.append(CheckResult(**base, verdict=FAILED, reason_code="subject_removed"))
+            continue
+        change = _identity_change(gid, old, new, before_els)
+        if change is not None:
+            kind, taken = change
+            if kind == RENAMED:
+                # 数据逐部件相同、只是显式 label 变了：数据这一项**通过**，并如实记下改名（只记身份摘要，不记 label
+                # 原文，ADR 0083）——提交后的改名由后端报给前端，让画布上已有的编辑跟着换身份（§五）
+                out.append(
+                    CheckResult(
+                        **base,
+                        verdict=VERIFIED,
+                        observed={
+                            "relabeled": {
+                                "from_identity": _identity_of(old),
+                                "to_identity": _identity_of(new),
+                            }
+                        },
+                    )
+                )
+            elif kind == SWAPPED:
+                out.append(
+                    CheckResult(
+                        **base,
+                        verdict=FAILED,
+                        reason_code="label_swapped",
+                        observed={"taken_from": taken},
+                    )
+                )
+            else:
+                out.append(CheckResult(**base, verdict=FAILED, reason_code="subject_removed"))
             continue
         afp = new.get("data_fingerprint")
         if bfp.get("status") != "ok" or not isinstance(afp, dict) or afp.get("status") != "ok":
@@ -804,6 +901,7 @@ def layout_regressions(
 __all__ = [
     "KINDS",
     "NOT_OBSERVABLE",
+    "RENAME_AWARE_KINDS",
     "changes_outside_target",
     "check",
     "data_unchanged",

@@ -114,6 +114,13 @@ def _holds(a: dict, cur: dict, base: dict) -> bool:
             return _series(cur, a)[a["prop"]] == _series(base, a)[a["prop"]]
         if k == "series_data_unchanged":
             return _series(cur, a)["data"] == _series(base, a)["data"]
+        if k == "line_label":
+            return _axes(cur, a["axes"])["lines"][a["index"]]["label"] == a["expected"]
+        if k == "line_data_unchanged":
+            return (
+                _axes(cur, a["axes"])["lines"][a["index"]]["data"]
+                == _axes(base, a["axes"])["lines"][a["index"]]["data"]
+            )
         if k == "series_count_unchanged":
             return len(_axes(cur, a["axes"])["lines"]) == len(_axes(base, a["axes"])["lines"])
         if k in (
@@ -201,6 +208,8 @@ ASSERTION_KINDS = {
     "line_property",
     "line_property_unchanged",
     "series_data_unchanged",
+    "line_label",
+    "line_data_unchanged",
     "series_count_unchanged",
     "text_equals",
     "text_contains",

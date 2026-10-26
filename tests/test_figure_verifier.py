@@ -486,6 +486,7 @@ def test_verifier_imports_without_the_scientific_stack():
 # --------------------------------------------------------------------------- 默认保持断言「数据不变」（figure_edit，Phase 3b）
 _DATA_KINDS = {
     "series_data_unchanged",
+    "line_data_unchanged",
     "errorbar_data_unchanged",
     "errorbar_points_unchanged",
     "image_data_unchanged",
@@ -531,10 +532,24 @@ def test_data_unchanged_rules_on_synthetic_manifests():
     )
     [gone] = figureverify.data_unchanged(_man(), before)
     assert (gone.verdict, gone.reason_code) == ("failed", "subject_removed")
-    [swapped] = figureverify.data_unchanged(
+    # 同 gid、身份（显式 label 摘要）变了、数据逐部件相同 = 改名：数据这一项通过，并记下改名（只有身份摘要）
+    [renamed] = figureverify.data_unchanged(
         _man(_with_identity(_line("s"), "l1:bbb")), _man(_with_identity(_line("s"), "l1:aaa"))
     )
-    assert (swapped.verdict, swapped.reason_code) == ("failed", "subject_removed")
+    assert (renamed.verdict, renamed.reason_code) == ("verified", None)
+    assert renamed.observed == {"relabeled": {"from_identity": "l1:aaa", "to_identity": "l1:bbb"}}
+    # 身份变了、数据也变 = 主体被顶替：仍是 subject_removed
+    [replaced] = figureverify.data_unchanged(
+        _man(_with_identity(_line("s", sha="b" * 64), "l1:bbb")),
+        _man(_with_identity(_line("s"), "l1:aaa")),
+    )
+    assert (replaced.verdict, replaced.reason_code) == ("failed", "subject_removed")
+    # 数据没量到（任一侧）时不能说「只是改名」：保守按 subject_removed
+    [unmeasured] = figureverify.data_unchanged(
+        _man(_with_identity(_line("s", status="unavailable"), "l1:bbb")),
+        _man(_with_identity(_line("s"), "l1:aaa")),
+    )
+    assert (unmeasured.verdict, unmeasured.reason_code) == ("failed", "subject_removed")
     for b, a in (
         (_man(_line("s", status="over_budget")), before),
         (before, _man(_line("s", status="unavailable"))),
@@ -553,3 +568,201 @@ def test_data_unchanged_rules_on_synthetic_manifests():
         == 1
     )
     assert figureverify.data_unchanged(_man(_line("s")), _man()) == []
+
+
+# --------------------------------------------------------------------------- 改名不是顶替（ADR 0083 §五）：合成 manifest
+def _two(a_label, b_label, a_id, b_id, *, a_sha="a" * 64, b_sha="b" * 64):
+    return _man(
+        _with_identity(_line(a_label, sha=a_sha, gid="axes_0.lines_0"), a_id),
+        _with_identity(_line(b_label, sha=b_sha, gid="axes_0.lines_1"), b_id),
+    )
+
+
+def _by_gid(checks):
+    return {c.id.removeprefix("data."): c for c in checks}
+
+
+def test_rename_of_one_series_passes_and_is_reported_as_relabeled():
+    before = _two("control", "treated", "l1:ctl", "l1:trt")
+    after = _two("control", "treated (n=6)", "l1:ctl", "l1:trt6")
+    got = _by_gid(figureverify.data_unchanged(after, before))
+    assert got["axes_0.lines_0"].verdict == "verified" and not got["axes_0.lines_0"].observed
+    c = got["axes_0.lines_1"]
+    assert (c.verdict, c.reason_code) == ("verified", None)
+    assert c.observed == {"relabeled": {"from_identity": "l1:trt", "to_identity": "l1:trt6"}}
+
+
+def test_rename_with_changed_data_is_still_subject_removed():
+    before = _two("control", "treated", "l1:ctl", "l1:trt")
+    after = _two("control", "treated (n=6)", "l1:ctl", "l1:trt6", b_sha="c" * 64)
+    c = _by_gid(figureverify.data_unchanged(after, before))["axes_0.lines_1"]
+    assert (c.verdict, c.reason_code) == ("failed", "subject_removed")
+    # 身份没变、数据变：照旧 data_changed
+    same_id = _two("control", "treated", "l1:ctl", "l1:trt", b_sha="c" * 64)
+    c = _by_gid(figureverify.data_unchanged(same_id, before))["axes_0.lines_1"]
+    assert (c.verdict, c.reason_code) == ("failed", "data_changed")
+
+
+def test_swapped_labels_fail_label_swapped_on_both_series():
+    before = _two("control", "treated", "l1:ctl", "l1:trt")
+    after = _two("treated", "control", "l1:trt", "l1:ctl")
+    got = _by_gid(figureverify.data_unchanged(after, before))
+    for gid, other in (("axes_0.lines_0", "axes_0.lines_1"), ("axes_0.lines_1", "axes_0.lines_0")):
+        assert (got[gid].verdict, got[gid].reason_code) == ("failed", "label_swapped")
+        assert got[gid].observed == {"taken_from": [other]}
+
+
+def test_taking_another_series_name_fails_label_swapped_and_leaves_the_other_alone():
+    before = _two("control", "treated", "l1:ctl", "l1:trt")
+    after = _two("control", "control", "l1:ctl", "l1:ctl")  # treated 改成了 control
+    got = _by_gid(figureverify.data_unchanged(after, before))
+    assert got["axes_0.lines_0"].verdict == "verified"
+    c = got["axes_0.lines_1"]
+    assert (c.verdict, c.reason_code, c.observed) == (
+        "failed",
+        "label_swapped",
+        {"taken_from": ["axes_0.lines_0"]},
+    )
+
+
+def test_a_name_that_belongs_to_a_non_data_element_is_not_a_swap():
+    """被抢名字的判据只看改前的**数据元素**：别的元素（没有数据指纹）恰好有同一个身份，不算贴错数据的标签。"""
+    before = _two("control", "treated", "l1:ctl", "l1:trt")
+    before["elements"].append({"gid": "axes_0.legend", "role": "legend", "identity": "l1:trt6"})
+    after = _two("control", "treated (n=6)", "l1:ctl", "l1:trt6")
+    c = _by_gid(figureverify.data_unchanged(after, before))["axes_0.lines_1"]
+    assert (c.verdict, c.reason_code) == ("verified", None)
+
+
+def test_missing_gid_is_still_subject_removed_and_missing_identity_is_not_compared():
+    before = _two("control", "treated", "l1:ctl", "l1:trt")
+    after = _man(_with_identity(_line("control", gid="axes_0.lines_0"), "l1:ctl"))
+    c = _by_gid(figureverify.data_unchanged(after, before))["axes_0.lines_1"]
+    assert (c.verdict, c.reason_code) == ("failed", "subject_removed")
+    # 一侧没有显式 label（没有 identity）：不比身份，数据相同就是 verified，且不当成改名
+    nameless = _two("control", "treated", "l1:ctl", None)
+    got = _by_gid(figureverify.data_unchanged(nameless, before))
+    assert got["axes_0.lines_1"].verdict == "verified" and not got["axes_0.lines_1"].observed
+
+
+def test_rename_aware_kinds_accept_a_rename_but_other_kinds_keep_treating_it_as_replaced():
+    before = _two("control", "treated", "l1:ctl", "l1:trt")
+    after = _two("control", "treated (n=6)", "l1:ctl", "l1:trt6")
+    goal = {"id": "g", "kind": "line_label", "axes": 0, "index": 1, "expected": "treated (n=6)"}
+    keep = {"id": "p", "kind": "line_data_unchanged", "axes": 0, "index": 1}
+    assert figureverify.check(goal, after, before, role="goal").verdict == "verified"
+    assert figureverify.check(keep, after, before, role="preserve").verdict == "verified"
+    # 数据也变了 / 名字对调：line_data_unchanged 判 failed（顶替），line_label 的目标只看名字
+    changed = _two("control", "treated (n=6)", "l1:ctl", "l1:trt6", b_sha="c" * 64)
+    c = figureverify.check(keep, changed, before, role="preserve")
+    assert (c.verdict, c.reason_code) == ("failed", "subject_removed")
+    swapped = _two("treated", "control", "l1:trt", "l1:ctl")
+    c = figureverify.check(keep, swapped, before, role="preserve")
+    assert (c.verdict, c.reason_code) == ("failed", "subject_removed")
+    # 按 label 找曲线的老断言：身份一变仍算顶替（行为与引入改名判定前逐字相同）
+    old_kind = {"id": "s", "kind": "series_data_unchanged", "axes": 0, "series": "treated"}
+    c = figureverify.check(old_kind, after, before, role="preserve")
+    assert c.verdict == "failed"
+
+
+# --------------------------------------------------------------------------- 改名：真 worker（multi_panel / line_two_series）
+def _relabel_edit(old: str, new: str) -> dict:
+    return {"file": "figure.py", "find": old, "replace": new, "count": 1}
+
+
+@needs_worker
+def test_real_worker_rename_passes_and_other_changes_are_told_apart(tmp_path):
+    base = _manifest(stage(tmp_path, "base", "multi_panel", [], "base"), "multi_panel")
+    # B 子图的曲线 label 改名（数据一个字节没动）：整张图的数据保持检查全 verified，B 那条带 relabeled
+    ren = stage(
+        tmp_path,
+        "ren",
+        "multi_panel",
+        [
+            _relabel_edit(
+                'ax.plot(X, ys, color="#333333", linewidth=1.2, label=title)',
+                'ax.plot(X, ys, color="#333333", linewidth=1.2, label=title + " (n=6)" if title.startswith("B") else title)',
+            )
+        ],
+        "ren",
+    )
+    got = _by_gid(figureverify.data_unchanged(_manifest(ren, "multi_panel"), base))
+    assert {c.verdict for c in got.values()} == {"verified"}, {
+        k: v.reason_code for k, v in got.items()
+    }
+    assert [g for g, c in got.items() if c.observed.get("relabeled")] == ["axes_1.lines_0"]
+    # 同时改了 B 的数据：subject_removed（身份 ≠ 且数据 ≠）
+    both = stage(
+        tmp_path,
+        "both",
+        "multi_panel",
+        [
+            _relabel_edit(
+                'ax.plot(X, ys, color="#333333", linewidth=1.2, label=title)',
+                'ax.plot(X[:-1] if title.startswith("B") else X, ys[:-1] if title.startswith("B") else ys, color="#333333", linewidth=1.2, label=title + " (n=6)" if title.startswith("B") else title)',
+            )
+        ],
+        "both",
+    )
+    c = _by_gid(figureverify.data_unchanged(_manifest(both, "multi_panel"), base))["axes_1.lines_0"]
+    assert (c.verdict, c.reason_code) == ("failed", "subject_removed")
+
+
+@needs_worker
+def test_real_worker_swapped_and_borrowed_labels_fail_label_swapped(tmp_path):
+    ctl = 'ax.plot(T, CONTROL, color="#1f77b4", linewidth=1.5, label="control")'
+    trt = 'ax.plot(T, TREATED, color="#d62728", linewidth=1.5, label="treated")'
+    base = _manifest(stage(tmp_path, "base", "line_two_series", [], "base"), "line_two_series")
+    swap = stage(
+        tmp_path,
+        "swap",
+        "line_two_series",
+        [
+            _relabel_edit(ctl, ctl.replace('"control"', '"treated"')),
+            _relabel_edit(trt, trt.replace('"treated"', '"control"')),
+        ],
+        "swap",
+    )
+    got = _by_gid(figureverify.data_unchanged(_manifest(swap, "line_two_series"), base))
+    assert {(c.verdict, c.reason_code) for c in got.values()} == {("failed", "label_swapped")}
+    # 只有 treated 抢了 control 的名字：control 那条没动（verified），treated 那条 label_swapped
+    borrow = stage(
+        tmp_path,
+        "borrow",
+        "line_two_series",
+        [_relabel_edit(trt, trt.replace('"treated"', '"control"'))],
+        "borrow",
+    )
+    got = _by_gid(figureverify.data_unchanged(_manifest(borrow, "line_two_series"), base))
+    assert (got["axes_0.lines_0"].verdict, got["axes_0.lines_1"].reason_code) == (
+        "verified",
+        "label_swapped",
+    )
+    # 删掉整条曲线：gid 没了 = subject_removed（改名的豁免不碰它）
+    gone = stage(tmp_path, "gone", "line_two_series", [_relabel_edit(trt, "pass")], "gone")
+    got = _by_gid(figureverify.data_unchanged(_manifest(gone, "line_two_series"), base))
+    assert (got["axes_0.lines_1"].verdict, got["axes_0.lines_1"].reason_code) == (
+        "failed",
+        "subject_removed",
+    )
+
+
+@needs_worker
+def test_relabel_scenarios_on_the_real_worker(built):
+    """FB-S10 / FB-S11：用户点名改图例名称——参考解的数据检查全过且如实记下改名；同时改了数据 → subject_removed；
+    两条曲线的名字对调 → 两条都是 label_swapped。"""
+    manifests, _ = built
+    base = _ok(manifests, "base__line_two_series")
+    for sid, renamed in (
+        ("FB-S10", ["axes_0.lines_1"]),
+        ("FB-S11", ["axes_0.lines_0", "axes_0.lines_1"]),
+    ):
+        got = _by_gid(figureverify.data_unchanged(_ok(manifests, f"{sid}__ref"), base))
+        assert {c.verdict for c in got.values()} == {"verified"}, sid
+        assert sorted(g for g, c in got.items() if c.observed.get("relabeled")) == renamed
+    c = _by_gid(figureverify.data_unchanged(_ok(manifests, "FB-S10__n.data"), base))[
+        "axes_0.lines_1"
+    ]
+    assert (c.verdict, c.reason_code) == ("failed", "subject_removed")
+    swap = _by_gid(figureverify.data_unchanged(_ok(manifests, "FB-S11__n.swap"), base))
+    assert {(c.verdict, c.reason_code) for c in swap.values()} == {("failed", "label_swapped")}

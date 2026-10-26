@@ -595,6 +595,171 @@
       "split": "dev"
     },
     {
+      "id": "FB-S10",
+      "title": "改一条曲线的图例名称",
+      "category": "single_element",
+      "task_type": "figure_edit",
+      "fixture": "line_two_series",
+      "instruction": "把 treated 曲线的图例名称改成 treated (n=6)。",
+      "check": "probe",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "subjective": false,
+      "goal": [
+        {
+          "id": "g.label",
+          "kind": "line_label",
+          "axes": 0,
+          "index": 1,
+          "expected": "treated (n=6)"
+        }
+      ],
+      "preserve": [
+        {
+          "id": "p.data.control",
+          "kind": "series_data_unchanged",
+          "axes": 0,
+          "series": "control"
+        },
+        {
+          "id": "p.data.treated",
+          "kind": "line_data_unchanged",
+          "axes": 0,
+          "index": 1
+        },
+        {
+          "id": "p.count",
+          "kind": "series_count_unchanged",
+          "axes": 0
+        },
+        {
+          "id": "p.label0",
+          "kind": "line_label",
+          "axes": 0,
+          "index": 0,
+          "expected": "control"
+        },
+        {
+          "id": "p.title",
+          "kind": "text_unchanged",
+          "axes": 0,
+          "which": "title"
+        }
+      ],
+      "reference_solution": [
+        {
+          "file": "figure.py",
+          "find": "ax.plot(T, TREATED, color=\"#d62728\", linewidth=1.5, label=\"treated\")",
+          "replace": "ax.plot(T, TREATED, color=\"#d62728\", linewidth=1.5, label=\"treated (n=6)\")",
+          "count": 1
+        }
+      ],
+      "negative_variants": [
+        {
+          "id": "n.data",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "ax.plot(T, TREATED, color=\"#d62728\", linewidth=1.5, label=\"treated\")",
+              "replace": "ax.plot(T[:-1], TREATED[:-1], color=\"#d62728\", linewidth=1.5, label=\"treated (n=6)\")",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "p.data.treated"
+          ]
+        }
+      ],
+      "unverified": [],
+      "split": "dev"
+    },
+    {
+      "id": "FB-S11",
+      "title": "两条曲线的图例名称都加样本量",
+      "category": "single_element",
+      "task_type": "figure_edit",
+      "fixture": "line_two_series",
+      "instruction": "图例里两条曲线的名称分别加上样本量：control (n=5)、treated (n=6)。",
+      "check": "probe",
+      "needs_real_model": false,
+      "expected_outcome": "completed",
+      "subjective": false,
+      "goal": [
+        {
+          "id": "g.label0",
+          "kind": "line_label",
+          "axes": 0,
+          "index": 0,
+          "expected": "control (n=5)"
+        },
+        {
+          "id": "g.label1",
+          "kind": "line_label",
+          "axes": 0,
+          "index": 1,
+          "expected": "treated (n=6)"
+        }
+      ],
+      "preserve": [
+        {
+          "id": "p.data.control",
+          "kind": "line_data_unchanged",
+          "axes": 0,
+          "index": 0
+        },
+        {
+          "id": "p.data.treated",
+          "kind": "line_data_unchanged",
+          "axes": 0,
+          "index": 1
+        },
+        {
+          "id": "p.count",
+          "kind": "series_count_unchanged",
+          "axes": 0
+        }
+      ],
+      "reference_solution": [
+        {
+          "file": "figure.py",
+          "find": "ax.plot(T, CONTROL, color=\"#1f77b4\", linewidth=1.5, label=\"control\")",
+          "replace": "ax.plot(T, CONTROL, color=\"#1f77b4\", linewidth=1.5, label=\"control (n=5)\")",
+          "count": 1
+        },
+        {
+          "file": "figure.py",
+          "find": "ax.plot(T, TREATED, color=\"#d62728\", linewidth=1.5, label=\"treated\")",
+          "replace": "ax.plot(T, TREATED, color=\"#d62728\", linewidth=1.5, label=\"treated (n=6)\")",
+          "count": 1
+        }
+      ],
+      "negative_variants": [
+        {
+          "id": "n.swap",
+          "edits": [
+            {
+              "file": "figure.py",
+              "find": "ax.plot(T, CONTROL, color=\"#1f77b4\", linewidth=1.5, label=\"control\")",
+              "replace": "ax.plot(T, CONTROL, color=\"#1f77b4\", linewidth=1.5, label=\"treated\")",
+              "count": 1
+            },
+            {
+              "file": "figure.py",
+              "find": "ax.plot(T, TREATED, color=\"#d62728\", linewidth=1.5, label=\"treated\")",
+              "replace": "ax.plot(T, TREATED, color=\"#d62728\", linewidth=1.5, label=\"control\")",
+              "count": 1
+            }
+          ],
+          "must_fail": [
+            "g.label0",
+            "g.label1"
+          ]
+        }
+      ],
+      "unverified": [],
+      "split": "dev"
+    },
+    {
       "id": "FB-C01",
       "title": "左列 y 轴标题对齐",
       "category": "complex_figure",
