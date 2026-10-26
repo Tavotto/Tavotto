@@ -35,7 +35,7 @@ export const SCALE = 2
 export const STRINGS = {
   'en-US': {
     assets: 'Assets', properties: 'Properties', canvas: 'Canvas', timeline: 'Timeline',
-    assistant: 'Assistant', exportStart: 'Export', fitCanvas: 'Fit canvas', fitShort: 'Fit', export: 'Export',
+    assistant: 'Assistant', exportStart: 'Export', fitCanvas: 'Fit canvas', sizeField: 'Size', legendCols: 'Columns', cold: 'Cold start in progress', fitShort: 'Fit', export: 'Export',
     searchPanels: 'Search figures', panelLabels: 'Add panel labels',
     editElements: 'Edit figure elements', figureElements: 'Figure elements', connectAi: 'Connect AI',
     searchElements: 'Search figure elements',
@@ -47,7 +47,7 @@ export const STRINGS = {
   },
   'zh-CN': {
     assets: '素材', properties: '属性', canvas: '画布', timeline: '时间线',
-    assistant: '改图助手', exportStart: '开始导出', fitCanvas: '适应画布', fitShort: '适应', export: '导出',
+    assistant: '改图助手', exportStart: '开始导出', fitCanvas: '适应画布', sizeField: '字号', legendCols: '列数', cold: '正在冷启动', fitShort: '适应', export: '导出',
     searchPanels: '搜索图', panelLabels: '添加序号标签',
     editElements: '改图里的内容', figureElements: '图内元素', connectAi: '连接 AI',
     searchElements: '搜索图内元素',
