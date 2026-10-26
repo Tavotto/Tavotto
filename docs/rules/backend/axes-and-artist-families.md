@@ -233,7 +233,10 @@ order: 80
   登记框时顺着 OffsetBox 树（`AnnotationBbox.offsetbox` / 锚定框自身 → `HPacker` / `VPacker` → `TextArea._text`）把每段非空
   文字登记成 role `text`，gid `<框的 gid>.texts_k`（`manifest._register_offsetbox_texts`）。文字、字号、颜色、字重、字体照常走
   text handler，TextArea 每次 draw 现量、框随之变大变小；**落位归打包器**：不宣称可拖（拖的是外框），`rotation` / `ha` / `va` /
-  `zorder` 按 `_mm_offsetbox_box` 从字段里拿掉（`_OFFSETBOX_TEXT_FIXED`）；外框隐藏时不输出其中的文字（看不见的字不可点、不进预检）。看护 `tests/test_offsetbox_text.py`（同一个用例文件）。
+  `zorder` 按 `_mm_offsetbox_box` 从字段里拿掉（`_OFFSETBOX_TEXT_FIXED`）；外框隐藏时不输出其中的文字（看不见的字不可点、不进预检）。
+  叶子还收 `DrawingArea` / `AuxTransformBox` 里 `add_artist` 进去的 `Text`（`AnchoredDrawingArea` 一族、比例尺标签同理）。
+  `fig.add_artist(...)` 贴在整张图上的锚定框 / 插框按 `fig.artists_j` 同一套登记（外框可拖、框里文字可编辑）；图级的其他
+  artist 仍不登记。看护 `tests/test_offsetbox_text.py`。
 - 面板翻转（flip_h/flip_v，先翻转后旋转）：导出按 dpi 位图嵌入
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。
 

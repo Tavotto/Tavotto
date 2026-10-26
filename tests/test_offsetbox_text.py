@@ -46,6 +46,21 @@ def main():
     ax.add_artist(AnchoredText("(a)", loc="upper left"))
     fig.savefig("Box.pdf")
     plt.close(fig)
+
+    # 同一类问题的其他形状：图级的框、DrawingArea 里直接放的 Text、比例尺的标签
+    from matplotlib.text import Text
+    from mpl_toolkits.axes_grid1.anchored_artists import AnchoredDrawingArea, AnchoredSizeBar
+
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])
+    fig.add_artist(AnnotationBbox(TextArea("fig note"), (0.5, 0.95), xycoords="figure fraction"))
+    fig.add_artist(AnchoredText("(b)", loc="lower right", bbox_to_anchor=(1, 0), bbox_transform=fig.transFigure))
+    ada = AnchoredDrawingArea(40, 20, 0, 0, loc="lower left", frameon=False)
+    ada.da.add_artist(Text(2, 2, "in da", fontsize=9))
+    ax.add_artist(ada)
+    ax.add_artist(AnchoredSizeBar(ax.transData, 0.2, "0.2 s", loc="lower right"))
+    fig.savefig("More.pdf")
+    plt.close(fig)
 """
 
 BOX = "axes_0.artists_0"
@@ -152,3 +167,55 @@ def test_hiding_the_box_drops_its_texts_from_the_manifest_and_undo_brings_them_b
     back = _man(hot)
     assert _field(back[MAIN], "text") == "80.0%"
     assert _field(back[SUB], "text") == "(80/100)"
+
+
+def _more(worker, patches=()):
+    resp = worker.override("More", list(patches))
+    assert not (resp.get("warnings") or []), resp["warnings"]
+    return {e["gid"]: e for e in resp["manifest"]["elements"]}
+
+
+#: `More` 图里的框：图级两个（`fig.artists`），轴上的 DrawingArea 与比例尺
+FIG_AB = "fig.artists_0"
+FIG_ANCHORED = "fig.artists_1"
+DRAWING_AREA = "axes_0.artists_0"
+SIZE_BAR = "axes_0.artists_1"
+
+
+def test_other_box_shapes_expose_their_texts_too(hot):
+    """图级的框（`fig.add_artist`）、`DrawingArea` 里直接放的 `Text`、比例尺的标签：同一类「框里的字改不了」。"""
+    man = _more(hot)
+    for box, want in (
+        (FIG_AB, "fig note"),
+        (FIG_ANCHORED, "(b)"),
+        (DRAWING_AREA, "in da"),
+        (SIZE_BAR, "0.2 s"),
+    ):
+        assert man[box]["role"] == "artist", box
+        el = man[f"{box}.texts_0"]
+        assert el["role"] == "text" and _field(el, "text") == want, box
+        assert el["draggable"] is False, box
+        assert not ({"rotation", "ha", "va", "zorder"} & _props(el)), box
+    # 图级的框和轴上的一样可拖（setter 按 figure 分数算）
+    assert man[FIG_AB]["draggable"] is True and man[FIG_ANCHORED]["draggable"] is True
+    got = _more(
+        hot,
+        [
+            {"gid": f"{FIG_AB}.texts_0", "prop": "text", "value": "figure-level note"},
+            {"gid": f"{DRAWING_AREA}.texts_0", "prop": "text", "value": "edited"},
+            {"gid": f"{SIZE_BAR}.texts_0", "prop": "text", "value": "200 ms"},
+        ],
+    )
+    assert _field(got[f"{FIG_AB}.texts_0"], "text") == "figure-level note"
+    assert _field(got[f"{DRAWING_AREA}.texts_0"], "text") == "edited"
+    assert _field(got[f"{SIZE_BAR}.texts_0"], "text") == "200 ms"
+    assert got[FIG_AB]["bbox"][2] > man[FIG_AB]["bbox"][2] + 1e-3
+
+
+def test_figure_level_box_drags_to_the_written_anchor(hot):
+    el = _more(hot)[FIG_AB]
+    target = [el["anchor"][0] + 0.03, el["anchor"][1] + 0.02]
+    got = _more(hot, [{"gid": FIG_AB, "prop": "pos_frac", "value": target}])
+    assert got[FIG_AB]["anchor"] == pytest.approx(target, abs=1e-6)
+    back = _more(hot)
+    assert back[FIG_AB]["anchor"] == pytest.approx(el["anchor"], abs=1e-9)

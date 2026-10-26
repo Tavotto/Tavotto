@@ -186,10 +186,11 @@ SAVE_MOMENT_ATTR = "_mm_save_moment"
 
 
 def _offsetbox_texts(art) -> list:
-    """框（`AnnotationBbox` / `AnchoredText` / 自己拼的 `HPacker` …）里每个 `TextArea` 的文字，按绘制顺序。
+    """框（`AnnotationBbox` / `AnchoredText` / 自己拼的 `HPacker` …）里的每段文字，按绘制顺序。
 
-    文字装在 OffsetBox 树里：`AnnotationBbox.offsetbox` → `HPacker` / `VPacker` → `TextArea._text`。
-    只认 OffsetBox 一族往下走，不碰别的 artist 的子节点（`DrawingArea` 里的图块不是文字）。
+    文字装在 OffsetBox 树里：`AnnotationBbox.offsetbox` → `HPacker` / `VPacker` → `TextArea._text`；
+    `DrawingArea` / `AuxTransformBox`（`AnchoredDrawingArea` 一族）里则是 `add_artist` 进去的 `Text` 本身。
+    只顺着 OffsetBox 一族往下走，叶子只收 `Text`（`DrawingArea` 里的图块不是文字）。
     """
     out: list = []
     seen: set[int] = set()
@@ -206,6 +207,9 @@ def _offsetbox_texts(art) -> list:
         for child in box.get_children():
             if isinstance(child, OffsetBox):
                 walk(child)
+            elif isinstance(child, Text) and id(child) not in seen:
+                seen.add(id(child))
+                out.append(child)
 
     root = art.offsetbox if isinstance(art, AnnotationBbox) else art
     if isinstance(root, OffsetBox):
@@ -608,6 +612,23 @@ def instrument(state: FigState) -> None:
             )
     for i, leg in enumerate(getattr(fig, "legends", []) or []):
         _register_legend(state, f"fig.legend_{i}", leg)
+    # `fig.add_artist(...)` 贴在整张图上的锚定框 / 插框：与 `ax.artists` 里的同一套（外框按
+    # `offsetbox_draggable` 可拖，setter 本就按 figure 分数算；框里的文字可编辑）。图级的其他
+    # artist（`fig.add_artist(Rectangle)` …）不在本条范围内，仍不登记
+    for j, art in enumerate(getattr(fig, "artists", []) or []):
+        if not isinstance(art, (AnchoredOffsetbox, AnnotationBbox)):
+            continue
+        if isinstance(art, AnchoredOffsetbox):
+            _svg_group(art)
+        _register(
+            state,
+            f"fig.artists_{j}",
+            art,
+            "artist",
+            f"{type(art).__name__} {j + 1}",
+            draggable=offsetbox_draggable(art),
+        )
+        _register_offsetbox_texts(state, f"fig.artists_{j}", art)
 
     # 色条反查：mappable.colorbar → 宿主轴（与色条方向事务共用同一份实现）
     # **传 `axestraversal.ordered_axes` 的结果**：插图（`ax.inset_axes()`）只在 `child_axes`
