@@ -191,6 +191,7 @@ def test_shared_title_and_legend_string_yields_a_follow_up_suggestion(world):
             "kind": "legend_label",
             "stem": "plot",
             "gid": "axes_0.lines_0",
+            "legend_gid": "axes_0.legend.texts_0",
             "from": "B",
             "to": "B: treated (n=6)",
         }

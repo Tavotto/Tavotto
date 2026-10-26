@@ -718,20 +718,28 @@ def label_changes(before: dict, after: dict) -> list[dict]:
     return out
 
 
-def label_visible_in_legend(man: object, text: str) -> bool:
-    """这份 manifest 的图里有没有一条**可见**的图例项正显示 `text`：`legend_text` 元素（`…legend.texts_<j>`，不含图例标题）的文字相等，
-    且这一项与它所在的图例都没被隐藏。没有图例（FigureBench 的 multi_panel）→ False。"""
+def legend_entry_gid(man: object, line_gid: str, text: str) -> str | None:
+    """这份 manifest 里**绑定到曲线 `line_gid`**（`legend_entry.source_gid`）、正显示 `text` 且没被隐藏的图例项的 gid；没有 → None。
+    只认图例项（`…legend.texts_<j>`，不含图例标题）；这一项与所在图例都没被隐藏才算。按绑定关系找，不按「别处有同名文字」。"""
     els = _elements_by_gid(man)
-    for gid, el in els.items():
+    for gid, el in sorted(els.items()):
         if el.get("role") != "legend_text" or not _LEGEND_ENTRY_GID.search(gid):
+            continue
+        entry = el.get("legend_entry")
+        if not isinstance(entry, dict) or entry.get("source_gid") != line_gid:
             continue
         if _editable_value(el, "text") != text or _editable_value(el, "visible") is False:
             continue
         legend = els.get(_LEGEND_ENTRY_GID.sub("", gid))
         if legend is not None and _editable_value(legend, "visible") is False:
             continue
-        return True
-    return False
+        return gid
+    return None
+
+
+def label_visible_in_legend(man: object, line_gid: str, text: str) -> bool:
+    """曲线 `line_gid` 的 label `text` 此刻是否画在图上：它自己的可见图例项正显示这段文字（见 `legend_entry_gid`）。没有图例 → False。"""
+    return legend_entry_gid(man, line_gid, text) is not None
 
 
 def record_label_findings(cand: Candidate, baseline: dict, after: dict) -> None:
@@ -745,7 +753,7 @@ def record_label_findings(cand: Candidate, baseline: dict, after: dict) -> None:
         elif len(store) < 20:
             store[key] = {
                 **ch,
-                "visible": label_visible_in_legend(baseline.get(ch["stem"]), ch["from"]),
+                "visible": label_visible_in_legend(baseline.get(ch["stem"]), ch["gid"], ch["from"]),
             }
 
 
@@ -754,17 +762,26 @@ def record_final_labels(cand: Candidate, after: dict) -> None:
     for (stem, gid), f in (cand.extras.get("label_findings") or {}).items():
         if isinstance(after, dict) and stem in after:
             f["final"] = element_label(after[stem], gid)
+            # 按钮要写的图例项：最终版里绑定这条曲线、显示原文的那一项（找不到 = 不给建议）
+            f["legend_gid"] = (
+                legend_entry_gid(after[stem], gid, f["final"]) if f["final"] is not None else None
+            )
 
 
 def legend_label_suggestions(cand: object, outcome: str | None) -> list[dict]:
     """收尾时的跟进建议（闭集形状，进 `sess["task"]["suggestions"]`）：任务成功（`completed`）、改动已提交，且某元素的 label 在
-    `check` 里被改过、最终又回到原文（Agent 改回去了）、而且图例正显示这段文字 → `{kind, stem, gid, from, to}`。
+    `check` 里被改过、最终又回到原文（Agent 改回去了）、而且图例正显示这段文字 → `{kind, stem, gid, legend_gid, from, to}`。
     条件缺一不给：没有提交后的最终值（渲染没量到）按「不知道」处理，不给。文字之外不带任何用户内容。"""
     if outcome != "completed" or not getattr(cand, "committed", False):
         return []
     out = []
     for f in (getattr(cand, "extras", {}).get("label_findings") or {}).values():
-        if not (f.get("visible") and f.get("final") == f["from"] and f["to"] != f["from"]):
+        if not (
+            f.get("visible")
+            and f.get("final") == f["from"]
+            and f["to"] != f["from"]
+            and f.get("legend_gid")
+        ):
             continue
         if max(len(f["from"]), len(f["to"])) > LABEL_TEXT_MAX:
             continue
@@ -773,6 +790,7 @@ def legend_label_suggestions(cand: object, outcome: str | None) -> list[dict]:
                 "kind": LEGEND_LABEL_KIND,
                 "stem": f["stem"],
                 "gid": f["gid"],
+                "legend_gid": f["legend_gid"],
                 "from": f["from"],
                 "to": f["to"],
             }

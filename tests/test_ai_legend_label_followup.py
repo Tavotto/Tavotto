@@ -8,7 +8,14 @@ import pytest
 from tavotto.engine import ai_bridge, ai_convert, ai_figure_edit
 
 
-def _man(lines=(), legend_texts=None, legend_visible=True, text_visible=True, title=None):
+def _man(
+    lines=(),
+    legend_texts=None,
+    legend_visible=True,
+    text_visible=True,
+    title=None,
+    source="axes_0.lines_0",
+):
     """合成 manifest：lines = [(gid, label)]；legend_texts = [text, …]（None = 没有图例）。"""
     els = [{"gid": "figure", "role": "figure", "editable": []}]
     for gid, label in lines:
@@ -30,6 +37,7 @@ def _man(lines=(), legend_texts=None, legend_visible=True, text_visible=True, ti
                 {
                     "gid": f"axes_0.legend.texts_{j}",
                     "role": "legend_text",
+                    "legend_entry": {"index": j, "source_gid": source},
                     "editable": [
                         {"prop": "text", "value": t},
                         {"prop": "visible", "value": text_visible},
@@ -67,20 +75,42 @@ def test_label_changes_covers_every_stem_independently():
 
 
 def test_visibility_needs_a_shown_legend_entry_with_that_text():
-    assert ai_figure_edit.label_visible_in_legend(_man(legend_texts=["B", "ctrl"]), "B")
-    assert not ai_figure_edit.label_visible_in_legend(_man(legend_texts=None), "B")  # 没有图例
-    assert not ai_figure_edit.label_visible_in_legend(_man(legend_texts=["ctrl"]), "B")
-    assert not ai_figure_edit.label_visible_in_legend(
-        _man(legend_texts=["B"], legend_visible=False), "B"
+    assert ai_figure_edit.label_visible_in_legend(
+        _man(legend_texts=["B", "ctrl"]), "axes_0.lines_0", "B"
     )
     assert not ai_figure_edit.label_visible_in_legend(
-        _man(legend_texts=["B"], text_visible=False), "B"
+        _man(legend_texts=None), "axes_0.lines_0", "B"
+    )  # 没有图例
+    assert not ai_figure_edit.label_visible_in_legend(
+        _man(legend_texts=["ctrl"]), "axes_0.lines_0", "B"
     )
-    assert not ai_figure_edit.label_visible_in_legend(None, "B")
+    assert not ai_figure_edit.label_visible_in_legend(
+        _man(legend_texts=["B"], legend_visible=False), "axes_0.lines_0", "B"
+    )
+    assert not ai_figure_edit.label_visible_in_legend(
+        _man(legend_texts=["B"], text_visible=False), "axes_0.lines_0", "B"
+    )
+    assert not ai_figure_edit.label_visible_in_legend(None, "axes_0.lines_0", "B")
+
+
+def test_another_lines_legend_entry_with_the_same_text_does_not_count():
+    """图例项绑定的是别的曲线：同名文字不算这条曲线画在图上。"""
+    other = _man(legend_texts=["B"], source="axes_0.lines_1")
+    assert not ai_figure_edit.label_visible_in_legend(other, "axes_0.lines_0", "B")
+    assert ai_figure_edit.label_visible_in_legend(other, "axes_0.lines_1", "B")
+
+
+def test_no_suggestion_when_only_another_lines_entry_shows_the_text(cand):
+    base = _man([("axes_0.lines_0", "B")], legend_texts=["B"], source="axes_0.lines_1")
+    _check(cand, {"plot": _man([("axes_0.lines_0", "C")])}, {"plot": base})
+    assert cand.extras["label_findings"][("plot", "axes_0.lines_0")]["visible"] is False
+    ai_figure_edit.record_final_labels(cand, {"plot": base})
+    cand.committed = True
+    assert ai_figure_edit.legend_label_suggestions(cand, "completed") == []
 
 
 def test_a_title_with_the_same_text_is_not_a_legend_entry():
-    assert not ai_figure_edit.label_visible_in_legend(_man(title="B"), "B")
+    assert not ai_figure_edit.label_visible_in_legend(_man(title="B"), "axes_0.lines_0", "B")
 
 
 # ------------------------------------------------------------------ agent_check 记发现
@@ -155,6 +185,7 @@ def test_suggestion_when_label_reverted_visible_and_completed(cand):
             "kind": "legend_label",
             "stem": "plot",
             "gid": "axes_0.lines_0",
+            "legend_gid": "axes_0.legend.texts_0",
             "from": "B",
             "to": "B: treated",
         }
@@ -208,6 +239,7 @@ def test_settle_task_exposes_suggestions_on_the_session_task(cand):
             "kind": "legend_label",
             "stem": "plot",
             "gid": "axes_0.lines_0",
+            "legend_gid": "axes_0.legend.texts_0",
             "from": "B",
             "to": "B: treated",
         }
@@ -252,3 +284,26 @@ def test_postcommit_render_records_the_final_label_of_each_finding(cand):
     assert cand.extras["label_findings"][("plot", "axes_0.lines_0")]["final"] == "B"
     cand.committed = True
     assert [s["from"] for s in ai_figure_edit.legend_label_suggestions(cand, "completed")] == ["B"]
+
+
+def test_no_suggestion_when_the_final_figure_has_no_bound_legend_entry(cand):
+    """基线里图例显示它，但最终版里没有绑定这条曲线的可见图例项（图例被去掉 / 项被隐藏）：没有可写的图例项，不给。"""
+    _check(cand, {"plot": EDITED}, {"plot": BASE})
+    ai_figure_edit.record_final_labels(
+        cand, {"plot": _man([("axes_0.lines_0", "B")], legend_texts=["B"], text_visible=False)}
+    )
+    cand.committed = True
+    assert ai_figure_edit.legend_label_suggestions(cand, "completed") == []
+
+
+def test_the_suggestion_carries_the_legend_entry_found_by_binding_not_a_fixed_gid(cand):
+    final = {
+        "plot": _man([("axes_0.lines_0", "B")], legend_texts=["x", "B"])
+    }  # 绑定的图例项是第 2 项
+    # 两项都绑定同一条曲线时取文字等于原文的那项
+    _check(cand, {"plot": EDITED}, {"plot": BASE})
+    ai_figure_edit.record_final_labels(cand, final)
+    cand.committed = True
+    assert [
+        s["legend_gid"] for s in ai_figure_edit.legend_label_suggestions(cand, "completed")
+    ] == ["axes_0.legend.texts_1"]

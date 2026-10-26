@@ -3796,13 +3796,16 @@ export interface AiTaskSummary {
 }
 
 /**
- * 改图任务的跟进建议：`legend_label` = 刚才没改的那个元素（`gid`，在图 `stem` 里）的 `label` 同时是图例里显示的文字；
+ * 改图任务的跟进建议：`legend_label` = 刚才没改的曲线（`gid`，在图 `stem` 里）的 `label` 同时是图例里（`legend_gid` 那一项）显示的文字；
  * `to` 是 Agent 试过的新文字、`from` 是现在的原文。形状是闭集，只含这两段已经画在图上的文字。
  */
 export interface AiTaskSuggestion {
   kind: 'legend_label'
   stem: string
+  /** 曲线（label 的主人）的 gid */
   gid: string
+  /** 图例里绑定这条曲线、显示原文的那一项的 gid：按钮写它的 `text`（写曲线 `label` 不会动图例） */
+  legend_gid: string
   from: string
   to: string
 }

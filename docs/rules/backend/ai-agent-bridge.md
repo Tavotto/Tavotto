@@ -31,7 +31,7 @@ order: 240
   MCP 侧同一件事是 `tavotto_refresh_project`（`codex-plugin/AGENTS.md`）；
   `app.refresh_project` 是四条路径（手动 / watcher / codex / ai）唯一的漏斗，
   `project_refresh_completed` 遥测只在这一处、只收这四个来由。
-- **改图收尾的跟进建议（`task.suggestions`，闭集 `kind: legend_label`）**：内置执行器的 `check`（`ai_figure_edit.agent_check`）渲染后，按 stem × gid 比 manifest `editable` 的 `label` 值（`label_changes`，**不看 identity / 数据指纹**，与数据检查的结论互不依赖），记进 `cand.extras["label_findings"]`；提交后那次渲染补最终值；`_settle_task` 在成功（`completed`）+ 已提交 + 最终回到原文 + 图例项正显示该文字（`label_visible_in_legend`）时才写 `{kind, stem, gid, from, to}`，只含这两段已画在图上的文字。CLI 路径（Codex / Claude Code）提交前不渲染，看不到被改过的 label，没有这项。前端点「一起改」走画布 `setOverride(..., 'label', to, true)`，不经 AI、不写脚本。看护 `tests/test_ai_legend_label_followup.py`、`tests/test_ai_edit_check_app.py`、`web/src/components/ai/legendLabelNotice.test.tsx`。
+- **改图收尾的跟进建议（`task.suggestions`，闭集 `kind: legend_label`）**：内置执行器的 `check`（`ai_figure_edit.agent_check`）渲染后，按 stem × gid 比 manifest `editable` 的 `label` 值（`label_changes`，**不看 identity / 数据指纹**，与数据检查的结论互不依赖），记进 `cand.extras["label_findings"]`；提交后那次渲染补最终值；`_settle_task` 在成功（`completed`）+ 已提交 + 最终回到原文 + 图例项正显示该文字（`label_visible_in_legend`）时才写 `{kind, stem, gid, legend_gid, from, to}`（`legend_gid` = 最终版里 `legend_entry.source_gid` 绑定该曲线的可见图例项；可见性也只认这个绑定，别处同名文字不算），只含这两段已画在图上的文字。CLI 路径（Codex / Claude Code）提交前不渲染，看不到被改过的 label，没有这项。前端点「一起改」走画布 `setOverride(panel, legend_gid, 'text', to, true)`（写曲线 `label` 不会动图例），不经 AI、不写脚本。看护 `tests/test_ai_legend_label_followup.py`、`tests/test_ai_edit_check_app.py`、`web/src/components/ai/legendLabelNotice.test.tsx`。
 - **「支持哪些 Agent」的唯一权威是 `engine/ai_agents.py` 的 `AGENT_REGISTRY`**
   （ADR 0015，改动前先读）。候选探测、启动验证、无副作用就绪检查、命令构造、
   流式输出分类、一键安装包名，全部由各自的 `AgentDefinition` 适配器给出。

@@ -13,6 +13,7 @@ import { agentCaps, capsOf } from '@/components/settings/testCaps'
 import { setCurrentProjectId } from '@/lib/session'
 import { useAiStore, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type PanelObject } from '@/types/document'
@@ -41,7 +42,8 @@ declare global {
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const GID = 'axes_0.lines_0'
-const SUGGESTION = { kind: 'legend_label' as const, stem: 'Fig1', gid: GID, from: 'B', to: 'B: treated (n=6)' }
+const LEGEND = 'axes_0.legend.texts_0'
+const SUGGESTION = { kind: 'legend_label' as const, stem: 'Fig1', gid: GID, legend_gid: LEGEND, from: 'B', to: 'B: treated (n=6)' }
 
 const panel = (over: Partial<PanelObject> = {}): PanelObject =>
   ({
@@ -77,9 +79,21 @@ const session = (over: Partial<AiSession> = {}): AiSession => ({
 let root: Root
 let host: HTMLDivElement
 
-async function mount(sessions: AiSession[], objects: PanelObject[] = [panel()]) {
+/** 面板当前的结构 manifest：曲线 + 绑定它的图例项（`bound` = 图例项绑定的曲线 gid） */
+function seedManifest(p: PanelObject, bound: string | null = GID) {
+  const elements = [
+    { gid: GID, role: 'line', editable: [{ prop: 'label', value: 'B' }] },
+    ...(bound
+      ? [{ gid: LEGEND, role: 'legend_text', legend_entry: { index: 0, source_gid: bound }, editable: [{ prop: 'text', value: 'B' }] }]
+      : []),
+  ]
+  useRenderStore.setState({ byKey: { [renderKeyOf(p)]: { manifest: { elements } } }, latest: {} } as never)
+}
+
+async function mount(sessions: AiSession[], objects: PanelObject[] = [panel()], bound: string | null = GID) {
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_legend_label_notice')
   useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects } }) as never)
+  seedManifest(objects[0], bound)
   useSelectionStore.setState({ ids: ['p1'] } as never)
   useUiStore.setState({ elementPanelId: null, selectedGids: [] } as never)
   useAiStore.setState({ sessions } as never)
@@ -140,8 +154,8 @@ describe('图例文字跟进卡', () => {
     expect(q(CARD)).toBeNull()
   })
 
-  it('面板上已经有这条 label override（例如重新载入后）：不出卡', async () => {
-    await mount([session()], [panel({ overrides: [{ gid: GID, prop: 'label', value: 'B: treated (n=6)' }] as never })])
+  it('该图例项已经有这条 text override（例如重新载入后）：不出卡', async () => {
+    await mount([session()], [panel({ overrides: [{ gid: LEGEND, prop: 'text', value: 'B: treated (n=6)' }] as never })])
     expect(q(CARD)).toBeNull()
   })
 
@@ -150,11 +164,21 @@ describe('图例文字跟进卡', () => {
     expect(q(CARD)).toBeNull()
   })
 
-  it('点「一起改」：走画布 setOverride(panel, gid, label, to, true)，卡片随之消失', async () => {
+  it('面板 manifest 里图例项绑定的是别的曲线（或没有图例项）：不出卡', async () => {
+    await mount([session()], [panel()], 'axes_0.lines_1')
+    expect(q(CARD)).toBeNull()
+  })
+
+  it('对曲线自己的 label override 不算已应用（图例不会因此变）', async () => {
+    await mount([session()], [panel({ overrides: [{ gid: GID, prop: 'label', value: 'B: treated (n=6)' }] as never })])
+    expect(q(CARD)).not.toBeNull()
+  })
+
+  it('点「一起改」：走画布 setOverride(panel, 图例项 gid, text, to, true)，卡片随之消失', async () => {
     await mount([session()])
     await act(async () => q<HTMLButtonElement>('[data-ai-suggestion-apply]')!.click())
     expect(setOverride).toHaveBeenCalledTimes(1)
-    expect(setOverride).toHaveBeenCalledWith('p1', GID, 'label', 'B: treated (n=6)', true)
+    expect(setOverride).toHaveBeenCalledWith('p1', LEGEND, 'text', 'B: treated (n=6)', true)
     expect(q(CARD)).toBeNull()
   })
 })
