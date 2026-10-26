@@ -3603,6 +3603,8 @@ def wipe_ondisk_key(run_dir: Path, env: dict, key: str) -> dict:
 
 
 WORKBUDDY_LOGIN_HOST = "workbuddy.cn"
+#: WorkBuddy 的后台进程（daemon / 运行时）映像路径里都带这个；删「家」之前要先结束它们（否则 WinError 5）
+WORKBUDDY_PROCESS_TOKENS = ("workbuddy",)
 QR_LOGIN_TIMEOUT_S = 600
 
 
@@ -3687,7 +3689,7 @@ def wipe_login_state(run_dir: Path) -> dict:
     left_dirs = []
     errors = {}
     for d in (work / "wbhome", work / "edge-login"):
-        err = _force_rmtree(d)
+        err = _force_rmtree(d, WORKBUDDY_PROCESS_TOKENS)
         if d.exists():
             left_dirs.append(d.name)
             errors[d.name] = err
@@ -3714,18 +3716,54 @@ def _long_path(p: Path) -> Path:
     return Path(s if s.startswith(_LONG_PREFIX) else _LONG_PREFIX + s)
 
 
-def _force_rmtree(d: Path) -> str | None:
+def _under_dir(img: str, d: Path) -> bool:
+    a = os.path.normcase(os.path.normpath(img))
+    b = os.path.normcase(os.path.normpath(str(d)))
+    return a == b or a.startswith(b.rstrip("\\/") + os.sep)
+
+
+def _kill_matching(pred) -> list[str]:
+    """结束当前用户下映像路径满足 pred 的进程（不在 Job 里的宿主后台进程，如 WorkBuddy 的 daemon）。"""
+    import ctypes
+    from ctypes import wintypes
+
+    import window_probe as P  # 同目录部署；映像路径查询的唯一出处
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi")
+    arr = (wintypes.DWORD * 4096)()
+    got = wintypes.DWORD()
+    if not psapi.EnumProcesses(arr, ctypes.sizeof(arr), ctypes.byref(got)):
+        return []
+    killed = []
+    for pid in list(arr)[: got.value // ctypes.sizeof(wintypes.DWORD)]:
+        if pid in (0, os.getpid()):
+            continue
+        img = P._image_path(pid) or ""
+        if not img or not pred(img):
+            continue
+        h = k32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
+        if h:
+            if k32.TerminateProcess(h, 1):
+                killed.append(Path(img).name)
+            k32.CloseHandle(h)
+    if killed:
+        time.sleep(2)  # 句柄释放
+    return killed
+
+
+def _force_rmtree(d: Path, kill_tokens: tuple[str, ...] = ()) -> str | None:
     """删一个目录树，删不掉也不抛：先结束映像在它下面的进程（WorkBuddy 在「家」里跑的运行时不在 Job 里，
     run 20261026T170159Z-0b45c5 的 wbhome 因此删不掉、登录态留在了盘上），再用长路径删、最多三次。返回最后的错误。"""
     if not d.exists():
         return None
     if os.name == "nt":
-        import window_probe as P  # 同目录部署；进程枚举与结束的唯一出处
-
         with contextlib.suppress(Exception):
-            P.kill_under(d)
+            _kill_matching(
+                lambda img: _under_dir(img, d) or any(t in img.lower() for t in kill_tokens)
+            )
     err = None
-    for _ in range(3):
+    for attempt in range(3):
         try:
             _rmtree_no_follow(_long_path(d))
             return None
@@ -3733,6 +3771,19 @@ def _force_rmtree(d: Path) -> str | None:
             return None
         except OSError as exc:
             err = f"{type(exc).__name__}: {exc}"[:200]
+            if attempt == 0 and os.name == "nt":
+                # 宿主给自己的目录设了只给它自己的 ACL（WorkBuddy 的 connectors\、logs\：WinError 5）：
+                # 我们是所有者，改回继承的权限再删（只动这棵要删的树）
+                subprocess.run(
+                    ["icacls", str(d), "/reset", "/T", "/C", "/Q"],
+                    capture_output=True,
+                    timeout=300,
+                )
+                subprocess.run(
+                    ["attrib", "-R", "-S", "-H", str(d / "*"), "/S", "/D"],
+                    capture_output=True,
+                    timeout=300,
+                )
             time.sleep(2)
     return err if d.exists() else None
 
@@ -3743,20 +3794,23 @@ def cmd_sweep(lab: Lab) -> dict:
     if holder is not None or lock_is_fresh(lab):
         return {"result": "error", "summary": "a job is running; retry after it finishes"}
     swept = sweep_stale_ondisk_configs(lab.runs) + sweep_stale_login_dirs(lab.runs)
-    left = [
-        str(d.relative_to(lab.runs))
+    left = {
+        str(d.relative_to(lab.runs)): (
+            _force_rmtree(d, WORKBUDDY_PROCESS_TOKENS) if d.is_dir() else "file remains"
+        )
         for pat in (
             "*/work/wbhome",
             "*/work/edge-login",
             "*/work/zdata/.zcode/v2/provider_config.json",
         )
         for d in lab.runs.glob(pat)
-    ]
+    }
+    left = {k: v for k, v in left.items() if (lab.runs / k).exists()}
     return {
         "result": "passed" if not left else "error",
         "summary": f"swept {len(swept)} run(s); {len(left)} left",
         "swept": swept,
-        "left": left[:20],
+        "left": dict(list(left.items())[:20]),
     }
 
 
@@ -3765,7 +3819,7 @@ def sweep_stale_login_dirs(runs: Path) -> list[str]:
     swept: list[str] = []
     if runs.is_dir():
         for d in [*runs.glob("*/work/wbhome"), *runs.glob("*/work/edge-login")]:
-            _force_rmtree(d)
+            _force_rmtree(d, WORKBUDDY_PROCESS_TOKENS)
             rid = d.parents[1].name
             if not d.exists() and rid not in swept:
                 swept.append(rid)
