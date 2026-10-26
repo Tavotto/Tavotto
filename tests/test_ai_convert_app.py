@@ -213,8 +213,9 @@ def test_builtin_correction_continues_existing_bytes_without_resetting_checks(
 
 
 @pytest.mark.parametrize("reject_after_agent_check", [False, True])
+@pytest.mark.parametrize("final_tool", ["check", "finish"])
 def test_builtin_final_check_reaches_adoption_only_after_parent_validation(
-    project, monkeypatch, tmp_path, reject_after_agent_check
+    project, monkeypatch, tmp_path, reject_after_agent_check, final_tool
 ):
     """Real runner IPC + worker: last-turn completion cannot bypass Task Core validation."""
     from tavotto.engine import ai_agents
@@ -228,7 +229,13 @@ def test_builtin_final_check_reaches_adoption_only_after_parent_validation(
                     {"tool_calls": [{"name": "create_file", "args": {"content": GOOD}}]},
                     {
                         "tool_calls": [
-                            {"name": "check", "args": {"final": True, "summary": "候选已出图"}}
+                            {
+                                "name": final_tool,
+                                "args": {
+                                    "summary": "候选已出图",
+                                    **({"final": True} if final_tool == "check" else {}),
+                                },
+                            }
                         ]
                     },
                 ]

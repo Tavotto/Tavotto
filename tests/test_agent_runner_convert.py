@@ -102,7 +102,7 @@ def test_wrong_edit_key_gets_schema_guidance_without_reinterpreting_or_writing(c
         by, ToolCall("wrong-key", "edit_file", {"old": "[1, 2]", "replacement_text": "[3, 4]"})
     )
     assert rejected.code == "bad_arguments"
-    assert "Missing required keys: new." in rejected.content
+    assert "Supply `new` or `new_string` as a string." in rejected.content
     assert '"new": "string"' in rejected.content
     assert "[3, 4]" not in rejected.content
     assert _tree(cand) == before
@@ -223,6 +223,59 @@ def test_final_check_completes_on_last_turn_without_another_model_request_or_lat
     assert (cand / "fig_matplotlib.py").read_text() == NEW
     assert tool_events(events) == [("create_file", True), ("check", True)]
     assert any(e.get("text") == "可编辑候选已出图；视觉差异待复核。" for e in events)
+    assert (cand / "fig.py").read_text() == ORIG
+
+
+def test_finish_checks_and_completes_instead_of_requesting_an_extra_model_reply(cand):
+    chk = CountingCheck()
+    script = {
+        "turns": [
+            step(call("create_file", content=NEW)),
+            step(call("finish", summary="已出图，视觉差异待确认。")),
+        ]
+    }
+    result, events = run_demo(
+        cand, script, check=chk, limits=replace(TASK.default_limits, max_turns=2)
+    )
+    assert result.ok and result.turns == 2
+    assert chk.calls == 1
+    assert any(e.get("text") == "已出图，视觉差异待确认。" for e in events)
+
+
+def test_conversion_sees_remaining_budget_before_closeout_without_extra_turn(cand):
+    class BudgetAwareModel:
+        calls = 0
+        notices = []
+
+        def complete(self, *, history, **kw):
+            self.calls += 1
+            if self.calls == 1:
+                call = ToolCall("create", "create_file", {"content": NEW})
+            elif self.calls == 2:
+                call = ToolCall("inspect", "check", {})
+            else:
+                self.notices = [
+                    msg.text for msg in history if msg.text.startswith("Tavotto runtime budget:")
+                ]
+                assert len(self.notices) == 1
+                assert "480 cumulative tokens" in self.notices[0]
+                assert "8 model requests" in self.notices[0]
+                assert "finish" in self.notices[0]
+                call = ToolCall("deliver", "finish", {"summary": "ready"})
+            return Turn(tool_calls=[call], usage=Usage(250, 10), stop="tool_use")
+
+    model = BudgetAwareModel()
+    chk = CountingCheck()
+    result, events = run_demo(
+        cand,
+        {},
+        model=model,
+        check=chk,
+        limits=replace(TASK.default_limits, max_turns=10, max_total_tokens=1000),
+    )
+    assert (result.ok, result.turns, model.calls, chk.calls) == (True, 3, 3, 2)
+    assert done(events)["usage"]["input_tokens"] == 750
+    assert done(events)["usage"]["output_tokens"] == 30
     assert (cand / "fig.py").read_text() == ORIG
 
 
@@ -429,6 +482,7 @@ class TestNormalFlow:
             "append_file",
             "edit_file",
             "check",
+            "finish",
         ]
 
     def test_first_message_names_both_files_and_prompt_is_stable(self, cand):

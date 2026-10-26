@@ -454,6 +454,7 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
     deadline = t0 + limits.max_seconds
     led = res.ledger
     streak_key, streak = None, 0
+    budget_notice_level = 0
 
     while True:
         if cancel.is_set():
@@ -464,6 +465,28 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
             return _finish(
                 res, False, "budget", "time" if time.monotonic() >= deadline else "tokens"
             )
+        hint = getattr(toolset, "budget_hint", "")
+        if hint:
+            used = led.total_in + led.total_out
+            spent = max(
+                used / limits.max_total_tokens,
+                res.turns / limits.max_turns,
+                (time.monotonic() - t0) / limits.max_seconds,
+            )
+            level = 2 if spent >= 0.75 else 1 if spent >= 0.5 else 0
+            if level > budget_notice_level:
+                budget_notice_level = level
+                history.append(
+                    Msg(
+                        "user",
+                        text=(
+                            "Tavotto runtime budget: "
+                            f"{limits.max_turns - res.turns} model requests, "
+                            f"{limits.max_total_tokens - used} cumulative tokens and "
+                            f"{max(0, int(deadline - time.monotonic()))} seconds remain. " + hint
+                        ),
+                    )
+                )
         if estimate_tokens(system, specs, history) > limits.compress_at_tokens:
             res.compressions += getattr(model, "compress_history", compress)(history)
 
@@ -635,11 +658,6 @@ def _execute(by_name: dict[str, toolmod.Tool], call: ToolCall) -> ToolResult:
 def _argument_hint(tool: toolmod.Tool, args: dict | None) -> str:
     props = tool.schema.get("properties", {})
     required = tool.schema.get("required", [])
-    if not required and tool.schema.get("anyOf"):
-        required = min(
-            (branch.get("required", []) for branch in tool.schema["anyOf"]),
-            key=lambda keys: sum(args is None or key not in args for key in keys),
-        )
     missing = [key for key in required if args is None or key not in args]
     types = {key: spec.get("type", "value") for key, spec in props.items()}
     prefix = f"Missing required keys: {', '.join(missing)}. " if missing else ""

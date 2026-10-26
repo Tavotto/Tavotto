@@ -31,6 +31,38 @@ def session(tmp_path, **kw):
     )
 
 
+@pytest.mark.parametrize("task", ["figure_edit", "convert_to_editable"])
+def test_anthropic_receives_supported_flat_tool_schemas(tmp_path, monkeypatch, task):
+    """The real service rejects anyOf/oneOf/allOf at an input_schema root (HTTP 400)."""
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    (tmp_path / "fig.py").write_text("print('source')\n")
+    srv = FakeModelServer(WIRE_CASES["anthropic"][0])
+    try:
+        model = loop.HttpModel(
+            wires.WIRES["anthropic"],
+            base_url=srv.url,
+            api_key="test",
+            model="m",
+            request_timeout=3,
+            retry_base=0,
+        )
+        loop.run(
+            model,
+            tools.TOOLSETS[task],
+            tools.RunEnvelope(task, tmp_path, "fig.py", "convert", output="fig_matplotlib.py"),
+            lambda _event: None,
+        )
+        schemas = {t["name"]: t["input_schema"] for t in srv.requests[0][2]["tools"]}
+        for schema in schemas.values():
+            assert schema["type"] == "object"
+            assert not {"anyOf", "oneOf", "allOf"}.intersection(schema)
+        assert {"old", "old_string", "new", "new_string"} <= schemas["edit_file"][
+            "properties"
+        ].keys()
+    finally:
+        srv.close()
+
+
 @pytest.mark.parametrize("wire", sorted(WIRE_CASES))
 def test_images_reach_each_real_http_request_and_never_events(tmp_path, monkeypatch, wire):
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")

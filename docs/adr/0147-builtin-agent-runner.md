@@ -104,9 +104,14 @@ Conversion output recovery remains within the existing budget: each create/appen
 参数拒绝仍以工具 handler 为权威，循环只从同一份公开 schema 生成缺失键与可用参数提示，不猜测未声明的键或回显参数值。
 文本替换的 schema 与取值共用 `_EDIT_TEXT_ARGUMENTS`：`old` / `old_string` 表示原文，`new` / `new_string` 表示替换文本，短名和完整名称都明确声明；
 同组给出不同值或非字符串时拒绝，未知名称不推断，模型原始调用在协议历史中不改写。figure_edit 与转换复用同一契约，路径、唯一匹配、秘密串与文件大小限制仍由原 handler 检查。
+工具 schema 使用平铺属性，不在顶层使用 anyOf / oneOf / allOf（Anthropic 真服务以 HTTP 400 拒绝）；必填替换文本的等价名称组由同一个 handler 验证。
 转换的 create / append / edit 回执均给当前文本 SHA-256，使编辑之后可继续有界追加；旧摘要仍拒绝。
 
 转换的既有 `check` 增加可选 `final`（布尔，默认 false）与 `summary`（字符串）。模型明确声明整份候选可交付后，**同次真实校验**返回 true 才直接完成 runner；
 报告文字不能替代结果，同批后续调用不再执行，summary 走正常脱敏事件出口。中间校验通过不自动交付，最终校验失败仍可修正；所有校验共用原有 3 次上限。
 取消、20 轮 / 400k token / 900 s 上限不变，失败任务不自动抢救。父进程仍独立执行 Task Core 校验、完整性检查、待采用留存及用户确认采用；
 可运行候选与视觉保真是分开的验收维度，不能因一次出图就宣称数据、完整输出或像素全部通过。看护 `test_agent_runner_convert`、`test_ai_convert_app`。
+
+转换同时提供语义明确的 `finish(summary)`，内部调用同一个 `check(final=true)`，模型无需先检查再请求一轮纯文字收尾；两者仍共用 3 次校验预算。
+只有转换工具集启用运行期预算提示：轮数、累计 token 或秒数用到 50% / 75% 时，各追加一次剩余资源与收尾指导，下次正常请求即可看到。
+提醒自身不增加请求次数、不延长预算、不把中间检查变成成功，也不允许省略真实数据 / 语义 / 输出。累计 token 仍按实际 input + output 记账（包括缓存输入）。

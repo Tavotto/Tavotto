@@ -629,13 +629,10 @@ def _edit_schema(path_description: str) -> dict:
                 "description": description
                 + f" Use {names[0]} or {names[1]}; if both are supplied their values must be identical.",
             }
-    schema = _obj(props, [])
-    schema["anyOf"] = [
-        {"required": [old, new]}
-        for old in _EDIT_TEXT_ARGUMENTS[0]
-        for new in _EDIT_TEXT_ARGUMENTS[1]
-    ]
-    return schema
+    # Anthropic rejects top-level anyOf/oneOf/allOf in tool input schemas.
+    # Alternative names are individually optional; the shared handler requires
+    # one string value from each group and rejects conflicting duplicates.
+    return _obj(props, [])
 
 
 def _edit_text_arguments(args: dict) -> tuple[str, str]:
@@ -811,10 +808,10 @@ How to work:
 2. For a long script, create_file with the first logical section, then append_file in small chunks
    (aim for under 150 lines per call). Copy the returned sha256 into the next append call.
    Finish all sections before check. Fix details with edit_file (small exact replacements).
-3. When the entire candidate is ready for delivery, call check with final=true and a concise summary
+3. When the entire candidate is ready for delivery, call finish with a concise summary
    in the language of the user's instruction, including any visual differences still needing review. A successful final
    check ends this model session immediately; the application still validates the candidate before adoption.
-   Use check without final only for an intermediate diagnostic, then correct reported problems.
+   Use check only for an intermediate diagnostic, then correct reported problems.
    All checks share the same limit of 3 calls. A failed final check lets you correct and retry.
 4. An intermediate check passing is not a reason to keep polishing. Follow the shared acceptance order:
    deliver the complete runnable candidate, and report remaining visual differences for later review.
@@ -1089,10 +1086,21 @@ class ConvertSession(FigureEditSession):
             result.completion_text = summary.strip() or result.content
         return result
 
+    def finish(self, args: dict, call_id: str = "") -> ToolResult:
+        # One validation authority and one shared check budget. Calling this
+        # explicitly declares delivery intent; a diagnostic check never does.
+        return self.check({"final": True, "summary": args.get("summary", "")}, call_id)
+
 
 class ConvertToEditableToolset:
     task_type = "convert_to_editable"
     default_limits = CONVERT_LIMITS
+    budget_hint = (
+        "Complete any known data, semantic or missing-output fixes, then call finish to validate and "
+        "deliver the entire candidate. If a check already passed and the script is complete, finish now; "
+        "report remaining visual differences instead of starting another visual-polishing cycle. "
+        "These reminders do not extend any limit or certify completion."
+    )
     truncation_hint = (
         "Your previous response reached the output limit. NONE of its tool calls ran; no file changed. "
         "The existing files and successful earlier tool results are still current. "
@@ -1204,6 +1212,23 @@ class ConvertToEditableToolset:
                     [],
                 ),
                 s.check,
+            ),
+            Tool(
+                "finish",
+                "Validate the complete candidate and finish this conversion if it runs and produces editable "
+                "figures. Prefer this over check when ready to deliver: it runs the same actual check and "
+                "ends the model session on success, without another reply. Failure lets you correct the script. "
+                f"Shares the same {CONVERT_MAX_CHECKS}-call validation budget with check; user adoption remains separate.",
+                _obj(
+                    {
+                        "summary": {
+                            "type": "string",
+                            "description": "Concise summary in the user's language, including visual differences still needing review.",
+                        }
+                    },
+                    [],
+                ),
+                s.finish,
             ),
         ]
 

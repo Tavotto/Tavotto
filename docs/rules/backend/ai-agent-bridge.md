@@ -411,6 +411,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   换行：读出时统一成 `\n`，写回恢复文件原有的 `\r\n`（混合换行的文件会被统一成首见的那种）。
   参数拒绝仍由各工具 handler 判定；`bad_arguments` 且未写入时，循环从该工具公开 schema 补充缺失必填键、可用键名及类型，提示原样重发一条修正调用。
   文本替换取值与 schema 共用 `_EDIT_TEXT_ARGUMENTS`：`old` / `old_string`、`new` / `new_string` 是明确声明的两组名称；同组重复提供时值必须相同。
+  schema 使用平铺属性（Anthropic 拒绝顶层 anyOf / oneOf / allOf），名称组必填与重复值一致性由共同 handler 验证，不复制另一套参数判据。
   不猜测未知名称，不回显模型给出的键名或参数内容；冲突值或类型错误在写入前拒绝。figure_edit 与转换共用这条契约，原有路径与内容验证不变。
   将来 `data_to_figure` 的工具集**没有写文件工具**（只出结构化列映射，ADR 0138 §四）。
 - **事件**（stdout 每行一条 JSON，ASCII 转义）：`thinking`（只有字符数）、`tool`（工具名、成败、一句话摘要，**不带文件内容 / 提示词 / 密钥**）、
@@ -427,7 +428,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   `done.ledger_mismatch=true`（不抛）。每轮记账后立刻复查 token：**终止答复**（`end` 且无工具调用）累计 `>` 上限才拒，恰好用满上限仍 `completed`；带工具调用 / 要开下一轮的答复累计 `>=` 上限即 `budget/tokens`，工具不执行、不开新轮。估计上下文超阈值时把早先的 `read_file` 结果换成「已读过 X（第 a–b 行，sha 前缀）」。
 - **`convert_to_editable` 工具集**（`tools.py` 的 `ConvertToEditableToolset` / `ConvertSession`，ADR 0147 §四；入口 `--task convert_to_editable --target <原脚本> --output <原名>_matplotlib.py`，
   默认任务仍是 `figure_edit`）。权限边界即 ADR 0143 §二：**原脚本永远不可写，Agent 只写候选目录顶层的那一个新文件**。
-  - 工具含 `read_image`、`read_file` / `list_dir`（候选内只读，与 figure_edit **同一个** `_resolve`，没有第二份路径判据）、`create_file(content)`、`append_file(content, expected_sha256)`、`edit_file(old, new)`、`check`；
+  - 工具含 `read_image`、`read_file` / `list_dir`（候选内只读，与 figure_edit **同一个** `_resolve`，没有第二份路径判据）、`create_file(content)`、`append_file(content, expected_sha256)`、`edit_file(old, new)`、`check` / `finish(summary)`；
     没有 `write_file`、没有 shell / 网络 / MCP。`create_file` 的可选 `path` 与 `edit_file` 的可选 `path` 只能是 `--output`：指向原脚本 → `source_readonly`，
     其它路径 → `not_output`，越界 → `path_outside`；一律工具错误、磁盘字节不变。第一次 `create_file` 用 `O_CREAT|O_EXCL` 新建（此刻已存在含悬空链接 → `output_exists`，不覆盖），
     之后允许整份覆盖这个新文件（模型自我修正）；`edit_file` 必须在本次运行里已 `create_file`（否则 `not_created`），`old` 恰好出现一次。含密钥的内容 → `secret_in_content`（新建 / 覆盖 / edit 三处）。
@@ -438,7 +439,9 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
     可选 `final: boolean`（默认 false）与 `summary: string`：模型明确声明整份候选已可交付，且同次回调返回布尔 true，工具才标记本轮完成；报告文字不能代替布尔结果。
     最终校验通过后不再请求模型收尾，同批后续工具也不执行；summary 沿正常脱敏出口发给用户。普通检查仍非终态，最终检查失败可继续修正，参数错误不消耗检查次数。
     轮数 / token / 取消 / deadline 限制不放宽；父进程仍独立执行 Task Core 校验、完整性与待采用检查，不从失败任务抢救候选，也不自动采用。
+    `finish(summary)` 是同一个 `check(final=true)` 的明确收尾入口，共用回调、次数和终态条件；它自己不执行文件写入或采用。
   - 预算默认值由工具集给（`default_limits`；命令行不给 `--max-turns` 等就用它）：convert 为 20 轮 / 900 s / 400k token / 单轮输出 32768（含模型思考；20 轮 ≈ 读 1–3 + 写 1 + 至多 3 轮 check/修 + 收尾，留余量）；figure_edit 不变。
+    转换的 `budget_hint` 使循环在任一资源使用达到 50% / 75% 时各插入一次剩余轮数、累计 token、秒数和收尾指导，随下一次正常模型请求发送；无额外请求，不重置账本或预算。普通检查通过仍非终态。
   - 系统提示是英文（要求用用户指令的语言回复）；共同验收顺序及要求（数据计算 / 完整可编辑出图 / 视觉另验）**引用 `ai_prompt_pack.convert_requirements()` 的同一份文字**（CLI 路径的 `convert_prompt` 也用它，不各抄一份），
     执行器特有的部分（只写一个新文件、不运行脚本、check ≤ 3 次）写在 `tools.py`。`ai_prompt_pack` 是纯标准库，所以 `agent_runner` 对它的 import 不破坏依赖方向（`test_import_architecture` 兜底）。
   - 看护 `tests/test_agent_runner_convert.py`（Demo 协议端到端 + 单元）。
