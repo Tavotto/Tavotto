@@ -39,6 +39,18 @@ _REPORT_KEYS = (
 )
 
 
+def _plain_text(v) -> str:
+    """报告里的错误字段 → 给 `shadow_note` 看的纯文本。字符串原样；容器递归取其中的字符串，**不**走 `json.dumps`——
+    转义后 traceback 的 `File \\"路径\\"` 带了反斜杠，认「落在项目包内的帧」（来源证据）的正则就读不出路径了。"""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict):
+        return "\n".join(_plain_text(x) for x in v.values() if x not in (None, "", [], {}))
+    if isinstance(v, (list, tuple)):
+        return "\n".join(_plain_text(x) for x in v if x not in (None, "", [], {}))
+    return str(v)
+
+
 def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     """The same bounded projection for read_run_report and application try_run."""
     if not isinstance(report, dict):
@@ -56,11 +68,7 @@ def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     # Keep package provenance in the same projection used by observation and the
     # real application trial. Historical failures must not replace the current one.
     diagnostic = error or report.get("error_tail") or report.get("attempt_history")
-    err_text = (
-        diagnostic
-        if isinstance(diagnostic, str)
-        else json.dumps(diagnostic, ensure_ascii=False, default=str)
-    )
+    err_text = _plain_text(diagnostic) if diagnostic else ""
     note = shadow_note(ctx, err_text).removeprefix("\nproject_package_shadow: ")
     if note:
         picked = {"project_package_shadow": note, **picked}

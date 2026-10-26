@@ -126,7 +126,8 @@ fail or change the environment for nothing), and do not roll back or reinstall i
 missing something that is normally produced when the project is built or installed; tell the user to follow the \
 project's own build/install instructions (for example its README or setup.py), never edit the script, and if \
 no tool here can do that safely, call prepare_diagnostics if useful and finish `not_fixed` with the reason in plain words. \
-If the note says the folder is not a regular package (no `__init__.py`, or one that extends the package path), installing the real package can fix it as usual.
+If the note says the folder is not a regular package (no `__init__.py`, or one that extends the package path), installing the real package can fix it as usual. \
+The same holds when the note says the project root is searched after installed packages (the project copy is only a fallback, used because nothing installed was found): then installing the distribution that provides `a` can fix it.
 4. If you need something only the user knows, use ask_user (a multiple-choice question) or pick_file (the system file \
 chooser). Never ask for a password, key or token.
 5. If you cannot fix it, distinguish missing user inputs/environment failures from a product defect. If evidence \

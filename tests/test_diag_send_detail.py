@@ -4327,11 +4327,11 @@ class TestIssue1012BackendItems:
             "LOCALAPPDATA" in Path(spec.origin).read_text(encoding="utf-8")
         )
 
-    def _render_env(self, monkeypatch, project, overrides=None):
+    def _render_env(self, monkeypatch, project, overrides=None, mode="project_root"):
         py, bundled = self._python()
         from tavotto.engine import workdir
 
-        monkeypatch.setattr(workdir, "mode_for", lambda fd: "project_root")
+        monkeypatch.setattr(workdir, "mode_for", lambda fd: mode)
         monkeypatch.setattr(pool, "resolve_worker_python", lambda d, **k: (py, pool.source_of(py)))
         monkeypatch.setattr(diagdetail, "_probe_subprocess", REAL_PROBE)
         src = diagdetail.Sources(
@@ -4395,6 +4395,21 @@ class TestIssue1012BackendItems:
         assert probe["shadowing_candidates"] == ["numpy.py"]
         assert not marker.exists()
         assert self._render_env(monkeypatch, proj)["probe"]["shadowing_candidates"] == []
+
+    def test_project_root_is_not_listed_as_an_import_root_that_can_shadow(
+        self, monkeypatch, tmp_path
+    ):
+        """safe worker 把项目根追加在 `sys.path` 末尾（site-packages 之后）：根下的 `numpy.py` 遮挡不了已装的 numpy，
+        不列；脚本所在目录（`sys.path[0]`）里的才列。沙盒 cwd 是空临时目录，这里只剩脚本目录这一个导入根。"""
+        proj = tmp_path / "proj"
+        (proj / "panels").mkdir(parents=True)
+        (proj / "panels" / "chart.py").write_text("x", encoding="utf-8")
+        (proj / "numpy.py").write_text("x", encoding="utf-8")
+        (proj / "panels" / "matplotlib.py").write_text("x", encoding="utf-8")
+        probe = self._render_env(
+            monkeypatch, proj, [{"panel": "p", "script": "panels/chart.py"}], mode="sandbox"
+        )["probe"]
+        assert probe["shadowing_candidates"] == ["matplotlib.py"]
 
     def _native(self, monkeypatch, tmp_path, kind, *, target=None, with_spec=True):
         """原生会话：项目根与 cwd 是两个不同的目录，各放一个会遮挡的文件。"""

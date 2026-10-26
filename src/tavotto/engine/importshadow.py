@@ -1,9 +1,14 @@
 """项目里的同名包遮蔽了真正要 import 的包：把「缺的到底是什么」说准。
 
 典型形状（真实科研语料 celerite）：项目根里躺着半截 `celerite/__init__.py`，它 `from .celerite_version import …`，
-而 `celerite_version.py` 是**构建时才生成**的。运行时 Python 先找到项目里的 `celerite/`（项目根在 `sys.path` 前面），
-于是报 `No module named 'celerite.celerite_version'`。看到的人（和模型）容易读成「缺 `celerite` 这个包」，去 pip 装同名包——
-装了也没用：项目里的文件夹仍然先被找到。
+而 `celerite_version.py` 是**构建时才生成**的。环境里**没装** `celerite` 时，Python 只能找到项目里的 `celerite/`
+（项目根在 `sys.path` 的**末尾**，site-packages 之后），于是报 `No module named 'celerite.celerite_version'`。看到的人（和模型）容易读成「缺 `celerite` 这个包」，去 pip 装同名包——
+「装了也没用」只对**脚本所在目录**里的同名包成立（`sys.path[0]`，先于一切）；对**项目根**里的同名包不成立：
+safe worker 把项目根追加在末尾（`worker._put_project_on_path`），已安装的同名包排在它前面，装上就能修。所以：
+
+* 脚本目录里的同名包（`roots`）：先于 site-packages，只看文件系统就能认定；
+* 项目根里的同名包（`late_roots`）：排在 site-packages 之后，**只有 traceback 里确有一帧落在这个包目录内**
+  （进程真的加载过它）才认——没装同名包时才会走到它，装了的话失败来自别处。
 
 本模块只做**判据**：输入是一段错误文本（异常消息 / traceback 尾巴）与候选根目录（项目根、脚本所在目录），
 对着**真实文件系统**回一个事实字典或 `None`。纯函数、只读、不执行任何用户代码、不联网。
@@ -91,7 +96,8 @@ def select_package(parent: str, roots: list[Path]) -> tuple[Path, list[Path], st
     对应 `importlib.machinery.PathFinder` 与 PEP 420 的规则，**从顶层包开始逐级解析**：
 
     1. 沿 `sys.path` 逐项找顶层名，**第一个**含 `top/__init__.py` 的位置胜出（regular 包），哪怕更前面有没有
-       `__init__.py` 的同名目录（那只是 namespace 的一个 portion，记下继续找）。所有项目根都排在 site-packages 之前。
+       `__init__.py` 的同名目录（那只是 namespace 的一个 portion，记下继续找）。传进来的 `roots` 都排在
+       site-packages 之前（脚本目录）；排在它之后的项目根由 `detect` 单独处理（`late_roots`）。
     2. 胜出的 regular 包把 `top.__path__` 限定为它自己的目录：它下面**所有**子包（含没有 `__init__.py` 的
        `top/sub/`）都只在这个 `__path__` 里找，装上的 `top/sub/extra.py` 看不见 → 结论是项目自有（`regular`）。
     3. 例外：它的 `__init__.py` 用 `extend_path` / `declare_namespace` 时，`__path__` 会并入其它同名目录，
@@ -130,7 +136,15 @@ def select_package(parent: str, roots: list[Path]) -> tuple[Path, list[Path], st
     return root.parent, [r.parent for r in found], kind
 
 
-def _fact(root: Path, parent: str, missing: str, *, relation: str, kind: str | None = None) -> dict:
+def _fact(
+    root: Path,
+    parent: str,
+    missing: str,
+    *,
+    relation: str,
+    kind: str | None = None,
+    after_site: bool = False,
+) -> dict:
     parent_dir = root.joinpath(*parent.split("."))
     init = parent_dir / "__init__.py"
     init_text = _read_init(init) if init.is_file() else ""
@@ -149,6 +163,8 @@ def _fact(root: Path, parent: str, missing: str, *, relation: str, kind: str | N
         "missing": missing,
         "project_path": rel,
         "relation": relation,  # missing_submodule | missing_name
+        #: 这份项目内的包在 `sys.path` 的哪一段：`before_site`（脚本目录，先于已装的包）| `after_site`（项目根，已装的同名包优先）
+        "search_order": "after_site" if after_site else "before_site",
         "init_imports_it": imports_it,
         "project_has_build_files": any((root / b).exists() for b in _BUILD_FILES),
     }
@@ -169,7 +185,14 @@ def describe(fact: dict) -> str:
             f"The failing import is `{missing}`, not `{pkg}`. Python found `{pkg}` in the project's own folder `{path}` "
             f"and that folder has no `{missing.rsplit('.', 1)[-1]}`."
         )
-    if fact["kind"] == "regular":
+    if fact.get("search_order") == "after_site":
+        # 项目根排在 site-packages 之后：走到项目里这一份，说明环境里没有别的同名包能用
+        tail = (
+            f" The project root is searched after installed packages, so Python only used this copy because no usable installed `{pkg}` "
+            f"was found. Installing the distribution that provides `{pkg}` can fix this (the installed one is found first). "
+            f"If the folder is a library source tree that was never built, building it is the alternative. Never edit the script."
+        )
+    elif fact["kind"] == "regular":
         tail = (
             " That folder belongs to a regular package in the project, so it is found before anything installed: installing a package named "
             f"`{pkg}` with pip will NOT change this. Do not install it."
@@ -222,9 +245,15 @@ def _terminal_exception(text: str) -> str | None:
 
 
 def detect(
-    text: str | None, roots: list[Path | str | None], *, project_on_path: bool = True
+    text: str | None,
+    roots: list[Path | str | None],
+    *,
+    project_on_path: bool = True,
+    late_roots: list[Path | str | None] | tuple[Path | str | None, ...] = (),
 ) -> dict | None:
-    """错误文本 → 遮蔽事实；不是这一类（含读不出来）回 `None`。`roots`：按 `sys.path` 的先后（脚本目录在前，再项目根）。
+    """错误文本 → 遮蔽事实；不是这一类（含读不出来）回 `None`。`roots`：排在 site-packages **之前**的目录，按
+    `sys.path` 先后（脚本目录）。`late_roots`：排在 site-packages **之后**的目录（safe worker 追加在末尾的项目根）：
+    那里的同名包只有环境里没装同名包时才会被 import，所以必须有 traceback 帧落在它的包目录内才认。
 
     `project_on_path`：失败的那个进程是否把项目放在 `sys.path` 上（真实运行 / 试运行副本：是；`try_import` 在全新
     scratch 目录里跑：否）。**不在路径上时，项目里有同名目录说明不了什么**——失败可能完全来自 site-packages——
@@ -232,7 +261,8 @@ def detect(
     if not text:
         return None
     candidates = [Path(r) for r in roots if r]
-    if not candidates:
+    late = [Path(r) for r in late_roots if r and Path(r) not in candidates]
+    if not candidates and not late:
         return None
     # 只看**最终抛出**的那个异常：脚本 `except ModuleNotFoundError:` 接住可选子模块、再抛别的错时，前面那次 import
     # 失败不是这次的原因。traceback 里认得出终止异常行时，它不是 import 类就不下结论，且只在那一行里匹配；
@@ -246,25 +276,41 @@ def detect(
         name = hits[-1].group("name")
         if "." in name:
             parent, child = name.rsplit(".", 1)
-            winner = select_package(parent, candidates)
+            # 整条 sys.path 一起解析（脚本目录在前、项目根在后）；winner 落在项目根（`late`）里 = 在 site-packages 之后
+            winner = select_package(parent, [*candidates, *late])
+            after_site = winner is not None and winner[0] in late and winner[0] not in candidates
+            needs_evidence = not project_on_path or after_site
             if winner is not None:
                 root, portions, kind = winner
                 # 没有来源证据就不下结论：项目不在 sys.path 上时，失败可能完全来自 site-packages
-                if project_on_path or any(
+                if not needs_evidence or any(
                     _frame_in(text, root.joinpath(*parent.split("."))) for root in portions
                 ):
                     if not any(
                         _child_exists(r.joinpath(*parent.split(".")), child) for r in portions
                     ):
-                        return _fact(root, parent, name, relation="missing_submodule", kind=kind)
+                        return _fact(
+                            root,
+                            parent,
+                            name,
+                            relation="missing_submodule",
+                            kind=kind,
+                            after_site=after_site,
+                        )
     m = None
     for m in _CANNOT_IMPORT_RE.finditer(scope):
         pass
     if m is not None:
         path = Path(m.group("path").strip())
-        for root in candidates:
+        for root in [*candidates, *late]:
             if _within(path, root):  # 括号里的路径本身就是来源证据
                 pkg = m.group("pkg")
                 if root.joinpath(*pkg.split(".")).is_dir():
-                    return _fact(root, pkg, f"{pkg}.{m.group('attr')}", relation="missing_name")
+                    return _fact(
+                        root,
+                        pkg,
+                        f"{pkg}.{m.group('attr')}",
+                        relation="missing_name",
+                        after_site=root in late and root not in candidates,
+                    )
     return None

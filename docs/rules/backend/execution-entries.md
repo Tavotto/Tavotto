@@ -37,6 +37,13 @@ order: 180
   `tavotto_bridge_runtime.*`，顶层 `manifest` / `overrides` / … 还给用户。`_ENGINE_MODULES`
   必须等于闭包：`tests/test_runtime_build.py` 从它反推 spec 的 datas，
   `tests/test_import_architecture.py` 要求它逐条登记成 worker.py 的 `extra_edges`。
+- **用户脚本的 `sys.path` 顺序（safe 与 native 同一语义）**：脚本所在目录在 `sys.path[0]`，与 `python 脚本.py`
+  逐字相同；safe worker 在此之外把项目根（图库根）**追加到末尾**（site-packages 之后，
+  `worker._put_project_on_path`），所以项目根里的 `paper_style.py` 之类帮手模块照样 import 得到，但项目根里恰好有
+  同名文件夹（整份库源码 `celerite/`）**盖不住**环境里装好的同名发行包——没装时才退回项目根那一份。**绝不要把项目根
+  `insert(0)`。** 静态侧是同一个模型，三处要一起改：`importscan._search_roots`（项目根排在标准库之后，只有项目根里的
+  `random.py` 遮蔽不了标准库）、`importshadow.detect(late_roots=…)`（项目根里的同名包要有 traceback 帧证据才算遮蔽，
+  且说明改为「装同名发行包能修」）、`diagdetail` 的遮挡扫描（不再列项目根）。看护 `tests/test_syspath_order.py`。
 - **两条入口里都绝不能出现裸的兄弟模块 import。** engine 目录在 bridge 里是
   **临时**上 `sys.path` 的（装完就收回），用户项目里完全可能有同名的
   `manifest.py` / `overrides.py` / `config.py`。兄弟模块一律在**模块层**平铺 import

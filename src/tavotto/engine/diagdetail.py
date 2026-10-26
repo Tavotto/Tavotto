@@ -1938,7 +1938,7 @@ def shadowing_candidates(dirs: list[str], names: set[str]) -> list[str]:
 
 
 def _focused_script_dir(src: Sources, figures_dir: object) -> str | None:
-    """焦点面板脚本所在目录（safe worker 会把它也插到 `sys.path` 最前，见 `worker.py` 的 `sys.path.insert`）。
+    """焦点面板脚本所在目录（safe worker 把它放在 `sys.path[0]`，见 `worker._put_project_on_path`）。
     只拼路径、看是不是目录，不读文件。"""
     if not isinstance(figures_dir, (str, Path)):
         return None
@@ -2141,11 +2141,11 @@ def collect_render_env(src: Sources, opts: DetailOptions, scrub: Scrubber) -> li
             "env_override": pool.worker_python_env(),
         }
         doc["probe"] = _probe_in_render_cwd(src, python, source == pool.SOURCE_BUNDLED, doc)
-        # safe worker 的导入根：项目根、焦点脚本所在目录（`worker.py` 的 `sys.path.insert`），加渲染 cwd
+        # safe worker 里排在 site-packages **之前**、真能遮挡它们的导入根：焦点脚本所在目录（`sys.path[0]`），加渲染 cwd。
+        # 项目根被 `worker._put_project_on_path` 追加在 `sys.path` 末尾（site-packages 之后），遮挡不了已装的包，所以不列
         _annotate_isolated_probe(
             doc,
             (
-                figures_dir,
                 _focused_script_dir(src, figures_dir),
                 (doc.get("probe_cwd") or {}).get("cwd"),
             ),

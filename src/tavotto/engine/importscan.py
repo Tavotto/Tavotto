@@ -12,12 +12,13 @@
   遮蔽不了它们（`BUILTIN_NAMES` / `FROZEN_NAMES` / `PRELOADED_STDLIB`；目标解释器的内建名单由调用方
   传 `builtin`，没传时只认这三张恒成立的表）；
 * **本地模块**（FO-031 / FO19：`lab_utils` 之类永远不装）：按 `sys.path` 的顺序在**搜索根**里找——
-  `python script.py` 是 `[脚本目录, 项目根]`（项目根是 safe worker 的图库根；native 下它不在
-  `sys.path` 上，仍按本地判但标 `unverified`），`python -m pkg.mod` 是 `[cwd]`（`Entry`）。同一目录
+  `python script.py` 是 `[脚本目录, …标准库与 site-packages…, 项目根]`（项目根是 safe worker 的图库根，**追加在
+  末尾**；native 下它不在 `sys.path` 上，仍按本地判但标 `unverified`），`python -m pkg.mod` 是 `[cwd]`（`Entry`）。同一目录
   里的优先级就是 `FileFinder` 的：**目录包（`__init__`）> 扩展模块 > `.py` > 命名空间目录**，名字按
   目录清单**逐字匹配**（`import Utils` 不会匹配 `utils.py`——大小写不敏感的文件系统上也一样，真实
-  Python 的大小写检查）。搜索根在 stdlib 目录**之前**，所以本地 `json.py` 遮蔽标准库 `json`
-  （`shadowing="stdlib"`）；
+  Python 的大小写检查）。**脚本目录 / cwd** 在 stdlib 目录**之前**，所以那里的 `json.py` 遮蔽标准库 `json`
+  （`shadowing="stdlib"`）；**项目根**在 stdlib 之后，只有它里面有的 `json.py` 遮蔽不了（仍归 stdlib，
+  `local_file_never_imported`）。项目根与已装发行包同名时静态侧不读环境、不判谁赢（两种结果都不需要装东西）；
 * **命名空间目录**（无 `__init__` 的目录）：常规包 / 模块在整条 `sys.path` 上任何位置都压过命名
   空间——所以它不能被判成「唯一提供者」：`bucket=local`（宁可不装）、`resolution_status=ambiguous`；
 * **第三方**：不是上面几种、且能经**可信解析**（项目声明 / curated 表，`depresolve.resolve`
@@ -454,7 +455,7 @@ class Entry:
     """脚本怎么被跑（决定 `sys.path` 的前几项）。默认 = safe worker 跑一个脚本（历史行为）。
 
     * 脚本（`python script.py` / safe worker）：`sys.path[0]` 是**脚本目录**；safe worker 另把项目根
-      （图库根）放进 `sys.path`，native 下项目根不在上面；
+      （图库根）**追加到 `sys.path` 末尾**（标准库、site-packages 之后），native 下项目根不在上面；
     * 模块（`python -m pkg.mod`）：`sys.path[0]` 是 **cwd**（不是脚本目录），`pkg` 的 `__init__` 先于
       `mod` 执行，`mod` 的 `__package__` 是 `pkg`。cwd 由调用方给（`cwd` 是项目相对目录，空 = 项目根）；
       `cwd_mode=sandbox`（safe worker 的沙盒 cwd）时项目根不在 `sys.path[0]` 上，搜索根标「未确认」。
@@ -1306,6 +1307,9 @@ class _Top:
         False  # 内建 / 预加载名，磁盘上却有同名本地文件（真实 Python 不会 import 它）
     )
     ns_ignored: bool = False  # 本地命名空间目录败给了标准库的常规包
+    #: 只在项目根（safe worker 追加在 `sys.path` 末尾，标准库与 site-packages 之后）里有同名文件，而这个名字是标准库的：
+    #: 真实 import 先找到标准库，项目根的文件到不了
+    root_after_stdlib: bool = False
     near_miss: bool = False  # 有只差大小写的同名文件
 
 
@@ -1452,8 +1456,10 @@ class _Scanner:
             if os.path.normcase(os.path.abspath(script_dir)) != os.path.normcase(
                 os.path.abspath(self.root)
             ):
-                # safe worker 把项目根（图库根）放进 sys.path；native 下它不在上面——仍按本地判（宁可
-                # 不误装），但标「未确认」
+                # safe worker 把项目根（图库根）**追加到 sys.path 末尾**（标准库 / site-packages 之后，见
+                # `worker._put_project_on_path`）；native 下它不在上面——仍按本地判（宁可不误装），但标「未确认」。
+                # 因为它排在最后：项目根里的同名文件盖不住标准库（`find_top` 的 `root_after_stdlib`）；与已装发行包
+                # 同名时哪个先被 import 取决于环境里装没装，两种结果都不需要装东西，所以仍判本地（不进 needed）
                 roots.append(
                     _Root(self.root, "project_root", self.entry.profile == figcapture.PROFILE_SAFE)
                 )
@@ -1662,6 +1668,14 @@ class _Scanner:
         if found.kind == "namespace" and name in self.stdlib_names:
             # 常规包压过命名空间：标准库的 `statistics` 不会败给项目里一个没有 __init__ 的 statistics/ 目录
             return _Top("none", ns_ignored=True)
+        if (
+            name in self.stdlib_names
+            and found.kind in ("package", "module", "extension")
+            and found.hit.root is not None
+            and found.hit.root.tag == "project_root"
+        ):
+            # safe worker 把项目根追加在 `sys.path` 末尾（标准库之后）：只有项目根里有的同名文件不会盖住标准库
+            return _Top("none", root_after_stdlib=True)
         return _Top("found", found)
 
     def _search(self, dirs: list[tuple[Path, _Root | None]], name: str) -> _Found | None:
@@ -2147,12 +2161,15 @@ class _Scanner:
             evidence.append("stdlib_name_table")
             if top.ns_ignored:
                 warns.append("local_namespace_dir_ignored")
+            if top.root_after_stdlib:
+                warns.append("local_file_never_imported")  # 项目根里的同名文件排在标准库之后
             return ImportClass(
                 bucket=BUCKET_STDLIB,
                 origin_kind=ORIGIN_STDLIB,
                 resolution_status=STATUS_RESOLVED,
                 evidence=tuple(evidence),
                 warnings=tuple(warns),
+                shadowing=BUCKET_STDLIB if top.root_after_stdlib else "",
                 **base,
             )
 

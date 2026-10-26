@@ -181,11 +181,12 @@ def test_package_selection_follows_pathfinder_and_pep420(box, layout, expect):
     fact = importshadow.detect(_MISSING, [script.parent, box.proj])
     if expect is None:
         assert fact is None
-        assert base.shadow_note(ctx, _MISSING) == ""
+        assert base.shadow_note(ctx, _MISSING, roots=[script.parent, box.proj]) == ""
         return
     kind, path = expect
     assert fact is not None and fact["kind"] == kind
-    note = base.shadow_note(ctx, _MISSING)
+    # 选包规则本身与 sys.path 先后无关：这里把两个根都当「先于 site-packages」（`roots=` 覆盖）单测它
+    note = base.shadow_note(ctx, _MISSING, roots=[script.parent, box.proj])
     assert ("Do not install it" in note) == (kind == "regular")
     if path:
         assert fact["project_path"] == path

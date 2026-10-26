@@ -23,15 +23,6 @@ def _no_real_ai_probe(monkeypatch):
 def test_real_session_report_gets_the_shadow_note_and_the_error_text(
     client, tmp_path, fake_pool, sessions
 ):
-    tb = (
-        "Traceback (most recent call last):\n"
-        '  File "/p/celerite/__init__.py", line 3, in <module>\n'
-        "    from .celerite_version import __version__\n"
-        "ModuleNotFoundError: No module named 'celerite.celerite_version'"
-    )
-    err = engine_pool.WorkerError(
-        "脚本执行失败: No module named 'celerite.celerite_version'", tb, code="script_error"
-    )
     # 先建会话拿到项目根，再在根里放半截 celerite/，然后跑到失败
     from test_preparation_session import _create_ready
 
@@ -39,6 +30,16 @@ def test_real_session_report_gets_the_shadow_note_and_the_error_text(
     (root / "celerite").mkdir()
     (root / "celerite" / "__init__.py").write_text(
         "from .celerite_version import __version__\n", encoding="utf-8"
+    )
+    # 项目根在 sys.path 末尾（site-packages 之后）：只有 traceback 里真有一帧落在项目的 celerite/ 内才算遮蔽
+    tb = (
+        "Traceback (most recent call last):\n"
+        f'  File "{root}/celerite/__init__.py", line 3, in <module>\n'
+        "    from .celerite_version import __version__\n"
+        "ModuleNotFoundError: No module named 'celerite.celerite_version'"
+    )
+    err = engine_pool.WorkerError(
+        "脚本执行失败: No module named 'celerite.celerite_version'", tb, code="script_error"
     )
     from test_preparation_session import _act, _action, _settle
 
@@ -52,5 +53,5 @@ def test_real_session_report_gets_the_shadow_note_and_the_error_text(
     r = run_tool(REGISTRY["read_run_report"], ctx, {})
     assert not r.is_error
     assert r.content.lstrip("{\n ").startswith('"project_package_shadow"')
-    assert "celerite.celerite_version" in r.content and "Do not install it" in r.content
+    assert "celerite.celerite_version" in r.content and "installed packages" in r.content
     assert '"error"' in r.content  # 模型现在也能读到异常本身

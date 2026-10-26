@@ -204,17 +204,19 @@ def shadow_note(
     roots: list[Path] | None = None,
 ) -> str:
     """错误文本里若是「项目内同名包遮蔽」（`importshadow`），回一段说明（以换行开头）；不是回空串。
-    候选根 = 项目根 + 脚本所在目录；只读文件系统，不执行任何用户代码。"""
+    候选根 = 脚本所在目录（先于 site-packages）+ 项目根（之后）；只读文件系统，不执行任何用户代码。"""
     from .. import importshadow
 
+    late: list[Path] = []
     if roots is None:
-        # 与 worker 的导入优先级一致（`worker.py` 把脚本目录放在 sys.path 前面，项目根在后）：脚本目录在前
+        # 与 worker 的导入顺序一致（`worker._put_project_on_path`）：脚本目录在 sys.path[0]，先于 site-packages；
+        # 项目根追加在末尾，已装的同名包优先——只有进程真的加载过它（traceback 帧）才算遮蔽
         roots = []
         if ctx.script_path is not None:
             roots.append(Path(ctx.script_path).parent)
-        roots.append(ctx.project_root)
+        late.append(ctx.project_root)
     try:
-        fact = importshadow.detect(text, roots, project_on_path=project_on_path)
+        fact = importshadow.detect(text, roots, project_on_path=project_on_path, late_roots=late)
     except Exception:  # noqa: BLE001 - 说明是锦上添花，判不出不能让工具失败
         return ""
     return f"\nproject_package_shadow: {fact['note']}" if fact else ""

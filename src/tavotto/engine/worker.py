@@ -100,6 +100,19 @@ _INTERPRETER_PACKAGE_DIRS = tuple(
 )
 
 
+def _put_project_on_path(script_dir, project_root) -> list[str]:
+    """把用户脚本的导入路径摆成 `python 脚本.py` 的样子，再外加项目根：脚本所在目录 `insert(0)`；项目根
+    （图库根）`append` 到**末尾**（site-packages 之后）。脚本就在项目根里时只有 `sys.path[0]` 这一项，不重复追加。
+    返回此刻新加的条目（按 `sys.path` 先后），给测试和静态模型对账。"""
+    added: list[str] = []
+    sys.path.insert(0, str(script_dir))
+    added.append(str(script_dir))
+    if Path(script_dir) != Path(project_root):
+        sys.path.append(str(project_root))
+        added.append(str(project_root))
+    return added
+
+
 def _suppress_project_bytecode(roots) -> None:
     """用户**项目目录里**的源码不写字节码：脚本自己（entry 不是 `__main__` 时按模块 import）与
     它 import 的项目内模块，都不在项目里留 `__pycache__/*.pyc`。
@@ -1109,12 +1122,13 @@ class Worker(wireproto.V1Handler):
         # cwd：默认沙盒（写入边界）；项目级开关打开时是脚本自己所在的目录——
         # 脚本用相对路径找数据（exists / glob / C++ 读取器）的唯一成立形态。
         os.chdir(self.workdir or self.sandbox)
-        # 图库根先进 sys.path（脚本 import 同目录的 paper_style / 数据模块），
-        # 脚本自己所在目录再插到最前——面板脚本放 panels/ 子目录时，
-        # 只加图库根会让 import_module(stem) 直接 ModuleNotFoundError。
-        sys.path.insert(0, str(self.figures_dir))
-        if self.script.parent != self.figures_dir:
-            sys.path.insert(0, str(self.script.parent))
+        # 与 `python 脚本.py` 同一个顺序：脚本自己所在目录在 `sys.path[0]`（面板脚本放 panels/ 子目录时，
+        # 只加图库根会让 import_module(stem) 直接 ModuleNotFoundError）；项目根（图库根）**追加到末尾**，排在
+        # site-packages 之后——脚本 import 项目根下的 paper_style / 数据模块照样找得到，但项目根里恰好有同名
+        # 文件夹（比如整份库源码 `celerite/`，里面缺构建时才生成的文件）不会再盖住环境里装好的那个发行包。
+        # 静态侧同一个模型：`importscan._search_roots`（project_root 排在标准库 / site 之后）与
+        # `importshadow.detect(late_roots=…)`；改这里要一起改（tests/test_syspath_order.py 锁住三者一致）。
+        _put_project_on_path(self.script.parent, self.figures_dir)
         # 项目目录里的源码（脚本本身按模块 import 时、它 import 的本地模块）不写 .pyc——
         # 必须在第一次 import 用户代码（paper_style / 脚本）之前装好。
         _suppress_project_bytecode((self.figures_dir, self.script.parent))
