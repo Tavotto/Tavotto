@@ -3513,19 +3513,33 @@ def _zcode_app_dirs(env: dict) -> list[Path]:
     return out
 
 
-def _files_containing(
-    roots: list[Path], needle: bytes, max_bytes: int = 64 * 1024**2
-) -> list[Path]:
-    hits = []
+def _file_contains(f: Path, needle: bytes, chunk: int = 1 << 20) -> bool:
+    """分块流式找（任意大小，跨块边界也认得出）；读不了就抛 OSError，由调用方当「没核对」。"""
+    tail = b""
+    with open(f, "rb") as fh:
+        while block := fh.read(chunk):
+            if needle in tail + block:
+                return True
+            tail = block[-(len(needle) - 1) :] if len(needle) > 1 else b""
+    return False
+
+
+def _files_containing(roots: list[Path], needle: bytes) -> tuple[list[Path], list[Path]]:
+    """返回 (含 needle 的文件, 读不了的文件)。读不了 ≠ 没有：调用方必须当核对未完成（Codex #1439）。"""
+    hits: list[Path] = []
+    unreadable: list[Path] = []
     for root in roots:
         if not root.exists():
             continue
         for f in [root] if root.is_file() else root.rglob("*"):
-            with contextlib.suppress(OSError):
-                if f.is_file() and not f.is_symlink() and f.stat().st_size <= max_bytes:
-                    if needle in f.read_bytes():
-                        hits.append(f)
-    return hits
+            if f.is_symlink() or not f.is_file():
+                continue
+            try:
+                if _file_contains(f, needle):
+                    hits.append(f)
+            except OSError:
+                unreadable.append(f)
+    return hits, unreadable
 
 
 def wipe_ondisk_key(run_dir: Path, env: dict, key: str) -> dict:
@@ -3538,15 +3552,18 @@ def wipe_ondisk_key(run_dir: Path, env: dict, key: str) -> dict:
         pc.unlink()
     _scrub(run_dir, key)
     app_dirs = _zcode_app_dirs(env)
-    for f in _files_containing(app_dirs, needle):
+    for f in _files_containing(app_dirs, needle)[0]:
         with contextlib.suppress(OSError):
             f.unlink()
-    left = _files_containing([run_dir, *app_dirs], needle)
+    left, unreadable = _files_containing([run_dir, *app_dirs], needle)
+
+    def name(p: Path) -> str:
+        return str(p.relative_to(run_dir)) if run_dir in p.parents else p.name
+
     return {
-        "wiped": not left,
-        "residual": [str(p.relative_to(run_dir)) if run_dir in p.parents else p.name for p in left][
-            :10
-        ],
+        "wiped": not left and not unreadable,  # 读不了的文件 = 没核对完，不算清干净
+        "residual": [name(p) for p in left][:10],
+        "unreadable": [name(p) for p in unreadable][:10],
         "checked_app_dirs": [p.name for p in app_dirs],
     }
 

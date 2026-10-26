@@ -2545,7 +2545,7 @@ def test_zcode_key_goes_only_into_provider_config_and_mcp_points_at_the_recorder
         assert {"Bash", "Write", "Edit", "WebFetch"} <= set(run["permission"]["disallowedTools"])
         assert run["permission"]["allowedTools"] == []  # 没给工具名就不放行任何东西
     # 只有 provider_config.json 一个文件含 key
-    assert A._files_containing([tmp_path], key.encode()) == [pc]
+    assert A._files_containing([tmp_path], key.encode()) == ([pc], [])
 
 
 def test_ondisk_key_is_wiped_and_any_residual_fails_the_run(tmp_path, monkeypatch):
@@ -2563,7 +2563,7 @@ def test_ondisk_key_is_wiped_and_any_residual_fails_the_run(tmp_path, monkeypatc
     env = {"APPDATA": str(appdata), "LOCALAPPDATA": str(tmp_path / "none")}
     res = A.wipe_ondisk_key(run_dir, env, key)
     assert res["wiped"] is True and res["checked_app_dirs"] == ["ZCode"]
-    assert not A._files_containing([run_dir, appdata], key.encode())
+    assert A._files_containing([run_dir, appdata], key.encode()) == ([], [])
     # 删不掉的残留（模拟：wipe 之后又写回）→ wiped=False
     monkeypatch.setattr(A, "_scrub", lambda folder, needle: None)
     (run_dir / "evidence" / "again.txt").write_text(key, encoding="utf-8")
@@ -2618,3 +2618,44 @@ def test_driver_stops_waiting_when_the_host_shows_a_permission_prompt(tmp_path, 
     assert D.PERMISSION_PROMPT_RE.search(
         "MCP Tavotto Health\n\nPermission required\n\nAwaiting approval"
     )
+
+
+def test_wipe_scans_large_files_and_counts_unreadable_ones_as_not_verified(tmp_path, monkeypatch):
+    """Codex #1439：超过 64 MiB 的文件、读不了的文件都不能算「没有 key」。"""
+    key = "sk-" + "L" * 32
+    chunk = 1 << 20
+    big = tmp_path / "big.bin"
+    with open(big, "wb") as f:
+        f.write(b"\0" * chunk * 3)
+        f.write(b"x" * (chunk - 5) + key.encode())  # 跨块边界
+    assert A._files_containing([tmp_path], key.encode()) == ([big], [])
+    run_dir = tmp_path / "run"
+    (run_dir / "work").mkdir(parents=True)
+    locked = run_dir / "work" / "locked.bin"
+    locked.write_bytes(b"x")
+    real = A._file_contains
+
+    def fake(f, n, **k):
+        if f == locked:
+            raise OSError("locked")
+        return real(f, n, **k)
+
+    monkeypatch.setattr(A, "_file_contains", fake)
+    res = A.wipe_ondisk_key(run_dir, {"APPDATA": str(tmp_path / "none")}, key)
+    assert res["wiped"] is False and res["unreadable"] == [str(Path("work") / "locked.bin")]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="winlab.py 是 Mac 端入口（POSIX 权限位）")
+def test_default_and_ondisk_keys_must_differ_in_either_order(tmp_path, monkeypatch):
+    import getpass
+
+    monkeypatch.setattr(W, "MODEL_CONF_PATH", tmp_path / "model.json")
+    monkeypatch.setattr(W, "MODEL_CONF_ONDISK_PATH", tmp_path / "model-ondisk.json")
+    same = "sk-" + "s" * 32
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="": same)
+    assert W.secret_init("deepseek", ondisk=True) == 0
+    assert W.secret_init("deepseek") == 2  # 后录默认那把、填了同一个 → 拒收
+    # 手工把两个文件改成同一把：落盘那格照样不跑
+    (tmp_path / "model.json").write_text(json.dumps({"api_key": same}))
+    (tmp_path / "model.json").chmod(0o600)
+    assert W.load_model_secret("zcode-native") is None

@@ -26,7 +26,6 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import hashlib
 import json
 import os
@@ -474,6 +473,13 @@ def model_conf_path(mode: str | None) -> Path:
     return MODEL_CONF_ONDISK_PATH if mode in ONDISK_MODES else MODEL_CONF_PATH
 
 
+def _stored_key(path: Path) -> str | None:
+    try:
+        return json.loads(path.read_text()).get("api_key") or None
+    except (OSError, ValueError):
+        return None
+
+
 def load_model_secret(mode: str | None = None) -> bytes | None:
     """真实模型调用的凭据：本机 0600 文件，经 stdin 交给 Lab 的那一次运行。除 ONDISK_MODES 外 Lab 不落盘、不打印。"""
     path = model_conf_path(mode)
@@ -486,6 +492,13 @@ def load_model_secret(mode: str | None = None) -> bytes | None:
         return None
     if path.stat().st_mode & 0o077:
         print(f"{path} must be chmod 600", file=sys.stderr)
+        return None
+    if mode in ONDISK_MODES and _stored_key(path) == _stored_key(MODEL_CONF_PATH):
+        # 文件被手工改成同一把也不行：会落盘的只能是那把专用限额 key
+        print(
+            f"{path} holds the same key as {MODEL_CONF_PATH}; refusing to write it to disk",
+            file=sys.stderr,
+        )
         return None
     return path.read_bytes()
 
@@ -500,14 +513,14 @@ def secret_init(provider: str, ondisk: bool = False) -> int:
     key = getpass.getpass(f"{label} (input hidden): ").strip()
     if not key:
         return 2
-    if ondisk and MODEL_CONF_PATH.exists():
-        with contextlib.suppress(OSError, ValueError):
-            if json.loads(MODEL_CONF_PATH.read_text()).get("api_key") == key:
-                print(
-                    "refused: this is the same key as the default one — create a separate capped key",
-                    file=sys.stderr,
-                )
-                return 2
+    # 两把必须不同，不论先录哪一把（Codex #1439：只在 --ondisk 时比会漏掉「后录默认那把、填了同一个」）
+    other = MODEL_CONF_PATH if ondisk else MODEL_CONF_ONDISK_PATH
+    if _stored_key(other) == key:
+        print(
+            "refused: the default key and the on-disk (ZCode) key must be different — create a separate capped key",
+            file=sys.stderr,
+        )
+        return 2
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
