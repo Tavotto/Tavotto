@@ -277,6 +277,16 @@ def _error_from_worker(
         params={"entry": entry, "reason": reason, "worker_code": str(exc.code or "")},
         traceback_text=exc.traceback_text,
     )
+    if exc.code == "write_outside_roots":
+        # Worker-owned, already relativized evidence; consumers must not parse
+        # localized advice or replay advice for a different execution scope.
+        extra = getattr(exc, "extra", None) or {}
+        if isinstance(extra, dict):
+            out["params"]["write_violation"] = {
+                key: extra[key][:limit]
+                for key, limit in (("path", 512), ("event", 64))
+                if isinstance(extra.get(key), str)
+            }
     # C++ 读取器找不到数据（ADR 0110 §一）：码照旧是「试运行失败」，载荷原样带出——素材库弹同一个
     # 「指认数据位置」对话框（`pool._offer_missing_input` 只在对上脚本里一串常量时挂）
     offer = getattr(exc, "missing_input", None)

@@ -421,6 +421,10 @@ def test_responses_recovery_retains_reasoning_but_never_executes_partial_calls(c
                 "output": [response_call("create_file", {"content": NEW}, "create")],
             }
         else:
+            assert reasoning not in body["input"], (
+                "A successful action consumed the temporary recovery state"
+            )
+            assert any(item.get("call_id") == "create" for item in body["input"])
             reply = {"status": "completed", "output": [response_call("finish", {}, "finish")]}
         reply["usage"] = {"input_tokens": 100, "output_tokens": 200}
         return 200, {}, json.dumps(reply).encode()

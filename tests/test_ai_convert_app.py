@@ -516,8 +516,12 @@ def test_existing_output_directories_do_not_block_conversion_validation(project,
     assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200
 
 
-def test_new_output_directory_failure_gives_conversion_scope_and_keeps_savefig(
-    project, monkeypatch
+@pytest.mark.parametrize(
+    "operation,name",
+    [("mkdir(exist_ok=True)", "new-output"), ("write_bytes(b'clobbered')", "out.png")],
+)
+def test_output_write_failure_keeps_its_actual_cause_for_the_next_correction(
+    project, monkeypatch, operation, name
 ):
     """Real worker denial must survive probe wrapping and guide a safe correction."""
     _m, client, figs, state = project
@@ -526,10 +530,7 @@ def test_new_output_directory_failure_gives_conversion_scope_and_keeps_savefig(
     for var in ("TMPDIR", "TEMP", "TMP"):
         monkeypatch.setenv(var, str(worker_tmp))
     monkeypatch.setenv("LOCALAPPDATA", str(figs.parent / "localappdata"))
-    bad = (
-        "from pathlib import Path\n"
-        "(Path(__file__).parent / 'new-output').mkdir(exist_ok=True)\n" + GOOD
-    )
+    bad = f"from pathlib import Path\nPath({str(figs / name)!r}).{operation}\n" + GOOD
     state["code"] = (
         "p = d / 'fig_matplotlib.py'; "
         f"p.write_text({GOOD!r} if p.exists() else {bad!r}, encoding='utf-8')"
@@ -537,11 +538,15 @@ def test_new_output_directory_failure_gives_conversion_scope_and_keeps_savefig(
     before = (figs / "out.png").read_bytes()
     sid = _start(client).get_json()["session"]
     session = _wait_final(client, sid)
-    assert len(state["prompts"]) == 2
+    assert len(state["prompts"]) == 2, json.dumps(session, ensure_ascii=False)
     assert ai_convert.WRITE_OUTSIDE_HINT in state["prompts"][1]
     assert "保留 Matplotlib savefig" in state["prompts"][1]
+    assert "Rejected write:" in state["prompts"][1]
+    assert "改成写到项目内" not in state["prompts"][1]
+    assert name in state["prompts"][1], "The model must see which write actually failed"
     assert session["task"]["outcome"] == "completed", session
-    assert not (figs / "new-output").exists()
+    if name != "out.png":
+        assert not (figs / name).exists()
     assert (figs / "out.png").read_bytes() == before
     assert (figs / "fig.py").read_bytes() == ORIGINAL.encode()
     assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200

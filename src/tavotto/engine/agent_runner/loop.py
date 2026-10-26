@@ -137,19 +137,20 @@ class HttpModel:
     def truncated_continuation(self, turn: Turn) -> Turn | None:
         return truncated_continuation(self.wire.name, turn)
 
-    def compress_history(self, history: list[Msg]) -> int:
-        # Manual thinking requires its last signed block during tool use. Keep
-        # that conversation append-only; the existing total budget still holds.
+    def release_recovery_state(self, history: list[Msg]) -> int:
+        # A successful tool action now records concrete progress. Do not charge
+        # every later request for the long interrupted reasoning that led to it.
+        # Manual Anthropic thinking requires its original signed prefix.
         if self.wire.name == "anthropic" and self.thinking == "budget":
             return 0
-        count = compress(history)
-        if count and self.wire.name == "anthropic":
-            # A thinking signature is bound to the preceding conversation.
-            # Editing old tool results invalidates every later signed block.
-            # Some endpoints return signed/redacted blocks even when no thinking
-            # option was requested. Omit stale blocks in both modes; manual
-            # budget mode remains append-only above. Tool calls/results stay
-            # paired and the requested thinking mode and effort stay unchanged.
+        count = sum(m.recovery_state for m in history)
+        if count:
+            history[:] = [m for m in history if not m.recovery_state]
+            self._invalidate_thinking_signatures(history)
+        return count
+
+    def _invalidate_thinking_signatures(self, history: list[Msg]) -> None:
+        if self.wire.name == "anthropic":
             for msg in history:
                 if msg.turn is not None and isinstance(msg.turn.native, list):
                     msg.turn.native = [
@@ -157,6 +158,21 @@ class HttpModel:
                         for block in msg.turn.native
                         if block.get("type") not in ("thinking", "redacted_thinking")
                     ]
+
+    def compress_history(self, history: list[Msg]) -> int:
+        # Manual thinking requires its last signed block during tool use. Keep
+        # that conversation append-only; the existing total budget still holds.
+        if self.wire.name == "anthropic" and self.thinking == "budget":
+            return 0
+        count = compress(history)
+        if count:
+            # A thinking signature is bound to the preceding conversation.
+            # Editing old tool results invalidates every later signed block.
+            # Some endpoints return signed/redacted blocks even when no thinking
+            # option was requested. Omit stale blocks in both modes; manual
+            # budget mode remains append-only above. Tool calls/results stay
+            # paired and the requested thinking mode and effort stay unchanged.
+            self._invalidate_thinking_signatures(history)
         return count
 
     def complete(
@@ -355,6 +371,7 @@ class RunResult:
     compressions: int = 0
     output_recoveries: int = 0
     protocol_recoveries: int = 0
+    recovery_state_releases: int = 0
     elapsed_ms: int = 0
 
 
@@ -457,6 +474,7 @@ def run(
             "compressions": res.compressions,
             "output_recoveries": res.output_recoveries,
             "protocol_recoveries": res.protocol_recoveries,
+            "recovery_state_releases": res.recovery_state_releases,
         }
     )
     return res
@@ -597,7 +615,7 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                 res.output_recoveries += 1
                 continue_turn = getattr(model, "truncated_continuation", lambda turn: None)(turn)
                 if continue_turn is not None:
-                    history.append(Msg("assistant", turn=continue_turn))
+                    history.append(Msg("assistant", turn=continue_turn, recovery_state=True))
                 history.append(Msg("user", text=TRUNCATION_FEEDBACK + hint))
                 continue
             return _finish(res, False, "budget", "output_truncated")
@@ -665,6 +683,10 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                 history.append(Msg("tool", results=results))
                 return _finish(res, False, "tool_error_loop", r.code)
         history.append(Msg("tool", results=results))
+        if any(not r.is_error for r in results):
+            res.recovery_state_releases += getattr(
+                model, "release_recovery_state", lambda history: 0
+            )(history)
 
 
 def _call_identity_error(calls: list[ToolCall]) -> str:

@@ -80,6 +80,7 @@ order: 130
     死的归 script_probe_failed 并带退出码的解释——把一次真崩溃报成「被中断」
     是撒谎。通用 `script_probe_failed` 在 `params.worker_code` 保留底层稳定原因码，
     消费方据此提供任务特定的修正指导，不解析本地化文案 / traceback 来猜原因。
+    写入拒绝另带 `params.write_violation`（worker 已相对化的 path / event，有界）；转换反馈沿应用 runner 传递这份现场，不能复用 MCP 的不同写入范围建议。
     **失败不写注册表**；产出 stem 已被另一份**仍在磁盘上的**脚本
     登记时报 `multiple_stem_conflict` 而不是静默抢走（裁决走 PUT
     /api/registry 的手工路——那才是用户显式指认；归属脚本已不存在的死条目

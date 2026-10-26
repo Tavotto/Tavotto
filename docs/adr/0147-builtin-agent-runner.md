@@ -141,6 +141,7 @@ Conversion output recovery remains within the existing budget: create/append sho
 
 - 截断轮的文字与所有工具调用均不接受；只将协议可回放的 reasoning / reasoning_content / 已签名 thinking 状态保留在模型历史中，并提醒模型接着做一个具体操作。
   无签名的 Anthropic thinking 不回填；思考内容不进事件、诊断包或日志。连续三轮截断终止，有正常响应进展后重新计连续次数。
+  成功执行后以实际工具结果接替临时续写状态，释放该状态，避免每轮重复收费；普通工具历史仍保留。Anthropic manual/budget 保留签名前缀，其他 Anthropic 模式在改历史后清除失效签名。
 - 非 JSON 对象的工具参数仍由 handler 前置拒绝；下一轮回放只把该调用的参数置为空对象，配对原 call ID 与 `bad_arguments`、同源 schema 提示，避免接口在模型看到反馈之前拒绝畸形历史。
   这不是替模型猜参数或执行原调用；有效对象（包括含错误键的对象）仍原样回放，未知键不推断。
 - 缺失或重复调用 ID 时整批不执行，作为协议错误反馈让模型重新发出有效调用，连续三次仍错误则终止。重复失败判据是同一工具、同一参数、同一错误码；不同纠错尝试可继续，但仍受全局预算限制。
@@ -148,3 +149,5 @@ Conversion output recovery remains within the existing budget: create/append sho
 
 协议依据：[DeepSeek Responses 的无状态历史](https://api-docs.deepseek.com/guides/responses_api/)、[输出限制含思考](https://api-docs.deepseek.com/api/create-response/)、
 [OpenAI reasoning 状态回传](https://developers.openai.com/api/docs/guides/reasoning)。看护 `test_agent_runner`、`test_agent_runner_convert` 与 `test_ai_connections`；真实服务证据独立记录，合成接收端测试不冒充真模型结果。
+
+转换写入守卫反馈同时保留原错误的有界现场与权限指导，不能把所有写入失败只解释成 mkdir。实际文件写入与目录创建的真实 worker 反例验证模型能看到失败位置；没有放宽写入根。

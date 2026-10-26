@@ -12526,6 +12526,11 @@ def _convert_runner(
                         "code": err.get("code"),
                         "message": err.get("message"),
                         **({"cause": cause} if cause else {}),
+                        **(
+                            {"write_violation": err["params"]["write_violation"]}
+                            if isinstance((err.get("params") or {}).get("write_violation"), dict)
+                            else {}
+                        ),
                     }
                 }
             stems = list(result.get("stems") or [])

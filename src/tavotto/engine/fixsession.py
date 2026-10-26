@@ -240,6 +240,9 @@ class _FinishAware:
         # Preserve the wire's signed-thinking rules in repair sessions too.
         return getattr(self.inner, "compress_history", loop.compress)(history)
 
+    def release_recovery_state(self, history) -> int:
+        return getattr(self.inner, "release_recovery_state", lambda history: 0)(history)
+
 
 @dataclass
 class _Pending:

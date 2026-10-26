@@ -112,7 +112,7 @@ NO_FIGURE_CODES = frozenset(
 WRITE_OUTSIDE_ROOTS_CODE = "write_outside_roots"
 WRITE_OUTSIDE_HINT = (
     "转换校验只允许写候选目录和运行时临时目录，不能写原项目。"
-    "删除仅为输出准备的 mkdir / makedirs；中间数据放内存，确需临时文件时使用 tempfile。"
+    "根据下面的实际错误定位写入；删除仅为输出准备的 mkdir / makedirs，额外文件写入和中间数据改用内存或 tempfile。"
     "保留 Matplotlib savefig 调用，Tavotto 会捕获图像，不需要预建输出目录；"
     "不要把写入改到项目的其他位置。"
 )
@@ -459,11 +459,18 @@ def run_validation(
         if code in NO_FIGURE_CODES:
             return {"status": "no_figure", "code": code}
         if ai_figure_edit.tripped_write_roots(code, err.get("cause")):
-            # 生产 runner 里码被探测折成 script_probe_failed，绊线的码在 `cause`：两种来源同一个结论、同一句提示
+            # Keep the concrete failure as well as the scope guidance: the
+            # rejected operation can be a file write, not just mkdir.
+            violation = err.get("write_violation")
+            detail = (
+                "\nRejected write: " + json.dumps(violation, ensure_ascii=False)
+                if isinstance(violation, dict) and violation
+                else ""
+            )
             return {
                 "status": "error",
                 "code": WRITE_OUTSIDE_ROOTS_CODE,
-                "message": WRITE_OUTSIDE_HINT,
+                "message": WRITE_OUTSIDE_HINT + detail,
             }
         return {
             "status": "error",

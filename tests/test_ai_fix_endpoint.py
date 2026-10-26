@@ -181,8 +181,12 @@ def test_fix_recovery_preserves_model_state_and_waits_for_the_card(
                 "output": [reasoning],
             }
         else:
-            if reasoning not in body["input"]:
-                return 400, {}, b"{}"  # A strict receiver needs the continuation.
+            if (reasoning in body["input"]) != (len(requests) == 2):
+                return (
+                    400,
+                    {},
+                    b"{}",
+                )  # Recovery state is needed once, then actual tool results suffice.
             name = "ask_user" if len(requests) == 2 else "finish"
             args = (
                 {"question": "数据在哪？", "options": [{"id": "a", "label": "A"}]}

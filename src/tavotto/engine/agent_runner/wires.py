@@ -130,6 +130,8 @@ class Msg:
     text: str = ""
     turn: Turn | None = None
     results: list[ToolResult] = field(default_factory=list)
+    # Interrupted reasoning is temporary handoff state, never a tool operation.
+    recovery_state: bool = False
 
 
 def truncated_continuation(wire: str, turn: Turn) -> Turn | None:
