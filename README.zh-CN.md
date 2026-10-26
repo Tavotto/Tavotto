@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero-window.zh.png" width="100%"
-       alt="macOS 上的 Tavotto 桌面版窗口，画布上是三幅图拼成的 150 × 125 毫米期刊版面，已选中图 (a)，右栏显示它的位置、尺寸和 100% 缩放。">
+       alt="macOS 上的 Tavotto 桌面窗口，排版已保存到项目，已选中图 (a)，右栏显示它的位置、尺寸和缩放。">
 </p>
 
 <p align="center">
@@ -82,7 +82,7 @@ tavotto
 
 双击一张图，Tavotto 把你的脚本跑一遍，并把那个 matplotlib `Figure` 留在内存里。从左边的树里选，或直接在画布上点标题、刻度、曲线、图例、箭头，改字号、颜色、线型或位置；拖动时图跟着光标走，松手时 matplotlib 才跑一次。[能改什么](docs/guide/editing-reference.zh-CN.md)。
 
-![在图 (a) 内部编辑：左边是元素树，选中了标题，右栏是它的字体、字号和颜色。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/canvas-edit.zh.png)
+![在图 (a) 内部编辑：左边是元素树，整个页面都在视野里，选中标题，上方是字号、粗体、斜体工具条，右栏是字体、字号和颜色。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/canvas-edit.zh.png)
 
 ### 把多张图排进一页
 
@@ -106,7 +106,7 @@ tavotto
 
 Tavotto 会找到你写这个脚本时用的 conda、venv 或系统 Python，并在那里运行。找不到的包会点名告诉你，你自己的环境从不被修改。在终端里，`tavotto run -- python figure.py` 会接管你平时那条命令画出的图（[Beta](docs/compatibility/tavotto-run.md)）。
 
-![从项目文件夹里打开的脚本：Tavotto 为它选定的环境连同 Python 版本列在界面上，脚本画出的图出现在图库里。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/run-script.zh.png)
+![运行关联脚本之后：素材库里 fig1_kinetics.py 显示「已捕获 1 张图」，产出的图已放在画布上，右栏显示它的位置、尺寸和原始尺寸。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/run-script.zh.png)
 
 ### 回到任何一个早先的版面
 

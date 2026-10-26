@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero-window.png" width="100%"
-       alt="The Tavotto desktop app window on macOS, showing a 150 × 125 mm three-panel journal layout with panel (a) selected and its position, size and 100% scale in the properties column.">
+       alt="The Tavotto desktop window on macOS with the layout saved to the project, panel (a) selected, and its position, size and scale in the properties column.">
 </p>
 
 <p align="center">
@@ -82,7 +82,7 @@ Your browser opens at `http://127.0.0.1:5089`. It needs Python 3.10 or later; on
 
 Double-click a panel and Tavotto runs your script once and keeps the matplotlib `Figure` in memory. Pick the title, a tick, a curve, the legend or an arrow from the tree or on the canvas, then change its size, colour, dash pattern or position; dragging follows the cursor, and matplotlib runs once when you let go. [What can be edited](docs/guide/editing-reference.md).
 
-![Editing inside figure (a): the element tree on the left, the title selected, and its font, size and colour on the right.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/canvas-edit.png)
+![Editing inside figure (a): the element tree on the left, the whole page in view with the title selected and its size, bold and italic controls above it, and font, size and colour on the right.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/canvas-edit.png)
 
 ### Lay out several figures on one page
 
@@ -106,7 +106,7 @@ The assistant panel edits the script for you ("move the legend to the top left, 
 
 Tavotto looks for the conda, venv or system Python your script was written for and runs it there. A package it cannot find is named, and your own environments are never modified. From a terminal, `tavotto run -- python figure.py` attaches to figures made by the command you already use ([Beta](docs/compatibility/tavotto-run.md)).
 
-![A script opened from a project folder: the environment Tavotto chose for it is listed with its Python version, and the figures the script produced appear in the library.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/run-script.png)
+![After running a linked script: the asset library shows fig1_kinetics.py as Captured 1 figure, and the figure it produced sits on the canvas, with its position, size and original size on the right.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/run-script.png)
 
 ### Go back to any earlier layout
 
