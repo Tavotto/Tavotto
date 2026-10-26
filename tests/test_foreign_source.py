@@ -53,7 +53,8 @@ def _panels(client) -> dict[str, dict]:
 
 
 def _foreign(client, panel_id: str):
-    return _panels(client)[panel_id]["foreign_source"]
+    # 素材 id 是 `str(相对路径)`（`/api/panels` 与 readiness 同一份）：Windows 上子目录用反斜杠
+    return _panels(client)[str(Path(panel_id))]["foreign_source"]
 
 
 def test_sibling_r_script_is_reported_with_language(client, tmp_path):
