@@ -153,6 +153,12 @@ def test_a_bad_explicit_path_falls_back_instead_of_crashing(monkeypatch, caplog)
 def test_hello_negotiates_the_protocol_version(client):
     client.ensure_started(max_sessions=2, max_queue=8)
     assert client.hello["supervisor_protocol_version"] == 1
+    # 策略在 Python：上限与淘汰租约都随 hello 交给 workerd（假 supervisor 把 payload 原样回显）
+    assert client.hello["payload"] == {
+        "max_sessions": 2,
+        "max_queue": 8,
+        "acquire_lease_ms": workerd_client.ACQUIRE_LEASE_MS,
+    }
 
 
 def test_a_foreign_supervisor_version_is_refused(tmp_path):

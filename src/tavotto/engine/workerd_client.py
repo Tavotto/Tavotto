@@ -118,6 +118,11 @@ def _dev_tree_candidates() -> list[str]:
     return [os.path.join(base, "release", EXE_NAME), os.path.join(base, "debug", EXE_NAME)]
 
 
+#: 会话交给调用方到它发出第一条请求之间的租约（毫秒），租约内 workerd 的 LRU 淘汰不挑它
+#: （ADR 0004 §淘汰）。与 Python 池的 `pool.ACQUIRE_LEASE` 是同一件事、同一个数。
+ACQUIRE_LEASE_MS = 30_000
+
+
 def find_workerd() -> str | None:
     """workerd 可执行文件的路径；显式禁用或找不到回 `None`。
 
@@ -183,7 +188,9 @@ class WorkerdClient:
         base.mkdir(parents=True, exist_ok=True)
         return str(base / "workerd.log")
 
-    def ensure_started(self, max_sessions: int = 3, max_queue: int = 32) -> None:
+    def ensure_started(
+        self, max_sessions: int = 3, max_queue: int = 32, acquire_lease_ms: int = ACQUIRE_LEASE_MS
+    ) -> None:
         """确保有一条活着的 workerd；崩过的自动重启（有上限）。
 
         hello 协商**在 `_lock` 之外**发：它是一次要等响应的往返，而 reader 线程
@@ -256,7 +263,11 @@ class WorkerdClient:
                 "hello",
                 None,
                 None,
-                {"max_sessions": max_sessions, "max_queue": max_queue},
+                {
+                    "max_sessions": max_sessions,
+                    "max_queue": max_queue,
+                    "acquire_lease_ms": acquire_lease_ms,
+                },
                 15.0,
             )
             got = self.hello.get("supervisor_protocol_version")
