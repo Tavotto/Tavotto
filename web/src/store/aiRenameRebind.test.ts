@@ -19,6 +19,7 @@ import {
 import { emptyProject, type PanelObject, type PanelOverride } from '@/types/document'
 import { rebindRenamedIdentities } from './aiRenameRebind'
 import { useAiStore } from './aiStore'
+import { useAssetStore } from './assetStore'
 import { useDocumentStore } from './documentStore'
 
 enablePatches()
@@ -271,5 +272,54 @@ describe('接线：ai.done 前向改写 / 撤销回应反向改写', () => {
       globalThis.fetch = prev
     }
     expect(ids(active()[0])).toEqual([OLD, OLD, OTHER, null, OTHER])
+  })
+})
+
+describe('手势进行中到达的改名：改写自成一条历史、不被手势取消回滚（Codex #1425 P1）', () => {
+  beforeEach(async () => {
+    await load([panel('p1', 'Fig1.pdf', EDITS())])
+  })
+  const nudge = () =>
+    useDocumentStore.getState().txnUpdate((d) => {
+      ;(d.objects[0] as PanelObject).x = 33
+    })
+
+  it('手势开着 → 改名到达 → 手势取消：改写仍在，手势的位移回滚', () => {
+    const st = useDocumentStore.getState()
+    st.beginTxn(literal('拖动'))
+    nudge()
+    rebindRenamedIdentities([RENAME], 'forward')
+    useDocumentStore.getState().endTxn({ discard: true })
+    expect(ids(active()[0])).toEqual([NEW, NEW, OTHER, null, OTHER])
+    expect(active()[0].x).toBe(0)
+  })
+
+  it('手势开着 → 改名到达 → 手势提交：两条独立历史，各自可撤销', () => {
+    const before = useDocumentStore.getState().past.length
+    useDocumentStore.getState().beginTxn(literal('拖动'))
+    nudge()
+    rebindRenamedIdentities([RENAME], 'forward')
+    useDocumentStore.getState().endTxn()
+    expect(useDocumentStore.getState().past.length).toBe(before + 2)
+    expect(ids(active()[0])).toEqual([NEW, NEW, OTHER, null, OTHER])
+    useDocumentStore.getState().undo() // 撤销改写
+    expect(ids(active()[0])).toEqual([OLD, OLD, OTHER, null, OTHER])
+    expect(active()[0].x).toBe(33)
+    useDocumentStore.getState().undo() // 撤销拖动
+    expect(active()[0].x).toBe(0)
+  })
+})
+
+describe('磁盘面板的 stem：有权威 stem 就只认它（Codex #1425 P1）', () => {
+  it('panel.png 注册为 panel、panel.pdf 注册为 panel-2：panel 的改名不碰 panel-2', async () => {
+    const info = (id: string, stem: string) => ({ id, stem }) as never
+    useAssetStore.setState({
+      byId: { 'panel.png': info('panel.png', 'panel'), 'panel.pdf': info('panel.pdf', 'panel-2') },
+    })
+    await load([panel('a', 'panel.png', EDITS()), panel('b', 'panel.pdf', EDITS())])
+    rebindRenamedIdentities([{ ...RENAME, stem: 'panel' }], 'forward')
+    expect(ids(active()[0])).toEqual([NEW, NEW, OTHER, null, OTHER])
+    expect(ids(active()[1])).toEqual([OLD, OLD, OTHER, null, OTHER])
+    useAssetStore.setState({ byId: {} })
   })
 })

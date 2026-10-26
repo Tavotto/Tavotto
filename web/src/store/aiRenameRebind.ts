@@ -14,7 +14,7 @@
  */
 import { produce } from 'immer'
 import { msg } from '@/i18n'
-import { panelStemOfFileId, stemOf } from '@/lib/panelStem'
+import { panelStemOfFileId } from '@/lib/panelStem'
 import {
   rebindOverrideIdentities,
   type IdentityRename,
@@ -26,7 +26,9 @@ import { useDocumentStore } from './documentStore'
 /** 这个面板属于哪张图：运行时面板按持久化的捕获来源，磁盘面板按素材清单的 stem（缺省退回文件名 stem）。 */
 function panelIsStem(panel: PanelObject, stem: string): boolean {
   if (panel.fileKind === 'runtime') return panel.source?.stem === stem
-  return panelStemOfFileId(panel.fileId) === stem || stemOf(panel.fileId) === stem
+  // 权威 stem（素材清单）已知就只认它；`panelStemOfFileId` 查不到时自己退回文件名 stem。
+  // 不能再 OR 一个文件名 stem：panel.png / panel.pdf 注册成 panel / panel-2 时会串到无关的图（#1251）
+  return panelStemOfFileId(panel.fileId) === stem
 }
 
 /** 有没有会被改写的条目（只读预检：没有就不开提交，也不动画布快照）。 */
@@ -36,12 +38,31 @@ const wouldRebind = (
   direction: RebindDirection,
 ): boolean => rebindOverrideIdentities(objects, renames, direction, panelIsStem, false) > 0
 
+const deferred: { renames: readonly IdentityRename[]; direction: RebindDirection }[] = []
+let unsubscribe: (() => void) | null = null
+
 /**
  * 改写画布上的 override 身份，回改了几条（所有画布合计）。`renames` 为空 → 什么都不做。
  * 调用方负责只在“这次修改确实落地”时调用：forward 在 AI 完成（`ai.done`，状态 done 且 changed），back 在撤销成功之后。
  */
 export function rebindRenamedIdentities(renames: readonly IdentityRename[], direction: RebindDirection): number {
   if (!renames.length) return 0
+  // 手势（拖动 / 属性页连续调整）开着时 commit 会并入它的事务：手势取消就把改写一起回滚，
+  // 而 AI 的脚本改动留着。外部事件不替用户收手势，等事务结束后再作为独立一条历史落地
+  // （入队按到达顺序，forward / back 不会错序）。此时回 0：改了几条要等事务结束才知道。
+  if (useDocumentStore.getState().txn) {
+    deferred.push({ renames, direction })
+    if (!unsubscribe) {
+      unsubscribe = useDocumentStore.subscribe((s) => {
+        if (s.txn) return
+        unsubscribe?.()
+        unsubscribe = null
+        const queue = deferred.splice(0)
+        for (const q of queue) rebindRenamedIdentities(q.renames, q.direction)
+      })
+    }
+    return 0
+  }
   const store = useDocumentStore.getState()
   let total = 0
   // 激活画布：一条历史
