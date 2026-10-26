@@ -819,7 +819,8 @@ def drive(ns: argparse.Namespace) -> dict:
                     if t.get("type") == "page" and (
                         is_workbench_url(url)
                         if ns.kind != "native"
-                        else not url.startswith("devtools:")
+                        # WorkBuddy 先开 splash.html 再开 index.html（run 20261026T164733Z-d2e08d 挂在 splash 上）
+                        else not url.startswith("devtools:") and "splash" not in url
                     ):
                         workbench = cdp.call(
                             "Target.attachToTarget", {"targetId": t["targetId"], "flatten": True}

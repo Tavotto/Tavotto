@@ -3684,19 +3684,46 @@ def _delete_credentials(filters: tuple[str, ...]) -> list[str]:
 def wipe_login_state(run_dir: Path) -> dict:
     """扫码登录格的收尾：删掉 run 目录里的「家」与登录用 Edge 配置，删掉凭据管理器里 WorkBuddy 的条目，再核对都不在了。"""
     work = run_dir / "work"
-    gone = []
+    left_dirs = []
     for d in (work / "wbhome", work / "edge-login"):
         if d.exists():
             with contextlib.suppress(OSError):
-                _rmtree_no_follow(d)
-        gone.append(not d.exists())
+                _rmtree_no_follow(_long_path(d))
+        if d.exists():
+            left_dirs.append(d.name)
     removed = _delete_credentials(WORKBUDDY_CRED_FILTERS)
     left = _delete_credentials(WORKBUDDY_CRED_FILTERS)  # 第二遍还删得到 = 没删干净
     return {
-        "wiped": all(gone) and not left,
+        "wiped": not left_dirs and not left,
+        "dirs_left": left_dirs,
         "credentials_removed": removed,
         "credentials_left": left,
     }
+
+
+_LONG_PREFIX = "\\\\?\\"
+
+
+def _long_path(p: Path) -> Path:
+    """Windows 扩展长度路径前缀：WorkBuddy 的运行时目录很深，Lab 的 LongPathsEnabled=0 时普通路径删不掉
+    （run 20261026T164733Z-d2e08d 的 wbhome 留了下来）。"""
+    if os.name != "nt":
+        return p
+    s = str(p.resolve())
+    return Path(s if s.startswith(_LONG_PREFIX) else _LONG_PREFIX + s)
+
+
+def sweep_stale_login_dirs(runs: Path) -> list[str]:
+    """被强行结束的旧 run 留下的「家」与登录用 Edge 配置：开跑前删掉。返回 run id。"""
+    swept: list[str] = []
+    if runs.is_dir():
+        for d in [*runs.glob("*/work/wbhome"), *runs.glob("*/work/edge-login")]:
+            with contextlib.suppress(OSError):
+                _rmtree_no_follow(_long_path(d))
+            rid = d.parents[1].name
+            if not d.exists() and rid not in swept:
+                swept.append(rid)
+    return swept
 
 
 def claude_isolated_config(cfg: Path, proj: Path) -> None:
@@ -3778,6 +3805,8 @@ def run_desktop_live_task(
     host = DESKTOP_HOSTS[cell.host]
     ext = DESKTOP_EXTENSIONS[cell.extension] if cell.extension else None
     swept = sweep_stale_ondisk_configs(lab.runs) if mode in DESKTOP_LIVE_ONDISK_MODES else []
+    if mode in DESKTOP_LIVE_LOGIN_MODES:
+        swept += sweep_stale_login_dirs(lab.runs)
     levels = {"L2": "not_tested", "L3": "not_run", "L4": "not_run", "L5": "not_run"}
     base: dict = {
         "host": {"id": host.id, "name": host.name, "pinned_version": host.version},

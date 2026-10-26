@@ -2817,3 +2817,12 @@ def test_login_state_wipe_removes_the_run_home_and_edge_profile(tmp_path, monkey
 
     monkeypatch.setattr(A, "_delete_credentials", creds)
     assert A.wipe_login_state(run_dir)["wiped"] is False
+
+
+def test_stale_login_dirs_from_killed_runs_are_swept(tmp_path):
+    runs = tmp_path / "runs"
+    for d in ("r1/work/wbhome/AppData", "r2/work/edge-login/Default"):
+        (runs / d).mkdir(parents=True)
+    (runs / "r1" / "evidence").mkdir()
+    assert sorted(A.sweep_stale_login_dirs(runs)) == ["r1", "r2"]
+    assert not (runs / "r1" / "work" / "wbhome").exists() and (runs / "r1" / "evidence").exists()
