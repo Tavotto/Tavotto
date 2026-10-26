@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: 2026-10-22
+Last updated: 2026-10-26
 
 Tavotto is a local-first scientific-figure editor. Rendering, composition and
 project writes happen on the machine running the engine: the user's computer by
@@ -96,11 +96,29 @@ does not mean that every desktop startup downloads that runtime.
 
 ## Optional AI assistant
 
-The optional assistant is invoked only by the user. Tavotto passes the request to
-a Codex or Claude command-line tool selected on the user's machine. That tool may
-have its own network, account and privacy behavior; it is not a background upload
-performed by Tavotto. Users should review the policy of the selected tool before
-using it with sensitive material.
+The optional assistant is invoked only by the user, and only with an AI the user
+has connected in the "Connect an AI" dialog. Tavotto never relays these
+requests through its own servers; the request goes from the user's machine to the
+AI the user chose, in one of two ways:
+
+* **Subscription sign-in (ChatGPT or Claude).** Tavotto passes the request to the
+  Codex or Claude command-line tool installed on the user's machine, which talks to
+  its own service under its own account and privacy terms.
+* **API key or account sign-in (DeepSeek, Kimi, Zhipu GLM, MiniMax, Alibaba Bailian,
+  OpenAI, Anthropic, a custom address and others).** The request is sent to that
+  provider's API address. When a Codex or Claude command-line tool is installed, it
+  may carry the call with the user's key handed to it; otherwise Tavotto's built-in
+  agent sends it directly. Either way the destination is the provider's API address
+  the user connected, and the key is not sent anywhere else. Plain `http` addresses
+  are accepted only on the local machine or a private network.
+
+What is sent is the user's instruction plus whatever the assistant reads from the
+project to do the job, which can include the script and files in the project folder.
+Tavotto itself does not upload AI prompts, responses or diffs anywhere (see "Data
+Tavotto does not upload"). The AI service, or the command-line tool in the first
+case, has its own network, account and privacy behavior and is not a background
+upload performed by Tavotto. Users should review the policy of the selected service
+before using it with sensitive material.
 
 ## Optional anonymous usage statistics
 
