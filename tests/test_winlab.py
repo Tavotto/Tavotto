@@ -2469,3 +2469,40 @@ def test_host_own_login_prompt_is_not_mistaken_for_the_extension_requiring_login
     i = src.index("LOGIN_MARKERS.search(panel)")
     assert "round1-webview.txt" in src[i - 400 : i]
     assert "round1-panel" not in src[i - 400 : i]
+
+
+def test_native_probe_that_aborts_after_the_window_is_an_error_not_a_passed_probe(
+    tmp_path, monkeypatch
+):
+    """Codex #1436：probe_once 保留 window 又写了 error（非回环可连、CDP 失败）时不能报 passed。"""
+    lab = A.Lab(tmp_path / "lab")
+    lab.cache.mkdir(parents=True)
+    py = lab.venv_python()
+    py.parent.mkdir(parents=True)
+    py.write_text("")
+    setup = tmp_path / "s.exe"
+    setup.write_bytes(b"")
+    root = tmp_path / "z"
+    root.mkdir()
+    monkeypatch.setattr(A, "fetch_pinned", lambda lab, h: (setup, {}))
+    monkeypatch.setattr(A, "authenticode", lambda p: {"status": "Valid", "org": "x"})
+    monkeypatch.setattr(A, "uninstall_desktop_host", lambda *a: {"ok": True, "steps": []})
+    monkeypatch.setattr(
+        A,
+        "install_desktop_host",
+        lambda *a: {"ok": True, "exe": str(root / "ZCode.exe"), "root": str(root), "version": "1"},
+    )
+
+    def fake_gui(lab, run_id, argv, cwd, env, prefix, timeout, secret_env=None):
+        out = Path(argv[argv.index("--out") + 1])
+        out.write_text(
+            json.dumps({"window": {"title": "ZCode"}, "error": "CDPError: boom", "pages": []}),
+            encoding="utf-8",
+        )
+        return {"exit_code": 0, "gui": "ran", "session_id": 1}
+
+    monkeypatch.setattr(A, "run_in_gui", fake_gui)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    res = A.run_desktop_hosts_task(lab, "rid", run_dir, {}, "zcode", native=True)
+    assert res["result"] == "error" and "aborted" in res["summary"]

@@ -3224,6 +3224,14 @@ def run_desktop_hosts_task(
         levels["L2"] = "passed"
         nat = summarize_native(win)
         base["native"] = nat
+        if win.get("error"):
+            # 窗口出来了但取证中途中止 / 出错（调试端口能从非回环连上、CDP 取文字失败…）：不当成一次成功的首屏探查
+            return {
+                **base,
+                "result": "error",
+                "summary": f"{host.name}: native probe aborted after the main window: {win['error']}"
+                + _cleanup_note(base),
+            }
         base["blocked_reason"] = (
             f"原生 Agent 首屏有登录要求：{', '.join(nat['login_markers'])}"
             if nat["login_markers"]
