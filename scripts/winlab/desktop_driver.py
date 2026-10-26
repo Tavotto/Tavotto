@@ -546,9 +546,18 @@ def _click_any(cdp: CDP, sid: str, labels: tuple[str, ...]) -> str | None:
 def phone_login(ecdp: CDP, esid: str, inbox: Path, out_dir: Path, prog, deadline: float) -> str:
     """手机号 + 短信验证码登录（用户 2026-10-27 要求；号码与验证码都经 Mac 端 `winlab login-input` 送进来，
     驱动器读到即删，不写进进度、报告和日志）。遇到滑块 / 拼图安全验证就停（不绕过）。返回 submitted 或失败原因。"""
-    time.sleep(3)
-    prog.step("login_phone_tab", clicked=_click_any(ecdp, esid, PHONE_TAB))
-    time.sleep(2)
+    # 登录页是异步渲染的：先等「手机号」入口出现再点；点完等手机号输入框出现，没出现就再点（最多三次）
+    end = min(deadline, time.monotonic() + 90)
+    while time.monotonic() < end and "手机号" not in str(ecdp.evaluate(esid, TEXT_JS) or ""):
+        time.sleep(2)
+    has_input = "(() => Array.from(document.querySelectorAll('input')).some(i => i.offsetParent !== null && /手机|phone/i.test((i.placeholder || '') + (i.getAttribute('aria-label') || ''))))()"
+    clicked = None
+    for _ in range(3):
+        clicked = _click_any(ecdp, esid, PHONE_TAB)
+        time.sleep(3)
+        if ecdp.evaluate(esid, has_input):
+            break
+    prog.step("login_phone_tab", clicked=clicked)
     phone = _read_inbox(inbox, "phone", deadline)
     if not phone:
         return "no phone number delivered"
