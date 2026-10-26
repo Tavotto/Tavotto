@@ -2571,6 +2571,9 @@ def test_ondisk_key_is_wiped_and_any_residual_fails_the_run(tmp_path, monkeypatc
     assert res["wiped"] is False and res["residual"] == [str(Path("evidence") / "again.txt")]
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="winlab.py 是 Mac 端入口：密钥文件的 0600 权限位检查只在 POSIX 上有意义"
+)
 def test_ondisk_modes_use_their_own_dedicated_key_file_and_never_fall_back(tmp_path, monkeypatch):
     assert W.ONDISK_MODES == A.DESKTOP_LIVE_ONDISK_MODES
     default = tmp_path / "model.json"
