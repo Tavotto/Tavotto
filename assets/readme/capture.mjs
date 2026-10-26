@@ -57,7 +57,7 @@ if (wants('run-script')) await runScriptScene()
 
 const app = await boot(LOCALE)
 const { page } = app
-const { pause, setField, selectPanel, buildLayout } = driver(page, S)
+const { pause, setField, selectPanel, quickSave, buildLayout } = driver(page, S)
 
 async function shot(name, clip) {
   const file = `${name}${SUFFIX}.png`
@@ -115,6 +115,7 @@ try {
     await setField('W', 52)
     await setField('X', 77)
     await pause(800)
+    await quickSave()
     await page.getByRole('tab', { name: S.timeline }).click()
     await pause(500)
     await nameMoment(S.moments[1])
@@ -133,6 +134,7 @@ try {
     await setField('W', 58)
     await setField('X', 46)
     await pause(800)
+    await quickSave()
     await page.keyboard.press('Escape')
     await page.getByRole('button', { name: S.export, exact: true }).first().click()
     await pause(4500)
@@ -156,6 +158,7 @@ try {
     await page.getByRole('button', { name: S.fitCanvas, exact: true }).click().catch(() => {})
     await pause(900)
     await page.locator('li[role="treeitem"]', { hasText: /Title|标题/ }).first().click()
+    await quickSave()
     await pause(4500) // the "created a canvas for editing" toast
     await shot('canvas-edit')
     await page.keyboard.press('Escape')

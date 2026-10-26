@@ -2,6 +2,17 @@
 // dismisses the first-run hint toast and selects panel (a), the way a user would.
 ;(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  // The layout was built and saved in a browser session; a WKWebView has its own storage, so the
+  // keys that say "this layout is saved in the project" (and the properties column's width, the
+  // hints already seen) are copied over once, and the page reloaded to start from them.
+  if (!sessionStorage.getItem('hero-ls')) {
+    sessionStorage.setItem('hero-ls', '1')
+    if (window.__HERO_LS) {
+      for (const [k, v] of Object.entries(window.__HERO_LS)) localStorage.setItem(k, v)
+      location.reload()
+      return
+    }
+  }
   for (let i = 0; i < 240; i++) {
     if (document.querySelectorAll('[data-object-id^="p_"]').length >= 3) break
     await sleep(500)

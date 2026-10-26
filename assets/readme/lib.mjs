@@ -39,7 +39,7 @@ export const STRINGS = {
     searchPanels: 'Search figures', panelLabels: 'Add panel labels',
     editElements: 'Edit figure elements', figureElements: 'Figure elements', connectAi: 'Connect AI',
     searchElements: 'Search figure elements',
-    untitled: /Untitled/, rename: 'Rename layout…', nameNow: 'Name this moment…',
+    saveToProject: 'Save to project', untitled: /Untitled/, rename: 'Rename layout…', nameNow: 'Name this moment…',
     layoutName: 'Kinetics study · Figure 2',
     moments: ['Three panels', 'Bottom row 52 mm'],
     building: /Building/,
@@ -51,7 +51,7 @@ export const STRINGS = {
     searchPanels: '搜索图', panelLabels: '添加序号标签',
     editElements: '改图里的内容', figureElements: '图内元素', connectAi: '连接 AI',
     searchElements: '搜索图内元素',
-    untitled: /新排版|未命名/, rename: '重命名排版…', nameNow: '给现在存个名字…',
+    saveToProject: '存进项目', untitled: /新排版|未命名/, rename: '重命名排版…', nameNow: '给现在存个名字…',
     layoutName: '反应动力学 · 图 2',
     moments: ['三幅图', '下排 52 mm'],
     building: /正在构建|构建中/,
@@ -235,11 +235,41 @@ export function driver(page, S) {
     await pause(1200)
     await page.keyboard.press('Escape')
     await pause(500)
+    // Label (c) lands on the 6 tick of the bar chart's y axis; the labels are
+    // ordinary text objects, so nudge it up and left (arrow keys move 1 mm).
+    const lb = await page.locator('[data-object-id^="t_"]').nth(2).boundingBox()
+    await page.mouse.click(lb.x + lb.width / 2, lb.y + lb.height / 2)
+    await pause(300)
+    for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowLeft')
+    for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowUp')
+    await page.keyboard.press('Escape')
+    await pause(300)
     await renameLayout()
+    // The properties column is a little wider than its default, so the scale row's
+    // "Original 73.3 × 57.8 mm" is not cut short.
+    const hb = await page.locator('[data-resize-handle="inspector"]').boundingBox()
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + 300)
+    await page.mouse.down()
+    await page.mouse.move(hb.x - 100, hb.y + 300, { steps: 10 })
+    await page.mouse.up()
+    await pause(600)
     await page.getByRole('button', { name: S.fitCanvas, exact: true }).click()
     await page.evaluate(() => document.activeElement?.blur())
+    await quickSave()
     await pause(5000) // let the "panel labels added" and hint toasts expire
   }
 
-  return { pause, field, setField, ensureAssets, addPanel, panel, selectPanel, renameLayout, buildLayout }
+  /**
+   * ⌘S: the first time it asks where to put the layout (the project), after that
+   * it updates the file — so the top bar reads "Saved to project", never "Not saved".
+   */
+  async function quickSave() {
+    await page.keyboard.press('ControlOrMeta+s')
+    await pause(900)
+    const ask = page.getByRole('button', { name: S.saveToProject })
+    if (await ask.isVisible().catch(() => false)) await ask.click()
+    await pause(1800)
+  }
+
+  return { pause, field, setField, ensureAssets, addPanel, panel, selectPanel, renameLayout, quickSave, buildLayout }
 }

@@ -48,13 +48,15 @@ Capture environment: `main` @ `1e3db090e` (the interface after #1411), frontend 
 `src-tauri/` with a throwaway bundle identifier, sidecar pointed at the worktree engine
 (`TAVOTTO_SIDECAR_EXE`), captured with `screencapture -l <windowid> -o`; no key or mouse event is
 sent to any app (the page selects panel (a) itself through `hero-driver.js`, added to the built
-frontend for the run only). The window is not frontmost while it is photographed, so macOS draws its
-traffic lights grey. Nothing is retouched.
+frontend for the run only). The shell is started with `open -g` from a throwaway `.app` wrapper, so it
+never takes the foreground; an unfocused window has grey traffic lights. The browser-built stills show
+"Saved to project" (⌘S before every shot); in the hero the top bar still reads "Not saved to project",
+because the desktop webview's own storage does not know the layout was saved (open item). Nothing is retouched.
 
 | Image | Shows | Status |
 | --- | --- | --- |
 | `hero-window(.zh).png` | the packaged-app window (macOS title bar, shadow), a three-panel 150 × 125 mm layout, panel (a) selected, its position / size / scale in the right column | `current` · 2560 × 1720 |
-| `layout(.zh).png` | the same page, panel (a) selected, size in mm | `current` · replaces the 2026-09-19 file |
+| `layout(.zh).png` | the same page (label (c) nudged off the y-axis tick), panel (a) selected, size in mm | `current` · replaces the 2026-09-19 file |
 | `canvas-edit(.zh).png` | inside figure (a): the element tree, the title selected, its font / size / colour | `current` |
 | `preflight(.zh).png` | the export dialog cropped to itself; Checks reads "1 to review · 3 not verifiable" (panel (a) drawn at 79 %) — a real mid state, not staged all-clear | `current` · replaces the 2026-09-19 file |
 | `connect-ai(.zh).png` | the "Connect an AI" dialog (cropped to the dialog) | `current` |

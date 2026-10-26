@@ -19,8 +19,8 @@
  *    window with `screencapture -l <id> -o`. Nothing is clicked or typed into any
  *    other app; no global key or mouse events are sent.
  */
-import { execFileSync, spawn } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { realpathSync, chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { OUT, REPO, STRINGS, boot, driver } from './lib.mjs'
@@ -39,8 +39,10 @@ mkdirSync(path.join(workdir, 'home'), { recursive: true })
 const app = await boot(LOCALE, undefined, { workdir })
 const d = driver(app.page, S)
 await d.buildLayout()
-await d.selectPanel(0)
 await d.pause(1500)
+const keep = /^tavotto\.(currentDoc|locale|ui|docIndex|onboarding|assetUsed|projectDoc\..*|projectFile\..*)$/
+const storage = await app.page.evaluate(() => ({ ...localStorage }))
+const snapshot = Object.fromEntries(Object.entries(storage).filter(([k]) => keep.test(k)))
 await app.close()
 
 // 2 · the window
@@ -48,7 +50,8 @@ const webDir = path.join(REPO, 'src', 'tavotto', 'web')
 const indexHtml = path.join(webDir, 'index.html')
 const indexOriginal = readFileSync(indexHtml, 'utf8')
 copyFileSync(path.join(import.meta.dirname, 'hero-driver.js'), path.join(webDir, 'assets', 'hero-driver.js'))
-writeFileSync(indexHtml, indexOriginal.replace('</body>', '<script src="/assets/hero-driver.js"></script></body>'))
+writeFileSync(path.join(webDir, 'assets', 'hero-ls.js'), `window.__HERO_LS = ${JSON.stringify(snapshot)}`)
+writeFileSync(indexHtml, indexOriginal.replace('</body>', '<script src="/assets/hero-ls.js"></script><script src="/assets/hero-driver.js"></script></body>'))
 const swift = path.join(workdir, 'windows.swift')
 writeFileSync(swift, `import CoreGraphics
 import Foundation
@@ -60,24 +63,49 @@ for w in list where (w[kCGWindowOwnerPID as String] as? Int32) == pid {
 }
 `)
 const lang = LOCALE === 'en-US' ? '(en)' : '(zh-Hans)'
-const shell = spawn(BIN, ['--open', app.figures, '-AppleLanguages', lang], {
-  env: {
-    ...process.env,
-    PYTHONPATH: path.join(REPO, 'src'),
-    TAVOTTO_SIDECAR_EXE: PY,
-    TAVOTTO_SIDECAR_ARGS: '-m tavotto',
-    TAVOTTO_DATA_DIR: path.join(workdir, 'data'),
-    TAVOTTO_CONFIG_DIR: path.join(workdir, 'config'),
-    TAVOTTO_NO_TELEMETRY: '1',
-    HOME: path.join(workdir, 'home'),
-  },
-  stdio: 'ignore',
-})
+// Launched through LaunchServices with `open -g`, so the window opens behind whatever
+// the user is working in and never takes the foreground. The debug binary is
+// wrapped in a throwaway .app bundle for that (Info.plist: the throwaway identifier).
+const appDir = path.join(workdir, 'Tavotto-shots.app')
+mkdirSync(path.join(appDir, 'Contents', 'MacOS'), { recursive: true })
+const exe = path.join(appDir, 'Contents', 'MacOS', 'Tavotto-shots')
+copyFileSync(BIN, exe)
+chmodSync(exe, 0o755)
+writeFileSync(path.join(appDir, 'Contents', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>Tavotto-shots</string>
+<key>CFBundleIdentifier</key><string>com.tavotto.readmeshots</string>
+<key>CFBundleName</key><string>Tavotto</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+</dict></plist>
+`)
+const env = {
+  PYTHONPATH: path.join(REPO, 'src'),
+  TAVOTTO_SIDECAR_EXE: PY,
+  TAVOTTO_SIDECAR_ARGS: '-m tavotto',
+  TAVOTTO_DATA_DIR: path.join(workdir, 'data'),
+  TAVOTTO_CONFIG_DIR: path.join(workdir, 'config'),
+  TAVOTTO_NO_TELEMETRY: '1',
+}
+execFileSync('open', [
+  '-g', '-n', '-a', appDir,
+  ...Object.entries(env).flatMap(([k, v]) => ['--env', `${k}=${v}`]),
+  '--args', '--open', app.figures, '-AppleLanguages', lang,
+])
+const shell = { pid: null, kill() { if (this.pid) process.kill(this.pid) } } // our own bundle's process only
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 let id = null
 try {
   for (let i = 0; i < 90 && !id; i++) {
     await wait(1000)
+    if (!shell.pid) {
+      try {
+        shell.pid = Number(execFileSync('pgrep', ['-n', '-f', realpathSync(exe)], { encoding: 'utf8' }).trim()) || null
+      } catch {
+        /* not started yet */
+      }
+    }
+    if (!shell.pid) continue
     const rows = execFileSync('swift', [swift, String(shell.pid)], { encoding: 'utf8' })
       .trim().split('\n').filter(Boolean).map((l) => l.split(' '))
     id = rows.find((r) => r[3] === '0' && Number(r[1]) > 600)?.[0] ?? null
@@ -97,6 +125,7 @@ try {
   shell.kill() // our own child only
   writeFileSync(indexHtml, indexOriginal)
   rmSync(path.join(webDir, 'assets', 'hero-driver.js'), { force: true })
+  rmSync(path.join(webDir, 'assets', 'hero-ls.js'), { force: true })
   await wait(1500)
   rmSync(workdir, { recursive: true, force: true })
 }
