@@ -634,3 +634,38 @@ def test_create_script_requires_the_script_guard(tmp_path):
     with scriptlock.script_guard(p):
         scriptlock.create_script(p, b"x")
     assert p.read_bytes() == b"x"
+
+
+def test_meta_read_retries_a_transient_windows_sharing_violation(tmp_path, monkeypatch):
+    """Windows 上续跑 `os.replace` 换 meta 的瞬间，读者拿到 PermissionError：重试后读到，不报 convert_not_ready。"""
+    meta = tmp_path / "meta.json"
+    meta.write_text('{"state": "resuming"}', encoding="utf-8")
+    real = Path.read_text
+    calls = {"n": 0}
+
+    def flaky(self, *a, **k):
+        if self == meta and calls["n"] < 2:
+            calls["n"] += 1
+            raise PermissionError(13, "The process cannot access the file")
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", flaky)
+    monkeypatch.setattr(ai_convert, "META_READ_RETRY_S", 0.0)
+    assert ai_convert._read_meta_file(meta) == {"state": "resuming"}
+    assert calls["n"] == 2
+
+
+def test_meta_read_does_not_retry_a_missing_or_corrupt_file(tmp_path, monkeypatch):
+    calls = {"n": 0}
+    real = Path.read_text
+
+    def counting(self, *a, **k):
+        calls["n"] += 1
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(Path, "read_text", counting)
+    assert ai_convert._read_meta_file(tmp_path / "absent.json") is None
+    bad = tmp_path / "bad.json"
+    bad.write_bytes(b"{not json")
+    assert ai_convert._read_meta_file(bad) is None
+    assert calls["n"] == 2

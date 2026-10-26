@@ -1130,14 +1130,34 @@ def ensure_registered() -> None:
 
 
 # --------------------------------------------------------------------------- 状态 / 采用 / 丢弃
+#: Windows 上续跑线程 `os.replace` 换 meta 的那一瞬，同时打开它的读者拿到 PermissionError（WinError 5 / 32），
+#: 不是「还没就绪」。短暂重试几次再下结论；POSIX 上 replace 对读者原子，第一次就成。
+META_READ_RETRIES = 5
+META_READ_RETRY_S = 0.02
+
+
+def _read_meta_file(path: Path) -> object | None:
+    """读 meta JSON；读不到 / 不是 JSON → None。只对「被占用」的那种 OSError 重试。"""
+    for attempt in range(META_READ_RETRIES):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            locked = isinstance(exc, PermissionError) or getattr(exc, "winerror", None) in (5, 32)
+            if not locked or attempt == META_READ_RETRIES - 1:
+                return None
+            time.sleep(META_READ_RETRY_S)
+        except ValueError:
+            return None
+    return None
+
+
 def _load_meta(sid: str, project: str) -> tuple[Path, dict]:
     cdir = CONVERT_DIR / _check_sid(sid)
     if not cdir.is_dir() or cdir.is_symlink() or not _under_convert_dir(cdir):
         raise ConvertError("convert_not_found", 404)
-    try:
-        meta = json.loads((cdir / META_NAME).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        raise ConvertError("convert_not_ready", 409) from None
+    meta = _read_meta_file(cdir / META_NAME)
+    if meta is None:
+        raise ConvertError("convert_not_ready", 409)
     if not isinstance(meta, dict) or meta.get("sid") != sid or meta.get("project") != project:
         raise ConvertError("convert_not_found", 404)
     return cdir, meta
