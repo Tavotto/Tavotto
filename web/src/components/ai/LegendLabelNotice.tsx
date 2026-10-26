@@ -17,7 +17,8 @@ import { Notice } from '../ui/Notice'
  * 点「一起改」= 对**这条曲线对应的图例项**经画布的 `setOverride(panelId, legend_gid, 'text', to, true)` 写 override
  * （与属性栏图例卡改图例项文字同一条路；写曲线 `label` 不会动图例）。进撤销历史、不经 AI、不写脚本。
  * 图例项以面板当前 manifest 为准再核一次：`role=legend_text` 且 `legend_entry.source_gid === 曲线 gid`，与后端给的
- * `legend_gid` 对不上 / 没有 manifest 就不出卡。显示是派生的：该图例项已有 `text === to` 的 override 就不显示。
+ * `legend_gid` 对不上 / 没有 manifest 就不出卡。显示是派生的：只算该图例项仍显示原文（没有 text override，或 override 恰为 `from`）的面板——
+ * 已改成 `to` 的、用户在画布上另改过文字的都不算，点击也不会覆盖它们。
  */
 export function LegendLabelNotice({ session, suggestion }: { session: AiSession; suggestion: AiTaskSuggestion }) {
   const { t } = useTranslation('ai')
@@ -35,9 +36,11 @@ export function LegendLabelNotice({ session, suggestion }: { session: AiSession;
           (e) => e.gid === legendGid && e.role === 'legend_text' && e.legend_entry?.source_gid === gid,
         )
         if (!bound) return false
-        return effectiveOverride(o.overrides, legendGid, 'text')?.value !== to
+        // 只替换仍显示原文的那一份：已改成 `to` 的不再出卡；用户在画布上另改过的文字（不是 `from`）不覆盖
+        const ov = effectiveOverride(o.overrides, legendGid, 'text')
+        return ov === undefined || ov === null || ov.value === from
       }),
-    [objects, byKey, latest, session.script, stem, gid, legendGid, to],
+    [objects, byKey, latest, session.script, stem, gid, legendGid, from],
   )
   if (pending.length === 0) return null
   return (
