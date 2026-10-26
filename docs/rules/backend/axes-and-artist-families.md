@@ -229,6 +229,11 @@ order: 80
   预览与 manifest 两次成图差 0.1–0.3 mm。`AnchoredOffsetbox.draw` 不开 SVG 组，`manifest._svg_group`
   给它包一层（只多一个 `<g id=gid>`，别的后端 `open_group` 是空操作），前端的乐观预览才找得到它。
   插图 manifest 带 `inset_of`（宿主 gid），前端拖宿主时带着挪过的插图。看护 `tests/test_drag_coverage.py`。
+- **框里的文字可编辑**（2026-10-26 用户反馈：`AnnotationBbox(HPacker([TextArea, TextArea]))` 的柱上标注改不了字）：
+  登记框时顺着 OffsetBox 树（`AnnotationBbox.offsetbox` / 锚定框自身 → `HPacker` / `VPacker` → `TextArea._text`）把每段非空
+  文字登记成 role `text`，gid `<框的 gid>.texts_k`（`manifest._register_offsetbox_texts`）。文字、字号、颜色、字重、字体照常走
+  text handler，TextArea 每次 draw 现量、框随之变大变小；**落位归打包器**：不宣称可拖（拖的是外框），`rotation` / `ha` / `va` /
+  `zorder` 按 `_mm_offsetbox_text` 从字段里拿掉（`_OFFSETBOX_TEXT_FIXED`）。看护 `tests/test_offsetbox_text.py`。
 - 面板翻转（flip_h/flip_v，先翻转后旋转）：导出按 dpi 位图嵌入
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。
 

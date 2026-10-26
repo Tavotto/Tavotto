@@ -35,7 +35,7 @@ from matplotlib.contour import ContourSet
 from matplotlib.image import AxesImage
 from matplotlib.lines import Line2D
 from matplotlib.markers import MarkerStyle
-from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox
+from matplotlib.offsetbox import AnchoredOffsetbox, AnnotationBbox, OffsetBox, TextArea
 from matplotlib.patches import FancyArrowPatch, Patch
 from matplotlib.path import Path
 from matplotlib.text import Text
@@ -183,6 +183,51 @@ _SKIP_LABELS = ("_child", "_nolegend_")
 MODIFIED_AFTER_SAVE_ATTR = "_mm_modified_after_save"
 #: 保存瞬间快照的结论属性（同源对：figcapture.SAVE_MOMENT；`tests/test_save_moment.py` 钉相等）
 SAVE_MOMENT_ATTR = "_mm_save_moment"
+
+
+def _offsetbox_texts(art) -> list:
+    """框（`AnnotationBbox` / `AnchoredText` / 自己拼的 `HPacker` …）里每个 `TextArea` 的文字，按绘制顺序。
+
+    文字装在 OffsetBox 树里：`AnnotationBbox.offsetbox` → `HPacker` / `VPacker` → `TextArea._text`。
+    只认 OffsetBox 一族往下走，不碰别的 artist 的子节点（`DrawingArea` 里的图块不是文字）。
+    """
+    out: list = []
+    seen: set[int] = set()
+
+    def walk(box) -> None:
+        if id(box) in seen:
+            return
+        seen.add(id(box))
+        if isinstance(box, TextArea):
+            t = getattr(box, "_text", None)
+            if isinstance(t, Text):
+                out.append(t)
+            return
+        for child in box.get_children():
+            if isinstance(child, OffsetBox):
+                walk(child)
+
+    root = art.offsetbox if isinstance(art, AnnotationBbox) else art
+    if isinstance(root, OffsetBox):
+        walk(root)
+    return out
+
+
+def _register_offsetbox_texts(state: FigState, parent_gid: str, art) -> None:
+    """框里的文字登记成可编辑文字（用户反馈：`AnnotationBbox(HPacker([TextArea, TextArea]))` 的
+    「98.8% (79/80)」右键只有隐藏，改不了字）。
+
+    位置归打包器：每次 draw 都由 `HPacker` / `VPacker` / 锚定规则重排，写进去的落位一画就被顶掉，
+    所以**不宣称可拖**（拖的是外面那个框，ADR 0100）；旋转 / 对齐在框里同样无意义，
+    `_fields_for` 按 `_mm_offsetbox_text` 把它们拿掉。文字、字号、颜色、字重、字体照常走 text handler，
+    框的大小随文字现量（TextArea 每次 draw 都重新测量）。
+    """
+    known = state.index_ids()
+    for k, t in enumerate(_offsetbox_texts(art)):
+        if id(t) in known or not t.get_text():
+            continue
+        t._mm_offsetbox_text = True  # noqa: SLF001
+        _register(state, f"{parent_gid}.texts_{k}", t, "text", f"文字 “{_snippet(t.get_text())}”")
 
 
 def _snippet(text: str, n: int = 18) -> str:
@@ -942,6 +987,7 @@ def instrument(state: FigState) -> None:
                 # （ADR 0100，`overrides._set_offsetbox_pos_frac`）；其余仍只开 visible / zorder
                 draggable=offsetbox_draggable(art),
             )
+            _register_offsetbox_texts(state, f"axes_{i}.artists_{j}", art)
         for j, tbl in enumerate(getattr(ax, "tables", []) or []):
             _register(state, f"axes_{i}.tables_{j}", tbl, "artist", f"表格 {j + 1}")
         leg = ax.get_legend()
@@ -4066,6 +4112,10 @@ def _with_value_original(fields: list[dict], state: FigState, gid: str) -> list[
     return fields
 
 
+#: 框里的文字不开放的属性：落位 / 对齐每次 draw 都由打包器重排，层级由外面那个框统一画
+_OFFSETBOX_TEXT_FIXED = frozenset({"rotation", "ha", "va", "zorder"})
+
+
 def _fields_for(el, state: FigState) -> list[dict]:
     artist, role, gid = el["artist"], el["role"], el["gid"]
     if role == "figure":
@@ -4096,6 +4146,9 @@ def _fields_for(el, state: FigState) -> list[dict]:
     if key == "ticks":
         return _tick_fields(artist)
     if key == "text":
+        if getattr(artist, "_mm_offsetbox_text", False):
+            # 框里的文字：落位、旋转、对齐归打包器（见 `_register_offsetbox_texts`）
+            return [f for f in _text_fields(artist) if f["prop"] not in _OFFSETBOX_TEXT_FIXED]
         return _text_fields(artist)
     if key == "legend_text":
         # 一段文字 + 一个条目。`visible` 由条目级的实现接管（整项进出图例盒），
