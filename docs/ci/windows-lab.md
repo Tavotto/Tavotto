@@ -154,6 +154,20 @@ python3 scripts/winlab/winlab.py test desktop-hosts --mode vscode   # cursor | t
 抄 x64 currentUser 那一项的 `InstallerUrl` 与 `InstallerSha256` 改 `DESKTOP_HOSTS`、走 PR。报告的 `window` 里有
 主窗口标题 / 窗口类 / 尺寸，证据目录有截图 `window.png`。
 
+### 桌面宿主里的 AI 扩展 L3–L5
+
+```sh
+python3 scripts/winlab/winlab.py test desktop-live --mode vscode-claude --ref HEAD   # VS Code + Claude Code 扩展，DeepSeek
+```
+
+需要 `secret-init deepseek` 录过 key（同 `hosts-live`）、Trojan 入口在（扩展包经 DMIT，一次一个、散列钉死；入口不在就是
+BLOCKED，不会直连）、交互会话在。判据与 `hosts-live` 相同，报告里多 `extension`、`driver`（每轮的窗口 / 面板 / 提交 /
+等待结束原因）和 `levels.provenance`（首个 `initialize` 的 clientInfo 与父进程链）。证据在 `evidence\desktop-live\`：
+`round1.json` / `round2.json`（驱动器每一步）、`round*-window.png`（工作台截图）、`round*-panel.txt`（面板文字）、
+`mcp-recorder.jsonl`。升级扩展 = 改 `DESKTOP_EXTENSIONS` 的版本、URL、散列和 `dir_name`，散列取 Open VSX 公布的
+`<包>.sha256`（本机另下一份核对）、走 PR。**改了 `agent.py` / `desktop_driver.py` 要先 `admin deploy-agent`**（执行器在
+`tools\winlab\`，不随 `prepare` 更新）。
+
 ### 真实模型调用（L4/L5）
 
 只用国内合规的 Anthropic 兼容接口（当前登记 DeepSeek）；Lab 在中国大陆，Anthropic / OpenAI 不在这里调。
@@ -163,7 +177,7 @@ python3 scripts/winlab/winlab.py test desktop-hosts --mode vscode   # cursor | t
 python3 scripts/winlab/winlab.py secret-init deepseek
 ```
 
-建议给 Lab 单独建一把限额的 key。每次 `test hosts-live` 经 SSH stdin 交给那一次运行，Lab 不落盘。
+建议给 Lab 单独建一把限额的 key。每次 `test hosts-live` / `test desktop-live` 经 SSH stdin 交给那一次运行，Lab 不落盘（交互会话一侧经命名管道，`request.json` 里没有它）。
 
 ### 黄金快照
 

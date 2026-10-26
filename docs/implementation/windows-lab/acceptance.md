@@ -247,6 +247,28 @@ cn-prod 路由上不认，用 `provider add --use` 设的默认；Codex 走 `wir
 **下一步（用户 10-25：下周做）**：桌面版 L3–L5 只对「底下跑 Claude Code / Codex」的路径可做——VS Code / Cursor / TRAE
 里的 Claude Code 扩展与 Codex 扩展，隔离配置接 DeepSeek，判定仍按 `mcp_recorder`；另加 CC-Switch 的 MCP 同步路径一条。
 
+## I. 桌面宿主里的 AI 扩展 L3–L5（`test desktop-live --mode vscode-claude`，2026-10-26）
+
+VS Code 1.141.2 + Open VSX `anthropic.claude-code` 2.1.310（win32-x64，sha256 `ebb9f501…cd39c`，经 DMIT），推理走 DeepSeek
+（`deepseek-flash`，Anthropic 兼容接口）。驱动器经 CDP 进扩展 webview 填提示词、点发送；判据同 `hosts-live`，另加进程链。
+
+| 级别 | 结论 | 证据 |
+| --- | --- | --- |
+| L2 | PASS | 主窗口「Visual Studio Code」约 4 s |
+| L3 | PASS | 两轮首个 `initialize` 的 clientInfo 均为 `claude-code 2.1.310`，父进程链 `claude.exe ← Code.exe`（安装目录内） |
+| L4 | PASS | 第一轮服务端：health → open_figure → apply_overrides → export → verify_replay，全部 ok |
+| L5 | PASS | 改动进会话日志、导出 PDF、重放一致；全新 VS Code 进程凭 session_id 重放并关闭会话 |
+
+run `20261026T133335Z-c0827a`（第一轮 165 s、第二轮 74 s）。扩展没要求 claude.ai 登录（`ANTHROPIC_AUTH_TOKEN` 在宿主进程环境里）。
+
+前七次 run 依次暴露的执行器问题（都已修，都不是 Tavotto 产品的故障）：Open VSX 证书链止于 Lab 根存储里没有的
+Starfield Root CA G2；扩展目录实际叫 `anthropic.claude-code-2.1.310`（无平台后缀）；密钥管道写完 `DisconnectNamedPipe`
+使读端 errno 22（`20261026T130344Z-7e8fcd`）；只看录制器安静会在模型思考时提前收场（`20261026T130906Z-feb0dd`）；
+面板里的 Bash 权限弹窗没人点而挂住（`20261026T132012Z-44023f`）。
+
+**产品侧发现**：`tavotto_open_figure` 的结果（含内嵌 SVG 与完整 manifest）超过 Claude Code 扩展的 MCP 输出上限，扩展把它
+落成文件，模型要用 Read / Grep 读回来才能取 gid / prop；真实用户在 VS Code 面板里会因此看到读文件的权限确认。另记 issue 跟进。
+
 ## E. 安全与仓库
 
 | 验收项 | 状态 | 说明 |

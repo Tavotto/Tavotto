@@ -64,6 +64,11 @@ Defender 实时防护开、`LongPathsEnabled=0` 的默认系统，以及真实 A
   `TavottoLab-GUI`（`/IT`，只在交互会话运行）拉起 `gui_host.py`，按 agent 写进 `state\gui\` 的请求、用同一套
   Job Object 跑登记任务的 argv，结果写回。会话不在 → `environment_unavailable`，**绝不退回 session 0 假装跑过**；
   结果里的 `session_id` 为 0 也判 error。`stop` 同时给交互会话那一半留停止标记。
+- **交互会话请求不装密钥**：`request.json` 明文落盘，只放公开环境与一个 `env_pipe` 管道名；密钥（`run_in_gui(secret_env=…)`，
+  按**值**从环境里拆出，不看变量名）由 session 0 的 agent 建一条命名管道——单实例、拒绝远程客户端、DACL 只给 `tavotto-lab` 自己
+  的 SID——写一次即关句柄（不 `DisconnectNamedPipe`：断开后读端下一次 read 得 errno 22；关掉则是正常 EOF，管道名随之消失），
+  `gui_host.py` 读一次合进子进程环境后即关，管道名必须是 agent 生成的形状（不认任意路径）；读不到就不跑命令。
+  证据落盘前仍照旧抹掉凭据。
 - 不要以 `tavotto-lab` 身份 RDP：会抢走控制台会话（断开后桌面不渲染）。人工维护用 administrator 的独立会话。
 - WebView2 调试端口（127.0.0.1:9222）由 HKLM 策略为 `Tavotto.exe` / `Tavotto beta.exe` 常开——与 nightly 同一条
   策略，只是在专用机上不每次删。msedgedriver 按本机 WebView2 版本从微软下载点取，核 Authenticode 与版本号。
@@ -89,6 +94,11 @@ Defender 实时防护开、`LongPathsEnabled=0` 的默认系统，以及真实 A
 - 唯一例外是 `desktop-hosts` 的安装包（用户 2026-10-25 授权）：只有海外 CDN 上的固定版本安装包经 DMIT 下载，
   国内 CDN 的（VS Code、TRAE CN、WorkBuddy）照旧直连；一次一个、每个有体积上限、下完先核散列再核签名，
   缓存后不重复下载。走哪条线路写死在 `DESKTOP_HOSTS` 里，不经 `--network` 开放。
+- `desktop-live` 的**扩展包**（`.vsix`，写死在 `DESKTOP_EXTENSIONS`）同一规矩，范围只限登记的固定版本：Open VSX 公布的
+  sha256 与代码里钉的逐字一致，经 DMIT 一次一个、有体积上限、散列不符即删，代理入口不在就是 `environment_unavailable`，
+  绝不直连。Open VSX 的证书链止于 Starfield Root CA G2，而 Lab（大陆）的 Windows 根存储里没有它：这一条下载路径优先用
+  venv 里 certifi 的 CA 包（报告 `trust_source=certifi`），venv 没有 certifi 才退回只多信**一个**钉死 DER 散列的公开根
+  （`pinned-root`）；不改系统根存储、不影响别的下载，TLS 校验照旧全开，信任源里没有这条链就如实 `environment_unavailable`。
 - 代理模式下先核出口：经代理取到的出口 IP 的 sha256 必须等于 `proxy-install` 写下的那个散列，
   否则 `failed`；入口不在就是 `environment_unavailable`，不探测、不回落。
 - 凭据只在本机 `~/.config/tavotto-winlab/proxy.json`（0600）与 Lab 的 `secrets\`（仅 SYSTEM /
@@ -112,10 +122,34 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
 - **地区政策**：Lab 在中国大陆。Anthropic / OpenAI 的真实模型调用不在这台机器上做——经代理出口调用等于绕开服务商
   的地区限制，授权解决不了政策问题；这些格保持 BLOCKED。L4/L5 用国内合规的 Anthropic 兼容接口驱动**真宿主**
   （`hosts-live`），报告写明宿主与模型分别是谁，不把它写成「Claude 模型通过」。
-- **桌面宿主（`desktop-hosts --mode <id>`）只做 L2**：安装包的 URL 与 SHA-256 固定在 `agent.py` 的 `DESKTOP_HOSTS`
+- **桌面宿主 `desktop-hosts --mode <id>` 只做 L2**：安装包的 URL 与 SHA-256 固定在 `agent.py` 的 `DESKTOP_HOSTS`
   （取自 microsoft/winget-pkgs 的清单），下载后核散列、核 Authenticode 为 Valid；非管理员静默装（currentUser）；
   `window_probe.py` 在交互会话里启动它，**主窗口**出现才算——可见、未被 DWM 隐藏、有标题、尺寸像窗口、属于安装目录
-  里的进程、连续稳定 5 s；然后结束它起的全部进程并卸载。VS Code 系用 run 目录里的 `--user-data-dir`。L3+ 要登录
-  各自账户、配 MCP，Lab 没有这些账户：一律 BLOCKED。Claude Desktop 只装、只起到登录页，不登录、不调用模型（地区政策同上）。
-- 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境，Lab 不落盘；证据落盘前抹掉凭据。证据字段按
+  里的进程、连续稳定 5 s；然后结束它起的全部进程并卸载。VS Code 系用 run 目录里的 `--user-data-dir`。宿主自带的
+  Agent（Copilot、Cursor、TRAE、WorkBuddy、ZCode）要各自账户：一律 BLOCKED。Claude Desktop 只装、只起到登录页，
+  不登录、不调用模型（地区政策同上）。
+- **桌面宿主 + 其中的 AI 扩展 `desktop-live --mode <宿主-扩展>`（L3–L5）**：宿主 × 扩展的闭集在 `DESKTOP_LIVE`
+  （当前只有 `vscode-claude`：VS Code + `anthropic.claude-code`），宿主装法同 L2，扩展包固定版本与散列（见代理纪律），
+  用 `code --install-extension` 装进 run 目录的 `--extensions-dir`。**判据与 `hosts-live` 同一个 `judge_live`，一字不改**：
+  宿主里的扩展经 `mcp_recorder` 指向的 Tavotto MCP 做事，L4/L5 看的还是录制器记下的服务端事实。区别只有谁发话：
+  `desktop_driver.py`（交互会话一侧、标准库）起宿主，等同 L2 的主窗口，经 CDP 进扩展 webview，把提示词填进输入框并点发送，
+  等录制器安静**且面板不忙**（首个流量后 45 s 无新行、面板上没有 Stop 按钮；上限 1200 s，到上限如实报 `max`），存证（截图 + 面板文字，不参与判定），按 Job 结束进程树。第二轮是
+  **全新的宿主进程**，只拿 `session_id`。
+  - **CDP 只绑回环**：只传 `--remote-debugging-port=<随机空闲端口>`、从不传 `--remote-debugging-address`，驱动器实测该端口
+    在本机非回环地址上连不上（连得上就中止）；跑完随 Job 一起关，不进代理（`NO_PROXY` 含回环）。选择器随固定版本的扩展钉死。
+  - **进程链判据（L3 的前置条件，加在 `judge_live` 之外）**：录制器带 `--host-root <宿主安装目录>`，首个 `initialize` 时多记
+    `client`（clientInfo 的 name / version）与 `ancestry`（父进程链**映像名**，最多 8 级；链上祖先的创建时间必须早于孩子，防 pid
+    复用）和 `host_ancestor`（祖先里最近一个映像在安装目录下的路径）。不记命令行参数。`host_ancestor` 为空 = L3 failed，
+    且 L4/L5 一并 failed（那条流量不是宿主里的扩展发的）；第二轮同理，否则 L5 failed。
+  - **配置隔离**：隔离的 `CLAUDE_CONFIG_DIR`，`claude mcp add` 用扩展随包的 `claude.exe` 写 tavotto → 录制器；该目录的
+    `settings.json` 事先定好全部权限，面板里不留没人点的弹窗：放行 `mcp__tavotto` 与只读的 Read / Glob / Grep（工具结果超过扩展的
+    MCP 输出上限会落成文件，模型要读回来），Bash / PowerShell / Write / Edit / Web* / Task 明确 `deny`（拒绝立即回给模型）；
+    不用 `bypassPermissions`；VS Code 的 `settings.json` 只有行为开关（含 `claudeCode.disableLoginPrompt`），
+    **不写任何密钥**，扩展从宿主进程环境取 `ANTHROPIC_BASE_URL` 等，密钥经上面的命名管道进环境。
+  - **结论取值**：扩展要求登录官方账户且一次工具都没调到 → `environment_unavailable`（BLOCKED）；驱动器没能操作面板
+    （没找到输入框、填不进、点不了发送）→ `error`，不推定是产品问题；宿主明确拒装扩展（版本不兼容）→ levels 记
+    `not_supported`、整次 `skipped`（NOT TESTED），附 `ext-install` 日志与截图，**不记 FAIL**（宿主限制，不是 Tavotto 的故障）；
+    其余装不上 → `failed`。`not_supported` 只出现在 levels 里，不是 ADR 0131 结果闭集的新成员。
+  - CC-Switch 的落盘例外**不在此**（单独的 PR 与单独的规则条目）。
+- 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境（交互会话里再经命名管道），Lab 不落盘；证据落盘前抹掉凭据。证据字段按
 `docs/implementation/multi-host-mcp/acceptance.md`。
