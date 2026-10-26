@@ -498,7 +498,16 @@ class FigureEditAdapter:
                 out.append(_render(st, FAILED, "stem_not_rendered", cid=f"render.{stem}"))
                 continue
             out += [
-                dataclasses.replace(c, id=f"{stem}.{c.id}")
+                dataclasses.replace(
+                    c,
+                    id=f"{stem}.{c.id}",
+                    # 改名（ADR 0083 §五）要报给前端按 (stem, gid) 改写画布 override 的身份：stem 不从 id 反解（stem 里可以有点）
+                    **(
+                        {"observed": {**c.observed, "stem": stem, "gid": c.id.split(".", 1)[-1]}}
+                        if "relabeled" in c.observed
+                        else {}
+                    ),
+                )
                 for c in figureverify.data_unchanged(after[stem], man, stage=st)
             ] + [
                 dataclasses.replace(c, id=f"{stem}.{c.id}")
@@ -650,6 +659,13 @@ def _data_lines(after: dict[str, dict], before: dict[str, dict | None]) -> list[
             if c.verdict != FAILED:
                 continue
             gid = str(c.id).split(".", 1)[-1]
+            if c.reason_code == "label_swapped":
+                out.append(
+                    f"label_swapped in figure '{stem}', element {gid}: this series now carries the label of another "
+                    "series (labels swapped or reused). Keep every series under its own label unless the user "
+                    "asked to rename it."
+                )
+                continue
             parts = ", ".join(str(x) for x in (c.observed or {}).get("parts") or [])
             out.append(
                 f"{c.reason_code} in figure '{stem}', element {gid}"
@@ -657,6 +673,122 @@ def _data_lines(after: dict[str, dict], before: dict[str, dict | None]) -> list[
                 + ": the plotted data differs from the original. Only presentation may change; restore the data."
             )
     return out
+
+
+#: `task.renamed` 最多报多少条（一次改图里被改名的线不会很多；上限只是 DTO 的体积护栏）
+RENAMED_MAX = 64
+
+
+def renamed_from_verification(verification: dict | None) -> list[dict]:
+    """从任务的验证段（`verification_summary` 的形状，历史库里也存着同一份）取出「数据没动、只是显式 label 变了」的元素，
+    给 `task.renamed` 用：`[{stem, gid, from_identity, to_identity}]`，**闭集形状、只有身份摘要**（label 原文不出门，ADR 0083）。
+
+    来源是提交后 L2 的数据检查（`figureverify.data_unchanged` 的 `observed.relabeled`，`_render_checks` 补上 stem 与 gid）：
+    只认 verified 的改名——名字对调（`label_swapped`）/ 数据也变了的不在内，它们的身份对不上本来就是要用户看见的。
+    前端据此把该 stem 的面板上、该 gid 处旧身份的 override 改写成新身份（撤销这次修改时反向改回）。"""
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    checks = ((verification or {}).get("figure") or {}).get("checks") or []
+    for c in checks:
+        obs = c.get("observed") if isinstance(c, dict) else None
+        if (
+            not isinstance(obs, dict)
+            or c.get("verdict") != VERIFIED
+            or c.get("stage") != "postcommit"
+        ):
+            continue
+        rel = obs.get("relabeled")
+        if not isinstance(rel, dict):
+            continue
+        item = {
+            "stem": obs.get("stem"),
+            "gid": obs.get("gid"),
+            "from_identity": rel.get("from_identity"),
+            "to_identity": rel.get("to_identity"),
+        }
+        if not all(isinstance(v, str) and v for v in item.values()):
+            continue
+        key = (item["stem"], item["gid"])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= RENAMED_MAX:
+            break
+    return out
+
+
+#: 文字变化清单里**不报**的角色：刻度文字（刻度器 + 格式化器的输出，数据 / 范围一变就跟着变，不是 Agent 写的字）；
+#: 图例文字是曲线 label 的派生（曲线 label 另报一条）
+_TEXT_SKIP_ROLES = frozenset({"ticklabel", "legend_text"})
+_TEXT_PROPS = ("text", "label", "title")
+_TEXT_CLIP = 60  # 单个文字在清单里最多留多少字符
+_TEXT_LINE_MAX = 900  # 整段清单的字符上限（超出的只报条数）
+
+
+def _visible_texts(man: dict) -> dict[tuple[str, str], tuple[str, str]]:
+    """manifest 里每个可见文字：`(gid, prop) → (role, 值)`。`_` 开头的 label 是 matplotlib 自动起的（不在图例里显示），不算。"""
+    out: dict[tuple[str, str], tuple[str, str]] = {}
+    for el in man.get("elements") or []:
+        if not isinstance(el, dict) or el.get("role") in _TEXT_SKIP_ROLES:
+            continue
+        gid = el.get("gid")
+        if not isinstance(gid, str):
+            continue
+        for f in el.get("editable") or []:
+            prop, val = f.get("prop"), f.get("value")
+            if prop not in _TEXT_PROPS or not isinstance(val, str):
+                continue
+            if prop == "label" and val.startswith("_"):
+                continue
+            out[(gid, prop)] = (str(el.get("role") or ""), val)
+    return out
+
+
+def _describe_text(gid: str, prop: str, role: str) -> str:
+    head, _, tail = gid.rpartition(".")
+    if head and tail in ("title", "xlabel", "ylabel"):
+        return f"{tail} of {head}"
+    return f"line label {gid}" if role == "line" and prop == "label" else f"{prop} {gid}"
+
+
+def _clip(text: str) -> str:
+    return text if len(text) <= _TEXT_CLIP else text[: _TEXT_CLIP - 1] + "…"
+
+
+def text_changes_note(after: dict[str, dict], before: dict[str, dict | None]) -> str:
+    """改前基线 → 本次校验渲染之间，**每一处可见文字的变化**（标题、轴标题、图例 / 曲线 label、其它文字）的一句话报告，给 Agent 自查：
+    用户没要求改的文字改动应该改回去。**只报事实、不判对错**（意图留给模型；没有“目标范围”之类的机械启发式，用户裁决）。
+    有界：每个文字截断，整段超长只报条数。同一文字按 `(gid, prop)` 配对；只在一侧出现的记 added / removed。"""
+    items: list[str] = []
+    stems = sorted(s for s, m in before.items() if m is not None and s in after)
+    for stem in stems:
+        old, new = _visible_texts(before[stem]), _visible_texts(after[stem])
+        prefix = f"[{stem}] " if len(stems) > 1 else ""
+        for key in sorted(old.keys() | new.keys()):
+            o, n = old.get(key), new.get(key)
+            if o is not None and n is not None and o[1] == n[1]:
+                continue
+            where = _describe_text(key[0], key[1], (n or o)[0])
+            if o is None:
+                items.append(f'{prefix}{where}: added "{_clip(n[1])}"')
+            elif n is None:
+                items.append(f'{prefix}{where}: removed "{_clip(o[1])}"')
+            else:
+                items.append(f'{prefix}{where}: "{_clip(o[1])}" -> "{_clip(n[1])}"')
+    if not items:
+        return "no visible text changes."
+    body, used = [], 0
+    for i, it in enumerate(items):
+        if used + len(it) > _TEXT_LINE_MAX:
+            body.append(f"(+{len(items) - i} more)")
+            break
+        body.append(it)
+        used += len(it) + 2
+    return (
+        "text changes: " + "; ".join(body) + ". Keep only the text changes the user asked for; "
+        "revert the others."
+    )
 
 
 def _with_original_names(manifests, cand: Candidate):
@@ -842,6 +974,7 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
         detail = " ".join(str(res.get(k) or "") for k in ("code", "message")).strip()
         return False, f"check failed (the edited script does not run): {detail}"[:1500]
     stems = list(res.get("stems") or [])
+    text_note = ""
     baseline = cand.extras.get("check_baseline", "unset")
     if baseline == "unset":
         baseline = _call_hook(cand.extras.get("check_before"))  # 只读；整个会话取一次
@@ -858,7 +991,8 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
         if bad:
             return False, "check failed: " + " ".join(bad)[:1400]
         notes.append("data unchanged")
-    return True, f"check passed: {len(stems)} figure(s) rendered; " + "; ".join(notes)
+        text_note = ". " + text_changes_note(after, baseline)
+    return True, f"check passed: {len(stems)} figure(s) rendered; " + "; ".join(notes) + text_note
 
 
 def envelope_for(

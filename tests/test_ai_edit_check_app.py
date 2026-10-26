@@ -208,3 +208,113 @@ def test_no_suggestion_when_the_figure_has_no_legend(world):
 def test_no_suggestion_when_the_task_is_not_completed(world):
     m, figs = world
     assert _label_flow(m, figs, SHARED_LABEL, SHARED_CHANGED, TITLE_ONLY, outcome="partial") == []
+
+
+TWO_LABELED = (
+    "import matplotlib.pyplot as plt\n\n\ndef main():\n"
+    "    plt.plot([1, 2, 3], [1, 4, 9], label='control')\n"
+    "    plt.plot([1, 2, 3], [2, 3, 5], label='treated')\n"
+    "    plt.title('old')\n    plt.xlabel('Time (s)')\n    plt.legend()\n    plt.show()\n\n\n"
+    "if __name__ == '__main__':\n    main()\n"
+)
+
+
+def test_report_lists_every_visible_text_change_and_tells_the_model_to_keep_only_the_asked_ones(
+    world,
+):
+    """②：通过的报告列出基线 → 校验渲染之间每一处可见文字变化（标题 / 轴标题 / 曲线 label），
+    并附一句“只留用户要求的、其余改回”。刻度文字与图例文字（曲线 label 的派生）不报。"""
+    m, figs = world
+    new = (
+        TWO_LABELED.replace("'old'", "'new title'")
+        .replace("'Time (s)'", "'Elapsed (s)'")
+        .replace("label='treated'", "label='treated (n=6)'")
+    )
+    ok, report = _check(m, figs, TWO_LABELED, new)
+    assert ok, report
+    assert "data unchanged" in report
+    assert 'title of axes_0: "old" -> "new title"' in report, report
+    assert 'xlabel of axes_0: "Time (s)" -> "Elapsed (s)"' in report, report
+    assert 'line label axes_0.lines_1: "treated" -> "treated (n=6)"' in report, report
+    assert "Keep only the text changes the user asked for; revert the others." in report, report
+    assert "legend" not in report and "ticklabel" not in report and "texts_" not in report, report
+
+
+def test_report_says_so_when_no_visible_text_changed(world):
+    m, figs = world
+    ok, report = _check(m, figs, TWO_LABELED, TWO_LABELED.replace("[1, 4, 9]", "[1, 4, 9]") + "\n")
+    assert ok and "no visible text changes." in report and "text changes:" not in report, report
+
+
+def test_rename_passes_the_data_check_but_swapped_labels_are_rejected(world):
+    """①：只改名（数据没动）通过；两条曲线的名字对调是在给数据贴错标签，`check` 当场拒绝并点名 label_swapped。"""
+    m, figs = world
+    ok, report = _check(
+        m, figs, TWO_LABELED, TWO_LABELED.replace("label='control'", "label='control (n=5)'")
+    )
+    assert ok and "data unchanged" in report, report
+    swapped = (
+        TWO_LABELED.replace("label='control'", "label='X'")
+        .replace("label='treated'", "label='control'")
+        .replace("label='X'", "label='treated'")
+    )
+    ok, report = _check(m, figs, TWO_LABELED, swapped, sid="s2")
+    assert not ok and "label_swapped" in report and "axes_0.lines_0" in report, report
+    assert "Only presentation may change" not in report, (
+        "名字对调不是“数据变了”，别让模型去还原数据"
+    )
+    # 改名的同时改了这条线的数据：仍是 subject_removed
+    both = TWO_LABELED.replace("label='treated'", "label='treated (n=6)'").replace(
+        "[2, 3, 5]", "[2, 3, 6]"
+    )
+    ok, report = _check(m, figs, TWO_LABELED, both, sid="s3")
+    assert not ok and "subject_removed" in report, report
+
+
+def _manifest_with(*pairs, role="title"):
+    return {
+        "elements": [
+            {"gid": g, "role": role, "editable": [{"prop": "text", "value": v}]} for g, v in pairs
+        ]
+    }
+
+
+def test_text_changes_note_is_bounded_and_covers_added_and_removed_text():
+    before = {"fig": _manifest_with(("axes_0.title", "a" * 200), ("axes_0.xlabel", "gone"))}
+    after = {"fig": _manifest_with(("axes_0.title", "b" * 200), ("axes_0.text_0", "new note"))}
+    note = ai_figure_edit.text_changes_note(after, before)
+    assert note.startswith("text changes: ") and "…" in note, note  # 单个文字被截断
+    assert (
+        'xlabel of axes_0: removed "gone"' in note
+        and 'text axes_0.text_0: added "new note"' in note
+    )
+    many_before = {"fig": _manifest_with(*[(f"axes_{i}.text_0", "x") for i in range(80)])}
+    many_after = {"fig": _manifest_with(*[(f"axes_{i}.text_0", "y" * 50) for i in range(80)])}
+    long_note = ai_figure_edit.text_changes_note(many_after, many_before)
+    assert "more)" in long_note and len(long_note) < 1200, len(long_note)  # 整段有界
+    # 基线缺（None）的 stem 不比；多张图时每条带 stem 前缀
+    assert "no visible text changes" in ai_figure_edit.text_changes_note(after, {"fig": None})
+    two = ai_figure_edit.text_changes_note(
+        {"a": after["fig"], "b": after["fig"]}, {"a": before["fig"], "b": before["fig"]}
+    )
+    assert "[a] " in two and "[b] " in two
+
+
+def test_renamed_from_verification_is_a_closed_identity_only_shape():
+    check = {
+        "id": "plot.data.axes_0.lines_1",
+        "stage": "postcommit",
+        "verdict": "verified",
+        "observed": {
+            "relabeled": {"from_identity": "l1:aa", "to_identity": "l1:bb"},
+            "stem": "plot",
+            "gid": "axes_0.lines_1",
+        },
+    }
+    ver = {"figure": {"checks": [check, dict(check), {**check, "verdict": "failed"}]}}
+    assert ai_figure_edit.renamed_from_verification(ver) == [
+        {"stem": "plot", "gid": "axes_0.lines_1", "from_identity": "l1:aa", "to_identity": "l1:bb"}
+    ]
+    assert ai_figure_edit.renamed_from_verification(None) == []
+    bad = {**check, "observed": {**check["observed"], "stem": ""}}
+    assert ai_figure_edit.renamed_from_verification({"figure": {"checks": [bad]}}) == []

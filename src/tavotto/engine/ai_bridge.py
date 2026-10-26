@@ -1783,6 +1783,7 @@ def _settle_task(sess: dict, task: dict) -> None:
     if task["error"] and sess["status"] != "done":
         sess["error"] = task["error"]
     verification = task["task_result"]["verification"]
+    renamed = _renamed_of(verification)
     sess["task"] = {
         **{k: v for k, v in sess["task"].items() if k != "phase"},  # 终态没有进行中的阶段
         "outcome": task["outcome"],
@@ -1790,6 +1791,29 @@ def _settle_task(sess: dict, task: dict) -> None:
         "explain": verification["explain"],
         # 自动修正了几轮（有界修正，Phase 4）：界面据此说「自动修正过一次」
         "corrections": int((task["task_result"].get("budget_used") or {}).get("corrections") or 0),
+        # 数据没动、只是显式 label 变了的元素（ADR 0083 §五）：前端据此让画布上已有的编辑跟着换身份；没有改名就没有这个键
+        **({"renamed": renamed} if renamed else {}),
+    }
+
+
+def _renamed_of(verification: dict | None) -> list[dict]:
+    from . import ai_figure_edit
+
+    return ai_figure_edit.renamed_from_verification(verification)
+
+
+def _restored_task(hist: dict | None) -> dict:
+    """后端重启后的会话详情没有内存里的 `task`，但改名（`task.renamed`）是撤销这次修改时要反向改回身份的依据：从历史库存着的验证段
+    重建。只在确有改名时给一个最小的 `task`（类型 + 结局 + `renamed`），其余情形与重启前后端一样不带 `task`。"""
+    renamed = _renamed_of((hist or {}).get("verification"))
+    if not renamed:
+        return {}
+    return {
+        "task": {
+            "task_type": hist.get("task_type"),
+            "outcome": hist.get("outcome"),
+            "renamed": renamed,
+        }
     }
     # 跟进建议（闭集，只有两段已画在图上的 label 文字）：现在只有「图例里也写着同一段文字」一种，只改图任务有
     from . import ai_figure_edit
@@ -1956,8 +1980,11 @@ def revert(sid: str) -> dict:
     LOG.info("AI 修改已回滚: %s（session %s）", sess["script"], sid)
     if sid in SESSIONS:
         SESSIONS[sid]["status"] = "reverted"
+    # 这次修改改过名的元素（ADR 0083 §五）：前端据此把画布 override 的身份从新名字改回旧名字（与 `ai.done.task.renamed` 同形状）。
+    # 取自历史库存着的验证段，所以后端重启后、从历史列表里撤销，都拿得到
+    renamed = _renamed_of((ai_history.get(sid) or {}).get("verification"))
     ai_history.update_status(sid, "reverted")
-    return {"ok": True, "script": sess["script"]}
+    return {"ok": True, "script": sess["script"], **({"renamed": renamed} if renamed else {})}
 
 
 def _refuse_stale_revert(sess: dict, script_path: Path, snapshot: bytes) -> None:
@@ -2095,6 +2122,7 @@ def get(sid: str) -> dict | None:
                 "final": _history_final(hist),
                 "cancel_requested": bool(hist.get("cancel_requested_ms")),
                 "note": "改前快照已清理，记录来自历史库",
+                **_restored_task(hist),
             }
         )
     if hist is not None:
@@ -2107,6 +2135,7 @@ def get(sid: str) -> dict | None:
                 "cancel_requested": bool(hist.get("cancel_requested_ms")),
                 "revert_available": hist.get("revert_available"),
                 "note": "后端已重启，记录来自历史库",
+                **_restored_task(hist),
             }
         )
     return _session_dto(

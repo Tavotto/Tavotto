@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -371,3 +372,77 @@ def test_a_stem_whose_baseline_replay_fails_is_unknown_and_caps_the_outcome(proj
     assert checks["render.Fig2"] == ("unknown", "no_baseline"), checks
     assert OUTSIDE in checks, "能重放的 stem 照常检查"
     assert sess["task"]["outcome"] == "partial", sess["task"]
+
+
+# --------------------------------------------------------------------------- 改名不是替换（ADR 0083 §五）
+RELABEL = "p = d / 'fig1.py'; p.write_text(p.read_text(encoding='utf-8').replace('label=\"signal\"', 'label=\"signal (n=4)\"'), encoding='utf-8')"
+RELABEL_AND_REDATA = RELABEL + "; " + REDATA.replace("p = d / 'fig1.py'; ", "")
+
+
+def _identity(label: str) -> str:
+    """`overrides.artist_identity` 的镜像（该模块只能在 worker 侧 import）：`l1:` + sha256(label) 前 16 位十六进制。"""
+    return "l1:" + hashlib.sha256(label.encode("utf-8")).hexdigest()[:16]
+
+
+def test_relabel_passes_the_data_check_and_is_reported_in_the_task(project):
+    m, client, figs, runs, state = project
+    state["code"] = RELABEL
+    _render(client)
+    sid, sess = _ai(client, **LINE)
+    assert sess["status"] == "done" and "signal (n=4)" in (figs / "fig1.py").read_text("utf-8")
+    assert _checks(sid)["Fig1.data.axes_0.lines_0"] == ("verified", None), _checks(sid)
+    assert sess["task"]["outcome"] == "completed", sess["task"]
+    # 闭集形状、只有身份摘要：label 原文不出门
+    assert sess["task"]["renamed"] == [
+        {
+            "stem": "Fig1",
+            "gid": "axes_0.lines_0",
+            "from_identity": _identity("signal"),
+            "to_identity": _identity("signal (n=4)"),
+        }
+    ]
+    assert "signal" not in json.dumps(sess["task"]["renamed"])
+    # 后端重启后（内存里没有会话）：改名从历史库的验证段重建，撤销时前端还靠它把身份改回去
+    del ai_bridge.SESSIONS[sid]
+    assert ai_bridge.get(sid)["task"]["renamed"] == sess["task"]["renamed"]
+
+
+def test_relabel_together_with_a_data_change_still_fails_and_reports_no_rename(project):
+    m, client, figs, runs, state = project
+    state["code"] = RELABEL_AND_REDATA
+    _render(client)
+    sid, sess = _ai(client)
+    assert _checks(sid)["Fig1.data.axes_0.lines_0"] == ("failed", "subject_removed")
+    assert sess["task"]["outcome"] == "failed", sess["task"]
+    assert "renamed" not in sess["task"], "数据也变了不是改名：不让前端把旧编辑绑到被顶替的对象上"
+
+
+def test_a_session_without_any_rename_has_no_renamed_key(project):
+    m, client, figs, runs, state = project
+    _render(client)
+    sid, sess = _ai(client)
+    assert "renamed" not in sess["task"]
+    del ai_bridge.SESSIONS[sid]
+    assert "task" not in ai_bridge.get(sid)
+
+
+def test_reverting_a_relabel_reports_the_rename_so_the_frontend_can_bind_back(project):
+    """撤销这次修改：回应带同样的 `renamed`（取自历史库的验证段，后端重启后、从历史列表里撤销也拿得到）；没改名的撤销不带这个键。"""
+    m, client, figs, runs, state = project
+    state["code"] = RELABEL
+    _render(client)
+    sid, sess = _ai(client, **LINE)
+    want = sess["task"]["renamed"]
+    del ai_bridge.SESSIONS[sid]  # 模拟后端重启：只剩 sidecar + 历史库
+    res = client.post(f"/api/ai/sessions/{sid}/revert")
+    assert res.status_code == 200, res.get_json()
+    assert res.get_json()["renamed"] == want
+    assert "signal (n=4)" not in (figs / "fig1.py").read_text("utf-8")
+
+
+def test_reverting_a_session_without_rename_has_no_renamed_key(project):
+    m, client, figs, runs, state = project
+    _render(client)
+    sid, _ = _ai(client)
+    res = client.post(f"/api/ai/sessions/{sid}/revert")
+    assert res.status_code == 200 and "renamed" not in res.get_json()
