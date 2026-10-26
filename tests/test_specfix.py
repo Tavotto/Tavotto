@@ -26,34 +26,34 @@ def _value(plan: dict, gid: str, prop: str):
 
 
 def test_font_target_is_on_the_page_and_converted_back_by_scale():
-    """缩到 60% 的图：目标是页面上的 8.5 pt，写进脚本的是 8.5 / 0.6 往上取两位。"""
+    """缩到 60% 的图：目标是页面上的 8 pt，写进脚本的是 8 / 0.6 往上取两位。"""
     m = _manifest(_el("a.xticks", "ticks", fontsize=7.0))
     plan = specfix.plan(
         m, profiles.load(), scale=0.6, targets=[("font-below-absolute-floor", "a.xticks")]
     )
-    assert _change(plan, "a.xticks", "fontsize")["after"] == 8.5
+    assert _change(plan, "a.xticks", "fontsize")["after"] == 8.0
     v = _value(plan, "a.xticks", "fontsize")
-    assert v * 0.6 > profiles.load()["absolute_min_font_size_pt"]
-    assert v == 14.17  # ceil(8.5 / 0.6, 2)：往下取的 14.16 × 0.6 = 8.496 仍会被判偏小
+    assert v * 0.6 >= profiles.load()["absolute_min_font_size_pt"]
+    assert v == 13.34  # ceil(8 / 0.6, 2)：往下取的 13.33 × 0.6 = 7.998 仍会被判偏小
 
 
 def test_raising_ticks_lifts_the_axis_label_but_never_past_its_own_ceiling():
     m = _manifest(
         _el("a.xticks", "ticks", fontsize=7.0),
-        _el("a.xlabel", "axis_label", fontsize=8.2),
+        _el("a.xlabel", "axis_label", fontsize=7.9),
         _el("a.title", "title", fontsize=12.0),
     )
     plan = specfix.plan(
         m, profiles.load(), scale=1.0, targets=[("font-below-absolute-floor", "a.xticks")]
     )
     assert _change(plan, "a.xlabel", "fontsize")["rule"] == "keep-hierarchy"
-    assert _value(plan, "a.xlabel", "fontsize") == 8.5
+    assert _value(plan, "a.xlabel", "fontsize") == 8.0
     # 标题本来就更大：一个字都不动
     assert not any(c["gid"] == "a.title" for c in plan["changes"])
 
 
 def test_legend_goes_into_the_intersection_of_both_intervals():
-    """图例同时受绝对下限（> 8，所以 8.5）与图例区间（8–9）约束：取交集里的最小档。"""
+    """图例同时受绝对下限（≥ 8）与图例区间（8–9）约束：取交集里的最小档。"""
     m = _manifest(
         _el("a.legend", "legend", fontsize=6.0),
         _el("a.legend.texts_0", "legend_text", fontsize=6.0),
@@ -64,7 +64,7 @@ def test_legend_goes_into_the_intersection_of_both_intervals():
         scale=1.0,
         targets=[("font-below-absolute-floor", "a.legend"), ("legend-font-size", "a.legend")],
     )
-    assert _value(plan, "a.legend", "fontsize") == 8.5
+    assert _value(plan, "a.legend", "fontsize") == 8.0
 
 
 def test_legend_is_fixed_by_its_drawn_entries_not_the_container_setter():
@@ -79,7 +79,7 @@ def test_legend_is_fixed_by_its_drawn_entries_not_the_container_setter():
     )
     plan = specfix.plan(m, profiles.load(), scale=1.0, targets=[("legend-font-size", "a.legend")])
     assert _change(plan, "a.legend", "fontsize")["before"] == 5.0
-    assert _value(plan, "a.legend", "fontsize") == 8.5
+    assert _value(plan, "a.legend", "fontsize") == 8.0
     # 标题的 title_fontsize 是设置器，不是被判的量：不顺手改
     assert not any(p["prop"] == "title_fontsize" for p in plan["patches"])
     # 没有画出来的条目：没有可改的量，什么都不登记
@@ -102,12 +102,12 @@ def test_scaled_legend_picks_the_worst_entry_on_the_page_not_in_script_points():
     )
     plan = specfix.plan(m, profiles.load(), scale=0.5, targets=[("legend-font-size", "a.legend")])
     assert _change(plan, "a.legend", "fontsize")["before"] == 5.0  # 页面上的字号（10 × 0.5）
-    assert _value(plan, "a.legend", "fontsize") == 17.0  # 页面 8.5 pt / 0.5
+    assert _value(plan, "a.legend", "fontsize") == 16.0  # 页面 8 pt / 0.5
 
 
 def test_empty_interval_is_skipped_not_forced():
     p = profiles.load()
-    p["legend_policy"] = {**p["legend_policy"], "max_font_size_pt": 8.0}  # 8.5 起才过绝对下限
+    p["legend_policy"] = {**p["legend_policy"], "max_font_size_pt": 7.5}  # 8 起才过绝对下限
     m = _manifest(
         _el("a.legend", "legend", fontsize=6.0),
         _el("a.legend.texts_0", "legend_text", fontsize=6.0),

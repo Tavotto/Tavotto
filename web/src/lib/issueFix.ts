@@ -144,8 +144,8 @@ export function planFix(
 }
 
 /**
- * 提字号。目标是**能通过**的最小 0.5 档：既要大于绝对下限（那条边不含等号，
- * ADR 0006 / 0029），也要不低于规范下限。改完再按同一条判据验一遍，验不过
+ * 提字号。目标是**能通过**的最小 0.5 档：不低于绝对下限与规范下限（两条都含等号，
+ * ADR 0029 修订 2026-10-26）。改完再按同一条判据验一遍，验不过
  * 就不给这颗按钮——「修完还是红的」是最糟的一种修复。
  */
 function planFontUp(
@@ -156,12 +156,9 @@ function planFontUp(
   const floor = num(profile.absolute_min_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
   const strict = num(profile.min_effective_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
   const max = num(profile.max_font_size_pt)
-  // 大于 floor 的最小 0.5 档；正好等于 floor 的那一档过不了，再上一档
-  let target = up(Math.max(strict, floor))
-  if (target <= floor) target += GRID
+  // 不低于两条下限的最小 0.5 档（`eff < floor` 才算违规，正好等于就过）
+  const target = up(Math.max(strict, floor))
   if (max != null && target > max) return null
-  // 区间下界就是 `target`：`eff <= floor` 才算违规，所以正好等于 floor 的
-  // 那一档过不了——下界是**调整过严格性之后**的那个数，不是 floor 本身
   return writeFontSize(issue, doc, target, { min: target, max: max ?? undefined })
 }
 
@@ -174,9 +171,9 @@ function planFontDown(
   const floor = num(profile.absolute_min_font_size_pt) ?? FALLBACK_MIN_FONT_SIZE_PT
   if (max == null) return null
   const target = down(max)
-  if (target <= floor) return null
-  // 上界是 max，下界是"比 floor 大的第一档"（`eff <= floor` 才算违规）
-  return writeFontSize(issue, doc, target, { min: floor + GRID, max })
+  if (target < floor) return null
+  // 上界是 max，下界是 floor 本身（`eff < floor` 才算违规）
+  return writeFontSize(issue, doc, target, { min: floor, max })
 }
 
 /** 画布标注的 `sizePt` 已经是页面上的绝对 pt，不乘缩放。 */

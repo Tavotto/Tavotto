@@ -311,9 +311,9 @@ def _font_entries(manifest: dict, profile: dict, scale: float) -> list[dict]:
 def _font_bounds(entry: dict, profile: dict) -> tuple[float, float | None]:
     """这个字号**能通过**的页面 pt 区间 `[lo, hi]`（`hi` 为 None = 无上限）。
 
-    绝对下限不含等号（`eff <= floor` 才算违规，ADR 0006 / 0029），所以正好等于
-    floor 的那一档过不了、再上一档；图例（`legend` 角色的 `fontsize`）另外夹进
-    图例区间（两端闭）。
+    两条下限都含等号（`eff < floor` 才算违规，ADR 0029 修订 2026-10-26），所以
+    下界就是两条下限里较高的那条往上取到 0.5 档；图例（`legend` 角色的
+    `fontsize`）另外夹进图例区间（两端闭）。
     """
     fb = preflight.profiles_mod.FALLBACK_MIN_FONT_SIZE_PT
     strict = _num(profile.get("min_effective_font_size_pt"))
@@ -321,8 +321,6 @@ def _font_bounds(entry: dict, profile: dict) -> tuple[float, float | None]:
     strict = fb if strict is None else strict
     floor = fb if floor is None else floor
     lo = _up(max(strict, floor))
-    if lo <= floor:
-        lo += GRID
     hi = _num(profile.get("max_font_size_pt"))
     if entry["role"] == "legend" and entry["prop"] == "fontsize":
         legend = profile.get("legend_policy") or {}

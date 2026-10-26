@@ -350,8 +350,8 @@ describe('摘要按导出目标取范围（审计 T33）', () => {
     doc.page = { w: 80, h: 40 } // 页面比例一条 warn（页面级，objectId 为 null）
     const render = {
       byKey: {
-        ...renderFor(p1, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
-        ...renderFor(p2, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
+        ...renderFor(p1, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 7.5 }])).byKey,
+        ...renderFor(p2, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 7.5 }])).byKey,
       },
       latest: { 'Fig1.pdf': `Fig1.pdf []`, 'Fig2.pdf': `Fig2.pdf []` },
     }
@@ -362,7 +362,7 @@ describe('摘要按导出目标取范围（审计 T33）', () => {
       render,
     ).issues
     expect(all.some((i) => i.objectRef.objectId === null), '夹具里得有一条页面级问题').toBe(true)
-    // 8pt 同时撞两条字号规则（默认规范两档同值，ADR 0029）：每张图各 n 条阻断
+    // 7.5pt 低于绝对下限（默认规范两档同值时只报下面那条，ADR 0029）：每张图各 n 条阻断
     const perPanel = all.filter((i) => i.severity === 'error' && i.objectRef.objectId === 'p1').length
     expect(perPanel).toBeGreaterThan(0)
 
@@ -399,8 +399,8 @@ describe('摘要按导出目标取范围（审计 T33）', () => {
     doc.page = { w: 80, h: 40 }
     const render = {
       byKey: {
-        ...renderFor(p1, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
-        ...renderFor(p2, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 8 }])).byKey,
+        ...renderFor(p1, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 7.5 }])).byKey,
+        ...renderFor(p2, manifestWith([{ gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 7.5 }])).byKey,
       },
       latest: { 'Fig1.pdf': `Fig1.pdf []`, 'Fig2.pdf': `Fig2.pdf []` },
     }

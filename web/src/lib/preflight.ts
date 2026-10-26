@@ -495,7 +495,7 @@ function checkPanelFonts(
   for (const [el, size, sizeProp] of fontElements(manifest, hidden)) {
     const gid = el.gid
     const eff = size * scale
-    if (eff <= floor) {
+    if (eff < floor) {
       sink.add(
         'font-below-absolute-floor',
         pf('fontBelowFloor', { effective: eff.toFixed(2), floor: g(floor) }),
@@ -889,7 +889,7 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
     if (t.hidden) continue
     const size = num(t.size_pt) ?? 0
     // 画布标注的 size_pt 已经是页面上的绝对 pt：不再乘 scale
-    if (size <= floor) {
+    if (size < floor) {
       sink.add('font-below-absolute-floor', pf('textBelowFloor', { size: g(size), floor: g(floor) }), {
         objectIds: [t.id],
         detail: { effective_pt: r2(size), floor_pt: floor },

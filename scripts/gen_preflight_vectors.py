@@ -166,10 +166,10 @@ def cases() -> list[dict]:
         }
     )
 
-    # 2. 字号：8.2pt 低于 8.5 下限；8.0pt 撞绝对下限（两条等级不同）
+    # 2. 字号：7.9pt 低于绝对下限；正好 8.0pt 通过（下限含等号，ADR 0029 修订 2026-10-26）
     m = _clean_manifest()
-    m["elements"][1]["editable"][1]["value"] = 8.2  # xticks fontsize
-    m["elements"][2]["editable"][1]["value"] = 8.0  # yticks fontsize
+    m["elements"][1]["editable"][1]["value"] = 8.0  # xticks fontsize
+    m["elements"][2]["editable"][1]["value"] = 7.9  # yticks fontsize
     out.append(
         {
             "name": "font-below-thresholds",
@@ -225,7 +225,7 @@ def cases() -> list[dict]:
     )
 
     # 7. 画布层：小字号标注 + 越界 + 重叠 + 隐藏 + 越过安全区
-    texts = [_text("t-small", 7.0), _text("t-floor", 8.0, rect_mm=[2, 2, 10, 5])]
+    texts = [_text("t-small", 7.0), _text("t-floor", 8.0, rect_mm=[2, 2, 10, 5])]  # 正好 8.0 的通过
     panels = [
         _panel("p1", manifest=_clean_manifest(), rect_mm=[0, 0, 60.0, 40.0], scale=0.75),
         _panel("p2", manifest=_clean_manifest(), rect_mm=[50.0, 30.0, 60.0, 40.0], scale=0.75),

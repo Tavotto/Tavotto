@@ -302,8 +302,8 @@ describe('普通界面不出现内部标识', () => {
     await openCard()
     expect(text()).toContain('字号低于绝对下限')
     // 当前值 → 要求：两个数字都摆出来，用户不必点开才知道差多少
-    expect(text()).toMatch(/6\.00 pt\s*→\s*大于 8 pt/)
-    // 行内只留要求本身：「正好等于不算通过」这类补一句的整句不在行里（在 title / ⓘ），否则 112px 的尾随格又要截断
+    expect(text()).toMatch(/6\.00 pt\s*→\s*≥ 8 pt/)
+    // 行内只留要求本身：「显示已四舍五入」这类补一句的整句不在行里（在 title / ⓘ），否则 112px 的尾随格又要截断
     const values = container.querySelector<HTMLElement>('[data-issue-values]')!
     expect(values.className, '值用等宽数字').toContain('font-mono')
   })
@@ -770,8 +770,8 @@ describe('按规则聚合（审计 T09）', () => {
     expect(text().split('字号低于绝对下限').length - 1, '标题逐行重复').toBe(1)
     expect(text()).toContain('2 个对象')
     expect(rows().length).toBe(2)
-    expect(text()).toMatch(/6\.00 pt\s*→\s*大于 8 pt/)
-    expect(text()).toMatch(/7\.00 pt\s*→\s*大于 8 pt/)
+    expect(text()).toMatch(/6\.00 pt\s*→\s*≥ 8 pt/)
+    expect(text()).toMatch(/7\.00 pt\s*→\s*≥ 8 pt/)
     // 等级不只靠颜色：组头写着等级文字
     expect(groups[0].textContent).toContain('阻断')
   })

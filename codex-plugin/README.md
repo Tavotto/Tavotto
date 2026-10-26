@@ -218,7 +218,7 @@ Times New Roman 与 Arial）、**图例加不加框**。回答里说「记住」
 或用 `python3 skills/tavotto-figure/scripts/prefs.py --unset <键>` 退回。
 
 出图纪律（`lab-publication-v1` 之外的几条硬默认）：宽度只出 8 cm / 15 cm
-两档、最终有效字号大于 8 pt、刻度朝内且只留主刻度、轴标题加粗、多子图在
+两档、最终有效字号不低于 8 pt、刻度朝内且只留主刻度、轴标题加粗、多子图在
 matplotlib 里拼成 15 cm 主图且每个子图的 x/y 轴各自标全（轴标题 + 刻度，
 不用 sharex/sharey 共享）；背景色块、指数据的
 箭头、说明文字这类效果**用户点头才加**。Tavotto 报错或表现不及预期时，
@@ -332,7 +332,7 @@ python3 skills/tavotto-figure/scripts/handoff.py figures/fig_removal_rate.py
 | 单栏 / 双栏宽 | 80 mm / 150 mm（容差 0.5 mm） |
 | 允许比例 | 16:9、4:3、1:1 |
 | 默认字号 | 9 pt |
-| 最终有效字号下限 | **必须大于 8 pt**（ADR 0029 起只有这一个数） |
+| 最终有效字号下限 | **不低于 8 pt**（ADR 0029 起只有这一个数，§6b 起含等号） |
 | 位图最低 DPI | 300 |
 | 矢量格式 | PDF、SVG |
 | 拉丁字体 | Times New Roman（+ 明确的中文 fallback） |

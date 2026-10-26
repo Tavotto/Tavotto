@@ -402,10 +402,10 @@ def _check_panel_fonts(panel: dict, profile: dict, sink: _Sink) -> None:
     for el, size in _iter_font_elements(manifest, hidden_legends):
         gid = el.get("gid", "")
         eff = size * scale
-        if eff <= floor:
+        if eff < floor:
             sink.add(
                 "font-below-absolute-floor",
-                f"图内文字的最终有效字号 {eff:.2f}pt 不大于绝对下限 {floor:g}pt",
+                f"图内文字的最终有效字号 {eff:.2f}pt 低于绝对下限 {floor:g}pt",
                 message=("fontBelowFloor", {"effective": f"{eff:.2f}", "floor": f"{floor:g}"}),
                 object_ids=[pid],
                 gids=[gid],
@@ -914,10 +914,10 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
         tid = t.get("id", "")
         size = _num_or(t.get("size_pt"), 0.0)
         # 画布标注的 size_pt 已经是页面上的绝对 pt：不再乘 scale
-        if size <= floor:
+        if size < floor:
             sink.add(
                 "font-below-absolute-floor",
-                f"画布文字 {size:g}pt 不大于绝对下限 {floor:g}pt",
+                f"画布文字 {size:g}pt 低于绝对下限 {floor:g}pt",
                 message=("textBelowFloor", {"size": f"{size:g}", "floor": f"{floor:g}"}),
                 object_ids=[tid],
                 detail={"effective_pt": _r2(size), "floor_pt": floor},

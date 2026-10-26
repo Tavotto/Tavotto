@@ -316,7 +316,7 @@ export function IssueRow({
                   <span aria-hidden className="text-ink-faint">
                     {' → '}
                   </span>
-                  {/* 行内只留要求本身（「大于 8 pt」）；「正好等于不算通过」这类补一句的整句在 title / ⓘ 里 */}
+                  {/* 行内只留要求本身（「≥ 8 pt」）；「显示已四舍五入」这类补一句的整句在 title / ⓘ 里 */}
                   <span className={current ? 'text-ink' : 'text-ink-2'}>{values.expectedHead ?? values.expected}</span>
                 </>
               )}

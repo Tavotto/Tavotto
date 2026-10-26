@@ -39,7 +39,7 @@ that both the Python engine and the TypeScript frontend read, so there is no sec
 copy to drift.
 
 The default `lab-publication-v1` encodes 80 mm single / 150 mm double column; 16:9,
-4:3 and 1:1 aspect ratios; 9 pt body text with a single hard floor above 8 pt of
+4:3 and 1:1 aspect ratios; 9 pt body text with a single hard floor of 8 pt (inclusive) on
 final effective size; ≥ 300 dpi rasters; Times New Roman with an explicit
 CJK fallback; 0.5 / 0.75 / 1.0 / 1.5 pt line widths; ticks in, enclosed spines,
 frameless legends; `Title (unit)` axis labels; and Scientific colour maps by semantic

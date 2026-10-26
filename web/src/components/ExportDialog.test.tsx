@@ -57,7 +57,7 @@ declare global {
 }
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
-/** 一张 8pt 刻度的图：撞绝对下限 → error，默认阻止导出 */
+/** 一张 7.5pt 刻度的图：撞绝对下限 → error，默认阻止导出 */
 const manifest = (tickPt: number) => ({
   stem: 'Fig1',
   size_mm: [80, 60],
@@ -549,7 +549,7 @@ describe('输出范围', () => {
 
 describe('单图退路裁白边：检查 / proof report / 请求吃同一份裁后文档', () => {
   it('页面 180 × 120、图 80 × 60 摆在 (30, 20)：请求与报告的页面都是 80 × 60，对象坐标平移到 (0, 0)', async () => {
-    await setup(8, { w: 180, h: 120 }) // 8pt → error，报告必出
+    await setup(7.5, { w: 180, h: 120 }) // 7.5pt → error，报告必出
     useDocumentStore.getState().commit(literal('挪'), (d) => {
       d.objects = d.objects.map((o) => ({ ...o, x: 30, y: 20 }))
     })
@@ -634,7 +634,7 @@ describe('对话框开着时素材没了', () => {
 
 describe('阻断不拦导出：无警告句 + 自动记录未处理的项', () => {
   it('有 error 时导出照样可点，没有确认勾选框也没有警告句；未处理的项自动写进样式检查报告', async () => {
-    await setup(8) // 8pt = 撞绝对下限 → error
+    await setup(7.5) // 7.5pt = 撞绝对下限 → error
     expect(text()).toContain('要改')
 
     // 知情确认框整个删掉了；导出永远可点
@@ -675,7 +675,7 @@ describe('阻断不拦导出：无警告句 + 自动记录未处理的项', () =
 
 describe('未处理的项随每次导出自动记录', () => {
   it('问题集合变了，下一次导出的报告记的是现在这一批（没有确认状态可以过期）', async () => {
-    await setup(8) // 8pt 刻度 → 一条阻断项
+    await setup(7.5) // 7.5pt 刻度 → 一条阻断项
     await click(button('开始导出')!)
     const first = exportBodies[0].style_check_report as { checks: unknown[] }
     expect(first.checks).toHaveLength(1)
@@ -717,7 +717,7 @@ describe('未处理的项随每次导出自动记录', () => {
   })
 
   it('导出之后下一次仍然带着未处理的项（不靠任何点头状态）', async () => {
-    await setup(8)
+    await setup(7.5)
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     await click(button('再次导出')!)
@@ -757,7 +757,7 @@ describe('统一 ExportRequest', () => {
 
 describe('SVG 导出（X03）', () => {
   it('SVG-only keeps its selection (and stays exportable) after following an error count chip', async () => {
-    await setup(8)
+    await setup(7.5)
     await click(formatBox('SVG'))
     await click(formatBox('PDF'))
     await click(formatBox('PNG'))
@@ -895,7 +895,7 @@ describe('文件名的跨平台校验', () => {
 describe('撞名之后「覆盖」带着的未处理项与第一次一致', () => {
   it('撞名之后点「覆盖」：同一批阻断项照样自动记录，不会因为没有确认状态而丢', async () => {
     jobStatus = 'conflict'
-    await setup(8) // 一条阻断项
+    await setup(7.5) // 一条阻断项
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     expect(exportBodies[0].validation).toMatchObject({ policy: 'acknowledged' })
@@ -912,7 +912,7 @@ describe('撞名之后「覆盖」带着的未处理项与第一次一致', () =
 
   it('撞名之后问题集合变了：「覆盖」带的是现在这一批（报告随之变）', async () => {
     jobStatus = 'conflict'
-    await setup(8)
+    await setup(7.5)
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     expect(button('覆盖'), '这一步得真的停在冲突条上').toBeTruthy()
@@ -989,7 +989,7 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   })
 
   it('样式检查报告：画布范围认画布页与 out-of-page；原图范围只认这张图的问题与图幅', async () => {
-    await offPage(8) // 8 pt 撞绝对下限：让原图范围也有一条要确认的阻断，报告才会生成
+    await offPage(7.5) // 7.5 pt 撞绝对下限：让原图范围也有一条要确认的阻断，报告才会生成
     await reopen()
     await click(button('开始导出')!)
     const canvasReport = exportBodies[0].style_check_report as Record<string, unknown>
@@ -1043,10 +1043,10 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   /**
    * 那张图**不在当前画布上**（Codex 评审 #596 P2）：`findFigurePanel()` 会跨画布找到它，
    * 检查与报告就都得按**它所在的那张画布**算——拿当前画布去裁，摘要里一条都剩不下
-   * （8 pt 的阻断被说成没问题），报告的 `objects` 也是空的。
+   * （7.5 pt 的阻断被说成没问题），报告的 `objects` 也是空的。
    */
   it('图在另一张画布上：检查按它所在的画布算，报告里有这张图', async () => {
-    await offPage(8)
+    await offPage(7.5)
     await act(async () => {
       useDocumentStore.getState().addCanvas('空白')
     })
@@ -1059,8 +1059,8 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
     expect(scopeRadios(), '单图编辑固定原图').toHaveLength(0)
-    // 这张图自己的阻断（8 pt）必须在；画布摆放那条不算
-    expect(errorHint(), '8 pt 的阻断被裁没了').toBeTruthy()
+    // 这张图自己的阻断（7.5 pt）必须在；画布摆放那条不算
+    expect(errorHint(), '7.5 pt 的阻断被裁没了').toBeTruthy()
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     const report = exportBodies[0].style_check_report as Record<string, unknown>
@@ -1072,9 +1072,9 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
 
   /**
    * 两张画布绑的规范不同（Codex 评审 #596 P1）：图所在的画布是宽松的 free-form
-   * （8 pt 合规），当前画布是 lab-publication（8 pt 是阻断）。摘要按图所在画布的规范算
+   * （7.5 pt 合规），当前画布是 lab-publication（7.5 pt 是阻断）。摘要按图所在画布的规范算
    * 出「干净」，那么报告的规范戳、严格核验的 `profile_id` 也必须是那一套——各取各的话，
-   * 报告会声称这张 8 pt 的图是按当前画布那套严规范查过并通过的。
+   * 报告会声称这张 7.5 pt 的图是按当前画布那套严规范查过并通过的。
    * 对照：切回画布范围，四处一起换成当前画布的规范（判据不是恒等成立）。
    */
   it('图在另一张画布上且两张画布规范不同：检查、报告、严格核验都按图所在画布的规范', async () => {
@@ -1084,7 +1084,7 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
       return e!
     }
     writeExportDefaults({ withProof: true, strictInspection: true })
-    await setup(8)
+    await setup(7.5)
     useDocumentStore.getState().commit(literal('图所在画布：宽松规范'), (d) => {
       d.profile = bindingFor(entry('free-form-v1'))
     })
@@ -1103,8 +1103,8 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
     expect(scopeRadios(), '单图编辑固定原图').toHaveLength(0)
-    // 按 free-form 算：8 pt 合规，没有要确认的东西
-    expect(anyHint(), '8 pt 在图所在画布的规范下不是阻断').toBeNull()
+    // 按 free-form 算：7.5 pt 合规，没有要确认的东西
+    expect(anyHint(), '7.5 pt 在图所在画布的规范下不是阻断').toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     expect(
       document.body.querySelector('[data-export-profile-canvas]'),
@@ -1399,7 +1399,7 @@ describe('预检的匿名用量统计', () => {
     posted.mockClear()
     setTelemetryEnabled(true)
     try {
-      await setup(8)                       // 8pt 刻度：撞绝对下限 → 1 条 error
+      await setup(7.5)                       // 7.5pt 刻度：撞绝对下限 → 1 条 error
       const calls = posted.mock.calls.filter(([event]) => event === 'preflight_completed')
       expect(calls).toHaveLength(1)
       const props = calls[0][1] as Record<string, unknown>
@@ -1482,8 +1482,8 @@ describe('对话框里改规范，不许连带重置用户填过的东西', () =
 import { SettingsDialog } from '@/components/SettingsDialog'
 import { dialogCovered } from '@/store/uiStore'
 
-/** 几条 8pt 刻度：每条一个阻断项（`font-below-absolute-floor`） */
-const manifestWithTicks = (n: number, pt = 8, sizeMm: [number, number] = [80, 60]) => ({
+/** 几条 7.5pt 刻度：每条一个阻断项（`font-below-absolute-floor`） */
+const manifestWithTicks = (n: number, pt = 7.5, sizeMm: [number, number] = [80, 60]) => ({
   stem: 'Fig1',
   size_mm: sizeMm,
   elements: Array.from({ length: n }, (_, i) => ({
@@ -1825,10 +1825,10 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
   const second: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }
 
   it('按原图：别的图的阻断项与页面级警告都不算进来；按画布：都算', async () => {
-    // 80×40 的页面：page-aspect 一条 warn（页面级）；Fig2 上 8pt：一条 error（别的图）
+    // 80×40 的页面：page-aspect 一条 warn（页面级）；Fig2 上 7.5pt：一条 error（别的图）
     await stage({
       panels: [{ ...panel, h: 40 }, second],
-      renders: { 'Fig1.pdf': manifestWithTicks(1, 9), 'Fig2.pdf': manifestWithTicks(1, 8) },
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 9), 'Fig2.pdf': manifestWithTicks(1, 7.5) },
       page: { w: 80, h: 40 },
     })
     useWorkspaceStore.setState({ mode: 'layout', activePanelId: null })
@@ -1885,7 +1885,7 @@ describe('T33 · 检查摘要按导出目标取范围', () => {
   it('按原图时这张图自己的阻断项照样拦住，并且报告里只有它的条目', async () => {
     await stage({
       panels: [panel, second],
-      renders: { 'Fig1.pdf': manifestWithTicks(1, 8), 'Fig2.pdf': manifestWithTicks(1, 8) },
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5), 'Fig2.pdf': manifestWithTicks(1, 7.5) },
     })
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
@@ -1923,7 +1923,7 @@ describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论
    * 多图排版的「每张图」只认画布上的图，所以它只在单图编辑里到得了（项目里只有一张图时就是它）。
    */
   async function setupOff(opts: { withCanvasPanel?: boolean } = {}) {
-    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 8) } })
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5) } })
     if (!opts.withCanvasPanel) {
       useDocumentStore.getState().commit(literal('只留一段小字'), (d) => {
         d.objects = [
@@ -1987,7 +1987,7 @@ describe('T33 · 检查区只有计数芯片与问题面板入口', () => {
   it('检查区不逐条列阻断项、没有「定位」入口和任何警告句：只有计数芯片 +「在问题面板中查看」', async () => {
     await stage({
       panels: [panel],
-      renders: { 'Fig1.pdf': manifestWithTicks(1, 8) },
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5) },
       page: { w: 80, h: 40 },
     })
     await mountDialogs()
@@ -2004,7 +2004,7 @@ describe('T33 · 检查区只有计数芯片与问题面板入口', () => {
   it('计数芯片来自真实检查结果：要改 / 留意带色点，建议与无法核验永远是灰；点芯片带着这一档去问题面板', async () => {
     await stage({
       panels: [panel],
-      renders: { 'Fig1.pdf': manifestWithTicks(1, 8) },
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5) },
       page: { w: 80, h: 40 },
     })
     await mountDialogs()
@@ -2044,7 +2044,7 @@ describe('T33 · 检查区只有计数芯片与问题面板入口', () => {
     expect(useUiStore.getState().exportOpen).toBe(false)
   })
   it('「在问题面板中查看」同样让开而不丢状态；换了文档才重置', async () => {
-    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 8) } })
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5) } })
     await mountDialogs()
     await openDialog()
     await typeFilename('kept')
@@ -2134,12 +2134,12 @@ describe('检查芯片 / 「在问题面板中查看」带着导出目标去（#
 
   async function twoWithErrorOnP2() {
     await setupTwo({ select: ['p1'] })
-    // Fig2 上 5 组 8 pt 刻度（多于先露的 3 条）：p2 有阻断项、p1 干净
+    // Fig2 上 5 组 7.5 pt 刻度（多于先露的 3 条）：p2 有阻断项、p1 干净
     const k2 = renderKey('Fig2.pdf', [])
     await act(async () => {
       const cur = useRenderStore.getState().byKey[k2]
       useRenderStore.setState({
-        byKey: { ...useRenderStore.getState().byKey, [k2]: { ...cur, manifest: manifestWithTicks(5, 8, [65, 50]) } },
+        byKey: { ...useRenderStore.getState().byKey, [k2]: { ...cur, manifest: manifestWithTicks(5, 7.5, [65, 50]) } },
       } as never)
       runValidation()
     })
@@ -2162,7 +2162,7 @@ describe('检查芯片 / 「在问题面板中查看」带着导出目标去（#
   it('按画布导出：从画布 A 的芯片进去只列 A 的问题，B 画布的不跟进来（#1106 P2）', async () => {
     await stage({
       panels: [panel, { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 0, y: 60, script: 'fig2.py' }],
-      renders: { 'Fig1.pdf': manifestWithTicks(1, 8), 'Fig2.pdf': manifestWithTicks(1, 9) },
+      renders: { 'Fig1.pdf': manifestWithTicks(1, 7.5), 'Fig2.pdf': manifestWithTicks(1, 9) },
     })
     await mountDialogs()
     await openDialog()

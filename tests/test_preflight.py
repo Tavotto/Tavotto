@@ -211,19 +211,18 @@ def test_effective_font_size_follows_the_final_physical_size():
 
 
 def test_the_default_spec_has_exactly_one_minimum_font_size():
-    """统一为 8 pt（ADR 0029）。
+    """统一为 8 pt（ADR 0029），且下限含等号（2026-10-26 修订）。
 
-    **8 pt 那条边一个字都没动**：正好 8.0 仍然不算过（`eff <= floor`）。变的是
-    「比 8 pt 更严的那条规则」——8.2 pt 从阻断项变成了通过。
+    课题组原文示例里本来就有 8 pt 的图例与刻度：正好 8.0 通过，低于 8 才是阻断项。
     """
     p = profiles.load("lab-publication-v1")
-    at_8_2 = _ids(preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=8.2)), p))
-    assert "font-too-small" not in at_8_2
-    assert "font-below-absolute-floor" not in at_8_2
     at_8_0 = _ids(preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=8.0)), p))
-    assert "font-below-absolute-floor" in at_8_0
-    # 两档同值时只报下面那条，不报两条：同一件事说两遍等于让用户找两次
     assert "font-too-small" not in at_8_0
+    assert "font-below-absolute-floor" not in at_8_0
+    at_7_9 = _ids(preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=7.9)), p))
+    assert "font-below-absolute-floor" in at_7_9
+    # 两档同值时只报下面那条，不报两条：同一件事说两遍等于让用户找两次
+    assert "font-too-small" not in at_7_9
 
 
 def test_the_strict_threshold_and_the_absolute_floor_are_still_two_checks():
@@ -238,7 +237,10 @@ def test_the_strict_threshold_and_the_absolute_floor_are_still_two_checks():
     assert "font-too-small" in at_5_5
     assert "font-below-absolute-floor" not in at_5_5
     at_5_0 = _ids(preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=5.0)), p))
-    assert "font-below-absolute-floor" in at_5_0
+    assert "font-below-absolute-floor" not in at_5_0, "下限含等号：正好 5.0 只差严格档"
+    assert "font-too-small" in at_5_0
+    at_4_5 = _ids(preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=4.5)), p))
+    assert "font-below-absolute-floor" in at_4_5
 
 
 def test_font_substitution_is_reported():
@@ -334,9 +336,9 @@ def test_data_semantics_are_only_suggestions():
 
 def test_summarize_blocks_only_on_errors():
     p = profiles.load("lab-publication-v1")
-    # 8.0 而不是 8.2：统一为 8 pt 之后 8.2 是合规的，用它当"有阻断项"的样例
+    # 7.9 而不是 8.0：下限含等号之后 8.0 是合规的，用它当"有阻断项"的样例
     # 会让这条用例在实现坏掉时照样绿（判据挑了个不会触发的输入）
-    spec = preflight.spec_from_manifest(_manifest(tick_pt=8.0))
+    spec = preflight.spec_from_manifest(_manifest(tick_pt=7.9))
     summary = preflight.summarize(preflight.run(spec, p))
     assert summary["blocking"] is True
     assert summary["counts"]["error"] >= 1

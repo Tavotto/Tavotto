@@ -389,7 +389,7 @@
           {
            "prop": "fontsize",
            "type": "number",
-           "value": 8.2
+           "value": 8.0
           }
          ]
         },
@@ -413,7 +413,7 @@
           {
            "prop": "fontsize",
            "type": "number",
-           "value": 8.0
+           "value": 7.9
           }
          ]
         },
@@ -608,7 +608,7 @@
      "message": {
       "key": "fontBelowFloor",
       "params": {
-       "effective": "8.00",
+       "effective": "7.90",
        "floor": "8"
       }
      },
@@ -619,7 +619,7 @@
       "axes_0.yticks"
      ],
      "detail": {
-      "effective_pt": 8.0,
+      "effective_pt": 7.9,
       "floor_pt": 8.0
      }
     }
@@ -1434,27 +1434,6 @@
     ]
    },
    "expected": [
-    {
-     "id": "font-below-absolute-floor",
-     "severity": "error",
-     "message": {
-      "key": "fontBelowFloor",
-      "params": {
-       "effective": "8.00",
-       "floor": "8"
-      }
-     },
-     "object_ids": [
-      "p1"
-     ],
-     "gids": [
-      "axes_0.legend.texts_0"
-     ],
-     "detail": {
-      "effective_pt": 8.0,
-      "floor_pt": 8.0
-     }
-    },
     {
      "id": "spines-not-enclosed",
      "severity": "warn",
@@ -2466,8 +2445,7 @@
      "object_ids": [
       "p1",
       "p2",
-      "t-small",
-      "t-floor"
+      "t-small"
      ],
      "gids": [
       "axes_0.xticks",
