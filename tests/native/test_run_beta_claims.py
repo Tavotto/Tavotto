@@ -1,4 +1,4 @@
-"""README 对 `tavotto run` 的承诺，逐句指得出兑现它的那行代码。
+"""指南对 `tavotto run` 的承诺，逐句指得出兑现它的那行代码。
 
 ## 为什么需要这一条
 
@@ -22,7 +22,9 @@
 这一条链路上曾经真的缺过的那一行。删掉实现 → 这里红，并且报的是**它让
 README 的哪一句变成了谎**，不是「找不到某个字符串」。
 
-READMEs 里那句话被删掉时本文件转绿，这是对的：承诺撤回之后就没有谎可言。
+承诺住在 `docs/guide/command-line(.zh-CN).md`（2026-10 README 瘦身时从 README 下沉）。
+那句话被删掉时本文件**变红**而不是跳过：承诺撤回要同时撤掉这里对应的 Claim，
+否则"删掉承诺就绿"会让门禁变成空的。
 """
 
 from __future__ import annotations
@@ -122,8 +124,11 @@ def code_only(text: str) -> str:
     return "\n".join(ln for ln in text.splitlines() if not _COMMENT_LINE.match(ln))
 
 
+GUIDES = ("docs/guide/command-line.md", "docs/guide/command-line.zh-CN.md")
+
+
 def _readmes() -> dict[str, str]:
-    return {name: _read(name) for name in ("README.md", "README.zh-CN.md")}
+    return {name: _read(name) for name in GUIDES}
 
 
 def _norm(text: str) -> str:
@@ -135,14 +140,12 @@ def _norm(text: str) -> str:
 def test_each_readme_promise_is_backed_by_code(claim: Claim):
     readmes = _readmes()
     promised = {
-        "README.md": _norm(claim.en) in _norm(readmes["README.md"]),
-        "README.zh-CN.md": _norm(claim.zh) in _norm(readmes["README.zh-CN.md"]),
+        GUIDES[0]: _norm(claim.en) in _norm(readmes[GUIDES[0]]),
+        GUIDES[1]: _norm(claim.zh) in _norm(readmes[GUIDES[1]]),
     }
-    if not any(promised.values()):
-        pytest.skip("两份 README 都不再这么承诺了——没有谎可言")
-    # 一份撤了一份没撤，本身就是个缺陷：两种语言的用户看到的产品不一样
+    # 不再跳过：承诺从指南里消失（或只剩一种语言）就红。真要撤回，连这条 Claim 一起删
     assert all(promised.values()), (
-        f"这句承诺只在其中一份 README 里：{promised}\n  zh: {claim.zh}\n  en: {claim.en}"
+        f"这句承诺不在指南里（或只在其中一份）：{promised}\n  zh: {claim.zh}\n  en: {claim.en}"
     )
     for leg in claim.legs:
         # **只在代码里找**：注释里提一句不算兑现（见 `code_only` 的说明）
