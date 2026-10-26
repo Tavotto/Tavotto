@@ -23,7 +23,7 @@
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/demo.zh.gif" width="100%"
-       alt="12 秒演示：选中一幅图，拖动它，把宽度改成 56 毫米，然后导出。">
+       alt="图内编辑的演示：双击图 (a) 进入图内，选中图例，把字号从 8 pt 调到 10 pt，再拖动图例到新位置，图随即重画。">
 </p>
 
 <p align="center">

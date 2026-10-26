@@ -23,7 +23,7 @@
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/demo.gif" width="100%"
-       alt="A 12-second walkthrough: select a panel, drag it, set its width to 56 mm, then export.">
+       alt="Walkthrough of editing inside a figure: double-click figure (a) to enter it, select the legend, raise its font size from 8 to 10 pt, then drag the legend to a new spot while the figure redraws.">
 </p>
 
 <p align="center">
