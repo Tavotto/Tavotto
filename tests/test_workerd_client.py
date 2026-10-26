@@ -161,6 +161,13 @@ def test_hello_negotiates_the_protocol_version(client):
     }
 
 
+def test_the_workerd_lease_is_the_python_pool_lease():
+    """两条控制面的「刚交出去、还没发第一条请求」租约是同一件事、同一个数（ADR 0004 §7）。"""
+    from tavotto.engine import pool
+
+    assert workerd_client.ACQUIRE_LEASE_MS == round(pool.ACQUIRE_LEASE * 1000)
+
+
 def test_a_foreign_supervisor_version_is_refused(tmp_path):
     c = workerd_client.WorkerdClient(_fake_exe(tmp_path, version=9))
     try:
