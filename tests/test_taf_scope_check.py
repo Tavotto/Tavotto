@@ -520,3 +520,33 @@ def test_other_stem_has_no_target():
 
 def test_every_probe_fixture_is_covered_by_the_scenarios():
     assert {s["fixture"] for s in probe_scenarios()} <= set(FIGURE_FIXTURES)
+
+
+LEGEND_LABELS = """
+import matplotlib.pyplot as plt
+def main():
+    fig, ax = plt.subplots()
+    ax.plot([0, 1, 2], [1, 2, 3], label="{a}")
+    ax.plot([0, 1, 2], [3, 2, 1], label="{b}")
+    ax.legend()
+    fig.savefig("fig.pdf")
+if __name__ == "__main__":
+    main()
+"""
+
+
+@needs_worker
+def test_a_renamed_lines_legend_text_follows_the_line_not_the_others(tmp_path):
+    """改名后图例项文字跟着变：记在它代表的那条曲线名下（目标是这条线 → 不算范围外）；目标是另一条线时照常算范围外。"""
+    before = _build(tmp_path, "a", LEGEND_LABELS.format(a="treated", b="control"))
+    after = _build(tmp_path, "b", LEGEND_LABELS.format(a="treated (n=6)", b="control"))
+    legend = [
+        g
+        for g, _ in figureverify._changes(after, before)
+        if (figureverify._elements(after).get(g) or {}).get("role") == "legend_text"
+    ]
+    assert legend, "改名后图例项的文字真的变了"
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_0")
+    assert c.verdict == "verified", c.observed
+    c = _only(after=after, before=before, scope="element", gid="axes_0.lines_1")
+    assert c.verdict == "unknown" and set(legend) <= set(c.observed["elements"]), c.observed

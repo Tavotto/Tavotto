@@ -625,14 +625,15 @@ _AXIS_LABEL_GID = re.compile(r"(axes_\d+)\.(xlabel|ylabel)$")
 def _owners(gid: str, prop: str | None, els: dict[str, dict]) -> set[str]:
     """一条改动「算谁的账」：它自己，加上 manifest 里明说它跟着谁走的那些对象（结构，不是按名字猜）。
 
-    * 图例项的 `handle_*`（示意线 / 色块）跟着 `legend_entry.source_gid` 那条曲线 / 柱组走；
+    * 图例项的 `handle_*`（示意线 / 色块）与 `text`（图例文字由曲线 label 生成，改名后跟着变）跟着 `legend_entry.source_gid`
+      那条曲线 / 柱组走；
     * 图像与色条的 `cmap / vmin / vmax` 共享同一个映射（图像的 `cmap_group_gids`、色条的 `mappable_gid`）；
     * 色条的 `label` 就是色条所在轴的 y（水平色条为 x）轴标题——同一个文字，两处出现；反过来亦然。
     """
     owners = {gid}
     el = els.get(gid) or {}
     role = el.get("role")
-    if role == "legend_text" and (prop or "").startswith("handle_"):
+    if role == "legend_text" and (prop == "text" or (prop or "").startswith("handle_")):
         src = (el.get("legend_entry") or {}).get("source_gid")
         if isinstance(src, str):
             owners.add(src)
@@ -785,7 +786,7 @@ def changes_outside_target(
     就要改多处（说「两条都改」却只选中一条），系统判不了意图，如实说「这些地方也变了，请确认」，结局最高 partial。
 
     不算范围外的派生改动——都按结构判，不看场景：
-    1. **跟随目标的对象**：`_owners`——图例项的 `handle_*` 跟着它代表的那条曲线 / 柱组；图像与色条共享 `cmap/vmin/vmax`；色条
+    1. **跟随目标的对象**：`_owners`——图例项的 `handle_*` 与文字跟着它代表的那条曲线 / 柱组；图像与色条共享 `cmap/vmin/vmax`；色条
        的 `label` 与所在轴的轴标题是同一个文字。它们的账记在 manifest 明说的那个主人名下，主人在范围内就在范围内。
        柱子（`barseries_N.bar_M`）是柱组的后代，已被前缀覆盖。
     2. **自动算出来的量**（`_auto_kind`）：轴的 `xlim / ylim`（**两侧自动缩放开着 + 数据范围真变了 + 新范围包住它才算**；显式 `set_[xy]lim` 不是缩放算的）、
