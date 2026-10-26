@@ -201,9 +201,11 @@ def shadow_note(
     from .. import importshadow
 
     if roots is None:
-        roots = [ctx.project_root]
+        # 与 worker 的导入优先级一致（`worker.py` 把脚本目录放在 sys.path 前面，项目根在后）：脚本目录在前
+        roots = []
         if ctx.script_path is not None:
             roots.append(Path(ctx.script_path).parent)
+        roots.append(ctx.project_root)
     try:
         fact = importshadow.detect(text, roots, project_on_path=project_on_path)
     except Exception:  # noqa: BLE001 - 说明是锦上添花，判不出不能让工具失败

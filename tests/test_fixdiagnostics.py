@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from tavotto.engine import deprepair, fixsession, importshadow, pool
-from tavotto.engine.fixtools import REGISTRY, FixContext, executors, run_tool
+from tavotto.engine.fixtools import REGISTRY, FixContext, base, executors, run_tool
 from tests.test_fixtools import put
 
 CELERITE_TB = (
@@ -119,6 +119,20 @@ def test_init_that_extends_the_package_path_is_treated_like_a_namespace(box, ini
     fact = importshadow.detect("ModuleNotFoundError: No module named 'celerite.extra'", [box.proj])
     assert fact and fact["kind"] == "namespace"
     assert "Do not install it" not in fact["note"] and "can fix this" in fact["note"]
+
+
+def test_script_dir_package_wins_over_project_root_package(box):
+    # project/foo（regular）与 project/scripts/foo（extend_path）同时在：脚本目录在 sys.path 前面，按它那份判
+    put(box.proj / "foo" / "__init__.py", "x = 1\n")
+    put(
+        box.proj / "scripts" / "foo" / "__init__.py",
+        "from pkgutil import extend_path\n__path__ = extend_path(__path__, __name__)\n",
+    )
+    script = put(box.proj / "scripts" / "fig.py", "import foo.bar\n")
+    ctx = make_ctx(box, script_path=script)
+    note = base.shadow_note(ctx, "ModuleNotFoundError: No module named 'foo.bar'")
+    assert "project_package_shadow:" in note
+    assert "Do not install it" not in note and "can fix this" in note
 
 
 def test_cannot_import_name_from_a_project_copy_is_recognised(box):

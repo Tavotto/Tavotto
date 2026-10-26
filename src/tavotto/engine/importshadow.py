@@ -137,7 +137,7 @@ def _frame_in(text: str, pkg_dir: Path) -> bool:
 def detect(
     text: str | None, roots: list[Path | str | None], *, project_on_path: bool = True
 ) -> dict | None:
-    """错误文本 → 遮蔽事实；不是这一类（含读不出来）回 `None`。`roots`：项目根、脚本所在目录（按 `sys.path` 的先后）。
+    """错误文本 → 遮蔽事实；不是这一类（含读不出来）回 `None`。`roots`：按 `sys.path` 的先后（脚本目录在前，再项目根）。
 
     `project_on_path`：失败的那个进程是否把项目放在 `sys.path` 上（真实运行 / 试运行副本：是；`try_import` 在全新
     scratch 目录里跑：否）。**不在路径上时，项目里有同名目录说明不了什么**——失败可能完全来自 site-packages——
@@ -155,10 +155,14 @@ def detect(
             parent, child = name.rsplit(".", 1)
             for root in candidates:
                 pdir = root.joinpath(*parent.split("."))
-                if pdir.is_dir() and not _child_exists(pdir, child):
-                    if not project_on_path and not _frame_in(text, pdir):
-                        continue
-                    return _fact(root, parent, name, relation="missing_submodule")
+                if not pdir.is_dir():
+                    continue
+                if not project_on_path and not _frame_in(text, pdir):
+                    continue
+                # `roots` 按 sys.path 的先后：第一个有这个包目录的根就是 Python 会用的那份，只由它下结论
+                if _child_exists(pdir, child):
+                    break
+                return _fact(root, parent, name, relation="missing_submodule")
     m = None
     for m in _CANNOT_IMPORT_RE.finditer(text):
         pass
