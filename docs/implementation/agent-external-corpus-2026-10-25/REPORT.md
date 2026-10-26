@@ -3,7 +3,7 @@
 Current follow-up: [shared recovery and the user-authorized builtin default](SELF-HEAL.md). Routing statements below describe the earlier frozen trial, before this switch.
 
 本文件是第一阶段的历史快照；最新流程优先的验收与复测见 [FUNCTIONAL-FOLLOWUP.md](FUNCTIONAL-FOLLOWUP.md)。
-历史保真缺口仍见 [FIDELITY-FOLLOWUP.md](FIDELITY-FOLLOWUP.md) 和 [LATEST-RESULTS.json](LATEST-RESULTS.json)，默认路由不变。
+历史保真缺口仍见 [FIDELITY-FOLLOWUP.md](FIDELITY-FOLLOWUP.md) 和 LATEST-RESULTS.json（存档，见 [EVIDENCE.md](EVIDENCE.md)），默认路由不变。
 
 日期：2026-10-25。基线 `d22b61a92e25d69c0e446e6276c13f5860e04b32`，最终产品代码
 `4420cdce9cfea854866e4b0925d989e2fc3a263e`，macOS arm64，真实模型
@@ -51,7 +51,7 @@ Current follow-up: [shared recovery and the user-authorized builtin default](SEL
 
 前 26 次主要行为版本为 `55401e9`；其中部分运行与共享函数的 AST 等价下沉重叠，逐次 dirty diff
 摘要保留，不能称全部在 clean commit 上完成。最后三次模型运行及以下完整应用复核使用 clean
-`4420cdce9`。逐次状态、候选 SHA、代码版本和 provider 原始用量见 [results.json](results.json)。
+`4420cdce9`。逐次状态、候选 SHA、代码版本和 provider 原始用量见 results.json（存档，见 [EVIDENCE.md](EVIDENCE.md)）。
 
 **最终产品复核覆盖全部 25 份曾被采用的候选：24 份通过检查、再次采用并在新应用会话完整运行；
 R plotmath 的旧候选因两页捕获失败被正确拒绝。** 新会话用 OS sandbox 禁止读取对应转换缓存，

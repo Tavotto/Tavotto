@@ -1,6 +1,6 @@
 # Formal-budget follow-ups after funding restoration
 
-2026-10-26. These are follow-ups to the frozen [23-case first pass](FULL-CORPUS.md), not replacements for its failures or a new 23/23 pass rate. Public structural receipts and local-evidence hashes are in [FORMAL-FOLLOWUP-RESULTS.json](FORMAL-FOLLOWUP-RESULTS.json). Source scripts, model transcripts, commands and credentials remain local. Default routes and production budgets are unchanged.
+2026-10-26. These are follow-ups to the frozen [23-case first pass](FULL-CORPUS.md), not replacements for its failures or a new 23/23 pass rate. Public structural receipts and local-evidence hashes are in FORMAL-FOLLOWUP-RESULTS.json（存档，见 [EVIDENCE.md](EVIDENCE.md)）. Source scripts, model transcripts, commands and credentials remain local. Default routes and production budgets are unchanged.
 
 ## Same-condition follow-ups
 

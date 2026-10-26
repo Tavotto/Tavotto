@@ -78,4 +78,4 @@ Windows CI then exposed two test portability assumptions: a fixture written with
 
 Unresolved: universal input/command accuracy; broad real-data formats and dependency combinations; all scientific/statistical mappings; MATLAB tick/layout/surface pixels; complex glyph pixels across renderers; repeated same-model executor comparisons; installed Windows/Linux acceptance. The application workflow and visual/scientific acceptance remain separate facts. Default routing stays unchanged.
 
-[Whitelisted per-attempt records and hashes](FUNCTIONAL-RESULTS.json) contain the frozen matrix, follow-ups, repair confirmations, source hashes, fresh-process checks, semantic oracle and known failures. Raw logs remain local and are not published.
+Whitelisted per-attempt records and hashes（存档，见 [EVIDENCE.md](EVIDENCE.md)） contain the frozen matrix, follow-ups, repair confirmations, source hashes, fresh-process checks, semantic oracle and known failures. Raw logs remain local and are not published.

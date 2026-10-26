@@ -4,7 +4,7 @@
 
 ## Matched real-service trials
 
-All trials use DeepSeek `deepseek-flash`, native Responses, no effort override, the same source bytes and runtime, and **32 turns / 800,000 cumulative input+output tokens / 900 seconds / 32,768 output tokens per response / three tool checks**. No candidate code was manually repaired. Raw receipts remain local; [the public ledger](SELF-HEAL-RESULTS.json) retains each result and its hash.
+All trials use DeepSeek `deepseek-flash`, native Responses, no effort override, the same source bytes and runtime, and **32 turns / 800,000 cumulative input+output tokens / 900 seconds / 32,768 output tokens per response / three tool checks**. No candidate code was manually repaired. Raw receipts remain local; the public ledger（存档，见 [EVIDENCE.md](EVIDENCE.md)） retains each result and its hash.
 
 | Case | Fresh baseline `41715ce13` | Intermediate `a48144aa2` | Final product `c7eff16e6` | Adopt / new app |
 | --- | --- | --- | --- | --- |

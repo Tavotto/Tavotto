@@ -2,7 +2,7 @@
 
 2026-10-26. This follow-up tests whether a user can convert an external script, explicitly adopt the new file, and reopen it in a fresh application process that captures figures. Scientific and visual fidelity remain separate acceptance dimensions. **Default routing is unchanged. No merge, release, installed-package acceptance or user rollout occurred.**
 
-The previous [protocol results](PROTOCOL-ROLLOUT.md) remain historical evidence. [LOOP-REPAIR-RESULTS.json](LOOP-REPAIR-RESULTS.json) retains every previous DeepSeek conversion attempt plus every diagnostic, intermediate fix, budget ablation and final run in this follow-up. It includes producer revisions, input hashes, effective budgets, tool error codes, runtime identity, adoption and fresh-process outcomes. Raw source, images, paths and credentials remain local.
+The previous [protocol results](PROTOCOL-ROLLOUT.md) remain historical evidence. LOOP-REPAIR-RESULTS.json（存档，见 [EVIDENCE.md](EVIDENCE.md)） retains every previous DeepSeek conversion attempt plus every diagnostic, intermediate fix, budget ablation and final run in this follow-up. It includes producer revisions, input hashes, effective budgets, tool error codes, runtime identity, adoption and fresh-process outcomes. Raw source, images, paths and credentials remain local.
 
 ## What failed, and which layer was responsible
 
