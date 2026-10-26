@@ -1682,3 +1682,700 @@ def test_installer_that_exits_nonzero_returns_at_once_instead_of_waiting_for_the
     )
     assert step["exit_code"] == 3 and "timed_out" not in step
     assert __import__("time").monotonic() - t0 < 20
+
+
+# --------------------------------------------------------------------------- 桌面宿主 L3–L5（desktop-live）
+import desktop_driver as D  # noqa: E402
+
+
+def test_desktop_live_modes_are_a_closed_set_of_host_extension_cells():
+    t = A.TASKS["desktop-live"]
+    assert t.modes == A.DESKTOP_LIVE_MODES == tuple(A.DESKTOP_LIVE)
+    assert t.networks == ("direct",) and t.needs_model_conf  # --network 不开放；要一次性模型凭据
+    for cell in A.DESKTOP_LIVE.values():
+        assert cell.host in A.DESKTOP_HOSTS and cell.extension in A.DESKTOP_EXTENSIONS
+    assert A.validate_test_args(t, [], None, "direct", mode="vscode-claude") is None
+    for bad in ("cursor-claude", "vscode", "vscode-codex", "../x"):
+        assert A.validate_test_args(t, [], None, "direct", mode=bad)
+    assert A.validate_test_args(t, [], None, "trojan", mode="vscode-claude")
+
+
+def test_extension_pin_is_exact_version_sha256_and_goes_through_the_proxy():
+    from urllib.parse import urlsplit
+
+    for e in A.DESKTOP_EXTENSIONS.values():
+        u = urlsplit(e.url)
+        assert u.scheme == "https" and u.hostname == "open-vsx.org", e.id
+        assert re.fullmatch(r"[0-9a-f]{64}", e.sha256), e.id
+        assert e.version in e.url and e.version in e.dir_name, e.id
+        assert e.network == "trojan" and 0 < e.max_bytes <= 500 * 1024**2, e.id
+        assert e.id == e.id.lower()
+
+
+def test_extension_download_refuses_when_the_proxy_is_down_instead_of_going_direct(
+    tmp_path, monkeypatch
+):
+    ext = A.DESKTOP_EXTENSIONS["anthropic.claude-code"]
+    monkeypatch.setattr(A, "_tcp_open", lambda *a, **k: False)
+    monkeypatch.setattr(A, "_opener", lambda mode: pytest.fail("must not open any connection"))
+    path, info = A.fetch_extension(A.Lab(root=tmp_path), ext)
+    assert path is None and "not listening" in info["unavailable"]
+
+
+def test_extension_download_with_wrong_hash_deletes_it(tmp_path, monkeypatch):
+    lab = A.Lab(root=tmp_path)
+    ext = A.DESKTOP_EXTENSIONS["anthropic.claude-code"]
+    monkeypatch.setattr(A, "_tcp_open", lambda *a, **k: True)
+    modes = []
+
+    class Opener:
+        def open(self, req, timeout):
+            return _Resp(b"not the vsix")
+
+    monkeypatch.setattr(A, "_opener", lambda mode, **kw: modes.append(mode) or Opener())
+    path, info = A.fetch_extension(lab, ext)
+    assert path is None and "sha256_mismatch" in info and modes == ["trojan"]
+    d = lab.cache / "desktop-extensions" / ext.id / ext.version
+    assert not any(d.iterdir())  # 散列不符：连 .part 都不留
+
+
+def test_pinned_download_stops_at_the_size_cap_and_leaves_nothing(tmp_path, monkeypatch):
+    class Opener:
+        def open(self, req, timeout):
+            return _Resp(b"0123456789")
+
+    monkeypatch.setattr(A, "_tcp_open", lambda *a, **k: True)
+    monkeypatch.setattr(A, "_opener", lambda mode: Opener())
+    d = tmp_path / "c"
+    path, info = A._fetch_pinned_file(d, "https://open-vsx.org/x.vsix", "0" * 64, "trojan", 4)
+    assert path is None and "larger than 4 bytes" in info["unavailable"]
+    assert not any(d.iterdir())
+
+
+def test_extension_cache_is_reused_only_when_the_hash_matches(tmp_path, monkeypatch):
+    import hashlib
+
+    data = b"vsix-bytes"
+    d = tmp_path / "c"
+    d.mkdir()
+    (d / "x.vsix").write_bytes(data)
+    monkeypatch.setattr(A, "_opener", lambda mode: pytest.fail("must not download"))
+    path, info = A._fetch_pinned_file(
+        d, "https://open-vsx.org/x.vsix", hashlib.sha256(data).hexdigest(), "trojan", 10**6
+    )
+    assert path == d / "x.vsix" and info["cached"] is True
+
+
+def test_secret_env_split_moves_by_value_not_by_name():
+    key = "sk-" + "s" * 30
+    pub, sec = A.split_secret_env(
+        {"ANTHROPIC_AUTH_TOKEN": key, "ANTHROPIC_BASE_URL": "https://x", "ODD": f"a{key}b"}, [key]
+    )
+    assert sec == {"ANTHROPIC_AUTH_TOKEN": key, "ODD": f"a{key}b"}
+    assert pub == {"ANTHROPIC_BASE_URL": "https://x"}
+    assert A.split_secret_env({"A": "b"}, [""]) == ({"A": "b"}, {})  # 空密钥不把什么都当密钥
+
+
+def test_request_json_never_carries_the_secret_only_a_pipe_name(tmp_path, monkeypatch):
+    key = "sk-" + "r" * 30
+    lab = A.Lab(tmp_path)
+    lab.state.mkdir()
+    monkeypatch.setattr(A, "ensure_gui_task", lambda lab: {"exit_code": 0})
+    monkeypatch.setattr(A, "GUI_START_WAIT_S", 0)
+    seen = {}
+
+    class FakePipe:
+        name = "tavotto-winlab-" + "a" * 32
+        delivered = False
+        error = None
+
+        def __init__(self, payload):
+            seen["payload"] = payload
+
+        def close(self):
+            seen["closed"] = True
+
+    monkeypatch.setattr(A, "_open_secret_pipe", FakePipe)
+
+    def run(argv, **kw):  # schtasks /Run：这一刻 request.json 就在盘上，抓下来
+        seen["request"] = (lab.state / "gui" / "request.json").read_text(encoding="utf-8")
+
+    monkeypatch.setattr(A.subprocess, "run", run)
+    public, secret = A.split_secret_env({"ANTHROPIC_AUTH_TOKEN": key, "OK": "1"}, [key])
+    out = A.run_in_gui(lab, RUN, ["x"], tmp_path, public, tmp_path / "p", 10, secret_env=secret)
+    assert out["gui"] == "no_interactive_session"
+    assert key not in seen["request"] and json.loads(seen["request"])["env_pipe"] == FakePipe.name
+    assert seen["payload"] == {"ANTHROPIC_AUTH_TOKEN": key} and seen["closed"] is True
+    for p in tmp_path.rglob("*"):  # 整个 Lab 根下任何文件都没有它
+        if p.is_file():
+            assert key not in p.read_text(encoding="utf-8", errors="replace"), p
+
+
+def test_run_in_gui_without_secrets_opens_no_pipe(tmp_path, monkeypatch):
+    lab = A.Lab(tmp_path)
+    lab.state.mkdir()
+    monkeypatch.setattr(A, "ensure_gui_task", lambda lab: {"exit_code": 0})
+    monkeypatch.setattr(A, "GUI_START_WAIT_S", 0)
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(A, "_open_secret_pipe", lambda p: pytest.fail("no secrets, no pipe"))
+    assert A.run_in_gui(lab, RUN, ["x"], tmp_path, {}, tmp_path / "p", 10)["gui"]
+
+
+def test_gui_host_merges_the_pipe_secret_into_the_child_env_only(tmp_path, monkeypatch):
+    key = "sk-" + "p" * 30
+    lab = A.Lab(tmp_path)
+    pipe = tmp_path / "pipe.json"
+    pipe.write_text(json.dumps({"WINLAB_SECRET_PROBE": key}), encoding="utf-8")
+    name = "tavotto-winlab-" + "b" * 32
+    monkeypatch.setattr(A, "_pipe_path", lambda n: str(pipe) if n == name else "/nonexistent/x")
+    _write_request(
+        lab,
+        RUN,
+        [sys.executable, "-c", "import os; print(len(os.environ['WINLAB_SECRET_PROBE']))"],
+    )
+    req_path = lab.state / "gui" / "request.json"
+    req = json.loads(req_path.read_text(encoding="utf-8"))
+    req["env_pipe"] = name
+    req_path.write_text(json.dumps(req), encoding="utf-8")
+    assert G.serve(lab) == 0
+    res = json.loads((lab.state / "gui" / f"{RUN}.result.json").read_text())
+    assert res["exit_code"] == 0
+    assert (lab.root / "out" / "p.stdout.log").read_text().strip() == str(len(key))
+
+
+@pytest.mark.parametrize(
+    "name", ["../evil", "tavotto-winlab-xyz", "C:\\x", "tavotto-winlab-" + "A" * 32]
+)
+def test_secret_pipe_name_must_have_the_agent_generated_shape(name):
+    with pytest.raises(ValueError):
+        A.read_secret_pipe(name)
+
+
+def test_gui_host_with_an_unreadable_secret_pipe_does_not_run_the_command(tmp_path, monkeypatch):
+    lab = A.Lab(tmp_path)
+    monkeypatch.setattr(A, "_pipe_path", lambda n: "/nonexistent/pipe")
+    monkeypatch.setattr(A.time, "sleep", lambda s: None)
+    _write_request(lab, RUN, [sys.executable, "-c", "open('ran','w')"])
+    req_path = lab.state / "gui" / "request.json"
+    req = json.loads(req_path.read_text(encoding="utf-8"))
+    req["env_pipe"] = "tavotto-winlab-" + "c" * 32
+    req_path.write_text(json.dumps(req), encoding="utf-8")
+    G.serve(lab)
+    res = json.loads((lab.state / "gui" / f"{RUN}.result.json").read_text())
+    assert res["exit_code"] is None and res.get("spawn_error") and not (tmp_path / "ran").exists()
+
+
+# --- 录制器：首个 initialize 的 client 与进程链 --------------------------------
+_HOST_ROOT = "C:/Users/u/AppData/Local/Programs/Microsoft VS Code"
+
+
+def _init_line(name="claude-code", version="2.1.310"):
+    return (
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"clientInfo": {"name": name, "version": version}, "secret": "ARGS"},
+            }
+        )
+        + "\n"
+    ).encode()
+
+
+def _records(tmp_path, chain, host_root=_HOST_ROOT):
+    import mcp_recorder as R
+
+    log = tmp_path / "rec.jsonl"
+    rec = R.Recorder(str(log), host_root, chain=lambda: chain)
+    rec.from_host(_init_line())
+    rec.from_host(_init_line("again", "9"))  # 只记首个
+    return [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()]
+
+
+def test_recorder_records_client_and_ancestry_with_the_host_ancestor(tmp_path):
+    chain = [
+        ("python.exe", "C:/v/Scripts/python.exe"),
+        ("claude.exe", "C:/run/ext/anthropic.claude-code/resources/native-binary/claude.exe"),
+        ("Code.exe", _HOST_ROOT + "/Code.exe"),
+        ("explorer.exe", "C:/Windows/explorer.exe"),
+    ]
+    rows = _records(tmp_path, chain)
+    inits = [r for r in rows if r.get("method") == "initialize"]
+    assert len(inits) == 2 and "ancestry" in inits[0] and "ancestry" not in inits[1]
+    assert inits[0]["client"] == {"name": "claude-code", "version": "2.1.310"}
+    assert inits[0]["ancestry"] == ["python.exe", "claude.exe", "Code.exe", "explorer.exe"]
+    assert inits[0]["host_ancestor"].endswith("Code.exe")
+    assert "ARGS" not in json.dumps(rows)  # 只记映像名与那一条路径，不记参数
+    p = A.host_provenance(tmp_path / "rec.jsonl")
+    assert p["from_host"] is True and p["host_ancestor"] == "Code.exe"
+    assert p["client"]["name"] == "claude-code"
+
+
+def test_recorder_without_a_host_ancestor_is_not_from_host(tmp_path):
+    chain = [
+        ("python.exe", "C:/v/python.exe"),
+        ("claude.exe", "C:/npm/claude.exe"),
+        ("cmd.exe", "C:/Windows/cmd.exe"),
+        # 同名但不在安装目录下的程序（另一个 Code.exe）不算宿主
+        ("Code.exe", "C:/Users/u/AppData/Local/Programs/Microsoft VS Code Insiders/Code.exe"),
+    ]
+    rows = _records(tmp_path, chain)
+    init = next(r for r in rows if r.get("method") == "initialize")
+    assert init["host_ancestor"] is None and init["ancestry"][1] == "claude.exe"
+    p = A.host_provenance(tmp_path / "rec.jsonl")
+    assert p["seen"] is True and p["from_host"] is False
+
+
+def test_recorder_ancestry_is_bounded_and_survives_a_failing_chain_provider(tmp_path):
+    import mcp_recorder as R
+
+    long = [(f"p{i}.exe", f"C:/x/p{i}.exe") for i in range(30)]
+    assert len(R.provenance(long, None)["ancestry"]) == R.MAX_RECORDED_NAMES
+    assert "host_ancestor" not in R.provenance(long, None)  # 没给 --host-root：不判
+    assert R._under("/a/b/Code.exe", "/a/b") is True
+    assert R._under("/a/bc/Code.exe", "/a/b") is False  # 前缀相同的兄弟目录不算
+    log = tmp_path / "r.jsonl"
+
+    def boom():
+        raise RuntimeError("snapshot failed")
+
+    rec = R.Recorder(str(log), "/a", chain=boom)
+    rec.from_host(_init_line())  # 取不到进程链不许打断通信
+    row = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
+    assert row["method"] == "initialize" and row["ancestry"] == []
+    assert A.host_provenance(log)["from_host"] is False
+
+
+def test_recorder_cli_accepts_host_root_before_the_separator(tmp_path):
+    import subprocess as sp
+
+    server = tmp_path / "s.py"
+    server.write_text("import sys\nsys.stdin.read()\n", encoding="utf-8")
+    log = tmp_path / "rec.jsonl"
+    out = sp.run(
+        [
+            sys.executable,
+            str(WINLAB / "mcp_recorder.py"),
+            str(log),
+            "--host-root",
+            "/opt/code",
+            "--",
+            sys.executable,
+            str(server),
+        ],
+        input=_init_line().decode(),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()]
+    init = next(r for r in rows if r.get("method") == "initialize")
+    assert "host_ancestor" in init and init["client"]["name"] == "claude-code"
+
+
+# --- L3 判据：流量必须来自宿主进程树 ------------------------------------------
+def _desktop_judge_inputs(tmp_path):
+    pdf = tmp_path / "o.pdf"
+    pdf.write_bytes(b"%PDF-1.7 x")
+    sid = "s-0123456789ab"
+    s1 = A.parse_stream(
+        _stream(
+            _use("1", "tavotto_health"),
+            _res("1", "{}"),
+            _use("2", "tavotto_open_figure"),
+            _res("2", '{"session_id": "s-0123456789ab"}'),
+            _use("3", "tavotto_apply_overrides"),
+            _res("3", '{"ok": true, "patch_hash": "sha256:' + H1 + '"}'),
+            _use("5", "tavotto_verify_replay"),
+            _res("5", '{"ok": true}'),
+        )
+    )
+    s1["listed_tools"] = ["tavotto_open_figure", "tavotto_health"]
+    return s1, _replay2(sid, H1), pdf, sid
+
+
+GOOD = {"seen": True, "from_host": True, "host_ancestor": "Code.exe"}
+NO_HOST = {"seen": True, "from_host": False, "host_ancestor": None}
+
+
+def test_desktop_judge_passes_when_the_cli_judge_passes_and_traffic_is_from_the_host(tmp_path):
+    s1, s2, pdf, sid = _desktop_judge_inputs(tmp_path)
+    base = A.judge_live(s1, s2, pdf, True, sid)
+    out = A.judge_desktop_live(s1, s2, pdf, True, sid, GOOD, GOOD)
+    assert (base["L4"], base["L5"]) == ("passed", "passed")
+    assert (out["L3"], out["L4"], out["L5"]) == ("passed",) * 3
+    assert out["checks"] == base["checks"]  # judge_live 的结论原样带出
+
+
+@pytest.mark.parametrize("bad", [NO_HOST, {"seen": False, "from_host": False}])
+def test_desktop_l3_fails_when_traffic_has_no_host_ancestor_and_drags_l4_l5_down(tmp_path, bad):
+    s1, s2, pdf, sid = _desktop_judge_inputs(tmp_path)
+    assert A.judge_live(s1, s2, pdf, True, sid)["L5"] == "passed"  # 单看 judge_live 本会过
+    out = A.judge_desktop_live(s1, s2, pdf, True, sid, bad, GOOD)
+    assert (out["L3"], out["L4"], out["L5"]) == ("failed",) * 3
+
+
+def test_desktop_l5_fails_when_the_fresh_process_round_was_not_from_the_host(tmp_path):
+    s1, s2, pdf, sid = _desktop_judge_inputs(tmp_path)
+    out = A.judge_desktop_live(s1, s2, pdf, True, sid, GOOD, NO_HOST)
+    assert (out["L3"], out["L4"], out["L5"]) == ("passed", "passed", "failed")
+
+
+def test_desktop_l3_still_needs_the_tools_list(tmp_path):
+    s1, s2, pdf, sid = _desktop_judge_inputs(tmp_path)
+    s1["listed_tools"] = []
+    assert A.judge_desktop_live(s1, s2, pdf, True, sid, GOOD, GOOD)["L3"] == "failed"
+
+
+def test_desktop_judge_keeps_judge_live_failures(tmp_path):
+    s1, s2, pdf, sid = _desktop_judge_inputs(tmp_path)
+    assert A.judge_desktop_live(s1, s2, pdf, False, sid, GOOD, GOOD)["L5"] == "failed"
+    pdf.write_bytes(b"<html>")
+    assert A.judge_desktop_live(s1, s2, pdf, True, sid, GOOD, GOOD)["L5"] == "failed"
+
+
+def test_host_provenance_only_reads_the_requested_round(tmp_path):
+    log = tmp_path / "r.jsonl"
+    rows = [
+        {
+            "dir": "host",
+            "method": "initialize",
+            "ancestry": ["a"],
+            "host_ancestor": "C:/h/Code.exe",
+        },
+        {"dir": "host", "method": "initialize", "ancestry": ["b"], "host_ancestor": None},
+    ]
+    log.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    assert A.host_provenance(log, 0, 1)["from_host"] is True
+    assert A.host_provenance(log, 1)["from_host"] is False
+    assert A.host_provenance(log, 2)["seen"] is False
+
+
+# --- 驱动器与配置 --------------------------------------------------------------
+def test_driver_debug_port_is_loopback_random_and_never_widened():
+    assert all(1024 < D.free_port() < 65536 for _ in range(3))
+    assert D.LOOPBACK == "127.0.0.1"
+    args = D.code_args("C:/u", "C:/e", "C:/w", 40123)
+    assert "--remote-debugging-port=40123" in args
+    assert not any(a.startswith("--remote-debugging-address") for a in args)
+    assert not any("0.0.0.0" in a for a in args)
+    assert args[-1] == "C:/w" and "--disable-workspace-trust" in args
+    assert not any(re.search(r"token|secret|key", a, re.I) for a in args)
+    uri = D.uri_open_args("C:/u", "C:/e")
+    assert "--open-url" in uri and uri[-1].startswith("vscode://anthropic.claude-code/open")
+    assert not any(a.startswith("--remote-debugging") for a in uri)
+
+
+def test_driver_websocket_client_follows_rfc6455():
+    assert D.ws_accept("dGhlIHNhbXBsZSBub25jZQ==") == "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="  # RFC §1.3
+    for n in (5, 200, 70000):
+        payload = (bytes(range(256)) * (n // 256 + 1))[:n]
+        frame = D.encode_frame(payload, 0x1, mask_key=b"\x01\x02\x03\x04")
+        assert frame[1] & 0x80  # 客户端帧必须掩码
+        if n < 126:
+            head = bytes([0x81, n])
+        elif n < 65536:
+            head = bytes([0x81, 126]) + n.to_bytes(2, "big")
+        else:
+            head = bytes([0x81, 127]) + n.to_bytes(8, "big")
+        # 服务器帧不掩码
+        assert D.decode_frame(head + payload) == (0x1, True, payload, len(head) + n)
+        assert D.decode_frame((head + payload)[:-1]) is None  # 半帧：留着等
+    key = b"\xaa\xbb\xcc\xdd"
+    masked = D.encode_frame(b"hello", 0x1, mask_key=key)
+    assert masked[2:6] == key
+    assert bytes(b ^ key[i % 4] for i, b in enumerate(masked[6:])) == b"hello"
+
+
+def test_driver_argv_has_only_the_registered_flags_and_no_credentials(tmp_path):
+    argv = A.driver_argv(
+        Path("py"),
+        Path("desktop_driver.py"),
+        exe="C:/vs/Code.exe",
+        root="C:/vs",
+        profile=tmp_path / "profile",
+        ext_dir=tmp_path / "ext",
+        workspace=tmp_path / "proj",
+        prompt_file=tmp_path / "prompt-1.txt",
+        rec_log=tmp_path / "rec.jsonl",
+        out_dir=tmp_path / "ev",
+        label="round1",
+    )
+    assert argv[:3] == ["py", "-I", "desktop_driver.py"]
+    flags = [a for a in argv if a.startswith("--")]
+    assert len(flags) == len(set(flags))
+    assert "--remote-debugging-port" not in " ".join(argv)  # 端口由驱动器自己随机选
+    assert not any(re.search(r"sk-|token|api[_-]?key", a, re.I) for a in argv)
+    # 驱动器真能解析这些 flag（agent 与 driver 两侧参数名同源）
+    src = (WINLAB / "desktop_driver.py").read_text(encoding="utf-8")
+    for f in flags:
+        assert f'"{f}"' in src, f
+
+
+def test_vscode_settings_and_claude_config_carry_no_secret_and_grant_only_tavotto(tmp_path):
+    settings = json.dumps(A.vscode_user_settings())
+    assert not re.search(r"token|secret|api[_-]?key|sk-|password", settings, re.I)
+    assert json.loads(settings)["claudeCode.disableLoginPrompt"] is True
+    cfg, proj = tmp_path / "cfg", tmp_path / "proj"
+    cfg.mkdir()
+    (cfg / ".claude.json").write_text(json.dumps({"mcpServers": {"tavotto": {}}}), encoding="utf-8")
+    A.claude_isolated_config(cfg, proj)
+    perms = json.loads((cfg / "settings.json").read_text(encoding="utf-8"))["permissions"]
+    # 只放行 tavotto 这一个服务器与只读工具，不是放开全部；会执行 / 写入 / 上网的明确拒绝（面板里没人点弹窗）
+    assert set(perms["allow"]) == {"mcp__tavotto", "Read", "Glob", "Grep"}
+    assert {"Bash", "PowerShell", "Write", "Edit", "WebFetch"} <= set(perms["deny"])
+    assert not set(perms["allow"]) & set(perms["deny"])
+    assert "defaultMode" not in perms  # 不靠 bypassPermissions
+    state = json.loads((cfg / ".claude.json").read_text(encoding="utf-8"))
+    assert state["mcpServers"] == {"tavotto": {}} and state["hasCompletedOnboarding"] is True
+
+
+def test_desktop_driver_is_deployed_and_importable_from_the_deployed_files_alone(tmp_path):
+    import shutil
+    import subprocess as sp
+
+    assert 'HERE / "desktop_driver.py"' in (WINLAB / "winlab.py").read_text(encoding="utf-8")
+    for src in (
+        WINLAB / "agent.py",
+        WINLAB / "window_probe.py",
+        WINLAB / "desktop_driver.py",
+        *(ROOT / "scripts" / "ci" / n for n in W.DEPLOYED_CI_MODULES),
+    ):
+        shutil.copy(src, tmp_path / src.name)
+    r = sp.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; sys.path[:0] = [sys.argv[1]]; import desktop_driver",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert r.returncode == 0, r.stderr
+
+
+# --- 任务编排：不兼容 / 代理 ----------------------------------------------------
+class _FakeLive:
+    def __init__(self, monkeypatch, tmp_path):
+        self.tmp = tmp_path
+        host = A.DESKTOP_HOSTS["vscode"]
+        self.root = tmp_path / "vs"
+        (self.root / "bin").mkdir(parents=True)
+        lab = A.Lab(tmp_path / "lab")
+        lab.cache.mkdir(parents=True)
+        py = lab.venv_python()
+        py.parent.mkdir(parents=True)
+        py.write_text("")
+        self.lab = lab
+        setup = tmp_path / "setup.exe"
+        setup.write_bytes(b"")
+        self.vsix = tmp_path / "x.vsix"
+        self.vsix.write_bytes(b"")
+        monkeypatch.setattr(A, "fetch_pinned", lambda lab, h: (setup, {}))
+        monkeypatch.setattr(A, "fetch_extension", lambda lab, e: (self.vsix, {}))
+        monkeypatch.setattr(A, "authenticode", lambda p: {"status": "Valid", "org": "x"})
+        monkeypatch.setattr(A, "uninstall_desktop_host", lambda *a: {"ok": True, "steps": []})
+        monkeypatch.setattr(
+            A,
+            "install_desktop_host",
+            lambda *a: {
+                "ok": True,
+                "exe": str(self.root / "Code.exe"),
+                "root": str(self.root),
+                "version": host.display_version,
+            },
+        )
+        self.conf = {"api_key": "sk-" + "z" * 30, "provider": "deepseek"}
+
+    def run(self):
+        run_dir = self.tmp / "run"
+        run_dir.mkdir(exist_ok=True)
+        return A.run_desktop_live_task(self.lab, "rid", run_dir, {}, self.conf, "vscode-claude")
+
+
+def test_host_rejecting_the_extension_as_incompatible_is_not_supported_not_failed(
+    monkeypatch, tmp_path
+):
+    f = _FakeLive(monkeypatch, tmp_path)
+
+    def logged(argv, cwd, env, prefix, timeout, stdin_data=None):
+        Path(f"{prefix}.stderr.log").parent.mkdir(parents=True, exist_ok=True)
+        Path(f"{prefix}.stderr.log").write_text(
+            "Unable to install extension 'x' as it is not compatible with VS Code '1.141.2'.",
+            encoding="utf-8",
+        )
+        Path(f"{prefix}.stdout.log").write_text("", encoding="utf-8")
+        return {"exit_code": 1}
+
+    monkeypatch.setattr(A, "_run_logged", logged)
+    r = f.run()
+    assert r["result"] == "skipped" and r["levels"]["L3"] == "not_supported"
+    assert r["levels"]["L5"] == "not_supported" and "host limitation" in r["summary"]
+
+
+def test_extension_that_fails_to_install_for_another_reason_is_failed(monkeypatch, tmp_path):
+    f = _FakeLive(monkeypatch, tmp_path)
+    monkeypatch.setattr(A, "_run_logged", lambda *a, **k: {"exit_code": 1})
+    r = f.run()
+    assert r["result"] == "failed" and r["levels"]["L3"] != "not_supported"
+
+
+def test_desktop_live_proxy_down_or_bad_hash_never_becomes_a_pass(monkeypatch, tmp_path):
+    f = _FakeLive(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        A, "fetch_extension", lambda lab, e: (None, {"unavailable": "proxy trojan not listening"})
+    )
+    r = f.run()
+    assert r["result"] == "environment_unavailable" and "not listening" in r["summary"]
+    monkeypatch.setattr(A, "fetch_extension", lambda lab, e: (None, {"sha256_mismatch": "0" * 64}))
+    assert f.run()["result"] == "error"
+
+
+def test_extension_download_trusts_one_pinned_root_and_keeps_tls_verification_on():
+    import ssl
+
+    ext = A.DESKTOP_EXTENSIONS["anthropic.claude-code"]
+    pem = A.extension_ca_pem(ext)
+    assert (
+        pem and A.hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest() == A.EXTENSION_CA_SHA256
+    )
+    # 钉子对不上（PEM 被改过）就一个额外的根都不信
+    import dataclasses
+
+    assert (
+        A.extension_ca_pem(dataclasses.replace(ext, extra_ca_pem=pem.replace("MIID3T", "MIID3U")))
+        is None
+    )
+    handlers = [
+        h
+        for h in A._opener("trojan", ca_pem=pem).handlers
+        if isinstance(h, A.urllib.request.HTTPSHandler)
+    ]
+    ctx = handlers[0]._context
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname is True
+    # 域名内置（Open VSX 与它重定向到的 Eclipse 内容站）：这个根不用于别的下载
+    for h in A.DESKTOP_HOSTS.values():
+        assert not hasattr(h, "extra_ca_pem")
+
+
+def test_extension_tls_prefers_certifi_then_pinned_root_and_fails_honestly_without_trust(
+    tmp_path, monkeypatch
+):
+    import ssl
+    import urllib.error
+
+    lab = A.Lab(root=tmp_path)
+    ext = A.DESKTOP_EXTENSIONS["anthropic.claude-code"]
+    monkeypatch.setattr(A, "_tcp_open", lambda *a, **k: True)
+    seen = {}
+
+    class Opener:
+        def open(self, req, timeout):
+            raise urllib.error.URLError(ssl.SSLCertVerificationError("unable to get local issuer"))
+
+    def opener(mode, **kw):
+        seen.update(kw)
+        return Opener()
+
+    monkeypatch.setattr(A, "_opener", opener)
+    # 没有 certifi：回退到钉死的单根；信任源缺根 -> 诚实失败，不降级、不关校验
+    path, info = A.fetch_extension(lab, ext)
+    assert path is None and "download failed" in info["unavailable"]
+    assert "ca_pem" in seen and "cafile" not in seen and info["trust_source"] == "pinned-root"
+    d = lab.cache / "desktop-extensions" / ext.id / ext.version
+    assert not any(d.iterdir())
+    # 有 certifi：优先用它，不再追加钉死的根
+    cert = lab.venv_python().parent.parent / "Lib" / "site-packages" / "certifi" / "cacert.pem"
+    cert.parent.mkdir(parents=True)
+    cert.write_text("x")
+    seen.clear()
+    A.fetch_extension(lab, ext)
+    assert seen == {"cafile": str(cert)}
+    # 没有额外根：什么都不追加
+    seen.clear()
+    A._fetch_pinned_file(d, ext.url, ext.sha256, "trojan", 10)
+    assert seen == {}
+    f = _FakeLive(monkeypatch, tmp_path / "f")
+    monkeypatch.setattr(
+        A, "fetch_extension", lambda lab, e: (None, {"unavailable": "download failed: URLError"})
+    )
+    assert f.run()["result"] == "environment_unavailable"
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="命名管道 + 进程令牌 SID 只在 Windows 上有意义（在 Lab 上跑）"
+)
+def test_secret_pipe_delivers_once_to_another_process_of_the_same_user():
+    import subprocess as sp
+
+    key = "sk-" + "q" * 30
+    pipe = A._open_secret_pipe({"K": key})
+    try:
+        code = (
+            "import sys; sys.path[:0]=[sys.argv[1], sys.argv[3]]; import agent as A, json;"
+            "print(json.dumps(A.read_secret_pipe(sys.argv[2])))"
+        )
+        r = sp.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                code,
+                str(WINLAB),
+                pipe.name,
+                str(ROOT / "scripts" / "ci"),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+        assert r.returncode == 0, r.stderr
+        assert json.loads(r.stdout) == {"K": key}
+        assert pipe.error is None
+        # 只发一次：第二次读不到（单实例、已断开）
+        again = sp.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                code,
+                str(WINLAB),
+                pipe.name,
+                str(ROOT / "scripts" / "ci"),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+        )
+        assert again.returncode != 0 and key not in again.stdout
+    finally:
+        pipe.close()
+    assert pipe.delivered is True
+
+
+def test_driver_waits_for_the_panel_to_stop_being_busy_not_only_for_recorder_silence(
+    tmp_path, monkeypatch
+):
+    """run 20261026T130906Z-feb0dd：模型在 open_figure 之后想了一分多钟，录制器 45 s 没新行就收场，
+    面板还在忙（有 Stop 按钮）——L5 判 failed 是驱动器提前走了，不是宿主做不到。"""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(D.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(D.time, "sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
+    rec = tmp_path / "rec.jsonl"
+    rec.write_text("a\nb\n", encoding="utf-8")
+    busy_until = 200.0
+    reason, n = D.wait_quiet(rec, 1, 45, 1200, 300, lambda: True, lambda: clock["t"] < busy_until)
+    assert reason == "quiet" and n == 2
+    assert clock["t"] >= busy_until
+    # 一直在忙 → 到 max_s 如实报 max，不当 quiet
+    clock["t"] = 0.0
+    reason, _ = D.wait_quiet(rec, 1, 45, 300, 300, lambda: True, lambda: True)
+    assert reason == "max"

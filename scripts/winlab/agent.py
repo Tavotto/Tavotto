@@ -28,6 +28,7 @@ import ssl
 import stat
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -62,6 +63,8 @@ MAX_SELECTORS = 40
 LIVE_HOST_IDS = ("claude-code", "codex-cli", "codebuddy", "minimax-code", "dsh")
 #: `desktop-hosts --mode`：桌面宿主 L2（固定版本见 DESKTOP_HOSTS）
 DESKTOP_HOST_IDS = ("vscode", "cursor", "trae-cn", "workbuddy", "zcode", "claude-desktop")
+#: `desktop-live --mode`：桌面宿主 + 其中的 AI 扩展，到 L3–L5（宿主 × 扩展的闭集见 DESKTOP_LIVE）
+DESKTOP_LIVE_MODES = ("vscode-claude",)
 #: 依赖安装配方的版本：改了 prepare 的安装步骤就加一，已有 venv 随之重装（散列戳里含它）。
 DEPS_RECIPE = "2"
 
@@ -267,6 +270,25 @@ TASKS: dict[str, Task] = {
                 "L3+ 要在宿主里登录各自账户、配置 MCP：Lab 没有这些账户，一律 blocked，不推定",
                 "主窗口出现 ≠ 能用：首次启动的登录 / 欢迎页之后的界面不在内",
                 "海外 CDN 的安装包经 DMIT 下载（用户授权），国内 CDN 直连；下载线路不代表宿主运行时的网络",
+                "Server 2025 不是 Windows 10 / 11 客户端",
+            ),
+        ),
+        Task(
+            id="desktop-live",
+            kind="desktop-live",
+            summary="桌面宿主 L3–L5：VS Code 里的 Claude Code 扩展（国内 Anthropic 兼容模型）经 CDP 驱动，调用 Tavotto MCP，改图、导出、重开核对",
+            timeout_s=4800,
+            needs_model_conf=True,
+            modes=DESKTOP_LIVE_MODES,
+            claim=(
+                "判据与 hosts-live 同一个 judge_live：L3 = 录制器见到 tools/list，且那条 MCP 流量的父进程链里有桌面宿主安装目录下的程序"
+                "（不是有人另起了 CLI）；L4 = 有成功的 tools/call；L5 = 改图、导出 PDF、重放一致、全新的宿主进程凭 session_id 恢复同一组修改"
+            ),
+            unverified=(
+                "模型不是 Claude：宿主是真 VS Code + 真 Claude Code 扩展，推理由国内 Anthropic 兼容接口提供（报告写明供应商与模型）",
+                "提示词经 CDP 注入输入框并点发送，不是真实键鼠输入（IME 不覆盖）",
+                "扩展包经 DMIT 从 Open VSX 下载（用户授权的范围，固定版本与散列），宿主运行时的网络是直连国内模型",
+                "只覆盖列出的宿主 × 扩展组合；其它桌面宿主 / 扩展仍是 L2 或 BLOCKED",
                 "Server 2025 不是 Windows 10 / 11 客户端",
             ),
         ),
@@ -802,13 +824,17 @@ def _tcp_open(host: str, port: int, timeout: float = 2.0) -> bool:
 
 
 # ----------------------------------------------------------------------------- 网络探测
-def _opener(mode: str):
+def _opener(mode: str, ca_pem: str | None = None, cafile: str | None = None):
     if mode == "direct":
         handler = urllib.request.ProxyHandler({})
     else:
         url = f"http://127.0.0.1:{PROXY_PORTS[mode]}"
         handler = urllib.request.ProxyHandler({"http": url, "https": url})
     ctx = ssl.create_default_context()  # 完整证书校验；绝不关
+    if cafile:  # venv 里 certifi 的 CA 包（只用于固定散列下载这一条路径）
+        ctx.load_verify_locations(cafile=cafile)
+    if ca_pem:  # 只多信一个钉死散列的根证书（见 STARFIELD_ROOT_G2_*），不是放宽校验
+        ctx.load_verify_locations(cadata=ca_pem)
     return urllib.request.build_opener(handler, urllib.request.HTTPSHandler(context=ctx))
 
 
@@ -1285,10 +1311,13 @@ LIVE_SESSION_2 = (
 )
 
 
+DEFAULT_HOST_MODEL = "deepseek-flash"
+
+
 def _host_model_env(conf: dict) -> dict[str, str]:
     """国内 Anthropic 兼容接口（供应商官方给的 Claude Code 接入变量）+ 关掉 Claude Code 发往 Anthropic 的
     非必要流量：Lab 在中国大陆，不经代理、也不碰海外服务。"""
-    model = conf.get("model") or "deepseek-flash"
+    model = conf.get("model") or DEFAULT_HOST_MODEL
     return {
         "ANTHROPIC_BASE_URL": conf["base_url"],
         "ANTHROPIC_AUTH_TOKEN": conf["api_key"],
@@ -1719,6 +1748,16 @@ LIVE_HOSTS = {
 }
 
 
+def _seed_live_project(py: Path, run_dir: Path, env: dict, ev: Path) -> tuple[Path, bool]:
+    """种图：项目目录里放 LIVE_FIGURE 并跑一遍产出 figure.pdf（hosts-live 与 desktop-live 同一张图）。"""
+    proj = run_dir / "work" / "project"
+    (proj / "out").mkdir(parents=True)
+    (proj / "plot.py").write_text(LIVE_FIGURE, encoding="utf-8")
+    seed_env = dict(env, MPLCONFIGDIR=str(run_dir / "work" / "mpl"))
+    seed = _run_logged([str(py), "plot.py"], proj, seed_env, ev / "seed-figure", 300)
+    return proj, seed.get("exit_code") == 0
+
+
 def run_hosts_live_task(
     lab: Lab, run_dir: Path, env: dict, model_conf: dict, host_id: str = "claude-code"
 ) -> dict:
@@ -1756,15 +1795,8 @@ def run_hosts_live_task(
             "summary": f"{host.id}: official CLI did not install or start (L2)",
             "levels": {"L2": "failed"},
         }
-    proj = run_dir / "work" / "project"
-    (proj / "out").mkdir(parents=True)
-    (proj / "plot.py").write_text(LIVE_FIGURE, encoding="utf-8")
-    data_dir = (
-        Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Tavotto"
-    )  # 产品默认（engine/config.data_dir）
-    seed_env = dict(env, MPLCONFIGDIR=str(run_dir / "work" / "mpl"))
-    seed = _run_logged([str(py), "plot.py"], proj, seed_env, ev / "seed-figure", 300)
-    if seed.get("exit_code") != 0:
+    proj, seeded = _seed_live_project(py, run_dir, env, ev)
+    if not seeded:
         return {
             "result": "error",
             "summary": "seeding the figure script failed",
@@ -2074,16 +2106,219 @@ def ensure_gui_task(lab: Lab) -> dict:
     return {"exit_code": out.returncode}
 
 
+#: 交互会话请求里密钥走的命名管道名（request.json 只带这个名字，不带值）
+GUI_PIPE_RE = re.compile(r"^tavotto-winlab-[0-9a-f]{32}$")
+GUI_PIPE_DIR = "\\\\.\\pipe\\"
+
+
+def split_secret_env(env: dict, secret_values: list[str]) -> tuple[dict, dict]:
+    """env → (公开部分, 密钥部分)：值里含有任何一个密钥字符串的项一律归密钥部分，不看变量名。"""
+    secret_values = [v for v in secret_values if v]
+    public, secret = {}, {}
+    for k, v in env.items():
+        (secret if any(sv in str(v) for sv in secret_values) else public)[k] = v
+    return public, secret
+
+
+def _pipe_path(name: str) -> str:
+    return GUI_PIPE_DIR + name
+
+
+class SecretPipe:
+    """把一小份密钥环境交给交互会话里的 gui_host，**不落盘**：session 0 的 agent 建一个只给 tavotto-lab 的
+    命名管道（单实例、拒绝远程客户端），写一次；gui_host 读一次就关。request.json 里只有管道名。
+    Windows 专用；测试里 `agent._open_secret_pipe` 换成假的。"""
+
+    def __init__(self, payload: dict):
+        self.name = "tavotto-winlab-" + secrets.token_hex(16)
+        self._data = json.dumps(payload).encode("utf-8")
+        self._handle = None
+        self.delivered = False
+        self.error: str | None = None
+        self._thread = None
+        self._lock = threading.Lock()
+
+    def start(self) -> SecretPipe:
+        import ctypes
+        from ctypes import wintypes
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        adv = ctypes.WinDLL("advapi32", use_last_error=True)
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.CreateNamedPipeW.restype = wintypes.HANDLE
+        k32.CreateNamedPipeW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+        ]
+        k32.ConnectNamedPipe.argtypes = [wintypes.HANDLE, wintypes.LPVOID]
+        k32.WriteFile.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPCVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            wintypes.LPVOID,
+        ]
+        k32.FlushFileBuffers.argtypes = [wintypes.HANDLE]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        adv.OpenProcessToken.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        adv.GetTokenInformation.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        adv.ConvertSidToStringSidW.argtypes = [wintypes.LPVOID, ctypes.POINTER(wintypes.LPWSTR)]
+        adv.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.LPVOID),
+            wintypes.LPVOID,
+        ]
+
+        # ACL 只给当前用户（tavotto-lab）：取自己的 SID，DACL 受保护、只有这一条允许项
+        token = wintypes.HANDLE()
+        if not adv.OpenProcessToken(
+            k32.GetCurrentProcess(), 0x8, ctypes.byref(token)
+        ):  # TOKEN_QUERY
+            raise OSError(ctypes.get_last_error(), "OpenProcessToken")
+        need = wintypes.DWORD()
+        adv.GetTokenInformation(token, 1, None, 0, ctypes.byref(need))  # TokenUser
+        buf = ctypes.create_string_buffer(need.value)
+        if not adv.GetTokenInformation(token, 1, buf, need, ctypes.byref(need)):
+            raise OSError(ctypes.get_last_error(), "GetTokenInformation")
+        k32.CloseHandle(token)
+        sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]
+        sid_str = wintypes.LPWSTR()
+        if not adv.ConvertSidToStringSidW(sid_ptr, ctypes.byref(sid_str)):
+            raise OSError(ctypes.get_last_error(), "ConvertSidToStringSid")
+        sddl = f"D:P(A;;FA;;;{sid_str.value})"
+
+        class SECURITY_ATTRIBUTES(ctypes.Structure):
+            _fields_ = [
+                ("nLength", wintypes.DWORD),
+                ("lpSecurityDescriptor", wintypes.LPVOID),
+                ("bInheritHandle", wintypes.BOOL),
+            ]
+
+        psd = wintypes.LPVOID()
+        if not adv.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            sddl, 1, ctypes.byref(psd), None
+        ):
+            raise OSError(ctypes.get_last_error(), "ConvertStringSecurityDescriptor")
+        sa = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), psd, False)
+        # PIPE_ACCESS_OUTBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE；字节流、阻塞、拒绝远程客户端
+        handle = k32.CreateNamedPipeW(
+            _pipe_path(self.name),
+            0x2 | 0x00080000,
+            0x0 | 0x0 | 0x8,
+            1,
+            65536,
+            65536,
+            0,
+            ctypes.byref(sa),
+        )
+        if handle in (None, ctypes.c_void_p(-1).value):
+            raise OSError(ctypes.get_last_error(), "CreateNamedPipe")
+        self._handle = handle
+
+        def serve() -> None:
+            ok = k32.ConnectNamedPipe(handle, None) or ctypes.get_last_error() == 535
+            if not ok:
+                self.error = f"ConnectNamedPipe winerror={ctypes.get_last_error()}"
+                return
+            written = wintypes.DWORD()
+            if k32.WriteFile(handle, self._data, len(self._data), ctypes.byref(written), None):
+                self.delivered = bool(k32.FlushFileBuffers(handle)) and written.value == len(
+                    self._data
+                )
+            else:
+                self.error = f"WriteFile winerror={ctypes.get_last_error()}"
+            # 直接关句柄、不 DisconnectNamedPipe：断开后读端下一次 read 得 ERROR_PIPE_NOT_CONNECTED
+            # （CRT 映射成 errno 22），关掉则是 ERROR_BROKEN_PIPE = 正常 EOF；管道名随之消失，只能读一次
+            with self._lock:
+                k32.CloseHandle(handle)
+                self._handle = None
+
+        self._k32 = k32
+        self._thread = threading.Thread(target=serve, daemon=True)
+        self._thread.start()
+        return self
+
+    def close(self) -> None:
+        """没人来读时（交互会话不在）：自己连一下把阻塞中的 ConnectNamedPipe 放走，再关句柄。"""
+        if self._handle is None and self._thread is None:
+            return
+        if self._thread is not None and self._thread.is_alive():
+            with contextlib.suppress(OSError):
+                open(_pipe_path(self.name), "rb").close()  # noqa: SIM115
+            self._thread.join(timeout=5)
+        with self._lock:
+            if self._handle is not None:
+                self._k32.CloseHandle(self._handle)
+                self._handle = None
+        self._data = b""
+
+
+def _open_secret_pipe(payload: dict) -> SecretPipe:
+    return SecretPipe(payload).start()
+
+
+def read_secret_pipe(name: str) -> dict:
+    """gui_host 一侧：读一次、关掉。管道名必须是 agent 生成的形状（不接受任意路径）。"""
+    if not GUI_PIPE_RE.fullmatch(name):
+        raise ValueError("bad secret pipe name")
+    last: OSError | None = None
+    for _ in range(50):
+        try:
+            with open(_pipe_path(name), "rb") as f:
+                return json.loads(f.read(65536).decode("utf-8"))
+        except OSError as exc:  # ERROR_PIPE_BUSY：agent 那一端刚好还没进入等待
+            last = exc
+            time.sleep(0.2)
+    raise last or OSError("secret pipe unreadable")
+
+
 def run_in_gui(
-    lab: Lab, run_id: str, argv: list[str], cwd: Path, env: dict, out_prefix: Path, timeout: float
+    lab: Lab,
+    run_id: str,
+    argv: list[str],
+    cwd: Path,
+    env: dict,
+    out_prefix: Path,
+    timeout: float,
+    secret_env: dict | None = None,
 ) -> dict:
     """把一条登记过的命令交给交互会话执行（gui_host.py），等结果。会话不在就 environment_unavailable——
-    绝不退回 session 0 里假装跑过。"""
+    绝不退回 session 0 里假装跑过。`env` 会明文写进 request.json，**不许装密钥**：密钥放 `secret_env`，
+    经命名管道交给 gui_host（只给 tavotto-lab，读一次即关，不落盘）。"""
     gui = lab.state / "gui"
     gui.mkdir(parents=True, exist_ok=True)
     reg = ensure_gui_task(lab)
     if reg["exit_code"] != 0:
         return {"exit_code": None, "gui": "task_register_failed"}
+    pipe = _open_secret_pipe(secret_env) if secret_env else None
+    try:
+        res = _run_in_gui_request(lab, gui, run_id, argv, cwd, env, out_prefix, timeout, pipe)
+        if pipe is not None:  # 诊断：只记结果与错误码，不含内容
+            res["secret_pipe"] = {"delivered": pipe.delivered, "error": pipe.error}
+        return res
+    finally:
+        if pipe is not None:
+            pipe.close()
+
+
+def _run_in_gui_request(lab, gui, run_id, argv, cwd, env, out_prefix, timeout, pipe) -> dict:
     req = {
         "run_id": run_id,
         "argv": argv,
@@ -2093,6 +2328,8 @@ def run_in_gui(
         "out_prefix": str(out_prefix),
         "written": time.time(),
     }
+    if pipe is not None:
+        req["env_pipe"] = pipe.name
     tmp = gui / "request.json.tmp"
     tmp.write_text(json.dumps(req), encoding="utf-8")
     os.replace(tmp, gui / "request.json")
@@ -2452,29 +2689,40 @@ def _file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def fetch_pinned(lab: Lab, host: DesktopHost) -> tuple[Path | None, dict]:
-    """下载（或复用缓存）固定版本的安装包并核 SHA-256。代理线路不通就 environment_unavailable，绝不改走直连。"""
-    d = lab.cache / "desktop-hosts" / host.id / host.version
-    dest = d / host.url.rsplit("/", 1)[-1]
-    info: dict = {"network": host.network, "cached": False}
-    if dest.exists() and _file_sha256(dest) == host.sha256:
+def _fetch_pinned_file(
+    d: Path,
+    url: str,
+    sha256: str,
+    network: str,
+    max_bytes: int,
+    ca_pem: str | None = None,
+    cafile: str | None = None,
+) -> tuple[Path | None, dict]:
+    """下载（或复用缓存）一个固定散列的文件到目录 d。代理线路不通就 environment_unavailable，绝不改走直连；
+    超过体积上限即停，散列不符即删。"""
+    dest = d / url.rsplit("/", 1)[-1]
+    info: dict = {"network": network, "cached": False}
+    if dest.exists() and _file_sha256(dest) == sha256:
         info["cached"] = True
         return dest, info
-    if host.network != "direct" and not _tcp_open("127.0.0.1", PROXY_PORTS[host.network]):
-        info["unavailable"] = f"proxy {host.network} not listening"
+    if network != "direct" and not _tcp_open("127.0.0.1", PROXY_PORTS[network]):
+        info["unavailable"] = f"proxy {network} not listening"
         return None, info
     d.mkdir(parents=True, exist_ok=True)
     part = dest.with_name(dest.name + ".part")
     h = hashlib.sha256()
     t0 = time.monotonic()
-    req = urllib.request.Request(host.url, headers={"User-Agent": "tavotto-winlab/1"})
+    req = urllib.request.Request(url, headers={"User-Agent": "tavotto-winlab/1"})
     try:
-        with _opener(host.network).open(req, timeout=60) as r, open(part, "wb") as f:
+        extra = {k: v for k, v in (("ca_pem", ca_pem), ("cafile", cafile)) if v}
+        opener = _opener(network, **extra)
+        info["trust_source"] = "certifi" if cafile else "pinned-root" if ca_pem else "system"
+        with opener.open(req, timeout=60) as r, open(part, "wb") as f:
             total = 0
             while chunk := r.read(1 << 20):
                 total += len(chunk)
-                if total > DESKTOP_MAX_BYTES:
-                    raise OSError(f"larger than {DESKTOP_MAX_BYTES} bytes")
+                if total > max_bytes:
+                    raise OSError(f"larger than {max_bytes} bytes")
                 h.update(chunk)
                 f.write(chunk)
     except (OSError, urllib.error.URLError) as exc:
@@ -2482,12 +2730,116 @@ def fetch_pinned(lab: Lab, host: DesktopHost) -> tuple[Path | None, dict]:
         info["unavailable"] = f"download failed: {type(exc).__name__}: {exc}"[:300]
         return None, info
     info.update(bytes=total, seconds=round(time.monotonic() - t0, 1))
-    if h.hexdigest() != host.sha256:
+    if h.hexdigest() != sha256:
         part.unlink(missing_ok=True)
         info["sha256_mismatch"] = h.hexdigest()
         return None, info
     os.replace(part, dest)
     return dest, info
+
+
+def fetch_pinned(lab: Lab, host: DesktopHost) -> tuple[Path | None, dict]:
+    """下载（或复用缓存）固定版本的安装包并核 SHA-256（规矩见 `_fetch_pinned_file`）。"""
+    return _fetch_pinned_file(
+        lab.cache / "desktop-hosts" / host.id / host.version,
+        host.url,
+        host.sha256,
+        host.network,
+        DESKTOP_MAX_BYTES,
+    )
+
+
+@dataclass(frozen=True)
+class ExtensionPin:
+    """宿主里的 AI 扩展包（.vsix）：与安装包同规矩——固定版本、固定散列、经 DMIT、一次一个。"""
+
+    id: str  # 发布者.名字（小写，VS Code 的扩展 id）
+    version: str
+    url: str
+    #: Open VSX 公布的 sha256（<包>.sha256），与这里逐字一致才可改动本表
+    sha256: str
+    network: str
+    max_bytes: int
+    #: 装好后 --extensions-dir 里的目录名
+    dir_name: str
+    #: 服务器链的根不在 Lab 的 Windows 根存储里时，多信的那一个根（PEM；散列钉死，见 EXTENSION_CA_SHA256）
+    extra_ca_pem: str = ""
+
+
+#: Open VSX（open-vsx.org 与它重定向到的 openvsx.eclipsecontent.org）的证书链止于 Starfield Root Certificate
+#: Authority - G2。Lab 在中国大陆，Windows 的受信任根是按需从微软下发的，这台机器的 ROOT 存储里没有它
+#: （Python 的 ssl 不会触发按需下载），于是 `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`
+#: （2026-10-26 实测）。解法是只多信这一个**钉死散列**的公开根（SHA-256 与 EXTENSION_CA_SHA256 对得上才用），
+#: 其余校验照旧；TLS 校验不关。
+STARFIELD_ROOT_G2_PEM = """-----BEGIN CERTIFICATE-----
+MIID3TCCAsWgAwIBAgIBADANBgkqhkiG9w0BAQsFADCBjzELMAkGA1UEBhMCVVMx
+EDAOBgNVBAgTB0FyaXpvbmExEzARBgNVBAcTClNjb3R0c2RhbGUxJTAjBgNVBAoT
+HFN0YXJmaWVsZCBUZWNobm9sb2dpZXMsIEluYy4xMjAwBgNVBAMTKVN0YXJmaWVs
+ZCBSb290IENlcnRpZmljYXRlIEF1dGhvcml0eSAtIEcyMB4XDTA5MDkwMTAwMDAw
+MFoXDTM3MTIzMTIzNTk1OVowgY8xCzAJBgNVBAYTAlVTMRAwDgYDVQQIEwdBcml6
+b25hMRMwEQYDVQQHEwpTY290dHNkYWxlMSUwIwYDVQQKExxTdGFyZmllbGQgVGVj
+aG5vbG9naWVzLCBJbmMuMTIwMAYDVQQDEylTdGFyZmllbGQgUm9vdCBDZXJ0aWZp
+Y2F0ZSBBdXRob3JpdHkgLSBHMjCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoC
+ggEBAL3twQP89o/8ArFvW59I2Z154qK3A2FWGMNHttfKPTUuiUP3oWmb3ooa/RMg
+nLRJdzIpVv257IzdIvpy3Cdhl+72WoTsbhm5iSzchFvVdPtrX8WJpRBSiUZV9Lh1
+HOZ/5FSuS/hVclcCGfgXcVnrHigHdMWdSL5stPSksPNkN3mSwOxGXn/hbVNMYq/N
+Hwtjuzqd+/x5AJhhdM8mgkBj87JyahkNmcrUDnXMN/uLicFZ8WJ/X7NfZTD4p7dN
+dloedl40wOiWVpmKs/B/pM293DIxfJHP4F8R+GuqSVzRmZTRouNjWwl2tVZi4Ut0
+HZbUJtQIBFnQmA4O5t78w+wfkPECAwEAAaNCMEAwDwYDVR0TAQH/BAUwAwEB/zAO
+BgNVHQ8BAf8EBAMCAQYwHQYDVR0OBBYEFHwMMh+n2TB/xH1oo2Kooc6rB1snMA0G
+CSqGSIb3DQEBCwUAA4IBAQARWfolTwNvlJk7mh+ChTnUdgWUXuEok21iXQnCoKjU
+sHU48TRqneSfioYmUeYs0cYtbpUgSpIB7LiKZ3sx4mcujJUDJi5DnUox9g61DLu3
+4jd/IroAow57UvtruzvE03lRTs2Q9GcHGcg8RnoNAX3FWOdt5oUwF5okxBDgBPfg
+8n/Uqgr/Qh037ZTlZFkSIHc40zI+OIF1lnP6aI+xy84fxez6nH7PfrHxBy22/L/K
+pL/QlwVKvOoYKAKQvVR4CSFx09F9HdkWsKlhPdAKACL8x3vLCWRFCztAgfd9fDL1
+mMpYjn0q7pBZc2T5NnReJaH1ZgUufzkVqSr7UIuOhWn0
+-----END CERTIFICATE-----
+"""
+EXTENSION_CA_SHA256 = "2ce1cb0bf9d2f9e102993fbe215152c3b2dd0cabde1c68e5319b839154dbb7f5"
+
+
+def extension_ca_pem(ext: ExtensionPin) -> str | None:
+    """扩展下载多信的根：PEM 的 DER 散列必须等于钉死的值，否则不用（下载照常走完整校验、多半会失败）。"""
+    if not ext.extra_ca_pem:
+        return None
+    der = ssl.PEM_cert_to_DER_cert(ext.extra_ca_pem)
+    return ext.extra_ca_pem if hashlib.sha256(der).hexdigest() == EXTENSION_CA_SHA256 else None
+
+
+DESKTOP_EXTENSIONS: dict[str, ExtensionPin] = {
+    e.id: e
+    for e in (
+        ExtensionPin(
+            id="anthropic.claude-code",
+            version="2.1.310",
+            url="https://open-vsx.org/api/Anthropic/claude-code/win32-x64/2.1.310/file/Anthropic.claude-code-2.1.310@win32-x64.vsix",
+            sha256="ebb9f5016589f0a654ed330fb488dcd42f0f64456216b63ab8242104487cd39c",
+            network="trojan",
+            max_bytes=400 * 1024**2,
+            dir_name="anthropic.claude-code-2.1.310-win32-x64",
+            extra_ca_pem=STARFIELD_ROOT_G2_PEM,
+        ),
+    )
+}
+
+
+def certifi_cafile(lab: Lab) -> str | None:
+    """venv 里 certifi 的 CA 包（它含 Starfield Root CA G2）：有就优先用，只作用于固定散列的扩展下载。"""
+    p = lab.venv_python().parent.parent / "Lib" / "site-packages" / "certifi" / "cacert.pem"
+    return str(p) if p.is_file() else None
+
+
+def fetch_extension(lab: Lab, ext: ExtensionPin) -> tuple[Path | None, dict]:
+    cafile = certifi_cafile(lab)
+    return _fetch_pinned_file(
+        lab.cache / "desktop-extensions" / ext.id / ext.version,
+        ext.url,
+        ext.sha256,
+        ext.network,
+        ext.max_bytes,
+        ca_pem=None if cafile else extension_ca_pem(ext),
+        cafile=cafile,
+    )
 
 
 def authenticode(path: Path) -> dict:
@@ -2805,6 +3157,497 @@ def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode
         "result": "failed",
         "summary": f"{host.name} started but no main window within the probe timeout"
         + _cleanup_note(base),
+    }
+
+
+# ----------------------------------------------------------------------------- 桌面宿主 L3–L5（desktop-live）
+@dataclass(frozen=True)
+class DesktopLive:
+    """宿主 × 扩展的一格：宿主见 DESKTOP_HOSTS，扩展见 DESKTOP_EXTENSIONS。"""
+
+    host: str
+    extension: str
+
+
+DESKTOP_LIVE: dict[str, DesktopLive] = {
+    "vscode-claude": DesktopLive("vscode", "anthropic.claude-code"),
+}
+assert tuple(DESKTOP_LIVE) == DESKTOP_LIVE_MODES
+#: 宿主装扩展时自报「版本不兼容」：这是宿主限制（not_supported），不是 Tavotto 的故障
+EXT_NOT_COMPATIBLE_RE = re.compile(
+    r"not compatible with|incompatible with|requires (?:vs ?code|visual studio code)|engine", re.I
+)
+#: 驱动器（交互会话一侧）静默多久、最长等多久；首个 MCP 流量最晚多久必须出现
+DRIVER_QUIET_S = 45
+DRIVER_MAX_S = 1200
+DRIVER_FIRST_TRAFFIC_S = 300
+PANEL_TAIL_CHARS = 2000
+
+
+def _tail_text(path: Path, n: int) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")[-n:]
+    except OSError:
+        return ""
+
+
+def host_provenance(path: Path, start_line: int = 0, end_line: int | None = None) -> dict:
+    """录制器记下的**首个** initialize：clientInfo 与父进程链。`from_host` = 祖先里有桌面宿主安装目录下的程序
+    （录制器带 --host-root 才会写 host_ancestor）。没有 initialize 记录就是 seen=False、from_host=False。"""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()[start_line:end_line]
+    except OSError:
+        lines = []
+    for line in lines:
+        with contextlib.suppress(ValueError):
+            rec = json.loads(line)
+            if rec.get("dir") == "host" and rec.get("method") == "initialize":
+                anc = rec.get("host_ancestor")
+                return {
+                    "seen": True,
+                    "client": rec.get("client") or {},
+                    "ancestry": list(rec.get("ancestry") or []),
+                    "host_ancestor": Path(anc).name if anc else None,
+                    "from_host": bool(anc),
+                }
+    return {"seen": False, "from_host": False}
+
+
+def judge_desktop_live(
+    s1: dict,
+    s2: dict,
+    pdf: Path | None,
+    journal_ok: bool,
+    sid: str | None,
+    prov1: dict,
+    prov2: dict,
+) -> dict:
+    """judge_live 一字不改地下 L4 / L5 的结论；桌面这里只在它**之外**加前置条件：
+    L3 还要求流量来自桌面宿主的进程树，否则 failed——此时 L4 / L5 的证据不能算「宿主里的扩展」做的，
+    一并 failed（原因写进 provenance）；第二轮同理，凭「全新的宿主进程」恢复的 L5 要求第二轮也来自宿主。"""
+    levels = judge_live(s1, s2, pdf, journal_ok, sid)
+    listed = "tavotto_open_figure" in s1["listed_tools"]
+    levels["L3"] = "passed" if listed and prov1.get("from_host") else "failed"
+    if levels["L3"] == "failed" and listed:
+        levels["L4"] = levels["L5"] = "failed"
+    elif not prov2.get("from_host") and levels["L5"] == "passed":
+        levels["L5"] = "failed"
+    levels["provenance"] = {"session_1": prov1, "session_2": prov2}
+    return levels
+
+
+def key_placeholder(model_conf: dict) -> str:
+    return str(model_conf.get("api_key") or "\0")
+
+
+def _json_merge_file(path: Path, patch: dict) -> None:
+    """把 patch 浅合并进一个 JSON 文件（不存在就新建）。"""
+    cur: dict = {}
+    with contextlib.suppress(OSError, ValueError):
+        cur = json.loads(path.read_text(encoding="utf-8"))
+    cur.update(patch)
+    path.write_text(json.dumps(cur, indent=2), encoding="utf-8")
+
+
+def vscode_user_settings(login_prompt_off: bool = True) -> dict:
+    """隔离 user-data-dir 里的 settings.json：只放行为开关，**没有任何密钥**（模型凭据只在进程环境里）。"""
+    return {
+        "telemetry.telemetryLevel": "off",
+        "update.mode": "none",
+        "extensions.autoUpdate": False,
+        "extensions.autoCheckUpdates": False,
+        "workbench.startupEditor": "none",
+        "workbench.tips.enabled": False,
+        "security.workspace.trust.enabled": False,
+        "window.restoreWindows": "none",
+        "claudeCode.disableLoginPrompt": login_prompt_off,
+    }
+
+
+#: 桌面面板里没人点权限弹窗：会弹窗的工具一律事先定好。放行 tavotto 与只读工具（open_figure 的结果超过
+#: 扩展的 MCP 输出上限时会落成文件，模型要能 Read 回来）；会改东西 / 跑命令 / 上网的直接拒绝——
+#: 拒绝会立刻回给模型，不会像弹窗那样一直挂着（run 20261026T132012Z-44023f 卡在 Bash 弹窗）。
+DESKTOP_CLAUDE_PERMISSIONS = {
+    "allow": ["mcp__tavotto", "Read", "Glob", "Grep"],
+    "deny": [
+        "Bash",
+        "PowerShell",
+        "Write",
+        "Edit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+        "Task",
+    ],
+}
+
+
+def claude_isolated_config(cfg: Path, proj: Path) -> None:
+    """隔离的 CLAUDE_CONFIG_DIR：预先放行 mcp__tavotto（只这一个服务器，不是放开全部），跳过首次引导，信任项目目录。
+    `claude mcp add` 已经在这里写好 .claude.json 的 mcpServers，这里只合并其它键。"""
+    cfg.mkdir(parents=True, exist_ok=True)
+    (cfg / "settings.json").write_text(
+        json.dumps({"permissions": DESKTOP_CLAUDE_PERMISSIONS}, indent=2), encoding="utf-8"
+    )
+    _json_merge_file(
+        cfg / ".claude.json",
+        {"hasCompletedOnboarding": True},
+    )
+    state = json.loads((cfg / ".claude.json").read_text(encoding="utf-8"))
+    projects = state.setdefault("projects", {})
+    for key in {str(proj), proj.as_posix()}:
+        projects.setdefault(key, {}).update(hasTrustDialogAccepted=True)
+    (cfg / ".claude.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def driver_argv(
+    py: Path,
+    driver: Path,
+    *,
+    exe: str,
+    root: str,
+    profile: Path,
+    ext_dir: Path,
+    workspace: Path,
+    prompt_file: Path,
+    rec_log: Path,
+    out_dir: Path,
+    label: str,
+) -> list[str]:
+    """交互会话里跑驱动器的 argv（登记任务的固定形状；没有任何透传）。"""
+    return [
+        str(py),
+        "-I",
+        str(driver),
+        "--exe",
+        exe,
+        "--root",
+        root,
+        "--user-data-dir",
+        str(profile / "data"),
+        "--extensions-dir",
+        str(ext_dir),
+        "--workspace",
+        str(workspace),
+        "--prompt-file",
+        str(prompt_file),
+        "--rec-log",
+        str(rec_log),
+        "--out-dir",
+        str(out_dir),
+        "--label",
+        label,
+        "--quiet-s",
+        str(DRIVER_QUIET_S),
+        "--max-s",
+        str(DRIVER_MAX_S),
+        "--first-traffic-s",
+        str(DRIVER_FIRST_TRAFFIC_S),
+    ]
+
+
+def run_desktop_live_task(
+    lab: Lab, run_id: str, run_dir: Path, env: dict, model_conf: dict, mode: str
+) -> dict:
+    cell = DESKTOP_LIVE[mode]
+    host = DESKTOP_HOSTS[cell.host]
+    ext = DESKTOP_EXTENSIONS[cell.extension]
+    levels = {"L2": "not_tested", "L3": "not_run", "L4": "not_run", "L5": "not_run"}
+    base: dict = {
+        "host": {"id": host.id, "name": host.name, "pinned_version": host.version},
+        "extension": {"id": ext.id, "pinned_version": ext.version, "sha256": ext.sha256},
+        "model": {
+            "provider": model_conf.get("provider"),
+            "model": model_conf.get("model")
+            or DEFAULT_HOST_MODEL,  # 与 _host_model_env 实际传给宿主的同一个
+        },
+        "levels": levels,
+    }
+    py = lab.venv_python()
+    if not py.exists():
+        return {
+            **base,
+            "result": "environment_unavailable",
+            "summary": "venv missing: run `winlab prepare` first",
+        }
+    setup, dl = fetch_pinned(lab, host)
+    base["download"] = {"host": dl}
+    if setup is None:
+        res = "error" if "sha256_mismatch" in dl else "environment_unavailable"
+        return {**base, "result": res, "summary": dl.get("unavailable", "host installer rejected")}
+    vsix, xl = fetch_extension(lab, ext)
+    base["download"]["extension"] = xl
+    if vsix is None:
+        if "sha256_mismatch" in xl:
+            return {
+                **base,
+                "result": "error",
+                "summary": "extension package SHA-256 does not match the pin",
+            }
+        return {**base, "result": "environment_unavailable", "summary": xl.get("unavailable", "")}
+    sig = authenticode(setup)
+    base["signature"] = sig
+    if sig["status"] != "Valid":
+        return {
+            **base,
+            "result": "error",
+            "summary": f"installer Authenticode status {sig['status']!r}",
+        }
+    work = run_dir / "work"
+    ev = run_dir / "evidence" / "desktop-live"
+    work.mkdir(parents=True, exist_ok=True)
+    ev.mkdir(parents=True, exist_ok=True)
+    henv = network_env("direct", env)
+    henv.update({"TEMP": str(work), "TMP": str(work)})
+    base["preexisting_uninstall"] = uninstall_desktop_host(host, work, henv)
+    if not base["preexisting_uninstall"]["ok"]:
+        return {**base, "result": "environment_unavailable", "summary": "残留的旧安装卸不掉"}
+    inst = install_desktop_host(host, setup, work, henv)
+    base["install"] = {k: v for k, v in inst.items() if k != "root"}
+    if not inst["ok"]:
+        levels["L2"] = "failed"
+        base["uninstall"] = uninstall_desktop_host(host, work, henv)
+        return {
+            **base,
+            "result": "failed",
+            "summary": _install_failure_summary(host, inst) + _cleanup_note(base),
+        }
+    ext_dir = (
+        run_dir / "ext"
+    )  # 扩展目录放在 work 之外：里面有 300 MB 的随包二进制，不参与抹密钥扫描
+    try:
+        out = _desktop_live_body(
+            lab, run_id, run_dir, henv, model_conf, cell, host, ext, vsix, inst, ext_dir, base
+        )
+    finally:
+        base["uninstall"] = uninstall_desktop_host(host, work, henv)
+        if ext_dir.exists():
+            _rmtree_no_follow(ext_dir)
+    out["uninstall"] = base["uninstall"]
+    if not base["uninstall"]["ok"]:
+        out["summary"] = str(out.get("summary", "")) + _cleanup_note(base)
+        if out.get("result") == "passed":
+            out["result"] = "error"  # 常驻机器上留着残余安装会污染后续运行
+    return out
+
+
+def _desktop_live_body(
+    lab, run_id, run_dir, env, model_conf, cell, host, ext, vsix, inst, ext_dir, base
+) -> dict:
+    py = lab.venv_python()
+    levels = base["levels"]
+    work = run_dir / "work"
+    ev = run_dir / "evidence" / "desktop-live"
+    key = model_conf["api_key"]
+    code_cmd = Path(inst["root"]) / "bin" / "code.cmd"
+    profile = work / "profile"
+    (profile / "data" / "User").mkdir(parents=True, exist_ok=True)
+    (profile / "data" / "User" / "settings.json").write_text(
+        json.dumps(vscode_user_settings(), indent=2), encoding="utf-8"
+    )
+    ext_dir.mkdir(parents=True, exist_ok=True)
+    install_args = [
+        str(code_cmd),
+        "--install-extension",
+        str(vsix),
+        "--force",
+        f"--extensions-dir={ext_dir}",
+        f"--user-data-dir={profile / 'data'}",
+    ]
+    step = _run_logged(install_args, work, env, ev / "ext-install", 600)
+    log_text = ""
+    for f in ev.glob("ext-install.*.log"):
+        log_text += f.read_text(encoding="utf-8", errors="replace")
+    found = sorted(ext_dir.glob(f"{ext.id}-{ext.version}*")) if ext_dir.is_dir() else []
+    installed = found[0] if found else ext_dir / ext.dir_name
+    base["extension"]["install_log_tail"] = log_text.replace(
+        key_placeholder(model_conf), "<redacted>"
+    )[-1500:]
+    base["extension"]["extensions_dir_listing"] = sorted(p.name for p in ext_dir.iterdir())[:20]
+    claude_exe = installed / "resources" / "native-binary" / "claude.exe"
+    base["extension"]["install_exit_code"] = step.get("exit_code")
+    if not installed.is_dir() or not claude_exe.is_file():
+        if EXT_NOT_COMPATIBLE_RE.search(log_text):
+            levels.update(L2="passed", L3="not_supported", L4="not_supported", L5="not_supported")
+            return {
+                **base,
+                "result": "skipped",
+                "summary": f"{host.name} {host.version} refused extension {ext.id} {ext.version} as incompatible "
+                "(host limitation, not a Tavotto failure; see evidence/desktop-live/ext-install.*.log)",
+                "not_supported_reason": "host rejected the extension as incompatible",
+            }
+        levels["L2"] = "passed"
+        return {
+            **base,
+            "result": "failed",
+            "summary": f"extension {ext.id} did not install (exit {step.get('exit_code')})",
+        }
+    proj, seeded = _seed_live_project(py, run_dir, env, ev)
+    if not seeded:
+        return {**base, "result": "error", "summary": "seeding the figure script failed"}
+    rec_log = ev / "mcp-recorder.jsonl"
+    recorder = Path(__file__).resolve().parent / "mcp_recorder.py"
+    mcp_cmd = [
+        str(py),
+        str(recorder),
+        str(rec_log),
+        "--host-root",
+        inst["root"],
+        "--",
+        str(py),
+        str(lab.repo / "codex-plugin" / "mcp" / "server.py"),
+    ]
+    mcp_env = {"TAVOTTO_MCP_ROOTS": str(proj), "TAVOTTO_NO_TELEMETRY": "1"}
+    cfg = work / "claude-config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    add = [str(claude_exe), "mcp", "add", "tavotto", "--scope", "user"]
+    for k, v in mcp_env.items():
+        add += ["-e", f"{k}={v}"]
+    _run_logged(
+        [*add, "--", *mcp_cmd],
+        proj,
+        {**env, "CLAUDE_CONFIG_DIR": str(cfg)},
+        ev / "mcp-add",
+        120,
+    )
+    claude_isolated_config(cfg, proj)
+    # 进程环境：隔离配置目录 + 国内 Anthropic 兼容接口。密钥那一项只走命名管道，不进 request.json
+    gui_env = dict(env, CLAUDE_CONFIG_DIR=str(cfg), **_host_model_env(model_conf))
+    public_env, secret_env = split_secret_env(gui_env, [key])
+    driver = Path(__file__).resolve().parent / "desktop_driver.py"
+
+    def one_round(n: int, prompt: str) -> dict:
+        pf = work / f"prompt-{n}.txt"
+        pf.write_text(prompt, encoding="utf-8")
+        argv = driver_argv(
+            py,
+            driver,
+            exe=inst["exe"],
+            root=inst["root"],
+            profile=profile,
+            ext_dir=ext_dir,
+            workspace=proj,
+            prompt_file=pf,
+            rec_log=rec_log,
+            out_dir=ev,
+            label=f"round{n}",
+        )
+        step = run_in_gui(
+            lab,
+            run_id,
+            argv,
+            work,
+            public_env,
+            ev / f"driver-{n}",
+            DRIVER_MAX_S + 600,
+            secret_env=secret_env,
+        )
+        info: dict = {}
+        with contextlib.suppress(OSError, ValueError):
+            info = json.loads((ev / f"round{n}.json").read_text(encoding="utf-8"))
+        tail = ""
+        for f in sorted(ev.glob(f"driver-{n}.*.log")):
+            tail += f.read_text(encoding="utf-8", errors="replace")[-1200:]
+        progress: list = []
+        with contextlib.suppress(OSError):
+            for line in (ev / f"round{n}-progress.jsonl").read_text(encoding="utf-8").splitlines():
+                with contextlib.suppress(ValueError):
+                    progress.append(json.loads(line))
+        return {
+            "step": step,
+            "driver": info,
+            "progress": progress,
+            "log_tail": tail.replace(key, "<redacted>"),
+        }
+
+    r1 = one_round(1, LIVE_SESSION_1)
+    if r1["step"].get("gui") == "no_interactive_session":
+        return {
+            **base,
+            "result": "environment_unavailable",
+            "summary": "no interactive session for tavotto-lab: run `winlab.py admin gui-setup` and reboot",
+        }
+    if r1["step"].get("gui") != "ran" or not r1["step"].get("session_id"):
+        return {
+            **base,
+            "result": "error",
+            "summary": f"gui bridge: {r1['step'].get('gui')} session={r1['step'].get('session_id')}",
+            "step": r1["step"],
+        }
+    base["session_id"] = r1["step"]["session_id"]
+    win = r1["driver"].get("window")
+    levels["L2"] = "passed" if win else "failed"
+    s1 = parse_recorded(rec_log)
+    split = _line_count(rec_log)
+    sid = opened_session_id(s1)
+    data_dir = Path(env.get("LOCALAPPDATA") or Path.home()) / "Tavotto"
+    journal_ok = journal_has_edits(data_dir, sid)
+    r2: dict = {"step": {"skipped": "no session id from session 1"}, "driver": {}}
+    if sid:
+        r2 = one_round(2, LIVE_SESSION_2.format(sid=sid))  # 全新的 VS Code 进程，只拿 session_id
+    _scrub(ev, key)
+    _scrub(work, key)
+    s2 = parse_recorded(rec_log, split)
+    base["driver"] = {"session_1": r1["driver"], "session_2": r2["driver"]}
+    base["driver_step"] = {"session_1": r1["step"], "session_2": r2["step"]}
+    base["driver_progress"] = {"session_1": r1["progress"], "session_2": r2.get("progress", [])}
+    base["driver_log_tail"] = r1["log_tail"] if not r1["driver"] else ""
+    # 面板文字尾部进报告（证据文件不回传 Mac）：判不出 L5 时能看到模型最后在说什么；已在 _scrub 之后
+    base["panel_tail"] = {
+        f"session_{n}": _tail_text(ev / f"round{n}-panel.txt", PANEL_TAIL_CHARS).replace(
+            key, "<redacted>"
+        )
+        for n in (1, 2)
+    }
+    last = (r1["progress"] or [{}])[-1].get("step")
+    base["driver_last_step"] = last
+    if not win:
+        return {
+            **base,
+            "result": "failed",
+            "summary": f"{host.name}: driver stopped after step {last!r} without a main window (error: {r1['driver'].get('error')})",
+        }
+    panel = ""
+    for f in ev.glob("round1-panel*.txt"):
+        panel += f.read_text(encoding="utf-8", errors="replace")[-20000:]
+    if not s1["calls"] and LOGIN_MARKERS.search(panel):
+        levels.update(L4="environment_unavailable", L5="environment_unavailable")
+        levels["L3"] = "passed" if "tavotto_open_figure" in s1["listed_tools"] else "not_run"
+        return {
+            **base,
+            "result": "environment_unavailable",
+            "summary": f"{ext.id} requires signing in to its own account before any tool call (L3–L5 blocked)",
+            "blocked_reason": "extension login required",
+        }
+    if not r1["driver"].get("submitted"):
+        levels.update(L3="not_run", L4="not_run", L5="not_run")
+        return {
+            **base,
+            "result": "error",
+            "summary": f"driver could not operate the {ext.id} panel: {r1['driver'].get('error')}",
+        }
+    prov1 = host_provenance(rec_log, 0, split)
+    prov2 = host_provenance(rec_log, split)
+    pdfs = sorted((proj / "out").glob("*.pdf"))
+    judged = judge_desktop_live(s1, s2, pdfs[0] if pdfs else None, journal_ok, sid, prov1, prov2)
+    judged["L2"] = "passed"
+    judged["session_id_from_session_1"] = bool(sid)
+    if r1["step"].get("timed_out") or r2["step"].get("timed_out"):
+        judged["L5"] = "error"
+    levels.update(judged)
+    return {
+        **base,
+        "result": av.aggregate([levels["L2"], levels["L3"], levels["L4"], levels["L5"]]),
+        "summary": f"{host.id} {host.display_version} + {ext.id} {ext.version} via {model_conf.get('provider', '?')}: "
+        f"L3={levels['L3']} L4={levels['L4']} L5={levels['L5']}",
+        "server_side_calls": {
+            "session_1": [
+                {"tool": c["name"].split("__")[-1], "ok": not c["is_error"]} for c in s1["calls"]
+            ],
+            "session_2": [
+                {"tool": c["name"].split("__")[-1], "ok": not c["is_error"]} for c in s2["calls"]
+            ],
+        },
     }
 
 
@@ -3223,6 +4066,15 @@ def _run_body(
     if task.kind == "desktop-hosts":
         return run_desktop_hosts_task(
             lab, run_dir.name, run_dir, env, (pkg or {}).get("mode") or DESKTOP_HOST_IDS[0]
+        )
+    if task.kind == "desktop-live":
+        return run_desktop_live_task(
+            lab,
+            run_dir.name,
+            run_dir,
+            env,
+            model_conf or {},
+            (pkg or {}).get("mode") or DESKTOP_LIVE_MODES[0],
         )
     if task.kind == "installer":
         return run_installer_task(

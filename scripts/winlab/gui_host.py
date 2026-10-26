@@ -8,6 +8,9 @@ SSH 会话在 session 0，没有用户桌面：真窗口、WebView2 渲染、窗
 
 本文件不决定跑什么：请求只能由 agent 写（`state\\` 只有 tavotto-lab 与管理员可写），而 agent 只写
 登记任务的 argv。没有请求、请求过期、run_id 不合形状一律直接退出。
+
+密钥不进请求文件：请求里只有 `env_pipe`（agent 建的命名管道名，ACL 只给 tavotto-lab），本文件读一次、
+合进子进程的环境后就关——密钥只存在于两个进程的内存与子进程环境里。
 """
 
 from __future__ import annotations
@@ -60,14 +63,23 @@ def serve(lab: A.Lab) -> int:
     )
     prefix = Path(req["out_prefix"])
     prefix.parent.mkdir(parents=True, exist_ok=True)
+    env = dict(req["env"])
+    pipe_error = None
+    if req.get("env_pipe"):
+        try:
+            env.update(A.read_secret_pipe(str(req["env_pipe"])))
+        except (OSError, ValueError) as exc:
+            pipe_error = f"{type(exc).__name__} winerror={getattr(exc, 'winerror', None)} errno={getattr(exc, 'errno', None)}"
     stop_flag = gui / f"{run_id}.stop"
     t0 = time.monotonic()
     with open(f"{prefix}.stdout.log", "wb") as out, open(f"{prefix}.stderr.log", "wb") as err:
         try:
+            if pipe_error:
+                raise OSError(f"secret pipe: {pipe_error}")
             tree = A.ProcessTree(
                 list(req["argv"]),
                 cwd=Path(req["cwd"]),
-                env=dict(req["env"]),
+                env=env,
                 stdout=out,
                 stderr=err,
             )
