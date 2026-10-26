@@ -219,14 +219,15 @@ def _register_offsetbox_texts(state: FigState, parent_gid: str, art) -> None:
 
     位置归打包器：每次 draw 都由 `HPacker` / `VPacker` / 锚定规则重排，写进去的落位一画就被顶掉，
     所以**不宣称可拖**（拖的是外面那个框，ADR 0100）；旋转 / 对齐在框里同样无意义，
-    `_fields_for` 按 `_mm_offsetbox_text` 把它们拿掉。文字、字号、颜色、字重、字体照常走 text handler，
+    `_fields_for` 按 `_mm_offsetbox_box`（文字所在的外框）把它们拿掉。文字、字号、颜色、字重、字体照常走 text handler，
     框的大小随文字现量（TextArea 每次 draw 都重新测量）。
     """
     known = state.index_ids()
     for k, t in enumerate(_offsetbox_texts(art)):
         if id(t) in known or not t.get_text():
             continue
-        t._mm_offsetbox_text = True  # noqa: SLF001
+        # 记下外框：既当「这是框里的文字」的标记，也让 build_manifest 在外框隐藏时跳过它
+        t._mm_offsetbox_box = art  # noqa: SLF001
         _register(state, f"{parent_gid}.texts_{k}", t, "text", f"文字 “{_snippet(t.get_text())}”")
 
 
@@ -4146,7 +4147,7 @@ def _fields_for(el, state: FigState) -> list[dict]:
     if key == "ticks":
         return _tick_fields(artist)
     if key == "text":
-        if getattr(artist, "_mm_offsetbox_text", False):
+        if getattr(artist, "_mm_offsetbox_box", None) is not None:
             # 框里的文字：落位、旋转、对齐归打包器（见 `_register_offsetbox_texts`）
             return [f for f in _text_fields(artist) if f["prop"] not in _OFFSETBOX_TEXT_FIXED]
         return _text_fields(artist)
@@ -5119,6 +5120,12 @@ def _measure_manifest(
         artist = el["artist"]
         if not _owner_axis_drawn(el):
             _drop(el, "not_drawn")
+            continue
+        # 外框被藏起来时，框里的文字自己的 visible 仍是 True，但画面上没有它：不输出，
+        # 免得看不见的字还能被点中、挡住下面的图，也不被预检去量。元素仍留在 state.elements
+        # （overrides 按 gid 找得到），取消隐藏后下一轮 build 它们就回来。
+        host_box = getattr(artist, "_mm_offsetbox_box", None)
+        if host_box is not None and not host_box.get_visible():
             continue
         entry = {
             "gid": el["gid"],

@@ -134,3 +134,21 @@ def test_the_box_itself_still_drags_with_its_texts(hot):
     assert _field(got[MAIN], "text") == "X"
     # 文字跟着框走：框左移 0.05，框里的字也左移
     assert got[MAIN]["bbox"][0] < base[MAIN]["bbox"][0] - 0.01
+
+
+def test_hiding_the_box_drops_its_texts_from_the_manifest_and_undo_brings_them_back(hot):
+    got = _man(
+        hot,
+        [
+            {"gid": BOX, "prop": "visible", "value": False},
+            {"gid": MAIN, "prop": "text", "value": "hidden edit"},
+        ],
+    )
+    # 看不见的字不该可点、不该被预检量；外框仍在元素树里可以取消隐藏
+    assert MAIN not in got and SUB not in got
+    assert _field(got[BOX], "visible") is False
+    # 另一个框的文字不受影响
+    assert "axes_0.artists_1.texts_0" in got
+    back = _man(hot)
+    assert _field(back[MAIN], "text") == "80.0%"
+    assert _field(back[SUB], "text") == "(80/100)"
