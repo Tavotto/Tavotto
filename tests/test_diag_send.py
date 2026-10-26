@@ -1344,6 +1344,8 @@ class TestContractMirrors:
             "size",
             "sha256",
             "note",
+            # API 1.1.0（infra #28）起的可选字段；同意时客户端带上（diagsend `_init`，ADR 0134）。
+            "error_summary",
         }
 
 
