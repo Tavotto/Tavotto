@@ -500,7 +500,10 @@ jobs:
             done
             # 空壳 dSYM（没有 DWARF）等于没存：必须真有函数
             for d in symbols/*.dSYM; do
-              n=$(dwarfdump --statistics "$d" | grep -m1 '"#functions"' | tr -dc '0-9')
+              # 先整段取下来再找：`| grep -m1` 提前关管道，pipefail 下 dwarfdump 的
+              # Broken pipe 会让这一步红（v0.19.0 演练实测）
+              stats=$(dwarfdump --statistics "$d")
+              n=$(printf '%s\n' "$stats" | grep '"#functions"' | sed -n 1p | tr -dc '0-9')
               test "${n:-0}" -gt 0 || { echo "::error::$d 里没有 DWARF 函数"; exit 1; }
             done
           else
