@@ -465,6 +465,32 @@ def test_deployed_modules_cover_agent_verify_local_imports():
     assert local | {"agent_verify.py"} <= set(W.DEPLOYED_CI_MODULES)
 
 
+def test_deployed_files_alone_can_import_the_agent(tmp_path):
+    # 结构保证：只把 admin_deploy_agent 实际部署的 .py 放进一个目录、隔离模式下 import agent 必须成功。
+    # 上一条只认 `from X import`，漏掉 `import proctree` 这类写法（Lab 上 agent 启动即 ModuleNotFoundError）。
+    import shutil
+    import subprocess as sp
+
+    for src in (
+        WINLAB / "agent.py",
+        *(ROOT / "scripts" / "ci" / n for n in W.DEPLOYED_CI_MODULES),
+    ):
+        shutil.copy(src, tmp_path / src.name)
+    r = sp.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import sys; sys.path[:0] = [sys.argv[1]]; import agent",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert r.returncode == 0, r.stderr
+
+
 def test_lab_ssh_never_multiplexes():
     # Win32-OpenSSH + ForceCommand：复用连接上的后续会话拿到的是第一条命令的 SSH_ORIGINAL_COMMAND
     base = " ".join(W.SSH_BASE)
@@ -1341,3 +1367,318 @@ def test_login_wall_is_blocked_not_failed():
     assert A.LOGIN_MARKERS.search("Error: Sign in to MiniMax to continue")
     assert A.LOGIN_MARKERS.search("请先登录后再使用")
     assert not A.LOGIN_MARKERS.search("opened the figure; logged 3 patches")
+
+
+# --------------------------------------------------------------------------- 桌面宿主 L2
+def test_desktop_hosts_are_a_closed_set_matching_the_modes():
+    assert tuple(A.DESKTOP_HOSTS) == A.DESKTOP_HOST_IDS == A.TASKS["desktop-hosts"].modes
+    assert A.TASKS["desktop-hosts"].networks == ("direct",)  # --network 不开放：线路由固定清单决定
+
+
+def test_desktop_host_pins_are_https_sha256_and_route_domestic_cdns_direct():
+    from urllib.parse import urlsplit
+
+    for h in A.DESKTOP_HOSTS.values():
+        u = urlsplit(h.url)
+        assert u.scheme == "https" and u.hostname, h.id
+        assert re.fullmatch(r"[0-9a-f]{64}", h.sha256), h.id
+        assert h.network in A.NETWORK_MODES, h.id
+        assert h.installer in ("inno", "nsis", "squirrel"), h.id
+        assert h.version in h.url, h.id  # 改版本必须同时改 URL 与散列
+        # 国内 CDN 一律直连：只有海外 CDN 才允许经 DMIT（用户 10-25 授权的范围）
+        if u.hostname.endswith(".cn"):
+            assert h.network == "direct", h.id
+
+
+def test_pinned_download_refuses_when_the_proxy_is_down_instead_of_going_direct(
+    tmp_path, monkeypatch
+):
+    lab = A.Lab(root=tmp_path)
+    host = A.DESKTOP_HOSTS["cursor"]
+    assert host.network != "direct"
+    monkeypatch.setattr(A, "_tcp_open", lambda *a, **k: False)
+    opened = []
+    monkeypatch.setattr(A, "_opener", lambda mode: opened.append(mode))
+    path, info = A.fetch_pinned(lab, host)
+    assert path is None and "not listening" in info["unavailable"]
+    assert opened == []
+
+
+class _Resp:
+    def __init__(self, data: bytes):
+        self._data = [data]
+
+    def read(self, _n):
+        return self._data.pop() if self._data else b""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_pinned_download_with_wrong_hash_leaves_nothing_behind(tmp_path, monkeypatch):
+    lab = A.Lab(root=tmp_path)
+    host = A.DESKTOP_HOSTS["vscode"]
+    modes = []
+
+    class Opener:
+        def open(self, req, timeout):
+            return _Resp(b"not the installer")
+
+    monkeypatch.setattr(A, "_opener", lambda mode: modes.append(mode) or Opener())
+    path, info = A.fetch_pinned(lab, host)
+    assert path is None and "sha256_mismatch" in info
+    assert modes == [host.network]
+    d = lab.cache / "desktop-hosts" / host.id / host.version
+    assert not any(d.iterdir())
+
+
+def test_pinned_download_reuses_a_cached_file_only_when_the_hash_matches(tmp_path, monkeypatch):
+    import hashlib
+
+    lab = A.Lab(root=tmp_path)
+    data = b"installer-bytes"
+    host = A.DesktopHost(
+        id="x",
+        name="X",
+        version="1",
+        display_version="1",
+        url="https://example.invalid/x/1/X-Setup.exe",
+        sha256=hashlib.sha256(data).hexdigest(),
+        network="direct",
+        installer="nsis",
+        display_re="^X",
+        exe_name="X.exe",
+    )
+    d = lab.cache / "desktop-hosts" / "x" / "1"
+    d.mkdir(parents=True)
+    (d / "X-Setup.exe").write_bytes(data)
+    monkeypatch.setattr(A, "_opener", lambda mode: pytest.fail("must not download"))
+    path, info = A.fetch_pinned(lab, host)
+    assert path == d / "X-Setup.exe" and info["cached"] is True
+
+
+@pytest.mark.parametrize(
+    "cmd,argv",
+    [
+        (
+            '"C:\\Users\\u\\AppData\\Local\\Programs\\Microsoft VS Code\\unins000.exe"',
+            ["C:\\Users\\u\\AppData\\Local\\Programs\\Microsoft VS Code\\unins000.exe"],
+        ),
+        (
+            '"C:\\P\\Uninstall ZCode.exe" /currentuser /S',
+            ["C:\\P\\Uninstall ZCode.exe", "/currentuser", "/S"],
+        ),
+        (
+            "C:\\Users\\u\\AppData\\Local\\AnthropicClaude\\Update.exe --uninstall",
+            ["C:\\Users\\u\\AppData\\Local\\AnthropicClaude\\Update.exe", "--uninstall"],
+        ),
+    ],
+)
+def test_uninstall_command_lines_split_like_windows(cmd, argv):
+    assert A._command_argv(cmd) == argv
+
+
+def test_window_probe_only_counts_processes_inside_the_install_dir():
+    import window_probe as P
+
+    root = (
+        Path("C:/Users/u/AppData/Local/Programs/cursor") if os.name == "nt" else Path("/opt/cursor")
+    )
+    assert P.under(str(root / "Cursor.exe"), root)
+    assert P.under(str(root / "resources" / "app" / "x.exe"), root)
+    assert not P.under(str(root.parent / "cursor-other" / "Cursor.exe"), root)
+    assert not P.under(None, root)
+
+
+def test_window_probe_is_deployed_with_the_agent():
+    src = (WINLAB / "winlab.py").read_text(encoding="utf-8")
+    assert 'HERE / "window_probe.py"' in src
+
+
+@pytest.mark.parametrize(
+    ("name", "plane"),
+    [
+        ("conda-prefix", "conda-fallback"),
+        ("conda-named", "conda-fallback"),
+        ("bundled", "workerd"),
+        ("cpython-3.13", "workerd"),
+        ("uv-3.12", "workerd"),
+    ],
+)
+def test_matrix_leg_control_plane_expectation(name, plane):
+    # workerd 按设计不接需要 Conda 激活的启动（回退到 Python 渲染池）；其余腿必须真走 workerd
+    argv = A.matrix_leg_argv(Path("py"), Path("side.exe"), name, "env_override", "figs", ["--x"])
+    assert argv[argv.index("--expect-control-plane") + 1] == plane
+    assert argv[-1] == "--x"
+
+
+def test_host_exe_is_found_next_to_the_icon_or_uninstaller_when_install_location_is_empty(tmp_path):
+    # ZCode（electron-builder NSIS）10-25 实测：InstallLocation 空、DisplayIcon 指向 uninstallerIcon.ico
+    root = tmp_path / "Programs" / "ZCode"
+    root.mkdir(parents=True)
+    (root / "ZCode.exe").write_bytes(b"")
+    host = A.DESKTOP_HOSTS["zcode"]
+    by_icon = {"DisplayIcon": str(root / "uninstallerIcon.ico"), "InstallLocation": ""}
+    by_uninstaller = {"UninstallString": f'"{root / "Uninstall ZCode.exe"}" /currentuser'}
+    assert A._host_exe(host, by_icon) == root / "ZCode.exe"
+    assert A._host_exe(host, by_uninstaller) == root / "ZCode.exe"
+    assert A._host_exe(host, {"DisplayIcon": str(tmp_path / "x.ico")}) is None
+
+
+def test_every_desktop_host_pins_a_display_version():
+    assert all(h.display_version for h in A.DESKTOP_HOSTS.values())
+
+
+class _FakeDesktopLab:
+    """run_desktop_hosts_task 的纯逻辑夹具：登记表、安装器、GUI 桥全部假的。"""
+
+    def __init__(self, monkeypatch, tmp_path, *, entries, installer_exit=0, window=True):
+        host = A.DESKTOP_HOSTS["zcode"]
+        self.host = host
+        self.version = host.display_version  # 安装器登记的版本
+        self.entries = list(entries)  # 当前登记项；卸载按 uninstall_ok 决定是否清空
+        self.stuck = False  # 为真：卸载器跑完登记项仍在
+        self.installer_exit = installer_exit
+        root = tmp_path / "ZCode"
+        root.mkdir()
+        (root / host.exe_name).write_bytes(b"")
+        self.root = root
+        setup = tmp_path / "setup.exe"
+        setup.write_bytes(b"")
+        lab = type("L", (), {})()
+        lab.venv_python = lambda: tmp_path / "py"
+        (tmp_path / "py").write_bytes(b"")
+        self.lab = lab
+        monkeypatch.setattr(A, "fetch_pinned", lambda lab, host: (setup, {}))
+        monkeypatch.setattr(A, "authenticode", lambda p: {"status": "Valid", "org": "x"})
+        monkeypatch.setattr(A, "_uninstall_entries", lambda rx: list(self.entries))
+        monkeypatch.setattr(A, "_run_until", self._run_until)
+
+        def gui(lab, run_id, argv, work, env, log, timeout):
+            out = Path(argv[argv.index("--out") + 1])
+            payload = {"window": {"title": "w"}, "seconds_to_window": 1.0} if window else {}
+            out.write_text(json.dumps(payload), encoding="utf-8")
+            return {"gui": "ran", "session_id": 1}
+
+        monkeypatch.setattr(A, "run_in_gui", gui)
+        self.tmp = tmp_path
+
+    def _run_until(self, argv, cwd, env, log, done, timeout):
+        if Path(argv[0]).name == "setup.exe":
+            if self.installer_exit == 0:
+                self.entries.append(self._entry(self.version))
+            else:  # 安装器失败，登记表里却留着旧版本
+                self.entries.append(_stale(self.host, self.tmp))
+            done()  # 真实的 _run_until 在主进程退出后轮询它
+            return {"exit_code": self.installer_exit, "seconds": 0.1}
+        if not self.stuck:
+            self.entries.clear()
+        return {"exit_code": 0, "seconds": 0.1}
+
+    def _entry(self, version):
+        return {
+            "key": "k",
+            "DisplayName": "ZCode",
+            "DisplayVersion": version,
+            "InstallLocation": str(self.root),
+            "UninstallString": f'"{self.root / "Uninstall ZCode.exe"}" /currentuser',
+        }
+
+    def run(self):
+        run_dir = self.tmp / "run"
+        run_dir.mkdir()
+        return A.run_desktop_hosts_task(self.lab, "rid", run_dir, {}, "zcode")
+
+
+def _stale(host, tmp_path):
+    root = tmp_path / "ZCode"
+    return {
+        "key": "old",
+        "DisplayName": "ZCode",
+        "DisplayVersion": "0.0.1",
+        "InstallLocation": str(root),
+        "UninstallString": f'"{root / "Uninstall ZCode.exe"}" /currentuser',
+    }
+
+
+def test_desktop_host_stale_install_that_cannot_be_removed_is_unavailable(monkeypatch, tmp_path):
+    f = _FakeDesktopLab(monkeypatch, tmp_path, entries=[])
+    f.entries.append(_stale(f.host, tmp_path))
+    f.stuck = True
+    r = f.run()
+    assert r["result"] == "environment_unavailable"
+    assert "旧安装卸不掉" in r["summary"]
+    assert "install" not in r
+
+
+def test_desktop_host_failed_installer_is_not_passed_by_a_stale_registration(monkeypatch, tmp_path):
+    f = _FakeDesktopLab(monkeypatch, tmp_path, entries=[], installer_exit=1)
+    r = f.run()
+    assert r["result"] == "failed"
+    assert r["levels"]["L2"] == "failed"
+
+
+def test_desktop_host_wrong_registered_version_is_failed_with_both_versions(monkeypatch, tmp_path):
+    f = _FakeDesktopLab(monkeypatch, tmp_path, entries=[])
+    f.version = "9.9.9"
+    r = f.run()
+    assert r["result"] == "failed"
+    assert "9.9.9" in r["summary"] and f.host.display_version in r["summary"]
+
+
+def test_desktop_host_passed_window_with_failed_final_uninstall_is_error(monkeypatch, tmp_path):
+    f = _FakeDesktopLab(monkeypatch, tmp_path, entries=[])
+    orig = f._run_until
+
+    def run_until(argv, cwd, env, log, done, timeout):
+        r = orig(argv, cwd, env, log, done, timeout)
+        f.stuck = Path(argv[0]).name == "setup.exe"  # 安装之后的卸载都卸不掉
+        return r
+
+    monkeypatch.setattr(A, "_run_until", run_until)
+    r = f.run()
+    assert r["levels"]["L2"] == "passed"
+    assert r["result"] == "error"
+    assert "L2 通过但清理失败" in r["summary"]
+
+
+@pytest.mark.parametrize(
+    "bad_step", [{"exit_code": None, "timed_out": True}, {"exit_code": 1, "seconds": 0.1}]
+)
+def test_desktop_host_final_uninstall_step_failure_is_error_even_if_entries_are_gone(
+    monkeypatch, tmp_path, bad_step
+):
+    f = _FakeDesktopLab(monkeypatch, tmp_path, entries=[])
+    orig = f._run_until
+
+    def run_until(argv, cwd, env, log, done, timeout):
+        r = orig(argv, cwd, env, log, done, timeout)  # 登记项照常被清空
+        return r if Path(argv[0]).name == "setup.exe" else dict(bad_step)
+
+    monkeypatch.setattr(A, "_run_until", run_until)
+    r = f.run()
+    assert r["levels"]["L2"] == "passed"
+    assert r["uninstall"]["ok"] is False
+    assert r["result"] == "error"
+
+
+def test_desktop_host_clean_pass_stays_passed(monkeypatch, tmp_path):
+    r = _FakeDesktopLab(monkeypatch, tmp_path, entries=[]).run()
+    assert r["result"] == "passed", r
+
+
+def test_installer_that_exits_nonzero_returns_at_once_instead_of_waiting_for_the_timeout(tmp_path):
+    t0 = __import__("time").monotonic()
+    step = A._run_until(
+        [sys.executable, "-c", "raise SystemExit(3)"],
+        tmp_path,
+        dict(os.environ),
+        tmp_path / "x",
+        lambda: False,
+        60,
+    )
+    assert step["exit_code"] == 3 and "timed_out" not in step
+    assert __import__("time").monotonic() - t0 < 20

@@ -118,6 +118,15 @@ finish. link_data_file asks the user itself, so do NOT propose_fix for it; a fil
 another card. NEVER edit the script. If a relative font, input, or output path works in the project but fails in Tavotto's \
 sandbox, inspect the current launch context and consider switch_workdir: it asks the user to approve the project's \
 real working directory while keeping safe guards. Then verify with try_run in the application.
+3f. PROJECT FOLDER SHADOWS A PACKAGE. If a report or trial output has `project_package_shadow` (or the error is \
+`No module named 'a.b'` while the project has its own folder `a/`): the import that failed is `a.b`, not `a`; Python \
+found `a` in the project folder. Say exactly that, naming the missing piece and the project folder. If the note says \
+the folder is a regular package, do NOT install a package named `a` over it (it cannot take effect and would only \
+fail or change the environment for nothing), and do not roll back or reinstall in circles. The project's copy is \
+missing something that is normally produced when the project is built or installed; tell the user to follow the \
+project's own build/install instructions (for example its README or setup.py), never edit the script, and if \
+no tool here can do that safely, call prepare_diagnostics if useful and finish `not_fixed` with the reason in plain words. \
+If the note says the folder is not a regular package (no `__init__.py`, or one that extends the package path), installing the real package can fix it as usual.
 4. If you need something only the user knows, use ask_user (a multiple-choice question) or pick_file (the system file \
 chooser). Never ask for a password, key or token.
 5. If you cannot fix it, distinguish missing user inputs/environment failures from a product defect. If evidence \

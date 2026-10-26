@@ -6,9 +6,25 @@
 
 from __future__ import annotations
 
+import re
 import threading
 
 from .base import FixContext
+
+_ERROR_LINE_RE = re.compile(r"^\s*(?:ERROR|error)\b[:\s].*", re.M)
+
+
+def failure_detail(out: str, limit: int = 2) -> str:
+    """pip / 安装器输出里最能说明原因的一两行（`ERROR:` 开头的），脱敏、单行截断；没有回空串。
+    给修复会话里的模型看：它看不到完整 stderr，只靠一个 code 分不清「没轮子」与「没这个包」。"""
+    from .readscope import scrub
+
+    lines: list[str] = []
+    for m in _ERROR_LINE_RE.finditer(out or ""):
+        line = m.group(0).strip()
+        if line and line not in lines:
+            lines.append(line[:240])
+    return scrub("\n".join(lines[-limit:]))
 
 
 def _default_installer(
@@ -24,9 +40,15 @@ def _default_installer(
             for req in requirements:
                 if cancel.is_set():
                     return {"ok": False, "code": "cancelled", "done": done}
-                code, _out = deprepair._pip_install(python, req, cancel, None)
+                code, out = deprepair._pip_install(python, req, cancel, None)
                 if code:
-                    return {"ok": False, "code": str(code), "done": done}
+                    # 只按安装器自己的输出分类（`deprepair.classify_pip_failure`）：不再起第二个 pip 去「查索引」——
+                    # `pip index` 不继承 `[install]` 配置的源（no-index / find-links / 私有 index），会把包名发到公网
+                    # PyPI，判断也不对。`dependency_not_found` 给模型的提示不断言「不存在」（见 `change._INSTALL_HINTS`）
+                    res = {"ok": False, "code": str(code), "done": done}
+                    if detail := failure_detail(out):
+                        res["detail"] = detail
+                    return res
                 done.append(req)
     except pool.EnvironmentBusy:
         return {"ok": False, "code": "env_busy", "done": done}

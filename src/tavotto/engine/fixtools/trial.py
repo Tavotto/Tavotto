@@ -32,7 +32,7 @@ from collections import deque
 from pathlib import Path
 
 from ..agent_runner.wires import ToolResult
-from .base import FixContext, FixTool, err, obj, ok
+from .base import FixContext, FixTool, err, obj, ok, shadow_note
 from .readscope import ReadScope, Resolved
 
 INSPECT_TIMEOUT_S = 40.0
@@ -532,7 +532,8 @@ def try_import(ctx: FixContext, args: dict) -> ToolResult:
             "import ok",
         )
     return ok(
-        f"import {module}: FAILED (exit {res['returncode']})\n{_tail(res['stderr'])}{note}",
+        f"import {module}: FAILED (exit {res['returncode']})\n{_tail(res['stderr'])}{note}"
+        + shadow_note(ctx, res["stderr"], project_on_path=False),
         "import failed",
     )
 
@@ -848,7 +849,7 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
 
         result = ctx.application_runner(python, timeout, ctx.cancel, approve_run)
         report = result.get("report") or {}
-        rendered = project_run_report(report).content
+        rendered = project_run_report(report, ctx).content
         code = result.get("code")
         if code:
             guidance = (
@@ -964,7 +965,17 @@ def try_run(ctx: FixContext, args: dict) -> ToolResult:
     summary = "trial run done" + (" (writes blocked)" if blocked else "")
     summary += " (cleanup_pending)" if pending else ""
     return ok(
-        head + extra + note + (f"\n--- last lines of the error output ---\n{tail}" if tail else ""),
+        head
+        + extra
+        + note
+        + (f"\n--- last lines of the error output ---\n{tail}" if tail else "")
+        + shadow_note(
+            ctx,
+            res.get("stderr"),
+            # 试运行只复制脚本所在目录并从副本里跑：能被它导入的项目内容只有这个目录（没复制整个目录时一个都没有）；
+            # 原项目根不在副本的导入路径上，根下的同名包不算「已加载」
+            roots=[src_dir] if whole else [],
+        ),
         summary,
     )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from ..agent_runner.wires import ToolResult
-from .base import err, ok
+from .base import FixContext, err, ok, shadow_note
 
 REPORT_MAX_CHARS = 8000
 
@@ -39,7 +39,7 @@ _REPORT_KEYS = (
 )
 
 
-def project_run_report(report: dict | None) -> ToolResult:
+def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
     """The same bounded projection for read_run_report and application try_run."""
     if not isinstance(report, dict):
         return err("no_report", "There is no preparation session report right now.")
@@ -53,6 +53,17 @@ def project_run_report(report: dict | None) -> ToolResult:
     result = report.get("result") or {}
     error = result.get("error") if isinstance(result, dict) else None
     error = error or report.get("error")
+    # Keep package provenance in the same projection used by observation and the
+    # real application trial. Historical failures must not replace the current one.
+    diagnostic = error or report.get("error_tail") or report.get("attempt_history")
+    err_text = (
+        diagnostic
+        if isinstance(diagnostic, str)
+        else json.dumps(diagnostic, ensure_ascii=False, default=str)
+    )
+    note = shadow_note(ctx, err_text).removeprefix("\nproject_package_shadow: ")
+    if note:
+        picked = {"project_package_shadow": note, **picked}
     if isinstance(error, dict):
         picked["error"] = {
             k: _precis(error[k]) for k in ("code", "message", "module") if error.get(k)

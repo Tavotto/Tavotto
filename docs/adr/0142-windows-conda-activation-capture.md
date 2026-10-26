@@ -39,6 +39,20 @@
    判据在 `launcher.raise_if_trusted_root_unusable`；`launcher_for_interpreter` / `context_key` 仍是不抛的纯函数。
 9. **不碰**：mamba / micromamba、用户环境发现（userenvs）、depplan。
 
+## 修订（2026-10-25）：不可信 prefix 直接启动时只补 DLL 搜索 PATH
+
+决策 8 说“找不到任何可信根的 Conda 形状目录（`conda create -p` 到任意目录）仍直接启动”。Windows Lab 环境矩阵（run `20261024T153250Z-94de7e`，
+Miniforge 26.9，beta 0.19.0b4）实测这条会让 `conda create -p` 的环境崩溃：PATH 上没有 `<prefix>\Library\bin`，numpy 加载 MKL/BLAS 时渲染进程以
+`0xC06D007F` 退出（#985 的“裸起正常”只在 DLL 解析不依赖 PATH 的 Python 版本上成立）。用户裁决（2026-10-25）：
+
+* **仍不激活、不执行 `etc/conda/activate.d`**（信任边界不变——那是环境里的代码）。
+* **只把 conda 激活本会加进 PATH 的目录补到 PATH 最前**（存在才加，顺序同 conda：`<prefix>`、`Library\mingw-w64\bin`、`Library\usr\bin`、`Library\bin`、`Scripts`）。
+  实现 `launcher.prefix_dll_dirs` / `with_prefix_dll_path`：经 `merge_env`（所有进程内探测与 Python 池的启动点）与 `pool.worker_env`（workerd 规格，只收增量：只多一个 `PATH`）。幂等。
+* 可信环境（走激活捕获）、非 Windows、非 Conda 形状、`TAVOTTO_CONDA_ACTIVATION=0`：行为不变。
+* 代价：靠 `activate.d` 设变量的 `-p` 环境（如 `ROOTSYS`）仍不能工作，需要放进用户的 conda 安装 `envs\` 下。
+
+看护：`tests/test_conda_prefix_dll_path.py`（目录集合与顺序 / 不起进程 / 增量只含 PATH / 可信路径不变）与 Windows 真机用例 `tests/test_windows_real_conda.py`。
+
 ## Win11 真机验收清单
 
 状态（2026-10-21，Miniconda 26.9.3 / py314，自定义根 `C:\Users\Jiaqi\tavotto verify\miniconda3`，带空格）：

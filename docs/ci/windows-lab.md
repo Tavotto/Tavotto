@@ -144,6 +144,16 @@ python3 scripts/winlab/winlab.py test installer --package <新包>.exe [--from <
 调旧 sidecar 不认识的参数（0.18.0 不认 `--ssl-selftest`，2026-10-24 实测）。源码在不可信分支（如带他人
 cherry-pick 的 beta 分支）上时用 main 的冒烟脚本，报告的 `commit` 如实记下。
 
+### 桌面宿主 L2
+
+```sh
+python3 scripts/winlab/winlab.py test desktop-hosts --mode vscode   # cursor | trae-cn | workbuddy | zcode | claude-desktop
+```
+
+一次一个宿主。升级某个宿主的版本 = 从 winget-pkgs 对应清单（`manifests/<首字母>/<发行方>/<包>/<版本>/*.installer.yaml`）
+抄 x64 currentUser 那一项的 `InstallerUrl` 与 `InstallerSha256` 改 `DESKTOP_HOSTS`、走 PR。报告的 `window` 里有
+主窗口标题 / 窗口类 / 尺寸，证据目录有截图 `window.png`。
+
 ### 真实模型调用（L4/L5）
 
 只用国内合规的 Anthropic 兼容接口（当前登记 DeepSeek）；Lab 在中国大陆，Anthropic / OpenAI 不在这里调。

@@ -30,6 +30,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pymupdf
@@ -3840,3 +3841,177 @@ def test_nonadmin_windows_cannot_symlink_fixtures_skip_only_on_privilege_error_a
     )
     assert "os.symlink" not in twin
     assert "symlink_to" not in inspect.getsource(layout.test_a15_bad_files_do_not_block_the_listing)
+
+
+# ---------------------------------------------------------------------------------------------
+# 非管理员 Windows 上 `taskkill /T /F` 不可靠：scripts/ci 里结束进程树只许走 proctree
+# ---------------------------------------------------------------------------------------------
+_CI_DIR = Path(__file__).resolve().parents[1] / "scripts" / "ci"
+
+
+def _proctree_calls(path: Path) -> set[str]:
+    """`proctree.<name>(…)` 在这个文件里被调用的名字（AST，不是子串）。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        n.func.attr
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "proctree"
+    }
+
+
+def test_ci_scripts_never_spawn_taskkill_and_use_one_process_tree_implementation():
+    """主语：scripts/ci 里每个**构造 argv 的字面量**（不是 docstring）。
+
+    hosted windows-latest 是管理员账户，`taskkill /T /F` 在那里表现正常；非管理员（Windows Lab、
+    用户机器）上它既慢又枚举不全（agent_verify 的超时 30 s > 用例的 20 s 上限、package_smoke
+    的 worker 残留）。三处调用方必须共用 `proctree`，不再各自裸调 taskkill。"""
+    offenders = []
+    for path in sorted(_CI_DIR.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, (ast.List, ast.Tuple))
+                and node.elts
+                and isinstance(node.elts[0], ast.Constant)
+                and isinstance(node.elts[0].value, str)
+                and node.elts[0].value.lower().startswith("taskkill")
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert not offenders, f"scripts/ci 里还有裸 taskkill argv：{offenders}"
+
+    assert {"kill_tree", "spawn"} <= _proctree_calls(_CI_DIR / "agent_verify.py")
+    assert {"kill_tree", "tree_gone"} <= _proctree_calls(_CI_DIR / "package_smoke.py")
+    assert "terminate_pid" in _proctree_calls(_CI_DIR / "cleanup.py")
+
+
+def test_proctree_kills_a_live_tree_including_grandchild(tmp_path):
+    """行为：根进程还活着时，`kill_tree` 收得到整棵树（含孙进程）。判据是孙进程的 pid **不存在**，不是「发过信号」。"""
+    sys.path.insert(0, str(_CI_DIR))
+    try:
+        import proctree
+    finally:
+        sys.path.remove(str(_CI_DIR))
+    pid_file = tmp_path / "grandchild.pid"
+    child = (
+        "import subprocess, sys, time\n"
+        "g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+        f"open({str(pid_file)!r}, 'w').write(str(g.pid))\n"
+        "time.sleep(600)\n"
+    )
+    kwargs = {"start_new_session": True} if os.name != "nt" else {}
+    proc = proctree.spawn(
+        [sys.executable, "-c", child],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **kwargs,
+    )
+    grandchild = None
+    try:
+        deadline = time.monotonic() + 30
+        while not pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        grandchild = int(pid_file.read_text(encoding="utf-8"))
+        assert proctree.is_alive(grandchild)
+        assert proctree.kill_tree(proc) is not None
+        proc.wait(timeout=20)
+        assert proctree.tree_gone(proc, 20)
+        deadline = time.monotonic() + 20
+        while proctree.is_alive(grandchild) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not proctree.is_alive(grandchild), "孙进程成了孤儿"
+    finally:
+        if grandchild is not None and proctree.is_alive(grandchild):
+            proctree.terminate_pid(grandchild)
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+@pytest.mark.skipif(
+    os.name != "nt", reason="Job Object 语义：POSIX 的进程组随根进程被回收后无从寻址"
+)
+def test_proctree_job_reaches_a_descendant_whose_parents_are_all_gone(tmp_path):
+    """行为：根进程与中间进程都**已退出**、叶子仍在时，`kill_tree` 靠 Job Object 仍收得到叶子。
+    叶子的父进程（中间进程）已死，进程快照回退顺着父子链从根往下找不到它——只有 Job 路径能过。"""
+    sys.path.insert(0, str(_CI_DIR))
+    try:
+        import proctree
+    finally:
+        sys.path.remove(str(_CI_DIR))
+    pid_file = tmp_path / "leaf.pid"
+    mid = (
+        "import subprocess, sys\n"
+        "g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+        f"open({str(pid_file)!r}, 'w').write(str(g.pid))\n"
+    )
+    root = f"import subprocess, sys\nsubprocess.Popen([sys.executable, '-c', {mid!r}]).wait()\n"
+    proc = proctree.spawn(
+        [sys.executable, "-c", root],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    leaf = None
+    try:
+        proc.wait(timeout=30)  # 根与中间进程都已退出
+        leaf = int(pid_file.read_text(encoding="utf-8"))
+        assert proc.tavotto_job is not None, "进程没放进 Job，这条用例没有意义"
+        assert proctree.is_alive(leaf), "前提：叶子必须在根进程退出后仍然活着"
+        assert proctree.kill_tree(proc) == "job"
+        assert proctree.tree_gone(proc, 20)
+        deadline = time.monotonic() + 20
+        while proctree.is_alive(leaf) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not proctree.is_alive(leaf), "叶子成了孤儿"
+    finally:
+        if leaf is not None and proctree.is_alive(leaf):
+            proctree.terminate_pid(leaf)
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+# --- 真窗口用例（tests/desktop_windows/）随产品改版失效的两处前提 -------------------------
+# 真窗口用例只在 nightly / Windows Lab 里跑，普通 CI 看不到它们过期（10-21 起一直红、没人发现）。
+# 这里在普通 CI 上钉住两处前提：用例引用的选择器必须仍在前端源码里，且用例不再拿「放大
+# 取景前量到的尺寸」去比「取景改变之后量到的尺寸」。
+
+_DESKTOP_WINDOW_TESTS = Path(__file__).parent / "desktop_windows"
+_WEB_SRC = Path(__file__).resolve().parents[1] / "web" / "src"
+
+
+def test_desktop_window_picker_test_leaves_the_tutorial_welcome_first():
+    """全新配置目录的第一屏是新手教程欢迎页（`NativeTutorial`：`aria-modal` 的整屏 fixed 层，
+    底下的主页 inert 且被盖住），用户必须先点「打开工作区」才点得到主页的「导入我的脚本」。
+    真窗口用例若直接点主页按钮就是 `element click intercepted`——点不到不是用例的毛病，
+    是用户也点不到，所以用例要走用户走的那条路。"""
+    exit_selector = "data-tutorial-open-workspace"
+    welcome = (_WEB_SRC / "components" / "onboarding" / "TutorialWelcome.tsx").read_text(
+        encoding="utf-8"
+    )
+    shell = (_WEB_SRC / "components" / "onboarding" / "NativeTutorial.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert exit_selector in welcome, "欢迎页的出口选择器改了：真窗口用例要跟着改"
+    assert 'aria-modal="true"' in shell and "fixed inset-0" in shell, (
+        "教程层不再整屏盖住主页：这条前提（以及用例里先离开欢迎页）可以重新评估"
+    )
+    picker = (_DESKTOP_WINDOW_TESTS / "test_file_picker.py").read_text(encoding="utf-8")
+    click_home = picker.index("d.click(d.find(IMPORT_BUTTON[variant]))")
+    assert exit_selector in picker[:click_home], (
+        "test_file_picker 在点主页按钮之前没有先离开教程欢迎页（全新配置目录的第一屏）"
+    )
+
+
+def test_desktop_window_paste_test_compares_sizes_within_one_view():
+    """粘贴第二个对象会让画布从单图编辑切到多图排版并重新取景（#1292），屏幕上的 px 尺度随之变。
+    用例若拿粘贴前量的 `original` 去比粘贴后量的对象，就把取景缩放当成了「粘贴没读系统剪贴板」。
+    正确的量法：粘贴之后在同一个取景里量原对象与新对象，比它们的比值。"""
+    src = (_DESKTOP_WINDOW_TESTS / "test_clipboard.py").read_text(encoding="utf-8")
+    body = src[src.index("def test_paste_reads_what_another_app_put_there") :]
+    tail = body[body.index("assert len(new) == 1") :]
+    assert "original[" not in tail, "粘贴后的尺寸不能和粘贴前量的原对象比：取景已经变了"
+    assert "rect(d, oid)" in tail, "粘贴之后要在同一个取景里重新量原对象"

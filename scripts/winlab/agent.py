@@ -60,6 +60,8 @@ SHARD_RE = re.compile(r"^([1-9][0-9]?)/([1-9][0-9]?)$")
 MAX_SELECTORS = 40
 #: hosts-live 的 --mode：真宿主的闭集（实现见 LIVE_HOSTS）
 LIVE_HOST_IDS = ("claude-code", "codex-cli", "codebuddy", "minimax-code", "dsh")
+#: `desktop-hosts --mode`：桌面宿主 L2（固定版本见 DESKTOP_HOSTS）
+DESKTOP_HOST_IDS = ("vscode", "cursor", "trae-cn", "workbuddy", "zcode", "claude-desktop")
 #: 依赖安装配方的版本：改了 prepare 的安装步骤就加一，已有 venv 随之重装（散列戳里含它）。
 DEPS_RECIPE = "2"
 
@@ -248,6 +250,23 @@ TASKS: dict[str, Task] = {
             unverified=(
                 "交互会话是自动登录的控制台会话，不是 RDP、不是多显示器 / 高 DPI",
                 "键鼠经 CDP 与窗口消息投递，不是真实硬件输入（IME 不覆盖）",
+                "Server 2025 不是 Windows 10 / 11 客户端",
+            ),
+        ),
+        Task(
+            id="desktop-hosts",
+            kind="desktop-hosts",
+            summary="桌面宿主 L2：下载固定版本安装包（核 SHA-256 + Authenticode）、静默装、在交互会话里起出主窗口、卸载",
+            timeout_s=2400,
+            modes=DESKTOP_HOST_IDS,
+            claim=(
+                "L2 = 这个固定版本的官方安装包在 Lab（非管理员 currentUser、zh-CN、Defender 开）上静默安装成功，"
+                "且在 tavotto-lab 的交互会话里起出了属于安装目录进程的、可见且稳定的主窗口"
+            ),
+            unverified=(
+                "L3+ 要在宿主里登录各自账户、配置 MCP：Lab 没有这些账户，一律 blocked，不推定",
+                "主窗口出现 ≠ 能用：首次启动的登录 / 欢迎页之后的界面不在内",
+                "海外 CDN 的安装包经 DMIT 下载（用户授权），国内 CDN 直连；下载线路不代表宿主运行时的网络",
                 "Server 2025 不是 Windows 10 / 11 客户端",
             ),
         ),
@@ -2307,6 +2326,488 @@ def run_desktop_window_task(lab: Lab, run_id: str, run_dir: Path, env: dict, pac
     }
 
 
+# ----------------------------------------------------------------------------- 桌面宿主 L2
+@dataclass(frozen=True)
+class DesktopHost:
+    """一个桌面宿主的固定版本安装包。URL 与 SHA-256 取自 microsoft/winget-pkgs 的清单（经评审的公开来源），
+    Lab 上下载后先核散列、再核 Authenticode；升级版本 = 改这里、走 PR。"""
+
+    id: str
+    name: str
+    version: str
+    #: 登记在 HKCU 卸载项里的 DisplayVersion（Lab 实测）；与 URL 里的 `version` 可以不同（TRAE 的构建号 ≠ 3.4.4）
+    display_version: str
+    url: str
+    sha256: str
+    #: 下载走哪条线路：国内 CDN 直连；海外 CDN 经 DMIT（用户 10-25 授权，只限这些安装包、一次一个）
+    network: str
+    #: inno | nsis | squirrel —— 决定静默安装 / 卸载参数
+    installer: str
+    #: HKCU 卸载项 DisplayName 的匹配（不区分大小写）
+    display_re: str
+    #: 主程序文件名（DisplayIcon 不指向 .exe 时在安装目录里找它）
+    exe_name: str
+    #: VS Code 系：用独立的 --user-data-dir / --extensions-dir 启动，不碰账户的真实配置
+    vscode_like: bool = False
+
+
+_INNO_SILENT = (
+    "/VERYSILENT",
+    "/SUPPRESSMSGBOXES",
+    "/NORESTART",
+    "/SP-",
+    "/CURRENTUSER",
+    "/MERGETASKS=!runcode",
+)
+DESKTOP_HOSTS: dict[str, DesktopHost] = {
+    h.id: h
+    for h in (
+        DesktopHost(
+            id="vscode",
+            name="Visual Studio Code",
+            version="1.141.2",
+            display_version="1.141.2",
+            url="https://vscode.download.prss.microsoft.com/dbazure/download/stable/16507d91be0dc1ce4f94c04d4d0430210b8685d9/VSCodeUserSetup-x64-1.141.2.exe",
+            sha256="9b9e7305bc5f2d9176dff8263ba146fc7b0d65ce1fb499271fd7746ec53d66ed",
+            network="direct",
+            installer="inno",
+            display_re=r"^Microsoft Visual Studio Code",
+            exe_name="Code.exe",
+            vscode_like=True,
+        ),
+        DesktopHost(
+            id="cursor",
+            name="Cursor",
+            version="3.20.14",
+            display_version="3.20.14",
+            url="https://downloads.cursor.com/production/67ac8ff8cc118b1eddcb5f2de564c20cffcae94d/win32/x64/user-setup/CursorUserSetup-x64-3.20.14.exe",
+            sha256="67508e9be8187996f48328f16297b411487a2a74d9acff5625c90e656e7502dd",
+            network="trojan",
+            installer="inno",
+            display_re=r"^Cursor",
+            exe_name="Cursor.exe",
+            vscode_like=True,
+        ),
+        DesktopHost(
+            id="trae-cn",
+            name="TRAE CN",
+            version="2.3.93438",
+            display_version="3.4.4",
+            url="https://lf-cdn.trae.com.cn/obj/trae-com-cn/pkg/app/releases/stable/2.3.93438/win32/TRAE_CN-Setup-x64.exe",
+            sha256="518d939b4715bf238fc54e2bd9f0373e2602e0fd3f69af2e812a0cbe157ef20f",
+            network="direct",
+            installer="inno",
+            display_re=r"^Trae CN|^TRAE CN",
+            exe_name="Trae CN.exe",
+            vscode_like=True,
+        ),
+        DesktopHost(
+            id="workbuddy",
+            name="WorkBuddy",
+            version="5.8.3",
+            display_version="5.8.3",
+            url="https://download.codebuddy.cn/workbuddy/saas/win32-x64-user/WorkBuddy-win32-x64-user-5.8.3.41334564-db0e9b51.exe",
+            sha256="824de10f3196c501004f540eb84ee881292fef2f5df9fb3fc48af9ea5366c03c",
+            network="direct",
+            installer="nsis",
+            display_re=r"^WorkBuddy",
+            exe_name="WorkBuddy.exe",
+        ),
+        DesktopHost(
+            id="zcode",
+            name="ZCode",
+            version="3.14.1",
+            display_version="3.14.1",
+            url="https://cdn-zcode.z.ai/zcode/electron/releases/3.14.1/windows-x64/ZCode-3.14.1-win-x64.exe",
+            sha256="f5216f6df1d5f5cf69d55d732c64927533fe9eeb31e8b39bed2493fac09ed9a0",
+            network="trojan",
+            installer="nsis",
+            display_re=r"^ZCode",
+            exe_name="ZCode.exe",
+        ),
+        DesktopHost(
+            id="claude-desktop",
+            name="Claude Desktop",
+            version="2.42304.2",
+            display_version="2.42304.2",
+            url="https://downloads.claude.ai/releases/win32/x64/2.42304.2/Claude-af65c0e384c1657459441aac3083c6e622789afe.exe",
+            sha256="9eff78c6fd1fde2035806401bd3933578842d9a377b76dacfdb7b14571a002b0",
+            network="trojan",
+            installer="squirrel",
+            display_re=r"^Claude",
+            exe_name="claude.exe",
+        ),
+    )
+}
+assert tuple(DESKTOP_HOSTS) == DESKTOP_HOST_IDS
+#: 单个安装包的上限：超过就停（防止误把别的东西当安装包拖下来）
+DESKTOP_MAX_BYTES = 600 * 1024**2
+
+
+def _file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def fetch_pinned(lab: Lab, host: DesktopHost) -> tuple[Path | None, dict]:
+    """下载（或复用缓存）固定版本的安装包并核 SHA-256。代理线路不通就 environment_unavailable，绝不改走直连。"""
+    d = lab.cache / "desktop-hosts" / host.id / host.version
+    dest = d / host.url.rsplit("/", 1)[-1]
+    info: dict = {"network": host.network, "cached": False}
+    if dest.exists() and _file_sha256(dest) == host.sha256:
+        info["cached"] = True
+        return dest, info
+    if host.network != "direct" and not _tcp_open("127.0.0.1", PROXY_PORTS[host.network]):
+        info["unavailable"] = f"proxy {host.network} not listening"
+        return None, info
+    d.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(dest.name + ".part")
+    h = hashlib.sha256()
+    t0 = time.monotonic()
+    req = urllib.request.Request(host.url, headers={"User-Agent": "tavotto-winlab/1"})
+    try:
+        with _opener(host.network).open(req, timeout=60) as r, open(part, "wb") as f:
+            total = 0
+            while chunk := r.read(1 << 20):
+                total += len(chunk)
+                if total > DESKTOP_MAX_BYTES:
+                    raise OSError(f"larger than {DESKTOP_MAX_BYTES} bytes")
+                h.update(chunk)
+                f.write(chunk)
+    except (OSError, urllib.error.URLError) as exc:
+        part.unlink(missing_ok=True)
+        info["unavailable"] = f"download failed: {type(exc).__name__}: {exc}"[:300]
+        return None, info
+    info.update(bytes=total, seconds=round(time.monotonic() - t0, 1))
+    if h.hexdigest() != host.sha256:
+        part.unlink(missing_ok=True)
+        info["sha256_mismatch"] = h.hexdigest()
+        return None, info
+    os.replace(part, dest)
+    return dest, info
+
+
+def authenticode(path: Path) -> dict:
+    pwsh = r"C:\Program Files\PowerShell\7\pwsh.exe"
+    out = subprocess.run(
+        [
+            pwsh,
+            "-NoProfile",
+            "-c",
+            f"$s=Get-AuthenticodeSignature -LiteralPath '{path}'; \"$($s.Status)|$($s.SignerCertificate.Subject)\"",
+        ],
+        capture_output=True,
+        text=True,
+        errors="replace",
+    ).stdout.strip()
+    status, _, subject = out.partition("|")
+    org = re.search(r"O=(\"[^\"]+\"|[^,]+)", subject)
+    return {"status": status, "org": org.group(1).strip('"') if org else None}
+
+
+def _uninstall_entries(display_re: str) -> list[dict]:
+    import winreg
+
+    rx = re.compile(display_re, re.I)
+    out = []
+    base = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
+    try:
+        root = winreg.OpenKey(winreg.HKEY_CURRENT_USER, base)
+    except OSError:
+        return out
+    with root:
+        i = 0
+        while True:
+            try:
+                name = winreg.EnumKey(root, i)
+            except OSError:
+                break
+            i += 1
+            with winreg.OpenKey(root, name) as k:
+                vals = {"key": name}
+                for v in (
+                    "DisplayName",
+                    "DisplayVersion",
+                    "InstallLocation",
+                    "DisplayIcon",
+                    "UninstallString",
+                    "QuietUninstallString",
+                ):
+                    with contextlib.suppress(OSError):
+                        vals[v] = str(winreg.QueryValueEx(k, v)[0])
+            if rx.search(vals.get("DisplayName", "")):
+                out.append(vals)
+    return out
+
+
+def _host_exe(host: DesktopHost, ent: dict) -> Path | None:
+    """主程序：DisplayIcon 就是 .exe 时直接用；否则在 InstallLocation、图标所在目录、卸载器所在目录里找
+    `exe_name`——electron-builder 的 NSIS 包（ZCode）InstallLocation 留空、DisplayIcon 指向 .ico。"""
+    icon = ent.get("DisplayIcon", "").split(",")[0].strip().strip('"')
+    if icon.lower().endswith(".exe") and Path(icon).exists():
+        return Path(icon)
+    dirs = [ent.get("InstallLocation", "").strip().strip('"')]
+    if icon:
+        dirs.append(str(Path(icon).parent))
+    for key in ("QuietUninstallString", "UninstallString"):
+        if ent.get(key):
+            dirs.append(str(Path(_command_argv(ent[key])[0]).parent))
+    for d in dirs:
+        if d and (Path(d) / host.exe_name).exists():
+            return Path(d) / host.exe_name
+    return None
+
+
+def _command_argv(cmd: str) -> list[str]:
+    """卸载项里的命令行：开头一段是程序（带不带引号都有），其余按空白切。"""
+    cmd = cmd.strip()
+    if cmd.startswith('"'):
+        exe, _, rest = cmd[1:].partition('"')
+    else:
+        m = re.match(r"(.+?\.exe)(.*)$", cmd, re.I)
+        exe, rest = (m.group(1), m.group(2)) if m else (cmd, "")
+    return [exe, *rest.split()]
+
+
+def _run_until(argv: list[str], cwd: Path, env: dict, log: Path, done, timeout: float) -> dict:
+    """跑安装 / 卸载器：主进程退出**且** `done()` 成立才算完——NSIS 卸载器会把自己拷进 %TEMP% 再起一份，
+    主进程一退就关 Job 会把真正干活的那份杀掉。主进程**非 0** 退出就是失败，立刻返回，不等到超时。"""
+    t0 = time.monotonic()
+    with open(f"{log}.log", "wb") as out:
+        tree = ProcessTree(argv, cwd=cwd, env=env, stdout=out, stderr=out)
+        try:
+            while time.monotonic() - t0 < timeout:
+                rc = tree.proc.poll()
+                if rc not in (None, 0):
+                    return {"exit_code": rc, "seconds": round(time.monotonic() - t0, 1)}
+                if rc is not None and done():
+                    return {
+                        "exit_code": tree.proc.returncode,
+                        "seconds": round(time.monotonic() - t0, 1),
+                    }
+                time.sleep(1)
+            return {"exit_code": tree.proc.poll(), "timed_out": True}
+        finally:
+            tree.close()
+
+
+def install_desktop_host(host: DesktopHost, setup: Path, work: Path, env: dict) -> dict:
+    args = {
+        "inno": list(_INNO_SILENT),
+        "nsis": ["/S", "/currentuser"],
+        "squirrel": ["--silent"],
+    }[host.installer]
+    found: dict = {}
+
+    def done() -> bool:
+        # 只认登记版本等于固定版本的那一条：残留的旧版本不算装好
+        for ent in reversed(_uninstall_entries(host.display_re)):
+            if ent.get("DisplayVersion") != host.display_version:
+                continue
+            exe = _host_exe(host, ent)
+            if exe:
+                found.update(entry=ent, exe=exe)
+                return True
+        return False
+
+    step = _run_until([str(setup), *args], work, env, work / "install", done, 900)
+    registered = [e.get("DisplayVersion") for e in _uninstall_entries(host.display_re)]
+    if not found or step.get("exit_code") != 0 or step.get("timed_out"):
+        return {"ok": False, "step": step, "registered_versions": registered}
+    ent = found["entry"]
+    return {
+        "ok": True,
+        "step": step,
+        "exe": str(found["exe"]),
+        "root": str(found["exe"].parent),
+        "display": ent.get("DisplayName"),
+        "version": ent.get("DisplayVersion"),
+    }
+
+
+def uninstall_desktop_host(host: DesktopHost, work: Path, env: dict) -> dict:
+    flags = {
+        "inno": ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+        "nsis": ["/S", "/currentuser"],
+        "squirrel": ["-s"],
+    }[host.installer]
+    steps = []
+    for ent in _uninstall_entries(host.display_re):
+        cmd = ent.get("QuietUninstallString") or ent.get("UninstallString")
+        if not cmd:
+            continue
+        argv = _command_argv(cmd)
+        if not ent.get("QuietUninstallString"):
+            argv += [f for f in flags if f.lower() not in (a.lower() for a in argv)]
+        key = ent["key"]
+        steps.append(
+            _run_until(
+                argv,
+                work,
+                env,
+                work / f"uninstall-{len(steps)}",
+                lambda key=key: (
+                    not any(e["key"] == key for e in _uninstall_entries(host.display_re))
+                ),
+                600,
+            )
+        )
+    steps_ok = all(not st.get("timed_out") and st.get("exit_code") == 0 for st in steps)
+    return {"ok": steps_ok and not _uninstall_entries(host.display_re), "steps": steps}
+
+
+def _cleanup_note(base: dict) -> str:
+    return "" if base.get("uninstall", {}).get("ok", True) else "；清理失败：最终卸载未卸干净"
+
+
+def _install_failure_summary(host: DesktopHost, inst: dict) -> str:
+    step = inst.get("step", {})
+    if step.get("timed_out"):
+        return "silent install timed out"
+    if step.get("exit_code") not in (0, None):
+        return f"installer exited with code {step['exit_code']}"
+    seen = [v for v in inst.get("registered_versions", []) if v]
+    if seen and host.display_version not in seen:
+        return f"installed version {', '.join(seen)} != pinned {host.display_version}"
+    return "silent install did not register the host"
+
+
+def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode: str) -> dict:
+    host = DESKTOP_HOSTS[mode]
+    levels = {"L2": "not_tested", "L3": "blocked", "L4": "blocked", "L5": "blocked"}
+    base = {
+        "host": {"id": host.id, "name": host.name, "pinned_version": host.version, "url": host.url},
+        "levels": levels,
+        "blocked_reason": "L3+ 要在宿主里登录各自的账户并配置 MCP（Lab 没有这些账户）",
+    }
+    setup, dl = fetch_pinned(lab, host)
+    base["download"] = dl
+    if setup is None:
+        if "sha256_mismatch" in dl:
+            return {
+                **base,
+                "result": "error",
+                "summary": "installer SHA-256 does not match the pin",
+            }
+        return {
+            **base,
+            "result": "environment_unavailable",
+            "summary": dl.get("unavailable", "download failed"),
+        }
+    sig = authenticode(setup)
+    base["signature"] = sig
+    if sig["status"] != "Valid":
+        return {
+            **base,
+            "result": "error",
+            "summary": f"installer Authenticode status {sig['status']!r}",
+        }
+    py = lab.venv_python()
+    if not py.exists():
+        return {
+            **base,
+            "result": "environment_unavailable",
+            "summary": "venv missing: run `winlab prepare` first",
+        }
+    work = run_dir / "work"
+    ev = run_dir / "evidence" / "desktop-host"
+    work.mkdir(parents=True, exist_ok=True)
+    ev.mkdir(parents=True, exist_ok=True)
+    henv = network_env("direct", env)
+    henv.update({"TEMP": str(work), "TMP": str(work)})
+    base["preexisting_uninstall"] = uninstall_desktop_host(host, work, henv)
+    if not base["preexisting_uninstall"]["ok"]:
+        return {
+            **base,
+            "result": "environment_unavailable",
+            "summary": "残留的旧安装卸不掉",
+        }
+    inst = install_desktop_host(host, setup, work, henv)
+    base["install"] = {k: v for k, v in inst.items() if k != "root"}
+    if not inst["ok"]:
+        levels["L2"] = "failed"
+        base["uninstall"] = uninstall_desktop_host(host, work, henv)  # 装了一半的也收掉，结果进报告
+        return {
+            **base,
+            "result": "failed",
+            "summary": _install_failure_summary(host, inst) + _cleanup_note(base),
+        }
+    try:
+        extra = []
+        if host.vscode_like:
+            prof = run_dir / "work" / "profile"
+            extra = [
+                f"--user-data-dir={prof / 'data'}",
+                f"--extensions-dir={prof / 'ext'}",
+                "--skip-welcome",
+                "--disable-workspace-trust",
+                "--new-window",
+            ]
+        probe = Path(__file__).resolve().parent / "window_probe.py"
+        out = ev / "window.json"
+        argv = [
+            str(py),
+            "-I",
+            str(probe),
+            "--exe",
+            inst["exe"],
+            "--root",
+            inst["root"],
+            "--out",
+            str(out),
+            "--shot",
+            str(ev / "window.png"),
+            "--",
+            *extra,
+        ]
+        step = run_in_gui(lab, run_id, argv, work, henv, ev / "probe", 240)
+    finally:
+        base["uninstall"] = uninstall_desktop_host(host, work, henv)
+    if step.get("gui") == "no_interactive_session":
+        return {
+            **base,
+            "result": "environment_unavailable",
+            "summary": "no interactive session for tavotto-lab: run `winlab.py admin gui-setup` and reboot"
+            + _cleanup_note(base),
+        }
+    if step.get("gui") != "ran" or not step.get("session_id"):
+        return {
+            **base,
+            "result": "error",
+            "summary": f"gui bridge: {step.get('gui')} session={step.get('session_id')}"
+            + _cleanup_note(base),
+            "step": step,
+        }
+    try:
+        win = json.loads(out.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {
+            **base,
+            "result": "error",
+            "summary": "window probe wrote no result" + _cleanup_note(base),
+            "step": step,
+        }
+    base["window"] = win
+    base["session_id"] = step["session_id"]
+    if win.get("window"):
+        levels["L2"] = "passed"
+        seen = f"{host.name} {inst.get('version')}: main window {win['window']['title']!r} in session {step['session_id']} after {win['seconds_to_window']} s"
+        if not base["uninstall"]["ok"]:
+            # 常驻机器上留着残余安装会污染后续运行：L2 如实记 passed，但整次不报 passed
+            return {**base, "result": "error", "summary": f"L2 通过但清理失败：{seen}"}
+        return {**base, "result": "passed", "summary": seen}
+    levels["L2"] = "failed"
+    return {
+        **base,
+        "result": "failed",
+        "summary": f"{host.name} started but no main window within the probe timeout"
+        + _cleanup_note(base),
+    }
+
+
 # ----------------------------------------------------------------------------- 环境矩阵
 #: better-sqlite3 等原生模块的预编译件默认从 GitHub release 取（这台机器取不到）→ npmmirror 的二进制镜像
 SQLITE_BINARY_MIRROR = "https://registry.npmmirror.com/-/binary/better-sqlite3"
@@ -2512,6 +3013,27 @@ def _find_sidecar(shell: Path) -> Path | None:
     return None
 
 
+def matrix_leg_argv(
+    py: Path, side: Path, name: str, expect: str, figs: str, extra: list[str]
+) -> list[str]:
+    """一条矩阵腿的 smoke argv。需要 Conda 激活的解释器 workerd 按设计不接，走 Python 渲染池
+    （用户 10-25 裁决，与 nightly 同）：`conda-fallback` = 产物带 workerd、这次渲染只走了 Python 池
+    （smoke_app 的这个取值随 #1410 进 main）；其余腿必须真走 workerd。"""
+    return [
+        str(py),
+        "scripts/smoke_app.py",
+        "--exe",
+        str(side),
+        "--figures",
+        figs,
+        "--expect-source",
+        expect,
+        "--expect-control-plane",
+        "conda-fallback" if name.startswith("conda") else "workerd",
+        *extra,
+    ]
+
+
 def run_env_matrix_task(lab: Lab, run_dir: Path, env: dict, package: str) -> dict:
     setup, err = package_path(lab, package)
     if err:
@@ -2556,19 +3078,7 @@ def run_env_matrix_task(lab: Lab, run_dir: Path, env: dict, package: str) -> dic
             lenv.pop("TAVOTTO_WORKER_PYTHON", None)
             if worker:
                 lenv["TAVOTTO_WORKER_PYTHON"] = worker
-            argv = [
-                str(lab.venv_python()),
-                "scripts/smoke_app.py",
-                "--exe",
-                str(side),
-                "--figures",
-                figs,
-                "--expect-source",
-                expect,
-                "--expect-control-plane",
-                "workerd",
-                *extra,
-            ]
+            argv = matrix_leg_argv(lab.venv_python(), side, name, expect, figs, extra)
             step = _run_logged(argv, lab.repo, lenv, run_dir / "evidence" / f"leg-{name}", 900)
             legs.append(
                 {
@@ -2709,6 +3219,10 @@ def _run_body(
     if task.kind == "desktop-window":
         return run_desktop_window_task(
             lab, run_dir.name, run_dir, env, (pkg or {}).get("package", "")
+        )
+    if task.kind == "desktop-hosts":
+        return run_desktop_hosts_task(
+            lab, run_dir.name, run_dir, env, (pkg or {}).get("mode") or DESKTOP_HOST_IDS[0]
         )
     if task.kind == "installer":
         return run_installer_task(

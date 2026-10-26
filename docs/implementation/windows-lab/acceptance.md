@@ -84,7 +84,7 @@
 | 用例 | 非管理员（tavotto-lab） | 管理员同一检出同一 venv | 定性 |
 | --- | --- | --- | --- |
 | `test_layout_recovery_backend::test_a15_bad_files_do_not_block_the_listing` | FAIL：`WinError 1314` 建符号链接无特权 | PASS | **CI 盲区**：hosted windows-latest 以管理员运行，非管理员用户的 Windows 从没被跑过；用例假设能建符号链接 |
-| `test_qa_first_open_env_and_data::test_project_venv_and_same_name_decoy_…` | FAIL：项目 venv 跑 `scripts/entry.py` 退出 1（stderr 被用例捕获，报告里看不到） | PASS | 同上，随权限变化；具体是夹具还是产品路径依赖特权待定 |
+| `test_qa_first_open_env_and_data::test_project_venv_and_same_name_decoy_…` | FAIL：项目 venv 跑 `scripts/entry.py` 退出 1（stderr 被用例捕获，报告里看不到） | PASS | **更正（10-25）**：与权限无关——夹具没有符号链接调用；main 与 #1413 分支上整文件在 Lab 均通过（run `20261024T173833Z-6eabd8` / `20261024T173647Z-f21b80`），原失败未复现，分片内顺序 / 状态相关未排除；用例已改为失败时把 stderr 带进断言 |
 | `test_compat_explore_data::RealExecution` 6 条 | FAIL：`parent_native` 执行数为 None | FAIL | 与权限无关；待查（Server 2025 / cp936 / 该组在 hosted Windows 上是否真跑） |
 
 以上是本次开荒**发现**的问题，不在本 PR 修：本 PR 只交付 Lab 本身。按 `.github/AGENTS.md`，
@@ -152,7 +152,7 @@
 | #1213 versionstore | `test_versionstore` | 通过（LongPaths=0） |
 | #1256 Guardian data_source（中文文件名） | `test_compat_guardian_families` | 通过（cp936） |
 | #1294 自动采用用户 Python | `test_environment_adoption` | 通过（Lab 的 Python 3.13 作用户 Python） |
-| 非管理员 Windows（新发现） | 三条用例需要符号链接特权 | **CI 盲区**：hosted windows-latest 是管理员；`test_a15…`、`test_two_symlinks…`、`test_qa_first_open…` 在非管理员下失败 |
+| 非管理员 Windows（新发现） | 三条用例需要符号链接特权 | **CI 盲区**：hosted windows-latest 是管理员；`test_a15…`、`test_two_symlinks…` 在非管理员下失败（夹具依赖特权，产品无问题，#1413 修）；`test_qa_first_open…` 后查与权限无关、未复现 |
 | 需要真窗口的项（#276 #1071 #1387 #1320 #1315 #1308 #1306 #1304 #1301 #82） | — | NOT TESTED：需要交互会话执行器（尚无） |
 | Win10 / Win11 / ARM / Anthropic 真模型（#1200 #1392 等） | — | 这台机器做不到 |
 
@@ -220,8 +220,32 @@ cn-prod 路由上不认，用 `provider add --use` 设的默认；Codex 走 `wir
 - 本 PR 自己的一条用例（字体 zip 成员 `a\b.ttf`）在 hosted Windows 上红、被合并队列踢出：Windows 上 zipfile 把
   反斜杠规范成 `/`。修复后先在 Lab 上跑过 `tests/test_winlab.py` 再推——Lab 用来验 Lab 自己。
 - `test_ci_qualification::test_kill_stale_actually_reaches_a_runner_workspace_process` 在 Lab 上红（run
-  `20261024T163857Z-c46c62`：runner 工作目录下的遗留进程没被收）——第四条「非管理员 Windows 上结束进程不可靠」的独立证据
-  （与 `taskkill` 那三条同源；hosted 是管理员，看不到）。建议合成一个 issue：进程收尾在非管理员 Windows 上的统一实现。
+  `20261024T163857Z-c46c62`）。**更正（10-25）**：起初记成第四条「非管理员 Windows 上结束进程不可靠」的证据，复查后
+  不是——Lab 执行器给 pytest 设了 `TAVOTTO_CI_STATE_ROOT`，用例没固定这个变量，把传入的 root 当成另一个根，就不收
+  runner 工作目录下的进程；本机设同一变量同样红。用例不封闭（自托管 `_lab-qualification` 也设这个变量），与 taskkill
+  无关，修复在 `fix/win-nonadmin-process-kill`。「结束进程不可靠」的独立证据是前三处。
+
+## H. 桌面宿主 L2（`test desktop-hosts --mode …`，2026-10-25）
+
+固定版本安装包取自 winget-pkgs 清单（URL + SHA-256），Lab 上下载后核散列、核 Authenticode；非管理员 currentUser 静默装，
+`window_probe.py` 在会话 1 里等主窗口（可见、未 cloaked、有标题、属于安装目录进程、稳定 5 s），截图后结束进程、卸载。
+海外 CDN 经 DMIT（用户 10-25 授权，一次一个），国内 CDN 直连。
+
+| 宿主 | 版本 | 下载线路 | 签名 | 主窗口 | L2 | L3+ | run |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| VS Code | 1.141.2 | 直连 | Valid · Microsoft Corporation | 「Visual Studio Code」8.4 s | PASS | BLOCKED（Copilot 账户） | `20261024T173951Z-271d2a` |
+| TRAE CN | 3.4.4 | 直连 | Valid · 北京引力弹弓科技有限公司 | 「TRAE CN」20.0 s | PASS | BLOCKED（TRAE 账户） | `20261024T174527Z-78c4b7` |
+| WorkBuddy 桌面 | 5.8.3 | 直连 | Valid · Tencent Technology (Shenzhen) | 「WorkBuddy」7.2 s | PASS | BLOCKED（腾讯账户；其 CLI 已 L5，见 G4） | `20261024T174804Z-f024cc` |
+| Cursor | 3.20.14 | DMIT Trojan | Valid · Anysphere, Inc. | 「Cursor Agents」35.4 s | PASS | BLOCKED（Cursor 账户） | `20261024T175152Z-c549e6` |
+| ZCode | 3.14.1 | DMIT Trojan | Valid · 北京智谱华章科技股份有限公司 | 「ZCode」8.0 s | PASS | BLOCKED（Z.AI 账户） | `20261024T181616Z-2c6296` |
+| Claude Desktop | 2.42304.2 | DMIT Trojan | Valid · Anthropic, PBC | 「Claude」6.9 s（登录页） | PASS | BLOCKED（Anthropic 账户 + 地区政策） | `20261024T181003Z-e8f7d3` |
+
+六个都卸载干净、无残留进程。过程中记下的事实：ZCode（electron-builder NSIS）卸载项的 `InstallLocation` 为空、
+`DisplayIcon` 指向 `.ico`，第一次 run `20261024T175426Z-2f5c94` 因此找不到主程序判 FAIL（执行器缺陷，不是宿主问题），
+改成在图标 / 卸载器目录里找后通过。Server 2025 上没装 VC++ 2015+ 运行库（winget 记为 ZCode 的依赖），ZCode 照样起得来。
+
+**下一步（用户 10-25：下周做）**：桌面版 L3–L5 只对「底下跑 Claude Code / Codex」的路径可做——VS Code / Cursor / TRAE
+里的 Claude Code 扩展与 Codex 扩展，隔离配置接 DeepSeek，判定仍按 `mcp_recorder`；另加 CC-Switch 的 MCP 同步路径一条。
 
 ## E. 安全与仓库
 
