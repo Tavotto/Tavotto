@@ -300,6 +300,25 @@ def test_text_changes_note_is_bounded_and_covers_added_and_removed_text():
     assert "[a] " in two and "[b] " in two
 
 
+def test_renamed_from_verification_keeps_every_verified_rename():
+    """改名都已提交并验证：一条不丢（截断会让被丢掉那几条线上的画布编辑失效，Codex #1425 P2）。"""
+    checks = [
+        {
+            "id": f"plot.data.axes_0.lines_{i}",
+            "stage": "postcommit",
+            "verdict": "verified",
+            "observed": {
+                "relabeled": {"from_identity": f"l1:a{i}", "to_identity": f"l1:b{i}"},
+                "stem": "plot",
+                "gid": f"axes_0.lines_{i}",
+            },
+        }
+        for i in range(80)
+    ]
+    got = ai_figure_edit.renamed_from_verification({"figure": {"checks": checks}})
+    assert [r["gid"] for r in got] == [f"axes_0.lines_{i}" for i in range(80)]
+
+
 def test_renamed_from_verification_is_a_closed_identity_only_shape():
     check = {
         "id": "plot.data.axes_0.lines_1",

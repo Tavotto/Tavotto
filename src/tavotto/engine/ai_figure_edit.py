@@ -689,10 +689,6 @@ def _data_lines(after: dict[str, dict], before: dict[str, dict | None]) -> list[
     return out
 
 
-#: `task.renamed` 最多报多少条（一次改图里被改名的线不会很多；上限只是 DTO 的体积护栏）
-RENAMED_MAX = 64
-
-
 def renamed_from_verification(verification: dict | None) -> list[dict]:
     """从任务的验证段（`verification_summary` 的形状，历史库里也存着同一份）取出「数据没动、只是显式 label 变了」的元素，
     给 `task.renamed` 用：`[{stem, gid, from_identity, to_identity}]`，**闭集形状、只有身份摘要**（label 原文不出门，ADR 0083）。
@@ -730,9 +726,8 @@ def renamed_from_verification(verification: dict | None) -> list[dict]:
         # 验证用的运行配置引用：前端只改同配置的运行时面板（磁盘面板恒跟默认配置 = 被验证的那份）。缺席 = 无参数
         if isinstance(run_config, str) and run_config:
             item["run_config"] = run_config
+        # 不截断：每一条都是已提交、已验证的改名，漏一条那条线上的画布编辑就失效。条数受验证段本身的体积约束
         out.append(item)
-        if len(out) >= RENAMED_MAX:
-            break
     return out
 
 
