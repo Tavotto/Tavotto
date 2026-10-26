@@ -894,6 +894,14 @@ def drive(ns: argparse.Namespace) -> dict:
                 return result
             time.sleep(0.5)
             sub = cdp.evaluate(sid, SUBMIT_JS) or {}
+            if ns.kind == "native" and sub.get("via") == "enter":
+                # 网页里派发的 KeyboardEvent 不是可信事件，WorkBuddy 不认（run 20261026T170159Z-0b45c5 字留在输入框里）：
+                # 再经 CDP 发一次真实的回车
+                time.sleep(0.5)
+                if (cdp.evaluate(sid, STATE_JS) or {}).get("input_length"):
+                    _key(cdp, sid, "keyDown", "Enter", "Enter", 13, text="\r")
+                    _key(cdp, sid, "keyUp", "Enter", "Enter", 13)
+                    sub["trusted_enter"] = True
             result["submitted"] = bool(sub.get("submitted"))
             result["submitted_via"] = sub.get("via")
             prog.step("submit", result=sub)

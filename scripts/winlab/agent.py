@@ -3685,17 +3685,18 @@ def wipe_login_state(run_dir: Path) -> dict:
     """扫码登录格的收尾：删掉 run 目录里的「家」与登录用 Edge 配置，删掉凭据管理器里 WorkBuddy 的条目，再核对都不在了。"""
     work = run_dir / "work"
     left_dirs = []
+    errors = {}
     for d in (work / "wbhome", work / "edge-login"):
-        if d.exists():
-            with contextlib.suppress(OSError):
-                _rmtree_no_follow(_long_path(d))
+        err = _force_rmtree(d)
         if d.exists():
             left_dirs.append(d.name)
+            errors[d.name] = err
     removed = _delete_credentials(WORKBUDDY_CRED_FILTERS)
     left = _delete_credentials(WORKBUDDY_CRED_FILTERS)  # 第二遍还删得到 = 没删干净
     return {
         "wiped": not left_dirs and not left,
         "dirs_left": left_dirs,
+        "errors": errors,
         "credentials_removed": removed,
         "credentials_left": left,
     }
@@ -3713,13 +3714,58 @@ def _long_path(p: Path) -> Path:
     return Path(s if s.startswith(_LONG_PREFIX) else _LONG_PREFIX + s)
 
 
+def _force_rmtree(d: Path) -> str | None:
+    """删一个目录树，删不掉也不抛：先结束映像在它下面的进程（WorkBuddy 在「家」里跑的运行时不在 Job 里，
+    run 20261026T170159Z-0b45c5 的 wbhome 因此删不掉、登录态留在了盘上），再用长路径删、最多三次。返回最后的错误。"""
+    if not d.exists():
+        return None
+    if os.name == "nt":
+        import window_probe as P  # 同目录部署；进程枚举与结束的唯一出处
+
+        with contextlib.suppress(Exception):
+            P.kill_under(d)
+    err = None
+    for _ in range(3):
+        try:
+            _rmtree_no_follow(_long_path(d))
+            return None
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            err = f"{type(exc).__name__}: {exc}"[:200]
+            time.sleep(2)
+    return err if d.exists() else None
+
+
+def cmd_sweep(lab: Lab) -> dict:
+    """只做收尾：删掉所有旧 run 里的落盘 key 配置与登录目录（不跑任何任务）。正在跑的那一个不碰。"""
+    holder = read_lock(lab)
+    if holder is not None or lock_is_fresh(lab):
+        return {"result": "error", "summary": "a job is running; retry after it finishes"}
+    swept = sweep_stale_ondisk_configs(lab.runs) + sweep_stale_login_dirs(lab.runs)
+    left = [
+        str(d.relative_to(lab.runs))
+        for pat in (
+            "*/work/wbhome",
+            "*/work/edge-login",
+            "*/work/zdata/.zcode/v2/provider_config.json",
+        )
+        for d in lab.runs.glob(pat)
+    ]
+    return {
+        "result": "passed" if not left else "error",
+        "summary": f"swept {len(swept)} run(s); {len(left)} left",
+        "swept": swept,
+        "left": left[:20],
+    }
+
+
 def sweep_stale_login_dirs(runs: Path) -> list[str]:
     """被强行结束的旧 run 留下的「家」与登录用 Edge 配置：开跑前删掉。返回 run id。"""
     swept: list[str] = []
     if runs.is_dir():
         for d in [*runs.glob("*/work/wbhome"), *runs.glob("*/work/edge-login")]:
-            with contextlib.suppress(OSError):
-                _rmtree_no_follow(_long_path(d))
+            _force_rmtree(d)
             rid = d.parents[1].name
             if not d.exists() and rid not in swept:
                 swept.append(rid)
@@ -5034,6 +5080,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--mode")
     r = sub.add_parser("reports")
     r.add_argument("--id")
+    sub.add_parser("sweep")
     sh = sub.add_parser("shot")
     sh.add_argument("--id", required=True)
     sh.add_argument("--name", required=True)
@@ -5070,6 +5117,8 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
         return _emit(cmd_reports(lab, ns.id))
     if ns.verb == "shot":
         return _emit(cmd_shot(lab, ns.id, ns.name))
+    if ns.verb == "sweep":
+        return _emit(cmd_sweep(lab))
     if ns.verb == "clean":
         return _emit(cmd_clean(lab, max(0, ns.keep)))
     if ns.verb == "stop":
