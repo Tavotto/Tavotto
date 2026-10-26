@@ -276,6 +276,9 @@ jobs:
         # Windows Authenticode 与 macOS / minisign 一样都是发行硬要求。
         # SignPath 未使能时独立报错、写作业摘要并退出；不再沿用 2026-08-22
         # 的临时未签名发行例外。非发行试构建仍可产出诊断 artifact。
+        # 唯一的放行口是**按 tag 点名**的维护者豁免：仓库变量
+        # WINDOWS_UNSIGNED_WAIVER_TAG 恰好等于本次 RELEASE_TAG 时只发 warning
+        # 放行这一版；下一个版本号对不上，自动回到拦停。
         # 政策与措辞见 docs/code-signing-policy.md。
         shell: bash
         run: |
@@ -287,6 +290,14 @@ jobs:
             [ -n "${MACOS_CERTIFICATE:-}" ]   || missing+=("MACOS_CERTIFICATE")
             [ -n "${MACOS_SIGN_IDENTITY:-}" ] || missing+=("MACOS_SIGN_IDENTITY")
             [ -n "${APPLE_ID:-}" ]            || missing+=("APPLE_ID（公证）")
+          elif [ "${SIGNPATH_ENABLED_VAR:-}" != "true" ] && [ -n "${RELEASE_TAG:-}" ] \
+               && [ "${WINDOWS_UNSIGNED_WAIVER_TAG:-}" = "$RELEASE_TAG" ]; then
+            echo "::warning title=Windows 安装包未签名（维护者豁免 $RELEASE_TAG）::vars.WINDOWS_UNSIGNED_WAIVER_TAG 点名豁免本版——Windows 安装包没有 Authenticode 签名，用户首次运行会看到 SmartScreen 警告。更新包仍有 minisign 签名。"
+            {
+              echo "### ⚠️ Windows 安装包未签名——维护者豁免 \`$RELEASE_TAG\`"
+              echo
+              echo "\`vars.WINDOWS_UNSIGNED_WAIVER_TAG\` 点名豁免了这一版；下一版 tag 对不上会自动回到拦停。"
+            } >> "$GITHUB_STEP_SUMMARY"
           elif [ "${SIGNPATH_ENABLED_VAR:-}" != "true" ]; then
             # 独立失败分支：运行页 annotation 与摘要都必须说清拦停原因。
             echo "::error title=Windows 安装包未签名::vars.SIGNPATH_ENABLED 未开启——本次发行的 Windows 安装包没有 Authenticode 签名。fail-closed：拒绝继续。"
@@ -308,6 +319,7 @@ jobs:
           echo "✅ 签名门禁通过（产物签名仍须在构建后验证）"
         env:
           SIGNPATH_ENABLED_VAR: ${{ vars.SIGNPATH_ENABLED }}
+          WINDOWS_UNSIGNED_WAIVER_TAG: ${{ vars.WINDOWS_UNSIGNED_WAIVER_TAG }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.13" }
@@ -482,7 +494,9 @@ jobs:
               test -d "$pair.dSYM" || { echo "::error::缺 $pair.dSYM（split-debuginfo 没生效？）"; exit 1; }
               # dSYM 在 target/release 下是指向 deps/ 的符号链接：-L 拍平成真目录
               cp -RL "$pair.dSYM" symbols/
-              dwarfdump -u "$pair" >> symbols/UUIDS.txt
+              # 读 dSYM 自己的 UUID（与二进制同一个）：壳的二进制会被 tauri 按
+              # mainBinaryName 改名，原路径在 bundle 之后已不存在（v0.19.0 演练实测）
+              dwarfdump -u "$pair.dSYM" >> symbols/UUIDS.txt
             done
             # 空壳 dSYM（没有 DWARF）等于没存：必须真有函数
             for d in symbols/*.dSYM; do
@@ -824,7 +838,7 @@ jobs:
           Write-Host "SignPath 签名有效：$($signature.SignerCertificate.Subject)"
 
       - name: 未签名即拦停（fail-closed）
-        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true' && env.IS_RELEASE_BUILD == '1'
+        if: runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true' && env.IS_RELEASE_BUILD == '1' && vars.WINDOWS_UNSIGNED_WAIVER_TAG != env.RELEASE_TAG
         shell: pwsh
         run: throw "SIGNPATH_ENABLED 未开启：Windows 安装包没有 Authenticode 签名，fail-closed 拒绝继续"
 

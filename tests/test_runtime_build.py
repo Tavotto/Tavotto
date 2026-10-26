@@ -1417,6 +1417,40 @@ def test_unsigned_windows_release_is_fail_closed(run_release_signing_gate, enabl
     assert "已拦停" in summary and "Authenticode" in summary
 
 
+@pytest.mark.parametrize(
+    ("waiver", "tag"),
+    [("", "v0.19.0"), ("v0.18.0", "v0.19.0"), ("v0.19.0", ""), ("", "")],
+)
+def test_unsigned_waiver_must_name_this_exact_tag(run_release_signing_gate, waiver, tag):
+    """豁免只认点名的这一个 tag：空、旧版本号、读不到 RELEASE_TAG 都照样拦停。"""
+    result, summary = run_release_signing_gate(
+        SIGNPATH_ENABLED_VAR="", WINDOWS_UNSIGNED_WAIVER_TAG=waiver, RELEASE_TAG=tag
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "已拦停" in summary
+
+
+def test_unsigned_waiver_for_this_tag_passes_with_warning(run_release_signing_gate):
+    result, summary = run_release_signing_gate(
+        SIGNPATH_ENABLED_VAR="", WINDOWS_UNSIGNED_WAIVER_TAG="v0.19.0", RELEASE_TAG="v0.19.0"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "::warning" in result.stdout and "::error" not in result.stdout
+    assert "维护者豁免" in summary and "v0.19.0" in summary
+
+
+def test_unsigned_waiver_does_not_relax_updater_key(run_release_signing_gate):
+    """豁免只管 Authenticode：缺 minisign 更新包密钥照样失败。"""
+    result, _ = run_release_signing_gate(
+        SIGNPATH_ENABLED_VAR="",
+        WINDOWS_UNSIGNED_WAIVER_TAG="v0.19.0",
+        RELEASE_TAG="v0.19.0",
+        TAURI_SIGNING_PRIVATE_KEY="",
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "TAURI_SIGNING_PRIVATE_KEY" in result.stdout
+
+
 @pytest.mark.parametrize("platform", ["Windows", "macOS"])
 def test_non_release_signing_gate_allows_unsigned_trials(run_release_signing_gate, platform):
     result, summary = run_release_signing_gate(
@@ -1470,6 +1504,7 @@ def test_late_unsigned_windows_gate_only_blocks_releases():
     condition = re.search(r"(?m)^        if: (.+)$", step)
     assert condition and condition.group(1) == (
         "runner.os == 'Windows' && vars.SIGNPATH_ENABLED != 'true' && env.IS_RELEASE_BUILD == '1'"
+        " && vars.WINDOWS_UNSIGNED_WAIVER_TAG != env.RELEASE_TAG"
     )
     assert re.search(r"(?m)^        shell: pwsh$", step)
     assert re.search(r"(?m)^        run: throw ", step)
