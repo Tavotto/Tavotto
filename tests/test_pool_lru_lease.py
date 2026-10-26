@@ -52,7 +52,7 @@ def test_lru_does_not_evict_a_session_whose_caller_has_not_requested_yet(project
     workers = [pool.get(f"f{i}.py", str(project), "main") for i in range(4)]
     # 4 个调用方都握着会话、都还没发请求：谁也不许被淘汰（上限是软的，租约期满后下一次取会话再收）
     assert all(w.alive() for w in workers)
-    assert not any(w._retired for w in workers)
+    assert not any(w._evicted for w in workers)
 
 
 def test_lease_ends_at_first_request_so_the_cap_still_holds(project, monkeypatch):
@@ -68,7 +68,7 @@ def test_lease_ends_at_first_request_so_the_cap_still_holds(project, monkeypatch
         time.sleep(0.05)
     assert sum(w.alive() for w in everyone) == pool.MAX_ALIVE
     assert fourth.alive()
-    assert workers[0]._retired  # 最久未用的那条
+    assert workers[0]._evicted  # 最久未用的那条
 
 
 def test_lease_is_bounded(project, monkeypatch):
@@ -78,23 +78,24 @@ def test_lease_is_bounded(project, monkeypatch):
     first = pool.get("f0.py", str(project), "main")
     second = pool.get("f1.py", str(project), "main")
     assert second.alive()
-    assert first._retired
+    assert first._evicted
 
 
-def test_request_on_a_session_the_pool_retired_is_not_blamed_on_the_worker(project):
+def test_request_on_a_session_the_pool_evicted_is_not_blamed_on_the_worker(project):
     w = pool.get("f0.py", str(project), "main")
+    w._evicted = True  # 与 acquire 的淘汰分支同序：先置标记再 shutdown
     w.shutdown()  # 池自己收掉了它；调用方手里还是老引用
     with pytest.raises(pool.WorkerError) as caught:
         w.ensure_built()
     err = caught.value
     assert err.code == "session_dead"
-    assert err.extra.get("retired") is True
+    assert err.extra.get("evicted") is True
     assert "退出码 0" not in str(err)
 
 
-def _retired_error():
-    err = pool.WorkerError("retired", "", code="session_dead")
-    err.extra = {"retired": True}
+def _evicted_error():
+    err = pool.WorkerError("evicted", "", code="session_dead")
+    err.extra = {"evicted": True}
     return err
 
 
@@ -119,14 +120,14 @@ def _attempt_rig(monkeypatch):
     return app_mod, fetched
 
 
-def test_engine_attempt_retries_once_when_the_session_was_retired_unsent(monkeypatch):
+def test_engine_attempt_retries_once_when_the_session_was_evicted_unsent(monkeypatch):
     app_mod, fetched = _attempt_rig(monkeypatch)
     calls = []
 
     def action(worker, stem):
         calls.append(worker)
         if len(calls) == 1:
-            raise _retired_error()
+            raise _evicted_error()
         return {"ok": True}
 
     _, _, result = app_mod._engine_attempt("id", _Stub(), "S", action)
@@ -136,7 +137,7 @@ def test_engine_attempt_retries_once_when_the_session_was_retired_unsent(monkeyp
 
 def test_engine_attempt_does_not_retry_a_real_session_death(monkeypatch):
     app_mod, fetched = _attempt_rig(monkeypatch)
-    dead = pool.WorkerError("died", "", code="session_dead")  # 没有 retired 标记：真崩溃
+    dead = pool.WorkerError("died", "", code="session_dead")  # 没有 evicted 标记：真崩溃
 
     def action(worker, stem):
         raise dead
@@ -150,8 +151,47 @@ def test_engine_attempt_retries_only_once(monkeypatch):
     app_mod, fetched = _attempt_rig(monkeypatch)
 
     def action(worker, stem):
-        raise _retired_error()
+        raise _evicted_error()
 
     with pytest.raises(pool.WorkerError):
         app_mod._engine_attempt("id", _Stub(), "S", action)
     assert len(fetched) == 1
+
+
+def _queued_request_error(project, kill):
+    """会话被 `kill(w)` 收掉后，排在锁后面的老引用请求拿到的错误。"""
+    w = pool.get("f0.py", str(project), "main")
+    kill(w)
+    with pytest.raises(pool.WorkerError) as caught:
+        w.ensure_built()
+    return caught.value
+
+
+def test_user_cancel_is_not_marked_evicted_and_not_retried(project, monkeypatch):
+    err = _queued_request_error(project, lambda w: w.force_kill())  # 用户停止脚本
+    assert err.extra.get("evicted") is None
+    app_mod, fetched = _attempt_rig(monkeypatch)
+    calls = []
+
+    def action(worker, stem):
+        calls.append(worker)
+        raise err
+
+    with pytest.raises(pool.WorkerError):
+        app_mod._engine_attempt("id", _Stub(), "S", action)
+    assert len(calls) == 1 and not fetched  # 只执行一次、没有重新取会话
+
+
+def test_non_eviction_shutdown_is_not_marked_evicted_and_not_retried(project, monkeypatch):
+    err = _queued_request_error(project, lambda w: w.shutdown())  # 失效重建等非淘汰关停
+    assert err.extra.get("evicted") is None
+    app_mod, fetched = _attempt_rig(monkeypatch)
+    calls = []
+
+    def action(worker, stem):
+        calls.append(worker)
+        raise err
+
+    with pytest.raises(pool.WorkerError):
+        app_mod._engine_attempt("id", _Stub(), "S", action)
+    assert len(calls) == 1 and not fetched

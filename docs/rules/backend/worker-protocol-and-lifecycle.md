@@ -68,9 +68,10 @@ order: 60
 - **LRU 淘汰不收「刚取到、还没发请求」的会话（Python 池）**：`acquire` 给会话打 `ACQUIRE_LEASE`（30 秒）租约，
   调用方第一条请求拿到 `w.lock` 即清零；租约内 `MAX_ALIVE` 淘汰跳过它（上限因此是软的）。否则淘汰线程的优雅
   `shutdown()` 与该调用方的首条请求在 `w.lock` 上竞争，淘汰一赢，worker 按 shutdown 正常退出（退出码恒为 0），
-  调用方被读成「自己以退出码 0 结束了」——4 张图同时重渲、`MAX_ALIVE=3` 时稳定丢一张。池自己收掉会话时先置 `_retired`；
-  排在后面的老引用请求认出它，一个字节不写，回 `session_dead` + `extra["retired"]`（不解释退出码），
-  `app._engine_attempt` 只对这一种重新取会话重试一次（真崩溃不重试）。看护 `tests/test_pool_lru_lease.py`。
+  调用方被读成「自己以退出码 0 结束了」——4 张图同时重渲、`MAX_ALIVE=3` 时稳定丢一张。**只有 LRU 淘汰**摘除会话时先置 `_evicted`；
+  排在后面的老引用请求认出它，一个字节不写，回 `session_dead` + `extra["evicted"]`（不解释退出码），
+  `app._engine_attempt` 只对这一种重新取会话重试一次。用户取消（`force_kill`）/ 超时 / 看门狗 / 失效重建 / 切项目 / 整体关停
+  都不置、不重试——重试会把用户刚停掉的脚本又跑起来；真崩溃同样不重试。看护 `tests/test_pool_lru_lease.py`。
 - **管道 EOF 先问死因，再说话（#435）**。EOF 之后两条控制面都先给子进程
   `EXIT_GRACE`（1.5 秒，Python 与 Rust 同一个数——两侧各自钉在 `tests/golden/exit_grace_ms.txt`，
   不拿正则扫对方的源码，没有解析器就分不清注释 / 字符串 / 原始字符串）自己退出，拿到退出状态才 kill

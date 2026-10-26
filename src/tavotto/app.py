@@ -7162,10 +7162,11 @@ def _engine_attempt(
                         else None
                     ),
                 ) from exc
-            # 池在我们取到会话之后、请求发出之前把它收掉了（`extra["retired"]`，一个字节都没写出去，
-            # 什么都没执行过）：重新取会话再来一次是安全的，也只来这一次——不是「崩了就重试」
-            retired = isinstance(exc, engine_pool.WorkerError) and bool(exc.extra.get("retired"))
-            if attempt or not (retired or _switched_to_project_env(worker, exc)):
+            # **只有 LRU 淘汰**：池在我们取到会话之后、请求发出之前为腾位置把它收掉了（`extra["evicted"]`，
+            # 一个字节都没写出去，什么都没执行过）：重新取会话再来一次是安全的，也只来这一次。
+            # 用户取消 / 超时 / 失效重建不带这个键、不在此重试（否则会把用户刚停掉的脚本又跑起来）
+            evicted = isinstance(exc, engine_pool.WorkerError) and bool(exc.extra.get("evicted"))
+            if attempt or not (evicted or _switched_to_project_env(worker, exc)):
                 raise
         worker, stem = _engine_worker(
             rel_id,

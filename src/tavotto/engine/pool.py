@@ -2576,10 +2576,13 @@ class EngineWorker:
     #: 消除的竞态。workerd 那侧的会话本来就用逻辑标记（`alive() → not _dead`），
     #: 两条控制面在「还活着吗」这件事上必须给出同一个答案。
     _dead = False
-    #: **池自己**正在 / 已经把这条会话收掉（优雅关停、LRU 淘汰、失效重建）。与 `_dead` 的差别：
-    #: 它在 `shutdown` 命令发出**之前**就置上，所以排在 `w.lock` 后面的老引用持有者拿到锁时
-    #: 能认出「不是 worker 自己死的」，不去解释一个退出码 0（见 `_request_observed`）。
-    _retired = False
+    #: **只属于 LRU 淘汰**（`acquire`）：池因 `MAX_ALIVE` 把这条会话摘掉并起线程优雅关停。它在摘除时、
+    #: `shutdown` 命令发出**之前**就置上，所以排在 `w.lock` 后面的老引用持有者拿到锁时能认出「池为了腾位置
+    #: 收的、什么都没执行过」，一个字节不写、带 `extra["evicted"]`，调用方换一条会话重试是安全的
+    #: （见 `_request_observed`）。与 `_dead`（worker 逻辑死亡）的差别：这是池的主动行为；与其余关停路径
+    #: （`force_kill` 的取消 / 超时 / 看门狗、失效重建、切项目、整体关停）的差别：那些**不**置它——用户
+    #: 取消的脚本、超时的脚本绝不能被自动重取会话再跑一遍。
+    _evicted = False
     #: `acquire` 刚交出去、调用方还没发第一条请求时有效的租约截止（`time.monotonic()`）；见 `ACQUIRE_LEASE`。
     _lease_until = 0.0
     #: 脚本 `input()` 怎么答（ADR 0099 §五）：None = 池会话（记住的答案 / 问界面 / 立即报错）；
@@ -2863,18 +2866,18 @@ class EngineWorker:
             # 「排队」全表现为在这把锁上等——所以它就是 queue_wait 的量法。
             t_lock = time.perf_counter()
             self._lease_until = 0.0  # 调用方的请求已经到手：租约（`ACQUIRE_LEASE`）完成使命
-            if self._retired and obj.get("cmd") != "shutdown":
-                # 池在这个调用方取到会话之后、拿到锁之前把它收掉了（失效重建 / 淘汰 / 关停）：
+            if self._evicted and obj.get("cmd") != "shutdown":
+                # 池在这个调用方取到会话之后、拿到锁之前把它 LRU 淘汰了：
                 # 请求一个字节都没写出去。这不是 worker 自己退出——**别去解释它的退出码**
                 # （优雅关停的退出码恒为 0，曾被读成「渲染进程自己以退出码 0 结束了」）。
-                # 带 `extra["retired"]`，调用方重新取会话再来一次是安全的（什么都没执行过）。
+                # 带 `extra["evicted"]`，调用方重新取会话再来一次是安全的（什么都没执行过）。
                 err = WorkerError(
-                    "这条渲染会话刚被收掉（同时存活的会话超出上限，或环境 / 设置刚变过），"
+                    "这条渲染会话刚被收掉（同时存活的会话超出上限），"
                     "这一步还没有执行；重新取会话再来一次即可。",
                     "",
                     code="session_dead",
                 )
-                err.extra = {"retired": True}
+                err.extra = {"evicted": True}
                 raise err
             # worker 在两次请求之间死掉（被杀、OOM）是**同一个故障**，不许按时间窗落进不同的分类
             # （QA LONG-03-B1）：拿锁时已看得见它死了、写管道时撞上 BrokenPipe、写进去之后读到 EOF，
@@ -3142,8 +3145,6 @@ class EngineWorker:
         全程**不碰模块级 `_lock`**——等子进程退出时把全局锁攥在手里，
         等于让一个卡住的脚本冻结整个池。
         """
-        # 先于 shutdown 命令置上（命令要等 `w.lock`，排在前面的老引用持有者会先看到它）
-        self._retired = True
         if graceful and self.alive():
             try:
                 self.request({"cmd": "shutdown"}, SHUTDOWN_TIMEOUT)
@@ -4658,6 +4659,7 @@ def acquire(
                     if victim is not w and not _is_fence_holder(victim) and not _is_leased(victim):
                         LOG.info("worker LRU 淘汰: %s", victim.script_name)
                         _workers.pop(vkey, None)
+                        victim._evicted = True  # 先于 shutdown 命令（见类属性注释）
                         threading.Thread(target=victim.shutdown, daemon=True).start()
         break
     if created:  # 出锁再清：prune 要遍历磁盘，不能占着 _lock
