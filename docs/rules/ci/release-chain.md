@@ -52,3 +52,9 @@ order: 140
   `release.yml` 的 `publish=false` 演练——打 tag 前必须先跑。
 - 遥测部署顺序：先发代理 → 验 PostHog 收得到 → 配采集器 → 再发客户端
   （反过来新事件被静默 400 而且全绿）。发行量采集器失败必须让 workflow 红。
+- **不带版本号的安装包别名**（README「下载最新版」直链 `releases/latest/download/<固定名>`）：
+  `release-publish.yml::github_release` 在挂载前，按产物清单的 role 把三份安装包 cp 成
+  `Tavotto-macOS.dmg` / `Tavotto-macOS-Intel.dmg` / `Tavotto-Windows-Setup.exe`，放 `assets/alias/`，
+  由 `files` 的 `assets/alias/*` 额外挂上。**带版本号的原件、清单、updater 资产不动**；别名**不进
+  `dist/`、不进 `artifact-manifest.json`**，只把哈希行追加进 `SHA256SUMS.txt`。看护：
+  `tests/test_release_workflow_contract.py` 里 `*unversioned_aliases*` 与 `*alias_step_copies*`。
