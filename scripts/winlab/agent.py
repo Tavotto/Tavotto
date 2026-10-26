@@ -64,7 +64,9 @@ LIVE_HOST_IDS = ("claude-code", "codex-cli", "codebuddy", "minimax-code", "dsh")
 #: `desktop-hosts --mode`：桌面宿主 L2（固定版本见 DESKTOP_HOSTS）
 DESKTOP_HOST_IDS = ("vscode", "cursor", "trae-cn", "workbuddy", "zcode", "claude-desktop")
 #: `desktop-live --mode`：桌面宿主 + 其中的 AI 扩展，到 L3–L5（宿主 × 扩展的闭集见 DESKTOP_LIVE）
-DESKTOP_LIVE_MODES = ("vscode-claude", "cursor-claude", "trae-claude")
+DESKTOP_LIVE_MODES = ("vscode-claude", "cursor-claude", "trae-claude", "zcode-native")
+#: 宿主只能从明文配置读 key 的格：用落盘专用 key（winlab.py ONDISK_MODES 同一份，测试核对），跑完 wipe_ondisk_key
+DESKTOP_LIVE_ONDISK_MODES = ("zcode-native",)
 #: 依赖安装配方的版本：改了 prepare 的安装步骤就加一，已有 venv 随之重装（散列戳里含它）。
 DEPS_RECIPE = "2"
 
@@ -3263,16 +3265,19 @@ def run_desktop_hosts_task(
 # ----------------------------------------------------------------------------- 桌面宿主 L3–L5（desktop-live）
 @dataclass(frozen=True)
 class DesktopLive:
-    """宿主 × 扩展的一格：宿主见 DESKTOP_HOSTS，扩展见 DESKTOP_EXTENSIONS。"""
+    """宿主 × 扩展的一格：宿主见 DESKTOP_HOSTS，扩展见 DESKTOP_EXTENSIONS。`native` = 不装扩展，
+    用宿主自己的 Agent（ZCode：自定义 Anthropic 兼容接口 + 项目级 MCP 配置）。"""
 
     host: str
-    extension: str
+    extension: str = ""
+    native: bool = False
 
 
 DESKTOP_LIVE: dict[str, DesktopLive] = {
     "vscode-claude": DesktopLive("vscode", "anthropic.claude-code"),
     "cursor-claude": DesktopLive("cursor", "anthropic.claude-code"),
     "trae-claude": DesktopLive("trae-cn", "anthropic.claude-code"),
+    "zcode-native": DesktopLive("zcode", native=True),
 }
 assert tuple(DESKTOP_LIVE) == DESKTOP_LIVE_MODES
 #: 宿主装扩展时自报「版本不兼容」：这是宿主限制（not_supported），不是 Tavotto 的故障
@@ -3284,6 +3289,21 @@ DRIVER_QUIET_S = 45
 DRIVER_MAX_S = 1200
 DRIVER_FIRST_TRAFFIC_S = 300
 PANEL_TAIL_CHARS = 2000
+
+
+def _grep_tail(folder: Path, pat: re.Pattern, n: int) -> list[str]:
+    """诊断：目录里所有日志中匹配的行，取最后 n 行（每行截 300 字）。"""
+    hits: list[str] = []
+    if folder.is_dir():
+        for f in sorted(folder.rglob("*")):
+            if f.is_file():
+                with contextlib.suppress(OSError):
+                    hits += [
+                        line[:300]
+                        for line in f.read_text(encoding="utf-8", errors="replace").splitlines()
+                        if pat.search(line)
+                    ]
+    return hits[-n:]
 
 
 def _tail_text(path: Path, n: int) -> str:
@@ -3384,6 +3404,153 @@ DESKTOP_CLAUDE_PERMISSIONS = {
 }
 
 
+#: ZCode 原生 Agent：事先定好权限，面板里不留没人点的弹窗。ZCode 没有 Claude Code 那样按工具前缀放行的写法，
+#: 用 `yolo`（只在这个隔离的数据目录里）+ 明确禁用会执行 / 写入 / 上网的内置工具；名称取自 ZCode CLI 文档的工具名
+ZCODE_DISALLOWED_TOOLS = (
+    "Bash",
+    "PowerShell",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "NotebookEdit",
+    "WebFetch",
+    "WebSearch",
+    "Task",
+)
+ZCODE_PROVIDER_ID = "tavotto-lab-deepseek"
+
+
+def tavotto_tool_names(server_dir: Path) -> list[str]:
+    """MCP 服务端登记的工具名（`HANDLERS` 的键）——ZCode 的 allowedTools 只认完整工具名，不认前缀。
+    从 Lab 仓库里的服务端源码现读，不在这里抄一份会漂移的清单。"""
+    src = (server_dir / "tavotto_mcp" / "server.py").read_text(encoding="utf-8")
+    m = re.search(r"^HANDLERS = \{(.*?)^\}", src, re.S | re.M)
+    return re.findall(r'^\s*"(tavotto_[a-z_]+)":', m.group(1), re.M) if m else []
+
+
+def zcode_isolated_config(
+    zdata: Path,
+    proj: Path,
+    mcp_cmd: list[str],
+    mcp_env: dict,
+    model_conf: dict,
+    tool_names: list[str] | None = None,
+) -> Path:
+    """ZCode 的隔离配置（ZCODE_DATA_BASE_DIR=zdata）：自定义 Anthropic 兼容接口 + tavotto MCP（项目级与用户级各一份）。
+    **provider_config.json 里有明文 key**（落盘例外，见 docs/rules/ci/windows-lab.md）；返回它的路径，跑完由
+    wipe_ondisk_key 删除。"""
+    model = model_conf.get("model") or DEFAULT_HOST_MODEL
+    pc = zdata / ".zcode" / "v2" / "provider_config.json"
+    pc.parent.mkdir(parents=True, exist_ok=True)
+    provider = {
+        "schemaVersion": 1,
+        "config": {
+            "providerConfigRules": {
+                "providerRules": [
+                    {
+                        "providerId": ZCODE_PROVIDER_ID,
+                        "providerName": "DeepSeek (Tavotto Lab)",
+                        "config": {
+                            "group": "standard-personal",
+                            "access": {"type": "api-key", "apiKey": model_conf["api_key"]},
+                            # ZCode 在 baseUrl 后面接 /messages；DeepSeek 的 Anthropic 兼容入口是 …/anthropic/v1/messages
+                            "api": {
+                                "type": "anthropic-messages",
+                                "baseUrl": model_conf["base_url"].rstrip("/") + "/v1",
+                            },
+                            "personalModelIds": [model],
+                        },
+                    }
+                ]
+            },
+            "modelConfigRules": {"providerModelRules": [], "manualProviderModelRules": []},
+            "defaultModelSelection": {"providerId": ZCODE_PROVIDER_ID, "modelId": model},
+        },
+    }
+    pc.write_text(json.dumps(provider, indent=2), encoding="utf-8")
+    run_conf = {
+        "features": {"mcp": True},
+        "mcp": {
+            "servers": {
+                "tavotto": {
+                    "type": "stdio",
+                    "command": mcp_cmd[0],
+                    "args": mcp_cmd[1:],
+                    "env": mcp_env,
+                    "enabled": True,
+                    "timeoutMs": 120000,
+                }
+            }
+        },
+        # 只放行 tavotto 自己的工具（完整名，run 20261026T154420Z-ca5927：配置里的 yolo 在桌面版不生效，
+        # health 弹了权限框）；会执行 / 写入 / 上网的明确禁用
+        "permission": {
+            "mode": "yolo",
+            "allowedTools": [f"mcp__tavotto__{n}" for n in tool_names or []],
+            "disallowedTools": list(ZCODE_DISALLOWED_TOOLS),
+        },
+    }
+    # 三处各放一份：项目目录、用户级（数据目录下的 cli/）、以及「非项目对话」的默认工作目录
+    # `<数据目录>/.zcode/workspace/default`——桌面版不开文件夹时对话就在那里，项目配置从工作目录发现；
+    # 只写前两处时 MCP 与权限都没生效（run 20261026T153350Z-c4c8f7：工具列表里没有 tavotto、Bash 弹了权限框）
+    for f in (
+        proj / ".zcode" / "config.json",
+        zdata / ".zcode" / "cli" / "config.json",
+        zdata / ".zcode" / "workspace" / "default" / ".zcode" / "config.json",
+    ):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(run_conf, indent=2), encoding="utf-8")
+    return pc
+
+
+#: ZCode 自己的应用数据目录（Electron userData 等）：key 可能被它另存一份，跑完一并核对
+def _zcode_app_dirs(env: dict) -> list[Path]:
+    out = []
+    for var in ("APPDATA", "LOCALAPPDATA"):
+        base = env.get(var) or os.environ.get(var)
+        if base and Path(base).is_dir():
+            out += [p for p in Path(base).iterdir() if p.name.lower().startswith("zcode")]
+    return out
+
+
+def _files_containing(
+    roots: list[Path], needle: bytes, max_bytes: int = 64 * 1024**2
+) -> list[Path]:
+    hits = []
+    for root in roots:
+        if not root.exists():
+            continue
+        for f in [root] if root.is_file() else root.rglob("*"):
+            with contextlib.suppress(OSError):
+                if f.is_file() and not f.is_symlink() and f.stat().st_size <= max_bytes:
+                    if needle in f.read_bytes():
+                        hits.append(f)
+    return hits
+
+
+def wipe_ondisk_key(run_dir: Path, env: dict, key: str) -> dict:
+    """落盘例外的收尾：删掉含 key 的配置，抹掉 run 目录里其它出现，再扫 run 目录与 ZCode 应用数据目录核对**一处都没有**。
+    应用数据目录里发现的直接删掉那个文件后再扫。返回 {"wiped": bool, "residual": [相对 / 应用目录名]}。"""
+    needle = key.encode("utf-8")
+    zdata = run_dir / "work" / "zdata"
+    pc = zdata / ".zcode" / "v2" / "provider_config.json"
+    with contextlib.suppress(OSError):
+        pc.unlink()
+    _scrub(run_dir, key)
+    app_dirs = _zcode_app_dirs(env)
+    for f in _files_containing(app_dirs, needle):
+        with contextlib.suppress(OSError):
+            f.unlink()
+    left = _files_containing([run_dir, *app_dirs], needle)
+    return {
+        "wiped": not left,
+        "residual": [str(p.relative_to(run_dir)) if run_dir in p.parents else p.name for p in left][
+            :10
+        ],
+        "checked_app_dirs": [p.name for p in app_dirs],
+    }
+
+
 def claude_isolated_config(cfg: Path, proj: Path) -> None:
     """隔离的 CLAUDE_CONFIG_DIR：预先放行 mcp__tavotto（只这一个服务器，不是放开全部），跳过首次引导，信任项目目录。
     `claude mcp add` 已经在这里写好 .claude.json 的 mcpServers，这里只合并其它键。"""
@@ -3416,6 +3583,7 @@ def driver_argv(
     out_dir: Path,
     label: str,
     open_uri: str = "none",
+    kind: str = "vscode",
 ) -> list[str]:
     """交互会话里跑驱动器的 argv（登记任务的固定形状；没有任何透传）。"""
     return [
@@ -3448,6 +3616,8 @@ def driver_argv(
         str(DRIVER_FIRST_TRAFFIC_S),
         "--open-uri",
         open_uri,
+        "--kind",
+        kind,
     ]
 
 
@@ -3456,11 +3626,14 @@ def run_desktop_live_task(
 ) -> dict:
     cell = DESKTOP_LIVE[mode]
     host = DESKTOP_HOSTS[cell.host]
-    ext = DESKTOP_EXTENSIONS[cell.extension]
+    ext = DESKTOP_EXTENSIONS[cell.extension] if cell.extension else None
     levels = {"L2": "not_tested", "L3": "not_run", "L4": "not_run", "L5": "not_run"}
     base: dict = {
         "host": {"id": host.id, "name": host.name, "pinned_version": host.version},
-        "extension": {"id": ext.id, "pinned_version": ext.version, "sha256": ext.sha256},
+        "extension": {"id": ext.id, "pinned_version": ext.version, "sha256": ext.sha256}
+        if ext
+        else None,
+        "native_agent": cell.native,
         "model": {
             "provider": model_conf.get("provider"),
             "model": model_conf.get("model")
@@ -3480,9 +3653,9 @@ def run_desktop_live_task(
     if setup is None:
         res = "error" if "sha256_mismatch" in dl else "environment_unavailable"
         return {**base, "result": res, "summary": dl.get("unavailable", "host installer rejected")}
-    vsix, xl = fetch_extension(lab, ext)
+    vsix, xl = fetch_extension(lab, ext) if ext else (None, {"skipped": "native agent"})
     base["download"]["extension"] = xl
-    if vsix is None:
+    if ext and vsix is None:
         if "sha256_mismatch" in xl:
             return {
                 **base,
@@ -3528,7 +3701,14 @@ def run_desktop_live_task(
         base["uninstall"] = uninstall_desktop_host(host, work, henv)
         if ext_dir.exists():
             _rmtree_no_follow(ext_dir)
+        if mode in DESKTOP_LIVE_ONDISK_MODES:
+            base["ondisk_key"] = wipe_ondisk_key(run_dir, henv, model_conf["api_key"])
     out["uninstall"] = base["uninstall"]
+    if "ondisk_key" in base:
+        out["ondisk_key"] = base["ondisk_key"]
+        if not base["ondisk_key"]["wiped"]:
+            out["result"] = "error"  # 落盘例外的前提是跑完不留：留下了就不算这次跑通
+            out["summary"] = str(out.get("summary", "")) + " (on-disk key NOT fully wiped)"
     if not base["uninstall"]["ok"]:
         out["summary"] = str(out.get("summary", "")) + _cleanup_note(base)
         if out.get("result") == "passed":
@@ -3547,6 +3727,73 @@ def host_cli(root: Path) -> Path | None:
     return None
 
 
+def _install_extension(env, host, ext, vsix, inst, ext_dir, work, ev, profile, base, model_conf):
+    """VS Code 系宿主：用宿主自带的命令行入口把固定版本的扩展装进 run 目录。
+    返回 (结论或 None, 扩展随包的 claude.exe)。"""
+    levels = base["levels"]
+    key = model_conf["api_key"]  # noqa: F841 — 与正文同名，日志抹密钥用
+
+    def body():
+        code_cmd = host_cli(Path(inst["root"]))
+        if code_cmd is None:
+            return {
+                **base,
+                "result": "error",
+                "summary": f"{host.name}: no command-line launcher (bin\\*.cmd) under the install dir",
+            }
+        (profile / "data" / "User").mkdir(parents=True, exist_ok=True)
+        (profile / "data" / "User" / "settings.json").write_text(
+            json.dumps(vscode_user_settings(), indent=2), encoding="utf-8"
+        )
+        ext_dir.mkdir(parents=True, exist_ok=True)
+        install_args = [
+            str(code_cmd),
+            "--install-extension",
+            str(vsix),
+            "--force",
+            f"--extensions-dir={ext_dir}",
+            f"--user-data-dir={profile / 'data'}",
+        ]
+        step = _run_logged(install_args, work, env, ev / "ext-install", 600)
+        log_text = ""
+        for f in ev.glob("ext-install.*.log"):
+            log_text += f.read_text(encoding="utf-8", errors="replace")
+        found = sorted(ext_dir.glob(f"{ext.id}-{ext.version}*")) if ext_dir.is_dir() else []
+        installed = found[0] if found else ext_dir / ext.dir_name
+        base["extension"]["install_log_tail"] = log_text.replace(
+            key_placeholder(model_conf), "<redacted>"
+        )[-1500:]
+        base["extension"]["extensions_dir_listing"] = sorted(p.name for p in ext_dir.iterdir())[:20]
+        claude_exe = installed / "resources" / "native-binary" / "claude.exe"
+        base["extension"]["install_exit_code"] = step.get("exit_code")
+        if not installed.is_dir() or not claude_exe.is_file():
+            if EXT_NOT_COMPATIBLE_RE.search(log_text):
+                levels.update(
+                    L2="passed", L3="not_supported", L4="not_supported", L5="not_supported"
+                )
+                return {
+                    **base,
+                    "result": "skipped",
+                    "summary": f"{host.name} {host.version} refused extension {ext.id} {ext.version} as incompatible "
+                    "(host limitation, not a Tavotto failure; see evidence/desktop-live/ext-install.*.log)",
+                    "not_supported_reason": "host rejected the extension as incompatible",
+                }
+            levels["L2"] = "passed"
+            return {
+                **base,
+                "result": "failed",
+                "summary": f"extension {ext.id} did not install (exit {step.get('exit_code')})",
+            }
+        return None
+
+    early = body()
+    claude_exe = None
+    found = sorted(ext_dir.glob(f"{ext.id}-{ext.version}*")) if ext_dir.is_dir() else []
+    installed = found[0] if found else ext_dir / ext.dir_name
+    claude_exe = installed / "resources" / "native-binary" / "claude.exe"
+    return early, claude_exe
+
+
 def _desktop_live_body(
     lab, run_id, run_dir, env, model_conf, cell, host, ext, vsix, inst, ext_dir, base
 ) -> dict:
@@ -3555,55 +3802,15 @@ def _desktop_live_body(
     work = run_dir / "work"
     ev = run_dir / "evidence" / "desktop-live"
     key = model_conf["api_key"]
-    code_cmd = host_cli(Path(inst["root"]))
-    if code_cmd is None:
-        return {
-            **base,
-            "result": "error",
-            "summary": f"{host.name}: no command-line launcher (bin\\*.cmd) under the install dir",
-        }
     profile = work / "profile"
-    (profile / "data" / "User").mkdir(parents=True, exist_ok=True)
-    (profile / "data" / "User" / "settings.json").write_text(
-        json.dumps(vscode_user_settings(), indent=2), encoding="utf-8"
-    )
-    ext_dir.mkdir(parents=True, exist_ok=True)
-    install_args = [
-        str(code_cmd),
-        "--install-extension",
-        str(vsix),
-        "--force",
-        f"--extensions-dir={ext_dir}",
-        f"--user-data-dir={profile / 'data'}",
-    ]
-    step = _run_logged(install_args, work, env, ev / "ext-install", 600)
-    log_text = ""
-    for f in ev.glob("ext-install.*.log"):
-        log_text += f.read_text(encoding="utf-8", errors="replace")
-    found = sorted(ext_dir.glob(f"{ext.id}-{ext.version}*")) if ext_dir.is_dir() else []
-    installed = found[0] if found else ext_dir / ext.dir_name
-    base["extension"]["install_log_tail"] = log_text.replace(
-        key_placeholder(model_conf), "<redacted>"
-    )[-1500:]
-    base["extension"]["extensions_dir_listing"] = sorted(p.name for p in ext_dir.iterdir())[:20]
-    claude_exe = installed / "resources" / "native-binary" / "claude.exe"
-    base["extension"]["install_exit_code"] = step.get("exit_code")
-    if not installed.is_dir() or not claude_exe.is_file():
-        if EXT_NOT_COMPATIBLE_RE.search(log_text):
-            levels.update(L2="passed", L3="not_supported", L4="not_supported", L5="not_supported")
-            return {
-                **base,
-                "result": "skipped",
-                "summary": f"{host.name} {host.version} refused extension {ext.id} {ext.version} as incompatible "
-                "(host limitation, not a Tavotto failure; see evidence/desktop-live/ext-install.*.log)",
-                "not_supported_reason": "host rejected the extension as incompatible",
-            }
-        levels["L2"] = "passed"
-        return {
-            **base,
-            "result": "failed",
-            "summary": f"extension {ext.id} did not install (exit {step.get('exit_code')})",
-        }
+    claude_exe = None
+    if not cell.native:
+        early, claude_exe = _install_extension(
+            env, host, ext, vsix, inst, ext_dir, work, ev, profile, base, model_conf
+        )
+        if early is not None:
+            return early
+    agent_label = ext.id if ext else f"{host.name} native agent"
     proj, seeded = _seed_live_project(py, run_dir, env, ev)
     if not seeded:
         return {**base, "result": "error", "summary": "seeding the figure script failed"}
@@ -3620,22 +3827,34 @@ def _desktop_live_body(
         str(lab.repo / "codex-plugin" / "mcp" / "server.py"),
     ]
     mcp_env = {"TAVOTTO_MCP_ROOTS": str(proj), "TAVOTTO_NO_TELEMETRY": "1"}
-    cfg = work / "claude-config"
-    cfg.mkdir(parents=True, exist_ok=True)
-    add = [str(claude_exe), "mcp", "add", "tavotto", "--scope", "user"]
-    for k, v in mcp_env.items():
-        add += ["-e", f"{k}={v}"]
-    _run_logged(
-        [*add, "--", *mcp_cmd],
-        proj,
-        {**env, "CLAUDE_CONFIG_DIR": str(cfg)},
-        ev / "mcp-add",
-        120,
-    )
-    claude_isolated_config(cfg, proj)
-    # 进程环境：隔离配置目录 + 国内 Anthropic 兼容接口。密钥那一项只走命名管道，不进 request.json
-    gui_env = dict(env, CLAUDE_CONFIG_DIR=str(cfg), **_host_model_env(model_conf))
-    public_env, secret_env = split_secret_env(gui_env, [key])
+    zdata = work / "zdata"
+    if cell.native:
+        # ZCode 只从明文 provider_config.json 读 key（用户 2026-10-26 同意的落盘例外，专用限额 key）：
+        # 只写本次 run 的 ZCODE_DATA_BASE_DIR，跑完 wipe_ondisk_key 删除并核对无残留
+        names = tavotto_tool_names(lab.repo / "codex-plugin" / "mcp")
+        if not names:
+            return {**base, "result": "error", "summary": "could not read tavotto MCP tool names"}
+        zcode_isolated_config(zdata, proj, mcp_cmd, mcp_env, model_conf, names)
+        # 日志进证据目录（落证前同样抹 key）：MCP 没连上时看它的诊断
+        gui_env = dict(env, ZCODE_DATA_BASE_DIR=str(zdata), ZCODE_LOG_DIR=str(ev / "zcode-logs"))
+        public_env, secret_env = gui_env, None
+    else:
+        cfg = work / "claude-config"
+        cfg.mkdir(parents=True, exist_ok=True)
+        add = [str(claude_exe), "mcp", "add", "tavotto", "--scope", "user"]
+        for k, v in mcp_env.items():
+            add += ["-e", f"{k}={v}"]
+        _run_logged(
+            [*add, "--", *mcp_cmd],
+            proj,
+            {**env, "CLAUDE_CONFIG_DIR": str(cfg)},
+            ev / "mcp-add",
+            120,
+        )
+        claude_isolated_config(cfg, proj)
+        # 进程环境：隔离配置目录 + 国内 Anthropic 兼容接口。密钥那一项只走命名管道，不进 request.json
+        gui_env = dict(env, CLAUDE_CONFIG_DIR=str(cfg), **_host_model_env(model_conf))
+        public_env, secret_env = split_secret_env(gui_env, [key])
     driver = Path(__file__).resolve().parent / "desktop_driver.py"
 
     def one_round(n: int, prompt: str) -> dict:
@@ -3653,7 +3872,10 @@ def _desktop_live_body(
             rec_log=rec_log,
             out_dir=ev,
             label=f"round{n}",
-            open_uri=f"{host.url_scheme}://{ext.id}/open" if host.url_scheme else "none",
+            open_uri=f"{host.url_scheme}://{ext.id}/open"
+            if host.url_scheme and not cell.native
+            else "none",
+            kind="native" if cell.native else "vscode",
         )
         step = run_in_gui(
             lab,
@@ -3683,7 +3905,8 @@ def _desktop_live_body(
             "log_tail": tail.replace(key, "<redacted>"),
         }
 
-    r1 = one_round(1, LIVE_SESSION_1)
+    lead = f"The project folder is {proj}. " if cell.native else ""
+    r1 = one_round(1, lead + LIVE_SESSION_1)
     if r1["step"].get("gui") == "no_interactive_session":
         return {
             **base,
@@ -3707,7 +3930,9 @@ def _desktop_live_body(
     journal_ok = journal_has_edits(data_dir, sid)
     r2: dict = {"step": {"skipped": "no session id from session 1"}, "driver": {}}
     if sid:
-        r2 = one_round(2, LIVE_SESSION_2.format(sid=sid))  # 全新的 VS Code 进程，只拿 session_id
+        r2 = one_round(
+            2, lead + LIVE_SESSION_2.format(sid=sid)
+        )  # 全新的 VS Code 进程，只拿 session_id
     _scrub(ev, key)
     _scrub(work, key)
     s2 = parse_recorded(rec_log, split)
@@ -3715,6 +3940,8 @@ def _desktop_live_body(
     base["driver_step"] = {"session_1": r1["step"], "session_2": r2["step"]}
     base["driver_progress"] = {"session_1": r1["progress"], "session_2": r2.get("progress", [])}
     base["driver_log_tail"] = r1["log_tail"] if not r1["driver"] else ""
+    if cell.native:
+        base["host_mcp_log"] = _grep_tail(ev / "zcode-logs", re.compile(r"mcp", re.I), 30)
     # 面板文字尾部进报告（证据文件不回传 Mac）：判不出 L5 时能看到模型最后在说什么；已在 _scrub 之后
     base["panel_tail"] = {
         f"session_{n}": _tail_text(ev / f"round{n}-panel.txt", PANEL_TAIL_CHARS).replace(
@@ -3738,7 +3965,7 @@ def _desktop_live_body(
         return {
             **base,
             "result": "environment_unavailable",
-            "summary": f"{ext.id} requires signing in to its own account before any tool call (L3–L5 blocked)",
+            "summary": f"{agent_label} requires signing in to its own account before any tool call (L3–L5 blocked)",
             "blocked_reason": "extension login required",
         }
     if not r1["driver"].get("submitted"):
@@ -3746,7 +3973,7 @@ def _desktop_live_body(
         return {
             **base,
             "result": "error",
-            "summary": f"driver could not operate the {ext.id} panel: {r1['driver'].get('error')}",
+            "summary": f"driver could not operate the {agent_label} panel: {r1['driver'].get('error')}",
         }
     prov1 = host_provenance(rec_log, 0, split)
     prov2 = host_provenance(rec_log, split)
@@ -3760,7 +3987,7 @@ def _desktop_live_body(
     return {
         **base,
         "result": av.aggregate([levels["L2"], levels["L3"], levels["L4"], levels["L5"]]),
-        "summary": f"{host.id} {host.display_version} + {ext.id} {ext.version} via {model_conf.get('provider', '?')}: "
+        "summary": f"{host.id} {host.display_version} + {agent_label}{' ' + ext.version if ext else ''} via {model_conf.get('provider', '?')}: "
         f"L3={levels['L3']} L4={levels['L4']} L5={levels['L5']}",
         "server_side_calls": {
             "session_1": [

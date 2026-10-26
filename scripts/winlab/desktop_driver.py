@@ -24,6 +24,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import socket
 import struct
 import subprocess
@@ -264,16 +265,20 @@ class CDP:
 
 # ----------------------------------------------------------------------------- 页面里跑的脚本
 #: 在当前文档与全部同源 iframe 里找消息输入框（webview 的内容在 iframe 里，外层与内层同源）
+INPUT_SELECTOR = '[role="textbox"][aria-label="%s"]' % INPUT_LABEL
+#: 原生 Agent（ZCode）：宿主自己的聊天输入框，没有扩展钉死的 aria-label——认第一个可见的 textarea / 可编辑区
+NATIVE_INPUT_SELECTOR = 'textarea, [contenteditable="true"], [role="textbox"]'
+
 _WALK = """
 function walk(doc) {
-  const el = doc.querySelector('[role="textbox"][aria-label="%(input)s"]');
+  const el = Array.from(doc.querySelectorAll(%(input)s)).find(e => e.offsetParent !== null);
   if (el) return {doc: doc, el: el};
   for (const f of doc.querySelectorAll('iframe')) {
     try { const d = f.contentDocument; if (d) { const r = walk(d); if (r) return r; } } catch (e) {}
   }
   return null;
 }
-""" % {"input": INPUT_LABEL}
+""" % {"input": json.dumps(INPUT_SELECTOR)}
 
 FIND_JS = "(() => {" + _WALK + "const r = walk(document); return {found: !!r};})()"
 
@@ -284,7 +289,7 @@ TYPE_JS = (
     + "const r = walk(document); if (!r) return {typed: false, why: 'no input'};"
     + "r.el.focus(); r.doc.execCommand('selectAll'); r.doc.execCommand('delete');"
     + "const ok = r.doc.execCommand('insertText', false, %s);"
-    + "return {typed: !!ok, length: (r.el.innerText || '').length};})()"
+    + "return {typed: !!ok, length: (r.el.value ?? r.el.innerText ?? '').length};})()"
 )
 
 #: 点发送；没有按钮时退回在输入框上派发 Enter
@@ -298,14 +303,31 @@ SUBMIT_JS = (
     + "return {submitted: true, via: 'enter'};})()"
 ) % {"send": SEND_LABEL}
 
+#: 「在忙」= 有停止按钮（扩展是 aria-label="Stop"；原生宿主按 aria-label / title 含 Stop / 停止 认）
+BUSY_SELECTOR = 'button[aria-label="Stop"], button[aria-label*="Stop"], button[title*="Stop"], button[aria-label*="停止"], button[title*="停止"]'
+
 #: 提交后输入框是否已清空（发出去了）、是否在忙（有 Stop 按钮）
 STATE_JS = (
     "(() => {"
     + _WALK
     + "const r = walk(document); if (!r) return null;"
-    + "return {input_length: (r.el.innerText || '').trim().length,"
-    + "busy: !!r.doc.querySelector('button[aria-label=\"Stop\"]')};})()"
-)
+    + "return {input_length: (r.el.value ?? r.el.innerText ?? '').trim().length,"
+    + "busy: !!r.doc.querySelector(%(busy)s)};})()"
+) % {"busy": json.dumps(BUSY_SELECTOR)}
+
+
+def use_input_selector(selector: str) -> None:
+    """换输入框选择器（原生宿主）：重建依赖它的几段 JS。只在进程启动时调一次。"""
+    global _WALK, FIND_JS, TYPE_JS, SUBMIT_JS, STATE_JS
+    old = json.dumps(INPUT_SELECTOR)
+    new = json.dumps(selector)
+    _WALK = _WALK.replace(old, new)
+    FIND_JS, TYPE_JS, SUBMIT_JS = (x.replace(old, new) for x in (FIND_JS, TYPE_JS, SUBMIT_JS))
+    STATE_JS = STATE_JS.replace(old, new)
+
+
+#: 宿主在等人点权限确认框（ZCode：「Permission required / Awaiting approval」；中文界面「需要授权 / 等待批准」）
+PERMISSION_PROMPT_RE = re.compile(r"Awaiting approval|Permission required|等待批准|需要授权")
 
 #: 面板文字（登录页、错误提示都在里面），每个文档最多 8000 字
 TEXT_JS = (
@@ -416,6 +438,9 @@ ONBOARDING_BUTTONS = (
     "Continue",
     "Later",
 )
+#: 原生 Agent（ZCode）首启：「Use API key」→「Skip for now」→ 问卷「Skip」。不含「Continue」：API Key 表单上的
+#: Continue 会提交（空的）key；不含任何 Connect / 登录（run 20261026T152056Z-fb05c7 的下一屏）
+NATIVE_ONBOARDING_BUTTONS = ("Use API key", "Skip for now", "Skip", "跳过", "稍后", "Later")
 #: 先找 button / role=button / a；TRAE 的「跳过」是普通元素（run 20261026T144322Z-291b6a），再找文字恰好等于白名单、
 #: 没有子元素的叶子节点，点它最近的可点祖先（没有就点它自己）
 ONBOARDING_CLICK_JS = (
@@ -433,6 +458,25 @@ def _url_shape(url: str) -> str:
     """诊断用：协议 + 最后一段文件名（不记完整路径与查询串）。"""
     scheme, _, rest = url.partition(":")
     return f"{scheme}:{rest.split('?', 1)[0].rsplit('/', 1)[-1][:40]}"
+
+
+def native_ready(cdp: CDP, page: str, timeout: float, onboarding: list, prog) -> str | None:
+    """原生 Agent（ZCode）：主页面就是聊天界面。首启引导（「Use API key」之后的「Skip for now」、问卷的「Skip」）
+    只点 NATIVE_ONBOARDING_BUTTONS 白名单，直到出现可见的输入框。返回输入框所在会话。"""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        cdp.pump(1.0)
+        sid = find_input_session(cdp)
+        if sid:
+            return sid
+        clicked = cdp.evaluate(
+            page, ONBOARDING_CLICK_JS % json.dumps(list(NATIVE_ONBOARDING_BUTTONS))
+        )
+        if clicked and len(onboarding) < 12:
+            onboarding.append(clicked)
+            prog.step("onboarding_click", button=clicked)
+        time.sleep(1.5)
+    return None
 
 
 def open_panel(
@@ -523,6 +567,7 @@ def wait_quiet(
     first_s: float,
     alive,
     busy=lambda: False,
+    blocked=lambda: False,
 ) -> tuple[str, int]:
     """首个流量之后 quiet_s 秒没有新行、且面板不在忙（没有 Stop 按钮）→ quiet；一直没有流量 →
     first_traffic_timeout；超过 max_s → max；宿主进程没了 → host_exited。返回 (原因, 最终行数)。
@@ -539,6 +584,8 @@ def wait_quiet(
             seen = seen or n > base_lines
         if not alive():
             return "host_exited", n
+        if blocked():
+            return "permission_prompt", n  # 面板在等人点权限框：没人会点，如实收场，不干等到上限
         if now - t0 > max_s:
             return "max", n
         if seen and now - last_change >= quiet_s and not busy():
@@ -573,8 +620,13 @@ def drive(ns: argparse.Namespace) -> dict:
     log = out_dir / f"{ns.label}-host-output.log"
     with open(log, "wb") as host_out:
         prog.step("launch_host", port=port)
+        launch = (
+            [f"--remote-debugging-port={port}"]
+            if ns.kind == "native"
+            else code_args(ns.user_data_dir, ns.extensions_dir, ns.workspace, port)
+        )
         tree = A.ProcessTree(
-            [ns.exe, *code_args(ns.user_data_dir, ns.extensions_dir, ns.workspace, port)],
+            [ns.exe, *launch],
             cwd=Path(ns.workspace),
             env=dict(os.environ),
             stdout=host_out,
@@ -624,7 +676,11 @@ def drive(ns: argparse.Namespace) -> dict:
                     continue
                 for t in targets:
                     url = str(t.get("url", ""))
-                    if t.get("type") == "page" and is_workbench_url(url):
+                    if t.get("type") == "page" and (
+                        is_workbench_url(url)
+                        if ns.kind != "native"
+                        else not url.startswith("devtools:")
+                    ):
                         workbench = cdp.call(
                             "Target.attachToTarget", {"targetId": t["targetId"], "flatten": True}
                         )["sessionId"]
@@ -661,15 +717,21 @@ def drive(ns: argparse.Namespace) -> dict:
                 session=workbench,
             )
             cdp.pump(5.0)  # 给扩展宿主一点激活时间，webview 目标陆续出现
-            sid, via = open_panel(
-                cdp,
-                workbench,
-                ns.exe,
-                uri_open_args(ns.user_data_dir, ns.extensions_dir, ns.open_uri)
-                if ns.open_uri != "none"
-                else None,
-                ns.panel_timeout,
-            )
+            if ns.kind == "native":
+                sid, via = (
+                    native_ready(cdp, workbench, ns.panel_timeout, onboarding, prog),
+                    "native",
+                )
+            else:
+                sid, via = open_panel(
+                    cdp,
+                    workbench,
+                    ns.exe,
+                    uri_open_args(ns.user_data_dir, ns.extensions_dir, ns.open_uri)
+                    if ns.open_uri != "none"
+                    else None,
+                    ns.panel_timeout,
+                )
             result["panel_opened_via"] = via
             prog.step("open_panel", via=via, sessions=len(cdp.sessions))
             result["target_types"] = sorted({str(i.get("type")) for i in cdp.sessions.values()})
@@ -699,6 +761,7 @@ def drive(ns: argparse.Namespace) -> dict:
                 # TRAE 跳过引导后换进程重开窗口：起的那个进程退了，宿主还在（run 20261026T145631Z-d4aaf2）
                 lambda: tree.proc.poll() is None or bool(P.top_windows(root)),
                 lambda: bool((cdp.evaluate(sid, STATE_JS) or {}).get("busy")),
+                lambda: bool(PERMISSION_PROMPT_RE.search(str(cdp.evaluate(sid, TEXT_JS) or ""))),
             )
             result["wait_ended"] = reason
             prog.step("wait_done", reason=reason, lines=n - base_lines)
@@ -771,7 +834,11 @@ def main(argv: list[str]) -> int:
     p.add_argument("--first-traffic-s", type=float, default=300)
     #: 扩展的 URI 入口（宿主自己的 URL 协议）；`none` = 只走命令面板；URI 不认也会退回命令面板
     p.add_argument("--open-uri", default=OPEN_URI)
+    #: vscode = VS Code 系宿主里的扩展面板；native = 宿主自己的聊天界面（ZCode）
+    p.add_argument("--kind", choices=("vscode", "native"), default="vscode")
     ns = p.parse_args(argv)
+    if ns.kind == "native":
+        use_input_selector(NATIVE_INPUT_SELECTOR)
     try:
         res = drive(ns)
     except Exception as exc:  # noqa: BLE001 — 启动阶段就崩也要留下结果
