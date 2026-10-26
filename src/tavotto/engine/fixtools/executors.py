@@ -8,12 +8,9 @@ from __future__ import annotations
 
 import re
 import threading
-import time
 
 from .base import FixContext
 
-#: 探「索引上有没有这个包」的预算（秒）。探不出来 = 保持原来的分类，不猜。
-INDEX_PROBE_S = 30.0
 _ERROR_LINE_RE = re.compile(r"^\s*(?:ERROR|error)\b[:\s].*", re.M)
 
 
@@ -30,52 +27,8 @@ def failure_detail(out: str, limit: int = 2) -> str:
     return scrub("\n".join(lines[-limit:]))
 
 
-def unresolved_name(out: str) -> str:
-    """pip 输出里最后一个「找不到」的发行版名（与 `deprepair.not_found_detail` 同一批正则）；取不出回空串。"""
-    from .. import deprepair
-
-    name = ""
-    for rx in deprepair._NOT_FOUND_NAME_RES:
-        for m in rx.finditer(out or ""):
-            name = m.group(1)
-    return name
-
-
-def index_has_project(
-    python: str, name: str, cancel: threading.Event, *, ignore_requires_python: bool = False
-) -> bool | None:
-    """索引上有没有叫 `name` 的项目（含只有源码包的）：`pip index versions`，**不带** `--only-binary`。
-    True / False；探不出（pip 太旧没有 `index`、没网、超时）回 None。
-
-    要它是因为 `pip install --only-binary=:all:` 在「只有源码包 / 没有适合当前 Python 的轮子」时也说
-    `(from versions: none)`，和「根本没这个包」一个样；不分开，模型会去换包名而不是换环境。"""
-    from .. import deprepair
-
-    argv = [
-        str(python),
-        "-m",
-        "pip",
-        "index",
-        "versions",
-        "--disable-pip-version-check",
-        "--no-input",
-    ]
-    if ignore_requires_python:
-        # pip 默认按 Requires-Python 过滤：所有发布版本都排除当前 Python 时「查不到」。带上它才看得到包本身；
-        # pip 不认这个选项（太旧）时输出里没有 `available versions`，落到「探不出」（None）
-        argv.append("--ignore-requires-python")
-    argv.append(name)
-    code, out = deprepair._run_pip(argv, cancel, None, deadline=time.time() + INDEX_PROBE_S)
-    low = (out or "").lower()
-    if not code and "available versions" in low:
-        return True
-    if "no matching distribution" in low or "could not find a version" in low:
-        return False
-    return None
-
-
 def _default_installer(python: str, requirements: list[str]) -> dict:
-    from .. import deprepair, depresolve, pool
+    from .. import deprepair, pool
 
     cancel = threading.Event()
     done: list[str] = []
@@ -84,35 +37,12 @@ def _default_installer(python: str, requirements: list[str]) -> dict:
         with pool.mutating_environment(key, python):
             for req in requirements:
                 code, out = deprepair._pip_install(python, req, cancel, None)
-                py_unsupported = False
-                unresolved = ""
                 if code:
-                    if code == deprepair.ERROR_NOT_FOUND:
-                        # 「没有这个包」与「有，但没有能装的轮子」输出一样；索引上查得到就改报后者
-                        # 探**真正没解析到的那个发行版**：装 A 失败可能是传递依赖 B 找不到，req 仍是 A
-                        # 请求带版本约束（==、>=、~= 等）时，「索引上有这个名字」说明不了「没有满足约束的版本」：
-                        # 不做存在性探测，保持 dependency_not_found（提示文字不断言「不存在」）
-                        parsed = depresolve.parse_requirement(req)
-                        unresolved = unresolved_name(out) if parsed and not parsed[1] else ""
-                        present = bool(unresolved) and index_has_project(python, unresolved, cancel)
-                        if unresolved and present is False:
-                            # 默认探测按 Requires-Python 过滤：再不过滤地看一次，区分「没这个包」与「不支持当前 Python」
-                            py_unsupported = (
-                                index_has_project(
-                                    python, unresolved, cancel, ignore_requires_python=True
-                                )
-                                is True
-                            )
-                        if present or py_unsupported:
-                            code = deprepair.ERROR_REQUIRES_BUILD
+                    # 只按安装器自己的输出分类（`deprepair.classify_pip_failure`）：不再起第二个 pip 去「查索引」——
+                    # `pip index` 不继承 `[install]` 配置的源（no-index / find-links / 私有 index），会把包名发到公网
+                    # PyPI，判断也不对。`dependency_not_found` 给模型的提示不断言「不存在」（见 `change._INSTALL_HINTS`）
                     res = {"ok": False, "code": str(code), "done": done}
-                    if py_unsupported:
-                        note = (
-                            f"Every release of {unresolved} on the index requires a different Python "
-                            "version than this environment's: the package does not support this Python."
-                        )
-                        res["detail"] = note + "\n" + failure_detail(out)
-                    elif detail := failure_detail(out):
+                    if detail := failure_detail(out):
                         res["detail"] = detail
                     return res
                 done.append(req)

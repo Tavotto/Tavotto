@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 import pytest
@@ -177,6 +176,29 @@ def test_package_selection_follows_pathfinder_and_pep420(box, layout, expect):
         assert fact["project_path"] == path
 
 
+@pytest.mark.parametrize(
+    ("layout", "kind"),
+    [
+        # 顶层 foo 是项目里的 regular 包：foo.__path__ 只有它自己，没有 __init__ 的 foo/sub/ 也是项目自有 → 别装
+        ({"foo": "x = 1\n", "foo/sub": None}, "regular"),
+        ({"foo": "x = 1\n", "foo/sub": "y = 1\n"}, "regular"),
+        # 顶层是 namespace / extend_path：逐级往下，装上能修
+        ({"foo": None, "foo/sub": None}, "namespace"),
+        ({"foo": _INIT_EXTEND, "foo/sub": None}, "namespace"),
+        # 项目里的 foo 根本没有 sub：不是项目遮蔽
+        ({"foo": "x = 1\n"}, None),
+    ],
+)
+def test_resolution_starts_from_the_top_level_package(box, layout, kind):
+    for rel, init in layout.items():
+        if init is None:
+            (box.proj / rel).mkdir(parents=True, exist_ok=True)
+        else:
+            put(box.proj / rel / "__init__.py", init)
+    fact = importshadow.detect("ModuleNotFoundError: No module named 'foo.sub.extra'", [box.proj])
+    assert (fact["kind"] if fact else None) == kind
+
+
 def test_cannot_import_name_from_a_project_copy_is_recognised(box):
     celerite_project(box)
     init = box.proj / "celerite" / "__init__.py"
@@ -274,15 +296,21 @@ PIP_NONE = (
 )
 
 
-def _run_default_installer(monkeypatch, pip_out, probe):
-    calls = {}
+def _run_default_installer(monkeypatch, pip_out, req="celerite"):
+    """缺省安装器 + 假 `_pip_install`；任何额外的 pip 子进程（`_run_pip`）/ `subprocess` 调用都记进 `extra`。"""
+    import subprocess
 
-    def fake_pip_install(python, req, cancel, on_log, **kw):
-        calls["req"] = req
+    extra = []
+
+    def fake_pip_install(python, r, cancel, on_log, **kw):
         return deprepair.classify_pip_failure(pip_out), pip_out
 
     monkeypatch.setattr(deprepair, "_pip_install", fake_pip_install)
-    monkeypatch.setattr(executors, "index_has_project", probe)
+    monkeypatch.setattr(
+        deprepair, "_run_pip", lambda *a, **k: extra.append(("run_pip", a)) or ("", "")
+    )
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: extra.append(("Popen", a)))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: extra.append(("run", a)))
 
     class _Lock:
         def __enter__(self):
@@ -292,103 +320,30 @@ def _run_default_installer(monkeypatch, pip_out, probe):
             return False
 
     monkeypatch.setattr(pool, "mutating_environment", lambda key, python: _Lock())
-    return executors._default_installer("py", ["celerite"]), calls
-
-
-def test_wheelless_package_is_requires_build_not_not_found(monkeypatch):
-    res, _ = _run_default_installer(monkeypatch, PIP_NONE, lambda py, name, ev, **kw: True)
-    assert res["code"] == deprepair.ERROR_REQUIRES_BUILD == "dependency_requires_build"
-    assert "No matching distribution found for celerite" in res["detail"]
-
-
-def test_transitive_dependency_missing_probes_that_dependency_not_the_requested_package(
-    monkeypatch,
-):
-    out = (
-        "ERROR: Could not find a version that satisfies the requirement ghost-dep>=1 (from versions: none)\n"
-        "ERROR: No matching distribution found for ghost-dep>=1\n"
-    )
-    probed = []
-
-    def probe(py, name, ev, **kw):
-        probed.append(name)
-        return name == "celerite"  # 请求的包 A 在索引上有；传递依赖 B 没有
-
-    res, _ = _run_default_installer(monkeypatch, out, probe)
-    assert set(probed) == {"ghost-dep"}  # 默认探测 + 不过滤 Requires-Python 各一次，都探 B
-    assert res["code"] == "dependency_not_found"
-
-
-def test_every_release_excluded_by_requires_python_is_reported_as_unsupported_python(monkeypatch):
-    calls = []
-
-    def probe(py, name, ev, *, ignore_requires_python=False):
-        calls.append(ignore_requires_python)
-        return True if ignore_requires_python else False  # 默认过滤后查不到，不过滤才看得到
-
-    res, _ = _run_default_installer(monkeypatch, PIP_NONE, probe)
-    assert calls == [False, True]
-    assert res["code"] == "dependency_requires_build"
-    assert "does not support this Python" in res["detail"]
-
-
-def test_index_probe_passes_ignore_requires_python_only_when_asked(monkeypatch):
-    argvs = []
-
-    def fake_run_pip(argv, cancel, on_log, **kw):
-        argvs.append(argv)
-        if "--ignore-requires-python" in argv:
-            return "", "celerite (0.4.3)\nAvailable versions: 0.4.3\n"
-        return "x", "ERROR: No matching distribution found for celerite"
-
-    monkeypatch.setattr(deprepair, "_run_pip", fake_run_pip)
-    ev = threading.Event()
-    assert executors.index_has_project("py", "celerite", ev) is False
-    assert executors.index_has_project("py", "celerite", ev, ignore_requires_python=True) is True
-    assert argvs[0].count("--ignore-requires-python") == 0 and argvs[1][-2:] == [
-        "--ignore-requires-python",
-        "celerite",
-    ]
-    # 太旧的 pip 不认这个选项：探不出，保持原分类
-    monkeypatch.setattr(
-        deprepair, "_run_pip", lambda *a, **k: ("x", "no such option: --ignore-requires-python")
-    )
-    assert executors.index_has_project("py", "c", ev, ignore_requires_python=True) is None
+    return executors._default_installer("py", [req]), extra
 
 
 @pytest.mark.parametrize(
-    "req", ["reviewprobe==2.0", "reviewprobe>=2", "reviewprobe~=2.0", "reviewprobe>=1,<2"]
+    ("pip_out", "code"),
+    [
+        (PIP_NONE, "dependency_not_found"),  # 只有源码包 / 异平台 wheel / 没这个包：输出一样，不猜
+        (
+            "ERROR: Could not find a version that satisfies the requirement celerite (from versions: 0.1.0)\n"
+            "ERROR: No matching distribution found for celerite\n",
+            "dependency_requires_build",  # 安装器自己列出了版本却装不上
+        ),
+        ("ERROR: Connection reset by peer\nretrying", "dependency_network_unavailable"),
+    ],
 )
-def test_versioned_requests_are_never_probed_and_stay_not_found(monkeypatch, req):
-    out = (
-        "ERROR: Could not find a version that satisfies the requirement reviewprobe==2.0 (from versions: none)\n"
-        "ERROR: No matching distribution found for reviewprobe==2.0\n"
-    )
-
-    def fake_pip_install(python, r, cancel, on_log, **kw):
-        return deprepair.classify_pip_failure(out), out
-
-    def boom(*a, **k):
-        raise AssertionError("must not probe a versioned request")
-
-    monkeypatch.setattr(deprepair, "_pip_install", fake_pip_install)
-    monkeypatch.setattr(executors, "index_has_project", boom)
-
-    class _Lock:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    monkeypatch.setattr(pool, "mutating_environment", lambda key, python: _Lock())
-    res = executors._default_installer("py", [req])
-    assert res["code"] == "dependency_not_found"
-
-
-def test_package_absent_from_the_index_stays_not_found(monkeypatch):
-    res, _ = _run_default_installer(monkeypatch, PIP_NONE, lambda py, name, ev, **kw: False)
-    assert res["code"] == "dependency_not_found"
+@pytest.mark.parametrize("req", ["celerite", "celerite==2.0", "celerite>=1,<2"])
+def test_installer_classifies_from_its_own_output_and_starts_no_second_process(
+    monkeypatch, pip_out, code, req
+):
+    # 配置了 no-index / find-links / 私有源的用户：任何额外的 pip / 网络调用都会绕开他的配置，所以一个都不许有
+    res, extra = _run_default_installer(monkeypatch, pip_out, req)
+    assert res["code"] == code
+    assert extra == []
+    assert "ERROR:" in res["detail"]
 
 
 def test_other_platform_wheels_only_stays_not_found_and_the_hint_asserts_no_nonexistence(box):
@@ -410,44 +365,6 @@ def test_other_platform_wheels_only_stays_not_found_and_the_hint_asserts_no_none
     assert "only be published for other Python versions or platforms" in r.content
     low = r.content.lower()
     assert "does not exist" not in low and "no package with that name" not in low
-
-
-def test_unknown_index_state_keeps_the_original_classification(monkeypatch):
-    res, _ = _run_default_installer(monkeypatch, PIP_NONE, lambda py, name, ev, **kw: None)
-    assert res["code"] == "dependency_not_found"
-
-
-def test_network_failure_is_not_probed_or_renamed(monkeypatch):
-    def boom(*a):
-        raise AssertionError("must not probe")
-
-    res, _ = _run_default_installer(monkeypatch, "ERROR: Connection reset by peer\nretrying", boom)
-    assert res["code"] == "dependency_network_unavailable"
-
-
-def test_index_probe_reads_pip_index_versions_output(monkeypatch):
-    seen = {}
-
-    def fake_run_pip(argv, cancel, on_log, **kw):
-        seen["argv"] = argv
-        return "", "celerite (0.4.3)\nAvailable versions: 0.4.3, 0.4.2\n"
-
-    monkeypatch.setattr(deprepair, "_run_pip", fake_run_pip)
-    assert executors.index_has_project("py", "celerite", threading.Event()) is True
-    assert (
-        seen["argv"][1:5] == ["-m", "pip", "index", "versions"]
-        and "--only-binary=:all:" not in seen["argv"]
-    )
-    monkeypatch.setattr(
-        deprepair,
-        "_run_pip",
-        lambda *a, **k: ("x", "ERROR: No matching distribution found for zzz"),
-    )
-    assert executors.index_has_project("py", "zzz", threading.Event()) is False
-    monkeypatch.setattr(
-        deprepair, "_run_pip", lambda *a, **k: ("x", "ERROR: unknown command index")
-    )
-    assert executors.index_has_project("py", "zzz", threading.Event()) is None
 
 
 def test_install_packages_tells_the_model_the_reason_and_the_installer_line(box):

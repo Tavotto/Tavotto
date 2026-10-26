@@ -59,37 +59,61 @@ def _read_init(init: Path) -> str:
         return ""
 
 
-def select_package(parent: str, roots: list[Path]) -> tuple[Path, list[Path]] | None:
-    """Python 会用项目 `roots`（按 `sys.path` 先后）里的哪一份 `parent` 包？回 `(代表根, 全部相关根)`；项目里没有回 `None`。
+def select_package(parent: str, roots: list[Path]) -> tuple[Path, list[Path], str] | None:
+    """Python 会用项目 `roots`（按 `sys.path` 先后）里的哪一份 `parent` 包？回 `(代表根, 全部相关根, kind)`；
+    项目里没有回 `None`。`kind`：`regular`（项目自有，装同名包不管用）或 `namespace`（装上能修）。
 
-    对应 `importlib.machinery.PathFinder` 与 PEP 420 的规则：沿 `sys.path` 逐项找，**第一个**含 `parent/__init__.py`
-    的位置胜出（regular 包），哪怕更前面有没有 `__init__.py` 的同名目录（那只是 namespace 的一个 portion，
-    记下来继续找）；只有所有位置都没有 regular 包时，才由全部 portion 合成 namespace 包。项目根都排在
-    site-packages 之前，所以项目里没有 regular 包时，已安装的 regular 包仍会胜出过 namespace portion——这时
-    安装能修，代表根取第一个 portion。胜出的 regular 包的 `__init__.py` 若用 `extend_path` / `declare_namespace`，
-    它的 `__path__` 会并入其它同名目录（`_fact` 据此把它按 namespace 说）：这里把其余含该目录的根也算作相关根。"""
-    rel = parent.split(".")
+    对应 `importlib.machinery.PathFinder` 与 PEP 420 的规则，**从顶层包开始逐级解析**：
+
+    1. 沿 `sys.path` 逐项找顶层名，**第一个**含 `top/__init__.py` 的位置胜出（regular 包），哪怕更前面有没有
+       `__init__.py` 的同名目录（那只是 namespace 的一个 portion，记下继续找）。所有项目根都排在 site-packages 之前。
+    2. 胜出的 regular 包把 `top.__path__` 限定为它自己的目录：它下面**所有**子包（含没有 `__init__.py` 的
+       `top/sub/`）都只在这个 `__path__` 里找，装上的 `top/sub/extra.py` 看不见 → 结论是项目自有（`regular`）。
+    3. 例外：它的 `__init__.py` 用 `extend_path` / `declare_namespace` 时，`__path__` 会并入其它同名目录，
+       等同 namespace，继续往下一级找。
+    4. 项目里所有位置都没有 regular 包时，由全部 portion 合成 namespace 包；已安装的 regular 包仍会胜出过
+       namespace portion，所以安装能修。再往下一级，在这些 portion 里重复本规则。"""
+    top, _, rest = parent.partition(".")
     portions: list[Path] = []
     for root in roots:
-        pdir = root.joinpath(*rel)
-        if not pdir.is_dir():
+        tdir = root / top
+        if not tdir.is_dir():
             continue
-        if (pdir / "__init__.py").is_file():
-            others = [r for r in roots if r.joinpath(*rel).is_dir()]
-            return root, (
-                others if _EXTENDS_PATH_RE.search(_read_init(pdir / "__init__.py")) else [root]
+        init = tdir / "__init__.py"
+        if init.is_file():
+            if _EXTENDS_PATH_RE.search(_read_init(init)):
+                # 第一个 regular 包胜出，但它把 `__path__` 并入其它同名目录：等同 namespace，其余位置也算相关根
+                portions = [r for r in roots if (r / top).is_dir()]
+                break
+            # regular 且不并路径：`__path__` 只有它自己，下面的一切都是它的
+            return (
+                (root, [root], "regular")
+                if (not rest or (tdir / rest.replace(".", "/")).is_dir())
+                else None
             )
-        portions.append(root)
-    return (portions[0], portions) if portions else None
+        portions.append(
+            root
+        )  # namespace portion，或 extend_path 的 regular 包（__path__ 会并入其它同名目录）
+    if not portions:
+        return None
+    if not rest:
+        return portions[0], portions, "namespace"
+    deeper = select_package(rest, [r / top for r in portions])
+    if deeper is None:
+        return None
+    root, found, kind = deeper
+    return root.parent, [r.parent for r in found], kind
 
 
-def _fact(root: Path, parent: str, missing: str, *, relation: str) -> dict:
+def _fact(root: Path, parent: str, missing: str, *, relation: str, kind: str | None = None) -> dict:
     parent_dir = root.joinpath(*parent.split("."))
     init = parent_dir / "__init__.py"
     init_text = _read_init(init) if init.is_file() else ""
     # `pkgutil.extend_path` / `declare_namespace` 的 `__init__.py` 会把 sys.path 上其它同名目录并进来：
     # 装上的发行版里的子模块照样能导入，行为上等同 namespace，不能说「装了也没用」
-    regular = init.is_file() and not _EXTENDS_PATH_RE.search(init_text)
+    regular = (
+        (kind == "regular") if kind else (init.is_file() and not _EXTENDS_PATH_RE.search(init_text))
+    )
     leaf = missing.rsplit(".", 1)[-1]
     imports_it = bool(regular and re.search(rf"\b{re.escape(leaf)}\b", init_text))
     try:
@@ -179,7 +203,7 @@ def detect(
             parent, child = name.rsplit(".", 1)
             winner = select_package(parent, candidates)
             if winner is not None:
-                root, portions = winner
+                root, portions, kind = winner
                 # 没有来源证据就不下结论：项目不在 sys.path 上时，失败可能完全来自 site-packages
                 if project_on_path or any(
                     _frame_in(text, root.joinpath(*parent.split("."))) for root in portions
@@ -187,7 +211,7 @@ def detect(
                     if not any(
                         _child_exists(r.joinpath(*parent.split(".")), child) for r in portions
                     ):
-                        return _fact(root, parent, name, relation="missing_submodule")
+                        return _fact(root, parent, name, relation="missing_submodule", kind=kind)
     m = None
     for m in _CANNOT_IMPORT_RE.finditer(text):
         pass
