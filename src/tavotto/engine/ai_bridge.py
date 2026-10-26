@@ -1794,6 +1794,14 @@ def _settle_task(sess: dict, task: dict) -> None:
         # 数据没动、只是显式 label 变了的元素（ADR 0083 §五）：前端据此让画布上已有的编辑跟着换身份；没有改名就没有这个键
         **({"renamed": renamed} if renamed else {}),
     }
+    # 跟进建议（闭集，只有两段已画在图上的 label 文字）：现在只有「图例里也写着同一段文字」一种，只改图任务有
+    from . import ai_figure_edit
+
+    cand = sess["taf"]["cand"]
+    if isinstance(cand, ai_figure_edit.Candidate):
+        suggestions = ai_figure_edit.legend_label_suggestions(cand, task["outcome"])
+        if suggestions:
+            sess["task"]["suggestions"] = suggestions
 
 
 def _renamed_of(verification: dict | None) -> list[dict]:
@@ -1815,14 +1823,6 @@ def _restored_task(hist: dict | None) -> dict:
             "renamed": renamed,
         }
     }
-    # 跟进建议（闭集，只有两段已画在图上的 label 文字）：现在只有「图例里也写着同一段文字」一种，只改图任务有
-    from . import ai_figure_edit
-
-    cand = sess["taf"]["cand"]
-    if isinstance(cand, ai_figure_edit.Candidate):
-        suggestions = ai_figure_edit.legend_label_suggestions(cand, task["outcome"])
-        if suggestions:
-            sess["task"]["suggestions"] = suggestions
 
 
 #: `ai.done.refresh.status` 的闭集。前端与历史页按它分支，别再加自由文本。
