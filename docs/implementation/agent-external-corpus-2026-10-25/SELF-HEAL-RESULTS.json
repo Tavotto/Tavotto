@@ -1,0 +1,613 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-26",
+  "default_routes_changed": true,
+  "design": "Fresh baseline, intermediate recovery trial and final recovery trial. Each trial retained; no retries pooled into first-pass success rate. Defaults and formal budgets unchanged except the user-authorized routing switch.",
+  "baseline": [
+    {
+      "case": "r_base_sinc",
+      "run": "r_base_sinc-baseline-41715",
+      "producer_sha": "41715ce134a96ffd5cd96329db82cd2db176658e",
+      "model": "deepseek-flash",
+      "protocol": "openai-responses",
+      "effort": null,
+      "budget_override": null,
+      "effective_limits": {
+        "max_turns": 32,
+        "max_total_tokens": 800000,
+        "max_seconds": 900.0,
+        "max_output_tokens": 32768,
+        "compress_at_tokens": 60000,
+        "same_error_limit": 3
+      },
+      "source_files_sha256": {
+        "sinc.R": "033cddc33ee148c20fb1bfeafcd4c050c8d550f64259d7ca74ee5f6b01082c5b"
+      },
+      "task_outcome": "failed",
+      "adopt_http": null,
+      "wall_seconds": 387.379,
+      "originals_unchanged": true,
+      "runner": [
+        {
+          "type": "done",
+          "ok": false,
+          "reason": "budget",
+          "detail": "output_truncated",
+          "turns": 4,
+          "changed": false,
+          "usage": {
+            "input_tokens": 22541,
+            "output_tokens": 65651,
+            "cached_input_tokens": 21120
+          },
+          "elapsed_ms": 385571,
+          "ledger_mismatch": false,
+          "usage_estimated": false,
+          "compressions": 0,
+          "output_recoveries": 1
+        }
+      ],
+      "receipt_sha256": "4ffc869a2546eb7ddd787ec56899c83d2fad27bc21d4a56921013b974752c007",
+      "fresh": null
+    },
+    {
+      "case": "r_base_plotmath",
+      "run": "r_base_plotmath-baseline-41715",
+      "producer_sha": "41715ce134a96ffd5cd96329db82cd2db176658e",
+      "model": "deepseek-flash",
+      "protocol": "openai-responses",
+      "effort": null,
+      "budget_override": null,
+      "effective_limits": {
+        "max_turns": 32,
+        "max_total_tokens": 800000,
+        "max_seconds": 900.0,
+        "max_output_tokens": 32768,
+        "compress_at_tokens": 60000,
+        "same_error_limit": 3
+      },
+      "source_files_sha256": {
+        "plotmath.R": "cc04e55226cbee7a5f9f14f13b5b9b0493a87fa6945fe0f9c2b786c626352ad0"
+      },
+      "task_outcome": "failed",
+      "adopt_http": null,
+      "wall_seconds": 367.269,
+      "originals_unchanged": true,
+      "runner": [
+        {
+          "type": "done",
+          "ok": false,
+          "reason": "budget",
+          "detail": "output_truncated",
+          "turns": 4,
+          "changed": false,
+          "usage": {
+            "input_tokens": 28469,
+            "output_tokens": 65653,
+            "cached_input_tokens": 24064
+          },
+          "elapsed_ms": 365415,
+          "ledger_mismatch": false,
+          "usage_estimated": false,
+          "compressions": 0,
+          "output_recoveries": 1
+        }
+      ],
+      "receipt_sha256": "6262e6caf9dbb430204426d8aa7865b04bdba2cb1cb1fe5493b4e0e901fa67fb",
+      "fresh": null
+    }
+  ],
+  "intermediate": [
+    {
+      "case": "r_base_sinc",
+      "run": "r_base_sinc-recovered-a481",
+      "producer_sha": "a48144aa28110a88c3578c0cbcb4f8c136a34315",
+      "model": "deepseek-flash",
+      "protocol": "openai-responses",
+      "effort": null,
+      "budget_override": null,
+      "effective_limits": {
+        "max_turns": 32,
+        "max_total_tokens": 800000,
+        "max_seconds": 900.0,
+        "max_output_tokens": 32768,
+        "compress_at_tokens": 60000,
+        "same_error_limit": 3
+      },
+      "source_files_sha256": {
+        "sinc.R": "033cddc33ee148c20fb1bfeafcd4c050c8d550f64259d7ca74ee5f6b01082c5b"
+      },
+      "task_outcome": "failed",
+      "adopt_http": null,
+      "wall_seconds": 328.992,
+      "originals_unchanged": true,
+      "runner": [
+        {
+          "type": "done",
+          "ok": false,
+          "reason": "budget",
+          "detail": "tokens",
+          "turns": 18,
+          "changed": true,
+          "usage": {
+            "input_tokens": 787814,
+            "output_tokens": 52721,
+            "cached_input_tokens": 732928
+          },
+          "elapsed_ms": 327159,
+          "ledger_mismatch": false,
+          "usage_estimated": false,
+          "compressions": 3,
+          "output_recoveries": 1,
+          "protocol_recoveries": 0
+        }
+      ],
+      "receipt_sha256": "77258dae3861df26873c307e4a7a24be19aea3ef8f4c80791cfdd933453f17aa",
+      "fresh": null
+    },
+    {
+      "case": "r_base_plotmath",
+      "run": "r_base_plotmath-recovered-a481",
+      "producer_sha": "a48144aa28110a88c3578c0cbcb4f8c136a34315",
+      "model": "deepseek-flash",
+      "protocol": "openai-responses",
+      "effort": null,
+      "budget_override": null,
+      "effective_limits": {
+        "max_turns": 32,
+        "max_total_tokens": 800000,
+        "max_seconds": 900.0,
+        "max_output_tokens": 32768,
+        "compress_at_tokens": 60000,
+        "same_error_limit": 3
+      },
+      "source_files_sha256": {
+        "plotmath.R": "cc04e55226cbee7a5f9f14f13b5b9b0493a87fa6945fe0f9c2b786c626352ad0"
+      },
+      "task_outcome": "failed",
+      "adopt_http": null,
+      "wall_seconds": 315.842,
+      "originals_unchanged": true,
+      "runner": [
+        {
+          "type": "done",
+          "ok": false,
+          "reason": "budget",
+          "detail": "tokens",
+          "turns": 17,
+          "changed": true,
+          "usage": {
+            "input_tokens": 758268,
+            "output_tokens": 52197,
+            "cached_input_tokens": 681600
+          },
+          "elapsed_ms": 314148,
+          "ledger_mismatch": false,
+          "usage_estimated": false,
+          "compressions": 3,
+          "output_recoveries": 1,
+          "protocol_recoveries": 0
+        }
+      ],
+      "receipt_sha256": "c9bb89357cb3d56d003eb2f7b5d7fd433675ee3257dbfa97ffa08b788feb80b8",
+      "fresh": null
+    },
+    {
+      "case": "pillow_book_polygon",
+      "run": "pillow_book_polygon-recovered-a481",
+      "producer_sha": "a48144aa28110a88c3578c0cbcb4f8c136a34315",
+      "model": "deepseek-flash",
+      "protocol": "openai-responses",
+      "effort": null,
+      "budget_override": null,
+      "effective_limits": {
+        "max_turns": 32,
+        "max_total_tokens": 800000,
+        "max_seconds": 900.0,
+        "max_output_tokens": 32768,
+        "compress_at_tokens": 60000,
+        "same_error_limit": 3
+      },
+      "source_files_sha256": {
+        "draw_polygon.py": "4de3631fa9bb8d9f413a134429cd95b2f79e7a5548032f4426316b22203f953e",
+        "reference/_native_reference.jpg": "cb396b3db93515de2b1906fcc4f1067d6d3b9c8b4a53fc7e092512beafc753ff"
+      },
+      "task_outcome": "completed",
+      "adopt_http": 200,
+      "wall_seconds": 31.391,
+      "originals_unchanged": true,
+      "runner": [
+        {
+          "type": "done",
+          "ok": true,
+          "reason": "completed",
+          "detail": "",
+          "turns": 4,
+          "changed": true,
+          "usage": {
+            "input_tokens": 26435,
+            "output_tokens": 3927,
+            "cached_input_tokens": 23168
+          },
+          "elapsed_ms": 29398,
+          "ledger_mismatch": false,
+          "usage_estimated": false,
+          "compressions": 0,
+          "output_recoveries": 0,
+          "protocol_recoveries": 0
+        }
+      ],
+      "receipt_sha256": "420aa706a542a20cbd3925e4ec554369c8ae6da290d1fa401fd84d3cc5800509",
+      "fresh": {
+        "phase": "completed",
+        "outcome": "succeeded",
+        "captures": 1,
+        "script_unchanged": true,
+        "model_used": false,
+        "forced_worker": false,
+        "receipt_sha256": "42af24ee061ed2560c74e6a77c0dd06bacb3b787a6e57dd5e9503ee9cb0b72c7"
+      }
+    },
+    {
+      "case": "matlab_bounded_nan",
+      "run": "matlab_bounded_nan-recovered-a481",
+      "producer_sha": "a48144aa28110a88c3578c0cbcb4f8c136a34315",
+      "model": "deepseek-flash",
+      "protocol": "openai-responses",
+      "effort": null,
+      "budget_override": null,
+      "effective_limits": {
+        "max_turns": 32,
+        "max_total_tokens": 800000,
+        "max_seconds": 900.0,
+        "max_output_tokens": 32768,
+        "compress_at_tokens": 60000,
+        "same_error_limit": 3
+      },
+      "source_files_sha256": {
+        "bounded_nan.m": "e7a6ada5f2823992bd42345938d14f7452c8deec7f12114375ef42ce7c860565",
+        "project_context/inpaint_nans.m": "dd674b401fa03a9a7d05169a4cc7147bf6768c0cd105d0b7800b04ae2263e4ef",
+        "project_context/catuneven.m": "5cc8ca98110b48b4e864a0c9ecc49fce827f1ca388152078d49e70b953d1aa92",
+        "project_context/boundedline.m": "8a63b0ca6defa0cd046c09b0c7bce03c2e93b91c25dda010581006a6fd29db8b",
+        "project_context/singlepatch.m": "dd201b4aee55a49bfc4e4537276d76ae0a86f954bba3f76cef82c32a74af645a",
+        "project_context/outlinebounds.m": "1640c1a024d51c78f900cfbe04928704fe53327645b38b235405f9c7de322f37",
+        "reference/_native_reference.png": "c84d411a2cd2cf327f8f29dcf93dcfd94c161ce2cc7aaaaa9ceae9eac467fe98"
+      },
+      "task_outcome": "completed",
+      "adopt_http": 200,
+      "wall_seconds": 260.84,
+      "originals_unchanged": true,
+      "runner": [
+        {
+          "type": "done",
+          "ok": true,
+          "reason": "completed",
+          "detail": "",
+          "turns": 15,
+          "changed": true,
+          "usage": {
+            "input_tokens": 445456,
+            "output_tokens": 40539,
+            "cached_input_tokens": 387072
+          },
+          "elapsed_ms": 258378,
+          "ledger_mismatch": false,
+          "usage_estimated": false,
+          "compressions": 12,
+          "output_recoveries": 0,
+          "protocol_recoveries": 0
+        }
+      ],
+      "receipt_sha256": "6c13e22a52ca65b3ed753a50d92b1e0e30c9f9055a8091f4d2abf7204d3c9e98",
+      "fresh": {
+        "phase": "completed",
+        "outcome": "succeeded",
+        "captures": 1,
+        "script_unchanged": true,
+        "model_used": false,
+        "forced_worker": false,
+        "receipt_sha256": "17af87dd9f77a234ad63481d7d33678f4ee5c01153cfef905a5daaeec7b7e3a2"
+      }
+    }
+  ],
+  "final": [
+    {
+      "case": "r_base_sinc",
+      "run": "r_base_sinc-recovered-c7ef",
+      "producer_sha": "c7eff16e6be8ebd773cda2246608110e59e5ff97",
+      "model": "deepseek-flash",
+      "protocol": "openai-responses",
+      "effort": null,
+      "budget_override": null,
+      "effective_limits": {
+        "max_turns": 32,
+        "max_total_tokens": 800000,
+        "max_seconds": 900.0,
+        "max_output_tokens": 32768,
+        "compress_at_tokens": 60000,
+        "same_error_limit": 3
+      },
+      "source_files_sha256": {
+        "sinc.R": "033cddc33ee148c20fb1bfeafcd4c050c8d550f64259d7ca74ee5f6b01082c5b"
+      },
+      "task_outcome": "completed",
+      "adopt_http": 200,
+      "wall_seconds": 254.168,
+      "originals_unchanged": true,
+      "runner": [
+        {
+          "type": "done",
+          "ok": true,
+          "reason": "completed",
+          "detail": "",
+          "turns": 11,
+          "changed": true,
+          "usage": {
+            "input_tokens": 346634,
+            "output_tokens": 38473,
+            "cached_input_tokens": 304384
+          },
+          "elapsed_ms": 251100,
+          "ledger_mismatch": false,
+          "usage_estimated": false,
+          "compressions": 3,
+          "output_recoveries": 0,
+          "protocol_recoveries": 0,
+          "recovery_state_releases": 0
+        }
+      ],
+      "receipt_sha256": "089c7ff3da756e7cca0b6eea27a01d13c4ee6f16acf50749b327afb20ca01c3d",
+      "fresh": {
+        "phase": "completed",
+        "outcome": "succeeded",
+        "captures": 2,
+        "script_unchanged": true,
+        "model_used": false,
+        "forced_worker": false,
+        "receipt_sha256": "c5b86050202c9b005928b81f66b871020069fb19f3127cc5d51490c3de0fad08"
+      }
+    },
+    {
+      "case": "r_base_plotmath",
+      "run": "r_base_plotmath-recovered-c7ef",
+      "producer_sha": "c7eff16e6be8ebd773cda2246608110e59e5ff97",
+      "model": "deepseek-flash",
+      "protocol": "openai-responses",
+      "effort": null,
+      "budget_override": null,
+      "effective_limits": {
+        "max_turns": 32,
+        "max_total_tokens": 800000,
+        "max_seconds": 900.0,
+        "max_output_tokens": 32768,
+        "compress_at_tokens": 60000,
+        "same_error_limit": 3
+      },
+      "source_files_sha256": {
+        "plotmath.R": "cc04e55226cbee7a5f9f14f13b5b9b0493a87fa6945fe0f9c2b786c626352ad0"
+      },
+      "task_outcome": "completed",
+      "adopt_http": 200,
+      "wall_seconds": 409.174,
+      "originals_unchanged": true,
+      "runner": [
+        {
+          "type": "done",
+          "ok": true,
+          "reason": "completed",
+          "detail": "",
+          "turns": 14,
+          "changed": true,
+          "usage": {
+            "input_tokens": 385292,
+            "output_tokens": 68808,
+            "cached_input_tokens": 300800
+          },
+          "elapsed_ms": 405027,
+          "ledger_mismatch": false,
+          "usage_estimated": false,
+          "compressions": 2,
+          "output_recoveries": 1,
+          "protocol_recoveries": 0,
+          "recovery_state_releases": 1
+        }
+      ],
+      "receipt_sha256": "72242fd00a2c33dead7d70b53b1a7ef0e1809b81573e11fde748d72eb08b8d2d",
+      "fresh": {
+        "phase": "completed",
+        "outcome": "succeeded",
+        "captures": 5,
+        "script_unchanged": true,
+        "model_used": false,
+        "forced_worker": false,
+        "receipt_sha256": "8288d554a874e09290a5fa837b7ac37ea8500d1ef5a0308f9a6e5e7cedc1bf67"
+      }
+    },
+    {
+      "case": "pillow_book_polygon",
+      "run": "pillow_book_polygon-recovered-c7ef",
+      "producer_sha": "c7eff16e6be8ebd773cda2246608110e59e5ff97",
+      "model": "deepseek-flash",
+      "protocol": "openai-responses",
+      "effort": null,
+      "budget_override": null,
+      "effective_limits": {
+        "max_turns": 32,
+        "max_total_tokens": 800000,
+        "max_seconds": 900.0,
+        "max_output_tokens": 32768,
+        "compress_at_tokens": 60000,
+        "same_error_limit": 3
+      },
+      "source_files_sha256": {
+        "draw_polygon.py": "4de3631fa9bb8d9f413a134429cd95b2f79e7a5548032f4426316b22203f953e",
+        "reference/_native_reference.jpg": "cb396b3db93515de2b1906fcc4f1067d6d3b9c8b4a53fc7e092512beafc753ff"
+      },
+      "task_outcome": "completed",
+      "adopt_http": 200,
+      "wall_seconds": 24.94,
+      "originals_unchanged": true,
+      "runner": [
+        {
+          "type": "done",
+          "ok": true,
+          "reason": "completed",
+          "detail": "",
+          "turns": 5,
+          "changed": true,
+          "usage": {
+            "input_tokens": 30719,
+            "output_tokens": 2674,
+            "cached_input_tokens": 29056
+          },
+          "elapsed_ms": 22896,
+          "ledger_mismatch": false,
+          "usage_estimated": false,
+          "compressions": 0,
+          "output_recoveries": 0,
+          "protocol_recoveries": 0,
+          "recovery_state_releases": 0
+        }
+      ],
+      "receipt_sha256": "71df1504c496c777e3011038625972a78a4db62f6324ffeb4e2cb3978c2c0ef0",
+      "fresh": {
+        "phase": "completed",
+        "outcome": "succeeded",
+        "captures": 1,
+        "script_unchanged": true,
+        "model_used": false,
+        "forced_worker": false,
+        "receipt_sha256": "9e390315193c85e7936fdbe5f80884a040be5e060a293d101549dd82f7d7e4e1"
+      }
+    },
+    {
+      "case": "matlab_bounded_nan",
+      "run": "matlab_bounded_nan-recovered-c7ef",
+      "producer_sha": "c7eff16e6be8ebd773cda2246608110e59e5ff97",
+      "model": "deepseek-flash",
+      "protocol": "openai-responses",
+      "effort": null,
+      "budget_override": null,
+      "effective_limits": {
+        "max_turns": 32,
+        "max_total_tokens": 800000,
+        "max_seconds": 900.0,
+        "max_output_tokens": 32768,
+        "compress_at_tokens": 60000,
+        "same_error_limit": 3
+      },
+      "source_files_sha256": {
+        "bounded_nan.m": "e7a6ada5f2823992bd42345938d14f7452c8deec7f12114375ef42ce7c860565",
+        "project_context/inpaint_nans.m": "dd674b401fa03a9a7d05169a4cc7147bf6768c0cd105d0b7800b04ae2263e4ef",
+        "project_context/catuneven.m": "5cc8ca98110b48b4e864a0c9ecc49fce827f1ca388152078d49e70b953d1aa92",
+        "project_context/boundedline.m": "8a63b0ca6defa0cd046c09b0c7bce03c2e93b91c25dda010581006a6fd29db8b",
+        "project_context/singlepatch.m": "dd201b4aee55a49bfc4e4537276d76ae0a86f954bba3f76cef82c32a74af645a",
+        "project_context/outlinebounds.m": "1640c1a024d51c78f900cfbe04928704fe53327645b38b235405f9c7de322f37",
+        "reference/_native_reference.png": "c84d411a2cd2cf327f8f29dcf93dcfd94c161ce2cc7aaaaa9ceae9eac467fe98"
+      },
+      "task_outcome": "completed",
+      "adopt_http": 200,
+      "wall_seconds": 249.934,
+      "originals_unchanged": true,
+      "runner": [
+        {
+          "type": "done",
+          "ok": true,
+          "reason": "completed",
+          "detail": "",
+          "turns": 14,
+          "changed": true,
+          "usage": {
+            "input_tokens": 436161,
+            "output_tokens": 38654,
+            "cached_input_tokens": 376064
+          },
+          "elapsed_ms": 247708,
+          "ledger_mismatch": false,
+          "usage_estimated": false,
+          "compressions": 11,
+          "output_recoveries": 0,
+          "protocol_recoveries": 0,
+          "recovery_state_releases": 0
+        }
+      ],
+      "receipt_sha256": "564ad000dadad179d63dcb7e06273d572f6dd8066f58ff95df4add1168dc60ba",
+      "fresh": {
+        "phase": "completed",
+        "outcome": "succeeded",
+        "captures": 1,
+        "script_unchanged": true,
+        "model_used": false,
+        "forced_worker": false,
+        "receipt_sha256": "216f2cf54cbeb09c4fd4866fad3fc4330d64810ce716683c8292ee067be46af5"
+      }
+    }
+  ],
+  "unset_default_smoke": {
+    "case": "pillow_book_polygon",
+    "run": "pillow_book_polygon-default-route-c7ef",
+    "producer_sha": "c7eff16e6be8ebd773cda2246608110e59e5ff97",
+    "model": "deepseek-flash",
+    "protocol": "openai-responses",
+    "effort": null,
+    "budget_override": null,
+    "effective_limits": {
+      "max_turns": 32,
+      "max_total_tokens": 800000,
+      "max_seconds": 900.0,
+      "max_output_tokens": 32768,
+      "compress_at_tokens": 60000,
+      "same_error_limit": 3
+    },
+    "source_files_sha256": {
+      "draw_polygon.py": "4de3631fa9bb8d9f413a134429cd95b2f79e7a5548032f4426316b22203f953e",
+      "reference/_native_reference.jpg": "cb396b3db93515de2b1906fcc4f1067d6d3b9c8b4a53fc7e092512beafc753ff"
+    },
+    "task_outcome": "completed",
+    "adopt_http": 200,
+    "wall_seconds": 28.281,
+    "originals_unchanged": true,
+    "runner": [
+      {
+        "type": "done",
+        "ok": true,
+        "reason": "completed",
+        "detail": "",
+        "turns": 4,
+        "changed": true,
+        "usage": {
+          "input_tokens": 25294,
+          "output_tokens": 2968,
+          "cached_input_tokens": 23808
+        },
+        "elapsed_ms": 25872,
+        "ledger_mismatch": false,
+        "usage_estimated": false,
+        "compressions": 0,
+        "output_recoveries": 0,
+        "protocol_recoveries": 0,
+        "recovery_state_releases": 0
+      }
+    ],
+    "receipt_sha256": "7edd2dba33dd1387d00995ad49dd83795e35217af476975a538f20cddc635587",
+    "fresh": {
+      "phase": "completed",
+      "outcome": "succeeded",
+      "captures": 1,
+      "script_unchanged": true,
+      "model_used": false,
+      "forced_worker": false,
+      "receipt_sha256": "4d3daf7b24ddf47068504bcca44d53b4dab88531c4d670414e8931d2a22ade37"
+    }
+  },
+  "local_validation": {
+    "runner_and_routes": 485,
+    "integration_pass": 795,
+    "integration_platform_skips": 2,
+    "integration_opt_in_skip_rerun": true,
+    "repair_cli_media_pass": 245,
+    "benchmark_and_architecture_pass": 87,
+    "final_shared_recovery_probe_app_pass": 505,
+    "counts_overlap": true
+  }
+}

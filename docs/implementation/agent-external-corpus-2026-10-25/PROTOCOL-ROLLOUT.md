@@ -1,5 +1,7 @@
 # Protocol acceptance and controlled builtin trial
 
+Current follow-up: [shared recovery and the user-authorized builtin default](SELF-HEAL.md). Routing statements below describe the earlier frozen trial, before this switch.
+
 2026-10-26. This follow-up prepares protocol acceptance and a reversible trial of the existing builtin preference. **The application default is unchanged. No release, user rollout or production feedback submission occurred.** The baseline and negative results in [FUNCTIONAL-FOLLOWUP.md](FUNCTIONAL-FOLLOWUP.md) remain valid historical evidence.
 
 Subsequent conversion-loop fixes, isolated budget ablations and the final three-case retest are recorded in [LOOP-REPAIR.md](LOOP-REPAIR.md). The failed attempts below remain in that cumulative ledger; later passes do not replace them.

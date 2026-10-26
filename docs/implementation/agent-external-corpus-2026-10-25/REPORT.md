@@ -1,5 +1,7 @@
 # 外部脚本复测：项目上下文与环境修复闭环
 
+Current follow-up: [shared recovery and the user-authorized builtin default](SELF-HEAL.md). Routing statements below describe the earlier frozen trial, before this switch.
+
 本文件是第一阶段的历史快照；最新流程优先的验收与复测见 [FUNCTIONAL-FOLLOWUP.md](FUNCTIONAL-FOLLOWUP.md)。
 历史保真缺口仍见 [FIDELITY-FOLLOWUP.md](FIDELITY-FOLLOWUP.md) 和 [LATEST-RESULTS.json](LATEST-RESULTS.json)，默认路由不变。
 
