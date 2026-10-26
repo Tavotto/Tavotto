@@ -425,7 +425,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   anthropic `stop_reason=refusal`、responses `status:incomplete` 且原因不是 `max_output_tokens`，`detail` 如 `incomplete_content_filter`）；
   responses 顶层 `status` 为 `failed`（`detail=failed_<error.code>`）或 `cancelled / queued / in_progress`（`status_<名>`）→ `network`，不再当作空的 end 轮。
   重试等待 = min(退避, Retry-After, 30 s, 距总时限的剩余)，剩余 ≤ 0 不再发请求 → `budget`（`detail=time`）；单次请求超时也不超过剩余时间。**等响应时也看总时限**：服务端以小于 socket 超时的间隔慢慢吐字节时每次 read 都成功，所以等待循环（与取消同一处、每 50 ms）同时判 deadline，到点即 `budget/time`，在途请求丢弃、回复不接受。
-  **`stop == end` 且无工具调用，或转换任务的显式最终校验实际通过，才算 `completed`**；最终校验见下，不从模型文字推断成功。其它停止值（未知 `stop_reason` / `finish_reason`，或 `tool_calls` / `tool_use` 结束却没有可用调用）→ `network`，`detail=bad_stop_<值>`（值只留小写字母数字下划线、≤ 24 字符）；`max_tokens` 仍是 `budget/output_truncated`。同一工具的同一错误码连续 3 次 → `tool_error_loop`。
+  **`stop == end` 且无工具调用，或转换任务的显式最终校验实际通过，才算 `completed`**；最终校验见下，不从模型文字推断成功。其它停止值（未知 `stop_reason` / `finish_reason`，或 `tool_calls` / `tool_use` 结束却没有可用调用）→ `network`，`detail=bad_stop_<值>`（值只留小写字母数字下划线、≤ 24 字符）；`max_tokens` 的有界续写规则见本节末，耗尽后为 `budget/output_truncated`。同一工具、同一参数、同一错误码连续 3 次 → `tool_error_loop`。
   SIGTERM / SIGINT / Ctrl-Break → `cancelled`。
 - **预算与账本**：轮数、token（input+output）、秒数三道上限。每轮 input / output / 耗时入账，结束时核「合计 == 各轮之和」，不等记
   `done.ledger_mismatch=true`（不抛）。每轮记账后立刻复查 token：**终止答复**（`end` 且无工具调用）累计 `>` 上限才拒，恰好用满上限仍 `completed`；带工具调用 / 要开下一轮的答复累计 `>=` 上限即 `budget/tokens`，工具不执行、不开新轮。估计上下文超阈值时把早先的 `read_file` 结果换成「已读过 X（第 a–b 行，sha 前缀）」。
@@ -469,7 +469,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
     明文 http 的局域网网关（`netpolicy` 放行、非回环）带可选 `insecure_lan: true`。
     每条带 `vendor`（合并后的厂商 id）与 `method`（接入方式 id）；logo 取它自己那一行的图标。多条可同时 `ready`，同厂商多条时 `label` 带用户起的名字 / 密钥尾四位；OpenAI / Claude 的官方 Key 连接名带「 API」后缀以便和订阅那条分开。没有地址的旧记录（官方 Key）不进视图。`state`：缺 Key → `needs_auth`；
     不兼容旧记录 / 保存时被服务商拒绝（`last_error: unauthorized` 落盘）/ 路由走不通 / 内置路由缺型号 → `error` 且带原因码 `error`。
-  - **路由 `route_for`**（`route` 只给诊断与测试，界面不显示）：订阅 → `cli:<agent>`；Key 类：该家族 CLI 可用且 `ai.builtin_default` 不为 true（默认 false；扩大覆盖的验收条件见 ADR 0147 §五）→ `cli:<家族>` + 注入；
+  - **路由 `route_for`**（`route` 只给诊断与测试，界面不显示）：订阅 → `cli:<agent>`；Key 类：该家族 CLI 可用且显式 `ai.builtin_default=false` → `cli:<家族>` + 注入；缺省 true（2026-10-26 用户授权，ADR 0147 §五），不覆盖已存 false；
     否则 → `builtin`（内置循环必须能用该记录：`ai_providers.builtin_conn`，不行则在派发前退回可用的 CLI；不在任务中途自动重放）。账号登录类也受默认偏好与强制开关控制，其 CLI 可用性只看安装且启用（不看 CLI 自己的官方登录，凭据由我们注入）；anthropic wire 只发 Bearer（`--auth bearer`），令牌在 spawn 前 `ensure_fresh`、只进环境变量。
     `TAVOTTO_AI_BUILTIN=1` 强制内置、`=0` 强制不用（没 CLI 即走不通）。
 - **管理接口**（照常过会话守卫与 Host/Origin 校验）：`POST /api/ai/connections`（`{vendor | method, api_key, base_url?, model?, label?, wire?, id?}` → `{ok, connection}`；Key 形状 = 可打印 ASCII 无空白 ≤ 4096；
@@ -674,7 +674,10 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 看护 `test_convert_fidelity.py` 和 `test_ai_convert.py` 的真实会话收尾用例。
 
 长转换允许单响应 32768 token（含模型思考），建议按约 6000 字符分块；完整接收的代码块不因超过建议值而丢弃，
-实际创建 / 覆盖 / 累计追加仍核同一个 200 KiB UTF-8 文件上限。所有调用仍受配置的 token、时间、轮数预算约束，截断整轮拒绝。
+实际创建 / 覆盖 / 累计追加仍核同一个 200 KiB UTF-8 文件上限。所有调用仍受配置的 token、时间、轮数预算约束。
+共享 loop 截断后只保留协议可回放的思考状态，拒绝该轮文字与工具，反馈让模型继续；连续三次截断终止，正常响应重置连续计数。
+错误参数经同源 schema 反馈；非对象参数仅在回放时换成空对象并配对原错误结果，不能执行。缺失/重复调用 ID 整批拒绝并反馈，连续三次终止。
+恢复不能绕过取消、校验次数、权限与用户确认；思考只在模型历史中，不进日志。完整契约与看护见 ADR 0147「共享恢复循环」。
 默认单次请求 300 秒，总期限仍会截断它，用户取消仍随时生效。
 Anthropic adaptive thinking 的签名绑定历史前缀；客户端压缩工具结果后删除历史内全部 thinking / redacted_thinking 块，
 保留工具调用及结果，不改用户推理强度。manual/budget 模式要求末轮思考块，保持追加历史并沿用总预算。

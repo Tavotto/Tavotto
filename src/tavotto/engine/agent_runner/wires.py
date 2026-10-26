@@ -132,6 +132,58 @@ class Msg:
     results: list[ToolResult] = field(default_factory=list)
 
 
+def truncated_continuation(wire: str, turn: Turn) -> Turn | None:
+    """Keep replayable reasoning, never an interrupted message or tool call.
+
+    These opaque blocks stay inside the model conversation. Retaining them is
+    neither executing a call nor accepting an incomplete answer as successful.
+    """
+    native = turn.native
+    if wire == "openai-responses" and isinstance(native, list):
+        items = [
+            item for item in native if isinstance(item, dict) and item.get("type") == "reasoning"
+        ]
+        return Turn(native=items) if items else None
+    if wire == "openai-chat" and isinstance(native, dict):
+        reasoning = native.get("reasoning_content")
+        if isinstance(reasoning, str) and reasoning:
+            return Turn(native={"reasoning_content": reasoning})
+    if wire == "anthropic" and isinstance(native, list):
+        items = []
+        for item in native:
+            if not isinstance(item, dict):
+                break
+            kind = item.get("type")
+            field = (
+                "signature"
+                if kind == "thinking"
+                else "data"
+                if kind == "redacted_thinking"
+                else None
+            )
+            if field is None or not isinstance(item.get(field), str) or not item[field]:
+                break  # An unfinished thinking block has no valid replay signature.
+            items.append(item)
+        return Turn(native=items) if items else None
+    return None
+
+
+def _replay_items(turn: Turn, kind: str, argument_key: str) -> list[dict]:
+    """Keep malformed arguments in tool feedback, not in a second invalid request.
+
+    A placeholder object does not authorize execution: the rejected original
+    call already received bad_arguments, paired with this exact call identity.
+    """
+    invalid = {call.id for call in turn.tool_calls if call.args is None}
+    identity = "call_id" if kind == "function_call" else "id"
+    return [
+        {**item, argument_key: "{}" if kind == "function_call" else {}}
+        if isinstance(item, dict) and item.get("type") == kind and item.get(identity) in invalid
+        else item
+        for item in turn.native or []
+    ]
+
+
 class RunnerFailure(Exception):
     """一次模型调用失败。`reason` 属于 done 事件的闭集；`detail` 是短代码，不含任何内容。"""
 
@@ -292,7 +344,9 @@ class AnthropicWire:
             if m.role == "user":
                 msgs.append({"role": "user", "content": [{"type": "text", "text": m.text}]})
             elif m.role == "assistant" and m.turn is not None:
-                msgs.append({"role": "assistant", "content": m.turn.native or []})
+                msgs.append(
+                    {"role": "assistant", "content": _replay_items(m.turn, "tool_use", "input")}
+                )
             elif m.role == "tool":
                 msgs.append(
                     {
@@ -567,7 +621,7 @@ class OpenAIResponsesWire:
             if m.role == "user":
                 items.append({"role": "user", "content": m.text})
             elif m.role == "assistant" and m.turn is not None:
-                items += list(m.turn.native or [])
+                items += _replay_items(m.turn, "function_call", "arguments")
             elif m.role == "tool":
                 items += [
                     {
@@ -662,7 +716,14 @@ class OpenAIResponsesWire:
                     )
                 )
             elif kind == "reasoning":
-                turn.thinking_chars += len(json.dumps(it.get("summary") or "", ensure_ascii=False))
+                # Compatible endpoints may return plain reasoning in content;
+                # summaries alone used to report zero for a full truncated turn.
+                turn.thinking_chars += sum(
+                    len(part["text"])
+                    for field in ("content", "summary")
+                    for part in (it.get(field) if isinstance(it.get(field), list) else [])
+                    if isinstance(part, dict) and isinstance(part.get("text"), str)
+                )
         turn.text = "".join(texts)
         turn.usage = usage
         # 截断优先于工具调用（同 AnthropicWire）

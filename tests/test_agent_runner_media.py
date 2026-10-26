@@ -215,7 +215,10 @@ def test_text_only_tool_protocol_is_unchanged():
 
 @pytest.mark.parametrize("thinking", ["none", "adaptive", "budget"])
 @pytest.mark.parametrize("block_type", ["thinking", "redacted_thinking"])
-def test_compression_respects_thinking_prefix_binding(tmp_path, thinking, block_type):
+@pytest.mark.parametrize("repair_wrapper", [False, True])
+def test_compression_respects_thinking_prefix_binding(
+    tmp_path, thinking, block_type, repair_wrapper
+):
     from dataclasses import replace
 
     (tmp_path / "plot.py").write_text("# input\n" * 500)
@@ -263,6 +266,12 @@ def test_compression_respects_thinking_prefix_binding(tmp_path, thinking, block_
         effort="high",
         post=post,
     )
+    if repair_wrapper:
+        import threading
+
+        from tavotto.engine.fixsession import _FinishAware
+
+        model = _FinishAware(model, threading.Event())
     envelope = tools.RunEnvelope(
         task_type="figure_edit",
         cwd=tmp_path,

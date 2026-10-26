@@ -11,9 +11,9 @@
 
 **不迁移存储**：沿用 `ai.providers[]` 与 `ai.active_provider`（后者只作旧字段兼容，这里的解析不看它）。
 
-**路由**（`route_for`，接口约定「路由」一节）：订阅 → 对应 CLI；Key 类 → 该家族 CLI 装着且可用、并且 `ai.builtin_default` 不为 true
-（默认 false，FigureBench 过线后改 true）→ CLI + 注入 provider（现状）；否则 → 内置执行器（`agent_runner`，ADR 0147 第二阶段）。
-没装任何 CLI 的用户因此直接可用。运维开关 `TAVOTTO_AI_BUILTIN=0|1` 强制。账号登录类：CLI 装了就走 CLI，没装走内置（Bearer 令牌）。
+**路由**（`route_for`，接口约定「路由」一节）：订阅 → 对应 CLI；Key / 自带 OAuth 凭据的连接默认用内置执行器。
+显式 `ai.builtin_default=false` 保留 CLI 偏好；内置无法接入时仍在派发前退回可用的 CLI，不在执行中切换。
+运维开关 `TAVOTTO_AI_BUILTIN=0|1` 强制；默认切换由维护者在 2026-10-26 授权（ADR 0147）。
 
 依赖方向 `ai_agents ← ai_providers ← ai_connections ← ai_bridge`；谁家 CLI 可用由调用方把 `agents[]` 的探测结论传进来
 （`ai_bridge.resolve_connection` 是带探测结论的入口，这里**不** import `ai_bridge`，免得成环）。纯标准库。
@@ -242,7 +242,7 @@ def builtin_forced() -> bool | None:
 
 
 def builtin_default() -> bool:
-    return config.ai_settings().get("builtin_default") is True
+    return config.ai_settings().get("builtin_default", True) is not False
 
 
 def _cli_present(agents_info: dict[str, dict], agent: str) -> bool:

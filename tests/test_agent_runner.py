@@ -88,6 +88,237 @@ def done(events: list[dict]) -> dict:
     return events[-1]
 
 
+def test_distinct_argument_corrections_reach_a_successful_edit(cand):
+    invalid = [
+        {"old": 123, "new": 456},
+        {"old": 'color="red"', "new": 456},
+        {"old": 'color="red"', "replacement_text": 'color="blue"'},
+    ]
+    steps = [{"tool_calls": [{"name": "read_file", "args": {"path": "fig.py"}}]}]
+    steps += [{"tool_calls": [{"name": "edit_file", "args": args}]} for args in invalid]
+    steps += [
+        {
+            "tool_calls": [
+                {"name": "edit_file", "args": {"old": 'color="red"', "new": 'color="blue"'}}
+            ]
+        },
+        {"text": "done"},
+    ]
+    res, events = run_demo(cand, {"turns": steps})
+    assert res.ok and res.turns == 6, res
+    assert (cand / "fig.py").read_text() == SCRIPT.replace('color="red"', 'color="blue"')
+    assert [e["ok"] for e in events if e["type"] == "tool"] == [True, False, False, False, True]
+
+
+@pytest.mark.parametrize("invalid_id", ["missing", "duplicate"])
+def test_invalid_call_identity_is_reissued_without_executing_the_rejected_batch(cand, invalid_id):
+    class Model:
+        count = 0
+
+        def complete(self, *, history, **kw):
+            self.count += 1
+            if self.count == 1:
+                calls = [
+                    wires.ToolCall(
+                        "" if invalid_id == "missing" else "same", "write_file", {"content": "BAD"}
+                    )
+                ]
+                if invalid_id == "duplicate":
+                    calls.append(wires.ToolCall("same", "list_dir", {}))
+                return wires.Turn(tool_calls=calls, stop="tool_use", usage=wires.Usage(5, 5))
+            assert (cand / "fig.py").read_text() == SCRIPT
+            assert history[-1].role == "user" and "no" in history[-1].text.lower()
+            return wires.Turn(text="No edit needed", stop="end", usage=wires.Usage(5, 5))
+
+    res, events = run_demo(cand, {}, model=Model())
+    assert res.ok and res.turns == 2, res
+    assert not any(e["type"] == "tool" for e in events)
+    assert (cand / "fig.py").read_text() == SCRIPT
+
+
+@pytest.mark.parametrize("failure", ["identity", "truncated"])
+@pytest.mark.parametrize("boundary", ["cancel", "turns", "tokens", "time", "streak"])
+def test_recovery_keeps_cancellation_and_original_limits(cand, monkeypatch, failure, boundary):
+    cancel = threading.Event()
+    clock = [0.0]
+    monkeypatch.setattr(loop.time, "monotonic", lambda: clock[0])
+    limits = tools.Limits(
+        max_turns=1 if boundary == "turns" else 10,
+        max_total_tokens=20 if boundary == "tokens" else 1000,
+        max_seconds=10,
+    )
+
+    class Model:
+        calls = 0
+
+        def complete(self, **kw):
+            self.calls += 1
+            if boundary == "cancel":
+                cancel.set()
+            if boundary == "time":
+                clock[0] = 11.0
+            return wires.Turn(
+                text="REJECTED_PRIVATE_TEXT",
+                tool_calls=[wires.ToolCall("", "write_file", {"content": "BAD"})],
+                stop="max_tokens" if failure == "truncated" else "tool_use",
+                usage=wires.Usage(10, 10),
+            )
+
+    before = _tree(cand)
+    model = Model()
+    res, events = run_demo(cand, {}, model=model, limits=limits, cancel=cancel)
+    assert not res.ok and model.calls == (3 if boundary == "streak" else 1)
+    expected = {"cancel": "cancelled", "turns": "max_turns", "tokens": "budget", "time": "budget"}
+    # Truncated responses exhausted at a boundary retain the specific failure.
+    assert res.reason == (
+        "budget"
+        if failure == "truncated" and boundary != "cancel"
+        else "network"
+        if boundary == "streak"
+        else expected[boundary]
+    )
+    assert _tree(cand) == before and res.ledger.check()
+    assert not any(e["type"] == "tool" for e in events)
+    assert "REJECTED_PRIVATE_TEXT" not in json.dumps(events)
+    assert done(events)["turns"] == model.calls
+
+
+@pytest.mark.parametrize("wire", ["anthropic", "openai-chat", "openai-responses"])
+def test_malformed_arguments_reach_the_model_as_feedback_in_valid_history(cand, wire):
+    requests = []
+
+    def reply(name=None, args=None):
+        ident = f"call-{len(requests)}"
+        if wire == "anthropic":
+            content = (
+                [{"type": "tool_use", "id": ident, "name": name, "input": args}]
+                if name
+                else [{"type": "text", "text": "done"}]
+            )
+            return {
+                "content": content,
+                "stop_reason": "tool_use" if name else "end_turn",
+                "usage": {"input_tokens": 5, "output_tokens": 5},
+            }
+        if wire == "openai-chat":
+            msg = {"content": None if name else "done"}
+            if name:
+                msg["tool_calls"] = [
+                    {
+                        "id": ident,
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps(args)},
+                    }
+                ]
+            return {
+                "choices": [{"finish_reason": "tool_calls" if name else "stop", "message": msg}],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 5},
+            }
+        output = (
+            [
+                {
+                    "type": "function_call",
+                    "call_id": ident,
+                    "name": name,
+                    "arguments": json.dumps(args),
+                }
+            ]
+            if name
+            else [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "done"}],
+                }
+            ]
+        )
+        return {
+            "status": "completed",
+            "output": output,
+            "usage": {"input_tokens": 5, "output_tokens": 5},
+        }
+
+    def post(url, headers, body, **kw):
+        requests.append(body)
+        if len(requests) == 1:
+            result = reply("edit_file", ["PRIVATE_INVALID_ARGUMENT"])
+        elif len(requests) == 2:
+            assert (cand / "fig.py").read_text() == SCRIPT
+            if wire == "anthropic":
+                call = body["messages"][1]["content"][0]
+                feedback = body["messages"][2]["content"][0]["content"]
+                valid = isinstance(call["input"], dict)
+            elif wire == "openai-chat":
+                call = body["messages"][2]["tool_calls"][0]["function"]
+                feedback = body["messages"][3]["content"]
+                valid = isinstance(json.loads(call["arguments"]), dict)
+            else:
+                call = body["input"][1]
+                feedback = body["input"][2]["output"]
+                valid = isinstance(json.loads(call["arguments"]), dict)
+            if not valid:
+                return 400, {}, b'{"error":{"code":"invalid_arguments"}}'
+            assert "Accepted keys and types" in feedback
+            assert "PRIVATE_INVALID_ARGUMENT" not in feedback
+            result = reply("read_file", {"path": "fig.py"})
+        elif len(requests) == 3:
+            result = reply("edit_file", {"old": 'color="red"', "new": 'color="blue"'})
+        else:
+            result = reply()
+        return 200, {}, json.dumps(result).encode()
+
+    model = loop.HttpModel(
+        wires.WIRES[wire],
+        base_url="https://example.test",
+        api_key=KEY_CANARY,
+        model="any-model",
+        max_attempts=1,
+        post=post,
+    )
+    res, events = run_demo(cand, {}, model=model)
+    assert res.ok and res.turns == 4, res
+    assert (cand / "fig.py").read_text() == SCRIPT.replace('color="red"', 'color="blue"')
+    assert "PRIVATE_INVALID_ARGUMENT" not in json.dumps(events)
+
+
+@pytest.mark.parametrize(
+    "wire,native,expected",
+    [
+        (
+            "openai-responses",
+            [
+                {"type": "reasoning", "encrypted_content": "opaque"},
+                {"type": "function_call", "arguments": "{"},
+            ],
+            [{"type": "reasoning", "encrypted_content": "opaque"}],
+        ),
+        ("openai-chat", {"reasoning_content": "private"}, {"reasoning_content": "private"}),
+        (
+            "anthropic",
+            [
+                {"type": "thinking", "thinking": "private", "signature": "signed"},
+                {"type": "tool_use", "id": "bad"},
+            ],
+            [{"type": "thinking", "thinking": "private", "signature": "signed"}],
+        ),
+        ("anthropic", [{"type": "thinking", "thinking": "unfinished"}], None),
+    ],
+)
+def test_truncation_continuation_has_no_executable_calls(wire, native, expected):
+    turn = wires.Turn(
+        native=native,
+        text="partial private text",
+        tool_calls=[wires.ToolCall("bad", "write_file", {})],
+        stop="max_tokens",
+    )
+    retained = wires.truncated_continuation(wire, turn)
+    if expected is None:
+        assert retained is None
+    else:
+        assert retained.native == expected
+        assert retained.text == "" and retained.tool_calls == []
+
+
 def tool_set(cand: Path, **kw) -> dict[str, tools.Tool]:
     return {t.name: t for t in tools.TOOLSETS["figure_edit"].tools(envelope(cand, **kw))}
 
@@ -395,7 +626,8 @@ class TestWires:
         assert body["messages"][0]["role"] == "system"
         assert body["tools"][0]["type"] == "function"
         assert set(body["tools"][0]["function"]) == {"name", "description", "parameters"}
-        assert "cache_control" not in json.dumps(body) and "reasoning" not in json.dumps(body)
+        # These are request options; their names may legitimately occur in instructions.
+        assert "cache_control" not in body and "reasoning" not in body
         body2 = srv.requests[1][2]
         asst, toolmsg = body2["messages"][2], body2["messages"][3]
         assert asst["role"] == "assistant" and asst["tool_calls"][0]["id"] == "call_1"

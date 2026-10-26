@@ -4,7 +4,7 @@
 
 * `completed`   模型给出最终文字、没有工具调用，或显式最终校验被工具确认通过（`ok=true`）；
 * `max_turns`   轮数用尽；`budget` token / 秒数用尽，或一轮输出被截断（`detail=output_truncated`）；
-* `tool_error_loop` 同一工具的同一错误码连续 3 次；
+* `tool_error_loop` 同一工具、同一参数的同一错误码连续 3 次；
 * `auth` 401 / 403 / 没密钥；`quota` 402、额度耗尽、429 重试用尽；
 * `refused` 服务端过滤 / 拒答（chat `finish_reason=content_filter`、anthropic `stop_reason=refusal`、responses `incomplete` 且原因不是
   `max_output_tokens`；`detail` 是短代码）；
@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import email.utils
+import hashlib
 import json
 import threading
 import time
@@ -41,6 +42,7 @@ from .wires import (
     Usage,
     Wire,
     post_json,
+    truncated_continuation,
 )
 
 REASONS = (
@@ -54,6 +56,24 @@ REASONS = (
     "network",
     "cancelled",
     "internal",
+)
+
+RECOVERY_GUIDANCE = """Execution and recovery loop:
+- Treat tool results as observations. If a call fails, use its reported schema and current state to
+  correct the next call; do not repeat an identical failing call or guess that it succeeded.
+- After a validation error, correct the candidate and validate again within the available check budget.
+  An installation or file write alone does not prove that the user's requested run succeeds.
+- Prefer one concrete tool action at a time over planning the entire implementation in one response.
+  If a response is interrupted, none of its tool calls ran. Retained reasoning is context only;
+  earlier successful operations remain valid. Continue from their actual results.
+- Recovery never grants permission, bypasses a confirmation, or extends the task's budget.
+"""
+
+TRUNCATION_FEEDBACK = (
+    "Tavotto runtime: the previous response reached its output limit. NONE of its tool calls ran. "
+    "Earlier completed tool operations remain current; do not repeat their side effects. "
+    "Use retained progress when available, then take one focused tool action. "
+    "Do not restart the entire plan or treat interrupted output as a successful write. "
 )
 
 
@@ -113,6 +133,9 @@ class HttpModel:
 
     def __repr__(self) -> str:  # 密钥不进 repr / 日志
         return f"HttpModel({self.wire.name}, model={self.model!r})"
+
+    def truncated_continuation(self, turn: Turn) -> Turn | None:
+        return truncated_continuation(self.wire.name, turn)
 
     def compress_history(self, history: list[Msg]) -> int:
         # Manual thinking requires its last signed block during tool use. Keep
@@ -331,6 +354,7 @@ class RunResult:
     usage_estimated: bool = False
     compressions: int = 0
     output_recoveries: int = 0
+    protocol_recoveries: int = 0
     elapsed_ms: int = 0
 
 
@@ -432,6 +456,7 @@ def run(
             "usage_estimated": res.usage_estimated,
             "compressions": res.compressions,
             "output_recoveries": res.output_recoveries,
+            "protocol_recoveries": res.protocol_recoveries,
         }
     )
     return res
@@ -449,12 +474,14 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
         return _finish(res, False, "internal", getattr(exc, "code", "bad_target"))
     by_name = {t.name: t for t in tools}
     specs = [t.spec() for t in tools]
-    system = toolset.system_prompt(envelope)
+    system = toolset.system_prompt(envelope) + "\n\n" + RECOVERY_GUIDANCE
     history: list[Msg] = [Msg("user", text=toolset.first_message(envelope))]
     deadline = t0 + limits.max_seconds
     led = res.ledger
     streak_key, streak = None, 0
     budget_notice_level = 0
+    truncated_streak = 0
+    invalid_identity_streak = 0
 
     while True:
         if cancel.is_set():
@@ -545,39 +572,59 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
         if turn.thinking_chars:
             emit({"type": "thinking", "chars": turn.thinking_chars})
         # 被截断的半截回答、以及停止原因不合法（未知 / 声称调工具却没有可用调用）的那一轮，都不把文字给用户看
-        rejected_stop = turn.stop == "max_tokens" or (not turn.tool_calls and turn.stop != "end")
+        identity_error = _call_identity_error(turn.tool_calls)
+        rejected_stop = (
+            turn.stop == "max_tokens"
+            or identity_error
+            or (not turn.tool_calls and turn.stop != "end")
+        )
         if turn.text and not rejected_stop:
             emit({"type": "text", "text": turn.text})
         if cancel.is_set():
             return _finish(res, False, "cancelled")
         if turn.stop == "max_tokens":  # 被截断的一轮：带不带工具调用都一个不执行
+            truncated_streak += 1
             hint = getattr(toolset, "truncation_hint", "")
             if (
-                hint
-                and not res.output_recoveries
+                truncated_streak < limits.same_error_limit
                 and used < limits.max_total_tokens
                 and res.turns < limits.max_turns
                 and time.monotonic() < deadline
             ):
-                # Discard the entire incomplete response, including tool calls
-                # and protocol-specific thinking. Its usage remains in the
-                # ledger; recovery consumes the same turn/token/time budget.
+                # Interrupted calls/text never run or reach the user. The wire
+                # may retain replayable reasoning so the next request need not
+                # spend the same output budget starting over from nothing.
                 res.output_recoveries += 1
-                history.append(Msg("user", text=hint))
+                continue_turn = getattr(model, "truncated_continuation", lambda turn: None)(turn)
+                if continue_turn is not None:
+                    history.append(Msg("assistant", turn=continue_turn))
+                history.append(Msg("user", text=TRUNCATION_FEEDBACK + hint))
                 continue
             return _finish(res, False, "budget", "output_truncated")
+        truncated_streak = 0
+        if identity_error:
+            invalid_identity_streak += 1
+            if invalid_identity_streak >= limits.same_error_limit:
+                return _finish(res, False, "network", identity_error)
+            res.protocol_recoveries += 1
+            history.append(
+                Msg(
+                    "user",
+                    text=(
+                        "Tavotto runtime rejected the entire response because tool call identities were missing "
+                        "or duplicated. No tool calls ran and no file changed. Reissue the next intended call "
+                        "using the advertised tool schema; each call must have a nonempty, unique identity."
+                    ),
+                )
+            )
+            continue
+        invalid_identity_streak = 0
         history.append(Msg("assistant", turn=turn))
         if not turn.tool_calls:
             if turn.stop != "end":  # 未知停止原因 / 声称要调工具却没有可用调用：不是完成
                 return _finish(res, False, "network", f"bad_stop_{turn.stop_value or turn.stop}")
             return _finish(res, True, "completed")
 
-        if any(not (isinstance(c.id, str) and c.id.strip()) for c in turn.tool_calls):
-            # 缺对应 ID 的工具调用：结果无法回填、下一轮必然失败——一个都不执行
-            return _finish(res, False, "network", "tool_call_without_id")
-        if len({c.id for c in turn.tool_calls}) != len(turn.tool_calls):
-            # 同一轮里重复的对应 ID：结果无法一一回填——一个都不执行
-            return _finish(res, False, "network", "duplicate_tool_call_id")
         results: list[ToolResult] = []
         for call in turn.tool_calls:
             if cancel.is_set():  # 每个工具调用前都查：已取消就不再写文件
@@ -606,13 +653,26 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                 if cancel.is_set():
                     return _finish(res, False, "cancelled")
                 return _finish(res, True, "completed")
-            key = (call.name, r.code) if r.is_error else None
+            # Distinct argument corrections may share an error code. Stop a
+            # repeated failed action, not three genuine attempts to repair it.
+            args_digest = hashlib.sha256(
+                json.dumps(call.args, sort_keys=True, ensure_ascii=True).encode()
+            ).digest()
+            key = (call.name, r.code, args_digest) if r.is_error else None
             streak = streak + 1 if key is not None and key == streak_key else (1 if key else 0)
             streak_key = key
             if streak >= limits.same_error_limit:
                 history.append(Msg("tool", results=results))
                 return _finish(res, False, "tool_error_loop", r.code)
         history.append(Msg("tool", results=results))
+
+
+def _call_identity_error(calls: list[ToolCall]) -> str:
+    if any(not (isinstance(call.id, str) and call.id.strip()) for call in calls):
+        return "tool_call_without_id"
+    if len({call.id for call in calls}) != len(calls):
+        return "duplicate_tool_call_id"
+    return ""
 
 
 def _execute(by_name: dict[str, toolmod.Tool], call: ToolCall) -> ToolResult:

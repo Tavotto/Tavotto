@@ -42,13 +42,13 @@ CLI 的写入面（任意 shell、网络、绝对路径写）也比「改一个�
 界面上也没有「执行器」——用户只看到「连接」，`builtin` 只经连接的 `route` 体现。命令是 `tavotto agent-run`（冻结产物同目录 `tavotto-cli`，源码 `-m tavotto`，与 D3 的 `fix-mcp` 同一启动器出处），
 复用候选工作区 / TAF 校验与修正 / 事件流 / 取消 / 历史库，与 Codex / Claude Code 同一套会话生命周期；密钥只经环境变量，提示词经 stdin。
 
-**路由规则**（用户决策 2026-10-24，视图见 `engine/ai_connections.py`）：
+**路由规则**（用户决策 2026-10-26，视图见 `engine/ai_connections.py`）：
 
 1. 订阅类连接（ChatGPT / Claude 的官方登录）→ 对应 CLI；
-2. Key 类连接：该连接家族的 CLI 装着且可用，并且 `ai.builtin_default` 不为 true → CLI + 注入 provider（现状）；否则 → 内置执行器。没装任何 CLI 的用户因此直接可用；
-3. `ai.builtin_default` 默认 false。扩大默认覆盖须按实际接入协议验收真模型改图、外部脚本转换和环境修复的完整应用流程，并检查确认、取消及卡住后的终止；FigureBench 单次跑分不足以决定默认切换。
-   定向试用可在独立配置中设为 true，保留 CLI 连接与撤回入口；不把一个协议的通过外推到其他协议。运维开关 `TAVOTTO_AI_BUILTIN=0|1` 强制；
-4. 账号登录（OAuth 访问令牌，如 MiniMax）类也遵循 `builtin_default` 与强制开关；默认 false 且 CLI 装了、启用时走 CLI（凭据由我们注入，不看 CLI 自己的官方登录）；没有可用 CLI 或偏好内置时走内置执行器，
+2. Key 类连接：该连接家族的 CLI 装着且可用，并且显式设置 `ai.builtin_default=false` → CLI + 注入 provider；否则 → 内置执行器。没装任何 CLI 的用户因此直接可用；
+3. `ai.builtin_default` 缺省为 true（2026-10-26 用户授权切换）。保留显式 false 的 CLI 偏好和 `TAVOTTO_AI_BUILTIN=0|1` 强制开关，不迁移用户已存偏好。
+   验收分别记录真实服务协议、完整应用转换与修复、确认、取消及卡住后的终止；一个协议或 FigureBench 跑分不代表所有任务通过。
+4. 账号登录（OAuth 访问令牌，如 MiniMax）类也遵循 `builtin_default` 与强制开关；显式 false 且 CLI 装了、启用时走 CLI（凭据由我们注入，不看 CLI 自己的官方登录）；没有可用 CLI 或偏好内置时走内置执行器，
    anthropic wire 只发 `Authorization: Bearer`（`--auth bearer`，不发 `x-api-key`），令牌在 spawn 之前由 `ai_oauth.ensure_fresh` 刷新、只进子进程环境变量。
    内置循环不能用的记录（如缺型号）退回可用的 CLI。
 5. 明文 http 只放本机回环与私网（2026-10-25 起放行局域网：实验室常有自建模型服务器）：`127.0.0.1` / `::1` / `localhost`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、
@@ -63,7 +63,7 @@ AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可
 
 ### 六、仍然不做
 
-流式回复；默认开启（`builtin_default` 先 false）。
+流式回复。
 
 ### 七、转换任务与思考强度（2026-10-25 用户裁决）
 
@@ -109,7 +109,7 @@ Conversion output recovery remains within the existing budget: create/append sho
 真实转换暴露两种循环浪费：模型把工具参数 `new` 写成别的名称，收到笼统错误后继续重试；候选已实际出图，却还需额外请求模型说“完成”，最后一轮因而失败。
 参数拒绝仍以工具 handler 为权威，循环只从同一份公开 schema 生成缺失键与可用参数提示，不猜测未声明的键或回显参数值。
 文本替换的 schema 与取值共用 `_EDIT_TEXT_ARGUMENTS`：`old` / `old_string` 表示原文，`new` / `new_string` 表示替换文本，短名和完整名称都明确声明；
-同组给出不同值或非字符串时拒绝，未知名称不推断，模型原始调用在协议历史中不改写。figure_edit 与转换复用同一契约，路径、唯一匹配、秘密串与文件大小限制仍由原 handler 检查。
+同组给出不同值或非字符串时拒绝，未知名称不推断；有效 JSON 对象在协议历史中不改写，非对象参数的回放修复见下。figure_edit 与转换复用同一契约，路径、唯一匹配、秘密串与文件大小限制仍由原 handler 检查。
 工具 schema 使用平铺属性，不在顶层使用 anyOf / oneOf / allOf（Anthropic 真服务以 HTTP 400 拒绝）；必填替换文本的等价名称组由同一个 handler 验证。
 转换的 create / append / edit 回执均给当前文本 SHA-256，使编辑之后可继续有界追加；旧摘要仍拒绝。
 
@@ -132,3 +132,19 @@ Conversion output recovery remains within the existing budget: create/append sho
 旧 20 轮 / 400k 上限会截断这些成功路径，900 s 时限尚有余量。因此仅把转换默认值调整为 **32 轮 / 800k token**，保留 **900 s**、单响应 32768、3 次工具校验及连续错误终止。
 总 token 仍含全部输入、缓存输入与输出，不改账本口径；最坏每次转换的 token 上限翻倍。预算提示、显式收尾、父进程校验及用户采用仍适用，改图/修复预算与默认路由不变。
 此对照说明具体复杂任务需要更多有效步骤，不能作为所有模型、脚本或科学/视觉保真均通过的证明；逐次失败和不同预算实验分开记录。
+
+
+### 修订：共享恢复循环与默认内置路由（2026-10-26）
+
+旧实现收到 `max_output_tokens` 后丢弃整轮模型状态，只允许一次重试；R sinc / plotmath 的新基线再次连续耗尽两轮 32768 输出，约 6 分钟时失败，尚未达到 900 秒期限。
+这是供应商单响应输出限制与客户端丢弃续写状态共同作用，不能只归因于总时限。环境修复的 `_FinishAware` 包装器同样转交协议续写与压缩策略，保留签名历史约束。共享 loop 向所有任务提供「观察工具结果 → 纠正参数或候选 → 再验证」规范：
+
+- 截断轮的文字与所有工具调用均不接受；只将协议可回放的 reasoning / reasoning_content / 已签名 thinking 状态保留在模型历史中，并提醒模型接着做一个具体操作。
+  无签名的 Anthropic thinking 不回填；思考内容不进事件、诊断包或日志。连续三轮截断终止，有正常响应进展后重新计连续次数。
+- 非 JSON 对象的工具参数仍由 handler 前置拒绝；下一轮回放只把该调用的参数置为空对象，配对原 call ID 与 `bad_arguments`、同源 schema 提示，避免接口在模型看到反馈之前拒绝畸形历史。
+  这不是替模型猜参数或执行原调用；有效对象（包括含错误键的对象）仍原样回放，未知键不推断。
+- 缺失或重复调用 ID 时整批不执行，作为协议错误反馈让模型重新发出有效调用，连续三次仍错误则终止。重复失败判据是同一工具、同一参数、同一错误码；不同纠错尝试可继续，但仍受全局预算限制。
+- 既有轮数、累计 token、秒数、校验次数、路径权限、取消、用户确认和采用条件均不放宽；不因 401/402、拒答或任意 400 错误自动切换接口或重放副作用。
+
+协议依据：[DeepSeek Responses 的无状态历史](https://api-docs.deepseek.com/guides/responses_api/)、[输出限制含思考](https://api-docs.deepseek.com/api/create-response/)、
+[OpenAI reasoning 状态回传](https://developers.openai.com/api/docs/guides/reasoning)。看护 `test_agent_runner`、`test_agent_runner_convert` 与 `test_ai_connections`；真实服务证据独立记录，合成接收端测试不冒充真模型结果。

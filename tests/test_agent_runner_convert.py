@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from tavotto.engine import ai_prompt_pack
-from tavotto.engine.agent_runner import loop, tools
+from tavotto.engine.agent_runner import loop, tools, wires
 from tavotto.engine.agent_runner.redact import Redactor
 from tavotto.engine.agent_runner.wires import ToolCall, Turn, Usage
 
@@ -383,8 +383,95 @@ def test_truncated_conversion_recovers_without_executing_or_replaying_partial_ca
     assert tool_events(events) == [("create_file", True)]
 
 
-@pytest.mark.parametrize("token_budget,expected_calls", [(1000, 2), (15, 1)])
-def test_truncation_recovery_is_once_and_never_expands_budget(cand, token_budget, expected_calls):
+def test_responses_recovery_retains_reasoning_but_never_executes_partial_calls(cand):
+    reasoning = {
+        "type": "reasoning",
+        "id": "reasoning-1",
+        "status": "incomplete",
+        "content": [{"type": "reasoning_text", "text": "PRIVATE_RETAINED_PROGRESS"}],
+        "summary": [],
+    }
+    requests = []
+
+    def response_call(name, args, call_id):
+        return {
+            "type": "function_call",
+            "call_id": call_id,
+            "name": name,
+            "arguments": json.dumps(args),
+        }
+
+    def post(url, headers, body, **kw):
+        requests.append(body)
+        assert body["max_output_tokens"] == TASK.default_limits.max_output_tokens
+        if len(requests) == 1:
+            reply = {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [reasoning, response_call("create_file", {"content": "BAD"}, "partial")],
+            }
+        elif len(requests) == 2:
+            assert not (cand / "fig_matplotlib.py").exists()
+            assert reasoning in body["input"], (
+                "Resume from accepted protocol state, not from scratch"
+            )
+            assert not any(item.get("call_id") == "partial" for item in body["input"])
+            reply = {
+                "status": "completed",
+                "output": [response_call("create_file", {"content": NEW}, "create")],
+            }
+        else:
+            reply = {"status": "completed", "output": [response_call("finish", {}, "finish")]}
+        reply["usage"] = {"input_tokens": 100, "output_tokens": 200}
+        return 200, {}, json.dumps(reply).encode()
+
+    model = loop.HttpModel(
+        wires.OpenAIResponsesWire(),
+        base_url="https://example.test",
+        api_key=KEY,
+        model="any-model",
+        post=post,
+        max_attempts=1,
+    )
+    check = CountingCheck()
+    res, events = run_demo(cand, {}, model=model, check=check)
+    assert res.ok and res.turns == 3 and res.output_recoveries == 1, res
+    assert check.calls == 1 and (cand / "fig_matplotlib.py").read_text() == NEW
+    assert (cand / "fig.py").read_text() == ORIG
+    assert "PRIVATE_RETAINED_PROGRESS" not in json.dumps(events)
+    assert (res.ledger.total_in, res.ledger.total_out) == (300, 600)
+
+
+def test_truncation_can_recover_again_after_successful_tool_progress(cand):
+    class Model:
+        calls = 0
+
+        def complete(self, **kw):
+            self.calls += 1
+            if self.calls in (1, 3):
+                return Turn(stop="max_tokens", usage=Usage(10, 20))
+            if self.calls == 2:
+                return Turn(
+                    tool_calls=[ToolCall("create", "create_file", {"content": NEW})],
+                    stop="tool_use",
+                    usage=Usage(10, 20),
+                )
+            assert self.calls == 4
+            return Turn(
+                tool_calls=[ToolCall("finish", "finish", {})], stop="tool_use", usage=Usage(10, 20)
+            )
+
+    check = CountingCheck()
+    res, events = run_demo(cand, {}, model=Model(), check=check)
+    assert res.ok and res.output_recoveries == 2 and res.turns == 4, res
+    assert check.calls == 1 and tool_events(events) == [("create_file", True), ("finish", True)]
+    assert (cand / "fig.py").read_text() == ORIG
+
+
+@pytest.mark.parametrize("token_budget,expected_calls", [(1000, 3), (15, 1)])
+def test_consecutive_truncation_recovery_is_bounded_and_never_expands_budget(
+    cand, token_budget, expected_calls
+):
     class Model:
         calls = 0
 

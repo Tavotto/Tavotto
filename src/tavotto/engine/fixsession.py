@@ -233,6 +233,13 @@ class _FinishAware:
             return Turn(text="", stop="end")
         return self.inner.complete(**kw)
 
+    def truncated_continuation(self, turn: Turn) -> Turn | None:
+        return getattr(self.inner, "truncated_continuation", lambda turn: None)(turn)
+
+    def compress_history(self, history) -> int:
+        # Preserve the wire's signed-thinking rules in repair sessions too.
+        return getattr(self.inner, "compress_history", loop.compress)(history)
+
 
 @dataclass
 class _Pending:
