@@ -296,6 +296,8 @@ _CONVERT_TEMPLATES: dict[str, tuple[frozenset[str], str]] = {
         frozenset(),
         "2. 图必须用 matplotlib 生成，并经 Figure.savefig(...) 落盘（沿用原脚本的输出文件名与格式）。"
         "逐一保留原脚本的出图数量、独立页面和顺序，不把几张图合成一张子图，也不省略后续输出。"
+        "绘图可全部写在顶层，或放进 main() 并只由 if __name__ == '__main__': main() 启动；"
+        "不要在模块导入时无条件调用 main()，避免应用选择 main 入口时重复出图。"
         "禁止再用 PIL / OpenCV / plotly / ROOT 画布出图。",
     ),
     "rule_size": (

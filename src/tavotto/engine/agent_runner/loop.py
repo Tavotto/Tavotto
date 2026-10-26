@@ -626,7 +626,7 @@ def _execute(by_name: dict[str, toolmod.Tool], call: ToolCall) -> ToolResult:
     r.call_id, r.name = call.id, call.name
     if r.code == "bad_arguments" and not r.mutated:
         # Handlers remain the only validation authority. Explain their
-        # rejection using the advertised schema, without guessing aliases or
+        # rejection using the advertised schema, without guessing unknown keys or
         # echoing model-supplied keys/values (which may contain private text).
         r.content += " " + _argument_hint(tool, call.args)
     return r
@@ -635,6 +635,11 @@ def _execute(by_name: dict[str, toolmod.Tool], call: ToolCall) -> ToolResult:
 def _argument_hint(tool: toolmod.Tool, args: dict | None) -> str:
     props = tool.schema.get("properties", {})
     required = tool.schema.get("required", [])
+    if not required and tool.schema.get("anyOf"):
+        required = min(
+            (branch.get("required", []) for branch in tool.schema["anyOf"]),
+            key=lambda keys: sum(args is None or key not in args for key in keys),
+        )
     missing = [key for key in required if args is None or key not in args]
     types = {key: spec.get("type", "value") for key, spec in props.items()}
     prefix = f"Missing required keys: {', '.join(missing)}. " if missing else ""

@@ -410,7 +410,8 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   大型只读资源可用 `read_file.byte_offset/byte_limit` 分段查看（单次 ≤ 64 KiB，默认 16 KiB）；返回完整 UTF-8 字符边界的 `next_byte_offset` / `eof`。打开前后核对文件身份与路径；分段读取不授予目标写权限，完整目标读取及写入的 200 KiB 限制不变。看护 `tests/test_agent_read_windows.py`。
   换行：读出时统一成 `\n`，写回恢复文件原有的 `\r\n`（混合换行的文件会被统一成首见的那种）。
   参数拒绝仍由各工具 handler 判定；`bad_arguments` 且未写入时，循环从该工具公开 schema 补充缺失必填键、可用键名及类型，提示原样重发一条修正调用。
-  不猜测 `new_string` 等别名，不回显模型给出的键名或参数内容；拒绝的调用保持零改动。
+  文本替换取值与 schema 共用 `_EDIT_TEXT_ARGUMENTS`：`old` / `old_string`、`new` / `new_string` 是明确声明的两组名称；同组重复提供时值必须相同。
+  不猜测未知名称，不回显模型给出的键名或参数内容；冲突值或类型错误在写入前拒绝。figure_edit 与转换共用这条契约，原有路径与内容验证不变。
   将来 `data_to_figure` 的工具集**没有写文件工具**（只出结构化列映射，ADR 0138 §四）。
 - **事件**（stdout 每行一条 JSON，ASCII 转义）：`thinking`（只有字符数）、`tool`（工具名、成败、一句话摘要，**不带文件内容 / 提示词 / 密钥**）、
   `text`（模型对用户说的话）、`usage`（每轮用量）、`done`（最后一条，恰好一条）。stderr 只写诊断级错误码。
@@ -430,6 +431,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
     没有 `write_file`、没有 shell / 网络 / MCP。`create_file` 的可选 `path` 与 `edit_file` 的可选 `path` 只能是 `--output`：指向原脚本 → `source_readonly`，
     其它路径 → `not_output`，越界 → `path_outside`；一律工具错误、磁盘字节不变。第一次 `create_file` 用 `O_CREAT|O_EXCL` 新建（此刻已存在含悬空链接 → `output_exists`，不覆盖），
     之后允许整份覆盖这个新文件（模型自我修正）；`edit_file` 必须在本次运行里已 `create_file`（否则 `not_created`），`old` 恰好出现一次。含密钥的内容 → `secret_in_content`（新建 / 覆盖 / edit 三处）。
+    create / append / edit 的回执均含当前文本 SHA-256；编辑后继续追加使用最新回执，不用旧 create 摘要。追加前仍核内容，过期摘要拒绝。
   - `--output` 起跑即校验：必须恰为 `<原名>_matplotlib.py`（原名 = `--target` 的 stem）、只有文件名（无目录、无反斜杠）、尚不存在（`lexists`）；不合格 → `done{ok:false, reason:"internal", detail:"bad_output"}`，**0 次模型请求**、磁盘不动。外层修正续跑只接受父进程传入的上次候选字节 SHA-256，拒绝链接、非普通文件、字节变化及超读限文件；`checks_used` 继承已用次数，子进程重启不重置校验预算。
   - `check`：同 figure_edit 的注入回调，语义是 ADR 0143 的 `run_validation`（用户同一路由下跑新脚本，必须捕获到 Matplotlib 图），回调可返回 `(ok, 报告)` 或 `CheckResult`（报告 + 有界图像）；转换入口经 IPC 调用应用同一校验，实时渲染 PNG 后才退役 worker。未注入回调则 `not_available`。
     新文件还没写出就 `check` → `not_created`（不调回调、不计数）。**回调最多被调 3 次**（ADR 0143「校验运行 ≤ 3」），第 4 次 `check_budget`。

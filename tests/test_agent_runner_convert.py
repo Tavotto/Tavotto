@@ -99,7 +99,7 @@ def test_wrong_edit_key_gets_schema_guidance_without_reinterpreting_or_writing(c
     by["create_file"].handler({"content": NEW})
     before = _tree(cand)
     rejected = loop._execute(
-        by, ToolCall("wrong-key", "edit_file", {"old": "[1, 2]", "new_string": "[3, 4]"})
+        by, ToolCall("wrong-key", "edit_file", {"old": "[1, 2]", "replacement_text": "[3, 4]"})
     )
     assert rejected.code == "bad_arguments"
     assert "Missing required keys: new." in rejected.content
@@ -111,6 +111,97 @@ def test_wrong_edit_key_gets_schema_guidance_without_reinterpreting_or_writing(c
     )
     assert not corrected.is_error
     assert (cand / "fig_matplotlib.py").read_text() == NEW.replace("[1, 2]", "[3, 4]")
+
+
+def _editable_tools(cand, task):
+    env = replace(envelope(cand, redactor=Redactor(KEY)), task_type=task)
+    by = {t.name: t for t in tools.TOOLSETS[task].tools(env)}
+    if task == "convert_to_editable":
+        by["create_file"].handler({"content": NEW})
+        target = cand / "fig_matplotlib.py"
+    else:
+        target = cand / "fig.py"
+        target.write_text(NEW)
+        by["read_file"].handler({"path": "fig.py"})
+    return by, target
+
+
+@pytest.mark.parametrize("task", ["figure_edit", "convert_to_editable"])
+@pytest.mark.parametrize("old_key", ["old", "old_string"])
+@pytest.mark.parametrize("new_key", ["new", "new_string"])
+def test_declared_text_edit_parameter_variants_use_the_same_exact_write(
+    cand, task, old_key, new_key
+):
+    by, target = _editable_tools(cand, task)
+    args = {old_key: "[1, 2]", new_key: "[3, 4]"}
+    before_args = dict(args)
+    result = loop._execute(by, ToolCall("replace", "edit_file", args))
+    assert not result.is_error, result.content
+    assert target.read_text() == NEW.replace("[1, 2]", "[3, 4]")
+    assert args == before_args  # Protocol history must retain what the model actually sent.
+
+
+@pytest.mark.parametrize("task", ["figure_edit", "convert_to_editable"])
+@pytest.mark.parametrize(
+    "extra", [{"old_string": "different source"}, {"new_string": "different replacement"}]
+)
+def test_conflicting_text_edit_parameter_values_are_refused_before_write(cand, task, extra):
+    by, _ = _editable_tools(cand, task)
+    before = _tree(cand)
+    result = loop._execute(
+        by, ToolCall("conflict", "edit_file", {"old": "[1, 2]", "new": "[3, 4]", **extra})
+    )
+    assert result.is_error and result.code == "bad_arguments"
+    assert _tree(cand) == before
+
+
+@pytest.mark.parametrize("task", ["figure_edit", "convert_to_editable"])
+def test_text_edit_parameter_variants_keep_secret_and_path_checks(cand, task):
+    by, _ = _editable_tools(cand, task)
+    before = _tree(cand)
+    secret = loop._execute(
+        by, ToolCall("secret", "edit_file", {"old_string": "[1, 2]", "new_string": KEY})
+    )
+    assert secret.code == "secret_in_content"
+    outside = loop._execute(
+        by,
+        ToolCall(
+            "outside", "edit_file", {"path": "../outside.txt", "old_string": "OUTSIDE", "new": "x"}
+        ),
+    )
+    assert outside.code == "path_outside"
+    if task == "convert_to_editable":
+        source = loop._execute(
+            by,
+            ToolCall(
+                "source", "edit_file", {"path": "fig.py", "old_string": "Image", "new_string": "x"}
+            ),
+        )
+        assert source.code == "source_readonly"
+    assert _tree(cand) == before
+    assert (cand.parent / "outside.txt").read_text() == "OUTSIDE\n"
+
+
+def test_edit_receipt_can_continue_a_long_conversion_without_a_stale_append(cand):
+    import hashlib
+
+    by = {t.name: t for t in TASK.tools(envelope(cand))}
+    created = by["create_file"].handler({"content": NEW})
+    old_digest = created.content.rsplit("sha256: ", 1)[-1]
+    edited = by["edit_file"].handler({"old": "[1, 2]", "new": "[3, 4]"})
+    current_digest = hashlib.sha256((cand / "fig_matplotlib.py").read_bytes()).hexdigest()
+    assert f"sha256: {current_digest}" in edited.content
+    assert (
+        by["append_file"]
+        .handler({"content": "# next section\n", "expected_sha256": old_digest})
+        .code
+        == "file_changed"
+    )
+    result = by["append_file"].handler(
+        {"content": "# next section\n", "expected_sha256": current_digest}
+    )
+    assert not result.is_error
+    assert (cand / "fig_matplotlib.py").read_text().endswith("# next section\n")
 
 
 def test_final_check_completes_on_last_turn_without_another_model_request_or_late_write(cand):

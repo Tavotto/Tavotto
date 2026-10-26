@@ -475,9 +475,10 @@ class FigureEditSession:
 
     def edit_file(self, args: dict, call_id: str = "") -> ToolResult:
         name = "edit_file"
-        old, new = args.get("old"), args.get("new")
-        if not isinstance(old, str) or not isinstance(new, str):
-            return _err(name, call_id, "bad_arguments", "`old` and `new` must be strings.")
+        try:
+            old, new = _edit_text_arguments(args)
+        except ValueError as exc:
+            return _err(name, call_id, "bad_arguments", str(exc))
         real = self._target_for_write(name, call_id, args.get("path", self.target_rel))
         if isinstance(real, ToolResult):
             return real
@@ -612,6 +613,43 @@ def _obj(props: dict, required: list[str]) -> dict:
     }
 
 
+# One explicit text-replacement contract shared by both task toolsets. These
+# spellings are advertised, not guessed from an unknown key or its value.
+_EDIT_TEXT_ARGUMENTS = (("old", "old_string"), ("new", "new_string"))
+
+
+def _edit_schema(path_description: str) -> dict:
+    props = {"path": {"type": "string", "description": path_description}}
+    for names, description in zip(
+        _EDIT_TEXT_ARGUMENTS, ("Exact text to replace (non-empty).", "Replacement text.")
+    ):
+        for name in names:
+            props[name] = {
+                "type": "string",
+                "description": description
+                + f" Use {names[0]} or {names[1]}; if both are supplied their values must be identical.",
+            }
+    schema = _obj(props, [])
+    schema["anyOf"] = [
+        {"required": [old, new]}
+        for old in _EDIT_TEXT_ARGUMENTS[0]
+        for new in _EDIT_TEXT_ARGUMENTS[1]
+    ]
+    return schema
+
+
+def _edit_text_arguments(args: dict) -> tuple[str, str]:
+    values = []
+    for names in _EDIT_TEXT_ARGUMENTS:
+        supplied = [args[name] for name in names if name in args]
+        if not supplied or any(not isinstance(value, str) for value in supplied):
+            raise ValueError(f"Supply `{names[0]}` or `{names[1]}` as a string.")
+        if any(value != supplied[0] for value in supplied[1:]):
+            raise ValueError(f"Conflicting `{names[0]}` and `{names[1]}` values; supply one value.")
+        values.append(supplied[0])
+    return values[0], values[1]
+
+
 def _read_schema() -> dict:
     return _obj(
         {
@@ -691,20 +729,7 @@ class FigureEditToolset:
                 "surrounding lines to make it unique and copy whitespace verbatim. Prefer this over write_file; "
                 "make several small edits rather than one large one. You must read_file the target first. "
                 "It can only modify the target script.",
-                _obj(
-                    {
-                        "path": {
-                            "type": "string",
-                            "description": _PATH_DESC + " Optional; must be the target.",
-                        },
-                        "old": {
-                            "type": "string",
-                            "description": "Exact text to replace (non-empty).",
-                        },
-                        "new": {"type": "string", "description": "Replacement text."},
-                    },
-                    ["old", "new"],
-                ),
+                _edit_schema(_PATH_DESC + " Optional; must be the target."),
                 bind(s.edit_file),
             ),
             Tool(
@@ -984,9 +1009,10 @@ class ConvertSession(FigureEditSession):
 
     def edit_file(self, args: dict, call_id: str = "") -> ToolResult:
         name = "edit_file"
-        old, new = args.get("old"), args.get("new")
-        if not isinstance(old, str) or not isinstance(new, str):
-            return _err(name, call_id, "bad_arguments", "`old` and `new` must be strings.")
+        try:
+            old, new = _edit_text_arguments(args)
+        except ValueError as exc:
+            return _err(name, call_id, "bad_arguments", str(exc))
         real = self._writable_output(name, call_id, args.get("path", self.output_rel))
         if isinstance(real, ToolResult):
             return real
@@ -1023,11 +1049,16 @@ class ConvertSession(FigureEditSession):
                 f"`old` appears {count} times in the file. Include more surrounding lines so that "
                 "it matches exactly once.",
             )
-        refused = self._commit_write(name, call_id, real, text, text.replace(old_n, new_n, 1), eol)
+        updated = text.replace(old_n, new_n, 1)
+        refused = self._commit_write(name, call_id, real, text, updated, eol)
         if refused is not None:
             return refused
         return ToolResult(
-            call_id, name, f"Edited {self.output_rel}.", summary="edited new file", mutated=True
+            call_id,
+            name,
+            f"Edited {self.output_rel}. sha256: {_sha(updated.encode('utf-8'))}",
+            summary="edited new file",
+            mutated=True,
         )
 
     def check(self, args: dict, call_id: str = "") -> ToolResult:
@@ -1131,7 +1162,7 @@ class ConvertToEditableToolset:
             Tool(
                 "append_file",
                 "Append the next section to the new script without regenerating earlier code. Use small chunks "
-                "to avoid output truncation. expected_sha256 must be copied from the previous create_file/append_file "
+                "to avoid output truncation. expected_sha256 must be copied from the latest create_file/append_file/edit_file "
                 "result; a repeated or stale append is refused. Only the new script is writable.",
                 _obj(
                     {
@@ -1149,20 +1180,7 @@ class ConvertToEditableToolset:
                 "several times or not at all the call fails and nothing changes, so include enough surrounding lines "
                 "to make it unique and copy whitespace verbatim. Use it after create_file and after check reports a "
                 "problem. It cannot modify the original script or any other file.",
-                _obj(
-                    {
-                        "path": {
-                            "type": "string",
-                            "description": _PATH_DESC + " Optional; must be the new file.",
-                        },
-                        "old": {
-                            "type": "string",
-                            "description": "Exact text to replace (non-empty).",
-                        },
-                        "new": {"type": "string", "description": "Replacement text."},
-                    },
-                    ["old", "new"],
-                ),
+                _edit_schema(_PATH_DESC + " Optional; must be the new file."),
                 s.edit_file,
             ),
             Tool(
