@@ -417,3 +417,37 @@ def test_read_logs_worker_without_any_log_is_a_clear_no_log(box, monkeypatch):
     monkeypatch.setattr(pool, "ENGINE_CACHE", box.tmp / "empty-cache")
     r = run_tool(REGISTRY["read_logs"], make_ctx(box), {"source": "worker"})
     assert r.is_error and r.code == "no_log" and "read_run_report" in r.content
+
+
+def test_an_import_failure_the_script_caught_is_not_the_diagnosis(box):
+    # 脚本接住可选子模块的缺失、再抛别的错：最终异常不是 import 类，遮蔽说明不能出现
+    celerite_project(box)
+    tb = (
+        "Traceback (most recent call last):\n"
+        f'  File "{box.proj / "fig.py"}", line 3, in <module>\n'
+        "    import celerite.celerite_version\n"
+        "ModuleNotFoundError: No module named 'celerite.celerite_version'\n"
+        "\n"
+        "During handling of the above exception, another exception occurred:\n"
+        "\n"
+        "Traceback (most recent call last):\n"
+        f'  File "{box.proj / "fig.py"}", line 5, in <module>\n'
+        '    raise ValueError("input data has invalid dimensions")\n'
+        "ValueError: input data has invalid dimensions\n"
+    )
+    assert importshadow.detect(tb, [box.proj]) is None
+
+
+def test_a_chained_import_failure_that_is_terminal_is_still_diagnosed(box):
+    celerite_project(box)
+    tb = (
+        "Traceback (most recent call last):\n"
+        '  File "x.py", line 1, in <module>\n'
+        "KeyError: 'a'\n"
+        "\n"
+        "During handling of the above exception, another exception occurred:\n"
+        "\n"
+        "ModuleNotFoundError: No module named 'celerite.celerite_version'\n"
+    )
+    fact = importshadow.detect(tb, [box.proj])
+    assert fact and fact["missing"] == "celerite.celerite_version"

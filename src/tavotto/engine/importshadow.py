@@ -205,6 +205,22 @@ def _frame_in(text: str, pkg_dir: Path) -> bool:
     return False
 
 
+_IMPORT_ERRORS = ("ModuleNotFoundError", "ImportError")
+#: traceback 的终止异常行：行首（可带缩进）是异常类名（可带模块前缀），后跟冒号或行尾
+_EXC_LINE_RE = re.compile(
+    r"^\s*(?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*(?:Error|Exception|Exit|Interrupt|Warning)\b(?::|$)"
+)
+
+
+def _terminal_exception(text: str) -> str | None:
+    """traceback 文本里最后一个异常行（去掉前导空白），认不出返回 `None`。"""
+    last = None
+    for line in text.splitlines():
+        if _EXC_LINE_RE.match(line):
+            last = line.strip()
+    return last
+
+
 def detect(
     text: str | None, roots: list[Path | str | None], *, project_on_path: bool = True
 ) -> dict | None:
@@ -218,8 +234,14 @@ def detect(
     candidates = [Path(r) for r in roots if r]
     if not candidates:
         return None
-    # 取最后一处：错误尾巴里最靠后的才是这次失败的那个异常
-    hits = list(_NO_MODULE_RE.finditer(text))
+    # 只看**最终抛出**的那个异常：脚本 `except ModuleNotFoundError:` 接住可选子模块、再抛别的错时，前面那次 import
+    # 失败不是这次的原因。traceback 里认得出终止异常行时，它不是 import 类就不下结论，且只在那一行里匹配；
+    # 认不出（只给了一句消息）就照旧看整段文本。来源证据（`_frame_in`）仍按整段 traceback 找。
+    terminal = _terminal_exception(text)
+    if terminal is not None and not terminal.startswith(_IMPORT_ERRORS):
+        return None
+    scope = terminal if terminal is not None else text
+    hits = list(_NO_MODULE_RE.finditer(scope))
     if hits:
         name = hits[-1].group("name")
         if "." in name:
@@ -236,7 +258,7 @@ def detect(
                     ):
                         return _fact(root, parent, name, relation="missing_submodule", kind=kind)
     m = None
-    for m in _CANNOT_IMPORT_RE.finditer(text):
+    for m in _CANNOT_IMPORT_RE.finditer(scope):
         pass
     if m is not None:
         path = Path(m.group("path").strip())
