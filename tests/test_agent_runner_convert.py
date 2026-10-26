@@ -15,6 +15,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -90,6 +92,115 @@ class CountingCheck:
     def __call__(self):
         self.calls += 1
         return self.ok, self.report
+
+
+def test_wrong_edit_key_gets_schema_guidance_without_reinterpreting_or_writing(cand):
+    by = {t.name: t for t in TASK.tools(envelope(cand))}
+    by["create_file"].handler({"content": NEW})
+    before = _tree(cand)
+    rejected = loop._execute(
+        by, ToolCall("wrong-key", "edit_file", {"old": "[1, 2]", "new_string": "[3, 4]"})
+    )
+    assert rejected.code == "bad_arguments"
+    assert "Missing required keys: new." in rejected.content
+    assert '"new": "string"' in rejected.content
+    assert "[3, 4]" not in rejected.content
+    assert _tree(cand) == before
+    corrected = loop._execute(
+        by, ToolCall("corrected", "edit_file", {"old": "[1, 2]", "new": "[3, 4]"})
+    )
+    assert not corrected.is_error
+    assert (cand / "fig_matplotlib.py").read_text() == NEW.replace("[1, 2]", "[3, 4]")
+
+
+def test_final_check_completes_on_last_turn_without_another_model_request_or_late_write(cand):
+    chk = CountingCheck()
+    script = {
+        "turns": [
+            step(call("create_file", content=NEW)),
+            step(
+                call("check", final=True, summary="可编辑候选已出图；视觉差异待复核。"),
+                call("edit_file", old="[1, 2]", new="[9, 9]"),
+            ),
+        ]
+    }
+    res, events = run_demo(
+        cand, script, check=chk, limits=replace(TASK.default_limits, max_turns=2)
+    )
+    assert (res.ok, res.reason, res.turns) == (True, "completed", 2)
+    assert chk.calls == 1
+    assert (cand / "fig_matplotlib.py").read_text() == NEW
+    assert tool_events(events) == [("create_file", True), ("check", True)]
+    assert any(e.get("text") == "可编辑候选已出图；视觉差异待复核。" for e in events)
+    assert (cand / "fig.py").read_text() == ORIG
+
+
+def test_failed_final_check_is_not_completed_even_when_report_claims_success(cand):
+    chk = CountingCheck(ok=False, report="check passed")
+    script = {"turns": [step(call("create_file", content=NEW)), step(call("check", final=True))]}
+    res, _ = run_demo(cand, script, check=chk, limits=replace(TASK.default_limits, max_turns=2))
+    assert not res.ok and res.reason == "max_turns"
+    assert chk.calls == 1
+
+
+def test_cancel_during_final_check_cannot_become_completion(cand):
+    cancel = threading.Event()
+
+    def check():
+        cancel.set()
+        return True, "captured"
+
+    model = loop.DemoModel(
+        {"turns": [step(call("create_file", content=NEW)), step(call("check", final=True))]}
+    )
+    events = []
+    res = loop.run(model, TASK, envelope(cand, check=check), events.append, cancel)
+    assert not res.ok and res.reason == "cancelled"
+
+
+def test_invalid_final_check_arguments_do_not_consume_validation_budget(cand):
+    chk = CountingCheck()
+    by = {t.name: t for t in TASK.tools(envelope(cand, check=chk))}
+    by["create_file"].handler({"content": NEW})
+    for args in ({"final": "true"}, {"final": True, "summary": None}):
+        assert by["check"].handler(args).code == "bad_arguments"
+    assert chk.calls == 0
+
+
+def test_final_check_cannot_bypass_the_token_limit(cand):
+    class Model:
+        calls = 0
+
+        def complete(self, **kw):
+            self.calls += 1
+            call = (
+                ToolCall("create", "create_file", {"content": NEW})
+                if self.calls == 1
+                else ToolCall("final", "check", {"final": True})
+            )
+            return Turn(tool_calls=[call], usage=Usage(5, 1), stop="tool_use")
+
+    chk = CountingCheck()
+    res, _ = run_demo(
+        cand, {}, model=Model(), check=chk, limits=replace(TASK.default_limits, max_total_tokens=12)
+    )
+    assert (res.ok, res.reason, res.detail) == (False, "budget", "tokens")
+    assert chk.calls == 0
+
+
+def test_final_check_cannot_complete_after_its_deadline(cand, monkeypatch):
+    clock = [0.0]
+    monkeypatch.setattr(loop.time, "monotonic", lambda: clock[0])
+
+    def check():
+        clock[0] = 10.0
+        return True, "captured"
+
+    script = {"turns": [step(call("create_file", content=NEW)), step(call("check", final=True))]}
+    res, _ = run_demo(
+        cand, script, check=check, limits=replace(TASK.default_limits, max_seconds=10)
+    )
+    assert (res.ok, res.reason, res.detail) == (False, "budget", "time")
 
 
 def test_truncated_conversion_recovers_without_executing_or_replaying_partial_calls(cand):

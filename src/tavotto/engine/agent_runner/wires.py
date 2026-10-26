@@ -114,6 +114,12 @@ class ToolResult:
     mutated: bool = False
     #: Bounded visual evidence; only wire adapters consume it, never emit().
     images: list[Image] = field(default_factory=list)
+    #: Actual injected check outcome; never inferred from its report text.
+    check_passed: bool | None = None
+    #: Trusted tool handler accepted an explicit final validation. The parent
+    #: still runs its own candidate/integrity/adoption checks.
+    completed: bool = False
+    completion_text: str = ""
 
 
 @dataclass

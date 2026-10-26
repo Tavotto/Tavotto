@@ -534,7 +534,11 @@ def agent_check(cand: ConvertCandidate, *, evidence: list | None = None) -> tupl
             message += f"; {len(evidence)} rendered preview(s) attached in capture order."
             if len(evidence) != count:
                 message += " Visual evidence is incomplete (preview unavailable or image budget reached). Do not claim full visual verification."
-            message += " Compare the previews to the original source and reference; this runtime result does not certify fidelity."
+            message += (
+                " This runtime result does not certify fidelity. If the whole script is complete and there are no known "
+                "data, semantic or missing-output problems, deliver it now and report visual differences for later review; "
+                "do not start another edit/check cycle to polish pixels."
+            )
         return True, message
     detail = " ".join(str(res.get(k) or "") for k in ("code", "message")).strip()
     return False, f"check failed ({status}): {detail}"[:1500]

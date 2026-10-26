@@ -2,7 +2,7 @@
 
 结束条件（`done.reason`，闭集 + 一个兜底）：
 
-* `completed`   模型给出最终文字、没有工具调用（`ok=true`）；
+* `completed`   模型给出最终文字、没有工具调用，或显式最终校验被工具确认通过（`ok=true`）；
 * `max_turns`   轮数用尽；`budget` token / 秒数用尽，或一轮输出被截断（`detail=output_truncated`）；
 * `tool_error_loop` 同一工具的同一错误码连续 3 次；
 * `auth` 401 / 403 / 没密钥；`quota` 402、额度耗尽、429 重试用尽；
@@ -570,6 +570,19 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                     "summary": r.summary,
                 }
             )
+            if cancel.is_set():
+                return _finish(res, False, "cancelled")
+            if r.completed and not r.is_error:
+                # The user-facing result still passes through the normal
+                # redacting emitter. Do not make another model request, or
+                # execute any later calls that could change the checked bytes.
+                if time.monotonic() >= deadline:
+                    return _finish(res, False, "budget", "time")
+                if r.completion_text:
+                    emit({"type": "text", "text": r.completion_text})
+                if cancel.is_set():
+                    return _finish(res, False, "cancelled")
+                return _finish(res, True, "completed")
             key = (call.name, r.code) if r.is_error else None
             streak = streak + 1 if key is not None and key == streak_key else (1 if key else 0)
             streak_key = key
@@ -594,7 +607,7 @@ def _execute(by_name: dict[str, toolmod.Tool], call: ToolCall) -> ToolResult:
         return ToolResult(
             call.id,
             call.name,
-            "Tool arguments were not a valid JSON object.",
+            "Tool arguments were not a valid JSON object. " + _argument_hint(tool, None),
             is_error=True,
             code="bad_arguments",
             summary="error: bad_arguments",
@@ -611,4 +624,24 @@ def _execute(by_name: dict[str, toolmod.Tool], call: ToolCall) -> ToolResult:
             summary="error: tool_crashed",
         )
     r.call_id, r.name = call.id, call.name
+    if r.code == "bad_arguments" and not r.mutated:
+        # Handlers remain the only validation authority. Explain their
+        # rejection using the advertised schema, without guessing aliases or
+        # echoing model-supplied keys/values (which may contain private text).
+        r.content += " " + _argument_hint(tool, call.args)
     return r
+
+
+def _argument_hint(tool: toolmod.Tool, args: dict | None) -> str:
+    props = tool.schema.get("properties", {})
+    required = tool.schema.get("required", [])
+    missing = [key for key in required if args is None or key not in args]
+    types = {key: spec.get("type", "value") for key, spec in props.items()}
+    prefix = f"Missing required keys: {', '.join(missing)}. " if missing else ""
+    return (
+        prefix
+        + "Accepted keys and types: "
+        + json.dumps(types, ensure_ascii=True)
+        + ". Use these exact parameter names and actual values; do not rename keys. "
+        "Resend one corrected call. This rejected call made no changes."
+    )

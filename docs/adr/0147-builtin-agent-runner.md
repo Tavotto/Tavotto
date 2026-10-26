@@ -97,3 +97,13 @@ OpenAI = ChatGPT 订阅（codex 登录）+ 官方 API Key；Claude = Claude 订�
 长转换可先 `create_file` 再 `append_file(content, expected_sha256)`；重复/过期追加拒绝，仍只写那个新文件、核完整文件大小和秘密串。不新增 shell、网络或默认路由。
 
 Conversion output recovery remains within the existing budget: each create/append carries at most 6,000 characters; one truncated response can be discarded and retried as a smaller section. The whole incomplete response is withheld from execution and protocol replay; its usage stays in the ledger. A second truncation or exhausted budget stops the task. Other toolsets do not opt into this recovery.
+
+### 修订：参数纠错与显式最终校验（2026-10-26）
+
+真实转换暴露两种循环浪费：模型把工具参数 `new` 写成别的名称，收到笼统错误后继续重试；候选已实际出图，却还需额外请求模型说“完成”，最后一轮因而失败。
+参数拒绝仍以工具 handler 为权威，循环只从同一份公开 schema 生成缺失键与可用参数提示，不接受别名或回显参数值。
+
+转换的既有 `check` 增加可选 `final`（布尔，默认 false）与 `summary`（字符串）。模型明确声明整份候选可交付后，**同次真实校验**返回 true 才直接完成 runner；
+报告文字不能替代结果，同批后续调用不再执行，summary 走正常脱敏事件出口。中间校验通过不自动交付，最终校验失败仍可修正；所有校验共用原有 3 次上限。
+取消、20 轮 / 400k token / 900 s 上限不变，失败任务不自动抢救。父进程仍独立执行 Task Core 校验、完整性检查、待采用留存及用户确认采用；
+可运行候选与视觉保真是分开的验收维度，不能因一次出图就宣称数据、完整输出或像素全部通过。看护 `test_agent_runner_convert`、`test_ai_convert_app`。

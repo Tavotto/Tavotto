@@ -409,6 +409,8 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   目标本身是符号链接也拒写。越界 / 写非目标 / 超大 / 非文本一律返回**工具错误结果**，不抛、不执行、文件零改动。
   大型只读资源可用 `read_file.byte_offset/byte_limit` 分段查看（单次 ≤ 64 KiB，默认 16 KiB）；返回完整 UTF-8 字符边界的 `next_byte_offset` / `eof`。打开前后核对文件身份与路径；分段读取不授予目标写权限，完整目标读取及写入的 200 KiB 限制不变。看护 `tests/test_agent_read_windows.py`。
   换行：读出时统一成 `\n`，写回恢复文件原有的 `\r\n`（混合换行的文件会被统一成首见的那种）。
+  参数拒绝仍由各工具 handler 判定；`bad_arguments` 且未写入时，循环从该工具公开 schema 补充缺失必填键、可用键名及类型，提示原样重发一条修正调用。
+  不猜测 `new_string` 等别名，不回显模型给出的键名或参数内容；拒绝的调用保持零改动。
   将来 `data_to_figure` 的工具集**没有写文件工具**（只出结构化列映射，ADR 0138 §四）。
 - **事件**（stdout 每行一条 JSON，ASCII 转义）：`thinking`（只有字符数）、`tool`（工具名、成败、一句话摘要，**不带文件内容 / 提示词 / 密钥**）、
   `text`（模型对用户说的话）、`usage`（每轮用量）、`done`（最后一条，恰好一条）。stderr 只写诊断级错误码。
@@ -418,7 +420,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   anthropic `stop_reason=refusal`、responses `status:incomplete` 且原因不是 `max_output_tokens`，`detail` 如 `incomplete_content_filter`）；
   responses 顶层 `status` 为 `failed`（`detail=failed_<error.code>`）或 `cancelled / queued / in_progress`（`status_<名>`）→ `network`，不再当作空的 end 轮。
   重试等待 = min(退避, Retry-After, 30 s, 距总时限的剩余)，剩余 ≤ 0 不再发请求 → `budget`（`detail=time`）；单次请求超时也不超过剩余时间。**等响应时也看总时限**：服务端以小于 socket 超时的间隔慢慢吐字节时每次 read 都成功，所以等待循环（与取消同一处、每 50 ms）同时判 deadline，到点即 `budget/time`，在途请求丢弃、回复不接受。
-  **只有 `stop == end` 且无工具调用才算 `completed`**：其它停止值（未知 `stop_reason` / `finish_reason`，或 `tool_calls` / `tool_use` 结束却没有可用调用）→ `network`，`detail=bad_stop_<值>`（值只留小写字母数字下划线、≤ 24 字符）；`max_tokens` 仍是 `budget/output_truncated`。同一工具的同一错误码连续 3 次 → `tool_error_loop`。
+  **`stop == end` 且无工具调用，或转换任务的显式最终校验实际通过，才算 `completed`**；最终校验见下，不从模型文字推断成功。其它停止值（未知 `stop_reason` / `finish_reason`，或 `tool_calls` / `tool_use` 结束却没有可用调用）→ `network`，`detail=bad_stop_<值>`（值只留小写字母数字下划线、≤ 24 字符）；`max_tokens` 仍是 `budget/output_truncated`。同一工具的同一错误码连续 3 次 → `tool_error_loop`。
   SIGTERM / SIGINT / Ctrl-Break → `cancelled`。
 - **预算与账本**：轮数、token（input+output）、秒数三道上限。每轮 input / output / 耗时入账，结束时核「合计 == 各轮之和」，不等记
   `done.ledger_mismatch=true`（不抛）。每轮记账后立刻复查 token：**终止答复**（`end` 且无工具调用）累计 `>` 上限才拒，恰好用满上限仍 `completed`；带工具调用 / 要开下一轮的答复累计 `>=` 上限即 `budget/tokens`，工具不执行、不开新轮。估计上下文超阈值时把早先的 `read_file` 结果换成「已读过 X（第 a–b 行，sha 前缀）」。
@@ -431,6 +433,9 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   - `--output` 起跑即校验：必须恰为 `<原名>_matplotlib.py`（原名 = `--target` 的 stem）、只有文件名（无目录、无反斜杠）、尚不存在（`lexists`）；不合格 → `done{ok:false, reason:"internal", detail:"bad_output"}`，**0 次模型请求**、磁盘不动。外层修正续跑只接受父进程传入的上次候选字节 SHA-256，拒绝链接、非普通文件、字节变化及超读限文件；`checks_used` 继承已用次数，子进程重启不重置校验预算。
   - `check`：同 figure_edit 的注入回调，语义是 ADR 0143 的 `run_validation`（用户同一路由下跑新脚本，必须捕获到 Matplotlib 图），回调可返回 `(ok, 报告)` 或 `CheckResult`（报告 + 有界图像）；转换入口经 IPC 调用应用同一校验，实时渲染 PNG 后才退役 worker。未注入回调则 `not_available`。
     新文件还没写出就 `check` → `not_created`（不调回调、不计数）。**回调最多被调 3 次**（ADR 0143「校验运行 ≤ 3」），第 4 次 `check_budget`。
+    可选 `final: boolean`（默认 false）与 `summary: string`：模型明确声明整份候选已可交付，且同次回调返回布尔 true，工具才标记本轮完成；报告文字不能代替布尔结果。
+    最终校验通过后不再请求模型收尾，同批后续工具也不执行；summary 沿正常脱敏出口发给用户。普通检查仍非终态，最终检查失败可继续修正，参数错误不消耗检查次数。
+    轮数 / token / 取消 / deadline 限制不放宽；父进程仍独立执行 Task Core 校验、完整性与待采用检查，不从失败任务抢救候选，也不自动采用。
   - 预算默认值由工具集给（`default_limits`；命令行不给 `--max-turns` 等就用它）：convert 为 20 轮 / 900 s / 400k token / 单轮输出 32768（含模型思考；20 轮 ≈ 读 1–3 + 写 1 + 至多 3 轮 check/修 + 收尾，留余量）；figure_edit 不变。
   - 系统提示是英文（要求用用户指令的语言回复）；共同验收顺序及要求（数据计算 / 完整可编辑出图 / 视觉另验）**引用 `ai_prompt_pack.convert_requirements()` 的同一份文字**（CLI 路径的 `convert_prompt` 也用它，不各抄一份），
     执行器特有的部分（只写一个新文件、不运行脚本、check ≤ 3 次）写在 `tools.py`。`ai_prompt_pack` 是纯标准库，所以 `agent_runner` 对它的 import 不破坏依赖方向（`test_import_architecture` 兜底）。

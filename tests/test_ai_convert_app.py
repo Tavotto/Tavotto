@@ -212,6 +212,80 @@ def test_builtin_correction_continues_existing_bytes_without_resetting_checks(
     assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200
 
 
+@pytest.mark.parametrize("reject_after_agent_check", [False, True])
+def test_builtin_final_check_reaches_adoption_only_after_parent_validation(
+    project, monkeypatch, tmp_path, reject_after_agent_check
+):
+    """Real runner IPC + worker: last-turn completion cannot bypass Task Core validation."""
+    from tavotto.engine import ai_agents
+
+    m, client, figs, _state = project
+    plan = tmp_path / "final-check.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "turns": [
+                    {"tool_calls": [{"name": "create_file", "args": {"content": GOOD}}]},
+                    {
+                        "tool_calls": [
+                            {"name": "check", "args": {"final": True, "summary": "候选已出图"}}
+                        ]
+                    },
+                ]
+            }
+        )
+    )
+
+    def cmd(agent, prompt, cwd, **kw):
+        spec = ai_agents.BuiltinAgent().build_command(
+            ai_agents.RunContext(
+                argv=[],
+                prompt=prompt,
+                cwd=cwd,
+                target=kw["target"],
+                task=kw["task"],
+                output=kw["output"],
+                resume_output_sha256=kw.get("resume_output_sha256", ""),
+                checks_used=kw.get("checks_used", 0),
+                endpoint_args=["--wire", "demo", "--demo-script", str(plan), "--max-turns", "2"],
+            )
+        )
+        return list(spec.argv), {"PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src")}
+
+    monkeypatch.setattr(ai_bridge, "_cmd", cmd)
+    monkeypatch.setattr(ai_bridge, "_spawn_env", lambda _cmd, extra: {**os.environ, **extra})
+    monkeypatch.setattr(ai_bridge.ai_providers, "builtin_conn", lambda *_: {"id": "test"})
+    with m.app.test_request_context("/"):
+        real_runner = m._convert_runner(m.current_ctx(), "fig.py")
+    calls = []
+
+    def runner(*args, **kwargs):
+        result = real_runner(*args, **kwargs)
+        calls.append(result)
+        if reject_after_agent_check and len(calls) > 1:
+            return {"error": {"code": "capture_incomplete", "message": "late validation failed"}}
+        return result
+
+    sid = ai_bridge.run(
+        "builtin",
+        "fig.py",
+        "convert",
+        str(figs),
+        task_hooks={"runner": runner},
+        convert={"library": "pillow", "original_rel": "out.png"},
+    )
+    sess = _wait_final(client, sid)
+    assert len(calls) >= 2 and calls[0].get("stems")
+    assert (figs / "fig.py").read_bytes() == ORIGINAL.encode()
+    assert (figs / "out.png").read_bytes() == PNG
+    if reject_after_agent_check:
+        assert sess["task"]["outcome"] == "failed", sess
+        assert client.post(f"/api/ai/convert/{sid}/adopt").status_code != 200
+    else:
+        assert sess["task"]["outcome"] == "completed", sess
+        assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200
+
+
 def test_agent_check_reads_current_live_pngs_before_worker_retirement(project):
     import base64
 

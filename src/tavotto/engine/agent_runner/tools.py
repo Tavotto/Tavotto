@@ -593,6 +593,7 @@ class FigureEditSession:
             summary=("check passed" if ok else "check found problems")
             + (f" ({len(images)} rendered previews)" if images else ""),
             images=images,
+            check_passed=ok,
             compact=(
                 report + " [Earlier rendered images omitted; these are not the current candidate.]"
                 if images
@@ -785,12 +786,14 @@ How to work:
 2. For a long script, create_file with the first logical section, then append_file in small chunks
    (aim for under 150 lines per call). Copy the returned sha256 into the next append call.
    Finish all sections before check. Fix details with edit_file (small exact replacements).
-3. Call check. It runs the new file the way the user would and returns captured figures for visual inspection.
-   Verify all expected pages, data/math semantics and editable objects. Fix execution or semantic errors,
-   then check again, at most 3 times. Follow the shared acceptance order above for visual differences;
-   a runtime pass is not a fidelity pass. Do not spend all check calls polishing edge pixels.
-4. Finish with what runs, any unresolved visual differences and what still needs review.
-   Reply in the language of the user's instruction.
+3. When the entire candidate is ready for delivery, call check with final=true and a concise summary
+   in the language of the user's instruction, including any visual differences still needing review. A successful final
+   check ends this model session immediately; the application still validates the candidate before adoption.
+   Use check without final only for an intermediate diagnostic, then correct reported problems.
+   All checks share the same limit of 3 calls. A failed final check lets you correct and retry.
+4. An intermediate check passing is not a reason to keep polishing. Follow the shared acceptance order:
+   deliver the complete runnable candidate, and report remaining visual differences for later review.
+   You may also finish with a concise final response; do not start another edit/check cycle merely to write it.
 """
 )
 
@@ -1029,6 +1032,12 @@ class ConvertSession(FigureEditSession):
 
     def check(self, args: dict, call_id: str = "") -> ToolResult:
         name = "check"
+        final = args.get("final", False)
+        summary = args.get("summary", "")
+        if type(final) is not bool or not isinstance(summary, str):
+            return _err(
+                name, call_id, "bad_arguments", "`final` must be boolean and `summary` a string."
+            )
         # 先报可操作的流程错误（还没建文件），再报环境限制（本会话没有 check）
         if not self.created:
             return _err(name, call_id, "not_created", "Create the new file with create_file first.")
@@ -1043,7 +1052,11 @@ class ConvertSession(FigureEditSession):
                 "Stop and tell the user what is still wrong.",
             )
         self.checks_run += 1
-        return super().check(args, call_id)
+        result = super().check(args, call_id)
+        if final and result.check_passed is True and not result.is_error:
+            result.completed = True
+            result.completion_text = summary.strip() or result.content
+        return result
 
 
 class ConvertToEditableToolset:
@@ -1155,9 +1168,23 @@ class ConvertToEditableToolset:
             Tool(
                 "check",
                 "Run the new file the way the user would run the original and verify that it produces a Matplotlib "
-                "figure. Call it after create_file, and again after fixing a reported problem. You have at most "
-                f"{CONVERT_MAX_CHECKS} calls in total. It takes no arguments and changes nothing.",
-                _obj({}, []),
+                "figure. When the complete script is ready to deliver, use final=true: success ends this model "
+                "session immediately and leaves adoption to the application and user. Use final=false for an "
+                "intermediate diagnostic; success then continues the conversation. Failed checks allow correction. "
+                f"You have at most {CONVERT_MAX_CHECKS} calls in total, including final checks.",
+                _obj(
+                    {
+                        "final": {
+                            "type": "boolean",
+                            "description": "Explicitly finalize this complete candidate if validation succeeds. Default false.",
+                        },
+                        "summary": {
+                            "type": "string",
+                            "description": "Concise delivery summary in the user's language, including any visual differences still needing review. Used only after a successful final check.",
+                        },
+                    },
+                    [],
+                ),
                 s.check,
             ),
         ]

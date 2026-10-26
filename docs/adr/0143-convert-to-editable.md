@@ -38,6 +38,8 @@
    `pool.build` / `invalidate` / `force_cancel` 同一份根，池键多一段），根只有候选目录——候选把相对路径输出（`out.png` / `data.csv`）写进
    项目目录时在写发生的那一刻以 `write_outside_roots` 失败，用户文件不被打开写；跑完的指纹复核只是兜底。绊线的盲区同 ADR 0141
    （C 层写、子进程、位于系统临时目录 / 用户缓存目录之下的项目）。
+   内置执行器可用 ADR 0147 的 `check(final=true, summary=...)` 在同次真实校验通过后结束模型会话，省去纯收尾的下一次请求；
+   这不是采用或父进程验证的替代品。Task Core 仍独立校验当前候选，失败仍不可采用，用户仍须对照确认。
 5. 对照数据（`comparison`）：原图像素宽高 / 字节 / 摘要（PNG / JPEG / GIF 头部）、新版图幅 mm 与图个数、宽高比相对差、新版 SVG 预览
    （沙盒 CSP + nosniff 的 `GET /api/ai/convert/<sid>/preview.svg`，只给 `<img>`）。**不做像素差**（`pixel_diff: null`）：
    原件是位图而新版是矢量重画，逐像素差没有可辩护的含义，交给用户并排看。
