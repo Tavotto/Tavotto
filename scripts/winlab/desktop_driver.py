@@ -600,6 +600,177 @@ def qr_login(cdp: CDP, page: str, ns: argparse.Namespace, out_dir: Path, prog) -
             edge.close()
 
 
+#: 选工作区时只点这些（逐字）：先找项目文件夹名本身（最近用过），再找「添加 / 打开文件夹」类入口
+WORKSPACE_ENTRY = ("Select Workspace", "选择工作区")
+WORKSPACE_ADD_BUTTONS = (
+    "Add Workspace",
+    "Add workspace",
+    "Open Folder",
+    "Open folder",
+    "Select Folder",
+    "Choose Folder",
+    "Browse",
+    "Browse...",
+    "添加工作区",
+    "选择文件夹",
+    "打开文件夹",
+)
+
+
+def _page_shot(cdp: CDP, sid: str, path: Path) -> bool:
+    with contextlib.suppress(CDPError, TimeoutError, OSError):
+        shot = cdp.call("Page.captureScreenshot", {"format": "png"}, session=sid, timeout=20)
+        save_png(shot["data"], path)
+        return True
+    return False
+
+
+def fill_folder_dialog(folder: str, timeout: float = 15) -> bool:
+    """宿主弹出的 Windows「选择文件夹」对话框（#32770）：把路径写进它的文件夹名输入框、按「选择文件夹」（IDOK）。
+    对话框关掉即成功。只操作这个对话框，不碰别的窗口。"""
+    import ctypes
+    from ctypes import wintypes
+
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    u32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    u32.SendMessageW.restype = ctypes.c_ssize_t
+
+    def find_dialog():
+        found = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def cb(h, _):
+            cls = ctypes.create_unicode_buffer(64)
+            u32.GetClassNameW(h, cls, 64)
+            if cls.value == "#32770" and u32.IsWindowVisible(h):
+                found.append(h)
+            return True
+
+        u32.EnumWindows(cb, 0)
+        return found[0] if found else None
+
+    end = time.monotonic() + timeout
+    dlg = None
+    while time.monotonic() < end and not dlg:
+        dlg = find_dialog()
+        time.sleep(0.5)
+    if not dlg:
+        return False
+    edits = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def child(h, _):
+        cls = ctypes.create_unicode_buffer(64)
+        u32.GetClassNameW(h, cls, 64)
+        parent = ctypes.create_unicode_buffer(64)
+        u32.GetClassNameW(u32.GetParent(h), parent, 64)
+        if cls.value == "Edit" and parent.value == "ComboBox" and u32.IsWindowVisible(h):
+            edits.append(h)
+        return True
+
+    u32.EnumChildWindows(dlg, child, 0)
+    if not edits:
+        return False
+    buf = ctypes.create_unicode_buffer(folder)
+    u32.SendMessageW(edits[-1], 0x000C, 0, ctypes.cast(buf, ctypes.c_void_p).value)  # WM_SETTEXT
+    ok = u32.GetDlgItem(dlg, 1)  # IDOK = 「选择文件夹」
+    if not ok:
+        return False
+    u32.SendMessageW(ok, 0x00F5, 0, 0)  # BM_CLICK
+    end = time.monotonic() + 10
+    while time.monotonic() < end:
+        if not u32.IsWindow(dlg) or not u32.IsWindowVisible(dlg):
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def pick_workspace(cdp: CDP, page: str, folder: str, out_dir: Path, prog) -> dict:
+    """原生宿主要先有工作区（WorkBuddy 不选工作区时回车只清空输入框、不建任务：run 20261026T181425Z-15a0af）。
+    点「Select Workspace」，菜单里有项目文件夹名就点它；没有就点登记的「添加 / 打开文件夹」入口，在弹出的系统
+    对话框里填项目路径。每一步截图、记菜单文字。"""
+    res: dict = {"entry": None}
+    for label in WORKSPACE_ENTRY:
+        if cdp.evaluate(page, PEEK_CLICK_JS % json.dumps(label)):
+            res["entry"] = label
+            break
+    time.sleep(2)
+    res["menu_text"] = str(cdp.evaluate(page, TEXT_JS) or "")[-600:]
+    _page_shot(cdp, page, out_dir / "workspace-menu.png")
+    name = Path(folder).name
+    if cdp.evaluate(page, PEEK_CLICK_JS % json.dumps(name)):
+        res["picked"] = "recent"
+    else:
+        for label in WORKSPACE_ADD_BUTTONS:
+            if cdp.evaluate(page, PEEK_CLICK_JS % json.dumps(label)):
+                res["add_button"] = label
+                res["picked"] = "dialog" if fill_folder_dialog(folder) else None
+                break
+    time.sleep(2)
+    _page_shot(cdp, page, out_dir / "workspace-after.png")
+    res["after_text"] = str(cdp.evaluate(page, TEXT_JS) or "")[-300:]
+    prog.step("workspace", **{k: v for k, v in res.items() if k not in ("menu_text", "after_text")})
+    return res
+
+
+#: 发送按钮：aria-label / title 带 send / 发送，或 type=submit
+SEND_BUTTON_JS = (
+    "(() => {const cand = Array.from(document.querySelectorAll('button, [role=button]')).filter(b => b.offsetParent !== null && !b.disabled);"
+    "const hit = cand.find(b => /send|发送|submit/i.test((b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '') + ' ' + (b.getAttribute('data-testid') || '')))"
+    " || cand.find(b => b.type === 'submit');"
+    "if (!hit) return null; const r = hit.getBoundingClientRect(); return {x: r.x + r.width / 2, y: r.y + r.height / 2};})()"
+)
+
+
+def _task_started(cdp: CDP, sid: str, rec_log: Path, base_lines: int) -> bool:
+    if recorder_lines(rec_log) > base_lines:
+        return True
+    st = cdp.evaluate(sid, STATE_JS) or {}
+    text = str(cdp.evaluate(sid, TEXT_JS) or "")
+    return bool(st.get("busy")) or ("No tasks" not in text and not st.get("input_length"))
+
+
+def native_submit(
+    cdp: CDP, sid: str, prompt: str, rec_log: Path, base_lines: int, out_dir: Path, prog
+) -> dict:
+    """原生宿主的发送：依次试 真实回车 → 真实点击发送按钮 → Ctrl+Enter，每试一次等 20 s 看任务起没起
+    （录制器有新行 / 面板在忙 / 「No tasks」消失且输入框空），截图。输入框被清空但没起任务就重填再试下一种。"""
+    tried = []
+    for i, how in enumerate(("enter", "button", "ctrl_enter")):
+        if not (cdp.evaluate(sid, STATE_JS) or {}).get("input_length"):
+            cdp.evaluate(sid, TYPE_JS % json.dumps(prompt))
+            time.sleep(0.5)
+        if how == "enter":
+            _key(cdp, sid, "keyDown", "Enter", "Enter", 13, text="\r")
+            _key(cdp, sid, "keyUp", "Enter", "Enter", 13)
+        elif how == "button":
+            pos = cdp.evaluate(sid, SEND_BUTTON_JS)
+            if not pos:
+                tried.append({"how": how, "found": False})
+                continue
+            for typ in ("mousePressed", "mouseReleased"):
+                cdp.call(
+                    "Input.dispatchMouseEvent",
+                    {"type": typ, "x": pos["x"], "y": pos["y"], "button": "left", "clickCount": 1},
+                    session=sid,
+                    timeout=10,
+                )
+        else:
+            _key(cdp, sid, "keyDown", "Enter", "Enter", 13, modifiers=2, text="\r")
+            _key(cdp, sid, "keyUp", "Enter", "Enter", 13, modifiers=2)
+        end = time.monotonic() + 20
+        started = False
+        while time.monotonic() < end and not started:
+            time.sleep(2)
+            started = _task_started(cdp, sid, rec_log, base_lines)
+        _page_shot(cdp, sid, out_dir / f"submit-{i + 1}-{how}.png")
+        tried.append({"how": how, "started": started})
+        prog.step("submit_try", how=how, started=started)
+        if started:
+            return {"submitted": True, "via": how, "tried": tried}
+    return {"submitted": False, "via": None, "tried": tried}
+
+
 def native_ready(cdp: CDP, page: str, timeout: float, onboarding: list, prog) -> str | None:
     """原生 Agent（ZCode）：主页面就是聊天界面。首启引导（「Use API key」之后的「Skip for now」、问卷的「Skip」）
     只点 NATIVE_ONBOARDING_BUTTONS 白名单，直到出现可见的输入框。返回输入框所在会话。"""
@@ -886,6 +1057,9 @@ def drive(ns: argparse.Namespace) -> dict:
                 result["error"] = "panel input not found"
                 return result
             result["input_found"] = True
+            if ns.workspace_pick == "folder":
+                result["workspace"] = pick_workspace(cdp, workbench, ns.workspace, out_dir, prog)
+                sid = find_input_session(cdp) or sid
             typed = cdp.evaluate(sid, TYPE_JS % json.dumps(prompt)) or {}
             result["typed"] = bool(typed.get("typed"))
             prog.step("type_prompt", result=typed)
@@ -893,15 +1067,10 @@ def drive(ns: argparse.Namespace) -> dict:
                 result["error"] = f"typing failed: {typed}"
                 return result
             time.sleep(0.5)
-            sub = cdp.evaluate(sid, SUBMIT_JS) or {}
-            if ns.kind == "native" and sub.get("via") == "enter":
-                # 网页里派发的 KeyboardEvent 不是可信事件，WorkBuddy 不认（run 20261026T170159Z-0b45c5 字留在输入框里）：
-                # 再经 CDP 发一次真实的回车
-                time.sleep(0.5)
-                if (cdp.evaluate(sid, STATE_JS) or {}).get("input_length"):
-                    _key(cdp, sid, "keyDown", "Enter", "Enter", 13, text="\r")
-                    _key(cdp, sid, "keyUp", "Enter", "Enter", 13)
-                    sub["trusted_enter"] = True
+            if ns.kind == "native":
+                sub = native_submit(cdp, sid, prompt, rec_log, base_lines, out_dir, prog)
+            else:
+                sub = cdp.evaluate(sid, SUBMIT_JS) or {}
             result["submitted"] = bool(sub.get("submitted"))
             result["submitted_via"] = sub.get("via")
             prog.step("submit", result=sub)
@@ -965,6 +1134,13 @@ def _evidence(cdp: CDP, out_dir: Path, label: str, result: dict) -> None:
                 save_png(shot["data"], out_dir / f"{label}-window.png")
                 result["screenshot"] = f"{label}-window.png"
             break
+    if "screenshot" not in result:
+        for sid2, info in list(cdp.sessions.items()):
+            if info.get("type") == "page" and _page_shot(
+                cdp, sid2, out_dir / f"{label}-window.png"
+            ):
+                result["screenshot"] = f"{label}-window.png"
+                break
     result["targets"] = [
         {"type": i.get("type"), "scheme": str(i.get("url", "")).split(":", 1)[0]}
         for i in cdp.sessions.values()
@@ -998,6 +1174,8 @@ def main(argv: list[str]) -> int:
     p.add_argument("--login-host", default="")
     p.add_argument("--edge-profile", default="")
     p.add_argument("--login-timeout", type=float, default=600)
+    #: 原生宿主要先选工作区（WorkBuddy）：folder = 选项目目录（--workspace）
+    p.add_argument("--workspace-pick", choices=("none", "folder"), default="none")
     ns = p.parse_args(argv)
     if ns.kind == "native":
         use_input_selector(NATIVE_INPUT_SELECTOR)

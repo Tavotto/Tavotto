@@ -2808,15 +2808,8 @@ def test_login_state_wipe_removes_the_run_home_and_edge_profile(tmp_path, monkey
         not (run_dir / "work" / "wbhome").exists()
         and not (run_dir / "work" / "edge-login").exists()
     )
-    # 凭据管理器第二遍还删得到 = 没删干净
-    calls = {"n": 0}
-
-    def creds(f):
-        calls["n"] += 1
-        return ["WorkBuddy/session"]
-
-    monkeypatch.setattr(A, "_delete_credentials", creds)
-    assert A.wipe_login_state(run_dir)["wiped"] is False
+    # 登录态常驻（用户 2026-10-27）：收尾不碰 state\\workbuddy-home，也不删凭据管理器条目
+    assert "persistent_login" in res and res["credentials_removed"] == []
 
 
 def test_stale_login_dirs_from_killed_runs_are_swept(tmp_path):
@@ -2826,3 +2819,19 @@ def test_stale_login_dirs_from_killed_runs_are_swept(tmp_path):
     (runs / "r1" / "evidence").mkdir()
     assert sorted(A.sweep_stale_login_dirs(runs)) == ["r1", "r2"]
     assert not (runs / "r1" / "work" / "wbhome").exists() and (runs / "r1" / "evidence").exists()
+
+
+def test_workbuddy_login_home_is_persistent_under_state_and_sweep_logout_removes_it(
+    tmp_path, monkeypatch
+):
+    lab = A.Lab(tmp_path / "lab")
+    home = A.workbuddy_home(lab)
+    assert home.parent == lab.state and not home.is_relative_to(lab.runs)
+    (home / ".workbuddy").mkdir(parents=True)
+    (home / ".workbuddy" / "session.json").write_text("token")
+    lab.runs.mkdir(parents=True)
+    monkeypatch.setattr(A, "_delete_credentials", lambda f: [])
+    res = A.cmd_sweep(lab)
+    assert home.exists() and "workbuddy_logout" not in res  # 不带开关不动常驻登录态
+    res = A.cmd_sweep(lab, workbuddy_logout=True)
+    assert not home.exists() and res["workbuddy_logout"]["home_removed"] is True

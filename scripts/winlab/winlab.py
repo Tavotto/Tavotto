@@ -791,7 +791,12 @@ def build_parser() -> argparse.ArgumentParser:
     n.add_argument("--mode", default="all", choices=["all", *lab_agent.NETWORK_MODES])
     r = sub.add_parser("reports")
     r.add_argument("--id")
-    sub.add_parser("sweep", help="只做收尾：删掉旧 run 里残留的落盘 key 配置与登录目录")
+    sw = sub.add_parser("sweep", help="只做收尾：删掉旧 run 里残留的落盘 key 配置与登录目录")
+    sw.add_argument(
+        "--workbuddy-logout",
+        action="store_true",
+        help="同时撤销常驻的 WorkBuddy 登录态（删 state\\workbuddy-home）",
+    )
     sh = sub.add_parser("shot", help="取回某次 run 证据里的一张 PNG（run 进行中也行；扫码登录用）")
     sh.add_argument("--id", required=True)
     sh.add_argument("--name", required=True)
@@ -830,7 +835,9 @@ def main(argv: list[str] | None = None) -> int:
     if ns.verb == "shot":
         return cmd_shot(ns.id, ns.name, Path(ns.out))
     if ns.verb == "sweep":
-        return show(*remote_json(["sweep"]))
+        return show(
+            *remote_json(["sweep", *(["--workbuddy-logout"] if ns.workbuddy_logout else [])])
+        )
     if ns.verb == "reports":
         return show(*remote_json(["reports", *(["--id", ns.id] if ns.id else [])]))
     if ns.verb == "clean":

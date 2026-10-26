@@ -3683,20 +3683,30 @@ def _delete_credentials(filters: tuple[str, ...]) -> list[str]:
     return removed
 
 
+def workbuddy_home(lab: Lab) -> Path:
+    return lab.state / "workbuddy-home"
+
+
 def wipe_login_state(run_dir: Path) -> dict:
     """扫码登录格的收尾：删掉 run 目录里的「家」与登录用 Edge 配置，删掉凭据管理器里 WorkBuddy 的条目，再核对都不在了。"""
     work = run_dir / "work"
     left_dirs = []
     errors = {}
+    # 登录态常驻在 state\workbuddy-home（用户 2026-10-27）；这里只收本次 run 的东西：登录用的 Edge 配置、旧版放在
+    # run 里的「家」。WorkBuddy 的后台进程一并结束（不让它在两次 run 之间常驻）
+    if os.name == "nt":
+        with contextlib.suppress(Exception):
+            _kill_matching(lambda img: any(t in img.lower() for t in WORKBUDDY_PROCESS_TOKENS))
     for d in (work / "wbhome", work / "edge-login"):
         err = _force_rmtree(d, WORKBUDDY_PROCESS_TOKENS)
         if d.exists():
             left_dirs.append(d.name)
             errors[d.name] = err
-    removed = _delete_credentials(WORKBUDDY_CRED_FILTERS)
-    left = _delete_credentials(WORKBUDDY_CRED_FILTERS)  # 第二遍还删得到 = 没删干净
+    removed: list[str] = []
+    left: list[str] = []  # 凭据管理器里的登录条目随常驻登录态保留；撤销走 sweep --workbuddy-logout
     return {
-        "wiped": not left_dirs and not left,
+        "wiped": not left_dirs,
+        "persistent_login": "state\\workbuddy-home (user-approved 2026-10-27; `winlab sweep --workbuddy-logout` removes it)",
         "dirs_left": left_dirs,
         "errors": errors,
         "credentials_removed": removed,
@@ -3788,12 +3798,23 @@ def _force_rmtree(d: Path, kill_tokens: tuple[str, ...] = ()) -> str | None:
     return err if d.exists() else None
 
 
-def cmd_sweep(lab: Lab) -> dict:
+def cmd_sweep(lab: Lab, workbuddy_logout: bool = False) -> dict:
     """只做收尾：删掉所有旧 run 里的落盘 key 配置与登录目录（不跑任何任务）。正在跑的那一个不碰。"""
     holder = read_lock(lab)
     if holder is not None or lock_is_fresh(lab):
         return {"result": "error", "summary": "a job is running; retry after it finishes"}
     swept = sweep_stale_ondisk_configs(lab.runs) + sweep_stale_login_dirs(lab.runs)
+    logout = None
+    if workbuddy_logout:
+        # 撤销常驻登录态：结束 WorkBuddy 进程、删「家」、删凭据管理器条目，再核对
+        err = _force_rmtree(workbuddy_home(lab), WORKBUDDY_PROCESS_TOKENS)
+        removed = _delete_credentials(WORKBUDDY_CRED_FILTERS)
+        logout = {
+            "home_removed": not workbuddy_home(lab).exists(),
+            "error": err,
+            "credentials_removed": removed,
+            "credentials_left": _delete_credentials(WORKBUDDY_CRED_FILTERS),
+        }
     left = {
         str(d.relative_to(lab.runs)): (
             _force_rmtree(d, WORKBUDDY_PROCESS_TOKENS) if d.is_dir() else "file remains"
@@ -3811,6 +3832,7 @@ def cmd_sweep(lab: Lab) -> dict:
         "summary": f"swept {len(swept)} run(s); {len(left)} left",
         "swept": swept,
         "left": dict(list(left.items())[:20]),
+        **({"workbuddy_logout": logout} if logout is not None else {}),
     }
 
 
@@ -4121,13 +4143,16 @@ def _desktop_live_body(
     zdata = work / "zdata"
     login_args: list[str] = []
     if cell.native and host.id == "workbuddy":
-        # 整个「家」放进 run 目录：MCP 配置（~/.workbuddy/mcp.json）、应用数据、登录态都在这里，跑完整个删掉。
+        # 「家」常驻在 state\workbuddy-home（用户 2026-10-27：专用账户登录态留在 Lab、只扫一次）：MCP 配置
+        # （~/.workbuddy/mcp.json，每次 run 改指本次的录制器）、应用数据、登录态都在这里，不进证据、不随 run 删。
         # 推理用 WorkBuddy 账户自己的模型，不碰我们的 key
-        home = work / "wbhome"
+        home = workbuddy_home(lab)
         workbuddy_isolated_config(home, mcp_cmd, mcp_env)
         gui_env = dict(env, **_home_env(home))
         public_env, secret_env = gui_env, None
         login_args = [
+            "--workspace-pick",
+            "folder",
             "--login",
             "qr",
             "--login-host",
@@ -5134,7 +5159,8 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--mode")
     r = sub.add_parser("reports")
     r.add_argument("--id")
-    sub.add_parser("sweep")
+    sw = sub.add_parser("sweep")
+    sw.add_argument("--workbuddy-logout", action="store_true")
     sh = sub.add_parser("shot")
     sh.add_argument("--id", required=True)
     sh.add_argument("--name", required=True)
@@ -5172,7 +5198,7 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
     if ns.verb == "shot":
         return _emit(cmd_shot(lab, ns.id, ns.name))
     if ns.verb == "sweep":
-        return _emit(cmd_sweep(lab))
+        return _emit(cmd_sweep(lab, ns.workbuddy_logout))
     if ns.verb == "clean":
         return _emit(cmd_clean(lab, max(0, ns.keep)))
     if ns.verb == "stop":
