@@ -2835,3 +2835,18 @@ def test_workbuddy_login_home_is_persistent_under_state_and_sweep_logout_removes
     assert home.exists() and "workbuddy_logout" not in res  # 不带开关不动常驻登录态
     res = A.cmd_sweep(lab, workbuddy_logout=True)
     assert not home.exists() and res["workbuddy_logout"]["home_removed"] is True
+
+
+def test_login_input_only_accepts_well_shaped_values_for_the_running_run(tmp_path):
+    lab = A.Lab(tmp_path / "lab")
+    rid = "20261027T000000Z-abcdef"
+    (lab.runs / rid / "work").mkdir(parents=True)
+    lab.state.mkdir(parents=True)
+    assert A.cmd_login_input(lab, rid, "phone", "13800000000")["result"] == "error"  # 没有在跑
+    lab.lock_path.write_text(json.dumps({"run_id": rid, "pid": 1}))
+    for kind, bad in (("phone", "12345"), ("phone", "../x"), ("code", "12ab"), ("pin", "1234")):
+        assert A.cmd_login_input(lab, rid, kind, bad)["result"] == "error", (kind, bad)
+    ok = A.cmd_login_input(lab, rid, "code", " 123456\n")
+    assert ok["result"] == "passed" and "123456" not in json.dumps(ok)  # 不回显
+    assert (lab.runs / rid / "work" / "login-code.txt").read_text() == "123456"
+    assert A.DESKTOP_LIVE["workbuddy-native-phone"].login == "phone"

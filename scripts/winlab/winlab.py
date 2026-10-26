@@ -791,6 +791,11 @@ def build_parser() -> argparse.ArgumentParser:
     n.add_argument("--mode", default="all", choices=["all", *lab_agent.NETWORK_MODES])
     r = sub.add_parser("reports")
     r.add_argument("--id")
+    li = sub.add_parser(
+        "login-input", help="把手机号 / 短信验证码送进正在跑的 run（值从 stdin 读，不进命令行）"
+    )
+    li.add_argument("--id", required=True)
+    li.add_argument("--kind", choices=("phone", "code"), required=True)
     sw = sub.add_parser("sweep", help="只做收尾：删掉旧 run 里残留的落盘 key 配置与登录目录")
     sw.add_argument(
         "--workbuddy-logout",
@@ -834,6 +839,12 @@ def main(argv: list[str] | None = None) -> int:
         return show(*remote_json([ns.verb]))
     if ns.verb == "shot":
         return cmd_shot(ns.id, ns.name, Path(ns.out))
+    if ns.verb == "login-input":
+        return show(
+            *remote_json(
+                ["login-input", "--id", ns.id, "--kind", ns.kind], stdin=sys.stdin.buffer.read(64)
+            )
+        )
     if ns.verb == "sweep":
         return show(
             *remote_json(["sweep", *(["--workbuddy-logout"] if ns.workbuddy_logout else [])])

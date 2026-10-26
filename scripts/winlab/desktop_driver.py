@@ -511,6 +511,75 @@ def login_link_ok(link: str, login_host: str) -> bool:
     )
 
 
+#: 手机号登录页上只点这些（逐字）
+PHONE_TAB = ("手机号", "手机号登录", "验证码登录")
+SEND_CODE = ("获取验证码", "发送验证码", "获取短信验证码")
+LOGIN_SUBMIT = ("登录", "登录/注册", "立即登录")
+CAPTCHA_RE = re.compile(r"安全验证|拖动|滑块|拼图|captcha", re.I)
+FILL_INPUT_JS = (
+    "(() => {const want = %s; const el = Array.from(document.querySelectorAll('input')).find(i => i.offsetParent !== null"
+    " && want.some(w => ((i.placeholder || '') + (i.getAttribute('aria-label') || '')).includes(w)));"
+    "if (!el) return false; el.focus(); el.select && el.select(); return true;})()"
+)
+
+
+def _read_inbox(inbox: Path, kind: str, deadline: float) -> str | None:
+    """等 Mac 端 `winlab login-input` 把值送进来（run 目录 work\\login-<kind>.txt）；读到即删，不进证据。"""
+    f = inbox / f"login-{kind}.txt"
+    while time.monotonic() < deadline:
+        if f.exists():
+            with contextlib.suppress(OSError):
+                v = f.read_text(encoding="utf-8").strip()
+                f.unlink()
+                return v
+        time.sleep(2)
+    return None
+
+
+def _click_any(cdp: CDP, sid: str, labels: tuple[str, ...]) -> str | None:
+    for label in labels:
+        if cdp.evaluate(sid, PEEK_CLICK_JS % json.dumps(label)):
+            return label
+    return None
+
+
+def phone_login(ecdp: CDP, esid: str, inbox: Path, out_dir: Path, prog, deadline: float) -> str:
+    """手机号 + 短信验证码登录（用户 2026-10-27 要求；号码与验证码都经 Mac 端 `winlab login-input` 送进来，
+    驱动器读到即删，不写进进度、报告和日志）。遇到滑块 / 拼图安全验证就停（不绕过）。返回 submitted 或失败原因。"""
+    time.sleep(3)
+    prog.step("login_phone_tab", clicked=_click_any(ecdp, esid, PHONE_TAB))
+    time.sleep(2)
+    phone = _read_inbox(inbox, "phone", deadline)
+    if not phone:
+        return "no phone number delivered"
+    if not ecdp.evaluate(esid, FILL_INPUT_JS % json.dumps(["手机", "phone", "Phone"])):
+        _page_shot(ecdp, esid, out_dir / "login-phone.png")
+        return "phone input not found"
+    ecdp.call("Input.insertText", {"text": phone}, session=esid, timeout=10)
+    phone = ""
+    time.sleep(0.5)
+    prog.step("login_send_code", clicked=_click_any(ecdp, esid, SEND_CODE))
+    time.sleep(3)
+    _page_shot(ecdp, esid, out_dir / "login-phone.png")
+    if CAPTCHA_RE.search(str(ecdp.evaluate(esid, TEXT_JS) or "")):
+        return "captcha required (not bypassed)"
+    prog.step("login_awaiting_code")
+    code = _read_inbox(inbox, "code", deadline)
+    if not code:
+        return "no code delivered"
+    if not ecdp.evaluate(esid, FILL_INPUT_JS % json.dumps(["验证码", "code", "Code"])):
+        return "code input not found"
+    ecdp.call("Input.insertText", {"text": code}, session=esid, timeout=10)
+    code = ""
+    time.sleep(0.5)
+    prog.step("login_submit", clicked=_click_any(ecdp, esid, LOGIN_SUBMIT))
+    time.sleep(3)
+    _page_shot(ecdp, esid, out_dir / "login-after.png")
+    if CAPTCHA_RE.search(str(ecdp.evaluate(esid, TEXT_JS) or "")):
+        return "captcha required (not bypassed)"
+    return "submitted"
+
+
 def qr_login(cdp: CDP, page: str, ns: argparse.Namespace, out_dir: Path, prog) -> bool:
     """扫码登录（WorkBuddy；用户 2026-10-27：专用账户、每次 run 扫一次、跑完清掉）。
     点宿主的「Sign In」→「Copy Login Link」，从剪贴板拿登录链接（主机必须是登记的那个），用**本次 run 自己的** Edge
@@ -566,6 +635,7 @@ def qr_login(cdp: CDP, page: str, ns: argparse.Namespace, out_dir: Path, prog) -
                 prog.step("login_browser", ok=False)
                 return False
             esid = None
+            phone_done = False
             end = time.monotonic() + ns.login_timeout
             next_shot = 0.0
             while time.monotonic() < end:
@@ -579,6 +649,12 @@ def qr_login(cdp: CDP, page: str, ns: argparse.Namespace, out_dir: Path, prog) -
                                 {"targetId": t["targetId"], "flatten": True},
                             )["sessionId"]
                             break
+                if esid and ns.login_method == "phone" and not phone_done:
+                    phone_done = True
+                    outcome = phone_login(ecdp, esid, Path(ns.login_inbox), out_dir, prog, end)
+                    if outcome != "submitted":
+                        prog.step("login_phone_failed", outcome=outcome)
+                        return False
                 if esid and time.monotonic() >= next_shot:
                     with contextlib.suppress(CDPError, TimeoutError, OSError):
                         shot = ecdp.call(
@@ -1169,6 +1245,9 @@ def main(argv: list[str]) -> int:
     p.add_argument("--kind", choices=("vscode", "native"), default="vscode")
     #: 原生宿主要扫码登录（WorkBuddy）：按钮文字、链接主机、Edge 配置目录都由 agent 登记，不透传
     p.add_argument("--login", choices=("none", "qr"), default="none")
+    #: qr = 截二维码给用户扫；phone = 手机号 + 短信验证码（值经 --login-inbox 目录里的一次性文件送进来）
+    p.add_argument("--login-method", choices=("qr", "phone"), default="qr")
+    p.add_argument("--login-inbox", default="")
     p.add_argument("--login-button", default="Sign In")
     p.add_argument("--login-link-button", default="Copy Login Link")
     p.add_argument("--login-host", default="")

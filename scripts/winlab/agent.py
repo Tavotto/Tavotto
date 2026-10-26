@@ -71,9 +71,10 @@ DESKTOP_LIVE_MODES = (
     "trae-claude",
     "zcode-native",
     "workbuddy-native",
+    "workbuddy-native-phone",
 )
 #: 要用户扫码登录宿主账户的格（用户 2026-10-27：专用账户、每次扫、跑完清掉登录态）
-DESKTOP_LIVE_LOGIN_MODES = ("workbuddy-native",)
+DESKTOP_LIVE_LOGIN_MODES = ("workbuddy-native", "workbuddy-native-phone")
 #: 宿主只能从明文配置读 key 的格：用落盘专用 key（winlab.py ONDISK_MODES 同一份，测试核对），跑完 wipe_ondisk_key
 DESKTOP_LIVE_ONDISK_MODES = ("zcode-native",)
 #: 依赖安装配方的版本：改了 prepare 的安装步骤就加一，已有 venv 随之重装（散列戳里含它）。
@@ -3288,6 +3289,8 @@ class DesktopLive:
     host: str
     extension: str = ""
     native: bool = False
+    #: 宿主账户怎么登录：qr = 截二维码给用户扫；phone = 手机号 + 短信验证码（经 `winlab login-input`）
+    login: str = ""
 
 
 DESKTOP_LIVE: dict[str, DesktopLive] = {
@@ -3295,7 +3298,8 @@ DESKTOP_LIVE: dict[str, DesktopLive] = {
     "cursor-claude": DesktopLive("cursor", "anthropic.claude-code"),
     "trae-claude": DesktopLive("trae-cn", "anthropic.claude-code"),
     "zcode-native": DesktopLive("zcode", native=True),
-    "workbuddy-native": DesktopLive("workbuddy", native=True),
+    "workbuddy-native": DesktopLive("workbuddy", native=True, login="qr"),
+    "workbuddy-native-phone": DesktopLive("workbuddy", native=True, login="phone"),
 }
 assert tuple(DESKTOP_LIVE) == DESKTOP_LIVE_MODES
 #: 宿主装扩展时自报「版本不兼容」：这是宿主限制（not_supported），不是 Tavotto 的故障
@@ -4161,6 +4165,10 @@ def _desktop_live_body(
             str(work / "edge-login"),
             "--login-timeout",
             str(QR_LOGIN_TIMEOUT_S),
+            "--login-method",
+            cell.login or "qr",
+            "--login-inbox",
+            str(work),
         ]
     elif cell.native:
         # ZCode 只从明文 provider_config.json 读 key（用户 2026-10-26 同意的落盘例外，专用限额 key）：
@@ -5072,6 +5080,25 @@ def cmd_reports(lab: Lab, run_id: str | None) -> dict:
     return {"runs": sorted((p.stem for p in lab.reports.glob("*.json")), reverse=True)[:50]}
 
 
+LOGIN_INPUT_RE = {"phone": re.compile(r"1\d{10}"), "code": re.compile(r"\d{4,8}")}
+
+
+def cmd_login_input(lab: Lab, run_id: str, kind: str, value: str) -> dict:
+    """把用户给的手机号 / 短信验证码送进**正在跑**的那次 run（work\\login-<kind>.txt，驱动器读到即删）。
+    只认形状正确的值；不回显值本身。"""
+    holder = read_lock(lab) or {}
+    if not RUN_ID_RE.fullmatch(run_id or "") or holder.get("run_id") != run_id:
+        return {"result": "error", "summary": "that run is not the one running"}
+    pat = LOGIN_INPUT_RE.get(kind)
+    if pat is None or not pat.fullmatch(value.strip()):
+        return {"result": "error", "summary": f"bad {kind}"}
+    work = lab.runs / run_id / "work"
+    tmp = work / f"login-{kind}.txt.tmp"
+    tmp.write_text(value.strip(), encoding="utf-8")
+    os.replace(tmp, work / f"login-{kind}.txt")
+    return {"result": "passed", "summary": f"{kind} delivered"}
+
+
 SHOT_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,40}\.png")
 SHOT_MAX_BYTES = 4 * 1024**2
 
@@ -5159,6 +5186,9 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--mode")
     r = sub.add_parser("reports")
     r.add_argument("--id")
+    li = sub.add_parser("login-input")
+    li.add_argument("--id", required=True)
+    li.add_argument("--kind", choices=("phone", "code"), required=True)
     sw = sub.add_parser("sweep")
     sw.add_argument("--workbuddy-logout", action="store_true")
     sh = sub.add_parser("shot")
@@ -5199,6 +5229,8 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
         return _emit(cmd_shot(lab, ns.id, ns.name))
     if ns.verb == "sweep":
         return _emit(cmd_sweep(lab, ns.workbuddy_logout))
+    if ns.verb == "login-input":
+        return _emit(cmd_login_input(lab, ns.id, ns.kind, sys.stdin.read(64)))
     if ns.verb == "clean":
         return _emit(cmd_clean(lab, max(0, ns.keep)))
     if ns.verb == "stop":
