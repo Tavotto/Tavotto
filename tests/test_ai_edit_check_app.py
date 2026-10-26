@@ -59,7 +59,7 @@ def world(tmp_path, monkeypatch):
         project_watch.stop()
 
 
-def _check(m, figs, base_src, new_src, sid="s1", entry=None, register=False):
+def _check(m, figs, base_src, new_src, sid="s1", entry=None, register=False, newline=None):
     script = figs / "plot.py"
     script.write_text(base_src, encoding="utf-8")
     if register:
@@ -70,11 +70,13 @@ def _check(m, figs, base_src, new_src, sid="s1", entry=None, register=False):
     baseline = runner(str(figs), "plot.py", None).get("manifests")
     assert baseline and "plot" in baseline, baseline
     cand = ai_figure_edit.create_candidate(sid, script, figs, "plot.py")
-    cand.target.write_text(new_src, encoding="utf-8")
+    cand.target.write_text(new_src, encoding="utf-8", newline=newline)
+    # Compare the file at the check boundary, including the platform's line endings.
+    before_check = cand.target.read_bytes()
     cand.extras.update({"runner": runner, "check_before": lambda: baseline})
     try:
         result = ai_figure_edit.agent_check(cand, ai_convert.run_validation)
-        assert cand.target.read_bytes() == new_src.encode(), (
+        assert cand.target.read_bytes() == before_check, (
             "Checking an edit must not rewrite its outputs"
         )
         return result
@@ -82,9 +84,10 @@ def _check(m, figs, base_src, new_src, sid="s1", entry=None, register=False):
         ai_figure_edit.remove_candidate(cand.dir)
 
 
-def test_show_only_script_keeps_its_name_when_only_the_title_changes(world):
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_show_only_script_keeps_its_name_when_only_the_title_changes(world, newline):
     m, figs = world
-    ok, report = _check(m, figs, SHOW_ONLY, SHOW_ONLY.replace("'old'", "'new'"))
+    ok, report = _check(m, figs, SHOW_ONLY, SHOW_ONLY.replace("'old'", "'new'"), newline=newline)
     assert ok, report
     assert "data unchanged" in report and "fingerprint not measured" not in report, report
 
