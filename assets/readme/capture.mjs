@@ -52,10 +52,22 @@ async function runScriptScene() {
     await p.keyboard.press('Escape')
     await d.pause(2500)
     await d.ensureAssets()
+    // Wider asset column and properties column, so script names and "Original 73.5 × 57.8" are whole.
+    const drag = async (sel, dx) => {
+      const hb = await p.locator(sel).boundingBox()
+      await p.mouse.move(hb.x + hb.width / 2, hb.y + 300)
+      await p.mouse.down()
+      await p.mouse.move(hb.x + hb.width / 2 + dx, hb.y + 300, { steps: 10 })
+      await p.mouse.up()
+      await d.pause(500)
+    }
+    await drag('[data-resize-handle="left-drawer"]', 140)
+    await drag('[data-resize-handle="inspector"]', -100)
     await d.quickSave()
     await p.mouse.move(1000, 1000)
+    await p.mouse.move(1900, 1100) // off the canvas, so nothing is hovered
     await p.evaluate(() => document.activeElement?.blur())
-    await d.pause(14_000) // let the toasts expire
+    await d.pause(30_000) // let the toasts expire
     const file = `run-script${SUFFIX}.png`
     await p.screenshot({ path: path.join(OUT, file) })
     console.log('→', path.join('assets/readme', file))
@@ -165,11 +177,14 @@ try {
       await page.getByRole('button', { name: S.figureElements, exact: true }).click()
       await tell.waitFor({ state: 'visible', timeout: 15_000 })
     }
-    // Zoom in on figure (a) with ctrl + wheel, as a trackpad pinch would
-    const box = await page.locator('[data-object-id^="p_"]').first().boundingBox()
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    // Fit the page, then zoom in two notches around its centre (ctrl + wheel, as a pinch would):
+    // the whole page stays in view, centred, with (a) large and nothing under the floating toolbar.
+    await page.getByText(S.fitShort, { exact: true }).last().click()
+    await pause(900)
+    const st = await page.locator('[data-canvas-stage]').boundingBox()
+    await page.mouse.move(st.x + st.width / 2, st.y + st.height / 2 - 40)
     await page.keyboard.down('Control')
-    for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, -120); await pause(150) }
+    for (let i = 0; i < 2; i++) { await page.mouse.wheel(0, -120); await pause(150) }
     await page.keyboard.up('Control')
     await pause(1200)
     await page.locator('li[role="treeitem"]', { hasText: /Title|标题/ }).first().click()
