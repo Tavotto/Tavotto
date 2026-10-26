@@ -321,7 +321,7 @@ def test_write_guard_guidance_requires_a_structured_cause(env):
     """A script's error text must not masquerade as a sandbox diagnosis."""
     message = "User exception mentioning write_outside_roots is not a write denial"
     env["runner"] = lambda figures_dir, rel, write_roots=None: {
-        "error": {"code": "script_probe_failed", "message": message, "worker_code": "script_error"}
+        "error": {"code": "script_probe_failed", "message": message, "cause": "script_error"}
     }
     sid = _run(env)
     sess = _wait(sid)

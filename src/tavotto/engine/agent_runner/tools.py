@@ -140,9 +140,16 @@ Scope rules (these are not negotiable):
 How to work:
 1. Read the target script with read_file before you edit it. Use list_dir if you need to see what else is there.
 2. Change it with edit_file (small exact replacements). Use write_file only if edit_file cannot express the change.
-3. After editing, call check. If it reports a problem, fix it and check again.
+3. After editing, call check. It re-runs your edited copy and reports whether it still runs and draws, whether the
+   data is unchanged and whether the set of figures is the same. If it reports a problem, fix it and check again.
+   You have at most 3 check calls.
 4. Finish with one or two sentences saying what you changed. Reply in the language of the user's instruction.
 """
+
+#: ADR 0143 / 0147：`check` 回调最多被调 3 次（转换：Agent ≤ 1 + 一轮有界修正；改图：同一上限，每次都在候选副本里
+#: 真渲染一遍）。第 4 次是工具错误 `check_budget`，回调不再被调。
+MAX_CHECKS = 3
+CONVERT_MAX_CHECKS = MAX_CHECKS
 
 _PATH_DESC = "Path relative to the project directory."
 
@@ -173,6 +180,7 @@ class FigureEditSession:
         self.target_rel = envelope.target
         self.check_fn = envelope.check
         self.redactor = envelope.redactor
+        self.checks_run = 0
         self.read_target = False
         self.mutated = False
         self.envelope_target = envelope.target
@@ -576,6 +584,15 @@ class FigureEditSession:
         name = "check"
         if self.check_fn is None:
             return _err(name, call_id, "not_available", "check is not available in this session.")
+        if self.checks_run >= MAX_CHECKS:
+            return _err(
+                name,
+                call_id,
+                "check_budget",
+                f"check was already called {MAX_CHECKS} times; no more runs are allowed. "
+                "Stop and tell the user what is still wrong.",
+            )
+        self.checks_run += 1
         try:
             result = self.check_fn()
             if isinstance(result, media.CheckResult):
@@ -768,8 +785,6 @@ class FigureEditToolset:
 
 # --------------------------------------------------------------------------- convert_to_editable（ADR 0143 / 0147）
 CONVERT_SUFFIX = "_matplotlib.py"
-#: ADR 0143：校验运行 ≤ 3（Agent ≤ 1 + 一轮有界修正）。第 4 次 `check` 是工具错误 `check_budget`。
-CONVERT_MAX_CHECKS = 3
 CONVERT_CHUNK_CHARS = 6000  # Advisory output size, not a second file-size authority.
 CONVERT_WRITE_HINT = (
     f"Prefer create_file/append_file blocks around {CONVERT_CHUNK_CHARS} characters to avoid output truncation. "
@@ -1070,15 +1085,6 @@ class ConvertSession(FigureEditSession):
             return _err(name, call_id, "not_created", "Create the new file with create_file first.")
         if self.check_fn is None:
             return _err(name, call_id, "not_available", "check is not available in this session.")
-        if self.checks_run >= CONVERT_MAX_CHECKS:
-            return _err(
-                name,
-                call_id,
-                "check_budget",
-                f"check was already called {CONVERT_MAX_CHECKS} times; no more runs are allowed. "
-                "Stop and tell the user what is still wrong.",
-            )
-        self.checks_run += 1
         result = super().check(args, call_id)
         if final and result.check_passed is True and not result.is_error:
             result.completed = True

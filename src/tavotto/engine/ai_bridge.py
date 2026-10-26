@@ -1056,6 +1056,7 @@ def _cmd(
     output: str | None = None,
     resume_output_sha256: str = "",
     checks_used: int = 0,
+    check_ipc: bool = False,
 ) -> tuple[list[str], dict[str, str]]:
     """→ (命令行, 需要追加到环境的变量)。第三方接口全部走这两样注入，
     绝不改写用户自己的 ~/.claude 或 ~/.codex 配置。
@@ -1079,6 +1080,7 @@ def _cmd(
                 output=output,
                 resume_output_sha256=resume_output_sha256,
                 checks_used=checks_used,
+                check_ipc=check_ipc,
                 model=model,
                 endpoint_args=list(extra_args),
                 endpoint_env=dict(extra_env),
@@ -1401,6 +1403,9 @@ def run(
         # 内置执行器要知道目标脚本（写权限收窄到它）；提示词走 stdin 不进 argv。两家 CLI 的调用形状一个字节不变
         # 转换任务（ADR 0143）：Agent 读候选里的原脚本副本、新建 `<原名>_matplotlib.py`；`check` 经 stdin/stdout 回调本进程的校验流水
         builtin_convert = builtin and convert is not None
+        #: 内置执行器的 `check` IPC（stdin 第一行是 `{"prompt":…}`、stdin 保持打开）：转换恒有；改图要有候选工作区（TAF）才有——
+        #: 没有候选就没有“提交前同一套检查”可调，不装 check（工具返回 not_available，与旧行为一致）
+        builtin_ipc = builtin and (convert is not None or cand is not None)
         if builtin_convert:
             cmd_kw = {
                 "target": Path(script).name,
@@ -1409,11 +1414,13 @@ def run(
             }
         else:
             cmd_kw = {"target": cand.target_name if cand is not None else script} if builtin else {}
+            if builtin_ipc:
+                cmd_kw["check_ipc"] = True
 
         def stdin_for(text: str) -> str | None:
             if not builtin:
                 return None
-            return json.dumps({"prompt": text}) + "\n" if builtin_convert else text
+            return json.dumps({"prompt": text}) + "\n" if builtin_ipc else text
 
         stdin_text = stdin_for(prompt)
         cmd, extra_env = _cmd(
@@ -1493,11 +1500,11 @@ def run(
                 from . import ai_tasks
 
                 task_run = ai_tasks.begin_registered(sid, envelope)
-                if builtin_convert:
+                if builtin_ipc:
                     # 内置执行器的 `check` 在 spawn 之后、消费它的输出期间就会跑校验（早于编排器的 `_render` 挂取消标记）：
                     # 会话的取消标记要在 spawn 前就挂到候选上，取消才会中止校验的 worker 与依赖安装
                     cand.extras["cancel"] = task_run.cancel_event
-            proc = _popen(cmd, agent_cwd, env, stderr_log, stdin_text, builtin_convert)
+            proc = _popen(cmd, agent_cwd, env, stderr_log, stdin_text, builtin_ipc)
             _SPAWN_MARK.started = True  # 进程已经起来了：此后任何异常都不能再清账本行
         except BaseException as exc:
             # 记录已落库而进程没起来：标成失败，不是删掉——「查询」要查得到它，且明确是没执行
@@ -1552,17 +1559,20 @@ def run(
 
     def _answer_check() -> None:
         """内置执行器的 `check`：跑 ADR 0143 的校验流水（`run_validation`，候选工作区里），把结论写回它的 stdin。"""
-        from . import ai_convert
+        from . import ai_convert, ai_figure_edit
         from .agent_runner.tools import CONVERT_MAX_CHECKS
 
         nonlocal convert_checks
         evidence = []
         try:
-            if convert_checks >= CONVERT_MAX_CHECKS:
-                ok, report = False, "check_budget"
+            if builtin_convert:
+                if convert_checks >= CONVERT_MAX_CHECKS:
+                    ok, report = False, "check_budget"
+                else:
+                    convert_checks += 1
+                    ok, report = ai_convert.agent_check(cand, evidence=evidence)
             else:
-                convert_checks += 1
-                ok, report = ai_convert.agent_check(cand, evidence=evidence)
+                ok, report = ai_figure_edit.agent_check(cand, ai_convert.run_validation)
         except Exception:  # noqa: BLE001 - 校验流水自身出错：告诉 Agent 不通过，不拖垮会话
             LOG.exception("内置执行器的 check 回调出错（session %s）", sid)
             ok, report = False, "check_failed"
@@ -1601,7 +1611,7 @@ def run(
                 line = line.rstrip("\n")
                 if not line.strip():
                     continue
-                if builtin_convert and '"check_request"' in line:
+                if builtin_ipc and '"check_request"' in line:
                     _answer_check()
                     continue
                 for kind, text in _classify(agent, line, st):
@@ -1658,7 +1668,7 @@ def run(
                 _spawn_env(cmd2[0], extra2),
                 log_state["log"],
                 stdin_for(again),
-                builtin_convert,
+                builtin_ipc,
             )
         except BaseException:
             sess["exited"].set()  # 没起来：没有要等的进程

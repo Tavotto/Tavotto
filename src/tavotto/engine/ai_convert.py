@@ -405,19 +405,23 @@ def normalize_outputs(cand: ConvertCandidate) -> dict | None:
     return None
 
 
-def run_validation(cand: ConvertCandidate, runner, *, evidence: list | None = None) -> dict:
+def run_validation(
+    cand: ConvertCandidate | ai_figure_edit.Candidate, runner, *, evidence: list | None = None
+) -> dict:
     """在用户同一解释器 / 同一路由下跑候选脚本一遍。
 
     `runner(figures_dir: str, script_rel: str, write_roots: tuple[str, ...]) -> {"stems": [...], "size_mm": [w, h] | None, "svg": str | None,
-    "error": None | {"code": str, "message": str, "worker_code": str | None}}`（app 注入，走现有 probe 路径并在返回前退役它起的 worker）。
+    "error": None | {"code": str, "message": str, "cause": str | None}}`（app 注入，走现有 probe 路径并在返回前退役它起的 worker）。
     **隔离写入（Codex #1277 P1）**：运行带写入根绊线（ADR 0141 的 `write_roots`，现有机制）——根只有候选目录（加 worker 自己的
     基础设施目录），所以候选脚本把相对路径输出（`out.png` / `data.csv`）写进项目目录时，在**写发生的那一刻**失败
     （`write_outside_roots`），用户文件根本没被打开写过；跑完的指纹复核只是兜底（绊线挡不住 C 层写）。
     候选以紧挨原脚本的**临时文件**（`_tavotto_convert_probe_<sid>.py`）形式存在（O_EXCL 新建、跑完即删）：相对路径的数据读取与 cwd 判据同原脚本。
     回 `{"status": "ok" | "no_figure" | "error", ...}`。"""
-    issue = normalize_outputs(cand)
-    if issue is not None:
-        return issue
+    # Editing preserves source-owned output names; only conversion creates a new identity.
+    if isinstance(cand, ConvertCandidate):
+        issue = normalize_outputs(cand)
+        if issue is not None:
+            return issue
     stage_path = cand.script_path.parent / f"{STAGE_PREFIX}{cand.sid}.py"
     rel = stage_path.relative_to(cand.project_root).as_posix()
     try:
@@ -454,13 +458,19 @@ def run_validation(cand: ConvertCandidate, runner, *, evidence: list | None = No
         code = str(err.get("code") or "run_failed")
         if code in NO_FIGURE_CODES:
             return {"status": "no_figure", "code": code}
-        if code == WRITE_OUTSIDE_ROOTS_CODE or err.get("worker_code") == WRITE_OUTSIDE_ROOTS_CODE:
+        if ai_figure_edit.tripped_write_roots(code, err.get("cause")):
+            # 生产 runner 里码被探测折成 script_probe_failed，绊线的码在 `cause`：两种来源同一个结论、同一句提示
             return {
                 "status": "error",
                 "code": WRITE_OUTSIDE_ROOTS_CODE,
                 "message": WRITE_OUTSIDE_HINT,
             }
-        return {"status": "error", "code": code, "message": str(err.get("message") or "")[:400]}
+        return {
+            "status": "error",
+            "code": code,
+            "message": str(err.get("message") or "")[:400],
+            **({"cause": str(err["cause"])} if err.get("cause") else {}),
+        }
     # Probe isolates per-figure failures so other pages remain usable. A
     # conversion, however, must not certify a candidate which lost some pages.
     if out.get("partial") or out.get("failed_figures") or out.get("dropped_figures"):
@@ -490,6 +500,8 @@ def run_validation(cand: ConvertCandidate, runner, *, evidence: list | None = No
         "stems": list(out["stems"]),
         "size_mm": out.get("size_mm"),
         "svg": out.get("svg"),
+        # 改图任务的 `check` 要数据指纹：runner 愿意给 manifest 就原样带上（转换任务不读）
+        "manifests": out.get("manifests"),
     }
 
 

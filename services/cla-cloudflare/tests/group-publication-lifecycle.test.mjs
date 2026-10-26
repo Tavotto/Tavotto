@@ -95,14 +95,12 @@ for(const field of ['kind','members','head_sha','base_sha','group'])test('group 
 
 
 test('group publication keeps the unchanged 35 external work cap for a larger full prefix',()=>isolated(async f=>{
- f.entries[1].headCommit.oid='6'.repeat(40);f.entries.push({id:'SYNTHETIC_QUEUE_3',position:3,headCommit:{oid:f.groupTarget.headSha},baseCommit:{oid:f.groupTarget.baseSha},pullRequest:{number:13,headRefOid:'7'.repeat(40),baseRefName:'main'}});
- f.members.set(13,{...f.members.get(12),number:13,head:{sha:'7'.repeat(40)}});
- await f.admit();assert.equal((await f.recover()).disposition,'target_retry_pending_or_exhausted');assert.equal(await f.owned(),null);assert.equal(f.mutations().length,0);
+ await f.admit();const first=await f.recover();assert.equal(first.disposition,'target_retry_pending_or_exhausted');assert.equal(first.budget.external,35);assert.equal(await f.owned(),null);assert.equal(f.mutations().length,0);
  assert.equal((await f.get('SELECT attempts FROM outbox')).attempts,1);
  for(let n=0;n<2;n++){f.advance(60);assert.equal((await f.recover()).disposition,'target_retry_pending_or_exhausted');}
  f.advance(60);assert.equal((await f.recover()).disposition,'idle');assert.equal((await f.get('SELECT attempts FROM outbox')).attempts,3);
  assert.ok(f.invocations.at(-1).budget.snapshot().external<=35);
-},{group:true}));
+},{group:true,prefix:6}));
 
 
 test('group proof schema binds provenance and exact validity bounds',()=>isolated(async f=>{

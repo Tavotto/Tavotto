@@ -130,6 +130,24 @@ def _runtime_block() -> dict:
     }
 
 
+#: 失败出在**用户自己选的环境**上（显式指定的解释器用不了、Conda 环境激活失败），与 Tavotto 的安装包无关：
+#: （字面量与 `pool.EXPLICIT_UNUSABLE_CODE` 等同值：pool 依赖本模块，这里不能顶层 import 它。）桌面版（该带内置 runtime）也不许把它说成「安装文件不完整」——那会让用户去重装一个完好无损的 Tavotto。
+USER_ENV_FAILURE_CODES = frozenset(
+    {
+        "explicit_python_unusable",
+        "project_python_unusable",
+        "conda_launcher_unavailable",
+    }
+)
+
+
+def _error_text(rt: dict, failure, snap: dict) -> str | None:
+    """`status()` 失败时给人看的一句话：用户自选环境的失败说它真实的原因；其余该带 runtime 却没有的才说「安装文件不完整」。"""
+    if failure.code in USER_ENV_FAILURE_CODES:
+        return str(failure)
+    return runtime.repair_hint() if rt["expected"] else snap["error"]
+
+
 def status() -> dict:
     """渲染环境现状——前端据此决定显示什么，以及要不要给「自动安装」。
 
@@ -164,6 +182,7 @@ def status() -> dict:
         }
     except pool.WorkerError as exc:
         code = exc.code
+        failure = exc
     base = find_base_python()
     snap = _snapshot()  # 同上：在可能很慢的 find_base_python 之后再取
     return {
@@ -183,7 +202,7 @@ def status() -> dict:
         "state": snap["state"],
         "attempt": snap["attempt"],
         "boot": _BOOT_ID,
-        "error": (runtime.repair_hint() if rt["expected"] else snap["error"]),
+        "error": _error_text(rt, failure, snap),
     }
 
 

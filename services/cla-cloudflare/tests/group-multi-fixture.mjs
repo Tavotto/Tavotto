@@ -1,7 +1,7 @@
 import {fixture} from './publication-lifecycle-fixture.mjs';
 import {randomToken,sha256} from '../src/core/crypto.ts';
-export async function multi(delegated=true){
- const f=await fixture({group:true,delegated});
+export async function multi(delegated=true,options={}){
+ const f=await fixture({...options,group:true,delegated});
  const token=randomToken(),csrf=randomToken();await f.store.addSession({token_hash:await sha256(token),actor:3,login:'user3',csrf_hash:await sha256(csrf),expires:f.now()+86400});
  const args=[token,csrf,f.c.origin],packet=await f.s.packet(...args,'individual');
  await f.s.sign(...args,packet.id,await f.s.intent(...args,packet.id,'contributor'),'contributor',f.evidence('contributor'));

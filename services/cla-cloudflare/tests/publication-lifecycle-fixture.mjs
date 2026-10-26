@@ -19,7 +19,7 @@ async function appKey(){
  keyPromise??=crypto.subtle.generateKey({name:'RSASSA-PKCS1-v1_5',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['sign','verify']).then(async pair=>({publicKey:pair.publicKey,pkcs8:Buffer.from(await crypto.subtle.exportKey('pkcs8',pair.privateKey)).toString('base64')}));
  return keyPromise;
 }
-export async function fixture({delegated=true,grantLifetime,group=false}={}){
+export async function fixture({delegated=true,grantLifetime,group=false,prefix=2}={}){
  const f=await signingFixture(delegated);
  if(grantLifetime!==undefined)f.grant.expires_at=f.now()+grantLifetime;
  if(delegated)await f.install();
@@ -29,7 +29,8 @@ export async function fixture({delegated=true,grantLifetime,group=false}={}){
  let tick=0,sequence=100,authorityReads=0,hidden=false;
  const head=()=>f.gh.head,pr=()=>({number:9,state:'open',user:{id:2,login:'contributor',type:'User'},commits:1,head:{sha:head()},base:{repo:{id:c.repositoryId},ref:'main',sha:'d'.repeat(40)}});
  const groupTarget={headSha:'e'.repeat(40),baseSha:'d'.repeat(40),baseRef:'refs/heads/main'};
- const entries=[1,2].map(n=>({id:'SYNTHETIC_QUEUE_'+n,position:n,baseCommit:{oid:groupTarget.baseSha},headCommit:{oid:n===2?groupTarget.headSha:'f'.repeat(40)},pullRequest:{number:10+n,headRefOid:(n===1?'b':'c').repeat(40),baseRefName:'main'}}));
+ assert.ok(Number.isSafeInteger(prefix)&&prefix>=1&&prefix<=100);
+ const entries=Array.from({length:prefix},(_,i)=>i+1).map(n=>({id:'SYNTHETIC_QUEUE_'+n,position:n,baseCommit:{oid:groupTarget.baseSha},headCommit:{oid:n===prefix?groupTarget.headSha:prefix===2?'f'.repeat(40):(2000+n).toString(16).padStart(40,'0')},pullRequest:{number:10+n,headRefOid:(n===1?'b':n===2?'c':n.toString(16)).repeat(40),baseRefName:'main'}}));
  const members=new Map(entries.map(e=>[e.pullRequest.number,{...pr(),number:e.pullRequest.number,head:{sha:e.pullRequest.headRefOid}}]));
  const get=(sql,...args)=>f.store.stmt(sql,...args).first();
  const transport=async(url,init)=>{
@@ -54,7 +55,14 @@ export async function fixture({delegated=true,grantLifetime,group=false}={}){
    if(token.expires<=f.now())return Response.json({message:'synthetic expired token'},{status:401});
   }else assert.equal(init.method,'GET');
   const base='/repos/'+c.repository;let data;
-  if(group && path==='/graphql'){
+  if(group && path==='/graphql' && body.query.startsWith('query NativePrefixPRMetadata(')){
+   assert.equal(init.method,'POST');assert.equal(token.write,false);
+   assert.deepEqual(body.variables,{owner:c.repository.split('/')[0],name:c.repository.split('/')[1]});
+   const numbers=[...body.query.matchAll(/p([0-9]+):pullRequest\(number:([0-9]+)\)/g)].map(m=>{assert.equal(m[1],m[2]);return Number(m[1]);});
+   assert.ok(numbers.length>=2&&numbers.length<=100);assert.equal(new Set(numbers).size,numbers.length);
+   const repository={databaseId:c.repositoryId};for(const n of numbers){const p=members.get(n);assert.ok(p);repository['p'+n]={number:p.number,state:p.state.toUpperCase(),headRefOid:p.head.sha,baseRefOid:p.base.sha,baseRefName:p.base.ref,baseRepository:{databaseId:p.base.repo.id},author:{__typename:p.user.type,login:p.user.login,databaseId:p.user.id},commits:{totalCount:p.commits}};}
+   data={data:{repository}};await hooks.prMetadata?.(data,numbers);
+  }else if(group && path==='/graphql'){
    assert.equal(init.method,'POST');assert.ok(body.query.startsWith('query('));assert.equal(body.variables.cursor,null);
    data={data:{repository:{databaseId:c.repositoryId,mergeQueue:{entries:{totalCount:entries.length,nodes:structuredClone(entries),pageInfo:{hasNextPage:false,endCursor:null}}}}}};
   }else if(path===base)data={id:c.repositoryId,full_name:c.repository,default_branch:'main'};

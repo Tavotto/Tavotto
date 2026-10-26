@@ -4,8 +4,8 @@
     "file": "src/native/github.ts",
     "before": "    if(readLease?.token!==undefined)return readLease.token;",
     "after": "",
-    "pattern": "prefix\\ read\\ session\\ actual\\ P2\\ costs\\ 28\\ with\\ all\\ dynamic\\ facts\\ fresh",
-    "selectedTitle": "prefix read session actual P2 costs 28 with all dynamic facts fresh",
+    "pattern": "^prefix\\ read\\ session\\ actual\\ P2\\ costs\\ 24\\ with\\ all\\ dynamic\\ facts\\ fresh$",
+    "selectedTitle": "prefix read session actual P2 costs 24 with all dynamic facts fresh",
     "testFile": "tests/prefix-read-session.test.mjs",
     "assertionError": true
   },
@@ -14,8 +14,8 @@
     "file": "src/native/github.ts",
     "before": "      if(readLease)readLease.source={sha:trusted.sha,policy:structuredClone(policy)};",
     "after": "",
-    "pattern": "prefix\\ read\\ session\\ actual\\ P3\\ costs\\ 34\\ with\\ all\\ dynamic\\ facts\\ fresh",
-    "selectedTitle": "prefix read session actual P3 costs 34 with all dynamic facts fresh",
+    "pattern": "^prefix\\ read\\ session\\ actual\\ P3\\ costs\\ 26\\ with\\ all\\ dynamic\\ facts\\ fresh$",
+    "selectedTitle": "prefix read session actual P3 costs 26 with all dynamic facts fresh",
     "testFile": "tests/prefix-read-session.test.mjs",
     "assertionError": true
   },
@@ -74,8 +74,8 @@
     "file": "src/native/service.ts",
     "before": "    const last=await mergePrefixBinding(this.c,reader,target,await reader.snapshot());",
     "after": "    const last=first;",
-    "pattern": "prefix\\ read\\ session\\ actual\\ P3\\ costs\\ 34\\ with\\ all\\ dynamic\\ facts\\ fresh",
-    "selectedTitle": "prefix read session actual P3 costs 34 with all dynamic facts fresh",
+    "pattern": "^prefix\\ read\\ session\\ actual\\ P3\\ costs\\ 26\\ with\\ all\\ dynamic\\ facts\\ fresh$",
+    "selectedTitle": "prefix read session actual P3 costs 26 with all dynamic facts fresh",
     "testFile": "tests/prefix-read-session.test.mjs",
     "assertionError": true
   },
@@ -84,8 +84,8 @@
     "file": "src/native/github.ts",
     "before": "page <= Math.ceil(pr.commits/100)",
     "after": "page <= 1",
-    "pattern": "prefix\\ read\\ session\\ commit\\ page101\\ is\\ read\\ anew\\ in\\ each\\ snapshot\\ and\\ costs30",
-    "selectedTitle": "prefix read session commit page101 is read anew in each snapshot and costs30",
+    "pattern": "^prefix\\ read\\ session\\ commit\\ page101\\ is\\ read\\ anew\\ in\\ each\\ snapshot\\ and\\ costs26$",
+    "selectedTitle": "prefix read session commit page101 is read anew in each snapshot and costs26",
     "testFile": "tests/prefix-read-session.test.mjs",
     "assertionError": true
   },
@@ -124,8 +124,8 @@
     "file": "src/native/github.ts",
     "before": "    const budget=this.budget;if(!budget)throw new Rejected('invocation_budget_required');",
     "after": "    const budget=this.budget;if(!budget)throw new Rejected('invocation_budget_required');budget.external=0;",
-    "pattern": "prefix\\ read\\ session\\ existing\\ invocation\\ charge7\\ is\\ preserved\\ through\\ both\\ snapshots",
-    "selectedTitle": "prefix read session existing invocation charge7 is preserved through both snapshots",
+    "pattern": "^prefix\\ read\\ session\\ existing\\ invocation\\ charge11\\ is\\ preserved\\ through\\ both\\ snapshots$",
+    "selectedTitle": "prefix read session existing invocation charge11 is preserved through both snapshots",
     "testFile": "tests/prefix-read-session.test.mjs",
     "assertionError": true
   },
@@ -134,8 +134,8 @@
     "file": "src/native/budget.ts",
     "before": "externalWork:35",
     "after": "externalWork:40",
-    "pattern": "prefix\\ read\\ session\\ P4\\ refuses\\ at\\ unchanged35\\ external\\ cap\\ with\\ no\\ result\\ or\\ write",
-    "selectedTitle": "prefix read session P4 refuses at unchanged35 external cap with no result or write",
+    "pattern": "^prefix\\ read\\ session\\ P8\\ refuses\\ at\\ unchanged35\\ external\\ cap\\ with\\ no\\ result\\ or\\ write$",
+    "selectedTitle": "prefix read session P8 refuses at unchanged35 external cap with no result or write",
     "testFile": "tests/prefix-read-session.test.mjs",
     "assertionError": true
   },
@@ -144,8 +144,8 @@
     "file": "src/native/service.ts",
     "before": "    for(const person of people)if(!await this.qualified(person.id,ceiling,now))eligible=false;",
     "after": "    for(const person of people.slice(0,1))if(!await this.qualified(person.id,ceiling,now))eligible=false;",
-    "pattern": "prefix\\ read\\ session\\ two\\ personally\\ completed\\ contributors\\ cost28\\ external\\ and7\\ SQL",
-    "selectedTitle": "prefix read session two personally completed contributors cost28 external and7 SQL",
+    "pattern": "^prefix\\ read\\ session\\ two\\ personally\\ completed\\ contributors\\ cost24\\ external\\ and7\\ SQL$",
+    "selectedTitle": "prefix read session two personally completed contributors cost24 external and7 SQL",
     "testFile": "tests/prefix-read-session.test.mjs",
     "assertionError": true
   }

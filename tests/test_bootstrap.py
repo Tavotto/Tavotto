@@ -53,6 +53,39 @@ def test_status_admits_it_cannot_help_without_any_python(monkeypatch):
     assert st["ok"] is False and st["can_install"] is False
 
 
+@pytest.mark.parametrize(
+    "code", ["explicit_python_unusable", "project_python_unusable", "conda_launcher_unavailable"]
+)
+def test_status_blames_the_users_environment_not_the_install_when_runtime_is_fine(
+    monkeypatch, code
+):
+    """桌面版（该带内置 runtime）里，用户自选的环境用不了 / Conda 激活失败，说的必须是真实原因：
+    不能是「安装文件不完整，请重新安装」（Windows Lab 环境矩阵 conda-named 腿：bundled 腿全绿，却让用户去重装）。"""
+
+    def boom():
+        raise pool.WorkerError("你指定的解释器用不了（X）", code=code)
+
+    monkeypatch.setattr(pool, "find_worker_python", boom)
+    monkeypatch.setattr(bootstrap, "find_base_python", lambda: None)
+    monkeypatch.setattr(bootstrap.runtime, "ships_bundled_runtime", lambda: True)
+    st = bootstrap.status()
+    assert st["ok"] is False and st["code"] == code
+    assert st["runtime"]["expected"] is True
+    assert st["error"] == "你指定的解释器用不了（X）"
+    assert "安装文件不完整" not in st["error"]
+
+
+def test_status_still_says_incomplete_install_when_the_bundled_runtime_is_broken(monkeypatch):
+    def boom():
+        raise pool.WorkerError("x", code="bundled_runtime_missing")
+
+    monkeypatch.setattr(pool, "find_worker_python", boom)
+    monkeypatch.setattr(bootstrap, "find_base_python", lambda: None)
+    monkeypatch.setattr(bootstrap.runtime, "ships_bundled_runtime", lambda: True)
+    st = bootstrap.status()
+    assert st["error"] == bootstrap.runtime.repair_hint()
+
+
 # ---------------- 隔离边界（最要紧的一条） -------------------------------------
 def test_install_never_touches_the_users_own_environment(monkeypatch, tmp_path):
     """安装必须发生在 Tavotto 的数据目录里，且 pip 只对着那个 venv 跑。

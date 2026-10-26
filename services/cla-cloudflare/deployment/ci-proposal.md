@@ -39,13 +39,22 @@ current authorization. A suspended/revoked/expired/disabled or stale proof fails
 Event fields cannot replace configuration or trusted source. Redirects, extra
 origins, changed default-branch commits and retargeted base branches fail closed.
 
-Merge queue remains an explicit blocker: native proofs currently support PRs,
-not merge-group candidates. This entry rejects merge_group before any request.
-Do not reuse a PR proof for a queue head, make a merge-group branch return green,
-or replace the current required gate until an independently reviewed native
-merge-group binding/recovery design or an explicit approved queue policy exists.
-The existing Python cla_service_verify.py does not provide these dual live
-authority reads and is not silently substituted into a successful native gate.
+The native consumer now supports `merge_group` with a distinct group locator,
+whole-prefix proof binding and two independent group authority reads. The group
+publication/recovery path is implemented and tested offline; it is not wired into
+the current workflow or accepted on the real platform. Run the proposed entry
+with `--event merge_group` only under the same separately reviewed trusted-source
+and configuration rules above. Never reuse a PR proof for a queue head.
+
+Real queue schema, minimal App authorization, CPU/D1 behavior and wakeup/proof
+timing still require isolated acceptance. Whole-group SQL admission is bounded
+to three personal or two delegated non-exempt contributors, and the unchanged
+external-request ceiling can reject a smaller group with a longer prefix or
+more pages. The existing four-candidate Merge Queue must therefore be tested at
+each prefix position before any native-gate activation; do not change queue
+policy or truncate the prefix to make it fit. The existing Python
+cla_service_verify.py does not provide these dual live authority reads and is
+not silently substituted into a successful native gate.
 
 Offline CI tests use actual service/evidence verification with a pre-existing
 synthetic confirmed publication at fixed time, and an in-memory GET transport.

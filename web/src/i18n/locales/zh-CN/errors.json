@@ -397,6 +397,7 @@
     "missingModulePackage": "这个包",
     "missingModuleTitle": "渲染环境里没有 {{module}}",
     "missingTitle": "尚未配置渲染环境",
+    "unusableTitle": "选定的渲染环境用不了",
     "noPythonAfter": "（或 Anaconda），再回到这里。",
     "noPythonBefore": "这台机器上没找到可用的 Python。请先安装",
     "noPythonLink": "Python 3.10 以上",

@@ -3891,7 +3891,28 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
             )
         return manifests(worker)
 
-    return {"before": before, "retire": retire, "after": after}
+    def check_before():
+        """内置执行器 `check` 的数据指纹基线：已 build 的 safe 会话**落盘**的 manifest，纯读（不重放 override、不退役、不执行）。
+        数据指纹不随用户叠的样式 override 变，所以落盘那份可直接当数据基线。会话缺失 / 不是磁盘这一版 → None（这项量不了）。"""
+        worker = engine_pool.peek(script, str(ctx.path), run=run_selection())
+        if worker is None or not worker.built:
+            return None
+        try:
+            disk = hashlib.sha256((ctx.path / script).read_bytes()).hexdigest()
+        except OSError:
+            return None
+        if getattr(worker, "last_build_source_sha256", None) != disk:
+            return None
+        return manifests(worker) or None
+
+    return {
+        "before": before,
+        "retire": retire,
+        "after": after,
+        # 内置执行器的 `check`（`ai_figure_edit.agent_check`）：候选在用户同一路由下的校验运行 + 数据指纹基线
+        "runner": _convert_runner(ctx, script, with_manifests=True, entry=entry),
+        "check_before": check_before,
+    }
 
 
 def project_status(ctx: "ProjectCtx | None") -> dict:
@@ -12472,7 +12493,9 @@ def _convert_error(exc: "engine_ai_convert.ConvertError"):
     return jsonify({"error": exc.code, "code": exc.code, "params": {}}), exc.status
 
 
-def _convert_runner(ctx: "ProjectCtx", source_script: str):
+def _convert_runner(
+    ctx: "ProjectCtx", source_script: str, *, with_manifests: bool = False, entry: str | None = None
+):
     """校验运行（注入 `ai_convert`）：走现有 probe 路径，**用户同一解释器 / 同一路由**；返回前退役它起的 worker。"""
 
     def runner(
@@ -12492,20 +12515,23 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
         # Validate the primary entry used by discovery/reopening. Generic probing
         # may try a helper after main fails; a helper's figure cannot certify the
         # complete converted script or hide its original execution error.
-        entries = engine_probe.entry_candidates(figures_dir, rel)[:1]
+        entries = [entry] if entry else engine_probe.entry_candidates(figures_dir, rel)[:1]
         result = engine_probe.probe(figures_dir, rel, entries=entries, **run_kw, **roots_kw)
         try:
             if result.get("error"):
                 err = result["error"]
+                cause = (err.get("params") or {}).get("worker_code")
                 return {
                     "error": {
                         "code": err.get("code"),
                         "message": err.get("message"),
-                        "worker_code": (err.get("params") or {}).get("worker_code"),
+                        **({"cause": cause} if cause else {}),
                     }
                 }
             stems = list(result.get("stems") or [])
-            conflicts = engine_probe._live_stem_conflicts(figures_dir, rel, stems)
+            # An edit retains its source-owned outputs; a conversion owns new ones.
+            owner = source_script if with_manifests else rel
+            conflicts = engine_probe._live_stem_conflicts(figures_dir, owner, stems)
             if conflicts:
                 return {
                     "error": {
@@ -12555,7 +12581,7 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
                                 "message": f"Captured figure {index + 1} could not be rendered as an image.",
                             }
                         }
-            return {
+            out = {
                 "stems": stems,
                 "size_mm": size,
                 "svg": svg,
@@ -12564,6 +12590,19 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
                 "failed_figures": result.get("failed_figures") or [],
                 "dropped_figures": result.get("dropped_figures", 0),
             }
+            if with_manifests and worker is not None:
+                mans = {}
+                for stem in stems:
+                    try:
+                        mans[stem] = json.loads(
+                            Path(
+                                engine_figcapture.usable_preview_path(worker.out_dir, stem, ".json")
+                            ).read_text(encoding="utf-8")
+                        )
+                    except (OSError, ValueError):
+                        continue
+                out["manifests"] = mans
+            return out
         finally:
             try:
                 engine_pool.invalidate(

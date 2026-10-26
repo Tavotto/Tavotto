@@ -397,6 +397,7 @@
     "missingModulePackage": "this package",
     "missingModuleTitle": "The rendering environment has no {{module}}",
     "missingTitle": "No rendering environment configured",
+    "unusableTitle": "The selected rendering environment can’t be used",
     "noPythonAfter": " (or Anaconda) first, then come back here.",
     "noPythonBefore": "No usable Python was found on this machine. Install",
     "noPythonLink": "Python 3.10 or newer",

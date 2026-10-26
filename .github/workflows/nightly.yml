@@ -354,9 +354,15 @@ jobs:
           # Rust supervisor 都必须被自动找到并真的用上——回退到 Python 池
           # 功能全在、只是慢、零报错，不断言就永远发现不了。
           # 这里**不设 TAVOTTO_WORKERD**：要验的正是自动发现。
+          # conda 腿例外：需要 Conda 激活的解释器按设计只走 Python 渲染池
+          # （workerd 的 spawn 规格不带激活增量，pool.py 会回退并打一条 WARNING，渲染本身成功），
+          # 所以这一腿断言 conda-fallback：二进制在（selected=workerd）、会话只有 python；
+          # 不能用 python——打包产物里 selected 恒为 workerd，python 期望会先在 selected 上红。
+          # 其余腿仍断言 workerd。
+          $plane = if ("${{ matrix.python }}" -eq "conda") { "conda-fallback" } else { "workerd" }
           python scripts/smoke_app.py --exe dist\Tavotto\Tavotto.exe `
             --figures "$dst" --expect-source $expect `
-            --expect-control-plane workerd
+            --expect-control-plane $plane
 
       - name: 无 Python：确认整套内置科学栈都能用
         # 装完即用是产品承诺的全部内容。这里不只看「起得来」，而是逐个 import

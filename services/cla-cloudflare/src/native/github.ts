@@ -252,12 +252,17 @@ export class GitHub implements GitHubPort {
     return {kind:'pr',repositoryId:this.c.repositoryId,headSha:pr.headSha,baseSha:pr.baseSha,policy,members:[],prs:[pr]};
   }
   private async prSnapshot(target:{number:number},token:string,repo:string,baseRef?:string,guard?:()=>void):Promise<PrSnapshot> {
+    const finish=await this.prSnapshotContent(target,token,repo,baseRef,guard);
+    guard?.();const after=await this.api(repo+'/pulls/'+target.number,token);guard?.();
+    return finish(after);
+  }
+  private async prSnapshotContent(target:{number:number},token:string,repo:string,baseRef?:string,guard?:()=>void,before?:Json):Promise<(after:Json)=>PrSnapshot> {
     guard?.();
-    const pr = await this.api(repo+'/pulls/'+target.number,token);guard?.();
+    const pr = before ?? await this.api(repo+'/pulls/'+target.number,token);guard?.();
     if (pr.number !== target.number || pr.state !== 'open' || pr.base?.repo?.id !== this.c.repositoryId ||
         !validSha(pr.head?.sha) || !validSha(pr.base?.sha) || !Number.isSafeInteger(pr.commits) || pr.commits < 1 || pr.commits > 1000)
       throw new Rejected('pr_mismatch');
-    const commits = []; let total = -1;
+    const commits:PrSnapshot['commits'] = []; let total = -1;
     for (let page = 1; page <= Math.ceil(pr.commits/100); page++) {
       guard?.();
       const data = await this.api(`${repo}/compare/${pr.base.sha}...${pr.head.sha}?per_page=100&page=${page}`,token);guard?.();
@@ -273,11 +278,39 @@ export class GitHub implements GitHubPort {
     }
     if (total !== commits.length || new Set(commits.map(x=>x.sha)).size !== commits.length || !commits.some(x=>x.sha === pr.head.sha))
       throw new Rejected('commits_incomplete');
-    guard?.();const after = await this.api(repo+'/pulls/'+target.number,token);guard?.();
+    return after=>{
+    guard?.();
     if (after.state !== 'open' || after.number !== pr.number || after.head?.sha !== pr.head.sha || after.base?.sha !== pr.base.sha ||
         after.commits !== pr.commits || after.user?.id !== pr.user?.id || after.base?.repo?.id !== this.c.repositoryId) throw new Rejected('state_changed');
     if(baseRef!==undefined && (pr.base?.ref!==baseRef || after.base?.ref!==baseRef || after.user?.login!==pr.user?.login || after.user?.type!==pr.user?.type))throw new Rejected('state_changed');
     return {number:pr.number,state:'open',headSha:pr.head.sha,baseSha:pr.base.sha,author:identity(pr.user),expectedCommits:pr.commits,commits};
+    };
+  }
+  // Batch only the dynamic metadata transport. Each member is freshly read
+  // before and after all commit pages in EACH of the two complete snapshots.
+  // No commit page, identity, queue read or cross-snapshot value is reused.
+  private async prMetadataBatch(numbers:number[],token:string,guard:()=>void):Promise<Map<number,Json>> {
+    guard();
+    if(numbers.length<2 || numbers.length>100 || new Set(numbers).size!==numbers.length ||
+      numbers.some(n=>!validId(n) || n>2147483647))throw new Rejected('merge_prefix_incomplete');
+    const fields='number state headRefOid baseRefOid baseRefName baseRepository { databaseId } author { __typename login ... on User { databaseId } ... on Bot { databaseId } } commits(first:1) { totalCount }';
+    const query=`query NativePrefixPRMetadata($owner:String!,$name:String!) { repository(owner:$owner,name:$name) { databaseId ${numbers.map(n=>`p${n}:pullRequest(number:${n}) { ${fields} }`).join(' ')} } }`;
+    const [owner,name]=this.c.repository.split('/');
+    const result=await this.json('https://api.github.com/graphql','POST',token,{query,variables:{owner,name}});guard();
+    if(result.errors!==undefined && (!Array.isArray(result.errors) || result.errors.length))throw new Rejected('merge_prefix_unavailable');
+    const repository=result.data?.repository;
+    if(!repository || Array.isArray(repository) || repository.databaseId!==this.c.repositoryId)throw new Rejected('repository_mismatch');
+    if(Object.keys(repository).sort().join(',')!==['databaseId',...numbers.map(n=>'p'+n)].sort().join(','))throw new Rejected('merge_prefix_incomplete');
+    const values=new Map<number,Json>();
+    for(const n of numbers){
+      guard();const p=repository['p'+n];
+      if(!p || p.number!==n || p.state!=='OPEN' || p.baseRepository?.databaseId!==this.c.repositoryId ||
+        !validSha(p.headRefOid) || !validSha(p.baseRefOid) || p.baseRefName!=='main' ||
+        !Number.isSafeInteger(p.commits?.totalCount) || p.commits.totalCount<1 || p.commits.totalCount>1000)throw new Rejected('pr_mismatch');
+      const user=identity({id:p.author?.databaseId,login:p.author?.login,type:p.author?.__typename});
+      values.set(n,{number:n,state:'open',user,commits:p.commits.totalCount,head:{sha:p.headRefOid},base:{sha:p.baseRefOid,ref:p.baseRefName,repo:{id:p.baseRepository.databaseId}}});
+    }
+    guard();return values;
   }
 
   async mergePrefixSnapshot(input:MergePrefixTarget):Promise<MergePrefixSnapshot> {
@@ -314,7 +347,16 @@ export class GitHub implements GitHubPort {
     readLease?.guard();
     const queue=()=>readQueue(this.c.repository,this.c.repositoryId,async(query,variables)=>{readLease?.guard();const data=await this.json('https://api.github.com/graphql','POST',token,{query,variables});readLease?.guard();return data;});
     const entries=await queue(),prefix=prefixFor(entries,target),prs:PrSnapshot[]=[];
-    for(const entry of prefix) {
+    if(readLease && prefix.length>1){
+      const numbers=prefix.map(e=>e.pullRequest.number),before=await this.prMetadataBatch(numbers,token,readLease.guard);
+      const pending:Array<(after:Json)=>PrSnapshot>=[];
+      for(const n of numbers)pending.push(await this.prSnapshotContent({number:n},token,repo,'main',readLease.guard,before.get(n)!));
+      const after=await this.prMetadataBatch(numbers,token,readLease.guard);
+      for(let i=0;i<prefix.length;i++){
+        const pr=pending[i]!(after.get(numbers[i]!)!);
+        if(pr.headSha!==prefix[i]!.pullRequest.headRefOid)throw new Rejected('merge_prefix_changed');prs.push(pr);
+      }
+    }else for(const entry of prefix) {
       const pr=await this.prSnapshot({number:entry.pullRequest.number},token,repo,'main',readLease?.guard);
       if(pr.headSha!==entry.pullRequest.headRefOid)throw new Rejected('merge_prefix_changed');prs.push(pr);
     }

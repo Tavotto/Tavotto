@@ -1,5 +1,8 @@
 # Full external-corpus run with formal budgets
 
+This is the frozen first-pass snapshot. Funding was subsequently restored; see
+[FORMAL-FOLLOWUP.md](FORMAL-FOLLOWUP.md) for the separately recorded follow-ups and newly found validation defect.
+
 2026-10-26. Frozen producer `79baa11824e379b24a1dead51537d0cacde823a5`, DeepSeek `deepseek-flash`, native Responses protocol. **Default routing is unchanged. No merge, release or package was produced.**
 
 This is one first-pass run over all 23 external cases (11 Pillow, 6 MATLAB, 6 R), using the same input manifest, reference delivery, preinstalled conversion runtime and formal product budgets. Each case was attempted once. No pixel/scientific-equivalence claim is made. Failures are retained in [FULL-CORPUS-RESULTS.json](FULL-CORPUS-RESULTS.json); original provenance remains in [sources.json](sources.json).
