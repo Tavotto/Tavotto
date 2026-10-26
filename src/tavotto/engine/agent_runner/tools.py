@@ -778,9 +778,11 @@ CONVERT_WRITE_HINT = (
     "per call. Copy the returned sha256 into "
     "the next append call. Finish all sections before check."
 )
-#: 一份完整重画脚本可能很长：输出上限比 figure_edit 大；轮数按「读 1–3 + 写 1 + check/修 ≤ 3 轮 + 收尾」留余量。
+#: Real multi-resource conversions needed 22 turns / 420k tokens (Pillow)
+#: and 677k tokens (MATLAB). Keep the 15-minute deadline and bounded checks;
+#: allow the complete read/write/correct/validate sequence to fit the budget.
 CONVERT_LIMITS = Limits(
-    max_turns=20, max_total_tokens=400_000, max_seconds=900.0, max_output_tokens=32768
+    max_turns=32, max_total_tokens=800_000, max_seconds=900.0, max_output_tokens=32768
 )
 
 # 要求的正文来自 ai_prompt_pack（CLI 路径用的同一份），这里只加执行器特有的部分（工具、不运行脚本、check 的预算）。

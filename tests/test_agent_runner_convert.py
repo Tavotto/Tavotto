@@ -765,7 +765,8 @@ class TestPromptAndLimits:
 
     def test_defaults(self):
         lim = TASK.default_limits
-        assert lim.max_turns == 20 and lim.max_output_tokens == 32768
+        assert lim.max_turns == 32 and lim.max_output_tokens == 32768
+        assert lim.max_total_tokens == 800_000 and lim.max_seconds == 900
         assert tools.CONVERT_MAX_CHECKS == 3
         assert tools.TOOLSETS["figure_edit"].default_limits == tools.Limits()
 

@@ -438,9 +438,10 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
     新文件还没写出就 `check` → `not_created`（不调回调、不计数）。**回调最多被调 3 次**（ADR 0143「校验运行 ≤ 3」），第 4 次 `check_budget`。
     可选 `final: boolean`（默认 false）与 `summary: string`：模型明确声明整份候选已可交付，且同次回调返回布尔 true，工具才标记本轮完成；报告文字不能代替布尔结果。
     最终校验通过后不再请求模型收尾，同批后续工具也不执行；summary 沿正常脱敏出口发给用户。普通检查仍非终态，最终检查失败可继续修正，参数错误不消耗检查次数。
-    轮数 / token / 取消 / deadline 限制不放宽；父进程仍独立执行 Task Core 校验、完整性与待采用检查，不从失败任务抢救候选，也不自动采用。
+    始终受配置的轮数 / token / 取消 / deadline 边界约束；父进程仍独立执行 Task Core 校验、完整性与待采用检查，不从失败任务抢救候选，也不自动采用。
     `finish(summary)` 是同一个 `check(final=true)` 的明确收尾入口，共用回调、次数和终态条件；它自己不执行文件写入或采用。
-  - 预算默认值由工具集给（`default_limits`；命令行不给 `--max-turns` 等就用它）：convert 为 20 轮 / 900 s / 400k token / 单轮输出 32768（含模型思考；20 轮 ≈ 读 1–3 + 写 1 + 至多 3 轮 check/修 + 收尾，留余量）；figure_edit 不变。
+  - 预算默认值由工具集给（`default_limits`；命令行不给 `--max-turns` 等就用它）：convert 为 32 轮 / 900 s / 800k token / 单轮输出 32768（含模型思考）；figure_edit 不变。
+    原 20 轮 / 400k 在同输入真模型对照中截断了可成功交付的流程：Pillow 需要 22 轮 / 420k，MATLAB 需要 677k。只增加转换的轮数/token 余量，保留 15 分钟截止、取消、文件/路径及 3 次校验边界。
     转换的 `budget_hint` 使循环在任一资源使用达到 50% / 75% 时各插入一次剩余轮数、累计 token、秒数和收尾指导，随下一次正常模型请求发送；无额外请求，不重置账本或预算。普通检查通过仍非终态。
   - 系统提示是英文（要求用用户指令的语言回复）；共同验收顺序及要求（数据计算 / 完整可编辑出图 / 视觉另验）**引用 `ai_prompt_pack.convert_requirements()` 的同一份文字**（CLI 路径的 `convert_prompt` 也用它，不各抄一份），
     执行器特有的部分（只写一个新文件、不运行脚本、check ≤ 3 次）写在 `tools.py`。`ai_prompt_pack` 是纯标准库，所以 `agent_runner` 对它的 import 不破坏依赖方向（`test_import_architecture` 兜底）。
@@ -669,7 +670,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 看护 `test_convert_fidelity.py` 和 `test_ai_convert.py` 的真实会话收尾用例。
 
 长转换允许单响应 32768 token（含模型思考），建议按约 6000 字符分块；完整接收的代码块不因超过建议值而丢弃，
-实际创建 / 覆盖 / 累计追加仍核同一个 200 KiB UTF-8 文件上限。总 token、时间、轮数预算及截断整轮拒绝不变。
+实际创建 / 覆盖 / 累计追加仍核同一个 200 KiB UTF-8 文件上限。所有调用仍受配置的 token、时间、轮数预算约束，截断整轮拒绝。
 默认单次请求 300 秒，总期限仍会截断它，用户取消仍随时生效。
 Anthropic adaptive thinking 的签名绑定历史前缀；客户端压缩工具结果后删除历史内全部 thinking / redacted_thinking 块，
 保留工具调用及结果，不改用户推理强度。manual/budget 模式要求末轮思考块，保持追加历史并沿用总预算。
