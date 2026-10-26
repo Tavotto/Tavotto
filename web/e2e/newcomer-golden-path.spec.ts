@@ -396,10 +396,12 @@ test('C：排版里选单栏页宽 + 出版规范 → 导出检查摘要 → 定
   const objects = page.locator('[data-canvas-stage] [data-object-id]')
   await expect(objects).toHaveCount(2, { timeout: 30_000 })
 
-  // 检查摘要：这张图在单栏页里有真实问题——计数芯片出现、不再是「未发现问题」，阻断项逐条可定位
+  // 检查摘要：这张图在单栏页里有真实问题——计数芯片出现、不再是「未发现问题」，逐条可定位。
+  // 示例图的刻度 / 图例正好 8 pt，按默认规范「≥ 8 pt」是合格的（ADR 0029 §6b），所以没有「要改」，只有「留意」
   await page.keyboard.press('ControlOrMeta+e')
   await expect(dialog).toBeVisible()
-  await expect(dialog.locator('[data-count-chip="danger"]')).toHaveCount(1, { timeout: 60_000 })
+  await expect(dialog.locator('[data-count-chip="warn"]')).toHaveCount(1, { timeout: 60_000 })
+  await expect(dialog.locator('[data-count-chip="danger"]')).toHaveCount(0)
   await expect(dialog.locator('[data-export-check-ok]')).toHaveCount(0)
   // 没有逐条阻断清单、没有警告句：芯片 + 「在问题面板中查看」；导出照样可点
   await expect(dialog.locator('[data-blocking-issue]')).toHaveCount(0)
