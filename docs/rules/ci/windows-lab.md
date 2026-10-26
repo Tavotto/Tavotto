@@ -126,15 +126,24 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
   （取自 microsoft/winget-pkgs 的清单），下载后核散列、核 Authenticode 为 Valid；非管理员静默装（currentUser）；
   `window_probe.py` 在交互会话里启动它，**主窗口**出现才算——可见、未被 DWM 隐藏、有标题、尺寸像窗口、属于安装目录
   里的进程、连续稳定 5 s；然后结束它起的全部进程并卸载。VS Code 系用 run 目录里的 `--user-data-dir`。宿主自带的
-  Agent（Copilot、Cursor、TRAE、WorkBuddy、ZCode）要各自账户：一律 BLOCKED。Claude Desktop 只装、只起到登录页，
+  Agent 要各自账户的一律 BLOCKED；要什么由 `desktop-native --mode <宿主>` 实测记录（见下）。Claude Desktop 只装、只起到登录页，
   不登录、不调用模型（地区政策同上）。
+- **原生 Agent 首屏探查 `desktop-native --mode <宿主>`**：装法同 L2，`native_probe.py` 在交互会话里起宿主（调试端口同下只绑回环；
+  宿主拒绝这个开关就不带它再起一次、只记窗口标题与截图），等首屏文字连续两次取样不变且不是「准备中」（最多 240 s），记下每个
+  页面的文字与截图，**不打字、不登录、不调模型**；唯一允许的点击是 `NATIVE_PEEK` 里按宿主登记的那一个入口按钮（逐字，如 ZCode 的
+  「Use API key」），只为看下一屏要填什么。报告 `native.login_markers` / `byok_markers` 是启发式词表，截图才是证据；L3+ 仍记 BLOCKED。
 - **桌面宿主 + 其中的 AI 扩展 `desktop-live --mode <宿主-扩展>`（L3–L5）**：宿主 × 扩展的闭集在 `DESKTOP_LIVE`
-  （当前只有 `vscode-claude`：VS Code + `anthropic.claude-code`），宿主装法同 L2，扩展包固定版本与散列（见代理纪律），
-  用 `code --install-extension` 装进 run 目录的 `--extensions-dir`。**判据与 `hosts-live` 同一个 `judge_live`，一字不改**：
+  （`vscode-claude` / `cursor-claude` / `trae-claude`：三个 VS Code 系宿主 + 同一个 `anthropic.claude-code`），宿主装法同 L2，
+  扩展包固定版本与散列（见代理纪律），用宿主安装目录里自带的命令行入口（`bin\*.cmd`，Cursor 在 `resources\app\bin\`，不在 PATH 里找）
+  `--install-extension` 装进 run 目录的 `--extensions-dir`。**判据与 `hosts-live` 同一个 `judge_live`，一字不改**：
   宿主里的扩展经 `mcp_recorder` 指向的 Tavotto MCP 做事，L4/L5 看的还是录制器记下的服务端事实。区别只有谁发话：
   `desktop_driver.py`（交互会话一侧、标准库）起宿主，等同 L2 的主窗口，经 CDP 进扩展 webview，把提示词填进输入框并点发送，
   等录制器安静**且面板不忙**（首个流量后 45 s 无新行、面板上没有 Stop 按钮；上限 1200 s，到上限如实报 `max`），存证（截图 + 面板文字，不参与判定），按 Job 结束进程树。第二轮是
   **全新的宿主进程**，只拿 `session_id`。
+  - **打开面板与首启引导**：VS Code 走扩展的 URI 入口（`vscode://…/open`），不认再走命令面板；Cursor 打开扩展 URI 前弹模态确认框，
+    TRAE 不登记协议，二者只走命令面板（最多试三次，每次先 Esc）。首启引导页（TRAE 的 `setup.html`）**只点 `ONBOARDING_BUTTONS`
+    白名单**里逐字相等的按钮（开始 / 跳过 / 下一步 / 继续 / 稍后…，不含登录、注册、授权、同意），点了什么进 progress；引导后宿主换
+    进程重开窗口时 CDP 重连，「宿主退出」= 起的进程退了**且**安装目录下没有顶层窗口。
   - **CDP 只绑回环**：只传 `--remote-debugging-port=<随机空闲端口>`、从不传 `--remote-debugging-address`，驱动器实测该端口
     在本机非回环地址上连不上（连得上就中止）；跑完随 Job 一起关，不进代理（`NO_PROXY` 含回环）。选择器随固定版本的扩展钉死。
   - **进程链判据（L3 的前置条件，加在 `judge_live` 之外）**：录制器带 `--host-root <宿主安装目录>`，首个 `initialize` 时多记
@@ -146,7 +155,8 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
     MCP 输出上限会落成文件，模型要读回来），Bash / PowerShell / Write / Edit / Web* / Task 明确 `deny`（拒绝立即回给模型）；
     不用 `bypassPermissions`；VS Code 的 `settings.json` 只有行为开关（含 `claudeCode.disableLoginPrompt`），
     **不写任何密钥**，扩展从宿主进程环境取 `ANTHROPIC_BASE_URL` 等，密钥经上面的命名管道进环境。
-  - **结论取值**：扩展要求登录官方账户且一次工具都没调到 → `environment_unavailable`（BLOCKED）；驱动器没能操作面板
+  - **结论取值**：扩展要求登录官方账户（只看**扩展自己 webview** 的文字；宿主自己的登录提示，如 Cursor 的 AI 功能要登录，不算）
+    且一次工具都没调到 → `environment_unavailable`（BLOCKED）；驱动器没能操作面板
     （没找到输入框、填不进、点不了发送）→ `error`，不推定是产品问题；宿主明确拒装扩展（版本不兼容）→ levels 记
     `not_supported`、整次 `skipped`（NOT TESTED），附 `ext-install` 日志与截图，**不记 FAIL**（宿主限制，不是 Tavotto 的故障）；
     其余装不上 → `failed`。`not_supported` 只出现在 levels 里，不是 ADR 0131 结果闭集的新成员。

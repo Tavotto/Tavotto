@@ -247,7 +247,7 @@ cn-prod 路由上不认，用 `provider add --use` 设的默认；Codex 走 `wir
 **下一步（用户 10-25：下周做）**：桌面版 L3–L5 只对「底下跑 Claude Code / Codex」的路径可做——VS Code / Cursor / TRAE
 里的 Claude Code 扩展与 Codex 扩展，隔离配置接 DeepSeek，判定仍按 `mcp_recorder`；另加 CC-Switch 的 MCP 同步路径一条。
 
-## I. 桌面宿主里的 AI 扩展 L3–L5（`test desktop-live --mode vscode-claude`，2026-10-26）
+## I. 桌面宿主里的 AI 扩展 L3–L5（`test desktop-live --mode …`，2026-10-26）
 
 VS Code 1.141.2 + Open VSX `anthropic.claude-code` 2.1.310（win32-x64，sha256 `ebb9f501…cd39c`，经 DMIT），推理走 DeepSeek
 （`deepseek-flash`，Anthropic 兼容接口）。驱动器经 CDP 进扩展 webview 填提示词、点发送；判据同 `hosts-live`，另加进程链。
@@ -265,6 +265,30 @@ run `20261026T133335Z-c0827a`（第一轮 165 s、第二轮 74 s）。扩展没�
 Starfield Root CA G2；扩展目录实际叫 `anthropic.claude-code-2.1.310`（无平台后缀）；密钥管道写完 `DisconnectNamedPipe`
 使读端 errno 22（`20261026T130344Z-7e8fcd`）；只看录制器安静会在模型思考时提前收场（`20261026T130906Z-feb0dd`）；
 面板里的 Bash 权限弹窗没人点而挂住（`20261026T132012Z-44023f`）。
+
+### Cursor / TRAE CN + 同一个扩展（2026-10-26）
+
+| 宿主 | 版本 | L2 | L3（进程链） | L4 | L5 | run |
+| --- | --- | --- | --- | --- | --- | --- |
+| VS Code | 1.141.2 | PASS | PASS（`claude.exe ← Code.exe`） | PASS | PASS | `20261026T133335Z-c0827a` |
+| Cursor | 3.20.14 | PASS | PASS（`claude.exe ← Cursor.exe`） | PASS | PASS | `20261026T141938Z-ff41f1` |
+| TRAE CN | 3.4.4 | PASS | PASS（`claude.exe ← Trae CN.exe`） | PASS | PASS | `20261026T151200Z-f5a12a` |
+
+三个宿主都没要求登录各自的账户就能用扩展（Cursor 自己的 AI 功能要登录，但不挡扩展）。途中修的执行器问题：Cursor 打开扩展 URI
+前的模态确认框挡住命令面板、Cursor 自己的登录提示被误判成扩展要登录（`20261026T134946Z-82ba4a`）；TRAE 首启引导页
+`setup.html` 被当成工作台、引导后换进程重开窗口（CDP 断开 `20261026T145044Z-553df4`、误判宿主退出 `20261026T145631Z-d4aaf2`）、
+扩展未激活时命令面板一次打不开（`20261026T150227Z-682f81`）。
+
+### 原生 Agent 首屏（`desktop-native`，不登录、不打字）
+
+| 宿主 | 首屏 | 结论 | run |
+| --- | --- | --- | --- |
+| VS Code | 内置 Chat：「Sign In」「Models」 | 要 GitHub 账户（首屏没有不登录的自带 key 入口） | `20261026T140104Z-7a817b` |
+| Cursor | 「Cursor’s AI features require you to be logged in」 | 要 Cursor 账户 | `20261026T140328Z-da3aae` |
+| TRAE CN | 首启引导「欢迎使用 / 开始」 | 引导之后未探（扩展路径已 L5） | `20261026T143125Z-b0be4b` |
+| WorkBuddy | 先「Preparing Environment」，之后「Sign In」 | 要腾讯账户 | `20261026T143420Z-5e4e92` |
+| ZCode | 「Connect to Z.ai / Connect to BigModel / Use API key」 | **可不登录、自带 key** | `20261026T141359Z-fa7e7c` |
+| Claude Desktop | 带调试端口起不出窗口；不带时窗口「Claude」 | 拒绝调试端口，文字未取到 | `20261026T143831Z-c456bc` |
 
 **产品侧发现**：`tavotto_open_figure` 的结果（含内嵌 SVG 与完整 manifest）超过 Claude Code 扩展的 MCP 输出上限，扩展把它
 落成文件，模型要用 Read / Grep 读回来才能取 gid / prop；真实用户在 VS Code 面板里会因此看到读文件的权限确认。另记 issue 跟进。

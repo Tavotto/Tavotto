@@ -158,6 +158,9 @@ python3 scripts/winlab/winlab.py test desktop-hosts --mode vscode   # cursor | t
 
 ```sh
 python3 scripts/winlab/winlab.py test desktop-live --mode vscode-claude --ref HEAD   # VS Code + Claude Code 扩展，DeepSeek
+python3 scripts/winlab/winlab.py test desktop-live --mode cursor-claude --ref HEAD   # Cursor + 同一个扩展
+python3 scripts/winlab/winlab.py test desktop-live --mode trae-claude --ref HEAD     # TRAE CN + 同一个扩展
+python3 scripts/winlab/winlab.py test desktop-native --mode zcode --ref HEAD         # 原生 Agent 首屏探查（六个宿主都可）
 ```
 
 需要 `secret-init deepseek` 录过 key（同 `hosts-live`）、Trojan 入口在（扩展包经 DMIT，一次一个、散列钉死；入口不在就是
