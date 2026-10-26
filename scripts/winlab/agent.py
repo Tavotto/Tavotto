@@ -3060,7 +3060,8 @@ NATIVE_BYOK_RE = re.compile(
 
 
 #: 原生探查时允许点的唯一入口按钮（逐字）：只为看下一屏要填什么，不填、不提交、不登录
-NATIVE_PEEK = {"zcode": "Use API key"}
+#: WorkBuddy 只点「Sign In」看它提供哪些登录方式（扫码 / 手机号…）；不输入、不提交（用户 2026-10-27：专用账户扫码登录）
+NATIVE_PEEK = {"zcode": "Use API key", "workbuddy": "Sign In"}
 
 
 def summarize_native(win: dict) -> dict:

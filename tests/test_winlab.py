@@ -2439,7 +2439,8 @@ def test_native_probe_only_looks_and_its_summary_reports_login_and_byok_markers(
         assert verb not in src  # 只看，不打字
     assert src.count(".click()") == 1  # 唯一的点击在 peek 里，只点登记的那一个按钮
     for b in A.NATIVE_PEEK.values():
-        assert not re.search(r"登录|sign|log ?in|connect|授权", b, re.I), b
+        # 入口按钮可以是「Sign In」（只看登录方式）；不许是确认 / 授权 / 同意 / 提交类
+        assert not re.search(r"continue|confirm|allow|授权|同意|提交|确认", b, re.I), b
     nat = A.summarize_native(
         {
             "cdp": True,
