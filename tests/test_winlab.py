@@ -2729,3 +2729,39 @@ def test_stale_provider_configs_from_killed_runs_are_swept_before_the_next_run(t
     keep.write_text("x")
     assert A.sweep_stale_ondisk_configs(runs) == ["20261026T000000Z-aaaaaa"]
     assert not old.exists() and keep.exists()
+
+
+def test_shot_returns_only_a_small_png_by_fixed_name_from_the_runs_evidence(tmp_path):
+    import base64
+
+    lab = A.Lab(tmp_path / "lab")
+    rid = "20261027T000000Z-abcdef"
+    ev = lab.runs / rid / "evidence" / "desktop-host"
+    ev.mkdir(parents=True)
+    png = b"\x89PNG\r\n\x1a\n" + b"x" * 100
+    (ev / "native-browser.png").write_bytes(png)
+    (ev / "secret.txt").write_text("k")
+    (ev / "fake.png").write_bytes(b"not a png")
+    ok = A.cmd_shot(lab, rid, "native-browser.png")
+    assert ok["result"] == "passed" and base64.b64decode(ok["png_b64"]) == png
+    for bad_id, bad_name in (
+        (rid, "../x.png"),
+        (rid, "secret.txt"),
+        (rid, "a/b.png"),
+        ("..", "native-browser.png"),
+        (rid, "fake.png"),
+        (rid, "missing.png"),
+    ):
+        assert A.cmd_shot(lab, bad_id, bad_name)["result"] == "error", (bad_id, bad_name)
+    (ev / "big.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * A.SHOT_MAX_BYTES)
+    assert A.cmd_shot(lab, rid, "big.png")["result"] == "error"
+
+
+def test_native_probe_link_shape_drops_one_time_query_parameters():
+    import native_probe as NP
+
+    assert (
+        NP.url_shape("https://www.codebuddy.cn/login?state=abc&code=xyz#frag")
+        == "https://www.codebuddy.cn/login"
+    )
+    assert NP.url_shape("not a url") == ""

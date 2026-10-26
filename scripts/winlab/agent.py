@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import datetime as _dt
 import hashlib
@@ -3062,6 +3063,8 @@ NATIVE_BYOK_RE = re.compile(
 #: 原生探查时允许点的唯一入口按钮（逐字）：只为看下一屏要填什么，不填、不提交、不登录
 #: WorkBuddy 只点「Sign In」看它提供哪些登录方式（扫码 / 手机号…）；不输入、不提交（用户 2026-10-27：专用账户扫码登录）
 NATIVE_PEEK = {"zcode": "Use API key", "workbuddy": "Sign In"}
+#: 入口按钮之后再点的那一个（只读：WorkBuddy 把登录链接放进剪贴板，报告只记链接的协议 / 主机 / 路径）
+NATIVE_PEEK_FOLLOW = {"workbuddy": "Copy Login Link"}
 
 
 def summarize_native(win: dict) -> dict:
@@ -3192,6 +3195,11 @@ def run_desktop_hosts_task(
                     else []
                 ),
                 *(["--peek-button", NATIVE_PEEK[host.id]] if host.id in NATIVE_PEEK else []),
+                *(
+                    ["--follow-button", NATIVE_PEEK_FOLLOW[host.id]]
+                    if host.id in NATIVE_PEEK_FOLLOW
+                    else []
+                ),
             ]
         step = run_in_gui(lab, run_id, argv, work, henv, ev / "probe", 900 if native else 240)
     finally:
@@ -4766,6 +4774,30 @@ def cmd_reports(lab: Lab, run_id: str | None) -> dict:
     return {"runs": sorted((p.stem for p in lab.reports.glob("*.json")), reverse=True)[:50]}
 
 
+SHOT_NAME_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,40}\.png")
+SHOT_MAX_BYTES = 4 * 1024**2
+
+
+def cmd_shot(lab: Lab, run_id: str, name: str) -> dict:
+    """取回某次 run 证据目录里的一张截图（只读，run 进行中也能取：WorkBuddy 扫码登录时把二维码交给用户）。
+    只认 run id 与形状固定的文件名、只在 evidence\\ 下找、必须是 PNG、有体积上限，不接受任何路径。"""
+    if not RUN_ID_RE.fullmatch(run_id or "") or not SHOT_NAME_RE.fullmatch(name or ""):
+        return {"result": "error", "summary": "bad run id or shot name"}
+    ev = lab.runs / run_id / "evidence"
+    hits = [p for p in ev.rglob(name) if p.is_file() and not p.is_symlink()] if ev.is_dir() else []
+    if len(hits) != 1:
+        return {"result": "error", "summary": f"{len(hits)} files named {name} in that run"}
+    data = hits[0].read_bytes()
+    if len(data) > SHOT_MAX_BYTES or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return {"result": "error", "summary": "not a small PNG"}
+    return {
+        "result": "passed",
+        "summary": name,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "png_b64": base64.b64encode(data).decode("ascii"),
+    }
+
+
 def cmd_clean(lab: Lab, keep: int) -> dict:
     """只删 runs\\ 下最旧的 run 目录（报告 JSON 保留）；正在跑的那一个永远不删。"""
     holder = read_lock(lab)
@@ -4829,6 +4861,9 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--mode")
     r = sub.add_parser("reports")
     r.add_argument("--id")
+    sh = sub.add_parser("shot")
+    sh.add_argument("--id", required=True)
+    sh.add_argument("--name", required=True)
     c = sub.add_parser("clean")
     c.add_argument("--keep", type=int, default=20)
     sub.add_parser("stop")
@@ -4860,6 +4895,8 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
         return _emit(cmd_status(lab))
     if ns.verb == "reports":
         return _emit(cmd_reports(lab, ns.id))
+    if ns.verb == "shot":
+        return _emit(cmd_shot(lab, ns.id, ns.name))
     if ns.verb == "clean":
         return _emit(cmd_clean(lab, max(0, ns.keep)))
     if ns.verb == "stop":
