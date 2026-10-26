@@ -17,9 +17,9 @@
   <a href="https://afdian.com/a/Tavotto"><img alt="在爱发电支持" src="https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E6%94%AF%E6%8C%81-946CE6?style=flat-square&labelColor=1b1b18"></a>
 </p>
 
-# Tavotto: a visual editor for matplotlib figures
+# Tavotto: make AI-drawn research figures publication-ready
 
-**Tavotto™ is a free, open-source editor for matplotlib figures, including the ones an AI coding agent wrote.** It opens the figure your script already drew, and you change titles, legends, curves and the page layout on a canvas. The script stays untouched, every edit is saved separately, and before export the figure is checked against a publication profile (font floor, column width, dpi).
+**AI drew your research figure. Tavotto™ makes it publication-ready.** Tavotto is a free, open-source tool for finishing scientific figures: it opens the figure that an AI assistant or your own Python script already drew (matplotlib today), and you change titles, legends, curves and the page layout on a canvas. The script stays untouched, every edit is saved separately, and before export the figure is checked against a publication profile (font floor, column width, dpi).
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/demo.gif" width="100%"

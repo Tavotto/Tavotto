@@ -17,9 +17,9 @@
   <a href="https://afdian.com/a/Tavotto"><img alt="在爱发电支持" src="https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E6%94%AF%E6%8C%81-946CE6?style=flat-square&labelColor=1b1b18"></a>
 </p>
 
-# Tavotto：matplotlib 图的可视化编辑器
+# Tavotto：AI 画好的科研图，改到能直接投稿
 
-**Tavotto™ 是免费开源的 matplotlib 图形编辑器，AI 写的绘图脚本也能接手。** 它打开脚本已经画好的图，标题、图例、曲线和版面都在画布上改。脚本一行不动，每处改动单独保存；导出之前，再按期刊规范（字号下限、栏宽、dpi）检查一遍。
+**AI 画好了你的科研图，Tavotto™ 把它改到能直接投稿。** Tavotto 是免费开源的科研绘图排版工具：AI 或你的 Python 脚本已经画好的图（目前支持 matplotlib），标题、图例、曲线和版面都在画布上改，还能按毫米拼成多图版面。脚本一行不动，每处改动单独保存；导出之前，再按期刊规范（字号下限、栏宽、dpi）检查一遍。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/demo.zh.gif" width="100%"
