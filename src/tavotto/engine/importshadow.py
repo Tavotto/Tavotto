@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 from pathlib import Path
@@ -28,7 +29,31 @@ _CANNOT_IMPORT_RE = re.compile(
 )
 _EXT_SUFFIXES = (".py", ".pyc", ".so", ".pyd", ".dylib")
 _INIT_READ_BYTES = 64 * 1024
-_EXTENDS_PATH_RE = re.compile(r"\b(?:extend_path|declare_namespace)\s*\(")
+_PATH_EXTENDERS = frozenset({"extend_path", "declare_namespace"})
+
+
+def _extends_path(init_text: str) -> bool:
+    """`__init__.py` 里真的**调用**了 `pkgutil.extend_path` / `pkg_resources.declare_namespace`（按 AST 认调用，
+    注释与文档字符串里提到不算）。解析不了的文件按没有调用处理——宁可说「别装」也不误导去装。"""
+    try:
+        tree = ast.parse(init_text)
+    except (SyntaxError, ValueError):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            f = node.func
+            name = (
+                f.attr
+                if isinstance(f, ast.Attribute)
+                else f.id
+                if isinstance(f, ast.Name)
+                else None
+            )
+            if name in _PATH_EXTENDERS:
+                return True
+    return False
+
+
 _BUILD_FILES = ("setup.py", "pyproject.toml", "setup.cfg", "CMakeLists.txt", "meson.build")
 
 
@@ -81,7 +106,7 @@ def select_package(parent: str, roots: list[Path]) -> tuple[Path, list[Path], st
             continue
         init = tdir / "__init__.py"
         if init.is_file():
-            if _EXTENDS_PATH_RE.search(_read_init(init)):
+            if _extends_path(_read_init(init)):
                 # 第一个 regular 包胜出，但它把 `__path__` 并入其它同名目录：等同 namespace，其余位置也算相关根
                 portions = [r for r in roots if (r / top).is_dir()]
                 break
@@ -111,9 +136,7 @@ def _fact(root: Path, parent: str, missing: str, *, relation: str, kind: str | N
     init_text = _read_init(init) if init.is_file() else ""
     # `pkgutil.extend_path` / `declare_namespace` 的 `__init__.py` 会把 sys.path 上其它同名目录并进来：
     # 装上的发行版里的子模块照样能导入，行为上等同 namespace，不能说「装了也没用」
-    regular = (
-        (kind == "regular") if kind else (init.is_file() and not _EXTENDS_PATH_RE.search(init_text))
-    )
+    regular = (kind == "regular") if kind else (init.is_file() and not _extends_path(init_text))
     leaf = missing.rsplit(".", 1)[-1]
     imports_it = bool(regular and re.search(rf"\b{re.escape(leaf)}\b", init_text))
     try:

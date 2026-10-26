@@ -120,6 +120,21 @@ def test_init_that_extends_the_package_path_is_treated_like_a_namespace(box, ini
     assert "Do not install it" not in fact["note"] and "can fix this" in fact["note"]
 
 
+@pytest.mark.parametrize(
+    "init_text",
+    [
+        "# We deliberately do not call extend_path(__path__, __name__).\n",
+        '"""Unlike pkg_resources.declare_namespace(__name__), this package stays regular."""\n',
+        "NOTE = 'extend_path(__path__, __name__)'\n",
+    ],
+)
+def test_mentions_of_path_extension_in_comments_or_strings_keep_the_package_regular(box, init_text):
+    put(box.proj / "celerite" / "__init__.py", init_text)
+    fact = importshadow.detect("ModuleNotFoundError: No module named 'celerite.extra'", [box.proj])
+    assert fact and fact["kind"] == "regular"
+    assert "Do not install it" in fact["note"]
+
+
 def test_script_dir_package_wins_over_project_root_package(box):
     # project/foo（regular）与 project/scripts/foo（extend_path）同时在：脚本目录在 sys.path 前面，按它那份判
     put(box.proj / "foo" / "__init__.py", "x = 1\n")
