@@ -77,6 +77,11 @@
 
 - 默认 `preserve` = 所有数据系列指纹、误差数据、xscale / yscale、未被点名的 xlim / ylim、轴标题里的单位、图数量与 stem。
 - 用户原话明确要求改科学内容 → 写进 `user_exceptions` **之前**先 `needs_input` 确认（FigureBench `FB-V04`）。
+- **“数据不变”不等于“名字不变”**（`figureverify.data_unchanged`，ADR 0083 §五）：曲线的目标身份是显式 label 的摘要，同 gid 身份变了
+  有两种来源。数据指纹逐部件相同 = **改名**（用户点名改图例也是这样）→ verified，`observed.relabeled` 记 `{from_identity, to_identity}`；
+  身份变了且数据也变 = `subject_removed`；新名字等于改前另一个数据元素的旧名字（名字对调 / 抢名字）= failed `label_swapped`；
+  gid 没了 = `subject_removed`。改名由后端收成 `task.renamed`（只有身份摘要），前端据此让画布上已有的编辑跟着换身份。
+  “用户有没有要求改这些字”不在此判：内置执行器 `check` 的通过报告列出每一处可见文字变化，意图留给模型。
 - `subjective` 项永不产生 `verified`；L5 评价只写进 `explain`，不改 verdict。
 - 断言类型闭集与 FigureBench 同名（`tests/test_figurebench_fixtures.py::ASSERTION_KINDS`），Phase 2 把判据实现为
   manifest + 数据指纹上的求值，FigureBench 的探针事实做对拍。
