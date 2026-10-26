@@ -3,6 +3,8 @@ show-only 脚本按原名比对、写入绊线被识别为“没量到”。假�
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from tavotto.engine import ai_bridge, ai_convert, ai_figure_edit, ai_history, pool, project_watch
@@ -122,10 +124,11 @@ def test_stage_prefix_mirrors_the_convert_module():
 
 
 def test_convert_validation_gives_the_write_hint_for_a_relative_output_script(world):
-    """转换任务的校验运行走同一条真链路：绊线的码被探测折成 script_probe_failed，也要走到设计好的“写到项目内”提示。"""
+    """真 worker 的写入拒绝须保留候选隔离提示与具体写入，供模型修正后重试。"""
     m, figs = world
     script = figs / "plot.py"
     script.write_text(SHOW_ONLY, encoding="utf-8")
+    original_bytes = script.read_bytes()
     ctx = next(iter(m.PROJECTS.values()))
     cand = ai_figure_edit.create_candidate("c1", script, figs, "plot.py")
     cand.new_bytes = WRITES_CSV.encode()
@@ -134,7 +137,11 @@ def test_convert_validation_gives_the_write_hint_for_a_relative_output_script(wo
     finally:
         ai_figure_edit.remove_candidate(cand.dir)
     assert res["status"] == "error" and res["code"] == ai_convert.WRITE_OUTSIDE_ROOTS_CODE, res
-    assert res["message"] == ai_convert.WRITE_OUTSIDE_HINT
+    hint, detail = res["message"].split("\nRejected write: ", 1)
+    assert hint == ai_convert.WRITE_OUTSIDE_HINT
+    assert json.loads(detail) == {"path": "data.csv", "event": "open"}
+    assert script.read_bytes() == original_bytes
+    assert not (figs / "data.csv").exists()
 
 
 TWO_PLOTS = (
