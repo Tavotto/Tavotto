@@ -335,7 +335,36 @@ def test_needs_input_card_preserves_following_multiline_commands(env):
     assert sess["task"]["outcome"] == "needs_input"
     assert sess["task"]["unmet"][0]["detail"] == reason
     assert not (env["figs"] / "fig_matplotlib.py").exists()
-    assert "write.csv" not in ai_convert.clean_needs_input_reason(reason + "x" * 2000)
+    assert "write.csv" not in ai_convert.clean_needs_input_reason(
+        reason + "x" * ai_convert.NEEDS_INPUT_REASON_MAX
+    )
+
+
+def test_needs_input_long_export_guide_reaches_the_task_card(env):
+    # A real model supplied a complete export guide just over 2,000 characters.
+    # Replacing the entire guide with "request a shorter explanation" stranded
+    # the user: the missing files and commands disappeared from the input card.
+    context = (
+        "The original calculation needs observed values and factor metadata. "
+        "CSV alone cannot preserve unused factor levels or their ordered property.\n"
+    ) * 17
+    commands = (
+        "Run in the original R project, then attach both output files:\n```r\n"
+        "utils::write.csv(observations, 'observations.csv', row.names = FALSE)\n"
+        "base::dput(list(levels = levels(observations$group), "
+        "ordered = is.ordered(observations$group)), file = 'groups.txt')\n```"
+    )
+    reason = context + commands
+    assert len(reason) > 2000
+    event = {
+        "type": "item.completed",
+        "item": {"type": "agent_message", "text": "TAVOTTO_NEEDS_INPUT: " + reason},
+    }
+    env["code"] = f"import json; print(json.dumps({event!r}))"
+    sess = _wait(_run(env))
+    assert sess["task"]["outcome"] == "needs_input"
+    assert sess["task"]["unmet"][0]["detail"] == reason
+    assert not (env["figs"] / "fig_matplotlib.py").exists()
 
 
 # --------------------------------------------------------------------------- 校验前的依赖步骤

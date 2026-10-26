@@ -351,7 +351,7 @@ r / matlab 时 `library` 必须缺省，后端用 `sourcelang.detect`（纯标�
 MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `convert_source_language_mismatch`。**不运行 R / MATLAB**：对照只用请求给的 `path` 或脚本旁
 同名位图（`ai_convert.sibling_original`），没有原图时 `comparison.reference=null`、`verification="unknown"`（界面说一句“请并排看一眼再采用”）。
 提示词是 `ai_prompt_pack` convert 一节的变体（逐步搬运 + R→Python / MATLAB→Python 对照表）。Python 里没有可靠对应时 Agent 首行写
-`TAVOTTO_NEEDS_INPUT: <原因>` → `ConvertExecutor` 抛 `ai_tasks.NeedsInput` → 结局 `needs_input`（原因清洗后限长 2,000 字，只进 `unmet[].detail`，
+`TAVOTTO_NEEDS_INPUT: <原因>` → `ConvertExecutor` 抛 `ai_tasks.NeedsInput` → 结局 `needs_input`（完整导出指引清洗后限长 8,192 字，只进 `unmet[].detail`，
 不进日志 / 遥测）；已写出可运行草稿也不能覆盖明确报告的数据/计算语义缺口，不进入采用。纯视觉未知项独立验收，见 ADR 0143「流程验收与视觉验收分开」；无标记照旧检查候选。新脚本缺包：校验运行前 `convertdeps.ensure(project, rel, cancel)`（app 对所有来源注入 `task_hooks["deps"]`；`cancel` = `TaskRun.cancel_event`）
 走 `deprepair.joint_plan_for` → `create_joint_plan` → `prepare`（不新写 pip 路径；取消经 `deprepair.cancel_status` 传到安装）。**名单**：只装 `engine/autoinstall_dists.txt`
 （PEP 503 名；14 个种子 ∪ 30 个常见大包 ∪ PyPI 30 天下载前 1000（ClickHouse 公开 PyPI 数据集）− 排除名单（pip/setuptools/wheel 等管理环境与打包工具），`scripts/dev/refresh_autoinstall_list.py` 生成，spec datas 带上）里的包；名单外的包不自动装。**每个环境问一次**：

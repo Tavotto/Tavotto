@@ -72,7 +72,9 @@ PREVIEW_NAME = "preview.svg"
 
 #: Agent 判定缺少保真所需证据或可靠对应时：首行 `TAVOTTO_NEEDS_INPUT: <原因>`；已写出的草稿也不能采用
 NEEDS_INPUT_MARKER = "TAVOTTO_NEEDS_INPUT:"
-NEEDS_INPUT_REASON_MAX = 2000
+#: A complete export guide includes prerequisites, commands and output names.
+#: Keep the whole guide within a bounded card; never truncate executable blocks.
+NEEDS_INPUT_REASON_MAX = 8192
 _NEEDS_INPUT_RE = re.compile(r"^[ \t>*`_-]*TAVOTTO_NEEDS_INPUT:[ \t]*(.*)$", re.M)
 #: 对照数据里 `verification` 的取值：没有原图 = `unknown`（Tavotto 没运行 R / MATLAB，也没有原图可比）；有原图 = 并排给人看
 VERIFICATION_UNKNOWN = "unknown"
