@@ -2420,6 +2420,11 @@ export interface ManifestElement {
    */
   inset_of?: string
   /**
+   * 框（`AnnotationBbox` / `AnchoredText` …）里的文字：外框的 gid。文字自己的落位归打包器、不可拖，
+   * 按住它拖起来时改拖外框（`inFigureMoveOf`）；点一下仍是选中这段字。
+   */
+  drag_host?: string
+  /**
    * 带文字的标注的箭头：它所属的那段标注文字的 gid。箭头的位置归文字（尾巴跟着文字、尖钉在
    * 数据点上），拖它时提示「拖文字」；没有这个字段的箭头（独立箭头、纯箭头注释）不是这回事（ADR 0100）。
    */

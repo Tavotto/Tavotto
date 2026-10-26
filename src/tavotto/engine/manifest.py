@@ -5160,6 +5160,10 @@ def _measure_manifest(
         ident = state.identity.get(el["gid"])
         if ident is not None:
             entry["identity"] = ident
+        if host_box is not None:
+            # 框里的文字自己不可拖（落位归打包器）：按住它拖起来时，前端改拖的是这个外框
+            # （`inFigureMoveOf` 认 `drag_host`；点一下仍是选中这段字）
+            entry["drag_host"] = host_box.get_gid()
         # 数据指纹（TAF L2「科学内容没被改」的前提）：只读事实，不是 override、不进文档
         fingerprint = data_fingerprint(artist, fingerprint_budget)
         if fingerprint is not None:

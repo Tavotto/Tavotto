@@ -102,8 +102,9 @@ def test_texts_inside_boxes_are_editable_text_elements(hot):
         assert el["role"] == "text", gid
         assert _field(el, "text") == want
         assert {"text", "fontsize", "color", "weight", "fontfamily"} <= _props(el), gid
-        # 落位归打包器：不可拖，旋转 / 对齐 / 层级不开放
+        # 落位归打包器：不可拖，旋转 / 对齐 / 层级不开放；按住它拖起来时前端改拖外框（`drag_host`）
         assert el["draggable"] is False, gid
+        assert el["drag_host"] == gid.rpartition(".")[0], gid
         assert not ({"rotation", "ha", "va", "zorder"} & _props(el)), gid
     assert _field(man[MAIN], "fontsize") == pytest.approx(10.2)
     assert _field(man[SUB], "fontsize") == pytest.approx(7.8)
@@ -194,7 +195,7 @@ def test_other_box_shapes_expose_their_texts_too(hot):
         assert man[box]["role"] == "artist", box
         el = man[f"{box}.texts_0"]
         assert el["role"] == "text" and _field(el, "text") == want, box
-        assert el["draggable"] is False, box
+        assert el["draggable"] is False and el["drag_host"] == box, box
         assert not ({"rotation", "ha", "va", "zorder"} & _props(el)), box
     # 图级的框和轴上的一样可拖（setter 按 figure 分数算）
     assert man[FIG_AB]["draggable"] is True and man[FIG_ANCHORED]["draggable"] is True

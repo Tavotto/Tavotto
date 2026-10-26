@@ -1493,6 +1493,11 @@ export function inFigureMoveOf(
   if (el.resizable) return axesMove(panel, geomTarget(manifest, el))
   if (el.arrow_endpoints) return arrowMove(panel, el)
   if (el.draggable && el.anchor) return elementMove(panel, el)
+  // 框里的文字：拖的是外框（引擎报的 `drag_host`）；外框自己拖不动（像素坐标的插框）就照旧说「拖不动」
+  if (el.drag_host) {
+    const host = manifest?.elements.find((m) => m.gid === el.drag_host)
+    if (host && host.gid !== el.gid && !host.drag_host) return inFigureMoveOf(panel, manifest, host)
+  }
   return null
 }
 

@@ -236,7 +236,8 @@ order: 80
   `zorder` 按 `_mm_offsetbox_box` 从字段里拿掉（`_OFFSETBOX_TEXT_FIXED`）；外框隐藏时不输出其中的文字（看不见的字不可点、不进预检）。
   叶子还收 `DrawingArea` / `AuxTransformBox` 里 `add_artist` 进去的 `Text`（`AnchoredDrawingArea` 一族、比例尺标签同理）。
   `fig.add_artist(...)` 贴在整张图上的锚定框 / 插框按 `fig.artists_j` 同一套登记（外框可拖、框里文字可编辑）；图级的其他
-  artist 仍不登记。看护 `tests/test_offsetbox_text.py`。
+  artist 仍不登记。框里的文字带 `drag_host`（外框 gid）：按住它拖起来时前端 `inFigureMoveOf` 改拖外框（方向键同一处），
+  点一下仍是选中这段字。看护 `tests/test_offsetbox_text.py`、`web/src/canvas/dragCoverage.test.tsx`、`e2e/drag-coverage.spec.ts`。
 - 面板翻转（flip_h/flip_v，先翻转后旋转）：导出按 dpi 位图嵌入
   （show_pdf_page 无镜像；flipH = 行倒序 + 旋转 180°），与 opacity<1 同一取舍。
 
