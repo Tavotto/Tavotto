@@ -435,6 +435,7 @@ def admin_deploy_agent() -> int:
             HERE / "mcp_recorder.py",
             HERE / "window_probe.py",
             HERE / "desktop_driver.py",
+            HERE / "native_probe.py",
             *(ROOT / "scripts" / "ci" / n for n in DEPLOYED_CI_MODULES),
             cmdf,
         ):
@@ -728,7 +729,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--from", dest="frm", help="installer：先装这个旧包再升级")
     t.add_argument(
         "--mode",
-        help="corpus：smoke | all；hosts-live：claude-code | codex-cli | …；desktop-live：vscode-claude",
+        help="corpus：smoke | all；hosts-live：claude-code | codex-cli | …；desktop-live：vscode-claude | cursor-claude | trae-claude",
     )
     t.add_argument("--ref", help="先 prepare 到这个提交（经可信度检查）")
     n = sub.add_parser("network")

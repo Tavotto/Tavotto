@@ -64,7 +64,7 @@ LIVE_HOST_IDS = ("claude-code", "codex-cli", "codebuddy", "minimax-code", "dsh")
 #: `desktop-hosts --mode`：桌面宿主 L2（固定版本见 DESKTOP_HOSTS）
 DESKTOP_HOST_IDS = ("vscode", "cursor", "trae-cn", "workbuddy", "zcode", "claude-desktop")
 #: `desktop-live --mode`：桌面宿主 + 其中的 AI 扩展，到 L3–L5（宿主 × 扩展的闭集见 DESKTOP_LIVE）
-DESKTOP_LIVE_MODES = ("vscode-claude",)
+DESKTOP_LIVE_MODES = ("vscode-claude", "cursor-claude", "trae-claude")
 #: 依赖安装配方的版本：改了 prepare 的安装步骤就加一，已有 venv 随之重装（散列戳里含它）。
 DEPS_RECIPE = "2"
 
@@ -270,6 +270,22 @@ TASKS: dict[str, Task] = {
                 "L3+ 要在宿主里登录各自账户、配置 MCP：Lab 没有这些账户，一律 blocked，不推定",
                 "主窗口出现 ≠ 能用：首次启动的登录 / 欢迎页之后的界面不在内",
                 "海外 CDN 的安装包经 DMIT 下载（用户授权），国内 CDN 直连；下载线路不代表宿主运行时的网络",
+                "Server 2025 不是 Windows 10 / 11 客户端",
+            ),
+        ),
+        Task(
+            id="desktop-native",
+            kind="desktop-native",
+            summary="桌面宿主原生 Agent 首屏探查：装、起、只看不点，记下它要什么账户、有没有自定义模型入口，然后卸载",
+            timeout_s=1800,
+            modes=DESKTOP_HOST_IDS,
+            claim=(
+                "宿主自带 Agent 的首屏（不登录、不点、不调模型）：每个 CDP 页面的文字与截图、顶层窗口标题；"
+                "按文字判有没有登录要求、有没有自定义模型 / API key 入口"
+            ),
+            unverified=(
+                "只看首屏：登录之后的界面、自定义模型实际能否接国内接口不在内",
+                "文字匹配是启发式：判据词表写在 NATIVE_LOGIN_RE / NATIVE_BYOK_RE，截图才是证据",
                 "Server 2025 不是 Windows 10 / 11 客户端",
             ),
         ),
@@ -2586,6 +2602,9 @@ class DesktopHost:
     exe_name: str
     #: VS Code 系：用独立的 --user-data-dir / --extensions-dir 启动，不碰账户的真实配置
     vscode_like: bool = False
+    #: VS Code 系：宿主注册的 URL 协议（扩展的 URI 入口 `<scheme>://<扩展>/open`）。空 = 只走命令面板：
+    #: Cursor 打开扩展 URI 前弹模态确认框（run 20261026T134946Z-82ba4a），会挡住命令面板
+    url_scheme: str = ""
 
 
 _INNO_SILENT = (
@@ -2611,6 +2630,7 @@ DESKTOP_HOSTS: dict[str, DesktopHost] = {
             display_re=r"^Microsoft Visual Studio Code",
             exe_name="Code.exe",
             vscode_like=True,
+            url_scheme="vscode",
         ),
         DesktopHost(
             id="cursor",
@@ -3027,7 +3047,36 @@ def _install_failure_summary(host: DesktopHost, inst: dict) -> str:
     return "silent install did not register the host"
 
 
-def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode: str) -> dict:
+#: 原生 Agent 首屏文字里的「要登录」与「能自带 key / 自定义模型」——启发式，截图才是证据
+NATIVE_LOGIN_RE = re.compile(
+    r"sign ?in|log ?in|sign up|登录|登入|注册|continue with (?:google|github|email)|扫码", re.I
+)
+NATIVE_BYOK_RE = re.compile(
+    r"api ?key|custom model|自定义模型|添加模型|bring your own|base ?url|模型服务商|model provider",
+    re.I,
+)
+
+
+#: 原生探查时允许点的唯一入口按钮（逐字）：只为看下一屏要填什么，不填、不提交、不登录
+NATIVE_PEEK = {"zcode": "Use API key"}
+
+
+def summarize_native(win: dict) -> dict:
+    text = "\n".join([*win.get("titles", []), *(p.get("text", "") for p in win.get("pages", []))])
+    return {
+        "cdp": bool(win.get("cdp")),
+        "pages": len(win.get("pages", [])),
+        "titles": win.get("titles", []),
+        "login_markers": sorted({m.group(0).lower() for m in NATIVE_LOGIN_RE.finditer(text)})[:12],
+        "byok_markers": sorted({m.group(0).lower() for m in NATIVE_BYOK_RE.finditer(text)})[:12],
+        "text_tail": text[-1500:],
+        "peek": win.get("peek"),
+    }
+
+
+def run_desktop_hosts_task(
+    lab: Lab, run_id: str, run_dir: Path, env: dict, mode: str, native: bool = False
+) -> dict:
     host = DESKTOP_HOSTS[mode]
     levels = {"L2": "not_tested", "L3": "blocked", "L4": "blocked", "L5": "blocked"}
     base = {
@@ -3115,7 +3164,33 @@ def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode
             "--",
             *extra,
         ]
-        step = run_in_gui(lab, run_id, argv, work, henv, ev / "probe", 240)
+        if native:
+            (work / "project").mkdir(exist_ok=True)
+            argv = [
+                str(py),
+                "-I",
+                str(Path(__file__).resolve().parent / "native_probe.py"),
+                "--exe",
+                inst["exe"],
+                "--root",
+                inst["root"],
+                "--out",
+                str(out),
+                "--shots",
+                str(ev),
+                *(
+                    [
+                        "--vscode-profile",
+                        str(run_dir / "work" / "profile"),
+                        "--workspace",
+                        str(work / "project"),
+                    ]
+                    if host.vscode_like
+                    else []
+                ),
+                *(["--peek-button", NATIVE_PEEK[host.id]] if host.id in NATIVE_PEEK else []),
+            ]
+        step = run_in_gui(lab, run_id, argv, work, henv, ev / "probe", 900 if native else 240)
     finally:
         base["uninstall"] = uninstall_desktop_host(host, work, henv)
     if step.get("gui") == "no_interactive_session":
@@ -3141,9 +3216,26 @@ def run_desktop_hosts_task(lab: Lab, run_id: str, run_dir: Path, env: dict, mode
             "result": "error",
             "summary": "window probe wrote no result" + _cleanup_note(base),
             "step": step,
+            "probe_log_tail": _tail_text(ev / "probe.stderr.log", 1500),
         }
-    base["window"] = win
+    base["window"] = win if not native else {"window": win.get("window"), "error": win.get("error")}
     base["session_id"] = step["session_id"]
+    if native and win.get("window"):
+        levels["L2"] = "passed"
+        nat = summarize_native(win)
+        base["native"] = nat
+        base["blocked_reason"] = (
+            f"原生 Agent 首屏有登录要求：{', '.join(nat['login_markers'])}"
+            if nat["login_markers"]
+            else "首屏没有认出登录要求（看截图核对）"
+        )
+        seen = (
+            f"{host.name} {inst.get('version')}: native first screen, cdp={nat['cdp']}, "
+            f"login={nat['login_markers'] or 'none seen'}, byok={nat['byok_markers'] or 'none seen'}"
+        )
+        if not base["uninstall"]["ok"]:
+            return {**base, "result": "error", "summary": f"探查完成但清理失败：{seen}"}
+        return {**base, "result": "passed", "summary": seen}
     if win.get("window"):
         levels["L2"] = "passed"
         seen = f"{host.name} {inst.get('version')}: main window {win['window']['title']!r} in session {step['session_id']} after {win['seconds_to_window']} s"
@@ -3171,6 +3263,8 @@ class DesktopLive:
 
 DESKTOP_LIVE: dict[str, DesktopLive] = {
     "vscode-claude": DesktopLive("vscode", "anthropic.claude-code"),
+    "cursor-claude": DesktopLive("cursor", "anthropic.claude-code"),
+    "trae-claude": DesktopLive("trae-cn", "anthropic.claude-code"),
 }
 assert tuple(DESKTOP_LIVE) == DESKTOP_LIVE_MODES
 #: 宿主装扩展时自报「版本不兼容」：这是宿主限制（not_supported），不是 Tavotto 的故障
@@ -3313,6 +3407,7 @@ def driver_argv(
     rec_log: Path,
     out_dir: Path,
     label: str,
+    open_uri: str = "none",
 ) -> list[str]:
     """交互会话里跑驱动器的 argv（登记任务的固定形状；没有任何透传）。"""
     return [
@@ -3343,6 +3438,8 @@ def driver_argv(
         str(DRIVER_MAX_S),
         "--first-traffic-s",
         str(DRIVER_FIRST_TRAFFIC_S),
+        "--open-uri",
+        open_uri,
     ]
 
 
@@ -3431,6 +3528,17 @@ def run_desktop_live_task(
     return out
 
 
+def host_cli(root: Path) -> Path | None:
+    """VS Code 系宿主自带的命令行入口（装扩展用）：VS Code / TRAE 在 `bin\\`，Cursor 在 `resources\\app\\bin\\`。
+    只认安装目录里这两处的 `.cmd`，不在 PATH 里找。"""
+    for d in (root / "bin", root / "resources" / "app" / "bin"):
+        if d.is_dir():
+            cmds = sorted(d.glob("*.cmd"))
+            if cmds:
+                return cmds[0]
+    return None
+
+
 def _desktop_live_body(
     lab, run_id, run_dir, env, model_conf, cell, host, ext, vsix, inst, ext_dir, base
 ) -> dict:
@@ -3439,7 +3547,13 @@ def _desktop_live_body(
     work = run_dir / "work"
     ev = run_dir / "evidence" / "desktop-live"
     key = model_conf["api_key"]
-    code_cmd = Path(inst["root"]) / "bin" / "code.cmd"
+    code_cmd = host_cli(Path(inst["root"]))
+    if code_cmd is None:
+        return {
+            **base,
+            "result": "error",
+            "summary": f"{host.name}: no command-line launcher (bin\\*.cmd) under the install dir",
+        }
     profile = work / "profile"
     (profile / "data" / "User").mkdir(parents=True, exist_ok=True)
     (profile / "data" / "User" / "settings.json").write_text(
@@ -3531,6 +3645,7 @@ def _desktop_live_body(
             rec_log=rec_log,
             out_dir=ev,
             label=f"round{n}",
+            open_uri=f"{host.url_scheme}://{ext.id}/open" if host.url_scheme else "none",
         )
         step = run_in_gui(
             lab,
@@ -3607,9 +3722,8 @@ def _desktop_live_body(
             "result": "failed",
             "summary": f"{host.name}: driver stopped after step {last!r} without a main window (error: {r1['driver'].get('error')})",
         }
-    panel = ""
-    for f in ev.glob("round1-panel*.txt"):
-        panel += f.read_text(encoding="utf-8", errors="replace")[-20000:]
+    # 只看扩展自己的 webview：宿主自己的登录提示（如 Cursor 的 AI 功能要登录）不是扩展要登录
+    panel = _tail_text(ev / "round1-webview.txt", 20000)
     if not s1["calls"] and LOGIN_MARKERS.search(panel):
         levels.update(L4="environment_unavailable", L5="environment_unavailable")
         levels["L3"] = "passed" if "tavotto_open_figure" in s1["listed_tools"] else "not_run"
@@ -4066,6 +4180,15 @@ def _run_body(
     if task.kind == "desktop-hosts":
         return run_desktop_hosts_task(
             lab, run_dir.name, run_dir, env, (pkg or {}).get("mode") or DESKTOP_HOST_IDS[0]
+        )
+    if task.kind == "desktop-native":
+        return run_desktop_hosts_task(
+            lab,
+            run_dir.name,
+            run_dir,
+            env,
+            (pkg or {}).get("mode") or DESKTOP_HOST_IDS[0],
+            native=True,
         )
     if task.kind == "desktop-live":
         return run_desktop_live_task(

@@ -380,31 +380,97 @@ def find_input_session(cdp: CDP) -> str | None:
     return None
 
 
+def connect_cdp(port: int, timeout: float) -> CDP | None:
+    """连上浏览器端的 CDP（开启目标发现）；`timeout` 秒内连不上返回 None。"""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        with contextlib.suppress(OSError, ValueError, CDPError, TimeoutError):
+            version = http_json(port, "/json/version")
+            cdp = CDP(WebSocket(port, "/" + version["webSocketDebuggerUrl"].split("/", 3)[3]))
+            cdp.call("Target.setDiscoverTargets", {"discover": True})
+            return cdp
+        time.sleep(1)
+    return None
+
+
+def is_workbench_url(url: str) -> bool:
+    """VS Code 系主窗口的工作台页面：VS Code / Cursor 是 `vscode-file://…/workbench.html`；
+    别的分支可能改了文件名，但都走 `vscode-file:` 协议。"""
+    if "setup" in url.rsplit("/", 1)[-1]:
+        return False  # TRAE 首启的欢迎页 setup.html 不是工作台（run 20261026T142555Z-89dd46）
+    return "workbench" in url or url.startswith("vscode-file:")
+
+
+#: 首启引导页上**只许点**的按钮（逐字匹配，去掉首尾空白）：开始 / 跳过 / 下一步 / 继续 / 稍后。
+#: 不点任何登录、注册、授权、同意条款之外的东西；点了哪些如实进 progress。
+ONBOARDING_BUTTONS = (
+    "开始",
+    "跳过",
+    "下一步",
+    "继续",
+    "稍后",
+    "以后再说",
+    "Start",
+    "Skip",
+    "Next",
+    "Continue",
+    "Later",
+)
+#: 先找 button / role=button / a；TRAE 的「跳过」是普通元素（run 20261026T144322Z-291b6a），再找文字恰好等于白名单、
+#: 没有子元素的叶子节点，点它最近的可点祖先（没有就点它自己）
+ONBOARDING_CLICK_JS = (
+    "(() => {const want = %s; const vis = e => e.offsetParent !== null;"
+    "for (const b of document.querySelectorAll('button, [role=button], a')) {"
+    " const t = (b.innerText || '').trim(); if (want.includes(t) && vis(b)) { b.click(); return t; } }"
+    "for (const e of document.querySelectorAll('body *')) {"
+    " if (e.children.length) continue; const t = (e.textContent || '').trim();"
+    " if (want.includes(t) && vis(e)) { (e.closest('button,[role=button],a,[onclick],[tabindex]') || e).click(); return t; } }"
+    "return null;})()"
+)
+
+
+def _url_shape(url: str) -> str:
+    """诊断用：协议 + 最后一段文件名（不记完整路径与查询串）。"""
+    scheme, _, rest = url.partition(":")
+    return f"{scheme}:{rest.split('?', 1)[0].rsplit('/', 1)[-1][:40]}"
+
+
 def open_panel(
     cdp: CDP, workbench: str, exe: str, args: list[str], timeout: float
 ) -> tuple[str | None, str | None]:
-    """先走扩展的 URI 入口，不行再走命令面板（键盘事件经 CDP）。返回 (输入框所在会话, 用了哪条路)。"""
-    p = subprocess.Popen(
-        [exe, *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=dict(os.environ)
+    """先走扩展的 URI 入口，不行再走命令面板（键盘事件经 CDP）。返回 (输入框所在会话, 用了哪条路)。
+    `args` 为 None = 只走命令面板（Cursor 打开扩展 URI 前会弹模态确认框，弹出来就挡住命令面板）。"""
+    p = (
+        subprocess.Popen(
+            [exe, *args], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=dict(os.environ)
+        )
+        if args is not None
+        else None
     )
     try:
-        end = time.monotonic() + timeout
+        end = time.monotonic() + (timeout if p is not None else 0)
         while time.monotonic() < end:
             cdp.pump(1.0)
             sid = find_input_session(cdp)
             if sid:
                 return sid, "uri"
-        _palette(cdp, workbench)
-        end = time.monotonic() + timeout
-        while time.monotonic() < end:
-            cdp.pump(1.0)
-            sid = find_input_session(cdp)
-            if sid:
-                return sid, "palette"
+        # 命令面板最多试三次、每次前先 Esc：工作台刚出来时扩展可能还没激活，命令还不在列表里
+        # （TRAE：run 20261026T145631Z-d4aaf2 一次成功，20261026T150227Z-682f81 同样流程一次没打开）
+        for _attempt in range(3):
+            with contextlib.suppress(CDPError, TimeoutError):
+                _key(cdp, workbench, "keyDown", "Escape", "Escape", 27)
+                _key(cdp, workbench, "keyUp", "Escape", "Escape", 27)
+            _palette(cdp, workbench)
+            end = time.monotonic() + timeout / 3
+            while time.monotonic() < end:
+                cdp.pump(1.0)
+                sid = find_input_session(cdp)
+                if sid:
+                    return sid, "palette"
         return None, None
     finally:
         with contextlib.suppress(OSError):
-            if p.poll() is None:
+            if p is not None and p.poll() is None:
                 p.kill()  # 只结束自己起的这一个转发进程
 
 
@@ -540,17 +606,51 @@ def drive(ns: argparse.Namespace) -> dict:
             cdp = CDP(WebSocket(port, ws_path))
             cdp.call("Target.setDiscoverTargets", {"discover": True})
             workbench = None
-            end = time.monotonic() + 60
+            end = time.monotonic() + 120
+            onboarding: list[str] = []
             while time.monotonic() < end and workbench is None:
-                for t in cdp.call("Target.getTargets").get("targetInfos", []):
-                    if t.get("type") == "page" and "workbench" in str(t.get("url", "")):
+                try:
+                    targets = cdp.call("Target.getTargets").get("targetInfos", [])
+                except (OSError, CDPError, TimeoutError):
+                    # TRAE 跳过引导后关掉欢迎窗、另开工作台，浏览器端连接随之断（run 20261026T145044Z-553df4）：重连
+                    prog.step("cdp_reconnect")
+                    with contextlib.suppress(OSError):
+                        cdp.ws.close()
+                    time.sleep(2)
+                    cdp = connect_cdp(port, 30)
+                    if cdp is None:
+                        result["error"] = "CDP endpoint went away after onboarding"
+                        return result
+                    continue
+                for t in targets:
+                    url = str(t.get("url", ""))
+                    if t.get("type") == "page" and is_workbench_url(url):
                         workbench = cdp.call(
                             "Target.attachToTarget", {"targetId": t["targetId"], "flatten": True}
                         )["sessionId"]
                         break
+                    if t.get("type") == "page" and "setup" in url.rsplit("/", 1)[-1]:
+                        sid = cdp.call(
+                            "Target.attachToTarget", {"targetId": t["targetId"], "flatten": True}
+                        )["sessionId"]
+                        clicked = cdp.evaluate(
+                            sid, ONBOARDING_CLICK_JS % json.dumps(list(ONBOARDING_BUTTONS))
+                        )
+                        if clicked and len(onboarding) < 8:
+                            onboarding.append(clicked)
+                            prog.step("onboarding_click", button=clicked)
                 if workbench is None:
-                    time.sleep(1)
-            prog.step("workbench_attach", attached=workbench is not None)
+                    time.sleep(2)
+            result["onboarding_clicked"] = onboarding
+            prog.step(
+                "workbench_attach",
+                attached=workbench is not None,
+                pages=[
+                    _url_shape(str(t.get("url", "")))
+                    for t in cdp.call("Target.getTargets").get("targetInfos", [])
+                    if t.get("type") == "page"
+                ][:8],
+            )
             if workbench is None:
                 result["error"] = "workbench page not found"
                 return result
@@ -565,7 +665,9 @@ def drive(ns: argparse.Namespace) -> dict:
                 cdp,
                 workbench,
                 ns.exe,
-                uri_open_args(ns.user_data_dir, ns.extensions_dir),
+                uri_open_args(ns.user_data_dir, ns.extensions_dir, ns.open_uri)
+                if ns.open_uri != "none"
+                else None,
                 ns.panel_timeout,
             )
             result["panel_opened_via"] = via
@@ -594,7 +696,8 @@ def drive(ns: argparse.Namespace) -> dict:
                 ns.quiet_s,
                 ns.max_s,
                 ns.first_traffic_s,
-                lambda: tree.proc.poll() is None,
+                # TRAE 跳过引导后换进程重开窗口：起的那个进程退了，宿主还在（run 20261026T145631Z-d4aaf2）
+                lambda: tree.proc.poll() is None or bool(P.top_windows(root)),
                 lambda: bool((cdp.evaluate(sid, STATE_JS) or {}).get("busy")),
             )
             result["wait_ended"] = reason
@@ -610,9 +713,13 @@ def drive(ns: argparse.Namespace) -> dict:
             prog.step("teardown")
             result["seconds"] = round(time.monotonic() - t0, 1)
             if cdp is not None:
-                _evidence(cdp, out_dir, ns.label, result)
-                prog.step("evidence", screenshot=result.get("screenshot"))
-                cdp.ws.close()
+                try:
+                    _evidence(cdp, out_dir, ns.label, result)
+                    prog.step("evidence", screenshot=result.get("screenshot"))
+                except (OSError, CDPError, TimeoutError) as exc:  # 存证失败不能吞掉前面的结果
+                    prog.step("evidence_failed", error=f"{type(exc).__name__}: {exc}"[:200])
+                with contextlib.suppress(OSError):
+                    cdp.ws.close()
             tree.close()  # Job 结束整棵进程树，调试端口随之关闭
 
 
@@ -624,8 +731,15 @@ def _evidence(cdp: CDP, out_dir: Path, label: str, result: dict) -> None:
         if t:
             texts.append(f"=== {info.get('type')} {str(info.get('url', ''))[:60]}\n{t}")
     (out_dir / f"{label}-panel.txt").write_text("\n".join(texts), encoding="utf-8")
+    # 只有扩展自己的 webview 的文字：判「扩展要登录」只看这里，宿主自己的登录提示（Cursor 的 AI 功能）不算
+    web = [
+        cdp.evaluate(sid, TEXT_JS) or ""
+        for sid, info in list(cdp.sessions.items())
+        if str(info.get("url", "")).startswith("vscode-webview:")
+    ]
+    (out_dir / f"{label}-webview.txt").write_text("\n".join(web), encoding="utf-8")
     for sid, info in list(cdp.sessions.items()):
-        if info.get("type") == "page" and "workbench" in str(info.get("url", "")):
+        if info.get("type") == "page" and is_workbench_url(str(info.get("url", ""))):
             with contextlib.suppress(CDPError, TimeoutError, OSError):
                 shot = cdp.call(
                     "Page.captureScreenshot", {"format": "png"}, session=sid, timeout=20
@@ -651,10 +765,12 @@ def main(argv: list[str]) -> int:
     p.add_argument("--out-dir", required=True)
     p.add_argument("--label", required=True)
     p.add_argument("--window-timeout", type=float, default=120)
-    p.add_argument("--panel-timeout", type=float, default=60)
+    p.add_argument("--panel-timeout", type=float, default=120)
     p.add_argument("--quiet-s", type=float, default=45)
     p.add_argument("--max-s", type=float, default=1200)
     p.add_argument("--first-traffic-s", type=float, default=300)
+    #: 扩展的 URI 入口（宿主自己的 URL 协议）；`none` = 只走命令面板；URI 不认也会退回命令面板
+    p.add_argument("--open-uri", default=OPEN_URI)
     ns = p.parse_args(argv)
     try:
         res = drive(ns)

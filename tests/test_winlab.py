@@ -1695,7 +1695,9 @@ def test_desktop_live_modes_are_a_closed_set_of_host_extension_cells():
     for cell in A.DESKTOP_LIVE.values():
         assert cell.host in A.DESKTOP_HOSTS and cell.extension in A.DESKTOP_EXTENSIONS
     assert A.validate_test_args(t, [], None, "direct", mode="vscode-claude") is None
-    for bad in ("cursor-claude", "vscode", "vscode-codex", "../x"):
+    for ok in ("cursor-claude", "trae-claude"):
+        assert A.validate_test_args(t, [], None, "direct", mode=ok) is None
+    for bad in ("vscode", "vscode-codex", "workbuddy-claude", "../x"):
         assert A.validate_test_args(t, [], None, "direct", mode=bad)
     assert A.validate_test_args(t, [], None, "trojan", mode="vscode-claude")
 
@@ -2137,11 +2139,13 @@ def test_desktop_driver_is_deployed_and_importable_from_the_deployed_files_alone
     import shutil
     import subprocess as sp
 
-    assert 'HERE / "desktop_driver.py"' in (WINLAB / "winlab.py").read_text(encoding="utf-8")
+    deploy = (WINLAB / "winlab.py").read_text(encoding="utf-8")
+    assert 'HERE / "desktop_driver.py"' in deploy and 'HERE / "native_probe.py"' in deploy
     for src in (
         WINLAB / "agent.py",
         WINLAB / "window_probe.py",
         WINLAB / "desktop_driver.py",
+        WINLAB / "native_probe.py",
         *(ROOT / "scripts" / "ci" / n for n in W.DEPLOYED_CI_MODULES),
     ):
         shutil.copy(src, tmp_path / src.name)
@@ -2150,7 +2154,7 @@ def test_desktop_driver_is_deployed_and_importable_from_the_deployed_files_alone
             sys.executable,
             "-I",
             "-c",
-            "import sys; sys.path[:0] = [sys.argv[1]]; import desktop_driver",
+            "import sys; sys.path[:0] = [sys.argv[1]]; import desktop_driver, native_probe",
             str(tmp_path),
         ],
         capture_output=True,
@@ -2167,6 +2171,7 @@ class _FakeLive:
         host = A.DESKTOP_HOSTS["vscode"]
         self.root = tmp_path / "vs"
         (self.root / "bin").mkdir(parents=True)
+        (self.root / "bin" / "code.cmd").write_text("")
         lab = A.Lab(tmp_path / "lab")
         lab.cache.mkdir(parents=True)
         py = lab.venv_python()
@@ -2379,3 +2384,88 @@ def test_driver_waits_for_the_panel_to_stop_being_busy_not_only_for_recorder_sil
     clock["t"] = 0.0
     reason, _ = D.wait_quiet(rec, 1, 45, 300, 300, lambda: True, lambda: True)
     assert reason == "max"
+
+
+def test_host_cli_is_found_only_inside_the_install_dir_for_each_vscode_like_host(tmp_path):
+    vs, cur, none = tmp_path / "vs", tmp_path / "cursor", tmp_path / "none"
+    (vs / "bin").mkdir(parents=True)
+    (vs / "bin" / "code.cmd").write_text("")
+    (cur / "resources" / "app" / "bin").mkdir(parents=True)
+    (cur / "resources" / "app" / "bin" / "cursor.cmd").write_text("")
+    none.mkdir()
+    assert A.host_cli(vs) == vs / "bin" / "code.cmd"
+    assert A.host_cli(cur) == cur / "resources" / "app" / "bin" / "cursor.cmd"
+    assert A.host_cli(none) is None
+
+
+def test_each_desktop_live_cell_opens_the_panel_through_its_own_host_url_scheme(tmp_path):
+    for mode, cell in A.DESKTOP_LIVE.items():
+        assert A.DESKTOP_HOSTS[cell.host].vscode_like, mode
+    # Cursor 打开扩展 URI 前弹模态确认框：只走命令面板
+    assert A.DESKTOP_HOSTS["vscode"].url_scheme == "vscode"
+    assert A.DESKTOP_HOSTS["cursor"].url_scheme == ""
+    argv = A.driver_argv(
+        Path("py"),
+        Path("d.py"),
+        exe="C.exe",
+        root="r",
+        profile=tmp_path,
+        ext_dir=tmp_path,
+        workspace=tmp_path,
+        prompt_file=tmp_path / "p",
+        rec_log=tmp_path / "r",
+        out_dir=tmp_path,
+        label="round1",
+        open_uri="cursor://anthropic.claude-code/open",
+    )
+    assert argv[argv.index("--open-uri") + 1] == "cursor://anthropic.claude-code/open"
+
+
+def test_native_probe_only_looks_and_its_summary_reports_login_and_byok_markers():
+    import native_probe as NP
+
+    args = NP.host_args(1234, None, None)
+    assert args == [
+        "--remote-debugging-port=1234"
+    ]  # 不传 address：只绑回环；非 VS Code 系不带 profile
+    assert any(a.startswith("--user-data-dir=") for a in NP.host_args(1, "p", "w"))
+    assert NP.host_args(None, None, None) == []  # 宿主拒绝调试端口时的第二次：不带
+    assert NP.NOT_READY_RE.search("Preparing Environment") and not NP.NOT_READY_RE.search("Sign in")
+    src = (WINLAB / "native_probe.py").read_text(encoding="utf-8")
+    for verb in ("Input.dispatch", "--remote-debugging-address", "insertText"):
+        assert verb not in src  # 只看，不打字
+    assert src.count(".click()") == 1  # 唯一的点击在 peek 里，只点登记的那一个按钮
+    for b in A.NATIVE_PEEK.values():
+        assert not re.search(r"登录|sign|log ?in|connect|授权", b, re.I), b
+    nat = A.summarize_native(
+        {
+            "cdp": True,
+            "titles": ["Cursor"],
+            "pages": [{"text": "Sign in to continue\nOr add your OpenAI API key"}],
+        }
+    )
+    assert "sign in" in nat["login_markers"] and "api key" in nat["byok_markers"]
+    assert A.summarize_native({"titles": ["X"], "pages": []})["login_markers"] == []
+    assert "desktop-native" in A.TASKS and A.TASKS["desktop-native"].modes == A.DESKTOP_HOST_IDS
+
+
+def test_workbench_page_is_recognized_by_its_vscode_file_scheme_too():
+    assert D.is_workbench_url("vscode-file://vscode-app/c:/x/workbench/workbench.html")
+    assert D.is_workbench_url("vscode-file://vscode-app/c:/x/trae/index.html")
+    assert not D.is_workbench_url("vscode-file://vscode-app/c:/x/setup/setup.html")
+    # 引导页只点白名单里的按钮：没有登录 / 注册 / 授权
+    for b in D.ONBOARDING_BUTTONS:
+        assert not re.search(r"登录|注册|sign|log ?in|授权|allow|同意|accept", b, re.I), b
+    assert not D.is_workbench_url("vscode-webview://abc/index.html")
+    assert (
+        D._url_shape("vscode-file://vscode-app/c:/a/b/index.html?x=1") == "vscode-file:index.html"
+    )
+
+
+def test_host_own_login_prompt_is_not_mistaken_for_the_extension_requiring_login(tmp_path):
+    """run 20261026T134946Z-82ba4a：Cursor 自己的「AI features require you to be logged in」进了面板文字，
+    被判成扩展要登录。判据只看扩展 webview 的文字。"""
+    src = (WINLAB / "agent.py").read_text(encoding="utf-8")
+    i = src.index("LOGIN_MARKERS.search(panel)")
+    assert "round1-webview.txt" in src[i - 400 : i]
+    assert "round1-panel" not in src[i - 400 : i]
