@@ -34,6 +34,7 @@ import {
   type AiTaskSummary,
 } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
+import { parseRenames, type IdentityRename, type RebindDirection } from '@/lib/overrideIdentity'
 import type { DraftTarget, LedgerWrite } from '@/lib/aiDraft'
 
 export type AiStatus = 'running' | 'done' | 'failed' | 'timeout' | 'cancelled' | 'reverted'
@@ -402,6 +403,15 @@ const supersedesFor = (project: string | null, fileId: string, script: string | 
 let settledNotifier: ((p: DonePayload) => void) | null = null
 export function setAiSettledNotifier(fn: ((p: DonePayload) => void) | null): void {
   settledNotifier = fn
+}
+
+/**
+ * 撤销这次 AI 修改成功之后，把画布 override 的身份从“改名后”改回“改名前”（ADR 0083 §五）。后端撤销回应带 `renamed`
+ * （取自历史库，所以重启后也有）。副作用在 `store/aiRenameRebind`（要碰文档 store），同样用回调注册，免得本 store 带上文档层。
+ */
+let renameRebinder: ((renames: IdentityRename[], direction: RebindDirection) => void) | null = null
+export function setAiRenameRebinder(fn: typeof renameRebinder): void {
+  renameRebinder = fn
 }
 
 /**
@@ -871,8 +881,10 @@ export const useAiStore = create<AiState>((set, get) => ({
     const target = get().sessions.find((x) => x.id === sid)
     if (!target) return false
     const born = get().generation
-    await aiRevert(sid, target.project)
+    const res = await aiRevert(sid, target.project)
     if (born !== get().generation) return false
+    // 先于调用方的 `markStale`：身份改回去与脚本回滚后的重建合并成一次渲染
+    renameRebinder?.(parseRenames(res?.renamed), 'back')
     set((s) => ({
       sessions: s.sessions.map((x) =>
         x.id === sid ? { ...x, status: 'reverted', changed: false } : x,
@@ -1126,6 +1138,7 @@ async function applyChange(c: AiSessionChange, born: number, pj: string | null):
       diff: d.diff ?? '',
       ...(d.error ? { error: d.error } : {}),
       ...(d.refresh ? { refresh: d.refresh } : {}),
+      ...(d.task ? { task: d.task } : {}),
     },
     d.transcript,
   )

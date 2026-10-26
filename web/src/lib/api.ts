@@ -6,6 +6,7 @@ import type { ExportRoute } from '@/lib/exportRoute'
 import type { Remedy } from '@/lib/fixRemedy'
 import type { FigureDocument, FigureSnapshot, ProjectDocument } from '@/types/document'
 import type { ManifestFrame } from '@/lib/figureFrame'
+import type { IdentityRename } from '@/lib/overrideIdentity'
 import type { PreviewMetadata } from '@/lib/previewBudget'
 import type { ScriptArgsSchema } from '@/lib/scriptArgsForm'
 import type { ThumbObject, ThumbPage } from '@/types/thumb'
@@ -3789,6 +3790,11 @@ export interface AiTaskSummary {
   corrections?: number
   /** 收尾时的跟进建议（后端闭集；老后端 / 没有可建议的时候没有这个字段）。只在改图任务成功时才可能有 */
   suggestions?: AiTaskSuggestion[]
+  /**
+   * 改图任务里“数据没动、只是显式 label 变了”的元素（ADR 0083 §五）：只有身份摘要，没有 label 原文。前端据此把画布上
+   * 已有的编辑改写到新身份（`store/aiRenameRebind`）；没有改名（或老后端）时没有这个键。
+   */
+  renamed?: IdentityRename[]
   /** 数据出图（`data_to_figure`）：新建的脚本（项目相对路径）；没写回（needs_input / failed）时没有 */
   script?: string
   /** 数据出图 needs_input：后端给的中性默认映射（x / y 列名），用来举例，不当结论 */
@@ -3930,7 +3936,7 @@ export function isDefiniteRunFailure(e: unknown): boolean {
 }
 
 export const aiRevert = (sid: string, pj: string | null) =>
-  jsonFetch<{ ok: boolean; script: string }>(
+  jsonFetch<{ ok: boolean; script: string; renamed?: IdentityRename[] }>(
     `/api/ai/sessions/${sid}/revert`,
     { method: 'POST' },
     pj,

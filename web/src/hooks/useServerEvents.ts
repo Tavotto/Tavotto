@@ -8,7 +8,9 @@ import {
   subscribeEvents,
   type ServerEvent,
 } from '@/lib/api'
-import { hintAiRev, setAiSettledNotifier, useAiStore, type DonePayload } from '@/store/aiStore'
+import { hintAiRev, setAiRenameRebinder, setAiSettledNotifier, useAiStore, type DonePayload } from '@/store/aiStore'
+import { rebindRenamedIdentities } from '@/store/aiRenameRebind'
+import { parseRenames } from '@/lib/overrideIdentity'
 import { useAiFixStore } from '@/store/aiFixStore'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
@@ -355,6 +357,10 @@ export function handleServerEvent(ev: ServerEvent) {
  */
 function announceAiDone(ev: DonePayload) {
   const setStatus = useUiStore.getState().setStatus
+  // AI 只改了某条线的显式 label（数据没动）：画布上写在它旧名字上的编辑跟着换成新身份，否则下一次渲染全被当“对象已找不到”
+  // 拒绝（ADR 0083 §五）。所有收尾路径（直达 / 回放 / 快照对账）都经过这里；撤销过的会话状态是 reverted，不会再改回去。
+  // 幂等：只改身份恰好等于旧身份的条目
+  if (ev.status === 'done' && ev.changed) rebindRenamedIdentities(parseRenames(ev.task?.renamed), 'forward')
   // 这里**不再 markStale**：文件变了的话后端在 ai.done 之前已经作废 worker、
   // 跑过统一刷新、发过 `panel.file_changed`（reason=ai），上面那个分支按
   // stem 把画布上的面板全部转入跟踪——同一次修改只置一次 stale（ADR 0041）。
@@ -403,6 +409,7 @@ function announceAiDone(ev: DonePayload) {
 }
 
 setAiSettledNotifier(announceAiDone)
+setAiRenameRebinder(rebindRenamedIdentities)
 
 /** 后端事件 → 渲染状态 / AI 会话 / 素材库刷新 / 状态栏 */
 export function useServerEvents() {

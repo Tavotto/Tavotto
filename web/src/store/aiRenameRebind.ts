@@ -1,0 +1,72 @@
+/**
+ * AI 改名之后，画布上已有的编辑跟着换身份（ADR 0083 §五）。
+ *
+ * 背景：override 的目标身份是显式 label 的摘要。AI 改图时若只改了某条线的 label（数据指纹逐部件相同），
+ * 后端判它为“改名”并报出 `{stem, gid, from_identity, to_identity}`；本模块把画布上写在该 gid、旧身份上的
+ * override 改写成新身份，否则下一次渲染引擎会把它们全部当“编辑的对象已找不到”拒绝。
+ * 撤销这次 AI 修改（脚本回到旧 label）时反向改回。
+ *
+ * - **一条历史**：激活画布走 `documentStore.commit`（整次提交标 `restored`——这些身份是写下那一刻的事实，
+ *   不许被抄写器按此刻的 manifest 重抄），非激活画布直接写快照（与 `renameCanvas` 同一个先例）。
+ * - **不另外触发渲染**：改写的是 `overrides` 内容，`useEngineSync` 看到“文档 overrides ≠ 已渲染 patches”会自己渲染一次，
+ *   与随 `panel.file_changed` 来的重建合并（撤销时本函数先于 `markStale`）。
+ * - **幂等**：只改身份恰好等于起点的条目（见 `rebindOverrideIdentities`）。
+ */
+import { produce } from 'immer'
+import { msg } from '@/i18n'
+import { panelStemOfFileId, stemOf } from '@/lib/panelStem'
+import {
+  rebindOverrideIdentities,
+  type IdentityRename,
+  type RebindDirection,
+} from '@/lib/overrideIdentity'
+import type { PanelObject } from '@/types/document'
+import { useDocumentStore } from './documentStore'
+
+/** 这个面板属于哪张图：运行时面板按持久化的捕获来源，磁盘面板按素材清单的 stem（缺省退回文件名 stem）。 */
+function panelIsStem(panel: PanelObject, stem: string): boolean {
+  if (panel.fileKind === 'runtime') return panel.source?.stem === stem
+  return panelStemOfFileId(panel.fileId) === stem || stemOf(panel.fileId) === stem
+}
+
+/** 有没有会被改写的条目（只读预检：没有就不开提交，也不动画布快照）。 */
+const wouldRebind = (
+  objects: Parameters<typeof rebindOverrideIdentities>[0],
+  renames: readonly IdentityRename[],
+  direction: RebindDirection,
+): boolean => rebindOverrideIdentities(objects, renames, direction, panelIsStem, false) > 0
+
+/**
+ * 改写画布上的 override 身份，回改了几条（所有画布合计）。`renames` 为空 → 什么都不做。
+ * 调用方负责只在“这次修改确实落地”时调用：forward 在 AI 完成（`ai.done`，状态 done 且 changed），back 在撤销成功之后。
+ */
+export function rebindRenamedIdentities(renames: readonly IdentityRename[], direction: RebindDirection): number {
+  if (!renames.length) return 0
+  const store = useDocumentStore.getState()
+  let total = 0
+  // 激活画布：一条历史
+  if (wouldRebind(store.doc.objects, renames, direction)) {
+    store.commit(
+      msg('history.setProp', { prop: msg('prop.label', undefined, 'inspector') }, 'workspace'),
+      (d) => {
+        total += rebindOverrideIdentities(d.objects, renames, direction, panelIsStem)
+      },
+      { overrides: 'restored' },
+    )
+  }
+  // 非激活画布：直接写快照
+  const inactive = store.canvases.filter((c) => c.id !== store.activeCanvasId && wouldRebind(c.objects, renames, direction))
+  if (inactive.length) {
+    const ids = new Set(inactive.map((c) => c.id))
+    useDocumentStore.setState((s) => ({
+      canvases: s.canvases.map((c) =>
+        ids.has(c.id)
+          ? produce(c, (d) => {
+              total += rebindOverrideIdentities(d.objects, renames, direction, panelIsStem)
+            })
+          : c,
+      ),
+    }))
+  }
+  return total
+}

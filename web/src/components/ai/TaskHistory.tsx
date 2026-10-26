@@ -14,8 +14,10 @@ import {
   pinAiHistory,
   type AiHistoryEntry,
 } from '@/lib/api'
+import { parseRenames } from '@/lib/overrideIdentity'
 import { currentProjectId } from '@/lib/session'
 import { cn } from '@/lib/utils'
+import { rebindRenamedIdentities } from '@/store/aiRenameRebind'
 import { scriptName, useAiStore } from '@/store/aiStore'
 import { useUiStore } from '@/store/uiStore'
 import { Button, IconButton } from '../ui/Button'
@@ -218,8 +220,10 @@ function HistoryRow({
             variant="danger"
             onClick={() =>
               void aiRevert(entry.id, pj).then(
-                () => {
+                (res) => {
                   if (!stillMine()) return
+                  // 这次修改改过名的话，画布编辑的身份跟着改回旧名字（ADR 0083 §五）
+                  rebindRenamedIdentities(parseRenames(res?.renamed), 'back')
                   useUiStore.getState().setStatus(msg('history.reverted', undefined, 'ai'), 'done')
                   onChanged()
                 },
