@@ -287,8 +287,24 @@ Starfield Root CA G2；扩展目录实际叫 `anthropic.claude-code-2.1.310`（�
 | Cursor | 「Cursor’s AI features require you to be logged in」 | 要 Cursor 账户 | `20261026T140328Z-da3aae` |
 | TRAE CN | 首启引导「欢迎使用 / 开始」 | 引导之后未探（扩展路径已 L5） | `20261026T143125Z-b0be4b` |
 | WorkBuddy | 先「Preparing Environment」，之后「Sign In」 | 要腾讯账户 | `20261026T143420Z-5e4e92` |
-| ZCode | 「Connect to Z.ai / Connect to BigModel / Use API key」 | **可不登录、自带 key** | `20261026T141359Z-fa7e7c` |
+| ZCode | 「Connect to Z.ai / Connect to BigModel / Use API key」 | **可不登录、自带 key** → 已做到 L5（见下） | `20261026T141359Z-fa7e7c` |
 | Claude Desktop | 带调试端口起不出窗口；不带时窗口「Claude」 | 拒绝调试端口，文字未取到 | `20261026T143831Z-c456bc` |
+
+### ZCode 原生 Agent（`zcode-native`，2026-10-27）
+
+ZCode 3.14.1 自己的 Agent，自定义 Anthropic 兼容接口接 DeepSeek（`deepseek-flash`，专用限额 key，落盘例外），首启「Use API key →
+Skip for now → Skip」，没登录 Z.ai / BigModel。
+
+| 级别 | 结论 | 证据 |
+| --- | --- | --- |
+| L2 | PASS | 主窗口「ZCode」约 6 s |
+| L3 | PASS | 两轮 clientInfo `zcode 0.16.9`，父进程链里 `ZCode.exe`（安装目录内） |
+| L4 | PASS | health → open_figure → apply_overrides → export → verify_replay 全部 ok |
+| L5 | PASS | PDF 导出、重放 23 个元素一致；全新 ZCode 进程凭 session_id 重放并关闭 |
+
+run `20261026T160936Z-fe61a2`，`ondisk_key.wiped = true`（run 目录与 `%APPDATA%\ZCode` 均无残留）。途中：只写项目目录与
+`cli\` 时桌面版读不到 MCP 与权限（`20261026T153350Z-c4c8f7`）；配置里的 `yolo` 不生效、工具名不认前缀，第一次工具调用就停在权限框
+（`20261026T154420Z-ca5927`）。
 
 **产品侧发现**：`tavotto_open_figure` 的结果（含内嵌 SVG 与完整 manifest）超过 Claude Code 扩展的 MCP 输出上限，扩展把它
 落成文件，模型要用 Read / Grep 读回来才能取 gid / prop；真实用户在 VS Code 面板里会因此看到读文件的权限确认。另记 issue 跟进。

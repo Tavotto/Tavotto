@@ -180,6 +180,15 @@ BLOCKED，不会直连）、交互会话在。判据与 `hosts-live` 相同，�
 python3 scripts/winlab/winlab.py secret-init deepseek
 ```
 
+`zcode-native` 另用一把**专用、设了消费上限**的 key（ZCode 只认明文配置文件，这一格会在 Lab 的 run 目录里短暂落盘、跑完删除并核对）：
+
+```sh
+python3 scripts/winlab/winlab.py secret-init deepseek --ondisk
+python3 scripts/winlab/winlab.py test desktop-live --mode zcode-native --ref HEAD
+```
+
+报告的 `ondisk_key.wiped` 必须为 true，否则整次是 error。
+
 建议给 Lab 单独建一把限额的 key。每次 `test hosts-live` / `test desktop-live` 经 SSH stdin 交给那一次运行，Lab 不落盘（交互会话一侧经命名管道，`request.json` 里没有它）。
 
 ### 黄金快照

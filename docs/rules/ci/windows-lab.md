@@ -133,7 +133,8 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
   页面的文字与截图，**不打字、不登录、不调模型**；唯一允许的点击是 `NATIVE_PEEK` 里按宿主登记的那一个入口按钮（逐字，如 ZCode 的
   「Use API key」），只为看下一屏要填什么。报告 `native.login_markers` / `byok_markers` 是启发式词表，截图才是证据；L3+ 仍记 BLOCKED。
 - **桌面宿主 + 其中的 AI 扩展 `desktop-live --mode <宿主-扩展>`（L3–L5）**：宿主 × 扩展的闭集在 `DESKTOP_LIVE`
-  （`vscode-claude` / `cursor-claude` / `trae-claude`：三个 VS Code 系宿主 + 同一个 `anthropic.claude-code`），宿主装法同 L2，
+  （`vscode-claude` / `cursor-claude` / `trae-claude`：三个 VS Code 系宿主 + 同一个 `anthropic.claude-code`；`zcode-native`：
+  ZCode 自己的 Agent，见下），宿主装法同 L2，
   扩展包固定版本与散列（见代理纪律），用宿主安装目录里自带的命令行入口（`bin\*.cmd`，Cursor 在 `resources\app\bin\`，不在 PATH 里找）
   `--install-extension` 装进 run 目录的 `--extensions-dir`。**判据与 `hosts-live` 同一个 `judge_live`，一字不改**：
   宿主里的扩展经 `mcp_recorder` 指向的 Tavotto MCP 做事，L4/L5 看的还是录制器记下的服务端事实。区别只有谁发话：
@@ -160,6 +161,20 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
     （没找到输入框、填不进、点不了发送）→ `error`，不推定是产品问题；宿主明确拒装扩展（版本不兼容）→ levels 记
     `not_supported`、整次 `skipped`（NOT TESTED），附 `ext-install` 日志与截图，**不记 FAIL**（宿主限制，不是 Tavotto 的故障）；
     其余装不上 → `failed`。`not_supported` 只出现在 levels 里，不是 ADR 0131 结果闭集的新成员。
+  - **原生 Agent 格 `zcode-native`**（`DesktopLive(native=True)`）：不装扩展，用 ZCode 自己的 Agent。首启只点
+    `NATIVE_ONBOARDING_BUTTONS`（Use API key / Skip for now / Skip…，**不含** Continue——API Key 表单上的 Continue 会提交空 key——
+    也不含任何 Connect / 登录）；输入框认第一个可见的 textarea / 可编辑区；面板出现权限确认框（`PERMISSION_PROMPT_RE`）就如实以
+    `permission_prompt` 收场。隔离：`ZCODE_DATA_BASE_DIR=<run>\work\zdata`；模型写 `zdata\.zcode\v2\provider_config.json`
+    （`anthropic-messages`，DeepSeek 的 `…/anthropic/v1`）；运行配置（MCP → 录制器、权限）写项目目录、`zdata\.zcode\cli\` 与
+    非项目对话的默认工作目录 `zdata\.zcode\workspace\default\.zcode\` 三处——只写前两处时桌面版读不到。权限：`allowedTools` 只列
+    tavotto 的**完整工具名**（从服务端 `HANDLERS` 现读；ZCode 不认前缀，桌面版也不认配置里的 `yolo`），执行 / 写入 / 上网的内置工具
+    明确禁用。进程链判据同上（`host_ancestor` = `ZCode.exe`）。
+  - **落盘例外（仅 `DESKTOP_LIVE_ONDISK_MODES` = `zcode-native`，用户 2026-10-26 同意）**：ZCode 只从明文 `provider_config.json`
+    读 key、不支持环境变量替换。所以这一格用**另一把专用、设了消费上限的 key**——用户在自己的终端 `secret-init deepseek --ondisk`
+    录入，存本机 `model-ondisk.json`（0600），与默认那把相同就拒收；缺了就不跑，**绝不退回默认那把**。key 只写本次 run 的
+    `zdata`；`run_desktop_live_task` 的 `finally` 里 `wipe_ondisk_key` 删掉该文件、抹掉 run 目录里其它出现，再扫 run 目录与 ZCode 的
+    应用数据目录（`%APPDATA%` / `%LOCALAPPDATA%` 下 `ZCode*`，发现即删）核对**一处都没有**；留下了就整次 `error`。报告带
+    `ondisk_key: {wiped, residual, checked_app_dirs}`。默认那把（hosts-live 与其它 desktop-live 格）照旧不落盘。
   - CC-Switch 的落盘例外**不在此**（单独的 PR 与单独的规则条目）。
-- 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境（交互会话里再经命名管道），Lab 不落盘；证据落盘前抹掉凭据。证据字段按
+- 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境（交互会话里再经命名管道），除上面登记的 `zcode-native` 外 Lab 不落盘；证据落盘前抹掉凭据。证据字段按
 `docs/implementation/multi-host-mcp/acceptance.md`。
