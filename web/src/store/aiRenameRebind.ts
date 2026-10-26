@@ -38,7 +38,7 @@ const wouldRebind = (
   direction: RebindDirection,
 ): boolean => rebindOverrideIdentities(objects, renames, direction, panelIsStem, false) > 0
 
-const deferred: { renames: readonly IdentityRename[]; direction: RebindDirection }[] = []
+const deferred: { renames: readonly IdentityRename[]; direction: RebindDirection; documentId: string | null }[] = []
 let unsubscribe: (() => void) | null = null
 
 /**
@@ -51,14 +51,17 @@ export function rebindRenamedIdentities(renames: readonly IdentityRename[], dire
   // 而 AI 的脚本改动留着。外部事件不替用户收手势，等事务结束后再作为独立一条历史落地
   // （入队按到达顺序，forward / back 不会错序）。此时回 0：改了几条要等事务结束才知道。
   if (useDocumentStore.getState().txn) {
-    deferred.push({ renames, direction })
+    // 记下排队那一刻的文档：手势结束前换了文档（切项目 / 打开别的排版）就丢掉，不落到另一份文档上
+    deferred.push({ renames, direction, documentId: useDocumentStore.getState().documentId })
     if (!unsubscribe) {
       unsubscribe = useDocumentStore.subscribe((s) => {
         if (s.txn) return
         unsubscribe?.()
         unsubscribe = null
         const queue = deferred.splice(0)
-        for (const q of queue) rebindRenamedIdentities(q.renames, q.direction)
+        for (const q of queue) {
+          if (q.documentId === s.documentId) rebindRenamedIdentities(q.renames, q.direction)
+        }
       })
     }
     return 0

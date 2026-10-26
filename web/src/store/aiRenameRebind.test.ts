@@ -308,6 +308,14 @@ describe('手势进行中到达的改名：改写自成一条历史、不被手�
     useDocumentStore.getState().undo() // 撤销拖动
     expect(active()[0].x).toBe(0)
   })
+
+  it('手势开着 → 改名到达 → 手势结束前换了文档：排队的改写丢掉，不落到另一份文档上', () => {
+    useDocumentStore.getState().beginTxn(literal('拖动'))
+    nudge()
+    rebindRenamedIdentities([RENAME], 'forward')
+    useDocumentStore.setState({ documentId: 'd_other', txn: null } as never)
+    expect(ids(active()[0])).toEqual([OLD, OLD, OTHER, null, OTHER])
+  })
 })
 
 describe('磁盘面板的 stem：有权威 stem 就只认它（Codex #1425 P1）', () => {
