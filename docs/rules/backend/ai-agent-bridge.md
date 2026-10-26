@@ -668,7 +668,8 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 `raster_drawing` 阻止把“Pillow 画完再 imshow”称为可编辑转写。没有命中不是全面保真证明。
 看护 `test_convert_fidelity.py` 和 `test_ai_convert.py` 的真实会话收尾用例。
 
-长转换允许单响应 32768 token（含模型思考），单次文件块仍为 6000 字符；总 token、时间和轮数预算不变。
+长转换允许单响应 32768 token（含模型思考），建议按约 6000 字符分块；完整接收的代码块不因超过建议值而丢弃，
+实际创建 / 覆盖 / 累计追加仍核同一个 200 KiB UTF-8 文件上限。总 token、时间、轮数预算及截断整轮拒绝不变。
 默认单次请求 300 秒，总期限仍会截断它，用户取消仍随时生效。
 Anthropic adaptive thinking 的签名绑定历史前缀；客户端压缩工具结果后删除历史内全部 thinking / redacted_thinking 块，
 保留工具调用及结果，不改用户推理强度。manual/budget 模式要求末轮思考块，保持追加历史并沿用总预算。

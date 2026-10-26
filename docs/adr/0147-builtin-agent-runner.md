@@ -96,7 +96,7 @@ OpenAI = ChatGPT 订阅（codex 登录）+ 官方 API Key；Claude = Claude 订�
 
 长转换可先 `create_file` 再 `append_file(content, expected_sha256)`；重复/过期追加拒绝，仍只写那个新文件、核完整文件大小和秘密串。不新增 shell、网络或默认路由。
 
-Conversion output recovery remains within the existing budget: each create/append carries at most 6,000 characters; one truncated response can be discarded and retried as a smaller section. The whole incomplete response is withheld from execution and protocol replay; its usage stays in the ledger. A second truncation or exhausted budget stops the task. Other toolsets do not opt into this recovery.
+Conversion output recovery remains within the existing budget: create/append should prefer blocks around 6,000 characters; one truncated response can be discarded and retried as a smaller section. The whole incomplete response is withheld from execution and protocol replay; its usage stays in the ledger. A second truncation or exhausted budget stops the task. Other toolsets do not opt into this recovery.
 
 ### 修订：参数纠错与显式最终校验（2026-10-26）
 
@@ -115,3 +115,7 @@ Conversion output recovery remains within the existing budget: each create/appen
 转换同时提供语义明确的 `finish(summary)`，内部调用同一个 `check(final=true)`，模型无需先检查再请求一轮纯文字收尾；两者仍共用 3 次校验预算。
 只有转换工具集启用运行期预算提示：轮数、累计 token 或秒数用到 50% / 75% 时，各追加一次剩余资源与收尾指导，下次正常请求即可看到。
 提醒自身不增加请求次数、不延长预算、不把中间检查变成成功，也不允许省略真实数据 / 语义 / 输出。累计 token 仍按实际 input + output 记账（包括缓存输入）。
+
+完整接收且解析成功的代码块不再因超过 6,000 字符而丢弃。该值只是减少输出截断的建议，实际文件仍受同一 `READ_LIMIT_BYTES`（200 KiB UTF-8 字节）上限约束；
+追加核累计文件大小，Unicode 按字节计算，路径、原子创建、秘密串及完整性门禁均保留。真模型的 6,268 字符块曾因这道额外阈值被拒，造成重写与重复输入计费；
+复用实际文件边界可接受该完整块，不能接受服务端标记截断的半截调用，也不提高轮数、token 或时间预算。

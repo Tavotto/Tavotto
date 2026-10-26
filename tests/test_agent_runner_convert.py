@@ -404,19 +404,33 @@ def test_truncation_recovery_is_once_and_never_expands_budget(cand, token_budget
     assert _tree(cand) == before
 
 
-def test_conversion_chunk_limit_refuses_without_touching_files(cand):
+@pytest.mark.parametrize("operation", ["create_file", "append_file"])
+def test_complete_conversion_block_above_chunk_hint_is_preserved(cand, operation):
     session = tools.ConvertSession(envelope(cand))
-    too_big = "#" * (tools.CONVERT_CHUNK_CHARS + 1)
+    content = "#" + "x" * (tools.CONVERT_CHUNK_CHARS + 268) + "\n" + NEW
+    prefix = ""
+    args = {"content": content}
+    if operation == "append_file":
+        prefix = "# initial section\n"
+        created = session.create_file({"content": prefix})
+        args["expected_sha256"] = created.content.split("sha256: ")[1]
+    result = getattr(session, operation)(args)
+    assert not result.is_error, result.content
+    assert (cand / "fig_matplotlib.py").read_bytes() == (prefix + content).encode()
+    assert (cand / "fig.py").read_text() == ORIG
+
+
+@pytest.mark.parametrize("operation", ["create_file", "append_file"])
+@pytest.mark.parametrize("character", ["x", "界"])
+def test_conversion_file_byte_limit_still_refuses_complete_blocks(cand, operation, character):
+    session = tools.ConvertSession(envelope(cand))
+    content = character * (tools.READ_LIMIT_BYTES // len(character.encode()) + 1)
+    args = {"content": content}
+    if operation == "append_file":
+        created = session.create_file({"content": NEW})
+        args["expected_sha256"] = created.content.split("sha256: ")[1]
     before = _tree(cand)
-    assert session.create_file({"content": too_big}).code == "chunk_too_large"
-    assert _tree(cand) == before
-    created = session.create_file({"content": NEW})
-    digest = created.content.split("sha256: ")[1]
-    before = _tree(cand)
-    assert (
-        session.append_file({"content": too_big, "expected_sha256": digest}).code
-        == "chunk_too_large"
-    )
+    assert getattr(session, operation)(args).code == "too_large"
     assert _tree(cand) == before
 
 
