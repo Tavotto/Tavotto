@@ -104,6 +104,7 @@ from .engine import (
     exporttelemetry as engine_exporttelemetry,
     figcapture as engine_figcapture,
     fixsession as engine_fixsession,
+    foreignsource as engine_foreignsource,
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
     inputbroker as engine_inputbroker,
@@ -5688,6 +5689,9 @@ def api_registry():
             # 各带稳定 reason code）：普通脚本不因静态分析解不出
             # 产物就从产品里消失，任意一条都可试运行。
             "all_scripts": inventory,
+            # 加字段（老前端忽略）：项目内认得出语言的 R / MATLAB 脚本（ADR 0143 修订「项目内入口」）。
+            # 独立于 `all_scripts`：它们不能“打开并运行”，不进运行环境探测 / 依赖准备 / 可运行脚本判据。
+            "foreign_scripts": engine_foreignsource.inventory(Path(ctx.path)),
         }
     )
 

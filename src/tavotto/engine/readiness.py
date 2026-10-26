@@ -48,7 +48,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import discover, project_refresh, registry
+from . import discover, foreignsource, project_refresh, registry
 
 # ---------------------------------------------------------------------------
 # 状态与 reason code —— **闭集**，前端按 code 查自己的文案
@@ -106,6 +106,7 @@ CAPABILITY_FIELDS = (
     "candidates",
     "can_probe",
     "can_manual_link",
+    "foreign_source",
 )
 
 
@@ -363,6 +364,8 @@ def _entry(
         "can_probe": bool(candidates),
         "can_manual_link": writable,
         "details": details,
+        # 素材的同名 R / MATLAB 脚本 `{script, language}`；由 `compute` 按素材填（这里是 stem 级的共享事实，没有它）
+        "foreign_source": None,
     }
 
 
@@ -394,9 +397,12 @@ def compute(ctx) -> dict:
         registry_valid = _registry_on_disk_ok(root)
         write_failed = state.registry_write_failed
         scan_sig = _script_signature(root)
+        dir_cache = foreignsource.DirCache(root)
+        foreign_sig = foreignsource.signature_of(root, dir_cache, [rel for rel, _ in assets])
 
         body_sig = _digest(
             {
+                "foreign": foreign_sig,
                 "registry": entries,
                 "assets": assets,
                 "scan": scan_sig,
@@ -439,7 +445,14 @@ def compute(ctx) -> dict:
             # `stem` 与 `id` 一起给出来：**关联动作的对象是 stem 不是这张图**
             # （注册表的键就是 stem），而同一个 stem 可能挂着两份素材。界面自己
             # 从文件名切一次的话，「哪一段算 stem」就有了第二份判据。
-            panels.append({"id": rel, "stem": stem, **cap})
+            # 同名外语脚本是**这张素材**的事实（同目录），不是 stem 的事实——同 stem 的两份素材可在不同目录；
+            # 只在“量过了、没有候选脚本”这一档给（其余状态说的是别的事）。老前端忽略这个字段。
+            foreign = (
+                foreignsource.sibling_of(root, dir_cache, rel)
+                if cap["reason_code"] == REASON_NO_CANDIDATE
+                else None
+            )
+            panels.append({"id": rel, "stem": stem, **cap, "foreign_source": foreign})
 
         summary = {"total": len(panels)}
         summary.update({s: 0 for s in STATUSES})

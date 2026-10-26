@@ -11,9 +11,11 @@ import {
   backendCodeMsg,
   runtimePreviewUrl,
   type CapturedFigureDescriptor,
+  type ForeignSource,
   type ScriptInventoryEntry,
 } from '@/lib/api'
 import { splitNoticeText } from '@/lib/noticeText'
+import { offerForeignConvert } from '@/lib/foreignEntry'
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
@@ -143,6 +145,9 @@ export function ScriptLibrary({ query }: { query: string }) {
     repairCards.add(entry.script)
   }
 
+  // R / MATLAB 脚本（后端 `foreign_scripts`，ADR 0143 修订「项目内入口」）：只能“生成可编辑版本”，不进下面的运行分组
+  const foreign = (view?.foreign_scripts ?? []).filter((f) => !q || f.script.toLowerCase().includes(q))
+
   const groups = new Map<Group, ScriptInventoryEntry[]>()
   for (const entry of scripts) {
     const g = groupOf(entry, runStates[entry.script], prepEntries[`script:${entry.script}`], registryAt)
@@ -170,7 +175,7 @@ export function ScriptLibrary({ query }: { query: string }) {
   if (!view) {
     return loading ? <ScriptSkeleton /> : null
   }
-  if (scripts.length === 0) {
+  if (scripts.length === 0 && foreign.length === 0) {
     return q ? (
       <EmptyState icon={SearchX} title={sc('noMatch')} data-script-no-match />
     ) : (
@@ -207,7 +212,42 @@ export function ScriptLibrary({ query }: { query: string }) {
           </section>
         )
       })}
+      {foreign.length > 0 && (
+        <section className="mt-1">
+          <h4 className="flex h-7 items-center gap-1.5 px-1" data-script-group="foreign">
+            <span className="type-section">{sc('group_foreign')}</span>
+            <span className="type-meta">{foreign.length}</span>
+          </h4>
+          <ul aria-label={sc('group_foreign')}>
+            {foreign.map((f) => (
+              <ForeignScriptRow key={f.script} source={f} />
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
+  )
+}
+
+/**
+ * 一行 R / MATLAB 脚本：文件名 + 语言。点开 = 出主页那张“生成可编辑版本”卡（同一个入口）。
+ * 它不是可运行脚本：没有 ▶、没有状态点、不进准备会话 / 运行状态机 / 依赖修复。
+ */
+function ForeignScriptRow({ source }: { source: ForeignSource }) {
+  useTranslation('workspace')
+  return (
+    <li data-foreign-script-row={source.script} data-foreign-language={source.language}>
+      <button
+        type="button"
+        onClick={() => offerForeignConvert(source)}
+        className={cn(listRowClass(), 'w-full gap-1.5 pl-3 pr-2 text-left')}
+      >
+        <span className="min-w-0 flex-1 truncate font-mono text-sm text-ink" title={source.script}>
+          {source.script}
+        </span>
+        <span className="shrink-0 type-meta text-ink-3">{sc(`foreignLang.${source.language}`)}</span>
+      </button>
+    </li>
   )
 }
 

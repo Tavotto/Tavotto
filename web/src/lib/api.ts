@@ -144,6 +144,17 @@ export interface PanelCapability {
   can_probe: boolean
   /** 界面可以提供「手工关联」；只读项目上为 false（登记要落盘） */
   can_manual_link: boolean
+  /**
+   * 这张图旁边同主干名的 R / MATLAB 脚本（ADR 0143 修订「项目内入口」）。**后端判的**（同目录、`sourcelang.detect`
+   * 认得出语言、无歧义），前端只翻译，不自己按后缀配对。老后端没有这个字段（= 没有入口）。
+   */
+  foreign_source?: ForeignSource | null
+}
+
+export interface ForeignSource {
+  /** 脚本（项目相对路径） */
+  script: string
+  language: 'r' | 'matlab'
 }
 
 export interface ReadinessPanel extends PanelCapability {
@@ -6243,6 +6254,8 @@ export interface RegistryView {
   conflicts: Record<string, string[]>
   /** 项目内全部合理 .py（含 show-only 与基础设施脚本；被 prune 的目录不列） */
   all_scripts: ScriptInventoryEntry[]
+  /** 项目内后端认得出语言的 R / MATLAB 脚本（只能“生成可编辑版本”，不能运行；老后端没有） */
+  foreign_scripts?: ForeignSource[]
 }
 
 export const fetchRegistry = () => jsonFetch<RegistryView>('/api/registry')

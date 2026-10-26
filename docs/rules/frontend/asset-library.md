@@ -2,7 +2,7 @@
 
 > 原文出自 `web/AGENTS.md`「素材库普通入口（2026-08-26，Compatibility Bridge Session 5）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scriptRunStore.test.ts`、`ScriptLibrary.test.tsx`、`AssetBrowser.runtime.test.tsx`、`AssetBrowser.tiff.test.tsx`、`lib/panelSrc.test.ts`、`projectSwitchAssets.test.ts`、`openRequest.test.ts`、`FigurePickerDialog.test.tsx`、`e2e/asset-library.spec.ts`、`projectSwitchDepRepair.test.ts`、`projectSwitchAi.test.ts`、`rebuildProgressId.golden.test.ts`
+> 看护用例（`web/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`scriptRunStore.test.ts`、`ScriptLibrary.test.tsx`、`AssetBrowser.runtime.test.tsx`、`AssetBrowser.tiff.test.tsx`、`lib/panelSrc.test.ts`、`projectSwitchAssets.test.ts`、`openRequest.test.ts`、`FigurePickerDialog.test.tsx`、`AssetBrowser.foreign.test.tsx`、`ScriptLibrary.foreign.test.tsx`、`e2e/asset-library.spec.ts`、`projectSwitchDepRepair.test.ts`、`projectSwitchAi.test.ts`、`rebuildProgressId.golden.test.ts`
 
 <!-- agents-route
 sheet: web/AGENTS.md
@@ -422,3 +422,7 @@ RenderCore，必须明确报 `svg_asset_export_unsupported`，不能交付空图
 
 看护：`tests/test_svg_assets.py`、`lib/panelSrc.test.ts`、
 `components/left/AssetBrowser.tiff.test.tsx`、`e2e/svg-assets.spec.ts`。
+
+- **R / MATLAB 入口（ADR 0143 修订「项目内入口」）**：素材卡的 `capability.foreign_source` 与脚本库的 `/api/registry` `foreign_scripts` 都是**后端报的事实**，
+  前端不按后缀配对、不自己判语言。素材卡：选中这样的图，列表外一句（`reasonText` 换成「这张图是 R / MATLAB 画的」）+ 主按钮「生成可编辑版本」；脚本库：单独一组、每行文件名 + 语言，
+  **没有 ▶**、不进 `groupOf` / 运行状态机 / 准备会话，点一行 = 出主页那张卡。两处动作都在 `lib/foreignEntry.ts`，落到同一个 `foreignScriptStore` 提议与 `convertStore.start`，不另起流程。

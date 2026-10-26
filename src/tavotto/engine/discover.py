@@ -991,8 +991,9 @@ def _iter_py(
     include_infrastructure: bool,
     strict: bool = False,
     budget: scanbudget.Budget | None = None,
+    suffixes: tuple[str, ...] = (".py",),
 ) -> list[Path]:
-    """图库里的 .py：递归但剪枝（隐藏目录、虚拟环境、缓存一律不下探）。
+    """图库里的 .py（`suffixes` 另给时是别的后缀，见 `iter_foreign_scripts`）：递归但剪枝（隐藏目录、虚拟环境、缓存一律不下探）。
 
     只扫顶层曾经是个隐性假设——把面板脚本放 panels/ 子目录的图库（论文的
     supporting_information 就是）会被整目录漏掉。
@@ -1060,7 +1061,7 @@ def _iter_py(
                         scanbudget.ISSUE_DEPTH, severity=scanbudget.SEVERITY_NOTE, path=rel(child)
                     )
                 continue
-            if child.suffix != ".py":
+            if child.suffix not in suffixes:
                 continue
             if not include_infrastructure and is_infrastructure_name(child.name):
                 continue
@@ -1078,6 +1079,18 @@ def _iter_py(
 def iter_scripts(figures_dir: Path) -> list[Path]:
     """自动静态起草的候选脚本（不含基础设施脚本）——起草口径的唯一出处。"""
     return _iter_py(Path(figures_dir), include_infrastructure=False)
+
+
+#: 「生成可编辑版本」认的 R / MATLAB 后缀（区分大小写；与 `sourcelang.extension_hint` 同一份）
+FOREIGN_SUFFIXES = (".R", ".r", ".m")
+
+
+def iter_foreign_scripts(figures_dir: Path) -> list[Path]:
+    """项目内 `.R` / `.r` / `.m` 文件（语言还没判：内容复核归 `sourcelang.detect`）。
+
+    walk 规则就是 `_iter_py` 那一个实现（PRUNE_DIRS / MAX_DEPTH / 隐藏项），只是后缀换了；
+    这些文件**不是** `iter_scripts` / `iter_all_scripts` 的成员——不进静态起草、注册表、运行环境探测。"""
+    return _iter_py(Path(figures_dir), include_infrastructure=True, suffixes=FOREIGN_SUFFIXES)
 
 
 def iter_all_scripts(

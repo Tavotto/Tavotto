@@ -31,6 +31,7 @@ import { runtimeSiblingOf } from '@/lib/assetSibling'
 import { formatCm } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import { addFigureToLayout, openFastEdit } from '@/store/workspace'
+import { startForeignConvert } from '@/lib/foreignEntry'
 import { PENDING_STATUSES, reasonText, statusLabel } from '@/lib/readinessText'
 import {
   DEFAULT_ASSET_FILTERS,
@@ -155,7 +156,9 @@ export function AssetBrowser() {
   const recentlyUsed = useAssetStore((s) => s.recentlyUsed)
   const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
   const objects = useDocumentStore((s) => s.doc.objects)
-  const scriptCount = useScriptLibraryStore((s) => s.view?.all_scripts?.length ?? 0)
+  const scriptCount = useScriptLibraryStore(
+    (s) => (s.view?.all_scripts?.length ?? 0) + (s.view?.foreign_scripts?.length ?? 0),
+  )
   const scriptsLoaded = useScriptLibraryStore((s) => s.loaded)
   const scriptsGeneration = useScriptLibraryStore((s) => s.generation)
   // 取失败（load 结束、没有清单）：脚本数是「不知道」，宁可摆搜索框。还没取到（含刚挂载、已触发未返回）则先不摆——
@@ -347,6 +350,8 @@ export function AssetBrowser() {
   // 标题行两颗动作钮的对象：选中的那张卡；没有描述符的运行时图没有可编辑 / 可添加的东西
   const activeItem = items.find((it) => itemId(it) === activeId)
   const activeActionable = !!activeItem && (activeItem.kind === 'file' || !!activeItem.asset.descriptor)
+  const activeCap = activeItem?.kind === 'file' ? activeItem.panel.capability : undefined
+  const activeForeign = activeCap?.foreign_source ?? null
   const activeName = activeItem ? (activeItem.kind === 'file' ? fileName(activeItem.panel.id) : activeItem.asset.stem) : ''
 
   const focusId = items.some((it) => itemId(it) === activeId)
@@ -606,6 +611,22 @@ export function AssetBrowser() {
                 ),
               )}
             </ul>
+          )}
+
+          {/* 选中的图旁边有同名 R / MATLAB 脚本（后端报的 `foreign_source`）：一句话 + 一个主按钮，走主页那张卡的同一个转换入口。
+              在 listbox 之外（option 里不许再嵌可 Tab 的控件） */}
+          {activeForeign && (
+            <div className="mt-2 flex items-center gap-2" data-asset-foreign={activeForeign.script}>
+              <p className="min-w-0 flex-1 text-xs text-ink-2">{reasonText(activeCap!)}</p>
+              <Button
+                variant="primary"
+                size="sm"
+                data-asset-foreign-convert={activeForeign.language}
+                onClick={() => startForeignConvert(activeForeign)}
+              >
+                {translate('prep.convert.btn.start', { ns: 'workspace' })}
+              </Button>
+            </div>
           )}
 
           {/* 与素材卡同一条规则：加载过就显示保留下来的那份——刷新失败时卡片还在，这张清单也在 */}

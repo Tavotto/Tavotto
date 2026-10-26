@@ -6104,6 +6104,10 @@ export default interface Resources {
     },
     "readiness": {
       "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅版面。",
+      "foreign": {
+        "matlab": "这张图是 MATLAB 画的",
+        "r": "这张图是 R 画的"
+      },
       "openCenter": "查看接入状态",
       "pillAria": "项目接入状态：{{status}}",
       "pillDismiss": "关闭",
@@ -6238,8 +6242,13 @@ export default interface Resources {
       "diagnostics": "诊断详情",
       "dropped_other": "还有 {{count}} 张未捕获。",
       "emptyTitle": "项目里没有发现 Python 脚本",
+      "foreignLang": {
+        "matlab": "MATLAB",
+        "r": "R"
+      },
       "groupInfraName": "工具与配置脚本",
       "groupInfra_other": "工具与配置脚本（{{count}}）",
+      "group_foreign": "R / MATLAB 脚本",
       "group_linked": "已关联",
       "group_needsEnv": "可能需要原环境",
       "group_needsFix": "需要修复",

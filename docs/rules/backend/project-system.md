@@ -85,6 +85,10 @@ order: 220
     = 这一轮还不知道。三档都不许压成两档。
   * 缓存挂在 `RefreshState.readiness`，键是输入的内容签名；刷新在事实真的
     动了之后额外清一次（依赖方向是 readiness → refresh，**反过来会成环**）。
+  * **`foreign_source`（ADR 0143 修订「项目内入口」，加字段、老前端忽略）**：`layout_only` + `no_source_candidate` 的素材，
+    若同目录有同主干名、`sourcelang.detect_file` 认得出语言的 `.R` / `.r` / `.m`（`engine/foreignsource.py`），就带
+    `{script, language}`，其余一律 `null`；有歧义不给、不猜。它是**素材级**事实（同 stem 的两份素材可在不同目录），不进 stem 级的能力表；
+    候选文件的 `(路径, 大小, mtime_ns)` 在 `body_sig` 里。这些文件**不是**脚本：不进 `iter_scripts` / 注册表 / 探测 / 依赖准备。
 - **「这张图有多大」的事实层只有一处（ADR 0028，2026-08-29）**：
   `engine/originalspec.py`。它回答**文件自己说了什么**，一个字不掺画布信息
   （没有 x/y/w/h、没有画布缩放、没有页面裁切）——「按原图导出」的**决策**在

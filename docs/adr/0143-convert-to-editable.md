@@ -197,6 +197,24 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 `DropTarget::ForeignScript { folder, script, name, ignored }`（载荷 `kind: "foreign_script"`），分派顺序 `.py` > 外语脚本 > 文件夹 > 不支持，多个取第一个；页面收到后与 DOM 拖放、选择器走同一个入口
 （`openForeign`：开所在文件夹 → 出卡，不运行；语言按文件名后缀在页面侧判）。
 
+### 项目内入口（2026-10-26 用户裁决：素材卡 + 脚本库两处都加）
+
+主页拖入只覆盖“用户手里正好拿着脚本”；已打开的项目里，R 画的 `fig3_yield.png` 旁边就躺着 `fig3_yield.R`，素材库却只说“没有找到生成它的脚本”。两处补入口，**判据在后端、前端只翻译**：
+
+- **素材卡**：`engine/foreignsource.sibling_of`——素材**同目录**下与它同主干名（逐字，`scandir` 的真实文件名，不靠 `stat`）的 `.R` / `.r` / `.m`，且 `sourcelang.detect_file` 认得出语言
+  （≤ 1 MB、UTF-8、`.m` 的 Obj-C 一票否决，判不出就没有入口、不猜）。多个文件都认得出（`fig.R` + `fig.m`，或 Linux 上 `fig.R` + `fig.r`）有歧义，不给。
+  结果挂在 readiness 报告的该素材上，新字段 `foreign_source: {script, language} | null`（`CAPABILITY_FIELDS` 同源，`/api/panels` 的 `capability` 带同一个值；老前端忽略）。
+  **只在 `layout_only` + `no_source_candidate` 那一档给**——已连接、有 Python 候选、扫描没跑成的图说的是别的事；`status` / `reason_code` 一字不动。
+  报告缓存键（`body_sig`）含候选文件的 `(路径, 大小, mtime_ns)`，同名脚本出现 / 消失 / 改动后下一次读取就重算。
+  界面：选中这样的图，列表下方一句「这张图是 R 画的」/「这张图是 MATLAB 画的」+ 主按钮「生成可编辑版本」（`reasonText` 也换成这一句，所以角标 title、可达名、菜单第二行一致）；
+  按钮走与主页那张卡**同一个**转换入口（`foreignScriptStore.setOffer` + `convertStore.start(script, null, null, language)` → `POST /api/ai/convert`，`source_language` 取后端给的语言），不新起第二套流程或端点；这个脚本已有转换条目时只出卡、不重发。
+- **脚本库**：`GET /api/registry` 新字段 `foreign_scripts: [{script, language}]`（同一套 walk：`discover.iter_foreign_scripts` 与 `_iter_py` 是同一个实现，只换后缀；同一个 `detect_file` 判语言，判不出的不列）。
+  **独立于 `all_scripts`**：R / MATLAB 脚本不能“打开并运行”，不进运行环境探测、依赖准备、准备会话、runstate，也不进 readiness 的“可运行脚本”判据（`iter_scripts` / `iter_all_scripts` 仍只认 `.py`）。
+  界面单独一组「R / MATLAB 脚本」，每行文件名 + 语言（R / MATLAB），没有 ▶；点一行 = 出主页那张卡（主按钮「生成可编辑版本」）。
+- **不变**：不运行 R / MATLAB；不收 `.Rmd` / `.qmd` / `.mlx` / `.fig` / `.rds`；后缀区分大小写（`.M` 不算）；原脚本永不改写；不加遥测事件；错误码与既有文案 key 不动。
+  后缀名单现在在 `sourcelang.extension_hint`、`discover.FOREIGN_SUFFIXES`、`foreignScript.ts`、`drop_paths.rs` 各有一份，`tests/test_foreign_source.py` 比后端两份。
+- **已知边界**：项目 watcher（`project_watch`）仍只盯 `.py` 与素材，所以“只新增了一个 `.R` 文件”不会自己触发刷新；下一次素材 / 脚本变化、手动刷新或重开项目时读到（报告缓存键已含候选文件，读到就是新的）。把 `.R` 纳入 watcher 会牵动脚本 delta 的全套处理，不在这一版。
+
 ## 修订：Pillow 画图脚本的识别放宽 + 转写对照表（2026-10-23，维护者裁决「先照常跑，跑完没有 matplotlib 图就出」）
 
 `rasterhint` 原先要求「找得到本次运行写出的文件」，Pillow 画图脚本一旦输出路径动态拼、只 `im.show()` 不存盘、或文件还没出现，

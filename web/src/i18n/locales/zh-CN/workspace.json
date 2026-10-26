@@ -501,6 +501,10 @@
     "problemsBlocking_other": "问题 · {{count}} 项阻断（共 {{total}}）"
   },
   "readiness": {
+    "foreign": {
+      "matlab": "这张图是 MATLAB 画的",
+      "r": "这张图是 R 画的"
+    },
     "bannerSummary": "已找到 {{total}} 张图：{{editable}} 张可编辑，{{pending}} 张待连接，{{layoutOnly}} 张仅版面。",
     "openCenter": "查看接入状态",
     "reason": {
@@ -624,6 +628,11 @@
     "group_needsFix": "需要修复",
     "prepareAria": "准备并运行 {{script}}",
     "group_noFigure": "跑完没有图",
+    "group_foreign": "R / MATLAB 脚本",
+    "foreignLang": {
+      "matlab": "MATLAB",
+      "r": "R"
+    },
     "copyPath": "复制路径",
     "pathCopied": "已复制：{{path}}",
     "pathCopyFailed": "无法写入剪贴板。脚本在：{{path}}",

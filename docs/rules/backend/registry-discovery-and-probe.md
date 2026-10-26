@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「渲染引擎核心机制」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_registry.py`、`test_discover.py`、`test_discover_problems.py`、`test_script_probe.py`、`test_asset_library.py`、`test_project_scan.py`、`test_project_scan_zero_exec.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_registry.py`、`test_foreign_source.py`、`test_discover.py`、`test_discover_problems.py`、`test_script_probe.py`、`test_asset_library.py`、`test_project_scan.py`、`test_project_scan_zero_exec.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：冲突只报告不裁决；probe 失败不写注册表、取得会话后复查取消且只退役当次实例；导入即扫描只读零执行、看不全 = partial 不是「没有」
 
 <!-- agents-route
@@ -235,3 +235,5 @@ order: 130
   `runtimeasset.has_disk_original` 按 `artifacts` 判一张图有没有自己的原件，乙不再同时以磁盘素材与 runtime 素材双列（没有映射条目的图仍按文件名找）。
 - **已知未覆盖**：同一路径被两张图都写过时（见上）退回按文件名 stem，不论谁最后写。
 看护 `tests/test_artifact_stem_map.py`（注册表 / register 语义 / 假 worker 端点 / 真 worker 同 stem 夹具登记→解析）。
+- **`/api/registry` 的 `foreign_scripts`（ADR 0143 修订「项目内入口」）**：项目内认得出语言的 `.R` / `.r` / `.m`（`discover.iter_foreign_scripts` = `_iter_py` 换后缀，
+  同一套剪枝；`sourcelang.detect_file` 判语言，判不出的不列）。**独立于 `all_scripts`**：它们不进探测、依赖准备、可运行脚本判据，也不被静态起草 / 注册表认领。
