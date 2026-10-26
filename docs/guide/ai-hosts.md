@@ -4,6 +4,8 @@
 
 ## The full Codex integration
 
+Verification status: the embedded canvas inside a real Codex Desktop task was accepted once, on 2026-08-24 with engine and plugin 0.9.2 and Codex Desktop 26.818 ([the record](../acceptance/codex-desktop-canvas.md)). It has not been re-run for the current release, and handing a figure over to the desktop window is not that canvas. Hosts that do not load local plugins never show the tools at all.
+
 Run these in a terminal, one at a time:
 
 ```sh

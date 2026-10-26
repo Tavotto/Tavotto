@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero-window.png" width="100%"
-       alt="The Tavotto window with a three-panel figure open: the element tree on the left, the figure laid out on a page in millimetres in the middle, and the properties of the selected legend on the right.">
+       alt="The Tavotto desktop app window on macOS, showing a 150 × 125 mm three-panel journal layout with panel (a) selected and its position, size and 100% scale in the properties column.">
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/demo.gif" width="100%"
-       alt="Screen recording: a legend is dragged to a new position on the canvas, its font size is changed in the right panel, and the figure is exported as PDF.">
+       alt="A 12-second walkthrough: select a panel, drag it, set its width to 56 mm, then export.">
 </p>
 
 <p align="center">
@@ -50,7 +50,7 @@
 ### Desktop app in three steps
 
 1. **Install it.** Open the `.dmg` or run the `.exe` from the buttons above. The installer carries its own Python with numpy, matplotlib, pandas, scipy, seaborn and Pillow, so you do not install Python. The download is about 195 MB on macOS and 89 MB on Windows.
-2. **Open your figures.** Drag a matplotlib script (`.py`) onto the window, or open the folder that holds your figure scripts. A short tutorial runs on first launch.
+2. **Open your figures.** Drag a matplotlib script (`.py`) onto the window, or open the folder that holds your figure scripts. The home page also offers a guided example.
 3. **Edit and export.** Double-click a panel to edit inside it, arrange panels on the page, then press Export. The preflight runs before anything is written.
 
 On Windows, an unsigned installer makes SmartScreen show a prompt on first run: choose *More info → Run anyway*, or check the file against `SHA256SUMS.txt` on the release page first. More: [installation details](docs/guide/install-advanced.md).
@@ -82,25 +82,25 @@ Your browser opens at `http://127.0.0.1:5089`. It needs Python 3.10 or later; on
 
 Double-click a panel and Tavotto runs your script once and keeps the matplotlib `Figure` in memory. Pick the title, a tick, a curve, the legend or an arrow from the tree or on the canvas, then change its size, colour, dash pattern or position; dragging follows the cursor, and matplotlib runs once when you let go. [What can be edited](docs/guide/editing-reference.md).
 
-![Tavotto with a panel opened for editing: the element tree on the left, the panel with its title selected in the middle, and the title text, font and size on the right.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/canvas-edit.png)
+![Editing inside figure (a): the element tree on the left, the title selected, and its font, size and colour on the right.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/canvas-edit.png)
 
 ### Lay out several figures on one page
 
 Place panels on a page measured in millimetres at the size their script drew them, snap and align them, bind them into rows and grids, add (a)(b)(c) labels, and draw arrows, scale bars and zoom boxes on top.
 
-![The layout view: three source PDFs in the library on the left, the composed page in the middle with one panel selected, and its position, size in millimetres and scale on the right.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/layout.png)
+![Layout mode: figures (a), (b) and (c) arranged on a 150 × 125 mm page, with (a) selected and its X, Y, W, H in millimetres on the right.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/layout.png)
 
 ### Check and export for submission
 
-Export writes PDF with real vector text, plus PNG and TIFF at the DPI you choose. Before that, the figure is checked against a publication profile at its final physical size: text under the font floor, the wrong column width, low-dpi rasters. Blocking problems need your written confirmation, and the result goes into an optional proof report. [Formats, levels and profile](docs/guide/export-and-preflight.md).
+Export writes PDF with real vector text, plus PNG, TIFF and SVG (PNG and TIFF at 300 to 1200 ppi; EPS too when you export a single figure that has a script). Alongside, the figure is checked against a publication profile at its final physical size: text under the font floor, the wrong column width, low-dpi rasters. Findings are sorted into to fix, to review, not verifiable and suggestions. They never lock the Export button; anything still unresolved is recorded in a style-check report written with the files. [Formats, levels and profile](docs/guide/export-and-preflight.md).
 
-![The export dialog listing the preflight result: 6 blocking findings, 4 warnings and 3 suggestions, with the legend and tick labels at 7.33 pt flagged against the 8 pt floor, each with a Locate link, and the Export button disabled.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/preflight.png)
+![The export dialog: output as whole page or each figure, PDF and PNG at 600 ppi, and the pre-export checks against the default spec showing 1 to review and 3 not verifiable.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/preflight.png)
 
 ### Connect your own AI to change the figure
 
-The assistant panel edits the script for you ("move the legend to the top left, 7 pt"). Connect Codex or Claude with a subscription login, or a DeepSeek, Kimi, GLM, MiniMax, Alibaba Bailian, OpenAI or Anthropic API key, or any compatible endpoint. Your script is snapshotted first, you see the diff, and one click reverts it. This is the only path that touches your script, and you have to start it.
+The assistant panel edits the script for you ("move the legend to the top left, 7 pt"). Connect a ChatGPT (Codex) or Claude subscription, an API key from DeepSeek, Kimi, Zhipu GLM, MiniMax, Alibaba Bailian, OpenAI or Anthropic and others, or any compatible custom endpoint. Your script is snapshotted first, you see the diff, and one click reverts it. This is the only path that touches your script, and you have to start it.
 
-![The Connect AI dialog: a list of AI providers with their logos on the left, and the sign-in or API key choice for the selected provider on the right.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/connect-ai.png)
+![The Connect an AI dialog: DeepSeek, Kimi, Zhipu GLM, MiniMax and Alibaba Bailian, each with a Connect button, and More AI… below.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/connect-ai.png)
 
 ### Open a script in the environment it already runs in
 
@@ -110,9 +110,9 @@ Tavotto looks for the conda, venv or system Python your script was written for a
 
 ### Go back to any earlier layout
 
-The layout timeline keeps a node automatically after pauses in editing and on export, write-back, save, and project open or close. Name the ones you want to keep, compare a node with the current canvas, and restore it; the state before the restore is saved too.
+The layout timeline keeps a node automatically after you pause editing (at most one every two minutes) and on export, write-back, save, and project open or close. Name the ones you want to keep, compare a node with the current canvas, and restore it; the state before the restore is saved too.
 
-![The layout timeline in the right panel: a list of nodes grouped by day, a named node "before submission", and a preview of the selected node next to a short list of what differs from the canvas.](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/timeline.png)
+![The Timeline tab in the right column listing two named moments, "Three panels" and "Bottom row 52 mm", above "Project opened".](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/timeline.png)
 
 ## Why use it
 
@@ -128,11 +128,11 @@ A vector editor is the more powerful drawing tool. It does not know that the thi
 
 ## Common questions
 
-**Can I edit a PDF that matplotlib generated?** Yes, when the script that produced it is next to it: `tavotto open figures/Fig1.pdf` finds the script, re-runs it and lets you edit the figure itself, not a flattened picture. A PDF with no script can still be placed on a page, arranged, annotated and exported, but not edited inside.
+**Can I edit a PDF that matplotlib generated?** Yes, when the script that produced it is next to it: `tavotto open figures/Fig1.pdf` matches it to the script in the same project, re-runs it and lets you edit the figure itself, not a flattened picture. A PDF with no script in its project folder can still be placed on a page, arranged, annotated and exported, but not edited inside.
 
 **Does Tavotto change my script?** No. Edits are stored as overrides in the layout and replayed onto a fresh run. "Write back to the original file" is an explicit action, and it can be locked off per project. The optional AI assistant is the other way your script can change, and only when you ask.
 
-**Is my data uploaded?** No. Rendering, layout and export run on your machine. Tavotto makes two requests on its own: a daily update check, and anonymous usage statistics that are off until you opt in. If you connect an AI, your requests go to the provider you chose. See [Privacy](#privacy).
+**Is my data uploaded?** No. Rendering, layout and export run on your machine. Tavotto makes two requests on its own: a daily update check, and anonymous usage statistics that are off until you opt in. If you connect an AI, your request goes to that AI, through its command-line tool or straight to its API, and nowhere else. See [Privacy](#privacy).
 
 **Does it work with figures written by Claude, Codex or ChatGPT?** Yes. Any matplotlib script works, including seaborn and pandas plots. For agents, keep the script and its output in one folder and save the output as vector PDF; the plugin teaches the agent this shape.
 

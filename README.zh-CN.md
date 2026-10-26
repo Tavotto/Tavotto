@@ -1,6 +1,6 @@
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/hero-window.zh.png" width="100%"
-       alt="Tavotto 窗口里打开着一张三联图：左栏是元素树，中间是按毫米排好的版面，右栏是选中图例的属性。">
+       alt="macOS 上的 Tavotto 桌面版窗口，画布上是三幅图拼成的 150 × 125 毫米期刊版面，已选中图 (a)，右栏显示它的位置、尺寸和 100% 缩放。">
 </p>
 
 <p align="center">
@@ -23,7 +23,7 @@
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/demo.zh.gif" width="100%"
-       alt="屏幕录制：在画布上把图例拖到新位置，在右栏改它的字号，然后把图导出为 PDF。">
+       alt="12 秒演示：选中一幅图，拖动它，把宽度改成 56 毫米，然后导出。">
 </p>
 
 <p align="center">
@@ -50,7 +50,7 @@
 ### 桌面版，三步
 
 1. **安装。** 点上面的按钮下载，打开 `.dmg` 或运行 `.exe`。安装包自带 Python 和 numpy、matplotlib、pandas、scipy、seaborn、Pillow，不用自己装 Python。下载约 195 MB（macOS）/ 89 MB（Windows）。
-2. **打开你的图。** 把 matplotlib 脚本（`.py`）拖进窗口，或打开存放绘图脚本的文件夹。首次启动会有一段简短教程。
+2. **打开你的图。** 把 matplotlib 脚本（`.py`）拖进窗口，或打开存放绘图脚本的文件夹。主页上还有一个带引导的示例。
 3. **改图并导出。** 双击一张图进入图内编辑，在版面上排好，再点导出。写出任何文件之前都会先跑一遍投稿前检查。
 
 Windows 安装包未签名时，首次运行会弹 SmartScreen 提示：点「更多信息 → 仍要运行」，或先对照 Release 页的 `SHA256SUMS.txt` 核验下载。更多见[安装详解](docs/guide/install-advanced.zh-CN.md)。
@@ -82,25 +82,25 @@ tavotto
 
 双击一张图，Tavotto 把你的脚本跑一遍，并把那个 matplotlib `Figure` 留在内存里。从左边的树里选，或直接在画布上点标题、刻度、曲线、图例、箭头，改字号、颜色、线型或位置；拖动时图跟着光标走，松手时 matplotlib 才跑一次。[能改什么](docs/guide/editing-reference.zh-CN.md)。
 
-![Tavotto 正在图内编辑：左栏是元素树，中间是选中了标题的那张图，右栏是标题的内容、字体与字号。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/canvas-edit.zh.png)
+![在图 (a) 内部编辑：左边是元素树，选中了标题，右栏是它的字体、字号和颜色。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/canvas-edit.zh.png)
 
 ### 把多张图排进一页
 
 图按脚本画出来的尺寸放在以毫米计的版面上，可吸附、对齐，编成行、列或网格，一键加 (a)(b)(c) 标注，再在上面画箭头、比例尺和放大框。
 
-![排版视图：左栏素材库里是三张源 PDF，中间是排好的版面且选中了一张图，右栏是它的位置、毫米尺寸与缩放。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/layout.zh.png)
+![多图排版：三幅图排在 150 × 125 毫米的页面上，选中 (a)，右栏以毫米显示它的 X、Y、宽、高。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/layout.zh.png)
 
 ### 投稿前检查并导出
 
-导出 PDF 时文字保持为真正的矢量文字，另有按你设定的 DPI 导出的 PNG 与 TIFF。导出之前，图会按**最终物理尺寸**对照出版规范检查：字号低于下限、栏宽不对、位图分辨率不够。阻断项需要你书面确认，检查结果会写进可选的证明报告。[格式、等级与规范](docs/guide/export-and-preflight.zh-CN.md)。
+导出 PDF 时文字保持为真正的矢量文字，另可导出 PNG、TIFF 和 SVG（PNG、TIFF 可选 300 到 1200 ppi；单独导出一张有脚本的图时还有 EPS）。同时，图会按**最终物理尺寸**对照出版规范检查：字号低于下限、栏宽不对、位图分辨率不够。结果分为要改、留意、无法核验和建议四类，不会锁住导出按钮；导出时仍未处理的项会记进随成图写出的样式检查报告。[格式、等级与规范](docs/guide/export-and-preflight.zh-CN.md)。
 
-![导出对话框里的预检结果：6 项阻断、4 项警告、3 项建议，图例与刻度标签 7.33 pt 低于 8 pt 下限，每条带「定位」链接，导出按钮是禁用状态。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/preflight.zh.png)
+![导出弹窗：整页或逐图导出，PDF 与 PNG 600 ppi，按默认规范的导出前检查显示 1 项留意、3 项无法核验。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/preflight.zh.png)
 
 ### 连接你自己的 AI 来改图
 
-助手面板可以替你改脚本（「把图例移到左上角，7 pt」）。可以用订阅登录连接 Codex 或 Claude，也可以用 DeepSeek、Kimi、智谱 GLM、MiniMax、阿里云百炼、OpenAI、Anthropic 的 API Key，或任何兼容的自定义地址。改动前先给脚本存快照，你能看到 diff，一键回滚。这是**唯一**会碰到你脚本的路径，而且要由你发起。
+助手面板可以替你改脚本（「把图例移到左上角，7 pt」）。可以用 ChatGPT（Codex）或 Claude 的订阅登录，也可以用 DeepSeek、Kimi、智谱 GLM、MiniMax、阿里云百炼、OpenAI、Anthropic 等的 API Key，或任何兼容的自定义地址。改动前先给脚本存快照，你能看到 diff，一键回滚。这是**唯一**会碰到你脚本的路径，而且要由你发起。
 
-![「连接 AI」对话框：左边是带标志的各家 AI 列表，右边是所选厂商的登录或 API Key 方式。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/connect-ai.zh.png)
+![「连接 AI」弹窗：DeepSeek、Kimi、智谱 GLM、MiniMax、百炼，每家一个「连接」按钮，下方是「更多 AI…」。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/connect-ai.zh.png)
 
 ### 在脚本原本能跑的环境里打开
 
@@ -110,9 +110,9 @@ Tavotto 会找到你写这个脚本时用的 conda、venv 或系统 Python，并
 
 ### 回到任何一个早先的版面
 
-排版时间线会在编辑停顿后、以及导出、写回、保存、打开和离开项目时自动留一个节点。想留住的可以起名，可以和当前画布对比，再恢复；恢复之前的状态也会先存下来。
+排版时间线会在你停下编辑后（最多每两分钟一个）、以及导出、写回、保存、打开和离开项目时自动留一个节点。想留住的可以起名，可以和当前画布对比，再恢复；恢复之前的状态也会先存下来。
 
-![右栏里的排版时间线：按天分组的节点列表，其中一个命名为「投稿前」的节点，选中节点的预览，以及它与当前画布差异的简短清单。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/timeline.zh.png)
+![右栏的时间线页签，列出两个命名时刻「三幅图」「下排 52 mm」，下面是「打开项目」。](https://raw.githubusercontent.com/Tavotto/Tavotto/main/assets/readme/timeline.zh.png)
 
 ## 为什么用它
 
@@ -128,11 +128,11 @@ Tavotto 会找到你写这个脚本时用的 conda、venv 或系统 Python，并
 
 ## 常见问题
 
-**能直接改 matplotlib 生成的 PDF 吗？** 能，前提是画出它的脚本就在旁边：`tavotto open figures/Fig1.pdf` 会找到脚本、重新运行，让你改图本身，而不是一张压平的图片。没有脚本的 PDF 仍然可以放进版面、排版、加标注和导出，但不能在图内编辑。
+**能直接改 matplotlib 生成的 PDF 吗？** 能，前提是画出它的脚本就在旁边：`tavotto open figures/Fig1.pdf` 会对应到同一项目里的脚本、重新运行，让你改图本身，而不是一张压平的图片。项目里找不到脚本的 PDF 仍然可以放进版面、排版、加标注和导出，但不能在图内编辑。
 
 **会改我的脚本吗？** 不会。改动以 override 的形式存在排版里，回放到重新跑出的图上。「写回原文件」是一个明确的操作，还可以按项目锁死。可选的 AI 助手是另一个会改脚本的入口，且只在你主动发起时才改。
 
-**数据会上传吗？** 不会。渲染、排版和导出都在你的电脑上完成。Tavotto 自己只发两类请求：每天一次的更新检查，以及默认关闭、由你同意才开启的匿名使用统计。你连接了 AI 时，请求会发给你选的那家服务商。见[隐私](#隐私)。
+**数据会上传吗？** 不会。渲染、排版和导出都在你的电脑上完成。Tavotto 自己只发两类请求：每天一次的更新检查，以及默认关闭、由你同意才开启的匿名使用统计。你连接了 AI 时，请求只发给那个 AI，经它的命令行工具或直接发到它的 API。见[隐私](#隐私)。
 
 **Claude、Codex、ChatGPT 写的绘图脚本能用吗？** 能。任何 matplotlib 脚本都行，包括 seaborn、pandas 画的图。让智能体来画时，脚本和产物放在同一个文件夹、产物存成矢量 PDF；插件会教智能体这个约定。
 
