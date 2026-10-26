@@ -2564,11 +2564,6 @@ def test_ondisk_key_is_wiped_and_any_residual_fails_the_run(tmp_path, monkeypatc
     res = A.wipe_ondisk_key(run_dir, env, key)
     assert res["wiped"] is True and res["checked_app_dirs"] == ["ZCode"]
     assert A._files_containing([run_dir, appdata], key.encode()) == ([], [])
-    # 删不掉的残留（模拟：wipe 之后又写回）→ wiped=False
-    monkeypatch.setattr(A, "_scrub", lambda folder, needle: None)
-    (run_dir / "evidence" / "again.txt").write_text(key, encoding="utf-8")
-    res = A.wipe_ondisk_key(run_dir, env, key)
-    assert res["wiped"] is False and res["residual"] == [str(Path("evidence") / "again.txt")]
 
 
 @pytest.mark.skipif(
@@ -2659,3 +2654,27 @@ def test_default_and_ondisk_keys_must_differ_in_either_order(tmp_path, monkeypat
     (tmp_path / "model.json").write_text(json.dumps({"api_key": same}))
     (tmp_path / "model.json").chmod(0o600)
     assert W.load_model_secret("zcode-native") is None
+
+
+def test_wipe_keeps_going_when_one_run_file_cannot_be_rewritten(tmp_path, monkeypatch):
+    """Codex #1439：run 目录里有个文件写不回去时，应用数据目录里的副本照样要删，结果如实 wiped=False。"""
+    key = "sk-" + "R" * 32
+    run_dir = tmp_path / "run"
+    (run_dir / "evidence").mkdir(parents=True)
+    stuck = run_dir / "evidence" / "stuck.log"
+    stuck.write_text(key, encoding="utf-8")
+    appdata = tmp_path / "appdata"
+    (appdata / "ZCode").mkdir(parents=True)
+    copy = appdata / "ZCode" / "state.json"
+    copy.write_text(key, encoding="utf-8")
+    real = Path.write_bytes
+
+    def fake(self, data):
+        if self == stuck:
+            raise PermissionError("read-only")
+        return real(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", fake)
+    res = A.wipe_ondisk_key(run_dir, {"APPDATA": str(appdata)}, key)
+    assert not copy.exists()  # 应用数据里的副本删掉了
+    assert res["wiped"] is False and res["residual"] == [str(Path("evidence") / "stuck.log")]

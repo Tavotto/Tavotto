@@ -3550,11 +3550,15 @@ def wipe_ondisk_key(run_dir: Path, env: dict, key: str) -> dict:
     pc = zdata / ".zcode" / "v2" / "provider_config.json"
     with contextlib.suppress(OSError):
         pc.unlink()
-    _scrub(run_dir, key)
+    # 先删应用数据目录里的副本，再逐个文件抹 run 目录：任何一个文件读写失败都不中断收尾（Codex #1439），
+    # 失败的文件留给下面的核对计入 residual / unreadable
     app_dirs = _zcode_app_dirs(env)
     for f in _files_containing(app_dirs, needle)[0]:
         with contextlib.suppress(OSError):
             f.unlink()
+    for f in _files_containing([run_dir], needle)[0]:
+        with contextlib.suppress(OSError):
+            f.write_bytes(f.read_bytes().replace(needle, b"<redacted>"))
     left, unreadable = _files_containing([run_dir, *app_dirs], needle)
 
     def name(p: Path) -> str:
