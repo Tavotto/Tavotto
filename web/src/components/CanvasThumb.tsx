@@ -167,7 +167,7 @@ export function CanvasThumb({
                   key={key}
                   panel={edited}
                   bucket={bucket}
-                  mtime={byId[o.fileId]?.mtime ?? 0}
+                  rev={o.fileKind === 'runtime' ? (nonce[o.fileId] ?? 0) : (byId[o.fileId]?.mtime ?? 0)}
                   fallbackHref={href}
                   x={o.x}
                   y={o.y}
@@ -234,20 +234,21 @@ export function CanvasThumb({
 function EditedThumbImage({
   panel,
   bucket,
-  mtime,
+  rev,
   fallbackHref,
   ...box
 }: {
   panel: PanelObject
   bucket: number
-  mtime: number
+  /** 缓存版本号：runtime 面板没有磁盘 mtime，取 previewNonce（重跑成功 bump），其余取素材 mtime——与 exportFigures 的 stamp 同一口径 */
+  rev: number
   fallbackHref: string
   x: number
   y: number
   width: number
   height: number
 }) {
-  const variant = useVariantPng(panel.fileId, panel.overrides, bucket, true, mtime, adoptionGuardOf(panel))
+  const variant = useVariantPng(panel.fileId, panel.overrides, bucket, true, rev, adoptionGuardOf(panel))
   return <ThumbImage fileId={panel.fileId} href={variant.url ?? fallbackHref} {...box} />
 }
 

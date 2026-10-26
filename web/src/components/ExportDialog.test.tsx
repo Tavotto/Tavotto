@@ -1800,6 +1800,45 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     // 没改过的那张照旧是素材预览图（不为它白跑引擎）
     expect(hrefs('Fig2.pdf').every((h) => h?.includes('/api/render?id=Fig2.pdf'))).toBe(true)
   })
+
+  it('runtime 面板带图内修改：重跑脚本（previewNonce 变）后整版预览按新版本重新出图，不停在上一次运行的图', async () => {
+    clearVariantPngCache()
+    vi.mocked(enginePreviewPng).mockClear()
+    URL.createObjectURL = vi.fn(() => 'blob:edited-rt')
+    URL.revokeObjectURL = vi.fn()
+    const RT = 'runtime:fig.py#F'
+    const edited: PanelObject = {
+      ...panel,
+      fileId: RT,
+      fileKind: 'runtime',
+      overrides: [{ gid: 'legend_0', prop: 'fontsize', value: 8.8 }],
+    } as PanelObject
+    const plain: PanelObject = { ...panel, id: 'p2', fileId: 'Fig2.pdf', x: 80 }
+    await stage({
+      panels: [edited, plain],
+      renders: { [RT]: manifestWithTicks(1, 9), 'Fig2.pdf': manifestWithTicks(1, 9) },
+      page: { w: 160, h: 60 },
+    })
+    useRuntimeAssetStore.setState({ previewNonce: { [RT]: 1 } } as never)
+    await mountDialogs()
+    await openDialog()
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 30))
+    })
+    const before = vi.mocked(enginePreviewPng).mock.calls.length
+    expect(before).toBeGreaterThan(0)
+    await act(async () => {
+      useRuntimeAssetStore.setState({ previewNonce: { [RT]: 2 } } as never)
+    })
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    // 页签缩略图 + 大预览各自按新版本重出一次（至少两处）；版本号不进缓存键时只剩单图预览那一处
+    expect(vi.mocked(enginePreviewPng).mock.calls.length - before).toBeGreaterThanOrEqual(2)
+  })
 })
 
 describe('P02 · 检查的是哪份产物（对象头不再复述文件名清单）', () => {
