@@ -84,11 +84,15 @@ beforeEach(async () => {
     const url = String(input)
     const body = JSON.parse(String(init?.body ?? '{}'))
     if (url.includes('/api/export')) exportCalls.push({ url, body })
-    const result = url.includes('/api/export/validate')
-      ? { ok: true, artifact_sources: { 'plot.png': {
-          render_policy: 'selected-figsize-v1', bytes_sha256: guard.bytesSha256,
-          size_bytes: guard.sizeBytes, origin: 'static', kind: 'png', source_id: '/figs/plot.png',
-        } } }
+    const artifactSource = {
+      render_policy: 'selected-figsize-v1', bytes_sha256: guard.bytesSha256,
+      size_bytes: guard.sizeBytes, origin: 'static', kind: 'png', source_id: '/figs/plot.png',
+    }
+    // 导出预览会按 overrides 出图（`useVariantPng`）：回真实后端的帧形状，带上同一份来源事实
+    const result = url.includes('/api/engine/preview_png')
+      ? { png: '', manifest: { elements: [] }, artifact_source: artifactSource }
+      : url.includes('/api/export/validate')
+      ? { ok: true, artifact_sources: { 'plot.png': artifactSource } }
       : url.includes('/api/export') ? doneJob() : { panels: [], styles: [], specs: [] }
     return new Response(JSON.stringify(result), {
       status: 200, headers: { 'Content-Type': 'application/json' },

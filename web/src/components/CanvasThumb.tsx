@@ -19,12 +19,15 @@
  * 回答「那一版长什么样」——后者是版本详情里的 `LayoutSnapshot`，它会在出不来
  * 时明确标「近似预览」。
  */
+import { useVariantPng } from '@/hooks/useVariantPng'
 import { renderUrl, runtimePreviewUrl } from '@/lib/api'
+import { adoptionGuardOf } from '@/lib/artifactValidation'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { cn } from '@/lib/utils'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { bucketFor } from '@/lib/previewBuckets'
+import type { PanelObject } from '@/types/document'
 import type { ThumbObject, ThumbPage } from '@/types/thumb'
 
 /**
@@ -52,6 +55,7 @@ export function CanvasThumb({
   transparent = false,
   flush = false,
   pxWidth,
+  editedPanel,
 }: {
   page: ThumbPage
   objects: readonly ThumbObject[]
@@ -72,6 +76,12 @@ export function CanvasThumb({
    * （放大预览时更清晰）；不给就是缩略图档 200。
    */
   pxWidth?: number
+  /**
+   * 导出预览用：这张面板要画「带图内修改」的那一版时返回它的文档对象（按它的 overrides 走
+   * `useVariantPng` 出图，出来之前 / 出不来时挂磁盘图）；返回 null 或不给 = 磁盘素材。
+   * 画布列表 / 版本列表不给——它们回答「哪一版」，一行缩略图付不起每张一次引擎往返。
+   */
+  editedPanel?: (o: ThumbObject) => PanelObject | null
 }) {
   const { w, h } = page
   const byId = useAssetStore((s) => s.byId)
@@ -145,10 +155,27 @@ export function CanvasThumb({
         .map((o, i) => {
           const key = o.id ?? `i${i}`
           if (o.type === 'panel' && o.fileId) {
+            const bucket = pxWidth && w > 0 ? bucketFor((o.w / w) * pxWidth) : 200
             const href =
               o.fileKind === 'runtime'
                 ? runtimePreviewUrl(o.fileId, nonce[o.fileId])
-                : renderUrl(o.fileId, pxWidth && w > 0 ? bucketFor((o.w / w) * pxWidth) : 200, byId[o.fileId]?.mtime)
+                : renderUrl(o.fileId, bucket, byId[o.fileId]?.mtime)
+            const edited = editedPanel?.(o)
+            if (edited) {
+              return (
+                <EditedThumbImage
+                  key={key}
+                  panel={edited}
+                  bucket={bucket}
+                  mtime={byId[o.fileId]?.mtime ?? 0}
+                  fallbackHref={href}
+                  x={o.x}
+                  y={o.y}
+                  width={o.w}
+                  height={o.h}
+                />
+              )
+            }
             return (
               <ThumbImage
                 key={key}
@@ -201,6 +228,27 @@ export function CanvasThumb({
       </g>
     </svg>
   )
+}
+
+/** 带图内修改的一张面板：按它自己的 overrides 出图（与版本预览同一条 `useVariantPng`），没出来之前挂磁盘图 */
+function EditedThumbImage({
+  panel,
+  bucket,
+  mtime,
+  fallbackHref,
+  ...box
+}: {
+  panel: PanelObject
+  bucket: number
+  mtime: number
+  fallbackHref: string
+  x: number
+  y: number
+  width: number
+  height: number
+}) {
+  const variant = useVariantPng(panel.fileId, panel.overrides, bucket, true, mtime, adoptionGuardOf(panel))
+  return <ThumbImage fileId={panel.fileId} href={variant.url ?? fallbackHref} {...box} />
 }
 
 /** 缩略图里的一张面板图：`/api/render` 的一次失败按 `lib/imgRetry` 有界重试（候选后端的背压） */

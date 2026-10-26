@@ -74,7 +74,7 @@ import {
   readExportDefaults,
   writeExportDefaults,
 } from "@/lib/exportDefaults";
-import { artifactValidationIssue } from "@/lib/artifactValidation";
+import { adoptionGuardOf, artifactValidationIssue } from "@/lib/artifactValidation";
 import { inspectionState } from "@/lib/artifactInspection";
 import { RetryImg } from "@/components/ui/RetryImg";
 import {
@@ -127,6 +127,7 @@ import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
+import { useVariantPng } from "@/hooks/useVariantPng";
 import { isJustBakedBaseline } from "@/store/actions";
 import { useAssetStore } from "@/store/assetStore";
 import { usePanelRender, useRenderStore } from "@/store/renderStore";
@@ -151,6 +152,7 @@ import { useDocumentStore } from "@/store/documentStore";
 import { dialogCovered, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
 import { isRuntimePanel, type CanvasObject, type FigureDocument, type PanelObject } from "@/types/document";
+import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import {
   getValidationSummary,
@@ -1948,18 +1950,41 @@ function useFigureThumbSource(
   const tracked = useRenderStore((s) => !!s.tracked[figure.figureId]);
   const panel = figure.panel;
   const needsEngine =
-    !!panel &&
-    ((panel.overrides.length > 0 && !isJustBakedBaseline(panel)) ||
-      tracked ||
-      figure.kind === "runtime");
+    !!panel && (showsEdits(panel) || tracked || figure.kind === "runtime");
   const svg = needsEngine ? (render?.svg ?? null) : null;
   // 同一份字符串复用同一个 `{__html}`：缩略格随对话框重渲时不必把整张 SVG 重新解析一遍
   const svgMarkup = useHtmlMarkup(svg);
-  const src = figureThumbSrc(figure, bucket);
+  // 引擎 SVG 不在手边（位图档没有矢量 payload、或被字节预算清掉了）：按 overrides 现出一张位图，
+  // 不拿磁盘原图冒充改过的那张（整版预览 `CanvasThumb` 的 `editedPanel` 同一条 `useVariantPng`）
+  const variant = useVariantPng(
+    panel?.fileId ?? figure.figureId,
+    panel?.overrides ?? NO_OVERRIDES,
+    bucket,
+    !!panel && !svg && showsEdits(panel),
+    figure.stamp ?? 0,
+    panel ? adoptionGuardOf(panel) : undefined,
+  );
+  const src = variant.url ?? figureThumbSrc(figure, bucket);
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;
   return { svgMarkup: svg ? svgMarkup : undefined, src, ratio };
+}
+
+const NO_OVERRIDES: PanelObject["overrides"] = [];
+
+/**
+ * 预览要不要画「带图内修改」的那一版：有自己的 overrides、且不只是磁盘上已经烙好的基线。
+ * 单图预览（`useFigureThumbSource`）与整版预览（`CanvasThumb` 的 `editedPanel`）共用这一份。
+ */
+function showsEdits(panel: PanelObject): boolean {
+  return panel.overrides.length > 0 && !isJustBakedBaseline(panel);
+}
+
+/** 整版预览里的一个对象若是带图内修改的面板，返回它（喂给 `CanvasThumb` 的 `editedPanel`） */
+function editedPanelOf(o: ThumbObject): PanelObject | null {
+  const obj = o as CanvasObject;
+  return obj.type === "panel" && showsEdits(obj) ? obj : null;
 }
 
 /**
@@ -2084,7 +2109,12 @@ function ExportPreviewPane({
               flagged={pageFlagged}
               onShow={onShow}
             >
-              <CanvasThumb page={doc.page} objects={doc.objects} className="h-full w-full" />
+              <CanvasThumb
+                page={doc.page}
+                objects={doc.objects}
+                className="h-full w-full"
+                editedPanel={editedPanelOf}
+              />
             </PreviewTab>
             {figures.map((f) => (
               <PreviewTab
@@ -2111,6 +2141,7 @@ function ExportPreviewPane({
                   transparent={transparent}
                   flush
                   pxWidth={px || undefined}
+                  editedPanel={editedPanelOf}
                 />
               )}
             </ExportZoomStage>
