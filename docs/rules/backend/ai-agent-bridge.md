@@ -346,6 +346,9 @@ order: 240
 不跟随链接、不读敏感路径或环境；文本视图经同一 `readscope` 脱敏并标注。内置 `list_dir(path)` 可浏览子目录，写仍只有一个候选；check/留存/续跑/采用均核
 起跑资源与快照摘要。生成代码使用原项目资源位置；看护 `tests/test_convert_context.py`（含读时换链接、资源漂移与删缓存后重开）。
 
+转换运行检查与采用后重开共用发现逻辑的首个入口；主入口失败或不出图，不能改跑辅助函数取得部分图后放行。
+真实错误交回既有有界修正流程。看护 `tests/test_ai_convert_app.py`（真 worker 主入口失败、辅助函数可出图、修正后采用）。
+
 **R / MATLAB 来源（ADR 0143 修订，2026-10-23）**：`POST /api/ai/convert` 多一个可选 `source_language`（`python` 缺省 | `r` | `matlab`）。
 r / matlab 时 `library` 必须缺省，后端用 `sourcelang.detect`（纯标准库；`.R` / `.r` / `.m` 纯文本、≤ 1 MB、UTF-8；`.m` 带 Objective-C 特征或
 MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `convert_source_language_mismatch`。**不运行 R / MATLAB**：对照只用请求给的 `path` 或脚本旁

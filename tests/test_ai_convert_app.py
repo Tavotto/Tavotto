@@ -159,6 +159,7 @@ def test_builtin_correction_continues_existing_bytes_without_resetting_checks(
     broken = GOOD.replace(
         "ax.plot([0, 1, 2], [0, 1, 4])", "raise RuntimeError('fixture correction needed')"
     )
+    broken += "\ndef render():\n    plt.figure()\n    plt.plot([0, 1])\n"
     plans = []
     for index, code in enumerate((broken, GOOD)):
         turns = [{"tool_calls": [{"name": "create_file", "args": {"content": code}}]}]
@@ -430,6 +431,37 @@ def test_a_script_that_captures_no_figure_fails_with_a_reason(project):
     assert sess["task"]["outcome"] == "failed"
     assert any(u["reason_code"] == "no_matplotlib_figure" for u in sess["task"]["unmet"])
     assert client.get(f"/api/ai/convert/{sid}").status_code in (404, 409)
+    assert sorted(p.name for p in figs.iterdir() if p.is_file()) == state["initial"]
+
+
+@pytest.mark.parametrize(
+    ("main_body", "reason"),
+    [
+        ("fig, ax = plt.subplots(); print(ax.y0)", "run_failed"),
+        ("pass", "no_matplotlib_figure"),
+    ],
+)
+def test_conversion_cannot_replace_failed_primary_entry_with_a_working_helper(
+    project, main_body, reason
+):
+    """Actual worker: a partial helper cannot certify the script later reopened at main."""
+    _m, client, figs, state = project
+    code = (
+        "import matplotlib.pyplot as plt\n"
+        "def render():\n"
+        "    fig, ax = plt.subplots()\n"
+        "    ax.plot([0, 1])\n"
+        "    fig.savefig('helper.png')\n"
+        f"def main():\n    {main_body}\n"
+        "if __name__ == '__main__':\n    main()\n"
+    )
+    state["code"] = f"(d / 'fig_matplotlib.py').write_text({code!r}, encoding='utf-8')"
+    sid = _start(client).get_json()["session"]
+    session = _wait_final(client, sid)
+    assert session["task"]["outcome"] == "failed", session["task"]
+    assert any(u["reason_code"] == reason for u in session["task"]["unmet"])
+    assert client.post(f"/api/ai/convert/{sid}/adopt").status_code != 200
+    assert (figs / "fig.py").read_bytes() == ORIGINAL.encode()
     assert sorted(p.name for p in figs.iterdir() if p.is_file()) == state["initial"]
 
 

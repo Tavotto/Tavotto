@@ -12489,7 +12489,11 @@ def _convert_runner(ctx: "ProjectCtx", source_script: str):
         except Exception:  # noqa: BLE001 —— 配置读不出来就按不带参数跑
             run = None
         run_kw = {"run": run} if run is not None else {}
-        result = engine_probe.probe(figures_dir, rel, **run_kw, **roots_kw)
+        # Validate the primary entry used by discovery/reopening. Generic probing
+        # may try a helper after main fails; a helper's figure cannot certify the
+        # complete converted script or hide its original execution error.
+        entries = engine_probe.entry_candidates(figures_dir, rel)[:1]
+        result = engine_probe.probe(figures_dir, rel, entries=entries, **run_kw, **roots_kw)
         try:
             if result.get("error"):
                 err = result["error"]
