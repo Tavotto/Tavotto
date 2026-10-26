@@ -2765,3 +2765,55 @@ def test_native_probe_link_shape_drops_one_time_query_parameters():
         == "https://www.codebuddy.cn/login"
     )
     assert NP.url_shape("not a url") == ""
+
+
+# --- WorkBuddy 原生：扫码登录、登录态不留 ----------------------------------------
+def test_workbuddy_login_link_must_be_https_on_the_registered_host():
+    ok = "https://www.workbuddy.cn/login/?platform=workbuddy&state=x"
+    assert D.login_link_ok(ok, A.WORKBUDDY_LOGIN_HOST)
+    for bad in (
+        "http://www.workbuddy.cn/login",
+        "https://workbuddy.cn.evil.com/login",
+        "https://evil.com/?u=workbuddy.cn",
+        "file:///C:/x",
+        "",
+    ):
+        assert not D.login_link_ok(bad, A.WORKBUDDY_LOGIN_HOST), bad
+    assert not D.login_link_ok(ok, "")
+
+
+def test_workbuddy_home_is_isolated_in_the_run_and_its_mcp_config_has_no_credentials(tmp_path):
+    home = tmp_path / "run" / "work" / "wbhome"
+    env = A._home_env(home)
+    assert all(Path(v).is_relative_to(home) for v in env.values())
+    f = A.workbuddy_isolated_config(home, ["py", "rec.py", "--", "py", "server.py"], {"X": "1"})
+    assert f == home / ".workbuddy" / "mcp.json"
+    cfg = json.loads(f.read_text(encoding="utf-8"))
+    assert cfg["mcpServers"]["tavotto"]["command"] == "py"
+    assert not re.search(r"token|secret|api[_-]?key|sk-|password", f.read_text(), re.I)
+    assert "workbuddy-native" in A.DESKTOP_LIVE_LOGIN_MODES and set(
+        A.DESKTOP_LIVE_LOGIN_MODES
+    ) <= set(A.DESKTOP_LIVE_MODES)
+
+
+def test_login_state_wipe_removes_the_run_home_and_edge_profile(tmp_path, monkeypatch):
+    run_dir = tmp_path / "run"
+    for d in ("wbhome/AppData/Roaming/WorkBuddy", "edge-login/Default"):
+        (run_dir / "work" / d).mkdir(parents=True)
+        (run_dir / "work" / d / "Cookies").write_text("session")
+    monkeypatch.setattr(A, "_delete_credentials", lambda f: [])
+    res = A.wipe_login_state(run_dir)
+    assert res["wiped"] is True
+    assert (
+        not (run_dir / "work" / "wbhome").exists()
+        and not (run_dir / "work" / "edge-login").exists()
+    )
+    # 凭据管理器第二遍还删得到 = 没删干净
+    calls = {"n": 0}
+
+    def creds(f):
+        calls["n"] += 1
+        return ["WorkBuddy/session"]
+
+    monkeypatch.setattr(A, "_delete_credentials", creds)
+    assert A.wipe_login_state(run_dir)["wiped"] is False

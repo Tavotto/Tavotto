@@ -460,6 +460,146 @@ def _url_shape(url: str) -> str:
     return f"{scheme}:{rest.split('?', 1)[0].rsplit('/', 1)[-1][:40]}"
 
 
+def clipboard_text() -> str:
+    """交互会话的剪贴板文字（CF_UNICODETEXT）；没有就空串。只读。"""
+    import ctypes
+    from ctypes import wintypes
+
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    u32.GetClipboardData.restype = wintypes.HANDLE
+    k32.GlobalLock.restype = ctypes.c_void_p
+    k32.GlobalLock.argtypes = [wintypes.HANDLE]
+    k32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+    if not u32.OpenClipboard(None):
+        return ""
+    try:
+        h = u32.GetClipboardData(13)
+        if not h:
+            return ""
+        ptr = k32.GlobalLock(h)
+        try:
+            return ctypes.wstring_at(ptr) if ptr else ""
+        finally:
+            k32.GlobalUnlock(h)
+    finally:
+        u32.CloseClipboard()
+
+
+EDGE_EXE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+#: 宿主自己的登录文案还在 = 没登录
+LOGGED_OUT_RE = re.compile(r"\bSign In\b|Signing In")
+PEEK_CLICK_JS = (
+    "(() => {const want = %s;"
+    "for (const e of document.querySelectorAll('body *')) {"
+    " if (e.children.length) continue; if ((e.textContent || '').trim() !== want || e.offsetParent === null) continue;"
+    " (e.closest('button,[role=button],a,[onclick],[tabindex]') || e).click(); return true; }"
+    "return false;})()"
+)
+
+
+def login_link_ok(link: str, login_host: str) -> bool:
+    """剪贴板里的登录链接只认 https + 登记的主机（或其子域）：别的东西不往 Edge 里开。"""
+    from urllib.parse import urlsplit
+
+    u = urlsplit(link.strip())
+    host = u.hostname or ""
+    return (
+        bool(login_host)
+        and u.scheme == "https"
+        and (host == login_host or host.endswith("." + login_host))
+    )
+
+
+def qr_login(cdp: CDP, page: str, ns: argparse.Namespace, out_dir: Path, prog) -> bool:
+    """扫码登录（WorkBuddy；用户 2026-10-27：专用账户、每次 run 扫一次、跑完清掉）。
+    点宿主的「Sign In」→「Copy Login Link」，从剪贴板拿登录链接（主机必须是登记的那个），用**本次 run 自己的** Edge
+    （--user-data-dir 在 run 目录、调试端口只绑回环）打开它，每 15 s 把登录页截成 `login-qr.png` 供 Mac 端
+    `winlab shot` 取走给用户扫；宿主页面不再有登录文案即算登录完成。不输入任何账户信息。超时返回 False。"""
+    from urllib.parse import urlsplit
+
+    # 先等首屏定下来：WorkBuddy 首启先「Preparing Environment」，这时还看不到 Sign In，不能当成已登录
+    settle_end = time.monotonic() + 300
+    while time.monotonic() < settle_end:
+        text = str(cdp.evaluate(page, TEXT_JS) or "")
+        if LOGGED_OUT_RE.search(text) or find_input_session(cdp):
+            break
+        time.sleep(3)
+    else:
+        prog.step("login_screen_never_settled")
+        return False
+    if not LOGGED_OUT_RE.search(text):
+        prog.step("logged_in", already=True)  # 第二轮：同一个 run 的「家」里已有登录态
+        return True
+    cdp.evaluate(page, PEEK_CLICK_JS % json.dumps(ns.login_button))
+    time.sleep(4)
+    cdp.evaluate(page, PEEK_CLICK_JS % json.dumps(ns.login_link_button))
+    time.sleep(1)
+    link = clipboard_text().strip()
+    host = urlsplit(link).hostname or ""
+    if not login_link_ok(link, ns.login_host):
+        prog.step("login_link", ok=False, host=host)
+        return False
+    prog.step("login_link", ok=True, host=host)
+    port = free_port()
+    edge_dir = Path(ns.edge_profile)
+    edge_dir.mkdir(parents=True, exist_ok=True)
+    with open(out_dir / "login-edge.log", "wb") as log:
+        edge = A.ProcessTree(
+            [
+                EDGE_EXE,
+                f"--remote-debugging-port={port}",
+                f"--user-data-dir={edge_dir}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--new-window",
+                link,
+            ],
+            cwd=edge_dir,
+            env=dict(os.environ),
+            stdout=log,
+            stderr=log,
+        )
+        try:
+            ecdp = connect_cdp(port, 60)
+            if ecdp is None:
+                prog.step("login_browser", ok=False)
+                return False
+            esid = None
+            end = time.monotonic() + ns.login_timeout
+            next_shot = 0.0
+            while time.monotonic() < end:
+                if esid is None:
+                    for t in ecdp.call("Target.getTargets").get("targetInfos", []):
+                        if t.get("type") == "page" and (
+                            urlsplit(t.get("url", "")).hostname or ""
+                        ).endswith(ns.login_host):
+                            esid = ecdp.call(
+                                "Target.attachToTarget",
+                                {"targetId": t["targetId"], "flatten": True},
+                            )["sessionId"]
+                            break
+                if esid and time.monotonic() >= next_shot:
+                    with contextlib.suppress(CDPError, TimeoutError, OSError):
+                        shot = ecdp.call(
+                            "Page.captureScreenshot", {"format": "png"}, session=esid, timeout=20
+                        )
+                        save_png(shot["data"], out_dir / "login-qr.png")
+                        prog.step("awaiting_login", screenshot="login-qr.png")
+                    next_shot = time.monotonic() + 15
+                text = str(cdp.evaluate(page, TEXT_JS) or "")
+                if text and not LOGGED_OUT_RE.search(text):
+                    prog.step("logged_in")
+                    return True
+                time.sleep(3)
+            prog.step("login_timeout")
+            return False
+        finally:
+            with contextlib.suppress(Exception):
+                ecdp.ws.close()  # type: ignore[possibly-undefined]
+            edge.close()
+
+
 def native_ready(cdp: CDP, page: str, timeout: float, onboarding: list, prog) -> str | None:
     """原生 Agent（ZCode）：主页面就是聊天界面。首启引导（「Use API key」之后的「Skip for now」、问卷的「Skip」）
     只点 NATIVE_ONBOARDING_BUTTONS 白名单，直到出现可见的输入框。返回输入框所在会话。"""
@@ -717,6 +857,12 @@ def drive(ns: argparse.Namespace) -> dict:
                 session=workbench,
             )
             cdp.pump(5.0)  # 给扩展宿主一点激活时间，webview 目标陆续出现
+            if ns.kind == "native" and ns.login == "qr":
+                if not qr_login(cdp, workbench, ns, out_dir, prog):
+                    result["error"] = "login not completed"
+                    result["login_required"] = True
+                    return result
+                result["logged_in"] = True
             if ns.kind == "native":
                 sid, via = (
                     native_ready(cdp, workbench, ns.panel_timeout, onboarding, prog),
@@ -836,6 +982,13 @@ def main(argv: list[str]) -> int:
     p.add_argument("--open-uri", default=OPEN_URI)
     #: vscode = VS Code 系宿主里的扩展面板；native = 宿主自己的聊天界面（ZCode）
     p.add_argument("--kind", choices=("vscode", "native"), default="vscode")
+    #: 原生宿主要扫码登录（WorkBuddy）：按钮文字、链接主机、Edge 配置目录都由 agent 登记，不透传
+    p.add_argument("--login", choices=("none", "qr"), default="none")
+    p.add_argument("--login-button", default="Sign In")
+    p.add_argument("--login-link-button", default="Copy Login Link")
+    p.add_argument("--login-host", default="")
+    p.add_argument("--edge-profile", default="")
+    p.add_argument("--login-timeout", type=float, default=600)
     ns = p.parse_args(argv)
     if ns.kind == "native":
         use_input_selector(NATIVE_INPUT_SELECTOR)
