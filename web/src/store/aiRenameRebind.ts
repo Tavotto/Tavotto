@@ -24,8 +24,10 @@ import type { PanelObject } from '@/types/document'
 import { useDocumentStore } from './documentStore'
 
 /** 这个面板属于哪张图：运行时面板按持久化的捕获来源，磁盘面板按素材清单的 stem（缺省退回文件名 stem）。 */
-function panelIsStem(panel: PanelObject, stem: string): boolean {
-  if (panel.fileKind === 'runtime') return panel.source?.stem === stem
+function panelIsStem(panel: PanelObject, stem: string, rename: IdentityRename): boolean {
+  // 运行时面板自带运行配置；后端只按一种配置做了提交后验证（磁盘面板恒跟默认配置 = 被验证的那份），
+  // 别的配置下这条线可能没改名，它的 override 不能被改到新身份。配置对不上就不改（保守）
+  if (panel.fileKind === 'runtime') return panel.source?.stem === stem && (panel.source?.runConfig ?? undefined) === rename.run_config
   // 权威 stem（素材清单）已知就只认它；`panelStemOfFileId` 查不到时自己退回文件名 stem。
   // 不能再 OR 一个文件名 stem：panel.png / panel.pdf 注册成 panel / panel-2 时会串到无关的图（#1251）
   return panelStemOfFileId(panel.fileId) === stem

@@ -331,3 +331,36 @@ describe('磁盘面板的 stem：有权威 stem 就只认它（Codex #1425 P1）
     useAssetStore.setState({ byId: {} })
   })
 })
+
+describe('运行配置：只改被验证的那一种配置的面板（Codex #1425 P1）', () => {
+  const runtime = (id: string, runConfig?: string): PanelObject =>
+    ({
+      ...panel(id, `runtime:${id}`, EDITS()),
+      fileKind: 'runtime',
+      source: { script: 'fig1.py', entry: 'main', stem: 'Fig1', captureSource: 'savefig', fingerprint: 'f', sizeMm: [80, 60], ...(runConfig ? { runConfig } : {}) },
+    }) as PanelObject
+  const OLDIDS = [OLD, OLD, OTHER, null, OTHER]
+  const NEWIDS = [NEW, NEW, OTHER, null, OTHER]
+
+  beforeEach(async () => {
+    await load([panel('disk', 'Fig1.pdf', EDITS()), runtime('rt_a', 'rc_a'), runtime('rt_b', 'rc_b'), runtime('rt_none')])
+  })
+
+  it('验证用 rc_a：磁盘面板（跟默认配置）与 rc_a 的运行时面板改，rc_b / 无配置的不动；撤销方向同理', () => {
+    const r = { ...RENAME, run_config: 'rc_a' }
+    rebindRenamedIdentities([r], 'forward')
+    expect(active().map(ids)).toEqual([NEWIDS, NEWIDS, OLDIDS, OLDIDS])
+    rebindRenamedIdentities([r], 'back')
+    expect(active().map(ids)).toEqual([OLDIDS, OLDIDS, OLDIDS, OLDIDS])
+  })
+
+  it('验证没带配置（无参数运行）：只改磁盘面板与无配置的运行时面板', () => {
+    rebindRenamedIdentities([RENAME], 'forward')
+    expect(active().map(ids)).toEqual([NEWIDS, OLDIDS, OLDIDS, NEWIDS])
+  })
+
+  it('parseRenames 保留闭集的 run_config', () => {
+    expect(parseRenames([{ ...RENAME, run_config: 'rc_a' }])).toEqual([{ ...RENAME, run_config: 'rc_a' }])
+    expect(parseRenames([{ ...RENAME, run_config: 5 }])).toEqual([RENAME])
+  })
+})

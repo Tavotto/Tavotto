@@ -485,6 +485,8 @@ class FigureEditAdapter:
             return [_render(st, FAILED, "render_failed", code=str(code))]
         out = [_render(st, VERIFIED, None, stems=sorted(after), not_covered=not_covered)]
         record_final_labels(cand, after)
+        hook_run_config = cand.extras.get("run_config")
+        verified_config = hook_run_config() if callable(hook_run_config) else None
         target = cand.extras.get("target") or {}
         for stem, man in sorted(before.items()):
             if man is None:  # 这个 stem 的改前重放失败：显式缺基线，不能被静默略过
@@ -503,7 +505,19 @@ class FigureEditAdapter:
                     id=f"{stem}.{c.id}",
                     # 改名（ADR 0083 §五）要报给前端按 (stem, gid) 改写画布 override 的身份：stem 不从 id 反解（stem 里可以有点）
                     **(
-                        {"observed": {**c.observed, "stem": stem, "gid": c.id.split(".", 1)[-1]}}
+                        {
+                            "observed": {
+                                **c.observed,
+                                "stem": stem,
+                                "gid": c.id.split(".", 1)[-1],
+                                # 验证实际用的运行配置引用（不透明 id，非参数值）；None = 无参数运行，不写这个键
+                                **(
+                                    {"run_config": verified_config}
+                                    if isinstance(verified_config, str) and verified_config
+                                    else {}
+                                ),
+                            }
+                        }
                         if "relabeled" in c.observed
                         else {}
                     ),
@@ -708,10 +722,14 @@ def renamed_from_verification(verification: dict | None) -> list[dict]:
         }
         if not all(isinstance(v, str) and v for v in item.values()):
             continue
+        run_config = obs.get("run_config")
         key = (item["stem"], item["gid"])
         if key in seen:
             continue
         seen.add(key)
+        # 验证用的运行配置引用：前端只改同配置的运行时面板（磁盘面板恒跟默认配置 = 被验证的那份）。缺席 = 无参数
+        if isinstance(run_config, str) and run_config:
+            item["run_config"] = run_config
         out.append(item)
         if len(out) >= RENAMED_MAX:
             break

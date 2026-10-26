@@ -96,6 +96,8 @@ export interface IdentityRename {
   gid: string
   from_identity: string
   to_identity: string
+  /** 提交后验证实际用的运行配置引用（`rc_…`，不透明 id）；缺席 = 无参数运行。运行时面板只在配置相同时才跟着改。 */
+  run_config?: string
 }
 
 /** 方向：`forward` = 旧身份 → 新身份（AI 改完）；`back` = 新身份 → 旧身份（撤销这次修改）。 */
@@ -116,7 +118,7 @@ export function rebindOverrideIdentities(
   objects: FigureDocument['objects'],
   renames: readonly IdentityRename[],
   direction: RebindDirection,
-  stemMatches: (panel: PanelObject, stem: string) => boolean,
+  stemMatches: (panel: PanelObject, stem: string, rename: IdentityRename) => boolean,
   /** false = 只数不改（预检：没有要改的就不必开一条历史；`objects` 可以是冻结的） */
   apply = true,
 ): number {
@@ -124,7 +126,7 @@ export function rebindOverrideIdentities(
   for (const obj of objects) {
     if (obj.type !== 'panel') continue
     for (const r of renames) {
-      if (!stemMatches(obj, r.stem)) continue
+      if (!stemMatches(obj, r.stem, r)) continue
       const [from, to] = direction === 'forward' ? [r.from_identity, r.to_identity] : [r.to_identity, r.from_identity]
       for (const o of obj.overrides) {
         if (o.gid === r.gid && o.identity === from) {
@@ -145,7 +147,14 @@ export function parseRenames(raw: unknown): IdentityRename[] {
     if (!r || typeof r !== 'object') continue
     const { stem, gid, from_identity: from, to_identity: to } = r as Record<string, unknown>
     if ([stem, gid, from, to].every((v) => typeof v === 'string' && v !== '') && from !== to) {
-      out.push({ stem: stem as string, gid: gid as string, from_identity: from as string, to_identity: to as string })
+      const rc = (r as Record<string, unknown>).run_config
+      out.push({
+        stem: stem as string,
+        gid: gid as string,
+        from_identity: from as string,
+        to_identity: to as string,
+        ...(typeof rc === 'string' && rc ? { run_config: rc } : {}),
+      })
     }
   }
   return out

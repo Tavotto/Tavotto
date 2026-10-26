@@ -3871,8 +3871,11 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
         # 所以正确性不靠它，靠 after 核会话执行的 source_sha256。
         engine_pool.invalidate(script, str(ctx.path), force=True)
 
+    verified_run: dict = {}
+
     def after(expected_sha256):
         run = run_selection()
+        verified_run["config_id"] = run.config_id if run is not None else None
         stems = ctx.registry.stems_of(script)
         worker = engine_enginesession.resolve(
             project_root=str(ctx.path),
@@ -3909,6 +3912,8 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
         "before": before,
         "retire": retire,
         "after": after,
+        # 提交后验证实际用的那一份运行配置引用（`rc_…` 或 None=无参数）：改名要报给前端，只让同配置的运行时面板跟着换身份
+        "run_config": lambda: verified_run.get("config_id"),
         # 内置执行器的 `check`（`ai_figure_edit.agent_check`）：候选在用户同一路由下的校验运行 + 数据指纹基线
         "runner": _convert_runner(ctx, script, with_manifests=True, entry=entry),
         "check_before": check_before,

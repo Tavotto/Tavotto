@@ -762,3 +762,41 @@ def test_fingerprint_env_dirs_do_not_count_toward_the_file_budget(tmp_path, monk
     (tmp_path / "fig1.py").write_text("", encoding="utf-8")
     monkeypatch.setattr(ai_figure_edit, "FINGERPRINT_MAX_FILES", 2)
     assert _pfp(tmp_path)["status"] == "ok"
+
+
+def _named_manifest(identity):
+    m = _manifest("a" * 64)
+    m["elements"][1]["identity"] = identity
+    return m
+
+
+def test_renamed_reports_the_run_config_the_verification_used(env):
+    """改名要带上提交后验证实际用的运行配置引用：前端只让同配置的运行时面板跟着换身份。"""
+    hooks = _hooks(
+        env, {"Fig1": _named_manifest("l1:old")}, {"Fig1": _named_manifest("l1:new")}, []
+    )
+    hooks["run_config"] = lambda: "rc_default"
+    sid, _ = _run(env, task_hooks=hooks)
+    _wait(sid)
+    renamed = ai_figure_edit.renamed_from_verification(ai_history.get(sid)["verification"])
+    assert renamed == [
+        {
+            "stem": "Fig1",
+            "gid": "axes_0.lines_0",
+            "from_identity": "l1:old",
+            "to_identity": "l1:new",
+            "run_config": "rc_default",
+        }
+    ]
+
+
+def test_renamed_without_run_config_has_no_run_config_key(env):
+    sid, _ = _run(
+        env,
+        task_hooks=_hooks(
+            env, {"Fig1": _named_manifest("l1:old")}, {"Fig1": _named_manifest("l1:new")}, []
+        ),
+    )
+    _wait(sid)
+    renamed = ai_figure_edit.renamed_from_verification(ai_history.get(sid)["verification"])
+    assert len(renamed) == 1 and "run_config" not in renamed[0]
