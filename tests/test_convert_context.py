@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import ai_convert, convertcontext, pool
+from tavotto.engine import ai_convert, convertcontext, inputremap, pool
 from tavotto.engine.agent_runner import tools
 
 
@@ -68,6 +68,46 @@ def test_snapshot_preserves_nested_resource_paths_and_import_provenance(project)
     assert cand.context["coverage"] == "static_partial"
     prompt = ai_convert.prompt_for(cand)
     assert convertcontext.MANIFEST in prompt and "Path(__file__)" in prompt
+
+
+def test_confirmed_external_input_policy_is_visible_without_copying_the_data(project):
+    external = project.parent / "supplied.csv"
+    external.write_text("4,5,6\n")
+    inputremap.add_rule(project, {"kind": "file", "from": "moved.csv", "to": str(external)})
+    cand = candidate(project)
+    policy = cand.context["input_read_policy"]
+    assert policy == {
+        "project_mappings_configured": True,
+        "mapping_applies_to": "missing_read_open",
+        "filesystem_probes_remapped": False,
+        "target_availability": "verify_by_reading_in_application",
+    }
+    context = (cand.dir / convertcontext.MANIFEST).read_text()
+    assert str(external) not in context and external.read_text() not in context
+    assert cand.context["input_remap_fingerprint"] == inputremap.fingerprint(project)
+    assert convertcontext.unchanged(project, cand.context, snapshot_dir=cand.dir)
+
+
+@pytest.mark.parametrize("initial_mapping", [False, True])
+def test_check_and_adopt_reject_changed_input_mapping_policy(project, initial_mapping):
+    external = project.parent / "supplied.csv"
+    external.write_text("4,5,6\n")
+    if initial_mapping:
+        inputremap.add_rule(project, {"kind": "file", "from": "moved.csv", "to": str(external)})
+    cand = candidate(project)
+    ready(cand)
+    if initial_mapping:
+        inputremap.remove_rule(project, "file", "moved.csv")
+    else:
+        inputremap.add_rule(project, {"kind": "file", "from": "moved.csv", "to": str(external)})
+    assert not convertcontext.unchanged(project, cand.context, snapshot_dir=cand.dir)
+    called = []
+    cand.extras["runner"] = lambda *args: called.append(args)
+    assert ai_convert.agent_check(cand) == (False, "convert_context_changed")
+    assert called == []
+    with pytest.raises(ai_convert.ConvertError, match="convert_context_changed"):
+        ai_convert.adopt(cand.sid, str(project.resolve()))
+    assert not (project / "plots" / cand.target_name).exists()
 
 
 @pytest.mark.parametrize("changed", [None, "st_ctime_ns", "st_ino", "st_mtime_ns"])

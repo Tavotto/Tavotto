@@ -41,3 +41,18 @@ Protocol basis: [DeepSeek stateless Responses history](https://api-docs.deepseek
 - This establishes successful execution for these cases. Full mathematical semantics, MATLAB/complex-glyph pixel fidelity, arbitrary scripts and dependencies, real OAuth refresh, the OpenAI service itself and same-model non-inferiority to Codex/Claude Code remain separate acceptance questions. Chat Completions remains a runner adapter, not an application connection.
 
 Revert the default via `ai.builtin_default=false` for CLI preference or `TAVOTTO_AI_BUILTIN=0` to require CLI. In-flight failures do not automatically switch executors and replay side effects. Existing user preferences and adopted scripts are preserved.
+
+## Follow-up: repaired external input missing from conversion context
+
+The additional Pillow data-link handoffs at `0ca97589f` and `8d32f3054` completed adoption and reopened with seven figures,
+but an output-name audit found that the upstream case has **eight distinct outputs**: the horse-mask figure was omitted in both.
+Those two handoffs therefore do **not** prove complete output preservation; their receipts remain as partial-output failures.
+The two environment repairs themselves (missing pandas and locating/linking the external image) succeeded. This finding does
+not change the separate four-case conversion table above.
+
+The model was shown a project-only snapshot without the external file and invented an `exists()`/skip branch. The application
+had a confirmed read mapping, but mappings intentionally do not change filesystem probes. The generic correction exposes that
+read policy and binds it to the current mapping fingerprint, while instructing the model to preserve original input paths,
+read required inputs and let failures enter the correction loop. It neither patches a case-specific script nor changes
+filesystem semantics, copies external data or reveals mapping destinations. Follow-up acceptance must compare output identities,
+not just a nonzero figure count; the next real-model receipts are recorded in the PR.

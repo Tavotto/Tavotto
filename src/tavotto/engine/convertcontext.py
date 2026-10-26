@@ -197,15 +197,29 @@ def snapshot(
     *,
     reference_files: tuple[str, ...] = (),
 ) -> dict:
+    from . import inputremap
+
     root = root.absolute()
     selected = selected_paths(root, reference_files)
     scope = readscope.ReadScope(home=Path.home(), project_root=root)
     entry = Path(script_rel)
+    # The model must know why a runtime input can be readable even though it is
+    # absent from this project-only snapshot. Do not disclose mapping targets or
+    # copy external files. Bind the fact to the same rules used by the worker.
+    with inputremap.project_mutex(root):
+        mapping_fingerprint = inputremap.fingerprint(root)
     manifest: dict = {
         "version": 1,
         "source": entry.as_posix(),
         "directory": DIRECTORY,
         "coverage": "static_partial",
+        "input_remap_fingerprint": mapping_fingerprint,
+        "input_read_policy": {
+            "project_mappings_configured": bool(mapping_fingerprint),
+            "mapping_applies_to": "missing_read_open",
+            "filesystem_probes_remapped": False,
+            "target_availability": "verify_by_reading_in_application",
+        },
         "user_selected": list(selected),
         "files": [],
         "omitted": [],
@@ -315,7 +329,14 @@ def snapshot(
 
 def unchanged(root: Path, manifest: dict, *, snapshot_dir: Path | None = None) -> bool:
     """Hash every nominated resource, including large binaries; never accept metadata as a hash."""
+    from . import inputremap
+
     if manifest.get("version") != 1 or not isinstance(manifest.get("files"), list):
+        return False
+    if (
+        "input_remap_fingerprint" in manifest
+        and inputremap.fingerprint(root) != manifest["input_remap_fingerprint"]
+    ):
         return False
     scope = readscope.ReadScope(home=Path.home(), project_root=root)
     for row in manifest["files"]:
