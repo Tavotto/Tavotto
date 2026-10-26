@@ -139,3 +139,71 @@ def test_check_renders_the_registered_entry_not_the_first_inferred_one(world):
         entry="publication",
     )
     assert not ok and "data_changed" in report, report
+
+
+# ---------------------------------------------------------------- 标题与图例同一个字符串（真 worker）
+SHARED_LABEL = (
+    "import matplotlib.pyplot as plt\n\n\ndef main():\n"
+    "    txt = 'B'\n"
+    "    fig, ax = plt.subplots()\n"
+    "    ax.plot([1, 2, 3], [1, 4, 9], label=txt)\n"
+    "    ax.set_title(txt)\n"
+    "    ax.legend()\n"
+    "    plt.show()\n\n\nif __name__ == '__main__':\n    main()\n"
+)
+NO_LEGEND = SHARED_LABEL.replace("    ax.legend()\n", "")
+#: Agent 先改共享字符串（标题和图例一起变），再改回去、只改标题
+SHARED_CHANGED = SHARED_LABEL.replace("txt = 'B'", "txt = 'B: treated (n=6)'")
+TITLE_ONLY = SHARED_LABEL.replace("ax.set_title(txt)", "ax.set_title('B: treated (n=6)')")
+
+
+def _label_flow(m, figs, base_src, first_src, final_src, outcome="completed"):
+    """复刻内置 Agent 的过程：第一次 check 用 `first_src`（改了共享字符串），最后提交 `final_src`；提交后那次渲染用真 runner。"""
+    script = figs / "plot.py"
+    script.write_text(base_src, encoding="utf-8")
+    ctx = next(iter(m.PROJECTS.values()))
+    runner = m._convert_runner(ctx, "plot.py", with_manifests=True)
+    baseline = runner(str(figs), "plot.py", None).get("manifests")
+    assert baseline and "plot" in baseline, baseline
+    cand = ai_figure_edit.create_candidate("lf", script, figs, "plot.py")
+    cand.extras.update({"runner": runner, "check_before": lambda: baseline})
+    try:
+        cand.target.write_text(first_src, encoding="utf-8")
+        ai_figure_edit.agent_check(cand, ai_convert.run_validation)
+        cand.target.write_text(final_src, encoding="utf-8")
+        ok, report = ai_figure_edit.agent_check(cand, ai_convert.run_validation)
+        assert ok, report
+        # 提交后的最终渲染（真 runner 渲染最终那一版）
+        cand.committed = True
+        script.write_text(final_src, encoding="utf-8")
+        final = runner(str(figs), "plot.py", None)
+        ai_figure_edit.record_final_labels(cand, final.get("manifests"))
+        return ai_figure_edit.legend_label_suggestions(cand, outcome)
+    finally:
+        ai_figure_edit.remove_candidate(cand.dir)
+
+
+def test_shared_title_and_legend_string_yields_a_follow_up_suggestion(world):
+    m, figs = world
+    got = _label_flow(m, figs, SHARED_LABEL, SHARED_CHANGED, TITLE_ONLY)
+    assert got == [
+        {
+            "kind": "legend_label",
+            "stem": "plot",
+            "gid": "axes_0.lines_0",
+            "from": "B",
+            "to": "B: treated (n=6)",
+        }
+    ], got
+
+
+def test_no_suggestion_when_the_figure_has_no_legend(world):
+    m, figs = world
+    first = NO_LEGEND.replace("txt = 'B'", "txt = 'B: treated (n=6)'")
+    final = NO_LEGEND.replace("ax.set_title(txt)", "ax.set_title('B: treated (n=6)')")
+    assert _label_flow(m, figs, NO_LEGEND, first, final) == []
+
+
+def test_no_suggestion_when_the_task_is_not_completed(world):
+    m, figs = world
+    assert _label_flow(m, figs, SHARED_LABEL, SHARED_CHANGED, TITLE_ONLY, outcome="partial") == []

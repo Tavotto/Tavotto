@@ -3787,10 +3787,24 @@ export interface AiTaskSummary {
   phase?: 'correcting' | null
   /** 收尾时：自动修正了几轮（0 = 一次就过了检查）；老后端没有 */
   corrections?: number
+  /** 收尾时的跟进建议（后端闭集；老后端 / 没有可建议的时候没有这个字段）。只在改图任务成功时才可能有 */
+  suggestions?: AiTaskSuggestion[]
   /** 数据出图（`data_to_figure`）：新建的脚本（项目相对路径）；没写回（needs_input / failed）时没有 */
   script?: string
   /** 数据出图 needs_input：后端给的中性默认映射（x / y 列名），用来举例，不当结论 */
   preview?: AiDataFigurePreview
+}
+
+/**
+ * 改图任务的跟进建议：`legend_label` = 刚才没改的那个元素（`gid`，在图 `stem` 里）的 `label` 同时是图例里显示的文字；
+ * `to` 是 Agent 试过的新文字、`from` 是现在的原文。形状是闭集，只含这两段已经画在图上的文字。
+ */
+export interface AiTaskSuggestion {
+  kind: 'legend_label'
+  stem: string
+  gid: string
+  from: string
+  to: string
 }
 
 /** 数据出图的默认映射预览（`ai_data_figure.NeedsInput.preview.to_dict()`）；只读展示 */

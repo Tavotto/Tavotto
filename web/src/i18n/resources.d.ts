@@ -113,6 +113,8 @@ export default interface Resources {
       "dataFigurePartial": "有些行不是数字，没有画出来；脚本已新建，结果未经完整核对。",
       "dataFigureReconcile": "查询结果",
       "dataFigureUnconfirmed": "没收到结果，可能已经生成了；先查询结果，别重复提交。",
+      "legendLabel": "图例里也写着「{{from}}」，要一起改成「{{to}}」吗？",
+      "legendLabelApply": "一起改",
       "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
       "taskPartial": "改动已写入，但有检查没能完成，结果未经完整核对。",
       "taskRejected": "改动没通过写回前检查，没有写入项目。",

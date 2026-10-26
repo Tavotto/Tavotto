@@ -1791,6 +1791,14 @@ def _settle_task(sess: dict, task: dict) -> None:
         # 自动修正了几轮（有界修正，Phase 4）：界面据此说「自动修正过一次」
         "corrections": int((task["task_result"].get("budget_used") or {}).get("corrections") or 0),
     }
+    # 跟进建议（闭集，只有两段已画在图上的 label 文字）：现在只有「图例里也写着同一段文字」一种，只改图任务有
+    from . import ai_figure_edit
+
+    cand = sess["taf"]["cand"]
+    if isinstance(cand, ai_figure_edit.Candidate):
+        suggestions = ai_figure_edit.legend_label_suggestions(cand, task["outcome"])
+        if suggestions:
+            sess["task"]["suggestions"] = suggestions
 
 
 #: `ai.done.refresh.status` 的闭集。前端与历史页按它分支，别再加自由文本。

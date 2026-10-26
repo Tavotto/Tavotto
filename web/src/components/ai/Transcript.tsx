@@ -13,6 +13,7 @@ import { Reveal } from '../ui/Field'
 import { Notice } from '../ui/Notice'
 import { CopyAction } from './CopyAction'
 import { DiffView } from './DiffView'
+import { LegendLabelNotice } from './LegendLabelNotice'
 import { Markdown } from './Markdown'
 import { revertSession } from './revertSession'
 import { formatDuration, groupEntries, spanOf, statusLabel, type Step } from './transcriptModel'
@@ -161,6 +162,15 @@ export function Turn({
           <DiffView diff={session.diff} script={session.script} onRevert={() => revertSession(session)} />
         </div>
       )}
+
+      {/* 跟进建议（后端闭集 `task.suggestions`）：图例里也写着刚才没动的那段文字，问一句要不要一起改；点了走画布 override、不经 AI */}
+      {session.changed &&
+        session.status === 'done' &&
+        (session.task?.suggestions ?? []).map((sg) =>
+          sg.kind === 'legend_label' ? (
+            <LegendLabelNotice key={`${sg.stem}/${sg.gid}`} session={session} suggestion={sg} />
+          ) : null,
+        )}
 
       {dataCard && (
         <Notice

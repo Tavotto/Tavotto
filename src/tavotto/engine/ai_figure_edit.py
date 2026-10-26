@@ -20,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -483,6 +484,7 @@ class FigureEditAdapter:
             code = getattr(exc, "code", None) or type(exc).__name__
             return [_render(st, FAILED, "render_failed", code=str(code))]
         out = [_render(st, VERIFIED, None, stems=sorted(after), not_covered=not_covered)]
+        record_final_labels(cand, after)
         target = cand.extras.get("target") or {}
         for stem, man in sorted(before.items()):
             if man is None:  # 这个 stem 的改前重放失败：显式缺基线，不能被静默略过
@@ -671,6 +673,113 @@ def _with_original_names(manifests, cand: Candidate):
     return out
 
 
+# --------------------------------------------------------------------------- 图例文字跟进（「标题与图例同一个字符串」）
+#: 一次任务最多给几条跟进建议、单条文字最长多少（超过的不建议：这里放的只有已经画在图上的两个 label 字符串）
+LABEL_SUGGESTION_MAX = 3
+LABEL_TEXT_MAX = 200
+LEGEND_LABEL_KIND = "legend_label"
+_LEGEND_ENTRY_GID = re.compile(r"\.texts_\d+$")
+
+
+def _elements_by_gid(man: object) -> dict[str, dict]:
+    els = man.get("elements") if isinstance(man, dict) else None
+    return {e["gid"]: e for e in els if isinstance(e, dict) and "gid" in e} if els else {}
+
+
+def _editable_value(el: dict, prop: str):
+    """元素 `editable` 里 `prop` 的当前值；没有这个 prop 回 None。"""
+    for f in el.get("editable") or ():
+        if isinstance(f, dict) and f.get("prop") == prop:
+            return f.get("value")
+    return None
+
+
+def element_label(man: object, gid: str) -> str | None:
+    """manifest 里 `gid` 元素的 `label` 字段（可编辑的图例文字来源）；元素不在 / 没有这个字段 / 不是字符串 → None。"""
+    el = _elements_by_gid(man).get(gid)
+    val = _editable_value(el, "label") if el else None
+    return val if isinstance(val, str) else None
+
+
+def label_changes(before: dict, after: dict) -> list[dict]:
+    """按 stem、按 gid 比两份 manifest 里元素 `label` 字段（`editable`）的值：同一 gid 两侧都有且文字不同 → `{stem, gid, from, to}`。
+
+    纯函数，**不看 identity、不看数据指纹**——判据只有 `editable` 里的 label 值，所以数据检查对 label 改动怎么判（现在身份里带
+    label 会失败）不影响它。`before` 里值为 None 的 stem（改前没有基线）与只在一侧出现的 stem / gid 略过。按 (stem, gid) 排序。"""
+    out: list[dict] = []
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return out
+    for stem in sorted(before.keys() & after.keys()):
+        old, new = _elements_by_gid(before[stem]), _elements_by_gid(after[stem])
+        for gid in sorted(old.keys() & new.keys()):
+            a, b = _editable_value(old[gid], "label"), _editable_value(new[gid], "label")
+            if isinstance(a, str) and isinstance(b, str) and a != b:
+                out.append({"stem": str(stem), "gid": gid, "from": a, "to": b})
+    return out
+
+
+def label_visible_in_legend(man: object, text: str) -> bool:
+    """这份 manifest 的图里有没有一条**可见**的图例项正显示 `text`：`legend_text` 元素（`…legend.texts_<j>`，不含图例标题）的文字相等，
+    且这一项与它所在的图例都没被隐藏。没有图例（FigureBench 的 multi_panel）→ False。"""
+    els = _elements_by_gid(man)
+    for gid, el in els.items():
+        if el.get("role") != "legend_text" or not _LEGEND_ENTRY_GID.search(gid):
+            continue
+        if _editable_value(el, "text") != text or _editable_value(el, "visible") is False:
+            continue
+        legend = els.get(_LEGEND_ENTRY_GID.sub("", gid))
+        if legend is not None and _editable_value(legend, "visible") is False:
+            continue
+        return True
+    return False
+
+
+def record_label_findings(cand: Candidate, baseline: dict, after: dict) -> None:
+    """`check` 渲染后调：改后与基线的 label 字段不同的元素记进 `cand.extras["label_findings"]`（按 (stem, gid) 去重，`from` 取最早的基线、
+    `to` 取最近一次）。`visible` = 基线图里有没有图例正显示 `from`。只记，不判——是否提示由收尾时的 `legend_label_suggestions` 决定。"""
+    store: dict = cand.extras.setdefault("label_findings", {})
+    for ch in label_changes(baseline, after):
+        key = (ch["stem"], ch["gid"])
+        if key in store:
+            store[key]["to"] = ch["to"]
+        elif len(store) < 20:
+            store[key] = {
+                **ch,
+                "visible": label_visible_in_legend(baseline.get(ch["stem"]), ch["from"]),
+            }
+
+
+def record_final_labels(cand: Candidate, after: dict) -> None:
+    """提交后那次渲染：把每条记过的发现在**最终提交的脚本**里的 label 写进 `final`（元素没了 / 渲染没量到则没有这个键）。"""
+    for (stem, gid), f in (cand.extras.get("label_findings") or {}).items():
+        if isinstance(after, dict) and stem in after:
+            f["final"] = element_label(after[stem], gid)
+
+
+def legend_label_suggestions(cand: object, outcome: str | None) -> list[dict]:
+    """收尾时的跟进建议（闭集形状，进 `sess["task"]["suggestions"]`）：任务成功（`completed`）、改动已提交，且某元素的 label 在
+    `check` 里被改过、最终又回到原文（Agent 改回去了）、而且图例正显示这段文字 → `{kind, stem, gid, from, to}`。
+    条件缺一不给：没有提交后的最终值（渲染没量到）按「不知道」处理，不给。文字之外不带任何用户内容。"""
+    if outcome != "completed" or not getattr(cand, "committed", False):
+        return []
+    out = []
+    for f in (getattr(cand, "extras", {}).get("label_findings") or {}).values():
+        if not (f.get("visible") and f.get("final") == f["from"] and f["to"] != f["from"]):
+            continue
+        if max(len(f["from"]), len(f["to"])) > LABEL_TEXT_MAX:
+            continue
+        out.append(
+            {
+                "kind": LEGEND_LABEL_KIND,
+                "stem": f["stem"],
+                "gid": f["gid"],
+                "from": f["from"],
+                "to": f["to"],
+            }
+        )
+    return sorted(out, key=lambda s: (s["stem"], s["gid"]))[:LABEL_SUGGESTION_MAX]
+
+
 def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
     """内置执行器改图任务里 `check` 工具的回调（Agent 在候选里改完自己要一次校验）→ `(是否通过, 给 Agent 看的一段报告)`。
 
@@ -725,6 +834,8 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
             "data fingerprint not measured (no baseline render of the original in this session)"
         )
     else:
+        # 图例文字跟进：先记、再判数据——现在 label 改动会让数据检查失败（身份里带 label），记录不能依赖它通过
+        record_label_findings(cand, baseline, after)
         bad = _data_lines(after, baseline)
         if bad:
             return False, "check failed: " + " ".join(bad)[:1400]
