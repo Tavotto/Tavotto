@@ -311,7 +311,17 @@ def test_renamed_from_verification_is_a_closed_identity_only_shape():
             "gid": "axes_0.lines_1",
         },
     }
-    ver = {"figure": {"checks": [check, dict(check), {**check, "verdict": "failed"}]}}
+    other = {"observed": {**check["observed"], "gid": "axes_0.lines_2"}}
+    ver = {
+        "figure": {
+            "checks": [
+                check,
+                dict(check),  # 重复的 (stem, gid) 只报一次
+                {**check, **other, "verdict": "failed"},  # 没过的不报
+                {**check, **other, "stage": "precommit"},  # 提交前的（没落地）不报
+            ]
+        }
+    }
     assert ai_figure_edit.renamed_from_verification(ver) == [
         {"stem": "plot", "gid": "axes_0.lines_1", "from_identity": "l1:aa", "to_identity": "l1:bb"}
     ]
