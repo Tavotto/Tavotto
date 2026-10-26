@@ -45,7 +45,17 @@ async function runScriptScene() {
     await d.pause(3500)
     await d.renameLayout()
     await p.locator('li:has-text("fig1_kinetic") button').first().click()
-    await d.pause(6000)
+    // The run ends by opening the produced figure for editing; step back out to the canvas,
+    // where it now sits, with the asset library showing the script as "Captured 1 figure".
+    await p.getByRole('button', { name: S.leaveEditing }).first().waitFor({ timeout: 120_000 })
+    await d.pause(1500)
+    await p.keyboard.press('Escape')
+    await d.pause(2500)
+    await d.ensureAssets()
+    await d.quickSave()
+    await p.mouse.move(1000, 1000)
+    await p.evaluate(() => document.activeElement?.blur())
+    await d.pause(14_000) // let the toasts expire
     const file = `run-script${SUFFIX}.png`
     await p.screenshot({ path: path.join(OUT, file) })
     console.log('→', path.join('assets/readme', file))
@@ -155,8 +165,13 @@ try {
       await page.getByRole('button', { name: S.figureElements, exact: true }).click()
       await tell.waitFor({ state: 'visible', timeout: 15_000 })
     }
-    await page.getByRole('button', { name: S.fitCanvas, exact: true }).click().catch(() => {})
-    await pause(900)
+    // Zoom in on figure (a) with ctrl + wheel, as a trackpad pinch would
+    const box = await page.locator('[data-object-id^="p_"]').first().boundingBox()
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.keyboard.down('Control')
+    for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, -120); await pause(150) }
+    await page.keyboard.up('Control')
+    await pause(1200)
     await page.locator('li[role="treeitem"]', { hasText: /Title|标题/ }).first().click()
     await quickSave()
     await pause(4500) // the "created a canvas for editing" toast

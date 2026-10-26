@@ -50,8 +50,9 @@ Capture environment: `main` @ `1e3db090e` (the interface after #1411), frontend 
 sent to any app (the page selects panel (a) itself through `hero-driver.js`, added to the built
 frontend for the run only). The shell is started with `open -g` from a throwaway `.app` wrapper, so it
 never takes the foreground; an unfocused window has grey traffic lights. The browser-built stills show
-"Saved to project" (⌘S before every shot); in the hero the top bar still reads "Not saved to project",
-because the desktop webview's own storage does not know the layout was saved (open item). Nothing is retouched.
+"Saved to project" (⌘S before every shot); the hero reads "Saved to project" too: its webview starts from a copy of the browser session's
+local storage (hero-ls.js, written by hero-window.mjs); the driver script is cache-busted with `?v=`
+because WKWebView otherwise keeps serving an earlier copy of `/assets/*`. Nothing is retouched.
 
 | Image | Shows | Status |
 | --- | --- | --- |
@@ -60,7 +61,7 @@ because the desktop webview's own storage does not know the layout was saved (op
 | `canvas-edit(.zh).png` | inside figure (a): the element tree, the title selected, its font / size / colour | `current` |
 | `preflight(.zh).png` | the export dialog cropped to itself; Checks reads "1 to review · 3 not verifiable" (panel (a) drawn at 79 %) — a real mid state, not staged all-clear | `current` · replaces the 2026-09-19 file |
 | `connect-ai(.zh).png` | the "Connect an AI" dialog (cropped to the dialog) | `current` |
-| `run-script(.zh).png` | the ▶ on a linked script in the asset library, mid-run: the Prepare · Run · Edit card | `current` |
+| `run-script(.zh).png` | after the run: the script row reads "Captured 1 figure", the produced figure (Fig1_kinetics) sits on the canvas, the layout is saved | `current` |
 | `timeline(.zh).png` | the right-column Timeline tab with two named moments | `current` |
 | `demo(.zh).gif` | select a panel, drag it, set its width, export (~12 s) | `current` |
 

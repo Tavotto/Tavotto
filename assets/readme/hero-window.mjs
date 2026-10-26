@@ -51,7 +51,7 @@ const indexHtml = path.join(webDir, 'index.html')
 const indexOriginal = readFileSync(indexHtml, 'utf8')
 copyFileSync(path.join(import.meta.dirname, 'hero-driver.js'), path.join(webDir, 'assets', 'hero-driver.js'))
 writeFileSync(path.join(webDir, 'assets', 'hero-ls.js'), `window.__HERO_LS = ${JSON.stringify(snapshot)}`)
-writeFileSync(indexHtml, indexOriginal.replace('</body>', '<script src="/assets/hero-ls.js"></script><script src="/assets/hero-driver.js"></script></body>'))
+writeFileSync(indexHtml, indexOriginal.replace('</body>', `<script src="/assets/hero-ls.js?v=${Date.now()}"></script><script src="/assets/hero-driver.js?v=${Date.now()}"></script></body>`))
 const swift = path.join(workdir, 'windows.swift')
 writeFileSync(swift, `import CoreGraphics
 import Foundation

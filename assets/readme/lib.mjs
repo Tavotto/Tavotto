@@ -39,8 +39,8 @@ export const STRINGS = {
     searchPanels: 'Search figures', panelLabels: 'Add panel labels',
     editElements: 'Edit figure elements', figureElements: 'Figure elements', connectAi: 'Connect AI',
     searchElements: 'Search figure elements',
-    saveToProject: 'Save to project', untitled: /Untitled/, rename: 'Rename layout…', nameNow: 'Name this moment…',
-    layoutName: 'Kinetics study · Figure 2',
+    leaveEditing: /Leave figure editing|Back to canvas/, saveToProject: 'Save to project', untitled: /Untitled/, rename: 'Rename layout…', nameNow: 'Name this moment…',
+    layoutName: 'Kinetics study · Figure 2', tabName: 'Figure 2',
     moments: ['Three panels', 'Bottom row 52 mm'],
     building: /Building/,
     mm: (axis) => `${axis} (mm)`,
@@ -51,8 +51,8 @@ export const STRINGS = {
     searchPanels: '搜索图', panelLabels: '添加序号标签',
     editElements: '改图里的内容', figureElements: '图内元素', connectAi: '连接 AI',
     searchElements: '搜索图内元素',
-    saveToProject: '存进项目', untitled: /新排版|未命名/, rename: '重命名排版…', nameNow: '给现在存个名字…',
-    layoutName: '反应动力学 · 图 2',
+    leaveEditing: /退出图内编辑|返回画布/, saveToProject: '存进项目', untitled: /新排版|未命名/, rename: '重命名排版…', nameNow: '给现在存个名字…',
+    layoutName: '反应动力学 · 图 2', tabName: '图 2',
     moments: ['三幅图', '下排 52 mm'],
     building: /正在构建|构建中/,
     mm: (axis) => `${axis} (mm)`,
@@ -176,7 +176,7 @@ export function driver(page, S) {
    * already open closes it. Open by what the drawer actually shows.
    */
   async function ensureAssets() {
-    const tell = page.getByLabel(S.searchPanels).first()
+    const tell = page.getByLabel(S.searchPanels, { exact: true }).first()
     if (await tell.isVisible().catch(() => false)) return
     await page.getByRole('button', { name: S.assets, exact: true }).click()
     await tell.waitFor({ state: 'visible', timeout: 15_000 })
@@ -245,6 +245,13 @@ export function driver(page, S) {
     await page.keyboard.press('Escape')
     await pause(300)
     await renameLayout()
+    // The canvas tab is named like the layout's figure.
+    await page.locator('[data-canvas-tab]').first().dblclick()
+    await pause(400)
+    await page.keyboard.press('ControlOrMeta+a')
+    await page.keyboard.type(S.tabName)
+    await page.keyboard.press('Enter')
+    await pause(600)
     // The properties column is a little wider than its default, so the scale row's
     // "Original 73.3 × 57.8 mm" is not cut short.
     const hb = await page.locator('[data-resize-handle="inspector"]').boundingBox()
