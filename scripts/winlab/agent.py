@@ -3542,6 +3542,18 @@ def _files_containing(roots: list[Path], needle: bytes) -> tuple[list[Path], lis
     return hits, unreadable
 
 
+def sweep_stale_ondisk_configs(runs: Path) -> list[str]:
+    """上一次 run 被强行结束（超时 / stop）时 finally 没机会跑：开跑前把所有旧 run 里残留的
+    provider_config.json 删掉（不看内容，文件本身就是落盘例外的产物）。返回删掉的 run id。"""
+    swept = []
+    if runs.is_dir():
+        for pc in runs.glob("*/work/zdata/.zcode/v2/provider_config.json"):
+            with contextlib.suppress(OSError):
+                pc.unlink()
+                swept.append(pc.parents[4].name)
+    return swept
+
+
 def wipe_ondisk_key(run_dir: Path, env: dict, key: str) -> dict:
     """落盘例外的收尾：删掉含 key 的配置，抹掉 run 目录里其它出现，再扫 run 目录与 ZCode 应用数据目录核对**一处都没有**。
     应用数据目录里发现的直接删掉那个文件后再扫。返回 {"wiped": bool, "residual": [相对 / 应用目录名]}。"""
@@ -3648,6 +3660,7 @@ def run_desktop_live_task(
     cell = DESKTOP_LIVE[mode]
     host = DESKTOP_HOSTS[cell.host]
     ext = DESKTOP_EXTENSIONS[cell.extension] if cell.extension else None
+    swept = sweep_stale_ondisk_configs(lab.runs) if mode in DESKTOP_LIVE_ONDISK_MODES else []
     levels = {"L2": "not_tested", "L3": "not_run", "L4": "not_run", "L5": "not_run"}
     base: dict = {
         "host": {"id": host.id, "name": host.name, "pinned_version": host.version},
@@ -3655,6 +3668,7 @@ def run_desktop_live_task(
         if ext
         else None,
         "native_agent": cell.native,
+        **({"swept_stale_ondisk_configs": swept} if swept else {}),
         "model": {
             "provider": model_conf.get("provider"),
             "model": model_conf.get("model")
@@ -3719,11 +3733,14 @@ def run_desktop_live_task(
             lab, run_id, run_dir, henv, model_conf, cell, host, ext, vsix, inst, ext_dir, base
         )
     finally:
-        base["uninstall"] = uninstall_desktop_host(host, work, henv)
-        if ext_dir.exists():
-            _rmtree_no_follow(ext_dir)
-        if mode in DESKTOP_LIVE_ONDISK_MODES:
-            base["ondisk_key"] = wipe_ondisk_key(run_dir, henv, model_conf["api_key"])
+        try:
+            base["uninstall"] = uninstall_desktop_host(host, work, henv)
+            if ext_dir.exists():
+                _rmtree_no_follow(ext_dir)
+        finally:
+            # 卸载自己抛异常也要清 key（Codex #1439）：落盘例外的收尾放在最外层
+            if mode in DESKTOP_LIVE_ONDISK_MODES:
+                base["ondisk_key"] = wipe_ondisk_key(run_dir, henv, model_conf["api_key"])
     out["uninstall"] = base["uninstall"]
     if "ondisk_key" in base:
         out["ondisk_key"] = base["ondisk_key"]

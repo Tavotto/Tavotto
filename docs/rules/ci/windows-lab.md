@@ -174,7 +174,9 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
     录入，存本机 `model-ondisk.json`（0600），与默认那把相同就拒收；缺了就不跑，**绝不退回默认那把**。key 只写本次 run 的
     `zdata`；`run_desktop_live_task` 的 `finally` 里 `wipe_ondisk_key` 删掉该文件、抹掉 run 目录里其它出现，再扫 run 目录与 ZCode 的
     应用数据目录（`%APPDATA%` / `%LOCALAPPDATA%` 下 `ZCode*`，发现即删）核对**一处都没有**；留下了就整次 `error`。报告带
-    `ondisk_key: {wiped, residual, checked_app_dirs}`。默认那把（hosts-live 与其它 desktop-live 格）照旧不落盘。
+    `ondisk_key: {wiped, residual, unreadable, checked_app_dirs}`——核对流式扫任意大小的文件，读不了的算没核对完；单个文件抹不掉不中断收尾；
+    收尾放在卸载外面的 `finally`（卸载抛异常也清）；上一次 run 被强行结束时，下一次 `zcode-native` 开跑前先删掉所有旧 run 里残留的
+    `provider_config.json`（报告 `swept_stale_ondisk_configs`）。默认那把（hosts-live 与其它 desktop-live 格）照旧不落盘。
   - CC-Switch 的落盘例外**不在此**（单独的 PR 与单独的规则条目）。
 - 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境（交互会话里再经命名管道），除上面登记的 `zcode-native` 外 Lab 不落盘；证据落盘前抹掉凭据。证据字段按
 `docs/implementation/multi-host-mcp/acceptance.md`。

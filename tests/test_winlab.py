@@ -2678,3 +2678,53 @@ def test_wipe_keeps_going_when_one_run_file_cannot_be_rewritten(tmp_path, monkey
     res = A.wipe_ondisk_key(run_dir, {"APPDATA": str(appdata)}, key)
     assert not copy.exists()  # 应用数据里的副本删掉了
     assert res["wiped"] is False and res["residual"] == [str(Path("evidence") / "stuck.log")]
+
+
+def test_ondisk_key_is_wiped_even_when_the_uninstaller_raises(tmp_path, monkeypatch):
+    """Codex #1439：最后的卸载抛异常时，provider_config.json 里的 key 也不能留在盘上。"""
+    f = _FakeLive(monkeypatch, tmp_path)
+    key = "sk-" + "u" * 32
+    f.conf = {"api_key": key, "provider": "deepseek", "base_url": "https://x/anthropic"}
+    zdata_pc = tmp_path / "run" / "work" / "zdata" / ".zcode" / "v2" / "provider_config.json"
+
+    def body(*a, **k):
+        zdata_pc.parent.mkdir(parents=True, exist_ok=True)
+        zdata_pc.write_text(key, encoding="utf-8")
+        return {"result": "passed", "summary": "ok"}
+
+    calls = {"n": 0}
+
+    def uninstall(*a):
+        calls["n"] += 1
+        if calls["n"] > 1:  # 第一次是 preexisting 清理；第二次是收尾
+            raise PermissionError("uninstaller would not start")
+        return {"ok": True, "steps": []}
+
+    monkeypatch.setattr(A, "_desktop_live_body", body)
+    monkeypatch.setattr(A, "uninstall_desktop_host", uninstall)
+    monkeypatch.setattr(A, "_zcode_app_dirs", lambda env: [])
+    run_dir = tmp_path / "run"
+    run_dir.mkdir(exist_ok=True)
+    with pytest.raises(PermissionError):
+        A.run_desktop_live_task(f.lab, "rid", run_dir, {}, f.conf, "zcode-native")
+    assert not zdata_pc.exists()
+
+
+def test_stale_provider_configs_from_killed_runs_are_swept_before_the_next_run(tmp_path):
+    runs = tmp_path / "runs"
+    old = (
+        runs
+        / "20261026T000000Z-aaaaaa"
+        / "work"
+        / "zdata"
+        / ".zcode"
+        / "v2"
+        / "provider_config.json"
+    )
+    old.parent.mkdir(parents=True)
+    old.write_text("{}")
+    keep = runs / "20261026T000000Z-aaaaaa" / "evidence" / "x.txt"
+    keep.parent.mkdir(parents=True)
+    keep.write_text("x")
+    assert A.sweep_stale_ondisk_configs(runs) == ["20261026T000000Z-aaaaaa"]
+    assert not old.exists() and keep.exists()
