@@ -169,6 +169,11 @@ describe('图例文字跟进卡', () => {
     expect(q(CARD)).toBeNull()
   })
 
+  it('后端给的 legend_gid 与面板 manifest 按 source_gid 找到的图例项不一致：不出卡', async () => {
+    await mount([session({ task: { task_type: 'figure_edit', outcome: 'completed', suggestions: [{ ...SUGGESTION, legend_gid: 'axes_0.legend.texts_5' }] } })])
+    expect(q(CARD)).toBeNull()
+  })
+
   it('对曲线自己的 label override 不算已应用（图例不会因此变）', async () => {
     await mount([session()], [panel({ overrides: [{ gid: GID, prop: 'label', value: 'B: treated (n=6)' }] as never })])
     expect(q(CARD)).not.toBeNull()
