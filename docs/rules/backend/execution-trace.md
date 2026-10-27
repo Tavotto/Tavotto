@@ -31,6 +31,7 @@ order: 325
 - **存储**：`data_dir()/cache/exec-trace/`，每 Trace 一个 JSON，`atomicio` 原子写，**只在后台写线程里写**（业务线程只 `submit`，绝不在业务锁里等磁盘）；上限 / 保留 / 节流 / 恢复的数值是
   `exectrace.py` 顶部常量（唯一出处，ADR 0151 §六列了当时的值）。只逐出冻结的；启动 `recover()` 把属主已死的运行中记录收成
   `interrupted`。读一律带 scope（项目的不透明键），对不上当不存在。
+- **读取端点（PR3）**：`GET /api/exec-trace` 只读零执行、按当前项目认领（两把 scope 键），找不到一律 404 + `available:false`；前端规则在 `docs/rules/frontend/execution-trace-ui.md`。
 - **不进遥测、不自动上传。** 诊断包要带 Trace 是 PR4 的事：另做导出投影、升 `BUNDLE_SCHEMA_VERSION`（`diagnostics.md`）。
   这份本地存储是诊断规则「不写盘」之外经维护者裁决的登记例外（2026-10-27），仅限本目录、仅限白名单字段。
 - **进程边界**：只在 Flask 父进程 import；worker / bridge / agent_runner 侧不 import（它们报来的事实由父进程收到时记）。

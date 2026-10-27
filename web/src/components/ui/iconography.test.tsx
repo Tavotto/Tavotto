@@ -71,6 +71,8 @@ const SVG_ALLOWLIST: Record<string, number> = {
   // 画布缩略图：页面比例里按对象落位画这份文档的真实内容（审计 T04 之后
   // 画布列表与版本列表共用这一份，原来那条豁免在 left/CanvasList.tsx 上）
   '/src/components/CanvasThumb.tsx': 1,
+  // 执行轨迹 waterfall 的交接连线：父智能体泳道到子智能体泳道的肘形曲线，两端按 span 起止时刻现算，不是图标
+  '/src/components/ai/traceWaterfall/Handoffs.tsx': 1,
   '/src/components/inspector/controls/ErrorBarDiagram.tsx': 1, // 误差棒的线 / 端帽示意
   '/src/components/inspector/controls/ProjectionPicker.tsx': 1, // 三维投影小立方体
   '/src/components/inspector/controls/ViewAngleDiagram.tsx': 1, // 三维三轴方向示意（按当前角度重画）

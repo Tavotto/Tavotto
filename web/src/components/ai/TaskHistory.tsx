@@ -26,6 +26,7 @@ import { SearchInput } from '../ui/SearchInput'
 import { Select } from '../ui/Select'
 import { StatusPill } from '../ui/StatusPill'
 import { statusLabel } from './transcriptModel'
+import { TraceDetails } from './TraceDetails'
 
 const ai = (key: string, values?: Record<string, unknown>) => translate(key, { ns: 'ai', ...(values ?? {}) })
 
@@ -272,6 +273,8 @@ function HistoryRow({
           <p className="type-meta">
             {ai(entry.revert_available ? 'history.snapshotAvailable' : 'history.snapshotCleared', { id: entry.id })}
           </p>
+          {/* 刷新 / 重启之后，已结束的那一轮只在这里：执行记录从后端保留期内的落盘快照恢复 */}
+          <TraceDetails taskRef={entry.id} pj={pj} running={entry.status === 'running'} />
         </div>
       )}
     </div>

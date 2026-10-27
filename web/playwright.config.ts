@@ -103,6 +103,8 @@ export default defineConfig({
         'ai-draft.spec.ts',
         // 运行中会话的恢复（PR4b）：占位与锁的文案是中英两套，定位走 data-*
         'ai-restore.spec.ts',
+        // 执行记录（ADR 0151 PR3）：Waterfall 的标签 / 指标 / 图例是中英两套，英文更长；定位走 data-*，两种语言各走一遍
+        'exec-trace.spec.ts',
         // 执行器与模型两级选择器：家族 / 型号显示名是后端给的，其余文案中英两套，定位走 data-*
         'ai-model-picker.spec.ts',
         'a11y.spec.ts',

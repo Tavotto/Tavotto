@@ -933,6 +933,20 @@ class TraceStore:
             return record["trace"]
         return None
 
+    def find(self, operation_kind: str, task_ref: str, *, scopes: set) -> dict | None:
+        """扫盘找某个任务引用的最新一条（总量有 `MAX_TOTAL_BYTES` 上限，扫一遍是有界的）。"""
+        best = None
+        for path, _open, _size, _mtime in self._entries():
+            record = self._read(path)
+            if record is None or record.get("scope") not in scopes:
+                continue
+            snap = record["trace"]
+            if snap.get("operation_kind") != operation_kind or snap.get("task_ref") != task_ref:
+                continue
+            if best is None or (snap.get("started_at") or 0) > (best.get("started_at") or 0):
+                best = snap
+        return best
+
     def _entries(self):
         try:
             names = os.listdir(self.root)
@@ -1070,6 +1084,30 @@ class Recorder:
         if self._store is None:
             return None
         return self._store.load(trace_id, scope=_ref(scope))
+
+    def find(self, operation_kind: str, task_ref: str, *, scopes) -> dict | None:
+        """按任务引用找这次任务的 Trace（AI 会话 id / 修复会话的准备会话 id / 计划 id / 作业 id）。
+
+        只在给定的 scope 里找（调用方给的是**当前项目**的键）；同一引用有多条时取最新开始的那条。内存里的
+        先看（运行中的最新），没有再扫盘。找不到 = None：没记过、已过期、别的项目的，读起来一样。"""
+        if operation_kind not in OPERATION_KINDS or _ref(task_ref) is None:
+            return None
+        wanted = {_ref(s) for s in scopes if _ref(s) is not None}
+        if not wanted:
+            return None
+        with self._lock:
+            live = [
+                t
+                for t in self._live.values()
+                if t.operation_kind == operation_kind
+                and t.task_ref == task_ref
+                and t.scope in wanted
+            ]
+        if live:
+            return max(live, key=lambda t: t.started_at).snapshot()
+        if self._store is None:
+            return None
+        return self._store.find(operation_kind, task_ref, scopes=wanted)
 
 
 def scope_for(project_key) -> str | None:

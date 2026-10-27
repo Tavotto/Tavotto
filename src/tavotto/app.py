@@ -4542,6 +4542,52 @@ def api_diagnostics_task():
     return resp
 
 
+#: 执行追踪的读取（ADR 0151 PR3）：`?kind=<operation_kind>&ref=<任务引用>` 或 `?id=<trace_id>`。
+#: 只读、零执行；按**当前项目**认领——AI 会话按项目根、其余按项目 id 记 scope，两把键都是本项目的。
+@app.get("/api/exec-trace")
+def api_exec_trace():
+    """一次任务的执行追踪快照（Waterfall 的权威数据；SSE 会丢，界面断线后以这里为准）。
+
+    找不到（从没记过 / 已过期 / 别的项目的 / 追踪被关掉）一律 404 + `available:false`，原因只分 `disabled` 与
+    `not_found`——猜 id 读不到别的项目的东西，也看不出它存不存在。
+    """
+    ctx = _request_ctx()
+    if not engine_exectrace.enabled():
+        resp = jsonify({"available": False, "reason": "disabled"})
+        resp.status_code = 404
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    kind = request.args.get("kind") or None
+    ref = request.args.get("ref") or None
+    trace_id = request.args.get("id") or None
+    if (kind is not None and kind not in engine_exectrace.OPERATION_KINDS) or not (
+        trace_id or (kind and ref)
+    ):
+        return jsonify({"error": "kind / ref 或 id 不对", "code": "bad_request"}), 400
+    scopes = []
+    if ctx is not None:
+        scopes.append(engine_exectrace.scope_for(getattr(ctx, "id", None)))
+        root = getattr(ctx, "path", None)
+        if root is not None:
+            scopes.append(engine_exectrace.scope_for(str(Path(root).resolve())))
+    scopes = [s for s in scopes if s]  # 没有项目键的 Trace（无项目上下文）永远读不到
+    snap = None
+    if trace_id:
+        for scope in scopes:
+            snap = engine_exectrace.RECORDER.get(trace_id, scope=scope)
+            if snap is not None:
+                break
+    else:
+        snap = engine_exectrace.RECORDER.find(kind, ref, scopes=scopes)
+    if snap is None:
+        resp = jsonify({"available": False, "reason": "not_found"})
+        resp.status_code = 404
+    else:
+        resp = jsonify({"available": True, "trace": snap})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 def _read_body_capped(limit: int) -> bytes:
     """从请求流**最多读 `limit + 1` 字节**——收请求体的端点共用这一份有界读取。
 

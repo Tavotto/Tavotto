@@ -16,6 +16,7 @@ import { DiffView } from './DiffView'
 import { LegendLabelNotice } from './LegendLabelNotice'
 import { Markdown } from './Markdown'
 import { revertSession } from './revertSession'
+import { TraceDetails } from './TraceDetails'
 import { formatDuration, groupEntries, spanOf, statusLabel, type Step } from './transcriptModel'
 
 /**
@@ -156,6 +157,15 @@ export function Turn({
           />
         ),
       )}
+
+      {/* 技术详情：完整执行追踪（ADR 0151），默认收起、展开才去取 */}
+      <TraceDetails
+        taskRef={session.id}
+        pj={session.project}
+        running={running}
+        settledKey={session.finalized}
+        hidden={session.provisional}
+      />
 
       {session.changed && session.diff && (
         <div className="animate-settle-in">

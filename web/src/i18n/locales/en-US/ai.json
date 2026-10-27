@@ -233,5 +233,205 @@
     "generate": "Generate",
     "cancel": "Cancel",
     "unconfirmedHint": "The last result isn’t confirmed yet. Check it in the conversation first."
+  },
+  "trace": {
+    "ui": {
+      "title": "Trace",
+      "treeLabel": "Steps",
+      "steps": "Steps",
+      "unknown": "—",
+      "search": {
+        "placeholder": "Search steps",
+        "label": "Search steps"
+      },
+      "metric": {
+        "duration": "Duration",
+        "cost": "Cost",
+        "tokens": "Tokens",
+        "modelCalls": "Model calls",
+        "toolCalls": "Tool calls",
+        "errors": "Errors"
+      },
+      "legend": {
+        "model": "Model call",
+        "tool": "Tool / phase",
+        "wait": "Waiting",
+        "handoff": "Handoff",
+        "failed": "Failed",
+        "point": "Moment only",
+        "unmeasured": "Not measured"
+      },
+      "empty": {
+        "title": "No matching steps",
+        "body": "Nothing in this trace matches “{{query}}”"
+      },
+      "toggle": {
+        "expand": "Expand {{name}}",
+        "collapse": "Collapse {{name}}"
+      },
+      "details": "Details for {{name}}",
+      "close": "Close",
+      "badge": {
+        "firstFailure": "First failure",
+        "slowest": "Slowest",
+        "attempt": "Attempt {{n}}"
+      },
+      "status": {
+        "running": "Running",
+        "ok": "Done",
+        "error": "Failed",
+        "cancelled": "Cancelled",
+        "unknown": "Unknown"
+      },
+      "field": {
+        "duration": "Duration",
+        "started": "Started",
+        "cost": "Cost",
+        "tokens": "Tokens",
+        "tokensIn": "Tokens in",
+        "tokensOut": "Tokens out",
+        "steps": "Steps",
+        "attempt": "Attempt"
+      },
+      "note": {
+        "reported": "Duration reported by another process",
+        "point": "Only the moment was recorded, not a duration",
+        "unmeasured": "This interval was not measured"
+      },
+      "stepCount_one": "{{count}} step",
+      "stepCount_other": "{{count}} steps",
+      "startOffset": "+{{value}}",
+      "tick": {
+        "seconds": "{{value}}s",
+        "minutes": "{{value}}m"
+      },
+      "resize": "Resize the step column"
+    },
+    "state": {
+      "toggle": "Execution trace",
+      "loading": "Reading the execution record…",
+      "error": "Couldn't read the execution record",
+      "retry": "Retry",
+      "not_found": "No execution record for this task (it may be past the retention period)",
+      "disabled": "Execution tracing is turned off",
+      "unsupported": "This execution record is from an incompatible version and can't be shown",
+      "truncated_one": "The record was too long; {{count}} entry in the middle was omitted",
+      "truncated_other": "The record was too long; {{count}} entries in the middle were omitted",
+      "interrupted": "The record stopped before the task ended (the app quit or crashed); what happened afterwards is unknown",
+      "incomplete": "The record is incomplete"
+    },
+    "operation": {
+      "ai_task": "AI task",
+      "fix_session": "Smart fix",
+      "preparation": "Run script",
+      "export": "Export"
+    },
+    "span": {
+      "task": "Task",
+      "accept": "Request accepted",
+      "plan": "Plan",
+      "execute": "Execute",
+      "agent_run": "Agent run",
+      "model_request": "Model request",
+      "tool_call": "Tool call",
+      "user_wait": "Waiting for you",
+      "env_install": "Install environment",
+      "env_resolve": "Choose environment",
+      "dependency_diagnosis": "Dependency check",
+      "script_run": "Run script",
+      "render": "Render",
+      "receipt": "Receipt",
+      "validate": "Pre-commit check",
+      "correct": "Auto-correction",
+      "commit": "Write file",
+      "refresh": "Refresh project",
+      "verify": "Post-commit check",
+      "settle": "Wrap up",
+      "export": "Export"
+    },
+    "stage": {
+      "plan": "Plan",
+      "check": "Check plan",
+      "spawn": "Start process",
+      "execute": "Run script",
+      "receipt": "Receipt",
+      "prepare": "Prepare",
+      "source": "Get source",
+      "compile": "Compile",
+      "compose": "Compose",
+      "raster": "Rasterize",
+      "inspect": "Inspect output",
+      "publish": "Write files",
+      "report": "Report"
+    },
+    "agent": {
+      "codex": "Codex",
+      "claude": "Claude Code",
+      "builtin": "Built-in agent"
+    },
+    "execution": {
+      "safe": "Safe mode",
+      "native": "Native mode"
+    },
+    "approvedBy": {
+      "policy": "Automatic by policy",
+      "user": "You approved",
+      "blocked": "Blocked",
+      "denied": "You declined",
+      "timeout": "No answer (timed out)"
+    },
+    "outcome": {
+      "completed": "Completed",
+      "partial": "Partly completed",
+      "needs_input": "Needs your input",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "interrupted": "Interrupted",
+      "fixed": "Fixed",
+      "not_fixed": "Not fixed",
+      "convert": "Handed to Make editable version",
+      "ready": "Ready",
+      "error": "Error",
+      "static_source_available": "Static original only",
+      "done": "Done",
+      "conflict": "File name taken; waiting for you"
+    },
+    "refresh": {
+      "pending": "Not refreshed yet",
+      "ok": "Refreshed",
+      "failed": "Refresh failed",
+      "skipped": "No refresh needed",
+      "not_wired": "Refresh not connected"
+    },
+    "timing": {
+      "reported": "Duration reported by the child process",
+      "point": "Only the moment was recorded, not an interval",
+      "unmeasured": "The interval wasn't measured"
+    },
+    "fact": {
+      "errorCode": "Error code",
+      "attempt": "Attempt",
+      "timing": "Timing",
+      "visibility": "Visibility",
+      "opaque": "Internal steps aren't observable; only the outer run is recorded",
+      "agent": "Agent",
+      "tool": "Tool",
+      "model": "Model",
+      "execution": "Execution",
+      "approvedBy": "Confirmation",
+      "agentExit": "Agent exit",
+      "exitOk": "Exited normally",
+      "exitFailed": "Exited with an error",
+      "outcome": "Task outcome",
+      "changed": "File changed",
+      "yes": "Yes",
+      "no": "No",
+      "refresh": "Project refresh",
+      "usage": "Usage",
+      "usageEstimated": "Estimated (the service didn't report it)",
+      "cost": "Cost",
+      "costEstimated": "Estimated from the price table ({{version}}), not a bill",
+      "firstFailure": "First step that failed"
+    }
   }
 }

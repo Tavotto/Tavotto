@@ -1489,6 +1489,79 @@ export async function fetchTaskDiagnostic(
   return { available: true, blob: await res.blob(), filename: match?.[1] ?? 'tavotto-task-diagnostic.json' }
 }
 
+/** 执行追踪快照（ADR 0151）：后端 `engine/exectrace.py` 的公开投影，字段全是闭集 / 数字 / 不透明 id */
+export type ExecTraceOperation = 'ai_task' | 'fix_session' | 'preparation' | 'export'
+export type ExecTraceEndStatus = 'ok' | 'failed' | 'cancelled' | 'timeout' | 'interrupted' | 'unknown'
+export interface ExecTraceUsage {
+  source: 'reported' | 'estimated'
+  input_tokens: number | null
+  output_tokens: number | null
+  cached_input_tokens: number | null
+  cost: { amount: number; currency: string; pricing_version: string; estimated: true } | null
+}
+export interface ExecTraceSpanDto {
+  span_id: string
+  parent_span_id: string | null
+  name: string
+  kind: string
+  start_offset_ms: number
+  end_offset_ms: number | null
+  duration_ms: number | null
+  status: ExecTraceEndStatus | 'running'
+  error_code: string | null
+  attempt: number
+  timing: 'measured' | 'reported' | 'point' | 'unmeasured'
+  attributes: Record<string, string | number | boolean>
+  usage: ExecTraceUsage | null
+}
+export interface ExecTraceEventDto {
+  seq: number
+  name: string
+  span_id: string
+  at_offset_ms: number
+  attributes?: Record<string, string | number | boolean>
+}
+export interface ExecTraceDto {
+  schema_version: number
+  trace_id: string
+  operation_kind: ExecTraceOperation
+  started_at: number
+  ended_at: number | null
+  status: ExecTraceEndStatus | 'running' | 'interrupted'
+  error_code: string | null
+  root_span_id: string
+  first_failure: { span_id: string; name: string; error_code: string | null; attempt: number } | null
+  truncated: boolean
+  dropped_count: number
+  complete: boolean
+  spans: ExecTraceSpanDto[]
+  events: ExecTraceEventDto[]
+  last_seq: number
+}
+export type ExecTraceResult =
+  | { available: true; trace: ExecTraceDto }
+  | { available: false; reason: 'not_found' | 'disabled' }
+
+/**
+ * 读一次任务的执行追踪（权威快照；SSE 会丢，断线后以这里为准）。`ref` 是任务引用：AI 会话 id、修复会话的准备会话 id……
+ * `pj` 取调用这一刻的项目——追踪按项目认领，别的项目的 id 读作「没有」。
+ */
+export async function fetchExecTrace(
+  kind: ExecTraceOperation,
+  ref: string,
+  pj: string | null = currentProjectId(),
+): Promise<ExecTraceResult> {
+  const qs = `kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(ref)}`
+  const res = await fetch(apiUrlFor(`/api/exec-trace?${qs}`, pj), withProjectFor(undefined, pj))
+  if (res.status === 404) {
+    const body = (await res.json().catch(() => ({}))) as { reason?: string }
+    return { available: false, reason: body.reason === 'disabled' ? 'disabled' : 'not_found' }
+  }
+  if (!res.ok) throw new ApiError(`exec_trace_${res.status}`, res.status, {})
+  const body = (await res.json()) as { trace: ExecTraceDto }
+  return { available: true, trace: body.trace }
+}
+
 /**
  * 版本列表。`sketch` 给了才带草图 —— **默认不带**。
  *

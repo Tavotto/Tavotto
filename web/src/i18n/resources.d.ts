@@ -231,7 +231,205 @@ export default interface Resources {
       "running": "运行中",
       "timeout": "超时"
     },
-    "tabLabel": "改图助手"
+    "tabLabel": "改图助手",
+    "trace": {
+      "agent": {
+        "builtin": "内置执行器",
+        "claude": "Claude Code",
+        "codex": "Codex"
+      },
+      "approvedBy": {
+        "blocked": "被拦截",
+        "denied": "你拒绝了",
+        "policy": "按规则自动",
+        "timeout": "没有回应（超时）",
+        "user": "你批准了"
+      },
+      "execution": {
+        "native": "原生模式",
+        "safe": "安全模式"
+      },
+      "fact": {
+        "agent": "Agent",
+        "agentExit": "Agent 退出",
+        "approvedBy": "确认",
+        "attempt": "第几次",
+        "changed": "文件有改动",
+        "cost": "费用",
+        "costEstimated": "按定价表估算（{{version}}），不是账单",
+        "errorCode": "错误码",
+        "execution": "执行方式",
+        "exitFailed": "异常退出",
+        "exitOk": "正常退出",
+        "firstFailure": "最先出错的一步",
+        "model": "模型",
+        "no": "否",
+        "opaque": "内部步骤不可观察，只记录了外层",
+        "outcome": "任务结局",
+        "refresh": "项目刷新",
+        "timing": "计时",
+        "tool": "工具",
+        "usage": "用量",
+        "usageEstimated": "估算（服务端没有报告）",
+        "visibility": "可见性",
+        "yes": "是"
+      },
+      "operation": {
+        "ai_task": "AI 任务",
+        "export": "导出",
+        "fix_session": "智能修复",
+        "preparation": "运行脚本"
+      },
+      "outcome": {
+        "cancelled": "已取消",
+        "completed": "已完成",
+        "conflict": "文件重名，等你决定",
+        "convert": "已转为生成可编辑版本",
+        "done": "完成",
+        "error": "出错",
+        "failed": "失败",
+        "fixed": "已修好",
+        "interrupted": "已中断",
+        "needs_input": "需要你补充",
+        "not_fixed": "没修好",
+        "partial": "部分完成",
+        "ready": "就绪",
+        "static_source_available": "只有静态原图"
+      },
+      "refresh": {
+        "failed": "刷新失败",
+        "not_wired": "未接刷新",
+        "ok": "已刷新",
+        "pending": "还没刷新",
+        "skipped": "不需要刷新"
+      },
+      "span": {
+        "accept": "接受请求",
+        "agent_run": "Agent 运行",
+        "commit": "写入文件",
+        "correct": "自动修正",
+        "dependency_diagnosis": "依赖诊断",
+        "env_install": "安装环境",
+        "env_resolve": "确定环境",
+        "execute": "执行",
+        "export": "导出",
+        "model_request": "模型请求",
+        "plan": "计划",
+        "receipt": "回执",
+        "refresh": "刷新项目",
+        "render": "渲染",
+        "script_run": "运行脚本",
+        "settle": "收尾",
+        "task": "任务",
+        "tool_call": "工具调用",
+        "user_wait": "等待你确认",
+        "validate": "提交前检查",
+        "verify": "提交后验证"
+      },
+      "stage": {
+        "check": "核对计划",
+        "compile": "编译",
+        "compose": "合成",
+        "execute": "执行脚本",
+        "inspect": "检查产物",
+        "plan": "计划",
+        "prepare": "准备",
+        "publish": "写出文件",
+        "raster": "栅格化",
+        "receipt": "回执",
+        "report": "报告",
+        "source": "取源图",
+        "spawn": "启动进程"
+      },
+      "state": {
+        "disabled": "执行追踪已关闭",
+        "error": "执行记录读不出来",
+        "incomplete": "记录不完整",
+        "interrupted": "记录在任务结束前中断（应用退出或崩溃），之后发生的事不知道",
+        "loading": "正在读取执行记录…",
+        "not_found": "这次任务没有执行记录（可能已超过保留期）",
+        "retry": "重试",
+        "toggle": "执行记录",
+        "truncated_other": "记录过长，中间省略了 {{count}} 条",
+        "unsupported": "这份执行记录来自不兼容的版本，无法显示"
+      },
+      "timing": {
+        "point": "只记录了时刻，没有区间",
+        "reported": "时长由子进程上报",
+        "unmeasured": "区间没有测量到"
+      },
+      "ui": {
+        "badge": {
+          "attempt": "第 {{n}} 次",
+          "firstFailure": "首个失败",
+          "slowest": "最慢"
+        },
+        "close": "关闭",
+        "details": "{{name}} 的详情",
+        "empty": {
+          "body": "这条轨迹里没有匹配“{{query}}”的内容",
+          "title": "没有匹配的步骤"
+        },
+        "field": {
+          "attempt": "尝试",
+          "cost": "费用",
+          "duration": "耗时",
+          "started": "开始于",
+          "steps": "步骤数",
+          "tokens": "Token",
+          "tokensIn": "输入 Token",
+          "tokensOut": "输出 Token"
+        },
+        "legend": {
+          "failed": "失败",
+          "handoff": "交接",
+          "model": "模型调用",
+          "point": "仅有时刻",
+          "tool": "工具 / 阶段",
+          "unmeasured": "未量到",
+          "wait": "等待"
+        },
+        "metric": {
+          "cost": "费用",
+          "duration": "耗时",
+          "errors": "失败",
+          "modelCalls": "模型调用",
+          "tokens": "Token",
+          "toolCalls": "工具调用"
+        },
+        "note": {
+          "point": "只记录了时刻，没有时长",
+          "reported": "耗时由其他进程上报",
+          "unmeasured": "这一段没有量到"
+        },
+        "resize": "调整步骤列宽度",
+        "search": {
+          "label": "搜索步骤",
+          "placeholder": "搜索步骤"
+        },
+        "startOffset": "+{{value}}",
+        "status": {
+          "cancelled": "已取消",
+          "error": "失败",
+          "ok": "完成",
+          "running": "进行中",
+          "unknown": "未知"
+        },
+        "stepCount_other": "{{count}} 步",
+        "steps": "步骤",
+        "tick": {
+          "minutes": "{{value}}分",
+          "seconds": "{{value}}秒"
+        },
+        "title": "执行轨迹",
+        "toggle": {
+          "collapse": "收起 {{name}}",
+          "expand": "展开 {{name}}"
+        },
+        "treeLabel": "步骤",
+        "unknown": "—"
+      }
+    }
   },
   "common": {
     "actions": {

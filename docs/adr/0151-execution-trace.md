@@ -153,3 +153,15 @@ PR3 的读取走 REST 权威快照。
 * 内置执行器在改图链路里的工具调用只有结束时刻（point），没有区间；模型请求在**失败且无用量**时（网络错误）没有单独的 Span，结局在 `agent_run` 与根上。
 * `ready_to_commit` 不成区间；`run_command` / `install_packages` 等工具的子进程内部不再细分。
 * 端点、SSE 提示与 Waterfall 是 PR3；诊断包与 Guardian 是 PR4。
+
+## 修订：PR3——把已复刻的 Waterfall 接到真实数据（2026-10-27）
+
+* **读取端点** `GET /api/exec-trace?kind=&ref=`（或 `?id=`）：只读零执行，按**当前项目**认领（AI 会话按项目根、其余按项目 id 记 scope，两把键都属本项目）；
+  找不到 / 过期 / 别的项目 / 追踪关闭一律 404 + `available:false`（原因只分 `not_found` / `disabled`），`Cache-Control: no-store`，会话认证照常。
+  `Recorder.find` 先看内存（运行中的最新），再扫盘（总量有上限，扫一遍有界）。
+* **实时**：评估过新增 SSE 事件——现有 `/api/events` 是满了就丢、无序号、无回放的进程级队列，承担不了完整性；所以不为 Waterfall 另建实时通道：
+  运行中且展开时每秒取一次权威快照，`ai.done` 已有的终局通知触发最后一次。
+* **前端**：原型搬进 `web/src/components/ai/traceWaterfall/`（视觉门禁、i18n、图标集按仓库规则改写，交互与版式保留）；`lib/execTrace.ts` 是唯一转换层；
+  转录的「执行记录」与任务历史的「技术详情」共用 `TraceDetails`。规则全文 `docs/rules/frontend/execution-trace-ui.md`。
+* **性能**（`e2e/exec-trace-perf.spec.ts`，489 Span + 200 观察点、运行中、Chromium，三次）：展开到首行 524–741 ms；5 s 实时窗口长任务 1 个、140–156 ms。
+  改之前（时间轴随此刻连续伸缩、行不 memo）是 24 个 / 累计 1.56 s：运行中时间轴改取阶梯值、行只在含未结束 Span 时随 `now` 重画。没有改用 Canvas、没有虚拟化。
