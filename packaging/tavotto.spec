@@ -254,9 +254,19 @@ if "truststore" not in TRUSTSTORE_MODULES:
         "干净 Windows 上私有 Python 下载会因缺根证书失败")
 print(f"[tavotto.spec] truststore 子模块: {', '.join(TRUSTSTORE_MODULES)}")
 
+# 「接入 AI 编辑器」（用户 2026-10-27）：`tavotto-cli mcp` 在进程内跑插件那一份 MCP 服务端（engine/mcpserve.py），
+# 宿主配置写这条命令，只装桌面版的用户不必再装 Python。服务端包在 `codex-plugin/mcp/tavotto_mcp/`（不在 src/ 下，
+# wheel 也不带它）；mcpserve 只在运行时按名字 import 它，静态分析看不见这条边——整包子模块点名收进 PYZ，
+# 没收到就在这里失败。tests/test_desktop_mcp_serve.py 看护。
+sys.path.insert(0, str(ROOT / "codex-plugin" / "mcp"))
+MCP_SERVER_MODULES = collect_submodules("tavotto_mcp")
+if "tavotto_mcp.server" not in MCP_SERVER_MODULES:
+    raise SystemExit("codex-plugin/mcp/tavotto_mcp 没被收进来——`tavotto-cli mcp` 会报 mcp_server_not_bundled")
+print(f"[tavotto.spec] MCP 服务端子模块: {', '.join(MCP_SERVER_MODULES)}")
+
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
-    pathex=[str(ROOT / "src")],
+    pathex=[str(ROOT / "src"), str(ROOT / "codex-plugin" / "mcp")],
     binaries=binaries,
     datas=datas,
     hiddenimports=[
@@ -270,6 +280,8 @@ a = Analysis(
         *_pk_hidden,
         # 平台原生证书校验（见上；tlstrust 延后 import）
         *TRUSTSTORE_MODULES,
+        # `tavotto-cli mcp` 的服务端（见上；mcpserve 运行时才 import）
+        *MCP_SERVER_MODULES,
     ],
     hookspath=[],
     runtime_hooks=[],

@@ -412,6 +412,75 @@ def _check_control_plane(base: str, expect: str | None) -> None:
         )
 
 
+#: `tavotto-cli mcp` 必须答出来的工具（「接入 AI 编辑器」写进宿主配置的就是这条命令）。只点名两个：
+#: 全集归 `tavotto_mcp.server.HANDLERS`，这里不抄第二份，只证明冻结产物里服务端真的起来了、不是降级 server。
+FROZEN_MCP_REQUIRED_TOOLS = ("tavotto_health", "tavotto_open_figure")
+
+
+def frozen_cli_for(exe: str) -> Path:
+    """GUI exe 同目录的 `tavotto-cli`，**绝对路径**：CI 传的是相对路径（`dist/Tavotto/Tavotto`），而握手子进程的
+    cwd 是示例项目——相对路径会去那下面找（Codex #1451 P1）。"""
+    p = Path(exe).resolve()
+    return p.with_name("tavotto-cli" + p.suffix)
+
+
+def check_frozen_mcp(cli: Path, project: Path, workdir: Path) -> None:
+    """冻结产物的 `tavotto-cli mcp`：握手、列工具、调一次 tavotto_health（冻结态缺模块只有这样才露出来）。"""
+    msgs = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "smoke-app", "version": "1"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "tavotto_health", "arguments": {}},
+        },
+    ]
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("TAVOTTO_", "MM_"))}
+    env.update(
+        TAVOTTO_DATA_DIR=str(workdir / "mcp-data"),
+        TAVOTTO_CONFIG_DIR=str(workdir / "mcp-config"),
+        TAVOTTO_MCP_ROOTS=str(project),
+        TAVOTTO_NO_TELEMETRY="1",
+    )
+    proc = subprocess.run(
+        [str(cli), "mcp"],
+        input="".join(json.dumps(m) + "\n" for m in msgs),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        cwd=str(project),
+        timeout=300,
+    )
+    try:
+        out = {
+            m.get("id"): m for m in (json.loads(x) for x in proc.stdout.splitlines() if x.strip())
+        }
+    except ValueError as exc:
+        raise SystemExit(f"::error::tavotto-cli mcp 的 stdout 不是纯 JSON-RPC: {exc}") from exc
+    tools = {t.get("name") for t in ((out.get(2) or {}).get("result") or {}).get("tools", [])}
+    missing = [t for t in FROZEN_MCP_REQUIRED_TOOLS if t not in tools]
+    health = (out.get(3) or {}).get("result") or {}
+    if proc.returncode != 0 or missing or not health or health.get("isError"):
+        raise SystemExit(
+            f"::error::tavotto-cli mcp 不可用（退出码 {proc.returncode}，缺工具 {missing}，"
+            f"health={json.dumps(health, ensure_ascii=False)[:300]}）: {proc.stderr.strip()[-600:]}"
+        )
+    print(f"· tavotto-cli mcp 通过：{len(tools)} 个工具，tavotto_health 正常")
+
+
 def run_smoke(
     launch: list[str],
     figures: Path,
@@ -771,6 +840,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         workdir = Path(tempfile.mkdtemp(prefix="tavotto-smoke-"))
     print(f"· 隔离用户目录: {workdir}")
+    if args.exe:
+        cli = frozen_cli_for(args.exe)
+        if not cli.is_file():
+            print(f"::error::冻结产物里没有 {cli.name}", file=sys.stderr)
+            return 1
+        check_frozen_mcp(cli, figures, workdir)
     try:
         run_smoke(
             launch,

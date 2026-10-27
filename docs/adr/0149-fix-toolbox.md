@@ -120,7 +120,7 @@
 **结构**：MCP 服务（`tavotto fix-mcp`，`engine/fixmcp.py`，纯标准库）一个工具也不自己执行——`tools/list` 与 `tools/call` 经本机回环 HTTP 回调应用进程里正在跑的修复会话
 （`GET …/tools`、`POST …/tool`），由 `run_tool(tool, 会话上下文, 参数, 审计)` 执行，所以 `ctx.ask` 弹卡、改动前快照、审计、项目作用域全是 D2b 那一份，MCP 层没有第二套档位 / 同意。
 回调凭**每个修复会话一枚的 scoped token**（`secrets` 生成、`compare_digest`、只对该会话的这两个路径有效，会话结束 / 取消即失效，同 `status_token` 的做法，`security.py`）；
-令牌只经环境变量传（CLI 自己的环境 → MCP 子进程），不进 argv / 日志 / 事件 / 审计。CLI 的 stdout 读掉丢弃，**结论只认 `finish` 工具**；退出时没调 `finish` = `failed`（闭集原因 `cli_no_finish` / `cli_exit` / `cli_start` / `budget`）。
+令牌只经环境变量传（CLI 自己的环境 → MCP 子进程），不进 argv / 日志 / 事件 / 审计。CLI 的 stdout 读掉丢弃，**结论只认 `finish` 工具**；退出时没调 `finish` = `failed`（闭集原因 `cli_no_finish` / `cli_no_tools` / `cli_exit` / `cli_start` / `budget`；`cli_no_tools` = CLI 正常退出而修复工具服务从没来取过工具清单、也没有任何回调——工具根本没接上，界面单说一句，日志与修复审计各记一条闭集码与计数，不记 CLI 输出）。
 **只读口径（维护者裁决：接受 Codex 这边的风险，两边都开放）**：修复会话里 Claude 与 Codex 的自带命令行都只许**只读**。Claude Code 经本次启动参数 `--settings` 的 `permissions`：
 `Read(...)` deny 规则从 `readscope` 硬拦表**现生成**（不手抄第二份），写类 / 联网工具全 deny，只允许 MCP 工具、`Read` / `Grep` / `Glob` 与一小张只读命令白名单，`--permission-mode dontAsk`（没明确允许的一律拒、不弹确认）；
 Codex 用 `--sandbox read-only`——它的自带命令行**读不受限**（凭据位置的 DENY 管不到它），写被沙盒拦。这是已知并接受的风险，不是遗漏。
@@ -163,3 +163,8 @@ Windows（#1358 无沙盒）与没有 bwrap 的 Linux 只有第②档，第①�
 安装授权绑定规范包名与完整版本约束，修改 pin/range 或去掉版本需再次确认。安装/卸载使用修复会话本身的取消信号，取消后不开始下一个包。在途工具达到任务时限后也会被标成卡住并收到取消；用户审阅卡片的时间不计入工具时限，仍在修改环境的工具不被冒充已退出。转换/改图进程的总时限由独立计时器看护，不依赖 stdout 是否有完整一行。
 
 `prepare_diagnostics` 可携带结构化 issue 草稿（标题、复现、预期、实际、证据、尝试、产品侧归因）；整份草稿受现有反馈说明上限约束，缺字段/超限返回可修正错误，不静默截断。用户先审阅草稿及本机准备的诊断包，再逐次决定是否通过既有私密反馈通道发送；不自动提交公开 issue，不自动附源码。
+
+**修订（2026-10-27，界面语言）**：AI 写给用户的那几句话（`propose_fix` 的理由、`ask_user` 的问题与选项、`finish` 的总结、诊断草稿）
+用界面语言写。`POST /api/ai/fix` 带上前端的 `i18n.language`，`fixsession.language_rule` 按闭集（目前只有 `zh` → 简体中文）在
+提示词末尾加一段 LANGUAGE；英文与认不出的语言不加（提示词本身是英文）。内置循环的系统提示与 CLI 提示词同一段，CLI 那份放在
+准备报告之前，报告被截断时不跟着丢。包名、命令、路径、报错原文不翻译。

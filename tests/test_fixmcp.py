@@ -309,14 +309,32 @@ def test_cancel_returns_a_blocked_tool_call_and_kills_the_cli_process(box, serve
 
 
 # =========================================================================== 会话结局
-def test_cli_exiting_without_finish_is_failed_with_a_closed_reason_code(box):
-    s, _ = start_session(box, [sys.executable, "-c", "print('I fixed it!')"])
-    wait_finished(s)
+def test_cli_exiting_without_finish_is_failed_with_a_closed_reason_code(box, caplog):
+    # 取过工具清单（修复工具接上了）却没调 finish 就退出 = AI 没修好
+    s, token = start_session(
+        box, [sys.executable, "-c", "import time; time.sleep(1); print('I fixed it!')"]
+    )
+    assert fixsession.SESSIONS.tool_list(s.id, token)
+    with caplog.at_level("WARNING", logger=fixsession.LOG.name):
+        wait_finished(s)
     assert (s.outcome, s.reason) == (fixsession.OUTCOME_FAILED, "cli_no_finish")
     assert s.summary == ""  # stdout 一个字不当结论
+    assert "I fixed it" not in caplog.text and "cli_no_finish" in caplog.text
     s2, _ = start_session(box, [sys.executable, "-c", "import sys; sys.exit(3)"])
     wait_finished(s2)
     assert (s2.outcome, s2.reason) == (fixsession.OUTCOME_FAILED, "cli_exit")
+
+
+def test_a_cli_that_never_reached_the_repair_tools_says_so(box, caplog):
+    """修复工具服务起不来（如 MCP 子进程加载到没有 fix-mcp 的旧 tavotto）：CLI 照样正常退出，但从没来取过工具清单、
+    也没有任何回调。界面要能说出这一条（不是笼统的「没能修好」），日志与修复审计各留一条闭集码。"""
+    with caplog.at_level("WARNING", logger=fixsession.LOG.name):
+        s, _ = start_session(box, [sys.executable, "-c", "print('no tools here')"])
+        wait_finished(s)
+    assert (s.outcome, s.reason, s.steps) == (fixsession.OUTCOME_FAILED, "cli_no_tools", 0)
+    assert "cli_no_tools" in caplog.text and "no tools here" not in caplog.text
+    codes = [r["result"].get("code") for r in fixsession.audit_tail({s.id})]
+    assert "cli_no_tools" in codes
 
 
 def test_a_cli_that_cannot_start_is_failed_not_a_crash(box):
