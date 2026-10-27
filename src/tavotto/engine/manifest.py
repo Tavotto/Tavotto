@@ -593,6 +593,9 @@ def instrument(state: FigState) -> None:
     state.elements.clear()
     state.index.clear()
     state.identity.clear()
+    # 重新 instrument = 脚本可能已经改了自己的值（rebase）：旧的「脚本原样」读数作废，
+    # 下一次原样的 manifest 再记；记上之前 `overrides.apply` 照旧当场读。
+    state.pristine_fields = None
 
     # figure 本体（点击空白处选中，可改尺寸）——不占用 artist gid
     state.index["figure"] = fig
@@ -5135,6 +5138,14 @@ def _measure_manifest(
     #: 别名解析用的反查表（含旧 gid 别名），按需建一次——绝大多数元素没有广播型 prop
     alias_rev: dict[int, str] | None = None
     alias_registered = frozenset(e["gid"] for e in state.elements)
+    #: Figure 没被任何 override 动过时，这一轮读出的字段就是「脚本原样」：顺手记进
+    #: `state.pristine_fields`，`overrides.apply` 之后采 `value_original` 从这里取（见那里的注释）。
+    #: 读数本来就要读，记一份不多花一次 `_fields_for`。
+    pristine_fields: dict[str, dict] | None = (
+        {} if not state.applied and not state.unrestored else None
+    )
+    if pristine_fields is not None:
+        state.pristine_fields = pristine_fields
 
     fingerprint_budget = [FINGERPRINT_BUDGET]
     for el in state.elements:
@@ -5148,12 +5159,15 @@ def _measure_manifest(
         host_box = getattr(artist, "_mm_offsetbox_box", None)
         if host_box is not None and not host_box.get_visible():
             continue
+        fields = _fields_for(el, state)
+        if pristine_fields is not None:
+            pristine_fields[el["gid"]] = {f["prop"]: f["value"] for f in fields if "value" in f}
         entry = {
             "gid": el["gid"],
             "role": el["role"],
             "label": el["label"],
             "draggable": el["draggable"],
-            "editable": _with_value_original(_fields_for(el, state), state, el["gid"]),
+            "editable": _with_value_original(fields, state, el["gid"]),
         }
         # 目标身份（ADR 0083）：前端写 override 时抄进 patch 的 `identity`，
         # 之后脚本结构变了，`overrides.apply` 拿它核对 gid 此刻指向的是不是同一个对象
