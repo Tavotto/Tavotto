@@ -468,3 +468,41 @@ def test_tracing_switched_off_changes_nothing_in_the_edit(env, monkeypatch):
     sess = _wait(sid)
     assert sess["status"] == "done" and '"new"' in _project_text(env)
     assert isinstance(sess["trace"], exectrace.NullTrace)
+
+
+# ================================================================ Codex #1453：落盘不在业务线程上
+
+
+def test_a_stalled_disk_never_blocks_the_caller_and_the_final_state_still_lands(
+    tmp_path, monkeypatch
+):
+    """P1：导出建作业在全局导出锁里开 Trace。盘卡住时调用方必须立刻返回（写盘在后台写线程），盘恢复后终局照样落盘。"""
+    import threading
+    import time as _time
+
+    from tavotto.engine import atomicio
+
+    gate = threading.Event()
+    real = atomicio.write_bytes
+
+    def stalled(path, data, **kw):
+        gate.wait(10)
+        return real(path, data, **kw)
+
+    monkeypatch.setattr(atomicio, "write_bytes", stalled)
+    store = exectrace.TraceStore(tmp_path / "xt", background=True)
+    t0 = _time.monotonic()
+    t = exectrace.ExecTrace("export", store=store, scope="pjA")
+    t.end_span(t.start_span("export", "phase"))
+    t.finish("ok")
+    assert _time.monotonic() - t0 < 0.5, "业务线程在等磁盘"
+    assert not (tmp_path / "xt" / f"{t.trace_id}.json").exists()
+    gate.set()
+    assert store.flush(5.0)
+    saved = store.load(t.trace_id, scope="pjA")
+    assert saved["status"] == "ok"
+    assert not (tmp_path / "xt" / f"{t.trace_id}.open.json").exists()
+
+
+def test_the_process_recorder_writes_in_the_background():
+    assert exectrace.RECORDER._store._background is True

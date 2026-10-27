@@ -28,7 +28,7 @@ order: 325
   永远 `estimated=True`。不为统计额外发模型请求。
 - **采集失败不影响业务。** 公开方法吞异常计 `internal_errors`；存储不可写 / 损坏只计数；`TAVOTTO_NO_EXEC_TRACE=1` 拿到 `NullTrace`。
   调用点不得自己 `try` 掉业务异常来「保护」采集，也不得在业务锁里等采集。
-- **存储**：`data_dir()/cache/exec-trace/`，每 Trace 一个 JSON，`atomicio` 原子写；上限 / 保留 / 节流 / 恢复的数值是
+- **存储**：`data_dir()/cache/exec-trace/`，每 Trace 一个 JSON，`atomicio` 原子写，**只在后台写线程里写**（业务线程只 `submit`，绝不在业务锁里等磁盘）；上限 / 保留 / 节流 / 恢复的数值是
   `exectrace.py` 顶部常量（唯一出处，ADR 0151 §六列了当时的值）。只逐出冻结的；启动 `recover()` 把属主已死的运行中记录收成
   `interrupted`。读一律带 scope（项目的不透明键），对不上当不存在。
 - **不进遥测、不自动上传。** 诊断包要带 Trace 是 PR4 的事：另做导出投影、升 `BUNDLE_SCHEMA_VERSION`（`diagnostics.md`）。

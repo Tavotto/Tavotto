@@ -76,7 +76,7 @@ attributes 只收 `ATTRIBUTES` 登记的键，值按类型（计数 / 毫秒 / �
 | 项 | 值 |
 | --- | --- |
 | 位置 | `data_dir()/cache/exec-trace/<trace_id>.open.json`（运行中）→ `<trace_id>.json`（冻结） |
-| 运行中写盘 | 开始 / 冻结各一次 + 结束 Span 时节流 `CHECKPOINT_S = 2 s`（热路径不逐条同步写） |
+| 运行中写盘 | 开始 / 冻结各一次 + 结束 Span 时节流 `CHECKPOINT_S = 2 s`；**全部在后台写线程**（`TraceStore(background=True)`，待写表按 Trace 合并、写那一刻取最新快照）——业务线程（持着导出全局锁 / AI 请求锁 / 脚本锁）永不做磁盘 I/O（Codex #1453 P1）；正常退出 `atexit` 最多等 1 s 写完 |
 | 单条 | `MAX_RECORD_BYTES = 256 KiB`，超了先砍事件中段、再砍 Span 尾，记 `truncated`、`complete=false` |
 | 总量 / 保留 | `MAX_TOTAL_BYTES = 8 MiB`、`RETENTION_S = 7 天`；只逐出冻结的、按 mtime 从旧到新；运行中的永不逐出 |
 | 每条内存上限 | `MAX_SPANS = 512`、`MAX_EVENTS = 1024`（丢中间）、去重键 4096 |

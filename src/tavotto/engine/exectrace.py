@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import atexit
 import functools
 import json
 import os
@@ -712,7 +713,7 @@ class ExecTrace:
             if not force and now - self._last_checkpoint < CHECKPOINT_S:
                 return
             self._last_checkpoint = now
-            store.save(self)
+            store.submit(self)
         except Exception:  # noqa: BLE001
             self._internal_errors += 1
 
@@ -792,11 +793,54 @@ class TraceStore:
 
     _TOKEN = secrets.token_hex(8)
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, *, background: bool = False) -> None:
         self._root = root
         self._lock = threading.Lock()
         self.write_errors = 0
         self.corrupt = 0
+        #: 后台写（进程级记录器用）：`submit()` 只把 Trace 记进待写表、立刻返回；写线程每次取**那一刻**的快照写盘。
+        #: 业务线程（可能正持着导出全局锁、AI 请求锁、脚本锁）因此永远不做磁盘 I/O——盘慢 / 卡住只拖慢 Trace 自己。
+        self._background = background
+        self._pending: OrderedDict[str, ExecTrace] = OrderedDict()
+        self._pending_lock = threading.Lock()
+        self._wake = threading.Event()
+        self._idle = threading.Event()
+        self._idle.set()
+        self._writer: threading.Thread | None = None
+
+    def submit(self, trace: ExecTrace) -> None:
+        """要求写一次（合并：同一条 Trace 待写多次只写一次最新的）。同步模式直接写（测试 / 工具用）。"""
+        if not self._background:
+            self.save(trace)
+            return
+        with self._pending_lock:
+            self._pending[trace.trace_id] = trace
+            self._pending.move_to_end(trace.trace_id)
+            self._idle.clear()
+            if self._writer is None or not self._writer.is_alive():
+                self._writer = threading.Thread(
+                    target=self._drain, name="tavotto-exectrace-writer", daemon=True
+                )
+                self._writer.start()
+        self._wake.set()
+
+    def _drain(self) -> None:
+        while True:
+            self._wake.wait(timeout=30.0)
+            self._wake.clear()
+            while True:
+                with self._pending_lock:
+                    if not self._pending:
+                        self._idle.set()
+                        break
+                    _, trace = self._pending.popitem(last=False)
+                self.save(trace)  # 自己吞异常、计 write_errors
+
+    def flush(self, timeout: float = 5.0) -> bool:
+        """等待待写表写空（测试 / 退出时用）；超时回 False，不抛。"""
+        if not self._background:
+            return True
+        return self._idle.wait(timeout)
 
     @property
     def root(self) -> Path:
@@ -1038,7 +1082,19 @@ def scope_for(project_key) -> str | None:
 
 
 #: 进程级入口：业务模块只经 `begin()` 拿 Trace。存储根延迟到第一次写才解析（`data_dir()` 在测试里被重定向）。
-RECORDER = Recorder(TraceStore())
+RECORDER = Recorder(TraceStore(background=True))
+
+
+def _flush_at_exit() -> None:
+    # 正常退出时把最后几次终局写完（最多等 1 秒）；被强杀的进程留下的 `.open` 由下次启动 `recover()` 收成 interrupted
+    try:
+        if RECORDER._store is not None:
+            RECORDER._store.flush(1.0)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+atexit.register(_flush_at_exit)
 
 
 def begin(operation_kind: str, **kwargs):
