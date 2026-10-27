@@ -1655,6 +1655,7 @@ def health() -> "tuple[dict, int]":
                 "ms": 0,
             }
         ] + resolution["tried"]
+        desktop_cmd = None
         if resolution["python"]:
             report.update(
                 ok=True, mode="engine", python=resolution["python"], source=resolution["source"]
@@ -1679,6 +1680,14 @@ def health() -> "tuple[dict, int]":
         else:
             diag = diagnosis_resolved(found, resolution)
             code, hint = diag["code"], diag["hint"]
+            desktop_cmd = desktop_mcp_command(found) if code == "desktop_only" else None
+        if not resolution["python"] and desktop_cmd:
+            # 只装了桌面版、它的 tavotto-cli 自带 MCP 服务端：server 会交给它（见 main），不需要 --provision。
+            # 体检必须如实说「健康」，否则 `tavotto codex install` 会去建一个用不着的 venv、联网装引擎
+            report.update(
+                ok=True, mode="desktop_cli", python=None, source="desktop_cli", cli=desktop_cmd[0]
+            )
+        elif not resolution["python"]:
             report.update(
                 code=code, error=hint, recovery=_recovery_steps(code, diag.get("index", _UNSET))
             )
@@ -1908,11 +1917,42 @@ def _hand_off(python: str, argv: "list[str]") -> int:
       **这一处保留既有调用，不带 `CREATE_NO_WINDOW`**：它承载宿主的 stdin/stdout 协议管道，
       与只读探测 / 后台重装不是同一用途。本次不改变这条交棒路径的 flags 与 stdio 继承。
     """
-    args = [python, os.path.abspath(__file__), *argv]
+    return _exec_or_call([python, os.path.abspath(__file__), *argv])
+
+
+def _exec_or_call(args: "list[str]") -> int:
+    """交棒的唯一实现（见 `_hand_off` 的说明）：POSIX execv、Windows 子进程继承 stdio。"""
     if _IS_WINDOWS:
         return subprocess.call(args)
-    os.execv(python, args)
+    os.execv(args[0], args)
     return 0  # 走不到：execv 成功就不返回，失败抛 OSError
+
+
+def desktop_mcp_command(found: dict) -> "list[str] | None":
+    """只装了桌面版（`desktop_only`）时，它的 `tavotto-cli` 能不能直接当 MCP 服务端（`tavotto-cli mcp`，「接入 AI 编辑器」
+    2026-10-27 起的桌面版）。判据是**真的执行** `<cli> mcp --help`：退出码 0 且 stderr 报出用法。老版本的
+    `tavotto-cli` 不认 `mcp`、会落进主入口——所以只看 `--help` 的回答，绝不在探测时起它的服务。"""
+    cmd = found.get("cmd") or []
+    if not cmd:
+        return None
+    try:
+        r = subprocess.run(
+            [*cmd, "mcp", "--help"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=60,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode == 0 and b"tavotto mcp" in (r.stderr or b""):
+        return [*cmd, "mcp"]
+    return None
+
+
+def _hand_off_cmd(cmd: "list[str]") -> int:
+    """把这个进程交给一条现成的命令（桌面版的 `tavotto-cli mcp`）：与 `_hand_off` 同一个 `_exec_or_call`。"""
+    return _exec_or_call(cmd)
 
 
 # --------------------------------- 主入口 -----------------------------------
@@ -2019,6 +2059,14 @@ def main() -> int:
         resolution = {"python": None, "source": None, "tried": []}
     diag = diagnosis_resolved(found, resolution)
     code, hint = diag["code"], diag["hint"]
+    if code == "desktop_only":
+        # 桌面版自带 `tavotto-cli mcp` 就交给它：只装桌面版的用户不必再 --provision（「接入 AI 编辑器」）
+        desktop_cmd = desktop_mcp_command(found)
+        if desktop_cmd:
+            print(
+                f"tavotto-mcp: 桌面版的 {desktop_cmd[0]} 自带 MCP 服务端，交棒。", file=sys.stderr
+            )
+            return _hand_off_cmd(desktop_cmd)
     if diag.get("engine"):
         resolution = {**resolution, "found_engine": diag["engine"]}
     if "index" in diag:
