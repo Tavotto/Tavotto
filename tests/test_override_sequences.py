@@ -184,6 +184,33 @@ FIXED: list[tuple[str, str, list[list[dict]]]] = [
             [_p("axes_0.patches_0", "hatch", "/")],
         ],
     ),
+    (
+        # lab 放宽种子 InvCont-s18：图例句柄颜色跟着柱子 facecolor 走。热态里句柄第一次被采样
+        # 是在第二轮，那时第一轮的 facecolor 已经把它的读数改成 #123456，`value_original` 记成了
+        # 联动后的值；重放从脚本原样起步，记的是 #1f77b4。修法：Figure 还是原样的那一轮整图读一份
+        # 字段（`FigState.pristine_fields`），之后各轮第一次采样都从那里取。
+        "seq18-bar-facecolor-then-legend-handle-color",
+        "InvCont",
+        [
+            [_p("axes_0.barseries_1.bar_0", "facecolor", "#123456")],
+            [
+                _p("axes_0.barseries_1.bar_0", "facecolor", "#123456"),
+                _p(_T1, "handle_color", "#ff0000"),
+            ],
+        ],
+    ),
+    (
+        # lab 放宽种子 InvCont-s29：同一族，花纹颜色跟着 edgecolor 走。
+        "seq29-bar-edgecolor-then-hatchcolor",
+        "InvCont",
+        [
+            [_p("axes_0.barseries_1", "edgecolor", "#123456")],
+            [
+                _p("axes_0.barseries_1", "edgecolor", "#123456"),
+                _p("axes_0.barseries_1", "hatchcolor", "#ff0000"),
+            ],
+        ],
+    ),
 ]
 
 

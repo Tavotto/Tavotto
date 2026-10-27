@@ -120,6 +120,13 @@ class FigState:
         # 前端拿它没法与 manifest 的 `value` 比；这一份在采 originals 的**同一时刻**、用 manifest
         # 自己的字段读法（`set_original_reader`）读，与 originals 同生同灭。读不出的不记 = 不知道。
         self.original_values: dict[tuple, object] = {}
+        # gid -> 该元素各字段的「脚本原样」：Figure **还没被任何 override 动过**时 build_manifest
+        # 顺手记下（那一轮的字段读数本来就要读）。采 `original_values` 优先取这里：元素之间有联动
+        # （图例句柄跟着柱子 facecolor、花纹颜色跟着 edgecolor），热会话里一个元素第一次被采样时，
+        # 别的 override 可能**前几轮**就把它的读数改掉了，而全量重放每次都从原样起步——两边的
+        # `value_original` 就对不上（lab 放宽种子 InvCont-s18/s29）。没有（还没出过原样的 manifest、
+        # 后来才出现的元素）就照旧当场读。
+        self.pristine_fields: dict[str, dict] | None = None
         # 由**广播型 prop** 代为采下的「脚本原样」（见 ALIAS_GROUPS）。它们
         # 是 originals 里没有对应 applied 条目的那些，单独记一笔才能在广播
         # 撤销之后跟着清掉——否则 originals 里会留下永远没人回收的条目。
@@ -5661,6 +5668,8 @@ def _apply(state: FigState, patches: list[dict]) -> list[str]:
 
     def _snapshot(gid: str) -> dict:
         fields = _field_snap.get(gid)
+        if fields is None and _ORIGINAL_READER is not None and state.pristine_fields is not None:
+            fields = state.pristine_fields.get(gid)
         if fields is None:
             sm, shown = _standalone_sm_of(state, gid), None
             try:

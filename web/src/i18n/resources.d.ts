@@ -2304,6 +2304,62 @@ export default interface Resources {
         "themeSystem": "跟随系统"
       },
       "helpAbout": "关于{{label}}",
+      "hosts": {
+        "announce": {
+          "failed": "没有接好。",
+          "ok": "完成。"
+        },
+        "changeFolder": "更改文件夹",
+        "chooseFolder": "选择文件夹",
+        "connect": "接入",
+        "connected": "已接入",
+        "disconnect": "断开",
+        "disconnected": "已断开",
+        "doneNewSession": "接好了。请在 {{host}} 里新开一个会话。",
+        "error": {
+          "bad_action": "不允许此操作。",
+          "bad_args": "参数不对。",
+          "bad_host": "不认识这个编辑器。",
+          "bad_output": "命令跑完了，但没有可读结果。再试一次。",
+          "cli_not_found": "找不到本机的 Tavotto 命令行（tavotto-cli）。安装包可能不完整，重装桌面版即可。",
+          "codex_install_failed": "Codex 没接好。展开详情看卡在哪一步。",
+          "config_unreadable": "{{host}} 的配置文件读不懂（可能带注释），为免弄坏，没有改它。展开详情看是哪个文件。",
+          "config_write_failed": "写不进 {{host}} 的配置文件。展开详情看是哪个文件。",
+          "host_cli_failed": "{{host}} 的命令行没能完成登记。展开详情看原文。",
+          "host_not_installed": "没检测到 {{host}}。装好并至少打开一次后再试。",
+          "mcp_server_not_bundled": "这一版 Tavotto 不带 MCP 服务，请升级桌面版。",
+          "not_desktop": "此操作仅在桌面版可用。",
+          "other": "没有接好。展开详情看命令的原话。",
+          "project_root_missing": "先选一个项目文件夹。",
+          "project_root_rejected": "不能选整个主目录或磁盘根目录，请选一个具体的项目文件夹。",
+          "server_health_failed": "配置已写好，但 Tavotto 的服务没能启动。展开详情看原因。",
+          "spawn_failed": "无法启动 Tavotto 命令行。再试一次。",
+          "unknown_host": "不认识这个编辑器。"
+        },
+        "more": "{{host}} 的更多操作",
+        "notDetected": "未检测到",
+        "pickFolderTitle": "让 {{host}} 用 Tavotto 处理哪个文件夹里的图？",
+        "retry": "重试",
+        "running": "接入中…",
+        "step": {
+          "config": "写配置",
+          "detect": "检测",
+          "health": "启动检查",
+          "host": "编辑器",
+          "project_root": "项目文件夹",
+          "register": "登记",
+          "server": "MCP 服务",
+          "trust": "信任 Tavotto",
+          "unregister": "移除登记"
+        },
+        "stepState": {
+          "done": "完成",
+          "failed": "失败",
+          "skipped": "无需改动"
+        },
+        "stepsTitle": "详情",
+        "title": "接入 AI 编辑器"
+      },
       "navGroup": {
         "general": "应用",
         "integrations": "集成",

@@ -1920,6 +1920,62 @@
       "back": "Back",
       "savedRefreshFailed": "Saved, but the status couldn’t be refreshed.",
       "retryRefresh": "Retry refresh"
+    },
+    "hosts": {
+      "title": "Connect AI editors",
+      "connect": "Connect",
+      "retry": "Retry",
+      "chooseFolder": "Choose folder",
+      "running": "Connecting…",
+      "connected": "Connected",
+      "notDetected": "Not found",
+      "disconnected": "Disconnected",
+      "doneNewSession": "Connected. Start a new session in {{host}}.",
+      "more": "More actions for {{host}}",
+      "changeFolder": "Change folder",
+      "disconnect": "Disconnect",
+      "pickFolderTitle": "Which folder should {{host}} work on with Tavotto?",
+      "stepsTitle": "Details",
+      "announce": {
+        "ok": "Done.",
+        "failed": "Not connected."
+      },
+      "stepState": {
+        "done": "done",
+        "skipped": "no change needed",
+        "failed": "failed"
+      },
+      "step": {
+        "project_root": "Project folder",
+        "detect": "Detect",
+        "config": "Write config",
+        "trust": "Trust Tavotto",
+        "register": "Register",
+        "unregister": "Unregister",
+        "health": "Start check",
+        "server": "MCP server",
+        "host": "Editor"
+      },
+      "error": {
+        "host_not_installed": "{{host}} was not found. Install it and open it once, then try again.",
+        "mcp_server_not_bundled": "This version of Tavotto has no MCP server. Update the desktop app.",
+        "project_root_missing": "Choose a project folder first.",
+        "project_root_rejected": "Choose a specific project folder, not your whole home folder or a drive root.",
+        "config_unreadable": "Tavotto could not read the {{host}} config file (it may contain comments), so it left it unchanged. Open Details to see which file.",
+        "config_write_failed": "Tavotto could not write the {{host}} config file. Open Details to see which file.",
+        "host_cli_failed": "The {{host}} command line did not finish the registration. Open Details for its output.",
+        "server_health_failed": "The config is written, but the Tavotto server did not start. Open Details for the reason.",
+        "codex_install_failed": "Codex is not connected. Open Details to see which step stopped.",
+        "unknown_host": "Unknown editor.",
+        "cli_not_found": "The Tavotto command line (tavotto-cli) is missing. Reinstall the desktop app.",
+        "spawn_failed": "Could not start the Tavotto command line. Try again.",
+        "bad_output": "The command finished without a readable result. Try again.",
+        "bad_args": "Invalid arguments.",
+        "bad_host": "Unknown editor.",
+        "bad_action": "This action is not allowed.",
+        "not_desktop": "Available in the desktop app only.",
+        "other": "Not connected. Open Details for the command output."
+      }
     }
   },
   "style": {

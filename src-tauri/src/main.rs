@@ -388,15 +388,163 @@ async fn codex_integration(app: tauri::AppHandle, action: String) -> Result<Stri
     if action != "install" && action != "doctor" {
         return Err("bad_action".into());
     }
+    run_cli_json(app, vec!["codex".into(), action, "--json".into()]).await
+}
+
+/// 「接入 AI 编辑器」的宿主闭集——**与 `engine/hostconnect.py` 的 `HOST_IDS` 逐字相同**
+/// （看护 `tests/test_desktop_hosts_button.py`）。webview 递不进任意宿主名。
+const HOST_IDS: [&str; 8] = [
+    "codex",
+    "claude-code",
+    "cursor",
+    "vscode",
+    "trae",
+    "zcode",
+    "workbuddy",
+    "claude-desktop",
+];
+
+/// 「接入 AI 编辑器」：spawn `tavotto-cli hosts <action> [<host>] [--project-root <目录>] --json`，
+/// 原样交回那一行 JSON——**壳里没有第二套安装器**，写哪些文件、怎么备份、怎么断开都只在
+/// `engine/hostconnect.py`（与 `codex_integration` 同一条纪律，ADR 0012）。
+///
+/// `action` 是闭集 `list` / `connect` / `disconnect`（断开是方案里的 ⋯ 菜单项：只删 tavotto 一条）；
+/// `host` 必须在 `HOST_IDS` 里；`project_root` 只给 `connect`，作为一个 argv 元素传（不过 shell），
+/// 文件夹本身合不合格由引擎判（根 / HOME 拒绝）。
+#[tauri::command]
+async fn host_integration(
+    app: tauri::AppHandle,
+    action: String,
+    host: Option<String>,
+    project_root: Option<String>,
+) -> Result<String, String> {
+    let args = host_cli_args(&action, host.as_deref(), project_root.as_deref())?;
+    run_cli_json(app, args).await
+}
+
+/// `host_integration` 收到的参数 → `tavotto-cli` 的 argv。**校验只在这里**（行为由下面的 `host_cli_tests` 钉住）：
+/// action 闭集、宿主必须在 `HOST_IDS`、文件夹只给 `connect` 且非空、作为一个 argv 元素传。
+fn host_cli_args(
+    action: &str,
+    host: Option<&str>,
+    project_root: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let mut args: Vec<String> = vec!["hosts".into()];
+    match action {
+        "list" => {
+            if host.is_some() || project_root.is_some() {
+                return Err("bad_args".into());
+            }
+            args.push(action.into());
+        }
+        "connect" | "disconnect" => {
+            let h = host.ok_or_else(|| "bad_args".to_string())?;
+            if !HOST_IDS.contains(&h) {
+                return Err("bad_host".into());
+            }
+            args.push(action.into());
+            args.push(h.into());
+            if let Some(root) = project_root {
+                if action != "connect" || root.is_empty() {
+                    return Err("bad_args".into());
+                }
+                args.push("--project-root".into());
+                args.push(root.into());
+            }
+        }
+        _ => return Err("bad_action".into()),
+    }
+    args.push("--json".into());
+    Ok(args)
+}
+
+#[cfg(test)]
+mod host_cli_tests {
+    use super::host_cli_args;
+
+    fn ok(v: &[&str]) -> Result<Vec<String>, String> {
+        Ok(v.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn list_takes_no_host_or_folder() {
+        assert_eq!(
+            host_cli_args("list", None, None),
+            ok(&["hosts", "list", "--json"])
+        );
+        assert_eq!(
+            host_cli_args("list", Some("cursor"), None),
+            Err("bad_args".into())
+        );
+        assert_eq!(
+            host_cli_args("list", None, Some("/p")),
+            Err("bad_args".into())
+        );
+    }
+
+    #[test]
+    fn only_known_hosts_pass() {
+        assert_eq!(
+            host_cli_args("connect", Some("cursor"), None),
+            ok(&["hosts", "connect", "cursor", "--json"])
+        );
+        for bad in ["--project-root", "cursor --json", "", "../x", "sh"] {
+            assert_eq!(
+                host_cli_args("connect", Some(bad), None),
+                Err("bad_host".into()),
+                "{bad}"
+            );
+        }
+        assert_eq!(host_cli_args("connect", None, None), Err("bad_args".into()));
+    }
+
+    #[test]
+    fn the_folder_is_one_argv_element_and_only_for_connect() {
+        let root = "/Users/me/论文 a;b/figs";
+        assert_eq!(
+            host_cli_args("connect", Some("zcode"), Some(root)),
+            ok(&[
+                "hosts",
+                "connect",
+                "zcode",
+                "--project-root",
+                root,
+                "--json"
+            ])
+        );
+        assert_eq!(
+            host_cli_args("disconnect", Some("zcode"), Some(root)),
+            Err("bad_args".into())
+        );
+        assert_eq!(
+            host_cli_args("connect", Some("zcode"), Some("")),
+            Err("bad_args".into())
+        );
+    }
+
+    #[test]
+    fn unknown_actions_are_refused() {
+        for bad in ["install", "uninstall", "LIST", ""] {
+            assert_eq!(
+                host_cli_args(bad, Some("cursor"), None),
+                Err("bad_action".into()),
+                "{bad}"
+            );
+        }
+    }
+}
+
+/// spawn 桌面版的 `tavotto-cli <args>`，取 stdout 里**最后一行 JSON**。失败也是一行 JSON（引擎的
+/// `--json` 纪律），所以不看退出码；真的一行都没有才回稳定 code（`cli_not_found` / `spawn_failed` /
+/// `bad_output`），由前端翻成人话——英文 code 不进界面。
+async fn run_cli_json(app: tauri::AppHandle, args: Vec<String>) -> Result<String, String> {
     let resource_dir = app.path().resource_dir().ok();
     tauri::async_runtime::spawn_blocking(move || {
         let cli = sidecar::resolve_cli(resource_dir.as_deref())?;
         let mut cmd = std::process::Command::new(&cli);
-        cmd.arg("codex")
-            .arg(&action)
-            .arg("--json")
-            // 安装要拉一次稀疏检出，可能跑上几分钟。stdin 给 null：这条命令
-            // 刻意不是交互向导，等在一个没人接的提示上等于挂死。
+        cmd.args(&args)
+            // 安装要拉一次稀疏检出、写配置后要真握手一次，可能跑上几分钟。stdin 给 null：
+            // 这些命令刻意不是交互向导，等在一个没人接的提示上等于挂死。
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -1838,6 +1986,7 @@ fn main() {
             reveal_project_dir,
             set_menu_locale,
             codex_integration,
+            host_integration,
             arm_close_guard,
             resolve_close_request,
             native_file_drop,

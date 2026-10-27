@@ -454,7 +454,7 @@ fn allowed_hits() -> Vec<Hit> {
         ),
         h(
             "main.rs",
-            "codex_integration",
+            "run_cli_json",
             "use std::os::windows::process::CommandExt",
         ),
     ]

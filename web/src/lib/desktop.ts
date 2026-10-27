@@ -11,6 +11,7 @@
 
 import { currentLocale, t } from '@/i18n'
 import { CodexShellError } from '@/lib/codexInstall'
+import { HostShellError } from '@/lib/hostConnect'
 
 /**
  * 运行在 Tavotto 桌面壳里（Tauri 2 注入的 IPC 标记在）——不管引擎在哪台机器上。
@@ -637,6 +638,31 @@ export async function runCodexIntegration(action: 'install' | 'doctor'): Promise
     // 一律当 spawn_failed——**不把它当句子显示给用户**。
     const code = typeof e === 'string' ? e : ''
     throw new CodexShellError(code || 'spawn_failed')
+  }
+}
+
+/**
+ * 「接入 AI 编辑器」（用户 2026-10-27）：壳命令 `host_integration` spawn `tavotto-cli hosts … --json`，原样交回那一行
+ * JSON。宿主名与 action 在壳里是闭集；`projectRoot` 只给 `connect`（第一次接入时用户选的文件夹）。
+ * 壳回的是稳定 code（cli_not_found / spawn_failed / bad_output / bad_args / bad_host / bad_action），其余一律当
+ * spawn_failed——**不把它当句子显示给用户**。
+ */
+export async function runHostIntegration(
+  action: 'list' | 'connect' | 'disconnect',
+  host?: string,
+  projectRoot?: string,
+): Promise<string> {
+  if (!isDesktop()) throw new HostShellError('not_desktop')
+  const { invoke } = await import('@tauri-apps/api/core')
+  try {
+    return await invoke<string>('host_integration', {
+      action,
+      host: host ?? null,
+      projectRoot: projectRoot ?? null,
+    })
+  } catch (e) {
+    const code = typeof e === 'string' ? e : ''
+    throw new HostShellError(code || 'spawn_failed')
   }
 }
 
