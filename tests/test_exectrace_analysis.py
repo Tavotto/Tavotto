@@ -157,6 +157,7 @@ def test_bench_rows_link_through_session_ref_and_supply_verification(root):
                 "variant": "ref",
                 "outcome": "completed",
                 "figure_verdict": "verified",
+                "goal": "verified",
                 "trace_ids": [t.trace_id],
             }
         ]
@@ -258,3 +259,21 @@ def test_cli_writes_schema_and_never_touches_the_trace_dir(root, tmp_path):
     assert (
         ea.main(["--traces", str(root), "--out", str(out), "--baseline", str(tmp_path / "no")]) == 2
     )
+
+
+def test_a_bench_row_passes_only_by_taf_benchs_own_final_ok_including_the_goal():
+    """Codex #1457：通过与否就是 `taf_bench.final_ok`（outcome + figure_verdict + goal），这里不另写一份。"""
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "tb", Path(__file__).resolve().parent.parent / "scripts" / "dev" / "taf_bench.py"
+    )
+    tb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tb)
+    base = {"id": "FB-1", "variant": "ref", "outcome": "completed", "figure_verdict": "verified"}
+    for goal in ("verified", "not_applicable", "failed", "unknown", None):
+        row = dict(base, goal=goal)
+        entry = ea._case_entries({"rows": [row]})[0]
+        assert entry["passed"] is tb.final_ok(row), goal
+    assert ea._case_entries({"rows": [dict(base, goal="failed")]})[0]["passed"] is False

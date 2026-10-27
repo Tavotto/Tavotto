@@ -44,12 +44,28 @@ SCHEMA = "tavotto.exectrace-analysis/1"
 #: Fewer samples than this and a statistic is `null` + `insufficient_samples: true`.
 MIN_SAMPLES = 5
 NOTE_SAME_CODE = "Rows sharing an error class share an evidence-backed stable code, not necessarily a root cause."
+_BENCH = None
+
+
+def _bench_final_ok(row: dict) -> bool:
+    """`scripts/dev/taf_bench.py::final_ok` 按文件路径载入（它顶层只 import 标准库）；判据只有那一份。"""
+    global _BENCH
+    if _BENCH is None:
+        import importlib.util
+        from pathlib import Path
+
+        path = Path(__file__).resolve().parents[1] / "dev" / "taf_bench.py"
+        spec = importlib.util.spec_from_file_location("_tavotto_taf_bench", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _BENCH = mod
+    return bool(_BENCH.final_ok(row))
+
+
 NOTE_NO_VERDICT = "Verdict and verification come only from guardian/bench results; a trace status is never a verdict."
 
 #: Source statuses that count as a pass. Everything else with a known status counts as not passed.
 GUARDIAN_PASS = ("passed", "control_met")
-BENCH_PASS_OUTCOME = "completed"
-BENCH_PASS_VERIFICATION = "verified"
 
 
 # ---------------------------------------------------------------- loading
@@ -116,11 +132,8 @@ def _case_entries(results) -> list[dict]:
             {
                 "case_id": f"{r['id']}/{variant}" if variant else r["id"],
                 "verdict": outcome if isinstance(outcome, str) else None,
-                "passed": (
-                    outcome == BENCH_PASS_OUTCOME and fv == BENCH_PASS_VERIFICATION
-                    if isinstance(outcome, str)
-                    else None
-                ),
+                # 通过与否只用 taf_bench 自己的判据（含目标断言 goal），不在这里另写一份（Codex #1457）
+                "passed": _bench_final_ok(r) if isinstance(outcome, str) else None,
                 "error_class": None,
                 "verification": fv if isinstance(fv, str) else None,
                 "raw": r,

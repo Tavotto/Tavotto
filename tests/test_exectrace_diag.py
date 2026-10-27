@@ -195,3 +195,16 @@ def test_the_user_can_export_one_trace_diagnostic_and_only_from_its_own_project(
         "reason": "not_found",
     }
     assert client.get("/api/exec-trace/diagnostic", query_string={"pj": pa}).status_code == 400
+
+
+def test_a_finished_verify_phase_is_not_a_verified_result():
+    """Codex #1457：AI 任务的 verify 阶段 ok 只说明那一段走完了；提交后检查 unknown（结局 partial）时不能说 verified。"""
+    for outcome, expected in (
+        ("partial", "unknown"),
+        ("completed", "verified"),
+        ("failed", "unknown"),
+    ):
+        t = _trace()
+        t.end_span(t.start_span("verify", "verify"))
+        t.finish("ok" if outcome != "failed" else "failed", attributes={"outcome": outcome})
+        assert diag.attribution(t.snapshot())["verified_by_execution"] == expected, outcome

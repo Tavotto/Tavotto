@@ -136,6 +136,16 @@ p.write_text(src, encoding="utf-8")
 """
 
 
+def goal_ok(r: dict) -> bool:
+    """没有目标断言的场景（只有保持类，例如 FB-V01）目标记 not_applicable，算满足。"""
+    return r.get("goal") in ("verified", "not_applicable")
+
+
+def final_ok(r: dict) -> bool:
+    """一行算不算「最终通过」——唯一判据（`scripts/ci/exectrace_analysis.py` 按路径载入用同一个，不另写一份）。"""
+    return r.get("outcome") == "completed" and r.get("figure_verdict") == "verified" and goal_ok(r)
+
+
 def _metrics(rows: list[dict], aggregate_only: bool = False) -> dict:
     """`06-benchmark-plan.md` §三：分母只算真的跑了的（not_run 单列，不进分母）。
 
@@ -146,13 +156,6 @@ def _metrics(rows: list[dict], aggregate_only: bool = False) -> dict:
 
     def rate(items, pred):
         return round(sum(1 for r in items if pred(r)) / len(items), 4) if items else None
-
-    def goal_ok(r):
-        # 没有目标断言的场景（只有保持类，例如 FB-V01）目标记 not_applicable，算满足
-        return r["goal"] in ("verified", "not_applicable")
-
-    def final_ok(r):
-        return r["outcome"] == "completed" and r["figure_verdict"] == "verified" and goal_ok(r)
 
     not_run = [f"{r['id']}/{r['variant']}" for r in rows if r["outcome"] is None]
     walls = sorted(r["wall_s"] for r in ran if r["wall_s"] is not None)

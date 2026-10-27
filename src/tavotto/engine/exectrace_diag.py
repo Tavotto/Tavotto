@@ -215,12 +215,17 @@ def attribution(snapshot: dict) -> dict:
     codes = [s.get("error_code") or "" for s in spans] + [snapshot.get("error_code") or ""]
     waits = [s for s in non_root if s.get("name") == "user_wait"]
 
-    # ④ 最终是否由真实执行证据验证：只认 Trace 里真的记了的验证 / 运行区间；没有就是 unknown
-    verify = [s for s in non_root if s.get("name") == "verify"]
+    # ④ 最终是否由真实证据验证。阶段 Span 的 ok 只说明那一段走完了，**不是**检查通过（Codex #1457）：
+    #   AI 任务只认 Task Core 的结局（`completed` = 必需检查全部 verified；其余一律说不出 = unknown）；
+    #   准备 / 运行只认真实执行区间 `script_run` 的终局；别的没有执行证据 = unknown。
+    root_outcome = next(
+        ((s.get("attributes") or {}).get("outcome") for s in spans if s.get("span_id") == root_id),
+        None,
+    )
     runs_real = [s for s in non_root if s.get("name") == "script_run"]
-    if verify:
-        verified = "verified" if verify[-1].get("status") == exectrace.STATUS_OK else "failed"
-    elif runs_real:
+    if snapshot.get("operation_kind") == "ai_task":
+        verified = "verified" if root_outcome == "completed" else "unknown"
+    elif runs_real and runs_real[-1].get("status") in (exectrace.STATUS_OK, *_FAILING):
         verified = "verified" if runs_real[-1].get("status") == exectrace.STATUS_OK else "failed"
     else:
         verified = "unknown"
