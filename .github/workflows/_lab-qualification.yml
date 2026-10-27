@@ -232,6 +232,12 @@ jobs:
           # 基线因此真正代表「用户会看到的那张图」。
           # shellcheck disable=SC2046
           "$VENV/bin/pip" install -q $(python3 scripts/ci/runtime_pins.py --include-corpus)
+          # matplotlib 的字体缓存在 runner 家目录（`~/.cache/matplotlib/fontlist-v<版本>.json`），
+          # 不随一次性 venv 走：键只有 matplotlib 版本，别的解释器建的同版本缓存会被原样读进来。
+          # 2026-09-22 留下的那份只有系统字体、没有 mpl-data 的 STIX，发行档 lab 上
+          # `font.family: STIXGeneral` 的教程图整张退成 DejaVu（test_tutorial_demo_figure 红）。
+          # 缓存只存「扫到了哪些字体」，删掉由本 venv 的 matplotlib 首次 import 时重建。
+          "$VENV/bin/python" -c "import glob, os, matplotlib; [os.remove(p) for p in glob.glob(os.path.join(matplotlib.get_cachedir(), 'fontlist-*.json'))]"
           echo "python=$VENV/bin/python" >> "$GITHUB_OUTPUT"
           "$VENV/bin/python" -c "import tavotto,matplotlib,numpy,PIL;print('环境就绪', tavotto.__version__)"
 
