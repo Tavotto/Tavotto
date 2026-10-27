@@ -35,6 +35,15 @@ const headers = {'cache-control':'no-store','referrer-policy':'no-referrer','x-c
   'content-security-policy':"default-src 'none'; frame-ancestors 'none'"};
 const json = (data:unknown,status=200,extra:Record<string,string>={}) => Response.json(data,{status,headers:{...headers,...extra}});
 const cookie = (name:string,value:string,age:number) => `${name}=${value}; Path=/; Max-Age=${age}; Secure; HttpOnly; SameSite=Lax`;
+// GitHub's /.well-known/oauth-authorization-server/login/oauth declares this
+// issuer and authorization_response_iss_parameter_supported=true. RFC 9207
+// section 2.4 requires an issuer for that provider and exact decoded-string
+// comparison; URL normalization or a missing-issuer fallback is not allowed.
+const GITHUB_OAUTH_ISSUER='https://github.com/login/oauth';
+function validOAuthCallbackQuery(url:URL):boolean {
+  return [...url.searchParams.keys()].sort().join(',')==='code,iss,state' &&
+    url.searchParams.get('iss')===GITHUB_OAUTH_ISSUER;
+}
 function cookies(req:Request):Map<string,string> {
   const result=new Map<string,string>();
   for (const piece of (req.headers.get('cookie') ?? '').split(';').filter(x=>x.trim())) {
@@ -158,7 +167,7 @@ export default {async scheduled(controller:{cron?:string},env:Env):Promise<void>
     }
     const s=await service(env),jar=cookies(req),token=jar.get('__Host-cla-session') ?? '',csrf=req.headers.get('x-csrf-token') ?? '';
     if(req.method==='GET' && url.pathname==='/oauth/callback') {
-      const query=[...url.searchParams.keys()];if(query.length!==2 || !query.includes('state') || !query.includes('code')) throw new Rejected('oauth_rejected');
+      if(!validOAuthCallbackQuery(url)) throw new Rejected('oauth_rejected');
       const login=await s.completeOAuth(url.searchParams.get('state')!,jar.get('__Host-cla-oauth') ?? '',url.searchParams.get('code')!);
       const browser=req.headers.get('accept')?.includes('text/html');
       const response=browser?new Response(null,{status:303,headers:{...headers,location:'/'}}):json({csrf:login.csrf});response.headers.append('set-cookie',cookie('__Host-cla-session',login.token,900));
