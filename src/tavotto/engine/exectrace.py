@@ -772,24 +772,30 @@ class TraceStore:
         return data
 
     def save(self, trace: ExecTrace) -> None:
+        """写一份快照。终局与否以**快照自己的状态**为准，并在写锁里再核一次：一个在 `finish()` 之前截下的运行中
+        快照，到写锁时 Trace 已冻结，就丢掉它——不能拿旧的运行中快照盖掉终局（`.open` 由终局那次删掉）。"""
+        snap = trace.snapshot()
+        final = snap.get("status") != STATUS_RUNNING
         record = {
             "store_version": 1,
             "scope": trace.scope,
             "owner_pid": os.getpid(),
             "owner_token": self._TOKEN,
-            "trace": trace.snapshot(),
+            "trace": snap,
         }
         try:
             data = self._encode(record)
             with self._lock:
+                if not final and trace.frozen:
+                    return
                 self.root.mkdir(parents=True, exist_ok=True)
-                atomicio.write_bytes(self._path(trace.trace_id, open_=not trace.frozen), data)
-                if trace.frozen:
+                atomicio.write_bytes(self._path(trace.trace_id, open_=not final), data)
+                if final:
                     try:
                         self._path(trace.trace_id, open_=True).unlink()
                     except FileNotFoundError:
                         pass
-            if trace.frozen:
+            if final:
                 self.prune()
         except Exception:  # noqa: BLE001
             self.write_errors += 1
@@ -838,49 +844,68 @@ class TraceStore:
         return out
 
     def recover(self, *, now: float | None = None) -> int:
-        """启动恢复：属主不在了的运行中记录收成 interrupted。属主还活着（别的 Tavotto 进程）的不碰。"""
+        """启动恢复：属主不在了的运行中记录收成 interrupted。属主还活着（别的 Tavotto 进程）的不碰。
+
+        一条记录坏了（JSON 合法但结构不对）只把这一条记成 `corrupt`、跳过，后面的照常恢复——永不外抛。
+        """
         recovered = 0
         for path, is_open, _size, _mtime in self._entries():
             if not is_open:
                 continue
-            record = self._read(path)
-            if record is None:
-                continue
-            pid = record.get("owner_pid")
-            mine = pid == os.getpid() and record.get("owner_token") == self._TOKEN
-            if mine or (isinstance(pid, int) and pid != os.getpid() and pid_alive(pid)):
-                continue
-            snap = record["trace"]
-            for span in snap.get("spans") or []:
-                if span.get("status") == STATUS_RUNNING:
-                    span["status"] = (
-                        STATUS_INTERRUPTED if span.get("kind") == "task" else STATUS_UNKNOWN
-                    )
-                    span["error_code"] = "interrupted" if span.get("kind") == "task" else "unclosed"
-                    span["timing"] = TIMING_UNMEASURED
-            snap["status"] = STATUS_INTERRUPTED
-            snap["error_code"] = "interrupted"
-            snap["complete"] = False
-            snap["ended_at"] = None
-            if not snap.get("first_failure"):
-                snap["first_failure"] = {
-                    "span_id": snap.get("root_span_id"),
-                    "name": "task",
-                    "error_code": "interrupted",
-                    "attempt": 1,
-                }
-            record["recovered"] = True
             try:
-                trace_id = snap.get("trace_id")
-                if not isinstance(trace_id, str) or not _TRACE_ID.fullmatch(trace_id):
-                    continue
-                atomicio.write_bytes(self._path(trace_id, open_=False), self._encode(record))
-                path.unlink()
-                recovered += 1
-            except Exception:  # noqa: BLE001
+                outcome = self._recover_one(path)
+            except Exception:  # noqa: BLE001 —— 观察层的恢复不让启动失败
                 self.write_errors += 1
-        self.prune(now=now)
+                continue
+            if outcome == "corrupt":
+                self.corrupt += 1
+            elif outcome == "recovered":
+                recovered += 1
+        try:
+            self.prune(now=now)
+        except Exception:  # noqa: BLE001
+            self.write_errors += 1
         return recovered
+
+    def _recover_one(self, path: Path) -> str:
+        record = self._read(path)
+        if record is None:
+            return "skipped"
+        pid = record.get("owner_pid")
+        mine = pid == os.getpid() and record.get("owner_token") == self._TOKEN
+        if mine or (isinstance(pid, int) and pid != os.getpid() and pid_alive(pid)):
+            return "skipped"
+        snap = record["trace"]
+        trace_id = snap.get("trace_id")
+        spans = snap.get("spans")
+        if (
+            not isinstance(trace_id, str)
+            or not _TRACE_ID.fullmatch(trace_id)
+            or not isinstance(spans, list)
+            or not all(isinstance(span, dict) for span in spans)
+        ):
+            return "corrupt"
+        for span in spans:
+            if span.get("status") == STATUS_RUNNING:
+                is_root = span.get("kind") == "task"
+                span["status"] = STATUS_INTERRUPTED if is_root else STATUS_UNKNOWN
+                span["error_code"] = "interrupted" if is_root else "unclosed"
+                span["timing"] = TIMING_UNMEASURED
+        snap["status"] = STATUS_INTERRUPTED
+        snap["error_code"] = "interrupted"
+        snap["complete"] = False
+        snap["ended_at"] = None
+        if not snap.get("first_failure"):
+            snap["first_failure"] = {
+                "span_id": snap.get("root_span_id"),
+                "name": "task",
+                "error_code": "interrupted",
+                "attempt": 1,
+            }
+        record["recovered"] = True
+        atomicio.write_bytes(self._path(trace_id, open_=False), self._encode(record))
+        path.unlink()
+        return "recovered"
 
     def prune(self, *, now: float | None = None) -> int:
         """过期与总量：只逐出冻结的，最旧的先走；运行中的（`.open`）不在候选里。"""

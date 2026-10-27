@@ -604,3 +604,46 @@ def test_operation_kinds_span_names_and_statuses_are_closed_sets():
         xt.ExecTrace("anything")
     assert "running" not in xt.END_STATUSES and "unknown" in xt.END_STATUSES
     assert set(xt.TIMINGS) == {"measured", "reported", "point", "unmeasured"}
+
+
+# ---------------------------------------------------------------- Codex #1449 两条
+
+
+def test_recovery_skips_a_structurally_malformed_record_and_still_recovers_the_rest(clock, store):
+    """P1：JSON 合法但结构不对的 `.open` 只记 corrupt、跳过；后面那条属主已死的照常恢复，不外抛。"""
+    store.root.mkdir(parents=True)
+    (store.root / f"{'a' * 32}.open.json").write_text(
+        json.dumps({"owner_pid": -1, "trace": {"spans": [1]}})
+    )
+    (store.root / f"{'b' * 32}.open.json").write_text(
+        json.dumps({"owner_pid": -1, "trace": {"trace_id": 7}})
+    )
+    t = xt.ExecTrace("ai_task", clock=clock, store=store)
+    path = store.root / f"{t.trace_id}.open.json"
+    record = json.loads(path.read_text())
+    record["owner_pid"], record["owner_token"] = _dead_pid(), "someone-else"
+    path.write_text(json.dumps(record))
+    assert store.recover() == 1
+    assert store.corrupt == 2
+    assert store.load(t.trace_id, scope=None)["status"] == "interrupted"
+
+
+def test_a_checkpoint_captured_before_finish_never_overwrites_the_final_record(clock, store):
+    """P2：一次 checkpoint 在 `finish()` 之前截下运行中快照、在终局写完之后才写——不许盖掉终局。"""
+    t = xt.ExecTrace("ai_task", clock=clock, store=store)
+    real = xt.ExecTrace.snapshot
+    state = {"raced": False}
+
+    def racing_snapshot(self):
+        snap = real(self)
+        if not state["raced"] and snap["status"] == "running":
+            state["raced"] = True
+            self.finish(xt.STATUS_OK)  # 另一个线程在这一刻冻结并写完终局
+        return snap
+
+    t.snapshot = racing_snapshot.__get__(t)
+    store.save(t)  # 拿着旧的运行中快照来写
+    assert state["raced"]
+    saved = store.load(t.trace_id, scope=None)
+    assert saved["status"] == "ok"
+    assert not (store.root / f"{t.trace_id}.open.json").exists()
