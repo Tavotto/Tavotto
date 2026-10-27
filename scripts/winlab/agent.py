@@ -3605,7 +3605,10 @@ CLAUDE3P_NO_ANTHROPIC = {
         "Edit",
         "NotebookEdit",
         "Task",
+        # 应用自带的工作区 shell（run 20261027T093311Z-8822e5 的会话记录里模型用了它 2 次）：名字不叫 Bash
+        "mcp__workspace__bash",
     ],
+    "chatAdvancedFileAnalysisEnabled": False,
     "chatTabEnabled": True,
     "coworkTabEnabled": False,
     "isClaudeCodeForDesktopEnabled": False,
