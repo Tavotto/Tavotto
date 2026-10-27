@@ -5181,7 +5181,7 @@ export default interface Resources {
         "foreignNotFound": "这个文件夹里没找到「{{name}}」，请选它所在的文件夹。",
         "nativeTitle": "选择 Python 绘图脚本",
         "openedFolder": "已打开项目「{{name}}」",
-        "openedScript": "已打开「{{name}}」所在的项目，正在运行它，出图后放进当前画布"
+        "openedScript": "已打开「{{name}}」所在的项目，正在运行它，出图后直接打开这张图"
       },
       "menuOpen": "打开",
       "more": "更多",
