@@ -207,7 +207,7 @@ order: 280
 - report.json 换形必升 bundle schema（现 7；5 = 新增 task-diagnostics.json；6 = project 段新增 `recent_runs`；7 = 网址只留 origin，见下）
 - 服务端第二道校验刻意与前端判据不同
 - 坏载荷退化成不带前端文件的包、不 400
-- 不写盘不上传不进 telemetry
+- 不写盘不上传不进 telemetry（层级执行追踪 `exectrace` 的本地有界存储是另一条数据、经维护者裁决的登记例外，诊断包今天不带它；要带走 PR4 另做导出投影并升 schema，见 `execution-trace.md` / ADR 0151）
 - traceback 配收尾异常行、worker.log 只带证据行（#435）
 
 ## 脚本运行失败进全局报告（bundle schema 6）

@@ -74,6 +74,7 @@ TS + Tailwind v4）。
 | `_write_source_files`、`pool.one_shot()`、`REPLAY_PIXEL_TOL`、`/api/update_source`、`history/restore` | 写回事务 → `writeback-transaction.md` | prepare 两道校验；verify 全量重放 + 几何 + 像素；热态不是这组 patches 就报 `fresh_only` |
 | `engine/locate.py`、`cli.py`、`handoff.py`、`tavotto open` / `doctor`、桌面 argv | 外部交接 → `external-handoff.md` | 发现链唯一权威 `locate.py`；子命令分派在 import Flask 之前；`HandoffError` 一律带稳定 code |
 | `engine/preparation.py`、`prepsession.py`、`dialogscan.py`、`receipt.py`、`trace.py`、`/api/engine/preparation*`（完整清单见细则） | 准备计划、执行回执与源图产物、准备会话 → `preparation-and-receipts.md` | 计划与观测分开；过期不执行 |
+| `engine/exectrace.py`、`data_dir()/cache/exec-trace/`、任何 `start_span` / `end_span` / `event` 调用点 | Execution Trace（层级执行追踪，ADR 0151） → `execution-trace.md` | 只观察不判定；自由字符串没有入口；采集失败不影响业务；时间不伪造 |
 | `rendercore/`、`fonts_allowlist.json`、`pdfbackend/canvas_coverage.json`、`scripts/fetch_fonts.py`、pyproject 的 native 依赖（模块分层见细则） | RenderCore → `rendercore.md` | 纯模型只许标准库、整包零 `import pymupdf`；`facade.py` 是契约的唯一实现；离开本机的只有 `inspector.public_projection()` |
 | `engine/browser.py`、`browser_imports.py`、`ENGINE_FILES` | 浏览器 playground（引擎侧） → `browser-playground-engine.md` | 平铺 import 与 worker 同一条 sys.path 纪律；加 flat import 同步 `ENGINE_FILES` |
 <!-- END GENERATED: agents-routes -->
