@@ -1356,6 +1356,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
           descriptors={report.captured ?? []}
           dropped={0}
           open={resultsOpen}
+          canvasId={entry.placeIn?.canvasId}
           onAdded={(d, added) => noteAddedPanelFor(editHost(entry.key), d.asset_id, added)}
           onOpenChange={(v) => {
             setResultsOpen(v)

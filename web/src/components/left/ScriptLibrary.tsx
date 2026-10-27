@@ -19,6 +19,8 @@ import { offerForeignConvert } from '@/lib/foreignEntry'
 import { formatCm } from '@/lib/units'
 import { formatMessage, msg, t as translate } from '@/i18n'
 import { addRuntimePanelToCanvas } from '@/store/workspace'
+import { activateCanvas } from '@/store/canvasSession'
+import { useDocumentStore } from '@/store/documentStore'
 import type { PanelObject } from '@/types/document'
 import { preparationPanelEnabled } from '@/lib/preparationFlag'
 import { prepRowKey } from '@/lib/preparationText'
@@ -879,6 +881,7 @@ export function ProbeResultsDialog({
   open,
   onOpenChange,
   onAdded,
+  canvasId,
 }: {
   script: string
   descriptors: CapturedFigureDescriptor[]
@@ -887,6 +890,8 @@ export function ProbeResultsDialog({
   onOpenChange: (v: boolean) => void
   /** 加进画布之后，带上**刚新建的那个面板**（准备面板据此观察它的首次编辑渲染，T09；不能按素材 id 回找——文档里可能已有同素材的旧实例） */
   onAdded?: (d: CapturedFigureDescriptor, panel: PanelObject) => void
+  /** 脚本是拖到这张画布上运行的（`PrepEntry.placeIn`）：加图前先切回它，不加到此刻激活的那张；画布已不在就加到激活画布 */
+  canvasId?: string
 }) {
   useTranslation('workspace')
   const setStatus = useUiStore((s) => s.setStatus)
@@ -926,6 +931,7 @@ export function ProbeResultsDialog({
               data-capture-add={d.stem}
               onClick={() => {
                 if (guard.current && !guard.current.still()) return
+                if (canvasId && useDocumentStore.getState().canvases.some((c) => c.id === canvasId)) activateCanvas(canvasId)
                 const added = addRuntimePanelToCanvas(d)
                 if (!added) return // 上次的排版还在恢复：已排队 / 被拒，不说"已加入"
                 setStatus(msg('registry.addedToCanvas', { stem: d.stem }, 'dialogs'), 'done')
