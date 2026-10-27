@@ -9,6 +9,18 @@ import type { ExecTraceDto } from '@/lib/api'
 const fetchExecTrace = vi.fn()
 vi.mock('@/lib/api', async (orig) => ({ ...(await orig<typeof import('@/lib/api')>()), fetchExecTrace: (...a: unknown[]) => fetchExecTrace(...a) }))
 
+const toWaterfallCalls = vi.fn()
+vi.mock('@/lib/execTrace', async (orig) => {
+  const real = await orig<typeof import('@/lib/execTrace')>()
+  return {
+    ...real,
+    toWaterfall: (...a: Parameters<typeof real.toWaterfall>) => {
+      toWaterfallCalls()
+      return real.toWaterfall(...a)
+    },
+  }
+})
+
 const { TraceDetails } = await import('./TraceDetails')
 
 function snap(status: 'running' | 'ok'): ExecTraceDto {
@@ -92,4 +104,22 @@ describe('TraceDetails', () => {
     expect(host.querySelector('[data-ai-trace-stale]')).toBeNull()
     expect(host.querySelector('[data-ai-trace-state="ok"]')).not.toBeNull()
   })
+
+  it('运行中再取到内容相同的快照：沿用同一份对象，不重建', async () => {
+    const first = snap('running')
+    fetchExecTrace.mockResolvedValue({ available: true, trace: first })
+    await act(async () => root.render(<TraceDetails taskRef="s3" pj="pj" running />))
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-ai-trace-toggle]')!.click())
+    await flush()
+    const builds = toWaterfallCalls.mock.calls.length
+    fetchExecTrace.mockResolvedValue({ available: true, trace: JSON.parse(JSON.stringify(first)) })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1100))
+    })
+    await flush()
+    expect(fetchExecTrace.mock.calls.length).toBeGreaterThan(1)
+    // 内容相同的快照不重建展示模型（运行中的「此刻」只经 now 走，不触发 toWaterfall）
+    expect(toWaterfallCalls.mock.calls.length).toBe(builds)
+  })
 })
+
