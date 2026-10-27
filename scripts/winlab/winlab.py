@@ -711,6 +711,26 @@ def admin_snapshot(name: str) -> int:
     return show(1, {"result": "error", "summary": f"snapshot {sid} not NORMAL within an hour"})
 
 
+#: 一次性：在 tavotto-lab 的注册表里建好 Claude Desktop 的用户级策略键，只把这一个键的写权限授给它（用户 2026-10-27
+#: 选「加一个管理员动作写注册表策略」）。不带任何值、不经手 key：每次 run 由 agent 以 tavotto-lab 身份写值、跑完删值
+#: （claude-desktop-native）。Policies 其余子键不动。该用户已登录（自动登录），HKU\<sid> 已加载
+CLAUDE_POLICY_ACL_PS = r"""
+$sid = (New-Object System.Security.Principal.NTAccount('tavotto-lab')).Translate([System.Security.Principal.SecurityIdentifier]).Value
+$path = "Registry::HKEY_USERS\$sid\SOFTWARE\Policies\Claude"
+if (-not (Test-Path "Registry::HKEY_USERS\$sid")) { throw 'tavotto-lab hive not loaded (log it in first)' }
+New-Item -Path $path -Force | Out-Null
+$acl = Get-Acl -Path $path
+$rule = New-Object System.Security.AccessControl.RegistryAccessRule('tavotto-lab', 'SetValue,ReadKey', 'Allow')
+$acl.SetAccessRule($rule)
+Set-Acl -Path $path -AclObject $acl
+(Get-Acl -Path $path).Access | Where-Object { $_.IdentityReference -like '*tavotto-lab*' } | Format-List IdentityReference, RegistryRights, AccessControlType
+"""
+
+
+def admin_claude_policy_acl() -> int:
+    return admin_ssh(CLAUDE_POLICY_ACL_PS)
+
+
 GUI_SETUP_PS = r"""
 $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 # autologon for tavotto-lab; the password goes into the LSA secret DefaultPassword, never the registry
@@ -826,6 +846,10 @@ def build_parser() -> argparse.ArgumentParser:
         "gui-setup",
         help="交互会话：tavotto-lab 自动登录 + 不锁屏 + WebView2 调试端口策略（之后需重启）",
     )
+    asub.add_parser(
+        "claude-policy-acl",
+        help="一次性：建 tavotto-lab 的 Claude Desktop 用户级策略键并只授它写这一个键（不写任何值）",
+    )
     sn = asub.add_parser("snapshot", help="黄金快照（腾讯云轻量；不做回滚 / 删除）")
     sn.add_argument("--name", required=True)
     return ap
@@ -900,6 +924,8 @@ def main(argv: list[str] | None = None) -> int:
             return admin_gui_setup()
         if ns.admin_verb == "snapshot":
             return admin_snapshot(ns.name)
+        if ns.admin_verb == "claude-policy-acl":
+            return admin_claude_policy_acl()
         return admin_proxy_install()
     return 2
 

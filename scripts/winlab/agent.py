@@ -3624,14 +3624,17 @@ def _policy_value(v) -> str:
 
 
 def claude3p_policy_write(conf: dict) -> list[str]:
-    """写 HKCU 策略；不是 Windows 或写不进去就跳过（返回写下的值名）。"""
+    """写 HKCU 策略的值。键本身由 `winlab admin claude-policy-acl` 一次性建好并授 tavotto-lab 写这一个键
+    （Policies 普通用户写不进：run 20261027T084529Z-3dfb43 写入 0 条）；没建就写不进，返回空表。"""
     try:
         import winreg
     except ImportError:
         return []
     names = []
     with contextlib.suppress(OSError):
-        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, CLAUDE_POLICY_KEY) as k:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, CLAUDE_POLICY_KEY, 0, winreg.KEY_SET_VALUE
+        ) as k:
             for name, v in conf.items():
                 winreg.SetValueEx(k, name, 0, winreg.REG_SZ, _policy_value(v))
                 names.append(name)
@@ -3639,14 +3642,18 @@ def claude3p_policy_write(conf: dict) -> list[str]:
 
 
 def claude3p_policy_wipe(key: str) -> dict:
-    """删掉整个 HKCU 策略键（Lab 上它只给这一格用），再核对：键还在、或任何值含 key 都算没清干净。"""
+    """删掉 HKCU 策略键下的全部值（键留着：它是管理员建的、tavotto-lab 只能写值），再核对：还有任何值都算没清干净。
+    `present` = 还有值。"""
     try:
         import winreg
     except ImportError:
         return {"wiped": True, "present": False}
     with contextlib.suppress(OSError):
         with winreg.OpenKey(
-            winreg.HKEY_CURRENT_USER, CLAUDE_POLICY_KEY, 0, winreg.KEY_ALL_ACCESS
+            winreg.HKEY_CURRENT_USER,
+            CLAUDE_POLICY_KEY,
+            0,
+            winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE,
         ) as k:
             while True:
                 try:
@@ -3654,17 +3661,16 @@ def claude3p_policy_wipe(key: str) -> dict:
                 except OSError:
                     break
                 winreg.DeleteValue(k, name)
-        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, CLAUDE_POLICY_KEY)
     leaked, present = False, False
     with contextlib.suppress(OSError):
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CLAUDE_POLICY_KEY) as k:
-            present = True
             i = 0
             while True:
                 try:
                     _, val, _ = winreg.EnumValue(k, i)
                 except OSError:
                     break
+                present = True
                 leaked = leaked or key in str(val)
                 i += 1
     return {"wiped": not present and not leaked, "present": present}
