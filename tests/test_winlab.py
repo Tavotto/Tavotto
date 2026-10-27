@@ -2868,3 +2868,18 @@ def test_use_input_selector_rebuilds_every_js_that_walks_for_the_input(monkeypat
         js = getattr(D, n)
         assert json.dumps(D.NATIVE_INPUT_SELECTOR) in js, n
         assert json.dumps(D.INPUT_SELECTOR) not in js, n
+
+
+def test_workbuddy_config_trusts_only_the_tavotto_server_with_workbuddys_own_hash(tmp_path):
+    # 期望值由 WorkBuddy 5.8.3 app.asar 里 computeTrustConfigHash 的原样 JS 在 node 里算出
+    cmd = ["C:\\py\\python.exe", "-I", "C:\\r\\mcp_recorder.py", "--log", "x"]
+    env = {"TAVOTTO_NO_TELEMETRY": "1", "TAVOTTO_MCP_ROOTS": "C:\\p"}
+    want = "bb3649d452650514f027a7cc610f88cf40cbc3d4a43371365080e189f63fec14"
+    assert A.workbuddy_trust_hash(cmd, env) == want
+    approvals = tmp_path / ".workbuddy" / "mcp-approvals.json"
+    approvals.parent.mkdir(parents=True)
+    approvals.write_text(json.dumps({"old::other": 1}), encoding="utf-8")
+    A.workbuddy_isolated_config(tmp_path, cmd, env)
+    got = json.loads(approvals.read_text(encoding="utf-8"))
+    assert set(got) == {"old::other", f"{want}::tavotto"}
+    assert isinstance(got[f"{want}::tavotto"], int)

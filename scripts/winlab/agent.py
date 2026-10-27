@@ -3640,7 +3640,26 @@ def workbuddy_isolated_config(home: Path, mcp_cmd: list[str], mcp_env: dict) -> 
         ),
         encoding="utf-8",
     )
+    # 用户自己加的 MCP 要在连接器页点「Trust」才会加载（run 20261027T071832Z-65d729：Agent 回「tavotto 工具不在」）。
+    # WorkBuddy 5.8.3 把信任记在同目录 mcp-approvals.json：键 = 「配置指纹::服务名」，值 = 毫秒时间戳；指纹 =
+    # sha256(command | 排序后的 args 逗号连接 | 排序后的 env 键名逗号连接)。这里替用户点一次，只信任这一条
+    approvals = f.parent / "mcp-approvals.json"
+    try:
+        known = json.loads(approvals.read_text(encoding="utf-8"))
+        known = known if isinstance(known, dict) else {}
+    except (OSError, ValueError):
+        known = {}
+    known[f"{workbuddy_trust_hash(mcp_cmd, mcp_env)}::tavotto"] = int(time.time() * 1000)
+    approvals.write_text(json.dumps(known, indent=2), encoding="utf-8")
     return f
+
+
+def workbuddy_trust_hash(mcp_cmd: list[str], mcp_env: dict) -> str:
+    """WorkBuddy 5.8.3 computeTrustConfigHash 对 stdio 服务的算法（没有 cwd 字段时）。"""
+    material = "|".join(
+        [mcp_cmd[0], ",".join(sorted(str(a) for a in mcp_cmd[1:])), ",".join(sorted(mcp_env))]
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 #: Windows 凭据管理器里可能属于 WorkBuddy 的条目（Electron keytar 等写在这里，不随环境变量隔离）
