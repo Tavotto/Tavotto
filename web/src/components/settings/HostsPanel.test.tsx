@@ -146,6 +146,33 @@ describe('HostsPanel', () => {
     expect(connectButton('cursor')?.textContent).toBe(tx('retry'))
   })
 
+  it('lets the user pick another folder when the remembered one is rejected', async () => {
+    runMock.mockResolvedValueOnce(LIST({ project_root: '/gone' }))
+    runMock.mockResolvedValueOnce(
+      JSON.stringify({
+        ok: false,
+        host: 'cursor',
+        action: 'connect',
+        state: 'failed',
+        error_code: 'project_root_rejected',
+        steps: [{ step: 'project_root', ok: false, skipped: false, error_code: 'project_root_rejected' }],
+      }),
+    )
+    runMock.mockResolvedValueOnce(LIST({ project_root: '/gone' }))
+    pickMock.mockResolvedValue('/new/figs')
+    runMock.mockResolvedValueOnce(
+      JSON.stringify({ ok: true, host: 'cursor', action: 'connect', state: 'needs_new_session', steps: [] }),
+    )
+    runMock.mockResolvedValue(LIST({ project_root: '/new/figs' }))
+    await mount()
+    await act(async () => connectButton('cursor')!.click()) // 第一次：用记住的那个，被拒
+    expect(pickMock).not.toHaveBeenCalled()
+    expect(connectButton('cursor')?.textContent).toBe(tx('chooseFolder'))
+    await act(async () => connectButton('cursor')!.click()) // 第二次：先换文件夹
+    expect(pickMock).toHaveBeenCalledTimes(1)
+    expect(runMock).toHaveBeenCalledWith('connect', 'cursor', '/new/figs')
+  })
+
   it('renders nothing in the browser', async () => {
     delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__
     await mount()

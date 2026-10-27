@@ -1907,6 +1907,7 @@
       "title": "接入 AI 编辑器",
       "connect": "接入",
       "retry": "重试",
+      "chooseFolder": "选择文件夹",
       "running": "接入中…",
       "connected": "已接入",
       "notDetected": "未检测到",

@@ -418,33 +418,120 @@ async fn host_integration(
     host: Option<String>,
     project_root: Option<String>,
 ) -> Result<String, String> {
+    let args = host_cli_args(&action, host.as_deref(), project_root.as_deref())?;
+    run_cli_json(app, args).await
+}
+
+/// `host_integration` 收到的参数 → `tavotto-cli` 的 argv。**校验只在这里**（行为由下面的 `host_cli_tests` 钉住）：
+/// action 闭集、宿主必须在 `HOST_IDS`、文件夹只给 `connect` 且非空、作为一个 argv 元素传。
+fn host_cli_args(
+    action: &str,
+    host: Option<&str>,
+    project_root: Option<&str>,
+) -> Result<Vec<String>, String> {
     let mut args: Vec<String> = vec!["hosts".into()];
-    match action.as_str() {
+    match action {
         "list" => {
             if host.is_some() || project_root.is_some() {
                 return Err("bad_args".into());
             }
-            args.push(action);
+            args.push(action.into());
         }
         "connect" | "disconnect" => {
             let h = host.ok_or_else(|| "bad_args".to_string())?;
-            if !HOST_IDS.contains(&h.as_str()) {
+            if !HOST_IDS.contains(&h) {
                 return Err("bad_host".into());
             }
-            args.push(action.clone());
-            args.push(h);
+            args.push(action.into());
+            args.push(h.into());
             if let Some(root) = project_root {
                 if action != "connect" || root.is_empty() {
                     return Err("bad_args".into());
                 }
                 args.push("--project-root".into());
-                args.push(root);
+                args.push(root.into());
             }
         }
         _ => return Err("bad_action".into()),
     }
     args.push("--json".into());
-    run_cli_json(app, args).await
+    Ok(args)
+}
+
+#[cfg(test)]
+mod host_cli_tests {
+    use super::host_cli_args;
+
+    fn ok(v: &[&str]) -> Result<Vec<String>, String> {
+        Ok(v.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn list_takes_no_host_or_folder() {
+        assert_eq!(
+            host_cli_args("list", None, None),
+            ok(&["hosts", "list", "--json"])
+        );
+        assert_eq!(
+            host_cli_args("list", Some("cursor"), None),
+            Err("bad_args".into())
+        );
+        assert_eq!(
+            host_cli_args("list", None, Some("/p")),
+            Err("bad_args".into())
+        );
+    }
+
+    #[test]
+    fn only_known_hosts_pass() {
+        assert_eq!(
+            host_cli_args("connect", Some("cursor"), None),
+            ok(&["hosts", "connect", "cursor", "--json"])
+        );
+        for bad in ["--project-root", "cursor --json", "", "../x", "sh"] {
+            assert_eq!(
+                host_cli_args("connect", Some(bad), None),
+                Err("bad_host".into()),
+                "{bad}"
+            );
+        }
+        assert_eq!(host_cli_args("connect", None, None), Err("bad_args".into()));
+    }
+
+    #[test]
+    fn the_folder_is_one_argv_element_and_only_for_connect() {
+        let root = "/Users/me/论文 a;b/figs";
+        assert_eq!(
+            host_cli_args("connect", Some("zcode"), Some(root)),
+            ok(&[
+                "hosts",
+                "connect",
+                "zcode",
+                "--project-root",
+                root,
+                "--json"
+            ])
+        );
+        assert_eq!(
+            host_cli_args("disconnect", Some("zcode"), Some(root)),
+            Err("bad_args".into())
+        );
+        assert_eq!(
+            host_cli_args("connect", Some("zcode"), Some("")),
+            Err("bad_args".into())
+        );
+    }
+
+    #[test]
+    fn unknown_actions_are_refused() {
+        for bad in ["install", "uninstall", "LIST", ""] {
+            assert_eq!(
+                host_cli_args(bad, Some("cursor"), None),
+                Err("bad_action".into()),
+                "{bad}"
+            );
+        }
+    }
 }
 
 /// spawn 桌面版的 `tavotto-cli <args>`，取 stdout 里**最后一行 JSON**。失败也是一行 JSON（引擎的

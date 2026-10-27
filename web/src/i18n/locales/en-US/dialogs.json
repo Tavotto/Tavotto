@@ -1925,6 +1925,7 @@
       "title": "Connect AI editors",
       "connect": "Connect",
       "retry": "Retry",
+      "chooseFolder": "Choose folder",
       "running": "Connecting…",
       "connected": "Connected",
       "notDetected": "Not found",

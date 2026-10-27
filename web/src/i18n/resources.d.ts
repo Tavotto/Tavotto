@@ -2109,6 +2109,7 @@ export default interface Resources {
           "ok": "完成。"
         },
         "changeFolder": "更改文件夹",
+        "chooseFolder": "选择文件夹",
         "connect": "接入",
         "connected": "已接入",
         "disconnect": "断开",

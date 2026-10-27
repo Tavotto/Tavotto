@@ -29,6 +29,9 @@ import { DiagnosticDisclosure, GroupNotice, SettingRow } from './SettingRow'
  * 它那一行 JSON。失败显示翻译过的一句原因，逐步结论折叠在下面（与 Codex 那一行同一形状）。浏览器模式没有壳，
  * 整组不显示——**不画一个按不动的按钮**。
  */
+/** 失败原因是文件夹本身时，下一次点按钮先弹选择框 */
+const FOLDER_ERRORS = ['project_root_rejected', 'project_root_missing']
+
 export function HostsPanel() {
   const { t } = useTranslation('dialogs')
   const tx = useCallback(
@@ -106,6 +109,12 @@ export function HostsPanel() {
                 ? hostErrorText(result.error_code, h.label)
                 : null
           const steps = result?.host === h.id ? result.steps : []
+          // 记住的文件夹失效（被移走 / 删掉 / 含分隔符被拒）：重试先让用户换一个文件夹，否则会一直提交那个坏的
+          // （Codex #1456 P2）
+          const folderProblem =
+            result?.host === h.id &&
+            !result.ok &&
+            FOLDER_ERRORS.includes(result.error_code ?? '')
           return (
             <div key={h.id} className="contents" data-host-row={h.id}>
               <SettingRow label={h.label} status={statusFor(h.id)}>
@@ -151,9 +160,15 @@ export function HostsPanel() {
                     loading={busy === h.id}
                     disabled={busy !== null}
                     data-host-connect={h.id}
-                    onClick={() => void run('connect', h.id)}
+                    onClick={() => void run('connect', h.id, folderProblem)}
                   >
-                    {busy === h.id ? tx('running') : failure ? tx('retry') : tx('connect')}
+                    {busy === h.id
+                      ? tx('running')
+                      : folderProblem
+                        ? tx('chooseFolder')
+                        : failure
+                          ? tx('retry')
+                          : tx('connect')}
                   </Button>
                 )}
               </SettingRow>
