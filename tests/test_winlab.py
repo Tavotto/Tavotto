@@ -2991,3 +2991,15 @@ def test_uia_onboarding_clicks_only_whitelisted_buttons_never_sign_in():
     ]
     assert D.uia_onboarding(nodes)["r"] == [10, 400, 200, 40]
     assert D.uia_onboarding(nodes[:2]) is None
+
+
+def test_claude_desktop_pac_sends_only_the_download_host_through_dmit():
+    import urllib.request
+
+    pac = A.CLAUDE3P_PAC
+    assert '"downloads.claude.ai"' in pac and f"127.0.0.1:{A.PROXY_PORTS['trojan']}" in pac
+    assert pac.count("PROXY") == 1 and 'return "DIRECT"' in pac
+    port = A.serve_pac(pac)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(f"http://127.0.0.1:{port}/proxy.pac", timeout=5) as r:
+        assert r.read().decode() == pac

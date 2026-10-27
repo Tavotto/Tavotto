@@ -3603,6 +3603,39 @@ CLAUDE3P_NO_ANTHROPIC = {
 
 #: 见 claude3p_isolated_config 的 inferenceModels
 CLAUDE3P_ROUTE = "claude-sonnet-4-5"
+#: 会话开始时应用要从这里下内置的 Claude Code（run 20261027T090928Z-bc8056 直连 3 次超时、会话起不来）。
+#: 用户 2026-10-27：「如果一定要下载，就是用dmit吧」——只这一个主机经 DMIT，其余（含 DeepSeek 推理）直连
+CLAUDE3P_DOWNLOAD_HOST = "downloads.claude.ai"
+CLAUDE3P_PAC = (
+    "function FindProxyForURL(url, host) {"
+    f' if (host === "{CLAUDE3P_DOWNLOAD_HOST}") return "PROXY 127.0.0.1:{PROXY_PORTS["trojan"]}";'
+    ' return "DIRECT"; }'
+)
+
+
+def serve_pac(pac: str) -> int:
+    """本次 run 的 PAC 脚本，只在回环上、只回 /proxy.pac；守护线程，随 agent 进程结束。返回端口。"""
+    import http.server
+
+    body = pac.encode("ascii")
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 — http.server 的接口名
+            if self.path.split("?")[0] != "/proxy.pac":
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ns-proxy-autoconfig")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv.server_address[1]
 
 
 def claude3p_config_dirs(home: Path, env: dict) -> list[Path]:
@@ -3687,6 +3720,7 @@ def claude3p_isolated_config(
     mcp_env: dict,
     model_conf: dict,
     tool_names: list[str],
+    pac_url: str = "",
 ) -> list[Path]:
     """Claude Desktop on 3P 的本地配置（`configLibrary\\_meta.json` 记 appliedId，`<id>.json` 平铺键值，格式同
     in-app 配置窗口写的）：gateway → DeepSeek，模型显式列出、不做发现；tavotto 经 `managedMcpServers` 起本地
@@ -3702,6 +3736,7 @@ def claude3p_isolated_config(
         "inferenceModels": [{"name": CLAUDE3P_ROUTE, "labelOverride": f"DeepSeek ({model})"}],
         "modelDiscoveryEnabled": False,
         **CLAUDE3P_NO_ANTHROPIC,
+        **({"egressProxyPacUrl": pac_url} if pac_url else {}),
         "managedMcpServers": [
             {
                 "name": "tavotto",
@@ -4399,7 +4434,22 @@ def _desktop_live_body(
         if not names:
             return {**base, "result": "error", "summary": "could not read tavotto MCP tool names"}
         home = work / "cdhome"
-        claude3p_isolated_config(home, env, mcp_cmd, mcp_env, model_conf, names)
+        if not _tcp_open("127.0.0.1", PROXY_PORTS["trojan"]):
+            # 内置 Claude Code 只能经 DMIT 取到；代理不在就如实不可用，不退回直连
+            return {
+                **base,
+                "result": "environment_unavailable",
+                "summary": f"DMIT proxy not listening; {CLAUDE3P_DOWNLOAD_HOST} is reachable only through it",
+            }
+        pac_port = serve_pac(CLAUDE3P_PAC)
+        base["egress"] = {
+            "pac": f"http://127.0.0.1:{pac_port}/proxy.pac",
+            "via_dmit": [CLAUDE3P_DOWNLOAD_HOST],
+            "everything_else": "DIRECT",
+        }
+        claude3p_isolated_config(
+            home, env, mcp_cmd, mcp_env, model_conf, names, pac_url=base["egress"]["pac"]
+        )
         base["claude3p_policy_values"] = len(getattr(claude3p_policy_write, "last", []))
         gui_env = dict(env, **_home_env(home))
         public_env, secret_env = gui_env, None
