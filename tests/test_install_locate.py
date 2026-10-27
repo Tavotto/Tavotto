@@ -601,11 +601,19 @@ def test_open_and_doctor_are_dispatched_before_argparse():
     这里**逐字列出闭集**而不是只查几个：加一条子命令却忘了让它在 argparse
     之前分派掉，表现是那条命令在源码检出里好使、在冻结产物里报
     "unrecognized arguments" —— 两种安装形态下行为不同，而没有任何一处会
-    自己发现（`run` 是 2026-08-28 加的第四条，ADR 0021；`fix-mcp` 是 AI 修复 D3 的 MCP 修复模式，ADR 0149；`agent-run` 是改图助手内置执行器的子进程入口，ADR 0147）。
+    自己发现（`run` 是 2026-08-28 加的第四条，ADR 0021；`fix-mcp` 是 AI 修复 D3 的 MCP 修复模式，ADR 0149；`agent-run` 是改图助手内置执行器的子进程入口，ADR 0147；`mcp` 是「接入 AI 编辑器」的进程内 MCP 服务端，2026-10-27）。
     """
     from tavotto.engine import cli as engine_cli
 
-    assert set(engine_cli.COMMANDS) == {"open", "run", "doctor", "codex", "fix-mcp", "agent-run"}
+    assert set(engine_cli.COMMANDS) == {
+        "open",
+        "run",
+        "doctor",
+        "codex",
+        "fix-mcp",
+        "agent-run",
+        "mcp",
+    }
     assert engine_cli.dispatch([]) is None
     assert engine_cli.dispatch(["--figures", "/tmp"]) is None
     app_src = (ROOT / "src" / "tavotto" / "app.py").read_text(encoding="utf-8")
