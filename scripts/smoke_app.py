@@ -417,6 +417,13 @@ def _check_control_plane(base: str, expect: str | None) -> None:
 FROZEN_MCP_REQUIRED_TOOLS = ("tavotto_health", "tavotto_open_figure")
 
 
+def frozen_cli_for(exe: str) -> Path:
+    """GUI exe 同目录的 `tavotto-cli`，**绝对路径**：CI 传的是相对路径（`dist/Tavotto/Tavotto`），而握手子进程的
+    cwd 是示例项目——相对路径会去那下面找（Codex #1451 P1）。"""
+    p = Path(exe).resolve()
+    return p.with_name("tavotto-cli" + p.suffix)
+
+
 def check_frozen_mcp(cli: Path, project: Path, workdir: Path) -> None:
     """冻结产物的 `tavotto-cli mcp`：握手、列工具、调一次 tavotto_health（冻结态缺模块只有这样才露出来）。"""
     msgs = [
@@ -834,7 +841,7 @@ def main(argv: list[str] | None = None) -> int:
         workdir = Path(tempfile.mkdtemp(prefix="tavotto-smoke-"))
     print(f"· 隔离用户目录: {workdir}")
     if args.exe:
-        cli = Path(args.exe).with_name("tavotto-cli" + Path(args.exe).suffix)
+        cli = frozen_cli_for(args.exe)
         if not cli.is_file():
             print(f"::error::冻结产物里没有 {cli.name}", file=sys.stderr)
             return 1

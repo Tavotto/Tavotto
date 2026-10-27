@@ -139,3 +139,18 @@ def test_help_goes_to_stderr(name, capsys):
     assert mcpserve.cli([name]) == 0
     cap = capsys.readouterr()
     assert cap.out == "" and "tavotto mcp" in cap.err
+
+
+def test_smoke_resolves_the_frozen_cli_before_the_handshake_changes_directory(
+    tmp_path, monkeypatch
+):
+    """CI 传相对的 `--exe dist/Tavotto/Tavotto`，握手的 cwd 是示例项目：CLI 路径必须先变成绝对的（Codex #1451 P1）。"""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import smoke_app
+
+    monkeypatch.chdir(tmp_path)
+    for exe in ("dist/Tavotto/Tavotto", "dist/Tavotto/Tavotto.exe"):
+        cli = smoke_app.frozen_cli_for(exe)
+        assert cli.is_absolute()
+        assert cli.parent == (tmp_path / "dist" / "Tavotto").resolve()
+        assert cli.name == "tavotto-cli" + Path(exe).suffix
