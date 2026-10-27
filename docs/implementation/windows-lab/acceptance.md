@@ -346,6 +346,9 @@ run `20261027T094658Z-4723df`：`ondisk_key.wiped = true`、`policy_key_present 
 `configLibrary` 被忽略、HKCU 策略普通用户写不进（`20261027T084529Z-3dfb43`）→ `admin claude-policy-acl`；非 claude 名字的模型
 路由被应用删掉（`20261027T085727Z-9ddf76`）；直连取不到内置 Claude Code（`20261027T090928Z-bc8056`）→ PAC 只让它经 DMIT；
 `Bash` 之外还有 `PowerShell` 与 `mcp__workspace__bash`（`20261027T091823Z-aeeda4` / `20261027T093311Z-8822e5`）。
+加了「策略值没写全就不起应用」的门禁（Codex #1450 P1）之后复跑 `20261027T100618Z-b5b222`：19 条策略全写入、L3 / L4 PASS，
+**L5 FAIL**——服务端 `tavotto_export` 成功，但 PDF 不在项目的 `out/`（模型没按提示词放目录），其余五项 L5 检查都过。
+这一格目前是「多次 PASS、一次因导出目录 FAIL」，不是稳定全过。
 ## E. 安全与仓库
 
 | 验收项 | 状态 | 说明 |
