@@ -342,11 +342,13 @@ STATE_JS = (
 
 def use_input_selector(selector: str) -> None:
     """换输入框选择器（原生宿主）：重建依赖它的几段 JS。只在进程启动时调一次。"""
-    global _WALK, FIND_JS, TYPE_JS, SUBMIT_JS, STATE_JS
+    global _WALK, FIND_JS, TYPE_JS, CLEAR_JS, SUBMIT_JS, STATE_JS
     old = json.dumps(INPUT_SELECTOR)
     new = json.dumps(selector)
     _WALK = _WALK.replace(old, new)
-    FIND_JS, TYPE_JS, SUBMIT_JS = (x.replace(old, new) for x in (FIND_JS, TYPE_JS, SUBMIT_JS))
+    FIND_JS, TYPE_JS, CLEAR_JS, SUBMIT_JS = (
+        x.replace(old, new) for x in (FIND_JS, TYPE_JS, CLEAR_JS, SUBMIT_JS)
+    )
     STATE_JS = STATE_JS.replace(old, new)
 
 

@@ -2850,3 +2850,21 @@ def test_login_input_only_accepts_well_shaped_values_for_the_running_run(tmp_pat
     assert ok["result"] == "passed" and "123456" not in json.dumps(ok)  # 不回显
     assert (lab.runs / rid / "work" / "login-code.txt").read_text() == "123456"
     assert A.DESKTOP_LIVE["workbuddy-native-phone"].login == "phone"
+
+
+def test_use_input_selector_rebuilds_every_js_that_walks_for_the_input(monkeypatch):
+    # run 20261027T070525Z-bc2593：新加的 CLEAR_JS 没进重建名单，原生宿主还在找 VS Code 的输入框
+    names = [
+        n
+        for n, v in vars(D).items()
+        if n.endswith("_JS") and isinstance(v, str) and "function walk" in v
+    ]
+    assert "CLEAR_JS" in names
+    for n in names:
+        monkeypatch.setattr(D, n, getattr(D, n))
+    monkeypatch.setattr(D, "_WALK", D._WALK)
+    D.use_input_selector(D.NATIVE_INPUT_SELECTOR)
+    for n in names:
+        js = getattr(D, n)
+        assert json.dumps(D.NATIVE_INPUT_SELECTOR) in js, n
+        assert json.dumps(D.INPUT_SELECTOR) not in js, n
