@@ -194,5 +194,5 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
     开跑前扫掉旧 run 的残留。`workbuddy-native-phone` 是手机号 + 短信验证码的登录方式：值只经 `winlab login-input` 的 stdin
     送进正在跑的 run，驱动器读到即删；**未实测通过**（短信未到）。
   - CC-Switch 的落盘例外**不在此**（单独的 PR 与单独的规则条目）。
-- 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境（交互会话里再经命名管道），除上面登记的 `zcode-native` 外 Lab 不落盘；证据落盘前抹掉凭据。证据字段按
+- 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境（交互会话里再经命名管道），除上面登记的 `zcode-native`（key）与 `workbuddy-native*`（账户登录态）外 Lab 不落盘；证据落盘前抹掉凭据。证据字段按
 `docs/implementation/multi-host-mcp/acceptance.md`。
