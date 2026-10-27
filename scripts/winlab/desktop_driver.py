@@ -297,16 +297,18 @@ TYPE_JS = (
 CLEAR_JS = (
     "(() => {"
     + _WALK
-    + "const r = walk(document); if (!r) return {focused: false};"
-    + "r.el.focus(); r.doc.execCommand('selectAll'); r.doc.execCommand('delete');"
-    + "return {focused: r.doc.activeElement === r.el || r.el.contains(r.doc.activeElement)};})()"
+    + "const r = walk(document); if (!r) return {found: false};"
+    + "r.el.click(); r.el.focus(); r.doc.execCommand('selectAll'); r.doc.execCommand('delete');"
+    + "return {found: true, focused: r.doc.activeElement === r.el || r.el.contains(r.doc.activeElement)};})()"
 )
 
 
 def native_type(cdp: CDP, sid: str, prompt: str) -> dict:
     """聚焦、清空，再用 Input.insertText 送整段字（走 beforeinput / input，编辑器自己的状态跟着变）。"""
+    _key(cdp, sid, "keyDown", "Escape", "Escape", 27)  # 关掉可能开着的下拉菜单
+    _key(cdp, sid, "keyUp", "Escape", "Escape", 27)
     st = cdp.evaluate(sid, CLEAR_JS) or {}
-    if not st.get("focused"):
+    if not st.get("found"):
         return {"typed": False, "why": "no input"}
     cdp.call("Input.insertText", {"text": prompt}, session=sid, timeout=20)
     time.sleep(0.5)
@@ -511,6 +513,13 @@ def clipboard_text() -> str:
 EDGE_EXE = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
 #: 宿主自己的登录文案还在 = 没登录
 LOGGED_OUT_RE = re.compile(r"\bSign In\b|Signing In")
+#: 只看不点：页面上有没有这段字的可见叶子元素
+PEEK_JS = (
+    "(() => {const want = %s;"
+    "for (const e of document.querySelectorAll('body *')) {"
+    " if (!e.children.length && (e.textContent || '').trim() === want && e.offsetParent !== null) return true; }"
+    "return false;})()"
+)
 PEEK_CLICK_JS = (
     "(() => {const want = %s;"
     "for (const e of document.querySelectorAll('body *')) {"
@@ -847,6 +856,14 @@ def pick_workspace(cdp: CDP, page: str, folder: str, out_dir: Path, prog) -> dic
     点「Select Workspace」，菜单里有项目文件夹名就点它；没有就点登记的「添加 / 打开文件夹」入口，在弹出的系统
     对话框里填项目路径。每一步截图、记菜单文字。"""
     res: dict = {"entry": None}
+    name = Path(folder).name
+    if not any(
+        cdp.evaluate(page, PEEK_JS % json.dumps(label)) for label in WORKSPACE_ENTRY
+    ) and cdp.evaluate(page, PEEK_JS % json.dumps(name)):
+        # 上次选过的工作区会记住：选择器直接显示项目文件夹名，再点它只会打开菜单
+        res["picked"] = "already"
+        prog.step("workspace", **res)
+        return res
     for label in WORKSPACE_ENTRY:
         if cdp.evaluate(page, PEEK_CLICK_JS % json.dumps(label)):
             res["entry"] = label
@@ -854,7 +871,6 @@ def pick_workspace(cdp: CDP, page: str, folder: str, out_dir: Path, prog) -> dic
     time.sleep(2)
     res["menu_text"] = str(cdp.evaluate(page, TEXT_JS) or "")[-600:]
     _page_shot(cdp, page, out_dir / "workspace-menu.png")
-    name = Path(folder).name
     if cdp.evaluate(page, PEEK_CLICK_JS % json.dumps(name)):
         res["picked"] = "recent"
     else:
