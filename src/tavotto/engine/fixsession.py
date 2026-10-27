@@ -159,6 +159,23 @@ def activity_detail(args: object) -> str:
     return ""
 
 
+#: 界面语言 → 用户看得到的那几句话（propose_fix / ask_user / finish …）用什么语言写。闭集：前端 `i18n.language` 的前缀；
+#: 英文与认不出的语言不加这一段（提示词本身是英文，模型默认就用英文写）
+UI_LANGUAGES = {"zh": "Simplified Chinese"}
+
+
+def language_rule(locale: object) -> str:
+    """提示词里「用界面语言跟用户说话」那一段；认不出的 `locale` 回空串（不猜）。"""
+    if not isinstance(locale, str):
+        return ""
+    name = UI_LANGUAGES.get(locale.strip().lower().replace("_", "-").split("-")[0])
+    if name is None:
+        return ""
+    return f"\nLANGUAGE. The user's interface is in {name}. Write every sentence the user will see in {name}: the \
+propose_fix sentence, ask_user questions and options, the finish summary and the diagnostics draft. Keep package names, \
+commands, file paths and error messages exactly as they are.\n"
+
+
 def _first_message(ctx: fixtools.FixContext, script: str) -> str:
     report = read_run_report(ctx, {})
     body = report.content if not report.is_error else "(no report available; call read_run_report)"
@@ -180,8 +197,9 @@ What you write in your reply is not shown to the user: the only way to report th
 CLI_PROMPT_MAX = 12000
 
 
-def cli_prompt(ctx: fixtools.FixContext, script: str) -> str:
-    text = SYSTEM_PROMPT + CLI_ADDENDUM + "\n" + _first_message(ctx, script)
+def cli_prompt(ctx: fixtools.FixContext, script: str, language: str = "") -> str:
+    # 语言那一段放在准备报告之前：报告太长被截断时它不跟着丢
+    text = SYSTEM_PROMPT + language + CLI_ADDENDUM + "\n" + _first_message(ctx, script)
     if len(text) > CLI_PROMPT_MAX:
         text = text[:CLI_PROMPT_MAX] + "\n[truncated; call read_run_report for the full report]"
     return text
@@ -199,9 +217,11 @@ class FixToolset:
         script: str,
         audit: AuditLog | None = None,
         on_activity: Callable[[str, str, str], None] | None = None,
+        language: str = "",
     ):
         self.ctx, self.script, self.audit = ctx, script, audit
         self.on_activity = on_activity
+        self.language = language
 
     def tools(self, envelope: RunEnvelope) -> list[Tool]:
         tools = fixtools.build_agent_tools(self.ctx, self.audit)
@@ -226,7 +246,7 @@ class FixToolset:
         return _first_message(self.ctx, self.script)
 
     def system_prompt(self, envelope: RunEnvelope) -> str:
-        return SYSTEM_PROMPT
+        return SYSTEM_PROMPT + self.language
 
     def budget(self, envelope: RunEnvelope) -> Limits:
         return envelope.limits
@@ -324,6 +344,8 @@ class FixSession:
     #: CLI 报告的 MCP 工具调用开始时刻 / 应用实际收到的回调次数（按工具名）；开始数多于回调数 = 有调用没送达
     begins: dict = field(default_factory=dict)
     cbs: dict = field(default_factory=dict)
+    #: CLI 的修复工具服务（`fixmcp`）来取过工具清单：没取过就退出 = 工具根本没接上（`cli_no_tools`），不是 AI 没修好
+    listed: bool = False
     approval: str | None = None  # CLI 自己在等审批（值 = 工具名，可空串）
     denied: set = field(default_factory=set)
 
@@ -422,6 +444,7 @@ class FixSessions:
         ctx_kwargs: dict | None = None,
         script_path: Path | None = None,
         background: bool = True,
+        locale: object = None,
     ) -> FixSession:
         with self._lock:
             cur = self.active()
@@ -465,12 +488,17 @@ class FixSessions:
         )
         s.ctx, s.audit = ctx, audit if audit is not None else AuditLog()
         s.cli = cli is not None
+        language = language_rule(locale)
         toolset = FixToolset(
-            ctx, script, audit, on_activity=lambda t, ph, d: self._activity(s, t, ph, d)
+            ctx,
+            script,
+            audit,
+            on_activity=lambda t, ph, d: self._activity(s, t, ph, d),
+            language=language,
         )
 
         if cli is not None:
-            prompt = cli_prompt(ctx, script)
+            prompt = cli_prompt(ctx, script, language)
 
             def work() -> None:
                 self._work_cli(
@@ -739,6 +767,22 @@ class FixSessions:
         self._drain_inflight(s)
         if reason != "budget":
             reason = "cli_exit" if (code or 0) != 0 else "cli_no_finish"
+            if reason == "cli_no_finish" and not s.listed and not s.cbs:
+                reason = "cli_no_tools"
+        if s.reported is None and not s.cancel.is_set():
+            # 只记闭集码与计数：CLI 的输出不进日志（可能带用户脚本 / 路径）
+            LOG.warning(
+                "fix session %s: the CLI exited without finish (%s; exit code %s, tool list fetched: %s, tool calls: %d)",
+                s.id,
+                reason,
+                code,
+                s.listed,
+                sum(s.cbs.values()),
+            )
+            if reason == "cli_no_tools":
+                self._audit_event(
+                    s, reason, "the AI exited before Tavotto's repair tools reached it"
+                )
         self._settle(s, reason)
 
     @staticmethod
@@ -798,7 +842,8 @@ class FixSessions:
 
     def tool_list(self, fix_id: object, token: object) -> list[dict]:
         """MCP `tools/list`：注册表里的名字 / 描述 / schema。**不含 tier / waits_for_user**（与 `build_agent_tools` 同口径）。"""
-        self._authorized(fix_id, token)
+        s = self._authorized(fix_id, token)
+        s.listed = True
         return [
             {"name": t.name, "description": t.description, "inputSchema": t.schema}
             for t in fixtools.REGISTRY.values()
@@ -1039,6 +1084,7 @@ __all__ = [
     "cli_agent",
     "cli_launcher",
     "cli_prompt",
+    "language_rule",
     "connection",
     "mcp_launcher",
 ]

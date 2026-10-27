@@ -9455,7 +9455,8 @@ def _fix_application_verification(ctx: "ProjectCtx", sess, *, desktop: bool) -> 
 
 @app.post("/api/ai/fix")
 def api_ai_fix():
-    """「使用你的 AI 来修复」（智能修复主线，ADR 0148 / 0149）。body：`{session_id, script}`（准备会话 id 与脚本项目相对路径）。
+    """「使用你的 AI 来修复」（智能修复主线，ADR 0148 / 0149）。body：`{session_id, script, locale?}`（准备会话 id、脚本项目相对路径、
+    界面语言——AI 写给用户的那几句话用它，认不出就不指定）。
 
     起一个修复会话（`engine/fixsession`）：`200 {ok: true, fix_id}`；有 API 连接走内置循环，否则有可用的 Codex / Claude Code
     就起那个 CLI（经 MCP 修复模式回调本会话，D3）；两者都没有 ->
@@ -9511,6 +9512,7 @@ def api_ai_fix():
             redactor=redactor,
             audit=engine_fixsession.AuditLog(),
             script_path=script_path,
+            locale=body.get("locale"),
             ctx_kwargs={
                 **_fix_session_env(sess),
                 **_fix_application_verification(ctx, sess, desktop=_desktop_initiated()),

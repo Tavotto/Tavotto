@@ -3369,12 +3369,12 @@ export const sortVendors = (vendors: AiVendor[], cnFirst: boolean): AiVendor[] =
 /** `POST /api/ai/fix` 的响应：成功给修复会话 id；`ok: false` + 稳定原因码（`ai_fix_unavailable` 没有可用的 API 连接 / `ai_fix_busy` 已有别的修复在跑） */
 export type AiFixResponse = { ok: true; fix_id: string } | { ok: false; reason: string }
 
-/** 请求 AI 环境修复（ADR 0148 / 0149）。body：准备会话 id 与脚本（项目相对路径） */
+/** 请求 AI 环境修复（ADR 0148 / 0149）。body：准备会话 id 与脚本（项目相对路径）；带上界面语言，AI 写给用户的话用它 */
 export const requestAiFix = (body: { session_id: string; script: string }) =>
   jsonFetch<AiFixResponse>('/api/ai/fix', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, locale: i18n.language }),
   })
 
 /**

@@ -5575,6 +5575,7 @@ export default interface Resources {
         "failed": {
           "auth": "AI 密钥无效，请在设置中检查",
           "budget": "AI 在限定的步数内没能修好",
+          "cli_no_tools": "修复工具没能连上 AI，这次什么也没改",
           "cli_tool_not_delivered": "AI 的一次调用没送达，已自动停止",
           "cli_waiting_approval": "AI 卡在它自己的审批上，已自动停止",
           "network": "连不上 AI 服务，稍后再试",
