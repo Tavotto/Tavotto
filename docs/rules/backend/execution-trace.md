@@ -2,12 +2,12 @@
 
 > 2026-10-27 随 PR1（契约、生命周期与有界存储）新增；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」表里（由下面的
 > `agents-route` 块生成）。这里是这一主题规则的**唯一全文**。
-> 看护用例：`tests/test_exectrace.py`（旧阶段轨迹仍由 `tests/test_trace.py` 看护，见 `preparation-and-receipts.md`）。
+> 看护用例：`tests/test_exectrace.py`、`tests/test_exectrace_pipelines.py`（旧阶段轨迹仍由 `tests/test_trace.py` 看护，见 `preparation-and-receipts.md`）。
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 325
-改到: `engine/exectrace.py`、`data_dir()/cache/exec-trace/`、任何 `start_span` / `end_span` / `event` 调用点
+改到: `engine/exectrace.py`、`engine/ai_pricing.py`、`data_dir()/cache/exec-trace/`、任何 `start_span` / `end_span` / `event` 调用点
 主题: Execution Trace（层级执行追踪，ADR 0151） → `execution-trace.md`
 必守要点: 只观察不判定；自由字符串没有入口；采集失败不影响业务；时间不伪造
 -->
@@ -34,3 +34,7 @@ order: 325
 - **不进遥测、不自动上传。** 诊断包要带 Trace 是 PR4 的事：另做导出投影、升 `BUNDLE_SCHEMA_VERSION`（`diagnostics.md`）。
   这份本地存储是诊断规则「不写盘」之外经维护者裁决的登记例外（2026-10-27），仅限本目录、仅限白名单字段。
 - **进程边界**：只在 Flask 父进程 import；worker / bridge / agent_runner 侧不 import（它们报来的事实由父进程收到时记）。
+- **接入点（PR2）**：每条链路一个根、一个冻结点，表在 ADR 0151「修订：PR2」。要点：AI 任务在账本预留**成功之后**开、`_finish_session`
+  冻结；工具 Span **只在 `fixtools.run_tool`**；Task Core 阶段只经 `ai_tasks._trace_phase`；准备 / 导出在各自的 `_record_terminal`。
+  新链路接入照这张表加一行，不在业务代码里另起第二个冻结点。
+- **费用**：`engine/ai_pricing.py` 是定价的唯一出处（带版本与出处）；改价 = 改表 + 升 `PRICING_VERSION` + 核出处。表外的厂商 / 模型永远 `null`。

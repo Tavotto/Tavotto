@@ -107,3 +107,49 @@ Execution Trace（本地执行观察）≠ Task Diagnostic（`taskdiag` 终局�
 | 读盘不核 scope | `test_a_trace_from_another_scope_reads_as_absent` |
 | 恢复时记成 ok | `test_a_running_record_whose_owner_died_is_recovered_as_interrupted` |
 | 采集异常外抛 | `test_internal_faults_are_swallowed_and_counted` |
+
+## 修订：PR2——真实执行边界接入（2026-10-27）
+
+每个 Span 都挂在**已有**的执行边界上；没有新的编排器、没有复制业务日志、执行顺序一行没变。
+
+| 链路 | 根 Trace 在哪开 / 冻结 | Span 落点（唯一生产者） |
+| --- | --- | --- |
+| AI 改图 / 转换（`ai_bridge.run`） | 账本原子预留**成功之后**开（重复请求在此之前被 0132 挡下，没有第二份执行也没有第二份 Trace）；终态唯一写入点 `_finish_session` 冻结 | `accept`（point）；每个 CLI 进程一个 `agent_run`（修正轮 attempt 递增；第三方 CLI `opaque=true`，内部不虚构）；内置执行器 stdout 的 `usage` 行 → `model_request`（`timing=reported`，时长取子进程这一轮的 `ms`，起点不早于父）；`tool` 行 → `tool_call` point（只有结束时刻） |
+| Task Core 阶段（`ai_tasks._drive`） | 跟随桥的 Trace（`TaskRun.trace`）；`run_task`（确定性任务）自己开、自己冻结 | `phase()` 推进即 `plan → execute → validate → (correct → validate)* → commit → verify`；提交前检查没过而进入修正 = 那次 `validate` 记 `failed/precommit_not_verified`；编排结束时开着的那段按真实结局（取消 / 超时 / 错误码）收尾 |
+| 智能修复（`fixsession` + `fixtools.run_tool`） | `FixSessions.start` 开；`_settle` 冻结（`fixed`/`convert` → ok，`not_fixed` → failed） | `tool_call` **只在 `run_tool` 记**（内置执行器与 CLI 经 MCP 同一入口，父层不重复计）；卡片等待 `user_wait`（挂在发起它的工具下，答复 / 拒绝 / 超时 / 取消如实）；内置循环同进程的 `usage` → `model_request` |
+| 准备（`preparation._execute`） | 执行线程开；`_record_terminal` 冻结 | `script_run`（真实执行区间，本进程单调钟）；旧阶段轨迹经 `observe_stage_trace` 映射成观察点 |
+| 导出（`exportjob.prepare`） | 有项目上下文才开；`_record_terminal` 冻结 | 阶段轨迹观察点；`partial` 记失败、`conflict`（等用户裁决撞名）记 ok + outcome |
+
+**四件事分开记**（根 Span 的 attributes）：`changed`（文件变没变）、`refresh`（统一刷新结局）、`outcome`（任务结局）各一条，与根的 `status`
+（会话终态）互不合并；Agent 退出码在 `agent_run.exit_ok`。验证结论仍在 TaskResult 里，Trace 不重判。
+
+**Token 与费用**（裁决 3）：`ai_pricing.py` 带版本（`PRICING_VERSION`）的定价表，只收从官方定价页逐条核过的条目（Anthropic Claude 5 系列、
+OpenAI gpt-5 / gpt-5-mini，出处见 `SOURCES`）；厂商只认连接的 `base_url` 与目录预设**逐字相同**，自定义网关不冒充官方计价。只有
+服务端报了用量（`reported=true`）才算费用；字符数估算的用量 Token 照记、标 `estimated`、费用 `null`。Anthropic 缓存**写入**按基础输入价算
+（用量里没拆出写入量），所以永远 `estimated=True`。第三方 CLI 一律没有 Token / 费用。
+
+**agent_runner 协议的加法**：`usage` 事件多带 `ms`（这一轮的时长）、`reported`，失败轮带 `ok:false`；父进程旧的 `classify_event` 不读它们，
+加法兼容。`agent_runner/tools.TOOL_NAMES` 是内置执行器工具名的闭集（`tool` 词表只从它注册，AST 用例核对每个 `Tool("…")`）。
+
+**跨进程**：子进程只报时长，父进程在收到那一刻打时间；agent_runner / CLI / MCP 子进程都不 import 本模块。SSE 不承担完整性（满了会丢），
+PR3 的读取走 REST 权威快照。
+
+### PR2 反证（`tests/test_exectrace_pipelines.py`；脚本 scratchpad `xt_mut2.py`，8/8 红）
+
+| 变异 | 红在 |
+| --- | --- |
+| 提交前检查没过也记 ok | `test_a_correction_is_a_second_agent_attempt_and_the_failed_check_stays_the_first_failure` |
+| 取消记成 ok | `test_cancel_freezes_the_trace_and_late_writes_do_not_pollute_it` |
+| 第三方 CLI 不标 opaque | `test_a_normal_edit_records_accept_agent_phases_and_keeps_four_facts_apart` |
+| 估算用量也算费用 | `test_an_estimated_usage_or_an_unknown_endpoint_never_gets_a_cost` |
+| 准备失败记 ok（真 worker） | `test_a_real_preparation_leaves_a_trace_on_disk_with_the_stage_facts_mapped[script-fails]` |
+| 卡片超时记成 ok | `test_an_unanswered_card_is_a_timed_out_wait_not_a_slow_model` |
+| 工具被第二处重复计 | `test_an_approved_fix_has_one_tool_span_per_call_and_the_wait_is_its_own_span` |
+| 拒绝记成批准 | `test_a_refused_install_is_recorded_as_the_users_decision` |
+
+### 没做 / 边界
+
+* 第三方 CLI（Codex / Claude Code）内部的模型请求、工具调用、Token 看不见：只有外层 `agent_run` 区间（`opaque`）。经 MCP 修复时工具调用仍如实（走 `run_tool`）。
+* 内置执行器在改图链路里的工具调用只有结束时刻（point），没有区间；模型请求在**失败且无用量**时（网络错误）没有单独的 Span，结局在 `agent_run` 与根上。
+* `ready_to_commit` 不成区间；`run_command` / `install_packages` 等工具的子进程内部不再细分。
+* 端点、SSE 提示与 Waterfall 是 PR3；诊断包与 Guardian 是 PR4。

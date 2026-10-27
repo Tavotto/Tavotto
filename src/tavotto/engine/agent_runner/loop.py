@@ -552,7 +552,8 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                 exc.usage = _accountable(exc.usage, request_tokens, None)
                 res.usage_estimated |= not exc.usage.reported
                 res.turns += 1
-                led.add(exc.usage, int((time.monotonic() - started) * 1000))
+                turn_ms = int((time.monotonic() - started) * 1000)
+                led.add(exc.usage, turn_ms)
                 emit(
                     {
                         "type": "usage",
@@ -560,13 +561,17 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                         "input_tokens": exc.usage.input_tokens,
                         "output_tokens": exc.usage.output_tokens,
                         "cached_input_tokens": exc.usage.cached_input_tokens,
+                        "ms": turn_ms,
+                        "reported": exc.usage.reported,
+                        "ok": False,
                     }
                 )
             return _finish(res, False, exc.reason, exc.detail)
         turn.usage = _accountable(turn.usage, request_tokens, turn)
         res.usage_estimated |= not turn.usage.reported
         res.turns += 1
-        led.add(turn.usage, int((time.monotonic() - started) * 1000))
+        turn_ms = int((time.monotonic() - started) * 1000)
+        led.add(turn.usage, turn_ms)
         emit(
             {
                 "type": "usage",
@@ -574,6 +579,9 @@ def _run(model, toolset, envelope, emit, cancel, t0, res: RunResult) -> None:
                 "input_tokens": turn.usage.input_tokens,
                 "output_tokens": turn.usage.output_tokens,
                 "cached_input_tokens": turn.usage.cached_input_tokens,
+                # 执行追踪（ADR 0151）：这一轮请求的时长与用量是否服务端报的（否 = 字符数保守估算）
+                "ms": turn_ms,
+                "reported": turn.usage.reported,
             }
         )
         # 每轮记账后立刻复查：超额的回复不接受、其工具不执行。终止答复（end 且无工具调用）恰好用满上限

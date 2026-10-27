@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, ContextManager
 
-from . import atomicio, exportreq, taskdiag, trace as tracemod
+from . import atomicio, exectrace, exportreq, taskdiag, trace as tracemod
 from .exportreq import ExportRequest, ExportRequestError
 
 #: 作业状态。`partial` 是独立一档 —— 把它并进 `done` 或 `failed` 都会说谎。
@@ -263,6 +263,8 @@ class ExportJob:
     #: 发起这次导出的项目（T04）。任务绑定诊断与 `/api/export/state` 按它认领：别的项目拿 job_id 读不到。
     #: 私有，不进 `to_payload()`。`None` = 没有项目上下文的调用方（测试 / 内部探针）。
     project_id: str | None = field(default=None, repr=False)
+    #: 执行追踪（ADR 0151，只观察；不进 `to_payload()`）：建作业时开，终局时映射阶段轨迹并冻结
+    exec_trace: object = field(default_factory=exectrace.NullTrace, repr=False)
     #: 终局快照只写一次（`_emit` 在每个终局都会走到，这里去重）。
     _diag_recorded: bool = field(default=False, repr=False)
     #: 终局回调（导出终态遥测 `export_result`）。由**接受了这次导出的路由**在 `prepare` 之后挂上；
@@ -428,6 +430,10 @@ def prepare(
             export_dir=Path(export_dir),
             project_id=project_id,
         )
+        if project_id:
+            job.exec_trace = exectrace.begin(
+                "export", task_ref=job.id, scope=exectrace.scope_for(project_id)
+            )
         _JOBS[job.id] = job
     return job
 
@@ -956,12 +962,39 @@ def _notify_terminal(job: ExportJob) -> None:
         pass
 
 
+exectrace.register_vocabulary(
+    "outcome", (STATUS_DONE, STATUS_PARTIAL, STATUS_FAILED, STATUS_CANCELLED, STATUS_CONFLICT)
+)
+#: 导出终局 → 根 Trace。`partial` = 有一部分产物没出来，记失败（第一处失败仍由阶段轨迹点名）
+_EXPORT_TRACE_END = {
+    STATUS_DONE: "ok",
+    STATUS_PARTIAL: "failed",
+    STATUS_FAILED: "failed",
+    STATUS_CANCELLED: "cancelled",
+    STATUS_CONFLICT: "ok",  # 撞名等用户裁决：不是失败，结局记在 outcome 上
+}
+
+
+def _trace_terminal(job: ExportJob) -> None:
+    try:
+        xt = job.exec_trace
+        status = _EXPORT_TRACE_END.get(job.status, "unknown")
+        code = None
+        if status == "failed":
+            code = job.error_code or ("partial" if job.status == STATUS_PARTIAL else job.status)
+        exectrace.observe_stage_trace(xt, job.trace.to_payload())
+        xt.finish(status, error_code=code, attributes={"outcome": job.status})
+    except Exception:  # noqa: BLE001 —— 观察不是导出的一部分
+        pass
+
+
 def _record_terminal(job: ExportJob) -> None:
     """终局那一刻冻结一份诊断快照（T04）。每个终局路径都经 `_emit`，终局字段先于 `status` 已写完。
     记录失败不许影响导出本身。"""
     if job._diag_recorded or not job.project_id:
         return
     job._diag_recorded = True
+    _trace_terminal(job)
     try:
         subject = {("doc", job.request.document_id)} if job.request.document_id else set()
         if job.request.original and job.request.original.figure_id:

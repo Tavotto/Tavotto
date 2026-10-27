@@ -98,6 +98,7 @@ from .engine import (
     envlease as engine_envlease,
     epsfile as engine_epsfile,
     execspec as engine_execspec,
+    exectrace as engine_exectrace,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
     exportroute as engine_exportroute,
@@ -15905,6 +15906,8 @@ def main():
     engine_ai_history.purge(keep_days=180)
     engine_ai_history.purge_requests()
     engine_ai_history.purge_drafts()
+    # 执行追踪（ADR 0151）：属主已不在的运行中记录收成 interrupted、过期的清掉；永不抛、不挡启动
+    engine_exectrace.recover_on_startup()
     # 选中的 PDF 后端在起服务前装载好（契约层是惰性装载的）：第一次 probe 不再多付一次
     # import 的延迟；选了装不上的后端在这里就报出来，不静默回退（ADR 0067 / 0072）
     LOG.info("PDF 后端: %s", engine_logsafe.known(pdfbackend.warm(), pdfbackend.BACKENDS))

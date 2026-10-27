@@ -691,6 +691,21 @@ _READ_WINDOW_HELP = (
 )
 
 
+#: 本执行器会给模型的全部工具名（闭集）。父进程的执行追踪只认这里的名字（`exectrace` 的 `tool` 词表）；
+#: 新加工具必须同步这里（`tests/test_exectrace_pipelines.py` 用 AST 核对每个 `Tool("…")`）。
+TOOL_NAMES = (
+    "append_file",
+    "check",
+    "create_file",
+    "edit_file",
+    "finish",
+    "list_dir",
+    "read_file",
+    "read_image",
+    "write_file",
+)
+
+
 def _image_tool(session: FigureEditSession) -> Tool:
     return Tool(
         "read_image",

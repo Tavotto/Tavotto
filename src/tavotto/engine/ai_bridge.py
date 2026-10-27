@@ -40,9 +40,11 @@ from . import (
     ai_oauth,
     ai_providers,
     config,
+    exectrace,
     projectenv,
     scriptlock,
 )
+from .agent_runner.tools import TOOL_NAMES as _RUNNER_TOOLS
 from .ai_agents import spawn_env as _spawn_env  # noqa: F401 — run() 与旧调用方仍认这个名字
 from .runtime import (  # noqa: F401 — 重导出，历史调用方仍认这个名字
     CREATE_NEW_CONSOLE,
@@ -142,6 +144,105 @@ def _finish_session(
     # 结束时刻：详情的 `ended_ms`（#1098 单独合入时前端靠它判 cancelled 快照是不是终态；这里与 `final` 同时置位）
     sess["ended_ms"] = int(time.time() * 1000)
     sess["final"] = True
+    _trace_settle_session(sess, task_result)
+
+
+# ---------------------------------------------------------------- 执行追踪（ADR 0151；只观察，永不抛）
+
+exectrace.register_vocabulary(
+    "agent", [a.id for a in ai_agents.AGENT_REGISTRY] + [ai_agents.BUILTIN_ID]
+)
+exectrace.register_vocabulary("tool", _RUNNER_TOOLS)
+exectrace.register_vocabulary("refresh", ("pending", "ok", "failed", "skipped", "not_wired"))
+
+#: 会话 status → 根 Trace 的终局（Agent 退出、文件变了、刷新、任务结局四件事分开记在根的 attributes 上）
+_TRACE_END = {
+    "done": exectrace.STATUS_OK,
+    "failed": exectrace.STATUS_FAILED,
+    "cancelled": exectrace.STATUS_CANCELLED,
+    "timeout": exectrace.STATUS_TIMEOUT,
+    "interrupted": exectrace.STATUS_INTERRUPTED,
+}
+
+
+def _trace_runner_event(trace, parent, line: str, model, endpoint) -> None:
+    """内置执行器 stdout 的一行结构化事件 → 模型请求 / 工具调用观察。CLI 的原始文本一个字都不进 Trace。"""
+    try:
+        if not line.startswith("{"):
+            return
+        ev = json.loads(line)
+        kind = ev.get("type") if isinstance(ev, dict) else None
+        if kind == "usage":
+            from . import ai_pricing
+
+            usage = ai_pricing.usage_with_cost(ev, endpoint, model)
+            trace.reported(
+                "model_request",
+                "model",
+                exectrace.STATUS_OK if ev.get("ok", True) else exectrace.STATUS_FAILED,
+                duration_ms=ev.get("ms"),
+                parent=parent,
+                attempt=1,
+                error_code=None if ev.get("ok", True) else "model_request_failed",
+                attributes=ai_pricing.model_attributes(endpoint, model),
+                usage=usage,
+            )
+        elif kind == "tool":
+            # 工具结束才有这一行、没有开始时刻：零宽观察点，不推算区间
+            trace.point(
+                "tool_call",
+                "tool",
+                exectrace.STATUS_OK if ev.get("ok") else exectrace.STATUS_FAILED,
+                parent=parent,
+                error_code=None if ev.get("ok") else "tool_failed",
+                attributes={"tool": ev.get("name")},
+            )
+    except Exception:  # noqa: BLE001 —— 观察失败不影响会话
+        pass
+
+
+def _trace_agent_exit(trace, span, sess: dict, proc) -> None:
+    try:
+        status = sess.get("status")
+        if status in ("cancelled", "timeout"):
+            trace.end_span(span, status)
+        elif proc.returncode == 0:
+            trace.end_span(span, exectrace.STATUS_OK, attributes={"exit_ok": True})
+        else:
+            trace.end_span(
+                span,
+                exectrace.STATUS_FAILED,
+                error_code="agent_exit_nonzero",
+                attributes={"exit_ok": False},
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _trace_settle_session(sess: dict, task_result: dict | None) -> None:
+    """终态唯一写入点上冻结 Trace：根的终局随会话 status；文件变没变、刷新结局、任务结局各记一条，不合并。"""
+    try:
+        trace = sess.get("trace")
+        if trace is None:
+            return
+        outcome = (task_result or {}).get("outcome")
+        error = sess.get("error")
+        code = None
+        if sess["status"] == "failed":
+            code = (task_result or {}).get("error") or (
+                "ai_session_error" if error else "ai_failed"
+            )
+        trace.finish(
+            _TRACE_END.get(sess["status"], exectrace.STATUS_UNKNOWN),
+            error_code=code,
+            attributes={
+                "changed": bool(sess.get("changed")),
+                "refresh": (sess.get("refresh") or {}).get("status"),
+                **({"outcome": outcome} if outcome else {}),
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _drop_attempt_files(sid: str, snap: Path, cand=None) -> None:
@@ -1491,6 +1592,14 @@ def run(
             stderr_log.close()
             _drop_attempt_files(sid, snap, cand)
             raise DuplicateRequest(started[1])
+        # 执行追踪（ADR 0151）：账本原子预留成功之后才开——重复请求走上面的去重，不会生出第二份执行，也就没有第二份 Trace
+        trace = exectrace.begin(
+            "ai_task",
+            task_ref=sid,
+            session_ref=client_request_id,
+            scope=exectrace.scope_for(project_key),
+        )
+        trace.point("accept", "phase", exectrace.STATUS_OK, attributes={"agent": agent})
         task_run = None
         try:
             if envelope is not None:
@@ -1511,6 +1620,7 @@ def run(
             stderr_log.close()
             if task_run is not None:
                 ai_tasks.discard_registered(sid)
+            trace.finish(exectrace.STATUS_FAILED, error_code="agent_spawn_failed")
             ai_history.record_end(sid, "failed", error=str(exc))
             ai_history.record_cancel_result(sid, "failed")  # 窗口里到的取消意图随终态收尾，不悬挂
             if cand is not None:
@@ -1538,6 +1648,8 @@ def run(
             "client_request_id": client_request_id,
             #: `_pump` 收尾（changed / diff / refresh 都确定、已落库）之后才为 True；会话详情据此告诉前端「这是不是终态快照」
             "final": False,
+            #: 执行追踪（只观察；`SESSION_INTERNAL_KEYS`，不进任何响应）。终局在 `_finish_session` 冻结
+            "trace": trace,
         }
         if convert is not None:
             sess["kind"] = "convert"
@@ -1545,6 +1657,7 @@ def run(
             #: 对外：任务类型与结局摘要（收尾时补全）；对内：候选与 Task Core 的运行对象（`SESSION_INTERNAL_KEYS`）
             sess["task"] = {"task_type": envelope.task_type, "outcome": None}
             sess["taf"] = {"cand": cand, "run": task_run}
+            task_run.trace = trace
         SESSIONS[sid] = sess
     # `record_start` 提交之后、上一行之前，别的进程可能已经写了取消意图（tick 看到会话不在内存里就不消费它）：入内存后立刻补一次，
     # 不等下一个 tick。用户已被告知"取消已接受"，任务不能因为这个窗口跑完
@@ -1590,11 +1703,21 @@ def run(
         except (OSError, ValueError, AttributeError):
             pass  # 子进程已经退出
 
+    agent_runs = [0]
+
     def _consume():
         st: dict = {}
         sess.pop("runner_error", None)
         proc = sess["proc"]
         complete = threading.Event()
+        agent_runs[0] += 1
+        # 一次 CLI 进程 = 一个 agent_run（修正轮是 attempt 递增的兄弟）。第三方 CLI 的内部步骤看不见：只记外层区间 + opaque
+        run_span = trace.start_span(
+            "agent_run",
+            "agent",
+            attempt=agent_runs[0],
+            attributes={"agent": agent, "opaque": agent != ai_agents.BUILTIN_ID},
+        )
 
         def expire():
             # A silent process (or one holding a partial line) never reaches a
@@ -1614,6 +1737,8 @@ def run(
                 if builtin_ipc and '"check_request"' in line:
                     _answer_check()
                     continue
+                if agent == ai_agents.BUILTIN_ID:
+                    _trace_runner_event(trace, run_span, line, model, endpoint)
                 for kind, text in _classify(agent, line, st):
                     if not text:
                         continue
@@ -1627,6 +1752,7 @@ def run(
             complete.set()
             timer.cancel()
             log_state["log"].close()
+            _trace_agent_exit(trace, run_span, sess, proc)
 
     def _respawn(note: str) -> None:
         """TAF 有界修正：在同一个候选目录里、带着原提示词 + 修正指令再起一次 CLI（Phase 4，`ai_tasks._admit_correction`
@@ -2109,7 +2235,7 @@ SESSION_TERMINAL_FIELDS: tuple[str, ...] = (
 #: 会话 dict 里**有意不对外**的内部字段（含不可序列化的）。`tests/test_ai_idempotency.py` 钉住：会话 dict 的每个键
 #: 必须落在 DTO 白名单或这里——新加字段时必须表态，不会悄悄漏进响应、也不会悄悄让详情 500。
 SESSION_INTERNAL_KEYS: frozenset[str] = frozenset(
-    {"proc", "exited", "script_path", "snapshot", "project", "context", "owner_pid", "taf"}
+    {"proc", "exited", "script_path", "snapshot", "project", "context", "owner_pid", "taf", "trace"}
 )
 
 
@@ -2251,6 +2377,7 @@ def _cancel_local(sid: str) -> bool:
             if not ai_tasks.cancel(sid):
                 return False  # 已经在提交（或已收尾）：取消未被接受，候选照常提交，状态不改
         _terminate(sess)
+        sess.get("trace", exectrace.NullTrace()).event("cancel_requested")
         sess["status"] = "cancelled"  # 界面立刻显示取消；脚本仍算忙，直到 `_await_exit` 观察到退出
         ai_history.update_status(sid, "cancelled")
         return True

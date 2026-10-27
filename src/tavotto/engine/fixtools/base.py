@@ -103,6 +103,11 @@ class FixContext:
     leases: list = field(default_factory=list)
     #: 项目外的读取清单（供卡片详情列出）
     reads: list[dict] = field(default_factory=list)
+    #: 执行追踪（ADR 0151，只观察）：`run_tool` 在它下面记 tool_call，`trace_parent` 是会话的 agent_run Span；
+    #: `trace_tool_span` 是正在执行的那次调用（等用户的卡片挂在它下面）。None = 不记
+    trace: object = None
+    trace_parent: str | None = None
+    trace_tool_span: str | None = None
     step: int = 0
     case_insensitive: bool | None = None
     extra_deny: list[Path] | None = None

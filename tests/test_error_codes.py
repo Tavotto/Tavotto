@@ -673,6 +673,10 @@ NON_UI_CODES = {
     # 候选发现（只读）：槽位目录在、却列不出来（权限 / 网络盘）→ 503。前端当成 unavailable 走重试，不折成空项目，
     # 从不把这个 code 显示给用户
     "candidates_unavailable",
+    # 执行追踪（ADR 0151）Span 的错误码：只进本地 Trace 的 `error_code`，不是 HTTP 响应、不作为错误文案显示
+    # （PR3 的 Waterfall 若展示它们，届时随界面一起登记双语文案）
+    "agent_exit_nonzero",
+    "agent_spawn_failed",
 }
 
 

@@ -22,13 +22,14 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from ..rendercore.inspector import FAILED, NOT_APPLICABLE, UNKNOWN, VERDICTS, VERIFIED
-from . import ai_agents, ai_history
+from . import ai_agents, ai_history, exectrace
 
 SCHEMA_VERSION = 1
 
 #: 任务结局闭集（与验证四态分开）。`needs_input` 是终态：用户的回答是一个新任务（`parent_task_id`），
 #: 不让会话长时间挂着占用脚本
 OUTCOMES = ("completed", "partial", "needs_input", "failed", "cancelled", "interrupted")
+exectrace.register_vocabulary("outcome", OUTCOMES)
 #: 进行中的阶段（非终态，落 `sessions.phase`；结束时清空）
 PHASES = ("planning", "executing", "verifying", "correcting", "ready_to_commit", "committing")
 LAYERS = ("L1", "L2", "L3", "L4", "L5")
@@ -510,6 +511,10 @@ class TaskRun:
         self.used = dict.fromkeys(BUDGET_KEYS, 0)
         #: 没过提交前检查的每一轮（证据）：`{round, failed: [[id, reason]], next}`，`next` = `correct` 或拒绝修正的原因
         self.attempts: list[dict] = []
+        #: 执行追踪（ADR 0151）：只观察阶段推进，不参与任何判定。桥 / `run_task` 挂上；没挂 = 空记录器
+        self.trace = exectrace.NullTrace()
+        self._phase_span: tuple[str, str | None] | None = None
+        self._phase_attempts: dict[str, int] = {}
 
     def charge(self, key: str, n: int = 1) -> None:
         """记一笔预算；超出上限抛 `BudgetExceeded`，**不记**超出的那一笔（它没被执行）。"""
@@ -589,6 +594,16 @@ def load(task_id: str, db_path=None) -> dict | None:
     }
 
 
+#: 会话 status → 执行追踪的根终局（`done` 只说明任务按契约走完；结局本身另记在根的 `outcome` 上）
+_TRACE_END = {
+    "done": "ok",
+    "failed": "failed",
+    "cancelled": "cancelled",
+    "timeout": "timeout",
+    "interrupted": "interrupted",
+}
+
+
 def _status_for(outcome: str, timed_out: bool) -> str:
     if timed_out:
         return "timeout"
@@ -646,11 +661,20 @@ def run_task(
     run = TaskRun(task_id, envelope, Plan(steps=()), clock=clock)
     with _RUNNING_LOCK:
         _RUNNING[task_id] = run
+    run.trace = exectrace.begin(
+        "ai_task", task_ref=task_id, scope=exectrace.scope_for(envelope.project_key)
+    )
     try:
         outcome, checks, unmet, error, timed_out = _drive(adapter, executor, run, db_path)
     finally:
         with _RUNNING_LOCK:
             _RUNNING.pop(task_id, None)
+    _trace_settle(run, outcome, error, timed_out)
+    run.trace.finish(
+        _TRACE_END.get(_status_for(outcome, timed_out), exectrace.STATUS_UNKNOWN),
+        error_code=(error or "").split(":", 1)[0] or None,
+        attributes={"outcome": outcome},
+    )
     ai_history.record_end(
         task_id,
         _status_for(outcome, timed_out),
@@ -703,6 +727,7 @@ def drive_registered(run: TaskRun, executor: Executor, *, db_path=None) -> dict:
     finally:
         with _RUNNING_LOCK:
             _RUNNING.pop(run.task_id, None)
+    _trace_settle(run, outcome, error, timed_out)
     return {
         "outcome": outcome,
         "error": error,
@@ -816,6 +841,74 @@ def _admit_correction(adapter, executor, run: TaskRun, pre) -> tuple[dict | None
     return feedback, None
 
 
+#: Task Core 阶段 → 执行追踪的 Span 名。`ready_to_commit` 是门内复查的一刻，不成区间；提交之后的 verifying 是提交后验证
+_PHASE_SPANS = {
+    "planning": "plan",
+    "executing": "execute",
+    "verifying": "validate",
+    "correcting": "correct",
+    "committing": "commit",
+}
+
+
+def _trace_phase_impl(run: TaskRun, phase: str, *, committed: bool = False) -> None:
+    """阶段推进的观察：结束上一段、开下一段。上一段是提交前检查而下一段是修正 = 那次检查没过（记 failed）；
+    其余的「结束」只说明阶段走完了，不说明结果好坏——结果由 `_trace_settle` 按真实结局记。"""
+    name = "verify" if phase == "verifying" and committed else _PHASE_SPANS.get(phase)
+    prev = run._phase_span
+    if prev is not None:
+        failed = prev[0] == "validate" and name == "correct"
+        run.trace.end_span(
+            prev[1],
+            exectrace.STATUS_FAILED if failed else exectrace.STATUS_OK,
+            error_code="precommit_not_verified" if failed else None,
+        )
+        run._phase_span = None
+    if name is None:
+        return
+    n = run._phase_attempts.get(name, 0) + 1
+    run._phase_attempts[name] = n
+    run._phase_span = (
+        name,
+        run.trace.start_span(
+            name, "verify" if name in ("validate", "verify") else "phase", attempt=n
+        ),
+    )
+
+
+def _trace_settle_impl(run: TaskRun, outcome: str, error: str | None, timed_out: bool) -> None:
+    """编排结束时还开着的那一段按真实结局收尾（取消 / 超时 / 失败码），不把它记成走完了。"""
+    prev, run._phase_span = run._phase_span, None
+    if prev is None:
+        return
+    if timed_out or error == "timeout":
+        status, code = exectrace.STATUS_TIMEOUT, "timeout"
+    elif outcome == "cancelled":
+        status, code = exectrace.STATUS_CANCELLED, None
+    elif error:
+        status, code = exectrace.STATUS_FAILED, error.split(":", 1)[0]
+    elif outcome in ("completed", "partial", "needs_input"):
+        status, code = exectrace.STATUS_OK, None
+    else:
+        status, code = exectrace.STATUS_FAILED, outcome
+    run.trace.end_span(prev[1], status, error_code=code, attributes={"outcome": outcome})
+
+
+def _trace_phase(run: TaskRun, phase: str, *, committed: bool = False) -> None:
+    """观察失败不影响编排（`run` 可能是替身、没有追踪字段）。"""
+    try:
+        _trace_phase_impl(run, phase, committed=committed)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _trace_settle(run: TaskRun, outcome: str, error: str | None, timed_out: bool) -> None:
+    try:
+        _trace_settle_impl(run, outcome, error, timed_out)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _drive(adapter: TaskAdapter, executor: Executor, run: TaskRun, db_path):
     """阶段推进本体。回 `(outcome, checks, unmet, error, timed_out)`；只有它决定提不提交。"""
     checks: list[CheckResult] = []
@@ -824,6 +917,7 @@ def _drive(adapter: TaskAdapter, executor: Executor, run: TaskRun, db_path):
 
     def phase(name: str) -> None:
         ai_history.record_task_phase(run.task_id, name, db_path=db_path)
+        _trace_phase(run, name, committed=committed)
 
     def stop() -> str | None:
         if run.cancelled():
@@ -857,6 +951,7 @@ def _drive(adapter: TaskAdapter, executor: Executor, run: TaskRun, db_path):
             True,
         )
 
+    _trace_phase(run, "planning")
     try:
         run.plan = adapter.plan(run.envelope)
         if run.plan.needs_input:

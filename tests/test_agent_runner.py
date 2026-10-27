@@ -582,12 +582,15 @@ class TestWires:
         # 系统提示 + 工具定义逐字稳定（缓存前缀）
         assert body["system"] == body2["system"] and body["tools"] == body2["tools"]
         # 用量：输入含缓存命中 / 写入
-        assert events[0] == {
+        first = dict(events[0])
+        assert isinstance(first.pop("ms"), int)  # 这一轮的时长（执行追踪用，ADR 0151）
+        assert first == {
             "type": "usage",
             "turn": 1,
             "input_tokens": 75,
             "output_tokens": 10,
             "cached_input_tokens": 20,
+            "reported": True,
         }
 
     def test_anthropic_thinking_modes(self, cand, serve):

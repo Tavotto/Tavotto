@@ -66,6 +66,7 @@ from . import (
     envadvice,
     execpolicy,
     execspec,
+    exectrace,
     figcapture,
     inputbroker,
     inputremap,
@@ -802,6 +803,9 @@ class PreparationResult:
     note: str = ""
     #: 阶段轨迹（U09，ADR 0071）：plan → check → spawn → execute → receipt，坏在哪一步就停在哪一步。
     trace: tracemod.Trace = dataclasses.field(default_factory=tracemod.Trace)
+    #: 执行追踪（ADR 0151，只观察；**不进 `to_payload()`**）：执行线程开始时开、终局时把上面的阶段轨迹只读映射进来再冻结
+    exec_trace: object = dataclasses.field(default_factory=exectrace.NullTrace, repr=False)
+    exec_span: str | None = dataclasses.field(default=None, repr=False)
     #: 这次 build 捕获到的东西（T01）：`{"stems", "descriptors", "remap_generation"}`——执行之后要登记 /
     #: 物化的调用方（`prepsession`）从这里拿，不必再问 worker。**不进 `to_payload()`**（描述符里有路径）。
     captured: dict | None = None
@@ -989,6 +993,7 @@ class PreparationService:
         plan, result = entry.plan, entry.result
         tr = result.trace
         result.started_at = time.time()
+        _trace_begin(plan, result)
         tr.mark("plan", plan_id=plan.plan_id)
         existing = pool.peek(
             plan.script, plan.project_root, **({"run": plan.run} if plan.run is not None else {})
@@ -1641,8 +1646,49 @@ class PreparationService:
                 entry.thread.join(join_timeout)
 
 
+exectrace.register_vocabulary(
+    "outcome", (STATUS_READY, STATUS_ERROR, STATUS_CANCELLED, STATUS_NEEDS_INPUT, STATUS_STATIC)
+)
+_PREP_TRACE_END = {
+    STATUS_READY: "ok",
+    STATUS_NEEDS_INPUT: "ok",
+    STATUS_STATIC: "ok",
+    STATUS_ERROR: "failed",
+    STATUS_CANCELLED: "cancelled",
+}
+
+
+def _trace_begin(plan, result: PreparationResult) -> None:
+    """执行线程开头开 Trace。采集代码永不让准备失败：计划缺字段（替身 / 旧调用方）就不开。"""
+    try:
+        result.exec_trace = exectrace.begin(
+            "preparation",
+            task_ref=getattr(plan, "plan_id", None),
+            scope=exectrace.scope_for(getattr(plan, "project_id", None)),
+        )
+        result.exec_span = result.exec_trace.start_span(
+            "script_run", "process", attributes={"execution": getattr(plan, "execution", None)}
+        )
+    except Exception:  # noqa: BLE001
+        result.exec_trace, result.exec_span = exectrace.NullTrace(), None
+
+
+def _trace_terminal(result: PreparationResult) -> None:
+    """执行追踪收尾：阶段事实只读映射（不读 facts、不造区间）→ 执行区间按真实终局结束 → 冻结。永不抛。"""
+    try:
+        xt = result.exec_trace
+        status = _PREP_TRACE_END.get(result.status, "unknown")
+        code = (result.error or {}).get("code") if status == "failed" else None
+        exectrace.observe_stage_trace(xt, result.trace.to_payload(), parent=result.exec_span)
+        xt.end_span(result.exec_span, status, error_code=code)
+        xt.finish(status, error_code=code, attributes={"outcome": result.status})
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _record_terminal(plan: PreparationPlan, result: PreparationResult) -> None:
     """终局那一刻冻结一份诊断快照（T04）。只收这一次尝试自己的事实；记录失败不影响准备本身。"""
+    _trace_terminal(result)
     if result.status not in (STATUS_READY, STATUS_ERROR, STATUS_CANCELLED, STATUS_NEEDS_INPUT):
         return
     try:

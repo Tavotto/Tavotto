@@ -422,7 +422,8 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
   不猜测未知名称，不回显模型给出的键名或参数内容；冲突值或类型错误在写入前拒绝。figure_edit 与转换共用这条契约，原有路径与内容验证不变。
   将来 `data_to_figure` 的工具集**没有写文件工具**（只出结构化列映射，ADR 0138 §四）。
 - **事件**（stdout 每行一条 JSON，ASCII 转义）：`thinking`（只有字符数）、`tool`（工具名、成败、一句话摘要，**不带文件内容 / 提示词 / 密钥**）、
-  `text`（模型对用户说的话）、`usage`（每轮用量）、`done`（最后一条，恰好一条）。stderr 只写诊断级错误码。
+  `text`（模型对用户说的话）、`usage`（每轮用量；另带 `ms` 这一轮的时长与 `reported` 用量是否服务端报的，失败轮带 `ok:false`——父进程的执行追踪据此记模型请求，ADR 0151）、`done`（最后一条，恰好一条）。stderr 只写诊断级错误码。
+  `tool` 事件的工具名只出自 `agent_runner/tools.TOOL_NAMES`（闭集，新加工具同步它）。
 - **结束条件与结局**：`done{ok, reason, detail}`，`reason` ∈ `completed | max_turns | budget | tool_error_loop | auth | quota | refused | network | cancelled`，
   外加兜底 `internal`（本模块自己的缺陷，`detail` 只有异常类型名）。失败**不抛**。429、5xx、408 与传输失败指数退避重试（有上限），401 / 403 → `auth`，
   402 或额度类 429 → `quota`，429 重试用尽 → `quota`，其余 4xx（含 409）不重试 → `network`。服务端过滤 / 拒答 → `refused`（chat `finish_reason=content_filter`、

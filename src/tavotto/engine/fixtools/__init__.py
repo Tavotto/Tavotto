@@ -7,6 +7,7 @@ D1 登记「看」「试」两组；D2a 加「改」组（change.py：装包 / �
 
 from __future__ import annotations
 
+from .. import exectrace
 from ..agent_runner.tools import Tool
 from ..agent_runner.wires import ToolResult
 from .ask import ASK_TOOLS
@@ -25,6 +26,10 @@ REGISTRY: dict[str, FixTool] = {
 }
 
 
+exectrace.register_vocabulary("tool", REGISTRY)
+exectrace.register_vocabulary("tier", TIERS)
+
+
 def _failed(name: str, code: str, message: str) -> ToolResult:
     return ToolResult("", name, message, is_error=True, code=code, summary=f"error: {code}")
 
@@ -38,9 +43,19 @@ def _approved_by(result: ToolResult, ctx: FixContext) -> str:
 def run_tool(
     tool: FixTool, ctx: FixContext, args: object, audit: AuditLog | None = None
 ) -> ToolResult:
-    """所有接法共用的调用入口：档位检查 → handler → 脱敏 → 审计。不抛。"""
+    """所有接法共用的调用入口：档位检查 → handler → 脱敏 → 审计。不抛。
+
+    执行追踪的 tool_call **只在这里记**（内置执行器与 CLI 经 MCP 都走这一个入口）：父层「等工具返回」不另记一次调用。"""
     ctx.step += 1
     ctx.call_meta = {}
+    trace = getattr(ctx, "trace", None) or exectrace.NullTrace()
+    span = trace.start_span(
+        "tool_call",
+        "tool",
+        parent=getattr(ctx, "trace_parent", None),
+        attributes={"tool": tool.name, "tier": tool.tier},
+    )
+    ctx.trace_tool_span = span
     if tool.tier not in ctx.allowed_tiers:
         result = _failed(
             tool.name, "tier_not_allowed", "This tool is not available in this session."
@@ -70,6 +85,13 @@ def run_tool(
     if result.mutated:
         ctx.verification = None
     result.content = scrub(result.content)
+    ctx.trace_tool_span = None
+    trace.end_span(
+        span,
+        exectrace.STATUS_FAILED if result.is_error else exectrace.STATUS_OK,
+        error_code=result.code if result.is_error else None,
+        attributes={"approved_by": _approved_by(result, ctx)},
+    )
     if audit is not None:
         audit.record(
             session=ctx.session_id,

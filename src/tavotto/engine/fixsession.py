@@ -28,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import fixtools
+from . import exectrace, fixtools
 from .agent_runner import loop
 from .agent_runner.redact import NO_REDACTION, Redactor
 from .agent_runner.tools import Limits, RunEnvelope, Tool
@@ -326,6 +326,71 @@ class FixSession:
     cbs: dict = field(default_factory=dict)
     approval: str | None = None  # CLI 自己在等审批（值 = 工具名，可空串）
     denied: set = field(default_factory=set)
+    #: 执行追踪（ADR 0151，只观察；不进 `public()`）
+    trace: object = field(default_factory=exectrace.NullTrace)
+    trace_agent: str | None = None
+
+
+exectrace.register_vocabulary("outcome", ("fixed", "not_fixed", "convert", "cancelled", "failed"))
+
+#: 修复会话结局 → 根 Trace 终局。`not_fixed` 是 AI 如实交代没修好：任务失败，不是采集失败
+_FIX_TRACE_END = {
+    "fixed": "ok",
+    "convert": "ok",
+    "not_fixed": "failed",
+    "cancelled": "cancelled",
+    "failed": "failed",
+}
+
+
+def _trace_settle(s: FixSession) -> None:
+    try:
+        status = _FIX_TRACE_END.get(s.outcome or "", "unknown")
+        code = None
+        if status == "failed":
+            code = "not_fixed" if s.outcome == "not_fixed" else (s.reason or "fix_failed")
+        s.trace.end_span(s.trace_agent, status, error_code=code)
+        s.trace.finish(status, error_code=code, attributes={"outcome": s.outcome})
+    except Exception:  # noqa: BLE001 —— 观察失败不影响收尾
+        pass
+
+
+def _trace_model_turn(s: FixSession, event: dict) -> None:
+    """内置执行器的一轮模型请求（同一进程里跑的循环报来的时长与用量）。修复会话的连接不过定价表：只记 Token。"""
+    try:
+        from . import ai_pricing
+
+        ok = event.get("ok", True)
+        s.trace.reported(
+            "model_request",
+            "model",
+            "ok" if ok else "failed",
+            duration_ms=event.get("ms"),
+            parent=s.trace_agent,
+            error_code=None if ok else "model_request_failed",
+            usage=ai_pricing.usage_with_cost(event, None, None),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _trace_wait(trace, span, kind: str, answer) -> None:
+    """一张卡片的等待：用户点了（批准 / 拒绝 / 选了）是这段等待 ok 地结束；超时、取消照实记。"""
+    try:
+        if answer == "timeout":
+            trace.end_span(span, "timeout", error_code="approval_timeout")
+            trace.event("approval_timeout", span_id=span)
+        elif answer in (None, "cancelled"):
+            trace.end_span(span, "cancelled")
+        else:
+            decided = "denied" if answer == "no" else "user"
+            trace.end_span(span, "ok", attributes={"approved_by": decided})
+            if kind in ("approve", "send"):
+                trace.event(
+                    "approval_denied" if answer == "no" else "approval_granted", span_id=span
+                )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _same(a: str, b: object) -> bool:
@@ -465,6 +530,20 @@ class FixSessions:
         )
         s.ctx, s.audit = ctx, audit if audit is not None else AuditLog()
         s.cli = cli is not None
+        # 执行追踪（ADR 0151，只观察）：一次修复会话一条根 Trace；会话里的 Agent 一个 agent_run，工具都挂在它下面
+        s.trace = exectrace.begin(
+            "fix_session",
+            task_ref=prep_session_id,
+            session_ref=s.id,
+            scope=exectrace.scope_for(scope),
+        )
+        s.trace_agent = s.trace.start_span(
+            "agent_run",
+            "agent",
+            # 经 MCP 的 CLI：它内部的模型调用看不见（opaque），工具调用经回调仍在 `run_tool` 里如实记
+            attributes={"opaque": True} if s.cli else {"agent": "builtin", "opaque": False},
+        )
+        ctx.trace, ctx.trace_parent = s.trace, s.trace_agent
         toolset = FixToolset(
             ctx, script, audit, on_activity=lambda t, ph, d: self._activity(s, t, ph, d)
         )
@@ -502,6 +581,8 @@ class FixSessions:
             if kind == "tool":
                 s.steps += 1
                 self._notify(s)
+            elif kind == "usage":
+                _trace_model_turn(s, event)
             elif kind == "done":
                 done.update(event)
 
@@ -532,6 +613,7 @@ class FixSessions:
                 s.reason = failed_reason[:24]
             s.state, s.card, s.pending, s.stalled = STATE_FINISHED, None, None, None
             s.done.set()
+        _trace_settle(s)
         if s.ctx is not None:
             s.ctx.release_leases()  # change_python 持的旧代租约：会话结束才放（之后旧代才可能被清理）
         self._notify(s)
@@ -852,6 +934,10 @@ class FixSessions:
             s.pending = p
             s.card = {**card, "id": p.card_id}
             s.state = STATE_WAITING
+        # 等用户是单独的一段：用户久不点不会被算成模型或工具慢。只观察结果，不授予、不绕过审批
+        wait = s.trace.start_span(
+            "user_wait", "wait", parent=getattr(s.ctx, "trace_tool_span", None)
+        )
         self._notify(s)
         deadline = time.monotonic() + ASK_TIMEOUT
         while not p.event.wait(0.2):
@@ -865,6 +951,7 @@ class FixSessions:
             if s.pending is p:
                 s.pending, s.card = None, None
                 s.state = STATE_RUNNING
+        _trace_wait(s.trace, wait, kind, (p.result or {}).get("answer"))
         self._notify(s)
         return p.result or {"answer": "cancelled"}
 
