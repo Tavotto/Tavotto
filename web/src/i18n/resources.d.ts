@@ -5169,6 +5169,14 @@ export default interface Resources {
       "desktopSessionFailed": "无法建立 Tavotto 桌面会话。请关闭窗口后重新打开应用。",
       "sessionUnauthenticated": "此页面没有 Tavotto 会话。请从终端或应用重新启动 Tavotto，从它打开的带凭据链接进入。"
     },
+    "canvasDrop": {
+      "browser": "浏览器里拖不进脚本。请在左侧脚本库里运行「{{name}}」。",
+      "cannotRun": "「{{name}}」的文件名首尾有空格，暂时不能直接运行。请改名后再拖进来。",
+      "noPath": "请在接下来的窗口里再选一次「{{name}}」。",
+      "notScript": "「{{name}}」不是 Python 脚本。请拖入 .py 文件。",
+      "outsideProject": "「{{name}}」不在当前项目的文件夹里，没有运行。要用它，请回到主页把它拖进来。",
+      "running": "正在运行「{{name}}」，出图后放进这张画布"
+    },
     "canvasList": {
       "canvasName": "画布名",
       "count_other": "{{count}} 张画布",

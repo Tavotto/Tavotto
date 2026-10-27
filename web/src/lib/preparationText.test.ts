@@ -25,6 +25,7 @@ const lost: PrepEntry = {
   wantsRun: false,
   allowRerun: true,
   transferFrom: null,
+  placeIn: null,
 }
 const ctx: PrepContext = { argsChanged: false, editReady: false, missingArgs: null }
 

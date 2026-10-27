@@ -195,7 +195,8 @@ export async function nativeFileDropAvailable(): Promise<boolean> {
 
 /**
  * 订阅系统拖放（`tavotto:file-drop`）。壳在每次有文件放进窗口、页面又接受了这次拖动时
- * 都发；**只有主页订阅**——编辑器不订阅，事件落空，画布的 HTML5 拖放照旧。浏览器模式是空订阅。
+ * 都发。订阅的是主页，以及编辑器的画布（`canvas/useCanvasScriptDrop`：只认与画布 DOM `drop` 配上对的那一条，
+ * ADR 0092 修订 2026-10-27）；画布的 HTML5 拖放照旧。浏览器模式是空订阅。
  */
 export async function onNativeFileDrop(
   handler: (drop: NativeFileDrop) => void,

@@ -109,6 +109,14 @@
     "count_one": "{{count}} canvas",
     "count_other": "{{count}} canvases"
   },
+  "canvasDrop": {
+    "running": "Running “{{name}}”. Its figure will go on this canvas.",
+    "outsideProject": "“{{name}}” isn’t in this project’s folder, so it wasn’t run. To use it, drop it on the home screen.",
+    "cannotRun": "“{{name}}” has spaces at the start or end of its name and can’t be run yet. Rename it and drop it again.",
+    "notScript": "“{{name}}” isn’t a Python script. Drop a .py file.",
+    "noPath": "Choose “{{name}}” again in the next window.",
+    "browser": "Scripts can’t be dropped in the browser. Run “{{name}}” from the script library on the left."
+  },
   "canvasTools": {
     "fit": "Fit",
     "label": "Canvas tools",

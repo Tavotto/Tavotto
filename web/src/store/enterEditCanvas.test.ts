@@ -66,3 +66,48 @@ describe('enterEdit：第二个脚本的图要落在自己的画布上', () => {
     expect([panel.nativeW, panel.nativeH]).toEqual([120, 90])
   })
 })
+
+describe('enterEdit：脚本是拖到某张画布上发起的（placeIn，2026-10-27 用户拍板）', () => {
+  const figuresOn = (canvasId: string) => {
+    const st = useDocumentStore.getState()
+    const objs = canvasId === st.activeCanvasId ? st.doc.objects : (st.canvases.find((c) => c.id === canvasId)?.objects ?? [])
+    return objs.filter((o) => o.type === 'panel').map((o) => (o as unknown as { fileId: string }).fileId)
+  }
+
+  it('放进那张画布、落在放下的位置，不新建画布', async () => {
+    await enterEdit(host, fig('a.py', 'fig_a'))
+    const paper = useDocumentStore.getState().activeCanvasId
+    await enterEdit({ ...host, placeIn: { canvasId: paper, at: { x: 120, y: 80 } } }, fig('b.py', 'fig_b'))
+    const st = useDocumentStore.getState()
+    expect(st.canvases).toHaveLength(1)
+    expect(st.activeCanvasId).toBe(paper)
+    expect(figuresOn(paper)).toEqual(['runtime:a.py#fig_a', 'runtime:b.py#fig_b'])
+    const b = st.doc.objects.find((o) => o.type === 'panel' && (o as unknown as { fileId: string }).fileId === 'runtime:b.py#fig_b') as unknown as {
+      x: number
+      y: number
+      w: number
+      h: number
+    }
+    // 页面 150 × 100、图 80 × 60：不带落点时排在 (35, 20)，盖不到 x = 120
+    expect(b.x <= 120 && 120 <= b.x + b.w && b.y <= 80 && 80 <= b.y + b.h, JSON.stringify(b)).toBe(true)
+  })
+
+  it('AI 修复期间用户切去了别的画布：修好后切回拖入的那张，图放在那里', async () => {
+    await enterEdit(host, fig('a.py', 'fig_a'))
+    const paper = useDocumentStore.getState().activeCanvasId
+    await enterEdit(host, fig('c.py', 'fig_c')) // 普通打开：新建画布并切过去
+    expect(useDocumentStore.getState().activeCanvasId).not.toBe(paper)
+    await enterEdit({ ...host, placeIn: { canvasId: paper } }, fig('b.py', 'fig_b'))
+    expect(useDocumentStore.getState().activeCanvasId).toBe(paper)
+    expect(figuresOn(paper)).toEqual(['runtime:a.py#fig_a', 'runtime:b.py#fig_b'])
+    expect(useDocumentStore.getState().canvases).toHaveLength(2)
+  })
+
+  it('那张画布已经不在了：按普通「打开」走，新建画布放它', async () => {
+    await enterEdit(host, fig('a.py', 'fig_a'))
+    await enterEdit({ ...host, placeIn: { canvasId: 'c_gone' } }, fig('b.py', 'fig_b'))
+    const st = useDocumentStore.getState()
+    expect(st.canvases).toHaveLength(2)
+    expect(figuresOn(st.activeCanvasId)).toEqual(['runtime:b.py#fig_b'])
+  })
+})

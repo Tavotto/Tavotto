@@ -10,7 +10,9 @@ import type { CapturedFigureDescriptor } from '@/lib/api'
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { findFigurePanel } from '@/store/documentStore'
 import { takeDeferredEntryOutcome } from '@/store/documentRestore'
-import type { EditRender } from '@/store/projectPreparationStore'
+import { activateCanvas } from '@/store/canvasSession'
+import { useDocumentStore } from '@/store/documentStore'
+import type { EditRender, PlaceIn } from '@/store/projectPreparationStore'
 import { renderKeyOf } from '@/store/renderStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useUiStore } from '@/store/uiStore'
@@ -43,6 +45,11 @@ export interface EnterEditHost {
   stillWanted?: () => boolean
   /** 「重建为可编辑版」：新面板摆在当前画布上原图旁边，不新建画布 */
   beside?: boolean
+  /**
+   * 用户把脚本拖到了这张画布上（`PrepEntry.placeIn`）：图放进它、落在放下的位置，不新建画布。那张画布已经被关掉 / 删掉就当没有，
+   * 按普通「打开」走
+   */
+  placeIn?: PlaceIn
 }
 
 /**
@@ -89,7 +96,19 @@ export async function enterEdit(host: EnterEditHost, d: CapturedFigureDescriptor
     if (host.stillWanted) addRuntimePanelToCanvas(d, undefined, undefined, { guard: host.stillWanted })
     else addRuntimePanelToCanvas(d)
   }
-  const descriptor = missing && !host.beside ? d : undefined
+  // 拖到画布上的脚本：先切回那张画布（AI 修复期间用户可能切走了），这张图不在它上面就放上去（落点 = 放下的位置）；
+  // 之后 `openFastEdit` 先找激活画布，找到的就是刚放的这一块——不会去别的画布上的旧实例，也不新建画布
+  const into = host.placeIn && useDocumentStore.getState().canvases.some((c) => c.id === host.placeIn!.canvasId) ? host.placeIn : null
+  let placed = false
+  if (into && !host.beside) {
+    activateCanvas(into.canvasId)
+    const onIt = useDocumentStore.getState().doc.objects.some((o) => o.type === 'panel' && o.fileId === d.asset_id)
+    if (!onIt) {
+      addRuntimePanelToCanvas(d, into.at?.x, into.at?.y, host.stillWanted ? { guard: host.stillWanted } : undefined)
+      placed = true
+    }
+  }
+  const descriptor = missing && !host.beside && !placed ? d : undefined
   const outcome = openFastEdit(d.asset_id, { guard: host.stillWanted, descriptor })
   // 记 `openFastEdit` 实际打开的那个面板（它选中的实例），不是文档里按素材 id 找到的第一个；
   // 进入编辑之后卡片自动收起，不留角标（工作区自己的「渲染完成」说结果）
