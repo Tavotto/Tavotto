@@ -1453,6 +1453,7 @@
       "failed": {
         "cli_waiting_approval": "The AI got stuck on its own approval and was stopped",
         "cli_tool_not_delivered": "A call from the AI never arrived and it was stopped",
+        "cli_no_tools": "The repair tools never reached the AI, so nothing was changed",
         "stalled": "The AI was quiet for too long and was stopped",
         "budget": "The AI ran out of steps before fixing it",
         "auth": "The AI key isn’t valid. Check it in Settings.",

@@ -70,6 +70,11 @@ order: 20
 
 ## 运行时解析器与 `--provision`（原「MCP server 与内嵌画布」一节）
 
+- **第三条路：桌面版的 `tavotto-cli mcp`**（2026-10-27，「接入 AI 编辑器」）：宿主配置直接写
+  `<桌面版>/tavotto-cli mcp`，冻结产物在进程内跑**同一个** `tavotto_mcp` 服务端（`engine/mcpserve.py`），不经
+  本文件的解析器、不需要 `--provision`。解析器与候选链不变：插件（Codex / Claude Code 市场）照旧走 `mcp/server.py`；
+  pip / pipx 装的 `tavotto mcp` 没有 `codex-plugin/`，如实报 `mcp_server_not_bundled`、不降级成假的工具列表。
+
 - **启动器 `mcp/server.py` 是运行时解析器（2026-08-20 重做）**：候选链
   当前解释器 → `TAVOTTO_MCP_PYTHON`（显式，失败要指名道姓报
   `engine_unavailable`）→ `TAVOTTO_WORKER_PYTHON`/设置里的 worker.python →

@@ -323,8 +323,19 @@ def test_with_only_a_cli_the_endpoint_starts_a_cli_session_not_the_builtin_loop(
     assert started["agent"] == "codex" and started["url"].startswith("http://127.0.0.1:")
     # 同一份提示词：内置循环的系统提示 + CLI 补充
     end = poll(client, body["fix_id"], lambda b: b["state"] == "finished")
-    assert (end["outcome"], end["reason"]) == ("failed", "cli_no_finish")
+    # 假 CLI 从没来取过修复工具清单：工具没接上，单独一个原因码
+    assert (end["outcome"], end["reason"]) == ("failed", "cli_no_tools")
     assert started["prompt"].startswith(fixsession.SYSTEM_PROMPT)
+    assert "LANGUAGE" not in started["prompt"]  # 没带界面语言：不指定
+    # 中文界面：AI 写给用户的话要用中文；语言那一段在准备报告之前（报告被截断也不丢）
+    resp = client.post(
+        "/api/ai/fix",
+        json={"session_id": report["session_id"], "script": "fig.py", "locale": "zh-CN"},
+    )
+    fix_id = resp.get_json()["fix_id"]
+    poll(client, fix_id, lambda b: b["state"] == "finished")
+    head = started["prompt"].split("Current preparation report")[0]
+    assert fixsession.language_rule("zh-CN") in head and "Simplified Chinese" in head
 
 
 def test_an_api_connection_still_wins_over_a_cli(
