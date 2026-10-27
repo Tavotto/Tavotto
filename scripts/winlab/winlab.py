@@ -466,7 +466,7 @@ MODEL_PROVIDERS = {"deepseek": "https://api.deepseek.com/anthropic"}
 #: 与 hosts-live / 其余 desktop-live 的那把分开，缺了就不跑，绝不退回用默认那把
 MODEL_CONF_ONDISK_PATH = MODEL_CONF_PATH.with_name("model-ondisk.json")
 #: 要用落盘专用 key 的 desktop-live 模式（与 agent.DESKTOP_LIVE_ONDISK_MODES 一致，测试核对）
-ONDISK_MODES = ("zcode-native",)
+ONDISK_MODES = ("zcode-native", "claude-desktop-native")
 #: 推理用宿主账户自带模型的 desktop-live 模式：不要求先录 key（与 agent.DESKTOP_LIVE_ACCOUNT_MODEL_MODES 一致，测试核对）
 ACCOUNT_MODEL_MODES = ("workbuddy-native", "workbuddy-native-phone")
 

@@ -1105,11 +1105,243 @@ def wait_quiet(
             return "first_traffic_timeout", n
 
 
+# ----------------------------------------------------------------------------- 无 CDP 的宿主（UI Automation）
+#: Claude Desktop 拒绝调试端口（run 20261026T141609Z-f9207d）：不走 CDP。`--force-renderer-accessibility` 让
+#: Electron 把网页内容交给 UI Automation；PowerShell 自带的 UIAutomationClient 读控件树（类型 / 名字 / 位置），
+#: 输入用真实键鼠（SetCursorPos + mouse_event、剪贴板 + Ctrl+V、回车），都只对宿主自己的窗口做
+UIA_LAUNCH_ARGS = ["--force-renderer-accessibility"]
+#: 宿主自己说本地区不可用（标准模式首屏，run 20261026T143831Z-c456bc）：如实收场为 BLOCKED，不想办法绕
+REGION_BLOCK_RE = re.compile(
+    r"App unavailable|only available in certain regions|unavailable in region", re.I
+)
+UIA_DUMP_PS = r"""
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]%d)
+$walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+$out = New-Object System.Collections.ArrayList
+function Walk($e, $d) {
+  if ($d -gt 60 -or $out.Count -gt 3000) { return }
+  try {
+    $c = $e.Current; $r = $c.BoundingRectangle
+    $box = if ($r.IsEmpty -or [double]::IsInfinity($r.X)) { @(0, 0, 0, 0) } else { @([int]$r.X, [int]$r.Y, [int]$r.Width, [int]$r.Height) }
+    [void]$out.Add(@{t = $c.ControlType.ProgrammaticName; n = $c.Name; f = $c.IsKeyboardFocusable; r = $box})
+  } catch {}
+  $ch = $walker.GetFirstChild($e)
+  while ($ch -ne $null) { Walk $ch ($d + 1); $ch = $walker.GetNextSibling($ch) }
+}
+Walk $root 0
+ConvertTo-Json -InputObject $out -Compress -Depth 4
+"""
+#: 能当输入框的控件类型（Electron 的 contenteditable 在 UIA 里是 Edit 或 Document）
+UIA_INPUT_TYPES = ("ControlType.Edit", "ControlType.Document")
+
+
+def uia_dump(hwnd: int, timeout: float = 90) -> list[dict]:
+    """宿主窗口的控件树（只读）。读不到返回空表。"""
+    with contextlib.suppress(OSError, subprocess.SubprocessError, ValueError):
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", UIA_DUMP_PS % hwnd],
+            capture_output=True,
+            timeout=timeout,
+        )
+        data = json.loads(r.stdout.decode("utf-8", "replace").strip() or "[]")
+        return data if isinstance(data, list) else [data]
+    return []
+
+
+def uia_text(nodes: list[dict]) -> str:
+    return "\n".join(str(n.get("n") or "") for n in nodes if n.get("n"))
+
+
+def uia_input(nodes: list[dict], window_rect: list[int]) -> dict | None:
+    """输入框：可聚焦的 Edit / Document、宽过 200 像素、在窗口下半部；多个取最靠下的。"""
+    top, bottom = window_rect[1], window_rect[3]
+    mid = top + (bottom - top) / 2
+    cands = [
+        n
+        for n in nodes
+        if n.get("t") in UIA_INPUT_TYPES
+        and n.get("f")
+        and (n.get("r") or [0, 0, 0, 0])[2] > 200
+        and (n["r"][1] + n["r"][3] / 2) > mid
+    ]
+    return max(cands, key=lambda n: n["r"][1]) if cands else None
+
+
+def _u32():
+    import ctypes
+
+    return ctypes.WinDLL("user32", use_last_error=True)
+
+
+def real_click(x: int, y: int) -> None:
+    u32 = _u32()
+    u32.SetCursorPos(int(x), int(y))
+    time.sleep(0.1)
+    u32.mouse_event(0x0002, 0, 0, 0, 0)  # LEFTDOWN
+    u32.mouse_event(0x0004, 0, 0, 0, 0)  # LEFTUP
+
+
+def real_keys(*vks: int) -> None:
+    """按下 vks（依次）再倒序抬起：组合键。"""
+    u32 = _u32()
+    for vk in vks:
+        u32.keybd_event(vk, 0, 0, 0)
+        time.sleep(0.03)
+    for vk in reversed(vks):
+        u32.keybd_event(vk, 0, 0x0002, 0)  # KEYUP
+        time.sleep(0.03)
+
+
+def set_clipboard_text(text: str) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    u32 = _u32()
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GlobalAlloc.restype = wintypes.HGLOBAL
+    k32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    k32.GlobalLock.restype = ctypes.c_void_p
+    k32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    k32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    u32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    data = (text + "\0").encode("utf-16-le")
+    if not u32.OpenClipboard(None):
+        return False
+    try:
+        u32.EmptyClipboard()
+        h = k32.GlobalAlloc(0x0002, len(data))  # GMEM_MOVEABLE
+        ptr = k32.GlobalLock(h)
+        ctypes.memmove(ptr, data, len(data))
+        k32.GlobalUnlock(h)
+        return bool(u32.SetClipboardData(13, h))  # CF_UNICODETEXT；成功后归系统所有
+    finally:
+        u32.CloseClipboard()
+
+
+def bring_front(hwnd: int) -> None:
+    u32 = _u32()
+    u32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    real_keys(0x12)  # 先按一下 Alt：解开前台锁，SetForegroundWindow 才生效
+    u32.SetForegroundWindow(hwnd)
+    time.sleep(0.5)
+
+
+def drive_uia(ns: argparse.Namespace) -> dict:
+    """无 CDP 的宿主：起宿主 → 等主窗口 → 读控件树（宿主说地区不可用就收场）→ 点输入框、贴提示词、回车 →
+    等录制器安静。每一步截图、控件树进证据。"""
+    with contextlib.suppress(AttributeError, OSError):
+        _u32().SetProcessDpiAwarenessContext(-4)  # 每监视器 DPI：UIA 坐标与 SetCursorPos 同一套像素
+    out_dir = Path(ns.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    root, rec_log = Path(ns.root), Path(ns.rec_log)
+    result: dict = {
+        "label": ns.label,
+        "window": None,
+        "input_found": False,
+        "typed": False,
+        "submitted": False,
+    }
+    prog = Progress(out_dir / f"{ns.label}-progress.jsonl")
+    prog.step("start", exe=ns.exe, workspace=ns.workspace)
+    prompt = Path(ns.prompt_file).read_text(encoding="utf-8")
+    base_lines = recorder_lines(rec_log)
+    log = out_dir / f"{ns.label}-host-output.log"
+
+    def shot(name: str) -> None:
+        if result.get("window"):
+            P._screenshot(result["window"]["rect"], out_dir / f"{ns.label}-{name}.png")
+
+    def dump(name: str) -> list[dict]:
+        nodes = uia_dump(result["window"]["hwnd"])
+        (out_dir / f"{ns.label}-uia-{name}.json").write_text(
+            json.dumps(nodes, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
+        return nodes
+
+    with open(log, "wb") as host_out:
+        prog.step("launch_host", args=UIA_LAUNCH_ARGS)
+        tree = A.ProcessTree(
+            [ns.exe, *UIA_LAUNCH_ARGS],
+            cwd=Path(ns.workspace),
+            env=dict(os.environ),
+            stdout=host_out,
+            stderr=host_out,
+        )
+        try:
+            result["window"] = wait_main_window(root, tree, ns.window_timeout)
+            prog.step("window", found=bool(result["window"]), host_exit=tree.proc.poll())
+            if not result["window"]:
+                result["error"] = "no main window"
+                return result
+            hwnd = result["window"]["hwnd"]
+            # 首屏可能还在加载：等控件树里出现输入框、地区提示，或 90 s
+            nodes: list[dict] = []
+            box = None
+            end = time.monotonic() + 90
+            while time.monotonic() < end:
+                nodes = dump("first")
+                text = uia_text(nodes)
+                if REGION_BLOCK_RE.search(text):
+                    result["region_blocked"] = True
+                    prog.step("region_blocked")
+                    shot("region")
+                    return result
+                box = uia_input(nodes, result["window"]["rect"])
+                if box:
+                    break
+                time.sleep(5)
+            shot("first")
+            result["uia_nodes"] = len(nodes)
+            result["uia_text_tail"] = uia_text(nodes)[-1500:]
+            prog.step("uia", nodes=len(nodes), input=box)
+            if not box:
+                result["error"] = "no input box in the UI Automation tree"
+                return result
+            result["input_found"] = True
+            bring_front(hwnd)
+            x, y, w, h = box["r"]
+            real_click(x + min(60, w // 2), y + h // 2)
+            time.sleep(0.5)
+            if not set_clipboard_text(prompt):
+                result["error"] = "clipboard unavailable"
+                return result
+            real_keys(0x11, 0x56)  # Ctrl+V
+            time.sleep(1)
+            result["typed"] = True
+            shot("typed")
+            real_keys(0x0D)  # Enter
+            prog.step("submit", how="enter")
+            reason, n = wait_quiet(
+                rec_log,
+                base_lines,
+                ns.quiet_s,
+                ns.max_s,
+                ns.first_traffic_s,
+                alive=lambda: tree.proc.poll() is None or bool(P.top_windows(root)),
+            )
+            result["submitted"] = n > base_lines
+            result["wait_ended"], result["recorder_lines"] = reason, n
+            prog.step("wait_done", reason=reason, lines=n)
+            shot("final")
+            (out_dir / f"{ns.label}-panel.txt").write_text(
+                uia_text(dump("final")), encoding="utf-8"
+            )
+            result["screenshot"] = f"{ns.label}-final.png"
+            return result
+        finally:
+            prog.step("teardown")
+            tree.close()  # Job 结束整棵进程树
+
+
 def save_png(b64: str, path: Path) -> None:
     path.write_bytes(base64.b64decode(b64))
 
 
 def drive(ns: argparse.Namespace) -> dict:
+    if ns.kind == "uia":
+        return drive_uia(ns)
     out_dir = Path(ns.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     root, rec_log = Path(ns.root), Path(ns.rec_log)
@@ -1368,8 +1600,9 @@ def main(argv: list[str]) -> int:
     p.add_argument("--first-traffic-s", type=float, default=300)
     #: 扩展的 URI 入口（宿主自己的 URL 协议）；`none` = 只走命令面板；URI 不认也会退回命令面板
     p.add_argument("--open-uri", default=OPEN_URI)
-    #: vscode = VS Code 系宿主里的扩展面板；native = 宿主自己的聊天界面（ZCode）
-    p.add_argument("--kind", choices=("vscode", "native"), default="vscode")
+    #: vscode = VS Code 系宿主里的扩展面板；native = 宿主自己的聊天界面（ZCode）；uia = 不开调试端口的宿主
+    #: （Claude Desktop），经 UI Automation + 真实键鼠
+    p.add_argument("--kind", choices=("vscode", "native", "uia"), default="vscode")
     #: 原生宿主要扫码登录（WorkBuddy）：按钮文字、链接主机、Edge 配置目录都由 agent 登记，不透传
     p.add_argument("--login", choices=("none", "qr"), default="none")
     #: qr = 截二维码给用户扫；phone = 手机号 + 短信验证码（值经 --login-inbox 目录里的一次性文件送进来）

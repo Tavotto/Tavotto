@@ -2919,3 +2919,61 @@ def test_account_model_modes_never_ask_for_our_key(monkeypatch):
     for mode in W.ACCOUNT_MODEL_MODES:
         assert W.main(["test", "desktop-live", "--mode", mode]) == 0
         assert sent["stdin"] is None and sent["argv"][-1] == mode
+
+
+def test_claude_desktop_3p_config_talks_only_to_deepseek_and_allows_only_tavotto_tools(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "real-local"))
+    conf = {"base_url": "https://api.deepseek.com/anthropic", "api_key": "k" * 8, "model": "m1"}
+    cmd = ["py.exe", "rec.py", "log", "--", "py.exe", "server.py"]
+    written = A.claude3p_isolated_config(
+        tmp_path / "home",
+        {},
+        cmd,
+        {"TAVOTTO_MCP_ROOTS": "p"},
+        conf,
+        ["tavotto_health", "tavotto_export"],
+    )
+    assert len(written) == 2  # run 家目录 + 真实 LOCALAPPDATA（跑完删）
+    for f in written:
+        meta = json.loads((f.parent / "_meta.json").read_text(encoding="utf-8"))
+        assert f.name == f"{meta['appliedId']}.json"
+        c = json.loads(f.read_text(encoding="utf-8"))
+        assert c["inferenceProvider"] == "gateway"
+        assert c["inferenceGatewayBaseUrl"] == conf["base_url"]
+        assert c["inferenceModels"] == ["m1"] and c["modelDiscoveryEnabled"] is False
+        # 官方文档「Disabling all Anthropic-bound connections」的六条
+        for k in (
+            "disableEssentialTelemetry",
+            "disableNonessentialTelemetry",
+            "disableNonessentialServices",
+            "disableAutoUpdates",
+            "skipWebFetchPreflight",
+        ):
+            assert c[k] is True, k
+        assert c["modelCatalogEnabled"] is False
+        assert "WebFetch" in c["disabledBuiltinTools"]
+        assert c["coworkTabEnabled"] is False and c["isClaudeCodeForDesktopEnabled"] is False
+        (srv,) = c["managedMcpServers"]
+        assert srv["transport"] == "stdio" and [srv["command"], *srv["args"]] == cmd
+        assert srv["toolPolicy"] == {"tavotto_health": "allow", "tavotto_export": "allow"}
+    swept = A.sweep_stale_ondisk_configs(tmp_path / "no-runs")
+    assert swept == ["LOCALAPPDATA"]
+    assert not list((tmp_path / "real-local" / "Claude-3p" / "configLibrary").glob("*.json"))
+
+
+def test_uia_driver_reports_the_region_block_and_picks_the_lowest_wide_input():
+    assert D.REGION_BLOCK_RE.search(
+        "App unavailable\nUnfortunately, Claude is only available in certain regions"
+    )
+    assert not D.REGION_BLOCK_RE.search("How can I help you today?")
+    rect = [0, 0, 1000, 800]
+    nodes = [
+        {"t": "ControlType.Edit", "f": True, "r": [10, 20, 600, 30]},  # 上半部的搜索框
+        {"t": "ControlType.Edit", "f": True, "r": [100, 650, 120, 40]},  # 太窄
+        {"t": "ControlType.Document", "f": True, "r": [100, 600, 700, 80]},
+        {"t": "ControlType.Edit", "f": False, "r": [100, 700, 700, 40]},  # 不可聚焦
+    ]
+    assert D.uia_input(nodes, rect)["r"] == [100, 600, 700, 80]
+    assert D.uia_input(nodes[:2], rect) is None

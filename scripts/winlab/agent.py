@@ -72,6 +72,7 @@ DESKTOP_LIVE_MODES = (
     "zcode-native",
     "workbuddy-native",
     "workbuddy-native-phone",
+    "claude-desktop-native",
 )
 #: 要用户扫码登录宿主账户的格（用户 2026-10-27：专用账户、每次扫、跑完清掉登录态）
 DESKTOP_LIVE_LOGIN_MODES = ("workbuddy-native", "workbuddy-native-phone")
@@ -79,7 +80,7 @@ DESKTOP_LIVE_LOGIN_MODES = ("workbuddy-native", "workbuddy-native-phone")
 #: winlab.py 的 ACCOUNT_MODEL_MODES 同一份，测试核对）
 DESKTOP_LIVE_ACCOUNT_MODEL_MODES = DESKTOP_LIVE_LOGIN_MODES
 #: 宿主只能从明文配置读 key 的格：用落盘专用 key（winlab.py ONDISK_MODES 同一份，测试核对），跑完 wipe_ondisk_key
-DESKTOP_LIVE_ONDISK_MODES = ("zcode-native",)
+DESKTOP_LIVE_ONDISK_MODES = ("zcode-native", "claude-desktop-native")
 #: 依赖安装配方的版本：改了 prepare 的安装步骤就加一，已有 venv 随之重装（散列戳里含它）。
 DEPS_RECIPE = "2"
 
@@ -2773,6 +2774,11 @@ def _fetch_pinned_file(
     return dest, info
 
 
+def _pinned_cached(lab: Lab, host: DesktopHost) -> bool:
+    dest = lab.cache / "desktop-hosts" / host.id / host.version / host.url.rsplit("/", 1)[-1]
+    return dest.is_file() and _file_sha256(dest) == host.sha256
+
+
 def fetch_pinned(lab: Lab, host: DesktopHost) -> tuple[Path | None, dict]:
     """下载（或复用缓存）固定版本的安装包并核 SHA-256（规矩见 `_fetch_pinned_file`）。"""
     return _fetch_pinned_file(
@@ -3303,6 +3309,7 @@ DESKTOP_LIVE: dict[str, DesktopLive] = {
     "zcode-native": DesktopLive("zcode", native=True),
     "workbuddy-native": DesktopLive("workbuddy", native=True, login="qr"),
     "workbuddy-native-phone": DesktopLive("workbuddy", native=True, login="phone"),
+    "claude-desktop-native": DesktopLive("claude-desktop", native=True),
 }
 assert tuple(DESKTOP_LIVE) == DESKTOP_LIVE_MODES
 #: 宿主装扩展时自报「版本不兼容」：这是宿主限制（not_supported），不是 Tavotto 的故障
@@ -3529,12 +3536,22 @@ def zcode_isolated_config(
 
 
 #: ZCode 自己的应用数据目录（Electron userData 等）：key 可能被它另存一份，跑完一并核对
+#: 落盘例外的宿主把东西写进哪些应用数据目录（名字前缀）：收尾时在这些目录里找 key
+ONDISK_APP_DIR_PREFIXES = ("zcode", "claude")
+
+
 def _zcode_app_dirs(env: dict) -> list[Path]:
-    out = []
+    """宿主的应用数据目录：传入环境的和这个账户真实的 APPDATA / LOCALAPPDATA 都看（Electron 不一定认环境变量）。
+    AnthropicClaude 是安装目录（几百 MB 的程序文件、随卸载删），不扫。"""
+    out: list[Path] = []
     for var in ("APPDATA", "LOCALAPPDATA"):
-        base = env.get(var) or os.environ.get(var)
-        if base and Path(base).is_dir():
-            out += [p for p in Path(base).iterdir() if p.name.lower().startswith("zcode")]
+        for base in {env.get(var), os.environ.get(var)} - {None, ""}:
+            if Path(base).is_dir():
+                out += [
+                    p
+                    for p in Path(base).iterdir()
+                    if p.name.lower().startswith(ONDISK_APP_DIR_PREFIXES) and p not in out
+                ]
     return out
 
 
@@ -3567,6 +3584,75 @@ def _files_containing(roots: list[Path], needle: bytes) -> tuple[list[Path], lis
     return hits, unreadable
 
 
+#: Claude Desktop 第三方推理（用户 2026-10-27：「不连接claude的官方服务，只用DeepSeek连接」）：推理只走 DeepSeek 的
+#: Anthropic 兼容接口；官方文档「Disabling all Anthropic-bound connections」列的六条全关，Cowork / Code 不开（Code 的
+#: WebFetch 预检会连 Anthropic；Cowork 要从 Anthropic 下载 VM 包），只用 Chat + 托管的 tavotto MCP
+CLAUDE3P_NO_ANTHROPIC = {
+    "disableEssentialTelemetry": True,
+    "disableNonessentialTelemetry": True,
+    "disableNonessentialServices": True,
+    "disableAutoUpdates": True,
+    "modelCatalogEnabled": False,
+    "skipWebFetchPreflight": True,
+    "disabledBuiltinTools": ["WebFetch", "WebSearch", "Bash"],
+    "chatTabEnabled": True,
+    "coworkTabEnabled": False,
+    "isClaudeCodeForDesktopEnabled": False,
+}
+
+
+def claude3p_config_dirs(home: Path, env: dict) -> list[Path]:
+    """configLibrary 写两处：重定向的 run 家目录下，和这个账户真实的 %LOCALAPPDATA%（Electron 取应用目录不一定认
+    环境变量）。真实那处跑完由 wipe_ondisk_key 删掉。"""
+    dirs = [home / "AppData" / "Local" / "Claude-3p" / "configLibrary"]
+    real = os.environ.get("LOCALAPPDATA")
+    if real:
+        dirs.append(Path(real) / "Claude-3p" / "configLibrary")
+    return dirs
+
+
+def claude3p_isolated_config(
+    home: Path,
+    env: dict,
+    mcp_cmd: list[str],
+    mcp_env: dict,
+    model_conf: dict,
+    tool_names: list[str],
+) -> list[Path]:
+    """Claude Desktop on 3P 的本地配置（`configLibrary\\_meta.json` 记 appliedId，`<id>.json` 平铺键值，格式同
+    in-app 配置窗口写的）：gateway → DeepSeek，模型显式列出、不做发现；tavotto 经 `managedMcpServers` 起本地
+    stdio → 录制器，只预先放行 tavotto 自己的工具。返回写下的配置文件（含 key，落盘例外）。"""
+    model = model_conf.get("model") or DEFAULT_HOST_MODEL
+    conf = {
+        "inferenceProvider": "gateway",
+        "inferenceGatewayBaseUrl": model_conf["base_url"],
+        "inferenceGatewayApiKey": model_conf["api_key"],
+        "inferenceGatewayAuthScheme": "bearer",
+        "inferenceModels": [model],
+        "modelDiscoveryEnabled": False,
+        **CLAUDE3P_NO_ANTHROPIC,
+        "managedMcpServers": [
+            {
+                "name": "tavotto",
+                "transport": "stdio",
+                "command": mcp_cmd[0],
+                "args": mcp_cmd[1:],
+                "env": mcp_env,
+                "toolPolicy": {n: "allow" for n in tool_names},
+            }
+        ],
+    }
+    written = []
+    for d in claude3p_config_dirs(home, env):
+        d.mkdir(parents=True, exist_ok=True)
+        cid = "tavotto-lab"
+        (d / "_meta.json").write_text(json.dumps({"appliedId": cid}), encoding="utf-8")
+        f = d / f"{cid}.json"
+        f.write_text(json.dumps(conf, indent=2), encoding="utf-8")
+        written.append(f)
+    return written
+
+
 def sweep_stale_ondisk_configs(runs: Path) -> list[str]:
     """上一次 run 被强行结束（超时 / stop）时 finally 没机会跑：开跑前把所有旧 run 里残留的
     provider_config.json 删掉（不看内容，文件本身就是落盘例外的产物）。返回删掉的 run id。"""
@@ -3576,7 +3662,17 @@ def sweep_stale_ondisk_configs(runs: Path) -> list[str]:
             with contextlib.suppress(OSError):
                 pc.unlink()
                 swept.append(pc.parents[4].name)
-    return swept
+        for pc in runs.glob("*/work/cdhome/AppData/Local/Claude-3p/configLibrary/*.json"):
+            with contextlib.suppress(OSError):
+                pc.unlink()
+                swept.append(pc.parents[6].name)
+    real = os.environ.get("LOCALAPPDATA")
+    if real:
+        for pc in (Path(real) / "Claude-3p" / "configLibrary").glob("*.json"):
+            with contextlib.suppress(OSError):
+                pc.unlink()
+                swept.append("LOCALAPPDATA")
+    return sorted(set(swept))
 
 
 def wipe_ondisk_key(run_dir: Path, env: dict, key: str) -> dict:
@@ -3587,6 +3683,10 @@ def wipe_ondisk_key(run_dir: Path, env: dict, key: str) -> dict:
     pc = zdata / ".zcode" / "v2" / "provider_config.json"
     with contextlib.suppress(OSError):
         pc.unlink()
+    for d in claude3p_config_dirs(run_dir / "work" / "cdhome", env):
+        for f in d.glob("*.json"):
+            with contextlib.suppress(OSError):
+                f.unlink()
     # 先删应用数据目录里的副本，再逐个文件抹 run 目录：任何一个文件读写失败都不中断收尾（Codex #1439），
     # 失败的文件留给下面的核对计入 residual / unreadable
     app_dirs = _zcode_app_dirs(env)
@@ -3985,6 +4085,13 @@ def run_desktop_live_task(
             "result": "environment_unavailable",
             "summary": "venv missing: run `winlab prepare` first",
         }
+    if mode == "claude-desktop-native" and not _pinned_cached(lab, host):
+        # 这一格不从 Anthropic 下载任何东西（用户 2026-10-27）：只用 L2 时已下好、已核散列的那份
+        return {
+            **base,
+            "result": "environment_unavailable",
+            "summary": "Claude Desktop installer is not in the Lab cache; this cell never downloads it",
+        }
     setup, dl = fetch_pinned(lab, host)
     base["download"] = {"host": dl}
     if setup is None:
@@ -4201,6 +4308,16 @@ def _desktop_live_body(
             "--login-inbox",
             str(work),
         ]
+    elif cell.native and host.id == "claude-desktop":
+        # Claude Desktop on 3P：gateway → DeepSeek（落盘例外同 ZCode：专用限额 key，跑完 wipe_ondisk_key）；整个用户目录
+        # 指到 run 里（~/.claude、应用数据都隔离），配置另写一份到真实 LOCALAPPDATA（跑完删）
+        names = tavotto_tool_names(lab.repo / "codex-plugin" / "mcp")
+        if not names:
+            return {**base, "result": "error", "summary": "could not read tavotto MCP tool names"}
+        home = work / "cdhome"
+        claude3p_isolated_config(home, env, mcp_cmd, mcp_env, model_conf, names)
+        gui_env = dict(env, **_home_env(home))
+        public_env, secret_env = gui_env, None
     elif cell.native:
         # ZCode 只从明文 provider_config.json 读 key（用户 2026-10-26 同意的落盘例外，专用限额 key）：
         # 只写本次 run 的 ZCODE_DATA_BASE_DIR，跑完 wipe_ondisk_key 删除并核对无残留
@@ -4248,7 +4365,7 @@ def _desktop_live_body(
             open_uri=f"{host.url_scheme}://{ext.id}/open"
             if host.url_scheme and not cell.native
             else "none",
-            kind="native" if cell.native else "vscode",
+            kind=("uia" if host.id == "claude-desktop" else "native") if cell.native else "vscode",
             extra=login_args,
         )
         step = run_in_gui(
@@ -4320,6 +4437,28 @@ def _desktop_live_body(
     base["driver_log_tail"] = r1["log_tail"] if not r1["driver"] else ""
     if cell.native and host.id == "zcode":
         base["host_mcp_log"] = _grep_tail(ev / "zcode-logs", re.compile(r"mcp", re.I), 30)
+    if cell.native and host.id == "claude-desktop":
+        # 应用自己的日志（配置被拒的键、MCP 起没起来）；key 不进日志，落证前仍按 key 抹一遍
+        logs = [work / "cdhome" / "AppData" / "Local" / "Claude-3p" / "logs"]
+        if os.environ.get("LOCALAPPDATA"):
+            logs.append(Path(os.environ["LOCALAPPDATA"]) / "Claude-3p" / "logs")
+        base["host_mcp_log"] = [
+            line.replace(key, "<redacted>")
+            for d in logs
+            for line in _grep_tail(
+                d, re.compile(r"mcp|configLibrary|inference|gateway|region", re.I), 30
+            )
+        ]
+    if r1["driver"].get("region_blocked"):
+        levels.update(
+            L3="environment_unavailable", L4="environment_unavailable", L5="environment_unavailable"
+        )
+        return {
+            **base,
+            "result": "environment_unavailable",
+            "summary": f"{host.name}: the app itself reports it is unavailable in this region (L3–L5 BLOCKED; not bypassed)",
+            "blocked_reason": "host unavailable in region",
+        }
     if r1["driver"].get("login_required"):
         levels.update(
             L3="environment_unavailable", L4="environment_unavailable", L5="environment_unavailable"
