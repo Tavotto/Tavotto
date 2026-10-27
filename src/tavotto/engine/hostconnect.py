@@ -115,6 +115,13 @@ def check_project_root(path: str) -> tuple[str | None, str | None]:
         return None, "文件夹不存在"
     if not p.is_dir():
         return None, "不是文件夹"
+    if os.pathsep in str(p):
+        # TAVOTTO_MCP_ROOTS 按 os.pathsep 切成多个根：`/tmp/a:b` 会被读成 `/tmp/a` 与 `b` 两个根，放行用户没选的目录
+        # （Codex #1455 P1；与 configure.py 的 validate_project_root 同一条规则）
+        return (
+            None,
+            f"文件夹路径里不能有「{os.pathsep}」（它在授权里是多个目录的分隔符），请换一个文件夹或改名",
+        )
     home = Path.home().resolve()
     if p == Path(p.anchor) or p == home or p in home.parents:
         return None, "不能是整个主目录或磁盘根目录，请选一个具体的项目文件夹"
@@ -489,8 +496,34 @@ def installed(host: str) -> bool:
     return False
 
 
+def _codex_connected() -> bool:
+    """Codex：插件装上了（`codexinstall.installed_plugin_dir()`，问的是 Codex 自己的安装记录）。"""
+    from . import codexinstall  # noqa: PLC0415
+
+    try:
+        return codexinstall.installed_plugin_dir() is not None
+    except Exception:  # noqa: BLE001 — 列表只是状态，问不到就当没接
+        return False
+
+
+def _claude_code_connected() -> bool:
+    """Claude Code：`claude mcp get tavotto` 认得它（user 级登记或插件带来的同名 server 都算）。"""
+    claude = _claude_argv()
+    if not claude:
+        return False
+    rc, out = _run([*claude, "mcp", "list"], timeout=60)
+    # 每行「名字: 命令 - 状态」；插件那条的名字自己带冒号（plugin:tavotto:tavotto），所以按行首前缀判
+    prefixes = (f"{SERVER_NAME}:", f"plugin:{SERVER_NAME}:{SERVER_NAME}:")
+    return rc == 0 and any(line.strip().startswith(prefixes) for line in out.splitlines())
+
+
 def connected(host: str, launch: dict | None, env: dict) -> bool:
-    """文件类宿主：每个目标文件里 tavotto 那一条与「现在会写的」逐字相同。其余宿主由各自的 CLI 判（这里不起子进程）。"""
+    """文件类宿主：每个目标文件里 tavotto 那一条与「现在会写的」逐字相同。Codex / Claude Code 问各自的 CLI
+    （Codex #1455 P2：之前这两家永远报「未接入」）。"""
+    if host == "codex":
+        return _codex_connected()
+    if host == "claude-code":
+        return _claude_code_connected()
     if host not in _FILE_HOSTS or launch is None:
         return False
     targets = _FILE_HOSTS[host].targets()
@@ -544,6 +577,14 @@ def health(launch: dict, env: dict) -> dict:
 def connect(host: str, project_root: str | None = None) -> dict:
     if host not in HOST_IDS:
         return _result(host, "connect", [_step("host", ok=False, code=ERR_UNKNOWN_HOST)])
+    if host == "codex":
+        # Codex 走插件（自带启动器与技能），不用这一份的 MCP 命令、也不用文件夹：pip / pipx 装的同样能接（Codex #1455 P2）
+        steps = _codex_connect()
+        out = _result(host, "connect", steps)
+        if out["ok"]:
+            changed = any(s["ok"] and not s["skipped"] for s in steps)
+            out["state"] = "needs_new_session" if changed else "connected"
+        return out
     launch = mcp_launch()
     if launch is None:
         return _result(
@@ -568,9 +609,7 @@ def connect(host: str, project_root: str | None = None) -> dict:
         _save_state({**state, "project_root": root})
     env = _env_for(root)
     steps: list[dict] = [_step("project_root", ok=True, skipped=True, detail=root)]
-    if host == "codex":
-        steps += _codex_connect()
-    elif host == "claude-code":
+    if host == "claude-code":
         steps += _claude_code_connect(launch, env)
     else:
         fh = _FILE_HOSTS[host]
@@ -589,7 +628,7 @@ def connect(host: str, project_root: str | None = None) -> dict:
             extra = fh.after_connect(launch, env)
             if extra:
                 steps.append(extra)
-    if all(s["ok"] for s in steps) and host != "codex":
+    if all(s["ok"] for s in steps):
         steps.append(health(launch, env))
     changed = any(s["ok"] and not s["skipped"] for s in steps if s["step"] != "health")
     out = _result(host, "connect", steps, project_root=root)
@@ -629,7 +668,8 @@ def list_hosts() -> dict:
                 "id": h,
                 "label": LABELS[h],
                 "installed": inst,
-                "connected": inst and bool(root) and connected(h, launch, env),
+                # Codex 不经文件夹（插件自带授权逻辑），其余要先有文件夹才谈得上「接入」
+                "connected": inst and (h == "codex" or bool(root)) and connected(h, launch, env),
             }
         )
     return {

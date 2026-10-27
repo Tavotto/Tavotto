@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -192,3 +193,49 @@ def test_health_really_starts_the_command_it_writes(tmp_path, monkeypatch):
     assert launch == {"command": sys.executable, "args": ["-m", "tavotto", "mcp"]}
     step = H.health(launch, {H.ROOTS_ENV: str(root)})
     assert step["ok"], step
+
+
+@pytest.mark.skipif(
+    os.pathsep != ":", reason="POSIX 上的分隔符是冒号（Windows 是分号，同一条规则）"
+)
+def test_a_folder_whose_name_contains_the_roots_separator_is_rejected(home):
+    """`/x/project:archive` 写进 TAVOTTO_MCP_ROOTS 会被切成两个根、放行用户没选的目录（Codex #1455 P1）。"""
+    bad = home / "papers" / "project:archive"
+    bad.mkdir(parents=True)
+    got, why = H.check_project_root(str(bad))
+    assert got is None and os.pathsep in why
+    (home / ".cursor").mkdir()
+    res = H.connect("cursor", str(bad))
+    assert res["error_code"] == H.ERR_BAD_ROOT and not (home / ".cursor" / "mcp.json").exists()
+
+
+def test_codex_connect_needs_neither_the_bundled_server_nor_a_folder(home, monkeypatch):
+    """pip / pipx 装的没有 MCP 服务端，但 Codex 走插件：照样委托 codexinstall（Codex #1455 P2）。"""
+    monkeypatch.setattr(H, "mcp_launch", lambda: None)
+    calls = []
+
+    def fake_connect():
+        calls.append(1)
+        return [H._step("plugin", ok=True)]
+
+    monkeypatch.setattr(H, "_codex_connect", fake_connect)
+    res = H.connect("codex")
+    assert calls == [1] and res["ok"] and res["state"] == "needs_new_session"
+
+
+def test_cli_managed_hosts_report_their_connection_state(home, monkeypatch):
+    """Codex / Claude Code 接好后列表里不能永远是「未接入」（Codex #1455 P2）。"""
+    monkeypatch.setattr(H, "_codex_connected", lambda: True)
+    monkeypatch.setattr(H, "_claude_argv", lambda: ["claude"])
+    monkeypatch.setattr(
+        H,
+        "_run",
+        lambda argv, timeout=120: (
+            0,
+            "plugin:tavotto:tavotto: /x/launch - ✓ Connected\nother: y\n",
+        ),
+    )
+    assert H.connected("codex", None, {}) is True
+    assert H.connected("claude-code", None, {}) is True
+    monkeypatch.setattr(H, "_run", lambda argv, timeout=120: (0, "other: y\nnot-tavotto: z\n"))
+    assert H.connected("claude-code", None, {}) is False
