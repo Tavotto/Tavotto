@@ -712,10 +712,11 @@ def _page_shot(cdp: CDP, sid: str, path: Path) -> bool:
     return False
 
 
-def fill_folder_dialog(folder: str, timeout: float = 15) -> str:
+def fill_folder_dialog(folder: str, timeout: float = 15, diag: dict | None = None) -> str:
     """宿主弹出的 Windows「选择文件夹」对话框（#32770）：把路径写进它的文件夹名输入框、按「选择文件夹」（IDOK）。
     填了路径的第一下常常只是进到那个目录，对话框没关就再按（最多三下）。对话框关掉返回 "ok"，否则返回卡在哪一步
-    （no_dialog / no_edit / no_ok / still_open）。只操作这个对话框，不碰别的窗口。"""
+    （no_dialog / no_edit / no_ok / still_open）。只操作这个对话框，不碰别的窗口。
+    diag 里记对话框标题和子控件（类名 / 父类名 / 控件 id / 可见），认不出输入框时照着它改。"""
     import ctypes
     from ctypes import wintypes
 
@@ -744,19 +745,42 @@ def fill_folder_dialog(folder: str, timeout: float = 15) -> str:
         time.sleep(0.5)
     if not dlg:
         return "no_dialog"
-    edits = []
+    diag = diag if diag is not None else {}
+    title = ctypes.create_unicode_buffer(128)
+    u32.GetWindowTextW(dlg, title, 128)
+    diag["title"] = title.value
 
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def child(h, _):
-        cls = ctypes.create_unicode_buffer(64)
-        u32.GetClassNameW(h, cls, 64)
-        parent = ctypes.create_unicode_buffer(64)
-        u32.GetClassNameW(u32.GetParent(h), parent, 64)
-        if cls.value == "Edit" and parent.value == "ComboBox" and u32.IsWindowVisible(h):
-            edits.append(h)
-        return True
+    def children() -> list[tuple]:
+        out = []
 
-    u32.EnumChildWindows(dlg, child, 0)
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def child(h, _):
+            cls = ctypes.create_unicode_buffer(64)
+            u32.GetClassNameW(h, cls, 64)
+            parent = ctypes.create_unicode_buffer(64)
+            u32.GetClassNameW(u32.GetParent(h), parent, 64)
+            out.append(
+                (h, cls.value, parent.value, u32.GetDlgCtrlID(h), bool(u32.IsWindowVisible(h)))
+            )
+            return True
+
+        u32.EnumChildWindows(dlg, child, 0)
+        return out
+
+    # 控件可能比对话框晚几百毫秒建好：等到有可见的输入框
+    edits: list = []
+    end = time.monotonic() + 8
+    while time.monotonic() < end:
+        kids = children()
+        visible = [k for k in kids if k[1] == "Edit" and k[4]]
+        # 文件名 / 文件夹名框：ComboBox 里的 Edit，或控件 id 1148 / 1152 的 Edit
+        edits = [k[0] for k in visible if k[2] == "ComboBox"] or [
+            k[0] for k in visible if k[3] in (1148, 1152)
+        ]
+        if edits:
+            break
+        time.sleep(0.5)
+    diag["children"] = [f"{c}<{p}#{i}{'' if v else ' hidden'}" for _, c, p, i, v in kids][:60]
     if not edits:
         return "no_edit"
     buf = ctypes.create_unicode_buffer(folder)
@@ -793,7 +817,8 @@ def pick_workspace(cdp: CDP, page: str, folder: str, out_dir: Path, prog) -> dic
         for label in WORKSPACE_ADD_BUTTONS:
             if cdp.evaluate(page, PEEK_CLICK_JS % json.dumps(label)):
                 res["add_button"] = label
-                res["dialog"] = fill_folder_dialog(folder)
+                res["dialog_diag"] = {}
+                res["dialog"] = fill_folder_dialog(folder, diag=res["dialog_diag"])
                 res["picked"] = "dialog" if res["dialog"] == "ok" else None
                 break
     time.sleep(2)
