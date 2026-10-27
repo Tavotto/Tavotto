@@ -697,7 +697,7 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
           return null
         }
         // 进入编辑的实现只有一份（`store/prepEnterEdit`）：与「打开并运行」完成后的自动进入共用
-        await enterEdit(editHost(entry.key), figures[0])
+        await enterEdit({ ...editHost(entry.key), placeIn: entry.placeIn ?? undefined }, figures[0])
         return null
       }
       case 'reopen':
@@ -707,7 +707,7 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
             ? entry.target
             : scriptTarget(entry.target.script, { reuse: entry.target.reuse_last_success === true }),
           // 「继续」不是新的一次「打开并运行」：回到已跑完的同配置会话时复用结果，不重跑（registry-center-preparation e2e）
-          { run: entry.wantsRun, rerun: false },
+          { run: entry.wantsRun, rerun: false, placeIn: entry.placeIn },
         )
         return null
       case 'confirm_origins': {
@@ -1356,6 +1356,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
           descriptors={report.captured ?? []}
           dropped={0}
           open={resultsOpen}
+          canvasId={entry.placeIn?.canvasId}
           onAdded={(d, added) => noteAddedPanelFor(editHost(entry.key), d.asset_id, added)}
           onOpenChange={(v) => {
             setResultsOpen(v)

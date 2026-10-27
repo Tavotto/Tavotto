@@ -167,7 +167,18 @@ describe('结束', () => {
     vi.mocked(fetchAiFix).mockResolvedValue(state({ state: 'finished', outcome: 'fixed', summary: '好了' }))
     await useAiFixStore.getState().refresh(KEY)
     expect(entry()).toBeUndefined()
-    expect(open).toHaveBeenCalledWith(target, { run: true, rerun: true })
+    expect(open).toHaveBeenCalledWith(target, { run: true, rerun: true, placeIn: null })
+  })
+
+  it('fixed：脚本是拖到某张画布上发起的，验证重跑沿用那张画布（修好后放回去，不新建画布）', async () => {
+    await start()
+    const open = vi.fn(async () => {})
+    const target = { script: 'plot.py' } as never
+    const placeIn = { canvasId: 'c_paper', at: { x: 40, y: 60 } }
+    useProjectPreparationStore.setState({ entries: { [KEY]: { target, placeIn } } as never, open } as never)
+    vi.mocked(fetchAiFix).mockResolvedValue(state({ state: 'finished', outcome: 'fixed', summary: '好了' }))
+    await useAiFixStore.getState().refresh(KEY)
+    expect(open).toHaveBeenCalledWith(target, { run: true, rerun: true, placeIn })
   })
 
   it('convert：清掉修复条目、记下交接、启动既有的「生成可编辑版本」；不重跑准备会话', async () => {

@@ -1076,3 +1076,49 @@ def test_the_auto_provision_switch_reaches_the_server_under_codex():
         "tavotto"
     ]
     assert launcher.NO_AUTO_PROVISION_ENV in entry["env_vars"]
+
+
+def _fake_cli(tmp_path: Path, *, supports_mcp: bool) -> list[str]:
+    """一个「桌面版 tavotto-cli」：新版认 `mcp --help`（stderr 报用法、退出 0），老版不认（落进主入口、退出 2）。"""
+    script = tmp_path / ("new_cli.py" if supports_mcp else "old_cli.py")
+    body = (
+        "import sys\n"
+        "if sys.argv[1:] == ['mcp', '--help']:\n"
+        "    sys.stderr.write('用法：tavotto mcp   （stdio MCP 服务）\\n'); sys.exit(0)\n"
+        if supports_mcp
+        else "import sys\nsys.stderr.write('usage: Tavotto [-h]\\nunrecognized arguments: mcp\\n'); sys.exit(2)\n"
+    )
+    script.write_text(body, encoding="utf-8")
+    return [sys.executable, str(script)]
+
+
+def test_desktop_only_hands_off_to_a_desktop_cli_that_serves_mcp(tmp_path):
+    """只装桌面版（「接入 AI 编辑器」）：新版桌面 CLI 自带 `mcp` 就交给它，不再降级成只有 health 的 server。"""
+    cmd = _fake_cli(tmp_path, supports_mcp=True)
+    assert launcher.desktop_mcp_command({"cmd": cmd}) == [*cmd, "mcp"]
+
+
+def test_an_older_desktop_cli_without_mcp_still_degrades(tmp_path):
+    assert launcher.desktop_mcp_command({"cmd": _fake_cli(tmp_path, supports_mcp=False)}) is None
+    assert launcher.desktop_mcp_command({"cmd": None}) is None
+
+
+def test_health_is_ok_when_only_the_desktop_app_is_there_and_it_serves_mcp(tmp_path, monkeypatch):
+    """`tavotto codex install` 读的就是这份体检：桌面版自带 `mcp` 时必须说健康，否则它会去 --provision、联网装引擎。"""
+    cmd = _fake_cli(tmp_path, supports_mcp=True)
+    monkeypatch.setattr(launcher, "_current_engine_ok", lambda: False)
+    monkeypatch.setattr(
+        launcher, "resolve", lambda found: {"python": None, "source": None, "tried": []}
+    )
+    monkeypatch.setattr(
+        launcher,
+        "diagnosis_resolved",
+        lambda found, res: {"code": "desktop_only", "hint": "h", "engine": None},
+    )
+    loc = launcher._plugin_locator()
+    monkeypatch.setattr(
+        loc, "find_tavotto", lambda *a, **k: {"cmd": cmd, "desktop": "x", "source": "desktop"}
+    )
+    report, rc = launcher.health()
+    assert rc == 0 and report["ok"] is True and report["mode"] == "desktop_cli"
+    assert report["cli"] == cmd[0]

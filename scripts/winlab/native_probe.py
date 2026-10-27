@@ -101,10 +101,49 @@ PEEK_JS = (
 )
 
 
-def peek(cdp, sid: str, button: str, shots: Path) -> dict:
-    """只点 agent 登记的那一个入口按钮（如 ZCode 的「Use API key」），看下一屏要填什么；不填、不提交、不登录。"""
+BROWSER_IMAGES = ("msedge.exe", "chrome.exe", "firefox.exe")
+
+
+def _clipboard_text() -> str:
+    """交互会话的剪贴板文字（CF_UNICODETEXT）；没有就空串。只读。"""
+    import ctypes
+    from ctypes import wintypes
+
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    u32.GetClipboardData.restype = wintypes.HANDLE
+    k32.GlobalLock.restype = ctypes.c_void_p
+    k32.GlobalLock.argtypes = [wintypes.HANDLE]
+    k32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+    if not u32.OpenClipboard(None):
+        return ""
+    try:
+        h = u32.GetClipboardData(13)
+        if not h:
+            return ""
+        ptr = k32.GlobalLock(h)
+        try:
+            return ctypes.wstring_at(ptr) if ptr else ""
+        finally:
+            k32.GlobalUnlock(h)
+    finally:
+        u32.CloseClipboard()
+
+
+def url_shape(url: str) -> str:
+    """只留协议、主机与路径；查询串 / 片段里的一次性参数（state、code）不记。"""
+    from urllib.parse import urlsplit
+
+    u = urlsplit(url.strip())
+    return f"{u.scheme}://{u.netloc}{u.path}" if u.scheme and u.netloc else ""
+
+
+def peek(cdp, sid: str, button: str, shots: Path, follow: str | None = None) -> dict:
+    """只点 agent 登记的那一个入口按钮（如 ZCode 的「Use API key」、WorkBuddy 的「Sign In」），看下一屏要填什么；
+    不填、不提交、不登录。宿主若因此打开了系统浏览器，截下浏览器窗口（登录页 / 二维码在那里）。
+    `follow`：再点一个登记的按钮（WorkBuddy「Copy Login Link」），只记链接的形状。"""
     clicked = bool(cdp.evaluate(sid, PEEK_JS % json.dumps(button)))
-    time.sleep(5)
+    time.sleep(8)
     res = {
         "button": button,
         "clicked": clicked,
@@ -114,6 +153,26 @@ def peek(cdp, sid: str, button: str, shots: Path) -> dict:
         shot = cdp.call("Page.captureScreenshot", {"format": "png"}, session=sid, timeout=20)
         D.save_png(shot["data"], shots / "native-peek.png")
         res["screenshot"] = "native-peek.png"
+    drive = Path(os.environ.get("SystemDrive", "C:") + "\\")
+    browsers = [w for w in P.top_windows(drive) if w.get("image", "").lower() in BROWSER_IMAGES]
+    res["browser_windows"] = [{"image": w["image"], "title": w["title"][:120]} for w in browsers][
+        :5
+    ]
+    if browsers:
+        big = max(
+            browsers, key=lambda w: (w["rect"][2] - w["rect"][0]) * (w["rect"][3] - w["rect"][1])
+        )
+        with contextlib.suppress(Exception):
+            if P._screenshot(big["rect"], shots / "native-browser.png"):
+                res["browser_screenshot"] = "native-browser.png"
+    if follow:
+        res["follow"] = {
+            "button": follow,
+            "clicked": bool(cdp.evaluate(sid, PEEK_JS % json.dumps(follow))),
+        }
+        time.sleep(1)
+        with contextlib.suppress(Exception):
+            res["follow"]["link_shape"] = url_shape(_clipboard_text())
     return res
 
 
@@ -190,7 +249,7 @@ def probe_once(ns: argparse.Namespace, port: int | None) -> dict:
                         page["screenshot"] = f"native-page-{i}.png"
                     out["pages"].append(page)
                     if ns.peek_button and i == 0:
-                        out["peek"] = peek(cdp, sid, ns.peek_button, shots)
+                        out["peek"] = peek(cdp, sid, ns.peek_button, shots, ns.follow_button)
             finally:
                 cdp.ws.close()
             return out
@@ -213,6 +272,7 @@ def main(argv: list[str]) -> int:
     p.add_argument("--timeout", type=float, default=120)
     #: agent 按宿主登记的唯一一个入口按钮（NATIVE_PEEK）；不给就只看
     p.add_argument("--peek-button")
+    p.add_argument("--follow-button")
     ns = p.parse_args(argv)
     res = probe(ns)
     Path(ns.out).write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")

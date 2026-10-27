@@ -327,6 +327,23 @@ describe('一次点击：检查 → 认领 run_when_ready（回显授权摘要�
     expect(addRuntimePanelToCanvas).not.toHaveBeenCalled()
   })
 
+  it('脚本是拖到画布上发起的（placeIn）：跑完把图放进那张画布、落在放下的位置，`openFastEdit` 不再新建画布；「继续」沿用这份意图', async () => {
+    const canvasId = useDocumentStore.getState().activeCanvasId
+    const placeIn = { canvasId, at: { x: 40, y: 30 } }
+    mockCreate.mockResolvedValueOnce(report())
+    claimed(running())
+    await store().open(scriptTarget('plot.py'), { run: true, placeIn })
+    expect(entry().placeIn).toEqual(placeIn)
+    mockGet.mockResolvedValueOnce(done(['a']))
+    await store().refresh(KEY)
+    await vi.waitFor(() => expect(openFastEdit).toHaveBeenCalledTimes(1))
+    expect(addRuntimePanelToCanvas).toHaveBeenCalledWith(fig('a'), 40, 30, expect.anything())
+    expect(vi.mocked(openFastEdit).mock.calls[0][1]?.descriptor).toBeUndefined()
+    // 别的入口（脚本库 ▶ 等）不带它：同一脚本再从那里打开就是普通「打开」
+    await store().open(scriptTarget('plot.py'), { run: true })
+    expect(entry().placeIn).toBeNull()
+  })
+
   it('重跑已缓存的图、合并进来的旧清单带的是上一次的非空描述符：以这次报告的描述符插入（Codex #1044 r4285970263）', async () => {
     mockCreate.mockResolvedValueOnce(report())
     claimed(running())

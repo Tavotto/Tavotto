@@ -19,6 +19,15 @@ order: 80
   `pluginmanifest.STAGE_REQUIRED`——只卡新 staging；**不进** `REQUIRED`，否则体检会把没有它的旧版已装插件报成损坏）从自己的位置找 `mcp/server.py`，按 `--host` 打印那一家的配置片段，
   **不写任何文件**。宿主差异只在它的 `HOSTS` 表（顶层 key / 额外字段 / 超时单位 / 落点 / Skill 入口）；
   字段依据与查证日期在 `docs/implementation/multi-host-mcp/hosts.md`，文档证明不了的字段不加。
+- **会写文件的是另一条命令：`tavotto hosts`**（2026-10-27，「接入 AI 编辑器」，`engine/hostconnect.py`）。`configure.py`
+  仍然只打印；桌面设置里的「接入」按钮 spawn 的是 `tavotto hosts connect <宿主> --json`。它写**用户级**配置
+  （Cursor `~/.cursor/mcp.json`、VS Code 用户目录的 `mcp.json`（`servers`）、TRAE / TRAE CN 用户目录的 `mcp.json`、
+  ZCode `~/.zcode` 下 `cli/` 与 `workspace/default/.zcode/` 两处的 `mcp.servers`、WorkBuddy `~/.workbuddy/mcp.json`、
+  Claude 桌面版 `claude_desktop_config.json`；Claude Code 用它自己的 `claude mcp add --scope user`；Codex 委托
+  `codexinstall`），条目是这一份 Tavotto 的 `tavotto-cli mcp`（`mcp_launch()`），授权同样只有 `TAVOTTO_MCP_ROOTS`
+  ——用户第一次接入时选的那个文件夹（`hosts.json`，所有宿主共用；根 / HOME / HOME 的上级拒绝）。三条纪律：写之前
+  备份、只动 tavotto 一条、读不懂（JSONC 等）就不写并报 `config_unreadable`；断开只删 tavotto；WorkBuddy 额外在
+  `mcp-approvals.json` 只信任 tavotto 这一条（用户点「接入」即同意，方案决策）。看护 `tests/test_hosts_connect.py`。
 - 授权只来自 `--project-root`（写进 `TAVOTTO_MCP_ROOTS`）；根 / HOME / 包目录拒绝。启动器探针与
   `launcher_starts()` 同一把尺（跑 `--health` 要体检 JSON）；引擎只在当前 shell 环境里找得到时才钉
   `TAVOTTO_MCP_PYTHON`，钉完在最小环境里再验。超时唯一出处是 Codex 配置 `codex.mcp.json` 的 `tool_timeout_sec`（启动超时是 `startup_timeout_sec`），按单位换算。
