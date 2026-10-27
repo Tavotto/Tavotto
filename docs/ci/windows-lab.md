@@ -200,6 +200,16 @@ python3 scripts/winlab/winlab.py sweep --workbuddy-logout   # 撤销常驻登录
 
 登录态常驻 Lab 的 `state\workbuddy-home`，之后的 run 直接复用，不必再扫。
 
+`claude-desktop-native`（Claude Desktop 第三方推理 → DeepSeek）用同一把 `--ondisk` 专用 key。第一次跑之前做一次管理员动作，
+只建 Claude Desktop 的用户级策略键并授 tavotto-lab 写值（不写任何值）；DMIT 要在线（只有 `downloads.claude.ai` 经它）：
+
+```sh
+python3 scripts/winlab/winlab.py admin claude-policy-acl   # 一次性
+python3 scripts/winlab/winlab.py test desktop-live --mode claude-desktop-native --ref HEAD
+```
+
+报告的 `ondisk_key.wiped` 必须为 true、`ondisk_key.policy_key_present` 必须为 false。
+
 建议给 Lab 单独建一把限额的 key。每次 `test hosts-live` / `test desktop-live` 经 SSH stdin 交给那一次运行，Lab 不落盘（交互会话一侧经命名管道，`request.json` 里没有它）。
 
 ### 黄金快照

@@ -326,6 +326,26 @@ run `20261027T075023Z-6a50e8`。途中（按出现顺序）：不选工作区时
 `execCommand` 填的字编辑器不认、发送键灰着（`20261027T064603Z-46d918`）；用户自加的 MCP 未经「Trust」不加载，Agent 如实回
 「tavotto 工具不在」、没有改用别的办法（`20261027T071832Z-65d729`）；会话日志在宿主的 `LOCALAPPDATA` 下（`20261027T073602Z-c417c0`）。
 
+
+### Claude Desktop 第三方推理（`claude-desktop-native`，2026-10-27）
+
+Claude Desktop 2.42304.2 的 Claude Desktop on 3P，gateway → DeepSeek（路由名 `claude-sonnet-4-5`，DeepSeek 映射到 `deepseek-flash`；
+界面显示「DeepSeek (deepseek-flash)」），没有登录 Claude.ai。标准模式在 Lab 首屏是「App unavailable in region」
+（`20261026T143831Z-c456bc`），3P 模式下不出现。
+
+| 级别 | 结论 | 证据 |
+| --- | --- | --- |
+| L2 | PASS | 主窗口「Claude」约 4 s（经 Squirrel 启动壳） |
+| L3 | PASS | 两轮 clientInfo `claude-desktop-3p 2.42304.2`，父进程链里 `claude.exe`（安装目录内） |
+| L4 | PASS | health → open_figure → apply_overrides → export → verify_replay 全部 ok |
+| L5 | PASS | PDF 导出、重放 23 个元素一致、修改落进会话日志；全新进程凭 session_id 重放并关闭 |
+
+run `20261027T094658Z-4723df`：`ondisk_key.wiped = true`、`policy_key_present = false`；`egress` 只有 `downloads.claude.ai` 经 DMIT。
+会话记录里模型用过的工具：tavotto 七种、只读 `Read`，以及应用自带工作区 shell `mcp__workspace__bash` 一条
+`ls /sessions/*/mnt/ …`（配置关不掉，见规则文档「已知余项」）。途中：Squirrel 启动壳 1 s 即退（`20261027T082204Z-de306b`）；
+`configLibrary` 被忽略、HKCU 策略普通用户写不进（`20261027T084529Z-3dfb43`）→ `admin claude-policy-acl`；非 claude 名字的模型
+路由被应用删掉（`20261027T085727Z-9ddf76`）；直连取不到内置 Claude Code（`20261027T090928Z-bc8056`）→ PAC 只让它经 DMIT；
+`Bash` 之外还有 `PowerShell` 与 `mcp__workspace__bash`（`20261027T091823Z-aeeda4` / `20261027T093311Z-8822e5`）。
 ## E. 安全与仓库
 
 | 验收项 | 状态 | 说明 |
