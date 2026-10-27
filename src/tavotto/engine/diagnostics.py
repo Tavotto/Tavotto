@@ -83,7 +83,9 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: 与 `web/src/diagnostics/types.ts` 的同名常量是严格同源对。
 #: 8 = 发送包新增 `detail-…` / `optional-…` 条目与 manifest 的 `contains_detail` / `detail_files` / `detail_options` / `truncated`
 #: （ADR 0118 修订 2026-10-13）；导出包的 report.json 与老文件一个字节没动，只有 manifest 多了这几个键。
-BUNDLE_SCHEMA_VERSION = 8
+#: 9 = 新增 `exec-traces.json`（ADR 0151 PR4）：本项目最近几次任务的执行追踪（层级阶段、耗时、稳定错误码、首个失败与
+#: 归因摘要），出门前经 `exectrace_diag` 的独立白名单投影；report.json 形状没变，读不认识的文件的人忽略它即可。
+BUNDLE_SCHEMA_VERSION = 9
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -1627,6 +1629,7 @@ def build_bundle(
     task_snapshots: dict | None = None,
     detail: DetailPayload | None = None,
     report: dict | None = None,
+    exec_traces: dict | None = None,
 ) -> bytes:
     """诊断包 zip 的字节流（全部内容已脱敏）。
 
@@ -1664,6 +1667,10 @@ def build_bundle(
             z.writestr(
                 "task-diagnostics.json", json.dumps(task_snapshots, ensure_ascii=False, indent=1)
             )
+
+        # ---- 执行追踪（ADR 0151 PR4）：调用方给的已是 `exectrace_diag.bundle_section` 的出门投影，原样放进去 ----
+        if exec_traces is not None and exec_traces.get("traces"):
+            z.writestr("exec-traces.json", json.dumps(exec_traces, ensure_ascii=False, indent=1))
 
         # ---- 发送包独有的 detail-… / optional-… 条目（diagdetail 组装；导出路径 detail=None，一个都不会有）----
         detail_files: list[dict] = []
@@ -1708,6 +1715,7 @@ def build_bundle(
                 bool(trace),
                 list(report.get("project") or {}),
                 has_tasks=task_snapshots is not None,
+                has_exec_traces=bool(exec_traces and exec_traces.get("traces")),
                 detail=detail,
             ),
         )
@@ -1742,6 +1750,7 @@ def _readme(
     project_keys: list[str] | None = None,
     *,
     has_tasks: bool = False,
+    has_exec_traces: bool = False,
     detail: DetailPayload | None = None,
 ) -> str:
     """包里有什么、**没有什么**。双语——用户得看得懂自己在往 issue 上贴什么。
@@ -1773,6 +1782,16 @@ def _readme(
             "start/end timestamps and duration, Python/matplotlib versions, execution and "
             "configuration choices, output dimensions/PPI, revision hashes and opaque local "
             "attempt/configuration references; no file names, paths, argument values or error text)\n"
+        )
+    if has_exec_traces:
+        extra_zh += (
+            "- exec-traces.json：最近几次任务的执行追踪（阶段的父子关系、耗时、状态、稳定错误码、首个失败与归因摘要、"
+            "可验证的 Token 与估算费用；记录不完整会注明；没有提示词、脚本、文件名、路径、工具参数、模型输出）\n"
+        )
+        extra_en += (
+            "- exec-traces.json: execution traces of recent tasks (step hierarchy, timings, statuses, stable error "
+            "codes, first failure and an attribution summary, verifiable tokens and estimated cost; incomplete records "
+            "are marked; no prompts, scripts, file names, paths, tool arguments or model output)\n"
         )
     text = (
         "Tavotto 诊断包 / Tavotto diagnostic package\n"

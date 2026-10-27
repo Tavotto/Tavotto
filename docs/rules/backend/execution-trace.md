@@ -2,12 +2,12 @@
 
 > 2026-10-27 随 PR1（契约、生命周期与有界存储）新增；速查行在 `src/tavotto/AGENTS.md`「按改动路径找细则」表里（由下面的
 > `agents-route` 块生成）。这里是这一主题规则的**唯一全文**。
-> 看护用例：`tests/test_exectrace.py`、`tests/test_exectrace_pipelines.py`（旧阶段轨迹仍由 `tests/test_trace.py` 看护，见 `preparation-and-receipts.md`）。
+> 看护用例：`tests/test_exectrace.py`、`tests/test_exectrace_pipelines.py`、`tests/test_exectrace_api.py`、`tests/test_exectrace_diag.py`、`tests/test_exectrace_matrix.py`、`tests/test_exectrace_otel.py`、`tests/test_exectrace_analysis.py`、`tests/test_exectrace_bench.py`（旧阶段轨迹仍由 `tests/test_trace.py` 看护，见 `preparation-and-receipts.md`）。
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 325
-改到: `engine/exectrace.py`、`engine/ai_pricing.py`、`data_dir()/cache/exec-trace/`、任何 `start_span` / `end_span` / `event` 调用点
+改到: `engine/exectrace.py`、`engine/exectrace_diag.py`、`engine/exectrace_otel.py`、`engine/ai_pricing.py`、`data_dir()/cache/exec-trace/`、任何 `start_span` / `end_span` / `event` 调用点
 主题: Execution Trace（层级执行追踪，ADR 0151） → `execution-trace.md`
 必守要点: 只观察不判定；自由字符串没有入口；采集失败不影响业务；时间不伪造
 -->
@@ -32,6 +32,10 @@ order: 325
   `exectrace.py` 顶部常量（唯一出处，ADR 0151 §六列了当时的值）。只逐出冻结的；启动 `recover()` 把属主已死的运行中记录收成
   `interrupted`。读一律带 scope（项目的不透明键），对不上当不存在。
 - **读取端点（PR3）**：`GET /api/exec-trace` 只读零执行、按当前项目认领（两把 scope 键），找不到一律 404 + `available:false`；前端规则在 `docs/rules/frontend/execution-trace-ui.md`。
+- **出门（PR4）**：离开本机的只有 `exectrace_diag.export_projection` / `document` / `bundle_section` 的产物（诊断包 `exec-traces.json`，schema 9；
+  用户导出 `/api/exec-trace/diagnostic`）。它们是独立的第二道白名单，不复制快照；归因只说证据说得出的话（说不出 = `unknown`，最慢 ≠ 根因）。
+  OTel 只有转换函数 `exectrace_otel.to_otlp_json`（估算用量不进 `gen_ai.*`）；Guardian 分析 `scripts/ci/exectrace_analysis.py` 不给兼容结论。
+  性能预算脚本 `scripts/dev/exectrace_bench.py`。
 - **不进遥测、不自动上传。** 诊断包要带 Trace 是 PR4 的事：另做导出投影、升 `BUNDLE_SCHEMA_VERSION`（`diagnostics.md`）。
   这份本地存储是诊断规则「不写盘」之外经维护者裁决的登记例外（2026-10-27），仅限本目录、仅限白名单字段。
 - **进程边界**：只在 Flask 父进程 import；worker / bridge / agent_runner 侧不 import（它们报来的事实由父进程收到时记）。

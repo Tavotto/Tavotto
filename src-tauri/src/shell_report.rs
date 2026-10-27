@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 /// 与 `diagsend.PRODUCTION_ENDPOINT` 同一个字面量（契约样例的 `endpoint`，两侧各验）。
 pub const PRODUCTION_ENDPOINT: &str = "https://tavotto.cn";
 /// 与 `diagnostics.BUNDLE_SCHEMA_VERSION` 同源（契约样例的 `schema_version`，Python 侧验等于它）。
-pub const BUNDLE_SCHEMA: u32 = 8;
+pub const BUNDLE_SCHEMA: u32 = 9;
 /// 壳包的故障类别：启动失败属于「安装、启动、更新」。
 pub const CATEGORY: &str = "install_update";
 /// 壳只存在于桌面发行版。

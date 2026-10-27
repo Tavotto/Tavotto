@@ -76,6 +76,18 @@ describe('TraceDetails', () => {
     expect(host.querySelector('[data-ai-trace-state="ok"]')).not.toBeNull()
   })
 
+  it('导出诊断只在任务结束后给；运行中的半份不交出去', async () => {
+    fetchExecTrace.mockResolvedValue({ available: true, trace: snap('running') })
+    await act(async () => root.render(<TraceDetails taskRef="s2" pj="pj" running />))
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-ai-trace-toggle]')!.click())
+    await flush()
+    expect(host.querySelector('[data-ai-trace-export]')).toBeNull()
+    fetchExecTrace.mockResolvedValue({ available: true, trace: snap('ok') })
+    await act(async () => root.render(<TraceDetails taskRef="s2" pj="pj" running={false} settledKey />))
+    await flush()
+    expect(host.querySelector('[data-ai-trace-export="idle"]')).not.toBeNull()
+  })
+
   it('会话结束后最后一次取失败：明说过期、给重试，不当「运行中」往前走；重试拿到终局', async () => {
     fetchExecTrace.mockResolvedValue({ available: true, trace: snap('running') })
     await act(async () => root.render(<TraceDetails taskRef="s1" pj="pj" running settledKey={false} />))

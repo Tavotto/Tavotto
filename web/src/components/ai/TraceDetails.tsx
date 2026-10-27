@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChartColumn, ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { fetchExecTrace, type ExecTraceDto } from '@/lib/api'
+import { fetchExecTrace, fetchExecTraceDiagnostic, type ExecTraceDto } from '@/lib/api'
 import { supported, toWaterfall } from '@/lib/execTrace'
 import { cn } from '@/lib/utils'
 import { Button } from '../ui/Button'
@@ -116,7 +116,7 @@ export function TraceDetails({
         <span className="min-w-0 truncate">{t('trace.state.toggle')}</span>
       </button>
       <Reveal open={open}>
-        <div className="pt-1 pb-2">{open && <Body load={load} nowWall={nowWall} onRetry={() => {
+        <div className="pt-1 pb-2">{open && <Body load={load} nowWall={nowWall} taskRef={ref} pj={pj} onRetry={() => {
               setLoad({ state: 'loading' })
               setAttempt((n) => n + 1)
             }} />}</div>
@@ -125,7 +125,19 @@ export function TraceDetails({
   )
 }
 
-function Body({ load, nowWall, onRetry }: { load: Load; nowWall: number; onRetry: () => void }) {
+function Body({
+  load,
+  nowWall,
+  taskRef,
+  pj,
+  onRetry,
+}: {
+  load: Load
+  nowWall: number
+  taskRef: string
+  pj: string | null
+  onRetry: () => void
+}) {
   const { t } = useTranslation('ai')
   if (load.state === 'idle' || load.state === 'loading') {
     return (
@@ -163,6 +175,7 @@ function Body({ load, nowWall, onRetry }: { load: Load; nowWall: number; onRetry
         </div>
       )}
       <Ready trace={trace} nowWall={load.stale ? trace.started_at : nowWall} />
+      {trace.status !== 'running' && <ExportDiagnostic taskRef={taskRef} pj={pj} />}
     </>
   )
 }
@@ -184,6 +197,43 @@ function Ready({ trace, nowWall }: { trace: ExecTraceDto; nowWall: number }) {
         </p>
       )}
       <TraceWaterfall model={model} now={now} />
+    </div>
+  )
+}
+
+/** 用户主动导出这一次的执行追踪诊断（下载 JSON，不上传）。只在任务结束后给：运行中的半份不当诊断交出去。 */
+function ExportDiagnostic({ taskRef, pj }: { taskRef: string; pj: string | null }) {
+  const { t } = useTranslation('ai')
+  const [phase, setPhase] = useState<'idle' | 'busy' | 'done' | 'gone' | 'error'>('idle')
+  const run = () => {
+    setPhase('busy')
+    void fetchExecTraceDiagnostic('ai_task', taskRef, pj)
+      .then((res) => {
+        if (!res.available) {
+          setPhase('gone')
+          return
+        }
+        const url = URL.createObjectURL(res.blob)
+        try {
+          const a = document.createElement('a')
+          a.href = url
+          a.download = res.filename
+          a.click()
+        } finally {
+          URL.revokeObjectURL(url)
+        }
+        setPhase('done')
+      })
+      .catch(() => setPhase('error'))
+  }
+  return (
+    <div data-ai-trace-export={phase} className="flex items-center gap-2 text-sm text-ink-3">
+      <Button variant="ghost" size="sm" onClick={run} disabled={phase === 'busy'}>
+        {t('trace.state.export')}
+      </Button>
+      {phase === 'done' && <span>{t('trace.state.exported')}</span>}
+      {phase === 'gone' && <span>{t('trace.state.not_found')}</span>}
+      {phase === 'error' && <span>{t('trace.state.error')}</span>}
     </div>
   )
 }

@@ -2,7 +2,7 @@
   "contract": 1,
   "_doc": "壳最小诊断（src-tauri/src/shell_report.rs）与引擎诊断发送（src/tavotto/engine/diagsend.py）共用的跨语言契约样例。Rust 测试与 tests/test_diag_shell_contract.py 各读一遍；改任何一侧的外层协议、闭集或包内容，必须同步改这里，两侧测试才同时变绿。",
   "endpoint": "https://tavotto.cn",
-  "schema_version": 8,
+  "schema_version": 9,
   "category": "install_update",
   "distribution": "desktop",
   "api_major": 1,
@@ -44,7 +44,7 @@
     "report.json"
   ],
   "manifest": {
-    "schema_version": 8,
+    "schema_version": 9,
     "created_at": "2026-10-15T08:00:00Z",
     "tavotto_version": "0.18.1",
     "source": "shell",
@@ -77,7 +77,7 @@
       "exit_code": 1
     }
   },
-  "zip_base64": "UEsDBBQAAAAAAAAAIQCLkXFmTQEAAE0BAAANAAAAbWFuaWZlc3QuanNvbnsKICAiY29udGFpbnNfZGV0YWlsIjogZmFsc2UsCiAgImNvbnRhaW5zX2Zyb250ZW5kX3N0YXRlIjogZmFsc2UsCiAgImNvbnRhaW5zX2ludGVyYWN0aW9uX3RyYWNlIjogZmFsc2UsCiAgImNyZWF0ZWRfYXQiOiAiMjAyNi0xMC0xNVQwODowMDowMFoiLAogICJlbnRyaWVzIjogWwogICAgIm1hbmlmZXN0Lmpzb24iLAogICAgInJlcG9ydC5qc29uIgogIF0sCiAgInBhcnRpYWwiOiB0cnVlLAogICJwcml2YWN5X21vZGUiOiAic2hlbGwtbWluaW1hbCIsCiAgInNjaGVtYV92ZXJzaW9uIjogOCwKICAic291cmNlIjogInNoZWxsIiwKICAidGF2b3R0b192ZXJzaW9uIjogIjAuMTguMSIKfVBLAwQUAAAAAAAAACEAbl3GJT8BAAA/AQAACwAAAHJlcG9ydC5qc29uewogICJmYWlsdXJlIjogewogICAgImNvZGUiOiAic2lkZWNhcl9leGl0ZWQiLAogICAgImV4aXRfY29kZSI6IDEsCiAgICAic3RhZ2UiOiAiaGFuZHNoYWtlIgogIH0sCiAgInBhcnRpYWwiOiB0cnVlLAogICJwbGF0Zm9ybSI6IHsKICAgICJhcmNoIjogImFybTY0IiwKICAgICJkaXN0cmlidXRpb24iOiAiZGVza3RvcCIsCiAgICAib3MiOiAibWFjb3MiCiAgfSwKICAicmVwb3J0X3ZlcnNpb24iOiAxLAogICJzb3VyY2UiOiAic2hlbGwiLAogICJ0YXZvdHRvIjogewogICAgImJ1aWxkIjogInJlbGVhc2UiLAogICAgInZlcnNpb24iOiAiMC4xOC4xIgogIH0KfVBLAQIUABQAAAAAAAAAIQCLkXFmTQEAAE0BAAANAAAAAAAAAAAAAAAAAAAAAABtYW5pZmVzdC5qc29uUEsBAhQAFAAAAAAAAAAhAG5dxiU/AQAAPwEAAAsAAAAAAAAAAAAAAAAAeAEAAHJlcG9ydC5qc29uUEsFBgAAAAACAAIAdAAAAOACAAAAAA==",
+  "zip_base64": "UEsDBBQAAAAAAAAAIQCbInJETQEAAE0BAAANAAAAbWFuaWZlc3QuanNvbnsKICAiY29udGFpbnNfZGV0YWlsIjogZmFsc2UsCiAgImNvbnRhaW5zX2Zyb250ZW5kX3N0YXRlIjogZmFsc2UsCiAgImNvbnRhaW5zX2ludGVyYWN0aW9uX3RyYWNlIjogZmFsc2UsCiAgImNyZWF0ZWRfYXQiOiAiMjAyNi0xMC0xNVQwODowMDowMFoiLAogICJlbnRyaWVzIjogWwogICAgIm1hbmlmZXN0Lmpzb24iLAogICAgInJlcG9ydC5qc29uIgogIF0sCiAgInBhcnRpYWwiOiB0cnVlLAogICJwcml2YWN5X21vZGUiOiAic2hlbGwtbWluaW1hbCIsCiAgInNjaGVtYV92ZXJzaW9uIjogOSwKICAic291cmNlIjogInNoZWxsIiwKICAidGF2b3R0b192ZXJzaW9uIjogIjAuMTguMSIKfVBLAwQUAAAAAAAAACEAbl3GJT8BAAA/AQAACwAAAHJlcG9ydC5qc29uewogICJmYWlsdXJlIjogewogICAgImNvZGUiOiAic2lkZWNhcl9leGl0ZWQiLAogICAgImV4aXRfY29kZSI6IDEsCiAgICAic3RhZ2UiOiAiaGFuZHNoYWtlIgogIH0sCiAgInBhcnRpYWwiOiB0cnVlLAogICJwbGF0Zm9ybSI6IHsKICAgICJhcmNoIjogImFybTY0IiwKICAgICJkaXN0cmlidXRpb24iOiAiZGVza3RvcCIsCiAgICAib3MiOiAibWFjb3MiCiAgfSwKICAicmVwb3J0X3ZlcnNpb24iOiAxLAogICJzb3VyY2UiOiAic2hlbGwiLAogICJ0YXZvdHRvIjogewogICAgImJ1aWxkIjogInJlbGVhc2UiLAogICAgInZlcnNpb24iOiAiMC4xOC4xIgogIH0KfVBLAQIUABQAAAAAAAAAIQCbInJETQEAAE0BAAANAAAAAAAAAAAAAAAAAAAAAABtYW5pZmVzdC5qc29uUEsBAhQAFAAAAAAAAAAhAG5dxiU/AQAAPwEAAAsAAAAAAAAAAAAAAAAAeAEAAHJlcG9ydC5qc29uUEsFBgAAAAACAAIAdAAAAOACAAAAAA==",
   "init_keys": [
     "arch",
     "bundle_schema",

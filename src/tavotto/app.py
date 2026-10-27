@@ -99,6 +99,7 @@ from .engine import (
     epsfile as engine_epsfile,
     execspec as engine_execspec,
     exectrace as engine_exectrace,
+    exectrace_diag as engine_exectrace_diag,
     exportjob as engine_exportjob,
     exportreq as engine_exportreq,
     exportroute as engine_exportroute,
@@ -4564,13 +4565,7 @@ def api_exec_trace():
         trace_id or (kind and ref)
     ):
         return jsonify({"error": "kind / ref 或 id 不对", "code": "bad_request"}), 400
-    scopes = []
-    if ctx is not None:
-        scopes.append(engine_exectrace.scope_for(getattr(ctx, "id", None)))
-        root = getattr(ctx, "path", None)
-        if root is not None:
-            scopes.append(engine_exectrace.scope_for(str(Path(root).resolve())))
-    scopes = [s for s in scopes if s]  # 没有项目键的 Trace（无项目上下文）永远读不到
+    scopes = _exec_trace_scopes(ctx)
     snap = None
     if trace_id:
         for scope in scopes:
@@ -4584,6 +4579,74 @@ def api_exec_trace():
         resp.status_code = 404
     else:
         resp = jsonify({"available": True, "trace": snap})
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _exec_trace_scopes(ctx) -> list[str]:
+    """当前项目的两把执行追踪 scope 键（AI 会话按项目根、其余按项目 id）；没有项目上下文 = 空（什么都读不到）。"""
+    scopes = []
+    if ctx is not None:
+        scopes.append(engine_exectrace.scope_for(getattr(ctx, "id", None)))
+        root = getattr(ctx, "path", None)
+        if root is not None:
+            scopes.append(engine_exectrace.scope_for(str(Path(root).resolve())))
+    return [s for s in scopes if s]
+
+
+def _exec_trace_bundle_section(ctx) -> dict | None:
+    """诊断包的 `exec-traces.json`：只读、零执行；追踪关闭 / 没有项目 / 读失败都只是「不放这个文件」。"""
+    if not engine_exectrace.enabled():
+        return None
+    try:
+        scopes = _exec_trace_scopes(ctx)
+        if not scopes:
+            return None
+        recent = engine_exectrace.RECORDER.recent(
+            scopes=scopes, limit=engine_exectrace_diag.BUNDLE_TRACES + 1
+        )
+        return engine_exectrace_diag.bundle_section(recent)
+    except Exception:  # noqa: BLE001 —— 诊断包照出，少这一节
+        LOG.debug("执行追踪进诊断包失败", exc_info=True)
+        return None
+
+
+@app.get("/api/exec-trace/diagnostic")
+def api_exec_trace_diagnostic():
+    """用户主动导出一次任务的执行追踪诊断（下载 JSON，不上传）：独立白名单投影 + 归因摘要 + 不完整说明。
+
+    与 `/api/exec-trace` 同一套认领：`?kind=&ref=` 或 `?id=`，只在当前项目里找，找不到一律 404。"""
+    ctx = _request_ctx()
+    kind = request.args.get("kind") or None
+    ref = request.args.get("ref") or None
+    trace_id = request.args.get("id") or None
+    if (kind is not None and kind not in engine_exectrace.OPERATION_KINDS) or not (
+        trace_id or (kind and ref)
+    ):
+        return jsonify({"error": "kind / ref 或 id 不对", "code": "bad_request"}), 400
+    snap = None
+    if engine_exectrace.enabled():
+        scopes = _exec_trace_scopes(ctx)
+        if trace_id:
+            snap = next(
+                (
+                    found
+                    for found in (engine_exectrace.RECORDER.get(trace_id, scope=s) for s in scopes)
+                    if found is not None
+                ),
+                None,
+            )
+        else:
+            snap = engine_exectrace.RECORDER.find(kind, ref, scopes=scopes)
+    doc = engine_exectrace_diag.document(snap) if snap is not None else None
+    if doc is None:
+        resp = jsonify({"available": False, "reason": "not_found"})
+        resp.status_code = 404
+    else:
+        resp = jsonify(doc)
+        resp.headers["Content-Disposition"] = (
+            f'attachment; filename="tavotto-exec-trace-{time.strftime("%Y%m%d-%H%M%S")}.json"'
+        )
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -4755,6 +4818,8 @@ def _build_diagnostics_bundle(
         frontend_dropped=frontend_dropped,
         # 本项目最近几次任务的冻结快照（失败在前）；只读登记表，不采集（T04）
         task_snapshots=engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid) if pid else None,
+        # 本项目最近几次任务的执行追踪（失败在前），出门前经独立的白名单投影（ADR 0151 PR4，bundle schema 9）
+        exec_traces=_exec_trace_bundle_section(ctx),
     )
     if detail is None:
         return engine_diagnostics.build_bundle(**common)

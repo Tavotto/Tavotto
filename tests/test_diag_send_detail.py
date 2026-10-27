@@ -296,7 +296,7 @@ class TestDefaultContents:
         # 勾选项没勾：没有 optional 内容
         assert not [n for n in names if n.startswith("optional-")]
         manifest = json.loads(z.read("manifest.json"))
-        assert manifest["schema_version"] == diagnostics.BUNDLE_SCHEMA_VERSION == 8
+        assert manifest["schema_version"] == diagnostics.BUNDLE_SCHEMA_VERSION == 9
         assert manifest["contains_detail"] is True
         assert manifest["truncated"] == []
         listed = {f["path"]: f["bytes"] for f in manifest["detail_files"]}

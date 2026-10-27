@@ -344,6 +344,8 @@ export default interface Resources {
       "state": {
         "disabled": "执行追踪已关闭",
         "error": "执行记录读不出来",
+        "export": "导出诊断",
+        "exported": "已保存到下载文件夹（只在本机，没有上传）",
         "incomplete": "记录不完整",
         "interrupted": "记录在任务结束前中断（应用退出或崩溃），之后发生的事不知道",
         "loading": "正在读取执行记录…",

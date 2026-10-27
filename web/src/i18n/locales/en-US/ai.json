@@ -319,7 +319,9 @@
       "truncated_other": "The record was too long; {{count}} entries in the middle were omitted",
       "interrupted": "The record stopped before the task ended (the app quit or crashed); what happened afterwards is unknown",
       "incomplete": "The record is incomplete",
-      "stale": "Couldn't load the final state; below is how the record looked before the task ended"
+      "stale": "Couldn't load the final state; below is how the record looked before the task ended",
+      "export": "Export diagnostics",
+      "exported": "Saved to your downloads (local only, nothing was uploaded)"
     },
     "operation": {
       "ai_task": "AI task",

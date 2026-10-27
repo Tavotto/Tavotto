@@ -1563,6 +1563,23 @@ export async function fetchExecTrace(
 }
 
 /**
+ * 用户主动导出一次任务的执行追踪诊断（ADR 0151 PR4）：后端出门投影 + 归因摘要，下载到本机，不上传。
+ * 找不到（过期 / 别的项目 / 追踪关闭）= `available: false`，调用方如实说，不拿别的东西冒充。
+ */
+export async function fetchExecTraceDiagnostic(
+  kind: ExecTraceOperation,
+  ref: string,
+  pj: string | null = currentProjectId(),
+): Promise<{ available: true; blob: Blob; filename: string } | { available: false }> {
+  const qs = `kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(ref)}`
+  const res = await fetch(apiUrlFor(`/api/exec-trace/diagnostic?${qs}`, pj), withProjectFor(undefined, pj))
+  if (res.status === 404) return { available: false }
+  if (!res.ok) throw new ApiError(`exec_trace_diagnostic_${res.status}`, res.status, {})
+  const match = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')
+  return { available: true, blob: await res.blob(), filename: match?.[1] ?? 'tavotto-exec-trace.json' }
+}
+
+/**
  * 版本列表。`sketch` 给了才带草图 —— **默认不带**。
  *
  * 「一行缩略图画几个对象 / 几个字」是缩略图组件自己的事，所以取值随请求给

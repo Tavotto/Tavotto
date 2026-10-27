@@ -947,6 +947,15 @@ class TraceStore:
                 best = snap
         return best
 
+    def scan(self, *, scopes: set) -> list[dict]:
+        """盘上属于这些 scope 的全部快照（总量有上限，扫一遍有界）。"""
+        out = []
+        for path, _open, _size, _mtime in self._entries():
+            record = self._read(path)
+            if record is not None and record.get("scope") in scopes:
+                out.append(record["trace"])
+        return out
+
     def _entries(self):
         try:
             names = os.listdir(self.root)
@@ -1108,6 +1117,28 @@ class Recorder:
         if self._store is None:
             return None
         return self._store.find(operation_kind, task_ref, scopes=wanted)
+
+    def recent(self, *, scopes, limit: int = 8) -> list[dict]:
+        """本项目最近的若干条 Trace（诊断包用）：失败 / 中断在前、同类按开始时间新到旧。内存里的优先（运行中的最新），
+        再补盘上的；同一 trace_id 只取一份。只读、零执行。"""
+        wanted = {_ref(s) for s in scopes if _ref(s) is not None}
+        if not wanted or limit <= 0:
+            return []
+        found: dict[str, dict] = {}
+        with self._lock:
+            live = [t for t in self._live.values() if t.scope in wanted]
+        for t in live:
+            snap = t.snapshot()
+            found[snap["trace_id"]] = snap
+        if self._store is not None:
+            for snap in self._store.scan(scopes=wanted):
+                found.setdefault(snap.get("trace_id"), snap)
+        failing = {STATUS_FAILED, STATUS_TIMEOUT, STATUS_INTERRUPTED}
+        ordered = sorted(
+            found.values(),
+            key=lambda s: (s.get("status") not in failing, -(s.get("started_at") or 0)),
+        )
+        return ordered[:limit]
 
 
 def scope_for(project_key) -> str | None:
