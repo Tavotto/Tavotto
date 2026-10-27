@@ -177,6 +177,22 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
     `ondisk_key: {wiped, residual, unreadable, checked_app_dirs}`——核对流式扫任意大小的文件，读不了的算没核对完；单个文件抹不掉不中断收尾；
     收尾放在卸载外面的 `finally`（卸载抛异常也清）；上一次 run 被强行结束时，下一次 `zcode-native` 开跑前先删掉所有旧 run 里残留的
     `provider_config.json`（报告 `swept_stale_ondisk_configs`）。默认那把（hosts-live 与其它 desktop-live 格）照旧不落盘。
+  - **原生 Agent 格 `workbuddy-native`**：WorkBuddy 自己的 Agent，推理用**登录账户自带的模型**（界面可见，如 GLM-5.3-Flash；
+    报告 `model.provider = workbuddy-account`），不经我们的任何 key。登录态是例外，见下条。首启跳过 `splash.html`；先选工作区
+    （选择器已显示项目文件夹名就不点；否则菜单「Open Local Folder」→ 系统选文件夹框：先点掉挡在前面的「位置不可用」类报错框，
+    再把路径写进控件 id 1152 / ComboBox 里的输入框、按 IDOK，没关就再按，最多三下；每步记 `dialog_diag`）。原生宿主的编辑器不认
+    `execCommand` 填的字（发送键一直灰）：先真实点一下输入框、再 CDP `Input.insertText`，落空才退回 `execCommand` + 真实空格退格；
+    发送依次试回车 / 按钮 / Ctrl+Enter，每试一次截图。MCP 写常驻家目录的 `.workbuddy\mcp.json`（每次 run 改指本次的录制器）；
+    用户自加的 MCP 要在连接器页点「Trust」才加载——执行器替这一步在同目录 `mcp-approvals.json` 只记 tavotto 一条（键 =
+    WorkBuddy 5.8.3 `computeTrustConfigHash` 的指纹 `::tavotto`），报告 unverified 写明。Tavotto 的会话日志在宿主的
+    `LOCALAPPDATA`（常驻家目录下）里找。进程链判据同上（`host_ancestor` = `WorkBuddy.exe`）。
+  - **登录态常驻例外（仅 `workbuddy-native*`，用户 2026-10-27 同意）**：WorkBuddy 要账户登录。用**专用测试账户**；登录方式是
+    驱动器在本次 run 自己的 Edge 配置里打开登录页、每 15 s 截 `login-qr.png`，Mac 端经只读的 `winlab shot` 取回给用户手机扫，
+    **聊天里不收密码 / 验证码**。登录态常驻 `state\workbuddy-home`（该宿主的整个用户目录：`USERPROFILE` / `APPDATA` /
+    `LOCALAPPDATA` 都指过去），不进证据、不随 run 删，下一次 run 直接复用；`winlab sweep --workbuddy-logout` 结束 WorkBuddy
+    进程、重置它自设的 ACL、删掉整个目录并清凭据管理器里的 WorkBuddy 条目，撤销即用它。每次 run 的 Edge 登录配置照旧随 run 删、
+    开跑前扫掉旧 run 的残留。`workbuddy-native-phone` 是手机号 + 短信验证码的登录方式：值只经 `winlab login-input` 的 stdin
+    送进正在跑的 run，驱动器读到即删；**未实测通过**（短信未到）。
   - CC-Switch 的落盘例外**不在此**（单独的 PR 与单独的规则条目）。
 - 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境（交互会话里再经命名管道），除上面登记的 `zcode-native` 外 Lab 不落盘；证据落盘前抹掉凭据。证据字段按
 `docs/implementation/multi-host-mcp/acceptance.md`。

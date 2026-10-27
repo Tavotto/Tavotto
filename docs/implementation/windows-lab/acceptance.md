@@ -309,6 +309,23 @@ run `20261026T160936Z-fe61a2`，`ondisk_key.wiped = true`（run 目录与 `%APPD
 **产品侧发现**：`tavotto_open_figure` 的结果（含内嵌 SVG 与完整 manifest）超过 Claude Code 扩展的 MCP 输出上限，扩展把它
 落成文件，模型要用 Read / Grep 读回来才能取 gid / prop；真实用户在 VS Code 面板里会因此看到读文件的权限确认。另记 issue 跟进。
 
+### WorkBuddy 原生 Agent（`workbuddy-native`，2026-10-27）
+
+WorkBuddy 5.8.3 自己的 Agent，推理用专用测试账户自带的模型（界面显示 `Fast (GLM-5.3-Flash)`），不经我们的 key。用户手机扫码登录一次
+（二维码由驱动器截图、经 `winlab shot` 取回），登录态常驻 `state\workbuddy-home`，之后的 run 全部自动登录。
+
+| 级别 | 结论 | 证据 |
+| --- | --- | --- |
+| L2 | PASS | 主窗口「WorkBuddy」约 6 s |
+| L3 | PASS | 两轮 clientInfo `workbuddy-mcp-probe:custom-mcp:tavotto 1.0.0`，父进程链里 `WorkBuddy.exe`（安装目录内） |
+| L4 | PASS | health → open_figure → apply_overrides → export → verify_replay 全部 ok |
+| L5 | PASS | PDF 导出、重放一致、线宽 3 落进会话日志；全新 WorkBuddy 进程凭 session_id 恢复同一 patch_hash |
+
+run `20261027T075023Z-6a50e8`。途中（按出现顺序）：不选工作区时回车只清空输入框（`20261026T181425Z-15a0af`）；工作区菜单项是
+「Open Local Folder」（`20261027T055251Z-be6fe5`）；选文件夹框前先弹「位置不可用」报错框（`20261027T063343Z-eb1a3a`）；
+`execCommand` 填的字编辑器不认、发送键灰着（`20261027T064603Z-46d918`）；用户自加的 MCP 未经「Trust」不加载，Agent 如实回
+「tavotto 工具不在」、没有改用别的办法（`20261027T071832Z-65d729`）；会话日志在宿主的 `LOCALAPPDATA` 下（`20261027T073602Z-c417c0`）。
+
 ## E. 安全与仓库
 
 | 验收项 | 状态 | 说明 |

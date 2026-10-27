@@ -189,6 +189,17 @@ python3 scripts/winlab/winlab.py test desktop-live --mode zcode-native --ref HEA
 
 报告的 `ondisk_key.wiped` 必须为 true，否则整次是 error。
 
+`workbuddy-native` 不用我们的 key（推理走 WorkBuddy 专用测试账户自带的模型），但要先登录一次。第一次跑时驱动器把登录二维码截成
+`login-qr.png`，在 Mac 上取回给手机扫（等到 run id 出现后反复取，图大于约 60 KB 才是加载好的二维码）：
+
+```sh
+python3 scripts/winlab/winlab.py test desktop-live --mode workbuddy-native --ref HEAD
+python3 scripts/winlab/winlab.py shot --id <run_id> --name login-qr.png --out /tmp/wb-qr.png   # 另开终端
+python3 scripts/winlab/winlab.py sweep --workbuddy-logout   # 撤销常驻登录态（删 state\workbuddy-home 与凭据条目）
+```
+
+登录态常驻 Lab 的 `state\workbuddy-home`，之后的 run 直接复用，不必再扫。
+
 建议给 Lab 单独建一把限额的 key。每次 `test hosts-live` / `test desktop-live` 经 SSH stdin 交给那一次运行，Lab 不落盘（交互会话一侧经命名管道，`request.json` 里没有它）。
 
 ### 黄金快照
