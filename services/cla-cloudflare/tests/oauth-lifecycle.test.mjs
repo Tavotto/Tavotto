@@ -27,7 +27,8 @@ async function isolated(run){
   const url=new URL((await r.json()).authorizationURL);challenge=url.searchParams.get('code_challenge');assert.equal(url.searchParams.get('code_challenge_method'),'S256');
   return {state:url.searchParams.get('state'),browser:/__Host-cla-oauth=([^;]+)/.exec(r.headers.get('set-cookie'))[1]};
  };
- const callback=(flow,accept='application/json')=>worker.fetch(new Request(c.origin+'/oauth/callback?'+new URLSearchParams({state:flow.state,code:'SYNTHETIC_CODE'}),{headers:{cookie:'__Host-cla-oauth='+flow.browser,accept}}),env);
+ const callback=(flow,accept='application/json',query=new URLSearchParams({state:flow.state,code:'SYNTHETIC_CODE',iss:'https://github.com/login/oauth'}))=>
+  worker.fetch(new Request(c.origin+'/oauth/callback?'+query,{headers:{cookie:'__Host-cla-oauth='+flow.browser,accept}}),env);
  const sessions=()=>f.sql.prepare('SELECT * FROM cla_native_v2_sessions').all();
  try{await run({f,env,start,callback,sessions,hooks,calls:()=>calls});}finally{globalThis.fetch=original;f.close();}
 }
@@ -36,6 +37,31 @@ test('OAuth full callback binds PKCE, sets session cookies and rejects replay',(
  const cookies=r.headers.get('set-cookie');assert.match(cookies,/__Host-cla-session=.*Max-Age=900; Secure; HttpOnly; SameSite=Lax/);assert.match(cookies,/__Host-cla-csrf=.*SameSite=Strict/);assert.match(cookies,/__Host-cla-oauth=; Path=\/; Max-Age=0/);
  const token=/__Host-cla-session=([^;]+)/.exec(cookies)[1];assert.equal(x.sessions().length,1);assert.equal(x.sessions()[0].token_hash,await sha256(token));assert.equal(x.sessions()[0].expires,x.f.now()+900);
  const before=x.calls();assert.equal((await x.callback(flow)).status,403);assert.equal(x.calls(),before);assert.equal(x.sessions().length,1);
+}));
+test('OAuth issuer metadata rejects response parameter pollution before state consumption',()=>isolated(async x=>{
+ // GitHub's public metadata declares this exact issuer and RFC 9207 support:
+ // https://github.com/.well-known/oauth-authorization-server/login/oauth
+ // Keep fixtures independent of the production constant; no network discovery
+ // or real credentials are used by these tests.
+ const flow=await x.start(),issuer='https://github.com/login/oauth';
+ const base=[['code','SYNTHETIC_CODE'],['state',flow.state]],good=[...base,['iss',issuer]];
+ const wrongIssuers=['','https://github.com','http://github.com/login/oauth','https://github.com/login/oauth/',
+  'https://GITHUB.com/login/oauth','https://github.com:443/login/oauth','https://github.com/login/oauth?x=y',
+  'https://github.com/login/oauth#fragment','https://github.com.evil.invalid/login/oauth',
+  'https://github.com@evil.invalid/login/oauth',encodeURIComponent(issuer)];
+ const cases=[base,...wrongIssuers.map(v=>[...base,['iss',v]]),
+  [...good,['iss',issuer]],[...good,['code','SECOND_CODE']],[...good,['state','SECOND_STATE']],
+  [...good,['extra','SYNTHETIC']],[...good,['error','access_denied']],[...good,['error_description','SYNTHETIC']],
+  [['state',flow.state],['iss',issuer]],[['code','SYNTHETIC_CODE'],['iss',issuer]],
+  [['installation_id','123'],['setup_action','install']]];
+ for(const entries of cases){
+  const r=await x.callback(flow,'application/json',new URLSearchParams(entries));
+  assert.equal(r.status,403);assert.equal((await r.json()).error,'oauth_rejected');
+  assert.equal(x.calls(),0);assert.equal(x.sessions().length,0);
+  assert.equal(x.f.sql.prepare('SELECT used FROM cla_native_v2_oauth_states').get().used,0);
+ }
+ // A rejected response cannot burn the legitimate browser-bound state.
+ assert.equal((await x.callback(flow)).status,200);assert.equal(x.calls(),2);assert.equal(x.sessions().length,1);
 }));
 test('OAuth exact state expiry rejects without exchange or session',()=>isolated(async x=>{
  const flow=await x.start();x.f.advance(300);const r=await x.callback(flow);assert.equal(r.status,403);assert.equal((await r.json()).error,'oauth_rejected');assert.equal(x.calls(),0);assert.equal(x.sessions().length,0);
