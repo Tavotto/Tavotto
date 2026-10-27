@@ -712,9 +712,10 @@ def _page_shot(cdp: CDP, sid: str, path: Path) -> bool:
     return False
 
 
-def fill_folder_dialog(folder: str, timeout: float = 15) -> bool:
+def fill_folder_dialog(folder: str, timeout: float = 15) -> str:
     """宿主弹出的 Windows「选择文件夹」对话框（#32770）：把路径写进它的文件夹名输入框、按「选择文件夹」（IDOK）。
-    对话框关掉即成功。只操作这个对话框，不碰别的窗口。"""
+    填了路径的第一下常常只是进到那个目录，对话框没关就再按（最多三下）。对话框关掉返回 "ok"，否则返回卡在哪一步
+    （no_dialog / no_edit / no_ok / still_open）。只操作这个对话框，不碰别的窗口。"""
     import ctypes
     from ctypes import wintypes
 
@@ -742,7 +743,7 @@ def fill_folder_dialog(folder: str, timeout: float = 15) -> bool:
         dlg = find_dialog()
         time.sleep(0.5)
     if not dlg:
-        return False
+        return "no_dialog"
     edits = []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -757,19 +758,20 @@ def fill_folder_dialog(folder: str, timeout: float = 15) -> bool:
 
     u32.EnumChildWindows(dlg, child, 0)
     if not edits:
-        return False
+        return "no_edit"
     buf = ctypes.create_unicode_buffer(folder)
     u32.SendMessageW(edits[-1], 0x000C, 0, ctypes.cast(buf, ctypes.c_void_p).value)  # WM_SETTEXT
     ok = u32.GetDlgItem(dlg, 1)  # IDOK = 「选择文件夹」
     if not ok:
-        return False
-    u32.SendMessageW(ok, 0x00F5, 0, 0)  # BM_CLICK
-    end = time.monotonic() + 10
-    while time.monotonic() < end:
-        if not u32.IsWindow(dlg) or not u32.IsWindowVisible(dlg):
-            return True
-        time.sleep(0.5)
-    return False
+        return "no_ok"
+    for _ in range(3):
+        u32.SendMessageW(ok, 0x00F5, 0, 0)  # BM_CLICK
+        end = time.monotonic() + 4
+        while time.monotonic() < end:
+            if not u32.IsWindow(dlg) or not u32.IsWindowVisible(dlg):
+                return "ok"
+            time.sleep(0.5)
+    return "still_open"
 
 
 def pick_workspace(cdp: CDP, page: str, folder: str, out_dir: Path, prog) -> dict:
@@ -791,7 +793,8 @@ def pick_workspace(cdp: CDP, page: str, folder: str, out_dir: Path, prog) -> dic
         for label in WORKSPACE_ADD_BUTTONS:
             if cdp.evaluate(page, PEEK_CLICK_JS % json.dumps(label)):
                 res["add_button"] = label
-                res["picked"] = "dialog" if fill_folder_dialog(folder) else None
+                res["dialog"] = fill_folder_dialog(folder)
+                res["picked"] = "dialog" if res["dialog"] == "ok" else None
                 break
     time.sleep(2)
     _page_shot(cdp, page, out_dir / "workspace-after.png")
