@@ -767,11 +767,33 @@ def fill_folder_dialog(folder: str, timeout: float = 15, diag: dict | None = Non
         u32.EnumChildWindows(dlg, child, 0)
         return out
 
-    # 控件可能比对话框晚几百毫秒建好：等到有可见的输入框
+    # 控件可能比对话框晚几百毫秒建好：等到有可见的输入框。选文件夹框打开前可能先弹报错框（「位置不可用」：默认
+    # 位置在 Lab 账户下不存在，run 20261027T063343Z-eb1a3a）——它没有输入框、只有一个按钮：点掉、记标题，再等真对话框
     edits: list = []
-    end = time.monotonic() + 8
+    kids: list = []
+    end = time.monotonic() + 20
     while time.monotonic() < end:
+        if not u32.IsWindow(dlg) or not u32.IsWindowVisible(dlg):
+            dlg = find_dialog()
+            if not dlg:
+                time.sleep(0.5)
+                continue
+            u32.GetWindowTextW(dlg, title, 128)
+            diag["title"] = title.value
         kids = children()
+        buttons = [k[0] for k in kids if k[1] == "Button" and k[4]]
+        is_file_dialog = any(k[1] in ("DUIViewWndClassName", "Edit", "ComboBoxEx32") for k in kids)
+        if not is_file_dialog and len(buttons) == 1 and len(diag.setdefault("dismissed", [])) < 3:
+            time.sleep(1)  # 文件对话框的控件也可能晚到：再看一眼才认定是报错框
+            kids = children()
+            if not any(k[1] in ("DUIViewWndClassName", "Edit", "ComboBoxEx32") for k in kids):
+                diag["dismissed"].append(title.value)
+                u32.SendMessageW(buttons[0], 0x00F5, 0, 0)  # BM_CLICK
+                time.sleep(1)
+                if u32.IsWindow(dlg) and u32.IsWindowVisible(dlg):
+                    u32.PostMessageW(dlg, 0x0010, 0, 0)  # WM_CLOSE
+                    time.sleep(1)
+                continue
         visible = [k for k in kids if k[1] == "Edit" and k[4]]
         # 文件名 / 文件夹名框：ComboBox 里的 Edit，或控件 id 1148 / 1152 的 Edit
         edits = [k[0] for k in visible if k[2] == "ComboBox"] or [
