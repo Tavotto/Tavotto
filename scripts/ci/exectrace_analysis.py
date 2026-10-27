@@ -41,6 +41,12 @@ import math
 import sys
 from pathlib import Path
 
+# Windows: a redirected stdout/stderr falls back to the locale code page; pin both to UTF-8 so a report
+# or diagnostic with non-ASCII text never raises UnicodeEncodeError in a CI step that otherwise succeeded.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 SCHEMA = "tavotto.exectrace-analysis/1"
 #: Fewer samples than this and a statistic is `null` + `insufficient_samples: true`.
 MIN_SAMPLES = 5
