@@ -312,7 +312,8 @@
       "unsupported": "这份执行记录来自不兼容的版本，无法显示",
       "truncated_other": "记录过长，中间省略了 {{count}} 条",
       "interrupted": "记录在任务结束前中断（应用退出或崩溃），之后发生的事不知道",
-      "incomplete": "记录不完整"
+      "incomplete": "记录不完整",
+      "stale": "执行记录没能更新到最终状态，下面是任务结束前的样子"
     },
     "operation": {
       "ai_task": "AI 任务",

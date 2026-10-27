@@ -140,6 +140,16 @@ describe('TraceWaterfall', () => {
     expect(v('modelCalls')).toBe('0')
   })
 
+  it('整段的触发区在子步骤的触发区之下（DOM 在前）：点彩色子段打开的是那一步', () => {
+    render()
+    const timeline = row('a')!.querySelector('[data-trace-timeline]')!
+    const triggers = [...timeline.querySelectorAll('[data-trace-trigger]')]
+    const lane = triggers.findIndex((el) => el.getAttribute('data-scope') === 'lane')
+    const steps = triggers.map((el, i) => (el.getAttribute('data-scope') === 'step' ? i : -1)).filter((i) => i >= 0)
+    expect(lane).toBe(0)
+    expect(steps.length).toBeGreaterThan(0)
+  })
+
   it('搜索过滤，并在没有命中时出空态', () => {
     render()
     type('script')

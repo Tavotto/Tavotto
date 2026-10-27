@@ -17,7 +17,8 @@ const LIVE_TICK_MS = 250
 type Load =
   | { state: 'idle' }
   | { state: 'loading' }
-  | { state: 'ready'; trace: ExecTraceDto }
+  /** `stale`：会话已经结束、但最后那次取快照失败——手里这份不是终局，不能再当「运行中」往前走 */
+  | { state: 'ready'; trace: ExecTraceDto; stale?: boolean }
   | { state: 'none'; reason: 'not_found' | 'disabled' | 'unsupported' }
   | { state: 'error' }
 
@@ -62,7 +63,9 @@ export function TraceDetails({
         else if (!supported(res.trace)) setLoad({ state: 'none', reason: 'unsupported' })
         else setLoad({ state: 'ready', trace: res.trace })
       } catch {
-        if (!stopped && mine === seq.current) setLoad((prev) => (prev.state === 'ready' ? prev : { state: 'error' }))
+        if (stopped || mine !== seq.current) return
+        // 运行中偶尔取失败：留着上一份，下一秒再取。会话已结束还失败：上一份就成了过期的，明说并给重试（Codex #1454）
+        setLoad((prev) => (prev.state === 'ready' ? (running ? prev : { ...prev, stale: true }) : { state: 'error' }))
       }
     }
     setLoad((prev) => (prev.state === 'ready' ? prev : { state: 'loading' }))
@@ -81,7 +84,8 @@ export function TraceDetails({
     }
   }, [open, running, ref, pj, hidden, settledKey, attempt])
 
-  const live = load.state === 'ready' && load.trace.status === 'running'
+  // 「此刻」只在会话真的还在跑、手里的快照也是运行中时往前走；会话结束后绝不靠旧快照继续画
+  const live = running && load.state === 'ready' && !load.stale && load.trace.status === 'running'
   useEffect(() => {
     if (!open || !live) return
     const timer = window.setInterval(() => setNowWall(Date.now() / 1000), LIVE_TICK_MS)
@@ -148,7 +152,19 @@ function Body({ load, nowWall, onRetry }: { load: Load; nowWall: number; onRetry
     )
   }
   const { trace } = load
-  return <Ready trace={trace} nowWall={nowWall} />
+  return (
+    <>
+      {load.stale && (
+        <div data-ai-trace-stale className="flex items-center gap-2 text-sm text-ink-3">
+          <span>{t('trace.state.stale')}</span>
+          <Button variant="ghost" size="sm" onClick={onRetry}>
+            {t('trace.state.retry')}
+          </Button>
+        </div>
+      )}
+      <Ready trace={trace} nowWall={load.stale ? trace.started_at : nowWall} />
+    </>
+  )
 }
 
 function Ready({ trace, nowWall }: { trace: ExecTraceDto; nowWall: number }) {

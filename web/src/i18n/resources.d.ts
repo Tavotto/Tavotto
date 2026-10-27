@@ -349,6 +349,7 @@ export default interface Resources {
         "loading": "正在读取执行记录…",
         "not_found": "这次任务没有执行记录（可能已超过保留期）",
         "retry": "重试",
+        "stale": "执行记录没能更新到最终状态，下面是任务结束前的样子",
         "toggle": "执行记录",
         "truncated_other": "记录过长，中间省略了 {{count}} 条",
         "unsupported": "这份执行记录来自不兼容的版本，无法显示"

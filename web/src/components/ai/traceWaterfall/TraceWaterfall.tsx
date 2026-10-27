@@ -573,11 +573,7 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
 
       <div data-trace-timeline className="relative h-full flex-1">
         <div className="absolute inset-0 overflow-hidden">
-          {isAgent ? (
-            <AgentLane node={node} view={view} now={now} model={model} details={details} onOpen={onOpen} />
-          ) : (
-            <LeafMarks node={node} view={view} now={now} live={live} />
-          )}
+          {/* 整段的触发区在前：泳道里子步骤的触发区后渲染、叠在它上面，点彩色的子段打开的是那一步（Codex #1454） */}
           <Trigger
             node={node}
             view={view}
@@ -586,6 +582,11 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
             open={popupOpen('lane')}
             onOpen={(el) => onOpen(node, 'lane', el)}
           />
+          {isAgent ? (
+            <AgentLane node={node} view={view} now={now} model={model} details={details} onOpen={onOpen} />
+          ) : (
+            <LeafMarks node={node} view={view} now={now} live={live} />
+          )}
           <span
             className="pointer-events-none absolute top-1/2 hidden -translate-y-1/2 items-center gap-1.5 ps-2 text-xs whitespace-nowrap text-ink-3 tabular-nums @xs/trace:flex"
             style={{ left: `${pct(figureLeft, view)}%` }}
