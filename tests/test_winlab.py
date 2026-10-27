@@ -3003,3 +3003,15 @@ def test_claude_desktop_pac_sends_only_the_download_host_through_dmit():
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with opener.open(f"http://127.0.0.1:{port}/proxy.pac", timeout=5) as r:
         assert r.read().decode() == pac
+
+
+def test_claude3p_tool_uses_counts_only_tool_names(tmp_path):
+    d = tmp_path / "AppData" / "Local" / "Claude-3p" / "local-agent-mode-sessions" / "x"
+    d.mkdir(parents=True)
+    (d / "t.jsonl").write_text(
+        '{"type": "tool_use", "id": "a", "name": "mcp__tavotto__tavotto_health", "input": {}}\n'
+        '{"type":"tool_use","id":"b","name":"PowerShell","input":{"command":"dir"}}\n'
+        '{"type":"text","text":"name: nope"}\n',
+        encoding="utf-8",
+    )
+    assert A.claude3p_tool_uses(tmp_path) == {"mcp__tavotto__tavotto_health": 1, "PowerShell": 1}

@@ -3649,6 +3649,35 @@ def serve_pac(pac: str) -> int:
     return srv.server_address[1]
 
 
+_TOOL_USE_RE = re.compile(r'"type"\s*:\s*"tool_use"[^{}]*?"name"\s*:\s*"([^"]{1,80})"')
+
+
+def claude3p_tool_uses(home: Path) -> dict[str, int]:
+    """Claude Desktop 会话记录（应用数据下 local-agent-mode-sessions / claude-code-sessions 的 json / jsonl）里每个
+    工具名出现的次数。只取名字。"""
+    counts: dict[str, int] = {}
+    for sub in ("local-agent-mode-sessions", "claude-code-sessions"):
+        for base in (
+            home / "AppData" / "Local" / "Claude-3p",
+            home / "AppData" / "Roaming" / "Claude-3p",
+        ):
+            d = base / sub
+            if not d.is_dir():
+                continue
+            for f in d.rglob("*"):
+                if (
+                    f.is_file()
+                    and f.suffix in (".json", ".jsonl")
+                    and f.stat().st_size < 50_000_000
+                ):
+                    with contextlib.suppress(OSError):
+                        for name in _TOOL_USE_RE.findall(
+                            f.read_text(encoding="utf-8", errors="replace")
+                        ):
+                            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 def claude3p_config_dirs(home: Path, env: dict) -> list[Path]:
     """configLibrary 写两处：重定向的 run 家目录下，和这个账户真实的 %LOCALAPPDATA%（Electron 取应用目录不一定认
     环境变量）。真实那处跑完由 wipe_ondisk_key 删掉。"""
@@ -4610,6 +4639,9 @@ def _desktop_live_body(
                 80,
             )
         ]
+    if cell.native and host.id == "claude-desktop":
+        # 模型实际用过的工具名（不含参数与结果）：会话记录里的 tool_use。面板只说「ran a command」，要知道是哪个工具
+        base["host_tool_uses"] = claude3p_tool_uses(work / "cdhome")
     if r1["driver"].get("region_blocked"):
         levels.update(
             L3="environment_unavailable", L4="environment_unavailable", L5="environment_unavailable"
