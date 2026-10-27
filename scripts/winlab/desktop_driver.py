@@ -292,6 +292,28 @@ TYPE_JS = (
     + "return {typed: !!ok, length: (r.el.value ?? r.el.innerText ?? '').length};})()"
 )
 
+#: 只聚焦并清空输入框，字由 CDP Input.insertText 送（原生宿主的编辑器不认 execCommand 填的字：WorkBuddy 发送键
+#: 一直灰着，run 20261027T064603Z-46d918）
+CLEAR_JS = (
+    "(() => {"
+    + _WALK
+    + "const r = walk(document); if (!r) return {focused: false};"
+    + "r.el.focus(); r.doc.execCommand('selectAll'); r.doc.execCommand('delete');"
+    + "return {focused: r.doc.activeElement === r.el || r.el.contains(r.doc.activeElement)};})()"
+)
+
+
+def native_type(cdp: CDP, sid: str, prompt: str) -> dict:
+    """聚焦、清空，再用 Input.insertText 送整段字（走 beforeinput / input，编辑器自己的状态跟着变）。"""
+    st = cdp.evaluate(sid, CLEAR_JS) or {}
+    if not st.get("focused"):
+        return {"typed": False, "why": "no input"}
+    cdp.call("Input.insertText", {"text": prompt}, session=sid, timeout=20)
+    time.sleep(0.5)
+    n = (cdp.evaluate(sid, STATE_JS) or {}).get("input_length") or 0
+    return {"typed": n > 0, "length": n, "via": "insertText"}
+
+
 #: 点发送；没有按钮时退回在输入框上派发 Enter
 SUBMIT_JS = (
     "(() => {"
@@ -875,8 +897,7 @@ def native_submit(
     tried = []
     for i, how in enumerate(("enter", "button", "ctrl_enter")):
         if not (cdp.evaluate(sid, STATE_JS) or {}).get("input_length"):
-            cdp.evaluate(sid, TYPE_JS % json.dumps(prompt))
-            time.sleep(0.5)
+            native_type(cdp, sid, prompt)
         if how == "enter":
             _key(cdp, sid, "keyDown", "Enter", "Enter", 13, text="\r")
             _key(cdp, sid, "keyUp", "Enter", "Enter", 13)
@@ -1197,7 +1218,10 @@ def drive(ns: argparse.Namespace) -> dict:
             if ns.workspace_pick == "folder":
                 result["workspace"] = pick_workspace(cdp, workbench, ns.workspace, out_dir, prog)
                 sid = find_input_session(cdp) or sid
-            typed = cdp.evaluate(sid, TYPE_JS % json.dumps(prompt)) or {}
+            if ns.kind == "native":
+                typed = native_type(cdp, sid, prompt)
+            else:
+                typed = cdp.evaluate(sid, TYPE_JS % json.dumps(prompt)) or {}
             result["typed"] = bool(typed.get("typed"))
             prog.step("type_prompt", result=typed)
             if not result["typed"]:
