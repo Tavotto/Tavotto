@@ -467,6 +467,8 @@ MODEL_PROVIDERS = {"deepseek": "https://api.deepseek.com/anthropic"}
 MODEL_CONF_ONDISK_PATH = MODEL_CONF_PATH.with_name("model-ondisk.json")
 #: 要用落盘专用 key 的 desktop-live 模式（与 agent.DESKTOP_LIVE_ONDISK_MODES 一致，测试核对）
 ONDISK_MODES = ("zcode-native",)
+#: 推理用宿主账户自带模型的 desktop-live 模式：不要求先录 key（与 agent.DESKTOP_LIVE_ACCOUNT_MODEL_MODES 一致，测试核对）
+ACCOUNT_MODEL_MODES = ("workbuddy-native", "workbuddy-native-phone")
 
 
 def model_conf_path(mode: str | None) -> Path:
@@ -871,7 +873,7 @@ def main(argv: list[str] | None = None) -> int:
             if rc != 0:
                 return rc
         stdin = None
-        if task.needs_model_conf:
+        if task.needs_model_conf and ns.mode not in ACCOUNT_MODEL_MODES:
             stdin = load_model_secret(ns.mode)
             if stdin is None:
                 return 3

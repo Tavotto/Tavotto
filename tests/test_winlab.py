@@ -2835,6 +2835,23 @@ def test_workbuddy_login_home_is_persistent_under_state_and_sweep_logout_removes
     assert home.exists() and "workbuddy_logout" not in res  # 不带开关不动常驻登录态
     res = A.cmd_sweep(lab, workbuddy_logout=True)
     assert not home.exists() and res["workbuddy_logout"]["home_removed"] is True
+    assert res["result"] == "passed"
+
+
+def test_sweep_logout_that_cannot_remove_the_home_is_not_reported_as_passed(tmp_path, monkeypatch):
+    """撤销登录态是用户要的那件事：「家」删不掉（拒绝访问）就整次 error，不能报 passed、0 left（Codex #1448 P2）。"""
+    lab = A.Lab(tmp_path / "lab")
+    home = A.workbuddy_home(lab)
+    (home / ".workbuddy").mkdir(parents=True)
+    lab.runs.mkdir(parents=True)
+    monkeypatch.setattr(A, "_delete_credentials", lambda f: [])
+    monkeypatch.setattr(A, "_force_rmtree", lambda d, tokens: "PermissionError: [WinError 5]")
+    res = A.cmd_sweep(lab, workbuddy_logout=True)
+    assert home.exists() and res["result"] == "error"
+    assert "NOT fully revoked" in res["summary"]
+    monkeypatch.setattr(A, "_force_rmtree", lambda d, tokens: None)
+    monkeypatch.setattr(A, "_delete_credentials", lambda f: ["WorkBuddy/session"])  # 凭据删完还在
+    assert A.cmd_sweep(lab, workbuddy_logout=True)["result"] == "error"
 
 
 def test_login_input_only_accepts_well_shaped_values_for_the_running_run(tmp_path):
@@ -2883,3 +2900,22 @@ def test_workbuddy_config_trusts_only_the_tavotto_server_with_workbuddys_own_has
     got = json.loads(approvals.read_text(encoding="utf-8"))
     assert set(got) == {"old::other", f"{want}::tavotto"}
     assert isinstance(got[f"{want}::tavotto"], int)
+
+
+def test_account_model_modes_never_ask_for_our_key(monkeypatch):
+    """WorkBuddy 用账户自带的模型：本机没录 DeepSeek key 也能跑（Codex #1448 P2）。两侧名单同一份。"""
+    assert W.ACCOUNT_MODEL_MODES == A.DESKTOP_LIVE_ACCOUNT_MODEL_MODES
+    assert set(W.ACCOUNT_MODEL_MODES) <= set(A.DESKTOP_LIVE_MODES)
+
+    def no_secret(mode):
+        raise AssertionError(f"{mode} 不该读 key")
+
+    sent: dict = {}
+    monkeypatch.setattr(W, "load_model_secret", no_secret)
+    monkeypatch.setattr(
+        W, "remote_json", lambda argv, stdin=None: sent.update(argv=argv, stdin=stdin) or (0, {})
+    )
+    monkeypatch.setattr(W, "show", lambda rc, out: rc)
+    for mode in W.ACCOUNT_MODEL_MODES:
+        assert W.main(["test", "desktop-live", "--mode", mode]) == 0
+        assert sent["stdin"] is None and sent["argv"][-1] == mode

@@ -75,6 +75,9 @@ DESKTOP_LIVE_MODES = (
 )
 #: 要用户扫码登录宿主账户的格（用户 2026-10-27：专用账户、每次扫、跑完清掉登录态）
 DESKTOP_LIVE_LOGIN_MODES = ("workbuddy-native", "workbuddy-native-phone")
+#: 推理用宿主账户自带模型、不经我们任何 key 的格：客户端不要求先录 key，Lab 也不读 stdin（Codex #1448 P2；
+#: winlab.py 的 ACCOUNT_MODEL_MODES 同一份，测试核对）
+DESKTOP_LIVE_ACCOUNT_MODEL_MODES = DESKTOP_LIVE_LOGIN_MODES
 #: 宿主只能从明文配置读 key 的格：用落盘专用 key（winlab.py ONDISK_MODES 同一份，测试核对），跑完 wipe_ondisk_key
 DESKTOP_LIVE_ONDISK_MODES = ("zcode-native",)
 #: 依赖安装配方的版本：改了 prepare 的安装步骤就加一，已有 venv 随之重装（散列戳里含它）。
@@ -3850,9 +3853,14 @@ def cmd_sweep(lab: Lab, workbuddy_logout: bool = False) -> dict:
         for d in lab.runs.glob(pat)
     }
     left = {k: v for k, v in left.items() if (lab.runs / k).exists()}
+    # 撤销登录态是用户要的那件事：「家」删不掉或凭据还在，整次就不算完成（Codex #1448 P2）
+    logout_failed = logout is not None and (
+        not logout["home_removed"] or bool(logout["credentials_left"])
+    )
     return {
-        "result": "passed" if not left else "error",
-        "summary": f"swept {len(swept)} run(s); {len(left)} left",
+        "result": "passed" if not left and not logout_failed else "error",
+        "summary": f"swept {len(swept)} run(s); {len(left)} left"
+        + ("; WorkBuddy sign-in state NOT fully revoked" if logout_failed else ""),
         "swept": swept,
         "left": dict(list(left.items())[:20]),
         **({"workbuddy_logout": logout} if logout is not None else {}),
@@ -4070,7 +4078,7 @@ def _install_extension(env, host, ext, vsix, inst, ext_dir, work, ev, profile, b
     """VS Code 系宿主：用宿主自带的命令行入口把固定版本的扩展装进 run 目录。
     返回 (结论或 None, 扩展随包的 claude.exe)。"""
     levels = base["levels"]
-    key = model_conf["api_key"]  # noqa: F841 — 与正文同名，日志抹密钥用
+    key = key_placeholder(model_conf)  # noqa: F841 — 与正文同名，日志抹密钥用
 
     def body():
         code_cmd = host_cli(Path(inst["root"]))
@@ -4140,7 +4148,8 @@ def _desktop_live_body(
     levels = base["levels"]
     work = run_dir / "work"
     ev = run_dir / "evidence" / "desktop-live"
-    key = model_conf["api_key"]
+    # 用账户自带模型的格（WorkBuddy）不经我们的 key：没有就用占位，抹它是空操作（Codex #1448 P2）
+    key = key_placeholder(model_conf)
     profile = work / "profile"
     claude_exe = None
     if not cell.native:
@@ -5295,7 +5304,7 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
         return av.EXIT_USAGE
     try:
         model_conf = None
-        if task.needs_model_conf:
+        if task.needs_model_conf and ns.mode not in DESKTOP_LIVE_ACCOUNT_MODEL_MODES:
             parsed = read_model_conf(sys.stdin)
             if isinstance(parsed, str):
                 return _emit({"result": "environment_unavailable", "summary": parsed})
