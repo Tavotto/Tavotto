@@ -3779,10 +3779,11 @@ def claude3p_isolated_config(
     model_conf: dict,
     tool_names: list[str],
     pac_url: str = "",
-) -> list[Path]:
+) -> dict:
     """Claude Desktop on 3P 的本地配置（`configLibrary\\_meta.json` 记 appliedId，`<id>.json` 平铺键值，格式同
     in-app 配置窗口写的）：gateway → DeepSeek，模型显式列出、不做发现；tavotto 经 `managedMcpServers` 起本地
-    stdio → 录制器，只预先放行 tavotto 自己的工具。返回写下的配置文件（含 key，落盘例外）。"""
+    stdio → 录制器，只预先放行 tavotto 自己的工具。返回 {files: 写下的配置文件（含 key，落盘例外）,
+    policy_written: 写进策略键的值名, policy_expected: 应写的值名}——调用方要核对策略写全了才能起应用。"""
     model = model_conf.get("model") or DEFAULT_HOST_MODEL
     conf = {
         "inferenceProvider": "gateway",
@@ -3807,7 +3808,7 @@ def claude3p_isolated_config(
         ],
     }
     written = []
-    claude3p_policy_write.last = claude3p_policy_write(conf)
+    policy_written = claude3p_policy_write(conf)
     for d in claude3p_config_dirs(home, env):
         d.mkdir(parents=True, exist_ok=True)
         cid = "tavotto-lab"
@@ -3815,7 +3816,7 @@ def claude3p_isolated_config(
         f = d / f"{cid}.json"
         f.write_text(json.dumps(conf, indent=2), encoding="utf-8")
         written.append(f)
-    return written
+    return {"files": written, "policy_written": policy_written, "policy_expected": list(conf)}
 
 
 def sweep_stale_ondisk_configs(runs: Path) -> list[str]:
@@ -4505,10 +4506,20 @@ def _desktop_live_body(
             "via_dmit": [CLAUDE3P_DOWNLOAD_HOST],
             "everything_else": "DIRECT",
         }
-        claude3p_isolated_config(
+        cfg = claude3p_isolated_config(
             home, env, mcp_cmd, mcp_env, model_conf, names, pac_url=base["egress"]["pac"]
         )
-        base["claude3p_policy_values"] = len(getattr(claude3p_policy_write, "last", []))
+        missing = sorted(set(cfg["policy_expected"]) - set(cfg["policy_written"]))
+        base["claude3p_policy_values"] = len(cfg["policy_written"])
+        if missing:
+            # 策略没写全就不起应用（Codex #1450 P1）：configLibrary 会被忽略，应用以标准模式起来、先连 claude.ai，
+            # 违反「不连接claude的官方服务」。已写的值由外层 finally 的 wipe_ondisk_key 删掉
+            return {
+                **base,
+                "result": "environment_unavailable",
+                "summary": "Claude Desktop policy values not written "
+                f"({len(missing)} missing, e.g. {missing[0]}): run `winlab admin claude-policy-acl` once; app not launched",
+            }
         gui_env = dict(env, **_home_env(home))
         public_env, secret_env = gui_env, None
     elif cell.native:

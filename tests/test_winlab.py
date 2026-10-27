@@ -2934,7 +2934,7 @@ def test_claude_desktop_3p_config_talks_only_to_deepseek_and_allows_only_tavotto
     monkeypatch.setattr(A, "claude3p_policy_wipe", lambda k: {"wiped": True, "present": False})
     conf = {"base_url": "https://api.deepseek.com/anthropic", "api_key": "k" * 8, "model": "m1"}
     cmd = ["py.exe", "rec.py", "log", "--", "py.exe", "server.py"]
-    written = A.claude3p_isolated_config(
+    res = A.claude3p_isolated_config(
         tmp_path / "home",
         {},
         cmd,
@@ -2942,7 +2942,9 @@ def test_claude_desktop_3p_config_talks_only_to_deepseek_and_allows_only_tavotto
         conf,
         ["tavotto_health", "tavotto_export"],
     )
+    written = res["files"]
     assert len(written) == 2  # run 家目录 + 真实 LOCALAPPDATA（跑完删）
+    assert set(res["policy_written"]) == set(res["policy_expected"])
     for f in written:
         meta = json.loads((f.parent / "_meta.json").read_text(encoding="utf-8"))
         assert f.name == f"{meta['appliedId']}.json"
@@ -3026,3 +3028,13 @@ def test_claude3p_tool_uses_counts_only_tool_names(tmp_path):
         encoding="utf-8",
     )
     assert A.claude3p_tool_uses(tmp_path) == {"mcp__tavotto__tavotto_health": 1, "PowerShell": 1}
+
+
+def test_claude_desktop_is_not_launched_unless_every_policy_value_was_written():
+    # Codex #1450 P1：策略没写全时应用会以标准模式起来、先连 claude.ai
+    src = (WINLAB / "agent.py").read_text(encoding="utf-8")
+    body = src[src.index("cfg = claude3p_isolated_config(") :]
+    check = body.index("if missing:")
+    assert check < body.index("gui_env = dict(env, **_home_env(home))")
+    assert '"environment_unavailable"' in body[check : check + 900]
+    assert "app not launched" in body[check : check + 900]
