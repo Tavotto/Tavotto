@@ -163,5 +163,6 @@ PR3 的读取走 REST 权威快照。
   运行中且展开时每秒取一次权威快照，`ai.done` 已有的终局通知触发最后一次。
 * **前端**：原型搬进 `web/src/components/ai/traceWaterfall/`（视觉门禁、i18n、图标集按仓库规则改写，交互与版式保留）；`lib/execTrace.ts` 是唯一转换层；
   转录的「执行记录」与任务历史的「技术详情」共用 `TraceDetails`。规则全文 `docs/rules/frontend/execution-trace-ui.md`。
-* **性能**（`e2e/exec-trace-perf.spec.ts`，489 Span + 200 观察点、运行中、Chromium，三次）：展开到首行 524–741 ms；5 s 实时窗口长任务 1 个、140–156 ms。
-  改之前（时间轴随此刻连续伸缩、行不 memo）是 24 个 / 累计 1.56 s：运行中时间轴改取阶梯值、行只在含未结束 Span 时随 `now` 重画。没有改用 Canvas、没有虚拟化。
+* **性能**（`e2e/exec-trace-perf.spec.ts`，489 Span + 200 观察点、运行中、Chromium，三次）：展开到首行 524–741 ms；含首渲在内的 5 s 窗口长任务 1 个、140–156 ms（那一个就是首渲）。
+  改之前（时间轴随此刻连续伸缩、行不 memo）同口径是 24 个 / 累计 1.56 s。用例后来改成首渲之后静置 1 s 再开 5 s 窗口（只量实时刷新本身）：本机 0 个长任务。
+  这个用例不进黄金路径，经 `playwright.perf.config.ts` 在 performance-agent workflow 里跑：运行中时间轴改取阶梯值、行只在含未结束 Span 时随 `now` 重画。没有改用 Canvas、没有虚拟化。

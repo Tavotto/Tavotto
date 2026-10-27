@@ -82,8 +82,8 @@ PLATFORM_SKIPS = {
     # 执行记录 Waterfall（ADR 0151 PR3）：同上，假 `codex` 是 POSIX shell 脚本（放行后以非零码退出）→ posix-e2e 腿执行
     # （chromium + chromium-en），Windows 腿跳过
     "exec-trace.spec.ts": 1,
-    # 大 Trace 性能预算：同一个假 `codex`（挂着不退出），只量前端。墙钟预算在共享 runner 上会抖，所以**不进任何 CI 腿**
-    # （主配置 testIgnore），只经 `playwright.perf.config.ts` 本机 / Agent 跑；Windows 上同样跳过
+    # 大 Trace 性能预算：同一个假 `codex`（挂着不退出），只量前端。不进黄金路径（主配置 testIgnore），经
+    # `playwright.perf.config.ts` 在 performance-agent workflow（Linux 的 Browser performance probe）里跑；Windows 上跳过
     "exec-trace-perf.spec.ts": 1,
 }
 

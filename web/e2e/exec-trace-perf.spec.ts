@@ -98,6 +98,11 @@ test('大 Trace：展开耗时与实时刷新期间的长任务', async ({ app, 
   await expect(page.locator('[data-trace-row]').first()).toBeVisible({ timeout: 15_000 })
   const openMs = Date.now() - t0
   const rows = await page.locator('[data-trace-row]').count()
+  // 首次渲染的长任务属于「展开」，不属于「实时刷新」：静置 1s 后清零再开窗（CI 慢机上首渲会拆成好几个长任务，混进来就量错了对象）
+  await page.waitForTimeout(1000)
+  await page.evaluate(() => {
+    ;(window as unknown as { __long: number[] }).__long = []
+  })
   await page.waitForTimeout(5000) // 运行中：每 250ms 往前走一格、每秒重取一次快照
   const long = await page.evaluate(() => (window as unknown as { __long: number[] }).__long)
   const result = {
