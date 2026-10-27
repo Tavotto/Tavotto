@@ -388,15 +388,76 @@ async fn codex_integration(app: tauri::AppHandle, action: String) -> Result<Stri
     if action != "install" && action != "doctor" {
         return Err("bad_action".into());
     }
+    run_cli_json(app, vec!["codex".into(), action, "--json".into()]).await
+}
+
+/// 「接入 AI 编辑器」的宿主闭集——**与 `engine/hostconnect.py` 的 `HOST_IDS` 逐字相同**
+/// （看护 `tests/test_desktop_hosts_button.py`）。webview 递不进任意宿主名。
+const HOST_IDS: [&str; 8] = [
+    "codex",
+    "claude-code",
+    "cursor",
+    "vscode",
+    "trae",
+    "zcode",
+    "workbuddy",
+    "claude-desktop",
+];
+
+/// 「接入 AI 编辑器」：spawn `tavotto-cli hosts <action> [<host>] [--project-root <目录>] --json`，
+/// 原样交回那一行 JSON——**壳里没有第二套安装器**，写哪些文件、怎么备份、怎么断开都只在
+/// `engine/hostconnect.py`（与 `codex_integration` 同一条纪律，ADR 0012）。
+///
+/// `action` 是闭集 `list` / `connect` / `disconnect`（断开是方案里的 ⋯ 菜单项：只删 tavotto 一条）；
+/// `host` 必须在 `HOST_IDS` 里；`project_root` 只给 `connect`，作为一个 argv 元素传（不过 shell），
+/// 文件夹本身合不合格由引擎判（根 / HOME 拒绝）。
+#[tauri::command]
+async fn host_integration(
+    app: tauri::AppHandle,
+    action: String,
+    host: Option<String>,
+    project_root: Option<String>,
+) -> Result<String, String> {
+    let mut args: Vec<String> = vec!["hosts".into()];
+    match action.as_str() {
+        "list" => {
+            if host.is_some() || project_root.is_some() {
+                return Err("bad_args".into());
+            }
+            args.push(action);
+        }
+        "connect" | "disconnect" => {
+            let h = host.ok_or_else(|| "bad_args".to_string())?;
+            if !HOST_IDS.contains(&h.as_str()) {
+                return Err("bad_host".into());
+            }
+            args.push(action.clone());
+            args.push(h);
+            if let Some(root) = project_root {
+                if action != "connect" || root.is_empty() {
+                    return Err("bad_args".into());
+                }
+                args.push("--project-root".into());
+                args.push(root);
+            }
+        }
+        _ => return Err("bad_action".into()),
+    }
+    args.push("--json".into());
+    run_cli_json(app, args).await
+}
+
+/// spawn 桌面版的 `tavotto-cli <args>`，取 stdout 里**最后一行 JSON**。失败也是一行 JSON（引擎的
+/// `--json` 纪律），所以不看退出码；真的一行都没有才回稳定 code（`cli_not_found` / `spawn_failed` /
+/// `bad_output`），由前端翻成人话——英文 code 不进界面。
+async fn run_cli_json(app: tauri::AppHandle, args: Vec<String>) -> Result<String, String> {
     let resource_dir = app.path().resource_dir().ok();
     tauri::async_runtime::spawn_blocking(move || {
         let cli = sidecar::resolve_cli(resource_dir.as_deref())?;
         let mut cmd = std::process::Command::new(&cli);
-        cmd.arg("codex")
-            .arg(&action)
-            .arg("--json")
-            // 安装要拉一次稀疏检出，可能跑上几分钟。stdin 给 null：这条命令
-            // 刻意不是交互向导，等在一个没人接的提示上等于挂死。
+        cmd.args(&args)
+            // 安装要拉一次稀疏检出、写配置后要真握手一次，可能跑上几分钟。stdin 给 null：
+            // 这些命令刻意不是交互向导，等在一个没人接的提示上等于挂死。
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
@@ -1838,6 +1899,7 @@ fn main() {
             reveal_project_dir,
             set_menu_locale,
             codex_integration,
+            host_integration,
             arm_close_guard,
             resolve_close_request,
             native_file_drop,

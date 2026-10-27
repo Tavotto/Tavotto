@@ -92,10 +92,13 @@ def test_the_button_spawns_the_engine_cli_with_json():
     """壳只 spawn `tavotto-cli codex <action> --json`，别的什么都不做。"""
     main_rs = _read("src", "main.rs")
     body = main_rs.split("async fn codex_integration")[1].split("\n}\n")[0]
-    assert '.arg("codex")' in body, "没有 codex 子命令——那就不是在跑那条安装器"
-    assert ".arg(&action)" in body
-    assert '.arg("--json")' in body, "不带 --json 的话拿回来的是给人读的文本，不是契约"
-    assert "resolve_cli" in body, "没解析 tavotto-cli；GUI 的那个 exe 拿不到 stdout"
+    # 与「接入 AI 编辑器」共用同一个 spawn（run_cli_json）：argv 在这里拼，spawn 在那里做
+    assert 'run_cli_json(app, vec!["codex".into(), action, "--json".into()])' in body, (
+        "不是 `tavotto-cli codex <action> --json`——那就不是在跑那条安装器"
+    )
+    spawn = main_rs.split("async fn run_cli_json")[1].split("\n}\n")[0]
+    assert "resolve_cli" in spawn, "没解析 tavotto-cli；GUI 的那个 exe 拿不到 stdout"
+    assert ".args(&args)" in spawn
 
 
 def test_the_action_is_a_closed_set():

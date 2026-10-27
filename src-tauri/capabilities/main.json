@@ -17,6 +17,7 @@
     "allow-reveal-project-dir",
     "allow-set-menu-locale",
     "allow-codex-integration",
+    "allow-host-integration",
     "allow-arm-close-guard",
     "allow-resolve-close-request",
     "allow-desktop-update-check",

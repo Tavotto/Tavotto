@@ -43,6 +43,7 @@ fn main() {
             "reveal_project_dir",
             "set_menu_locale",
             "codex_integration",
+            "host_integration",
             "arm_close_guard",
             "resolve_close_request",
             "native_file_drop",
