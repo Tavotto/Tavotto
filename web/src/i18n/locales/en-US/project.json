@@ -101,7 +101,7 @@
       "folderTitle": "Choose the folder that contains your script",
       "nativeTitle": "Choose a Python plotting script",
       "openedFolder": "Opened the project “{{name}}”",
-      "openedScript": "Opened the project that contains “{{name}}” and started running it; its figure will be added to the current canvas"
+      "openedScript": "Opened the project that contains “{{name}}” and started running it; its figure will open when it’s ready"
     },
     "menuOpen": "Open",
     "more": "More",
