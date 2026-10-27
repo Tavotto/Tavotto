@@ -2562,6 +2562,10 @@ def test_ondisk_key_is_wiped_and_any_residual_fails_the_run(tmp_path, monkeypatc
     (appdata / "ZCode" / "Local Storage").mkdir(parents=True)
     (appdata / "ZCode" / "Local Storage" / "leveldb.log").write_bytes(b"x" + key.encode())
     env = {"APPDATA": str(appdata), "LOCALAPPDATA": str(tmp_path / "none")}
+    # 真实的应用数据目录与注册表不碰（Lab 上真目录里有 Claude*：run 20261027T095801Z-ae9014）
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "none"))
+    monkeypatch.setattr(A, "claude3p_policy_wipe", lambda k: {"wiped": True, "present": False})
     res = A.wipe_ondisk_key(run_dir, env, key)
     assert res["wiped"] is True and res["checked_app_dirs"] == ["ZCode"]
     assert A._files_containing([run_dir, appdata], key.encode()) == ([], [])
@@ -2925,6 +2929,9 @@ def test_claude_desktop_3p_config_talks_only_to_deepseek_and_allows_only_tavotto
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "real-local"))
+    policy: dict = {}
+    monkeypatch.setattr(A, "claude3p_policy_write", lambda c: policy.update(c) or list(c))
+    monkeypatch.setattr(A, "claude3p_policy_wipe", lambda k: {"wiped": True, "present": False})
     conf = {"base_url": "https://api.deepseek.com/anthropic", "api_key": "k" * 8, "model": "m1"}
     cmd = ["py.exe", "rec.py", "log", "--", "py.exe", "server.py"]
     written = A.claude3p_isolated_config(
@@ -2965,6 +2972,7 @@ def test_claude_desktop_3p_config_talks_only_to_deepseek_and_allows_only_tavotto
         (srv,) = c["managedMcpServers"]
         assert srv["transport"] == "stdio" and [srv["command"], *srv["args"]] == cmd
         assert srv["toolPolicy"] == {"tavotto_health": "allow", "tavotto_export": "allow"}
+    assert policy["inferenceProvider"] == "gateway"  # 同一份配置也进策略键（只在 Windows 上真写）
     swept = A.sweep_stale_ondisk_configs(tmp_path / "no-runs")
     assert swept == ["LOCALAPPDATA"]
     assert not list((tmp_path / "real-local" / "Claude-3p" / "configLibrary").glob("*.json"))
