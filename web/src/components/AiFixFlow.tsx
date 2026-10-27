@@ -138,6 +138,7 @@ const failureLine = (reason: string | undefined) => {
   switch (reason) {
     case 'cli_waiting_approval':
     case 'cli_tool_not_delivered':
+    case 'cli_no_tools':
     case 'stalled':
       return ft(`failed.${reason}`)
     case 'budget':

@@ -206,6 +206,11 @@ describe('进度与卡住（D3）', () => {
     }
     expect((await render(entry(CARDS.autoStopped))).querySelector('[data-title]')?.textContent).toBe('AI 卡在它自己的审批上，已自动停止')
   })
+
+  it('修复工具没接上 AI（CLI 一步没走就退出）单说一句，不落成笼统的「没能修好」', async () => {
+    const t = (await render(entry({ phase: 'done', outcome: 'failed', reason: 'cli_no_tools' }))).querySelector('[data-title]')?.textContent
+    expect(t).toBe('修复工具没能连上 AI，这次什么也没改')
+  })
 })
 
 it('确认卡的详情里列出将要安装的包（默认折叠）', async () => {

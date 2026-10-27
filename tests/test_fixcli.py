@@ -240,6 +240,26 @@ def test_prompt_is_the_same_text_as_the_builtin_loop_plus_a_cli_note(box):
     assert "fig.py" in text and len(text) <= fixsession.CLI_PROMPT_MAX + 100
 
 
+@pytest.mark.parametrize(
+    ("locale", "language"),
+    [("zh-CN", "Simplified Chinese"), ("zh", "Simplified Chinese")],
+)
+def test_the_ui_language_reaches_both_wires(box, locale, language):
+    """中文界面里 AI 写给用户的话（propose_fix 理由、finish 总结…）要是中文：内置循环与 CLI 同一段语言规则。"""
+    rule = fixsession.language_rule(locale)
+    assert language in rule and "propose_fix" in rule and "finish" in rule
+    ctx = FixContext.for_fix_session("s", box.proj, home=box.home)
+    toolset = fixsession.FixToolset(ctx, "fig.py", language=rule)
+    assert toolset.system_prompt(None) == fixsession.SYSTEM_PROMPT + rule
+    text = fixsession.cli_prompt(ctx, "fig.py", rule)
+    assert rule in text.split("Current preparation report")[0]
+
+
+@pytest.mark.parametrize("locale", ["en-US", "en", "fr-FR", "", None, 3, ["zh"]])
+def test_english_or_unknown_ui_language_adds_nothing(locale):
+    assert fixsession.language_rule(locale) == ""
+
+
 # =========================================================================== TOML 字符串编码（Codex #1383 P2）
 @pytest.mark.parametrize(
     "text",

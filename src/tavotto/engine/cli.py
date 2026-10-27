@@ -20,7 +20,7 @@ import json
 import sys
 
 #: 认得的子命令。放在这里是为了让「它是不是子命令」这个判断只有一处。
-COMMANDS = ("open", "run", "doctor", "codex", "fix-mcp", "agent-run")
+COMMANDS = ("open", "run", "doctor", "codex", "fix-mcp", "agent-run", "mcp")
 
 
 def use_utf8_streams() -> None:
@@ -82,6 +82,12 @@ def dispatch(argv: list[str]) -> int | None:
         from .agent_runner import __main__ as agent_runner_main
 
         return agent_runner_main.main(argv[1:])
+    if argv[0] == "mcp":
+        # 「接入 AI 编辑器」（用户 2026-10-27）：宿主配置里写 `tavotto-cli mcp`，桌面版在进程内跑插件那一份
+        # MCP 服务端，只装桌面版的用户不必再装 Python / pipx。stdout 归协议独占（见 mcpserve）。
+        from . import mcpserve
+
+        return mcpserve.cli(argv[1:])
     return doctor(argv[1:])
 
 
