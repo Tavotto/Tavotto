@@ -2,7 +2,7 @@
 
 > 2026-10-27 随 Execution Trace PR3 新增。这里是这一主题规则的**唯一全文**；`web/AGENTS.md` 只留速查行（由下面的 `agents-route` 块生成）。
 > 看护用例：`src/lib/execTrace.test.ts`、`src/components/ai/traceWaterfall/traceWaterfall.test.tsx`、`e2e/exec-trace.spec.ts`（真后端，中英各一遍）、
-> `e2e/exec-trace-perf.spec.ts`（大 Trace 性能预算）；后端端点 `tests/test_exectrace_api.py`。
+> `e2e/exec-trace-perf.spec.ts`（大 Trace 性能预算；墙钟预算在共享 runner 上会抖，不进 CI 腿，按需 `cd web && npx playwright test -c playwright.perf.config.ts e2e/exec-trace-perf.spec.ts --project=chromium`）；后端端点 `tests/test_exectrace_api.py`。
 
 <!-- agents-route
 sheet: web/AGENTS.md

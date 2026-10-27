@@ -6,7 +6,8 @@ import { defineConfig, devices } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './e2e',
-  testMatch: 'perf-agent.spec.ts',
+  // exec-trace-perf.spec.ts：执行记录 Waterfall 的大 Trace 性能预算（ADR 0151 PR3），本机 / Agent 按需跑
+  testMatch: ['perf-agent.spec.ts', 'exec-trace-perf.spec.ts'],
   // Playwright 启动时会删除整个 outputDir。
   // 性能原始报告和 pending/failed summary 放在 web/test-results/perf-agent；
   // 这里必须独立，避免在长时间子进程执行中间抹掉 Agent 可读状态。
