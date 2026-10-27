@@ -3702,7 +3702,7 @@ def claude3p_isolated_config(
         ],
     }
     written = []
-    claude3p_policy_write(conf)
+    claude3p_policy_write.last = claude3p_policy_write(conf)
     for d in claude3p_config_dirs(home, env):
         d.mkdir(parents=True, exist_ok=True)
         cid = "tavotto-lab"
@@ -4382,6 +4382,7 @@ def _desktop_live_body(
             return {**base, "result": "error", "summary": "could not read tavotto MCP tool names"}
         home = work / "cdhome"
         claude3p_isolated_config(home, env, mcp_cmd, mcp_env, model_conf, names)
+        base["claude3p_policy_values"] = len(getattr(claude3p_policy_write, "last", []))
         gui_env = dict(env, **_home_env(home))
         public_env, secret_env = gui_env, None
     elif cell.native:
@@ -4505,7 +4506,11 @@ def _desktop_live_body(
         base["host_mcp_log"] = _grep_tail(ev / "zcode-logs", re.compile(r"mcp", re.I), 30)
     if cell.native and host.id == "claude-desktop":
         # 应用自己的日志（配置被拒的键、MCP 起没起来）；key 不进日志，落证前仍按 key 抹一遍
-        logs = [work / "cdhome" / "AppData" / "Local" / "Claude-3p" / "logs"]
+        logs = [
+            work / "cdhome" / "AppData" / sub / app / "logs"
+            for sub in ("Local", "Roaming")
+            for app in ("Claude-3p", "Claude")
+        ]
         for var, sub in (
             ("LOCALAPPDATA", "Claude-3p"),
             ("APPDATA", "Claude"),
@@ -4518,8 +4523,11 @@ def _desktop_live_body(
             for d in logs
             for line in _grep_tail(
                 d,
-                re.compile(r"mcp|configLibrary|inference|gateway|region|3p|policy|managed", re.I),
-                30,
+                re.compile(
+                    r"mcp|configLibrary|inference|gateway|region|3p|policy|managed|deployment",
+                    re.I,
+                ),
+                40,
             )
         ]
     if r1["driver"].get("region_blocked"):
