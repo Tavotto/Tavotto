@@ -408,11 +408,13 @@ def http_json(port: int, path: str, timeout: float = 5):
         return json.loads(r.read().decode("utf-8"))
 
 
-def wait_main_window(root: Path, tree, timeout: float) -> dict | None:
+def wait_main_window(root: Path, tree, timeout: float, launcher_exits: bool = False) -> dict | None:
+    """`launcher_exits`：起的是安装器的启动壳（Squirrel 的 claude.exe 拉起 app-<版本>\\claude.exe 后 1 s 就退出，
+    run 20261027T082204Z-de306b）——它退了不算宿主退了，只等安装目录下的主窗口。"""
     t0 = time.monotonic()
     window, since = None, None
     while time.monotonic() - t0 < timeout:
-        if tree.proc.poll() is not None and not P.top_windows(root):
+        if not launcher_exits and tree.proc.poll() is not None and not P.top_windows(root):
             return None
         wins = P.top_windows(root)
         if wins:
@@ -1270,7 +1272,7 @@ def drive_uia(ns: argparse.Namespace) -> dict:
             stderr=host_out,
         )
         try:
-            result["window"] = wait_main_window(root, tree, ns.window_timeout)
+            result["window"] = wait_main_window(root, tree, ns.window_timeout, launcher_exits=True)
             prog.step("window", found=bool(result["window"]), host_exit=tree.proc.poll())
             if not result["window"]:
                 result["error"] = "no main window"
@@ -1333,6 +1335,8 @@ def drive_uia(ns: argparse.Namespace) -> dict:
         finally:
             prog.step("teardown")
             tree.close()  # Job 结束整棵进程树
+            # 启动壳拉起的应用不一定还在 Job 里：安装目录下的进程一并结束
+            result["killed_under_root"] = P.kill_under(root)
 
 
 def save_png(b64: str, path: Path) -> None:
