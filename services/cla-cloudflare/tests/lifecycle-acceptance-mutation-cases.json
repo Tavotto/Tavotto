@@ -1,5 +1,50 @@
 [
   {
+    "name": "OAuth issuer exact value",
+    "file": "src/native/worker.ts",
+    "before": "url.searchParams.get('iss')===GITHUB_OAUTH_ISSUER",
+    "after": "true",
+    "pattern": "OAuth issuer metadata rejects response parameter pollution before state consumption",
+    "testFile": "tests/oauth-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "OAuth issuer unique closed query fields",
+    "file": "src/native/worker.ts",
+    "before": "[...url.searchParams.keys()].sort().join(',')==='code,iss,state'",
+    "after": "url.searchParams.has('code') && url.searchParams.has('state') && url.searchParams.has('iss')",
+    "pattern": "OAuth issuer metadata rejects response parameter pollution before state consumption",
+    "testFile": "tests/oauth-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "OAuth advertised issuer cannot be omitted",
+    "file": "src/native/worker.ts",
+    "before": "return [...url.searchParams.keys()].sort().join(',')==='code,iss,state' &&\n    url.searchParams.get('iss')===GITHUB_OAUTH_ISSUER;",
+    "after": "return ['code,state','code,iss,state'].includes([...url.searchParams.keys()].sort().join(',')) && (!url.searchParams.has('iss') || url.searchParams.get('iss')===GITHUB_OAUTH_ISSUER);",
+    "pattern": "OAuth issuer metadata rejects response parameter pollution before state consumption",
+    "testFile": "tests/oauth-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "OAuth issuer must not be URL-normalized",
+    "file": "src/native/worker.ts",
+    "before": "url.searchParams.get('iss')===GITHUB_OAUTH_ISSUER",
+    "after": "url.searchParams.get('iss')!=='' && new URL(url.searchParams.get('iss')!).href===GITHUB_OAUTH_ISSUER",
+    "pattern": "OAuth issuer metadata rejects response parameter pollution before state consumption",
+    "testFile": "tests/oauth-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
+    "name": "OAuth issuer uses GitHub metadata identity",
+    "file": "src/native/worker.ts",
+    "before": "const GITHUB_OAUTH_ISSUER='https://github.com/login/oauth';",
+    "after": "const GITHUB_OAUTH_ISSUER='https://github.com';",
+    "pattern": "OAuth issuer metadata rejects response parameter pollution before state consumption",
+    "testFile": "tests/oauth-lifecycle.test.mjs",
+    "assertionError": true
+  },
+  {
     "name": "lifecycle send receipt is not confirmation",
     "file": "src/native/automatic.ts",
     "before": "await s.store.settleAutomaticPublication(issued!,'reconcile',receipt.id);",
