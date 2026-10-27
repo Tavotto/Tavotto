@@ -688,6 +688,8 @@ def qr_login(cdp: CDP, page: str, ns: argparse.Namespace, out_dir: Path, prog) -
 #: 选工作区时只点这些（逐字）：先找项目文件夹名本身（最近用过），再找「添加 / 打开文件夹」类入口
 WORKSPACE_ENTRY = ("Select Workspace", "选择工作区")
 WORKSPACE_ADD_BUTTONS = (
+    "Open Local Folder",  # WorkBuddy 5.8.3 菜单原文（run 20261027T055251Z-be6fe5）
+    "打开本地文件夹",
     "Add Workspace",
     "Add workspace",
     "Open Folder",
