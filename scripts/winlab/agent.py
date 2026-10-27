@@ -3611,6 +3611,65 @@ def claude3p_config_dirs(home: Path, env: dict) -> list[Path]:
     return dirs
 
 
+#: 用户级策略（官方 MDM 位置之一，CC Desktop Switch 在 Windows 上也写这里）：本地 configLibrary 没被读到时
+#: 应用仍按标准模式加载 claude.ai（run 20261027T082635Z-022557 没有 Claude-3p 日志）。值一律 REG_SZ，数组 / 对象
+#: 写成 JSON 字符串、布尔写 "true" / "false"（configuration-format：Value types in a profile or registry policy）
+CLAUDE_POLICY_KEY = r"SOFTWARE\Policies\Claude"
+
+
+def _policy_value(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return v if isinstance(v, str) else json.dumps(v)
+
+
+def claude3p_policy_write(conf: dict) -> list[str]:
+    """写 HKCU 策略；不是 Windows 或写不进去就跳过（返回写下的值名）。"""
+    try:
+        import winreg
+    except ImportError:
+        return []
+    names = []
+    with contextlib.suppress(OSError):
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, CLAUDE_POLICY_KEY) as k:
+            for name, v in conf.items():
+                winreg.SetValueEx(k, name, 0, winreg.REG_SZ, _policy_value(v))
+                names.append(name)
+    return names
+
+
+def claude3p_policy_wipe(key: str) -> dict:
+    """删掉整个 HKCU 策略键（Lab 上它只给这一格用），再核对：键还在、或任何值含 key 都算没清干净。"""
+    try:
+        import winreg
+    except ImportError:
+        return {"wiped": True, "present": False}
+    with contextlib.suppress(OSError):
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER, CLAUDE_POLICY_KEY, 0, winreg.KEY_ALL_ACCESS
+        ) as k:
+            while True:
+                try:
+                    name = winreg.EnumValue(k, 0)[0]
+                except OSError:
+                    break
+                winreg.DeleteValue(k, name)
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, CLAUDE_POLICY_KEY)
+    leaked, present = False, False
+    with contextlib.suppress(OSError):
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, CLAUDE_POLICY_KEY) as k:
+            present = True
+            i = 0
+            while True:
+                try:
+                    _, val, _ = winreg.EnumValue(k, i)
+                except OSError:
+                    break
+                leaked = leaked or key in str(val)
+                i += 1
+    return {"wiped": not present and not leaked, "present": present}
+
+
 def claude3p_isolated_config(
     home: Path,
     env: dict,
@@ -3643,6 +3702,7 @@ def claude3p_isolated_config(
         ],
     }
     written = []
+    claude3p_policy_write(conf)
     for d in claude3p_config_dirs(home, env):
         d.mkdir(parents=True, exist_ok=True)
         cid = "tavotto-lab"
@@ -3672,6 +3732,8 @@ def sweep_stale_ondisk_configs(runs: Path) -> list[str]:
             with contextlib.suppress(OSError):
                 pc.unlink()
                 swept.append("LOCALAPPDATA")
+    if claude3p_policy_wipe("\0")["wiped"] is False:
+        swept.append("HKCU-policy-left")
     return sorted(set(swept))
 
 
@@ -3697,12 +3759,16 @@ def wipe_ondisk_key(run_dir: Path, env: dict, key: str) -> dict:
         with contextlib.suppress(OSError):
             f.write_bytes(f.read_bytes().replace(needle, b"<redacted>"))
     left, unreadable = _files_containing([run_dir, *app_dirs], needle)
+    policy = claude3p_policy_wipe(key)
 
     def name(p: Path) -> str:
         return str(p.relative_to(run_dir)) if run_dir in p.parents else p.name
 
     return {
-        "wiped": not left and not unreadable,  # 读不了的文件 = 没核对完，不算清干净
+        "wiped": not left
+        and not unreadable
+        and policy["wiped"],  # 读不了的文件 = 没核对完，不算清干净
+        "policy_key_present": policy["present"],
         "residual": [name(p) for p in left][:10],
         "unreadable": [name(p) for p in unreadable][:10],
         "checked_app_dirs": [p.name for p in app_dirs],
@@ -4440,13 +4506,20 @@ def _desktop_live_body(
     if cell.native and host.id == "claude-desktop":
         # 应用自己的日志（配置被拒的键、MCP 起没起来）；key 不进日志，落证前仍按 key 抹一遍
         logs = [work / "cdhome" / "AppData" / "Local" / "Claude-3p" / "logs"]
-        if os.environ.get("LOCALAPPDATA"):
-            logs.append(Path(os.environ["LOCALAPPDATA"]) / "Claude-3p" / "logs")
+        for var, sub in (
+            ("LOCALAPPDATA", "Claude-3p"),
+            ("APPDATA", "Claude"),
+            ("LOCALAPPDATA", "Claude"),
+        ):
+            if os.environ.get(var):
+                logs.append(Path(os.environ[var]) / sub / "logs")
         base["host_mcp_log"] = [
             line.replace(key, "<redacted>")
             for d in logs
             for line in _grep_tail(
-                d, re.compile(r"mcp|configLibrary|inference|gateway|region", re.I), 30
+                d,
+                re.compile(r"mcp|configLibrary|inference|gateway|region|3p|policy|managed", re.I),
+                30,
             )
         ]
     if r1["driver"].get("region_blocked"):
