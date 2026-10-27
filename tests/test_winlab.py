@@ -2957,7 +2957,7 @@ def test_claude_desktop_3p_config_talks_only_to_deepseek_and_allows_only_tavotto
         ):
             assert c[k] is True, k
         assert c["modelCatalogEnabled"] is False
-        assert "WebFetch" in c["disabledBuiltinTools"]
+        assert {"WebFetch", "Bash", "PowerShell", "Write", "Edit"} <= set(c["disabledBuiltinTools"])
         assert c["coworkTabEnabled"] is False and c["isClaudeCodeForDesktopEnabled"] is False
         (srv,) = c["managedMcpServers"]
         assert srv["transport"] == "stdio" and [srv["command"], *srv["args"]] == cmd

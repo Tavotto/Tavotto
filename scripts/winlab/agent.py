@@ -3594,7 +3594,18 @@ CLAUDE3P_NO_ANTHROPIC = {
     "disableAutoUpdates": True,
     "modelCatalogEnabled": False,
     "skipWebFetchPreflight": True,
-    "disabledBuiltinTools": ["WebFetch", "WebSearch", "Bash"],
+    # 同 desktop-live 其它格：执行 / 写入 / 上网的内置工具一律拒（run 20261027T091823Z-aeeda4 模型「ran a command」：
+    # Windows 上执行工具是 PowerShell，只拒 Bash 不够）；只读的 Read / Glob / Grep 留着（大结果会落成文件要读回）
+    "disabledBuiltinTools": [
+        "WebFetch",
+        "WebSearch",
+        "Bash",
+        "PowerShell",
+        "Write",
+        "Edit",
+        "NotebookEdit",
+        "Task",
+    ],
     "chatTabEnabled": True,
     "coworkTabEnabled": False,
     "isClaudeCodeForDesktopEnabled": False,
