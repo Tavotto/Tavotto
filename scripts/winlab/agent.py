@@ -3653,6 +3653,21 @@ def serve_pac(pac: str) -> int:
 
 
 _TOOL_USE_RE = re.compile(r'"type"\s*:\s*"tool_use"[^{}]*?"name"\s*:\s*"([^"]{1,80})"')
+#: 执行类工具的命令原文（截 300 字）：要知道模型拿 shell 做了什么
+_SHELL_CMD_RE = re.compile(
+    r'"name"\s*:\s*"(?:mcp__workspace__bash|Bash|PowerShell)"\s*,\s*"input"\s*:\s*\{\s*"command"\s*:\s*"((?:[^"\\]|\\.){0,300})'
+)
+
+
+def claude3p_shell_commands(home: Path) -> list[str]:
+    out: list[str] = []
+    for f in (home / "AppData").rglob("*"):
+        if f.is_file() and f.suffix in (".json", ".jsonl") and f.stat().st_size < 50_000_000:
+            with contextlib.suppress(OSError):
+                for c in _SHELL_CMD_RE.findall(f.read_text(encoding="utf-8", errors="replace")):
+                    if c not in out:
+                        out.append(c)
+    return out[:10]
 
 
 def claude3p_tool_uses(home: Path) -> dict[str, int]:
@@ -4645,6 +4660,9 @@ def _desktop_live_body(
     if cell.native and host.id == "claude-desktop":
         # 模型实际用过的工具名（不含参数与结果）：会话记录里的 tool_use。面板只说「ran a command」，要知道是哪个工具
         base["host_tool_uses"] = claude3p_tool_uses(work / "cdhome")
+        base["host_shell_commands"] = [
+            c.replace(key, "<redacted>") for c in claude3p_shell_commands(work / "cdhome")
+        ]
     if r1["driver"].get("region_blocked"):
         levels.update(
             L3="environment_unavailable", L4="environment_unavailable", L5="environment_unavailable"
