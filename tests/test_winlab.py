@@ -2439,7 +2439,8 @@ def test_native_probe_only_looks_and_its_summary_reports_login_and_byok_markers(
         assert verb not in src  # 只看，不打字
     assert src.count(".click()") == 1  # 唯一的点击在 peek 里，只点登记的那一个按钮
     for b in A.NATIVE_PEEK.values():
-        assert not re.search(r"登录|sign|log ?in|connect|授权", b, re.I), b
+        # 入口按钮可以是「Sign In」（只看登录方式）；不许是确认 / 授权 / 同意 / 提交类
+        assert not re.search(r"continue|confirm|allow|授权|同意|提交|确认", b, re.I), b
     nat = A.summarize_native(
         {
             "cdp": True,
@@ -2561,6 +2562,10 @@ def test_ondisk_key_is_wiped_and_any_residual_fails_the_run(tmp_path, monkeypatc
     (appdata / "ZCode" / "Local Storage").mkdir(parents=True)
     (appdata / "ZCode" / "Local Storage" / "leveldb.log").write_bytes(b"x" + key.encode())
     env = {"APPDATA": str(appdata), "LOCALAPPDATA": str(tmp_path / "none")}
+    # 真实的应用数据目录与注册表不碰（Lab 上真目录里有 Claude*：run 20261027T095801Z-ae9014）
+    monkeypatch.setenv("APPDATA", str(appdata))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "none"))
+    monkeypatch.setattr(A, "claude3p_policy_wipe", lambda k: {"wiped": True, "present": False})
     res = A.wipe_ondisk_key(run_dir, env, key)
     assert res["wiped"] is True and res["checked_app_dirs"] == ["ZCode"]
     assert A._files_containing([run_dir, appdata], key.encode()) == ([], [])
@@ -2728,3 +2733,308 @@ def test_stale_provider_configs_from_killed_runs_are_swept_before_the_next_run(t
     keep.write_text("x")
     assert A.sweep_stale_ondisk_configs(runs) == ["20261026T000000Z-aaaaaa"]
     assert not old.exists() and keep.exists()
+
+
+def test_shot_returns_only_a_small_png_by_fixed_name_from_the_runs_evidence(tmp_path):
+    import base64
+
+    lab = A.Lab(tmp_path / "lab")
+    rid = "20261027T000000Z-abcdef"
+    ev = lab.runs / rid / "evidence" / "desktop-host"
+    ev.mkdir(parents=True)
+    png = b"\x89PNG\r\n\x1a\n" + b"x" * 100
+    (ev / "native-browser.png").write_bytes(png)
+    (ev / "secret.txt").write_text("k")
+    (ev / "fake.png").write_bytes(b"not a png")
+    ok = A.cmd_shot(lab, rid, "native-browser.png")
+    assert ok["result"] == "passed" and base64.b64decode(ok["png_b64"]) == png
+    for bad_id, bad_name in (
+        (rid, "../x.png"),
+        (rid, "secret.txt"),
+        (rid, "a/b.png"),
+        ("..", "native-browser.png"),
+        (rid, "fake.png"),
+        (rid, "missing.png"),
+    ):
+        assert A.cmd_shot(lab, bad_id, bad_name)["result"] == "error", (bad_id, bad_name)
+    (ev / "big.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * A.SHOT_MAX_BYTES)
+    assert A.cmd_shot(lab, rid, "big.png")["result"] == "error"
+
+
+def test_native_probe_link_shape_drops_one_time_query_parameters():
+    import native_probe as NP
+
+    assert (
+        NP.url_shape("https://www.codebuddy.cn/login?state=abc&code=xyz#frag")
+        == "https://www.codebuddy.cn/login"
+    )
+    assert NP.url_shape("not a url") == ""
+
+
+# --- WorkBuddy 原生：扫码登录、登录态不留 ----------------------------------------
+def test_workbuddy_login_link_must_be_https_on_the_registered_host():
+    ok = "https://www.workbuddy.cn/login/?platform=workbuddy&state=x"
+    assert D.login_link_ok(ok, A.WORKBUDDY_LOGIN_HOST)
+    for bad in (
+        "http://www.workbuddy.cn/login",
+        "https://workbuddy.cn.evil.com/login",
+        "https://evil.com/?u=workbuddy.cn",
+        "file:///C:/x",
+        "",
+    ):
+        assert not D.login_link_ok(bad, A.WORKBUDDY_LOGIN_HOST), bad
+    assert not D.login_link_ok(ok, "")
+
+
+def test_workbuddy_home_is_isolated_in_the_run_and_its_mcp_config_has_no_credentials(tmp_path):
+    home = tmp_path / "run" / "work" / "wbhome"
+    env = A._home_env(home)
+    assert all(Path(v).is_relative_to(home) for v in env.values())
+    f = A.workbuddy_isolated_config(home, ["py", "rec.py", "--", "py", "server.py"], {"X": "1"})
+    assert f == home / ".workbuddy" / "mcp.json"
+    cfg = json.loads(f.read_text(encoding="utf-8"))
+    assert cfg["mcpServers"]["tavotto"]["command"] == "py"
+    assert not re.search(r"token|secret|api[_-]?key|sk-|password", f.read_text(), re.I)
+    assert "workbuddy-native" in A.DESKTOP_LIVE_LOGIN_MODES and set(
+        A.DESKTOP_LIVE_LOGIN_MODES
+    ) <= set(A.DESKTOP_LIVE_MODES)
+
+
+def test_login_state_wipe_removes_the_run_home_and_edge_profile(tmp_path, monkeypatch):
+    run_dir = tmp_path / "run"
+    for d in ("wbhome/AppData/Roaming/WorkBuddy", "edge-login/Default"):
+        (run_dir / "work" / d).mkdir(parents=True)
+        (run_dir / "work" / d / "Cookies").write_text("session")
+    monkeypatch.setattr(A, "_delete_credentials", lambda f: [])
+    res = A.wipe_login_state(run_dir)
+    assert res["wiped"] is True
+    assert (
+        not (run_dir / "work" / "wbhome").exists()
+        and not (run_dir / "work" / "edge-login").exists()
+    )
+    # 登录态常驻（用户 2026-10-27）：收尾不碰 state\\workbuddy-home，也不删凭据管理器条目
+    assert "persistent_login" in res and res["credentials_removed"] == []
+
+
+def test_stale_login_dirs_from_killed_runs_are_swept(tmp_path):
+    runs = tmp_path / "runs"
+    for d in ("r1/work/wbhome/AppData", "r2/work/edge-login/Default"):
+        (runs / d).mkdir(parents=True)
+    (runs / "r1" / "evidence").mkdir()
+    assert sorted(A.sweep_stale_login_dirs(runs)) == ["r1", "r2"]
+    assert not (runs / "r1" / "work" / "wbhome").exists() and (runs / "r1" / "evidence").exists()
+
+
+def test_workbuddy_login_home_is_persistent_under_state_and_sweep_logout_removes_it(
+    tmp_path, monkeypatch
+):
+    lab = A.Lab(tmp_path / "lab")
+    home = A.workbuddy_home(lab)
+    assert home.parent == lab.state and not home.is_relative_to(lab.runs)
+    (home / ".workbuddy").mkdir(parents=True)
+    (home / ".workbuddy" / "session.json").write_text("token")
+    lab.runs.mkdir(parents=True)
+    monkeypatch.setattr(A, "_delete_credentials", lambda f: [])
+    res = A.cmd_sweep(lab)
+    assert home.exists() and "workbuddy_logout" not in res  # 不带开关不动常驻登录态
+    res = A.cmd_sweep(lab, workbuddy_logout=True)
+    assert not home.exists() and res["workbuddy_logout"]["home_removed"] is True
+    assert res["result"] == "passed"
+
+
+def test_sweep_logout_that_cannot_remove_the_home_is_not_reported_as_passed(tmp_path, monkeypatch):
+    """撤销登录态是用户要的那件事：「家」删不掉（拒绝访问）就整次 error，不能报 passed、0 left（Codex #1448 P2）。"""
+    lab = A.Lab(tmp_path / "lab")
+    home = A.workbuddy_home(lab)
+    (home / ".workbuddy").mkdir(parents=True)
+    lab.runs.mkdir(parents=True)
+    monkeypatch.setattr(A, "_delete_credentials", lambda f: [])
+    monkeypatch.setattr(A, "_force_rmtree", lambda d, tokens: "PermissionError: [WinError 5]")
+    res = A.cmd_sweep(lab, workbuddy_logout=True)
+    assert home.exists() and res["result"] == "error"
+    assert "NOT fully revoked" in res["summary"]
+    monkeypatch.setattr(A, "_force_rmtree", lambda d, tokens: None)
+    monkeypatch.setattr(A, "_delete_credentials", lambda f: ["WorkBuddy/session"])  # 凭据删完还在
+    assert A.cmd_sweep(lab, workbuddy_logout=True)["result"] == "error"
+
+
+def test_login_input_only_accepts_well_shaped_values_for_the_running_run(tmp_path):
+    lab = A.Lab(tmp_path / "lab")
+    rid = "20261027T000000Z-abcdef"
+    (lab.runs / rid / "work").mkdir(parents=True)
+    lab.state.mkdir(parents=True)
+    assert A.cmd_login_input(lab, rid, "phone", "13800000000")["result"] == "error"  # 没有在跑
+    lab.lock_path.write_text(json.dumps({"run_id": rid, "pid": 1}))
+    for kind, bad in (("phone", "12345"), ("phone", "../x"), ("code", "12ab"), ("pin", "1234")):
+        assert A.cmd_login_input(lab, rid, kind, bad)["result"] == "error", (kind, bad)
+    ok = A.cmd_login_input(lab, rid, "code", " 123456\n")
+    assert ok["result"] == "passed" and "123456" not in json.dumps(ok)  # 不回显
+    assert (lab.runs / rid / "work" / "login-code.txt").read_text() == "123456"
+    assert A.DESKTOP_LIVE["workbuddy-native-phone"].login == "phone"
+
+
+def test_use_input_selector_rebuilds_every_js_that_walks_for_the_input(monkeypatch):
+    # run 20261027T070525Z-bc2593：新加的 CLEAR_JS 没进重建名单，原生宿主还在找 VS Code 的输入框
+    names = [
+        n
+        for n, v in vars(D).items()
+        if n.endswith("_JS") and isinstance(v, str) and "function walk" in v
+    ]
+    assert "CLEAR_JS" in names
+    for n in names:
+        monkeypatch.setattr(D, n, getattr(D, n))
+    monkeypatch.setattr(D, "_WALK", D._WALK)
+    D.use_input_selector(D.NATIVE_INPUT_SELECTOR)
+    for n in names:
+        js = getattr(D, n)
+        assert json.dumps(D.NATIVE_INPUT_SELECTOR) in js, n
+        assert json.dumps(D.INPUT_SELECTOR) not in js, n
+
+
+def test_workbuddy_config_trusts_only_the_tavotto_server_with_workbuddys_own_hash(tmp_path):
+    # 期望值由 WorkBuddy 5.8.3 app.asar 里 computeTrustConfigHash 的原样 JS 在 node 里算出
+    cmd = ["C:\\py\\python.exe", "-I", "C:\\r\\mcp_recorder.py", "--log", "x"]
+    env = {"TAVOTTO_NO_TELEMETRY": "1", "TAVOTTO_MCP_ROOTS": "C:\\p"}
+    want = "bb3649d452650514f027a7cc610f88cf40cbc3d4a43371365080e189f63fec14"
+    assert A.workbuddy_trust_hash(cmd, env) == want
+    approvals = tmp_path / ".workbuddy" / "mcp-approvals.json"
+    approvals.parent.mkdir(parents=True)
+    approvals.write_text(json.dumps({"old::other": 1}), encoding="utf-8")
+    A.workbuddy_isolated_config(tmp_path, cmd, env)
+    got = json.loads(approvals.read_text(encoding="utf-8"))
+    assert set(got) == {"old::other", f"{want}::tavotto"}
+    assert isinstance(got[f"{want}::tavotto"], int)
+
+
+def test_account_model_modes_never_ask_for_our_key(monkeypatch):
+    """WorkBuddy 用账户自带的模型：本机没录 DeepSeek key 也能跑（Codex #1448 P2）。两侧名单同一份。"""
+    assert W.ACCOUNT_MODEL_MODES == A.DESKTOP_LIVE_ACCOUNT_MODEL_MODES
+    assert set(W.ACCOUNT_MODEL_MODES) <= set(A.DESKTOP_LIVE_MODES)
+
+    def no_secret(mode):
+        raise AssertionError(f"{mode} 不该读 key")
+
+    sent: dict = {}
+    monkeypatch.setattr(W, "load_model_secret", no_secret)
+    monkeypatch.setattr(
+        W, "remote_json", lambda argv, stdin=None: sent.update(argv=argv, stdin=stdin) or (0, {})
+    )
+    monkeypatch.setattr(W, "show", lambda rc, out: rc)
+    for mode in W.ACCOUNT_MODEL_MODES:
+        assert W.main(["test", "desktop-live", "--mode", mode]) == 0
+        assert sent["stdin"] is None and sent["argv"][-1] == mode
+
+
+def test_claude_desktop_3p_config_talks_only_to_deepseek_and_allows_only_tavotto_tools(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "real-local"))
+    policy: dict = {}
+    monkeypatch.setattr(A, "claude3p_policy_write", lambda c: policy.update(c) or list(c))
+    monkeypatch.setattr(A, "claude3p_policy_wipe", lambda k: {"wiped": True, "present": False})
+    conf = {"base_url": "https://api.deepseek.com/anthropic", "api_key": "k" * 8, "model": "m1"}
+    cmd = ["py.exe", "rec.py", "log", "--", "py.exe", "server.py"]
+    res = A.claude3p_isolated_config(
+        tmp_path / "home",
+        {},
+        cmd,
+        {"TAVOTTO_MCP_ROOTS": "p"},
+        conf,
+        ["tavotto_health", "tavotto_export"],
+    )
+    written = res["files"]
+    assert len(written) == 2  # run 家目录 + 真实 LOCALAPPDATA（跑完删）
+    assert set(res["policy_written"]) == set(res["policy_expected"])
+    for f in written:
+        meta = json.loads((f.parent / "_meta.json").read_text(encoding="utf-8"))
+        assert f.name == f"{meta['appliedId']}.json"
+        c = json.loads(f.read_text(encoding="utf-8"))
+        assert c["inferenceProvider"] == "gateway"
+        assert c["inferenceGatewayBaseUrl"] == conf["base_url"]
+        # 应用只收 claude 名字的路由；DeepSeek 把 claude-sonnet* 映射到 deepseek-flash，界面标出真实供应商
+        assert c["inferenceModels"] == [
+            {"name": "claude-sonnet-4-5", "labelOverride": "DeepSeek (m1)"}
+        ]
+        assert c["modelDiscoveryEnabled"] is False
+        # 官方文档「Disabling all Anthropic-bound connections」的六条
+        for k in (
+            "disableEssentialTelemetry",
+            "disableNonessentialTelemetry",
+            "disableNonessentialServices",
+            "disableAutoUpdates",
+            "skipWebFetchPreflight",
+        ):
+            assert c[k] is True, k
+        assert c["modelCatalogEnabled"] is False
+        assert {"WebFetch", "Bash", "PowerShell", "Write", "Edit", "mcp__workspace__bash"} <= set(
+            c["disabledBuiltinTools"]
+        )
+        assert c["chatAdvancedFileAnalysisEnabled"] is False
+        assert c["coworkTabEnabled"] is False and c["isClaudeCodeForDesktopEnabled"] is False
+        (srv,) = c["managedMcpServers"]
+        assert srv["transport"] == "stdio" and [srv["command"], *srv["args"]] == cmd
+        assert srv["toolPolicy"] == {"tavotto_health": "allow", "tavotto_export": "allow"}
+    assert policy["inferenceProvider"] == "gateway"  # 同一份配置也进策略键（只在 Windows 上真写）
+    swept = A.sweep_stale_ondisk_configs(tmp_path / "no-runs")
+    assert swept == ["LOCALAPPDATA"]
+    assert not list((tmp_path / "real-local" / "Claude-3p" / "configLibrary").glob("*.json"))
+
+
+def test_uia_driver_reports_the_region_block_and_picks_the_lowest_wide_input():
+    assert D.REGION_BLOCK_RE.search(
+        "App unavailable\nUnfortunately, Claude is only available in certain regions"
+    )
+    assert not D.REGION_BLOCK_RE.search("How can I help you today?")
+    rect = [0, 0, 1000, 800]
+    nodes = [
+        {"t": "ControlType.Edit", "f": True, "r": [10, 20, 600, 30]},  # 上半部的搜索框
+        {"t": "ControlType.Edit", "f": True, "r": [100, 650, 120, 40]},  # 太窄
+        {"t": "ControlType.Document", "f": True, "r": [100, 600, 700, 80]},
+        {"t": "ControlType.Edit", "f": False, "r": [100, 700, 700, 40]},  # 不可聚焦
+    ]
+    assert D.uia_input(nodes, rect)["r"] == [100, 600, 700, 80]
+    assert D.uia_input(nodes[:2], rect) is None
+
+
+def test_uia_onboarding_clicks_only_whitelisted_buttons_never_sign_in():
+    nodes = [
+        {"t": "ControlType.Button", "n": "Or sign in with Claude.ai", "r": [1, 1, 50, 20]},
+        {"t": "ControlType.Text", "n": "Continue", "r": [1, 1, 50, 20]},
+        {"t": "ControlType.Button", "n": "Continue", "r": [10, 400, 200, 40]},
+    ]
+    assert D.uia_onboarding(nodes)["r"] == [10, 400, 200, 40]
+    assert D.uia_onboarding(nodes[:2]) is None
+
+
+def test_claude_desktop_pac_sends_only_the_download_host_through_dmit():
+    import urllib.request
+
+    pac = A.CLAUDE3P_PAC
+    assert '"downloads.claude.ai"' in pac and f"127.0.0.1:{A.PROXY_PORTS['trojan']}" in pac
+    assert pac.count("PROXY") == 1 and 'return "DIRECT"' in pac
+    port = A.serve_pac(pac)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(f"http://127.0.0.1:{port}/proxy.pac", timeout=5) as r:
+        assert r.read().decode() == pac
+
+
+def test_claude3p_tool_uses_counts_only_tool_names(tmp_path):
+    d = tmp_path / "AppData" / "Local" / "Claude-3p" / "local-agent-mode-sessions" / "x"
+    d.mkdir(parents=True)
+    (d / "t.jsonl").write_text(
+        '{"type": "tool_use", "id": "a", "name": "mcp__tavotto__tavotto_health", "input": {}}\n'
+        '{"type":"tool_use","id":"b","name":"PowerShell","input":{"command":"dir"}}\n'
+        '{"type":"text","text":"name: nope"}\n',
+        encoding="utf-8",
+    )
+    assert A.claude3p_tool_uses(tmp_path) == {"mcp__tavotto__tavotto_health": 1, "PowerShell": 1}
+
+
+def test_claude_desktop_is_not_launched_unless_every_policy_value_was_written():
+    # Codex #1450 P1：策略没写全时应用会以标准模式起来、先连 claude.ai
+    src = (WINLAB / "agent.py").read_text(encoding="utf-8")
+    body = src[src.index("cfg = claude3p_isolated_config(") :]
+    check = body.index("if missing:")
+    assert check < body.index("gui_env = dict(env, **_home_env(home))")
+    assert '"environment_unavailable"' in body[check : check + 900]
+    assert "app not launched" in body[check : check + 900]

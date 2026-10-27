@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { CapturedFigureDescriptor } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { createCanvasAndActivate } from '@/store/canvasSession'
+import { useDocumentStore } from '@/store/documentStore'
+import { emptyProject } from '@/types/document'
 import { CaptureThumb, ProbeResultsDialog } from './ScriptLibrary'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 
@@ -127,5 +130,21 @@ describe('ProbeResultsDialog 行布局', () => {
     const first = rows[0].querySelector('img')!
     await act(async () => first.dispatchEvent(new Event('error')))
     expect(rows[0].querySelector('button')?.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('脚本是拖到画布 A 上运行的、用户此刻在画布 B：「添加到画布」切回 A 再加，不加到 B（Codex #1458）', async () => {
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_results')
+    const paper = useDocumentStore.getState().activeCanvasId
+    const other = createCanvasAndActivate('别的画布')
+    expect(useDocumentStore.getState().activeCanvasId).toBe(other)
+    await render(
+      <ProbeResultsDialog script="fig11.py" descriptors={[desc('a'), desc('b')]} dropped={0} open onOpenChange={() => {}} canvasId={paper} />,
+    )
+    const add = document.querySelector<HTMLButtonElement>('[data-capture-add="a"]')!
+    await act(async () => add.click())
+    const st = useDocumentStore.getState()
+    expect(st.activeCanvasId).toBe(paper)
+    expect(st.doc.objects.filter((o) => o.type === 'panel')).toHaveLength(1)
+    expect(st.canvases.find((c) => c.id === other)?.objects.filter((o) => o.type === 'panel') ?? []).toHaveLength(0)
   })
 })

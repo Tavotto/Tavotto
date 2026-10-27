@@ -132,7 +132,7 @@ export function addRuntimePanelToCanvas(
   if (
     deferUserEntry(() => {
       if (opts?.guard && !opts.guard()) return
-      void addRuntimePanelToCanvas(desc)
+      void addRuntimePanelToCanvas(desc, atX, atY)
     }) !== 'run'
   )
     return null

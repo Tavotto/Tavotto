@@ -125,6 +125,17 @@ export interface PrepEntry {
   allowRerun: boolean
   /** 同一脚本换了参数（另一份运行配置）时，旧会话里还在等的运行意图：「打开并运行」带它去后端原子转移，不并存两份 */
   transferFrom: string | null
+  /**
+   * 这次「打开并运行」是用户把脚本**拖到某张画布上**发起的：跑出来的图放进那张画布（落点就是放下的位置），不按「打开 = 换看那一张」
+   * 新建画布（2026-10-27 用户拍板）。只有那个入口给值；「继续」与 AI 修好后的验证重跑是同一个意图的延续，原样带过去；其余入口为 null
+   */
+  placeIn: PlaceIn | null
+}
+
+/** 拖放入口要把图放进的画布与落点（页面毫米坐标；没有落点就按常规摆放） */
+export interface PlaceIn {
+  canvasId: string
+  at?: { x: number; y: number }
 }
 
 export interface EditRender {
@@ -144,7 +155,8 @@ interface PreparationState {
    * 就代用户认领它（授权合同的摘要由 `act` 回显）——这是唯一一条「打开」之后自动认领的路径；其余入口只检查
    */
   /** `rerun: false`：卡上「继续」带着运行意图重开——只认领新的 `run_when_ready`，落到已跑完的同配置会话就复用那份结果，不重跑 */
-  open: (target: PreparationTarget, opts?: { show?: boolean; run?: boolean; rerun?: boolean }) => Promise<void>
+  /** `placeIn`：图要放进的画布（只有「拖到画布上」入口与它的延续传，见 `PrepEntry.placeIn`） */
+  open: (target: PreparationTarget, opts?: { show?: boolean; run?: boolean; rerun?: boolean; placeIn?: PlaceIn | null }) => Promise<void>
   /** 只读补拉（SSE 提示 / 轮询 / 重连） */
   refresh: (key: string) => Promise<void>
   /** SSE `preparation.session`：只是「重读」的提示 */
@@ -548,6 +560,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
             armMaybeFrom: keepArm ? prev.armMaybeFrom : null,
             wantsRun: !!opts?.run,
             allowRerun: opts?.rerun !== false,
+            placeIn: opts?.placeIn ?? null,
             transferFrom: sameTarget
               ? (prev?.transferFrom ?? null)
               : prev?.report?.intent?.status === 'active'
@@ -792,6 +805,7 @@ async function autoEnterEdit(
           })
           return sameResult() && surface?.key === key && surface.mode === 'card'
         },
+        placeIn: store().entries[key]?.placeIn ?? undefined,
       },
       figure,
     )

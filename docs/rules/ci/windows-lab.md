@@ -126,8 +126,8 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
   （取自 microsoft/winget-pkgs 的清单），下载后核散列、核 Authenticode 为 Valid；非管理员静默装（currentUser）；
   `window_probe.py` 在交互会话里启动它，**主窗口**出现才算——可见、未被 DWM 隐藏、有标题、尺寸像窗口、属于安装目录
   里的进程、连续稳定 5 s；然后结束它起的全部进程并卸载。VS Code 系用 run 目录里的 `--user-data-dir`。宿主自带的
-  Agent 要各自账户的一律 BLOCKED；要什么由 `desktop-native --mode <宿主>` 实测记录（见下）。Claude Desktop 只装、只起到登录页，
-  不登录、不调用模型（地区政策同上）。
+  Agent 要各自账户的一律 BLOCKED；要什么由 `desktop-native --mode <宿主>` 实测记录（见下）。Claude Desktop 的标准模式在 Lab
+  首屏即「App unavailable in region」，只装、只起到这一屏；L3+ 只走下面的 `claude-desktop-native`（第三方推理）。
 - **原生 Agent 首屏探查 `desktop-native --mode <宿主>`**：装法同 L2，`native_probe.py` 在交互会话里起宿主（调试端口同下只绑回环；
   宿主拒绝这个开关就不带它再起一次、只记窗口标题与截图），等首屏文字连续两次取样不变且不是「准备中」（最多 240 s），记下每个
   页面的文字与截图，**不打字、不登录、不调模型**；唯一允许的点击是 `NATIVE_PEEK` 里按宿主登记的那一个入口按钮（逐字，如 ZCode 的
@@ -169,7 +169,7 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
     非项目对话的默认工作目录 `zdata\.zcode\workspace\default\.zcode\` 三处——只写前两处时桌面版读不到。权限：`allowedTools` 只列
     tavotto 的**完整工具名**（从服务端 `HANDLERS` 现读；ZCode 不认前缀，桌面版也不认配置里的 `yolo`），执行 / 写入 / 上网的内置工具
     明确禁用。进程链判据同上（`host_ancestor` = `ZCode.exe`）。
-  - **落盘例外（仅 `DESKTOP_LIVE_ONDISK_MODES` = `zcode-native`，用户 2026-10-26 同意）**：ZCode 只从明文 `provider_config.json`
+  - **落盘例外（`DESKTOP_LIVE_ONDISK_MODES` = `zcode-native`，用户 2026-10-26 同意；`claude-desktop-native` 见下，2026-10-27）**：ZCode 只从明文 `provider_config.json`
     读 key、不支持环境变量替换。所以这一格用**另一把专用、设了消费上限的 key**——用户在自己的终端 `secret-init deepseek --ondisk`
     录入，存本机 `model-ondisk.json`（0600），与默认那把相同就拒收；缺了就不跑，**绝不退回默认那把**。key 只写本次 run 的
     `zdata`；`run_desktop_live_task` 的 `finally` 里 `wipe_ondisk_key` 删掉该文件、抹掉 run 目录里其它出现，再扫 run 目录与 ZCode 的
@@ -177,6 +177,44 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
     `ondisk_key: {wiped, residual, unreadable, checked_app_dirs}`——核对流式扫任意大小的文件，读不了的算没核对完；单个文件抹不掉不中断收尾；
     收尾放在卸载外面的 `finally`（卸载抛异常也清）；上一次 run 被强行结束时，下一次 `zcode-native` 开跑前先删掉所有旧 run 里残留的
     `provider_config.json`（报告 `swept_stale_ondisk_configs`）。默认那把（hosts-live 与其它 desktop-live 格）照旧不落盘。
+  - **原生 Agent 格 `workbuddy-native`**：WorkBuddy 自己的 Agent，推理用**登录账户自带的模型**（界面可见，如 GLM-5.3-Flash；
+    报告 `model.provider = workbuddy-account`），不经我们的任何 key。登录态是例外，见下条。首启跳过 `splash.html`；先选工作区
+    （选择器已显示项目文件夹名就不点；否则菜单「Open Local Folder」→ 系统选文件夹框：先点掉挡在前面的「位置不可用」类报错框，
+    再把路径写进控件 id 1152 / ComboBox 里的输入框、按 IDOK，没关就再按，最多三下；每步记 `dialog_diag`）。原生宿主的编辑器不认
+    `execCommand` 填的字（发送键一直灰）：先真实点一下输入框、再 CDP `Input.insertText`，落空才退回 `execCommand` + 真实空格退格；
+    发送依次试回车 / 按钮 / Ctrl+Enter，每试一次截图。MCP 写常驻家目录的 `.workbuddy\mcp.json`（每次 run 改指本次的录制器）；
+    用户自加的 MCP 要在连接器页点「Trust」才加载——执行器替这一步在同目录 `mcp-approvals.json` 只记 tavotto 一条（键 =
+    WorkBuddy 5.8.3 `computeTrustConfigHash` 的指纹 `::tavotto`），报告 unverified 写明。Tavotto 的会话日志在宿主的
+    `LOCALAPPDATA`（常驻家目录下）里找。进程链判据同上（`host_ancestor` = `WorkBuddy.exe`）。
+  - **登录态常驻例外（仅 `workbuddy-native*`，用户 2026-10-27 同意）**：WorkBuddy 要账户登录。用**专用测试账户**；登录方式是
+    驱动器在本次 run 自己的 Edge 配置里打开登录页、每 15 s 截 `login-qr.png`，Mac 端经只读的 `winlab shot` 取回给用户手机扫，
+    **聊天里不收密码 / 验证码**。登录态常驻 `state\workbuddy-home`（该宿主的整个用户目录：`USERPROFILE` / `APPDATA` /
+    `LOCALAPPDATA` 都指过去），不进证据、不随 run 删，下一次 run 直接复用；`winlab sweep --workbuddy-logout` 结束 WorkBuddy
+    进程、重置它自设的 ACL、删掉整个目录并清凭据管理器里的 WorkBuddy 条目，撤销即用它。每次 run 的 Edge 登录配置照旧随 run 删、
+    开跑前扫掉旧 run 的残留。`workbuddy-native-phone` 是手机号 + 短信验证码的登录方式：值只经 `winlab login-input` 的 stdin
+    送进正在跑的 run，驱动器读到即删；**未实测通过**（短信未到）。
+  - **原生 Agent 格 `claude-desktop-native`（用户 2026-10-27：「不连接claude的官方服务，只用DeepSeek连接」）**：Claude
+    Desktop 的官方第三方推理（Claude Desktop on 3P），`inferenceProvider = gateway` → DeepSeek 的 Anthropic 兼容接口，**不登录
+    Anthropic、不调 Anthropic 模型**。官方文档「Disabling all Anthropic-bound connections」的六条全关（两类遥测、非必要服务、
+    自动更新、模型目录、WebFetch 预检）；Cowork 与 Code 关，只开 Chat；执行 / 写入 / 上网的内置工具与应用自带的工作区 shell
+    `mcp__workspace__bash` 列进 `disabledBuiltinTools`。tavotto 经 `managedMcpServers` 起本地 stdio → 录制器，`toolPolicy` 只放行
+    tavotto 自己的工具名。模型：应用只收指向 Anthropic 模型名的路由，所以路由名是 `claude-sonnet-4-5`、显示名「DeepSeek (…)」，
+    DeepSeek 按其官方文档把 `claude-sonnet*` 映射到 `deepseek-flash`；报告 `model.route` 与 `model.model` 分开记。
+    - **配置位置**：本地 `configLibrary` 被忽略（标准模式先加载 claude.ai、在地区页停住），只有用户级策略
+      `HKCU\SOFTWARE\Policies\Claude` 能让它进 3P。普通用户写不进 Policies，所以 **`winlab admin claude-policy-acl`（用户同意的
+      一次性管理员动作）**只建这一个键、只授 tavotto-lab `SetValue, ReadKey`，**不写任何值、不经手 key**；每次 run 由 agent 以
+      tavotto-lab 身份写值（含 key，落盘例外同 ZCode：`secret-init deepseek --ondisk` 那把专用限额 key），`wipe_ondisk_key` 跑完删光
+      全部值并核对（`ondisk_key.policy_key_present` 必须为 false）；`configLibrary` 也照写一份在 run 家目录与真实 `LOCALAPPDATA`，同样删。
+    - **唯一经 DMIT 的流量**（用户 2026-10-27：「如果一定要下载，就是用dmit吧」）：会话开始时应用要从 `downloads.claude.ai` 取内置
+      的 Claude Code（直连超时，会话起不来）。本次 run 在回环上起一个 PAC（`egressProxyPacUrl`）：**只有这一个主机**
+      `PROXY 127.0.0.1:<trojan>`，其余（含 DeepSeek 推理）`DIRECT`；DMIT 没在听就 `environment_unavailable`，不退回直连。报告
+      `egress` 写明。安装包只用 L2 时已缓存、已核散列的那份，这一格从不下载安装包。
+    - **驱动**：应用拒绝调试端口，不走 CDP。`--force-renderer-accessibility` + PowerShell 的 UI Automation 读控件树；首屏只点
+      `UIA_ONBOARDING_BUTTONS`（Continue / Skip / Not now / Get started 逐字相等），名字带 sign in / Claude.ai / account 的一律不点；
+      输入用真实键鼠（点输入框、剪贴板 + Ctrl+V、回车）；面板有 Stop / responding / Preparing 时不判安静。宿主自报地区不可用就
+      `environment_unavailable`（BLOCKED），**不绕**。Squirrel 的 `claude.exe` 是启动壳（1 s 就退），等安装目录下的主窗口。
+    - **已知余项**：这一版的工作区 shell 配置关不掉——报告 `host_tool_uses` / `host_shell_commands` 从会话记录里列出模型实际用过的
+      工具名与命令原文（截 300 字）；验收那次它只跑了一条只读的 `ls /sessions/*/mnt/`（找 Tavotto 落成文件的大结果）。
   - CC-Switch 的落盘例外**不在此**（单独的 PR 与单独的规则条目）。
-- 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境（交互会话里再经命名管道），除上面登记的 `zcode-native` 外 Lab 不落盘；证据落盘前抹掉凭据。证据字段按
+- 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境（交互会话里再经命名管道），除上面登记的 `zcode-native` / `claude-desktop-native`（key）与 `workbuddy-native*`（账户登录态）外 Lab 不落盘；证据落盘前抹掉凭据。证据字段按
 `docs/implementation/multi-host-mcp/acceptance.md`。

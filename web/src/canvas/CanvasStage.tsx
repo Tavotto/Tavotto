@@ -12,6 +12,7 @@ import { useProjectStore } from '@/store/projectStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
 import { addPanelToCanvas, useWorkspaceStore } from '@/store/workspace'
+import { acceptsScriptDrag, useCanvasScriptDrop } from './useCanvasScriptDrop'
 import { clientToMm, mmToPx, mmToViewX, mmToViewY, mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { emptyStateAnchor } from '@/lib/emptyStateAnchor'
 import { shouldFitOnDoubleClick } from '@/lib/fitGuard'
@@ -77,6 +78,7 @@ export function CanvasStage() {
   if (fastEdit && canvasMenu) setCanvasMenu(null)
   /** 素材拖进来时的落点预览（mm，与松手后 `addPanelToCanvas` 落的是同一个框） */
   const ghost = useDropGhost(fastEdit)
+  const dropScript = useCanvasScriptDrop()
 
   // 「适应」看的是哪一块。快速编辑下是那张图的包围盒（图比页面大是常态，
   // 按页面 fit 会把它切掉一半）；排版下是页面。
@@ -231,6 +233,10 @@ export function CanvasStage() {
             e.preventDefault()
             e.dataTransfer.dropEffect = 'copy'
             ghost.over(e.clientX, e.clientY)
+          } else if (acceptsScriptDrag([...e.dataTransfer.types])) {
+            // 系统拖来的文件（.py）：接受这次拖动，macOS 壳才会旁听到路径（ADR 0092）
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
           }
         }}
         onDragLeave={(e) => {
@@ -239,7 +245,14 @@ export function CanvasStage() {
         onDrop={(e) => {
           ghost.clear()
           const pid = e.dataTransfer.getData('application/x-panel-id')
-          if (!pid) return
+          if (!pid) {
+            if (!acceptsScriptDrag([...e.dataTransfer.types])) return
+            // 拖到这张画布上的脚本：运行它，图放进这张画布（单图编辑这一屏没有页面坐标，不带落点）
+            e.preventDefault()
+            const canvasId = useDocumentStore.getState().activeCanvasId
+            dropScript(e.dataTransfer, fastEdit ? { canvasId } : { canvasId, at: clientToMm(e.clientX, e.clientY) })
+            return
+          }
           e.preventDefault()
           const info = useAssetStore.getState().byId[pid]
           if (!info) return
