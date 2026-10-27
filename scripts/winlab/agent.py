@@ -3960,7 +3960,10 @@ def run_desktop_live_task(
         else None,
         "native_agent": cell.native,
         **({"swept_stale_ondisk_configs": swept} if swept else {}),
-        "model": {
+        # WorkBuddy 用登录账户自带的模型（界面上可见，如 GLM-5.3-Flash），不经我们的 key
+        "model": {"provider": "workbuddy-account", "model": None}
+        if cell.native and host.id == "workbuddy"
+        else {
             "provider": model_conf.get("provider"),
             "model": model_conf.get("model")
             or DEFAULT_HOST_MODEL,  # 与 _host_model_env 实际传给宿主的同一个
@@ -4288,7 +4291,11 @@ def _desktop_live_body(
     s1 = parse_recorded(rec_log)
     split = _line_count(rec_log)
     sid = opened_session_id(s1)
-    data_dir = Path(env.get("LOCALAPPDATA") or Path.home()) / "Tavotto"
+    # 宿主拉起的 Tavotto 继承的是宿主的环境：WorkBuddy 的 LOCALAPPDATA 指在常驻家目录下（run 20261027T073602Z-c417c0
+    # 在 run 的 LOCALAPPDATA 里找不到会话日志）
+    data_dir = (
+        Path(public_env.get("LOCALAPPDATA") or env.get("LOCALAPPDATA") or Path.home()) / "Tavotto"
+    )
     journal_ok = journal_has_edits(data_dir, sid)
     r2: dict = {"step": {"skipped": "no session id from session 1"}, "driver": {}}
     if sid:
@@ -4359,7 +4366,7 @@ def _desktop_live_body(
     return {
         **base,
         "result": av.aggregate([levels["L2"], levels["L3"], levels["L4"], levels["L5"]]),
-        "summary": f"{host.id} {host.display_version} + {agent_label}{' ' + ext.version if ext else ''} via {model_conf.get('provider', '?')}: "
+        "summary": f"{host.id} {host.display_version} + {agent_label}{' ' + ext.version if ext else ''} via {base['model']['provider'] or '?'}: "
         f"L3={levels['L3']} L4={levels['L4']} L5={levels['L5']}",
         "server_side_calls": {
             "session_1": [
