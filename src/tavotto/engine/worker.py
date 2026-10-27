@@ -1145,6 +1145,13 @@ class Worker(wireproto.V1Handler):
         # 账本的观察钩子之后才装：这里先留一份原始 lexists，守卫自己判「目标在不在」时不被当成脚本的观察
         real_lexists = os.path.lexists
 
+        def _real_path(p) -> Path:
+            # 守卫判「真身在不在真实图库」用 `os.path.realpath`，不用 `Path.resolve()`：3.12 的非 strict
+            # `resolve()` 末尾还会 `self.stat()` 一次（3.13 去掉了），那一下经过账本的 `os.stat` 观察包装，
+            # 被记成「脚本回读了刚被拦下的路径」——项目模式里删一个过期输出、再删一次同一个文件，
+            # 3.12 上整次 build 判 `safe_file_operation_blocked`（发行档 lab 第一次在 3.12 上跑出来）。
+            return Path(os.path.realpath(os.fspath(p)))
+
         def _guarded_unlink(p, missing_ok=False):
             if missing_ok and not real_lexists(p):
                 # `unlink(missing_ok=True)` 且目标不在：直跑要么删掉它、要么 no-op，随后 exists() 两边都是 False——
@@ -1152,7 +1159,7 @@ class Worker(wireproto.V1Handler):
                 # 不等于「直跑时没有」（文件可能按相对路径写进了沙盒），那里仍按被拦记账。
                 return None
             try:
-                if p.resolve().is_relative_to(real_figs):
+                if _real_path(p).is_relative_to(real_figs):
                     print(f"[guard] 跳过删除真实图库文件: {p}", file=sys.stderr)
                     ledger.blocked("Path.unlink", ledger.KIND_DELETE, p)
                     return None
@@ -1179,7 +1186,7 @@ class Worker(wireproto.V1Handler):
         # 那是它自己的输出（文案如实说「已有同名文件会被脚本改写」）。
         def _inside_real(path) -> bool:
             try:
-                return Path(os.fspath(path)).resolve().is_relative_to(real_figs)
+                return _real_path(path).is_relative_to(real_figs)
             except (OSError, TypeError, ValueError):
                 return False
 
@@ -1231,7 +1238,7 @@ class Worker(wireproto.V1Handler):
 
         def _guarded_write_text(p, *a, **kw):
             try:
-                if p.resolve().is_relative_to(real_figs):
+                if _real_path(p).is_relative_to(real_figs):
                     print(f"[guard] 跳过写入真实图库文件: {p}", file=sys.stderr)
                     ledger.blocked("Path.write_text", ledger.KIND_WRITE, p)
                     return 0
