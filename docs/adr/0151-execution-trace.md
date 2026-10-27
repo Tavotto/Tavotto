@@ -163,15 +163,16 @@ PR3 的读取走 REST 权威快照。
   运行中且展开时每秒取一次权威快照，`ai.done` 已有的终局通知触发最后一次。
 * **前端**：原型搬进 `web/src/components/ai/traceWaterfall/`（视觉门禁、i18n、图标集按仓库规则改写，交互与版式保留）；`lib/execTrace.ts` 是唯一转换层；
   转录的「执行记录」与任务历史的「技术详情」共用 `TraceDetails`。规则全文 `docs/rules/frontend/execution-trace-ui.md`。
-* **性能**（`e2e/exec-trace-perf.spec.ts`，489 Span + 200 观察点、运行中、Chromium，三次）：展开到首行 524–741 ms；5 s 实时窗口长任务 1 个、140–156 ms。
-  改之前（时间轴随此刻连续伸缩、行不 memo）是 24 个 / 累计 1.56 s：运行中时间轴改取阶梯值、行只在含未结束 Span 时随 `now` 重画。没有改用 Canvas、没有虚拟化。
+* **性能**（`e2e/exec-trace-perf.spec.ts`，489 Span + 200 观察点、运行中、Chromium，三次）：展开到首行 524–741 ms；含首渲在内的 5 s 窗口长任务 1 个、140–156 ms（那一个就是首渲）。
+  改之前（时间轴随此刻连续伸缩、行不 memo）同口径是 24 个 / 累计 1.56 s。用例后来改成首渲之后静置 1 s 再开 5 s 窗口（只量实时刷新本身）：本机 0 个长任务。
+  这个用例不进黄金路径，经 `playwright.perf.config.ts` 在 performance-agent workflow 里跑：运行中时间轴改取阶梯值、行只在含未结束 Span 时随 `now` 重画。没有改用 Canvas、没有虚拟化。
 
 ## 修订：PR4——诊断、归因、Guardian 对比与回归体系（2026-10-27）
 
 * **出门投影与归因**（`engine/exectrace_diag.py`）：离开本机前再走一遍**独立**的白名单投影（逐字段按形状 / 闭集 / 词表重校验，不认识的丢，
   不导出 `task_ref` / `session_ref` / scope，冗余事件不出门）。归因分开给「最早失败的阶段」（`origin`，Trace 记下的第一次失败；任务失败却没记过 =
   `unknown`）、「连带失败」（`cascade`，不含根）、「最长耗时」（`slowest.is_cause = false`）、「最终结局」；另有修复尝试、重试、重复工具调用、预算、
-  用户拒绝、超时、是否经真实执行验证（只认 `verify` / `script_run` 区间，没有就 `unknown`）、完整 / 截断 / 中断。Task Diagnostic 仍是任务诊断的权威。
+  用户拒绝、超时、是否经真实证据验证（AI 任务只认 Task Core 结局 `completed`、修复会话只认结局 `fixed`、准备只认真实执行区间 `script_run`；阶段 Span 的 ok 不算，说不出就 `unknown`）、完整 / 截断 / 中断。Task Diagnostic 仍是任务诊断的权威。
 * **诊断包 schema 9**：新增 `exec-traces.json`（本项目最近 8 条，失败在前，整节 ≤192 KiB，超了从尾部丢并记 `truncated`）。同源对：
   `diagnostics.BUNDLE_SCHEMA_VERSION` ↔ `web/src/diagnostics/types.ts` ↔ 壳 `shell_report.rs` 的 `BUNDLE_SCHEMA` ↔ `tests/golden/diag_shell_report.json`。
   追踪关闭 / 没有记录时不放这个文件（不放空壳）。上传仍只有用户逐次确认的「发送问题反馈」一条路（ADR 0118），遥测同意语义不变。

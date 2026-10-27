@@ -14,7 +14,7 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e',
   // Agent 专用长时间性能基准由 playwright.perf.config.ts 启动，常规黄金路径不运行它。
-  // exec-trace-perf.spec.ts 是墙钟性能预算（共享 runner 上会抖），同样只经 playwright.perf.config.ts 跑
+  // exec-trace-perf.spec.ts 是墙钟性能预算，与 perf-agent 一样只经 playwright.perf.config.ts（performance-agent workflow）跑
   testIgnore: ['perf-agent.spec.ts', 'exec-trace-perf.spec.ts'],
   // 每个用例都要起一次后端（含冷启动的 matplotlib 会话），给足时间
   timeout: 180_000,
