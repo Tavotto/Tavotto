@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -55,6 +56,7 @@ ROW_FIELDS = (
     "output_tokens",
     "cached_input_tokens",
     "cost_usd",
+    "task_refs",  # 这一行跑的 AI 会话 id（= 该次执行 Trace 的 task_ref；只增不改，见 ADR 0151）
 )
 #: `--real builtin`：内置执行器臂（ADR 0147）。走产品同一条 `/api/ai/run`，只是请求带 `connection` 并由路由选到 builtin
 BUILTIN_ARM = "builtin"
@@ -523,7 +525,7 @@ def _take_usage(line: str, box: dict) -> None:
 
 def _row(s, variant, **kw) -> dict:
     row = dict.fromkeys(ROW_FIELDS)
-    row.update({"id": s["id"], "variant": variant, "unintended": False, **kw})
+    row.update({"id": s["id"], "variant": variant, "unintended": False, "task_refs": [], **kw})
     return row
 
 
@@ -601,6 +603,7 @@ def _one(
         return r.get_json()["manifest"]
 
     t0 = time.monotonic()
+    sid = None
     try:
         before = render()
         data_before = user_files()  # 改前渲染之后、任务之前：任务期间任何用户文件变化都算非预期修改
@@ -628,7 +631,12 @@ def _one(
         task = ai_tasks.load(sid) or {}
         after = render()
     except Exception as exc:  # noqa: BLE001 —— 一个场景跑不起来记成 not_run，不让整批中断
-        return _row(s, variant, error=f"{type(exc).__name__}: {exc}"[:300])
+        return _row(
+            s,
+            variant,
+            error=f"{type(exc).__name__}: {exc}"[:300],
+            task_refs=[sid] if sid else [],
+        )
     wall = round(time.monotonic() - t0, 3)
     checks = figureverify.verify(s.get("goal", []), s.get("preserve", []), after, before)
     from tavotto.engine.ai_tasks import aggregate_verdict
@@ -650,6 +658,7 @@ def _one(
         wall_s=wall,
         **{k: (usage_box or {}).get(k) for k in USAGE_KEYS},
         error=sess.get("error"),
+        task_refs=[sid],
     )
 
 
@@ -707,6 +716,20 @@ def compare(a: dict, b: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def write_exec_trace_analysis(report: dict, data_dir: Path, out: Path) -> None:
+    """`--exec-trace-out`：用本次基准自己的数据目录里的 Trace 跑只读分析（`scripts/ci/exectrace_analysis.py`），
+    报告本身当作 `--guardian-results`（行里的 `task_refs` 就是关联）。不起模型、不改报告、不改 Trace。"""
+    from tavotto.engine import exectrace
+
+    exectrace.RECORDER._store.flush(10.0)  # 后台写线程可能还有没落盘的终态
+    path = ROOT / "scripts" / "ci" / "exectrace_analysis.py"
+    spec = importlib.util.spec_from_file_location("_tavotto_exectrace_analysis", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    analysis = mod.build_report(data_dir / "cache" / "exec-trace", report)
+    out.write_text(json.dumps(analysis, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument(
@@ -755,6 +778,12 @@ def main(argv=None) -> int:
     ap.add_argument("--model", default=None, help="钉住模型（--real 必填；两臂必须相同）")
     ap.add_argument("--effort", default=None, help="钉住推理强度（可选；两臂必须相同）")
     ap.add_argument(
+        "--exec-trace-out",
+        type=Path,
+        default=None,
+        help="跑完后用本次数据目录里的执行 Trace 做只读分析，写到这个文件（默认不做；不多调模型）",
+    )
+    ap.add_argument(
         "--compare", nargs=2, type=Path, metavar=("A", "B"), help="比较两份报告，输出 Markdown"
     )
     args = ap.parse_args(argv)
@@ -766,6 +795,9 @@ def main(argv=None) -> int:
         else:
             print(text)
         return 0
+    if args.exec_trace_out and args.holdout:
+        print("--exec-trace-out 会带出逐场景 id，不能用于 --holdout", file=sys.stderr)
+        return 2
     if args.real and not args.model:
         print(
             "--real 必须用 --model 钉住模型（两臂用同一个，否则差值不可归因于 Pack）",
@@ -835,6 +867,8 @@ def main(argv=None) -> int:
         return 2
     rows = report["rows"]
     report["split"] = split
+    if args.exec_trace_out:
+        write_exec_trace_analysis(report, work / "data", args.exec_trace_out)
     if args.holdout:
         report.pop("rows")  # holdout 只出汇总分
         report["metrics"] = _metrics(rows, aggregate_only=True)

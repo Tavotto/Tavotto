@@ -277,3 +277,23 @@ def test_a_bench_row_passes_only_by_taf_benchs_own_final_ok_including_the_goal()
         entry = ea._case_entries({"rows": [row]})[0]
         assert entry["passed"] is tb.final_ok(row), goal
     assert ea._case_entries({"rows": [dict(base, goal="failed")]})[0]["passed"] is False
+
+
+def test_bench_rows_link_through_their_recorded_task_refs(root):
+    """taf_bench 每行记的 `task_refs: [会话 id]` 就是 Trace 的 `task_ref`；无需 trace_ids。"""
+    t = make(root, ref="sess9")
+    results = {
+        "rows": [
+            {
+                "id": "s9",
+                "variant": "ref",
+                "outcome": "completed",
+                "figure_verdict": "verified",
+                "goal": "verified",
+                "task_refs": ["sess9"],
+            }
+        ]
+    }
+    (row,) = rows_of(root, results)
+    assert row["case_id"] == "s9/ref" and row["verdict_pass"] is True
+    assert t is not None

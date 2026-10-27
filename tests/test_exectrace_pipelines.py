@@ -399,7 +399,7 @@ def test_a_real_preparation_leaves_a_trace_on_disk_with_the_stage_facts_mapped(t
                 if not p.name.endswith(".open.json")
                 and json.loads(p.read_text(encoding="utf-8"))["trace"].get("task_ref") == plan_id
             ],
-            timeout=20,
+            timeout=60,
         )
     snap = found[0]
     run = _spans(snap, "script_run")[0]

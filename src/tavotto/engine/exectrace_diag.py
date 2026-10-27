@@ -164,46 +164,70 @@ def attribution(snapshot: dict) -> dict:
     non_root = [s for s in spans if s.get("span_id") != root_id]
     ff = snapshot.get("first_failure") if isinstance(snapshot.get("first_failure"), dict) else None
 
-    # ① 最早失败的阶段（根因候选）：Trace 记下的第一次失败；没记过但任务失败了 = unknown
-    if ff and ff.get("span_id") != root_id:
+    failed_task = status in _FAILING
+    # ① 最早失败的阶段（根因候选）：只在任务真的失败时给。任务成功了，途中自愈的失败（Agent 调错工具又改正）不是「起源」，
+    #    单列在 `recovered`（真实 Codex 验证发现：修好的会话被归因到一次被策略挡下的读取）
+    if not failed_task:
+        origin = None
+    elif ff and ff.get("span_id") != root_id:
         origin = {
             "stage": _closed(ff.get("name"), exectrace.SPAN_NAMES),
             "error_code": _code(ff.get("error_code")),
             "attempt": _count(ff.get("attempt")),
         }
-    elif status in _FAILING:
+    else:
         origin = {
             "stage": "unknown",
             "error_code": _code(snapshot.get("error_code")),
             "attempt": None,
         }
-    else:
-        origin = None
 
     # ② 后续连带失败：第一次之后的其他失败（不含根；根的失败是它们的结果）
     failing = [s for s in non_root if s.get("status") in _FAILING]
     first_id = ff.get("span_id") if ff else None
-    cascade = [
+    others = [
         {
             "stage": _closed(s.get("name"), exectrace.SPAN_NAMES),
             "error_code": _code(s.get("error_code")),
         }
         for s in failing
-        if s.get("span_id") != first_id
+        if s.get("span_id") != first_id or not failed_task
     ][:MAX_CASCADE]
-
-    # ③ 最长耗时的阶段：单独给，明确它不是根因
-    measured = [
-        s
+    cascade = others if failed_task else []
+    recovered = [] if failed_task else others
+    blocked = sum(
+        1
         for s in non_root
-        if s.get("kind") != "agent"
+        if s.get("name") == "tool_call"
+        and (s.get("attributes") or {}).get("approved_by") == "blocked"
+    )
+
+    # ③ 最长耗时的阶段：单独给，明确它不是根因；算的是**自身**耗时——等用户点卡片的时间（子 user_wait）扣掉，
+    #    不把用户在想的那几秒算成工具慢（真实 Codex 验证发现）
+    waited: dict[str, float] = {}
+    for s in non_root:
+        if s.get("name") == "user_wait" and _num(s.get("duration_ms")):
+            pid = s.get("parent_span_id")
+            waited[pid] = waited.get(pid, 0.0) + s["duration_ms"]
+    own = {
+        s.get("span_id"): s["duration_ms"] - waited.get(s.get("span_id"), 0.0)
+        for s in non_root
+        if s.get("kind") not in ("agent", "wait")
         and s.get("timing") in ("measured", "reported")
         and _num(s.get("duration_ms"))
-    ]
-    slowest = max(measured, key=lambda s: s["duration_ms"], default=None)
+    }
+    slowest_id = max(own, key=own.get, default=None)
+    slowest = next((s for s in non_root if s.get("span_id") == slowest_id), None)
 
     names = [s.get("name") for s in spans]
     corrections = names.count("correct")
+    changes = sum(
+        1
+        for s in non_root
+        if s.get("name") == "tool_call"
+        and (s.get("attributes") or {}).get("tier") in ("tavotto", "listed", "user_env")
+        and s.get("status") in (exectrace.STATUS_OK, *_FAILING)
+    )
     runs = [s for s in non_root if s.get("name") == "agent_run"]
     retried = sum(1 for s in non_root if (_count(s.get("attempt")) or 1) > 1)
     tool_counts: dict[str, int] = {}
@@ -225,6 +249,10 @@ def attribution(snapshot: dict) -> dict:
     runs_real = [s for s in non_root if s.get("name") == "script_run"]
     if snapshot.get("operation_kind") == "ai_task":
         verified = "verified" if root_outcome == "completed" else "unknown"
+    elif snapshot.get("operation_kind") == "fix_session":
+        # 修复会话交 `fixed` 之前，产品要求本会话最后一次改动之后的应用执行证据（ADR 0149 修订 2026-10-25）：
+        # 结局 fixed 就是那道门过了；其余结局说不出 = unknown（AI 自述或副本运行不算）
+        verified = "verified" if root_outcome == "fixed" else "unknown"
     elif runs_real and runs_real[-1].get("status") in (exectrace.STATUS_OK, *_FAILING):
         verified = "verified" if runs_real[-1].get("status") == exectrace.STATUS_OK else "failed"
     else:
@@ -238,14 +266,19 @@ def attribution(snapshot: dict) -> dict:
         "slowest": (
             {
                 "stage": _closed(slowest.get("name"), exectrace.SPAN_NAMES),
-                "duration_ms": _num(slowest.get("duration_ms")),
+                "duration_ms": _num(own[slowest_id]),
                 "is_cause": False,
             }
             if slowest
             else None
         ),
-        "repair_attempted": corrections > 0 or snapshot.get("operation_kind") == "fix_session",
-        "repair_attempts": corrections,
+        "recovered": recovered,
+        "blocked_calls": blocked,
+        "repair_attempted": corrections > 0
+        or changes > 0
+        or snapshot.get("operation_kind") == "fix_session",
+        # AI 改图：修正轮数；智能修复：动了环境的工具调用数（tavotto / listed / user_env 档）
+        "repair_attempts": corrections + changes,
         "agent_runs": len(runs),
         "retried_spans": retried,
         "repeated_tool_calls": repeated,

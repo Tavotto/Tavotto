@@ -592,7 +592,30 @@ def new_row(cid: str, layer: str, before: dict | None = None) -> dict:
         "product_classification": None,
         "raw": {},
         "unverified": list(UNVERIFIED_BASE),
+        #: Execution trace ids produced by this case (`scripts/ci/exectrace_analysis.py` links traces back by them;
+        #: a trace never supplies the verdict)
+        "trace_ids": [],
     }
+
+
+def _collect_exec_traces(work: Path, evidence: Path) -> list[str]:
+    """Execution traces from this case's own data dir (ADR 0151 PR4): record their ids as the case <-> trace link
+    and copy the frozen records into the evidence dir (the work dir is removed afterwards). Read-only and
+    verdict-neutral: `status` / `failure_category` still come only from this module's own predicates."""
+    found: list[str] = []
+    try:
+        dest = evidence / "exec-trace"
+        for path in sorted(work.glob("**/data/cache/exec-trace/*.json")):
+            if path.name.endswith(".open.json"):
+                continue
+            tid = path.stem
+            if len(tid) == 32 and all(c in "0123456789abcdef" for c in tid):
+                dest.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, dest / path.name)
+                found.append(tid)
+    except OSError:
+        pass
+    return found
 
 
 def finalize_row(row: dict) -> dict:
@@ -1149,6 +1172,7 @@ def _execute(request: dict) -> dict:
         )
     row["timings_s"]["tavotto"] = round(time.monotonic() - t0, 3)
     row["environment_after"] = environment()
+    row["trace_ids"] = _collect_exec_traces(work, evidence)
     launches = {}
     for role in ("native", "tavotto"):
         log = work / f"{role}-execs.jsonl"

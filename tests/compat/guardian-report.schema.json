@@ -381,6 +381,13 @@
             "minLength": 1
           }
         },
+        "trace_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "[0-9a-f]{32}"
+          }
+        },
         "fixture": {
           "$ref": "#/$defs/fixture"
         },

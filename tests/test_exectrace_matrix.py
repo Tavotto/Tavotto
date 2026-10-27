@@ -108,7 +108,7 @@ def test_t02_a_missing_dependency_is_located_at_the_real_execution_and_carries_i
         plan_id = state["plan"]["plan_id"]
         store = work / "data" / "cache" / "exec-trace"
         snap = None
-        for _ in range(100):
+        for _ in range(600):  # 盘上那份由后台写线程落盘：满载的机器上留足余量
             found = [
                 json.loads(p.read_text(encoding="utf-8"))["trace"]
                 for p in store.glob("*.json")

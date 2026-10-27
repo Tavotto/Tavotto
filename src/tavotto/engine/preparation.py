@@ -1679,7 +1679,9 @@ def _trace_terminal(result: PreparationResult) -> None:
         xt = result.exec_trace
         status = _PREP_TRACE_END.get(result.status, "unknown")
         code = (result.error or {}).get("code") if status == "failed" else None
-        exectrace.observe_stage_trace(xt, result.trace.to_payload(), parent=result.exec_span)
+        exectrace.observe_stage_trace(
+            xt, result.trace.to_payload(), parent=result.exec_span, legacy_t0=result.trace._t0
+        )
         xt.end_span(result.exec_span, status, error_code=code)
         xt.finish(status, error_code=code, attributes={"outcome": result.status})
     except Exception:  # noqa: BLE001

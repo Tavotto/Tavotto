@@ -982,7 +982,7 @@ def _trace_terminal(job: ExportJob) -> None:
         code = None
         if status == "failed":
             code = job.error_code or ("partial" if job.status == STATUS_PARTIAL else job.status)
-        exectrace.observe_stage_trace(xt, job.trace.to_payload())
+        exectrace.observe_stage_trace(xt, job.trace.to_payload(), legacy_t0=job.trace._t0)
         xt.finish(status, error_code=code, attributes={"outcome": job.status})
     except Exception:  # noqa: BLE001 —— 观察不是导出的一部分
         pass

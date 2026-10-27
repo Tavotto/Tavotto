@@ -8,8 +8,9 @@ Hard rules (each one has a test in `tests/test_exectrace_analysis.py`):
 
 * A Trace observes; it does not judge. The `verdict` and `verification` columns come ONLY from the
   guardian / bench results passed in. Without them they are `null`, whatever the trace `status` says.
-* Case ids come from the guardian / bench results, never from the trace. Neither runner records trace
-  ids today, so the linkage is explicit: a result entry lists `trace_ids` and/or `task_refs`
+* Case ids come from the guardian / bench results, never from the trace. taf_bench rows record
+  `task_refs: [session id]` (run it with `--exec-trace-out`); compat_guardian records nothing yet,
+  so the linkage is explicit: a result entry lists `trace_ids` and/or `task_refs`
   (the trace's opaque `task_ref` / `session_ref`; for taf_bench the session id is both).
   A trace no entry claims has `case_id = null`.
 * Error class = the guardian taxonomy category when the results supply one for the case, else the

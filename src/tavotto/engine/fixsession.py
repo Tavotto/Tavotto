@@ -396,7 +396,7 @@ def _trace_model_turn(s: FixSession, event: dict) -> None:
         pass
 
 
-def _trace_wait(trace, span, kind: str, answer) -> None:
+def _trace_wait(trace, span, kind: str, answer, ctx=None) -> None:
     """一张卡片的等待：用户点了（批准 / 拒绝 / 选了）是这段等待 ok 地结束；超时、取消照实记。"""
     try:
         if answer == "timeout":
@@ -407,6 +407,8 @@ def _trace_wait(trace, span, kind: str, answer) -> None:
         else:
             decided = "denied" if answer == "no" else "user"
             trace.end_span(span, "ok", attributes={"approved_by": decided})
+            if ctx is not None:
+                ctx.trace_wait_decision = decided
             if kind in ("approve", "send"):
                 trace.event(
                     "approval_denied" if answer == "no" else "approval_granted", span_id=span
@@ -996,7 +998,7 @@ class FixSessions:
             if s.pending is p:
                 s.pending, s.card = None, None
                 s.state = STATE_RUNNING
-        _trace_wait(s.trace, wait, kind, (p.result or {}).get("answer"))
+        _trace_wait(s.trace, wait, kind, (p.result or {}).get("answer"), s.ctx)
         self._notify(s)
         return p.result or {"answer": "cancelled"}
 

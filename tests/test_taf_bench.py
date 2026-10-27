@@ -743,3 +743,38 @@ def test_usage_is_taken_only_from_self_reported_events():
         "cached_input_tokens": 7,
         "cost_usd": 0.5,
     }
+
+
+# ---- ADR 0151 PR4：每行记它跑的 AI 会话 id（= Trace 的 task_ref），--exec-trace-out 把基准报告交给只读分析
+
+
+@pytest.mark.skipif(WORKER_PY is None, reason="not_run：找不到装有 matplotlib 的解释器")
+def test_rows_carry_their_session_id_and_the_analysis_links_them_to_the_trace(tmp_path):
+    dev = {s["id"]: s for s in bench.load_scenarios("dev") if bench.benchable(s)}
+    report = bench.run([dev["FB-S02"]], tmp_path / "work" / "projects")
+    (row,) = report["rows"]
+    assert row["task_refs"] and all(isinstance(x, str) for x in row["task_refs"])
+    assert len(row["task_refs"]) == 1 and "task_refs" in bench.ROW_FIELDS
+    out = tmp_path / "analysis.json"
+    from tavotto.engine import exectrace
+
+    # `main` 会在 import 前把数据目录设到 --work/data；这里在进程内跑，用记录器实际落盘的那个
+    data_dir = exectrace.RECORDER._store.root.parents[1]
+    bench.write_exec_trace_analysis(report, data_dir, out)
+    analysis = json.loads(out.read_text(encoding="utf-8"))
+    linked = [r for r in analysis["rows"] if r["case_id"] == "FB-S02/ref"]
+    assert len(linked) == 1, analysis["rows"]
+    assert linked[0]["verdict_pass"] is True and linked[0]["verification"] == "verified"
+    assert analysis["guardian_results_supplied"] is True
+
+
+def test_a_row_that_never_got_a_session_has_an_empty_task_refs():
+    assert bench._row({"id": "S"}, "ref", error="run 500")["task_refs"] == []
+
+
+def test_exec_trace_out_is_refused_for_holdout(tmp_path, capsys):
+    rc = bench.main(
+        ["--holdout", "--exec-trace-out", str(tmp_path / "a.json"), "--work", str(tmp_path / "w")]
+    )
+    assert rc == 2 and not (tmp_path / "a.json").exists()
+    assert "holdout" in capsys.readouterr().err

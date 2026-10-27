@@ -108,6 +108,8 @@ class FixContext:
     trace: object = None
     trace_parent: str | None = None
     trace_tool_span: str | None = None
+    #: 本次调用里用户对卡片的决定（`user` / `denied`），只给执行追踪用；`run_tool` 读完即清
+    trace_wait_decision: str | None = None
     step: int = 0
     case_insensitive: bool | None = None
     extra_deny: list[Path] | None = None

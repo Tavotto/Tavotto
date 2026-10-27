@@ -176,6 +176,10 @@ expectation_mismatch`。比声明更好的结果同样是不等：它可能是�
 时才起作用；没有声明的 case 保持原样（如 `s07 / s17 / s25` 仍是 `failed`）。声明文件与它的 schema 同夹具一样
 按 `git show HEAD:` 比对，报告里带 `expectations_sha256`，`validate` 会按声明重算每一行的状态。
 
+- `cases[].trace_ids`（可选，2026-10-27 增补、版本不升：只加不改，旧报告照样有效，trend 的历史不断档）：这个用例自己数据目录里的执行追踪
+  id（ADR 0151 PR4），冻结的记录复制到证据目录的 `exec-trace/`。只是关联，**不参与结论**——`status` / `failure_category` 仍只由本模块判据给出；
+  `python scripts/ci/exectrace_analysis.py --traces <证据>/exec-trace --guardian-results <报告> --out …` 出对比分析。
+
 ## 4. 原生参照（`compat_driver.py --mode native_ref`，M1）
 
 普通 `python script.py` 语义（缺省 cwd = 脚本目录），只观测不干预；**独立实现，不 import 产品的

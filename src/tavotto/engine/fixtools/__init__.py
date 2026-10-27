@@ -86,11 +86,21 @@ def run_tool(
         ctx.verification = None
     result.content = scrub(result.content)
     ctx.trace_tool_span = None
+    approved_by = _approved_by(result, ctx)
+    # 等用户的那张卡已经有了决定（批准 / 拒绝）：工具这一层与它的 user_wait 说同一句话（审计的 approved_by 不动）
+    decided = getattr(ctx, "trace_wait_decision", None)
+    ctx.trace_wait_decision = None
+    # 被策略挡下的调用根本没执行——是护栏在工作，不是失败：记 cancelled（码照留），不当成「最早失败」（真实 Codex 验证发现）
+    blocked = approved_by == "blocked"
     trace.end_span(
         span,
-        exectrace.STATUS_FAILED if result.is_error else exectrace.STATUS_OK,
+        exectrace.STATUS_CANCELLED
+        if blocked
+        else exectrace.STATUS_FAILED
+        if result.is_error
+        else exectrace.STATUS_OK,
         error_code=result.code if result.is_error else None,
-        attributes={"approved_by": _approved_by(result, ctx)},
+        attributes={"approved_by": decided if decided and not blocked else approved_by},
     )
     if audit is not None:
         audit.record(

@@ -179,8 +179,8 @@ PR3 的读取走 REST 权威快照。
   不完整说明；界面在「执行记录」里，任务结束后才给（运行中的半份不交出去），只下载到本机。
 * **Guardian / FigureBench 只读分析**（`scripts/ci/exectrace_analysis.py`，`tavotto.exectrace-analysis/1`）：Trace 不给兼容结论——`verdict` /
   `verification` 只来自 Guardian / bench 的结果文件，否则 `null`；用例与 Trace 的关联只认结果文件里的 `trace_ids` / `task_refs`。对比统计每个均值 /
-  分位数带 `n`，样本 < 5 记 `null` + `insufficient_samples`，不声称显著性；同一错误类只按证据分组，并写明「同码 ≠ 同根因」。Guardian / taf_bench 的
-  运行目前不记 Trace 关联，所以**还没有挂钩子**（每行要多记会话 id，改它们的报告 schema 是单独的一步）。
+  分位数带 `n`，样本 < 5 记 `null` + `insufficient_samples`，不声称显著性；同一错误类只按证据分组，并写明「同码 ≠ 同根因」。`taf_bench` 每行记 `task_refs`（AI 会话 id），
+  `--exec-trace-out FILE` 跑完后对自己数据目录的 Trace 出这份分析（holdout 拒绝：分析里有逐用例 id）；Guardian 的关联见下文「Guardian 关联」。
 * **OpenTelemetry**（`engine/exectrace_otel.py`）：只做转换函数，不导出到网络、不加依赖。OTLP/JSON `ExportTraceServiceRequest`（opentelemetry-proto
   v1.x，枚举写整数、int64 写字符串）；只有 `ok` → OK，`failed` / `timeout` → ERROR，`cancelled` / `unknown` / `interrupted` / 运行中 → UNSET +
   `tavotto.status`（不为外部标准改 Tavotto 的状态语义）；**只有服务端报的用量**进 `gen_ai.usage.{input,output}_tokens`（GenAI semconv，Development
@@ -199,7 +199,7 @@ PR3 的读取走 REST 权威快照。
 | T02 | 缺少 Python 依赖 | `test_exectrace_matrix::test_t02_…`（失败落在 `script_run`、稳定码、包名不进 Trace） | 真 worker |
 | T03 | 依赖修复成功 | `test_exectrace_matrix::test_t03_…`（装包工具 ok；没执行证据就 `unknown`） | 真 `run_tool`，装包器替身 |
 | T04 | 安装失败 | `test_exectrace_matrix::test_t04_…`（`pip_failed` 是根因，不冒充成功） | 真 `run_tool`，装包器替身 |
-| T05 | Pillow 像素图 | **not_run**：转写交接的结局映射（`convert` → ok + outcome）有单测，端到端未覆盖 | — |
+| T05 | Pillow 像素图 | `test_exectrace_t05::test_t05_a_pillow_only_script…`（产品报 `no_figures_captured`，Trace 同码失败于 `script_run`，不升格；无文件名 / 路径）、`…::test_t05_the_convert_handoff…`（`convert` → ok + outcome，`convert_script` 工具 Span） | 真 worker；假模型修复会话 |
 | T06 | 用户拒绝修改环境 | `…pipelines::test_a_refused_install…` | 假模型修复会话 |
 | T07 | 模型 API 超时 | `test_exectrace::test_a_retry_is_a_separate_attempt…`、`…pipelines::…estimated…`（runner `ok:false`） | 构造事件 |
 | T08 | 工具连续失败 | `test_exectrace_diag::test_repair_refusal_budget…`（重复调用、预算、超时） | 真 ExecTrace |
@@ -224,3 +224,21 @@ PR3 的读取走 REST 权威快照。
 | 出门投影放过 Span 名 | `test_exectrace_diag::test_the_export_projection…` |
 | 所有事件都出门 | 同上 |
 | 诊断包不按项目取 | `test_exectrace_diag::test_the_bundle_carries_this_projects…` |
+
+### 真实模型验证（2026-10-27，维护者授权付费模型）
+
+用真实 Codex CLI（ChatGPT 订阅登录；本机没有 API Key，所以内置执行器的 Token / 费用路径这次没有真模型数据）跑了 3 个场景、共 4 次 Codex 运行（没有为好看的结果重试），
+应用在隔离的配置 / 数据目录里（用户自己的配置与历史一字未碰）：① AI 改图成功（`agent_run` 32.9 s、opaque、`changed=true`、`refresh=ok`）；② 脚本缺依赖
+→ 智能修复经 MCP 修好（18 个工具调用、3 次批准、`change_python` 在隔离数据目录的受管环境里、第二次 `try_run` 通过，结局 `fixed`）；③ 依赖在 PyPI 上不存在
+→ `dependency_not_found` + 回滚 + 用户拒绝发送诊断，结局 `not_fixed`。所有 Trace / 诊断文档对项目路径、脚本名、包名、提示词、报错文字的检索**零命中**。
+
+验证发现并已修（`tests/test_exectrace_realfindings.py`，反证 4/4 红）：
+
+| 发现 | 修法 |
+| --- | --- |
+| 被策略挡下的越界读取（Agent 随后改正）被记成「最早失败」，修好的会话也被归因到它 | 挡下的调用没执行：`run_tool` 记 `cancelled`（码照留），不进 `first_failure`；归因只在任务真的失败时给 `origin` / `cascade`，任务成功时途中失败列 `recovered`，另计 `blocked_calls` |
+| 修复会话 `repair_attempts` 恒 0、`verified_by_execution` 恒 unknown | 修复次数 = 动了环境的工具调用（tavotto / listed / user_env 档）；结局 `fixed` = 产品「交 fixed 必须有最后一次改动之后的应用执行证据」那道门过了 → verified |
+| 准备的阶段观察点全落在收尾那一毫秒 | `observe_stage_trace(…, legacy_t0=)`：旧轨迹的 `perf_counter` 时刻按同进程单调钟换算到 Trace 偏移，点落在真实发生的时刻 |
+| 等用户点卡片的时间算进工具耗时，「最慢」可能怪到用户头上；工具与它的 user_wait 的 `approved_by` 说法不一 | 「最慢」按自身耗时（扣掉子 `user_wait`）；有卡片决定时工具的 `approved_by` 与 user_wait 一致（审计的 `approved_by` 不动） |
+
+遗留：修复会话里 `try_run` 发起的准备运行是**另一条** Trace（按计划 id 找得到），与修复会话的 Trace 之间还没有父子关联；Codex / Claude Code 的 Token 与费用看不见（opaque）。
