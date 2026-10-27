@@ -1112,6 +1112,8 @@ def wait_quiet(
 #: Electron 把网页内容交给 UI Automation；PowerShell 自带的 UIAutomationClient 读控件树（类型 / 名字 / 位置），
 #: 输入用真实键鼠（SetCursorPos + mouse_event、剪贴板 + Ctrl+V、回车），都只对宿主自己的窗口做
 UIA_LAUNCH_ARGS = ["--force-renderer-accessibility"]
+#: 面板还在干活（run 20261027T090423Z-40f9c8：首个流量后 45 s「Preparing session」还没完就被判 quiet）
+UIA_BUSY_RE = re.compile(r"Stop response|is responding|Preparing session|Running\b", re.I)
 #: 宿主自己说本地区不可用（标准模式首屏，run 20261026T143831Z-c456bc）：如实收场为 BLOCKED，不想办法绕
 REGION_BLOCK_RE = re.compile(
     r"App unavailable|only available in certain regions|unavailable in region", re.I
@@ -1348,6 +1350,7 @@ def drive_uia(ns: argparse.Namespace) -> dict:
                 ns.max_s,
                 ns.first_traffic_s,
                 alive=lambda: tree.proc.poll() is None or bool(P.top_windows(root)),
+                busy=lambda: bool(UIA_BUSY_RE.search(uia_text(uia_dump(hwnd)))),
             )
             result["submitted"] = n > base_lines
             result["wait_ended"], result["recorder_lines"] = reason, n

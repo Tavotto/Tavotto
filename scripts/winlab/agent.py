@@ -4542,10 +4542,11 @@ def _desktop_live_body(
             for line in _grep_tail(
                 d,
                 re.compile(
-                    r"mcp|configLibrary|inference|gateway|region|3p|policy|managed|deployment",
+                    r"mcp|configLibrary|inference|gateway|region|3p|policy|managed|deployment"
+                    r"|downloads\.claude|claude\.ai|anthropic\.com|bundle|\bvm\b|sandbox|download",
                     re.I,
                 ),
-                40,
+                80,
             )
         ]
     if r1["driver"].get("region_blocked"):
