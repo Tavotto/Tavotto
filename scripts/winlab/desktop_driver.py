@@ -299,21 +299,45 @@ CLEAR_JS = (
     + _WALK
     + "const r = walk(document); if (!r) return {found: false};"
     + "r.el.click(); r.el.focus(); r.doc.execCommand('selectAll'); r.doc.execCommand('delete');"
-    + "return {found: true, focused: r.doc.activeElement === r.el || r.el.contains(r.doc.activeElement)};})()"
+    + "const b = r.el.getBoundingClientRect();"
+    + "return {found: true, x: b.x + Math.min(40, b.width / 2), y: b.y + Math.min(20, b.height / 2),"
+    + " focused: r.doc.activeElement === r.el || r.el.contains(r.doc.activeElement)};})()"
 )
 
 
 def native_type(cdp: CDP, sid: str, prompt: str) -> dict:
-    """聚焦、清空，再用 Input.insertText 送整段字（走 beforeinput / input，编辑器自己的状态跟着变）。"""
+    """聚焦、清空，再用 Input.insertText 送整段字（走 beforeinput / input，编辑器自己的状态跟着变）。
+    页面没键盘焦点时 insertText 落空（run 20261027T071201Z-8218c4）：先真实点一下输入框。还是空就退回 execCommand
+    填字，再补真实的空格 + 退格让编辑器同步状态。"""
     _key(cdp, sid, "keyDown", "Escape", "Escape", 27)  # 关掉可能开着的下拉菜单
     _key(cdp, sid, "keyUp", "Escape", "Escape", 27)
+    with contextlib.suppress(CDPError, TimeoutError):
+        cdp.call("Page.bringToFront", {}, session=sid, timeout=5)
+    with contextlib.suppress(CDPError, TimeoutError):
+        cdp.call("Emulation.setFocusEmulationEnabled", {"enabled": True}, session=sid, timeout=5)
     st = cdp.evaluate(sid, CLEAR_JS) or {}
     if not st.get("found"):
         return {"typed": False, "why": "no input"}
+    for typ in ("mousePressed", "mouseReleased"):
+        cdp.call(
+            "Input.dispatchMouseEvent",
+            {"type": typ, "x": st["x"], "y": st["y"], "button": "left", "clickCount": 1},
+            session=sid,
+            timeout=10,
+        )
+    time.sleep(0.3)
     cdp.call("Input.insertText", {"text": prompt}, session=sid, timeout=20)
     time.sleep(0.5)
     n = (cdp.evaluate(sid, STATE_JS) or {}).get("input_length") or 0
-    return {"typed": n > 0, "length": n, "via": "insertText"}
+    if n:
+        return {"typed": True, "length": n, "via": "insertText"}
+    cdp.evaluate(sid, TYPE_JS % json.dumps(prompt))
+    cdp.call("Input.insertText", {"text": " "}, session=sid, timeout=10)
+    _key(cdp, sid, "keyDown", "Backspace", "Backspace", 8)
+    _key(cdp, sid, "keyUp", "Backspace", "Backspace", 8)
+    time.sleep(0.5)
+    n = (cdp.evaluate(sid, STATE_JS) or {}).get("input_length") or 0
+    return {"typed": n > 0, "length": n, "via": "execCommand+keys", "focused": st.get("focused")}
 
 
 #: 点发送；没有按钮时退回在输入框上派发 Enter
