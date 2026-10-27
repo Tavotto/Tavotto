@@ -61,7 +61,14 @@ export function TraceDetails({
         if (stopped || mine !== seq.current) return
         if (!res.available) setLoad({ state: 'none', reason: res.reason })
         else if (!supported(res.trace)) setLoad({ state: 'none', reason: 'unsupported' })
-        else setLoad({ state: 'ready', trace: res.trace })
+        else
+          // 运行中每秒都会再取一次：内容没变就沿用上一份对象（同一个引用），整棵树不重建、行不重画——
+          // 只有真的有 Span 开始 / 结束才付重画的钱（CI 慢机上每次重建约 100 ms 长任务）
+          setLoad((prev) =>
+            prev.state === 'ready' && !prev.stale && sameSnapshot(prev.trace, res.trace)
+              ? prev
+              : { state: 'ready', trace: res.trace },
+          )
       } catch {
         if (stopped || mine !== seq.current) return
         // 运行中偶尔取失败：留着上一份，下一秒再取。会话已结束还失败：上一份就成了过期的，明说并给重试（Codex #1454）
@@ -236,4 +243,11 @@ function ExportDiagnostic({ taskRef, pj }: { taskRef: string; pj: string | null 
       {phase === 'error' && <span>{t('trace.state.error')}</span>}
     </div>
   )
+}
+
+/** 两份快照的内容是否相同（JSON 等价；几百个 Span 也只是毫秒级，比重建整棵树便宜得多） */
+function sameSnapshot(a: ExecTraceDto, b: ExecTraceDto): boolean {
+  if (a === b) return true
+  if (a.trace_id !== b.trace_id || a.last_seq !== b.last_seq || a.spans.length !== b.spans.length) return false
+  return JSON.stringify(a) === JSON.stringify(b)
 }
