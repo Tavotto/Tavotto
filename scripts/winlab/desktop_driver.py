@@ -1135,6 +1135,10 @@ function Walk($e, $d) {
 Walk $root 0
 ConvertTo-Json -InputObject $out -Compress -Depth 4
 """
+#: 首屏引导只点这些按钮（逐字相等）。3P 欢迎页「No Claude.ai account needed」的 Continue 即此；
+#: 任何带登录 / Claude.ai 的按钮都不点（「Or sign in with Claude.ai」）
+UIA_ONBOARDING_BUTTONS = ("Continue", "Skip", "Not now", "Get started")
+UIA_NEVER_CLICK_RE = re.compile(r"sign in|log in|claude\.ai|account", re.I)
 #: 能当输入框的控件类型（Electron 的 contenteditable 在 UIA 里是 Edit 或 Document）
 UIA_INPUT_TYPES = ("ControlType.Edit", "ControlType.Document")
 
@@ -1154,6 +1158,19 @@ def uia_dump(hwnd: int, timeout: float = 90) -> list[dict]:
 
 def uia_text(nodes: list[dict]) -> str:
     return "\n".join(str(n.get("n") or "") for n in nodes if n.get("n"))
+
+
+def uia_onboarding(nodes: list[dict]) -> dict | None:
+    for n in nodes:
+        name = str(n.get("n") or "").strip()
+        if (
+            n.get("t") == "ControlType.Button"
+            and name in UIA_ONBOARDING_BUTTONS
+            and not UIA_NEVER_CLICK_RE.search(name)
+            and (n.get("r") or [0, 0, 0, 0])[2] > 0
+        ):
+            return n
+    return None
 
 
 def uia_input(nodes: list[dict], window_rect: list[int]) -> dict | None:
@@ -1293,6 +1310,15 @@ def drive_uia(ns: argparse.Namespace) -> dict:
                 box = uia_input(nodes, result["window"]["rect"])
                 if box:
                     break
+                btn = uia_onboarding(nodes)
+                if btn and len(result.setdefault("onboarding", [])) < 6:
+                    result["onboarding"].append(btn["n"])
+                    prog.step("onboarding_click", button=btn["n"])
+                    bring_front(hwnd)
+                    bx, by, bw, bh = btn["r"]
+                    real_click(bx + bw // 2, by + bh // 2)
+                    time.sleep(3)
+                    continue
                 time.sleep(5)
             shot("first")
             result["uia_nodes"] = len(nodes)

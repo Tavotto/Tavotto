@@ -3601,6 +3601,10 @@ CLAUDE3P_NO_ANTHROPIC = {
 }
 
 
+#: 见 claude3p_isolated_config 的 inferenceModels
+CLAUDE3P_ROUTE = "claude-sonnet-4-5"
+
+
 def claude3p_config_dirs(home: Path, env: dict) -> list[Path]:
     """configLibrary 写两处：重定向的 run 家目录下，和这个账户真实的 %LOCALAPPDATA%（Electron 取应用目录不一定认
     环境变量）。真实那处跑完由 wipe_ondisk_key 删掉。"""
@@ -3693,7 +3697,9 @@ def claude3p_isolated_config(
         "inferenceGatewayBaseUrl": model_conf["base_url"],
         "inferenceGatewayApiKey": model_conf["api_key"],
         "inferenceGatewayAuthScheme": "bearer",
-        "inferenceModels": [model],
+        # 应用只收「指向 Anthropic 模型名」的路由，非 claude 名字整条删掉（run 20261027T085727Z-9ddf76）；
+        # DeepSeek 的 Anthropic 接口把 claude-sonnet* 映射到 deepseek-flash（其官方文档），请求只到 DeepSeek
+        "inferenceModels": [{"name": CLAUDE3P_ROUTE, "labelOverride": f"DeepSeek ({model})"}],
         "modelDiscoveryEnabled": False,
         **CLAUDE3P_NO_ANTHROPIC,
         "managedMcpServers": [
@@ -4143,6 +4149,12 @@ def run_desktop_live_task(
         # WorkBuddy 用登录账户自带的模型（界面上可见，如 GLM-5.3-Flash），不经我们的 key
         "model": {"provider": "workbuddy-account", "model": None}
         if cell.native and host.id == "workbuddy"
+        else {
+            "provider": model_conf.get("provider"),
+            "model": "deepseek-flash",  # DeepSeek 把 claude-sonnet* 路由映射到它
+            "route": CLAUDE3P_ROUTE,
+        }
+        if cell.native and host.id == "claude-desktop"
         else {
             "provider": model_conf.get("provider"),
             "model": model_conf.get("model")

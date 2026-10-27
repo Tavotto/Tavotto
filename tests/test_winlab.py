@@ -2942,7 +2942,11 @@ def test_claude_desktop_3p_config_talks_only_to_deepseek_and_allows_only_tavotto
         c = json.loads(f.read_text(encoding="utf-8"))
         assert c["inferenceProvider"] == "gateway"
         assert c["inferenceGatewayBaseUrl"] == conf["base_url"]
-        assert c["inferenceModels"] == ["m1"] and c["modelDiscoveryEnabled"] is False
+        # 应用只收 claude 名字的路由；DeepSeek 把 claude-sonnet* 映射到 deepseek-flash，界面标出真实供应商
+        assert c["inferenceModels"] == [
+            {"name": "claude-sonnet-4-5", "labelOverride": "DeepSeek (m1)"}
+        ]
+        assert c["modelDiscoveryEnabled"] is False
         # 官方文档「Disabling all Anthropic-bound connections」的六条
         for k in (
             "disableEssentialTelemetry",
@@ -2977,3 +2981,13 @@ def test_uia_driver_reports_the_region_block_and_picks_the_lowest_wide_input():
     ]
     assert D.uia_input(nodes, rect)["r"] == [100, 600, 700, 80]
     assert D.uia_input(nodes[:2], rect) is None
+
+
+def test_uia_onboarding_clicks_only_whitelisted_buttons_never_sign_in():
+    nodes = [
+        {"t": "ControlType.Button", "n": "Or sign in with Claude.ai", "r": [1, 1, 50, 20]},
+        {"t": "ControlType.Text", "n": "Continue", "r": [1, 1, 50, 20]},
+        {"t": "ControlType.Button", "n": "Continue", "r": [10, 400, 200, 40]},
+    ]
+    assert D.uia_onboarding(nodes)["r"] == [10, 400, 200, 40]
+    assert D.uia_onboarding(nodes[:2]) is None
