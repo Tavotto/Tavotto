@@ -82,7 +82,8 @@ def test_t05_a_pillow_only_script_is_recorded_as_the_failure_the_product_reports
     # 产品的结论：没有可编辑图
     assert result["status"] == "error", result
     code = result["error"]["code"]
-    assert code == "no_figures_captured"
+    # 产品按脚本有没有打印分成两个码（`_silent` = 一个字都没打印）；本用例的主语是「Trace 与产品结论一致」，两者都是没出可编辑图
+    assert code in ("no_figures_captured", "no_figures_captured_silent")
     # Trace 与之一致：失败、同一错误码、落在真实执行区间
     assert snap is not None
     assert snap["status"] == "failed" and snap["error_code"] == code

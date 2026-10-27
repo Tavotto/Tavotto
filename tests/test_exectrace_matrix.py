@@ -37,12 +37,20 @@ def test_t03_a_successful_dependency_repair_records_the_install_and_the_evidence
     r = call(ctx, "install_packages", {"env": "e", "packages": ["seaborn"]})
     assert not r.is_error
     t.end_span(ctx.trace_parent)
-    t.finish("ok", attributes={"outcome": "fixed"})
+    t.finish("ok")
     snap = t.snapshot()
     tools = [s for s in snap["spans"] if s["name"] == "tool_call"]
     assert [(s["attributes"]["tool"], s["status"]) for s in tools] == [("install_packages", "ok")]
-    # 没有一次真实执行把它验证过：归因如实说「没有执行证据」，不因为工具成功就说修好了
+    # 装包工具成功本身不是验证：没有结局 / 执行证据时归因如实说 unknown
     assert diag.attribution(snap)["verified_by_execution"] == "unknown"
+    # 修复会话交 `fixed` 必须先过「最后一次改动之后的应用执行证据」那道门（ADR 0149 修订）：结局 fixed 才是 verified
+    from tavotto.engine import (
+        fixsession,  # noqa: F401 —— 修复会话的结局词表由它登记；不依赖别的用例先 import
+    )
+
+    t2 = xt.ExecTrace("fix_session")
+    t2.finish("ok", attributes={"outcome": "fixed"})
+    assert diag.attribution(t2.snapshot())["verified_by_execution"] == "verified"
 
 
 def test_t04_a_failed_install_has_its_stable_code_and_is_never_a_success(box):
