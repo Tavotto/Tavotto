@@ -416,3 +416,21 @@ def test_ordinary_analysis_ignores_a_running_validation_but_validation_reads_the
     assert inside != baseline, inside
     assert inside_scan != baseline_scan
     workdir.forget(proj)
+
+
+def test_edit_check_runner_sees_the_candidate_data_not_the_original(edit_world):
+    """回归：改图检查要能比出“候选改了数据”——影子之后原脚本那一次与候选那一次必须读到不同字节。"""
+    m, figs = edit_world
+    new = EDIT_BASE.replace("[1, 4, 9]", "[1, 4, 10]")
+    cand, runner = _edit_candidate(m, figs, new)
+    try:
+        original = runner(str(figs), "plot.py")
+        roots = (str(cand.dir),)
+        with shadowscript.shadow(
+            cand.project_root, "plot.py", cand.target, execspec.write_roots_key(roots)
+        ):
+            changed = runner(str(figs), "plot.py", roots)
+        assert not original.get("error") and not changed.get("error"), (original, changed)
+        assert original["manifests"] != changed["manifests"]
+    finally:
+        ai_figure_edit.remove_candidate(cand.dir)
