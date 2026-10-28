@@ -372,7 +372,9 @@ def test_resolve_finds_the_managed_install_first(env, monkeypatch, tmp_path):
     assert locs[0].source == "managed" and locs[0].path == str(Path(entry).parent)
     assert ai_agents.candidates(agent)[0].source == "managed"
     res = ai_agents.resolve(agent, probe_readiness=False)
-    assert res.path == entry and res.source == "managed" and "9.9.9" in (res.version or "")
+    # Windows 上 which 按 PATHEXT 给出大写扩展名（codex.CMD）：路径按 normcase 比
+    assert os.path.normcase(res.path) == os.path.normcase(entry)
+    assert res.source == "managed" and "9.9.9" in (res.version or "")
     ai_agents.clear_cache()
 
 
