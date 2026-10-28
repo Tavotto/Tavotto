@@ -474,7 +474,7 @@ describe('运行 / 取消 / 结果', () => {
     }
     const groups = [...host.querySelectorAll('section ul[aria-label]')].map((ul) => ({
       name: ul.getAttribute('aria-label'),
-      scripts: [...ul.querySelectorAll('li > div span.font-mono')].map((s) => s.getAttribute('title')),
+      scripts: [...ul.querySelectorAll('li > div span.font-mono > span.truncate')].map((s) => s.getAttribute('title')),
     }))
     expect(groups[0]).toEqual({ name: '需要修复', scripts: ['a.py'] })
     expect(groups.find((g) => g.name === '可能需要原环境')?.scripts).toEqual(['b.py', 'c.py'])

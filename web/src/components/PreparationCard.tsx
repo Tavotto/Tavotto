@@ -11,14 +11,14 @@ import {
   FileCodeCorner,
   ImageOff,
   KeyRound,
-  LoaderCircle,
   Minus,
   RotateCcw,
   Sparkles,
   Unplug,
   X,
 } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { WorkdirChooseButton } from '@/components/WorkdirRow'
 import {
   backendCodeMsg,
@@ -233,10 +233,11 @@ export function PreparationCard() {
 const STEPS = ['prepare', 'run', 'edit'] as const
 
 const TONE_ICON: Record<Exclude<PrepTone, null>, ReactNode> = {
-  busy: <LoaderCircle size={ICON_SIZE.md} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />,
-  ok: <CircleCheck size={ICON_SIZE.md} className="shrink-0 text-ok" />,
-  bad: <CircleAlert size={ICON_SIZE.md} className="shrink-0 text-danger" />,
-  mute: <CircleQuestionMark size={ICON_SIZE.md} className="shrink-0 text-ink-3" />,
+  // 状态图标：颜色 + 实心孪生双重提示（空心环 + 细线记号四种长得太像）；busy 是全产品唯一的 Spinner
+  busy: <Spinner size={ICON_SIZE.md} className="text-accent" />,
+  ok: <CircleCheck filled size={ICON_SIZE.md} className="shrink-0 text-ok" />,
+  bad: <CircleAlert filled size={ICON_SIZE.md} className="shrink-0 text-danger" />,
+  mute: <CircleQuestionMark filled size={ICON_SIZE.md} className="shrink-0 text-ink-3" />,
 }
 
 function toneIcon(tone: PrepTone, state: string): ReactNode {
@@ -322,7 +323,7 @@ function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, m
       </div>
       <div className="flex min-h-0 flex-col gap-3 overflow-y-auto" data-prep-body>
         <div className="flex items-start gap-2.5">
-          {icon}
+          {icon && <IconSlot className="h-5">{icon}</IconSlot>}
           <p className="type-title min-w-0 flex-1 break-words font-medium text-ink" data-prep-line aria-live="polite">
             {title}
           </p>
@@ -582,7 +583,7 @@ function ScanPill({ scan, card }: { scan: ProjectScan; card: { kind: ScanCardKin
     <Pill
       attrs={attrs}
       label={label}
-      icon={card.kind === 'scanning' ? <LoaderCircle size={ICON_SIZE.sm} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" /> : <CircleQuestionMark size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />}
+      icon={card.kind === 'scanning' ? <Spinner size={ICON_SIZE.sm} className="text-accent" /> : <CircleQuestionMark size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />}
     >
       {label}
     </Pill>
@@ -1378,11 +1379,11 @@ function SessionPill({ entry, view }: { entry: PrepEntry; view: PrepView }) {
   const icon = (() => {
     switch (view.tone) {
       case 'busy':
-        return <LoaderCircle size={ICON_SIZE.sm} className="shrink-0 animate-spin text-accent motion-reduce:animate-none" />
+        return <Spinner size={ICON_SIZE.sm} className="text-accent" />
       case 'ok':
-        return <CircleCheck size={ICON_SIZE.sm} className="shrink-0 text-ok" />
+        return <CircleCheck filled size={ICON_SIZE.sm} className="shrink-0 text-ok" />
       case 'bad':
-        return <CircleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" />
+        return <CircleAlert filled size={ICON_SIZE.sm} className="shrink-0 text-danger" />
       default:
         return <FileCodeCorner size={ICON_SIZE.sm} className="shrink-0 text-ink-3" />
     }

@@ -7,8 +7,9 @@ import {
   type PointerEvent,
 } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, FileCodeCorner, GripVertical, Image, LoaderCircle } from '@/components/ui/icons'
+import { Check, FileCodeCorner, GripVertical, Image } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { DURATION, tween } from '@/lib/motion'
 import { DEMO_FIGURE } from '@/lib/onboarding/demoFigure'
@@ -274,7 +275,7 @@ export function DemoImportStep() {
                     </span>
                   </span>
                   <div role="status" className="flex flex-1 flex-col items-center justify-center gap-3 text-base text-ink-2">
-                    <LoaderCircle size={ICON_SIZE.lg} className="animate-spin text-ink-3 motion-reduce:animate-none" aria-hidden="true" />
+                    <Spinner size={ICON_SIZE.lg} className="text-ink-3" aria-hidden="true" />
                     {t('onboarding.import.rendering')}
                   </div>
                   <div className="flex items-center gap-3 px-1 text-sm text-ink-3">

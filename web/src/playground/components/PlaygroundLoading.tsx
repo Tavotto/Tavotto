@@ -10,8 +10,9 @@
  * 回到案例库，不是把加载藏起来。
  */
 import { Button } from '@/components/ui/Button'
-import { Check, LoaderCircle } from '@/components/ui/icons'
+import { Check } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import type { PlaygroundPhase } from '../protocol'
 import { pg } from '../pgText'
 
@@ -57,7 +58,7 @@ export function PlaygroundLoading({
               {state === 'done' ? (
                 <Check size={ICON_SIZE.md} className="shrink-0 text-ink-3" aria-hidden />
               ) : state === 'active' ? (
-                <LoaderCircle size={ICON_SIZE.md} className="shrink-0 animate-spin text-accent" aria-hidden />
+                <Spinner size={ICON_SIZE.md} className="text-accent" aria-hidden />
               ) : (
                 <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-border" aria-hidden />
               )}

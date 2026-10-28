@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { Reveal } from '../ui/Field'
 import { ChevronRight, CircleQuestionMark, TriangleAlert } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { Notice, type StatusTone } from '../ui/Notice'
@@ -417,7 +417,7 @@ export function InlineWarning({
         tone === 'danger' ? 'bg-danger-surface text-danger-content' : 'bg-surface-hover text-ink-2',
       )}
     >
-      <TriangleAlert size={ICON_SIZE.sm} className="mt-px shrink-0" aria-hidden />
+      <IconSlot><TriangleAlert size={ICON_SIZE.sm} className="shrink-0" aria-hidden /></IconSlot>
       <span className="min-w-0">{children}</span>
     </p>
   )

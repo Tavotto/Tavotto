@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
-import { LoaderCircle, Pause, Play, TriangleAlert, Unplug, X } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { Pause, Play, TriangleAlert, Unplug, X } from '@/components/ui/icons'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import {
   backendCodeMsg,
   isNativeTerminal,
@@ -166,7 +167,7 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
           role="alert"
           className="mt-1 flex items-start gap-1 text-xs leading-relaxed text-danger"
         >
-          <TriangleAlert size={ICON_SIZE.xs} className="mt-0.5 shrink-0" />
+          <IconSlot><TriangleAlert size={ICON_SIZE.xs} className="shrink-0" /></IconSlot>
           <span className="min-w-0 flex-1">
             {fmt(backendCodeMsg(error.code, error.params, error.message) as UiMessage)}
           </span>
@@ -207,12 +208,16 @@ function SessionCard({ session }: { session: NativeSessionInfo }) {
 
 function StateIcon({ state }: { state: NativeSessionState }) {
   const tone = TONE[state]
+  return <IconSlot className="text-sm">{stateGlyph(tone)}</IconSlot>
+}
+
+function stateGlyph(tone: (typeof TONE)[NativeSessionState]) {
   if (tone === 'busy') {
-    return <LoaderCircle size={ICON_SIZE.sm} className="mt-0.5 shrink-0 animate-spin text-ink-3" />
+    return <Spinner size={ICON_SIZE.sm} className="text-ink-3" />
   }
-  if (tone === 'ready') return <Pause size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-ink-2" />
-  if (tone === 'bad') return <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
-  return <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-border-strong" />
+  if (tone === 'ready') return <Pause size={ICON_SIZE.sm} className="shrink-0 text-ink-2" />
+  if (tone === 'bad') return <TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" />
+  return <span className="h-2 w-2 shrink-0 rounded-full bg-border-strong" />
 }
 
 /**

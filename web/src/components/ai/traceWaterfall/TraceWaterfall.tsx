@@ -12,8 +12,9 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/Badge'
-import { ArrowRight, ChevronDown, LoaderCircle, RotateCcw, SearchX, TriangleAlert, X } from '@/components/ui/icons'
+import { ArrowRight, ChevronDown, RotateCcw, SearchX, TriangleAlert, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { Kbd } from '@/components/ui/Kbd'
 import { SearchInput } from '@/components/ui/SearchInput'
 import { cn, MOD } from '@/lib/utils'
@@ -510,7 +511,7 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
         {(live || failed) && (
           <span className="flex shrink-0 items-center" data-trace-status-glyph={live ? 'running' : 'error'}>
             {live ? (
-              <LoaderCircle size={ICON_SIZE.sm} aria-hidden className="text-ink-3 motion-safe:animate-spin" />
+              <Spinner size={ICON_SIZE.sm} aria-hidden className="text-ink-3" />
             ) : (
               <TriangleAlert size={ICON_SIZE.sm} aria-hidden className="text-danger" />
             )}

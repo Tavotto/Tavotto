@@ -6,7 +6,7 @@ import { listRowClass } from '@/components/ui/listRow'
 import { cn } from '@/lib/utils'
 import { joinProjectPath } from '@/lib/desktop'
 import { Details, Summary } from '@/components/ui/Details'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import {
   backendCodeMsg,
   runtimePreviewUrl,
@@ -346,14 +346,15 @@ function ScriptRow({
   return (
     <li className="flex flex-col" data-script-row={entry.script}>
       <div {...menu.rowProps} className={cn(listRowClass(), 'gap-1.5 pl-1.5 pr-0.5')}>
-        <StatusDot entry={entry} run={run} prep={prep} />
         {/* 脚本名是这一行的主文字：等宽（路径 / 脚本名那一档）但字号跟正文走 12，
-            与右侧 11px 的状态一句话差一个台阶（左栏审计 L02） */}
-        <span
-          className="min-w-0 flex-1 truncate font-mono text-sm text-ink"
-          title={entry.script}
-        >
-          {entry.script}
+            与右侧 11px 的状态一句话差一个台阶（左栏审计 L02）。状态点与脚本名同属一个基线组
+            （items-baseline）：点用 `vertical-align: middle`（= 基线上抬半个 x 高）对准小写字母
+            的视觉中心，不靠 margin 凑，换字体 / 字号也跟着走 */}
+        <span className="flex min-w-0 flex-1 items-baseline gap-1.5 font-mono text-sm">
+          <StatusDot entry={entry} run={run} prep={prep} />
+          <span className="min-w-0 flex-1 truncate text-ink" title={entry.script}>
+            {entry.script}
+          </span>
         </span>
         <StatusLine
           entry={entry}
@@ -575,17 +576,17 @@ function StatusDot({
   // 停在门上不是失败（缺的是一个决定），不标红
   const failed = !running && !!run?.error && !isGatePhase(phase)
   return (
-    <span className="flex h-4 w-4 shrink-0 items-center justify-center" aria-hidden data-script-dot={running ? 'running' : undefined}>
+    <span className="block w-4 shrink-0 text-center" aria-hidden data-script-dot={running ? 'running' : undefined}>
       <span
         className={cn(
-          'h-1.5 w-1.5 rounded-full',
+          'inline-block size-1.5 rounded-full align-middle',
           running
             ? 'bg-accent'
             : failed
               ? 'bg-danger'
               : isLinked(entry)
                 ? 'bg-ink-2'
-                : 'border border-ink-faint',
+                : 'border-[1.5px] border-ink-3',
         )}
       />
     </span>
@@ -945,7 +946,7 @@ export function ProbeResultsDialog({
       </ul>
       {dropped > 0 && (
         <p className="mt-1.5 flex items-start gap-1 type-meta">
-          <Ban size={ICON_SIZE.xs} className="mt-0.5 shrink-0" />
+          <IconSlot><Ban size={ICON_SIZE.xs} className="shrink-0" /></IconSlot>
           {sc('dropped', { count: dropped })}
         </p>
       )}

@@ -52,7 +52,7 @@ import {
   TriangleAlert,
   X,
 } from "@/components/ui/icons";
-import { ICON_SIZE } from "@/components/ui/Icon";
+import { ICON_SIZE, IconSlot } from "@/components/ui/Icon";
 import { CanvasThumb } from "./CanvasThumb";
 import { ExportZoomStage } from "./ExportZoomStage";
 import { ExportLocationRow } from "./ExportLocationRow";
@@ -2310,11 +2310,9 @@ function ScopeNote({
             </span>
           ) : (
             <span className="flex items-start gap-1.5 text-danger-content">
-              <TriangleAlert
-                size={ICON_SIZE.xs}
-                className="mt-0.5 shrink-0"
-                aria-hidden
-              />
+              <IconSlot>
+                <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
+              </IconSlot>
               {/* 三个原因各说各的话——折成两句的话「源文件不见了」会被说成
                 「先选中一张图」，用户照做之后按钮还是灰的 */}
               {ex(`scopeUnavailable.${reason}`)}
@@ -2724,11 +2722,9 @@ function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   if (out.status === "failed" || !out.name) {
     return (
       <p className="flex items-start gap-1.5 text-sm text-danger-content">
-        <TriangleAlert
-          size={ICON_SIZE.xs}
-          className="mt-0.5 shrink-0"
-          aria-hidden
-        />
+        <IconSlot>
+          <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
+        </IconSlot>
         {ex("outputFailed", {
           // 一批里根本没起来的那张没有格式，点名用图名
           format: out.format ? out.format.toUpperCase() : (out.name ?? ""),
@@ -2825,11 +2821,9 @@ function InspectionLine({
         data-inspection="failed"
         className="flex items-start gap-1 text-sm text-danger-content"
       >
-        <TriangleAlert
-          size={ICON_SIZE.xs}
-          className="mt-0.5 shrink-0"
-          aria-hidden
-        />
+        <IconSlot>
+          <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
+        </IconSlot>
         {ex("inspection.failedItems", {
           items: state.failed.map(label).join("、"),
         })}

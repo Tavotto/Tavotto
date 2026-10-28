@@ -124,7 +124,7 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 | 问题清单入口（左轨「问题」） | `ListChecks`（左列两枚对勾 + 右列两道，与 `LayoutList` 同骨架；有实心孪生） | 此前是 `TriangleAlert`——入口与「警告」同形，轨上一枚警告三角一直在余光里报警（2026-10-07 设计审计 §9.4） |
 | 折叠 / 展开 | `ChevronRight` 转 90° | 手绘 svg、浏览器 `<details>` 三角 |
 | 下拉 | `ChevronDown` | — |
-| 加载中 | `LoaderCircle` | 别名 `Loader2` |
+| 加载中 | `ui/Spinner`（底环 + 短弧；不在图标集里，`LoaderCircle` 只剩集内几何、界面不再引用） | 别名 `Loader2`；3/4 弧的 `LoaderCircle`（2026-10-28 换掉） |
 | 帮助 | `CircleQuestionMark` | 别名 `CircleHelp` |
 | 成功 | `CircleCheck`（状态）/ `Check`（选中标记） | 别名 `CheckCircle2` |
 | 可编辑的图（由脚本生成、能改图内对象） | `SquareMousePointer`，唯一出处 `ui/semanticIcons.EditableFigureIcon` | `Braces` |

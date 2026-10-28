@@ -152,6 +152,15 @@ strokeWidth；开关 / 激活态写 `filled`（29 个有实心孪生，其余忽
 按个数豁免）、不许引入图标集里没有的名字、不许拿字符 / emoji 当图标、不许裸 `<summary>`
 ——`iconography.test.tsx` 用 AST 逐条守着。同一语义只用一个图标（表在文档第四节）；加新
 图标是在 `defs.ts` 里**画**，不是去别的库挑。
+**对齐、加载、状态**（2026-10-28 图标审计）：①「图标 + 文字」行的图标一律包 `ui/Icon` 的 `IconSlot`
+（槽高 = 该行行高 `1lh`、图标居中），行容器 `items-start`；图标 / `Spinner` 的 className 上不许写
+`mt-px / mt-0.5 / mt-[3px]` 之类的 margin-top 微调（`iconography.test` 的 `icon-nudge`，豁免表
+`NUDGE_ALLOWLIST` 目前为空）；文字的行高在兄弟元素上时给槽写同一组文字类（`text-xs leading-relaxed`）或
+`h-5`。②「加载中」只有 `ui/Spinner`（淡底环 + 约 100° 短弧，描边 2.5/24、12 / 14px 档不低于 1.4px，
+减少动态效果时不转），不再有 `LoaderCircle` 式 3/4 弧；其余图标的描边仍按比例缩放、不设下限。
+③ 状态不画彩色圆盘：语义色只留在图形上，状态图标用实心孪生（`CircleCheck` / `CircleAlert` /
+`CircleQuestionMark` 的 `filled`），进行中是 `Spinner`；点状标记（脚本行状态点）6px、空心环描边 1.5px，
+与文字同在一个 `items-baseline` 组里、用 `vertical-align: middle` 对准小写字母中心，不靠 margin。
 
 ## 说明条与不推挤（2026-10-16 UI 2.0·PR10，规格 02 / 05；与上文冲突处以本节为准）
 

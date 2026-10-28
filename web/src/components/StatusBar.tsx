@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
-import { Check, CircleAlert, Copy, Info, Lightbulb, LoaderCircle, X } from '@/components/ui/icons'
+import { Check, CircleAlert, Copy, Info, Lightbulb, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { SwapText } from '@/components/ui/SwapText'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { ANCHORED_HINTS, hintDismissTimer, useHintStore } from '@/lib/onboarding/hints'
@@ -229,14 +230,14 @@ function ErrorBody({ text }: { text: string }) {
 
 /**
  * 状态 toast 的图标按语气取（`StatusTone`，2026-10-07 审计 P0）：只有报告「做成了」的那句打 ✓，
- * 进行中的转圈（与 `Button` 忙碌态同一个 LoaderCircle），其余中性的一句给 Info——此前
+ * 进行中的转圈（与 `Button` 忙碌态同一个 Spinner），其余中性的一句给 Info——此前
  * 「正在构建…」也打勾。颜色除错误外都是 ink-3：图标只分语气，不抢字的戏；错误用 danger 锚点。
  */
 function StatusIcon({ tone }: { tone: StatusTone }) {
   if (tone === 'error') return <CircleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" aria-hidden />
   if (tone === 'done') return <Check size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
   if (tone === 'progress')
-    return <LoaderCircle size={ICON_SIZE.sm} className="shrink-0 animate-spin text-ink-3" aria-hidden />
+    return <Spinner size={ICON_SIZE.sm} className="text-ink-3" aria-hidden />
   return <Info size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden />
 }
 

@@ -3,14 +3,14 @@ import { useTranslation } from 'react-i18next'
 import {
   Check,
   Download,
-  LoaderCircle,
   Redo2,
   Undo2,
   ShieldCheck,
   TriangleAlert,
 } from '@/components/ui/icons'
 import { Button, IconButton } from '@/components/ui/Button'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { listRowClass } from '@/components/ui/listRow'
 import { Notice } from '@/components/ui/Notice'
 import { StatusPill } from '@/components/ui/StatusPill'
@@ -222,7 +222,7 @@ export function McpApp({
           title={pending ? mc('exportPendingTitle') : undefined}
           onClick={() => void runExport(['pdf', 'png'])}
         >
-          {busy === 'export' ? <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" /> : <Download size={ICON_SIZE.sm} />}
+          {busy === 'export' ? <Spinner size={ICON_SIZE.sm} /> : <Download size={ICON_SIZE.sm} />}
           {mc('exportBoth')}
         </Button>
       </WidgetHeader>
@@ -278,7 +278,7 @@ function RenderState({
   if (rendering) {
     return (
       <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
-        <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" />
+        <Spinner size={ICON_SIZE.sm} />
         {mc('rendering')}
       </span>
     )
@@ -286,7 +286,7 @@ function RenderState({
   if (pending) {
     return (
       <span className="flex shrink-0 items-center gap-1 text-xs text-ink-3">
-        <LoaderCircle size={ICON_SIZE.sm} />
+        <Spinner size={ICON_SIZE.sm} className="animate-none" />
         {mc('pending')}
       </span>
     )
@@ -321,7 +321,7 @@ export function PreflightPill({
   const clean = err + warn + nv === 0
   const tone = stale || loading ? 'neutral' : err ? 'danger' : warn ? 'warn' : nv ? 'neutral' : 'ok'
   const Icon = loading
-    ? LoaderCircle
+    ? Spinner
     : err
       ? SEVERITY_ICON.error
       : warn
@@ -339,7 +339,7 @@ export function PreflightPill({
       title={stale ? mc('pillStaleTitle') : mc('pillTitle')}
     >
       <StatusPill tone={tone}>
-        <Icon size={ICON_SIZE.xs} aria-hidden className={loading ? 'animate-spin' : undefined} />
+        <Icon size={ICON_SIZE.xs} aria-hidden />
         {stale
           ? mc('pillStale')
           : clean
@@ -415,7 +415,9 @@ export function IssueList({
                   'disabled:cursor-default disabled:hover:bg-transparent',
                 )}
               >
-                <Icon size={ICON_SIZE.sm} aria-hidden className={cn('mt-0.5 shrink-0', SEVERITY_INK[it.severity])} />
+                <IconSlot>
+                  <Icon size={ICON_SIZE.sm} aria-hidden className={SEVERITY_INK[it.severity]} />
+                </IconSlot>
                 <span className="sr-only">{severityLabel(it.severity)}</span>
                 {/* issue #30：Python 求值器随 issue 发可翻译描述符（message =
                     key + params，golden vectors 与前端求值器逐字对齐），这里按
