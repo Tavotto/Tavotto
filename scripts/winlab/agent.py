@@ -4387,7 +4387,10 @@ def install_tavotto_for_connect(setup: Path, base: dict) -> tuple[dict | None, d
             "result": "error",
             "summary": "Tavotto silent install did not produce Tavotto.exe",
         }
-    cli = shell.with_name("tavotto-cli.exe")
+    # 冻结的引擎在安装目录的子目录里（sidecar 那一份旁边，同 installer-check 的找法），不在壳旁边
+    cli = next(
+        iter(sorted(shell.parent.rglob("tavotto-cli.exe"))), shell.with_name("tavotto-cli.exe")
+    )
     if not cli.is_file():
         return None, {
             **base,
