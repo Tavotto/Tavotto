@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, ExternalLink, X } from '@/components/ui/icons'
+import { ExternalLink, X } from '@/components/ui/icons'
 import { Details, Summary } from '../ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
@@ -349,7 +349,9 @@ export function EndpointDialog({
       title={
         existing
           ? ag('endpoint.editTitle', { label: existing.label })
-          : ag('endpoint.addTitle', { name: agentLabel })
+          : agentLabel
+            ? ag('endpoint.addTitle', { name: agentLabel })
+            : ag('endpoint.addTitleGeneric')
       }
       size="md"
       status={
@@ -453,11 +455,6 @@ export function EndpointDialog({
                 <span className="shrink-0 truncate text-xs font-normal text-ink-3">
                   {presetRec ? presetName(presetRec) : ''}
                 </span>
-                <ChevronRight
-                  size={ICON_SIZE.sm}
-                  className="shrink-0 text-ink-3 transition-transform group-open:rotate-90"
-                  aria-hidden
-                />
               </Summary>
               <div className="flex flex-col gap-5 pb-5 pt-1">{connectionFields}</div>
             </Details>
@@ -467,11 +464,6 @@ export function EndpointDialog({
 
           <Details className="group text-xs leading-relaxed text-ink-3">
             <Summary className="inline-flex cursor-default items-center gap-1 hover:text-ink-2">
-              <ChevronRight
-                size={ICON_SIZE.xs}
-                className="shrink-0 transition-transform group-open:rotate-90"
-                aria-hidden
-              />
               {ag('endpoint.keyNoteMore')}
             </Summary>
             {/* 密钥那一句原本常驻在密钥框下面（全面打磨 D22）：它和这里的三条是同一件事，

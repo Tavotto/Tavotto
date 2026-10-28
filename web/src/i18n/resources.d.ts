@@ -1867,6 +1867,7 @@ export default interface Resources {
         },
         "endpoint": {
           "addTitle": "为 {{name}} 添加模型服务",
+          "addTitleGeneric": "添加模型服务",
           "apiKey": "密钥",
           "apiKeySaved": "已保存 {{hint}}，留空则不改",
           "baseUrl": "接口地址",
