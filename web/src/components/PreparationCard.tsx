@@ -82,6 +82,7 @@ import { ArgvTokens, PasteCommand } from './ScriptArgvEditor'
 import { isSecret, suggestionText, useScriptInputAnswer, type ScriptInputAnswer } from './ScriptInputForm'
 import { TaskDiagnostic } from './TaskDiagnostic'
 import { SendReportButton } from './SendReportButton'
+import { FailureMenu, errorTextOf } from './PreparationFailureMenu'
 import { CopyButton } from './settings/CopyButton'
 import { Button, IconButton } from './ui/Button'
 import { Details, Summary } from './ui/Details'
@@ -1155,6 +1156,9 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
   const script = targetName(entry)
   const [localError, setLocalError] = useState<string | null>(null)
   const [resultsOpen, setResultsOpen] = useState(false)
+  // 失败卡（主按钮是「使用你的 AI 来修复」）里「⋯」菜单原位展开的那一块：原样参数 / 全部详情；同一时刻只开一个
+  const [panel, setPanel] = useState<'args' | 'details' | null>(null)
+  const argvDraft = useScriptArgvStore((s) => ('id' in entry.target ? undefined : s.drafts[entry.target.script]))
   const workdirReq = report?.requirements.find((r) => r.kind === 'workdir_choice')
   const workdirPayload = workdirReq?.kind === 'workdir_choice' ? workdirReq.payload : null
   const [workdir, setWorkdir] = useState<WorkdirMode | null>(workdirPayload?.recommended ?? null)
@@ -1269,10 +1273,38 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
   if (view.input && report?.runtime_input) {
     slot.push(<EmbeddedInput key="input" requestId={report.runtime_input.id} answer={answer} />)
   }
-  const argsHere = scriptTargetName !== null && (view.argsOpen || ARGS_FOLDED.has(view.state))
+  // 失败卡（版式 1）：一句话 + 一个主按钮，参数 / 详情 / 稍后全进页眉的「⋯」，点开才在卡体里原位展开
+  const compactFail = p?.kind === 'ai_fix' && !ownsInput
+  const argsHere = scriptTargetName !== null && (view.argsOpen || (!compactFail && ARGS_FOLDED.has(view.state)) || (compactFail && panel === 'args'))
   if (argsHere) {
-    slot.push(<ArgsBlock key="args" script={scriptTargetName} schema={argsSchemaOf(report)} expanded={view.argsOpen} />)
+    slot.push(
+      <ArgsBlock key="args" script={scriptTargetName} schema={argsSchemaOf(report)} expanded={view.argsOpen} rawOpen={compactFail && panel === 'args'} />,
+    )
   }
+  if (compactFail && panel === 'details') {
+    slot.push(
+      <div key="details" data-prep-details className="flex flex-col gap-1.5 border-t border-border pt-2.5 text-sm text-ink-2">
+        <SessionDetails entry={entry} view={view} />
+      </div>,
+    )
+  }
+  const failMenu = compactFail && (
+    <FailureMenu
+      argsPreview={
+        scriptTargetName === null
+          ? null
+          : argvDraft?.sensitive || ('argv_sensitive' in entry.target && entry.target.argv_sensitive)
+            ? pt('detail.argsHidden', { count: (argvDraft?.tokens ?? ('id' in entry.target ? [] : (entry.target.argv ?? []))).length })
+            : (argvDraft?.tokens ?? ('id' in entry.target ? [] : (entry.target.argv ?? [])))
+                .map((t) => (/[\s"']/.test(t) || t === '' ? JSON.stringify(t) : t))
+                .join(' ')
+      }
+      error={errorTextOf(report)}
+      onOpenArgs={() => setPanel((v) => (v === 'args' ? null : 'args'))}
+      onOpenDetails={() => setPanel((v) => (v === 'details' ? null : 'details'))}
+      onLater={() => useUiStore.getState().setGuideCard('pill')}
+    />
+  )
 
   const details = ownsInput ? <InputOutput /> : <SessionDetails entry={entry} view={view} />
   // 脚本能跑、只是用位图库画的图：AI 修复会话交接给「生成可编辑版本」（ADR 0149 §七）——同一张卡接上既有的进度 / 对照 / 采用
@@ -1348,10 +1380,10 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
         title={title}
         attrs={attrs}
         slot={slot.length ? slot : undefined}
-        details={details}
+        details={compactFail ? undefined : details}
         detailsLabel={ownsInput ? pt('card.allOutput') : undefined}
-        more={ownsInput ? <InputMore answer={answer} /> : undefined}
-        ghost={secondary || ghost}
+        more={ownsInput ? <InputMore answer={answer} /> : failMenu || undefined}
+        ghost={compactFail ? undefined : secondary || ghost}
         aiFix={aiFix}
         primary={ownsInput ? <AnswerButton answer={answer} /> : (feedbackPrimary ?? primary ?? fallbackPrimary)}
       />
@@ -1610,7 +1642,18 @@ function Figures({ report }: { report: PreparationReport | null }) {
  * 参数：必填项直接摆出来（脚本写了 help 就随字段显示）；其余参数、原样 token 列表与粘贴命令收在折叠里。
  * 参数 schema 是后端报告给的；没有 schema 时只有「原样参数 / 粘贴命令」（需要参数时默认展开）。
  */
-function ArgsBlock({ script, schema, expanded }: { script: string; schema: ScriptArgsSchema | null; expanded: boolean }) {
+function ArgsBlock({
+  script,
+  schema,
+  expanded,
+  rawOpen,
+}: {
+  script: string
+  schema: ScriptArgsSchema | null
+  expanded: boolean
+  /** 从失败卡的「⋯ → 原样参数」进来：原样参数 / 粘贴命令那一块直接展开 */
+  rawOpen?: boolean
+}) {
   useTranslation('workspace')
   const visible = schema?.arguments.filter((a) => !a.hidden) ?? []
   const required = visible.filter((a) => a.required === true)
@@ -1628,7 +1671,7 @@ function ArgsBlock({ script, schema, expanded }: { script: string; schema: Scrip
           </div>
         </Details>
       )}
-      <Details data-testid={`argv-raw-${script}`} open={expanded && !schema ? true : undefined}>
+      <Details data-testid={`argv-raw-${script}`} open={(expanded && !schema) || rawOpen ? true : undefined}>
         <Summary className="type-body h-6 gap-1 text-ink-2">
           {pt('card.rawArgs')}
         </Summary>

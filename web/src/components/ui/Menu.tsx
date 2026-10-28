@@ -194,6 +194,7 @@ export function MenuItem({
   children,
   shortcut,
   onSelect,
+  onFocus,
   disabled,
   danger,
   reason,
@@ -203,7 +204,10 @@ export function MenuItem({
 }: {
   children: ReactNode
   shortcut?: string
-  onSelect?: () => void
+  /** 项被选中（Radix 默认选中即关菜单；要留着菜单就在这里 `e.preventDefault()`） */
+  onSelect?: (e: Event) => void
+  /** 项获得焦点——指针悬停与方向键高亮都会走到这里（侧边预览用它知道「现在指着哪一项」） */
+  onFocus?: () => void
   disabled?: boolean
   danger?: boolean
   /**
@@ -223,6 +227,7 @@ export function MenuItem({
       {...rest}
       disabled={disabled}
       onSelect={onSelect}
+      onFocus={onFocus}
       className={cn(ITEM_CLASS, danger ? 'text-danger' : 'text-ink')}
     >
       {/* 菜单项图标一律 ink-2（2026-10-07 设计审计 §3.4）——比字淡一档，危险项跟着字走红；

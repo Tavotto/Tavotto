@@ -3246,6 +3246,31 @@ describe('智能修复（ADR 0148）：每张失败卡都有「✦ 使用你的 
     }
   })
 
+  it('失败卡版式 1：一句话 + 一个主按钮；详情 / 参数 / 稍后全在页眉「⋯」，悬停出具体内容、点详情复制', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    await mount()
+    await openWith(report(STATES.errRemedyAi))
+    expect(panel().querySelector('[data-prep-details-toggle]')).toBeNull()
+    expect(panel().querySelector('[data-prep-later]')).toBeNull()
+    expect(panel().querySelector('[data-prep-args]')).toBeNull()
+    const more = panel().querySelector('[data-prep-more]') as HTMLButtonElement
+    expect(more).not.toBeNull()
+    await act(async () => {
+      more.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    const item = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+    expect(item('[data-prep-menu-later]')).not.toBeNull()
+    await act(async () => item('[data-prep-menu-details]')!.focus())
+    const preview = document.body.querySelector('[data-prep-menu-preview]')
+    expect(preview?.textContent).toContain(errorReports.plain_exception.result.error.traceback.split('\n').filter((l: string) => l.trim()).pop()!.trim())
+    await act(async () => item('[data-prep-menu-details]')!.click())
+    expect(writeText).toHaveBeenCalledWith(errorReports.plain_exception.result.error.traceback)
+    expect(document.body.querySelector('[data-prep-copied]')?.textContent).toBe('已复制')
+    await act(async () => root.unmount())
+    host.remove()
+  })
+
   it('remedy 为 ai_fix / connect_ai：主按钮就是它；feedback：一句话 +「发送」', async () => {
     await mount()
     await openWith(report(STATES.errRemedyAi))
