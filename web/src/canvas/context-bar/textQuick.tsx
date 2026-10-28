@@ -35,6 +35,7 @@ export function TextQuickControls({
     options: family?.options ?? [],
     labels: family?.option_labels,
     faces: family?.option_faces,
+    onChange: (v) => a.writeOnce('fontFamily', v),
   })
   const size = a.fieldOf('sizePt')
   const sizeVal = a.valueOf('sizePt')
@@ -48,10 +49,9 @@ export function TextQuickControls({
         <Select
           className={cn(familyWidth, 'shrink-0')}
           ariaLabel={translate('textControls.font', { ns: 'inspector' })}
-          value={familyValue}
-          onChange={(v) => a.writeOnce('fontFamily', v)}
+          value={fm.value}
+          onChange={fm.onChange}
           options={fm.options}
-          triggerLabel={fm.triggerLabel}
           title={fm.title}
         />
       )}

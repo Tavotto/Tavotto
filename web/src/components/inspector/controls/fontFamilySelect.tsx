@@ -1,23 +1,22 @@
 import type { ReactNode } from 'react'
 import { t } from '@/i18n'
 import type { SelectOption } from '@/components/ui/Select'
-import { fontFamilyOptionLabel, optionLabel } from '../roles/registry'
+import { fontFamilyOptionLabel } from '../roles/registry'
 import { fontStackOf } from './fontStack'
 
-const GENERIC = ['serif', 'sans-serif', 'monospace'] as const
-const isGeneric = (v: string) => (GENERIC as readonly string[]).includes(v)
+const isGeneric = (v: string) => ['serif', 'sans-serif', 'monospace'].includes(v)
 
 /**
- * 字体下拉（图内文字）的选项与收起态——Word「主题字体」的做法：
+ * 字体下拉（图内文字）的选项与收起态：用户只挑具体字体，不出现「衬线 / 无衬线 / 等宽」。
  *
- * - 收起的字段显示**此刻真正画出来的那张脸**（脚本写 `serif`、画的是 Times New Roman → 显示
- *   「Times New Roman」），悬停说明它来自脚本的 `serif` 设置；
- * - 列表里具体字体照旧，通用族挪到末尾一个小分组「跟随全局字体族」，每行「衬线 · Times New Roman」
- *   （三行都有，解析口径与引擎渲染同一条：`option_faces`）。值是通用族时勾选落在分组里那一行。
+ * 脚本写的是通用族（`serif`）时，引擎发来的 `option_faces` 说明它此刻由哪张脸画：
+ * - 收起态与列表里的选中项都是那张脸（「Times New Roman」）；它不在选项表里（没装、退到
+ *   「DejaVu Serif」之类）就补成一行，让它能显示为选中；悬停说明它来自脚本的 `serif` 设置；
+ * - 选**正是这张脸**的那一行是空操作（`onChange` 不转发：脚本保持 `serif`，没有编辑）；选别的具体
+ *   字体写的是那个显式名字（跟随 rcParams 与显式字体是两种不同的选择）。
  *
- * 只管显示：选项的 `value` 永远是引擎的原值，选了通用族行写回的仍是 `serif`，选具体字体行
- * 写的是那个字体名（这是两种不同的选择：显式字体 vs 跟随 rcParams）。老引擎不发 `option_faces`
- * （或字段里没有通用族）时原样平铺，行为不变。
+ * 老引擎不发 `option_faces`、或这个通用族解析不出来时原样平铺（通用族留在列表里，值才有对应项）。
+ * 只管显示：选项的 `value` 永远是引擎的原值。
  */
 export function fontFamilySelectModel({
   value,
@@ -26,6 +25,7 @@ export function fontFamilySelectModel({
   faces,
   extra,
   labelOf,
+  onChange,
 }: {
   /** 当前值；多选混合时传空串 */
   value: string
@@ -36,48 +36,31 @@ export function fontFamilySelectModel({
   extra?: (o: string) => ReactNode
   /** 具体字体行的显示名；默认 `fontFamilyOptionLabel`（调用方已有自己的口径时传入） */
   labelOf?: (o: string) => string
-}): { options: SelectOption[]; triggerLabel?: ReactNode; title?: string } {
+  onChange: (v: string) => void
+}): { options: SelectOption[]; value: string; onChange: (v: string) => void; title?: string } {
   const named = labelOf ?? ((o: string) => fontFamilyOptionLabel(o, labels, options))
-  const row = (o: string, ...kids: ReactNode[]): SelectOption => ({
+  const row = (o: string): SelectOption => ({
     value: o,
-    label: <span style={{ fontFamily: fontStackOf(o) }}>{kids}</span>,
-  })
-  const hasGeneric = options.some(isGeneric)
-  const hasFaces = !!faces && GENERIC.some((g) => faces[g])
-  if (!hasGeneric || !hasFaces) {
-    return {
-      options: options.map((o) =>
-        row(o, named(o), extra?.(o)),
-      ),
-    }
-  }
-  const group = t('textControls.fontGenericGroup', { ns: 'inspector' })
-  const concrete = options.filter((o) => !isGeneric(o))
-  const generics = options.filter(isGeneric)
-  const out: SelectOption[] = [
-    ...concrete.map((o) =>
-      row(o, named(o), extra?.(o)),
+    label: (
+      <span style={{ fontFamily: fontStackOf(o) }}>
+        {named(o)}
+        {extra?.(o)}
+      </span>
     ),
-    ...generics.map((g) => ({
-      ...row(
-        g,
-        faces![g]
-          ? t('textControls.fontGenericRow', {
-              ns: 'inspector',
-              generic: optionLabel('fontfamily', g),
-              face: faces![g],
-            })
-          : optionLabel('fontfamily', g),
-      ),
-      group,
-    })),
-  ]
-  const face = isGeneric(value) ? faces![value] : undefined
-  return face
-    ? {
-        options: out,
-        triggerLabel: <span style={{ fontFamily: fontStackOf(face) }}>{named(face)}</span>,
-        title: t('textControls.fontFromGeneric', { ns: 'inspector', generic: value }),
-      }
-    : { options: out }
+  })
+  const face = isGeneric(value) ? faces?.[value] : undefined
+  const resolved = (g: string) => !!faces?.[g]
+  // 通用族行只在「它解析得出脸」时拿掉；解析不出来的（老引擎 / 没有这一族）留着，当前值才有对应项
+  const kept = options.filter((o) => !isGeneric(o) || !resolved(o))
+  const list = face && !kept.includes(face) ? [face, ...kept] : kept
+  if (!face) return { options: list.map(row), value, onChange }
+  return {
+    options: list.map(row),
+    value: face,
+    // 选中的就是它画出来的那张脸：不是编辑，脚本里的 serif 原样保留
+    onChange: (v) => {
+      if (v !== face) onChange(v)
+    },
+    title: t('textControls.fontFromGeneric', { ns: 'inspector', generic: value }),
+  }
 }

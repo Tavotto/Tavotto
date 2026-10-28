@@ -290,6 +290,7 @@ function FontFamilyRowView({
     labels: optionLabels,
     faces: optionFaces,
     labelOf: optionLabelOf,
+    onChange,
     extra: (o) => missing.has(o) && <FontMissingTag />,
   })
   return (
@@ -303,11 +304,10 @@ function FontFamilyRowView({
           className="min-w-0 flex-1"
           ariaLabel={label}
           // Radix 的 value 必须是选项之一才会显示；mixed 传空串走 placeholder
-          value={mixed ? '' : value}
+          value={fm.value}
           placeholder={mixed ? translate('element.mixedValues', { ns: 'inspector' }) : undefined}
-          onChange={onChange}
+          onChange={fm.onChange}
           options={fm.options}
-          triggerLabel={fm.triggerLabel}
           title={fm.title}
         />
       </Row>

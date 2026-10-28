@@ -2024,15 +2024,15 @@ function BatchFieldRow({
                   options: fontOpts,
                   labels: merged?.option_labels,
                   faces: merged?.option_faces,
+                  onChange: writeOnce,
                 })
                 return (
                   <Select
                     className="min-w-0 flex-1"
-                    value={mixed ? '' : String(first ?? '')}
+                    value={fm.value}
                     placeholder={el('mixedValues')}
-                    onChange={(x) => writeOnce(x)}
+                    onChange={fm.onChange}
                     options={fm.options}
-                    triggerLabel={fm.triggerLabel}
                     title={fm.title}
                     ariaLabel={label}
                   />
@@ -2425,13 +2425,13 @@ function FieldRow({
           options: fontOpts,
           labels: merged?.option_labels,
           faces: merged?.option_faces,
+          onChange: writeOnce,
         })
         return wrap(
           <Select
-            value={enumValue}
-            onChange={(v) => writeOnce(v)}
+            value={fm.value}
+            onChange={fm.onChange}
             options={fm.options}
-            triggerLabel={fm.triggerLabel}
             title={fm.title}
             ariaLabel={label}
           />,

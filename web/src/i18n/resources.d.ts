@@ -5006,8 +5006,6 @@ export default interface Resources {
       "color": "颜色",
       "font": "字体",
       "fontFromGeneric": "来自脚本里的「{{generic}}」字体设置",
-      "fontGenericGroup": "跟随全局字体族",
-      "fontGenericRow": "{{generic}} · {{face}}",
       "fontMissingHint": "这台电脑没装这个字体，图上用的是别的字体。",
       "fontMissingTag": "（未安装）",
       "size": "字号"

@@ -25,8 +25,6 @@ interface SelectProps<T extends string> {
   ariaLabel?: string
   /** 当前取值的一句解释（原生 title）；逐项的解释放 `SelectOption.hint` */
   title?: string
-  /** 收起态要显示的内容；不带 = 显示选中项自己的文字。选中项的文字与收起态不同时用（字体的「跟随全局字体族」行） */
-  triggerLabel?: ReactNode
 }
 
 /** 相邻且同名 `group` 的选项并成一组（保持原顺序）；没有 group 的各自并成无标题的一组。 */
@@ -49,7 +47,6 @@ export function Select<T extends string>({
   disabled,
   ariaLabel,
   title,
-  triggerLabel,
 }: SelectProps<T>) {
   return (
     <RS.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
@@ -77,7 +74,7 @@ export function Select<T extends string>({
             否则一个长名字会把它撑出所在的那一行。`min-w-0` 是让 flex 子项真的
             缩得下去的那一半，少了它 truncate 不生效 */}
         <span className="min-w-0 flex-1 truncate text-left">
-          <RS.Value placeholder={placeholder}>{triggerLabel}</RS.Value>
+          <RS.Value placeholder={placeholder} />
         </span>
         {/* 下拉的记号只有 chevron-down（Design Constitution 第六节）：收起时朝下，
             展开时同一枚转到朝上——不做图标互换（两枚字形的视觉重心难对齐，切换
