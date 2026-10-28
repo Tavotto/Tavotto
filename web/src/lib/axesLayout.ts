@@ -195,7 +195,8 @@ export function axesAspectLocked(el: { editable: readonly { prop: string; value?
  *
  * 固定点 = 被拖手柄对侧；边柄没提到的那一轴固定左 / 上边（与画布对象等比缩放同一约定）。
  * 倍数默认取偏离 1 更多的那一轴；`by` 指定按哪一轴定（吸附吸上的那一轴）。
- * 框钳在整图里，两边都不小于 `min`；两者冲突时留在图内优先。
+ * 框钳在整图里，两边都不小于 `min`；起始框已违反某条约束（短边已小于 `min` / 已超出图边）时，
+ * 那条约束只挡继续变坏的方向——倍数 1（原样）始终可取，不会被钳得跳到图边或被强行缩。
  */
 export function lockedAxesResize(
   start: Rect4,
@@ -221,7 +222,10 @@ export function lockedAxesResize(
   else s = Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy
   const room = (f: number, a: number, size: number) =>
     Math.min(a > 0 ? f / a : Infinity, a < 1 ? (1 - f) / (1 - a) : Infinity) / size
-  s = clamp(s, Math.max(min / w, min / h), Math.min(room(fx, ax, w), room(fy, ay, h)))
+  // 下限 / 上限都与 1 取让步：已经太小的框不能再缩但不被放大，已经出图的框不能再放大但不被强行缩
+  const lo = Math.min(1, Math.max(min / w, min / h))
+  const hi = Math.max(1, Math.min(room(fx, ax, w), room(fy, ay, h)))
+  s = clamp(s, lo, hi)
   return [fx - ax * w * s, fy - ay * h * s, w * s, h * s]
 }
 

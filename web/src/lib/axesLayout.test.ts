@@ -60,4 +60,25 @@ describe('lockedAxesResize', () => {
     expect(Math.min(r[2], r[3])).toBeCloseTo(0.05, 9)
     expect(ratio(r)).toBeCloseTo(ratio(START), 9)
   })
+
+  it('起始框短边已小于最小尺寸：往里拖不会被钳到图边，往外拖照常放大且不出图', () => {
+    const thin: Rect4 = [0.1, 0.45, 0.8, 0.01]
+    const inward = lockedAxesResize(thin, 'e', -0.1, 0, 0.05)
+    expect(inward[2]).toBeLessThanOrEqual(0.8 + 1e-12)
+    expect(ratio(inward)).toBeCloseTo(ratio(thin), 9)
+    const outward = lockedAxesResize(thin, 'e', 0.05, 0, 0.05)
+    expect(outward[2]).toBeGreaterThan(0.8)
+    expect(outward[0] + outward[2]).toBeLessThanOrEqual(1 + 1e-12)
+    expect(ratio(outward)).toBeCloseTo(ratio(thin), 9)
+  })
+
+  it('起始框已超出图边：往外拖不再放大也不被强行缩，往里拖可以缩小', () => {
+    const over: Rect4 = [0.5, 0.1, 0.6, 0.3]
+    const outward = lockedAxesResize(over, 'e', 0.1, 0, 0.05)
+    expect(outward[2]).toBeLessThanOrEqual(0.6 + 1e-12)
+    expect(outward[2]).toBeCloseTo(0.6, 9)
+    const inward = lockedAxesResize(over, 'e', -0.2, 0, 0.05)
+    expect(inward[2]).toBeCloseTo(0.4, 9)
+    expect(ratio(inward)).toBeCloseTo(ratio(over), 9)
+  })
 })
