@@ -62,28 +62,26 @@ export function WorkdirRow() {
   }
   return (
     // 标准设置行，坐在「Python 与运行」组里（2026-10-07 设计审计 §9.1：此前外面再包一层 border-t 碎片）。
-    // 当前档那句话是**现状**不是说明（§13），常驻在标题列里，不收进问号。三档分段放不进定宽控件列，
-    // 所以控件整行宽（fill）；错误是分段下面的 danger Notice
+    // 当前档那句话是**现状**不是说明（§13），常驻在标题列里，不收进问号。三档分段比定宽控件列宽，
+    // 所以控件按内容宽贴右缘（auto，组太窄才叠放）；错误是整行下面的 danger Notice（below）
     <SettingRow
       label={en('workdirLabel')}
       status={t(status)}
-      control="fill"
+      control="auto"
+      below={error ? <Notice tone="danger">{error}</Notice> : undefined}
       data-settings-anchor="project.workdir"
     >
-      <div className="flex min-w-0 flex-col gap-2">
-        <Segmented
-          value={mode}
-          onChange={(v) => void pick(v)}
-          ariaLabel={en('workdirLabel')}
-          data-testid="setting-workdir-mode"
-          items={available.map((m) => ({
-            value: m,
-            label: t(MODE_LABEL[m]),
-            disabled: busy,
-          }))}
-        />
-        {error && <Notice tone="danger">{error}</Notice>}
-      </div>
+      <Segmented
+        value={mode}
+        onChange={(v) => void pick(v)}
+        ariaLabel={en('workdirLabel')}
+        data-testid="setting-workdir-mode"
+        items={available.map((m) => ({
+          value: m,
+          label: t(MODE_LABEL[m]),
+          disabled: busy,
+        }))}
+      />
     </SettingRow>
   )
 }

@@ -359,7 +359,7 @@ function DiagnosticsReportSection() {
           }
         >
           {phase !== 'ready' ? (
-            <Button variant="ghost" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
+            <Button variant="secondary" size="sm" onClick={() => void prepare()} disabled={phase === 'busy'}>
               {phase === 'busy' ? st('diagnostics.preparing') : st('diagnostics.copyReport')}
             </Button>
           ) : (

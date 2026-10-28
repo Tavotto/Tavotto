@@ -206,7 +206,7 @@ describe('Notice / StatusPill', () => {
 })
 
 describe('FormSection + FieldGroup + SettingRow', () => {
-  it('组里的 SettingRow 不再自带上下留白（内边距交给组），组外的照旧；balanced 是 4 : 6 两列、控件左起', async () => {
+  it('组里的 SettingRow 不再自带上下留白（内边距交给组），组外的照旧；balanced 是 4 : 6 两列、控件贴控件列右缘', async () => {
     await render(
       <FormSection title={T} description={T} data-fs>
         <FieldGroup data-fg>
@@ -227,7 +227,8 @@ describe('FormSection + FieldGroup + SettingRow', () => {
     const bal = q('[data-row="bal"]')!
     expect(bal.getAttribute('data-layout')).toBe('balanced')
     expect(bal.className).toContain('grid-cols-[minmax(0,4fr)_minmax(0,6fr)]')
-    expect(bal.lastElementChild!.className).not.toMatch(/justify-end/)
+    expect(bal.lastElementChild!.className).toMatch(/justify-end/)
+    expect(bal.lastElementChild!.className).not.toMatch(/justify-self-end/)
   })
 })
 

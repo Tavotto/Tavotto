@@ -2753,6 +2753,9 @@ const outputSaved = (o: ExportOutput) => o.status !== "failed" && !!o.name;
  */
 export function exportResultClean(job: ExportJob, edited: boolean): boolean {
   if (job.status !== "done" || edited) return false;
+  // 只有桌面壳里胶囊才带得出「在文件夹中显示」：浏览器 / 远程服务器上，产物的打开 / 下载链接只在结果块的
+  // `OutputRow` 里——拿掉它用户就取不到文件了（Codex #1466 P1），所以浏览器里照旧显示结果块
+  if (!canRevealInFileManager()) return false;
   const saved = job.outputs.filter(outputSaved);
   if (saved.length === 0 || saved.length !== job.outputs.length) return false;
   if ((job.warnings?.length ?? 0) > 0) return false;

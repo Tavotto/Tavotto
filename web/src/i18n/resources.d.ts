@@ -73,15 +73,18 @@ export default interface Resources {
     },
     "history": {
       "allStatuses": "全部状态",
-      "changedSuffix": " · 有改动",
       "close": "关闭任务历史",
       "count_other": "{{count}} 条",
       "delete": "删除此记录",
-      "effort": "推理强度：{{effort}}",
+      "effortTitle": "思考强度",
       "empty": "还没有改图任务",
       "filterAria": "按状态筛选",
+      "model": "模型",
+      "modelDefault": "跟随 CLI 默认",
+      "moreInfo": "详情",
       "next": "下一页",
       "noMatch": "没有匹配的任务",
+      "openTrace": "查看执行记录",
       "pin": "固定此记录",
       "pinTip": "固定：不随保留期清理",
       "prev": "上一页",
@@ -90,11 +93,20 @@ export default interface Resources {
       "reverted": "已回滚，脚本恢复原样。",
       "searchAria": "搜索任务历史",
       "searchPlaceholder": "搜索任务…",
-      "snapshotAvailable": "快照可用",
-      "snapshotCleared": "快照已清理",
+      "snapshot": "快照",
+      "snapshotAvailableShort": "可撤销",
+      "snapshotClearedShort": "已清理",
+      "state": {
+        "changed": "有改动",
+        "unchanged": "没有改动"
+      },
       "title": "任务历史",
       "unpin": "取消固定",
-      "unpinTip": "取消固定：会随保留期清理"
+      "unpinTip": "取消固定：会随保留期清理",
+      "via": {
+        "cli": "本机 CLI",
+        "endpoint": "API 接口"
+      }
     },
     "markdown": {
       "image": "[图片：{{alt}}]",
@@ -177,7 +189,6 @@ export default interface Resources {
       "stepRan": "运行",
       "targetAria": "作用目标：{{target}}",
       "taskHistory": "任务历史",
-      "techDetails": "技术详情",
       "unconfirmedBody": "这条指令可能已经在执行，先查询结果。",
       "unconfirmedGoneBody": "发起这条指令的图已不在画布上，仍可查询结果。",
       "unconfirmedTitle": "已发出，尚未收到确认"
@@ -342,6 +353,7 @@ export default interface Resources {
         "spawn": "启动进程"
       },
       "state": {
+        "close": "关闭",
         "disabled": "执行追踪已关闭",
         "error": "执行记录读不出来",
         "export": "导出诊断",
@@ -393,6 +405,7 @@ export default interface Resources {
           "wait": "等待"
         },
         "metric": {
+          "atLeast": "≥{{count}}",
           "cost": "费用",
           "duration": "耗时",
           "errors": "失败",
@@ -404,6 +417,23 @@ export default interface Resources {
           "point": "只记录了时刻，没有时长",
           "reported": "耗时由其他进程上报",
           "unmeasured": "这一段没有量到"
+        },
+        "playback": {
+          "pause": "暂停",
+          "play": "播放",
+          "replay": "重播",
+          "scrub": "回放进度",
+          "speed": {
+            "auto": "自动",
+            "fast": "10×",
+            "realtime": "1×"
+          },
+          "speedLabel": "回放速度",
+          "speedTip": {
+            "auto": "压缩到几秒内放完",
+            "fast": "10 倍速",
+            "realtime": "按实际时间"
+          }
         },
         "resize": "调整步骤列宽度",
         "search": {
@@ -1867,6 +1897,7 @@ export default interface Resources {
         },
         "endpoint": {
           "addTitle": "为 {{name}} 添加模型服务",
+          "addTitleGeneric": "添加模型服务",
           "apiKey": "密钥",
           "apiKeySaved": "已保存 {{hint}}，留空则不改",
           "baseUrl": "接口地址",
@@ -3624,7 +3655,7 @@ export default interface Resources {
       "workdirHintProjectNative": "正在用你自己的 Python，脚本在自己的目录里运行，用相对路径写出的文件会落进项目目录并改写同名文件；项目里的文件被删除、改名仍会被拦下。想隔离就改回沙盒。",
       "workdirHintProjectRoot": "脚本在项目根目录里运行，用相对路径写出的文件会落进项目目录并改写同名文件；项目里的文件被删除、改名仍会被拦下。",
       "workdirHintRuntime": "{{script}} 要找的数据在沙盒里找不到，但在脚本所在的目录里找得到。",
-      "workdirHintSandbox": "开启后在本地环境中运行，兼容性更好。",
+      "workdirHintSandbox": "脚本在沙盒里运行，写出的文件不会碰项目；用 open 读相对路径的数据时会回退到脚本目录。",
       "workdirLabel": "脚本的运行目录",
       "workdirMode_project": "脚本目录",
       "workdirMode_project_root": "项目根目录",

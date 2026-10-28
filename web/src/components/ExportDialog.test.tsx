@@ -25,6 +25,13 @@ vi.mock('@/lib/api', async (importOriginal) => ({
 }))
 
 // 「在文件夹中显示」走桌面壳的 IPC；只有个别用例把 `__TAURI_INTERNALS__` 装上
+// 能不能「在文件夹中显示」：桌面壳才有；全部成功只在能显示时改走胶囊（浏览器里照旧留结果块，那里才有下载链接）
+// `can: null` = 用真实判定（多数用例自己装了桌面环境）；true / false = 用例点名覆盖
+const reveal = vi.hoisted(() => ({ can: null as boolean | null }))
+vi.mock('@/lib/desktop', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@/lib/desktop')>()
+  return { ...real, canRevealInFileManager: () => reveal.can ?? real.canRevealInFileManager() }
+})
 const tauriInvoke = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined as unknown))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: tauriInvoke }))
 
@@ -3013,11 +3020,19 @@ describe('导出终局通知：关窗期间的结果不能无声', () => {
     expect(status().exportOpen).toBe(true)
     await finish({ status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } })
     expect(status().status).toBeNull()
-    // 全部成功：结果块不插进对话框（不位移），改由对话框上面的胶囊说一声（能显示时带「在文件夹中显示」、6 秒后自己走）
+    // 全部成功（桌面壳）：结果块不插进对话框（不位移），改由对话框上面的胶囊说一声（带「在文件夹中显示」、6 秒后自己走）
+    reveal.can = true
     resetExportState()
     await startThenClose(false)
     await finish({ job_id: 'job-1', status: 'done', outputs: [doneOut] })
     expect(JSON.stringify(status().status)).toContain('export.exported')
+    // 浏览器里全部成功也留在结果块（下载链接只在那里），不弹第二份
+    reveal.can = false
+    resetExportState()
+    await startThenClose(false)
+    await finish({ job_id: 'job-1', status: 'done', outputs: [doneOut] })
+    expect(status().status).toBeNull()
+    reveal.can = null
     // 带警告的成功仍留在结果块里，不弹第二份
     resetExportState()
     await startThenClose(false)
@@ -3295,14 +3310,30 @@ describe('预览信息完善（PR3）：结果块', () => {
     expect(q('[data-export-partial-summary]')).toBeNull()
   })
 
-  it('干净地全部成功：结果块不插进对话框（状态区不出现），脚部是「再次导出 · 完成」，胶囊说「已导出」', async () => {
-    await setup(9)
-    await click(q('[data-export-start]')!)
-    expect(q('[data-export-result]')).toBeNull()
-    expect(q('[data-dialog-status]')).toBeNull()
-    expect(q('[data-export-again]')).toBeTruthy()
-    expect(q('[data-export-finish]')).toBeTruthy()
-    expect(JSON.stringify(useUiStore.getState().status)).toContain('export.exported')
+  it('干净地全部成功（桌面壳）：结果块不插进对话框（状态区不出现），脚部是「再次导出 · 完成」，胶囊说「已导出」', async () => {
+    reveal.can = true
+    try {
+      await setup(9)
+      await click(q('[data-export-start]')!)
+      expect(q('[data-export-result]')).toBeNull()
+      expect(q('[data-dialog-status]')).toBeNull()
+      expect(q('[data-export-again]')).toBeTruthy()
+      expect(q('[data-export-finish]')).toBeTruthy()
+      expect(JSON.stringify(useUiStore.getState().status)).toContain('export.exported')
+    } finally {
+      reveal.can = null
+    }
+  })
+
+  it('浏览器里干净地全部成功：结果块照旧在对话框里——产物的打开 / 下载链接只在那里（Codex #1466 P1）', async () => {
+    reveal.can = false
+    try {
+      await setup(9)
+      await click(q('[data-export-start]')!)
+      expect(q('[data-export-result]')).toBeTruthy()
+    } finally {
+      reveal.can = null
+    }
   })
 })
 

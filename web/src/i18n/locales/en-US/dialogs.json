@@ -1197,6 +1197,7 @@
       },
       "endpoint": {
         "addTitle": "Add a model service for {{name}}",
+        "addTitleGeneric": "Add a model service",
         "apiKey": "API key",
         "apiKeySaved": "{{hint}} saved; leave empty to keep it",
         "baseUrl": "Base URL",
