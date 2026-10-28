@@ -158,7 +158,7 @@ strokeWidth；开关 / 激活态写 `filled`（29 个有实心孪生，其余忽
 `NUDGE_ALLOWLIST` 目前为空）；文字的行高在兄弟元素上时给槽写同一组文字类（`text-xs leading-relaxed`）或
 `h-5`。②「加载中」只有 `ui/Spinner`（淡底环 + 约 100° 短弧，描边 2.5/24、12 / 14px 档不低于 1.4px，
 减少动态效果时不转），不再有 `LoaderCircle` 式 3/4 弧；其余图标的描边仍按比例缩放、不设下限。
-④ **手帐线稿（2026-10-28，framed-icons 审计）：图标不套底座。** 空状态的图形是 `ui/Sketch` 的线稿（封闭集 11 幅、54×42、1px 发丝线落在 .5 坐标、45° 整像素排线、仅 `currentColor` = ink-faint，亮暗同源；`EmptyState` 的 `art` 属性按意思选，同义复用，不为一个调用处新画）。行首 / 标题行的角色图标（项目行、属性栏标题、连接 AI 方式行、教程脚本卡）是无框 16px + `IconSlot`，居中在**第一行文字**上（名字折两行也不动）；不再有 `bg-surface-hover` 一类的 28/32/40px 图标底座，也不再有 48px 绿底圆盘（联系作者「已发送」是标题行首的 ok 色对勾）。缩略图占位是 `.hatch-box`（发丝框 + 与进度条同一张 45° 排线瓦片，`index.css`），不画图标。`Sketch.tsx` 在 `iconography.test` 的内联 svg 豁免表里占 1 个。
+④ **手帐线稿（2026-10-28，framed-icons 审计）：图标不套底座。** 空状态的图形是 `ui/Sketch` 的线稿（封闭集 11 幅、54×42（唯一尺寸例外：首页拖放区的 `drop` 96×72，`SKETCH_SIZE_OVERRIDE`）、1px 发丝线落在 .5 坐标、45° 整像素排线、仅 `currentColor` = ink-faint，亮暗同源；`EmptyState` 的 `art` 属性按意思选，同义复用，不为一个调用处新画）。行首 / 标题行的角色图标（项目行、属性栏标题、连接 AI 方式行、教程脚本卡）是无框 16px + `IconSlot`，居中在**第一行文字**上（名字折两行也不动）；不再有 `bg-surface-hover` 一类的 28/32/40px 图标底座，也不再有 48px 绿底圆盘（联系作者「已发送」是标题行首的 ok 色对勾）。缩略图占位是 `.hatch-box`（发丝框 + 与进度条同一张 45° 排线瓦片，`index.css`），不画图标。`Sketch.tsx` 在 `iconography.test` 的内联 svg 豁免表里占 1 个。
 ③ 状态不画彩色圆盘：语义色只留在图形上，状态图标用实心孪生（`CircleCheck` / `CircleAlert` /
 `CircleQuestionMark` 的 `filled`），进行中是 `Spinner`；点状标记（脚本行状态点）6px、空心环描边 1.5px，
 与文字同在一个 `items-baseline` 组里、用 `vertical-align: middle` 对准小写字母中心，不靠 margin。

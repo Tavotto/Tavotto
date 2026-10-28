@@ -483,7 +483,7 @@ function DropZone({ importer, dragging }: { importer: Importer; dragging: boolea
           dropZoneClass(dragging),
         )}
       >
-        {/* 手帐线稿：虚线框 + 向下的箭头；拖入时由 ink-faint 提到 ink-3（接收态本身的蓝线在 dropZoneClass 上） */}
+        {/* 手帐线稿（96×72）：文件卡落进托盘；拖入时由 ink-faint 提到 ink-3，卡下落 4px、落点虚线变 accent（index.css 按 data-dragging） */}
         <span aria-hidden className={cn('flex', dragging ? 'text-ink-3' : 'text-ink-faint')}>
           <Sketch name="drop" className="block" />
         </span>

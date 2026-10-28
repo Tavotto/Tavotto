@@ -24,9 +24,16 @@ export type SketchName =
   | 'warn' // 出错：纸 + 感叹号
   | 'pencil' // 改图 / 样式：纸 + 铅笔
   | 'sheet' // 通用：折角纸 + 几行字
-  | 'drop' // 拖入：虚线框 + 向下的箭头
+  | 'drop' // 拖入：.py 文件卡（折角排线、三行代码）落进托盘，三道错落的下落节拍
 
 export const SKETCH_SIZE = { w: 54, h: 42 } as const
+/**
+ * 尺寸例外（2026-10-28，redesign-3 C1）：首页拖放区是整屏的主图，画布放大到 96×72；
+ * 其余仍是 54×42。线宽、.5 坐标、排线瓦片都不变——只是画布更大，不是缩放（缩放会糊）。
+ */
+export const SKETCH_SIZE_OVERRIDE: Partial<Record<SketchName, { w: number; h: number }>> = {
+  drop: { w: 96, h: 72 },
+}
 
 const SHEET = 'M12.5 3.5H33.5L42.5 12.5V38.5H12.5Z'
 const EAR = 'M33.5 3.5V12.5H42.5Z'
@@ -136,11 +143,27 @@ function Drawing({ name, hatch }: { name: SketchName; hatch: string }): ReactNod
         </>
       )
     case 'drop':
+      // 构图：文件卡（焦点）在托盘里；托盘前壁遮住卡底 = 景深；顶部三道错落的短线 = 下落的节拍。
+      // `sk-fall` 一组（卡 + 节拍）拖入时整体下移 4px，落点虚线 `sk-landing` 换 accent（index.css，由 data-dragging 驱动）
       return (
         <>
-          <rect x="3.5" y="14.5" width="47" height="26" strokeDasharray="2 2" />
-          <path d="M27.5 3.5V22.5M21.5 16.5L27.5 22.5L33.5 16.5" strokeLinecap="round" strokeLinejoin="round" />
-          <rect x="21.5" y="30.5" width="12" height="5" fill={hatch} />
+          <g className="sk-fall">
+            <path d="M40.5 1.5v3M47.5 3.5v3M54.5 1.5v3" />
+            <path d="M29.5 9.5H55.5L66.5 20.5V52.5H29.5Z" fill={PAPER} />
+            <path d="M55.5 9.5V20.5H66.5Z" fill={hatch} />
+            <path d="M55.5 9.5V20.5H66.5" />
+            <path d="M36.5 28.5H52.5M40.5 33.5H59.5M40.5 38.5H50.5" strokeLinecap="round" />
+          </g>
+          <path d="M10.5 43.5H85.5V64.5H10.5Z" fill={PAPER} />
+          <rect x="10.5" y="58.5" width="75" height="6" fill={hatch} stroke="none" />
+          <path d="M10.5 58.5H85.5M10.5 43.5V64.5H85.5V43.5Z" />
+          <path
+            className="sk-landing"
+            d="M22.5 51.5H73.5"
+            strokeDasharray="1 2"
+            strokeLinecap="butt"
+            style={{ stroke: 'var(--sk-landing, currentColor)' }}
+          />
         </>
       )
   }
@@ -148,13 +171,14 @@ function Drawing({ name, hatch }: { name: SketchName; hatch: string }): ReactNod
 
 export function Sketch({ name, className }: { name: SketchName; className?: string }) {
   const id = `sk${useId().replace(/[^a-zA-Z0-9]/g, '')}`
+  const { w, h } = SKETCH_SIZE_OVERRIDE[name] ?? SKETCH_SIZE
   return (
     <svg
       aria-hidden="true"
       data-sketch={name}
-      width={SKETCH_SIZE.w}
-      height={SKETCH_SIZE.h}
-      viewBox={`0 0 ${SKETCH_SIZE.w} ${SKETCH_SIZE.h}`}
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
       fill="none"
       stroke="currentColor"
       strokeWidth="1"

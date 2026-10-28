@@ -111,6 +111,7 @@ MIT，755 个图标源码公开）逐个量过之后，每一条都能指出 luc
 （1px、.5 坐标、45° 整像素排线、ink-faint）。线稿不是图标：图标集管小控件里的符号，线稿管一屏的主图，
 封闭集 11 幅（select / canvas / history / versions / ok / code / search / warn / pencil / sheet / drop）。
 缩略图占位用 `.hatch-box`，不画图标。
+尺寸例外只有一处：首页拖放区的 `drop`（文件卡落进托盘）是整屏主图，画布 96×72（`SKETCH_SIZE_OVERRIDE`），线宽与排线不变。
 
 ## 四、语义统一表（同一含义只用一个图标）
 
