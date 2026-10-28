@@ -12031,7 +12031,12 @@ def api_managed_environment_rebuild():
         status = 409 if exc.code == engine_pool.ENVIRONMENT_MUTATING else 400
         return jsonify({"error": str(exc), "code": exc.code}), status
     engine_deprepair.reset_state(root)
-    engine_deprepair.start_rebuild(root, lambda p: sse_publish("engine.dependency", p), progress_id)
+    engine_deprepair.start_rebuild(
+        root,
+        lambda p: sse_publish("engine.dependency", p),
+        progress_id,
+        str(body.get("private_python_id") or ""),
+    )
     return jsonify({"started": True, "progress_id": progress_id})
 
 

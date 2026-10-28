@@ -1726,25 +1726,31 @@ def claim_rebuild_progress_id(raw: str | None) -> str:
     return pid
 
 
-def start_rebuild(project: str | Path, on_event, progress_id: str) -> None:
+def start_rebuild(
+    project: str | Path, on_event, progress_id: str, private_python_id: str = ""
+) -> None:
     """起重建线程（`progress_id` 必须已经由 `claim_rebuild_progress_id` 占用）。"""
     threading.Thread(
-        target=lambda: _rebuild_guarded(project, on_event, progress_id),
+        target=lambda: _rebuild_guarded(project, on_event, progress_id, private_python_id),
         daemon=True,
         name="tavotto-managed-rebuild",
     ).start()
 
 
-def rebuild_managed_async(project: str | Path, on_event=None, progress_id: str = "") -> str:
+def rebuild_managed_async(
+    project: str | Path, on_event=None, progress_id: str = "", private_python_id: str = ""
+) -> str:
     """占用 id + 起线程；回这次重建的进度 id（`claim_rebuild_progress_id` 的规则）。"""
     pid = claim_rebuild_progress_id(progress_id)
-    start_rebuild(project, on_event, pid)
+    start_rebuild(project, on_event, pid, private_python_id)
     return pid
 
 
-def _rebuild_guarded(project, on_event, progress_id: str) -> dict:
+def _rebuild_guarded(project, on_event, progress_id: str, private_python_id: str = "") -> dict:
     try:
-        return rebuild_managed(project, on_event, progress_id=progress_id)
+        return rebuild_managed(
+            project, on_event, progress_id=progress_id, private_python_id=private_python_id
+        )
     except RepairError as exc:
         _log_repair_failure("受管环境重建", progress_id, exc.code)
         return _emit(progress_id, STATE_FAILED, on_event, code=exc.code, error=str(exc))
@@ -1759,7 +1765,9 @@ def _rebuild_guarded(project, on_event, progress_id: str) -> dict:
         )
 
 
-def rebuild_managed(project: str | Path, on_event=None, *, progress_id: str = "") -> dict:
+def rebuild_managed(
+    project: str | Path, on_event=None, *, progress_id: str = "", private_python_id: str = ""
+) -> dict:
     """重建受管环境：按账上记过的那些**建新的一代**，验完再切 active（U04 起不再删旧的
     重来——旧代留到没人用）。`progress_id` 没给就现生成一个（同步调用方用回值里的 `progress_id`）。
 
@@ -1769,8 +1777,17 @@ def rebuild_managed(project: str | Path, on_event=None, *, progress_id: str = ""
     **不声称 lockfile 级复现**：`environment.json` 里记的是安装当时解析出来的
     版本，重建时那个版本可能已经从 index 上撤了。真撤了就如实报错，不悄悄
     换一个别的版本装上——「重建完跟以前不一样」比「重建失败」难查得多。
+
+    **没有基础解释器时的私有 Python**（ADR 0063 / 0111）：授权绑在用户看过的那份载荷上——调用方回传
+    `capability.private_python.id`，与此刻的 `offer_payload()` 同一份才供应（锁换了 = 没授权，照旧
+    `managed_env_unavailable`，不静默换成另一份下载）；没传 / 有基础解释器则不下载。
     """
     root = str(Path(project))
+    private = None
+    if private_python_id and not base_python():
+        offered = privatepython.offer_payload()
+        if offered is not None and offered.get("id") == private_python_id:
+            private = offered
     pid = progress_id or new_rebuild_progress_id()
     cancel_ev = threading.Event()
     with _lock:
@@ -1791,6 +1808,8 @@ def rebuild_managed(project: str | Path, on_event=None, *, progress_id: str = ""
             emit=lambda state, **kw: _emit(pid, state, on_event, **kw),
             on_log=lambda text: _append_log(pid, text, on_event),
             label="rebuild",
+            provision_private=private is not None,
+            private_plan=private,
         )
         outcome = _run_generation(job, cancel_ev)
         if outcome.get("ok"):
@@ -3041,9 +3060,12 @@ class PackageJob:
     dependents: tuple[str, ...]
     created_at: float
     expires_at: float
+    #: 首装且没有基础解释器时，计划里说出口的私有 Python 载荷（`privatepython.offer_payload()`）；其余为 None
+    private_python: dict | None = None
 
     def to_payload(self) -> dict:
         return {
+            "private_python": self.private_python,
             "job_id": self.job_id,
             "op": self.op,
             "distribution": self.distribution,
@@ -3240,10 +3262,9 @@ def list_managed_packages(project: str | Path | None) -> dict:
     busy = envlease.is_mutating_key(_env_key(TARGET_MANAGED, "", root)) or (
         bool(python) and envlease.is_mutating(python)
     )
-    available = True if managed["exists"] else managed_available()
-    capability = {"available": available is not False, "reason": ""}
-    if available is False:
-        capability = {"available": False, "reason": ERROR_MANAGED_UNAVAILABLE}
+    capability = _managed_capability(bool(managed["exists"]))
+    if not capability["available"]:
+        pass
     elif managed["exists"] and inv is None:
         capability = {"available": True, "reason": ERROR_MANAGED_BROKEN}
     elif managed["state"] == managedenv.STATE_INCOMPLETE and (managedenv.read_manifest(root) or {}):
@@ -3268,6 +3289,50 @@ def list_managed_packages(project: str | Path | None) -> dict:
         "snapshots": len(managedenv.list_snapshots(root)),
         # 卸载没有回滚这件事要在界面上**说出来**（ADR 0019 §八）
         "rollback": "snapshot_only",
+    }
+
+
+def _managed_capability(env_exists: bool) -> dict:
+    """设置 → 包管理能不能动手，以及（没有基础解释器时）为什么、还有什么路。
+
+    * 基础解释器还在后台探（`managed_available()` 为 None）：`checking=True`，界面说「正在检查」——
+      不先隐藏提醒再冒出来（探完结论只变一次）；
+    * 没有合格的基础解释器但提供私有 Python：**可用**，带 `private_python` 载荷（界面把字节数说出口，
+      首装 / 重建 / 「自动准备」都凭它授权；ADR 0063 / 0111）——不再叫用户去装 Python；
+    * 连私有 Python 也不提供（不支持的平台 / 锁关着）：才是 `managed_env_unavailable`；
+    * 装着的 Python 因版本在支持区间之外被拒时带 `rejected_python`（版本 + 支持区间），界面说「太新 / 太旧」。
+    """
+    base = managed_available()
+    if base is None:
+        return {"available": True, "reason": "", **({"checking": True} if not env_exists else {})}
+    if base:
+        return {"available": True, "reason": ""}
+    private = privatepython.offer_payload()
+    cap: dict = {"available": env_exists or private is not None, "reason": ""}
+    if private is not None:
+        cap["private_python"] = private
+    if not cap["available"]:
+        cap["reason"] = ERROR_MANAGED_UNAVAILABLE
+    rejected = _rejected_python()
+    if rejected:
+        cap["rejected_python"] = rejected
+    return cap
+
+
+def _rejected_python() -> dict | None:
+    """被支持区间拒掉的已装 Python：`{version, direction: newer|older, min, max}`；没有回 None。"""
+    versions = managedenv.rejected_python_versions()
+    if not versions:
+        return None
+    version = versions[0]
+    try:
+        minor = tuple(int(x) for x in version.split(".")[:2])
+    except ValueError:
+        return None
+    return {
+        "version": ".".join(version.split(".")[:3]),
+        "direction": "newer" if minor >= projectenv.PYTHON_MAX_EXCLUSIVE else "older",
+        **supported_python_range(),
     }
 
 
@@ -3535,12 +3600,13 @@ def create_package_job(project: str | Path, op: str, spec: str) -> PackageJob:
 
     python = managedenv.python_of(root) or ""
     creates = False
+    private_python: dict | None = None
     if not python:
         if op != OP_INSTALL:
             raise RepairError(ERROR_PACKAGE_ENV_MISSING, "这个项目还没有 Tavotto 环境")
         creates = True
-        if not base_python():
-            raise RepairError(ERROR_MANAGED_UNAVAILABLE, "这台机器上没有可以用来创建环境的 Python")
+        # 没有基础解释器：提供私有 Python 就把它挂在作业上（授权绑在计划上，ADR 0063 / 0111），否则才拒绝
+        private_python = _private_python_offer()
 
     env_key = _env_key(TARGET_MANAGED, python, root)
     busy = envlease.is_mutating(python) if python else envlease.is_mutating_key(env_key)
@@ -3579,6 +3645,7 @@ def create_package_job(project: str | Path, op: str, spec: str) -> PackageJob:
         dependents=dependents,
         created_at=now,
         expires_at=now + PLAN_TTL_S,
+        private_python=private_python,
     )
     with _lock:
         for stale in [k for k, j in _jobs.items() if j.expires_at < now]:
@@ -3689,6 +3756,8 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             ),
             on_log=lambda text: _append_log(job.job_id, text, on_event),
             label=f"{job.op}-{job.distribution}",
+            provision_private=job.private_python is not None,
+            private_plan=job.private_python,
         )
         outcome = _run_generation_locked(gen_job, cancel_ev, env_key)
         if not outcome.get("ok"):
@@ -4909,8 +4978,8 @@ class _GenerationJob:
     emit: object  # (state, **kw) -> dict
     on_log: object  # (text) -> None
     label: str = "generation"  # 快照文件名里的动作名（`after-<label>`）
-    #: 计划里明示过「将下载私有 Python」的授权才为真（U05）；重建 / 包管理首装为假——
-    #: 那两条路没有说出口的下载，没有基础解释器就照旧 `managed_env_unavailable`。
+    #: 计划里明示过「将下载私有 Python」的授权才为真（U05）：联合准备 / 单包修复由计划载荷、包管理首装由作业载荷、
+    #: 重建由用户回传的载荷 id 授权；没有说出口的下载，没有基础解释器就照旧 `managed_env_unavailable`。
     provision_private: bool = False
     #: 计划里告诉用户的那段私有 Python 载荷（`offer_payload()` / `present_payload()`）：执行时来源必须还是它说的
     #: 那一处（`origin`、同一个 id），否则 `repair_plan_stale`——不静默换源、不变成联网下载（ADR 0111 §一）。

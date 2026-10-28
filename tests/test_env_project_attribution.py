@@ -200,7 +200,7 @@ def test_the_endpoint_echoes_the_id_and_refuses_a_bad_one(client, project, monke
     monkeypatch.setattr(
         deprepair,
         "_rebuild_guarded",
-        lambda project, on_event, progress_id: started.append(progress_id),
+        lambda project, on_event, progress_id, private_python_id="": started.append(progress_id),
     )
 
     class _SyncThread:

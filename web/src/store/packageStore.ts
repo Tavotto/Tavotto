@@ -132,6 +132,7 @@ const failure = (e: unknown): { code: string; text: string } => {
 
 export const RUNNING_STATES: PackageProgress['state'][] = [
   'preparing',
+  'downloading_python',
   'creating_env',
   'installing',
   'verifying',

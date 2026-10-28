@@ -893,13 +893,16 @@ def test_replan_when_the_new_environment_is_no_longer_missing_anything_just_cont
     assert len(env["prompts"]) == 1
 
 
-def test_replan_while_still_on_the_system_python_returns_the_system_card_again(env, held_on_system):
+def test_replan_while_still_on_the_system_python_returns_the_managed_card_not_a_switch_request(
+    env, held_on_system
+):
     sid, st, tmp = held_on_system
     _as(st, tmp, source=pool.SOURCE_SYSTEM, ext=True)
     out = _replan(env, sid)
     assert out["state"] == ai_convert.STATE_AWAITING, out
     card = ai_convert.status(sid, _project(env))["dependency_card"]
-    assert card["kind"] == "system" and card["action"] == "choose_env"
+    assert card["kind"] == "ask_once" and card["action"] == "install_managed"
+    assert card["env"]["kind"] == "system"
     assert "prepare" not in [c[0] for c in st.calls]
     assert len(env["prompts"]) == 1
 

@@ -300,7 +300,8 @@ interface DepRepairState {
    */
   adoptUserEnvironment: (id: string, script: string) => Promise<void>
   cancel: () => Promise<void>
-  rebuildManaged: () => Promise<void>
+  /** `privatePythonId`：没有基础解释器时，用户看过并同意的私有 Python 载荷 id */
+  rebuildManaged: (privatePythonId?: string) => Promise<void>
   onProgress: (p: DependencyProgress) => void
   /**
    * 对账（SSE 重连 / 页面恢复）：后端 `/api/events` 无重放，断线期间丢了终态事件，卡片就永远停在「正在安装」。
@@ -834,7 +835,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
   },
 
-  rebuildManaged: async () => {
+  rebuildManaged: async (privatePythonId) => {
     const owner = currentProjectId()
     if (get().busy || get().rebuildRunningFor(owner)) return
     const epoch = projectEpoch
@@ -858,7 +859,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       progress: started,
     })
     try {
-      await rebuildManagedEnvironment(id)
+      await rebuildManagedEnvironment(id, privatePythonId)
       // 进度此后只由 SSE 推进（切走时 `clear()` 已经把它收进 A 那格），这里不再写进度
       if (epoch !== projectEpoch) return
       set({ busy: false })

@@ -865,9 +865,23 @@ function convertFlow(
           {pt('convert.deps.btn.decline')}
         </Button>
       )
+      // 内置 runtime 不往里装包，但默认动作不是“请你换环境”：给本项目准备受管环境并装上（选别的环境留作次要入口）
+      const builtin = (card.env.kind === 'builtin' || card.env.kind === 'system') && card.action === 'install_managed'
+      const sysPython = card.env.kind === 'system'
+      const otherEnv = builtin ? (
+        <Button variant="ghost" size="md" data-convert-choose-env className="text-ink-2" onClick={() => store.chooseEnv(p.script)}>
+          {pt('convert.deps.btn.otherEnv')}
+        </Button>
+      ) : null
+      const ghost = (
+        <>
+          {otherEnv}
+          {decline}
+        </>
+      )
       if (card.kind === 'system') {
         return {
-          title: pt(card.env.kind === 'builtin' ? 'convert.deps.systemBuiltin' : 'convert.deps.system', { product: PRODUCT_NAME }),
+          title: pt('convert.deps.system', { product: PRODUCT_NAME }),
           primary: (
             <Button
               variant="primary"
@@ -884,11 +898,22 @@ function convertFlow(
       }
       const uncommon = card.kind === 'uncommon'
       const title = uncommon
-        ? pt('convert.deps.uncommon', { names: listJoin(card.outside_list.length ? card.outside_list : card.packages) })
-        : pt(card.action === 'install_managed' ? 'convert.deps.askOnceManaged' : 'convert.deps.askOnce', {
-            env,
+        ? pt(builtin ? 'convert.deps.uncommonManaged' : 'convert.deps.uncommon', {
+            names: listJoin(card.outside_list.length ? card.outside_list : card.packages),
             product: PRODUCT_NAME,
           })
+        : builtin
+          ? pt(sysPython ? 'convert.deps.askSystem' : 'convert.deps.askBuiltin', {
+              product: PRODUCT_NAME,
+              names: listJoin(card.packages),
+              size: card.downloads_python && (card.download_bytes ?? 0) > 0
+                ? pt('convert.deps.downloadSize', { mb: Math.max(1, Math.round((card.download_bytes ?? 0) / 1048576)) })
+                : '',
+            })
+          : pt(card.action === 'install_managed' ? 'convert.deps.askOnceManaged' : 'convert.deps.askOnce', {
+              env,
+              product: PRODUCT_NAME,
+            })
       return {
         title,
         primary: (
@@ -899,10 +924,10 @@ function convertFlow(
             data-prep-primary="convert_deps_install"
             onClick={() => void store.resolveDeps(p.script)}
           >
-            {pt(uncommon ? 'convert.deps.btn.installOnce' : 'convert.deps.btn.installAlways')}
+            {pt(uncommon ? 'convert.deps.btn.installOnce' : builtin ? 'convert.deps.btn.prepareEnv' : 'convert.deps.btn.installAlways')}
           </Button>
         ),
-        ghost: decline,
+        ghost,
       }
     }
     case 'resuming':

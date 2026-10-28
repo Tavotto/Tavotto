@@ -1587,10 +1587,13 @@
         "uninstallTitle": "卸载 {{name}}？",
         "rebuildTitle": "重建这个项目的环境？",
         "rebuildBody": "会删掉现有环境、新建一个，并按安装记录重装所有包。期间用到它的图无法渲染；已装包的记录不会丢。",
-        "rebuildAction": "重建"
+        "rebuildAction": "重建",
+        "rebuildBodyPython": "会删掉现有环境、新建一个，并按安装记录重装所有包。期间用到它的图无法渲染；已装包的记录不会丢。{{python}}",
+        "privatePythonTitle": "先准备 Python？",
+        "privatePythonAction": "继续"
       },
       "disabled": {
-        "noBasePython": "没有找到可用的 Python。请安装 3.10 或以上版本后回到这里。",
+        "noBasePython": "这台电脑没有 {{product}} 能用的 Python（需要 {{min}}–{{max}}），也没法自动准备。请安装后回到这里。",
         "noProject": "打开一个项目后才能管理它的 {{product}} 环境。",
         "other": "包管理暂时不可用。"
       },
@@ -1621,7 +1624,8 @@
         "log": "详细日志",
         "preparing": "正在准备{{op}} {{name}}…",
         "progressAria": "包操作进度",
-        "verifying": "正在验证环境…"
+        "verifying": "正在验证环境…",
+        "downloading_python": "正在准备 Python…"
       },
       "loading": "正在读取…",
       "network": {
@@ -1687,6 +1691,16 @@
         "empty": "还没有环境被允许自动装包。",
         "loading": "正在读取…",
         "revoke": "撤销"
+      },
+      "python": {
+        "checking": "正在检查 Python…",
+        "none": "这台电脑上没有可用的 Python，{{product}} 可以自动准备一个{{size}}",
+        "tooNew": "你装的 Python {{version}} 比 {{product}} 支持的新（支持 {{min}}–{{max}}），可以让 {{product}} 自动准备一个{{size}}",
+        "tooOld": "你装的 Python {{version}} 比 {{product}} 支持的旧（支持 {{min}}–{{max}}），可以让 {{product}} 自动准备一个{{size}}",
+        "tooNewManual": "你装的 Python {{version}} 比 {{product}} 支持的新（支持 {{min}}–{{max}}）。请另装一个 {{min}}–{{max}} 的版本后回到这里。",
+        "tooOldManual": "你装的 Python {{version}} 比 {{product}} 支持的旧（支持 {{min}}–{{max}}）。请另装一个 {{min}}–{{max}} 的版本后回到这里。",
+        "downloadSize": "（需下载约 {{mb}} MB）",
+        "prepare": "自动准备"
       }
     },
     "project": {

@@ -4077,7 +4077,8 @@ export type ConvertSourceLanguage = 'python' | 'r' | 'matlab'
 /**
  * 校验前缺 Python 包、要用户先决定时的卡片事实（后端 `convertdeps` 的 card；任务以 `needs_input` 终局，候选留着等用户）。
  * `ask_once` = 这个环境第一次要装（主按钮：装，以后这个环境都自动装）；`uncommon` = 名单外的包，点名；
- * `system` = 系统自带 / 内置 runtime，不装（主按钮：打开「选择运行环境」）。没有机器路径。
+ * `system` = 系统自带 Python，不装（主按钮：打开「选择运行环境」）。内置 runtime 不再出这张卡：它是 `ask_once` +
+ * `install_managed`（给本项目准备受管环境并装上，必要时先下私有 Python）。没有机器路径。
  */
 export interface ConvertDependencyCard {
   kind: 'ask_once' | 'uncommon' | 'system'
@@ -4091,6 +4092,8 @@ export interface ConvertDependencyCard {
   target: string
   creates_environment: boolean
   downloads_python: boolean
+  /** 要下载的私有 Python 的字节数（授权要说出大小）；安装包自带 / 已缓存 / 不下载为 0；老后端没有 */
+  download_bytes?: number
   modifies_user_environment: boolean
   /** 上一次点击时摘要对不上（环境在期间变了），这是换新的卡片 */
   notice?: string
@@ -5944,11 +5947,12 @@ export const setDependencyGroups = (groups: string[]) =>
  * 删掉并重建当前项目的 Tavotto 隔离环境（用户自己的 .venv 没有这个操作）。`progressId` 是这次重建的进度 id，
  * 由调用方在发请求**之前**生成（`depRepairStore.newRebuildProgressId()`，与后端 `REBUILD_PROGRESS_ID_RE` 同源，#606）
  */
-export const rebuildManagedEnvironment = (progressId: string) =>
+export const rebuildManagedEnvironment = (progressId: string, privatePythonId?: string) =>
   jsonFetch<{ started: boolean; progress_id: string }>('/api/engine/environment/managed/rebuild', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ progress_id: progressId }),
+    // `private_python_id`：用户看过的那份私有 Python 载荷的 id（没有基础解释器时才有）——授权绑在它上面
+    body: JSON.stringify({ progress_id: progressId, ...(privatePythonId ? { private_python_id: privatePythonId } : {}) }),
   })
 
 /** 某个计划 / 作业此刻的进度（SSE 断了、或发起请求本身失败之后问实况；没到过后端的 id 回 `idle`） */
@@ -5987,8 +5991,27 @@ export interface UserPackage {
   installed_at: number
 }
 
+/** 装着的 Python 因版本在支持区间之外被拒（后端 `deprepair._rejected_python`） */
+export interface RejectedPython {
+  version: string
+  direction: 'newer' | 'older'
+  min: string
+  max: string
+}
+
+/** 设置 → 包管理能不能动手；没有基础解释器时带「还有什么路」 */
+export interface PackagesCapability {
+  available: boolean
+  reason: string
+  /** 基础解释器还在后台探：界面说「正在检查」，探完再取一次 */
+  checking?: boolean
+  /** 没有合格的基础解释器但提供私有 Python：首装 / 重建 / 「自动准备」凭它授权 */
+  private_python?: PrivatePythonOffer
+  rejected_python?: RejectedPython
+}
+
 export interface ManagedPackages {
-  capability: { available: boolean; reason: string }
+  capability: PackagesCapability
   environment: (ManagedEnvironment & { in_use: boolean }) | null
   builtin: BuiltinPackage[]
   /** managed_env（受管环境现算）/ bundled_runtime（内置 runtime 清单）/ planned（都还没有） */
@@ -6010,6 +6033,8 @@ export interface PackageJob {
   dependents: string[]
   network_required: boolean
   expires_at: number
+  /** 首装且没有基础解释器：这次授权包含的私有 Python（界面必须把大小说出口） */
+  private_python?: PrivatePythonOffer | null
 }
 
 /** 作业进度。前端**按 state 换文案，不解析日志**。 */

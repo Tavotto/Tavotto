@@ -481,6 +481,15 @@ def remove(project: str | Path) -> bool:
 
 
 # --------------------------------------------------------------- 创建
+#: 上一次不带范围收窄的基础解释器探测里，探得到、却因版本在支持区间之外被拒的完整版本串（探到合格者则为空）。
+_last_rejected: tuple[str, ...] = ()
+
+
+def rejected_python_versions() -> tuple[str, ...]:
+    """这台机器上装着、却因版本不在支持区间被拒的 Python 版本（上一次探测的结论；还没探过为空）。"""
+    return _last_rejected
+
+
 def base_python(
     *, within: tuple[tuple[int, int], tuple[int, int]] | None = None, patch_spec: str = ""
 ) -> str | None:
@@ -541,9 +550,14 @@ def base_pick(
             return None
         return (parts[0], parts[1]) if len(parts) == 2 else None
 
+    rejected: list[str] = []
+
     def _supported(_path: str, version: str) -> bool:
         parts = _minor(version)
-        if parts is None or not (projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE):
+        if parts is None:
+            return False
+        if not (projectenv.PYTHON_MIN <= parts < projectenv.PYTHON_MAX_EXCLUSIVE):
+            rejected.append(version.strip())
             return False
         if within is not None and not within[0] <= parts < within[1]:
             return False
@@ -568,6 +582,11 @@ def base_pick(
     except (OSError, ValueError) as exc:  # 探测本身不该让请求 500
         LOG.warning("基础解释器探测失败: %s", exc)
         first = None
+    if within is None and not patch_spec:
+        # 没找到合格者时，界面要能说「你装的 3.15 太新」而不是笼统的「请安装 Python」：
+        # 记下这一轮因版本区间被拒的候选（只记探测本来就拿到的版本，不多起进程）
+        global _last_rejected
+        _last_rejected = tuple(dict.fromkeys(rejected)) if not first else ()
     if within is not None and found:
         best = max(range(len(found)), key=lambda i: (found[i][0], -i))
         version, path = found[best]

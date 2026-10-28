@@ -2413,8 +2413,11 @@ export default interface Resources {
         "builtinPlanned": "创建环境时安装 matplotlib 及其依赖。",
         "builtinTitle": "内置包",
         "confirm": {
+          "privatePythonAction": "继续",
+          "privatePythonTitle": "先准备 Python？",
           "rebuildAction": "重建",
           "rebuildBody": "会删掉现有环境、新建一个，并按安装记录重装所有包。期间用到它的图无法渲染；已装包的记录不会丢。",
+          "rebuildBodyPython": "会删掉现有环境、新建一个，并按安装记录重装所有包。期间用到它的图无法渲染；已装包的记录不会丢。{{python}}",
           "rebuildTitle": "重建这个项目的环境？",
           "uninstallAction": "卸载",
           "uninstallBody": "将从项目环境中移除，用到它的脚本无法渲染。",
@@ -2422,7 +2425,7 @@ export default interface Resources {
           "uninstallTitle": "卸载 {{name}}？"
         },
         "disabled": {
-          "noBasePython": "没有找到可用的 Python。请安装 3.10 或以上版本后回到这里。",
+          "noBasePython": "这台电脑没有 {{product}} 能用的 Python（需要 {{min}}–{{max}}），也没法自动准备。请安装后回到这里。",
           "noProject": "打开一个项目后才能管理它的 {{product}} 环境。",
           "other": "包管理暂时不可用。"
         },
@@ -2449,6 +2452,7 @@ export default interface Resources {
           "creating_env": "正在创建 Tavotto 环境…",
           "dismiss": "关闭",
           "done": "已{{op}} {{name}} {{version}}",
+          "downloading_python": "正在准备 Python…",
           "failed": "{{op}} {{name}} 没有完成",
           "installing": "正在{{op}} {{name}}…",
           "log": "详细日志",
@@ -2468,6 +2472,16 @@ export default interface Resources {
           "update": "升级"
         },
         "protected": "内置依赖，只读",
+        "python": {
+          "checking": "正在检查 Python…",
+          "downloadSize": "（需下载约 {{mb}} MB）",
+          "none": "这台电脑上没有可用的 Python，{{product}} 可以自动准备一个{{size}}",
+          "prepare": "自动准备",
+          "tooNew": "你装的 Python {{version}} 比 {{product}} 支持的新（支持 {{min}}–{{max}}），可以让 {{product}} 自动准备一个{{size}}",
+          "tooNewManual": "你装的 Python {{version}} 比 {{product}} 支持的新（支持 {{min}}–{{max}}）。请另装一个 {{min}}–{{max}} 的版本后回到这里。",
+          "tooOld": "你装的 Python {{version}} 比 {{product}} 支持的旧（支持 {{min}}–{{max}}），可以让 {{product}} 自动准备一个{{size}}",
+          "tooOldManual": "你装的 Python {{version}} 比 {{product}} 支持的旧（支持 {{min}}–{{max}}）。请另装一个 {{min}}–{{max}} 的版本后回到这里。"
+        },
         "reason": {
           "repair": "缺包时自动修复安装",
           "user": "手动安装"
@@ -5988,16 +6002,21 @@ export default interface Resources {
           "start": "生成可编辑版本"
         },
         "deps": {
+          "askBuiltin": "内置环境不往里装包。{{product}} 会为这个项目自动准备一个独立环境，并装上 {{names}}{{size}}",
           "askOnce": "要给这个环境（{{env}}）装缺的包吗？",
           "askOnceManaged": "要给这个环境（{{env}}）装缺的包吗（会装进 {{product}} 为本项目建的独立环境，不改动它）？",
+          "askSystem": "这个 Python 是系统自带的，不往里装包。{{product}} 会为这个项目自动准备一个独立环境，并装上 {{names}}{{size}}",
           "btn": {
             "chooseEnv": "选择运行环境",
             "continue": "继续",
             "decline": "不装",
             "installAlways": "装，以后这个环境都自动装",
-            "installOnce": "确认，装上"
+            "installOnce": "确认，装上",
+            "otherEnv": "选别的环境",
+            "prepareEnv": "自动准备并安装"
           },
           "continuing": "正在继续检查新版本…",
+          "downloadSize": "（需先下载约 {{mb}} MB 的 Python）",
           "env": {
             "managed": "{{product}} 的项目环境"
           },
@@ -6006,8 +6025,8 @@ export default interface Resources {
           "resuming": "正在装 {{names}}，装好后接着生成…",
           "stopping": "正在停止…",
           "system": "这个 Python 是系统自带的，往里面装包可能弄坏系统工具。请给项目换一个环境。",
-          "systemBuiltin": "这是 {{product}} 内置的运行环境，不往里面装包。请给项目换一个环境。",
-          "uncommon": "{{names}} 这个包不常见，确认是你要的再装。"
+          "uncommon": "{{names}} 这个包不常见，确认是你要的再装。",
+          "uncommonManaged": "{{names}} 这个包不常见，确认是你要的再装（会装进 {{product}} 为本项目准备的独立环境）。"
         },
         "fail": {
           "agent_auth": "模型凭据无效或已过期，请检查 AI 连接。",

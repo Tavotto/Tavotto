@@ -357,8 +357,10 @@ class TestPrivateBase:
         assert plan.private_python is not None and plan.private_python["required"] is True
         assert server.requests == []
 
-    def test_rebuild_and_package_first_install_never_download(self, tmp_path, house, no_base, fake):
-        """没有明示过下载的两条路：重建 / 包管理首装——没有基础解释器就照旧 unavailable，零请求。"""
+    def test_rebuild_without_the_users_authorization_never_downloads(
+        self, tmp_path, house, no_base, fake
+    ):
+        """重建没有拿到用户看过的那份载荷 id（没传 / 传错 / 锁换了）：没有基础解释器就照旧 unavailable，零请求。"""
         server, src, _ = fake
         project = _project(tmp_path)
         managedenv.write_manifest(project, managedenv.new_manifest(project, "x"))
@@ -368,6 +370,61 @@ class TestPrivateBase:
         assert server.requests == []
         assert privatepython.python_of(src) is None
         assert managedenv.referenced_base_runtimes() == set()
+        wrong = deprepair._rebuild_guarded(
+            project, None, deprepair.new_rebuild_progress_id(), "cpython-9.9.9-000000000000"
+        )
+        assert wrong["code"] == deprepair.ERROR_MANAGED_UNAVAILABLE
+        assert server.requests == [], "id 不是用户看过的那一份：不供应，也不静默换成另一份"
+
+    @needs_real_base
+    def test_rebuild_with_the_disclosed_offer_id_provisions_private_python(
+        self, tmp_path, house, no_base, fake
+    ):
+        """设置→包管理的“自动准备”/重建：授权 = 回传 `capability.private_python.id`（与此刻 offer 同一份）。
+        没有基础解释器也能建出环境，不再“请安装 Python”；账上记着私有 runtime 为 base。"""
+        server, src, _ = fake
+        project = _project(tmp_path)
+        assert deprepair.base_python() is None  # 同步探完（页面上第一次是后台探：见 checking 用例）
+        cap = deprepair.list_managed_packages(project)["capability"]
+        assert cap["available"] is True and cap["private_python"]["id"] == src.id
+        assert cap["private_python"]["download_bytes"] == src.size
+        out = deprepair._rebuild_guarded(
+            project, None, deprepair.new_rebuild_progress_id(), cap["private_python"]["id"]
+        )
+        assert out.get("ok") is True, json.dumps(out, ensure_ascii=False, default=str)
+        assert server.requests == [f"/{src.archive_name}"]
+        assert managedenv.python_of(project)
+        assert src.id in managedenv.referenced_base_runtimes()
+
+    @needs_real_base
+    def test_package_first_install_without_base_carries_and_runs_the_private_python_offer(
+        self, tmp_path, house, no_base, fake
+    ):
+        """包管理首装：作业（计划）里挂着说出口的私有 Python 载荷；执行时先供应再建第一代再装包。"""
+        server, src, _ = fake
+        project = _project(tmp_path)
+        job = deprepair.create_package_job(project, deprepair.OP_INSTALL, ALPHA[0])
+        assert job.creates_environment is True and job.private_python["required"] is True
+        payload = job.to_payload()
+        assert payload["private_python"]["download_bytes"] == src.size
+        assert server.requests == [], "计划阶段不联网"
+        out = deprepair.run_package_job(job.job_id)
+        assert out["ok"] is True, json.dumps(out, ensure_ascii=False, default=str)
+        assert server.requests == [f"/{src.archive_name}"]
+        assert managedenv.python_of(project)
+
+    def test_package_first_install_is_unavailable_when_private_python_is_not_offered(
+        self, tmp_path, no_base, monkeypatch
+    ):
+        """连私有 Python 也不提供（不支持的平台 / 锁关着）：才是 managed_env_unavailable。"""
+        monkeypatch.setenv("TAVOTTO_PRIVATE_PYTHON", "0")
+        assert deprepair.base_python() is None
+        with pytest.raises(deprepair.RepairError) as err:
+            deprepair.create_package_job(_project(tmp_path), deprepair.OP_INSTALL, ALPHA[0])
+        assert err.value.code == deprepair.ERROR_MANAGED_UNAVAILABLE
+        cap = deprepair.list_managed_packages(_project(tmp_path, "p2"))["capability"]
+        assert cap["available"] is False and cap["reason"] == deprepair.ERROR_MANAGED_UNAVAILABLE
+        assert "private_python" not in cap
 
     @needs_real_base
     def test_offline_prepare_is_a_safe_stop_and_registers_no_generation(
