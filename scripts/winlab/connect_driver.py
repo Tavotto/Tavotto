@@ -229,6 +229,15 @@ def operate(cdp: D.CDP, sid: str, ns: argparse.Namespace, out_dir: Path, prog) -
     return res
 
 
+def sidecar_log_tail(limit: int = 3000) -> str:
+    """壳把 sidecar 的输出追加到 Tauri 的 app_log_dir（Windows：%LOCALAPPDATA%\\com.tavotto.tavotto\\logs\\sidecar.log）。"""
+    base = Path(os.environ.get("LOCALAPPDATA") or "")
+    logs = sorted(base.glob("com.tavotto*/logs/sidecar.log"), key=lambda p: p.stat().st_mtime)
+    if not logs:
+        return ""
+    return logs[-1].read_bytes()[-limit:].decode("utf-8", "replace")
+
+
 def debug_endpoint_up(port: int) -> bool:
     try:
         D.http_json(port, "/json/version", timeout=2)
@@ -286,8 +295,9 @@ def drive(ns: argparse.Namespace) -> dict:
             else:
                 result.update(operate(cdp, sid, ns, out_dir, prog))
             if result.get("error"):
-                # 证据文件不回传 Mac：出错时窗口截图（winlab shot 取）与此刻的全部调试目标进结果
+                # 证据文件不回传 Mac：出错时窗口截图（winlab shot 取）、此刻的全部调试目标、壳的 sidecar 日志尾部进结果
                 P._screenshot(result["window"]["rect"], out_dir / f"{ns.label}-window.png")
+                result["sidecar_log_tail"] = sidecar_log_tail()
                 with contextlib.suppress(D.CDPError, TimeoutError):
                     result["targets"] = [
                         {"type": t.get("type"), "url": str(t.get("url", ""))[:120]}

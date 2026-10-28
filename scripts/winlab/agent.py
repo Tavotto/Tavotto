@@ -4669,10 +4669,19 @@ def finish_connect_cell(lab, run_id, run_dir, env, connect, out: dict) -> dict:
     if drv.get("error") == "no page on the sidecar origin":
         # 起来了但渲染服务没就绪（错误页）。嫌疑：宿主拉起的 `tavotto-cli mcp` 在宿主退出后还活着（WorkBuddy 的 daemon
         # 不在 Job 里）。先记下此刻还活着的 Tavotto 进程，只结束它们，再起一次——第二次好了就坐实了这个冲突
-        first = {"error": drv["error"], "targets": drv.get("targets")}
+        first = {
+            "error": drv["error"],
+            "targets": drv.get("targets"),
+            "sidecar_log_tail": drv.get("sidecar_log_tail"),
+        }
         if os.name == "nt":
             tav = str(connect["install_dir"]).lower()
             first["tavotto_procs_killed"] = _kill_matching(lambda img: img.lower().startswith(tav))
+            if connect["host_id"] == "workbuddy":
+                # WorkBuddy 的后台进程不全在安装目录下（运行时在它的家里）：按映像路径里的名字结束
+                first["host_procs_killed"] = _kill_matching(
+                    lambda img: any(t in img.lower() for t in WORKBUDDY_PROCESS_TOKENS)
+                )
         out["disconnect_first_try"] = first
         r = _connect_driver_round(lab, run_id, run_dir, env, connect, "disconnect")
         drv = r["driver"]
