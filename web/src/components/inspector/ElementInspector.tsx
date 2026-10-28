@@ -2030,7 +2030,7 @@ function BatchFieldRow({
                       value: o,
                       label: (
                         <span style={{ fontFamily: fontStackOf(o) }}>
-                          {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
+                          {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts, merged?.option_faces)}
                         </span>
                       ),
                     }))}
@@ -2428,7 +2428,7 @@ function FieldRow({
               value: o,
               label: (
                 <span style={{ fontFamily: fontStackOf(o) }}>
-                  {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
+                  {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts, merged?.option_faces)}
                 </span>
               ),
             }))}

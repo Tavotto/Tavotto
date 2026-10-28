@@ -1095,6 +1095,7 @@
     "align": "Align",
     "color": "Colour",
     "font": "Font",
+    "fontGenericFace": "{{generic}} (renders as {{face}})",
     "fontMissingHint": "That font isn’t installed, so the figure uses another one.",
     "fontMissingTag": " (not installed)",
     "size": "Size"

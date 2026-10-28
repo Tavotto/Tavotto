@@ -246,6 +246,20 @@ describe('字体的中文显示名（manifest 顶层 font_family_names）', () =
     expect(fontFamilyOptionLabel('Songti SC', NAMES, opts)).toBe('Songti SC')
   })
 
+  it('通用族带 option_faces：显示「衬线（实际：Times New Roman）」，没带 / 本身就是脸名则照旧；值不变', async () => {
+    const opts = ['serif', 'sans-serif', 'Times New Roman']
+    const faces = { serif: 'Times New Roman' }
+    const zh = fontFamilyOptionLabel('serif', NAMES, opts, faces)
+    expect(zh).toContain('Times New Roman')
+    expect(zh).toContain(optionLabelOfSerif())
+    // 没带脸的通用族、具体字体名：不加后缀
+    expect(fontFamilyOptionLabel('sans-serif', NAMES, opts, faces)).not.toContain('Times')
+    expect(fontFamilyOptionLabel('Times New Roman', NAMES, opts, faces)).toBe('Times New Roman')
+    expect(fontFamilyOptionLabel('serif', NAMES, opts)).toBe(optionLabelOfSerif())
+    await applyLocale('en-US')
+    expect(fontFamilyOptionLabel('serif', NAMES, opts, faces)).toBe('Serif (renders as Times New Roman)')
+  })
+
   it('两个族中文名相同：只有它们补上族名，分得开', () => {
     const shared = {
       BiauKaiHK: '標楷體-港澳',

@@ -266,6 +266,8 @@ function FontFamilyRowView({
    * `optionLabelOf`；它在这里只为让 memo 在显示名到达 / 变化时重画
    */
   optionLabels?: Readonly<Record<string, string>>
+  /** 通用族 → 此刻真正画它的脸（`option_faces`）；与 `optionLabels` 同理，只为让 memo 重画 */
+  optionFaces?: Readonly<Record<string, string>>
   /** 多选且字体不一致：显示「多个值」占位，绝不谎报其中某一个的字体 */
   mixed?: boolean
   /**
@@ -345,6 +347,7 @@ const FontFamilyRowMemo = memo(
     a.labelWidth === b.labelWidth &&
     a.lang === b.lang &&
     sameLabels(a.optionLabels, b.optionLabels) &&
+    sameLabels(a.optionFaces, b.optionFaces) &&
     !!a.onReset === !!b.onReset &&
     sameList(a.options, b.options) &&
     sameList(a.unavailable, b.unavailable),

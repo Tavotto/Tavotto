@@ -1491,6 +1491,32 @@ def _family_options() -> list[str]:
     return [*_GENERIC_FAMILIES, *(n for n in _NAMED_FAMILIES if _font_installed(n))]
 
 
+def _generic_family_faces() -> dict[str, str]:
+    """见 `_generic_family_faces_for`；按字体注册表代次 + rcParams 的族链缓存（每个文字元素都问）。"""
+    key = tuple(tuple(str(x) for x in mpl.rcParams[f"font.{g}"]) for g in _GENERIC_FAMILIES)
+    return dict(_generic_family_faces_for(sync_font_caches(), key))
+
+
+@lru_cache(maxsize=8)
+def _generic_family_faces_for(_generation: tuple, _chains: tuple) -> dict[str, str]:
+    """三个通用族此刻**真正由哪张脸画**：{"serif": "Times New Roman", …}。
+
+    `fontfamily` 字段的值是脚本写的通用族（`serif`），用户看到的却是画出来的
+    Times New Roman——下拉里只写「衬线」对不上（用户反馈）。这里按渲染同一条路解析
+    （`font_faces` → `_resolved_font_paths`，读 rcParams 的 `font.<通用族>`），**只用于显示**：
+    字段的 `value` 仍是 `serif`，写回脚本的也仍是它。解析不出来的族不出现；
+    装的就是 DejaVu 时如实报 DejaVu。"""
+    out: dict[str, str] = {}
+    for g in _GENERIC_FAMILIES:
+        try:
+            face = font_faces("", [g], None).get("face")
+        except Exception:
+            face = None
+        if face:
+            out[g] = face
+    return out
+
+
 def installed_font_families() -> tuple[str, ...]:
     """本机字体族（见 `_installed_font_families`），按字体注册表的代次缓存：脚本或
     fname 放开 `addfont` 了新字体，下一份 manifest 就列得出它（`overrides.sync_font_caches`）。
@@ -1543,6 +1569,13 @@ def installed_font_display_names() -> dict[str, str]:
 @lru_cache(maxsize=1)
 def _installed_font_display_names(_generation: tuple) -> dict[str, str]:
     return font_display_names(installed_font_families())
+
+
+def _family_faces_attr(fam: str) -> dict:
+    """`fontfamily` 字段的 `option_faces`（加字段协议，老前端忽略）：当前值是通用族时
+    才带，只有那一项——其余通用族的解析不必按元素重复发。"""
+    face = _generic_family_faces().get(fam) if fam in _GENERIC_FAMILIES else None
+    return {"option_faces": {fam: face}} if face else {}
 
 
 def _text_fields(t) -> list[dict]:
@@ -1638,6 +1671,7 @@ def _text_fields(t) -> list[dict]:
             "value": str(fam),
             "options": fam_opts,
             **({"options_unavailable": fam_missing} if fam_missing else {}),
+            **_family_faces_attr(fam),
         },
         {
             "prop": "rotation",
@@ -3371,6 +3405,7 @@ def _tick_family_field(ts: TickSet) -> dict:
         "value": str(fam),
         "options": fam_opts,
         **({"options_unavailable": fam_missing} if fam_missing else {}),
+        **_family_faces_attr(fam),
     }
 
 

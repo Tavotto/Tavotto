@@ -48,7 +48,7 @@ export function TextQuickControls({
             value: o,
             label: (
               <span style={{ fontFamily: fontStackOf(o) }}>
-                {fontFamilyOptionLabel(o, family.option_labels, family.options ?? [])}
+                {fontFamilyOptionLabel(o, family.option_labels, family.options ?? [], family.option_faces)}
               </span>
             ),
           }))}

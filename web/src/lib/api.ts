@@ -2252,6 +2252,12 @@ export interface EditableField {
    */
   option_labels?: Record<string, string>
   /**
+   * 字体族字段专有：当前值是通用族（`serif`）时，matplotlib 此刻真正用来画它的那张脸
+   * （`{serif: 'Times New Roman'}`）。**只用于显示**——`value` 与写回脚本的仍是 `serif`。
+   * 老引擎不发它，下拉照旧只写通用族。
+   */
+  option_faces?: Record<string, string>
+  /**
    * marker 一族字段专有的**只读事实**：图上此刻画的是什么形状（见
    * `MarkerShape`）。`value` 说的是「选中的是哪个取值」，它说的是形状。
    */
