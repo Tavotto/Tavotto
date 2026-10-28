@@ -39,6 +39,7 @@ import {
 import type { ComponentType } from 'react'
 import { KeyCaps } from '@/components/ui/Kbd'
 import { Dialog } from '@/components/ui/Dialog'
+import { scrollFadeStyle, useScrollFade } from '@/components/ui/scrollFade'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { keyOf } from '@/lib/keymap'
 import { useWorkspaceStore } from '@/store/workspace'
@@ -304,6 +305,7 @@ export function CommandPalette() {
   const [cursor, setCursor] = useState<{ id: string; query: string } | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
+  const { fade: listFade, measure: measureListFade } = useScrollFade(listRef, 'y')
 
   // 每次打开都从空查询、首行开始。焦点进输入框、Esc / 点外面关闭、关闭后焦点还给打开前的元素——
   // 这三件都由 `Dialog chrome="palette"` 给（焦点陷阱与归还，2026-10-07 设计审计 §10.1），这里不再自己挂监听
@@ -417,7 +419,11 @@ export function CommandPalette() {
       <ul
         ref={listRef}
         id={LIST_ID}
-        className="max-h-80 overflow-y-auto p-1"
+        // 底部多 8px 留白 + 20px 渐隐：最后一行不再被容器下沿硬切；滚到底渐隐收掉（scrollFade 共享件）
+        className="max-h-80 overflow-y-auto p-1 pb-3"
+        style={scrollFadeStyle(listFade, 'y', 20)}
+        // 列表在 Dialog 里随打开才挂载，useScrollFade 的原生 scroll 监听挂在了空 ref 上；滚动由这里补量
+        onScroll={measureListFade}
         role="listbox"
         aria-label={t('palette.listLabel')}
       >

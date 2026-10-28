@@ -255,6 +255,23 @@ describe('必填与错误定位', () => {
   })
 })
 
+describe('标题与折叠头', () => {
+  it('没有宿主名（兼容端点入口）时标题不留空名字', async () => {
+    await mount({ presets: [], agentLabel: '' })
+    const title = document.body.querySelector('[role="dialog"] h2, [role="dialog"] [id]')?.textContent ?? ''
+    expect(text()).toContain(ag('endpoint.addTitleGeneric'))
+    expect(text()).not.toMatch(/为\s{2,}添加|for\s{2,}/)
+    expect(title).not.toBe('')
+  })
+
+  it('折叠头只有 Summary 自带的那一个箭头', async () => {
+    await mount({ presets: [] })
+    for (const summary of document.body.querySelectorAll('summary')) {
+      expect(summary.querySelectorAll('svg').length, summary.textContent ?? '').toBe(1)
+    }
+  })
+})
+
 describe('隐私说明说的是核过的事实（审计 T45）', () => {
   it('首屏一句短话，细节展开才有', async () => {
     await mount({ presets: [] })

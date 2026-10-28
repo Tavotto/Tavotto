@@ -142,12 +142,14 @@ test('故障卡 → 打开 → 发送：脚本运行失败卡里入口在折叠�
     await card.locator('[data-prep-primary]').click() // 打开并运行：点一次就检查并认领（V2 PR4）
     await expect(card).toHaveAttribute('data-prep-state', /failed|error/, { timeout: 120_000 })
 
-    // 主按钮仍是修复类（再试一次），发送反馈住在折叠详情里
+    // 主按钮仍是修复类（使用你的 AI 来修复），发送反馈住在「⋯ → 全部详情」展开的详情里
     const primaryBtn = card.locator('[data-prep-primary]')
     await expect(primaryBtn).toHaveCount(1)
     await expect(primaryBtn).not.toHaveAttribute('data-send-report', /.*/)
     const entry = card.locator('[data-prep-details] [data-send-report]')
-    await card.locator('[data-prep-details-toggle]').click()
+    // 失败卡版式 1：一句话 + 一个主按钮，详情在页眉「⋯」里（菜单项「全部详情」原位展开）
+    await card.locator('[data-prep-more]').click()
+    await page.locator('[data-prep-menu-all-details]').click()
     await expect(entry).toBeVisible()
     expect(connections).toBe(0)
 

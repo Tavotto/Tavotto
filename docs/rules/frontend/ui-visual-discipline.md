@@ -45,7 +45,7 @@ OptionGrid 与 Segmented 同皮；说明条只有 `Notice`；页签 属性 | 画
 字体角色十个（新增 `type-display` 24 / `type-heading` 17 / `type-reading` 13·1.6；`type-title` 600；`type-caption` 12 / ink-3）；控件高 28 + `lg` 32
 （对话框页脚 / 页面 CTA）；投影全部 `color-mix(var(--color-shadow) N%)`，`shadow-card` **只在 `ui/Card`**；状态色一个锚点派生
 `-surface` / `-border` / `-content`（字用 content），旧 `*-subtle` 是别名；z-index 只用 `z-sticky … z-onboarding` 九档 token；焦点环 offset 2、
-插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画）；光标一律箭头（可拖的卡用抓手）。
+插入点 accent；滚动条 6px、只在悬停 / 内含焦点时出现；加载只有 sweep / 静态骨架 / shimmer / 转圈（禁呼吸动画；`ui/ProgressBar` 是铅笔排线：11px、发丝框、整像素 5px 斜线 mask，不确定态排线 2.2s 线性流动、确定态宽度吸附整条线）；光标一律箭头（可拖的卡用抓手）。
 新原语：`Card`、`Notice`（恢复）、`StatusPill`、`dropZoneClass`（拖放接收态：静态不画、拖入才是 1px accent 虚线 + accent-subtle + 外发光）、`FormSection` + `FieldGroup`（`SettingRow layout="balanced"`）、EmptyState v2、`listRowClass({ size })`
 + `rowMetaClass` + `dropLineClass`、`useRowMenu` + `RowMenu`（⋯ / 右键 / ⇧F10 同一份菜单）；Dialog 宽度 sm 400 / md 480 / lg 560 / xl 760 / shell、
 页脚 `{ start, secondary, primary }` 三槽、浮动毛玻璃页脚、`onEscape`（Esc = 安全答案）、栈底才画遮罩；**每个上下文一颗主按钮**；对话框页脚的破坏性动作是
@@ -139,8 +139,8 @@ EmptyState。**同类控件出现第二套实现先删第二套，不给新写�
 画布），无选择且未钉住时不占位；断点 ≥1440 双栏可钉住、1024–1439 左右
 互斥、<1024 覆盖式抽屉。底部无常驻状态栏：拖动中的几何读数贴在选区下方（`MeasureChip`；放不下翻到上方，最后整体夹进舞台，选区占满 / 出界时也不被裁掉；底部浮动工具条显示时那一条（`viewportStore.fitBottomClear` = `TOOLBAR_FIT_CLEARANCE`，与「适应」取景同一个值）不算舞台，翻转与夹取都让开它；图内编辑态的方向键微调贴在被推的图内元素下面——位置与 Δ 都取 `InFigureMove.preview` 发布的预览（`elementPreview` / `gidDrag`，与 `ElementBoxes` 同源），落到页面走画布画这张图的同一个变换 `lib/panelTransform`（先翻转再旋转，翻转面板上贴在镜像后的元素下、Δ 报看得见的方向，#832 评审），子图贴边被钳住时芯片跟着停、Δ 报真正挪了的量，权威缺席时不报，不拿面板的框顶替，Codex #833），左下 HUD 只有工具提示，
 通知只有一条轨（`NotificationRail`，底部居中、宽 ≤ 360、**最多三条**叠着、最新的最靠近底边；`StatusBar` 的 `RAIL_MAX`）：普通状态短暂即逝
-（成功类 4 秒收，`STATUS_AUTO_DISMISS_MS`）、错误常驻可关（胶囊 + 复制详情）、操作提示可关、「已为编辑加入本文档」带撤销；入场
-`rise-in`（180ms，opacity + 4px 位移 + scale .98→1）、退场 `rise-out`（120ms ease-in）；保存状态是顶栏文档名旁的状态芯片。
+（成功类 4 秒收，`STATUS_AUTO_DISMISS_MS`；带动作的状态默认常驻，唯一例外是声明了 `dismissMs` 的导出成功胶囊——6 秒收，`EXPORT_DONE_DISMISS_MS`，悬停 / 聚焦暂停）、错误常驻可关（胶囊 + 复制详情）、操作提示可关、「已为编辑加入本文档」带撤销；入场
+`rise-in`（180ms，opacity + 4px 位移 + scale .98→1）、退场 `rise-out`（120ms ease-in）；保存状态是顶栏文档名旁的状态芯片。**有模态对话框开着时**（`ui/Dialog` 经 `dialogLayerStore` 登记）整列通知移进 body 的 `z-toast` 层压在对话框上面（画布列里的那条会被遮罩盖暗），点它不算「点了对话框外面」（`Dialog` 的 `onInteractOutside` 认 `[data-notification-rail]`）。
 
 **图标**（2026-09-06 统一，2026-09-15 换成自绘图标集，ADR 0052；细则 `docs/ux/ICONOGRAPHY.md`）：
 全产品只有 `components/ui/icons` 一套（几何 `defs.ts`、工厂 `createIcon.tsx`，142 个名字与

@@ -291,6 +291,7 @@ interface UiState extends Persisted {
   /**
    * 这条 toast 的一个动作（可选，`setStatus` 的 `action`）：通知轨里的「查看」。带动作的 toast 是要用户回头处理的
    * 一句话（导出关窗后失败 / 等你决定），所以**不自己消失**，和错误一样挂到用户点 × 或主人撤掉。
+   * 例外：声明了 `dismissMs` 的（导出全部成功的「已导出 … · 在文件夹中显示」）带动作也到点自己走，悬停 / 聚焦时暂停。
    */
   statusAction: StatusAction | null
   /** 正在双击编辑的文字对象 */
@@ -462,7 +463,16 @@ interface UiState extends Persisted {
   setStatus: (
     msg: UiMessage | null,
     tone?: StatusTone,
-    opts?: { passive?: boolean; owner?: string; action?: StatusAction },
+    opts?: {
+      passive?: boolean
+      owner?: string
+      action?: StatusAction
+      /**
+       * 带动作却仍自己走的那种（导出成功的「已导出 … · 在文件夹中显示」）：给了它就按这个毫秒数收起，
+       * 指针停在上面 / 焦点在它的按钮上照样不走表（`statusDismissTimer`）。错误语气不受它影响，仍常驻。
+       */
+      dismissMs?: number
+    },
   ) => void
   /**
    * 撤掉**这个主人**挂上的 toast；此刻挂着的不是它的（换成了别的图 / 别的类别的提示、或已被关掉）
@@ -547,6 +557,9 @@ function persist(state: UiState) {
 
 /** 普通状态自己走的时长；错误保留到用户关闭 */
 export const STATUS_AUTO_DISMISS_MS = 4000
+
+/** 导出成功胶囊（带「在文件夹中显示」）的停留时长：比普通状态长，给用户伸手点的时间；悬停 / 聚焦时暂停 */
+export const EXPORT_DONE_DISMISS_MS = 6000
 
 /**
  * 状态的自动收起计时器：指针停在 toast 上、焦点在它的按钮上、页面不可见时都不走表
@@ -762,9 +775,9 @@ export const useUiStore = create<UiState>((set, get) => ({
       statusAction: status ? (opts?.action ?? null) : null,
     })
     statusDismissTimer.cancel()
-    // 普通状态短暂即逝；错误与带动作的保留到用户处理（toast 上有关闭键）
-    if (status && statusTone !== 'error' && !opts?.action) {
-      statusDismissTimer.start(STATUS_AUTO_DISMISS_MS, () =>
+    // 普通状态短暂即逝；错误与带动作的保留到用户处理（toast 上有关闭键）——带动作但声明了 `dismissMs` 的例外
+    if (status && statusTone !== 'error' && (!opts?.action || opts.dismissMs)) {
+      statusDismissTimer.start(opts?.dismissMs ?? STATUS_AUTO_DISMISS_MS, () =>
         set({ status: null, statusTone: 'info', statusPassive: false, statusOwner: null, statusAction: null }),
       )
     }

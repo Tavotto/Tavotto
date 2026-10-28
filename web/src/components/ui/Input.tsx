@@ -475,7 +475,7 @@ export function NumberField({
             fill || half ? 'w-full' : 'w-[calc(4ch+0.75rem)]',
             'placeholder:font-sans placeholder:text-ink-3',
             // 框内有单位时数字右对齐、贴着单位；没有单位时居中（框只比数字大一圈）
-            unit != null ? 'pr-1 text-right' : 'text-center',
+            unit != null ? 'pr-0.5 text-right' : 'text-center',
           )}
         />
         {unit != null && (

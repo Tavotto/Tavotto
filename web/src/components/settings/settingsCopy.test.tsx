@@ -420,7 +420,7 @@ describe('T43 导出偏好：与导出对话框同名同单位', () => {
   it('单位是 ppi', async () => {
     defaults({ dpi: '600' })
     await open('export')
-    expect(bodyText()).toContain('600 ppi')
+    expect(bodyText()).toContain('600 ppi')
     expect(bodyText()).not.toContain('600 dpi')
   })
 

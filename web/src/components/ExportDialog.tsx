@@ -66,7 +66,7 @@ import {
   type ExportOutput,
   type PanelInfo,
 } from "@/lib/api";
-import { formatMessage, msg, t as translate, type UiMessage } from "@/i18n";
+import { formatMessage, literal, msg, t as translate, type UiMessage } from "@/i18n";
 import { emitActivity } from "@/lib/activity";
 import { useHtmlMarkup } from "@/lib/useHtmlMarkup";
 import {
@@ -149,7 +149,7 @@ import {
 import { useProfileStore } from "@/store/profileStore";
 import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
-import { dialogCovered, useUiStore } from "@/store/uiStore";
+import { dialogCovered, EXPORT_DONE_DISMISS_MS, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
 import { isRuntimePanel, type CanvasObject, type FigureDocument, type PanelObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
@@ -1291,7 +1291,10 @@ export function ExportDialog() {
     const key = `${job.job_id}:${job.status}`;
     if (announced.current === key) return;
     announced.current = key;
-    if (resultVisible) return;
+    // 对话框开着：结果块就在眼前，不弹第二份——例外是**全部成功**：那一块不插进对话框（不位移），改由浮在
+    // 对话框上面的胶囊说一声（见 `exportResultClean`）
+    const clean = exportResultClean(job, editedDuringExport);
+    if (resultVisible && !clean) return;
     const ui = useUiStore.getState();
     const view = {
       label: msg("export.viewResult", undefined, "dialogs"),
@@ -1303,10 +1306,28 @@ export function ExportDialog() {
     const owner = { owner: EXPORT_STATUS_OWNER, action: view };
     const done = job.outputs.filter((o) => o.status === "done" && o.name);
     if (job.status === "done" && done.length) {
+      // 带「在文件夹中显示」（能显示时）：用 job 里的目录与第一件文件，不依赖渲染期闭包
+      const dir = job.export_dir;
+      const first = done[0]!.name!;
+      const reveal =
+        dir && canRevealInFileManager()
+          ? {
+              label: msg("export.showInFolder", undefined, "dialogs"),
+              run: () => {
+                void revealExportedFile(dir, first).then((ok) => {
+                  if (!ok)
+                    useUiStore.getState().setStatus(
+                      literal(ex("revealFailed", { path: `${dir}/${first}` })),
+                      "error",
+                    );
+                });
+              },
+            }
+          : undefined;
       ui.setStatus(
         msg("export.exported", { files: done.map((o) => o.name).join("、") }, "dialogs"),
         "done",
-        { owner: EXPORT_STATUS_OWNER },
+        { owner: EXPORT_STATUS_OWNER, action: reveal, dismissMs: reveal ? EXPORT_DONE_DISMISS_MS : undefined },
       );
     } else if (job.status === "cancelled") {
       ui.setStatus(msg("export.cancelled", undefined, "dialogs"), "info", { owner: EXPORT_STATUS_OWNER });
@@ -1319,7 +1340,7 @@ export function ExportDialog() {
     } else if (job.status === "unknown") {
       ui.setStatus(msg("export.toast.unknown", undefined, "dialogs"), "error", owner);
     }
-  }, [job, busy, resultVisible]);
+  }, [job, busy, resultVisible, editedDuringExport]);
 
   // 重新打开对话框 = 用户已经看到结果：撤掉关窗期间挂着的那条
   useEffect(() => {
@@ -1412,11 +1433,13 @@ export function ExportDialog() {
   });
   /** 「在文件夹中显示」失败的标题里是完整路径，要能在任意处折行 */
   const failureIsPath = failure?.kind === "reveal-error";
+  // 干净地全部成功：结果块不插进对话框（不位移），胶囊在对话框上面说「已导出 …」
+  const cleanDone = !!job && !busy && exportResultClean(job, editedDuringExport);
   const statusVisible =
     busy ||
     conflicts.length > 0 ||
     !!failure ||
-    (!!job && job.status !== "conflict");
+    (!!job && job.status !== "conflict" && !cleanDone);
   const statusBlock = statusVisible ? (
     <div data-export-status className="flex flex-col gap-2">
       {busy && <ProgressRow job={running ? storeJob : null} batch={batchActive ? batch : null} />}
@@ -1453,7 +1476,7 @@ export function ExportDialog() {
           {failure.inline}
         </Notice>
       )}
-      {job && !busy && job.status !== "conflict" && (
+      {job && !busy && job.status !== "conflict" && !cleanDone && (
         <ResultBlock
           job={job}
           edited={editedDuringExport}
@@ -1486,6 +1509,13 @@ export function ExportDialog() {
             {ex("exportAgain")}
           </Button>
         ),
+        // 干净成功时结果块不在对话框里，「在文件夹中显示」就落在脚部（胶囊 6 秒后会走，这里一直在）
+        secondary:
+          cleanDone && revealTarget ? (
+            <Button variant="secondary" size="lg" data-export-reveal onClick={revealDone}>
+              {ex("showInFolder")}
+            </Button>
+          ) : undefined,
         primary: (
           <Button ref={finishRef} variant="primary" size="lg" data-export-finish onClick={close}>
             {ex("finish")}
@@ -2715,6 +2745,22 @@ const outputFailureReason = (o: ExportOutput) =>
 
 /** 这一件产物已被后端确认写出（`OutputRow` 画成功行的同一条判据） */
 const outputSaved = (o: ExportOutput) => o.status !== "failed" && !!o.name;
+
+/**
+ * 这次导出是不是**干净地全部成功**（没有失败的产物、没有核验未通过 / 警告 / 导出期间被编辑过）。
+ * 干净时结果不插进对话框（对话框不位移），由浮在它上面的胶囊说一声；任何一条不干净，结果块照旧留在对话框里
+ * （`ResultBlock` 的摘要行与这里是同一个判据：`clean = failedCount === 0 && !note`）。
+ */
+export function exportResultClean(job: ExportJob, edited: boolean): boolean {
+  if (job.status !== "done" || edited) return false;
+  // 只有桌面壳里胶囊才带得出「在文件夹中显示」：浏览器 / 远程服务器上，产物的打开 / 下载链接只在结果块的
+  // `OutputRow` 里——拿掉它用户就取不到文件了（Codex #1466 P1），所以浏览器里照旧显示结果块
+  if (!canRevealInFileManager()) return false;
+  const saved = job.outputs.filter(outputSaved);
+  if (saved.length === 0 || saved.length !== job.outputs.length) return false;
+  if ((job.warnings?.length ?? 0) > 0) return false;
+  return !saved.some((o) => inspectionState(o.manifest).tone === "failed");
+}
 
 function OutputRow({ out, dir }: { out: ExportOutput; dir: string }) {
   useTranslation(["dialogs", "errors"]);

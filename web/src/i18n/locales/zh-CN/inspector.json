@@ -85,10 +85,10 @@
     "background": "背景",
     "bgColor": "背景色",
     "clearAll": "全部清除",
-    "deleteGuide": "删除{{axis}}参考线 {{pos}} mm",
+    "deleteGuide": "删除{{axis}}参考线 {{pos}} mm",
     "grid": "网格",
     "gridSize": "网格间距",
-    "gridSummary": "网格 {{size}} mm",
+    "gridSummary": "网格 {{size}} mm",
     "guideCount_other": "{{count}} 条",
     "guideHorizontal": "水平",
     "guideVertical": "垂直",
@@ -97,13 +97,13 @@
     "guidesNone": "无",
     "lock": "锁定",
     "margin": "页边距",
-    "marginSummary": "页边距 {{margin}} mm",
+    "marginSummary": "页边距 {{margin}} mm",
     "objects": "对象",
     "pageSize": "页面尺寸",
     "presetGroup": "页面预设",
     "presets": {
       "double": {
-        "hint": "{{w}} mm，按当前出版规范的双栏宽",
+        "hint": "{{w}} mm，按当前出版规范的双栏宽",
         "label": "双栏"
       },
       "full": {
@@ -111,7 +111,7 @@
         "label": "整页"
       },
       "single": {
-        "hint": "{{w}} mm，按当前出版规范的单栏宽",
+        "hint": "{{w}} mm，按当前出版规范的单栏宽",
         "label": "单栏"
       },
       "square": {
@@ -136,7 +136,7 @@
     "transparent": "透明",
     "transparentBg": "透明背景",
     "viewAids": "辅助显示",
-    "sizeMeta": "{{w}} × {{h}} mm",
+    "sizeMeta": "{{w}} × {{h}} mm",
     "preset": "预设",
     "presetCustom": "自定义",
     "size": "尺寸",
@@ -144,7 +144,7 @@
     "portrait": "竖向",
     "landscape": "横向",
     "export": "导出",
-    "exportSummary": "{{formats}} · {{dpi}} ppi"
+    "exportSummary": "{{formats}} · {{dpi}} ppi"
   },
   "closePanel": "关闭右侧面板",
   "control": {
@@ -260,7 +260,7 @@
     "clickToEdit": "点击图内元素开始编辑",
     "editElement": "修改图内元素",
     "editProp": "修改{{label}}",
-    "figureSize": "整图 {{w}} × {{h}} mm",
+    "figureSize": "整图 {{w}} × {{h}} mm",
     "foldBackground": "背景和其他",
     "foldBboxDetail": "背景细项",
     "foldCoords": "坐标轴、翻转、长宽比",
@@ -698,15 +698,15 @@
     "nativeMixed": "多个原始尺寸",
     "nativeSize": "原始尺寸",
     "nativeSizeTip": "回到素材本身的 mm 尺寸",
-    "nativeTip": "素材自身尺寸 {{w}} × {{h}} cm",
+    "nativeTip": "素材自身尺寸 {{w}} × {{h}} cm",
     "nativeTipMulti": "素材自身尺寸",
     "noAssetMatch": "没有匹配的素材",
     "opacity": "不透明度",
     "opaque": "不透明",
     "opacityMixed": "多个值",
     "overrideCount_other": "{{count}} 项图内修改",
-    "ptHint": "原图 {{base}} pt × 缩放 {{scale}}%",
-    "ptHintBad": "原图 {{base}} pt × 缩放 {{scale}}%，有效字号低于 6 pt，不满足出版可读性",
+    "ptHint": "原图 {{base}} pt × 缩放 {{scale}}%",
+    "ptHintBad": "原图 {{base}} pt × 缩放 {{scale}}%，有效字号低于 6 pt，不满足出版可读性",
     "replace": "替换素材",
     "replacePicture": "换一张图",
     "rotateFlipOpacity": "旋转、翻转、透明度",
@@ -728,7 +728,7 @@
     "cropRow": "取景",
     "fitRow": "适配",
     "frameLegacyTitle": "与脚本保存的原图大小不同",
-    "frameLegacyBody": "这张图在排版上仍按 figsize 显示；脚本保存时裁成了 {{w}} × {{h}} mm。改用后位置不变，只是外框变化。",
+    "frameLegacyBody": "这张图在排版上仍按 figsize 显示；脚本保存时裁成了 {{w}} × {{h}} mm。改用后位置不变，只是外框变化。",
     "frameLegacyAdopt": "改用原图的图幅",
     "frameLegacyAdoptBlocked": "这张图裁剪后留下的部分完全在原图的图幅之外，改用后什么都不剩，所以不能切换。先调整或重置裁剪再试。"
   },
@@ -898,7 +898,7 @@
       "linewidth": "描边线宽"
     }
   },
-  "resize": "调整属性栏宽度（{{min}}–{{max}} px）",
+  "resize": "调整属性栏宽度（{{min}}–{{max}} px）",
   "role": {
     "arrow_patch": "箭头",
     "axes": "子图",
@@ -1013,8 +1013,8 @@
     "italic": "斜体（仅拉丁字形）",
     "lineHeight": "行距",
     "matchAction": "对齐",
-    "matchHint": "图内正文显示约 {{eff}} pt",
-    "matchTitle": "标注字号是页面绝对值。「{{panel}}」缩放到 {{scale}}% 后，图内 {{base}} pt 正文约显示为 {{eff}} pt；用这个值可与正文一样大。",
+    "matchHint": "图内正文显示约 {{eff}} pt",
+    "matchTitle": "标注字号是页面绝对值。「{{panel}}」缩放到 {{scale}}% 后，图内 {{base}} pt 正文约显示为 {{eff}} pt；用这个值可与正文一样大。",
     "newlineTitle": "在光标处插入换行（画布内编辑可用 {{alt}} / {{mod}}）",
     "padding": "内边距",
     "placeholder": "输入文字…",
@@ -1110,7 +1110,7 @@
   },
   "transform": {
     "rotation": "旋转",
-    "summary": "X {{x}} · Y {{y}} mm",
+    "summary": "X {{x}} · Y {{y}} mm",
     "textHeightAuto": "文字高度随内容",
     "title": "位置与尺寸"
   },
@@ -1219,7 +1219,7 @@
   },
   "docSummary": {
     "title": "本排版",
-    "size": "{{w}} × {{h}} mm",
+    "size": "{{w}} × {{h}} mm",
     "annotations_other": "{{count}} 处文字与标注",
     "canvasSettings": "画布设置"
   }

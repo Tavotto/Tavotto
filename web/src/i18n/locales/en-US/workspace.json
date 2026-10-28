@@ -95,8 +95,8 @@
     "duplicate": "Duplicate canvas",
     "keepOne": "A project needs at least one canvas.",
     "listLabel": "Canvas list",
-    "meta_one": "{{w}} × {{h}} mm · {{count}} object",
-    "meta_other": "{{w}} × {{h}} mm · {{count}} objects",
+    "meta_one": "{{w}} × {{h}} mm · {{count}} object",
+    "meta_other": "{{w}} × {{h}} mm · {{count}} objects",
     "newCanvas": "New canvas",
     "noMatch": "No matching canvas",
     "openCanvas": "Open canvas {{name}}",
@@ -205,7 +205,7 @@
   },
   "drawer": {
     "pin": "Pin sidebar",
-    "resize": "Resize sidebar ({{min}}–{{max}} px)",
+    "resize": "Resize sidebar ({{min}}–{{max}} px)",
     "unpin": "Unpin sidebar"
   },
   "elementTree": {
@@ -432,10 +432,10 @@
     }
   },
   "pageEdge": {
-    "height": "H {{mm}} mm",
+    "height": "H {{mm}} mm",
     "heightPrefix": "H ",
     "snapTo": "Snapped to {{name}}",
-    "width": "W {{mm}} mm",
+    "width": "W {{mm}} mm",
     "widthPrefix": "W "
   },
   "panelBadge": {
@@ -1065,7 +1065,7 @@
       "confirmOrigins": "Confirm packages"
     },
     "card": {
-      "steps": "Progress",
+      "stepOf": "Step {{n}} of {{total}}: {{name}}",
       "step": {
         "prepare": "Prepare",
         "run": "Run",
@@ -1075,6 +1075,9 @@
       "close": "Close (keeps running)",
       "more": "More",
       "details": "Details",
+      "allDetails": "All details",
+      "copied": "Copied",
+      "noArgs": "(no arguments)",
       "allOutput": "All output",
       "noOutput": "No output yet",
       "endInput": "End input",

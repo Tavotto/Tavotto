@@ -36,3 +36,10 @@ export function formatMm(v: number): string {
 export function formatCm(v: number): string {
   return round1(v / 10).toString()
 }
+
+/**
+ * 数字与单位之间的间隔：U+2009 细空格（全产品唯一写法；i18n 的 `measure.*` 与 `sizeMeta` / `pageEdge`
+ * 里同一个字符）。不用普通空格：`@sfinterface/numbers` 的 affix 是 inline-block + nowrap，
+ * 开头的普通空格会被折叠吃掉（画布页顶读数曾显示成「100.0mm」）；细空格不参与折叠，也不会换行断开。
+ */
+export const UNIT_GAP = '\u2009'

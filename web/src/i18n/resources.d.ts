@@ -497,12 +497,12 @@ export default interface Resources {
     },
     "literal": "{{text}}",
     "measure": {
-      "cmSize": "{{w}} × {{h}} cm",
-      "mm": "{{value}} mm",
-      "mmPair": "{{a}}, {{b}} mm",
-      "mmSize": "{{w}} × {{h}} mm",
-      "ppi": "{{value}} ppi",
-      "pxSize": "{{w}} × {{h}} px"
+      "cmSize": "{{w}} × {{h}} cm",
+      "mm": "{{value}} mm",
+      "mmPair": "{{a}}, {{b}} mm",
+      "mmSize": "{{w}} × {{h}} mm",
+      "ppi": "{{value}} ppi",
+      "pxSize": "{{w}} × {{h}} px"
     },
     "mixed": "多个值",
     "notice": {
@@ -764,7 +764,7 @@ export default interface Resources {
       "locationPickTitle": "选择导出文件夹",
       "locationUpdating": "正在更新…",
       "mergePdf": "合成一个多页 PDF：{{name}}（{{count}} 页）",
-      "mmSize": "{{w}} × {{h}} mm",
+      "mmSize": "{{w}} × {{h}} mm",
       "needsRerun": "这张图需要重新运行脚本才能按原图导出。也可以改按画布导出（版面按画布，保真度较低）。",
       "openProblems": "在问题面板中查看",
       "operationFailed": "无法完成：{{error}}",
@@ -826,7 +826,7 @@ export default interface Resources {
         "unknown_figure": "找不到这张图的信息，暂时只能按画布导出。"
       },
       "showInFolder": "在文件夹中显示",
-      "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
+      "sizeDiskDiffers": "磁盘上的原文件为 {{dw}} × {{dh}} mm（脚本保存时已裁边），将按图幅 {{w}} × {{h}} mm 导出。",
       "sizeUnknownShort": "尺寸未知",
       "start": "开始导出",
       "statusFailed": "暂时无法获取导出状态，作业仍可能完成",
@@ -962,10 +962,10 @@ export default interface Resources {
       },
       "finish": {
         "after": "你的调整成果",
-        "afterAlt": "你的调整成果：同一组数据，图例换了位置，标题 {{size}} pt",
-        "afterAltUnmoved": "你的调整成果：同一组数据，标题 {{size}} pt",
+        "afterAlt": "你的调整成果：同一组数据，图例换了位置，标题 {{size}} pt",
+        "afterAltUnmoved": "你的调整成果：同一组数据，标题 {{size}} pt",
         "before": "调整前",
-        "beforeAlt": "调整前：脚本原样画出的图，图例在右下角，标题 {{size}} pt",
+        "beforeAlt": "调整前：脚本原样画出的图，图例在右下角，标题 {{size}} pt",
         "compareLabel": "调整前后对比",
         "demoNote": "教程里的改动只在这个演示中，不会写进任何文件。",
         "nextHint": "已经学会直接编辑科研图。现在可以试试自己的 Python 绘图脚本。",
@@ -1032,13 +1032,13 @@ export default interface Resources {
         "decrease": "减小字号",
         "figureLabel": "反应动力学图，标题可以选中",
         "increase": "增大字号",
-        "sizeAria": "标题字号（{{min}} 到 {{max}} pt）",
+        "sizeAria": "标题字号（{{min}} 到 {{max}} pt）",
         "sizeLabel": "字号",
         "success": "太棒了！不用改代码，也能调整文字。",
         "task": "点击标题，把文字调大一点",
         "taskSelected": "把字号调大一点",
         "tip": "点击标题",
-        "titleLabel": "图标题「{{text}}」，{{size}} pt。点击选中后可以改字号"
+        "titleLabel": "图标题「{{text}}」，{{size}} pt。点击选中后可以改字号"
       },
       "welcome": {
         "begin": "开始新手教程",
@@ -1478,7 +1478,7 @@ export default interface Resources {
         "user": "自定义"
       },
       "pinAsProject": "固定为本项目规范",
-      "previewAria": "样式示例：标题 {{title}} pt，轴标题 {{axis}} pt，刻度 {{tick}} pt，图例 {{legend}} pt，线宽 {{line}} pt，边框 {{spine}} pt",
+      "previewAria": "样式示例：标题 {{title}} pt，轴标题 {{axis}} pt，刻度 {{tick}} pt，图例 {{legend}} pt，线宽 {{line}} pt，边框 {{spine}} pt",
       "previewTitle": "示例",
       "readOnlyBadge": "只读",
       "readOnlyBuiltinBadge": "内置 · 只读",
@@ -1897,6 +1897,7 @@ export default interface Resources {
         },
         "endpoint": {
           "addTitle": "为 {{name}} 添加模型服务",
+          "addTitleGeneric": "添加模型服务",
           "apiKey": "密钥",
           "apiKeySaved": "已保存 {{hint}}，留空则不改",
           "baseUrl": "接口地址",
@@ -2708,7 +2709,7 @@ export default interface Resources {
         "off": "关",
         "on": "开",
         "page": "页面尺寸",
-        "pageSize": "{{w}} × {{h}} mm",
+        "pageSize": "{{w}} × {{h}} mm",
         "palette": "配色",
         "title": "影响",
         "unsavedDraft": "还没存下：存下之后才能让画布跟随它。"
@@ -2721,7 +2722,7 @@ export default interface Resources {
       "needPanel": "先选中一张已渲染、可编辑的图",
       "newStyle": "新建样式",
       "noSavedStyles": "还没有保存的样式",
-      "pageSizeSuffix": "（{{w}} × {{h}} mm）",
+      "pageSizeSuffix": "（{{w}} × {{h}} mm）",
       "paletteSwatchAria": "配色第 {{index}} 色",
       "paletteTitle": "系列配色，按出现顺序循环。",
       "removeColor": "移除颜色",
@@ -2816,13 +2817,13 @@ export default interface Resources {
         "guides": "参考线：{{from}} → {{to}} 条",
         "hidden": "{{name}}：已隐藏",
         "locked": "{{name}}：已锁定",
-        "moved": "{{name}}：移动 {{dx}}, {{dy}} mm",
+        "moved": "{{name}}：移动 {{dx}}, {{dy}} mm",
         "movedAndResized": "{{name}}：位置与尺寸已变",
         "overridesDetail": "{{name}}：{{elements}} 个图内元素有变化（位置 {{pos}}、文字 {{text}}、子图布局 {{axes}}、其他 {{other}}）",
         "overridesSample": "涉及：{{list}}",
         "pageBackground": "页面背景设置不同",
-        "pageMargin": "安全区页边距：{{a}} → {{b}} mm",
-        "pageSize": "页面尺寸：{{aw}} × {{ah}} → {{bw}} × {{bh}} mm",
+        "pageMargin": "安全区页边距：{{a}} → {{b}} mm",
+        "pageSize": "页面尺寸：{{aw}} × {{ah}} → {{bw}} × {{bh}} mm",
         "removed": "当前已删除：{{name}}",
         "resized": "{{name}}：尺寸已变",
         "rotationChanged": "{{name}}：旋转 {{from}}° → {{to}}°",
@@ -2897,9 +2898,9 @@ export default interface Resources {
       "summary": {
         "added_other": "新增 {{count}} 个对象",
         "baseline_other": "{{count}} 个对象",
-        "page": "{{w}} × {{h}} mm",
+        "page": "{{w}} × {{h}} mm",
         "removed_other": "删除 {{count}} 个对象",
-        "resized": "图幅 {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
+        "resized": "图幅 {{fromW}} × {{fromH}} → {{toW}} × {{toH}} mm",
         "sameMetrics": "对象数与图幅未变"
       },
       "today": "今天",
@@ -3654,7 +3655,7 @@ export default interface Resources {
       "workdirHintProjectNative": "正在用你自己的 Python，脚本在自己的目录里运行，用相对路径写出的文件会落进项目目录并改写同名文件；项目里的文件被删除、改名仍会被拦下。想隔离就改回沙盒。",
       "workdirHintProjectRoot": "脚本在项目根目录里运行，用相对路径写出的文件会落进项目目录并改写同名文件；项目里的文件被删除、改名仍会被拦下。",
       "workdirHintRuntime": "{{script}} 要找的数据在沙盒里找不到，但在脚本所在的目录里找得到。",
-      "workdirHintSandbox": "开启后在本地环境中运行，兼容性更好。",
+      "workdirHintSandbox": "脚本在沙盒里运行，写出的文件不会碰项目；用 open 读相对路径的数据时会回退到脚本目录。",
       "workdirLabel": "脚本的运行目录",
       "workdirMode_project": "脚本目录",
       "workdirMode_project_root": "项目根目录",
@@ -4008,12 +4009,12 @@ export default interface Resources {
       "background": "背景",
       "bgColor": "背景色",
       "clearAll": "全部清除",
-      "deleteGuide": "删除{{axis}}参考线 {{pos}} mm",
+      "deleteGuide": "删除{{axis}}参考线 {{pos}} mm",
       "export": "导出",
-      "exportSummary": "{{formats}} · {{dpi}} ppi",
+      "exportSummary": "{{formats}} · {{dpi}} ppi",
       "grid": "网格",
       "gridSize": "网格间距",
-      "gridSummary": "网格 {{size}} mm",
+      "gridSummary": "网格 {{size}} mm",
       "guideCount_other": "{{count}} 条",
       "guideHorizontal": "水平",
       "guideVertical": "垂直",
@@ -4023,7 +4024,7 @@ export default interface Resources {
       "landscape": "横向",
       "lock": "锁定",
       "margin": "页边距",
-      "marginSummary": "页边距 {{margin}} mm",
+      "marginSummary": "页边距 {{margin}} mm",
       "objects": "对象",
       "orientation": "方向",
       "pageSize": "页面尺寸",
@@ -4033,7 +4034,7 @@ export default interface Resources {
       "presetGroup": "页面预设",
       "presets": {
         "double": {
-          "hint": "{{w}} mm，按当前出版规范的双栏宽",
+          "hint": "{{w}} mm，按当前出版规范的双栏宽",
           "label": "双栏"
         },
         "full": {
@@ -4041,7 +4042,7 @@ export default interface Resources {
           "label": "整页"
         },
         "single": {
-          "hint": "{{w}} mm，按当前出版规范的单栏宽",
+          "hint": "{{w}} mm，按当前出版规范的单栏宽",
           "label": "单栏"
         },
         "square": {
@@ -4055,7 +4056,7 @@ export default interface Resources {
       "safeAreaTip": "只是画布上的参考框，不裁剪也不影响导出",
       "show": "显示",
       "size": "尺寸",
-      "sizeMeta": "{{w}} × {{h}} mm",
+      "sizeMeta": "{{w}} × {{h}} mm",
       "snap": "自动对齐",
       "snapEnable": "启用吸附",
       "snapGrid": "对齐网格",
@@ -4139,7 +4140,7 @@ export default interface Resources {
     "docSummary": {
       "annotations_other": "{{count}} 处文字与标注",
       "canvasSettings": "画布设置",
-      "size": "{{w}} × {{h}} mm",
+      "size": "{{w}} × {{h}} mm",
       "title": "本排版"
     },
     "element": {
@@ -4194,7 +4195,7 @@ export default interface Resources {
       "colorbarOwnershipUnknown": "归属未确定",
       "editElement": "修改图内元素",
       "editProp": "修改{{label}}",
-      "figureSize": "整图 {{w}} × {{h}} mm",
+      "figureSize": "整图 {{w}} × {{h}} mm",
       "foldBackground": "背景和其他",
       "foldBboxDetail": "背景细项",
       "foldCoords": "坐标轴、翻转、长宽比",
@@ -4656,7 +4657,7 @@ export default interface Resources {
       "flipped": "已翻转",
       "frameLegacyAdopt": "改用原图的图幅",
       "frameLegacyAdoptBlocked": "这张图裁剪后留下的部分完全在原图的图幅之外，改用后什么都不剩，所以不能切换。先调整或重置裁剪再试。",
-      "frameLegacyBody": "这张图在排版上仍按 figsize 显示；脚本保存时裁成了 {{w}} × {{h}} mm。改用后位置不变，只是外框变化。",
+      "frameLegacyBody": "这张图在排版上仍按 figsize 显示；脚本保存时裁成了 {{w}} × {{h}} mm。改用后位置不变，只是外框变化。",
       "frameLegacyTitle": "与脚本保存的原图大小不同",
       "geometry": "位置与尺寸",
       "image": "图片",
@@ -4667,15 +4668,15 @@ export default interface Resources {
       "nativeMixed": "多个原始尺寸",
       "nativeSize": "原始尺寸",
       "nativeSizeTip": "回到素材本身的 mm 尺寸",
-      "nativeTip": "素材自身尺寸 {{w}} × {{h}} cm",
+      "nativeTip": "素材自身尺寸 {{w}} × {{h}} cm",
       "nativeTipMulti": "素材自身尺寸",
       "noAssetMatch": "没有匹配的素材",
       "opacity": "不透明度",
       "opacityMixed": "多个值",
       "opaque": "不透明",
       "overrideCount_other": "{{count}} 项图内修改",
-      "ptHint": "原图 {{base}} pt × 缩放 {{scale}}%",
-      "ptHintBad": "原图 {{base}} pt × 缩放 {{scale}}%，有效字号低于 6 pt，不满足出版可读性",
+      "ptHint": "原图 {{base}} pt × 缩放 {{scale}}%",
+      "ptHintBad": "原图 {{base}} pt × 缩放 {{scale}}%，有效字号低于 6 pt，不满足出版可读性",
       "replace": "替换素材",
       "replaceAction": "选择…",
       "replaceDescription": "图内修改无法带到新素材，清空前会先征求你的同意。",
@@ -4861,7 +4862,7 @@ export default interface Resources {
         "linewidth": "描边线宽"
       }
     },
-    "resize": "调整属性栏宽度（{{min}}–{{max}} px）",
+    "resize": "调整属性栏宽度（{{min}}–{{max}} px）",
     "role": {
       "arrow_patch": "箭头",
       "axes": "子图",
@@ -4976,8 +4977,8 @@ export default interface Resources {
       "italic": "斜体（仅拉丁字形）",
       "lineHeight": "行距",
       "matchAction": "对齐",
-      "matchHint": "图内正文显示约 {{eff}} pt",
-      "matchTitle": "标注字号是页面绝对值。「{{panel}}」缩放到 {{scale}}% 后，图内 {{base}} pt 正文约显示为 {{eff}} pt；用这个值可与正文一样大。",
+      "matchHint": "图内正文显示约 {{eff}} pt",
+      "matchTitle": "标注字号是页面绝对值。「{{panel}}」缩放到 {{scale}}% 后，图内 {{base}} pt 正文约显示为 {{eff}} pt；用这个值可与正文一样大。",
       "newlineTitle": "在光标处插入换行（画布内编辑可用 {{alt}} / {{mod}}）",
       "padding": "内边距",
       "placeholder": "输入文字…",
@@ -5073,7 +5074,7 @@ export default interface Resources {
     },
     "transform": {
       "rotation": "旋转",
-      "summary": "X {{x}} · Y {{y}} mm",
+      "summary": "X {{x}} · Y {{y}} mm",
       "textHeightAuto": "文字高度随内容",
       "title": "位置与尺寸"
     },
@@ -5476,7 +5477,7 @@ export default interface Resources {
       "duplicate": "复制画布",
       "keepOne": "项目至少保留一张画布",
       "listLabel": "画布列表",
-      "meta_other": "{{w}} × {{h}} mm · {{count}} 对象",
+      "meta_other": "{{w}} × {{h}} mm · {{count}} 对象",
       "moveDown": "下移",
       "moveUp": "上移",
       "newCanvas": "新建画布",
@@ -5565,7 +5566,7 @@ export default interface Resources {
     },
     "drawer": {
       "pin": "钉住侧栏",
-      "resize": "调整侧栏宽度（{{min}}–{{max}} px）",
+      "resize": "调整侧栏宽度（{{min}}–{{max}} px）",
       "unpin": "取消钉住侧栏"
     },
     "elementTree": {
@@ -5802,10 +5803,10 @@ export default interface Resources {
       }
     },
     "pageEdge": {
-      "height": "高 {{mm}} mm",
+      "height": "高 {{mm}} mm",
       "heightPrefix": "高 ",
       "snapTo": "吸附到 {{name}}",
-      "width": "宽 {{mm}} mm",
+      "width": "宽 {{mm}} mm",
       "widthPrefix": "宽 "
     },
     "panelBadge": {
@@ -5949,13 +5950,16 @@ export default interface Resources {
         }
       },
       "card": {
+        "allDetails": "全部详情",
         "allOutput": "全部输出",
         "answerAria": "回答",
         "close": "关闭（后台照跑）",
+        "copied": "已复制",
         "details": "详情",
         "endInput": "结束输入",
         "minimize": "缩成角标",
         "more": "更多",
+        "noArgs": "（没有参数）",
         "noOutput": "脚本还没有输出",
         "otherArgs_other": "其他 {{count}} 个参数",
         "rawArgs": "原样参数 / 粘贴命令",
@@ -5967,7 +5971,7 @@ export default interface Resources {
           "prepare": "准备",
           "run": "运行"
         },
-        "steps": "进度",
+        "stepOf": "第 {{n}} 步，共 {{total}} 步：{{name}}",
         "stopScript": "停止脚本"
       },
       "convert": {

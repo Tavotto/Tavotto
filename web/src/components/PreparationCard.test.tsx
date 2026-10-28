@@ -585,6 +585,21 @@ describe('一句话 + 至多一个主按钮（每一种状态 × 每一种语种
   }
 })
 
+describe('页眉：只写当前阶段 + 三小段进度（精致感审计第二批 #1）', () => {
+  it('当前阶段名一处可见；三段 done / current / todo；第几步由 aria-label 与 aria-current 传达', async () => {
+    await mount()
+    await openWith(report({}))
+    const head = panel().querySelector('[data-prep-steps]') as HTMLElement
+    expect(head.querySelector('[data-prep-stage]')!.textContent).toBe('准备')
+    // 不再把三个阶段名并排写出来（点分隔的写法）
+    expect(head.querySelectorAll('[data-prep-stage]')).toHaveLength(1)
+    const segs = [...head.querySelectorAll<HTMLElement>('[data-prep-seg]')]
+    expect(segs.map((e) => e.dataset.prepSeg)).toEqual(['current', 'todo', 'todo'])
+    expect(segs.map((e) => e.getAttribute('aria-current'))).toEqual(['step', null, null])
+    expect(head.querySelector('ol')!.getAttribute('aria-label')).toBe('第 1 步，共 3 步：准备')
+  })
+})
+
 const toggleDetails = () =>
   act(async () => (panel().querySelector('[data-prep-details-toggle]') as HTMLButtonElement).click())
 const details = () => panel().querySelector('[data-prep-details]') as HTMLElement | null
@@ -3229,6 +3244,31 @@ describe('智能修复（ADR 0148）：每张失败卡都有「✦ 使用你的 
       await act(async () => root.unmount())
       host.remove()
     }
+  })
+
+  it('失败卡版式 1：一句话 + 一个主按钮；详情 / 参数 / 稍后全在页眉「⋯」，悬停出具体内容、点详情复制', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    await mount()
+    await openWith(report(STATES.errRemedyAi))
+    expect(panel().querySelector('[data-prep-details-toggle]')).toBeNull()
+    expect(panel().querySelector('[data-prep-later]')).toBeNull()
+    expect(panel().querySelector('[data-prep-args]')).toBeNull()
+    const more = panel().querySelector('[data-prep-more]') as HTMLButtonElement
+    expect(more).not.toBeNull()
+    await act(async () => {
+      more.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    const item = (sel: string) => document.body.querySelector<HTMLElement>(sel)
+    expect(item('[data-prep-menu-later]')).not.toBeNull()
+    await act(async () => item('[data-prep-menu-details]')!.focus())
+    const preview = document.body.querySelector('[data-prep-menu-preview]')
+    expect(preview?.textContent).toContain(errorReports.plain_exception.result.error.traceback.split('\n').filter((l: string) => l.trim()).pop()!.trim())
+    await act(async () => item('[data-prep-menu-details]')!.click())
+    expect(writeText).toHaveBeenCalledWith(errorReports.plain_exception.result.error.traceback)
+    expect(document.body.querySelector('[data-prep-copied]')?.textContent).toBe('已复制')
+    await act(async () => root.unmount())
+    host.remove()
   })
 
   it('remedy 为 ai_fix / connect_ai：主按钮就是它；feedback：一句话 +「发送」', async () => {

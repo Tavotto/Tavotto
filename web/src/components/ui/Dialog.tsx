@@ -1,3 +1,4 @@
+import { registerDialogOpen } from '@/store/dialogLayerStore'
 import * as RD from '@radix-ui/react-dialog'
 import { t } from '@/i18n'
 import { X } from './icons'
@@ -277,6 +278,8 @@ export function Dialog({
     ;(initialFocusRef?.current ?? content).focus({ preventScroll: true })
   }, [open, initialFocusRef])
 
+  // 登记「有模态开着」：通知轨据此把自己移到对话框上面（`dialogLayerStore`）
+  useEffect(() => (open ? registerDialogOpen() : undefined), [open])
   const hasBody = children != null && children !== false
   // 浮动页脚：默认外壳、有正文、没有 status 区时，页脚往上叠进正文的底边（负 margin = 自己的高度），正文底部
   // 留出同样高的内边距——滚动时内容从页脚底下滑过、滚到底时最后一行停在页脚上方。页脚**永远**是 Content 的
@@ -378,7 +381,10 @@ export function Dialog({
             }
             if (locked) e.preventDefault()
           }}
-          onInteractOutside={(e) => locked && e.preventDefault()}
+          onInteractOutside={(e) => {
+            // 压在对话框上面的通知胶囊（`NotificationRail` 的 body 层）：点它不算「点了对话框外面」
+            if (locked || (e.target instanceof Element && e.target.closest('[data-notification-rail]'))) e.preventDefault()
+          }}
           className={cn(
             'fixed left-1/2 z-dialog max-h-[86vh] max-w-[calc(100vw-2rem)] -translate-x-1/2',
             palette ? 'top-[18vh]' : 'top-1/2 -translate-y-1/2',

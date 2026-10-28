@@ -196,7 +196,7 @@ for (const theme of THEMES) {
       expect(ring).toMatch(/outline-offset:\s*-2px/)
     })
 
-    it('控件边界（border-control：复选框 / 单选 / 关态开关）对白 / 纸 / surface-2 ≥3:1', () => {
+    it('控件边界（border-control：复选框 / 单选 / 关态开关的 1.5px 内描边与缩小的滑块——同一个色，同一条 ≥3:1）对白 / 纸 / surface-2 ≥3:1', () => {
       for (const g of GROUNDS) {
         expect(contrast(token('border-control'), token(g)), `border-control on ${g}`).toBeGreaterThanOrEqual(3)
       }
