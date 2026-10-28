@@ -5,8 +5,10 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { fetchExecTrace, fetchExecTraceDiagnostic, type ExecTraceDto, type ExecTraceOperation } from '@/lib/api'
 import { supported, toWaterfall } from '@/lib/execTrace'
 import { Button } from '../ui/Button'
+import { useTraceDialogStore } from '@/store/traceDialogStore'
 import { Dialog } from '../ui/Dialog'
 import { TraceWaterfall } from './traceWaterfall/TraceWaterfall'
+import { usePlayback } from './traceWaterfall/usePlayback'
 
 /** 运行中且展开时多久问一次权威快照（SSE 会丢、不承担完整性；收起 / 页面不可见时不问） */
 const LIVE_POLL_MS = 1000
@@ -58,6 +60,20 @@ export function TraceDetails({ hidden, ...target }: TraceTarget & { hidden?: boo
       <TraceDialog {...target} open={open} onOpenChange={setOpen} />
     </div>
   )
+}
+
+/**
+ * 常驻的执行记录卡宿主：给「从会消失的浮层里打开」的入口用（任务历史）。读 `traceDialogStore`，关的那一下
+ * 还要把最后一份目标画完退场，所以留着上一份。挂在不会随浮层卸载的父级里（`TaskHistoryPopover`）。
+ */
+export function TraceDialogHost() {
+  const target = useTraceDialogStore((s) => s.target)
+  const close = useTraceDialogStore((s) => s.close)
+  const last = useRef(target)
+  if (target) last.current = target
+  const shown = target ?? last.current
+  if (!shown) return null
+  return <TraceDialog {...shown} open={!!target} onOpenChange={(v) => !v && close()} />
 }
 
 /**
@@ -221,7 +237,13 @@ function Ready({ trace, nowWall }: { trace: ExecTraceDto; nowWall: number }) {
   const { t } = useTranslation('ai')
   // 展示模型只随快照变（每秒一次）；「此刻」每 250ms 走一格只经 `now` 传下去，不重建整棵树
   const model = useMemo(() => toWaterfall(trace, trace.started_at), [trace])
-  const now = model.running ? Math.max(model.duration, nowWall - trace.started_at) : model.duration
+  // 已结束的 Trace 打开时按时间回放一遍（运行中的走实时，不给回放条）。回放时指标条仍是整份的总数；
+  // 展示模型只在「回放开始 / 结束」换一次，进度每格只经 `now` 传下去（行 memo 判断这一格对哪些行有影响）
+  const canReplay = !model.running && trace.status !== 'running' && model.duration > 0
+  const pb = usePlayback(model.duration, canReplay)
+  const replaying = canReplay && pb.replaying
+  const shown = useMemo(() => (replaying ? { ...model, replay: true } : model), [model, replaying])
+  const now = replaying ? pb.t : model.running ? Math.max(model.duration, nowWall - trace.started_at) : model.duration
   return (
     <div data-ai-trace-state={trace.status} className="flex flex-col gap-1.5">
       {(trace.truncated || (!trace.complete && trace.status !== 'running')) && (
@@ -233,7 +255,24 @@ function Ready({ trace, nowWall }: { trace: ExecTraceDto; nowWall: number }) {
               : t('trace.state.incomplete')}
         </p>
       )}
-      <TraceWaterfall model={model} now={now} />
+      <TraceWaterfall
+        model={shown}
+        now={now}
+        playback={
+          canReplay
+            ? {
+                total: model.duration,
+                t: pb.t,
+                playing: pb.playing,
+                speed: pb.speed,
+                onToggle: pb.toggle,
+                onReplay: pb.replay,
+                onSeek: pb.seek,
+                onSpeed: pb.setSpeed,
+              }
+            : undefined
+        }
+      />
     </div>
   )
 }

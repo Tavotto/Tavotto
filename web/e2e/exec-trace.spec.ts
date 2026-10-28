@@ -58,6 +58,8 @@ test('执行追踪：运行中实时、失败归因到 Agent 运行、刷新后�
   await expect(agentRow.first()).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('[data-ai-trace-state="running"]')).toBeVisible()
   await expect(page.locator('[data-trace-bar][data-running]').first()).toBeVisible()
+  // 运行中走实时，没有回放条
+  await expect(page.locator('[data-trace-playback]')).toHaveCount(0)
   await card.screenshot({ path: info.outputPath('exec-trace-running.png') })
 
   // 放行：假 CLI 以 3 退出 → Agent 运行失败；那一行是第一次失败
@@ -66,6 +68,9 @@ test('执行追踪：运行中实时、失败归因到 Agent 运行、刷新后�
   await expect(page.locator('[data-ai-trace-state="failed"]')).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('[data-trace-badge="first-failure"]')).toHaveCount(1)
   await expect(page.locator('[data-trace-bar][data-running]')).toHaveCount(0)
+  // 跑着时开的卡，收尾后出现回放条但不自动播（它已经看过实时了）：停在终点
+  await expect(page.locator('[data-trace-playback]')).toBeVisible()
+  await expect(page.locator('[data-trace-waterfall]')).not.toHaveAttribute('data-replay', /.*/)
   await card.screenshot({ path: info.outputPath('exec-trace-failed.png') })
   // 暗色主题：颜色全走语义 token，换主题当场变（截图为证）
   await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'))
@@ -104,7 +109,31 @@ test('执行追踪：运行中实时、失败归因到 Agent 运行、刷新后�
   await expect(page.locator('[data-ai-history-card="details"] [data-ai-history-strip]')).toBeVisible()
   await page.locator('[data-ai-history-trace]').click()
   const histCard = page.locator('[data-dialog="exec-trace"]')
+  await expect(histCard).toBeVisible()
+  // 打开宽卡 = 任务历史弹层和详情卡先让路：不能再有任何浮层压在宽卡上面遮住 Waterfall
+  await expect(page.locator('[data-ai-history]')).toHaveCount(0)
+  await expect(page.locator('[data-ai-history-card]')).toHaveCount(0)
+  const dialogBox = (await histCard.boundingBox())!
+  const covering = await page.evaluate(
+    ({ x, y }) => {
+      const top = document.elementFromPoint(x, y)
+      return !!top && !top.closest('[data-dialog="exec-trace"]')
+    },
+    { x: dialogBox.x + dialogBox.width / 2, y: dialogBox.y + dialogBox.height / 2 },
+  )
+  expect(covering).toBe(false)
   await expect(histCard.locator('[data-ai-trace-state="failed"]')).toBeVisible({ timeout: 15_000 })
+  // 已结束的 Trace 打开就是回放：有回放条，能拖到终点、能重播
+  await expect(histCard.locator('[data-trace-playback]')).toBeVisible()
+  const scrub = histCard.locator('[data-trace-playback-scrub]')
+  await scrub.focus()
+  await page.keyboard.press('End')
+  await expect(histCard.locator('[data-trace-waterfall]')).not.toHaveAttribute('data-replay', /.*/)
+  await expect(histCard.locator('[data-trace-playback-clock]')).toHaveText(/^0:\d\d \/ 0:\d\d$/)
+  await histCard.locator('[data-trace-playback-replay]').click()
+  await expect(histCard.locator('[data-trace-waterfall]')).toHaveAttribute('data-replay', 'true')
+  await scrub.focus()
+  await page.keyboard.press('End')
   await expect(histCard.locator('[data-trace-badge="first-failure"]')).toHaveCount(1)
   await histCard.screenshot({ path: info.outputPath('exec-trace-history.png') })
 })

@@ -18,6 +18,7 @@ import { Kbd } from '@/components/ui/Kbd'
 import { SearchInput } from '@/components/ui/SearchInput'
 import { cn, MOD } from '@/lib/utils'
 import { Handoffs } from './Handoffs'
+import { PlaybackBar, type PlaybackProps } from './PlaybackBar'
 import { MorphText } from './MorphText'
 import { SpanIcon } from './SpanIcon'
 import { SpanPopover } from './SpanPopover'
@@ -37,7 +38,10 @@ import {
   laneSegments,
   leafType,
   matchingIds,
+  notStartedAt,
   pct,
+  rowUnchangedBetween,
+  settledAt,
   spanFigure,
   subtreeOpen,
   ticksFor,
@@ -53,6 +57,8 @@ export interface TraceWaterfallProps extends Omit<HTMLAttributes<HTMLDivElement>
   model: WaterfallModel
   /** 距 Trace 起点的秒数；没有结束时刻的 span 画到这里 */
   now: number
+  /** 回放条（只给已结束的 Trace）：放在指标条下面，滑块与时间轴对齐 */
+  playback?: PlaybackProps
 }
 
 const MIN_ZOOM = 1
@@ -62,7 +68,7 @@ type Details = { id: string; scope: Scope; anchor: HTMLElement }
 type View = { start: number; domain: number; edgePct?: number }
 const clampSplit = (p: number) => Math.min(70, Math.max(20, p))
 
-export function TraceWaterfall({ model, now, className, style, ...props }: TraceWaterfallProps) {
+export function TraceWaterfall({ model, now, playback, className, style, ...props }: TraceWaterfallProps) {
   const { t } = useTranslation('ai')
   const rootRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -85,31 +91,37 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
     walk(roots, (n) => map.set(n.span.id, n))
     return map
   }, [roots])
-  const metrics = useMemo(() => computeMetrics(roots, model, now), [roots, model, now])
+  // 指标条回放时也给**整份**的总数（总时长 / 费用 / 失败数），不随回放进度变——部分和会把还没结束的调用的费用写早了
+  const metrics = useMemo(() => computeMetrics(roots, model, now), [roots, model, model.running ? now : 0])
   const matches = useMemo(() => matchingIds(roots, query), [roots, query])
   const whole = traceDomain(metrics.extent, model.running, track.width)
   // 时间轴已在最后一条之后留了 END_LABEL_PX：条尾落在留边以内就照常放右边，只有放大后贴到右缘才翻到左边（不压住条）
   const edgePct = track.width > 0 ? Math.max(50, 100 - (END_LABEL_PX / track.width) * 100 + 0.5) : 90
   const view: View = useMemo(() => ({ ...(zoom ?? { start: 0, domain: whole }), edgePct }), [zoom, whole, edgePct])
   const ticks = useMemo(() => ticksFor(view.start, view.domain), [view])
-  const running = useCallback((n: TraceNode) => isRunning(n.span, model), [model])
+  const running = useCallback((n: TraceNode) => isRunning(n.span, model, now), [model, now])
+  const replay = !!model.replay
 
   // 搜索时，折叠的智能体里的命中项也要露出来
   const isOpen = (n: TraceNode) => matches !== null || !collapsed.has(n.span.id)
-  const isShown = (n: TraceNode) => matches === null || matches.has(n.span.id)
+  const isShown = (n: TraceNode) =>
+    (matches === null || matches.has(n.span.id)) && !notStartedAt(n.span, now, replay)
 
+  // 回放时「还没开始」的行不进列表（连线 / 滚动跟随也只数看得见的）；非回放不依赖此刻
+  const cut = replay ? now : 0
   const flat = useMemo(() => {
     const out: TraceNode[] = []
     const visit = (nodes: TraceNode[]) => {
       for (const n of nodes) {
         if (matches !== null && !matches.has(n.span.id)) continue
+        if (notStartedAt(n.span, cut, replay)) continue
         out.push(n)
         if (matches !== null || !collapsed.has(n.span.id)) visit(n.children)
       }
     }
     visit(roots)
     return out
-  }, [roots, collapsed, matches])
+  }, [roots, collapsed, matches, replay, cut])
 
   // ---- 测量 -----------------------------------------------------------------
 
@@ -138,7 +150,7 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
   useLayoutEffect(syncScroll)
 
   // 新步骤出现时跟到底部，除非读者往上翻了
-  const started = model.spans.length
+  const started = replay ? flat.length : model.spans.length
   useLayoutEffect(() => {
     const vp = viewportRef.current
     if (vp && following.current) vp.scrollTop = vp.scrollHeight
@@ -245,7 +257,7 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
 
   const renderLevel = (nodes: TraceNode[]) =>
     nodes.filter(isShown).map((node) => {
-      const hasChildren = node.children.length > 0
+      const hasChildren = replay ? node.children.some(isShown) : node.children.length > 0
       const open = hasChildren && isOpen(node)
       return (
         <li key={node.span.id} className="motion-safe:animate-settle-in">
@@ -277,6 +289,7 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
       ref={rootRef}
       data-trace-waterfall
       data-running={model.running || undefined}
+      data-replay={replay || undefined}
       onPointerEnter={() => (hovered.current = true)}
       onPointerLeave={() => (hovered.current = false)}
       className={cn('@container/trace w-full overflow-hidden rounded-lg border border-border bg-surface text-base text-ink', className)}
@@ -322,6 +335,8 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
         />
         <Metric id="errors" label={t('trace.ui.metric.errors')} value={String(metrics.errors)} />
       </dl>
+
+      {playback && <PlaybackBar {...playback} fraction={Math.min(1, playback.total / whole)} />}
 
       {/* 主体 */}
       <div
@@ -373,17 +388,17 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
             className="max-h-[min(36rem,50vh)] overflow-y-auto overscroll-contain"
           >
             <div className="relative">
-              <Handoffs flat={flat} view={view} track={track} now={now} running={running} />
+              <Handoffs flat={flat} view={view} track={track} now={now} replay={replay} running={running} />
               <ul aria-label={t('trace.ui.treeLabel')}>{renderLevel(roots)}</ul>
             </div>
           </div>
-          {/* 现在线：只在运行中画 */}
-          {model.running && (
+          {/* 现在线：运行中、回放中才画 */}
+          {(model.running || replay) && (
             <div aria-hidden className="pointer-events-none absolute inset-y-0 start-(--trace-label) end-0 overflow-hidden">
               <span
                 data-trace-now
                 className="absolute inset-y-0 w-px bg-accent"
-                style={{ left: `${pct(Math.max(now, metrics.extent), view)}%` }}
+                style={{ left: `${pct(replay ? now : Math.max(now, metrics.extent), view)}%` }}
               />
             </div>
           )}
@@ -443,6 +458,7 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
           node={detailsNode}
           anchor={details.anchor}
           running={running(detailsNode)}
+          replay={replay}
           now={now}
           slowest={detailsNode.span.id === metrics.slowestId}
           onClose={closeDetails}
@@ -496,7 +512,9 @@ const Row = memo(RowImpl, (a, b) => {
     if (k === 'now') continue
     if (a[k] !== b[k]) return false
   }
-  return a.now === b.now || !subtreeOpen(b.node)
+  if (a.now === b.now) return true
+  // 回放：这一格对这一行有没有影响，看它（含子孙）的时间范围
+  return b.model.replay ? rowUnchangedBetween(b.node, a.now, b.now) : !subtreeOpen(b.node)
 })
 
 function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, details, onToggle, onOpen }: RowProps) {
@@ -505,10 +523,13 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
   const isAgent = span.kind === 'agent'
   const pinned = isAgent && hasChildren && open
   const top = depth * ROW
-  const live = isRunning(span, model)
-  const failed = span.status === 'error'
+  const replay = !!model.replay
+  const live = isRunning(span, model, now)
+  // 回放中还没结束的调用，结局（失败 / 最慢 / 首个失败）此刻还不知道：不露
+  const settled = settledAt(span, now, replay)
+  const failed = settled && span.status === 'error'
   const popupOpen = (scope: Scope, id = span.id) => details?.id === id && details.scope === scope
-  const end = endOf(span, now)
+  const end = endOf(span, now, replay)
 
   // 工具行：名字就是它调了哪个工具（change_python），「工具调用」这个种类图标已经说了、在悬浮提示和详情里仍写全
   const toolNamed = span.kind === 'tool' && !!span.detail
@@ -550,7 +571,7 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
       data-trace-row
       data-trace-span-id={span.id}
       data-kind={span.kind}
-      data-status={span.status ?? 'none'}
+      data-status={(settled && span.status) || 'none'}
       data-timing={span.timing}
       data-running={live || undefined}
       data-trace-pinned={pinned || undefined}
@@ -606,6 +627,7 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
         <div className="absolute inset-0 overflow-hidden">
           {/* 整段的触发区在前：泳道里子步骤的触发区后渲染、叠在它上面，点彩色的子段打开的是那一步（Codex #1454） */}
           <Trigger
+            replay={replay}
             node={node}
             view={view}
             now={now}
@@ -616,7 +638,7 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
           {isAgent ? (
             <AgentLane node={node} view={view} now={now} model={model} details={details} onOpen={onOpen} />
           ) : (
-            <LeafMarks node={node} view={view} now={now} live={live} />
+            <LeafMarks node={node} view={view} now={now} live={live} replay={replay} settled={settled} />
           )}
           <span
             data-trace-figure-side={edge ? 'before' : 'after'}
@@ -627,14 +649,14 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
             // 条已经贴到右缘（放大后 / 时间轴留边不够）：小字改放在条尾的左边，不被右缘裁掉
             style={edge ? { right: `${100 - pct(figureLeft, view)}%` } : { left: `${pct(figureLeft, view)}%` }}
           >
-            <span data-trace-figure>{spanFigure(node, now)}</span>
-            {span.firstFailure && (
+            <span data-trace-figure>{spanFigure(node, now, replay)}</span>
+            {span.firstFailure && settled && (
               <Badge tone="danger" data-trace-badge="first-failure" className="hidden gap-1 @sm/trace:inline-flex">
                 <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
                 {t('trace.ui.badge.firstFailure')}
               </Badge>
             )}
-            {slowest && (
+            {slowest && settled && (
               <Badge data-trace-badge="slowest" className="hidden motion-safe:animate-pop-in @sm/trace:inline-flex">
                 {t('trace.ui.badge.slowest')}
               </Badge>
@@ -647,17 +669,31 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
 }
 
 /** 叶子行：实心条 / 虚线框 / 点 */
-function LeafMarks({ node, view, now, live }: { node: TraceNode; view: View; now: number; live: boolean }) {
+function LeafMarks({
+  node,
+  view,
+  now,
+  live,
+  replay,
+  settled,
+}: {
+  node: TraceNode
+  view: View
+  now: number
+  live: boolean
+  replay: boolean
+  settled: boolean
+}) {
   const { span } = node
   if (span.timing === 'point') return <Marker node={node} view={view} />
-  if (span.timing === 'unmeasured') return <Bar node={node} view={view} start={span.start} end={endOf(span, now)} type="muted" dashed />
+  if (span.timing === 'unmeasured') return <Bar node={node} view={view} start={span.start} end={endOf(span, now, replay)} type="muted" dashed />
   return (
     <Bar
       node={node}
       view={view}
       start={span.start}
-      end={endOf(span, now)}
-      type={leafType(span)}
+      end={endOf(span, now, replay)}
+      type={leafType(span, !settled)}
       running={live}
       retry={span.kind === 'model' && span.retry}
     />
@@ -682,9 +718,12 @@ function AgentLane({
 }) {
   const { span } = node
   if (span.timing === 'point') return <Marker node={node} view={view} />
-  if (span.timing === 'unmeasured') return <Bar node={node} view={view} start={span.start} end={endOf(span, now)} type="muted" dashed lane />
+  const replay = !!model.replay
+  if (span.timing === 'unmeasured') return <Bar node={node} view={view} start={span.start} end={endOf(span, now, replay)} type="muted" dashed lane />
   const segs: LaneSegment[] = laneSegments(node, now, model)
-  const extras = node.children.filter((c) => c.span.kind !== 'agent' && !hasInterval(c.span))
+  const extras = node.children.filter(
+    (c) => c.span.kind !== 'agent' && !hasInterval(c.span) && !notStartedAt(c.span, now, replay),
+  )
   return (
     <>
       {segs.map((seg) => (
@@ -702,6 +741,7 @@ function AgentLane({
           />
           {seg.node && (
             <Trigger
+              replay={replay}
               node={seg.node}
               view={view}
               now={now}
@@ -719,6 +759,7 @@ function AgentLane({
           <span key={c.span.id} className="contents">
             <Marker node={c} view={view} />
             <Trigger
+              replay={replay}
               node={c}
               view={view}
               now={now}
@@ -729,8 +770,9 @@ function AgentLane({
           </span>
         ) : (
           <span key={c.span.id} className="contents">
-            <Bar node={c} view={view} start={c.span.start} end={endOf(c.span, now)} type="muted" dashed lane />
+            <Bar node={c} view={view} start={c.span.start} end={endOf(c.span, now, replay)} type="muted" dashed lane />
             <Trigger
+              replay={replay}
               node={c}
               view={view}
               now={now}
@@ -849,11 +891,13 @@ function Trigger({
   start,
   end,
   open,
+  replay = false,
   onOpen,
 }: {
   node: TraceNode
   view: View
   now: number
+  replay?: boolean
   scope: Scope
   start?: number
   end?: number
@@ -864,7 +908,7 @@ function Trigger({
   const { span } = node
   const a = pct(start ?? span.start, view)
   const point = span.timing === 'point'
-  const b = pct(end ?? endOf(span, now), view)
+  const b = pct(end ?? endOf(span, now, replay), view)
   const style: CSSProperties = point
     ? { left: `calc(${a}% - 8px)`, width: 16 }
     : { left: `${a}%`, width: `max(8px, ${b - a}%)` }

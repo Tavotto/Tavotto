@@ -27,7 +27,9 @@ import { SearchInput } from '../ui/SearchInput'
 import { Select } from '../ui/Select'
 import { statusLabel } from './transcriptModel'
 import { AgentBadge, HistoryDetailsCard, HoverPopover } from './historyRowCards'
-import { TraceDialog } from './TraceDetails'
+import { TraceDialogHost } from './TraceDetails'
+import { useTraceDialogStore } from '@/store/traceDialogStore'
+import { Popover } from '../ui/Popover'
 
 const ai = (key: string, values?: Record<string, unknown>) => translate(key, { ns: 'ai', ...(values ?? {}) })
 
@@ -38,6 +40,38 @@ const ALL_STATUSES = '__all__'
 const HISTORY_STATUSES = ['running', 'done', 'failed', 'timeout', 'cancelled', 'reverted', 'interrupted']
 
 const PAGE = 20
+
+/**
+ * 面板顶部的「任务历史」钮 + 它的弹层 + 执行记录卡宿主。宿主挂在弹层**外面**：从某一行点「查看执行记录」时，
+ * 弹层（连同悬浮详情卡 / 模型卡）先收起、行卸载，宽卡由这里的宿主画——不会被弹层压住，也不随那一行消失。
+ */
+export function TaskHistoryPopover() {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <Popover
+        width={320}
+        align="end"
+        open={open}
+        onOpenChange={setOpen}
+        trigger={
+          <IconButton
+            data-ai-history-trigger
+            label={ai('panel.taskHistory')}
+            tip={!open}
+            iconSize="sm"
+            className="text-ink-2"
+          >
+            <RotateCcwClock size={ICON_SIZE.sm} />
+          </IconButton>
+        }
+      >
+        <TaskHistory onClose={() => setOpen(false)} />
+      </Popover>
+      <TraceDialogHost />
+    </>
+  )
+}
 
 /**
  * 任务历史：项目级持久化记录（SQLite），刷新与后端重启后仍在。
@@ -141,7 +175,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
         ) : (
           <div className="flex flex-col gap-0.5">
             {entries.map((s) => (
-              <HistoryRow key={s.id} entry={s} pj={pj} onChanged={() => void load(query, status, offset)} />
+              <HistoryRow key={s.id} entry={s} pj={pj} onChanged={() => void load(query, status, offset)} onDismiss={onClose} />
             ))}
           </div>
         )}
@@ -170,17 +204,19 @@ function HistoryRow({
   entry,
   pj,
   onChanged,
+  onDismiss,
 }: {
   entry: AiHistoryEntry
   /** 这条记录所属的项目（历史视图打开时认领的那个） */
   pj: string | null
   onChanged: () => void
+  /** 收起整个任务历史弹层（打开宽卡之前先让路） */
+  onDismiss: () => void
 }) {
   useTranslation('ai')
   // 动作回来时已经换了项目：后果（提示、重查）属于那个项目，不写进现在这个
   const stillMine = () => currentProjectId() === pj
   const caps = useAiStore((s) => s.caps)
-  const [traceOpen, setTraceOpen] = useState(false)
   const failed = entry.status === 'failed' || entry.status === 'timeout' || entry.status === 'interrupted'
   const running = entry.status === 'running'
   // 状态点 + 一个词：完成的任务说「有改动 / 没有改动」（不再单独说「完成」），其余照状态说
@@ -242,7 +278,15 @@ function HistoryRow({
             </button>
           }
         >
-          <HistoryDetailsCard entry={entry} pj={pj} onOpenTrace={() => setTraceOpen(true)} />
+          <HistoryDetailsCard
+            entry={entry}
+            pj={pj}
+            onOpenTrace={() => {
+              // 宽卡交给常驻宿主画，再收起弹层（连带详情卡 / 模型卡）：浮层的层级比对话框高，留着就压在 Waterfall 上
+              useTraceDialogStore.getState().open({ taskRef: entry.id, pj, running, settledKey: entry.status })
+              onDismiss()
+            }}
+          />
         </HoverPopover>
       </div>
       <div
@@ -303,15 +347,6 @@ function HistoryRow({
           <Trash2 size={ICON_SIZE.xs} />
         </IconButton>
       </div>
-      {/* 刷新 / 重启之后，已结束的那一轮只在这里：执行记录从后端保留期内的落盘快照恢复 */}
-      <TraceDialog
-        taskRef={entry.id}
-        pj={pj}
-        running={running}
-        settledKey={entry.status}
-        open={traceOpen}
-        onOpenChange={setTraceOpen}
-      />
     </div>
   )
 }

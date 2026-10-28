@@ -418,6 +418,23 @@ export default interface Resources {
           "reported": "耗时由其他进程上报",
           "unmeasured": "这一段没有量到"
         },
+        "playback": {
+          "pause": "暂停",
+          "play": "播放",
+          "replay": "重播",
+          "scrub": "回放进度",
+          "speed": {
+            "auto": "自动",
+            "fast": "10×",
+            "realtime": "1×"
+          },
+          "speedLabel": "回放速度",
+          "speedTip": {
+            "auto": "压缩到几秒内放完",
+            "fast": "10 倍速",
+            "realtime": "按实际时间"
+          }
+        },
         "resize": "调整步骤列宽度",
         "search": {
           "label": "搜索步骤",

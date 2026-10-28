@@ -273,6 +273,23 @@
         "point": "Moment only",
         "unmeasured": "Not measured"
       },
+      "playback": {
+        "play": "Play",
+        "pause": "Pause",
+        "replay": "Replay",
+        "scrub": "Replay position",
+        "speedLabel": "Replay speed",
+        "speed": {
+          "auto": "Auto",
+          "realtime": "1×",
+          "fast": "10×"
+        },
+        "speedTip": {
+          "auto": "Compress to a few seconds",
+          "realtime": "Real time",
+          "fast": "10× speed"
+        }
+      },
       "empty": {
         "title": "No matching steps",
         "body": "Nothing in this trace matches “{{query}}”"

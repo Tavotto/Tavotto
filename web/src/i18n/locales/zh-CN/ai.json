@@ -269,6 +269,23 @@
         "point": "仅有时刻",
         "unmeasured": "未量到"
       },
+      "playback": {
+        "play": "播放",
+        "pause": "暂停",
+        "replay": "重播",
+        "scrub": "回放进度",
+        "speedLabel": "回放速度",
+        "speed": {
+          "auto": "自动",
+          "realtime": "1×",
+          "fast": "10×"
+        },
+        "speedTip": {
+          "auto": "压缩到几秒内放完",
+          "realtime": "按实际时间",
+          "fast": "10 倍速"
+        }
+      },
       "empty": {
         "title": "没有匹配的步骤",
         "body": "这条轨迹里没有匹配“{{query}}”的内容"

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { fetchAiHistory, type AiHistoryEntry } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { TaskHistory } from './TaskHistory'
+import { TaskHistory, TaskHistoryPopover } from './TaskHistory'
 
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
@@ -109,5 +109,39 @@ describe('任务历史行', () => {
     await act(async () => badge.click())
     const card = document.querySelector('[data-ai-history-card="model"]')!
     expect(q('[data-ai-history-model]', card as HTMLElement)!.textContent).toBe('跟随 CLI 默认')
+  })
+
+  it('点「查看执行记录」：详情卡和任务历史弹层先收起，宽卡由常驻宿主画（不被浮层压住、不随那一行消失）', async () => {
+    vi.mocked(fetchAiHistory).mockResolvedValue({ sessions: [base], total: 1 } as never)
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <TaskHistoryPopover />
+        </TooltipProvider>,
+      )
+    })
+    await act(async () => q('[data-ai-history-trigger]')!.click())
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    expect(q('[data-ai-history]')).not.toBeNull()
+    await act(async () => q('[data-ai-history-details]')!.click())
+    expect(q('[data-ai-history-card="details"]')).not.toBeNull()
+    await act(async () => q('[data-ai-history-trace]')!.click())
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    expect(q('[data-dialog="exec-trace"]')).not.toBeNull()
+    expect(q('[data-ai-history]')).toBeNull()
+    expect(q('[data-ai-history-card]')).toBeNull()
+    // 关掉宽卡：宿主退场，不留残余
+    await act(async () => q('[data-ai-trace-close]')!.click())
+    await act(async () => {
+      await new Promise<void>((r) => setTimeout(r, 0))
+    })
+    expect(q('[data-dialog="exec-trace"]')).toBeNull()
   })
 })

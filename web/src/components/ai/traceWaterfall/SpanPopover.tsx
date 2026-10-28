@@ -15,6 +15,7 @@ interface Props {
   anchor: HTMLElement
   running: boolean
   now: number
+  replay?: boolean
   slowest: boolean
   onClose: () => void
 }
@@ -25,7 +26,7 @@ type Tone = 'neutral' | 'accent' | 'danger' | 'ok'
  * 浮在条下方、与条左对齐（靠近视口底边时翻到上方）。列表滚动时跟着条走——
  * 位置直接写进元素样式，不走 React state，所以滚动 / 跟随不会重渲染。Esc 或点外面关闭，焦点还给触发它的条。
  */
-export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Props) {
+export function SpanPopover({ node, anchor, running, now, replay = false, slowest, onClose }: Props) {
   const { t } = useTranslation('ai')
   const ref = useRef<HTMLDivElement>(null)
   const { span } = node
@@ -87,12 +88,12 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
 
   const rows: { id: string; label: string; value: string }[] = []
   if (span.timing === 'measured' || span.timing === 'reported') {
-    rows.push({ id: 'duration', label: t('trace.ui.field.duration'), value: formatSeconds(Math.max(0, endOf(span, now) - span.start)) })
+    rows.push({ id: 'duration', label: t('trace.ui.field.duration'), value: formatSeconds(Math.max(0, endOf(span, now, replay) - span.start)) })
   } else if (span.timing === 'unmeasured') {
     rows.push({ id: 'duration', label: t('trace.ui.field.duration'), value: dash })
   }
   rows.push({ id: 'started', label: t('trace.ui.field.started'), value: t('trace.ui.startOffset', { value: formatSeconds(span.start) }) })
-  if (node.cost !== null) rows.push({ id: 'cost', label: t('trace.ui.field.cost'), value: formatCost(node.cost) })
+  if (node.cost !== null && !(replay && running)) rows.push({ id: 'cost', label: t('trace.ui.field.cost'), value: formatCost(node.cost) })
   if (span.kind === 'agent') {
     if (node.tokens !== null) rows.push({ id: 'tokens', label: t('trace.ui.field.tokens'), value: formatTokens(node.tokens) })
     rows.push({ id: 'steps', label: t('trace.ui.field.steps'), value: String(node.children.length) })
@@ -135,7 +136,7 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
                 {t('trace.ui.badge.firstFailure')}
               </Badge>
             )}
-            {slowest && <Badge data-trace-badge="slowest">{t('trace.ui.badge.slowest')}</Badge>}
+            {slowest && !(replay && running) && <Badge data-trace-badge="slowest">{t('trace.ui.badge.slowest')}</Badge>}
             {span.retry && <Badge data-trace-badge="retry">{t('trace.ui.badge.attempt', { n: span.attempt })}</Badge>}
           </div>
         </div>

@@ -80,11 +80,50 @@ export const LANES = [
 export const hasInterval = (s: WaterfallSpan) => s.timing === 'measured' || s.timing === 'reported'
 
 /** 还在跑：没有结束时刻、区间是量到的，且整条 Trace 还在跑 */
-export const isRunning = (s: WaterfallSpan, model: WaterfallModel) =>
-  s.end === undefined && model.running && hasInterval(s)
+export const isRunning = (s: WaterfallSpan, model: WaterfallModel, now = 0) =>
+  hasInterval(s) &&
+  (model.replay ? s.start <= now && (s.end === undefined || s.end > now) : s.end === undefined && model.running)
 
-/** 结束时刻；没有结束时刻的画到 `now` */
-export const endOf = (s: WaterfallSpan, now: number) => s.end ?? Math.max(now, s.start)
+/** 结束时刻；没有结束时刻的画到 `now`。回放中：结束得比 `now` 晚的也只画到 `now`（那一刻它还没结束） */
+export const endOf = (s: WaterfallSpan, now: number, replay = false) => {
+  if (s.end === undefined) return Math.max(now, s.start)
+  return replay ? Math.max(s.start, Math.min(s.end, now)) : s.end
+}
+
+/**
+ * 回放中这个 Span 在 `now` 那一刻是不是已经有定论（状态 / 费用 / 失败标记才可以露出来）：
+ * 点 / 虚线框这类没有区间的，出现即定论；有区间的要等到它结束。非回放一律是。
+ */
+export const settledAt = (s: WaterfallSpan, now: number, replay: boolean) =>
+  !replay || !hasInterval(s) || (s.end !== undefined && s.end <= now)
+
+/** 回放中：这个 Span 在 `now` 那一刻还没开始（不画） */
+export const notStartedAt = (s: WaterfallSpan, now: number, replay: boolean) => replay && s.start > now
+
+const extentCache = new WeakMap<TraceNode, { from: number; to: number }>()
+/** 这一行（含子孙）涉及的时间范围；有区间却没结束的，终点 = ∞。回放时行 memo 靠它判断「这一格对这行有没有影响」 */
+export function subtreeExtent(node: TraceNode): { from: number; to: number } {
+  let v = extentCache.get(node)
+  if (!v) {
+    const { span } = node
+    let to = span.end ?? (hasInterval(span) ? Infinity : span.start)
+    let from = span.start
+    for (const c of node.children) {
+      const e = subtreeExtent(c)
+      from = Math.min(from, e.from)
+      to = Math.max(to, e.to)
+    }
+    v = { from, to }
+    extentCache.set(node, v)
+  }
+  return v
+}
+
+/** 回放时，`a` → `b` 两个时刻之间这一行的画面会不会变：都在它开始之前，或都在它彻底结束之后，就不变 */
+export function rowUnchangedBetween(node: TraceNode, a: number, b: number): boolean {
+  const { from, to } = subtreeExtent(node)
+  return (a >= to && b >= to) || (a < from && b < from)
+}
 
 /**
  * `wait` 只给真的等待（`kind==='wait'` 的 Span，例如等用户确认）——斜纹的意思就是「在等」。
@@ -102,9 +141,10 @@ export interface LaneSegment {
 }
 
 /** 叶子条该画成什么 */
-export function leafType(span: WaterfallSpan): SegType {
-  if (span.status === 'error') return 'failed'
-  if (span.status === 'cancelled' || span.status === 'unknown') return 'muted'
+export function leafType(span: WaterfallSpan, open = false): SegType {
+  // 回放中还没结束的调用：结局（失败 / 取消）此刻还不知道，按种类画
+  if (!open && span.status === 'error') return 'failed'
+  if (!open && (span.status === 'cancelled' || span.status === 'unknown')) return 'muted'
   if (span.kind === 'model') return 'model'
   if (span.kind === 'wait') return 'wait'
   return 'tool'
@@ -117,14 +157,15 @@ export function leafType(span: WaterfallSpan): SegType {
 export function laneSegments(agent: TraceNode, now: number, model: WaterfallModel): LaneSegment[] {
   if (!hasInterval(agent.span)) return []
   const a0 = agent.span.start
-  const a1 = endOf(agent.span, now)
-  const kids = agent.children.filter((c) => hasInterval(c.span))
+  const replay = !!model.replay
+  const a1 = endOf(agent.span, now, replay)
+  const kids = agent.children.filter((c) => hasInterval(c.span) && !notStartedAt(c.span, now, replay))
   const leaves = kids.filter((c) => c.span.kind !== 'agent')
   const subs = kids.filter((c) => c.span.kind === 'agent')
   const cuts = new Set([a0, a1])
   for (const c of kids) {
     cuts.add(Math.min(a1, Math.max(a0, c.span.start)))
-    cuts.add(Math.min(a1, Math.max(a0, endOf(c.span, now))))
+    cuts.add(Math.min(a1, Math.max(a0, endOf(c.span, now, replay))))
   }
   const points = [...cuts].sort((x, y) => x - y)
   const out: LaneSegment[] = []
@@ -132,13 +173,13 @@ export function laneSegments(agent: TraceNode, now: number, model: WaterfallMode
     const [x, y] = [points[i], points[i + 1]]
     if (y - x < 1e-6) continue
     const mid = (x + y) / 2
-    const within = (c: TraceNode) => c.span.start <= mid && endOf(c.span, now) >= mid
+    const within = (c: TraceNode) => c.span.start <= mid && endOf(c.span, now, replay) >= mid
     const leaf = leaves.find(within)
     const busy = subs.filter(within)
     let type: SegType
     let key: string
     if (leaf) {
-      type = leafType(leaf.span)
+      type = leafType(leaf.span, replay && !settledAt(leaf.span, now, replay))
       key = leaf.span.id
     } else if (busy.length) {
       type = 'delegate'
@@ -155,7 +196,7 @@ export function laneSegments(agent: TraceNode, now: number, model: WaterfallMode
     }
   }
   const last = out.at(-1)
-  if (last && isRunning(agent.span, model)) last.running = true
+  if (last && isRunning(agent.span, model, now)) last.running = true
   return out
 }
 
@@ -290,11 +331,13 @@ export function formatTokens(n: number) {
 }
 
 /** 行尾小字：时长 · 费用；point 只写时刻；unmeasured 写 — */
-export function spanFigure(node: TraceNode, now: number): string {
+export function spanFigure(node: TraceNode, now: number, replay = false): string {
   const { span } = node
   const dash = t('trace.ui.unknown', { ns: 'ai' })
   if (span.timing === 'point') return t('trace.ui.startOffset', { ns: 'ai', value: formatSeconds(span.start) })
   if (span.timing === 'unmeasured') return dash
-  const text = formatSeconds(Math.max(0, endOf(span, now) - span.start))
+  const text = formatSeconds(Math.max(0, endOf(span, now, replay) - span.start))
+  // 回放中还没结束的：费用此刻不知道，只写已经过去的时长
+  if (!settledAt(span, now, replay)) return text
   return node.cost !== null && node.cost > 0 ? `${text} · ${formatCost(node.cost)}` : text
 }
