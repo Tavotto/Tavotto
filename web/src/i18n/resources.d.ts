@@ -5918,13 +5918,16 @@ export default interface Resources {
         }
       },
       "card": {
+        "allDetails": "全部详情",
         "allOutput": "全部输出",
         "answerAria": "回答",
         "close": "关闭（后台照跑）",
+        "copied": "已复制",
         "details": "详情",
         "endInput": "结束输入",
         "minimize": "缩成角标",
         "more": "更多",
+        "noArgs": "（没有参数）",
         "noOutput": "脚本还没有输出",
         "otherArgs_other": "其他 {{count}} 个参数",
         "rawArgs": "原样参数 / 粘贴命令",
