@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { cn } from '@/lib/utils'
 import { SpanIcon } from './SpanIcon'
 import { MorphText } from './MorphText'
 import { endOf, formatCost, formatSeconds, formatTokens, type TraceNode } from './utils'
@@ -14,6 +15,7 @@ interface Props {
   anchor: HTMLElement
   running: boolean
   now: number
+  replay?: boolean
   slowest: boolean
   onClose: () => void
 }
@@ -24,10 +26,13 @@ type Tone = 'neutral' | 'accent' | 'danger' | 'ok'
  * 浮在条下方、与条左对齐（靠近视口底边时翻到上方）。列表滚动时跟着条走——
  * 位置直接写进元素样式，不走 React state，所以滚动 / 跟随不会重渲染。Esc 或点外面关闭，焦点还给触发它的条。
  */
-export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Props) {
+export function SpanPopover({ node, anchor, running, now, replay = false, slowest, onClose }: Props) {
   const { t } = useTranslation('ai')
   const ref = useRef<HTMLDivElement>(null)
   const { span } = node
+  // 在对话框（模态）里：挂到 body 上的浮层会被 Radix 当成「点在外面」、还吃不到指针事件，所以挂进对话框本身，
+  // 位置换成相对它的坐标（对话框自己带 transform，`fixed` 的参照系就是它）
+  const host = anchor.closest<HTMLElement>('[data-dialog]')
 
   useLayoutEffect(() => {
     let frame = 0
@@ -37,9 +42,11 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
       if (el && anchor.isConnected) {
         const a = anchor.getBoundingClientRect()
         const { width, height } = el.getBoundingClientRect()
-        const flip = a.bottom + 6 + height > window.innerHeight - 8 && a.top - 6 - height > 8
-        const left = Math.min(Math.max(8, a.left), Math.max(8, window.innerWidth - width - 8))
-        const top = flip ? a.top - 6 - height : a.bottom + 6
+        const h = host?.getBoundingClientRect()
+        const [x0, y0, w, hh] = h ? [h.left, h.top, h.width, h.height] : [0, 0, window.innerWidth, window.innerHeight]
+        const flip = a.bottom - y0 + 6 + height > hh - 8 && a.top - y0 - 6 - height > 8
+        const left = Math.min(Math.max(8, a.left - x0), Math.max(8, w - width - 8))
+        const top = flip ? a.top - y0 - 6 - height : a.bottom - y0 + 6
         const key = `${left}|${top}`
         if (key !== last) {
           last = key
@@ -53,7 +60,7 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
     }
     place()
     return () => cancelAnimationFrame(frame)
-  }, [anchor])
+  }, [anchor, host])
 
   useEffect(() => {
     ref.current?.focus({ preventScroll: true })
@@ -81,12 +88,12 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
 
   const rows: { id: string; label: string; value: string }[] = []
   if (span.timing === 'measured' || span.timing === 'reported') {
-    rows.push({ id: 'duration', label: t('trace.ui.field.duration'), value: formatSeconds(Math.max(0, endOf(span, now) - span.start)) })
+    rows.push({ id: 'duration', label: t('trace.ui.field.duration'), value: formatSeconds(Math.max(0, endOf(span, now, replay) - span.start)) })
   } else if (span.timing === 'unmeasured') {
     rows.push({ id: 'duration', label: t('trace.ui.field.duration'), value: dash })
   }
   rows.push({ id: 'started', label: t('trace.ui.field.started'), value: t('trace.ui.startOffset', { value: formatSeconds(span.start) }) })
-  if (node.cost !== null) rows.push({ id: 'cost', label: t('trace.ui.field.cost'), value: formatCost(node.cost) })
+  if (node.cost !== null && !(replay && running)) rows.push({ id: 'cost', label: t('trace.ui.field.cost'), value: formatCost(node.cost) })
   if (span.kind === 'agent') {
     if (node.tokens !== null) rows.push({ id: 'tokens', label: t('trace.ui.field.tokens'), value: formatTokens(node.tokens) })
     rows.push({ id: 'steps', label: t('trace.ui.field.steps'), value: String(node.children.length) })
@@ -111,7 +118,10 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
       data-trace-popover
       data-trace-span-id={span.id}
       style={{ left: -9999, top: 0, visibility: 'hidden' }}
-      className="fixed z-popover flex w-80 flex-col gap-3 rounded-lg bg-surface p-3 text-base text-ink shadow-pop outline-none motion-safe:animate-pop-in data-[side=top]:origin-bottom-left data-[side=bottom]:origin-top-left"
+      className={cn(
+        host ? 'absolute' : 'fixed',
+        'z-popover flex w-80 flex-col gap-3 rounded-lg bg-surface p-3 text-base text-ink shadow-pop outline-none motion-safe:animate-pop-in data-[side=top]:origin-bottom-left data-[side=bottom]:origin-top-left',
+      )}
     >
       <div className="flex items-center gap-2">
         <SpanIcon icon={span.icon} size="lg" />
@@ -126,7 +136,7 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
                 {t('trace.ui.badge.firstFailure')}
               </Badge>
             )}
-            {slowest && <Badge data-trace-badge="slowest">{t('trace.ui.badge.slowest')}</Badge>}
+            {slowest && !(replay && running) && <Badge data-trace-badge="slowest">{t('trace.ui.badge.slowest')}</Badge>}
             {span.retry && <Badge data-trace-badge="retry">{t('trace.ui.badge.attempt', { n: span.attempt })}</Badge>}
           </div>
         </div>
@@ -170,6 +180,6 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
         </dl>
       )}
     </div>,
-    document.body,
+    host ?? document.body,
   )
 }

@@ -10,7 +10,7 @@ import { expect, test, waitForFigureEdit } from './fixtures'
  */
 test.skip(process.platform === 'win32', '假 CLI 是 shell 脚本，只在 posix-e2e 腿执行')
 
-function bigTrace(startedAt: number) {
+function bigTrace(startedAt: number, finished = false) {
   const spans: Record<string, unknown>[] = []
   const events: Record<string, unknown>[] = []
   const base = (o: Record<string, unknown>) => ({
@@ -22,12 +22,12 @@ function bigTrace(startedAt: number) {
     usage: null,
     ...o,
   })
-  spans.push(base({ span_id: 'root', parent_span_id: null, name: 'task', kind: 'task', start_offset_ms: 0, end_offset_ms: null, duration_ms: null, status: 'running' }))
+  spans.push(base({ span_id: 'root', parent_span_id: null, name: 'task', kind: 'task', start_offset_ms: 0, end_offset_ms: finished ? 48_000 : null, duration_ms: finished ? 48_000 : null, status: finished ? 'ok' : 'running' }))
   let seq = 0
   for (let a = 0; a < 8; a++) {
     const id = `run${a}`
     const t0 = a * 6000
-    spans.push(base({ span_id: id, name: 'agent_run', kind: 'agent', start_offset_ms: t0, end_offset_ms: a === 7 ? null : t0 + 6000, duration_ms: a === 7 ? null : 6000, status: a === 7 ? 'running' : 'ok', attributes: { agent: 'builtin', opaque: false } }))
+    spans.push(base({ span_id: id, name: 'agent_run', kind: 'agent', start_offset_ms: t0, end_offset_ms: a === 7 && !finished ? null : t0 + 6000, duration_ms: a === 7 && !finished ? null : 6000, status: a === 7 && !finished ? 'running' : 'ok', attributes: { agent: 'builtin', opaque: false } }))
     for (let i = 0; i < 60; i++) {
       const s = t0 + Math.floor(i / 2) * 190
       const model = i % 2 === 0
@@ -58,14 +58,14 @@ function bigTrace(startedAt: number) {
     trace_id: 'f'.repeat(32),
     operation_kind: 'ai_task',
     started_at: startedAt,
-    ended_at: null,
-    status: 'running',
+    ended_at: finished ? startedAt + 48 : null,
+    status: finished ? 'ok' : 'running',
     error_code: null,
     root_span_id: 'root',
     first_failure: { span_id: 'run0-0', name: 'model_request', error_code: 'tool_failed', attempt: 1 },
     truncated: false,
     dropped_count: 0,
-    complete: false,
+    complete: finished,
     spans,
     events,
     last_seq: seq,
@@ -120,6 +120,48 @@ test('大 Trace：展开耗时与实时刷新期间的长任务', async ({ app, 
   // 预算：展开 < 3s；实时刷新的 5 秒里长任务 ≤ 3 个、单个 < 200ms（2026-10-27 基线：行不做 memo、时间轴随此刻连续伸缩时
   // 是 24 个 / 累计 1.56s——每 250ms 一格全部 689 行重画；改成阶梯时间轴 + 行 memo 后 1 个 / 148ms，见 PR 正文的三次测量）
   expect(openMs).toBeLessThan(3000)
+  expect(result.longTasks).toBeLessThanOrEqual(3)
+  expect(result.longTaskMaxMs).toBeLessThan(200)
+})
+
+test('大 Trace：已结束的回放（自动播放约 4 秒）期间的长任务', async ({ app, page }, info) => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tavotto-fake-codex-'))
+  const bin = path.join(dir, 'codex')
+  writeFileSync(bin, '#!/bin/sh\ncase "$1" in\n  --version) echo "codex-cli 0.0.1" ;;\n  login) echo "Logged in" ;;\n  *) sleep 60 ;;\nesac\n')
+  chmodSync(bin, 0o755)
+  const a = await app({ env: { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ''}` } })
+  const startedAt = Date.now() / 1000 - 60
+  await page.route('**/api/exec-trace?**', (route) => route.fulfill({ json: { available: true, trace: bigTrace(startedAt, true) } }))
+  await page.goto(a.baseURL)
+  await page.getByText('Fig1_kinetics.pdf').dblclick({ timeout: 30_000 })
+  await waitForFigureEdit(page)
+  await page.locator('[data-inspector-tab="assistant"]').click()
+  await page.locator('[data-ai-input]').fill('把线条加粗一点')
+  await page.locator('[data-ai-send="send"]').click()
+  await expect(page.locator('[data-ai-session="running"]')).toBeVisible({ timeout: 30_000 })
+  await page.evaluate(() => {
+    const w = window as unknown as { __long: number[] }
+    w.__long = []
+    new PerformanceObserver((list) => list.getEntries().forEach((e) => w.__long.push(e.duration))).observe({ type: 'longtask', buffered: false })
+  })
+  await page.locator('[data-ai-trace-toggle]').click()
+  await expect(page.locator('[data-trace-playback]')).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('[data-trace-waterfall]')).toHaveAttribute('data-replay', 'true')
+  const t0 = Date.now()
+  // 自动播放跑完（整段压缩到约 4 秒）：回放结束的那一刻画完整结果
+  await expect(page.locator('[data-trace-waterfall]')).not.toHaveAttribute('data-replay', /.*/, { timeout: 15_000 })
+  const replayMs = Date.now() - t0
+  const long = await page.evaluate(() => (window as unknown as { __long: number[] }).__long)
+  const result = {
+    replayMs,
+    longTasks: long.length,
+    longTaskMaxMs: Math.round(Math.max(0, ...long)),
+    longTaskTotalMs: Math.round(long.reduce((x, y) => x + y, 0)),
+  }
+  writeFileSync(info.outputPath('exec-trace-replay-perf.json'), JSON.stringify(result, null, 2))
+  console.log('exec-trace-replay-perf', JSON.stringify(result))
+  // 预算：整段压缩到约 4 秒放完；回放期间长任务 ≤ 3 个、单个 < 200ms（行 memo 按「这一格对这行有没有影响」跳过；2026-10-28 基线 1 个 / 55ms）
+  expect(replayMs).toBeLessThan(8000)
   expect(result.longTasks).toBeLessThanOrEqual(3)
   expect(result.longTaskMaxMs).toBeLessThan(200)
 })
