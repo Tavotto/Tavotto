@@ -123,15 +123,20 @@ export function GridDots({ w, h, gridSize }: { w: number; h: number; gridSize: n
       const t = Math.max(1, Math.round(dpr)) // 十字 / 点的粗细（设备像素）= 1 CSS px
       const arm = 2 * t
       const half = Math.floor(t / 2)
-      const sx = (mm: number) => Math.round((panX + mmToWorld(mm) * zoom) * dpr)
-      const sy = (mm: number) => Math.round((panY + mmToWorld(mm) * zoom) * dpr)
+      // 纸面原点在 canvas 里的位置**量出来**，不从 pan 推：舞台四周还有标尺等偏移，从 pan 推会让点阵整体错开纸边
+      const page = canvas.parentElement?.getBoundingClientRect()
+      const own = canvas.getBoundingClientRect()
+      const ox = page ? page.left - own.left : panX
+      const oy = page ? page.top - own.top : panY
+      const sx = (mm: number) => Math.round((ox + mmToWorld(mm) * zoom) * dpr)
+      const sy = (mm: number) => Math.round((oy + mmToWorld(mm) * zoom) * dpr)
       const nx = Math.floor(w / step + 1e-6)
       const ny = Math.floor(h / step + 1e-6)
       // 可见的格子下标范围
-      const i0 = Math.max(0, Math.floor((-panX / (mmToWorld(1) * zoom)) / step) - 1)
-      const i1 = Math.min(nx, Math.ceil(((viewW - panX) / (mmToWorld(1) * zoom)) / step) + 1)
-      const j0 = Math.max(0, Math.floor((-panY / (mmToWorld(1) * zoom)) / step) - 1)
-      const j1 = Math.min(ny, Math.ceil(((viewH - panY) / (mmToWorld(1) * zoom)) / step) + 1)
+      const i0 = Math.max(0, Math.floor((-ox / (mmToWorld(1) * zoom)) / step) - 1)
+      const i1 = Math.min(nx, Math.ceil(((viewW - ox) / (mmToWorld(1) * zoom)) / step) + 1)
+      const j0 = Math.max(0, Math.floor((-oy / (mmToWorld(1) * zoom)) / step) - 1)
+      const j1 = Math.min(ny, Math.ceil(((viewH - oy) / (mmToWorld(1) * zoom)) / step) + 1)
       // 颜色串来自 token 的解析值，不透明度走 globalAlpha（不手写 rgba 字面量）
       const paint = (c: string, a: number) => {
         ctx.fillStyle = c
@@ -219,8 +224,9 @@ export function GridDots({ w, h, gridSize }: { w: number; h: number; gridSize: n
         // 净变换 = 恒等：canvas 的屏幕原点恰在舞台 (0,0)，一个 canvas 像素 = 一个设备像素
         left: -panX / zoom,
         top: -panY / zoom,
-        width: viewW * zoom,
-        height: viewH * zoom,
+        // 世界层自己还会再乘一次 zoom：CSS 尺寸写 viewW，`scale(1/zoom)` 与世界层的 zoom 相抵，屏幕上正好 viewW
+        width: viewW,
+        height: viewH,
         transform: `scale(${1 / zoom})`,
         transformOrigin: '0 0',
       }}
