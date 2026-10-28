@@ -86,7 +86,7 @@ test('执行追踪：运行中实时、失败归因到 Agent 运行、刷新后�
   await expect(card).toBeVisible()
   // 导出诊断在卡的页脚（任务已结束）；关闭钮关卡
   await expect(card.locator('[data-ai-trace-export]')).toBeVisible()
-  await card.locator('[data-dialog-footer] button', { hasText: /关闭|Close/ }).click()
+  await card.locator('[data-ai-trace-close]').click()
   await expect(card).toHaveCount(0)
 
   // 刷新：前端什么都不记得；已结束的那一轮只在任务历史里，执行记录从后端保留期内的落盘快照恢复

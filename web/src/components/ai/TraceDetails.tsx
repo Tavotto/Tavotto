@@ -153,7 +153,7 @@ export function TraceDialog({
           </Button>
         ) : undefined,
         primary: (
-          <Button variant="primary" size="lg" onClick={() => onOpenChange(false)}>
+          <Button data-ai-trace-close variant="primary" size="lg" onClick={() => onOpenChange(false)}>
             {t('trace.state.close')}
           </Button>
         ),
