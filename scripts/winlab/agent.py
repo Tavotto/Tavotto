@@ -1947,7 +1947,9 @@ def _scrub(folder: Path, needle: str) -> list[str]:
     """兜底：哪怕宿主把凭据回显进了日志，也在落成证据前抹掉。返回读不了 / 写不回的文件（宿主的后台进程还开着它：
     WorkBuddy 自动更新把安装包下进 TEMP，Lab run 20261028T114129Z-d49586 读它 Errno 22 崩了整个 agent）——
     调用方决定这算不算没抹干净，这里不让一个文件中断收尾。"""
-    if not needle or not folder.is_dir():
+    if len(needle or "") < 8 or not folder.is_dir():
+        # 没有真 key 的格用占位 "\0"（key_placeholder）：拿它去抹会把每个二进制文件里的 NUL 都换掉——Lab run
+        # 20261028T124404Z-2a15f4 就这样写坏了 Tavotto 的 SQLite（第二次起渲染服务崩在 ai_history）
         return []
     raw = needle.encode()
     skipped: list[str] = []

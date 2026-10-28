@@ -3300,3 +3300,12 @@ def test_scrub_skips_a_file_it_cannot_read_and_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "read_bytes", read_bytes)
     assert A._scrub(tmp_path, "SECRET-123") == ["Setup.exe"]
     assert (tmp_path / "a.log").read_text(encoding="utf-8") == "k=<redacted>"
+
+
+def test_scrub_with_the_no_key_placeholder_touches_nothing(tmp_path):
+    """用账户自带模型的格没有 key，占位是 "\\0"：抹它不能动任何文件（二进制文件里到处是 NUL）。"""
+    db = tmp_path / "ai_history.sqlite"
+    blob = b"SQLite format 3\x00\x00\x10\x00" + bytes(64)
+    db.write_bytes(blob)
+    assert A._scrub(tmp_path, A.key_placeholder({})) == []
+    assert db.read_bytes() == blob
