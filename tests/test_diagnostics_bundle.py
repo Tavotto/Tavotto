@@ -1555,3 +1555,72 @@ def test_url_fact_and_url_keys_in_generic_objects():
         {"proxy_url": "https://u:p@h/CANARY?k=v", "endpoint": "https://h/CANARY", "name": "x"}
     )
     assert out == {"proxy_url": "https://h", "endpoint": "https://h", "name": "x"}
+
+
+def _fake_caps(**diag):
+    return {
+        "agents": [
+            {
+                "id": "codex",
+                "installed": False,
+                "enabled": True,
+                "state": "broken",
+                "executable_path": None,
+                "detection_source": None,
+                "version": None,
+                "diagnostics": {
+                    "searched": [],
+                    "broken_path": "/Users/alice/.codex/bin/codex",
+                    "readiness": "unknown",
+                    "readiness_detail": "probe_failed",
+                    **diag,
+                },
+            }
+        ],
+        "endpoints": [],
+    }
+
+
+def test_report_ai_section_carries_readiness_and_broken_path_from_a_fresh_probe(monkeypatch):
+    from tavotto.engine import ai_bridge
+
+    calls: list[bool] = []
+
+    def caps(refresh=False):
+        calls.append(refresh)
+        return _fake_caps()
+
+    monkeypatch.setattr(ai_bridge, "capabilities", caps)
+    report = engine_diagnostics.build_report()
+    assert calls == [True]  # 报告生成时真刷新，不吃装/登录之前的缓存
+    codex = report["ai"]["codex"]
+    assert codex["readiness"] == "unknown" and codex["readiness_detail"] == "probe_failed"
+    assert codex["broken_path"]
+    assert report["ai_probe"] == "refreshed"
+    # 不含账号信息：就绪细节是稳定串，整份报告里没有邮箱
+    assert "@" not in json.dumps(report["ai"])
+
+
+def test_report_ai_refresh_is_bounded_and_falls_back_to_the_cache(monkeypatch):
+    import threading
+
+    from tavotto.engine import ai_bridge
+
+    release = threading.Event()
+
+    def hang(refresh=False):
+        release.wait(5)
+        return _fake_caps()
+
+    monkeypatch.setattr(ai_bridge, "capabilities", hang)
+    monkeypatch.setattr(engine_diagnostics, "AI_REFRESH_BUDGET_S", 0.05)
+    monkeypatch.setattr(ai_bridge, "cached_capabilities", lambda: {})
+    try:
+        report = engine_diagnostics.build_report()
+        assert report["ai"] == {} and report["ai_probe"] == "timeout"
+        monkeypatch.setattr(ai_bridge, "cached_capabilities", lambda: _fake_caps())
+        report = engine_diagnostics.build_report()
+        assert report["ai"]["codex"]["readiness_detail"] == "probe_failed"
+        assert report["ai_probe"] == "stale"
+    finally:
+        release.set()

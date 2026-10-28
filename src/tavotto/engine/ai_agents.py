@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config
+from . import config, managedcli
 from .runtime import CREATE_NO_WINDOW
 
 #: 候选来源。**只是诊断信息，不参与「能不能用」的判断**——能不能用只看
@@ -39,6 +39,7 @@ from .runtime import CREATE_NO_WINDOW
 Source = str
 SOURCES: tuple[str, ...] = (
     "custom",  # 用户在设置里指定的可执行文件
+    "managed",  # Tavotto 应用内安装的官方 CLI（`data_dir()/cli/<名>/…`，`engine/managedcli.py`）
     "path",  # 系统 PATH
     "homebrew",  # Homebrew 前缀
     "common_location",  # 各平台常见安装目录（bun / volta / scoop / winget / choco…）
@@ -258,6 +259,12 @@ def search_locations(name: str) -> list[SearchLocation]:
     从桌面快捷方式启动的进程拿的又是启动那一刻的旧环境块。所以这里把
     npm / winget / scoop / bun / volta / 官方安装器的落点全部直接翻一遍。
     """
+    managed = managedcli.bin_dir(name)
+    head = [SearchLocation(str(managed), "managed")] if managed is not None else []
+    return head + _platform_locations(name)
+
+
+def _platform_locations(name: str) -> list[SearchLocation]:
     home = os.path.expanduser("~")
     if os.name == "nt":
         appdata = os.environ.get("APPDATA") or home + r"\AppData\Roaming"
@@ -1424,6 +1431,12 @@ def candidates(agent: AgentDefinition, override: str | None = None) -> list[CliC
         p = Path(custom).expanduser()
         if p.is_file():
             add(str(p), "custom")
+    # 应用内托管安装的那份（用户点过「安装」才会有）：排在 PATH 之前——它是用户刚让 Tavotto 装的，
+    # 不能被 PATH 上某份旧的 / 坏的壳挡在后面；起不来时 resolve() 照样落到下一个候选
+    for name in agent.command_names:
+        managed_dir = managedcli.bin_dir(name)
+        if managed_dir is not None:
+            add(shutil.which(name, path=str(managed_dir)), "managed")
     for name in agent.command_names:
         add(shutil.which(name), "path")
     # PATH 里没有：把常见安装目录当成 PATH 再 which（Windows 上 PATHEXT 的

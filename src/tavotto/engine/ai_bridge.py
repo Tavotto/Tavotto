@@ -41,6 +41,7 @@ from . import (
     ai_providers,
     config,
     exectrace,
+    managedcli,
     projectenv,
     scriptlock,
 )
@@ -478,7 +479,9 @@ def _agent_caps(agent: ai_agents.AgentDefinition, saved: dict, npm_available: bo
         info["install"] = {
             "method": agent.install_spec.method,
             "package": agent.install_spec.package,
-            "available": npm_available,
+            # 托管安装（`managedcli`）不需要 npm：这个平台上有锁定的官方包就一定能装
+            "managed": managedcli.offered(agent.id),
+            "available": npm_available or managedcli.offered(agent.id),
             **install_status(agent.id),
         }
     return info
@@ -532,6 +535,12 @@ def resolve_connection(connection_id: str) -> tuple[str, dict | None]:
     找不到 / 走不通 → `ai_connections.ConnectionRefused`。"""
     infos = {a["id"]: a for a in capabilities().get("agents", [])}
     return ai_connections.resolve_connection(connection_id, infos)
+
+
+def cached_capabilities() -> dict:
+    """当前缓存里的能力表（不探测、可能为空）。诊断在刷新超时后拿它兜底。"""
+    with _CAPS_LOCK:
+        return _CAPS_CACHE
 
 
 def capabilities_generation() -> int:
@@ -656,7 +665,7 @@ def install_status(agent_id: str) -> dict:
     st = _INSTALLS.get(agent_id)
     if not st:
         return {"status": "idle"}
-    return {k: st[k] for k in ("status", "code", "log") if k in st}
+    return {k: st[k] for k in ("status", "code", "log", "progress", "phase", "via") if k in st}
 
 
 #: 按脚本的锁（ADR 0110 §五）：持有者清单与唯一写入口在 `scriptlock`
@@ -782,28 +791,81 @@ def _await_exit(sess: dict) -> None:
             exited.set()
 
 
-def script_busy(script_path: str | Path) -> bool:
-    """这份脚本此刻有没有编码 Agent 会话还没**真正结束**（改写脚本要让路，ADR 0110 §五）：状态还在跑，
-    或者状态已经是取消 / 超时 / 中断、但还没观察到进程（连同进程组）退出（`_await_exit`，Codex 评 #730 P1）。
-
-    要当作「之后一直成立」来用，必须在 `script_guard` 里判、并在同一段锁里把事做完。
-    """
+def busy_session(script_path: str | Path) -> str | None:
+    """占着这份脚本的那次编码 Agent 会话的 id（没有则 None）。判据见 `script_busy`；前端据此接上正在跑的那次。"""
     target = scriptlock.script_key(script_path)
-    for sess in list(SESSIONS.values()):
+    for sid, sess in list(SESSIONS.items()):
         exited = sess.get("exited")
         still_alive = exited is not None and not exited.is_set()
         if sess.get("status") != "running" and not still_alive:
             continue
         try:
             if os.path.normcase(os.path.realpath(sess.get("script_path") or "")) == target:
-                return True
+                return sess.get("id") or sid
         except (OSError, ValueError):
             continue
-    return False
+    return None
+
+
+def script_busy(script_path: str | Path) -> bool:
+    """这份脚本此刻有没有编码 Agent 会话还没**真正结束**（改写脚本要让路，ADR 0110 §五）：状态还在跑，
+    或者状态已经是取消 / 超时 / 中断、但还没观察到进程（连同进程组）退出（`_await_exit`，Codex 评 #730 P1）。
+
+    要当作「之后一直成立」来用，必须在 `script_guard` 里判、并在同一段锁里把事做完。
+    """
+    return busy_session(script_path) is not None
+
+
+#: 托管安装各阶段占进度条的区间（下载占大头；校验 / 解包 / 探测按实际耗时的量级分）
+_PHASE_SPAN = {
+    managedcli.PHASE_DOWNLOAD: (0.0, 0.80),
+    managedcli.PHASE_VERIFY: (0.80, 0.86),
+    managedcli.PHASE_EXTRACT: (0.86, 0.95),
+    managedcli.PHASE_PROBE: (0.95, 1.0),
+}
+
+
+def _managed_progress(state: dict):
+    """托管安装的进度回调：只写 `phase` 与 0–1 的 `progress`（单调不回退，下载换源重来时进度条不倒退）。"""
+
+    def on_progress(phase: str, done: int, total: int) -> None:
+        lo, hi = _PHASE_SPAN.get(phase, (0.0, 1.0))
+        frac = 0.0 if total <= 0 else max(0.0, min(1.0, done / total))
+        state["phase"] = phase
+        state["progress"] = max(float(state.get("progress", 0.0)), round(lo + (hi - lo) * frac, 4))
+
+    return on_progress
+
+
+def _managed_work(agent_id: str, state: dict) -> None:
+    """后台线程体：`managedcli.provision` → 清缓存 → 重新真探测才定成败。不登录。"""
+    try:
+        managedcli.provision(agent_id, on_progress=_managed_progress(state))
+        # 装好不算数：重新探测，CLI 真能 --version（经 resolve 的同一条候选链）才算装上
+        invalidate_capabilities()
+        info = None
+        for entry in capabilities(refresh=True).get("agents", []):
+            if entry["id"] == agent_id:
+                info = entry
+                break
+        if info and info["installed"]:
+            state.update(status="done", progress=1.0)
+        else:
+            state.update(status="error", code="installed_but_not_found")
+    except managedcli.ManagedCliError as exc:
+        state.update(status="error", code=exc.code)
+    except Exception as exc:  # noqa: BLE001 — 线程里不许漏异常
+        LOG.exception("托管安装线程异常")
+        state.update(status="error", code="spawn_failed", log=type(exc).__name__)
+    finally:
+        LOG.info(
+            "managed install %s -> %s %s", agent_id, state.get("status"), state.get("code", "")
+        )
 
 
 def start_install(agent_id: str) -> dict:
-    """后台 `npm install -g <包>`；结束后**重新真探测**才定成败。
+    """安装 Agent CLI。有锁定的官方包的平台（`managedcli.offered`）走**应用内托管安装**（不要 npm / 终端）；
+    其余回落到后台 `npm install -g <包>`。两条路结束后都**重新真探测**才定成败。
 
     包名只从适配器的固定 install spec 上取，绝不把请求体里的字符串拼进
     命令行；不用 `shell=True`，参数一律数组。
@@ -815,6 +877,22 @@ def start_install(agent_id: str) -> dict:
     with _INSTALL_LOCK:
         st = _INSTALLS.get(agent_id)
         if st and st.get("status") == "running":
+            return install_status(agent_id)
+        if managedcli.offered(agent_id):
+            state = {
+                "status": "running",
+                "started": time.time(),
+                "via": "managed",
+                "phase": managedcli.PHASE_DOWNLOAD,
+                "progress": 0.0,
+            }
+            _INSTALLS[agent_id] = state
+            threading.Thread(
+                target=_managed_work,
+                args=(agent_id, state),
+                daemon=True,
+                name=f"ai-install-{agent_id}",
+            ).start()
             return install_status(agent_id)
         npm = _npm_argv()
         if npm is None:
@@ -1374,8 +1452,10 @@ def run(
                 raise AgentError("ai_agent_not_usable", {"agent": agent})
         if not script_path.is_file():
             raise RuntimeError(f"脚本不存在: {script}")
-        if script_busy(script_path):
-            raise AgentError("ai_script_busy", {"script": script})
+        busy_sid = busy_session(script_path)
+        if busy_sid is not None:
+            # `session`：正在占着这份脚本的那次会话——前端据此接上它，而不是只能告诉用户「等一下」
+            raise AgentError("ai_script_busy", {"script": script, "session": busy_sid})
         sid = uuid.uuid4().hex[:12]
         SNAP_DIR.mkdir(parents=True, exist_ok=True)
         _prune_snapshots()

@@ -520,6 +520,7 @@ def test_placeholders_match_the_params_the_backend_sends(locale: str):
     table = _errors(locale)["backend"]
     for code, params in USER_VISIBLE_CODES.items():
         used = set(re.findall(r"\{\{\s*(\w+)\s*\}\}", table[code]))
+        params = params - DATA_ONLY_PARAMS.get(code, set())
         assert used == params, f"{locale} {code}：文案用了 {used}，后端给的是 {params}"
 
 
@@ -680,6 +681,10 @@ NON_UI_CODES = {
     "agent_exit_nonzero",
     "agent_spawn_failed",
 }
+
+
+#: 只给前端程序用、不进文案的 params（不要求占位符）。`session`：占着脚本的那次会话 id，前端据此接上它。
+DATA_ONLY_PARAMS = {"ai_script_busy": {"session"}}
 
 
 def _error_blocks(text: str):

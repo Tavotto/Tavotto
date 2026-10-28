@@ -29,6 +29,7 @@ import os
 import platform
 import re
 import sys
+import threading
 import time
 import traceback
 import zipfile
@@ -1479,6 +1480,32 @@ def _runtime_section() -> dict:
     return section
 
 
+#: 报告里 AI 能力的刷新上限（秒）。缓存里的结论可能是装/登录之前的（用户刚装完 CLI 就来反馈很常见）：
+#: 生成报告时在后台线程里真刷新一次；到点没回就用缓存兜底并在 `ai_probe` 里如实写 `stale`/`timeout`，
+#: 刷新线程继续跑完并写回缓存。比 `app.DIAG_AI_PROBE_BUDGET_S`（30 s，诊断页自己的等待）短：包是在用户点
+#: 「导出」时同步生成的，不能让它比诊断页还慢。
+AI_REFRESH_BUDGET_S = 20.0
+
+
+def _fresh_ai_capabilities() -> tuple[dict, str]:
+    """→ (能力表, 来源)：`refreshed`（刚真探测过）| `stale`（超时，用的缓存）| `timeout`（超时且缓存为空）。"""
+    box: dict = {}
+
+    def work() -> None:
+        try:
+            box["caps"] = ai_bridge.capabilities(refresh=True)
+        except Exception as exc:  # noqa: BLE001 — 探测失败不许拖垮诊断包
+            box["error"] = type(exc).__name__
+
+    t = threading.Thread(target=work, daemon=True, name="mm-diag-ai-refresh")
+    t.start()
+    t.join(AI_REFRESH_BUDGET_S)
+    if "caps" in box:
+        return box["caps"], "refreshed"
+    cached = ai_bridge.cached_capabilities()
+    return cached, ("stale" if cached else "timeout")
+
+
 def build_report(project: dict | None = None, port: int | None = None) -> dict:
     """结构化诊断报告（已脱敏）。project 由 app 层传入，避免这里反向依赖。"""
     from .. import __version__
@@ -1497,7 +1524,7 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
         else None
     )
     roots = project_roots(project)
-    caps = ai_bridge.capabilities()
+    caps, ai_probe = _fresh_ai_capabilities()
     lines = _export_log_lines(roots)
     errors = recent_errors(lines)
 
@@ -1556,9 +1583,15 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
                 "path": entry["executable_path"],
                 "source": entry["detection_source"],
                 "version": entry["version"],
+                # 「装了但用不了 / 没登录」的分诊（TVD 反馈里常缺）：就绪状态是闭集三值，detail 是适配器写死的
+                # 稳定诊断串（不含账号信息，见 `ReadinessResult`）；broken_path 是第一个起不来的候选路径
+                "readiness": (entry.get("diagnostics") or {}).get("readiness"),
+                "readiness_detail": (entry.get("diagnostics") or {}).get("readiness_detail"),
+                "broken_path": (entry.get("diagnostics") or {}).get("broken_path"),
             }
             for entry in caps.get("agents", [])
         },
+        "ai_probe": ai_probe,
         "ai_endpoints": [
             {
                 "id": e["id"],

@@ -1292,6 +1292,7 @@
         "common_location": "常见安装位置",
         "custom": "自定义路径",
         "homebrew": "Homebrew",
+        "managed": "Tavotto 应用内安装",
         "npm_global": "npm 全局目录",
         "package_binary": "npm 包内的可执行文件",
         "path": "系统 PATH",
