@@ -4666,6 +4666,11 @@ def finish_connect_cell(lab, run_id, run_dir, env, connect, out: dict) -> dict:
     unwrap_connected_entry(connect)
     r = _connect_driver_round(lab, run_id, run_dir, env, connect, "disconnect")
     drv = r["driver"]
+    if drv.get("error") == "no page on the sidecar origin":
+        # 起来了但渲染服务没就绪（错误页）：重起一次，如实记下第一次的样子
+        out["disconnect_first_try"] = {"error": drv["error"], "targets": drv.get("targets")}
+        r = _connect_driver_round(lab, run_id, run_dir, env, connect, "disconnect")
+        drv = r["driver"]
     problems = []
     if drv.get("error"):
         problems.append(drv["error"])
@@ -4675,7 +4680,12 @@ def finish_connect_cell(lab, run_id, run_dir, env, connect, out: dict) -> dict:
         problems.append("row still shows connected after 「断开」")
     problems += judge_disconnected(connect)
     levels["disconnect"] = "passed" if not problems else ("error" if drv.get("error") else "failed")
-    out["disconnect"] = {"driver": drv, "gui": r["step"].get("gui"), "problems": problems}
+    out["disconnect"] = {
+        "driver": drv,
+        "gui": r["step"].get("gui"),
+        "problems": problems,
+        "host_procs_killed": connect.get("host_procs_killed", []),
+    }
     out["result"] = av.aggregate(
         [levels[k] for k in ("L2", "L3", "L4", "L5", "connect", "disconnect")]
     )
@@ -4813,6 +4823,13 @@ def run_desktop_live_task(
         )
         if connect and connect.get("wrapped"):
             # 断开放在判完 L3–L5 之后、卸载之前：先把录制器换回按钮写的原样，再点「断开」
+            # 宿主不在 Job 里的后台进程（WorkBuddy 的 daemon 等）先结束：它们还在时第二次起 Tavotto，渲染服务 60 s 没起来
+            # （Lab run 20261028T120133Z-b8ed52 的断开那一次）
+            if os.name == "nt":
+                root = str(inst["root"]).lower()
+                connect["host_procs_killed"] = _kill_matching(
+                    lambda img: img.lower().startswith(root)
+                )
             out = finish_connect_cell(lab, run_id, run_dir, henv, connect, out)
     finally:
         try:
