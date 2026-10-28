@@ -9,37 +9,53 @@
 （`os.path.dirname(__file__)` 读数据、traceback 文件名、`sys.argv[0]` 都与采用之后一致），cwd 仍是原脚本所在目录。
 
 键里带 `write_roots_key`（候选目录）：同一个显示路径的两次并发转换各是各的，也不会串到别的会话。
+只读静态分析（依赖调研 / 工作目录证据 / 入口推断）**只在那次校验运行自己的上下文里**才读影子：`shadow()` 同时在
+当前线程 / 任务的 `contextvars` 上标出“这次校验”，`lookup_active` 只认它；别的线程里的普通会话（用户同时打开 / 重跑原脚本）
+对同一路径的分析永远读磁盘原件，不会被候选污染。没有“全局恰好登记一份就优先读”的隐式查找。
 纯标准库；登记只在 `with shadow(...)` 期间有效，出作用域即摘。
 """
 
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import os
 import threading
 from pathlib import Path
 
 _LOCK = threading.Lock()
 _ENTRIES: dict[tuple[str, str, str], str] = {}
+#: 当前上下文里正在进行的那次校验（`(figures_dir 规范键, rel 规范键, roots_key)`）；线程 / 任务各自一份，不跨会话
+_ACTIVE: contextvars.ContextVar[tuple[str, str, str] | None] = contextvars.ContextVar(
+    "tavotto_shadow_active", default=None
+)
+
+
+def _norm_dir(path) -> str:
+    return os.path.normcase(os.path.realpath(os.fspath(path)))
+
+
+def _norm_rel(rel) -> str:
+    """相对路径的规范键：登记与查询**共用这一个函数**。Windows 上 `normcase` 小写化并把 `/` 换成 `\\`，
+    所以先 normcase 再统一成 `/`——大小写 / 分隔符写法不同的同一个路径得到同一个键。"""
+    return os.path.normcase(os.fspath(rel)).replace("\\", "/")
 
 
 def _key(figures_dir, rel, roots_key: str) -> tuple[str, str, str]:
-    return (
-        os.path.normcase(os.path.realpath(os.fspath(figures_dir))),
-        Path(rel).as_posix(),
-        roots_key,
-    )
+    return (_norm_dir(figures_dir), _norm_rel(Path(rel).as_posix()), roots_key)
 
 
 @contextlib.contextmanager
 def shadow(figures_dir, rel: str, source, roots_key: str):
-    """登记 `figures_dir/rel` 的影子脚本字节来自 `source`；出作用域摘掉。"""
+    """登记 `figures_dir/rel` 的影子脚本字节来自 `source`，并在当前上下文标出“这次校验”；出作用域摘掉。"""
     key = _key(figures_dir, rel, roots_key)
     with _LOCK:
         _ENTRIES[key] = os.fspath(source)
+    token = _ACTIVE.set(key)
     try:
         yield
     finally:
+        _ACTIVE.reset(token)
         with _LOCK:
             _ENTRIES.pop(key, None)
 
@@ -52,18 +68,22 @@ def lookup(figures_dir, rel: str, roots_key: str) -> str | None:
         return _ENTRIES.get(_key(figures_dir, rel, roots_key))
 
 
-def lookup_any(figures_dir, script) -> str | None:
-    """只知道（项目, 路径）、不知道写入根的只读静态分析（依赖调研 / 工作目录证据）用：恰好登记了一份才回，
-    没有或有歧义（同一显示路径两次并发转换）回 None——宁可当“文件不存在”，也不拿别人的字节判。
+def lookup_active(figures_dir, script) -> str | None:
+    """只读静态分析（依赖调研 / 工作目录证据）用：**当前上下文正在进行的那次校验**登记的就是这个（项目, 路径）时回字节
+    所在的真实路径；否则（没有校验在进行 / 别的路径 / 别的线程里的普通会话）回 None——只分析磁盘原件。
     `script` 可以是项目相对路径，也可以是（已 realpath 的）项目内绝对路径。"""
+    active = _ACTIVE.get()
+    if active is None:
+        return None
     try:
-        root = os.path.normcase(os.path.realpath(os.fspath(figures_dir)))
-        real = os.path.normcase(os.path.realpath(os.path.join(root, os.fspath(script))))
-        rel = Path(os.path.relpath(real, root)).as_posix()
+        root = _norm_dir(figures_dir)
+        real = os.path.realpath(os.path.join(os.fspath(figures_dir), os.fspath(script)))
+        rel = _norm_rel(
+            os.path.relpath(real, os.path.realpath(os.fspath(figures_dir))).replace(os.sep, "/")
+        )
     except (OSError, ValueError):
         return None
-    with _LOCK:
-        hits = {src for (d, r, _k), src in _ENTRIES.items() if d == root and r == rel}
-    if len(hits) != 1:
+    if active[0] != root or active[1] != rel:
         return None
-    return next(iter(hits))
+    with _LOCK:
+        return _ENTRIES.get(active)

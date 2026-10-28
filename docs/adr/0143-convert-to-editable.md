@@ -89,7 +89,16 @@ Python、R、MATLAB 共用这条路径；无效路径返回 `convert_reference_i
   `runpy.run_path` 并临时重定向 `io.open_code`（CPython 3.10–3.15 同形，缺命中就大声失败），函数入口经 `SourceFileLoader` 子类。
   写入根绊线照旧只放行候选目录。登记键含写入根，并发的两次转换互不串。无 Windows 特例（没有软链视图，不需要符号链接权限）。
 * 父进程的静态分析（依赖调研 `importscan`、工作目录证据 `databinding`、入口推断 `probe.entry_candidates`）读同一份影子字节，
-  所以“缺包先装”“数据只在项目根要先问”仍然生效；只读，歧义时当“文件不存在”。
+  所以“缺包先装”“数据只在项目根要先问”仍然生效；只读。**影子只对那次校验运行自己的上下文生效**（`shadow()` 同时在
+  当前线程 / 任务的 `contextvars` 上标出校验，`shadowscript.lookup_active` 只认它）：用户同时打开 / 重跑原脚本的普通会话
+  （别的线程）对同一路径的 `decision_for` / `importscan` 永远只读磁盘原件，不被候选污染；没有“全局恰好一份就优先读”的隐式查找。
+  登记与查询共用同一个路径规范化（Windows `normcase` 小写化后大写目录 / 脚本名也命中）。
+* **`multiprocessing` spawn / forkserver 子进程（Windows、macOS 默认）也跑候选字节**：子进程按 `__main__.__file__` 重跑显示路径，
+  继承不了父进程临时替换的 `io.open_code`。worker 在跑用户脚本期间包一层 `multiprocessing.spawn.get_preparation_data`
+  （`ProcessPoolExecutor` 同走；候选 import 了 joblib / loky 时再包 loky 的同名函数），把子进程的 main 指向**沙盒里**自动生成的
+  引导文件（不碰用户项目，也不往候选目录加文件——候选目录的文件树是校验判据）。引导文件在子进程里装同样的重定向后以 `__mp_main__` 跑显示路径：`__file__` / `sys.argv[0]` 仍是显示路径，
+  cwd 沿用父进程，`dirname(__file__)` 读数据与父进程一致；函数入口则改装只认入口模块名的 `meta_path` 查找器。不用“候选目录内同名副本 +
+  改 cwd”：那会让 `__file__` 与 cwd 都偏离原脚本。
 * **指纹排除同步 / 系统客户端的产物**（`engine/syncnoise.py` 闭集，不含裸 `*.tmp`），并且只有 size + 内容摘要都相同的 mtime 变化不算改动。
   真改动仍判失败，检查的 `observed` 带变化文件（≤ 50 个，相对路径）与 `sync_folder`；项目在已知同步盘里时原因码为
   `project_files_changed_sync`。ready 的状态带 `adopt_adds`（采用会新增的文件，原脚本不动）。

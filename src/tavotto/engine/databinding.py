@@ -902,7 +902,7 @@ def evidence(script_path: str | os.PathLike, project_root: str | os.PathLike) ->
     try:
         # 影子脚本（ADR 0143 修订）：校验运行的候选字节在候选目录、项目里没有这个文件；位置（script.parent）仍是项目里的
         source = (
-            Path(shadowscript.lookup_any(root, real) or script)
+            Path(shadowscript.lookup_active(root, real) or script)
             .read_bytes()
             .decode("utf-8", errors="replace")
         )

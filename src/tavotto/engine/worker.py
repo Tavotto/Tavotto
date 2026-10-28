@@ -443,6 +443,133 @@ def _import_shadow_entry(display: Path, source: Path, stem: str):
     return module
 
 
+_SPAWN_BOOTSTRAP = """\
+# Tavotto 影子脚本的 spawn 子进程引导（自动生成，勿改）：子进程按 init_main_from_path 重跑本文件，
+# 本文件让子进程读到与父进程同一份候选字节，且 __file__ / sys.argv[0] 仍是项目里的显示路径。
+import importlib.abc
+import importlib.machinery
+import importlib.util
+import io
+import os
+import runpy
+import sys
+
+_CFG = __CFG__
+_DISPLAY = _CFG["display"]
+_SOURCE = _CFG["source"]
+
+
+def _norm(p):
+    return os.path.normcase(os.path.realpath(os.fspath(p)))
+
+
+_KEY = _norm(_DISPLAY)
+
+if _CFG["mode"] == "main":
+    _real = io.open_code
+
+    def _open_code(path):
+        try:
+            hit = _norm(path) == _KEY
+        except (OSError, TypeError, ValueError):
+            hit = False
+        return _real(_SOURCE) if hit else _real(path)
+
+    io.open_code = _open_code
+    try:
+        _inner = runpy.run_path(_DISPLAY, run_name="__mp_main__")
+    finally:
+        io.open_code = _real
+    globals().update(_inner)
+else:
+
+    class _ShadowLoader(importlib.machinery.SourceFileLoader):
+        def get_data(self, path):
+            if _norm(path) == _KEY:
+                path = _SOURCE
+            return super().get_data(path)
+
+        def path_stats(self, path):
+            raise OSError("shadow script has no stat")
+
+    class _Finder(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path=None, target=None):
+            if name != _CFG["stem"]:
+                return None
+            return importlib.util.spec_from_file_location(
+                name, _DISPLAY, loader=_ShadowLoader(name, _DISPLAY)
+            )
+
+    sys.meta_path.insert(0, _Finder())
+"""
+
+
+def _install_spawn_shadow(display: Path, source: Path, entry_is_main: bool, boot_dir: Path):
+    """影子脚本 + `multiprocessing` 的 spawn / forkserver（Windows、macOS 默认）：子进程按 `__main__.__file__`
+    重新执行显示路径，而显示路径上没有文件（转换）或是旧字节（改图），也继承不了父进程临时替换的 `io.open_code`。
+
+    做法：包一层 `get_preparation_data`（`multiprocessing.spawn`，`ProcessPoolExecutor` 同走它；候选 import 了
+    joblib 时再包 loky 的同名函数），把子进程的 main 指向**沙盒里**一个自动生成的引导文件（不碰用户项目，也不往候选目录加文件）。
+    引导文件在子进程里装同样的 `open_code` 重定向后以 `__mp_main__` 跑显示路径——`__file__` / `sys.argv[0]` 仍是
+    显示路径、cwd 沿用父进程（原脚本目录），`dirname(__file__)` 读数据与父进程一致；入口不是 `__main__`（import 入口模块）
+    时，引导文件改装一个只认入口模块名的 meta_path 查找器，让子进程 unpickle 时 import 到的也是候选字节。
+    返回还原函数；写不出引导文件（沙盒不可写）就什么都不包——退回到旧行为，不影响父进程。"""
+    boot = boot_dir / "_tavotto_shadow_spawn_main.py"
+    cfg = {
+        "display": str(display),
+        "source": str(source),
+        "mode": "main" if entry_is_main else "entry",
+        "stem": display.stem,
+    }
+    try:
+        boot.write_text(_SPAWN_BOOTSTRAP.replace("__CFG__", repr(cfg)), encoding="utf-8")
+    except OSError:
+        return lambda: None
+    boot_path = os.fspath(boot)
+    target = _norm_path(display)
+
+    patched: list[tuple[object, object]] = []
+
+    def wrap(mod) -> None:
+        orig = getattr(mod, "get_preparation_data", None)
+        if orig is None:
+            return
+
+        def get_preparation_data(*args, **kwargs):
+            data = orig(*args, **kwargs)
+            main_path = data.get("init_main_from_path")
+            ours = main_path is not None and _norm_path(main_path) == target
+            if ours or not entry_is_main:
+                data.pop("init_main_from_name", None)
+                data["init_main_from_path"] = boot_path
+            return data
+
+        get_preparation_data._tavotto_orig = orig
+        mod.get_preparation_data = get_preparation_data
+        patched.append((mod, orig))
+
+    import multiprocessing.spawn as mp_spawn  # noqa: PLC0415
+
+    wrap(mp_spawn)
+    try:
+        roots = _static_import_roots(source)
+    except Exception:  # noqa: BLE001 — 静态扫描失败只是少包一层
+        roots = frozenset()
+    if roots & {"joblib", "loky"}:
+        for name in ("joblib.externals.loky.backend.spawn", "loky.backend.spawn"):
+            try:
+                wrap(importlib.import_module(name))
+            except Exception:  # noqa: BLE001 — 没装 joblib / loky 就没有这条路径
+                continue
+
+    def restore() -> None:
+        while patched:
+            mod, orig = patched.pop()
+            mod.get_preparation_data = orig
+
+    return restore
+
+
 class SafeSession(figsession.LiveFigureSession):
     """safe 档的 LiveFigureSession：引擎自己写盘时摘掉 savefig 拦截。
 
@@ -1418,6 +1545,13 @@ class Worker(wireproto.V1Handler):
         # 里连一行 traceback 都没有。与 `python fig.py` 的语义对齐：退出码 0 /
         # None 就是脚本正常结束（已经画好的图照常捕获），非零才是它自己报的失败。
         # paper_style 的 import 也在这道保护里：它是用户代码，import 期间一样能 exit。
+        restore_spawn = (
+            _install_spawn_shadow(
+                self.script, self.script_source, self.entry == "__main__", self.sandbox
+            )
+            if self.script_source != self.script
+            else (lambda: None)
+        )
         with (
             contextlib.redirect_stdout(stdout_tail),
             executionfact.on_user_entry(self.script, self._execution_entered),
@@ -1485,6 +1619,7 @@ class Worker(wireproto.V1Handler):
                 # 脚本跑完了：之后再有谁读 stdin 一律 EOF，绝不再发问（也绝不再碰协议管道）
                 channel.closed = True
                 ledger.stop()
+                restore_spawn()
                 # 无论正常结束 / SystemExit / 异常都在这里收括号（finally 不改变原有异常传播）
                 if self.entry == "__main__":
                     post = _source_stamp(self.script_source)

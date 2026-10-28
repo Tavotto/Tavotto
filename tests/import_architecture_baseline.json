@@ -16,6 +16,12 @@
     },
     {
       "from": "tavotto/engine/worker.py",
+      "call": "importlib.import_module(name)",
+      "targets": [],
+      "reason": "候选 import 了 joblib 时包 loky 的 get_preparation_data（影子脚本的 spawn 子进程，ADR 0143 修订）；目标是第三方 joblib / loky，不是仓库模块。"
+    },
+    {
+      "from": "tavotto/engine/worker.py",
       "call": "importlib.import_module(self.script.stem)",
       "targets": [],
       "reason": "装的是用户的绘图脚本，不是仓库模块。"

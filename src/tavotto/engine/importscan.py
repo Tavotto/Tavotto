@@ -2278,7 +2278,7 @@ def _rank(top: _Top) -> int:
 
 
 def _shadow_tree(root: Path, script: str) -> ast.Module | None:
-    source = shadowscript.lookup_any(root, script)
+    source = shadowscript.lookup_active(root, script)
     if source is None:
         return None
     try:

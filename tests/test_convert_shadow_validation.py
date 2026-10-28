@@ -167,11 +167,13 @@ def test_registration_is_scoped_and_isolated_per_write_roots(tmp_path):
         assert shadowscript.lookup(tmp_path / "p", "d/a.py", key) == str(src)
         assert shadowscript.lookup(tmp_path / "p", "d/a.py", other) is None
         assert shadowscript.lookup(tmp_path / "p", "d/a.py", "") is None
-        assert shadowscript.lookup_any(tmp_path / "p", "d/a.py") == str(src)
+        assert shadowscript.lookup_active(tmp_path / "p", "d/a.py") == str(src)
         second = tmp_path / "c" / "b.py"
         second.write_text("x=2\n")
         with shadowscript.shadow(tmp_path / "p", "d/a.py", second, other):
-            assert shadowscript.lookup_any(tmp_path / "p", "d/a.py") is None  # 歧义 = 当不存在
+            # 内层校验只看见自己的字节，不会串到外层那一份
+            assert shadowscript.lookup_active(tmp_path / "p", "d/a.py") == str(second)
+        assert shadowscript.lookup_active(tmp_path / "p", "d/a.py") == str(src)
     assert shadowscript.lookup(tmp_path / "p", "d/a.py", key) is None
 
 
@@ -261,3 +263,156 @@ def test_edit_candidate_writing_into_the_project_is_still_stopped(edit_world):
     finally:
         workdir.forget(figs)
         ai_figure_edit.remove_candidate(cand.dir)
+
+
+# --------------------------------------------------------------------------- spawn 子进程也跑候选字节
+SPAWN_BODY = """\
+import multiprocessing as mp
+import os
+from concurrent.futures import ProcessPoolExecutor
+
+import matplotlib.pyplot as plt
+
+MARK = "{mark}"
+PARENT_CWD = os.getcwd()
+
+
+def child(x):
+    return MARK, os.path.basename(__file__), os.getcwd(), x
+
+
+def check(got, x):
+    assert got[0] == "CANDIDATE-BYTES", got
+    assert got[1] == "{name}", got
+    assert os.path.realpath(got[2]) == os.path.realpath(PARENT_CWD), got
+    assert got[3] == x, got
+
+
+def main():
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(1) as pool:
+        check(pool.apply(child, (1,)), 1)
+    with ProcessPoolExecutor(1, mp_context=ctx) as ex:
+        check(ex.submit(child, 2).result(), 2)
+    p = ctx.Process(target=child, args=(3,))
+    p.start()
+    p.join()
+    assert p.exitcode == 0, p.exitcode
+    fig, ax = plt.subplots()
+    ax.plot([1, 2])
+    fig.savefig("o.png")
+"""
+
+
+@pytest.mark.parametrize("guarded", [True, False], ids=["main_entry", "module_entry"])
+def test_spawn_children_run_the_candidate_bytes_for_conversion(world, guarded):
+    root, cand, runner = world
+    src = SPAWN_BODY.format(mark="CANDIDATE-BYTES", name="fig_matplotlib.py")
+    if guarded:
+        src += "\n\nif __name__ == '__main__':\n    main()\n"
+    cand.new_bytes = src.encode()
+    cand.target.write_bytes(cand.new_bytes)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "ok", result
+    assert not (root / "sub" / "fig_matplotlib.py").exists()
+
+
+@pytest.mark.parametrize("guarded", [True, False], ids=["main_entry", "module_entry"])
+def test_spawn_children_run_the_candidate_bytes_for_edit(edit_world, guarded):
+    """改图：磁盘上的原脚本标记是 ORIGINAL——子进程拿到 CANDIDATE-BYTES 才说明读的是候选而不是原件。"""
+    m, figs = edit_world
+    (figs / "data.csv").write_text("x\n", encoding="utf-8")
+    script = figs / "plot.py"
+    tail = "\n\nif __name__ == '__main__':\n    main()\n" if guarded else ""
+    script.write_text(SPAWN_BODY.format(mark="ORIGINAL", name="plot.py") + tail, encoding="utf-8")
+    ctx = next(iter(m.PROJECTS.values()))
+    runner = m._convert_runner(ctx, "plot.py", with_manifests=True)
+    cand = ai_figure_edit.create_candidate("fedcba987655", script, figs, "plot.py")
+    cand.target.write_text(
+        SPAWN_BODY.format(mark="CANDIDATE-BYTES", name="plot.py") + tail, encoding="utf-8"
+    )
+    cand.new_bytes = cand.target.read_bytes()
+    try:
+        result = ai_convert.run_validation(cand, runner)
+        assert result["status"] == "ok", result
+    finally:
+        ai_figure_edit.remove_candidate(cand.dir)
+
+
+# --------------------------------------------------------------------------- 影子只对那次校验运行生效
+def test_windows_style_case_insensitive_paths_hit_the_same_key(tmp_path, monkeypatch):
+    """Windows 的 normcase 会小写化：登记与查询共用同一个规范化，含大写的目录 / 脚本名也命中。"""
+    import ntpath
+
+    monkeypatch.setattr(os.path, "normcase", ntpath.normcase)
+    src = tmp_path / "c" / "a.py"
+    src.parent.mkdir()
+    src.write_text("x=1\n")
+    proj = tmp_path / "p"
+    (proj / "Figures").mkdir(parents=True)
+    key = execspec.write_roots_key((str(src.parent),))
+    with shadowscript.shadow(proj, "Figures/Plot_matplotlib.py", src, key):
+        assert shadowscript.lookup(proj, "Figures/Plot_matplotlib.py", key) == str(src)
+        assert shadowscript.lookup(proj, "figures\\plot_matplotlib.py", key) == str(src)
+        assert shadowscript.lookup_active(proj, "Figures/Plot_matplotlib.py") == str(src)
+        absolute = os.path.join(os.path.realpath(proj), "Figures", "Plot_matplotlib.py")
+        assert shadowscript.lookup_active(proj, absolute) == str(src)
+
+
+def test_shadow_is_invisible_outside_the_validating_context(tmp_path):
+    """校验进行中，别的线程里的普通会话（和校验自己以外的一切）对同一路径只看到磁盘原件。"""
+    src = tmp_path / "c" / "a.py"
+    src.parent.mkdir()
+    src.write_text("x=1\n")
+    proj = tmp_path / "p"
+    (proj / "d").mkdir(parents=True)
+    key = execspec.write_roots_key((str(src.parent),))
+    seen: list = []
+    with shadowscript.shadow(proj, "d/a.py", src, key):
+        assert shadowscript.lookup_active(proj, "d/a.py") == str(src)
+        assert shadowscript.lookup_active(proj, "d/other.py") is None
+        t = threading.Thread(target=lambda: seen.append(shadowscript.lookup_active(proj, "d/a.py")))
+        t.start()
+        t.join()
+    assert seen == [None]
+    assert shadowscript.lookup_active(proj, "d/a.py") is None
+
+
+def test_ordinary_analysis_ignores_a_running_validation_but_validation_reads_the_candidate(
+    tmp_path,
+):
+    from tavotto.engine import importscan
+
+    proj = tmp_path / "p"
+    proj.mkdir()
+    (proj / "plot.py").write_text("import json\n", encoding="utf-8")
+    (proj / "data.csv").write_text("a\n1\n", encoding="utf-8")
+    cand = tmp_path / "c" / "plot.py"
+    cand.parent.mkdir()
+    cand.write_text("import json\nopen('data.csv').read()\nimport pandas\n", encoding="utf-8")
+    key = execspec.write_roots_key((str(cand.parent),))
+
+    def decide():
+        workdir.forget(proj)
+        return workdir.decision_for(proj, "plot.py")["evidence"]["verdict"]
+
+    baseline = decide()
+    baseline_scan = importscan.scan(proj, "plot.py")
+    results: dict = {}
+
+    def ordinary_session():
+        results["verdict"] = decide()
+        results["scan"] = importscan.scan(proj, "plot.py")
+
+    with shadowscript.shadow(proj, "plot.py", cand, key):
+        t = threading.Thread(target=ordinary_session)
+        t.start()
+        t.join()
+        inside = decide()
+        inside_scan = importscan.scan(proj, "plot.py")
+    assert results["verdict"] == baseline == "none"
+    assert results["scan"] == baseline_scan
+    # 校验自己仍读到候选：读 data.csv 的证据、以及新增的 pandas
+    assert inside != baseline, inside
+    assert inside_scan != baseline_scan
+    workdir.forget(proj)
