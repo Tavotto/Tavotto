@@ -382,6 +382,10 @@ run `20261027T094658Z-4723df`：`ondisk_key.wiped = true`、`policy_key_present 
 - 没有真 key 的格拿占位 `"\0"` 去抹文件，写坏了 Tavotto 的 SQLite，第二次起渲染服务崩在 `ai_history`（`20261028T124404Z-2a15f4`
   的 sidecar 日志）→ 短于 8 个字符的值不抹。这个缺陷 #1448 起就在，之前没人在跑完后再读那些文件，所以没暴露。
 
+Codex #1473 P1 之后（安装器退出码非 0、或认不出与安装包同版本的那一份就判 error，绝不拿残留旧版本顶替）在 `7d5a8e33b` 上复跑
+ZCode：`20261028T132208Z-c1164b` 六项全 PASS，`tavotto.installer_exit_code = 0`、`version = 0.19.0`（残留的「Tavotto beta」卸载项
+不被选中）。
+
 产品侧的发现：桌面版的冻结 CLI 不带画布 `canvas.html`（ZCode / WorkBuddy 的体检都报 “canvas widget file is missing”）。对这两个
 宿主不影响工具；只装桌面版的 Codex 用户经插件交棒时会丢内嵌画布，#1468 让插件交棒时把自己那一份指给它。
 
