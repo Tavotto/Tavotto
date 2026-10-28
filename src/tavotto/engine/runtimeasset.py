@@ -50,7 +50,7 @@ import os
 import shutil
 from pathlib import Path
 
-from . import config, figcapture, inputremap, runconfig
+from . import config, documents, figcapture, inputremap, runconfig
 
 LOG = logging.getLogger("tavotto.runtimeasset")
 
@@ -295,6 +295,43 @@ def uses_stem(used_ids: object, registry, script: str, stem: str) -> bool:
         hit = resolve(fid, registry)
         if hit is not None and hit["script"] == script and hit["stem"] == stem:
             return True
+    return False
+
+
+def _strings_of(value: object):
+    """递归产出一份 JSON 值里的全部字符串（含字典的键以外的所有值）。显式栈，深文档不会撞递归上限。"""
+    stack = [value]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, str):
+            yield cur
+        elif isinstance(cur, dict):
+            stack.extend(cur.values())
+        elif isinstance(cur, list):
+            stack.extend(cur)
+
+
+def saved_layouts_use_stem(layout_dirs, registry, script: str, stem: str) -> bool:
+    """磁盘上已保存的排版（`layout_dirs` 下的用户文档 `*.json`）有没有引用这张图（含运行配置变体）。
+
+    脚本没了以后 cache 预览是这张图唯一剩下的像素，删掉它会让引用它的排版再也找不回这张图，所以
+    未打开的已存排版也算在用。只读用户文档（`documents.is_user_document_stem` 剔掉 Tavotto 自己的文件），
+    不进 `_autosave/` 与 versions（不在 `layout_dirs` 的直接子文件里）；读不了 / 坏掉的文档跳过。
+    """
+    for d in layout_dirs:
+        try:
+            files = sorted(Path(d).glob("*.json"))
+        except OSError:
+            continue
+        for path in files:
+            if not documents.is_user_document_stem(path.stem):
+                continue
+            try:
+                doc = documents.loads_document(path.read_bytes())
+            except (OSError, ValueError):
+                continue
+            if uses_stem(list(_strings_of(doc)), registry, script, stem):
+                return True
     return False
 
 

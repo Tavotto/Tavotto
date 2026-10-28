@@ -220,7 +220,7 @@
     "runtime_asset_unknown": "This runtime figure isn’t on record: {{id}} — run that script again to re-establish the link (with the same arguments, if it came from a run with arguments)",
     "runtime_cache_missing": "No preview for this runtime figure yet. It’s created when the script runs.",
     "runtime_asset_source_present": "The script for this figure is still on disk, so it can’t be removed from assets.",
-    "runtime_asset_in_use": "This figure is in use on the canvas, so it can’t be removed from assets.",
+    "runtime_asset_in_use": "In use on a canvas or saved layout, so it can’t be removed from assets.",
     "runtime_source_writeback_unsupported": "Writing edits back into the script source isn’t supported. Edits on runtime figures live in the layout only.",
     "scan_failed": "Scan failed: {{reason}}",
     "perf_report_rejected": "Not a performance report; nothing was saved ({{reason}})",

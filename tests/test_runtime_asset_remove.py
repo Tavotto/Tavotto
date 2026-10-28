@@ -172,3 +172,41 @@ class TestRemoveOrphanRuntimeAsset:
         assert r1.status_code == 404 and r1.get_json()["code"] == "runtime_asset_unknown"
         r2 = client.post("/api/runtime/remove", json={"id": "plain.pdf"})
         assert r2.status_code == 400 and r2.get_json()["code"] == "runtime_asset_unknown"
+
+
+class TestSavedLayoutsCountAsInUse:
+    def _setup(self, client, tmp_path):
+        figs = _open(client, tmp_path, {"gone.py": {"entry": "__main__", "stems": ["gone"]}})
+        _materialize(figs, tmp_path, "gone.py", "gone")
+        store = figs / "tavottofile"
+        (store / "_autosave").mkdir(parents=True)
+        return figs, store
+
+    @pytest.mark.parametrize("variant", [False, True])
+    def test_saved_layout_reference_refuses_and_changes_nothing(self, client, tmp_path, variant):
+        figs, store = self._setup(client, tmp_path)
+        cfg = runconfig.put(figs, "gone.py", ["--k", "1"])
+        _materialize(figs, tmp_path, "gone.py", "gone", cfg.id)
+        ref = _id("gone.py", "gone", cfg.id if variant else "")
+        doc = {"schema": 3, "canvases": [{"objects": [{"type": "panel", "fileId": ref}]}]}
+        (store / "Figure 1.json").write_text(json.dumps(doc), encoding="utf-8")
+        before = (figs / "tavotto_registry.json").read_bytes()
+        resp = client.post(
+            "/api/runtime/remove", json={"id": _id("gone.py", "gone"), "used_ids": []}
+        )
+        assert resp.status_code == 409
+        assert resp.get_json()["code"] == "runtime_asset_in_use"
+        assert (figs / "tavotto_registry.json").read_bytes() == before
+        assert _cache_exists(figs, _id("gone.py", "gone"))
+
+    def test_autosave_broken_and_reserved_documents_do_not_block(self, client, tmp_path):
+        figs, store = self._setup(client, tmp_path)
+        ref = json.dumps({"objects": [{"fileId": _id("gone.py", "gone")}]})
+        (store / "_autosave" / "x.json").write_text(ref, encoding="utf-8")
+        (store / "broken.json").write_text("{not json", encoding="utf-8")
+        (store / "nan.json").write_text('{"a": NaN}', encoding="utf-8")
+        resp = client.post(
+            "/api/runtime/remove", json={"id": _id("gone.py", "gone"), "used_ids": []}
+        )
+        assert resp.status_code == 200, resp.get_json()
+        assert "gone.py" not in _registry_scripts(figs)

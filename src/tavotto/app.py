@@ -6390,7 +6390,10 @@ def api_runtime_remove():
         resp.status_code = 409
         return resp
     script, stem = status["script"], status["stem"]
-    if engine_runtimeasset.uses_stem(body.get("used_ids"), ctx.registry, script, stem):
+    layout_dirs = [d for d in (project_store_dir(ctx), ctx.path / "canvases") if d is not None]
+    if engine_runtimeasset.uses_stem(
+        body.get("used_ids"), ctx.registry, script, stem
+    ) or engine_runtimeasset.saved_layouts_use_stem(layout_dirs, ctx.registry, script, stem):
         resp = jsonify(
             {
                 "error": f"画布中正在使用这张图，不能移除: {rel_id}",
