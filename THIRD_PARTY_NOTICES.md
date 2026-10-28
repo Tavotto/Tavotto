@@ -11,7 +11,7 @@ Tavotto 自身的许可见 `LICENSE`。下面是随源码内联的第三方素�
 「连接 AI」界面用的**彩色**标志在 `web/src/components/settings/brandLogoData.ts`，取自同一仓库同一提交（ab8cbcc）的
 `packages/static-svg/icons/<name>-color.svg`（path 与渐变），涉及：bailian、claude、deepseek、gemini、kimi、
 minimax、qwen、zhipu；许可证文本同下。「接入 AI 编辑器」那一组另取（同为 lobe-icons，npm 包 @lobehub/icons-static-svg 1.101.0）：`trae-color.svg`（trae，彩色，在 brandLogoData.ts）、
-单色的 `cursor.svg`、`workbuddy.svg`（在 vendorIcons.ts；zcode 复用其中的 `zai.svg`）。VS Code 的标志取自 Simple Icons 11.0.0 的
+单色的 `cursor.svg`、`workbuddy.svg`（在 brandLogoData.ts，画成 currentColor；zcode 复用 vendorIcons.ts 里的 `zai.svg`）。VS Code 的标志取自 Simple Icons 11.0.0 的
 `visualstudiocode.svg`（CC0 1.0，无需署名；在 brandLogoData.ts，颜色取其官方色 #007ACC）。
 这些标志是各厂商的商标，仅用于在界面上指认对应服务，不表示与其有任何关联或背书。
 
