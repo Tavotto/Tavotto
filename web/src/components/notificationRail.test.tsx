@@ -34,7 +34,8 @@ import { ADOPTED_NOTICE_MS, useEnvStore } from '@/store/envStore'
 import { useRenderStore } from '@/store/renderStore'
 import { HINT_AUTO_DISMISS_MS, showHint, useHintStore } from '@/lib/onboarding/hints'
 import { useOnboardingStore } from '@/store/onboardingStore'
-import { STATUS_AUTO_DISMISS_MS, useUiStore } from '@/store/uiStore'
+import { EXPORT_DONE_DISMISS_MS, STATUS_AUTO_DISMISS_MS, useUiStore } from '@/store/uiStore'
+import { registerDialogOpen } from '@/store/dialogLayerStore'
 
 declare global {
   // eslint-disable-next-line no-var
@@ -188,6 +189,36 @@ describe('带动作的状态 toast（导出关窗后的结果等）', () => {
     act(() => btn.click())
     expect(run).toHaveBeenCalledTimes(1)
     expect(statusToast()!.querySelector('button[aria-label]:last-child')).toBeTruthy()
+  })
+
+  it('带动作但声明了 dismissMs（导出成功胶囊）：到点自己走；悬停时暂停、移开后接着数', () => {
+    act(() =>
+      useUiStore.getState().setStatus(literal('已导出 a.pdf'), 'done', {
+        action: { label: literal('在文件夹中显示'), run: vi.fn() },
+        dismissMs: EXPORT_DONE_DISMISS_MS,
+      }),
+    )
+    tick(EXPORT_DONE_DISMISS_MS - 500)
+    pointer(statusToast()!, 'pointerover')
+    tick(EXPORT_DONE_DISMISS_MS * 2)
+    expect(status(), '悬停期间不走表').not.toBeNull()
+    pointer(statusToast()!, 'pointerout')
+    tick(600)
+    expect(status()).toBeNull()
+  })
+
+  it('有模态对话框开着：通知移进 body 的 toast 层（压在对话框上），点它不算点了对话框外面', () => {
+    const off = registerDialogOpen()
+    try {
+      act(() => useUiStore.getState().setStatus(literal('已导出 a.pdf'), 'done'))
+      const layer = document.body.querySelector<HTMLElement>('body > [data-notification-rail]')
+      expect(layer).toBeTruthy()
+      expect(layer!.className).toContain('z-toast')
+      expect(layer!.querySelector('[data-toast-layout]')).toBeTruthy()
+    } finally {
+      act(() => off())
+    }
+    expect(document.body.querySelector('body > [data-notification-rail]')).toBeNull()
   })
 
   it('对照：不带动作的非错误 toast 照旧自己走', () => {

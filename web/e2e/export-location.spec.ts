@@ -69,7 +69,7 @@ test(
     const job = (await (await started).json()) as { export_dir?: string }
     expect(job.export_dir, '导出写到选的目录').toMatch(new RegExp(`${path.basename(target)}$`))
     await expect(location).toHaveAttribute('title', new RegExp(`${path.basename(target)}$`))
-    await expect(dialog.locator('[data-export-result]')).toBeVisible({ timeout: 240_000 })
+    await expect(dialog.locator('[data-export-finish]')).toBeVisible({ timeout: 240_000 })
     await expect
       .poll(() => (existsSync(target) ? readdirSync(target).filter((f) => /\.(pdf|png)$/i.test(f)).length : 0), {
         timeout: 60_000,

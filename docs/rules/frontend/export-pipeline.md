@@ -170,7 +170,11 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   （且没被设置 / 样式压住）时结果就在结果块里，**不弹第二份**；关着时走通知轨——`done` / `cancelled` 一句话自己消失，
   `failed` / `partial` / `unknown`（错误语气）与 `conflict`（作业停下等你决定，info 语气）带「查看」动作、**不自己消失**
   （`setStatus(…, { owner: 'export.result', action })`），点「查看」或重新打开对话框即撤；切项目时同主人的也撤。
-  新一轮导出开始（`running`）同样撤掉上一条。看护：`components/ExportDialog.test.tsx`「导出终局通知」组、`notificationRail.test.tsx`。
+  新一轮导出开始（`running`）同样撤掉上一条。
+  **全部成功是例外**（`exportResultClean()`：`done`、无失败产物、无警告、无核验未通过、导出期间没被编辑）：对话框开着时结果块**不插进对话框**
+  （对话框不位移），脚部是「再次导出 · 在文件夹中显示 · 完成」，由通知轨的胶囊「已导出 … · 在文件夹中显示」说一声——它压在对话框上面
+  （`dialogLayerStore` → `z-toast` 层，见 `ui-visual-discipline.md`），6 秒后自己走（`EXPORT_DONE_DISMISS_MS`，`setStatus(…, { dismissMs })`，
+  悬停 / 聚焦暂停）。部分成功 / 失败 / 有警告仍在对话框里留结果块，与从前一致。逐个文件的核验详情只在不干净的结果块里。看护：`components/ExportDialog.test.tsx`「导出终局通知」组、`notificationRail.test.tsx`。
 
 ## 速查表原要点（2026-09-25 迁入，#608）
 

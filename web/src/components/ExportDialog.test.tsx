@@ -38,7 +38,7 @@ import { TooltipProvider } from '@/components/ui/Tooltip'
 import { useAssetStore } from '@/store/assetStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { renderKey, useRenderStore } from '@/store/renderStore'
-import { useUiStore } from '@/store/uiStore'
+import { statusDismissTimer, useUiStore } from '@/store/uiStore'
 import { runValidation, useValidationStore } from '@/store/validationStore'
 import { bindingFor } from '@/lib/specBinding'
 import { DEFAULT_PROFILE_ID } from '@/lib/profile'
@@ -1308,6 +1308,10 @@ describe('产物核验（ADR 0068）：未核验不显示绿', () => {
     notes: [],
   })
   const badge = () => document.body.querySelector<HTMLElement>('[data-inspection]')
+  // 干净的全部成功不再把结果块插进对话框（胶囊说一声）；这一组看的是结果块里的核验徽标，所以让结果不干净（带一条警告）
+  beforeEach(() => {
+    jobWarnings = ['预览与画布略有出入']
+  })
 
   it('回执里没有 manifest（老服务端 / 检查器没跑）：画「未核验」，没有绿勾', async () => {
     await setup(9)
@@ -3009,10 +3013,15 @@ describe('导出终局通知：关窗期间的结果不能无声', () => {
     expect(status().exportOpen).toBe(true)
     await finish({ status: 'failed', outputs: [failedOut], error: { code: 'format_failed', params: {}, recoverable: true } })
     expect(status().status).toBeNull()
-    // 成功也一样：开着就不弹
+    // 全部成功：结果块不插进对话框（不位移），改由对话框上面的胶囊说一声（能显示时带「在文件夹中显示」、6 秒后自己走）
     resetExportState()
     await startThenClose(false)
     await finish({ job_id: 'job-1', status: 'done', outputs: [doneOut] })
+    expect(JSON.stringify(status().status)).toContain('export.exported')
+    // 带警告的成功仍留在结果块里，不弹第二份
+    resetExportState()
+    await startThenClose(false)
+    await finish({ job_id: 'job-1', status: 'done', outputs: [doneOut], warnings: ['预览与画布略有出入'] })
     expect(status().status).toBeNull()
   })
 
@@ -3062,6 +3071,7 @@ describe('状态区与完成态脚部', () => {
   })
 
   it('结果落在脚部正上方的状态区，不在可滚正文里', async () => {
+    jobWarnings = ['预览与画布略有出入'] // 干净的全部成功不插结果块（见下一条）
     await setup(9)
     expect(statusArea(), '还没导：状态区不占位').toBeNull()
     await click(q('[data-export-start]')!)
@@ -3278,10 +3288,21 @@ describe('预览信息完善（PR3）：结果块', () => {
   })
 
   it('全部成功：没有汇总句', async () => {
+    jobWarnings = ['预览与画布略有出入']
     await setup(9)
     await click(q('[data-export-start]')!)
     expect(q('[data-export-result]')).toBeTruthy()
     expect(q('[data-export-partial-summary]')).toBeNull()
+  })
+
+  it('干净地全部成功：结果块不插进对话框（状态区不出现），脚部是「再次导出 · 完成」，胶囊说「已导出」', async () => {
+    await setup(9)
+    await click(q('[data-export-start]')!)
+    expect(q('[data-export-result]')).toBeNull()
+    expect(q('[data-dialog-status]')).toBeNull()
+    expect(q('[data-export-again]')).toBeTruthy()
+    expect(q('[data-export-finish]')).toBeTruthy()
+    expect(JSON.stringify(useUiStore.getState().status)).toContain('export.exported')
   })
 })
 
@@ -3444,21 +3465,19 @@ describe('导出页改版（beta 0.19.0b3 反馈）', () => {
     expect(q('[data-export-preview] > div')!.className).not.toMatch(/\brounded/)
   })
 
-  it('全部成功：一句「已导出 N 个文件」+ 一个「在文件夹中显示」，逐个文件与核验都折在详情里', async () => {
+  it('全部成功：对话框里没有结果块；「在文件夹中显示」落在脚部，胶囊带同一个动作并 6 秒后自己走', async () => {
     const w = window as unknown as Record<string, unknown>
     w.__TAURI_INTERNALS__ = { invoke: vi.fn() }
     try {
       jobOutputs = [out('pdf', 'a.pdf', 'done'), out('png', 'a.png', 'done')]
       await setup(9)
       await click(q('[data-export-start]')!)
-      const result = q('[data-export-result]')!
-      expect(result.textContent).toContain('已导出 2 个文件')
-      expect(result.textContent).not.toContain('a.pdf')
-      expect(result.textContent).not.toMatch(/核验/)
-      expect(q('[data-dialog-status] [data-export-reveal]'), '动作在摘要行上').toBeTruthy()
-      expect(q('[data-dialog-footer] [data-export-reveal]'), '脚部不再重复').toBeNull()
-      await openResultDetail()
-      expect(result.textContent).toContain('a.pdf')
+      expect(q('[data-export-result]'), '干净成功不插结果块').toBeNull()
+      expect(q('[data-dialog-footer] [data-export-reveal]'), '动作落在脚部').toBeTruthy()
+      const ui = useUiStore.getState()
+      expect(JSON.stringify(ui.status)).toContain('export.exported')
+      expect(ui.statusAction).not.toBeNull()
+      expect(statusDismissTimer.running).toBe(true)
     } finally {
       delete w.__TAURI_INTERNALS__
     }

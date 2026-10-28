@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FocusEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { Check, CircleAlert, Copy, Info, Lightbulb, X } from '@/components/ui/icons'
@@ -27,6 +28,7 @@ import { userEnvironmentName } from '@/lib/userEnvironmentText'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
 import { useNoticeRailStore } from '@/store/noticeRailStore'
+import { useDialogLayerStore } from '@/store/dialogLayerStore'
 import { restartEngineFromCard } from '@/lib/exitNotices'
 import { useContactStore } from '@/store/contactStore'
 
@@ -279,8 +281,10 @@ function useArrivalOrder() {
 export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'alert' | null } = {}) {
   const railRef = useRef<HTMLDivElement>(null)
   // 每次渲染后量一次在场通知（退场中的不算）最上面那条的顶边，浮动胶囊据此避让（见 `noticeRailStore`）
+  // 有模态对话框开着：通知移进 body 的 toast 层压在对话框上面（见 `dialogLayerStore`），不再是画布列里的那一条轨
+  const overModal = useDialogLayerStore((s) => s.open > 0)
   useEffect(() => {
-    const tops = [...(railRef.current?.querySelectorAll('[data-toast-layout][data-state="open"]') ?? [])].map((e) =>
+    const tops = [...(overModal ? [] : (railRef.current?.querySelectorAll('[data-toast-layout][data-state="open"]') ?? []))].map((e) =>
       Math.round(e.getBoundingClientRect().top),
     )
     useNoticeRailStore.getState().setTop(tops.length ? Math.min(...tops) : null)
@@ -424,45 +428,8 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
   const hintOrder = arrival('hint', hintPresence.mounted && hint && hintToken)
   const statusOrder = arrival('status', statusPresence.mounted && shown.status)
 
-  return (
-    <div
-      ref={railRef}
-      // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
-      className={cn(
-        'pointer-events-none absolute inset-x-0 z-canvas-chrome flex flex-col items-center gap-1.5 px-4',
-        toolbarUp ? 'bottom-16' : 'bottom-3',
-      )}
-    >
-      {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化。
-          `data-status-live` 是这块播报区的**稳定机器标识**：`role="status"` 全产品有十几个
-          产出点（快速编辑那行常驻说明、素材库、导出面板、问题面板……），所以
-          `[role="status"]` 取第一个拿到的是「文档里排在最前的那个 status」，不是
-          「应用刚说了什么」。要问后者的（e2e）一律认这个属性，见 `web/AGENTS.md`。 */}
-      {/* `data-status-key`：刚说的那句话的消息键（e2e 认它，不认译文——换语言照样判得了） */}
-      <div
-        aria-live="polite"
-        role="status"
-        data-status-live
-        data-status-key={tone !== 'error' && status ? status.key : undefined}
-        className="sr-only"
-      >
-        {tone !== 'error' ? liveText : ''}
-      </div>
-      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
-        {tone === 'error' ? liveText : ''}
-      </div>
-      <div aria-live="polite" className="sr-only">
-        {liveHintText}
-      </div>
-      <div aria-live="polite" className="sr-only">
-        {adopted ? adoptedText : ''}
-      </div>
-      <div aria-live="polite" className="sr-only">
-        {autofilled ? autofillText : ''}
-      </div>
-      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
-        {engineExit ? translate('exitNotice.engine.text', { ns: 'workspace' }) : ''}
-      </div>
+  const toasts = (
+    <>
       {/* 显示顺序 = 出现的先后（`order`），最新的最靠近底边；DOM 顺序固定 */}
       {addedPresence.mounted && (
         <Toast
@@ -567,6 +534,60 @@ export function NotificationRail({ announceRole = 'alert' }: { announceRole?: 'a
           closeLabel={t('status.dismissError')}
         />
       )}
+    </>
+  )
+  return (
+    <div
+      ref={overModal ? undefined : railRef}
+      data-notification-rail
+      // 画布底部有浮动工具条时整列抬到它上面去（toast 居中、工具条也居中，不抬就叠在一起）
+      className={cn(
+        'pointer-events-none absolute inset-x-0 z-canvas-chrome flex flex-col items-center gap-1.5 px-4',
+        toolbarUp ? 'bottom-16' : 'bottom-3',
+      )}
+    >
+      {/* aria-live 常驻在 DOM 里，读屏器才能捕捉内容变化。
+          `data-status-live` 是这块播报区的**稳定机器标识**：`role="status"` 全产品有十几个
+          产出点（快速编辑那行常驻说明、素材库、导出面板、问题面板……），所以
+          `[role="status"]` 取第一个拿到的是「文档里排在最前的那个 status」，不是
+          「应用刚说了什么」。要问后者的（e2e）一律认这个属性，见 `web/AGENTS.md`。 */}
+      {/* `data-status-key`：刚说的那句话的消息键（e2e 认它，不认译文——换语言照样判得了） */}
+      <div
+        aria-live="polite"
+        role="status"
+        data-status-live
+        data-status-key={tone !== 'error' && status ? status.key : undefined}
+        className="sr-only"
+      >
+        {tone !== 'error' ? liveText : ''}
+      </div>
+      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
+        {tone === 'error' ? liveText : ''}
+      </div>
+      <div aria-live="polite" className="sr-only">
+        {liveHintText}
+      </div>
+      <div aria-live="polite" className="sr-only">
+        {adopted ? adoptedText : ''}
+      </div>
+      <div aria-live="polite" className="sr-only">
+        {autofilled ? autofillText : ''}
+      </div>
+      <div aria-live="assertive" role={announceRole ?? undefined} className="sr-only">
+        {engineExit ? translate('exitNotice.engine.text', { ns: 'workspace' }) : ''}
+      </div>
+      {overModal
+        ? createPortal(
+            <div
+              ref={railRef}
+              data-notification-rail
+              className="pointer-events-none fixed inset-x-0 bottom-6 z-toast flex flex-col items-center gap-1.5 px-4"
+            >
+              {toasts}
+            </div>,
+            document.body,
+          )
+        : toasts}
     </div>
   )
 }

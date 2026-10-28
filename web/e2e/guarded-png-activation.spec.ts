@@ -531,10 +531,8 @@ test('guarded PNG: hidden companion, stable adoption, undo, re-entry, and exact 
   expect(result!.outputs.every(o => o.status === 'done')).toBe(true)
   const pngOutputs = result!.outputs.filter(o => o.format === 'png')
   expect(pngOutputs).toHaveLength(1)
-  // 结果现在是一句摘要，逐个文件在折叠的「详情」里：先展开再认文件名
-  await expect(dialog.locator('[data-export-result]')).toBeVisible()
-  await dialog.locator('[data-export-result] [data-notice-detail-toggle]').click()
-  await expect(dialog.locator('[data-export-result]')).toContainText(pngOutputs[0].name)
+  // 干净的全部成功不插结果块：完成态以脚部「完成」为准，文件名在落盘文件上核（下一行）
+  await expect(dialog.locator('[data-export-finish]')).toBeVisible()
   expect(readFileSync(path.join(job.export_dir, pngOutputs[0].name))).toEqual(source.png)
   source.expectUnchanged()
 })
