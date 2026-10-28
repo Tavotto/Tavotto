@@ -4364,16 +4364,29 @@ def judge_connect_written(connect: dict) -> dict:
 
 def install_tavotto_for_connect(setup: Path, base: dict) -> tuple[dict | None, dict | None]:
     """装被测的 Tavotto 安装包（非管理员 currentUser 静默装，同 desktop-window）；返回 (connect 上下文, 提前收场的结论)。"""
-    uninstall_all()
-    inst = install_package(setup)
-    base["tavotto"] = {"version": inst.get("version"), "display": inst.get("name")}
-    if not inst.get("ok"):
+    cleaned = uninstall_all()
+    # 卸不掉的旧安装（如只剩卸载项的 beta）不挡这次：只认这次装出来的那一份（Lab 实测 run 20261028T104530Z-f3adab：
+    # 卸载项里排在最后的是残留的「Tavotto beta 0.19.0-beta.4」，按位置取就拿错了）
+    before = {e["InstallLocation"] for e in _hkcu_installs()}
+    subprocess.run([str(setup), "/S"], capture_output=True, timeout=900)
+    found = _hkcu_installs()
+    mine = [e for e in found if e["InstallLocation"] not in before] or [
+        e for e in found if e.get("DisplayName") == "Tavotto"
+    ]
+    base["tavotto"] = {
+        "version": mine[-1].get("DisplayVersion") if mine else None,
+        "display": mine[-1].get("DisplayName") if mine else None,
+        "leftover_installs": []
+        if cleaned
+        else sorted(str(e.get("DisplayName")) for e in found if e not in mine),
+    }
+    shell = Path(mine[-1]["InstallLocation"]) / "Tavotto.exe" if mine else None
+    if shell is None or not shell.is_file():
         return None, {
             **base,
             "result": "error",
-            "summary": "Tavotto silent install did not produce a shell",
+            "summary": "Tavotto silent install did not produce Tavotto.exe",
         }
-    shell = Path(inst["shell"])
     cli = shell.with_name("tavotto-cli.exe")
     if not cli.is_file():
         return None, {
