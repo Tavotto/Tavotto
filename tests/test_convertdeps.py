@@ -299,25 +299,45 @@ def test_a_bound_plan_that_grew_beyond_the_list_asks_instead_of_installing(fake_
     assert fake_repair.discarded == ["p1"] and "prepare" not in _names(fake_repair)
 
 
-# --------------------------------------------------------------------------- 系统 Python / 内置 runtime：永不装
-@pytest.mark.parametrize(
-    ("source", "kw"),
-    [
-        (pool.SOURCE_SYSTEM, {"ext": True}),
-        (pool.SOURCE_CONFIGURED, {"python": OS_PYTHON}),
-        (pool.SOURCE_BUNDLED, {}),
-        (pool.SOURCE_CURRENT, {}),
-    ],
-)
-def test_system_and_builtin_pythons_are_never_installed_into(fake_repair, tmp_path, source, kw):
-    _as(fake_repair, tmp_path, source=source, **kw)
+# --------------------------------------------------------------------------- 内置 runtime：默认走受管环境（不再请用户换环境）
+@pytest.mark.parametrize("source", [pool.SOURCE_BUNDLED, pool.SOURCE_CURRENT])
+def test_builtin_runtime_defaults_to_a_managed_environment_instead_of_asking_to_switch(
+    fake_repair, tmp_path, source
+):
+    _as(fake_repair, tmp_path, source=source)
     got = convertdeps.ensure("/proj", SCRIPT)
-    assert got["status"] == "hold" and got["card"]["kind"] == "system"
-    assert got["card"]["action"] == "choose_env" and got["card"]["packages"]
-    assert "create_joint_plan" not in _names(fake_repair) and "prepare" not in _names(fake_repair)
-    # 点了也不装：这是边界不是偏好
-    again = convertdeps.resolve("/proj", SCRIPT, confirmed_impact="anything")
-    assert again["status"] == "hold" and again["card"]["kind"] == "system"
+    card = got["card"]
+    assert got["status"] == "hold" and card["kind"] == "ask_once", (
+        "不再是 system 卡（换环境的负担丢给用户）"
+    )
+    assert card["env"]["kind"] == "builtin" and card["action"] == "install_managed"
+    assert card["packages"] == ["pandas", "statsmodels"]
+    created = next(c for c in fake_repair.calls if c[0] == "create_joint_plan")
+    assert created[3] == {"target_kind": deprepair.TARGET_MANAGED}
+    assert "prepare" not in _names(fake_repair), "问之前一个字节不装"
+
+
+def test_builtin_card_discloses_the_private_python_download_and_its_size(fake_repair, tmp_path):
+    _as(fake_repair, tmp_path, source=pool.SOURCE_BUNDLED)
+    offer = {"download_bytes": 52 * 1048576, "origin": "download"}
+    fake_repair.bound = _bound(
+        target_kind=deprepair.TARGET_MANAGED,
+        private_python=offer,
+        creates_environment=True,
+        impact={"target_kind": deprepair.TARGET_MANAGED, "private_python": offer},
+    )
+    card = convertdeps.ensure("/proj", SCRIPT)["card"]
+    assert card["downloads_python"] is True and card["download_bytes"] == 52 * 1048576
+    # 点主按钮 = 一次授权：回显卡片摘要后才装（含下载），且不对内置 runtime 记常驻同意
+    got = convertdeps.resolve("/proj", SCRIPT, confirmed_impact="digest-1")
+    assert got["status"] == "installed" and ("prepare", "p1", "digest-1") in fake_repair.calls
+    assert convertdeps.consented_envs() == []
+
+
+def test_a_stale_digest_on_the_builtin_card_never_installs(fake_repair, tmp_path):
+    _as(fake_repair, tmp_path, source=pool.SOURCE_BUNDLED)
+    got = convertdeps.resolve("/proj", SCRIPT, confirmed_impact="digest-OLD")
+    assert got["status"] == "hold" and got["code"] == "dependency_impact_changed"
     assert "prepare" not in _names(fake_repair)
 
 

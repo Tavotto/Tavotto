@@ -27,6 +27,7 @@ import {
   cancelPackageJob,
   fetchManagedPackages,
   planPackageJob,
+  rebuildManagedEnvironment,
   runPackageJob,
   type ManagedPackages,
   type PackageJob,
@@ -34,6 +35,7 @@ import {
 import { t } from '@/i18n'
 import { PackagesSettings } from '@/components/settings/PackagesSettings'
 import { currentProjectId } from '@/lib/session'
+import { useDepRepairStore } from '@/store/depRepairStore'
 import { usePackageStore } from '@/store/packageStore'
 import { useUiStore } from '@/store/uiStore'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -188,6 +190,7 @@ beforeEach(() => {
   planMock.mockReset()
   runMock.mockReset()
   cancelMock.mockReset()
+  vi.mocked(rebuildManagedEnvironment).mockReset()
   usePackageStore.setState({
     data: null,
     loading: false,
@@ -198,6 +201,7 @@ beforeEach(() => {
     errorText: '',
   })
   useUiStore.setState({ confirm: null })
+  useDepRepairStore.setState({ busy: false, rebuilding: {}, progress: null })
 })
 
 afterEach(() => {
@@ -230,8 +234,154 @@ describe('能力与禁用原因', () => {
       builtin_source: 'planned',
       user: [],
     })
-    expect(text()).toContain(pk('disabled.noBasePython'))
+    expect(text()).toContain(pk('disabled.noBasePython', { product: 'Tavotto', min: '3.10', max: '3.14' }))
+    expect(text()).not.toContain('{{')
     expect(input().disabled).toBe(true)
+  })
+
+  // ---- 没有合格基础解释器：不再叫用户去装 Python，而是自动准备（ADR 0063 / 0111）----
+  const OFFER = {
+    id: 'cpython-3.13.5-abc123def456',
+    version: '3.13.5',
+    target: 'macos-aarch64',
+    download_bytes: 52 * 1048576,
+    source_host: 'github.com',
+    required: true,
+    cached: false,
+    network_required: true,
+    origin: 'download' as const,
+  }
+  const NO_ENV = { ...LISTING.environment!, exists: false, in_use: false }
+
+  it('装的 Python 太新：一句话说清版本与支持范围，主按钮「自动准备」，大小说出口，点了就带授权 id 重建', async () => {
+    await mount({
+      ...LISTING,
+      capability: {
+        available: true,
+        reason: '',
+        private_python: OFFER,
+        rejected_python: { version: '3.15.2', direction: 'newer', min: '3.10', max: '3.14' },
+      },
+      environment: NO_ENV,
+      builtin_source: 'planned',
+      user: [],
+    })
+    const note = document.querySelector('[data-packages-python-prepare]')!
+    expect(note.textContent).toContain('3.15.2')
+    expect(note.textContent).toContain('3.10–3.14')
+    expect(note.textContent).toContain('52 MB')
+    expect(note.textContent).not.toContain('请安装')
+    expect(document.querySelector('[data-packages-disabled]')).toBeNull()
+    const { rebuildManagedEnvironment } = await import('@/lib/api')
+    await act(async () => byName(pk('python.prepare'))!.click())
+    expect(rebuildManagedEnvironment).toHaveBeenCalledWith(expect.any(String), OFFER)
+  })
+
+  it('完全没有 Python：同样自动准备；安装包自带的那份不提下载', async () => {
+    await mount({
+      ...LISTING,
+      capability: { available: true, reason: '', private_python: { ...OFFER, origin: 'bundled', download_bytes: 0 } },
+      environment: NO_ENV,
+      user: [],
+    })
+    const note = document.querySelector('[data-packages-python-prepare]')!
+    expect(note.textContent).toBe(pk('python.none', { product: 'Tavotto', size: '' }) + pk('python.prepare'))
+    expect(note.textContent).not.toContain('MB')
+  })
+
+  it('探测期间显示「正在检查」，结论出来只变一次：不先出现“请安装”', async () => {
+    const seen: string[] = []
+    const watch = new MutationObserver(() => seen.push(document.body.textContent ?? ''))
+    await mount({
+      ...LISTING,
+      capability: { available: true, reason: '', checking: true },
+      environment: NO_ENV,
+      user: [],
+    })
+    expect(text()).toContain(pk('python.checking'))
+    expect(document.querySelector('[data-packages-disabled]')).toBeNull()
+    expect(document.querySelector('[data-packages-python-prepare]')).toBeNull()
+    watch.observe(document.body, { childList: true, subtree: true, characterData: true })
+    // 后台探完：下一次取回结论
+    listMock.mockResolvedValue({
+      ...LISTING,
+      capability: { available: true, reason: '', private_python: OFFER },
+      environment: NO_ENV,
+      user: [],
+    })
+    await act(async () => usePackageStore.getState().load())
+    watch.disconnect()
+    expect(text()).not.toContain(pk('python.checking'))
+    expect(document.querySelector('[data-packages-python-prepare]')).not.toBeNull()
+    expect(seen.some((t) => t.includes(pk('disabled.noBasePython', { product: 'Tavotto', min: '3.10', max: '3.14' })))).toBe(false)
+  })
+
+  it('连私有 Python 也没有，且装的是太新的：说清版本与范围，不给“自动准备”', async () => {
+    await mount({
+      ...LISTING,
+      capability: {
+        available: false,
+        reason: 'managed_env_unavailable',
+        rejected_python: { version: '3.15.2', direction: 'newer', min: '3.10', max: '3.14' },
+      },
+      environment: NO_ENV,
+      user: [],
+    })
+    expect(text()).toContain(pk('python.tooNewManual', { product: 'Tavotto', version: '3.15.2', min: '3.10', max: '3.14' }))
+    expect(byName(pk('python.prepare'))).toBeUndefined()
+  })
+
+  it('首装没有基础解释器：计划带私有 Python，先确认（含下载大小），取消就不 run', async () => {
+    planMock.mockResolvedValue({ job: job({ creates_environment: true, private_python: OFFER }) })
+    await mount({ ...LISTING, capability: { available: true, reason: '', private_python: OFFER }, environment: NO_ENV, user: [] })
+    await type('lmfit')
+    const pending = act(async () => byName(pk('install'))!.click())
+    await act(async () => {})
+    const confirm = useUiStore.getState().confirm!
+    expect(JSON.stringify(confirm.body)).toContain('52')
+    await act(async () => confirm.resolve(false))
+    await pending
+    expect(runMock).not.toHaveBeenCalled()
+  })
+
+  it('重建时没有基础解释器：确认框说出下载大小，并回传授权 id', async () => {
+    await mount({ ...LISTING, capability: { available: true, reason: '', private_python: OFFER } })
+    const { rebuildManagedEnvironment } = await import('@/lib/api')
+    vi.mocked(rebuildManagedEnvironment).mockClear()
+    await rebuild()
+    const confirm = useUiStore.getState().confirm!
+    expect(confirm.body.key).toBe('settings.packages.confirm.rebuildBodyPython')
+    expect(JSON.stringify(confirm.body.values)).toContain('52')
+    await act(async () => confirm.resolve(true))
+    expect(rebuildManagedEnvironment).toHaveBeenCalledWith(expect.any(String), OFFER)
+  })
+
+  it.each(['done', 'failed'] as const)('点「自动准备」后重建到了终态（%s）：包管理页重新读清单，不停在“没有可用 Python / 尚未创建”', async (terminal) => {
+    const noEnv = { ...LISTING, capability: { available: true, reason: '', private_python: OFFER }, environment: NO_ENV, builtin_source: 'planned' as const, user: [] }
+    await mount(noEnv)
+    const { rebuildManagedEnvironment } = await import('@/lib/api')
+    vi.mocked(rebuildManagedEnvironment).mockResolvedValue({ started: true, progress_id: 'x' })
+    await act(async () => byName(pk('python.prepare'))!.click())
+    const id = vi.mocked(rebuildManagedEnvironment).mock.calls.at(-1)![0]
+    // 进行中：按钮禁用
+    expect((byName(pk('python.prepare')) as HTMLButtonElement).disabled).toBe(true)
+    listMock.mockClear()
+    listMock.mockResolvedValue({ ...LISTING })
+    await act(async () => {
+      useDepRepairStore.getState().onProgress({ plan_id: id, state: terminal, log: '', error: null, code: '', target_kind: 'tavotto_managed' } as never)
+    })
+    expect(listMock).toHaveBeenCalled()
+    expect(document.querySelector('[data-packages-python-prepare]')).toBeNull()
+    expect(useDepRepairStore.getState().rebuildRunningFor(currentProjectId())).toBe(false)
+  })
+
+  it('不是重建的终态（别的作业）不额外读清单', async () => {
+    await mount({ ...LISTING })
+    listMock.mockClear()
+    await act(async () => {
+      useDepRepairStore.getState().onProgress({ plan_id: 'someone-else', state: 'done', log: '', error: null, code: '', target_kind: 'tavotto_managed' } as never)
+    })
+    expect(listMock).not.toHaveBeenCalled()
   })
 
   it('环境正在被别的操作改动（busy）：按钮禁用，清单照常显示', async () => {

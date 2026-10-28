@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
+import { literal } from '@/i18n/message'
 import { formatDateTime } from '@/i18n/format'
-import type { PackageOp, PackageProgress, UserPackage } from '@/lib/api'
+import { privatePythonOrigin, type PackageOp, type PackageProgress, type PackagesCapability, type UserPackage } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { currentProjectId } from '@/lib/session'
 import { cn } from '@/lib/utils'
-import { repairCodeMessage } from '../DependencyRepairCard'
+import { privatePythonText, repairCodeMessage } from '../DependencyRepairCard'
 import { useDepRepairStore } from '@/store/depRepairStore'
 import { isPackageJobRunning, searchTerm, usePackageStore } from '@/store/packageStore'
 import { askConfirm } from '@/store/uiStore'
@@ -89,6 +90,14 @@ export function PackagesSettings() {
     return () => window.clearInterval(timer)
   }, [running])
 
+  // 基础解释器还在后台探：隔一会儿取一次，探完结论只变一次（不先隐藏提醒再冒出来）
+  const checking = !!data?.capability?.checking
+  useEffect(() => {
+    if (!checking) return
+    const timer = window.setInterval(() => void usePackageStore.getState().load(), 1500)
+    return () => window.clearInterval(timer)
+  }, [checking])
+
   const capability = data?.capability
   const available = !!capability?.available
   const locked = !available || running || busy || !!data?.busy
@@ -108,6 +117,15 @@ export function PackagesSettings() {
     const api = usePackageStore.getState()
     const job = await api.plan(op, target)
     if (!job) return false
+    // 首装且没有基础解释器：计划里带着私有 Python，授权要把它（含下载大小）说出口
+    if (job.creates_environment && job.private_python?.required) {
+      const ok = await askConfirm({
+        title: msg('settings.packages.confirm.privatePythonTitle', undefined, 'dialogs'),
+        body: literal(privatePythonText(job.private_python)),
+        confirmLabel: msg('settings.packages.confirm.privatePythonAction', undefined, 'dialogs'),
+      })
+      if (!ok) return false
+    }
     if (op === 'uninstall') {
       const ok = await askConfirm({
         title: msg('settings.packages.confirm.uninstallTitle', { name: job.distribution }, 'dialogs'),
@@ -143,15 +161,7 @@ export function PackagesSettings() {
     // 分区之间的间距由外壳统一给（`display: contents`）；这一页是管理页，信息架构不动，
     // 只把字级 / 按钮 / 折叠区收到与别的分区同一套
     <div data-packages-page className="contents">
-      {!available && capability && (
-        <p className="type-caption" data-packages-disabled>
-          {capability.reason === 'no_project'
-            ? pk('disabled.noProject', { product: PRODUCT_NAME })
-            : capability.reason === 'managed_env_unavailable'
-              ? pk('disabled.noBasePython')
-              : pk('disabled.other')}
-        </p>
-      )}
+      {capability && <PythonNotice capability={capability} envExists={!!data?.environment?.exists} />}
       {loadError && !data && <Notice tone="danger">{loadError}</Notice>}
 
       {/* ---------------- 环境（先说现状，再给动作；2026-09-13 审计 B39） ---------------- */}
@@ -282,6 +292,68 @@ export function PackagesSettings() {
  * `StatusPill`（就绪 / 未完成 / 尚未创建，2026-10-07 设计审计 §9.1：状态一律胶囊、带字）+ ⋯，「重建环境…」在 ⋯ 里
  * ——它是高影响、低频的动作，先确认、说清会删什么、重装什么；菜单项第二行就是那句说明。
  */
+/** 提示里的“（需下载约 N MB）”：只有这次真要下载才有（安装包自带 / 已缓存的不提） */
+function downloadSize(offer: PackagesCapability['private_python']): string {
+  return offer && privatePythonOrigin(offer) === 'download' && offer.download_bytes > 0
+    ? pk('python.downloadSize', { mb: Math.max(1, Math.round(offer.download_bytes / 1048576)) })
+    : ''
+}
+
+/**
+ * 这台电脑没有 {{product}} 能用的基础 Python 时的那一句（卡片纪律：一句话 + 一个主按钮）。
+ *
+ *   * 还在探：「正在检查 Python…」（探完再换，不先消失再冒出来）；
+ *   * 能自动准备（提供私有 Python）：一句话说清原因（没有 / 装的太新 / 太旧，带版本与支持范围）+ 主按钮「自动准备」，
+ *     字节数在句子里说出口，点按钮就是那一次授权（ADR 0063 / 0111）——不再叫用户去装 Python；
+ *   * 连这条路也没有：才让用户自己装，并说清要哪个范围。
+ * 环境已经在时不出现（重建走环境菜单）。
+ */
+function PythonNotice({ capability, envExists }: { capability: PackagesCapability; envExists: boolean }) {
+  useTranslation('dialogs')
+  const rebuildManaged = useDepRepairStore((s) => s.rebuildManaged)
+  const rebuildBusy = useDepRepairStore((s) => s.busy || s.rebuildRunningFor(currentProjectId()))
+  if (capability.reason === 'no_project') {
+    return (
+      <p className="type-caption" data-packages-disabled>
+        {pk('disabled.noProject', { product: PRODUCT_NAME })}
+      </p>
+    )
+  }
+  if (capability.checking) {
+    return (
+      <p className="type-caption" role="status" data-packages-python-checking>
+        {pk('python.checking')}
+      </p>
+    )
+  }
+  const rej = capability.rejected_python
+  const range = { min: rej?.min ?? '3.10', max: rej?.max ?? '3.14' }
+  const offer = capability.private_python
+  if (offer && !envExists) {
+    const why = rej
+      ? pk(rej.direction === 'newer' ? 'python.tooNew' : 'python.tooOld', { product: PRODUCT_NAME, version: rej.version, ...range, size: downloadSize(offer) })
+      : pk('python.none', { product: PRODUCT_NAME, size: downloadSize(offer) })
+    return (
+      <div className="flex items-center gap-3" data-packages-python-prepare>
+        <p className="type-caption min-w-0 flex-1">{why}</p>
+        <Button variant="primary" size="sm" disabled={rebuildBusy} onClick={() => void rebuildManaged(offer)}>
+          {pk('python.prepare')}
+        </Button>
+      </div>
+    )
+  }
+  if (capability.available) return null
+  return (
+    <p className="type-caption" data-packages-disabled>
+      {capability.reason !== 'managed_env_unavailable'
+        ? pk('disabled.other')
+        : rej
+          ? pk(rej.direction === 'newer' ? 'python.tooNewManual' : 'python.tooOldManual', { product: PRODUCT_NAME, version: rej.version, ...range })
+          : pk('disabled.noBasePython', { product: PRODUCT_NAME, ...range })}
+    </p>
+  )
+}
+
 function EnvironmentSection() {
   useTranslation('dialogs')
   const env = usePackageStore((s) => s.data?.environment)
@@ -296,14 +368,19 @@ function EnvironmentSection() {
         ' · ',
       )
     : pk('env.notCreated')
+  // 没有基础解释器（用户的 Python 被卸了 / 版本不在范围内）而提供私有 Python：重建要先准备它，
+  // 授权绑在这份载荷上（回传 id），确认框里把下载大小说出口
+  const offer = capability.private_python
   const rebuild = async () => {
     const ok = await askConfirm({
       title: msg('settings.packages.confirm.rebuildTitle', undefined, 'dialogs'),
-      body: msg('settings.packages.confirm.rebuildBody', undefined, 'dialogs'),
+      body: offer
+        ? msg('settings.packages.confirm.rebuildBodyPython', { python: privatePythonText(offer) }, 'dialogs')
+        : msg('settings.packages.confirm.rebuildBody', undefined, 'dialogs'),
       confirmLabel: msg('settings.packages.confirm.rebuildAction', undefined, 'dialogs'),
       danger: true,
     })
-    if (ok) await rebuildManaged()
+    if (ok) await rebuildManaged(offer ?? undefined)
   }
   return (
     <FormSection title={pk('envSection')}>

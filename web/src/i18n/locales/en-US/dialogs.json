@@ -1605,10 +1605,13 @@
         "uninstallTitle": "Uninstall {{name}}?",
         "rebuildTitle": "Rebuild this project’s environment?",
         "rebuildBody": "Deletes the current environment, creates a new one and reinstalls every package on record. Figures that use it cannot render meanwhile; the package records are kept.",
-        "rebuildAction": "Rebuild"
+        "rebuildAction": "Rebuild",
+        "rebuildBodyPython": "Deletes the current environment, creates a new one and reinstalls every package on record. Figures that use it cannot render meanwhile; the package records are kept. {{python}}",
+        "privatePythonTitle": "Set up Python first?",
+        "privatePythonAction": "Continue"
       },
       "disabled": {
-        "noBasePython": "No usable Python found. Install 3.10 or newer, then come back here.",
+        "noBasePython": "This computer has no Python {{product}} can use ({{min}}–{{max}}), and none can be set up automatically. Install one, then come back here.",
         "noProject": "Open a project to manage its {{product}} environment.",
         "other": "Package management is not available right now."
       },
@@ -1639,7 +1642,8 @@
         "log": "Detailed log",
         "preparing": "Preparing to {{op}} {{name}}…",
         "progressAria": "Package operation progress",
-        "verifying": "Verifying the environment can still render…"
+        "verifying": "Verifying the environment can still render…",
+        "downloading_python": "Preparing Python…"
       },
       "loading": "Loading…",
       "network": {
@@ -1705,6 +1709,16 @@
         "empty": "No environment is allowed to install packages automatically yet.",
         "loading": "Loading…",
         "revoke": "Revoke"
+      },
+      "python": {
+        "checking": "Checking Python…",
+        "none": "This computer has no usable Python; {{product}} can set one up for you{{size}}.",
+        "tooNew": "The Python {{version}} you installed is newer than {{product}} supports ({{min}}–{{max}}); {{product}} can set one up for you{{size}}.",
+        "tooOld": "The Python {{version}} you installed is older than {{product}} supports ({{min}}–{{max}}); {{product}} can set one up for you{{size}}.",
+        "tooNewManual": "The Python {{version}} you installed is newer than {{product}} supports ({{min}}–{{max}}). Install a {{min}}–{{max}} version, then come back here.",
+        "tooOldManual": "The Python {{version}} you installed is older than {{product}} supports ({{min}}–{{max}}). Install a {{min}}–{{max}} version, then come back here.",
+        "downloadSize": " (about {{mb}} MB to download)",
+        "prepare": "Set up automatically"
       }
     },
     "project": {

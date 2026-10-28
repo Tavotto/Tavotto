@@ -1713,6 +1713,52 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(resolveConvertDependencies).not.toHaveBeenCalled()
     })
 
+    it('内置 runtime 缺包：不再请用户换环境——一句话（含要下载的 Python 大小）+ 一个主按钮「自动准备并安装」；选别的环境是次要入口', async () => {
+      const builtin = { ...base, kind: 'ask_once' as const, env: { kind: 'builtin' as const, name: 'python' }, action: 'install_managed' as const, packages: ['adjusttext'], downloads_python: true, download_bytes: 52 * 1048576 }
+      await begin(builtin)
+      expect(line()).toBe('内置环境不往里装包。Tavotto 会为这个项目自动准备一个独立环境，并装上 adjusttext（需先下载约 52 MB 的 Python）')
+      const btn = foreignCard()?.querySelector('[data-convert-deps-install]') as HTMLButtonElement
+      expect(btn.textContent).toBe('自动准备并安装')
+      expect(visibleSentenceCount(foreignCard()!, 'zh-CN')).toBeLessThanOrEqual(1)
+      expect(visiblePrimaryButtons(foreignCard()!)).toBe(1)
+      expect(foreignCard()?.querySelector('[data-convert-choose-env]')?.textContent).toBe('选别的环境')
+      expect(host.textContent).not.toContain('请给项目换一个环境')
+      await act(async () => btn.click())
+      expect(resolveConvertDependencies).toHaveBeenCalledWith('sid-r', 'dg-1', expect.anything())
+    })
+
+    it('系统自带 Python 缺包：同样默认自动准备受管环境，一个主按钮 + 次要“选别的环境”', async () => {
+      await begin({ ...base, kind: 'ask_once' as const, env: { kind: 'system' as const, name: 'python3' }, action: 'install_managed' as const, packages: ['adjusttext'] })
+      expect(line()).toBe('这个 Python 是系统自带的，不往里装包。Tavotto 会为这个项目自动准备一个独立环境，并装上 adjusttext')
+      expect(visiblePrimaryButtons(foreignCard()!)).toBe(1)
+      expect(foreignCard()?.querySelector('[data-convert-choose-env]')?.textContent).toBe('选别的环境')
+    })
+
+    it('内置环境下名单外的包：标题提到受管环境', async () => {
+      await begin({ ...uncommon, env: { kind: 'builtin' as const, name: 'python' }, action: 'install_managed' as const })
+      expect(line()).toBe('obscure-pkg 这个包不常见，确认是你要的再装（会装进 Tavotto 为本项目准备的独立环境）。')
+    })
+
+    it('名单外的包 + 要下载私有 Python：不常见卡也说出下载与大小（点“安装一次”同时授权那次下载）', async () => {
+      await begin({ ...uncommon, env: { kind: 'builtin' as const, name: 'python' }, action: 'install_managed' as const, downloads_python: true, download_bytes: 52 * 1048576 })
+      expect(line()).toBe('obscure-pkg 这个包不常见，确认是你要的再装（会装进 Tavotto 为本项目准备的独立环境）。（需先下载约 52 MB 的 Python）')
+    })
+
+    it('名单外的包、非内置环境也要下载私有 Python：同样说出口；不下载时不提', async () => {
+      await begin({ ...uncommon, downloads_python: true, download_bytes: 30 * 1048576 })
+      expect(line()).toContain('（需先下载约 30 MB 的 Python）')
+    })
+
+    it('名单外的包、不下载 Python：句子里不提下载（对照）', async () => {
+      await begin({ ...uncommon, env: { kind: 'builtin' as const, name: 'python' }, action: 'install_managed' as const })
+      expect(line()).not.toContain('下载')
+    })
+
+    it('内置 runtime 缺包、不用下载 Python：句子里不提下载', async () => {
+      await begin({ ...base, kind: 'ask_once' as const, env: { kind: 'builtin' as const, name: 'python' }, action: 'install_managed' as const, packages: ['adjusttext'] })
+      expect(line()).toBe('内置环境不往里装包。Tavotto 会为这个项目自动准备一个独立环境，并装上 adjusttext')
+    })
+
     it('系统 Python：选完环境且解释器变了 → 自动 replan，卡片说“正在按新环境重新检查…”，结果换成对应的新卡；没变不动', async () => {
       await begin(system)
       vi.mocked(replanConvertDependencies).mockReset().mockResolvedValue({ session: 'sid-r', state: 'resuming' })

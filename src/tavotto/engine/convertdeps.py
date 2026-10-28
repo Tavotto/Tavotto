@@ -17,8 +17,10 @@ worker 退役全在里面）。本模块只回答两件事：**这一次能不�
 
 * `project_venv`（项目自己的 `.venv`）/ `managed`（Tavotto 受管环境的现有一代，且计划不新建环境、不下载私有 Python）：
   名单内的包**直接装**（保持上一轮的口径；摘要由服务端同次调用回显，见下）；
-* `system`（OS 自带 / `EXTERNALLY-MANAGED`）与 `builtin`（内置 runtime / Tavotto 自建 worker-env / 本进程解释器）：**永不装**，
-  卡片 `system`：请用户给项目换环境（主按钮打开现有的「选择运行环境」）；
+* `system`（OS 自带 / `EXTERNALLY-MANAGED`）与 `builtin`（内置 runtime / Tavotto 自建 worker-env / 本进程解释器）：**不往里面装**，但也不把“换环境”的负担丢给用户——
+  默认动作 = `install_managed`：给本项目准备 Tavotto 受管环境（`joint_target_for` 本来就把 builtin 归到受管目标），没有基础
+  解释器时计划自带私有 Python 下载（`downloads_python` / `download_bytes`，一次授权）。卡片 `ask_once`（名单外则 `uncommon`），
+  **不记常驻同意**（装完项目就不再是 builtin 了）；“选别的环境”留作次要入口；
 * 其余（Conda、设置里指定的、环境变量固定的、项目记录里用户采用的……）= `other`：**第一次**需要装时出卡片 `ask_once`
   （“要给这个环境装缺的包吗？”），用户点主按钮才记下**对这个环境**的常驻同意（`ai.convert.auto_install_envs`，键 = 解释器路径的
   sha256 前 16 位，不存明文路径；值只有“种类 + 名字”供设置页列出与撤销）；之后同一环境再缺名单内的包就直接装。
@@ -95,7 +97,7 @@ SKIP_REASONS = ("disabled", "plan_unavailable", "plan_blocked", "plan_refused")
 #: 卡片种类闭集（前端按它分支，文案中英两份）
 CARD_ASK_ONCE = "ask_once"  # 这个环境第一次需要装：问一次，主按钮 = 装且以后都自动装
 CARD_UNCOMMON = "uncommon"  # 名单外的包：点名，确认是你要的再装（只装这一次）
-CARD_SYSTEM = "system"  # 系统自带 / 内置 runtime：不装，请给项目换环境
+CARD_SYSTEM = "system"  # 历史卡片种类（不再产出：系统自带 / 内置 runtime 现在默认走受管环境）
 CARD_KINDS = (CARD_ASK_ONCE, CARD_UNCOMMON, CARD_SYSTEM)
 
 #: 环境种类闭集
@@ -307,6 +309,8 @@ def _card(
         "target": str(impact.get("target_kind") or ""),
         "creates_environment": bool(impact.get("creates_environment")),
         "downloads_python": bool(impact.get("private_python")),
+        # 说出口的字节数（授权要说出大小）：安装包自带 / 已缓存的是 0
+        "download_bytes": int((impact.get("private_python") or {}).get("download_bytes") or 0),
         "modifies_user_environment": bool(impact.get("modifies_user_environment")),
     }
 
@@ -433,21 +437,11 @@ def _decide(project: str, stage_rel: str, *, clicked: bool, confirmed_impact: st
     if sv["verdict"] == STATUS_SKIPPED:
         return _result(STATUS_SKIPPED, reason=sv["reason"])
     env, names = sv["env"], sv["names"]
-    outside = [n for n in names if not in_allowlist(n)]
     kind = env["kind"]
 
-    if kind in (KIND_SYSTEM, KIND_BUILTIN):
-        # 系统自带 / 内置 runtime：永不往里装（点击也不行：这是边界，不是偏好）
-        return _result(
-            STATUS_HOLD,
-            missing=names,
-            reason=CARD_SYSTEM,
-            card=_card(
-                CARD_SYSTEM, env=env, names=names, outside=outside, action=ACTION_CHOOSE_ENV
-            ),
-        )
-
     direct = kind in DIRECT_KINDS
+    #: 内置 runtime / OS 自带 Python：都不往里装，默认给本项目准备受管环境并装进去（不改它们），不记常驻同意
+    builtin = kind in (KIND_BUILTIN, KIND_SYSTEM)
     target_kind = sv["target_kind"]
     plan, code = _make_plan(project, stage_rel, target_kind)
     if plan is None:
@@ -475,14 +469,14 @@ def _decide(project: str, stage_rel: str, *, clicked: bool, confirmed_impact: st
                 code="dependency_impact_changed",
                 card=card,
             )
-        if not direct and not plan_outside and not has_consent(env["key"]):
+        if not direct and not builtin and not plan_outside and not has_consent(env["key"]):
             grant(
                 env
             )  # 点“装，以后这个环境都自动装”= 对这个环境记下常驻同意（名单外的包只装这一次，不记）
         return _install(plan, plan_names, cancel, confirmed_impact)
 
     # 自动路径（任务内的校验运行）：名单内 + 已授权的环境才装
-    consented = direct or has_consent(env["key"])
+    consented = direct or (not builtin and has_consent(env["key"]))
     needs_user = (
         bool(plan_outside)
         or not consented
