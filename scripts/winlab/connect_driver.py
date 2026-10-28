@@ -282,8 +282,17 @@ def drive(ns: argparse.Namespace) -> dict:
                 }
             sid = page_session(cdp, ns.page_timeout)
             if sid is None:
-                return {**result, "error": "no page on the sidecar origin"}
-            result.update(operate(cdp, sid, ns, out_dir, prog))
+                result["error"] = "no page on the sidecar origin"
+            else:
+                result.update(operate(cdp, sid, ns, out_dir, prog))
+            if result.get("error"):
+                # 证据文件不回传 Mac：出错时窗口截图（winlab shot 取）与此刻的全部调试目标进结果
+                P._screenshot(result["window"]["rect"], out_dir / f"{ns.label}-window.png")
+                with contextlib.suppress(D.CDPError, TimeoutError):
+                    result["targets"] = [
+                        {"type": t.get("type"), "url": str(t.get("url", ""))[:120]}
+                        for t in cdp.call("Target.getTargets").get("targetInfos", [])
+                    ][:12]
         finally:
             tree.close()  # Job 结束整棵进程树（壳、sidecar、WebView2、它拉起的 tavotto-cli）
     return result

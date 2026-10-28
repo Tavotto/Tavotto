@@ -3927,6 +3927,8 @@ def wipe_ondisk_key(run_dir: Path, env: dict, key: str) -> dict:
 
 
 WORKBUDDY_LOGIN_HOST = "workbuddy.cn"
+#: WorkBuddy 自动更新把新版本安装包下进 TEMP 下的这个目录（Lab 实测 `workbuddy-update-x64\WorkBuddy-Setup-5.9.3.….exe`）
+WORKBUDDY_UPDATE_GLOB = "workbuddy-update-*"
 #: WorkBuddy 的后台进程（daemon / 运行时）映像路径里都带这个；删「家」之前要先结束它们（否则 WinError 5）
 WORKBUDDY_PROCESS_TOKENS = ("workbuddy",)
 QR_LOGIN_TIMEOUT_S = 600
@@ -5090,6 +5092,14 @@ def _desktop_live_body(
     def one_round(n: int, prompt: str) -> dict:
         pf = work / f"prompt-{n}.txt"
         pf.write_text(prompt, encoding="utf-8")
+        if host.id == "workbuddy":
+            # WorkBuddy 在后台把新版本下进 TEMP（= work），下一次启动就去装它、9 s 退出（Lab run 20261028T115015Z-01d080：
+            # 第二轮没起来）。固定版本的验收不让宿主中途自己升级：每轮启动前删掉下好的更新包，报告记下
+            for d in sorted(work.glob(WORKBUDDY_UPDATE_GLOB)):
+                _rmtree_no_follow(d)
+                base.setdefault("host_update_removed", []).append(
+                    {"round": n, "dir": d.name, "left": d.exists()}
+                )
         argv = driver_argv(
             py,
             driver,
