@@ -444,8 +444,13 @@ def _import_shadow_entry(display: Path, source: Path, stem: str):
 
 
 _SPAWN_BOOTSTRAP = """\
-# Tavotto 影子脚本的 spawn 子进程引导（自动生成，勿改）：子进程按 init_main_from_path 重跑本文件，
-# 本文件让子进程读到与父进程同一份候选字节，且 __file__ / sys.argv[0] 仍是项目里的显示路径。
+# Tavotto 影子脚本的 spawn 引导（自动生成，勿改）。同一个文件两种用法：
+# 1) 子进程：multiprocessing 按 init_main_from_path 以 __mp_main__ 重跑本文件——让子进程读到与父进程同一份候选字节，
+#    且 __file__ / sys.argv[0] 仍是项目里的显示路径；
+# 2) 父进程：worker 按路径加载本文件后调 install()，包住 get_preparation_data（只改子进程 main 的路径，不碰任何对象）。
+# 引擎模块（src/tavotto/engine）自己不 import multiprocessing（ADR 0014 §6 / 0020 §8：Figure 不出进程）；
+# 这份生成的文件才碰它，且全文没有 pickle / Figure / 任何写。
+import importlib
 import importlib.abc
 import importlib.machinery
 import importlib.util
@@ -465,7 +470,47 @@ def _norm(p):
 
 _KEY = _norm(_DISPLAY)
 
-if _CFG["mode"] == "main":
+
+def install():
+    import multiprocessing.spawn as mp_spawn
+
+    patched = []
+    boot_path = _CFG["boot"]
+
+    def wrap(mod):
+        orig = getattr(mod, "get_preparation_data", None)
+        if orig is None:
+            return
+
+        def get_preparation_data(*args, **kwargs):
+            data = orig(*args, **kwargs)
+            main_path = data.get("init_main_from_path")
+            ours = main_path is not None and _norm(main_path) == _KEY
+            if ours or _CFG["mode"] != "main":
+                data.pop("init_main_from_name", None)
+                data["init_main_from_path"] = boot_path
+            return data
+
+        mod.get_preparation_data = get_preparation_data
+        patched.append((mod, orig))
+
+    wrap(mp_spawn)
+    if _CFG["loky"]:
+        for name in ("joblib.externals.loky.backend.spawn", "loky.backend.spawn"):
+            try:
+                wrap(importlib.import_module(name))
+            except Exception:
+                continue
+
+    def restore():
+        while patched:
+            mod, orig = patched.pop()
+            mod.get_preparation_data = orig
+
+    return restore
+
+
+if __name__ == "__mp_main__" and _CFG["mode"] == "main":
     _real = io.open_code
 
     def _open_code(path):
@@ -481,7 +526,7 @@ if _CFG["mode"] == "main":
     finally:
         io.open_code = _real
     globals().update(_inner)
-else:
+elif __name__ == "__mp_main__":
 
     class _ShadowLoader(importlib.machinery.SourceFileLoader):
         def get_data(self, path):
@@ -505,69 +550,37 @@ else:
 
 
 def _install_spawn_shadow(display: Path, source: Path, entry_is_main: bool, boot_dir: Path):
-    """影子脚本 + `multiprocessing` 的 spawn / forkserver（Windows、macOS 默认）：子进程按 `__main__.__file__`
+    """影子脚本 + 子进程启动方式 spawn / forkserver（Windows、macOS 默认）：子进程按 `__main__.__file__`
     重新执行显示路径，而显示路径上没有文件（转换）或是旧字节（改图），也继承不了父进程临时替换的 `io.open_code`。
 
-    做法：包一层 `get_preparation_data`（`multiprocessing.spawn`，`ProcessPoolExecutor` 同走它；候选 import 了
-    joblib 时再包 loky 的同名函数），把子进程的 main 指向**沙盒里**一个自动生成的引导文件（不碰用户项目，也不往候选目录加文件）。
-    引导文件在子进程里装同样的 `open_code` 重定向后以 `__mp_main__` 跑显示路径——`__file__` / `sys.argv[0]` 仍是
-    显示路径、cwd 沿用父进程（原脚本目录），`dirname(__file__)` 读数据与父进程一致；入口不是 `__main__`（import 入口模块）
-    时，引导文件改装一个只认入口模块名的 meta_path 查找器，让子进程 unpickle 时 import 到的也是候选字节。
-    返回还原函数；写不出引导文件（沙盒不可写）就什么都不包——退回到旧行为，不影响父进程。"""
+    做法：在**沙盒里**（不碰用户项目，也不往候选目录加文件）写一份自动生成的引导文件 `_SPAWN_BOOTSTRAP`，按路径加载后
+    调它的 `install()`：包一层 `get_preparation_data`（`ProcessPoolExecutor` 同走它；候选 import 了 joblib 时再包 loky 的同名函数），
+    把子进程的 main 指向这份引导文件。**本模块不 import 那个多进程库**——碰它的只有生成的文件（引擎里 Figure 不出进程的门禁，
+    ADR 0014 §6 / 0020 §8）。子进程里引导文件装同样的 `open_code` 重定向后以 `__mp_main__` 跑显示路径——`__file__` /
+    `sys.argv[0]` 仍是显示路径、cwd 沿用父进程（原脚本目录），`dirname(__file__)` 读数据与父进程一致；入口不是 `__main__`
+    （import 入口模块）时，改装一个只认入口模块名的 meta_path 查找器，让子进程 unpickle 时 import 到的也是候选字节。
+    返回还原函数；写不出 / 加载不了引导文件（沙盒不可写）就什么都不包——退回到旧行为，不影响父进程。"""
     boot = boot_dir / "_tavotto_shadow_spawn_main.py"
+    try:
+        loky = bool(_static_import_roots(source) & {"joblib", "loky"})
+    except Exception:  # noqa: BLE001 — 静态扫描失败只是少包一层
+        loky = False
     cfg = {
         "display": str(display),
         "source": str(source),
         "mode": "main" if entry_is_main else "entry",
         "stem": display.stem,
+        "boot": os.fspath(boot),
+        "loky": loky,
     }
     try:
         boot.write_text(_SPAWN_BOOTSTRAP.replace("__CFG__", repr(cfg)), encoding="utf-8")
-    except OSError:
+        spec = importlib.util.spec_from_file_location("_tavotto_shadow_spawn_parent", boot)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.install()
+    except Exception:  # noqa: BLE001 — 引导装不上就退回旧行为
         return lambda: None
-    boot_path = os.fspath(boot)
-    target = _norm_path(display)
-
-    patched: list[tuple[object, object]] = []
-
-    def wrap(mod) -> None:
-        orig = getattr(mod, "get_preparation_data", None)
-        if orig is None:
-            return
-
-        def get_preparation_data(*args, **kwargs):
-            data = orig(*args, **kwargs)
-            main_path = data.get("init_main_from_path")
-            ours = main_path is not None and _norm_path(main_path) == target
-            if ours or not entry_is_main:
-                data.pop("init_main_from_name", None)
-                data["init_main_from_path"] = boot_path
-            return data
-
-        get_preparation_data._tavotto_orig = orig
-        mod.get_preparation_data = get_preparation_data
-        patched.append((mod, orig))
-
-    import multiprocessing.spawn as mp_spawn  # noqa: PLC0415
-
-    wrap(mp_spawn)
-    try:
-        roots = _static_import_roots(source)
-    except Exception:  # noqa: BLE001 — 静态扫描失败只是少包一层
-        roots = frozenset()
-    if roots & {"joblib", "loky"}:
-        for name in ("joblib.externals.loky.backend.spawn", "loky.backend.spawn"):
-            try:
-                wrap(importlib.import_module(name))
-            except Exception:  # noqa: BLE001 — 没装 joblib / loky 就没有这条路径
-                continue
-
-    def restore() -> None:
-        while patched:
-            mod, orig = patched.pop()
-            mod.get_preparation_data = orig
-
-    return restore
 
 
 class SafeSession(figsession.LiveFigureSession):
