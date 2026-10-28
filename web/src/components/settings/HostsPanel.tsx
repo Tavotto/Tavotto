@@ -14,6 +14,7 @@ import {
   type HostStep,
 } from '@/lib/hostConnect'
 import { isDesktop, pickDirectory, runHostIntegration } from '@/lib/desktop'
+import { BrandLogo } from './BrandLogo'
 import { Button, IconButton } from '../ui/Button'
 import { FieldGroup, FormSection } from '../ui/FormSection'
 import { Menu, MenuItem } from '../ui/Menu'
@@ -116,8 +117,11 @@ export function HostsPanel() {
             !result.ok &&
             FOLDER_ERRORS.includes(result.error_code ?? '')
           return (
-            <div key={h.id} className="contents" data-host-row={h.id}>
-              <SettingRow label={h.label} status={statusFor(h.id)}>
+            <div key={h.id} className="flex min-h-12 flex-col gap-2 [&>[data-setting-row]]:min-h-0" data-host-row={h.id}>
+              <SettingRow
+                label={h.label}
+                leading={<BrandLogo logo={h.id} size={ICON_SIZE.md} />}
+                status={statusFor(h.id)}>
                 {!h.installed ? (
                   <span className="text-sm text-ink-3" data-host-missing>
                     {tx('notDetected')}

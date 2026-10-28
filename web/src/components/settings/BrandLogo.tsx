@@ -13,6 +13,11 @@ const ALIAS: Record<string, string> = {
   google: 'gemini',
   tongyi: 'qwen',
   chatglm: 'zhipu',
+  // 接入 AI 编辑器的宿主 id（engine/hostconnect.py）：Claude Code / Claude 桌面版用 Claude 标志；
+  // ZCode 是 Z.ai（智谱）的，lobe-icons 没有 ZCode 专属标志，取 Z.ai 单色标志
+  'claude-code': 'claude',
+  'claude-desktop': 'claude',
+  zcode: 'zai',
 }
 
 /**

@@ -105,6 +105,7 @@ export const settingRowLabelId = (controlId: string) => `${controlId}-label`
 
 export function SettingRow({
   label,
+  leading,
   description,
   help,
   helpLabel,
@@ -138,6 +139,8 @@ export function SettingRow({
   children?: ReactNode
   /** 控件的 id：给了标签就是 `<label htmlFor>`，点文字等于点控件。**控件必须一直挂着**（指向未挂载的输入是坏标签） */
   controlId?: string
+  /** 标题左侧的裸图标（厂商标志之类；无框无底）：放在 28px 标题盒里，与标题文字同一条中线，与标题间距 10px */
+  leading?: ReactNode
   /** normal 48px（默认）/ compact 32px（密集字段清单，不放说明） */
   density?: 'normal' | 'compact'
   /** fixed：控件落在定宽的控件列；fill：控件整行宽，落到标题下一行 */
@@ -173,6 +176,11 @@ export function SettingRow({
       <div className="flex min-w-0 flex-col">
         {/* 标题行是一个与控件同高的 28px 盒：控件对齐它，不对齐整行中线 */}
         <span className="flex min-h-7 items-center gap-1">
+          {leading != null && (
+            <IconSlot data-setting-leading className="mr-1.5">
+              {leading}
+            </IconSlot>
+          )}
           <LabelTag
             id={controlId ? settingRowLabelId(controlId) : undefined}
             htmlFor={controlId}
