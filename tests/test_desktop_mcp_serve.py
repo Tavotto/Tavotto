@@ -279,14 +279,16 @@ def test_the_workflow_gate_catches_a_missing_or_commented_out_canvas_step():
 
 
 def _run_targets(fn: ast.FunctionDef) -> list[str]:
-    """`main()` 里**真正会执行**的 `run([...])` 调用，按出现顺序，各取参数里的字符串常量拼起来。
-    注释不进 AST，所以被注释掉的调用不在这里（Codex #1482 P1：子串位置判不出它被注释了）。"""
+    """`main()` **最外层**一定会执行的 `run([...])` 语句，按顺序，各取参数里的字符串常量拼起来。
+    只看顶层语句：注释不进 AST；`if` 分支（含 `if False:` 死分支）与内嵌函数里的调用都不算——它们不一定执行
+    （Codex #1482 两轮 P1）。build_desktop 的构建步骤本来就都写在 main 的顶层。"""
     out = []
-    for node in ast.walk(fn):
-        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "run" and node.args:
-            consts = [n.value for n in ast.walk(node.args[0]) if isinstance(n, ast.Constant)]
-            out.append((node.lineno, " ".join(str(c) for c in consts)))
-    return [text for _, text in sorted(out)]
+    for stmt in fn.body:
+        call = stmt.value if isinstance(stmt, ast.Expr) else None
+        if isinstance(call, ast.Call) and getattr(call.func, "id", None) == "run" and call.args:
+            consts = [n.value for n in ast.walk(call.args[0]) if isinstance(n, ast.Constant)]
+            out.append(" ".join(str(c) for c in consts))
+    return out
 
 
 def canvas_before_pyinstaller(src: str) -> bool:
@@ -305,6 +307,9 @@ def test_build_desktop_builds_the_canvas_before_pyinstaller():
     line = next(ln for ln in src.splitlines() if '"build_mcp_widget.py"' in ln)
     assert not canvas_before_pyinstaller(src.replace(line, "    # " + line.strip()))
     assert not canvas_before_pyinstaller(src.replace(line, ""))
+    # 挪进死分支、或挪进一个没人调用的内嵌函数：都不一定执行，也必须翻红
+    assert not canvas_before_pyinstaller(src.replace(line, "    if False:\n    " + line))
+    assert not canvas_before_pyinstaller(src.replace(line, "    def _later():\n    " + line))
 
 
 @pytest.mark.parametrize(
