@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { KeyRound, Sparkles } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import type { AiConnection, AiVendor, AiVendorMethod } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { StatusPill } from '../../ui/StatusPill'
@@ -97,9 +97,10 @@ export function MethodList({
                 m.available && !clickable && 'cursor-default hover:bg-surface',
               )}
             >
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-group text-ink-2">
+              {/* 无框 16px，坐在名字（第一行，text-base）的中线上 */}
+              <IconSlot className="self-start text-base text-ink-2">
                 <Icon size={ICON_SIZE.md} aria-hidden />
-              </span>
+              </IconSlot>
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-base font-medium text-ink">{methodName(m)}</span>
                 <span className="type-caption truncate">{m.available ? methodHint(vendor, m) : cx('needsInstall')}</span>

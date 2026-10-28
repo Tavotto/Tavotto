@@ -17,7 +17,7 @@ import { ProgressBar } from '../ui/ProgressBar'
 import { Check, File as FileIcon, Plus, Trash2, X } from '../ui/icons'
 import { useUiStore } from '@/store/uiStore'
 import { msg } from '@/i18n/message'
-import { ICON_SIZE } from '../ui/Icon'
+import { ICON_SIZE, IconSlot } from '../ui/Icon'
 import { CopyButton } from '../settings/CopyButton'
 import { WeComQrImage, useWeComContactVisible } from '../settings/WeComContact'
 import { ReplyPaper } from './ReplyPaper'
@@ -324,10 +324,11 @@ export function ContactDialog() {
       role="status"
       data-contact-status="done"
     >
-      <span className="flex size-12 items-center justify-center rounded-full bg-ok-surface text-ok-content">
-        <Check size={ICON_SIZE.lg} />
-      </span>
-      <p className="type-section" data-contact-sent-title>
+      {/* 无底盘的 ok 色对勾，与标题同一行同一中线（手帐线稿 2026-10-28；原来是 48px 绿底圆盘） */}
+      <p className="type-section flex items-center justify-center gap-1.5" data-contact-sent-title>
+        <IconSlot aria-hidden className="text-ok-content">
+          <Check size={ICON_SIZE.md} />
+        </IconSlot>
         {cs('sentTitle')}
       </p>
       <p className="text-sm text-ink-2" data-contact-inbox-missing={s.inboxMissing ? '' : undefined}>

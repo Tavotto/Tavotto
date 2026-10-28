@@ -8,7 +8,7 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, FileCodeCorner, GripVertical, Image } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { Spinner } from '@/components/ui/Spinner'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { DURATION, tween } from '@/lib/motion'
@@ -265,9 +265,9 @@ export function DemoImportStep() {
                   className="absolute inset-0 flex animate-fade-in flex-col rounded-lg bg-surface p-3 shadow-[0_8px_24px_color-mix(in_srgb,var(--color-shadow)_6%,transparent)] inset-ring inset-ring-border"
                 >
                   <span data-tutorial-imported="" className="flex items-center gap-2.5 text-base text-ink">
-                    <span className="grid h-8 w-8 place-items-center rounded-md bg-field text-ink-2">
-                      <FileCodeCorner size={ICON_SIZE.sm} />
-                    </span>
+                    <IconSlot className="text-ink-2">
+                      <FileCodeCorner size={ICON_SIZE.md} />
+                    </IconSlot>
                     <span className="font-mono font-medium">{name}</span>
                     <span className="ml-auto text-sm text-ink-3">{t('onboarding.import.builtin')}</span>
                     <span className="mr-1 grid h-[18px] w-[18px] place-items-center rounded-full bg-ok text-surface">
@@ -341,12 +341,13 @@ export function DemoImportStep() {
                 transform: lifted ? `translate(${drag.dx}px, ${drag.dy}px) scale(1.03)` : 'rotate(-5deg)',
               }}
             >
-              <span className="grid h-14 w-14 shrink-0 place-items-center rounded-lg bg-field text-ink-2">
-                <FileCodeCorner size={ICON_SIZE.lg} className="h-7 w-7" />
-              </span>
-              <span className="flex min-w-0 flex-col gap-0.5">
+              {/* 无框图标，坐在文件名（第一行，type-title 20px 行高）的中线上；说明在名字下、与名字左对齐 */}
+              <span className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5">
+                <IconSlot className="type-title text-ink-2">
+                  <FileCodeCorner size={ICON_SIZE.lg} />
+                </IconSlot>
                 <span className="type-title truncate font-mono font-medium">{name}</span>
-                <span className="truncate text-sm text-ink-3">{t('onboarding.import.cardHint')}</span>
+                <span className="col-start-2 truncate text-sm text-ink-3">{t('onboarding.import.cardHint')}</span>
               </span>
               <GripVertical size={ICON_SIZE.lg} className="ml-auto shrink-0 text-ink-faint" aria-hidden="true" />
             </div>

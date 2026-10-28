@@ -48,6 +48,7 @@ import { untruncatedLabel } from '../inspector/identityCrumbs'
 import { engineLabel, groupName, roleName, unsupportedOf } from '../inspector/roles/registry'
 import { IconButton } from '../ui/Button'
 import { EmptyLine } from '../ui/EmptyLine'
+import { EmptyState } from '../ui/EmptyState'
 import { BackgroundChoice } from '../inspector/ElementInspector'
 import { MenuItem } from '../ui/Menu'
 import { RowMenu } from '../ui/RowMenu'
@@ -292,15 +293,18 @@ export function ElementTree({ chrome = 'drawer' }: { chrome?: 'drawer' | 'bare' 
       )
     }
     return (
-      <EmptyLine
+      // 与改图面板「选中一张可编辑的图」是同一句话、同一幅线稿：抽屉够高，放得下 EmptyState（手帐线稿 2026-10-28）；
+      // 列表里其余的空态（需要渲染 / 无匹配 / 被拒）仍是一行灰字——那些是列表顶部的状态，不是整屏的空
+      <EmptyState
+        art="select"
+        data-element-tree-no-panel
+        title={et('noPanelTitle')}
         action={{
           label: et('locateEditable'),
           // 选中即够：这棵树的目标面板就是「选中的那张可编辑的图」，不必先进编辑态
           onClick: () => useSelectionStore.getState().set([editable[0].id]),
         }}
-      >
-        {et('noPanelTitle')}
-      </EmptyLine>
+      />
     )
   }
 

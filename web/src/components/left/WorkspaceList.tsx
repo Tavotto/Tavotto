@@ -32,7 +32,7 @@ const ws = (key: string, values?: Record<string, unknown>) =>
  * 与 Project Picker 的分工：Picker 是「还没有项目时」的整屏入口（含教程、粘贴路径）；
  * 这里是「已经在干活时」换图库。两处的判据共用 `lib/recentProjects`（同名区分、
  * 筛选、失效分组），「打开文件夹 / 新建项目」共用 `useProjectEntry`，**行共用 `ProjectRow`**
- * （`ProjectPickerRow.tsx`，2026-10-07 设计审计 §10.3：这里 `density="drawer"`）。
+ * （`ProjectPickerRow.tsx`，2026-10-07 设计审计 §10.3；「全部项目」页 2026-10-28 起改用索引行）。
  *
  * 当前项目是顶上一张 subtle 卡（不是一行选中行），**不再出现在收藏里**——此前它被收藏时一屏画两次选中。
  * 顶栏的项目名按钮开的就是这个抽屉——同一份列表只在一处。
@@ -136,7 +136,6 @@ export function WorkspaceList() {
                   key={e.path}
                   entry={e}
                   hint={hints.get(e.path)}
-                  density="drawer"
                   busy={busyPath === e.path}
                   switching={switching}
                   pinned
@@ -168,7 +167,6 @@ export function WorkspaceList() {
                 key={e.path}
                 entry={e}
                 hint={hints.get(e.path)}
-                density="drawer"
                 busy={busyPath === e.path}
                 switching={switching}
                 pinned={false}

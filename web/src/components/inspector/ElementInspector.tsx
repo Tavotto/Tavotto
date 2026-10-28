@@ -1,6 +1,5 @@
 import { Dialog } from '../ui/Dialog'
 import { EmptyState } from '../ui/EmptyState'
-import { EditableFigureIcon } from '../ui/semanticIcons'
 import { artifactBackgroundOriginal } from '@/lib/artifactValidation'
 import { Fragment, useCallback, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -661,7 +660,7 @@ export function BackgroundChoice({ panel }: { panel: PanelObject }) {
     setOpen(false)
   }
   return <>
-    <EmptyState icon={EditableFigureIcon} title={t('artifact.backgroundVisibilityRequired', { ns: 'errors' })}
+    <EmptyState art="select" title={t('artifact.backgroundVisibilityRequired', { ns: 'errors' })}
       action={{ label: t('artifact.chooseBackground', { ns: 'errors' }), onClick: () => setOpen(true) }} />
     <Dialog open={open} onOpenChange={setOpen} anchor="artifact-background" size="sm"
       title={t('artifact.chooseBackground', { ns: 'errors' })} description={t('artifact.backgroundVisibilityRequired', { ns: 'errors' })}

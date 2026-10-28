@@ -16,7 +16,7 @@ import {
   Trash2,
   Type as TypeIcon,
 } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { switchKindOf } from '@/lib/shapeSwitch'
@@ -81,16 +81,14 @@ function IdentityFrame({
         <span className="flex min-w-0 flex-1 items-center gap-1">{path}</span>
         {chips}
       </p>
-      <div className="flex min-h-8 items-center gap-2">
-        {/* 角色图标底座：圆角 md（8），与行 / 框同一档（此前 rounded-sm 与圆形图标钮不一致） */}
-        <span
-          data-identity-icon
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-surface-hover text-ink-2"
-        >
+      {/* 角色图标：无框 16px，坐在名字**第一行**的中线上（槽高 32 = 名字单行时的行高；名字折两行时第一行仍在 16 处，
+          名字块上下各留 4px 保证这一点）——手帐线稿 2026-10-28，原来是 28px 灰底座 */}
+      <div className="flex min-h-8 items-start gap-2">
+        <IconSlot data-identity-icon className="h-8 w-4 text-ink-3">
           {icon}
-        </span>
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">{name}</div>
-        {menu}
+        </IconSlot>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 py-1">{name}</div>
+        <span className="flex h-8 shrink-0 items-center">{menu}</span>
       </div>
     </header>
   )

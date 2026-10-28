@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bookmark, Copy, Eye, Minus, Pencil, Plus, RotateCcw, RotateCcwClock, Trash2 } from '@/components/ui/icons'
+import { Bookmark, Copy, Eye, Minus, Pencil, Plus, RotateCcw, Trash2 } from '@/components/ui/icons'
 import { FIELD_BOX, FIELD_FOCUS } from '@/components/ui/fieldBox'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
@@ -500,15 +500,15 @@ export function TimelinePanel() {
             </p>
           )
         ) : versions.length === 0 ? (
-          <EmptyState icon={RotateCcwClock} title={vd('emptyTitle')} hint={vd('emptyBody')} />
+          <EmptyState art="versions" title={vd('emptyTitle')} hint={vd('emptyBody')} />
         ) : scoped.length === 0 ? (
           <EmptyState
-            icon={RotateCcwClock}
+            art="versions"
             title={vd(scopeKind === 'figure' ? 'noneHereFigure' : 'noneHere')}
             hint={scopeKind === 'figure' ? undefined : vd('noneHereHint', { n: versions.length })}
           />
         ) : groups.length === 0 ? (
-          <EmptyState icon={Bookmark} title={vd('noNamed')} />
+          <EmptyState art="versions" title={vd('noNamed')} />
         ) : (
           <div aria-label={vd('listLabel')} role="list" data-timeline-list>
             {groups.map((g) => (

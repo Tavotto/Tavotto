@@ -10,6 +10,7 @@ import {
   Play,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Sketch } from '@/components/ui/Sketch'
 import { backendErrorText, browseDirs, type RecentProject } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import {
@@ -482,14 +483,9 @@ function DropZone({ importer, dragging }: { importer: Importer; dragging: boolea
           dropZoneClass(dragging),
         )}
       >
-        <span
-          aria-hidden
-          className={cn(
-            'flex size-10 items-center justify-center rounded-lg text-ink-2',
-            dragging ? 'bg-surface text-accent' : 'bg-surface-hover',
-          )}
-        >
-          <FileCodeCorner size={ICON_SIZE.lg} />
+        {/* 手帐线稿（96×72）：文件卡落进托盘；拖入时由 ink-faint 提到 ink-3，卡下落 4px、落点虚线变 accent（index.css 按 data-dragging） */}
+        <span aria-hidden className={cn('flex', dragging ? 'text-ink-3' : 'text-ink-faint')}>
+          <Sketch name="drop" className="block" />
         </span>
         <span className="type-heading mt-4">
           {dragging ? t('home.returning.dropRelease') : t('home.returning.dropTitle')}
@@ -819,9 +815,7 @@ function RecentItem({
               子项不按容器宽拉伸、按内容宽度排（缩略图格塌成细条、长路径撑出卡外） */}
           <span className="flex h-full w-full min-w-0 max-w-full flex-col gap-2">
             {/* 外 12 = 内 8 + 4：缩略图格是 md 圆角、坐在画布灰上 */}
-            <span aria-hidden className="flex h-20 w-full shrink-0 items-center justify-center rounded-md bg-canvas text-ink-3">
-              <Folder size={ICON_SIZE.lg} />
-            </span>
+            <span aria-hidden data-home-thumb-placeholder className="hatch-box h-20 w-full shrink-0 rounded-md" />
             <span className="flex w-full min-w-0 max-w-full flex-col gap-0.5 overflow-hidden px-2">
               <span className="flex items-center gap-1.5 pr-6">
                 <span className="truncate text-base font-medium text-ink">{entry.name}</span>

@@ -5,33 +5,42 @@ import {
   BookOpen,
   ChevronRight,
   CornerDownLeft,
+  ExternalLink,
   FolderOpen,
   FolderPlus,
-  SearchX,
+  Search,
+  TriangleAlert,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendErrorText, type RecentProject } from '@/lib/api'
 import { AppMenuButton } from './AppMenuButton'
 import { ContactButton } from './contact/ContactButton'
 import { useRovingList } from './left/rovingList'
-import { ProjectRow } from './ProjectPickerRow'
-import { dragRegionProps, isDesktop, pickDirectory, WINDOW_CONTROLS_INSET, windowChrome } from '@/lib/desktop'
-import { PRODUCT_NAME } from '@/lib/brand'
+import { ProjectIndexRow, revealLabel, revealProject } from './ProjectPickerRow'
+import {
+  canRevealInFileManager,
+  dragRegionProps,
+  isDesktop,
+  pickDirectory,
+  WINDOW_CONTROLS_INSET,
+  windowChrome,
+} from '@/lib/desktop'
+import { formatRelativeTime, formatShortWhen } from '@/i18n/format'
 import {
   homeVariant,
   runTutorialEntry,
   tutorialEntry,
 } from '@/lib/onboarding/tutorial'
-import { disambiguateRecent, splitRecent, submitTargetFor } from '@/lib/recentProjects'
+import { disambiguateRecent, looksLikePath, splitRecent, submitTargetFor } from '@/lib/recentProjects'
 import { cn } from '@/lib/utils'
 import { useOnboardingStore } from '@/store/onboardingStore'
 import { useProjectStore } from '@/store/projectStore'
 import { DirBrowser, NewProjectNameDialog, TailPath } from './DirBrowser'
 import { HomeView } from './home/HomeView'
-import { BrandMark } from './ui/BrandMark'
 import { Button } from './ui/Button'
+import { Card } from './ui/Card'
 import { EmptyState } from './ui/EmptyState'
-import { TextInput } from './ui/Input'
+import { FIELD_BOX, FIELD_FOCUS_WITHIN } from './ui/fieldBox'
 import { TooltipProvider } from './ui/Tooltip'
 
 export { DirBrowser, TailPath }
@@ -108,17 +117,24 @@ export function ProjectPicker() {
 }
 
 /**
- * 「全部项目」：改版前的 Project Picker 原样搬过来，多一颗「返回主页」。
+ * 「全部项目」：手帐索引页（2026-10-28 redesign-3 A3，master–detail）。
  *
- * ### 版式（审计 T02）
+ * ### 版式
  *
- * 品牌、新建 / 浏览 / 路径输入、教程入口固定在上方，**只有最近项目那一栏
- * 自己滚**：改造前整页一起滚，二十条最近项目就把新建 / 打开推出了视口，
- * 而这些正是用户来这一屏要按的东西。
+ * 返回主页、标题 + 数量、**一个**框（筛选 / 粘路径）固定在上方；下面是左右两栏：
+ * 左边是索引（「•」记号 · 名字 · 虚点引线 · 短日期，目录没了的是「×」+ 删除线，末尾一行「已不存在 N · 全部移除」），
+ * 右边是选中那个项目的详情卡（缩略图占位、名字、路径、上次打开、一颗黑色「打开」，两个静默链接）。
+ * **只有索引 + 详情那一块自己滚**（审计 T02：二十条最近项目不许把输入框推出视口）；窄于 640px 详情叠到索引下面。
  *
- * 路径输入框兼作筛选：输入名字就过滤最近列表，输入绝对路径就打开那条路径
- * （判据在 `lib/recentProjects.submitTargetFor`）。同名项目带可辨认的父目录，
- * 已不存在的目录收进一组，各自能移除、也能一次全移除。
+ * ### 一个框两件事
+ *
+ * 输入名字就筛最近列表；输入绝对路径（`/`、`~`、`C:\`）就打开那条路径（判据在 `lib/recentProjects.submitTargetFor`）：
+ * 路径态下框尾的「新建项目 · 浏览…」换成「打开 ↵」。回车：路径 / 唯一匹配项照旧；其余情况打开当前选中的那一个。
+ *
+ * ### 选中
+ *
+ * 默认选第一个；单击或键盘聚焦选中；双击 / 回车打开。↑↓ 是索引的漫游焦点（`useRovingList`，整列一个 Tab 停靠点）。
+ * 同名项目的辨认后缀跟在名字后面，目录不存在的项目选中后详情卡的主按钮是「从列表移除」。
  */
 function AllProjects({
   error,
@@ -140,13 +156,26 @@ function AllProjects({
   // 切项目是串行的；切换期间这一屏所有「打开 / 新建 / 返回」一起置灰（Codex #550）
   const switching = useProjectStore((s) => s.switching)
   const [typed, setTyped] = useState('')
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
 
   const { available, missing } = useMemo(() => splitRecent(recent, typed), [recent, typed])
   // 辨认后缀按**整份**列表算：筛选到只剩一个 figs 时它仍是六个里的那一个
   const hints = useMemo(() => disambiguateRecent(recent), [recent])
   const target = submitTargetFor(typed, available)
+  const pathMode = looksLikePath(typed)
   const entry = useProjectEntry((path, create) => void openPath(path, create))
   const roving = useRovingList<HTMLDivElement>()
+  const listRef = roving.ref
+
+  // 选中的那一个：用户点过的还在列表里就是它，否则第一个（筛选把它筛掉了也回到第一个）
+  const shown = useMemo(() => [...available, ...missing], [available, missing])
+  const selected = shown.find((r) => r.path === selectedPath) ?? shown[0] ?? null
+  const now = Date.now()
+  const whenOf = (r: RecentProject) => (r.last_opened > 0 ? formatShortWhen(r.last_opened, now) : undefined)
+
+  const openSelected = () => {
+    if (selected?.exists) void openPath(selected.path)
+  }
 
   return (
     // 窗框：macOS 下空白处可拖动窗口（红绿灯在左上角，这一列居中、碰不到它们）
@@ -155,151 +184,283 @@ function AllProjects({
       <AppMenuButton className="absolute left-2 top-3" />
       <main
         aria-label={t('picker.regionLabel')}
-        className="flex h-full w-[460px] max-w-[calc(100vw-3rem)] flex-col"
+        className="flex h-full w-[720px] max-w-[calc(100vw-3rem)] flex-col"
         {...dragRegionProps('self')}
       >
-        {/* 固定区：品牌 + 主入口。`shrink-0` 是这一屏的要点——列表再长也挤不动它 */}
+        {/* 固定区：返回 · 标题 · 框。`shrink-0` 是这一屏的要点——列表再长也挤不动它 */}
         <header className="shrink-0 pt-3" {...dragRegionProps('self')}>
-          <Button size="md" className="-ml-2.5 mb-2 text-ink-2" data-home-back onClick={onBack}>
+          <Button size="md" className="-ml-2.5 text-ink-2" data-home-back onClick={onBack}>
             <ArrowLeft size={ICON_SIZE.sm} />
             {t('home.backHome')}
           </Button>
-          {/* 页面底是纸色 --color-bg：灰块用 paper 档才能与背景分开 */}
-          {/* 标题走 type-title（15 / 500），字距 0（全面打磨 D44，§6：负字距是自造的第七种排法） */}
-          <h1 className="type-title flex items-center gap-2.5">
-            <BrandMark size={24} tone="paper" />
-            {PRODUCT_NAME}
-          </h1>
-          <p className="mt-1 text-xs leading-relaxed text-ink-3">{t('picker.tagline')}</p>
-
-          <div className="mt-5 flex gap-2">
-            {/* 页面 CTA 是 32px（lg，审计 §10.3）；一屏一颗填色主动作 */}
-            <Button
-              variant="primary"
-              size="lg"
-              disabled={switching}
-              onClick={entry.startCreate}
-            >
-              <FolderPlus size={ICON_SIZE.md} />
-              {t('picker.create')}
-            </Button>
-            <Button
-              variant="secondary"
-              size="lg"
-              disabled={switching}
-              onClick={entry.startOpen}
-            >
-              <FolderOpen size={ICON_SIZE.md} />
-              {t('picker.browse')}
-            </Button>
+          <div className="mb-3 mt-4 flex items-baseline gap-2">
+            <h1 className="type-heading">{t('picker.title')}</h1>
+            {/* 计数是 type-meta（等宽数字），不是等宽字体（审计 §10.3） */}
+            {shown.length > 0 && <span className="type-meta tabular-nums">{t('picker.recentCount', { count: shown.length })}</span>}
             {currentOpen && (
               <Button
                 size="md"
-                className="ml-auto text-ink-2"
+                className="ml-auto text-ink-3"
                 disabled={switching}
                 onClick={() => useProjectStore.getState().returnToCurrent()}
               >
                 {t('picker.backToCurrent')}
+                <ChevronRight size={ICON_SIZE.xs} aria-hidden />
               </Button>
             )}
           </div>
 
           {/* 一个框两件事：粘贴路径直接打开（从文件管理器复制过来永远比一层层点快），
-              输入名字就筛最近项目；回车打开路径或唯一匹配项 */}
+              输入名字就筛最近项目；回车打开路径、唯一匹配项，或当前选中的那一个 */}
           <form
             role="search"
-            className="mt-3 flex gap-2"
             onSubmit={(e) => {
               e.preventDefault()
-              if (!target || switching) return
-              void openPath(target.kind === 'path' ? target.path : target.entry.path)
+              if (switching) return
+              if (target) void openPath(target.kind === 'path' ? target.path : target.entry.path)
+              else if (!pathMode) openSelected()
             }}
           >
-            <TextInput
-              value={typed}
-              onChange={(e) => setTyped(e.target.value)}
-              placeholder={t('picker.pathPlaceholder')}
-              aria-label={t('picker.pathLabel')}
-              className="flex-1 font-mono"
-              spellCheck={false}
-            />
-            <Button
-              type="submit"
-              variant="secondary"
-              size="md"
-              disabled={!target || switching}
-              aria-label={
-                target?.kind === 'recent' ? t('picker.openMatch', { name: target.entry.name }) : undefined
-              }
+            <div
+              className={cn(
+                FIELD_BOX,
+                FIELD_FOCUS_WITHIN,
+                'flex h-9 items-center gap-2 pl-3 pr-1 text-base',
+              )}
             >
-              <CornerDownLeft size={ICON_SIZE.sm} />
-              {t('picker.openButton')}
-            </Button>
+              <Search size={ICON_SIZE.md} aria-hidden className="shrink-0 text-ink-3" />
+              <input
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                onKeyDown={(e) => {
+                  // 从框里 ↓ 直接落到索引（选中的那一行）
+                  if (e.key !== 'ArrowDown' || e.altKey || e.metaKey || e.ctrlKey) return
+                  const row =
+                    listRef.current?.querySelector<HTMLElement>('[data-selected] [data-roving]:not(:disabled)') ??
+                    listRef.current?.querySelector<HTMLElement>('[data-roving]:not(:disabled)')
+                  if (!row) return
+                  e.preventDefault()
+                  row.focus()
+                }}
+                placeholder={t('picker.pathPlaceholder')}
+                aria-label={t('picker.pathLabel')}
+                className="h-full min-w-0 flex-1 bg-transparent text-base text-ink outline-none placeholder:text-ink-3"
+                spellCheck={false}
+                autoComplete="off"
+              />
+              {pathMode ? (
+                <Button
+                  type="submit"
+                  size="md"
+                  className="shrink-0 text-ink-2"
+                  disabled={!target || switching}
+                  aria-label={
+                    target?.kind === 'recent' ? t('picker.openMatch', { name: target.entry.name }) : undefined
+                  }
+                >
+                  <CornerDownLeft size={ICON_SIZE.sm} aria-hidden />
+                  {t('picker.openButton')}
+                </Button>
+              ) : (
+                <span className="flex shrink-0 items-center gap-0.5">
+                  {/* 静默钮（ghost）：一屏的黑色填充钮只留给详情卡的「打开」；窄于 560px 只剩图标，文字留给读屏 */}
+                  <Button size="md" className="text-ink-2" disabled={switching} onClick={entry.startCreate}>
+                    <FolderPlus size={ICON_SIZE.md} aria-hidden />
+                    <span className="max-[559px]:sr-only">{t('picker.create')}</span>
+                  </Button>
+                  <span aria-hidden className="h-4 w-px bg-border" />
+                  <Button size="md" className="text-ink-2" disabled={switching} onClick={entry.startOpen}>
+                    <FolderOpen size={ICON_SIZE.md} aria-hidden />
+                    <span className="max-[559px]:sr-only">{t('picker.browse')}</span>
+                  </Button>
+                </span>
+              )}
+            </div>
           </form>
 
           {error && (
-            <p role="alert" className="mt-3 text-xs leading-relaxed text-danger">
+            <p role="alert" className="mt-2 text-xs leading-relaxed text-danger">
               {error}
             </p>
           )}
-
-          <TutorialEntry />
         </header>
 
-        {recent.length > 0 && (
-          <section
-            aria-label={t('picker.recentLabel')}
-            className="flex min-h-0 flex-1 flex-col pb-6 pt-7"
-          >
-            {/* 分区小标走 type-section（全面打磨 D44） */}
-            <h2 className="mb-1.5 flex h-7 shrink-0 items-center gap-1.5">
-              <span className="type-section">{t('picker.recentHeading')}</span>
-              {/* 计数是 type-meta（等宽数字），不是等宽字体（审计 §10.3） */}
-              <span className="type-meta">{t('picker.recentCount', { count: available.length + missing.length })}</span>
-            </h2>
+        {recent.length > 0 ? (
+          <section aria-label={t('picker.recentLabel')} className="flex min-h-0 flex-1 flex-col pt-5">
             {/* 只有这一块滚：`min-h-0` 让它在 flex 列里真的能收缩，否则它会把
-                自己撑到内容高度、把滚动交还给页面（= 改造前的样子） */}
+                自己撑到内容高度、把滚动交还给页面（= 改造前的样子）。-mx-2 / px-2：给行的悬停底留出左右各 8px 而不被裁掉 */}
             <div
               data-recent-scroll
               ref={roving.ref}
               onFocus={roving.onFocus}
               onKeyDown={roving.onKeyDown}
-              className="-mx-2 min-h-0 flex-1 overflow-y-auto px-1"
+              className="-mx-2 min-h-0 flex-1 overflow-y-auto px-2 pb-4"
             >
-              {/* 行与左栏「项目」抽屉同一份（`ProjectRow`，这里 density="page"：52px + 文件夹记号）；
-                  一列一个 Tab 停靠点，↑↓ 走行、Enter 打开 */}
-              <ul className="flex flex-col">
-                {available.map((r) => (
-                  <ProjectRow
-                    key={r.path}
-                    entry={r}
-                    density="page"
-                    hint={hints.get(r.path)}
-                    busy={busyPath === r.path}
-                    switching={switching}
-                    onOpen={() => void openPath(r.path)}
-                    onRemove={() => void remove(r.path)}
-                  />
-                ))}
-              </ul>
-              {missing.length > 0 && (
-                <MissingGroup
-                  entries={missing}
-                  hints={hints}
-                  onRemove={(path) => void remove(path)}
-                  onRemoveAll={() => void removeMany(missing.map((r) => r.path))}
-                />
-              )}
-              {available.length + missing.length === 0 && (
-                <EmptyState icon={SearchX} title={t('picker.filterNoMatch', { query: typed.trim() })} data-picker-no-match />
+              {shown.length === 0 ? (
+                // 路径态下列表本来就筛空了（路径不是名字）：不说「没有匹配」，框尾的「打开 ↵」就是下一步
+                !pathMode && (
+                  <EmptyState art="search" title={t('picker.filterNoMatch', { query: typed.trim() })} data-picker-no-match />
+                )
+              ) : (
+                <div className="grid grid-cols-1 items-start gap-4 sm:grid-cols-[248px_minmax(0,1fr)]">
+                  <div className="-mx-2 min-w-0">
+                    {/* 一列一个 Tab 停靠点，↑↓ 走行、Enter 打开（行是 `ProjectIndexRow`） */}
+                    <ul className="flex flex-col">
+                      {available.map((r) => (
+                        <ProjectIndexRow
+                          key={r.path}
+                          entry={r}
+                          hint={hints.get(r.path)}
+                          when={whenOf(r)}
+                          selected={selected?.path === r.path}
+                          busy={busyPath === r.path}
+                          switching={switching}
+                          onSelect={() => setSelectedPath(r.path)}
+                          onOpen={() => void openPath(r.path)}
+                        />
+                      ))}
+                    </ul>
+                    {missing.length > 0 && (
+                      <section aria-label={t('picker.missingGroup')} className="mt-4">
+                        <div className="mb-1 flex items-center justify-between gap-2 px-2 text-xs text-ink-3">
+                          <span className="tabular-nums">{t('picker.missingCount', { count: missing.length })}</span>
+                          <button
+                            type="button"
+                            onClick={() => void removeMany(missing.map((r) => r.path))}
+                            className="rounded-xs text-ink-2 underline underline-offset-2 outline-none hover:text-ink focus-visible:focus-ring"
+                          >
+                            {t('picker.removeAllMissing')}
+                          </button>
+                        </div>
+                        <ul className="flex flex-col">
+                          {missing.map((r) => (
+                            <ProjectIndexRow
+                              key={r.path}
+                              entry={r}
+                              hint={hints.get(r.path)}
+                              when={whenOf(r)}
+                              selected={selected?.path === r.path}
+                              busy={false}
+                              switching={false}
+                              onSelect={() => setSelectedPath(r.path)}
+                              onOpen={() => {}}
+                            />
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                  </div>
+                  {selected && (
+                    <ProjectDetail
+                      key={selected.path}
+                      entry={selected}
+                      opened={selected.last_opened > 0 ? formatRelativeTime(selected.last_opened) : null}
+                      busy={busyPath === selected.path}
+                      switching={switching}
+                      onOpen={() => void openPath(selected.path)}
+                      onRemove={() => void remove(selected.path)}
+                    />
+                  )}
+                </div>
               )}
             </div>
           </section>
+        ) : (
+          <div className="min-h-0 flex-1" />
         )}
 
+        <TutorialEntry />
         {entry.dialogs}
       </main>
     </div>
+  )
+}
+
+/**
+ * 详情卡（索引页右栏）：选中项目的「翻开页」——缩略图占位（最近列表不带画布数据，画不出缩略图：用 `.hatch-box`）、
+ * 名字、路径（教程副本只说「教程项目」）、上次打开；一颗黑色「打开」，旁边两个静默链接：
+ * 「在 Finder 中打开」（只有桌面壳做得到，浏览器模式不摆）与「从列表移除」（只动列表、不删磁盘）。
+ * 目录已不存在的项目没有可打开的东西：主按钮换成「从列表移除」，没有别的动作。
+ */
+function ProjectDetail({
+  entry,
+  opened,
+  busy,
+  switching,
+  onOpen,
+  onRemove,
+}: {
+  entry: RecentProject
+  /** 「3 小时前」；没有记录时缺席 */
+  opened: string | null
+  busy: boolean
+  switching: boolean
+  onOpen: () => void
+  onRemove: () => void
+}) {
+  const { t } = useTranslation('project')
+  const canReveal = entry.exists && canRevealInFileManager()
+  return (
+    <Card data-picker-detail padding="none" className="min-w-0 sm:sticky sm:top-0">
+      <div className="p-1">
+        <span
+          aria-hidden
+          data-gone={!entry.exists || undefined}
+          className="hatch-box h-37 w-full rounded-md"
+        />
+      </div>
+      <div className="px-3 pb-4 pt-3.5">
+        <h2 className="type-heading truncate" title={entry.name}>
+          {entry.name}
+        </h2>
+        <p className="mt-0.5 select-text text-xs text-ink-3 [overflow-wrap:anywhere]">
+          {entry.tutorial ? t('picker.tutorialBadge') : entry.path}
+        </p>
+        {!entry.exists ? (
+          <p className="flex items-center gap-1 text-xs text-danger-content">
+            <TriangleAlert size={ICON_SIZE.xs} aria-hidden />
+            {t('picker.missingDir')}
+          </p>
+        ) : (
+          opened && <p className="text-xs tabular-nums text-ink-3">{t('home.openedAgo', { when: opened })}</p>
+        )}
+        <div className="mt-4 flex flex-wrap items-center gap-x-1 gap-y-2">
+          {entry.exists ? (
+            <Button
+              variant="primary"
+              size="lg"
+              data-picker-detail-open
+              disabled={busy || switching}
+              onClick={onOpen}
+            >
+              {busy ? t('picker.opening') : t('picker.openButton')}
+            </Button>
+          ) : (
+            <Button variant="primary" size="lg" data-picker-detail-remove title={t('picker.removeFromListTitle')} onClick={onRemove}>
+              {t('picker.removeFromList')}
+            </Button>
+          )}
+          <span className="flex-1" />
+          {canReveal && (
+            <Button size="md" className="text-ink-2" data-picker-detail-reveal onClick={() => revealProject(entry.path)}>
+              <ExternalLink size={ICON_SIZE.sm} aria-hidden />
+              {revealLabel()}
+            </Button>
+          )}
+          {entry.exists && (
+            <Button
+              size="md"
+              className="text-ink-2"
+              data-picker-detail-remove
+              title={t('picker.removeFromListTitle')}
+              onClick={onRemove}
+            >
+              {t('picker.removeFromList')}
+            </Button>
+          )}
+        </div>
+      </div>
+    </Card>
   )
 }
 
@@ -367,92 +528,25 @@ export function useProjectEntry(
  * 新手教程的一行入口（ADR 0040；三步原生教程 ADR 0136）。教程是内置演示、不依赖后端的
  * 教程资源，所以总是可用；切项目进行中时置灰（教程层会盖住正在切换的界面）。
  * 点下去的全部逻辑在 `lib/onboarding/tutorial.ts`，这里只显示结果。
+ * 索引页上它是页脚的一条静默文字链（start / resume / restart 三态不变），不再带说明句。
  */
 function TutorialEntry() {
   const { t } = useTranslation('project')
   const entry = useOnboardingStore((s) => tutorialEntry(s.status))
   const switching = useProjectStore((s) => s.switching)
   return (
-    <section aria-label={t('picker.tutorialLabel')} className="mt-5 flex flex-col gap-1">
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="md"
-          className="-ml-2.5 text-ink-2"
-          disabled={switching}
-          data-onboarding-anchor="tutorial-entry"
-          onClick={() => void runTutorialEntry('picker')}
-        >
-          <BookOpen size={ICON_SIZE.md} />
-          {t(`picker.tutorial.${entry}`)}
-        </Button>
-      </div>
-      <p className="text-xs leading-relaxed text-ink-3">{t('picker.tutorialHint')}</p>
-    </section>
-  )
-}
-
-/**
- * 已不存在的目录：收成一组放在可打开的项目后面，默认折叠。
- * 组头是两个**并列**的控件（展开 / 全部移除），不把按钮套进 summary 里
- * ——嵌套交互控件在辅助技术里是读不出来的。
- */
-function MissingGroup({
-  entries,
-  hints,
-  onRemove,
-  onRemoveAll,
-}: {
-  entries: RecentProject[]
-  hints: Map<string, string>
-  onRemove: (path: string) => void
-  onRemoveAll: () => void
-}) {
-  const { t } = useTranslation('project')
-  const [expanded, setExpanded] = useState(false)
-  const id = 'picker-missing-group'
-  return (
-    <section aria-label={t('picker.missingGroup')} className="mt-4 border-t border-border pt-3">
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          aria-expanded={expanded}
-          aria-controls={id}
-          aria-label={t(expanded ? 'picker.missingGroupCollapse' : 'picker.missingGroupExpand')}
-          onClick={() => setExpanded((v) => !v)}
-          className="flex min-w-0 flex-1 items-center gap-1 rounded-sm text-left text-xs text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
-        >
-          <ChevronRight
-            size={ICON_SIZE.xs}
-            aria-hidden
-            className={cn('shrink-0 text-ink-3 transition-transform', expanded && 'rotate-90')}
-          />
-          <span className="truncate">{t('picker.missingGroup')}</span>
-          <span className="tabular-nums text-ink-3">{t('picker.recentCount', { count: entries.length })}</span>
-        </button>
-        <Button size="sm" variant="secondary" className="shrink-0 text-xs" onClick={onRemoveAll}>
-          {t('picker.removeAllMissing')}
-        </Button>
-      </div>
-      {expanded && (
-        <>
-          <p className="mt-1 text-xs leading-relaxed text-ink-3">{t('picker.missingHint')}</p>
-          <ul id={id} className="mt-1 flex flex-col">
-            {entries.map((r) => (
-              <ProjectRow
-                key={r.path}
-                entry={r}
-                density="page"
-                hint={hints.get(r.path)}
-                busy={false}
-                switching={false}
-                onOpen={() => {}}
-                onRemove={() => onRemove(r.path)}
-              />
-            ))}
-          </ul>
-        </>
-      )}
+    <section aria-label={t('picker.tutorialLabel')} className="flex shrink-0 justify-center pb-6 pt-1">
+      <Button
+        variant="ghost"
+        size="md"
+        className="text-ink-3"
+        disabled={switching}
+        data-onboarding-anchor="tutorial-entry"
+        onClick={() => void runTutorialEntry('picker')}
+      >
+        <BookOpen size={ICON_SIZE.md} />
+        {t(`picker.tutorial.${entry}`)}
+      </Button>
     </section>
   )
 }

@@ -233,14 +233,17 @@ describe('FormSection + FieldGroup + SettingRow', () => {
 })
 
 describe('EmptyState v2', () => {
-  it('40px lg 圆角图标底座 + type-title 标题 + type-caption 说明（42ch）+ 32px 主动作', async () => {
+  it('54×42 手帐线稿（无底座）+ type-title 标题 + type-caption 说明（42ch）+ 32px 主动作', async () => {
     const onClick = vi.fn()
-    await render(<EmptyState icon={Pencil} title={T} hint={T} action={{ label: T, onClick }} data-es />)
+    await render(<EmptyState art="pencil" title={T} hint={T} action={{ label: T, onClick }} data-es />)
     const es = q('[data-es]')!
     expect(es.hasAttribute('data-empty-state')).toBe(true)
-    const tile = es.firstElementChild!
-    expect(tile.className).toMatch(/\bsize-10\b/)
-    expect(tile.className).toMatch(/\brounded-lg\b/)
+    const art = es.firstElementChild!
+    expect(art.className).not.toMatch(/\bbg-/)
+    expect(art.className).toMatch(/\btext-ink-faint\b/)
+    const svg = art.querySelector('svg')!
+    expect(svg.getAttribute('data-sketch')).toBe('pencil')
+    expect([svg.getAttribute('width'), svg.getAttribute('height')]).toEqual(['54', '42'])
     expect(es.querySelector('.type-title')).not.toBeNull()
     expect(es.querySelector('.type-caption')!.className).toContain('max-w-[42ch]')
     const btn = es.querySelector<HTMLButtonElement>('button[data-variant]')!

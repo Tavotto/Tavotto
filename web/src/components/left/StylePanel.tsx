@@ -1,6 +1,6 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bold, ChevronRight, Italic, Paintbrush, RotateCcw } from '@/components/ui/icons'
+import { Bold, ChevronRight, Italic, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
@@ -125,7 +125,7 @@ function StylePanelBody() {
     return (
       <div className="flex min-h-0 flex-1 flex-col" data-style-panel-empty>
         <EmptyState
-          icon={Paintbrush}
+          art="pencil"
           title={sp('emptyTitle')}
           action={{ label: sp('emptyAction'), onClick: () => useUiStore.getState().setLeftTab('layers') }}
         />
@@ -147,7 +147,7 @@ function StylePanelBody() {
              还没动过」的面板不渲染，heavy 脚本要几分钟——`useEngineSync.renderTargets`），
              由用户点一下，与元素树的「加载元素清单」同一个动作；左栏留在这里 */
           <EmptyState
-            icon={Paintbrush}
+            art="pencil"
             title={sp('needRender')}
             hint={rendering ? sp('building') : undefined}
             action={

@@ -1249,7 +1249,8 @@
   },
   "docSummary": {
     "title": "This layout",
-    "size": "{{w}} × {{h}} mm",
+    "size": "{{w}} × {{h}} mm",
+    "details": "Details",
     "annotations_one": "{{count}} text or annotation",
     "annotations_other": "{{count}} texts and annotations",
     "canvasSettings": "Canvas settings"

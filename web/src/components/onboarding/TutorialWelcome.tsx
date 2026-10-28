@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowRight, FileCodeCorner } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { dragRegionProps } from '@/lib/desktop'
 import { DEMO_FIGURE } from '@/lib/onboarding/demoFigure'
@@ -132,9 +132,10 @@ function ScriptCard() {
       data-tutorial-script-card=""
     >
       <div className="mb-3 flex items-center gap-3 [@media(max-height:720px)]:mb-1.5">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-surface-2 text-ink-2">
+        {/* 无框图标，与文件名同一行中线（手帐线稿 2026-10-28） */}
+        <IconSlot className="text-lg text-ink-2">
           <FileCodeCorner size={ICON_SIZE.lg} />
-        </span>
+        </IconSlot>
         <span className="font-mono text-lg font-medium text-ink">{DEMO_FIGURE.script}</span>
       </div>
       <pre
