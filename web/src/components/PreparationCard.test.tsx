@@ -585,6 +585,21 @@ describe('一句话 + 至多一个主按钮（每一种状态 × 每一种语种
   }
 })
 
+describe('页眉：只写当前阶段 + 三小段进度（精致感审计第二批 #1）', () => {
+  it('当前阶段名一处可见；三段 done / current / todo；第几步由 aria-label 与 aria-current 传达', async () => {
+    await mount()
+    await openWith(report({}))
+    const head = panel().querySelector('[data-prep-steps]') as HTMLElement
+    expect(head.querySelector('[data-prep-stage]')!.textContent).toBe('准备')
+    // 不再把三个阶段名并排写出来（点分隔的写法）
+    expect(head.querySelectorAll('[data-prep-stage]')).toHaveLength(1)
+    const segs = [...head.querySelectorAll<HTMLElement>('[data-prep-seg]')]
+    expect(segs.map((e) => e.dataset.prepSeg)).toEqual(['current', 'todo', 'todo'])
+    expect(segs.map((e) => e.getAttribute('aria-current'))).toEqual(['step', null, null])
+    expect(head.querySelector('ol')!.getAttribute('aria-label')).toBe('第 1 步，共 3 步：准备')
+  })
+})
+
 const toggleDetails = () =>
   act(async () => (panel().querySelector('[data-prep-details-toggle]') as HTMLButtonElement).click())
 const details = () => panel().querySelector('[data-prep-details]') as HTMLElement | null

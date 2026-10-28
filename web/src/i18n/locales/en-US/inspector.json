@@ -86,10 +86,10 @@
     "background": "Background",
     "bgColor": "Background colour",
     "clearAll": "Clear all",
-    "deleteGuide": "Delete {{axis}} guide at {{pos}} mm",
+    "deleteGuide": "Delete {{axis}} guide at {{pos}} mm",
     "grid": "Grid",
     "gridSize": "Grid size",
-    "gridSummary": "Grid {{size}} mm",
+    "gridSummary": "Grid {{size}} mm",
     "guideCount_one": "{{count}} guide",
     "guideCount_other": "{{count}} guides",
     "guideHorizontal": "Horizontal",
@@ -99,13 +99,13 @@
     "guidesNone": "None",
     "lock": "Lock",
     "margin": "Margin",
-    "marginSummary": "Margin {{margin}} mm",
+    "marginSummary": "Margin {{margin}} mm",
     "objects": "Objects",
     "pageSize": "Page size",
     "presetGroup": "Page presets",
     "presets": {
       "double": {
-        "hint": "{{w}} mm — double-column width of the current publication spec",
+        "hint": "{{w}} mm — double-column width of the current publication spec",
         "label": "Double"
       },
       "full": {
@@ -113,7 +113,7 @@
         "label": "Full page"
       },
       "single": {
-        "hint": "{{w}} mm — single-column width of the current publication spec",
+        "hint": "{{w}} mm — single-column width of the current publication spec",
         "label": "Single"
       },
       "square": {
@@ -138,7 +138,7 @@
     "transparent": "Transparent",
     "transparentBg": "Transparent background",
     "viewAids": "Display aids",
-    "sizeMeta": "{{w}} × {{h}} mm",
+    "sizeMeta": "{{w}} × {{h}} mm",
     "preset": "Preset",
     "presetCustom": "Custom",
     "size": "Size",
@@ -146,7 +146,7 @@
     "portrait": "Portrait",
     "landscape": "Landscape",
     "export": "Export",
-    "exportSummary": "{{formats}} · {{dpi}} ppi"
+    "exportSummary": "{{formats}} · {{dpi}} ppi"
   },
   "closePanel": "Close right panel",
   "control": {
@@ -267,7 +267,7 @@
     "clickToEdit": "Click an element in the figure to start editing",
     "editElement": "Edit figure element",
     "editProp": "Change {{label}}",
-    "figureSize": "Figure {{w}} × {{h}} mm",
+    "figureSize": "Figure {{w}} × {{h}} mm",
     "foldBackground": "Background & more",
     "foldBboxDetail": "Background details",
     "foldCoords": "Axes, flip, aspect",
@@ -717,7 +717,7 @@
     "nativeMixed": "Multiple original sizes",
     "nativeSize": "Original size",
     "nativeSizeTip": "Back to the asset’s own mm size",
-    "nativeTip": "The asset’s own size: {{w}} × {{h}} cm",
+    "nativeTip": "The asset’s own size: {{w}} × {{h}} cm",
     "nativeTipMulti": "The assets’ own sizes",
     "noAssetMatch": "No matching asset",
     "opacity": "Opacity",
@@ -725,8 +725,8 @@
     "opacityMixed": "Mixed",
     "overrideCount_one": "This figure has {{count}} edit",
     "overrideCount_other": "{{count}} figure edits",
-    "ptHint": "{{base}} pt in the original × {{scale}}% scale",
-    "ptHintBad": "{{base}} pt in the original × {{scale}}% scale: effective size below 6 pt, too small for print",
+    "ptHint": "{{base}} pt in the original × {{scale}}% scale",
+    "ptHintBad": "{{base}} pt in the original × {{scale}}% scale: effective size below 6 pt, too small for print",
     "replace": "Replace asset",
     "replacePicture": "Replace image",
     "rotateFlipOpacity": "Rotate, flip, opacity",
@@ -748,7 +748,7 @@
     "cropRow": "Framing",
     "fitRow": "Fit",
     "frameLegacyTitle": "Differs from the figure the script saved",
-    "frameLegacyBody": "This figure is still shown at its figsize; the script saved it cropped to {{w}} × {{h}} mm. Switching keeps its position; only the outer box changes.",
+    "frameLegacyBody": "This figure is still shown at its figsize; the script saved it cropped to {{w}} × {{h}} mm. Switching keeps its position; only the outer box changes.",
     "frameLegacyAdopt": "Use the saved figure size",
     "frameLegacyAdoptBlocked": "The cropped part of this figure lies entirely outside the saved figure size, so nothing would be left after switching. Adjust or reset the crop first."
   },
@@ -918,7 +918,7 @@
       "linewidth": "Edge width"
     }
   },
-  "resize": "Resize the properties panel ({{min}}–{{max}} px)",
+  "resize": "Resize the properties panel ({{min}}–{{max}} px)",
   "role": {
     "arrow_patch": "Arrow",
     "axes": "Axes",
@@ -1036,8 +1036,8 @@
     "italic": "Italic (Latin glyphs only)",
     "lineHeight": "Line height",
     "matchAction": "Match",
-    "matchHint": "Body text in the figure renders at about {{eff}} pt",
-    "matchTitle": "Annotation size is absolute on the page. With “{{panel}}” scaled to {{scale}}%, {{base}} pt body text renders at about {{eff}} pt; use this value to match it.",
+    "matchHint": "Body text in the figure renders at about {{eff}} pt",
+    "matchTitle": "Annotation size is absolute on the page. With “{{panel}}” scaled to {{scale}}%, {{base}} pt body text renders at about {{eff}} pt; use this value to match it.",
     "newlineTitle": "Insert a line break at the cursor (on-canvas editing also uses {{alt}} / {{mod}})",
     "padding": "Padding",
     "placeholder": "Type text…",
@@ -1132,7 +1132,7 @@
   },
   "transform": {
     "rotation": "Rotation",
-    "summary": "X {{x}} · Y {{y}} mm",
+    "summary": "X {{x}} · Y {{y}} mm",
     "textHeightAuto": "Height follows the content",
     "title": "Position and size"
   },
@@ -1248,7 +1248,7 @@
   },
   "docSummary": {
     "title": "This layout",
-    "size": "{{w}} × {{h}} mm",
+    "size": "{{w}} × {{h}} mm",
     "annotations_one": "{{count}} text or annotation",
     "annotations_other": "{{count}} texts and annotations",
     "canvasSettings": "Canvas settings"

@@ -20,6 +20,8 @@ import { MenuItem } from './Menu'
 import { Notice } from './Notice'
 import { RowMenu } from './RowMenu'
 import { StatusPill } from './StatusPill'
+import { Toggle } from './Toggle'
+import { UNIT_GAP } from '@/lib/units'
 import { TooltipProvider } from './Tooltip'
 import { useRowMenu } from './useRowMenu'
 
@@ -371,5 +373,32 @@ describe('RowMenu：⋯ / 右键 / ⇧F10 同一份菜单', () => {
     const pm = q('[data-row-point-menu]')!
     expect(pm).not.toBeNull()
     expect(pm.querySelector('[data-mi="rename"]')).not.toBeNull()
+  })
+})
+
+describe('Toggle：关态是空心描边轨道 + 缩小的同色滑块（精致感审计第二批 #3）', () => {
+  it('关：透明轨道 + 1.5px 内描边 border-control，滑块 scale-75 同色无投影；开：黑轨 + 白钮 + 投影', async () => {
+    await render(<Toggle checked={false} onChange={() => {}} aria-label="x" />)
+    const track = q('[role=switch] > span')!
+    const thumb = track.firstElementChild!
+    expect(track.className).toContain('bg-transparent')
+    expect(track.className).toContain('ring-[1.5px]')
+    expect(track.className).toContain('ring-border-control')
+    expect(track.className).not.toContain('bg-ink')
+    expect(thumb.className).toContain('scale-75')
+    expect(thumb.className).toContain('bg-border-control')
+    expect(thumb.className).not.toContain('shadow-thumb')
+    await render(<Toggle checked onChange={() => {}} aria-label="x" />)
+    const on = q('[role=switch] > span')!
+    expect(on.className).toContain('bg-ink')
+    expect(on.className).not.toContain('ring-')
+    expect(on.firstElementChild!.className).toContain('bg-thumb')
+    expect(on.firstElementChild!.className).not.toContain('scale-75')
+  })
+})
+
+describe('数字与单位的间隔', () => {
+  it('全产品一个字符：U+2009 细空格', () => {
+    expect(UNIT_GAP).toBe('\u2009')
   })
 })

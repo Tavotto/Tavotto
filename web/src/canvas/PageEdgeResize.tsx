@@ -8,6 +8,7 @@ import { figureFrameFacts } from '@/lib/figureEdgeFrame'
 import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
 import { useInteractionStore } from '@/store/interactionStore'
 import { useUiStore } from '@/store/uiStore'
+import { UNIT_GAP } from '@/lib/units'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 import { cn } from '@/lib/utils'
 import { startFigureEdgeResize } from './figureEdgeDrag'
@@ -21,7 +22,7 @@ const DIM_GAP = 26
 /** 单图的命中区压进图里的深度（px）：图框边上常贴着轴标题，比页面边（对称 5 px）浅 */
 const FIGURE_HIT_IN = 2
 
-const MM_SUFFIX = '\u00a0mm'
+const MM_SUFFIX = `${UNIT_GAP}mm`
 const mmText = (v: number) => String(Math.round(v * 10) / 10)
 
 /**

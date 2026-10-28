@@ -589,7 +589,7 @@ describe('完成页', () => {
     expect(before.querySelector('[data-demo-legend]')!.getAttribute('transform')).not.toBe(
       after.querySelector('[data-demo-legend]')!.getAttribute('transform'),
     )
-    expect(after.getAttribute('aria-label')).toContain('11 pt')
+    expect(after.getAttribute('aria-label')).toContain('11 pt')
   })
 
   it('「开始使用」记完成、收起教程层；「重新体验」回到第一步并清空改动', async () => {

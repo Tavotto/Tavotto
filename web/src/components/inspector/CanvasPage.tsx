@@ -4,7 +4,7 @@ import { Numbers } from '@sfinterface/numbers'
 import { useInteractionStore } from '@/store/interactionStore'
 import { ArrowLeftRight, ExternalLink, LayoutGrid, Trash2 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { formatMm } from '@/lib/units'
+import { formatMm, UNIT_GAP } from '@/lib/units'
 import { onExportDefaultsHydrated, readExportDefaults } from '@/lib/exportDefaults'
 import { hasRaster } from '@/lib/exportRequest'
 import { msg, t as translate, type UiMessage } from '@/i18n'
@@ -159,7 +159,7 @@ export function CanvasPage() {
             {/* 只读的页面尺寸读数是会滚的数字：± / 输入 / 预设一步到位地滚；拖页面边时逐 mm 即时换 */}
             <Numbers value={page.w} {...numbersProps} />
             {' × '}
-            <Numbers value={page.h} {...numbersProps} suffix=" mm" />
+            <Numbers value={page.h} {...numbersProps} suffix={UNIT_GAP + 'mm'} />
           </span>
         </p>
         <div className="flex min-h-8 items-center gap-2">

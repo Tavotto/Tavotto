@@ -91,7 +91,7 @@
     "duplicate": "复制画布",
     "keepOne": "项目至少保留一张画布",
     "listLabel": "画布列表",
-    "meta_other": "{{w}} × {{h}} mm · {{count}} 对象",
+    "meta_other": "{{w}} × {{h}} mm · {{count}} 对象",
     "newCanvas": "新建画布",
     "noMatch": "没有匹配的画布",
     "openCanvas": "打开画布 {{name}}",
@@ -196,7 +196,7 @@
   },
   "drawer": {
     "pin": "钉住侧栏",
-    "resize": "调整侧栏宽度（{{min}}–{{max}} px）",
+    "resize": "调整侧栏宽度（{{min}}–{{max}} px）",
     "unpin": "取消钉住侧栏"
   },
   "elementTree": {
@@ -413,10 +413,10 @@
     }
   },
   "pageEdge": {
-    "height": "高 {{mm}} mm",
+    "height": "高 {{mm}} mm",
     "heightPrefix": "高 ",
     "snapTo": "吸附到 {{name}}",
-    "width": "宽 {{mm}} mm",
+    "width": "宽 {{mm}} mm",
     "widthPrefix": "宽 "
   },
   "panelBadge": {
@@ -1007,7 +1007,7 @@
       "confirmOrigins": "确认包名"
     },
     "card": {
-      "steps": "进度",
+      "stepOf": "第 {{n}} 步，共 {{total}} 步：{{name}}",
       "step": {
         "prepare": "准备",
         "run": "运行",

@@ -307,7 +307,7 @@ const calls = (page: Page) =>
 test('画布在真 iframe 里挂起来，并把规范 / 尺寸 / 预检摆出来', async ({ page }) => {
   const frame = await boot(page)
   await expect(frame.getByText('lab-publication-v1 v1.0.0')).toBeVisible()
-  await expect(frame.getByText('80.0 × 60.0 mm')).toBeVisible()
+  await expect(frame.getByText('80.0 × 60.0 mm')).toBeVisible()
   await expect(frame.getByRole('button', { name: /0 阻断 · 1 警告/ })).toBeVisible()
   // 引擎给的 SVG 真的进了画布（而不是一个连不上的 <img>）
   await expect(frame.locator('[data-element-svg] svg').first()).toBeVisible()

@@ -172,9 +172,9 @@ describe('CanvasPage', () => {
     expect(custom!.getAttribute('data-state')).toBe('checked')
   })
 
-  it('导出摘要跟着取回的后端默认值重读：画布页先挂着、取回后不停在空缓存的 600 ppi（Codex #829）', async () => {
+  it('导出摘要跟着取回的后端默认值重读：画布页先挂着、取回后不停在空缓存的 600 ppi（Codex #829）', async () => {
     const summary = () => container.querySelector('[data-canvas-export-summary]')!.textContent ?? ''
-    expect(summary()).toContain('600 ppi') // 前提：挂载时本机缓存是空的
+    expect(summary()).toContain('600 ppi') // 前提：挂载时本机缓存是空的
     const prev = globalThis.fetch
     globalThis.fetch = (async () =>
       new Response(
@@ -188,14 +188,14 @@ describe('CanvasPage', () => {
     } finally {
       globalThis.fetch = prev
     }
-    expect(summary()).toContain('TIFF · 1200 ppi')
+    expect(summary()).toContain('TIFF · 1200 ppi')
   })
 
   it.each([
     [['pdf'], 'PDF', false],
     [['pdf', 'eps'], 'PDF · EPS', false],
-    [['png'], 'PNG · 900 ppi', true],
-    [['pdf', 'png'], 'PDF · PNG · 900 ppi', true],
+    [['png'], 'PNG · 900 ppi', true],
+    [['pdf', 'png'], 'PDF · PNG · 900 ppi', true],
   ])('导出摘要只在有位图格式时报 ppi：%j（Codex #829 P2，判据 hasRaster）', async (formats, text, raster) => {
     const summary = () => container.querySelector('[data-canvas-export-summary]')!.textContent ?? ''
     const prev = globalThis.fetch
@@ -220,8 +220,8 @@ describe('CanvasPage', () => {
     // 「辅助显示」收着：摘要里要带网格间距，不能只说一个「网格」
     expect(disclosure('辅助显示').getAttribute('aria-expanded')).toBe('false')
     const gridSize = useUiStore.getState().gridSize
-    expect(disclosure('辅助显示').textContent).toContain(`网格 ${gridSize} mm`)
-    // 页面尺寸的组头右侧原来挂着「150.0 × 100.0 mm」——与 24px 下面的 W / H 框
+    expect(disclosure('辅助显示').textContent).toContain(`网格 ${gridSize} mm`)
+    // 页面尺寸的组头右侧原来挂着「150.0 × 100.0 mm」——与 24px 下面的 W / H 框
     // 是同一对数，还是两种格式（打磨 L9 删掉）。判据钉住「组头里不再有那个数」，
     // 同时确认它并没有连着从可编辑的框里一起消失
     const page = useDocumentStore.getState().doc.page
@@ -283,7 +283,7 @@ describe('CanvasPage 页面预设宽度读当前出版规范', () => {
     bind({ ...d, widths_mm: { ...d.widths_mm, single: 90 } })
     const opts = await openOptions()
     const single = opts.find((x) => x.querySelector('[data-page-preset="single"]'))!
-    expect(single.textContent).toContain('90 mm')
+    expect(single.textContent).toContain('90 mm')
     await act(async () => single.click())
     expect(useDocumentStore.getState().doc.page.w).toBe(90)
   })

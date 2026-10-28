@@ -122,7 +122,7 @@ function useEditReady(renders: Record<string, EditRender>): boolean {
  * 「试运行并连接」——都落在这张卡上。
  *
  * ```text
- * 准备 · 运行 · 编辑                        —  ×
+ * 准备 ▬▭▭                                  —  ×
  * 发现绘图脚本 spectrum.py
  * 详情 ▾                       稍后  [打开并运行]
  * ```
@@ -282,21 +282,25 @@ function Shell({ label, step, icon, title, attrs, slot, details, detailsLabel, m
       className="pointer-events-auto flex min-h-0 w-full animate-pop-in flex-col gap-3 rounded-panel bg-surface px-5 pb-4 pt-3.5 text-base text-ink shadow-dialog"
     >
       <div className="flex h-6 shrink-0 items-center gap-2">
-        <ol className="flex items-center gap-1.5 text-sm" aria-label={pt('card.steps')}>
-          {STEPS.map((s, i) => (
-            <li
-              key={s}
-              aria-current={i === step ? 'step' : undefined}
-              className={cn(
-                'flex items-center gap-1.5',
-                i === step ? 'font-medium text-ink' : i < step ? 'text-ink-3' : 'text-ink-faint',
-              )}
-            >
-              {i > 0 && <span aria-hidden className="h-[3px] w-[3px] rounded-full bg-ink-faint" />}
-              {pt(`card.step.${s}`)}
-            </li>
-          ))}
-        </ol>
+        {/* 只写当前阶段 + 三小段进度（2026-10-28 精致感审计第二批 #1，方案 B）：此前「准备 • 运行 • 编辑」的 3px 点与待办步骤同为
+            ink-faint（对白 2.5:1），读起来像项目符号。三段：已过 ink-3、当前 ink、待办 border；步骤名与第几步由 sr-only 文字 + aria-current 传达 */}
+        <div className="flex h-6 min-w-0 items-center gap-2 text-sm" data-prep-steps data-prep-step={STEPS[step]}>
+          <span aria-hidden className="font-medium leading-none text-ink" data-prep-stage>
+            {pt(`card.step.${STEPS[step]}`)}
+          </span>
+          <ol className="flex items-center gap-[3px]" aria-label={pt('card.stepOf', { n: step + 1, total: STEPS.length, name: pt(`card.step.${STEPS[step]}`) })}>
+            {STEPS.map((s, i) => (
+              <li
+                key={s}
+                aria-current={i === step ? 'step' : undefined}
+                data-prep-seg={i === step ? 'current' : i < step ? 'done' : 'todo'}
+                className={cn('h-[3px] w-3.5 rounded-xs', i === step ? 'bg-ink' : i < step ? 'bg-ink-3' : 'bg-border')}
+              >
+                <span className="sr-only">{pt(`card.step.${s}`)}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
         <div className="-mr-2 ml-auto flex items-center">
           {!onClose && (
             <IconButton

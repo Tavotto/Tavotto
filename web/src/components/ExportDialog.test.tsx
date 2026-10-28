@@ -476,7 +476,7 @@ describe('输出范围', () => {
     })
     // 单图编辑隐藏范围选择，固定 original（请求体里的 scope 由下面「单图」组钉住）
     expect(scopeRadios()).toHaveLength(0)
-    expect(text()).toContain('80 × 60 mm')
+    expect(text()).toContain('80 × 60 mm')
     expect(text()).not.toContain('不会带进导出')
   })
 
@@ -497,15 +497,15 @@ describe('输出范围', () => {
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
-    expect(text()).toContain('75.3 × 58.7 mm')
+    expect(text()).toContain('75.3 × 58.7 mm')
     // 渲染回来：第 ① 档（manifest size_mm）到位——**没有任何素材清单的变化**。
     // 以前对话框只在素材清单变化时重算规格，这一刻它继续说 75.3 × 58.7，
     // 而快速编辑条上已经是 80 × 57.6（审计 T33）
     await act(async () => {
       seedExactRender(panel, { ...manifest(9), size_mm: [80, 57.6] } as never)
     })
-    expect(text()).toContain('80 × 57.6 mm')
-    expect(text()).not.toContain('75.3 × 58.7 mm')
+    expect(text()).toContain('80 × 57.6 mm')
+    expect(text()).not.toContain('75.3 × 58.7 mm')
   })
 
   // 「没有当前图就禁用」那一条被 #295 改掉了：项目里只有一张图时就按它导。
@@ -540,11 +540,11 @@ describe('输出范围', () => {
     expect(epsBox.closest('label')!.title).not.toContain('每张图单独导出')
     expect(text()).not.toContain('先选中一张图')
     expect(document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]'), '预览显示页面').toBeTruthy()
-    expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm')
+    expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm')
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     expect(exportBodies[0].scope, '内部改按画布导').toBe('canvas')
-    // 退路按图框裁掉页面白边：请求的页面尺寸 = 预览显示的 80 × 60 mm
+    // 退路按图框裁掉页面白边：请求的页面尺寸 = 预览显示的 80 × 60 mm
     expect((exportBodies[0].canvas as { page_w_mm: number }).page_w_mm).toBe(80)
     expect((exportBodies[0].canvas as { page_h_mm: number }).page_h_mm).toBe(60)
   })
@@ -564,7 +564,7 @@ describe('单图退路裁白边：检查 / proof report / 请求吃同一份裁�
     await act(async () => {
       useUiStore.getState().setExportOpen(true)
     })
-    expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm')
+    expect(document.body.querySelector('[data-export-preview-size]')?.textContent).toContain('80 × 60 mm')
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     const canvas = exportBodies[0].canvas as {
@@ -818,7 +818,7 @@ describe('SVG 导出（X03）', () => {
 })
 
 describe('导出默认值以后端为准（#715 PR-B）', () => {
-  it('对话框常驻挂载之后才取回的后端默认值：下次打开用取回的值（换 origin 首启不退回 600 ppi）', async () => {
+  it('对话框常驻挂载之后才取回的后端默认值：下次打开用取回的值（换 origin 首启不退回 600 ppi）', async () => {
     await setup(9) // 本机缓存是空的：挂载时读到 600
     await act(async () => {
       useUiStore.getState().setExportOpen(false)
@@ -992,7 +992,7 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   })
 
   it('样式检查报告：画布范围认画布页与 out-of-page；原图范围只认这张图的问题与图幅', async () => {
-    await offPage(7.5) // 7.5 pt 撞绝对下限：让原图范围也有一条要确认的阻断，报告才会生成
+    await offPage(7.5) // 7.5 pt 撞绝对下限：让原图范围也有一条要确认的阻断，报告才会生成
     await reopen()
     await click(button('开始导出')!)
     const canvasReport = exportBodies[0].style_check_report as Record<string, unknown>
@@ -1014,8 +1014,8 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   })
 
   /**
-   * 画布上的**缩放**同样不进原图导出（ADR 0028）：9 pt 的图在画布上缩到一半，读者在那页上
-   * 量到 4.5 pt——按画布导出这是阻断；按原图导出，文件里仍是 9 pt，不许被这次缩放阻断，
+   * 画布上的**缩放**同样不进原图导出（ADR 0028）：9 pt 的图在画布上缩到一半，读者在那页上
+   * 量到 4.5 pt——按画布导出这是阻断；按原图导出，文件里仍是 9 pt，不许被这次缩放阻断，
    * 报告里也不许出现这条。画布范围那半边是前提（否则「不阻断」恒成立）。
    */
   it('画布上缩小摆放的图：画布范围按缩放后的字号阻断，原图范围按原图字号放行', async () => {
@@ -1026,13 +1026,13 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
       ;(d.objects[0] as PanelObject).h = 30
     })
     await reopen()
-    expect(errorHint(), '前提：画布范围下 4.5 pt 是阻断').toBeTruthy()
+    expect(errorHint(), '前提：画布范围下 4.5 pt 是阻断').toBeTruthy()
     expect(errorHint()).toBeTruthy()
 
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
     expect(scopeRadios(), '单图编辑固定按原图，没有范围可选').toHaveLength(0)
-    expect(anyHint(), '原图里是 9 pt，没有要确认的阻断').toBeNull()
+    expect(anyHint(), '原图里是 9 pt，没有要确认的阻断').toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
@@ -1046,7 +1046,7 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   /**
    * 那张图**不在当前画布上**（Codex 评审 #596 P2）：`findFigurePanel()` 会跨画布找到它，
    * 检查与报告就都得按**它所在的那张画布**算——拿当前画布去裁，摘要里一条都剩不下
-   * （7.5 pt 的阻断被说成没问题），报告的 `objects` 也是空的。
+   * （7.5 pt 的阻断被说成没问题），报告的 `objects` 也是空的。
    */
   it('图在另一张画布上：检查按它所在的画布算，报告里有这张图', async () => {
     await offPage(7.5)
@@ -1062,8 +1062,8 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
     expect(scopeRadios(), '单图编辑固定原图').toHaveLength(0)
-    // 这张图自己的阻断（7.5 pt）必须在；画布摆放那条不算
-    expect(errorHint(), '7.5 pt 的阻断被裁没了').toBeTruthy()
+    // 这张图自己的阻断（7.5 pt）必须在；画布摆放那条不算
+    expect(errorHint(), '7.5 pt 的阻断被裁没了').toBeTruthy()
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     const report = exportBodies[0].style_check_report as Record<string, unknown>
@@ -1075,9 +1075,9 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
 
   /**
    * 两张画布绑的规范不同（Codex 评审 #596 P1）：图所在的画布是宽松的 free-form
-   * （7.5 pt 合规），当前画布是 lab-publication（7.5 pt 是阻断）。摘要按图所在画布的规范算
+   * （7.5 pt 合规），当前画布是 lab-publication（7.5 pt 是阻断）。摘要按图所在画布的规范算
    * 出「干净」，那么报告的规范戳、严格核验的 `profile_id` 也必须是那一套——各取各的话，
-   * 报告会声称这张 7.5 pt 的图是按当前画布那套严规范查过并通过的。
+   * 报告会声称这张 7.5 pt 的图是按当前画布那套严规范查过并通过的。
    * 对照：切回画布范围，四处一起换成当前画布的规范（判据不是恒等成立）。
    */
   it('图在另一张画布上且两张画布规范不同：检查、报告、严格核验都按图所在画布的规范', async () => {
@@ -1106,8 +1106,8 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await reopen()
     expect(scopeRadios(), '单图编辑固定原图').toHaveLength(0)
-    // 按 free-form 算：7.5 pt 合规，没有要确认的东西
-    expect(anyHint(), '7.5 pt 在图所在画布的规范下不是阻断').toBeNull()
+    // 按 free-form 算：7.5 pt 合规，没有要确认的东西
+    expect(anyHint(), '7.5 pt 在图所在画布的规范下不是阻断').toBeNull()
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
     expect(
       document.body.querySelector('[data-export-profile-canvas]'),
@@ -1556,7 +1556,7 @@ async function stage(opts: {
 async function setupTwo(opts: { select?: string[]; open?: boolean } = {}) {
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_two')
   useDocumentStore.getState().commit(literal('准备'), (d) => {
-    // 页面按默认规范的双栏宽 150 mm、4:3——夹具本身不能带阻断项，否则每条
+    // 页面按默认规范的双栏宽 150 mm、4:3——夹具本身不能带阻断项，否则每条
     // 用例都得先去点确认框，测的就不再是"选对了图"这一件事
     d.page = { w: 150, h: 112.5 }
     d.objects = [
@@ -1718,7 +1718,7 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     await openDialog()
     expect(header()).toContain('Fig1')
     expect(header(), '范围词不在一行头部里复述').not.toContain('原图尺寸')
-    expect(header()).toContain('80 × 60 mm')
+    expect(header()).toContain('80 × 60 mm')
     expect(text()).not.toContain('磁盘上的原件')
     // 缩略图只在左栏大预览里（对象头不再重复一份小的）
     expect(document.body.querySelector('[data-export-target] img')).toBeNull()
@@ -1735,11 +1735,11 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
     await openDialog()
-    expect(header()).toContain('80 × 57.6 mm')
-    expect(header()).toContain('磁盘上的原文件为 75.3 × 58.7 mm')
-    expect(header()).toContain('将按图幅 80 × 57.6 mm 导出')
+    expect(header()).toContain('80 × 57.6 mm')
+    expect(header()).toContain('磁盘上的原文件为 75.3 × 58.7 mm')
+    expect(header()).toContain('将按图幅 80 × 57.6 mm 导出')
     // 同一份 spec 只在三处出现：对象头、左栏预览、磁盘原件那句「将按图幅 … 导出」
-    expect(text().split('80 × 57.6 mm').length - 1).toBe(3)
+    expect(text().split('80 × 57.6 mm').length - 1).toBe(3)
   })
 
   it('位图源没有「裁过」这回事：尺寸不一致也不说那句', async () => {
@@ -1751,7 +1751,7 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await mountDialogs()
     await openDialog()
-    expect(header()).toContain('80 × 57.6 mm')
+    expect(header()).toContain('80 × 57.6 mm')
     expect(text()).not.toContain('磁盘上的原件')
   })
 
@@ -1760,7 +1760,7 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     await mountDialogs()
     await openDialog()
     expect(header()).toContain(useDocumentStore.getState().doc.name)
-    expect(header()).toContain('180 × 120 mm')
+    expect(header()).toContain('180 × 120 mm')
     expect(header(), '精简成一行：名字 · 尺寸').not.toContain('1 个对象')
     // 与画布列表 / 版本列表同一个组件（在左栏大预览里）：面板落位处挂的是素材预览图，不是灰方块
     const thumb = document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb]')
@@ -1993,7 +1993,7 @@ describe('#1228 评审 P2 · 不在画布上的原图不借画布的检查结论
   }
 
   /**
-   * 画布上只有一条 5 pt 的文字（一条阻断项），项目里唯一的「图」是素材库里还没上画布的 Fig9。
+   * 画布上只有一条 5 pt 的文字（一条阻断项），项目里唯一的「图」是素材库里还没上画布的 Fig9。
    * 多图排版的「每张图」只认画布上的图，所以它只在单图编辑里到得了（项目里只有一张图时就是它）。
    */
   async function setupOff(opts: { withCanvasPanel?: boolean } = {}) {
@@ -2208,7 +2208,7 @@ describe('检查芯片 / 「在问题面板中查看」带着导出目标去（#
 
   async function twoWithErrorOnP2() {
     await setupTwo({ select: ['p1'] })
-    // Fig2 上 5 组 7.5 pt 刻度（多于先露的 3 条）：p2 有阻断项、p1 干净
+    // Fig2 上 5 组 7.5 pt 刻度（多于先露的 3 条）：p2 有阻断项、p1 干净
     const k2 = renderKey('Fig2.pdf', [])
     await act(async () => {
       const cur = useRenderStore.getState().byKey[k2]
@@ -2290,7 +2290,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     expect(originalRadio().hasAttribute('disabled'), '选中了面板还说「先选中一张图」').toBe(false)
     expect(text()).not.toContain('先选中一张图')
     await click(originalRadio())
-    expect(text()).toContain('65 × 50 mm') // 左栏 / 对象头报的是选中的那张
+    expect(text()).toContain('65 × 50 mm') // 左栏 / 对象头报的是选中的那张
     // 「每张图单独导出」= 一次点击把每张图各导一份（依次发多个作业）
     await click(button('开始导出')!)
     await batchDone()
@@ -2313,7 +2313,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     })
     expect(originalRadio().hasAttribute('disabled')).toBe(false)
     await click(originalRadio())
-    expect(text()).toContain('80 × 60 mm')
+    expect(text()).toContain('80 × 60 mm')
   })
 
   it('什么都没选、项目里有两张图：缩略图条永远在；切到「每张图单独导出」不用先选一张，点哪张只换预览 / 检查摘要', async () => {
@@ -2331,7 +2331,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     expect(options.map((o) => o.textContent)).toEqual(['Fig1', 'Fig2'])
     await click(options[1])
     expect(figureOptions()[1].getAttribute('aria-selected')).toBe('true')
-    expect(text()).toContain('65 × 50 mm')
+    expect(text()).toContain('65 × 50 mm')
 
     await click(button('开始导出')!)
     await batchDone()
@@ -2348,7 +2348,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     await setupTwo({ select: ['p2'] })
     await click(originalRadio())
     await click(figureOptions()[0])
-    expect(text()).toContain('80 × 60 mm')
+    expect(text()).toContain('80 × 60 mm')
     await click(button('开始导出')!)
     await batchDone()
     expect(exportBodies).toHaveLength(2)
@@ -2358,7 +2358,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     await setupTwo({ select: ['p2'] })
     await click(originalRadio())
     await click(figureOptions()[0])
-    expect(text()).toContain('80 × 60 mm')
+    expect(text()).toContain('80 × 60 mm')
     await act(async () => {
       useUiStore.getState().setExportOpen(false)
     })
@@ -2366,7 +2366,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
       useUiStore.getState().setExportOpen(true)
     })
     await click(originalRadio())
-    expect(text()).toContain('65 × 50 mm')
+    expect(text()).toContain('65 × 50 mm')
   })
 
   it('缩略图条永远在；选中的那张源文件没了：整版下一个字不说，每张图单独导出才说', async () => {
@@ -2396,7 +2396,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     await click(figureOptions()[0])
     expect(text()).not.toContain('源文件现在找不到了')
     expect(button('开始导出')!.hasAttribute('disabled')).toBe(false)
-    expect(text()).toContain('80 × 60 mm')
+    expect(text()).toContain('80 × 60 mm')
   })
 
   /**
@@ -2433,7 +2433,7 @@ describe('画布模式下选中的图就是要导的那张（用户反馈 06）'
     const header = document.body.querySelector('[data-export-target]')
     expect(header, '选中了图就该有对象头').toBeTruthy()
     expect(header!.textContent).toContain('Fig9')
-    expect(header!.textContent).toContain('70 × 50 mm')
+    expect(header!.textContent).toContain('70 × 50 mm')
     expect(header!.textContent).not.toContain('没有当前图')
     const img = document.body.querySelector('[data-export-preview-stage] img') as HTMLImageElement | null
     expect(img?.getAttribute('src'), '左栏大预览走素材同一条地址').toContain('/api/render?id=Fig9.pdf')
