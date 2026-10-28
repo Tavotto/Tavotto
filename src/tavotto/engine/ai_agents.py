@@ -1408,6 +1408,24 @@ def path_override(agent_id: str) -> str | None:
     return value or None
 
 
+def managed_paths(command_names: tuple[str, ...] | list[str]) -> list[str]:
+    """应用内托管安装的可执行文件（`managedcli.bin_dir` 下 which 得到的）。
+
+    **「托管那份在哪」只有这一处**：AI 候选链（`candidates`）与 `codexinstall.find_codex`
+    （插件安装流水线 / `hostconnect.installed('codex')`）共用它，两边对「这台机器上有没有
+    codex」的回答不许分叉。没装 / 数据目录不可解析 = 空表。
+    """
+    out: list[str] = []
+    for name in command_names:
+        managed_dir = managedcli.bin_dir(name)
+        if managed_dir is None:
+            continue
+        hit = shutil.which(name, path=str(managed_dir))
+        if hit:
+            out.append(hit)
+    return out
+
+
 def candidates(agent: AgentDefinition, override: str | None = None) -> list[CliCandidate]:
     """该 Agent 的候选（按优先级、按实际路径去重）：设置 → PATH → 常见位置 →
     Agent 独有的具体文件（Codex 桌面版自带那份）→ npm 包内二进制 → MSIX 包体。
@@ -1433,10 +1451,8 @@ def candidates(agent: AgentDefinition, override: str | None = None) -> list[CliC
             add(str(p), "custom")
     # 应用内托管安装的那份（用户点过「安装」才会有）：排在 PATH 之前——它是用户刚让 Tavotto 装的，
     # 不能被 PATH 上某份旧的 / 坏的壳挡在后面；起不来时 resolve() 照样落到下一个候选
-    for name in agent.command_names:
-        managed_dir = managedcli.bin_dir(name)
-        if managed_dir is not None:
-            add(shutil.which(name, path=str(managed_dir)), "managed")
+    for managed_path in managed_paths(agent.command_names):
+        add(managed_path, "managed")
     for name in agent.command_names:
         add(shutil.which(name), "path")
     # PATH 里没有：把常见安装目录当成 PATH 再 which（Windows 上 PATHEXT 的

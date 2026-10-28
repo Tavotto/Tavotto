@@ -518,3 +518,32 @@ def test_lock_script_check_passes_on_the_shipped_lock():
     spec.loader.exec_module(mod)
     assert mod.main(["--check"]) == 0
     assert gzip  # 保持 import 被使用（归档助手以后可能直接用）
+
+
+# ---------------------------------------------------------------- 插件安装流水线也认托管那份
+def test_codexinstall_and_hostconnect_see_the_managed_codex(env, monkeypatch):
+    """只有托管 Codex（PATH / 固定目录都没有）：find_codex 返回托管路径、hostconnect.installed 为真、
+    `_codex_or_fail` 不在第一步阻断。看护「托管路径只有 `ai_agents.managed_paths` 一份」。"""
+    from tavotto.engine import codexinstall, hostconnect
+
+    files = _files()
+    gh, npm = _archives(files)
+    srv = env({"/gh": gh, "/npm": npm})
+    cli = _cli(files, gh, npm, srv)
+    _fake_lock_for(monkeypatch, cli)
+    monkeypatch.setattr(ai_agents, "path_override", lambda agent_id: None)
+    monkeypatch.setenv("PATH", "/nonexistent-path-for-test")
+    monkeypatch.setattr(codexinstall, "_search_dirs", lambda: [])
+    monkeypatch.setattr(codexinstall, "_is_windows", lambda: False)
+    ai_agents.clear_cache()
+    assert codexinstall.find_codex()[0] is None  # 还没装
+    assert hostconnect.installed("codex") is False
+    entry = managedcli.provision("codex", cli=cli)
+    ai_agents.clear_cache()
+    found, _searched = codexinstall.find_codex()
+    assert found is not None and Path(found).parent == Path(entry).parent
+    assert hostconnect.installed("codex") is True
+    steps: list[dict] = []
+    assert codexinstall._codex_or_fail(steps) == found
+    assert steps[0]["ok"] is True
+    ai_agents.clear_cache()

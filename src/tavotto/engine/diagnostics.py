@@ -86,7 +86,9 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: （ADR 0118 修订 2026-10-13）；导出包的 report.json 与老文件一个字节没动，只有 manifest 多了这几个键。
 #: 9 = 新增 `exec-traces.json`（ADR 0151 PR4）：本项目最近几次任务的执行追踪（层级阶段、耗时、稳定错误码、首个失败与
 #: 归因摘要），出门前经 `exectrace_diag` 的独立白名单投影；report.json 形状没变，读不认识的文件的人忽略它即可。
-BUNDLE_SCHEMA_VERSION = 9
+#: 10 = report.json 新增顶层 `ai_probe`（AI 候选链探测摘要）与每个 agent 的 `readiness` / `readiness_detail` /
+#: `broken_path`（托管 Codex 安装 PR）；旧读法忽略这些键即可，但换形必升号。
+BUNDLE_SCHEMA_VERSION = 10
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
