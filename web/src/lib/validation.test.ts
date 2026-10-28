@@ -208,6 +208,35 @@ describe('一次交上来多个对象时逐个入账', () => {
   })
 })
 
+describe('单图编辑没有页面：画布摆放类规则不判', () => {
+  const big = () => panel({ id: 'big', nativeW: 177.8, nativeH: 100, w: 177.8, h: 100 })
+  const placement = ['out-of-page', 'outside-margin', 'overlap']
+
+  it('一张图比文档页面大：没有 out-of-page / outside-margin（issues 与 raw 都没有）', () => {
+    const p = big()
+    const doc = { ...docWith([p]), page: { w: 150, h: 100, margin: 5 } }
+    const r = runOne(doc, renderFor(p, manifestWith([])))
+    for (const code of placement) {
+      expect(r.issues.some((i) => i.ruleCode === code)).toBe(false)
+      expect(r.raw.some((i) => i.id === code)).toBe(false)
+    }
+  })
+
+  it('同样的图加上第二张（排版）：越界照常报', () => {
+    const p = big()
+    const q = panel({ id: 'q', x: 0, y: 0 })
+    const doc = { ...docWith([p, q]), page: { w: 150, h: 100 } }
+    const r = runOne(doc, renderFor(p, manifestWith([])))
+    expect(r.issues.filter((i) => i.ruleCode === 'out-of-page').map((i) => i.objectRef.objectId)).toContain('big')
+  })
+
+  it('隐藏的图也计一张：仍是单图编辑，不判摆放', () => {
+    const p = { ...big(), hidden: true }
+    const doc = { ...docWith([p]), page: { w: 150, h: 100 } }
+    expect(runOne(doc, renderFor(p, manifestWith([]))).issues.some((i) => i.ruleCode === 'out-of-page')).toBe(false)
+  })
+})
+
 describe('画布维度（改造前缺的那一维）', () => {
   it('每条问题都说得出自己在哪张画布上', () => {
     const p = panel()
@@ -565,10 +594,16 @@ describe('原图范围不算画布摆放类规则（FLAG-B1）', () => {
     },
   ]
 
+  // 单图编辑（画布上恰好一张图）不判摆放类规则：夹具再放一张隐藏的图，让它是排版、几何上不占位
+  const inLayout = (d: FigureDocument): FigureDocument => {
+    d.objects.push(panel({ id: 'pad', hidden: true }))
+    return d
+  }
+
   for (const { rule, build } of fixtures) {
     it(`${rule}：画布范围照报，原图范围（摘要与报告那份投影）都不算`, () => {
       const p1 = panel()
-      const result = runOne(build(), renderFor(p1, clean()))
+      const result = runOne(inLayout(build()), renderFor(p1, clean()))
       // 前提：画布范围下这条规则确实落在 p1 头上
       const canvasSummary = summaryFor(result.issues, { canvasId: 'c1', ready: true, failed: false })
       expect(
@@ -603,7 +638,7 @@ describe('原图范围不算画布摆放类规则（FLAG-B1）', () => {
 
   it('out-of-page 在原图范围下不再是阻断：摘要里没有它带来的 error', () => {
     const p1 = panel()
-    const d = fixtures[0].build()
+    const d = inLayout(fixtures[0].build())
     const result = runOne(d, renderFor(p1, manifestWith([
       { gid: 'axes_0.xticks', role: 'ticks', label: 'X 刻度文字', pt: 9 },
     ])))
