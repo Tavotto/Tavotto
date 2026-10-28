@@ -20,7 +20,7 @@ export interface PlaybackProps {
 }
 
 /**
- * 回放条：左边播放 / 重播 / `0:12 / 0:33` / 速度，右边的进度条与下面时间轴同一把尺——
+ * 回放条（在卡片最底部）：左边播放 / 重播 / `0:12 / 0:33` / 速度，右边的进度条与下面时间轴同一把尺——
  * 它的宽度 = 总时长占时间轴的比例（`fraction`），拇指在哪，现在线就在哪。放在 `data-trace-body` 里，沿用它的标签列宽。
  * 进度条自己画（不是原生 range）：点哪落哪，不被原生拇指的内缩带偏。
  */
@@ -58,7 +58,7 @@ export function PlaybackBar({ total, t, playing, speed, onToggle, onReplay, onSe
   }
 
   return (
-    <div data-trace-playback className="relative flex h-11 items-center border-b border-border bg-surface select-none">
+    <div data-trace-playback className="relative flex h-9 items-center border-t border-border bg-surface select-none">
       <div className="flex w-(--trace-label) shrink-0 items-center gap-1 ps-3 pe-3">
         <IconButton
           data-trace-playback-toggle={playing ? 'pause' : 'play'}
@@ -104,14 +104,15 @@ export function PlaybackBar({ total, t, playing, speed, onToggle, onReplay, onSe
             onKeyDown={onKeyDown}
             className="group/scrub relative h-full cursor-grab touch-none active:cursor-grabbing outline-none"
           >
-            <span className="pointer-events-none absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-border" />
+            {/* 克制：2px 细线，走过的部分只比底色深一档；拇指平时不画，指针靠近 / 拖动 / 键盘聚焦时才出现一个小点 */}
+            <span className="pointer-events-none absolute inset-x-0 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-border transition-[height] duration-fast group-hover/scrub:h-1" />
             <span
-              className="pointer-events-none absolute start-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-accent"
+              className="pointer-events-none absolute start-0 top-1/2 h-0.5 -translate-y-1/2 rounded-full bg-ink-3 transition-[height] duration-fast group-hover/scrub:h-1"
               style={{ width: `${share * 100}%` }}
             />
             <span
               data-trace-playback-thumb
-              className="pointer-events-none absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent group-focus-visible/scrub:focus-ring"
+              className="pointer-events-none absolute top-1/2 size-2 -translate-x-1/2 -translate-y-1/2 scale-0 rounded-full bg-ink-2 opacity-0 transition-[opacity,scale] duration-fast group-hover/scrub:scale-100 group-hover/scrub:opacity-100 group-active/scrub:scale-100 group-active/scrub:opacity-100 group-focus-visible/scrub:scale-100 group-focus-visible/scrub:opacity-100 group-focus-visible/scrub:focus-ring"
               style={{ left: `${share * 100}%` }}
             />
           </div>

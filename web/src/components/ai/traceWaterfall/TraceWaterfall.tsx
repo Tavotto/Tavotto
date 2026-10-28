@@ -336,8 +336,6 @@ export function TraceWaterfall({ model, now, playback, className, style, ...prop
         <Metric id="errors" label={t('trace.ui.metric.errors')} value={String(metrics.errors)} />
       </dl>
 
-      {playback && <PlaybackBar {...playback} fraction={Math.min(1, playback.total / whole)} />}
-
       {/* 主体 */}
       <div
         ref={bodyRef}
@@ -452,6 +450,9 @@ export function TraceWaterfall({ model, now, playback, className, style, ...prop
 
       {/* 图例 */}
       <Legend />
+
+      {/* 回放条在最底部：不抢上面数字与步骤的视线 */}
+      {playback && <PlaybackBar {...playback} fraction={Math.min(1, playback.total / whole)} />}
 
       {details && detailsNode && details.anchor.isConnected && (
         <SpanPopover
