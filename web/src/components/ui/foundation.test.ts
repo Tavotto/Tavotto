@@ -251,9 +251,9 @@ const RULES: Rule[] = [
     spares: '<span className="peer-focus-visible:ring-2 peer-focus-visible:ring-accent" />',
   },
   {
-    name: '加载只有四种写法：sweep / 静态骨架 / text-shimmer / 转圈——没有 Tailwind 的 animate-pulse（宪法第七节）',
+    name: '加载只有四种写法：sweep（含进度条排线流动）/ 静态骨架 / text-shimmer / 转圈——没有 Tailwind 的 animate-pulse（宪法第七节）',
     pattern: /\banimate-pulse\b/,
-    fix: '不定进度 ProgressBar（animate-sweep）；骨架静态 bg-surface-hover + opacity-65；进行中的字 text-shimmer；按钮 / 行内 Spinner（animate-spin）；一次性「看这里」animate-attention',
+    fix: '不定进度 ProgressBar（排线流动）；骨架静态 bg-surface-hover + opacity-65；进行中的字 text-shimmer；按钮 / 行内 Spinner（animate-spin）；一次性「看这里」animate-attention',
     catches: '<span className="h-2 w-2 animate-pulse rounded-full" />',
     spares: '<span className="animate-sweep animate-spin text-shimmer animate-attention" />',
   },
