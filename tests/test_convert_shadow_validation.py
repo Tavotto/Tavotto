@@ -66,7 +66,7 @@ class DirWatcher:
         while not self._stop.is_set():
             for dp, _dn, fn in os.walk(self.root):
                 for n in fn:
-                    self.seen.add(os.path.relpath(os.path.join(dp, n), self.root))
+                    self.seen.add(Path(os.path.relpath(os.path.join(dp, n), self.root)).as_posix())
             time.sleep(0.002)
 
     def __enter__(self):
