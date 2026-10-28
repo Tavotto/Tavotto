@@ -51,7 +51,7 @@ import { useSelectionStore } from '@/store/selectionStore'
 import { useWorkspaceStore } from '@/store/workspace'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
-import { emptyProject, type PanelObject } from '@/types/document'
+import { emptyProject, type CanvasObject, type PanelObject } from '@/types/document'
 import { seedExactRender } from '@/test/renderFixtures'
 
 declare global {
@@ -1799,6 +1799,34 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     expect(vi.mocked(enginePreviewPng).mock.calls.every(([id, patches]) => id === 'Fig1.pdf' && JSON.stringify(patches) === JSON.stringify(edited.overrides))).toBe(true)
     // 没改过的那张照旧是素材预览图（不为它白跑引擎）
     expect(hrefs('Fig2.pdf').every((h) => h?.includes('/api/render?id=Fig2.pdf'))).toBe(true)
+  })
+
+  it('整版预览里的序号按导出出来的样子画：字体、字号、粗细取文字对象自己的，不是缩略图的灰字估号', async () => {
+    await stage({ panels: [panel], renders: { 'Fig1.pdf': manifestWithTicks(1, 9) }, page: { w: 150, h: 112.5 } })
+    useDocumentStore.getState().commit(literal('序号'), (d) => {
+      d.objects.push({
+        id: 'lab_a',
+        type: 'text',
+        text: '(a)',
+        x: 1,
+        y: 1,
+        w: 6,
+        h: 4.4,
+        sizePt: 10,
+        bold: true,
+        color: '#000000',
+        align: 'left',
+      } as CanvasObject)
+    })
+    await mountDialogs()
+    await openDialog()
+    const label = document.body.querySelector('[data-export-preview-stage] [data-canvas-thumb] [data-thumb-text] text')
+    expect(label, '大预览里的序号走导出画法').toBeTruthy()
+    expect(label!.textContent).toBe('(a)')
+    expect(Number(label!.getAttribute('font-size'))).toBeCloseTo((10 * 25.4) / 72, 9)
+    expect(label!.getAttribute('font-weight')).toBe('700')
+    expect(label!.getAttribute('fill')).toBe('#000000')
+    expect(label!.getAttribute('style')).toContain('var(--font-doc)')
   })
 
   it('runtime 面板带图内修改：重跑脚本（previewNonce 变）后整版预览按新版本重新出图，不停在上一次运行的图', async () => {

@@ -27,7 +27,11 @@ import { cn } from '@/lib/utils'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { bucketFor } from '@/lib/previewBuckets'
-import type { PanelObject } from '@/types/document'
+import { layerOf } from '@/lib/glyphPlan'
+import { DEFAULT_INTERPRETATION, interpretRuns, parseRuns, SCRIPT_SIZE, SUB_DROP, SUP_RISE } from '@/lib/richText'
+import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
+import { MM_PER_PT } from '@/lib/units'
+import type { PanelObject, TextObject } from '@/types/document'
 import type { ThumbObject, ThumbPage } from '@/types/thumb'
 
 /**
@@ -56,6 +60,7 @@ export function CanvasThumb({
   flush = false,
   pxWidth,
   editedPanel,
+  exportedText,
 }: {
   page: ThumbPage
   objects: readonly ThumbObject[]
@@ -82,6 +87,14 @@ export function CanvasThumb({
    * 画布列表 / 版本列表不给——它们回答「哪一版」，一行缩略图付不起每张一次引擎往返。
    */
   editedPanel?: (o: ThumbObject) => PanelObject | null
+  /**
+   * 导出预览用：这个文字对象要按「导出出来的样子」画时返回它的文档对象——字体族、字号（pt 按页面 mm 折算）、
+   * 粗细、斜体、颜色、对齐、行距、底色与描边都取对象自己的，取法与画布 `TextView` 同一套
+   * （`canvasFontStack(effectiveCanvasFamily())`、`MM_PER_PT`、`lib/richText` 的上下标）。
+   * 不给 / 返回 null = 缩略图的示意画法（灰字、按框高估字号）：画布列表 / 版本列表回答「哪一版」，
+   * 草图里也没有这些字段，DOM 与不带这个 prop 之前逐字相同。
+   */
+  exportedText?: (o: ThumbObject) => TextObject | null
 }) {
   const { w, h } = page
   const byId = useAssetStore((s) => s.byId)
@@ -189,6 +202,8 @@ export function CanvasThumb({
             )
           }
           if (o.type === 'text') {
+            const exact = exportedText?.(o)
+            if (exact) return <ExportedText key={key} obj={exact} />
             return (
               <text
                 key={key}
@@ -227,6 +242,71 @@ export function CanvasThumb({
         })}
       </g>
     </svg>
+  )
+}
+
+/**
+ * 导出预览里的一个文字对象，按它自己的排印画（与画布 `TextView` 同一套取值；单位是页面 mm）。
+ *
+ * 行的竖直位置照 CSS 行盒：第 i 行占 `[i, i+1) × 行距`，字形居中在行盒里——`dominant-baseline="central"`
+ * 取的正是字体 ascent / descent 的中线，与 CSS 把半行距上下均分的结果相同。
+ * 不折行：画布上超过框宽才折的长句，这里仍是一行（显式换行照画）。
+ */
+function ExportedText({ obj }: { obj: TextObject }) {
+  const size = obj.sizePt * MM_PER_PT
+  const lead = (obj.lineHeight ?? 1.25) * size
+  const pad = obj.padding ?? 0
+  const x = obj.align === 'center' ? obj.x + obj.w / 2 : obj.align === 'right' ? obj.x + obj.w - pad : obj.x + pad
+  const anchor = obj.align === 'center' ? 'middle' : obj.align === 'right' ? 'end' : 'start'
+  const border = obj.borderColor ? (obj.borderPt ?? 0.75) * MM_PER_PT : 0
+  return (
+    <g data-thumb-text>
+      {(obj.bg || border > 0) && (
+        <rect
+          x={obj.x}
+          y={obj.y}
+          width={obj.w}
+          height={obj.h}
+          fill={obj.bg ?? 'none'}
+          stroke={border > 0 ? (obj.borderColor ?? undefined) : undefined}
+          strokeWidth={border > 0 ? border : undefined}
+        />
+      )}
+      <text
+        x={x}
+        fontSize={size}
+        fontWeight={obj.bold ? 700 : 400}
+        fontStyle={obj.italic ? 'italic' : 'normal'}
+        textDecoration={obj.underline ? 'underline' : undefined}
+        fill={obj.color}
+        textAnchor={anchor}
+        dominantBaseline="central"
+        // 字体栈的衬线档是 `var(--font-doc)`：var() 只在 style 里解析，表现属性里不认
+        style={{ fontFamily: canvasFontStack(effectiveCanvasFamily(obj)) }}
+      >
+        {obj.text.split('\n').map((line, i) => (
+          <tspan key={i} x={x} y={obj.y + pad + (i + 0.5) * lead}>
+            {interpretRuns(parseRuns(line), {
+              isPrimary: (cp) => layerOf(cp) === 'primary',
+              isDrawable: (cp) => layerOf(cp) !== 'missing',
+              mode: obj.interpretation ?? DEFAULT_INTERPRETATION,
+            }).map((r, j) =>
+              r.script === '' ? (
+                r.text
+              ) : (
+                <tspan
+                  key={j}
+                  fontSize={size * SCRIPT_SIZE}
+                  baselineShift={size * (r.script === 'sup' ? SUP_RISE : -SUB_DROP)}
+                >
+                  {r.text}
+                </tspan>
+              ),
+            )}
+          </tspan>
+        ))}
+      </text>
+    </g>
   )
 }
 

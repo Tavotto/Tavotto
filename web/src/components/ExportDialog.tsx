@@ -151,7 +151,7 @@ import { useProjectStore } from "@/store/projectStore";
 import { useDocumentStore } from "@/store/documentStore";
 import { dialogCovered, useUiStore } from "@/store/uiStore";
 import { useWorkspaceStore } from "@/store/workspace";
-import { isRuntimePanel, type CanvasObject, type FigureDocument, type PanelObject } from "@/types/document";
+import { isRuntimePanel, type CanvasObject, type FigureDocument, type PanelObject, type TextObject } from "@/types/document";
 import type { ThumbObject } from "@/types/thumb";
 import { cropToVisibleContent, croppedDocument } from "@/lib/exportCrop";
 import {
@@ -1987,6 +1987,12 @@ function editedPanelOf(o: ThumbObject): PanelObject | null {
   return obj.type === "panel" && showsEdits(obj) ? obj : null;
 }
 
+/** 整版预览里的文字按导出出来的样子画：字体、字号、粗细都取对象自己的（喂给 `CanvasThumb` 的 `exportedText`） */
+function exportedTextOf(o: ThumbObject): TextObject | null {
+  const obj = o as CanvasObject;
+  return obj.type === "text" ? obj : null;
+}
+
 /**
  * 缩略图本体：按**真实图幅比例**定盒，再放进调用方给的固定外框里（外框尺寸不变、不溢出）。
  * `boxRatio` = 外框的宽高比，用来判断该贴宽还是贴高。
@@ -2114,6 +2120,7 @@ function ExportPreviewPane({
                 objects={doc.objects}
                 className="h-full w-full"
                 editedPanel={editedPanelOf}
+                exportedText={exportedTextOf}
               />
             </PreviewTab>
             {figures.map((f) => (
@@ -2142,6 +2149,7 @@ function ExportPreviewPane({
                   flush
                   pxWidth={px || undefined}
                   editedPanel={editedPanelOf}
+                  exportedText={exportedTextOf}
                 />
               )}
             </ExportZoomStage>

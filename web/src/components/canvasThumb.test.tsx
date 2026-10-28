@@ -222,3 +222,80 @@ describe('flush / pxWidth（导出预览的缩放舞台用）：默认行为一�
     expect(svg.querySelector('[data-thumb-panel]')!.getAttribute('href')).toContain('w=1600')
   })
 })
+
+describe('exportedText（导出预览用）：文字按导出出来的样子画；不给时一字不变', () => {
+  const label = {
+    id: 'l',
+    type: 'text',
+    text: '(a)',
+    x: 2,
+    y: 3,
+    w: 8,
+    h: 5,
+    sizePt: 9,
+    bold: true,
+    color: '#112233',
+    align: 'left',
+  } as CanvasObject
+  const asText = (o: unknown) => ((o as CanvasObject).type === 'text' ? (o as never) : null)
+  const draw = async (el: React.ReactElement) => {
+    await teardown()
+    return render(el)
+  }
+  const textOf = (svg: SVGElement) => svg.querySelector('[data-thumb-text] text') as SVGTextElement
+
+  it('不传、或对这个对象返回 null：DOM 逐字相同（画布列表 / 版本列表的示意画法）', async () => {
+    const plain = (await draw(<CanvasThumb page={PAGE} objects={[label]} />)).outerHTML
+    const off = (await draw(<CanvasThumb page={PAGE} objects={[label]} exportedText={() => null} />)).outerHTML
+    expect(off).toBe(plain)
+    expect(plain).not.toContain('data-thumb-text')
+  })
+
+  it('给了：字号按 pt 折成页面 mm，粗细、颜色、字体族都取对象自己的（没设过字体族 = 文档衬线）', async () => {
+    const svg = await draw(<CanvasThumb page={PAGE} objects={[label]} exportedText={asText} />)
+    const t = textOf(svg)
+    expect(Number(t.getAttribute('font-size'))).toBeCloseTo((9 * 25.4) / 72, 9)
+    expect(t.getAttribute('font-weight')).toBe('700')
+    expect(t.getAttribute('font-style')).toBe('normal')
+    expect(t.getAttribute('fill')).toBe('#112233')
+    expect(t.getAttribute('style')).toContain('var(--font-doc)')
+    expect(t.textContent).toBe('(a)')
+    const sans = await draw(
+      <CanvasThumb page={PAGE} objects={[{ ...label, fontFamily: 'sans-serif', italic: true } as CanvasObject]} exportedText={asText} />,
+    )
+    expect(textOf(sans).getAttribute('style')).toContain('Helvetica')
+    expect(textOf(sans).getAttribute('font-style')).toBe('italic')
+  })
+
+  it('对齐与多行：左对齐锚在左边 + 内边距，居中锚在框中线，右对齐锚在右边 − 内边距；每行一个 tspan，行盒按 lineHeight 排', async () => {
+    const lines = { ...label, text: '第一行\n第二行', padding: 1, lineHeight: 1.5 } as CanvasObject
+    const size = (9 * 25.4) / 72
+    const at = async (align: string) => {
+      const svg = await draw(<CanvasThumb page={PAGE} objects={[{ ...lines, align } as CanvasObject]} exportedText={asText} />)
+      const t = textOf(svg)
+      return { anchor: t.getAttribute('text-anchor'), spans: [...t.children].map((s) => [Number(s.getAttribute('x')), Number(s.getAttribute('y')), s.textContent]) }
+    }
+    const left = await at('left')
+    expect(left.anchor).toBe('start')
+    expect(left.spans).toEqual([
+      [3, expect.closeTo(3 + 1 + 0.5 * 1.5 * size, 9), '第一行'],
+      [3, expect.closeTo(3 + 1 + 1.5 * 1.5 * size, 9), '第二行'],
+    ])
+    expect((await at('center')).anchor).toBe('middle')
+    expect((await at('center')).spans[0][0]).toBe(6)
+    expect((await at('right')).anchor).toBe('end')
+    expect((await at('right')).spans[0][0]).toBe(9)
+  })
+
+  it('上下标与画布同一份 richText 解析：^{…} 画成小号抬高的一段，记号本身不画出来', async () => {
+    const svg = await draw(
+      <CanvasThumb page={PAGE} objects={[{ ...label, text: 'h^{-1}' } as CanvasObject]} exportedText={asText} />,
+    )
+    const t = textOf(svg)
+    expect(t.textContent).toBe('h-1')
+    const sup = t.querySelector('tspan tspan')!
+    expect(sup.textContent).toBe('-1')
+    expect(Number(sup.getAttribute('font-size'))).toBeCloseTo(((9 * 25.4) / 72) * 0.62, 9)
+    expect(Number(sup.getAttribute('baseline-shift'))).toBeGreaterThan(0)
+  })
+})
