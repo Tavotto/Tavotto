@@ -13,7 +13,6 @@ import {
   Minus,
   MoveHorizontal,
   RotateCcwClock,
-  Sparkles,
   Square,
   Type,
   type IconComponent,
@@ -653,7 +652,7 @@ function AssistantPanelBody() {
         >
           {!panel && dataTurns.length === 0 ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
-            <EmptyState icon={FileCodeCorner} title={ai('panel.noPanelTitle')} />
+            <EmptyState art="select" title={ai('panel.noPanelTitle')} />
           ) : turns.length > 0 ? (
             // 节奏由列表容器统一管（§6.1）：轮与轮 16、轮内各块 8；子组件不带外边距
             <div
@@ -676,7 +675,7 @@ function AssistantPanelBody() {
             /* 还没发过任务：中间是空态 + 至多三条可点的示例提示（§6.7）——点一下填进输入框，改完再发 */
             <div data-ai-empty className="flex min-h-full flex-col items-center justify-center pb-4">
               <div className="w-full">
-                <EmptyState icon={Sparkles} title={ai('panel.emptyTitle')} hint={ai('panel.emptyHint')} />
+                <EmptyState art="pencil" title={ai('panel.emptyTitle')} hint={ai('panel.emptyHint')} />
               </div>
               <div className="-mt-4 flex w-full max-w-[17rem] flex-col gap-1.5">
                 {suggestions.slice(0, EXAMPLE_COUNT).map((c) => (

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { captureProjectEpoch, type ProjectEpochGuard } from '@/lib/projectEpoch'
 import { useTranslation } from 'react-i18next'
-import { Ban, Copy, CornerDownLeft, ImageOff, Play, SearchX, Settings, Square } from '@/components/ui/icons'
+import { Ban, Copy, CornerDownLeft, Play, Settings, Square } from '@/components/ui/icons'
 import { listRowClass } from '@/components/ui/listRow'
 import { cn } from '@/lib/utils'
 import { joinProjectPath } from '@/lib/desktop'
@@ -179,10 +179,10 @@ export function ScriptLibrary({ query }: { query: string }) {
   }
   if (scripts.length === 0 && foreign.length === 0) {
     return q ? (
-      <EmptyState icon={SearchX} title={sc('noMatch')} data-script-no-match />
+      <EmptyState art="search" title={sc('noMatch')} data-script-no-match />
     ) : (
       <div className="px-3">
-        <EmptyState icon={Play} title={sc('emptyTitle')} />
+        <EmptyState art="code" title={sc('emptyTitle')} />
       </div>
     )
   }
@@ -859,12 +859,7 @@ export function CaptureThumb({ d }: { d: CapturedFigureDescriptor }) {
           />
         </span>
       ) : (
-        <span
-          data-capture-thumb-fallback
-          className="flex size-full items-center justify-center rounded-xs bg-surface-2 text-ink-faint ring-1 ring-inset ring-border"
-        >
-          <ImageOff size={ICON_SIZE.md} aria-hidden />
-        </span>
+        <span data-capture-thumb-fallback className="hatch-box size-full rounded-xs" />
       )}
     </span>
   )

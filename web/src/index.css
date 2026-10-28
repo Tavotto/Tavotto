@@ -552,8 +552,11 @@
    做 mask，任何缩放都锐利）。底排线 ink 15%，已完成的一段是 ink-3；确定态宽度吸附到整条线
    （不支持 CSS round() 的内核退回精确百分比）；不确定态整片排线以 2.2s 线性慢速斜向流动，
    减少动态效果时静止。 */
-.progress-track {
+.progress-track,
+.hatch-box {
   --progress-hatch: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='5' shape-rendering='crispEdges'%3E%3Crect x='4' y='0' width='1' height='1'/%3E%3Crect x='3' y='1' width='1' height='1'/%3E%3Crect x='2' y='2' width='1' height='1'/%3E%3Crect x='1' y='3' width='1' height='1'/%3E%3Crect x='0' y='4' width='1' height='1'/%3E%3C/svg%3E");
+}
+.progress-track {
   position: relative;
   height: 11px;
   overflow: hidden;
@@ -565,6 +568,28 @@
   .progress-track {
     box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-ink) 30%, transparent);
   }
+}
+/* 缩略图占位（手帐线稿）：与进度条同一块纸——发丝框 + 同一张 45° 排线瓦片，不画图标。
+   尺寸与圆角由使用处给；排线与进度条的底排线同色（ink 15%） */
+.hatch-box {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: var(--color-surface);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 16%, transparent);
+}
+@media (min-resolution: 2dppx) {
+  .hatch-box {
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-ink) 30%, transparent);
+  }
+}
+.hatch-box::before {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  -webkit-mask: var(--progress-hatch) 0 0 / 5px 5px;
+  mask: var(--progress-hatch) 0 0 / 5px 5px;
+  background: color-mix(in srgb, var(--color-ink) 15%, transparent);
 }
 .progress-track > .progress-base,
 .progress-track > .progress-fill {

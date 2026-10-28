@@ -7,7 +7,6 @@ import {
   CornerDownLeft,
   FolderOpen,
   FolderPlus,
-  SearchX,
 } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { backendErrorText, type RecentProject } from '@/lib/api'
@@ -291,7 +290,7 @@ function AllProjects({
                 />
               )}
               {available.length + missing.length === 0 && (
-                <EmptyState icon={SearchX} title={t('picker.filterNoMatch', { query: typed.trim() })} data-picker-no-match />
+                <EmptyState art="search" title={t('picker.filterNoMatch', { query: typed.trim() })} data-picker-no-match />
               )}
             </div>
           </section>

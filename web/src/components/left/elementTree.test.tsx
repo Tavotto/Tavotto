@@ -470,13 +470,15 @@ describe('空态与搜索框（UI 2.0 第二轮 09）', () => {
     expect(line.querySelector('button, a, [role="button"], [role="link"]')).toBeNull()
   })
 
-  it('有可编辑的图但没选中：一行灰字 + 「选中一张可编辑的图」', async () => {
+  it('有可编辑的图但没选中：与改图面板同一幅「选图」线稿 + 「选中一张可编辑的图」', async () => {
     useUiStore.getState().setElementPanel(null)
     useSelectionStore.getState().set([])
     await mount()
-    const line = emptyLine()!
-    expect(line.textContent).toContain(t('elementTree.noPanelTitle', { ns: 'workspace' }))
-    await act(async () => line.querySelector('button')!.click())
+    expect(emptyLine()).toBeNull()
+    const es = host.querySelector<HTMLElement>('[data-empty-state]')!
+    expect(es.querySelector('[data-sketch="select"]')).not.toBeNull()
+    expect(es.textContent).toContain(t('elementTree.noPanelTitle', { ns: 'workspace' }))
+    await act(async () => es.querySelector('button')!.click())
     expect(useSelectionStore.getState().ids).toEqual(['p1'])
   })
 

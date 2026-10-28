@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { perfCount } from '@/perf/core'
 import { useTranslation } from 'react-i18next'
 import { t as translate } from '@/i18n'
-import { Images } from '@/components/ui/icons'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { runTutorialEntry } from '@/lib/onboarding/tutorial'
 import { useAssetStore } from '@/store/assetStore'
@@ -527,7 +526,7 @@ function EmptyHint() {
         className={cn('pointer-events-auto p-4', !onLightPaper && 'rounded-lg bg-surface')}
       >
         <EmptyState
-          icon={Images}
+          art="canvas"
           title={sg('emptyTitle')}
           // 素材清单还没回来时先按「有」说：那句「放文件进目录」是对空项目说的
           hint={sg(assetsLoaded && !hasAssets ? 'emptyHintNoAssets' : 'emptyHint')}

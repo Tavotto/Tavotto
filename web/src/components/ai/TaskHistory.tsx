@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, Pin, RotateCcw, RotateCcwClock, Trash2, X } from '@/components/ui/icons'
+import { ChevronRight, Pin, RotateCcw, Trash2, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import { formatTime } from '@/i18n/format'
@@ -136,7 +136,7 @@ export function TaskHistory({ onClose }: { onClose: () => void }) {
           <p className="px-1.5 py-2 text-sm text-danger-content">{error}</p>
         ) : !loaded ? null : entries.length === 0 ? (
           /* 空状态只给一句（审计 T37）：怎么开始，输入框自己说 */
-          <EmptyState icon={RotateCcwClock} title={ai(filtering ? 'history.noMatch' : 'history.empty')} />
+          <EmptyState art={filtering ? 'search' : 'history'} title={ai(filtering ? 'history.noMatch' : 'history.empty')} />
         ) : (
           <div className="flex flex-col gap-0.5">
             {entries.map((s) => (

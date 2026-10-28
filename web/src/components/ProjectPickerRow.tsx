@@ -2,7 +2,7 @@ import { useState, type KeyboardEvent, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { msg, t as translate } from '@/i18n'
 import { ArrowDown, ArrowUp, Bookmark, ExternalLink, Folder, TriangleAlert, X } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { dropLineClass, listRowClass, rowMetaClass } from '@/components/ui/listRow'
 import type { RecentProject } from '@/lib/api'
 import { canRevealInFileManager, fileManagerKind, isDesktop, revealProjectFolder, type FileManagerKind } from '@/lib/desktop'
@@ -218,14 +218,6 @@ export function ProjectRow({
       )}
     >
       <span aria-hidden className={dropLineClass(drop)} />
-      {!drawer && (
-        <span
-          aria-hidden
-          className="flex size-8 shrink-0 items-center justify-center rounded-md bg-surface-hover text-ink-3"
-        >
-          <Folder size={ICON_SIZE.md} />
-        </span>
-      )}
       <button
         type="button"
         data-roving
@@ -242,6 +234,15 @@ export function ProjectRow({
         title={entry.tutorial ? undefined : entry.path}
         className="min-w-0 flex-1 self-stretch text-left outline-none focus-visible:focus-ring disabled:cursor-default aria-disabled:cursor-default"
       >
+        {/* 项目夹图标：无框 16px，坐在名字（第一行）的中线上，不跟两行块的中线（手帐线稿 2026-10-28）；
+            抽屉里的行没有它 */}
+        <span className="flex items-start gap-2">
+        {!drawer && (
+          <IconSlot aria-hidden className="text-ink-3">
+            <Folder size={ICON_SIZE.md} />
+          </IconSlot>
+        )}
+        <span className="block min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
           <span className={cn('truncate', entry.exists ? 'text-ink' : 'text-ink-3')}>{entry.name}</span>
           {!entry.exists && (
@@ -263,6 +264,8 @@ export function ProjectRow({
         ) : (
           <TailPath path={entry.path} className={cn('font-normal', current ? 'text-ink-2' : 'text-ink-3')} />
         )}
+        </span>
+        </span>
       </button>
       {/* 收藏开关就在行上：这是这个抽屉最常做的整理动作，不该藏进菜单第二层 */}
       {drawer && onTogglePin && (

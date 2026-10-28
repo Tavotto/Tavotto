@@ -5,7 +5,6 @@ import { CountChip } from '@/components/ui/CountChip'
 import { Details, Summary } from '@/components/ui/Details'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { RetryImg } from '@/components/ui/RetryImg'
-import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import {
   backendCodeMsg,
   backendErrorText,
@@ -289,7 +288,7 @@ function ReadinessBody() {
     if (loadError) {
       return (
         <EmptyState
-          icon={TriangleAlert}
+          art="warn"
           title={rd('loadFailed')}
           hint={loadError}
           action={{
@@ -338,7 +337,7 @@ function ReadinessBody() {
       </NoticeReveal>
 
       {report.summary.total === 0 ? (
-        <EmptyState icon={EditableFigureIcon} title={rd('emptyTitle')} hint={rd('emptyHint')} />
+        <EmptyState art="select" title={rd('emptyTitle')} hint={rd('emptyHint')} />
       ) : (
         groups.map(
           ({ key, panels }) =>

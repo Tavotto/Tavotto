@@ -60,6 +60,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层
   '/src/canvas/PageEdgeResize.tsx': 1, // 拖页面边的尺寸标注（引出线 + 双箭头，画布叠加层）
   '/src/canvas/IssueSpotlight.tsx': 1, // 定位舞台灯的暗幕与受光遮罩（画布叠加层）
+  '/src/components/ui/Sketch.tsx': 1, // 空状态手帐线稿（54×42 的插图，不是图标；一个 <svg> 出 11 幅）
   '/src/components/ui/Spinner.tsx': 1, // 全产品唯一的加载图形（底环 + 短弧，描边下限属于它，不走图标集的比例缩放）
   '/src/components/ui/BrandMark.tsx': 1, // 品牌标（唯一出处 lib/brand.ts 的图形侧）
   '/src/components/settings/BrandLogo.tsx': 2, // 厂商标志（多色 / 渐变，图形数据在 brandLogoData.ts）+ 没有彩色版的厂商的单色图形

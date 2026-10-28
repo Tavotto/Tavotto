@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Numbers } from '@sfinterface/numbers'
 import { useInteractionStore } from '@/store/interactionStore'
 import { ArrowLeftRight, ExternalLink, LayoutGrid, Trash2 } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { formatMm, UNIT_GAP } from '@/lib/units'
 import { onExportDefaultsHydrated, readExportDefaults } from '@/lib/exportDefaults'
 import { hasRaster } from '@/lib/exportRequest'
@@ -162,14 +162,12 @@ export function CanvasPage() {
             <Numbers value={page.h} {...numbersProps} suffix={UNIT_GAP + 'mm'} />
           </span>
         </p>
-        <div className="flex min-h-8 items-center gap-2">
-          <span
-            data-identity-icon
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-surface-hover text-ink-2"
-          >
+        {/* 无框 16px 图标，槽高 32、名字块上下各 4px：第一行永远在 16 处（同 IdentityHeader） */}
+        <div className="flex min-h-8 items-start gap-2">
+          <IconSlot data-identity-icon className="h-8 w-4 text-ink-3">
             <LayoutGrid size={ICON_SIZE.md} aria-hidden />
-          </span>
-          <h2 title={name} className="type-heading line-clamp-2 min-w-0 break-words">
+          </IconSlot>
+          <h2 title={name} className="type-heading line-clamp-2 min-w-0 break-words py-1">
             {name}
           </h2>
         </div>
