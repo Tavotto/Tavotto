@@ -1950,8 +1950,19 @@ def desktop_mcp_command(found: dict) -> "list[str] | None":
     return None
 
 
+#: 服务端找画布产物的环境变量（与 `tavotto_mcp.widget.WIDGET_ENV` 同名，用例核对）与插件里那一份的位置
+WIDGET_ENV = "TAVOTTO_MCP_WIDGET"
+PLUGIN_WIDGET = os.path.join(HERE, "widget", "canvas.html")
+
+
 def _hand_off_cmd(cmd: "list[str]") -> int:
-    """把这个进程交给一条现成的命令（桌面版的 `tavotto-cli mcp`）：与 `_hand_off` 同一个 `_exec_or_call`。"""
+    """把这个进程交给一条现成的命令（桌面版的 `tavotto-cli mcp`）：与 `_hand_off` 同一个 `_exec_or_call`。
+
+    画布（MCP App UI）是发版时构建、随插件发的 `widget/canvas.html`，桌面版的冻结 CLI 里没有这个文件：交棒前把插件里
+    这一份经 `TAVOTTO_MCP_WIDGET` 指给它，否则只装桌面版的 Codex 用户就丢了内嵌画布（Windows Lab 实测桌面 CLI 的体检报
+    「bundled canvas widget file is missing」）。用户自己设了这个变量就不动。"""
+    if os.path.isfile(PLUGIN_WIDGET) and not os.environ.get(WIDGET_ENV):
+        os.environ[WIDGET_ENV] = PLUGIN_WIDGET
     return _exec_or_call(cmd)
 
 
