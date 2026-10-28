@@ -57,15 +57,14 @@ Windows 安装包未签名时，首次运行会弹 SmartScreen 提示：点「�
 
 ### 在 AI 编程助手里用
 
-同一套引擎和画布也以工具的形式提供给编程助手，让它画图、在 Tavotto 里打开、跑预检并导出。
+装了桌面版，就打开**设置 → 改图助手 → 接入 AI 编辑器**，在你用的编辑器那一行点**接入**；第一次会问它可以处理哪个项目文件夹。
 
-| 助手 | 状态 | 怎么装 |
+| 助手 | 装了桌面版 | 没装桌面版 |
 | --- | --- | --- |
-| Codex | 插件 | [在 Codex 中第一次使用 Tavotto](#在-codex-中第一次使用-tavotto) |
-| Claude Code | Beta | [在 Claude Code 中使用 Tavotto](#在-claude-code-中使用-tavottobeta) |
-| DeepSeek Harness | Beta | [在 DeepSeek Harness 中使用 Tavotto](#在-deepseek-harness-中使用-tavottobeta) |
-| WorkBuddy | Beta | [在 WorkBuddy 中使用 Tavotto](#在-workbuddy-中使用-tavottobeta) |
-| Cursor、VS Code、Trae、ZCode、MiniMax Code、Claude Desktop | 实验 | [配置生成器](#在其他-ai-编辑器--客户端中使用实验) |
+| Codex | 点「接入」 | [Codex 插件](#在-codex-中第一次使用-tavotto) |
+| Claude Code、WorkBuddy | 点「接入」 | [插件（Beta）](docs/guide/ai-hosts.zh-CN.md#在-claude-code-中使用-tavottobeta) |
+| Cursor、VS Code、Trae、ZCode、Claude Desktop | 点「接入」 | [配置生成器（实验）](docs/guide/ai-hosts.zh-CN.md#在其他-ai-编辑器--客户端中使用实验) |
+| DeepSeek Harness、MiniMax Code | 暂不支持 | [bundle（Beta）或配置生成器](docs/guide/ai-hosts.zh-CN.md#在-deepseek-harness-中使用-tavottobeta) |
 
 ### PyPI 安装（Linux 与服务器）
 
@@ -142,7 +141,7 @@ Tavotto 会找到你写这个脚本时用的 conda、venv 或系统 Python，并
 
 ## 在 AI 编程助手里安装
 
-上表里每个助手的逐步安装。命令以外的细节都在[完整说明](docs/guide/ai-hosts.zh-CN.md)里。
+不用桌面版「接入」按钮时的 Codex 安装。其他助手，以及命令以外的细节，都在[完整说明](docs/guide/ai-hosts.zh-CN.md)里。
 
 ### 在 Codex 中第一次使用 Tavotto
 
@@ -212,55 +211,6 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 把下面一句完整发给 Codex：
 
 > 请严格按照 README 的「在 Codex 中第一次使用 Tavotto」执行普通用户安装。不要 clone 或构建源码，不要运行 pnpm、npm、cargo、Tauri、测试或 editable install。只安装 Codex 插件和所需的 Tavotto 引擎，运行健康检查；需要新会话时明确告诉我并停止。
-
-### 在 Claude Code 中使用 Tavotto（Beta）
-
-同一份插件可装进 Claude Code 的终端和 IDE 扩展，限 Local 或 SSH 会话（Cloud 和 WSL 会话不加载本地插件）。在对应环境的终端逐条运行：
-
-```sh
-claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
-claude plugin install tavotto@tavotto
-pipx install "tavotto[worker]"
-```
-
-然后新开 Claude Code 会话，或运行 `/reload-plugins`；`/mcp` 里应该列出 `plugin:tavotto:tavotto`。Claude Code 没有内嵌画布，照常用工具打开、修改、预检和导出，要手动编辑就交接桌面版。更新用 `claude plugin update tavotto@tavotto`。
-
-### 在 DeepSeek Harness 中使用 Tavotto（Beta）
-
-要求 `PATH` 上已有 `pnpm`，DSH 的插件管理器会调用它。把 bundle 加进实际使用的 profile（这里的 `web` 是 `dsh web` 启动的那一份）：
-
-```sh
-dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"
-pipx install "tavotto[worker]"
-```
-
-装好后用 `dsh web` 新开会话，请在项目目录里启动，不要在主目录启动。更新用 `dsh plugin --profile web update tavotto-dsh`。没有 pnpm 就用[配置生成器](#在其他-ai-编辑器--客户端中使用实验)，选 `--host dsh`。
-
-### 在 WorkBuddy 中使用 Tavotto（Beta）
-
-WorkBuddy 装的是同一份 Claude Code 插件。在它的插件市场选择「添加市场」，填入：
-
-```text
-Tavotto/Tavotto
-```
-
-安装 `tavotto@tavotto`，在终端运行 `pipx install "tavotto[worker]"`，再新开对话，让 WorkBuddy 调用 `tavotto_health`。请在项目目录使用，不要在主目录使用。更新和卸载都在 WorkBuddy 里该插件的卡片上操作。
-
-以上 Beta 只描述安装渠道，依据是本地宿主冒烟，不是发行产物的 `host_verified` 验收。各宿主哪些验证过、哪些没有，见[完整说明](docs/guide/ai-hosts.zh-CN.md)。
-
-### 在其他 AI 编辑器 / 客户端中使用（实验）
-
-Cursor、VS Code（GitHub Copilot Agent）、Trae、ZCode、MiniMax Code、Claude Desktop（本地聊天）和上面这些宿主用的是同一份 MCP 服务和技能。从 [Releases](https://github.com/Tavotto/Tavotto/releases) 下载 `codex-plugin-<版本>.zip`（名字带 codex 是历史原因，内容对所有宿主一样），解压到会长期保留的目录，再生成配置。生成器**只打印，不写任何文件**：
-
-```sh
-python3 <完整包>/integrations/configure.py --host vscode --project-root /绝对路径/你的项目
-```
-
-```powershell
-py -3 '<完整包>\integrations\configure.py' --host vscode --project-root 'D:\你的项目'
-```
-
-然后在对话里调用 `tavotto_health`，确认 `server.package_dir` 就是刚解压的那份包。引擎准备、`--host` 的可选值、升级方法和各宿主的验证程度见[完整说明](docs/guide/ai-hosts.zh-CN.md)。
 
 ## 隐私
 

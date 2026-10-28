@@ -57,15 +57,14 @@ On Windows, an unsigned installer makes SmartScreen show a prompt on first run: 
 
 ### Use it from an AI coding assistant
 
-The same engine and canvas are available as tools inside coding agents, so an agent can draw a figure, open it in Tavotto, run the preflight and export.
+With the desktop app installed, open **Settings → Figure assistants → Connect AI editors** and press **Connect** on your editor's row; the first time, it asks which project folder the editor may work in.
 
-| Assistant | Status | How to install |
+| Assistant | With the desktop app | Without it |
 | --- | --- | --- |
-| Codex | Plugin | [Using Tavotto with Codex for the first time](#using-tavotto-with-codex-for-the-first-time) |
-| Claude Code | Beta | [Using Tavotto with Claude Code](#using-tavotto-with-claude-code-beta) |
-| DeepSeek Harness | Beta | [Using Tavotto with DeepSeek Harness](#using-tavotto-with-deepseek-harness-beta) |
-| WorkBuddy | Beta | [Using Tavotto with WorkBuddy](#using-tavotto-with-workbuddy-beta) |
-| Cursor, VS Code, Trae, ZCode, MiniMax Code, Claude Desktop | Experimental | [Config generator](#using-tavotto-from-other-ai-editors-and-clients-experimental) |
+| Codex | Connect | [Codex plugin](#using-tavotto-with-codex-for-the-first-time) |
+| Claude Code, WorkBuddy | Connect | [Plugin (Beta)](docs/guide/ai-hosts.md#using-tavotto-with-claude-code-beta) |
+| Cursor, VS Code, Trae, ZCode, Claude Desktop | Connect | [Config generator (experimental)](docs/guide/ai-hosts.md#using-tavotto-from-other-ai-editors-and-clients-experimental) |
+| DeepSeek Harness, MiniMax Code | Not yet | [Bundle (Beta) or config generator](docs/guide/ai-hosts.md#using-tavotto-with-deepseek-harness-beta) |
 
 ### pip, Linux and servers
 
@@ -142,7 +141,7 @@ A vector editor is the more powerful drawing tool. It does not know that the thi
 
 ## Install in an AI coding assistant
 
-Step-by-step installs for each assistant in the table above. Everything beyond the commands is in [the full reference](docs/guide/ai-hosts.md).
+The Codex install without the desktop app's Connect button. Every other assistant, and everything beyond the commands, is in [the full reference](docs/guide/ai-hosts.md).
 
 ### Using Tavotto with Codex for the first time
 
@@ -212,55 +211,6 @@ Do not tell Codex to run a bare `tavotto open` on this route: the desktop instal
 Send Codex this message, in full:
 
 > Follow the "Using Tavotto with Codex for the first time" section of the README exactly, as a regular-user install. Do not clone or build the source; do not run pnpm, npm, cargo, Tauri, tests, or an editable install. Install only the Codex plugin and the Tavotto engine it needs, then run the health check; when a new session is required, tell me so explicitly and stop.
-
-### Using Tavotto with Claude Code (Beta)
-
-The same plugin installs into Claude Code's terminal and IDE extensions, in Local or SSH sessions (Cloud and WSL sessions do not load local plugins). Run these one at a time in that environment's terminal:
-
-```sh
-claude plugin marketplace add Tavotto/Tavotto --sparse .claude-plugin
-claude plugin install tavotto@tavotto
-pipx install "tavotto[worker]"
-```
-
-Then start a new session or run `/reload-plugins`; `/mcp` should list `plugin:tavotto:tavotto`. Claude Code has no embedded canvas, so you work through the tools and hand the figure to the desktop app to keep editing by hand. Update with `claude plugin update tavotto@tavotto`.
-
-### Using Tavotto with DeepSeek Harness (Beta)
-
-Needs `pnpm` on `PATH`, which DSH's plugin manager uses. Add the bundle to the profile you use (`web` is the one `dsh web` starts):
-
-```sh
-dsh plugin --profile web add "git+https://github.com/Tavotto/Tavotto.git#plugin-stable&path:/codex-plugin"
-pipx install "tavotto[worker]"
-```
-
-Start a new session with `dsh web`, in your project folder rather than your home folder. Update with `dsh plugin --profile web update tavotto-dsh`. Without pnpm, use the [config generator](#using-tavotto-from-other-ai-editors-and-clients-experimental) with `--host dsh`.
-
-### Using Tavotto with WorkBuddy (Beta)
-
-WorkBuddy installs the same plugin as Claude Code. In its plugin marketplace choose **Add marketplace** and enter:
-
-```text
-Tavotto/Tavotto
-```
-
-Install `tavotto@tavotto`, run `pipx install "tavotto[worker]"` in a terminal, then start a new conversation and ask WorkBuddy to call `tavotto_health`. Work in your project folder, not your home folder. Updating and uninstalling are done from the plugin's card in WorkBuddy.
-
-The Beta label covers these install channels, backed by local host smoke tests; it does not claim `host_verified` acceptance of a released artifact. What is and is not verified per host is in [the full reference](docs/guide/ai-hosts.md).
-
-### Using Tavotto from other AI editors and clients (experimental)
-
-Cursor, VS Code (GitHub Copilot agent), Trae, ZCode, MiniMax Code, Claude Desktop (local chat) and the hosts above use the same MCP server and skill. Download `codex-plugin-<version>.zip` from [Releases](https://github.com/Tavotto/Tavotto/releases) (the name is historical; the contents are the same for every host), unzip it somewhere permanent, and generate the config. The generator only prints; it writes no files:
-
-```sh
-python3 <package>/integrations/configure.py --host vscode --project-root /absolute/path/to/project
-```
-
-```powershell
-py -3 '<package>\integrations\configure.py' --host vscode --project-root 'D:\path\to\project'
-```
-
-Then call `tavotto_health` in a chat and check that `server.package_dir` is the folder you unzipped. Engine setup, the list of `--host` values, upgrading and the evidence level of each host: [the full reference](docs/guide/ai-hosts.md).
 
 ## Privacy
 
