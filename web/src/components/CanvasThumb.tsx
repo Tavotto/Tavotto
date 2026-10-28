@@ -99,8 +99,10 @@ export function CanvasThumb({
   const { w, h } = page
   const byId = useAssetStore((s) => s.byId)
   const nonce = useRuntimeAssetStore((s) => s.previewNonce)
-  // 裁切 id 只由页面尺寸决定：同一份内容在画布列表与版本列表里画出的 DOM 逐字相同（同尺寸的两张共用一个也无妨，几何一样）
-  const clip = `thumb-page-${w}x${h}`
+  // 裁切 id 只由页面尺寸与 flush 决定：同一份内容在画布列表与版本列表里画出的 DOM 逐字相同（同尺寸的两张共用一个也无妨，几何一样）。
+  // flush 的裁切没有圆角，几何不同，id 必须不同：导出对话框里页签缩略图（带圆角）与大预览（flush）同时在页面上，同一个 id 时
+  // 浏览器取文档里第一个——大预览被页签那份圆角裁掉四个角（150 mm 宽的页面上约 11.6 mm），角上的序号 (a) 只剩半个
+  const clip = `thumb-page-${w}x${h}${flush ? '-flush' : ''}`
   const checker = `thumb-checker-${w}x${h}`
   // 棋盘格的格子：长边切成 ~16 份，两格一个周期；只有 transparent 才用
   const cell = Math.max(w, h) / 16

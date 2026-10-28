@@ -216,6 +216,29 @@ describe('flush / pxWidth（导出预览的缩放舞台用）：默认行为一�
     expect(page.getAttribute('rx')).toBe('0')
   })
 
+  it('flush 与带圆角的缩略图同在一页（导出对话框：页签 + 大预览）：大预览的裁切解析到无圆角的那一份', async () => {
+    await teardown()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    await act(async () => {
+      root.render(
+        <>
+          <CanvasThumb page={PAGE} objects={panelObjs} />
+          <CanvasThumb page={PAGE} objects={panelObjs} flush />
+        </>,
+      )
+    })
+    const [tab, big] = [...container.querySelectorAll('[data-canvas-thumb]')]
+    const clipOf = (svg: Element) => {
+      const ref = svg.querySelector('g[clip-path]')!.getAttribute('clip-path')!
+      // 浏览器按 id 解析 url(#…)：同一个 id 有两份时取文档里的第一份
+      return document.getElementById(/url\(#(.+)\)/.exec(ref)![1])!.querySelector('rect')!
+    }
+    expect(clipOf(big).getAttribute('rx')).toBe('0')
+    expect(Number(clipOf(tab).getAttribute('rx'))).toBeGreaterThan(0)
+  })
+
   it('pxWidth：按每张面板自己的显示宽度挑档（放大后更清晰）', async () => {
     // 面板占页宽一半；页面显示 3000 设备像素 → 面板 1500 → 1600 档
     const svg = await draw(<CanvasThumb page={PAGE} objects={panelObjs} flush pxWidth={3000} />)
