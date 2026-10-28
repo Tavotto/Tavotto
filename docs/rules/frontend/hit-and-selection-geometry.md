@@ -162,7 +162,7 @@ order: 190
   够不着）时，这一轴的吸附线与反馈都不发（`interactions.reached`；位移照常被钳位）。**子图缩放手柄现在吸**（`interactions.axesResizeSnapper`）：
   只吸正在动的那条边（角柄两条）：本图其他子图 / 色条的同一条边、整图四边（不要中线）、别的图子图的
   同一条边、参考线；复用同一把容差、吸住后保持（x / y 各一份 hold）与 ⌘ / Ctrl 临时不吸；吸附只改最终框，
-  写法仍是一条 position；锁宽高比的缩放是 PR3，这里没有。
+  写法仍是一条 position。**锁比例的子图**（manifest `aspect` 不是 auto：imshow / `set_aspect('equal')` / 数值，`axesLayout.axesAspectLocked`）的手柄**等比缩放**（`axesLayout.lockedAxesResize`：固定点在手柄对侧，边柄另一轴固定左 / 上边，钳在整图里）——自由缩放改了比例，重渲时 `apply_aspect` 会把框缩回原比例并居中，吸到线上的边落不到线上、不动的边也跟着挪（2026-10-28 宣传片测试页实测）；吸附修正相对等比框的边，角柄两轴都吸上取修正小（mm）的那一轴定倍数，线框即结果（看护 `lib/axesLayout.test.ts`、`canvas/crossFigureDrag.test.tsx`「锁比例的子图」）。`set_box_aspect` 定出来的比例 manifest 没报，仍按自由缩放。
   ⑨ **吸附反馈（ADR 0128 §四，PR4）**：`interactionStore.snapFeedback`（`SnapFeedback`：axis / v / self /
   可选 target，页面 mm）与 `snapXs/snapYs` 同一次 `setSnap`（第三参）写、同一次 `end()` 清，值相同不触发；
   构造唯一出处 `lib/snapFeedback.feedbackFor`：`self` = 被拖元素**吸附后**此刻的框（图内拖动；⇧ 锁向没被
