@@ -278,6 +278,7 @@ OUTBOUND = {
     "engine/ai_oauth.py": "_opener",
     "engine/codexinstall.py": "_fetch",
     "engine/diagsend.py": "_opener",
+    "engine/managedcli.py": "_fetch",
     "engine/privatepython.py": "_fetch",
     "engine/telemetry.py": "_post",
     "engine/updater.py": "_fetch_latest_release",
