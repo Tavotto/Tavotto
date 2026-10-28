@@ -682,6 +682,7 @@ function InstallPanel({
   onRefreshed: OnRefreshed
 }) {
   useTranslation('dialogs')
+  const { t: te } = useTranslation('errors')
   const info = agent.install
   const [state, setState] = useState<AiInstallState | null>(null)
   const [confirming, setConfirming] = useState(false)
@@ -738,15 +739,17 @@ function InstallPanel({
       {!info.available && <p className="text-xs leading-relaxed text-ink-3">{ag('install.noNpm')}</p>}
       {live?.status === 'error' && (
         <p role="alert" className="text-xs text-danger">
-          {ag(
-            `install.error.${
-              live.code === 'npm_missing' ||
-              live.code === 'installed_but_not_found' ||
-              live.code === 'timeout'
-                ? live.code
-                : 'other'
-            }`,
-          )}
+          {live.code?.startsWith('managed_cli_')
+            ? te(`engine.managedCliError.${live.code}` as 'engine.managedCliError.managed_cli_offline')
+            : ag(
+                `install.error.${
+                  live.code === 'npm_missing' ||
+                  live.code === 'installed_but_not_found' ||
+                  live.code === 'timeout'
+                    ? live.code
+                    : 'other'
+                }`,
+              )}
         </p>
       )}
       {live?.log && (

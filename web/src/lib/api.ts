@@ -3209,7 +3209,8 @@ export interface AiAgentCaps {
 /** `npm install -g` 的进度（后台线程，前端轮询） */
 export interface AiInstallState {
   status: 'idle' | 'running' | 'done' | 'error'
-  code?: 'npm_missing' | 'npm_failed' | 'installed_but_not_found' | 'timeout' | 'spawn_failed'
+  code?: 'npm_missing' | 'npm_failed' | 'installed_but_not_found' | 'timeout' | 'spawn_failed' | `managed_cli_${string}`
+  progress?: number
   log?: string
 }
 
