@@ -1,10 +1,7 @@
-import {
-  optionLabel as baseOptionLabel,
-  propLabel as basePropLabel,
-} from "@/store/actions";
-import { displayLabel } from "./mathtext";
-import type { Manifest, ManifestGroup } from "@/lib/api";
-import { currentLocale, t } from "@/i18n";
+import { optionLabel as baseOptionLabel, propLabel as basePropLabel } from '@/store/actions'
+import { displayLabel } from './mathtext'
+import type { Manifest, ManifestGroup } from '@/lib/api'
+import { currentLocale, t } from '@/i18n'
 
 /**
  * 图内元素属性的显示注册表。
@@ -37,13 +34,13 @@ import { currentLocale, t } from "@/i18n";
  * 界面上再没有第二个词表示同一个量。
  */
 const ROLE_SCOPED_PROPS: Record<string, string[]> = {
-  bar: ["facecolor", "linewidth"],
-  bar_series: ["facecolor", "linewidth"],
-  scatter: ["facecolor", "linewidth"],
-  fill: ["facecolor", "linewidth"],
+  bar: ['facecolor', 'linewidth'],
+  bar_series: ['facecolor', 'linewidth'],
+  scatter: ['facecolor', 'linewidth'],
+  fill: ['facecolor', 'linewidth'],
   // 脚本 add_patch 出的独立形状：facecolor 是它自己的填充
-  patch: ["facecolor", "linewidth"],
-};
+  patch: ['facecolor', 'linewidth'],
+}
 
 /**
  * 属性显示名。查找顺序：角色专属 → 通用 → store 里的基础表 → **属性名原文**。
@@ -54,20 +51,16 @@ const ROLE_SCOPED_PROPS: Record<string, string[]> = {
  */
 export const propLabel = (prop: string, role?: string): string => {
   if (role && ROLE_SCOPED_PROPS[role]?.includes(prop)) {
-    const scoped = t(`propByRole.${role}.${prop}`, {
-      ns: "inspector",
-      defaultValue: "",
-    });
-    if (scoped) return scoped;
+    const scoped = t(`propByRole.${role}.${prop}`, { ns: 'inspector', defaultValue: '' })
+    if (scoped) return scoped
   }
-  const generic = t(`prop.${prop}`, { ns: "inspector", defaultValue: "" });
-  return generic || basePropLabel(prop);
-};
+  const generic = t(`prop.${prop}`, { ns: 'inspector', defaultValue: '' })
+  return generic || basePropLabel(prop)
+}
 
 /** 角色显示名，用在「已选 N 个文字」这类多选标题上；未知角色回落到通用说法。 */
 export const roleName = (role: string): string =>
-  t(`role.${role}`, { ns: "inspector", defaultValue: "" }) ||
-  t("role.unknown", { ns: "inspector" });
+  t(`role.${role}`, { ns: 'inspector', defaultValue: '' }) || t('role.unknown', { ns: 'inspector' })
 
 /**
  * enum 选项的显示名。色图名（viridis…）与格式串（%.1f）保持原文——它们是
@@ -80,8 +73,7 @@ export const roleName = (role: string): string =>
  * 会把结果补回来，用例照样绿（本轮实测两条变异双双存活）。属性名那条
  * （`propLabel`）不一样，它**真有**角色专属的第一跳，所以留着。
  */
-export const optionLabel = (prop: string, value: string): string =>
-  baseOptionLabel(prop, value);
+export const optionLabel = (prop: string, value: string): string => baseOptionLabel(prop, value)
 
 /**
  * 这个下拉（`options`）里**不止一项**会显示成它的名字。两种撞法都要数：两个族的中文名相同
@@ -91,34 +83,31 @@ export const optionLabel = (prop: string, value: string): string =>
  *
  * 按 (选项数组, 表对象, 语言) 缓存：下拉每一项都要问一次，同一次渲染里的调用共用一份
  */
-const SHARED_NAMES = new WeakMap<
-  object,
-  WeakMap<object, { lang: string; names: Set<string> }>
->();
+const SHARED_NAMES = new WeakMap<object, WeakMap<object, { lang: string; names: Set<string> }>>()
 
 function sharedNames(
   labels: Readonly<Record<string, string>>,
   options: readonly string[],
 ): Set<string> {
-  const lang = currentLocale();
-  let byLabels = SHARED_NAMES.get(options);
-  if (!byLabels) SHARED_NAMES.set(options, (byLabels = new WeakMap()));
-  const hit = byLabels.get(labels);
-  if (hit && hit.lang === lang) return hit.names;
-  const seen = new Set<string>();
-  const names = new Set<string>();
+  const lang = currentLocale()
+  let byLabels = SHARED_NAMES.get(options)
+  if (!byLabels) SHARED_NAMES.set(options, (byLabels = new WeakMap()))
+  const hit = byLabels.get(labels)
+  if (hit && hit.lang === lang) return hit.names
+  const seen = new Set<string>()
+  const names = new Set<string>()
   const shown = (name: string) => {
-    if (seen.has(name)) names.add(name);
-    seen.add(name);
-  };
+    if (seen.has(name)) names.add(name)
+    seen.add(name)
+  }
   // 只数**这个下拉里**的项：显示名表是整份 manifest 的，StylePanel 那一行的选项只是它的子集，
   // 选项之外的同名族不该给唯一看得见的那一项补上族名
   for (const o of new Set(options)) {
-    const zh = labels[o];
-    shown(zh && zh !== o ? zh : optionLabel("fontfamily", o));
+    const zh = labels[o]
+    shown(zh && zh !== o ? zh : optionLabel('fontfamily', o))
   }
-  byLabels.set(labels, { lang, names });
-  return names;
+  byLabels.set(labels, { lang, names })
+  return names
 }
 
 /**
@@ -128,7 +117,6 @@ function sharedNames(
  * 唯一的例外是**重名**（见 `sharedNames`）：下拉里另有一项也显示成这个中文名时，只显示
  * 中文名就是两个一模一样的项，这时补上族名「標楷體-港澳（BiauKaiHK Regular）」分得开。
  *
- * `faces` 是字段上的 `option_faces`（引擎发的：通用族 → 此刻真正画它的那张脸）。
  * `labels` 是字段上的 `option_labels`（`withMachineFamilies` 从 manifest 挂上来的），
  * `options` 是**这个下拉的全部选项**（撞名要连没有显示名的族一起数，所以必传）。
  * 只管显示，写入值永远是 `value`。
@@ -137,65 +125,52 @@ export function fontFamilyOptionLabel(
   value: string,
   labels: Readonly<Record<string, string>> | undefined,
   options: readonly string[],
-  faces?: Readonly<Record<string, string>>,
 ): string {
-  const zh = labels?.[value];
-  const generic = optionLabel("fontfamily", value);
-  // 通用族（serif 等）此刻真正由哪张脸画：「衬线（实际：Times New Roman）」。只改显示，写入值仍是 `value`
-  const face = faces?.[value];
-  const named =
-    !labels || !zh || zh === value || !currentLocale().startsWith("zh")
-      ? generic
-      : sharedNames(labels, options).has(zh)
-        ? `${zh}（${value}）`
-        : zh;
-  return face && face !== value
-    ? t("textControls.fontGenericFace", {
-        ns: "inspector",
-        generic: named,
-        face,
-      })
-    : named;
+  const zh = labels?.[value]
+  if (!labels || !zh || zh === value || !currentLocale().startsWith('zh')) {
+    return optionLabel('fontfamily', value)
+  }
+  return sharedNames(labels, options).has(zh) ? `${zh}（${value}）` : zh
 }
 
 /* ---------------------- 引擎发过来的分组名 → 显示名 ------------------------ */
 
 /** manifest 的 `group` 字面量 → i18n key。键是协议数据，不是界面文案。 */
 const ENGINE_GROUP: Record<string, string> = {
-  位置与尺寸: "geometry",
-  视角: "view",
-  数据范围: "dataRange",
-  坐标轴: "axis",
-  轴箭头: "axisArrows",
-  刻度: "ticks",
-  刻度线: "tickMarks",
-  刻度定位: "tickLocator",
-  网格与边框: "gridFrame",
-  "边框（逐条）": "gridFramePerSide",
-  线条与标记: "lineMarker",
+  位置与尺寸: 'geometry',
+  视角: 'view',
+  数据范围: 'dataRange',
+  坐标轴: 'axis',
+  轴箭头: 'axisArrows',
+  刻度: 'ticks',
+  刻度线: 'tickMarks',
+  刻度定位: 'tickLocator',
+  网格与边框: 'gridFrame',
+  '边框（逐条）': 'gridFramePerSide',
+  线条与标记: 'lineMarker',
   // 散点 / 填充族的线型与花纹（`_collection_fields`）
-  线条与填充: "lineFill",
+  线条与填充: 'lineFill',
   // stem 图的标记那一组（`_stem_fields`）
-  标记: "marker",
-  渐变填充: "gradientFill",
-  颜色映射: "colormap",
-  文字: "text",
-  排版: "typography",
-  背景: "background",
-  描边: "stroke",
-  图例: "legend",
-  图例项: "legendEntry",
-  样式: "style",
-  布局: "layout",
-  排列: "arrange",
-  高级: "advanced",
-};
+  标记: 'marker',
+  渐变填充: 'gradientFill',
+  颜色映射: 'colormap',
+  文字: 'text',
+  排版: 'typography',
+  背景: 'background',
+  描边: 'stroke',
+  图例: 'legend',
+  图例项: 'legendEntry',
+  样式: 'style',
+  布局: 'layout',
+  排列: 'arrange',
+  高级: 'advanced',
+}
 
 /** 分组显示名；引擎发来没登记过的分组原样透出。 */
 export const groupLabel = (name: string): string => {
-  const key = ENGINE_GROUP[name];
-  return key ? t(`group.${key}`, { ns: "inspector" }) : name;
-};
+  const key = ENGINE_GROUP[name]
+  return key ? t(`group.${key}`, { ns: 'inspector' }) : name
+}
 
 /**
  * 分组的稳定顺序。manifest 里 group 出现的次序取决于引擎实现，按这张表排
@@ -203,37 +178,37 @@ export const groupLabel = (name: string): string => {
  * 英文界面后版面顺序会跟着字母序漂走。未登记的分组排在最后。
  */
 const GROUP_ORDER = [
-  "位置与尺寸",
-  "视角",
-  "数据范围",
-  "坐标轴",
-  "轴箭头",
-  "刻度",
-  "刻度线",
-  "刻度定位",
-  "网格与边框",
-  "边框（逐条）",
-  "线条与标记",
-  "线条与填充",
-  "标记",
-  "渐变填充",
-  "颜色映射",
-  "文字",
-  "排版",
-  "背景",
-  "描边",
-  "图例",
-  "图例项",
-  "样式",
-  "布局",
-  "排列",
-  "高级",
-];
+  '位置与尺寸',
+  '视角',
+  '数据范围',
+  '坐标轴',
+  '轴箭头',
+  '刻度',
+  '刻度线',
+  '刻度定位',
+  '网格与边框',
+  '边框（逐条）',
+  '线条与标记',
+  '线条与填充',
+  '标记',
+  '渐变填充',
+  '颜色映射',
+  '文字',
+  '排版',
+  '背景',
+  '描边',
+  '图例',
+  '图例项',
+  '样式',
+  '布局',
+  '排列',
+  '高级',
+]
 
 export const groupRank = (name: string) => {
-  const i = GROUP_ORDER.indexOf(name);
-  return i < 0 ? GROUP_ORDER.length : i;
-};
+  const i = GROUP_ORDER.indexOf(name)
+  return i < 0 ? GROUP_ORDER.length : i
+}
 
 /* ---------------------- 引擎发过来的元素名 → 显示名 ------------------------ */
 
@@ -248,43 +223,43 @@ export const groupRank = (name: string) => {
  *   ③ 顺序敏感：`散点 “x”` 必须排在 `散点系列 N` 之前那类前缀冲突要先长后短。
  */
 const ENGINE_LABEL_PATTERNS: { re: RegExp; key: string }[] = [
-  { re: /^整张图$/, key: "figure" },
-  { re: /^色条轴$/, key: "colorbarAxes" },
-  { re: /^色条$/, key: "colorbar" },
-  { re: /^图例$/, key: "legend" },
-  { re: /^标注箭头$/, key: "annotationArrow" },
-  { re: /^图例标题 “(.*)”$/s, key: "legendTitleNamed" },
-  { re: /^图例项 “(.*)”$/s, key: "legendEntryNamed" },
-  { re: /^柱形系列 “(.*)”$/s, key: "barSeriesNamed" },
-  { re: /^柱形系列 (\d+)$/, key: "barSeries" },
-  { re: /^散点 “(.*)”$/s, key: "scatterNamed" },
-  { re: /^散点系列 (\d+)$/, key: "scatterSeries" },
-  { re: /^曲线 “(.*)”$/s, key: "lineNamed" },
-  { re: /^曲线 (\d+)$/, key: "line" },
-  { re: /^标题 “(.*)”$/s, key: "titleNamed" },
-  { re: /^文字 “(.*)”$/s, key: "textNamed" },
-  { re: /^刻度 “(.*)”$/s, key: "tickNamed" },
-  { re: /^子图 (\d+)$/, key: "axes" },
+  { re: /^整张图$/, key: 'figure' },
+  { re: /^色条轴$/, key: 'colorbarAxes' },
+  { re: /^色条$/, key: 'colorbar' },
+  { re: /^图例$/, key: 'legend' },
+  { re: /^标注箭头$/, key: 'annotationArrow' },
+  { re: /^图例标题 “(.*)”$/s, key: 'legendTitleNamed' },
+  { re: /^图例项 “(.*)”$/s, key: 'legendEntryNamed' },
+  { re: /^柱形系列 “(.*)”$/s, key: 'barSeriesNamed' },
+  { re: /^柱形系列 (\d+)$/, key: 'barSeries' },
+  { re: /^散点 “(.*)”$/s, key: 'scatterNamed' },
+  { re: /^散点系列 (\d+)$/, key: 'scatterSeries' },
+  { re: /^曲线 “(.*)”$/s, key: 'lineNamed' },
+  { re: /^曲线 (\d+)$/, key: 'line' },
+  { re: /^标题 “(.*)”$/s, key: 'titleNamed' },
+  { re: /^文字 “(.*)”$/s, key: 'textNamed' },
+  { re: /^刻度 “(.*)”$/s, key: 'tickNamed' },
+  { re: /^子图 (\d+)$/, key: 'axes' },
   // twinx/twiny 的双生轴：「子图 2（右轴）」，同侧第二条带序号「（右轴 2）」。
   // 引擎侧的构词出处是 engine/manifest.py 的 _TWIN_SIDE_NAMES。
-  { re: /^子图 (\d+)（(左轴|右轴|上轴|下轴)( \d+)?）$/, key: "axesTwin" },
-  { re: /^柱 (\d+)$/, key: "bar" },
-  { re: /^误差棒 (\d+)$/, key: "errorbar" },
-  { re: /^图像 (\d+)$/, key: "image" },
-  { re: /^填充区域 (\d+)$/, key: "fillArea" },
-  { re: /^形状 (\d+)$/, key: "shape" },
-  { re: /^箭头 (\d+)$/, key: "arrow" },
-  { re: /^([XYZ]) 轴 “(.*)”$/s, key: "axisLabelNamed" },
-  { re: /^([XYZ]) 刻度文字$/, key: "tickLabels" },
-];
+  { re: /^子图 (\d+)（(左轴|右轴|上轴|下轴)( \d+)?）$/, key: 'axesTwin' },
+  { re: /^柱 (\d+)$/, key: 'bar' },
+  { re: /^误差棒 (\d+)$/, key: 'errorbar' },
+  { re: /^图像 (\d+)$/, key: 'image' },
+  { re: /^填充区域 (\d+)$/, key: 'fillArea' },
+  { re: /^形状 (\d+)$/, key: 'shape' },
+  { re: /^箭头 (\d+)$/, key: 'arrow' },
+  { re: /^([XYZ]) 轴 “(.*)”$/s, key: 'axisLabelNamed' },
+  { re: /^([XYZ]) 刻度文字$/, key: 'tickLabels' },
+]
 
 /** 双生轴的轴侧字面量（引擎协议中文）→ twinSide 翻译键。 */
 const TWIN_SIDE_KEYS: Record<string, string> = {
-  左轴: "left",
-  右轴: "right",
-  上轴: "top",
-  下轴: "bottom",
-};
+  左轴: 'left',
+  右轴: 'right',
+  上轴: 'top',
+  下轴: 'bottom',
+}
 
 /**
  * 引擎元素名 → 当前语言。中文界面下是恒等映射（key 的中文译文与引擎原串
@@ -293,24 +268,17 @@ const TWIN_SIDE_KEYS: Record<string, string> = {
 export function engineLabel(label: string): string {
   // mathtext 在这里一并换成可读文本（2026-09-14 审计 A3）：树 / 问题面板 / 导出清单 /
   // 上下文栏 / 图例项都从这一个出口取名字，不再各自露出 `$\mathrm{…}$`
-  return displayLabel(engineLabelRaw(label));
+  return displayLabel(engineLabelRaw(label))
 }
 
 function engineLabelRaw(label: string): string {
   for (const { re, key } of ENGINE_LABEL_PATTERNS) {
-    const m = re.exec(label);
-    if (!m) continue;
-    if (key === "axesTwin") {
+    const m = re.exec(label)
+    if (!m) continue
+    if (key === 'axesTwin') {
       // (宿主序号, 轴侧, 可选“ 序号”) 三个组：轴侧翻成当前语言，序号原样拼上
-      const side = t(`engineLabel.twinSide.${TWIN_SIDE_KEYS[m[2]]}`, {
-        ns: "inspector",
-      });
-      return t("engineLabel.axesTwin", {
-        ns: "inspector",
-        value: m[1],
-        side,
-        ord: m[3] ?? "",
-      });
+      const side = t(`engineLabel.twinSide.${TWIN_SIDE_KEYS[m[2]]}`, { ns: 'inspector' })
+      return t('engineLabel.axesTwin', { ns: 'inspector', value: m[1], side, ord: m[3] ?? '' })
     }
     // 单捕获组统一喂给 {{value}}；轴标签那条是 (轴名, 文字) 两个组
     const values =
@@ -318,10 +286,10 @@ function engineLabelRaw(label: string): string {
         ? { axis: m[1], value: m[2] }
         : m.length === 2
           ? { axis: m[1], value: m[1] }
-          : {};
-    return t(`engineLabel.${key}`, { ns: "inspector", ...values });
+          : {}
+    return t(`engineLabel.${key}`, { ns: 'inspector', ...values })
   }
-  return label;
+  return label
 }
 
 /**
@@ -334,17 +302,15 @@ function engineLabelRaw(label: string): string {
  * 方向与两端延伸都成了普通的 enum 字段。留着这条机制是因为「说清为什么
  * 做不到」比「摆一个点了没反应的控件」好，下一个真做不到的能力还得用它。
  */
-export const UNSUPPORTED_ROLES = [] as const;
+export const UNSUPPORTED_ROLES = [] as const
 
-export const unsupportedOf = (
-  role: string,
-): { title: string; reason: string } | undefined =>
+export const unsupportedOf = (role: string): { title: string; reason: string } | undefined =>
   (UNSUPPORTED_ROLES as readonly string[]).includes(role)
     ? {
-        title: t(`unsupported.${role}.title`, { ns: "inspector" }),
-        reason: t(`unsupported.${role}.reason`, { ns: "inspector" }),
+        title: t(`unsupported.${role}.title`, { ns: 'inspector' }),
+        reason: t(`unsupported.${role}.reason`, { ns: 'inspector' }),
       }
-    : undefined;
+    : undefined
 
 /**
  * 字段的「中性默认」——等于它就说明脚本没在这上面做文章。
@@ -368,11 +334,11 @@ const NEUTRAL: Record<string, unknown> = {
   invert_x: false,
   invert_y: false,
   outline_visible: false,
-  major_mode: "auto",
-  minor_mode: "auto",
-  minor_format: "none",
-  extend: "neither",
-};
+  major_mode: 'auto',
+  minor_mode: 'auto',
+  minor_format: 'none',
+  extend: 'neither',
+}
 
 /**
  * 分组是否「已经有内容」：组里任一字段被脚本设成了非中性值，或用户改过。
@@ -385,10 +351,10 @@ export function groupHasContent(
   isOverridden: (prop: string) => boolean,
 ): boolean {
   return fields.some((f) => {
-    if (isOverridden(f.prop)) return true;
-    if (!(f.prop in NEUTRAL)) return false;
-    return f.value !== NEUTRAL[f.prop];
-  });
+    if (isOverridden(f.prop)) return true
+    if (!(f.prop in NEUTRAL)) return false
+    return f.value !== NEUTRAL[f.prop]
+  })
 }
 
 /**
@@ -397,10 +363,10 @@ export function groupHasContent(
  * 面包屑、「只看此分支」的提示条都从这一个出口取。
  */
 export function groupName(group: ManifestGroup, manifest: Manifest): string {
-  const sep = t("modelGroup.memberSeparator", { ns: "inspector" });
+  const sep = t('modelGroup.memberSeparator', { ns: 'inspector' })
   const members = group.subplot_gids
     .map((g) => manifest.elements.find((e) => e.gid === g))
     .map((e, i) => (e ? engineLabel(e.label) : group.subplot_gids[i]))
-    .join(sep);
-  return t("modelGroup.sharedColorbar", { ns: "inspector", members });
+    .join(sep)
+  return t('modelGroup.sharedColorbar', { ns: 'inspector', members })
 }

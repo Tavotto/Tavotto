@@ -19,6 +19,7 @@ import { useRenderStore } from '@/store/renderStore'
 import { seedExactRender } from '@/test/renderFixtures'
 import { emptyProject, type PanelObject } from '@/types/document'
 import { fontFamilyOptionLabel } from './roles/registry'
+import { fontFamilySelectModel } from './controls/fontFamilySelect'
 import { FIGURE_TEXT_SINGLE_PROPS, useFigureTypography, type TypographyAdapter } from './typographyAdapter'
 
 /** 写入会触发一次渲染：像真引擎那样把同一份 manifest（含本机表）再发回来 */
@@ -246,20 +247,6 @@ describe('字体的中文显示名（manifest 顶层 font_family_names）', () =
     expect(fontFamilyOptionLabel('Songti SC', NAMES, opts)).toBe('Songti SC')
   })
 
-  it('通用族带 option_faces：显示「衬线（实际：Times New Roman）」，没带 / 本身就是脸名则照旧；值不变', async () => {
-    const opts = ['serif', 'sans-serif', 'Times New Roman']
-    const faces = { serif: 'Times New Roman' }
-    const zh = fontFamilyOptionLabel('serif', NAMES, opts, faces)
-    expect(zh).toContain('Times New Roman')
-    expect(zh).toContain(optionLabelOfSerif())
-    // 没带脸的通用族、具体字体名：不加后缀
-    expect(fontFamilyOptionLabel('sans-serif', NAMES, opts, faces)).not.toContain('Times')
-    expect(fontFamilyOptionLabel('Times New Roman', NAMES, opts, faces)).toBe('Times New Roman')
-    expect(fontFamilyOptionLabel('serif', NAMES, opts)).toBe(optionLabelOfSerif())
-    await applyLocale('en-US')
-    expect(fontFamilyOptionLabel('serif', NAMES, opts, faces)).toBe('Serif (renders as Times New Roman)')
-  })
-
   it('两个族中文名相同：只有它们补上族名，分得开', () => {
     const shared = {
       BiauKaiHK: '標楷體-港澳',
@@ -303,3 +290,50 @@ describe('字体的中文显示名（manifest 顶层 font_family_names）', () =
 function optionLabelOfSerif(): string {
   return fontFamilyOptionLabel('serif', undefined, [])
 }
+
+describe('字体下拉模型 fontFamilySelectModel（Word 主题字体做法）', () => {
+  const opts = ['serif', 'sans-serif', 'monospace', 'Arial', 'Times New Roman']
+  const faces = { serif: 'Times New Roman', 'sans-serif': 'Arial', monospace: 'DejaVu Sans Mono' }
+  const text = (n: unknown): string => {
+    const x = n as { props?: { children?: unknown } } | string | null | false | undefined
+    if (x == null || x === false) return ''
+    if (typeof x === 'string') return x
+    const c = x.props?.children
+    return Array.isArray(c) ? c.map(text).join('') : text(c)
+  }
+
+  it('值是 serif：收起态显示画出来的脸，通用族挪到末尾「跟随全局字体族」分组，具体名不重复', async () => {
+    await applyLocale('zh-CN')
+    const m = fontFamilySelectModel({ value: 'serif', options: opts, labels: undefined, faces })
+    expect(text(m.triggerLabel)).toBe('Times New Roman')
+    expect(m.title).toContain('serif')
+    // 值仍是原始选项串（写回不变）；具体字体在前，通用族在后且带分组
+    expect(m.options.map((o) => o.value)).toEqual(['Arial', 'Times New Roman', 'serif', 'sans-serif', 'monospace'])
+    expect(m.options.filter((o) => o.group).map((o) => o.group)).toEqual(['跟随全局字体族', '跟随全局字体族', '跟随全局字体族'])
+    expect(m.options.filter((o) => !o.group).map((o) => o.value)).toEqual(['Arial', 'Times New Roman'])
+    expect(m.options.filter((o) => o.group).map((o) => text(o.label))).toEqual([
+      '衬线 · Times New Roman',
+      '无衬线 · Arial',
+      '等宽 · DejaVu Sans Mono',
+    ])
+    // 具体行就叫自己的名字，每个名字只在不分组的区域出现一次
+    expect(text(m.options.find((o) => o.value === 'Times New Roman')!.label)).toBe('Times New Roman')
+  })
+
+  it('值是具体字体 / 没有 option_faces / 老引擎：不改收起态，也不分组', () => {
+    const concrete = fontFamilySelectModel({ value: 'Arial', options: opts, labels: undefined, faces })
+    expect(concrete.triggerLabel).toBeUndefined()
+    const old = fontFamilySelectModel({ value: 'serif', options: opts, labels: undefined, faces: undefined })
+    expect(old.triggerLabel).toBeUndefined()
+    expect(old.options.map((o) => o.value)).toEqual(opts)
+    expect(old.options.some((o) => o.group)).toBe(false)
+  })
+
+  it('英文界面', async () => {
+    await applyLocale('en-US')
+    const m = fontFamilySelectModel({ value: 'serif', options: opts, labels: undefined, faces })
+    expect(m.options.filter((o) => o.group).map((o) => text(o.label))[0]).toBe('Serif · Times New Roman')
+    expect(m.options.find((o) => o.group)!.group).toBe('Follow global font family')
+    await applyLocale('zh-CN')
+  })
+})

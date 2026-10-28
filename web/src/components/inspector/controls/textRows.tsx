@@ -13,7 +13,7 @@ import { ColorField, NumberField } from '../../ui/Input'
 import { Segmented } from '../../ui/Segmented'
 import { Select } from '../../ui/Select'
 import { Tip } from '../../ui/Tooltip'
-import { fontStackOf } from './fontStack'
+import { fontFamilySelectModel } from './fontFamilySelect'
 import { INSPECTOR_CONTROL_X } from '../layout'
 
 /**
@@ -245,6 +245,8 @@ function FontFamilyRowView({
   overridden,
   onReset,
   optionLabelOf,
+  optionLabels,
+  optionFaces,
   mixed,
   unavailable = [],
 }: {
@@ -281,6 +283,15 @@ function FontFamilyRowView({
   perfCount('render.FontFamilyRow')
   const label = tc('font')
   const missing = new Set(unavailable)
+  // Aa 预览：选项文字用它自己的字体栈显示；写入值仍是原始选项串
+  const fm = fontFamilySelectModel({
+    value: mixed ? '' : value,
+    options,
+    labels: optionLabels,
+    faces: optionFaces,
+    labelOf: optionLabelOf,
+    extra: (o) => missing.has(o) && <FontMissingTag />,
+  })
   return (
     <>
       <Row
@@ -295,16 +306,9 @@ function FontFamilyRowView({
           value={mixed ? '' : value}
           placeholder={mixed ? translate('element.mixedValues', { ns: 'inspector' }) : undefined}
           onChange={onChange}
-          options={options.map((o) => ({
-            value: o,
-            // Aa 预览：选项文字用它自己的字体栈显示；写入值仍是原始选项串
-            label: (
-              <span style={{ fontFamily: fontStackOf(o) }}>
-                {optionLabelOf(o)}
-                {missing.has(o) && <FontMissingTag />}
-              </span>
-            ),
-          }))}
+          options={fm.options}
+          triggerLabel={fm.triggerLabel}
+          title={fm.title}
         />
       </Row>
       {!mixed && missing.has(value) && (

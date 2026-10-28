@@ -204,20 +204,22 @@ def _fam(t):
 plt.rcParams["font.serif"] = ["No Such Font Zzz", "DejaVu Sans", "DejaVu Serif"]
 f = _fam(Text(0, 0, "hi", fontfamily="serif"))
 assert f["value"] == "serif", f            # 写回的仍是脚本的原值
-assert f["option_faces"] == {"serif": "DejaVu Sans"}, f
+assert f["option_faces"]["serif"] == "DejaVu Sans", f
+assert set(f["option_faces"]) <= {"serif", "sans-serif", "monospace"}, f
 
 # rcParams 变了：缓存不许返回旧脸
 plt.rcParams["font.serif"] = ["DejaVu Serif"]
 f = _fam(Text(0, 0, "hi", fontfamily="serif"))
-assert f["option_faces"] == {"serif": "DejaVu Serif"}, f
+assert f["option_faces"]["serif"] == "DejaVu Serif", f
 
-# 无衬线 / 等宽同理，且只带当前值那一项
+# 三个通用族一起发（下拉末尾「跟随全局字体族」列三行），与当前值是谁无关
 plt.rcParams["font.sans-serif"] = ["DejaVu Sans"]
 f = _fam(Text(0, 0, "hi", fontfamily="sans-serif"))
-assert f["option_faces"] == {"sans-serif": "DejaVu Sans"}, f
-
-# 具体字体名本来就是画出来的那个：不带
-assert "option_faces" not in _fam(Text(0, 0, "hi", fontfamily="DejaVu Sans"))
+assert f["option_faces"]["sans-serif"] == "DejaVu Sans", f
+assert set(f["option_faces"]) == {"serif", "sans-serif", "monospace"}, f
+# 当前值是具体字体名时同样带（列表末尾的通用族行要用）；value 不变
+f = _fam(Text(0, 0, "hi", fontfamily="DejaVu Sans"))
+assert f["value"] == "DejaVu Sans" and f["option_faces"]["serif"] == "DejaVu Serif", f
 
 # 刻度字段同一条路
 fig, ax = plt.subplots()
@@ -228,13 +230,13 @@ from tickmodel import TickSet
 for lbl in ax.xaxis.get_ticklabels():
     lbl.set_fontfamily("serif")
 tf = manifest._tick_family_field(TickSet(ax, "x"))
-assert tf["value"] == "serif" and tf["option_faces"] == {"serif": "DejaVu Serif"}, tf
+assert tf["value"] == "serif" and tf["option_faces"]["serif"] == "DejaVu Serif", tf
 print("OK")
 """
 
 
 def test_generic_family_field_reports_the_face_actually_drawn():
-    """`fontfamily` 的值是通用族（`serif`）时，字段带 `option_faces`：matplotlib 此刻真正
+    """`fontfamily` 字段带 `option_faces`（三个通用族各由哪张脸画）：matplotlib 此刻真正
     用哪张脸画它（用户反馈：图明明是 Times New Roman，下拉里还写「衬线」）。`value` 不变。
     """
     out = subprocess.run(

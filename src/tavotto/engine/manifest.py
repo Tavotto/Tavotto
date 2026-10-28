@@ -1571,11 +1571,12 @@ def _installed_font_display_names(_generation: tuple) -> dict[str, str]:
     return font_display_names(installed_font_families())
 
 
-def _family_faces_attr(fam: str) -> dict:
-    """`fontfamily` 字段的 `option_faces`（加字段协议，老前端忽略）：当前值是通用族时
-    才带，只有那一项——其余通用族的解析不必按元素重复发。"""
-    face = _generic_family_faces().get(fam) if fam in _GENERIC_FAMILIES else None
-    return {"option_faces": {fam: face}} if face else {}
+def _family_faces_attr() -> dict:
+    """`fontfamily` 字段的 `option_faces`（加字段协议，老前端忽略）：三个通用族此刻各由
+    哪张脸画。每个字体族字段都带（下拉末尾的「跟随全局字体族」要列三行，闭合态也要在当前值
+    是通用族时显示它解析出的那张脸）；解析不出来的族不出现，一个都没有就不带。"""
+    faces = _generic_family_faces()
+    return {"option_faces": faces} if faces else {}
 
 
 def _text_fields(t) -> list[dict]:
@@ -1671,7 +1672,7 @@ def _text_fields(t) -> list[dict]:
             "value": str(fam),
             "options": fam_opts,
             **({"options_unavailable": fam_missing} if fam_missing else {}),
-            **_family_faces_attr(fam),
+            **_family_faces_attr(),
         },
         {
             "prop": "rotation",
@@ -3405,7 +3406,7 @@ def _tick_family_field(ts: TickSet) -> dict:
         "value": str(fam),
         "options": fam_opts,
         **({"options_unavailable": fam_missing} if fam_missing else {}),
-        **_family_faces_attr(fam),
+        **_family_faces_attr(),
     }
 
 
