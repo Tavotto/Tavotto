@@ -91,7 +91,10 @@ env:
 
 jobs:
   qualify:
-    runs-on: [self-hosted, linux, x64, tavotto-lab]
+    # 发行档（mode=release）跑在 ci-infra 按需开的竞价机上（标签 tavotto-lab-spot，
+    # JIT runner、跑完一个 job 即注销；见 docs/ci/self-hosted-runner.md「release 档的按需竞价机」）；
+    # 其余档位仍是常驻 VM（tavotto-lab）。两个数组都必须是字面量——合同测试按字面量展开。
+    runs-on: ${{ fromJSON(inputs.mode == 'release' && '["self-hosted","linux","x64","tavotto-lab-spot"]' || '["self-hosted","linux","x64","tavotto-lab"]') }}
     timeout-minutes: 180
     concurrency:
       # **每条调用链一个槽，两条链绝不共用。**

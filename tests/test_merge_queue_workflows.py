@@ -3089,6 +3089,15 @@ def _runs_on_atoms(job_block: str, where: str) -> set[str]:
         return atoms
     if value == "${{ matrix.os }}":
         return _matrix_os_values(job_block)
+    if value.startswith("${{ fromJSON(") and value.endswith(") }}"):
+        # 唯一的合法形状：`_lab-qualification.yml` 按档位选实验室 runner——表达式里的每个
+        # 字面量 JSON 数组都是一个可能的去处，取并集（不猜表达式的真假，两边都算可达）。
+        arrays = re.findall(r"'(\[[^\]']*\])'", value)
+        assert len(arrays) == 2, f"{where}: fromJSON 的 runs-on 应恰有两个字面量数组：{value!r}"
+        atoms = set()
+        for arr in arrays:
+            atoms |= {v.strip().strip('"') for v in arr[1:-1].split(",") if v.strip()}
+        return atoms
     if value.startswith("[") and value.endswith("]"):
         return {v.strip().strip("\"'") for v in value[1:-1].split(",") if v.strip()}
     assert re.fullmatch(r"[\w.-]+", value), f"{where}: runs-on 的写法认不出：{value!r}"
@@ -3247,6 +3256,22 @@ class TestRunnerTrustZones:
                 "它通向实验室 runner，只许维护者才能造成的事件"
             )
 
+    def test_only_the_release_mode_selects_the_spot_runner(self):
+        """`tavotto-lab-spot`（ci-infra 按需开的竞价机）只给 `mode == release`：表达式的真支是竞价机、
+        假支是常驻 VM，条件**只**是 `inputs.mode == 'release'`。写反（release 落在常驻 VM、
+        日常档落在一台可能根本没开的竞价机上）时，日常 lab 会永远排队。"""
+        block = _code(_jobs_of(self._texts()["_lab-qualification.yml"])["qualify"])
+        m = re.search(
+            r"(?m)^    runs-on: \$\{\{ fromJSON\(inputs\.mode == 'release' && "
+            r"'(\[[^']*\])' \|\| '(\[[^']*\])'\) \}\}\s*$",
+            block,
+        )
+        assert m, "qualify 的 runs-on 不再是「release 用竞价机、其余用常驻 VM」的 fromJSON 表达式"
+        import json
+
+        assert json.loads(m.group(1)) == ["self-hosted", "linux", "x64", "tavotto-lab-spot"]
+        assert json.loads(m.group(2)) == ["self-hosted", "linux", "x64", "tavotto-lab"]
+
     def test_every_workflow_event_is_in_the_known_closed_set(self):
         """每个 workflow 的事件 ⊆ 闭集，且闭集里的每个事件今天都真的有人用（不是一张宽过头的表）。
         `pull_request_target` 不在闭集里——03 §3「不因本计划改用 pull_request_target」。"""
@@ -3276,7 +3301,7 @@ class TestRunnerTrustZones:
             for a in used - _HOSTED_RUNNERS - _BUILTIN_SELF_HOSTED_LABELS
             if not a.startswith("group:")
         }
-        assert "tavotto-lab" in custom, (
+        assert {"tavotto-lab", "tavotto-lab-spot"} <= custom, (
             f"实验室标签不在用到的集合里：{sorted(used)}——判据量错了对象"
         )
         declared = _actionlint_custom_labels()

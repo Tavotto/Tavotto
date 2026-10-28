@@ -27,6 +27,8 @@ order: 100
   贡献者、同仓库分支 PR 不经审批），现状、缺口与管理员交接在 `docs/implementation/ci-foundation/CI04_RUNNER_PILOT.md` §2 与
   `ADMIN_HANDOFF_RUNNER_POOL.md`。`runner_pool_ready: not_run`。
 
+- **发行档用按需竞价机（2026-10-28）**：`_lab-qualification.yml::qualify` 的 `runs-on` 是 `fromJSON(inputs.mode == 'release' && '[…tavotto-lab-spot]' || '[…tavotto-lab]')`，两个标签都登记在 `actionlint.yaml`；竞价机由私有仓库 ci-infra 开关，运维见 `docs/ci/self-hosted-runner.md` §10；看护 `TestRunnerTrustZones::test_only_the_release_mode_selects_the_spot_runner`。
+
 - **审查/评论事件的额外信任界**：`issue_comment`（默认分支执行）及
   `pull_request_review` / `pull_request_review_comment`（PR 载荷）都按
   **不可信来源**归类，与 `pull_request` 一样只能使用 hosted runner。
