@@ -54,7 +54,17 @@ test('构建版本不一致：是顶栏芯片，工作面板里的标签行与�
   const a = await app()
   await openCanvasWithFigure(page, a.baseURL)
   await expect(page.locator('[data-build-mismatch]')).toHaveCount(0)
-  const before = await layoutBoxes(page)
+  // 打开图之后左栏抽屉还可能在收起的过渡里：等版面连续两次量得一样再记「之前」，否则量到的是半路的盒子
+  let before = await layoutBoxes(page)
+  await expect
+    .poll(async () => {
+      await page.waitForTimeout(250)
+      const now = await layoutBoxes(page)
+      const same = JSON.stringify(now) === JSON.stringify(before)
+      before = now
+      return same
+    }, { timeout: 10_000 })
+    .toBe(true)
 
   // 让下一次版本自检认为后端换了构建：芯片出现
   await page.route(/\/api\/version(\?|$)/, (route) => route.fulfill({ json: { build: 'index-someothernewbuild', version: 'x' } }))
