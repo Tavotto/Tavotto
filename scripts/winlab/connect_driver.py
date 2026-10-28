@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import agent as A  # noqa: E402 — 同目录部署：Job Object 的唯一出处
 import desktop_driver as D  # noqa: E402 — CDP 客户端、选文件夹框、截图的唯一出处
+import window_probe as P  # noqa: E402 — 窗口截图
 
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
@@ -238,11 +239,17 @@ def drive(ns: argparse.Namespace) -> dict:
             prog.step("window", found=bool(result["window"]))
             if not result["window"]:
                 return {**result, "error": "Tavotto main window never appeared"}
-            cdp = D.connect_cdp(ns.port, 60)
+            cdp = D.connect_cdp(ns.port, ns.page_timeout)
             if cdp is None:
+                # 证据文件不回传 Mac：窗口截图（winlab shot 取）与壳的输出尾部进结果
+                P._screenshot(result["window"]["rect"], out_dir / f"{ns.label}-window.png")
+                log.flush()
+                tail = (out_dir / f"{ns.label}-tavotto.log").read_bytes()[-1500:]
                 return {
                     **result,
                     "error": f"no WebView2 debug endpoint on {ns.port} (HKLM policy?)",
+                    "shell_log_tail": tail.decode("utf-8", "replace"),
+                    "shell_alive": tree.proc.poll() is None,
                 }
             if D.non_loopback_reachable(ns.port):
                 return {
