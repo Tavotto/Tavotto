@@ -73,7 +73,7 @@ AI 修复（ADR 0149）的内置循环同样改为取连接视图里第一个可
   与 CLI 路径是同一条流水，ADR 0143 一条不放松：原脚本永远不可写、只新建一个文件、R / MATLAB 来源同样可走。
 * **改图任务也有 `check`（2026-10-25，FigureBench 真跑发现：此前改图路径没装回调，`check` 恒 `not_available`，模型改完看不到结果，只能靠提交后的 TAF 验证兜底）**：
   有 TAF 候选工作区的内置改图同样带 `--check-ipc`（同一条 stdout `check_request` / stdin 回复），回调是 `ai_figure_edit.agent_check`——**提交前同一套检查前移到 Agent 手里**，不另写判据：
-  `FigureEditAdapter._precommit`（改过没有 / 语法 / 静态输出名 / 候选里别的文件 / 原项目没被动）→ 都过了在用户同一路由下真渲染候选（`ai_convert.run_validation`：候选字节写成紧挨原脚本的临时文件、写入根绊线只开候选目录、
+  `FigureEditAdapter._precommit`（改过没有 / 语法 / 静态输出名 / 候选里别的文件 / 原项目没被动）→ 都过了在用户同一路由下真渲染候选（`ai_convert.run_validation`：候选字节留在候选目录、以影子脚本按原脚本路径运行（ADR 0143 校验影子脚本修订）、写入根绊线只开候选目录、
   跑完即删，不运行原脚本本身、不写用户文件）→ 数据指纹（`figureverify.data_unchanged`，提交后 L2 用的同一个函数）对基线（池里已 build 会话落盘的 manifest，只读；没有基线就如实说“没量”，不阻止通过）。
   次数上限与转换同一处（`tools.MAX_CHECKS = 3`，第 4 次 `check_budget` 且回调不再被调）。范围外有没有被改（`changes_outside_target`）需要无 override 的重放基线、会动用户的热会话，所以仍只在提交后 L2 量。
   Codex / Claude Code 两条 CLI 路径没有这个入口（Agent 看不到校验结果），被提交前检查拦下时才由 TAF 有界修正再跑一轮；没有候选目录（TAF 关）的内置改图不装 check（`not_available`，与旧行为一致）。
