@@ -3102,9 +3102,13 @@ def test_connect_judge_does_not_import_the_product_code():
 
 def test_tavotto_runs_with_the_real_user_profile():
     """改了 USERPROFILE，WebView2 就不开策略给的调试端口（Lab 实测）：Tavotto 的环境不许改用户目录。"""
-    env = A.tavotto_gui_env({"USERPROFILE": "C:\\Users\\lab", "PATH": "x"}, Path("W"))
+    import connect_driver as C
+
+    env = C.tavotto_env({"USERPROFILE": "C:\\Users\\lab", "PATH": "x"}, Path("W"))
     assert env["USERPROFILE"] == "C:\\Users\\lab" and "HOME" not in env
-    assert env["TAVOTTO_CONFIG_DIR"] == str(Path("W") / "tavotto-config")
+    assert env["TAVOTTO_DATA_DIR"] == str(Path("W") / "tavotto-data")
+    # agent 问 hosts list 用同一个配置目录（hosts.json 在那里）
+    assert A.tavotto_config_env({}, Path("W"))["TAVOTTO_CONFIG_DIR"] == env["TAVOTTO_CONFIG_DIR"]
 
 
 @pytest.mark.parametrize("host_id", ["zcode", "workbuddy"])

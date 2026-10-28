@@ -238,6 +238,19 @@ def sidecar_log_tail(limit: int = 3000) -> str:
     return logs[-1].read_bytes()[-limit:].decode("utf-8", "replace")
 
 
+def tavotto_env(base: dict, state_dir: Path) -> dict:
+    """起 Tavotto 的环境：用户目录**不改**（改了 USERPROFILE，WebView2 就不开策略给的调试端口：Lab 实测
+    run 20261028T105803Z-0b59f0 与对照 20261028T110340Z-ef0489），Tavotto 自己的数据 / 配置进 run 目录。
+    这里起的是装好的桌面壳：壳自己与 sidecar 握手（`TAVOTTO_DESKTOP_HANDSHAKE`），本驱动只经 CDP 点界面、不调 API。"""
+    return dict(
+        base,
+        TAVOTTO_DATA_DIR=str(state_dir / "tavotto-data"),
+        TAVOTTO_CONFIG_DIR=str(state_dir / "tavotto-config"),
+        TAVOTTO_NO_TELEMETRY="1",
+        TAVOTTO_NO_UPDATE_CHECK="1",
+    )
+
+
 def debug_endpoint_up(port: int) -> bool:
     try:
         D.http_json(port, "/json/version", timeout=2)
@@ -263,7 +276,7 @@ def drive(ns: argparse.Namespace) -> dict:
         tree = A.ProcessTree(
             [ns.exe, "--open", ns.open],
             cwd=Path(ns.open),
-            env=dict(os.environ),
+            env=tavotto_env(dict(os.environ), Path(ns.state_dir)),
             stdout=log,
             stderr=log,
         )
@@ -318,6 +331,8 @@ def main(argv: list[str]) -> int:
     p.add_argument("--folder", required=True)
     p.add_argument("--out-dir", required=True)
     p.add_argument("--label", required=True)
+    #: Tavotto 自己的数据 / 配置目录放在这下面（run 的 work）
+    p.add_argument("--state-dir", required=True)
     p.add_argument("--port", type=int, default=A.DEBUG_PORT)
     p.add_argument("--window-timeout", type=float, default=180)
     p.add_argument("--page-timeout", type=float, default=180)

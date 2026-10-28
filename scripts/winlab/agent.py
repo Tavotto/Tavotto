@@ -4450,16 +4450,10 @@ def install_tavotto_for_connect(setup: Path, base: dict) -> tuple[dict | None, d
     return {"shell": shell, "cli": cli, "wrapped": False, "install_dir": shell.parent}, None
 
 
-def tavotto_gui_env(env: dict, work: Path) -> dict:
-    """起 Tavotto 的环境：用户目录**不改**（改了 USERPROFILE，WebView2 就不开策略给的调试端口：Lab 实测
-    run 20261028T105803Z-0b59f0 与对照 20261028T110340Z-ef0489），Tavotto 自己的数据 / 配置进 run 目录。"""
-    return dict(
-        env,
-        TAVOTTO_DATA_DIR=str(work / "tavotto-data"),
-        TAVOTTO_CONFIG_DIR=str(work / "tavotto-config"),
-        TAVOTTO_NO_TELEMETRY="1",
-        TAVOTTO_NO_UPDATE_CHECK="1",
-    )
+def tavotto_config_env(env: dict, work: Path) -> dict:
+    """问装好的 `tavotto-cli hosts list` 时的环境：配置目录与驱动器给 Tavotto 的同一个（hosts.json 在那里）。
+    用户目录**不改**——Tavotto 本身也用真实的用户目录起（见 connect_driver 的 `tavotto_env`）。"""
+    return dict(env, TAVOTTO_CONFIG_DIR=str(work / "tavotto-config"), TAVOTTO_NO_TELEMETRY="1")
 
 
 def _connect_driver_round(
@@ -4495,10 +4489,10 @@ def _connect_driver_round(
         str(ev),
         "--label",
         label,
+        "--state-dir",
+        str(work),
     ]
-    step = run_in_gui(
-        lab, run_id, argv, work, tavotto_gui_env(env, work), ev / f"driver-{action}", 1200
-    )
+    step = run_in_gui(lab, run_id, argv, work, env, ev / f"driver-{action}", 1200)
     info: dict = {}
     with contextlib.suppress(OSError, ValueError):
         info = json.loads((ev / f"{label}.json").read_text(encoding="utf-8"))
@@ -4514,7 +4508,7 @@ def tavotto_hosts_list(connect: dict, env: dict, work: Path) -> dict | None:
             text=True,
             encoding="utf-8",
             errors="replace",
-            env=tavotto_gui_env(env, work),
+            env=tavotto_config_env(env, work),
             timeout=180,
         )
         d = json.loads(p.stdout.strip().splitlines()[-1])
