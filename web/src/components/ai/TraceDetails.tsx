@@ -2,11 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChartColumn, ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { fetchExecTrace, fetchExecTraceDiagnostic, type ExecTraceDto } from '@/lib/api'
+import { fetchExecTrace, fetchExecTraceDiagnostic, type ExecTraceDto, type ExecTraceOperation } from '@/lib/api'
 import { supported, toWaterfall } from '@/lib/execTrace'
-import { cn } from '@/lib/utils'
 import { Button } from '../ui/Button'
-import { Reveal } from '../ui/Field'
+import { Dialog } from '../ui/Dialog'
 import { TraceWaterfall } from './traceWaterfall/TraceWaterfall'
 
 /** 运行中且展开时多久问一次权威快照（SSE 会丢、不承担完整性；收起 / 页面不可见时不问） */
@@ -22,42 +21,72 @@ type Load =
   | { state: 'none'; reason: 'not_found' | 'disabled' | 'unsupported' }
   | { state: 'error' }
 
-/**
- * 「执行记录」（ADR 0151 PR3）：一次 AI 任务的完整执行追踪。默认收起，普通用户看到的仍是那一行过程与结局；
- * 展开才去问后端、才画 Waterfall。只翻译、不判断：状态 / 耗时 / 费用全来自快照，缺的就说缺。
- * 转录里的一轮与任务历史的一行共用它：`taskRef` 是 AI 会话 id，`pj` 是那次任务所属的项目（不跟着此刻的项目走）。
- */
-export function TraceDetails({
-  taskRef,
-  pj,
-  running,
-  settledKey,
-  hidden,
-}: {
+interface TraceTarget {
+  kind?: ExecTraceOperation
   taskRef: string
   pj: string | null
   running: boolean
   /** 会话收尾的标记（变了就再问一次终局快照） */
   settledKey?: unknown
-  /** 还没拿到后端会话 id 的占位轮：不显示 */
-  hidden?: boolean
-}) {
+}
+
+/**
+ * 「执行记录」入口（ADR 0151 PR3）：窄栏里只有一行，点开是一张宽的浮动卡（`TraceDialog`，共用 `ui/Dialog`）。
+ * 转录里的一轮与智能修复卡共用它；任务历史的一行从悬浮详情卡里的按钮直接开 `TraceDialog`。
+ */
+export function TraceDetails({ hidden, ...target }: TraceTarget & { hidden?: boolean }) {
   const { t } = useTranslation('ai')
   const [open, setOpen] = useState(false)
+  if (hidden) return null
+  return (
+    <div data-ai-trace>
+      <button
+        type="button"
+        data-ai-trace-toggle
+        aria-expanded={open}
+        onClick={() => setOpen(true)}
+        className="group/row flex h-7 w-full min-w-0 items-center gap-2 rounded-md text-left text-base text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
+      >
+        <ChartColumn aria-hidden size={ICON_SIZE.sm} className="shrink-0" />
+        <span className="min-w-0 truncate">{t('trace.state.toggle')}</span>
+        <ChevronRight
+          aria-hidden
+          size={ICON_SIZE.sm}
+          className="ms-auto shrink-0 opacity-0 transition-opacity duration-fast group-hover/row:opacity-100 group-focus-visible/row:opacity-100"
+        />
+      </button>
+      <TraceDialog {...target} open={open} onOpenChange={setOpen} />
+    </div>
+  )
+}
+
+/**
+ * 宽的执行记录浮动卡。打开才去问后端、才画；关了就停轮询。只翻译、不判断：状态 / 耗时 / 费用全来自快照，缺的就说缺。
+ * `taskRef` 是该 `kind` 的任务引用（AI 会话 id / 修复的准备会话 id），`pj` 是那次任务所属的项目（不跟着此刻的项目走）。
+ */
+export function TraceDialog({
+  kind = 'ai_task',
+  taskRef,
+  pj,
+  running,
+  settledKey,
+  open,
+  onOpenChange,
+}: TraceTarget & { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { t } = useTranslation('ai')
   const [load, setLoad] = useState<Load>({ state: 'idle' })
   const [nowWall, setNowWall] = useState(() => Date.now() / 1000)
   const [attempt, setAttempt] = useState(0)
   const seq = useRef(0)
   const ref = taskRef
-
   // 展开 / 会话终局变化 / 运行中定时：问一次权威快照。请求序号挡住旧响应，会话的项目挡串项目（发请求那一刻的 pj）
   useEffect(() => {
-    if (!open || hidden) return
+    if (!open) return
     let stopped = false
     const ask = async () => {
       const mine = ++seq.current
       try {
-        const res = await fetchExecTrace('ai_task', ref, pj)
+        const res = await fetchExecTrace(kind, ref, pj)
         if (stopped || mine !== seq.current) return
         if (!res.available) setLoad({ state: 'none', reason: res.reason })
         else if (!supported(res.trace)) setLoad({ state: 'none', reason: 'unsupported' })
@@ -89,7 +118,7 @@ export function TraceDetails({
       stopped = true
       window.clearInterval(timer)
     }
-  }, [open, running, ref, pj, hidden, settledKey, attempt])
+  }, [open, running, kind, ref, pj, settledKey, attempt])
 
   // 「此刻」只在会话真的还在跑、手里的快照也是运行中时往前走；会话结束后绝不靠旧快照继续画
   const live = running && load.state === 'ready' && !load.stale && load.trace.status === 'running'
@@ -99,52 +128,54 @@ export function TraceDetails({
     return () => window.clearInterval(timer)
   }, [open, live])
 
-  if (hidden) return null
+  const exporter = useExporter(kind, ref, pj)
+
+  const finished = load.state === 'ready' && load.trace.status !== 'running'
 
   return (
-    <div data-ai-trace>
-      <button
-        type="button"
-        data-ai-trace-toggle
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="group/row flex h-7 w-full min-w-0 items-center gap-2 rounded-md text-left text-base text-ink-3 outline-none hover:text-ink-2 focus-visible:focus-ring"
-      >
-        <span aria-hidden className="grid size-3.5 shrink-0 place-items-center">
-          <ChartColumn size={ICON_SIZE.sm} className="col-start-1 row-start-1 transition-opacity duration-fast group-hover/row:opacity-0" />
-          <ChevronRight
-            size={ICON_SIZE.sm}
-            className={cn(
-              'col-start-1 row-start-1 opacity-0 transition-[opacity,transform] duration-fast group-hover/row:opacity-100',
-              open && 'rotate-90',
-            )}
-          />
-        </span>
-        <span className="min-w-0 truncate">{t('trace.state.toggle')}</span>
-      </button>
-      <Reveal open={open}>
-        <div className="pt-1 pb-2">{open && <Body load={load} nowWall={nowWall} taskRef={ref} pj={pj} onRetry={() => {
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      size="shell"
+      anchor="exec-trace"
+      title={t('trace.state.toggle')}
+      footer={{
+        start: finished ? <ExportStatus phase={exporter.phase} /> : undefined,
+        secondary: finished ? (
+          <Button
+            variant="secondary"
+            size="lg"
+            data-ai-trace-export={exporter.phase}
+            onClick={exporter.run}
+            disabled={exporter.phase === 'busy'}
+          >
+            {t('trace.state.export')}
+          </Button>
+        ) : undefined,
+        primary: (
+          <Button variant="primary" size="lg" onClick={() => onOpenChange(false)}>
+            {t('trace.state.close')}
+          </Button>
+        ),
+      }}
+    >
+      {open && (
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          <Body
+            load={load}
+            nowWall={nowWall}
+            onRetry={() => {
               setLoad({ state: 'loading' })
               setAttempt((n) => n + 1)
-            }} />}</div>
-      </Reveal>
-    </div>
+            }}
+          />
+        </div>
+      )}
+    </Dialog>
   )
 }
 
-function Body({
-  load,
-  nowWall,
-  taskRef,
-  pj,
-  onRetry,
-}: {
-  load: Load
-  nowWall: number
-  taskRef: string
-  pj: string | null
-  onRetry: () => void
-}) {
+function Body({ load, nowWall, onRetry }: { load: Load; nowWall: number; onRetry: () => void }) {
   const { t } = useTranslation('ai')
   if (load.state === 'idle' || load.state === 'loading') {
     return (
@@ -182,7 +213,6 @@ function Body({
         </div>
       )}
       <Ready trace={trace} nowWall={load.stale ? trace.started_at : nowWall} />
-      {trace.status !== 'running' && <ExportDiagnostic taskRef={taskRef} pj={pj} />}
     </>
   )
 }
@@ -208,13 +238,14 @@ function Ready({ trace, nowWall }: { trace: ExecTraceDto; nowWall: number }) {
   )
 }
 
+type ExportPhase = 'idle' | 'busy' | 'done' | 'gone' | 'error'
+
 /** 用户主动导出这一次的执行追踪诊断（下载 JSON，不上传）。只在任务结束后给：运行中的半份不当诊断交出去。 */
-function ExportDiagnostic({ taskRef, pj }: { taskRef: string; pj: string | null }) {
-  const { t } = useTranslation('ai')
-  const [phase, setPhase] = useState<'idle' | 'busy' | 'done' | 'gone' | 'error'>('idle')
+function useExporter(kind: ExecTraceOperation, taskRef: string, pj: string | null) {
+  const [phase, setPhase] = useState<ExportPhase>('idle')
   const run = () => {
     setPhase('busy')
-    void fetchExecTraceDiagnostic('ai_task', taskRef, pj)
+    void fetchExecTraceDiagnostic(kind, taskRef, pj)
       .then((res) => {
         if (!res.available) {
           setPhase('gone')
@@ -233,16 +264,15 @@ function ExportDiagnostic({ taskRef, pj }: { taskRef: string; pj: string | null 
       })
       .catch(() => setPhase('error'))
   }
-  return (
-    <div data-ai-trace-export={phase} className="flex items-center gap-2 text-sm text-ink-3">
-      <Button variant="ghost" size="sm" onClick={run} disabled={phase === 'busy'}>
-        {t('trace.state.export')}
-      </Button>
-      {phase === 'done' && <span>{t('trace.state.exported')}</span>}
-      {phase === 'gone' && <span>{t('trace.state.not_found')}</span>}
-      {phase === 'error' && <span>{t('trace.state.error')}</span>}
-    </div>
-  )
+  return { phase, run }
+}
+
+function ExportStatus({ phase }: { phase: ExportPhase }) {
+  const { t } = useTranslation('ai')
+  if (phase === 'done') return <span className="text-sm text-ink-3">{t('trace.state.exported')}</span>
+  if (phase === 'gone') return <span className="text-sm text-ink-3">{t('trace.state.not_found')}</span>
+  if (phase === 'error') return <span className="text-sm text-ink-3">{t('trace.state.error')}</span>
+  return null
 }
 
 /** 两份快照的内容是否相同（JSON 等价；几百个 Span 也只是毫秒级，比重建整棵树便宜得多） */

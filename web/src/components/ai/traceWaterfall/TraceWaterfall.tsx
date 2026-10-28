@@ -85,7 +85,7 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
   }, [roots])
   const metrics = useMemo(() => computeMetrics(roots, model, now), [roots, model, now])
   const matches = useMemo(() => matchingIds(roots, query), [roots, query])
-  const whole = traceDomain(metrics.extent, model.running)
+  const whole = traceDomain(metrics.extent, model.running, track.width)
   const view: View = useMemo(() => zoom ?? { start: 0, domain: whole }, [zoom, whole])
   const ticks = useMemo(() => ticksFor(view.start, view.domain), [view])
   const running = useCallback((n: TraceNode) => isRunning(n.span, model), [model])
@@ -304,8 +304,18 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
         <Metric id="duration" label={t('trace.ui.metric.duration')} value={formatSeconds(metrics.extent)} />
         <Metric id="cost" label={t('trace.ui.metric.cost')} value={metrics.cost === null ? dash : formatCost(metrics.cost)} />
         <Metric id="tokens" label={t('trace.ui.metric.tokens')} value={metrics.tokens === null ? dash : formatTokens(metrics.tokens)} />
-        <Metric id="modelCalls" label={t('trace.ui.metric.modelCalls')} value={metrics.llmCalls == null ? '—' : String(metrics.llmCalls)} />
-        <Metric id="toolCalls" label={t('trace.ui.metric.toolCalls')} value={metrics.toolCalls == null ? '—' : String(metrics.toolCalls)} />
+        <Metric id="modelCalls" label={t('trace.ui.metric.modelCalls')} value={metrics.llmCalls == null ? dash : String(metrics.llmCalls)} />
+        <Metric
+          id="toolCalls"
+          label={t('trace.ui.metric.toolCalls')}
+          value={
+            metrics.toolCalls == null
+              ? dash
+              : metrics.toolCallsLowerBound
+                ? t('trace.ui.metric.atLeast', { count: metrics.toolCalls })
+                : String(metrics.toolCalls)
+          }
+        />
         <Metric id="errors" label={t('trace.ui.metric.errors')} value={String(metrics.errors)} />
       </dl>
 
@@ -336,7 +346,7 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
                   <span
                     key={x}
                     data-trace-tick
-                    className="absolute top-1/2 -translate-y-1/2 ps-2 text-xs text-ink-3 tabular-nums"
+                    className="absolute top-1/2 -translate-y-1/2 ps-2 text-xs whitespace-nowrap text-ink-3 tabular-nums"
                     style={{ left: `${pct(x, view)}%` }}
                   >
                     {formatTick(x)}
@@ -356,7 +366,7 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
               following.current = el.scrollHeight - el.scrollTop - el.clientHeight < ROW
               syncScroll()
             }}
-            className="max-h-112 overflow-y-auto overscroll-contain"
+            className="max-h-[min(36rem,50vh)] overflow-y-auto overscroll-contain"
           >
             <div className="relative">
               <Handoffs flat={flat} view={view} track={track} now={now} running={running} />
@@ -496,6 +506,12 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
   const popupOpen = (scope: Scope, id = span.id) => details?.id === id && details.scope === scope
   const end = endOf(span, now)
 
+  // 工具行：名字就是它调了哪个工具（change_python），「工具调用」这个种类图标已经说了、在悬浮提示和详情里仍写全
+  const toolNamed = span.kind === 'tool' && !!span.detail
+  const primary = toolNamed ? span.detail! : span.name
+  const secondary = toolNamed ? undefined : span.detail
+  const fullName = toolNamed ? `${span.name} · ${span.detail}` : secondary ? `${span.name} · ${secondary}` : span.name
+
   const label = (
     <>
       {hasChildren && (
@@ -506,7 +522,7 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
         />
       )}
       <SpanIcon icon={span.icon} />
-      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+      <span className="flex min-w-0 flex-1 items-center gap-1.5" title={fullName}>
         {(live || failed) && (
           <span className="flex shrink-0 items-center" data-trace-status-glyph={live ? 'running' : 'error'}>
             {live ? (
@@ -516,13 +532,14 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
             )}
           </span>
         )}
-        <span className={cn('truncate', isAgent && 'font-medium', failed && 'text-danger-content')}>{span.name}</span>
-        {span.detail && <span className="hidden min-w-0 truncate text-ink-3 @lg/trace:inline">{span.detail}</span>}
+        <span className={cn('truncate', isAgent && 'font-medium', failed && 'text-danger-content')}>{primary}</span>
+        {secondary && <span className="hidden min-w-0 truncate text-ink-3 @lg/trace:inline">{secondary}</span>}
       </span>
     </>
   )
 
   const figureLeft = span.timing === 'point' ? span.start : end
+  const edge = pct(figureLeft, view) > 90
 
   return (
     <div
@@ -536,18 +553,28 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
       data-top={top}
       data-popup-open={popupOpen('lane') || undefined}
       className={cn(
-        'group/row relative flex h-9 items-center border-b border-transparent hover:bg-surface-hover data-popup-open:bg-surface-hover',
-        pinned && 'sticky z-sticky data-stuck:border-border data-stuck:bg-surface',
+        'group/row relative flex h-9 items-center border-b border-transparent',
+        // 吸顶的行底色**一直**不透明（不等滚动事件把 data-stuck 补上）：底下滚过来的行从它后面干净地穿过去；
+        // 悬停的淡灰不能直接上在它身上（半透明会透出底下的字），改画在一层叠加里
+        pinned
+          ? 'sticky z-sticky bg-surface data-stuck:border-border'
+          : 'hover:bg-surface-hover data-popup-open:bg-surface-hover',
       )}
       style={pinned ? { top } : undefined}
     >
       {pinned && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 start-(--trace-label) end-0 border-s border-border opacity-0 group-data-stuck/row:opacity-100"
-        >
-          <GridLines ticks={ticks} view={view} />
-        </div>
+        <>
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 group-hover/row:bg-surface-hover group-data-popup-open/row:bg-surface-hover"
+          />
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 start-(--trace-label) end-0 border-s border-border"
+          >
+            <GridLines ticks={ticks} view={view} />
+          </div>
+        </>
       )}
 
       {hasChildren ? (
@@ -588,8 +615,13 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
             <LeafMarks node={node} view={view} now={now} live={live} />
           )}
           <span
-            className="pointer-events-none absolute top-1/2 hidden -translate-y-1/2 items-center gap-1.5 ps-2 text-xs whitespace-nowrap text-ink-3 tabular-nums @xs/trace:flex"
-            style={{ left: `${pct(figureLeft, view)}%` }}
+            data-trace-figure-side={edge ? 'before' : 'after'}
+            className={cn(
+              'pointer-events-none absolute top-1/2 hidden -translate-y-1/2 items-center gap-1.5 text-xs whitespace-nowrap text-ink-3 tabular-nums @xs/trace:flex',
+              edge ? 'pe-2' : 'ps-2',
+            )}
+            // 条已经贴到右缘（放大后 / 时间轴留边不够）：小字改放在条尾的左边，不被右缘裁掉
+            style={edge ? { right: `${100 - pct(figureLeft, view)}%` } : { left: `${pct(figureLeft, view)}%` }}
           >
             <span data-trace-figure>{spanFigure(node, now)}</span>
             {span.firstFailure && (
@@ -718,7 +750,8 @@ function fillClass(type: SegType, laneIndex: number): string {
   switch (type) {
     case 'model': return lane.strong
     case 'tool': return lane.mid
-    case 'think': return lane.faint
+    case 'think':
+    case 'delegate': return lane.faint
     case 'failed': return 'bg-danger'
     case 'muted': return 'bg-ink-faint/40'
     case 'wait': return 'border border-border-strong'

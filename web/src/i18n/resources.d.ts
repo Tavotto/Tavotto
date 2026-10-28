@@ -73,15 +73,18 @@ export default interface Resources {
     },
     "history": {
       "allStatuses": "全部状态",
-      "changedSuffix": " · 有改动",
       "close": "关闭任务历史",
       "count_other": "{{count}} 条",
       "delete": "删除此记录",
-      "effort": "推理强度：{{effort}}",
+      "effortTitle": "思考强度",
       "empty": "还没有改图任务",
       "filterAria": "按状态筛选",
+      "model": "模型",
+      "modelDefault": "跟随 CLI 默认",
+      "moreInfo": "详情",
       "next": "下一页",
       "noMatch": "没有匹配的任务",
+      "openTrace": "查看执行记录",
       "pin": "固定此记录",
       "pinTip": "固定：不随保留期清理",
       "prev": "上一页",
@@ -90,11 +93,20 @@ export default interface Resources {
       "reverted": "已回滚，脚本恢复原样。",
       "searchAria": "搜索任务历史",
       "searchPlaceholder": "搜索任务…",
-      "snapshotAvailable": "快照可用",
-      "snapshotCleared": "快照已清理",
+      "snapshot": "快照",
+      "snapshotAvailableShort": "可撤销",
+      "snapshotClearedShort": "已清理",
+      "state": {
+        "changed": "有改动",
+        "unchanged": "没有改动"
+      },
       "title": "任务历史",
       "unpin": "取消固定",
-      "unpinTip": "取消固定：会随保留期清理"
+      "unpinTip": "取消固定：会随保留期清理",
+      "via": {
+        "cli": "本机 CLI",
+        "endpoint": "API 接口"
+      }
     },
     "markdown": {
       "image": "[图片：{{alt}}]",
@@ -177,7 +189,6 @@ export default interface Resources {
       "stepRan": "运行",
       "targetAria": "作用目标：{{target}}",
       "taskHistory": "任务历史",
-      "techDetails": "技术详情",
       "unconfirmedBody": "这条指令可能已经在执行，先查询结果。",
       "unconfirmedGoneBody": "发起这条指令的图已不在画布上，仍可查询结果。",
       "unconfirmedTitle": "已发出，尚未收到确认"
@@ -342,6 +353,7 @@ export default interface Resources {
         "spawn": "启动进程"
       },
       "state": {
+        "close": "关闭",
         "disabled": "执行追踪已关闭",
         "error": "执行记录读不出来",
         "export": "导出诊断",
@@ -393,6 +405,7 @@ export default interface Resources {
           "wait": "等待"
         },
         "metric": {
+          "atLeast": "≥{{count}}",
           "cost": "费用",
           "duration": "耗时",
           "errors": "失败",

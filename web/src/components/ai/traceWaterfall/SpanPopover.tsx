@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { cn } from '@/lib/utils'
 import { SpanIcon } from './SpanIcon'
 import { MorphText } from './MorphText'
 import { endOf, formatCost, formatSeconds, formatTokens, type TraceNode } from './utils'
@@ -28,6 +29,9 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
   const { t } = useTranslation('ai')
   const ref = useRef<HTMLDivElement>(null)
   const { span } = node
+  // 在对话框（模态）里：挂到 body 上的浮层会被 Radix 当成「点在外面」、还吃不到指针事件，所以挂进对话框本身，
+  // 位置换成相对它的坐标（对话框自己带 transform，`fixed` 的参照系就是它）
+  const host = anchor.closest<HTMLElement>('[data-dialog]')
 
   useLayoutEffect(() => {
     let frame = 0
@@ -37,9 +41,11 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
       if (el && anchor.isConnected) {
         const a = anchor.getBoundingClientRect()
         const { width, height } = el.getBoundingClientRect()
-        const flip = a.bottom + 6 + height > window.innerHeight - 8 && a.top - 6 - height > 8
-        const left = Math.min(Math.max(8, a.left), Math.max(8, window.innerWidth - width - 8))
-        const top = flip ? a.top - 6 - height : a.bottom + 6
+        const h = host?.getBoundingClientRect()
+        const [x0, y0, w, hh] = h ? [h.left, h.top, h.width, h.height] : [0, 0, window.innerWidth, window.innerHeight]
+        const flip = a.bottom - y0 + 6 + height > hh - 8 && a.top - y0 - 6 - height > 8
+        const left = Math.min(Math.max(8, a.left - x0), Math.max(8, w - width - 8))
+        const top = flip ? a.top - y0 - 6 - height : a.bottom - y0 + 6
         const key = `${left}|${top}`
         if (key !== last) {
           last = key
@@ -53,7 +59,7 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
     }
     place()
     return () => cancelAnimationFrame(frame)
-  }, [anchor])
+  }, [anchor, host])
 
   useEffect(() => {
     ref.current?.focus({ preventScroll: true })
@@ -111,7 +117,10 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
       data-trace-popover
       data-trace-span-id={span.id}
       style={{ left: -9999, top: 0, visibility: 'hidden' }}
-      className="fixed z-popover flex w-80 flex-col gap-3 rounded-lg bg-surface p-3 text-base text-ink shadow-pop outline-none motion-safe:animate-pop-in data-[side=top]:origin-bottom-left data-[side=bottom]:origin-top-left"
+      className={cn(
+        host ? 'absolute' : 'fixed',
+        'z-popover flex w-80 flex-col gap-3 rounded-lg bg-surface p-3 text-base text-ink shadow-pop outline-none motion-safe:animate-pop-in data-[side=top]:origin-bottom-left data-[side=bottom]:origin-top-left',
+      )}
     >
       <div className="flex items-center gap-2">
         <SpanIcon icon={span.icon} size="lg" />
@@ -170,6 +179,6 @@ export function SpanPopover({ node, anchor, running, now, slowest, onClose }: Pr
         </dl>
       )}
     </div>,
-    document.body,
+    host ?? document.body,
   )
 }

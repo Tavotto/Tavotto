@@ -58,16 +58,19 @@
   },
   "history": {
     "allStatuses": "All statuses",
-    "changedSuffix": " · changed",
     "close": "Close task history",
     "count_one": "{{count}} task",
     "count_other": "{{count}} tasks",
     "delete": "Delete this record",
-    "effort": "Reasoning effort: {{effort}}",
+    "effortTitle": "Reasoning",
     "empty": "No assistant tasks yet",
     "filterAria": "Filter by status",
+    "model": "Model",
+    "modelDefault": "CLI default",
+    "moreInfo": "Details",
     "next": "Next",
     "noMatch": "No matching task",
+    "openTrace": "View execution record",
     "pin": "Pin this record",
     "pinTip": "Pin: exempt from retention cleanup",
     "prev": "Previous",
@@ -76,11 +79,20 @@
     "reverted": "Reverted. The script is back to how it was.",
     "searchAria": "Search task history",
     "searchPlaceholder": "Search tasks…",
-    "snapshotAvailable": "Snapshot available",
-    "snapshotCleared": "Snapshot cleaned up",
+    "snapshot": "Snapshot",
+    "snapshotAvailableShort": "Can revert",
+    "snapshotClearedShort": "Cleared",
+    "state": {
+      "changed": "Changed",
+      "unchanged": "No change"
+    },
     "title": "Task history",
     "unpin": "Unpin",
-    "unpinTip": "Unpin: cleaned up with the retention policy"
+    "unpinTip": "Unpin: cleaned up with the retention policy",
+    "via": {
+      "endpoint": "API endpoint",
+      "cli": "Local CLI"
+    }
   },
   "markdown": {
     "image": "[image: {{alt}}]",
@@ -160,7 +172,6 @@
     "stepRan": "Ran",
     "targetAria": "Target: {{target}}",
     "taskHistory": "Task history",
-    "techDetails": "Technical details",
     "unconfirmedBody": "This request may already be running. Check the result first.",
     "unconfirmedGoneBody": "The figure that sent this is no longer on the canvas. You can still check the result.",
     "unconfirmedTitle": "Sent, not yet confirmed",
@@ -250,7 +261,8 @@
         "tokens": "Tokens",
         "modelCalls": "Model calls",
         "toolCalls": "Tool calls",
-        "errors": "Errors"
+        "errors": "Errors",
+        "atLeast": "≥{{count}}"
       },
       "legend": {
         "model": "Model call",
@@ -321,7 +333,8 @@
       "incomplete": "The record is incomplete",
       "stale": "Couldn't load the final state; below is how the record looked before the task ended",
       "export": "Export diagnostics",
-      "exported": "Saved to your downloads (local only, nothing was uploaded)"
+      "exported": "Saved to your downloads (local only, nothing was uploaded)",
+      "close": "Close"
     },
     "operation": {
       "ai_task": "AI task",

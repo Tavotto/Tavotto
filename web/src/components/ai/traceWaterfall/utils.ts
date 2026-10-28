@@ -86,7 +86,11 @@ export const isRunning = (s: WaterfallSpan, model: WaterfallModel) =>
 /** 结束时刻；没有结束时刻的画到 `now` */
 export const endOf = (s: WaterfallSpan, now: number) => s.end ?? Math.max(now, s.start)
 
-export type SegType = 'model' | 'tool' | 'wait' | 'think' | 'failed' | 'muted'
+/**
+ * `wait` 只给真的等待（`kind==='wait'` 的 Span，例如等用户确认）——斜纹的意思就是「在等」。
+ * `delegate`：这段时间由子智能体接手（它自己的泳道在下一行画），父泳道只是安静地陪着，不是在等。
+ */
+export type SegType = 'model' | 'tool' | 'wait' | 'think' | 'delegate' | 'failed' | 'muted'
 
 export interface LaneSegment {
   key: string
@@ -107,7 +111,7 @@ export function leafType(span: WaterfallSpan): SegType {
 }
 
 /**
- * 把智能体的区间切成「此刻它在做什么」：自己的一次调用 / 等子智能体 / 调用之间的思考。
+ * 把智能体的区间切成「此刻它在做什么」：自己的一次调用 / 子智能体接手 / 调用之间的思考。
  * 只用有区间的子项；point 与 unmeasured 的子项另画（标记 / 虚线框）。
  */
 export function laneSegments(agent: TraceNode, now: number, model: WaterfallModel): LaneSegment[] {
@@ -137,8 +141,8 @@ export function laneSegments(agent: TraceNode, now: number, model: WaterfallMode
       type = leafType(leaf.span)
       key = leaf.span.id
     } else if (busy.length) {
-      type = 'wait'
-      key = `wait:${busy.map((c) => c.span.id).join('+')}`
+      type = 'delegate'
+      key = `delegate:${busy.map((c) => c.span.id).join('+')}`
     } else {
       type = 'think'
       key = 'think'
@@ -163,7 +167,10 @@ export interface TraceMetrics {
   tokens: number | null
   /** null = 有不可观察的 Agent，数不出来（不是 0） */
   llmCalls: number | null
+  /** 经我们自己的工具入口观察到的工具调用数；有不可观察的 Agent 时只是下界（`toolCallsLowerBound`），一个都没观察到 = null */
   toolCalls: number | null
+  /** true = `toolCalls` 是「至少」：不可观察的 Agent 自己用的工具我们看不见 */
+  toolCallsLowerBound: boolean
   errors: number
   slowestId?: string
 }
@@ -175,6 +182,7 @@ export function computeMetrics(roots: TraceNode[], model: WaterfallModel, now: n
     tokens: known(...roots.map((r) => r.tokens)),
     llmCalls: 0,
     toolCalls: 0,
+    toolCallsLowerBound: false,
     errors: 0,
   }
   let slowest = 0
@@ -199,8 +207,10 @@ export function computeMetrics(roots: TraceNode[], model: WaterfallModel, now: n
   })
   if (m.errors === 0) m.errors = rootErrors
   if (opaque) {
+    // 模型调用在 Agent 内部，数不出来；工具调用经我们自己的入口走的那些是看得见的——只能当下界，一个都没看见就是不知道
     m.llmCalls = null
-    m.toolCalls = null
+    if ((m.toolCalls ?? 0) > 0) m.toolCallsLowerBound = true
+    else m.toolCalls = null
   }
   return m
 }
@@ -226,8 +236,15 @@ const TICK_STEPS = [0.5, 1, 2, 5, 10, 15, 20, 30, 60, 120, 300, 600, 1800, 3600]
 /** 运行中的时间轴只取这张阶梯上的值：此刻每走一格不改坐标系，已结束的行就不必重画（大 Trace 的实时刷新预算） */
 const LIVE_DOMAINS = [8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096]
 
-export function traceDomain(extent: number, running: boolean) {
-  if (!running) return Math.max(extent * 1.06, 1)
+/** 已结束的时间轴在最后一条之后至少留这么多像素：最后一条后面的时长小字（「2m 34s」）要放得下 */
+const END_LABEL_PX = 64
+
+export function traceDomain(extent: number, running: boolean, trackWidth = 0) {
+  if (!running) {
+    // 轨道宽度量到了就按像素留边（窄轨道留得多一些），没量到先按比例
+    const share = trackWidth > 0 ? Math.min(0.35, END_LABEL_PX / trackWidth) : 0.06
+    return Math.max(extent / (1 - share), extent * 1.06, 1)
+  }
   const want = extent * 1.3
   return LIVE_DOMAINS.find((d) => d >= want) ?? Math.ceil(want / 1024) * 1024
 }

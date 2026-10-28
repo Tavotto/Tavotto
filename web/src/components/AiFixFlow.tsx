@@ -4,6 +4,7 @@ import { isDesktop, pickAnyFile, pickDirectory } from '@/lib/desktop'
 import { useAiFixStore, type AiFixEntry } from '@/store/aiFixStore'
 import { cn } from '@/lib/utils'
 import type { AiFixCard } from '@/lib/api'
+import { TraceDetails } from './ai/TraceDetails'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Input'
 import { ProgressBar } from './ui/ProgressBar'
@@ -158,8 +159,32 @@ const failureLine = (reason: string | undefined) => {
   }
 }
 
-/** 修复会话进行中 / 等用户 / 结束时的卡片内容；条目不在这几个阶段就返回 null（走原来的卡） */
+/**
+ * 修复会话进行中 / 等用户 / 结束时的卡片内容；条目不在这几个阶段就返回 null（走原来的卡）。
+ * 会话起来之后（有 `fixId`）折叠的详情里多一行「执行记录」（ADR 0151）：修复的 Trace 以准备会话 id 为引用，
+ * 跑着、等着、没修好（`done`）都读得到；修好（`fixed`）/ 取消 / 交接时条目会被清掉，那一行也随卡片消失。
+ */
 export function aiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null {
+  const ui = buildAiFixFlow(fixKey, entry)
+  if (!ui || !entry.fixId || (entry.phase !== 'running' && entry.phase !== 'waiting' && entry.phase !== 'done')) return ui
+  return {
+    ...ui,
+    details: (
+      <>
+        {ui.details}
+        <TraceDetails
+          kind="fix_session"
+          taskRef={entry.ref.session_id}
+          pj={entry.pj ?? null}
+          running={entry.phase !== 'done'}
+          settledKey={entry.phase}
+        />
+      </>
+    ),
+  }
+}
+
+function buildAiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null {
   const store = useAiFixStore.getState()
   const busy = entry.answering === true
   const skip = (label: string, answer = 'skip') => (
