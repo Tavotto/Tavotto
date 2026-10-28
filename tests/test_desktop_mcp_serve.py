@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -154,3 +155,82 @@ def test_smoke_resolves_the_frozen_cli_before_the_handshake_changes_directory(
         assert cli.is_absolute()
         assert cli.parent == (tmp_path / "dist" / "Tavotto").resolve()
         assert cli.name == "tavotto-cli" + Path(exe).suffix
+
+
+# ----------------------------------------------------------------------------- 画布随包（MCP App UI）
+def test_frozen_build_bundles_the_canvas_where_the_server_looks_for_it():
+    """`tavotto_mcp/widget.py` 按 `<tavotto_mcp 的上一级>/widget/canvas.html` 找画布；冻结后那一级是 _MEIPASS，
+    所以 spec 必须把它收到 `widget/`，且缺了 / 过期就拒绝打包（不进库，ADR 0043）。"""
+    from tavotto_mcp import widget
+
+    pkg_parent = Path(widget.__file__).resolve().parent.parent
+    assert widget._DEFAULT.relative_to(pkg_parent) == Path("widget") / "canvas.html"
+    tree = ast.parse((ROOT / "packaging" / "tavotto.spec").read_text(encoding="utf-8"))
+    appended = [
+        n.args[0]
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "append"
+        and getattr(n.func.value, "id", None) == "datas"
+        and n.args
+        and isinstance(n.args[0], ast.Tuple)
+    ]
+    widget_entries = [
+        t for t in appended if isinstance(t.elts[1], ast.Constant) and t.elts[1].value == "widget"
+    ]
+    assert len(widget_entries) == 1
+    assert ast.unparse(widget_entries[0].elts[0]) == "str(MCP_WIDGET)"
+    src = (ROOT / "packaging" / "tavotto.spec").read_text(encoding="utf-8")
+    gate = src[src.index("if not MCP_WIDGET.is_file()") :]
+    assert "current_fingerprint(MCP_WIDGET) != source_fingerprint()" in gate.splitlines()[0]
+    assert "raise SystemExit" in gate[:400]
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_mcp_widget
+
+    assert build_mcp_widget.OUT == widget._DEFAULT  # spec 收的就是服务端源码态找的那一份
+
+
+def _jobs(workflow: str) -> dict[str, str]:
+    text = (ROOT / ".github" / "workflows" / workflow).read_text(encoding="utf-8")
+    body = text[text.index("\njobs:\n") :]
+    parts = re.split(r"(?m)^  ([A-Za-z0-9_-]+):\n", body)
+    return dict(zip(parts[1::2], parts[2::2]))
+
+
+@pytest.mark.parametrize("workflow", ["ci.yml", "nightly.yml"])
+def test_every_job_that_freezes_the_sidecar_builds_the_canvas_first(workflow):
+    frozen = {
+        name: job
+        for name, job in _jobs(workflow).items()
+        if "pyinstaller packaging/tavotto.spec" in job
+    }
+    assert frozen, f"{workflow} 里没找到跑 PyInstaller 的 job——判据空了"
+    for name, job in frozen.items():
+        built = job.find("scripts/build_mcp_widget.py")
+        assert 0 <= built < job.index("pyinstaller packaging/tavotto.spec"), name
+
+
+def test_build_desktop_builds_the_canvas_before_pyinstaller():
+    src = (ROOT / "scripts" / "build_desktop.py").read_text(encoding="utf-8")
+    main = src[src.index("def main") :]
+    assert 0 <= main.find('"build_mcp_widget.py"') < main.index('"PyInstaller"')
+
+
+@pytest.mark.parametrize(
+    "result, available",
+    [
+        ({"structuredContent": {"canvas": {"available": True}}}, True),
+        (
+            {"content": [{"type": "text", "text": json.dumps({"canvas": {"available": False}})}]},
+            False,
+        ),
+        ({"content": [{"type": "text", "text": "not json"}]}, None),
+        ({}, None),
+    ],
+)
+def test_smoke_reads_the_canvas_section_of_the_health_result(result, available):
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import smoke_app
+
+    assert smoke_app.health_canvas(result).get("available") is available

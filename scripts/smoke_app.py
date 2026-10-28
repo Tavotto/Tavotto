@@ -478,7 +478,23 @@ def check_frozen_mcp(cli: Path, project: Path, workdir: Path) -> None:
             f"::error::tavotto-cli mcp 不可用（退出码 {proc.returncode}，缺工具 {missing}，"
             f"health={json.dumps(health, ensure_ascii=False)[:300]}）: {proc.stderr.strip()[-600:]}"
         )
-    print(f"· tavotto-cli mcp 通过：{len(tools)} 个工具，tavotto_health 正常")
+    canvas = health_canvas(health)
+    if not canvas.get("available"):
+        # 画布随包（tavotto.spec 收进 widget/）：缺了宿主里就没有内嵌画布，工具照常——正因为不报错才要在这里拦
+        raise SystemExit(f"::error::tavotto-cli mcp 的画布不可用: {canvas.get('reason') or canvas}")
+    print(f"· tavotto-cli mcp 通过：{len(tools)} 个工具，tavotto_health 正常，画布随包")
+
+
+def health_canvas(result: dict) -> dict:
+    """`tavotto_health` 的 tools/call 结果里的 `canvas` 一节（结构化内容优先，退回第一段文本里的 JSON）。"""
+    data = result.get("structuredContent")
+    if not isinstance(data, dict):
+        try:
+            data = json.loads((result.get("content") or [{}])[0].get("text") or "{}")
+        except (ValueError, AttributeError, IndexError):
+            data = {}
+    canvas = data.get("canvas") if isinstance(data, dict) else None
+    return canvas if isinstance(canvas, dict) else {}
 
 
 def run_smoke(
