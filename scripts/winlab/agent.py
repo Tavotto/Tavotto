@@ -4354,7 +4354,7 @@ def judge_connect_written(connect: dict) -> dict:
         elif entry != written:
             problems.append(f"{f.name}: entry differs from the first target's")
     if written is not None and connect["host_id"] == "workbuddy":
-        approvals = _read_json(connect["home"] / ".workbuddy" / "mcp-approvals.json") or {}
+        approvals = _read_json(connect["real_home"] / ".workbuddy" / "mcp-approvals.json") or {}
         cmd = [str(written.get("command")), *[str(a) for a in written.get("args") or []]]
         trust = f"{workbuddy_trust_hash(cmd, written.get('env') or {})}::tavotto"
         if trust not in approvals:
@@ -4406,12 +4406,11 @@ def install_tavotto_for_connect(setup: Path, base: dict) -> tuple[dict | None, d
     return {"shell": shell, "cli": cli, "wrapped": False}, None
 
 
-def tavotto_gui_env(env: dict, home: Path, work: Path) -> dict:
-    """起 Tavotto 的环境：用户目录 = 宿主的那个家（按钮按 `~` 找宿主的配置），Tavotto 自己的数据 / 配置进 run 目录。"""
+def tavotto_gui_env(env: dict, work: Path) -> dict:
+    """起 Tavotto 的环境：用户目录**不改**（改了 USERPROFILE，WebView2 就不开策略给的调试端口：Lab 实测
+    run 20261028T105803Z-0b59f0 与对照 20261028T110340Z-ef0489），Tavotto 自己的数据 / 配置进 run 目录。"""
     return dict(
         env,
-        USERPROFILE=str(home),
-        HOME=str(home),
         TAVOTTO_DATA_DIR=str(work / "tavotto-data"),
         TAVOTTO_CONFIG_DIR=str(work / "tavotto-config"),
         TAVOTTO_NO_TELEMETRY="1",
@@ -4454,13 +4453,7 @@ def _connect_driver_round(
         label,
     ]
     step = run_in_gui(
-        lab,
-        run_id,
-        argv,
-        work,
-        tavotto_gui_env(env, connect["home"], work),
-        ev / f"driver-{action}",
-        1200,
+        lab, run_id, argv, work, tavotto_gui_env(env, work), ev / f"driver-{action}", 1200
     )
     info: dict = {}
     with contextlib.suppress(OSError, ValueError):
@@ -4468,10 +4461,95 @@ def _connect_driver_round(
     return {"step": step, "driver": info}
 
 
-def connect_via_button(lab, run_id, run_dir, env, connect, home, proj, base) -> dict | None:
-    """在 Tavotto 里真点「接入」，再逐字核对它写的配置；返回 None = 可以接着跑宿主，否则是提前收场的结论。"""
+def tavotto_hosts_list(connect: dict, env: dict, work: Path) -> dict | None:
+    """装好的 tavotto-cli 自己怎么看（`hosts list --json`，与界面那一组同一个来源）：界面和文件对不上时看它。"""
+    try:
+        p = subprocess.run(
+            [str(connect["cli"]), "hosts", "list", "--json"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=tavotto_gui_env(env, work),
+            timeout=180,
+        )
+        d = json.loads(p.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return None
+    row = [h for h in d.get("hosts") or [] if h.get("id") == connect["host_id"]]
+    return {"project_root": d.get("project_root"), "row": row[0] if row else None}
+
+
+def _backups(targets: list[tuple[Path, tuple[str, ...]]]) -> set[str]:
+    return {
+        str(b)
+        for f, _ in targets
+        if f.parent.is_dir()
+        for b in f.parent.glob(f"{f.name}.tavotto-backup-*")
+    }
+
+
+def snapshot_real_targets(connect: dict) -> None:
+    """真实用户目录里的目标文件（与 WorkBuddy 的信任文件）跑前的原样；`restore_real_targets` 跑完还原。"""
+    files = [f for f, _ in connect["targets"]]
+    if connect["host_id"] == "workbuddy":
+        files.append(connect["real_home"] / ".workbuddy" / "mcp-approvals.json")
+    connect["originals"] = {str(f): (f.read_bytes() if f.is_file() else None) for f in files}
+    connect["backups_before"] = _backups(connect["targets"])
+    # 这台账户上宿主的用户目录可能还不存在（WorkBuddy 平时跑在隔离的家里）：接入前由 prepare 建出来，跑完删掉建的
+    created: list[str] = []
+    for f in files:
+        d = f.parent
+        while d != connect["real_home"] and not d.exists() and str(d) not in created:
+            created.append(str(d))
+            d = d.parent
+    connect["created_dirs"] = sorted(created, key=len, reverse=True)
+
+
+def restore_real_targets(connect: dict) -> dict:
+    """还原跑前的原样，但**不留 tavotto 那一条**（Lab 账户的真实目录不该带着它，含此前调试留下的）；删掉本次接入时
+    Tavotto 生成的备份文件。返回还原了什么，进报告。"""
+    paths = dict(connect["targets"])
+    restored, removed = [], []
+    for name, raw in (connect.get("originals") or {}).items():
+        f = Path(name)
+        if raw is None:
+            if f.exists():
+                f.unlink()
+                removed.append(f.name)
+            continue
+        if f in paths:
+            d = json.loads(raw.decode("utf-8-sig") or "{}")
+            box = _servers(d, paths[f])
+            if box is not None:
+                box.pop("tavotto", None)
+            raw = json.dumps(d, indent=2).encode("utf-8")
+        f.write_bytes(raw)
+        restored.append(f.name)
+    for b in _backups(connect["targets"]) - connect.get("backups_before", set()):
+        with contextlib.suppress(OSError):
+            Path(b).unlink()
+            removed.append(Path(b).name)
+    for d in connect.get("created_dirs", []):
+        with contextlib.suppress(OSError):
+            Path(d).rmdir()  # 只删空的：里面要是有别人的东西就留着
+            removed.append(Path(d).name + "\\")
+    return {"restored": restored, "removed": removed}
+
+
+def connect_via_button(lab, run_id, run_dir, env, connect, host_home, proj, base) -> dict | None:
+    """在 Tavotto 里真点「接入」，在真实用户目录里逐字核对它写的配置；返回 None = 可以接着跑宿主，否则是提前收场的结论。
+    宿主自己跑在隔离的家里（`host_home`）：核对通过后由 `wrap_connected_entry` 把那一条（包上录制器）放进宿主的家。"""
     levels = base["levels"]
-    connect.update(home=home, proj=proj, targets=connect_targets(connect["host_id"], home))
+    real_home = Path(os.environ.get("USERPROFILE") or Path.home())
+    connect.update(
+        real_home=real_home,
+        host_home=host_home,
+        proj=proj,
+        targets=connect_targets(connect["host_id"], real_home),
+        host_targets=connect_targets(connect["host_id"], host_home),
+    )
+    snapshot_real_targets(connect)
     connect["before"] = prepare_connect_targets(connect["targets"])
     r = _connect_driver_round(lab, run_id, run_dir, env, connect, "connect")
     base["connect"] = {"driver": r["driver"], "gui": r["step"].get("gui")}
@@ -4483,19 +4561,19 @@ def connect_via_button(lab, run_id, run_dir, env, connect, home, proj, base) -> 
             "summary": "no interactive session for tavotto-lab: run `winlab.py admin gui-setup` and reboot",
         }
     drv = r["driver"]
-    if drv.get("error") or not (drv.get("after") or {}).get("connected"):
-        levels["connect"] = "error" if drv.get("error") else "failed"
+    if drv.get("error"):
+        levels["connect"] = "error"
         return {
             **base,
-            "result": levels["connect"],
-            "summary": f"Tavotto 「接入」 for {connect['host_id']}: "
-            + (
-                drv.get("error")
-                or f"row did not show connected: {(drv.get('after') or {}).get('text', '')[:200]!r}"
-            ),
+            "result": "error",
+            "summary": f"Tavotto 「接入」 for {connect['host_id']}: {drv['error']}",
         }
     verdict = judge_connect_written(connect)
     base["connect"]["written"] = {"ok": verdict["ok"], "problems": verdict["problems"]}
+    base["connect"]["entry"] = verdict["written"]
+    base["connect"]["cli_list"] = tavotto_hosts_list(connect, env, run_dir / "work")
+    ui_connected = bool((drv.get("after") or {}).get("connected"))
+    base["connect"]["ui_connected"] = ui_connected
     if not verdict["ok"]:
         levels["connect"] = "failed"
         return {
@@ -4503,21 +4581,23 @@ def connect_via_button(lab, run_id, run_dir, env, connect, home, proj, base) -> 
             "result": "failed",
             "summary": f"Tavotto wrote the {connect['host_id']} config wrong: {'; '.join(verdict['problems'])[:300]}",
         }
-    levels["connect"] = "passed"
+    # 文件写对了、界面却没认出「已接入」：按钮这一侧算失败，但宿主照跑（写下的那一条能不能用是另一件事）
+    levels["connect"] = "passed" if ui_connected else "failed"
     connect["written"] = verdict["written"]
     return None
 
 
 def wrap_connected_entry(connect: dict, mcp_cmd: list[str]) -> None:
-    """跑宿主的那段时间：录制器包在按钮写的命令外面（只换 command / args；env、位置、其余键不动）。WorkBuddy 的信任
-    按条目指纹记，包过的那一条另记一条信任，断开前删掉。"""
+    """按钮写的那一条（真实用户目录里的不动）放进宿主隔离的家里同样位置，录制器包在命令外面（只换 command / args，
+    env 不动）。WorkBuddy 的信任按条目指纹记：给包过的那一条记在宿主的家里。"""
     wrapped = {**connect["written"], "command": mcp_cmd[0], "args": mcp_cmd[1:]}
-    for f, path in connect["targets"]:
+    for f, path in connect["host_targets"]:
         d = _read_json(f) or {}
         _servers(d, path, create=True)["tavotto"] = wrapped
+        f.parent.mkdir(parents=True, exist_ok=True)
         f.write_text(json.dumps(d, indent=2), encoding="utf-8")
     if connect["host_id"] == "workbuddy":
-        approvals = connect["home"] / ".workbuddy" / "mcp-approvals.json"
+        approvals = connect["host_home"] / ".workbuddy" / "mcp-approvals.json"
         known = _read_json(approvals) or {}
         key = f"{workbuddy_trust_hash(mcp_cmd, wrapped.get('env') or {})}::tavotto"
         known[key] = int(time.time() * 1000)
@@ -4527,12 +4607,15 @@ def wrap_connected_entry(connect: dict, mcp_cmd: list[str]) -> None:
 
 
 def unwrap_connected_entry(connect: dict) -> None:
-    for f, path in connect["targets"]:
-        d = _read_json(f) or {}
-        _servers(d, path, create=True)["tavotto"] = connect["written"]
-        f.write_text(json.dumps(d, indent=2), encoding="utf-8")
+    """宿主跑完：从它隔离的家里删掉放进去的那一条与另记的信任。"""
+    for f, path in connect["host_targets"]:
+        d = _read_json(f)
+        box = _servers(d, path) if d else None
+        if box is not None and "tavotto" in box:
+            box.pop("tavotto")
+            f.write_text(json.dumps(d, indent=2), encoding="utf-8")
     if connect.get("wrapped_trust"):
-        approvals = connect["home"] / ".workbuddy" / "mcp-approvals.json"
+        approvals = connect["host_home"] / ".workbuddy" / "mcp-approvals.json"
         known = _read_json(approvals) or {}
         known.pop(connect["wrapped_trust"], None)
         approvals.write_text(json.dumps(known, indent=2), encoding="utf-8")
@@ -4552,7 +4635,7 @@ def judge_disconnected(connect: dict) -> list[str]:
 
 
 def finish_connect_cell(lab, run_id, run_dir, env, connect, out: dict) -> dict:
-    """录制器换回按钮写的原样 → Tavotto 认出「已接入」→ 点「断开」→ 核对文件与接入前相同；把两项并进结论。"""
+    """宿主跑完 → Tavotto 认出「已接入」→ 点「断开」→ 核对文件与接入前相同；把两项并进结论。"""
     levels = out["levels"]
     unwrap_connected_entry(connect)
     r = _connect_driver_round(lab, run_id, run_dir, env, connect, "disconnect")
@@ -4680,8 +4763,8 @@ def run_desktop_live_task(
     ext_dir = (
         run_dir / "ext"
     )  # 扩展目录放在 work 之外：里面有 300 MB 的随包二进制，不参与抹密钥扫描
+    connect = None
     try:
-        connect = None
         if tavotto_setup is not None:
             connect, early = install_tavotto_for_connect(tavotto_setup, base)
             if early is not None:
@@ -4707,6 +4790,8 @@ def run_desktop_live_task(
             out = finish_connect_cell(lab, run_id, run_dir, henv, connect, out)
     finally:
         try:
+            if connect and connect.get("originals") is not None:
+                base["connect_restore"] = restore_real_targets(connect)
             if tavotto_setup is not None:
                 base["tavotto_uninstall"] = {"ok": uninstall_all()}
             base["uninstall"] = uninstall_desktop_host(host, work, henv)
@@ -4719,6 +4804,9 @@ def run_desktop_live_task(
             if mode in DESKTOP_LIVE_LOGIN_MODES:
                 base["login_state"] = wipe_login_state(run_dir)
     out["uninstall"] = base["uninstall"]
+    for k in ("connect_restore", "tavotto_uninstall"):
+        if k in base:
+            out[k] = base[k]
     if "login_state" in base:
         out["login_state"] = base["login_state"]
         if not base["login_state"]["wiped"]:
