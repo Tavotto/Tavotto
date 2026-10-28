@@ -67,7 +67,7 @@ PREVIEW_MAX_BYTES = 6 * 1024 * 1024
 #: 待采用候选的保留时间；超龄的在下一次新建候选时顺手清掉
 RETAIN_S = 24 * 3600
 NAME_SUFFIX = "_matplotlib"
-#: 校验运行用的临时文件名前缀。worker 按 `importlib.import_module(stem)` 加载脚本，stem 必须是合法模块名（不能以点开头）
+#: （已退役：校验改用影子脚本，项目里不再写临时文件；常量留给 `ai_figure_edit.STAGE_PREFIX` 的镜像一致性用例与旧名识别）。原：校验运行用的临时文件名前缀。worker 按 `importlib.import_module(stem)` 加载脚本，stem 必须是合法模块名（不能以点开头）
 STAGE_PREFIX = "_tavotto_convert_probe_"
 MAX_NUMBERED = 99
 META_NAME = "meta.json"
@@ -404,9 +404,9 @@ def adopt_names(project_root: Path | str, script_rel: str, target_name: str) -> 
     return []
 
 
-def _prepare_shadow(cand: ConvertCandidate) -> str:
+def _prepare_shadow(cand: ConvertCandidate | ai_figure_edit.Candidate) -> str:
     """校验运行的影子脚本：保证候选目录里的 `cand.target` 就是 `cand.new_bytes`，回它在项目里将会在的位置
-    （= 采用会选的名字，项目相对 posix）。选名只看不写；项目里什么都不建。"""
+    （项目相对 posix）。转换：采用会选的名字；改图：原脚本自己的路径。选名只看不写；项目里什么都不建。"""
     data = cand.new_bytes or b""
     try:
         same = not cand.target.is_symlink() and cand.target.read_bytes() == data
@@ -416,6 +416,8 @@ def _prepare_shadow(cand: ConvertCandidate) -> str:
         if cand.target.is_symlink():
             raise OSError("candidate_symlink")
         atomicio.write_bytes(cand.target, data)
+    if not isinstance(cand, ConvertCandidate):
+        return cand.script_rel
     names = adopt_names(cand.project_root, cand.script_rel, cand.target_name)
     # 名字全占满（采用也会失败）：用基础名；校验仍然只读不写项目
     return names[0] if names else (Path(cand.script_rel).parent / cand.target_name).as_posix()
@@ -463,7 +465,7 @@ def run_validation(
     **隔离写入（Codex #1277 P1）**：运行带写入根绊线（ADR 0141 的 `write_roots`，现有机制）——根只有候选目录（加 worker 自己的
     基础设施目录），所以候选脚本把相对路径输出（`out.png` / `data.csv`）写进项目目录时，在**写发生的那一刻**失败
     （`write_outside_roots`），用户文件根本没被打开写过；跑完的指纹复核只是兜底（绊线挡不住 C 层写）。
-    候选以紧挨原脚本的**临时文件**（`_tavotto_convert_probe_<sid>.py`）形式存在（O_EXCL 新建、跑完即删）：相对路径的数据读取与 cwd 判据同原脚本。
+    候选是**影子脚本**（见下）：项目里不写任何文件；相对路径的数据读取与 cwd 判据同原脚本。
     回 `{"status": "ok" | "no_figure" | "error", ...}`。"""
     # Editing preserves source-owned output names; only conversion creates a new identity.
     if isinstance(cand, ConvertCandidate):
@@ -472,50 +474,26 @@ def run_validation(
             return issue
     cancel = cand.extras.get("cancel")
     checked_runner = getattr(runner, "with_images", runner) if evidence is not None else runner
-    if isinstance(cand, ConvertCandidate):
-        # 影子脚本（ADR 0143 修订）：候选字节留在候选目录，**项目里不写任何文件**——同步盘不会把它同步出去，
-        # 也没有“项目里冒出文件 / 指纹被同步客户端搅动”这两类误伤。worker 读候选目录里的字节、以采用之后会在的位置
-        # 为 `__file__`（cwd 仍是原脚本所在目录），写入根绊线只放行候选目录。
-        try:
-            rel = _prepare_shadow(cand)
-        except OSError as exc:
-            code = "exists" if isinstance(exc, FileExistsError) else "write_failed"
-            return {"status": "error", "code": f"stage_{code}", "message": str(exc)}
-        roots_key = execspec.write_roots_key((str(cand.dir),))
-        with shadowscript.shadow(cand.project_root, rel, cand.target, roots_key):
-            deps = _ensure_dependencies(cand, rel)
-            if deps is not None:
-                return deps
-            if cancel is not None and cancel.is_set():
-                # 依赖旁路没报取消（调研 none / skipped / 不缺包）而取消已置位：不启动校验运行
-                return {"status": "cancelled"}
-            out, killed = _run_with_cancel(checked_runner, cand, rel, cancel)
-            if killed:
-                return {"status": "cancelled"}
-    else:
-        # 改图任务的候选（`ai_figure_edit.Candidate`）沿用紧挨原脚本的临时文件（O_EXCL 新建、跑完即删）
-        stage_path = cand.script_path.parent / f"{STAGE_PREFIX}{cand.sid}.py"
-        rel = stage_path.relative_to(cand.project_root).as_posix()
-        try:
-            with scriptlock.script_guard(stage_path):
-                scriptlock.create_script(stage_path, cand.new_bytes or b"")
-                try:
-                    deps = _ensure_dependencies(cand, rel)
-                    if deps is not None:
-                        return deps
-                    if cancel is not None and cancel.is_set():
-                        return {"status": "cancelled"}
-                    out, killed = _run_with_cancel(checked_runner, cand, rel, cancel)
-                    if killed:
-                        return {"status": "cancelled"}
-                finally:
-                    try:
-                        stage_path.unlink()
-                    except OSError:
-                        pass
-        except OSError as exc:
-            code = "exists" if isinstance(exc, FileExistsError) else "write_failed"
-            return {"status": "error", "code": f"stage_{code}", "message": str(exc)}
+    # 影子脚本（ADR 0143 修订）：候选字节留在候选目录，**项目里不写任何文件**——同步盘不会把它同步出去，
+    # 也没有“项目里冒出文件 / 指纹被同步客户端搅动”这两类误伤。worker 读候选目录里的字节、以它在项目里的位置
+    # 为 `__file__`（转换：采用会选的新名字；改图：原脚本自己的路径），cwd 仍是原脚本所在目录，
+    # 写入根绊线只放行候选目录。登记键含写入根，所以改图的校验不会碰用户正在看的原脚本热会话。
+    try:
+        rel = _prepare_shadow(cand)
+    except OSError as exc:
+        code = "exists" if isinstance(exc, FileExistsError) else "write_failed"
+        return {"status": "error", "code": f"stage_{code}", "message": str(exc)}
+    roots_key = execspec.write_roots_key((str(cand.dir),))
+    with shadowscript.shadow(cand.project_root, rel, cand.target, roots_key):
+        deps = _ensure_dependencies(cand, rel)
+        if deps is not None:
+            return deps
+        if cancel is not None and cancel.is_set():
+            # 依赖旁路没报取消（调研 none / skipped / 不缺包）而取消已置位：不启动校验运行
+            return {"status": "cancelled"}
+        out, killed = _run_with_cancel(checked_runner, cand, rel, cancel)
+        if killed:
+            return {"status": "cancelled"}
     if evidence is not None:
         from .agent_runner.media import from_wire
 

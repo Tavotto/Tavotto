@@ -835,7 +835,8 @@ def text_changes_note(after: dict[str, dict], before: dict[str, dict | None]) ->
 
 
 def _with_original_names(manifests, cand: Candidate):
-    """校验运行的是临时文件 `tavotto_convert_probe_<sid>.py`；只 show 不 savefig 的图 worker 按脚本 stem 兜底命名（`fallback_stems`：
+    """（影子脚本之后校验运行以原脚本自己的路径跑，兜底命名本就是原 stem，这里通常是恒等；旧名识别留作防御。）
+    历史：校验运行曾是临时文件 `tavotto_convert_probe_<sid>.py`；只 show 不 savefig 的图 worker 按脚本 stem 兜底命名（`fallback_stems`：
     `<stem>`、`<stem>-2`…），于是叫临时文件名。把这个前缀换回原脚本的 stem，才和基线（原脚本）同名可比。savefig 命名的图不受影响。"""
     if not isinstance(manifests, dict):
         return manifests
@@ -978,7 +979,7 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
 
     **与产品提交前同一套**，不另写判据：
     1. 提交前 L1（`FigureEditAdapter._precommit`）：目标还在且改过 / 语法 / 静态输出名集合不变 / 候选里没有别的文件被改 / 原项目没被动；
-    2. 都过了再真渲染：候选字节以紧挨原脚本的临时文件在用户同一路由下跑一遍（`run_validation` = `ai_convert.run_validation`，由桥注入以免 import 成环，写入根绊线只开候选目录，
+    2. 都过了再真渲染：候选字节作为影子脚本（项目里不写任何文件，`__file__` 是原脚本自己的路径）在用户同一路由下跑一遍（`run_validation` = `ai_convert.run_validation`，由桥注入以免 import 成环，写入根绊线只开候选目录，
        **不写任何用户文件、不运行原脚本本身**），要求仍捕获到图；
     3. 数据指纹（`figureverify.data_unchanged`，提交后 L2 用的同一个函数）对基线——基线是池里已 build 的那个会话落盘的 manifest（只读，
        不重放不退役，`check_before` 钩子）；没有基线 = 这一项没量（报告里说明），不影响通过与否。

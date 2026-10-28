@@ -82,9 +82,9 @@ Python、R、MATLAB 共用这条路径；无效路径返回 `convert_reference_i
 真实诊断包（坚果云同步盘里的 R 项目）：旧做法把候选写成紧挨原脚本的 `_tavotto_convert_probe_<sid>.py`，同步盘把它同步出去，
 用户看见项目里冒出文件；同步客户端自己的临时 / 冲突文件与 mtime 改动又让“项目未改动”复核误判，两次 `precommit_not_verified`。
 
-* **二、4 的临时文件整段作废（仅转换；改图 `figure_edit` 的候选仍用旧临时文件）**。候选字节留在候选目录，`engine/shadowscript.py`
+* **二、4 的临时文件整段作废（转换与改图 `figure_edit` 的候选校验共用 `run_validation`，一起改）**。候选字节留在候选目录，`engine/shadowscript.py`
   登记“项目里将来的位置（= 采用会选的名字，`adopt_names`，只看不写）→ 候选文件”，`execspec.safe_spec` 取出放进
-  `ExecutionSpec.script_source` → worker `--script-source`：worker 读候选字节，`__file__` / `sys.argv[0]` / traceback 文件名是
+  `ExecutionSpec.script_source`（转换：显示路径 = 采用会选的新名字；改图：显示路径 = 原脚本自己的路径，池键含写入根，碰不到用户正在看的热会话）→ worker `--script-source`：worker 读候选字节，`__file__` / `sys.argv[0]` / traceback 文件名是
   显示路径（`os.path.dirname(__file__)` 读数据与采用后一致），cwd 仍是原脚本目录（相对路径读数据不变）。`__main__` 入口经
   `runpy.run_path` 并临时重定向 `io.open_code`（CPython 3.10–3.15 同形，缺命中就大声失败），函数入口经 `SourceFileLoader` 子类。
   写入根绊线照旧只放行候选目录。登记键含写入根，并发的两次转换互不串。无 Windows 特例（没有软链视图，不需要符号链接权限）。

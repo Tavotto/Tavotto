@@ -1,3 +1,4 @@
+# ruff: noqa: F811 - imported pytest fixture
 """转换校验不往用户项目里写任何文件（ADR 0143 修订：影子脚本）。
 
 真 safe worker 端到端：候选字节留在候选目录，worker 以 `--script-source` 读它、`__file__` /
@@ -184,3 +185,79 @@ def test_dependency_survey_reads_the_shadow_candidate(world):
     with shadowscript.shadow(root, "sub/fig_matplotlib.py", cand.target, key):
         survey = convertdeps._survey(str(root), "sub/fig_matplotlib.py")
     assert survey["verdict"] != "none" and "pandas" in survey.get("names", []), survey
+
+
+# --------------------------------------------------------------------------- 改图（figure_edit）候选同样走影子脚本
+from test_ai_edit_check_app import world as edit_world  # noqa: E402,F401,I001
+
+EDIT_BASE = (
+    "import os\nimport matplotlib.pyplot as plt\n\n\ndef main():\n"
+    "    here = os.path.dirname(os.path.abspath(__file__))\n"
+    "    assert os.path.basename(__file__) == 'plot.py', __file__\n"
+    "    assert open(os.path.join(here, 'data.csv')).read() == open('data.csv').read() == 'x\\n'\n"
+    "    plt.plot([1, 2, 3], [1, 4, 9])\n    plt.title('old')\n    plt.show()\n\n\n"
+    "if __name__ == '__main__':\n    main()\n"
+)
+
+
+def _edit_candidate(m, figs, new_src):
+    (figs / "data.csv").write_text("x\n", encoding="utf-8")
+    script = figs / "plot.py"
+    script.write_text(EDIT_BASE, encoding="utf-8")
+    ctx = next(iter(m.PROJECTS.values()))
+    runner = m._convert_runner(ctx, "plot.py", with_manifests=True)
+    cand = ai_figure_edit.create_candidate("fedcba987654", script, figs, "plot.py")
+    cand.target.write_text(new_src, encoding="utf-8")
+    cand.new_bytes = cand.target.read_bytes()
+    return cand, runner
+
+
+def test_edit_validation_writes_nothing_and_file_points_at_the_original(edit_world):
+    m, figs = edit_world
+    cand, runner = _edit_candidate(m, figs, EDIT_BASE.replace("'old'", "'new'"))
+    before = ai_figure_edit.project_fingerprint(figs)
+    try:
+        with DirWatcher(figs) as watcher:
+            result = ai_convert.run_validation(cand, runner)
+        assert result["status"] == "ok", result
+        assert not any(n.startswith(ai_convert.STAGE_PREFIX) for n in watcher.seen), watcher.seen
+        assert watcher.seen <= {"plot.py", "data.csv", "tavotto_registry.json"}, watcher.seen
+        assert (
+            ai_figure_edit.fingerprint_changes(before, ai_figure_edit.project_fingerprint(figs))
+            == []
+        )
+        assert (figs / "plot.py").read_text(encoding="utf-8") == EDIT_BASE, "原脚本字节不变"
+    finally:
+        ai_figure_edit.remove_candidate(cand.dir)
+
+
+def test_edit_validation_runs_the_candidate_bytes_not_the_original(edit_world):
+    """反证：项目里的原脚本断言通过，候选故意断言失败——必须看到候选的失败，说明跑的是候选字节。"""
+    m, figs = edit_world
+    cand, runner = _edit_candidate(
+        m, figs, EDIT_BASE.replace("'old'", "'new'") + "\nraise SystemExit('candidate ran')\n"
+    )
+    try:
+        result = ai_convert.run_validation(cand, runner)
+        assert result["status"] == "error", result
+    finally:
+        ai_figure_edit.remove_candidate(cand.dir)
+
+
+def test_edit_candidate_writing_into_the_project_is_still_stopped(edit_world):
+    m, figs = edit_world
+    workdir.set_mode(figs, workdir.MODE_PROJECT)
+    try:
+        cand, runner = _edit_candidate(
+            m,
+            figs,
+            EDIT_BASE.replace(
+                "    plt.show()", "    open('sneaky.csv', 'w').write('x')\n    plt.show()"
+            ),
+        )
+        result = ai_convert.run_validation(cand, runner)
+        assert result["status"] == "error" and result["code"] == "write_outside_roots", result
+        assert not (figs / "sneaky.csv").exists()
+    finally:
+        workdir.forget(figs)
+        ai_figure_edit.remove_candidate(cand.dir)
