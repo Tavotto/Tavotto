@@ -1218,7 +1218,8 @@
   },
   "docSummary": {
     "title": "本排版",
-    "size": "{{w}} × {{h}} mm",
+    "size": "{{w}} × {{h}} mm",
+    "details": "详情",
     "annotations_other": "{{count}} 处文字与标注",
     "canvasSettings": "画布设置"
   }

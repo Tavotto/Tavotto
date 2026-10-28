@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { perfCount } from '@/perf/core'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { ChevronRight, Pin, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { drawerMotion, type PresenceState } from '@/lib/motion'
@@ -15,8 +15,7 @@ import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/
 import { useAiStore } from '@/store/aiStore'
 import { TimelinePanel } from '../VersionDialog'
 import { assistantTabLabel, AssistantPanel } from '../ai/AiPanel'
-import { Button, IconButton } from '../ui/Button'
-import { Notice } from '../ui/Notice'
+import { IconButton } from '../ui/Button'
 import { ColorFieldContext } from '../ui/colorPalette'
 import { Tab, TabList, TabPanel } from '../ui/Tabs'
 import { Tip } from '../ui/Tooltip'
@@ -287,40 +286,120 @@ function PropertiesPage() {
   )
 }
 
+/** 摘要里的毫米数：整数不带 .0（「150 × 100 mm」），有小数才留一位 */
+const mmShort = (v: number) => formatMm(v).replace(/\.0$/, '')
+
 /**
- * 没有选中时的属性页：这份文档的摘要卡（尺寸、几张图、几处修改）+「画布设置 ›」。
- * 只读事实，不重复画布页的控件；一句提示告诉用户点什么开始编辑。
+ * 没有选中时的属性页：这份文档的摘要卡（redesign-3 B2，手帐线稿）。
+ *
+ * 上面是页面比例的发丝预览（画布灰托盘里一张纸，上边与左边各一条尺寸刻度「150」「100」）：没有图时纸上是一格虚线空位，
+ * 有图时每张图按**它在文档里的真实位置与大小**按页面比例缩进预览（排线框，与缩略图占位同一种语言）；
+ * 纸永远是白的（`--color-paper`，暗色里不反相）。下面依次是标题、一行事实（尺寸 · 几张图，等宽数字，数字与单位之间是
+ * 窄空格）、「画布设置 ›」；「详情」只在悬停 / 键盘聚焦这张卡时显现，展开后是起步提示与标注 / 修改计数。
+ * 只读事实，不重复画布页的控件。
  */
 function DocumentSummary() {
   const { t } = useTranslation('inspector')
   const page = useDocumentStore((s) => s.doc.page)
   const objects = useDocumentStore((s) => s.doc.objects)
+  const [open, setOpen] = useState(false)
   const figures = objects.filter((o): o is PanelObject => o.type === 'panel')
   const changes = figures.reduce((n, p) => n + p.overrides.length, 0)
-  const facts = [
-    t('docSummary.size', { w: formatMm(page.w), h: formatMm(page.h) }),
-    t('summaryPanels', { count: figures.length }),
+  const extra = [
     ...(objects.length > figures.length
       ? [t('docSummary.annotations', { count: objects.length - figures.length })]
       : []),
     ...(changes > 0 ? [t('element.modifiedCount', { count: changes })] : []),
   ]
+  const meta = [
+    t('docSummary.size', { w: mmShort(page.w), h: mmShort(page.h) }),
+    t('summaryPanels', { count: figures.length }),
+  ].join(' · ')
+  const ratio = page.h > 0 && page.w > 0 ? page.w / page.h : 1.5
+  // 纸宽：随栏宽（cqi，Inspector 内层是 @container）伸缩，封顶 164px；竖版页再按 120px 高封顶，不把栏撑高。
+  // 左边留 22px 给纵向刻度、右边留同样 22px：纸本身才落在托盘的正中（刻度是挂在纸两边的）
+  const previewW = `calc(min(52cqi, 164px, ${Math.round(120 * ratio)}px) + 44px)`
+  const pct = (v: number, of: number) => `${(Math.max(0, Math.min(1, v / of)) * 100).toFixed(2)}%`
   return (
     <div className="p-3">
-      {/* 一行提示（UI 2.0）：「本排版 · 尺寸 · 几张图」+ 「画布设置 ›」；起步那句提示折进「详情」。不再是一张三层的卡 */}
-      <Notice
+      <section
         data-document-summary
-        title={t('docSummary.title')}
-        detail={t('emptyHint')}
-        action={
-          <Button size="sm" data-document-summary-canvas onClick={() => useUiStore.getState().setRightTab('canvas')}>
-            {t('docSummary.canvasSettings')}
-            <ChevronRight size={ICON_SIZE.xs} aria-hidden />
-          </Button>
-        }
+        aria-label={t('docSummary.title')}
+        className="group/doc rounded-lg bg-surface"
       >
-        {facts.join(' · ')}
-      </Notice>
+        <div data-document-summary-preview className="flex justify-center rounded-md bg-canvas pb-3 pt-4">
+          <div className="relative px-[22px] pt-3.5" style={{ width: previewW }} aria-hidden>
+            {/* 上边：横向刻度「—— 150 ——」 */}
+            <div className="absolute inset-x-[22px] top-0 flex h-3 items-center gap-1.5 text-xs tabular-nums text-ink-3">
+              <i className="h-px flex-1 bg-border-strong" />
+              <span>{mmShort(page.w)}</span>
+              <i className="h-px flex-1 bg-border-strong" />
+            </div>
+            {/* 左边：纵向刻度 */}
+            <div className="absolute bottom-0 left-0 top-3.5 flex w-[18px] flex-col items-center gap-1 text-xs tabular-nums text-ink-3">
+              <i className="w-px flex-1 bg-border-strong" />
+              <span>{mmShort(page.h)}</span>
+              <i className="w-px flex-1 bg-border-strong" />
+            </div>
+            <div data-document-summary-page className="paper-sheet relative w-full" style={{ aspectRatio: `${page.w} / ${page.h}` }}>
+              {figures.length === 0 ? (
+                <span className="paper-slot-empty absolute inset-2 rounded-xs" />
+              ) : (
+                figures
+                  .filter((f) => !f.hidden)
+                  .map((f) => (
+                    <span
+                      key={f.id}
+                      data-document-summary-slot
+                      className="hatch-box hatch-box-paper rounded-xs"
+                      // .hatch-box 自带 position: relative（未分层样式，压过 Tailwind 的 absolute 工具类）：绝对定位写在 style 里
+                      style={{
+                        position: 'absolute',
+                        left: pct(f.x, page.w),
+                        top: pct(f.y, page.h),
+                        width: pct(f.w, page.w),
+                        height: pct(f.h, page.h),
+                      }}
+                    />
+                  ))
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 flex items-baseline justify-between gap-2 px-0.5">
+          <h3 className="type-title min-w-0 truncate">{t('docSummary.title')}</h3>
+          <button
+            type="button"
+            data-document-summary-details
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+            className={cn(
+              'shrink-0 rounded-xs text-sm text-ink-3 outline-none transition-opacity duration-fast hover:text-ink focus-visible:focus-ring',
+              open ? 'opacity-100' : 'opacity-0 focus-visible:opacity-100 group-focus-within/doc:opacity-100 group-hover/doc:opacity-100',
+            )}
+          >
+            {t('docSummary.details')}
+          </button>
+        </div>
+        <p className="mt-0.5 truncate px-0.5 text-sm tabular-nums text-ink-3">{meta}</p>
+        {open && (
+          <div data-document-summary-detail className="mt-2 px-0.5 text-sm text-ink-3">
+            {extra.length > 0 && <p className="tabular-nums">{extra.join(' · ')}</p>}
+            <p className={extra.length > 0 ? 'mt-1' : undefined}>{t('emptyHint')}</p>
+          </div>
+        )}
+        <div className="mt-2 border-t border-border pt-2">
+          <button
+            type="button"
+            data-document-summary-canvas
+            onClick={() => useUiStore.getState().setRightTab('canvas')}
+            className="-ml-0.5 inline-flex h-6 items-center gap-0.5 rounded-xs px-0.5 text-sm text-ink-2 outline-none hover:text-ink focus-visible:focus-ring"
+          >
+            {t('docSummary.canvasSettings')}
+            <ChevronRight size={ICON_SIZE.xs} aria-hidden className="text-ink-faint" />
+          </button>
+        </div>
+      </section>
     </div>
   )
 }

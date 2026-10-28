@@ -591,6 +591,33 @@
   mask: var(--progress-hatch) 0 0 / 5px 5px;
   background: color-mix(in srgb, var(--color-ink) 15%, transparent);
 }
+/* 属性栏默认卡的页面预览（Inspector DocumentSummary，redesign-3 B2）：画在**纸**上，纸在暗色里仍是白的，
+   所以发丝与排线用纸上的墨（--color-paper-ink，两套主题同值），不用界面的 ink（暗色里会变浅、落在白纸上看不见） */
+.paper-sheet {
+  background: var(--color-paper);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-paper-ink) 16%, transparent);
+}
+@media (min-resolution: 2dppx) {
+  .paper-sheet {
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-paper-ink) 30%, transparent);
+  }
+}
+.hatch-box.hatch-box-paper {
+  background: var(--color-paper);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-paper-ink) 16%, transparent);
+}
+@media (min-resolution: 2dppx) {
+  .hatch-box.hatch-box-paper {
+    box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-paper-ink) 30%, transparent);
+  }
+}
+.hatch-box.hatch-box-paper::before {
+  background: color-mix(in srgb, var(--color-paper-ink) 15%, transparent);
+}
+.paper-slot-empty {
+  outline: 1px dashed color-mix(in srgb, var(--color-paper-ink) 22%, transparent);
+  outline-offset: -1px;
+}
 .progress-track > .progress-base,
 .progress-track > .progress-fill {
   position: absolute;

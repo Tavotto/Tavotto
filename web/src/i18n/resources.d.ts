@@ -4109,7 +4109,8 @@ export default interface Resources {
     "docSummary": {
       "annotations_other": "{{count}} 处文字与标注",
       "canvasSettings": "画布设置",
-      "size": "{{w}} × {{h}} mm",
+      "details": "详情",
+      "size": "{{w}} × {{h}} mm",
       "title": "本排版"
     },
     "element": {
