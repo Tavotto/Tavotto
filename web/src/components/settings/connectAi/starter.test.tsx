@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { setLocale } from '@/i18n'
 import { useAiStore } from '@/store/aiStore'
+import { resetAgentInstallStore } from '@/store/agentInstallStore'
 import { agentCaps, connection, connectCapsOf, VENDORS } from '../testCaps'
 import { ConnectAiDialog } from './ConnectAiDialog'
+import { useCapsWatch } from './useCapsWatch'
 
 Element.prototype.scrollIntoView ??= function scrollIntoView() {}
 HTMLCanvasElement.prototype.getContext = (() => null) as never
@@ -33,6 +35,7 @@ const withAgent = (state: 'not_installed' | 'broken' | 'needs_auth' | 'disabled'
   })
 
 beforeEach(() => {
+  resetAgentInstallStore()
   calls = []
   install = []
   serverCaps = withAgent('not_installed')
@@ -68,6 +71,12 @@ const q = (sel: string) => document.body.querySelector<HTMLElement>(sel)
 const click = async (el: Element | null) => {
   await act(async () => (el as HTMLElement).click())
   await act(async () => {})
+}
+
+/** 真实应用里 `ConnectAiHost` 在对话框开着时挂的 3 秒刷新 */
+function Watch() {
+  useCapsWatch(true)
+  return null
 }
 
 describe('新手首屏', () => {
@@ -112,6 +121,32 @@ describe('命令行 AI 一句话一按钮', () => {
     expect(q('[data-connect-step-text]')!.textContent).toBe('正在安装…')
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100)
+    })
+    await act(async () => {})
+    expect(calls.some((c) => c.url === '/api/ai/agents/codex/login' && c.method === 'POST')).toBe(true)
+  })
+
+  it('竞争：3 秒的 caps 刷新先报「已装好」卸掉安装按钮，安装 done 后仍自动发起登录', async () => {
+    await render(
+      <>
+        <Watch />
+        <ConnectAiDialog open onClose={() => {}} />
+      </>,
+    )
+    install = [{ status: 'running' }, { status: 'running' }, { status: 'done' }]
+    await click(q('[data-connect-action="install"]'))
+    // 2s 一轮：仍在装；3s：caps 刷新发现已装好 → 按钮被卸载，行里变回「登录」
+    serverCaps = withAgent('needs_auth')
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100)
+    })
+    await act(async () => {})
+    expect(q('[data-connect-action="install"]')).toBeNull()
+    expect(q('[data-connect-action="login"]')).not.toBeNull()
+    expect(calls.some((c) => c.url === '/api/ai/agents/codex/login' && c.method === 'POST')).toBe(false)
+    // 4s / 6s：安装状态轮询走到 done → 自动登录，不用用户再点
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000)
     })
     await act(async () => {})
     expect(calls.some((c) => c.url === '/api/ai/agents/codex/login' && c.method === 'POST')).toBe(true)

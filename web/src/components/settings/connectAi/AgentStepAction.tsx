@@ -4,19 +4,16 @@ import { useState } from 'react'
 import { Button } from '../../ui/Button'
 import { agentStep } from './agentStep'
 import { installProgressText, useAgentInstall } from './useAgentInstall'
-import { refreshCaps } from './useCapsWatch'
 
 /**
  * 命令行 AI（login 方式）一行的「一句话 + 一个按钮」：没装 / 打不开 / 没登录 / 已关闭。
  * 「安装并登录 / 重新安装」先走安装接口，装好后自动接登录（`beginLogin`）；安装中显示进度，失败给一句话。
  * 「登录」不在这里：agent 已装好时行里的登录按钮（`useLoginFlow`）负责。
  */
-export function AgentStepAction({ agent, beginLogin }: { agent: AiAgentCaps; beginLogin: () => void }) {
+export function AgentStepAction({ agent, owner }: { agent: AiAgentCaps; owner: string }) {
   const [error, setError] = useState<string | null>(null)
-  const install = useAgentInstall(agent.id, () => {
-    // 装好：重读状态（拿到 installed / needs_auth），再自动登录
-    void refreshCaps().then(beginLogin)
-  })
+  // 装好后的自动登录由常驻的那一行（`useLoginAfterInstall`）接——这个按钮可能在 caps 刷新时先被卸掉
+  const install = useAgentInstall(agent.id, owner)
   const step = agentStep(agent.state, agent.display_name)
   if (!step.action || step.action === 'login') return null
 

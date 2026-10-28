@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import type { AiConnection, AiVendor } from '@/lib/api'
+import type { AiAgentId, AiConnection, AiVendor } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useAiStore } from '@/store/aiStore'
 import { Button } from '../../ui/Button'
@@ -13,6 +13,7 @@ import { cx } from './copy'
 import { MethodList } from './MethodList'
 import { connectionErrorText, loginAgentOf, methodsOf, vendorName } from './vendors'
 import { AgentStepAction } from './AgentStepAction'
+import { useLoginAfterInstall } from './useAgentInstall'
 import { refreshAndFind, useLoginFlow } from './useLoginFlow'
 import { VendorKeyForm } from './VendorKeyForm'
 
@@ -52,6 +53,7 @@ export function VendorRow({
   const multi = methods.length > 1
   const method = methods[0]
   const flow = useLoginFlow(vendor, method, onConnected)
+  useLoginAfterInstall(loginAgentOf(vendor, method) as AiAgentId, `row:${vendor.id}`, flow.begin)
   const loginAgent = useAiStore((st) => (method.kind === 'login' ? st.caps?.agents.find((a) => a.id === loginAgentOf(vendor, method)) : undefined))
 
   const all = connections ?? (connection ? [connection] : [])
@@ -99,7 +101,7 @@ export function VendorRow({
   } else if (unavailable) {
     // 命令行 AI 没装 / 打不开 / 关了：一句话 + 一个按钮；找不到这个 agent（老后端）才退回「需先安装」
     action = loginAgent ? (
-      <AgentStepAction agent={loginAgent} beginLogin={flow.begin} />
+      <AgentStepAction agent={loginAgent} owner={`row:${vendor.id}`} />
     ) : (
       <span className="type-caption">{cx('needsInstall')}</span>
     )

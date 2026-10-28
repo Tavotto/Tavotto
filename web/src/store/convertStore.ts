@@ -190,6 +190,16 @@ function applyConvertStatus(script: string, pj: string | null, status: ConvertSt
  */
 const SETTLE_TRANSPORT_RETRIES = 5
 
+/** 这个会话是不是转换任务：转换会话的 meta 在 → fetchConvert 成功（或「还没写好」409）；非转换 / 查不到 → false */
+async function isConvertSession(sid: string, pj: string | null): Promise<boolean> {
+  try {
+    await fetchConvert(sid, pj)
+    return true
+  } catch (e) {
+    return e instanceof ApiError && e.status === 409 && e.body?.code === 'convert_not_ready'
+  }
+}
+
 async function settleAfterStop(script: string, session: string, pj: string | null): Promise<void> {
   const guard = captureProjectEpoch()
   const mine = () => guard.still() && useConvertStore.getState().entries[script]?.session === session
@@ -436,14 +446,17 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           posted = await startConvert(body, pj)
         } catch (e) {
           // 这个脚本上已有一次转换在跑（多半是别处 / 重载前发起的）：不是错误，直接接上正在跑的那次。
-          // 后端在 409 里给了 session 就用它，否则用本端登记过的；都没有才当普通失败显示
-          const known =
-            e instanceof ApiError && e.status === 409 && e.body?.code === 'ai_script_busy'
-              ? ((typeof (e.body.params as { session?: unknown } | undefined)?.session === 'string' &&
-                    (e.body.params as { session: string }).session) ||
-                  acceptedSessions.get(key) ||
-                  null)
-              : null
+          // 后端的 busy 只按脚本路径匹配、不分任务种类，409 里的 session 也可能是普通 AI 改图的——
+          // 所以先核验它真是转换会话（`GET /api/ai/convert/<sid>` 对非转换会话回 404 convert_not_found），
+          // 或就是本端登记过的那个；核验不过 = 照常显示「脚本上已有 AI 任务在运行」，不接管
+          let known: string | null = null
+          if (e instanceof ApiError && e.status === 409 && e.body?.code === 'ai_script_busy') {
+            const fromServer = (e.body.params as { session?: unknown } | undefined)?.session
+            const mine = acceptedSessions.get(key) ?? null
+            if (typeof fromServer === 'string' && fromServer) {
+              known = fromServer === mine || (await isConvertSession(fromServer, pj)) ? fromServer : null
+            } else known = mine
+          }
           if (!known) throw e
           posted = { session: known }
         }

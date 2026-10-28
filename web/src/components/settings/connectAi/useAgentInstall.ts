@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { backendErrorText, fetchAiInstallStatus, startAiInstall, type AiAgentId, type AiInstallState } from '@/lib/api'
+import { useEffect, useRef } from 'react'
+import type { AiAgentId, AiInstallState } from '@/lib/api'
+import { useAgentInstallStore } from '@/store/agentInstallStore'
 import { t as translate } from '@/i18n'
 import { ag } from '../agentState'
 import { cx } from './copy'
-
-const INSTALL_POLL_MS = 2000
+import { refreshCaps } from './useCapsWatch'
 
 /** 应用内安装的失败码（后端 `managedcli.ERROR_*`），文案在 errors:engine.managedCliError.* */
 const MANAGED_CODES = new Set([
@@ -42,56 +42,28 @@ export const installProgressText = (progress: number | undefined): string =>
     : ag('install.running')
 
 /**
- * 「安装 / 重新安装」：POST 起装，2 秒一轮 GET 轮询（running / done / error）。装好后调 `onDone`（调用方接登录）。
- * 接口形状不变——后端怎么装（npm 或应用内下载）这里不管。卸载即停。
+ * 「安装 / 重新安装」的组件侧句柄：状态与轮询都住在 `agentInstallStore`（组件被 capabilities 刷新卸载也不丢），
+ * 这里只订阅。装好后「接着登录」：发起安装的那一行（`owner`，它的登录流程一直挂着）用 `useLoginAfterInstall` 消费。
  */
-export function useAgentInstall(agent: AiAgentId, onDone: () => void) {
-  const [state, setState] = useState<AiInstallState | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const running = state?.status === 'running'
-  const doneRef = useRef(onDone)
+export function useAgentInstall(agent: AiAgentId, owner: string) {
+  const entry = useAgentInstallStore((s) => s.byAgent[agent])
+  const error = entry?.status === 'error' ? (entry.message ?? installErrorText(entry.code)) : null
+  return {
+    running: entry?.status === 'running',
+    progress: entry?.progress,
+    error,
+    begin: () => useAgentInstallStore.getState().begin(agent, owner, refreshCaps),
+  }
+}
+
+/** 常驻的那一行调用：安装完成留下登录意图时，发起登录（不依赖安装按钮还在不在） */
+export function useLoginAfterInstall(agent: AiAgentId, owner: string, beginLogin: () => void): void {
+  const due = useAgentInstallStore((s) => s.loginDue[agent] === owner)
+  const ref = useRef(beginLogin)
   useEffect(() => {
-    doneRef.current = onDone
-  }, [onDone])
-
+    ref.current = beginLogin
+  })
   useEffect(() => {
-    if (!running) return
-    let stopped = false
-    const timer = window.setInterval(() => {
-      void (async () => {
-        try {
-          const s = await fetchAiInstallStatus(agent)
-          if (stopped) return
-          if (s.status === 'running') return setState(s)
-          stopped = true
-          window.clearInterval(timer)
-          setState(s)
-          if (s.status === 'error') setError(installErrorText(s.code))
-          else if (s.status === 'done') doneRef.current()
-        } catch {
-          /* 网络抖动：下一轮再问 */
-        }
-      })()
-    }, INSTALL_POLL_MS)
-    return () => {
-      stopped = true
-      window.clearInterval(timer)
-    }
-  }, [running, agent])
-
-  const begin = useCallback(async () => {
-    setError(null)
-    setState({ status: 'running' })
-    try {
-      const s = await startAiInstall(agent)
-      setState(s)
-      if (s.status === 'done') doneRef.current()
-      else if (s.status === 'error') setError(installErrorText(s.code))
-    } catch (e) {
-      setState({ status: 'error' })
-      setError(backendErrorText(e))
-    }
-  }, [agent])
-
-  return { running, progress: state?.progress, error, begin: () => void begin() }
+    if (due && useAgentInstallStore.getState().takeLoginDue(agent, owner)) ref.current()
+  }, [due, agent, owner])
 }

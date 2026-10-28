@@ -84,7 +84,8 @@ describe('convertStore', () => {
     await first
   })
 
-  it('ai_script_busy：不是错误，接上正在跑的那次（409 带 session）', async () => {
+  it('ai_script_busy：不是错误，接上正在跑的那次（409 带 session，且核验是转换会话）', async () => {
+    vi.mocked(fetchConvert).mockResolvedValueOnce({ session: 'live1', state: 'ready' } as never)
     vi.mocked(startConvert).mockRejectedValueOnce(
       new ApiError('busy', 409, { code: 'ai_script_busy', params: { script: 'plot.py', session: 'live1' } }),
     )
@@ -95,6 +96,21 @@ describe('convertStore', () => {
     useConvertStore.getState().clear('plot.py')
     await vi.advanceTimersByTimeAsync(POLL_MS + 10)
     await p
+  })
+
+  it('ai_script_busy 的 session 是普通改图任务（convert_not_found）：不接管，显示忙碌、不取消改图', async () => {
+    vi.mocked(startConvert).mockRejectedValueOnce(
+      new ApiError('busy', 409, { code: 'ai_script_busy', params: { script: 'plot.py', session: 'edit1' } }),
+    )
+    vi.mocked(fetchConvert).mockRejectedValueOnce(new ApiError('nf', 404, { code: 'convert_not_found' }))
+    await start()
+    const e = useConvertStore.getState().entries['plot.py']
+    expect(e?.phase).toBe('failed')
+    expect(e?.session).not.toBe('edit1')
+    expect(e?.error).toContain('plot.py')
+    expect(fetchConvert).toHaveBeenCalledWith('edit1', expect.anything())
+    useConvertStore.getState().clear('plot.py')
+    expect(aiCancel).not.toHaveBeenCalled()
   })
 
   it('ai_script_busy 没带 session 也没登记过：按普通失败显示', async () => {
