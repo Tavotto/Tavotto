@@ -118,6 +118,9 @@ EVENT_NAMES = (
 
 _CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _VOCAB_VALUE = re.compile(r"[a-z0-9][a-z0-9_.-]{0,63}")
+#: `codes` 类取值的单条形状：`<检查 id>:<reason_code>`（只有小写字母 / 数字 / `_` `.` `:`，不含空白、斜杠、引号）。
+_CHECK_CODE = re.compile(r"[a-z][a-z0-9_.]{0,63}:[a-z][a-z0-9_]{0,63}")
+MAX_CODES = 16
 _REF = re.compile(r"[A-Za-z0-9_-]{1,64}")
 _TRACE_ID = re.compile(r"[0-9a-f]{32}")
 _MAX_COUNT = 10**9
@@ -140,7 +143,7 @@ _VOCABULARIES: dict[str, set[str]] = {
     "refresh": set(),
 }
 
-#: attributes 白名单：键 → 类型（`count` 非负整数 / `ms` 非负毫秒 / `flag` 布尔 / `enum:<词表>`）。
+#: attributes 白名单：键 → 类型（`count` 非负整数 / `ms` 非负毫秒 / `flag` 布尔 / `enum:<词表>` / `codes` 检查码列表）。
 #: 不在表里的键整条丢弃并计数。加键先加到这里（测试钉闭集）。
 ATTRIBUTES: dict[str, str] = {
     "tool": "enum:tool",
@@ -162,6 +165,7 @@ ATTRIBUTES: dict[str, str] = {
     "changed": "flag",
     "refresh": "enum:refresh",
     "checks_failed": "count",
+    "unmet_checks": "codes",
 }
 
 # ---------------------------------------------------------------- 上限
@@ -236,6 +240,15 @@ def _attr_value(kind: str, value):
         return None
     if kind == "flag":
         return value if isinstance(value, bool) else None
+    if kind == "codes":
+        # 未满足检查的 `<id>:<reason_code>` 列表：每条过形状、去重、至多 MAX_CODES 条；没有合格条目 = 拒绝
+        if not isinstance(value, (list, tuple)):
+            return None
+        kept = []
+        for item in value:
+            if isinstance(item, str) and _CHECK_CODE.fullmatch(item) and item not in kept:
+                kept.append(item)
+        return kept[:MAX_CODES] or None
     if kind.startswith("enum:"):
         vocab = _VOCABULARIES.get(kind[5:], ())
         return value if isinstance(value, str) and value in vocab else None
