@@ -1889,8 +1889,12 @@ def run_hosts_live_task(
         )
     else:
         r2 = {"exit_code": None, "skipped": "no session id from session 1"}
-    _scrub(ev, model_conf["api_key"])
-    _scrub(run_dir / "work", model_conf["api_key"])
+    unscrubbed = _scrub(ev, model_conf["api_key"]) + _scrub(run_dir / "work", model_conf["api_key"])
+    if unscrubbed:
+        return {
+            "result": "error",
+            "summary": f"could not check {len(unscrubbed)} file(s) for the key: {unscrubbed[:3]}",
+        }
     s2 = parse_recorded(rec_log, split)
     host_text = ""
     for f in ev.glob("session-1.*.log"):
@@ -1939,16 +1943,23 @@ def run_hosts_live_task(
     }
 
 
-def _scrub(folder: Path, needle: str) -> None:
-    """兜底：哪怕宿主把凭据回显进了日志，也在落成证据前抹掉。"""
+def _scrub(folder: Path, needle: str) -> list[str]:
+    """兜底：哪怕宿主把凭据回显进了日志，也在落成证据前抹掉。返回读不了 / 写不回的文件（宿主的后台进程还开着它：
+    WorkBuddy 自动更新把安装包下进 TEMP，Lab run 20261028T114129Z-d49586 读它 Errno 22 崩了整个 agent）——
+    调用方决定这算不算没抹干净，这里不让一个文件中断收尾。"""
     if not needle or not folder.is_dir():
-        return
+        return []
     raw = needle.encode()
+    skipped: list[str] = []
     for p in folder.rglob("*"):
-        if p.is_file():
-            data = p.read_bytes()
-            if raw in data:
-                p.write_bytes(data.replace(raw, b"<redacted>"))
+        try:
+            if p.is_file():
+                data = p.read_bytes()
+                if raw in data:
+                    p.write_bytes(data.replace(raw, b"<redacted>"))
+        except OSError:
+            skipped.append(str(p.relative_to(folder)))
+    return skipped
 
 
 MODEL_KEY_SHAPE_RE = re.compile(r"^[A-Za-z0-9_\-\.]{16,200}$")
@@ -5157,8 +5168,16 @@ def _desktop_live_body(
         r2 = one_round(
             2, lead + LIVE_SESSION_2.format(sid=sid)
         )  # 全新的 VS Code 进程，只拿 session_id
-    _scrub(ev, key)
-    _scrub(work, key)
+    unscrubbed = _scrub(ev, key) + _scrub(work, key)
+    if unscrubbed:
+        base["scrub_unreadable"] = unscrubbed[:20]
+        if model_conf.get("api_key"):
+            # 用了我们的 key：没核对完就不能说抹干净了（WorkBuddy 那一格不经我们的 key，只记下）
+            return {
+                **base,
+                "result": "error",
+                "summary": f"could not check {len(unscrubbed)} file(s) for the key: {unscrubbed[:3]}",
+            }
     s2 = parse_recorded(rec_log, split)
     base["driver"] = {"session_1": r1["driver"], "session_2": r2["driver"]}
     base["driver_step"] = {"session_1": r1["step"], "session_2": r2["step"]}

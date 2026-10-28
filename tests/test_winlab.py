@@ -3284,3 +3284,19 @@ def test_connect_driver_is_deployed_with_the_agent():
     src = (WINLAB / "winlab.py").read_text(encoding="utf-8")
     deploy = src[src.index("def admin_deploy_agent") :]
     assert 'HERE / "connect_driver.py"' in deploy[: deploy.index("cmdf,")]
+
+
+def test_scrub_skips_a_file_it_cannot_read_and_says_so(tmp_path, monkeypatch):
+    (tmp_path / "a.log").write_text("k=SECRET-123", encoding="utf-8")
+    locked = tmp_path / "Setup.exe"
+    locked.write_bytes(b"x")
+    real = Path.read_bytes
+
+    def read_bytes(self):
+        if self == locked:
+            raise OSError(22, "Invalid argument")
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    assert A._scrub(tmp_path, "SECRET-123") == ["Setup.exe"]
+    assert (tmp_path / "a.log").read_text(encoding="utf-8") == "k=<redacted>"
