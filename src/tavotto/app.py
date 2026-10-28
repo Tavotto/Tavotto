@@ -6353,6 +6353,70 @@ def api_runtime_preview():
     return resp
 
 
+@app.post("/api/runtime/remove")
+def api_runtime_remove():
+    """素材库「从素材中移除」：脚本已不在磁盘上的 runtime 素材，摘掉它的登记与物化 cache。
+
+    请求体：`{id, used_ids}`；`used_ids` 是调用方当前画布 / 排版里全部面板的 fileId（文档状态在前端，
+    后端自己看不见）。只动 `tavotto_registry.json`（经 `discover.unregister_stem` 的原子写）与
+    `data_dir()` 下的 cache，**绝不删除或改动用户的任何文件**。拒绝：
+    404 `runtime_asset_unknown`（不是 / 解析不到）、409 `runtime_asset_source_present`（脚本还在，
+    这不是孤儿）、409 `runtime_asset_in_use`（画布在用这张图，含它的运行配置变体）。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True)
+    rel_id = str(body.get("id") or "")
+    if not engine_runtimeasset.is_runtime_id(rel_id):
+        return jsonify(
+            {
+                "error": f"不是 runtime 素材 id: {rel_id}",
+                "code": "runtime_asset_unknown",
+                "params": {"id": rel_id},
+            }
+        ), 400
+    status = engine_runtimeasset.stale_status(
+        ctx.path, rel_id, ctx.registry, worker_python=engine_pool.find_worker_python
+    )
+    if status["status"] is None or not status["registered"]:
+        return _runtime_asset_unknown(rel_id)
+    if status["status"] != engine_runtimeasset.STALE_MISSING_SOURCE:
+        resp = jsonify(
+            {
+                "error": f"脚本还在磁盘上，不能从素材中移除: {rel_id}",
+                "code": "runtime_asset_source_present",
+                "params": {},
+            }
+        )
+        resp.status_code = 409
+        return resp
+    script, stem = status["script"], status["stem"]
+    # 与 /api/layouts 同一来源：tavottofile/、旧项目 canvases/、数据目录 layouts/ 以后加了新位置也自动纳入
+    layout_dirs = _layout_read_dirs()
+    if engine_runtimeasset.uses_stem(
+        body.get("used_ids"), ctx.registry, script, stem
+    ) or engine_runtimeasset.saved_layouts_use_stem(layout_dirs, ctx.registry, script, stem):
+        resp = jsonify(
+            {
+                "error": f"画布中正在使用这张图，不能移除: {rel_id}",
+                "code": "runtime_asset_in_use",
+                "params": {},
+            }
+        )
+        resp.status_code = 409
+        return resp
+    try:
+        # 先删 cache 再摘登记会让"登记还在、cache 没了"的中间态被别人看到；反过来中间态是
+        # "登记没了、cache 残留"，cache 本来就是可删的派生物（prune_cache 会收），所以先摘登记。
+        engine_discover.unregister_stem(ctx.path, script, stem)
+    except (OSError, RuntimeError) as exc:
+        return jsonify(
+            {"error": str(exc), "code": "registry_update_failed", "params": {"reason": str(exc)}}
+        ), 400
+    engine_runtimeasset.drop_stem_caches(ctx.path, script, stem)
+    refresh_project(ctx, reason="registry", allow_static_merge=False)
+    return jsonify({"removed": True, "id": rel_id})
+
+
 @app.put("/api/registry")
 def api_registry_write():
     """手工裁决：直接写一条脚本的 stem 归属（冲突仲裁、改 entry/cost）。"""

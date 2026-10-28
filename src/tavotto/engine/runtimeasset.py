@@ -50,7 +50,7 @@ import os
 import shutil
 from pathlib import Path
 
-from . import config, figcapture, inputremap, runconfig
+from . import config, documents, figcapture, inputremap, runconfig
 
 LOG = logging.getLogger("tavotto.runtimeasset")
 
@@ -266,6 +266,73 @@ def preview_path(project_root: str | Path, asset_id: str) -> Path | None:
 def drop_cache(project_root: str | Path, asset_id: str) -> None:
     """删掉该 asset 的 cache（测试与显式清理用）；不存在就什么都不做。"""
     shutil.rmtree(cache_dir(project_root, asset_id), ignore_errors=True)
+
+
+def drop_stem_caches(project_root: str | Path, script: str, stem: str) -> None:
+    """删掉 (script, stem) 这张图的全部物化 cache：无参数那份 + 运行配置（T03）变体各一份。
+
+    只删 `data_dir()/cache/runtime/` 下 Tavotto 自己的派生物，绝不碰用户文件；"从素材中移除"用。
+    """
+    drop_cache(project_root, figcapture.runtime_asset_id(script, stem))
+    try:
+        configs = runconfig.configs_of(project_root, script)
+    except runconfig.RunConfigError:
+        return  # 登记读不出：变体 cache 是派生物，留给 prune_cache 收，不因此让移除失败
+    for cfg in configs:
+        drop_cache(project_root, figcapture.runtime_asset_id(script, stem, cfg.id))
+
+
+def uses_stem(used_ids: object, registry, script: str, stem: str) -> bool:
+    """`used_ids`（当前画布 / 排版里的面板 fileId）里有没有这张图（含它的运行配置变体）。
+
+    逐个 id 走 `resolve()` 正向重算比对 (script, stem)，不反解 id；解析不到的 id 与它无关。
+    """
+    if not isinstance(used_ids, (list, tuple, set, frozenset)):
+        return False
+    for fid in used_ids:
+        if not is_runtime_id(fid):
+            continue
+        hit = resolve(fid, registry)
+        if hit is not None and hit["script"] == script and hit["stem"] == stem:
+            return True
+    return False
+
+
+def _strings_of(value: object):
+    """递归产出一份 JSON 值里的全部字符串（含字典的键以外的所有值）。显式栈，深文档不会撞递归上限。"""
+    stack = [value]
+    while stack:
+        cur = stack.pop()
+        if isinstance(cur, str):
+            yield cur
+        elif isinstance(cur, dict):
+            stack.extend(cur.values())
+        elif isinstance(cur, list):
+            stack.extend(cur)
+
+
+def saved_layouts_use_stem(layout_dirs, registry, script: str, stem: str) -> bool:
+    """磁盘上已保存的排版（`layout_dirs` 下的用户文档 `*.json`）有没有引用这张图（含运行配置变体）。
+
+    脚本没了以后 cache 预览是这张图唯一剩下的像素，删掉它会让引用它的排版再也找不回这张图，所以
+    未打开的已存排版也算在用。只读用户文档（`documents.is_user_document_stem` 剔掉 Tavotto 自己的文件），
+    不进 `_autosave/` 与 versions（不在 `layout_dirs` 的直接子文件里）；读不了 / 坏掉的文档跳过。
+    """
+    for d in layout_dirs:
+        try:
+            files = sorted(Path(d).glob("*.json"))
+        except OSError:
+            continue
+        for path in files:
+            if not documents.is_user_document_stem(path.stem):
+                continue
+            try:
+                doc = documents.loads_document(path.read_bytes())
+            except (OSError, ValueError):
+                continue
+            if uses_stem(list(_strings_of(doc)), registry, script, stem):
+                return True
+    return False
 
 
 #: cache 总预算：与引擎会话缓存同一治理思路（超预算按最后使用时间从旧到新删）。

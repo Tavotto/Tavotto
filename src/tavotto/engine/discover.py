@@ -1592,6 +1592,43 @@ def register(
         )
 
 
+def unregister_stem(
+    figures_dir: str | Path,
+    script: str,
+    stem: str,
+    *,
+    on_written: Callable[[str], None] | None = None,
+) -> bool:
+    """从注册表摘掉 (script, stem) 这一张图的登记；该脚本没有别的 stem 了就连脚本条目一起摘。
+
+    只动 `tavotto_registry.json`（经 `write_config` 的原子写），绝不碰用户的任何文件。
+    读—改—写整段在项目锁里，和 `register` 同一把锁；其余 stem、entry / cost / notes 原样保留。
+    本来就没有这一条 → 什么都不写，返回 False。
+    """
+    with inputremap.project_mutex(figures_dir):
+        path = registry.existing_registry_path(figures_dir)
+        try:
+            cfg = json.loads(path.read_text(encoding="utf-8")) if path else {}
+        except (OSError, ValueError):
+            return False
+        scripts = cfg.get("scripts") if isinstance(cfg, dict) else None
+        prev = scripts.get(script) if isinstance(scripts, dict) else None
+        if not isinstance(prev, dict) or stem not in (prev.get("stems") or []):
+            return False
+        remaining = [s for s in prev["stems"] if s != stem]
+        _register_locked(
+            figures_dir,
+            script,
+            remaining,
+            prev.get("entry", "main"),
+            prev.get("cost", ""),
+            prev.get("notes", ""),
+            append=False,
+            on_written=on_written,
+        )
+        return True
+
+
 def registered_stems(figures_dir: str | Path, script: str) -> list[str]:
     """Current registered stems; unreadable/missing entries retain the old empty-list contract."""
     return list(registered_stem_origins(figures_dir, script) or {})

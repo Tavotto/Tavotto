@@ -37,6 +37,8 @@
     "refreshTip": "检查项目里的新文件与脚本改动",
     "refreshing": "正在检查新文件…",
     "removeFilter": "移除筛选：{{label}}",
+    "removeFromAssets": "从素材中移除",
+    "removeInUse": "画布中正在使用",
     "resetFilters": "重置筛选",
     "retry": "重试",
     "runtimeBadge": "运行时图",
