@@ -209,15 +209,11 @@ describe('边界措辞与真实判据同步（审计 T41）', () => {
     ).toBe('≥ 8 pt')
   })
 
-  it('7.995pt 被显示成 8.00：同一句话也要成立（这一档的真值并不等于下限）', () => {
-    // 图内文字的 `effective` 走 toFixed(2)，7.995×1 显示成 8.00
-    const hit = runSpec(specWithPanelText(7.995, 1), loadProfile()).find(
-      (i) => i.id === 'font-below-absolute-floor',
-    )!
-    expect(hit.message.values?.effective).toBe('8.00')
-    expect(
-      issueValues(issue({ ruleCode: 'font-below-absolute-floor', message: hit.message })).expected,
-    ).toBe('≥ 8 pt，当前值实际略低，显示已四舍五入。')
+  it('7.9996pt（缩放噪声）在容差内通过；7.98pt 仍违规——显示成 8.00 的假违规不再出现', () => {
+    const ids = (pt: number) => runSpec(specWithPanelText(pt, 1), loadProfile()).map((i) => i.id)
+    expect(ids(8)).not.toContain('font-below-absolute-floor')
+    expect(ids(7.9996)).not.toContain('font-below-absolute-floor')
+    expect(ids(7.98)).toContain('font-below-absolute-floor')
   })
 
   it('含等号的那一侧（≥ / ≤）在边界上说的是「显示已四舍五入」', () => {

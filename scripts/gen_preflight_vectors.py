@@ -225,7 +225,12 @@ def cases() -> list[dict]:
     )
 
     # 7. 画布层：小字号标注 + 越界 + 重叠 + 隐藏 + 越过安全区
-    texts = [_text("t-small", 7.0), _text("t-floor", 8.0, rect_mm=[2, 2, 10, 5])]  # 正好 8.0 的通过
+    texts = [
+        _text("t-small", 7.0),
+        _text("t-floor", 8.0, rect_mm=[2, 2, 10, 5]),
+        _text("t-noise", 7.9996, rect_mm=[2, 12, 10, 5]),  # 容差内：通过
+        _text("t-short", 7.98, rect_mm=[2, 22, 10, 5]),  # 超出容差：违规
+    ]  # 正好 8.0 的通过
     panels = [
         _panel("p1", manifest=_clean_manifest(), rect_mm=[0, 0, 60.0, 40.0], scale=0.75),
         _panel("p2", manifest=_clean_manifest(), rect_mm=[50.0, 30.0, 60.0, 40.0], scale=0.75),
