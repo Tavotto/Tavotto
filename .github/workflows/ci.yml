@@ -1522,11 +1522,12 @@ jobs:
       - name: 构建前端进包
         run: python scripts/build_frontend.py
 
-      - name: 构建画布产物给 e2e 用
+      - name: 构建画布产物（e2e 与进包共用）
         # ADR 0043 之后 `codex-plugin/mcp/widget/canvas.html` 不再入库，而
         # web/e2e/mcp-canvas.spec.ts 从那个位置读**真产物**挂进 iframe。这条腿要
         # 自己构建一份（写到默认位置，已被 .gitignore 挡住；上一步已装好 web 依赖）。
         # 不构建 = 四条 mcp-canvas 用例 ENOENT（#290 full-ci run 34014889780）。
+        # 下面 PyInstaller 也收这一份（tavotto.spec：缺了或过期拒绝打包）。
         run: python scripts/build_mcp_widget.py
 
       # Rust supervisor：tavotto.spec 从 workerd/target/release/ 取，取不到直接
@@ -1956,6 +1957,11 @@ jobs:
 
       - name: 构建前端进包
         run: python scripts/build_frontend.py
+
+      - name: 构建画布产物进包
+        # tavotto.spec 只收与本次源码一致的 codex-plugin/mcp/widget/canvas.html（不进库，ADR 0043），
+        # 缺了拒绝打包；`tavotto-cli mcp` 靠它给宿主内嵌画布（上一步已装好 web 依赖）
+        run: python scripts/build_mcp_widget.py
 
       # **不设 TAVOTTO_WORKERD**——冒烟要验的正是「产物自带的那份被自动找到」
       - uses: dtolnay/rust-toolchain@stable

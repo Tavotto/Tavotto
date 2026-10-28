@@ -264,6 +264,19 @@ if "tavotto_mcp.server" not in MCP_SERVER_MODULES:
     raise SystemExit("codex-plugin/mcp/tavotto_mcp 没被收进来——`tavotto-cli mcp` 会报 mcp_server_not_bundled")
 print(f"[tavotto.spec] MCP 服务端子模块: {', '.join(MCP_SERVER_MODULES)}")
 
+# 画布（MCP App UI，`codex-plugin/mcp/widget/canvas.html`）：服务端按 `tavotto_mcp/widget.py` 的默认路径
+# `<tavotto_mcp 的上一级>/widget/canvas.html` 找它，冻结后那一级就是 _MEIPASS，所以落点是 `widget/`。它是构建物、
+# **不进版本库**（ADR 0043：进库会让每个改 web/src 的 PR 都带一份、并行 PR 必撞），这里只收打包前现建的那一份，
+# 而且必须与本次源码一致——缺了或过期就拒绝打包（与字体同一种拦法；先跑 python scripts/build_mcp_widget.py）。
+# 漏了的表现是桌面版 `tavotto-cli mcp` 体检报「canvas widget file is missing」（Windows Lab，v0.19.0）。
+from build_mcp_widget import OUT as MCP_WIDGET  # noqa: E402
+from build_mcp_widget import current_fingerprint, source_fingerprint  # noqa: E402
+
+if not MCP_WIDGET.is_file() or current_fingerprint(MCP_WIDGET) != source_fingerprint():
+    raise SystemExit(
+        f"画布产物缺失或与源码不一致：{MCP_WIDGET}（先跑 python scripts/build_mcp_widget.py）")
+datas.append((str(MCP_WIDGET), "widget"))
+
 a = Analysis(
     [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT / "src"), str(ROOT / "codex-plugin" / "mcp")],

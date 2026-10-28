@@ -228,6 +228,9 @@ def main() -> None:
     sync_version(version)
 
     run([sys.executable, str(ROOT / "scripts" / "build_frontend.py")])
+    # 画布（MCP App UI）：`tavotto-cli mcp` 带上它，宿主里的内嵌画布才在；构建物不进库（ADR 0043），
+    # tavotto.spec 只收与本次源码一致的这一份
+    run([sys.executable, str(ROOT / "scripts" / "build_mcp_widget.py")])
     build_workerd()
     build_runtime(args.skip_runtime, args.rebuild_runtime)
     # 批准字体（U10，ADR 0060 / 0072）：不进 git，按 allowlist 的 sha256 取到 src/tavotto/resources/fonts/，

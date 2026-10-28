@@ -35,6 +35,12 @@ order: 50
   `tavotto.spec` 把 `codex-plugin/mcp` 加进 `pathex`、`collect_submodules("tavotto_mcp")` 铺进 hiddenimports，收不到就
   拒绝打包；`scripts/smoke_app.py --exe` 用同目录的 `tavotto-cli` 真跑一次 `mcp` 握手 + `tavotto_health`。漏收的表现是
   宿主里 Tavotto 没有工具、stderr 一行 `mcp_server_not_bundled`。看护 `tests/test_desktop_mcp_serve.py`。
+- **画布（MCP App UI）随桌面包**（2026-10-29）：服务端按 `tavotto_mcp/widget.py` 的默认路径 `<tavotto_mcp 的上一级>/widget/canvas.html`
+  找画布，冻结后那一级是 `_MEIPASS`，所以 `tavotto.spec` 把 `codex-plugin/mcp/widget/canvas.html` 收到 `widget/`。它是构建物、
+  **不进版本库**（ADR 0043：进库会让每个改 `web/src` 的 PR 都带一份、并行 PR 必撞）：凡是跑 PyInstaller 的地方（`build_desktop.py`、
+  CI 两条冒烟腿、nightly）先跑 `python scripts/build_mcp_widget.py`；spec 只收与本次源码指纹一致的那一份，缺了或过期拒绝打包；
+  `smoke_app.py --exe` 要求冻结 `tavotto-cli mcp` 的体检报画布可用。漏了的表现是宿主工具照常、内嵌画布没有，体检报
+  「canvas widget file is missing」（Windows Lab，v0.19.0）。看护 `tests/test_desktop_mcp_serve.py`。
 - **包内数据文件要显式进 PyInstaller 的 datas**（2026-09-02，ADR 0039）：
   `Analysis` 只把 .py 编进 PYZ，`tavotto/profiles/publication.json` 与
   `tavotto/resources/tutorial_project/` 这类数据在冻结产物里**本来是没有的**
