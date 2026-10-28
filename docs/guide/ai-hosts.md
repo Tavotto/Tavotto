@@ -2,6 +2,27 @@
 
 > Part of the [Tavotto README](../../README.md). This page holds the detail the README links to.
 
+## With the desktop app: Connect
+
+Open **Settings → Figure assistants → Connect AI editors**. Each editor Tavotto finds on this computer has a row: **Connect** when it is not connected yet, **✓ Connected** with a **⋯** menu (Change folder, Disconnect) when it is. Editors it does not find say *Not found* and have no button.
+
+The first Connect asks for a project folder; every editor shares that folder, and your home folder or a drive root is refused. The button runs the Tavotto that came with the desktop app (`tavotto-cli mcp`), so nothing is downloaded and your own Python is not touched.
+
+| Row | What Connect changes |
+| --- | --- |
+| Codex | Installs the Codex plugin, the same as `tavotto codex install` |
+| Claude Code | `claude mcp add --scope user tavotto …` (skipped when the Tavotto plugin is already installed) |
+| Cursor | `~/.cursor/mcp.json` |
+| VS Code | `mcp.json` in VS Code's user folder |
+| Trae | `mcp.json` in Trae's (or Trae CN's) user folder |
+| ZCode | `~/.zcode/cli/config.json` and `~/.zcode/workspace/default/.zcode/config.json` |
+| WorkBuddy | `~/.workbuddy/mcp.json`, and trusts that one entry in `mcp-approvals.json` |
+| Claude Desktop | `claude_desktop_config.json` (standard mode, local chat) |
+
+Only the `tavotto` entry is written or removed; everything else in those files stays. A file that already exists is copied to `<name>.tavotto-backup-<time>` before it changes, and a file Tavotto cannot read is left alone. Start a new session or conversation in the editor afterwards; most editors read these files only at start. Disconnect removes the `tavotto` entry again (the WorkBuddy trust record stays; it matches only that exact entry).
+
+The plugin routes below are for when you do not use the desktop app, or want the plugin's skill as well.
+
 ## The full Codex integration
 
 Verification status: the embedded canvas inside a real Codex Desktop task was accepted once, on 2026-08-24 with engine and plugin 0.9.2 and Codex Desktop 26.818 ([the record](../acceptance/codex-desktop-canvas.md)). It has not been re-run for the current release, and handing a figure over to the desktop window is not that canvas. Hosts that do not load local plugins never show the tools at all.
