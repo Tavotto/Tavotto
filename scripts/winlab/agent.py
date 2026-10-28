@@ -4806,13 +4806,21 @@ def run_desktop_live_task(
             if connect and connect.get("originals") is not None:
                 base["connect_restore"] = restore_real_targets(connect)
             if tavotto_setup is not None:
-                uninstall_all()
-                # 只核对这次装的那一份（Lab 上另有卸不掉的残留 beta 卸载项，不算这次的）
+                # 只核对这次装的那一份（Lab 上另有卸不掉的残留 beta 卸载项，不算这次的）。卸载器从 %TEMP% 重新拉起
+                # 自己、慢的时候一轮等不完（Lab run 20261028T113530Z-944fa9 留下了这一份）：再等再试一轮
                 mine = connect["install_dir"] if connect else None
-                left = [e for e in _hkcu_installs() if mine and Path(e["InstallLocation"]) == mine]
+                for attempt in range(3):
+                    uninstall_all()
+                    left = [
+                        e for e in _hkcu_installs() if mine and Path(e["InstallLocation"]) == mine
+                    ]
+                    if not left:
+                        break
+                    time.sleep(20)
                 base["tavotto_uninstall"] = {
                     "ok": not left and not (mine and (mine / "Tavotto.exe").exists()),
                     "left": [str(e.get("DisplayName")) for e in left],
+                    "attempts": attempt + 1,
                 }
             base["uninstall"] = uninstall_desktop_host(host, work, henv)
             if ext_dir.exists():
