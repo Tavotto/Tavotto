@@ -682,7 +682,7 @@ describe('「全部项目」：设计稿上没有位置的功能都在这儿', (
     await mount()
     await click(host.querySelector<HTMLButtonElement>('[data-home-all]')!)
     expect(buttonByText('新建项目')).toBeDefined()
-    expect(buttonByText('浏览目录')).toBeDefined()
+    expect(buttonByText('浏览…')).toBeDefined()
     expect(host.querySelector('input[aria-label="项目路径"]')).not.toBeNull()
     expect(host.querySelector('section[aria-label="已不存在的目录"]')).not.toBeNull()
     expect(host.querySelector('[data-onboarding-anchor="tutorial-entry"]')!.textContent).toContain('用示例了解')

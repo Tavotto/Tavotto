@@ -583,6 +583,15 @@
     box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--color-ink) 30%, transparent);
   }
 }
+.hatch-box[data-gone] {
+  background: transparent;
+  box-shadow: none;
+  outline: 1px dashed color-mix(in srgb, var(--color-ink) 22%, transparent);
+  outline-offset: -1px;
+}
+.hatch-box[data-gone]::before {
+  display: none;
+}
 .hatch-box::before {
   content: '';
   position: absolute;

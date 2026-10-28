@@ -80,6 +80,29 @@ export function formatDate(ts: number | Date): string {
   return new Intl.DateTimeFormat(currentLocale(), { dateStyle: 'medium' }).format(ts)
 }
 
+/**
+ * 索引页上的「短日期」（「全部项目」的最近项目列，一列几个字）：今天 / 昨天 → 说出来；
+ * 六天内 → 星期几（周二 / Tue）；更早 → 月/日（10/21，跨年才带两位年份）。按本地日历日算，不按 24 小时。
+ */
+export function formatShortWhen(ts: number, now: number = Date.now()): string {
+  const locale = currentLocale()
+  const day = (t: number) => {
+    const d = new Date(t)
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  }
+  const diff = Math.round((day(now) - day(ts)) / 86_400_000)
+  if (diff <= 1) {
+    const word = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(-Math.max(0, diff), 'day')
+    return word.charAt(0).toLocaleUpperCase(locale) + word.slice(1)
+  }
+  if (diff < 7) return new Intl.DateTimeFormat(locale, { weekday: 'short' }).format(ts)
+  const sameYear = new Date(ts).getFullYear() === new Date(now).getFullYear()
+  return new Intl.DateTimeFormat(
+    locale,
+    sameYear ? { month: 'numeric', day: 'numeric' } : { year: '2-digit', month: 'numeric', day: 'numeric' },
+  ).format(ts)
+}
+
 const RELATIVE_STEPS: [Intl.RelativeTimeFormatUnit, number][] = [
   ['second', 60],
   ['minute', 60],
