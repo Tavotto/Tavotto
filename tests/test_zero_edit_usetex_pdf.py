@@ -98,5 +98,8 @@ def test_zero_edit_pdf_matches_the_scripts_own_savefig(tmp_path):
     assert [w[0] for w in product[1]] == [w[0] for w in native[1]]
     for got, want in zip(product[1], native[1]):
         assert got[1:] == pytest.approx(want[1:], abs=0.01), got[0]
-    assert product[2] == pytest.approx(native[2], abs=0.01)
+    # pytest 9.2 的 approx 不收「元素为序列」的列表：先比个数，再逐个边框比
+    assert len(product[2]) == len(native[2])
+    for got, want in zip(product[2], native[2]):
+        assert got == pytest.approx(want, abs=0.01)
     assert native[2], "no axes frame found: the comparison would be hollow"
