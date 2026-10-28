@@ -150,10 +150,9 @@ export function issueValues(issue: ValidationIssue): IssueValues {
  * 「要求」那半句用哪个说法（审计 T41）。
  *
  * 边界的包含性**只有一个出处**：上面那张 `VALUES` 表里的 `cmp`，它照抄两侧
- * 求值器的判据形状——`font-below-absolute-floor` 是 `eff <= floor`（所以要求
- * 是**大于**，等于不算通过），`font-too-small` 是 `eff < strict`（所以要求是
- * **≥**）。2026-09-06 用真实样本在 `engine/preflight.run()` 上逐个跑过 7.99 /
- * 7.995 / 8.00 / 8.005：8.00 命中绝对下限、8.005 通过，等号确实不含在内。
+ * 求值器的判据形状——`font-below-absolute-floor` 与 `font-too-small` 现在都是
+ * 含等号（`eff < floor - 容差` 才违规，要求是 **≥**；ADR 0029 修订 2026-10-28，
+ * 容差 0.005 pt）。2026-09-06 的旧实测（8.00 命中绝对下限）已作废。
  *
  * 剩下的问题是**显示舍入**：图内文字的 `effective` 是 `toFixed(2)` 的结果，
  * 阈值却是 `%g`，于是 7.996pt 与 8.000pt 都显示成 `8.00`，配上「要求 大于 8pt」

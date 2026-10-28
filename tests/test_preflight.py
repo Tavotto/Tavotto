@@ -210,6 +210,16 @@ def test_effective_font_size_follows_the_final_physical_size():
     assert issues["font-below-absolute-floor"]["detail"]["effective_pt"] == 7.2
 
 
+def test_font_floor_tolerance_absorbs_scale_noise_but_not_real_shortfall():
+    """含等号 + 0.005 pt 容差（ADR 0029 修订 2026-10-28）：7.9996（缩放往返噪声）通过，
+    7.98 仍违规。容差取 0.005：小于编辑器最小一格 0.01，大于 mm↔pt 往返误差 ~1e-4。"""
+    p = profiles.load("lab-publication-v1")
+    for pt, bad in [(8.0, False), (7.9996, False), (7.995, False), (7.98, True)]:
+        ids = _ids(preflight.run(preflight.spec_from_manifest(_manifest(tick_pt=pt)), p))
+        assert ("font-below-absolute-floor" in ids) is bad, pt
+        assert "font-too-small" not in ids or bad, pt
+
+
 def test_the_default_spec_has_exactly_one_minimum_font_size():
     """统一为 8 pt（ADR 0029），且下限含等号（2026-10-26 修订）。
 

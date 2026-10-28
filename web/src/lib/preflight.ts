@@ -4,6 +4,7 @@ import { formatMessage, msg, type UiMessage } from '@/i18n'
 import { PROOF_KIND } from './brand'
 import {
   FALLBACK_MIN_FONT_SIZE_PT,
+  FONT_FLOOR_TOL_PT,
   profileStamp,
   severityOf,
   type PublicationProfile,
@@ -495,13 +496,13 @@ function checkPanelFonts(
   for (const [el, size, sizeProp] of fontElements(manifest, hidden)) {
     const gid = el.gid
     const eff = size * scale
-    if (eff < floor) {
+    if (eff < floor - FONT_FLOOR_TOL_PT) {
       sink.add(
         'font-below-absolute-floor',
         pf('fontBelowFloor', { effective: eff.toFixed(2), floor: g(floor) }),
         { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), floor_pt: floor }, worse: -eff, prop: sizeProp },
       )
-    } else if (eff < strict) {
+    } else if (eff < strict - FONT_FLOOR_TOL_PT) {
       sink.add(
         'font-too-small',
         pf('fontTooSmall', { effective: eff.toFixed(2), min: g(strict) }),
@@ -889,14 +890,14 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
     if (t.hidden) continue
     const size = num(t.size_pt) ?? 0
     // 画布标注的 size_pt 已经是页面上的绝对 pt：不再乘 scale
-    if (size < floor) {
+    if (size < floor - FONT_FLOOR_TOL_PT) {
       sink.add('font-below-absolute-floor', pf('textBelowFloor', { size: g(size), floor: g(floor) }), {
         objectIds: [t.id],
         detail: { effective_pt: r2(size), floor_pt: floor },
         worse: -size,
         prop: 'sizePt',
       })
-    } else if (size < strict) {
+    } else if (size < strict - FONT_FLOOR_TOL_PT) {
       sink.add('font-too-small', pf('textTooSmall', { size: g(size), min: g(strict) }), {
         objectIds: [t.id],
         detail: { effective_pt: r2(size), min_pt: strict },
