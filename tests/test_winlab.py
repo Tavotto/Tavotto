@@ -3309,3 +3309,39 @@ def test_scrub_with_the_no_key_placeholder_touches_nothing(tmp_path):
     db.write_bytes(blob)
     assert A._scrub(tmp_path, A.key_placeholder({})) == []
     assert db.read_bytes() == blob
+
+
+def test_pick_fresh_tavotto_never_takes_an_old_install_for_the_package():
+    """Codex #1473 P1：新包装失败时不许拿残留的旧正式版 / beta 顶替被测版本。"""
+    old = {"DisplayName": "Tavotto", "DisplayVersion": "0.18.0", "InstallLocation": "C:\\T"}
+    beta = {
+        "DisplayName": "Tavotto beta",
+        "DisplayVersion": "0.19.0-beta.4",
+        "InstallLocation": "C:\\B",
+    }
+    new = {"DisplayName": "Tavotto", "DisplayVersion": "0.19.0", "InstallLocation": "C:\\T"}
+    pkg = "Tavotto-0.19.0-Windows-Setup.exe"
+    # 装失败：卸载项还是旧的那两条
+    assert A.pick_fresh_tavotto([old, beta], {"C:\\T", "C:\\B"}, pkg) is None
+    # 装上了（覆盖在旧位置上，位置没变）：按版本认出来
+    assert A.pick_fresh_tavotto([beta, new], {"C:\\T", "C:\\B"}, pkg) is new
+    # beta 的包名带 -beta.N：认 beta 那一份不行（DisplayName 不是 Tavotto）
+    assert A.pick_fresh_tavotto([beta], set(), "Tavotto-0.19.0-beta.4-Windows-Setup.exe") is None
+    # 包名读不出版本：只认新出现的位置
+    fresh = {"DisplayName": "Tavotto", "DisplayVersion": "x", "InstallLocation": "C:\\N"}
+    assert A.pick_fresh_tavotto([old, fresh], {"C:\\T"}, "custom.exe") is fresh
+    assert A.pick_fresh_tavotto([old], {"C:\\T"}, "custom.exe") is None
+
+
+def test_connect_install_fails_closed_on_a_bad_installer_exit(monkeypatch, tmp_path):
+    old = {"DisplayName": "Tavotto", "DisplayVersion": "0.19.0", "InstallLocation": str(tmp_path)}
+    (tmp_path / "Tavotto.exe").write_bytes(b"")
+    monkeypatch.setattr(A, "uninstall_all", lambda: False)
+    monkeypatch.setattr(A, "_hkcu_installs", lambda: [old])
+
+    class P:
+        returncode = 1
+
+    monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: P())
+    ctx, early = A.install_tavotto_for_connect(tmp_path / "Tavotto-0.19.0-Windows-Setup.exe", {})
+    assert ctx is None and early["result"] == "error"

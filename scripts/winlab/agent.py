@@ -4382,26 +4382,50 @@ def judge_connect_written(connect: dict) -> dict:
     return {"ok": not problems and written is not None, "problems": problems, "written": written}
 
 
+#: 发行安装包的文件名里带版本（`Tavotto-0.19.0-Windows-Setup.exe`），与卸载项的 DisplayVersion 对得上
+SETUP_VERSION_RE = re.compile(r"^Tavotto-(\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.]+)?)-Windows-Setup\.exe$")
+
+
+def pick_fresh_tavotto(found: list[dict], before: set[str], package: str) -> dict | None:
+    """这次装出来的那一份。卸不掉的旧安装（如只剩卸载项的 beta）不挡这次，但也绝不能顶替它：
+    包名带版本时只认 `DisplayName == "Tavotto"` 且 DisplayVersion 与包名相同的那一份（同版本覆盖装也认得出）；
+    包名读不出版本时只认这次新出现的安装位置。Lab run 20261028T104530Z-f3adab：按位置取拿到了残留的 beta。"""
+    m = SETUP_VERSION_RE.fullmatch(package)
+    if m:
+        hits = [
+            e
+            for e in found
+            if e.get("DisplayName") == "Tavotto" and e.get("DisplayVersion") == m.group(1)
+        ]
+    else:
+        hits = [e for e in found if e["InstallLocation"] not in before]
+    return hits[-1] if len(hits) == 1 else None
+
+
 def install_tavotto_for_connect(setup: Path, base: dict) -> tuple[dict | None, dict | None]:
     """装被测的 Tavotto 安装包（非管理员 currentUser 静默装，同 desktop-window）；返回 (connect 上下文, 提前收场的结论)。"""
     cleaned = uninstall_all()
-    # 卸不掉的旧安装（如只剩卸载项的 beta）不挡这次：只认这次装出来的那一份（Lab 实测 run 20261028T104530Z-f3adab：
-    # 卸载项里排在最后的是残留的「Tavotto beta 0.19.0-beta.4」，按位置取就拿错了）
     before = {e["InstallLocation"] for e in _hkcu_installs()}
-    subprocess.run([str(setup), "/S"], capture_output=True, timeout=900)
+    proc = subprocess.run([str(setup), "/S"], capture_output=True, timeout=900)
     found = _hkcu_installs()
-    mine = [e for e in found if e["InstallLocation"] not in before] or [
-        e for e in found if e.get("DisplayName") == "Tavotto"
-    ]
+    mine = pick_fresh_tavotto(found, before, setup.name)
     base["tavotto"] = {
-        "version": mine[-1].get("DisplayVersion") if mine else None,
-        "display": mine[-1].get("DisplayName") if mine else None,
+        "installer_exit_code": proc.returncode,
+        "version": mine.get("DisplayVersion") if mine else None,
+        "display": mine.get("DisplayName") if mine else None,
         "leftover_installs": []
         if cleaned
-        else sorted(str(e.get("DisplayName")) for e in found if e not in mine),
+        else sorted(str(e.get("DisplayName")) for e in found if e is not mine),
     }
-    shell = Path(mine[-1]["InstallLocation"]) / "Tavotto.exe" if mine else None
-    if shell is None or not shell.is_file():
+    if proc.returncode != 0 or mine is None:
+        # 装失败、或认不出哪一份是这次装的：绝不拿残留的旧版本当被测版本（Codex #1473 P1）
+        return None, {
+            **base,
+            "result": "error",
+            "summary": f"Tavotto installer exit {proc.returncode}; no install matching {setup.name}",
+        }
+    shell = Path(mine["InstallLocation"]) / "Tavotto.exe"
+    if not shell.is_file():
         return None, {
             **base,
             "result": "error",
