@@ -12,7 +12,6 @@ import {
   LayoutList,
   Minus,
   MoveHorizontal,
-  RotateCcwClock,
   Sparkles,
   Square,
   Type,
@@ -51,7 +50,7 @@ import { Notice } from '../ui/Notice'
 import { Popover } from '../ui/Popover'
 import { Segmented } from '../ui/Segmented'
 import { Tip } from '../ui/Tooltip'
-import { TaskHistory } from './TaskHistory'
+import { TaskHistory, TaskHistoryPopover } from './TaskHistory'
 import { BrandLogo } from '@/components/settings/BrandLogo'
 import { requestConnectAi } from '@/store/connectAiStore'
 import { ConnectionModelPicker, FamilyIcon, ModelPicker, modelLabel } from './ModelPicker'
@@ -318,7 +317,6 @@ function AssistantPanelBody() {
     void useAiStore.getState().restoreRunning()
   }, [])
   const [checkNote, setCheckNote] = useState<'unreachable' | null>(null)
-  const [historyOpen, setHistoryOpen] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // 贴底跟随（ChatGPT / Claude 的约定）：只在用户本来就看着底部时才跟着新内容滚（判据在下面的
@@ -622,25 +620,7 @@ function AssistantPanelBody() {
             {ai('dataFigure.open')}
           </Button>
         )}
-        <Popover
-          width={320}
-          align="end"
-          open={historyOpen}
-          onOpenChange={setHistoryOpen}
-          trigger={
-            <IconButton
-              data-ai-history-trigger
-              label={ai('panel.taskHistory')}
-              tip={!historyOpen}
-              iconSize="sm"
-              className="text-ink-2"
-            >
-              <RotateCcwClock size={ICON_SIZE.sm} />
-            </IconButton>
-          }
-        >
-          <TaskHistory onClose={() => setHistoryOpen(false)} />
-        </Popover>
+        <TaskHistoryPopover />
       </div>
 
       <div ref={stageRef} className="relative min-h-0 flex-1">

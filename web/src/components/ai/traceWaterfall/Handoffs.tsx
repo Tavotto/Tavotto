@@ -5,6 +5,7 @@ interface Props {
   view: { start: number; domain: number }
   track: { left: number; width: number }
   now: number
+  replay?: boolean
   running: (n: TraceNode) => boolean
 }
 
@@ -13,7 +14,7 @@ interface Props {
  * 子智能体结束后同形状折返。画的是 span 之间的几何关系，所以是 svg（iconography 豁免登记）。
  * 只画当前可见（未折叠、未被搜索滤掉）的行。
  */
-export function Handoffs({ flat, view, track, now, running }: Props) {
+export function Handoffs({ flat, view, track, now, replay = false, running }: Props) {
   if (!track.width) return null
   const index = new Map(flat.map((n, i) => [n.span.id, i]))
   const x = (time: number) => (pct(time, view) / 100) * track.width + track.left
@@ -29,7 +30,7 @@ export function Handoffs({ flat, view, track, now, running }: Props) {
     const xs = x(node.span.start)
     lines.push({ key: `${node.span.id}:out`, d: `M${xs} ${yp}V${yc - r}Q${xs} ${yc} ${xs + r} ${yc}`, dot: [xs, yp], lane: node.lane })
     if (!running(node)) {
-      const xe = x(endOf(node.span, now))
+      const xe = x(endOf(node.span, now, replay))
       lines.push({ key: `${node.span.id}:back`, d: `M${xe - r} ${yc}Q${xe} ${yc} ${xe} ${yc - r}V${yp}`, dot: [xe, yp], lane: node.lane })
     }
   }

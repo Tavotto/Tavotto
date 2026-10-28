@@ -5,6 +5,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExecTraceDto } from '@/lib/api'
+import { TooltipProvider } from '@/components/ui/Tooltip'
 
 const fetchExecTrace = vi.fn()
 vi.mock('@/lib/api', async (orig) => ({ ...(await orig<typeof import('@/lib/api')>()), fetchExecTrace: (...a: unknown[]) => fetchExecTrace(...a) }))
@@ -80,47 +81,47 @@ const flush = () => act(async () => {
 describe('TraceDetails', () => {
   it('默认收起、不请求；展开才取', async () => {
     fetchExecTrace.mockResolvedValue({ available: true, trace: snap('ok') })
-    await act(async () => root.render(<TraceDetails taskRef="s1" pj="pj" running={false} />))
+    await act(async () => root.render(<TooltipProvider><TraceDetails taskRef="s1" pj="pj" running={false} /></TooltipProvider>))
     expect(fetchExecTrace).not.toHaveBeenCalled()
     await act(async () => host.querySelector<HTMLButtonElement>('[data-ai-trace-toggle]')!.click())
     await flush()
     expect(fetchExecTrace).toHaveBeenCalledWith('ai_task', 's1', 'pj')
-    expect(host.querySelector('[data-ai-trace-state="ok"]')).not.toBeNull()
+    expect(document.querySelector('[data-ai-trace-state="ok"]')).not.toBeNull()
   })
 
   it('导出诊断只在任务结束后给；运行中的半份不交出去', async () => {
     fetchExecTrace.mockResolvedValue({ available: true, trace: snap('running') })
-    await act(async () => root.render(<TraceDetails taskRef="s2" pj="pj" running />))
+    await act(async () => root.render(<TooltipProvider><TraceDetails taskRef="s2" pj="pj" running /></TooltipProvider>))
     await act(async () => host.querySelector<HTMLButtonElement>('[data-ai-trace-toggle]')!.click())
     await flush()
-    expect(host.querySelector('[data-ai-trace-export]')).toBeNull()
+    expect(document.querySelector('[data-ai-trace-export]')).toBeNull()
     fetchExecTrace.mockResolvedValue({ available: true, trace: snap('ok') })
-    await act(async () => root.render(<TraceDetails taskRef="s2" pj="pj" running={false} settledKey />))
+    await act(async () => root.render(<TooltipProvider><TraceDetails taskRef="s2" pj="pj" running={false} settledKey /></TooltipProvider>))
     await flush()
-    expect(host.querySelector('[data-ai-trace-export="idle"]')).not.toBeNull()
+    expect(document.querySelector('[data-ai-trace-export="idle"]')).not.toBeNull()
   })
 
   it('会话结束后最后一次取失败：明说过期、给重试，不当「运行中」往前走；重试拿到终局', async () => {
     fetchExecTrace.mockResolvedValue({ available: true, trace: snap('running') })
-    await act(async () => root.render(<TraceDetails taskRef="s1" pj="pj" running settledKey={false} />))
+    await act(async () => root.render(<TooltipProvider><TraceDetails taskRef="s1" pj="pj" running settledKey={false} /></TooltipProvider>))
     await act(async () => host.querySelector<HTMLButtonElement>('[data-ai-trace-toggle]')!.click())
     await flush()
-    expect(host.querySelector('[data-ai-trace-state="running"]')).not.toBeNull()
+    expect(document.querySelector('[data-ai-trace-state="running"]')).not.toBeNull()
     fetchExecTrace.mockRejectedValueOnce(new Error('offline'))
-    await act(async () => root.render(<TraceDetails taskRef="s1" pj="pj" running={false} settledKey={true} />))
+    await act(async () => root.render(<TooltipProvider><TraceDetails taskRef="s1" pj="pj" running={false} settledKey={true} /></TooltipProvider>))
     await flush()
-    expect(host.querySelector('[data-ai-trace-stale]')).not.toBeNull()
+    expect(document.querySelector('[data-ai-trace-stale]')).not.toBeNull()
     fetchExecTrace.mockResolvedValue({ available: true, trace: snap('ok') })
-    await act(async () => host.querySelector<HTMLButtonElement>('[data-ai-trace-stale] button')!.click())
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-ai-trace-stale] button')!.click())
     await flush()
-    expect(host.querySelector('[data-ai-trace-stale]')).toBeNull()
-    expect(host.querySelector('[data-ai-trace-state="ok"]')).not.toBeNull()
+    expect(document.querySelector('[data-ai-trace-stale]')).toBeNull()
+    expect(document.querySelector('[data-ai-trace-state="ok"]')).not.toBeNull()
   })
 
   it('运行中再取到内容相同的快照：沿用同一份对象，不重建', async () => {
     const first = snap('running')
     fetchExecTrace.mockResolvedValue({ available: true, trace: first })
-    await act(async () => root.render(<TraceDetails taskRef="s3" pj="pj" running />))
+    await act(async () => root.render(<TooltipProvider><TraceDetails taskRef="s3" pj="pj" running /></TooltipProvider>))
     await act(async () => host.querySelector<HTMLButtonElement>('[data-ai-trace-toggle]')!.click())
     await flush()
     const builds = toWaterfallCalls.mock.calls.length
@@ -133,5 +134,68 @@ describe('TraceDetails', () => {
     // 内容相同的快照不重建展示模型（运行中的「此刻」只经 now 走，不触发 toWaterfall）
     expect(toWaterfallCalls.mock.calls.length).toBe(builds)
   })
-})
 
+  describe('按时间回放（已结束的 Trace）', () => {
+    const open = async (status: 'running' | 'ok') => {
+      fetchExecTrace.mockResolvedValue({ available: true, trace: snap(status) })
+      await act(async () =>
+        root.render(
+          <TooltipProvider>
+            <TraceDetails taskRef="rp" pj="pj" running={status === 'running'} />
+          </TooltipProvider>,
+        ),
+      )
+      await act(async () => host.querySelector<HTMLButtonElement>('[data-ai-trace-toggle]')!.click())
+      await flush()
+    }
+    const wf = () => document.querySelector('[data-trace-waterfall]')!
+    const bar = () => document.querySelector('[data-trace-playback]')
+
+    it('打开就从头自动播：回放中带 data-replay，播放键是暂停；拖到终点后画完整结果，重播再回到回放', async () => {
+      await open('ok')
+      expect(bar()).not.toBeNull()
+      expect(wf().hasAttribute('data-replay')).toBe(true)
+      expect(document.querySelector('[data-trace-playback-toggle]')!.getAttribute('data-trace-playback-toggle')).toBe('pause')
+      expect(document.querySelector('[data-trace-playback-clock]')!.textContent).toBe('0:00 / 0:02')
+      const scrub = document.querySelector<HTMLElement>('[data-trace-playback-scrub]')!
+      await act(async () => {
+        scrub.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
+      })
+      expect(wf().hasAttribute('data-replay')).toBe(false)
+      expect(document.querySelector('[data-trace-playback-clock]')!.textContent).toBe('0:02 / 0:02')
+      expect(document.querySelector('[data-trace-playback-toggle]')!.getAttribute('data-trace-playback-toggle')).toBe('play')
+      await act(async () => document.querySelector<HTMLButtonElement>('[data-trace-playback-replay]')!.click())
+      expect(wf().hasAttribute('data-replay')).toBe(true)
+    })
+
+    it('拖到中间：暂停在那一刻，进度条读数跟着；没开始的行不画', async () => {
+      await open('ok')
+      const scrub = document.querySelector<HTMLElement>('[data-trace-playback-scrub]')!
+      await act(async () => {
+        scrub.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
+      })
+      expect(document.querySelector('[data-trace-playback-clock]')!.textContent).toBe('0:00 / 0:02')
+      expect(document.querySelector('[data-trace-playback-toggle]')!.getAttribute('data-trace-playback-toggle')).toBe('play')
+      expect(scrub.getAttribute('aria-valuenow')).toBe('0')
+    })
+
+    it('运行中的 Trace 走实时，没有回放条', async () => {
+      await open('running')
+      expect(bar()).toBeNull()
+      expect(wf().hasAttribute('data-replay')).toBe(false)
+    })
+
+    it('减少动效：不自动播，直接停在终点（有回放条，可手动重播）', async () => {
+      const mm = window.matchMedia
+      window.matchMedia = ((q: string) => ({ matches: q.includes('reduce'), media: q, addEventListener() {}, removeEventListener() {} })) as never
+      try {
+        await open('ok')
+        expect(bar()).not.toBeNull()
+        expect(wf().hasAttribute('data-replay')).toBe(false)
+        expect(document.querySelector('[data-trace-playback-clock]')!.textContent).toBe('0:02 / 0:02')
+      } finally {
+        window.matchMedia = mm
+      }
+    })
+  })
+})

@@ -54,4 +54,9 @@ export interface WaterfallModel {
   /** 秒：已结束 = 根的时长；运行中 = 截至 `now` */
   duration: number
   running: boolean
+  /**
+   * 回放中（只对已结束的 Trace）：`now` 是回放到的时刻，画「那一刻的样子」——还没开始的 Span 不画，
+   * 开始了没结束的画到 `now`（当作还在跑），已结束的画全。数据本身一个字不改（`duration` 仍是真的总时长）。
+   */
+  replay?: boolean
 }
