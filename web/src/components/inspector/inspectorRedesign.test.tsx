@@ -262,4 +262,19 @@ describe('身份头与右栏', () => {
     await act(async () => q<HTMLButtonElement>('[data-document-summary-canvas]')!.click())
     expect(useUiStore.getState().rightTab).toBe('canvas')
   })
+
+  it('页面预览只画图与纸的交集：出界的图不被整块挪进纸里，完全在纸外的不画（Codex #1471 P2）', async () => {
+    const panel = (id: string, x: number, y: number, w: number, h: number) =>
+      ({ id, type: 'panel', fileId: `${id}.pdf`, x, y, w, h, overrides: [], locked: false }) as unknown as CanvasObject
+    // 纸 100 × 80：A 从 x = −20 起宽 40（纸上只占 0–20）；B 完全在纸外
+    await seed([panel('A', -20, 10, 40, 20), panel('B', 120, 10, 10, 10)], [])
+    await render(<Inspector />)
+    const slots = [...document.querySelectorAll<HTMLElement>('[data-document-summary-slot]')]
+    expect(slots).toHaveLength(1)
+    const pc = (v: string) => parseFloat(v)
+    expect(pc(slots[0]!.style.left)).toBe(0)
+    expect(pc(slots[0]!.style.width)).toBe(20)
+    expect(pc(slots[0]!.style.top)).toBe(12.5)
+    expect(pc(slots[0]!.style.height)).toBe(25)
+  })
 })

@@ -347,7 +347,11 @@ function DocumentSummary() {
               ) : (
                 figures
                   .filter((f) => !f.hidden)
-                  .map((f) => (
+                  // 只画图与纸的**交集**（Codex #1471 P2）：起点和宽高各自夹到纸内会把出界的图整块挪进纸里，
+                  // 例如 x = −20、宽 40 的图该只占纸上 0–20，而不是 0–40；完全在纸外的不画
+                  .map((f) => ({ f, x0: Math.max(0, f.x), y0: Math.max(0, f.y), x1: Math.min(page.w, f.x + f.w), y1: Math.min(page.h, f.y + f.h) }))
+                  .filter(({ x0, y0, x1, y1 }) => x1 > x0 && y1 > y0)
+                  .map(({ f, x0, y0, x1, y1 }) => (
                     <span
                       key={f.id}
                       data-document-summary-slot
@@ -355,10 +359,10 @@ function DocumentSummary() {
                       // .hatch-box 自带 position: relative（未分层样式，压过 Tailwind 的 absolute 工具类）：绝对定位写在 style 里
                       style={{
                         position: 'absolute',
-                        left: pct(f.x, page.w),
-                        top: pct(f.y, page.h),
-                        width: pct(f.w, page.w),
-                        height: pct(f.h, page.h),
+                        left: pct(x0, page.w),
+                        top: pct(y0, page.h),
+                        width: pct(x1 - x0, page.w),
+                        height: pct(y1 - y0, page.h),
                       }}
                     />
                   ))
