@@ -2,7 +2,7 @@ import { refuseArtifactOperation } from '@/lib/artifactValidation'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { TriangleAlert } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { msg, t as translate } from '@/i18n'
 import {
   backendErrorText,
@@ -274,7 +274,7 @@ function SyncOverridesDialog({ panel, onClose }: { panel: PanelObject; onClose: 
 
             {!!mapped.length && !onCanvas && (
               <div className="flex items-start gap-1.5 rounded-sm border border-border bg-surface-2 p-2">
-                <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" />
+                <IconSlot className="text-xs leading-relaxed"><TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" /></IconSlot>
                 <p className="text-xs leading-relaxed text-ink-2">{sy('notOnCanvas')}</p>
               </div>
             )}

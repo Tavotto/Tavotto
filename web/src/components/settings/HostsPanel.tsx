@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CircleCheck, CircleMinus, CircleX, Ellipsis, FolderOpen, Unplug } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import {
   HostShellError,
   hostErrorText,
@@ -194,7 +194,9 @@ function StepList({ steps }: { steps: HostStep[] }) {
         const tone = !s.ok ? 'text-danger' : s.skipped ? 'text-ink-3' : 'text-ok'
         return (
           <li key={`${s.step}-${i}`} className="flex items-start gap-1.5 text-sm">
-            <Icon size={ICON_SIZE.sm} className={`mt-0.5 shrink-0 ${tone}`} aria-hidden />
+            <IconSlot>
+              <Icon size={ICON_SIZE.sm} className={tone} aria-hidden />
+            </IconSlot>
             <span className="min-w-0">
               <span className="text-ink">{hostStepLabel(s.step)}</span>
               <span className="ml-1 text-ink-3">{hostStepStateText(s)}</span>

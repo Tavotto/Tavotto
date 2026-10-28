@@ -20,8 +20,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button, IconButton } from '@/components/ui/Button'
 import { buttonClass } from '@/components/ui/buttonClass'
-import { Check, Download, LoaderCircle, X } from '@/components/ui/icons'
+import { Check, Download, X } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 import { runUndoRedo } from '@/hooks/useKeyboard'
 import { t as translate } from '@/i18n'
 import { RELEASES_LATEST_URL } from '@/lib/brand'
@@ -122,7 +123,7 @@ export function GuidedTask({
             </p>
           ) : integrity.verdict === 'checking' ? (
             <p className="flex items-center gap-1.5 text-xs text-ink-3">
-              <LoaderCircle size={ICON_SIZE.sm} className="animate-spin" aria-hidden />
+              <Spinner size={ICON_SIZE.sm} aria-hidden />
               {pg('taskChecking')}
             </p>
           ) : (

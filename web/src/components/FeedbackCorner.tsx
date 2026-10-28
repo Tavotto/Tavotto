@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CircleAlert, X } from '@/components/ui/icons'
 import { Button } from '@/components/ui/Button'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { DURATION, usePresence } from '@/lib/motion'
 import { useDiagSendStore } from '@/store/diagSendStore'
 import { useExitNoticeStore } from '@/store/exitNoticeStore'
@@ -161,9 +161,10 @@ export function FeedbackCorner() {
             : { 'data-previous-exit-card': shown.kind })}
           className="pointer-events-auto relative flex w-full gap-3 rounded-lg bg-surface p-3.5 pr-10 shadow-pop data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out"
         >
-          <span aria-hidden className="flex size-8 shrink-0 items-center justify-center rounded-full bg-danger-surface text-danger">
-            <CircleAlert size={ICON_SIZE.md} />
-          </span>
+          {/* 不画彩盘：语义色只留在图形上；实心孪生 + 与标题首行同高的图标槽（text-sm = 标题的行高） */}
+          <IconSlot aria-hidden className="text-sm text-danger">
+            <CircleAlert filled size={ICON_SIZE.md} />
+          </IconSlot>
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <p className="text-sm font-medium text-ink">{title(shown)}</p>
             <p className="text-sm leading-5 text-ink-2">{body(shown)}</p>

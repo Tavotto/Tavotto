@@ -19,7 +19,10 @@
  *      引入**——lucide-react 已经拆掉，别再装回来。
  *   4. 不许拿 Unicode 字符 / emoji 当图标（JSX 文本里单独一个 ✕ ▸ ▾ …）。
  *      快捷键提示里的 ⌘ ⇧ ⏎ 是按键名不是图标，那些在字符串里，不在这条规则内。
- *   5. 折叠块不用原生 `<summary>`：浏览器自带的实心三角每家长得都不一样，也对不上
+ *   6. 图标不靠 margin-top 凑对齐：`mt-px / mt-0.5 / mt-1 / mt-[3px]` 之类的微调写在图标（或
+      Spinner）自己的 className 上就是红——单行时恰好对上，换字号 / 图标档 / 折成两行就歪。
+      图标 + 文字行用 `IconSlot`（槽高 = 该行行高 `1lh`，图标居中）。
+   5. 折叠块不用原生 `<summary>`：浏览器自带的实心三角每家长得都不一样，也对不上
  *      树 / 检查器里的折叠箭头。统一走 `ui/Details` 的 `Summary`（ChevronRight）。
  *
  * 判源码结构用 TypeScript 的 AST 而不是正则：注释、docstring、`onClick={() =>`
@@ -57,6 +60,7 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/canvas/OverlaySvg.tsx': 1, // 选框 / 手柄 / 参考线覆盖层
   '/src/canvas/PageEdgeResize.tsx': 1, // 拖页面边的尺寸标注（引出线 + 双箭头，画布叠加层）
   '/src/canvas/IssueSpotlight.tsx': 1, // 定位舞台灯的暗幕与受光遮罩（画布叠加层）
+  '/src/components/ui/Spinner.tsx': 1, // 全产品唯一的加载图形（底环 + 短弧，描边下限属于它，不走图标集的比例缩放）
   '/src/components/ui/BrandMark.tsx': 1, // 品牌标（唯一出处 lib/brand.ts 的图形侧）
   '/src/components/settings/BrandLogo.tsx': 2, // 厂商标志（多色 / 渐变，图形数据在 brandLogoData.ts）+ 没有彩色版的厂商的单色图形
   '/src/components/inspector/controls/TickAndSpineDiagram.tsx': 1, // 四边刻度示意图（网格开关那枚小 svg 已随 Toggle 回收）
@@ -87,6 +91,26 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/onboarding/DemoFigure.tsx': 1,
   // 新手教程第一步从脚本卡指向投放框的那条虚线弧：两端按卡片与投放框此刻的位置现算，不是图标
   '/src/components/onboarding/DemoImportStep.tsx': 1,
+}
+
+/**
+ * 图标 margin-top 微调的豁免表：路径 → 允许的个数。每一条都得说清「为什么 IconSlot 不够」
+ * （例如图标本来就不在文字行里，而是对着一个非文字的块）。目前没有。
+ */
+const NUDGE_ALLOWLIST: Record<string, number> = {}
+
+/** 图标（或图标式加载器）身上不许出现的 margin-top 微调：mt-px / mt-0.5 / mt-1 / mt-1.5 / mt-[Npx] */
+const ICON_NUDGE = /(^|\s)-?mt-(px|0\.5|1|1\.5|\[-?[\d.]+px\])(?=\s|$)/
+const ICON_LIKE_TAGS = new Set(['Icon', 'Spinner'])
+
+function stringsIn(n: ts.Node, out: string[] = []): string[] {
+  if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) out.push(n.text)
+  else if (ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) out.push(n.text)
+  // 回调不能返回值：forEachChild 遇到真值就停
+  ts.forEachChild(n, (c) => {
+    stringsIn(c, out)
+  })
+  return out
 }
 
 /** `size` 是别的意思（外框边长 / 加载器尺寸）的组件，数字字面量放行 */
@@ -123,6 +147,7 @@ export interface Finding {
     | 'foreign-icon-lib'
     | 'glyph'
     | 'native-summary'
+    | 'icon-nudge'
   line: number
   detail: string
 }
@@ -176,6 +201,14 @@ export function audit(path: string, src: string): Finding[] {
       for (const attr of n.attributes.properties) {
         if (!ts.isJsxAttribute(attr)) continue
         const name = attr.name.getText(sf)
+        if (
+          name === 'className' &&
+          attr.initializer &&
+          (iconLocals.has(tag) || ICON_LIKE_TAGS.has(tag)) &&
+          stringsIn(attr.initializer).some((x) => ICON_NUDGE.test(x))
+        ) {
+          out.push({ kind: 'icon-nudge', line: lineOf(attr), detail: `<${tag} className=…mt-*>` })
+        }
         if (name === 'absoluteStrokeWidth' && iconLocals.has(tag)) {
           out.push({ kind: 'absolute-stroke', line: lineOf(attr), detail: `<${tag}>` })
         }
@@ -186,7 +219,7 @@ export function audit(path: string, src: string): Finding[] {
         if (name === 'size' && capitalized && !NON_ICON_SIZED.has(tag)) {
           const numeric =
             (expr && ts.isNumericLiteral(expr)) || (ts.isStringLiteral(init) && /^\d+$/.test(init.text))
-          const isIcon = iconLocals.has(tag)
+          const isIcon = iconLocals.has(tag) || tag === 'Spinner'
           if (numeric || (isIcon && !/^ICON_SIZE(\.(xs|sm|md|lg)|\[.+\])$/.test(text))) {
             out.push({ kind: 'raw-size', line: lineOf(attr), detail: `<${tag} size=${text}>` })
           }
@@ -246,6 +279,11 @@ function offenders(kind: Finding['kind']): string[] {
     if (kind === 'inline-svg') {
       const allowed = SVG_ALLOWLIST[path] ?? 0
       if (hits.length > allowed) rows.push(`${path}（${hits.length} 处，豁免 ${allowed}）`)
+      continue
+    }
+    if (kind === 'icon-nudge') {
+      const allowed = NUDGE_ALLOWLIST[path] ?? 0
+      if (hits.length > allowed) rows.push(...hits.map((h) => `${path}:${h.line} ${h.detail}（豁免 ${allowed}）`))
       continue
     }
     if (kind === 'native-summary' && path === '/src/components/ui/Details.tsx') continue
@@ -315,6 +353,21 @@ describe('图标只有一套：components/ui/icons + Icon.tsx 的阶梯', () => 
     )
   })
 
+  it('图标不靠 margin-top 凑对齐（图标 + 文字行用 IconSlot）', () => {
+    expect(
+      offenders('icon-nudge'),
+      '图标 + 文字行：行容器 items-start，图标包进 <IconSlot>，不要给图标写 mt-*',
+    ).toEqual([])
+  })
+
+  it('图标 margin-top 豁免表里的每个文件都还存在、个数没有虚高', () => {
+    for (const [path, allowed] of Object.entries(NUDGE_ALLOWLIST)) {
+      expect(SOURCES[path], `${path} 已不存在，把它从豁免表里删掉`).toBeDefined()
+      const n = audit(path, SOURCES[path]!).filter((f) => f.kind === 'icon-nudge').length
+      expect(n, `${path} 实际 ${n} 处，豁免却给了 ${allowed}`).toBe(allowed)
+    }
+  })
+
   it('图标集里每个名字都渲染得出来（几何定义不缺项）', () => {
     for (const [name, def] of Object.entries(ICON_DEFS as Record<string, IconDef>)) {
       const parts = [...(def.s ?? []), ...(def.f ?? [])]
@@ -367,6 +420,19 @@ describe('自检：判据认得出每一种违规（不是空门禁）', () => {
     expect(kinds("import { X } from 'lucide-react'")).toContain('foreign-icon-lib')
     expect(kinds("import { X } from 'lucide-react/icons/x'")).toContain('foreign-icon-lib')
     expect(kinds("import { X } from '@/components/ui/icons'")).not.toContain('foreign-icon-lib')
+  })
+
+  it('图标 margin-top 微调：直接写、cn() 里写、模板串里写都抓；IconSlot 与别的元素不抓', () => {
+    expect(kinds(head + 'const a = <Check className="mt-0.5 shrink-0" />')).toContain('icon-nudge')
+    expect(kinds(head + 'const a = <Check className="shrink-0 mt-[3px]" />')).toContain('icon-nudge')
+    expect(kinds(head + "const a = <Check className={cn('shrink-0', on && 'mt-px')} />")).toContain('icon-nudge')
+    expect(kinds(head + 'const a = <Check className={`mt-1 ${tone}`} />')).toContain('icon-nudge')
+    expect(kinds('const a = <Icon size={s} className="mt-0.5" />')).toContain('icon-nudge')
+    expect(kinds('const a = <Spinner className="mt-px" />')).toContain('icon-nudge')
+    expect(kinds(head + 'const a = <Check className="mt-4" />')).not.toContain('icon-nudge')
+    expect(kinds(head + 'const a = <Check className="shrink-0 text-ink-3" />')).not.toContain('icon-nudge')
+    expect(kinds('const a = <p className="mt-0.5" />')).not.toContain('icon-nudge')
+    expect(kinds('const a = <IconSlot><Check /></IconSlot>')).not.toContain('icon-nudge')
   })
 
   it('原生 summary', () => {

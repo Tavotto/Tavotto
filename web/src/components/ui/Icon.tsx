@@ -1,4 +1,6 @@
-import { createContext, useContext, type ReactNode } from 'react'
+import { createContext, useContext, type HTMLAttributes, type ReactNode } from 'react'
+
+import { cn } from '@/lib/utils'
 
 /**
  * 图标体系的唯一出处（`docs/ux/ICONOGRAPHY.md` 是它的说明书，决策在 ADR 0052）。
@@ -70,4 +72,23 @@ export function IconProvider({
 }: { children: ReactNode } & Partial<IconDefaults>) {
   const value = { ...DEFAULTS, ...overrides }
   return <IconDefaultsContext.Provider value={value}>{children}</IconDefaultsContext.Provider>
+}
+
+/**
+ * 图标槽：「图标 + 文字」行里图标的唯一对齐手段。槽高 = 这一行文字的行高（`h-lh`，
+ * 即 CSS `1lh`，取槽所在行容器继承到的 line-height），图标在槽里居中，所以图标中心 =
+ * 第一行文字的中心——单行、折成两行、换字号 / 图标档都不用调；行容器写 `items-start`，
+ * 不许再给图标手写 `mt-px / mt-0.5 / mt-[3px]`（`iconography.test.tsx`「图标不靠
+ * margin-top 凑对齐」守着）。
+ *
+ * 槽的行高是**行容器**的，不是兄弟文字的：文字自己带 `type-title` 之类的行高时（图标在
+ * 容器上、文字在兄弟元素上），给槽写同一个行高 `className="h-5"`，不要回到 margin。
+ * 桌面最低 macOS 14（Safari 17）/ WebView2，`lh` 单位可用。
+ */
+export function IconSlot({ className, children, ...rest }: HTMLAttributes<HTMLSpanElement>) {
+  return (
+    <span data-icon-slot className={cn('inline-flex h-lh shrink-0 items-center justify-center', className)} {...rest}>
+      {children}
+    </span>
+  )
 }

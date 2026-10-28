@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ChevronRight, CircleAlert, CircleCheck, Info, TriangleAlert, type IconComponent } from './icons'
 import { Button } from './Button'
 import { Reveal } from './Field'
-import { ICON_SIZE } from './Icon'
+import { ICON_SIZE, IconSlot } from './Icon'
 import { cn } from '@/lib/utils'
 
 export type StatusTone = 'neutral' | 'info' | 'ok' | 'warn' | 'danger'
@@ -80,12 +80,14 @@ export function Notice({
     >
       <div className="flex min-h-[30px] items-start gap-2 py-[5px] pl-2.5 pr-1.5">
         {Icon && (
-          <Icon
-            size={ICON_SIZE.sm}
-            aria-hidden
-            data-notice-icon={tone === 'danger' ? 'attention' : ''}
-            className={cn('mt-[3px] shrink-0', tone === 'danger' ? 'text-danger' : 'text-ink-3')}
-          />
+          <IconSlot>
+            <Icon
+              size={ICON_SIZE.sm}
+              aria-hidden
+              data-notice-icon={tone === 'danger' ? 'attention' : ''}
+              className={tone === 'danger' ? 'text-danger' : 'text-ink-3'}
+            />
+          </IconSlot>
         )}
         <div className="min-w-0 flex-1 break-words">
           {title != null && typeof children === 'string' ? (

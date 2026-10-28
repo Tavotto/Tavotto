@@ -14,7 +14,7 @@ import {
   Zap,
   type IconComponent,
 } from '@/components/ui/icons'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import {
   backendCodeMsg,
@@ -426,7 +426,7 @@ export function AssetBrowser() {
           onClick={refreshNow}
         >
           {/* 自旋的是这个图标本身：Button 自带的 loading 会再插一个
-              LoaderCircle，28px 的图标按钮里挤两个图标就是布局跳变 */}
+              Spinner，28px 的图标按钮里挤两个图标就是布局跳变 */}
           <RefreshCw size={ICON_SIZE.md} className={busy ? 'animate-spin text-ink-3' : 'text-ink-2'} />
         </IconButton>
       </DrawerHeaderActions>
@@ -1361,7 +1361,7 @@ function UnsupportedAssets({ items }: { items: UnsupportedAsset[] }) {
       <ul className="mt-1 space-y-1">
         {items.map((u) => (
           <li key={u.id} className="flex gap-1.5 text-xs text-ink-2" title={u.id}>
-            <TriangleAlert size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-danger" aria-hidden />
+            <IconSlot><TriangleAlert size={ICON_SIZE.sm} className="shrink-0 text-danger" aria-hidden /></IconSlot>
             <span className="min-w-0">
               {formatMessage(backendCodeMsg(u.code, { file: u.name }, u.name))}
             </span>

@@ -151,10 +151,10 @@ describe('状态 toast 的语气（2026-10-07 审计 P0：此前非错误一律�
     expect(shape()).not.toContain('icon-check')
   })
 
-  it('progress：转圈（与 Button 忙碌态同一个 LoaderCircle）', () => {
+  it('progress：转圈（与 Button 忙碌态同一个 Spinner）', () => {
     act(() => useUiStore.getState().setStatus(literal('正在构建 a…'), 'progress'))
     expect(tone()).toBe('progress')
-    expect(shape()).toContain('icon-loader-circle')
+    expect(shape()).toContain('icon-spinner')
     expect(shape()).toContain('animate-spin')
   })
 

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, type FocusEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/Button'
-import { ICON_SIZE } from '@/components/ui/Icon'
+import { ICON_SIZE, IconSlot } from '@/components/ui/Icon'
 import { Lightbulb, X } from '@/components/ui/icons'
 import { t as translate } from '@/i18n'
 import { rescueFocus } from '@/lib/focusRescue'
@@ -76,7 +76,7 @@ export function PageBoundsHint() {
         'data-[state=open]:animate-rise-in data-[state=closed]:animate-rise-out',
       )}
     >
-      <Lightbulb size={ICON_SIZE.sm} className="mt-0.5 shrink-0 text-ink-3" aria-hidden />
+      <IconSlot><Lightbulb size={ICON_SIZE.sm} className="shrink-0 text-ink-3" aria-hidden /></IconSlot>
       <div className="flex min-w-0 flex-1 flex-col items-start gap-1">
         <p>{t('hints.layout_page_bounds')}</p>
         <Button

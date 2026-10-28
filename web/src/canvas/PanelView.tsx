@@ -79,8 +79,9 @@ import {
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
 import { pageToContentVec, panelContentTransform, panelTransformCss } from '@/lib/panelTransform'
-import { Info, LoaderCircle } from '@/components/ui/icons'
+import { Info } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
+import { Spinner } from '@/components/ui/Spinner'
 
 /**
  * 面板显示：
@@ -1324,7 +1325,7 @@ function RenderStatusBadge({ obj, approx = false }: { obj: PanelObject; approx?:
         )}
       >
         {shown.tone === 'busy' && (
-          <LoaderCircle size={ICON_SIZE.xs} aria-hidden className="animate-spin opacity-80" />
+          <Spinner size={ICON_SIZE.xs} aria-hidden className="opacity-80" />
         )}
         {shown.text}
         {/* 只有这一小块接指针事件。整枚角标收回指针事件是不行的：外层刻意是
