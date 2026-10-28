@@ -29,6 +29,7 @@ import { currentProjectId } from '@/lib/session'
 import { draftFromOffer, userSpecifiedBody, type OriginDraft } from '@/lib/importOrigin'
 import { t } from '@/i18n'
 import { useEnvStore } from '@/store/envStore'
+import { usePackageStore } from '@/store/packageStore'
 import { useProjectPreparationStore } from '@/store/projectPreparationStore'
 import { useRenderStore } from '@/store/renderStore'
 import { useScriptRunStore } from '@/store/scriptRunStore'
@@ -300,8 +301,8 @@ interface DepRepairState {
    */
   adoptUserEnvironment: (id: string, script: string) => Promise<void>
   cancel: () => Promise<void>
-  /** `privatePythonId`：没有基础解释器时，用户看过并同意的私有 Python 载荷 id */
-  rebuildManaged: (privatePythonId?: string) => Promise<void>
+  /** `seen`：没有基础解释器时，用户看过并同意的私有 Python 载荷——授权绑在它的 id + 来源 + 下载量上（ADR 0111 §一） */
+  rebuildManaged: (seen?: PrivatePythonOffer) => Promise<void>
   onProgress: (p: DependencyProgress) => void
   /**
    * 对账（SSE 重连 / 页面恢复）：后端 `/api/events` 无重放，断线期间丢了终态事件，卡片就永远停在「正在安装」。
@@ -835,7 +836,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     }
   },
 
-  rebuildManaged: async (privatePythonId) => {
+  rebuildManaged: async (seen) => {
     const owner = currentProjectId()
     if (get().busy || get().rebuildRunningFor(owner)) return
     const epoch = projectEpoch
@@ -859,7 +860,7 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       progress: started,
     })
     try {
-      await rebuildManagedEnvironment(id, privatePythonId)
+      await rebuildManagedEnvironment(id, seen)
       // 进度此后只由 SSE 推进（切走时 `clear()` 已经把它收进 A 那格），这里不再写进度
       if (epoch !== projectEpoch) return
       set({ busy: false })
@@ -895,9 +896,14 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
       if (!TERMINAL.includes(p.state) && STATE_ORDER[p.state] < STATE_ORDER[seen.state]) return
     }
     // 重建到了终局：那个项目的单飞放开——不管此刻开着哪个项目
+    // 先记下「这是不是某个项目的重建终态」（放开单飞之后就认不出了）：重建会改包管理页说的环境
+    let rebuildTerminal = false
     if (TERMINAL.includes(p.state)) {
       const owner = startedPlans.get(p.plan_id)
-      if (owner !== undefined) releaseRebuild(owner, p.plan_id)
+      if (owner !== undefined) {
+        rebuildTerminal = get().rebuilding[projectKey(owner)] === p.plan_id
+        releaseRebuild(owner, p.plan_id)
+      }
     }
     // 作业属于**别的项目**（本标签页起的、起完切走了）：进度只更新它那一格，此刻的界面与副作用
     // （刷环境 / 重排渲染 / 关框 / 错误文案）一个都不碰——那些说的都是此刻开着的项目（issue #590）
@@ -925,6 +931,9 @@ export const useDepRepairStore = create<DepRepairState>((set, get) => ({
     if (p.state === 'done' || p.state === 'failed' || p.state === 'cancelled') {
       // 环境那半边变了（换了解释器 / 建了受管环境），刷一次环境状态
       void useEnvStore.getState().refresh()
+      // 重建（含包管理页的「自动准备」）的终态：包管理页自己的清单 / 能力（「没有可用 Python」「尚未创建」）也已过期，
+      // 页面轮询不覆盖这一次，成功失败都重读——否则页面停在旧状态、按钮重新可点
+      if (rebuildTerminal) void usePackageStore.getState().load()
       let rerun = false
       if (p.state === 'done') {
         // **装完必须把那次失败的渲染重新排上**，否则这条主路走不完：

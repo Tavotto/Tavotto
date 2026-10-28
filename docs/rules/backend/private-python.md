@@ -79,7 +79,7 @@ order: 170
   `private_python` 载荷（`offer_payload()`：id / 版本 / 目标 / `download_bytes` / `cached` / `network_required`，
   无机器路径），`offer()` 的受管目标同样带它；界面必须把 `download_bytes` 说出口。执行端按
   `_GenerationJob.provision_private` 在**锁内、建 venv 之前**先供应（进度状态 `downloading_python`，`result.download`
-  带 stage / 字节数）；包管理首装的授权在作业（`PackageJob.private_python`）上、重建的授权是调用方回传用户看过的载荷 id（`rebuild_managed(private_python_id=)`，与此刻 `offer_payload()` 同一份才供应）——都不是静默下载；两者都没有授权（或连私有 Python 都不提供）时没有 base 才是 `managed_env_unavailable`。设置→包管理的能力载荷（`list_managed_packages().capability`）带 `private_python`（可自动准备）/ `checking`（后台还在探，不闪）/ `rejected_python`（装着的 Python 因版本区间被拒：版本 + 方向 + 支持范围，来自 `managedenv.rejected_python_versions()`）。
+  带 stage / 字节数）；包管理首装的授权在作业（`PackageJob.private_python`）上、重建的授权是调用方回传用户看过的载荷 id + `origin` + `download_bytes`（`rebuild_managed(private_python_id=, seen_origin=, seen_download_bytes=)`，`resolve_rebuild_offer` 与此刻 `offer_payload()` 逐项一致才供应；来源或下载量变了 = `repair_plan_stale`、零请求；端点在占 id 前先拒）——都不是静默下载；两者都没有授权（或连私有 Python 都不提供）时没有 base 才是 `managed_env_unavailable`。设置→包管理的能力载荷（`list_managed_packages().capability`）带 `private_python`（可自动准备）/ `checking`（后台还在探，不闪）/ `rejected_python`（装着的 Python 因版本区间被拒：版本 + 方向 + 支持范围，来自 `managedenv.rejected_python_versions()`）。
   锁文件 `enabled=false` 且没开逃生门时行为与 U04 逐字相同。
 - **干净机器的第一份计划**（PR B）：一个渲染解释器都没有时 `deprepair.private_python_target()` 以私有 Python 为目标
   ——已供应就真量，没落盘用替身（`private_fresh_facts()`：`privatepython.standin_marker_env` + adapter 已有 + 宿主 stdlib）；

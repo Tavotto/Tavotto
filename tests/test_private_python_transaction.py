@@ -388,8 +388,20 @@ class TestPrivateBase:
         cap = deprepair.list_managed_packages(project)["capability"]
         assert cap["available"] is True and cap["private_python"]["id"] == src.id
         assert cap["private_python"]["download_bytes"] == src.size
+        seen = cap["private_python"]
+        # 授权绑在用户看到的来源与下载量上：回显的来源对不上（用户看到的是“已缓存”、此刻要下载）= 过期，零请求
+        stale = deprepair._rebuild_guarded(
+            project, None, deprepair.new_rebuild_progress_id(), seen["id"], "cached", 0
+        )
+        assert stale.get("code") == deprepair.ERROR_PLAN_STALE, stale
+        assert server.requests == [], "来源变了：一个请求都不发"
         out = deprepair._rebuild_guarded(
-            project, None, deprepair.new_rebuild_progress_id(), cap["private_python"]["id"]
+            project,
+            None,
+            deprepair.new_rebuild_progress_id(),
+            seen["id"],
+            seen["origin"],
+            seen["download_bytes"],
         )
         assert out.get("ok") is True, json.dumps(out, ensure_ascii=False, default=str)
         assert server.requests == [f"/{src.archive_name}"]

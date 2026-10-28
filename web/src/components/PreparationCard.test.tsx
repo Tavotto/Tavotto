@@ -1739,6 +1739,21 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(line()).toBe('obscure-pkg 这个包不常见，确认是你要的再装（会装进 Tavotto 为本项目准备的独立环境）。')
     })
 
+    it('名单外的包 + 要下载私有 Python：不常见卡也说出下载与大小（点“安装一次”同时授权那次下载）', async () => {
+      await begin({ ...uncommon, env: { kind: 'builtin' as const, name: 'python' }, action: 'install_managed' as const, downloads_python: true, download_bytes: 52 * 1048576 })
+      expect(line()).toBe('obscure-pkg 这个包不常见，确认是你要的再装（会装进 Tavotto 为本项目准备的独立环境）。（需先下载约 52 MB 的 Python）')
+    })
+
+    it('名单外的包、非内置环境也要下载私有 Python：同样说出口；不下载时不提', async () => {
+      await begin({ ...uncommon, downloads_python: true, download_bytes: 30 * 1048576 })
+      expect(line()).toContain('（需先下载约 30 MB 的 Python）')
+    })
+
+    it('名单外的包、不下载 Python：句子里不提下载（对照）', async () => {
+      await begin({ ...uncommon, env: { kind: 'builtin' as const, name: 'python' }, action: 'install_managed' as const })
+      expect(line()).not.toContain('下载')
+    })
+
     it('内置 runtime 缺包、不用下载 Python：句子里不提下载', async () => {
       await begin({ ...base, kind: 'ask_once' as const, env: { kind: 'builtin' as const, name: 'python' }, action: 'install_managed' as const, packages: ['adjusttext'] })
       expect(line()).toBe('内置环境不往里装包。Tavotto 会为这个项目自动准备一个独立环境，并装上 adjusttext')

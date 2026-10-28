@@ -336,7 +336,7 @@ function PythonNotice({ capability, envExists }: { capability: PackagesCapabilit
     return (
       <div className="flex items-center gap-3" data-packages-python-prepare>
         <p className="type-caption min-w-0 flex-1">{why}</p>
-        <Button variant="primary" size="sm" disabled={rebuildBusy} onClick={() => void rebuildManaged(offer.id)}>
+        <Button variant="primary" size="sm" disabled={rebuildBusy} onClick={() => void rebuildManaged(offer)}>
           {pk('python.prepare')}
         </Button>
       </div>
@@ -380,7 +380,7 @@ function EnvironmentSection() {
       confirmLabel: msg('settings.packages.confirm.rebuildAction', undefined, 'dialogs'),
       danger: true,
     })
-    if (ok) await rebuildManaged(offer?.id)
+    if (ok) await rebuildManaged(offer ?? undefined)
   }
   return (
     <FormSection title={pk('envSection')}>

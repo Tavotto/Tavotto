@@ -5947,12 +5947,22 @@ export const setDependencyGroups = (groups: string[]) =>
  * 删掉并重建当前项目的 Tavotto 隔离环境（用户自己的 .venv 没有这个操作）。`progressId` 是这次重建的进度 id，
  * 由调用方在发请求**之前**生成（`depRepairStore.newRebuildProgressId()`，与后端 `REBUILD_PROGRESS_ID_RE` 同源，#606）
  */
-export const rebuildManagedEnvironment = (progressId: string, privatePythonId?: string) =>
+export const rebuildManagedEnvironment = (progressId: string, seen?: PrivatePythonOffer) =>
   jsonFetch<{ started: boolean; progress_id: string }>('/api/engine/environment/managed/rebuild', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // `private_python_id`：用户看过的那份私有 Python 载荷的 id（没有基础解释器时才有）——授权绑在它上面
-    body: JSON.stringify({ progress_id: progressId, ...(privatePythonId ? { private_python_id: privatePythonId } : {}) }),
+    // 用户看过的那份私有 Python 载荷（没有基础解释器时才有）：授权绑在 id + 来源 + 下载量上，后端逐项比对，
+    // 点击前来源变了（缓存被清 → 要下载）就拒绝要求重新确认（ADR 0111 §一）
+    body: JSON.stringify({
+      progress_id: progressId,
+      ...(seen
+        ? {
+            private_python_id: seen.id,
+            private_python_origin: privatePythonOrigin(seen),
+            private_python_download_bytes: seen.download_bytes,
+          }
+        : {}),
+    }),
   })
 
 /** 某个计划 / 作业此刻的进度（SSE 断了、或发起请求本身失败之后问实况；没到过后端的 id 回 `idle`） */

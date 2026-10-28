@@ -1726,30 +1726,74 @@ def claim_rebuild_progress_id(raw: str | None) -> str:
     return pid
 
 
+def resolve_rebuild_offer(
+    private_python_id: str = "", seen_origin: str = "", seen_download_bytes: int | None = None
+) -> dict | None:
+    """重建要供应的私有 Python 载荷；授权绑在用户**实际看到的那份**上（ADR 0111 §一）。
+
+    用户确认时看到的是 `id` + `origin` + `download_bytes`（缓存的说「不下载」、下载的说大小）。此刻重算的载荷
+    id 相同但来源或下载量变了（点击前缓存归档被清 = cached 变 download），那不是用户同意过的事——
+    `repair_plan_stale`、零请求，让他按新的来源重新确认。没回显来源 / 下载量（老前端）同样按未确认处理。
+    没传 id / 已有基础解释器 / 锁换了：不供应（照旧，不静默换成另一份下载）。
+    """
+    if not private_python_id or base_python():
+        return None
+    offered = privatepython.offer_payload()
+    if offered is None or offered.get("id") != private_python_id:
+        return None
+    if offered.get("origin") != seen_origin or offered.get("download_bytes") != seen_download_bytes:
+        raise RepairError(ERROR_PLAN_STALE, "确认之后 Python 的来源或下载量变了，请重新确认")
+    return offered
+
+
 def start_rebuild(
-    project: str | Path, on_event, progress_id: str, private_python_id: str = ""
+    project: str | Path,
+    on_event,
+    progress_id: str,
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
 ) -> None:
     """起重建线程（`progress_id` 必须已经由 `claim_rebuild_progress_id` 占用）。"""
     threading.Thread(
-        target=lambda: _rebuild_guarded(project, on_event, progress_id, private_python_id),
+        target=lambda: _rebuild_guarded(
+            project, on_event, progress_id, private_python_id, seen_origin, seen_download_bytes
+        ),
         daemon=True,
         name="tavotto-managed-rebuild",
     ).start()
 
 
 def rebuild_managed_async(
-    project: str | Path, on_event=None, progress_id: str = "", private_python_id: str = ""
+    project: str | Path,
+    on_event=None,
+    progress_id: str = "",
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
 ) -> str:
     """占用 id + 起线程；回这次重建的进度 id（`claim_rebuild_progress_id` 的规则）。"""
     pid = claim_rebuild_progress_id(progress_id)
-    start_rebuild(project, on_event, pid, private_python_id)
+    start_rebuild(project, on_event, pid, private_python_id, seen_origin, seen_download_bytes)
     return pid
 
 
-def _rebuild_guarded(project, on_event, progress_id: str, private_python_id: str = "") -> dict:
+def _rebuild_guarded(
+    project,
+    on_event,
+    progress_id: str,
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
+) -> dict:
     try:
         return rebuild_managed(
-            project, on_event, progress_id=progress_id, private_python_id=private_python_id
+            project,
+            on_event,
+            progress_id=progress_id,
+            private_python_id=private_python_id,
+            seen_origin=seen_origin,
+            seen_download_bytes=seen_download_bytes,
         )
     except RepairError as exc:
         _log_repair_failure("受管环境重建", progress_id, exc.code)
@@ -1766,7 +1810,13 @@ def _rebuild_guarded(project, on_event, progress_id: str, private_python_id: str
 
 
 def rebuild_managed(
-    project: str | Path, on_event=None, *, progress_id: str = "", private_python_id: str = ""
+    project: str | Path,
+    on_event=None,
+    *,
+    progress_id: str = "",
+    private_python_id: str = "",
+    seen_origin: str = "",
+    seen_download_bytes: int | None = None,
 ) -> dict:
     """重建受管环境：按账上记过的那些**建新的一代**，验完再切 active（U04 起不再删旧的
     重来——旧代留到没人用）。`progress_id` 没给就现生成一个（同步调用方用回值里的 `progress_id`）。
@@ -1779,15 +1829,12 @@ def rebuild_managed(
     换一个别的版本装上——「重建完跟以前不一样」比「重建失败」难查得多。
 
     **没有基础解释器时的私有 Python**（ADR 0063 / 0111）：授权绑在用户看过的那份载荷上——调用方回传
-    `capability.private_python.id`，与此刻的 `offer_payload()` 同一份才供应（锁换了 = 没授权，照旧
-    `managed_env_unavailable`，不静默换成另一份下载）；没传 / 有基础解释器则不下载。
+    `capability.private_python.id` 并回显看到的 `origin` / `download_bytes`，与此刻的 `offer_payload()`
+    逐项一致才供应（`resolve_rebuild_offer`：锁换了 = 没授权，照旧 `managed_env_unavailable`；来源或下载量变了
+    = `repair_plan_stale`，不把重算出的下载当已授权）；没传 / 有基础解释器则不下载。
     """
     root = str(Path(project))
-    private = None
-    if private_python_id and not base_python():
-        offered = privatepython.offer_payload()
-        if offered is not None and offered.get("id") == private_python_id:
-            private = offered
+    private = resolve_rebuild_offer(private_python_id, seen_origin, seen_download_bytes)
     pid = progress_id or new_rebuild_progress_id()
     cancel_ev = threading.Event()
     with _lock:

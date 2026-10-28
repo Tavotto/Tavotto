@@ -274,7 +274,7 @@ describe('能力与禁用原因', () => {
     expect(document.querySelector('[data-packages-disabled]')).toBeNull()
     const { rebuildManagedEnvironment } = await import('@/lib/api')
     await act(async () => byName(pk('python.prepare'))!.click())
-    expect(rebuildManagedEnvironment).toHaveBeenCalledWith(expect.any(String), OFFER.id)
+    expect(rebuildManagedEnvironment).toHaveBeenCalledWith(expect.any(String), OFFER)
   })
 
   it('完全没有 Python：同样自动准备；安装包自带的那份不提下载', async () => {
@@ -353,7 +353,35 @@ describe('能力与禁用原因', () => {
     expect(confirm.body.key).toBe('settings.packages.confirm.rebuildBodyPython')
     expect(JSON.stringify(confirm.body.values)).toContain('52')
     await act(async () => confirm.resolve(true))
-    expect(rebuildManagedEnvironment).toHaveBeenCalledWith(expect.any(String), OFFER.id)
+    expect(rebuildManagedEnvironment).toHaveBeenCalledWith(expect.any(String), OFFER)
+  })
+
+  it.each(['done', 'failed'] as const)('点「自动准备」后重建到了终态（%s）：包管理页重新读清单，不停在“没有可用 Python / 尚未创建”', async (terminal) => {
+    const noEnv = { ...LISTING, capability: { available: true, reason: '', private_python: OFFER }, environment: NO_ENV, builtin_source: 'planned' as const, user: [] }
+    await mount(noEnv)
+    const { rebuildManagedEnvironment } = await import('@/lib/api')
+    vi.mocked(rebuildManagedEnvironment).mockResolvedValue({ started: true, progress_id: 'x' })
+    await act(async () => byName(pk('python.prepare'))!.click())
+    const id = vi.mocked(rebuildManagedEnvironment).mock.calls.at(-1)![0]
+    // 进行中：按钮禁用
+    expect((byName(pk('python.prepare')) as HTMLButtonElement).disabled).toBe(true)
+    listMock.mockClear()
+    listMock.mockResolvedValue({ ...LISTING })
+    await act(async () => {
+      useDepRepairStore.getState().onProgress({ plan_id: id, state: terminal, log: '', error: null, code: '', target_kind: 'tavotto_managed' } as never)
+    })
+    expect(listMock).toHaveBeenCalled()
+    expect(document.querySelector('[data-packages-python-prepare]')).toBeNull()
+    expect(useDepRepairStore.getState().rebuildRunningFor(currentProjectId())).toBe(false)
+  })
+
+  it('不是重建的终态（别的作业）不额外读清单', async () => {
+    await mount({ ...LISTING })
+    listMock.mockClear()
+    await act(async () => {
+      useDepRepairStore.getState().onProgress({ plan_id: 'someone-else', state: 'done', log: '', error: null, code: '', target_kind: 'tavotto_managed' } as never)
+    })
+    expect(listMock).not.toHaveBeenCalled()
   })
 
   it('环境正在被别的操作改动（busy）：按钮禁用，清单照常显示', async () => {
