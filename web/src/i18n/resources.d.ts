@@ -6005,6 +6005,7 @@ export default interface Resources {
         "stopScript": "停止脚本"
       },
       "convert": {
+        "adoptAdds": "采用只会新增 {{files}}，原脚本不动",
         "adopted": "已采用，正在打开新版本…",
         "aspectDiffers": "宽高比与原图相差约 {{pct}}%",
         "btn": {
@@ -6063,6 +6064,7 @@ export default interface Resources {
           "no_matplotlib_import": "生成的脚本没有用 Matplotlib",
           "other_file_changed": "助手改动了不该动的文件，已丢弃",
           "project_files_changed": "校验运行改动了项目文件，已丢弃",
+          "project_files_changed_sync": "项目文件在这期间发生了变化，已丢弃。这个项目在同步盘里，可能是同步软件在改文件，请等同步结束后重试",
           "raster_drawing": "生成的脚本仍把文字或形状画成位图",
           "render_not_wired": "暂时无法校验新版本",
           "resume_error": "接着生成时出错了，请重试",

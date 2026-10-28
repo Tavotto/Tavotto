@@ -44,11 +44,14 @@ from . import (
     convertfidelity,
     convertoutputs,
     discover,
+    execspec,
     projectenv,
     rasterhint,
     registry,
     scriptlock,
+    shadowscript,
     sourcelang,
+    syncnoise,
 )
 from .ai_tasks import FAILED, UNKNOWN, VERIFIED, CheckResult, NeedsInput, TaskError
 from .imageheader import image_dimensions
@@ -64,7 +67,7 @@ PREVIEW_MAX_BYTES = 6 * 1024 * 1024
 #: 待采用候选的保留时间；超龄的在下一次新建候选时顺手清掉
 RETAIN_S = 24 * 3600
 NAME_SUFFIX = "_matplotlib"
-#: 校验运行用的临时文件名前缀。worker 按 `importlib.import_module(stem)` 加载脚本，stem 必须是合法模块名（不能以点开头）
+#: （已退役：校验改用影子脚本，项目里不再写临时文件；常量留给 `ai_figure_edit.STAGE_PREFIX` 的镜像一致性用例与旧名识别）。原：校验运行用的临时文件名前缀。worker 按 `importlib.import_module(stem)` 加载脚本，stem 必须是合法模块名（不能以点开头）
 STAGE_PREFIX = "_tavotto_convert_probe_"
 MAX_NUMBERED = 99
 META_NAME = "meta.json"
@@ -116,6 +119,11 @@ WRITE_OUTSIDE_HINT = (
     "保留 Matplotlib savefig 调用，Tavotto 会捕获图像，不需要预建输出目录；"
     "不要把写入改到项目的其他位置。"
 )
+#: 项目指纹复核失败的原因码（界面按 `prep.convert.fail.<reason>` 换语言）。项目在同步盘里用 `_sync` 那条，
+#: 文案多一句“可能是同步盘在同步”；变化的相对路径（最多 `MAX_CHANGED_FILES` 个）在检查的 `observed.files`。
+PROJECT_CHANGED_REASON = "project_files_changed"
+PROJECT_CHANGED_SYNC_REASON = "project_files_changed_sync"
+MAX_CHANGED_FILES = 50
 _SID = re.compile(r"[0-9a-f]{12}")
 _STATES = (
     "ready",
@@ -379,6 +387,42 @@ def prompt_for(cand: ConvertCandidate) -> str:
 
 
 # --------------------------------------------------------------------------- 校验
+def adopt_names(project_root: Path | str, script_rel: str, target_name: str) -> list[str]:
+    """采用此刻会新建的文件（项目相对 posix 路径列表，现在恒为一个）：原脚本同目录、`<stem>.py`，重名自动加序号
+    `_2` … `_99`（与 `_adopt_locked` 同一个选名规则，**只看不写**）。全占满回空表。原脚本不在其中。"""
+    root = Path(project_root)
+    parent_rel = Path(script_rel).parent
+    stem = Path(target_name).stem
+    for n in range(1, MAX_NUMBERED + 1):
+        name = f"{stem}.py" if n == 1 else f"{stem}_{n}.py"
+        rel = (parent_rel / name).as_posix()
+        dest = projectenv.contained_path(root, rel)
+        if dest is None:
+            return []
+        if not os.path.lexists(dest):
+            return [rel]
+    return []
+
+
+def _prepare_shadow(cand: ConvertCandidate | ai_figure_edit.Candidate) -> str:
+    """校验运行的影子脚本：保证候选目录里的 `cand.target` 就是 `cand.new_bytes`，回它在项目里将会在的位置
+    （项目相对 posix）。转换：采用会选的名字；改图：原脚本自己的路径。选名只看不写；项目里什么都不建。"""
+    data = cand.new_bytes or b""
+    try:
+        same = not cand.target.is_symlink() and cand.target.read_bytes() == data
+    except OSError:
+        same = False
+    if not same:
+        if cand.target.is_symlink():
+            raise OSError("candidate_symlink")
+        atomicio.write_bytes(cand.target, data)
+    if not isinstance(cand, ConvertCandidate):
+        return cand.script_rel
+    names = adopt_names(cand.project_root, cand.script_rel, cand.target_name)
+    # 名字全占满（采用也会失败）：用基础名；校验仍然只读不写项目
+    return names[0] if names else (Path(cand.script_rel).parent / cand.target_name).as_posix()
+
+
 def _static_uses_matplotlib(tree: ast.AST) -> bool:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -421,40 +465,35 @@ def run_validation(
     **隔离写入（Codex #1277 P1）**：运行带写入根绊线（ADR 0141 的 `write_roots`，现有机制）——根只有候选目录（加 worker 自己的
     基础设施目录），所以候选脚本把相对路径输出（`out.png` / `data.csv`）写进项目目录时，在**写发生的那一刻**失败
     （`write_outside_roots`），用户文件根本没被打开写过；跑完的指纹复核只是兜底（绊线挡不住 C 层写）。
-    候选以紧挨原脚本的**临时文件**（`_tavotto_convert_probe_<sid>.py`）形式存在（O_EXCL 新建、跑完即删）：相对路径的数据读取与 cwd 判据同原脚本。
+    候选是**影子脚本**（见下）：项目里不写任何文件；相对路径的数据读取与 cwd 判据同原脚本。
     回 `{"status": "ok" | "no_figure" | "error", ...}`。"""
     # Editing preserves source-owned output names; only conversion creates a new identity.
     if isinstance(cand, ConvertCandidate):
         issue = normalize_outputs(cand)
         if issue is not None:
             return issue
-    stage_path = cand.script_path.parent / f"{STAGE_PREFIX}{cand.sid}.py"
-    rel = stage_path.relative_to(cand.project_root).as_posix()
+    cancel = cand.extras.get("cancel")
+    checked_runner = getattr(runner, "with_images", runner) if evidence is not None else runner
+    # 影子脚本（ADR 0143 修订）：候选字节留在候选目录，**项目里不写任何文件**——同步盘不会把它同步出去，
+    # 也没有“项目里冒出文件 / 指纹被同步客户端搅动”这两类误伤。worker 读候选目录里的字节、以它在项目里的位置
+    # 为 `__file__`（转换：采用会选的新名字；改图：原脚本自己的路径），cwd 仍是原脚本所在目录，
+    # 写入根绊线只放行候选目录。登记键含写入根，所以改图的校验不会碰用户正在看的原脚本热会话。
     try:
-        with scriptlock.script_guard(stage_path):
-            scriptlock.create_script(stage_path, cand.new_bytes or b"")
-            try:
-                deps = _ensure_dependencies(cand, rel)
-                if deps is not None:
-                    return deps
-                cancel = cand.extras.get("cancel")
-                if cancel is not None and cancel.is_set():
-                    # 依赖旁路没报取消（调研 none / skipped / 不缺包）而取消已置位：不启动校验运行
-                    return {"status": "cancelled"}
-                checked_runner = (
-                    getattr(runner, "with_images", runner) if evidence is not None else runner
-                )
-                out, killed = _run_with_cancel(checked_runner, cand, rel, cancel)
-                if killed:
-                    return {"status": "cancelled"}
-            finally:
-                try:
-                    stage_path.unlink()
-                except OSError:
-                    pass
+        rel = _prepare_shadow(cand)
     except OSError as exc:
         code = "exists" if isinstance(exc, FileExistsError) else "write_failed"
         return {"status": "error", "code": f"stage_{code}", "message": str(exc)}
+    roots_key = execspec.write_roots_key((str(cand.dir),))
+    with shadowscript.shadow(cand.project_root, rel, cand.target, roots_key):
+        deps = _ensure_dependencies(cand, rel)
+        if deps is not None:
+            return deps
+        if cancel is not None and cancel.is_set():
+            # 依赖旁路没报取消（调研 none / skipped / 不缺包）而取消已置位：不启动校验运行
+            return {"status": "cancelled"}
+        out, killed = _run_with_cancel(checked_runner, cand, rel, cancel)
+        if killed:
+            return {"status": "cancelled"}
     if evidence is not None:
         from .agent_runner.media import from_wire
 
@@ -841,15 +880,20 @@ class ConvertAdapter:
         if changed is None:
             out.append(_check("project.untouched", st, "integrity", UNKNOWN, "project_over_budget"))
         elif changed:
+            # 同步盘（坚果云 / Dropbox / OneDrive / iCloud …）里的项目：变化更可能来自同步客户端而不是校验运行。
+            # 指纹已排除客户端自己的临时 / 冲突文件（`syncnoise`），剩下的仍判失败（用户文件真的变了），
+            # 但换一句能说“可能是同步盘在同步”的原因码；`sync_folder` 同时写进 observed。
+            sync = syncnoise.in_sync_folder(cand.project_root)
             out.append(
                 _check(
                     "project.untouched",
                     st,
                     "integrity",
                     FAILED,
-                    "project_files_changed",
-                    files=changed[:50],
+                    PROJECT_CHANGED_SYNC_REASON if sync else PROJECT_CHANGED_REASON,
+                    files=changed[:MAX_CHANGED_FILES],
                     total=len(changed),
+                    sync_folder=sync,
                 )
             )
         else:
@@ -1209,6 +1253,12 @@ def status(sid: str, project: str) -> dict:
         "comparison": meta.get("comparison"),
         "has_preview": bool(meta.get("has_preview")) and (cdir / PREVIEW_NAME).is_file(),
         "adopted_script": meta.get("adopted_script"),
+        # 采用会在项目里新增的文件（项目相对路径；原脚本不动）。ready 时按**此刻**的项目重算（重名会自动加序号）
+        "adopt_adds": adopt_names(
+            project, str(meta.get("script_rel") or ""), str(meta.get("target_name") or "")
+        )
+        if state == "ready" and meta.get("script_rel") and meta.get("target_name")
+        else [],
         # 等用户决定装包 / 换环境时的卡片事实（`convertdeps` 的 card）；续跑失败时的原因（`failure`）
         "dependency_card": meta.get("dependency_card") if state in (STATE_AWAITING,) else None,
         "failure": meta.get("failure") if state == STATE_FAILED else None,
@@ -1510,7 +1560,17 @@ def run_resume(
                     remove_dir(cdir)
                     return {"state": "cancelled"}
                 return {"state": "ready"}
-            failure = {"reason": "project_files_changed"}
+            first = untouched[0]
+            failure = {
+                "reason": first.reason_code
+                if first.reason_code in (PROJECT_CHANGED_REASON, PROJECT_CHANGED_SYNC_REASON)
+                else PROJECT_CHANGED_REASON,
+                **{
+                    k: v
+                    for k, v in (first.observed or {}).items()
+                    if k in ("files", "total", "sync_folder")
+                },
+            }
             _drop_candidate_files(cdir, meta)
         else:
             check = _failure_check(result, "precommit")

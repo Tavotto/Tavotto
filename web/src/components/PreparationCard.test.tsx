@@ -1508,6 +1508,15 @@ describe('执行结束、捕获到图、首次编辑渲染是三件事', () => {
       expect(foreignCard()?.querySelector('[data-convert-installed]')?.textContent).toBe('已为这个项目装好 pandas 和 statsmodels')
     })
 
+    it('ready 时说清楚采用只会新增哪个文件、原脚本不动；后端没给清单就不说', async () => {
+      vi.mocked(fetchConvert).mockResolvedValue({ ...readyR, adopt_adds: ['sub/fig_matplotlib.py'] })
+      await mountBoth()
+      await offer('fig.R', 'r')
+      await act(async () => startBtn()!.click())
+      await settle()
+      expect(foreignCard()?.querySelector('[data-convert-adopt-adds]')?.textContent).toBe('采用只会新增 sub/fig_matplotlib.py，原脚本不动')
+    })
+
     it('出现时 PreparationCard 让开：一次只有一张一句话卡片', async () => {
       await mountBoth()
       useUiStore.setState({ guideCard: 'card' })

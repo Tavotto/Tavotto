@@ -34,6 +34,7 @@ from pathlib import Path
 
 from . import (
     discover,
+    execspec,
     figcapture,
     inputbroker,
     inputremap,
@@ -43,6 +44,7 @@ from . import (
     runconfig,
     runtimeasset,
     scanbudget,
+    shadowscript,
     taskdiag,
     texdiag,
 )
@@ -309,7 +311,9 @@ def _attach_workdir_hint(out: dict, exc: pool.WorkerError) -> None:
         out["workdir_hint"] = hint
 
 
-def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
+def entry_candidates(
+    figures_dir: str | Path, script: str, *, source: str | Path | None = None
+) -> list[str]:
     """该脚本值得一试的 entry 列表（静态推断优先，去重保序）。
 
     两级静态推断：`discover.analyze_script`（存图口径，注册表草稿同款）给出
@@ -318,11 +322,22 @@ def entry_candidates(figures_dir: str | Path, script: str) -> list[str]:
     会给出真正的报错（语法错误的 traceback 比静态猜测有解释力）。
     """
     # 脚本钉在项目根之内的 realpath 才读；在外面就是「解析不了」那一档，退回盲试列表
-    real = projectenv.contained_path(figures_dir, script)
-    if real is None:
-        return list(FALLBACK_ENTRIES)
-    path = Path(real)
-    info = discover.analyze_script(path, Path(figures_dir))
+    # `source`（影子脚本，ADR 0143 修订）：项目里没有这个文件，字节在候选目录；静态分析钉在它自己的目录里读，
+    # 判入口的 AST 口径与采用后重开同一把尺子（只有 stems 的磁盘比对用的根不同，入口不依赖它）
+    if source is not None:
+        path = Path(source)
+        root = path.parent
+        real = projectenv.contained_path(root, path.name)
+        if real is None:
+            return list(FALLBACK_ENTRIES)
+        path = Path(real)
+    else:
+        real = projectenv.contained_path(figures_dir, script)
+        if real is None:
+            return list(FALLBACK_ENTRIES)
+        path = Path(real)
+        root = Path(figures_dir)
+    info = discover.analyze_script(path, root)
     static = discover.probe_entry_candidates(path)
     out: list[str] = []
     if info:
@@ -430,7 +445,8 @@ def _probe(
     _cancel_err = lambda: _err(  # noqa: E731 —— 两个出口共用同一句
         ERROR_CANCELLED, "试运行已取消"
     )
-    script_path = Path(figures_dir) / script
+    shadow = shadowscript.lookup(figures_dir, script, execspec.write_roots_key(write_roots))
+    script_path = Path(shadow) if shadow else Path(figures_dir) / script
     if not script_path.is_file():
         return {
             **empty,
@@ -470,7 +486,7 @@ def _probe(
 
     tried: list[str] = []
     first_error: dict | None = None
-    for entry in entries or entry_candidates(figures_dir, script):
+    for entry in entries or entry_candidates(figures_dir, script, source=shadow):
         if cancelled():
             return {**empty, "tried": tried, "error": _cancel_err()}
         tried.append(entry)

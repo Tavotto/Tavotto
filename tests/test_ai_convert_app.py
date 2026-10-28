@@ -354,7 +354,7 @@ def test_convert_runs_validates_compares_and_adopts_without_touching_the_origina
     assert pv.status_code == 200 and pv.mimetype == "image/svg+xml"
     assert "sandbox" in pv.headers["Content-Security-Policy"]
     assert b"<svg" in pv.data
-    # 采用前项目里什么都没多：校验用的临时文件已删
+    # 采用前项目里什么都没多：校验运行从头到尾没往项目里写任何文件（影子脚本，ADR 0143 修订）
     assert sorted(p.name for p in figs.iterdir() if p.is_file()) == state["initial"]
     assert not any(p.name.startswith(ai_convert.STAGE_PREFIX) for p in figs.iterdir())
     verified_bytes = (ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py").read_bytes()
@@ -417,7 +417,7 @@ def test_every_conversion_source_prepares_target_python_dependencies(
     assert st["library"] == ("pillow" if language == "python" else None)
     assert st["installed"] == ["pandas"]
     assert st["comparison"]["verification"] == "side_by_side"
-    assert seen and seen[0][1].startswith(ai_convert.STAGE_PREFIX)
+    assert seen and seen[0][1] == "fig_matplotlib.py"
     assert (figs / script).read_bytes() == source
     a = client.post(f"/api/ai/convert/{sid}/adopt")
     assert a.status_code == 200 and a.get_json()["script"] == "fig_matplotlib.py"
@@ -663,7 +663,7 @@ def test_replan_endpoint_rechecks_the_same_candidate_with_the_current_environmen
     assert done.status_code == 202
     got = settle()
     assert got["state"] == "ready" and got["installed"] == ["pandas"], got
-    assert len(seen) == 3 and all(rel.startswith(ai_convert.STAGE_PREFIX) for rel in seen)
+    assert len(seen) == 3 and all(rel == "fig_matplotlib.py" for rel in seen)
     assert len(state["prompts"]) == 1, "Resuming dependencies must not ask the model to regenerate"
     assert candidate.read_bytes() == generated
     assert (figs / script).read_bytes() == source

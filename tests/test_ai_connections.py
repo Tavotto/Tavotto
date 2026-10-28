@@ -2178,7 +2178,11 @@ def edit_check_chain(chain):
 
     def runner(figures_dir, rel, write_roots=None):
         runs.append((rel, write_roots))
-        text = (Path(figures_dir) / rel).read_text(encoding="utf-8")  # 临时校验文件，紧挨原脚本
+        # 影子脚本（ADR 0143 修订）：候选字节在候选目录，项目里 rel 位置放的是原脚本——与真 runner 一样按登记取
+        from tavotto.engine import execspec, shadowscript
+
+        shadow = shadowscript.lookup(figures_dir, rel, execspec.write_roots_key(write_roots))
+        text = Path(shadow or Path(figures_dir) / rel).read_text(encoding="utf-8")
         return {
             "stems": ["Fig1"],
             "size_mm": None,

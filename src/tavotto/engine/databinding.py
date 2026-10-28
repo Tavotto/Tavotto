@@ -38,7 +38,7 @@ import os
 from collections.abc import Iterator
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from . import projectenv, scriptanswers
+from . import projectenv, scriptanswers, shadowscript
 
 #: 「像数据文件」的扩展名（小写、不带点）。表外的名字只有带目录分隔符时才算候选：
 #: `os.path` / `matplotlib.pyplot` 这类模块名带点但不带分隔符，不该被当成文件。
@@ -900,7 +900,12 @@ def evidence(script_path: str | os.PathLike, project_root: str | os.PathLike) ->
         }
     script = Path(real)
     try:
-        source = script.read_bytes().decode("utf-8", errors="replace")
+        # 影子脚本（ADR 0143 修订）：校验运行的候选字节在候选目录、项目里没有这个文件；位置（script.parent）仍是项目里的
+        source = (
+            Path(shadowscript.lookup_active(root, real) or script)
+            .read_bytes()
+            .decode("utf-8", errors="replace")
+        )
     except OSError:
         source = ""
     lits = relative_path_literals(source)

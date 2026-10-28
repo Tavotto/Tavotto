@@ -150,6 +150,7 @@ from .engine import (
     scriptedit as engine_scriptedit,
     scriptlock as engine_scriptlock,
     session_client as engine_session_client,
+    shadowscript as engine_shadowscript,
     sourcelang as engine_sourcelang,
     specfix as engine_specfix,
     svgexecution as engine_svgexecution,
@@ -12719,7 +12720,20 @@ def _convert_runner(
         # Validate the primary entry used by discovery/reopening. Generic probing
         # may try a helper after main fails; a helper's figure cannot certify the
         # complete converted script or hide its original execution error.
-        entries = [entry] if entry else engine_probe.entry_candidates(figures_dir, rel)[:1]
+        entries = (
+            [entry]
+            if entry
+            else engine_probe.entry_candidates(
+                figures_dir,
+                rel,
+                # 影子脚本（ADR 0143 修订）：候选字节在候选目录、项目里没有这个文件
+                source=engine_shadowscript.lookup(
+                    figures_dir, rel, engine_execspec.write_roots_key(write_roots)
+                )
+                if write_roots
+                else None,
+            )[:1]
+        )
         result = engine_probe.probe(figures_dir, rel, entries=entries, **run_kw, **roots_kw)
         try:
             if result.get("error"):

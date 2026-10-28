@@ -4106,7 +4106,7 @@ export interface ConvertStatus {
   /** `state === 'awaiting_dependencies'` 时的卡片事实 */
   dependency_card?: ConvertDependencyCard | null
   /** `state === 'failed'`（续跑失败）时的原因 */
-  failure?: { reason: string; installer_code?: string; packages?: string[]; code?: string } | null
+  failure?: { reason: string; installer_code?: string; packages?: string[]; code?: string; files?: string[]; total?: number; sync_folder?: boolean } | null
   script: string
   target_name: string
   /** 位图库名；R / MATLAB 来源没有（null） */
@@ -4118,6 +4118,8 @@ export interface ConvertStatus {
   comparison: ConvertComparison | null
   has_preview: boolean
   adopted_script?: string | null
+  /** `state === 'ready'`：采用会在项目里新增的文件（项目相对路径，原脚本不动）；老后端没有 */
+  adopt_adds?: string[]
 }
 
 const jsonPost = (body?: unknown): RequestInit => ({

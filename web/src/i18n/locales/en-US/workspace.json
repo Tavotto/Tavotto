@@ -1311,6 +1311,7 @@
         "syntax_error": "The generated script has a syntax error",
         "other_file_changed": "The assistant changed files it shouldn’t have, so it was discarded",
         "project_files_changed": "The validation run changed project files, so it was discarded",
+        "project_files_changed_sync": "Project files changed in the meantime, so it was discarded. This project is in a sync folder, so the sync app may be changing files. Wait for syncing to finish, then retry",
         "render_not_wired": "The new version can’t be checked right now",
         "budget_exhausted": "Out of attempts",
         "missing_dependency": "The Python packages the new version needs are not installed (auto-install is off, or they can't be installed automatically). Install them yourself and try again",
@@ -1329,6 +1330,7 @@
         "matlab": "This is a MATLAB script; {{product}} can write a separate, directly editable Matplotlib version and leave the original untouched."
       },
       "unverified": "{{product}} didn’t run R / MATLAB. Compare side by side before using it",
+      "adoptAdds": "Adopting only adds {{files}}; your original script is not touched",
       "installed": "Installed {{names}} for this project",
       "btn": {
         "start": "Make editable version",

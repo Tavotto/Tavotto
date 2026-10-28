@@ -568,6 +568,7 @@ MCP 来源的 safe 运行在 worker 里多装一道**运行期**写入检查（`
 - 与捕获 / 守卫的关系：现有守卫（真实图库的 `Path.unlink` / `write_text` 跳过、删除 / 改名账本）**一字不动**，绊线装在 `ledger.install()` 之后，不改任何一条守卫的语义；它也不属于 `safe_file_operation_blocked` 那一族，不触发 0127 的回退。
 - 配置经 `execspec.worker_argv` 的 `--write-roots`，缺省（GUI / CLI）argv 逐字节不变；池键 `_worker_key` / `_worker_base` 并入 `execspec.write_roots_key`。
 - 窗口 = 脚本 build；窗口外（导出、override、预览）是引擎自己的写，不拦。脚本留下的线程 / `atexit` 在窗口外，是盲区。
+- 影子脚本（ADR 0143 修订）：转换校验的候选字节留在候选目录，`shadowscript` → `ExecutionSpec.script_source` → `worker_argv` 的 `--script-source`（缺省 argv 逐字节不变）；`__file__` / `sys.argv[0]` 是项目里将来的位置，项目里不写任何文件。读脚本字节的新代码路径要同时认 `script_source`；用例 `tests/test_convert_shadow_validation.py`。
 - 盲区清单与白名单见 `docs/rules/backend/execution-entries.md`「写入根绊线」与 ADR 0141；用例 `tests/test_mcp_write_tripwire.py` 同时钉「挡得住的」和「挡不住的」。
 
 ## 速查表原要点（#815 精简时迁入，原文照搬）

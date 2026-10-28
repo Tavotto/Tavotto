@@ -61,7 +61,7 @@ import stat
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
-from . import depresolve, distmeta, execspec, figcapture, projectenv, scanbudget
+from . import depresolve, distmeta, execspec, figcapture, projectenv, scanbudget, shadowscript
 
 BUCKET_STDLIB = "stdlib"
 BUCKET_LOCAL = "local"
@@ -1750,6 +1750,14 @@ class _Scanner:
             else Path(self.script).as_posix()
         )
         self.stem = stem
+        if (
+            self.tree_given is None
+            and self.entry.kind == execspec.TARGET_SCRIPT
+            and not self.script_outside
+        ):
+            # 影子脚本（ADR 0143 修订）：生成可编辑版本的校验运行，候选字节在候选目录、项目里没有这个文件；
+            # 依赖调研读那份字节（只读、解析失败当没有），其余（本地模块查找等）照常以项目为根
+            self.tree_given = _shadow_tree(self.root, self.script)
         if self.entry.kind == execspec.TARGET_SCRIPT or entry_pkg is not None:
             if self.tree_given is not None and self.entry.kind == execspec.TARGET_SCRIPT:
                 parsed = self._visit(self.tree_given, "", entry_rel)
@@ -2267,6 +2275,16 @@ def _rank(top: _Top) -> int:
 
 
 # ---------------------------------------------------------------- 入口
+
+
+def _shadow_tree(root: Path, script: str) -> ast.Module | None:
+    source = shadowscript.lookup_active(root, script)
+    if source is None:
+        return None
+    try:
+        return ast.parse(Path(source).read_text(encoding="utf-8", errors="replace"))
+    except (OSError, SyntaxError, ValueError, RecursionError, MemoryError):
+        return None
 
 
 def scan(

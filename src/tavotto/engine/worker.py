@@ -43,6 +43,7 @@ import faulthandler
 import hashlib
 import importlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -386,6 +387,200 @@ def _capture_entry_sha(script: Path, captured: list[str]):
         yield
     finally:
         SourceFileLoader.get_code = original
+
+
+@contextlib.contextmanager
+def _redirect_open_code(display: Path, source: Path):
+    """`runpy.run_path(display)` 读代码时把 `display` 换成 `source` 的字节（`--script-source`，影子脚本）。
+
+    `runpy`（CPython 3.10–3.15 同形）只经 `io.open_code` 读 .py 源码并以 `display` 为文件名编译，所以脚本里的
+    `__file__` / traceback 文件名 / `sys.argv[0]` 都是 `display`，而字节来自 `source`。只改这一个路径、
+    其余 `open_code`（import 系统自己走 `_io.open_code`，不经这里）一概原样；缺了这次命中，`run_path` 会以
+    FileNotFoundError 大声失败，不会静默跑错文件。"""
+    real = io.open_code
+    target = _norm_path(display)
+
+    def open_code(path):
+        try:
+            hit = _norm_path(path) == target
+        except (OSError, TypeError, ValueError):
+            hit = False
+        return real(os.fspath(source)) if hit else real(path)
+
+    io.open_code = open_code
+    try:
+        yield
+    finally:
+        io.open_code = real
+
+
+def _import_shadow_entry(display: Path, source: Path, stem: str):
+    """`importlib.import_module(stem)` 的影子版：模块名 / `__file__` / `__spec__.origin` 是 `display`，字节读自 `source`。
+    `get_code` 仍是 `SourceFileLoader` 的（`_capture_entry_sha` 照常包它），只换 `get_data` 的落点、并让 `path_stats`
+    失败（`display` 不存在 → 不读 / 不写 .pyc，永远从源码编译）。"""
+    from importlib.machinery import SourceFileLoader  # noqa: PLC0415
+
+    display_key = _norm_path(display)
+
+    class _ShadowLoader(SourceFileLoader):
+        def get_data(self, path):
+            if _norm_path(path) == display_key:
+                path = os.fspath(source)
+            return super().get_data(path)
+
+        def path_stats(self, path):
+            raise OSError("shadow script has no stat")
+
+    loader = _ShadowLoader(stem, os.fspath(display))
+    spec = importlib.util.spec_from_file_location(stem, os.fspath(display), loader=loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[stem] = module
+    try:
+        loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(stem, None)
+        raise
+    return module
+
+
+_SPAWN_BOOTSTRAP = """\
+# Tavotto 影子脚本的 spawn 引导（自动生成，勿改）。同一个文件两种用法：
+# 1) 子进程：multiprocessing 按 init_main_from_path 以 __mp_main__ 重跑本文件——让子进程读到与父进程同一份候选字节，
+#    且 __file__ / sys.argv[0] 仍是项目里的显示路径；
+# 2) 父进程：worker 按路径加载本文件后调 install()，包住 get_preparation_data（只改子进程 main 的路径，不碰任何对象）。
+# 引擎模块（src/tavotto/engine）自己不 import multiprocessing（ADR 0014 §6 / 0020 §8：Figure 不出进程）；
+# 这份生成的文件才碰它，且全文没有 pickle / Figure / 任何写。
+import importlib
+import importlib.abc
+import importlib.machinery
+import importlib.util
+import io
+import os
+import runpy
+import sys
+
+_CFG = __CFG__
+_DISPLAY = _CFG["display"]
+_SOURCE = _CFG["source"]
+
+
+def _norm(p):
+    return os.path.normcase(os.path.realpath(os.fspath(p)))
+
+
+_KEY = _norm(_DISPLAY)
+
+
+def install():
+    import multiprocessing.spawn as mp_spawn
+
+    patched = []
+    boot_path = _CFG["boot"]
+
+    def wrap(mod):
+        orig = getattr(mod, "get_preparation_data", None)
+        if orig is None:
+            return
+
+        def get_preparation_data(*args, **kwargs):
+            data = orig(*args, **kwargs)
+            main_path = data.get("init_main_from_path")
+            ours = main_path is not None and _norm(main_path) == _KEY
+            if ours or _CFG["mode"] != "main":
+                data.pop("init_main_from_name", None)
+                data["init_main_from_path"] = boot_path
+            return data
+
+        mod.get_preparation_data = get_preparation_data
+        patched.append((mod, orig))
+
+    wrap(mp_spawn)
+    if _CFG["loky"]:
+        for name in ("joblib.externals.loky.backend.spawn", "loky.backend.spawn"):
+            try:
+                wrap(importlib.import_module(name))
+            except Exception:
+                continue
+
+    def restore():
+        while patched:
+            mod, orig = patched.pop()
+            mod.get_preparation_data = orig
+
+    return restore
+
+
+if __name__ == "__mp_main__" and _CFG["mode"] == "main":
+    _real = io.open_code
+
+    def _open_code(path):
+        try:
+            hit = _norm(path) == _KEY
+        except (OSError, TypeError, ValueError):
+            hit = False
+        return _real(_SOURCE) if hit else _real(path)
+
+    io.open_code = _open_code
+    try:
+        _inner = runpy.run_path(_DISPLAY, run_name="__mp_main__")
+    finally:
+        io.open_code = _real
+    globals().update(_inner)
+elif __name__ == "__mp_main__":
+
+    class _ShadowLoader(importlib.machinery.SourceFileLoader):
+        def get_data(self, path):
+            if _norm(path) == _KEY:
+                path = _SOURCE
+            return super().get_data(path)
+
+        def path_stats(self, path):
+            raise OSError("shadow script has no stat")
+
+    class _Finder(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path=None, target=None):
+            if name != _CFG["stem"]:
+                return None
+            return importlib.util.spec_from_file_location(
+                name, _DISPLAY, loader=_ShadowLoader(name, _DISPLAY)
+            )
+
+    sys.meta_path.insert(0, _Finder())
+"""
+
+
+def _install_spawn_shadow(display: Path, source: Path, entry_is_main: bool, boot_dir: Path):
+    """影子脚本 + 子进程启动方式 spawn / forkserver（Windows、macOS 默认）：子进程按 `__main__.__file__`
+    重新执行显示路径，而显示路径上没有文件（转换）或是旧字节（改图），也继承不了父进程临时替换的 `io.open_code`。
+
+    做法：在**沙盒里**（不碰用户项目，也不往候选目录加文件）写一份自动生成的引导文件 `_SPAWN_BOOTSTRAP`，按路径加载后
+    调它的 `install()`：包一层 `get_preparation_data`（`ProcessPoolExecutor` 同走它；候选 import 了 joblib 时再包 loky 的同名函数），
+    把子进程的 main 指向这份引导文件。**本模块不 import 那个多进程库**——碰它的只有生成的文件（引擎里 Figure 不出进程的门禁，
+    ADR 0014 §6 / 0020 §8）。子进程里引导文件装同样的 `open_code` 重定向后以 `__mp_main__` 跑显示路径——`__file__` /
+    `sys.argv[0]` 仍是显示路径、cwd 沿用父进程（原脚本目录），`dirname(__file__)` 读数据与父进程一致；入口不是 `__main__`
+    （import 入口模块）时，改装一个只认入口模块名的 meta_path 查找器，让子进程 unpickle 时 import 到的也是候选字节。
+    返回还原函数；写不出 / 加载不了引导文件（沙盒不可写）就什么都不包——退回到旧行为，不影响父进程。"""
+    boot = boot_dir / "_tavotto_shadow_spawn_main.py"
+    try:
+        loky = bool(_static_import_roots(source) & {"joblib", "loky"})
+    except Exception:  # noqa: BLE001 — 静态扫描失败只是少包一层
+        loky = False
+    cfg = {
+        "display": str(display),
+        "source": str(source),
+        "mode": "main" if entry_is_main else "entry",
+        "stem": display.stem,
+        "boot": os.fspath(boot),
+        "loky": loky,
+    }
+    try:
+        boot.write_text(_SPAWN_BOOTSTRAP.replace("__CFG__", repr(cfg)), encoding="utf-8")
+        spec = importlib.util.spec_from_file_location("_tavotto_shadow_spawn_parent", boot)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.install()
+    except Exception:  # noqa: BLE001 — 引导装不上就退回旧行为
+        return lambda: None
 
 
 class SafeSession(figsession.LiveFigureSession):
@@ -907,6 +1102,11 @@ class Worker(wireproto.V1Handler):
     def __init__(self, args):
         global SESSION
         self.script = Path(args.script).resolve()
+        #: 影子脚本（`--script-source`）：用户项目里**没有**这个文件（校验运行不往用户项目写任何东西），
+        #: 字节来自这个路径，而 `__file__` / traceback / `sys.argv[0]` 仍是 `self.script`（项目里它将来所在的位置）。
+        #: 没给 = 就是 `self.script`（旧行为逐字节不变）。
+        source = getattr(args, "script_source", None)
+        self.script_source = Path(source).resolve() if source else self.script
         self.figures_dir = Path(args.figures_dir).resolve()
         self.out_dir = Path(args.out_dir).resolve()
         self.sandbox = Path(args.sandbox).resolve()
@@ -1265,7 +1465,7 @@ class Worker(wireproto.V1Handler):
         self._probe_misses = figcapture.ProbeMisses()
         # 脚本源码给改指当证据：落在 cwd 里的绝对路径是不是相对路径规范化来的（证不出就保留绝对身份）
         try:
-            script_source = self.script.read_text(encoding="utf-8", errors="replace")
+            script_source = self.script_source.read_text(encoding="utf-8", errors="replace")
         except OSError:
             script_source = ""
         figcapture.install_input_remap(
@@ -1311,7 +1511,7 @@ class Worker(wireproto.V1Handler):
         try:
             import ast  # noqa: PLC0415
 
-            source_bytes = self.script.read_bytes()
+            source_bytes = self.script_source.read_bytes()
             unused = figcapture.unused_imports(ast.parse(source_bytes))
         except (OSError, SyntaxError, ValueError):
             unused = frozenset()
@@ -1349,7 +1549,7 @@ class Worker(wireproto.V1Handler):
         #   从不查 `__pycache__`，读的就是源码本身。故沿用执行前后括号：读源码那一刻必落在 pre 与 post 之间，
         #   两端 (mtime_ns, size, inode, sha) 完全相同 ⇒ 期间没被写过（刻意 utime 回拨属对抗性，不设防）；不同 → None。
         #   `_source_stamp` 只给这条路径用。
-        pre = _source_stamp(self.script) if self.entry == "__main__" else None
+        pre = _source_stamp(self.script_source) if self.entry == "__main__" else None
         entry_shas: list[str] = []
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
         # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
@@ -1358,6 +1558,13 @@ class Worker(wireproto.V1Handler):
         # 里连一行 traceback 都没有。与 `python fig.py` 的语义对齐：退出码 0 /
         # None 就是脚本正常结束（已经画好的图照常捕获），非零才是它自己报的失败。
         # paper_style 的 import 也在这道保护里：它是用户代码，import 期间一样能 exit。
+        restore_spawn = (
+            _install_spawn_shadow(
+                self.script, self.script_source, self.entry == "__main__", self.sandbox
+            )
+            if self.script_source != self.script
+            else (lambda: None)
+        )
         with (
             contextlib.redirect_stdout(stdout_tail),
             executionfact.on_user_entry(self.script, self._execution_entered),
@@ -1377,10 +1584,19 @@ class Worker(wireproto.V1Handler):
                 if self.entry == "__main__":
                     import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
 
-                    runpy.run_path(str(self.script), run_name="__main__")
+                    if self.script_source != self.script:
+                        with _redirect_open_code(self.script, self.script_source):
+                            runpy.run_path(str(self.script), run_name="__main__")
+                    else:
+                        runpy.run_path(str(self.script), run_name="__main__")
                 else:
                     with _capture_entry_sha(self.script, entry_shas):
-                        module = importlib.import_module(self.script.stem)
+                        if self.script_source != self.script:
+                            module = _import_shadow_entry(
+                                self.script, self.script_source, self.script.stem
+                            )
+                        else:
+                            module = importlib.import_module(self.script.stem)
                     getattr(module, self.entry)()
             except SystemExit as exc:
                 if exc.code not in (None, 0):
@@ -1416,9 +1632,10 @@ class Worker(wireproto.V1Handler):
                 # 脚本跑完了：之后再有谁读 stdin 一律 EOF，绝不再发问（也绝不再碰协议管道）
                 channel.closed = True
                 ledger.stop()
+                restore_spawn()
                 # 无论正常结束 / SystemExit / 异常都在这里收括号（finally 不改变原有异常传播）
                 if self.entry == "__main__":
-                    post = _source_stamp(self.script)
+                    post = _source_stamp(self.script_source)
                     self._source_sha256 = pre[3] if pre is not None and pre == post else None
                 else:
                     # 恰好一次加载才可信；零次（入口模块此前已在 sys.modules，如被 paper_style 提前 import）或多次 → None
@@ -1517,7 +1734,7 @@ class Worker(wireproto.V1Handler):
         except ValueError:  # 脚本不在图库下（防御，不该发生）
             rel = self.script.name
         try:
-            script_bytes = self.script.read_bytes()
+            script_bytes = self.script_source.read_bytes()
         except OSError:
             script_bytes = b""
         fingerprint = figcapture.source_fingerprint(
@@ -1771,7 +1988,7 @@ class Worker(wireproto.V1Handler):
             t = str(token).casefold()
             if t and (t in folded or folded in t):
                 return False
-        return name in _static_import_roots(self.script)
+        return name in _static_import_roots(self.script_source)
 
     def _fidelity_summary(self) -> dict | None:
         """本轮账本的 `fidelity` 段（闭集枚举 + 计数）；有弱信号时在 worker.log 留一行供诊断。"""
@@ -1852,6 +2069,8 @@ def _parse_remap(raw) -> list[dict]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--script", required=True)
+    # 影子脚本：字节读自这里、`__file__` 仍是 --script（校验运行不往用户项目写文件；没给 = 旧行为）
+    ap.add_argument("--script-source", default=None)
     ap.add_argument("--figures-dir", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--sandbox", required=True)

@@ -25,7 +25,16 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import ai_prompt_pack, ai_tasks, config, discover, figureverify, registry, scriptlock
+from . import (
+    ai_prompt_pack,
+    ai_tasks,
+    config,
+    discover,
+    figureverify,
+    registry,
+    scriptlock,
+    syncnoise,
+)
 from .ai_tasks import FAILED, NOT_APPLICABLE, UNKNOWN, VERIFIED, CheckResult, TaskError
 
 TASK_TYPE = "figure_edit"
@@ -92,6 +101,7 @@ def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) ->
             d
             for d in dirnames
             if d not in skip_names
+            and not syncnoise.is_sync_noise(d)
             # 环境目录整棵跳过（链接目录不在此列：它走下面的链接记录，不进入）
             and ((Path(dirpath) / d).is_symlink() or not is_python_env_dir(Path(dirpath) / d))
         )
@@ -111,6 +121,8 @@ def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) ->
                 mtime = None
             files[rel] = ["link", _readlink(p), mtime]
         for name in sorted(filenames):
+            if syncnoise.is_sync_noise(name):
+                continue  # 同步客户端 / 系统自己写的（闭集见 `syncnoise`）：不是校验运行改的
             p = Path(dirpath) / name
             rel = p.relative_to(root).as_posix()
             if rel in exclude:
@@ -138,7 +150,25 @@ def fingerprint_changes(before: dict, after: dict) -> list[str] | None:
     if before.get("status") != "ok" or after.get("status") != "ok":
         return None
     a, b = before["files"], after["files"]
-    return sorted(k for k in a.keys() | b.keys() if a.get(k) != b.get(k))
+    return sorted(k for k in a.keys() | b.keys() if _entry_changed(a.get(k), b.get(k)))
+
+
+def _entry_changed(x: list | None, y: list | None) -> bool:
+    """同步客户端常只碰 mtime（内容一字未变）：两侧都有内容摘要且 size + 摘要都相同，就不算改动。
+    没有摘要的（超过哈希上限的大文件、链接、读不了的）仍按完整记录比，mtime 变了算变。"""
+    if x == y:
+        return False
+    if (
+        x is not None
+        and y is not None
+        and len(x) == 3
+        and len(y) == 3
+        and x[2] is not None
+        and x[0] == y[0]
+        and x[2] == y[2]
+    ):
+        return False
+    return True
 
 
 def _tree(root: Path) -> dict[str, str] | None:
@@ -805,7 +835,8 @@ def text_changes_note(after: dict[str, dict], before: dict[str, dict | None]) ->
 
 
 def _with_original_names(manifests, cand: Candidate):
-    """校验运行的是临时文件 `tavotto_convert_probe_<sid>.py`；只 show 不 savefig 的图 worker 按脚本 stem 兜底命名（`fallback_stems`：
+    """（影子脚本之后校验运行以原脚本自己的路径跑，兜底命名本就是原 stem，这里通常是恒等；旧名识别留作防御。）
+    历史：校验运行曾是临时文件 `tavotto_convert_probe_<sid>.py`；只 show 不 savefig 的图 worker 按脚本 stem 兜底命名（`fallback_stems`：
     `<stem>`、`<stem>-2`…），于是叫临时文件名。把这个前缀换回原脚本的 stem，才和基线（原脚本）同名可比。savefig 命名的图不受影响。"""
     if not isinstance(manifests, dict):
         return manifests
@@ -948,7 +979,7 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
 
     **与产品提交前同一套**，不另写判据：
     1. 提交前 L1（`FigureEditAdapter._precommit`）：目标还在且改过 / 语法 / 静态输出名集合不变 / 候选里没有别的文件被改 / 原项目没被动；
-    2. 都过了再真渲染：候选字节以紧挨原脚本的临时文件在用户同一路由下跑一遍（`run_validation` = `ai_convert.run_validation`，由桥注入以免 import 成环，写入根绊线只开候选目录，
+    2. 都过了再真渲染：候选字节作为影子脚本（项目里不写任何文件，`__file__` 是原脚本自己的路径）在用户同一路由下跑一遍（`run_validation` = `ai_convert.run_validation`，由桥注入以免 import 成环，写入根绊线只开候选目录，
        **不写任何用户文件、不运行原脚本本身**），要求仍捕获到图；
     3. 数据指纹（`figureverify.data_unchanged`，提交后 L2 用的同一个函数）对基线——基线是池里已 build 的那个会话落盘的 manifest（只读，
        不重放不退役，`check_before` 钩子）；没有基线 = 这一项没量（报告里说明），不影响通过与否。
