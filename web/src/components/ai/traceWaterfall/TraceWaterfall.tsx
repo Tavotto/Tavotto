@@ -46,6 +46,7 @@ import {
   type LaneSegment,
   type SegType,
   type TraceNode,
+  END_LABEL_PX,
 } from './utils'
 
 export interface TraceWaterfallProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
@@ -57,7 +58,8 @@ export interface TraceWaterfallProps extends Omit<HTMLAttributes<HTMLDivElement>
 const MIN_ZOOM = 1
 type Scope = 'lane' | 'step'
 type Details = { id: string; scope: Scope; anchor: HTMLElement }
-type View = { start: number; domain: number }
+/** `edgePct`：条尾超过这里，时长小字才改放到条尾左边（= 时间轴为它留的右边之外） */
+type View = { start: number; domain: number; edgePct?: number }
 const clampSplit = (p: number) => Math.min(70, Math.max(20, p))
 
 export function TraceWaterfall({ model, now, className, style, ...props }: TraceWaterfallProps) {
@@ -86,7 +88,9 @@ export function TraceWaterfall({ model, now, className, style, ...props }: Trace
   const metrics = useMemo(() => computeMetrics(roots, model, now), [roots, model, now])
   const matches = useMemo(() => matchingIds(roots, query), [roots, query])
   const whole = traceDomain(metrics.extent, model.running, track.width)
-  const view: View = useMemo(() => zoom ?? { start: 0, domain: whole }, [zoom, whole])
+  // 时间轴已在最后一条之后留了 END_LABEL_PX：条尾落在留边以内就照常放右边，只有放大后贴到右缘才翻到左边（不压住条）
+  const edgePct = track.width > 0 ? Math.max(50, 100 - (END_LABEL_PX / track.width) * 100 + 0.5) : 90
+  const view: View = useMemo(() => ({ ...(zoom ?? { start: 0, domain: whole }), edgePct }), [zoom, whole, edgePct])
   const ticks = useMemo(() => ticksFor(view.start, view.domain), [view])
   const running = useCallback((n: TraceNode) => isRunning(n.span, model), [model])
 
@@ -539,7 +543,7 @@ function RowImpl({ node, open, hasChildren, ticks, view, now, model, slowest, de
   )
 
   const figureLeft = span.timing === 'point' ? span.start : end
-  const edge = pct(figureLeft, view) > 90
+  const edge = pct(figureLeft, view) > (view.edgePct ?? 90)
 
   return (
     <div

@@ -237,7 +237,7 @@ const TICK_STEPS = [0.5, 1, 2, 5, 10, 15, 20, 30, 60, 120, 300, 600, 1800, 3600]
 const LIVE_DOMAINS = [8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096]
 
 /** 已结束的时间轴在最后一条之后至少留这么多像素：最后一条后面的时长小字（「2m 34s」）要放得下 */
-const END_LABEL_PX = 64
+export const END_LABEL_PX = 64
 
 export function traceDomain(extent: number, running: boolean, trackWidth = 0) {
   if (!running) {
