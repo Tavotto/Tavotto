@@ -156,6 +156,8 @@ export function AssetBrowser() {
   const recentlyUsed = useAssetStore((s) => s.recentlyUsed)
   const runtimeAssets = useRuntimeAssetStore((s) => s.assets)
   const objects = useDocumentStore((s) => s.doc.objects)
+  const canvases = useDocumentStore((s) => s.canvases)
+  const activeCanvasId = useDocumentStore((s) => s.activeCanvasId)
   const scriptCount = useScriptLibraryStore(
     (s) => (s.view?.all_scripts?.length ?? 0) + (s.view?.foreign_scripts?.length ?? 0),
   )
@@ -220,6 +222,20 @@ export function AssetBrowser() {
     }
     return map
   }, [objects])
+
+  /** 当前项目**全部画布**里每个素材的使用次数：当前画布用实时 objects，其余取 canvases（未显示的画布
+   * 的最新状态在那里，可能还没保存到磁盘）。只给「从素材中移除」的在用判定与 used_ids，卡片角标仍用 usage */
+  const projectUsage = useMemo(() => {
+    const map = new Map<string, number>()
+    const add = (list: readonly { type: string; fileId?: string }[]) => {
+      for (const o of list) {
+        if (o.type === 'panel' && o.fileId) map.set(o.fileId, (map.get(o.fileId) ?? 0) + 1)
+      }
+    }
+    add(objects as never)
+    for (const c of canvases) if (c.id !== activeCanvasId) add(c.objects as never)
+    return map
+  }, [objects, canvases, activeCanvasId])
 
   // 来源选项也收「用不了的文件」所在的目录：一个子目录里只有范围之外的 TIFF 时，它得选得中，
   // 否则那张清单按来源筛不出来（Codex #561）
@@ -656,7 +672,7 @@ export function AssetBrowser() {
         <AssetCardMenu
           item={items.find((it) => itemId(it) === cardMenu.id)}
           panel={panels.find((p) => p.id === cardMenu.id)}
-          usage={usage}
+          usage={projectUsage}
           runtimeAssets={runtimeAssets ?? []}
           at={cardMenu}
           onClose={() => {
@@ -1390,7 +1406,7 @@ function AssetCardMenu({
 }: {
   item: LibraryItem | undefined
   panel?: PanelInfo
-  /** 画布里每个素材的使用次数（卡片 ×N 角标的同一份数据） */
+  /** 当前项目全部画布里每个素材的使用次数（移除的在用判定与 used_ids；不是卡片角标那份） */
   usage: Map<string, number>
   runtimeAssets: RuntimeAssetInfo[]
   at: { x: number; y: number }

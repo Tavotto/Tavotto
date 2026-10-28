@@ -6390,7 +6390,8 @@ def api_runtime_remove():
         resp.status_code = 409
         return resp
     script, stem = status["script"], status["stem"]
-    layout_dirs = [d for d in (project_store_dir(ctx), ctx.path / "canvases") if d is not None]
+    # 与 /api/layouts 同一来源：tavottofile/、旧项目 canvases/、数据目录 layouts/ 以后加了新位置也自动纳入
+    layout_dirs = _layout_read_dirs()
     if engine_runtimeasset.uses_stem(
         body.get("used_ids"), ctx.registry, script, stem
     ) or engine_runtimeasset.saved_layouts_use_stem(layout_dirs, ctx.registry, script, stem):

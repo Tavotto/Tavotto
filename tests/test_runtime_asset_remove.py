@@ -199,6 +199,25 @@ class TestSavedLayoutsCountAsInUse:
         assert (figs / "tavotto_registry.json").read_bytes() == before
         assert _cache_exists(figs, _id("gone.py", "gone"))
 
+    def test_layout_dir_saved_layout_reference_refuses(self, client, tmp_path, monkeypatch):
+        figs, _store = self._setup(client, tmp_path)
+        layouts = tmp_path / "app_layouts"
+        layouts.mkdir()
+        monkeypatch.setattr(m, "LAYOUT_DIR", layouts)
+        doc = {
+            "schema": 3,
+            "canvases": [{"objects": [{"type": "panel", "fileId": _id("gone.py", "gone")}]}],
+        }
+        (layouts / "Old.json").write_text(json.dumps(doc), encoding="utf-8")
+        before = (figs / "tavotto_registry.json").read_bytes()
+        resp = client.post(
+            "/api/runtime/remove", json={"id": _id("gone.py", "gone"), "used_ids": []}
+        )
+        assert resp.status_code == 409
+        assert resp.get_json()["code"] == "runtime_asset_in_use"
+        assert (figs / "tavotto_registry.json").read_bytes() == before
+        assert _cache_exists(figs, _id("gone.py", "gone"))
+
     def test_autosave_broken_and_reserved_documents_do_not_block(self, client, tmp_path):
         figs, store = self._setup(client, tmp_path)
         ref = json.dumps({"objects": [{"fileId": _id("gone.py", "gone")}]})

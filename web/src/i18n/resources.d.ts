@@ -3142,7 +3142,7 @@ export default interface Resources {
       "run_config_unreadable": "这个项目保存的运行参数记录已损坏，Tavotto 没有拿它去运行（否则可能用错参数画出一张看似正常的图）。Tavotto 不会自动覆盖或删除它。请修复或删除该项目的运行参数记录文件后再重试（无参数运行不受影响）。",
       "run_config_unsupported": "这份运行参数记录来自更新版本的 Tavotto，当前版本读不懂。请升级后再试，不会改用空参数运行。",
       "runtime_asset_has_no_original_artifact": "运行时素材没有原始图文件，无法写回。磁盘上有同名文件时，请从素材库写回。",
-      "runtime_asset_in_use": "画布中正在使用这张图，不能从素材中移除。",
+      "runtime_asset_in_use": "画布或已保存的排版中正在使用，不能从素材中移除。",
       "runtime_asset_source_present": "这张图所属的脚本还在磁盘上，不能从素材中移除。",
       "runtime_asset_unknown": "运行时素材没有记录：{{id}}。重新运行该脚本即可重新建立关联；若它来自带参数的运行，请用原参数重新运行。",
       "runtime_cache_missing": "该运行时素材尚未生成预览。运行脚本后会自动生成。",

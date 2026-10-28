@@ -111,7 +111,10 @@ beforeEach(() => {
   mockAdd.mockClear()
   mockProbe.mockReset()
   mockRemove.mockClear()
-  useDocumentStore.setState((st) => ({ doc: { ...st.doc, objects: [] } }))
+  useDocumentStore.setState((st) => ({
+    doc: { ...st.doc, objects: [] },
+    canvases: st.canvases.filter((c) => c.id !== 'cv-other'),
+  }))
 })
 
 afterEach(async () => {
@@ -245,6 +248,43 @@ describe('RuntimeAssetCard', () => {
       expect(item.textContent).toContain('画布中正在使用')
       await act(async () => item.click())
       expect(mockRemove).not.toHaveBeenCalled()
+    })
+
+    it('只在非当前画布上用到：置灰，且请求的 used_ids 含它（未保存的画布也算）', async () => {
+      useRuntimeAssetStore.setState({ assets: [asset({ status: 'missing_source' })] })
+      useDocumentStore.setState((st) => ({
+        doc: { ...st.doc, objects: [] },
+        canvases: [
+          ...st.canvases,
+          {
+            id: 'cv-other',
+            name: 'B',
+            page: st.doc.page,
+            objects: [{ type: 'panel', fileId: ID }] as never,
+            guides: [],
+          },
+        ],
+      }))
+      await mount()
+      await openMenu()
+      const item = removeItem()!
+      expect(item.hasAttribute('data-disabled')).toBe(true)
+      await act(async () => item.click())
+      expect(mockRemove).not.toHaveBeenCalled()
+      // 换成可点的另一张图，验证别的画布上的引用被带进 used_ids
+      const OTHER = 'runtime:b.py#b'
+      useRuntimeAssetStore.setState({
+        assets: [asset({ status: 'missing_source' }), asset({ id: OTHER, script: 'b.py', stem: 'b', status: 'missing_source' })],
+      })
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      })
+      const card = host.querySelector<HTMLElement>(`[data-card="${OTHER}"]`)!
+      await act(async () => {
+        card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 30 }))
+      })
+      await act(async () => removeItem()!.click())
+      expect(mockRemove).toHaveBeenCalledWith(OTHER, [ID])
     })
 
     it('脚本还在的运行时卡、以及文件素材：菜单里没有这一项', async () => {
