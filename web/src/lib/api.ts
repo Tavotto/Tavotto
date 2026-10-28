@@ -7232,6 +7232,18 @@ export interface RuntimeAssetInfo {
 export const fetchRuntimeAssets = () =>
   jsonFetch<{ assets: RuntimeAssetInfo[] }>('/api/runtime/assets')
 
+/**
+ * 「从素材中移除」：脚本已不在磁盘上的 runtime 素材，摘掉它的登记与物化 cache（绝不动用户文件）。
+ * `usedIds` = 当前画布 / 排版里全部面板的 fileId（文档状态在前端，后端据此防守「在用」）。
+ * 失败是带稳定 code 的 ApiError：`runtime_asset_in_use` / `runtime_asset_source_present` / `runtime_asset_unknown`。
+ */
+export const removeRuntimeAsset = (id: string, usedIds: string[]) =>
+  jsonFetch<{ removed: boolean; id: string }>('/api/runtime/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, used_ids: usedIds }),
+  })
+
 /* ------------------ Tavotto Run · native 会话（ADR 0021） ------------------ */
 
 /**

@@ -268,6 +268,36 @@ def drop_cache(project_root: str | Path, asset_id: str) -> None:
     shutil.rmtree(cache_dir(project_root, asset_id), ignore_errors=True)
 
 
+def drop_stem_caches(project_root: str | Path, script: str, stem: str) -> None:
+    """删掉 (script, stem) 这张图的全部物化 cache：无参数那份 + 运行配置（T03）变体各一份。
+
+    只删 `data_dir()/cache/runtime/` 下 Tavotto 自己的派生物，绝不碰用户文件；"从素材中移除"用。
+    """
+    drop_cache(project_root, figcapture.runtime_asset_id(script, stem))
+    try:
+        configs = runconfig.configs_of(project_root, script)
+    except runconfig.RunConfigError:
+        return  # 登记读不出：变体 cache 是派生物，留给 prune_cache 收，不因此让移除失败
+    for cfg in configs:
+        drop_cache(project_root, figcapture.runtime_asset_id(script, stem, cfg.id))
+
+
+def uses_stem(used_ids: object, registry, script: str, stem: str) -> bool:
+    """`used_ids`（当前画布 / 排版里的面板 fileId）里有没有这张图（含它的运行配置变体）。
+
+    逐个 id 走 `resolve()` 正向重算比对 (script, stem)，不反解 id；解析不到的 id 与它无关。
+    """
+    if not isinstance(used_ids, (list, tuple, set, frozenset)):
+        return False
+    for fid in used_ids:
+        if not is_runtime_id(fid):
+            continue
+        hit = resolve(fid, registry)
+        if hit is not None and hit["script"] == script and hit["stem"] == stem:
+            return True
+    return False
+
+
 #: cache 总预算：与引擎会话缓存同一治理思路（超预算按最后使用时间从旧到新删）。
 RUNTIME_CACHE_MAX_BYTES = 256 * 1024 * 1024
 RUNTIME_CACHE_KEEP = 200

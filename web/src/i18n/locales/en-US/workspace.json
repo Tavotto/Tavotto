@@ -39,6 +39,8 @@
     "refreshTip": "Check the project for new files and script changes",
     "refreshing": "Checking for new files…",
     "removeFilter": "Remove filter: {{label}}",
+    "removeFromAssets": "Remove from assets",
+    "removeInUse": "In use on the canvas",
     "resetFilters": "Reset filters",
     "retry": "Retry",
     "runtimeBadge": "Runtime figure",

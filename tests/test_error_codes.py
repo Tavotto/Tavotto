@@ -201,6 +201,8 @@ USER_VISIBLE_CODES = {
     "runtime_asset_unknown": {"id"},
     "runtime_asset_has_no_original_artifact": set(),
     "runtime_cache_missing": set(),
+    "runtime_asset_source_present": set(),
+    "runtime_asset_in_use": set(),
     # --- Compatibility Bridge Session 5：素材库普通入口 ---
     "probe_in_progress": {"script"},
     "script_name_missing": set(),

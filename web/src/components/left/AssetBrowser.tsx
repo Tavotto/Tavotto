@@ -656,6 +656,8 @@ export function AssetBrowser() {
         <AssetCardMenu
           item={items.find((it) => itemId(it) === cardMenu.id)}
           panel={panels.find((p) => p.id === cardMenu.id)}
+          usage={usage}
+          runtimeAssets={runtimeAssets ?? []}
           at={cardMenu}
           onClose={() => {
             setCardMenu(null)
@@ -1381,11 +1383,16 @@ function UnsupportedAssets({ items }: { items: UnsupportedAsset[] }) {
 function AssetCardMenu({
   item,
   panel,
+  usage,
+  runtimeAssets,
   at,
   onClose,
 }: {
   item: LibraryItem | undefined
   panel?: PanelInfo
+  /** 画布里每个素材的使用次数（卡片 ×N 角标的同一份数据） */
+  usage: Map<string, number>
+  runtimeAssets: RuntimeAssetInfo[]
   at: { x: number; y: number }
   onClose: () => void
 }) {
@@ -1400,6 +1407,21 @@ function AssetCardMenu({
   const stale = item.kind === 'runtime' && actionable && !!runtimeStaleKey(item.asset)
   const runScript = () => {
     if (item.kind === 'runtime' && !busy) void useScriptRunStore.getState().run(item.asset.script)
+  }
+  // 「从素材中移除」只给脚本已不在磁盘上的运行时图；画布在用就置灰（同一张图的运行配置变体也算在用）
+  const orphan = item.kind === 'runtime' && item.asset.status === 'missing_source'
+  const inUse =
+    item.kind === 'runtime' &&
+    runtimeAssets.some(
+      (a) =>
+        a.script === item.asset.script && a.stem === item.asset.stem && (usage.get(a.id) ?? 0) > 0,
+    )
+  const removeAsset = () => {
+    if (item.kind !== 'runtime') return
+    void useRuntimeAssetStore
+      .getState()
+      .removeAsset(item.asset.id, [...usage.keys()])
+      .catch((e: unknown) => useUiStore.getState().setStatus(backendErrorMsg(e), 'error'))
   }
   const cap = panel?.capability
   const showCap = !!panel && !!cap && cap.status !== 'editable'
@@ -1439,6 +1461,17 @@ function AssetCardMenu({
           onSelect={() => useProjectReadinessStore.getState().focusPanel(panel.id, 'panel')}
         >
           {translate('readiness.openCenter', { ns: 'workspace' })}
+        </MenuItem>
+      )}
+      {orphan && (
+        <MenuItem
+          icon={X}
+          disabled={inUse}
+          reason={inUse ? ab('removeInUse') : undefined}
+          data-asset-remove
+          onSelect={removeAsset}
+        >
+          {ab('removeFromAssets')}
         </MenuItem>
       )}
     </PointMenu>

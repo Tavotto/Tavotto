@@ -58,6 +58,12 @@ order: 140
     `_status_ladder`（`stale_status` 与 `list_assets` 共用，列表场景只探
     一次解释器）。条目带物化 cache 里的描述符（前端「添加到画布」的数据
     源）；没跑过的条目没有尺寸没有描述符——不给假值。
+  * **从素材中移除（孤儿图）**：脚本已不在磁盘上（`missing_source`）的 runtime 素材可经
+    `POST /api/runtime/remove {id, used_ids}` 摘掉——只动注册表（唯一写入函数 `discover.write_config`，
+    经 `discover.unregister_stem`，同脚本别的 stem 保留，最后一个 stem 走后整条脚本条目消失）与
+    `data_dir()` 下的物化 cache（含运行配置变体，`runtimeasset.drop_stem_caches`），**绝不删改用户文件**。
+    拒绝码：`runtime_asset_source_present`（脚本还在，409）、`runtime_asset_in_use`（`used_ids` 里有这张图
+    或它的运行配置变体，409）、`runtime_asset_unknown`。看护 `tests/test_runtime_asset_remove.py`。
   * 看护 `tests/test_runtime_asset.py`；`tavotto open` 的自动 probe 仍
     刻意未动（Session 6）。素材库普通入口已落地（Session 5，前端规则见
     `web/AGENTS.md`）。

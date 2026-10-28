@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   fetchRuntimeAssets,
   fetchRuntimeStatus,
+  removeRuntimeAsset,
   type RuntimeAssetInfo,
   type RuntimeStaleStatus,
 } from '@/lib/api'
@@ -44,6 +45,8 @@ interface RuntimeAssetStore {
   previewNonce: Record<string, number>
   /** 重取清单（只读端点，绝不触发脚本执行）；幂等去重 */
   loadAssets: () => Promise<void>
+  /** 「从素材中移除」孤儿 runtime 素材（后端摘登记 + 删 cache），成功后重取清单；失败抛 ApiError */
+  removeAsset: (id: string, usedIds: string[]) => Promise<void>
   bumpPreview: (ids: string[]) => void
   /** 查询一次该面板的状态（幂等；非 runtime 面板与在途请求直接跳过） */
   ensure: (panel: PanelObject) => void
@@ -95,6 +98,13 @@ export const useRuntimeAssetStore = create<RuntimeAssetStore>((set, get) => ({
         set({ assetsLoading: false })
       })
     return assetsInflight
+  },
+
+  removeAsset: async (id, usedIds) => {
+    const started = epoch
+    await removeRuntimeAsset(id, usedIds)
+    if (epoch !== started) return
+    await get().loadAssets()
   },
 
   bumpPreview: (ids) =>
