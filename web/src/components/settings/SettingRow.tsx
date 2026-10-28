@@ -154,7 +154,7 @@ export function SettingRow({
   /** fixed：控件落在定宽的控件列；fill：控件整行宽，落到标题下一行；auto：控件按内容宽贴右缘、与标题块垂直居中，组太窄才叠放 */
   control?: 'fixed' | 'fill' | 'auto'
   /**
-   * default：标题列弹性 + 控件列定宽 240、控件贴右缘；balanced：两列 4 : 6、控件从控件列左缘起排
+   * default：标题列弹性 + 控件列定宽 240、控件贴右缘；balanced：两列 4 : 6、控件贴控件列右缘
    * （格式复选框、库选择、安装表单这类控件本身就宽、或是一组控件的行；2026-10-07 设计审计 §9.1）
    */
   layout?: 'default' | 'balanced'
@@ -230,6 +230,8 @@ export function SettingRow({
         className={cn(
           'flex min-h-7 min-w-0 items-center gap-2',
           !fill && !balanced && 'justify-end justify-self-end',
+          // balanced 的控件列是 6/10 的宽格：控件仍贴格的右缘，与别的行的控件同一条右缘线
+          balanced && 'justify-end',
           !fill && !auto && settingControlStacked,
           auto && settingControlAutoStacked,
         )}
