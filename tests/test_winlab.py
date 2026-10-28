@@ -3263,10 +3263,12 @@ def test_connect_driver_row_settles_only_on_a_final_state():
     import connect_driver as C
 
     busy = {"present": True, "connected": False, "button": {"text": "…", "disabled": True}}
-    assert not C.settled(busy, "connect") and not C.settled(busy, "disconnect")
+    assert not C.settled(busy, "connect", 999) and not C.settled(busy, "disconnect")
     assert C.settled({"present": True, "connected": True, "button": None}, "connect")
     retry = {"present": True, "connected": False, "button": {"text": "重试", "disabled": False}}
-    assert C.settled(retry, "connect")  # 失败：按钮回来可点，结论由 agent 读文件判
+    # 接好了、列表还没刷新回来时按钮也是可点的：过了宽限才当失败落定
+    assert not C.settled(retry, "connect", C.CONNECT_REFRESH_GRACE_S - 1)
+    assert C.settled(retry, "connect", C.CONNECT_REFRESH_GRACE_S)
     assert not C.settled({"present": True, "connected": True, "button": None}, "disconnect")
     assert C.settled(retry, "disconnect")
     assert not C.settled({"present": False}, "connect")

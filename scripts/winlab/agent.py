@@ -3549,7 +3549,7 @@ def zcode_isolated_config(
         },
     }
     if not with_mcp:
-        # desktop-connect：tavotto 那一条由 Tavotto 桌面版的「接入」按钮写（旁人条目见 prepare_connect_targets）
+        # desktop-connect：tavotto 那一条由 Tavotto 桌面版的「接入」按钮写进用户级两处（旁人条目见 prepare_connect_targets）
         run_conf["mcp"] = {"servers": {}}
     # 三处各放一份：项目目录、用户级（数据目录下的 cli/）、以及「非项目对话」的默认工作目录
     # `<数据目录>/.zcode/workspace/default`——桌面版不开文件夹时对话就在那里，项目配置从工作目录发现；
@@ -3560,7 +3560,12 @@ def zcode_isolated_config(
         zdata / ".zcode" / "workspace" / "default" / ".zcode" / "config.json",
     ):
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps(run_conf, indent=2), encoding="utf-8")
+        conf = run_conf
+        if not with_mcp and f.parent.parent == proj:
+            # 按钮不写项目级：这里不放 mcp 键，空的服务器表会盖掉用户级那两处（Lab run 20261028T111218Z-773916：
+            # 录制器一行都没收到）
+            conf = {k: v for k, v in run_conf.items() if k != "mcp"}
+        f.write_text(json.dumps(conf, indent=2), encoding="utf-8")
     return pc
 
 
@@ -4403,7 +4408,7 @@ def install_tavotto_for_connect(setup: Path, base: dict) -> tuple[dict | None, d
             "result": "environment_unavailable",
             "summary": f"HKLM WebView2 debug-port policy missing for {shell.name}: run `winlab.py admin gui-setup`",
         }
-    return {"shell": shell, "cli": cli, "wrapped": False}, None
+    return {"shell": shell, "cli": cli, "wrapped": False, "install_dir": shell.parent}, None
 
 
 def tavotto_gui_env(env: dict, work: Path) -> dict:
@@ -4793,7 +4798,13 @@ def run_desktop_live_task(
             if connect and connect.get("originals") is not None:
                 base["connect_restore"] = restore_real_targets(connect)
             if tavotto_setup is not None:
-                base["tavotto_uninstall"] = {"ok": uninstall_all()}
+                uninstall_all()
+                # 只核对这次装的那一份（Lab 上另有卸不掉的残留 beta 卸载项，不算这次的）
+                mine = connect["install_dir"] if connect else None
+                base["tavotto_uninstall"] = {
+                    "ok": mine is None
+                    or all(Path(e["InstallLocation"]) != mine for e in _hkcu_installs())
+                }
             base["uninstall"] = uninstall_desktop_host(host, work, henv)
             if ext_dir.exists():
                 _rmtree_no_follow(ext_dir)

@@ -97,14 +97,21 @@ def row_state(cdp: D.CDP, sid: str, host: str) -> dict:
     return v if isinstance(v, dict) else {"present": False}
 
 
-def settled(state: dict, action: str) -> bool:
-    """这一行落定了没有：connect → 已接入，或按钮回来且可点（失败提示 / 重试）；disconnect → 接入按钮回来。"""
+#: connect：按钮回来可点之后，界面还要再跑一次 `hosts list`（冻结 CLI 冷启动几秒）才会换成「已接入」。按钮可点却一直
+#: 没换过来这么久，才当成失败落定（Lab run 20261028T111218Z-773916：一可点就判，抢在刷新之前）
+CONNECT_REFRESH_GRACE_S = 90.0
+
+
+def settled(state: dict, action: str, enabled_for: float = 0.0) -> bool:
+    """这一行落定了没有：connect → 已接入，或按钮可点且已过了列表刷新的宽限（失败提示 / 重试）；
+    disconnect → 接入按钮回来。`enabled_for` = 按钮连续可点了多少秒。"""
     if not state.get("present"):
         return False
     btn = state.get("button")
+    enabled = bool(btn and not btn.get("disabled"))
     if action == "connect":
-        return bool(state.get("connected")) or bool(btn and not btn.get("disabled"))
-    return bool(btn and not btn.get("disabled")) and not state.get("connected")
+        return bool(state.get("connected")) or (enabled and enabled_for >= CONNECT_REFRESH_GRACE_S)
+    return enabled and not state.get("connected")
 
 
 def click(cdp: D.CDP, sid: str, find_js: str) -> bool:
@@ -171,10 +178,20 @@ def operate(cdp: D.CDP, sid: str, ns: argparse.Namespace, out_dir: Path, prog) -
     else:
         if not click(cdp, sid, _q(f"{row_sel(ns.host)} [data-host-more]")):
             return {**res, "error": "no ⋯ button on the row (not shown as connected?)"}
-        if not wait_js(cdp, sid, _menuitem(DISCONNECT_LABELS), 10) or not click(
-            cdp, sid, _menuitem(DISCONNECT_LABELS)
-        ):
+        if not wait_js(cdp, sid, _menuitem(DISCONNECT_LABELS), 10):
             return {**res, "error": "no 「断开」 item in the ⋯ menu"}
+        time.sleep(
+            0.8
+        )  # 菜单弹出有动画：位置稳定了再点（Lab run 20261028T111218Z-773916 点了没反应）
+        if not click(cdp, sid, _menuitem(DISCONNECT_LABELS)):
+            return {**res, "error": "could not click 「断开」"}
+        time.sleep(1)
+        if cdp.evaluate(sid, f"!!({_menuitem(DISCONNECT_LABELS)})") is True:
+            # 菜单还开着 = 鼠标没点中：聚焦那一项、按真实的回车（Radix 菜单项认回车）
+            cdp.evaluate(sid, f"({_menuitem(DISCONNECT_LABELS)}).focus()")
+            for typ in ("keyDown", "keyUp"):
+                D._key(cdp, sid, typ, "Enter", "Enter", 13)
+            res["disconnect_via"] = "enter"
     prog.step("clicked", action=ns.action)
     # 第一次接入：按钮先弹系统的选文件夹框（Tauri 的 dialog 插件）；它在不在都要看一眼——已记住文件夹时不弹
     if ns.action == "connect":
@@ -185,9 +202,16 @@ def operate(cdp: D.CDP, sid: str, ns: argparse.Namespace, out_dir: Path, prog) -
     end = time.monotonic() + ns.settle_timeout
     state = row_state(cdp, sid, ns.host)
     time.sleep(1)  # 点下去到按钮变「正在接入…」之间有一帧：别把点之前的样子当成落定
+    enabled_since = None
     while time.monotonic() < end:
         state = row_state(cdp, sid, ns.host)
-        if settled(state, ns.action):
+        btn = state.get("button")
+        if btn and not btn.get("disabled"):
+            enabled_since = enabled_since or time.monotonic()
+        else:
+            enabled_since = None
+        held = time.monotonic() - enabled_since if enabled_since else 0.0
+        if settled(state, ns.action, held):
             break
         time.sleep(1)
     else:
