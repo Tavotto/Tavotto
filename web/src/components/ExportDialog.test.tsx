@@ -230,6 +230,18 @@ async function setup(tickPt: number, page = { w: 80, h: 60 }, panelH = 60) {
   })
 }
 
+/**
+ * 单图编辑（画布上恰好一张图）不判画布摆放类规则；要测「画布范围下摆放类阻断还在」的用例
+ * 再放一张隐藏的图，让画布是排版（隐藏的图也计一张、几何上不占位）。
+ */
+async function keepInLayout() {
+  await act(async () => {
+    useDocumentStore.getState().commit(literal('第二张图（隐藏）'), (d) => {
+      d.objects = [...d.objects, { ...panel, id: 'p-pad', hidden: true } as never]
+    })
+  })
+}
+
 const text = () => document.body.textContent ?? ''
 
 /** 位图素材 + 快速编辑（原图范围）的夹具；`overrides` 决定走"照抄"还是"重画" */
@@ -679,6 +691,7 @@ describe('阻断不拦导出：无警告句 + 自动记录未处理的项', () =
 describe('未处理的项随每次导出自动记录', () => {
   it('问题集合变了，下一次导出的报告记的是现在这一批（没有确认状态可以过期）', async () => {
     await setup(7.5) // 7.5pt 刻度 → 一条阻断项
+    await keepInLayout()
     await click(button('开始导出')!)
     const first = exportBodies[0].style_check_report as { checks: unknown[] }
     expect(first.checks).toHaveLength(1)
@@ -916,6 +929,7 @@ describe('撞名之后「覆盖」带着的未处理项与第一次一致', () =
   it('撞名之后问题集合变了：「覆盖」带的是现在这一批（报告随之变）', async () => {
     jobStatus = 'conflict'
     await setup(7.5)
+    await keepInLayout()
     await click(button('开始导出')!)
     expect(exportBodies).toHaveLength(1)
     expect(button('覆盖'), '这一步得真的停在冲突条上').toBeTruthy()
@@ -971,6 +985,7 @@ describe('原图范围不被画布摆放阻断（FLAG-B1）', () => {
   }
   const offPage = async (tickPt: number) => {
     await setup(tickPt, { w: 150, h: 100 })
+    await keepInLayout()
     useDocumentStore.getState().commit(literal('摆到页外'), (d) => {
       ;(d.objects[0] as PanelObject).x = -20
     })
