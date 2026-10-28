@@ -122,7 +122,7 @@ async function exportWith(page: Page, formats: string[], filename: string) {
     canvas?: { page_w_mm: number; page_h_mm: number }
   }
   const job = (await response.json()) as { export_dir: string }
-  await expect(page.locator('[data-export-finish]')).toBeVisible({ timeout: 240_000 })
+  await expect(page.locator('[data-export-result]')).toBeVisible({ timeout: 240_000 })
   await expect(page.locator('[data-export-failed]')).toHaveCount(0)
   return { dir: job.export_dir, request, dialog }
 }
