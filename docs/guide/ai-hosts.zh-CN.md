@@ -2,6 +2,27 @@
 
 > 属于 [Tavotto 自述](../../README.zh-CN.md)，这里放 README 指过来的细节。
 
+## 装了桌面版：点「接入」
+
+打开**设置 → 改图助手 → 接入 AI 编辑器**。Tavotto 在这台电脑上找到的每个编辑器各占一行：还没接入的显示**接入**；接好的显示 **✓ 已接入**，旁边的 **⋯** 里有「更改文件夹」和「断开」。没找到的编辑器写「未检测到」，没有按钮。
+
+第一次点「接入」会让你选一个项目文件夹，所有编辑器共用它；整个主目录和磁盘根目录不收。按钮用的是桌面版自带的 Tavotto（`tavotto-cli mcp`），不下载任何东西，也不碰你自己的 Python。
+
+| 哪一行 | 「接入」改了什么 |
+| --- | --- |
+| Codex | 装 Codex 插件，与 `tavotto codex install` 相同 |
+| Claude Code | `claude mcp add --scope user tavotto …`（已装 Tavotto 插件时跳过） |
+| Cursor | `~/.cursor/mcp.json` |
+| VS Code | VS Code 用户目录里的 `mcp.json` |
+| Trae | Trae（或 Trae CN）用户目录里的 `mcp.json` |
+| ZCode | `~/.zcode/cli/config.json` 与 `~/.zcode/workspace/default/.zcode/config.json` |
+| WorkBuddy | `~/.workbuddy/mcp.json`，并在 `mcp-approvals.json` 里只信任这一条 |
+| Claude Desktop | `claude_desktop_config.json`（标准模式的本地对话） |
+
+只写入或删除 `tavotto` 这一项，文件里的其他内容不动。已有的文件改之前先复制成 `<文件名>.tavotto-backup-<时间>`；读不懂的文件不改。接入后在编辑器里新开一个会话或对话：多数编辑器只在启动时读这些文件。「断开」再把 `tavotto` 这一项删掉（WorkBuddy 的信任记录留着：它只对那一条原样的配置有效）。
+
+下面的插件安装方式，适合不用桌面版、或者还想要插件里技能的情况。
+
 ## 完整的 Codex 集成
 
 验收状态：画布在真实 Codex Desktop 任务里只验收过一次，时间是 2026-08-24，引擎与插件 0.9.2，Codex Desktop 26.818（[验收记录](../acceptance/codex-desktop-canvas.md)）；当前发行版没有重做，而「把图交接到桌面窗口」不算这块画布。不读取本机插件的宿主永远看不到这些工具。

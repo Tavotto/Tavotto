@@ -215,6 +215,33 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
       `environment_unavailable`（BLOCKED），**不绕**。Squirrel 的 `claude.exe` 是启动壳（1 s 就退），等安装目录下的主窗口。
     - **已知余项**：这一版的工作区 shell 配置关不掉——报告 `host_tool_uses` / `host_shell_commands` 从会话记录里列出模型实际用过的
       工具名与命令原文（截 300 字）；验收那次它只跑了一条只读的 `ls /sessions/*/mnt/`（找 Tavotto 落成文件的大结果）。
+  - **「接入 AI 编辑器」真机验收 `desktop-connect --mode <格> --package <Tavotto 安装包>`**（`CONNECT_CELLS`：`zcode-native` →
+    ZCode 那一行、`workbuddy-native` → WorkBuddy 那一行）：同一格 desktop-live，只是 tavotto 那一条 MCP 配置**不由执行器写**，
+    而由装好的 Tavotto 写。装法同 `desktop-window`（`cache\packages\` 里带 `.sha256` 的包，非管理员静默装，只认这次装出来的
+    那一份）；`connect_driver.py` 在交互会话里起 `Tavotto.exe --open <只放示例 PDF 的项目>`（WebView2 调试端口同 desktop-window
+    的 HKLM 策略），真实鼠标事件点左栏「设置」→「改图助手」→ 那一行的「接入」，第一次接入弹的系统选文件夹框用 `fill_folder_dialog`
+    填宿主的项目目录。Tavotto 用 tavotto-lab **真实的用户目录**起（改了 `USERPROFILE`，WebView2 就不开策略给的调试端口——Lab 实测），
+    它自己的数据 / 配置目录进 run 目录。
+    - **真实用户目录里的那几个文件跑完还原**：接入前存下原样（含 WorkBuddy 的 `mcp-approvals.json`），跑完写回原样但**去掉
+      tavotto 那一条**，删掉本次 Tavotto 生成的 `*.tavotto-backup-*` 与为此建的空目录；报告 `connect_restore` 列出还原了什么。
+    - **按钮这一侧的判据是执行器自己的**（`connect_targets` / `judge_connect_written`，不 import 产品的 hostconnect）：接入前在
+      每个目标文件里去掉残留的 tavotto、放一条旁人条目 `lab-keep-me`（ZCode 那份 `enabled=false`）；点完之后每个文件**只多出 tavotto
+      一条**，命令 = 安装目录里的 `tavotto-cli.exe`、参数 = `["mcp"]`、env 只有 `TAVOTTO_MCP_ROOTS` = 选的文件夹，几个文件里的那一条
+      相同；WorkBuddy 另要有按执行器自己的指纹算法算出的信任记录。文件不符 → `connect=failed`，不跑宿主；文件对了但那一行没显示
+      「已接入」→ `connect=failed`，宿主照跑。报告带装好的 `tavotto-cli hosts list --json` 怎么看这一行（`connect.cli_list`）。
+    - **宿主这一侧**：宿主仍跑在 desktop-live 那个隔离的家里（ZCode 的 `zdata`、WorkBuddy 的常驻家，落盘 key 与登录态的范围不变），
+      执行器把按钮写的那一条放进宿主的家里**同样的相对位置**，并在跑宿主的那段时间给真实目录与宿主的家两处都包上录制器（只换
+      command / args，env 不动；ZCode 设了 `ZCODE_DATA_BASE_DIR` 仍读真实 `~/.zcode` 的用户级配置，Lab 实测；WorkBuddy 为包过的
+      那一条在宿主的家里另记信任），宿主拉起的服务端就是桌面版自带的 `tavotto-cli mcp`；判据同 desktop-live 的 `judge_live`。
+      跑完把真实目录里的换回按钮写的原样、从宿主的家里删掉这一条，再起一次 Tavotto：那一行要认出「已接入」，点「⋯」→「断开」，之后真实目录里每个目标文件与接入前
+      **逐键相同**（tavotto 没了、旁人条目还在）→ `disconnect=passed`。报告 `levels` 多 `connect` / `disconnect` 两项，结论按
+      六项聚合。断开前先结束宿主不在 Job 里的后台进程；那一次 Tavotto 起来却停在错误页（渲染服务没就绪）就记下 sidecar 日志尾部、
+      重起一次，报告 `disconnect_first_try` 如实留着。Tavotto 跑完卸载（只核对这次装的那一份，卸载器慢就再等再试）。
+  - **WorkBuddy 会自己升级**：它在后台把新版本安装包下进 TEMP（`workbuddy-update-*`），下次启动就去装、9 s 退出。固定版本的验收
+    不让宿主中途换版本：`workbuddy-native*` 每轮启动前删掉下好的更新包，报告 `host_update_removed` 记下。
+  - **抹凭据只抹真 key**：没有我们 key 的格（WorkBuddy 用账户自带模型）占位是 `"\0"`，`_scrub` 对短于 8 个字符的值什么都不做——
+    拿 NUL 去抹会写坏 run 目录里的每个二进制文件（Lab 实测写坏了 Tavotto 的 SQLite）。读不了的文件（宿主后台进程开着）跳过并记进
+    报告 `scrub_unreadable`；用了我们 key 的格有读不了的就整次 `error`（没核对完不能说抹干净了）。
   - CC-Switch 的落盘例外**不在此**（单独的 PR 与单独的规则条目）。
 - 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境（交互会话里再经命名管道），除上面登记的 `zcode-native` / `claude-desktop-native`（key）与 `workbuddy-native*`（账户登录态）外 Lab 不落盘；证据落盘前抹掉凭据。证据字段按
 `docs/implementation/multi-host-mcp/acceptance.md`。

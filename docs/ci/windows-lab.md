@@ -171,6 +171,18 @@ BLOCKED，不会直连）、交互会话在。判据与 `hosts-live` 相同，�
 `<包>.sha256`（本机另下一份核对）、走 PR。**改了 `agent.py` / `desktop_driver.py` 要先 `admin deploy-agent`**（执行器在
 `tools\winlab\`，不随 `prepare` 更新）。
 
+### 「接入 AI 编辑器」按钮的真机验收
+
+```sh
+# Mac：从 release 取 Windows 安装包，与 SHA256SUMS.txt 核对后连同 <包名>.sha256 经管理员 scp 进 Lab 的 cache\packages\
+python3 scripts/winlab/winlab.py test desktop-connect --mode zcode-native --package Tavotto-<版本>-Windows-Setup.exe --ref HEAD
+python3 scripts/winlab/winlab.py test desktop-connect --mode workbuddy-native --package Tavotto-<版本>-Windows-Setup.exe
+```
+
+格与 key 同 desktop-live（`zcode-native` 用落盘专用 key，`workbuddy-native` 用常驻的登录态，没登录就照扫码那一节）。
+报告 `levels.connect` / `levels.disconnect` 是按钮那一侧，`connect.written.problems` 列出配置哪里不符，`connect.cli_list` 是
+装好的 CLI 自己怎么看这一行；截图在证据目录 `desktop-connect/tavotto-connect-{before,after}.png` 与 `tavotto-disconnect-*.png`。
+
 ### 真实模型调用（L4/L5）
 
 只用国内合规的 Anthropic 兼容接口（当前登记 DeepSeek）；Lab 在中国大陆，Anthropic / OpenAI 不在这里调。

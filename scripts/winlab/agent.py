@@ -81,6 +81,9 @@ DESKTOP_LIVE_LOGIN_MODES = ("workbuddy-native", "workbuddy-native-phone")
 DESKTOP_LIVE_ACCOUNT_MODEL_MODES = DESKTOP_LIVE_LOGIN_MODES
 #: 宿主只能从明文配置读 key 的格：用落盘专用 key（winlab.py ONDISK_MODES 同一份，测试核对），跑完 wipe_ondisk_key
 DESKTOP_LIVE_ONDISK_MODES = ("zcode-native", "claude-desktop-native")
+#: `desktop-connect --mode`：「接入 AI 编辑器」真机验收——这几格 desktop-live 的 MCP 配置不由执行器写，而由装好的
+#: Tavotto 桌面版设置里那一行的「接入」按钮写；值是那一行的宿主 id（`engine/hostconnect.py` 的 HOST_IDS）
+CONNECT_CELLS = {"zcode-native": "zcode", "workbuddy-native": "workbuddy"}
 #: 依赖安装配方的版本：改了 prepare 的安装步骤就加一，已有 venv 随之重装（散列戳里含它）。
 DEPS_RECIPE = "2"
 
@@ -321,6 +324,28 @@ TASKS: dict[str, Task] = {
                 "提示词经 CDP 注入输入框并点发送，不是真实键鼠输入（IME 不覆盖）",
                 "扩展包经 DMIT 从 Open VSX 下载（用户授权的范围，固定版本与散列），宿主运行时的网络是直连国内模型",
                 "只覆盖列出的宿主 × 扩展组合；其它桌面宿主 / 扩展仍是 L2 或 BLOCKED",
+                "Server 2025 不是 Windows 10 / 11 客户端",
+            ),
+        ),
+        Task(
+            id="desktop-connect",
+            kind="desktop-connect",
+            summary="「接入 AI 编辑器」真机验收：装 Tavotto 安装包，在它的设置里真点那一行的「接入」，宿主凭它写的配置连上桌面版自带的 MCP 服务端做到 L5，再点「断开」",
+            timeout_s=5400,
+            needs_model_conf=True,
+            accepts_package=True,
+            modes=tuple(CONNECT_CELLS),
+            claim=(
+                "按钮这一侧：装好的 Tavotto 设置里点「接入」（第一次接入在系统选文件夹框里选项目文件夹）后，宿主读的那几个配置文件里出现"
+                "且只多出 tavotto 一条，命令是安装目录里的 tavotto-cli.exe mcp、授权根是选的文件夹（WorkBuddy 另有这一条的信任记录）；"
+                "宿主这一侧：L3–L5 与 desktop-live 同一个 judge_live，服务端是桌面版自带的 tavotto-cli mcp；"
+                "点「断开」后这些文件与接入前逐键相同"
+            ),
+            unverified=(
+                "录制器在跑宿主的那段时间包在按钮写的命令外面（只换 command / args，env 与位置不动），断开前改回按钮写的原样；"
+                "按钮写的那一条本身由逐字核对证明，不是由宿主读它原样证明",
+                "提示词与点击经 CDP 投递（不是硬件键鼠，IME 不覆盖）；选文件夹框经窗口消息填写",
+                "只覆盖列出的宿主；其余各行（Cursor / VS Code / TRAE / Claude 桌面版 / Codex / Claude Code）不在这一格",
                 "Server 2025 不是 Windows 10 / 11 客户端",
             ),
         ),
@@ -1864,8 +1889,12 @@ def run_hosts_live_task(
         )
     else:
         r2 = {"exit_code": None, "skipped": "no session id from session 1"}
-    _scrub(ev, model_conf["api_key"])
-    _scrub(run_dir / "work", model_conf["api_key"])
+    unscrubbed = _scrub(ev, model_conf["api_key"]) + _scrub(run_dir / "work", model_conf["api_key"])
+    if unscrubbed:
+        return {
+            "result": "error",
+            "summary": f"could not check {len(unscrubbed)} file(s) for the key: {unscrubbed[:3]}",
+        }
     s2 = parse_recorded(rec_log, split)
     host_text = ""
     for f in ev.glob("session-1.*.log"):
@@ -1914,16 +1943,25 @@ def run_hosts_live_task(
     }
 
 
-def _scrub(folder: Path, needle: str) -> None:
-    """兜底：哪怕宿主把凭据回显进了日志，也在落成证据前抹掉。"""
-    if not needle or not folder.is_dir():
-        return
+def _scrub(folder: Path, needle: str) -> list[str]:
+    """兜底：哪怕宿主把凭据回显进了日志，也在落成证据前抹掉。返回读不了 / 写不回的文件（宿主的后台进程还开着它：
+    WorkBuddy 自动更新把安装包下进 TEMP，Lab run 20261028T114129Z-d49586 读它 Errno 22 崩了整个 agent）——
+    调用方决定这算不算没抹干净，这里不让一个文件中断收尾。"""
+    if len(needle or "") < 8 or not folder.is_dir():
+        # 没有真 key 的格用占位 "\0"（key_placeholder）：拿它去抹会把每个二进制文件里的 NUL 都换掉——Lab run
+        # 20261028T124404Z-2a15f4 就这样写坏了 Tavotto 的 SQLite（第二次起渲染服务崩在 ai_history）
+        return []
     raw = needle.encode()
+    skipped: list[str] = []
     for p in folder.rglob("*"):
-        if p.is_file():
-            data = p.read_bytes()
-            if raw in data:
-                p.write_bytes(data.replace(raw, b"<redacted>"))
+        try:
+            if p.is_file():
+                data = p.read_bytes()
+                if raw in data:
+                    p.write_bytes(data.replace(raw, b"<redacted>"))
+        except OSError:
+            skipped.append(str(p.relative_to(folder)))
+    return skipped
 
 
 MODEL_KEY_SHAPE_RE = re.compile(r"^[A-Za-z0-9_\-\.]{16,200}$")
@@ -3467,6 +3505,7 @@ def zcode_isolated_config(
     mcp_env: dict,
     model_conf: dict,
     tool_names: list[str] | None = None,
+    with_mcp: bool = True,
 ) -> Path:
     """ZCode 的隔离配置（ZCODE_DATA_BASE_DIR=zdata）：自定义 Anthropic 兼容接口 + tavotto MCP（项目级与用户级各一份）。
     **provider_config.json 里有明文 key**（落盘例外，见 docs/rules/ci/windows-lab.md）；返回它的路径，跑完由
@@ -3522,6 +3561,9 @@ def zcode_isolated_config(
             "disallowedTools": list(ZCODE_DISALLOWED_TOOLS),
         },
     }
+    if not with_mcp:
+        # desktop-connect：tavotto 那一条由 Tavotto 桌面版的「接入」按钮写进用户级两处（旁人条目见 prepare_connect_targets）
+        run_conf["mcp"] = {"servers": {}}
     # 三处各放一份：项目目录、用户级（数据目录下的 cli/）、以及「非项目对话」的默认工作目录
     # `<数据目录>/.zcode/workspace/default`——桌面版不开文件夹时对话就在那里，项目配置从工作目录发现；
     # 只写前两处时 MCP 与权限都没生效（run 20261026T153350Z-c4c8f7：工具列表里没有 tavotto、Bash 弹了权限框）
@@ -3531,7 +3573,12 @@ def zcode_isolated_config(
         zdata / ".zcode" / "workspace" / "default" / ".zcode" / "config.json",
     ):
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(json.dumps(run_conf, indent=2), encoding="utf-8")
+        conf = run_conf
+        if not with_mcp and f.parent.parent == proj:
+            # 按钮不写项目级：这里不放 mcp 键，空的服务器表会盖掉用户级那两处（Lab run 20261028T111218Z-773916：
+            # 录制器一行都没收到）
+            conf = {k: v for k, v in run_conf.items() if k != "mcp"}
+        f.write_text(json.dumps(conf, indent=2), encoding="utf-8")
     return pc
 
 
@@ -3882,6 +3929,8 @@ def wipe_ondisk_key(run_dir: Path, env: dict, key: str) -> dict:
 
 
 WORKBUDDY_LOGIN_HOST = "workbuddy.cn"
+#: WorkBuddy 自动更新把新版本安装包下进 TEMP 下的这个目录（Lab 实测 `workbuddy-update-x64\WorkBuddy-Setup-5.9.3.….exe`）
+WORKBUDDY_UPDATE_GLOB = "workbuddy-update-*"
 #: WorkBuddy 的后台进程（daemon / 运行时）映像路径里都带这个；删「家」之前要先结束它们（否则 WinError 5）
 WORKBUDDY_PROCESS_TOKENS = ("workbuddy",)
 QR_LOGIN_TIMEOUT_S = 600
@@ -4223,8 +4272,471 @@ def driver_argv(
     ]
 
 
+# ----------------------------------------------------------------------------- 「接入 AI 编辑器」真机验收
+#: 接入前放进每个目标文件的「旁人条目」：断开后必须原样还在（按钮只删 tavotto 那一项）。它起不来也无害：
+#: ZCode 那份 enabled=false，WorkBuddy 没有它的信任记录就不加载
+CONNECT_DECOY = "lab-keep-me"
+CONNECT_DECOY_ENTRY = {"command": "cmd.exe", "args": ["/c", "exit", "0"], "env": {}}
+#: 按钮写的那一条里，授权根的环境变量（`TAVOTTO_MCP_ROOTS`，与服务端读的同名）
+CONNECT_ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
+
+
+def connect_targets(host_id: str, home: Path) -> list[tuple[Path, tuple[str, ...]]]:
+    """按钮应当写的文件，以及 tavotto 那一条所在的键路径。这是**执行器自己的**知识——zcode-native / workbuddy-native
+    两格实测宿主读这些位置——不 import 产品的 hostconnect：拿被测代码当判据等于没判。"""
+    if host_id == "zcode":
+        servers = ("mcp", "servers")
+        return [
+            (home / ".zcode" / "cli" / "config.json", servers),
+            (home / ".zcode" / "workspace" / "default" / ".zcode" / "config.json", servers),
+        ]
+    if host_id == "workbuddy":
+        return [(home / ".workbuddy" / "mcp.json", ("mcpServers",))]
+    raise KeyError(host_id)
+
+
+def _read_json(f: Path) -> dict | None:
+    try:
+        d = json.loads(f.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def _servers(d: dict, path: tuple[str, ...], create: bool = False) -> dict | None:
+    box = d
+    for k in path:
+        nxt = box.get(k)
+        if not isinstance(nxt, dict):
+            if not create:
+                return None
+            nxt = box[k] = {}
+        box = nxt
+    return box
+
+
+def _decoy(path: tuple[str, ...]) -> dict:
+    return (
+        dict(CONNECT_DECOY_ENTRY, type="stdio", enabled=False)
+        if path == ("mcp", "servers")
+        else dict(CONNECT_DECOY_ENTRY)
+    )
+
+
+def prepare_connect_targets(targets: list[tuple[Path, tuple[str, ...]]]) -> dict[str, dict]:
+    """接入之前：每个目标文件里去掉上一次留下的 tavotto、放进旁人条目，其余键不动。返回接入前的样子（断开后要逐键相同）。"""
+    before: dict[str, dict] = {}
+    for f, path in targets:
+        d = _read_json(f) or {}
+        box = _servers(d, path, create=True)
+        box.pop("tavotto", None)
+        box[CONNECT_DECOY] = _decoy(path)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(d, indent=2), encoding="utf-8")
+        before[str(f)] = json.loads(json.dumps(d))
+    return before
+
+
+def _same_path(a: str, b: str) -> bool:
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def judge_connect_written(connect: dict) -> dict:
+    """按钮写完之后逐字核对：每个目标文件里有且只多了 tavotto 一条；命令 = 安装目录里的 tavotto-cli.exe，参数 = ["mcp"]，
+    env 只有授权根 = 选的那个文件夹；几个文件里的那一条相同；WorkBuddy 另有这一条的信任记录（键按执行器自己的算法算）。"""
+    problems: list[str] = []
+    written = None
+    for f, path in connect["targets"]:
+        d = _read_json(f)
+        if d is None:
+            problems.append(f"{f.name}: missing or not JSON")
+            continue
+        box = _servers(d, path) or {}
+        entry = box.get("tavotto")
+        if not isinstance(entry, dict):
+            problems.append(f"{f.name}: no tavotto entry under {'.'.join(path)}")
+            continue
+        rest = json.loads(json.dumps(d))
+        (_servers(rest, path) or {}).pop("tavotto", None)
+        if rest != connect["before"][str(f)]:
+            problems.append(f"{f.name}: other keys changed")
+        if not _same_path(str(entry.get("command", "")), str(connect["cli"])):
+            problems.append(f"{f.name}: command is not the installed tavotto-cli.exe")
+        if entry.get("args") != ["mcp"]:
+            problems.append(f"{f.name}: args {entry.get('args')!r} != ['mcp']")
+        env = entry.get("env")
+        if not isinstance(env, dict) or set(env) != {CONNECT_ROOTS_ENV}:
+            problems.append(f"{f.name}: env keys {sorted(env or {})!r} != [{CONNECT_ROOTS_ENV}]")
+        elif not _same_path(str(env[CONNECT_ROOTS_ENV]), str(connect["proj"])):
+            problems.append(f"{f.name}: {CONNECT_ROOTS_ENV} is not the chosen folder")
+        if written is None:
+            written = entry
+        elif entry != written:
+            problems.append(f"{f.name}: entry differs from the first target's")
+    if written is not None and connect["host_id"] == "workbuddy":
+        approvals = _read_json(connect["real_home"] / ".workbuddy" / "mcp-approvals.json") or {}
+        cmd = [str(written.get("command")), *[str(a) for a in written.get("args") or []]]
+        trust = f"{workbuddy_trust_hash(cmd, written.get('env') or {})}::tavotto"
+        if trust not in approvals:
+            problems.append("mcp-approvals.json: no trust record for the written entry")
+    return {"ok": not problems and written is not None, "problems": problems, "written": written}
+
+
+#: 发行安装包的文件名里带版本（`Tavotto-0.19.0-Windows-Setup.exe`），与卸载项的 DisplayVersion 对得上
+SETUP_VERSION_RE = re.compile(r"^Tavotto-(\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.]+)?)-Windows-Setup\.exe$")
+
+
+def pick_fresh_tavotto(found: list[dict], before: set[str], package: str) -> dict | None:
+    """这次装出来的那一份。卸不掉的旧安装（如只剩卸载项的 beta）不挡这次，但也绝不能顶替它：
+    包名带版本时只认 `DisplayName == "Tavotto"` 且 DisplayVersion 与包名相同的那一份（同版本覆盖装也认得出）；
+    包名读不出版本时只认这次新出现的安装位置。Lab run 20261028T104530Z-f3adab：按位置取拿到了残留的 beta。"""
+    m = SETUP_VERSION_RE.fullmatch(package)
+    if m:
+        hits = [
+            e
+            for e in found
+            if e.get("DisplayName") == "Tavotto" and e.get("DisplayVersion") == m.group(1)
+        ]
+    else:
+        hits = [e for e in found if e["InstallLocation"] not in before]
+    return hits[-1] if len(hits) == 1 else None
+
+
+def install_tavotto_for_connect(setup: Path, base: dict) -> tuple[dict | None, dict | None]:
+    """装被测的 Tavotto 安装包（非管理员 currentUser 静默装，同 desktop-window）；返回 (connect 上下文, 提前收场的结论)。"""
+    cleaned = uninstall_all()
+    before = {e["InstallLocation"] for e in _hkcu_installs()}
+    proc = subprocess.run([str(setup), "/S"], capture_output=True, timeout=900)
+    found = _hkcu_installs()
+    mine = pick_fresh_tavotto(found, before, setup.name)
+    base["tavotto"] = {
+        "installer_exit_code": proc.returncode,
+        "version": mine.get("DisplayVersion") if mine else None,
+        "display": mine.get("DisplayName") if mine else None,
+        "leftover_installs": []
+        if cleaned
+        else sorted(str(e.get("DisplayName")) for e in found if e is not mine),
+    }
+    if proc.returncode != 0 or mine is None:
+        # 装失败、或认不出哪一份是这次装的：绝不拿残留的旧版本当被测版本（Codex #1473 P1）
+        return None, {
+            **base,
+            "result": "error",
+            "summary": f"Tavotto installer exit {proc.returncode}; no install matching {setup.name}",
+        }
+    shell = Path(mine["InstallLocation"]) / "Tavotto.exe"
+    if not shell.is_file():
+        return None, {
+            **base,
+            "result": "error",
+            "summary": "Tavotto silent install did not produce Tavotto.exe",
+        }
+    # 冻结的引擎在安装目录的子目录里（sidecar 那一份旁边，同 installer-check 的找法），不在壳旁边
+    cli = next(
+        iter(sorted(shell.parent.rglob("tavotto-cli.exe"))), shell.with_name("tavotto-cli.exe")
+    )
+    if not cli.is_file():
+        return None, {
+            **base,
+            "result": "failed",
+            "summary": "installed Tavotto has no tavotto-cli.exe",
+        }
+    if not webview2_policy_ok(shell):
+        return None, {
+            **base,
+            "result": "environment_unavailable",
+            "summary": f"HKLM WebView2 debug-port policy missing for {shell.name}: run `winlab.py admin gui-setup`",
+        }
+    return {"shell": shell, "cli": cli, "wrapped": False, "install_dir": shell.parent}, None
+
+
+def tavotto_config_env(env: dict, work: Path) -> dict:
+    """问装好的 `tavotto-cli hosts list` 时的环境：配置目录与驱动器给 Tavotto 的同一个（hosts.json 在那里）。
+    用户目录**不改**——Tavotto 本身也用真实的用户目录起（见 connect_driver 的 `tavotto_env`）。"""
+    return dict(env, TAVOTTO_CONFIG_DIR=str(work / "tavotto-config"), TAVOTTO_NO_TELEMETRY="1")
+
+
+def _connect_driver_round(
+    lab: Lab, run_id: str, run_dir: Path, env: dict, connect: dict, action: str
+) -> dict:
+    work = run_dir / "work"
+    ev = run_dir / "evidence" / "desktop-connect"
+    ev.mkdir(parents=True, exist_ok=True)
+    opened = work / "tavotto-open"
+    if not opened.is_dir():
+        # 给 Tavotto 打开的项目：只放示例 PDF（「仅排版」素材，打开时不跑脚本），与宿主用的项目分开
+        opened.mkdir(parents=True)
+        for pdf in sorted((lab.repo / "examples" / "figures").glob("*.pdf")):
+            shutil.copy2(pdf, opened / pdf.name)
+    label = f"tavotto-{action}"
+    argv = [
+        str(lab.venv_python()),
+        "-I",
+        str(Path(__file__).resolve().parent / "connect_driver.py"),
+        "--exe",
+        str(connect["shell"]),
+        "--root",
+        str(connect["shell"].parent),
+        "--open",
+        str(opened),
+        "--host",
+        connect["host_id"],
+        "--action",
+        action,
+        "--folder",
+        str(connect["proj"]),
+        "--out-dir",
+        str(ev),
+        "--label",
+        label,
+        "--state-dir",
+        str(work),
+    ]
+    step = run_in_gui(lab, run_id, argv, work, env, ev / f"driver-{action}", 1200)
+    info: dict = {}
+    with contextlib.suppress(OSError, ValueError):
+        info = json.loads((ev / f"{label}.json").read_text(encoding="utf-8"))
+    return {"step": step, "driver": info}
+
+
+def tavotto_hosts_list(connect: dict, env: dict, work: Path) -> dict | None:
+    """装好的 tavotto-cli 自己怎么看（`hosts list --json`，与界面那一组同一个来源）：界面和文件对不上时看它。"""
+    try:
+        p = subprocess.run(
+            [str(connect["cli"]), "hosts", "list", "--json"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=tavotto_config_env(env, work),
+            timeout=180,
+        )
+        d = json.loads(p.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return None
+    row = [h for h in d.get("hosts") or [] if h.get("id") == connect["host_id"]]
+    return {"project_root": d.get("project_root"), "row": row[0] if row else None}
+
+
+def _backups(targets: list[tuple[Path, tuple[str, ...]]]) -> set[str]:
+    return {
+        str(b)
+        for f, _ in targets
+        if f.parent.is_dir()
+        for b in f.parent.glob(f"{f.name}.tavotto-backup-*")
+    }
+
+
+def snapshot_real_targets(connect: dict) -> None:
+    """真实用户目录里的目标文件（与 WorkBuddy 的信任文件）跑前的原样；`restore_real_targets` 跑完还原。"""
+    files = [f for f, _ in connect["targets"]]
+    if connect["host_id"] == "workbuddy":
+        files.append(connect["real_home"] / ".workbuddy" / "mcp-approvals.json")
+    connect["originals"] = {str(f): (f.read_bytes() if f.is_file() else None) for f in files}
+    connect["backups_before"] = _backups(connect["targets"])
+    # 这台账户上宿主的用户目录可能还不存在（WorkBuddy 平时跑在隔离的家里）：接入前由 prepare 建出来，跑完删掉建的
+    created: list[str] = []
+    for f in files:
+        d = f.parent
+        while d != connect["real_home"] and not d.exists() and str(d) not in created:
+            created.append(str(d))
+            d = d.parent
+    connect["created_dirs"] = sorted(created, key=len, reverse=True)
+
+
+def restore_real_targets(connect: dict) -> dict:
+    """还原跑前的原样，但**不留 tavotto 那一条**（Lab 账户的真实目录不该带着它，含此前调试留下的）；删掉本次接入时
+    Tavotto 生成的备份文件。返回还原了什么，进报告。"""
+    paths = dict(connect["targets"])
+    restored, removed = [], []
+    for name, raw in (connect.get("originals") or {}).items():
+        f = Path(name)
+        if raw is None:
+            if f.exists():
+                f.unlink()
+                removed.append(f.name)
+            continue
+        if f in paths:
+            d = json.loads(raw.decode("utf-8-sig") or "{}")
+            box = _servers(d, paths[f])
+            if box is not None:
+                box.pop("tavotto", None)
+            raw = json.dumps(d, indent=2).encode("utf-8")
+        f.write_bytes(raw)
+        restored.append(f.name)
+    for b in _backups(connect["targets"]) - connect.get("backups_before", set()):
+        with contextlib.suppress(OSError):
+            Path(b).unlink()
+            removed.append(Path(b).name)
+    for d in connect.get("created_dirs", []):
+        with contextlib.suppress(OSError):
+            Path(d).rmdir()  # 只删空的：里面要是有别人的东西就留着
+            removed.append(Path(d).name + "\\")
+    return {"restored": restored, "removed": removed}
+
+
+def connect_via_button(lab, run_id, run_dir, env, connect, host_home, proj, base) -> dict | None:
+    """在 Tavotto 里真点「接入」，在真实用户目录里逐字核对它写的配置；返回 None = 可以接着跑宿主，否则是提前收场的结论。
+    宿主自己跑在隔离的家里（`host_home`）：核对通过后由 `wrap_connected_entry` 把那一条（包上录制器）放进宿主的家。"""
+    levels = base["levels"]
+    real_home = Path(os.environ.get("USERPROFILE") or Path.home())
+    connect.update(
+        real_home=real_home,
+        host_home=host_home,
+        proj=proj,
+        targets=connect_targets(connect["host_id"], real_home),
+        host_targets=connect_targets(connect["host_id"], host_home),
+    )
+    snapshot_real_targets(connect)
+    connect["before"] = prepare_connect_targets(connect["targets"])
+    r = _connect_driver_round(lab, run_id, run_dir, env, connect, "connect")
+    base["connect"] = {"driver": r["driver"], "gui": r["step"].get("gui")}
+    if r["step"].get("gui") == "no_interactive_session":
+        levels["connect"] = "environment_unavailable"
+        return {
+            **base,
+            "result": "environment_unavailable",
+            "summary": "no interactive session for tavotto-lab: run `winlab.py admin gui-setup` and reboot",
+        }
+    drv = r["driver"]
+    if drv.get("error"):
+        levels["connect"] = "error"
+        return {
+            **base,
+            "result": "error",
+            "summary": f"Tavotto 「接入」 for {connect['host_id']}: {drv['error']}",
+        }
+    verdict = judge_connect_written(connect)
+    base["connect"]["written"] = {"ok": verdict["ok"], "problems": verdict["problems"]}
+    base["connect"]["entry"] = verdict["written"]
+    base["connect"]["cli_list"] = tavotto_hosts_list(connect, env, run_dir / "work")
+    ui_connected = bool((drv.get("after") or {}).get("connected"))
+    base["connect"]["ui_connected"] = ui_connected
+    if not verdict["ok"]:
+        levels["connect"] = "failed"
+        return {
+            **base,
+            "result": "failed",
+            "summary": f"Tavotto wrote the {connect['host_id']} config wrong: {'; '.join(verdict['problems'])[:300]}",
+        }
+    # 文件写对了、界面却没认出「已接入」：按钮这一侧算失败，但宿主照跑（写下的那一条能不能用是另一件事）
+    levels["connect"] = "passed" if ui_connected else "failed"
+    connect["written"] = verdict["written"]
+    return None
+
+
+def wrap_connected_entry(connect: dict, mcp_cmd: list[str]) -> None:
+    """跑宿主的那段时间：录制器包在按钮写的那条命令外面（只换 command / args，env 不动），**真实用户目录与宿主隔离的家
+    两处都放**——ZCode 设了 ZCODE_DATA_BASE_DIR 仍读真实 `~/.zcode` 的用户级配置（Lab run 20261028T112629Z-e43fb2：
+    宿主用的是按钮原样写的那条，录制器一行没收到）。断开前 `unwrap_connected_entry` 把真实目录里的换回原样。
+    WorkBuddy 的信任按条目指纹记：给包过的那一条在宿主的家里另记一条。"""
+    wrapped = {**connect["written"], "command": mcp_cmd[0], "args": mcp_cmd[1:]}
+    for f, path in [*connect["targets"], *connect["host_targets"]]:
+        d = _read_json(f) or {}
+        _servers(d, path, create=True)["tavotto"] = wrapped
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps(d, indent=2), encoding="utf-8")
+    if connect["host_id"] == "workbuddy":
+        approvals = connect["host_home"] / ".workbuddy" / "mcp-approvals.json"
+        known = _read_json(approvals) or {}
+        key = f"{workbuddy_trust_hash(mcp_cmd, wrapped.get('env') or {})}::tavotto"
+        known[key] = int(time.time() * 1000)
+        approvals.write_text(json.dumps(known, indent=2), encoding="utf-8")
+        connect["wrapped_trust"] = key
+    connect["wrapped"] = True
+
+
+def unwrap_connected_entry(connect: dict) -> None:
+    """宿主跑完：真实目录里换回按钮写的原样（断开要在它上面判），宿主的家里删掉放进去的那一条与另记的信任。"""
+    for f, path in connect["targets"]:
+        d = _read_json(f) or {}
+        _servers(d, path, create=True)["tavotto"] = connect["written"]
+        f.write_text(json.dumps(d, indent=2), encoding="utf-8")
+    for f, path in connect["host_targets"]:
+        if any(f == g for g, _ in connect["targets"]):
+            continue
+        d = _read_json(f)
+        box = _servers(d, path) if d else None
+        if box is not None and "tavotto" in box:
+            box.pop("tavotto")
+            f.write_text(json.dumps(d, indent=2), encoding="utf-8")
+    if connect.get("wrapped_trust"):
+        approvals = connect["host_home"] / ".workbuddy" / "mcp-approvals.json"
+        known = _read_json(approvals) or {}
+        known.pop(connect["wrapped_trust"], None)
+        approvals.write_text(json.dumps(known, indent=2), encoding="utf-8")
+    connect["wrapped"] = False
+
+
+def judge_disconnected(connect: dict) -> list[str]:
+    """断开之后：每个目标文件与接入前逐键相同（tavotto 没了，旁人条目与其余键都在）。"""
+    problems = []
+    for f, _ in connect["targets"]:
+        d = _read_json(f)
+        if d is None:
+            problems.append(f"{f.name}: missing or not JSON after disconnect")
+        elif d != connect["before"][str(f)]:
+            problems.append(f"{f.name}: differs from before connect")
+    return problems
+
+
+def finish_connect_cell(lab, run_id, run_dir, env, connect, out: dict) -> dict:
+    """宿主跑完 → Tavotto 认出「已接入」→ 点「断开」→ 核对文件与接入前相同；把两项并进结论。"""
+    levels = out["levels"]
+    unwrap_connected_entry(connect)
+    r = _connect_driver_round(lab, run_id, run_dir, env, connect, "disconnect")
+    drv = r["driver"]
+    if drv.get("error") == "no page on the sidecar origin":
+        # 起来了但渲染服务没就绪（错误页）。嫌疑：宿主拉起的 `tavotto-cli mcp` 在宿主退出后还活着（WorkBuddy 的 daemon
+        # 不在 Job 里）。先记下此刻还活着的 Tavotto 进程，只结束它们，再起一次——第二次好了就坐实了这个冲突
+        first = {
+            "error": drv["error"],
+            "targets": drv.get("targets"),
+            "sidecar_log_tail": drv.get("sidecar_log_tail"),
+        }
+        if os.name == "nt":
+            tav = str(connect["install_dir"]).lower()
+            first["tavotto_procs_killed"] = _kill_matching(lambda img: img.lower().startswith(tav))
+            if connect["host_id"] == "workbuddy":
+                # WorkBuddy 的后台进程不全在安装目录下（运行时在它的家里）：按映像路径里的名字结束
+                first["host_procs_killed"] = _kill_matching(
+                    lambda img: any(t in img.lower() for t in WORKBUDDY_PROCESS_TOKENS)
+                )
+        out["disconnect_first_try"] = first
+        r = _connect_driver_round(lab, run_id, run_dir, env, connect, "disconnect")
+        drv = r["driver"]
+    problems = []
+    if drv.get("error"):
+        problems.append(drv["error"])
+    elif not (drv.get("before") or {}).get("connected"):
+        problems.append("Tavotto did not show its own entry as connected before disconnect")
+    elif (drv.get("after") or {}).get("connected"):
+        problems.append("row still shows connected after 「断开」")
+    problems += judge_disconnected(connect)
+    levels["disconnect"] = "passed" if not problems else ("error" if drv.get("error") else "failed")
+    out["disconnect"] = {
+        "driver": drv,
+        "gui": r["step"].get("gui"),
+        "problems": problems,
+        "host_procs_killed": connect.get("host_procs_killed", []),
+    }
+    out["result"] = av.aggregate(
+        [levels[k] for k in ("L2", "L3", "L4", "L5", "connect", "disconnect")]
+    )
+    out["summary"] = (
+        f"{out.get('summary', '')}; connect={levels['connect']} disconnect={levels['disconnect']}"
+    )
+    return out
+
+
 def run_desktop_live_task(
-    lab: Lab, run_id: str, run_dir: Path, env: dict, model_conf: dict, mode: str
+    lab: Lab,
+    run_id: str,
+    run_dir: Path,
+    env: dict,
+    model_conf: dict,
+    mode: str,
+    connect_package: str | None = None,
 ) -> dict:
     cell = DESKTOP_LIVE[mode]
     host = DESKTOP_HOSTS[cell.host]
@@ -4263,6 +4775,12 @@ def run_desktop_live_task(
             "result": "environment_unavailable",
             "summary": "venv missing: run `winlab prepare` first",
         }
+    tavotto_setup = None
+    if connect_package is not None:
+        tavotto_setup, err = package_path(lab, connect_package)
+        if err:
+            return {**base, "result": "environment_unavailable", "summary": err}
+        levels.update(connect="not_run", disconnect="not_run")
     if mode == "claude-desktop-native" and not _pinned_cached(lab, host):
         # 这一格不从 Anthropic 下载任何东西（用户 2026-10-27）：只用 L2 时已下好、已核散列的那份
         return {
@@ -4315,12 +4833,59 @@ def run_desktop_live_task(
     ext_dir = (
         run_dir / "ext"
     )  # 扩展目录放在 work 之外：里面有 300 MB 的随包二进制，不参与抹密钥扫描
+    connect = None
     try:
+        if tavotto_setup is not None:
+            connect, early = install_tavotto_for_connect(tavotto_setup, base)
+            if early is not None:
+                return early
+            connect["host_id"] = CONNECT_CELLS[mode]
         out = _desktop_live_body(
-            lab, run_id, run_dir, henv, model_conf, cell, host, ext, vsix, inst, ext_dir, base
+            lab,
+            run_id,
+            run_dir,
+            henv,
+            model_conf,
+            cell,
+            host,
+            ext,
+            vsix,
+            inst,
+            ext_dir,
+            base,
+            connect=connect,
         )
+        if connect and connect.get("wrapped"):
+            # 断开放在判完 L3–L5 之后、卸载之前：先把录制器换回按钮写的原样，再点「断开」
+            # 宿主不在 Job 里的后台进程（WorkBuddy 的 daemon 等）先结束：它们还在时第二次起 Tavotto，渲染服务 60 s 没起来
+            # （Lab run 20261028T120133Z-b8ed52 的断开那一次）
+            if os.name == "nt":
+                root = str(inst["root"]).lower()
+                connect["host_procs_killed"] = _kill_matching(
+                    lambda img: img.lower().startswith(root)
+                )
+            out = finish_connect_cell(lab, run_id, run_dir, henv, connect, out)
     finally:
         try:
+            if connect and connect.get("originals") is not None:
+                base["connect_restore"] = restore_real_targets(connect)
+            if tavotto_setup is not None:
+                # 只核对这次装的那一份（Lab 上另有卸不掉的残留 beta 卸载项，不算这次的）。卸载器从 %TEMP% 重新拉起
+                # 自己、慢的时候一轮等不完（Lab run 20261028T113530Z-944fa9 留下了这一份）：再等再试一轮
+                mine = connect["install_dir"] if connect else None
+                for attempt in range(3):
+                    uninstall_all()
+                    left = [
+                        e for e in _hkcu_installs() if mine and Path(e["InstallLocation"]) == mine
+                    ]
+                    if not left:
+                        break
+                    time.sleep(20)
+                base["tavotto_uninstall"] = {
+                    "ok": not left and not (mine and (mine / "Tavotto.exe").exists()),
+                    "left": [str(e.get("DisplayName")) for e in left],
+                    "attempts": attempt + 1,
+                }
             base["uninstall"] = uninstall_desktop_host(host, work, henv)
             if ext_dir.exists():
                 _rmtree_no_follow(ext_dir)
@@ -4331,6 +4896,9 @@ def run_desktop_live_task(
             if mode in DESKTOP_LIVE_LOGIN_MODES:
                 base["login_state"] = wipe_login_state(run_dir)
     out["uninstall"] = base["uninstall"]
+    for k in ("connect_restore", "tavotto_uninstall"):
+        if k in base:
+            out[k] = base[k]
     if "login_state" in base:
         out["login_state"] = base["login_state"]
         if not base["login_state"]["wiped"]:
@@ -4427,7 +4995,7 @@ def _install_extension(env, host, ext, vsix, inst, ext_dir, work, ev, profile, b
 
 
 def _desktop_live_body(
-    lab, run_id, run_dir, env, model_conf, cell, host, ext, vsix, inst, ext_dir, base
+    lab, run_id, run_dir, env, model_conf, cell, host, ext, vsix, inst, ext_dir, base, connect=None
 ) -> dict:
     py = lab.venv_python()
     levels = base["levels"]
@@ -4467,7 +5035,8 @@ def _desktop_live_body(
         # （~/.workbuddy/mcp.json，每次 run 改指本次的录制器）、应用数据、登录态都在这里，不进证据、不随 run 删。
         # 推理用 WorkBuddy 账户自己的模型，不碰我们的 key
         home = workbuddy_home(lab)
-        workbuddy_isolated_config(home, mcp_cmd, mcp_env)
+        if connect is None:
+            workbuddy_isolated_config(home, mcp_cmd, mcp_env)
         gui_env = dict(env, **_home_env(home))
         public_env, secret_env = gui_env, None
         login_args = [
@@ -4528,7 +5097,9 @@ def _desktop_live_body(
         names = tavotto_tool_names(lab.repo / "codex-plugin" / "mcp")
         if not names:
             return {**base, "result": "error", "summary": "could not read tavotto MCP tool names"}
-        zcode_isolated_config(zdata, proj, mcp_cmd, mcp_env, model_conf, names)
+        zcode_isolated_config(
+            zdata, proj, mcp_cmd, mcp_env, model_conf, names, with_mcp=connect is None
+        )
         # 日志进证据目录（落证前同样抹 key）：MCP 没连上时看它的诊断
         gui_env = dict(env, ZCODE_DATA_BASE_DIR=str(zdata), ZCODE_LOG_DIR=str(ev / "zcode-logs"))
         public_env, secret_env = gui_env, None
@@ -4549,11 +5120,37 @@ def _desktop_live_body(
         # 进程环境：隔离配置目录 + 国内 Anthropic 兼容接口。密钥那一项只走命名管道，不进 request.json
         gui_env = dict(env, CLAUDE_CONFIG_DIR=str(cfg), **_host_model_env(model_conf))
         public_env, secret_env = split_secret_env(gui_env, [key])
+    if connect is not None:
+        home = workbuddy_home(lab) if connect["host_id"] == "workbuddy" else zdata
+        early = connect_via_button(lab, run_id, run_dir, env, connect, home, proj, base)
+        if early is not None:
+            return early
+        # 宿主跑的是按钮写的那条命令（桌面版自带的 tavotto-cli mcp），外面包一层录制器
+        written = connect["written"]
+        mcp_cmd = [
+            str(py),
+            str(recorder),
+            str(rec_log),
+            "--host-root",
+            inst["root"],
+            "--",
+            written["command"],
+            *written["args"],
+        ]
+        wrap_connected_entry(connect, mcp_cmd)
     driver = Path(__file__).resolve().parent / "desktop_driver.py"
 
     def one_round(n: int, prompt: str) -> dict:
         pf = work / f"prompt-{n}.txt"
         pf.write_text(prompt, encoding="utf-8")
+        if host.id == "workbuddy":
+            # WorkBuddy 在后台把新版本下进 TEMP（= work），下一次启动就去装它、9 s 退出（Lab run 20261028T115015Z-01d080：
+            # 第二轮没起来）。固定版本的验收不让宿主中途自己升级：每轮启动前删掉下好的更新包，报告记下
+            for d in sorted(work.glob(WORKBUDDY_UPDATE_GLOB)):
+                _rmtree_no_follow(d)
+                base.setdefault("host_update_removed", []).append(
+                    {"round": n, "dir": d.name, "left": d.exists()}
+                )
         argv = driver_argv(
             py,
             driver,
@@ -4632,8 +5229,16 @@ def _desktop_live_body(
         r2 = one_round(
             2, lead + LIVE_SESSION_2.format(sid=sid)
         )  # 全新的 VS Code 进程，只拿 session_id
-    _scrub(ev, key)
-    _scrub(work, key)
+    unscrubbed = _scrub(ev, key) + _scrub(work, key)
+    if unscrubbed:
+        base["scrub_unreadable"] = unscrubbed[:20]
+        if model_conf.get("api_key"):
+            # 用了我们的 key：没核对完就不能说抹干净了（WorkBuddy 那一格不经我们的 key，只记下）
+            return {
+                **base,
+                "result": "error",
+                "summary": f"could not check {len(unscrubbed)} file(s) for the key: {unscrubbed[:3]}",
+            }
     s2 = parse_recorded(rec_log, split)
     base["driver"] = {"session_1": r1["driver"], "session_2": r2["driver"]}
     base["driver_step"] = {"session_1": r1["step"], "session_2": r2["step"]}
@@ -5177,6 +5782,16 @@ def _run_body(
             (pkg or {}).get("mode") or DESKTOP_HOST_IDS[0],
             native=True,
         )
+    if task.kind == "desktop-connect":
+        return run_desktop_live_task(
+            lab,
+            run_dir.name,
+            run_dir,
+            env,
+            model_conf or {},
+            (pkg or {}).get("mode") or tuple(CONNECT_CELLS)[0],
+            connect_package=(pkg or {}).get("package", ""),
+        )
     if task.kind == "desktop-live":
         return run_desktop_live_task(
             lab,
@@ -5675,7 +6290,7 @@ def main(argv: list[str] | None = None, lab: Lab | None = None) -> int:
             model_conf = parsed
         pkg = {"package": ns.package, "from": ns.frm} if task.accepts_package else None
         if task.modes:
-            pkg = {"mode": ns.mode or task.modes[0]}
+            pkg = {**(pkg or {}), "mode": ns.mode or task.modes[0]}
         return _emit(run_task(lab, task, ns.tests, ns.shard, network, model_conf, pkg))
     except LabBusy as busy:
         return _emit(
