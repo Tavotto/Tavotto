@@ -31,6 +31,10 @@ from pathlib import Path
 
 DIRNAME = "mcp-sessions"
 VERSION = 1
+#: 带运行配置引用（`run_config`，T10）的记录。旧读者只认 `VERSION`：读到它当作不存在（会话报 `unknown_session`、
+#: 重新打开），而不是把一个带参数的会话当成无参数会话复活。不带配置的记录照旧写 `VERSION`，旧插件仍能恢复。
+VERSION_RUN_CONFIG = 2
+READABLE_VERSIONS = (VERSION, VERSION_RUN_CONFIG)
 #: 七天：够一次投稿修改往返；再旧的画布卡片本来也不该悄悄复活
 TTL_SECONDS = 7 * 24 * 3600
 MAX_RECORDS = 64
@@ -62,7 +66,8 @@ def save(base: Path, record: dict, *, now: float | None = None) -> Path:
     if not valid_id(session_id):
         raise ValueError(f"非法 session_id: {session_id!r}")
     stamp = time.time() if now is None else now
-    body = {**record, "v": VERSION, "saved_at": stamp}
+    version = VERSION_RUN_CONFIG if record.get("run_config") else VERSION
+    body = {**record, "v": version, "saved_at": stamp}
     base.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(base, 0o700)
@@ -98,7 +103,9 @@ def load(base: Path, session_id: str, *, now: float | None = None) -> dict | Non
     for key, kind in _REQUIRED.items():
         if not isinstance(record.get(key), kind) or isinstance(record.get(key), bool):
             return None
-    if record["v"] != VERSION or record["id"] != session_id:
+    if record["v"] not in READABLE_VERSIONS or record["id"] != session_id:
+        return None
+    if (record["v"] == VERSION_RUN_CONFIG) != isinstance(record.get("run_config"), str):
         return None
     stamp = time.time() if now is None else now
     if stamp - float(record["saved_at"]) > TTL_SECONDS:
