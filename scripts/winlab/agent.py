@@ -4593,10 +4593,12 @@ def connect_via_button(lab, run_id, run_dir, env, connect, host_home, proj, base
 
 
 def wrap_connected_entry(connect: dict, mcp_cmd: list[str]) -> None:
-    """按钮写的那一条（真实用户目录里的不动）放进宿主隔离的家里同样位置，录制器包在命令外面（只换 command / args，
-    env 不动）。WorkBuddy 的信任按条目指纹记：给包过的那一条记在宿主的家里。"""
+    """跑宿主的那段时间：录制器包在按钮写的那条命令外面（只换 command / args，env 不动），**真实用户目录与宿主隔离的家
+    两处都放**——ZCode 设了 ZCODE_DATA_BASE_DIR 仍读真实 `~/.zcode` 的用户级配置（Lab run 20261028T112629Z-e43fb2：
+    宿主用的是按钮原样写的那条，录制器一行没收到）。断开前 `unwrap_connected_entry` 把真实目录里的换回原样。
+    WorkBuddy 的信任按条目指纹记：给包过的那一条在宿主的家里另记一条。"""
     wrapped = {**connect["written"], "command": mcp_cmd[0], "args": mcp_cmd[1:]}
-    for f, path in connect["host_targets"]:
+    for f, path in [*connect["targets"], *connect["host_targets"]]:
         d = _read_json(f) or {}
         _servers(d, path, create=True)["tavotto"] = wrapped
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -4612,8 +4614,14 @@ def wrap_connected_entry(connect: dict, mcp_cmd: list[str]) -> None:
 
 
 def unwrap_connected_entry(connect: dict) -> None:
-    """宿主跑完：从它隔离的家里删掉放进去的那一条与另记的信任。"""
+    """宿主跑完：真实目录里换回按钮写的原样（断开要在它上面判），宿主的家里删掉放进去的那一条与另记的信任。"""
+    for f, path in connect["targets"]:
+        d = _read_json(f) or {}
+        _servers(d, path, create=True)["tavotto"] = connect["written"]
+        f.write_text(json.dumps(d, indent=2), encoding="utf-8")
     for f, path in connect["host_targets"]:
+        if any(f == g for g, _ in connect["targets"]):
+            continue
         d = _read_json(f)
         box = _servers(d, path) if d else None
         if box is not None and "tavotto" in box:
@@ -4801,9 +4809,10 @@ def run_desktop_live_task(
                 uninstall_all()
                 # 只核对这次装的那一份（Lab 上另有卸不掉的残留 beta 卸载项，不算这次的）
                 mine = connect["install_dir"] if connect else None
+                left = [e for e in _hkcu_installs() if mine and Path(e["InstallLocation"]) == mine]
                 base["tavotto_uninstall"] = {
-                    "ok": mine is None
-                    or all(Path(e["InstallLocation"]) != mine for e in _hkcu_installs())
+                    "ok": not left and not (mine and (mine / "Tavotto.exe").exists()),
+                    "left": [str(e.get("DisplayName")) for e in left],
                 }
             base["uninstall"] = uninstall_desktop_host(host, work, henv)
             if ext_dir.exists():

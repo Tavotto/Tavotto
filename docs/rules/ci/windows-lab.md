@@ -230,9 +230,10 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
       相同；WorkBuddy 另要有按执行器自己的指纹算法算出的信任记录。文件不符 → `connect=failed`，不跑宿主；文件对了但那一行没显示
       「已接入」→ `connect=failed`，宿主照跑。报告带装好的 `tavotto-cli hosts list --json` 怎么看这一行（`connect.cli_list`）。
     - **宿主这一侧**：宿主仍跑在 desktop-live 那个隔离的家里（ZCode 的 `zdata`、WorkBuddy 的常驻家，落盘 key 与登录态的范围不变），
-      执行器把按钮写的那一条放进宿主的家里**同样的相对位置**，录制器包在命令外面（只换 command / args，env 不动；WorkBuddy 为包过的
+      执行器把按钮写的那一条放进宿主的家里**同样的相对位置**，并在跑宿主的那段时间给真实目录与宿主的家两处都包上录制器（只换
+      command / args，env 不动；ZCode 设了 `ZCODE_DATA_BASE_DIR` 仍读真实 `~/.zcode` 的用户级配置，Lab 实测；WorkBuddy 为包过的
       那一条在宿主的家里另记信任），宿主拉起的服务端就是桌面版自带的 `tavotto-cli mcp`；判据同 desktop-live 的 `judge_live`。
-      跑完从宿主的家里删掉这一条，再起一次 Tavotto：那一行要认出「已接入」，点「⋯」→「断开」，之后真实目录里每个目标文件与接入前
+      跑完把真实目录里的换回按钮写的原样、从宿主的家里删掉这一条，再起一次 Tavotto：那一行要认出「已接入」，点「⋯」→「断开」，之后真实目录里每个目标文件与接入前
       **逐键相同**（tavotto 没了、旁人条目还在）→ `disconnect=passed`。报告 `levels` 多 `connect` / `disconnect` 两项，结论按
       六项聚合。Tavotto 跑完卸载。
   - CC-Switch 的落盘例外**不在此**（单独的 PR 与单独的规则条目）。

@@ -3181,7 +3181,7 @@ def test_connect_judge_wants_the_workbuddy_trust_record(tmp_path):
 
 
 @pytest.mark.parametrize("host_id", ["zcode", "workbuddy"])
-def test_wrap_puts_the_button_entry_into_the_host_home_and_unwrap_takes_it_out(tmp_path, host_id):
+def test_wrap_covers_both_homes_and_unwrap_gives_back_the_button_entry(tmp_path, host_id):
     ctx = _connect_ctx(tmp_path, host_id)
     ctx["before"] = A.prepare_connect_targets(ctx["targets"])
     entry = _button_writes(ctx)
@@ -3200,9 +3200,15 @@ def test_wrap_puts_the_button_entry_into_the_host_home_and_unwrap_takes_it_out(t
     approvals = ctx["host_home"] / ".workbuddy" / "mcp-approvals.json"
     if host_id == "workbuddy":
         assert ctx["wrapped_trust"] in json.loads(approvals.read_text(encoding="utf-8"))
-    # 真实用户目录里按钮写的那份一个字没动（断开要在它上面判）
-    assert {str(f): f.read_text(encoding="utf-8") for f, _ in ctx["targets"]} == real
+    # 真实用户目录里那一条也包上了（ZCode 读的是它）；unwrap 之后一个字不差地换回按钮写的原样
+    for f, path in ctx["targets"]:
+        got = A._servers(json.loads(f.read_text(encoding="utf-8")), path)["tavotto"]
+        assert [got["command"], *got["args"]] == wrapped_cmd
     A.unwrap_connected_entry(ctx)
+    assert {str(f): json.loads(f.read_text(encoding="utf-8")) for f, _ in ctx["targets"]} == {
+        k: json.loads(v) for k, v in real.items()
+    }
+    assert A.judge_connect_written(ctx)["ok"]
     for f, path in ctx["host_targets"]:
         assert "tavotto" not in (A._servers(json.loads(f.read_text(encoding="utf-8")), path) or {})
     if host_id == "workbuddy":
