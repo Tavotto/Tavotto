@@ -184,3 +184,67 @@ def test_the_font_dropdown_only_offers_what_this_runtime_can_draw():
     )
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().endswith("OK")
+
+
+_FACES_DRIVER = """\
+import sys
+sys.path.insert(0, sys.argv[1])
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.text import Text
+
+import manifest
+
+def _fam(t):
+    return next(f for f in manifest._text_fields(t) if f["prop"] == "fontfamily")
+
+# 通用族 serif，rcParams 的 font.serif 把第一个没装的名字排在前面：
+# 画出来的是第一个**装了的**，字段要如实报它（不是「衬线」，也不是写死的 Times）
+plt.rcParams["font.serif"] = ["No Such Font Zzz", "DejaVu Sans", "DejaVu Serif"]
+f = _fam(Text(0, 0, "hi", fontfamily="serif"))
+assert f["value"] == "serif", f            # 写回的仍是脚本的原值
+assert f["option_faces"]["serif"] == "DejaVu Sans", f
+assert set(f["option_faces"]) <= {"serif", "sans-serif", "monospace"}, f
+
+# rcParams 变了：缓存不许返回旧脸
+plt.rcParams["font.serif"] = ["DejaVu Serif"]
+f = _fam(Text(0, 0, "hi", fontfamily="serif"))
+assert f["option_faces"]["serif"] == "DejaVu Serif", f
+
+# 三个通用族一起发（下拉末尾「跟随全局字体族」列三行），与当前值是谁无关
+plt.rcParams["font.sans-serif"] = ["DejaVu Sans"]
+f = _fam(Text(0, 0, "hi", fontfamily="sans-serif"))
+assert f["option_faces"]["sans-serif"] == "DejaVu Sans", f
+assert set(f["option_faces"]) == {"serif", "sans-serif", "monospace"}, f
+# 当前值是具体字体名时同样带（列表末尾的通用族行要用）；value 不变
+f = _fam(Text(0, 0, "hi", fontfamily="DejaVu Sans"))
+assert f["value"] == "DejaVu Sans" and f["option_faces"]["serif"] == "DejaVu Serif", f
+
+# 刻度字段同一条路
+fig, ax = plt.subplots()
+ax.plot([0, 1], [0, 1])
+fig.canvas.draw()
+plt.rcParams["font.family"] = "serif"
+from tickmodel import TickSet
+for lbl in ax.xaxis.get_ticklabels():
+    lbl.set_fontfamily("serif")
+tf = manifest._tick_family_field(TickSet(ax, "x"))
+assert tf["value"] == "serif" and tf["option_faces"]["serif"] == "DejaVu Serif", tf
+print("OK")
+"""
+
+
+def test_generic_family_field_reports_the_face_actually_drawn():
+    """`fontfamily` 字段带 `option_faces`（三个通用族各由哪张脸画）：matplotlib 此刻真正
+    用哪张脸画它（用户反馈：图明明是 Times New Roman，下拉里还写「衬线」）。`value` 不变。
+    """
+    out = subprocess.run(
+        [WORKER_PY, "-c", _FACES_DRIVER, str(ENGINE_DIR)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip().endswith("OK")
