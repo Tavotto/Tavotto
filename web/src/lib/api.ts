@@ -3209,9 +3209,25 @@ export interface AiAgentCaps {
 /** `npm install -g` 的进度（后台线程，前端轮询） */
 export interface AiInstallState {
   status: 'idle' | 'running' | 'done' | 'error'
-  code?: 'npm_missing' | 'npm_failed' | 'installed_but_not_found' | 'timeout' | 'spawn_failed' | `managed_cli_${string}`
-  progress?: number
+  code?:
+    | 'npm_missing'
+    | 'npm_failed'
+    | 'installed_but_not_found'
+    | 'timeout'
+    | 'spawn_failed'
+    | 'managed_cli_offline'
+    | 'managed_cli_tls'
+    | 'managed_cli_source_unavailable'
+    | 'managed_cli_hash_mismatch'
+    | 'managed_cli_unsupported_platform'
+    | 'managed_cli_disk_full'
+    | 'managed_cli_invalid_archive'
+    | 'managed_cli_write_failed'
+    | 'managed_cli_launch_failed'
+    | 'managed_cli_cancelled'
   log?: string
+  /** 应用内下载安装的进度 0–1；没有就只显示「正在安装…」 */
+  progress?: number
 }
 
 /** 第三方 API 接入。密钥永远不回传，只给「有没有」和尾四位。 */

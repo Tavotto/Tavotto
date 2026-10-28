@@ -126,7 +126,7 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 
 把下面一句完整发给 Codex：
 
-> 请严格按照 README 的「在 Codex 中第一次使用 Tavotto」执行普通用户安装。
+> 请严格按照 README 的「在 Codex 里用 Tavotto（插件）」执行普通用户安装。
 > 不要 clone 或构建源码，不要运行 pnpm、npm、cargo、Tauri、测试或 editable
 > install。只安装 Codex 插件和所需的 Tavotto 引擎，运行健康检查；需要新会话时
 > 明确告诉我并停止。

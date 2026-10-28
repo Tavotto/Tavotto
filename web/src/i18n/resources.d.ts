@@ -2113,8 +2113,25 @@ export default interface Resources {
         "saveKey": "保存",
         "savedRefreshFailed": "已保存，但没能刷新状态。",
         "signIn": "登录",
+        "starter": {
+          "key": "没有订阅：填一个 API Key",
+          "other": "其他方式",
+          "subscription": "有 ChatGPT 订阅：用 ChatGPT 账号登录"
+        },
+        "step": {
+          "broken": "找到了 {{product}}，但打不开",
+          "disabled": "已在设置里关闭",
+          "enable": "打开",
+          "install": "安装并登录",
+          "installingPct": "正在安装… {{pct}}%",
+          "needsAuth": "还没登录",
+          "notInstalled": "没装 {{product}}",
+          "reinstall": "重新安装"
+        },
         "subtitle": "连接一个 AI，用于改图或修复环境。",
+        "subtitleConvert": "把 {{name}} 转成可编辑版本需要一个 AI。连上后会自动开始。",
         "title": "连接一个 AI",
+        "titleConvert": "连接一个 AI 来转换",
         "titleFix": "连接一个 AI 来修复"
       },
       "copied": "已复制",
@@ -6088,6 +6105,7 @@ export default interface Resources {
           "retry": "带参考文件重试"
         },
         "running": "正在生成可编辑版本…",
+        "runningElapsed": "正在生成可编辑版本…（已用 {{minutes}} 分钟）",
         "stoppedLate": "转换已经完成，停止来得太晚。对照一下，要用就采用",
         "unverified": "{{product}} 没有运行 R / MATLAB，请并排看一眼再采用"
       },

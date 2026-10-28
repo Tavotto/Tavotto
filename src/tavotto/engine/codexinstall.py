@@ -991,7 +991,7 @@ _ARCHIVE_MANUAL = (
     + brand.CODEX_PLUGIN_STABLE_ARCHIVE_DIR
     + " 目录>` 与 `codex plugin add "
     + brand.CODEX_PLUGIN_REF
-    + "`（README「在 Codex 中第一次使用 Tavotto」有 Windows 上的逐行步骤）"
+    + "`（README「在 Codex 里用 Tavotto（插件）」有 Windows 上的逐行步骤）"
 )
 
 

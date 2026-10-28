@@ -8,7 +8,7 @@
 ## 任务路由
 
 - 用户要求安装、运行或试用 Tavotto，而未要求修改源码：这是**用户安装任务**。
-  只读 README 的「在 Codex 中第一次使用 Tavotto」章节；不得构建仓库、安装
+  只读 README 的「在 Codex 里用 Tavotto（插件）」章节；不得构建仓库、安装
   开发依赖或运行完整测试。普通用户安装绝不需要 clone 本仓库，也绝不需要
   `pnpm`、`npm`、`cargo`、Tauri、前端构建、`run.sh`、测试套件或源码
   editable install——源码开发只留给明确说「我要贡献/开发 Tavotto」的人。

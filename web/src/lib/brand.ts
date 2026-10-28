@@ -16,7 +16,7 @@ export const RELEASES_LATEST_URL = `${REPO_URL}/releases/latest`
 /** 隐私说明（设置页「关于与隐私」、首启遥测询问都链到它） */
 export const PRIVACY_DOC_URL = `${REPO_URL}/blob/main/docs/privacy.md`
 /**
- * 「在 Codex 中第一次使用 Tavotto」的使用指南（README 的章节锚点）。
+ * 「在 Codex 里用 Tavotto（插件）」的使用指南（README 的章节锚点）。
  *
  * **「Tavotto for Codex」与「本机装了 Codex CLI」是两件事**：前者是把
  * Tavotto 装进 Codex（插件 + 技能 + MCP 画布），后者是 Tavotto 借用本机的
@@ -36,7 +36,7 @@ export const FEEDBACK_EMAIL = 'feedback@tavotto.com'
 export const WEBSITE_URL = 'https://www.tavotto.com'
 export const supportPageUrl = (locale: 'zh-CN' | 'en-US'): string =>
   `${WEBSITE_URL}${locale === 'zh-CN' ? '/zh/support/' : '/support/'}`
-export const CODEX_GUIDE_URL = `${REPO_URL}#using-tavotto-with-codex-for-the-first-time`
+export const CODEX_GUIDE_URL = `${REPO_URL}#using-tavotto-in-codex-plugin`
 
 export const PACKAGE_KIND = 'tavotto-package'
 export const PROOF_KIND = 'tavotto-proof'

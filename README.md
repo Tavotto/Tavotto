@@ -39,7 +39,7 @@
   <a href="https://github.com/Tavotto/Tavotto/releases/latest/download/Tavotto-Windows-Setup.exe"><img alt="Download for Windows, x64" src="https://img.shields.io/badge/Windows-x64-2868b7?style=for-the-badge&logo=windows&logoColor=white&labelColor=1b1b18"></a>
   <br>
   <a href="#pip-linux-and-servers"><img alt="Install from PyPI" src="https://img.shields.io/badge/PyPI-pipx%20install-2868b7?style=for-the-badge&logo=pypi&logoColor=white&labelColor=1b1b18"></a>
-  <a href="#using-tavotto-with-codex-for-the-first-time"><img alt="Install the Codex plugin" src="https://img.shields.io/badge/Codex-plugin-2868b7?style=for-the-badge&logo=openai&logoColor=white&labelColor=1b1b18"></a>
+  <a href="#using-tavotto-in-codex-plugin"><img alt="Install the Codex plugin" src="https://img.shields.io/badge/Codex-plugin-2868b7?style=for-the-badge&logo=openai&logoColor=white&labelColor=1b1b18"></a>
   <a href="#using-tavotto-with-claude-code-beta"><img alt="Install the Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin%20(Beta)-2868b7?style=for-the-badge&logo=claude&logoColor=white&labelColor=1b1b18"></a>
 </p>
 
@@ -61,7 +61,7 @@ With the desktop app installed, open **Settings → Figure assistants → Connec
 
 | Assistant | With the desktop app | Without it |
 | --- | --- | --- |
-| Codex | Connect | [Codex plugin](#using-tavotto-with-codex-for-the-first-time) |
+| Codex | Connect | [Codex plugin](#using-tavotto-in-codex-plugin) |
 | Claude Code, WorkBuddy | Connect | [Plugin (Beta)](docs/guide/ai-hosts.md#using-tavotto-with-claude-code-beta) |
 | Cursor, VS Code, Trae, ZCode, Claude Desktop | Connect | [Config generator (experimental)](docs/guide/ai-hosts.md#using-tavotto-from-other-ai-editors-and-clients-experimental) |
 | DeepSeek Harness, MiniMax Code | Not yet | [Bundle (Beta) or config generator](docs/guide/ai-hosts.md#using-tavotto-with-deepseek-harness-beta) |
@@ -143,7 +143,9 @@ A vector editor is the more powerful drawing tool. It does not know that the thi
 
 The Codex install without the desktop app's Connect button. Every other assistant, and everything beyond the commands, is in [the full reference](docs/guide/ai-hosts.md).
 
-### Using Tavotto with Codex for the first time
+### Using Tavotto in Codex (plugin)
+
+Just want AI inside Tavotto? You don't need this section: click "Connect AI" in the app.
 
 > **Regular users: do not clone or build this repository.** Installing from source is only for people working on Tavotto itself.
 
@@ -210,7 +212,7 @@ Do not tell Codex to run a bare `tavotto open` on this route: the desktop instal
 
 Send Codex this message, in full:
 
-> Follow the "Using Tavotto with Codex for the first time" section of the README exactly, as a regular-user install. Do not clone or build the source; do not run pnpm, npm, cargo, Tauri, tests, or an editable install. Install only the Codex plugin and the Tavotto engine it needs, then run the health check; when a new session is required, tell me so explicitly and stop.
+> Follow the "Using Tavotto in Codex (plugin)" section of the README exactly, as a regular-user install. Do not clone or build the source; do not run pnpm, npm, cargo, Tauri, tests, or an editable install. Install only the Codex plugin and the Tavotto engine it needs, then run the health check; when a new session is required, tell me so explicitly and stop.
 
 ## Privacy
 

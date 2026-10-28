@@ -156,7 +156,7 @@ for the output.
 
 Send Codex this message, in full:
 
-> Follow the "Using Tavotto with Codex for the first time" section of the README
+> Follow the "Using Tavotto in Codex (plugin)" section of the README
 > exactly, as a regular-user install. Do not clone or build the source; do not run
 > pnpm, npm, cargo, Tauri, tests, or an editable install. Install only the Codex
 > plugin and the Tavotto engine it needs, then run the health check; when a new

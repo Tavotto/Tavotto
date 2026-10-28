@@ -16,6 +16,7 @@ import {
   effectiveAgent,
   fetchAiSession,
   fetchConvert,
+  hasUsableAi,
   isDefiniteRunFailure,
   replanConvertDependencies,
   resolveConvertDependencies,
@@ -27,6 +28,7 @@ import {
 import { captureProjectEpoch } from '@/lib/projectEpoch'
 import { currentProjectId, onCurrentProjectChange } from '@/lib/session'
 import { newRequestId, useAiStore } from '@/store/aiStore'
+import { requestConnectAi } from '@/store/connectAiStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -70,12 +72,14 @@ export interface ConvertEntry {
   stopping?: boolean
   /** `running`（AI 任务阶段）里点了「停止」却被拒 / 只是转交给别的进程，结果任务仍然做完了：`ready` 卡改说「转换已经完成，停止来得太晚」 */
   stoppedLate?: boolean
+  /** 这一轮开始的时刻（ms）；运行中的卡片据此显示「已用 X 分钟」 */
+  startedAt?: number
 }
 
 interface ConvertState {
   entries: Record<string, ConvertEntry>
   /** `language` 缺省 python（`library` 必填）；`r` / `matlab` 时 `library` 传 null */
-  start: (script: string, library: string | null, path: string | null, language?: ConvertSourceLanguage, referenceFiles?: string[]) => Promise<void>
+  start: (script: string, library: string | null, path: string | null, language?: ConvertSourceLanguage, referenceFiles?: string[], afterConnect?: boolean) => Promise<void>
   adopt: (script: string) => Promise<string | null>
   discard: (script: string) => Promise<void>
   /** 依赖卡片的主按钮（问一次 / 名单外）：回显卡片摘要，后端装 + 接着校验同一个候选；`system` 卡片没有这个动作 */
@@ -334,10 +338,13 @@ const postFor = (session: string, kind: ResumeKind) => (pj: string | null) =>
     ? resolveConvertDependencies(session, kind.digest, pj)
     : replanConvertDependencies(session, pj)
 
+/** 后端 `require_usable` 的拒绝码：都意味着「先去连一个 AI」 */
+const NEEDS_AI_CODES = new Set(['ai_agent_not_installed', 'ai_agent_needs_auth', 'ai_agent_not_usable', 'ai_agent_disabled'])
+
 export const useConvertStore = create<ConvertState>((set, get) => ({
   entries: {},
 
-  start: async (script, library, path, language = 'python', referenceFiles) => {
+  start: async (script, library, path, language = 'python', referenceFiles, afterConnect = false) => {
     const guard = captureProjectEpoch()
     const pj = currentProjectId()
     // 续查只认「失败卡上留着的、且登记为已受理」的那个会话（条目被重置后遗留的登记不算）
@@ -349,6 +356,8 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
       await resumeAfterLost(script, prior.session, prior.lost)
       return
     }
+    // 这个脚本的转换已经在跑：再点一次什么都不做（后端也只允许一个，重复发只会换来 ai_script_busy）
+    if (prior?.phase === 'running' && !afterConnect) return
     const resumable = prior?.phase === 'failed' && prior.session ? prior.session : null
     set((s) => ({
       entries: {
@@ -369,6 +378,7 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
           envBase: null,
           replanning: false,
           lost: null,
+          startedAt: Date.now(),
         },
       },
     }))
@@ -382,19 +392,37 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
     }
     attempts.set(key, { n: attempt, rid })
     const isCurrent = () => attempts.get(key)?.n === attempt
+    /** 打开「连接 AI」，连上后用同样的参数再来一次（只一次：重来时 afterConnect=true，不再弹） */
+    const connectThenRetry = () => {
+      if (pendingRequestIds.get(key) === rid) pendingRequestIds.delete(key)
+      attempts.delete(key)
+      get().clear(script)
+      requestConnectAi({
+        reason: 'convert',
+        name: script,
+        onConnected: () => {
+          if (guard.still()) void get().start(script, library, path, language, references, true)
+        },
+      })
+    }
     try {
       let session = resumable && acceptedSessions.get(key) === resumable ? resumable : undefined
       if (!session) {
         // 与既有 AI 流程同一套「实际派活的 Agent」：用户选了 Claude 或 Codex 不可用时不能默认成 codex
         const ai = useAiStore.getState()
         if (!ai.caps) await ai.loadCaps().catch(() => undefined)
+        // 一个能用的 AI 都没有：先连接，连上自动重来一次（不发请求、不留失败卡）
+        if (!afterConnect && ai.caps && !hasUsableAi(useAiStore.getState().caps)) {
+          if (!guard.still() || !isCurrent()) return
+          connectThenRetry()
+          return
+        }
         const { agent: preferred, caps, models, efforts } = useAiStore.getState()
         const agent = effectiveAgent(preferred, caps)
         const info = agent ? agentById(caps, agent) : undefined
         const model = agent ? (models[agent] ?? info?.default_model ?? null) : null
         const effort = agent && info?.efforts.length ? (efforts[agent] ?? info.default_effort ?? null) : null
-        const posted = await startConvert(
-          {
+        const body = {
             script,
             // Python 来源带位图库；R / MATLAB 来源带语言、不带库（后端据此分流并复核文件内容）
             ...(language === 'python' ? { library: library ?? undefined } : { source_language: language }),
@@ -402,9 +430,23 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
             ...(references.length ? { reference_files: references } : {}),
             client_request_id: rid,
             ...(agent ? { agent, model, effort } : {}),
-          },
-          pj,
-        )
+          }
+        let posted: { session: string }
+        try {
+          posted = await startConvert(body, pj)
+        } catch (e) {
+          // 这个脚本上已有一次转换在跑（多半是别处 / 重载前发起的）：不是错误，直接接上正在跑的那次。
+          // 后端在 409 里给了 session 就用它，否则用本端登记过的；都没有才当普通失败显示
+          const known =
+            e instanceof ApiError && e.status === 409 && e.body?.code === 'ai_script_busy'
+              ? ((typeof (e.body.params as { session?: unknown } | undefined)?.session === 'string' &&
+                    (e.body.params as { session: string }).session) ||
+                  acceptedSessions.get(key) ||
+                  null)
+              : null
+          if (!known) throw e
+          posted = { session: known }
+        }
         session = posted.session
         // 只有当前 attempt 能清 id：被取代的旧 POST（同一 id）先成功时不清，等新 attempt 自己落定
         if (isCurrent()) pendingRequestIds.delete(key)
@@ -494,6 +536,10 @@ export const useConvertStore = create<ConvertState>((set, get) => ({
       }
       if (!guard.still()) return
       if (!isCurrent()) return // 已被停止 / 被更新的一次发起取代：旧 POST 的失败不能写进新会话的条目
+      if (!afterConnect && e instanceof ApiError && e.status === 409 && NEEDS_AI_CODES.has(String(e.body?.code))) {
+        connectThenRetry() // 后端说没有可用的 AI：同样先连接、连上重试一次
+        return
+      }
       set1(script, {
         phase: 'failed',
         error: backendErrorText(e),

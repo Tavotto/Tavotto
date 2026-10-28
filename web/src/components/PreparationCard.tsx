@@ -839,6 +839,16 @@ function pythonDownloadNote(card: { downloads_python?: boolean; download_bytes?:
     : ''
 }
 
+/** 转换在跑时每 30 秒让卡片重绘一次，「已用 X 分钟」才会走 */
+function useConvertTick(active: boolean): void {
+  const [, setN] = useState(0)
+  useEffect(() => {
+    if (!active) return
+    const id = window.setInterval(() => setN((n) => n + 1), 30_000)
+    return () => window.clearInterval(id)
+  }, [active])
+}
+
 /** 生成可编辑版本进行中 / 有结果时卡片的样子：一句话 + 一个主按钮（+ 一颗次按钮）。采用 = 后端新建兄弟脚本，再走「打开并运行」 */
 function convertFlow(
   c: NonNullable<ReturnType<typeof useConvertStore.getState>['entries'][string]>,
@@ -853,8 +863,10 @@ function convertFlow(
         // 停止被拒 / 只转交给别的进程：结局未定，等对账——只有一句话、没有按钮（候选可能马上 ready）
         return { title: pt('convert.deps.stopping'), slot: <Progress /> }
       }
+      // 转换要几分钟：满一分钟起说「已用 X 分钟」（卡片每 30 秒重绘一次，见 `useConvertTick`）
+      const minutes = c.startedAt ? Math.floor((Date.now() - c.startedAt) / 60_000) : 0
       return {
-        title: pt('convert.running'),
+        title: minutes >= 1 ? pt('convert.runningElapsed', { minutes }) : pt('convert.running'),
         slot: <Progress />,
         ghost: (
           <Button variant="ghost" size="md" data-convert-stop className="text-ink-2" onClick={() => void store.stop(p.script)}>
@@ -1057,6 +1069,7 @@ function useConvertFlow(
   identity: unknown,
 ): ReturnType<typeof convertFlow> | null {
   const [draft, setDraft] = useState<{ identity: unknown; text: string } | null>(null)
+  useConvertTick(c?.phase === 'running')
   const flow = c && p ? convertFlow(c, p, entry) : null
   if (!flow || !p || c?.phase !== 'failed' || !['needs_input', 'convert_reference_invalid'].includes(c.reason ?? '')) return flow
   const text = draft && draft.identity === identity ? draft.text : ''

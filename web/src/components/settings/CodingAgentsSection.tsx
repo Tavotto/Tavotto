@@ -20,6 +20,7 @@ import { AgentDetailView } from './AgentDetailView'
 import { AgentList } from './AgentList'
 import { ConnectionsList } from './connectAi/ConnectionsList'
 import { cx } from './connectAi/copy'
+import { useCapsWatch } from './connectAi/useCapsWatch'
 import { Details, Summary } from '../ui/Details'
 import { CodexIntegrationPanel } from './CodexIntegrationPanel'
 import { HostsPanel } from './HostsPanel'
@@ -127,6 +128,8 @@ export function CodingAgentsSection() {
     }
   }
 
+  // 回到前台（用户刚在终端里装 / 登录完）刷新一次；设置页不轮询
+  useCapsWatch(true, { poll: false })
   const detail = agentById(caps, detailId)
   if (detail && caps) {
     return (

@@ -83,7 +83,7 @@ def test_the_scan_sees_the_known_references():
         "guide",
         "Using Tavotto with WorkBuddy",
     ) in refs
-    assert ("web/src/lib/brand.ts", "anchor", "using-tavotto-with-codex-for-the-first-time") in refs
+    assert ("web/src/lib/brand.ts", "anchor", "using-tavotto-in-codex-plugin") in refs
     assert any(
-        kind == "title" and value.startswith("在 Codex 中第一次使用") for _, kind, value in refs
+        kind == "title" and value.startswith("在 Codex 里用 Tavotto") for _, kind, value in refs
     )

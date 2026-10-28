@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { BrandMark } from '@/components/ui/BrandMark'
 import { PRODUCT_NAME } from '@/lib/brand'
-import type { AiConnection, AiVendor } from '@/lib/api'
+import { readyConnections, type AiConnection, type AiVendor } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { Button, IconButton } from '../../ui/Button'
 import { Dialog } from '../../ui/Dialog'
@@ -13,7 +13,8 @@ import { BrandLines } from './BrandLines'
 import { CompatibleEndpoint } from './CompatibleEndpoint'
 import { cx } from './copy'
 import { MethodList } from './MethodList'
-import { connectionOf, connectionsOf, listedVendors, vendorName } from './vendors'
+import { connectionOf, connectionsOf, listedVendors, methodsOf, vendorName } from './vendors'
+import { chatgptVendorOf, StarterChoices } from './StarterChoices'
 import { VendorRow } from './VendorRow'
 
 /** 卡上默认露几家（用户决策：5 家，其余在「更多 AI…」里） */
@@ -29,11 +30,17 @@ export const CONNECT_AI_VISIBLE = 5
 export function ConnectAiDialog({
   open,
   reason = 'general',
+  name,
+  list,
   onClose,
   onConnected,
 }: {
   open: boolean
-  reason?: 'general' | 'fix'
+  reason?: 'general' | 'fix' | 'convert'
+  /** reason=convert 时文案里的脚本名 */
+  name?: string
+  /** 'all' = 直接给完整厂商列表，不走新手首屏 */
+  list?: 'all'
   onClose: () => void
   onConnected?: (c?: AiConnection) => void
 }) {
@@ -44,12 +51,36 @@ export function ConnectAiDialog({
   const [step, setStep] = useState<AiVendor | null>(null)
   const vendors = listedVendors(caps)
   const shown = all ? vendors : vendors.slice(0, CONNECT_AI_VISIBLE)
-  const title = reason === 'fix' ? cx('titleFix') : cx('title')
+  const title = reason === 'fix' ? cx('titleFix') : reason === 'convert' ? cx('titleConvert') : cx('title')
+  const subtitle = reason === 'convert' ? cx('subtitleConvert', { name: name ?? '' }) : cx('subtitle')
 
+  // 新手首屏：打开那一刻一个连接都没有 → 两条路；点「其他方式」才是完整列表。已有连接的用户维持现有列表
+  const readyCount = readyConnections(caps).length
+  const chatgpt = chatgptVendorOf(vendors)
+  const [route, setRoute] = useState<'all' | null>(list ?? null)
+  const [keysOpen, setKeysOpen] = useState(false)
+  const starter = !!caps && readyCount === 0 && !!chatgpt && route === null
+  const keyVendors = vendors.filter((v) => methodsOf(v).every((m) => m.kind === 'key'))
+
+  const finished = useRef(false)
   const done = (c?: AiConnection) => {
+    if (finished.current) return
+    finished.current = true
     onConnected?.(c)
     onClose()
   }
+  // 在别处（终端里、另一个窗口）连好了：caps 轮询到新的 ready 连接，同样算连上
+  const baseline = useRef<Set<string> | null>(null)
+  useEffect(() => {
+    if (!open || !caps) return
+    const ready = readyConnections(caps)
+    if (baseline.current === null) baseline.current = new Set(ready.map((c) => c.id))
+    else {
+      const fresh = ready.find((c) => !baseline.current!.has(c.id))
+      if (fresh) done(fresh)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, caps, readyCount])
 
   return (
     <>
@@ -57,7 +88,7 @@ export function ConnectAiDialog({
         open={open && !manual}
         onOpenChange={(v) => !v && onClose()}
         title={title}
-        description={cx('subtitle')}
+        description={subtitle}
         chrome="split"
         width={800}
         height="480px"
@@ -91,7 +122,7 @@ export function ConnectAiDialog({
                     {title}
                   </p>
                   <p aria-hidden className="mt-1 text-base leading-[1.5] text-ink-2">
-                    {cx('subtitle')}
+                    {subtitle}
                   </p>
                 </>
               )}
@@ -102,6 +133,26 @@ export function ConnectAiDialog({
                   <MethodList vendor={step} connections={connectionsOf(caps, step)} onConnected={done} />
                 </div>
               ) : (
+                starter && chatgpt ? (
+                  <StarterChoices
+                    chatgpt={chatgpt}
+                    keyVendors={keyVendors}
+                    keysOpen={keysOpen}
+                    onToggleKeys={() => setKeysOpen((v) => !v)}
+                    onOther={() => setRoute('all')}
+                    onConnected={done}
+                    renderKeyRow={(v) => (
+                      <VendorRow
+                        key={v.id}
+                        vendor={v}
+                        connection={connectionOf(caps, v)}
+                        connections={connectionsOf(caps, v)}
+                        onConnected={done}
+                        onChooseMethods={setStep}
+                      />
+                    )}
+                  />
+                ) : (
                 <>
                   <ul className="-mx-4 flex flex-col">
                     {shown.map((v) => (
@@ -130,6 +181,7 @@ export function ConnectAiDialog({
                     </div>
                   )}
                 </>
+                )
               )}
             </div>
             <div className="flex shrink-0 justify-end px-6 pb-4 pt-2">

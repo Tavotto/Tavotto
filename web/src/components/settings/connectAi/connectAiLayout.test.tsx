@@ -84,7 +84,7 @@ const click = async (el: Element | null) => {
 
 describe('版式：宽矩形 + 左侧品牌画', () => {
   it('固定尺寸的横向弹窗；左栏占约 40%、窄屏（<700px）隐藏，右栏常在；左栏有标志与产品名（来自品牌常量）', async () => {
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     const content = q('[data-dialog="connect-ai"]')!
     expect(content.style.width).toBe('800px')
     expect(content.style.height).toBe('480px')
@@ -101,7 +101,7 @@ describe('版式：宽矩形 + 左侧品牌画', () => {
   })
 
   it('左栏背景用品牌 token（不写字面色）', async () => {
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     expect(q('[data-connect-brand]')!.getAttribute('style')).toContain('var(--color-paper-ink)')
   })
 })
@@ -128,7 +128,7 @@ describe('二级卡片的说明写产品名', () => {
 
 describe('二级卡片：一家厂商有多种连接方式', () => {
   it('多种方式：点「连接」进二级页（大 logo + 厂商名 + 返回），每种方式一张卡；返回回到列表', async () => {
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     expect(q('[data-connect-vendor="openai"] [data-connect-action="methods"]')).toBeTruthy()
     await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
     const step = q('[data-connect-step="openai"]')!
@@ -147,7 +147,7 @@ describe('二级卡片：一家厂商有多种连接方式', () => {
   })
 
   it('选 API Key：展开 Key 表单，提交用该方式的目录 id；选订阅：直接发起登录（家族来自 method.agent）', async () => {
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
     await click(q('[data-connect-method="api"]'))
     const input = q<HTMLInputElement>('[data-connect-key-input]')!
@@ -164,7 +164,7 @@ describe('二级卡片：一家厂商有多种连接方式', () => {
   })
 
   it('不可用的方式置灰不可点，并给一句原因', async () => {
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     await click(q('[data-connect-vendor="anthropic"] [data-connect-action="methods"]'))
     const sub = q<HTMLButtonElement>('[data-connect-method="sub"]')!
     expect(sub.disabled).toBe(true)
@@ -173,7 +173,7 @@ describe('二级卡片：一家厂商有多种连接方式', () => {
   })
 
   it('只有一种方式的厂商不进二级页：点「连接」直接展开 Key 表单', async () => {
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     expect(q('[data-connect-vendor="deepseek"] [data-connect-action="methods"]')).toBeNull()
     await click(q('[data-connect-vendor="deepseek"] [data-connect-action="key"]'))
     expect(q('[data-connect-step]')).toBeNull()
@@ -182,7 +182,7 @@ describe('二级卡片：一家厂商有多种连接方式', () => {
 
   it('降级：没有 methods 字段时按旧的 connect 当唯一方式', async () => {
     useAiStore.setState({ caps: { ...connectCapsOf(), vendors: [{ ...OPENAI, methods: undefined }] } })
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     expect(q('[data-connect-vendor="openai"] [data-connect-action="methods"]')).toBeNull()
     expect(q('[data-connect-vendor="openai"] [data-connect-action="login"]')).toBeTruthy()
   })
@@ -263,7 +263,7 @@ describe('多方式厂商：一种连好了不堵另一种的入口', () => {
 
   it('已用订阅连接：行上显示「已连接」，入口仍在；二级页里订阅卡已连接、API Key 卡仍可连', async () => {
     withConns(SUB)
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     const row = q('[data-connect-vendor="openai"]')!
     expect(row.querySelector('[data-connect-state="ready"]')?.textContent).toBe(cx('connected'))
     await click(row.querySelector('[data-connect-action="methods"]'))
@@ -278,7 +278,7 @@ describe('多方式厂商：一种连好了不堵另一种的入口', () => {
 
   it('反过来：已连 API Key，订阅卡照常可登录；已连的 Key 卡展开是管理（换 Key / 断开）', async () => {
     withConns(KEY)
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
     expect(q('[data-connect-method="api"]')!.dataset.connectMethodState).toBe('ready')
     expect(q('[data-connect-method="sub"]')!.dataset.connectMethodState).toBe('none')
@@ -292,7 +292,7 @@ describe('多方式厂商：一种连好了不堵另一种的入口', () => {
 
   it('已连的订阅卡只显示状态，不展开', async () => {
     withConns(SUB)
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
     expect(q<HTMLButtonElement>('[data-connect-method="sub"]')!.disabled).toBe(true)
   })
@@ -309,7 +309,7 @@ describe('多方式厂商：一种连好了不堵另一种的入口', () => {
     useAiStore.setState({
       caps: { ...connectCapsOf([connection('p_k', { vendor: 'moonshot', method: 'kimi-code:key' })]), vendors: [kimi] },
     })
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     await click(q('[data-connect-vendor="moonshot"] [data-connect-action="methods"]'))
     expect(q('[data-connect-method="moonshot:key"]')!.dataset.connectMethodState).toBe('none')
     expect(q('[data-connect-method="kimi-code:key"]')!.dataset.connectMethodState).toBe('ready')
@@ -327,7 +327,7 @@ describe('多方式厂商：一种连好了不堵另一种的入口', () => {
       methods: [{ id: 'o', kind: 'oauth', label_key: 'method.account', connection_id: 'minimax-oauth', available: true }, { id: 'k', kind: 'key', label_key: 'method.apiKey', catalog_id: 'minimax', available: true }],
     })
     useAiStore.setState({ caps: { ...connectCapsOf([connection('minimax-oauth', { vendor: 'minimax' })]), vendors: [mm] } })
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     await click(q('[data-connect-vendor="minimax"] [data-connect-action="methods"]'))
     expect(q('[data-connect-method="o"]')!.dataset.connectMethodState).toBe('ready')
     expect(q('[data-connect-method="k"]')!.dataset.connectMethodState).toBe('none')
@@ -344,7 +344,7 @@ describe('登录只认所选方式的连接', () => {
     const onConnected = vi.fn()
     useAiStore.setState({ caps: caps(KEY) })
     serverCaps = caps(KEY) // 登录没成：后端仍只有那条 Key 连接
-    await render(<ConnectAiDialog open onClose={onClose} onConnected={onConnected} />)
+    await render(<ConnectAiDialog open list="all" onClose={onClose} onConnected={onConnected} />)
     await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
     await click(q('[data-connect-method="sub"]'))
     await click(q('[data-connect-login="terminal"]'))
@@ -374,7 +374,7 @@ describe('error 状态的 Key 连接：改 Key 是更新不是新建', () => {
     useAiStore.setState({
       caps: { ...connectCapsOf([connection('p_openai', { vendor: 'openai', method: 'api', state: 'error', error: 'unauthorized' })]), vendors: [DS, OPENAI, CLAUDE] },
     })
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
     await click(q('[data-connect-method="api"]'))
     const input = q<HTMLInputElement>('[data-connect-key-input]')!
@@ -405,7 +405,7 @@ describe('登录后读不到状态：重试的是刷新，不是重新登录', (
       return base(url as string, init)
     }) as typeof fetch
     const onConnected = vi.fn()
-    await render(<ConnectAiDialog open onClose={() => {}} onConnected={onConnected} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} onConnected={onConnected} />)
     await click(q('[data-connect-vendor="openai"] [data-connect-action="methods"]'))
     await click(q('[data-connect-method="sub"]'))
     await click(q('[data-connect-login="terminal"]'))

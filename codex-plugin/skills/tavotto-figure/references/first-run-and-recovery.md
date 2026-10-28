@@ -7,7 +7,7 @@ WorkBuddy、ZCode……）时，安装和重载看 `other-hosts.md`；引擎侧�
 
 ## 插件没有在本会话加载（工具列表里没有 `tavotto_health`）
 
-说明插件不在本会话里。给用户 README「在 Codex 中第一次使用 Tavotto」的两条
+说明插件不在本会话里。给用户 README「在 Codex 里用 Tavotto（插件）」的两条
 安装命令（分开跑，别用 `&&`——不同 shell 兼容，也好判断是哪一步失败）：
 
 ```sh

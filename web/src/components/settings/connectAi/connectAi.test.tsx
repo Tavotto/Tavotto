@@ -101,19 +101,19 @@ const click = async (el: Element) => {
 
 describe('ConnectAiDialog：排序与个数', () => {
   it('中文界面：国内在前，只露前 5 家', async () => {
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     expect(ids()).toEqual(['deepseek', 'kimi', 'qwen', 'zhipu', 'chatgpt'])
     expect(rows()).toHaveLength(CONNECT_AI_VISIBLE)
   })
 
   it('英文界面：海外在前', async () => {
     await setLocale('en-US')
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     expect(ids()).toEqual(['chatgpt', 'claude', 'openai', 'gemini', 'anthropic'])
   })
 
   it('「更多 AI…」展开全部（自定义不在列表里，另有「其他兼容接口…」）', async () => {
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     expect(document.body.querySelector('[data-connect-other]')).toBeNull()
     await click(document.body.querySelector('[data-connect-more]')!)
     expect(ids()).toHaveLength(9)
@@ -124,7 +124,7 @@ describe('ConnectAiDialog：排序与个数', () => {
 
   it('从修复入口打开时标题多「来修复」，「稍后」直接关闭', async () => {
     const onClose = vi.fn()
-    await render(<ConnectAiDialog open reason="fix" onClose={onClose} />)
+    await render(<ConnectAiDialog open list="all" reason="fix" onClose={onClose} />)
     expect(document.body.textContent).toContain(cx('titleFix'))
     expect(document.body.textContent).toContain(cx('subtitle'))
     await click(document.body.querySelector('[data-connect-later]')!)
@@ -132,7 +132,7 @@ describe('ConnectAiDialog：排序与个数', () => {
   })
 
   it('每一行都是彩色 logo + 厂商名', async () => {
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     const r = row('deepseek')
     expect(r.querySelector('[data-brand-logo="deepseek"]')).toBeTruthy()
     expect(r.textContent).toContain('DeepSeek')
@@ -151,7 +151,7 @@ describe('ConnectAiDialog：连接', () => {
       }
       return null
     }
-    await render(<ConnectAiDialog open onClose={onClose} onConnected={onConnected} />)
+    await render(<ConnectAiDialog open list="all" onClose={onClose} onConnected={onConnected} />)
     expect(row('deepseek').querySelector('[data-connect-key-form]')).toBeNull()
     await click(row('deepseek').querySelector('[data-connect-action="key"]')!)
     const link = row('deepseek').querySelector<HTMLAnchorElement>('[data-connect-key-link]')!
@@ -177,7 +177,7 @@ describe('ConnectAiDialog：连接', () => {
       c.url === '/api/ai/connections' && c.method === 'POST'
         ? json({ ok: true, connection: connection('deepseek', { state: 'error' }) })
         : null
-    await render(<ConnectAiDialog open onClose={onClose} />)
+    await render(<ConnectAiDialog open list="all" onClose={onClose} />)
     await click(row('deepseek').querySelector('[data-connect-action="key"]')!)
     await type(row('deepseek').querySelector('[data-connect-key-input]')!, 'sk-bad')
     await click(row('deepseek').querySelector('[data-connect-key-submit]')!)
@@ -187,7 +187,7 @@ describe('ConnectAiDialog：连接', () => {
 
   it('订阅类：点「登录」直接发起登录（POST /api/ai/agents/codex/login），不展开表单', async () => {
     onPost = (c) => (c.url.endsWith('/api/ai/agents/codex/login') && c.method === 'POST' ? json({ started: true, mode: 'background' }) : null)
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     await click(row('chatgpt').querySelector('[data-connect-action="login"]')!)
     expect(calls.some((c) => c.url.endsWith('/api/ai/agents/codex/login') && c.method === 'POST')).toBe(true)
     expect(row('chatgpt').querySelector('[data-connect-key-form]')).toBeNull()
@@ -204,7 +204,7 @@ describe('ConnectAiDialog：连接', () => {
       }
       return null
     }
-    await render(<ConnectAiDialog open onClose={onClose} onConnected={onConnected} />)
+    await render(<ConnectAiDialog open list="all" onClose={onClose} onConnected={onConnected} />)
     await click(row('chatgpt').querySelector('[data-connect-action="login"]')!)
     const btn = row('chatgpt').querySelector<HTMLButtonElement>('[data-connect-login="terminal"]')!
     expect(btn.textContent).toBe(t('settings.agents.login.done', { ns: 'dialogs' }))
@@ -215,7 +215,7 @@ describe('ConnectAiDialog：连接', () => {
 
   it('已连接的行显示「已连接」，没有连接按钮', async () => {
     useAiStore.setState({ caps: connectCapsOf([connection('deepseek', { label: 'DeepSeek' })]) })
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     expect(row('deepseek').querySelector('[data-connect-state="ready"]')?.textContent).toBe(cx('connected'))
     expect(row('deepseek').querySelector('[data-connect-action]')).toBeNull()
   })
@@ -225,7 +225,7 @@ describe('ConnectAiDialog：连接', () => {
     caps.vendors = caps.vendors!.map((v) => (v.id === 'chatgpt' ? { ...v, available: false } : v))
     useAiStore.setState({ caps })
     await setLocale('en-US')
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     expect(row('chatgpt').querySelector('[data-connect-action]')).toBeNull()
     expect(row('chatgpt').textContent).toContain(cx('needsInstall'))
   })
@@ -236,7 +236,7 @@ describe('后端补充约定', () => {
     const caps = connectCapsOf()
     caps.vendors = caps.vendors!.map((v) => (v.id === 'deepseek' ? { ...v, label: 'DeepSeek-EN', label_key: 'vendor.deepseek' } : v))
     useAiStore.setState({ caps })
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     expect(row('deepseek').textContent).toContain(t('settings.agents.vendor.deepseek', { ns: 'dialogs' }))
     expect(row('deepseek').textContent).not.toContain('DeepSeek-EN')
     expect(row('chatgpt').textContent).toContain('ChatGPT')
@@ -246,7 +246,7 @@ describe('后端补充约定', () => {
     const caps = connectCapsOf([connection('deepseek', { state: 'error', error: 'unauthorized' })])
     caps.vendors = caps.vendors!.map((v) => (v.id === 'deepseek' ? { ...v, key_hint_key: 'vendor.deepseek' } : v))
     useAiStore.setState({ caps })
-    await render(<ConnectAiDialog open onClose={() => {}} />)
+    await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     expect(row('deepseek').querySelector('[data-connect-state="error"]')?.textContent).toBe(cx('err.unauthorized'))
     await click(row('deepseek').querySelector('[data-connect-action="key"]')!)
     expect(row('deepseek').querySelector('[data-connect-key-hint]')).toBeTruthy()
