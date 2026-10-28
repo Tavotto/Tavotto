@@ -3038,3 +3038,241 @@ def test_claude_desktop_is_not_launched_unless_every_policy_value_was_written():
     assert check < body.index("gui_env = dict(env, **_home_env(home))")
     assert '"environment_unavailable"' in body[check : check + 900]
     assert "app not launched" in body[check : check + 900]
+
+
+# ----------------------------------------------------------------------------- desktop-connect（「接入 AI 编辑器」真机验收）
+def _connect_ctx(tmp_path: Path, host_id: str) -> dict:
+    home = tmp_path / "home"
+    proj = tmp_path / "proj"
+    proj.mkdir(parents=True)
+    cli = tmp_path / "Tavotto" / "sidecar" / "tavotto-cli.exe"
+    return {
+        "host_id": host_id,
+        "real_home": home,
+        "host_home": tmp_path / "host-home",
+        "proj": proj,
+        "cli": cli,
+        "targets": A.connect_targets(host_id, home),
+        "host_targets": A.connect_targets(host_id, tmp_path / "host-home"),
+    }
+
+
+def _button_writes(ctx: dict, entry: dict | None = None) -> dict:
+    """照 hostconnect 的做法写：每个目标文件只在服务器表里加 tavotto 一条（WorkBuddy 另记信任）。"""
+    entry = entry or {
+        "command": str(ctx["cli"]),
+        "args": ["mcp"],
+        "env": {A.CONNECT_ROOTS_ENV: str(ctx["proj"])},
+    }
+    for f, path in ctx["targets"]:
+        d = json.loads(f.read_text(encoding="utf-8"))
+        A._servers(d, path, create=True)["tavotto"] = entry
+        f.write_text(json.dumps(d), encoding="utf-8")
+    if ctx["host_id"] == "workbuddy":
+        cmd = [entry["command"], *entry["args"]]
+        approvals = ctx["real_home"] / ".workbuddy" / "mcp-approvals.json"
+        approvals.write_text(
+            json.dumps({f"{A.workbuddy_trust_hash(cmd, entry['env'])}::tavotto": 1}),
+            encoding="utf-8",
+        )
+    return entry
+
+
+def test_connect_targets_are_where_the_live_cells_proved_the_hosts_read():
+    home = Path("H")
+    zc = A.connect_targets("zcode", home)
+    assert [f for f, _ in zc] == [
+        home / ".zcode" / "cli" / "config.json",
+        home / ".zcode" / "workspace" / "default" / ".zcode" / "config.json",
+    ]
+    assert all(p == ("mcp", "servers") for _, p in zc)
+    assert A.connect_targets("workbuddy", home) == [
+        (home / ".workbuddy" / "mcp.json", ("mcpServers",))
+    ]
+    assert set(A.CONNECT_CELLS) <= set(A.DESKTOP_LIVE_MODES)
+    assert A.TASKS["desktop-connect"].modes == tuple(A.CONNECT_CELLS)
+    assert A.TASKS["desktop-connect"].accepts_package
+
+
+def test_connect_judge_does_not_import_the_product_code():
+    """判据是执行器自己的：agent.py 不 import hostconnect（拿被测代码当判据等于没判）。"""
+    src = (WINLAB / "agent.py").read_text(encoding="utf-8")
+    assert "hostconnect" not in re.sub(r"#.*|\"\"\"[\s\S]*?\"\"\"", "", src)
+
+
+def test_tavotto_runs_with_the_real_user_profile():
+    """改了 USERPROFILE，WebView2 就不开策略给的调试端口（Lab 实测）：Tavotto 的环境不许改用户目录。"""
+    env = A.tavotto_gui_env({"USERPROFILE": "C:\\Users\\lab", "PATH": "x"}, Path("W"))
+    assert env["USERPROFILE"] == "C:\\Users\\lab" and "HOME" not in env
+    assert env["TAVOTTO_CONFIG_DIR"] == str(Path("W") / "tavotto-config")
+
+
+@pytest.mark.parametrize("host_id", ["zcode", "workbuddy"])
+def test_prepare_drops_a_stale_tavotto_entry_and_keeps_everything_else(tmp_path, host_id):
+    ctx = _connect_ctx(tmp_path, host_id)
+    f, path = ctx["targets"][0]
+    f.parent.mkdir(parents=True)
+    old = {"keep": 1}
+    A._servers(old, path, create=True).update(tavotto={"command": "old"}, other={"command": "x"})
+    f.write_text(json.dumps(old), encoding="utf-8")
+    before = A.prepare_connect_targets(ctx["targets"])
+    d = json.loads(f.read_text(encoding="utf-8"))
+    box = A._servers(d, path)
+    assert "tavotto" not in box and box["other"] == {"command": "x"} and A.CONNECT_DECOY in box
+    assert d["keep"] == 1 and before[str(f)] == d
+    for g, _ in ctx["targets"][1:]:
+        assert g.is_file()
+
+
+@pytest.mark.parametrize("host_id", ["zcode", "workbuddy"])
+def test_connect_judge_accepts_exactly_what_the_button_should_write(tmp_path, host_id):
+    ctx = _connect_ctx(tmp_path, host_id)
+    ctx["before"] = A.prepare_connect_targets(ctx["targets"])
+    entry = _button_writes(ctx)
+    v = A.judge_connect_written(ctx)
+    assert v["ok"], v["problems"]
+    assert v["written"] == entry
+
+
+@pytest.mark.parametrize(
+    "mutate, problem",
+    [
+        (lambda e, c: e.update(args=["mcp", "--x"]), "args"),
+        (lambda e, c: e.update(command=str(c["proj"] / "python.exe")), "command"),
+        (lambda e, c: e["env"].update(EXTRA="1"), "env keys"),
+        (lambda e, c: e["env"].update({A.CONNECT_ROOTS_ENV: str(c["real_home"])}), "chosen folder"),
+    ],
+)
+def test_connect_judge_rejects_a_wrong_entry(tmp_path, mutate, problem):
+    ctx = _connect_ctx(tmp_path, "zcode")
+    ctx["before"] = A.prepare_connect_targets(ctx["targets"])
+    entry = {
+        "command": str(ctx["cli"]),
+        "args": ["mcp"],
+        "env": {A.CONNECT_ROOTS_ENV: str(ctx["proj"])},
+    }
+    mutate(entry, ctx)
+    _button_writes(ctx, entry)
+    v = A.judge_connect_written(ctx)
+    assert not v["ok"] and any(problem in p for p in v["problems"]), v["problems"]
+
+
+def test_connect_judge_rejects_touching_other_keys_or_a_missing_target(tmp_path):
+    ctx = _connect_ctx(tmp_path, "zcode")
+    ctx["before"] = A.prepare_connect_targets(ctx["targets"])
+    _button_writes(ctx)
+    f0, _ = ctx["targets"][0]
+    d = json.loads(f0.read_text(encoding="utf-8"))
+    d["mcp"]["servers"].pop(A.CONNECT_DECOY)
+    f0.write_text(json.dumps(d), encoding="utf-8")
+    ctx["targets"][1][0].unlink()
+    problems = A.judge_connect_written(ctx)["problems"]
+    assert any("other keys changed" in p for p in problems)
+    assert any("missing" in p for p in problems)
+
+
+def test_connect_judge_wants_the_workbuddy_trust_record(tmp_path):
+    ctx = _connect_ctx(tmp_path, "workbuddy")
+    ctx["before"] = A.prepare_connect_targets(ctx["targets"])
+    _button_writes(ctx)
+    (ctx["real_home"] / ".workbuddy" / "mcp-approvals.json").write_text("{}", encoding="utf-8")
+    v = A.judge_connect_written(ctx)
+    assert not v["ok"] and any("trust" in p for p in v["problems"])
+
+
+@pytest.mark.parametrize("host_id", ["zcode", "workbuddy"])
+def test_wrap_puts_the_button_entry_into_the_host_home_and_unwrap_takes_it_out(tmp_path, host_id):
+    ctx = _connect_ctx(tmp_path, host_id)
+    ctx["before"] = A.prepare_connect_targets(ctx["targets"])
+    entry = _button_writes(ctx)
+    ctx["written"] = entry
+    real = {str(f): f.read_text(encoding="utf-8") for f, _ in ctx["targets"]}
+    for f, _ in ctx["host_targets"]:  # 宿主的家里原有的东西要留着
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"own": 1}), encoding="utf-8")
+    wrapped_cmd = ["py.exe", "mcp_recorder.py", "rec.jsonl", "--", entry["command"], *entry["args"]]
+    A.wrap_connected_entry(ctx, wrapped_cmd)
+    for f, path in ctx["host_targets"]:
+        d = json.loads(f.read_text(encoding="utf-8"))
+        got = A._servers(d, path)["tavotto"]
+        assert [got["command"], *got["args"]] == wrapped_cmd and got["env"] == entry["env"]
+        assert d["own"] == 1
+    approvals = ctx["host_home"] / ".workbuddy" / "mcp-approvals.json"
+    if host_id == "workbuddy":
+        assert ctx["wrapped_trust"] in json.loads(approvals.read_text(encoding="utf-8"))
+    # 真实用户目录里按钮写的那份一个字没动（断开要在它上面判）
+    assert {str(f): f.read_text(encoding="utf-8") for f, _ in ctx["targets"]} == real
+    A.unwrap_connected_entry(ctx)
+    for f, path in ctx["host_targets"]:
+        assert "tavotto" not in (A._servers(json.loads(f.read_text(encoding="utf-8")), path) or {})
+    if host_id == "workbuddy":
+        assert json.loads(approvals.read_text(encoding="utf-8")) == {}
+
+
+@pytest.mark.parametrize("host_id", ["zcode", "workbuddy"])
+def test_restore_puts_the_real_home_back_without_tavotto(tmp_path, host_id):
+    ctx = _connect_ctx(tmp_path, host_id)
+    f0, path0 = ctx["targets"][0]
+    f0.parent.mkdir(parents=True)
+    orig = {"keep": True}
+    A._servers(orig, path0, create=True)["tavotto"] = {"command": "left-over-from-a-debug-run"}
+    f0.write_text(json.dumps(orig), encoding="utf-8")
+    A.snapshot_real_targets(ctx)
+    ctx["before"] = A.prepare_connect_targets(ctx["targets"])
+    _button_writes(ctx)
+    (f0.parent / f"{f0.name}.tavotto-backup-20261028-120000").write_text("{}", encoding="utf-8")
+    out = A.restore_real_targets(ctx)
+    d = json.loads(f0.read_text(encoding="utf-8"))
+    assert d["keep"] is True and A._servers(d, path0) == {}
+    assert not list(f0.parent.glob("*.tavotto-backup-*"))
+    for f, _ in ctx["targets"][1:]:
+        assert not f.exists()  # 跑前没有的文件跑完也没有
+    if host_id == "workbuddy":
+        assert not (ctx["real_home"] / ".workbuddy" / "mcp-approvals.json").exists()
+    assert out["restored"]
+
+
+def test_restore_removes_the_dirs_it_had_to_create(tmp_path):
+    ctx = _connect_ctx(tmp_path, "workbuddy")
+    ctx["real_home"].mkdir()
+    A.snapshot_real_targets(ctx)
+    ctx["before"] = A.prepare_connect_targets(ctx["targets"])
+    _button_writes(ctx)
+    A.restore_real_targets(ctx)
+    assert not (ctx["real_home"] / ".workbuddy").exists()
+
+
+def test_disconnect_judge_wants_the_files_back_as_before(tmp_path):
+    ctx = _connect_ctx(tmp_path, "zcode")
+    ctx["before"] = A.prepare_connect_targets(ctx["targets"])
+    _button_writes(ctx)
+    assert A.judge_disconnected(ctx)  # 还有 tavotto：不算断开
+    for f, path in ctx["targets"]:
+        d = json.loads(f.read_text(encoding="utf-8"))
+        A._servers(d, path).pop("tavotto")
+        f.write_text(json.dumps(d), encoding="utf-8")
+    assert A.judge_disconnected(ctx) == []
+    f0, path = ctx["targets"][0]
+    d = json.loads(f0.read_text(encoding="utf-8"))
+    A._servers(d, path).pop(A.CONNECT_DECOY)  # 断开把旁人的条目也删了
+    f0.write_text(json.dumps(d), encoding="utf-8")
+    assert A.judge_disconnected(ctx) == [f"{f0.name}: differs from before connect"]
+
+
+def test_connect_driver_row_settles_only_on_a_final_state():
+    import connect_driver as C
+
+    busy = {"present": True, "connected": False, "button": {"text": "…", "disabled": True}}
+    assert not C.settled(busy, "connect") and not C.settled(busy, "disconnect")
+    assert C.settled({"present": True, "connected": True, "button": None}, "connect")
+    retry = {"present": True, "connected": False, "button": {"text": "重试", "disabled": False}}
+    assert C.settled(retry, "connect")  # 失败：按钮回来可点，结论由 agent 读文件判
+    assert not C.settled({"present": True, "connected": True, "button": None}, "disconnect")
+    assert C.settled(retry, "disconnect")
+    assert not C.settled({"present": False}, "connect")
+
+
+def test_connect_driver_is_deployed_with_the_agent():
+    src = (WINLAB / "winlab.py").read_text(encoding="utf-8")
+    deploy = src[src.index("def admin_deploy_agent") :]
+    assert 'HERE / "connect_driver.py"' in deploy[: deploy.index("cmdf,")]
