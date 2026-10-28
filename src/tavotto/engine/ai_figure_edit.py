@@ -25,7 +25,16 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import ai_prompt_pack, ai_tasks, config, discover, figureverify, registry, scriptlock
+from . import (
+    ai_prompt_pack,
+    ai_tasks,
+    config,
+    discover,
+    figureverify,
+    registry,
+    scriptlock,
+    syncnoise,
+)
 from .ai_tasks import FAILED, NOT_APPLICABLE, UNKNOWN, VERIFIED, CheckResult, TaskError
 
 TASK_TYPE = "figure_edit"
@@ -92,6 +101,7 @@ def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) ->
             d
             for d in dirnames
             if d not in skip_names
+            and not syncnoise.is_sync_noise(d)
             # 环境目录整棵跳过（链接目录不在此列：它走下面的链接记录，不进入）
             and ((Path(dirpath) / d).is_symlink() or not is_python_env_dir(Path(dirpath) / d))
         )
@@ -111,6 +121,8 @@ def project_fingerprint(root: Path, *, exclude: frozenset[str] = frozenset()) ->
                 mtime = None
             files[rel] = ["link", _readlink(p), mtime]
         for name in sorted(filenames):
+            if syncnoise.is_sync_noise(name):
+                continue  # 同步客户端 / 系统自己写的（闭集见 `syncnoise`）：不是校验运行改的
             p = Path(dirpath) / name
             rel = p.relative_to(root).as_posix()
             if rel in exclude:
@@ -138,7 +150,25 @@ def fingerprint_changes(before: dict, after: dict) -> list[str] | None:
     if before.get("status") != "ok" or after.get("status") != "ok":
         return None
     a, b = before["files"], after["files"]
-    return sorted(k for k in a.keys() | b.keys() if a.get(k) != b.get(k))
+    return sorted(k for k in a.keys() | b.keys() if _entry_changed(a.get(k), b.get(k)))
+
+
+def _entry_changed(x: list | None, y: list | None) -> bool:
+    """同步客户端常只碰 mtime（内容一字未变）：两侧都有内容摘要且 size + 摘要都相同，就不算改动。
+    没有摘要的（超过哈希上限的大文件、链接、读不了的）仍按完整记录比，mtime 变了算变。"""
+    if x == y:
+        return False
+    if (
+        x is not None
+        and y is not None
+        and len(x) == 3
+        and len(y) == 3
+        and x[2] is not None
+        and x[0] == y[0]
+        and x[2] == y[2]
+    ):
+        return False
+    return True
 
 
 def _tree(root: Path) -> dict[str, str] | None:

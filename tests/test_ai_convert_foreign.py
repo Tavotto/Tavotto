@@ -378,7 +378,7 @@ def test_installed_packages_are_recorded_and_the_run_proceeds(env):
     sid = _run(env, hooks={"deps": hook})
     sess = _wait(sid)
     assert sess["task"]["outcome"] == "completed", sess["task"]
-    assert len(calls) == 1 and calls[0][1].startswith(ai_convert.STAGE_PREFIX)
+    assert len(calls) == 1 and calls[0][1].endswith("_matplotlib.py")
     assert ai_convert.status(sid, _project(env))["installed"] == ["pandas", "statsmodels"]
 
 
@@ -504,7 +504,7 @@ def test_resume_continues_the_same_candidate_without_rerunning_the_agent(env, mo
     t.start()
     t.join(20)
     assert out["state"] == "ready", out
-    assert seen and seen[0][0].startswith(ai_convert.STAGE_PREFIX) and seen[0][1] == "digest-abc"
+    assert seen and seen[0][0].endswith("_matplotlib.py") and seen[0][1] == "digest-abc"
     assert len(env["prompts"]) == 1, "没有第二次 Agent 调用"
     st = ai_convert.status(sid, _project(env))
     assert st["state"] == "ready" and st["installed"] == ["pandas", "statsmodels"]
@@ -1214,7 +1214,7 @@ def test_a_stop_during_a_running_validation_force_cancels_the_probe(env, monkeyp
     cancel.set()
     t.join(20)
     assert out == {"state": "cancelled"}, out
-    assert len(forced) == 1 and forced[0][0].startswith(ai_convert.STAGE_PREFIX)
+    assert len(forced) == 1 and forced[0][0].endswith("_matplotlib.py")
     assert not (ai_convert.CONVERT_DIR / sid).exists()
 
 

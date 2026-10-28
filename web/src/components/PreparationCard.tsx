@@ -816,6 +816,11 @@ function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useCon
           {pt('convert.unverified', { product: PRODUCT_NAME })}
         </p>
       ) : null}
+      {st?.adopt_adds && st.adopt_adds.length > 0 ? (
+        <p data-convert-adopt-adds className="text-sm text-ink-3">
+          {pt('convert.adoptAdds', { files: listJoin(st.adopt_adds) })}
+        </p>
+      ) : null}
       {st?.installed && st.installed.length > 0 ? (
         <p data-convert-installed className="text-sm text-ink-3">
           {pt('convert.installed', { names: listJoin(st.installed) })}

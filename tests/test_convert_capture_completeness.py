@@ -75,8 +75,8 @@ def test_application_adapter_preserves_partial_capture_evidence(tmp_path, monkey
 
 def test_validation_probe_cannot_be_discovered_as_a_project_owner(candidate):
     def runner(root, rel, *_):
-        # Watchers can enumerate the project while this actual staging file exists.
-        assert (candidate.project_root / rel).is_file()
+        # 影子脚本：项目里根本没有这个文件，文件监视器 / 素材发现什么都看不到。
+        assert not (candidate.project_root / rel).exists()
         assert rel not in {
             p.relative_to(candidate.project_root).as_posix()
             for p in discover.iter_scripts(candidate.project_root)

@@ -61,7 +61,7 @@ import os
 import secrets
 from pathlib import Path
 
-from . import figcapture
+from . import figcapture, shadowscript
 
 PROFILE_SAFE = figcapture.PROFILE_SAFE
 PROFILE_NATIVE = figcapture.PROFILE_NATIVE
@@ -301,6 +301,11 @@ class ExecutionSpec:
     #: 缓存目录再并入 `write_roots_key`——MCP 与 GUI 取同一脚本得不到同一条会话。机器相关路径，
     #: **不进 `stable_payload()`**。native 恒 None。
     write_roots: tuple[str, ...] | None = None
+    #: safe 档：影子脚本的字节来源（`shadowscript`，ADR 0143 修订）。非 None = 项目里没有 `target` 这个文件
+    #: （生成可编辑版本的校验运行，候选留在候选目录），worker 读这里的字节、`__file__` 仍是 `target`。
+    #: 由 `safe_spec` 按 `shadowscript.lookup(project_root, target, write_roots)` 取，只在带写入根的运行里才可能非空。
+    #: 机器相关路径，**不进 `stable_payload()`**；`worker_argv` 的 `--script-source` 唯一出处。
+    script_source: str | None = None
 
     def __post_init__(self) -> None:
         if self.profile not in PROFILES:
@@ -408,6 +413,7 @@ class ExecutionSpec:
         out["env"] = dict(self.env) if self.env is not None else None
         out["input_remap"] = [dict(r) for r in self.input_remap]
         out["write_roots"] = None if self.write_roots is None else list(self.write_roots)
+        out["script_source"] = self.script_source
         out["spec_version"] = SPEC_VERSION
         return out
 
@@ -529,6 +535,7 @@ def spec_from_payload(data: dict) -> ExecutionSpec:
         env_source=data.get("env_source", "") or "",
         stdin=data.get("stdin", STDIN_INHERIT) or STDIN_INHERIT,
         write_roots=(None if data.get("write_roots") is None else tuple(data.get("write_roots"))),
+        script_source=data.get("script_source") or None,
     )
 
 
@@ -603,6 +610,11 @@ def safe_spec(
         input_remap=tuple(figcapture.clean_remap_rules(list(input_remap or ()))),
         run_config=run_config,
         write_roots=None if write_roots is None else tuple(write_roots),
+        script_source=(
+            shadowscript.lookup(figures_dir, script, write_roots_key(write_roots))
+            if write_roots is not None
+            else None
+        ),
     )
 
 
@@ -826,6 +838,9 @@ def worker_argv(
         # 也不受 Windows list2cmdline 的引号膨胀影响。引用仍参与 workerd 的 spawn
         # 身份；worker 缺少匹配载荷时拒绝执行，绝不回落为空 argv。
         out += ["--run-config", spec.run_config]
+    if spec.script_source:
+        # 影子脚本（ADR 0143 修订）：只在转换校验运行里多两个 token——没有它的 argv 逐字节不变（golden）
+        out += ["--script-source", spec.script_source]
     if spec.write_roots is not None:
         # #898：写入根绊线。只在 MCP 来源的运行里多两个 token——没有它的 argv 逐字节不变（golden）。
         # 根进 argv（而不是环境变量）：workerd 的 spawn 规格哈希只看 argv / env / cwd，

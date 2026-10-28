@@ -343,12 +343,12 @@ def test_no_figure_captured_is_a_failure_with_a_reason(env):
     assert not (ai_convert.CONVERT_DIR / sid).exists()
 
 
-def test_run_error_is_a_failure_and_the_stage_file_is_gone(env):
+def test_run_error_is_a_failure_and_the_project_never_sees_a_stage_file(env):
     seen = []
 
     def boom(figures_dir, rel, write_roots=None):
         seen.append(Path(figures_dir) / rel)
-        assert (Path(figures_dir) / rel).is_file(), "校验期间候选以临时文件存在于原脚本旁"
+        assert not (Path(figures_dir) / rel).exists(), "校验期间项目里没有候选文件（影子脚本）"
         return {"error": {"code": "script_exception", "message": "KeyError: 'x'"}}
 
     env["runner"] = boom
@@ -358,10 +358,8 @@ def test_run_error_is_a_failure_and_the_stage_file_is_gone(env):
     assert ("render.capture", "run_failed") in {
         (u["constraint_id"], u["reason_code"]) for u in sess["task"]["unmet"]
     }
-    assert (
-        seen and seen[0].parent == env["figs"] and seen[0].name.startswith(ai_convert.STAGE_PREFIX)
-    )
-    assert not seen[0].exists(), "校验用的临时文件跑完即删"
+    assert seen and seen[0] == env["figs"] / "fig_matplotlib.py"
+    assert not seen[0].exists(), "校验运行从头到尾没往项目里写文件"
     assert sorted(_project_files(env["figs"])) == ["data.csv", "fig.py", "out.png"]
 
 

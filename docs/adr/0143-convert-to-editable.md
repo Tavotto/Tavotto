@@ -77,6 +77,23 @@ Python、R、MATLAB 共用这条路径；无效路径返回 `convert_reference_i
 [Matplotlib addfont](https://matplotlib.org/stable/api/font_manager_api.html)。提示词和成功出图都不是科学保真证明；
 原生参照与数值/几何复测另行记录，不改变 `side_by_side` / `unknown` 的含义。默认执行器路由不变。
 
+### 校验影子脚本修订（2026-10-29：校验不往用户项目写任何文件）
+
+真实诊断包（坚果云同步盘里的 R 项目）：旧做法把候选写成紧挨原脚本的 `_tavotto_convert_probe_<sid>.py`，同步盘把它同步出去，
+用户看见项目里冒出文件；同步客户端自己的临时 / 冲突文件与 mtime 改动又让“项目未改动”复核误判，两次 `precommit_not_verified`。
+
+* **二、4 的临时文件整段作废（仅转换；改图 `figure_edit` 的候选仍用旧临时文件）**。候选字节留在候选目录，`engine/shadowscript.py`
+  登记“项目里将来的位置（= 采用会选的名字，`adopt_names`，只看不写）→ 候选文件”，`execspec.safe_spec` 取出放进
+  `ExecutionSpec.script_source` → worker `--script-source`：worker 读候选字节，`__file__` / `sys.argv[0]` / traceback 文件名是
+  显示路径（`os.path.dirname(__file__)` 读数据与采用后一致），cwd 仍是原脚本目录（相对路径读数据不变）。`__main__` 入口经
+  `runpy.run_path` 并临时重定向 `io.open_code`（CPython 3.10–3.15 同形，缺命中就大声失败），函数入口经 `SourceFileLoader` 子类。
+  写入根绊线照旧只放行候选目录。登记键含写入根，并发的两次转换互不串。无 Windows 特例（没有软链视图，不需要符号链接权限）。
+* 父进程的静态分析（依赖调研 `importscan`、工作目录证据 `databinding`、入口推断 `probe.entry_candidates`）读同一份影子字节，
+  所以“缺包先装”“数据只在项目根要先问”仍然生效；只读，歧义时当“文件不存在”。
+* **指纹排除同步 / 系统客户端的产物**（`engine/syncnoise.py` 闭集，不含裸 `*.tmp`），并且只有 size + 内容摘要都相同的 mtime 变化不算改动。
+  真改动仍判失败，检查的 `observed` 带变化文件（≤ 50 个，相对路径）与 `sync_folder`；项目在已知同步盘里时原因码为
+  `project_files_changed_sync`。ready 的状态带 `adopt_adds`（采用会新增的文件，原脚本不动）。
+
 ### 三、默认开与逃生口
 
 用户 2026-10-21 裁决：全部默认开，不是 beta-only，不挂默认关的实验开关（与 TAF 的 `ai.taf.enabled` 不同，不看它）。保留一个总开关作为逃生口：

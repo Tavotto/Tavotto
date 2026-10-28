@@ -1245,6 +1245,7 @@
         "syntax_error": "生成的脚本有语法错误",
         "other_file_changed": "助手改动了不该动的文件，已丢弃",
         "project_files_changed": "校验运行改动了项目文件，已丢弃",
+        "project_files_changed_sync": "项目文件在这期间发生了变化，已丢弃。这个项目在同步盘里，可能是同步软件在改文件，请等同步结束后重试",
         "render_not_wired": "暂时无法校验新版本",
         "budget_exhausted": "尝试次数用完了",
         "missing_dependency": "新版本要用的 Python 包没装上（自动安装已关闭，或这些包没法自动装），请手动装好后重试",
@@ -1263,6 +1264,7 @@
         "matlab": "这是 MATLAB 脚本，{{product}} 可以另写一份能直接编辑的 Matplotlib 版本，原脚本不动。"
       },
       "unverified": "{{product}} 没有运行 R / MATLAB，请并排看一眼再采用",
+      "adoptAdds": "采用只会新增 {{files}}，原脚本不动",
       "installed": "已为这个项目装好 {{names}}",
       "btn": {
         "start": "生成可编辑版本",

@@ -43,6 +43,7 @@ import faulthandler
 import hashlib
 import importlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -386,6 +387,60 @@ def _capture_entry_sha(script: Path, captured: list[str]):
         yield
     finally:
         SourceFileLoader.get_code = original
+
+
+@contextlib.contextmanager
+def _redirect_open_code(display: Path, source: Path):
+    """`runpy.run_path(display)` 读代码时把 `display` 换成 `source` 的字节（`--script-source`，影子脚本）。
+
+    `runpy`（CPython 3.10–3.15 同形）只经 `io.open_code` 读 .py 源码并以 `display` 为文件名编译，所以脚本里的
+    `__file__` / traceback 文件名 / `sys.argv[0]` 都是 `display`，而字节来自 `source`。只改这一个路径、
+    其余 `open_code`（import 系统自己走 `_io.open_code`，不经这里）一概原样；缺了这次命中，`run_path` 会以
+    FileNotFoundError 大声失败，不会静默跑错文件。"""
+    real = io.open_code
+    target = _norm_path(display)
+
+    def open_code(path):
+        try:
+            hit = _norm_path(path) == target
+        except (OSError, TypeError, ValueError):
+            hit = False
+        return real(os.fspath(source)) if hit else real(path)
+
+    io.open_code = open_code
+    try:
+        yield
+    finally:
+        io.open_code = real
+
+
+def _import_shadow_entry(display: Path, source: Path, stem: str):
+    """`importlib.import_module(stem)` 的影子版：模块名 / `__file__` / `__spec__.origin` 是 `display`，字节读自 `source`。
+    `get_code` 仍是 `SourceFileLoader` 的（`_capture_entry_sha` 照常包它），只换 `get_data` 的落点、并让 `path_stats`
+    失败（`display` 不存在 → 不读 / 不写 .pyc，永远从源码编译）。"""
+    from importlib.machinery import SourceFileLoader  # noqa: PLC0415
+
+    display_key = _norm_path(display)
+
+    class _ShadowLoader(SourceFileLoader):
+        def get_data(self, path):
+            if _norm_path(path) == display_key:
+                path = os.fspath(source)
+            return super().get_data(path)
+
+        def path_stats(self, path):
+            raise OSError("shadow script has no stat")
+
+    loader = _ShadowLoader(stem, os.fspath(display))
+    spec = importlib.util.spec_from_file_location(stem, os.fspath(display), loader=loader)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[stem] = module
+    try:
+        loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(stem, None)
+        raise
+    return module
 
 
 class SafeSession(figsession.LiveFigureSession):
@@ -907,6 +962,11 @@ class Worker(wireproto.V1Handler):
     def __init__(self, args):
         global SESSION
         self.script = Path(args.script).resolve()
+        #: 影子脚本（`--script-source`）：用户项目里**没有**这个文件（校验运行不往用户项目写任何东西），
+        #: 字节来自这个路径，而 `__file__` / traceback / `sys.argv[0]` 仍是 `self.script`（项目里它将来所在的位置）。
+        #: 没给 = 就是 `self.script`（旧行为逐字节不变）。
+        source = getattr(args, "script_source", None)
+        self.script_source = Path(source).resolve() if source else self.script
         self.figures_dir = Path(args.figures_dir).resolve()
         self.out_dir = Path(args.out_dir).resolve()
         self.sandbox = Path(args.sandbox).resolve()
@@ -1265,7 +1325,7 @@ class Worker(wireproto.V1Handler):
         self._probe_misses = figcapture.ProbeMisses()
         # 脚本源码给改指当证据：落在 cwd 里的绝对路径是不是相对路径规范化来的（证不出就保留绝对身份）
         try:
-            script_source = self.script.read_text(encoding="utf-8", errors="replace")
+            script_source = self.script_source.read_text(encoding="utf-8", errors="replace")
         except OSError:
             script_source = ""
         figcapture.install_input_remap(
@@ -1311,7 +1371,7 @@ class Worker(wireproto.V1Handler):
         try:
             import ast  # noqa: PLC0415
 
-            source_bytes = self.script.read_bytes()
+            source_bytes = self.script_source.read_bytes()
             unused = figcapture.unused_imports(ast.parse(source_bytes))
         except (OSError, SyntaxError, ValueError):
             unused = frozenset()
@@ -1349,7 +1409,7 @@ class Worker(wireproto.V1Handler):
         #   从不查 `__pycache__`，读的就是源码本身。故沿用执行前后括号：读源码那一刻必落在 pre 与 post 之间，
         #   两端 (mtime_ns, size, inode, sha) 完全相同 ⇒ 期间没被写过（刻意 utime 回拨属对抗性，不设防）；不同 → None。
         #   `_source_stamp` 只给这条路径用。
-        pre = _source_stamp(self.script) if self.entry == "__main__" else None
+        pre = _source_stamp(self.script_source) if self.entry == "__main__" else None
         entry_shas: list[str] = []
         # `SystemExit` 不是 `Exception`：脚本末尾的 `sys.exit(main())` / `exit()` /
         # `quit()` 会一路穿过 `ensure_built` 的 `except Exception`，落到主循环
@@ -1377,10 +1437,19 @@ class Worker(wireproto.V1Handler):
                 if self.entry == "__main__":
                     import runpy  # noqa: PLC0415 — 内联脚本（fig4c / fig_models）
 
-                    runpy.run_path(str(self.script), run_name="__main__")
+                    if self.script_source != self.script:
+                        with _redirect_open_code(self.script, self.script_source):
+                            runpy.run_path(str(self.script), run_name="__main__")
+                    else:
+                        runpy.run_path(str(self.script), run_name="__main__")
                 else:
                     with _capture_entry_sha(self.script, entry_shas):
-                        module = importlib.import_module(self.script.stem)
+                        if self.script_source != self.script:
+                            module = _import_shadow_entry(
+                                self.script, self.script_source, self.script.stem
+                            )
+                        else:
+                            module = importlib.import_module(self.script.stem)
                     getattr(module, self.entry)()
             except SystemExit as exc:
                 if exc.code not in (None, 0):
@@ -1418,7 +1487,7 @@ class Worker(wireproto.V1Handler):
                 ledger.stop()
                 # 无论正常结束 / SystemExit / 异常都在这里收括号（finally 不改变原有异常传播）
                 if self.entry == "__main__":
-                    post = _source_stamp(self.script)
+                    post = _source_stamp(self.script_source)
                     self._source_sha256 = pre[3] if pre is not None and pre == post else None
                 else:
                     # 恰好一次加载才可信；零次（入口模块此前已在 sys.modules，如被 paper_style 提前 import）或多次 → None
@@ -1517,7 +1586,7 @@ class Worker(wireproto.V1Handler):
         except ValueError:  # 脚本不在图库下（防御，不该发生）
             rel = self.script.name
         try:
-            script_bytes = self.script.read_bytes()
+            script_bytes = self.script_source.read_bytes()
         except OSError:
             script_bytes = b""
         fingerprint = figcapture.source_fingerprint(
@@ -1771,7 +1840,7 @@ class Worker(wireproto.V1Handler):
             t = str(token).casefold()
             if t and (t in folded or folded in t):
                 return False
-        return name in _static_import_roots(self.script)
+        return name in _static_import_roots(self.script_source)
 
     def _fidelity_summary(self) -> dict | None:
         """本轮账本的 `fidelity` 段（闭集枚举 + 计数）；有弱信号时在 worker.log 留一行供诊断。"""
@@ -1852,6 +1921,8 @@ def _parse_remap(raw) -> list[dict]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--script", required=True)
+    # 影子脚本：字节读自这里、`__file__` 仍是 --script（校验运行不往用户项目写文件；没给 = 旧行为）
+    ap.add_argument("--script-source", default=None)
     ap.add_argument("--figures-dir", required=True)
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--sandbox", required=True)
