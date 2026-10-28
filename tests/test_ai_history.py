@@ -185,6 +185,9 @@ def test_broken_candidate_falls_through(monkeypatch):
 
 def test_start_install_reports_missing_npm(monkeypatch):
     """现场没有 npm：结构化 npm_missing，引导装 Node，而不是闷头失败。"""
+    monkeypatch.setattr(
+        ai_bridge.managedcli, "offered", lambda name: False
+    )  # 托管不可用的平台才回落 npm
     monkeypatch.setattr(ai_bridge, "_npm_argv", lambda: None)
     monkeypatch.setattr(ai_bridge, "_INSTALLS", {})
     st = ai_bridge.start_install("codex")

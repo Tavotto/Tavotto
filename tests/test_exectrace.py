@@ -470,6 +470,7 @@ def test_attributes_and_vocabularies_are_closed_sets():
         "changed",
         "refresh",
         "checks_failed",
+        "unmet_checks",
     }
     with pytest.raises(ValueError):
         xt.register_vocabulary("prompt", ["x"])
@@ -650,3 +651,21 @@ def test_a_checkpoint_captured_before_finish_never_overwrites_the_final_record(c
     saved = store.load(t.trace_id, scope=None)
     assert saved["status"] == "ok"
     assert not (store.root / f"{t.trace_id}.open.json").exists()
+
+
+def test_unmet_checks_attribute_keeps_only_code_shaped_entries():
+    kept, rejected = xt.project_attributes(
+        {
+            "unmet_checks": [
+                "render.capture:syntax_error",
+                "render.capture:syntax_error",
+                "/tmp/a.py: x",
+                "Bad Id:y",
+            ]
+        }
+    )
+    assert kept == {"unmet_checks": ["render.capture:syntax_error"]} and rejected == 0
+    assert xt.project_attributes({"unmet_checks": ["/home/alice/x.py"]}) == ({}, 1)
+    assert xt.project_attributes({"unmet_checks": "render.capture:x"}) == ({}, 1)
+    many = [f"c{i}:r" for i in range(40)]
+    assert len(xt.project_attributes({"unmet_checks": many})[0]["unmet_checks"]) == xt.MAX_CODES

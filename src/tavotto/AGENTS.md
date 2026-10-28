@@ -65,7 +65,7 @@ TS + Tailwind v4）。
 | `/api/export*`、`engine/exportreq.py`、`exportjob.py`、`exportroute.py`、`svgstore.py`、`svgexecution.py`、`tiffwrite.py`、`_serialize_figure` | 导出（ADR 0031 / 0046） → `export-pipeline.md` | 五端点一服务；文件名严格同源 |
 | `app.py` 的 `PROJECTS` / `_request_ctx` / `bound_project`、`project_refresh.py`、`project_watch.py`、`readiness.py`、`originalspec.py`、`tutorial.py`、`tiffprobe.py` | 项目系统（后端侧） → `project-system.md` | 指名不存在的项目 409 绝不落默认项目；派生刷新只有 `app.refresh_project()`；readiness 只报告不动手 |
 | `security.py`、`session_client.py`、任何新端点 | 会话认证（ADR 0008） → `session-auth.md` | 旁路只有三个；用户可控的路径碰文件系统 / 子进程前只经 `app.safe_resolve` / `projectenv.contained_path` |
-| `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`codexinstall.py`、`/api/ai/*` | 编码 Agent 桥 → `ai-agent-bridge.md` | 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml |
+| `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*` | 编码 Agent 桥 → `ai-agent-bridge.md` | 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml |
 | `richtext.py` | 文字：行内上下标与大小写 → `richtext.md` | ↔ `web/src/lib/richText.ts` 严格同源（三常量 + parse） |
 | `profiles/publication.json`、`engine/profiles.py`、`preflight.py`、`profilestore.py` | 出版规范 profile 与预检 → `profiles-and-preflight.md` | 规则唯一权威是那份 JSON；两侧求值器靠 golden vectors 对齐 |
 | `engine/telemetry.py`、`EVENTS`、`services/telemetry_proxy/`、`collect_distribution_metrics.py` | 匿名用量统计 → `telemetry.md` | 不引入任何分析 SDK；`capture()` 永不抛不阻塞；范围扩大升 `CONSENT_VERSION`；HTTPS 只经 `tlstrust` |

@@ -515,6 +515,9 @@ class TaskRun:
         self.trace = exectrace.NullTrace()
         self._phase_span: tuple[str, str | None] | None = None
         self._phase_attempts: dict[str, int] = {}
+        #: 最近一轮没过的提交前检查（`<id>:<reason_code>`，已脱敏成码）：validate 段收尾时进 attributes，
+        #: 让执行记录看得出「哪条检查没过」（用户诊断包 TVD-ZG0Y）
+        self._unmet_checks: list[str] = []
 
     def charge(self, key: str, n: int = 1) -> None:
         """记一笔预算；超出上限抛 `BudgetExceeded`，**不记**超出的那一笔（它没被执行）。"""
@@ -851,6 +854,33 @@ _PHASE_SPANS = {
 }
 
 
+def _check_code(check) -> str:
+    """一条没过的检查压成 `<id>:<reason_code>`：只含代码里的稳定码，不含脚本 / 路径 / 模型输出。
+    `data.<label>` 这类 id 的后缀是用户的系列名，只留 `data` 一段。"""
+    cid = str(check.id or "")
+    head = cid.split(".", 1)[0]
+    if head == "data" or not re.fullmatch(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?", cid):
+        cid = head if re.fullmatch(r"[a-z][a-z0-9_]*", head) else "unknown"
+    reason = str(check.reason_code or check.verdict or "")
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", reason):
+        reason = "unknown"
+    return f"{cid}:{reason}"
+
+
+def _run_unmet(run) -> list[str]:
+    return list(getattr(run, "_unmet_checks", None) or [])
+
+
+def _unmet_codes(checks) -> list[str]:
+    return sorted(
+        {
+            _check_code(c)
+            for c in checks
+            if c.stage == "precommit" and c.verdict not in (VERIFIED, NOT_APPLICABLE)
+        }
+    )
+
+
 def _trace_phase_impl(run: TaskRun, phase: str, *, committed: bool = False) -> None:
     """阶段推进的观察：结束上一段、开下一段。上一段是提交前检查而下一段是修正 = 那次检查没过（记 failed）；
     其余的「结束」只说明阶段走完了，不说明结果好坏——结果由 `_trace_settle` 按真实结局记。"""
@@ -862,6 +892,7 @@ def _trace_phase_impl(run: TaskRun, phase: str, *, committed: bool = False) -> N
             prev[1],
             exectrace.STATUS_FAILED if failed else exectrace.STATUS_OK,
             error_code="precommit_not_verified" if failed else None,
+            attributes={"unmet_checks": unmet} if failed and (unmet := _run_unmet(run)) else None,
         )
         run._phase_span = None
     if name is None:
@@ -891,7 +922,10 @@ def _trace_settle_impl(run: TaskRun, outcome: str, error: str | None, timed_out:
         status, code = exectrace.STATUS_OK, None
     else:
         status, code = exectrace.STATUS_FAILED, outcome
-    run.trace.end_span(prev[1], status, error_code=code, attributes={"outcome": outcome})
+    attrs: dict = {"outcome": outcome}
+    if prev[0] == "validate" and (unmet := _run_unmet(run)):
+        attrs["unmet_checks"] = unmet
+    run.trace.end_span(prev[1], status, error_code=code, attributes=attrs)
 
 
 def _trace_phase(run: TaskRun, phase: str, *, committed: bool = False) -> None:
@@ -973,6 +1007,7 @@ def _drive(adapter: TaskAdapter, executor: Executor, run: TaskRun, db_path):
         phase("verifying")
         pre = _verify_precommit(adapter, run, candidate)
         while not precommit_admits(pre):
+            run._unmet_checks = _unmet_codes(pre)
             if (
                 why := stop()
             ):  # 校验期间（例如装依赖）被取消：不浪费修正，也不把取消记成「检查不过」

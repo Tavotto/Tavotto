@@ -1306,6 +1306,7 @@
         "common_location": "Common install location",
         "custom": "Custom path",
         "homebrew": "Homebrew",
+        "managed": "Installed by Tavotto",
         "npm_global": "npm global directory",
         "package_binary": "Executable inside the npm package",
         "path": "System PATH",

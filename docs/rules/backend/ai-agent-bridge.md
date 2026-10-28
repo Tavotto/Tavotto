@@ -2,13 +2,13 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「编码 Agent 桥」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_ai_agents.py`、`test_ai_login.py`、`test_ai_bridge.py`、`test_ai_capabilities.py`、`test_ai_refresh.py`、`test_ai_history.py`、`test_ai_idempotency.py`、`test_ai_revert_stale.py`、`test_codex_install_cli.py`、`test_managed_cli.py`
 > `src/tavotto/AGENTS.md`「必守要点」压缩前原文（2026-10-24，与正文同等有效）：「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml；revert 只回滚本次 AI 那一版（细则见 `ai-agent-bridge.md`）
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
 order: 240
-改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`codexinstall.py`、`/api/ai/*`
+改到: `engine/ai_bridge.py`、`ai_agents.py`、`ai_providers.py`、`codexinstall.py`、`managedcli.py`、`resources/managed_cli_lock.json`、`/api/ai/*`
 主题: 编码 Agent 桥 → `ai-agent-bridge.md`
 必守要点: 「支持哪些 Agent」只在 `AGENT_REGISTRY`；CLI 子进程一律 `spawn_env()`；绝不改写用户的 settings / config.toml
 -->
@@ -702,3 +702,12 @@ Anthropic adaptive thinking 的签名绑定历史前缀；客户端压缩工具�
 Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同一 API 内比较变化时间，
 跨 API 仍比较设备、inode、大小和 mtime；读取前后的身份校验与拒绝替换不变。
 看护 `test_image_header.py`、`test_agent_runner_media.py`；后者直接断言接收端后续请求仍带源码和图像。
+
+- **应用内托管安装 Codex（`engine/managedcli.py`，锁 `resources/managed_cli_lock.json`，2026-10-29）**：`start_install("codex")` 在锁里有
+  的平台（darwin arm64/x64、win32 x64、linux x64）走托管：GitHub `codex-package-<triple>` 主 → registry.npmmirror.com
+  的 `@openai/codex@<版本>-<平台>` 镜像（两份归档字节不同、**各锁各的 sha256**；解开后整棵树 `tree_sha256` 共用，
+  逐文件相同）；慢了换源（判据同私有 Python，ADR 0112）、hash 不符不重试不换源；装到 `data_dir()/cli/codex/<版本>-<树摘要>/`，
+  `current.json` 原子切换；`search_locations` 首位 / `candidates` 在 PATH 之前，source=`managed`。**装好不登录**
+  （登录由前端在 done 后调既有 login 接口）。其余平台与其它 Agent 回落 npm。升版本用 `scripts/managed_cli_lock.py`
+  （`--update` / `--check [--online]`）。install 状态 `{status, progress 0–1, phase, via, code}`；错误码见 `managedcli.ERROR_CODES`，
+  文案在 `errors.json` 的 `engine.managedCliError.*`。传输层与 privatepython 同判据但独立实现（理由见模块头）。

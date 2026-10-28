@@ -199,12 +199,15 @@ def test_second_request_on_a_busy_script_is_409(client, tmp_path, cli, monkeypat
     state["delay"] = 1.5
     _open(client, _project(tmp_path))
     monkeypatch.setattr(m, "sse_publish", lambda *a: None)
-    assert _post(client, RID).status_code == 200
+    first = _post(client, RID)
+    assert first.status_code == 200
 
     busy = _post(client, RID2)
     assert busy.status_code == 409
     body = busy.get_json()
-    assert body["code"] == "ai_script_busy" and body["params"] == {"script": "fig1.py"}
+    # `session`：占着脚本的那次会话，前端据此接上它
+    assert body["code"] == "ai_script_busy"
+    assert body["params"] == {"script": "fig1.py", "session": first.get_json()["session"]}
 
     # 被拒的请求没有留下任何东西：它的 id 查不到，之后空闲了可以正常发
     assert client.get(f"/api/ai/requests/{RID2}").status_code == 404

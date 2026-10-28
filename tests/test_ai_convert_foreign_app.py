@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from tavotto.engine import ai_convert, ai_tasks, config, convertdeps, project_watch
+from tavotto.engine import ai_bridge, ai_convert, ai_tasks, config, convertdeps, project_watch
+
+_REAL_RUN = ai_bridge.run  # 夹具会把 engine_ai.run 换成记录器；这里留一份真的
 
 R_SCRIPT = 'library(ggplot2)\ndf <- read.csv("data.csv")\nggplot(df, aes(x, y)) + geom_point()\n'
 M_SCRIPT = "% 曲线\nx = linspace(0, 1, 20);\nfigure;\nplot(x, x.^2);\n"
@@ -211,3 +213,32 @@ def test_a_tiff_beside_the_script_is_not_a_displayable_reference(project):
     (figs / "fig.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     assert _post(client, script="fig.R", source_language="r").status_code == 200
     assert calls[1]["convert"]["original_rel"] == "fig.png"
+
+
+def test_busy_script_409_names_the_running_session(project, monkeypatch):
+    """同一脚本上已有 AI 任务在跑：409 `ai_script_busy` 的 params 带上正在跑的那次 `session`，前端据此接上它。"""
+    from tavotto import app as m
+
+    client, figs, calls = project
+    monkeypatch.setattr(m.engine_ai, "run", _REAL_RUN)
+    monkeypatch.setattr(
+        ai_bridge.ai_agents, "resolve", lambda agent, probe_readiness=True: _usable()
+    )
+    monkeypatch.setitem(
+        ai_bridge.SESSIONS,
+        "run-busy-01",
+        {"id": "run-busy-01", "status": "running", "script_path": str(figs / "fig.R")},
+    )
+    r = _post(client, script="fig.R", source_language="r", path="out.png")
+    assert r.status_code == 409, r.get_json()
+    body = r.get_json()
+    assert body["code"] == "ai_script_busy"
+    assert body["params"] == {"script": "fig.R", "session": "run-busy-01"}
+    assert ai_bridge.busy_session(figs / "fig.py") is None
+    assert ai_bridge.busy_session(figs / "fig.R") == "run-busy-01"
+
+
+def _usable():
+    from tavotto.engine import ai_agents
+
+    return ai_agents.Resolution(argv=["/x/codex"], path="/x/codex", version="1", source="path")

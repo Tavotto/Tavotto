@@ -138,6 +138,9 @@ def find_codex() -> tuple[str | None, list[str]]:
     而一串路径他一眼就能看出该往哪儿指（与 AI 桥的 `diagnostics.searched` 同一纪律）。
     """
     searched: list[str] = ["PATH"]
+    # 应用内托管安装的那份排最前（与 AI 候选链同序，且同一份解析：`ai_agents.managed_paths`）
+    for managed in ai_agents.managed_paths(("codex",)):
+        return managed, ["managed", *searched]
     hit = shutil.which("codex")
     if hit:
         return hit, searched

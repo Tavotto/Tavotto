@@ -391,6 +391,18 @@
     "incompleteTitle": "The installation is incomplete",
     "installFailed": "Installation failed",
     "installing": "Installing…",
+    "managedCliError": {
+      "managed_cli_offline": "Couldn’t download Codex. Check your connection and try again; any Codex you already have is unaffected.",
+      "managed_cli_tls": "Couldn’t verify the download server’s security certificate, so Codex wasn’t downloaded. This isn’t a lost connection: this computer may be missing a root certificate, or a network proxy may be replacing certificates. Update the system or contact your network administrator, then try again.",
+      "managed_cli_source_unavailable": "This version of Codex isn’t available at the download address. Update the app and try again.",
+      "managed_cli_hash_mismatch": "The downloaded Codex failed verification and was rejected. Please try again.",
+      "managed_cli_unsupported_platform": "Installing Codex inside the app isn’t supported on this system or chip yet.",
+      "managed_cli_disk_full": "Not enough free disk space to install Codex (about 1 GB needed). Free up some space and try again.",
+      "managed_cli_invalid_archive": "The downloaded Codex file is damaged and was rejected. Update the app and try again.",
+      "managed_cli_write_failed": "Couldn’t write to the app’s data folder. Free up space or check permissions, then try again.",
+      "managed_cli_launch_failed": "The installed Codex couldn’t start and was rejected.",
+      "managed_cli_cancelled": "Codex installation was cancelled."
+    },
     "managedEnvInstalled": "Installed: {{packages}}",
     "managedEnvRebuild": "Rebuild {{product}} environment",
     "managedEnvUsing": "This project’s {{product}} environment: Python {{version}}",

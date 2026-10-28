@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -86,6 +87,10 @@ def test_a_correction_is_a_second_agent_attempt_and_the_failed_check_stays_the_f
     validates = _spans(snap, "validate")
     assert [(v["attempt"], v["status"]) for v in validates] == [(1, "failed"), (2, "ok")]
     assert validates[0]["error_code"] == "precommit_not_verified"
+    # 哪条提交前检查没过：只有 `<检查 id>:<原因码>`，没有脚本 / 路径 / 模型输出
+    unmet = validates[0]["attributes"]["unmet_checks"]
+    assert unmet and all(re.fullmatch(r"[a-z][a-z0-9_.]*:[a-z][a-z0-9_]*", u) for u in unmet)
+    assert "unmet_checks" not in validates[1]["attributes"]
     assert [c["status"] for c in _spans(snap, "correct")] == ["ok"]
     # 最终成功不抹掉第一次失败的证据
     assert snap["first_failure"]["name"] == "validate" and snap["first_failure"]["attempt"] == 1

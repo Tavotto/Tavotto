@@ -850,3 +850,21 @@ def test_budget_contract_bounds_corrections():
     assert e.value.code == "contract_budget"
     env = ai_tasks.TaskEnvelope.from_dict(_env())
     assert env.budget.max_corrections == 0 and env.to_dict()["budget"]["max_corrections"] == 0
+
+
+def test_unmet_codes_are_ids_and_reason_codes_only():
+    def chk(cid, verdict="failed", reason=None, stage="precommit"):
+        return ai_tasks.CheckResult(
+            id=cid, layer="L1", stage=stage, role="goal", verdict=verdict, reason_code=reason
+        )
+
+    got = ai_tasks._unmet_codes(
+        [
+            chk("render.capture", reason="syntax_error"),
+            chk("data.My Secret Series", reason="subject_removed"),
+            chk("ok.one", verdict="verified"),
+            chk("post.one", stage="postcommit"),
+            chk("weird id/with space", verdict="unknown"),
+        ]
+    )
+    assert got == ["data:subject_removed", "render.capture:syntax_error", "unknown:unknown"]

@@ -148,7 +148,7 @@ def test_the_bundle_carries_this_projects_exec_traces_failures_first_and_nothing
     other.finish("failed", error_code="agent_exit_nonzero")
     files = _bundle(client, pa)
     manifest = json.loads(files["manifest.json"])
-    assert manifest["schema_version"] == 9
+    assert manifest["schema_version"] == 10
     section = json.loads(files["exec-traces.json"])
     ids = [d["trace"]["trace_id"] for d in section["traces"]]
     assert bad.trace_id in ids and ok.trace_id in ids and other.trace_id not in ids
@@ -208,3 +208,25 @@ def test_a_finished_verify_phase_is_not_a_verified_result():
         t.end_span(t.start_span("verify", "verify"))
         t.finish("ok" if outcome != "failed" else "failed", attributes={"outcome": outcome})
         assert diag.attribution(t.snapshot())["verified_by_execution"] == expected, outcome
+
+
+def test_validate_span_unmet_checks_reach_the_exported_projection_and_junk_is_dropped():
+    t = _trace()
+    val = t.start_span("validate", "verify")
+    t.end_span(
+        val,
+        "failed",
+        error_code="precommit_not_verified",
+        attributes={"unmet_checks": ["render.capture:syntax_error"]},
+    )
+    t.finish("failed", error_code="precommit_not_verified")
+    snap = t.snapshot()
+    proj = diag.export_projection(snap)
+    (span,) = [s for s in proj["spans"] if s["name"] == "validate"]
+    assert span["attributes"]["unmet_checks"] == ["render.capture:syntax_error"]
+    # 导出这一刻再校验一次：被篡改成路径的条目出不去
+    for s in snap["spans"]:
+        if s["name"] == "validate":
+            s["attributes"]["unmet_checks"] = ["/Users/alice/secret.R"]
+    (span,) = [s for s in diag.export_projection(snap)["spans"] if s["name"] == "validate"]
+    assert "unmet_checks" not in span["attributes"]
