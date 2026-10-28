@@ -1122,3 +1122,30 @@ def test_health_is_ok_when_only_the_desktop_app_is_there_and_it_serves_mcp(tmp_p
     report, rc = launcher.health()
     assert rc == 0 and report["ok"] is True and report["mode"] == "desktop_cli"
     assert report["cli"] == cmd[0]
+
+
+def test_hand_off_to_the_desktop_cli_points_it_at_the_plugins_canvas(tmp_path, monkeypatch):
+    """桌面版的冻结 CLI 不带 `widget/canvas.html`（发版时随插件构建）：交棒时把插件里那一份指给它，画布不丢。"""
+    from tavotto_mcp import widget
+
+    assert launcher.WIDGET_ENV == widget.WIDGET_ENV
+    assert Path(launcher.PLUGIN_WIDGET).parent.parent == Path(launcher.HERE)
+    page = tmp_path / "canvas.html"
+    page.write_text("<html></html>", encoding="utf-8")
+    seen: list = []
+    monkeypatch.setattr(launcher, "PLUGIN_WIDGET", str(page))
+    monkeypatch.setattr(
+        launcher, "_exec_or_call", lambda args: seen.append(os.environ.get(widget.WIDGET_ENV)) or 0
+    )
+    monkeypatch.delenv(widget.WIDGET_ENV, raising=False)
+    assert launcher._hand_off_cmd(["tavotto-cli", "mcp"]) == 0
+    assert seen == [str(page)]
+    # 用户自己指了别处：不覆盖
+    monkeypatch.setenv(widget.WIDGET_ENV, "mine.html")
+    launcher._hand_off_cmd(["tavotto-cli", "mcp"])
+    assert seen[-1] == "mine.html"
+    # 插件里没有这个文件（源码态没构建）：什么都不设，服务端照常报缺
+    monkeypatch.delenv(widget.WIDGET_ENV)
+    monkeypatch.setattr(launcher, "PLUGIN_WIDGET", str(tmp_path / "absent.html"))
+    launcher._hand_off_cmd(["tavotto-cli", "mcp"])
+    assert seen[-1] is None
