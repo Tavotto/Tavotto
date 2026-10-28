@@ -235,7 +235,13 @@ L4 真宿主执行工具调用 → L5 科研绘图任务到编辑、保存、重
       那一条在宿主的家里另记信任），宿主拉起的服务端就是桌面版自带的 `tavotto-cli mcp`；判据同 desktop-live 的 `judge_live`。
       跑完把真实目录里的换回按钮写的原样、从宿主的家里删掉这一条，再起一次 Tavotto：那一行要认出「已接入」，点「⋯」→「断开」，之后真实目录里每个目标文件与接入前
       **逐键相同**（tavotto 没了、旁人条目还在）→ `disconnect=passed`。报告 `levels` 多 `connect` / `disconnect` 两项，结论按
-      六项聚合。Tavotto 跑完卸载。
+      六项聚合。断开前先结束宿主不在 Job 里的后台进程；那一次 Tavotto 起来却停在错误页（渲染服务没就绪）就记下 sidecar 日志尾部、
+      重起一次，报告 `disconnect_first_try` 如实留着。Tavotto 跑完卸载（只核对这次装的那一份，卸载器慢就再等再试）。
+  - **WorkBuddy 会自己升级**：它在后台把新版本安装包下进 TEMP（`workbuddy-update-*`），下次启动就去装、9 s 退出。固定版本的验收
+    不让宿主中途换版本：`workbuddy-native*` 每轮启动前删掉下好的更新包，报告 `host_update_removed` 记下。
+  - **抹凭据只抹真 key**：没有我们 key 的格（WorkBuddy 用账户自带模型）占位是 `"\0"`，`_scrub` 对短于 8 个字符的值什么都不做——
+    拿 NUL 去抹会写坏 run 目录里的每个二进制文件（Lab 实测写坏了 Tavotto 的 SQLite）。读不了的文件（宿主后台进程开着）跳过并记进
+    报告 `scrub_unreadable`；用了我们 key 的格有读不了的就整次 `error`（没核对完不能说抹干净了）。
   - CC-Switch 的落盘例外**不在此**（单独的 PR 与单独的规则条目）。
 - 一次性凭据只经 SSH stdin 进那一次运行的宿主进程环境（交互会话里再经命名管道），除上面登记的 `zcode-native` / `claude-desktop-native`（key）与 `workbuddy-native*`（账户登录态）外 Lab 不落盘；证据落盘前抹掉凭据。证据字段按
 `docs/implementation/multi-host-mcp/acceptance.md`。
