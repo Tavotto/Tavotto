@@ -15,7 +15,10 @@ import { create } from 'zustand'
 import { cancelArtifactEntry } from '@/lib/artifactValidation'
 import { emitActivity } from '@/lib/activity'
 import { useDocumentStore } from '@/store/documentStore'
-import type { CanvasObject, PanelObject } from '@/types/document'
+import { figuresOf } from '@/lib/figuresOf'
+
+// 判据本体在 `lib/figuresOf`（问题清单也要读，lib 不许依赖 store）；这里原样再导出，既有调用方不用改
+export { figuresOf }
 
 export type WorkspaceMode = 'fast_edit' | 'layout'
 
@@ -98,14 +101,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ mode: 'layout', activePanelId: null, pendingElementEdit: null, addedForEdit: null })
   },
 }))
-
-/**
- * 一张画布上「算数」的图：面板（figure）。**判据只有这一处**——runtime 图与磁盘图同为 `panel`、同等计；
- * 标注 / 文字 / 形状 / 箭头不是图，不计；**隐藏的图也计**（2026-10-21 用户拍板：隐藏是排版操作，不改模式、不发通知）。
- */
-export function figuresOf(objects: readonly CanvasObject[]): PanelObject[] {
-  return objects.filter((o): o is PanelObject => o.type === 'panel')
-}
 
 /**
  * **模式的唯一写入点**：按激活画布上的图数把 `mode` / `activePanelId` 对到该有的值——恰好 1 张 = 单图编辑

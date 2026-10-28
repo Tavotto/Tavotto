@@ -2371,6 +2371,34 @@
        5
       ],
       "hidden": false
+     },
+     {
+      "id": "t-noise",
+      "text": "(a)",
+      "size_pt": 7.9996,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       2,
+       12,
+       10,
+       5
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-short",
+      "text": "(a)",
+      "size_pt": 7.98,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       2,
+       22,
+       10,
+       5
+      ],
+      "hidden": false
      }
     ],
     "objects": [
@@ -2428,6 +2456,28 @@
        5
       ],
       "hidden": false
+     },
+     {
+      "id": "t-noise",
+      "type": "text",
+      "rect_mm": [
+       2,
+       12,
+       10,
+       5
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-short",
+      "type": "text",
+      "rect_mm": [
+       2,
+       22,
+       10,
+       5
+      ],
+      "hidden": false
      }
     ]
    },
@@ -2445,7 +2495,8 @@
      "object_ids": [
       "p1",
       "p2",
-      "t-small"
+      "t-small",
+      "t-short"
      ],
      "gids": [
       "axes_0.xticks",
@@ -2527,7 +2578,9 @@
      "object_ids": [
       "p1",
       "t-small",
-      "t-floor"
+      "t-floor",
+      "t-noise",
+      "t-short"
      ],
      "gids": [],
      "detail": {}

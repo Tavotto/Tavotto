@@ -292,12 +292,16 @@ def test_new_staging_must_carry_the_bundle():
 
 def test_install_line_is_published_where_the_matrix_says():
     """安装那行整行由 `brand.DSH_*` 拼出，放在哪由支持矩阵 `dsh` 这一档决定（2026-09-30 用户决定）：
-    `beta` 时 README 给出；此前 plugin-stable 还没带 bundle，README 与插件（技能）里一行都不许有，
+    `beta` 时宿主接入指南 `docs/guide/ai-hosts.md` 给出（README 只留一张表指过去，2026-10-28）；此前 plugin-stable
+    还没带 bundle，指南与插件（技能）里一行都不许有，
     规格只在待发说明里。"""
     expected = f'dsh plugin --profile {brand.DSH_DEFAULT_PROFILE} add "{brand.DSH_PLUGIN_SPEC}"'
     matrix = json.loads((ROOT / "docs" / "support-matrix.json").read_text(encoding="utf-8"))
     (host,) = [h for h in matrix["mcp_hosts"]["hosts"] if h["id"] == "dsh"]
-    lines = [ln.strip() for ln in (ROOT / "README.md").read_text(encoding="utf-8").splitlines()]
+    lines = [
+        ln.strip()
+        for ln in (ROOT / "docs" / "guide" / "ai-hosts.md").read_text(encoding="utf-8").splitlines()
+    ]
     found = [ln for ln in lines if ln.startswith("dsh plugin ")]
     if host["status"] == "beta":
         assert found == [expected]

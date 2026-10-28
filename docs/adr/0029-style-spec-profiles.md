@@ -205,6 +205,19 @@ i18n），用户自己起的名字**不翻译**。id 与版本留在技术详情
 - **派生值跟着降一档**：自动修复的目标（`specfix._font_bounds`、`issueFix.planFontUp`）与内置默认样式的
   刻度 / 图例档（`profilestore._secondary_font_pt`）都是「能通过的最小 0.5 档」，默认规范下从 8.5 变成 8。
 
+## 6c. 修订（2026-10-28）：含等号 + 数值容差，修复写出正好的下限
+
+维护者裁决：**8 pt 合规**。§6b 已把比较改成 `eff < floor`；这一版补两件事：
+
+- **容差**：违规判据是 `eff < floor - FONT_FLOOR_TOL_PT`，`FONT_FLOOR_TOL_PT = 0.005` pt（`engine/profiles.py`，
+  同源对 `web/src/lib/profile.ts`，`test_font_floor_tolerance_is_one_number_on_both_sides` 看护）。
+  吸收 mm↔pt、图缩放往返的浮点噪声（7.9996 通过）；0.005 小于编辑器最小一格 0.01 pt，所以真正少 0.01 以上的
+  （7.98）仍违规。`font-too-small`（规范下限）与 `font-below-absolute-floor` 共用同一容差；图内文字与画布文字、
+  Python / TS 四处同改，`preflight_vectors.json` 经 `python scripts/gen_preflight_vectors.py --write` 重新生成。
+- **修复写出正好的下限**：自动修复目标是「能通过的最小 0.5 档」，即 `up(max(strict, floor))`，默认规范下就是 `8`
+  （不是 8.01 / 8.000001）；不再有「`target <= floor` 就加一档」的分支。
+- 显示舍入：违规只在 `eff < floor - 0.005` 时发生，toFixed(2) 不会再把违规值显示成与阈值相等的 8.00。
+
 ## 7. 看护
 
 | 判据 | 在哪 |

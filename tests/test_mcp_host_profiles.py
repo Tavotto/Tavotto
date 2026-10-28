@@ -150,7 +150,7 @@ def test_no_host_is_claimed_verified_without_evidence():
             assert f"### 证据：{host['id']}" in acceptance
 
 
-#: beta 档的宿主 → (一键安装渠道, 验收矩阵子行的标签, README 章节里的宿主名)。
+#: beta 档的宿主 → (一键安装渠道, 验收矩阵子行的标签, 宿主接入指南章节里的宿主名)。
 #: WorkBuddy 装的是同一份 Claude 插件与同一个仓库根市场（ADR 0109），渠道相同、章节各写各的。
 BETA_CHANNELS = {
     "claude-code": ("claude-plugin", "插件", "Claude Code"),
@@ -160,14 +160,15 @@ BETA_CHANNELS = {
 
 
 def test_beta_label_follows_the_matrix_and_its_evidence():
-    """README 的「(Beta)」只能由支持矩阵的 beta 档派生，beta 又只能由真宿主冒烟撑着（2026-09-28）。
+    """宿主接入指南的「(Beta)」只能由支持矩阵的 beta 档派生，beta 又只能由真宿主冒烟撑着（2026-09-28）。
+    逐宿主的安装章节 2026-10-28 起在 `docs/guide/ai-hosts.md`（README 只留一张表）。
 
-    三个方向都钉：beta 的宿主 → 验收子行至少 local_smoke、README 有带 (Beta) 的章节；
-    README 里每个带 (Beta) 的宿主章节 → 矩阵里是 beta。缺哪一边都是口径与事实分叉。
+    三个方向都钉：beta 的宿主 → 验收子行至少 local_smoke、指南有带 (Beta) 的章节；
+    指南里每个带 (Beta) 的宿主章节 → 矩阵里是 beta。缺哪一边都是口径与事实分叉。
     """
     matrix = json.loads((ROOT / "docs" / "support-matrix.json").read_text(encoding="utf-8"))
     acceptance = (DOCS / "acceptance.md").read_text(encoding="utf-8")
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    guide = (ROOT / "docs" / "guide" / "ai-hosts.md").read_text(encoding="utf-8")
     beta_names = set()
     for host in matrix["mcp_hosts"]["hosts"]:
         if host["status"] != "beta":
@@ -180,9 +181,9 @@ def test_beta_label_follows_the_matrix_and_its_evidence():
         # 只看「工具完整流程」那一格：备注里「不算 host_verified」这类话会让整行子串匹配恒真
         cells = [c.strip() for c in row.group(0).strip().strip("|").split("|")]
         assert cells[3] in ("local_smoke", "host_verified"), cells
-        assert f"### Using Tavotto with {name} (Beta)" in readme.splitlines()
+        assert f"## Using Tavotto with {name} (Beta)" in guide.splitlines()
         beta_names.add(name)
-    labelled = set(re.findall(r"^### Using Tavotto with (.+) \(Beta\)$", readme, flags=re.M))
+    labelled = set(re.findall(r"^## Using Tavotto with (.+) \(Beta\)$", guide, flags=re.M))
     assert labelled == beta_names
 
 
@@ -619,8 +620,8 @@ def test_update_hint_is_not_codex_only():
 @pytest.mark.parametrize(
     "rel",
     [
-        "README.md",
-        "README.zh-CN.md",
+        "docs/guide/ai-hosts.md",
+        "docs/guide/ai-hosts.zh-CN.md",
         "codex-plugin/skills/tavotto-figure/references/other-hosts.md",
     ],
 )

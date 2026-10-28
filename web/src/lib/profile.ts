@@ -32,6 +32,9 @@ export const DEFAULT_SEVERITY: Severity = 'warn'
  */
 export const FALLBACK_MIN_FONT_SIZE_PT = 8.0
 
+/** 字号下限判据的数值容差（pt），含等号：`eff >= floor - tol` 通过。同源对：engine/profiles.py `FONT_FLOOR_TOL_PT`。 */
+export const FONT_FLOOR_TOL_PT = 0.005
+
 export interface AspectRatio {
   id: string
   w: number

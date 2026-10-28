@@ -349,6 +349,50 @@ run `20261027T094658Z-4723df`：`ondisk_key.wiped = true`、`policy_key_present 
 加了「策略值没写全就不起应用」的门禁（Codex #1450 P1）之后复跑 `20261027T100618Z-b5b222`：19 条策略全写入、L3 / L4 PASS，
 **L5 FAIL**——服务端 `tavotto_export` 成功，但 PDF 不在项目的 `out/`（模型没按提示词放目录），其余五项 L5 检查都过。
 这一格目前是「多次 PASS、一次因导出目录 FAIL」，不是稳定全过。
+## J. 「接入 AI 编辑器」按钮真机验收（`test desktop-connect --mode …`，2026-10-28）
+
+被测：v0.19.0 发行的 `Tavotto-0.19.0-Windows-Setup.exe`（与 release 的 `SHA256SUMS.txt` 核对一致，经管理员 scp 进
+`cache\packages\`），非管理员 currentUser 静默装。在装好的 Tavotto 里真点设置 →「改图助手」→ 那一行的「接入」，第一次接入在
+系统选文件夹框里选宿主的项目目录；宿主再凭这条配置去调桌面版自带的 `tavotto-cli mcp`；跑完点「⋯」→「断开」。两格都在执行器
+提交 `25ce5e470` 上。
+
+| 格 | connect | L2 | L3 | L4 | L5 | disconnect | run |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| ZCode 3.14.1 原生 Agent（DeepSeek，落盘专用 key） | PASS | PASS | PASS | PASS | PASS | PASS | `20261028T130729Z-ed85d2` |
+| WorkBuddy 5.8.3 原生 Agent（账户自带模型） | PASS | PASS | PASS | PASS | PASS | PASS | `20261028T125917Z-2c6c3f` |
+
+- **connect**：两格都是那一行显示「已接入」；ZCode 的 `~/.zcode/cli/config.json` 与 `~/.zcode/workspace/default/.zcode/config.json`、
+  WorkBuddy 的 `~/.workbuddy/mcp.json` 里只多了 tavotto 一条（旁人条目与其余键不变），命令是安装目录里的
+  `…\Tavotto\sidecar\Tavotto\tavotto-cli.exe`、参数 `["mcp"]`、env 只有 `TAVOTTO_MCP_ROOTS` = 选的文件夹；WorkBuddy 的
+  `mcp-approvals.json` 里有这一条的信任记录。装好的 `tavotto-cli hosts list --json` 也报这一行已接入。
+- **L3–L5**：服务端就是桌面版自带的 `tavotto-cli mcp`（体检报 engine 0.19.0）。两轮 clientInfo 分别是 `zcode 0.16.9` 与
+  `workbuddy-mcp-probe:custom-mcp:tavotto`，父进程链里有宿主安装目录下的 `ZCode.exe` / `WorkBuddy.exe`；health → open_figure →
+  apply_overrides → export → verify_replay 全部 ok，全新的宿主进程凭 session_id 重放一致并关闭会话。
+- **disconnect**：再起一次 Tavotto，那一行认出「已接入」；点「断开」后目标文件与接入前逐键相同。真实用户目录里的这几个文件跑完
+  还原、删掉本次生成的 `*.tavotto-backup-*`；ZCode 的落盘 key `wiped = true`；WorkBuddy 登录态按规则留在常驻家；Tavotto 卸载干净。
+
+途中发现并修掉的（都在执行器这一侧，不是产品缺陷）：
+
+- 改了 `USERPROFILE` 再起 Tavotto，WebView2 不开策略给的调试端口（`20261028T105803Z-0b59f0`，对照 `20261028T110340Z-ef0489`）
+  → Tavotto 用真实用户目录起，执行器在那里核对、跑完还原。
+- 驱动器在按钮一可点时就判，抢在界面重新读列表之前（`20261028T111218Z-773916`，那一行其实接上了）→ 等「已接入」出现。
+- ZCode 设了 `ZCODE_DATA_BASE_DIR` 仍读真实 `~/.zcode` 的用户级配置，录制器一行没收到（`20261028T112629Z-e43fb2`）→ 跑宿主的
+  那段时间真实目录也包录制器。
+- WorkBuddy 在后台自己下新版本、第二次启动去装（`20261028T115015Z-01d080`）→ 每轮启动前删掉下好的更新包。
+- 没有真 key 的格拿占位 `"\0"` 去抹文件，写坏了 Tavotto 的 SQLite，第二次起渲染服务崩在 `ai_history`（`20261028T124404Z-2a15f4`
+  的 sidecar 日志）→ 短于 8 个字符的值不抹。这个缺陷 #1448 起就在，之前没人在跑完后再读那些文件，所以没暴露。
+
+Codex #1473 P1 之后（安装器退出码非 0、或认不出与安装包同版本的那一份就判 error，绝不拿残留旧版本顶替）在 `7d5a8e33b` 上复跑
+ZCode：`20261028T132208Z-c1164b` 六项全 PASS，`tavotto.installer_exit_code = 0`、`version = 0.19.0`（残留的「Tavotto beta」卸载项
+不被选中）。起 Tavotto 的环境挪进 `connect_driver.py`（守卫 `test_every_app_launcher_adopts_credentials`）之后在 `4631f461b`
+上再跑一次：`20261028T144125Z-b4dd68` 六项全 PASS。
+
+产品侧的发现：桌面版的冻结 CLI 不带画布 `canvas.html`（ZCode / WorkBuddy 的体检都报 “canvas widget file is missing”）。对这两个
+宿主不影响工具；只装桌面版的 Codex 用户经插件交棒时会丢内嵌画布，#1468 让插件交棒时把自己那一份指给它。
+
+不在这一格：Cursor、VS Code（Copilot）、TRAE、Claude 桌面版标准模式、Codex、Claude Code 那几行。TRAE 用户级 `mcp.json` 的位置
+仍是推的——TRAE 自己的 Agent 要账户登录，Lab 上验不到；Claude 桌面版标准模式在 Lab 首屏即地区不可用。
+
 ## E. 安全与仓库
 
 | 验收项 | 状态 | 说明 |

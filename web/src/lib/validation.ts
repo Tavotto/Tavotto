@@ -32,6 +32,7 @@ import type { ExportRoute } from './exportRoute'
 import { formatMessage, msg, type UiMessage } from '@/i18n'
 import type { Manifest, PanelInfo } from './api'
 import type { PanelRender } from '@/store/renderStore'
+import { figuresOf } from './figuresOf'
 import { fixOptions, fixRoute, planFix } from './issueFix'
 import { severityOf, type PublicationProfile, type Severity } from './profile'
 import {
@@ -280,7 +281,17 @@ export function validateCanvas(
   assets: Record<string, PanelInfo>,
   render: { byKey: Record<string, PanelRender>; latest: Record<string, string> },
 ): CanvasResult {
-  return resultOf(input, documentId, buildSpec(input.doc, assets, render))
+  const result = resultOf(input, documentId, buildSpec(input.doc, assets, render))
+  // 单图编辑（画布上恰好一张图，隐藏的也计）没有页面：舞台不画页面纸、导出是图本身（ADR 0028 / 0031 §original），
+  // 文档里留着的页面尺寸（默认 150 × 100…）与这张图比没有意义——画布摆放类规则（越界 / 页边距 / 重叠）不判，
+  // 否则一张没动过的大图一打开就被「超出页面范围」阻断。第二张图进来就是排版，规则原样回来。
+  if (figuresOf(input.doc.objects).length !== 1) return result
+  const keep = (code: string) => appliesToOriginal(code)
+  return {
+    ...result,
+    issues: result.issues.filter((i) => keep(i.ruleCode)),
+    raw: result.raw.filter((r) => keep(r.id)),
+  }
 }
 
 /** 原图范围的目标：那张图（画布对象 id）与它按原图导出时的图幅（mm） */

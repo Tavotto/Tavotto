@@ -96,7 +96,6 @@ import {
 import type { PanelObject } from '@/types/document'
 import {
   engineLabel,
-  fontFamilyOptionLabel,
   groupLabel,
   groupRank,
   optionLabel,
@@ -167,7 +166,7 @@ import { useElementWriter } from './elementWrite'
 import { TypographyControls } from './controls/TypographyControls'
 import { isTextLikeSelection } from './textStyleModel'
 import { FIGURE_TEXT_BATCH_PROPS, useFigureTypography } from './typographyAdapter'
-import { fontStackOf } from './controls/fontStack'
+import { fontFamilySelectModel } from './controls/fontFamilySelect'
 import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useLocateReveal } from './useLocateReveal'
@@ -2019,20 +2018,21 @@ function BatchFieldRow({
                   batchManifest?.font_family_names,
                 )
                 const fontOpts = merged?.options ?? opts
+                const fm = fontFamilySelectModel({
+                  value: mixed ? '' : String(first ?? ''),
+                  options: fontOpts,
+                  labels: merged?.option_labels,
+                  faces: merged?.option_faces,
+                  onChange: writeOnce,
+                })
                 return (
                   <Select
                     className="min-w-0 flex-1"
-                    value={mixed ? '' : String(first ?? '')}
+                    value={fm.value}
                     placeholder={el('mixedValues')}
-                    onChange={(x) => writeOnce(x)}
-                    options={fontOpts.map((o) => ({
-                      value: o,
-                      label: (
-                        <span style={{ fontFamily: fontStackOf(o) }}>
-                          {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
-                        </span>
-                      ),
-                    }))}
+                    onChange={fm.onChange}
+                    options={fm.options}
+                    title={fm.title}
                     ariaLabel={label}
                   />
                 )
@@ -2419,18 +2419,19 @@ function FieldRow({
           rowManifest?.font_family_names,
         )
         const fontOpts = merged?.options ?? enumOptions
+        const fm = fontFamilySelectModel({
+          value: enumValue,
+          options: fontOpts,
+          labels: merged?.option_labels,
+          faces: merged?.option_faces,
+          onChange: writeOnce,
+        })
         return wrap(
           <Select
-            value={enumValue}
-            onChange={(v) => writeOnce(v)}
-            options={fontOpts.map((o) => ({
-              value: o,
-              label: (
-                <span style={{ fontFamily: fontStackOf(o) }}>
-                  {fontFamilyOptionLabel(o, merged?.option_labels, fontOpts)}
-                </span>
-              ),
-            }))}
+            value={fm.value}
+            onChange={fm.onChange}
+            options={fm.options}
+            title={fm.title}
             ariaLabel={label}
           />,
         )

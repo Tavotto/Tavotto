@@ -140,6 +140,7 @@ export function TypographyControls({
             onChange={(v) => adapter.writeOnce('fontFamily', v)}
             optionLabels={family.option_labels}
             optionLabelOf={(o) => fontFamilyOptionLabel(o, family.option_labels, family.options ?? [])}
+            optionFaces={family.option_faces}
             overridden={dirty('fontFamily')}
             onReset={reset('fontFamily')}
           />

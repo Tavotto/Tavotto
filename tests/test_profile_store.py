@@ -537,6 +537,14 @@ def test_font_floor_fallback_is_one_number_on_both_sides():
     assert float(match.group(1)) == profiles.FALLBACK_MIN_FONT_SIZE_PT
 
 
+def test_font_floor_tolerance_is_one_number_on_both_sides():
+    """严格同源对：`profiles.FONT_FLOOR_TOL_PT` ↔ `web/src/lib/profile.ts`。"""
+    ts = (ROOT / "web" / "src" / "lib" / "profile.ts").read_text(encoding="utf-8")
+    match = re.search(r"export const FONT_FLOOR_TOL_PT = ([\d.]+)", ts)
+    assert match, "TS 侧找不到 FONT_FLOOR_TOL_PT"
+    assert float(match.group(1)) == profiles.FONT_FLOOR_TOL_PT == 0.005
+
+
 def test_an_explicit_historical_八点五_is_preserved(data_dir):
     """旧项目**显式**存了 8.5 的（期刊覆盖）保留其历史值，不擅自改结果；
     没显式存过的按新默认走 8 pt。"""
