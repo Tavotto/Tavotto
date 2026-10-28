@@ -5,29 +5,25 @@ import { useUiStore } from '@/store/uiStore'
 import { mmToWorld, useViewportStore } from '@/store/viewportStore'
 
 /**
- * 画布网格（2026-10-28 打磨第三批 D，方案 3「两级 + 上下文强调」，维护者补了一条铁律：**点绝不变深**）。
+ * 画布网格（2026-10-28 打磨第三批 D；维护者看过两级点阵后改回**线网格，但更细更轻**）。
  *
- * - **主点**：每 `gridSize` 一个小十字（1 CSS px 粗、臂长 2 CSS px），静止与拖动时都是同一个浅色；
- * - **副点**：每半格一个 1 CSS px 的点，**只在半格 ≥ 10 屏幕像素时**才淡入（12–20 之间渐显，仍是同一个浅色，不更深）；
- *   格子小到不足 8 屏幕像素时主点按倍数抽稀（只抽稀，不变密也不变深）；
- * - **唯一的强调**：拖动吸上网格线时，那一整行 / 一整列的网格点短暂换成选中蓝（`--color-sel`），松开 / 离开后 0.45 秒淡出。
+ * - 每 `gridSize` 一条线，**1 个设备像素**粗（高清屏上 0.5 CSS px），paper-ink 的固定低比例，静止与拖动时同一个浅色，不变深；
+ *   格子小到不足 8 屏幕像素时按倍数抽稀；
+ * - **唯一的强调**：拖动吸上网格线时，那一条线短暂换成选中蓝（`--color-sel`），离开后 0.45 秒淡出。
  *
- * **屏幕空间**：一块 `<canvas>`，尺寸 = 舞台视口 × dpr，每个点落在整设备像素上，任何缩放下都锐利；它住在世界层里（纸之上、
- * 内容之下，所以对象仍盖住网格），用「`left/top = −pan / zoom` + `scale(1 / zoom)`」把自己的净变换抵成恒等——**世界层的
- * 变换不动**。点的位置每帧按当前 pan / zoom 重算（几百到两万个小矩形，一次 fill）。
- * 点的墨是 `--color-paper-ink`（纸上的墨，两套主题同值，暗色里纸仍是白的）。
+ * **屏幕空间**：一块 `<canvas>`，尺寸 = 舞台视口 × dpr，线落在整设备像素上，任何缩放下都锐利；它住在世界层里（纸之上、
+ * 内容之下），用「`left/top = −pan / zoom` + `scale(1 / zoom)`」与世界层的 zoom 相抵——**世界层的变换不动**；纸面原点按
+ * 实际位置量出来。线的墨是 `--color-paper-ink`（纸上的墨，两套主题同值，暗色里纸仍是白的）。
  */
 
-/** 主点 / 副点的墨：paper-ink 的百分比；两档都是**常量**，不随缩放、拖动变化 */
-const MAJOR_INK = 0.3
-const MINOR_INK = 0.24
+/** 网格线的墨：paper-ink 的比例，常量（不随缩放、拖动变深）。高清屏上线只有 0.5 CSS px，墨略高一点才与 1x 观感相当 */
+const LINE_INK = 0.05
+const LINE_INK_HIDPI = 0.08
 /** 强调淡出时长（秒） */
 const FADE_MS = 450
-/** 主点最小屏幕间距（CSS px）：再密就按倍数抽稀 */
+/** 网格线最小屏幕间距（CSS px）：再密就按倍数抽稀，不糊成一片灰 */
 const MIN_MAJOR_PX = 8
-/** 半格屏幕间距到这个值才开始画副点，到 `MINOR_FULL_PX` 全部淡入 */
-const MINOR_START_PX = 10
-const MINOR_FULL_PX = 18
+
 
 interface Lit {
   axis: 'x' | 'y'
@@ -120,9 +116,7 @@ export function GridDots({ w, h, gridSize }: { w: number; h: number; gridSize: n
       const pxPerMm = mmToWorld(1) * zoom
       const cellPx = step * pxPerMm
       const stride = Math.max(1, Math.ceil(MIN_MAJOR_PX / cellPx))
-      const t = Math.max(1, Math.round(dpr)) // 十字 / 点的粗细（设备像素）= 1 CSS px
-      const arm = 2 * t
-      const half = Math.floor(t / 2)
+      const t = Math.max(1, Math.round(dpr)) // 强调线粗细（设备像素）= 1 CSS px
       // 纸面原点在 canvas 里的位置**量出来**，不从 pan 推：舞台四周还有标尺等偏移，从 pan 推会让点阵整体错开纸边
       const page = canvas.parentElement?.getBoundingClientRect()
       const own = canvas.getBoundingClientRect()
@@ -143,67 +137,31 @@ export function GridDots({ w, h, gridSize }: { w: number; h: number; gridSize: n
         ctx.globalAlpha = a
       }
 
-      // 主点：十字
-      paint(ink, MAJOR_INK)
+      // 网格线：每 gridSize 一条，**1 个设备像素**粗（高清屏上是 0.5 CSS px），只铺在纸面范围内
+      const line = 1
+      const x0 = sx(0), x1 = sx(w), y0 = sy(0), y1 = sy(h)
+      paint(ink, dpr >= 2 ? LINE_INK_HIDPI : LINE_INK)
       ctx.beginPath()
+      for (let i = i0 - (i0 % stride); i <= i1; i += stride) {
+        if (i < 0) continue
+        ctx.rect(sx(i * step), y0, line, y1 - y0)
+      }
       for (let j = j0 - (j0 % stride); j <= j1; j += stride) {
         if (j < 0) continue
-        const y = sy(j * step)
-        for (let i = i0 - (i0 % stride); i <= i1; i += stride) {
-          if (i < 0) continue
-          const x = sx(i * step)
-          ctx.rect(x - arm, y - half, arm * 2 + t, t)
-          ctx.rect(x - half, y - arm, t, arm * 2 + t)
-        }
+        ctx.rect(x0, sy(j * step), x1 - x0, line)
       }
       ctx.fill()
 
-      // 副点：半格；只在半格够大时淡入，淡入完仍是同一个浅色
-      const halfPx = cellPx / 2
-      if (stride === 1 && halfPx >= MINOR_START_PX) {
-        const k = Math.min(1, (halfPx - MINOR_START_PX) / (MINOR_FULL_PX - MINOR_START_PX))
-        paint(ink, MINOR_INK * k)
-        ctx.beginPath()
-        for (let j = j0; j <= j1; j++) {
-          for (let i = i0; i <= i1; i++) {
-            const hx = (i + 0.5) * step
-            const hy = (j + 0.5) * step
-            const xm = hx <= w + 1e-6
-            const ym = hy <= h + 1e-6
-            // 半格点三种：格心、横向半格、纵向半格（与主点的并集 = 半格网格）
-            if (xm && ym && i < nx && j < ny) ctx.rect(sx(hx) - half, sy(hy) - half, t, t)
-            if (xm && i < nx && j >= 0 && j <= ny) ctx.rect(sx(hx) - half, sy(j * step) - half, t, t)
-            if (ym && j < ny && i >= 0 && i <= nx) ctx.rect(sx(i * step) - half, sy(hy) - half, t, t)
-          }
-        }
-        ctx.fill()
-      }
-
-      // 强调：吸上的那一整行 / 一整列的网格点换选中蓝；离开后淡出
+      // 强调：吸上的那一条网格线短暂换成选中蓝；离开后淡出
       const now = performance.now()
       let fading = false
       for (const q of lit.current) {
         const a = q.left === null ? 1 : 1 - (now - q.left) / FADE_MS
         if (a <= 0) continue
         if (q.left !== null) fading = true
-        paint(sel, 0.9 * a)
-        ctx.beginPath()
-        if (q.axis === 'y') {
-          const y = sy(q.v)
-          for (let i = Math.max(0, i0 - (i0 % stride)); i <= i1; i += stride) {
-            const x = sx(i * step)
-            ctx.rect(x - arm, y - half, arm * 2 + t, t)
-            ctx.rect(x - half, y - arm, t, arm * 2 + t)
-          }
-        } else {
-          const x = sx(q.v)
-          for (let j = Math.max(0, j0 - (j0 % stride)); j <= j1; j += stride) {
-            const y = sy(j * step)
-            ctx.rect(x - arm, y - half, arm * 2 + t, t)
-            ctx.rect(x - half, y - arm, t, arm * 2 + t)
-          }
-        }
-        ctx.fill()
+        paint(sel, 0.7 * a)
+        if (q.axis === 'y') ctx.fillRect(x0, sy(q.v), x1 - x0, t)
+        else ctx.fillRect(sx(q.v), y0, t, y1 - y0)
       }
       lit.current = lit.current.filter((q) => q.left === null || now - q.left < FADE_MS)
       raf.current = fading ? requestAnimationFrame(draw) : 0

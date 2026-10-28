@@ -1,5 +1,5 @@
 /**
- * 网格点（`GridDots`）：点绝不变深（维护者铁律）、副点只在半格够大时淡入、吸上网格线那一行 / 列才换选中蓝。
+ * 网格（`GridDots`）：细线、墨不随缩放变深（维护者铁律）、吸上网格线的那一条才换选中蓝。
  * jsdom 没有 2d 上下文：换一个只记录 `fill` 时 fillStyle 与矩形数的桩。
  */
 import { act } from 'react'
@@ -36,6 +36,9 @@ beforeEach(() => {
     },
     fill() {
       fills.push({ style: this.fillStyle, alpha: this.globalAlpha, rects })
+    },
+    fillRect() {
+      fills.push({ style: this.fillStyle, alpha: this.globalAlpha, rects: 1 })
     },
   }
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(ctx as never)
@@ -75,22 +78,20 @@ describe('GridDots', () => {
     expect(c.className).toContain('pointer-events-none')
   })
 
-  it('主点的墨是常量：缩放怎么变，主点那一档 alpha 不变；副点只在半格够大时出现，且不比主点深', async () => {
-    const majors = new Set<number>()
+  it('线的墨是常量：缩放怎么变 alpha 都不变，只画一层线（没有副点、不变深）', async () => {
+    const alphas = new Set<number>()
     for (const zoom of [0.5, 1, 3, 8]) {
       fills = []
       await act(async () => useViewportStore.setState({ zoom }))
       await mount()
-      majors.add(fills[0]!.alpha)
-      const minor = fills.slice(1).find((f) => f.rects > 0)
-      if (minor) expect(minor.alpha).toBeLessThanOrEqual(fills[0]!.alpha)
-      if (zoom <= 0.5) expect(fills.length, `zoom ${zoom} 不画副点`).toBe(1)
-      if (zoom >= 1) expect(fills.length, `zoom ${zoom} 画副点`).toBeGreaterThan(1)
+      expect(fills.length, `zoom ${zoom} 只有一层网格线`).toBe(1)
+      expect(fills[0]!.rects).toBeGreaterThan(0)
+      alphas.add(fills[0]!.alpha)
     }
-    expect(majors.size, '主点 alpha 不随缩放变化').toBe(1)
+    expect(alphas.size, '线的 alpha 不随缩放变化').toBe(1)
   })
 
-  it('吸上网格线：那一行换选中蓝（sel），不在网格上的吸附（对象边）不亮；松开后淡出', async () => {
+  it('吸上网格线：那一条线换选中蓝（sel），不在网格上的吸附（对象边）不亮；松开后淡出', async () => {
     await mount()
     const before = fills.length
     fills = []
@@ -101,7 +102,7 @@ describe('GridDots', () => {
     expect(before).toBeGreaterThan(0)
     fills = []
     await act(async () => useInteractionStore.setState({ snapYs: [] }))
-    // 离开瞬间还在淡（alpha 略低于 0.9 或等于），随后 rAF 淡完
+    // 离开瞬间还在淡，随后 rAF 淡完
     expect(fills.some((f) => f.style.includes('70, 133, 226'))).toBe(true)
   })
 })
