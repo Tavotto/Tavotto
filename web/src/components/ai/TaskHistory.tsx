@@ -231,13 +231,13 @@ function HistoryRow({
 
   return (
     // 弹层里的一行：每一行同一个版式（提示词 2 行 + 一行元信息），失败也只是红点 + 「失败」，原因在详情卡里；
-    // 置顶 / 回滚 / 删除浮在右上角，指针靠近或键盘聚焦这一行才出现
+    // 置顶 / 回滚 / 删除在元信息行的右端，指针靠近或键盘聚焦这一行才出现
     <div
       data-ai-history-row={entry.status}
       className="group/hrow relative rounded-md px-2 py-1.5 transition-colors duration-fast focus-within:bg-surface-hover hover:bg-surface-hover"
     >
       <p className="line-clamp-2 text-sm leading-relaxed text-ink">{entry.prompt}</p>
-      <div data-ai-history-meta className="mt-0.5 flex h-5 min-w-0 items-center gap-1.5 text-xs text-ink-3">
+      <div data-ai-history-meta className="mt-0.5 flex h-5 min-w-0 items-center gap-1.5 pe-20 text-xs text-ink-3">
         <AgentBadge entry={entry} agent={agent} name={agentName} pj={pj} />
         <HoverPopover
           ariaLabel={ai('history.moreInfo')}
@@ -292,11 +292,10 @@ function HistoryRow({
       <div
         data-ai-history-actions
         className={cn(
-          'absolute top-1 right-1 flex items-center gap-px rounded-md bg-surface p-0.5 shadow-pop',
+          // 放在元信息那一行的右端（那里本来就空着），不压提示词；不加底板、阴影
+          'absolute right-1 bottom-1 flex items-center gap-px',
           'pointer-events-none opacity-0 transition-opacity duration-fast',
           'group-focus-within/hrow:pointer-events-auto group-focus-within/hrow:opacity-100 group-hover/hrow:pointer-events-auto group-hover/hrow:opacity-100',
-          // 提示词被它盖住的那一小段渐隐，不硬切
-          'before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-6 before:bg-linear-to-r before:from-transparent before:to-surface',
         )}
       >
         <IconButton
