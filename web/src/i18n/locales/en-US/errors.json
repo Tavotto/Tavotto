@@ -554,7 +554,7 @@
     "workdirHintProject": "The script runs in its own directory; files it writes by relative path land in the project directory and overwrite same-name files. Deleting and renaming files inside the project are still blocked.",
     "workdirHintProjectNative": "You are using your own Python, so the script runs in its own directory; files it writes by relative path land in the project directory and overwrite same-name files. Deleting and renaming files inside the project are still blocked. Switch back to the sandbox to isolate it.",
     "workdirHintProjectRoot": "The script runs in the project root; files it writes by relative path land in the project directory and overwrite same-name files. Deleting and renaming files inside the project are still blocked.",
-    "workdirHintSandbox": "Turn on to run in your local environment for better compatibility.",
+    "workdirHintSandbox": "Runs in the sandbox: files it writes never touch the project, and data read with open by relative path falls back to the script’s directory.",
     "workdirLabel": "Working directory",
     "workdirMode_project": "Script directory",
     "workdirMode_project_root": "Project root",

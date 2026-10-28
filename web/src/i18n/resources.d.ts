@@ -3624,7 +3624,7 @@ export default interface Resources {
       "workdirHintProjectNative": "正在用你自己的 Python，脚本在自己的目录里运行，用相对路径写出的文件会落进项目目录并改写同名文件；项目里的文件被删除、改名仍会被拦下。想隔离就改回沙盒。",
       "workdirHintProjectRoot": "脚本在项目根目录里运行，用相对路径写出的文件会落进项目目录并改写同名文件；项目里的文件被删除、改名仍会被拦下。",
       "workdirHintRuntime": "{{script}} 要找的数据在沙盒里找不到，但在脚本所在的目录里找得到。",
-      "workdirHintSandbox": "开启后在本地环境中运行，兼容性更好。",
+      "workdirHintSandbox": "脚本在沙盒里运行，写出的文件不会碰项目；用 open 读相对路径的数据时会回退到脚本目录。",
       "workdirLabel": "脚本的运行目录",
       "workdirMode_project": "脚本目录",
       "workdirMode_project_root": "项目根目录",
