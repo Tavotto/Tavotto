@@ -24,7 +24,16 @@ import {
   type ResizeDir,
 } from '@/lib/geometry'
 import type { ElementGeometry, Manifest, ManifestElement } from '@/lib/api'
-import { flipY, resizeGroup, round4, sameAfterRound4, unionBox, type Rect4 } from '@/lib/axesLayout'
+import {
+  axesAspectLocked,
+  flipY,
+  lockedAxesResize,
+  resizeGroup,
+  round4,
+  sameAfterRound4,
+  unionBox,
+  type Rect4,
+} from '@/lib/axesLayout'
 import { contentToPageVec, pageToContentVec, panelContentTransform } from '@/lib/panelTransform'
 import {
   anchorOf,
@@ -2343,7 +2352,13 @@ export function startAxesDrag(
 
   const snapper = axesResizeSnapper(panel, element, mode)
 
-  const compute = (dfx: number, dfy: number): Rect4 => {
+  // 锁比例的子图（imshow / equal）：宽高同比缩放，否则重渲时 apply_aspect 把框缩回原比例、
+  // 线框与吸附都对不上结果（见 `lockedAxesResize`）
+  const locked = axesAspectLocked(element)
+  const full = panelFullRect(panel)
+
+  const compute = (dfx: number, dfy: number, by?: 'x' | 'y'): Rect4 => {
+    if (locked) return lockedAxesResize(start, mode, dfx, dfy, MIN, by)
     let [x, y, w, h] = start
     if (mode.includes('e')) w = clamp(w + dfx, MIN, 1 - x)
     else if (mode.includes('w')) {
@@ -2372,7 +2387,18 @@ export function startAxesDrag(
     // 吸附只改最终框（写法不变：仍是一条 position）；吸的是钳位后正在动的那条边
     if (snapper) {
       const [sx, sy] = snapper(rect, mods)
-      if (sx || sy) {
+      if (locked && (sx || sy)) {
+        // 等比：倍数只能由一轴定——角柄两轴都吸上时取修正小的那一轴（mm），另一轴跟着比例走
+        // （够不着的那条线 report 不发）。修正是相对**等比框**的边，不是相对原始位移
+        const by = sx && (!sy || Math.abs(sx * full.w) <= Math.abs(sy * full.h)) ? 'x' : 'y'
+        const dw = rect[2] - start[2]
+        const dh = rect[3] - start[3]
+        rect = compute(
+          (mode.includes('w') ? -dw : dw) + sx,
+          (mode.includes('n') ? -dh : dh) + sy,
+          by,
+        )
+      } else if (sx || sy) {
         dfx += sx
         dfy += sy
         rect = compute(dfx, dfy)

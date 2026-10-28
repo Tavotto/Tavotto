@@ -1,4 +1,5 @@
 import type { AlignMode, ResizeDir } from './geometry'
+import { clamp } from './units'
 
 /** figure 分数坐标的 [x, y, w, h]；y 的原点由使用方约定 */
 export type Rect4 = [number, number, number, number]
@@ -177,6 +178,51 @@ export function resizeGroup(g: Rect4, dir: ResizeDir, dfx: number, dfy: number):
     gw * sx,
     gh * sy,
   ]
+}
+
+/** 子图的长宽比是否被 matplotlib 锁着（`aspect` 不是 auto：imshow、`set_aspect('equal')`、数值） */
+export function axesAspectLocked(el: { editable: readonly { prop: string; value?: unknown }[] }): boolean {
+  const f = el.editable.find((x) => x.prop === 'aspect')
+  return f != null && f.value !== 'auto'
+}
+
+/**
+ * 锁比例子图拖缩放手柄后的 position（bottom-origin 分数）：宽高同乘一个倍数 s。
+ *
+ * 自由缩放写下的框比例一变，matplotlib 重渲时 `apply_aspect` 会把画出来的框按原比例
+ * 缩回去并在写下的框里居中——吸到参考线的上边落不到线上、不动的下边也跟着挪
+ * （宣传片测试页实测）。等比写下的框比例不变，`apply_aspect` 不再改它，拖的时候看到的线框就是结果。
+ *
+ * 固定点 = 被拖手柄对侧；边柄没提到的那一轴固定左 / 上边（与画布对象等比缩放同一约定）。
+ * 倍数默认取偏离 1 更多的那一轴；`by` 指定按哪一轴定（吸附吸上的那一轴）。
+ * 框钳在整图里，两边都不小于 `min`；两者冲突时留在图内优先。
+ */
+export function lockedAxesResize(
+  start: Rect4,
+  dir: ResizeDir,
+  dfx: number,
+  dfy: number,
+  min: number,
+  by?: 'x' | 'y',
+): Rect4 {
+  const [x, y, w, h] = start
+  // 固定点在框内的相对位置：ax 0 = 左边不动、1 = 右边不动；ay 0 = 下边不动、1 = 上边不动
+  const ax = dir.includes('w') ? 1 : 0
+  const ay = dir.includes('n') ? 0 : 1
+  const fx = x + ax * w
+  const fy = y + ay * h
+  // dfy 是屏幕向下为正；上柄向上拖 = 变高
+  const sx = dir.includes('e') ? (w + dfx) / w : dir.includes('w') ? (w - dfx) / w : null
+  const sy = dir.includes('n') ? (h - dfy) / h : dir.includes('s') ? (h + dfy) / h : null
+  let s: number
+  if (sx == null) s = sy ?? 1
+  else if (sy == null) s = sx
+  else if (by) s = by === 'x' ? sx : sy
+  else s = Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy
+  const room = (f: number, a: number, size: number) =>
+    Math.min(a > 0 ? f / a : Infinity, a < 1 ? (1 - f) / (1 - a) : Infinity) / size
+  s = clamp(s, Math.max(min / w, min / h), Math.min(room(fx, ax, w), room(fy, ay, h)))
+  return [fx - ax * w * s, fy - ay * h * s, w * s, h * s]
 }
 
 /** 绕中心按比例缩放（Inspector 的百分比输入）；同样只兜最小尺寸，不钳画布 */
