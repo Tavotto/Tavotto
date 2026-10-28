@@ -21,7 +21,7 @@ export interface PlaybackProps {
 
 /**
  * 回放条（在卡片最底部）：左边播放 / 重播 / `0:12 / 0:33` / 速度，右边的进度条与下面时间轴同一把尺——
- * 它的宽度 = 总时长占时间轴的比例（`fraction`），拇指在哪，现在线就在哪。放在 `data-trace-body` 里，沿用它的标签列宽。
+ * 它的宽度 = 总时长占时间轴的比例（`fraction`），拇指在哪，现在线就在哪。标签列宽 `--trace-label` 与右侧滚动条槽宽 `--trace-gutter` 都来自 `TraceWaterfall` 根，与时间轴同宽。
  * 进度条自己画（不是原生 range）：点哪落哪，不被原生拇指的内缩带偏。
  */
 export function PlaybackBar({ total, t, playing, speed, onToggle, onReplay, onSeek, onSpeed, fraction }: PlaybackProps & { fraction: number }) {
@@ -58,7 +58,7 @@ export function PlaybackBar({ total, t, playing, speed, onToggle, onReplay, onSe
   }
 
   return (
-    <div data-trace-playback className="relative flex h-9 items-center border-t border-border bg-surface select-none">
+    <div data-trace-playback className="relative flex h-9 shrink-0 items-center border-t border-border bg-surface select-none">
       <div className="flex w-(--trace-label) shrink-0 items-center gap-1 ps-3 pe-3">
         <IconButton
           data-trace-playback-toggle={playing ? 'pause' : 'play'}
@@ -87,7 +87,7 @@ export function PlaybackBar({ total, t, playing, speed, onToggle, onReplay, onSe
           }))}
         />
       </div>
-      <div className="relative h-full flex-1">
+      <div className="relative me-(--trace-gutter) h-full flex-1">
         <div className="absolute inset-y-0 start-0" style={{ width: `${fraction * 100}%` }}>
           <div
             ref={trackRef}

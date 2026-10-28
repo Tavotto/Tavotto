@@ -15,6 +15,12 @@ const ALIAS: Record<string, string> = {
   chatglm: 'zhipu',
 }
 
+/** 有没有这个键的真实标志（含别名与单色图形）：调用方据此决定画标志还是退到别的图标，不落进通用图标 */
+export const hasBrandLogo = (logo: string | null | undefined): boolean => {
+  const key = logo ? (ALIAS[logo] ?? logo) : ''
+  return !!(BRAND_LOGOS[key] || VENDOR_GLYPHS[key])
+}
+
 /**
  * 厂商的真实标志：直接画，没有底、没有边框（与 `VendorIcon` 同一姿态）。
  *

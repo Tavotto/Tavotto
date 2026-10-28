@@ -36,3 +36,7 @@ order: 225
   连线是唯一的内联 `<svg>`（`iconography.test` 登记豁免 1 处）。选择器只认 `data-trace-*` / `data-ai-trace*`。
 - **行与图标**：名称列的主文字：工具行是工具 id（种类由图标说，全名在 `title` 与详情卡里），其余是阶段名；图标不带框，一律图标集里的实心孪生
   （`filled`）按种类上语义色，厂商标用无框的 `AgentIcon`。吸顶行底色一直不透明；已结束的时间轴按像素给末尾时长小字留边（`traceDomain`）。
+- **宽卡的版面**（对话框里 `TraceWaterfall variant="flush"`）：标题与搜索在对话框标题栏（`Dialog.headerEnd`），瀑布本身无边框 / 无自己的标题；
+  纵向依次是指标条 → 行区（唯一会滚的）→ 图例 → 回放条，定高（`min(46rem, 86vh)`）。坐标轴（吸顶）、吸顶行、普通行、网格线、现在线同在**一个**滚动容器里、
+  共用一个宽度与一套 `pct` 坐标（`scrollbar-gutter: stable`，右侧槽宽经 `--trace-gutter` 让回放条 / 缩放条同宽）；网格线只有 `GridLines` 一处画，左缘那条就是步骤列分隔线。
+  所有左缘统一在 `px-4`。

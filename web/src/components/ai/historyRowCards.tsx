@@ -12,10 +12,12 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AgentIcon } from '@/components/settings/AgentIcon'
+import { BrandLogo, hasBrandLogo } from '@/components/settings/BrandLogo'
 import { ChartColumn } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { fetchExecTrace, type AiAgentCaps, type AiHistoryEntry } from '@/lib/api'
 import { supported, toWaterfall } from '@/lib/execTrace'
+import { modelBrandKey } from '@/lib/modelVendor'
 import { cn } from '@/lib/utils'
 import { Button } from '../ui/Button'
 import { Popover } from '../ui/Popover'
@@ -238,6 +240,28 @@ export function HistoryDetailsCard({
 
 const LEVEL: Record<string, number> = { minimal: 1, low: 1, medium: 2, high: 3, xhigh: 3, max: 3, ultra: 3 }
 
+/**
+ * 这一条记录的标志（无框）：先认**型号**的厂商（`deepseek-v4-pro` → DeepSeek，不管是哪个执行器代跑的），
+ * 认不出再用它接管的第三方接口的图标键，最后才是执行器自己的图标（Codex / Claude Code 没带型号时）。
+ */
+export function EntryLogo({
+  entry,
+  agent,
+  iconKey,
+  size,
+}: {
+  entry: AiHistoryEntry
+  agent: AiAgentCaps | undefined
+  iconKey: string
+  size: number
+}) {
+  const endpointKey = agent?.endpoint?.icon_key
+  const brand = modelBrandKey(entry.model) ?? (hasBrandLogo(endpointKey) ? endpointKey : null)
+  // 没有可认的厂商：执行器自己的图标（Claude 的橙色标志、Codex 的 OpenAI 标志；没有标志的落到通用图标）
+  if (!brand) return <AgentIcon iconKey={iconKey} size={size} glyphSize={size} className="text-current" />
+  return <BrandLogo logo={brand} size={size} />
+}
+
 /** 元信息最前面的 Agent 标（无框）与它的模型卡 */
 export function AgentBadge({
   entry,
@@ -264,7 +288,7 @@ export function AgentBadge({
           aria-label={name}
           className="flex size-5 shrink-0 items-center justify-center rounded-sm text-ink-2 outline-none focus-visible:focus-ring"
         >
-          <AgentIcon iconKey={iconKey} size={ICON_SIZE.md} glyphSize={ICON_SIZE.md} className="text-current" />
+          <EntryLogo entry={entry} agent={agent} iconKey={iconKey} size={ICON_SIZE.md} />
         </button>
       }
     >
@@ -295,7 +319,7 @@ function ModelCard({
   return (
     <div data-ai-history-card="model" className="flex flex-col gap-2 p-1">
       <div className="flex items-center gap-2">
-        <AgentIcon iconKey={iconKey} size={ICON_SIZE.lg} glyphSize={ICON_SIZE.lg} className="text-current" />
+        <EntryLogo entry={entry} agent={agent} iconKey={iconKey} size={ICON_SIZE.lg} />
         <div className="min-w-0">
           <b className="block truncate text-base font-medium text-ink">{name}</b>
           {via && <small className="block text-xs text-ink-3">{via}</small>}

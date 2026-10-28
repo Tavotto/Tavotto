@@ -1,10 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChartColumn, ChevronRight } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
 import { fetchExecTrace, fetchExecTraceDiagnostic, type ExecTraceDto, type ExecTraceOperation } from '@/lib/api'
 import { supported, toWaterfall } from '@/lib/execTrace'
 import { Button } from '../ui/Button'
+import { Kbd } from '../ui/Kbd'
+import { SearchInput } from '../ui/SearchInput'
+import { MOD } from '@/lib/utils'
 import { useTraceDialogStore } from '@/store/traceDialogStore'
 import { Dialog } from '../ui/Dialog'
 import { TraceWaterfall } from './traceWaterfall/TraceWaterfall'
@@ -93,6 +96,8 @@ export function TraceDialog({
   const [load, setLoad] = useState<Load>({ state: 'idle' })
   const [nowWall, setNowWall] = useState(() => Date.now() / 1000)
   const [attempt, setAttempt] = useState(0)
+  const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
   const seq = useRef(0)
   const ref = taskRef
   // 展开 / 会话终局变化 / 运行中定时：问一次权威快照。请求序号挡住旧响应，会话的项目挡串项目（发请求那一刻的 pj）
@@ -153,6 +158,29 @@ export function TraceDialog({
       open={open}
       onOpenChange={onOpenChange}
       size="shell"
+      // 读到了才定高：行区在固定高度里滚，回放时一行行长出来也不让整张卡跟着变高、在屏幕里跳；上限仍是 86vh
+      height={load.state === 'ready' ? 'min(46rem, 86vh)' : undefined}
+      headerEnd={
+        load.state === 'ready' ? (
+          <>
+            <SearchInput
+              ref={searchRef}
+              data-trace-search
+              value={query}
+              onValueChange={setQuery}
+              aria-label={t('trace.ui.search.label')}
+              placeholder={t('trace.ui.search.placeholder')}
+              spellCheck={false}
+              autoComplete="off"
+              className="w-56"
+            />
+            <span aria-hidden className="hidden items-center gap-0.5 min-[1100px]:inline-flex">
+              <Kbd>{MOD}</Kbd>
+              <Kbd>F</Kbd>
+            </span>
+          </>
+        ) : undefined
+      }
       anchor="exec-trace"
       title={t('trace.state.toggle')}
       footer={{
@@ -176,9 +204,10 @@ export function TraceDialog({
       }}
     >
       {open && (
-        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        <div className="flex min-h-0 flex-1 flex-col">
           <Body
             load={load}
+            search={{ value: query, inputRef: searchRef }}
             nowWall={nowWall}
             onRetry={() => {
               setLoad({ state: 'loading' })
@@ -191,18 +220,28 @@ export function TraceDialog({
   )
 }
 
-function Body({ load, nowWall, onRetry }: { load: Load; nowWall: number; onRetry: () => void }) {
+function Body({
+  load,
+  nowWall,
+  onRetry,
+  search,
+}: {
+  load: Load
+  nowWall: number
+  onRetry: () => void
+  search: SearchBinding
+}) {
   const { t } = useTranslation('ai')
   if (load.state === 'idle' || load.state === 'loading') {
     return (
-      <p data-ai-trace-state="loading" className="text-sm text-ink-3 text-shimmer">
+      <p data-ai-trace-state="loading" className="p-5 text-sm text-ink-3 text-shimmer">
         {t('trace.state.loading')}
       </p>
     )
   }
   if (load.state === 'error') {
     return (
-      <div data-ai-trace-state="error" className="flex items-center gap-2 text-sm text-ink-3">
+      <div data-ai-trace-state="error" className="flex items-center gap-2 p-5 text-sm text-ink-3">
         <span>{t('trace.state.error')}</span>
         <Button variant="ghost" size="sm" onClick={onRetry}>
           {t('trace.state.retry')}
@@ -212,7 +251,7 @@ function Body({ load, nowWall, onRetry }: { load: Load; nowWall: number; onRetry
   }
   if (load.state === 'none') {
     return (
-      <p data-ai-trace-state={load.reason} className="text-sm text-ink-3">
+      <p data-ai-trace-state={load.reason} className="p-5 text-sm text-ink-3">
         {t(`trace.state.${load.reason}`)}
       </p>
     )
@@ -221,19 +260,19 @@ function Body({ load, nowWall, onRetry }: { load: Load; nowWall: number; onRetry
   return (
     <>
       {load.stale && (
-        <div data-ai-trace-stale className="flex items-center gap-2 text-sm text-ink-3">
+        <div data-ai-trace-stale className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2 text-sm text-ink-3">
           <span>{t('trace.state.stale')}</span>
           <Button variant="ghost" size="sm" onClick={onRetry}>
             {t('trace.state.retry')}
           </Button>
         </div>
       )}
-      <Ready trace={trace} nowWall={load.stale ? trace.started_at : nowWall} />
+      <Ready trace={trace} nowWall={load.stale ? trace.started_at : nowWall} search={search} />
     </>
   )
 }
 
-function Ready({ trace, nowWall }: { trace: ExecTraceDto; nowWall: number }) {
+function Ready({ trace, nowWall, search }: { trace: ExecTraceDto; nowWall: number; search: SearchBinding }) {
   const { t } = useTranslation('ai')
   // 展示模型只随快照变（每秒一次）；「此刻」每 250ms 走一格只经 `now` 传下去，不重建整棵树
   const model = useMemo(() => toWaterfall(trace, trace.started_at), [trace])
@@ -245,9 +284,9 @@ function Ready({ trace, nowWall }: { trace: ExecTraceDto; nowWall: number }) {
   const shown = useMemo(() => (replaying ? { ...model, replay: true } : model), [model, replaying])
   const now = replaying ? pb.t : model.running ? Math.max(model.duration, nowWall - trace.started_at) : model.duration
   return (
-    <div data-ai-trace-state={trace.status} className="flex flex-col gap-1.5">
+    <div data-ai-trace-state={trace.status} className="flex min-h-0 flex-1 flex-col">
       {(trace.truncated || (!trace.complete && trace.status !== 'running')) && (
-        <p data-ai-trace-incomplete className="text-sm text-ink-3">
+        <p data-ai-trace-incomplete className="shrink-0 border-b border-border px-4 py-2 text-sm text-ink-3">
           {trace.truncated
             ? t('trace.state.truncated', { count: trace.dropped_count })
             : trace.status === 'interrupted'
@@ -256,6 +295,8 @@ function Ready({ trace, nowWall }: { trace: ExecTraceDto; nowWall: number }) {
         </p>
       )}
       <TraceWaterfall
+        variant="flush"
+        search={search}
         model={shown}
         now={now}
         playback={
@@ -276,6 +317,8 @@ function Ready({ trace, nowWall }: { trace: ExecTraceDto; nowWall: number }) {
     </div>
   )
 }
+
+type SearchBinding = { value: string; inputRef: RefObject<HTMLInputElement | null> }
 
 type ExportPhase = 'idle' | 'busy' | 'done' | 'gone' | 'error'
 

@@ -6,7 +6,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { TraceWaterfall } from './TraceWaterfall'
-import { traceDomain } from './utils'
+import { END_LABEL_PX, traceDomain } from './utils'
 import type { WaterfallModel, WaterfallSpan } from './types'
 
 const span = (over: Partial<WaterfallSpan> & Pick<WaterfallSpan, 'id' | 'name' | 'kind' | 'start'>): WaterfallSpan => ({
@@ -285,7 +285,7 @@ describe('TraceWaterfall', () => {
   })
 
   it('已结束的时间轴在最后一条后面按像素留边（时长小字放得下），窄轨道留得更多', () => {
-    expect(traceDomain(100, false, 640)).toBeCloseTo(100 / (1 - 64 / 640))
+    expect(traceDomain(100, false, 640)).toBeCloseTo(100 / (1 - END_LABEL_PX / 640))
     expect(traceDomain(100, false, 200)).toBeGreaterThan(traceDomain(100, false, 640))
     expect(traceDomain(100, false)).toBeGreaterThanOrEqual(106)
   })

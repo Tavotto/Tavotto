@@ -151,6 +151,8 @@ interface DialogProps {
    * 时间线的预览（ADR 0101）默认焦点在「关闭」上，回车不会误触恢复。
    */
   initialFocusRef?: RefObject<HTMLElement | null>
+  /** 标题栏右端（关闭 × 之前）的一小块控件，如搜索框；只给 `shell` 那种一条标题栏的外壳用 */
+  headerEnd?: ReactNode
 }
 
 /**
@@ -180,6 +182,7 @@ export function Dialog({
   anchor,
   chrome = 'default',
   initialFocusRef,
+  headerEnd,
 }: DialogProps) {
   const palette = chrome === 'palette'
   const split = chrome === 'split'
@@ -409,6 +412,7 @@ export function Dialog({
                 </RD.Description>
               )}
             </div>
+            {headerEnd && !palette && !split && <div className="ms-auto flex min-w-0 items-center gap-2">{headerEnd}</div>}
           </div>
           {/* 没有正文（标题已说完）就不摆这块留白。正文是阅读面：type-reading 13 / 1.6
               （子元素自己写了字号的照旧）。浮动页脚时正文底部留出页脚的高度（见 floating） */}

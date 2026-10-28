@@ -5,6 +5,8 @@ import type { WaterfallModel, WaterfallSpan } from './types'
 
 /** 行高（px）：Handoffs 的连线按它算 y，所以每一行必须正好这么高 */
 export const ROW = 36
+/** 坐标轴高度（px）：它吸在滚动区顶上，吸顶行的 `top` 要退开这么多 */
+export const AXIS = 36
 /** 智能体泳道条高度的一半 */
 export const LANE_HALF = 10
 
@@ -277,8 +279,8 @@ const TICK_STEPS = [0.5, 1, 2, 5, 10, 15, 20, 30, 60, 120, 300, 600, 1800, 3600]
 /** 运行中的时间轴只取这张阶梯上的值：此刻每走一格不改坐标系，已结束的行就不必重画（大 Trace 的实时刷新预算） */
 const LIVE_DOMAINS = [8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 3072, 4096]
 
-/** 已结束的时间轴在最后一条之后至少留这么多像素：最后一条后面的时长小字（「2m 34s」）要放得下 */
-export const END_LABEL_PX = 64
+/** 已结束的时间轴在最后一条之后至少留这么多像素：最后一条后面的时长小字（「2m 34s」）加「最慢」徽标要放得下 */
+export const END_LABEL_PX = 104
 
 export function traceDomain(extent: number, running: boolean, trackWidth = 0) {
   if (!running) {
