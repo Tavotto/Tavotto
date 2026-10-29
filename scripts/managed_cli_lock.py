@@ -3,7 +3,8 @@
 
     python scripts/managed_cli_lock.py --check                  # 离线：锁文件形状与规范化（CI 跑这个）
     python scripts/managed_cli_lock.py --check --online         # 联网：与 GitHub release / npmmirror 的元数据对账（不下载大文件）
-    python scripts/managed_cli_lock.py --update 0.166.0 [--cache DIR]   # 维护者：下载全部平台、两来源逐文件比对后写锁
+    python scripts/managed_cli_lock.py --update 0.166.0 [--cli codex] [--cache DIR]   # 维护者：下载全部平台、两来源逐文件比对后写锁
+    python scripts/managed_cli_lock.py --update 2.1.308 --cli claude [--cache DIR]    # 同上，Claude Code（只改这一个 CLI 的条目）
 
 ## 更新流程（升版本）
 
@@ -13,6 +14,11 @@
 2. `--check --online` 再对一次账；`pytest tests/test_managed_cli.py`。
 3. 发版前在 mac / Windows 真机各点一次「安装」（真探测 `--version`）。
 `--cache DIR`：已下载过的归档按 URL 文件名放在 DIR 里就不重下（大小对得上才用）。
+
+Claude Code：npmmirror 平台子包 `@anthropic-ai/claude-code-<平台>@<版本>`（tgz，只取 `package/<二进制>`）与官方
+`https://downloads.claude.ai/claude-code-releases/<版本>/<平台>/<二进制>` 裸文件；后者的 sha256 必须等于同目录
+`manifest.json` 里该平台的 checksum，前者必须等于 registry 元数据的 sha512 integrity，**两边解出的二进制字节必须逐字节相同**。
+（manifest 另有 GPG 签名，这里不验——锁里钉的是我们自己算的 sha256，运行时只认锁。）
 """
 
 from __future__ import annotations
@@ -36,16 +42,40 @@ from tavotto.engine import managedcli as mc  # noqa: E402
 
 LOCK = ROOT / "src" / "tavotto" / "resources" / "managed_cli_lock.json"
 
-PLATFORMS = {
+CODEX_PLATFORMS = {
     "darwin-arm64": ("aarch64-apple-darwin", "bin/codex"),
     "darwin-x64": ("x86_64-apple-darwin", "bin/codex"),
     "win32-x64": ("x86_64-pc-windows-msvc", "bin/codex.exe"),
     "linux-x64": ("x86_64-unknown-linux-musl", "bin/codex"),
 }
-TEMPLATES = {
-    "github_url": mc.GITHUB_PREFIX + "rust-v{version}/codex-package-{triple}.tar.gz",
-    "mirror_url": mc.MIRROR_PREFIX + "codex-{version}-{npm}.tgz",
-    "mirror_strip": "package/vendor/{triple}/",
+CODEX_SOURCES = [
+    {"key": "github", "url": mc.GITHUB_PREFIX + "rust-v{version}/codex-package-{triple}.tar.gz"},
+    {
+        "key": "mirror",
+        "url": mc.MIRROR_PREFIX + "codex-{version}-{npm}.tgz",
+        "strip": "package/vendor/{triple}/",
+    },
+]
+#: Claude Code：平台键同时是 npm 子包后缀与 GCS 目录名；入口是原生二进制（Windows 带 .exe）
+CLAUDE_PLATFORMS = {
+    "darwin-arm64": ("darwin-arm64", "claude"),
+    "darwin-x64": ("darwin-x64", "claude"),
+    "win32-x64": ("win32-x64", "claude.exe"),
+    "linux-x64": ("linux-x64", "claude"),
+}
+CLAUDE_SOURCES = [
+    {
+        "key": "mirror",
+        "url": mc.CLAUDE_MIRROR_PREFIX + "{npm}/-/claude-code-{npm}-{version}.tgz",
+        "strip": "package/",
+        "only": "{entry}",
+    },
+    {"key": "gcs", "url": mc.CLAUDE_GCS_PREFIX + "{version}/{npm}/{entry}", "raw": True},
+]
+GCS_MANIFEST = mc.CLAUDE_GCS_PREFIX + "{version}/manifest.json"
+NPM_META = {
+    "codex": "https://registry.npmmirror.com/@openai/codex/{version}-{npm}",
+    "claude": "https://registry.npmmirror.com/@anthropic-ai/claude-code-{npm}/{version}",
 }
 
 
@@ -87,9 +117,11 @@ def _sri512(path: Path) -> str:
     return "sha512-" + base64.b64encode(h.digest()).decode()
 
 
-def _tree(archive: Path, strip: str, version: str, entry: str) -> tuple[str, int, int]:
-    cli = mc.ManagedCli("codex", version, "x", "x", entry, "0" * 64, 1 << 40, 0, ())
-    src = mc.ArchiveSource("https://github.com/x", 1, "0" * 64, strip)
+def _tree(
+    name: str, archive: Path, version: str, entry: str, strip: str = "", only: str = "", raw=False
+) -> tuple[str, int, int]:
+    cli = mc.ManagedCli(name, version, "x", "x", entry, "0" * 64, 1 << 40, 0, ())
+    src = mc.ArchiveSource("https://github.com/x", 1, "0" * 64, strip, only, raw)
     with tempfile.TemporaryDirectory() as td:
         stage = Path(td) / "t"
         stage.mkdir()
@@ -102,34 +134,37 @@ def _tree(archive: Path, strip: str, version: str, entry: str) -> tuple[str, int
         return mc.tree_digest(stage)
 
 
-def update(version: str, cache: Path | None) -> dict:
+def _plat_common(key: str, triple: str, entry: str, tree: tuple[str, int, int]) -> dict:
+    return {
+        "triple": triple,
+        "npm": key,
+        "entrypoint": entry,
+        "tree_sha256": tree[0],
+        "file_count": tree[1],
+        "unpacked_size": tree[2],
+    }
+
+
+def _update_codex(version: str, cache: Path | None) -> dict:
     tag = f"rust-v{version}"
     rel = _get_json(f"https://api.github.com/repos/openai/codex/releases/tags/{tag}")
     assets = {a["name"]: a for a in rel["assets"]}
     plats: dict = {}
-    for key, (triple, entry) in PLATFORMS.items():
-        npm = key
+    gh_src, mi_src = CODEX_SOURCES
+    for key, (triple, entry) in CODEX_PLATFORMS.items():
         a = assets[f"codex-package-{triple}.tar.gz"]
         gh_sha = str(a["digest"]).removeprefix("sha256:")
-        meta = _get_json(f"https://registry.npmmirror.com/@openai/codex/{version}-{npm}")
-        dist = meta["dist"]
-        gh_url = TEMPLATES["github_url"].format(version=version, triple=triple)
-        mi_url = TEMPLATES["mirror_url"].format(version=version, npm=npm)
-        gh_file = _download(gh_url, cache, a["size"])
-        mi_file = _download(mi_url, cache, dist["size"])
+        dist = _get_json(NPM_META["codex"].format(version=version, npm=key))["dist"]
+        gh_file = _download(gh_src["url"].format(version=version, triple=triple), cache, a["size"])
+        mi_file = _download(mi_src["url"].format(version=version, npm=key), cache, dist["size"])
         assert mc._sha256_file(gh_file) == gh_sha, f"{key}: GitHub 归档与 release 摘要不符"  # noqa: SLF001
         assert _sri512(mi_file) == dist["integrity"], f"{key}: npm 归档与 registry integrity 不符"
-        t1 = _tree(gh_file, "", version, entry)
-        t2 = _tree(mi_file, TEMPLATES["mirror_strip"].format(triple=triple), version, entry)
+        t1 = _tree("codex", gh_file, version, entry)
+        t2 = _tree("codex", mi_file, version, entry, mi_src["strip"].format(triple=triple))
         if t1 != t2:
             raise SystemExit(f"{key}: 两个来源解开的树不同，拒绝写锁")
         plats[key] = {
-            "triple": triple,
-            "npm": npm,
-            "entrypoint": entry,
-            "tree_sha256": t1[0],
-            "file_count": t1[1],
-            "unpacked_size": t1[2],
+            **_plat_common(key, triple, entry, t1),
             "github": {"size": a["size"], "sha256": gh_sha},
             "mirror": {
                 "size": dist["size"],
@@ -138,28 +173,81 @@ def update(version: str, cache: Path | None) -> dict:
             },
         }
         print(f"{key}: ok tree={t1[0][:12]} files={t1[1]}", file=sys.stderr)
-    return {
-        "_comment": COMMENT,
-        "schema": mc.LOCK_SCHEMA,
-        "clis": {"codex": {"version": version, **TEMPLATES, "platforms": plats}},
-    }
+    return {"version": version, "sources": CODEX_SOURCES, "platforms": plats}
+
+
+def _update_claude(version: str, cache: Path | None) -> dict:
+    manifest = _get_json(GCS_MANIFEST.format(version=version))
+    if manifest.get("version") != version:
+        raise SystemExit(f"manifest 的版本 {manifest.get('version')!r} 与要锁的 {version} 不符")
+    mi_src, gcs_src = CLAUDE_SOURCES
+    plats: dict = {}
+    for key, (triple, entry) in CLAUDE_PLATFORMS.items():
+        m = manifest["platforms"][key]
+        if m["binary"] != entry:
+            raise SystemExit(f"{key}: manifest 的二进制名 {m['binary']!r} 不是 {entry!r}")
+        dist = _get_json(NPM_META["claude"].format(version=version, npm=key))["dist"]
+        kw = {"version": version, "npm": key, "entry": entry}
+        # 缓存文件名取 URL 末段；两个平台的 GCS 文件都叫 claude，所以按平台分目录
+        sub = (cache / key) if cache is not None else None
+        mi_file = _download(mi_src["url"].format(**kw), sub, dist["size"])
+        raw_file = _download(gcs_src["url"].format(**kw), sub, m["size"])
+        assert mc._sha256_file(raw_file) == m["checksum"], f"{key}: GCS 文件与 manifest 摘要不符"  # noqa: SLF001
+        assert _sri512(mi_file) == dist["integrity"], f"{key}: npm 归档与 registry integrity 不符"
+        t1 = _tree("claude", mi_file, version, entry, mi_src["strip"], mi_src["only"].format(**kw))
+        t2 = _tree("claude", raw_file, version, entry, raw=True)
+        if t1 != t2:
+            raise SystemExit(f"{key}: 两个来源的二进制不是同一份字节，拒绝写锁")
+        plats[key] = {
+            **_plat_common(key, triple, entry, t1),
+            "mirror": {
+                "size": dist["size"],
+                "sha256": mc._sha256_file(mi_file),  # noqa: SLF001
+                "integrity": dist["integrity"],
+            },
+            "gcs": {"size": m["size"], "sha256": m["checksum"]},
+        }
+        print(f"{key}: ok tree={t1[0][:12]} files={t1[1]}", file=sys.stderr)
+    return {"version": version, "sources": CLAUDE_SOURCES, "platforms": plats}
+
+
+UPDATERS = {"codex": _update_codex, "claude": _update_claude}
+
+
+def update(name: str, version: str, cache: Path | None, base: dict | None = None) -> dict:
+    """只重写 `name` 这一个 CLI 的条目，其它 CLI 原样保留。"""
+    clis = dict((base or {}).get("clis") or {})
+    clis[name] = UPDATERS[name](version, cache)
+    return {"_comment": COMMENT, "schema": mc.LOCK_SCHEMA, "clis": clis}
 
 
 def check_online(lock: dict) -> list[str]:
     problems: list[str] = []
     for name, cli in lock["clis"].items():
         v = cli["version"]
-        rel = _get_json(f"https://api.github.com/repos/openai/codex/releases/tags/rust-v{v}")
-        assets = {a["name"]: a for a in rel["assets"]}
+        if name == "codex":
+            rel = _get_json(f"https://api.github.com/repos/openai/codex/releases/tags/rust-v{v}")
+            assets = {a["name"]: a for a in rel["assets"]}
+        else:
+            manifest = _get_json(GCS_MANIFEST.format(version=v))
         for key, p in cli["platforms"].items():
-            a = assets.get(f"codex-package-{p['triple']}.tar.gz")
-            if (
-                a is None
-                or str(a["digest"]) != f"sha256:{p['github']['sha256']}"
-                or a["size"] != p["github"]["size"]
-            ):
-                problems.append(f"{name}/{key}: GitHub 资产与锁不符")
-            dist = _get_json(f"https://registry.npmmirror.com/@openai/codex/{v}-{p['npm']}")["dist"]
+            if name == "codex":
+                a = assets.get(f"codex-package-{p['triple']}.tar.gz")
+                if (
+                    a is None
+                    or str(a["digest"]) != f"sha256:{p['github']['sha256']}"
+                    or a["size"] != p["github"]["size"]
+                ):
+                    problems.append(f"{name}/{key}: GitHub 资产与锁不符")
+            else:
+                m = manifest["platforms"].get(key)
+                if (
+                    m is None
+                    or m["checksum"] != p["gcs"]["sha256"]
+                    or m["size"] != p["gcs"]["size"]
+                ):
+                    problems.append(f"{name}/{key}: 官方 manifest 与锁不符")
+            dist = _get_json(NPM_META[name].format(version=v, npm=p["npm"]))["dist"]
             if dist["integrity"] != p["mirror"]["integrity"] or dist["size"] != p["mirror"]["size"]:
                 problems.append(f"{name}/{key}: npmmirror 元数据与锁不符")
     return problems
@@ -172,11 +260,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--online", action="store_true")
     ap.add_argument("--update", metavar="VERSION")
+    ap.add_argument(
+        "--cli", choices=sorted(UPDATERS), default="codex", help="--update 针对哪个 CLI"
+    )
     ap.add_argument("--cache", type=Path)
     ap.add_argument("--lock", type=Path, default=LOCK)
     args = ap.parse_args(argv)
     if args.update:
-        args.lock.write_text(dumps(update(args.update, args.cache)), encoding="utf-8")
+        base = json.loads(args.lock.read_text(encoding="utf-8")) if args.lock.is_file() else None
+        args.lock.write_text(
+            dumps(update(args.cli, args.update, args.cache, base)), encoding="utf-8"
+        )
         print(f"已写 {args.lock}")
         return 0
     text = args.lock.read_text(encoding="utf-8")

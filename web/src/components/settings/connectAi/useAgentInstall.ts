@@ -20,9 +20,9 @@ const MANAGED_CODES = new Set([
   'managed_cli_cancelled',
 ])
 
-/** 安装失败码 → 一句话；应用内安装的码走后端那块文案，旧 npm 的码用原有文案，未知码一句通用兜底 */
-export function installErrorText(code: AiInstallState['code'] | string | undefined): string {
-  if (code && MANAGED_CODES.has(code)) return translate(`engine.managedCliError.${code}`, { ns: 'errors' })
+/** 安装失败码 → 一句话；应用内安装的码走后端那块文案（`product` = 这个 CLI 的产品名，Codex / Claude Code 共用一份），旧 npm 的码用原有文案，未知码一句通用兜底 */
+export function installErrorText(code: AiInstallState['code'] | string | undefined, product: string): string {
+  if (code && MANAGED_CODES.has(code)) return translate(`engine.managedCliError.${code}`, { ns: 'errors', product })
   switch (code) {
     case 'npm_missing':
       return ag('install.error.npm_missing')
@@ -45,9 +45,9 @@ export const installProgressText = (progress: number | undefined): string =>
  * 「安装 / 重新安装」的组件侧句柄：状态与轮询都住在 `agentInstallStore`（组件被 capabilities 刷新卸载也不丢），
  * 这里只订阅。装好后「接着登录」：发起安装的那一行（`owner`，它的登录流程一直挂着）用 `useLoginAfterInstall` 消费。
  */
-export function useAgentInstall(agent: AiAgentId, owner: string) {
+export function useAgentInstall(agent: AiAgentId, owner: string, product: string) {
   const entry = useAgentInstallStore((s) => s.byAgent[agent])
-  const error = entry?.status === 'error' ? (entry.message ?? installErrorText(entry.code)) : null
+  const error = entry?.status === 'error' ? (entry.message ?? installErrorText(entry.code, product)) : null
   return {
     running: entry?.status === 'running',
     progress: entry?.progress,

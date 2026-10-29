@@ -13,7 +13,7 @@ import { installProgressText, useAgentInstall } from './useAgentInstall'
 export function AgentStepAction({ agent, owner }: { agent: AiAgentCaps; owner: string }) {
   const [error, setError] = useState<string | null>(null)
   // 装好后的自动登录由常驻的那一行（`useLoginAfterInstall`）接——这个按钮可能在 caps 刷新时先被卸掉
-  const install = useAgentInstall(agent.id, owner)
+  const install = useAgentInstall(agent.id, owner, agent.display_name)
   const step = agentStep(agent.state, agent.display_name)
   if (!step.action || step.action === 'login') return null
 

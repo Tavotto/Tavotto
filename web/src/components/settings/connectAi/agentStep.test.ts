@@ -12,13 +12,17 @@ describe('agentStep', () => {
     expect(agentStep('disabled', 'Codex')).toMatchObject({ text: '已在设置里关闭', action: 'enable', actionLabel: '打开' })
     expect(agentStep('ready', 'Codex')).toMatchObject({ text: '已连接', action: null })
     expect(agentStep('installed', 'Codex').action).toBeNull()
+    // Claude Code 与 Codex 同一套：没装就是「安装并登录」
+    expect(agentStep('not_installed', 'Claude Code')).toMatchObject({ text: '没装 Claude Code', action: 'install', actionLabel: '安装并登录' })
   })
 
   it('英文界面也有文案', async () => {
     await setLocale('en-US')
     expect(agentStep('not_installed', 'Codex').text).toBe("Codex isn't installed")
-    expect(installErrorText('managed_cli_offline')).toMatch(/Codex/)
-    expect(installErrorText('weird')).toBe(t('settings.agents.install.error.other', { ns: 'dialogs' }))
+    expect(installErrorText('managed_cli_offline', 'Codex')).toMatch(/Codex/)
+    expect(installErrorText('managed_cli_offline', 'Claude Code')).toMatch(/Claude Code/)
+    expect(installErrorText('managed_cli_offline', 'Claude Code')).not.toMatch(/Codex/)
+    expect(installErrorText('weird', 'Claude Code')).toBe(t('settings.agents.install.error.other', { ns: 'dialogs' }))
     await setLocale('zh-CN')
   })
 })

@@ -143,11 +143,13 @@ def test_login_specs_are_declared_by_the_adapters():
     codex = ai_agents.get_agent("codex").login_spec()
     claude = ai_agents.get_agent("claude").login_spec()
     assert (codex.argv_suffix, codex.mode, codex.account) == (("login",), "background", "ChatGPT")
+    # claude 2.x 的 `auth login` 无 TTY 也能用（自己开浏览器 + 本机回调）：与 codex 同为后台模式，不再借系统终端
     assert (claude.argv_suffix, claude.mode, claude.account) == (
         ("auth", "login"),
-        "terminal",
+        "background",
         "Claude",
     )
+    assert set(claude.url_hosts) == {"claude.ai", "claude.com", "platform.claude.com"}
     # 基类默认不支持登录——没有官方登录子命令就不画按钮
     assert _FakeAgentWithoutLogin().login_spec() is None
 
@@ -401,6 +403,13 @@ def test_generic_login_layer_names_no_agent():
 
 
 def _terminal_agent(monkeypatch):
+    # 终端模式是通用层仍支持的能力（适配器声明 `terminal` 即走），claude 自己已改成后台模式：
+    # 这组用例借 claude 的 id 走终端分支，登记一份终端规格的适配器规格
+    monkeypatch.setattr(
+        ai_agents.ClaudeAgent,
+        "login_spec",
+        lambda self: ai_agents.LoginSpec(("auth", "login"), "terminal", "Claude"),
+    )
     monkeypatch.setattr(
         ai_agents,
         "candidates",

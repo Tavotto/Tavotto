@@ -157,10 +157,11 @@ def env(tmp_path, monkeypatch):
 
 
 def _fake_lock_for(monkeypatch, cli):
+    cli_name = cli.name
     monkeypatch.setattr(
         managedcli,
         "cli_for",
-        lambda name, platform_key=None, lock=None: cli if name == "codex" else None,
+        lambda name, platform_key=None, lock=None: cli if name == cli_name else None,
     )
 
 
@@ -486,9 +487,10 @@ def test_shipped_lock_is_valid_pinned_and_urls_derive_from_the_template():
 def test_source_hosts_allowlist_matches_the_shipped_lock():
     lock = managedcli.load_lock()
     hosts = set()
-    for key in lock["clis"]["codex"]["platforms"]:
-        for s in managedcli.cli_for("codex", key, lock).sources:
-            hosts.add(s.host)
+    for name, cli in lock["clis"].items():
+        for key in cli["platforms"]:
+            for s in managedcli.cli_for(name, key, lock).sources:
+                hosts.add(s.host)
     assert hosts == set(managedcli.SOURCE_HOSTS)
 
 
@@ -504,7 +506,9 @@ def test_validate_lock_rejects_loose_locks():
             managedcli.validate_lock(bad)
 
     mutate(lambda c: c.update(version="latest"))
-    mutate(lambda c: c.update(github_url="https://evil.example/{version}/{triple}"))
+    mutate(lambda c: c["sources"][0].update(url="https://evil.example/{version}/{triple}"))
+    mutate(lambda c: c["sources"][0].update(key="gitlab"))
+    mutate(lambda c: c["sources"][1].update(strip="/abs/"))
     mutate(lambda c: c["platforms"]["darwin-arm64"].update(tree_sha256="abc"))
     mutate(lambda c: c["platforms"]["darwin-arm64"]["github"].update(sha256="G" * 64))
     mutate(lambda c: c["platforms"]["darwin-arm64"].update(entrypoint="../x"))
@@ -549,3 +553,201 @@ def test_codexinstall_and_hostconnect_see_the_managed_codex(env, monkeypatch):
     assert codexinstall._codex_or_fail(steps) == found
     assert steps[0]["ok"] is True
     ai_agents.clear_cache()
+
+
+# ================================================================ Claude Code（第二个受控 CLI）
+# 来源：npmmirror 平台子包（tgz，只取 package/<二进制>）→ downloads.claude.ai 裸二进制（raw）
+CLAUDE_ENTRY = "claude.cmd" if os.name == "nt" else "claude"
+CLAUDE_BIN = (
+    b"@echo 2.1.308 (Claude Code)\r\n"
+    if os.name == "nt"
+    else b"#!/bin/sh\necho '2.1.308 (Claude Code)'\n"
+)
+
+
+def _claude_tgz(binary: bytes = CLAUDE_BIN) -> bytes:
+    """npm 平台子包：二进制之外另有 package.json / LICENSE / README，必须被 `only` 挡在树外。"""
+    return _tar(
+        [
+            ("package/package.json", b"{}", {}),
+            ("package/LICENSE.md", b"license", {}),
+            ("package/README.md", b"readme", {}),
+            ("package/" + CLAUDE_ENTRY, binary, {"mode": 0o755}),
+        ]
+    )
+
+
+def _claude_cli(
+    srv: _Server, *, binary: bytes = CLAUDE_BIN, raw_bytes=None, tree=None
+) -> managedcli.ManagedCli:
+    tgz = _claude_tgz(binary)
+    raw = raw_bytes if raw_bytes is not None else binary
+    return managedcli.ManagedCli(
+        name="claude",
+        version="2.1.308",
+        platform="test-x64",
+        triple="test-x64",
+        entrypoint=CLAUDE_ENTRY,
+        tree_sha256=tree or _tree_digest({CLAUDE_ENTRY: binary}),
+        unpacked_size=len(binary),
+        file_count=1,
+        sources=(
+            managedcli.ArchiveSource(
+                srv.url("/npm"),
+                len(tgz),
+                hashlib.sha256(tgz).hexdigest(),
+                "package/",
+                only=CLAUDE_ENTRY,
+            ),
+            managedcli.ArchiveSource(
+                srv.url("/gcs"), len(raw), hashlib.sha256(raw).hexdigest(), raw=True
+            ),
+        ),
+    )
+
+
+def test_claude_mirror_tgz_installs_only_the_binary_and_probes(env, monkeypatch):
+    srv = env({"/npm": _claude_tgz(), "/gcs": CLAUDE_BIN})
+    cli = _claude_cli(srv)
+    _fake_lock_for(monkeypatch, cli)
+    entry = managedcli.provision("claude", cli=cli)
+    root = managedcli.root_dir("claude") / cli.id
+    assert [p.name for p in root.iterdir()] == [
+        CLAUDE_ENTRY
+    ]  # package.json / LICENSE / README 不进树
+    assert Path(entry).read_bytes() == CLAUDE_BIN  # 原样，一个字节不改
+    assert srv.hits == {"/npm": 1}
+    assert managedcli.bin_dir("claude") == root
+    assert managedcli.installed_version("claude") == "2.1.308"
+
+
+def test_claude_falls_back_to_the_raw_binary_and_gets_the_same_tree(env):
+    srv = env({"/gcs": CLAUDE_BIN})  # /npm → 404
+    cli = _claude_cli(srv)
+    entry = managedcli.provision("claude", cli=cli)
+    assert Path(entry).read_bytes() == CLAUDE_BIN
+    assert srv.hits == {"/npm": 1, "/gcs": 1}
+    if os.name != "nt":
+        assert os.access(entry, os.X_OK)
+
+
+def test_claude_raw_hash_mismatch_is_not_retried(env):
+    srv = env({"/gcs": CLAUDE_BIN + b"x"})  # /npm 404 → 落到裸二进制，字节被动过
+    cli = _claude_cli(srv, raw_bytes=CLAUDE_BIN)
+    with pytest.raises(managedcli.ManagedCliError) as exc:
+        managedcli.provision("claude", cli=cli)
+    assert exc.value.code == managedcli.ERROR_HASH_MISMATCH
+    assert srv.hits == {"/npm": 1, "/gcs": 1}
+    assert managedcli.entrypoint("claude", cli) is None
+
+
+def test_claude_tree_mismatch_is_rejected_even_when_the_download_hash_matches(env):
+    srv = env({"/npm": _claude_tgz()})
+    cli = _claude_cli(srv, tree="0" * 64)
+    with pytest.raises(managedcli.ManagedCliError) as exc:
+        managedcli.provision("claude", cli=cli)
+    assert exc.value.code == managedcli.ERROR_HASH_MISMATCH
+
+
+def test_claude_probe_requires_the_locked_version(env):
+    other = CLAUDE_BIN.replace(b"2.1.308", b"2.0.0")
+    srv = env({"/gcs": other})
+    cli = _claude_cli(srv, binary=other)
+    with pytest.raises(managedcli.ManagedCliError) as exc:
+        managedcli.provision("claude", cli=cli)
+    assert exc.value.code == managedcli.ERROR_LAUNCH_FAILED
+
+
+def test_managed_claude_is_found_by_resolve_and_disables_the_autoupdater(env, monkeypatch):
+    srv = env({"/npm": _claude_tgz()})
+    cli = _claude_cli(srv)
+    _fake_lock_for(monkeypatch, cli)
+    monkeypatch.setattr(ai_agents, "path_override", lambda agent_id: None)
+    ai_agents.clear_cache()
+    entry = managedcli.provision("claude", cli=cli)
+    ai_agents.clear_cache()
+    agent = next(a for a in ai_agents.agents() if a.id == "claude")
+    assert ai_agents.candidates(agent)[0].source == "managed"
+    res = ai_agents.resolve(agent, probe_readiness=False)
+    assert os.path.normcase(res.path) == os.path.normcase(entry) and res.source == "managed"
+    # 托管那份的子进程环境带 DISABLE_AUTOUPDATER=1；别处的 claude / 没有路径都不带
+    assert ai_agents.spawn_env(entry)["DISABLE_AUTOUPDATER"] == "1"
+    monkeypatch.delenv("DISABLE_AUTOUPDATER", raising=False)
+    assert "DISABLE_AUTOUPDATER" not in ai_agents.spawn_env("/usr/local/bin/claude")
+    assert "DISABLE_AUTOUPDATER" not in ai_agents.spawn_env(None)
+    ai_agents.clear_cache()
+
+
+def test_start_install_claude_goes_through_the_same_managed_path(monkeypatch):
+    monkeypatch.setattr(ai_bridge, "_INSTALLS", {})
+    monkeypatch.setattr(ai_bridge.managedcli, "offered", lambda name: name == "claude")
+    seen: list[str] = []
+
+    def fake_provision(name, on_progress=None, **kw):
+        seen.append(name)
+        on_progress("download", 1, 2)
+        return "/x/claude"
+
+    monkeypatch.setattr(ai_bridge.managedcli, "provision", fake_provision)
+    monkeypatch.setattr(
+        ai_bridge,
+        "capabilities",
+        lambda refresh=False: {"agents": [{"id": "claude", "installed": True}]},
+    )
+    monkeypatch.setattr(ai_bridge, "_npm_argv", lambda: pytest.fail("托管可用时不许碰 npm"))
+    assert ai_bridge.start_install("claude")["via"] == "managed"
+    st = _wait_install("claude")
+    assert st["status"] == "done" and seen == ["claude"]
+
+
+def test_shipped_lock_pins_claude_with_mirror_first_and_raw_fallback():
+    lock = managedcli.load_lock()
+    cli = lock["clis"]["claude"]
+    assert set(cli["platforms"]) == {"darwin-arm64", "darwin-x64", "win32-x64", "linux-x64"}
+    assert [d["key"] for d in cli["sources"]] == ["mirror", "gcs"]
+    for key, p in cli["platforms"].items():
+        c = managedcli.cli_for("claude", key, lock)
+        mirror, gcs = c.sources
+        entry = "claude.exe" if key.startswith("win32") else "claude"
+        assert c.entrypoint == entry and c.file_count == 1
+        assert mirror.url == (
+            f"https://registry.npmmirror.com/@anthropic-ai/claude-code-{key}/-/"
+            f"claude-code-{key}-{c.version}.tgz"
+        )
+        assert (mirror.strip, mirror.only, mirror.raw) == ("package/", entry, False)
+        assert gcs.url == (
+            f"https://downloads.claude.ai/claude-code-releases/{c.version}/{key}/{entry}"
+        )
+        assert gcs.raw is True and gcs.strip == "" and gcs.only == ""
+        # 裸二进制就是入口文件，大小 = 解开后的总量；npm 包是压缩过的另一份字节
+        assert gcs.size == c.unpacked_size and mirror.size < gcs.size
+        assert c.id == f"{c.version}-{c.tree_sha256[:12]}"
+        assert p["mirror"]["integrity"].startswith("sha512-")
+
+
+def test_validate_lock_rejects_loose_claude_entries():
+    import copy
+
+    good = managedcli.load_lock()
+
+    def mutate(fn):
+        bad = copy.deepcopy(good)
+        fn(bad["clis"]["claude"])
+        with pytest.raises(ValueError):
+            managedcli.validate_lock(bad)
+
+    mutate(lambda c: c["sources"][1].update(url="https://evil.example/{version}/x"))
+    mutate(lambda c: c["sources"][1].update(strip="package/"))  # raw 来源没有 strip
+    mutate(lambda c: c["sources"][0].update(only="../x"))
+    mutate(lambda c: c["platforms"]["darwin-arm64"]["gcs"].update(sha256="abc"))
+    bad = copy.deepcopy(good)
+    bad["clis"]["mystery"] = bad["clis"].pop("claude")  # 不在登记表里的 CLI 名
+    with pytest.raises(ValueError):
+        managedcli.validate_lock(bad)
+
+
+def test_claude_adapter_logs_in_in_the_background_with_the_official_command():
+    spec = ai_agents.get_agent("claude").login_spec()
+    assert (spec.argv_suffix, spec.mode) == (("auth", "login"), "background")
+    # 授权地址只认这几个主机；Tavotto 不读不存任何登录凭据（输出里除授权地址外一概丢弃）
+    assert spec.url_hosts == ("claude.ai", "claude.com", "platform.claude.com")
