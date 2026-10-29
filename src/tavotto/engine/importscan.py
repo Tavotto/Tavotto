@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import keyword
 import os
 import re
 import stat
@@ -1393,8 +1394,10 @@ class _Scanner:
         budget: scanbudget.Budget | None,
         dists: distmeta.Index | None = None,
         ext_suffixes: tuple[str, ...] | None = None,
+        extra_imports: tuple[str, ...] = (),
     ) -> None:
         self.root = root
+        self.extra_imports = extra_imports
         self.dists = dists
         self.ext_suffixes = ext_suffixes
         #: 命中过扩展模块、却没有目标解释器的后缀表去确认它真的会被加载（`_finish` 据此标搜索不完整）
@@ -1758,6 +1761,8 @@ class _Scanner:
             # 影子脚本（ADR 0143 修订）：生成可编辑版本的校验运行，候选字节在候选目录、项目里没有这个文件；
             # 依赖调研读那份字节（只读、解析失败当没有），其余（本地模块查找等）照常以项目为根
             self.tree_given = _shadow_tree(self.root, self.script)
+        if self.extra_imports and self.tree_given is not None:
+            self.tree_given = _with_extra_imports(self.tree_given, self.extra_imports)
         if self.entry.kind == execspec.TARGET_SCRIPT or entry_pkg is not None:
             if self.tree_given is not None and self.entry.kind == execspec.TARGET_SCRIPT:
                 parsed = self._visit(self.tree_given, "", entry_rel)
@@ -1765,6 +1770,14 @@ class _Scanner:
                 self.problems.append({"path": entry_rel, "kind": "outside_project"})
             else:
                 parsed = self._load(self.script_p, entry_rel, "")
+                if (
+                    parsed is not None
+                    and self.extra_imports
+                    and self.entry.kind == execspec.TARGET_SCRIPT
+                ):
+                    parsed = self._visit(
+                        _with_extra_imports(parsed.tree, self.extra_imports), "", entry_rel
+                    )
             self.read_files.append(entry_rel)
         unused: frozenset[str] = frozenset()
         if parsed is not None:
@@ -2277,6 +2290,18 @@ def _rank(top: _Top) -> int:
 # ---------------------------------------------------------------- 入口
 
 
+def _with_extra_imports(tree: ast.Module, modules: tuple[str, ...]) -> ast.Module:
+    """入口脚本的 AST 之外，再并入「运行时观察到缺了」的顶层模块名，当作脚本顶层的无条件 `import X`（裸 import 永不算 unused）。
+    只收合法标识符形态的顶层名；其余忽略。不改调用方给的 `tree`。"""
+    extra: list[ast.stmt] = []
+    for name in dict.fromkeys(modules):
+        if name.isidentifier() and not keyword.iskeyword(name):
+            extra.extend(ast.parse(f"import {name}").body)
+    if not extra:
+        return tree
+    return ast.Module(body=[*tree.body, *extra], type_ignores=[])
+
+
 def _shadow_tree(root: Path, script: str) -> ast.Module | None:
     source = shadowscript.lookup_active(root, script)
     if source is None:
@@ -2300,6 +2325,7 @@ def scan(
     budget: scanbudget.Budget | None = None,
     dists: distmeta.Index | None = None,
     ext_suffixes: tuple[str, ...] | None = None,
+    extra_imports: tuple[str, ...] = (),
 ) -> ScanResult:
     """扫描脚本（及其本地模块）的 import，逐个顶级名分类。
 
@@ -2317,6 +2343,8 @@ def scan(
     `ext_suffixes`（#888）是**目标**解释器的 `EXTENSION_SUFFIXES`：给了，扩展模块只认这些后缀；没给，退回宽松形状，
     命中的扩展模块标 `unverified` + `extension_suffix_not_confirmed` 且 `search_complete=False`（不拿宿主的后缀冒充）。
     被预算 / 文件数 / 深度截断的扫描同样 `search_complete=False`。
+    `extra_imports`：运行时观察到缺了的顶层模块名（`import` 语句看不见的惰性依赖，如 `pandas.read_excel` 之于 openpyxl），
+    并入入口脚本当作顶层无条件 import（脚本入口；`python -m` 入口不适用）。
     """
     return _Scanner(
         Path(root),
@@ -2330,6 +2358,7 @@ def scan(
         budget=budget,
         dists=dists,
         ext_suffixes=tuple(ext_suffixes) if ext_suffixes else None,
+        extra_imports=tuple(extra_imports),
     ).run()
 
 

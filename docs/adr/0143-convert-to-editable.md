@@ -162,6 +162,13 @@ outcome、corrections 个数、是否采用）——不带脚本、路径或图�
 - **换环境后重新判定（Codex #1330 P1）**：系统 Python / 内置 runtime 卡的主按钮打开现有的环境选择器（不另造第二个）；选完且解释器确实变了（前端比环境身份：全局解释器 + 本项目来源 / 解释器），
   前端自动 `POST …/dependencies {action:"replan"}`——不带摘要、不重跑 Agent，后端用此刻的项目解释器走自动路径的同一棵决定树（`convertdeps.ensure`）：能直接装的装并接着校验同一个候选，
   要问一次 / 名单外 / 仍是系统 Python 的回新卡，已不缺包的直接续跑。会话认证、项目隔离、续跑忙碌判定（`convert_resume_busy`）、取消传递与 `install` 动作一致；解释器没变保持原卡。
+- **运行时观察到的缺包并入同一棵决定树（TVD-82B9）**：有些依赖 `import` 语句里看不见（`pandas.read_excel` 惰性 import openpyxl，R 的 `readxl::read_excel` 转写后必然如此），
+  静态扫描判「不缺」放行，校验运行才报 `missing_dependency`。此时 `run_validation` 取 worker 错误里**结构化的** `params.module`（不解析文案）并入依赖决定：
+  `convertdeps.ensure/resolve(runtime_modules=)` → `deprepair.joint_plan_for/create_joint_plan(extra_imports=)` → `depplan.plan(extra_imports=)` → `importscan.scan(extra_imports=)`，
+  当作入口脚本的顶层无条件 import，与静态 import 走同一份来源判决（import 名→发行包名仍是 `depresolve` 的映射），所以名单内 + 已同意 → 直接装；要用户 → `hold`；名单外 → `uncommon`，
+  内置 / 系统 Python 照旧默认 `install_managed`。**不新增 pip 路径**；装完**只重跑校验一次**（每候选每进程），装了又报缺包如实 `missing_dependency`。
+  卡片带 `runtime_modules`，持久化在 `meta.json` 的 `dependency_card`；用户点击 / `replan` 的 `run_resume` 从中取回，重算计划时带上同一份，摘要才对得上。
+  替身重算（`_replan_on_base`）靠 `JointRepairPlan.extra_imports` 带过去。没有为 `read_excel` 之类写「隐式依赖」静态表（importscan/depplan 没有这类机制，运行时观察更准）。
 - **取消传到安装（Codex #1330 P1-1）**：任务的取消标记（`TaskRun.cancel_event`）与续跑作业的取消标记原样传给 `convertdeps`，由监视线程在取消到来时调 deprepair 现有的
   `cancel_status`（`prepare` 复用同一个取消句柄，开跑前就取消也会在拿锁前停手、一个字节不写）；过了提交点的取消被 `cancel_status` 拒绝，结果如实回 `installed`。
   卡片上点停止 / 关闭 = `discard`，它把取消传给正在进行的续跑作业，作业停手后删候选目录，结局 `cancelled`。

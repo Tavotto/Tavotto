@@ -602,3 +602,58 @@ def test_no_new_pip_or_subprocess_path_in_convertdeps():
         assert callable(getattr(deprepair, name))
     src = inspect.getsource(convertdeps)
     assert "subprocess" not in src and "pip install" not in src.replace("`pip install`", "")
+
+
+# --------------------------------------------------------------------------- 运行时观察到的缺包
+def test_runtime_modules_reach_both_the_survey_and_the_bound_plan(fake_repair, tmp_path):
+    seen = {}
+    orig_joint = deprepair.joint_plan_for
+
+    def joint_plan_for(project, script, **kw):
+        seen["joint"] = kw
+        return orig_joint(project, script, **kw)
+
+    deprepair.joint_plan_for = joint_plan_for
+    try:
+        got = convertdeps.ensure("/proj", SCRIPT, runtime_modules=("openpyxl",))
+    finally:
+        deprepair.joint_plan_for = orig_joint
+    assert got["status"] == "installed"
+    assert seen["joint"]["extra_imports"] == ("openpyxl",)
+    created = next(c for c in fake_repair.calls if c[0] == "create_joint_plan")
+    assert created[3]["extra_imports"] == ("openpyxl",)
+
+
+def test_builtin_environment_holds_with_the_runtime_module_on_the_card_and_click_echoes_it(
+    fake_repair, tmp_path
+):
+    _as(fake_repair, tmp_path, source=pool.SOURCE_BUNDLED, kind=deprepair.TARGET_MANAGED)
+    fake_repair.joint = _joint(requirements=("openpyxl",))
+    fake_repair.bound = _bound(
+        requirements=("openpyxl",),
+        target_kind=deprepair.TARGET_MANAGED,
+        impact={"target_kind": deprepair.TARGET_MANAGED, "creates_environment": True},
+        creates_environment=True,
+    )
+    held = convertdeps.ensure("/proj", SCRIPT, runtime_modules=("openpyxl",))
+    assert held["status"] == "hold" and held["card"]["kind"] == "ask_once"
+    assert held["card"]["runtime_modules"] == ["openpyxl"]
+    assert held["card"]["packages"] == ["openpyxl"]
+    assert not any(c[0] == "prepare" for c in fake_repair.calls)
+    clicked = convertdeps.resolve(
+        "/proj",
+        SCRIPT,
+        confirmed_impact=held["card"]["impact_digest"],
+        runtime_modules=tuple(held["card"]["runtime_modules"]),
+    )
+    assert clicked["status"] == "installed"
+    created = [c for c in fake_repair.calls if c[0] == "create_joint_plan"]
+    assert all(c[3]["extra_imports"] == ("openpyxl",) for c in created), (
+        "ensure 与 resolve 重算计划都带着同一份运行时缺包"
+    )
+
+
+def test_without_runtime_modules_the_plan_entries_are_called_exactly_as_before(fake_repair):
+    convertdeps.ensure("/proj", SCRIPT)
+    created = next(c for c in fake_repair.calls if c[0] == "create_joint_plan")
+    assert "extra_imports" not in created[3]

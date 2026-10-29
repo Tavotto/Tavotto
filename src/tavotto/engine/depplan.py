@@ -1341,6 +1341,7 @@ def plan(
     coverage: Callable[[tuple[str, ...]], dict | None] | None = None,
     user_specified: Mapping[str, str] | None = None,
     run_env_replaceable: bool | None = None,
+    extra_imports: tuple[str, ...] = (),
 ) -> JointPlan:
     """拼一份联合计划。`facts` 是**此刻会跑脚本的**解释器的事实（缺什么按它量——门问的是
     「现在起会话会不会缺包」）；`target_kind` 说安装会落到哪种环境（受管环境并入 adapter 约束，
@@ -1363,6 +1364,8 @@ def plan(
     不必有一条被 AST 认出的 import 指到它；目标里没有、或装着的版本不满足声明的约束，就进 `requirements`。`run_env_replaceable`
     说此刻跑脚本的环境是不是 Tavotto 自己的（受管代 / 内置 runtime / 尚未落盘的新一代）：是，**相关的**差集（见 `declared_gaps`）才让计划
     `ready`；不是（用户交给我们的系统解释器；缺省 None = 受管目标一律视为是）只记录偏差、不为它动手。用户自己的 venv 目标永不并入 roots。
+    `extra_imports`：运行时观察到缺了的顶层模块名（转换校验运行报 `missing_dependency` 点名的、静态看不见的惰性依赖），
+    并入扫描当作入口脚本的顶层 import，之后走与静态 import 完全相同的来源判决（`importscan.scan(extra_imports=)`）。
     同一个 import 名有多个互斥发行包（`cv2`）时，项目声明点名的那个胜出，点名了两个 = `dependency_conflict`（roots 不与 curated 取并集）。"""
     if target_kind not in TARGETS:
         raise ValueError(f"target_kind 非法: {target_kind!r}")
@@ -1385,6 +1388,7 @@ def plan(
         builtin=(target.builtin or None) if target is not None else None,
         ext_suffixes=(target.ext_suffixes or None) if target is not None else None,
         dists=dists,
+        extra_imports=tuple(extra_imports),
     )
     installed = facts.installed if facts is not None else {}
     target_installed = target.installed if target is not None else {}
