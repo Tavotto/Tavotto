@@ -105,3 +105,20 @@ describe('codec 的读回', () => {
     expect(legacy.reparse!(out)).toEqual(runs)
   })
 })
+
+describe('剪贴板（Codex #1489）', () => {
+  it('自己复制出去的上下标 / raw 标签粘回来认得', async () => {
+    const { DOMParser: PMParser, DOMSerializer } = await import('prosemirror-model')
+    const { richSchema } = await import('./richEditor')
+    const runs: TextRun[] = [
+      { text: 'x', script: '' },
+      { text: '2', script: 'sup' },
+      { text: 'i', script: 'sub' },
+      { text: '\\textsc{a}', script: '', raw: true },
+    ]
+    const frag = DOMSerializer.fromSchema(richSchema).serializeFragment(runsToDoc(runs).content)
+    const div = document.createElement('div')
+    div.appendChild(frag)
+    expect(docToRuns(PMParser.fromSchema(richSchema).parse(div))).toEqual(runs)
+  })
+})

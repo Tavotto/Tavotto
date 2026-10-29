@@ -273,3 +273,12 @@ describe('限制：mathtext 写不出的字符', () => {
     ).toBe('a^b$\\mathit{c}$')
   })
 })
+
+describe('反斜杠在公式段外原样（matplotlib 只认 \\$ 一种转义）', () => {
+  it('字面反斜杠、反斜杠 + 美元、反斜杠结尾都原样往返', () => {
+    for (const text of ['C:\\data', 'a\\$b', 'end\\']) {
+      const runs = [{ text, script: '' as const }]
+      expect(parseMathtext(serializeMathtext(runs))).toEqual(runs)
+    }
+  })
+})

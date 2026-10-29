@@ -234,15 +234,18 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 外部改了字符串（撤销 / 重做、换选中对象、大小写菜单）：整段换掉，不进编辑框历史
+  // 外部改了字符串（撤销 / 重做、换选中对象、大小写菜单）或换了写法：整段换掉，不进编辑框历史。
+  // 写法变了字符串不变也要重读——两个标注字符串相同、一个旧标记一个 LaTeX 子集，画出来不同（Codex #1489）
+  const parsedWith = useRef(codec)
   useEffect(() => {
     const view = viewRef.current
-    if (!view || value === emitted.current) return
+    if (!view || (value === emitted.current && codec === parsedWith.current)) return
     emitted.current = value
+    parsedWith.current = codec
     const doc = runsToDoc(cb.current.codec.parse(value))
     const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content)
     view.dispatch(tr.setMeta('rt-external', true).setMeta('addToHistory', false))
-  }, [value])
+  }, [value, codec])
 
   const run = (mark: RichMark | 'break') => {
     const view = viewRef.current

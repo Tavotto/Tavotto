@@ -243,6 +243,9 @@ function toPiece(r: TextRun, text: string): Piece {
 function emitLine(pieces: Piece[], verbatimRaw: boolean): string {
   let out = ''
   for (const p of pieces) {
+    // 只转义 `$`、不转义 `\`：matplotlib 在公式段外只认 `\$` 这一种转义，单独的 `\` 原样显示
+    // （实测见文件头）。把 `\` 写成 `\\` 反而多显示一个反斜杠。`a\$`（字面反斜杠 + 美元）写成 `a\\$`，
+    // matplotlib 把末尾的 `\$` 读成 `$`、前面的 `\` 原样——往返用例钉着。
     if (p.kind === 'plain') out += p.text.replace(/\$/g, '\\$')
     else if (p.kind === 'raw') {
       for (const ch of p.text) {

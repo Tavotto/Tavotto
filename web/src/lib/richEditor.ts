@@ -108,17 +108,19 @@ export const richSchema = new Schema({
     },
     sup: {
       excludes: 'sup sub',
-      parseDOM: [{ tag: 'sup' }],
+      // 自己复制出去的是 `span[data-rt]`，粘回来要认得（Codex #1489）
+      parseDOM: [{ tag: 'sup' }, { tag: 'span[data-rt="sup"]' }],
       toDOM: () => ['span', { 'data-rt': 'sup', style: scriptStyle(SUP_RISE) }, 0],
     },
     sub: {
       excludes: 'sup sub',
-      parseDOM: [{ tag: 'sub' }],
+      parseDOM: [{ tag: 'sub' }, { tag: 'span[data-rt="sub"]' }],
       toDOM: () => ['span', { 'data-rt': 'sub', style: scriptStyle(-SUB_DROP) }, 0],
     },
     /** 读不懂的命令原文（`\textsc{abc}`）：照字面显示、写回原样；挨着它打的字不继承 */
     raw: {
       inclusive: false,
+      parseDOM: [{ tag: 'span[data-rt="raw"]' }],
       toDOM: () => ['span', { 'data-rt': 'raw' }, 0],
     },
   },

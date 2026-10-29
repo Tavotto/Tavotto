@@ -242,3 +242,13 @@ describe('科学文本与字形提示', () => {
     expect(container.textContent?.includes('另一种字体')).toBe(false)
   })
 })
+
+describe('换了写法、字符串不变（Codex #1489）', () => {
+  it('同一串字从旧标记换成 LaTeX 子集：框按新写法重读', () => {
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = '\\textit{x}')))
+    expect(editorDom().textContent).toBe('\\textit{x}')
+    act(() => s().commit(literal('换写法'), (d) => void ((d.objects[0] as TextObject).textFormat = 'latex')))
+    expect(editorDom().textContent).toBe('x')
+    expect(editorDom().querySelector('em')?.textContent).toBe('x')
+  })
+})
