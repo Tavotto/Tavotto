@@ -8,11 +8,11 @@ import { useAiStore } from '@/store/aiStore'
 import { StatusPill } from '../../ui/StatusPill'
 import { OAuthLoginDialog } from '../OAuthLoginDialog'
 import { useAgentStepAction } from './useAgentStepAction'
-import { Button } from '../../ui/Button'
+import { InstallActionButton } from './InstallActionButton'
 import { agentStep } from './agentStep'
 import { ConnectionManage } from './ConnectionManage'
 import { cx } from './copy'
-import { installProgressText, useLoginAfterInstall } from './useAgentInstall'
+import { useLoginAfterInstall } from './useAgentInstall'
 import { connectionErrorText, connectionForMethod, loginAgentOf, methodHint, methodName, vendorName } from './vendors'
 import { refreshAndFind, useLoginFlow } from './useLoginFlow'
 import { VendorKeyForm } from './VendorKeyForm'
@@ -179,7 +179,7 @@ function LoginMethodRow({ vendor, method: m, connections, onConnected, picked: o
   const usable = m.available || !!installAgent
   // 已连的订阅类没有可管理的东西（只能在命令行里退出登录）：卡片只显示状态，不展开
   const clickable = usable && !ready
-  const caption = showAction && act.running ? installProgressText(act.progress) : methodCaption(vendor, m, installAgent)
+  const caption = methodCaption(vendor, m, installAgent)
   const dataAttrs = {
     'data-connect-method': m.id,
     'data-connect-method-kind': m.kind,
@@ -191,16 +191,13 @@ function LoginMethodRow({ vendor, method: m, connections, onConnected, picked: o
       {showAction && act.step?.action && act.step.action !== 'login' ? (
         <div {...dataAttrs} className={cn(CARD_CLASS, 'border-border bg-surface')}>
           {body(
-            <Button
-              variant="secondary"
-              size="sm"
-              data-connect-action={act.step.action}
-              loading={act.running}
-              disabled={act.running}
+            <InstallActionButton
+              label={act.step.actionLabel ?? ''}
+              running={act.running}
+              progress={act.progress}
               onClick={act.onClick}
-            >
-              {act.step.actionLabel}
-            </Button>,
+              action={act.step.action}
+            />,
           )}
         </div>
       ) : (

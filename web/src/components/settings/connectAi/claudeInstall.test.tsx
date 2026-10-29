@@ -94,11 +94,28 @@ describe('Claude Code 应用内安装并登录', () => {
     expect(card.textContent).toContain('安装 Claude Code CLI 以启用')
     expect(card.textContent).not.toContain('没装 Claude Code')
     const btn = card.querySelector('[data-connect-action="install"]')!
-    expect(btn.textContent).toBe('安装并登录')
+    expect(btn.textContent).toContain('安装并登录')
     expect(calls.some((c) => c.url === '/api/ai/agents/claude/login')).toBe(false)
     await click(btn)
     expect(calls.some((c) => c.url === '/api/ai/agents/claude/install' && c.method === 'POST')).toBe(true)
     expect(q('[data-connect-method="sub"]')!.textContent).toContain('正在安装')
+  })
+
+  it('安装中：说明行不变，按钮自己是进度条（文字含百分比、aria-valuenow、aria-disabled）', async () => {
+    await render()
+    install = [{ status: 'running', progress: 0.5 }]
+    await click(q('[data-connect-action="install"]'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100)
+    })
+    await act(async () => {})
+    const row = q('[data-connect-method="sub"]')!
+    expect(row.textContent).toContain('安装 Claude Code CLI 以启用')
+    const bar = row.querySelector('[data-connect-install-progress]')!
+    expect(bar.getAttribute('role')).toBe('progressbar')
+    expect(bar.getAttribute('aria-valuenow')).toBe('50')
+    expect(bar.textContent).toContain('50%')
+    expect(row.querySelector('[data-connect-action="install"]')!.getAttribute('aria-disabled')).toBe('true')
   })
 
   it('装好后自动发起 claude 的登录，登录提示摆在这一行下面', async () => {
