@@ -18,6 +18,7 @@ The first Connect asks for a project folder; every editor shares that folder, an
 | ZCode | `~/.zcode/cli/config.json` and `~/.zcode/workspace/default/.zcode/config.json` |
 | WorkBuddy | `~/.workbuddy/mcp.json`, and trusts that one entry in `mcp-approvals.json` |
 | Claude Desktop | `claude_desktop_config.json` (standard mode, local chat) |
+| Antigravity | `~/.gemini/config/mcp_config.json` and `~/.gemini/antigravity/mcp_config.json` (the new and the older location) |
 
 Only the `tavotto` entry is written or removed; everything else in those files stays. A file that already exists is copied to `<name>.tavotto-backup-<time>` before it changes, and a file Tavotto cannot read is left alone. Start a new session or conversation in the editor afterwards; most editors read these files only at start. Disconnect removes the `tavotto` entry again (the WorkBuddy trust record stays; it matches only that exact entry).
 

@@ -41,7 +41,7 @@ from pathlib import Path
 from . import config
 from .runtime import CREATE_NO_WINDOW
 
-#: 第一版的八个宿主（顺序 = 界面上的顺序）
+#: 九个宿主（顺序 = 界面上的顺序）
 HOST_IDS = (
     "codex",
     "claude-code",
@@ -51,6 +51,7 @@ HOST_IDS = (
     "zcode",
     "workbuddy",
     "claude-desktop",
+    "antigravity",
 )
 SERVER_NAME = "tavotto"
 ROOTS_ENV = "TAVOTTO_MCP_ROOTS"
@@ -275,6 +276,13 @@ def _workbuddy_dir() -> Path:
     return Path.home() / ".workbuddy"
 
 
+def _antigravity_dirs() -> tuple[Path, Path]:
+    """Google Antigravity 的两处用户配置目录：2.0 起共享的 `~/.gemini/config` 与旧版 `~/.gemini/antigravity`。
+    Windows 的 `~` 是 `%USERPROFILE%`（`Path.home()`）。`~/.gemini` 本身不算：Gemini CLI 也用它。"""
+    g = Path.home() / ".gemini"
+    return g / "config", g / "antigravity"
+
+
 def _claude_desktop_dir() -> Path:
     return _appdata() / "Claude"
 
@@ -379,6 +387,15 @@ _FILE_HOSTS: dict[str, FileHost] = {
         detect=lambda: _existing([_claude_desktop_dir()]),
         targets=lambda: [
             FileTarget(_claude_desktop_dir() / "claude_desktop_config.json", "mcpServers", _plain)
+        ],
+    ),
+    "antigravity": FileHost(
+        "antigravity",
+        "Antigravity",
+        detect=lambda: _existing(list(_antigravity_dirs())),
+        # 新旧两处都写：只写一处时另一版本读不到（和 ZCode 同理）；格式与 Cursor / Claude 桌面版同为 mcpServers
+        targets=lambda: [
+            FileTarget(d / "mcp_config.json", "mcpServers", _plain) for d in _antigravity_dirs()
         ],
     ),
 }

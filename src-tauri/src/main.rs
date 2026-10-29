@@ -393,7 +393,7 @@ async fn codex_integration(app: tauri::AppHandle, action: String) -> Result<Stri
 
 /// 「接入 AI 编辑器」的宿主闭集——**与 `engine/hostconnect.py` 的 `HOST_IDS` 逐字相同**
 /// （看护 `tests/test_desktop_hosts_button.py`）。webview 递不进任意宿主名。
-const HOST_IDS: [&str; 8] = [
+const HOST_IDS: [&str; 9] = [
     "codex",
     "claude-code",
     "cursor",
@@ -402,6 +402,7 @@ const HOST_IDS: [&str; 8] = [
     "zcode",
     "workbuddy",
     "claude-desktop",
+    "antigravity",
 ];
 
 /// 「接入 AI 编辑器」：spawn `tavotto-cli hosts <action> [<host>] [--project-root <目录>] --json`，
