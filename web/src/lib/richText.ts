@@ -511,6 +511,13 @@ const escapeLiteral = (s: string, followedByRun: boolean) =>
 export const plainText = (text: string, format?: TextFormat) =>
   parseRuns(text, format).map((r) => r.text).join('')
 
+/**
+ * 标注在名字 / 列表 / 问题里显示的那串字：LaTeX 写法去掉命令（`Rate \textit{k}` → `Rate k`，公式留源码）；
+ * 旧标记的原样（这几处升级前就显示原文，不改它们的样子）。
+ */
+export const displayText = (text: string, format?: TextFormat) =>
+  format === 'latex' ? plainText(text, 'latex') : text
+
 /** 文本里是否真的用到了上下标——没用到就不必走富文本渲染路径。 */
 export const hasScripts = (text: string, format?: TextFormat) =>
   parseRuns(text, format).some((r) => r.script !== '')

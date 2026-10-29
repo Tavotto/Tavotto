@@ -384,8 +384,8 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "文字内容框所见即所得：选中一段设斜体 / 粗体 / 上下标，框里直接显示；可切 LaTeX 源码、粘贴公式",
-        "en-US": "WYSIWYG text boxes: style a selected range in place; switch to LaTeX source or paste formulas"
+        "zh-CN": "文字内容框所见即所得：选中一段设斜体 / 粗体 / 上下标；可切 LaTeX 源码、粘贴公式；标注里的公式排成真公式（画布与导出同一份）",
+        "en-US": "WYSIWYG text boxes: style a selected range in place; LaTeX source mode and formula paste; annotation formulas typeset identically on canvas and in exports"
       },
       "entry": "图内文字元素或画布标注 → 属性栏内容框（或右键快捷编辑、画布上双击）→ 选中一段 → 角上的 B / I / x² / x₂",
       "e2e": [
@@ -400,6 +400,10 @@
         {
           "spec": "features.spec.ts",
           "title": "功能：图内标题切到 LaTeX 源码改成 $\\mathit{…}$，切回所见即所得显示斜体，引擎重画"
+        },
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：画布标注里写公式，画布上显示 matplotlib 排出的轮廓（与导出同一份），切回所见即所得是公式块"
         }
       ]
     },

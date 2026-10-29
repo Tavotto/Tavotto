@@ -1,7 +1,9 @@
 import 'prosemirror-view/style/prosemirror.css'
 import { Slice } from 'prosemirror-model'
 import { TextSelection } from 'prosemirror-state'
-import { EditorView } from 'prosemirror-view'
+import { EditorView, type NodeView } from 'prosemirror-view'
+import type { Node as PMNode } from 'prosemirror-model'
+import { createRoot, type Root } from 'react-dom/client'
 import {
   forwardRef,
   useEffect,
@@ -32,6 +34,7 @@ import type { TextRun } from '@/lib/richText'
 import { ALT, cn, combo, modKey } from '@/lib/utils'
 import { Button } from './Button'
 import { FIELD_BOX, FIELD_FOCUS_WITHIN } from './fieldBox'
+import { MathFormula } from './MathFormula'
 import { fitTextAreaHeight } from './Input'
 
 /** 挂着的编辑器，按内容节点查（测试与 e2e 驱动选区用；界面代码不走这里） */
@@ -56,6 +59,31 @@ function syncDomSelection(view: EditorView): void {
     view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, anchor, head)))
   } catch {
     // 落在编辑器不认的节点上（公式块内部等）：保持编辑器自己的选区
+  }
+}
+
+/**
+ * 公式块的显示：后端排好的公式（`MathFormula`，与导出同一份结果）。只有宿主给了 `mathFamily`
+ * （标注）时才用它；图内文字的公式块仍显示源码——那里图上就是 matplotlib 画的真身，编辑框不另画一份。
+ */
+class MathChipView implements NodeView {
+  dom: HTMLElement
+  private root: Root
+  constructor(node: PMNode, family: string, sizePx: number) {
+    this.dom = document.createElement('span')
+    this.dom.className = 'rt-math'
+    this.dom.contentEditable = 'false'
+    this.dom.dataset.rtMath = node.attrs.src as string
+    this.root = createRoot(this.dom)
+    this.root.render(<MathFormula src={node.attrs.src as string} family={family} sizePx={sizePx} />)
+  }
+  ignoreMutation() {
+    return true
+  }
+  destroy() {
+    const root = this.root
+    // 卸载推迟一拍：ProseMirror 在自己的更新里调 destroy，同步卸载另一个 React 根会被 React 警告
+    queueMicrotask(() => root.unmount())
   }
 }
 
@@ -103,6 +131,8 @@ export interface RichTextFieldProps {
   placeholder?: string
   /** 正文字号（px）：上下标的绝对字号与基线由它算（`--rt-size`） */
   sizePx?: number
+  /** 标注的字体族：给了就把公式块画成排好的公式（ADR 0152 PR 4）；不给（图内文字）显示源码 */
+  mathFamily?: string
   /** 工具条右侧宿主自己的按钮（大小写菜单等） */
   extra?: ReactNode
   /** 框最多长到几行再滚动（`field`） */
@@ -134,6 +164,7 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     'aria-label': ariaLabel,
     placeholder,
     sizePx,
+    mathFamily,
     extra,
     maxRows = 6,
     autoFocus,
@@ -199,6 +230,9 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
         onEnter: () => cb.current.onEnter?.() ?? false,
         onEscape: () => cb.current.onEscape?.() ?? false,
       }),
+      ...(mathFamily
+        ? { nodeViews: { math: (node: PMNode) => new MathChipView(node, mathFamily, sizePx ?? 13) } }
+        : {}),
       attributes: (state) => ({
         role: 'textbox',
         'aria-multiline': 'true',

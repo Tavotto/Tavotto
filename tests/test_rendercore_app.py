@@ -580,14 +580,14 @@ def test_a_panel_with_overrides_is_rendered_by_the_worker_and_carries_a_receipt(
     seen: dict = {}
     real_produce = rc_job.produce
 
-    def spy(job, tmp_dir, *, sources, provider, host=None):
+    def spy(job, tmp_dir, *, sources, provider, host=None, math=None):
         class Spy:
             def resolve(self, obj):
                 fs = sources.resolve(obj)
                 seen[str(obj.get("id"))] = fs
                 return fs
 
-        return real_produce(job, tmp_dir, sources=Spy(), provider=provider, host=host)
+        return real_produce(job, tmp_dir, sources=Spy(), provider=provider, host=host, math=math)
 
     monkeypatch.setattr(rc_job, "produce", spy)
     spec = _canvas(formats=["pdf"])

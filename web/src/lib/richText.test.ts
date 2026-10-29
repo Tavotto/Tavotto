@@ -267,3 +267,11 @@ describe('LaTeX 写法（ADR 0152）的画布 / 大小写约定', () => {
     expect(parseRuns('\\textit{T} $x$')).toEqual([{ text: '\\textit{T} $x$', script: '' }])
   })
 })
+
+describe('displayText：名字 / 列表里显示的那串字（ADR 0152 PR 4）', () => {
+  it('LaTeX 写法去掉命令（公式留源码），旧标记原样', async () => {
+    const { displayText } = await import('./richText')
+    expect(displayText('Rate \\textit{k} = $A e^{-E}$', 'latex')).toBe('Rate k = A e^{-E}')
+    expect(displayText('cm^{-1}')).toBe('cm^{-1}')
+  })
+})

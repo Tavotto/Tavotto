@@ -49,12 +49,13 @@ def produce(
     sources: SourceResolver,
     provider: HbFaceProvider,
     host: RenderHost | None = None,
+    math: dict | None = None,
 ) -> list[exportjob.Produced]:
     req = job.request
     job.check_cancelled()
     job.trace.mark("compile")
     try:
-        rp = plan.compile_plan(req, sources=sources, faces=provider)
+        rp = plan.compile_plan(req, sources=sources, faces=provider, math=math)
     except plan.PlanError as exc:
         # reason 里带上里层的 code（source_* / font_*）：读者据它分类，不必解析文案
         inner = exc.params.get("source_code") or exc.params.get("font_code") or ""

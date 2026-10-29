@@ -45,6 +45,7 @@ import {
 } from './preflight'
 import type { CanvasData, CanvasObject, FigureDocument } from '@/types/document'
 import { subplotLookup, type SubplotPart } from './subplotParts'
+import { displayText } from './richText'
 
 /* ------------------------------ Issue 模型 -------------------------------- */
 
@@ -250,7 +251,7 @@ function subjectOf(
     obj?.type === 'panel'
       ? (obj.name ?? obj.fileId)
       : obj?.type === 'text'
-        ? obj.text.trim().slice(0, 24) || undefined
+        ? displayText(obj.text, obj.textFormat).trim().slice(0, 24) || undefined
         : undefined
   if (!occ.gid) {
     return { kind: 'object', objectType: obj?.type, objectName }

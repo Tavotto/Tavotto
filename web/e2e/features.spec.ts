@@ -611,6 +611,37 @@ test(
 )
 
 test(
+  '功能：画布标注里写公式，画布上显示 matplotlib 排出的轮廓（与导出同一份），切回所见即所得是公式块',
+  { tag: ['@feature:text.rich-editor'] },
+  async ({ app, page }) => {
+    const a = await app()
+    await page.setViewportSize(VIEWPORT)
+    await page.goto(a.baseURL)
+    await expect(page.locator('[data-canvas-stage]')).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
+    await page.keyboard.press('ControlOrMeta+k')
+    await page.keyboard.type('text')
+    await page.locator('[data-cmd-id="add-text"]').click()
+    const objects = page.locator('[data-canvas-stage] [data-object-id]')
+    await expect(objects).toHaveCount(1)
+
+    // 属性栏的标注文字框：切到源码写一段带公式的 LaTeX，再切回
+    const field = page.locator('[data-text-content]')
+    await field.locator('[data-rich-action="mode"]').click()
+    await field.locator('[data-rich-source]').fill('k = $\\frac{a}{b}$')
+    await field.locator('[data-rich-action="mode"]').click()
+
+    // 画布：公式是排好的轮廓（SVG path），不是源码
+    const math = objects.first().locator('[data-math-state="ok"]')
+    await expect(math).toHaveCount(1, { timeout: 60_000 })
+    await expect(math.locator('svg path')).toHaveCount(1)
+    await expect(objects.first()).not.toContainText('\\frac')
+    // 编辑框里的公式块也是排好的公式
+    await expect(field.locator('[data-rt-math] [data-math-state="ok"]')).toHaveCount(1)
+  },
+)
+
+test(
   '功能：图例位置网格点「左上」，引擎重画后图例真的挪到坐标区左上角',
   { tag: ['@feature:legend.properties'] },
   async ({ app, page }) => {

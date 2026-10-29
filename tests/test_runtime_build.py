@@ -1015,11 +1015,11 @@ def test_spec_ships_every_module_the_worker_imports():
         assert out, f"用例前提：{path.name} 里确实有 {names} 装载清单"
         return out
 
-    # **两个根**：safe worker 与 native bridge runner 是两条各自独立起进程的
-    # 入口（后者由用户自己的解释器按绝对路径执行，见 ADR 0020）。只查一个根
-    # 就是这条用例 docstring 里说的「只查半条链」的同款缺陷，换了个位置。
-    # 两个根都按文件路径装 `bridgeboot`（不经 import 语句），所以它也是根的一部分。
-    closure, todo = set(), ["worker", "bridge_runner", "bridgeboot"]
+    # **三个根**：safe worker、native bridge runner 与公式排版子进程是各自独立起进程的
+    # 入口（bridge 由用户自己的解释器按绝对路径执行，见 ADR 0020；公式排版由内置 runtime
+    # 按绝对路径执行，ADR 0152 PR 4）。只查一个根就是这条用例 docstring 里说的「只查半条链」
+    # 的同款缺陷，换了个位置。两个根都按文件路径装 `bridgeboot`（不经 import 语句），所以它也是根的一部分。
+    closure, todo = set(), ["worker", "bridge_runner", "bridgeboot", "mathtext_child"]
     todo += list(load_lists(engine / "worker.py", ("_ENGINE_MODULES",)))
     todo += list(load_lists(engine / "bridge_runner.py", ("_PHASE1", "_PHASE2")))
     while todo:
@@ -1037,6 +1037,7 @@ def test_spec_ships_every_module_the_worker_imports():
         "用例前提：worker 确实经 figsession / wireproto 复用编辑语义与信封"
     )
     assert "bridgeboot.py" in siblings, "用例前提：两个根都按文件路径装 bridgeboot"
+    assert "mathtext_child.py" in siblings, "用例前提：公式排版子进程是第三个根"
 
     shipped = {Path(source).name for source, _ in _engine_source_datas()}
     missing = siblings - shipped
