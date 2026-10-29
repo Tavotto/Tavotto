@@ -740,7 +740,9 @@ function InstallPanel({
       {live?.status === 'error' && (
         <p role="alert" className="text-xs text-danger">
           {live.code?.startsWith('managed_cli_')
-            ? te(`engine.managedCliError.${live.code}` as 'engine.managedCliError.managed_cli_offline')
+            ? te(`engine.managedCliError.${live.code}` as 'engine.managedCliError.managed_cli_offline', {
+                product: agent.display_name,
+              })
             : ag(
                 `install.error.${
                   live.code === 'npm_missing' ||

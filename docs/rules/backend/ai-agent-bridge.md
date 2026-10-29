@@ -711,3 +711,13 @@ Windows 的路径 stat 与句柄 fstat 可能给 ctime 不同含义，只在同�
   （登录由前端在 done 后调既有 login 接口）。其余平台与其它 Agent 回落 npm。升版本用 `scripts/managed_cli_lock.py`
   （`--update` / `--check [--online]`）。install 状态 `{status, progress 0–1, phase, via, code}`；错误码见 `managedcli.ERROR_CODES`，
   文案在 `errors.json` 的 `engine.managedCliError.*`。传输层与 privatepython 同判据但独立实现（理由见模块头）。
+- **应用内托管安装 Claude Code（同一套机制，2026-10-29）**：锁里 `clis.claude.sources` 逐项声明来源（`SOURCE_PREFIXES` 登记每个 CLI 允许的
+  来源键与 URL 前缀）：registry.npmmirror.com 的 `@anthropic-ai/claude-code-<平台>`（tgz，`only` 只取 `package/<二进制>`，
+  package.json / 许可证不进树）主 → `downloads.claude.ai/claude-code-releases/<版本>/<平台>/<二进制>` 裸文件（`raw`：下载物就是入口文件，
+  sha256 取自官方 `manifest.json`）；两个来源的二进制**逐字节相同**（`--update --cli claude` 时核）。**条款红线**：只原样下载 + 校验 + 解包，
+  不改、不重打包二进制；每个用户用自己的凭据；Tavotto 不做 Claude.ai 登录页、不收集 / 存储 / 转发 token——登录完全是 claude 自己的
+  `claude auth login`（`LoginSpec` background，无 TTY 可用；授权地址只从输出里取主机精确命中 `claude.ai` / `claude.com` /
+  `platform.claude.com` 的 https 地址）。托管那份的子进程环境带 `DISABLE_AUTOUPDATER=1`（`managedcli.child_env`，由 `ai_agents.spawn_env`
+  统一加；版本只由锁控制）。就绪判定仍是 `claude auth status`（只取 `loggedIn`）。前端文案 `engine.managedCliError.*` 带 `{{product}}`，
+  Codex / Claude Code 共用；订阅登录卡（`MethodList`）在 agent 没装时不置灰，点开走 `AgentStepAction`「安装并登录」。
+  升版本：`python scripts/managed_cli_lock.py --update <版本> --cli claude`。

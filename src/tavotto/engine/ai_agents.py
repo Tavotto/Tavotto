@@ -408,6 +408,8 @@ def spawn_env(cli_path: str | None, extra: dict | None = None) -> dict:
         if d and d not in parts and os.path.isdir(d):
             parts.append(d)
     env["PATH"] = os.pathsep.join(parts)
+    # 托管安装的 CLI（claude）：关掉它自己的自动升级——版本只由 `managed_cli_lock.json` 控制
+    env.update(managedcli.child_env(cli_path))
     if extra:
         env.update(extra)
     return env
@@ -967,8 +969,15 @@ class ClaudeAgent(AgentDefinition):
         return re.sub(r"\[[^\]]*\]$", "", value.strip()) or None
 
     def login_spec(self) -> LoginSpec | None:
-        # `claude auth login` 需要交互：只能开在用户的系统终端里
-        return LoginSpec(("auth", "login"), "terminal", "Claude")
+        # `claude auth login` 无 TTY 也能用：自己开浏览器、自己在本机起回调，后台启动即可（与 `codex login` 同一模式）。
+        # 授权地址只从输出里取主机精确命中下面表的 https 地址（只含 state / PKCE challenge，不是凭据）；
+        # Tavotto 不读、不存、不转发 claude 产生的任何登录凭据
+        return LoginSpec(
+            ("auth", "login"),
+            "background",
+            "Claude",
+            ("claude.ai", "claude.com", "platform.claude.com"),
+        )
 
     def model_capabilities(self) -> ModelCapabilities:
         details, families, aliases = self._catalog()

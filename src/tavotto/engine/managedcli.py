@@ -1,4 +1,14 @@
-"""受控 CLI 供应：把官方 Codex CLI 装进 `data_dir()/cli/codex/`——不要 npm、不要 Homebrew、不要终端。
+"""受控 CLI 供应：把官方 Codex / Claude Code CLI 装进 `data_dir()/cli/<名>/`——不要 npm、不要 Homebrew、不要终端。
+
+## 两个 CLI 的来源（锁里 `clis.<名>.sources` 逐项声明，顺序即尝试顺序）
+
+* `codex`：GitHub release（`.tar.gz`）→ npmmirror 平台子包（`.tgz`，树根前缀 `package/vendor/<triple>/`）。
+* `claude`：npmmirror 平台子包 `@anthropic-ai/claude-code-<平台>`（`.tgz`，只取里面的原生二进制 `only`）→
+  官方 `downloads.claude.ai` 的**裸二进制**（`raw`：下载物本身就是入口文件，不是归档）。
+  两个来源落盘必须是同一份字节：npm 包里的 `claude` 与 GCS 上的 `claude` 逐字节相同（`--update` 时核过）。
+
+**条款红线**：只原样下载 + 校验 + 解包，不修改、不重打包二进制；登录由 claude 自己的 `auth login` 完成，Tavotto 不收集、
+不存储、不转发任何 token；托管的 claude 启动时设 `DISABLE_AUTOUPDATER=1`（版本只由锁控制，见 `child_env`）。
 
 ## 为什么是锁文件 + 两个来源
 
@@ -120,10 +130,19 @@ DISK_MARGIN_BYTES = 64 * 1024 * 1024
 STALE_STAGING_S = 3600
 
 #: 已发行的来源主机（固定常量，不从调用方传进来的 URL 现推——现推的判据恒真）：只有它们进日志时明文。
-SOURCE_HOSTS = frozenset({"github.com", "registry.npmmirror.com"})
+SOURCE_HOSTS = frozenset({"github.com", "registry.npmmirror.com", "downloads.claude.ai"})
 #: 锁里 URL 模板允许的前缀；`validate_lock` 钉着。
 GITHUB_PREFIX = "https://github.com/openai/codex/releases/download/"
 MIRROR_PREFIX = "https://registry.npmmirror.com/@openai/codex/-/"
+CLAUDE_MIRROR_PREFIX = "https://registry.npmmirror.com/@anthropic-ai/claude-code-"
+CLAUDE_GCS_PREFIX = "https://downloads.claude.ai/claude-code-releases/"
+#: 每个受控 CLI 的每个来源键允许的 URL 前缀（`validate_lock` 钉着；锁里出现表外的 CLI / 来源键 = 拒绝）
+SOURCE_PREFIXES: dict[str, dict[str, str]] = {
+    "codex": {"github": GITHUB_PREFIX, "mirror": MIRROR_PREFIX},
+    "claude": {"mirror": CLAUDE_MIRROR_PREFIX, "gcs": CLAUDE_GCS_PREFIX},
+}
+#: 托管 CLI 子进程要带的环境变量（版本只由我们的锁控制：不许 CLI 自己升级）
+MANAGED_CHILD_ENV: dict[str, dict[str, str]] = {"claude": {"DISABLE_AUTOUPDATER": "1"}}
 
 _HEX64 = re.compile(r"[0-9a-f]{64}")
 _VERSION = re.compile(r"\d+\.\d+\.\d+")
@@ -159,6 +178,10 @@ class ArchiveSource:
     sha256: str
     #: 归档内树根的前缀（GitHub 包为空串；npm 平台包为 `package/vendor/<triple>/`）；前缀之外的成员忽略
     strip: str = ""
+    #: 非空 = 归档里只取这一个成员（相对 `strip` 之后的路径），其余忽略（npm 包里的 package.json / 许可证不进树）
+    only: str = ""
+    #: True = 下载物本身就是入口文件（官方发行的裸二进制），不是归档
+    raw: bool = False
 
     @property
     def host(self) -> str:
@@ -214,6 +237,38 @@ def _fmt(template: str, **kw) -> str:
     return template.format(**kw)
 
 
+def _source_defs(where: str, name: str, cli: dict) -> list[dict]:
+    """`clis.<名>.sources`：来源声明（顺序即尝试顺序）。每项 `key` 必须在 `SOURCE_PREFIXES[名]` 里，URL 必须以登记过的前缀开头。"""
+    prefixes = SOURCE_PREFIXES.get(name)
+    if prefixes is None:
+        raise ValueError(f"{where}: {name!r} 不是登记过的受控 CLI")
+    defs = cli.get("sources")
+    if not isinstance(defs, list) or not defs:
+        raise ValueError(f"{where}.sources 缺失")
+    seen: set[str] = set()
+    for d in defs:
+        if not isinstance(d, dict):
+            raise ValueError(f"{where}.sources 里有非对象项")
+        key = str(d.get("key", ""))
+        if key not in prefixes or key in seen:
+            raise ValueError(f"{where}.sources 的来源键 {key!r} 不在登记表里或重复")
+        seen.add(key)
+        url = str(d.get("url", ""))
+        if not url.startswith(prefixes[key]) or "{version}" not in url:
+            raise ValueError(f"{where}.sources.{key}.url 必须是 {prefixes[key]}… 且含 {{version}}")
+        strip = str(d.get("strip", ""))
+        if strip and (not strip.endswith("/") or ".." in strip or strip.startswith("/")):
+            raise ValueError(f"{where}.sources.{key}.strip 形状不对")
+        only = str(d.get("only", ""))
+        if ".." in only.split("/") or only.startswith("/") or "\\" in only:
+            raise ValueError(f"{where}.sources.{key}.only 形状不对")
+        if d.get("raw") is not None and not isinstance(d["raw"], bool):
+            raise ValueError(f"{where}.sources.{key}.raw 必须是布尔值")
+        if d.get("raw") and (strip or only):
+            raise ValueError(f"{where}.sources.{key}: raw 来源没有 strip / only")
+    return defs
+
+
 def validate_lock(lock: dict) -> None:
     """锁文件必须真的「锁住」：精确版本、64 位小写 hex、来源只能是登记过的主机、URL 与模板推导一致。"""
     if not isinstance(lock, dict) or lock.get("schema") != LOCK_SCHEMA:
@@ -228,21 +283,7 @@ def validate_lock(lock: dict) -> None:
         version = str(cli.get("version", ""))
         if not _VERSION.fullmatch(version):
             raise ValueError(f"{where}.version 必须是精确的 x.y.z，拿到 {version!r}")
-        gh = str(cli.get("github_url", ""))
-        if not gh.startswith(GITHUB_PREFIX) or "{triple}" not in gh or "{version}" not in gh:
-            raise ValueError(
-                f"{where}.github_url 必须是 {GITHUB_PREFIX}… 且含 {{version}} {{triple}}"
-            )
-        mirror = str(cli.get("mirror_url", ""))
-        if (
-            not mirror.startswith(MIRROR_PREFIX)
-            or "{version}" not in mirror
-            or "{npm}" not in mirror
-        ):
-            raise ValueError(f"{where}.mirror_url 必须是 {MIRROR_PREFIX}… 且含 {{version}} {{npm}}")
-        mstrip = str(cli.get("mirror_strip", ""))
-        if not mstrip.endswith("/") or "{triple}" not in mstrip or ".." in mstrip:
-            raise ValueError(f"{where}.mirror_strip 形状不对")
+        defs = _source_defs(where, name, cli)
         plats = cli.get("platforms")
         if not isinstance(plats, dict) or not plats:
             raise ValueError(f"{where}.platforms 缺失")
@@ -262,7 +303,8 @@ def validate_lock(lock: dict) -> None:
             for key in ("unpacked_size", "file_count"):
                 if not isinstance(p.get(key), int) or p[key] <= 0:
                     raise ValueError(f"{pw}.{key} 必须是正整数")
-            for key in ("github", "mirror"):
+            for d in defs:
+                key = d["key"]
                 s = p.get(key)
                 if not isinstance(s, dict):
                     raise ValueError(f"{pw}.{key} 缺失")
@@ -270,27 +312,41 @@ def validate_lock(lock: dict) -> None:
                     raise ValueError(f"{pw}.{key}.sha256 必须是 64 位小写 hex")
                 if not isinstance(s.get("size"), int) or s["size"] <= 0:
                     raise ValueError(f"{pw}.{key}.size 必须是正整数")
-            if not _SRI512.fullmatch(str(p["mirror"].get("integrity", ""))):
-                raise ValueError(f"{pw}.mirror.integrity 必须是 npm 的 sha512 SRI（在线核对用）")
-            for src in _sources(cli, plat, p):
+                if key == "mirror" and not _SRI512.fullmatch(str(s.get("integrity", ""))):
+                    raise ValueError(
+                        f"{pw}.mirror.integrity 必须是 npm 的 sha512 SRI（在线核对用）"
+                    )
+            try:
+                srcs = _sources(name, cli, plat, p)
+            except (KeyError, IndexError, ValueError) as exc:
+                raise ValueError(f"{pw}: URL 模板推不出来: {exc}") from exc
+            for src in srcs:
                 host = urllib.parse.urlsplit(src.url).hostname
                 if host not in SOURCE_HOSTS:
                     raise ValueError(f"{pw}: 来源主机 {host!r} 不在登记表里")
 
 
-def _sources(cli: dict, plat: str, p: dict) -> tuple[ArchiveSource, ...]:
-    kw = {"version": cli["version"], "triple": p["triple"], "npm": p["npm"]}
-    return (
-        ArchiveSource(
-            _fmt(cli["github_url"], **kw), p["github"]["size"], p["github"]["sha256"], ""
-        ),
-        ArchiveSource(
-            _fmt(cli["mirror_url"], **kw),
-            p["mirror"]["size"],
-            p["mirror"]["sha256"],
-            _fmt(cli["mirror_strip"], **kw),
-        ),
-    )
+def _sources(name: str, cli: dict, plat: str, p: dict) -> tuple[ArchiveSource, ...]:
+    kw = {
+        "version": cli["version"],
+        "triple": p["triple"],
+        "npm": p["npm"],
+        "entry": p["entrypoint"],
+    }
+    out: list[ArchiveSource] = []
+    for d in cli["sources"]:
+        meta = p[d["key"]]
+        out.append(
+            ArchiveSource(
+                _fmt(d["url"], **kw),
+                meta["size"],
+                meta["sha256"],
+                _fmt(d.get("strip", ""), **kw),
+                _fmt(d.get("only", ""), **kw),
+                bool(d.get("raw", False)),
+            )
+        )
+    return tuple(out)
 
 
 def load_lock(path: Path | None = None) -> dict:
@@ -339,7 +395,7 @@ def cli_for(
         tree_sha256=p["tree_sha256"],
         unpacked_size=p["unpacked_size"],
         file_count=p["file_count"],
-        sources=_sources(cli, key, p),
+        sources=_sources(name, cli, key, p),
     )
 
 
@@ -405,6 +461,20 @@ def bin_dir(name: str) -> Path | None:
     except Exception:  # noqa: BLE001 — 发现路径上的探查绝不抛（数据目录不可解析 = 没装）
         return None
     return entry.parent if entry is not None else None
+
+
+def child_env(path: str | os.PathLike | None) -> dict[str, str]:
+    """起托管 CLI 子进程要追加的环境变量：路径在 `cli/<名>/` 之下才带（用户自己装的那份不动）。
+    claude 的 `DISABLE_AUTOUPDATER=1`：版本只由我们的锁控制。"""
+    if not path:
+        return {}
+    for name, env in MANAGED_CHILD_ENV.items():
+        try:
+            _under(Path(path), root_dir(name))
+        except Exception:  # noqa: BLE001 — 子进程环境的探查绝不抛（数据目录不可解析 = 不是托管那份）
+            continue
+        return dict(env)
+    return {}
 
 
 def status(name: str) -> dict:
@@ -804,6 +874,9 @@ def _member_rel(member: tarfile.TarInfo, strip: str) -> str | None:
 def _extract(archive: Path, staging: Path, src: ArchiveSource, cli: ManagedCli, job: _Job) -> None:
     """逐成员校验 + 手写落盘（不用 `extractall`：解释器版本不同的过滤器语义不同，这里不依赖它）。
     总量超过锁里的 `unpacked_size` 立刻拒绝（防解压炸弹）。"""
+    if src.raw:
+        _install_raw(archive, staging, cli, job)
+        return
     written = 0
     count = 0
     try:
@@ -814,6 +887,8 @@ def _extract(archive: Path, staging: Path, src: ArchiveSource, cli: ManagedCli, 
                     continue
                 if rel == "":
                     continue
+                if src.only and rel != src.only:
+                    continue  # 只取登记的那一个成员（npm 包里的 package.json / 许可证等不进树）
                 target = staging.joinpath(*rel.split("/"))
                 _under(target, staging)
                 if member.isdir():
@@ -850,6 +925,30 @@ def _extract(archive: Path, staging: Path, src: ArchiveSource, cli: ManagedCli, 
             "归档里的文件数与锁里登记的不同",
             expected=cli.file_count,
             got=count,
+        )
+
+
+def _install_raw(archive: Path, staging: Path, cli: ManagedCli, job: _Job) -> None:
+    """裸二进制来源：下载物（已核过 sha256）原样放到入口路径，不改一个字节。"""
+    size = archive.stat().st_size
+    if size > cli.unpacked_size:
+        raise ManagedCliError(ERROR_INVALID_ARCHIVE, "下载物比锁里登记的大")
+    target = staging.joinpath(*cli.entrypoint.split("/"))
+    _under(target, staging)
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(archive, target)
+        os.chmod(target, 0o755)
+    except OSError as exc:
+        code = ERROR_DISK_FULL if _is_disk_full(exc) else ERROR_WRITE_FAILED
+        raise ManagedCliError(code, f"裸二进制落盘失败: {exc}") from exc
+    job.emit(PHASE_EXTRACT, size, cli.unpacked_size)
+    if cli.file_count != 1:
+        raise ManagedCliError(
+            ERROR_INVALID_ARCHIVE,
+            "裸二进制来源的文件数只能是 1",
+            expected=cli.file_count,
+            got=1,
         )
 
 
@@ -899,6 +998,7 @@ def _probe(entry: Path, cli: ManagedCli) -> str:
             encoding="utf-8",
             errors="replace",
             stdin=subprocess.DEVNULL,
+            env={**os.environ, **MANAGED_CHILD_ENV.get(cli.name, {})},
             creationflags=CREATE_NO_WINDOW,
         )
     except subprocess.TimeoutExpired as exc:

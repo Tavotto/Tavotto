@@ -21,7 +21,7 @@ pip 不受影响：新版 pip 经 truststore 走平台校验。
 日志里写着为什么。
 
 **产品里的出站 HTTPS 只有九处，全经这里**（`tests/test_outbound_https_trust.py` 按 AST 钉）：私有 Python
-下载（`privatepython._fetch`）、应用内安装官方 Codex CLI（`managedcli._fetch`，与私有 Python 同一判据）、匿名遥测投递（`telemetry._post`）、检查更新（`updater._fetch_latest_release`）、
+下载（`privatepython._fetch`）、应用内安装官方 Codex / Claude Code CLI（`managedcli._fetch`，与私有 Python 同一判据）、匿名遥测投递（`telemetry._post`）、检查更新（`updater._fetch_latest_release`）、
 没有 git 时下载 Codex 插件发行分支压缩包（`codexinstall._fetch`）、用户逐次确认后发送诊断包
 （`diagsend._opener`，ADR 0118；它另加一个不跟随重定向的处理器）、用户点「从服务商获取」时
 取型号列表（`ai_catalog._opener`，同样不跟随重定向）、用户点「用账号登录」后的设备码授权与令牌刷新
