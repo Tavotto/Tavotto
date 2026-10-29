@@ -37,3 +37,15 @@ describe('公式排版结果的前端缓存（ADR 0152 PR 4）', () => {
     expect(mathPathData(BOX)).toBe('M 0 0.2 L 2 -0.8 Z')
   })
 })
+
+describe('回答形状不对也不抛（未处理的拒绝会让整个测试进程判败）', () => {
+  it('fetch 回的 JSON 没有 results：不记结果、下次再排', async () => {
+    __resetMathForTests()
+    vi.stubGlobal('fetch', async () => new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    expect(mathBoxOf('z', 'serif')).toBeUndefined()
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mathBoxOf('z', 'serif')).toBeUndefined() // 又排进去了，没有卡在「在途」
+    vi.unstubAllGlobals()
+  })
+})

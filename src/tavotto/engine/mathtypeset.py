@@ -78,6 +78,8 @@ def _has_matplotlib(python: str, *, bundled: bool) -> bool:
             env=runtime.probe_env(python, bundled=bundled),
             capture_output=True,
             timeout=TIMEOUT_S,
+            # GUI（Flask 进程）拥有的子进程：Windows 上不弹控制台窗口
+            creationflags=runtime.CREATE_NO_WINDOW,
         )
     except (OSError, subprocess.SubprocessError):
         return False
@@ -149,7 +151,9 @@ def _run_child(items: list[tuple[str, str]], figures_dir: str | Path | None = No
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",  # 子进程的 stderr 可能是本机代码页（cp936 等）；结果只读 stdout 的 JSON
             timeout=TIMEOUT_S,
+            creationflags=runtime.CREATE_NO_WINDOW,
         )
         results = json.loads(p.stdout)["results"]
     except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:

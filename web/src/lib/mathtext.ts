@@ -30,18 +30,23 @@ async function flush() {
   queued = []
   for (let i = 0; i < batch.length; i += MATHTEXT_MAX_ITEMS) {
     const chunk = batch.slice(i, i + MATHTEXT_MAX_ITEMS)
-    let got: MathBox[]
+    let got: MathBox[] | undefined
     try {
-      got = (await typesetMath(chunk)).results
+      got = (await typesetMath(chunk))?.results
     } catch {
-      // 请求失败（后端没起来等）不记结果：下次有人要时再试
+      got = undefined
+    }
+    if (!Array.isArray(got)) {
+      // 请求失败（后端没起来等）或回答形状不对：不记结果，下次有人要时再试。
+      // 不许在这里抛——这是排进微任务的异步函数，抛出去就是一个没人接的拒绝
       for (const it of chunk) pending.delete(keyOf(it.src, it.family))
       continue
     }
+    const answers = got
     chunk.forEach((it, k) => {
       const key = keyOf(it.src, it.family)
       pending.delete(key)
-      results.set(key, got[k] ?? { ok: false, error: 'missing' })
+      results.set(key, answers[k] ?? { ok: false, error: 'missing' })
     })
     notify()
   }
