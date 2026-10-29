@@ -1835,6 +1835,8 @@ export type ExportObject =
       font_family?: 'serif' | 'sans-serif' | 'monospace'
       /** 科学文本解释；缺席 = auto，后端缺省与它一致 */
       interpretation?: 'auto' | 'scientific'
+      /** 文字写法；缺席 = 旧标记，后端缺省与它一致（ADR 0152） */
+      text_format?: 'latex'
       underline?: boolean
       line_height?: number
       padding_mm?: number

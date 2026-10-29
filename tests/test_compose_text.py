@@ -215,6 +215,81 @@ def test_escaped_markers_render_literally():
     assert "".join(_rows(page)) == "x^{2}"
 
 
+# ---------------- LaTeX 写法（text_format="latex"，ADR 0152）--------------------
+
+
+def _char_fonts(cs: list[pdftext.Char]) -> dict[str, str]:
+    return {ch.c: ch.font for ch in cs if ch.c.strip()}
+
+
+def _latex(text: str, **kw) -> dict:
+    return _base(text, text_format="latex", **kw)
+
+
+def test_latex_textit_uses_italic_face_only_inside_command():
+    """`\textit{T}`：只有 T 用斜体脸落笔；文本层里没有命令字符。"""
+    page = _draw(_latex(r"temp \textit{T} (K)"))
+    assert "".join(_rows(page)) == "temp T (K)"
+    fonts = _char_fonts(page)
+    assert "Italic" in fonts["T"]
+    assert all("Italic" not in fonts[c] for c in "temp(K)")
+
+
+def test_latex_textbf_and_bold_italic():
+    fonts = _char_fonts(_draw(_latex(r"a \textbf{b \textit{c}}")))
+    assert "Bold" not in fonts["a"] and "Italic" not in fonts["a"]
+    assert "Bold" in fonts["b"] and "Italic" not in fonts["b"]
+    assert "BoldItalic" in fonts["c"]
+
+
+def test_latex_italic_on_bold_object_is_bold_italic():
+    """对象自身是粗体时，行内斜体与它取「或」：落笔是粗斜体，正文仍是粗体。"""
+    fonts = _char_fonts(_draw(_latex(r"a \textit{b}", bold=True)))
+    assert "BoldItalic" in fonts["b"] and "Bold" in fonts["a"] and "Italic" not in fonts["a"]
+
+
+def test_latex_script_inside_italic_is_small_raised_and_italic():
+    from tavotto import richtext
+
+    page = _draw(_latex(r"\textit{x\textsubscript{i}} y"))
+    fonts = _char_fonts(page)
+    assert "Italic" in fonts["x"] and "Italic" in fonts["i"] and "Italic" not in fonts["y"]
+    sub = [s for s in _spans(page) if s[2] == "i"][0]
+    assert sub[0] == pytest.approx(SIZE * richtext.SCRIPT_SIZE, abs=0.01)
+
+
+def test_latex_style_spanning_newline_continues_on_next_line():
+    page = _draw(_latex("\\textit{ab\ncd} e"))
+    fonts = _char_fonts(page)
+    assert _rows(page) == ["ab", "cd e"]
+    assert all("Italic" in fonts[c] for c in "abcd") and "Italic" not in fonts["e"]
+
+
+def test_latex_width_is_measured_with_the_styled_face():
+    """换行量宽用的是落笔那张脸：行宽 = 正文段宽 + 斜体段宽（同一份 shaped plan 量与画）。"""
+    from tavotto.rendercore import facade, typography
+
+    faces = typography.faces_for(facade.provider(), "serif", False, False)
+    line = typography.layout_text(_latex(r"ff \textit{ff}"), faces).lines[0]
+    want = typography.mixed_width("ff ", faces, SIZE) + typography.mixed_width(
+        "ff", faces.styled(True, False), SIZE
+    )
+    assert line.width == pytest.approx(want, abs=1e-6)
+
+
+def test_latex_commands_are_literal_without_text_format():
+    """没有 text_format 的老标注逐字不变：`\textit{T}` 就是这几个字。"""
+    page = _draw(_base(r"\textit{T}"))
+    assert "".join(_rows(page)) == r"\textit{T}"
+    assert all("Italic" not in f for f in _fonts(page))
+
+
+def test_latex_math_segment_draws_its_source_until_typeset():
+    """公式排版接入之前，公式片段按源码原样画（与画布同一个约定），不吞字。"""
+    page = _draw(_latex(r"k = $A e^{-E}$"))
+    assert "".join(_rows(page)) == "k = $A e^{-E}$"
+
+
 # ---------------- 超宽单词逐字兜底（前端 word-break:break-word 同源）---------
 
 

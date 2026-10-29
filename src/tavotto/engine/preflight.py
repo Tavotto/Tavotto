@@ -44,6 +44,7 @@ figure spec（两侧同源的规范化输入）：
   "texts":   [{"id": str, "text": str, "size_pt": float, "bold": bool,
                "font_family": str,      # 生效的族（没设过 = 默认族，不是空串）
                "interpretation": str,   # 科学文本解释档（没设过 = auto，不是空串）
+               "text_format": str,      # 文字写法（缺席 = 旧标记；"latex" = ADR 0152）
                "rect_mm": [x,y,w,h], "hidden": bool}],
   "objects": [{"id": str, "type": str, "rect_mm": [x,y,w,h], "hidden": bool}]
 }
@@ -952,7 +953,10 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
         # 字形覆盖：量的是**渲染表示**（标记拆掉、该合成的已合成），
         # 判据与前端 `glyphPlan.ts` 同源，读同一张生成的覆盖表。
         gone, subst = glyphplan.text_diagnostics(
-            str(t.get("text") or ""), _canvas_coverage(), t.get("interpretation")
+            str(t.get("text") or ""),
+            _canvas_coverage(),
+            t.get("interpretation"),
+            text_format=t.get("text_format"),
         )
         if gone:
             shown = "".join(gone)

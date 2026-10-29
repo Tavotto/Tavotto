@@ -53,6 +53,8 @@ function toExportObject(o: CanvasObject): ExportObject {
         font_family: o.fontFamily,
         // 同理：`interpretation` 没设过 = auto = 后端缺省，不发。
         interpretation: o.interpretation,
+        // 同理：`textFormat` 没设过 = 旧标记 = 后端缺省，不发（ADR 0152）。
+        text_format: o.textFormat,
         underline: o.underline || undefined,
         line_height: o.lineHeight,
         padding_mm: o.padding || undefined,

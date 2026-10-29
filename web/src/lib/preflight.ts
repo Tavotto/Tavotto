@@ -169,6 +169,8 @@ export interface PreflightTextSpec {
   font_family: string
   /** **生效**的科学文本解释档（没设过 = auto）。缺字形判据要量渲染表示，不是原文 */
   interpretation?: 'auto' | 'scientific'
+  /** 文字写法（缺席 = 旧标记）。缺字形判据按它拆标记（ADR 0152） */
+  text_format?: 'latex'
   rect_mm: [number, number, number, number]
   hidden: boolean
 }
@@ -920,7 +922,7 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
     }
     // 字形覆盖：量的是**渲染表示**（标记拆掉、该合成的已合成），
     // 判据与 `engine/preflight.py` 同源，读同一张生成的覆盖表。
-    const { missing, substituted } = textDiagnostics(t.text, t.interpretation)
+    const { missing, substituted } = textDiagnostics(t.text, t.interpretation, t.text_format)
     if (missing.length) {
       const chars = missing.join('')
       sink.add('glyph-missing', pf('textGlyphMissing', { chars, count: String(missing.length) }), {
@@ -1184,6 +1186,7 @@ export function buildSpec(
         // 只有 `lib/typography` 一处，这里不写第二个。
         font_family: o.type === 'text' ? effectiveCanvasFamily(o) : '',
         interpretation: o.type === 'text' ? o.interpretation : undefined,
+        text_format: o.type === 'text' ? o.textFormat : undefined,
         rect_mm: rect(o),
         hidden: !!o.hidden,
       })),
