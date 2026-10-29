@@ -360,7 +360,7 @@ function ElementQuick({
             if (!follow) return write(prop, value, immediate)
             setOverrides(
               panel.id,
-              msg('history.setProp', { prop: propLabel('text') }, 'inspector'),
+              msg('history.setProp', { prop: propLabel('text') }, 'workspace'),
               [
                 { gid: el.gid, prop: 'fontfamily', value: follow },
                 { gid: el.gid, prop, value: lens.toScript(prop, value) },
