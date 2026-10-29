@@ -1,9 +1,7 @@
-import { useAiStore } from '@/store/aiStore'
-import { patchAiAgent, backendErrorText, type AiAgentCaps } from '@/lib/api'
-import { useState } from 'react'
+import type { AiAgentCaps } from '@/lib/api'
 import { Button } from '../../ui/Button'
-import { agentStep } from './agentStep'
-import { installProgressText, useAgentInstall } from './useAgentInstall'
+import { installProgressText } from './useAgentInstall'
+import { useAgentStepAction } from './useAgentStepAction'
 
 /**
  * 命令行 AI（login 方式）一行的「一句话 + 一个按钮」：没装 / 打不开 / 没登录 / 已关闭。
@@ -11,47 +9,22 @@ import { installProgressText, useAgentInstall } from './useAgentInstall'
  * 「登录」不在这里：agent 已装好时行里的登录按钮（`useLoginFlow`）负责。
  */
 export function AgentStepAction({ agent, owner }: { agent: AiAgentCaps; owner: string }) {
-  const [error, setError] = useState<string | null>(null)
-  // 装好后的自动登录由常驻的那一行（`useLoginAfterInstall`）接——这个按钮可能在 caps 刷新时先被卸掉
-  const install = useAgentInstall(agent.id, owner, agent.display_name)
-  const step = agentStep(agent.state, agent.display_name)
-  if (!step.action || step.action === 'login') return null
-
-  const onClick = async () => {
-    if (step.action === 'enable') {
-      setError(null)
-      try {
-        await patchAiAgent(agent.id, { enabled: true })
-        await useAiStore.getState().loadCaps(true)
-      } catch (e) {
-        setError(backendErrorText(e))
-      }
-      return
-    }
-    install.begin()
-  }
-
-  const err = install.error ?? error
+  const h = useAgentStepAction(agent, agent.id, owner)
+  const step = h.step
+  if (!step || !step.action || step.action === 'login') return null
   return (
     <span data-connect-step-action={step.action} className="flex flex-col items-end gap-1">
       <span className="flex items-center gap-2">
         <span className="type-caption" data-connect-step-text>
-          {install.running ? installProgressText(install.progress) : step.text}
+          {h.running ? installProgressText(h.progress) : step.text}
         </span>
-        <Button
-          variant="secondary"
-          size="sm"
-          data-connect-action={step.action}
-          loading={install.running}
-          disabled={install.running}
-          onClick={() => void onClick()}
-        >
+        <Button variant="secondary" size="sm" data-connect-action={step.action} loading={h.running} disabled={h.running} onClick={h.onClick}>
           {step.actionLabel}
         </Button>
       </span>
-      {err && (
+      {h.error && (
         <span role="alert" className="text-xs text-danger">
-          {err}
+          {h.error}
         </span>
       )}
     </span>

@@ -87,23 +87,22 @@ async function render() {
 }
 
 describe('Claude Code 应用内安装并登录', () => {
-  it('没装：订阅登录卡不置灰，点开是「没装 Claude Code」+「安装并登录」；点了 POST /agents/claude/install，不先登录', async () => {
+  it('没装：订阅登录卡的行右直接是「安装并登录」，不用先点卡片；点了 POST /agents/claude/install，不先登录', async () => {
     await render()
-    const card = q('[data-connect-method="sub"]') as HTMLButtonElement
-    expect(card.disabled).toBe(false)
-    await click(card)
+    const card = q('[data-connect-method="sub"]')!
+    expect(card.tagName).not.toBe('BUTTON')
     expect(card.textContent).toContain('安装 Claude Code CLI 以启用')
-    expect(q('[data-connect-step-text]')!.textContent).toBe('没装 Claude Code')
-    const btn = q('[data-connect-action="install"]')!
+    expect(card.textContent).not.toContain('没装 Claude Code')
+    const btn = card.querySelector('[data-connect-action="install"]')!
     expect(btn.textContent).toBe('安装并登录')
     expect(calls.some((c) => c.url === '/api/ai/agents/claude/login')).toBe(false)
     await click(btn)
     expect(calls.some((c) => c.url === '/api/ai/agents/claude/install' && c.method === 'POST')).toBe(true)
+    expect(q('[data-connect-method="sub"]')!.textContent).toContain('正在安装')
   })
 
-  it('装好后自动发起 claude 的登录', async () => {
+  it('装好后自动发起 claude 的登录，登录提示摆在这一行下面', async () => {
     await render()
-    await click(q('[data-connect-method="sub"]'))
     install = [{ status: 'running', progress: 0.5 }, { status: 'done' }]
     serverCaps = caps('needs_auth')
     await click(q('[data-connect-action="install"]'))
@@ -112,11 +111,25 @@ describe('Claude Code 应用内安装并登录', () => {
     })
     await act(async () => {})
     expect(calls.some((c) => c.url === '/api/ai/agents/claude/login' && c.method === 'POST')).toBe(true)
+    expect(q('[data-connect-login]')).toBeTruthy()
+  })
+
+  it('打不开 → 行右「重新安装」；被关了 → 行右「打开」；都不用先点卡片', async () => {
+    for (const [state, action] of [
+      ['broken', 'reinstall'],
+      ['disabled', 'enable'],
+    ] as const) {
+      serverCaps = connectCapsOf([], { vendors: [CLAUDE], agents: [claudeCaps({ state, installed: true, usable: false })] })
+      useAiStore.setState({ caps: serverCaps })
+      await render()
+      expect(q('[data-connect-method="sub"]')!.querySelector(`[data-connect-action="${action}"]`)).toBeTruthy()
+      await act(async () => root.unmount())
+      host.remove()
+    }
   })
 
   it('装失败：一句话写的是 Claude Code，不是 Codex', async () => {
     await render()
-    await click(q('[data-connect-method="sub"]'))
     install = [{ status: 'error', code: 'managed_cli_offline' }]
     await click(q('[data-connect-action="install"]'))
     await act(async () => {

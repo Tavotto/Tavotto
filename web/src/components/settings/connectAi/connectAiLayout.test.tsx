@@ -164,7 +164,7 @@ describe('二级卡片：一家厂商有多种连接方式', () => {
     expect(calls.some((c) => c.url.endsWith('/api/ai/agents/codex/login') && c.method === 'POST')).toBe(true)
   })
 
-  it('后端报了 codex 没装：订阅登录卡写「安装 Codex CLI 以启用」且可点；打不开写「重新安装」', async () => {
+  it('后端报了 codex 没装：订阅登录卡写「安装 Codex CLI 以启用」，按钮在行右；打不开写「重新安装」', async () => {
     const unavailable: AiVendor = { ...OPENAI, methods: OPENAI.methods!.map((m) => (m.id === 'sub' ? { ...m, available: false } : m)) }
     for (const [state, key] of [
       ['not_installed', 'step.installToEnable'],
@@ -174,8 +174,9 @@ describe('二级卡片：一家厂商有多种连接方式', () => {
         caps: connectCapsOf([], { vendors: [unavailable], agents: [agentCaps({ state, installed: false, usable: false })] }),
       })
       await render(<MethodList vendor={unavailable} onConnected={() => {}} />)
-      const sub = q<HTMLButtonElement>('[data-connect-method="sub"]')!
-      expect(sub.disabled).toBe(false)
+      const sub = q('[data-connect-method="sub"]')!
+      expect(sub.tagName).not.toBe('BUTTON')
+      expect(sub.querySelector('[data-connect-action]')).toBeTruthy()
       expect(sub.textContent).toContain(cx(key, { product: 'Codex' }))
       expect(sub.textContent).not.toContain(cx('needsInstall'))
       await act(async () => root.unmount())
