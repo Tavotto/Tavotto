@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import threading
 import time
@@ -182,11 +183,15 @@ def test_dependency_survey_reads_the_shadow_candidate(world):
     from tavotto.engine import convertdeps
 
     root, cand, _ = world
-    cand.target.write_bytes(b"import pandas\nimport matplotlib\n")
+    # 缺的包要选测试环境里一定没有的：release 档 lab 的验证环境装着 pandas，用它调研结论是「什么都不缺」。
+    # adjustText 是登记过的公开包（depresolve 名单），不在 Tavotto 与测试的依赖里——也是诊断包 TVD-ZG0Y 里缺的那个
+    if importlib.util.find_spec("adjustText") is not None:
+        pytest.skip("这个环境装了 adjustText，缺包调研无从发生")
+    cand.target.write_bytes(b"import adjustText\nimport matplotlib\n")
     key = execspec.write_roots_key((str(cand.dir),))
     with shadowscript.shadow(root, "sub/fig_matplotlib.py", cand.target, key):
         survey = convertdeps._survey(str(root), "sub/fig_matplotlib.py")
-    assert survey["verdict"] != "none" and "pandas" in survey.get("names", []), survey
+    assert survey["verdict"] != "none" and "adjusttext" in survey.get("names", []), survey
 
 
 # --------------------------------------------------------------------------- 改图（figure_edit）候选同样走影子脚本

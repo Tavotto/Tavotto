@@ -1137,7 +1137,11 @@ def test_hand_off_to_the_desktop_cli_points_it_at_the_plugins_canvas(tmp_path, m
     monkeypatch.setattr(
         launcher, "_exec_or_call", lambda args: seen.append(os.environ.get(widget.WIDGET_ENV)) or 0
     )
-    monkeypatch.delenv(widget.WIDGET_ENV, raising=False)
+    # 先 setenv 再 delenv：变量原本不存在时 `delenv(raising=False)` 什么都不记，
+    # `_hand_off_cmd` 直接写进 os.environ 的值会在收尾时被「还原」回来、漏给后面的用例
+    # （release 档 lab 装的真 wheel 带画布，test_mcp_stdio 读到的就成了这里的占位页）
+    monkeypatch.setenv(widget.WIDGET_ENV, "")
+    monkeypatch.delenv(widget.WIDGET_ENV)
     assert launcher._hand_off_cmd(["tavotto-cli", "mcp"]) == 0
     assert seen == [str(page)]
     # 用户自己指了别处：不覆盖
