@@ -207,6 +207,6 @@ describe('定位落点在真的属性页里', () => {
 
   it('不是定位来的（点选文字元素）：选中即可打字的便利照旧', async () => {
     await mount(TITLE)
-    expect(document.activeElement?.tagName).toBe('TEXTAREA')
+    expect((document.activeElement as HTMLElement | null)?.dataset.richText).toBe('field')
   })
 })

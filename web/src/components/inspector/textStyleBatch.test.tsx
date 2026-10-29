@@ -284,9 +284,9 @@ describe('图标题 + X/Y 轴标题的公共样式', () => {
 
   it('批量里不显示文字内容的可编辑控件', async () => {
     await mount(['axes_0.title', 'axes_0.xaxis.label'])
-    // 内容是 textarea / 文本框；批量里一个都不该有
+    // 内容是所见即所得文字框 / 文本框；批量里一个都不该有
     // （对齐区把选中元素的**名字**列出来是另一回事，那是「选了谁」不是「改内容」）
-    expect(host.querySelector('textarea')).toBeNull()
+    expect(host.querySelector('textarea, [data-rich-text]')).toBeNull()
     const editable = inputs().filter(
       (i) => i.value === 'Reaction kinetics' || i.value === 'Reaction time',
     )
@@ -297,7 +297,7 @@ describe('图标题 + X/Y 轴标题的公共样式', () => {
     })
     document.body.innerHTML = ''
     await mount(['axes_0.title'])
-    expect(host.querySelector('textarea, input[data-inspector-prop="text"]')).toBeTruthy()
+    expect(host.querySelector('[data-rich-text], input[data-inspector-prop="text"]')).toBeTruthy()
   })
 
   it('字重不一致时 B 是 mixed 三态，不是「都没加粗」', async () => {

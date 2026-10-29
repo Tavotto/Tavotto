@@ -466,8 +466,8 @@ describe('颜色条（审计 T23）', () => {
     // 「更多」还折叠着的时候它就在——说明它在首屏，不是在折叠区里
     const more = buttons().find((b) => b.textContent?.trim().split(', ')[0] === '更多')
     expect(more?.getAttribute('aria-expanded')).toBe('false')
-    const box = nameRow!.querySelector('textarea') as HTMLTextAreaElement
-    expect(box.value).toBe('Intensity (a.u.)')
+    // 名称是所见即所得文字框（ADR 0152）：显示的字就是内容
+    expect(nameRow!.querySelector('[data-rich-text]')?.textContent).toBe('Intensity (a.u.)')
   })
 
   it('方向是一组带小色条预览的选项，不是文字下拉；点一下写 matplotlib 的值', async () => {

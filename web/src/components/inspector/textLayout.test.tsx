@@ -92,8 +92,8 @@ describe('顺序：内容与排版在前，位置退到后面', () => {
   })
 
   it('单击文字后不展开任何分组就能改内容、字号、对齐', () => {
-    const ta = q<HTMLTextAreaElement>('textarea')!
-    expect(ta.value).toBe('UI')
+    // 内容框是所见即所得文字框（ADR 0152）：显示的字就是内容
+    expect(q('[data-rich-text]')!.textContent).toBe('UI')
     // 字号与对齐是 TypographyControls 出的，可见标签就是它们的名字
     expect(host.textContent).toContain('字号')
     expect(host.textContent).toContain('对齐')

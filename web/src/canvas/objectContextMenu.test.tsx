@@ -1252,7 +1252,7 @@ describe('图内元素的弹层（dialog）外壳不回归', () => {
     await openElement()
     const dlg = document.querySelector('[role="dialog"]')!
     expect(dlg).not.toBeNull()
-    expect(dlg.querySelector('textarea')).not.toBeNull()
+    expect(dlg.querySelector('[data-rich-text]')).not.toBeNull()
     expect(document.querySelector('[data-quick-item="reset-element"]')?.textContent).toContain('1')
     await click(document.querySelector<HTMLElement>('[data-quick-item="reset-element"]'))
     expect(byId<PanelObject>('p1').overrides).toEqual([])

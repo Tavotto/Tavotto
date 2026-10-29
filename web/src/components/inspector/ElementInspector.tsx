@@ -111,7 +111,8 @@ import { OriginalFileActions } from './OriginalFileActions'
 import { Grid2, Reveal, Row, Section } from '../ui/Field'
 import { SummaryRow } from '../ui/SummaryRow'
 import { Notice } from '../ui/Notice'
-import { ColorField, NumberField, TextArea, TextInput } from '../ui/Input'
+import { ColorField, NumberField, TextInput } from '../ui/Input'
+import { RichTextField } from '../ui/RichTextField'
 import { Select } from '../ui/Select'
 import { Toggle } from '../ui/Toggle'
 import { Tip } from '../ui/Tooltip'
@@ -170,7 +171,8 @@ import { fontFamilySelectModel } from './controls/fontFamilySelect'
 import { alignSelectedPanelElements } from '@/store/alignAction'
 import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useLocateReveal } from './useLocateReveal'
-import { TextActionRow } from './TextActions'
+import { TextCaseMenu } from './TextActions'
+import { figureTextCodec } from '@/lib/richEditor'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
@@ -215,6 +217,13 @@ function ElementBuildMessage({ fileId, rendering }: { fileId: string; rendering:
  * 决定（presentation/registry）：primary 永远展开，「更多」是唯一的中频折叠区
  * （展开状态按角色持久化），「源文件与高级」收纳写回/历史/诊断与低频字段。
  */
+/** Enter / Esc 提交图内文字：失焦即结束编辑事务（与画布文字同一契约） */
+const blurActive = () => {
+  const ae = document.activeElement
+  if (ae instanceof HTMLElement) ae.blur()
+  return true
+}
+
 export function ElementInspector({ panel }: { panel: PanelObject }) {
   useTranslation('inspector')
   const render = usePanelRender(panel)
@@ -2153,9 +2162,8 @@ function FieldRow({
   const rowManifest = usePanelRender(panel)?.manifest
   const backgroundOriginal = artifactBackgroundOriginal(panel, useExactPanelManifest(panel))
   const gidRef = useRef<string>('')
-  const taRef = useRef<HTMLTextAreaElement | null>(null)
   const autoFocus = useCallback(
-    (el: HTMLInputElement | HTMLTextAreaElement | null) => {
+    (el: { focus(): void; select(): void } | null) => {
       // 只在切到新元素的那一次抢焦点，后续重渲染不打断用户
       if (!el || gidRef.current === element.gid) return
       gidRef.current = element.gid
@@ -2488,47 +2496,24 @@ function FieldRow({
       const text = String(value ?? '')
       return wrap(
         <>
-          {/* 输入框占满整行，四个动作横排在下方——竖排会把这一行拉得比输入框还高 */}
-          <div className="flex w-full min-w-0 flex-col gap-1">
-            <TextArea
-              // 名字 = 标签列那句可见文字，同一个表达式（axe `label`，见 TextArea 的注释）
-              aria-label={label}
-              // 选中带文字的元素就直接可以打字，不用再点一次输入框
-              ref={(el) => {
-                taRef.current = el
-                autoFocus(el)
-              }}
-              maxRows={4}
-              value={text}
-              onFocus={beginTxn}
-              onBlur={endTxn}
-              onChange={(e) => write(e.target.value)}
-              onKeyDown={(e) => {
-                e.stopPropagation()
-                if (e.key === 'Escape') {
-                  e.currentTarget.blur()
-                } else if (e.key === 'Enter') {
-                  // 契约与画布文字一致：Enter 提交，⌥/⌘/Ctrl+Enter 换行
-                  e.preventDefault()
-                  if (e.altKey || e.metaKey || e.ctrlKey) {
-                    const ta = e.currentTarget
-                    const a = ta.selectionStart ?? text.length
-                    const b = ta.selectionEnd ?? text.length
-                    write(text.slice(0, a) + '\n' + text.slice(b))
-                    requestAnimationFrame(() => {
-                      ta.focus()
-                      ta.setSelectionRange(a + 1, a + 1)
-                    })
-                  } else e.currentTarget.blur()
-                }
-              }}
-            />
-            <TextActionRow
-              text={text}
-              taRef={taRef}
-              onChange={(next, immediate) => write(next, immediate)}
-            />
-          </div>
+          {/* 所见即所得（ADR 0152）：粗斜体 / 上下标在框里直接显示，存储仍是 mathtext 字符串 */}
+          <RichTextField
+            // 名字 = 标签列那句可见文字，同一个表达式（axe `label`）
+            aria-label={label}
+            // 选中带文字的元素就直接可以打字，不用再点一次输入框
+            ref={autoFocus}
+            maxRows={4}
+            value={text}
+            codec={figureTextCodec}
+            onFocus={beginTxn}
+            onBlur={endTxn}
+            onChange={(next) => write(next)}
+            // 契约与画布文字一致：Enter 提交，⌥/⌘/Ctrl+Enter 换行；Esc 也是提交
+            onEnter={blurActive}
+            onEscape={blurActive}
+            testId="figure-text-content"
+            extra={<TextCaseMenu text={text} onChange={(next) => write(next, true)} />}
+          />
         </>,
         // 标签与多行输入框顶对齐（2026-09-11 用户反馈）：居中会让「内容」悬在框的半腰
         'start',

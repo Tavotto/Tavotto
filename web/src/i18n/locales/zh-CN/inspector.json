@@ -1223,5 +1223,17 @@
     "details": "详情",
     "annotations_other": "{{count}} 处文字与标注",
     "canvasSettings": "画布设置"
+  },
+  "richText": {
+    "bold": "粗体（选中的字）",
+    "boldTitle": "粗体：作用于选中的字（{{key}}）",
+    "italic": "斜体（选中的字）",
+    "italicTitle": "斜体：作用于选中的字（{{key}}）",
+    "sup": "上标",
+    "supTitle": "上标：作用于选中的字（{{key}}）",
+    "sub": "下标",
+    "subTitle": "下标：作用于选中的字（{{key}}）",
+    "newline": "插入换行",
+    "newlineTitle": "在光标处插入换行（{{alt}} / {{mod}}）"
   }
 }

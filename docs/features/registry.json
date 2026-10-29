@@ -368,11 +368,31 @@
       "status": "active",
       "platform": "both",
       "summary": {
-        "zh-CN": "文字工具加标注（行内上标）",
-        "en-US": "Add a text annotation with the text tool (inline superscript)"
+        "zh-CN": "文字工具加标注（所见即所得：选中后 ⌘↑ 设上标）",
+        "en-US": "Add a text annotation with the text tool (WYSIWYG: select and press ⌘↑ for superscript)"
       },
       "entry": "顶栏「文字」/ 快捷键 T → 点画布",
       "e2e": [
+        {
+          "spec": "golden-paths.spec.ts",
+          "title": "打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复"
+        }
+      ]
+    },
+    {
+      "id": "text.rich-editor",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "文字内容框所见即所得：选中一段设斜体 / 粗体 / 上下标，框里直接显示",
+        "en-US": "WYSIWYG text boxes: italicize / bold / super- or subscript a selected range, shown in place"
+      },
+      "entry": "图内文字元素或画布标注 → 属性栏内容框（或右键快捷编辑、画布上双击）→ 选中一段 → 角上的 B / I / x² / x₂",
+      "e2e": [
+        {
+          "spec": "features.spec.ts",
+          "title": "功能：图内标题的内容框是所见即所得的——选中末字点斜体，框里那个字变斜体、引擎按 mathtext 重画；撤销还原"
+        },
         {
           "spec": "golden-paths.spec.ts",
           "title": "打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启恢复"

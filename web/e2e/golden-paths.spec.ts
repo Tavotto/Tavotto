@@ -86,10 +86,14 @@ test('打开项目 → 发现图片 → 渲染 → 修改 → 撤销 → 重启�
   // 只在多图排版下有落点——画布上有第二张图才是排版（没有「回排版」按钮了）。
   await addSecondFigure(page)
 
-  // 文字工具加一段带上标的标注，验证行内标记在画布上真的渲染成上标
+  // 文字工具加一段带上标的标注：就地编辑是所见即所得的（ADR 0152）——选中「-1」按 ⌘↑ 变上标，
+  // 验证它在画布上真的渲染成上标
   await page.getByRole('button', { name: '文字' }).click()
   await page.locator('[data-canvas-stage]').click({ position: { x: 420, y: 240 } })
-  await page.keyboard.type('cm^{-1}')
+  await page.keyboard.type('cm-1')
+  await page.keyboard.press('Shift+ArrowLeft')
+  await page.keyboard.press('Shift+ArrowLeft')
+  await page.keyboard.press('ControlOrMeta+ArrowUp')
   await page.keyboard.press('Escape')
 
   const marked = page.locator('span', { hasText: /^-1$/ }).first()

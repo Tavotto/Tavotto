@@ -318,12 +318,13 @@ test(
     await expectHittable(titleItem, '元素树里的「标题」')
     await titleItem.click()
     const inspector = page.getByLabel('右侧面板', { exact: true })
-    const titleField = inspector.locator('[data-prop="text"] textarea')
+    // 内容框是所见即所得文字框（ADR 0152）：显示的字就是内容
+    const titleField = inspector.locator('[data-prop="text"] [data-rich-text]')
     await expect(titleField).toBeVisible()
-    await expect(titleField).toHaveValue('峰 值 A [smooth]') // 脚本自己的标题：label + 模式
+    await expect(titleField).toHaveText('峰 值 A [smooth]') // 脚本自己的标题：label + 模式
     await titleField.fill(NEW_TITLE)
     await titleField.press('Enter')
-    await expect(titleField).toHaveValue(NEW_TITLE)
+    await expect(titleField).toHaveText(NEW_TITLE)
     await expect(inspector.getByText('1 项已修改')).toBeVisible({ timeout: 30_000 })
     // 编辑渲染请求里带着这条 patch，响应里标题文字就是新值
     await expect
@@ -411,8 +412,8 @@ test(
     await openElementsTab(page)
     await (await expandTreeUntil(page, /^标题/)).click()
     await expect(
-      page.getByLabel('右侧面板', { exact: true }).locator('[data-prop="text"] textarea'),
-    ).toHaveValue(NEW_TITLE)
+      page.getByLabel('右侧面板', { exact: true }).locator('[data-prop="text"] [data-rich-text]'),
+    ).toHaveText(NEW_TITLE)
     // 冷重放：冻结配置 + 那一次执行的回答转录；没有再弹输入框
     const replays = execs(project).slice(before)
     expect(replays.length).toBeGreaterThanOrEqual(1)

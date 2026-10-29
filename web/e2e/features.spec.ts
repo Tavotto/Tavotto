@@ -541,6 +541,44 @@ test(
 )
 
 test(
+  '功能：图内标题的内容框是所见即所得的——选中末字点斜体，框里那个字变斜体、引擎按 mathtext 重画；撤销还原',
+  { tag: ['@feature:text.rich-editor'] },
+  async ({ app, page }) => {
+    const a = await app()
+    await openFigure(page, a.baseURL)
+    const h0 = (await gidBox(page, 'axes_0.title'))!
+    expect(h0, '样例图应当有标题').not.toBeNull()
+    await page.mouse.click(h0.x + h0.w / 2, h0.y + h0.h / 2)
+
+    const field = page.locator('[data-prop="text"] [data-rich-text="field"]')
+    await expect(field).toHaveCount(1, { timeout: 15_000 })
+    await expectInViewport(page, field, '标题的内容框')
+    const title = (await field.textContent()) ?? ''
+    expect(title.length, '样例图标题应当非空').toBeGreaterThan(1)
+    await expect(field.locator('em')).toHaveCount(0)
+
+    // 选中末尾一个字，点「斜体（选中的字）」：只有那个字变斜体
+    const key0 = await waitExact(page)
+    await field.click()
+    await page.keyboard.press('End')
+    await page.keyboard.press('Shift+ArrowLeft')
+    await page.locator('[data-prop="text"] [data-rich-action="italic"]').click()
+    await expect(field.locator('em')).toHaveText(title.slice(-1))
+    await expect(field).toHaveText(title)
+    await page.keyboard.press('Enter') // Enter 提交（失焦结束编辑事务）
+    const key1 = await waitExact(page, key0)
+
+    // 撤销：一次编辑是一条历史，框里回到没有斜体
+    await page.locator('[data-canvas-stage]').focus()
+    await page.keyboard.press('ControlOrMeta+z')
+    await waitExact(page, key1)
+    await page.mouse.click(h0.x + h0.w / 2, h0.y + h0.h / 2)
+    await expect(field).toHaveText(title)
+    await expect(field.locator('em')).toHaveCount(0)
+  },
+)
+
+test(
   '功能：图例位置网格点「左上」，引擎重画后图例真的挪到坐标区左上角',
   { tag: ['@feature:legend.properties'] },
   async ({ app, page }) => {

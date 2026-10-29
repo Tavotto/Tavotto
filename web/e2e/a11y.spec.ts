@@ -442,8 +442,9 @@ test('图内编辑的属性栏（属性页签，选中标题）：正文框有�
   }
 
   // 先证明这一屏真的有那个正文框，否则 `label` 规则对它 inapplicable、判据恒真
-  await expect(inspector.locator('textarea')).toHaveCount(1)
-  const controls = await inspector.locator('input, textarea, [role="switch"]').count()
+  // 正文框是所见即所得文字框（ADR 0152，role=textbox 的 contenteditable）
+  await expect(inspector.locator('[data-rich-text]')).toHaveCount(1)
+  const controls = await inspector.locator('input, textarea, [role="textbox"], [role="switch"]').count()
   expect(controls, '属性页签里一个控件都没有，这一遍扫描是恒真的').toBeGreaterThan(3)
 
   const named = await new AxeBuilder({ page })
