@@ -1,0 +1,52 @@
+# ADR 0152：所见即所得文字编辑框——字符串仍是权威，编辑框只是视图；标注加 LaTeX 子集写法
+
+日期：2026-10-29 · 状态：**Accepted（PR 1：片段模型、两种写法、导出按片段换脸）**；PR 2 编辑框、PR 3 LaTeX 模式与粘贴、
+PR 4 标注公式排版、PR 5 图内公式字体跟正文各自修订本 ADR
+相关：[0032 排版能力层](0032-typography-capability-layer.md)、[0033 科学文本与字体回退](0033-scientific-text-and-font-fallback.md)
+（本 ADR 修订其「画布文字没有 math 档」的边界：公式改由 PR 4 的 worker 排版兑现）、[0060 批准字体集合](0060-font-policy-and-allowlist.md)；
+规则全文 `docs/rules/backend/richtext.md`；看护 `tests/test_rich_text_vectors.py`、`web/src/lib/richText.golden.test.ts`、
+`tests/test_compose_text.py` 的 `test_latex_*`。
+
+## 维护者裁决（2026-10-29）
+
+起因是用户反馈：「现在对坐标轴和文字只能整体的斜体，但是在使用一列符号或者罗马字符的时候，我们需要把他们单独斜体」。
+维护者随后决定把文字编辑做成「和 Word 一样所见即所得的编辑窗口……同时也能切换成 latex 模式」，并且「标注里渲染也能同步完成」。
+
+1. **立项并登记 1.0 豁免**（`docs/1.0-release-readiness.md` §1.8）。
+2. 编辑器库用 **ProseMirror**（PR 2）。
+3. 标注里的公式由**内置 runtime 的 worker 用 matplotlib mathtext** 排成矢量路径（PR 4）：与图内文字同一套语法、同一种外观；
+   代价是只支持 mathtext 那个 LaTeX 子集。
+4. 标注的 LaTeX 模式显示**真 LaTeX 子集**（`\textit{}` / `\textbf{}` / `$…$`），不是 Tavotto 自己的标记。
+5. 图内公式字体**自动跟正文**（PR 5）。
+6. 先行分支 `feat/partial-italic` 的 `*{…}` 标记**不发布**；它「导出按片段换斜体脸」的那一半并入 PR 1。
+
+## 决定
+
+### 一、字符串仍是唯一权威
+
+`TextObject.text`（标注）与图内文字的 `text` override 仍各是一个字符串。编辑框打开时把它解析成片段、每次改动后写回规范形；
+存储、导出、写回事务、撤销都不知道编辑框的存在。打开不编辑**不改写**字符串。
+
+### 二、标注的第二种写法：`textFormat: 'latex'`
+
+- 字段可选，**缺省 = 旧标记**（`^{…}` / `_{…}`），读法逐字不变、磁盘格式不升版；导出载荷字段 `text_format` 缺省不发。
+- `'latex'` 按 LaTeX 子集读（命令表与宽进规则在 `richtext.py` / `richText.ts` 的「LaTeX 子集」一节，两侧严格同源，
+  同一份向量 `tests/golden/rich_text_vectors.json` 两边各跑一遍）。读不懂的命令连同花括号原样是字（`raw` 片段），写回时也原样。
+- 片段模型 `TextRun` 加 `italic` / `bold` / `math` / `raw`；旧标记读出来的片段这四个都为假。
+- 旧标注**第一次用新编辑框保存**时转换（`legacyToLatex`）：成对的 `$` 写成 `\$`，不会突然变成公式。
+
+### 三、导出按片段换脸
+
+`FaceSet.variant` 给出 (片段斜体, 片段粗体) 对应的正文脸，与对象自身的粗 / 斜取「或」；量宽与落笔读同一张脸，
+字形覆盖也按那张脸问（`glyphplan.text_diagnostics` 的 `styled_cov`）。CJK 脸不换。
+
+### 四、PR 1 时公式片段的画法
+
+公式排版（PR 4）接入之前，公式片段在画布与导出上**按源码原样画**（连 `$` 定界符），两侧同一个约定，不吞字。
+PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到这一过渡态。
+
+## 不做
+
+- 不改图内文字的存法（仍是 mathtext 字符串）。
+- 不给 CJK 合成斜体 / 粗体。
+- 不支持 mathtext 以外的 LaTeX 环境（`align` 等）；PR 4 对它们给出明确的问题条目。

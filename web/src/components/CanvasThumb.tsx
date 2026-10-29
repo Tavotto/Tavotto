@@ -28,7 +28,7 @@ import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { bucketFor } from '@/lib/previewBuckets'
 import { layerOf } from '@/lib/glyphPlan'
-import { DEFAULT_INTERPRETATION, interpretRuns, parseRuns, SCRIPT_SIZE, SUB_DROP, SUP_RISE } from '@/lib/richText'
+import { DEFAULT_INTERPRETATION, interpretRuns, runLines, SCRIPT_SIZE, SUB_DROP, SUP_RISE } from '@/lib/richText'
 import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
 import { MM_PER_PT } from '@/lib/units'
 import type { PanelObject, TextObject } from '@/types/document'
@@ -286,20 +286,24 @@ function ExportedText({ obj }: { obj: TextObject }) {
         // 字体栈的衬线档是 `var(--font-doc)`：var() 只在 style 里解析，表现属性里不认
         style={{ fontFamily: canvasFontStack(effectiveCanvasFamily(obj)) }}
       >
-        {obj.text.split('\n').map((line, i) => (
+        {runLines(obj.text, obj.textFormat).map((line, i) => (
           <tspan key={i} x={x} y={obj.y + pad + (i + 0.5) * lead}>
-            {interpretRuns(parseRuns(line), {
+            {interpretRuns(line, {
               isPrimary: (cp) => layerOf(cp) === 'primary',
               isDrawable: (cp) => layerOf(cp) !== 'missing',
               mode: obj.interpretation ?? DEFAULT_INTERPRETATION,
             }).map((r, j) =>
-              r.script === '' ? (
+              r.math ? (
+                `$${r.text}$`
+              ) : r.script === '' && !r.italic && !r.bold ? (
                 r.text
               ) : (
                 <tspan
                   key={j}
-                  fontSize={size * SCRIPT_SIZE}
-                  baselineShift={size * (r.script === 'sup' ? SUP_RISE : -SUB_DROP)}
+                  fontStyle={r.italic ? 'italic' : undefined}
+                  fontWeight={r.bold ? 700 : undefined}
+                  fontSize={r.script ? size * SCRIPT_SIZE : undefined}
+                  baselineShift={r.script ? size * (r.script === 'sup' ? SUP_RISE : -SUB_DROP) : undefined}
                 >
                   {r.text}
                 </tspan>

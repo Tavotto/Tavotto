@@ -201,6 +201,18 @@ describe('科学文本解释', () => {
   it('`m²` 两档都不动——那是主脸自己画得出的设计字形', () => {
     expect(renderOne({ text: 'm²', interpretation: 'scientific' }).textContent).toBe('m²')
   })
+
+  it('LaTeX 写法：只有 \\textit 那一段是 italic、\\textbf 那段是粗体，命令字符不显示', () => {
+    const el = renderOne({ text: 'temp \\textit{T} \\textbf{K}', textFormat: 'latex' })
+    expect(el.textContent).toBe('temp T K')
+    const spans = [...el.querySelectorAll('span')]
+    expect(spans.filter((s) => s.style.fontStyle === 'italic').map((s) => s.textContent)).toEqual(['T'])
+    expect(spans.filter((s) => s.style.fontWeight === '700').map((s) => s.textContent)).toEqual(['K'])
+  })
+
+  it('没有 textFormat 的老标注：LaTeX 命令原样显示', () => {
+    expect(renderOne({ text: '\\textit{T}' }).textContent).toBe('\\textit{T}')
+  })
 })
 
 /** 取这段文字的正文字号（px），用来验证上标确实更小 */

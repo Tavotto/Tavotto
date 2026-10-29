@@ -113,7 +113,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
 
   /** 大小写：直接改文本内容（可撤销），不新增字段，导出零改动。 */
   const applyCase = (mode: CaseMode) =>
-    patch(hist('transformCase'), (o) => (o.text = transformCase(o.text, mode)))
+    patch(hist('transformCase'), (o) => (o.text = transformCase(o.text, mode, false, o.textFormat)))
 
   /** 在光标处插入换行；textarea 没聚焦过就接在末尾。补丁重渲染后恢复光标。 */
   const insertNewline = () => {
@@ -460,7 +460,7 @@ function ScientificText({
   const missing: string[] = []
   const substituted: string[] = []
   for (const o of objs) {
-    const d = textDiagnostics(o.text, o.interpretation)
+    const d = textDiagnostics(o.text, o.interpretation, o.textFormat)
     for (const c of d.missing) if (!missing.includes(c)) missing.push(c)
     for (const c of d.substituted) if (!substituted.includes(c)) substituted.push(c)
   }

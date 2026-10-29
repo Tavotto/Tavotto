@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「文字：行内上下标与大小写」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_compose_text.py`、`test_glyph_plan.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_compose_text.py`、`test_glyph_plan.py`、`test_rich_text_vectors.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -18,6 +18,15 @@ order: 250
   字号与基线做几何级看护）。只有 `^{`/`_{` 才触发，正文里孤立的 `^`/`_`
   原样显示；`\^`、`\_`、`\\` 是转义。序列化**按需转义**——无脑加反斜杠会让
   用户点一次「大小写」正文里就凭空多出 `\`。
+- **第二种写法 `latex`**（ADR 0152，2026-10-29）：标注带 `textFormat: 'latex'`（载荷 `text_format`）时按
+  LaTeX 子集读：`\textit{}` `\emph{}` `\textbf{}` `\textup{}` `\textmd{}` `\textnormal{}`
+  `\textsuperscript{}` `\textsubscript{}`、`$…$` / `$$…$$` / `\(…\)` / `\[…\]` 公式、`{…}` 分组、
+  `\$ \% \& \# \_ \{ \}` `\^{}` `\~{}` `\textbackslash{}` 字面量、`~` 不换行空格、`\\` 换行。**宽进严出**：读不懂的
+  命令连同花括号原样是字（`raw` 片段，写回也原样）；写回只出规范形（粗体 → 斜体 → 上下标逐层分组）。
+  没有该字段的标注一律按旧标记读，逐字不变。两侧解析 + 规范形 + 可读文本由同一份向量
+  `tests/golden/rich_text_vectors.json` 看护（`python scripts/gen_rich_text_vectors.py --write` 生成；pytest 与 vitest 各跑一遍）。
+  导出按片段换斜体 / 粗体脸（`FaceSet.variant`，与对象自身粗 / 斜取「或」），量宽、落笔、覆盖判据读同一张脸。
+  公式片段在公式排版接入（PR 4）之前两侧都按源码原样画。
 - **图内元素文字**走 matplotlib mathtext（`cm$^{-1}$`），不是上面那套标记；
   大小写转换要 `protectMath`（`$…$` 里是 `\alpha` 这类命令，改大小写就废）。
 - 大小写是**一次性动作**，直接改文本内容（可撤销），不新增字段、导出零改动。

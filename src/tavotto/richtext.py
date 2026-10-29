@@ -1,4 +1,4 @@
-"""标注文字的行内标记：上标 `^{…}`、下标 `_{…}`，以及 Unicode 科学文本的解释。
+"""标注文字的两种写法（旧标记 / LaTeX 子集），以及 Unicode 科学文本的解释。
 
 **与前端 web/src/lib/richText.ts 严格同源**（同名注释与同名常量）：画布上怎么
 排，导出的 PDF 就得怎么排。改一边必须同步另一边。
@@ -10,6 +10,11 @@
   * 只有 `^{`/`_{` 才触发，正文里孤零零的 `^` 或 `_` 原样显示——存量文字
     不会因为升级突然变形。
 需要字面量的 `^`/`_`/`\\` 时写 `\\^`、`\\_`、`\\\\`。
+
+**第二种写法 `latex`**（ADR 0152，所见即所得编辑框）：对象带 `text_format == "latex"` 时，
+同一个字符串按 LaTeX 子集读——`\\textit{}` / `\\emph{}` / `\\textbf{}` /
+`\\textsuperscript{}` / `\\textsubscript{}` / `$…$` 公式。没有这个字段的对象一律按上面的
+旧标记读，逐字不变。见本文件「LaTeX 子集」一节。
 
 纯标准库。
 """
@@ -28,9 +33,19 @@ SUB_DROP = 0.18
 _OPENER = {"^": "sup", "_": "sub"}
 
 
+#: 标注文字的写法。缺省（None / ""）= 旧标记；闭集，与 `richText.ts` 的 `TEXT_FORMATS` 同源。
+TEXT_FORMATS = ("latex",)
+
+
 class TextRun(NamedTuple):
     text: str
     script: str  # "" | "sup" | "sub"
+    italic: bool = False
+    bold: bool = False
+    #: True = 这一段是公式源码（`$…$` 里面那串），`text` 原样是用户写的 mathtext
+    math: bool = False
+    #: True = 读不懂的命令原文（`\\textsc{abc}`）：照字面显示，写回时原样、不转义
+    raw: bool = False
 
 
 def _match_brace(text: str, open_at: int) -> int:
@@ -52,11 +67,13 @@ def _match_brace(text: str, open_at: int) -> int:
     return -1
 
 
-def parse_runs(text: str) -> list[TextRun]:
-    """标记文本 → 片段列表。
+def parse_runs(text: str, text_format: str | None = None) -> list[TextRun]:
+    """标记文本 → 片段列表。`text_format == "latex"` 走 LaTeX 子集，其余走旧标记。
 
     解析失败的片段（没有配对的 `}`）按字面量原样保留，绝不吞掉用户的字符。
     """
+    if text_format == "latex":
+        return _parse_latex(text)
     runs: list[TextRun] = []
     buf = ""
     i = 0
@@ -85,13 +102,230 @@ def parse_runs(text: str) -> list[TextRun]:
     return runs
 
 
-def plain_text(text: str) -> str:
-    """去掉全部标记，只留可读文本。"""
-    return "".join(r.text for r in parse_runs(text))
+def plain_text(text: str, text_format: str | None = None) -> str:
+    """去掉全部标记，只留可读文本（公式段留它的源码）。"""
+    return "".join(r.text for r in parse_runs(text, text_format))
 
 
-def has_scripts(text: str) -> bool:
-    return any(r.script for r in parse_runs(text))
+def has_scripts(text: str, text_format: str | None = None) -> bool:
+    return any(r.script for r in parse_runs(text, text_format))
+
+
+# ---------------------------------------------------------------------------
+# LaTeX 子集（`text_format == "latex"`，ADR 0152）
+# ---------------------------------------------------------------------------
+#
+# **宽进**：用户从论文里粘贴过来的文字要尽量读对；读不懂的命令连同它的花括号原样当文字，
+# 绝不吞字。**严出**在前端 `serializeRuns(…, "latex")`：编辑框写回的永远是规范形。
+#
+#     \textit{…} \emph{…}           斜体
+#     \textbf{…}                    粗体
+#     \textup{…} \textmd{…}         取消斜体 / 取消粗体；\textnormal{…} 两者都取消
+#     \textsuperscript{…}           上标；\textsubscript{…} 下标
+#     $…$  $$…$$  \(…\)  \[…\]      公式（源码原样进 TextRun.text，math=True）
+#     {…}                           分组，花括号本身不显示
+#     \$ \% \& \# \_ \{ \} \^{} \~{}   字面量；\textbackslash{} 是反斜杠
+#     ~                             不换行空格；\\ 换行；\␣ 空格
+#     其余：原样是字（裸 `^` `_` `%` `&` `#` 也是字——宽进）
+
+_STYLE_CMDS = {
+    "textit": ("italic", True),
+    "emph": ("italic", True),
+    "textup": ("italic", False),
+    "textbf": ("bold", True),
+    "textmd": ("bold", False),
+    "textsuperscript": ("script", "sup"),
+    "textsubscript": ("script", "sub"),
+}
+_LITERAL_ESCAPES = "$%&#_{}"
+_ACCENT_LITERALS = "^~"
+_NBSP = "\u00a0"
+
+
+class _St(NamedTuple):
+    script: str = ""
+    italic: bool = False
+    bold: bool = False
+
+
+def _find_unescaped(text: str, needle: str, start: int) -> int:
+    i = start
+    while i < len(text):
+        if text[i] == "\\":
+            if text.startswith(needle, i):  # needle 本身以反斜杠开头（`\)` / `\]`）
+                return i
+            i += 2
+            continue
+        if text.startswith(needle, i):
+            return i
+        i += 1
+    return -1
+
+
+def _parse_latex(text: str) -> list[TextRun]:
+    runs: list[TextRun] = []
+    _latex_into(text, _St(), runs)
+    return runs
+
+
+def _emit(runs: list[TextRun], text: str, st: _St, math: bool = False, raw: bool = False) -> None:
+    if not text:
+        return
+    last = runs[-1] if runs else None
+    if (
+        last is not None
+        and not math
+        and not last.math
+        and last.raw == raw
+        and (last.script, last.italic, last.bold) == (st.script, st.italic, st.bold)
+    ):
+        runs[-1] = last._replace(text=last.text + text)
+    else:
+        runs.append(TextRun(text, st.script, st.italic, st.bold, math, raw))
+
+
+def _latex_into(text: str, st: _St, runs: list[TextRun]) -> None:  # noqa: C901 —— 一个扫描器
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\" and i + 1 < n:
+            nxt = text[i + 1]
+            if nxt.isascii() and nxt.isalpha():
+                j = i + 1
+                while j < n and text[j].isascii() and text[j].isalpha():
+                    j += 1
+                name = text[i + 1 : j]
+                has_group = j < n and text[j] == "{"
+                close = _match_brace(text, j) if has_group else -1
+                if name in _STYLE_CMDS and close > 0:
+                    field, value = _STYLE_CMDS[name]
+                    _latex_into(text[j + 1 : close], st._replace(**{field: value}), runs)
+                    i = close + 1
+                    continue
+                if name == "textnormal" and close > 0:
+                    _latex_into(text[j + 1 : close], st._replace(italic=False, bold=False), runs)
+                    i = close + 1
+                    continue
+                if name == "textbackslash":
+                    _emit(runs, "\\", st)
+                    if text.startswith("{}", j):
+                        i = j + 2
+                    else:  # 控制词后面的空格是分隔符（LaTeX 规则）
+                        while j < n and text[j] == " ":
+                            j += 1
+                        i = j
+                    continue
+                # 不认识的命令：连同紧跟的那组花括号原样是字
+                end = close + 1 if close > 0 else j
+                _emit(runs, text[i:end], st, raw=True)
+                i = end
+                continue
+            if nxt in _LITERAL_ESCAPES:
+                _emit(runs, nxt, st)
+                i += 2
+                continue
+            if nxt in _ACCENT_LITERALS:
+                _emit(runs, nxt, st)
+                i += 4 if text.startswith("{}", i + 2) else 2
+                continue
+            if nxt == "\\":
+                _emit(runs, "\n", st)
+                i += 2
+                continue
+            if nxt == " ":
+                _emit(runs, " ", st)
+                i += 2
+                continue
+            if nxt in "([":
+                closer = "\\)" if nxt == "(" else "\\]"
+                end = _find_unescaped(text, closer, i + 2)
+                if end >= 0:
+                    _emit(runs, text[i + 2 : end], st, math=True)
+                    i = end + 2
+                    continue
+            _emit(runs, ch, st)
+            i += 1
+            continue
+        if ch == "$":
+            double = text.startswith("$$", i)
+            delim = "$$" if double else "$"
+            end = _find_unescaped(text, delim, i + len(delim))
+            if end >= 0:
+                _emit(runs, text[i + len(delim) : end], st, math=True)
+                i = end + len(delim)
+                continue
+            _emit(runs, ch, st)
+            i += 1
+            continue
+        if ch == "{":
+            close = _match_brace(text, i)
+            if close > 0:
+                _latex_into(text[i + 1 : close], st, runs)
+                i = close + 1
+                continue
+        if ch == "~":
+            _emit(runs, _NBSP, st)
+            i += 1
+            continue
+        _emit(runs, ch, st)
+        i += 1
+
+
+_ESCAPE_OUT = {
+    "\\": "\\textbackslash{}",
+    "$": "\\$",
+    "%": "\\%",
+    "&": "\\&",
+    "#": "\\#",
+    "_": "\\_",
+    "{": "\\{",
+    "}": "\\}",
+    "^": "\\^{}",
+    "~": "\\~{}",
+    _NBSP: "~",
+}
+
+
+def serialize_latex(runs: list[TextRun]) -> str:
+    """片段 → LaTeX 子集的**规范形**（与 `richText.ts` 的 `serializeRuns(…, 'latex')` 逐字同源）。
+
+    相邻片段按「粗体 → 斜体 → 上下标」逐层分组，每组只包一次命令：`\\textbf{a \\textit{b}} c`
+    原样往返。公式段写回 `$源码$`。`parse_runs(serialize_latex(rs), "latex")` 与 `rs` 等价。"""
+    return _serialize_level(list(runs), 0)
+
+
+_LEVELS = ("bold", "italic", "script")
+
+
+def _serialize_level(runs: list[TextRun], level: int) -> str:
+    if level == len(_LEVELS):
+        return "".join(
+            f"${r.text}$"
+            if r.math
+            else r.text
+            if r.raw
+            else "".join(_ESCAPE_OUT.get(ch, ch) for ch in r.text)
+            for r in runs
+        )
+    field = _LEVELS[level]
+    out: list[str] = []
+    i = 0
+    while i < len(runs):
+        value = getattr(runs[i], field)
+        j = i
+        while j < len(runs) and getattr(runs[j], field) == value:
+            j += 1
+        inner = _serialize_level(runs[i:j], level + 1)
+        if field == "bold" and value:
+            inner = f"\\textbf{{{inner}}}"
+        elif field == "italic" and value:
+            inner = f"\\textit{{{inner}}}"
+        elif field == "script" and value:
+            inner = f"\\text{'superscript' if value == 'sup' else 'subscript'}{{{inner}}}"
+        out.append(inner)
+        i = j
+    return "".join(out)
 
 
 # ---------------------------------------------------------------------------
@@ -219,24 +453,32 @@ def interpret_runs(runs, is_primary=None, is_drawable=None, mode=DEFAULT_INTERPR
     scientific = mode == "scientific"
     out: list[TextRun] = []
 
-    def emit(text: str, script: str) -> None:
+    def emit(text: str, script: str, like: TextRun) -> None:
         if not text:
             return
-        if out and out[-1].script == script:
-            out[-1] = TextRun(out[-1].text + text, script)
+        last = out[-1] if out else None
+        if (
+            last is not None
+            and not last.math
+            and (last.script, last.italic, last.bold) == (script, like.italic, like.bold)
+        ):
+            out[-1] = last._replace(text=last.text + text)
         else:
-            out.append(TextRun(text, script))
+            out.append(TextRun(text, script, like.italic, like.bold))
 
     for run in runs:
+        if run.math:  # 公式源码不是字，不折
+            out.append(run)
+            continue
         if run.script:
-            emit(run.text, run.script)
+            emit(run.text, run.script, run)
             continue
         i = 0
         text = run.text
         while i < len(text):
             script = _script_of(text[i])
             if not script:
-                emit(text[i], "")
+                emit(text[i], "", run)
                 i += 1
                 continue
             j = i
@@ -250,9 +492,9 @@ def interpret_runs(runs, is_primary=None, is_drawable=None, mode=DEFAULT_INTERPR
             )
             possible = all(is_primary(ord(c)) for c in base)
             if worth and possible:
-                emit(base, script)
+                emit(base, script, run)
             else:
-                emit(chunk, "")
+                emit(chunk, "", run)
             i = j
     return out
 

@@ -31,6 +31,7 @@ import {
   DEFAULT_INTERPRETATION,
   interpretRuns,
   parseRuns,
+  type TextFormat,
   type TextInterpretation,
 } from './richText'
 
@@ -141,13 +142,17 @@ export function substitutedChars(text: string): string[] {
  * Unicode 上下标该合成的已经合成——拿原文去问会报出一批不会发生的方框，
  * 而假红比假绿更难查（用户会去修一个不存在的问题）。
  *
+ * 公式片段不在这里问——它不是按字落笔的（ADR 0152）。覆盖表是十二张脸的交集、不分样式，
+ * 所以行内斜体 / 粗体片段与正文问同一张表（Python 侧按真脸问，那一侧多一个参数）。
+ *
  * 与 `src/tavotto/glyphplan.py` 的 `text_diagnostics` 严格同源。
  */
 export function textDiagnostics(
   text: string,
   interpretation?: TextInterpretation,
+  format?: TextFormat,
 ): { missing: string[]; substituted: string[] } {
-  const runs = interpretRuns(parseRuns(text), {
+  const runs = interpretRuns(parseRuns(text, format).filter((r) => !r.math), {
     isPrimary: (cp) => layerOf(cp) === 'primary',
     isDrawable: (cp) => layerOf(cp) !== 'missing',
     mode: interpretation ?? DEFAULT_INTERPRETATION,

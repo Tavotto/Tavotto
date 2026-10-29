@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react'
 import { msg, t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import {
@@ -8,7 +8,9 @@ import {
   SCRIPT_SIZE,
   SUB_DROP,
   SUP_RISE,
+  type TextFormat,
   type TextInterpretation,
+  type TextRun,
 } from '@/lib/richText'
 import { layerOf } from '@/lib/glyphPlan'
 import { MM_PER_PT } from '@/lib/units'
@@ -183,7 +185,12 @@ export function TextView({
       }}
     >
       {editing ? null : (
-        <RenderedText text={obj.text} sizePx={sizePx} interpretation={obj.interpretation} />
+        <RenderedText
+          text={obj.text}
+          sizePx={sizePx}
+          interpretation={obj.interpretation}
+          format={obj.textFormat}
+        />
       )}
     </div>
   )
@@ -195,49 +202,56 @@ function syncEmpty(el: HTMLElement) {
 }
 
 /**
- * 行内标记的渲染（上标 `^{…}` / 下标 `_{…}`）。
+ * 行内标记的渲染（上标 / 下标、LaTeX 写法的行内斜体 / 粗体，ADR 0152）。
  *
  * 字号与基线偏移用**绝对像素**算，不用 em/百分比：`vertical-align` 的长度值
  * 是相对元素自身字号解析的，套在缩小后的 span 上会再乘一次比例，画布与
  * 导出就对不上了。常量取自 lib/richText.ts，与后端 richtext.py 同源。
+ *
+ * 公式片段在公式排版接入之前按源码原样画（`$…$` 连定界符）——与导出那一侧
+ * （`typography.interpreted_pieces`）同一个约定。
  */
 function RenderedText({
   text,
   sizePx,
   interpretation,
+  format,
 }: {
   text: string
   sizePx: number
   interpretation?: TextInterpretation
+  format?: TextFormat
 }) {
   // 与导出读同一份判据：`layerOf` 的覆盖表就是 PDF 后端那三张脸的能力。
   // **浏览器自己的字体栈不参与这个判断**——它画得出 `⁵` 不代表导出画得出，
   // 拿它当判据的结果正是「预览好好的、导出上是个方框」。
-  const runs = interpretRuns(parseRuns(text), {
+  const runs = interpretRuns(parseRuns(text, format), {
     isPrimary: (cp) => layerOf(cp) === 'primary',
     isDrawable: (cp) => layerOf(cp) !== 'missing',
     mode: interpretation ?? DEFAULT_INTERPRETATION,
   })
-  if (runs.every((r) => r.script === '')) return <>{runs.map((r) => r.text).join('')}</>
+  const plain = (r: TextRun) => r.script === '' && !r.italic && !r.bold && !r.math
+  if (runs.every(plain)) return <>{runs.map((r) => r.text).join('')}</>
   return (
     <>
-      {runs.map((r, i) =>
-        r.script === '' ? (
-          <span key={i}>{r.text}</span>
-        ) : (
-          <span
-            key={i}
-            style={{
-              fontSize: sizePx * SCRIPT_SIZE,
-              // 正 = 抬高；vertical-align 的正值就是往上，故下标取负
-              verticalAlign: sizePx * (r.script === 'sup' ? SUP_RISE : -SUB_DROP),
-              lineHeight: 0, // 上下标不参与行盒高度，行距不被它撑开
-            }}
-          >
+      {runs.map((r, i) => {
+        if (r.math) return <span key={i}>{`$${r.text}$`}</span>
+        // 行内样式只在**打开**时写：对象自己是粗 / 斜体时，片段不写 normal 去覆盖它（与导出的「或」一致）
+        const style: CSSProperties = {}
+        if (r.italic) style.fontStyle = 'italic'
+        if (r.bold) style.fontWeight = 700
+        if (r.script !== '') {
+          style.fontSize = sizePx * SCRIPT_SIZE
+          // 正 = 抬高；vertical-align 的正值就是往上，故下标取负
+          style.verticalAlign = sizePx * (r.script === 'sup' ? SUP_RISE : -SUB_DROP)
+          style.lineHeight = 0 // 上下标不参与行盒高度，行距不被它撑开
+        }
+        return (
+          <span key={i} style={style}>
             {r.text}
           </span>
-        ),
-      )}
+        )
+      })}
     </>
   )
 }

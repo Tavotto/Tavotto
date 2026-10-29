@@ -1,0 +1,574 @@
+{
+ "schema": 1,
+ "comment": "生成物：标注两种写法的跨语言看护向量。唯一产生者 scripts/gen_rich_text_vectors.py；手改无效。pytest（tests/test_rich_text_vectors.py）与 vitest（web/src/lib/richText.golden.test.ts）各跑一遍同一份。",
+ "vectors": [
+  {
+   "name": "legacy-sup",
+   "format": null,
+   "text": "cm^{-1}",
+   "runs": [
+    {
+     "text": "cm",
+     "script": ""
+    },
+    {
+     "text": "-1",
+     "script": "sup"
+    }
+   ],
+   "latex": "cm\\textsuperscript{-1}",
+   "plain": "cm-1"
+  },
+  {
+   "name": "legacy-sub",
+   "format": null,
+   "text": "H_{2}O",
+   "runs": [
+    {
+     "text": "H",
+     "script": ""
+    },
+    {
+     "text": "2",
+     "script": "sub"
+    },
+    {
+     "text": "O",
+     "script": ""
+    }
+   ],
+   "latex": "H\\textsubscript{2}O",
+   "plain": "H2O"
+  },
+  {
+   "name": "legacy-lone-caret",
+   "format": null,
+   "text": "a^b _c 100%",
+   "runs": [
+    {
+     "text": "a^b _c 100%",
+     "script": ""
+    }
+   ],
+   "latex": "a\\^{}b \\_c 100\\%",
+   "plain": "a^b _c 100%"
+  },
+  {
+   "name": "legacy-escapes",
+   "format": null,
+   "text": "x\\^{2} \\\\ y",
+   "runs": [
+    {
+     "text": "x^{2} \\ y",
+     "script": ""
+    }
+   ],
+   "latex": "x\\^{}\\{2\\} \\textbackslash{} y",
+   "plain": "x^{2} \\ y"
+  },
+  {
+   "name": "legacy-dollar-pair",
+   "format": null,
+   "text": "costs $5 and $10",
+   "runs": [
+    {
+     "text": "costs $5 and $10",
+     "script": ""
+    }
+   ],
+   "latex": "costs \\$5 and \\$10",
+   "plain": "costs $5 and $10"
+  },
+  {
+   "name": "legacy-backslash-end",
+   "format": null,
+   "text": "C:\\data\\",
+   "runs": [
+    {
+     "text": "C:\\data\\",
+     "script": ""
+    }
+   ],
+   "latex": "C:\\textbackslash{}data\\textbackslash{}",
+   "plain": "C:\\data\\"
+  },
+  {
+   "name": "legacy-cjk",
+   "format": null,
+   "text": "样品 A ×10⁵",
+   "runs": [
+    {
+     "text": "样品 A ×10⁵",
+     "script": ""
+    }
+   ],
+   "latex": "样品 A ×10⁵",
+   "plain": "样品 A ×10⁵"
+  },
+  {
+   "name": "italic",
+   "format": "latex",
+   "text": "Temperature \\textit{T} (K)",
+   "runs": [
+    {
+     "text": "Temperature ",
+     "script": ""
+    },
+    {
+     "text": "T",
+     "script": "",
+     "italic": true
+    },
+    {
+     "text": " (K)",
+     "script": ""
+    }
+   ],
+   "latex": "Temperature \\textit{T} (K)",
+   "plain": "Temperature T (K)"
+  },
+  {
+   "name": "emph",
+   "format": "latex",
+   "text": "\\emph{in vivo} test",
+   "runs": [
+    {
+     "text": "in vivo",
+     "script": "",
+     "italic": true
+    },
+    {
+     "text": " test",
+     "script": ""
+    }
+   ],
+   "latex": "\\textit{in vivo} test",
+   "plain": "in vivo test"
+  },
+  {
+   "name": "bold-italic-nested",
+   "format": "latex",
+   "text": "\\textbf{a \\textit{b}} c",
+   "runs": [
+    {
+     "text": "a ",
+     "script": "",
+     "bold": true
+    },
+    {
+     "text": "b",
+     "script": "",
+     "italic": true,
+     "bold": true
+    },
+    {
+     "text": " c",
+     "script": ""
+    }
+   ],
+   "latex": "\\textbf{a \\textit{b}} c",
+   "plain": "a b c"
+  },
+  {
+   "name": "italic-in-bold-canon",
+   "format": "latex",
+   "text": "\\textit{\\textbf{x}}",
+   "runs": [
+    {
+     "text": "x",
+     "script": "",
+     "italic": true,
+     "bold": true
+    }
+   ],
+   "latex": "\\textbf{\\textit{x}}",
+   "plain": "x"
+  },
+  {
+   "name": "script-in-italic",
+   "format": "latex",
+   "text": "\\textit{x\\textsubscript{i}}",
+   "runs": [
+    {
+     "text": "x",
+     "script": "",
+     "italic": true
+    },
+    {
+     "text": "i",
+     "script": "sub",
+     "italic": true
+    }
+   ],
+   "latex": "\\textit{x\\textsubscript{i}}",
+   "plain": "xi"
+  },
+  {
+   "name": "superscript",
+   "format": "latex",
+   "text": "cm\\textsuperscript{-1}",
+   "runs": [
+    {
+     "text": "cm",
+     "script": ""
+    },
+    {
+     "text": "-1",
+     "script": "sup"
+    }
+   ],
+   "latex": "cm\\textsuperscript{-1}",
+   "plain": "cm-1"
+  },
+  {
+   "name": "upright-in-italic",
+   "format": "latex",
+   "text": "\\emph{a \\textup{b} c}",
+   "runs": [
+    {
+     "text": "a ",
+     "script": "",
+     "italic": true
+    },
+    {
+     "text": "b",
+     "script": ""
+    },
+    {
+     "text": " c",
+     "script": "",
+     "italic": true
+    }
+   ],
+   "latex": "\\textit{a }b\\textit{ c}",
+   "plain": "a b c"
+  },
+  {
+   "name": "textnormal",
+   "format": "latex",
+   "text": "\\textbf{\\textit{a \\textnormal{b}}}",
+   "runs": [
+    {
+     "text": "a ",
+     "script": "",
+     "italic": true,
+     "bold": true
+    },
+    {
+     "text": "b",
+     "script": ""
+    }
+   ],
+   "latex": "\\textbf{\\textit{a }}b",
+   "plain": "a b"
+  },
+  {
+   "name": "grouping-braces",
+   "format": "latex",
+   "text": "{\\textit{g}}roup",
+   "runs": [
+    {
+     "text": "g",
+     "script": "",
+     "italic": true
+    },
+    {
+     "text": "roup",
+     "script": ""
+    }
+   ],
+   "latex": "\\textit{g}roup",
+   "plain": "group"
+  },
+  {
+   "name": "math-dollar",
+   "format": "latex",
+   "text": "Rate \\textit{k} = $A e^{-E/RT}$",
+   "runs": [
+    {
+     "text": "Rate ",
+     "script": ""
+    },
+    {
+     "text": "k",
+     "script": "",
+     "italic": true
+    },
+    {
+     "text": " = ",
+     "script": ""
+    },
+    {
+     "text": "A e^{-E/RT}",
+     "script": "",
+     "math": true
+    }
+   ],
+   "latex": "Rate \\textit{k} = $A e^{-E/RT}$",
+   "plain": "Rate k = A e^{-E/RT}"
+  },
+  {
+   "name": "math-display-dollar",
+   "format": "latex",
+   "text": "$$\\frac{a}{b}$$ end",
+   "runs": [
+    {
+     "text": "\\frac{a}{b}",
+     "script": "",
+     "math": true
+    },
+    {
+     "text": " end",
+     "script": ""
+    }
+   ],
+   "latex": "$\\frac{a}{b}$ end",
+   "plain": "\\frac{a}{b} end"
+  },
+  {
+   "name": "math-paren-bracket",
+   "format": "latex",
+   "text": "\\(x^2\\) and \\[y\\]",
+   "runs": [
+    {
+     "text": "x^2",
+     "script": "",
+     "math": true
+    },
+    {
+     "text": " and ",
+     "script": ""
+    },
+    {
+     "text": "y",
+     "script": "",
+     "math": true
+    }
+   ],
+   "latex": "$x^2$ and $y$",
+   "plain": "x^2 and y"
+  },
+  {
+   "name": "math-in-bold",
+   "format": "latex",
+   "text": "q \\textbf{$x$ y}",
+   "runs": [
+    {
+     "text": "q ",
+     "script": ""
+    },
+    {
+     "text": "x",
+     "script": "",
+     "bold": true,
+     "math": true
+    },
+    {
+     "text": " y",
+     "script": "",
+     "bold": true
+    }
+   ],
+   "latex": "q \\textbf{$x$ y}",
+   "plain": "q x y"
+  },
+  {
+   "name": "math-escaped-dollar",
+   "format": "latex",
+   "text": "$a\\$b$",
+   "runs": [
+    {
+     "text": "a\\$b",
+     "script": "",
+     "math": true
+    }
+   ],
+   "latex": "$a\\$b$",
+   "plain": "a\\$b"
+  },
+  {
+   "name": "escapes",
+   "format": "latex",
+   "text": "50\\% \\& \\# \\_ \\{x\\} \\$5",
+   "runs": [
+    {
+     "text": "50% & # _ {x} $5",
+     "script": ""
+    }
+   ],
+   "latex": "50\\% \\& \\# \\_ \\{x\\} \\$5",
+   "plain": "50% & # _ {x} $5"
+  },
+  {
+   "name": "accents",
+   "format": "latex",
+   "text": "a\\^{}b \\~{}c",
+   "runs": [
+    {
+     "text": "a^b ~c",
+     "script": ""
+    }
+   ],
+   "latex": "a\\^{}b \\~{}c",
+   "plain": "a^b ~c"
+  },
+  {
+   "name": "backslash",
+   "format": "latex",
+   "text": "\\textbackslash{}x \\textbackslash y",
+   "runs": [
+    {
+     "text": "\\x \\y",
+     "script": ""
+    }
+   ],
+   "latex": "\\textbackslash{}x \\textbackslash{}y",
+   "plain": "\\x \\y"
+  },
+  {
+   "name": "nbsp",
+   "format": "latex",
+   "text": "Fig.~1",
+   "runs": [
+    {
+     "text": "Fig. 1",
+     "script": ""
+    }
+   ],
+   "latex": "Fig.~1",
+   "plain": "Fig. 1"
+  },
+  {
+   "name": "newline",
+   "format": "latex",
+   "text": "a\\\\b",
+   "runs": [
+    {
+     "text": "a\nb",
+     "script": ""
+    }
+   ],
+   "latex": "a\nb",
+   "plain": "a\nb"
+  },
+  {
+   "name": "control-space",
+   "format": "latex",
+   "text": "a\\ b",
+   "runs": [
+    {
+     "text": "a b",
+     "script": ""
+    }
+   ],
+   "latex": "a b",
+   "plain": "a b"
+  },
+  {
+   "name": "unknown-command",
+   "format": "latex",
+   "text": "\\textsc{abc} d",
+   "runs": [
+    {
+     "text": "\\textsc{abc}",
+     "script": "",
+     "raw": true
+    },
+    {
+     "text": " d",
+     "script": ""
+    }
+   ],
+   "latex": "\\textsc{abc} d",
+   "plain": "\\textsc{abc} d"
+  },
+  {
+   "name": "unclosed-command",
+   "format": "latex",
+   "text": "\\textit{x",
+   "runs": [
+    {
+     "text": "\\textit",
+     "script": "",
+     "raw": true
+    },
+    {
+     "text": "{x",
+     "script": ""
+    }
+   ],
+   "latex": "\\textit\\{x",
+   "plain": "\\textit{x"
+  },
+  {
+   "name": "unpaired-dollar",
+   "format": "latex",
+   "text": "cost $5",
+   "runs": [
+    {
+     "text": "cost $5",
+     "script": ""
+    }
+   ],
+   "latex": "cost \\$5",
+   "plain": "cost $5"
+  },
+  {
+   "name": "lone-caret-underscore",
+   "format": "latex",
+   "text": "a^b c_d 100% x&y #1",
+   "runs": [
+    {
+     "text": "a^b c_d 100% x&y #1",
+     "script": ""
+    }
+   ],
+   "latex": "a\\^{}b c\\_d 100\\% x\\&y \\#1",
+   "plain": "a^b c_d 100% x&y #1"
+  },
+  {
+   "name": "raw-newline",
+   "format": "latex",
+   "text": "line1\nline2",
+   "runs": [
+    {
+     "text": "line1\nline2",
+     "script": ""
+    }
+   ],
+   "latex": "line1\nline2",
+   "plain": "line1\nline2"
+  },
+  {
+   "name": "cjk-italic",
+   "format": "latex",
+   "text": "温度 \\textit{T}",
+   "runs": [
+    {
+     "text": "温度 ",
+     "script": ""
+    },
+    {
+     "text": "T",
+     "script": "",
+     "italic": true
+    }
+   ],
+   "latex": "温度 \\textit{T}",
+   "plain": "温度 T"
+  },
+  {
+   "name": "empty-command",
+   "format": "latex",
+   "text": "a\\textit{}b",
+   "runs": [
+    {
+     "text": "ab",
+     "script": ""
+    }
+   ],
+   "latex": "ab",
+   "plain": "ab"
+  }
+ ]
+}

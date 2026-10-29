@@ -2,6 +2,7 @@
 import { t } from '@/i18n'
 import type { ArtifactValidation, SourceBackedFigure } from '@/lib/artifactValidation'
 import { newId } from '@/lib/id'
+import type { TextFormat } from '@/lib/richText'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 
 export interface ObjectBase {
@@ -224,6 +225,12 @@ export interface TextObject extends ObjectBase {
    * 闭集与语义的唯一出处是 `lib/richText.ts`（↔ `src/tavotto/richtext.py`）。
    */
   interpretation?: 'auto' | 'scientific'
+  /**
+   * `text` 的写法（ADR 0152）。**可选：老文档没有它 = 旧标记**（`^{…}` / `_{…}`），读法逐字
+   * 不变、磁盘格式不升版。`'latex'` = LaTeX 子集（`\textit{}` / `\textbf{}` / `$…$`），由
+   * 所见即所得编辑框写入。闭集与语义的唯一出处是 `lib/richText.ts`（↔ `src/tavotto/richtext.py`）。
+   */
+  textFormat?: TextFormat
   bold: boolean
   /** 可选：旧文档无此字段，undefined 即 false（后端 t.get("italic") 同义）。
    *  斜体只作用于拉丁字形——导出走 times-italic，宋体无斜体变体。 */
