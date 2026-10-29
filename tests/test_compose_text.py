@@ -265,6 +265,14 @@ def test_latex_style_spanning_newline_continues_on_next_line():
     assert all("Italic" in fonts[c] for c in "abcd") and "Italic" not in fonts["e"]
 
 
+def test_latex_raw_command_spanning_newline_keeps_outer_style():
+    """读不懂的命令跨行（`\textit{\textsc{ab⏎cd}}`）：两行都是斜体、命令原样是字，
+    与画布（`runLines`）一致（Codex #1488：逐行写回再读会拆坏外层分组）。"""
+    page = _draw(_latex("\\textit{\\textsc{ab\ncd}}"))
+    assert _rows(page) == ["\\textsc{ab", "cd}"]
+    assert all("Italic" in f for f in _fonts(page))
+
+
 def test_latex_width_is_measured_with_the_styled_face():
     """换行量宽用的是落笔那张脸：行宽 = 正文段宽 + 斜体段宽（同一份 shaped plan 量与画）。"""
     from tavotto.rendercore import facade, typography

@@ -250,6 +250,13 @@ describe('LaTeX 写法（ADR 0152）的画布 / 大小写约定', () => {
     ])
   })
 
+  it('runLines：读不懂的命令跨行时两半都留着外层样式（与导出 _run_lines 同一约定）', () => {
+    expect(runLines('\\textit{\\textsc{ab\ncd}}', 'latex')).toEqual([
+      [{ text: '\\textsc{ab', script: '', italic: true, raw: true }],
+      [{ text: 'cd}', script: '', italic: true, raw: true }],
+    ])
+  })
+
   it('大小写只动字，不动命令与公式源码', () => {
     expect(transformCase('\\textit{temp} $\\alpha_{ij}$', 'upper', false, 'latex')).toBe(
       '\\textit{TEMP} $\\alpha_{ij}$',

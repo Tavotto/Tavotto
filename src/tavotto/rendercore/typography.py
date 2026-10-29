@@ -256,15 +256,15 @@ def _chars_of(u: Unit) -> list[Unit]:
 
 
 def interpreted_pieces(
-    raw: str, faces: FaceSet, interpretation: str, text_format: str | None = None
+    runs: list[richtext.TextRun], faces: FaceSet, interpretation: str
 ) -> list[tuple[str, str, str, Style]]:
-    """一行原文 → [(渲染文字, script, 用户原文, 行内样式)]。合成上下标（`⁵` → 上标 `5`）的
+    """一行的片段 → [(渲染文字, script, 用户原文, 行内样式)]。合成上下标（`⁵` → 上标 `5`）的
     那一段 `用户原文 != 渲染文字`；用户自己写的 `^{5}` 两者相同（括号里就是他打的字）。
     覆盖判据按片段自己落笔的那张脸问（`\\textit{}` 问斜体脸）。
 
     公式片段（`math`）在公式排版接入之前按源码原样画（`$…$` 连定界符），即用户写的字。"""
     out: list[tuple[str, str, str, Style]] = []
-    for run in richtext.parse_runs(raw, text_format):
+    for run in runs:
         style: Style = (run.italic, run.bold)
         if run.math:
             src = f"${run.text}$"
@@ -297,7 +297,7 @@ def break_lines(
     按 `richtext.interpret_runs` 受控解释；CJK 逐字、拉丁按词（空格附着前词）；单个单元
     自己就超宽时先独占一行再逐字断。返回每行的片段序列（已 rstrip）。"""
     lines: list[Unit] = []
-    for raw in _logical_lines(text, text_format):
+    for line_runs in _run_lines(text, text_format):
         units: list[Unit] = []
         cur: Unit = []
 
@@ -307,9 +307,7 @@ def break_lines(
             else:
                 cur.append((ch, sc, lch, st))
 
-        for text_, script, logical, style in interpreted_pieces(
-            raw, faces, interpretation, text_format
-        ):
+        for text_, script, logical, style in interpreted_pieces(line_runs, faces, interpretation):
             for ch, lch in zip(text_, logical):
                 if ord(ch) > _CJK_BREAK:
                     if cur:
@@ -348,11 +346,13 @@ def break_lines(
     return lines
 
 
-def _logical_lines(text: str, text_format: str | None) -> list[str]:
-    """按换行切成逐行原文。旧标记直接按 `\\n` 切；LaTeX 写法里 `\\textit{a\\nb}` 这种跨行的
-    样式要在每一行里各自闭合，所以先解析成片段、按片段里的换行切开，再逐行写回同一写法。"""
+def _run_lines(text: str, text_format: str | None) -> list[list[richtext.TextRun]]:
+    """一段文字 → 逐行的片段（与 `richText.ts` 的 `runLines` 同一个约定）。旧标记照旧「先按 `\\n`
+    切、再逐行解析」（升级前的行为，逐字不变）；LaTeX 写法先整段解析，再按片段里的换行切开——
+    `\\textit{a\\nb}` 两行都是斜体。**切开后的片段直接排版，不写回字符串再读**：读不懂的命令
+    （`raw`）跨行时半截再读会拆坏外层分组（Codex #1488）。"""
     if text_format != "latex":
-        return text.split("\n")
+        return [richtext.parse_runs(line) for line in text.split("\n")]
     lines: list[list[richtext.TextRun]] = [[]]
     for run in richtext.parse_runs(text, text_format):
         if run.math:
@@ -364,7 +364,7 @@ def _logical_lines(text: str, text_format: str | None) -> list[str]:
                 lines.append([])
             if part:
                 lines[-1].append(run._replace(text=part))
-    return [richtext.serialize_latex(line) for line in lines]
+    return lines
 
 
 def _same_run(a: ShapedPiece, b: ShapedPiece) -> bool:
