@@ -45,6 +45,14 @@ worker 退役全在里面）。本模块只回答两件事：**这一次能不�
 （拿锁前什么都不写；事务里按它自己的回滚 / 提交点语义：过了提交点的取消被 `cancel_status` 拒绝，环境已经换代，结果如实回 `installed`）；
 结局 `cancelled`，之后不再有任何写环境的调用。
 
+## 运行时观察到的缺包（Antigravity / TVD-82B9：`pandas.read_excel` → openpyxl）
+
+有些依赖 `import` 语句里看不见（pandas 惰性 import openpyxl），静态扫描判「不缺」放行，校验运行才报 `missing_dependency` 并点名模块。
+`ensure` / `resolve` 的 `runtime_modules` 就是这类**运行时观察到的**顶层模块名：按静态 import 同一棵来源判决并入计划
+（`deprepair.joint_plan_for(extra_imports=)` / `create_joint_plan(extra_imports=)`），之后走同一棵决定树（名单内 + 已同意 → 直接装；
+需要用户 → `hold` 出卡片；名单外 → `uncommon`）。卡片带着 `runtime_modules`，用户点击后的 `resolve` 据此重算计划，摘要才对得上。
+装包仍只经 `deprepair`；`ai_convert.run_validation` 只重跑校验一次。
+
 纯标准库（Flask 父进程 import 链；`deprepair` / `pool` 在函数内 import，让本模块的常量与开关不拖入它们的整条依赖）。
 """
 
@@ -295,7 +303,14 @@ def _public_env(env: dict) -> dict:
 
 
 def _card(
-    kind: str, *, env: dict, names: list[str], outside: list[str], action: str, plan=None
+    kind: str,
+    *,
+    env: dict,
+    names: list[str],
+    outside: list[str],
+    action: str,
+    plan=None,
+    runtime_modules: tuple[str, ...] = (),
 ) -> dict:
     """交给前端的卡片事实（结构化字段；不含机器路径、不含 plan_id）。`impact_digest` 是用户点主按钮时要原样回传的摘要。"""
     impact = getattr(plan, "impact", None) or {}
@@ -306,6 +321,8 @@ def _card(
         "env": _public_env(env),
         "action": action,
         "impact_digest": getattr(plan, "impact_digest", "") or "",
+        # 运行时观察到缺的模块（静态看不见）：用户点击后的 `resolve` 要带着它重算计划，摘要才一致
+        "runtime_modules": list(runtime_modules),
         "target": str(impact.get("target_kind") or ""),
         "creates_environment": bool(impact.get("creates_environment")),
         "downloads_python": bool(impact.get("private_python")),
@@ -373,13 +390,14 @@ def _install(plan, names: list[str], cancel: threading.Event | None, confirmed_i
 
 
 # --------------------------------------------------------------------------- 决定
-def _survey(project: str, stage_rel: str) -> dict:
+def _survey(project: str, stage_rel: str, runtime_modules: tuple[str, ...] = ()) -> dict:
     """只读：缺什么、此刻环境是什么类。回
     `{"verdict": none|skipped|ready, "reason", "names", "env", "target_kind"}`；`ready` 才有 names / env。"""
     from . import depplan, deprepair, pool
 
     try:
-        joint, _kind, _python = deprepair.joint_plan_for(project, stage_rel)
+        extra = {"extra_imports": runtime_modules} if runtime_modules else {}
+        joint, _kind, _python = deprepair.joint_plan_for(project, stage_rel, **extra)
     except Exception:  # noqa: BLE001 —— 解释器解析不出 / 事实取不到：不是这里的事，校验运行会给出它自己的错
         return {"verdict": STATUS_SKIPPED, "reason": "plan_unavailable"}
     if joint.status == depplan.STATUS_NOTHING_NEEDED:
@@ -407,12 +425,15 @@ def _survey(project: str, stage_rel: str) -> dict:
     }
 
 
-def _make_plan(project: str, stage_rel: str, target_kind: str):
+def _make_plan(
+    project: str, stage_rel: str, target_kind: str, runtime_modules: tuple[str, ...] = ()
+):
     """形成（不执行）联合计划；拒绝时回 `(None, 错误码)`。"""
     from . import deprepair
 
     try:
-        return deprepair.create_joint_plan(project, stage_rel, target_kind=target_kind), ""
+        extra = {"extra_imports": runtime_modules} if runtime_modules else {}
+        return deprepair.create_joint_plan(project, stage_rel, target_kind=target_kind, **extra), ""
     except deprepair.RepairError as exc:
         return None, exc.code
     except Exception:  # noqa: BLE001
@@ -429,9 +450,17 @@ def _discard(plan) -> None:
     deprepair._discard_plan(plan.plan_id)  # 没执行的计划不留着
 
 
-def _decide(project: str, stage_rel: str, *, clicked: bool, confirmed_impact: str | None, cancel):
+def _decide(
+    project: str,
+    stage_rel: str,
+    *,
+    clicked: bool,
+    confirmed_impact: str | None,
+    cancel,
+    runtime_modules: tuple[str, ...] = (),
+):
     """`ensure`（clicked=False）与 `resolve`（clicked=True）共用的决定树。"""
-    sv = _survey(project, stage_rel)
+    sv = _survey(project, stage_rel, runtime_modules)
     if sv["verdict"] == STATUS_NONE:
         return _result(STATUS_NONE)
     if sv["verdict"] == STATUS_SKIPPED:
@@ -443,7 +472,7 @@ def _decide(project: str, stage_rel: str, *, clicked: bool, confirmed_impact: st
     #: 内置 runtime / OS 自带 Python：都不往里装，默认给本项目准备受管环境并装进去（不改它们），不记常驻同意
     builtin = kind in (KIND_BUILTIN, KIND_SYSTEM)
     target_kind = sv["target_kind"]
-    plan, code = _make_plan(project, stage_rel, target_kind)
+    plan, code = _make_plan(project, stage_rel, target_kind, runtime_modules)
     if plan is None:
         return _result(STATUS_SKIPPED, reason="plan_refused", missing=names, code=code)
     plan_names = _plan_names(plan)
@@ -459,7 +488,13 @@ def _decide(project: str, stage_rel: str, *, clicked: bool, confirmed_impact: st
         if not confirmed_impact or plan.impact_digest != confirmed_impact:
             card_kind = CARD_UNCOMMON if plan_outside else CARD_ASK_ONCE
             card = _card(
-                card_kind, env=env, names=plan_names, outside=plan_outside, action=action, plan=plan
+                card_kind,
+                env=env,
+                names=plan_names,
+                outside=plan_outside,
+                action=action,
+                plan=plan,
+                runtime_modules=runtime_modules,
             )
             _discard(plan)
             return _result(
@@ -486,7 +521,13 @@ def _decide(project: str, stage_rel: str, *, clicked: bool, confirmed_impact: st
     if needs_user:
         card_kind = CARD_UNCOMMON if plan_outside else CARD_ASK_ONCE
         card = _card(
-            card_kind, env=env, names=plan_names, outside=plan_outside, action=action, plan=plan
+            card_kind,
+            env=env,
+            names=plan_names,
+            outside=plan_outside,
+            action=action,
+            plan=plan,
+            runtime_modules=runtime_modules,
         )
         _discard(plan)
         return _result(STATUS_HOLD, missing=plan_names, reason=card_kind, card=card)
@@ -496,14 +537,27 @@ def _decide(project: str, stage_rel: str, *, clicked: bool, confirmed_impact: st
 
 
 # --------------------------------------------------------------------------- 入口
-def ensure(project: str, stage_rel: str, cancel: threading.Event | None = None) -> dict:
+def ensure(
+    project: str,
+    stage_rel: str,
+    cancel: threading.Event | None = None,
+    *,
+    runtime_modules: tuple[str, ...] = (),
+) -> dict:
     """校验运行**之前**调：`stage_rel` 是已落盘的候选临时脚本（项目相对）。回
     `{"status": none|installed|hold|skipped|failed|cancelled, "installed", "missing", "reason", "code", "card"?}`。
-    `hold` = 要用户先决定（带结构化 `card`）。不抛：任何意外都归成 `skipped`（让校验运行自己如实失败）。"""
+    `hold` = 要用户先决定（带结构化 `card`）。`runtime_modules` = 校验运行报 `missing_dependency` 点名的、静态扫描看不见的顶层模块名。不抛：任何意外都归成 `skipped`（让校验运行自己如实失败）。"""
     if not enabled():
         return _result(STATUS_SKIPPED, reason="disabled")
     try:
-        return _decide(str(project), stage_rel, clicked=False, confirmed_impact=None, cancel=cancel)
+        return _decide(
+            str(project),
+            stage_rel,
+            clicked=False,
+            confirmed_impact=None,
+            cancel=cancel,
+            runtime_modules=tuple(runtime_modules),
+        )
     except Exception:  # noqa: BLE001
         LOG.warning("自动安装决定失败", exc_info=True)
         return _result(STATUS_SKIPPED, reason="plan_unavailable")
@@ -515,13 +569,19 @@ def resolve(
     *,
     confirmed_impact: str | None,
     cancel: threading.Event | None = None,
+    runtime_modules: tuple[str, ...] = (),
 ) -> dict:
     """用户在卡片上点了主按钮（`install`）：`confirmed_impact` 是卡片带着的摘要，由**前端回显**。
     重算计划；摘要对不上就回新的卡片（`code == dependency_impact_changed`）而不装。名单内、问过一次的 `ask_once`
     点击会对这个环境记下常驻同意。`system` 卡片没有“装”这个动作：回同一张卡。"""
     try:
         return _decide(
-            str(project), stage_rel, clicked=True, confirmed_impact=confirmed_impact, cancel=cancel
+            str(project),
+            stage_rel,
+            clicked=True,
+            confirmed_impact=confirmed_impact,
+            cancel=cancel,
+            runtime_modules=tuple(runtime_modules),
         )
     except Exception:  # noqa: BLE001
         LOG.warning("自动安装（用户确认后）失败", exc_info=True)

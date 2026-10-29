@@ -1,7 +1,6 @@
 # ADR 0152：所见即所得文字编辑框——字符串仍是权威，编辑框只是视图；标注加 LaTeX 子集写法
 
-日期：2026-10-29 · 状态：**Accepted（PR 1：片段模型、两种写法、导出按片段换脸；PR 2：编辑框；PR 3：LaTeX 模式与粘贴；PR 4：标注公式排版）**；
-PR 4 标注公式排版、PR 5 图内公式字体跟正文各自修订本 ADR
+日期：2026-10-29 · 状态：**Accepted（PR 1：片段模型、两种写法、导出按片段换脸；PR 2：编辑框；PR 3：LaTeX 模式与粘贴；PR 4：标注公式排版；PR 5：图内公式字体跟正文）**。
 相关：[0032 排版能力层](0032-typography-capability-layer.md)、[0033 科学文本与字体回退](0033-scientific-text-and-font-fallback.md)
 （本 ADR 修订其「画布文字没有 math 档」的边界：公式改由 PR 4 的 worker 排版兑现）、[0060 批准字体集合](0060-font-policy-and-allowlist.md)；
 规则全文 `docs/rules/backend/richtext.md`；看护 `tests/test_rich_text_vectors.py`、`web/src/lib/richText.golden.test.ts`、
@@ -70,7 +69,6 @@ PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到�
   变成公式块；「$5 and $10」这种原样是字。标注另认 `\textit{}` 等文字样式命令。认不出交给默认粘贴；自己复制出去的
   （带 `data-rt` 标签）走默认的 HTML 读入。
 - **双击公式块**切到源码模式。
-
 ### 七、PR 4：标注公式排版
 
 - **谁排**：`engine/mathtypeset.py` 起一个带 matplotlib 的解释器跑独立脚本 `engine/mathtext_child.py`（内置 runtime →
@@ -89,6 +87,16 @@ PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到�
   matplotlib 画的真身）；缩略图里的公式显示源码。
 - 打包：`mathtext_child.py` 进 `packaging/tavotto.spec` 的外部解释器源码清单（第三个根，`test_runtime_build` 按 import
   闭包看护）。
+
+### 八、PR 5：图内公式字体跟正文
+
+- matplotlib 默认公式字体集是 DejaVu Sans：正文 Times 的轴标题里 `$\mathit{T}$` 是无衬线斜体（10-29 实测 PDF 字体名
+  `DejaVuSans-Oblique`）。引擎的「字体族」修改本来就连公式一起换（`overrides._set_text_fontfamily`：正文按回退链、
+  公式切 custom 字体集指向同一族）——**不加引擎能力**：所见即所得文字框（属性页、右键快捷编辑）写入的文字里有规范段的
+  斜体 / 粗体 / 上下标、而这段字的字体族还没被改过时，同一次编辑里顺带写一条字体族 override，值是它**现在的**正文族
+  （`lib/figureMathFont.ts`）。写回与重放走字体族那条已有的路。实测：加上之后斜体 T 是 `TimesNewRomanPS-ItalicMT`。
+- 代价：字体族那一行显示「已修改」（确实改了：公式的字体集）；rcParams 进程级的 custom 集边界照旧（多段文字各选不同
+  字体时后改的赢，见 `_apply_mathtext_custom_set`）。
 
 ## 不做
 

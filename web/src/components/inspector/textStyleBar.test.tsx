@@ -26,6 +26,8 @@ import { flushPreviewFrame, resetPreview, setHistoryMode } from '@/store/svgPrev
 import { emptyProject, type PanelObject } from '@/types/document'
 import { propertyPathOf } from '@/lib/typography'
 import { ElementInspector } from './ElementInspector'
+import { richViewOf } from '@/components/ui/RichTextField'
+import { TextSelection } from 'prosemirror-state'
 import { hasTextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { FIGURE_TEXT_SINGLE_PROPS } from './typographyAdapter'
 
@@ -359,5 +361,34 @@ describe('行里的控件与属性页同一条写入路径', () => {
       reset.click()
     })
     expect(overrideOf('axes_0.title', 'fontsize')).toBeUndefined()
+  })
+})
+
+
+describe('公式字体跟正文（ADR 0152 PR 5）', () => {
+  it('内容框里给一段设斜体：同一次编辑顺带把字体族写成当前正文族；再改不重复写', async () => {
+    await mount('axes_0.title')
+    const box = document.querySelector('[data-prop="text"] [data-rich-text="field"]') as HTMLElement
+    const view = richViewOf(box)!
+    await act(async () => {
+      box.focus()
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 0, 1)))
+    })
+    await act(async () => {
+      ;(document.querySelector('[data-prop="text"] [data-rich-action="italic"]') as HTMLElement).click()
+    })
+    expect(String(overrideOf('axes_0.title', 'text'))).toContain('$\\mathit{')
+    expect(overrideOf('axes_0.title', 'fontfamily')).toBe('serif')
+  })
+
+  it('只改字、没用样式：不碰字体族', async () => {
+    await mount('axes_0.title')
+    const box = document.querySelector('[data-prop="text"] [data-rich-text="field"]') as HTMLElement
+    const view = richViewOf(box)!
+    await act(async () => {
+      box.focus()
+      view.dispatch(view.state.tr.insertText('x', 0))
+    })
+    expect(overrideOf('axes_0.title', 'fontfamily')).toBeUndefined()
   })
 })

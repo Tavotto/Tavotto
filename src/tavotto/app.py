@@ -12795,11 +12795,14 @@ def _convert_runner(
             if result.get("error"):
                 err = result["error"]
                 cause = (err.get("params") or {}).get("worker_code")
+                module = (err.get("params") or {}).get("module")
                 return {
                     "error": {
                         "code": err.get("code"),
                         "message": err.get("message"),
                         **({"cause": cause} if cause else {}),
+                        # 缺依赖点名的模块（结构化字段）：转换的依赖决定据此并入计划，不解析文案
+                        **({"module": module} if isinstance(module, str) and module else {}),
                         **(
                             {"write_violation": err["params"]["write_violation"]}
                             if isinstance((err.get("params") or {}).get("write_violation"), dict)
