@@ -55,7 +55,6 @@ from __future__ import annotations
 
 import ast
 import dataclasses
-import keyword
 import os
 import re
 import stat
@@ -2290,16 +2289,28 @@ def _rank(top: _Top) -> int:
 # ---------------------------------------------------------------- 入口
 
 
+def _plain_name(name: str) -> bool:
+    """普通的顶层名：合法标识符且不是关键字（`class` 解析失败、`True` / `None` 解析成常量，都不算）。"""
+    if not name.isidentifier():
+        return False
+    try:
+        node = ast.parse(name, mode="eval").body
+    except SyntaxError:
+        return False
+    return isinstance(node, ast.Name)
+
+
 def _with_extra_imports(tree: ast.Module, modules: tuple[str, ...]) -> ast.Module:
     """入口脚本的 AST 之外，再并入「运行时观察到缺了」的顶层模块名，当作脚本顶层的无条件 `import X`（裸 import 永不算 unused）。
-    只收合法标识符形态的顶层名；其余忽略。不改调用方给的 `tree`。"""
-    extra: list[ast.stmt] = []
-    for name in dict.fromkeys(modules):
-        if name.isidentifier() and not keyword.iskeyword(name):
-            extra.extend(ast.parse(f"import {name}").body)
+    只收普通顶层名（`_plain_name`）；其余忽略。直接构造 `ast.Import` 节点（不拼源码再解析）；不改调用方给的 `tree`。"""
+    extra: list[ast.stmt] = [
+        ast.Import(names=[ast.alias(name=name)])
+        for name in dict.fromkeys(modules)
+        if _plain_name(name)
+    ]
     if not extra:
         return tree
-    return ast.Module(body=[*tree.body, *extra], type_ignores=[])
+    return ast.fix_missing_locations(ast.Module(body=[*tree.body, *extra], type_ignores=[]))
 
 
 def _shadow_tree(root: Path, script: str) -> ast.Module | None:
