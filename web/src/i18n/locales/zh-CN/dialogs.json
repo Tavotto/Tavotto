@@ -1508,7 +1508,7 @@
           "corrupt_sessions": "会话损坏副本的内容"
         },
         "extraHint": {
-          "source": "出错的脚本（即使它没在项目里登记）、项目里登记的脚本，以及参与依赖安装的 requirements / constraints / pyproject 文件会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；这些文件里有密钥请不要勾。",
+          "source": "出错的脚本（即使它没在项目里登记；R / MATLAB 脚本也算，含「生成可编辑版本」时 AI 留下的候选脚本）、项目里登记的脚本，以及参与依赖安装的 requirements / constraints / pyproject 文件会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；这些文件里有密钥请不要勾。",
           "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
           "corrupt_sessions": "默认只有损坏副本的名字和大小；勾选后附上内容。"
         },

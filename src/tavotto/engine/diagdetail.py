@@ -34,6 +34,7 @@ import platform
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -171,6 +172,18 @@ def parse_options(raw: object) -> DetailOptions:
     return DetailOptions(**{k: raw.get(k) is True for k in OPTION_KEYS})
 
 
+@dataclasses.dataclass(frozen=True)
+class ConvertAttempt:
+    """一次「生成可编辑版本」任务（`ai_history` 里 `task_type=convert_to_editable` 的会话）涉及的东西：原脚本（项目相对写法，
+    可能是 `.R` / `.m`）、这次有没有失败，以及候选目录里**还留着**的候选脚本（`ai_convert.recent_attempts` 已按项目 / 任务
+    校验过；这里收之前再核一遍是普通文件而不是符号链接）。"""
+
+    sid: str
+    script: str
+    failed: bool
+    candidate: Path | None = None
+
+
 @dataclasses.dataclass
 class Sources:
     """app 层递进来的、本模块不该自己去找的东西（保持本模块不依赖 Flask 与「当前项目」）。"""
@@ -180,6 +193,9 @@ class Sources:
     #: 最近尝试过的脚本 `[(脚本, 是否有失败的尝试)]`（`taskdiag.Store.attempted_scripts`：运行 / 依赖准备 / 依赖修复），
     #: 不要求在登记表里——出错的那个脚本常常没登记（桌面当项目、直接拖进来的脚本）
     attempted: list[tuple[str, bool]] = dataclasses.field(default_factory=list)
+    #: 本项目最近的转换任务（`ai_convert.recent_attempts`）：原脚本（R / MATLAB 不会出现在 `attempted`，那里只有 Tavotto 跑过的
+    #: Python）与候选目录里留着的候选脚本（在项目外，只此一条途径进包）
+    converts: list[ConvertAttempt] = dataclasses.field(default_factory=list)
     baked: dict | None = None  # `load_baked(ctx)`：{stem: {"versions": [...]}}
     task_section: dict | None = None  # `taskdiag.bundle_section(..., limit=24)`
     frontend: dict | None = None  # 经 `diagnostics_frontend.sanitize_detail` 的前端 detail 子对象
@@ -2484,6 +2500,11 @@ def collect_network(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
 SOURCE_REASON_FAILING = "failing_attempt"
 SOURCE_REASON_PANEL = "panel"
 SOURCE_REASON_RECENT = "recent"
+#: 转换任务留在候选目录里的候选脚本（AI 写的、没被采用的那份）
+SOURCE_REASON_CANDIDATE = "convert_candidate"
+#: 转换入口接受的来源脚本后缀（`sourcelang`：`.py` / `.R` / `.r` / `.m`）；会话记录里的 `script` 不信，再按它过滤一遍
+CONVERT_SOURCE_EXTS = (".py", ".r", ".m")
+CONVERT_CANDIDATE_DIR = "convert-candidate"
 #: 声明文件（参与依赖计划的 requirements / constraints / pyproject）最多收几份
 DECLARED_FILES = 20
 #: 用来定「从哪个脚本所在目录往上找声明文件」的脚本数上限
@@ -2512,8 +2533,13 @@ def source_candidates(
         for p in ((src.frontend or {}).get("overrides") or [])
         if p.get("script")
     ]
-    failing = [s for s, bad in src.attempted if bad]
-    attempted_ok = [s for s, bad in src.attempted if not bad]
+    # 转换任务的原脚本（R / MATLAB 走这里进来）与 Tavotto 跑过的脚本同一套路径规则：解析后必须仍在项目目录内
+    converts = [c for c in src.converts if c.script.lower().endswith(CONVERT_SOURCE_EXTS)]
+    failing = [*(s for s, bad in src.attempted if bad), *(c.script for c in converts if c.failed)]
+    attempted_ok = [
+        *(s for s, bad in src.attempted if not bad),
+        *(c.script for c in converts if not c.failed),
+    ]
     seen: dict[str, Path] = {}
     fids: dict[str, FileId] = {}
     tried: set[str] = set()
@@ -2545,6 +2571,30 @@ def source_candidates(
         alias[raw] = rel
         seen[rel] = path
 
+    # 候选脚本在项目外（`cache/ai_convert/<sid>/`），不走项目目录的包含判据：路径由 `ai_convert.recent_attempts` 按
+    # 「该项目、该任务自己的候选目录里的常规文件」给出，这里只再拒符号链接 / 非常规文件，成员名用不带绝对路径的虚拟写法
+    cand_failing: list[str] = []
+    cand_ok: list[str] = []
+    cand_rels: set[str] = set()
+    for c in src.converts:
+        if c.candidate is None:
+            continue
+        rel = f"{CONVERT_CANDIDATE_DIR}/{c.sid}/{c.candidate.name}"
+        if rel in seen:
+            continue
+        try:
+            st = c.candidate.lstat()
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            fids[rel] = FileId.of(st)
+        except OSError:
+            if failed is not None:
+                failed.append(rel)
+            continue
+        seen[rel] = c.candidate
+        cand_rels.add(rel)
+        (cand_failing if c.failed else cand_ok).append(rel)
+
     def canon(names) -> list[str]:
         return list(dict.fromkeys(alias[r] for r in names if r in alias and alias[r] in seen))
 
@@ -2553,7 +2603,9 @@ def source_candidates(
     ordered_focus = [r for r in canon(focus) if r not in ordered_failing + ordered_attempted]
     ordered = [
         *ordered_failing,
+        *cand_failing,
         *ordered_attempted,
+        *cand_ok,
         *ordered_focus,
     ]  # 多张面板同一脚本：按首次出现去重
     rest = [r for r in seen if r not in ordered]
@@ -2567,7 +2619,9 @@ def source_candidates(
         panel_set = set(canon(focus))
         for r in chosen:
             reasons[r] = (
-                SOURCE_REASON_FAILING
+                SOURCE_REASON_CANDIDATE
+                if r in cand_rels
+                else SOURCE_REASON_FAILING
                 if r in ordered_failing
                 else SOURCE_REASON_PANEL
                 if r in panel_set
@@ -2956,7 +3010,9 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
                     "criterion": "scripts from recent failed / attempted runs first (even if not registered in the "
                     "project; only files inside the project folder), then scripts registered in the open project "
                     "(panel scripts first, then newest first); each script carries a reason "
-                    "(failing_attempt / panel / recent). `declarations` are the dependency declaration files "
+                    "(failing_attempt / panel / recent / convert_candidate). Scripts of recent 'generate editable "
+                    "version' (R / MATLAB / Python) conversion tasks are included, together with the candidate "
+                    "script such a task left in its own candidate folder (convert_candidate). `declarations` are the dependency declaration files "
                     "(requirements*.txt / constraints.txt / pyproject.toml) the dependency planner reads",
                     "scripts": index,
                     "declarations": declarations,

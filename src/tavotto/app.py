@@ -4851,6 +4851,26 @@ def _diagnostics_project_status() -> dict:
     return status
 
 
+def _diagnostics_convert_attempts(
+    figures_dir: str | None,
+) -> "list[engine_diagdetail.ConvertAttempt]":
+    """本项目最近的「生成可编辑版本」任务（附带源码用）：原脚本可能是 R / MATLAB，不在 `taskdiag` 里。
+    与 `attempted_scripts` 同一保留期（`taskdiag.RETENTION_S`）。读不到就当没有，不拖垮备包。"""
+    if not figures_dir:
+        return []
+    try:
+        rows = engine_ai_convert.recent_attempts(
+            str(Path(figures_dir).resolve()), engine_taskdiag.RETENTION_S
+        )
+    except Exception:  # noqa: BLE001 —— 历史库 / 候选目录读不出来只让这一路少一块
+        LOG.warning("诊断包: 读转换任务记录失败", exc_info=True)
+        return []
+    return [
+        engine_diagdetail.ConvertAttempt(r["sid"], r["script"], r["failed"], r["candidate"])
+        for r in rows
+    ]
+
+
 def _build_diagnostics_bundle(
     frontend: dict | None = None,
     frontend_dropped: bool = False,
@@ -4877,6 +4897,7 @@ def _build_diagnostics_bundle(
         project=status,
         scripts=ctx.registry.all_scripts() if ctx is not None else [],
         attempted=engine_taskdiag.STORE.attempted_scripts(pid) if pid else [],
+        converts=_diagnostics_convert_attempts((status or {}).get("figures_dir")),
         baked=load_baked(ctx) if ctx is not None else None,
         task_section=(
             engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid, limit=24) if pid else None

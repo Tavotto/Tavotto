@@ -117,3 +117,11 @@
 
 [ADR 0129](0129-abnormal-exit-marker.md)：壳在本机写一个只含版本 / 时间 / 退出类型闭集、**不上传**、启动时读一次的 `session-state.json`，用来在「上次没有正常退出」的下次启动提示一张卡。
 它不违背本 ADR「状态只在内存」的本意——没有自动补发、没有跨启动待发队列、不记用户活动；卡片只打开既有确认框，点之前不 prepare。引擎会话中意外退出的修复卡不受发送开关控制，也不含发送入口。
+
+## 补充（2026-10-30）：「脚本源码」收 R / MATLAB 与转换任务的候选脚本
+
+勾选「脚本源码」时，`optional-source.zip` 的来源再加两路，**勾选项、确认框、`bundle_schema`（8）、manifest 与服务器侧都不变**（文件都在同一个内层 zip 里，`index.json` 的 `reason` 多一个取值）：
+
+- **转换任务的原脚本**：本项目最近（`taskdiag.RETENTION_S`，与 `attempted_scripts` 同一保留期；至多 24 个会话）的 `convert_to_editable` 会话（读 `ai_history`，只读）涉及的原脚本——`.py` / `.R` / `.r` / `.m`（`sourcelang` 接受的后缀）。结局不是 completed 也不是取消的算失败，与失败的运行并列排最前（`failing_attempt`）。路径规则同其它脚本：解析后必须仍在项目目录内。R / MATLAB 以前从不进包，因为它们只出现在转换任务里，不在 `taskdiag` 也不在项目脚本登记表。
+- **候选目录里留着的候选脚本**（`reason: convert_candidate`）：只收该任务**自己**的候选目录（`cache/ai_convert/<sid>/`，`CONVERT_DIR` 的直接子目录、非符号链接）里 `meta.json` 指名（`target_name`）的那一个 `.py`，且 `meta.json` 的 `sid` / `project` 对得上、还没被采用（采用了的已经在项目里，走项目路径）；必须是常规文件（`lstat`，不跟随符号链接）。目录里的原脚本副本、参考图、上下文快照、预览一律不收。成员名与 `index.json` 用虚拟写法 `convert-candidate/<sid>/<文件名>`，不带绝对路径。注意：失败 / 取消 / 超时的会话收尾时候选目录已被 `release` 删掉，所以这一路实际只覆盖「通过检查待采用」「停住等依赖」「已装好等继续」这几种仍留存的候选。
+- **脱敏不变**：非 `.py` 的脚本本来就整份按完整模式（`scrub_script`）处理——家目录 → `~`、用户名 → `<user>`、秘密键值、PEM、令牌；R / MATLAB 不分注释与代码，比 Python 的分区更严。与 Python 同一口径，**不做邮箱 / 他人用户名替换**。看护 `tests/test_diag_foreign_source.py`。
