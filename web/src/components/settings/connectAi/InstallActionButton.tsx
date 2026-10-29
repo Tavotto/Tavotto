@@ -6,7 +6,7 @@ import { installProgressText } from './useAgentInstall'
  * 行右的动作按钮（安装并登录 / 重新安装 / 打开）。安装中它本身就是进度条：
  * 同一份文字叠两层——底层 ink 字在灰底上，覆盖层 surface 字在 ink 底上，按进度从左往右露出，被填到的部分字变白；
  * 两套主题只换 token。安装中不用 disabled（会压成 opacity-40），改 aria-disabled 并拦点击；
- * 宽度取「原文案」与「正在安装… 100%」较宽者，切换不跳。进度未知时覆盖层停在 35% 并呼吸（reduced-motion 下静止）。
+ * 宽度取「原文案」与「正在安装… 100%」较宽者，切换不跳。进度未知时覆盖层静止停在 35%（不加动画）。
  */
 export function InstallActionButton({
   label,
@@ -54,9 +54,7 @@ export function InstallActionButton({
           data-connect-install-progress
           style={{ clipPath: `inset(0 calc(100% - ${fill}%) 0 0)` }}
           className={cn(
-            'pointer-events-none absolute inset-0 flex items-center justify-center bg-ink text-surface transition-[clip-path] duration-300 ease-out motion-reduce:transition-none',
-            pct === null && 'motion-safe:animate-pulse',
-          )}
+            'pointer-events-none absolute inset-0 flex items-center justify-center bg-ink text-surface transition-[clip-path] duration-slow ease-out motion-reduce:transition-none')}
         >
           {text}
         </span>
