@@ -252,3 +252,68 @@ describe('换了写法、字符串不变（Codex #1489）', () => {
     expect(editorDom().querySelector('em')?.textContent).toBe('x')
   })
 })
+
+describe('LaTeX 模式与粘贴（ADR 0152 PR 3）', () => {
+  const source = () => container.querySelector<HTMLTextAreaElement>('[data-rich-source]')
+  const typeSource = (v: string) =>
+    act(() => {
+      const ta = source()!
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      setter.call(ta, v)
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+  it('切到 LaTeX：老标注显示成 LaTeX 子集规范形，不改就不写', () => {
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = 'cm^{-1}')))
+    click('mode')
+    expect(source()!.value).toBe('cm\\textsuperscript{-1}')
+    expect(current().text).toBe('cm^{-1}')
+    expect(current().textFormat).toBeUndefined()
+  })
+
+  it('在源码里改：直接写回并标 textFormat；切回所见即所得显示样式', () => {
+    click('mode')
+    typeSource('Temperature \\textit{T} (K)')
+    expect(current().text).toBe('Temperature \\textit{T} (K)')
+    expect(current().textFormat).toBe('latex')
+    click('mode')
+    expect(source()).toBeNull()
+    expect(editorDom().querySelector('em')?.textContent).toBe('T')
+  })
+
+  it('源码有错：说出错在第几个字符，不许切回；改对了再切', () => {
+    click('mode')
+    typeSource('\\textit{T')
+    click('mode')
+    expect(source()).not.toBeNull()
+    expect(container.querySelector('[data-rich-source-error]')?.textContent).toContain('8')
+    typeSource('\\textit{T}')
+    expect(container.querySelector('[data-rich-source-error]')).toBeNull()
+    click('mode')
+    expect(source()).toBeNull()
+  })
+
+  it('粘贴论文里的公式：变成公式块；「$5 and $10」原样是字', () => {
+    select(3, 3)
+    act(() => void view().pasteText(' with $k = A e^{-E}$'))
+    expect(current().text).toBe('H2O with $k = A e^{-E}$')
+    expect(editorDom().querySelector('[data-rt-math]')?.getAttribute('data-rt-math')).toBe('k = A e^{-E}')
+    act(() => void view().pasteText(' costs $5 and $10'))
+    expect(current().text).toBe('H2O with $k = A e^{-E}$ costs \\$5 and \\$10')
+  })
+
+  it('双击公式块进入 LaTeX 模式', () => {
+    act(() => s().commit(literal('换文字'), (d) => {
+      const o = d.objects[0] as TextObject
+      o.text = 'k = $A$'
+      o.textFormat = 'latex'
+    }))
+    const math = editorDom().querySelector('[data-rt-math]')!
+    act(() => {
+      const v = view()
+      const pos = v.posAtDOM(math, 0)
+      v.someProp('handleDoubleClickOn', (f) => f(v, pos, v.state.doc.nodeAt(pos)!, pos, new MouseEvent('dblclick'), true))
+    })
+    expect(source()?.value).toBe('k = $A$')
+  })
+})

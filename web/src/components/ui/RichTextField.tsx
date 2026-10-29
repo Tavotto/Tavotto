@@ -1,4 +1,5 @@
 import 'prosemirror-view/style/prosemirror.css'
+import { Slice } from 'prosemirror-model'
 import { TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
 import {
@@ -8,6 +9,7 @@ import {
   useLayoutEffect,
   useReducer,
   useRef,
+  useState,
   type CSSProperties,
   type ReactNode,
 } from 'react'
@@ -24,11 +26,13 @@ import {
   toggleRichMark,
   type RichCodec,
   type RichMark,
+  type SourceError,
 } from '@/lib/richEditor'
 import type { TextRun } from '@/lib/richText'
 import { ALT, cn, combo, modKey } from '@/lib/utils'
 import { Button } from './Button'
 import { FIELD_BOX, FIELD_FOCUS_WITHIN } from './fieldBox'
+import { fitTextAreaHeight } from './Input'
 
 /** 挂着的编辑器，按内容节点查（测试与 e2e 驱动选区用；界面代码不走这里） */
 const VIEWS = new WeakMap<Element, EditorView>()
@@ -150,6 +154,15 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
   /** 上一次由编辑框写出去的字符串：外部 value 等于它就不回灌（不打断光标） */
   const emitted = useRef(value)
   const [, bump] = useReducer((n: number) => n + 1, 0)
+  /**
+   * LaTeX 模式（ADR 0152 PR 3，只有 `field` 形态有）：直接改存着的字符串（标注显示 LaTeX 子集的规范形）。
+   * 两种模式改的是同一个字符串；源码有结构错误时不许切回，错在哪一行字说清。
+   */
+  const [mode, setMode] = useState<'rich' | 'latex'>('rich')
+  const [source, setSource] = useState('')
+  const [sourceError, setSourceError] = useState<SourceError | null>(null)
+  const sourceRef = useRef<HTMLTextAreaElement>(null)
+  const enterLatex = useRef<() => void>(() => {})
 
   useLayoutEffect(() => {
     if (!host.current) return
@@ -186,6 +199,24 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
         ...(placeholder ? { 'data-placeholder': placeholder } : {}),
         ...(state.doc.content.size === 0 ? { 'data-empty': '' } : {}),
       }),
+      // 粘贴：认得出公式（`$…$` / `\(…\)`……）或样式命令就按片段放进来；认不出交给默认粘贴，一字不改。
+      // 自己复制出去的（带 `data-rt` 标签）走默认的 HTML 读入，样式原样
+      handlePaste: (v, event, slice) => {
+        const html = event.clipboardData?.getData('text/html') ?? ''
+        if (html.includes('data-rt')) return false
+        const text =
+          event.clipboardData?.getData('text/plain') || slice.content.textBetween(0, slice.content.size, '\n')
+        const runs = text ? cb.current.codec.pasteRuns?.(text) : null
+        if (!runs) return false
+        v.dispatch(v.state.tr.replaceSelection(new Slice(runsToDoc(runs).content, 0, 0)).scrollIntoView())
+        return true
+      },
+      // 双击公式块：切到 LaTeX 模式改源码（画布上就地编辑没有源码模式，什么都不做）
+      handleDoubleClickOn: (_v, _pos, node) => {
+        if (node.type.name !== 'math' || variant !== 'field') return false
+        enterLatex.current()
+        return true
+      },
       dispatchTransaction(tr) {
         const v = viewRef.current
         if (!v) return
@@ -242,6 +273,8 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     if (!view || (value === emitted.current && codec === parsedWith.current)) return
     emitted.current = value
     parsedWith.current = codec
+    // LaTeX 模式里外部改了（撤销 / 重做）：源码框跟着换
+    setSource((cur) => (cur === value ? cur : value))
     const doc = runsToDoc(cb.current.codec.parse(value))
     const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content)
     view.dispatch(tr.setMeta('rt-external', true).setMeta('addToHistory', false))
@@ -263,6 +296,41 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     view.dispatch(tr.setSelection(TextSelection.create(doc, 0, doc.content.size)))
   }
   useImperativeHandle(ref, () => ({ focus: () => viewRef.current?.focus(), select: selectAll, run }))
+
+  enterLatex.current = () => {
+    const view = viewRef.current
+    // 标注：老标注也显示成 LaTeX 子集的规范形；不改就不写回（只有源码框的输入才写）
+    setSource(view ? codec.serialize(docToRuns(view.state.doc)) : value)
+    setSourceError(null)
+    setMode('latex')
+    requestAnimationFrame(() => sourceRef.current?.focus())
+  }
+  const leaveLatex = () => {
+    const err = codec.validate?.(source) ?? null
+    setSourceError(err)
+    if (err) {
+      sourceRef.current?.focus()
+      return
+    }
+    const view = viewRef.current
+    if (view) {
+      const doc = runsToDoc((codec.reparse ?? codec.parse)(source))
+      const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content)
+      view.dispatch(tr.setMeta('rt-external', true).setMeta('addToHistory', false))
+    }
+    setMode('rich')
+    requestAnimationFrame(() => viewRef.current?.focus())
+  }
+  const editSource = (next: string) => {
+    setSource(next)
+    if (sourceError) setSourceError(codec.validate?.(next) ?? null)
+    if (next === emitted.current) return
+    emitted.current = next
+    cb.current.onChange(next)
+  }
+  useLayoutEffect(() => {
+    if (mode === 'latex' && sourceRef.current) fitTextAreaHeight(sourceRef.current, maxRows)
+  }, [mode, source, maxRows])
 
   const active = (mark: RichMark) => (viewRef.current ? markActive(viewRef.current.state, mark) : false)
   const vars = { '--rt-size': sizePx ? `${sizePx}px` : undefined } as CSSProperties
@@ -311,31 +379,81 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     </Button>
   )
 
+  const latex = mode === 'latex'
   return (
     <div
       className={cn('relative w-full min-w-0 text-ink', FIELD_BOX, FIELD_FOCUS_WITHIN, className)}
       style={style}
+      data-rich-mode={mode}
     >
-      <div className="px-2 pt-1.5 pb-7 leading-relaxed">{content}</div>
-      <div className="absolute bottom-1 right-1 flex items-center gap-0.5">
-        {tool('bold', <Bold size={ICON_SIZE.xs} />, 'bold', modKey('B'))}
-        {tool('italic', <Italic size={ICON_SIZE.xs} />, 'italic', modKey('I'))}
-        {tool('sup', <Superscript size={ICON_SIZE.xs} />, 'sup', modKey('↑'))}
-        {tool('sub', <Subscript size={ICON_SIZE.xs} />, 'sub', modKey('↓'))}
+      <div className={cn('px-2 pt-1.5 pb-7 leading-relaxed', latex && 'hidden')}>{content}</div>
+      {latex && (
+        <div className="px-2 pt-1.5 pb-7">
+          <textarea
+            ref={sourceRef}
+            aria-label={ariaLabel}
+            data-rich-source
+            rows={1}
+            spellCheck={false}
+            value={source}
+            onChange={(e) => editSource(e.target.value)}
+            onFocus={() => cb.current.onFocus?.()}
+            onBlur={() => cb.current.onBlur?.()}
+            onKeyDown={(e) => {
+              if (!(e.key === 'Escape' && !cb.current.onEscape)) e.stopPropagation()
+              if (e.key === 'Escape' && cb.current.onEscape?.()) e.preventDefault()
+              // Enter 的契约与所见即所得一致：宿主接了 Enter（提交）就提交；⌥/⌘/Ctrl+Enter 换行
+              if (e.key === 'Enter' && !(e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) && cb.current.onEnter?.()) {
+                e.preventDefault()
+              }
+            }}
+            className="block w-full min-w-0 resize-none bg-transparent font-mono text-sm leading-relaxed text-ink outline-none"
+          />
+          {sourceError && (
+            <p data-rich-source-error className="mt-1 text-xs text-danger" role="alert">
+              {rt(sourceError.code === 'brace' ? 'errorBrace' : 'errorDollar', { at: sourceError.at })}
+            </p>
+          )}
+        </div>
+      )}
+      <div className="absolute bottom-1 left-1 flex items-center">
         <Button
           size="icon-xs"
-          data-rich-action="break"
-          className="text-ink-2"
+          data-rich-action="mode"
+          active={latex}
+          aria-pressed={latex}
+          // 与右边那排图标钮同一档高度；字比图标宽，宽度随字
+          className={cn('w-auto px-1 font-mono text-xs', !latex && 'text-ink-3')}
           onPointerDown={(e) => e.preventDefault()}
-          onClick={() => run('break')}
-          aria-label={rt('newline')}
-          title={rt('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
+          onClick={() => (latex ? leaveLatex() : enterLatex.current())}
+          title={rt(latex ? 'modeToRichTitle' : 'modeToLatexTitle')}
+          aria-label={rt('modeLatex')}
         >
-          <CornerDownLeft size={ICON_SIZE.xs} />
+          {rt('modeShort')}
         </Button>
+      </div>
+      <div className="absolute bottom-1 right-1 flex items-center gap-0.5">
+        {!latex && (
+          <>
+            {tool('bold', <Bold size={ICON_SIZE.xs} />, 'bold', modKey('B'))}
+            {tool('italic', <Italic size={ICON_SIZE.xs} />, 'italic', modKey('I'))}
+            {tool('sup', <Superscript size={ICON_SIZE.xs} />, 'sup', modKey('↑'))}
+            {tool('sub', <Subscript size={ICON_SIZE.xs} />, 'sub', modKey('↓'))}
+            <Button
+              size="icon-xs"
+              data-rich-action="break"
+              className="text-ink-2"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => run('break')}
+              aria-label={rt('newline')}
+              title={rt('newlineTitle', { alt: combo(ALT, '⏎'), mod: modKey('⏎') })}
+            >
+              <CornerDownLeft size={ICON_SIZE.xs} />
+            </Button>
+          </>
+        )}
         {extra}
       </div>
     </div>
   )
 })
-

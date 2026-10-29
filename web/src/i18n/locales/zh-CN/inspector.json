@@ -1234,6 +1234,12 @@
     "sub": "下标",
     "subTitle": "下标：作用于选中的字（{{key}}）",
     "newline": "插入换行",
-    "newlineTitle": "在光标处插入换行（{{alt}} / {{mod}}）"
+    "newlineTitle": "在光标处插入换行（{{alt}} / {{mod}}）",
+    "modeLatex": "LaTeX 源码",
+    "modeToLatexTitle": "切到 LaTeX 源码（专业用户可直接粘贴、改公式）",
+    "modeToRichTitle": "切回所见即所得",
+    "errorBrace": "第 {{at}} 个字符：花括号没有配对，改正后才能切回所见即所得",
+    "errorDollar": "第 {{at}} 个字符：$ 没有配对，改正后才能切回所见即所得",
+    "modeShort": "TeX"
   }
 }

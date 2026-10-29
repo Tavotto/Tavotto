@@ -1265,6 +1265,12 @@
     "sub": "Subscript",
     "subTitle": "Subscript: applies to the selected text ({{key}})",
     "newline": "Insert line break",
-    "newlineTitle": "Insert a line break at the cursor ({{alt}} / {{mod}})"
+    "newlineTitle": "Insert a line break at the cursor ({{alt}} / {{mod}})",
+    "modeLatex": "LaTeX source",
+    "modeToLatexTitle": "Switch to LaTeX source (paste or edit formulas directly)",
+    "modeToRichTitle": "Back to rich text",
+    "errorBrace": "Character {{at}}: unmatched brace — fix it to switch back to rich text",
+    "errorDollar": "Character {{at}}: unmatched $ — fix it to switch back to rich text",
+    "modeShort": "TeX"
   }
 }
