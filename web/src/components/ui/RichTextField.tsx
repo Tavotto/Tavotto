@@ -153,6 +153,13 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
   cb.current = { codec, onChange, onEnter, onEscape, onFocus, onBlur }
   /** 上一次由编辑框写出去的字符串：外部 value 等于它就不回灌（不打断光标） */
   const emitted = useRef(value)
+  /**
+   * 编辑框（所见即所得或源码框）刚写出去的那一串——宿主随即可能换写法：第一次改老标注标 textFormat。
+   * 认出这次回声就不重读：所见即所得里重读会把光标甩到末尾，源码框里会改写用户正在打的字。只在**紧接着的那次渲染**
+   * 有效（下面无依赖的 effect 每次渲染后清掉）：同一串字的写法变化若来自别处（换选中了一个字符串相同、
+   * 写法不同的标注），它已经被清掉，照常重读（Codex #1492 复核 P1）
+   */
+  const ownEcho = useRef<string | null>(null)
   const [, bump] = useReducer((n: number) => n + 1, 0)
   /**
    * LaTeX 模式（ADR 0152 PR 3，只有 `field` 形态有）：直接改存着的字符串（标注显示 LaTeX 子集的规范形）。
@@ -184,6 +191,7 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
       }
       if (text === emitted.current) return
       emitted.current = text
+      ownEcho.current = text
       cb.current.onChange(text)
     }
     const view = new EditorView(host.current, {
@@ -268,24 +276,25 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
   // 外部改了字符串（撤销 / 重做、换选中对象、大小写菜单）或换了写法：整段换掉，不进编辑框历史。
   // 写法变了字符串不变也要重读——两个标注字符串相同、一个旧标记一个 LaTeX 子集，画出来不同（Codex #1489）
   const parsedWith = useRef(codec)
-  const modeRef = useRef(mode)
-  modeRef.current = mode
   useEffect(() => {
     const view = viewRef.current
     const valueChanged = value !== emitted.current
     if (!view || (!valueChanged && codec === parsedWith.current)) return
     emitted.current = value
     parsedWith.current = codec
-    // 只是写法换了、字符串是自己刚写出去的（源码模式里第一次改老标注，宿主随即标 textFormat）：
-    // 文档已经在 editSource 里按源码同步过，源码框更不能动——用户正在里面打字
-    if (!valueChanged && modeRef.current === 'latex') return
+    // 自己刚写出去的回声：文档已经是对的（所见即所得本来就是它；源码模式在 editSource 里同步过）
+    if (!valueChanged && ownEcho.current === value) return
     // 外部真改了字符串（撤销 / 重做、换选中对象）：源码框换成**新值经 codec 读写后的规范形**——
     // 老标注的原文是旧标记，直接塞进源码框会在切回时被当 LaTeX 读（Codex #1492 P1）
-    if (valueChanged) setSource(cb.current.codec.serialize(cb.current.codec.parse(value)))
+    setSource(cb.current.codec.serialize(cb.current.codec.parse(value)))
     const doc = runsToDoc(cb.current.codec.parse(value))
     const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content)
     view.dispatch(tr.setMeta('rt-external', true).setMeta('addToHistory', false))
   }, [value, codec])
+  // 回声只认紧接着的那次渲染（这条 effect 排在上面那条之后，同一次提交里后跑）
+  useEffect(() => {
+    ownEcho.current = null
+  })
 
   const run = (mark: RichMark | 'break') => {
     const view = viewRef.current
@@ -337,6 +346,7 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     }
     if (next === emitted.current) return
     emitted.current = next
+    ownEcho.current = next
     cb.current.onChange(next)
   }
   useLayoutEffect(() => {

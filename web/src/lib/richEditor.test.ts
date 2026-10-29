@@ -190,3 +190,14 @@ describe('粘贴：样式命令里套公式（Codex #1492）', () => {
     ])
   })
 })
+
+describe('粘贴：$$…$$ 不被当钱数转义（Codex #1492 复核）', () => {
+  it('\\textit{T} $$a+b$$ 的公式源码原样', async () => {
+    const { pastedRuns } = await import('./richEditor')
+    expect(pastedRuns('\\textit{T} $$a+b$$', 'annotation')).toEqual([
+      { text: 'T', script: '', italic: true },
+      { text: ' ', script: '' },
+      { text: 'a+b', script: '', math: true },
+    ])
+  })
+})

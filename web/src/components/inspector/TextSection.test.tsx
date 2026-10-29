@@ -348,3 +348,45 @@ describe('LaTeX 模式的同步与撤销（Codex #1492）', () => {
     expect(current().text).toBe('H2O')
   })
 })
+
+describe('第一次改老标注：写法换了也不重读（Codex #1492 复核）', () => {
+  it('所见即所得里打第一个字：光标留在原处，不被甩到末尾', () => {
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = 'cm^{-1} long tail')))
+    select(1, 1)
+    act(() => view().dispatch(view().state.tr.insertText('X')))
+    expect(current().textFormat).toBe('latex')
+    expect(view().state.selection.from).toBe(2)
+  })
+
+  it('停在源码模式时换成字符串相同、写法不同的标注：照常重读', () => {
+    act(() => s().commit(literal('换文字'), (d) => {
+      const o = d.objects[0] as TextObject
+      o.text = 'a $x$'
+      o.textFormat = 'latex'
+    }))
+    click('mode')
+    act(() => s().commit(literal('换写法'), (d) => void delete (d.objects[0] as TextObject).textFormat))
+    // 旧标记里 $ 是字：源码框写成转义的规范形，切回后没有公式块
+    expect(container.querySelector<HTMLTextAreaElement>('[data-rich-source]')!.value).toBe('a \\$x\\$')
+    click('mode')
+    expect(editorDom().querySelector('[data-rt-math]')).toBeNull()
+  })
+})
+
+describe('陈旧的回声不挡后来的重读', () => {
+  it('源码里写出一串（写法没变，回声没被用掉），随后同一串换成旧标记：照常重读', () => {
+    act(() => s().commit(literal('标 LaTeX'), (d) => {
+      const o = d.objects[0] as TextObject
+      o.text = 'b'
+      o.textFormat = 'latex'
+    }))
+    click('mode')
+    act(() => {
+      const ta = container.querySelector<HTMLTextAreaElement>('[data-rich-source]')!
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ta, 'a $x$')
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => s().commit(literal('换写法'), (d) => void delete (d.objects[0] as TextObject).textFormat))
+    expect(container.querySelector<HTMLTextAreaElement>('[data-rich-source]')!.value).toBe('a \\$x\\$')
+  })
+})

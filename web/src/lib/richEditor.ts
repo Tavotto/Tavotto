@@ -126,10 +126,13 @@ export function pastedRuns(text: string, dialect: 'annotation' | 'mathtext'): Te
   return out
 }
 
-/** `$…$` 里不像公式的那几对 `$` 写成 `\$`（「$5 and $10」留成字），其余原样 */
+/**
+ * `$…$` 里不像公式的那几对 `$` 写成 `\$`（「$5 and $10」留成字），其余原样。`$$…$$` 先整段认出来、
+ * 原样跳过——不然里面那层 `$a+b$` 会被当成一对钱数转义掉（Codex #1492 复核）
+ */
 function escapeNonMathDollars(text: string): string {
-  return text.replace(/(?<!\\)\$([^$\n]+?)(?<!\\)\$/g, (m, body: string) =>
-    looksLikeMath(body) ? m : `\\$${body}\\$`,
+  return text.replace(/\$\$[\s\S]+?\$\$|(?<!\\)\$([^$\n]+?)(?<!\\)\$/g, (m, body?: string) =>
+    body === undefined || looksLikeMath(body) ? m : `\\$${body}\\$`,
   )
 }
 
