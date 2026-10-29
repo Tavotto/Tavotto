@@ -93,3 +93,20 @@ def test_validation_probe_cannot_be_discovered_as_a_project_owner(candidate):
 def test_internal_capture_diagnostics_use_the_existing_ui_reason(code):
     checked = ai_convert._failure_check({"status": "error", "code": code}, "precommit")
     assert checked.reason_code == "run_failed"
+
+
+def test_application_adapter_carries_the_structured_missing_module(tmp_path, monkeypatch):
+    """缺依赖点名的模块走结构化字段（probe 错误的 `params.module`）交给依赖决定，不解析中文文案。"""
+    err = {
+        "code": "missing_dependency",
+        "message": "缺少依赖包：openpyxl（当前渲染环境里没有它）",
+        "params": {"module": "openpyxl"},
+    }
+    monkeypatch.setattr(app_module.engine_probe, "probe", lambda *_a, **_k: {"error": err})
+    monkeypatch.setattr(app_module.engine_runconfig, "default_selection", lambda *_: None)
+    monkeypatch.setattr(app_module.engine_pool, "invalidate", lambda *_a, **_k: None)
+    out = app_module._convert_runner(SimpleNamespace(path=tmp_path), "source.py")(
+        str(tmp_path), "probe.py"
+    )
+    assert out["error"]["code"] == "missing_dependency"
+    assert out["error"]["module"] == "openpyxl"

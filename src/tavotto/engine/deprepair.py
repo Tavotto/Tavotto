@@ -4077,6 +4077,8 @@ class JointRepairPlan:
     install_layers_digest: str = ""
     #: 用户指定、未经可信来源核实的需求（`depplan.JointPlan.user_specified`）：披露（`impact`）与替身重算（`_replan_on_base`）都读它。
     user_specified: tuple[dict, ...] = ()
+    #: 运行时观察到缺了的顶层模块名（`create_joint_plan(extra_imports=)`）：替身重算（`_replan_on_base`）要把它们再交给 `depplan.plan`。
+    extra_imports: tuple[str, ...] = ()
     #: 计划用到的 import 名（needed + unknown）与形成计划那一刻这些名字在两份事实的静态索引里的提供状态指纹
     #: （`depplan.provider_digest`，#932）：执行前重量事实后再比，变了 = `repair_plan_stale`。同 `layers_digest`，只是执行期的一致性校验。
     names: tuple[str, ...] = ()
@@ -4249,6 +4251,7 @@ def joint_plan_for(
     *,
     groups: list[str] | None = None,
     scope_policy: str = "",
+    extra_imports: tuple[str, ...] = (),
 ) -> tuple[depplan.JointPlan, str, str]:
     """算一份联合计划（只读）：缺什么按**此刻选中的**解释器量、装什么按目标量（`_facts_for`）。
     回 (计划, 目标类型, 解释器)。
@@ -4276,6 +4279,7 @@ def joint_plan_for(
         install_facts=install_facts,
         coverage=_coverage_reader(facts),
         run_env_replaceable=_run_env_ours(root, facts),
+        extra_imports=extra_imports,
     )
     return _with_scope_check(root, script, plan, target_kind, scope_policy), target_kind, python
 
@@ -4343,6 +4347,7 @@ def create_joint_plan(
     groups: list[str] | None = None,
     scope_policy: str = "",
     user_specified: Mapping[str, str] | None = None,
+    extra_imports: tuple[str, ...] = (),
 ) -> JointRepairPlan:
     """把联合计划绑定成可执行的（发 plan_id）。**不装任何东西。**
 
@@ -4350,6 +4355,9 @@ def create_joint_plan(
     未经可信来源核实**的需求；只收来源未定的表外 import，过 `depresolve.from_user_input` 的严格语法，进联合计划并在影响披露里标明
     （`impact["user_specified"]`）。不合格的整份拒绝：语法不对 `package_requirement_invalid`，这个 import 不是表外名
     `dependency_install_not_allowed`——不静默丢弃、不降级成别的需求。
+
+    `extra_imports`：运行时观察到缺了的顶层模块名（转换校验运行的 `missing_dependency`，`convertdeps` 传入），按静态 import 同一棵来源判决并入；
+    随计划保存，替身重算（`_replan_on_base`）再交给 `depplan.plan`。
 
     计划不是 `ready`（没缺的 / blocked）就拒绝：`dependency_plan_blocked` 带 blocked 理由——
     执行端不会「把认不出的那行剥掉偷偷继续」。`target_kind` 可以由调用方指定（用户在用户
@@ -4396,6 +4404,7 @@ def create_joint_plan(
             coverage=_coverage_reader(facts),
             user_specified=user_specified,
             run_env_replaceable=_run_env_ours(root, facts),
+            extra_imports=extra_imports,
         )
     except depplan.UserSpecifiedRejected as exc:
         raise _user_specified_error(exc) from exc
@@ -4462,6 +4471,7 @@ def create_joint_plan(
         layers_digest=depplan.layer_digest(facts),
         install_layers_digest=depplan.layer_digest(install_facts),
         user_specified=tuple(joint.user_specified),
+        extra_imports=tuple(extra_imports),
         names=plan_names,
         names_digest=depplan.provider_digest(facts, plan_names),
         install_names_digest=depplan.provider_digest(install_facts, plan_names),
@@ -4906,6 +4916,7 @@ def prepare(
                 replace_ledger=plan.scope_policy == SCOPE_POLICY_SWITCH,
                 refuse_pinned=True,
                 user_specified=plan.user_specified,
+                extra_imports=plan.extra_imports,
             )
             return _run_generation(job, cancel_ev)
         key = _env_key(TARGET_PROJECT_VENV, plan.python, plan.project)
@@ -5053,6 +5064,8 @@ class _GenerationJob:
     #: 用户指定、未经可信来源核实的需求（`JointRepairPlan.user_specified`）：替身重算（`_replan_on_base`）要把它们再交给
     #: `depplan.plan`，装后核验（`_verify_distributions`）对这些 import 更严（读不出 = 失败）。
     user_specified: tuple[dict, ...] = ()
+    #: 运行时观察到缺了的顶层模块名（`JointRepairPlan.extra_imports`）：替身重算时再交给 `depplan.plan`。
+    extra_imports: tuple[str, ...] = ()
 
 
 def generation_requirements(
@@ -5502,6 +5515,7 @@ def _replan_on_base(job: _GenerationJob, base: str) -> _GenerationJob:
             target_kind=TARGET_MANAGED,
             groups=list(job.groups) or None,
             user_specified={u["import_name"]: u["requirement"] for u in job.user_specified} or None,
+            extra_imports=job.extra_imports,
         )
     except depplan.UserSpecifiedRejected as exc:
         # 下载期间脚本 / 声明变了，用户指定的那个 import 不再是来源未定的表外名：用户确认的不是这件事

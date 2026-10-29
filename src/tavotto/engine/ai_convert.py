@@ -494,6 +494,13 @@ def run_validation(
         out, killed = _run_with_cancel(checked_runner, cand, rel, cancel)
         if killed:
             return {"status": "cancelled"}
+        retry = _runtime_dependency_retry(cand, rel, out)
+        if retry is not None:
+            if "status" in retry:
+                return retry
+            out, killed = _run_with_cancel(checked_runner, cand, rel, cancel)
+            if killed:
+                return {"status": "cancelled"}
     if evidence is not None:
         from .agent_runner.media import from_wire
 
@@ -648,8 +655,11 @@ def _ensure_dependencies(cand: ConvertCandidate, rel: str) -> dict | None:
     hook = cand.extras.get("deps")
     if hook is None:
         return None
+    # 校验运行报 missing_dependency 点名的模块（静态扫描看不见的惰性依赖）：并入同一棵决定树；没有就按 3 参调用（兼容既有钩子）
+    runtime = tuple(cand.extras.get("runtime_modules") or ())
+    extra = {"runtime_modules": runtime} if runtime else {}
     try:
-        got = hook(str(cand.project_root), rel, cand.extras.get("cancel")) or {}
+        got = hook(str(cand.project_root), rel, cand.extras.get("cancel"), **extra) or {}
     except Exception:  # noqa: BLE001 —— 依赖旁路的任何异常都不该让校验崩：当作没装，让运行自己如实失败
         return None
     status = got.get("status")
@@ -676,6 +686,32 @@ def _ensure_dependencies(cand: ConvertCandidate, rel: str) -> dict | None:
             "packages": list(got.get("missing") or []),
         }
     return None
+
+
+def _runtime_dependency_retry(cand: ConvertCandidate, rel: str, out: dict) -> dict | None:
+    """校验运行报 `missing_dependency` 且点名了模块（静态扫描看不见的惰性依赖，如 `pandas.read_excel` → openpyxl）：把它并入依赖决定，
+    走与静态缺包同一棵决定树（`_ensure_dependencies` → `convertdeps`）。回 None = 照旧（没点名 / 没接钩子 / 已重跑过 / 没装上任何东西，
+    由调用方把原来的 `missing_dependency` 如实报出）；回 `{}` = 装好了，调用方重跑校验**一次**；回带 `status` 的 dict = 这就是校验结论
+    （停住等用户决定 / 安装失败 / 取消）。每个候选每个进程内最多重跑一次，装了又报缺包不会循环。"""
+    err = out.get("error") or {}
+    module = str(err.get("module") or "")
+    if (
+        err.get("code") != MISSING_DEPENDENCY_CODE
+        or not module
+        or cand.extras.get("deps") is None
+        or cand.extras.get("runtime_retried")
+    ):
+        return None
+    cand.extras["runtime_retried"] = True
+    modules = list(cand.extras.get("runtime_modules") or ())
+    if module not in modules:
+        modules.append(module)
+    cand.extras["runtime_modules"] = modules
+    before = list(cand.installed)
+    deps = _ensure_dependencies(cand, rel)
+    if deps is not None:
+        return deps
+    return {} if cand.installed != before else None
 
 
 def comparison_of(cand: ConvertCandidate, validation: dict) -> dict:
@@ -1511,11 +1547,18 @@ def run_resume(
         cand.extras["runner"] = runner
         cand.extras["cancel"] = cancel
         cand.extras["resume"] = True
+        # 上一轮因运行时缺包而停住时，卡片带着那些模块名：续跑的依赖决定要带上它们重算计划（摘要才对得上）
+        card = meta.get("dependency_card")
+        held = card.get("runtime_modules") if isinstance(card, dict) else None
+        if isinstance(held, list) and all(isinstance(m, str) for m in held) and held:
+            cand.extras["runtime_modules"] = list(held)
         if ensure is not None:
-            cand.extras["deps"] = lambda proj, rel, cancel_ev: ensure(proj, rel, cancel_ev)
+            cand.extras["deps"] = lambda proj, rel, cancel_ev, **kw: ensure(
+                proj, rel, cancel_ev, **kw
+            )
         else:
-            cand.extras["deps"] = lambda proj, rel, cancel_ev: resolve(
-                proj, rel, confirmed_impact=confirmed_impact, cancel=cancel_ev
+            cand.extras["deps"] = lambda proj, rel, cancel_ev, **kw: resolve(
+                proj, rel, confirmed_impact=confirmed_impact, cancel=cancel_ev, **kw
             )
         installed_before = list(
             cand.installed

@@ -369,6 +369,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 （`ai_convert.prepare_resume` / `run_resume`：装 → 校验**同一个候选** → 留存，不重跑 Agent），`discard` 取消正在进行的安装。换了环境（系统 / 内置卡选完环境且解释器变了）前端发 `{action:"replan"}`：`run_resume(ensure=convertdeps.ensure)` 按此刻环境重判同一个候选（不带摘要，复用同一续跑作业与忙碌判定）。授权口径两种：点过卡片 = 前端回显卡片摘要（服务端不自回显，
 对不上回新卡片）；已记过同意的环境 = 服务端回显同次调用算出的摘要（维护者 2026-10-23 裁决）。开关 `ai.convert.auto_install=false` / `TAVOTTO_NO_CONVERT_AUTO_INSTALL=1`
 （关着或计划不可执行时没有可执行动作，校验以 `missing_dependency` 失败，不修正）。
+运行时缺包（ADR 0143「运行时观察到的缺包」）：校验运行报 `missing_dependency` 且 `params.module` 点名时，`ai_convert._runtime_dependency_retry` 把模块名并入 `convertdeps.ensure(runtime_modules=)`（同一棵决定树，不新写 pip 路径），装好后只重跑校验一次；卡片 `runtime_modules` 存进 `dependency_card`，`run_resume` 取回并传给 `resolve/ensure` 重算计划。
 晚到的停止（ADR 0143 修订二）：`run_resume` 里依赖步骤返回 `installed`（过提交点，取消被拒）而取消标记已置位时，`run_validation` 在 `_ensure_dependencies` 处返回内部状态 `installed_stopped`，
 续跑把候选留成 `meta.json` `deps_installed`（不删、不自动校验、`installed` 如实记录），`prepare_resume` 也接受这个状态；用户点继续 = `{action:"replan"}`。依赖步骤返回 `cancelled`（或没装过东西）才删候选。
 前端续跑传输错误一律先 `GET /api/ai/convert/<sid>` 对账再决定，后端 POST 不做幂等（409 即对账触发点）。

@@ -1254,3 +1254,117 @@ def test_cancel_resume_sets_the_event_while_holding_the_registry_lock():
         with ac._RESUMES_LOCK:
             ac._RESUMES.pop(sid, None)
     assert seen == [True]
+
+
+# --------------------------------------------------------------------------- 运行时观察到的缺包（TVD-82B9：pandas.read_excel → openpyxl，import 语句里看不见）
+RT_MISSING = {
+    "error": {
+        "code": "missing_dependency",
+        "message": "缺少依赖包：openpyxl",
+        "module": "openpyxl",
+    }
+}
+
+
+def _rt_hook(calls, *, after="installed", card=None):
+    """静态扫描判不缺（无 `runtime_modules`）→ none；带着运行时缺的模块名 → 按 `after` 处理。"""
+
+    def hook(project, rel, cancel=None, *, runtime_modules=()):
+        calls.append(tuple(runtime_modules))
+        if not runtime_modules:
+            return {"status": "none"}
+        if after == "installed":
+            return {"status": "installed", "installed": ["openpyxl"]}
+        return {"status": "hold", "card": dict(card or RT_CARD), "missing": ["openpyxl"]}
+
+    return hook
+
+
+RT_CARD = {**CARD, "packages": ["openpyxl"], "runtime_modules": ["openpyxl"]}
+
+
+def test_runtime_missing_module_is_folded_into_the_dependency_decision_and_validation_reruns_once(
+    env,
+):
+    runs, calls = [], []
+
+    def runner(*a, **k):
+        runs.append(1)
+        return RT_MISSING if len(runs) == 1 else ok_runner(*a)
+
+    env["runner"] = runner
+    sid = _run(env, hooks={"deps": _rt_hook(calls)})
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "completed", sess["task"]
+    assert calls == [(), ("openpyxl",)], "先静态（不缺），运行时点名后同一棵决定树再来一次"
+    assert len(runs) == 2
+    assert ai_convert.status(sid, _project(env))["installed"] == ["openpyxl"]
+    assert len(env["prompts"]) == 1
+
+
+def test_runtime_missing_module_still_missing_after_install_fails_honestly_without_looping(env):
+    runs, calls = [], []
+
+    def runner(*a, **k):
+        runs.append(1)
+        return RT_MISSING
+
+    env["runner"] = runner
+    sid = _run(env, hooks={"deps": _rt_hook(calls)})
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "failed"
+    assert len(runs) == 2 and len(calls) == 2, "最多重跑一次"
+    assert ("render.capture", "missing_dependency") in {
+        (u["constraint_id"], u["reason_code"]) for u in sess["task"]["unmet"]
+    }
+    assert sess["task"]["corrections"] == 0
+
+
+def test_runtime_missing_module_that_needs_the_user_holds_with_the_modules_on_the_card(env):
+    calls = []
+    env["runner"] = lambda *a, **k: RT_MISSING
+    sid = _run(env, hooks={"deps": _rt_hook(calls, after="hold")})
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "needs_input", sess["task"]
+    (unmet,) = sess["task"]["unmet"]
+    assert unmet["reason_code"] == "dependency_decision"
+    assert unmet["data"]["runtime_modules"] == ["openpyxl"]
+    st = ai_convert.status(sid, _project(env))
+    assert st["state"] == ai_convert.STATE_AWAITING
+    assert (ai_convert.CONVERT_DIR / sid / "fig_matplotlib.py").is_file(), "候选没删"
+
+
+def test_resume_after_a_runtime_hold_recomputes_the_plan_with_the_same_modules(env):
+    env["runner"] = lambda *a, **k: RT_MISSING
+    sid = _run(env, hooks={"deps": _rt_hook([], after="hold")})
+    _wait(sid)
+    seen = []
+
+    def resolve(project, rel, *, confirmed_impact, cancel=None, runtime_modules=()):
+        seen.append((confirmed_impact, tuple(runtime_modules)))
+        return {"status": "installed", "installed": ["openpyxl"]}
+
+    cdir, meta, cancel = ai_convert.prepare_resume(sid, _project(env))
+    out = ai_convert.run_resume(
+        sid,
+        _project(env),
+        cdir,
+        meta,
+        cancel,
+        runner=ok_runner,
+        resolve=resolve,
+        confirmed_impact="digest-abc",
+    )
+    assert out["state"] == "ready", out
+    assert seen == [("digest-abc", ("openpyxl",))], "点击后重算计划带上运行时缺的模块，摘要才对得上"
+
+
+def test_a_missing_dependency_without_a_named_module_is_not_folded(env):
+    calls = []
+    env["runner"] = lambda *a, **k: {
+        "error": {"code": "missing_dependency", "message": "缺少依赖包"}
+    }
+    sid = _run(env, hooks={"deps": _rt_hook(calls)})
+    sess = _wait(sid)
+    assert sess["task"]["outcome"] == "failed"
+    assert calls == [()], "没点名模块：不二次决定"
