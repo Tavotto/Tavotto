@@ -16190,6 +16190,10 @@ def main():
     engine_ai_history.purge(keep_days=180)
     engine_ai_history.purge_requests()
     engine_ai_history.purge_drafts()
+    try:  # 转换候选目录：失败后留给诊断包的（6 小时）与超龄的
+        engine_ai_convert.prune_expired()
+    except Exception:  # noqa: BLE001 —— 清扫失败不挡启动
+        LOG.warning("清理转换候选目录失败", exc_info=True)
     # 执行追踪（ADR 0151）：属主已不在的运行中记录收成 interrupted、过期的清掉；永不抛、不挡启动
     engine_exectrace.recover_on_startup()
     # 选中的 PDF 后端在起服务前装载好（契约层是惰性装载的）：第一次 probe 不再多付一次

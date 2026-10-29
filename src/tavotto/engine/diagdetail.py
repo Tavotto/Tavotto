@@ -2860,12 +2860,24 @@ def _secret_string_spans(text: str) -> list[tuple[int, int, str]]:
     return spans
 
 
+#: R / MATLAB 源码里的邮箱 `local@domain.tld`（`.R` / `.r` / `.m` 专用；Python 不做，装饰器 `@app.route` 之类要原样）。
+#: 线性：起点不许紧跟在本地部分字符后（逐词只试一次），本地部分 ≤ 64、域名至多 9 段、每段 ≤ 64；域名必须含点、
+#: 末段是 2–24 个字母。R 的 `obj@slot` / MATLAB 的 `@(x) x.^2`、`@myfun` 没有「本地部分 + 带点域名」，不命中
+_EMAIL = re.compile(
+    r"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9][A-Za-z0-9._%+\-]{0,63}@"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,62}[A-Za-z0-9])?\.){1,8}[A-Za-z]{2,24}(?![A-Za-z0-9@\-])"
+)
+_EMAIL_EXTS = (".r", ".m")
+
+
 def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
     """脚本源码的脱敏。可执行代码用 `code`（源码模式：`token = self._next()` 原样）；**注释和字符串字面量里**
     的 `key=value` 是明文，必须用 `full`（完整 KV 替换）——`# api_key=REAL_SECRET` 不带引号，源码模式会放过它。
-    非 .py 一律 `full`；tokenize 失败（语法坏的 .py、未闭合的字符串）时整份按 `full` 处理。"""
+    非 .py 一律 `full`（`.R` / `.r` / `.m` 先把邮箱换成 `<email>`）；tokenize 失败（语法坏的 .py、未闭合的字符串）时整份按 `full` 处理。"""
     text = _nl(text)
     if not rel.lower().endswith(".py"):
+        if rel.lower().endswith(_EMAIL_EXTS):
+            text = _EMAIL.sub("<email>", text)  # 先于完整模式：`<user>@host` 不能留下
         return full.text(text)
     text = _redact_pem(text)  # 多行的块先整体换掉：注释里的 PEM 每行是一个独立的 COMMENT token
     spans = _prose_spans(text)

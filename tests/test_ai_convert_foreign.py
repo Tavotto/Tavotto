@@ -113,6 +113,18 @@ def _wait(sid, timeout=20.0):
     return ai_bridge.SESSIONS[sid]
 
 
+def _assert_only_kept_for_diagnostics(env, sid):
+    """失败收尾后候选目录最多是「只留给诊断包」的 failed_kept：状态 / 续跑 / 采用都 404（ADR 0143 修订）。"""
+    d = ai_convert.CONVERT_DIR / sid
+    if d.exists():
+        meta = json.loads((d / ai_convert.META_NAME).read_text(encoding="utf-8"))
+        assert meta["state"] == ai_convert.STATE_FAILED_KEPT
+    for call in (ai_convert.status, ai_convert.adopt, ai_convert.prepare_resume):
+        with pytest.raises(ai_convert.ConvertError) as exc:
+            call(sid, _project(env))
+        assert exc.value.code == "convert_not_found"
+
+
 def _project(env) -> str:
     return str(env["figs"].resolve())
 
@@ -402,7 +414,7 @@ def test_install_failure_is_a_final_failure_without_running_the_candidate(env):
         (u["constraint_id"], u["reason_code"]) for u in sess["task"]["unmet"]
     }
     assert sess["task"]["corrections"] == 0, "改代码解决不了装包失败：不修正"
-    assert not (ai_convert.CONVERT_DIR / sid).exists()
+    _assert_only_kept_for_diagnostics(env, sid)
 
 
 def test_skipped_branch_runs_the_candidate_and_missing_dependency_is_not_corrected(env):
@@ -993,7 +1005,7 @@ def test_project_changed_during_the_dependency_survey_never_enters_the_hold(env)
     task = sess["task"]
     assert task["outcome"] != "needs_input", task
     assert any(u["constraint_id"] == "project.untouched" for u in task["unmet"]), task["unmet"]
-    assert not (ai_convert.CONVERT_DIR / sid).exists(), "候选不留存"
+    _assert_only_kept_for_diagnostics(env, sid)
     with pytest.raises(ai_convert.ConvertError):
         ai_convert.status(sid, _project(env))
 

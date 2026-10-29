@@ -53,6 +53,7 @@ from . import (
     shadowscript,
     sourcelang,
     syncnoise,
+    taskdiag,
 )
 from .ai_tasks import FAILED, UNKNOWN, VERIFIED, CheckResult, NeedsInput, TaskError
 from .imageheader import image_dimensions
@@ -108,6 +109,10 @@ STATE_RESUMING = "resuming"
 STATE_FAILED = "failed"
 #: 续跑里依赖已装好、但用户的停止来得太晚（过了 deprepair 提交点，环境已换代，修复层拒绝了取消）：候选保留，停在这里等用户点「继续」
 STATE_INSTALLED = "deps_installed"
+#: 失败 / 超时收尾后**只为诊断包「附带源码」**留着的候选（不可采用、不可续跑：`_load_meta` 对它一律 404）；
+#: 保留 `FAILED_KEEP_S` 后由 `prune_expired` 删（用户取消的照旧立即删）
+STATE_FAILED_KEPT = "failed_kept"
+FAILED_KEEP_S = taskdiag.RETENTION_S
 #: 跑通了但没捕获到 Matplotlib 图的错误码（`probe.ERROR_NO_FIGURE` 与准备路径的两个同义码）
 NO_FIGURE_CODES = frozenset(
     {"script_no_figure", "no_figures_captured", "no_figures_captured_silent"}
@@ -134,6 +139,7 @@ _STATES = (
     STATE_RESUMING,
     STATE_FAILED,
     STATE_INSTALLED,
+    STATE_FAILED_KEPT,
 )
 
 
@@ -212,6 +218,8 @@ class ConvertCandidate:
     hold: dict | None = None
     #: 校验运行前依赖步骤返回了 installed 而取消已置位（停止晚于安装提交点）：候选要留着，停在 `deps_installed` 等用户点「继续」
     late_installed: bool = False
+    #: 失败 / 超时后候选目录留给诊断包（`keep_failed`）：`release` 不删
+    kept_failed: bool = False
     new_bytes: bytes | None = None
     #: 对桥而言“没写用户文件”：恒 False（`_settle_task` / 刷新据此不当成脚本被改）
     committed: bool = False
@@ -253,8 +261,17 @@ def remove_dir(cdir: Path) -> None:
         pass
 
 
+def _failed_kept_expired(d: Path, now: float) -> bool:
+    meta = _read_meta_file(d / META_NAME)
+    if not isinstance(meta, dict) or meta.get("state") != STATE_FAILED_KEPT:
+        return False
+    at = meta.get("failed_kept_at")
+    return isinstance(at, (int, float)) and now - at > FAILED_KEEP_S
+
+
 def prune_expired(now: float | None = None) -> int:
-    """清掉超龄的候选目录（按目录 mtime）。采用后的目录不再需要，也一并清。"""
+    """清掉超龄的候选目录（按目录 mtime）。采用后的目录不再需要，也一并清。失败后留给诊断包的候选
+    （`failed_kept`）只留 `FAILED_KEEP_S`，按 meta 里的 `failed_kept_at` 判（读不到退回目录 mtime）。"""
     now = time.time() if now is None else now
     removed = 0
     try:
@@ -263,7 +280,10 @@ def prune_expired(now: float | None = None) -> int:
         return 0
     for d in entries:
         try:
-            if d.is_dir() and not d.is_symlink() and now - d.stat().st_mtime > RETAIN_S:
+            if not d.is_dir() or d.is_symlink():
+                continue
+            age = now - d.stat().st_mtime
+            if age > RETAIN_S or (age > FAILED_KEEP_S and _failed_kept_expired(d, now)):
                 remove_dir(d)
                 removed += 1
         except OSError:
@@ -340,8 +360,25 @@ def _own_files(script_rel: str) -> frozenset[str]:
 
 def release(cand: ConvertCandidate) -> None:
     """会话收尾：通过检查、留存待采用的候选（含停住等用户决定 / 已装好等继续的）保留；其余（失败 / 取消 / 超时）删掉。"""
-    if not cand.ready and cand.hold is None and not cand.late_installed:
+    if not cand.ready and cand.hold is None and not cand.late_installed and not cand.kept_failed:
         remove_dir(cand.dir)
+
+
+def keep_failed(cand: ConvertCandidate) -> bool:
+    """失败 / 超时（**不含用户取消**）而没有可采用的结果时，把候选目录留 `FAILED_KEEP_S`，只为诊断包「附带源码」
+    能带上 AI 写出来却没通过的那份脚本。meta 标 `failed_kept`：`_load_meta` 对它一律 404，所以采用 / 续跑 / 丢弃 / 预览
+    都够不到。没有候选文件（Agent 什么都没写出来）或写 meta 失败就不留（回 False，由调用方照旧删）。"""
+    if cand.new_bytes is None or not cand.target.is_file():
+        return False
+    meta = {**_hold_meta(cand, STATE_FAILED_KEPT), "failed_kept_at": time.time()}
+    meta.pop("context", None)
+    meta.pop("project_before", None)
+    try:
+        atomicio.write_bytes(cand.dir / META_NAME, atomicio.dumps_json(meta))
+    except OSError:
+        return False
+    cand.kept_failed = True
+    return True
 
 
 def prompt_for(cand: ConvertCandidate) -> str:
@@ -1103,6 +1140,8 @@ class ConvertExecutor(ai_figure_edit.BridgeExecutor):
     def discard(self, run, cand: ConvertCandidate) -> None:
         if cand.hold is not None or cand.late_installed:
             return  # 停住等用户决定的候选要留着（`resume` 接着走它）；取消 / 超时等其余结局不会设 hold
+        if not run.cancelled() and keep_failed(cand):
+            return  # 失败 / 超时：留给诊断包（不可采用 / 续跑）；用户取消照旧立即删
         remove_dir(cand.dir)
 
 
@@ -1241,6 +1280,8 @@ def _load_meta(sid: str, project: str) -> tuple[Path, dict]:
         raise ConvertError("convert_not_ready", 409)
     if not isinstance(meta, dict) or meta.get("sid") != sid or meta.get("project") != project:
         raise ConvertError("convert_not_found", 404)
+    if meta.get("state") == STATE_FAILED_KEPT:
+        raise ConvertError("convert_not_found", 404)  # 只留给诊断包，不是可操作的候选
     return cdir, meta
 
 
@@ -1293,6 +1334,8 @@ def _candidate_file(sid: str, project: str) -> Path | None:
             return None
         if meta.get("adopted_script"):
             return None  # 采用了的那份已经在项目里，走项目路径
+        if meta.get("state") == STATE_FAILED_KEPT and _failed_kept_expired(cdir, time.time()):
+            return None  # 过了保留期、等着下次清扫的：不再收
         name = meta.get("target_name")
         if (
             not isinstance(name, str)

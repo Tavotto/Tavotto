@@ -7,6 +7,7 @@ Agent CLI 换成一段 python（不联网）：它在**自己的 cwd**（候选�
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import threading
@@ -145,6 +146,18 @@ def _project(env) -> str:
 
 
 # --------------------------------------------------------------------------- 适配器与候选
+def _assert_only_kept_for_diagnostics(env, sid):
+    """失败 / 超时收尾后候选目录最多是「只留给诊断包」的 failed_kept：采用 / 续跑 / 状态都 404（ADR 0143 修订）。"""
+    d = ai_convert.CONVERT_DIR / sid
+    if d.exists():
+        meta = json.loads((d / ai_convert.META_NAME).read_text(encoding="utf-8"))
+        assert meta["state"] == ai_convert.STATE_FAILED_KEPT
+    for call in (ai_convert.status, ai_convert.adopt, ai_convert.prepare_resume):
+        with pytest.raises(ai_convert.ConvertError) as exc:
+            call(sid, _project(env))
+        assert exc.value.status == 404 or exc.value.code == "convert_not_found"
+
+
 def test_adapter_is_registered_as_a_task_adapter_not_a_new_channel(env):
     sid = _run(env)
     _wait(sid)
@@ -259,7 +272,7 @@ def test_failed_prechecks_stage_nothing_and_leave_the_project_alone(env, code, f
     assert sess["task"]["outcome"] == "failed"
     unmet = {(u["constraint_id"], u["reason_code"]) for u in sess["task"]["unmet"]}
     assert failed in unmet
-    assert not (ai_convert.CONVERT_DIR / sid).exists(), "没通过的候选收尾即删"
+    _assert_only_kept_for_diagnostics(env, sid)
     after = _project_files(env["figs"])
     if code is WRITE_PROJECT:
         after.pop(
@@ -284,7 +297,7 @@ def test_validation_run_that_overwrites_project_files_fails_the_task(env):
     assert sess["task"]["outcome"] == "failed"
     unmet = {(u["constraint_id"], u["reason_code"]) for u in sess["task"]["unmet"]}
     assert ("project.untouched", "project_files_changed") in unmet
-    assert not (ai_convert.CONVERT_DIR / sid).exists()
+    _assert_only_kept_for_diagnostics(env, sid)
     with pytest.raises(ai_convert.ConvertError):
         ai_convert.adopt(sid, _project(env))
 
@@ -340,7 +353,7 @@ def test_no_figure_captured_is_a_failure_with_a_reason(env):
     assert ("render.capture", "no_matplotlib_figure") in {
         (u["constraint_id"], u["reason_code"]) for u in sess["task"]["unmet"]
     }
-    assert not (ai_convert.CONVERT_DIR / sid).exists()
+    _assert_only_kept_for_diagnostics(env, sid)
 
 
 def test_run_error_is_a_failure_and_the_project_never_sees_a_stage_file(env):
@@ -367,7 +380,7 @@ def test_without_a_wired_runner_the_candidate_is_not_staged(env):
     sid = _run(env, runner=None)
     sess = _wait(sid)
     assert sess["task"]["outcome"] == "failed"
-    assert not (ai_convert.CONVERT_DIR / sid).exists()
+    _assert_only_kept_for_diagnostics(env, sid)
 
 
 def test_one_bounded_correction_can_fix_a_missing_matplotlib_import(env):
@@ -667,3 +680,90 @@ def test_meta_read_does_not_retry_a_missing_or_corrupt_file(tmp_path, monkeypatc
     bad.write_bytes(b"{not json")
     assert ai_convert._read_meta_file(bad) is None
     assert calls["n"] == 2
+
+
+# --------------------------------------------------------------------------- 失败候选只为诊断包保留 6 小时
+def _unit_candidate(env, sid="0123456789ab"):
+    script = env["figs"] / "fig.py"
+    cand = ai_convert.create_candidate(
+        sid, script, env["figs"], "fig.py", library=None, source_language="python"
+    )
+    cand.new_bytes = b"print('CAND')\n"
+    cand.target.write_bytes(cand.new_bytes)
+    return cand
+
+
+class _Run:
+    def __init__(self, cancelled):
+        self._c = cancelled
+
+    def cancelled(self):
+        return self._c
+
+
+def _discard(cand, *, cancelled):
+    ex = ai_convert.ConvertExecutor.__new__(ai_convert.ConvertExecutor)
+    ex.discard(_Run(cancelled), cand)
+    ai_convert.release(cand)
+
+
+def test_failed_candidate_is_kept_for_diagnostics_but_not_actionable(env):
+    env["code"] = WRITE_SYNTAX
+    sid = _run(env)
+    _wait(sid)
+    d = ai_convert.CONVERT_DIR / sid
+    assert (d / "fig_matplotlib.py").is_file(), "失败的候选留着"
+    meta = json.loads((d / ai_convert.META_NAME).read_text(encoding="utf-8"))
+    assert meta["state"] == ai_convert.STATE_FAILED_KEPT and meta["failed_kept_at"] > 0
+    _assert_only_kept_for_diagnostics(env, sid)
+    rows = {r["sid"]: r for r in ai_convert.recent_attempts(_project(env), 3600)}
+    assert rows[sid]["failed"] is True and rows[sid]["candidate"] == d / "fig_matplotlib.py"
+    # 诊断包「附带源码」能收到它（reason convert_candidate，失败的排在前面）
+    from tavotto.engine import diagdetail
+
+    src = diagdetail.Sources(
+        project={"figures_dir": _project(env)},
+        converts=[
+            diagdetail.ConvertAttempt(r["sid"], r["script"], r["failed"], r["candidate"])
+            for r in rows.values()
+        ],
+    )
+    reasons: dict[str, str] = {}
+    got = [r for r, _p in diagdetail.source_candidates(src, reasons=reasons)]
+    assert got[:2] == ["fig.py", f"convert-candidate/{sid}/fig_matplotlib.py"]
+    assert reasons[got[0]] == "failing_attempt" and reasons[got[1]] == "convert_candidate"
+
+
+def test_cancelled_candidate_is_removed_immediately(env):
+    cand = _unit_candidate(env)
+    _discard(cand, cancelled=True)
+    assert not cand.dir.exists()
+
+
+def test_failed_candidate_without_a_written_file_is_not_kept(env):
+    cand = _unit_candidate(env)
+    cand.target.unlink()
+    _discard(cand, cancelled=False)
+    assert not cand.dir.exists()
+
+
+def test_failed_kept_expires_after_the_retention_and_not_before(env):
+    now = 1_000_000_000.0
+    fresh = _unit_candidate(env, "aaaaaaaaaaaa")
+    stale = _unit_candidate(env, "bbbbbbbbbbbb")
+    for cand, at in ((fresh, now - 3600), (stale, now - ai_convert.FAILED_KEEP_S - 10)):
+        _discard(cand, cancelled=False)
+        assert cand.dir.exists()
+        meta = json.loads((cand.dir / ai_convert.META_NAME).read_text(encoding="utf-8"))
+        meta["failed_kept_at"] = at
+        (cand.dir / ai_convert.META_NAME).write_text(json.dumps(meta), encoding="utf-8")
+        os.utime(cand.dir, (at, at))
+    assert ai_convert.prune_expired(now) == 1
+    assert fresh.dir.exists() and not stale.dir.exists()
+    # 诊断包也不收已过保留期、还没被清扫的
+    again = _unit_candidate(env, "cccccccccccc")
+    _discard(again, cancelled=False)
+    meta = json.loads((again.dir / ai_convert.META_NAME).read_text(encoding="utf-8"))
+    meta["failed_kept_at"] = 1.0
+    (again.dir / ai_convert.META_NAME).write_text(json.dumps(meta), encoding="utf-8")
+    assert ai_convert._candidate_file("cccccccccccc", _project(env)) is None

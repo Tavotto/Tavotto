@@ -26,6 +26,10 @@ home_csv <- path.expand("~/Desktop/x.csv")
 out <- 'C:\\\\Users\\\\someone\\\\Documents\\\\out.pdf'
 api_key <- "sk-CANARYSECRETKEY1234567890"
 password = 'CANARY_PASSWORD_VALUE'
+# contact: jane.doe+lab@dept.example.edu
+mail <- "first_last@sub.example.co.uk"
+slot_val <- obj@slot
+area <- model@fit
 """
 
 M_SCRIPT = """% data from /Users/someone/Desktop/a.csv by someone
@@ -37,6 +41,8 @@ f = 'C:\\Users\\someone\\Desktop\\a.xlsx';
 t = readtable("/Users/someone/Desktop/a.xlsx", ...
    'x');
 apiKey = 'sk-CANARYSECRETKEY1234567890';
+% reach me at jane.doe@dept.example.edu
+sq = @(x) x.^2; h = @myfun; g = cellfun(@(s) [s '@'], c, 'UniformOutput', false);
 """
 
 
@@ -264,9 +270,48 @@ class TestForeignScriptsAreScrubbed:
             "CANARY_PASSWORD_VALUE",
             "CANARY_BLOCK_SECRET",
             "sk-CANARYSECRETKEY1234567890",
+            "jane.doe",
+            "first_last",
+            "example.edu",
+            "example.co.uk",
         ):
             assert canary not in out, canary
         assert "~" in out  # 反证：家目录确实被换成了 ~，不是什么都没读到
         assert "<redacted>" in out
+        assert "<email>" in out
+        # 反例：R 的 `obj@slot`、MATLAB 的 `@(x) x.^2` / `@myfun` 不受影响
+        for keep in ("obj@slot", "model@fit", "@(x) x.^2", "@myfun", "[s '@']"):
+            assert keep in out or keep not in text, keep
         # 不含用户信息的正文原样保留（不是整份抹掉）
         assert ("library(ggplot2)" in out) or ("readtable" in out)
+
+
+class TestEmailOnlyForRAndMatlab:
+    def test_python_sources_keep_email_like_text(self, home):
+        text = "# me@example.com\n@app.route('/x')\nx = 'a@b.com'\n"
+        out = diagdetail.scrub_script(
+            text, "a.py", diagdetail.Scrubber(), diagdetail.Scrubber(source_mode=True)
+        )
+        assert "me@example.com" in out and "@app.route" in out and "a@b.com" in out
+
+    @pytest.mark.parametrize("name", ["a.R", "a.r", "a.m"])
+    def test_email_shapes(self, name, home):
+        s = diagdetail.Scrubber()
+        c = diagdetail.Scrubber(source_mode=True)
+        text = "x <- 'u.v+w@a-b.example.org'; y = 'someone@host.com.'\nobj@slot; @(x) x; f = @sin\nbad@nodot\n"
+        out = diagdetail.scrub_script(text, name, s, c)
+        assert out.count("<email>") == 2
+        assert "obj@slot" in out and "@(x) x" in out and "@sin" in out and "bad@nodot" in out
+
+    def test_email_regex_is_linear(self):
+        import time
+
+        for blob in (
+            "a" * 300_000 + "@",
+            "a." * 150_000 + "@",
+            "a@" + "b." * 150_000,
+            "a@" + "b" * 300_000,
+        ):
+            t0 = time.perf_counter()
+            diagdetail._EMAIL.sub("<email>", blob)
+            assert time.perf_counter() - t0 < 2.0
