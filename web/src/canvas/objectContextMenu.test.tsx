@@ -1354,3 +1354,53 @@ describe('「把这些修改用到同脚本的其他图…」', () => {
     expect(targets).toEqual(['Fig2.pdf'])
   })
 })
+
+describe('快捷编辑里的公式字体跟正文（Codex #1496）', () => {
+  beforeEach(async () => {
+    await seed([panel('p1')])
+    const p = byId<PanelObject>('p1')
+    const { seedExactRender } = await import('@/test/renderFixtures')
+    seedExactRender(p, {
+      stem: 'Fig1',
+      size_mm: [40, 30],
+      elements: [
+        {
+          gid: 'axes_0.title',
+          role: 'title',
+          label: '标题',
+          group: 'axes',
+          bbox: [0.1, 0.1, 0.5, 0.2],
+          editable: [
+            { prop: 'text', type: 'text', value: 'Hi' },
+            { prop: 'fontfamily', type: 'enum', value: 'serif', options: ['serif', 'sans-serif'] },
+            { prop: 'visible', type: 'bool', value: true },
+          ],
+        },
+      ],
+    } as never)
+    await mount()
+  })
+
+  it('选中一字点斜体：字体族与文字一条历史，撤销一次两者都退', async () => {
+    await act(async () => {
+      useQuickEdit.getState().open({ kind: 'element', panelId: 'p1', gid: 'axes_0.title' }, 50, 50)
+    })
+    const { richViewOf } = await import('@/components/ui/RichTextField')
+    const { TextSelection } = await import('prosemirror-state')
+    const box = document.querySelector<HTMLElement>('[role="dialog"] [data-rich-text]')!
+    const view = richViewOf(box)!
+    await act(async () => {
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 0, 1)))
+    })
+    const before = past().length
+    await click(document.querySelector<HTMLElement>('[role="dialog"] [data-rich-action="italic"]'))
+    const ov = byId<PanelObject>('p1').overrides
+    expect(ov).toContainEqual({ gid: 'axes_0.title', prop: 'fontfamily', value: 'serif' })
+    expect(ov.find((o) => o.prop === 'text')?.value).toBe('$\\mathit{H}$i')
+    expect(past().length).toBe(before + 1)
+    await act(async () => {
+      useDocumentStore.getState().undo()
+    })
+    expect(byId<PanelObject>('p1').overrides).toEqual([])
+  })
+})
