@@ -2830,7 +2830,11 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
     )
     # 标注里的公式先排好（子进程、按内容缓存，ADR 0152 PR 4）：RenderCore 只读结果，不起进程
     canvas = job.request.canvas
-    math = engine_mathtypeset.layouts_for(list(canvas.objects)) if canvas is not None else {}
+    math = (
+        engine_mathtypeset.layouts_for(list(canvas.objects), _mathtext_project())
+        if canvas is not None
+        else {}
+    )
     return rc_job.produce(
         job,
         tmp_dir,
@@ -3286,6 +3290,15 @@ def api_export_cancel():
     return jsonify({"cancelling": bool(ok)})
 
 
+def _mathtext_project() -> Path | None:
+    """公式排版选解释器时参考的项目（与图同一条 `resolve_worker_python` 决策）；没有就回 None 走全局链条。"""
+    try:
+        ctx = _request_ctx()
+    except Exception:  # noqa: BLE001 —— 作业线程里没有请求上下文 / 指名的项目不在了：退到全局链条
+        return None
+    return ctx.path if ctx is not None else None
+
+
 #: `/api/mathtext` 一次最多排几条、每条源码多长（画布一屏的公式远小于此；超了是调用方的错）
 MATHTEXT_MAX_ITEMS = 64
 MATHTEXT_MAX_SRC = 2000
@@ -3307,7 +3320,7 @@ def api_mathtext():
         if not isinstance(src, str) or len(src) > MATHTEXT_MAX_SRC:
             return jsonify({"ok": False, "error": "bad_items"}), 400
         pairs.append((src, engine_mathtypeset.family_of(it.get("family"))))
-    got = engine_mathtypeset.typeset_many(pairs)
+    got = engine_mathtypeset.typeset_many(pairs, _mathtext_project())
     return jsonify(
         {"ok": True, "results": [got[engine_mathtypeset.key_of(s_, f)] for s_, f in pairs]}
     )
@@ -9013,7 +9026,7 @@ def _write_source_files(
                 png_tmp,
                 annotations,
                 dpi=600,
-                math=engine_mathtypeset.layouts_for(annotations),
+                math=engine_mathtypeset.layouts_for(annotations, _mathtext_project()),
             )
         if warnings:
             raise WriteBackVerifyError(warnings)

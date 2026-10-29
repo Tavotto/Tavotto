@@ -20,11 +20,11 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture(autouse=True)
 def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("TAVOTTO_DATA_DIR", str(tmp_path))
-    mathtypeset._memory.clear()
-    mathtypeset._python.clear()
+    for d in (mathtypeset._memory, mathtypeset._picked, mathtypeset._missed):
+        d.clear()
     yield
-    mathtypeset._memory.clear()
-    mathtypeset._python.clear()
+    for d in (mathtypeset._memory, mathtypeset._picked, mathtypeset._missed):
+        d.clear()
 
 
 def test_typesets_to_em_outlines_and_reports_syntax_errors():
@@ -49,7 +49,7 @@ def test_second_call_comes_from_cache_without_a_child(monkeypatch):
 
 
 def test_no_runtime_is_reported_and_not_cached(monkeypatch, tmp_path):
-    monkeypatch.setattr(mathtypeset, "_pick_python", lambda: None)
+    monkeypatch.setattr(mathtypeset, "_pick_python", lambda _dir=None: None)
     got = mathtypeset.typeset_many([("y", "serif")])
     assert got[mathtypeset.key_of("y", "serif")] == {"ok": False, "error": mathtypeset.NO_RUNTIME}
     assert not (tmp_path / "cache" / "mathtext").exists()
@@ -62,3 +62,35 @@ def test_math_items_only_reads_latex_annotations():
         {"type": "text", "text": "$z$", "text_format": "latex", "hidden": True},
     ]
     assert mathtypeset.math_items(objs) == [("x^2", "sans-serif")]
+
+
+def test_a_missing_interpreter_is_retried_later(monkeypatch):
+    """第一次找不到解释器不记死：装好之后（这里是隔了 RETRY_S）不重启也能排（Codex #1497）。"""
+    import sys
+
+    answers = [None, (sys.executable, False)]
+    monkeypatch.setattr(mathtypeset, "_pick_python", lambda _dir=None: answers.pop(0))
+    monkeypatch.setattr(mathtypeset, "RETRY_S", 0.0)
+    first = mathtypeset.typeset_many([("q", "serif")])[mathtypeset.key_of("q", "serif")]
+    assert first == {"ok": False, "error": mathtypeset.NO_RUNTIME}
+    assert mathtypeset.typeset_many([("q", "serif")])[mathtypeset.key_of("q", "serif")]["ok"]
+
+
+def test_the_figure_interpreter_decision_is_a_candidate(monkeypatch, tmp_path):
+    """内置 runtime 不在、当前解释器也不算（打包态）时，用图渲染那条决策给的解释器——
+    环境变量 / 设置 / 项目环境都在那条决策里（Codex #1497）。"""
+    import sys
+
+    from tavotto.engine import pool, runtime
+
+    seen = {}
+
+    def resolve(figures_dir, **_kw):
+        seen["dir"] = figures_dir
+        return sys.executable, "env_override"
+
+    monkeypatch.setattr(runtime, "bundled_python", lambda: None)
+    monkeypatch.setattr(runtime, "is_frozen", lambda: True)
+    monkeypatch.setattr(pool, "resolve_worker_python", resolve)
+    assert mathtypeset._pick_python(tmp_path) == (sys.executable, False)
+    assert seen["dir"] == tmp_path

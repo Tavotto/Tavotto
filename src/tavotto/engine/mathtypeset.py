@@ -18,6 +18,7 @@ import json
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 from .. import richtext
@@ -40,7 +41,11 @@ NO_RUNTIME = "no_runtime"
 
 _lock = threading.Lock()
 _memory: dict[str, dict] = {}
-_python: list[str | None] = []  # 探过一次就记住（[] = 还没探）
+#: 找到的解释器按项目记住；**找不到的不记死**——隔 `RETRY_S` 再探：装好 matplotlib / 换了解释器之后
+#: 不重启也要能恢复（Codex #1497）
+_picked: dict[str, tuple[str, bool]] = {}
+_missed: dict[str, float] = {}
+RETRY_S = 30.0
 
 
 #: 查找键与排版模型同一个（`typography.math_key`）
@@ -79,28 +84,62 @@ def _has_matplotlib(python: str, *, bundled: bool) -> bool:
     return p.returncode == 0
 
 
-def _pick_python() -> tuple[str, bool] | None:
-    """排版用哪个解释器：内置 runtime → 源码模式的当前解释器 → 设置里的 worker 解释器。"""
+def _pick_python(figures_dir: str | Path | None = None) -> tuple[str, bool] | None:
+    """排版用哪个解释器（每一条都要 import 得到 matplotlib）：
+
+    1. 内置 runtime——排版结果最可复现（同一份 matplotlib、同一套 STIX）；
+    2. 图渲染用的那一个：`pool.resolve_worker_python(项目)`——环境变量 `TAVOTTO_WORKER_PYTHON`、设置、
+       项目记住的 / 项目自带的环境都在这条决策里，与图同一个出处（Codex #1497：只读全局设置会漏掉它们，
+       图画得出来、公式却一直 `no_runtime`）；没有项目时用 `select_worker_python()` 的全局链条；
+    3. 源码模式的当前解释器。
+    """
     bundled = runtime.bundled_python()
     candidates: list[tuple[str | None, bool]] = [(bundled, True)]
+    try:
+        from . import pool
+
+        python, _source = (
+            pool.resolve_worker_python(figures_dir) if figures_dir else pool.select_worker_python()
+        )
+        candidates.append((python, bool(bundled) and pool.same_python(python, bundled)))
+    except Exception:  # noqa: BLE001 —— 显式指定的解释器不可用等：图那边会自己报，这里只是少一条候选
+        pass
     if not runtime.is_frozen():
         candidates.append((sys.executable, False))
-    candidates.append((config.worker_python(), False))
+    seen: set[str] = set()
     for python, is_bundled in candidates:
-        if python and _has_matplotlib(python, bundled=is_bundled):
+        if not python or python in seen:
+            continue
+        seen.add(python)
+        if _has_matplotlib(python, bundled=is_bundled):
             return python, is_bundled
     return None
 
 
-def _run_child(items: list[tuple[str, str]]) -> list[dict]:
+def _python_for(figures_dir: str | Path | None) -> tuple[str, bool] | None:
+    key = str(figures_dir or "")
     with _lock:
-        if not _python:
-            picked = _pick_python()
-            _python.append(None if picked is None else picked[0])
-            _python.append("1" if picked and picked[1] else "")
-        python, bundled = _python[0], bool(_python[1])
-    if python is None:
+        hit = _picked.get(key)
+        if hit and Path(hit[0]).exists():
+            return hit
+        missed = _missed.get(key)
+        if missed is not None and time.monotonic() - missed < RETRY_S:
+            return None
+    picked = _pick_python(figures_dir)
+    with _lock:
+        if picked is None:
+            _missed[key] = time.monotonic()
+        else:
+            _picked[key] = picked
+            _missed.pop(key, None)
+    return picked
+
+
+def _run_child(items: list[tuple[str, str]], figures_dir: str | Path | None = None) -> list[dict]:
+    picked = _python_for(figures_dir)
+    if picked is None:
         return [{"ok": False, "error": NO_RUNTIME} for _ in items]
+    python, bundled = picked
     req = {"fonts": _fonts(), "items": [{"src": s, "family": f} for s, f in items]}
     try:
         p = subprocess.run(
@@ -120,7 +159,9 @@ def _run_child(items: list[tuple[str, str]]) -> list[dict]:
     return results
 
 
-def typeset_many(items: list[tuple[str, str]]) -> dict[str, dict]:
+def typeset_many(
+    items: list[tuple[str, str]], figures_dir: str | Path | None = None
+) -> dict[str, dict]:
     """[(源码, 族)] → {键: 结果}。结果是 `mathtext_child` 的形状（em 单位、y 向上），或 `{"ok": False, "error"}`。"""
     out: dict[str, dict] = {}
     todo: list[tuple[str, str]] = []
@@ -143,7 +184,7 @@ def typeset_many(items: list[tuple[str, str]]) -> dict[str, dict]:
             todo.append((src, fam))
             out[key] = {}
     if todo:
-        for (src, fam), res in zip(todo, _run_child(todo)):
+        for (src, fam), res in zip(todo, _run_child(todo, figures_dir)):
             key = key_of(src, fam)
             out[key] = res
             if res.get("error") == NO_RUNTIME or str(res.get("error", "")).startswith(
@@ -177,7 +218,7 @@ def math_items(objects: list[dict]) -> list[tuple[str, str]]:
     return items
 
 
-def layouts_for(objects: list[dict]) -> dict[str, dict]:
+def layouts_for(objects: list[dict], figures_dir: str | Path | None = None) -> dict[str, dict]:
     """导出用：这批对象里公式的排版结果，交给 `plan.compile_page(math=…)`。没有公式就不起子进程。"""
     items = math_items(objects)
-    return typeset_many(items) if items else {}
+    return typeset_many(items, figures_dir) if items else {}
