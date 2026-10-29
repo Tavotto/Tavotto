@@ -1254,5 +1254,17 @@
     "annotations_one": "{{count}} text or annotation",
     "annotations_other": "{{count}} texts and annotations",
     "canvasSettings": "Canvas settings"
+  },
+  "richText": {
+    "bold": "Bold (selection)",
+    "boldTitle": "Bold: applies to the selected text ({{key}})",
+    "italic": "Italic (selection)",
+    "italicTitle": "Italic: applies to the selected text ({{key}})",
+    "sup": "Superscript",
+    "supTitle": "Superscript: applies to the selected text ({{key}})",
+    "sub": "Subscript",
+    "subTitle": "Subscript: applies to the selected text ({{key}})",
+    "newline": "Insert line break",
+    "newlineTitle": "Insert a line break at the cursor ({{alt}} / {{mod}})"
   }
 }

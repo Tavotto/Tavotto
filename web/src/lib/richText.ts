@@ -606,7 +606,8 @@ export function transformCase(
   )
 }
 
-function applyCase(s: string, mode: CaseMode): string {
+/** 一段纯文字的大小写转换（不认任何标记）。 */
+export function applyCase(s: string, mode: CaseMode): string {
   switch (mode) {
     case 'upper':
       return s.toUpperCase()

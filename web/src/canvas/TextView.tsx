@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react'
+import { useLayoutEffect, useRef, type CSSProperties } from 'react'
 import { msg, t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import {
@@ -13,6 +13,8 @@ import {
   type TextRun,
 } from '@/lib/richText'
 import { layerOf } from '@/lib/glyphPlan'
+import { annotationCodec } from '@/lib/richEditor'
+import { RichTextField } from '@/components/ui/RichTextField'
 import { MM_PER_PT } from '@/lib/units'
 import { canvasSelectionFor, groundInkFor, type CanvasSelection, type SelectionInk } from '@/lib/canvasSelection'
 import { useDocumentStore } from '@/store/documentStore'
@@ -31,8 +33,8 @@ const SELECTION_CLASS: Record<CanvasSelection, string> = {
 }
 /** 编辑态的占位落在底上本身：按底的深浅取纸墨的 65%（白纸上 ≈ 浅色里的 ink-3） */
 const PLACEHOLDER_CLASS: Record<SelectionInk, string> = {
-  'paper-ink': 'data-empty:before:text-paper-ink/65',
-  paper: 'data-empty:before:text-paper/65',
+  'paper-ink': '[&_.ProseMirror[data-empty]]:before:text-paper-ink/65',
+  paper: '[&_.ProseMirror[data-empty]]:before:text-paper/65',
 }
 
 /**
@@ -83,83 +85,46 @@ export function TextView({
     // editing 在依赖里：div 带着 key 随编辑态重建（见下），必须重新 observe 新节点
   }, [obj.id, editing, preview])
 
-  // 进入编辑态时 React 已把子节点清空，这里接管 DOM 内容避免打字被重渲染覆盖
-  useEffect(() => {
-    if (!editing) return
-    const el = ref.current
-    if (!el) return
-    el.innerText = obj.text
-    syncEmpty(el)
-    el.focus()
-    const range = document.createRange()
-    range.selectNodeContents(el)
-    const sel = window.getSelection()
-    sel?.removeAllRanges()
-    sel?.addRange(range)
-    // obj.text 只在提交时变化，故意不作为依赖，防止打字过程中回灌
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing])
-
+  /**
+   * 就地编辑（ADR 0152）：所见即所得文字框，Enter / Esc 提交，⌥/⌘/Ctrl+Enter 换行。
+   * 打字期间只记在这里，失焦时整段写成**一条**历史（与改造前同一契约）；写回 LaTeX 子集并标 textFormat。
+   */
+  const pending = useRef<string | null>(null)
   const commitText = () => {
-    const el = ref.current
-    if (!el) return
-    const text = el.innerText.replace(/\n$/, '')
+    const text = pending.current
+    pending.current = null
     setEditingText(null)
-    if (text !== obj.text) {
+    if (text !== null && text !== obj.text) {
       useDocumentStore.getState().commit(msg('history.editText', undefined, 'inspector'), (d) => {
         const o = d.objects.find((x) => x.id === obj.id)
-        if (o && o.type === 'text') o.text = text
+        if (o && o.type === 'text') {
+          o.text = text
+          o.textFormat = 'latex'
+        }
       })
     }
+  }
+  const blurEditor = () => {
+    const ae = document.activeElement
+    if (ae instanceof HTMLElement && ref.current?.contains(ae)) ae.blur()
+    return true
   }
 
   return (
     <div
-      // key 随编辑态变：编辑期 contentEditable 往 DOM 里写的文本节点不归
-      // React 管，退出编辑时 React 只会把 <RenderedText> 插进去、不会清掉
-      // 那些野节点——正文就显示两遍（键入「（a）」显示「（a）（a）」）。
-      // 换 key 强制重建 div，两个方向的切换都从空 DOM 开始。
+      // key 随编辑态变：编辑器与静态渲染各自从空 DOM 开始，ResizeObserver 也随之重挂
+      // （历史：plaintext contentEditable 时代留下的野节点会让正文显示两遍）。
       key={editing ? 'editing' : 'static'}
       ref={ref}
-      // plaintext-only：Enter 语义可控、粘贴不带富文本、DOM 里只有文本节点
-      contentEditable={editing ? 'plaintext-only' : false}
-      suppressContentEditableWarning
       spellCheck={false}
-      onBlur={editing ? commitText : undefined}
-      onInput={editing ? (e) => syncEmpty(e.currentTarget) : undefined}
-      onKeyDown={
-        editing
-          ? (e) => {
-              e.stopPropagation()
-              if (e.key === 'Escape') {
-                e.preventDefault()
-                ref.current?.blur()
-              } else if (e.key === 'Enter') {
-                // 契约：Enter 提交；⌥/⌘/Ctrl+Enter 换行。
-                // 不走 contentEditable 默认断行——WebKit 在行尾插的 <br>
-                // 不可见，提交时又被当尾部空行裁掉，表现为「按了没反应」。
-                e.preventDefault()
-                if (e.altKey || e.metaKey || e.ctrlKey) {
-                  document.execCommand('insertText', false, '\n')
-                } else {
-                  ref.current?.blur()
-                }
-              }
-            }
-          : undefined
-      }
       onPointerDown={editing ? (e) => e.stopPropagation() : undefined}
-      // 编辑时空着就写一句占位（2026-10-07 设计审计 §10.1）：此前清空之后框里什么都没有，看不出还在编辑。
-      // 占位只在 ::before 里（不进 innerText、不会被提交成正文）。「空」认 data-empty 不认 :empty：
-      // 全选删掉之后 Chromium/WebKit 常在框里留一个 <br>，:empty 就不再命中、占位恰在清空时不见。
-      data-placeholder={editing ? translate('stage.textPlaceholder', { ns: 'workspace' }) : undefined}
       className={cn(
         'absolute left-0 top-0 w-full outline-none',
         // 选区：全局 ::selection 是界面的（半透明 accent tint + 界面 ink）。纸上的底由用户定（深色页面、中灰文字框…），
         // tint 叠上去配哪种墨都可能不到 4.5:1（Codex P2 两轮）——纸上的选区自己定不透明的底与墨
         selectionClass,
         // 占位：纸墨 65%，不是界面的 ink-3（暗色里是浅灰，落在白纸上看不见）
-        editing && cn('data-empty:before:pointer-events-none data-empty:before:content-[attr(data-placeholder)]', placeholderClass),
+        editing && placeholderClass,
       )}
       style={{
         fontFamily: canvasFontStack(effectiveCanvasFamily(obj)),
@@ -184,7 +149,24 @@ export function TextView({
           : undefined,
       }}
     >
-      {editing ? null : (
+      {editing ? (
+        <RichTextField
+          variant="inline"
+          // 与属性页文字框同一个名字（「文字」）
+          aria-label={translate('text.title', { ns: 'inspector' })}
+          value={obj.text}
+          codec={annotationCodec(obj.textFormat)}
+          onChange={(text) => (pending.current = text)}
+          onBlur={commitText}
+          onEnter={blurEditor}
+          onEscape={blurEditor}
+          // 编辑时空着就写一句占位（2026-10-07 设计审计 §10.1），只在 ::before 里、不进正文
+          placeholder={translate('stage.textPlaceholder', { ns: 'workspace' })}
+          sizePx={sizePx}
+          selectAllOnMount
+          testId="canvas-text-editor"
+        />
+      ) : (
         <RenderedText
           text={obj.text}
           sizePx={sizePx}
@@ -196,10 +178,6 @@ export function TextView({
   )
 }
 
-/** 编辑框「看起来空」：只剩浏览器留下的 <br> / 末尾换行也算空。DOM 归 contentEditable 管，故直接写属性、不走 state */
-function syncEmpty(el: HTMLElement) {
-  el.toggleAttribute('data-empty', (el.textContent ?? '').replace(/\n$/, '') === '')
-}
 
 /**
  * 行内标记的渲染（上标 / 下标、LaTeX 写法的行内斜体 / 粗体，ADR 0152）。

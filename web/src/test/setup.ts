@@ -66,3 +66,10 @@ afterEach(() => {
 afterEach(() => {
   __resetOutboxForTests()
 })
+
+// ProseMirror（所见即所得文字框，ADR 0152）聚焦 / 滚动时要量选区的矩形：jsdom 没有版面，
+// Range 上这两个方法不存在，补成「零大小」——用例只断言文档与状态，不断言位置。
+if (typeof Range !== 'undefined' && !Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => ({ length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] }) as unknown as DOMRectList
+  Range.prototype.getBoundingClientRect = () => new DOMRect()
+}

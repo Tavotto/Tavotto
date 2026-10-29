@@ -4910,6 +4910,18 @@ export default interface Resources {
       }
     },
     "resize": "调整属性栏宽度（{{min}}–{{max}} px）",
+    "richText": {
+      "bold": "粗体（选中的字）",
+      "boldTitle": "粗体：作用于选中的字（{{key}}）",
+      "italic": "斜体（选中的字）",
+      "italicTitle": "斜体：作用于选中的字（{{key}}）",
+      "newline": "插入换行",
+      "newlineTitle": "在光标处插入换行（{{alt}} / {{mod}}）",
+      "sub": "下标",
+      "subTitle": "下标：作用于选中的字（{{key}}）",
+      "sup": "上标",
+      "supTitle": "上标：作用于选中的字（{{key}}）"
+    },
     "role": {
       "arrow_patch": "箭头",
       "axes": "子图",

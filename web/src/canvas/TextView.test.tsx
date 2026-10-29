@@ -1,18 +1,9 @@
 /**
- * 文字标注：退出编辑态后正文只显示一遍。
+ * 文字标注的画布渲染与就地编辑。
  *
- * 背景（2026-08-25 用户报告：键入「（a）」显示「（a）（a）」）：编辑期
- * contentEditable 往 div 里写的文本节点不归 React 管——React 在编辑态渲染的
- * 子节点是 null。退出编辑时 React 只把 <RenderedText> 插进去、不清野节点，
- * 于是 contentEditable 留下的那份和 React 渲染的那份同时在场，正文显示两遍。
- * （回归自 104729b：在那之前非编辑态子节点是纯字符串，React 对单字符串子节点
- * 走 textContent 直写路径，顺手清掉了整个 DOM；换成 <RenderedText> 元素后
- * 这条清扫就没了。）
- *
- * 修法是 div 的 key 随编辑态变（editing/static），两个方向的切换都强制重建
- * DOM。这里模拟 contentEditable 的行为直接往 DOM 塞真实文本节点——jsdom 不
- * 实现 innerText（赋值只是 expando 属性），所以 textContent + innerText 两个
- * 都要摆：前者是 React 看得见的真实 DOM，后者是 commitText 读的那份。
+ * 就地编辑是所见即所得文字框（ADR 0152）：编辑器从现有正文（带样式）起步，失焦时整段写成一条历史；
+ * 没改就不写。历史背景（2026-08-25「（a）」显示两遍）：plaintext contentEditable 时代退出编辑后会残留
+ * 野节点——div 的 key 随编辑态变的修法保留，这里的用例改为断言编辑器本身的行为。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -23,6 +14,7 @@ import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type TextObject } from '@/types/document'
 import { CANVAS_TEXT_FAMILIES, canvasFontStack } from '@/lib/typography'
 import { TextView } from './TextView'
+import { richViewOf } from '@/components/ui/RichTextField'
 
 const textObj = (over: Partial<TextObject> = {}): TextObject => ({
   id: 't1',
@@ -66,13 +58,6 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-/** 模拟 contentEditable 打字：真实文本节点（React 不知情）+ innerText expando */
-function typeInto(el: HTMLElement, text: string) {
-  el.textContent = text
-  // jsdom 的 innerText 赋值不落进 DOM，只是普通属性——commitText 读的正是它
-  ;(el as unknown as { innerText: string }).innerText = text
-}
-
 describe('字体族落到画布上', () => {
   const renderOne = (over: Partial<TextObject>) => {
     useDocumentStore.getState().silent((d) => {
@@ -103,58 +88,64 @@ describe('字体族落到画布上', () => {
   })
 })
 
-describe('TextView 编辑提交', () => {
-  it('退出编辑后正文只显示一遍（不残留 contentEditable 的野节点）', async () => {
-    const obj = textObj()
-    useDocumentStore.getState().silent((d) => {
-      d.objects.push(obj)
+describe('TextView 编辑提交（所见即所得就地编辑，ADR 0152）', () => {
+  const render = () =>
+    act(() => {
+      root.render(<TextView obj={useDocumentStore.getState().doc.objects[0] as TextObject} />)
     })
-    const render = () =>
-      act(() => {
-        root.render(<TextView obj={useDocumentStore.getState().doc.objects[0] as TextObject} />)
-      })
-    render()
+  const editor = () => container.querySelector<HTMLElement>('[data-rich-text="inline"]')!
 
-    // 进入编辑态（等一拍让编辑 effect 跑完）
+  it('打字后失焦：一条历史写回 LaTeX 子集，退出后正文只显示一遍', async () => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(textObj({ text: '' }))
+    })
+    render()
     await act(async () => {
       useUiStore.getState().setEditingText('t1')
     })
     render()
-    const editingEl = container.querySelector('div')!
-    expect(editingEl.getAttribute('contenteditable')).toBe('plaintext-only')
-
-    // 打字 + 失焦提交（React 的 onBlur 由 focusout 驱动）
+    const view = richViewOf(editor())!
     await act(async () => {
-      typeInto(editingEl, '（a）')
-      editingEl.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+      editor().focus()
+      view.dispatch(view.state.tr.insertText('（a）'))
+      editor().blur()
     })
     render()
-
-    expect(useDocumentStore.getState().doc.objects[0]).toMatchObject({ text: '（a）' })
-    // 修之前这里是「（a）（a）」：React 插入的 <RenderedText> 与
-    // contentEditable 留下的文本节点同时在场
+    expect(useDocumentStore.getState().doc.objects[0]).toMatchObject({ text: '（a）', textFormat: 'latex' })
+    expect(useUiStore.getState().editingTextId).toBeNull()
     expect(container.textContent).toBe('（a）')
   })
 
-  it('再次进入编辑不把上一轮的渲染文本带进 DOM', async () => {
+  it('进入编辑：编辑器里就是现有正文（带样式），只出现一遍', async () => {
     useDocumentStore.getState().silent((d) => {
-      d.objects.push(textObj({ text: '（a）' }))
+      d.objects.push(textObj({ text: 'T \\textit{x}', textFormat: 'latex' }))
     })
-    const render = () =>
-      act(() => {
-        root.render(<TextView obj={useDocumentStore.getState().doc.objects[0] as TextObject} />)
-      })
     render()
-    expect(container.textContent).toBe('（a）')
-
     await act(async () => {
       useUiStore.getState().setEditingText('t1')
     })
     render()
-    const editingEl = container.querySelector('div')!
-    // 编辑态从空 DOM 开始（编辑 effect 的 innerText 赋值在 jsdom 里不进 DOM，
-    // 真浏览器里它会重设全部内容）；展示态渲染的文本节点必须已被清走
-    expect(editingEl.textContent).toBe('')
+    expect(editor().textContent).toBe('T x')
+    expect(editor().querySelector('em')?.textContent).toBe('x')
+  })
+
+  it('没改就退出：不写文档、不进历史', async () => {
+    useDocumentStore.getState().silent((d) => {
+      d.objects.push(textObj({ text: 'cm^{-1}' }))
+    })
+    render()
+    await act(async () => {
+      useUiStore.getState().setEditingText('t1')
+    })
+    render()
+    const before = useDocumentStore.getState().past.length
+    await act(async () => {
+      editor().focus()
+      editor().blur()
+    })
+    expect(useDocumentStore.getState().doc.objects[0]).toMatchObject({ text: 'cm^{-1}' })
+    expect((useDocumentStore.getState().doc.objects[0] as TextObject).textFormat).toBeUndefined()
+    expect(useDocumentStore.getState().past.length).toBe(before)
   })
 })
 
@@ -233,34 +224,29 @@ describe('TextView 编辑态的插入点与占位', () => {
     act(() => root.render(<TextView obj={obj()} />))
     const el = () => container.querySelector<HTMLElement>('div')!
     expect(el().style.caretColor).toBe('')
-    expect(el().dataset.placeholder).toBeUndefined()
+    expect(container.querySelector('[data-placeholder]')).toBeNull()
     act(() => useUiStore.setState({ editingTextId: 't1' }))
     act(() => root.render(<TextView obj={obj()} />))
     expect(el().style.caretColor).toBe('var(--color-accent)')
-    expect(el().dataset.placeholder).toBe('输入文字')
-    expect(el().textContent, '占位不进正文').toBe('')
-    expect(el().hasAttribute('data-empty')).toBe(true)
+    const editor = container.querySelector<HTMLElement>('[data-rich-text="inline"]')!
+    expect(editor.dataset.placeholder).toBe('输入文字')
+    expect(editor.textContent, '占位不进正文').toBe('')
+    expect(editor.hasAttribute('data-empty')).toBe(true)
   })
 
-  it('打字后不算空；全选删掉只剩浏览器留下的 <br> 时又算空（不靠 :empty）', () => {
+  it('打字后不算空；全删之后又算空', () => {
     useDocumentStore.getState().silent((d) => {
       d.objects.push(textObj())
     })
     const obj = () => useDocumentStore.getState().doc.objects[0] as TextObject
     act(() => useUiStore.setState({ editingTextId: 't1' }))
     act(() => root.render(<TextView obj={obj()} />))
-    const el = () => container.querySelector<HTMLElement>('div')!
-    act(() => {
-      el().textContent = 'a'
-      el().dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    expect(el().hasAttribute('data-empty')).toBe(false)
-    act(() => {
-      el().replaceChildren(document.createElement('br'))
-      el().dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    expect(el().matches(':empty'), '留着 <br>，:empty 不命中').toBe(false)
-    expect(el().hasAttribute('data-empty')).toBe(true)
+    const editor = () => container.querySelector<HTMLElement>('[data-rich-text="inline"]')!
+    const view = richViewOf(editor())!
+    act(() => view.dispatch(view.state.tr.insertText('a')))
+    expect(editor().hasAttribute('data-empty')).toBe(false)
+    act(() => view.dispatch(view.state.tr.delete(0, view.state.doc.content.size)))
+    expect(editor().hasAttribute('data-empty')).toBe(true)
   })
 })
 
