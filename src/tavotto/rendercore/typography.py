@@ -206,6 +206,12 @@ class LaidOutLine:
     pieces: tuple[ShapedPiece, ...]
     #: 这一行**用户写的**原文（含 Unicode 上下标字符，不含 `^{}` 标记）——ActualText 的依据。
     logical: str
+    #: 这一行里排好的公式：(行内起点 x（pt，页面 y 向下空间）, 排版结果)。结果是 `engine.mathtypeset`
+    #: 的形状：em 单位、基线 y = 0、y 向上（ADR 0152 PR 4）
+    math: tuple[tuple[float, dict], ...] = ()
+    #: 每个 piece 的起点 x（同一空间）。没有公式时首尾相接（= 行起点 + 前面各段宽之和）；公式后面的
+    #: 那一段从公式右边起——落笔时在这里断开另起一段文字，不然后面的字会压在公式上
+    piece_x: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -220,6 +226,8 @@ class TextBlock:
     missing: tuple[str, ...]
     #: 落在 cjk 层的字符（换族不换它；不算换脸）。
     cjk_chars: tuple[str, ...]
+    #: 排不出来的公式：(源码, 原因)。这些公式按源码原样画了（`$…$`），调用方把它们报成问题
+    math_failures: tuple[tuple[str, str], ...] = ()
 
 
 #: 行内样式：(斜体, 粗体)。
@@ -231,9 +239,48 @@ _PLAIN: Style = (False, False)
 Unit = list[tuple[str, str, str, Style]]
 
 
-def _unit_w(u: Unit, faces: FaceSet, size: float) -> float:
+#: 公式在换行单元里的 script 标记；占位字符见 `MathSlots`
+MATH = "math"
+#: 公式占位字符从这里数起（Unicode 补充专用区 B）：一个公式一个字符，原文里不可能出现
+_MATH_BASE = 0x100000
+
+
+def math_key(src: str, family: str) -> str:
+    """公式排版结果的查找键（`compile_page(math=…)` 与 `engine.mathtypeset` 同一个）。"""
+    return f"{family}\x00{src}"
+
+
+class MathSlots:
+    """一段文字里的公式（ADR 0152 PR 4）：每个排得出的公式在换行单元里占**一个**占位字符，
+    换行把它当成不可拆的一格（`_CJK_BREAK` 以上的字符本来就各自成单元），量宽读排版结果的宽度。
+
+    排不出的（结果缺席或 `ok` 为假）不占位：调用方按源码原样画，并记进 `failed`。"""
+
+    def __init__(self, lookup):
+        self._lookup = lookup
+        self.boxes: dict[str, dict] = {}
+        self.failed: list[tuple[str, str]] = []
+
+    def slot(self, src: str) -> str | None:
+        box = self._lookup(src)
+        if not box or not box.get("ok"):
+            err = str((box or {}).get("error") or "not_typeset")
+            if (src, err) not in self.failed:
+                self.failed.append((src, err))
+            return None
+        ch = chr(_MATH_BASE + len(self.boxes))
+        self.boxes[ch] = box
+        return ch
+
+    def width(self, seg: str, size: float) -> float:
+        return sum(float(self.boxes[ch]["width"]) * size for ch in seg)
+
+
+def _unit_w(u: Unit, faces: FaceSet, size: float, slots: MathSlots | None = None) -> float:
     return sum(
-        mixed_width(seg, faces.styled(*st), richtext.run_metrics(sc, size)[0])
+        slots.width(seg, size)
+        if sc == MATH and slots is not None
+        else mixed_width(seg, faces.styled(*st), richtext.run_metrics(sc, size)[0])
         for seg, sc, _, st in u
     )
 
@@ -256,17 +303,25 @@ def _chars_of(u: Unit) -> list[Unit]:
 
 
 def interpreted_pieces(
-    runs: list[richtext.TextRun], faces: FaceSet, interpretation: str
+    runs: list[richtext.TextRun],
+    faces: FaceSet,
+    interpretation: str,
+    slots: MathSlots | None = None,
 ) -> list[tuple[str, str, str, Style]]:
     """一行的片段 → [(渲染文字, script, 用户原文, 行内样式)]。合成上下标（`⁵` → 上标 `5`）的
     那一段 `用户原文 != 渲染文字`；用户自己写的 `^{5}` 两者相同（括号里就是他打的字）。
     覆盖判据按片段自己落笔的那张脸问（`\\textit{}` 问斜体脸）。
 
-    公式片段（`math`）在公式排版接入之前按源码原样画（`$…$` 连定界符），即用户写的字。"""
+    公式片段（`math`）排得出时占一个占位字符（`MathSlots`）；排不出、或调用方没给排版结果时
+    按源码原样画（`$…$` 连定界符），即用户写的字。"""
     out: list[tuple[str, str, str, Style]] = []
     for run in runs:
         style: Style = (run.italic, run.bold)
         if run.math:
+            ch = slots.slot(run.text) if slots is not None else None
+            if ch is not None:
+                out.append((ch, MATH, ch, _PLAIN))
+                continue
             src = f"${run.text}$"
             out.append((src, "", src, _PLAIN))
             continue
@@ -292,6 +347,7 @@ def break_lines(
     box_w: float,
     interpretation: str,
     text_format: str | None = None,
+    slots: MathSlots | None = None,
 ) -> list[Unit]:
     """贪心换行——与旧 facade `_draw_text` 逐句相同：行内标记先解析成片段，Unicode 上下标
     按 `richtext.interpret_runs` 受控解释；CJK 逐字、拉丁按词（空格附着前词）；单个单元
@@ -307,7 +363,9 @@ def break_lines(
             else:
                 cur.append((ch, sc, lch, st))
 
-        for text_, script, logical, style in interpreted_pieces(line_runs, faces, interpretation):
+        for text_, script, logical, style in interpreted_pieces(
+            line_runs, faces, interpretation, slots
+        ):
             for ch, lch in zip(text_, logical):
                 if ord(ch) > _CJK_BREAK:
                     if cur:
@@ -324,20 +382,20 @@ def break_lines(
 
         line: Unit = []
         for u in units:
-            if len(_chars_of(u)) > 1 and _unit_w(_rstrip(u), faces, size) > box_w:
+            if len(_chars_of(u)) > 1 and _unit_w(_rstrip(u), faces, size, slots) > box_w:
                 if line:
                     lines.append(_rstrip(line))
                     line = []
                 for cu in _chars_of(u):
                     cand = line + cu
-                    if line and _unit_w(_rstrip(cand), faces, size) > box_w:
+                    if line and _unit_w(_rstrip(cand), faces, size, slots) > box_w:
                         lines.append(_rstrip(line))
                         line = list(cu)
                     else:
                         line = cand
                 continue
             cand = line + u
-            if line and _unit_w(_rstrip(cand), faces, size) > box_w:
+            if line and _unit_w(_rstrip(cand), faces, size, slots) > box_w:
                 lines.append(_rstrip(line))
                 line = list(u)
             else:
@@ -371,9 +429,12 @@ def _same_run(a: ShapedPiece, b: ShapedPiece) -> bool:
     return a.face is b.face and a.size == b.size and a.rise == b.rise and a.layer == b.layer
 
 
-def layout_text(t: dict, faces: FaceSet) -> TextBlock | None:
+def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
     """画布文字对象（`text` / `size_pt` / `x_mm` … 与旧 facade 同一份字段）→ 已排版的块。
-    空白文字回 None（什么都不画）。"""
+    空白文字回 None（什么都不画）。
+
+    `math`：公式排版结果（`math_key(源码, 族)` → 结果），调用方事先排好（`engine.mathtypeset`）；
+    本模块不起子进程。缺席 = 公式按源码画、不报问题（没有接公式排版的调用方，行为与 PR 4 之前相同）。"""
     text = t.get("text", "")
     if not text.strip():
         return None
@@ -386,7 +447,9 @@ def layout_text(t: dict, faces: FaceSet) -> TextBlock | None:
     box_w = mm2pt(t["w_mm"]) - 2 * pad
     align = t.get("align", "left")
 
-    units_lines = break_lines(text, faces, size, box_w, interp, fmt)
+    fam = latin_family(t.get("font_family"))
+    slots = MathSlots(lambda src: math.get(math_key(src, fam))) if math is not None else None
+    units_lines = break_lines(text, faces, size, box_w, interp, fmt, slots)
     asc, desc = faces.primary.ascender, faces.primary.descender
     baseline0 = y0 + size * ((line_h - (asc - desc)) / 2 + asc)
     cov = coverage(faces)
@@ -395,7 +458,7 @@ def layout_text(t: dict, faces: FaceSet) -> TextBlock | None:
     for i, line in enumerate(units_lines):
         if not line:
             continue
-        w = _unit_w(line, faces, size)
+        w = _unit_w(line, faces, size, slots)
         x = (
             x0 + (box_w - w) / 2
             if align == "center"
@@ -404,14 +467,26 @@ def layout_text(t: dict, faces: FaceSet) -> TextBlock | None:
             else x0
         )
         pieces: list[ShapedPiece] = []
+        piece_x: list[float] = []
+        maths: list[tuple[float, dict]] = []
+        cursor = 0.0  # 行内已落笔的宽度：公式与公式后面的字都按它落位
+        after_math = False  # 公式之后的第一段不并进前一段（中间隔着公式的宽度）
         for seg_text, seg_script, seg_logical, seg_style in line:
+            if seg_script == MATH and slots is not None:
+                for ch in seg_text:
+                    maths.append((x + cursor, slots.boxes[ch]))
+                    cursor += slots.width(ch, size)
+                after_math = True
+                continue
             seg_size, rise = richtext.run_metrics(seg_script, size)
             for piece in shape_segment(
                 seg_text, faces.styled(*seg_style), seg_size, rise, seg_logical
             ):
+                start = x + cursor
+                cursor += piece.width
                 # 相邻、同脸同字号同基线的片段合成一段：换行单元按空格切开只是为了换行，
                 # 落笔时它们是同一段文字（advance 已各自排好，合并不改几何）
-                if pieces and _same_run(pieces[-1], piece):
+                if pieces and not after_math and _same_run(pieces[-1], piece):
                     prev = pieces[-1]
                     pieces[-1] = ShapedPiece(
                         prev.face,
@@ -424,9 +499,23 @@ def layout_text(t: dict, faces: FaceSet) -> TextBlock | None:
                     )
                 else:
                     pieces.append(piece)
-        logical = "".join(seg_logical for _, _, seg_logical, _ in line)
+                    piece_x.append(start)
+                after_math = False
+        logical = "".join(
+            seg_logical for _, sc, seg_logical, _ in line if not (sc == MATH and slots is not None)
+        )
         rendered += logical
-        out.append(LaidOutLine(x, baseline0 + i * size * line_h, w, tuple(pieces), logical))
+        out.append(
+            LaidOutLine(
+                x,
+                baseline0 + i * size * line_h,
+                w,
+                tuple(pieces),
+                logical,
+                tuple(maths),
+                tuple(piece_x),
+            )
+        )
     missing, _subst = glyphplan.text_diagnostics(
         text, cov, interp, text_format=fmt, styled_cov=lambda st: coverage(faces.styled(*st))
     )
@@ -441,4 +530,5 @@ def layout_text(t: dict, faces: FaceSet) -> TextBlock | None:
         underline=bool(t.get("underline")),
         missing=tuple(missing),
         cjk_chars=cjk_chars,
+        math_failures=tuple(slots.failed) if slots is not None else (),
     )

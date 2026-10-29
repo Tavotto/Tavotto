@@ -201,6 +201,29 @@ describe('科学文本解释', () => {
     expect(spans.filter((s) => s.style.fontWeight === '700').map((s) => s.textContent)).toEqual(['K'])
   })
 
+  it('公式（ADR 0152 PR 4）：先按源码显示，排好后换成轮廓；不撑开行盒', async () => {
+    const { __resetMathForTests } = await import('@/lib/mathtext')
+    __resetMathForTests()
+    vi.stubGlobal('fetch', async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          results: [{ ok: true, width: 2, ascent: 0.8, descent: 0.2, segments: [['M', 0, 0], ['L', 2, 0], ['Z']] }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    const el = renderOne({ text: 'k = $x^2$', textFormat: 'latex' })
+    expect(el.querySelector('[data-math-state="pending"]')?.textContent).toBe('$x^2$')
+    await act(async () => {
+      await vi.waitFor(() => expect(el.querySelector('[data-math-state="ok"]')).not.toBeNull())
+    })
+    const math = el.querySelector<HTMLElement>('[data-math-state="ok"]')!
+    expect(math.style.height).toBe('0px')
+    expect(parseFloat(math.style.width)).toBeCloseTo(2 * mmPxOf(el), 5)
+    expect(math.querySelector('path')?.getAttribute('d')).toBe('M 0 0 L 2 0 Z')
+  })
+
   it('没有 textFormat 的老标注：LaTeX 命令原样显示', () => {
     expect(renderOne({ text: '\\textit{T}' }).textContent).toBe('\\textit{T}')
   })

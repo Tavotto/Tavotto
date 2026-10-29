@@ -14,6 +14,7 @@ import {
 } from '@/lib/richText'
 import { layerOf } from '@/lib/glyphPlan'
 import { annotationCodec } from '@/lib/richEditor'
+import { MathFormula } from '@/components/ui/MathFormula'
 import { RichTextField } from '@/components/ui/RichTextField'
 import { MM_PER_PT } from '@/lib/units'
 import { canvasSelectionFor, groundInkFor, type CanvasSelection, type SelectionInk } from '@/lib/canvasSelection'
@@ -163,6 +164,7 @@ export function TextView({
           // 编辑时空着就写一句占位（2026-10-07 设计审计 §10.1），只在 ::before 里、不进正文
           placeholder={translate('stage.textPlaceholder', { ns: 'workspace' })}
           sizePx={sizePx}
+          mathFamily={effectiveCanvasFamily(obj)}
           selectAllOnMount
           testId="canvas-text-editor"
         />
@@ -172,6 +174,7 @@ export function TextView({
           sizePx={sizePx}
           interpretation={obj.interpretation}
           format={obj.textFormat}
+          family={effectiveCanvasFamily(obj)}
         />
       )}
     </div>
@@ -186,19 +189,21 @@ export function TextView({
  * 是相对元素自身字号解析的，套在缩小后的 span 上会再乘一次比例，画布与
  * 导出就对不上了。常量取自 lib/richText.ts，与后端 richtext.py 同源。
  *
- * 公式片段在公式排版接入之前按源码原样画（`$…$` 连定界符）——与导出那一侧
- * （`typography.interpreted_pieces`）同一个约定。
+ * 公式片段画后端 matplotlib 排出的轮廓（`MathFormula`，与导出同一份结果）；还没排好 / 排不出时
+ * 按源码原样画（`$…$`），与导出那一侧（`typography.interpreted_pieces`）同一个退路。
  */
 function RenderedText({
   text,
   sizePx,
   interpretation,
   format,
+  family,
 }: {
   text: string
   sizePx: number
   interpretation?: TextInterpretation
   format?: TextFormat
+  family: string
 }) {
   // 与导出读同一份判据：`layerOf` 的覆盖表就是 PDF 后端那三张脸的能力。
   // **浏览器自己的字体栈不参与这个判断**——它画得出 `⁵` 不代表导出画得出，
@@ -213,7 +218,7 @@ function RenderedText({
   return (
     <>
       {runs.map((r, i) => {
-        if (r.math) return <span key={i}>{`$${r.text}$`}</span>
+        if (r.math) return <MathFormula key={i} src={r.text} family={family} sizePx={sizePx} />
         // 行内样式只在**打开**时写：对象自己是粗 / 斜体时，片段不写 normal 去覆盖它（与导出的「或」一致）
         const style: CSSProperties = {}
         if (r.italic) style.fontStyle = 'italic'

@@ -2,7 +2,7 @@
 import { t } from '@/i18n'
 import type { ArtifactValidation, SourceBackedFigure } from '@/lib/artifactValidation'
 import { newId } from '@/lib/id'
-import type { TextFormat } from '@/lib/richText'
+import { displayText, type TextFormat } from '@/lib/richText'
 import { migrateFigureFrames } from '@/lib/figureFrameMigration'
 
 export interface ObjectBase {
@@ -687,7 +687,7 @@ export function objectLabel(o: CanvasObject): string {
     case 'panel':
       return o.fileId.split('/').pop()?.replace(/\.[^.]+$/, '') ?? t('objectType.panel')
     case 'text':
-      return o.text.trim().slice(0, 18) || t('objectType.emptyText')
+      return displayText(o.text, o.textFormat).trim().slice(0, 18) || t('objectType.emptyText')
     case 'arrow':
       return t('objectType.arrow')
     case 'shape':

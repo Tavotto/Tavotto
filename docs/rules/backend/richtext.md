@@ -31,6 +31,10 @@ order: 250
   （核心 `web/src/lib/richEditor.ts`）编辑，不再有纯文本框直接改标记。它只在用户真的改了时写回规范形；
   图内文字的写法是 `web/src/lib/mathtextCodec.ts`（只认规范段，其余 `$…$` 原样是公式块，`$` / `\$` 按 matplotlib
   的逐行规则读写——实测见该文件注释）。
+- **标注公式排版**（ADR 0152 PR 4）：`$…$` 由 `engine/mathtypeset.py` 起 matplotlib 子进程排成 em 轮廓、按内容缓存；
+  导出把结果作为 `math=` 交给 `plan.compile_page`（RenderCore 不起进程），画布经 `/api/mathtext` 读同一份。新增导出 /
+  写回路径要先 `mathtypeset.layouts_for(objects)` 再编译，不然公式只按源码画。看护 `tests/test_mathtypeset.py`、
+  `test_rendercore_plan.py` 的 `test_math_*`、`test_export_endpoint.py` 的 `test_export_*math*`。
 - **图内元素文字**走 matplotlib mathtext（`cm$^{-1}$`），不是上面那套标记；
   大小写转换要 `protectMath`（`$…$` 里是 `\alpha` 这类命令，改大小写就废）。
 - 大小写是**一次性动作**，直接改文本内容（可撤销），不新增字段、导出零改动。

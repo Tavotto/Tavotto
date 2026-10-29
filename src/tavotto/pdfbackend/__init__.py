@@ -242,8 +242,8 @@ def original_tiff(src, out, ppi, transparent=False, *, dpi_meta=None):
     return _impl().original_tiff(src, out, ppi, transparent, dpi_meta=dpi_meta)
 
 
-def annotate_asset(pdf_path, png_path, objects, dpi=600):
-    return _impl().annotate_asset(pdf_path, png_path, objects, dpi)
+def annotate_asset(pdf_path, png_path, objects, dpi=600, math=None):
+    return _impl().annotate_asset(pdf_path, png_path, objects, dpi, math=math)
 
 
 def mm2pt(mm):

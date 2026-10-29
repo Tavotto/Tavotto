@@ -768,7 +768,12 @@ class _NoPanels:
 
 
 def annotate_asset(
-    pdf_path: Path, png_path: Path | None, objects: list[dict], dpi: int = 600
+    pdf_path: Path,
+    png_path: Path | None,
+    objects: list[dict],
+    dpi: int = 600,
+    *,
+    math: dict | None = None,
 ) -> None:
     """把画布标注（坐标为**该图自身的 mm**）画进单图文件：标注编成一页 IR、写成 Canonical 覆盖页，经
     pikepdf `add_overlay` 叠到原 PDF 首页之上（原内容流与资源不动，仍是矢量、文字层在）；PNG 由注好的
@@ -789,6 +794,7 @@ def annotate_asset(
         sources=_NoPanels(),
         faces=provider(),
         background=None,
+        math=math,
     )
     tmp_dir = Path(tempfile.mkdtemp(prefix="tavotto-annotate-"))
     try:

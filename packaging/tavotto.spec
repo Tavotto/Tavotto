@@ -119,13 +119,14 @@ datas = [
 # 执行侧子进程要用的源码（见文件头说明 1）。两条入口：
 #   safe worker      —— worker.py 及它平铺 import 的传递闭包；
 #   native bridge    —— bridge_runner.py（用户自己的 Python 按绝对路径起它）
-#                       + bridgeboot.py（私有命名空间装载器）。
+#                       + bridgeboot.py（私有命名空间装载器）；
+#   公式排版         —— mathtext_child.py（内置 runtime 按绝对路径起它，ADR 0152 PR 4）。
 # 两份清单由 tests/test_runtime_build.py 从**源码的 import 闭包**反推校验，
 # 不靠人记得回来改这一行。
 for name in ("worker.py", "executionfact.py", "manifest.py", "overrides.py", "patchspec.py",
              "pathgeom.py", "axestraversal.py", "spinemodel.py", "tickmodel.py", "colorbarmodel.py", "legendmodel.py", "figcapture.py", "teedraw.py", "figsession.py", "wireproto.py", "scriptinput.py", "runtime.py", "writetripwire.py", "texdiag.py",
              "previewbudget.py", "preview_complexity.py", "preview_hybrid.py",
-             "bridge_runner.py", "bridgeboot.py"):
+             "bridge_runner.py", "bridgeboot.py", "mathtext_child.py"):
     datas.append((str(PKG / "engine" / name), "tavotto/engine"))
 
 # 内置渲染 runtime（见文件头说明 3）。

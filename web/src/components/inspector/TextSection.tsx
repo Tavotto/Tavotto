@@ -25,7 +25,7 @@ import { ColorField, NumberField } from '../ui/Input'
 import { RichTextField } from '../ui/RichTextField'
 import { Menu, MenuItem } from '../ui/Menu'
 import { Segmented } from '../ui/Segmented'
-import { canvasFieldOf, coerceTypography, displayValueOf } from '@/lib/typography'
+import { canvasFieldOf, coerceTypography, displayValueOf, effectiveCanvasFamily } from '@/lib/typography'
 import { EffectToggle } from './controls/EffectToggle'
 import { TypographyControls } from './controls/TypographyControls'
 import { useCanvasTypography } from './typographyAdapter'
@@ -86,6 +86,8 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
         // 存储仍是字符串：老标注按旧标记读，第一次在这里改动时写成 LaTeX 子集并标 textFormat
         <div className="mb-2" data-text-content>
           <RichTextField
+            // 公式块按字体族排：换了族就换一个编辑框（公式块的排版结果跟着换）
+            key={effectiveCanvasFamily(one)}
             // 名字 = 分区标题那句可见文字，同一个表达式（此前这格没有可达名）
             aria-label={tx('title')}
             value={one.text}
@@ -100,6 +102,7 @@ export function TextSection({ objs }: { objs: TextObject[] }) {
             onBlur={endTxn}
             placeholder={tx('placeholder')}
             sizePx={13}
+            mathFamily={effectiveCanvasFamily(one)}
             // 画布文字用文档字体预览；框本身与其它可编辑框同一副（fieldBox）
             style={{ fontFamily: 'var(--font-doc)' }}
             testId="text-object-content"

@@ -92,6 +92,8 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/onboarding/DemoFigure.tsx': 1,
   // 新手教程第一步从脚本卡指向投放框的那条虚线弧：两端按卡片与投放框此刻的位置现算，不是图标
   '/src/components/onboarding/DemoImportStep.tsx': 1,
+  // 标注里的公式（ADR 0152 PR 4）：用户写的 LaTeX 由后端 matplotlib 排出的轮廓，与导出同一份，不是图标
+  '/src/components/ui/MathFormula.tsx': 1,
 }
 
 /**

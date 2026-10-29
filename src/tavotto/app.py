@@ -118,6 +118,7 @@ from .engine import (
     locate as engine_locate,
     logsafe as engine_logsafe,
     managedenv as engine_managedenv,
+    mathtypeset as engine_mathtypeset,
     nativehandoff as engine_nativehandoff,
     nativeperm as engine_nativeperm,
     nativesession as engine_nativesession,
@@ -2827,8 +2828,16 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
             ),
         ),
     )
+    # 标注里的公式先排好（子进程、按内容缓存，ADR 0152 PR 4）：RenderCore 只读结果，不起进程
+    canvas = job.request.canvas
+    math = engine_mathtypeset.layouts_for(list(canvas.objects)) if canvas is not None else {}
     return rc_job.produce(
-        job, tmp_dir, sources=resolver, provider=rc_facade.provider(), host=rc_facade.host()
+        job,
+        tmp_dir,
+        sources=resolver,
+        provider=rc_facade.provider(),
+        host=rc_facade.host(),
+        math=math,
     )
 
 
@@ -3275,6 +3284,33 @@ def api_export_cancel():
     job = engine_exportjob.get(job_id)
     ok = engine_exportjob.cancel(job_id) if job is None or _export_job_is_mine(job) else False
     return jsonify({"cancelling": bool(ok)})
+
+
+#: `/api/mathtext` 一次最多排几条、每条源码多长（画布一屏的公式远小于此；超了是调用方的错）
+MATHTEXT_MAX_ITEMS = 64
+MATHTEXT_MAX_SRC = 2000
+
+
+@app.post("/api/mathtext")
+def api_mathtext():
+    """标注公式的排版结果（ADR 0152 PR 4）：画布预览与导出读同一份（`engine/mathtypeset.py`，按内容缓存）。
+
+    body `{"items": [{"src": "A e^{-E}", "family": "serif"}]}` → `{"ok": true, "results": [...]}`，
+    结果是 em 单位、基线 y = 0、y 向上的路径段与盒子，或 `{"ok": false, "error": "…"}`。"""
+    body = request.get_json(force=True, silent=True) or {}
+    items = body.get("items")
+    if not isinstance(items, list) or len(items) > MATHTEXT_MAX_ITEMS:
+        return jsonify({"ok": False, "error": "bad_items"}), 400
+    pairs: list[tuple[str, str]] = []
+    for it in items:
+        src = it.get("src") if isinstance(it, dict) else None
+        if not isinstance(src, str) or len(src) > MATHTEXT_MAX_SRC:
+            return jsonify({"ok": False, "error": "bad_items"}), 400
+        pairs.append((src, engine_mathtypeset.family_of(it.get("family"))))
+    got = engine_mathtypeset.typeset_many(pairs)
+    return jsonify(
+        {"ok": True, "results": [got[engine_mathtypeset.key_of(s_, f)] for s_, f in pairs]}
+    )
 
 
 @app.post("/api/export/validate")
@@ -8971,7 +9007,14 @@ def _write_source_files(
             pdf_tmp = next((t for tg, t in tmps if tg.suffix == ".pdf"), None)
             png_tmp = next((t for tg, t in tmps if tg.suffix == ".png"), None)
             assert pdf_tmp is not None  # 端点已拦过「只有 PNG」的素材
-            pdfbackend.annotate_asset(pdf_tmp, png_tmp, annotations, dpi=600)
+            # 标注里的公式与导出同一份排版结果（ADR 0152 PR 4）
+            pdfbackend.annotate_asset(
+                pdf_tmp,
+                png_tmp,
+                annotations,
+                dpi=600,
+                math=engine_mathtypeset.layouts_for(annotations),
+            )
         if warnings:
             raise WriteBackVerifyError(warnings)
         if diffs:

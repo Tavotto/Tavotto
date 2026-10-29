@@ -2138,6 +2138,31 @@ export const validateExport = (req: ExportRequest, pj?: string | null) =>
     body: JSON.stringify(req),
   }, pj)
 
+/* --------------------------- 标注公式排版（ADR 0152 PR 4） --------------------------- */
+
+/**
+ * 一个公式的排版结果：em 单位、基线 y = 0、**y 向上**的轮廓段（M / L / C / Z）与盒子；
+ * 或排不出来的原因。与导出读同一份（`engine/mathtypeset.py`），所以画布与 PDF 逐点相同。
+ */
+export interface MathBox {
+  ok: boolean
+  width?: number
+  ascent?: number
+  descent?: number
+  segments?: (string | number)[][]
+  error?: string
+}
+
+/** 一次最多排几条（与后端 `MATHTEXT_MAX_ITEMS` 同值） */
+export const MATHTEXT_MAX_ITEMS = 64
+
+export const typesetMath = (items: { src: string; family: string }[]) =>
+  jsonFetch<{ ok: boolean; results: MathBox[] }>('/api/mathtext', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ items }),
+  })
+
 /* --------------------------- 可复现项目包 ---------------------------------- */
 
 export interface PackageResult {
