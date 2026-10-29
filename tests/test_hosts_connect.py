@@ -239,3 +239,97 @@ def test_cli_managed_hosts_report_their_connection_state(home, monkeypatch):
     assert H.connected("claude-code", None, {}) is True
     monkeypatch.setattr(H, "_run", lambda argv, timeout=120: (0, "other: y\nnot-tavotto: z\n"))
     assert H.connected("claude-code", None, {}) is False
+
+
+# ----------------------------------------------------------------------------- Antigravity
+def _agy_files(home):
+    return (
+        home / ".gemini" / "config" / "mcp_config.json",
+        home / ".gemini" / "antigravity" / "mcp_config.json",
+    )
+
+
+def test_antigravity_is_detected_by_its_own_dirs_not_by_gemini_cli_alone(home):
+    (home / ".gemini").mkdir()  # Gemini CLI 也用这个目录，不能算装了 Antigravity
+    assert H.installed("antigravity") is False
+    (home / ".gemini" / "config").mkdir()
+    assert H.installed("antigravity") is True
+
+
+def test_antigravity_old_dir_alone_counts_as_installed(home):
+    (home / ".gemini" / "antigravity").mkdir(parents=True)
+    assert H.installed("antigravity") is True
+
+
+def test_antigravity_writes_both_config_files_and_disconnect_drops_both(home, project):
+    (home / ".gemini" / "antigravity").mkdir(parents=True)
+    res = H.connect("antigravity", str(project))
+    assert res["ok"] and res["state"] == "needs_new_session"
+    for f in _agy_files(home):
+        entry = json.loads(f.read_text(encoding="utf-8"))["mcpServers"]["tavotto"]
+        assert set(entry) == {"command", "args", "env"}  # 与 Cursor 同形，不加 type
+        assert entry["env"] == {H.ROOTS_ENV: str(project.resolve())}
+    assert H.list_hosts()["hosts"][-1] == {
+        "id": "antigravity",
+        "label": "Antigravity",
+        "installed": True,
+        "connected": True,
+    }
+    assert H.disconnect("antigravity")["ok"]
+    for f in _agy_files(home):
+        assert "tavotto" not in json.loads(f.read_text(encoding="utf-8"))["mcpServers"]
+
+
+def test_antigravity_treats_an_empty_existing_file_as_an_empty_object(home, project):
+    new, old = _agy_files(home)
+    new.parent.mkdir(parents=True)
+    new.write_text("", encoding="utf-8")  # 真机残留：2.0 建了 0 字节的 mcp_config.json
+    assert H.connect("antigravity", str(project))["ok"]
+    assert "tavotto" in json.loads(new.read_text(encoding="utf-8"))["mcpServers"]
+    assert old.is_file()  # 旧目录原本不存在，也一并建出来
+
+
+def test_antigravity_merge_keeps_other_servers_and_is_idempotent(home, project):
+    _new, old = _agy_files(home)
+    old.parent.mkdir(parents=True)
+    old.write_text(
+        json.dumps({"mcpServers": {"other": {"command": "x"}}, "keep": 1}), encoding="utf-8"
+    )
+    assert H.connect("antigravity", str(project))["ok"]
+    got = json.loads(old.read_text(encoding="utf-8"))
+    assert got["keep"] == 1 and got["mcpServers"]["other"] == {"command": "x"}
+    assert len(list(old.parent.glob("mcp_config.json.tavotto-backup-*"))) == 1
+    again = H.connect("antigravity", str(project))
+    assert again["ok"] and again["state"] == "connected"
+    assert all(s["skipped"] for s in again["steps"] if s["step"] == "config")
+    assert len(list(old.parent.glob("mcp_config.json.tavotto-backup-*"))) == 1
+    assert json.loads(old.read_text(encoding="utf-8")) == got
+
+
+def test_antigravity_unreadable_file_is_left_alone(home, project):
+    new, _old = _agy_files(home)
+    new.parent.mkdir(parents=True)
+    new.write_text("{ // jsonc\n}", encoding="utf-8")
+    res = H.connect("antigravity", str(project))
+    assert not res["ok"] and res["error_code"] == H.ERR_UNREADABLE
+    assert new.read_text(encoding="utf-8") == "{ // jsonc\n}"
+
+
+def test_antigravity_not_installed_is_reported(home, project):
+    res = H.connect("antigravity", str(project))
+    assert not res["ok"] and res["state"] == "not_installed"
+    assert not (home / ".gemini").exists()
+
+
+def test_antigravity_paths_follow_userprofile_on_windows(tmp_path, monkeypatch):
+    """Windows 下 `~` = %USERPROFILE%（`Path.home()` 读它）；两处都落在其下的 .gemini，不走 APPDATA。"""
+    prof = tmp_path / "Users" / "me"
+    prof.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: prof))
+    monkeypatch.setenv("APPDATA", str(prof / "AppData" / "Roaming"))
+    assert H._antigravity_dirs() == (prof / ".gemini" / "config", prof / ".gemini" / "antigravity")
+    fh = H._FILE_HOSTS["antigravity"]
+    assert [t.path for t in fh.targets()] == [
+        prof / ".gemini" / "config" / "mcp_config.json",
+        prof / ".gemini" / "antigravity" / "mcp_config.json",
+    ]

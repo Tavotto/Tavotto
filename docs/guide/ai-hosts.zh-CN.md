@@ -18,6 +18,7 @@
 | ZCode | `~/.zcode/cli/config.json` 与 `~/.zcode/workspace/default/.zcode/config.json` |
 | WorkBuddy | `~/.workbuddy/mcp.json`，并在 `mcp-approvals.json` 里只信任这一条 |
 | Claude Desktop | `claude_desktop_config.json`（标准模式的本地对话） |
+| Antigravity | `~/.gemini/config/mcp_config.json` 与 `~/.gemini/antigravity/mcp_config.json`（新旧两处位置） |
 
 只写入或删除 `tavotto` 这一项，文件里的其他内容不动。已有的文件改之前先复制成 `<文件名>.tavotto-backup-<时间>`；读不懂的文件不改。接入后在编辑器里新开一个会话或对话：多数编辑器只在启动时读这些文件。「断开」再把 `tavotto` 这一项删掉（WorkBuddy 的信任记录留着：它只对那一条原样的配置有效）。
 

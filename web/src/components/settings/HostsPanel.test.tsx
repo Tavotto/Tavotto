@@ -43,6 +43,7 @@ const LIST = (overrides: Record<string, unknown> = {}) =>
       { id: 'codex', label: 'Codex', installed: true, connected: true },
       { id: 'cursor', label: 'Cursor', installed: true, connected: false },
       { id: 'zcode', label: 'ZCode', installed: false, connected: false },
+      { id: 'antigravity', label: 'Antigravity', installed: true, connected: false },
     ],
     ...overrides,
   })
@@ -87,6 +88,13 @@ describe('HostsPanel', () => {
     expect(connectButton('cursor')?.textContent).toBe(tx('connect'))
     expect(row('codex')?.querySelector('[data-host-connected]')?.textContent).toContain(tx('connected'))
     expect(connectButton('codex')).toBeNull()
+  })
+
+  it('draws Antigravity with its own logo, not the generic fallback', async () => {
+    runMock.mockResolvedValue(LIST())
+    await mount()
+    expect(row('antigravity')?.querySelector('[data-brand-logo]')?.getAttribute('data-brand-logo')).toBe('antigravity')
+    expect(connectButton('antigravity')?.textContent).toBe(tx('connect'))
   })
 
   it('asks for the folder on the first connect and passes it through unchanged', async () => {
