@@ -15,6 +15,20 @@ test('转换缺少输入：确认前不发送参考，更正错误路径后能�
     status: 'completed', currentStep: null, completedSteps: [], skippedSteps: [], hintSeen: {},
     startedAt: 1, completedAt: 2, tutorialProjectId: null, tutorialDocumentId: null, pausedBy: null,
   })))
+  // 转换前现在会先看有没有可用的 AI（没有就先打开「连接 AI」、不发请求）；CI 机器没装任何 CLI，
+  // 所以这里把 capabilities 换成「有一个已连接的 Codex」，本用例测的是参考文件重试，不是连接流程
+  await page.route('**/api/ai/capabilities*', async (route) => {
+    const real = await (await route.fetch()).json()
+    const agent = {
+      ...(real.agents?.[0] ?? {}), id: 'codex', display_name: 'Codex', icon_key: 'codex', state: 'ready',
+      installed: true, enabled: true, usable: true, models: [], default_model: null, efforts: [], default_effort: null,
+    }
+    const connection = {
+      id: 'chatgpt', vendor: 'chatgpt', label: 'ChatGPT', logo: 'chatgpt', state: 'ready', route: 'cli:codex',
+      models: [], default_model: null, efforts: [], default_effort: null,
+    }
+    await route.fulfill({ json: { ...real, agents: [agent], connections: [connection] } })
+  })
   await page.route(/\/api\/ai\/convert(?:\?|$)/, async (route) => {
     if (route.request().method() !== 'POST') return route.continue()
     posts.push(route.request().postDataJSON())

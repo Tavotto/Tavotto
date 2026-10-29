@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
-import { useAiStore } from '@/store/aiStore'
 import { useConnectAiStore } from '@/store/connectAiStore'
+import { refreshCaps, useCapsWatch } from './settings/connectAi/useCapsWatch'
 import { ConnectAiDialog } from './settings/connectAi/ConnectAiDialog'
 
 /**
@@ -11,10 +11,13 @@ export function ConnectAiHost() {
   const open = useConnectAiStore((s) => s.open)
   const reason = useConnectAiStore((s) => s.reason)
   const onConnected = useConnectAiStore((s) => s.onConnected)
+  const name = useConnectAiStore((s) => s.name)
   const close = useConnectAiStore((s) => s.close)
   useEffect(() => {
-    if (open && !useAiStore.getState().caps) void useAiStore.getState().loadCaps().catch(() => undefined)
+    // 打开时强刷一次：用户可能刚在终端里装好 / 登录好了；没探测过也走这一条
+    if (open) void refreshCaps()
   }, [open])
+  useCapsWatch(open)
   if (!open) return null
-  return <ConnectAiDialog open reason={reason} onClose={close} onConnected={() => onConnected?.()} />
+  return <ConnectAiDialog open reason={reason} name={name ?? undefined} onClose={close} onConnected={() => onConnected?.()} />
 }

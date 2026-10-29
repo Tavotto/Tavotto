@@ -1917,7 +1917,24 @@
       },
       "back": "返回",
       "savedRefreshFailed": "已保存，但没能刷新状态。",
-      "retryRefresh": "重试刷新"
+      "retryRefresh": "重试刷新",
+      "titleConvert": "连接一个 AI 来转换",
+      "subtitleConvert": "把 {{name}} 转成可编辑版本需要一个 AI。连上后会自动开始。",
+      "starter": {
+        "subscription": "有 ChatGPT 订阅：用 ChatGPT 账号登录",
+        "key": "没有订阅：填一个 API Key",
+        "other": "其他方式"
+      },
+      "step": {
+        "notInstalled": "没装 {{product}}",
+        "broken": "找到了 {{product}}，但打不开",
+        "needsAuth": "还没登录",
+        "disabled": "已在设置里关闭",
+        "install": "安装并登录",
+        "reinstall": "重新安装",
+        "enable": "打开",
+        "installingPct": "正在安装… {{pct}}%"
+      }
     },
     "hosts": {
       "title": "接入 AI 编辑器",

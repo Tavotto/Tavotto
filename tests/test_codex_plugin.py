@@ -2008,9 +2008,9 @@ def test_readme_first_use_entry_says_no_clone_no_build():
     """首次安装用户看到的第一条说明就是「不 clone、不构建源码」，中英一致。"""
     zh = READMES["zh"].read_text(encoding="utf-8")
     en = READMES["en"].read_text(encoding="utf-8")
-    assert "在 Codex 中第一次使用 Tavotto" in zh
+    assert "在 Codex 里用 Tavotto（插件）" in zh
     assert "普通用户不要克隆或构建这个仓库" in zh
-    assert "Using Tavotto with Codex for the first time" in en
+    assert "Using Tavotto in Codex (plugin)" in en
     assert "do not clone or build this repository" in en
     # 源码开发是贡献者的路，不是普通用户的 fallback
     assert "贡献者：从源码开发" in zh

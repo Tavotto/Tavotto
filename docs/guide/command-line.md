@@ -29,7 +29,7 @@ Without the desktop app it falls back to browser mode.
 Tavotto-editable figure has to have (script beside its output, vector PDF, an output
 name that resolves statically) and puts the editor inside Codex itself — the install
 commands and what to say in the first session are in
-[Using Tavotto with Codex for the first time](../../README.md#using-tavotto-with-codex-for-the-first-time)
+[Using Tavotto in Codex (plugin)](../../README.md#using-tavotto-in-codex-plugin)
 below.
 
 It ships a skill, a local MCP server with nine tools — health check, open a figure,

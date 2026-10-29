@@ -39,7 +39,7 @@
   <a href="https://github.com/Tavotto/Tavotto/releases/latest/download/Tavotto-Windows-Setup.exe"><img alt="下载 Windows x64 版" src="https://img.shields.io/badge/Windows-x64-2868b7?style=for-the-badge&logo=windows&logoColor=white&labelColor=1b1b18"></a>
   <br>
   <a href="#pypi-安装linux-与服务器"><img alt="用 PyPI 安装" src="https://img.shields.io/badge/PyPI-pipx%20install-2868b7?style=for-the-badge&logo=pypi&logoColor=white&labelColor=1b1b18"></a>
-  <a href="#在-codex-中第一次使用-tavotto"><img alt="安装 Codex 插件" src="https://img.shields.io/badge/Codex-plugin-2868b7?style=for-the-badge&logo=openai&logoColor=white&labelColor=1b1b18"></a>
+  <a href="#在-codex-里用-tavotto插件"><img alt="安装 Codex 插件" src="https://img.shields.io/badge/Codex-plugin-2868b7?style=for-the-badge&logo=openai&logoColor=white&labelColor=1b1b18"></a>
   <a href="#在-claude-code-中使用-tavottobeta"><img alt="安装 Claude Code 插件" src="https://img.shields.io/badge/Claude%20Code-plugin%20(Beta)-2868b7?style=for-the-badge&logo=claude&logoColor=white&labelColor=1b1b18"></a>
 </p>
 
@@ -61,7 +61,7 @@ Windows 安装包未签名时，首次运行会弹 SmartScreen 提示：点「�
 
 | 助手 | 装了桌面版 | 没装桌面版 |
 | --- | --- | --- |
-| Codex | 点「接入」 | [Codex 插件](#在-codex-中第一次使用-tavotto) |
+| Codex | 点「接入」 | [Codex 插件](#在-codex-里用-tavotto插件) |
 | Claude Code、WorkBuddy | 点「接入」 | [插件（Beta）](docs/guide/ai-hosts.zh-CN.md#在-claude-code-中使用-tavottobeta) |
 | Cursor、VS Code、Trae、ZCode、Claude Desktop | 点「接入」 | [配置生成器（实验）](docs/guide/ai-hosts.zh-CN.md#在其他-ai-编辑器--客户端中使用实验) |
 | DeepSeek Harness、MiniMax Code | 暂不支持 | [bundle（Beta）或配置生成器](docs/guide/ai-hosts.zh-CN.md#在-deepseek-harness-中使用-tavottobeta) |
@@ -143,7 +143,9 @@ Tavotto 会找到你写这个脚本时用的 conda、venv 或系统 Python，并
 
 不用桌面版「接入」按钮时的 Codex 安装。其他助手，以及命令以外的细节，都在[完整说明](docs/guide/ai-hosts.zh-CN.md)里。
 
-### 在 Codex 中第一次使用 Tavotto
+### 在 Codex 里用 Tavotto（插件）
+
+只想在 Tavotto 里用 AI，不需要这一节：在应用里点「连接 AI」即可。
 
 > **普通用户不要克隆或构建这个仓库。** 源码安装只用于参与 Tavotto 开发。
 
@@ -210,7 +212,7 @@ python3 <插件目录>/skills/tavotto-figure/scripts/handoff.py path/to/figure.p
 
 把下面一句完整发给 Codex：
 
-> 请严格按照 README 的「在 Codex 中第一次使用 Tavotto」执行普通用户安装。不要 clone 或构建源码，不要运行 pnpm、npm、cargo、Tauri、测试或 editable install。只安装 Codex 插件和所需的 Tavotto 引擎，运行健康检查；需要新会话时明确告诉我并停止。
+> 请严格按照 README 的「在 Codex 里用 Tavotto（插件）」执行普通用户安装。不要 clone 或构建源码，不要运行 pnpm、npm、cargo、Tauri、测试或 editable install。只安装 Codex 插件和所需的 Tavotto 引擎，运行健康检查；需要新会话时明确告诉我并停止。
 
 ## 隐私
 

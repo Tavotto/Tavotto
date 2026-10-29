@@ -1285,6 +1285,7 @@
     "progress": "In progress",
     "convert": {
       "running": "Making an editable version…",
+      "runningElapsed": "Generating the editable version… ({{minutes}} min so far)",
       "ready": "The new version is ready. Compare, then decide",
       "stoppedLate": "The conversion had already finished; the stop came too late. Compare, and adopt it if you want it",
       "adopted": "Adopted. Opening the new version…",

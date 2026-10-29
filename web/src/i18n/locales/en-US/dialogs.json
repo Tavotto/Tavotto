@@ -1935,7 +1935,24 @@
       },
       "back": "Back",
       "savedRefreshFailed": "Saved, but the status couldn’t be refreshed.",
-      "retryRefresh": "Retry refresh"
+      "retryRefresh": "Retry refresh",
+      "titleConvert": "Connect an AI to convert",
+      "subtitleConvert": "Converting {{name}} to an editable version needs an AI. It starts automatically once connected.",
+      "starter": {
+        "subscription": "Have a ChatGPT plan: sign in with ChatGPT",
+        "key": "No plan: enter an API key",
+        "other": "Other ways"
+      },
+      "step": {
+        "notInstalled": "{{product}} isn't installed",
+        "broken": "Found {{product}}, but it won't open",
+        "needsAuth": "Not signed in yet",
+        "disabled": "Turned off in Settings",
+        "install": "Install and sign in",
+        "reinstall": "Reinstall",
+        "enable": "Turn on",
+        "installingPct": "Installing… {{pct}}%"
+      }
     },
     "hosts": {
       "title": "Connect AI editors",

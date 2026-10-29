@@ -12,9 +12,12 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   aiCancel: vi.fn().mockResolvedValue({ ok: true }),
 }))
 
+vi.mock('@/store/connectAiStore', () => ({ requestConnectAi: vi.fn() }))
+
 import { ApiError, aiCancel, discardConvert, fetchAiSession, fetchConvert, replanConvertDependencies, resolveConvertDependencies, startConvert } from '@/lib/api'
 import { setCurrentProjectId } from '@/lib/session'
 import { useAiStore } from '@/store/aiStore'
+import { requestConnectAi } from '@/store/connectAiStore'
 import { POLL_MS, useConvertStore } from '@/store/convertStore'
 import { useEnvStore } from '@/store/envStore'
 import { useUiStore } from '@/store/uiStore'
@@ -27,7 +30,8 @@ describe('convertStore', () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] })
     setCurrentProjectId('A')
     useConvertStore.setState({ entries: {} })
-    useAiStore.setState({ caps: { agents: [] } as never })
+    useAiStore.setState({ caps: { agents: [{ id: 'codex', usable: true, efforts: [] }] } as never, agent: null })
+    vi.mocked(requestConnectAi).mockReset()
     vi.mocked(startConvert).mockReset()
     vi.mocked(aiCancel).mockClear()
     vi.mocked(fetchAiSession).mockReset().mockResolvedValue({ status: 'running', final: false } as never)
@@ -35,6 +39,85 @@ describe('convertStore', () => {
   afterEach(() => {
     useConvertStore.getState().clear('plot.py')
     vi.useRealTimers()
+  })
+
+  it('一个能用的 AI 都没有：不发请求，打开「连接 AI」，连上后用同样参数重来一次', async () => {
+    useAiStore.setState({ caps: { agents: [] } as never })
+    await start()
+    expect(startConvert).not.toHaveBeenCalled()
+    expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
+    const opts = vi.mocked(requestConnectAi).mock.calls[0]![0]!
+    expect(opts).toMatchObject({ reason: 'convert', name: 'plot.py' })
+    // 连上后重来：这次即使 caps 仍空也不再弹（只重试一次），直接发请求
+    vi.mocked(startConvert).mockResolvedValueOnce({ session: 's1', script: 'plot.py' })
+    opts.onConnected!()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(startConvert).toHaveBeenCalledTimes(1)
+    expect(requestConnectAi).toHaveBeenCalledTimes(1)
+    useConvertStore.getState().clear('plot.py')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+  })
+
+  it.each(['ai_agent_not_installed', 'ai_agent_needs_auth', 'ai_agent_not_usable', 'ai_agent_disabled'])(
+    '后端 409 %s：打开「连接 AI」不留失败卡；重试后再 409 就如实失败（不循环）',
+    async (code) => {
+      vi.mocked(startConvert).mockRejectedValueOnce(new ApiError('x', 409, { code, params: { agent: 'codex' } }))
+      await start()
+      expect(requestConnectAi).toHaveBeenCalledTimes(1)
+      expect(useConvertStore.getState().entries['plot.py']).toBeUndefined()
+      vi.mocked(startConvert).mockRejectedValueOnce(new ApiError('x', 409, { code, params: { agent: 'codex' } }))
+      vi.mocked(requestConnectAi).mock.calls[0]![0]!.onConnected!()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(requestConnectAi).toHaveBeenCalledTimes(1)
+      expect(useConvertStore.getState().entries['plot.py']?.phase).toBe('failed')
+    },
+  )
+
+  it('转换已在跑时再点什么都不做（不再发 POST）', async () => {
+    vi.mocked(startConvert).mockResolvedValueOnce({ session: 's1', script: 'plot.py' })
+    const first = start()
+    await vi.advanceTimersByTimeAsync(0)
+    await start()
+    expect(startConvert).toHaveBeenCalledTimes(1)
+    useConvertStore.getState().clear('plot.py')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await first
+  })
+
+  it('ai_script_busy：不是错误，接上正在跑的那次（409 带 session，且核验是转换会话）', async () => {
+    vi.mocked(fetchConvert).mockResolvedValueOnce({ session: 'live1', state: 'ready' } as never)
+    vi.mocked(startConvert).mockRejectedValueOnce(
+      new ApiError('busy', 409, { code: 'ai_script_busy', params: { script: 'plot.py', session: 'live1' } }),
+    )
+    const p = start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useConvertStore.getState().entries['plot.py']).toMatchObject({ phase: 'running', session: 'live1', error: null })
+    expect(typeof useConvertStore.getState().entries['plot.py']?.startedAt).toBe('number')
+    useConvertStore.getState().clear('plot.py')
+    await vi.advanceTimersByTimeAsync(POLL_MS + 10)
+    await p
+  })
+
+  it('ai_script_busy 的 session 是普通改图任务（convert_not_found）：不接管，显示忙碌、不取消改图', async () => {
+    vi.mocked(startConvert).mockRejectedValueOnce(
+      new ApiError('busy', 409, { code: 'ai_script_busy', params: { script: 'plot.py', session: 'edit1' } }),
+    )
+    vi.mocked(fetchConvert).mockRejectedValueOnce(new ApiError('nf', 404, { code: 'convert_not_found' }))
+    await start()
+    const e = useConvertStore.getState().entries['plot.py']
+    expect(e?.phase).toBe('failed')
+    expect(e?.session).not.toBe('edit1')
+    expect(e?.error).toContain('plot.py')
+    expect(fetchConvert).toHaveBeenCalledWith('edit1', expect.anything())
+    useConvertStore.getState().clear('plot.py')
+    expect(aiCancel).not.toHaveBeenCalled()
+  })
+
+  it('ai_script_busy 没带 session 也没登记过：按普通失败显示', async () => {
+    vi.mocked(startConvert).mockRejectedValueOnce(new ApiError('busy', 409, { code: 'ai_script_busy', params: { script: 'plot.py' } }))
+    await start()
+    expect(useConvertStore.getState().entries['plot.py']?.phase).toBe('failed')
+    expect(requestConnectAi).not.toHaveBeenCalled()
   })
 
   it('模型响应截断保留明确原因，不落成未知失败', async () => {
@@ -158,7 +241,7 @@ describe('convertStore：R / MATLAB 来源（ADR 0143 修订）', () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] })
     setCurrentProjectId('A')
     useConvertStore.setState({ entries: {} })
-    useAiStore.setState({ caps: { agents: [] } as never })
+    useAiStore.setState({ caps: { agents: [{ id: 'codex', usable: true, efforts: [] }] } as never })
     vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 's1', script: 'fig.R' })
     vi.mocked(fetchConvert).mockReset()
     vi.mocked(fetchAiSession).mockReset().mockResolvedValue({ status: 'running', final: false } as never)
@@ -233,7 +316,7 @@ describe('convertStore：缺依赖卡（Codex #1330 P1-2，候选留着、接着
     vi.useFakeTimers({ toFake: ['setTimeout'] })
     setCurrentProjectId('A')
     useConvertStore.setState({ entries: {} })
-    useAiStore.setState({ caps: { agents: [] } as never })
+    useAiStore.setState({ caps: { agents: [{ id: 'codex', usable: true, efforts: [] }] } as never })
     vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 's1', script: 'fig.R' })
     vi.mocked(fetchConvert).mockReset()
     vi.mocked(fetchAiSession).mockReset().mockResolvedValue(held)
@@ -377,7 +460,7 @@ describe('convertStore：换环境后按新环境重新判定（Codex #1330 P1�
     useConvertStore.setState({ entries: {} })
     useUiStore.setState({ engineEnvOpen: false, engineEnvPick: false })
     useEnvStore.setState({ env: envOf('/usr/bin/python3') })
-    useAiStore.setState({ caps: { agents: [] } as never })
+    useAiStore.setState({ caps: { agents: [{ id: 'codex', usable: true, efforts: [] }] } as never })
     vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 's1', script: 'fig.R' })
     vi.mocked(fetchConvert).mockReset()
     vi.mocked(fetchAiSession).mockReset().mockResolvedValue(held)
@@ -465,7 +548,7 @@ describe('convertStore：续跑遇到传输错误先对账（Codex #1330 P1，GE
     vi.useFakeTimers({ toFake: ['setTimeout'] })
     setCurrentProjectId('A')
     useConvertStore.setState({ entries: {} })
-    useAiStore.setState({ caps: { agents: [] } as never })
+    useAiStore.setState({ caps: { agents: [{ id: 'codex', usable: true, efforts: [] }] } as never })
     vi.mocked(startConvert).mockReset().mockResolvedValue({ session: 's1', script: 'fig.R' })
     vi.mocked(fetchConvert).mockReset()
     vi.mocked(fetchAiSession).mockReset().mockResolvedValue(held)
@@ -597,7 +680,7 @@ describe('convertStore：AI 任务阶段点停止先看取消回复（Codex #133
     vi.useFakeTimers({ toFake: ['setTimeout'] })
     setCurrentProjectId('A')
     useConvertStore.setState({ entries: {} })
-    useAiStore.setState({ caps: { agents: [] } as never })
+    useAiStore.setState({ caps: { agents: [{ id: 'codex', usable: true, efforts: [] }] } as never })
     vi.mocked(startConvert).mockReset()
     vi.mocked(aiCancel).mockReset()
     vi.mocked(fetchConvert).mockReset()

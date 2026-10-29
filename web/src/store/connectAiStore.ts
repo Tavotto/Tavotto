@@ -10,14 +10,16 @@ import { useUiStore } from '@/store/uiStore'
  * `open({ reason })`。`reason: 'fix'` 只换一句标题（「连接一个 AI 来修复」）；连好之后的事（修复自动续跑）
  * 不在这里——续跑由 `aiFixStore` 订阅 `caps` 接走，这里只负责「开 / 关」和一个连好的回调。
  */
-export type ConnectAiReason = 'general' | 'fix'
+export type ConnectAiReason = 'general' | 'fix' | 'convert'
 
 interface ConnectAiState {
   open: boolean
   reason: ConnectAiReason
   /** 连好（新连了一个、并且 caps 已刷新）时调用一次 */
   onConnected: (() => void) | null
-  openDialog: (opts?: { reason?: ConnectAiReason; onConnected?: () => void }) => void
+  /** 文案里的 {{name}}（reason=convert 时是要转换的脚本名） */
+  name: string | null
+  openDialog: (opts?: { reason?: ConnectAiReason; onConnected?: () => void; name?: string }) => void
   close: () => void
 }
 
@@ -25,15 +27,17 @@ export const useConnectAiStore = create<ConnectAiState>((set) => ({
   open: false,
   reason: 'general',
   onConnected: null,
-  openDialog: (opts) => set({ open: true, reason: opts?.reason ?? 'general', onConnected: opts?.onConnected ?? null }),
-  close: () => set({ open: false, onConnected: null }),
+  name: null,
+  openDialog: (opts) =>
+    set({ open: true, reason: opts?.reason ?? 'general', onConnected: opts?.onConnected ?? null, name: opts?.name ?? null }),
+  close: () => set({ open: false, onConnected: null, name: null }),
 }))
 
 /**
  * 所有「去连一个 AI」的入口走这一个函数。后端给了连接视图（`vendors` / `connections`）→ 开小弹窗；
  * 老后端没有 → 退回旧行为（打开设置 → 改图助手），不崩、不开一个空弹窗。
  */
-export function requestConnectAi(opts?: { reason?: ConnectAiReason; onConnected?: () => void }): void {
+export function requestConnectAi(opts?: { reason?: ConnectAiReason; onConnected?: () => void; name?: string }): void {
   if (hasConnectionView(useAiStore.getState().caps)) useConnectAiStore.getState().openDialog(opts)
   else useUiStore.getState().setSettingsOpen(true, 'ai')
 }

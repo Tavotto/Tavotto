@@ -26,7 +26,7 @@ tavotto open figures/                    # 或者整个图库
 **用 Codex 的话**可以装插件。它让 Codex 知道「Tavotto 能接手的图」该长什么样
 （脚本与产物同目录、矢量 PDF、产出名可静态解析），并把编辑器搬进 Codex 里——
 安装命令与第一个会话该说什么，见下面的
-[在 Codex 中第一次使用 Tavotto](../../README.zh-CN.md#在-codex-中第一次使用-tavotto)。
+[在 Codex 里用 Tavotto（插件）](../../README.zh-CN.md#在-codex-里用-tavotto插件)。
 
 插件带一个 skill、一个本地 MCP server（九个工具：健康检查、打开图、应用 override、
 规范化一张图、跑预检、按指定 DPI 导出真矢量 PDF/SVG/EPS 或 PNG/TIFF、校验重放、
