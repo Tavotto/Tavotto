@@ -268,13 +268,20 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
   // 外部改了字符串（撤销 / 重做、换选中对象、大小写菜单）或换了写法：整段换掉，不进编辑框历史。
   // 写法变了字符串不变也要重读——两个标注字符串相同、一个旧标记一个 LaTeX 子集，画出来不同（Codex #1489）
   const parsedWith = useRef(codec)
+  const modeRef = useRef(mode)
+  modeRef.current = mode
   useEffect(() => {
     const view = viewRef.current
-    if (!view || (value === emitted.current && codec === parsedWith.current)) return
+    const valueChanged = value !== emitted.current
+    if (!view || (!valueChanged && codec === parsedWith.current)) return
     emitted.current = value
     parsedWith.current = codec
-    // LaTeX 模式里外部改了（撤销 / 重做）：源码框跟着换
-    setSource((cur) => (cur === value ? cur : value))
+    // 只是写法换了、字符串是自己刚写出去的（源码模式里第一次改老标注，宿主随即标 textFormat）：
+    // 文档已经在 editSource 里按源码同步过，源码框更不能动——用户正在里面打字
+    if (!valueChanged && modeRef.current === 'latex') return
+    // 外部真改了字符串（撤销 / 重做、换选中对象）：源码框换成**新值经 codec 读写后的规范形**——
+    // 老标注的原文是旧标记，直接塞进源码框会在切回时被当 LaTeX 读（Codex #1492 P1）
+    if (valueChanged) setSource(cb.current.codec.serialize(cb.current.codec.parse(value)))
     const doc = runsToDoc(cb.current.codec.parse(value))
     const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content)
     view.dispatch(tr.setMeta('rt-external', true).setMeta('addToHistory', false))
@@ -312,18 +319,22 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
       sourceRef.current?.focus()
       return
     }
-    const view = viewRef.current
-    if (view) {
-      const doc = runsToDoc((codec.reparse ?? codec.parse)(source))
-      const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content)
-      view.dispatch(tr.setMeta('rt-external', true).setMeta('addToHistory', false))
-    }
+    // 编辑框文档在源码输入时已逐次同步（见 editSource），这里只换回显示
     setMode('rich')
     requestAnimationFrame(() => viewRef.current?.focus())
   }
   const editSource = (next: string) => {
     setSource(next)
     if (sourceError) setSourceError(codec.validate?.(next) ?? null)
+    // 源码的每次改动也落进编辑框的文档与它的撤销历史：切回所见即所得后 ⌘Z 撤得掉刚才在源码里的改动
+    // （Codex #1492）。标 rt-external：写出去的是用户打的原文，不让 flush 再按规范形写一遍
+    const view = viewRef.current
+    if (view) {
+      const doc = runsToDoc((codec.reparse ?? codec.parse)(next))
+      view.dispatch(
+        view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content).setMeta('rt-external', true),
+      )
+    }
     if (next === emitted.current) return
     emitted.current = next
     cb.current.onChange(next)

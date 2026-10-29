@@ -317,3 +317,34 @@ describe('LaTeX 模式与粘贴（ADR 0152 PR 3）', () => {
     expect(source()?.value).toBe('k = $A$')
   })
 })
+
+describe('LaTeX 模式的同步与撤销（Codex #1492）', () => {
+  const source = () => container.querySelector<HTMLTextAreaElement>('[data-rich-source]')
+  const typeSource = (v: string) =>
+    act(() => {
+      const ta = source()!
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ta, v)
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+  it('停在源码模式时换成老标注：源码框是它的 LaTeX 规范形，切回后上标还在、钱数不是公式', () => {
+    click('mode')
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = 'cm^{-1} costs $5 and $10')))
+    expect(source()!.value).toBe('cm\\textsuperscript{-1} costs \\$5 and \\$10')
+    click('mode')
+    expect(editorDom().querySelector('[data-rt="sup"]')?.textContent).toBe('-1')
+    expect(editorDom().querySelector('[data-rt-math]')).toBeNull()
+    expect(current().text).toBe('cm^{-1} costs $5 and $10') // 没改就没写
+  })
+
+  it('源码里的改动切回后能 ⌘Z 撤掉', () => {
+    click('mode')
+    typeSource('\\textit{H}2O')
+    click('mode')
+    expect(editorDom().querySelector('em')?.textContent).toBe('H')
+    act(() => (editorDom() as HTMLElement).focus())
+    press('z', { ctrlKey: true })
+    expect(editorDom().querySelector('em')).toBeNull()
+    expect(current().text).toBe('H2O')
+  })
+})

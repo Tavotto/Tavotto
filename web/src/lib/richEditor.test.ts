@@ -179,3 +179,14 @@ describe('源码校验', () => {
     expect(validateSource('cm$^{-1}$\n$x$', 'mathtext')).toBeNull()
   })
 })
+
+describe('粘贴：样式命令里套公式（Codex #1492）', () => {
+  it('\\textit{T $x$} 整段按 LaTeX 子集读，钱数仍是字', async () => {
+    const { pastedRuns } = await import('./richEditor')
+    expect(pastedRuns('\\textit{T $x$} costs $5 and $10', 'annotation')).toEqual([
+      { text: 'T ', script: '', italic: true },
+      { text: 'x', script: '', italic: true, math: true },
+      { text: ' costs $5 and $10', script: '' },
+    ])
+  })
+})

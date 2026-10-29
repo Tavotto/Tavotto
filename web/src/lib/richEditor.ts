@@ -89,6 +89,11 @@ const TEXT_STYLE_CMD = /\\(?:textit|emph|textbf|textup|textmd|textnormal|textsup
  * 它就成了斜体字（RichTextField 的读回同步），不必在这里重复一遍规范段的判断。
  */
 export function pastedRuns(text: string, dialect: 'annotation' | 'mathtext'): TextRun[] | null {
+  // 标注里带文字样式命令的，是整段 LaTeX 源码：整段按 LaTeX 子集读，命令里套着的公式
+  // （`\textit{T $x$}`）不被切开（Codex #1492）。不像公式的成对 `$`（钱数）先转义成字
+  if (dialect === 'annotation' && TEXT_STYLE_CMD.test(text)) {
+    return parseRuns(escapeNonMathDollars(text), 'latex')
+  }
   const runs: TextRun[] = []
   let found = false
   const plain = (seg: string) => {
@@ -119,6 +124,13 @@ export function pastedRuns(text: string, dialect: 'annotation' | 'mathtext'): Te
     else out.push({ ...r })
   }
   return out
+}
+
+/** `$…$` 里不像公式的那几对 `$` 写成 `\$`（「$5 and $10」留成字），其余原样 */
+function escapeNonMathDollars(text: string): string {
+  return text.replace(/(?<!\\)\$([^$\n]+?)(?<!\\)\$/g, (m, body: string) =>
+    looksLikeMath(body) ? m : `\\$${body}\\$`,
+  )
 }
 
 /**
