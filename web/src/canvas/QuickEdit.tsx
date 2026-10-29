@@ -28,6 +28,7 @@ import { useQuickEdit } from './quickEditStore'
 import { TextCaseMenu } from '@/components/inspector/TextActions'
 import { RichTextField, richViewOf } from '@/components/ui/RichTextField'
 import { figureTextCodec } from '@/lib/richEditor'
+import { mathFontFollow } from '@/lib/figureMathFont'
 import { TextSelection } from 'prosemirror-state'
 import { hasTextStyleBar, TextStyleBar } from '@/components/inspector/TextStyleBar'
 import { Button } from '@/components/ui/Button'
@@ -347,7 +348,18 @@ function ElementQuick({
     <>
       <Head>{engineLabel(el.label)}</Head>
 
-      {field('text') && <TextContentRow read={read} write={write} close={close} />}
+      {field('text') && (
+        <TextContentRow
+          read={read}
+          write={(prop, value, immediate) => {
+            // 用了样式 / 公式而字体族没改过：同一次编辑里让公式字体跟正文（ADR 0152 PR 5）
+            const follow = prop === 'text' ? mathFontFollow(panel, el, String(value)) : null
+            if (follow) setOverride(panel.id, el.gid, 'fontfamily', follow, false)
+            write(prop, value, immediate)
+          }}
+          close={close}
+        />
+      )}
       {hasTextStyleBar(el) && (
         <div className="px-1.5 py-1">
           <TextStyleBar panel={panel} element={el} />

@@ -173,6 +173,7 @@ import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useLocateReveal } from './useLocateReveal'
 import { TextCaseMenu } from './TextActions'
 import { figureTextCodec } from '@/lib/richEditor'
+import { mathFontFollow } from '@/lib/figureMathFont'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
@@ -2507,7 +2508,12 @@ function FieldRow({
             codec={figureTextCodec}
             onFocus={beginTxn}
             onBlur={endTxn}
-            onChange={(next) => write(next)}
+            onChange={(next) => {
+              // 用了样式 / 公式而字体族没改过：同一次编辑里让公式字体跟正文（ADR 0152 PR 5）
+              const follow = mathFontFollow(panel, element, next)
+              if (follow) setOverride(panel.id, element.gid, 'fontfamily', follow, false)
+              write(next)
+            }}
             // 契约与画布文字一致：Enter 提交，⌥/⌘/Ctrl+Enter 换行；Esc 也是提交
             onEnter={blurActive}
             onEscape={blurActive}
