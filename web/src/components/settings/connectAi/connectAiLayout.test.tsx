@@ -10,9 +10,10 @@ import { t } from '@/i18n'
 import type { AiVendor } from '@/lib/api'
 import { PRODUCT_NAME } from '@/lib/brand'
 import { useAiStore } from '@/store/aiStore'
-import { connection, connectCapsOf, vendor } from '../testCaps'
+import { agentCaps, connection, connectCapsOf, vendor } from '../testCaps'
 import { BrandLines } from './BrandLines'
 import { ConnectAiDialog } from './ConnectAiDialog'
+import { MethodList } from './MethodList'
 import { methodHint } from './vendors'
 
 declare global {
@@ -163,7 +164,27 @@ describe('二级卡片：一家厂商有多种连接方式', () => {
     expect(calls.some((c) => c.url.endsWith('/api/ai/agents/codex/login') && c.method === 'POST')).toBe(true)
   })
 
-  it('不可用的方式置灰不可点，并给一句原因', async () => {
+  it('后端报了 codex 没装：订阅登录卡写「安装 Codex CLI 以启用」且可点；打不开写「重新安装」', async () => {
+    const unavailable: AiVendor = { ...OPENAI, methods: OPENAI.methods!.map((m) => (m.id === 'sub' ? { ...m, available: false } : m)) }
+    for (const [state, key] of [
+      ['not_installed', 'step.installToEnable'],
+      ['broken', 'step.reinstallToEnable'],
+    ] as const) {
+      useAiStore.setState({
+        caps: connectCapsOf([], { vendors: [unavailable], agents: [agentCaps({ state, installed: false, usable: false })] }),
+      })
+      await render(<MethodList vendor={unavailable} onConnected={() => {}} />)
+      const sub = q<HTMLButtonElement>('[data-connect-method="sub"]')!
+      expect(sub.disabled).toBe(false)
+      expect(sub.textContent).toContain(cx(key, { product: 'Codex' }))
+      expect(sub.textContent).not.toContain(cx('needsInstall'))
+      await act(async () => root.unmount())
+      host.remove()
+    }
+    expect(cx('step.installToEnable', { product: 'Codex' })).toBe('安装 Codex CLI 以启用')
+  })
+
+  it('不可用的方式置灰不可点，并给一句原因（后端没报这个 agent = 老后端）', async () => {
     await render(<ConnectAiDialog open list="all" onClose={() => {}} />)
     await click(q('[data-connect-vendor="anthropic"] [data-connect-action="methods"]'))
     const sub = q<HTMLButtonElement>('[data-connect-method="sub"]')!

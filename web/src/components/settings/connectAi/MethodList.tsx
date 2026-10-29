@@ -24,6 +24,21 @@ function installableAgent(vendor: AiVendor, method: AiVendorMethod, agents: AiAg
   return agent && action && action !== 'login' ? agent : undefined
 }
 
+/** 卡片第二行：可用 → 方式说明；命令行 AI 可在应用内装 / 重装 / 打开 → 说清「点这里就能装」；找不到 agent（老后端）才「需先安装」 */
+function methodCaption(vendor: AiVendor, method: AiVendorMethod, agent: AiAgentCaps | undefined): string {
+  if (method.available) return methodHint(vendor, method)
+  if (!agent) return cx('needsInstall')
+  const product = agent.display_name
+  switch (agentStep(agent.state, product).action) {
+    case 'install':
+      return cx('step.installToEnable', { product })
+    case 'reinstall':
+      return cx('step.reinstallToEnable', { product })
+    default:
+      return cx('step.disabled')
+  }
+}
+
 /** 选中某种方式之后摆在卡片下面的东西：Key 表单 / 登录按钮与提示 / 设备码小对话框 */
 function MethodConnect({
   vendor,
@@ -103,7 +118,8 @@ export function MethodList({
         const conn = connectionForMethod(connections, vendor, m)
         const ready = conn?.state === 'ready'
         // 已连的订阅类没有可管理的东西（只能在命令行里退出登录）：卡片只显示状态，不展开
-        const installable = !!installableAgent(vendor, m, agents)
+        const installAgent = installableAgent(vendor, m, agents)
+        const installable = !!installAgent
         const usable = m.available || installable
         const clickable = usable && !(ready && m.kind !== 'key')
         return (
@@ -129,7 +145,7 @@ export function MethodList({
               </IconSlot>
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-base font-medium text-ink">{methodName(m)}</span>
-                <span className="type-caption truncate">{usable ? methodHint(vendor, m) : cx('needsInstall')}</span>
+                <span className="type-caption truncate">{methodCaption(vendor, m, installAgent)}</span>
               </span>
               {conn && (
                 <StatusPill

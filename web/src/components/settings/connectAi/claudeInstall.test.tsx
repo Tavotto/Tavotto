@@ -92,6 +92,7 @@ describe('Claude Code 应用内安装并登录', () => {
     const card = q('[data-connect-method="sub"]') as HTMLButtonElement
     expect(card.disabled).toBe(false)
     await click(card)
+    expect(card.textContent).toContain('安装 Claude Code CLI 以启用')
     expect(q('[data-connect-step-text]')!.textContent).toBe('没装 Claude Code')
     const btn = q('[data-connect-action="install"]')!
     expect(btn.textContent).toBe('安装并登录')
