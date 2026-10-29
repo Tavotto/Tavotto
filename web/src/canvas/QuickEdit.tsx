@@ -16,6 +16,7 @@ import {
   hideElement,
   setLegendPlacement,
   setOverride,
+  setOverrides,
   unhideElement,
 } from '@/store/actions'
 import { useDocumentStore } from '@/store/documentStore'
@@ -28,6 +29,7 @@ import { useQuickEdit } from './quickEditStore'
 import { TextCaseMenu } from '@/components/inspector/TextActions'
 import { RichTextField, richViewOf } from '@/components/ui/RichTextField'
 import { figureTextCodec } from '@/lib/richEditor'
+import { mathFontFollow } from '@/lib/figureMathFont'
 import { TextSelection } from 'prosemirror-state'
 import { hasTextStyleBar, TextStyleBar } from '@/components/inspector/TextStyleBar'
 import { Button } from '@/components/ui/Button'
@@ -347,7 +349,28 @@ function ElementQuick({
     <>
       <Head>{engineLabel(el.label)}</Head>
 
-      {field('text') && <TextContentRow read={read} write={write} close={close} />}
+      {field('text') && (
+        <TextContentRow
+          read={read}
+          write={(prop, value, immediate) => {
+            // 用了样式 / 公式而字体族没改过：同一次编辑里让公式字体跟正文（ADR 0152 PR 5）。
+            // 两条 override **一次 commit**：快捷编辑没有聚焦事务，分两次写会是两条历史，
+            // 撤销一次只退掉文字、字体族留着（Codex #1496）
+            const follow = prop === 'text' ? mathFontFollow(panel, el, String(value)) : null
+            if (!follow) return write(prop, value, immediate)
+            setOverrides(
+              panel.id,
+              msg('history.setProp', { prop: propLabel('text') }, 'workspace'),
+              [
+                { gid: el.gid, prop: 'fontfamily', value: follow },
+                { gid: el.gid, prop, value: lens.toScript(prop, value) },
+              ],
+              immediate,
+            )
+          }}
+          close={close}
+        />
+      )}
       {hasTextStyleBar(el) && (
         <div className="px-1.5 py-1">
           <TextStyleBar panel={panel} element={el} />
