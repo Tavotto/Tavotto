@@ -608,8 +608,8 @@ def _slow_prepare(monkeypatch, *, past_commit):
         with deprepair._lock:
             ev = deprepair._cancels.get(plan_id)
         if ev is not None and ev.is_set():
-            return {"state": deprepair.STATE_CANCELLED}
-        return {"state": deprepair.STATE_DONE}
+            return {"ok": False, "code": deprepair.ERROR_CANCELLED}
+        return {"ok": True, "python": "/managed/bin/python", "installed": {}}
 
     monkeypatch.setattr(deprepair, "prepare", prepare)
     return entered, release, seen

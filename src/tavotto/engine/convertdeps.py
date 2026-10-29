@@ -357,14 +357,19 @@ def _run_prepare(plan, cancel: threading.Event | None, confirmed_impact: str) ->
     try:
         if cancel is not None and cancel.is_set():
             deprepair.cancel_status(pid)  # 开跑前就取消了：prepare 的取消检查点会在拿锁前停手
-        out = deprepair.prepare(pid, None, confirmed_impact=confirmed_impact)
-        return {
-            "state": str((out or {}).get("state") or ""),
-            "code": str((out or {}).get("code") or ""),
-        }
+        out = deprepair.prepare(pid, None, confirmed_impact=confirmed_impact) or {}
+        # `prepare` 的返回是 `{"ok": True, "python", "installed", …}` / `{"ok": False, "code", …}`——没有 `state` 键
+        # （`state` 只走进度事件）。按 `ok` 判，与 `pyversionfix` 同一口径（端到端实测：装好了却被判失败）
+        code = str(out.get("code") or "")
+        if out.get("ok") is True:
+            return {"state": deprepair.STATE_DONE, "code": ""}
+        if code == deprepair.ERROR_CANCELLED:
+            return {"state": deprepair.STATE_CANCELLED, "code": code}
+        return {"state": deprepair.STATE_FAILED, "code": code}
     except deprepair.RepairError as exc:
         return {"state": deprepair.STATE_FAILED, "code": exc.code}
     except Exception:  # noqa: BLE001
+        LOG.warning("自动安装执行失败", exc_info=True)
         return {"state": deprepair.STATE_FAILED, "code": deprepair.ERROR_FAILED}
     finally:
         done.set()
