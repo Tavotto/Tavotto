@@ -579,6 +579,38 @@ test(
 )
 
 test(
+  '功能：图内标题切到 LaTeX 源码改成 $\\mathit{…}$，切回所见即所得显示斜体，引擎重画',
+  { tag: ['@feature:text.rich-editor'] },
+  async ({ app, page }) => {
+    const a = await app()
+    await openFigure(page, a.baseURL)
+    const h0 = (await gidBox(page, 'axes_0.title'))!
+    expect(h0, '样例图应当有标题').not.toBeNull()
+    await page.mouse.click(h0.x + h0.w / 2, h0.y + h0.h / 2)
+
+    const box = page.locator('[data-prop="text"]')
+    const field = box.locator('[data-rich-text="field"]')
+    await expect(field).toHaveCount(1, { timeout: 15_000 })
+    const title = ((await field.textContent()) ?? '').trim()
+    expect(title.length, '样例图标题应当非空').toBeGreaterThan(1)
+
+    // 切到源码：框里就是存着的那串字
+    const key0 = await waitExact(page)
+    await box.locator('[data-rich-action="mode"]').click()
+    const source = box.locator('[data-rich-source]')
+    await expect(source).toHaveValue(title)
+    await source.fill('$\\mathit{x}$ ' + title)
+    await waitExact(page, key0) // 源码里的改动同样即时写回、引擎重画
+
+    // 切回：$\mathit{x}$ 是规范段，显示成斜体的 x
+    await box.locator('[data-rich-action="mode"]').click()
+    await expect(source).toHaveCount(0)
+    await expect(field.locator('em')).toHaveText('x')
+    await expect(field).toHaveText('x ' + title)
+  },
+)
+
+test(
   '功能：图例位置网格点「左上」，引擎重画后图例真的挪到坐标区左上角',
   { tag: ['@feature:legend.properties'] },
   async ({ app, page }) => {

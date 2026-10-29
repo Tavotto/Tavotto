@@ -122,3 +122,82 @@ describe('剪贴板（Codex #1489）', () => {
     expect(docToRuns(PMParser.fromSchema(richSchema).parse(div))).toEqual(runs)
   })
 })
+
+describe('粘贴识别（ADR 0152 PR 3）', () => {
+  it('论文里的公式变成公式块，周围的字原样', async () => {
+    const { pastedRuns } = await import('./richEditor')
+    expect(pastedRuns('Rate $k = A e^{-E/RT}$ at 300 K', 'annotation')).toEqual([
+      { text: 'Rate ', script: '' },
+      { text: 'k = A e^{-E/RT}', script: '', math: true },
+      { text: ' at 300 K', script: '' },
+    ])
+    expect(pastedRuns('\\(x^2\\) and \\[y_i\\]', 'mathtext')).toEqual([
+      { text: 'x^2', script: '', math: true },
+      { text: ' and ', script: '' },
+      { text: 'y_i', script: '', math: true },
+    ])
+    expect(pastedRuns('$$\\frac{a}{b}$$', 'annotation')).toEqual([{ text: '\\frac{a}{b}', script: '', math: true }])
+  })
+
+  it('单个字母的 $x$ 是公式；「$5 and $10」不是，交给默认粘贴', async () => {
+    const { pastedRuns } = await import('./richEditor')
+    expect(pastedRuns('$x$', 'annotation')).toEqual([{ text: 'x', script: '', math: true }])
+    expect(pastedRuns('costs $5 and $10', 'annotation')).toBeNull()
+    expect(pastedRuns('plain text', 'mathtext')).toBeNull()
+  })
+
+  it('标注认 \\textit 这类样式命令；图内文字不认（那里没有文字模式命令）', async () => {
+    const { pastedRuns } = await import('./richEditor')
+    expect(pastedRuns('Temperature \\textit{T} (K)', 'annotation')).toEqual([
+      { text: 'Temperature ', script: '' },
+      { text: 'T', script: '', italic: true },
+      { text: ' (K)', script: '' },
+    ])
+    expect(pastedRuns('Temperature \\textit{T} (K)', 'mathtext')).toBeNull()
+  })
+
+  it('转义的 \\$ 不当定界符', async () => {
+    const { pastedRuns } = await import('./richEditor')
+    expect(pastedRuns('\\$x\\$', 'annotation')).toBeNull()
+  })
+})
+
+describe('源码校验', () => {
+  it('花括号不配对 / $ 不成对给出位置；配对的、转义的不算错', async () => {
+    const { validateSource } = await import('./richEditor')
+    expect(validateSource('\\textit{T', 'annotation')).toEqual({ code: 'brace', at: 8 })
+    expect(validateSource('a}b', 'annotation')).toEqual({ code: 'brace', at: 2 })
+    expect(validateSource('k = $A e^{-E', 'annotation')).toEqual({ code: 'brace', at: 10 })
+    expect(validateSource('cost $5', 'annotation')).toEqual({ code: 'dollar', at: 6 })
+    expect(validateSource('\\{ \\$ $x$ $$y$$', 'annotation')).toBeNull()
+    expect(validateSource('Temperature \\textit{T} (K)', 'annotation')).toBeNull()
+  })
+
+  it('图内文字按行查：公式段不跨行', async () => {
+    const { validateSource } = await import('./richEditor')
+    expect(validateSource('$x\ny$', 'mathtext')).toEqual({ code: 'dollar', at: 1 })
+    expect(validateSource('cm$^{-1}$\n$x$', 'mathtext')).toBeNull()
+  })
+})
+
+describe('粘贴：样式命令里套公式（Codex #1492）', () => {
+  it('\\textit{T $x$} 整段按 LaTeX 子集读，钱数仍是字', async () => {
+    const { pastedRuns } = await import('./richEditor')
+    expect(pastedRuns('\\textit{T $x$} costs $5 and $10', 'annotation')).toEqual([
+      { text: 'T ', script: '', italic: true },
+      { text: 'x', script: '', italic: true, math: true },
+      { text: ' costs $5 and $10', script: '' },
+    ])
+  })
+})
+
+describe('粘贴：$$…$$ 不被当钱数转义（Codex #1492 复核）', () => {
+  it('\\textit{T} $$a+b$$ 的公式源码原样', async () => {
+    const { pastedRuns } = await import('./richEditor')
+    expect(pastedRuns('\\textit{T} $$a+b$$', 'annotation')).toEqual([
+      { text: 'T', script: '', italic: true },
+      { text: ' ', script: '' },
+      { text: 'a+b', script: '', math: true },
+    ])
+  })
+})

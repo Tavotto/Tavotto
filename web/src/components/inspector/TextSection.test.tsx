@@ -252,3 +252,141 @@ describe('换了写法、字符串不变（Codex #1489）', () => {
     expect(editorDom().querySelector('em')?.textContent).toBe('x')
   })
 })
+
+describe('LaTeX 模式与粘贴（ADR 0152 PR 3）', () => {
+  const source = () => container.querySelector<HTMLTextAreaElement>('[data-rich-source]')
+  const typeSource = (v: string) =>
+    act(() => {
+      const ta = source()!
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      setter.call(ta, v)
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+  it('切到 LaTeX：老标注显示成 LaTeX 子集规范形，不改就不写', () => {
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = 'cm^{-1}')))
+    click('mode')
+    expect(source()!.value).toBe('cm\\textsuperscript{-1}')
+    expect(current().text).toBe('cm^{-1}')
+    expect(current().textFormat).toBeUndefined()
+  })
+
+  it('在源码里改：直接写回并标 textFormat；切回所见即所得显示样式', () => {
+    click('mode')
+    typeSource('Temperature \\textit{T} (K)')
+    expect(current().text).toBe('Temperature \\textit{T} (K)')
+    expect(current().textFormat).toBe('latex')
+    click('mode')
+    expect(source()).toBeNull()
+    expect(editorDom().querySelector('em')?.textContent).toBe('T')
+  })
+
+  it('源码有错：说出错在第几个字符，不许切回；改对了再切', () => {
+    click('mode')
+    typeSource('\\textit{T')
+    click('mode')
+    expect(source()).not.toBeNull()
+    expect(container.querySelector('[data-rich-source-error]')?.textContent).toContain('8')
+    typeSource('\\textit{T}')
+    expect(container.querySelector('[data-rich-source-error]')).toBeNull()
+    click('mode')
+    expect(source()).toBeNull()
+  })
+
+  it('粘贴论文里的公式：变成公式块；「$5 and $10」原样是字', () => {
+    select(3, 3)
+    act(() => void view().pasteText(' with $k = A e^{-E}$'))
+    expect(current().text).toBe('H2O with $k = A e^{-E}$')
+    expect(editorDom().querySelector('[data-rt-math]')?.getAttribute('data-rt-math')).toBe('k = A e^{-E}')
+    act(() => void view().pasteText(' costs $5 and $10'))
+    expect(current().text).toBe('H2O with $k = A e^{-E}$ costs \\$5 and \\$10')
+  })
+
+  it('双击公式块进入 LaTeX 模式', () => {
+    act(() => s().commit(literal('换文字'), (d) => {
+      const o = d.objects[0] as TextObject
+      o.text = 'k = $A$'
+      o.textFormat = 'latex'
+    }))
+    const math = editorDom().querySelector('[data-rt-math]')!
+    act(() => {
+      const v = view()
+      const pos = v.posAtDOM(math, 0)
+      v.someProp('handleDoubleClickOn', (f) => f(v, pos, v.state.doc.nodeAt(pos)!, pos, new MouseEvent('dblclick'), true))
+    })
+    expect(source()?.value).toBe('k = $A$')
+  })
+})
+
+describe('LaTeX 模式的同步与撤销（Codex #1492）', () => {
+  const source = () => container.querySelector<HTMLTextAreaElement>('[data-rich-source]')
+  const typeSource = (v: string) =>
+    act(() => {
+      const ta = source()!
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ta, v)
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+  it('停在源码模式时换成老标注：源码框是它的 LaTeX 规范形，切回后上标还在、钱数不是公式', () => {
+    click('mode')
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = 'cm^{-1} costs $5 and $10')))
+    expect(source()!.value).toBe('cm\\textsuperscript{-1} costs \\$5 and \\$10')
+    click('mode')
+    expect(editorDom().querySelector('[data-rt="sup"]')?.textContent).toBe('-1')
+    expect(editorDom().querySelector('[data-rt-math]')).toBeNull()
+    expect(current().text).toBe('cm^{-1} costs $5 and $10') // 没改就没写
+  })
+
+  it('源码里的改动切回后能 ⌘Z 撤掉', () => {
+    click('mode')
+    typeSource('\\textit{H}2O')
+    click('mode')
+    expect(editorDom().querySelector('em')?.textContent).toBe('H')
+    act(() => (editorDom() as HTMLElement).focus())
+    press('z', { ctrlKey: true })
+    expect(editorDom().querySelector('em')).toBeNull()
+    expect(current().text).toBe('H2O')
+  })
+})
+
+describe('第一次改老标注：写法换了也不重读（Codex #1492 复核）', () => {
+  it('所见即所得里打第一个字：光标留在原处，不被甩到末尾', () => {
+    act(() => s().commit(literal('换文字'), (d) => void ((d.objects[0] as TextObject).text = 'cm^{-1} long tail')))
+    select(1, 1)
+    act(() => view().dispatch(view().state.tr.insertText('X')))
+    expect(current().textFormat).toBe('latex')
+    expect(view().state.selection.from).toBe(2)
+  })
+
+  it('停在源码模式时换成字符串相同、写法不同的标注：照常重读', () => {
+    act(() => s().commit(literal('换文字'), (d) => {
+      const o = d.objects[0] as TextObject
+      o.text = 'a $x$'
+      o.textFormat = 'latex'
+    }))
+    click('mode')
+    act(() => s().commit(literal('换写法'), (d) => void delete (d.objects[0] as TextObject).textFormat))
+    // 旧标记里 $ 是字：源码框写成转义的规范形，切回后没有公式块
+    expect(container.querySelector<HTMLTextAreaElement>('[data-rich-source]')!.value).toBe('a \\$x\\$')
+    click('mode')
+    expect(editorDom().querySelector('[data-rt-math]')).toBeNull()
+  })
+})
+
+describe('陈旧的回声不挡后来的重读', () => {
+  it('源码里写出一串（写法没变，回声没被用掉），随后同一串换成旧标记：照常重读', () => {
+    act(() => s().commit(literal('标 LaTeX'), (d) => {
+      const o = d.objects[0] as TextObject
+      o.text = 'b'
+      o.textFormat = 'latex'
+    }))
+    click('mode')
+    act(() => {
+      const ta = container.querySelector<HTMLTextAreaElement>('[data-rich-source]')!
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(ta, 'a $x$')
+      ta.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    act(() => s().commit(literal('换写法'), (d) => void delete (d.objects[0] as TextObject).textFormat))
+    expect(container.querySelector<HTMLTextAreaElement>('[data-rich-source]')!.value).toBe('a \\$x\\$')
+  })
+})

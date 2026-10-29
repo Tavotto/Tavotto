@@ -73,3 +73,10 @@ if (typeof Range !== 'undefined' && !Range.prototype.getClientRects) {
   Range.prototype.getClientRects = () => ({ length: 0, item: () => null, [Symbol.iterator]: [][Symbol.iterator] }) as unknown as DOMRectList
   Range.prototype.getBoundingClientRect = () => new DOMRect()
 }
+// ProseMirror 的 `pasteText`（粘贴识别用例）会 new 一个 ClipboardEvent：jsdom 没有这个构造器，
+// 补成不带剪贴板数据的普通事件——编辑框此时退回读 slice 里的文字，正是用例要走的那条路。
+if (typeof globalThis.ClipboardEvent === 'undefined') {
+  ;(globalThis as { ClipboardEvent?: unknown }).ClipboardEvent = class extends Event {
+    clipboardData: DataTransfer | null = null
+  }
+}
