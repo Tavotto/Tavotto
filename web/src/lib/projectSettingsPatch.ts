@@ -43,7 +43,8 @@ export async function applyProjectSettingsPatch(
   const origin = pj ?? identityOf()
   bump(1)
   try {
-    const res = await patchProjectSettings(patch, pj)
+    // 没显式指定就照旧只传 patch（走当前项目），调用形状与原来逐字一致
+    const res = pj == null ? await patchProjectSettings(patch) : await patchProjectSettings(patch, pj)
     if (identityOf() !== origin) return
     useProjectStore.setState((s) =>
       s.project
