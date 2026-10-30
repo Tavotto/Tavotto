@@ -12,12 +12,12 @@
 from __future__ import annotations
 
 import json
-import os
 import threading
 import time
 
 import pytest
 
+from support import procprobe
 from tavotto.engine import ai_bridge, ai_convert, ai_history, ai_tasks
 from tests.test_ai_convert_foreign import (  # noqa: F401  —— 夹具复用
     CARD,
@@ -242,15 +242,8 @@ def test_cancel_during_the_correction_stops_the_agent_and_drops_the_candidate(
     assert out["state"] == "cancelled", out
     assert not (ai_convert.CONVERT_DIR / sid).exists(), "候选删了"
     assert not ai_convert.resuming(sid)
-    end = time.time() + 10
-    alive = True
-    while alive and time.time() < end:
-        try:
-            os.kill(pid, 0)
-            time.sleep(0.1)
-        except OSError:
-            alive = False
-    assert not alive, "Agent 进程残留"
+    # Windows 上 os.kill(pid, 0) 会杀进程（#523），探测只经 procprobe
+    assert procprobe.wait_gone(pid, timeout=10), "Agent 进程残留"
     assert len(env["prompts"]) == 2
 
 
