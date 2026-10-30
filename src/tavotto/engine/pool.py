@@ -1289,10 +1289,11 @@ def _tex_error(message: str, traceback_text: str, extra=None) -> "WorkerError | 
     return err
 
 
-#: 依赖安装**真正成功提交过**的 (项目, 模块)：之后同一个模块仍然读不了，说明装包没有用，落到
-#: `import_folder_unreadable`，不再循环出安装卡。只在安装成功时记（`deprepair` 的两处终态调 `note_unreadable_install`），
-#: 给错误分类从不记账；按项目区分，不同项目里同名模块、同名文件夹互不影响。进程内，不落盘。
-_UNREADABLE_INSTALLED: set[tuple[str, str]] = set()
+#: 依赖安装**真正成功提交过**的 (项目, 解释器, 模块)：之后同一个解释器里这个模块仍然读不了，说明装包没有用，落到
+#: `import_folder_unreadable`，不再循环出安装卡。只在安装成功时记（`deprepair` 的成功终态调 `note_unreadable_install`，
+#: 带安装落地的那个环境的解释器），给错误分类从不记账。键里有解释器：项目切到另一个环境后，在旧环境里装过
+#: 不挡新环境里本来可行的修复；项目切换环境（`reset_worker_python` / `deprepair.reset_state`）时清掉。进程内，不落盘。
+_UNREADABLE_INSTALLED: set[tuple[str, str, str]] = set()
 _UNREADABLE_INSTALLED_LOCK = threading.Lock()
 
 
@@ -1300,20 +1301,42 @@ def _unreadable_project_key(project) -> str:
     return projectenv._key(project) if project else ""
 
 
-def note_unreadable_install(project, module: str) -> None:
-    """一次依赖安装成功提交到 `project` 后调用：记下 `module` 装过了。"""
+def _unreadable_env_key(python) -> str:
+    """环境身份：解释器的规范化绝对路径（不 realpath：两个 venv 的解释器常同指向一个基础解释器）。"""
+    return os.path.normcase(os.path.abspath(str(python))) if python else ""
+
+
+def note_unreadable_install(project, module: str, python="") -> None:
+    """一次依赖安装成功提交到 `project` 的 `python` 环境后调用：记下 `module` 在这个环境里装过了。"""
     if module:
         with _UNREADABLE_INSTALLED_LOCK:
-            _UNREADABLE_INSTALLED.add((_unreadable_project_key(project), str(module)))
+            _UNREADABLE_INSTALLED.add(
+                (_unreadable_project_key(project), _unreadable_env_key(python), module)
+            )
 
 
-def _unreadable_install_done(project, module: str) -> bool:
+def reset_unreadable_installs(project=None) -> None:
+    """清掉记账：给了 `project` 只清它的，否则全清（项目切换环境 / 测试之间）。"""
     with _UNREADABLE_INSTALLED_LOCK:
-        return (_unreadable_project_key(project), module) in _UNREADABLE_INSTALLED
+        if project is None:
+            _UNREADABLE_INSTALLED.clear()
+        else:
+            key = _unreadable_project_key(project)
+            for item in [i for i in _UNREADABLE_INSTALLED if i[0] == key]:
+                _UNREADABLE_INSTALLED.discard(item)
+
+
+def _unreadable_install_done(project, python, module: str) -> bool:
+    with _UNREADABLE_INSTALLED_LOCK:
+        return (
+            _unreadable_project_key(project),
+            _unreadable_env_key(python),
+            module,
+        ) in _UNREADABLE_INSTALLED
 
 
 def unreadable_folder_error(
-    message: str, traceback_text: str, extra=None, *, project=""
+    message: str, traceback_text: str, extra=None, *, project="", python=""
 ) -> "WorkerError | None":
     """worker / bridge 报来的结构化事实 `unreadable_folder` → 错误；没有或畸形回 None（ADR 0153 B）。
 
@@ -1333,7 +1356,7 @@ def unreadable_folder_error(
     fact = {"folder": folder}
     module = structured_missing_module(given.get("module"))
     if module and "." not in module and _mappable_to_distribution(module):
-        if not _unreadable_install_done(project, module):
+        if not _unreadable_install_done(project, python, module):
             err = _missing_dependency_error(module, traceback_text)
             err.extra = {"unreadable_folder": {**fact, "module": module}}
             return err
@@ -2262,6 +2285,7 @@ def reset_worker_python() -> None:
     用户刚把设置里的解释器改掉，项目侧还端着上一轮的结论就是两套答案。
     """
     global _worker_python, _worker_source
+    reset_unreadable_installs()  # 换了环境：旧环境里「装过」的记账不再作数
     with _lock:
         _worker_python = None
         _worker_source = ""
@@ -2881,6 +2905,7 @@ class EngineWorker:
             tb,
             err if isinstance(err, dict) else None,
             project=getattr(self, "figures_dir", ""),
+            python=getattr(self, "python", ""),
         )
         if unreadable is not None:
             unreadable.script_name = self.script_name
@@ -3362,7 +3387,13 @@ def _spawn_spec(
 
 
 def _worker_error(
-    message: str, code: str, traceback_text: str, extra: dict | None = None, *, project=""
+    message: str,
+    code: str,
+    traceback_text: str,
+    extra: dict | None = None,
+    *,
+    project="",
+    python="",
 ) -> WorkerError:
     """错误三元组 → `WorkerError`，**`missing_dependency` 优先于协议 code**。
 
@@ -3377,7 +3408,9 @@ def _worker_error(
     tex = _tex_error(message, traceback_text, extra)
     if tex is not None:
         return tex
-    unreadable = unreadable_folder_error(message, traceback_text, extra, project=project)
+    unreadable = unreadable_folder_error(
+        message, traceback_text, extra, project=project, python=python
+    )
     if unreadable is not None:
         return unreadable
     mod = missing_module(f"{message}\n{traceback_text}")
@@ -3611,7 +3644,14 @@ class WorkerdWorker:
             # workerd 只如实报退出状态（`ExitReport`），怎么解释、日志空不空要不要
             # 说，都归这边——与 Python 池的 EOF 路径同一句话（`session_dead_message`）。
             message = session_dead_message(exc.extra.get("exit"), tb, self.log_path)
-        err = _worker_error(message, code, tb, exc.extra, project=getattr(self, "figures_dir", ""))
+        err = _worker_error(
+            message,
+            code,
+            tb,
+            exc.extra,
+            project=getattr(self, "figures_dir", ""),
+            python=getattr(self, "python", ""),
+        )
         # 两条控制面在「缺包时上层拿得到哪些事实」上必须给同一个答案
         err.script_name = self.script_name
         err.python_source = getattr(self, "python_source", "") or ""

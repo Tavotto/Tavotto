@@ -771,3 +771,59 @@ def test_joint_install_endings_record_every_import_name_of_the_plan(tmp_path):
             engine_pool.unreadable_folder_error("m", "t", fact, project=proj).code
             == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
         )
+
+
+# --------------------------------------------------------------------------- 记账按目标环境区分
+def test_install_in_env_a_does_not_block_the_fix_in_env_b(tmp_path):
+    proj, mod = str(tmp_path / "p"), _name()
+    env_a, env_b = str(tmp_path / "envA" / "python"), str(tmp_path / "envB" / "python")
+    fact = {"unreadable_folder": {"folder": ".deps", "module": mod}}
+    engine_pool.note_unreadable_install(proj, mod, env_a)
+    # 同一环境装过之后仍失败：一句话的卡
+    assert (
+        engine_pool.unreadable_folder_error("m", "t", fact, project=proj, python=env_a).code
+        == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+    )
+    # 切到环境 B（没装过）：仍给安装出路
+    assert (
+        engine_pool.unreadable_folder_error("m", "t", fact, project=proj, python=env_b).code
+        == "missing_dependency"
+    )
+    # 经 worker 错误收口也按它自己的解释器查
+    worker = engine_pool.EngineWorker.__new__(engine_pool.EngineWorker)
+    worker.script_name, worker.figures_dir, worker.python = "fig.py", proj, env_b
+    resp = {"error": {"code": "script_error", "message": "m", "traceback": "t", **fact}}
+    assert worker._error_of(resp).code == "missing_dependency"
+    worker.python = env_a
+    assert worker._error_of(resp).code == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+
+
+def test_switching_environment_and_reset_state_clear_the_records(tmp_path):
+    from tavotto.engine import deprepair
+
+    proj, other, mod = str(tmp_path / "p"), str(tmp_path / "q"), _name()
+    py = str(tmp_path / "env" / "python")
+    fact = {"unreadable_folder": {"folder": ".deps", "module": mod}}
+
+    def blocked(project):
+        return (
+            engine_pool.unreadable_folder_error("m", "t", fact, project=project, python=py).code
+            == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+        )
+
+    for reset in (
+        lambda: engine_pool.reset_worker_python(),
+        lambda: deprepair.reset_state(proj),
+        lambda: deprepair.reset_state(),
+        lambda: engine_pool.reset_unreadable_installs(proj),
+    ):
+        engine_pool.note_unreadable_install(proj, mod, py)
+        assert blocked(proj)
+        reset()
+        assert not blocked(proj)
+    # 只清这个项目的
+    engine_pool.note_unreadable_install(proj, mod, py)
+    engine_pool.note_unreadable_install(other, mod, py)
+    deprepair.reset_state(proj)
+    assert not blocked(proj) and blocked(other)
+    engine_pool.reset_unreadable_installs()

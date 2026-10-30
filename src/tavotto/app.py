@@ -10629,6 +10629,7 @@ def _native_preparation_runner(pl, before_retry=None):
             str(error.get("traceback") or ""),
             error,
             project=native_project,
+            python=getattr(session, "interpreter", ""),
         )
         if unreadable is not None:
             raise unreadable
@@ -11626,6 +11627,7 @@ def _set_project_environment(
             )
         except engine_envlease.EnvironmentBusy as exc:
             return _environment_busy(exc)
+        engine_pool.reset_unreadable_installs(root)
         engine_pool.reset_worker_python()
         engine_pool.shutdown_all(root)
         return jsonify({"ok": True, "project": _project_environment_state()})
