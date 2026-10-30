@@ -57,7 +57,7 @@ export type PrepPrimary =
   | { kind: 'feedback' }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
-export type PrepButton = 'run' | 'openRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
+export type PrepButton = 'run' | 'openRun' | 'allowRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
 
 /** 卡片的视觉语气：标题左边那个小图标（`busy` 转圈、`ok` 勾、`bad` 叹号、`mute` 灰） */
 export type PrepTone = 'busy' | 'ok' | 'bad' | 'mute' | null
@@ -530,6 +530,11 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
   // 后端没有回退（项目设成只用安全运行 / 运维关了回退 / 老后端）——如实说为什么，不替用户换环境重跑，没有主按钮。
   // 原因来自账本里的闭集理由码（`declined`），前端不另判
   if (report.outcome.kind === 'failed' && code === 'safe_file_operation_blocked') {
+    // 浏览器模式（ADR 0127 修订 2026-10-30）：后端没静默回退，但给了一张「用户点一次才换」的确认——一句话 + 一个主按钮，
+    // 不进 AI 修复（`withRemedy` 看到 remedy 是 `switch_native` 就不摆 AI 次按钮）。按钮来自报告里的动作，前端不判
+    if (has(report, 'confirm_native_run')) {
+      return view('file_ops_confirm', 'fileOpsConfirm', v, act('confirm_native_run', 'allowRun'), { tone: 'bad', step: 1 })
+    }
     const declined = currentAttempt(report)?.declined
     const key =
       declined === 'policy_safe_only'

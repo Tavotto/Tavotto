@@ -653,6 +653,7 @@ export const useProjectPreparationStore = create<PreparationState>((set, get) =>
               action_id: action.id,
               expected_config_revision: report.config_revision,
               ...(action.impact.impact_digest ? { impact_digest: action.impact.impact_digest } : {}),
+              ...(action.confirm_token ? { confirm_token: action.confirm_token } : {}),
               ...(transferFrom ? { transfer_from: transferFrom } : {}),
             },
             pj,

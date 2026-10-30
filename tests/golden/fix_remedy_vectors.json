@@ -26,6 +26,12 @@
       "remedy": { "kind": "switch_native", "silent": true }
     },
     {
+      "name": "safe guard blocked in browser mode -> ask the user, not AI (even with AI connected)",
+      "failure": "safe_file_operation_blocked",
+      "ctx": { "confirm_native": true, "ai_connected": true },
+      "remedy": { "kind": "switch_native", "silent": false }
+    },
+    {
       "name": "listed package in an allowed environment -> install without asking",
       "failure": "missing_dependency",
       "ctx": { "missing_installable": true, "packages": ["scipy"], "auto_install_allowed": true },
