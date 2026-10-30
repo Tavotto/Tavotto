@@ -184,10 +184,14 @@ def test_executable_bit_is_kept_and_copy_is_writable(env):
     parent.mkdir()
     r = _save_as(client, pj, parent)
     copy = Path(r.get_json()["path"])
-    mode = (copy / "run.sh").stat().st_mode & 0o777
-    assert mode & 0o100 and mode & 0o200 and mode & 0o400, oct(mode)
-    assert os.access(copy / "run.sh", os.X_OK)
-    assert not (copy / "ro.txt").stat().st_mode & 0o111  # 没有执行位的不凭空多出来
+    # 只用 os.access 判（门禁 test_no_test_judges_executability_by_filesystem_mode 不许按 st_mode 判执行位；本用例只在 POSIX 跑）
+    helper_copy = copy / "run.sh"
+    assert (
+        os.access(helper_copy, os.X_OK)
+        and os.access(helper_copy, os.W_OK)
+        and os.access(helper_copy, os.R_OK)
+    )
+    assert not os.access(copy / "ro.txt", os.X_OK)  # 没有执行位的不凭空多出来
     assert os.access(copy / "ro.txt", os.W_OK)
 
 
