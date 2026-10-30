@@ -63,6 +63,7 @@ export default defineConfig({
       // 一个 project 就要回去改那张 matrix）。
       testMatch: [
         'golden-paths.spec.ts',
+        'dark-draft-arrow.spec.ts',
         'a11y.spec.ts',
         'keyboard-golden-path.spec.ts',
         'twin-axes-pick.spec.ts',
