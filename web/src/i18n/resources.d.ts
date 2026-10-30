@@ -2123,10 +2123,12 @@ export default interface Resources {
           "disabled": "已在设置里关闭",
           "enable": "打开",
           "install": "安装并登录",
+          "installToEnable": "安装 {{product}} CLI 以启用",
           "installingPct": "正在安装… {{pct}}%",
           "needsAuth": "还没登录",
           "notInstalled": "没装 {{product}}",
-          "reinstall": "重新安装"
+          "reinstall": "重新安装",
+          "reinstallToEnable": "重新安装 {{product}} CLI 以启用"
         },
         "subtitle": "连接一个 AI，用于改图或修复环境。",
         "subtitleConvert": "把 {{name}} 转成可编辑版本需要一个 AI。连上后会自动开始。",

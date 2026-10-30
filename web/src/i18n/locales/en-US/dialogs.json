@@ -1945,6 +1945,8 @@
       },
       "step": {
         "notInstalled": "{{product}} isn't installed",
+        "installToEnable": "Install {{product}} CLI to enable",
+        "reinstallToEnable": "Reinstall {{product}} CLI to enable",
         "broken": "Found {{product}}, but it won't open",
         "needsAuth": "Not signed in yet",
         "disabled": "Turned off in Settings",
