@@ -23,6 +23,8 @@ export interface ThumbObject {
   fileKind?: string
   /** 文字：正文 */
   text?: string
+  /** 文字：写法（`latex` = LaTeX 子集；缺席 = 旧标记）。缩略图用它把存着的串读成「显示的字」 */
+  textFormat?: string
   /** 形状：种类 */
   shape?: string
 }

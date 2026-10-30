@@ -28,7 +28,8 @@ import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { bucketFor } from '@/lib/previewBuckets'
 import { layerOf } from '@/lib/glyphPlan'
-import { DEFAULT_INTERPRETATION, interpretRuns, runLines, SCRIPT_SIZE, SUB_DROP, SUP_RISE } from '@/lib/richText'
+import { DEFAULT_INTERPRETATION, displayText, interpretRuns, runLines } from '@/lib/richText'
+import { ThumbMathLine, ThumbRun } from '@/components/ThumbMathLine'
 import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
 import { MM_PER_PT } from '@/lib/units'
 import type { PanelObject, TextObject } from '@/types/document'
@@ -215,7 +216,9 @@ export function CanvasThumb({
                 fill="currentColor"
                 className="text-paper-ink-2"
               >
-                {(o.text ?? '').slice(0, THUMB_TEXT_CHARS)}
+                {/* 显示的字，不是存着的串：LaTeX 命令去掉、公式不带 `$`。公式不在这里画成轮廓——一页 / 一列版本里
+                    几十个缩略图各发一次排版请求不值（它回答「哪一版」），导出预览才画真公式 */}
+                {displayText(o.text ?? '', o.textFormat === 'latex' ? 'latex' : undefined).slice(0, THUMB_TEXT_CHARS)}
               </text>
             )
           }
@@ -260,7 +263,26 @@ function ExportedText({ obj }: { obj: TextObject }) {
   const pad = obj.padding ?? 0
   const x = obj.align === 'center' ? obj.x + obj.w / 2 : obj.align === 'right' ? obj.x + obj.w - pad : obj.x + pad
   const anchor = obj.align === 'center' ? 'middle' : obj.align === 'right' ? 'end' : 'start'
+  const family = effectiveCanvasFamily(obj)
   const border = obj.borderColor ? (obj.borderPt ?? 0.75) * MM_PER_PT : 0
+  const textProps = {
+    fontSize: size,
+    fontWeight: obj.bold ? 700 : 400,
+    fontStyle: obj.italic ? ('italic' as const) : ('normal' as const),
+    textDecoration: obj.underline ? 'underline' : undefined,
+    fill: obj.color,
+    // 字体栈的衬线档是 `var(--font-doc)`：var() 只在 style 里解析，表现属性里不认
+    style: { fontFamily: canvasFontStack(family) },
+  }
+  const lines = runLines(obj.text, obj.textFormat).map((line) =>
+    interpretRuns(line, {
+      isPrimary: (cp) => layerOf(cp) === 'primary',
+      isDrawable: (cp) => layerOf(cp) !== 'missing',
+      mode: obj.interpretation ?? DEFAULT_INTERPRETATION,
+    }),
+  )
+  const mid = (i: number) => obj.y + pad + (i + 0.5) * lead
+  const plainLines = lines.map((l, i) => [l, i] as const).filter(([l]) => !l.some((r) => r.math))
   return (
     <g data-thumb-text>
       {(obj.bg || border > 0) && (
@@ -274,44 +296,33 @@ function ExportedText({ obj }: { obj: TextObject }) {
           strokeWidth={border > 0 ? border : undefined}
         />
       )}
-      <text
-        x={x}
-        fontSize={size}
-        fontWeight={obj.bold ? 700 : 400}
-        fontStyle={obj.italic ? 'italic' : 'normal'}
-        textDecoration={obj.underline ? 'underline' : undefined}
-        fill={obj.color}
-        textAnchor={anchor}
-        dominantBaseline="central"
-        // 字体栈的衬线档是 `var(--font-doc)`：var() 只在 style 里解析，表现属性里不认
-        style={{ fontFamily: canvasFontStack(effectiveCanvasFamily(obj)) }}
-      >
-        {runLines(obj.text, obj.textFormat).map((line, i) => (
-          <tspan key={i} x={x} y={obj.y + pad + (i + 0.5) * lead}>
-            {interpretRuns(line, {
-              isPrimary: (cp) => layerOf(cp) === 'primary',
-              isDrawable: (cp) => layerOf(cp) !== 'missing',
-              mode: obj.interpretation ?? DEFAULT_INTERPRETATION,
-            }).map((r, j) =>
-              r.math ? (
-                `$${r.text}$`
-              ) : r.script === '' && !r.italic && !r.bold ? (
-                r.text
-              ) : (
-                <tspan
-                  key={j}
-                  fontStyle={r.italic ? 'italic' : undefined}
-                  fontWeight={r.bold ? 700 : undefined}
-                  fontSize={r.script ? size * SCRIPT_SIZE : undefined}
-                  baselineShift={r.script ? size * (r.script === 'sup' ? SUP_RISE : -SUB_DROP) : undefined}
-                >
-                  {r.text}
-                </tspan>
-              ),
-            )}
-          </tspan>
-        ))}
-      </text>
+      {plainLines.length > 0 && (
+        <text {...textProps} x={x} textAnchor={anchor} dominantBaseline="central">
+          {plainLines.map(([runs, i]) => (
+            <tspan key={i} x={x} y={mid(i)}>
+              {runs.map((r, j) => (
+                <ThumbRun key={j} r={r} size={size} />
+              ))}
+            </tspan>
+          ))}
+        </text>
+      )}
+      {/* 含公式的行：文字与轮廓分段排（见 ThumbMathLine） */}
+      {lines.map(
+        (runs, i) =>
+          runs.some((r) => r.math) && (
+            <ThumbMathLine
+              key={i}
+              runs={runs}
+              family={family}
+              size={size}
+              x={x}
+              mid={mid(i)}
+              align={obj.align === 'center' ? 'center' : obj.align === 'right' ? 'right' : 'left'}
+              textProps={textProps}
+            />
+          ),
+      )}
     </g>
   )
 }
