@@ -371,6 +371,37 @@ def release(cand: ConvertCandidate) -> None:
         remove_dir(cand.dir)
 
 
+def clear_redirect_area(cand) -> bool:
+    """清空候选的改道区（含只读文件：chmod u+w 后重试一次）。回 True = 已不存在。删不掉回 False，由调用方决定怎么办。"""
+    area = Path(cand.dir) / REDIRECT_DIRNAME
+    if not os.path.lexists(area):
+        return True
+    for attempt in range(2):
+        try:
+            if area.is_symlink() or not area.is_dir():
+                area.unlink()
+            else:
+                shutil.rmtree(area)
+        except OSError:
+            if attempt:
+                break
+            for dp, dns, fns in os.walk(area):
+                for name in (*dns, *fns):
+                    full = os.path.join(dp, name)
+                    try:
+                        if not os.path.islink(full):
+                            os.chmod(full, 0o700)
+                    except OSError:
+                        pass
+            try:
+                os.chmod(area, 0o700)
+            except OSError:
+                pass
+        if not os.path.lexists(area):
+            return True
+    return not os.path.lexists(area)
+
+
 def keep_failed(cand: ConvertCandidate) -> bool:
     """失败 / 超时（**不含用户取消**）而没有可采用的结果时，把候选目录留 `FAILED_KEEP_S`，只为诊断包「附带源码」
     能带上 AI 写出来却没通过的那份脚本。meta 标 `failed_kept`：`_load_meta` 对它一律 404，所以采用 / 续跑 / 丢弃 / 预览
@@ -384,8 +415,10 @@ def keep_failed(cand: ConvertCandidate) -> bool:
             cand.new_bytes = cand.target.read_bytes()
         except OSError:
             return False
-    # 改道区里可能有用户数据的衍生文件（CSV…）：诊断只要脚本，这里不留
-    shutil.rmtree(cand.dir / REDIRECT_DIRNAME, ignore_errors=True)
+    # 改道区里可能有用户数据的衍生文件（CSV…）：诊断只要脚本，这里不留；删不干净就整个不留（回 False，
+    # 调用方照旧走 `release` 删整个候选目录），绝不在还有改道数据时标 failed_kept
+    if not clear_redirect_area(cand):
+        return False
     meta = {**_hold_meta(cand, STATE_FAILED_KEPT), "failed_kept_at": time.time()}
     meta.pop("context", None)
     meta.pop("project_before", None)
@@ -687,6 +720,15 @@ def _run_with_cancel(runner, cand: ConvertCandidate, rel: str, cancel) -> tuple[
     """跑校验运行；运行中取消到来时，若 runner 带 `force_cancel(figures_dir, rel, write_roots)`（app 注入，= `pool.force_cancel`
     的同键硬杀）就当场结束在跑的探测。回 `(输出, 是否因取消被硬杀)`。runner 没有该入口（纯引擎单测）则等同直接调用。"""
     figures_dir, roots = str(cand.project_root), validation_roots(cand)
+    # 每次校验执行都从空的改道区开始（agent_check / 提交前 / 依赖重试 / 续跑共用同一候选目录），
+    # 否则 `open(p, 'x')` 第二次失败、追加再读的脚本累积数据；删不掉就明确失败，不拿旧数据继续
+    if not clear_redirect_area(cand):
+        return {
+            "error": {
+                "code": "redirect_area_not_clearable",
+                "message": "The candidate's redirect area from a previous run could not be cleared.",
+            }
+        }, False
     killer = getattr(runner, "force_cancel", None)
     if cancel is None or killer is None:
         return runner(figures_dir, rel, roots) or {}, False

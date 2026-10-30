@@ -652,6 +652,7 @@ NON_UI_CODES = {
     "capture_incomplete",
     "convert_output_identity",
     "preview_render_failed",
+    "redirect_area_not_clearable",
     "telemetry_rejected",
     "invalid_telemetry_event",
     "bad_nonce",

@@ -201,6 +201,98 @@ def test_redirected_write_can_be_read_back_and_originals_are_copy_on_write(world
     assert _redirected(cand, "sub/data.csv").read_text() == "x,y\n1,2\n9,9\n"
 
 
+EXCLUSIVE = (
+    "import os\nimport matplotlib.pyplot as plt\n"
+    "here = os.path.dirname(os.path.abspath(__file__))\n"
+    "open(os.path.join(here, 'once.csv'), 'x').write('1')\n"
+    "plt.plot([1])\nplt.savefig('o.png')\n"
+)
+APPEND_READ = (
+    "import os\nimport matplotlib.pyplot as plt\n"
+    "here = os.path.dirname(os.path.abspath(__file__))\n"
+    "p = os.path.join(here, 'log.csv')\n"
+    "open(p, 'a').write('row\\n')\n"
+    "assert open(p).read() == 'row\\n', open(p).read()\n"
+    "plt.plot([1])\nplt.savefig('o.png')\n"
+)
+
+
+@pytest.mark.parametrize("source", [EXCLUSIVE, APPEND_READ], ids=["exclusive", "append_read"])
+def test_every_validation_run_starts_from_an_empty_redirect_area(world, source):
+    """agent_check 与提交前校验（以及依赖重试 / 续跑）共用候选目录：第二次必须与全新一次相同。"""
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = source.encode()
+    cand.target.write_bytes(cand.new_bytes)
+    first = ai_convert.run_validation(cand, runner)
+    second = ai_convert.run_validation(cand, runner)
+    third = ai_convert.run_validation(cand, runner)
+    assert first["status"] == second["status"] == third["status"] == "ok", (first, second, third)
+
+
+def test_dependency_retry_rerun_also_sees_a_fresh_redirect_area(world, monkeypatch):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = EXCLUSIVE.encode()
+    cand.target.write_bytes(cand.new_bytes)
+    calls = []
+    real = ai_convert._runtime_dependency_retry
+
+    def retry_once(c, rel, out):
+        calls.append(1)
+        return {} if len(calls) == 1 else real(c, rel, out)
+
+    monkeypatch.setattr(ai_convert, "_runtime_dependency_retry", retry_once)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "ok", result
+    assert len(calls) == 1
+
+
+def test_unclearable_redirect_area_fails_the_run_instead_of_using_stale_data(world, monkeypatch):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = EXCLUSIVE.encode()
+    cand.target.write_bytes(cand.new_bytes)
+    assert ai_convert.run_validation(cand, runner)["status"] == "ok"
+
+    def boom(*_a, **_k):
+        raise PermissionError("busy")
+
+    monkeypatch.setattr(ai_convert.shutil, "rmtree", boom)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "error" and result["code"] == "redirect_area_not_clearable", result
+
+
+def test_keep_failed_does_not_retain_a_candidate_with_undeletable_redirected_data(
+    world, monkeypatch
+):
+    root, cand, runner = world
+    cand.new_bytes = cand.target.read_bytes() if cand.target.exists() else b"x = 1\n"
+    cand.target.write_bytes(cand.new_bytes)
+    area = cand.dir / ai_convert.REDIRECT_DIRNAME
+    area.mkdir()
+    (area / "data.csv").write_text("derived")
+    monkeypatch.setattr(
+        ai_convert.shutil, "rmtree", lambda *a, **k: (_ for _ in ()).throw(PermissionError("x"))
+    )
+    assert ai_convert.keep_failed(cand) is False
+    assert not cand.kept_failed
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 权限位")
+def test_keep_failed_removes_read_only_redirected_data_then_retains(world):
+    root, cand, runner = world
+    cand.new_bytes = b"x = 1\n"
+    cand.target.write_bytes(cand.new_bytes)
+    sub = cand.dir / ai_convert.REDIRECT_DIRNAME / "d"
+    sub.mkdir(parents=True)
+    (sub / "ro.csv").write_text("derived")
+    (sub / "ro.csv").chmod(0o400)
+    sub.chmod(0o500)
+    assert ai_convert.keep_failed(cand) is True
+    assert not (cand.dir / ai_convert.REDIRECT_DIRNAME).exists()
+
+
 def test_writes_outside_project_and_allowed_roots_still_trip(world):
     root, cand, runner = world
     workdir.set_mode(root, workdir.MODE_PROJECT)
