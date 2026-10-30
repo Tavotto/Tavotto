@@ -563,7 +563,7 @@ export default interface Resources {
         "prepare_failed": "诊断包没准备好。",
         "unknown": "结果无法确认，请到「发送问题反馈」里查看。"
       },
-      "diagHint": "日志里可能有脚本打印出的内容；不含你的脚本和数据文件。",
+      "diagHint": "日志里可能有脚本打印出的内容，并包含受管环境安装的 Python 包名和版本；不含你的脚本和数据文件。",
       "diagKindsTitle": "包含",
       "diagLabel": "附上诊断信息",
       "diagPreparing": "正在准备诊断包…",
@@ -2297,8 +2297,8 @@ export default interface Resources {
           "saveFailed": "没能保存",
           "saved": "已保存",
           "send": "发送",
-          "sentence": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），不附带你的脚本文件和数据文件。",
-          "sentenceExtras": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），并附带你勾选的：{{items}}。",
+          "sentence": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），以及受管环境安装的 Python 包名及版本，不附带你的脚本文件和数据文件。",
+          "sentenceExtras": "将发送诊断包，含报错详情和日志（日志里可能有脚本打印出的内容），以及受管环境安装的 Python 包名及版本，并附带你勾选的：{{items}}。",
           "sentenceItem": {
             "corrupt_sessions": "会话损坏副本的内容",
             "crash_reports": "系统崩溃报告（可能含打开着的文件的内容）",
