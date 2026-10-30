@@ -357,3 +357,11 @@ order: 200
 - `reconstruction_changed`：编辑与 guard 原样保留、不自动换基，一句话 + 「重新对照确认」；确认后一次提交更新摘要。
 看护：`lib/sourceBackedFigure.test.ts`、`store/sourceBackedAdoption.test.ts`、`canvas/sourceBackedPreview.test.tsx`、
 `components/SourceBackedReviewDialog.test.tsx`、`e2e/guarded-png-activation.spec.ts`。
+
+## 没有写入权限的项目（2026-10-30）
+
+打开 `project.writable === false` 的项目时，`ReadOnlyProjectPrompt` 问**一次**：一句话 + 「另存为…」（主）+「继续只读打开」（次）。
+另存为 = 选文件夹（桌面壳原生选择器，浏览器版 `DirBrowser`）→ `saveProjectAs` → `projectStore.open(副本)`；
+「继续只读打开」写 `settings.readonly_save_as_declined`（按项目路径，持久）；Esc 只是本次会话不再问、不写记忆
+（`lib/readOnlyPromptMemory`）。界面不判权限，事实只认后端的 `writable`；教程项目不问。
+看护：`components/ReadOnlyProjectPrompt.test.tsx`。

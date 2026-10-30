@@ -38,6 +38,7 @@ import { UpdateNoticeDialog } from '@/components/UpdateNoticeDialog'
 import { DependencyPrepareDialog } from '@/components/DependencyPrepareDialog'
 import { ImportOriginDialog } from '@/components/ImportOriginDialog'
 import { EngineEnvironmentDialog } from '@/components/EngineEnvironmentDialog'
+import { ReadOnlyProjectPrompt } from '@/components/ReadOnlyProjectPrompt'
 import { WorkdirConfirmDialog } from '@/components/WorkdirConfirmDialog'
 import { MissingInputDialog } from '@/components/MissingInputDialog'
 import { TooltipProvider } from '@/components/ui/Tooltip'
@@ -368,6 +369,8 @@ function Workspace() {
         <ConfirmDialog />
         {/* 首开要先选运行目录（U03）：渲染 store 把后端的「需要输入」交到 envStore，这里渲染 */}
         <WorkdirConfirmDialog />
+        {/* 项目文件夹没有写入权限：打开时问一次要不要另存一份到自己的文件夹 */}
+        <ReadOnlyProjectPrompt />
         <MissingInputDialog />
         {/* 跑前的依赖门（U04）：同一种「需要输入」，载荷在依赖修复 store 里，这里渲染 */}
         <DependencyPrepareDialog />

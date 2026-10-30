@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
+import errno
 import faulthandler
 import hashlib
 import importlib
@@ -775,6 +776,51 @@ FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
 #: MCP 来源的 safe 运行里，脚本想写授权根之外（写入根绊线，#898）。**绊线不是沙盒**，盲区见 `writetripwire`。
 #: 不属于 `execpolicy.BLOCKED_CODES`：它不会触发「换 native 重跑」的回退（native 没有绊线，换过去等于放行）。
 WRITE_OUTSIDE_ROOTS = writetripwire.CODE
+#: 脚本想写的文件夹没有写入权限（只读项目 / 只读卷），脚本因此没能写出它的输出文件。与父进程
+#: `pool.OUTPUT_FOLDER_READ_ONLY_CODE` 同值（本模块不 import 兄弟模块）。
+OUTPUT_FOLDER_READ_ONLY = "output_folder_read_only"
+_WRITE_DENIED_ERRNOS = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
+
+
+def _write_denied_by_folder(exc: BaseException) -> bool:
+    """异常链里有没有一次「文件夹不让写」：`OSError`（EROFS / EACCES / EPERM）带文件名，
+    且**接收这个文件的文件夹**此刻确实没有写入权限。
+
+    判据的主语是**文件夹**，不是异常类型：`PermissionError` 也是「读不了某个文件」的脸（那是
+    `import_folder_unreadable` / 用户自己的权限问题，换环境没用也不是只读项目）。所以：
+
+    * `EROFS` 本身就是只读卷，直接算；
+    * `EACCES` / `EPERM` 要求父文件夹对当前账户 `W_OK` 为假，**并且**目标若已存在则必须是可读的
+      ——存在却读不了 = 读失败，不是写失败；
+    * 没有文件名（C 扩展里丢了）判不了，不算。
+    """
+    seen = 0
+    cur: BaseException | None = exc
+    while cur is not None and seen < 16:
+        if isinstance(cur, OSError) and cur.errno in _WRITE_DENIED_ERRNOS:
+            name = cur.filename
+            if isinstance(name, bytes):
+                try:
+                    name = os.fsdecode(name)
+                except (UnicodeError, ValueError):
+                    name = None
+            if isinstance(name, str) and name:
+                if cur.errno == errno.EROFS:
+                    return True
+                path = Path(name)
+                parent = path.parent if str(path.parent) else Path(".")
+                try:
+                    exists = os.path.lexists(path)
+                    readable = (not exists) or os.access(path, os.R_OK)
+                    if readable and not os.access(parent, os.W_OK | os.X_OK):
+                        return True
+                except OSError:
+                    pass
+        cur = cur.__cause__ or cur.__context__
+        seen += 1
+    return False
+
+
 #: 载荷里的「该走哪条执行路径」：保留文件语义（native bridge / `tavotto run`）。字符串是桌面侧
 #: 接入依据；`adapter_available` 只说「这个 build 失败之后，桌面界面是否已经会自动换那条路径重跑」——
 #: 终端里的 `tavotto run` 一直可用，但自动回退没接通之前这个值保持 false（不承诺没接通的东西）。
@@ -1924,6 +1970,15 @@ class Worker(wireproto.V1Handler):
                     retryable=False,
                     traceback_text=traceback.format_exc(),
                     extra={"missing_input": missing},
+                ) from exc
+            if _write_denied_by_folder(exc):
+                # 脚本想写的文件夹没有写入权限（只读项目）：用户的下一步是另存一份到自己的文件夹，
+                # 不是读 traceback，更不是换环境 / 让 AI 改脚本。traceback 仍随错误带出，供诊断
+                raise ProtocolError(
+                    OUTPUT_FOLDER_READ_ONLY,
+                    f"脚本想写的文件夹没有写入权限，因此某些输出文件未生成: {type(exc).__name__}",
+                    retryable=False,
+                    traceback_text=traceback.format_exc(),
                 ) from exc
             # 不是一次落空的只读打开、但异常链里确实有「文件不存在」（C++ 读取器）：码仍是
             # script_error，只多带一份事实；对不对得上脚本里哪串常量由父进程判（ADR 0110 §一）

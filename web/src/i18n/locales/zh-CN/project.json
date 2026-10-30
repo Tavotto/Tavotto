@@ -163,5 +163,11 @@
     "scriptCount_other": "{{count}} 个已关联脚本",
     "unpin": "取消收藏",
     "unpinLabel": "取消收藏 {{name}}"
+  },
+  "readOnlyPrompt": {
+    "title": "Tavotto 没有这个文件夹的写入权限。另存一份到你自己的文件夹再编辑？",
+    "save": "另存为…",
+    "continue": "继续只读打开",
+    "pickTitle": "选择另存到哪个文件夹"
   }
 }

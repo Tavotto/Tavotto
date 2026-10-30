@@ -575,7 +575,13 @@ export interface ProjectStatus {
   exists?: boolean
   writable?: boolean
   scripts?: number
-  settings?: { export_dir?: string; backup_dir?: string; allow_write_back?: boolean }
+  settings?: {
+    export_dir?: string
+    backup_dir?: string
+    allow_write_back?: boolean
+    /** 用户对「没有写入权限的项目要不要另存一份」选了继续只读：按项目路径记住，之后打开不再问 */
+    readonly_save_as_declined?: boolean
+  }
   export_dir?: string
   backup_dir?: string
   /** 本机真实家目录（后端 `Path.home()`）：界面缩写 `~` 只认它，不按路径形状猜 */
@@ -769,6 +775,7 @@ export const patchProjectSettings = (patch: {
   export_dir?: string
   backup_dir?: string
   allow_write_back?: boolean
+  readonly_save_as_declined?: boolean
 }) =>
   jsonFetch<{ settings: ProjectStatus['settings']; export_dir: string; backup_dir: string }>(
     '/api/project/settings',
@@ -776,6 +783,20 @@ export const patchProjectSettings = (patch: {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
+    },
+  )
+
+/**
+ * 把当前项目文件夹另存为 `parent` 下的一份可写副本（后端 `engine/projectcopy`），回副本路径。
+ * 打开副本是调用方的事（`useProjectStore.open`）；体量超限等失败是带 code 的 `ApiError`。
+ */
+export const saveProjectAs = (parent: string) =>
+  jsonFetch<{ path: string; files: number; bytes: number; skipped: number }>(
+    '/api/project/save-as',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent }),
     },
   )
 
