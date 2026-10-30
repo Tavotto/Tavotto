@@ -4923,6 +4923,8 @@ export default interface Resources {
       "modeToRichTitle": "切回所见即所得",
       "newline": "插入换行",
       "newlineTitle": "在光标处插入换行（{{alt}} / {{mod}}）",
+      "preview": "公式预览",
+      "previewNoRuntime": "没有可用的排版环境",
       "sub": "下标",
       "subTitle": "下标：作用于选中的字（{{key}}）",
       "sup": "上标",

@@ -1240,6 +1240,8 @@
     "modeToRichTitle": "切回所见即所得",
     "errorBrace": "第 {{at}} 个字符：花括号没有配对，改正后才能切回所见即所得",
     "errorDollar": "第 {{at}} 个字符：$ 没有配对，改正后才能切回所见即所得",
-    "modeShort": "TeX"
+    "modeShort": "TeX",
+    "preview": "公式预览",
+    "previewNoRuntime": "没有可用的排版环境"
   }
 }

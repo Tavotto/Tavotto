@@ -35,6 +35,9 @@ order: 250
   导出把结果作为 `math=` 交给 `plan.compile_page`（RenderCore 不起进程），画布经 `/api/mathtext` 读同一份。新增导出 /
   写回路径要先 `mathtypeset.layouts_for(objects)` 再编译，不然公式只按源码画。看护 `tests/test_mathtypeset.py`、
   `test_rendercore_plan.py` 的 `test_math_*`、`test_export_endpoint.py` 的 `test_export_*math*`。
+- **图内文字的公式预览**（ADR 0152 PR 6）：`/api/mathtext` 的 `family` 另收 `face:<族名>`（只给编辑框预览；标注 / 导出仍严格三族，
+  RenderCore 不认）。`mathtext_child.FACE_SETS` ↔ `manifest._MATHTEXT_SET_FACES` 严格同源，`test_mathtypeset.py` 的
+  `test_child_face_table_mirrors_the_manifest_math_face_table` 看护；族名只收名字（字符集见 `mathtypeset._FACE_NAME`），不收路径。
 - **图内元素文字**走 matplotlib mathtext（`cm$^{-1}$`），不是上面那套标记；
   大小写转换要 `protectMath`（`$…$` 里是 `\alpha` 这类命令，改大小写就废）。
 - 大小写是**一次性动作**，直接改文本内容（可撤销），不新增字段、导出零改动。

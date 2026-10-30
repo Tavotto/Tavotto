@@ -35,6 +35,7 @@ import { ALT, cn, combo, modKey } from '@/lib/utils'
 import { Button } from './Button'
 import { FIELD_BOX, FIELD_FOCUS_WITHIN } from './fieldBox'
 import { MathFormula } from './MathFormula'
+import { MathPreviewStrip } from './MathPreviewStrip'
 import { fitTextAreaHeight } from './Input'
 
 /** 挂着的编辑器，按内容节点查（测试与 e2e 驱动选区用；界面代码不走这里） */
@@ -63,24 +64,42 @@ function syncDomSelection(view: EditorView): void {
 }
 
 /**
- * 公式块的显示：后端排好的公式（`MathFormula`，与导出同一份结果）。只有宿主给了 `mathFamily`
- * （标注）时才用它；图内文字的公式块仍显示源码——那里图上就是 matplotlib 画的真身，编辑框不另画一份。
+ * 公式块的显示：后端排好的公式（`MathFormula`，与导出同一份结果）。只有宿主给了 `mathFamily` 时才用它：
+ * 标注给三族之一，图内文字给 `face:<图上画公式的那张脸>`（ADR 0152 后续）。
+ * 族 / 字号由 `get` 现读，宿主换了（字体族改了）时 `render()` 就地重画，不重建编辑器（重建会丢焦点）。
  */
 class MathChipView implements NodeView {
   dom: HTMLElement
   private root: Root
-  constructor(node: PMNode, family: string, sizePx: number) {
+  private node: PMNode
+  private get: () => { family: string; sizePx: number; live: boolean }
+  private all: Set<MathChipView>
+  constructor(node: PMNode, get: () => { family: string; sizePx: number; live: boolean }, all: Set<MathChipView>) {
+    this.node = node
+    this.get = get
+    this.all = all
     this.dom = document.createElement('span')
     this.dom.className = 'rt-math'
     this.dom.contentEditable = 'false'
     this.dom.dataset.rtMath = node.attrs.src as string
     this.root = createRoot(this.dom)
-    this.root.render(<MathFormula src={node.attrs.src as string} family={family} sizePx={sizePx} />)
+    all.add(this)
+    this.render()
+  }
+  render() {
+    const { family, sizePx, live } = this.get()
+    // 源码模式时这份文档是隐藏的、每个键都被换一遍：不排版（否则每键一个请求），切回来再排
+    if (!live) {
+      this.root.render(<span>{this.node.attrs.src as string}</span>)
+      return
+    }
+    this.root.render(<MathFormula src={this.node.attrs.src as string} family={family} sizePx={sizePx} />)
   }
   ignoreMutation() {
     return true
   }
   destroy() {
+    this.all.delete(this)
     const root = this.root
     // 卸载推迟一拍：ProseMirror 在自己的更新里调 destroy，同步卸载另一个 React 根会被 React 警告
     queueMicrotask(() => root.unmount())
@@ -131,7 +150,10 @@ export interface RichTextFieldProps {
   placeholder?: string
   /** 正文字号（px）：上下标的绝对字号与基线由它算（`--rt-size`） */
   sizePx?: number
-  /** 标注的字体族：给了就把公式块画成排好的公式（ADR 0152 PR 4）；不给（图内文字）显示源码 */
+  /**
+   * 公式的排版族：给了就把公式块画成排好的公式、并在源码模式下方出预览条（ADR 0152 PR 4）。
+   * 标注传画布字体族（`serif` / `sans-serif` / `monospace`）；图内文字传 `face:<图上画公式的那张脸>`；不给显示源码。
+   */
   mathFamily?: string
   /** 工具条右侧宿主自己的按钮（大小写菜单等） */
   extra?: ReactNode
@@ -201,6 +223,11 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
   const [sourceError, setSourceError] = useState<SourceError | null>(null)
   const sourceRef = useRef<HTMLTextAreaElement>(null)
   const enterLatex = useRef<() => void>(() => {})
+  /** 源码框的光标位置：预览条跟着光标所在行 */
+  const [caret, setCaret] = useState(0)
+  /** 挂着的公式块视图与它们现读的族 / 字号（见 `MathChipView`） */
+  const chips = useRef(new Set<MathChipView>())
+  const mathProps = useRef({ family: mathFamily ?? '', sizePx: sizePx ?? 13, live: true })
 
   useLayoutEffect(() => {
     if (!host.current) return
@@ -231,7 +258,7 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
         onEscape: () => cb.current.onEscape?.() ?? false,
       }),
       ...(mathFamily
-        ? { nodeViews: { math: (node: PMNode) => new MathChipView(node, mathFamily, sizePx ?? 13) } }
+        ? { nodeViews: { math: (node: PMNode) => new MathChipView(node, () => mathProps.current, chips.current) } }
         : {}),
       attributes: (state) => ({
         role: 'textbox',
@@ -325,6 +352,11 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content)
     view.dispatch(tr.setMeta('rt-external', true).setMeta('addToHistory', false))
   }, [value, codec])
+  mathProps.current = { family: mathFamily ?? '', sizePx: sizePx ?? 13, live: mode === 'rich' }
+  // 公式的族 / 字号变了（图内文字改了字体族，公式字体集跟着换）：已挂着的公式块就地重画
+  useEffect(() => {
+    for (const c of chips.current) c.render()
+  }, [mathFamily, sizePx, mode])
   // 回声只认紧接着的那次渲染（这条 effect 排在上面那条之后，同一次提交里后跑）
   useEffect(() => {
     ownEcho.current = null
@@ -402,7 +434,7 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
         // 占位的颜色：框里用界面的 ink-3；画布上就地编辑由宿主按纸的底色给（白纸上的浅灰在深色页面上看不见）
         variant === 'field' && '[&_.ProseMirror[data-empty]]:before:text-ink-3',
         '[&_.ProseMirror[data-empty]]:before:content-[attr(data-placeholder)]',
-        // 公式块：PR 4 之前显示源码，整块是一个对象
+        // 公式块：整块是一个对象
         '[&_.rt-math]:rounded-sm [&_.rt-math]:bg-accent-subtle [&_.rt-math]:px-0.5',
         contentClassName,
       )}
@@ -451,7 +483,11 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
             rows={1}
             spellCheck={false}
             value={source}
-            onChange={(e) => editSource(e.target.value)}
+            onChange={(e) => {
+              setCaret(e.target.selectionStart)
+              editSource(e.target.value)
+            }}
+            onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
             onFocus={() => cb.current.onFocus?.()}
             onBlur={() => cb.current.onBlur?.()}
             onKeyDown={(e) => {
@@ -464,6 +500,16 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
             }}
             className="block w-full min-w-0 resize-none bg-transparent font-mono text-sm leading-relaxed text-ink outline-none"
           />
+          {mathFamily && (
+            <MathPreviewStrip
+              source={source}
+              caret={caret}
+              codec={codec}
+              family={mathFamily}
+              sizePx={(sizePx ?? 13) + 3}
+              label={rt('preview')}
+            />
+          )}
           {sourceError && (
             <p data-rich-source-error className="mt-1 text-xs text-danger" role="alert">
               {rt(sourceError.code === 'brace' ? 'errorBrace' : 'errorDollar', { at: sourceError.at })}

@@ -94,6 +94,8 @@ const SVG_ALLOWLIST: Record<string, number> = {
   '/src/components/onboarding/DemoImportStep.tsx': 1,
   // 标注里的公式（ADR 0152 PR 4）：用户写的 LaTeX 由后端 matplotlib 排出的轮廓，与导出同一份，不是图标
   '/src/components/ui/MathFormula.tsx': 1,
+  // LaTeX 源码模式下方的公式预览条：同一份排版结果，不是图标
+  '/src/components/ui/MathPreviewStrip.tsx': 1,
 }
 
 /**

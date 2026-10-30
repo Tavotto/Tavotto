@@ -22,3 +22,32 @@ export function mathFontFollow(panel: PanelObject, el: ManifestElement, nextText
   const styled = parseMathtext(nextText).some((r) => !r.math && (r.italic || r.bold || r.script !== ''))
   return styled ? field.value : null
 }
+
+/** 后端 `mathtypeset.face_of` 收的族名字符集（`[\w .()+&'-]{1,80}`）的镜像：不合法的退默认脸，免得整条请求被拒 */
+const FACE_NAME = /^[\p{L}\p{N}_ .()+&'-]{1,80}$/u
+
+/** 族名取第一个（字体栈 `A, B` 的头一个）、去引号；不合法退默认脸 */
+function faceName(raw: string): string {
+  const first = raw.split(',')[0].trim().replace(/^["']|["']$/g, '')
+  return FACE_NAME.test(first) ? first : DEFAULT_MATH_FACE
+}
+
+/** matplotlib 默认的公式字体集（`mathtext.fontset = dejavusans`）用的那张脸 */
+export const DEFAULT_MATH_FACE = 'DejaVu Sans'
+
+/**
+ * 图内文字编辑框里的公式预览用哪个「族」排：`face:<图上画公式的那张脸>`（`/api/mathtext` 的 `face:` 写法）。
+ *
+ * 优先级（越靠前越新）：
+ *  1. 这次编辑会让公式跟正文（`mathFontFollow`）：预览直接用将要写下的正文族，不等 manifest 刷新；
+ *  2. 字体族已有 override：引擎把公式字体集切到同一族（`overrides._set_text_fontfamily`），值就是它；
+ *  3. manifest 的 `math_face`（含 `$…$` 的元素才有）；
+ *  4. 都没有：matplotlib 默认的 DejaVu Sans。
+ */
+export function figureMathFamily(panel: PanelObject, el: ManifestElement, text: string): string {
+  const follow = mathFontFollow(panel, el, text)
+  const override = effectiveOverride(panel.overrides, el.gid, 'fontfamily')?.value
+  const face =
+    follow ?? (typeof override === 'string' && override ? override : null) ?? el.math_face ?? DEFAULT_MATH_FACE
+  return `face:${faceName(face)}`
+}
