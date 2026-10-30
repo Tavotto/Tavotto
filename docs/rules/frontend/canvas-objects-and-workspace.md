@@ -243,6 +243,7 @@ order: 210
   以左上角为锚点静默校正 w / h。夹取 / 吸附在**页面 mm** 上做（`lib/pageEdgeResize.planFigureFrame` → `resizeFigureEdge`，
   最小 10 mm），再按缩放比换回图幅 mm（0.01 一格、夹进引擎给 `size_mm` 的界）。**权威只认精确 manifest**（ADR 0017，
   `lib/figureEdgeFrame.figureFrameFacts`）：缺席 / 被裁过 / 旋转过 / `size_mm` 只读，整组命中区不挂。松手到新图回来之间
-  （`interaction.figureFramePending`，不随 `end()` 清）旧图与背纸收起、只留虚线框占位，免得旧图错位闪一下；新图回来 / 撤销 / 20 s 超时即撤。
+  （`interaction.figureFramePending`，不随 `end()` 清）旧图与背纸收起、只留虚线框占位，免得旧图错位闪一下；渲染状态角标保持可见且占位时立即显示。
+  新图回来 / 撤销 / 当前变体明确失败 / 20 s 超时即撤；不能把别的变体或之前缓存的失败当作这次失败。
   拖动是对视口的直接操纵（每帧 `setPan` 退出「适应画布」，Esc 还原）。命中区图内编辑里也可用，压进图里只有 2 px（其余 8 px 在图外：贴着图框的 figure 级文字 / 轴标题要点得到，`multi-select-geometry.spec.ts` 看护）。
   看护：`canvas/figureEdgeResize.test.tsx`、`lib/pageEdgeResize.test.ts`（`planFigureFrame`）、`e2e/figure-edge-resize.spec.ts`（`@feature:canvas.single-figure-edge-resize`）。

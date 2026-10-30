@@ -90,11 +90,11 @@ import {
 } from '@/lib/scaleSnap'
 import { clamp } from '@/lib/units'
 import { setTxnAnchor, useDocumentStore } from '@/store/documentStore'
-import { registerPointerCancel } from '@/store/gestureCoordinator'
+import { hasActiveGesture, hasActivePointerGesture, registerPointerCancel, subscribeGestureCoordinator } from '@/store/gestureCoordinator'
 import { useInteractionStore, type SnapFeedback } from '@/store/interactionStore'
 import { feedbackFor } from '@/lib/snapFeedback'
 import { displayedExactManifest } from '@/store/mountedSvgStore'
-import { exactPanelManifest, useRenderStore } from '@/store/renderStore'
+import { exactPanelManifest, renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore, type Tool } from '@/store/uiStore'
 import { useWorkspaceStore } from '@/store/workspaceStore'
@@ -108,7 +108,12 @@ import {
 } from '@/store/viewportStore'
 import { setOverride, setOverrides } from '@/store/actions'
 import { resizePatch } from '@/store/patchResizeAction'
-import { previewLine, previewScale, previewTransform } from '@/store/svgPreviewStore'
+import {
+  cancelQueuedTranslation, captureQueuedTranslationCommit, findGidNode, findPanelSvg,
+  flushPreviewFrame, flushQueuedTranslation, markPreviewMove, prepareQueuedTranslationCommit,
+  previewLine, previewScale, previewSession, previewTransform, queuedTranslation,
+  rebaseQueuedTranslation, updateQueuedTranslation, type QueuedTranslation,
+} from '@/store/svgPreviewStore'
 import {
   beginElementPreview,
   cancelElementPreview,
@@ -1742,6 +1747,214 @@ function trackInFigureMove(
   })
 }
 
+type DeferredIntent = {
+  delta: [number, number]
+  shift: boolean
+  metaKey: boolean
+  ctrlKey: boolean
+  complete: boolean
+}
+
+type DeferredMove = {
+  panelId: string
+  gid: string
+  role: string
+  dragProp: string
+  identity: string
+  expectedKey: string
+  documentId: string | null
+  loadSeq: number
+  canvasId: string
+  basis: string
+  layout: { width: number; height: number }
+  intents: DeferredIntent[]
+  committed: boolean
+  internal: boolean
+  preview: QueuedTranslation
+  cleanups: (() => void)[]
+}
+
+let deferredMove: DeferredMove | null = null
+
+const deferredBasis = (panel: PanelObject) => JSON.stringify([
+  panel.x, panel.y, panel.w, panel.h, panel.crop, panelContentTransform(panel),
+])
+
+function deferredContextValid(d: DeferredMove): boolean {
+  const ds = useDocumentStore.getState()
+  const panel = ds.doc.objects.find((o) => o.id === d.panelId)
+  const ui = useUiStore.getState()
+  return ds.documentId === d.documentId && ds.loadSeq === d.loadSeq && ds.activeCanvasId === d.canvasId &&
+    panel?.type === 'panel' && renderKeyOf(panel) === d.expectedKey &&
+    !panel.hidden && !panel.locked && deferredBasis(panel) === d.basis &&
+    ui.elementPanelId === d.panelId && ui.selectedGids.length === 1 && ui.selectedGids[0] === d.gid
+}
+
+/** DOM 只是位移预览；正式锚点和吸附候选都在对应版本渲染完后重取。 */
+function drawDeferredMove(d: DeferredMove) {
+  const [dx, dy] = d.intents.reduce<[number, number]>(
+    (sum, intent) => [sum[0] + intent.delta[0], sum[1] + intent.delta[1]], [0, 0],
+  )
+  updateQueuedTranslation(d.preview, [dx, dy])
+}
+
+function endDeferredMove(d: DeferredMove, explain = false) {
+  if (deferredMove !== d) return
+  deferredMove = null
+  for (const cleanup of d.cleanups) cleanup()
+  cancelQueuedTranslation(d.preview)
+  if (explain && d.intents.some((i) => i.complete)) {
+    useUiStore.getState().setStatus(msg('status.dragSyncCancelled', undefined, 'workspace'), 'error')
+  }
+}
+
+/** 在 SVG 挂载、前一预览认领之后执行；每次只用当前权威提交一条手势。 */
+export function resumeDeferredInFigureDrag(panelId: string) {
+  const d = deferredMove
+  if (!d || d.panelId !== panelId || d.internal) return
+  const ds = useDocumentStore.getState()
+  const panel = ds.doc.objects.find((o) => o.id === d.panelId)
+  if (!deferredContextValid(d) || panel?.type !== 'panel') {
+    endDeferredMove(d, true)
+    return
+  }
+  const own = useRenderStore.getState().byKey[d.expectedKey]
+  if (own?.status === 'error') {
+    endDeferredMove(d, true)
+    return
+  }
+  const manifest = displayedExactManifest(panel)
+  if (!manifest) return
+  const el = manifest.elements.find((entry) => entry.gid === d.gid)
+  if (!el || el.role !== d.role || el.drag_prop !== d.dragProp ||
+      JSON.stringify(el.identity ?? null) !== d.identity || panel.lockedGids?.includes(d.gid)) {
+    endDeferredMove(d, true)
+    return
+  }
+  if (d.committed) {
+    // 同一 SVG 字符串可能复用同一个节点；复位那次已被权威接管的预览。
+    rebaseQueuedTranslation(d.preview)
+    d.committed = false
+  }
+  const next = d.intents[0]
+  if (!next) return endDeferredMove(d)
+  if (!next.complete) return drawDeferredMove(d)
+  // 这次提交来自渲染回包，不得结束或并入另一个正在进行的用户手势。
+  if (ds.txn || hasActiveGesture() || hasActivePointerGesture() || interaction().kind !== 'none') {
+    return drawDeferredMove(d)
+  }
+
+  // 已挂的临时位移不能成为新预览的 base，否则每次交接都会翻倍。
+  prepareQueuedTranslationCommit(d.preview)
+  const mv = inFigureMoveOf(panel, manifest, el)
+  if (!mv) return endDeferredMove(d, true)
+  let [dx, dy] = next.delta
+  const mods = { metaKey: next.metaKey, ctrlKey: next.ctrlKey, shiftKey: next.shift }
+  if (mv.snapBox) {
+    const box = mv.snapBox
+    const snapper = inFigureSnapper(panel, mv.moving, mv.snapKind, mv.clampedToPanel)
+    if (snapper) {
+      const [sx, sy] = snapper([box[0] + dx, box[1] + dy, box[2], box[3]], mods, [dx, dy])
+      dx += sx
+      dy += sy
+    }
+  }
+  mv.preview(dx, dy, carriesContents(mods))
+  flushPreviewFrame()
+  interaction().end()
+  d.internal = true
+  const changed = mv.commit(dx, dy, carriesContents(mods))
+  d.intents.shift()
+  const current = useDocumentStore.getState().doc.objects.find((o) => o.id === d.panelId)
+  if (current?.type === 'panel') d.expectedKey = renderKeyOf(current)
+  d.internal = false
+  captureQueuedTranslationCommit(d.preview)
+  if (changed) {
+    d.committed = true
+    drawDeferredMove(d)
+  } else {
+    rebaseQueuedTranslation(d.preview)
+    resumeDeferredInFigureDrag(panelId)
+  }
+}
+
+/** 同步中只接已经精确命中过的同一元素，保存指针位移而不读取旧 manifest。 */
+export function startDeferredInFigureDrag(
+  e: ReactPointerEvent,
+  panel: PanelObject,
+  layout: { width: number; height: number },
+): boolean {
+  const ui = useUiStore.getState()
+  const prior = previewSession()
+  let d = deferredMove
+  const move = prior?.move
+  const gid = d?.panelId === panel.id ? d.gid : move?.gid
+  const node = gid ? findGidNode(findPanelSvg(panel.id), gid) : null
+  const rect = node?.getBoundingClientRect()
+  if (!gid || !rect || e.clientX < rect.left || e.clientX > rect.right ||
+      e.clientY < rect.top || e.clientY > rect.bottom || ui.selectedGids.length !== 1 || ui.selectedGids[0] !== gid) return false
+  if (!d) {
+    if (!move || !prior?.pendingCommit?.some((p) => p.gid === gid && p.prop === move.dragProp) ||
+        prior.awaitKey !== renderKeyOf(panel)) return false
+    const ds = useDocumentStore.getState()
+    d = {
+      panelId: panel.id, gid, role: move.role, dragProp: move.dragProp,
+      identity: JSON.stringify(move.identity ?? null), expectedKey: prior.awaitKey,
+      documentId: ds.documentId, loadSeq: ds.loadSeq, canvasId: ds.activeCanvasId,
+      basis: deferredBasis(panel),
+      layout, intents: [], committed: false, internal: false,
+      preview: queuedTranslation(panel.id, gid), cleanups: [],
+    }
+    deferredMove = d
+    const mine = d
+    const check = () => {
+      if (mine.internal || deferredMove !== mine) return
+      // 撤销时先收排队预览，再让既有账本还原已提交的上一笔。
+      if (!deferredContextValid(mine)) return endDeferredMove(mine, true)
+      queueMicrotask(() => resumeDeferredInFigureDrag(mine.panelId))
+    }
+    d.cleanups.push(useDocumentStore.subscribe(check), useRenderStore.subscribe(check),
+      useUiStore.subscribe(check), useInteractionStore.subscribe(check), subscribeGestureCoordinator(check))
+  }
+  if (d.panelId !== panel.id || d.gid !== gid || d.intents.some((i) => !i.complete)) return false
+  e.stopPropagation()
+  e.preventDefault()
+  const intent: DeferredIntent = { delta: [0, 0], shift: false, metaKey: false, ctrlKey: false, complete: false }
+  d.intents.push(intent)
+  const mine = d
+  const toContent = contentDelta(panel, layout)
+  interaction().begin('element')
+  trackPointer(e, {
+    onMove: (ev, dxPx, dyPx) => {
+      if (deferredMove !== mine) return
+      let [dx, dy] = toContent(dxPx, dyPx)
+      if (ev.shiftKey) [dx, dy] = contentAxisLock(layout, dx, dy)
+      intent.delta = [dx, dy]
+      intent.shift = ev.shiftKey
+      intent.metaKey = ev.metaKey
+      intent.ctrlKey = ev.ctrlKey
+      drawDeferredMove(mine)
+    },
+    onEnd: (moved, ev, end) => {
+      interaction().end()
+      if (deferredMove !== mine) return
+      if (!moved || end.cancelled) {
+        mine.intents = mine.intents.filter((i) => i !== intent)
+        drawDeferredMove(mine)
+        flushQueuedTranslation(mine.preview)
+        if (!mine.intents.length && !mine.committed) endDeferredMove(mine)
+        return
+      }
+      intent.metaKey = ev.metaKey
+      intent.ctrlKey = ev.ctrlKey
+      intent.complete = true
+      flushQueuedTranslation(mine.preview)
+      resumeDeferredInFigureDrag(mine.panelId)
+    },
+  })
+  return true
+}
+
 /** 可拖的图内文字 / 图例 / 形状：挪锚点（`drag_prop`，pos_frac / loc_frac …） */
 export function elementMove(panel: PanelObject, element: ManifestElement): InFigureMove | null {
   if (!element.anchor || !element.drag_prop) return null
@@ -1755,6 +1968,7 @@ export function elementMove(panel: PanelObject, element: ManifestElement): InFig
   const carried = manifest ? patchContents(panel, manifest, [element.gid]) : []
 
   beginElementPreview(panel)
+  markPreviewMove({ gid: element.gid, role: element.role, dragProp, identity: element.identity })
   noteDragBegin(
     'element.drag.begin',
     panel,

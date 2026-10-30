@@ -592,7 +592,7 @@ class BrowserSession:
         `preview_hybrid.save_preview_svg`——抄一份过来的代价是同一个脚本在两个
         入口里预览表示法不一样。
         """
-        man = manifest_mod.build_manifest(state, stem)
+        manifest_mod.prepare_preview(state)
         # 先按原样准备；预览结束、临时 rasterize 还原后，按最终 SVG 的坐标重测。
         # 与桌面同一份 capture_preview_manifest，不在临时表示法里读语义。
         buf = io.BytesIO()

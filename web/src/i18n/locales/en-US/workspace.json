@@ -748,11 +748,15 @@
     "mismatch_other": "{{count}} places differ from the style",
     "align": "Match",
     "waitingRender": "This version of the figure is still rendering — edit when it finishes",
+    "previewPending": "Updating the figure preview; the image may not be current yet.",
+    "previewFailed": "The figure preview could not be updated; the image may be out of date.",
+    "pendingSizeCancelled": "The font size was not applied because the figure changed or rendering failed. Try again.",
     "bindCancelled": "You switched canvases, so the style you picked wasn’t applied — pick it again on that canvas",
     "bindMissing": "That style is no longer in the library — nothing was changed",
     "editCancelled": "The style or canvas just changed, so your change wasn’t applied — please make it again"
   },
   "status": {
+    "dragSyncCancelled": "The figure could not sync, so the later drag was not applied. Try again.",
     "alignAllLocked": "All selected objects are locked; unlock them to arrange",
     "alignLockedSkipped_one": "Skipped {{count}} locked object",
     "alignLockedSkipped_other": "Skipped {{count}} locked objects",

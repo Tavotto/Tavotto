@@ -6730,6 +6730,7 @@ export default interface Resources {
         "ticks": "刻度文字跟着刻度走，不能单独拖；刻度的位置与方向在属性页修改",
         "unsupported": "暂不支持拖动「{{label}}」这类对象"
       },
+      "dragSyncCancelled": "图形未能同步，后续拖动没有应用，请重试。",
       "elementCycled": "已选中「{{label}}」（此处第 {{index}}/{{total}} 个重叠元素）",
       "elementHidden": "已隐藏「{{label}}」，可在「已隐藏元素」里恢复",
       "elementLocked": "已锁定「{{label}}」，画布点击将跳过它",
@@ -6817,6 +6818,9 @@ export default interface Resources {
       "mixedHint": "这几处的值不一样；输入一个值会统一它们",
       "needRender": "要读出这张图的样式，需要渲染一次。",
       "noManifest": "这张图还没有可读的图内元素。",
+      "pendingSizeCancelled": "字号调整未应用：图形状态已变化或渲染失败，请重试。",
+      "previewFailed": "图形预览更新失败，画面可能不是最新状态。",
+      "previewPending": "图形预览正在同步，画面可能尚未更新。",
       "restoreWaiting": "还有图在渲染，渲染完才能恢复",
       "restore_other": "恢复原样 · {{count}} 项",
       "row": {

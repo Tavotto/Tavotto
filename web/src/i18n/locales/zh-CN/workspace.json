@@ -716,11 +716,15 @@
     "mismatch_other": "{{count}} 处与样式不一致",
     "align": "对齐",
     "waitingRender": "这张图的这一版还在渲染，渲染完才能改",
+    "previewPending": "图形预览正在同步，画面可能尚未更新。",
+    "previewFailed": "图形预览更新失败，画面可能不是最新状态。",
+    "pendingSizeCancelled": "字号调整未应用：图形状态已变化或渲染失败，请重试。",
     "bindCancelled": "切换了画布，刚才选的样式没有绑上，请在那张画布上再选一次",
     "bindMissing": "要绑定的那套样式已经不在样式库里了，没有改动",
     "editCancelled": "样式或画布刚换过，刚才的改动没有生效，请再改一次"
   },
   "status": {
+    "dragSyncCancelled": "图形未能同步，后续拖动没有应用，请重试。",
     "alignAllLocked": "选中的对象都已锁定，先解锁再排列",
     "alignLockedSkipped_other": "已跳过 {{count}} 个锁定对象",
     "assetReplaced": "已替换为「{{name}}」，位置与尺寸保持不变",

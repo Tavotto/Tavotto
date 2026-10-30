@@ -3018,6 +3018,84 @@ def _run_write_back(client, figs, paired_preview=False):
     return body, patches
 
 
+def test_drag_font_and_figure_size_write_back_and_reopen(write_back, tmp_path):
+    """Compare the edited session, the actual written PDF, and a reopened session."""
+    from tavotto import pdfbackend
+
+    m, client, figs = write_back
+    original = figs / "TestFig_a.pdf"
+    original_bytes = original.read_bytes()
+    script_bytes = (figs / "fig_test.py").read_bytes()
+    edits = [
+        {"gid": "axes_0.legend", "prop": "loc_frac", "value": [0.3, 0.4]},
+        {"gid": "axes_0.xlabel", "prop": "fontsize", "value": 18},
+        {"gid": "axes_0.ylabel", "prop": "fontsize", "value": 18},
+        {"gid": "figure", "prop": "size_mm", "value": [120, 80]},
+    ]
+    base = client.post("/api/engine/render", json={"id": original.name, "patches": []})
+    assert base.status_code == 200, base.get_json()
+    for end in (1, 3, 4):
+        rendered = client.post(
+            "/api/engine/render", json={"id": original.name, "patches": edits[:end]}
+        )
+        assert rendered.status_code == 200, rendered.get_json()
+        assert not rendered.get_json().get("warnings"), rendered.get_json()
+    hot = rendered.get_json()["manifest"]
+    assert hot["size_mm"] == pytest.approx([120, 80], abs=0.01)
+    assert _bbox_of(hot, "axes_0.legend") != pytest.approx(
+        _bbox_of(base.get_json()["manifest"], "axes_0.legend"), abs=0.005
+    )
+
+    worker, stem = m._engine_worker(original.name, safe_only=True)
+    hot_png = worker.render_png(stem, 800).read_bytes()
+    hot_pdf = tmp_path / "hot.pdf"
+    assert not worker.export(stem, edits, str(hot_pdf), fmt="pdf", dpi=600).get("warnings")
+    response = client.post(
+        "/api/engine/update_source",
+        json={
+            "id": original.name,
+            "patches": edits,
+            "expected_mtime": int(original.stat().st_mtime),
+        },
+    )
+    assert response.status_code == 200, response.get_json()
+    receipt = response.get_json()
+    assert receipt["verification"]["replay"] == "ok"
+    assert receipt["verification"]["pixels"] == "ok"
+    assert receipt["verification"]["elements"] > 0
+    assert receipt["warnings"] == [] and "post_check" not in receipt
+    assert original.read_bytes() != original_bytes
+    assert (Path(receipt["backup_dir"]) / original.name).read_bytes() == original_bytes
+    assert (figs / "fig_test.py").read_bytes() == script_bytes
+
+    # PDFium independently reopens the written PDF and the hot export at the same resolution.
+    hot_pdf_png, written_png = tmp_path / "hot-pdf.png", tmp_path / "written-pdf.png"
+    pdfbackend.render_preview_png(hot_pdf, 800, hot_pdf_png)
+    pdfbackend.render_preview_png(original, 800, written_png)
+    extent = pdfbackend.compare_png_extent(hot_pdf_png, written_png)
+    assert extent["ok"] and extent["total_pixels"] > 0 and extent["differing_pixels"] == 0
+    size = pdfbackend.probe_asset(original, "pdf")
+    assert [size["w_pt"] * 25.4 / 72, size["h_pt"] * 25.4 / 72] == pytest.approx(
+        [120, 80], abs=0.05
+    )
+
+    # A new project and worker inherit the saved baseline from the written file.
+    pool.shutdown_all(figures_dir=str(figs), wait=True)
+    m.reset_projects()
+    m.open_project(str(figs))
+    panels = client.get("/api/panels").get_json()["panels"]
+    reopened = next(p for p in panels if p["id"] == original.name)
+    assert reopened["baked_current"] is True and reopened["baked_overrides"] == edits
+    again = client.post(
+        "/api/engine/render", json={"id": original.name, "patches": reopened["baked_overrides"]}
+    )
+    assert again.status_code == 200, again.get_json()
+    diffs, compared = m._compare_manifests(hot, again.get_json()["manifest"])
+    assert compared > 0 and not diffs, diffs
+    cold, stem = m._engine_worker(original.name, safe_only=True)
+    assert cold.render_png(stem, 800).read_bytes() == hot_png
+
+
 @pytest.mark.parametrize("paired_preview", [False, True])
 def test_write_back_verifies_a_clean_replay_and_keeps_vector_text(
     write_back, replay_bases, paired_preview
