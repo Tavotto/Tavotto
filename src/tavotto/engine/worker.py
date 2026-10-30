@@ -1443,9 +1443,15 @@ class Worker(wireproto.V1Handler):
                 extra.append(getattr(matplotlib, getter)())
             except Exception:  # noqa: BLE001 — 取不到就少一项白名单，不让绊线的装配挡住渲染
                 pass
+        # 改道模式（ADR 0143 修订 2026-10-30）：`--write-roots` 里成对的 redirect-* 条目 = 项目内的写换到候选的改道区
+        try:
+            roots, redirect = writetripwire.split_roots(self.write_roots)
+        except ValueError as exc:
+            raise SystemExit(f"--write-roots: {exc}") from exc
         writetripwire.install(
-            [*self.write_roots, *writetripwire.infrastructure_roots(extra=extra)],
+            [*roots, *writetripwire.infrastructure_roots(extra=extra)],
             display_base=str(self.figures_dir),
+            redirect=redirect,
         )
 
     def build(self, timings: dict | None = None) -> dict:
@@ -2101,14 +2107,15 @@ class Worker(wireproto.V1Handler):
 
     def _unreadable_folder_fact(self, exc: BaseException) -> dict:
         """跳过之后仍失败、而失败是「脚本加进 `sys.path` 的项目外目录读不了」：`{"unreadable_folder": {"folder": 目录名}}`。
-        判据与目录名清洗在 `bridgeboot.unreadable_folder_fact`（native 同一份）；只给目录名，不带路径。"""
-        fact = bridgeboot.unreadable_folder_fact(
+        判据与目录名清洗在 `bridgeboot.unreadable_folder_facts`（native 同一份）；公开事实只给目录名，不带路径；
+        完整路径只在私有键 `unreadable_folder_private`（给父进程登记修复令牌，敏感运行的白名单不放行它）。"""
+        fact, private = bridgeboot.unreadable_folder_facts(
             exc,
             getattr(self, "_path_baseline", ()),
             (self.figures_dir, self.script.parent),
             (sys.prefix, sys.base_prefix, sys.exec_prefix, *_INTERPRETER_PACKAGE_DIRS),
         )
-        return {"unreadable_folder": fact} if fact else {}
+        return {"unreadable_folder": fact, "unreadable_folder_private": private} if fact else {}
 
     def _missing_module_fact(self, exc: BaseException) -> dict:
         """缺依赖的结构化事实：`{"missing_dependency": True, "missing_module": 顶层包名?}`；不是缺依赖回 `{}`。

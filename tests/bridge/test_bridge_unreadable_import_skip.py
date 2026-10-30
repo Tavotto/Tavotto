@@ -53,6 +53,11 @@ def test_native_bridge_end_to_end_reports_the_unreadable_folder(
         with bridge_session(script, cwd=str(proj)) as sess:
             err = sess.wait_event("barrier")["script_error"]
             assert err["unreadable_folder"] == {"folder": ".work_deps_bad", "module": mod}
+            # 完整路径只在私有键（父进程登记修复令牌用），公开事实里没有
+            assert err["unreadable_folder_private"] == {
+                "path": str(bad),
+                "file": str(bad / mod / "__init__.py"),
+            }
             assert "PermissionError" in err["traceback"]
     finally:
         _unlock(bad, good)

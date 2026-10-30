@@ -65,6 +65,8 @@ pub struct ReportInput {
     pub exit_code: Option<i32>,
     /// locate 阶段失败时的安装文件事实（三个布尔值）；其余阶段 / 资源目录拿不到为 `None`（报告里是 `null`）。
     pub install_files: Option<crate::rescue::InstallFiles>,
+    /// launch 阶段 spawn 失败时的系统错误类别（`rescue::SPAWN_ERRORS` 闭集）；其余为 `None`（报告里是 `null`）。
+    pub spawn_error: Option<&'static str>,
     pub created_at: String,
 }
 
@@ -76,7 +78,7 @@ pub fn version_ok(v: &str) -> bool {
 }
 
 impl ReportInput {
-    /// 版本不合形状 → `unknown`；阶段 / 错误码不在闭集 → `unknown`。
+    /// 版本不合形状 → `unknown`；阶段 / 错误码不在闭集 → `unknown`；spawn 错误类别不在闭集 → `other`。
     fn sanitized(&self) -> ReportInput {
         let mut s = self.clone();
         if !version_ok(&s.version) {
@@ -87,6 +89,11 @@ impl ReportInput {
         }
         if !crate::rescue::CODES.contains(&s.code.as_str()) {
             s.code = "unknown".into();
+        }
+        if s.spawn_error
+            .is_some_and(|k| !crate::rescue::SPAWN_ERRORS.contains(&k))
+        {
+            s.spawn_error = Some("other");
         }
         s
     }
@@ -145,6 +152,8 @@ pub fn build_documents(input: &ReportInput) -> (Value, Value) {
                 "internal_dir": f.internal_dir,
                 "exe": f.exe,
             })),
+            // 闭集里的类别名，不是系统错误原文
+            "spawn_error": i.spawn_error,
         },
     });
     (manifest, report)
@@ -948,6 +957,12 @@ mod tests {
                     internal_dir: f["internal_dir"].as_bool().unwrap(),
                     exe: f["exe"].as_bool().unwrap(),
                 }),
+            spawn_error: i["spawn_error"].as_str().map(|k| {
+                *crate::rescue::SPAWN_ERRORS
+                    .iter()
+                    .find(|e| **e == k)
+                    .expect("样例里的 spawn_error 在闭集里")
+            }),
             created_at: i["created_at"].as_str().unwrap().into(),
         }
     }
@@ -1033,6 +1048,20 @@ mod tests {
             let (_, r) = build_documents(&input);
             assert_eq!(r["failure"]["install_files"], want);
         }
+    }
+
+    #[test]
+    fn the_spawn_error_is_a_closed_set_name_or_null() {
+        let c = contract();
+        let mut input = sample_input(&c);
+        for kind in crate::rescue::SPAWN_ERRORS {
+            input.spawn_error = Some(kind);
+            let (_, r) = build_documents(&input);
+            assert_eq!(r["failure"]["spawn_error"], json!(kind));
+        }
+        input.spawn_error = None;
+        let (_, r) = build_documents(&input);
+        assert_eq!(r["failure"]["spawn_error"], Value::Null);
     }
 
     #[test]

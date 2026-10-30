@@ -25,6 +25,7 @@ from tavotto.engine import (
     ai_tasks,
     config,
     scriptlock,
+    writetripwire,
 )
 
 ORIGINAL = """from PIL import Image
@@ -303,7 +304,7 @@ def test_validation_run_that_overwrites_project_files_fails_the_task(env):
 
 
 def test_validation_run_is_isolated_by_write_roots_and_user_out_png_is_untouched(env):
-    """P1（Codex #1277）：隔离而不只是事后检测——校验运行拿到的写入根只有候选目录；候选写 `out.png` 在写发生时就被拦。"""
+    """P1（Codex #1277）：隔离而不只是事后检测——校验运行拿到的写入根只有候选目录（外加改道条目，项目内的写被换到候选暂存区）。"""
     figs = env["figs"]
     before = (figs / "out.png").read_bytes()
     seen = {}
@@ -323,8 +324,11 @@ def test_validation_run_is_isolated_by_write_roots_and_user_out_png_is_untouched
     assert sess["task"]["outcome"] == "failed"
     assert (figs / "out.png").read_bytes() == before
     cdir = ai_convert.CONVERT_DIR / sid
-    assert seen["roots"] == (str(cdir),), "写入根只能是候选目录，不含项目目录"
-    assert str(figs) not in "".join(seen["roots"])
+    plain, redirect = writetripwire.split_roots(seen["roots"])
+    assert plain == [str(cdir)], "授权根只能是候选目录，不含项目目录"
+    assert redirect == (str(figs), str(cdir / ai_convert.REDIRECT_DIRNAME)), (
+        "项目内的写改道进候选暂存区"
+    )
     assert ("render.capture", "run_failed") in {
         (u["constraint_id"], u["reason_code"]) for u in sess["task"]["unmet"]
     }

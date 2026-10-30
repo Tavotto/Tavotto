@@ -41,6 +41,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   replanConvertDependencies: vi.fn(),
   aiCancel: vi.fn().mockResolvedValue({ ok: true }),
   requestAiFix: vi.fn(),
+  repairImportFolder: vi.fn(),
 }))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/liveSync')>()),
@@ -62,6 +63,7 @@ import {
   fetchPanels,
   refreshProject,
   probeScript,
+  repairImportFolder,
   type CapturedFigureDescriptor,
   type PreparationAction,
   type PreparationAttempt,
@@ -3084,6 +3086,99 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       await openWith(report({ ...STATES.fileOpsBlocked, remedy: { kind: 'switch_native', silent: false } }))
       expect(panel().dataset.prepState).toBe('file_ops_blocked')
       expect(primary()).toBeNull()
+    })
+  })
+
+  describe('项目外文件夹读不了：一键修复权限（Windows，ADR 0153 修订 2026-10-30）', () => {
+    const unreadable = (params: Record<string, string> = { folder: '.work_sensor_plot_deps_20261030', repair_token: 'rt-1' }) =>
+      report({
+        phase: 'action_required',
+        outcome: { kind: 'failed', code: 'import_folder_unreadable' },
+        actions: [action('run'), action('recheck')],
+        provider: { plan_id: 'p', attempt_id: 'prep-1', attempts: 1, dependency: null },
+        result: { status: 'error', error: { code: 'import_folder_unreadable', message: 'x', params } },
+      })
+
+    beforeEach(() => {
+      vi.mocked(repairImportFolder).mockReset()
+      mockAct.mockClear()
+    })
+
+    it('有令牌：一句话点名文件夹 + 一个主按钮「修复权限」，不堆说明', async () => {
+      await mount()
+      await openWith(unreadable())
+      expect(panel().dataset.prepState).toBe('folder_unreadable')
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe('脚本用到的文件夹“.work_sensor_plot_deps_20261030”读不了，需要修复它的权限')
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.dataset.prepPrimary).toBe('repair_folder')
+      expect(primary()?.textContent).toBe('修复权限')
+      expect(visibleSentenceCount(panel(), 'zh-CN')).toBeLessThanOrEqual(1)
+    })
+
+    it('英文界面同样一句话、没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(unreadable())
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toContain('.work_sensor_plot_deps_20261030')
+      expect(primary()?.textContent).toBe('Repair permissions')
+      expect(line + primary()?.textContent).not.toMatch(/[一-鿿]/)
+    })
+
+    it('有令牌时不摆「使用你的 AI 来修复」（AI 对权限无能为力）；没有令牌时保持原状（仍摆）', async () => {
+      await mount()
+      await openWith({ ...unreadable(), remedy: { kind: 'ai_fix' } })
+      expect(panel().dataset.prepState).toBe('folder_unreadable')
+      expect(panel().querySelector('[data-prep-ai-fix]')).toBeNull()
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      await openWith({ ...unreadable({ folder: '.work_deps' }), remedy: { kind: 'ai_fix' } })
+      expect(panel().querySelector('[data-prep-ai-fix], [data-prep-primary="ai_fix"]')).not.toBeNull()
+    })
+
+    it('没有令牌（非 Windows / 老后端 / 敏感运行）：保持原来的通用失败卡，不画「修复权限」', async () => {
+      await mount()
+      await openWith(unreadable({ folder: '.work_deps' }))
+      expect(panel().dataset.prepState).toBe('failed')
+      expect(primary()?.textContent).toBe('再试一次')
+      expect(panel().textContent).not.toContain('修复权限')
+    })
+
+    it('点一次：只把令牌交给后端；成功后沿用「再试一次」同一个动作重跑一次', async () => {
+      await mount()
+      await openWith(unreadable())
+      vi.mocked(repairImportFolder).mockResolvedValueOnce({ ok: true, repaired: true })
+      mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }) })
+      await act(async () => primary()!.click())
+      expect(vi.mocked(repairImportFolder).mock.calls).toEqual([['rt-1']])
+      expect(mockAct).toHaveBeenCalledTimes(1)
+      expect(mockAct.mock.calls[0][1]).toMatchObject({ action_id: 'act-run' })
+    })
+
+    it('用户在 UAC 上取消：卡片如实一句话说明，不重跑、不自动再弹，按钮留着等用户自己再点', async () => {
+      await mount()
+      await openWith(unreadable())
+      vi.mocked(repairImportFolder).mockRejectedValueOnce(
+        new ApiError('x', 409, { code: 'repair_cancelled', params: {} }),
+      )
+      await act(async () => primary()!.click())
+      expect(panel().dataset.prepState).toBe('action_failed')
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('你取消了管理员确认，权限没有改动。')
+      expect(vi.mocked(repairImportFolder)).toHaveBeenCalledTimes(1)
+      expect(mockAct).not.toHaveBeenCalled()
+      expect(primary()?.textContent).toBe('修复权限')
+    })
+
+    it('没拿到管理员权限 / 修复没成功：各是各自的一句话，也不重跑', async () => {
+      await mount()
+      await openWith(unreadable())
+      vi.mocked(repairImportFolder).mockRejectedValueOnce(new ApiError('x', 409, { code: 'repair_not_elevated', params: {} }))
+      await act(async () => primary()!.click())
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toContain('没能获得管理员权限')
+      vi.mocked(repairImportFolder).mockRejectedValueOnce(new ApiError('x', 500, { code: 'repair_failed', params: {} }))
+      await act(async () => primary()!.click())
+      expect(panel().querySelector('[data-prep-line]')?.textContent).toBe('修复没有成功，文件夹仍然读不了。')
+      expect(mockAct).not.toHaveBeenCalled()
     })
   })
 

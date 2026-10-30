@@ -171,11 +171,16 @@ def _entry_changed(x: list | None, y: list | None) -> bool:
     return True
 
 
+#: 候选目录里的改道区（校验运行写进项目的文件落这里；ADR 0143 修订 2026-10-30）：不算“候选里多出来的文件”
+REDIRECT_DIRNAME = "redirected"
+
+
 def _tree(root: Path) -> dict[str, str] | None:
-    """候选目录的 `{相对路径: sha256}`；文件数超限回 None。"""
+    """候选目录的 `{相对路径: sha256}`（不含根下的改道区）；文件数超限回 None。"""
     out: dict[str, str] = {}
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = sorted(d for d in dirnames if d != "__pycache__")
+        skip = {"__pycache__"} | ({REDIRECT_DIRNAME} if Path(dirpath) == root else set())
+        dirnames[:] = sorted(d for d in dirnames if d not in skip)
         for name in sorted(filenames):
             p = Path(dirpath) / name
             if len(out) >= CANDIDATE_MAX_FILES:

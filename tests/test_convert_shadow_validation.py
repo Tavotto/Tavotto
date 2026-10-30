@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -143,19 +144,489 @@ def test_module_entry_also_gets_the_display_file(world):
     assert result["status"] == "ok", result
 
 
-def test_candidate_writing_into_the_project_still_trips_the_write_roots(world):
+def _redirected(cand, rel):
+    return cand.dir / ai_convert.REDIRECT_DIRNAME / rel
+
+
+def test_candidate_writing_into_the_project_is_redirected_not_failed(world):
+    """相对路径（chdir 到脚本目录后）与绝对路径写 CSV：校验通过、项目逐字节不变、文件落在候选的改道区。"""
     root, cand, runner = world
-    workdir.set_mode(
-        root, workdir.MODE_PROJECT
-    )  # cwd 就是原脚本所在目录：相对路径的写会落进用户项目
+    workdir.set_mode(root, workdir.MODE_PROJECT)  # cwd 就是原脚本所在目录
+    before = ai_figure_edit.project_fingerprint(root)
     cand.new_bytes = (
-        b"import matplotlib.pyplot as plt\nopen('sneaky.txt', 'w').write('x')\n"
-        b"plt.plot([1])\nplt.savefig('o.png')\n"
+        "import os\nimport matplotlib.pyplot as plt\n"
+        "here = os.path.dirname(os.path.abspath(__file__))\n"
+        "open('rel.csv', 'w').write('rel')\n"
+        "os.makedirs(os.path.join(here, 'out', 'deep'), exist_ok=True)\n"
+        "open(os.path.join(here, 'out', 'deep', 'abs.csv'), 'w').write('abs')\n"
+        "plt.plot([1])\nplt.savefig('o.png')\n"
+    ).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    with DirWatcher(root) as watcher:
+        result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "ok", result
+    assert watcher.seen == {"sub/fig.R", "sub/data.csv"}, watcher.seen
+    assert (
+        ai_figure_edit.fingerprint_changes(before, ai_figure_edit.project_fingerprint(root)) == []
     )
+    assert _redirected(cand, "sub/rel.csv").read_text() == "rel"
+    assert _redirected(cand, "sub/out/deep/abs.csv").read_text() == "abs"
+    assert not (root / "sub" / "out").exists()
+    # 影子 / 指纹复核仍然通过
+    assert all(
+        c.verdict == ai_convert.VERIFIED
+        for c in ai_convert.ADAPTER._project_untouched(cand, "precommit")
+    )
+
+
+def test_redirected_write_can_be_read_back_and_originals_are_copy_on_write(world):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = (
+        "import os\nimport pandas_free as _x\n".replace("import pandas_free as _x\n", "")
+        + "import matplotlib.pyplot as plt\n"
+        "here = os.path.dirname(os.path.abspath(__file__))\n"
+        "p = os.path.join(here, 'made.csv')\n"
+        "open(p, 'w').write('a,b\\n1,2\\n')\n"
+        "assert os.path.exists(p) and os.path.isfile(p)\n"
+        "assert open(p).read() == 'a,b\\n1,2\\n'\n"
+        "d = os.path.join(here, 'data.csv')\n"
+        "open(d, 'a').write('9,9\\n')\n"
+        "assert open(d).read() == 'x,y\\n1,2\\n9,9\\n', open(d).read()\n"
+        "plt.plot([1])\nplt.savefig('o.png')\n"
+    ).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "ok", result
+    assert (root / "sub" / "data.csv").read_text() == "x,y\n1,2\n"  # 用户的原文件没动
+    assert _redirected(cand, "sub/data.csv").read_text() == "x,y\n1,2\n9,9\n"
+
+
+EXCLUSIVE = (
+    "import os\nimport matplotlib.pyplot as plt\n"
+    "here = os.path.dirname(os.path.abspath(__file__))\n"
+    "open(os.path.join(here, 'once.csv'), 'x').write('1')\n"
+    "plt.plot([1])\nplt.savefig('o.png')\n"
+)
+APPEND_READ = (
+    "import os\nimport matplotlib.pyplot as plt\n"
+    "here = os.path.dirname(os.path.abspath(__file__))\n"
+    "p = os.path.join(here, 'log.csv')\n"
+    "open(p, 'a').write('row\\n')\n"
+    "assert open(p).read() == 'row\\n', open(p).read()\n"
+    "plt.plot([1])\nplt.savefig('o.png')\n"
+)
+
+
+@pytest.mark.parametrize("source", [EXCLUSIVE, APPEND_READ], ids=["exclusive", "append_read"])
+def test_every_validation_run_starts_from_an_empty_redirect_area(world, source):
+    """agent_check 与提交前校验（以及依赖重试 / 续跑）共用候选目录：第二次必须与全新一次相同。"""
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = source.encode()
+    cand.target.write_bytes(cand.new_bytes)
+    first = ai_convert.run_validation(cand, runner)
+    second = ai_convert.run_validation(cand, runner)
+    third = ai_convert.run_validation(cand, runner)
+    assert first["status"] == second["status"] == third["status"] == "ok", (first, second, third)
+
+
+def test_dependency_retry_rerun_also_sees_a_fresh_redirect_area(world, monkeypatch):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = EXCLUSIVE.encode()
+    cand.target.write_bytes(cand.new_bytes)
+    calls = []
+    real = ai_convert._runtime_dependency_retry
+
+    def retry_once(c, rel, out):
+        calls.append(1)
+        return {} if len(calls) == 1 else real(c, rel, out)
+
+    monkeypatch.setattr(ai_convert, "_runtime_dependency_retry", retry_once)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "ok", result
+    assert len(calls) == 1
+
+
+def test_unclearable_redirect_area_fails_the_run_instead_of_using_stale_data(world, monkeypatch):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = EXCLUSIVE.encode()
+    cand.target.write_bytes(cand.new_bytes)
+    assert ai_convert.run_validation(cand, runner)["status"] == "ok"
+
+    def boom(*_a, **_k):
+        raise PermissionError("busy")
+
+    monkeypatch.setattr(ai_convert.shutil, "rmtree", boom)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "error" and result["code"] == "redirect_area_not_clearable", result
+
+
+def test_keep_failed_does_not_retain_a_candidate_with_undeletable_redirected_data(
+    world, monkeypatch
+):
+    root, cand, runner = world
+    cand.new_bytes = cand.target.read_bytes() if cand.target.exists() else b"x = 1\n"
+    cand.target.write_bytes(cand.new_bytes)
+    area = cand.dir / ai_convert.REDIRECT_DIRNAME
+    area.mkdir()
+    (area / "data.csv").write_text("derived")
+    monkeypatch.setattr(
+        ai_convert.shutil, "rmtree", lambda *a, **k: (_ for _ in ()).throw(PermissionError("x"))
+    )
+    assert ai_convert.keep_failed(cand) is False
+    assert not cand.kept_failed
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 权限位")
+def test_keep_failed_removes_read_only_redirected_data_then_retains(world):
+    root, cand, runner = world
+    cand.new_bytes = b"x = 1\n"
+    cand.target.write_bytes(cand.new_bytes)
+    sub = cand.dir / ai_convert.REDIRECT_DIRNAME / "d"
+    sub.mkdir(parents=True)
+    (sub / "ro.csv").write_text("derived")
+    (sub / "ro.csv").chmod(0o400)
+    sub.chmod(0o500)
+    assert ai_convert.keep_failed(cand) is True
+    assert not (cand.dir / ai_convert.REDIRECT_DIRNAME).exists()
+
+
+PRELUDE = (
+    "import os\nimport matplotlib.pyplot as plt\n"
+    "here = os.path.dirname(os.path.abspath(__file__))\n"
+    "data = os.path.join(here, 'data.csv')\n"
+    "ORIG = 'x,y\\n1,2\\n'\n"
+    "assert os.path.exists(data) and open(data).read() == ORIG\n"
+)
+EPILOGUE = "plt.plot([1])\nplt.savefig('o.png')\n"
+
+
+def _validate(world, body, twice=False):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = (PRELUDE + body + EPILOGUE).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    result = ai_convert.run_validation(cand, runner)
+    if twice:  # 白名单随 worker 走：第二次校验的 worker 是新的，原文件重新可见（PRELUDE 会断言）
+        assert result["status"] == "ok", result
+        result = ai_convert.run_validation(cand, runner)
+    assert (root / "sub" / "data.csv").read_text() == "x,y\n1,2\n"  # 项目里的原件始终没动
+    return result, cand
+
+
+def test_replace_of_a_redirected_output_does_not_resurrect_the_project_file(world):
+    result, cand = _validate(
+        world,
+        "open(data, 'w').write('new')\n"
+        "arch = os.path.join(here, 'archive.csv')\n"
+        "os.replace(data, arch)\n"
+        "assert not os.path.exists(data) and not os.path.isfile(data)\n"
+        "try:\n    open(data)\n    raise SystemExit('stale data visible')\nexcept FileNotFoundError:\n    pass\n"
+        "assert open(arch).read() == 'new'\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/archive.csv").read_text() == "new"
+
+
+def test_remove_after_write_and_remove_of_a_project_only_file_are_whiteouts(world):
+    result, cand = _validate(
+        world,
+        "open(data, 'w').write('new')\nos.remove(data)\n"
+        "assert not os.path.exists(data)\n"
+        "try:\n    open(data)\n    raise SystemExit('visible')\nexcept FileNotFoundError:\n    pass\n",
+        twice=True,
+    )
+    assert result["status"] == "ok", result
+    result, _ = _validate(
+        world,
+        "os.remove(data)\nassert not os.path.exists(data)\n"
+        "try:\n    os.path.getsize(data)\n    raise SystemExit('visible')\n"
+        "except FileNotFoundError:\n    pass\n"
+        "try:\n    os.remove(data)\n    raise SystemExit('twice')\nexcept FileNotFoundError:\n    pass\n",
+    )
+    assert result["status"] == "ok", result
+
+
+def test_write_again_after_a_whiteout_works(world):
+    result, cand = _validate(
+        world,
+        "os.remove(data)\nassert not os.path.exists(data)\n"
+        "open(data, 'w').write('again')\n"
+        "assert os.path.exists(data) and open(data).read() == 'again'\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/data.csv").read_text() == "again"
+
+
+def test_os_open_without_creat_on_an_existing_project_file(world):
+    result, cand = _validate(
+        world,
+        "fd = os.open(data, os.O_WRONLY | os.O_TRUNC)\nos.write(fd, b'z')\nos.close(fd)\n"
+        "assert open(data).read() == 'z'\n"
+        "fd = os.open(os.path.join(here, 'data.csv'), os.O_WRONLY)\nos.close(fd)\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/data.csv").read_text() == "z"
+
+
+def test_os_open_without_creat_on_a_missing_file_still_fails(world):
+    result, cand = _validate(
+        world,
+        "try:\n    os.open(os.path.join(here, 'nope.csv'), os.O_WRONLY)\n"
+        "    raise SystemExit('created')\nexcept FileNotFoundError:\n    pass\n"
+        "os.remove(data)\n"
+        "try:\n    os.open(data, os.O_WRONLY | os.O_TRUNC)\n"
+        "    raise SystemExit('whited-out file opened')\nexcept FileNotFoundError:\n    pass\n",
+    )
+    assert result["status"] == "ok", result
+    assert not _redirected(cand, "sub/nope.csv").exists()
+
+
+def _project_dir(world):
+    out = world[0] / "sub" / "out"
+    out.mkdir(exist_ok=True)
+    (out / "old.csv").write_text("old")
+    return out
+
+
+def _tripped(result):
+    assert result["status"] == "error" and result["code"] == "write_outside_roots", result
+    return True
+
+
+def test_rmtree_of_an_existing_project_dir_trips(world):
+    out = _project_dir(world)
+    result, _ = _validate(
+        world,
+        "o = os.path.join(here, 'out')\nopen(os.path.join(o, 'new.csv'), 'w').write('n')\n"
+        "import shutil\nshutil.rmtree(o)\n",
+    )
+    assert _tripped(result)
+    assert (out / "old.csv").read_text() == "old" and not (out / "new.csv").exists()
+
+
+def test_moving_a_partially_written_project_dir_trips(world):
+    """项目目录里写了新文件再整体 shutil.move 走：只移暂存副本会让 old.csv 留在原处（Codex #1516 P1）。"""
+    out = _project_dir(world)
+    result, _ = _validate(
+        world,
+        "o = os.path.join(here, 'out')\nopen(os.path.join(o, 'new.csv'), 'w').write('n')\n"
+        "import shutil\nshutil.move(o, os.path.join(here, 'archive'))\n",
+    )
+    assert _tripped(result)
+    assert (out / "old.csv").read_text() == "old" and not (out / "new.csv").exists()
+    assert not (world[0] / "sub" / "archive").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="符号链接需要权限")
+def test_unlinking_or_moving_a_project_symlink_trips_instead_of_whiting_out_its_target(world):
+    """项目里 `alias.csv -> data.csv`：删 / 改名 / 移走的是链接本身，不能被 realpath 模拟成删目标（Codex #1516 P1）。"""
+    sub = world[0] / "sub"
+    (sub / "alias.csv").symlink_to("data.csv")
+    for op in (
+        "os.unlink(os.path.join(here, 'alias.csv'))",
+        "os.rename(os.path.join(here, 'alias.csv'), os.path.join(here, 'b.csv'))",
+        "import shutil\nshutil.move(os.path.join(here, 'alias.csv'), os.path.join(here, 'b.csv'))",
+        # 目标是链接：真实执行只替换链接本身，data.csv 不变
+        "n = os.path.join(here, 'new.csv')\nopen(n, 'w').write('z')\nos.replace(n, os.path.join(here, 'alias.csv'))",
+        "import shutil\nn = os.path.join(here, 'new.csv')\nopen(n, 'w').write('z')\n"
+        "shutil.move(n, os.path.join(here, 'alias.csv'))",
+    ):
+        result, _ = _validate(world, op + "\n")
+        assert _tripped(result)
+        assert (sub / "data.csv").read_text() == "x,y\n1,2\n" and (sub / "alias.csv").is_symlink()
+
+
+def test_copying_a_project_file_onto_itself_is_still_a_same_file_error(world):
+    """`shutil.copyfile(data, data)`：真实执行抛 SameFileError，改道不能让它悄悄成功（Codex #1516 P2）。"""
+    result, cand = _validate(
+        world,
+        "import shutil\nd = os.path.join(here, 'data.csv')\n"
+        "for fn in (shutil.copyfile, shutil.copy, shutil.copy2):\n"
+        "    try:\n        fn(d, d)\n        raise SystemExit('copied onto itself')\n"
+        "    except OSError:\n        pass\n",  # SameFileError 是 OSError；Windows 3.12+ 真实 copy2(x, x) 抛共享冲突（WinError 32）
+    )
+    assert result["status"] == "ok", result
+    assert not _redirected(cand, "sub/data.csv").exists()
+
+
+def test_same_file_error_is_what_copyfile_and_copy_raise(world):
+    result, _ = _validate(
+        world,
+        "import shutil\nd = os.path.join(here, 'data.csv')\n"
+        "for fn in (shutil.copyfile, shutil.copy):\n"
+        "    try:\n        fn(d, d)\n        raise SystemExit('copied onto itself')\n"
+        "    except shutil.SameFileError:\n        pass\n",
+    )
+    assert result["status"] == "ok", result
+
+
+def test_copy2_copy_copyfile_into_an_existing_project_file_land_in_the_overlay(world):
+    """每个平台：copy2 / copy / copyfile 到项目里已有文件上，项目那份不动，结果在改道区（Windows 的 CopyFile2 不能绕过）。"""
+    root = world[0]
+    (root / "sub" / "src.csv").write_text("from-src")
+    for i, call in enumerate(("copy2", "copy", "copyfile")):
+        result, cand = _validate(
+            world,
+            "import shutil\n"
+            f"shutil.{call}(os.path.join(here, 'src.csv'), data)\n"
+            "assert open(data).read() == 'from-src'\n",
+        )
+        assert result["status"] == "ok", (call, result)
+        assert _redirected(cand, "sub/data.csv").read_text() == "from-src", call
+    assert (root / "sub" / "src.csv").read_text() == "from-src"
+
+
+def test_copy2_into_a_project_directory_goes_to_the_overlay(world):
+    _project_dir(world)
+    (world[0] / "sub" / "src.csv").write_text("from-src")
+    result, cand = _validate(
+        world,
+        "import shutil\nshutil.copy2(os.path.join(here, 'src.csv'), os.path.join(here, 'out'))\n"
+        "assert open(os.path.join(here, 'out', 'src.csv')).read() == 'from-src'\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/out/src.csv").read_text() == "from-src"
+    assert not (world[0] / "sub" / "out" / "src.csv").exists()
+
+
+def test_rmdir_of_a_project_dir_trips_but_a_purely_staged_dir_can_be_removed(world):
+    _project_dir(world)
+    result, _ = _validate(world, "os.rmdir(os.path.join(here, 'out'))\n")
+    assert _tripped(result)
+    result, _ = _validate(
+        world,
+        "import shutil\nn = os.path.join(here, 'staged', 'deep')\nos.makedirs(n)\n"
+        "assert os.path.isdir(n)\nopen(os.path.join(n, 'f.csv'), 'w').write('x')\n"
+        "shutil.rmtree(os.path.join(here, 'staged'))\nassert not os.path.exists(n)\n",
+    )
+    assert result["status"] == "ok", result
+
+
+def test_writing_a_file_over_a_project_directory_is_is_a_directory_error(world):
+    _project_dir(world)
+    result, cand = _validate(
+        world,
+        "o = os.path.join(here, 'out')\n"
+        "for fn in (lambda: open(o, 'w'), lambda: open(o, 'a'),\n"
+        "           lambda: os.open(o, os.O_WRONLY | os.O_CREAT)):\n"
+        "    try:\n        fn()\n        raise SystemExit('created a file over a dir')\n"
+        "    except IsADirectoryError:\n        pass\n"
+        "assert os.path.isdir(o) and not os.path.isfile(o)\n",
+    )
+    assert result["status"] == "ok", result
+    assert not _redirected(cand, "sub/out").exists()
+
+
+def test_mkdir_over_project_file_raises_and_over_a_whited_out_file_trips(world):
+    result, _ = _validate(
+        world,
+        "try:\n    os.mkdir(data)\n    raise SystemExit('mkdir over file')\n"
+        "except FileExistsError:\n    pass\n",
+    )
+    assert result["status"] == "ok", result
+    result, _ = _validate(world, "os.remove(data)\nos.mkdir(data)\n")
+    assert _tripped(result)
+
+
+def test_rename_onto_a_project_directory(world):
+    _project_dir(world)
+    result, _ = _validate(
+        world,
+        "open(data, 'w').write('n')\n"
+        "try:\n    os.replace(data, os.path.join(here, 'out'))\n    raise SystemExit('replaced dir')\n"
+        "except IsADirectoryError:\n    pass\n",
+    )
+    assert result["status"] == "ok", result
+    result, _ = _validate(
+        world,
+        "os.makedirs(os.path.join(here, 'stg'))\nos.rename(os.path.join(here, 'stg'), os.path.join(here, 'out'))\n",
+    )
+    assert _tripped(result)
+
+
+def test_copy_destinations_colliding_with_project_entries(world):
+    _project_dir(world)
+    result, _ = _validate(
+        world,
+        "import shutil\nsrc = os.path.join(here, 'srcdir')\nos.makedirs(src)\n"
+        "open(os.path.join(src, 'a.csv'), 'w').write('a')\n"
+        "o = os.path.join(here, 'out')\n"
+        "try:\n    shutil.copyfile(os.path.join(src, 'a.csv'), o)\n    raise SystemExit('copyfile over dir')\n"
+        "except IsADirectoryError:\n    pass\n"
+        "try:\n    shutil.copytree(src, o)\n    raise SystemExit('copytree over dir')\n"
+        "except FileExistsError:\n    pass\n"
+        "shutil.copytree(src, os.path.join(here, 'fresh'))\nassert os.path.isfile(os.path.join(here, 'fresh', 'a.csv'))\n",
+    )
+    assert result["status"] == "ok", result
+    result, _ = _validate(
+        world,
+        "import shutil\nos.makedirs(os.path.join(here, 'srcdir'))\n"
+        "shutil.copytree(os.path.join(here, 'srcdir'), os.path.join(here, 'out'), dirs_exist_ok=True)\n",
+    )
+    assert _tripped(result)
+    result, _ = _validate(
+        world, "import shutil\nshutil.copymode(os.path.join(here, 'data.csv'), data)\n"
+    )
+    assert _tripped(result)
+
+
+def test_exclusive_create_against_project_file_and_append_to_whited_out_file(world):
+    result, cand = _validate(
+        world,
+        "for fn in (lambda: open(data, 'x'),\n"
+        "           lambda: os.open(data, os.O_WRONLY | os.O_CREAT | os.O_EXCL)):\n"
+        "    try:\n        fn()\n        raise SystemExit('x over existing')\n"
+        "    except FileExistsError:\n        pass\n"
+        "os.remove(data)\nopen(data, 'a').write('tail')\n"
+        "assert open(data).read() == 'tail'\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/data.csv").read_text() == "tail"
+
+
+def test_writes_outside_project_and_allowed_roots_still_trip(world):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    elsewhere = root.parent / "elsewhere"
+    elsewhere.mkdir()
+    cand.new_bytes = (
+        "import matplotlib.pyplot as plt\n"
+        f"open({str(elsewhere / 'x.txt')!r}, 'w').write('x')\n"
+        "plt.plot([1])\nplt.savefig('o.png')\n"
+    ).encode()
     cand.target.write_bytes(cand.new_bytes)
     result = ai_convert.run_validation(cand, runner)
     assert result["status"] == "error" and result["code"] == "write_outside_roots", result
-    assert not (root / "sub" / "sneaky.txt").exists()
+    assert not (elsewhere / "x.txt").exists()
+
+
+def test_c_level_write_into_the_project_is_still_caught_by_the_fingerprint(world):
+    """改道的盲区（C 层 / 子进程写）：绊线与改道都看不见，指纹复核照旧判失败。"""
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = (
+        "import os\nimport matplotlib.pyplot as plt\n"
+        "here = os.path.dirname(os.path.abspath(__file__))\n"
+        "import subprocess, sys\n"
+        "subprocess.run([sys.executable, '-c', 'open(%r, \"w\").write(\"c\")' % "
+        "os.path.join(here, 'c_level.txt')], check=True)\n"
+        "plt.plot([1])\nplt.savefig('o.png')\n"
+    ).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    ai_convert.run_validation(cand, runner)
+    try:
+        failed = [
+            c
+            for c in ai_convert.ADAPTER._project_untouched(cand, "precommit")
+            if c.verdict != ai_convert.VERIFIED
+        ]
+        assert failed, "指纹复核应判出项目被改动"
+    finally:
+        (root / "sub" / "c_level.txt").unlink(missing_ok=True)
 
 
 def test_registration_is_scoped_and_isolated_per_write_roots(tmp_path):
@@ -251,7 +722,7 @@ def test_edit_validation_runs_the_candidate_bytes_not_the_original(edit_world):
         ai_figure_edit.remove_candidate(cand.dir)
 
 
-def test_edit_candidate_writing_into_the_project_is_still_stopped(edit_world):
+def test_edit_candidate_writing_into_the_project_is_redirected(edit_world):
     m, figs = edit_world
     workdir.set_mode(figs, workdir.MODE_PROJECT)
     try:
@@ -263,8 +734,11 @@ def test_edit_candidate_writing_into_the_project_is_still_stopped(edit_world):
             ),
         )
         result = ai_convert.run_validation(cand, runner)
-        assert result["status"] == "error" and result["code"] == "write_outside_roots", result
+        assert result["status"] == "ok", result
         assert not (figs / "sneaky.csv").exists()
+        assert (cand.dir / ai_convert.REDIRECT_DIRNAME / "sneaky.csv").read_text() == "x"
+        # 改道区不算“候选里多出来的文件”
+        assert not any(k.startswith("redirected/") for k in ai_figure_edit._tree(cand.dir))
     finally:
         workdir.forget(figs)
         ai_figure_edit.remove_candidate(cand.dir)
@@ -439,3 +913,39 @@ def test_edit_check_runner_sees_the_candidate_data_not_the_original(edit_world):
         assert original["manifests"] != changed["manifests"]
     finally:
         ai_figure_edit.remove_candidate(cand.dir)
+
+
+def test_copy2_never_reaches_winapi_copyfile2_during_validation(world):
+    """在 POSIX 上模拟 Windows 3.12+ 的 `shutil._winapi.CopyFile2` 分支：改道期间 copy2 不得走到它。"""
+    (world[0] / "sub" / "src.csv").write_text("from-src")
+    result, cand = _validate(
+        world,
+        "import shutil, types\n"
+        "def boom(*a, **k):\n    raise RuntimeError('CopyFile2 reached')\n"
+        "shutil._winapi = types.SimpleNamespace(CopyFile2=boom, COPY_FILE_ALLOW_DECRYPTED_DESTINATION=0,\n"
+        "                                        COPY_FILE_COPY_SYMLINK=0, ERROR_PRIVILEGE_NOT_HELD=1314, ERROR_ACCESS_DENIED=5)\n"
+        "shutil.copy2(os.path.join(here, 'src.csv'), data)\n"
+        "assert open(data).read() == 'from-src'\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/data.csv").read_text() == "from-src"
+
+
+def test_pathlib_write_unlink_rename_are_redirected_too(world):
+    """Python 3.10 的 pathlib 在 import 时就绑定了 io.open / os.*：改道必须也盖住 Path 的写 / 删 / 改名。"""
+    result, cand = _validate(
+        world,
+        "from pathlib import Path\n"
+        "p = Path(here) / 'p.csv'\np.write_bytes(b'bytes')\nassert p.read_bytes() == b'bytes'\n"
+        "p.write_bytes(b'text')\nassert p.read_bytes() == b'text'\n"
+        "q = Path(here) / 'q.csv'\np.rename(q)\nassert q.read_bytes() == b'text' and not os.path.exists(p)\n"
+        "r = Path(here) / 'r.csv'\nq.replace(r)\n"
+        "(Path(here) / 'newdir').mkdir()\n(Path(here) / 'newdir').rmdir()\n"
+        "assert r.read_bytes() == b'text'\n"
+        "Path(here, 'kept.csv').write_bytes(b'kept')\n"
+        "Path(here, 't.csv').touch()\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/kept.csv").read_text() == "kept"
+    assert _redirected(cand, "sub/t.csv").exists()
+    assert not (world[0] / "sub" / "kept.csv").exists()

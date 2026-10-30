@@ -33,6 +33,7 @@ from . import (
     execspec,
     executionfact,
     figcapture,
+    folderrepair,
     inputbroker,
     inputremap,
     launcher as launcher_mod,
@@ -745,8 +746,13 @@ def recovery_params(exc: "WorkerError") -> dict:
         # TeX 工具链（`texdiag`）：缺的命令 / 文件名（白名单清洗过）与 LaTeX 的那一行 `! …`
         return texdiag.params_of(extra.get("tex"))
     if exc.code == IMPORT_FOLDER_UNREADABLE_CODE:
-        # 只有目录名（不是路径）；缺了就不发这个码（`unreadable_folder_error`）
-        return {"folder": str(extra["unreadable_folder"]["folder"])}
+        # 只有目录名（不是路径）；缺了就不发这个码（`unreadable_folder_error`）。`repair_token` 是不透明的服务端令牌
+        # （`folderrepair`，仅 Windows 才有），前端凭它请求「修复权限」；它不是路径、也推不出路径
+        fact = extra["unreadable_folder"]
+        params = {"folder": str(fact["folder"])}
+        if fact.get("repair_token"):
+            params["repair_token"] = str(fact["repair_token"])
+        return params
     if exc.code == figcapture.EXPORT_RASTER_TOO_LARGE_CODE:
         # 宽 / 高 / 上限都是整数事实，没有路径与内容；缺字段（旧 worker 之类）就不捏造
         return {k: int(extra[k]) for k in ("width", "height", "max_pixels") if k in extra}
@@ -1354,24 +1360,37 @@ def unreadable_folder_error(
     ):
         return None
     fact = {"folder": folder}
+    # 一键修复权限（Windows）：完整路径只在私有键 `unreadable_folder_private`，在这里换成服务端令牌就地丢弃——
+    # 路径不进 `err.extra`（诊断 / 投影 / 遥测读得到的那一份），前端只拿到不透明的 `repair_token`
+    private = extra.get("unreadable_folder_private") if isinstance(extra, dict) else None
+    if isinstance(private, dict):
+        token = folderrepair.issue(project, private.get("path"), private.get("file") or "")
+        if token:
+            fact["repair_token"] = token
     module = structured_missing_module(given.get("module"))
     if module and "." not in module and _mappable_to_distribution(module):
         if not _unreadable_install_done(project, python, module):
             err = _missing_dependency_error(module, traceback_text)
             err.extra = {"unreadable_folder": {**fact, "module": module}}
             return err
+    if module:
+        # 这个模块在这个项目里是「读不了的本地模块」：之后的联合计划不再把它当表外依赖去问包名（`depplan.plan`）
+        folderrepair.note_unreadable_module(project, module)
     err = WorkerError(message, traceback_text, code=IMPORT_FOLDER_UNREADABLE_CODE)
     err.extra = {"unreadable_folder": fact}
     return err
 
 
 def _mappable_to_distribution(module: str) -> bool:
-    """模块名能不能映射到 PyPI 包名：只用 `depresolve` 现有的两张表（curated / 同名预填），不另建表。"""
+    """模块名能不能**可信地**映射到 PyPI 包名：只认 `depresolve` 的 curated 表（`CURATED` + `SAME_NAME`），不另建表。
+
+    `suggest_distribution` 的同名预填**不算**：它只是确认界面的初始值，没有任何来源核实。读不了的文件就在那个文件夹里，
+    表外的名字多半是用户自己的模块，去 PyPI 装一个同名猜测的包基本肯定是错的（装不到 → 核对包名 → 又回来，死循环）。"""
     from . import depresolve
 
     if depresolve.not_pip_installable(module) is not None:
         return False
-    return bool(depresolve.curated_distribution(module) or depresolve.suggest_distribution(module))
+    return bool(depresolve.curated_distribution(module))
 
 
 def _missing_dependency_error(mod: str, traceback_text: str) -> "WorkerError":

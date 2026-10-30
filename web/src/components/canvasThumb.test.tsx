@@ -17,6 +17,7 @@
  * 它**不覆盖**组件自己画得对不对（改了组件两边一起变）。那一档在
  * `left/canvasList.test.tsx` 与 `VersionDialog.test.tsx` 的内容判据里。
  */
+import { readFileSync } from 'node:fs'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -412,5 +413,14 @@ describe('标注里的公式（ADR 0152 §七）：缩略图 / 导出预览不�
     await teardown()
     const legacy = { ...formula, textFormat: undefined, text: '\\textit{b}' } as CanvasObject
     expect((await render(<CanvasThumb page={PAGE} objects={[legacy]} />)).querySelector('text')!.textContent).toBe('\\textit{b}')
+  })
+
+  it('小缩略图的字用 --font-glance：Segoe UI 在前（Windows 上上下标不回退到衬线），其后才是界面栈', async () => {
+    await teardown()
+    const small = { ...formula, text: 'E $E_a$' } as CanvasObject
+    const t = (await render(<CanvasThumb page={PAGE} objects={[small]} />)).querySelector('text')!
+    expect(t.getAttribute('style')).toContain('var(--font-glance)')
+    const css = readFileSync(`${process.cwd()}/src/index.css`, 'utf8') // vitest 在 web/ 下跑
+    expect(/--font-glance:\s*([^;]+);/.exec(css)?.[1].trim()).toBe("'Segoe UI', var(--font-sans)")
   })
 })
