@@ -18,6 +18,9 @@ import pytest
 
 from tavotto.engine import ai_agents, ai_bridge, ai_catalog, ai_providers
 
+#: conftest 默认把地址探测桩成「判不了」（不联网）；这里测它本身，用真的那个
+_REAL_PROBE = ai_catalog._probe_kind
+
 ROOT = Path(__file__).resolve().parents[1]
 LOCALES = ROOT / "web" / "src" / "i18n" / "locales"
 KEY = "sk-super-secret-1234567890"
@@ -161,6 +164,20 @@ class _Gateway:
                 if outer.mode == "401":
                     self.send_response(401)
                     self.end_headers()
+                    return
+                if outer.mode == "relay":
+                    # new-api 这类中转站：API 在 /v1 下面，其余路径都回网站首页（TVD-J5QG 实测形状）
+                    api = self.path.startswith("/v1/")
+                    body = (
+                        b'{"error":{"message":"Invalid token","type":"new_api_error"}}'
+                        if api
+                        else b"<!doctype html><html><body>relay</body></html>"
+                    )
+                    self.send_response(401 if api else 200)
+                    self.send_header("Content-Type", "application/json" if api else "text/html")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
                     return
                 if outer.mode == "redirect":
                     self.send_response(302)
@@ -491,3 +508,102 @@ def test_third_party_notices_cover_the_icon_sources():
     assert "Simple Icons" in notices and "CC0" in notices
     for key in _icon_table_keys():
         assert key in notices, f"{key} 的图形来源没在 THIRD_PARTY_NOTICES.md 登记"
+
+
+# ---- 接口地址少写 /v1（TVD-J5QG）----------------------------------------------
+
+
+@pytest.fixture
+def real_probe(monkeypatch):
+    monkeypatch.setattr(ai_catalog, "_probe_kind", _REAL_PROBE)
+
+
+def test_relay_address_without_v1_is_corrected(gateway, real_probe):
+    g = gateway(mode="relay")
+    assert ai_catalog.api_root_fix(g.url, KEY) == g.url + "/v1"
+    assert [h["path"] for h in g.hits] == ["/models", "/v1/models"]
+    assert all(h["headers"]["authorization"] == f"Bearer {KEY}" for h in g.hits)
+
+
+def test_address_that_is_already_the_api_root_is_left_alone(gateway, real_probe):
+    g = gateway()  # /models 就回 JSON
+    assert ai_catalog.api_root_fix(g.url, KEY) == ai_catalog.ROOT_OK
+    assert [h["path"] for h in g.hits] == ["/models"]
+    # 已经以 /v1 结尾：不联网
+    assert ai_catalog.api_root_fix(g.url + "/v1", KEY) == ai_catalog.ROOT_OK
+    assert len(g.hits) == 1
+
+
+def test_web_page_on_both_paths_is_not_guessed(gateway, real_probe):
+    g = gateway(mode="html")  # /models 与 /v1/models 都是网页：判不出 API 在哪，不改
+    assert ai_catalog.api_root_fix(g.url, KEY) == ai_catalog.ROOT_OK
+
+
+def test_unreachable_address_is_unknown_not_ok(real_probe):
+    assert ai_catalog.api_root_fix("http://127.0.0.1:1", KEY) == ai_catalog.ROOT_UNKNOWN
+
+
+def _codex_record(url, agent="codex"):
+    return ai_providers.create(
+        {
+            "id": "relay",
+            "label": "relay",
+            "agent": agent,
+            "base_url": url,
+            "api_key": KEY,
+            "models": ["m"],
+            "default_model": "m",
+            "wire_api": "responses",
+        }
+    )
+
+
+def test_ensure_api_root_writes_the_fix_back_once(gateway, real_probe):
+    g = gateway(mode="relay")
+    rec = _codex_record(g.url)
+    got = ai_providers.ensure_api_root(rec)
+    assert got["base_url"] == g.url + "/v1"
+    assert ai_providers.get("relay")["base_url"] == g.url + "/v1"
+    hits = len(g.hits)
+    # 核过的地址不再联网
+    again = ai_providers.ensure_api_root(ai_providers.get("relay"))
+    assert again["base_url"] == g.url + "/v1" and len(g.hits) == hits
+
+
+def test_ensure_api_root_marks_a_good_address_and_skips_it_next_time(gateway, real_probe):
+    g = gateway()
+    rec = _codex_record(g.url)
+    assert ai_providers.ensure_api_root(rec)["base_url"] == g.url
+    assert ai_providers.get("relay")["api_root_ok"] == g.url
+    ai_providers.ensure_api_root(ai_providers.get("relay"))
+    assert len(g.hits) == 1
+    # 用户改了地址：标记跟着失效，下次重核
+    ai_providers.save({**ai_providers.get("relay"), "base_url": g.url + "/x"})
+    assert "api_root_ok" not in ai_providers.get("relay")
+
+
+def test_ensure_api_root_leaves_unknown_and_anthropic_records_untouched(gateway, real_probe):
+    rec = _codex_record("http://127.0.0.1:1")
+    assert ai_providers.ensure_api_root(rec)["base_url"] == "http://127.0.0.1:1"
+    assert "api_root_ok" not in ai_providers.get("relay")  # 联网失败不记，下次再核
+    g = gateway(mode="relay")
+    ai_providers.delete("relay")
+    claude = _codex_record(g.url, agent="claude")  # Anthropic 系自己拼 /v1/messages
+    assert ai_providers.ensure_api_root(claude)["base_url"] == g.url and g.hits == []
+
+
+def test_ensure_api_root_does_not_overwrite_an_address_changed_meanwhile(
+    gateway, real_probe, monkeypatch
+):
+    g = gateway(mode="relay")
+    rec = _codex_record(g.url)
+    real_fix = ai_catalog.api_root_fix
+
+    def fix_then_user_edits(base, key):
+        out = real_fix(base, key)
+        ai_providers.save({**ai_providers.get("relay"), "base_url": "https://other.example/v1"})
+        return out
+
+    monkeypatch.setattr(ai_catalog, "api_root_fix", fix_then_user_edits)
+    ai_providers.ensure_api_root(rec)
+    assert ai_providers.get("relay")["base_url"] == "https://other.example/v1"

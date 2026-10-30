@@ -307,25 +307,14 @@ def _parse_models(body: bytes) -> list[str]:
     return out
 
 
-def fetch_models(base_url: str, api_key: str) -> tuple[list[str] | None, str | None]:
-    """→ (型号列表, None) 或 (None, 原因码)。不抛。"""
-    base_url = (base_url or "").strip()
-    api_key = (api_key or "").strip()
-    if not base_url or not api_key:
-        return None, "no_key"
-    refusal = url_refusal(base_url)
-    if refusal:
-        return None, refusal
-    url = models_url(base_url)
+def _get_request(base_url: str, url: str, api_key: str) -> urllib.request.Request:
+    """带密钥的 GET（型号清单 / 地址探测共用）。调用方已过 `url_refusal`；明文 http 钉 IP 失败抛 ValueError。"""
     extra: dict[str, str] = {}
     if urllib.parse.urlsplit(url).scheme.lower() == "http":
         # 明文 http（回环 / 私网）：把判定时解析出的 IP 钉进 URL 直连，`Host` 头保留原主机名（防 DNS 重绑定）
-        try:
-            url, host_header = netpolicy.pin_url(url)
-        except ValueError:
-            return None, "insecure_url"
+        url, host_header = netpolicy.pin_url(url)
         extra["Host"] = host_header
-    req = urllib.request.Request(  # noqa: S310 - 上面已限定 https / 回环或私网 http
+    return urllib.request.Request(  # noqa: S310 - 调用方已限定 https / 回环或私网 http
         url,
         headers={
             **extra,
@@ -336,6 +325,79 @@ def fetch_models(base_url: str, api_key: str) -> tuple[list[str] | None, str | N
             "Accept": "application/json",
         },
     )
+
+
+#: `api_root_fix` 的三种结论
+ROOT_OK = "ok"  # 这个地址就是 API 根（或判不出要改）：不用改，记下核过
+ROOT_UNKNOWN = "unknown"  # 联网失败 / 超时：这次判不了，下次再核
+
+
+def _body_kind(body: bytes) -> str:
+    """响应体是 `json` / `html`（网页）/ `other`。只看开头，不解析 HTML。"""
+    head = body.lstrip()[:1]
+    if head == b"<":
+        return "html"
+    try:
+        json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return "other"
+    return "json"
+
+
+def _probe_kind(base_url: str, url: str, api_key: str) -> str | None:
+    """GET `url`（与型号清单同一套头 / opener / 超时 / 不跟随重定向）→ 响应体的 `_body_kind`；
+    非 2xx 也看它的体（真 API 的 401 / 404 回的是 JSON 错误）。联网失败 → None。不抛。"""
+    try:
+        req = _get_request(base_url, url, api_key)
+        direct = urllib.parse.urlsplit(base_url).scheme.lower() == "http"
+        with _opener(direct=direct).open(req, timeout=TIMEOUT_S) as resp:
+            body = resp.read(_MAX_BODY + 1)
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read(_MAX_BODY + 1)
+        except OSError:
+            return "other"
+    except (OSError, ValueError):  # URLError / 超时 / 连接被拒 / 钉 IP 失败
+        return None
+    return _body_kind(body)
+
+
+def api_root_fix(base_url: str, api_key: str) -> str:
+    """OpenAI 系协议（Codex 注入、内置执行器的 openai-responses / openai-chat）在地址后**直接**拼 `/responses` /
+    `/chat/completions`，所以地址必须是 API 根；型号清单（`models_url`）却会自动补 `/v1`——地址少写 `/v1` 时
+    型号拿得到、一发请求就打到中转站的网站首页（TVD-J5QG：`/responses` 回 200 的 HTML）。
+
+    → 改正后的地址（`{base}/v1`）| `ROOT_OK`（不用改）| `ROOT_UNKNOWN`（这次判不了）。**只在**
+    `GET {base}/models` 回的是网页、而 `GET {base}/v1/models` 回的是 JSON（含 401 这类 JSON 错误）时才改：
+    原地址是 JSON / 别的形状、`/v1` 那边也是网页，一律不动——不猜。密钥只发往同源（`/v1` 不换主机）。不抛。"""
+    base = (base_url or "").strip().rstrip("/")
+    key = (api_key or "").strip()
+    if not base or not key or url_refusal(base) or base.lower().endswith("/v1"):
+        return ROOT_OK
+    here = _probe_kind(base, base + "/models", key)
+    if here is None:
+        return ROOT_UNKNOWN
+    if here != "html":
+        return ROOT_OK
+    there = _probe_kind(base, base + "/v1/models", key)
+    if there is None:
+        return ROOT_UNKNOWN
+    return base + "/v1" if there == "json" else ROOT_OK
+
+
+def fetch_models(base_url: str, api_key: str) -> tuple[list[str] | None, str | None]:
+    """→ (型号列表, None) 或 (None, 原因码)。不抛。"""
+    base_url = (base_url or "").strip()
+    api_key = (api_key or "").strip()
+    if not base_url or not api_key:
+        return None, "no_key"
+    refusal = url_refusal(base_url)
+    if refusal:
+        return None, refusal
+    try:
+        req = _get_request(base_url, models_url(base_url), api_key)
+    except ValueError:
+        return None, "insecure_url"
     try:
         direct = urllib.parse.urlsplit(base_url).scheme.lower() == "http"
         with _opener(direct=direct).open(req, timeout=TIMEOUT_S) as resp:

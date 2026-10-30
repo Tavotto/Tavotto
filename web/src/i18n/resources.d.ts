@@ -119,12 +119,14 @@ export default interface Resources {
       "resend": "重新发送"
     },
     "notice": {
+      "checkConnection": "检查连接",
       "dataFigureFailedWritten": "新脚本已写进项目，但画出来的数据与 CSV 对不上；不对的话可以删掉这份新脚本。",
       "dataFigureNeedsInput": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列。",
       "dataFigureNeedsInputExample": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列，例如“画 {{y}} 随 {{x}} 的变化”。",
       "dataFigurePartial": "有些行不是数字，没有画出来；脚本已新建，结果未经完整核对。",
       "dataFigureReconcile": "查询结果",
       "dataFigureUnconfirmed": "没收到结果，可能已经生成了；先查询结果，别重复提交。",
+      "htmlResponse": "连接地址打开的是网页，不是接口。",
       "legendLabel": "图例里也写着「{{from}}」，要一起改成「{{to}}」吗？",
       "legendLabelApply": "一起改",
       "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
@@ -6087,6 +6089,7 @@ export default interface Resources {
         "fail": {
           "agent_auth": "模型凭据无效或已过期，请检查 AI 连接。",
           "agent_budget": "转换达到时间或用量上限，已停止；没有采用候选。",
+          "agent_html_response": "连接地址打开的是网页，不是接口，请检查连接地址。",
           "agent_internal": "转换执行器出错，可以审阅并发送私密问题报告。",
           "agent_max_turns": "转换达到步骤上限，已停止。",
           "agent_network": "模型服务请求失败，可以重试。",

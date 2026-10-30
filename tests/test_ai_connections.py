@@ -491,6 +491,30 @@ def test_post_saves_a_key_connection_and_never_echoes_the_key(client, world, cap
     assert _conn(_caps(), conn["id"])["state"] == "ready"
 
 
+def test_post_saves_a_relay_address_missing_v1_as_the_corrected_one(client, world, monkeypatch):
+    """中转站地址少写 `/v1`（TVD-J5QG）：型号清单会自己补 `/v1` 所以拿得到，真发请求时拼 `/responses` 就打到网站首页。
+    保存时核一次：`{base}/models` 是网页、`{base}/v1/models` 是 JSON → 存成 `{base}/v1`。"""
+    probed: list[str] = []
+
+    def probe(_base, url, _key):
+        probed.append(url)
+        return "json" if "/v1/" in url else "html"
+
+    monkeypatch.setattr(ai_catalog, "_probe_kind", probe)
+    world["fetch"] = (["claude-sonnet-5-5"], None)
+    resp = _post(
+        client,
+        vendor="custom",
+        api_key=KEY,
+        base_url="https://relay.example",
+        wire="openai-responses",
+    )
+    assert resp.status_code == 200, resp.get_json()
+    stored = ai_providers.get(resp.get_json()["connection"]["id"])
+    assert stored["base_url"] == "https://relay.example/v1"
+    assert probed == ["https://relay.example/models", "https://relay.example/v1/models"]
+
+
 def test_post_failing_to_list_models_still_saves_but_reports_an_error(client, world):
     world["fetch"] = (None, "network")
     conn = _post(client, vendor="moonshot", api_key=KEY).get_json()["connection"]
@@ -811,6 +835,24 @@ def test_fix_connection_takes_the_first_ready_key_connection(world, monkeypatch)
     ai_providers.delete("second")
     ai_providers.delete("good")
     assert fixsession.connection()["wire"] == "openai-responses"
+
+
+def test_fix_connection_corrects_a_relay_address_only_when_it_is_about_to_run(world, monkeypatch):
+    """AI 修复真要开跑（`refresh=True`）才核地址少没少 `/v1` 并改正；只问「有没有」（capabilities）绝不联网。"""
+    probed: list[str] = []
+
+    def probe(_base, url, _key):
+        probed.append(url)
+        return "json" if "/v1/" in url else "html"
+
+    monkeypatch.setattr(ai_catalog, "_probe_kind", probe)
+    _save("cx", agent="codex", base="https://relay.example", default_model="claude-sonnet-5-5")
+    assert ai_connections.first_key_connection()["base_url"] == "https://relay.example"
+    assert probed == []
+    assert (
+        ai_connections.first_key_connection(refresh=True)["base_url"] == "https://relay.example/v1"
+    )
+    assert ai_providers.get("cx")["base_url"] == "https://relay.example/v1"
 
 
 def test_ai_fix_available_follows_the_connection_view(client, world, monkeypatch):

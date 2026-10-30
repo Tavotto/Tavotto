@@ -103,6 +103,8 @@
     "resend": "重新发送"
   },
   "notice": {
+    "htmlResponse": "连接地址打开的是网页，不是接口。",
+    "checkConnection": "检查连接",
     "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
     "taskPartial": "改动已写入，但有检查没能完成，结果未经完整核对。",
     "taskRejected": "改动没通过写回前检查，没有写入项目。",
