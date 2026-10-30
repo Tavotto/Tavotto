@@ -155,6 +155,8 @@ const RULES: Record<
   // 而换哪一个只有用户说得出（自动挑一个会让同一份文档在两台机器上不一样）。
   'glyph-missing': { category: 'text', context: 'document', fix: 'none' },
   'glyph-substituted': { category: 'text', context: 'document', fix: 'none' },
+  // 公式排不出来：能修的动作是改公式本身（只有用户说得出写什么），所以 `fix: 'none'`；点击定位到那条文字
+  'math-unrenderable': { category: 'text', context: 'document', fix: 'none' },
   // 修法是外边距重排（ADR 0051 的 `adapt_margins`）：挪子图、不挪那条文字，有位移预算，
   // 改完真实渲染裁决；放不下就如实说「放不下」、一个字不改（ADR 0080）
   'element-outside-figure': { category: 'layout', context: 'document', fix: 'safe_auto' },
