@@ -34,6 +34,7 @@ def test_vectors_match_python_side(vec):
     assert [_run(r) for r in runs] == vec["runs"]
     assert richtext.serialize_latex(runs) == vec["latex"]
     assert richtext.plain_text(vec["text"], vec["format"]) == vec["plain"]
+    assert richtext.glance_text(vec["text"], vec["format"]) == vec["glance"]
 
 
 @pytest.mark.parametrize("vec", VECTORS, ids=[v["name"] for v in VECTORS])

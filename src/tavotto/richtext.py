@@ -507,3 +507,197 @@ def run_metrics(script: str, size: float) -> tuple[float, float]:
     if script == "sub":
         return size * SCRIPT_SIZE, -size * SUB_DROP
     return size, 0.0
+
+
+# ---------------------------------------------------------------------------
+# 一眼读得懂的字（小缩略图，ADR 0152）
+# ---------------------------------------------------------------------------
+#
+# 画布列表、版本列表的小缩略图不排公式（几十张图各发一次排版请求不值，它只回答「哪一页 / 哪一版」），
+# 但 `plain_text` 留的是公式源码（`\frac{RT^2}{k}`），一眼读不出来。`glance_text` 把常见的
+# mathtext 读成近似的 Unicode 文字（`RT²/k`）。**只给人认页面**：不是排版，不进导出、不写回；
+# 读不懂的命令去掉反斜杠留名字，绝不吞掉用户写的字母。下面几张表与 `richText.ts` 同名同源，
+# 由 `tests/golden/rich_text_vectors.json` 的 `glance` 一节逐项看护。
+
+#: 命令 → 字符：希腊字母与常用符号。
+GLANCE_SYMBOLS = {
+    "alpha": "α", "beta": "β", "gamma": "γ", "delta": "δ", "epsilon": "ε", "varepsilon": "ε",
+    "zeta": "ζ", "eta": "η", "theta": "θ", "vartheta": "ϑ", "iota": "ι", "kappa": "κ",
+    "lambda": "λ", "mu": "μ", "nu": "ν", "xi": "ξ", "pi": "π", "varpi": "ϖ", "rho": "ρ",
+    "varrho": "ϱ", "sigma": "σ", "varsigma": "ς", "tau": "τ", "upsilon": "υ", "phi": "φ",
+    "varphi": "φ", "chi": "χ", "psi": "ψ", "omega": "ω",
+    "Gamma": "Γ", "Delta": "Δ", "Theta": "Θ", "Lambda": "Λ", "Xi": "Ξ", "Pi": "Π",
+    "Sigma": "Σ", "Upsilon": "Υ", "Phi": "Φ", "Psi": "Ψ", "Omega": "Ω",
+    "times": "×", "cdot": "·", "div": "÷", "pm": "±", "mp": "∓",
+    "le": "≤", "leq": "≤", "ge": "≥", "geq": "≥", "ne": "≠", "neq": "≠", "approx": "≈",
+    "sim": "∼", "simeq": "≃", "equiv": "≡", "propto": "∝", "ll": "≪", "gg": "≫",
+    "infty": "∞", "partial": "∂", "nabla": "∇", "sum": "∑", "prod": "∏", "int": "∫", "oint": "∮",
+    "to": "→", "rightarrow": "→", "leftarrow": "←", "Rightarrow": "⇒", "leftrightarrow": "↔",
+    "uparrow": "↑", "downarrow": "↓", "degree": "°", "circ": "∘", "prime": "′",
+    "AA": "Å", "hbar": "ℏ", "ell": "ℓ", "cdots": "⋯", "ldots": "…", "dots": "…",
+    "langle": "⟨", "rangle": "⟩", "lbrace": "{", "rbrace": "}", "vert": "|", "Vert": "‖", "mid": "|",
+    "in": "∈", "notin": "∉", "subset": "⊂", "cup": "∪", "cap": "∩", "forall": "∀", "exists": "∃",
+    "perp": "⊥", "parallel": "∥", "angle": "∠", "star": "⋆", "ast": "∗", "bullet": "•",
+    "dagger": "†", "emptyset": "∅", "Re": "ℜ", "Im": "ℑ", "aleph": "ℵ",
+    "wedge": "∧", "vee": "∨", "neg": "¬",
+}  # fmt: skip
+
+#: 函数名命令：照名字写出来，两边留空格（`\ln x` → `ln x`）。
+GLANCE_FUNCS = (
+    "arccos", "arcsin", "arctan", "arg", "cos", "cosh", "cot", "coth", "csc", "deg", "det", "dim",
+    "exp", "gcd", "hom", "inf", "ker", "lg", "lim", "liminf", "limsup", "ln", "log", "max", "min",
+    "Pr", "sec", "sin", "sinh", "sup", "tan", "tanh",
+)  # fmt: skip
+
+#: 只换字体的命令：留下参数本身。
+GLANCE_UNWRAP = (
+    "mathrm", "mathit", "mathbf", "mathsf", "mathtt", "mathcal", "mathbb", "mathfrak", "mathscr",
+    "mathdefault", "text", "textrm", "textit", "textbf", "operatorname", "boldsymbol",
+)  # fmt: skip
+
+#: 字母上的记号：参数只有一个字符时加组合附加符（`\hat{x}` → `x̂`），否则只留参数。
+GLANCE_ACCENTS = {
+    "hat": "̂", "widehat": "̂", "bar": "̄", "overline": "̅", "vec": "⃗",
+    "dot": "̇", "ddot": "̈", "tilde": "̃", "widetilde": "̃",
+}  # fmt: skip
+
+#: 间距命令（含 `\,` 这类单符号的）：都读成一个空格，`\!` 读成没有。
+GLANCE_SPACES = {",": " ", ":": " ", ";": " ", " ": " ", "!": "", "quad": " ", "qquad": " "}
+
+#: 只影响排版、不带字的命令：去掉。
+GLANCE_DROP = (
+    "left", "right", "displaystyle", "textstyle", "scriptstyle", "limits", "nolimits",
+    "big", "Big", "bigg", "Bigg",
+)  # fmt: skip
+
+_SUP_OF = {base: ch for ch, base in SUPERSCRIPT_BASE.items()}
+_SUB_OF = {base: ch for ch, base in SUBSCRIPT_BASE.items()}
+#: 分式 / 根号的一边含这些字符就加括号（`\frac{a+b}{c}` → `(a+b)/c`）。
+_GLANCE_OPS = "+-=/ ×·±<>≤≥≈≠"
+_FRACS = ("frac", "dfrac", "tfrac", "cfrac")
+
+
+def glance_text(text: str, text_format: str | None = None) -> str:
+    """一眼读得懂的字：公式读成近似的 Unicode，上下标能换成 Unicode 上下标字符的就换。"""
+    out = []
+    for r in parse_runs(text, text_format):
+        if r.math:
+            out.append(_glance_math(r.text))
+        elif r.script:
+            out.append(_glance_script(r.text, "^" if r.script == "sup" else "_", fallback=r.text))
+        else:
+            out.append(r.text)
+    return "".join(out)
+
+
+def _glance_math(src: str) -> str:
+    return " ".join(_glance_seq(src).split()).replace("( ", "(").replace(" )", ")")
+
+
+def _glance_seq(src: str) -> str:
+    out = []
+    i = 0
+    while i < len(src):
+        piece, i = _glance_item(src, i)
+        out.append(piece)
+    return "".join(out)
+
+
+def _glance_item(src: str, i: int) -> tuple[str, int]:
+    """从 `i` 读一项，回 (读出的字, 下一项起点)。"""
+    ch = src[i]
+    if ch.isspace() or ch == "}":  # 公式里的空格不显示；落单的 `}` 去掉
+        return "", i + 1
+    if ch == "{":
+        close = _match_brace(src, i)
+        if close < 0:
+            return "", i + 1
+        return _glance_seq(src[i + 1 : close]), close + 1
+    if ch in "^_":
+        arg, j = _glance_arg(src, i + 1)
+        return _glance_script(arg, ch, fallback=None), j
+    if ch == "\\":
+        return _glance_command(src, i)
+    if ch == "~":
+        return " ", i + 1
+    return ch, i + 1
+
+
+def _glance_arg(src: str, i: int) -> tuple[str, int]:
+    while i < len(src) and src[i].isspace():
+        i += 1
+    if i >= len(src):
+        return "", i
+    return _glance_item(src, i)
+
+
+def _glance_script(arg: str, kind: str, fallback: str | None) -> str:
+    """上下标：每个字都有 Unicode 上下标字符就换；否则公式里写成 `^x` / `^(ab)`，正文片段原样。"""
+    arg = arg.strip()
+    if not arg:
+        return ""
+    if kind == "^" and arg == "∘":
+        return "°"
+    if kind == "^" and all(c in "′″" for c in arg):
+        return arg
+    table = _SUP_OF if kind == "^" else _SUB_OF
+    if all(c in table for c in arg):
+        return "".join(table[c] for c in arg)
+    if fallback is not None:
+        return fallback
+    return kind + (f"({arg})" if len(arg) > 1 else arg)
+
+
+def _glance_paren(s: str) -> str:
+    return f"({s})" if len(s) > 1 and any(c in _GLANCE_OPS for c in s) else s
+
+
+def _glance_command(src: str, i: int) -> tuple[str, int]:  # noqa: C901 —— 一张命令表
+    if i + 1 >= len(src):
+        return "", i + 1
+    nxt = src[i + 1]
+    if not nxt.isascii() or not nxt.isalpha():
+        if nxt in GLANCE_SPACES:
+            return GLANCE_SPACES[nxt], i + 2
+        if nxt == "\\":
+            return " ", i + 2
+        return nxt, i + 2  # \{ \$ \% \_ …：字面量
+    j = i + 1
+    while j < len(src) and src[j].isascii() and src[j].isalpha():
+        j += 1
+    name = src[i + 1 : j]
+    if name in _FRACS:
+        num, j = _glance_arg(src, j)
+        den, j = _glance_arg(src, j)
+        return f"{_glance_paren(num)}/{_glance_paren(den)}", j
+    if name == "sqrt":
+        k = j
+        while k < len(src) and src[k].isspace():
+            k += 1
+        if k < len(src) and src[k] == "[":
+            end = src.find("]", k)
+            if end > 0:
+                j = end + 1
+        arg, j = _glance_arg(src, j)
+        return "√" + _glance_paren(arg), j
+    if name in GLANCE_UNWRAP:
+        return _glance_arg(src, j)
+    if name in GLANCE_ACCENTS:
+        arg, j = _glance_arg(src, j)
+        return (arg + GLANCE_ACCENTS[name] if len(arg) == 1 else arg), j
+    if name in GLANCE_SPACES:
+        return GLANCE_SPACES[name], j
+    if name in GLANCE_DROP:
+        if name in ("left", "right") and j < len(src) and src[j] == ".":
+            j += 1
+        return "", j
+    if name in GLANCE_SYMBOLS:
+        return GLANCE_SYMBOLS[name], j
+    if name in GLANCE_FUNCS:
+        k = j
+        while k < len(src) and src[k].isspace():
+            k += 1
+        # 紧跟括号、上下标或到头就不留后面的空格（`\sin(x)` → `sin(x)`，`\lim_{x}` → `limₓ`）
+        tight = k >= len(src) or src[k] in "([^_" or src.startswith("\\left", k)
+        return f" {name}" + ("" if tight else " "), j
+    return name, j

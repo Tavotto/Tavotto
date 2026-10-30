@@ -9,7 +9,7 @@
     python scripts/gen_rich_text_vectors.py --write    # 按 Python 侧重新生成
 
 Python 是参考实现。每条向量给出：解析出的片段、写回 LaTeX 子集的规范形（旧标记那几条就是
-「第一次用新编辑框保存时」会变成的字符串）、去掉标记后的可读文本。
+「第一次用新编辑框保存时」会变成的字符串）、去掉标记后的可读文本，以及小缩略图用的「一眼读得懂的字」（`glance_text`）。
 
 纯标准库。
 """
@@ -68,6 +68,14 @@ CASES: list[tuple[str, str | None, str]] = [
     ("raw-newline", "latex", "line1\nline2"),
     ("cjk-italic", "latex", r"温度 \textit{T}"),
     ("empty-command", "latex", r"a\textit{}b"),
+    # —— 一眼读得懂的字（小缩略图）：公式读成近似 Unicode
+    ("glance-arrhenius", "latex", r"$E_a=\frac{RT^2}{k}\,\ln\frac{k_2}{k_1}$"),  # 分式、上下标换字符、函数名两边空格
+    ("glance-func-tight", "latex", r"$\sin(\theta)$ $\lim_{x\to 0}$"),  # 函数名紧跟括号 / 下标不留空格；下标换不了就 _(…)
+    ("glance-paren-frac", "latex", r"$\left(\frac{a+b}{c}\right)^2$"),  # 含运算符的一边加括号；\left \right 去掉
+    ("glance-sqrt-accent-unknown", "latex", r"$\sqrt[3]{x+1}$ $\hat{x}$ $\alpah$"),  # 读不懂的命令留名字
+    ("glance-degree-escape", "latex", r"$90^\circ$ $50\%$ $a\,b\!c$ $T_{\max}$"),
+    ("glance-script-text", "latex", r"T\textsubscript{eff} cm\textsuperscript{-1}"),  # 正文上下标换不了就原样
+    ("glance-unbalanced", "latex", r"$\frac{a}{$ x"),  # 缺右花括号：不崩、不吞字
 ]
 
 
@@ -97,6 +105,7 @@ def build() -> dict:
                 "runs": [_run(r) for r in runs],
                 "latex": richtext.serialize_latex(runs),
                 "plain": richtext.plain_text(text, fmt),
+                "glance": richtext.glance_text(text, fmt),
             }
         )
     return {
@@ -108,6 +117,15 @@ def build() -> dict:
             "（web/src/lib/richText.golden.test.ts）各跑一遍同一份。"
         ),
         "vectors": vectors,
+        # `glance_text` 的几张表：向量只覆盖其中几项，表本身逐项对照
+        "glance": {
+            "symbols": richtext.GLANCE_SYMBOLS,
+            "funcs": list(richtext.GLANCE_FUNCS),
+            "unwrap": list(richtext.GLANCE_UNWRAP),
+            "accents": richtext.GLANCE_ACCENTS,
+            "spaces": richtext.GLANCE_SPACES,
+            "drop": list(richtext.GLANCE_DROP),
+        },
     }
 
 

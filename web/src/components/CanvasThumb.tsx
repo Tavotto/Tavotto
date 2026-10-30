@@ -28,7 +28,7 @@ import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { bucketFor } from '@/lib/previewBuckets'
 import { layerOf } from '@/lib/glyphPlan'
-import { DEFAULT_INTERPRETATION, displayText, interpretRuns, runLines } from '@/lib/richText'
+import { DEFAULT_INTERPRETATION, glanceText, interpretRuns, runLines } from '@/lib/richText'
 import { ThumbMathLine, ThumbRun } from '@/components/ThumbMathLine'
 import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
 import { MM_PER_PT } from '@/lib/units'
@@ -216,9 +216,10 @@ export function CanvasThumb({
                 fill="currentColor"
                 className="text-paper-ink-2"
               >
-                {/* 显示的字，不是存着的串：LaTeX 命令去掉、公式不带 `$`。公式不在这里画成轮廓——一页 / 一列版本里
-                    几十个缩略图各发一次排版请求不值（它回答「哪一版」），导出预览才画真公式 */}
-                {displayText(o.text ?? '', o.textFormat === 'latex' ? 'latex' : undefined).slice(0, THUMB_TEXT_CHARS)}
+                {/* 显示的字，不是存着的串：LaTeX 命令去掉，公式读成近似 Unicode（`\frac{F}{A}` → `F/A`）。公式不在这里
+                    画成轮廓——一页 / 一列版本里几十个缩略图各发一次排版请求不值（它回答「哪一版」），导出预览才画真公式。
+                    版本草图的字后端已按同一读法读好、不带写法，这里原样 */}
+                {(o.textFormat === 'latex' ? glanceText(o.text ?? '', 'latex') : (o.text ?? '')).slice(0, THUMB_TEXT_CHARS)}
               </text>
             )
           }
