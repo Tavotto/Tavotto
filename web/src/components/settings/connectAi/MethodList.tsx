@@ -126,7 +126,8 @@ function MethodRow({ vendor, method: m, connections, onConnected, picked: on, on
   const conn = connectionForMethod(connections, vendor, m)
   const ready = conn?.state === 'ready'
   const usable = m.available
-  const clickable = usable
+  // 已连的非 Key 类（OAuth）没有可管理的东西（Change Key 对 OAuth 连接必 404）：卡片只显示状态，不展开
+  const clickable = usable && !(ready && m.kind !== 'key')
   return (
     <div className="flex flex-col gap-2">
       <button

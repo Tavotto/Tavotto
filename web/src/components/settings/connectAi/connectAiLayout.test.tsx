@@ -353,6 +353,13 @@ describe('多方式厂商：一种连好了不堵另一种的入口', () => {
     await click(q('[data-connect-vendor="minimax"] [data-connect-action="methods"]'))
     expect(q('[data-connect-method="o"]')!.dataset.connectMethodState).toBe('ready')
     expect(q('[data-connect-method="k"]')!.dataset.connectMethodState).toBe('none')
+    // 已连的账号登录（OAuth）没有可管理的东西，「换 Key」对它必 404：卡片不可点、点了也不展开管理/Key 表单
+    const oauthCard = q('[data-connect-method="o"]') as HTMLButtonElement
+    expect(oauthCard.disabled).toBe(true)
+    await click(oauthCard)
+    expect(oauthCard.getAttribute('aria-pressed')).toBe('false')
+    expect(q('[data-connect-change-key]')).toBeNull()
+    expect(q('[data-connect-key-input]')).toBeNull()
   })
 })
 
