@@ -392,7 +392,8 @@ def _project_dir(world):
 
 
 def _tripped(result):
-    return result["status"] == "error" and result["code"] == "write_outside_roots", result
+    assert result["status"] == "error" and result["code"] == "write_outside_roots", result
+    return True
 
 
 def test_rmtree_of_an_existing_project_dir_trips(world):

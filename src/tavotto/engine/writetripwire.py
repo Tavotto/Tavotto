@@ -579,7 +579,7 @@ def _w_mkdir(orig):
                 r = _resolve(path)
                 if r is None or not _white(r[1]):
                     raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), path)
-                return orig(path, mode, dir_fd=dir_fd)  # 被“删掉”的文件处建目录：不模拟 → 走绊线
+                _violation("os.mkdir", r[0])  # 被“删掉”的文件处建目录：不模拟
             target = _map(path, write=True)
             if target is not None:
                 path = target
@@ -601,8 +601,8 @@ def _w_remove(orig):
                     raise _enoent(path)
                 over = _real_exists(target)
                 real = _real_exists(rp)
-                if real and _ORIG["isdir"](rp) and not over:
-                    return orig(path, dir_fd=dir_fd)  # 目录：不改道（走绊线）
+                if real and _ORIG["isdir"](rp):
+                    _violation("os.remove", rp)
                 if over:
                     orig(target)
                     if real:
@@ -625,8 +625,11 @@ def _w_rmdir(orig):
     def fn(path, *, dir_fd=None):
         if dir_fd is None and _redirect_on():
             r = _resolve(path)
-            if r is not None and not _proj_dir(r) and _real_exists(r[2]):
-                path = r[2]
+            if r is not None:
+                if _proj_dir(r):
+                    _violation("os.rmdir", r[0])  # 显式失败：不依赖后面的删除账本去“跳过”它
+                if _real_exists(r[2]):
+                    path = r[2]
         return orig(path, dir_fd=dir_fd)
 
     return fn
@@ -645,7 +648,7 @@ def _w_rename(orig):
                 )
                 if not src_is_dir:
                     raise _eisdir(dst)
-                return orig(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+                _violation("os.rename", rd[0])
             if (
                 rd is not None
                 and _real_exists(rd[0])
@@ -654,8 +657,7 @@ def _w_rename(orig):
                     or (rs is None and _ORIG["isdir"](os.fsdecode(os.fspath(src))))
                 )
             ):
-                # 目录改名到项目里已有的文件上：不模拟 → 走绊线
-                return orig(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+                _violation("os.rename", rd[0])  # 目录改名到项目里已有的文件上：不模拟
             if rd is not None:
                 _prepare_write(rd)
             d = rd[2] if rd is not None else dst
@@ -666,8 +668,8 @@ def _w_rename(orig):
                     raise _enoent(src)
                 over = _real_exists(target)
                 real = _real_exists(rp)
-                if real and _ORIG["isdir"](rp) and not over:
-                    pass  # 目录：src 不改道（走绊线）
+                if real and _ORIG["isdir"](rp):
+                    _violation("os.rename", rp)  # 项目里的目录被改名走：不模拟
                 elif over:
                     orig(target, d)
                     if real:
@@ -777,9 +779,7 @@ def _w_copytree(orig):
             if rd is not None:
                 if _real_exists(rd[0]) and not _white(rd[1]):
                     if kwargs.get("dirs_exist_ok") or (len(args) >= 5 and args[4]):
-                        return orig(
-                            src, dst, *args, **kwargs
-                        )  # 合并进项目里已有的目录：不模拟 → 走绊线
+                        _violation("shutil.copytree", rd[0])  # 合并进项目里已有的目录：不模拟
                     raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), dst)
                 dst = _map(dst, write=True)
         return orig(src, dst, *args, **kwargs)
@@ -795,8 +795,11 @@ def _w_rmtree(orig):
     def rmtree(path, *args, **kwargs):
         if _redirect_on():
             r = _resolve(path)
-            if r is not None and not _real_exists(r[0]) and _real_exists(r[2]):
-                path = r[2]
+            if r is not None:
+                if _real_exists(r[0]):
+                    _violation("shutil.rmtree", r[0])
+                if _real_exists(r[2]):
+                    path = r[2]
         return orig(path, *args, **kwargs)
 
     return rmtree
@@ -823,9 +826,7 @@ def _w_move(orig):
                     os.fsdecode(os.fspath(dst)), os.path.basename(os.fsdecode(os.fspath(src)))
                 )
                 if _real_exists(inner):
-                    return orig(
-                        src, dst, *args, **kwargs
-                    )  # 移进目录时同名项已在项目里：不模拟 → 走绊线
+                    _violation("shutil.move", rd[0])  # 移进目录时同名项已在项目里：不模拟
                 _ORIG["makedirs"](rd[2], exist_ok=True)
             dst = rd[2]
         result = orig(src, dst, *args, **kwargs)
