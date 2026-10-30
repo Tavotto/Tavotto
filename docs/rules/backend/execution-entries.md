@@ -98,9 +98,9 @@ order: 180
   全部读不了 → 返回最初的 spec，由 loader 原样抛最初的 `PermissionError`；不吞别的异常、不改写 `ImportError`。
 - **留痕**：worker.log 的 `[import-skip] {json}`（safe）+ 回执 `runtime.import_skips`（两条入口；公开面只有模块名，路径只在诊断包的私有回执里，
   唯一投影 `receipt.project_import_skips`）。
-- **残余失败先走一键安装，兜底才是一句话**：`bridgeboot.unreadable_folder_fact`（项目外、脚本运行期间新加进 `sys.path`、不在解释器前缀 / 包目录下）→ 错误带
-  `unreadable_folder.{folder, module}`（只有名字）→ `pool.unreadable_folder_error`：模块能映射到 PyPI 包名（`depresolve` 现有的表）且第一次出现 →
-  **现有的 `missing_dependency` 错误**（一键装进受管环境，下次运行查找器跳过读不了的那一处）；`app.py` 的可信解析给不出安装名、或装完仍读不了同一处 →
+- **残余失败先走一键安装，兜底才是一句话**：`bridgeboot.unreadable_folder_fact`（项目外、脚本运行期间新加进 `sys.path`、不在解释器前缀 / 包目录下，且文件是查找器登记过的「命中但读不了」的模块文件——数据文件的权限错误不算）→ 错误带
+  `unreadable_folder.{folder, module}`（只有名字）→ `pool.unreadable_folder_error`：模块能映射到 PyPI 包名（`depresolve` 现有的表）且这个项目里还没装过它（记账只在安装成功提交后，`deprepair._run_install` → `pool.note_unreadable_install`，按项目区分） →
+  **现有的 `missing_dependency` 错误**（一键装进受管环境，下次运行查找器跳过读不了的那一处）；`app.py` 的可信解析给不出安装名、或装过一次后同一处仍读不了 →
   稳定码 `import_folder_unreadable`（一句话卡；这条兜底暂无一键出路，候选：提权修复文件夹权限）。AI 修复提示词 3g：装进受管环境有效、换解释器无效、不改脚本不动文件夹。
 - 看护 `tests/test_unreadable_import_skip.py`（含两条入口各一条真 worker 端到端、变异：删掉装配调用即红）。
 

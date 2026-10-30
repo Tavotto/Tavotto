@@ -1289,32 +1289,37 @@ def _tex_error(message: str, traceback_text: str, extra=None) -> "WorkerError | 
     return err
 
 
-#: 已经送去「装进受管环境」的 (模块, 文件夹)：同一处读不了装完仍然失败，第二次起落到 `import_folder_unreadable`，
-#: 不再循环出安装卡。进程内、带过期，不落盘（装好后重跑成功不会再走到这里）。
-_UNREADABLE_ROUTED: dict[tuple[str, str], float] = {}
-_UNREADABLE_ROUTED_TTL = 1800.0
-_UNREADABLE_ROUTED_LOCK = threading.Lock()
+#: 依赖安装**真正成功提交过**的 (项目, 模块)：之后同一个模块仍然读不了，说明装包没有用，落到
+#: `import_folder_unreadable`，不再循环出安装卡。只在安装成功时记（`deprepair` 的两处终态调 `note_unreadable_install`），
+#: 给错误分类从不记账；按项目区分，不同项目里同名模块、同名文件夹互不影响。进程内，不落盘。
+_UNREADABLE_INSTALLED: set[tuple[str, str]] = set()
+_UNREADABLE_INSTALLED_LOCK = threading.Lock()
 
 
-def _claim_unreadable_install(module: str, folder: str) -> bool:
-    """第一次见到这个 (模块, 文件夹) 回 True（并记下）；已送去安装过、还没过期回 False。"""
-    now = time.monotonic()
-    with _UNREADABLE_ROUTED_LOCK:
-        for key, at in list(_UNREADABLE_ROUTED.items()):
-            if now - at > _UNREADABLE_ROUTED_TTL:
-                del _UNREADABLE_ROUTED[key]
-        if (module, folder) in _UNREADABLE_ROUTED:
-            return False
-        _UNREADABLE_ROUTED[(module, folder)] = now
-        return True
+def _unreadable_project_key(project) -> str:
+    return projectenv._key(project) if project else ""
 
 
-def unreadable_folder_error(message: str, traceback_text: str, extra=None) -> "WorkerError | None":
+def note_unreadable_install(project, module: str) -> None:
+    """一次依赖安装成功提交到 `project` 后调用：记下 `module` 装过了。"""
+    if module:
+        with _UNREADABLE_INSTALLED_LOCK:
+            _UNREADABLE_INSTALLED.add((_unreadable_project_key(project), str(module)))
+
+
+def _unreadable_install_done(project, module: str) -> bool:
+    with _UNREADABLE_INSTALLED_LOCK:
+        return (_unreadable_project_key(project), module) in _UNREADABLE_INSTALLED
+
+
+def unreadable_folder_error(
+    message: str, traceback_text: str, extra=None, *, project=""
+) -> "WorkerError | None":
     """worker / bridge 报来的结构化事实 `unreadable_folder` → 错误；没有或畸形回 None（ADR 0153 B）。
 
     读不了的那个模块若能映射到 PyPI 包名（`depresolve` 现有的 curated 表 / 同名预填），对当前解释器它就等于「缺包」：
     产出**现有的缺依赖错误**（带模块名），用户点一下装进受管环境，下次运行时查找器跳过读不了的那一处、用新装的这份。
-    只有映射不到、或同一 (模块, 文件夹) 已送去安装过仍然失败，才落到一句话的 `import_folder_unreadable`。
+    只有映射不到、或同一 (模块, 文件夹) 已装过仍然失败，才落到一句话的 `import_folder_unreadable`。
     目录名必须是短的单段名字（不含分隔符 / 控制字符），否则不信这条事实。原始消息与 traceback 原样保留。"""
     given = extra.get("unreadable_folder") if isinstance(extra, dict) else None
     folder = given.get("folder") if isinstance(given, dict) else None
@@ -1328,7 +1333,7 @@ def unreadable_folder_error(message: str, traceback_text: str, extra=None) -> "W
     fact = {"folder": folder}
     module = structured_missing_module(given.get("module"))
     if module and "." not in module and _mappable_to_distribution(module):
-        if _claim_unreadable_install(module, folder):
+        if not _unreadable_install_done(project, module):
             err = _missing_dependency_error(module, traceback_text)
             err.extra = {"unreadable_folder": {**fact, "module": module}}
             return err
@@ -2871,7 +2876,12 @@ class EngineWorker:
         if tex is not None:
             tex.script_name = self.script_name
             return tex
-        unreadable = unreadable_folder_error(msg, tb, err if isinstance(err, dict) else None)
+        unreadable = unreadable_folder_error(
+            msg,
+            tb,
+            err if isinstance(err, dict) else None,
+            project=getattr(self, "figures_dir", ""),
+        )
         if unreadable is not None:
             unreadable.script_name = self.script_name
             unreadable.python_source = getattr(self, "python_source", "") or ""
@@ -3352,7 +3362,7 @@ def _spawn_spec(
 
 
 def _worker_error(
-    message: str, code: str, traceback_text: str, extra: dict | None = None
+    message: str, code: str, traceback_text: str, extra: dict | None = None, *, project=""
 ) -> WorkerError:
     """错误三元组 → `WorkerError`，**`missing_dependency` 优先于协议 code**。
 
@@ -3367,7 +3377,7 @@ def _worker_error(
     tex = _tex_error(message, traceback_text, extra)
     if tex is not None:
         return tex
-    unreadable = unreadable_folder_error(message, traceback_text, extra)
+    unreadable = unreadable_folder_error(message, traceback_text, extra, project=project)
     if unreadable is not None:
         return unreadable
     mod = missing_module(f"{message}\n{traceback_text}")
@@ -3601,7 +3611,7 @@ class WorkerdWorker:
             # workerd 只如实报退出状态（`ExitReport`），怎么解释、日志空不空要不要
             # 说，都归这边——与 Python 池的 EOF 路径同一句话（`session_dead_message`）。
             message = session_dead_message(exc.extra.get("exit"), tb, self.log_path)
-        err = _worker_error(message, code, tb, exc.extra)
+        err = _worker_error(message, code, tb, exc.extra, project=getattr(self, "figures_dir", ""))
         # 两条控制面在「缺包时上层拿得到哪些事实」上必须给同一个答案
         err.script_name = self.script_name
         err.python_source = getattr(self, "python_source", "") or ""

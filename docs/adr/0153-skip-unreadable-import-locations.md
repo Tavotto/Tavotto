@@ -20,8 +20,8 @@ AI 修复换了两代受管环境，一点用都没有——换环境改变不�
 `bridgeboot.UnreadableImportSkipper`（纯标准库、3.10 可跑）挂在 `sys.meta_path` 里**紧挨 `PathFinder` 之前**（`BuiltinImporter` /
 `FrozenImporter` 的优先级不变）。它替 `PathFinder` 做**同一次**查找：
 
-* 命中的 spec 是文件加载器（源码 / 无源码字节码 / 扩展）、origin 打开抛 `PermissionError`、且它的缓存字节码也读不了
-  （能读到有效缓存时 CPython 本来就能加载，不算读不了）→ 在候选的**副本**里去掉命中的那一条（包、单文件模块、子包都认；
+* 命中的 spec 是文件加载器（源码 / 无源码字节码 / 扩展）、origin 打开抛 `PermissionError`、且它的缓存字节码按 CPython 自己的规则也用不上（magic、marshal 可解、时间戳型与源码 mtime/size 相符；checked-hash 型因源码读不了而无效、unchecked 有效）
+  （有效缓存 CPython 本来就能加载，不算读不了；过期或损坏的缓存会被 CPython 拒掉再去读源码，照常跳过）→ 在候选的**副本**里去掉命中的那一条（包、单文件模块、子包都认；
   相对路径与大小写按 `normcase(abspath)` 比较），继续找；
 * 后面找到了可读的 → 返回它，并记一条事件；
 * 后面没有可读的了（或认不出命中的是哪一条）→ 返回**最初**命中的 spec，loader 原样抛最初的 `PermissionError`；
@@ -48,7 +48,7 @@ native bridge（`bridge_runner.py` 同位置）各调用一次；`worker.py` 另
 这个模块就等于「缺包」：装进受管环境后，下次运行时查找器跳过读不了的那一处，就能找到新装的这份（Windows 11 真机已验证）。
 
 worker / bridge 在脚本失败时判一次（`bridgeboot.unreadable_folder_fact`）：异常链里有带文件名的 `PermissionError`（errno 13）、
-文件落在某个**脚本运行期间新加进 `sys.path`** 的目录下、该目录在项目根之外（且不包住项目）、也不在解释器自己的前缀 / 包目录里。
+文件是查找器当场登记过的「命中了但读不了」的模块文件（脚本自己读写该目录下数据文件撞到的权限错误不算 import 失败）、落在某个**脚本运行期间新加进 `sys.path`** 的目录下、该目录在项目根之外（且不包住项目）、也不在解释器自己的前缀 / 包目录里。
 成立则随错误带 `unreadable_folder: {folder: 目录名, module: 读不了的顶层模块名?}`（只有名字，不带路径；敏感运行里这个键过不了白名单）。
 
 父进程在错误收口（`pool._error_of` / `pool._worker_error`，native 在 `app.py` 的脚本错误出口，同一个 `pool.unreadable_folder_error`）：
@@ -56,7 +56,7 @@ worker / bridge 在脚本失败时判一次（`bridgeboot.unreadable_folder_fact
 1. **`module` 能映射到 PyPI 包名**（`depresolve` 现有的 curated 表或同名预填，装不了的如 ROOT 除外），且这个 (模块, 文件夹) 第一次出现 →
    产出**现有的 `missing_dependency` 错误**（带模块名），用户看到现有的「安装」卡，一键装进受管环境。`app.py` 再用可信解析核一次：
    给不出安装名（没有 `requirement`）就不出「换环境」的缺依赖卡，改落到第 2 条。
-2. **映射不到、或同一 (模块, 文件夹) 已送去安装过仍然失败**（进程内带过期的记录，不循环出安装卡）→ 稳定码 `import_folder_unreadable`：
+2. **映射不到、或同一 (模块, 文件夹) 已送去安装过仍然失败**（记账只在依赖安装**真正成功提交**之后——`deprepair._run_install` 的两个成功终态调 `pool.note_unreadable_install`——并按项目区分；给错误分类从不记账，用户重试渲染仍有安装出路；不循环出安装卡）→ 稳定码 `import_folder_unreadable`：
    默认只露一句话（「脚本加载的项目外文件夹“X”读不了」+ 该做什么），主按钮沿用现有的。**这条兜底目前没有能一键解决的出路**；
    候选：提权一次修复那个文件夹的权限（另开 PR）。
 

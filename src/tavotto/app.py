@@ -10620,8 +10620,15 @@ def _native_preparation_runner(pl, before_retry=None):
         error = dict(session.script_error)
         _end_native_session(session)
         # 脚本加进 sys.path 的项目外目录读不了（ADR 0153）：桥带来的结构化事实 → 稳定码，与 safe 同一个出口
+        try:
+            native_project = str(require_project())
+        except NoProjectError:
+            native_project = ""
         unreadable = engine_pool.unreadable_folder_error(
-            str(error.get("message") or "脚本运行出错"), str(error.get("traceback") or ""), error
+            str(error.get("message") or "脚本运行出错"),
+            str(error.get("traceback") or ""),
+            error,
+            project=native_project,
         )
         if unreadable is not None:
             raise unreadable

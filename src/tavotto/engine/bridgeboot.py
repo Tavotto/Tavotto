@@ -379,6 +379,44 @@ def _hit_entry(spec, entries) -> str | None:
     return where if where in {_norm(e) for e in entries} else None
 
 
+def _cache_usable(spec) -> bool:
+    """源码读不了时，`spec.cached` 的字节码 CPython 能不能真的用上（`SourceLoader.get_code` 的规则）。
+
+    读得了头、magic 对、marshal 解得开，并且：时间戳型要和源码的 mtime / size 对得上（源码 `stat` 不了当失效）；
+    hash 型 `checked` 要读源码重算——源码读不了所以无效；`unchecked` 直接有效。用不上就照常跳过。"""
+    cached = getattr(spec, "cached", None)
+    if not isinstance(cached, str):
+        return False
+    try:
+        with open(cached, "rb") as f:
+            data = f.read()
+    except OSError:
+        return False
+    import importlib.util
+    import marshal
+
+    if len(data) < 16 or data[:4] != importlib.util.MAGIC_NUMBER:
+        return False
+    flags = int.from_bytes(data[4:8], "little")
+    if flags & 0b1:  # hash 型
+        if flags & 0b10:  # checked：要读源码重算 hash，而源码读不了
+            return False
+    else:
+        try:
+            st = os.stat(spec.origin)
+        except OSError:
+            return False
+        if int.from_bytes(data[8:12], "little") != (
+            int(st.st_mtime) & 0xFFFFFFFF
+        ) or int.from_bytes(data[12:16], "little") != (st.st_size & 0xFFFFFFFF):
+            return False
+    try:
+        marshal.loads(data[16:])
+    except (EOFError, ValueError, TypeError):
+        return False
+    return True
+
+
 class UnreadableImportSkipper:
     """`sys.meta_path` 上、**紧挨 `PathFinder` 之前**的查找器：命中的位置读不了就换下一个位置继续找。
 
@@ -396,6 +434,9 @@ class UnreadableImportSkipper:
     def __init__(self, on_skip=None):
         self.events: list[dict] = []
         self._seen: set = set()
+        #: 查找器当场登记的「命中了但读不了」的模块文件（origin 与缓存的比较形）：失败事实只认这些文件
+        #: （脚本自己读写该目录下的数据文件撞到权限错误不是 import 失败）
+        self.blocked_files: set = set()
         self._on_skip = on_skip
         self._local = threading.local()
         self._installed = False
@@ -434,15 +475,19 @@ class UnreadableImportSkipper:
                 return spec
         return first
 
-    @staticmethod
-    def _blocked(spec) -> bool:
+    def _blocked(self, spec) -> bool:
         if not isinstance(spec.origin, str) or not isinstance(spec.loader, _FILE_LOADERS):
             return False
         if not _unreadable(spec.origin):
             return False
-        # 源码读不了但缓存字节码读得了且有效时，CPython 本来就能加载：不当成读不了
-        cached = getattr(spec, "cached", None)
-        return not (isinstance(cached, str) and not _unreadable(cached) and os.path.exists(cached))
+        # 源码读不了但缓存字节码按 CPython 自己的规则仍然用得上时，加载本来就能成：不当成读不了
+        if _cache_usable(spec):
+            return False
+        for path in (spec.origin, getattr(spec, "cached", None)):
+            norm = _norm(path)
+            if norm:
+                self.blocked_files.add(norm)
+        return True
 
     def _note(self, fullname: str, skipped: list[str]) -> None:
         for entry in skipped:
@@ -506,16 +551,24 @@ def _top_module(rel: str) -> str:
 
 
 def unreadable_folder_fact(
-    exc: BaseException, baseline, project_roots, interpreter_dirs=()
+    exc: BaseException, baseline, project_roots, interpreter_dirs=(), blocked_files=None
 ) -> dict:
     """失败是不是「脚本加进 `sys.path` 的项目外目录读不了」：是则回 `{"folder": 目录名}`，否则 `{}`。
 
     判据（全部成立才算）：异常链里有 `PermissionError`（errno 13）且带文件名；文件落在某个 `sys.path` 目录下；
     该目录是脚本运行期间新加的（不在 `baseline` 里——启动时的 `sys.path` 快照）；它不在任何项目根之下，
     也不在解释器自己的包目录 / 前缀下（那种读不了换环境才可能有用）。给目录**名**与读不了的顶层模块名（`module`，
-    认得出才有），不带路径。"""
+    认得出才有），不带路径。
+
+    另需**import 失败的证据**：`PermissionError` 的文件必须是查找器当场登记过的「命中了但读不了」的模块文件
+    （`blocked_files`，默认取进程里装着的那个查找器）；脚本自己读写该目录下的数据文件撞到权限错误不出这个事实。"""
     import errno
 
+    evidence = (
+        blocked_files
+        if blocked_files is not None
+        else (_SKIPPER.blocked_files if _SKIPPER is not None else set())
+    )
     base = {_norm(p) for p in baseline}
     roots = [r for r in (_norm(p) for p in project_roots) if r]
     skip_under = [r for r in (_norm(p) for p in interpreter_dirs) if r]
@@ -527,7 +580,8 @@ def unreadable_folder_fact(
     while cur is not None and seen < 16:
         if isinstance(cur, PermissionError) and cur.errno == errno.EACCES:
             target = _norm(cur.filename) if isinstance(cur.filename, str) else None
-            if target:
+            # 证据：这个文件是查找器当场登记过的「命中了但读不了」的模块文件；脚本自己读写数据文件撞到的不算
+            if target and target in evidence:
                 for entry in list(sys.path):
                     norm = _norm(entry)
                     if not norm or norm in base or not under(target, norm):

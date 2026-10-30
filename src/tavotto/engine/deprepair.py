@@ -1543,6 +1543,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             # 代事务生成的回执原样带到对外终态（它自己的 `done` 被 `_emit_repair_step` 吞了）
             "providers": outcome.get("providers", []),
         }
+        pool.note_unreadable_install(plan.project, req.import_name)
         _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
         LOG.info(
             "依赖修复成功: %s %s → %s",
@@ -1661,6 +1662,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             "",
         ),
     }
+    pool.note_unreadable_install(plan.project, req.import_name)
     _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
     LOG.info(
         "依赖修复成功: %s %s → %s",

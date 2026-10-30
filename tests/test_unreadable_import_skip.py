@@ -255,7 +255,8 @@ def test_readable_but_broken_module_is_not_skipped(skipper, two_dirs):
     assert skipper.events == []
 
 
-def test_valid_cached_bytecode_means_the_module_is_loadable_not_skipped(skipper, two_dirs):
+def _bytecode_case(skipper, two_dirs, mutate):
+    """源码读不了 + 一份（按 `mutate` 改过的）缓存：回 find_spec 命中的 origin 所在目录，和事件数。"""
     bad, good = two_dirs
     name = _name()
     src = bad / f"{name}.py"
@@ -266,17 +267,44 @@ def test_valid_cached_bytecode_means_the_module_is_loadable_not_skipped(skipper,
     pyc = Path(importlib.util.cache_from_source(str(src)))
     if not pyc.exists():
         pytest.skip("本环境不写字节码")
-    # 源码读不了、缓存有效且读得了：CPython 本来就能加载，不该被我们换成后面的
-    # （这里 mtime 不变，pyc 仍有效）
+    mutate(src, pyc)
     (good / f"{name}.py").write_text("WHERE='good'")
     sys.path.append(str(good))
+    importlib.invalidate_caches()
     _lock(src)
     try:
         spec = skipper.find_spec(name)
-        assert spec.origin == str(src)
+        return Path(spec.origin).parent, bad, good, len(skipper.events)
     finally:
         src.chmod(0o600)
-    assert skipper.events == []
+
+
+def test_valid_cached_bytecode_means_the_module_is_loadable_not_skipped(skipper, two_dirs):
+    where, bad, _, events = _bytecode_case(skipper, two_dirs, lambda src, pyc: None)
+    assert where == bad and events == 0
+
+
+def test_stale_cached_bytecode_does_not_stop_the_skip(skipper, two_dirs):
+    def age(src, pyc):  # 源码的 mtime 变了：时间戳型缓存按 CPython 的规则失效
+        st = src.stat()
+        os.utime(src, (st.st_atime, st.st_mtime + 1000))
+
+    where, _, good, events = _bytecode_case(skipper, two_dirs, age)
+    assert where == good and events == 1
+
+
+def test_corrupt_cached_bytecode_does_not_stop_the_skip(skipper, two_dirs):
+    def corrupt(src, pyc):
+        pyc.write_bytes(pyc.read_bytes()[:20])  # 头还在，body 被截断
+
+    where, _, good, events = _bytecode_case(skipper, two_dirs, corrupt)
+    assert where == good and events == 1
+
+    def bad_magic(src, pyc):
+        pyc.write_bytes(b"\x00\x00\x00\x00" + pyc.read_bytes()[4:])
+
+    where, _, good, events = _bytecode_case(skipper, two_dirs, bad_magic)
+    assert where == good
 
 
 def test_reentrant_calls_fall_through(skipper):
@@ -332,8 +360,45 @@ def test_unreadable_folder_fact_names_the_script_added_outside_folder(tmp_path, 
     monkeypatch.syspath_prepend(str(dep))
     wrapped = ImportError("boom")
     wrapped.__cause__ = err
-    fact = bridgeboot.unreadable_folder_fact(wrapped, baseline, [str(proj)], [sys.prefix])
+    fact = bridgeboot.unreadable_folder_fact(
+        wrapped, baseline, [str(proj)], [sys.prefix], _seen(err)
+    )
     assert fact == {"folder": ".work_deps", "module": "tzdata"}
+
+
+def _seen(err) -> set:
+    """查找器当场登记过的「命中但读不了」的文件集合（证据）。"""
+    return {bridgeboot._norm(err.filename)}
+
+
+def test_data_file_permission_error_is_not_an_import_failure(tmp_path, monkeypatch):
+    """脚本把外部库目录加进 sys.path 后读写其中的数据文件（external/pandas/data.csv）撞权限错误：不出事实。"""
+    dep = tmp_path / "external"
+    dep.mkdir()
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    baseline = list(sys.path)
+    monkeypatch.syspath_prepend(str(dep))
+    csv = PermissionError(13, "Permission denied", str(dep / "pandas" / "data.csv"))
+    module = PermissionError(13, "Permission denied", str(dep / "pandas" / "__init__.py"))
+    registered = _seen(module)  # 查找器只登记过模块文件
+    assert bridgeboot.unreadable_folder_fact(csv, baseline, [str(proj)], (), registered) == {}
+    assert bridgeboot.unreadable_folder_fact(module, baseline, [str(proj)], (), registered) == {
+        "folder": "external",
+        "module": "pandas",
+    }
+    assert bridgeboot.unreadable_folder_fact(module, baseline, [str(proj)], (), set()) == {}
+
+
+def test_skipper_registers_the_blocked_module_file_as_evidence(skipper, two_dirs):
+    bad, good = two_dirs
+    name = _name()
+    (bad / f"{name}.py").write_text("x=1")
+    _lock(bad / f"{name}.py")
+    sys.path[:0] = [str(bad)]
+    with pytest.raises(PermissionError) as err:
+        _import(name)
+    assert bridgeboot._norm(err.value.filename) in skipper.blocked_files
 
 
 def test_unreadable_folder_fact_rejects_what_it_should(tmp_path, monkeypatch):
@@ -344,24 +409,28 @@ def test_unreadable_folder_fact_rejects_what_it_should(tmp_path, monkeypatch):
     err = PermissionError(13, "x", str(dep / "m.py"))
     monkeypatch.syspath_prepend(str(dep))
     base_with = list(sys.path)
+    seen = _seen(err)
     # 启动时就在 sys.path 里的目录（PYTHONPATH 之类）：不是「脚本加载的」
-    assert bridgeboot.unreadable_folder_fact(err, base_with, [str(proj)]) == {}
+    assert bridgeboot.unreadable_folder_fact(err, base_with, [str(proj)], (), seen) == {}
     base_without = [p for p in base_with if p != str(dep)]
     # 在项目里：不是项目外
-    assert bridgeboot.unreadable_folder_fact(err, base_without, [str(tmp_path)]) == {}
+    assert bridgeboot.unreadable_folder_fact(err, base_without, [str(tmp_path)], (), seen) == {}
     # 解释器自己的目录：换环境才可能有用
-    assert bridgeboot.unreadable_folder_fact(err, base_without, [str(proj)], [str(dep)]) == {}
+    assert bridgeboot.unreadable_folder_fact(err, base_without, [str(proj)], [str(dep)], seen) == {}
     # 不是 Errno 13 / 不是 PermissionError / 没有文件名
     assert (
         bridgeboot.unreadable_folder_fact(
-            FileNotFoundError(2, "x", str(dep / "m.py")), base_without, [str(proj)]
+            FileNotFoundError(2, "x", str(dep / "m.py")), base_without, [str(proj)], (), seen
         )
         == {}
     )
     assert (
-        bridgeboot.unreadable_folder_fact(PermissionError(13, "x"), base_without, [str(proj)]) == {}
+        bridgeboot.unreadable_folder_fact(
+            PermissionError(13, "x"), base_without, [str(proj)], (), seen
+        )
+        == {}
     )
-    assert bridgeboot.unreadable_folder_fact(err, base_without, [str(proj)]) == {
+    assert bridgeboot.unreadable_folder_fact(err, base_without, [str(proj)], (), seen) == {
         "folder": "dep",
         "module": "m",
     }
@@ -386,27 +455,47 @@ def test_unmappable_module_falls_back_to_the_one_sentence_code():
     )
 
 
-def test_mappable_module_is_routed_to_the_existing_missing_dependency_flow():
-    mod = _name()
+def test_classification_is_not_bookkeeping_and_install_is(tmp_path):
+    mod, proj, other = _name(), str(tmp_path / "p1"), str(tmp_path / "p2")
     fact = {"unreadable_folder": {"folder": ".deps", "module": mod}}
-    exc = engine_pool.unreadable_folder_error("m", "t", fact)
-    assert exc.code == "missing_dependency" and exc.module == mod
+    # 连续分类两次：都是 missing_dependency（分类从不记账，用户重试渲染仍有安装出路）
+    for _ in range(2):
+        exc = engine_pool.unreadable_folder_error("m", "t", fact, project=proj)
+        assert exc.code == "missing_dependency" and exc.module == mod
     worker = engine_pool.EngineWorker.__new__(engine_pool.EngineWorker)
-    worker.script_name = "fig.py"
-    mod2 = _name()
-    resp = {
-        "error": {
-            "code": "script_error",
-            "message": "m",
-            "traceback": "t",
-            "unreadable_folder": {"folder": ".deps", "module": mod2},
-        }
-    }
-    got = worker._error_of(resp)
-    assert got.code == "missing_dependency" and got.module == mod2
-    # 同一处装完仍然读不了：第二次起落到一句话的卡，不再循环出安装卡
-    again = engine_pool.unreadable_folder_error("m", "t", fact)
-    assert again.code == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+    worker.script_name, worker.figures_dir = "fig.py", proj
+    resp = {"error": {"code": "script_error", "message": "m", "traceback": "t", **fact}}
+    assert worker._error_of(resp).code == "missing_dependency"
+    # 依赖安装真正成功提交到该项目之后，同一处仍失败才落到一句话的卡
+    engine_pool.note_unreadable_install(proj, mod)
+    assert (
+        engine_pool.unreadable_folder_error("m", "t", fact, project=proj).code
+        == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+    )
+    assert worker._error_of(resp).code == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+    # 换一个项目不受影响
+    assert engine_pool.unreadable_folder_error("m", "t", fact, project=other).code == (
+        "missing_dependency"
+    )
+
+
+def test_both_success_endings_of_a_dependency_install_record_the_module():
+    """记账只在安装成功提交之后：`deprepair._run_install` 的两个成功终态（受管环境 / 用户环境）各调一次。"""
+    import ast
+    import inspect
+    import textwrap
+
+    from tavotto.engine import deprepair
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(deprepair._run_install)))
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "note_unreadable_install"
+    ]
+    assert len(calls) == 2
 
 
 def test_mutation_without_the_routing_the_routing_test_goes_red(monkeypatch):
@@ -609,3 +698,41 @@ def test_mutation_without_the_install_calls_the_end_to_end_goes_red(tmp_path):
         _unlock(bad, good)
     assert real["ok"] is True and [e["module"] for e in real["skips"]] == [mod], real
     assert mutant["ok"] is False and "PermissionError" in mutant["tb"], mutant
+
+
+# --------------------------------------------------------------------------- 试运行 / tavotto open 保留
+def test_probe_keeps_the_folder_code_and_params():
+    from tavotto.engine import probe
+
+    exc = engine_pool.unreadable_folder_error(
+        "m", "tb", {"unreadable_folder": {"folder": ".deps", "module": "ROOT"}}
+    )
+    out = probe._error_from_worker(exc, "main")
+    assert out["code"] == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+    assert out["params"] == {"folder": ".deps"}
+
+
+def test_probe_missing_dependency_from_an_unreadable_folder_keeps_module_and_folder():
+    from tavotto.engine import probe
+
+    exc = engine_pool.unreadable_folder_error(
+        "m", "tb", {"unreadable_folder": {"folder": ".deps", "module": _name()}}, project=""
+    )
+    assert exc.code == "missing_dependency"
+    out = probe._error_from_worker(exc, "main")  # 没有 figures_dir：不生成 offer，但码与参数在
+    assert out["code"] == "missing_dependency"
+    assert out["params"]["module"] == exc.module and out["params"]["folder"] == ".deps"
+
+
+def test_tavotto_open_names_the_folder_instead_of_the_own_environment_sentence():
+    from tavotto.engine import handoff
+
+    for code in ("missing_dependency", "import_folder_unreadable"):
+        err = handoff._probe_error(
+            {"code": code, "message": "x", "params": {"module": "tzdata", "folder": ".deps"}}
+        )
+        assert err.code == "import_folder_unreadable"
+        assert err.extra["folder"] == ".deps" and err.extra["probe_code"] == code
+        assert ".deps" in str(err) and "自己的 Python 环境" not in str(err)
+    plain = handoff._probe_error({"code": "missing_dependency", "params": {"module": "scipy"}})
+    assert plain.code == "native_run_required"
