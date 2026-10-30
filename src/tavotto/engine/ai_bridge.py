@@ -1954,10 +1954,11 @@ def run(
                 assert result_bytes is not None
                 _record_after(sess, result_bytes)
                 new_text = result_bytes.decode("utf-8", errors="replace")
+                old_text = cand.base_bytes.decode("utf-8", errors="replace")
             else:
                 _record_after(sess, script_path.read_bytes())
                 new_text = script_path.read_text(encoding="utf-8", errors="replace")
-            old_text = snap.read_text(encoding="utf-8", errors="replace")
+                old_text = snap.read_text(encoding="utf-8", errors="replace")
             sess["changed"] = new_text != old_text
             sess["diff"] = "".join(
                 difflib.unified_diff(

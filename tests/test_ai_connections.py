@@ -2371,18 +2371,20 @@ def test_builtin_missing_dependency_holds_candidate_until_install_and_recheck(ed
     assert len(gateway.requests) == 4, "安装后续跑不能再次请求模型"
 
 
-def test_edit_dependency_planning_does_not_attribute_external_edit(edit_check_chain):
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_edit_dependency_planning_does_not_attribute_external_edit(edit_check_chain, newline):
     box = edit_check_chain
+    (box["figs"] / "fig1.py").write_bytes(SCRIPT.replace("\n", newline).encode("utf-8"))
     box["serve"](
         [READ_TURN, _edit("e1", '"old"', '"new"'), _tool_turn("c1", "check", {}), END_TURN]
     )
     box["hooks"]["runner"] = lambda *_: {
         "error": {"code": "missing_dependency", "module": "openpyxl", "message": "missing"}
     }
-    later = SCRIPT.replace('"old"', '"external"')
+    later = SCRIPT.replace('"old"', '"external"').replace("\n", newline)
 
     def plan(*_a, **_kw):
-        (box["figs"] / "fig1.py").write_text(later)
+        (box["figs"] / "fig1.py").write_bytes(later.encode("utf-8"))
         return {"status": "hold", "card": {"kind": "ask_once", "packages": ["openpyxl"]}}
 
     box["hooks"]["dependency_plan"] = plan
@@ -2390,8 +2392,8 @@ def test_edit_dependency_planning_does_not_attribute_external_edit(edit_check_ch
     sess = _wait(sid)
     assert sess["task"]["outcome"] == "needs_input"
     assert sess["changed"] is False and sess["diff"] == ""
-    assert (box["figs"] / "fig1.py").read_text() == later
+    assert (box["figs"] / "fig1.py").read_bytes().decode("utf-8") == later
     with pytest.raises(ai_bridge.AgentError) as exc:
         ai_bridge.revert(sid)
     assert exc.value.code == "ai_revert_conflict"
-    assert (box["figs"] / "fig1.py").read_text() == later
+    assert (box["figs"] / "fig1.py").read_bytes().decode("utf-8") == later
