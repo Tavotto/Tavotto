@@ -144,6 +144,48 @@ def test_blocked_main_then_draw_function_succeeds_in_safe(
     assert KIND not in [a["kind"] for a in final["actions"]]
 
 
+SAVE_FIRST = """\
+import matplotlib.pyplot as plt
+
+
+def draw_figure():
+    fig, ax = plt.subplots()
+    ax.plot([1, 2])
+    return fig
+
+
+def save():
+    draw_figure().savefig("out.png")
+
+
+if __name__ == "__main__":
+    save()
+"""
+
+
+def test_the_single_swap_is_never_spent_on_the_whole_script_entry(
+    client, tmp_path, fake_pool, entries, native, sessions
+):
+    """先试函数入口 `save` 被拦：唯一一次换入口给 `draw_figure`，不给会重跑顶层代码的 `__main__`。"""
+    entries["blocked"] = {"save"}
+    _setup(client, tmp_path, "s.py", SAVE_FIRST)
+    final = _go(client, "s.py")
+    assert entries["seen"][0] == "save" and entries["seen"][1:] == ["draw_figure"]
+    assert "__main__" not in entries["seen"] and native["calls"] == []
+    assert final["result"]["status"] == "ready"
+
+
+def test_only_whole_script_candidates_means_the_original_branch(
+    client, tmp_path, fake_pool, entries, native, sessions
+):
+    """候选里除了 `__main__` 没有函数入口：不换，直接走原分支。"""
+    entries["blocked"] = {"__main__"}
+    _setup(client, tmp_path, "t.py", TOP_LEVEL_ONLY)
+    _browser(client)
+    final = _go(client, "t.py")
+    assert entries["seen"] == ["__main__"] and KIND in [a["kind"] for a in final["actions"]]
+
+
 def test_desktop_swaps_entry_first_then_falls_back_to_native(
     client, tmp_path, fake_pool, entries, native, sessions
 ):

@@ -2172,7 +2172,8 @@ class SessionService:
                 for e in probe.entry_candidates(
                     sess.project_root, done_plan.script, static_only=True
                 )
-                if e not in tried
+                # 只取函数入口：`__main__`（INLINE_ENTRY）会把顶层代码整段重跑，换过去多半还是同一个拦截，白用掉唯一一次换入口
+                if e not in tried and e != registry.INLINE_ENTRY
             ]
         except Exception:  # noqa: BLE001 — 候选算不出来 = 不换，走原分支
             LOG.exception("换入口候选失败 %s", done_plan.script)
