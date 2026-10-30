@@ -5487,6 +5487,18 @@ export const setProjectWorkdir = (mode: WorkdirMode) =>
     },
   )
 
+/**
+ * 「修复权限」（Windows，ADR 0153 修订 2026-10-30）：失败卡 `import_folder_unreadable` 的 `params.repair_token`
+ * 是服务端一次性的不透明令牌；接口只收它，路径不出后端。用户在 UAC 上取消 / 没拿到管理员权限 / 修复没成功都以
+ * 稳定 code 抛 `ApiError`（文案走 `backendErrorText`）。成功后调用方负责重跑脚本。
+ */
+export const repairImportFolder = (token: string) =>
+  jsonFetch<{ ok: boolean; repaired: boolean }>('/api/engine/folder-repair', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+
 // ---------------------------------------------------------------------------
 // 受控依赖修复（ADR 0019）
 //
@@ -7034,6 +7046,9 @@ export interface PreparationResultError {
     reason?: 'no_interactive_client' | 'replay_missing' | 'secret_required' | 'transcript_mismatch' | string
     /** 输入类的读取方式（闭集）：getpass = 口令——首问无人应答时口令性质只在这里 */
     input_kind?: 'input' | 'readline' | 'read' | 'getpass' | string
+    /** `import_folder_unreadable`：目录名（不是路径）+ 仅 Windows 才有的一次性修复令牌（不透明，推不出路径） */
+    folder?: string
+    repair_token?: string
   }
   /** 脚本的完整 traceback（保尾部）；敏感运行没有 */
   traceback?: string

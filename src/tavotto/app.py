@@ -106,6 +106,7 @@ from .engine import (
     exporttelemetry as engine_exporttelemetry,
     figcapture as engine_figcapture,
     fixsession as engine_fixsession,
+    folderrepair as engine_folderrepair,
     foreignsource as engine_foreignsource,
     handoff as engine_handoff,
     handoffreceipt as engine_handoffreceipt,
@@ -840,12 +841,15 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
             if engine_pool.install_offer_blocked(route)
             else _dependency_repair_offer(exc, detail)
         )
-        folder = ((getattr(exc, "extra", None) or {}).get("unreadable_folder") or {}).get("folder")
+        unreadable = (getattr(exc, "extra", None) or {}).get("unreadable_folder") or {}
+        folder = unreadable.get("folder")
         if folder and not (repair and repair.get("requirement")):
             # 读不了的是项目外文件夹里的包（ADR 0153 B），可信解析又给不出安装名：不出「换环境」的缺依赖卡，
-            # 落到一句话的 import_folder_unreadable
+            # 落到一句话的 import_folder_unreadable（修复令牌随参数带出，与 `recovery_params` 同形）
             body["code"] = engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
             body["params"] = {"folder": folder}
+            if unreadable.get("repair_token"):
+                body["params"]["repair_token"] = unreadable["repair_token"]
             body.pop("module", None)
             repair = None
             route = ""
@@ -10113,6 +10117,46 @@ def api_engine_workdir_set():
             root,
         )
     return jsonify({"ok": True, "workdir": state, "project": _project_environment_state()})
+
+
+#: 修复接口的 HTTP 状态：用户的选择类结局（取消 / 没拿到提权）与进行中是 409，令牌失效 410，被拒的目标 403，非 Windows 400
+_FOLDER_REPAIR_STATUS = {
+    engine_folderrepair.ERROR_UNSUPPORTED: 400,
+    engine_folderrepair.ERROR_TOKEN_INVALID: 410,
+    engine_folderrepair.ERROR_TARGET_REJECTED: 403,
+    engine_folderrepair.ERROR_NOT_CONFIRMED: 403,
+    engine_folderrepair.ERROR_IN_PROGRESS: 409,
+    engine_folderrepair.ERROR_CANCELLED: 409,
+    engine_folderrepair.ERROR_NOT_ELEVATED: 409,
+    engine_folderrepair.ERROR_FAILED: 500,
+}
+
+
+@app.post("/api/engine/folder-repair")
+def api_engine_folder_repair():
+    """「修复权限」（ADR 0153 修订 2026-10-30）：只收失败卡上的不透明令牌，不收路径。
+
+    要「用户在页面上点了」（`_page_authenticated`，fail closed：MCP / CLI 的本机凭据头不算）；令牌绑定项目与目录、
+    一次性、会过期；路径在动手前由 `folderrepair.validate_target` 再验一遍；提权一次、只改这一个目录。
+    成功 `{ok: true, repaired}`，调用方随后重跑脚本；失败的 code 与文案见 `folderrepair.ERROR_CODES`。"""
+    root = str(require_project())
+    body = request.get_json(silent=True) or {}
+    token = body.get("token") if isinstance(body, dict) else None
+    try:
+        if not _page_authenticated():
+            raise engine_folderrepair.RepairError(engine_folderrepair.ERROR_NOT_CONFIRMED)
+        result = engine_folderrepair.run_repair(token, root)
+    except engine_folderrepair.RepairError as exc:
+        # 日志只有闭集的原因码，没有路径与令牌
+        LOG.info(
+            "修复权限未完成: %s %s",
+            engine_logsafe.known(exc.code, engine_folderrepair.ERROR_CODES),
+            engine_logsafe.known(exc.reason, engine_folderrepair.REASONS),
+        )
+        return jsonify(
+            {"error": f"修复权限未完成: {exc.code}", "code": exc.code, "params": {}}
+        ), _FOLDER_REPAIR_STATUS.get(exc.code, 500)
+    return jsonify({"ok": True, **result})
 
 
 def _input_remap_error(exc):

@@ -55,6 +55,8 @@ export type PrepPrimary =
   | { kind: 'ai_fix' }
   /** 反馈卡（remedy `feedback`）：「发送」——发送问题反馈（ADR 0118，逐次确认、源码默认不勾） */
   | { kind: 'feedback' }
+  /** 项目外文件夹读不了（Windows，ADR 0153 修订）：「修复权限」。`token` 是后端一次性的不透明令牌，前端不持有路径 */
+  | { kind: 'repair_folder'; token: string }
 
 /** 主按钮的文案键（`workspace:prep.btn.*`）：按钮说的就是它真正做的那件事 */
 export type PrepButton = 'run' | 'openRun' | 'allowRun' | 'runAnyway' | 'runAgain' | 'retry' | 'stop' | 'install' | 'switchScope' | 'recheck'
@@ -230,6 +232,7 @@ const FAILURE_STATES = new Set([
   'env_blocked',
   'blocked',
   'file_ops_blocked',
+  'folder_unreadable',
   'no_figure',
   'no_figure_raster',
   'not_registered',
@@ -568,6 +571,14 @@ function needsSomething(report: PreparationReport, script: string): PrepView {
           tone: 'bad',
           step: 1,
         })
+      }
+      if (code === 'import_folder_unreadable') {
+        // 有令牌 = 后端认定这台机器上能一键修（只有 Windows 才发）：主按钮「修复权限」；没有令牌保持原来的通用失败卡
+        const token = report.result?.error?.params?.repair_token
+        if (typeof token === 'string' && token) {
+          const folder = String(report.result?.error?.params?.folder ?? '')
+          return view('folder_unreadable', 'folderUnreadable', { script, folder }, { kind: 'repair_folder', token }, { tone: 'bad', step: 1 })
+        }
       }
       // 换成原样运行之后又出错了：一句话说明已经换过（脚本自己的错误原文与运行记录在详情里），主按钮仍是再试一次
       return view('failed', fellBack(report) ? 'failedAfterFallback' : 'failed', v, runPrimary(report, 'retry') ?? fallback, {

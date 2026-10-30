@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from tavotto import tiffprobe
+from tavotto.engine import folderrepair
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "src" / "tavotto" / "app.py"
@@ -88,6 +89,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.texdiag",
     # 没有写入权限的项目另存一份（`projectcopy.CopyError`，由 app 的 `/api/project/save-as` 转出）
     "tavotto.engine.projectcopy",
+    # 「修复权限」（ADR 0153 修订 2026-10-30）：`RepairError.code` 由 `/api/engine/folder-repair` 转成 JSON
+    "tavotto.engine.folderrepair",
 )
 
 
@@ -187,6 +190,8 @@ USER_VISIBLE_CODES = {
     "write_outside_roots": set(),
     # ADR 0153：脚本加进 sys.path 的项目外文件夹读不了、跳过之后仍失败；参数来自 `pool.recovery_params`（只有目录名）
     "import_folder_unreadable": {"folder"},
+    # 「修复权限」（ADR 0153 修订 2026-10-30，`engine/folderrepair`）：全是固定文案、不带参数——路径不进响应
+    **{code: set() for code in folderrepair.ERROR_CODES},
     # worker 直出位图超像素预算（`figcapture.check_export_raster`）；参数来自 `pool.recovery_params`
     "export_raster_too_large": {"width", "height", "max_pixels"},
     # TeX 工具链（`texdiag`）：参数来自错误转换合同 `pool.recovery_params`；`tex_failed` 的 `{{error}}`

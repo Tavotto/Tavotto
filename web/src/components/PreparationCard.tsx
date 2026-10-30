@@ -22,8 +22,10 @@ import { Spinner } from '@/components/ui/Spinner'
 import { WorkdirChooseButton } from '@/components/WorkdirRow'
 import {
   backendCodeMsg,
+  backendErrorText,
   fetchDependencyOffer,
   isNativeTerminal,
+  repairImportFolder,
   type GuiDialogPayload,
   type PreparationAttempt,
   type PreparationReport,
@@ -669,6 +671,8 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.aiFix')
     case 'feedback':
       return pt('btn.send')
+    case 'repair_folder':
+      return pt('btn.repairFolder')
   }
 }
 
@@ -776,6 +780,22 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         // 打开发送问题反馈对话框（本机备包，逐次确认；源码复选框默认不勾——ADR 0118）
         useDiagSendStore.getState().setOpen(true)
         return null
+      case 'repair_folder': {
+        // 修复项目外文件夹的权限（Windows，ADR 0153 修订）：只交令牌，后端弹一次 UAC。取消 / 没拿到管理员权限 / 没修好都
+        // 把后端那一句话放在卡片标题上（返回串），不重试、不再弹；成功后沿用卡上「再试一次」同一个动作重跑一次
+        const guard = captureProjectEpoch()
+        try {
+          await repairImportFolder(p.token)
+        } catch (e) {
+          return guard.still() ? backendErrorText(e) : null
+        }
+        if (!guard.still() || !report) return null
+        const can = (kind: 'run_when_ready' | 'run') => report.actions.some((a) => a.kind === kind)
+        const rerun = can('run_when_ready') ? 'run_when_ready' : can('run') ? 'run' : null
+        if (rerun) await store.act(entry.key, rerun)
+        else await store.open(entry.target, { run: true, placeIn: entry.placeIn })
+        return null
+      }
     }
   }
 }

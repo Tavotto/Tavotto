@@ -1,6 +1,6 @@
 # ADR 0153：import 时跳过「找到了但读不了」的位置（safe 与 native 同装），并把残余失败说成一句话
 
-日期：2026-10-30 · 状态：**Accepted**（用户 2026-10-30 裁决 A + B；反馈包 TVD-HZ0A，0.19.1 Windows）
+日期：2026-10-30 · 状态：**Accepted**（用户 2026-10-30 裁决 A + B；反馈包 TVD-HZ0A，0.19.1 Windows；同日修订：一键修复权限）
 相关：[0014 safe / native 执行档](0014-safe-native-execution-profiles.md)、[0020 native matplotlib bridge](0020-native-matplotlib-bridge.md)、
 [0057 首开环境与工作目录](0057-first-open-environment-and-workdir.md)；规则全文 `docs/rules/backend/execution-entries.md`「跳过读不了的 import 位置」。
 
@@ -57,8 +57,8 @@ worker / bridge 在脚本失败时判一次（`bridgeboot.unreadable_folder_fact
    产出**现有的 `missing_dependency` 错误**（带模块名），用户看到现有的「安装」卡，一键装进受管环境。`app.py` 再用可信解析核一次：
    给不出安装名（没有 `requirement`）就不出「换环境」的缺依赖卡，改落到第 2 条。
 2. **映射不到、或同一 (模块, 文件夹) 已送去安装过仍然失败**（记账只在依赖安装**真正成功提交**之后——`deprepair._run_install` 的两个成功终态调 `pool.note_unreadable_install`——并按项目区分；给错误分类从不记账，用户重试渲染仍有安装出路；不循环出安装卡）→ 稳定码 `import_folder_unreadable`：
-   默认只露一句话（「脚本加载的项目外文件夹“X”读不了」+ 该做什么），主按钮沿用现有的。**这条兜底目前没有能一键解决的出路**；
-   候选：提权一次修复那个文件夹的权限（另开 PR）。
+   默认只露一句话（「脚本加载的项目外文件夹“X”读不了」+ 该做什么）。Windows 上主按钮是「修复权限」（见下「修订 2026-10-30：一键修复权限」）；
+   其它平台没有令牌、没有按钮，保持一句话。
 
 AI 修复：`fixsession.SYSTEM_PROMPT` 的 3g 写明——装进 Tavotto 受管环境有效（读不了的那一处会被跳过）；单纯换解释器无效；
 不改用户脚本，不动那个文件夹。
@@ -68,3 +68,36 @@ AI 修复：`fixsession.SYSTEM_PROMPT` 的 3g 写明——装进 Tavotto 受管�
 * 少数「本来就该失败」的 import 现在会成功——前提是后面确有另一个可读位置；读的永远是同一个模块名下 `sys.path` 顺序里下一个可读者。
 * 每个未缓存的 import 多一次 `open(origin)`；热路径实测见 `tests/test_unreadable_import_skip.py::test_overhead_is_small`。
 * 无新增遥测、无新增端点、无存储格式变化；回滚 = 删掉两处装配调用。
+
+## 修订 2026-10-30：一键修复权限（Windows）
+
+用户硬性要求：兼容性问题一定要让小白点一两下就能解决，不出难题。上面 B.2 的兜底卡（装了包同一处仍读不了、或模块装不了）原先只能告诉用户
+「去给账户开放读取权限」——对小白就是难题。这一节给它一个主按钮「修复权限」。
+
+**这是在用户点击确认之后，修改项目外一个文件夹的权限**——Tavotto 此前从不改项目外的任何东西，所以把边界写死在这里：
+
+* **为什么可以接受**：① 只改**这一个**目录（失败卡点名的那个依赖夹），不改它的父目录，不碰目录外任何东西；② 只做「恢复继承」：
+  `takeown /f <目录> /r /d y` 把属主换成当前管理员组，再 `icacls <目录> /reset /t /c /q` 让它重新继承父目录的权限——不加任何特殊授权、
+  不放开给 Everyone；③ 用户亲手点按钮，再亲手过一次 UAC（`ShellExecuteEx runas`）；取消 / 不是管理员就什么都不改，卡片如实说一句，
+  不重复弹窗；④ 目录本来就是脚本自己放进 `sys.path` 的、用户的 Codex 沙箱账户创建的依赖夹（`pip --target` 先装进不继承权限的
+  `mkdtemp` 再 move 进去，所以属主是沙箱账户）。
+* **令牌，不是路径**：worker / bridge 在失败事实里另带私有键 `unreadable_folder_private.{path, file}`（敏感运行的白名单不放行它）；
+  父进程 `pool.unreadable_folder_error` 把它换成 `folderrepair.issue()` 的服务端令牌就地丢弃——完整路径只活在 `folderrepair` 的进程内存里，
+  不进 `err.extra`、公开投影、遥测与日志。令牌不透明、一次性、绑定（项目、目录真实路径）、15 分钟过期；非 Windows 不发。
+  失败参数 `params.repair_token` 只有前端的按钮用它。
+* **接口只收令牌**：`POST /api/engine/folder-repair {token}`；要「用户在页面上点了」（`_page_authenticated`，本机凭据头 / MCP / 无会话状态 fail closed）。
+  动手前 `folderrepair.validate_target` 对**真实路径**再验一遍：本地绝对路径、是目录、不是盘符根、不是用户主目录本身 / 主目录的祖先 /
+  主目录下的标准文件夹（Desktop、Documents……）、不是系统目录（Windows、Program Files、ProgramData）、仍在项目之外且不包住项目、
+  与登记那刻的真实路径一致（挡住登记后换成联接点）。命令只对验过的真实路径动手；还要登记的那个文件此刻**确实仍读不了**，
+  读得了就不弹 UAC。
+* **提权在 sidecar 发起**（Flask 父进程，纯标准库 `ctypes`），不放桌面壳：浏览器模式同样能用，不新增 `#[tauri::command]` 与 ACL。
+  两条命令包进**一个** `powershell.exe -EncodedCommand`（每个参数是单引号字面量，不经 cmd 的 `%` / `&` / `^` 展开），只弹一次 UAC；
+  系统工具与 PowerShell 都用 `SystemRoot\System32` 下的绝对路径，不吃 PATH。跑完再复核那个文件是否读得了：退出码 0 但仍读不了也算失败。
+* **结局**（稳定码，文案固定、不带参数）：`repair_cancelled`（UAC 取消）、`repair_not_elevated`（没拿到管理员权限）、`repair_failed`
+  （命令失败 / 仍读不了）、`repair_token_invalid`、`repair_target_rejected`、`repair_not_confirmed`、`repair_in_progress`、`repair_unsupported`。
+  取消与没拿到提权不作废令牌（可自己再点一次，每次点击至多一次 UAC）；跑过命令（成败）或目标被拒就作废。
+* **前端**：准备卡 `folder_unreadable` 态——一句话点名文件夹 + 主按钮「修复权限」（没有令牌 = 原来的通用失败卡）；成功后沿用卡上
+  「再试一次」同一个动作重跑一次；失败 / 取消的一句话放在卡片标题上，不自动重试。
+
+后果：新增一个会改项目外权限的端点，但被令牌、页面点击、路径再验、一次 UAC 四道门夹着；回滚 = 删 `folderrepair` 与卡片的一个主按钮，
+失败卡退回一句话。看护 `tests/test_folder_repair.py`（含 argv 精确断言与路径验证每一条的拒绝用例）。

@@ -33,6 +33,7 @@ from . import (
     execspec,
     executionfact,
     figcapture,
+    folderrepair,
     inputbroker,
     inputremap,
     launcher as launcher_mod,
@@ -745,8 +746,13 @@ def recovery_params(exc: "WorkerError") -> dict:
         # TeX 工具链（`texdiag`）：缺的命令 / 文件名（白名单清洗过）与 LaTeX 的那一行 `! …`
         return texdiag.params_of(extra.get("tex"))
     if exc.code == IMPORT_FOLDER_UNREADABLE_CODE:
-        # 只有目录名（不是路径）；缺了就不发这个码（`unreadable_folder_error`）
-        return {"folder": str(extra["unreadable_folder"]["folder"])}
+        # 只有目录名（不是路径）；缺了就不发这个码（`unreadable_folder_error`）。`repair_token` 是不透明的服务端令牌
+        # （`folderrepair`，仅 Windows 才有），前端凭它请求「修复权限」；它不是路径、也推不出路径
+        fact = extra["unreadable_folder"]
+        params = {"folder": str(fact["folder"])}
+        if fact.get("repair_token"):
+            params["repair_token"] = str(fact["repair_token"])
+        return params
     if exc.code == figcapture.EXPORT_RASTER_TOO_LARGE_CODE:
         # 宽 / 高 / 上限都是整数事实，没有路径与内容；缺字段（旧 worker 之类）就不捏造
         return {k: int(extra[k]) for k in ("width", "height", "max_pixels") if k in extra}
@@ -1354,6 +1360,13 @@ def unreadable_folder_error(
     ):
         return None
     fact = {"folder": folder}
+    # 一键修复权限（Windows）：完整路径只在私有键 `unreadable_folder_private`，在这里换成服务端令牌就地丢弃——
+    # 路径不进 `err.extra`（诊断 / 投影 / 遥测读得到的那一份），前端只拿到不透明的 `repair_token`
+    private = extra.get("unreadable_folder_private") if isinstance(extra, dict) else None
+    if isinstance(private, dict):
+        token = folderrepair.issue(project, private.get("path"), private.get("file") or "")
+        if token:
+            fact["repair_token"] = token
     module = structured_missing_module(given.get("module"))
     if module and "." not in module and _mappable_to_distribution(module):
         if not _unreadable_install_done(project, python, module):
