@@ -18,7 +18,7 @@ import { LegendLabelNotice } from './LegendLabelNotice'
 import { Markdown } from './Markdown'
 import { revertSession } from './revertSession'
 import { TraceDetails } from './TraceDetails'
-import { formatDuration, groupEntries, spanOf, statusLabel, type Step } from './transcriptModel'
+import { agentErrorKey, fixedByConnection, formatDuration, groupEntries, spanOf, statusLabel, type Step } from './transcriptModel'
 
 /**
  * 改图助手的转录（2026-10-07 设计审计 §6.1 / §6.2，宪法第十八节「2026-10-07 重做」）：从「一轮一张卡」改成「一段对话」。
@@ -51,7 +51,8 @@ function statusText(s: AiSession): string {
     if (outcome === 'partial') return ai('session.taskPartial')
     if (outcome === 'failed') return ai('session.taskFailedChanged')
   }
-  if (s.status === 'failed' && !s.changed && outcome === 'failed') return ai('session.taskRejected')
+  // AI 这一侧没跑成的失败不是「没通过写回前检查」：走通用的「失败」
+  if (s.status === 'failed' && !s.changed && outcome === 'failed' && !agentErrorKey(s.error)) return ai('session.taskRejected')
   if (s.status === 'done') return ai(s.changed ? 'session.doneChanged' : 'session.doneNoChange')
   if (s.status === 'reverted') return ai('session.reverted')
   return statusLabel(s.status)
@@ -119,10 +120,10 @@ export function Turn({
       : session.status === 'done' && outcome === 'failed' && session.changed
         ? 'failed'
         : null
-  // 内置执行器报接口地址打开的是网页（`agent_html_response`）：这句与「检查连接」优先于通用的「没通过写回前检查」
-  const htmlResponse = session.error === 'agent_html_response'
+  // AI 这一侧没跑成（模型 / 连接 / Agent 进程 / 超时）：说具体原因，不落到「没通过写回前检查」——候选根本没写出来；原始码只进「详情」
+  const agentError = agentErrorKey(session.error)
   const rejected =
-    !htmlResponse && session.status === 'failed' && outcome === 'failed' && !session.changed && !dataFigureTurn
+    !agentError && session.status === 'failed' && outcome === 'failed' && !session.changed && !dataFigureTurn
   const unmetIds = (session.task?.unmet ?? []).map((u) => u.constraint_id)
   const unmetDetail = unmetIds.length ? [ai('notice.unmetHeading'), ...unmetIds].join('\n') : null
   // 从数据出图：没有 diff、没有回滚；partial / needs_input 各一张 warn 卡，failed 走下面通用的失败卡（正文 = error）
@@ -242,15 +243,17 @@ export function Turn({
           title={rejected ? undefined : statusLabel(session.status)}
           // 一句话留在正文；长的 / 多行的整段进「详情」（带复制）
           detail={
-            rejected
-              ? [unmetDetail, splitNoticeText(session.error).detail ?? splitNoticeText(session.error).inline]
-                  .filter(Boolean)
-                  .join('\n\n') || null
-              : splitNoticeText(session.error).detail
+            agentError
+              ? session.error
+              : rejected
+                ? [unmetDetail, splitNoticeText(session.error).detail ?? splitNoticeText(session.error).inline]
+                    .filter(Boolean)
+                    .join('\n\n') || null
+                : splitNoticeText(session.error).detail
           }
           action={
-            htmlResponse ? (
-              // 地址指到了网页（中转站少写 `/v1` 之类）：重试只会再失败一次，主按钮去改连接
+            fixedByConnection(agentError) ? (
+              // 凭据无效 / 地址指到了网页（中转站少写 `/v1` 之类）：重试只会再失败一次，主按钮去改连接
               <Button data-ai-check-connection size="sm" onClick={() => requestCheckConnection()}>
                 {ai('notice.checkConnection')}
               </Button>
@@ -261,8 +264,8 @@ export function Turn({
             ) : undefined
           }
         >
-          {htmlResponse
-            ? ai('notice.htmlResponse')
+          {agentError
+            ? ai(`sessionError.${agentError}`)
             : rejected
               ? ai('notice.taskRejected')
               : splitNoticeText(session.error).inline}

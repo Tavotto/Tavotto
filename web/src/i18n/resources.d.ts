@@ -126,7 +126,6 @@ export default interface Resources {
       "dataFigurePartial": "有些行不是数字，没有画出来；脚本已新建，结果未经完整核对。",
       "dataFigureReconcile": "查询结果",
       "dataFigureUnconfirmed": "没收到结果，可能已经生成了；先查询结果，别重复提交。",
-      "htmlResponse": "连接地址打开的是网页，不是接口。",
       "legendLabel": "图例里也写着「{{from}}」，要一起改成「{{to}}」吗？",
       "legendLabelApply": "一起改",
       "taskFailedChanged": "改动已写入，但核对发现数据或输出变了；不对的话可以回滚到修改前。",
@@ -223,6 +222,20 @@ export default interface Resources {
       "taskRejected": "修改没通过写回前检查，项目未改动",
       "taskVerified": "已改，数据核对一致",
       "taskVerifiedCorrected_other": "已改（自动修正 {{count}} 次），数据核对一致"
+    },
+    "sessionError": {
+      "agent_auth": "模型凭据无效或已过期。",
+      "agent_budget": "这次修改用量超出上限，已停止。",
+      "agent_exit_nonzero": "AI 这次运行出错了。",
+      "agent_html_response": "连接地址打开的是网页，不是接口。",
+      "agent_internal": "AI 这次运行出错了。",
+      "agent_max_turns": "这次修改步骤过多，已停止。",
+      "agent_network": "连不上模型服务。",
+      "agent_output_truncated": "模型单次回复达到上限，没能写完。",
+      "agent_quota": "模型服务额度不足或正在限流，稍后再试。",
+      "agent_refused": "模型拒绝了这次修改。",
+      "agent_tool_error_loop": "AI 反复出错，已停止。",
+      "timeout": "这次修改超时，已停止。"
     },
     "status": {
       "aiAlreadyRan": "这条指令已经执行过（任务记录已被删除），不会再次发送。",
