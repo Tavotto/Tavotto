@@ -414,6 +414,22 @@ def _white(key: str) -> bool:
     return key in _state["whiteouts"]
 
 
+def _trip_if_project_link(op: str, raw) -> None:
+    """删除 / 改名 / 移走作用在**链接本身**（最后一段不跟随）：`_resolve` 走 realpath 会落到链接目标上，
+    把「删别名」模拟成「删目标」。项目里的符号链接不模拟，失败即关闭。"""
+    if isinstance(raw, int) or not isinstance(raw, (str, bytes, os.PathLike)):
+        return
+    try:
+        lexical = os.path.abspath(os.fsdecode(os.fspath(raw)))
+        inside = os.path.islink(lexical) and _under(
+            os.path.normcase(os.path.realpath(os.path.dirname(lexical))), [_state["redirect"][1]]
+        )
+    except (OSError, ValueError):
+        return
+    if inside:
+        _violation(op, lexical)  # 在 try 外：它抛的 PermissionError 也是 OSError，不能被上面吞掉
+
+
 def _prepare_write(r) -> None:
     """改道写之前：项目里的父目录真实存在时，补建改道区里的父目录（保住 `FileNotFoundError` 的原有语义）。"""
     rp, key, target = r
@@ -594,6 +610,7 @@ def _w_remove(orig):
     @functools.wraps(orig)
     def fn(path, *, dir_fd=None):
         if dir_fd is None and _redirect_on():
+            _trip_if_project_link("os.remove", path)
             r = _resolve(path)
             if r is not None:
                 rp, key, target = r
@@ -624,6 +641,7 @@ def _w_rmdir(orig):
     @functools.wraps(orig)
     def fn(path, *, dir_fd=None):
         if dir_fd is None and _redirect_on():
+            _trip_if_project_link("os.rmdir", path)
             r = _resolve(path)
             if r is not None:
                 if _proj_dir(r):
@@ -639,6 +657,7 @@ def _w_rename(orig):
     @functools.wraps(orig)
     def rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
         if src_dir_fd is None and dst_dir_fd is None and _redirect_on():
+            _trip_if_project_link("os.rename", src)
             rs = _resolve(src)
             rd = _resolve(dst)
             if rd is not None and _proj_dir(rd):
@@ -794,6 +813,7 @@ def _w_rmtree(orig):
     @functools.wraps(orig)
     def rmtree(path, *args, **kwargs):
         if _redirect_on():
+            _trip_if_project_link("shutil.rmtree", path)
             r = _resolve(path)
             if r is not None:
                 if _real_exists(r[0]):
@@ -810,6 +830,7 @@ def _w_move(orig):
     def move(src, dst, *args, **kwargs):
         if not _redirect_on():
             return orig(src, dst, *args, **kwargs)
+        _trip_if_project_link("shutil.move", src)
         rs = _resolve(src)
         rd = _resolve(dst)
         overlay_src = False

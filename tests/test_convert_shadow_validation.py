@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -418,6 +419,21 @@ def test_moving_a_partially_written_project_dir_trips(world):
     assert _tripped(result)
     assert (out / "old.csv").read_text() == "old" and not (out / "new.csv").exists()
     assert not (world[0] / "sub" / "archive").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="符号链接需要权限")
+def test_unlinking_or_moving_a_project_symlink_trips_instead_of_whiting_out_its_target(world):
+    """项目里 `alias.csv -> data.csv`：删 / 改名 / 移走的是链接本身，不能被 realpath 模拟成删目标（Codex #1516 P1）。"""
+    sub = world[0] / "sub"
+    (sub / "alias.csv").symlink_to("data.csv")
+    for op in (
+        "os.unlink(os.path.join(here, 'alias.csv'))",
+        "os.rename(os.path.join(here, 'alias.csv'), os.path.join(here, 'b.csv'))",
+        "import shutil\nshutil.move(os.path.join(here, 'alias.csv'), os.path.join(here, 'b.csv'))",
+    ):
+        result, _ = _validate(world, op + "\n")
+        assert _tripped(result)
+        assert (sub / "data.csv").read_text() == "x,y\n1,2\n" and (sub / "alias.csv").is_symlink()
 
 
 def test_rmdir_of_a_project_dir_trips_but_a_purely_staged_dir_can_be_removed(world):
