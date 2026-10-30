@@ -423,6 +423,16 @@ def test_the_text_in_a_sketch_is_cut_to_the_length_the_caller_asked_for(client):
     assert "text" not in silent["versions"][0]["sketch"]["objects"][0]
 
 
+def test_a_sketch_text_carries_its_latex_format_so_the_thumb_can_read_it(client):
+    """缩略图要把 `\\textit{x}` 读成显示的字（ADR 0152）；旧写法的标注不带这个字段。"""
+    latex = {**_text(0, "a \\textit{b}"), "textFormat": "latex"}
+    client.post("/api/versions/d1", json={"doc": _doc_with([latex, _text(1, "旧")])})
+    got = client.get("/api/versions/d1?sketch=40&sketchText=24").get_json()
+    new, old = got["versions"][0]["sketch"]["objects"]
+    assert new["textFormat"] == "latex"
+    assert "textFormat" not in old
+
+
 def test_hidden_objects_are_dropped_before_the_cut_not_after(client):
     """先滤隐藏再截断。反过来的话「前 N 个全是隐藏对象」的版本得到一张空图。"""
     objects = [{**_panel(i), "hidden": True} for i in range(5)] + [_text(9, "看得见")]

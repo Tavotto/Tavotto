@@ -322,3 +322,93 @@ describe('exportedText（导出预览用）：文字按导出出来的样子画�
     expect(Number(sup.getAttribute('baseline-shift'))).toBeGreaterThan(0)
   })
 })
+
+describe('标注里的公式（ADR 0152 §七）：缩略图 / 导出预览不再画 `$…$` 源码', () => {
+  const formula = {
+    id: 'm',
+    type: 'text',
+    text: 'k = $x^2$ ok',
+    textFormat: 'latex',
+    x: 2,
+    y: 3,
+    w: 60,
+    h: 5,
+    sizePt: 9,
+    color: '#112233',
+    align: 'left',
+  } as CanvasObject
+  const asText = (o: unknown) => ((o as CanvasObject).type === 'text' ? (o as never) : null)
+  const okBox = { ok: true, width: 2, ascent: 0.8, descent: 0.2, segments: [['M', 0, 0], ['L', 2, 0], ['Z']] }
+  const stub = (result: unknown) =>
+    vi.stubGlobal('fetch', async () =>
+      new Response(JSON.stringify({ ok: true, results: [result] }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+    )
+
+  beforeEach(async () => {
+    const { __resetMathForTests } = await import('@/lib/mathtext')
+    __resetMathForTests()
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('排好后：公式是 <path>（轮廓与画布同一份），两侧文字各一段，源码不再出现', async () => {
+    stub(okBox)
+    await teardown()
+    const svg = await render(<CanvasThumb page={PAGE} objects={[formula]} exportedText={asText} />)
+    await act(async () => {
+      await vi.waitFor(() => expect(svg.querySelector('path[data-thumb-math]')).not.toBeNull())
+    })
+    const path = svg.querySelector('path[data-thumb-math]')!
+    expect(path.getAttribute('d')).toBe('M 0 0 L 2 0 Z')
+    expect(path.getAttribute('fill')).toBe('#112233')
+    const size = (9 * 25.4) / 72
+    expect(path.getAttribute('transform')).toMatch(/scale\(/)
+    expect(Number(/scale\(([\d.]+)\)/.exec(path.getAttribute('transform')!)![1])).toBeCloseTo(size, 6)
+    const texts = [...svg.querySelectorAll('[data-thumb-math-line] text')].map((t) => t.textContent)
+    expect(texts).toEqual(['k = ', ' ok'])
+    expect(svg.textContent).not.toContain('$')
+  })
+
+  it('公式落在前一段文字之后，后一段文字紧接公式之后（宽度累计）', async () => {
+    stub(okBox)
+    await teardown()
+    const svg = await render(<CanvasThumb page={PAGE} objects={[formula]} exportedText={asText} />)
+    await act(async () => {
+      await vi.waitFor(() => expect(svg.querySelector('path[data-thumb-math]')).not.toBeNull())
+    })
+    const size = (9 * 25.4) / 72
+    const [a, b] = [...svg.querySelectorAll<SVGTextElement>('[data-thumb-math-line] text')]
+    const mx = Number(/translate\(([\d.]+) /.exec(svg.querySelector('path[data-thumb-math]')!.getAttribute('transform')!)![1])
+    expect(Number(a.getAttribute('x'))).toBeCloseTo(2, 6)
+    expect(mx).toBeGreaterThan(Number(a.getAttribute('x')))
+    expect(Number(b.getAttribute('x'))).toBeCloseTo(mx + 2 * size, 6)
+  })
+
+  it('还没排好：照源码画（$…$）', async () => {
+    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}))
+    await teardown()
+    const svg = await render(<CanvasThumb page={PAGE} objects={[formula]} exportedText={asText} />)
+    expect(svg.querySelector('[data-thumb-math-line]')!.textContent).toBe('k = $x^2$ ok')
+    expect(svg.querySelector('path[data-thumb-math]')).toBeNull()
+  })
+
+  it('排不出来：照源码画（$…$），与画布同一个退路', async () => {
+    stub({ ok: false, error: 'bad' })
+    await teardown()
+    const svg = await render(<CanvasThumb page={PAGE} objects={[formula]} exportedText={asText} />)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    expect(svg.querySelector('path[data-thumb-math]')).toBeNull()
+    expect(svg.querySelector('[data-thumb-math-line]')!.textContent).toBe('k = $x^2$ ok')
+  })
+
+  it('小缩略图：画读出来的字，不是存着的串（`\\textit{}` 命令去掉，公式不带 $）；旧写法原样', async () => {
+    await teardown()
+    const small = { ...formula, text: 'a \\textit{b} $x^2$' } as CanvasObject
+    expect((await render(<CanvasThumb page={PAGE} objects={[small]} />)).querySelector('text')!.textContent).toBe('a b x^2')
+    // 草图里没有 textFormat 的旧标注：原样
+    await teardown()
+    const legacy = { ...formula, textFormat: undefined, text: '\\textit{b}' } as CanvasObject
+    expect((await render(<CanvasThumb page={PAGE} objects={[legacy]} />)).querySelector('text')!.textContent).toBe('\\textit{b}')
+  })
+})

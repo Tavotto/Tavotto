@@ -84,7 +84,11 @@ PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到�
 - **排不出来**：两侧都按源码原样画（`$…$`，不吞字）；导出报 `math_unrenderable`（警告里带源码与原因），画布上带红色波浪线、
   悬停看原因。未接入问题面板（preflight 两侧是纯求值器，不起排版进程）。
 - **已知限制**：公式是轮廓，PDF 文本层里没有它的字（复制不出来）；图内文字的公式块在编辑框里仍显示源码（图上就是
-  matplotlib 画的真身）；缩略图里的公式显示源码。
+  matplotlib 画的真身）。
+- **缩略图与导出预览**：导出对话框的整页预览把公式画成同一份轮廓（`<path>`，`ThumbMathLine`）：SVG 的 `<text>` 里放不下
+  path，含公式的行拆成文字段与公式段，按 `getComputedTextLength()` 累计的宽度排（量不到时按字数估），对齐按整行总宽算；
+  没排好 / 排不出仍按源码。画布列表 / 版本列表的小缩略图不画轮廓（几十张缩略图各发排版请求不值），但画**显示的字**
+  （`displayText`：LaTeX 命令去掉、公式不带 `$`）；版本草图因此带上 `textFormat`。
 - 打包：`mathtext_child.py` 进 `packaging/tavotto.spec` 的外部解释器源码清单（第三个根，`test_runtime_build` 按 import
   闭包看护）。
 

@@ -15330,6 +15330,9 @@ def _version_sketch(v: dict, max_objects: int, max_text: int) -> dict | None:
                 item["fileKind"] = o["fileKind"]
         elif kind == "text" and max_text > 0 and isinstance(o.get("text"), str):
             item["text"] = o["text"][:max_text]
+            # 写法跟着正文走：缩略图要把 LaTeX 命令读成显示的字（ADR 0152），不带它就把 `\textit{x}` 原样画出来
+            if o.get("textFormat") == "latex":
+                item["textFormat"] = "latex"
         elif kind == "shape" and isinstance(o.get("shape"), str):
             item["shape"] = o["shape"]
         objects.append(item)
