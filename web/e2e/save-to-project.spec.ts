@@ -93,8 +93,8 @@ test('画布文字仍在编辑时按保存，先提交文字再写入项目文�
   await page.keyboard.press('ControlOrMeta+s')
   const dialog = page.locator('[data-dialog="layout"]')
   await expect(dialog).toBeVisible()
-  await dialog.locator('#layout-save-name').fill(NAME)
-  await dialog.locator('#layout-save-name').press('Enter')
+  await dialog.locator('[data-layout-save-name]').fill(NAME)
+  await dialog.locator('[data-layout-save-name]').press('Enter')
   await expect.poll(() => existsSync(file) ? textsOnDisk(file) : []).toEqual(['编辑中保存'])
 
   await page.locator('[data-tool="text"]').click()
