@@ -215,6 +215,7 @@ export function CanvasThumb({
                 fontSize={Math.max(o.h * 0.7, h / 20)}
                 fill="currentColor"
                 className="text-paper-ink-2"
+                style={{ fontFamily: 'var(--font-glance)' }}
               >
                 {/* 显示的字，不是存着的串：LaTeX 命令去掉，公式读成近似 Unicode（`\frac{F}{A}` → `F/A`）。公式不在这里
                     画成轮廓——一页 / 一列版本里几十个缩略图各发一次排版请求不值（它回答「哪一版」），导出预览才画真公式。
