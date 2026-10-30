@@ -126,6 +126,71 @@ def test_save_as_picks_a_free_name_when_the_target_exists(env):
     assert list((parent / "proj").iterdir()) == []  # 原有同名文件夹一个字节没碰
 
 
+def test_destination_taken_between_check_and_mkdir_survives_and_copy_goes_to_next_number(
+    env, monkeypatch
+):
+    """另一个请求在我们选名之后、mkdir 之前占了 `proj`：它存好的项目一个字节不许被清，我们落到 `proj 2`。"""
+    client, project, tmp = env
+    pj = _open(project)
+    parent = tmp / "mine"
+    parent.mkdir()
+    real_mkdir = Path.mkdir
+    state = {"raced": False}
+
+    def racing_mkdir(self, *a, **k):
+        if self == parent.resolve() / "proj" and not state["raced"]:
+            state["raced"] = True
+            real_mkdir(self)  # 「另一个请求」抢先建好并存进了自己的项目
+            (self / "winner.txt").write_text("keep me")
+        return real_mkdir(self, *a, **k)
+
+    monkeypatch.setattr(Path, "mkdir", racing_mkdir)
+    r = _save_as(client, pj, parent)
+    assert r.status_code == 200, r.get_json()
+    assert state["raced"]
+    assert (parent / "proj" / "winner.txt").read_text() == "keep me"
+    assert Path(r.get_json()["path"]).name == "proj 2"
+    assert (parent / "proj 2" / "fig.py").is_file()
+
+
+def test_failure_never_removes_a_directory_this_call_did_not_create(env, monkeypatch):
+    client, project, tmp = env
+    pj = _open(project)
+    parent = tmp / "mine"
+    (parent / "proj").mkdir(parents=True)
+    (parent / "proj" / "other.txt").write_text("x")
+
+    def boom(src, dst, *a, **k):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(projectcopy.shutil, "copyfile", boom)
+    r = _save_as(client, pj, parent)
+    assert r.get_json()["code"] == "project_copy_failed"
+    assert (parent / "proj" / "other.txt").read_text() == "x"  # 别人的目录还在
+    assert not (parent / "proj 2").exists()  # 自己占的那个被清掉
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX 权限位")
+def test_executable_bit_is_kept_and_copy_is_writable(env):
+    client, project, tmp = env
+    helper = project / "run.sh"
+    helper.write_text("#!/bin/sh\n")
+    helper.chmod(0o555)
+    plain = project / "ro.txt"
+    plain.write_text("x")
+    plain.chmod(0o444)
+    pj = _open(project)
+    parent = tmp / "mine"
+    parent.mkdir()
+    r = _save_as(client, pj, parent)
+    copy = Path(r.get_json()["path"])
+    mode = (copy / "run.sh").stat().st_mode & 0o777
+    assert mode & 0o100 and mode & 0o200 and mode & 0o400, oct(mode)
+    assert os.access(copy / "run.sh", os.X_OK)
+    assert not (copy / "ro.txt").stat().st_mode & 0o111  # 没有执行位的不凭空多出来
+    assert os.access(copy / "ro.txt", os.W_OK)
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="符号链接需要权限")
 def test_save_as_does_not_follow_symlinks(env):
     client, project, tmp = env
