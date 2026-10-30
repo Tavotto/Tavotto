@@ -42,6 +42,11 @@ pub struct StartError {
 }
 
 impl StartError {
+    fn with_install_files(mut self, files: Option<crate::rescue::InstallFiles>) -> Self {
+        self.info = self.info.with_install_files(files);
+        self
+    }
+
     fn new(stage: &'static str, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -54,6 +59,25 @@ pub struct Sidecar {
     child: Mutex<Option<Child>>,
     stdin: Mutex<Option<ChildStdin>>,
     pub log_path: PathBuf,
+}
+
+fn bundled_exe_name() -> &'static str {
+    if cfg!(windows) {
+        "Tavotto.exe"
+    } else {
+        "Tavotto"
+    }
+}
+
+/// 打包 sidecar 的三样东西在不在：`sidecar/Tavotto` 目录、其下 `_internal`、可执行文件。只回布尔值
+/// （不含路径 / 文本），进启动诊断区分「exe 被杀软隔离」与「安装不完整」。资源目录拿不到 → `None`。
+pub fn probe_install_files(resource_dir: Option<&Path>) -> Option<crate::rescue::InstallFiles> {
+    let dir = resource_dir?.join("sidecar").join("Tavotto");
+    Some(crate::rescue::InstallFiles {
+        sidecar_dir: dir.is_dir(),
+        internal_dir: dir.join("_internal").is_dir(),
+        exe: dir.join(bundled_exe_name()).is_file(),
+    })
 }
 
 /// 解析 sidecar 可执行文件。优先级：
@@ -78,11 +102,7 @@ fn resolve_command(
         return Ok((p, args));
     }
 
-    let exe_name = if cfg!(windows) {
-        "Tavotto.exe"
-    } else {
-        "Tavotto"
-    };
+    let exe_name = bundled_exe_name();
     if let Some(res) = resource_dir {
         let bundled = res.join("sidecar").join("Tavotto").join(exe_name);
         if bundled.is_file() {
@@ -261,8 +281,10 @@ impl Sidecar {
     ) -> Result<(Sidecar, u16), StartError> {
         use crate::rescue::{code, stage};
         let m = crate::i18n::text(locale);
-        let (exe, extra_args) = resolve_command(resource_dir.as_deref(), locale)
-            .map_err(|e| StartError::new(stage::LOCATE, code::SIDECAR_NOT_FOUND, e))?;
+        let (exe, extra_args) = resolve_command(resource_dir.as_deref(), locale).map_err(|e| {
+            StartError::new(stage::LOCATE, code::SIDECAR_NOT_FOUND, e)
+                .with_install_files(probe_install_files(resource_dir.as_deref()))
+        })?;
 
         std::fs::create_dir_all(log_dir).map_err(|e| {
             StartError::new(
@@ -569,6 +591,53 @@ mod tests {
             Ok(_) => panic!("must not start"),
             Err(e) => e,
         }
+    }
+
+    #[test]
+    fn the_install_probe_reports_which_of_the_three_pieces_exist() {
+        use crate::rescue::InstallFiles;
+        let facts = |sidecar_dir, internal_dir, exe| {
+            Some(InstallFiles {
+                sidecar_dir,
+                internal_dir,
+                exe,
+            })
+        };
+        // 资源目录拿不到：整体 None（与「三项都缺」区分）
+        assert_eq!(probe_install_files(None), None);
+        // 整个 sidecar 目录不在
+        let res = scratch("res");
+        assert_eq!(probe_install_files(Some(&res)), facts(false, false, false));
+        // 全在
+        bundled(&res, b"x");
+        std::fs::create_dir_all(res.join("sidecar").join("Tavotto").join("_internal")).unwrap();
+        assert_eq!(probe_install_files(Some(&res)), facts(true, true, true));
+        // 缺 exe（杀软隔离的形状）：目录与 _internal 还在
+        std::fs::remove_file(res.join("sidecar").join("Tavotto").join(bundled_exe_name())).unwrap();
+        assert_eq!(probe_install_files(Some(&res)), facts(true, true, false));
+        // 同名目录不算 exe（is_file，不是 exists）
+        std::fs::create_dir(res.join("sidecar").join("Tavotto").join(bundled_exe_name())).unwrap();
+        assert_eq!(probe_install_files(Some(&res)), facts(true, true, false));
+    }
+
+    #[test]
+    fn a_missing_bundled_sidecar_is_a_locate_failure_that_carries_the_install_facts() {
+        if source_tree_venv_bin().is_some() {
+            return; // 开发机上源码树回退会找到 .venv 里的入口，locate 不会失败
+        }
+        let res = scratch("res");
+        let dir = res.join("sidecar").join("Tavotto");
+        std::fs::create_dir_all(dir.join("_internal")).unwrap();
+        let e = start_in(&res, &scratch("logs"));
+        assert_eq!((e.info.stage, e.info.code), ("locate", "sidecar_not_found"));
+        assert_eq!(
+            e.info.install_files,
+            Some(crate::rescue::InstallFiles {
+                sidecar_dir: true,
+                internal_dir: true,
+                exe: false
+            })
+        );
     }
 
     #[test]

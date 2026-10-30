@@ -271,6 +271,9 @@ class GlyphRun:
     #: 这一段的**逻辑文字**与 cluster 原文拼出来的不一致时（合成上下标：画的是 `5`，
     #: 用户写的是 `⁵`），这里放用户的原文；写入器包 ActualText。None = 一致。
     actual_text: str | None = None
+    #: 不画、只进文本层（PDF 文字渲染模式 3；SVG / 位图不画）。标注公式的源码用它：公式本身是
+    #: 填充轮廓，文本层里在同一位置放这段看不见的字，阅读器里选中 / 复制拿到 LaTeX（ADR 0152 §七）。
+    invisible: bool = False
 
     @property
     def cluster_text(self) -> str:
@@ -658,6 +661,8 @@ def _text(node: ShapedText, page: Page, path: str) -> None:
                 raise IRError("bad_glyph", f"cluster 原文必须是字符串: {g.text!r}", rp)
         if run.actual_text is not None and not isinstance(run.actual_text, str):
             raise IRError("bad_glyph", f"actual_text 必须是字符串或 None: {run.actual_text!r}", rp)
+        if not isinstance(run.invisible, bool):
+            raise IRError("bad_glyph", f"invisible 必须是布尔值: {run.invisible!r}", rp)
 
 
 def _placement(

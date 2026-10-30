@@ -1927,6 +1927,8 @@
       },
       "step": {
         "notInstalled": "没装 {{product}}",
+        "installToEnable": "安装 {{product}} CLI 以启用",
+        "reinstallToEnable": "重新安装 {{product}} CLI 以启用",
         "broken": "找到了 {{product}}，但打不开",
         "needsAuth": "还没登录",
         "disabled": "已在设置里关闭",

@@ -17,6 +17,8 @@ order: 30
   （`editing_state_unknown`），不靠超时推断干净；② **只许主窗口的壳自带 `error.html` 调用**（`rescue::decide` 查 label + 当前 URL，ACL 之外再查一道）；
   capability 是独立的 `rescue-page.json`（`local:true`、无 remote、`windows:["main"]`），`main.json` 与 `remote-*.json` 不得出现 `allow-rescue-*`；
   ③ **更新走同一个协调器**（同一个 `UpdateState`，安装带 `expected_version`，对不上 `candidate_changed`）；
-  ④ **重新尝试 = 重启整个应用**（收 sidecar → 写 clean → `restart()`），不做同进程重试。shell 报告只含闭集字段（`STAGES` / `CODES`），不收 `msg` / 日志路径 / 环境变量；
+  ③之二 **失败码是 `sidecar_not_found` 时主按钮是「重新安装」**（`rescue_reinstall`，ADR 0130「三之二」）：唯一允许同版本安装的路径，
+  放宽版本判据只在 `app_update::reinstall_builder`，门禁 `rescue::decide_reinstall`（可信页面 + 未进编辑态 + 失败码）；普通更新路径仍只装更新版本；
+  ④ **重新尝试 = 重启整个应用**（收 sidecar → 写 clean → `restart()`），不做同进程重试。shell 报告只含闭集字段（`STAGES` / `CODES`，locate 失败时另有 `install_files` 三个布尔值），不收 `msg` / 日志路径 / 环境变量；
   **只有 `rescue_diag_send` 联网**，由用户单独点击触发；端点是编译期常量，环境变量只能关。协议常量、失败码、上传地址向量、包内容以
   `tests/golden/diag_shell_report.json` 为唯一出处（Rust 与 `tests/test_diag_shell_contract.py` 各读）。发行边界：只能救援已带此功能且壳能运行的客户端。

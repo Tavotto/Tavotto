@@ -63,6 +63,8 @@ pub struct ReportInput {
     pub stage: String,
     pub code: String,
     pub exit_code: Option<i32>,
+    /// locate 阶段失败时的安装文件事实（三个布尔值）；其余阶段 / 资源目录拿不到为 `None`（报告里是 `null`）。
+    pub install_files: Option<crate::rescue::InstallFiles>,
     pub created_at: String,
 }
 
@@ -133,7 +135,17 @@ pub fn build_documents(input: &ReportInput) -> (Value, Value) {
         "report_version": 1,
         "tavotto": { "version": i.version, "build": if i.debug_build { "debug" } else { "release" } },
         "platform": { "os": i.os, "arch": i.arch, "distribution": DISTRIBUTION },
-        "failure": { "stage": i.stage, "code": i.code, "exit_code": i.exit_code },
+        "failure": {
+            "stage": i.stage,
+            "code": i.code,
+            "exit_code": i.exit_code,
+            // 只有三个布尔值：没有路径、没有文本
+            "install_files": i.install_files.map(|f| json!({
+                "sidecar_dir": f.sidecar_dir,
+                "internal_dir": f.internal_dir,
+                "exe": f.exe,
+            })),
+        },
     });
     (manifest, report)
 }
@@ -929,6 +941,13 @@ mod tests {
             stage: i["stage"].as_str().unwrap().into(),
             code: i["code"].as_str().unwrap().into(),
             exit_code: i["exit_code"].as_i64().map(|n| n as i32),
+            install_files: i["install_files"]
+                .as_object()
+                .map(|f| crate::rescue::InstallFiles {
+                    sidecar_dir: f["sidecar_dir"].as_bool().unwrap(),
+                    internal_dir: f["internal_dir"].as_bool().unwrap(),
+                    exe: f["exe"].as_bool().unwrap(),
+                }),
             created_at: i["created_at"].as_str().unwrap().into(),
         }
     }
@@ -975,6 +994,45 @@ mod tests {
         assert_eq!(body["size"], p.zip.len());
         assert_eq!(body["sha256"], sha256_hex(&p.zip));
         assert_eq!(body["category"], c["category"]);
+    }
+
+    #[test]
+    fn install_files_are_three_booleans_or_null_and_never_text() {
+        use crate::rescue::InstallFiles;
+        let c = contract();
+        let mut input = sample_input(&c);
+        // 三种形状：全在、缺 exe、整个 sidecar 目录不在；再加「资源目录拿不到」= null
+        for (files, want) in [
+            (
+                Some(InstallFiles {
+                    sidecar_dir: true,
+                    internal_dir: true,
+                    exe: true,
+                }),
+                json!({"sidecar_dir": true, "internal_dir": true, "exe": true}),
+            ),
+            (
+                Some(InstallFiles {
+                    sidecar_dir: true,
+                    internal_dir: true,
+                    exe: false,
+                }),
+                json!({"sidecar_dir": true, "internal_dir": true, "exe": false}),
+            ),
+            (
+                Some(InstallFiles {
+                    sidecar_dir: false,
+                    internal_dir: false,
+                    exe: false,
+                }),
+                json!({"sidecar_dir": false, "internal_dir": false, "exe": false}),
+            ),
+            (None, Value::Null),
+        ] {
+            input.install_files = files;
+            let (_, r) = build_documents(&input);
+            assert_eq!(r["failure"]["install_files"], want);
+        }
     }
 
     #[test]

@@ -363,8 +363,15 @@ class SvgWriter:
         )
         pen_x = node.x
         for run in node.runs:
-            layout = self._text_layout(run) if self.text_policy == TEXT_POLICY_TEXT else None
-            if layout is not None:
+            layout = (
+                self._text_layout(run)
+                if self.text_policy == TEXT_POLICY_TEXT and not run.invisible
+                else None
+            )
+            if run.invisible:
+                # 只进 PDF 文本层的段（公式源码，ADR 0152 §七）：SVG 里什么都不画；笔照常前进，后面的字落位不变
+                pass
+            elif layout is not None:
                 self._text_element(group, node, run, pen_x, layout)
                 self.facts.text_runs += 1
             else:
