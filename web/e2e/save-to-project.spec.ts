@@ -128,7 +128,11 @@ test('文字工具提示关闭时 Escape 提交，再保存第二版到项目文
   await expect(page.locator('[data-rich-text="inline"]')).toBeFocused()
   await page.keyboard.type('第二版')
   await page.keyboard.press('Escape')
+  // 保存自身也会收尾编辑器，所以先记录 Escape 后、保存前的状态。
+  const editorsAfterEscape = await page.locator('[data-rich-text="inline"]').count()
+  const textVisibleAfterEscape = await page.locator('[data-canvas-stage]').getByText('第二版').isVisible()
   await page.keyboard.press('ControlOrMeta+s')
   await expect.poll(() => textsOnDisk(file).sort()).toEqual(['第一版', '第二版'])
-  await expect(page.locator('[data-rich-text="inline"]')).toHaveCount(0)
+  expect(editorsAfterEscape).toBe(0)
+  expect(textVisibleAfterEscape).toBe(true)
 })
