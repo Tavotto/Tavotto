@@ -77,6 +77,7 @@ import { useScriptRunStore } from '@/store/scriptRunStore'
 import { useNativeSessionStore } from '@/store/nativeSessionStore'
 import { useUiStore } from '@/store/uiStore'
 import { aiFixFlow } from './AiFixFlow'
+import { dependencyDecision } from './DependencyDecision'
 import { ProbeResultsDialog } from './left/ScriptLibrary'
 import { OriginReasonCounts } from './OriginDetails'
 import { ScriptArgsForm } from './ScriptArgsForm'
@@ -858,20 +859,6 @@ function ConvertCompare({ entry }: { entry: NonNullable<ReturnType<typeof useCon
   )
 }
 
-/** 依赖卡片里的环境可读名：`conda: myenv` / `python: myenv`（后端只给种类 + 目录名，没有路径） */
-function depsEnvLabel(env: { kind: string; name: string }): string {
-  if (env.kind === 'managed') return pt('convert.deps.env.managed', { product: PRODUCT_NAME })
-  const prefix = env.kind === 'conda' ? 'conda' : env.kind === 'project_venv' ? 'venv' : 'python'
-  return `${prefix}: ${env.name}`
-}
-
-/** 这张确认卡会不会连带下载私有 Python、多大：有就回那句「（需先下载约 N MB 的 Python）」，没有回空串（共用片段） */
-function pythonDownloadNote(card: { downloads_python?: boolean; download_bytes?: number | null }): string {
-  return card.downloads_python && (card.download_bytes ?? 0) > 0
-    ? pt('convert.deps.downloadSize', { mb: Math.max(1, Math.round((card.download_bytes ?? 0) / 1048576)) })
-    : ''
-}
-
 /** 转换在跑时每 30 秒让卡片重绘一次，「已用 X 分钟」才会走 */
 function useConvertTick(active: boolean): void {
   const [, setN] = useState(0)
@@ -908,80 +895,12 @@ function convertFlow(
         ),
       }
     case 'deps': {
-      // 新脚本缺 Python 包、要用户先决定：一句话 + 一个主按钮（+「不装」）。三种卡：问一次 / 名单外点名 / 系统 Python
-      const card = c.card
-      if (!card) return { title: pt('convert.fail.unknown') }
-      const env = depsEnvLabel(card.env)
-      const decline = (
-        <Button variant="ghost" size="md" data-convert-decline className="text-ink-2" onClick={() => void store.discard(p.script)}>
-          {pt('convert.deps.btn.decline')}
-        </Button>
-      )
-      // 内置 runtime 不往里装包，但默认动作不是“请你换环境”：给本项目准备受管环境并装上（选别的环境留作次要入口）
-      const builtin = (card.env.kind === 'builtin' || card.env.kind === 'system') && card.action === 'install_managed'
-      const sysPython = card.env.kind === 'system'
-      const otherEnv = builtin ? (
-        <Button variant="ghost" size="md" data-convert-choose-env className="text-ink-2" onClick={() => store.chooseEnv(p.script)}>
-          {pt('convert.deps.btn.otherEnv')}
-        </Button>
-      ) : null
-      const ghost = (
-        <>
-          {otherEnv}
-          {decline}
-        </>
-      )
-      if (card.kind === 'system') {
-        return {
-          title: pt('convert.deps.system', { product: PRODUCT_NAME }),
-          primary: (
-            <Button
-              variant="primary"
-              size="md"
-              data-convert-choose-env
-              data-prep-primary="convert_choose_env"
-              onClick={() => store.chooseEnv(p.script)}
-            >
-              {pt('convert.deps.btn.chooseEnv')}
-            </Button>
-          ),
-          ghost: decline,
-        }
-      }
-      const uncommon = card.kind === 'uncommon'
-      // 带私有 Python 下载的卡片一律说出口（常见 / 不常见 / 问一次都一样）：点「安装一次」就是同时授权那次下载
-      // （ADR 0063 / 0111 §一），不能让用户没看到就授权
-      const size = pythonDownloadNote(card)
-      const title = uncommon
-        ? pt(builtin ? 'convert.deps.uncommonManaged' : 'convert.deps.uncommon', {
-            names: listJoin(card.outside_list.length ? card.outside_list : card.packages),
-            product: PRODUCT_NAME,
-          }) + size
-        : builtin
-          ? pt(sysPython ? 'convert.deps.askSystem' : 'convert.deps.askBuiltin', {
-              product: PRODUCT_NAME,
-              names: listJoin(card.packages),
-              size,
-            })
-          : pt(card.action === 'install_managed' ? 'convert.deps.askOnceManaged' : 'convert.deps.askOnce', {
-              env,
-              product: PRODUCT_NAME,
-            }) + size
-      return {
-        title,
-        primary: (
-          <Button
-            variant="primary"
-            size="md"
-            data-convert-deps-install={card.kind}
-            data-prep-primary="convert_deps_install"
-            onClick={() => void store.resolveDeps(p.script)}
-          >
-            {pt(uncommon ? 'convert.deps.btn.installOnce' : builtin ? 'convert.deps.btn.prepareEnv' : 'convert.deps.btn.installAlways')}
-          </Button>
-        ),
-        ghost,
-      }
+      if (!c.card) return { title: pt('convert.fail.unknown') }
+      return dependencyDecision(c.card, {
+        install: () => void store.resolveDeps(p.script),
+        decline: () => void store.discard(p.script),
+        chooseEnv: () => store.chooseEnv(p.script),
+      })
     }
     case 'resuming':
       if (c.stopping) {

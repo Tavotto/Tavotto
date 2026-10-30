@@ -42,6 +42,11 @@ export default interface Resources {
       "truncated": "文件太多，只列出前一部分",
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
+    "dependency": {
+      "installing": "正在准备依赖，完成后会重新检查…",
+      "missing": "校验时缺少 {{names}}；安装后会重新检查并应用修改。",
+      "waiting": "等你决定安装缺少的依赖"
+    },
     "diff": {
       "copyPatch": "复制补丁",
       "edited": "已修改",
@@ -3004,6 +3009,8 @@ export default interface Resources {
       "ai_agent_not_usable": "{{agent}} 暂时不可用。在「改图助手」里查看状态。",
       "ai_agent_probe_timeout": "验证 {{path}} 超时。可以再试，原设置不变。",
       "ai_agent_unknown": "无法识别该改图助手：{{agent}}。",
+      "ai_candidate_changed": "脚本或待提交的修改在检查后发生了变化。请重新发送改图指令。",
+      "ai_candidate_unavailable": "这次待提交的修改已不可用。请重新发送改图指令。",
       "ai_draft_too_large": "指令过长（超过 {{limit_kb}} KB），没有保存为草稿。",
       "ai_endpoint_incompatible": "“{{endpoint}}”用的接口协议，Codex 已不再支持。到设置里改由 Claude Code 接入，或把地址换成支持 Responses 协议的。",
       "ai_endpoint_needs_login": "“{{endpoint}}”的账号登录已失效。到设置里重新登录。",

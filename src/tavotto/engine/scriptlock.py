@@ -10,6 +10,7 @@
 * `ai_bridge.run`：从「脚本在不在」到快照、起 Agent 进程、登记进 `SESSIONS`。之后由 Agent 进程自己写，
   它 `running` 期间改写 / 复原在锁里判 `script_busy` 让路。
 * `ai_bridge.revert`：「是不是 AI 改完的那一版」的判定到写回快照。
+* `ai_bridge.resume_figure_edit`：复核候选与项目基线、预留跨进程任务并登记续跑；锁序与 `run` 一致。
 * `scriptbackup.replace`：校验和 → 两处备份 → 替换（改写与复原共用）。
 * `app.api_script_edit_commit`：锁内复判 `script_busy` → 重算 → `scriptbackup.replace`。
 * `app.api_script_backups_restore`：锁内复判 `script_busy` → 算复原字节 → `scriptbackup.replace`。
