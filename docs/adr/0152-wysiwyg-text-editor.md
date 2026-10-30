@@ -86,8 +86,8 @@ PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到�
   `PreflightTextSpec.math_errors: [{src, why}]`（与面板的 `render_error` / `stale` 同一种喂法），求值器对每条有失败公式的
   可见文字出一条 `math-unrenderable`（两档 profile 都是 `warn`，与导出的 `math_unrenderable` 警告同级；点击选中那条文字）。
   前端 `buildSpec` 读 `lib/mathtext` 缓存里 `ok: false` 的（排版还没回来的不算：「不知道」不是「排不出」），
-  `validationStore.startValidation` 订阅 `subscribeMath`，结果一到就重排一轮检查；Python 侧 `mathtypeset.cached_failures`
-  只读磁盘缓存、不起进程（MCP 现在不带画布文字，调用方有了再接）。
+  `validationStore.startValidation` 订阅 `subscribeMath`，结果一到就重排一轮检查。Python 侧
+  求值器同样认这个字段（金向量两侧对齐）；MCP 的 spec 现在不带画布文字，没有要填它的地方。
 - **已知限制**：公式是轮廓，PDF 文本层里没有它的字（复制不出来）；图内文字的公式块在编辑框里仍显示源码（图上就是
   matplotlib 画的真身）；缩略图里的公式显示源码。
 - 打包：`mathtext_child.py` 进 `packaging/tavotto.spec` 的外部解释器源码清单（第三个根，`test_runtime_build` 按 import
