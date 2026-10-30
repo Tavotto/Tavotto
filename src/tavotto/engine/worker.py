@@ -881,18 +881,19 @@ def _write_denied_by_folder(
     cur: BaseException | None = exc
     while cur is not None and seen < 16:
         if isinstance(cur, OSError) and cur.errno in _WRITE_DENIED_ERRNOS:
-            name = cur.filename
-            if isinstance(name, bytes):
-                try:
-                    name = os.fsdecode(name)
-                except (UnicodeError, ValueError):
-                    name = None
-            if isinstance(name, str) and name:
+            # `os.replace(可写临时文件, 只读目录/x)`：filename 是源、filename2 才是被拒的目标——两个都要看
+            for raw in (cur.filename, getattr(cur, "filename2", None)):
+                name = raw
+                if isinstance(name, bytes):
+                    try:
+                        name = os.fsdecode(name)
+                    except (UnicodeError, ValueError):
+                        name = None
+                if not (isinstance(name, str) and name):
+                    continue
                 if cur.errno == errno.EROFS:
                     return True
                 if name not in write_attempts:
-                    cur = cur.__cause__ or cur.__context__
-                    seen += 1
                     continue
                 # 用记录写意图那一刻解出的绝对路径，不在分类时再按（可能已恢复的）cwd 解
                 recorded = write_attempts[name] if isinstance(write_attempts, dict) else name

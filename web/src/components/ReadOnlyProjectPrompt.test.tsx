@@ -15,6 +15,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   saveProjectAs: vi.fn(),
   patchProjectSettings: vi.fn(),
+  browseDirs: vi.fn(),
 }))
 vi.mock('@/lib/desktop', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/desktop')>()),
@@ -22,7 +23,7 @@ vi.mock('@/lib/desktop', async (importOriginal) => ({
   pickDirectory: vi.fn(),
 }))
 
-import { ApiError, backendErrorText, EngineError, engineErrorMsg, patchProjectSettings, saveProjectAs, type ProjectStatus } from '@/lib/api'
+import { ApiError, backendErrorText, browseDirs, EngineError, engineErrorMsg, patchProjectSettings, saveProjectAs, type ProjectStatus } from '@/lib/api'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
 import { ReadOnlyProjectPrompt } from '@/components/ReadOnlyProjectPrompt'
 import { resetReadOnlyPromptMemory } from '@/lib/readOnlyPromptMemory'
@@ -125,7 +126,7 @@ describe('ReadOnlyProjectPrompt', () => {
     openMock.mockResolvedValue(status({ figures_dir: '/home/me/mine/ro-project', writable: true }))
     await setProject(status())
     await click('[data-readonly-project-save]')
-    expect(saveMock).toHaveBeenCalledWith('/home/me/mine')
+    expect(saveMock).toHaveBeenCalledWith('/home/me/mine', 'p1')
     expect(openMock).toHaveBeenCalledWith('/home/me/mine/ro-project')
     expect(q('[data-dialog="readonly-project"]')).toBeNull()
   })
@@ -198,7 +199,7 @@ describe('ReadOnlyProjectPrompt', () => {
     })
     await setProject(status())
     await click('[data-readonly-project-continue]')
-    expect(patchMock).toHaveBeenCalledWith({ readonly_save_as_declined: true })
+    expect(patchMock).toHaveBeenCalledWith({ readonly_save_as_declined: true }, 'p1')
     expect(q('[data-dialog="readonly-project"]')).toBeNull()
     // 后端把记忆放进了项目状态：重新打开同一个项目不再问
     expect(useProjectStore.getState().project?.settings?.readonly_save_as_declined).toBe(true)
@@ -248,6 +249,63 @@ describe('ReadOnlyProjectPrompt', () => {
     await act(async () => finish({ settings: { readonly_save_as_declined: true }, export_dir: '', backup_dir: '' }))
     await flush()
     expect(q('[data-dialog="readonly-project"]')).toBeTruthy()
+  })
+
+  it('native picker pending while the project switches: its result is ignored and B keeps its prompt', async () => {
+    let resolvePick!: (v: string | null) => void
+    pickMock.mockReturnValue(new Promise((r) => (resolvePick = r)))
+    await setProject(status())
+    await act(async () => {
+      q('[data-readonly-project-save]')!.click()
+    })
+    await setProject(status({ id: 'p2', figures_dir: '/data/other-ro', name: 'other-ro' }))
+    await flush()
+    await act(async () => {
+      resolvePick('/home/me/mine')
+    })
+    await flush()
+    expect(saveMock).not.toHaveBeenCalled() // 绝不为 B 另存
+    expect(openMock).not.toHaveBeenCalled()
+    expect(q('[data-dialog="readonly-project"]')).toBeTruthy() // B 的弹窗完好
+    expect(q('[data-readonly-project-save]')).toBeTruthy()
+  })
+
+  it('a save-as in flight for A that returns after the switch neither opens nor disturbs B', async () => {
+    let resolveSave!: (v: Awaited<ReturnType<typeof saveProjectAs>>) => void
+    pickMock.mockResolvedValue('/home/me/mine')
+    saveMock.mockReturnValue(new Promise((r) => (resolveSave = r)))
+    await setProject(status())
+    await click('[data-readonly-project-save]')
+    expect(saveMock).toHaveBeenCalledWith('/home/me/mine', 'p1') // 请求显式属于 A
+    await setProject(status({ id: 'p2', figures_dir: '/data/other-ro', name: 'other-ro' }))
+    await act(async () => {
+      resolveSave({ path: '/home/me/mine/ro-project', files: 1, bytes: 1, skipped: 0 })
+    })
+    await flush()
+    expect(openMock).not.toHaveBeenCalled()
+    expect(q('[data-readonly-project-save]')).toBeTruthy()
+  })
+
+  it('browser directory browser is discarded by a project switch', async () => {
+    desktopMock.mockReturnValue(false)
+    vi.mocked(browseDirs).mockResolvedValue({
+      path: '/home/me',
+      parent: '/home',
+      is_roots: false,
+      dirs: [],
+      roots: [],
+      shortcuts: [],
+      writable: true,
+    } as never)
+    await setProject(status())
+    await click('[data-readonly-project-save]')
+    const pickTitle = t('readOnlyPrompt.pickTitle', { ns: 'project' })
+    expect(document.body.textContent).toContain(pickTitle) // 目录浏览器开着
+    await setProject(status({ id: 'p2', figures_dir: '/data/other-ro', name: 'other-ro' }))
+    await flush()
+    expect(document.body.textContent).not.toContain(pickTitle) // A 的浏览器随 A 卸载
+    expect(saveMock).not.toHaveBeenCalled()
+    expect(q('[data-readonly-project-save]')).toBeTruthy() // B 的提示在
   })
 
   it('a different read-only project asks on its own', async () => {

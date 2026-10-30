@@ -771,12 +771,16 @@ export const browseDirs = (path?: string, hasFile?: string) => {
   return jsonFetch<BrowseResult>(`/api/projects/browse${q ? `?${q}` : ''}`)
 }
 
-export const patchProjectSettings = (patch: {
-  export_dir?: string
-  backup_dir?: string
-  allow_write_back?: boolean
-  readonly_save_as_declined?: boolean
-}) =>
+export const patchProjectSettings = (
+  patch: {
+    export_dir?: string
+    backup_dir?: string
+    allow_write_back?: boolean
+    readonly_save_as_declined?: boolean
+  },
+  /** 显式指定项目（发起时的那个）；不给 = 此刻的项目 */
+  pj?: string | null,
+) =>
   jsonFetch<{ settings: ProjectStatus['settings']; export_dir: string; backup_dir: string }>(
     '/api/project/settings',
     {
@@ -784,13 +788,14 @@ export const patchProjectSettings = (patch: {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
     },
+    pj,
   )
 
 /**
  * 把当前项目文件夹另存为 `parent` 下的一份可写副本（后端 `engine/projectcopy`），回副本路径。
  * 打开副本是调用方的事（`useProjectStore.open`）；体量超限等失败是带 code 的 `ApiError`。
  */
-export const saveProjectAs = (parent: string) =>
+export const saveProjectAs = (parent: string, pj?: string | null) =>
   jsonFetch<{
     path: string
     files: number
@@ -805,6 +810,7 @@ export const saveProjectAs = (parent: string) =>
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ parent }),
     },
+    pj,
   )
 
 /**

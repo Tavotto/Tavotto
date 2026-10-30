@@ -35,11 +35,15 @@ export function useProjectSettingsPending(): boolean {
  * **响应回来时项目已经换了（请求在飞时切到别的项目）就丢弃**：请求是带着发起时的项目身份发给 A 的，
  * 把 A 的回执套到此刻的 `project`（B）上，B 就显示 A 的导出 / 备份目录。
  */
-export async function applyProjectSettingsPatch(patch: Parameters<typeof patchProjectSettings>[0]) {
-  const origin = identityOf()
+export async function applyProjectSettingsPatch(
+  patch: Parameters<typeof patchProjectSettings>[0],
+  /** 显式指定项目（发起时的那个）：请求发给它，回执只在它仍是当前项目时才写进 store */
+  pj?: string | null,
+) {
+  const origin = pj ?? identityOf()
   bump(1)
   try {
-    const res = await patchProjectSettings(patch)
+    const res = await patchProjectSettings(patch, pj)
     if (identityOf() !== origin) return
     useProjectStore.setState((s) =>
       s.project

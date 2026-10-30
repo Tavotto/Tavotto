@@ -558,6 +558,34 @@ def test_chdir_into_a_read_only_folder_and_back_is_still_an_output_failure(safe_
         out.chmod(0o755)
 
 
+@_no_chmod
+def test_replacing_a_writable_temp_file_into_a_read_only_folder_is_an_output_failure(tmp_path):
+    """`os.replace(可写临时文件, 只读目录/result.csv)`：被拒的是 filename2（目标），filename 是源。
+    （safe 档的写守卫不真执行改名，所以这里用真实的 `os.replace` 异常 + 审计钩子的事件直接测分类。）"""
+    from tavotto.engine import worker
+
+    out = tmp_path / "out"
+    out.mkdir()
+    src = tmp_path / "tmp_result.csv"
+    src.write_text("a")
+    out.chmod(0o555)
+    dst = out / "result.csv"
+    try:
+        with pytest.raises(PermissionError) as err:
+            os.replace(src, dst)
+        assert err.value.filename2 is not None
+        worker._record_write_attempts(True)
+        try:
+            worker._write_attempt_hook("os.rename", (str(src), str(dst), -1, -1))
+        finally:
+            worker._record_write_attempts(False)
+        assert worker._write_denied_by_folder(err.value, worker._WRITE_ATTEMPTS) is True
+        # 源的父目录可写，只看 filename 会漏判
+        assert worker._write_denied_by_folder(err.value, {str(src): str(src)}) is False
+    finally:
+        out.chmod(0o755)
+
+
 @needs_worker
 def test_a_writable_folder_never_gets_the_read_only_code(safe_project):
     (safe_project / "out").mkdir()
