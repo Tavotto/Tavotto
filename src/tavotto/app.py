@@ -7443,16 +7443,25 @@ def _engine_attempt(
                 if progress_pj is not None
                 else contextlib.nullcontext()
             ):
-                if observe_worker is not None:
-                    observe_worker(worker)
                 _admit_artifact(worker, stem, artifact_source)
                 result = action(worker, stem)
             _assert_artifact_current(artifact_source)
+            if observe_worker is not None:
+                observe_worker(worker)
             execution = _svg_execution_result(worker)
             if isinstance(result, dict):
                 result.update(execution)
             return worker, stem, result
         except (engine_pool.WorkerError, engine_artifactcontext.ArtifactContextError) as exc:
+            # A missing import proves the worker actually executed the script,
+            # even if a cold build failed before override could return. A stale
+            # artifact or a superseded queue entry does not prove execution.
+            if (
+                observe_worker is not None
+                and isinstance(exc, engine_pool.WorkerError)
+                and exc.code == "missing_dependency"
+            ):
+                observe_worker(worker)
             fact = _svg_execution_result(worker)
             if isinstance(exc, engine_pool.WorkerError):
                 exc.extra.update(fact)

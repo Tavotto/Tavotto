@@ -180,11 +180,7 @@ def _load(key: str, path: Path | None = None) -> list[dict]:
         try:
             path = path or _path(key)
             stat = path.stat()
-            if (
-                path.is_symlink()
-                or stat.st_size > _MAX_FILE_BYTES
-                or time.time() - stat.st_mtime > _RETENTION_S
-            ):
+            if path.is_symlink() or stat.st_size > _MAX_FILE_BYTES:
                 raise ValueError("expired or invalid diagnostic cache")
             raw = json.loads(path.read_text(encoding="utf-8"))
             rows = raw if isinstance(raw, list) else []
@@ -194,7 +190,17 @@ def _load(key: str, path: Path | None = None) -> list[dict]:
         while len(_cache) > _MAX_PROJECTS:
             _cache.popitem(last=False)
     _cache.move_to_end(key)
-    return _cache[key]
+    rows = _cache[key]
+    cutoff = time.time() - _RETENTION_S
+    retained = [
+        row for row in rows if row.get("finished_at") is not None and row["finished_at"] >= cutoff
+    ]
+    if len(retained) != len(rows):
+        rows[:] = retained
+        # A newer record may have refreshed the file mtime: erase individual
+        # expired rows from disk as well as from the long-lived process cache.
+        threading.Thread(target=_save, args=(key, path or _path(key)), daemon=True).start()
+    return rows
 
 
 def _save(key: str, path: Path) -> None:
