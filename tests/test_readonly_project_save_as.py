@@ -527,10 +527,35 @@ def test_eacces_needs_a_recorded_write_attempt_for_that_exact_path(tmp_path):
     try:
         if not os.access(locked, os.W_OK):
             assert worker._write_denied_by_folder(exc) is False  # 没记过写意图：读失败的脸
-            assert worker._write_denied_by_folder(exc, {target: None}) is True
-            assert worker._write_denied_by_folder(exc, {target + "2": None}) is False
+            assert worker._write_denied_by_folder(exc, {target: target}) is True
+            assert worker._write_denied_by_folder(exc, {target + "2": target}) is False
     finally:
         locked.chmod(0o755)
+
+
+@_no_chmod
+@needs_worker
+def test_chdir_into_a_read_only_folder_and_back_is_still_an_output_failure(safe_project):
+    """脚本临时 chdir 进只读目录写、异常展开时 chdir 回来：相对文件名在分类时会指到可写目录。
+    绝对路径要在写发生那一刻记下（py3.10 没有 contextlib.chdir，手写 try/finally）。"""
+    out = safe_project / "out"
+    out.mkdir()
+    out.chmod(0o555)
+    action = (
+        "import os\n"
+        "old = os.getcwd()\n"
+        "os.chdir('out')\n"
+        "try:\n"
+        "    open('table.csv', 'w').write('a')\n"
+        "finally:\n"
+        "    os.chdir(old)\n"
+    )
+    try:
+        with pytest.raises(engine_pool.WorkerError) as err:
+            _run(safe_project, action)
+        assert err.value.code == engine_pool.OUTPUT_FOLDER_READ_ONLY_CODE
+    finally:
+        out.chmod(0o755)
 
 
 @needs_worker

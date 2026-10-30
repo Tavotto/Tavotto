@@ -786,7 +786,9 @@ _WRITE_DENIED_ERRNOS = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
 #: `OSError` 不带“是读还是写”：另一个账户 0700 目录里的输入 CSV，`open(..., "r")` 也是 EACCES，且
 #: `lexists` 看不见它（目录进不去）。所以写意图在**失败现场**由审计钩子记下，分类时只认记过的路径。
 #: 与 `writetripwire` 无关（那是 MCP 的越界绊线，另一个模块、另一套判据），这里只记、不拦。
-_WRITE_ATTEMPTS: dict[str, None] = {}
+#: 值是**事件发生那一刻**解成的绝对路径（`os.path.abspath`，用当时的 cwd）：脚本 `chdir` 进只读目录写、
+#: 异常展开时又 `chdir` 回来，分类时再按现在的 cwd 解相对路径就指到了别处。
+_WRITE_ATTEMPTS: dict[str, str] = {}
 _WRITE_ATTEMPTS_CAP = 512
 _write_recording = False
 _write_hook_installed = False
@@ -821,9 +823,13 @@ def _note_write_path(value) -> None:
             return
     if not isinstance(value, str) or not value:
         return
+    try:
+        absolute = os.path.abspath(value)
+    except (OSError, ValueError):
+        return
     if len(_WRITE_ATTEMPTS) >= _WRITE_ATTEMPTS_CAP:
         _WRITE_ATTEMPTS.pop(next(iter(_WRITE_ATTEMPTS)), None)
-    _WRITE_ATTEMPTS[value] = None
+    _WRITE_ATTEMPTS[value] = absolute
 
 
 def _write_attempt_hook(event, args):
@@ -857,7 +863,7 @@ def _record_write_attempts(on: bool) -> None:
 
 
 def _write_denied_by_folder(
-    exc: BaseException, write_attempts: "dict[str, None] | frozenset[str]" = frozenset()
+    exc: BaseException, write_attempts: "dict[str, str] | frozenset[str]" = frozenset()
 ) -> bool:
     """异常链里有没有一次「文件夹不让写」：`OSError`（EROFS / EACCES / EPERM）带文件名，
     且**接收这个文件的文件夹**此刻确实没有写入权限。
@@ -888,7 +894,9 @@ def _write_denied_by_folder(
                     cur = cur.__cause__ or cur.__context__
                     seen += 1
                     continue
-                path = Path(name)
+                # 用记录写意图那一刻解出的绝对路径，不在分类时再按（可能已恢复的）cwd 解
+                recorded = write_attempts[name] if isinstance(write_attempts, dict) else name
+                path = Path(recorded)
                 parent = path.parent if str(path.parent) else Path(".")
                 try:
                     exists = os.path.lexists(path)

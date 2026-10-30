@@ -225,6 +225,18 @@ describe('ReadOnlyProjectPrompt', () => {
     expect(q('[data-dialog="readonly-project"]')).toBeNull()
   })
 
+  it('switching straight from read-only A to read-only B shows the prompt for B', async () => {
+    await setProject(status())
+    expect(q('[data-dialog="readonly-project"]')).toBeTruthy()
+    await setProject(status({ id: 'p2', figures_dir: '/data/other-ro', name: 'other-ro' }))
+    await flush()
+    expect(q('[data-dialog="readonly-project"]')).toBeTruthy()
+    // B 的弹窗是真的：继续只读写的是 B 的设置（patch 走当前项目），不会再弹第二次
+    patchMock.mockResolvedValue({ settings: { readonly_save_as_declined: true }, export_dir: '', backup_dir: '' })
+    await click('[data-readonly-project-continue]')
+    expect(q('[data-dialog="readonly-project"]')).toBeNull()
+  })
+
   it('a different read-only project asks on its own', async () => {
     await setProject(status())
     await click('[data-readonly-project-continue]').catch(() => {})

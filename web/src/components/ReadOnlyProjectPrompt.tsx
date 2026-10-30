@@ -48,21 +48,17 @@ export function ReadOnlyProjectPrompt() {
     !project.tutorial &&
     project.settings?.readonly_save_as_declined !== true
 
+  // 开与收只在这**一个**效果里决定（A → B 直接切换时，旧的收和新的开不能各排一次 setShown，后到的 null 会盖掉 B 的弹窗）：
+  // 目标值 = 此刻该显示哪个项目的弹窗——正在显示的还成立就留着；否则是第一次见到的只读项目；否则没有。
   useEffect(() => {
-    if (needsPrompt && root && !wasAsked(root)) {
-      markAsked(root)
-      setError(null)
-      setShown(root)
-    }
-  }, [needsPrompt, root])
-
-  // 项目换了（或已经可写 / 已记住选择）：弹窗跟着收
-  useEffect(() => {
-    if (shown && (!needsPrompt || root !== shown)) {
-      setShown(null)
-      setIncomplete(null)
-    }
-  }, [shown, needsPrompt, root])
+    const target =
+      needsPrompt && root && (shown === root || !wasAsked(root)) ? root : null
+    if (target === shown) return
+    if (target) markAsked(target)
+    setError(null)
+    setIncomplete(null)
+    setShown(target)
+  }, [needsPrompt, root, shown])
 
   const close = () => {
     // 不确认就关：副本留在磁盘上，但不切过去
