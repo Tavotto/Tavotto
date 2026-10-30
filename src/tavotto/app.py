@@ -15456,10 +15456,11 @@ def _version_sketch(v: dict, max_objects: int, max_text: int) -> dict | None:
                 item["fileKind"] = o["fileKind"]
         elif kind == "text" and max_text > 0 and isinstance(o.get("text"), str):
             # LaTeX 写法先读成显示的字再截（ADR 0152）：先截后读会切掉右花括号，`\textit{…` 原样露出来；
-            # 读法与前端 `displayText` 同一份（`richtext` 同源对），草图里因此只放读好的字、不带写法
+            # 读法与前端小缩略图的 `glanceText` 同一份（`richtext` 同源对，公式读成近似 Unicode），
+            # 草图里因此只放读好的字、不带写法
             text = o["text"]
             if o.get("textFormat") == "latex":
-                text = richtext.plain_text(text, "latex")
+                text = richtext.glance_text(text, "latex")
             item["text"] = text[:max_text]
         elif kind == "shape" and isinstance(o.get("shape"), str):
             item["shape"] = o["shape"]

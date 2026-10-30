@@ -402,10 +402,12 @@ describe('标注里的公式（ADR 0152 §七）：缩略图 / 导出预览不�
     expect(svg.querySelector('[data-thumb-math-line]')!.textContent).toBe('k = $x^2$ ok')
   })
 
-  it('小缩略图：画读出来的字，不是存着的串（`\\textit{}` 命令去掉，公式不带 $）；旧写法原样', async () => {
+  it('小缩略图：画读出来的字，不是存着的串（`\\textit{}` 命令去掉，公式读成近似 Unicode）；旧写法原样', async () => {
     await teardown()
-    const small = { ...formula, text: 'a \\textit{b} $x^2$' } as CanvasObject
-    expect((await render(<CanvasThumb page={PAGE} objects={[small]} />)).querySelector('text')!.textContent).toBe('a b x^2')
+    const small = { ...formula, text: 'a \\textit{b} $x^2$, $\\sigma=\\frac{F}{A}$' } as CanvasObject
+    expect((await render(<CanvasThumb page={PAGE} objects={[small]} />)).querySelector('text')!.textContent).toBe(
+      'a b x², σ=F/A',
+    )
     // 草图里没有 textFormat 的旧标注：原样
     await teardown()
     const legacy = { ...formula, textFormat: undefined, text: '\\textit{b}' } as CanvasObject

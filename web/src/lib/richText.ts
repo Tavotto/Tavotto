@@ -629,3 +629,191 @@ export function applyCase(s: string, mode: CaseMode): string {
         .replace(/(^|[.!?。！？]\s*)(\p{L})/gu, (_m, lead: string, c: string) => lead + c.toUpperCase())
   }
 }
+
+// ---------------------------------------------------------------------------
+// 一眼读得懂的字（小缩略图，ADR 0152）
+// ---------------------------------------------------------------------------
+//
+// 与 `richtext.glance_text` 严格同源（同名表、同一套读法），由 `tests/golden/rich_text_vectors.json`
+// 的 `glance` 字段与表逐项看护。画布列表、版本列表的小缩略图不排公式，但公式源码一眼读不出来：
+// 这里把常见 mathtext 读成近似的 Unicode（`\frac{RT^2}{k}` → `RT²/k`）。只给人认页面，不进导出、
+// 不写回；读不懂的命令去掉反斜杠留名字。长度一律按码点数（Python 的 `len`）。
+
+/** 命令 → 字符：希腊字母与常用符号。 */
+export const GLANCE_SYMBOLS: Readonly<Record<string, string>> = {
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', epsilon: 'ε', varepsilon: 'ε',
+  zeta: 'ζ', eta: 'η', theta: 'θ', vartheta: 'ϑ', iota: 'ι', kappa: 'κ',
+  lambda: 'λ', mu: 'μ', nu: 'ν', xi: 'ξ', pi: 'π', varpi: 'ϖ', rho: 'ρ',
+  varrho: 'ϱ', sigma: 'σ', varsigma: 'ς', tau: 'τ', upsilon: 'υ', phi: 'φ',
+  varphi: 'φ', chi: 'χ', psi: 'ψ', omega: 'ω',
+  Gamma: 'Γ', Delta: 'Δ', Theta: 'Θ', Lambda: 'Λ', Xi: 'Ξ', Pi: 'Π',
+  Sigma: 'Σ', Upsilon: 'Υ', Phi: 'Φ', Psi: 'Ψ', Omega: 'Ω',
+  times: '×', cdot: '·', div: '÷', pm: '±', mp: '∓',
+  le: '≤', leq: '≤', ge: '≥', geq: '≥', ne: '≠', neq: '≠', approx: '≈',
+  sim: '∼', simeq: '≃', equiv: '≡', propto: '∝', ll: '≪', gg: '≫',
+  infty: '∞', partial: '∂', nabla: '∇', sum: '∑', prod: '∏', int: '∫', oint: '∮',
+  to: '→', rightarrow: '→', leftarrow: '←', Rightarrow: '⇒', leftrightarrow: '↔',
+  uparrow: '↑', downarrow: '↓', degree: '°', circ: '∘', prime: '′',
+  AA: 'Å', hbar: 'ℏ', ell: 'ℓ', cdots: '⋯', ldots: '…', dots: '…',
+  langle: '⟨', rangle: '⟩', lbrace: '{', rbrace: '}', vert: '|', Vert: '‖', mid: '|',
+  in: '∈', notin: '∉', subset: '⊂', cup: '∪', cap: '∩', forall: '∀', exists: '∃',
+  perp: '⊥', parallel: '∥', angle: '∠', star: '⋆', ast: '∗', bullet: '•',
+  dagger: '†', emptyset: '∅', Re: 'ℜ', Im: 'ℑ', aleph: 'ℵ',
+  wedge: '∧', vee: '∨', neg: '¬',
+}
+
+/** 函数名命令：照名字写出来，两边留空格（`\ln x` → `ln x`）。 */
+export const GLANCE_FUNCS: readonly string[] = [
+  'arccos', 'arcsin', 'arctan', 'arg', 'cos', 'cosh', 'cot', 'coth', 'csc', 'deg', 'det', 'dim',
+  'exp', 'gcd', 'hom', 'inf', 'ker', 'lg', 'lim', 'liminf', 'limsup', 'ln', 'log', 'max', 'min',
+  'Pr', 'sec', 'sin', 'sinh', 'sup', 'tan', 'tanh',
+]
+
+/** 只换字体的命令：留下参数本身。 */
+export const GLANCE_UNWRAP: readonly string[] = [
+  'mathrm', 'mathit', 'mathbf', 'mathsf', 'mathtt', 'mathcal', 'mathbb', 'mathfrak', 'mathscr',
+  'mathdefault', 'text', 'textrm', 'textit', 'textbf', 'operatorname', 'boldsymbol',
+]
+
+/** 字母上的记号：参数只有一个字符时加组合附加符（`\hat{x}` → `x̂`），否则只留参数。 */
+export const GLANCE_ACCENTS: Readonly<Record<string, string>> = {
+  hat: '̂', widehat: '̂', bar: '̄', overline: '̅', vec: '⃗',
+  dot: '̇', ddot: '̈', tilde: '̃', widetilde: '̃',
+}
+
+/** 间距命令（含 `\,` 这类单符号的）：都读成一个空格，`\!` 读成没有。 */
+export const GLANCE_SPACES: Readonly<Record<string, string>> = {
+  ',': ' ', ':': ' ', ';': ' ', ' ': ' ', '!': '', quad: ' ', qquad: ' ',
+}
+
+/** 只影响排版、不带字的命令：去掉。 */
+export const GLANCE_DROP: readonly string[] = [
+  'left', 'right', 'displaystyle', 'textstyle', 'scriptstyle', 'limits', 'nolimits',
+  'big', 'Big', 'bigg', 'Bigg',
+]
+
+const invert = (t: Readonly<Record<string, string>>) =>
+  Object.fromEntries(Object.entries(t).map(([ch, base]) => [base, ch])) as Record<string, string>
+const SUP_OF = invert(SUPERSCRIPT_BASE)
+const SUB_OF = invert(SUBSCRIPT_BASE)
+/** 分式 / 根号的一边含这些字符就加括号（`\frac{a+b}{c}` → `(a+b)/c`）。 */
+const GLANCE_OPS = '+-=/ ×·±<>≤≥≈≠'
+const FRACS = ['frac', 'dfrac', 'tfrac', 'cfrac']
+const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k)
+const isSpace = (c: string | undefined) => !!c && /\s/.test(c)
+const cpLen = (s: string) => [...s].length
+
+/** 一眼读得懂的字：公式读成近似的 Unicode，上下标能换成 Unicode 上下标字符的就换。 */
+export const glanceText = (text: string, format?: TextFormat) =>
+  parseRuns(text, format)
+    .map((r) =>
+      r.math
+        ? glanceMath(r.text)
+        : r.script
+          ? glanceScript(r.text, r.script === 'sup' ? '^' : '_', r.text)
+          : r.text,
+    )
+    .join('')
+
+const glanceMath = (src: string) =>
+  glanceSeq(src).split(/\s+/).filter(Boolean).join(' ').replaceAll('( ', '(').replaceAll(' )', ')')
+
+function glanceSeq(src: string): string {
+  let out = ''
+  let i = 0
+  while (i < src.length) {
+    const [piece, next] = glanceItem(src, i)
+    out += piece
+    i = next
+  }
+  return out
+}
+
+/** 从 `i` 读一项，回 [读出的字, 下一项起点]。 */
+function glanceItem(src: string, i: number): [string, number] {
+  const ch = src[i]
+  if (isSpace(ch) || ch === '}') return ['', i + 1] // 公式里的空格不显示；落单的 `}` 去掉
+  if (ch === '{') {
+    const close = matchBrace(src, i)
+    if (close < 0) return ['', i + 1]
+    return [glanceSeq(src.slice(i + 1, close)), close + 1]
+  }
+  if (ch === '^' || ch === '_') {
+    const [arg, j] = glanceArg(src, i + 1)
+    return [glanceScript(arg, ch, null), j]
+  }
+  if (ch === '\\') return glanceCommand(src, i)
+  if (ch === '~') return [' ', i + 1]
+  // 码点读：代理对整个当一项
+  const cp = String.fromCodePoint(src.codePointAt(i)!)
+  return [cp, i + cp.length]
+}
+
+function glanceArg(src: string, i: number): [string, number] {
+  while (i < src.length && isSpace(src[i])) i++
+  if (i >= src.length) return ['', i]
+  return glanceItem(src, i)
+}
+
+/** 上下标：每个字都有 Unicode 上下标字符就换；否则公式里写成 `^x` / `^(ab)`，正文片段原样。 */
+function glanceScript(raw: string, kind: '^' | '_', fallback: string | null): string {
+  const arg = raw.trim()
+  if (!arg) return ''
+  if (kind === '^' && arg === '∘') return '°'
+  if (kind === '^' && [...arg].every((c) => c === '′' || c === '″')) return arg
+  const table = kind === '^' ? SUP_OF : SUB_OF
+  if ([...arg].every((c) => has(table, c))) return [...arg].map((c) => table[c]).join('')
+  if (fallback !== null) return fallback
+  return kind + (cpLen(arg) > 1 ? `(${arg})` : arg)
+}
+
+const glanceParen = (s: string) =>
+  cpLen(s) > 1 && [...s].some((c) => GLANCE_OPS.includes(c)) ? `(${s})` : s
+
+function glanceCommand(src: string, i: number): [string, number] {
+  if (i + 1 >= src.length) return ['', i + 1]
+  const nxt = src[i + 1]
+  if (!isAsciiLetter(nxt)) {
+    if (has(GLANCE_SPACES, nxt)) return [GLANCE_SPACES[nxt], i + 2]
+    if (nxt === '\\') return [' ', i + 2]
+    const cp = String.fromCodePoint(src.codePointAt(i + 1)!)
+    return [cp, i + 1 + cp.length] // \{ \$ \% \_ …：字面量
+  }
+  let j = i + 1
+  while (j < src.length && isAsciiLetter(src[j])) j++
+  const name = src.slice(i + 1, j)
+  if (FRACS.includes(name)) {
+    const [num, a] = glanceArg(src, j)
+    const [den, b] = glanceArg(src, a)
+    return [`${glanceParen(num)}/${glanceParen(den)}`, b]
+  }
+  if (name === 'sqrt') {
+    let k = j
+    while (k < src.length && isSpace(src[k])) k++
+    if (src[k] === '[') {
+      const end = src.indexOf(']', k)
+      if (end > 0) j = end + 1
+    }
+    const [arg, b] = glanceArg(src, j)
+    return ['√' + glanceParen(arg), b]
+  }
+  if (GLANCE_UNWRAP.includes(name)) return glanceArg(src, j)
+  if (has(GLANCE_ACCENTS, name)) {
+    const [arg, b] = glanceArg(src, j)
+    return [cpLen(arg) === 1 ? arg + GLANCE_ACCENTS[name] : arg, b]
+  }
+  if (has(GLANCE_SPACES, name)) return [GLANCE_SPACES[name], j]
+  if (GLANCE_DROP.includes(name)) {
+    if ((name === 'left' || name === 'right') && src[j] === '.') j++
+    return ['', j]
+  }
+  if (has(GLANCE_SYMBOLS, name)) return [GLANCE_SYMBOLS[name], j]
+  if (GLANCE_FUNCS.includes(name)) {
+    let k = j
+    while (k < src.length && isSpace(src[k])) k++
+    // 紧跟括号、上下标或到头就不留后面的空格（`\sin(x)` → `sin(x)`，`\lim_{x}` → `limₓ`）
+    const tight = k >= src.length || '([^_'.includes(src[k]) || src.startsWith('\\left', k)
+    return [` ${name}` + (tight ? '' : ' '), j]
+  }
+  return [name, j]
+}

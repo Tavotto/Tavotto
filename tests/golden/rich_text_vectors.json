@@ -17,7 +17,8 @@
     }
    ],
    "latex": "cm\\textsuperscript{-1}",
-   "plain": "cm-1"
+   "plain": "cm-1",
+   "glance": "cm⁻¹"
   },
   {
    "name": "legacy-sub",
@@ -38,7 +39,8 @@
     }
    ],
    "latex": "H\\textsubscript{2}O",
-   "plain": "H2O"
+   "plain": "H2O",
+   "glance": "H₂O"
   },
   {
    "name": "legacy-lone-caret",
@@ -51,7 +53,8 @@
     }
    ],
    "latex": "a\\^{}b \\_c 100\\%",
-   "plain": "a^b _c 100%"
+   "plain": "a^b _c 100%",
+   "glance": "a^b _c 100%"
   },
   {
    "name": "legacy-escapes",
@@ -64,7 +67,8 @@
     }
    ],
    "latex": "x\\^{}\\{2\\} \\textbackslash{} y",
-   "plain": "x^{2} \\ y"
+   "plain": "x^{2} \\ y",
+   "glance": "x^{2} \\ y"
   },
   {
    "name": "legacy-dollar-pair",
@@ -77,7 +81,8 @@
     }
    ],
    "latex": "costs \\$5 and \\$10",
-   "plain": "costs $5 and $10"
+   "plain": "costs $5 and $10",
+   "glance": "costs $5 and $10"
   },
   {
    "name": "legacy-backslash-end",
@@ -90,7 +95,8 @@
     }
    ],
    "latex": "C:\\textbackslash{}data\\textbackslash{}",
-   "plain": "C:\\data\\"
+   "plain": "C:\\data\\",
+   "glance": "C:\\data\\"
   },
   {
    "name": "legacy-cjk",
@@ -103,7 +109,8 @@
     }
    ],
    "latex": "样品 A ×10⁵",
-   "plain": "样品 A ×10⁵"
+   "plain": "样品 A ×10⁵",
+   "glance": "样品 A ×10⁵"
   },
   {
    "name": "italic",
@@ -125,7 +132,8 @@
     }
    ],
    "latex": "Temperature \\textit{T} (K)",
-   "plain": "Temperature T (K)"
+   "plain": "Temperature T (K)",
+   "glance": "Temperature T (K)"
   },
   {
    "name": "emph",
@@ -143,7 +151,8 @@
     }
    ],
    "latex": "\\textit{in vivo} test",
-   "plain": "in vivo test"
+   "plain": "in vivo test",
+   "glance": "in vivo test"
   },
   {
    "name": "bold-italic-nested",
@@ -167,7 +176,8 @@
     }
    ],
    "latex": "\\textbf{a \\textit{b}} c",
-   "plain": "a b c"
+   "plain": "a b c",
+   "glance": "a b c"
   },
   {
    "name": "italic-in-bold-canon",
@@ -182,7 +192,8 @@
     }
    ],
    "latex": "\\textbf{\\textit{x}}",
-   "plain": "x"
+   "plain": "x",
+   "glance": "x"
   },
   {
    "name": "script-in-italic",
@@ -201,7 +212,8 @@
     }
    ],
    "latex": "\\textit{x\\textsubscript{i}}",
-   "plain": "xi"
+   "plain": "xi",
+   "glance": "xi"
   },
   {
    "name": "superscript",
@@ -218,7 +230,8 @@
     }
    ],
    "latex": "cm\\textsuperscript{-1}",
-   "plain": "cm-1"
+   "plain": "cm-1",
+   "glance": "cm⁻¹"
   },
   {
    "name": "upright-in-italic",
@@ -241,7 +254,8 @@
     }
    ],
    "latex": "\\textit{a }b\\textit{ c}",
-   "plain": "a b c"
+   "plain": "a b c",
+   "glance": "a b c"
   },
   {
    "name": "textnormal",
@@ -260,7 +274,8 @@
     }
    ],
    "latex": "\\textbf{\\textit{a }}b",
-   "plain": "a b"
+   "plain": "a b",
+   "glance": "a b"
   },
   {
    "name": "grouping-braces",
@@ -278,7 +293,8 @@
     }
    ],
    "latex": "\\textit{g}roup",
-   "plain": "group"
+   "plain": "group",
+   "glance": "group"
   },
   {
    "name": "math-dollar",
@@ -305,7 +321,8 @@
     }
    ],
    "latex": "Rate \\textit{k} = $A e^{-E/RT}$",
-   "plain": "Rate k = A e^{-E/RT}"
+   "plain": "Rate k = A e^{-E/RT}",
+   "glance": "Rate k = Ae^(-E/RT)"
   },
   {
    "name": "math-display-dollar",
@@ -323,7 +340,8 @@
     }
    ],
    "latex": "$\\frac{a}{b}$ end",
-   "plain": "\\frac{a}{b} end"
+   "plain": "\\frac{a}{b} end",
+   "glance": "a/b end"
   },
   {
    "name": "math-paren-bracket",
@@ -346,7 +364,8 @@
     }
    ],
    "latex": "$x^2$ and $y$",
-   "plain": "x^2 and y"
+   "plain": "x^2 and y",
+   "glance": "x² and y"
   },
   {
    "name": "math-in-bold",
@@ -370,7 +389,8 @@
     }
    ],
    "latex": "q \\textbf{$x$ y}",
-   "plain": "q x y"
+   "plain": "q x y",
+   "glance": "q x y"
   },
   {
    "name": "math-escaped-dollar",
@@ -384,7 +404,8 @@
     }
    ],
    "latex": "$a\\$b$",
-   "plain": "a\\$b"
+   "plain": "a\\$b",
+   "glance": "a$b"
   },
   {
    "name": "escapes",
@@ -397,7 +418,8 @@
     }
    ],
    "latex": "50\\% \\& \\# \\_ \\{x\\} \\$5",
-   "plain": "50% & # _ {x} $5"
+   "plain": "50% & # _ {x} $5",
+   "glance": "50% & # _ {x} $5"
   },
   {
    "name": "accents",
@@ -410,7 +432,8 @@
     }
    ],
    "latex": "a\\^{}b \\~{}c",
-   "plain": "a^b ~c"
+   "plain": "a^b ~c",
+   "glance": "a^b ~c"
   },
   {
    "name": "backslash",
@@ -423,7 +446,8 @@
     }
    ],
    "latex": "\\textbackslash{}x \\textbackslash{}y",
-   "plain": "\\x \\y"
+   "plain": "\\x \\y",
+   "glance": "\\x \\y"
   },
   {
    "name": "nbsp",
@@ -436,7 +460,8 @@
     }
    ],
    "latex": "Fig.~1",
-   "plain": "Fig. 1"
+   "plain": "Fig. 1",
+   "glance": "Fig. 1"
   },
   {
    "name": "newline",
@@ -449,7 +474,8 @@
     }
    ],
    "latex": "a\nb",
-   "plain": "a\nb"
+   "plain": "a\nb",
+   "glance": "a\nb"
   },
   {
    "name": "control-space",
@@ -462,7 +488,8 @@
     }
    ],
    "latex": "a b",
-   "plain": "a b"
+   "plain": "a b",
+   "glance": "a b"
   },
   {
    "name": "unknown-command",
@@ -480,7 +507,8 @@
     }
    ],
    "latex": "\\textsc{abc} d",
-   "plain": "\\textsc{abc} d"
+   "plain": "\\textsc{abc} d",
+   "glance": "\\textsc{abc} d"
   },
   {
    "name": "unclosed-command",
@@ -498,7 +526,8 @@
     }
    ],
    "latex": "\\textit\\{x",
-   "plain": "\\textit{x"
+   "plain": "\\textit{x",
+   "glance": "\\textit{x"
   },
   {
    "name": "unpaired-dollar",
@@ -511,7 +540,8 @@
     }
    ],
    "latex": "cost \\$5",
-   "plain": "cost $5"
+   "plain": "cost $5",
+   "glance": "cost $5"
   },
   {
    "name": "lone-caret-underscore",
@@ -524,7 +554,8 @@
     }
    ],
    "latex": "a\\^{}b c\\_d 100\\% x\\&y \\#1",
-   "plain": "a^b c_d 100% x&y #1"
+   "plain": "a^b c_d 100% x&y #1",
+   "glance": "a^b c_d 100% x&y #1"
   },
   {
    "name": "raw-newline",
@@ -537,7 +568,8 @@
     }
    ],
    "latex": "line1\nline2",
-   "plain": "line1\nline2"
+   "plain": "line1\nline2",
+   "glance": "line1\nline2"
   },
   {
    "name": "cjk-italic",
@@ -555,7 +587,8 @@
     }
    ],
    "latex": "温度 \\textit{T}",
-   "plain": "温度 T"
+   "plain": "温度 T",
+   "glance": "温度 T"
   },
   {
    "name": "empty-command",
@@ -568,7 +601,380 @@
     }
    ],
    "latex": "ab",
-   "plain": "ab"
+   "plain": "ab",
+   "glance": "ab"
+  },
+  {
+   "name": "glance-arrhenius",
+   "format": "latex",
+   "text": "$E_a=\\frac{RT^2}{k}\\,\\ln\\frac{k_2}{k_1}$",
+   "runs": [
+    {
+     "text": "E_a=\\frac{RT^2}{k}\\,\\ln\\frac{k_2}{k_1}",
+     "script": "",
+     "math": true
+    }
+   ],
+   "latex": "$E_a=\\frac{RT^2}{k}\\,\\ln\\frac{k_2}{k_1}$",
+   "plain": "E_a=\\frac{RT^2}{k}\\,\\ln\\frac{k_2}{k_1}",
+   "glance": "Eₐ=RT²/k ln k₂/k₁"
+  },
+  {
+   "name": "glance-func-tight",
+   "format": "latex",
+   "text": "$\\sin(\\theta)$ $\\lim_{x\\to 0}$",
+   "runs": [
+    {
+     "text": "\\sin(\\theta)",
+     "script": "",
+     "math": true
+    },
+    {
+     "text": " ",
+     "script": ""
+    },
+    {
+     "text": "\\lim_{x\\to 0}",
+     "script": "",
+     "math": true
+    }
+   ],
+   "latex": "$\\sin(\\theta)$ $\\lim_{x\\to 0}$",
+   "plain": "\\sin(\\theta) \\lim_{x\\to 0}",
+   "glance": "sin(θ) lim_(x→0)"
+  },
+  {
+   "name": "glance-paren-frac",
+   "format": "latex",
+   "text": "$\\left(\\frac{a+b}{c}\\right)^2$",
+   "runs": [
+    {
+     "text": "\\left(\\frac{a+b}{c}\\right)^2",
+     "script": "",
+     "math": true
+    }
+   ],
+   "latex": "$\\left(\\frac{a+b}{c}\\right)^2$",
+   "plain": "\\left(\\frac{a+b}{c}\\right)^2",
+   "glance": "((a+b)/c)²"
+  },
+  {
+   "name": "glance-sqrt-accent-unknown",
+   "format": "latex",
+   "text": "$\\sqrt[3]{x+1}$ $\\hat{x}$ $\\alpah$",
+   "runs": [
+    {
+     "text": "\\sqrt[3]{x+1}",
+     "script": "",
+     "math": true
+    },
+    {
+     "text": " ",
+     "script": ""
+    },
+    {
+     "text": "\\hat{x}",
+     "script": "",
+     "math": true
+    },
+    {
+     "text": " ",
+     "script": ""
+    },
+    {
+     "text": "\\alpah",
+     "script": "",
+     "math": true
+    }
+   ],
+   "latex": "$\\sqrt[3]{x+1}$ $\\hat{x}$ $\\alpah$",
+   "plain": "\\sqrt[3]{x+1} \\hat{x} \\alpah",
+   "glance": "√(x+1) x̂ alpah"
+  },
+  {
+   "name": "glance-degree-escape",
+   "format": "latex",
+   "text": "$90^\\circ$ $50\\%$ $a\\,b\\!c$ $T_{\\max}$",
+   "runs": [
+    {
+     "text": "90^\\circ",
+     "script": "",
+     "math": true
+    },
+    {
+     "text": " ",
+     "script": ""
+    },
+    {
+     "text": "50\\%",
+     "script": "",
+     "math": true
+    },
+    {
+     "text": " ",
+     "script": ""
+    },
+    {
+     "text": "a\\,b\\!c",
+     "script": "",
+     "math": true
+    },
+    {
+     "text": " ",
+     "script": ""
+    },
+    {
+     "text": "T_{\\max}",
+     "script": "",
+     "math": true
+    }
+   ],
+   "latex": "$90^\\circ$ $50\\%$ $a\\,b\\!c$ $T_{\\max}$",
+   "plain": "90^\\circ 50\\% a\\,b\\!c T_{\\max}",
+   "glance": "90° 50% a bc Tₘₐₓ"
+  },
+  {
+   "name": "glance-script-text",
+   "format": "latex",
+   "text": "T\\textsubscript{eff} cm\\textsuperscript{-1}",
+   "runs": [
+    {
+     "text": "T",
+     "script": ""
+    },
+    {
+     "text": "eff",
+     "script": "sub"
+    },
+    {
+     "text": " cm",
+     "script": ""
+    },
+    {
+     "text": "-1",
+     "script": "sup"
+    }
+   ],
+   "latex": "T\\textsubscript{eff} cm\\textsuperscript{-1}",
+   "plain": "Teff cm-1",
+   "glance": "Teff cm⁻¹"
+  },
+  {
+   "name": "glance-unbalanced",
+   "format": "latex",
+   "text": "$\\frac{a}{$ x",
+   "runs": [
+    {
+     "text": "\\frac{a}{",
+     "script": "",
+     "math": true
+    },
+    {
+     "text": " x",
+     "script": ""
+    }
+   ],
+   "latex": "$\\frac{a}{$ x",
+   "plain": "\\frac{a}{ x",
+   "glance": "a/ x"
   }
- ]
+ ],
+ "glance": {
+  "symbols": {
+   "alpha": "α",
+   "beta": "β",
+   "gamma": "γ",
+   "delta": "δ",
+   "epsilon": "ε",
+   "varepsilon": "ε",
+   "zeta": "ζ",
+   "eta": "η",
+   "theta": "θ",
+   "vartheta": "ϑ",
+   "iota": "ι",
+   "kappa": "κ",
+   "lambda": "λ",
+   "mu": "μ",
+   "nu": "ν",
+   "xi": "ξ",
+   "pi": "π",
+   "varpi": "ϖ",
+   "rho": "ρ",
+   "varrho": "ϱ",
+   "sigma": "σ",
+   "varsigma": "ς",
+   "tau": "τ",
+   "upsilon": "υ",
+   "phi": "φ",
+   "varphi": "φ",
+   "chi": "χ",
+   "psi": "ψ",
+   "omega": "ω",
+   "Gamma": "Γ",
+   "Delta": "Δ",
+   "Theta": "Θ",
+   "Lambda": "Λ",
+   "Xi": "Ξ",
+   "Pi": "Π",
+   "Sigma": "Σ",
+   "Upsilon": "Υ",
+   "Phi": "Φ",
+   "Psi": "Ψ",
+   "Omega": "Ω",
+   "times": "×",
+   "cdot": "·",
+   "div": "÷",
+   "pm": "±",
+   "mp": "∓",
+   "le": "≤",
+   "leq": "≤",
+   "ge": "≥",
+   "geq": "≥",
+   "ne": "≠",
+   "neq": "≠",
+   "approx": "≈",
+   "sim": "∼",
+   "simeq": "≃",
+   "equiv": "≡",
+   "propto": "∝",
+   "ll": "≪",
+   "gg": "≫",
+   "infty": "∞",
+   "partial": "∂",
+   "nabla": "∇",
+   "sum": "∑",
+   "prod": "∏",
+   "int": "∫",
+   "oint": "∮",
+   "to": "→",
+   "rightarrow": "→",
+   "leftarrow": "←",
+   "Rightarrow": "⇒",
+   "leftrightarrow": "↔",
+   "uparrow": "↑",
+   "downarrow": "↓",
+   "degree": "°",
+   "circ": "∘",
+   "prime": "′",
+   "AA": "Å",
+   "hbar": "ℏ",
+   "ell": "ℓ",
+   "cdots": "⋯",
+   "ldots": "…",
+   "dots": "…",
+   "langle": "⟨",
+   "rangle": "⟩",
+   "lbrace": "{",
+   "rbrace": "}",
+   "vert": "|",
+   "Vert": "‖",
+   "mid": "|",
+   "in": "∈",
+   "notin": "∉",
+   "subset": "⊂",
+   "cup": "∪",
+   "cap": "∩",
+   "forall": "∀",
+   "exists": "∃",
+   "perp": "⊥",
+   "parallel": "∥",
+   "angle": "∠",
+   "star": "⋆",
+   "ast": "∗",
+   "bullet": "•",
+   "dagger": "†",
+   "emptyset": "∅",
+   "Re": "ℜ",
+   "Im": "ℑ",
+   "aleph": "ℵ",
+   "wedge": "∧",
+   "vee": "∨",
+   "neg": "¬"
+  },
+  "funcs": [
+   "arccos",
+   "arcsin",
+   "arctan",
+   "arg",
+   "cos",
+   "cosh",
+   "cot",
+   "coth",
+   "csc",
+   "deg",
+   "det",
+   "dim",
+   "exp",
+   "gcd",
+   "hom",
+   "inf",
+   "ker",
+   "lg",
+   "lim",
+   "liminf",
+   "limsup",
+   "ln",
+   "log",
+   "max",
+   "min",
+   "Pr",
+   "sec",
+   "sin",
+   "sinh",
+   "sup",
+   "tan",
+   "tanh"
+  ],
+  "unwrap": [
+   "mathrm",
+   "mathit",
+   "mathbf",
+   "mathsf",
+   "mathtt",
+   "mathcal",
+   "mathbb",
+   "mathfrak",
+   "mathscr",
+   "mathdefault",
+   "text",
+   "textrm",
+   "textit",
+   "textbf",
+   "operatorname",
+   "boldsymbol"
+  ],
+  "accents": {
+   "hat": "̂",
+   "widehat": "̂",
+   "bar": "̄",
+   "overline": "̅",
+   "vec": "⃗",
+   "dot": "̇",
+   "ddot": "̈",
+   "tilde": "̃",
+   "widetilde": "̃"
+  },
+  "spaces": {
+   ",": " ",
+   ":": " ",
+   ";": " ",
+   " ": " ",
+   "!": "",
+   "quad": " ",
+   "qquad": " "
+  },
+  "drop": [
+   "left",
+   "right",
+   "displaystyle",
+   "textstyle",
+   "scriptstyle",
+   "limits",
+   "nolimits",
+   "big",
+   "Big",
+   "bigg",
+   "Bigg"
+  ]
+ }
 }
