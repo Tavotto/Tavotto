@@ -397,9 +397,8 @@ export function OverlaySvg() {
 }
 
 /**
- * 箭头 / 直线的拖画预览：直接按新对象的最终样式画（默认色 + 1pt 线宽 +
- * 箭头帽），几何与 ArrowView 同一套（帽长 4×线宽、帽半宽 1.7×线宽、
- * 实心三角端线段回缩 0.75×帽长）——预览即成品。
+ * 箭头 / 直线的拖画预览：中心保持新对象的颜色与几何，外加仅在拖画期间出现的
+ * 选区色描边，使它在纸外的深色画布上也可见。描边不进入文档。
  */
 function DraftLinePreview({
   draft,
@@ -424,8 +423,29 @@ function DraftLinePreview({
   const trim = isArrow ? headLen * 0.75 : 0
   const p2 = { x: b.x - ux * trim, y: b.y - uy * trim }
   return (
-    <g>
+    <g data-draft-line-preview>
       <line
+        data-draft-outline="line"
+        x1={a.x}
+        y1={a.y}
+        x2={p2.x}
+        y2={p2.y}
+        stroke={SEL}
+        strokeWidth={sw + 3}
+        strokeLinecap="round"
+      />
+      {isArrow && len > headLen && (
+        <polygon
+          data-draft-outline="head"
+          points={`${b.x},${b.y} ${b.x - ux * headLen + -uy * headHalf},${b.y - uy * headLen + ux * headHalf} ${b.x - ux * headLen - -uy * headHalf},${b.y - uy * headLen - ux * headHalf}`}
+          fill={SEL}
+          stroke={SEL}
+          strokeWidth={3}
+          strokeLinejoin="round"
+        />
+      )}
+      <line
+        data-draft-content="line"
         x1={a.x}
         y1={a.y}
         x2={p2.x}
@@ -436,6 +456,7 @@ function DraftLinePreview({
       />
       {isArrow && len > headLen && (
         <polygon
+          data-draft-content="head"
           points={`${b.x},${b.y} ${b.x - ux * headLen + -uy * headHalf},${b.y - uy * headLen + ux * headHalf} ${b.x - ux * headLen - -uy * headHalf},${b.y - uy * headLen - ux * headHalf}`}
           fill={color}
         />

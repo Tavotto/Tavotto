@@ -12,6 +12,35 @@ const ai = (key: string, values?: Record<string, unknown>) => translate(key, { n
 /** 会话状态名；未知状态原样透出（后端加了新状态也不会变成空白） */
 export const statusLabel = (status: string) => translate(`status.${status}`, { ns: 'ai', defaultValue: status })
 
+/**
+ * 会话错误码里「AI 这一侧没跑成」的那一类（模型 / 连接 / Agent 进程 / 超时）→ 文案键；别的（检查没过、脚本被改……）→ null。
+ * 后端把稳定码原样放进 `session.error`（`agent_*` 来自内置执行器的 `done.reason`，见 `ai_agents.BuiltinAgent`）；
+ * 这一类不能落到「没通过写回前检查」那句上——候选根本没写出来。不认识的 `agent_*` 归到 `agent_internal`。
+ */
+export const AGENT_ERRORS = [
+  'agent_auth',
+  'agent_quota',
+  'agent_network',
+  'agent_html_response',
+  'agent_refused',
+  'agent_budget',
+  'agent_output_truncated',
+  'agent_max_turns',
+  'agent_tool_error_loop',
+  'agent_internal',
+  'agent_exit_nonzero',
+  'timeout',
+] as const
+export type AgentErrorKey = (typeof AGENT_ERRORS)[number]
+export function agentErrorKey(error: string | null | undefined): AgentErrorKey | null {
+  if (!error) return null
+  if ((AGENT_ERRORS as readonly string[]).includes(error)) return error as AgentErrorKey
+  if (error.startsWith('agent_') || error.startsWith('executor_error:')) return 'agent_internal'
+  return null
+}
+/** 这几种重试也是同样结果，主按钮去改连接 */
+export const fixedByConnection = (key: AgentErrorKey | null) => key === 'agent_auth' || key === 'agent_html_response'
+
 /** 耗时：10s 以内带一位小数（0.2s / 1.8s），一分钟以内取整（18s），再长写成「2m 05s」 */
 export function formatDuration(ms: number): string {
   const s = Math.max(0, ms) / 1000

@@ -111,12 +111,16 @@ def _clean(rec: dict, existing_ids: set[str] = frozenset()) -> dict:
     # 只认目录里的原因码，且只有真被拒才留（断网这类暂时性失败不落盘，免得永远显示出错）
     if rec.get("last_error") in ai_catalog.REASONS:
         out_extra = {**out_extra, "last_error": rec["last_error"]}
+    base_url = str(rec.get("base_url") or "").strip().rstrip("/")
+    # `ensure_api_root` 核过的地址：只在它仍等于当前地址时保留——改了地址就自然失效、下次用时重核
+    if base_url and rec.get("api_root_ok") == base_url:
+        out_extra = {**out_extra, "api_root_ok": base_url}
     return {
         **out_extra,
         "id": pid,
         "label": str(rec.get("label") or pid).strip()[:60],
         "agent": agent,
-        "base_url": str(rec.get("base_url") or "").strip().rstrip("/"),
+        "base_url": base_url,
         "api_key": str(rec.get("api_key") or "").strip(),
         "models": models,
         "default_model": default_model,
@@ -401,6 +405,44 @@ def update_oauth(pid: str, oauth: dict | None) -> dict | None:
         return {"providers": providers}, providers[idx]
 
     return _update(tx)
+
+
+def ensure_api_root(rec: dict | None) -> dict | None:
+    """OpenAI 系记录（Codex 注入 / 内置执行器）的地址少写了 `/v1`：用前核一次、确认了就改正并写回（`ai_catalog.api_root_fix`）。
+
+    **每个地址只核一次**：结论（不用改 / 改成了什么）记进 `api_root_ok`，之后同一地址不再联网；联网失败这次照旧用原地址、
+    不记，下次再核。账号登录记录、Anthropic 系（它们自己拼 `/v1/messages`）、没地址 / 没密钥的不碰。
+    → 用得上的那条记录（改正后的或原样的）；`rec` 为 None 原样返回。会联网（最多两次、各 5 s），调用方放在锁外。"""
+    if (
+        not rec
+        or rec.get("auth") == "oauth"
+        or _family(str(rec.get("agent") or "")) != FAMILY_OPENAI
+        or incompatibility(
+            rec
+        )  # 旧协议记录照旧由 spawn 前的 `ai_endpoint_incompatible` 拒绝，不碰它
+    ):
+        return rec
+    base = str(rec.get("base_url") or "").strip().rstrip("/")
+    key = str(rec.get("api_key") or "").strip()
+    if not base or not key or rec.get("api_root_ok") == base:
+        return rec
+    verdict = ai_catalog.api_root_fix(base, key)
+    if verdict == ai_catalog.ROOT_UNKNOWN:
+        return rec
+    fixed = base if verdict == ai_catalog.ROOT_OK else verdict
+    pid = rec.get("id")
+
+    def tx(ai: dict):
+        providers = _providers_in(ai)
+        idx = next((i for i, p in enumerate(providers) if p.get("id") == pid), -1)
+        # 核的这段时间里用户改了地址 / 删了这条：不覆盖用户的新值
+        if idx < 0 or str(providers[idx].get("base_url") or "").rstrip("/") != base:
+            return {}, None
+        # 只动这两个字段：整条过 `_clean` 会把别的字段（旧协议标记等）顺手「规范化」掉
+        providers[idx] = {**providers[idx], "base_url": fixed, "api_root_ok": fixed}
+        return {"providers": providers}, providers[idx]
+
+    return _update(tx) or rec
 
 
 def _harden() -> None:

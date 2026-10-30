@@ -1421,6 +1421,10 @@ def run(
             ai_oauth.ensure_fresh(pre_chosen)
         except ai_oauth.NeedsLogin:
             needs_login = {"endpoint": pre_chosen.get("label") or pre_chosen.get("id") or ""}
+    elif pre_chosen is not None:
+        # 第三方 Key 接口的地址少写了 `/v1`（TVD-J5QG）：spawn 之前核一次、确认了就改正写回。每个地址只联网一次，同样放在锁外；
+        # 下面重新 `resolve` 拿到的就是改正后的记录
+        ai_providers.ensure_api_root(pre_chosen)
     script_path = Path(figures_dir) / script
     project_key = str(Path(figures_dir).resolve())
     # 内置执行器**一律**走候选工作区 + 提交前检查 + 事务写回（与 TAF 实验开关无关）：它不是用户装的 CLI，

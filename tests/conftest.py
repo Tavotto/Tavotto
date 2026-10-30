@@ -205,6 +205,16 @@ def _isolated_system_pythons(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _offline_api_root_probe(monkeypatch):
+    """接口地址探测（`ai_catalog.api_root_fix`：保存连接 / spawn 之前核地址少没少 `/v1`）会真去请求服务商。用例里存的是
+    真实厂商地址（api.deepseek.com …），不桩就会在测试进程里联网。默认「判不了」（不联网、记录不改，与改动前的行为一致）；
+    测它本身的用例自己注入 `_probe_kind`。"""
+    from tavotto.engine import ai_catalog
+
+    monkeypatch.setattr(ai_catalog, "_probe_kind", lambda *_a, **_k: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_windows_registry(monkeypatch):
     """PEP 514 注册表是 Windows 机器级来源（`userenvs._windows_registry_pythons`）：CI 的 Windows runner 上真有
     `PythonCore\\3.x`，「候选应为空 / 机器线索只有两条」的用例会多出五条。默认读空注册表；需要内容的用例自己注入 `reader`。"""

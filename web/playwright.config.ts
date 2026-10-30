@@ -65,6 +65,7 @@ export default defineConfig({
         // Delayed renders exercise pointer routing and resize status in WKWebView as well as Chromium.
         'drag-sync.spec.ts',
         'golden-paths.spec.ts',
+        'dark-draft-arrow.spec.ts',
         'a11y.spec.ts',
         'keyboard-golden-path.spec.ts',
         'twin-axes-pick.spec.ts',
@@ -81,6 +82,8 @@ export default defineConfig({
         // 排版时间线（ADR 0101）：节点缩略图在浏览器里用 canvas 合成——WKWebView 编不出
         // webp（退回 png）、画 SVG 会不会 taint 画布，只有这个引擎答得了
         'layout-timeline.spec.ts',
+        // 位图加载期间旧图仍须显示：macOS 桌面壳使用 WebKit。
+        'render-swap-continuity.spec.ts',
         // 时间线行的真实双击（前导 click 序列）与显式钮：WebKit 的事件序列要亲自量
         'timeline-row-actions.spec.ts',
         // 顶栏窄宽度下两两不重叠：量的是字宽，WebKit 的字体度量与 chromium 不同

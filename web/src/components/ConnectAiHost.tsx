@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
+import { useAiStore } from '@/store/aiStore'
 import { useConnectAiStore } from '@/store/connectAiStore'
+import { CompatibleEndpoint } from './settings/connectAi/CompatibleEndpoint'
 import { refreshCaps, useCapsWatch } from './settings/connectAi/useCapsWatch'
 import { ConnectAiDialog } from './settings/connectAi/ConnectAiDialog'
 
@@ -13,11 +15,15 @@ export function ConnectAiHost() {
   const onConnected = useConnectAiStore((s) => s.onConnected)
   const name = useConnectAiStore((s) => s.name)
   const close = useConnectAiStore((s) => s.close)
+  const editing = useConnectAiStore((s) => s.editing)
+  const closeEditor = useConnectAiStore((s) => s.closeEditor)
+  const editingEndpoint = useAiStore((s) => (editing ? s.caps?.endpoints?.find((e) => e.id === editing) : undefined))
   useEffect(() => {
     // 打开时强刷一次：用户可能刚在终端里装好 / 登录好了；没探测过也走这一条
     if (open) void refreshCaps()
   }, [open])
   useCapsWatch(open)
+  if (editingEndpoint) return <CompatibleEndpoint existing={editingEndpoint} onClose={closeEditor} onSaved={closeEditor} />
   if (!open) return null
   return <ConnectAiDialog open reason={reason} name={name ?? undefined} onClose={close} onConnected={() => onConnected?.()} />
 }

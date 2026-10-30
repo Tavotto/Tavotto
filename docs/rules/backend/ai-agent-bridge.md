@@ -167,6 +167,12 @@ order: 240
   127.0.0.0/8 / `::1` 例外，字面判不解析 DNS，且回环 http **不经任何代理**（`ProxyHandler({})`，否则 HTTP_PROXY 会拿到明文密钥）；其他 http → `insecure_url`）**；任何失败只回稳定原因码（`no_key /
   key_origin_mismatch / insecure_url / timeout / unauthorized / bad_response / network`）、永远 200、不抛，界面保持预设 `models_hint` / 用户手填的列表。密钥只进请求头，
   日志只写接口 id 与原因码，缓存文件里没有密钥。看护：`tests/test_ai_catalog.py`、`EndpointDialog.test.tsx`。
+  **地址少写 `/v1`（TVD-J5QG）**：型号清单自己补 `/v1`，OpenAI 系协议却直接拼 `{base}/responses`——中转站地址漏写 `/v1` 时型号拿得到、
+  请求打到网站首页。`ai_catalog.api_root_fix` 是唯一判据：`GET {base}/models` 回网页且 `GET {base}/v1/models` 回 JSON（含 401 这类 JSON 错误）
+  才改成 `{base}/v1`，其余不猜；`ai_providers.ensure_api_root` 每个地址只核一次（结论记 `api_root_ok`，改了地址自然失效；联网失败不记），
+  只动 `base_url` / `api_root_ok` 两个字段，不碰账号登录 / Anthropic 系 / 旧协议记录。调用点三处：保存 Key 连接后、`ai_bridge.run` spawn 前
+  （与 `ensure_fresh` 同在锁外）、AI 修复挑连接 `refresh=True` 时。内置执行器收到 2xx 网页 → `network/html_response` → 会话错误
+  `agent_html_response`，失败卡主按钮「检查连接」。测试进程默认把 `_probe_kind` 桩成判不了（`tests/conftest.py`），测它的用例自己注入。
 - **账号登录（设备码 OAuth，`engine/ai_oauth.py`，ADR 0146，状态「提议」）**：只给**拿到 Tavotto 自有 client_id** 的厂商
   （目前只有 MiniMax 国内 / 海外；Kimi 走官方命令行，不在此列；流程按规格表可扩展）。client_id 只在 `ai_oauth.CLIENT_IDS`（出厂 `None`）与环境变量 `TAVOTTO_OAUTH_CLIENT_ID_MINIMAX`；
   `None` 时 capabilities 的 `oauth.<厂商>.oauth_available` 为 false、**界面不出现入口**（不放占位）。源码里不写别家的 client_id、

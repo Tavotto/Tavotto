@@ -1248,6 +1248,7 @@
         "agent_output_truncated": "模型达到单次响应上限，未能写完脚本；没有采用候选。",
         "agent_budget": "转换达到时间或用量上限，已停止；没有采用候选。",
         "agent_network": "模型服务请求失败，可以重试。",
+        "agent_html_response": "连接地址打开的是网页，不是接口，请检查连接地址。",
         "agent_auth": "模型凭据无效或已过期，请检查 AI 连接。",
         "agent_quota": "模型服务额度不足或正在限流。",
         "agent_refused": "模型拒绝了这次转换。",

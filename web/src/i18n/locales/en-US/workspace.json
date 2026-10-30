@@ -1314,6 +1314,7 @@
         "agent_output_truncated": "The model reached its response limit before finishing the script. No candidate was adopted.",
         "agent_budget": "The conversion reached its time or token limit. No candidate was adopted.",
         "agent_network": "The model service request failed. You can retry.",
+        "agent_html_response": "The connection address opens a web page, not an API. Check the address.",
         "agent_auth": "The model credential is invalid or expired. Check the AI connection.",
         "agent_quota": "The model service has no available quota or is rate limited.",
         "agent_refused": "The model declined this conversion.",

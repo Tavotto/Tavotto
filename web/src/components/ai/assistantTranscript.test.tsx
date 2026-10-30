@@ -34,6 +34,11 @@ import { Markdown } from './Markdown'
 import { formatDuration, parseUnifiedDiff, type LineRow } from './transcriptModel'
 
 const refreshProjectNow = vi.hoisted(() => vi.fn(async () => {}))
+const requestCheckConnection = vi.hoisted(() => vi.fn())
+vi.mock('@/store/connectAiStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/connectAiStore')>()),
+  requestCheckConnection,
+}))
 vi.mock('@/store/liveSync', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/store/liveSync')>()),
   refreshProjectNow,
@@ -417,6 +422,19 @@ describe('发送失败（§6.7）', () => {
 })
 
 describe('会话失败的重试', () => {
+  it('连接地址打开的是网页（agent_html_response）：一句话 + 主按钮「检查连接」，不给只会再失败的重试', async () => {
+    requestCheckConnection.mockClear()
+    await mount([session({ status: 'failed', error: 'agent_html_response' })])
+    const notice = q('[data-ai-error="session"]')!
+    expect(notice.textContent).toContain(ai('sessionError.agent_html_response'))
+    expect(notice.textContent).not.toContain(ai('notice.taskRejected'))
+    expect(notice.querySelector('[data-ai-retry]')).toBeNull()
+    const btn = notice.querySelector<HTMLButtonElement>('[data-ai-check-connection]')!
+    expect(btn.textContent).toBe(ai('notice.checkConnection'))
+    await act(async () => btn.click())
+    expect(requestCheckConnection).toHaveBeenCalledTimes(1)
+  })
+
   it('兄弟面板（同一脚本的另一张图）发起的失败轮次：看得到，但不给重试（Codex #827 P1）', async () => {
     await mount([session({ status: 'failed', error: 'boom', panelId: 'p-sibling' })])
     expect(q('[data-ai-error="session"]')).not.toBeNull()
@@ -538,6 +556,36 @@ describe('任务结局（TAF Phase 3c）：只翻译 task.outcome', () => {
     const detail = await openDetail()
     expect(detail).toContain('plan_rejected')
     expect(detail).toContain('axis.range')
+  })
+
+  it('AI 这一侧没跑成（agent_network）+ outcome failed：说具体原因，不说「没通过写回前检查」；原始码只在详情，仍可重试', async () => {
+    await mount([session({ status: 'failed', changed: false, error: 'agent_network', task: task('failed', true) })])
+    expect(status()).toBe(ai('status.failed'))
+    const card = q('[data-ai-error="session"]')!
+    expect(card.textContent).toContain(ai('sessionError.agent_network'))
+    expect(card.textContent).not.toContain(ai('notice.taskRejected'))
+    expect(card.textContent).not.toContain('agent_network')
+    expect(card.dataset.aiTaskOutcome).toBeUndefined()
+    expect(card.querySelector('[data-ai-retry]')).not.toBeNull()
+    expect(await openDetail()).toContain('agent_network')
+  })
+
+  it('凭据无效（agent_auth）：主按钮「检查连接」；不认识的 agent_* / executor_error:* 落到通用的「AI 运行出错」', async () => {
+    requestCheckConnection.mockClear()
+    await mount([
+      session({ id: 'a', status: 'failed', changed: false, error: 'agent_auth', task: task('failed') }),
+    ])
+    const card = q('[data-ai-error="session"]')!
+    expect(card.textContent).toContain(ai('sessionError.agent_auth'))
+    expect(card.querySelector('[data-ai-retry]')).toBeNull()
+    await act(async () => card.querySelector<HTMLButtonElement>('[data-ai-check-connection]')!.click())
+    expect(requestCheckConnection).toHaveBeenCalledTimes(1)
+    for (const error of ['agent_something_new', 'executor_error:KeyError']) {
+      await mount([session({ id: 'b', status: 'failed', changed: false, error, task: task('failed') })])
+      const c = q('[data-ai-error="session"]')!
+      expect(c.textContent).toContain(ai('sessionError.agent_internal'))
+      expect(c.textContent).not.toContain(error)
+    }
   })
 
   it('completed + 没改动：有意说「已完成，脚本没有变化」，不说「核对一致」（没写回就没有渲染层核对）', async () => {

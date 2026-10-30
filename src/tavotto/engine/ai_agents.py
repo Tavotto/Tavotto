@@ -1326,6 +1326,10 @@ class BuiltinAgent(AgentDefinition):
         ):
             # Preserve only closed short codes, never model/provider error text.
             reason = str(ev["reason"])
+            if reason == "network" and ev.get("detail") == "html_response":
+                # 接口地址打开的是网页：比「连不上」说得准，前端失败卡据此给「检查连接」
+                state["runner_error"] = "agent_html_response"
+                return [("message", "连接地址打开的是网页，不是接口")]
             if reason in self._FAILURES:
                 state["runner_error"] = (
                     "agent_output_truncated"

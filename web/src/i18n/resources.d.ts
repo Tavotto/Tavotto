@@ -119,6 +119,7 @@ export default interface Resources {
       "resend": "重新发送"
     },
     "notice": {
+      "checkConnection": "检查连接",
       "dataFigureFailedWritten": "新脚本已写进项目，但画出来的数据与 CSV 对不上；不对的话可以删掉这份新脚本。",
       "dataFigureNeedsInput": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列。",
       "dataFigureNeedsInputExample": "没能判断哪列做横轴、哪列做纵轴。请在指令里点名这两列，例如“画 {{y}} 随 {{x}} 的变化”。",
@@ -221,6 +222,20 @@ export default interface Resources {
       "taskRejected": "修改没通过写回前检查，项目未改动",
       "taskVerified": "已改，数据核对一致",
       "taskVerifiedCorrected_other": "已改（自动修正 {{count}} 次），数据核对一致"
+    },
+    "sessionError": {
+      "agent_auth": "模型凭据无效或已过期。",
+      "agent_budget": "这次修改用量超出上限，已停止。",
+      "agent_exit_nonzero": "AI 这次运行出错了。",
+      "agent_html_response": "连接地址打开的是网页，不是接口。",
+      "agent_internal": "AI 这次运行出错了。",
+      "agent_max_turns": "这次修改步骤过多，已停止。",
+      "agent_network": "连不上模型服务。",
+      "agent_output_truncated": "模型单次回复达到上限，没能写完。",
+      "agent_quota": "模型服务额度不足或正在限流，稍后再试。",
+      "agent_refused": "模型拒绝了这次修改。",
+      "agent_tool_error_loop": "AI 反复出错，已停止。",
+      "timeout": "这次修改超时，已停止。"
     },
     "status": {
       "aiAlreadyRan": "这条指令已经执行过（任务记录已被删除），不会再次发送。",
@@ -6112,6 +6127,7 @@ export default interface Resources {
         "fail": {
           "agent_auth": "模型凭据无效或已过期，请检查 AI 连接。",
           "agent_budget": "转换达到时间或用量上限，已停止；没有采用候选。",
+          "agent_html_response": "连接地址打开的是网页，不是接口，请检查连接地址。",
           "agent_internal": "转换执行器出错，可以审阅并发送私密问题报告。",
           "agent_max_turns": "转换达到步骤上限，已停止。",
           "agent_network": "模型服务请求失败，可以重试。",
