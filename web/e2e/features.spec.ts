@@ -560,8 +560,16 @@ test(
     // 选中末尾一个字，点「斜体（选中的字）」：只有那个字变斜体
     const key0 = await waitExact(page)
     await field.click()
-    await page.keyboard.press('End')
-    await page.keyboard.press('Shift+ArrowLeft')
+    // 编辑器在 mouseup 之后还会异步落一次点击处的选区（ProseMirror），紧跟着按的 End 可能被它盖回点击处——
+    // CI 上慢机器选中的就是框正中那个字。按到光标真在末尾、选区真是末字为止，再点斜体
+    const selected = () => page.evaluate(() => window.getSelection()?.toString() ?? '')
+    await expect
+      .poll(async () => {
+        await page.keyboard.press('End')
+        await page.keyboard.press('Shift+ArrowLeft')
+        return selected()
+      })
+      .toBe(title.slice(-1))
     await page.locator('[data-prop="text"] [data-rich-action="italic"]').click()
     await expect(field.locator('em')).toHaveText(title.slice(-1))
     await expect(field).toHaveText(title)
