@@ -74,7 +74,7 @@ import {
   type CommitOptions,
   type HistoryEntry,
 } from './documentStore'
-import { finishActiveGesture } from './gestureCoordinator'
+import { finishActiveGesture, finishFocusedRichText } from './gestureCoordinator'
 import { writeBoundProjectFile } from './projectSave'
 import { captureSaveContext, reportSaveSkipped, stillCurrent } from './saveContext'
 import { useInteractionStore } from './interactionStore'
@@ -570,6 +570,7 @@ function afterSwitch(): void {
  * 事务开着、值还没落定的中间态（与 runUndoRedo 同一条理由，issue #131）。
  */
 export async function runManualSave(): Promise<void> {
+  finishFocusedRichText()
   finishActiveGesture()
   const ui = useUiStore.getState()
   // 按下 ⌘S 那一刻的排版 / 项目 / 绑定：整条链只用它（`saveContext.ts`）

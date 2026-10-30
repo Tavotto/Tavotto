@@ -22,6 +22,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import {
   cancelActivePointerGesture,
   finishActiveGesture,
+  finishFocusedRichText,
   yieldsCanvasShortcuts,
 } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -174,6 +175,7 @@ export function useKeyboard() {
       e.stopPropagation()
       finishNudge()
       if (e.shiftKey) {
+        finishFocusedRichText()
         finishActiveGesture()
         useUiStore.getState().setLayoutOpen(true, 'save')
       } else void runManualSave()

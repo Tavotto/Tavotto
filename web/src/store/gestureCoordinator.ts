@@ -63,6 +63,12 @@ export function finishActiveGesture(): void {
   }
 }
 
+/** 保存前让富文本框失焦：它会先冲刷组字期暂存的内容，再结束宿主的事务。 */
+export function finishFocusedRichText(): void {
+  const el = document.activeElement
+  if (el instanceof HTMLElement && el.matches('[data-rich-text], [data-rich-source]')) el.blur()
+}
+
 /**
  * 此刻开着的那一次指针追踪（拖动 / 缩放 / 框选 / 绘制……）的「取消」出口；null = 没有。
  * 由 `canvas/interactions.trackPointer` 登记（为什么要有这个出口见那里）；住在 store 层是因为
