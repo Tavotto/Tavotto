@@ -72,7 +72,43 @@ pub struct InstallFiles {
     pub exe: bool,
 }
 
-/// 启动失败的结构化事实：阶段 + 稳定码 + 退出码 + 安装文件事实。**不含任何文本**——人读的报错原文走 error.html 的 `msg`，
+/// launch 阶段 spawn 失败时操作系统错误的类别（闭集，进 shell 报告；不是错误原文）。`other` 是兜底。
+/// 用来区分「杀软 / 策略拦了」「文件坏了」「权限不对」——`sidecar_spawn_failed` 本身分不出来（TVD-JNZE）。
+pub const SPAWN_ERRORS: &[&str] = &[
+    "access_denied",
+    "virus_detected",
+    "blocked_by_policy",
+    "bad_executable",
+    "file_in_use",
+    "not_found",
+    "other",
+];
+
+/// 把 spawn 的系统错误归入 [`SPAWN_ERRORS`]。纯函数：`windows` 由调用方传 `cfg!(windows)`，两套错误号都能在任一平台上测。
+pub fn spawn_error_kind(raw: Option<i32>, kind: std::io::ErrorKind, windows: bool) -> &'static str {
+    use std::io::ErrorKind;
+    let by_raw = match (windows, raw) {
+        // ERROR_VIRUS_INFECTED / ERROR_VIRUS_DELETED：Defender 等杀软在 CreateProcess 时拦下
+        (true, Some(225 | 226)) => Some("virus_detected"),
+        // ERROR_ACCESS_DISABLED_BY_POLICY（SRP / AppLocker）/ ERROR_SYSTEM_INTEGRITY_POLICY_VIOLATION（WDAC）
+        (true, Some(1260 | 4551)) => Some("blocked_by_policy"),
+        // ERROR_BAD_FORMAT / ERROR_BAD_EXE_FORMAT / ERROR_EXE_MACHINE_TYPE_MISMATCH：文件损坏或下载不完整
+        (true, Some(11 | 193 | 216)) => Some("bad_executable"),
+        // ERROR_SHARING_VIOLATION / ERROR_LOCK_VIOLATION：杀软正在扫描或另一个进程占着
+        (true, Some(32 | 33)) => Some("file_in_use"),
+        // ENOEXEC / ETXTBSY（macOS 与 Linux 同号）
+        (false, Some(8)) => Some("bad_executable"),
+        (false, Some(26)) => Some("file_in_use"),
+        _ => None,
+    };
+    by_raw.unwrap_or(match kind {
+        ErrorKind::PermissionDenied => "access_denied",
+        ErrorKind::NotFound => "not_found",
+        _ => "other",
+    })
+}
+
+/// 启动失败的结构化事实：阶段 + 稳定码 + 退出码 + 安装文件事实 + spawn 错误类别。**不含任何文本**——人读的报错原文走 error.html 的 `msg`，
 /// 那是另一条链路，不进 shell 报告。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct FailureInfo {
@@ -81,6 +117,8 @@ pub struct FailureInfo {
     pub exit_code: Option<i32>,
     /// 只在 locate 阶段失败时有值；其余阶段（文件都找到了）为 `None`。
     pub install_files: Option<InstallFiles>,
+    /// 只在 launch 阶段 spawn 失败时有值（[`SPAWN_ERRORS`] 之一）；其余为 `None`。
+    pub spawn_error: Option<&'static str>,
 }
 
 impl FailureInfo {
@@ -90,11 +128,17 @@ impl FailureInfo {
             code,
             exit_code: None,
             install_files: None,
+            spawn_error: None,
         }
     }
 
     pub fn with_install_files(mut self, files: Option<InstallFiles>) -> Self {
         self.install_files = files;
+        self
+    }
+
+    pub fn with_spawn_error(mut self, kind: &'static str) -> Self {
+        self.spawn_error = Some(kind);
         self
     }
 }
@@ -172,15 +216,16 @@ fn gate(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(), &'s
     )
 }
 
-/// 「重新安装」（允许同版本）适用的失败码——只有文件丢失一种。别的失败（握手超时、启动崩溃……）
-/// 重装同一个版本修不好，也就不放行同版本安装。
+/// 「重新安装」（允许同版本）适用的失败码：文件丢失（`sidecar_not_found`）与文件在但系统拒绝运行
+/// （`sidecar_spawn_failed`：杀软拦截、文件损坏、权限不对——重启都修不好，重装同一个版本最可能一下修好，TVD-JNZE）。
+/// 别的失败（握手超时、启动崩溃……）重装同一个版本修不好，也就不放行同版本安装。
 pub const REINSTALL_DENY_NOT_APPLICABLE: &str = "reinstall_not_applicable";
 
 pub fn reinstall_applies(code: &str) -> bool {
-    code == code::SIDECAR_NOT_FOUND
+    code == code::SIDECAR_NOT_FOUND || code == code::SIDECAR_SPAWN_FAILED
 }
 
-/// 纯判据：在 [`decide`]（可信页面 + 从未进入编辑态）之上再要求当前失败码确实是 `sidecar_not_found`。
+/// 纯判据：在 [`decide`]（可信页面 + 从未进入编辑态）之上再要求当前失败码满足 [`reinstall_applies`]。
 /// 同版本安装的放行点只有这一处。
 pub fn decide_reinstall(
     label: &str,
@@ -223,8 +268,8 @@ pub struct Status {
     update: bool,
     /// 启动诊断可发送（环境变量只能关闭它，不能改地址）。
     upload: bool,
-    /// 页面主按钮该是「重新安装」：可用 + 更新通道已配置 + 失败码是 `sidecar_not_found`（文件丢失，
-    /// 重启修不好）。判据只有 [`reinstall_applies`] 这一个出处，页面不自己猜。
+    /// 页面主按钮该是「重新安装」：可用 + 更新通道已配置 + 失败码满足 [`reinstall_applies`]（文件丢失 /
+    /// 系统拒绝运行，重启修不好）。判据只有 [`reinstall_applies`] 这一个出处，页面不自己猜。
     reinstall: bool,
 }
 
@@ -314,7 +359,7 @@ pub async fn rescue_update_install(
 
 /// 重新安装当前版本（文件丢失时的出路）：走同一个协调器——同一把锁、内置公钥验签、`run_install_expecting`
 /// 核对版本——但允许**同版本**。同版本放行只在这条命令里（`app_update::reinstall_builder`），且先过
-/// [`gate_reinstall`]：可信页面 + 从未进入编辑态 + 失败码是 `sidecar_not_found`。装完由页面调 `rescue_retry` 重启。
+/// [`gate_reinstall`]：可信页面 + 从未进入编辑态 + 失败码满足 [`reinstall_applies`]。装完由页面调 `rescue_retry` 重启。
 #[tauri::command]
 pub async fn rescue_reinstall(
     app: tauri::AppHandle,
@@ -367,6 +412,7 @@ fn ensure_prepared(app: &tauri::AppHandle, state: &RescueState) -> Prepared {
         code: info.code.to_string(),
         exit_code: info.exit_code,
         install_files: info.install_files,
+        spawn_error: info.spawn_error,
         created_at: now_iso(),
     });
     *slot = Some(p.clone());
@@ -523,15 +569,19 @@ mod tests {
     }
 
     #[test]
-    fn same_version_reinstall_needs_the_trusted_page_a_clean_window_and_the_missing_files_code() {
+    fn same_version_reinstall_needs_the_trusted_page_a_clean_window_and_a_reinstallable_code() {
         let page = u("tauri://localhost/error.html");
         let missing = Some(code::SIDECAR_NOT_FOUND);
-        assert_eq!(
-            decide_reinstall("main", Some(&page), false, missing),
-            Ok(())
-        );
-        // 失败码不是 sidecar_not_found：重装同一个版本修不好，不放行（闭集里每一个别的码都拒）
-        for c in CODES.iter().filter(|c| **c != code::SIDECAR_NOT_FOUND) {
+        let reinstallable = [code::SIDECAR_NOT_FOUND, code::SIDECAR_SPAWN_FAILED];
+        for c in reinstallable {
+            assert_eq!(
+                decide_reinstall("main", Some(&page), false, Some(c)),
+                Ok(()),
+                "{c}"
+            );
+        }
+        // 文件丢失 / 拒绝运行以外的码：重装同一个版本修不好，不放行（闭集里每一个别的码都拒）
+        for c in CODES.iter().filter(|c| !reinstallable.contains(c)) {
             assert_eq!(
                 decide_reinstall("main", Some(&page), false, Some(c)),
                 Err(REINSTALL_DENY_NOT_APPLICABLE),
@@ -560,6 +610,34 @@ mod tests {
     }
 
     #[test]
+    fn spawn_errors_fall_into_the_closed_set_by_platform_error_number() {
+        use std::io::ErrorKind::{NotFound, Other, PermissionDenied};
+        for (raw, kind, windows, want) in [
+            (Some(5), PermissionDenied, true, "access_denied"),
+            (Some(225), Other, true, "virus_detected"),
+            (Some(226), Other, true, "virus_detected"),
+            (Some(1260), Other, true, "blocked_by_policy"),
+            (Some(4551), Other, true, "blocked_by_policy"),
+            (Some(193), Other, true, "bad_executable"),
+            (Some(216), Other, true, "bad_executable"),
+            (Some(32), Other, true, "file_in_use"),
+            (Some(2), NotFound, true, "not_found"),
+            (Some(1455), Other, true, "other"),
+            (Some(13), PermissionDenied, false, "access_denied"),
+            (Some(8), Other, false, "bad_executable"),
+            (Some(26), Other, false, "file_in_use"),
+            // 同一个错误号在另一个平台上不是同一件事：Unix 的 8 不按 Windows 解释，反之亦然
+            (Some(225), Other, false, "other"),
+            (Some(8), Other, true, "other"),
+            (None, Other, true, "other"),
+        ] {
+            let got = spawn_error_kind(raw, kind, windows);
+            assert_eq!(got, want, "{raw:?} {kind:?} windows={windows}");
+            assert!(SPAWN_ERRORS.contains(&got));
+        }
+    }
+
+    #[test]
     fn the_entered_flag_only_ever_goes_one_way() {
         let s = RescueState::default();
         assert!(!s.entered());
@@ -581,6 +659,7 @@ mod tests {
             code: "sidecar_timeout".into(),
             exit_code: None,
             install_files: None,
+            spawn_error: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }));
         s.set_failure(FailureInfo::new("launch", "sidecar_spawn_failed"));

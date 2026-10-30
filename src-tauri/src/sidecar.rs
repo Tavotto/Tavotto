@@ -47,6 +47,11 @@ impl StartError {
         self
     }
 
+    fn with_spawn_error(mut self, kind: &'static str) -> Self {
+        self.info = self.info.with_spawn_error(kind);
+        self
+    }
+
     fn new(stage: &'static str, code: &'static str, message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -362,6 +367,11 @@ impl Sidecar {
                     &e.to_string(),
                 ),
             )
+            .with_spawn_error(crate::rescue::spawn_error_kind(
+                e.raw_os_error(),
+                e.kind(),
+                cfg!(windows),
+            ))
         })?;
 
         // 凭据走 stdin 首行；这条管道随后保持打开作为「父进程还活着」的信号。
@@ -751,6 +761,8 @@ mod tests {
             (e.info.stage, e.info.code),
             ("launch", "sidecar_spawn_failed")
         );
+        // 没有执行权限 = EACCES：报告里记闭集类别，不记原文
+        assert_eq!(e.info.spawn_error, Some("access_denied"));
     }
 
     #[test]
