@@ -73,6 +73,7 @@ __all__ = [
     "install_unreadable_import_skipper",
     "skip_events",
     "unreadable_folder_fact",
+    "unreadable_folder_facts",
     "drop_script_dir_from_sys_path",
     "load_engine_modules",
 ]
@@ -553,6 +554,13 @@ def _top_module(rel: str) -> str:
 def unreadable_folder_fact(
     exc: BaseException, baseline, project_roots, interpreter_dirs=(), blocked_files=None
 ) -> dict:
+    """公开事实（只有目录名与模块名）；判据与私有部分见 `unreadable_folder_facts`。"""
+    return unreadable_folder_facts(exc, baseline, project_roots, interpreter_dirs, blocked_files)[0]
+
+
+def unreadable_folder_facts(
+    exc: BaseException, baseline, project_roots, interpreter_dirs=(), blocked_files=None
+) -> tuple[dict, dict]:
     """失败是不是「脚本加进 `sys.path` 的项目外目录读不了」：是则回 `{"folder": 目录名}`，否则 `{}`。
 
     判据（全部成立才算）：异常链里有 `PermissionError`（errno 13）且带文件名；文件落在某个 `sys.path` 目录下；
@@ -561,7 +569,11 @@ def unreadable_folder_fact(
     认得出才有），不带路径。
 
     另需**import 失败的证据**：`PermissionError` 的文件必须是查找器当场登记过的「命中了但读不了」的模块文件
-    （`blocked_files`，默认取进程里装着的那个查找器）；脚本自己读写该目录下的数据文件撞到权限错误不出这个事实。"""
+    （`blocked_files`，默认取进程里装着的那个查找器）；脚本自己读写该目录下的数据文件撞到权限错误不出这个事实。
+
+    回 `(公开事实, 私有事实)`；不成立两个都是 `{}`。私有事实 `{"path": 目录完整路径, "file": 读不了的文件}` 只给父进程
+    登记「一键修复权限」的服务端令牌（ADR 0153 修订 2026-10-30，`engine/folderrepair`）：它从不进公开投影与遥测，
+    敏感运行里 worker 的白名单也不放行它。"""
     import errno
 
     evidence = (
@@ -592,7 +604,11 @@ def unreadable_folder_fact(
                     module = _top_module(os.path.abspath(cur.filename)[len(norm) :])
                     if module:
                         fact["module"] = module
-                    return fact
+                    private = {
+                        "path": os.path.abspath(entry),
+                        "file": os.path.abspath(cur.filename),
+                    }
+                    return fact, private
         cur = cur.__cause__ or cur.__context__
         seen += 1
-    return {}
+    return {}, {}

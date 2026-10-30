@@ -111,6 +111,8 @@ SAME_NAME: frozenset[str] = frozenset(
         "numba",
         "xarray",
         "statsmodels",
+        # pandas 的时区数据依赖（Windows 上 `pip --target` 依赖夹里最常见的读不了的包，ADR 0153）
+        "tzdata",
         "h5py",
         "netcdf4",
         "zarr",

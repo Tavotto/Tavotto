@@ -1453,12 +1453,12 @@ def _unreadable_folder_extra(exc: BaseException, args) -> dict:
                 for k in ("stdlib", "platstdlib", "purelib", "platlib")
             ),
         ]
-        fact = bridgeboot.unreadable_folder_fact(
+        fact, private = bridgeboot.unreadable_folder_facts(
             exc, _PATH_BASELINE, [r for r in roots if r], [p for p in interp if p]
         )
     except Exception:  # noqa: BLE001
         return {}
-    return {"unreadable_folder": fact} if fact else {}
+    return {"unreadable_folder": fact, "unreadable_folder_private": private} if fact else {}
 
 
 def main(argv: list | None = None) -> int:

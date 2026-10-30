@@ -1008,6 +1008,7 @@
       "install": "Install missing components first",
       "needsArgs": "The script needs arguments",
       "fileOpsConfirm": "This script needs to really write files to disk to finish",
+      "folderUnreadable": "The script uses a folder, “{{folder}}”, that this account can’t read; its permissions need repairing",
       "fileOpsBlocked": "The script changes project files, then reads them; safe mode doesn't change them, so the result would differ and no figure was made",
       "fileOpsBlockedSafeOnly": "This project is set to safe mode only; the script changes files, then reads them, so the result would differ and no figure was made",
       "fileOpsBlockedOff": "Running as-is is turned off; the script changes project files, then reads them, so safe mode's result would differ and no figure was made",
@@ -1039,6 +1040,7 @@
       "run": "Run",
       "openRun": "Open and run",
       "allowRun": "Allow and run",
+      "repairFolder": "Repair permissions",
       "clearReuse": "Don't reuse",
       "runAnyway": "Run anyway",
       "runAgain": "Run again",
@@ -1410,6 +1412,7 @@
       }
     },
     "aiFix": {
+      "repairFolder": "The script uses a folder outside the project that this account can’t read; its permissions need repairing",
       "running": "AI is looking for the cause…",
       "cancel": "Cancel",
       "confirm": "Fix",

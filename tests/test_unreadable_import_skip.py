@@ -55,6 +55,18 @@ def _name() -> str:
     return "skipmod_" + uuid.uuid4().hex[:10]
 
 
+@pytest.fixture(autouse=True)
+def _skipmod_is_trusted(monkeypatch):
+    """这些用例里随机造的 `skipmod_*` 模块当作有可信映射的包（只在父进程的分类这一处；静态计划不动，免得先被依赖门拦下）。
+    表外的用户模块另有用例（见 test_folder_repair）。"""
+    real = engine_pool._mappable_to_distribution
+    monkeypatch.setattr(
+        engine_pool,
+        "_mappable_to_distribution",
+        lambda module: str(module).startswith("skipmod_") or real(module),
+    )
+
+
 def _lock(path: Path) -> Path:
     path.chmod(0)
     return path

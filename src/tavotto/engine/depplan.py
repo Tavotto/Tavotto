@@ -58,7 +58,7 @@ import threading
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
-from . import config, depresolve, distmeta, importscan, launcher, projectenv, runtime
+from . import config, depresolve, distmeta, folderrepair, importscan, launcher, projectenv, runtime
 
 LOG = logging.getLogger("tavotto.depplan")
 
@@ -784,6 +784,9 @@ class JointPlan:
     #: 计划里点名、**不送 pip** 的已知装不了的包（`depresolve.NOT_PIP_INSTALLABLE`；ADR 0061 修订 2026-10-21）：
     #: `{name, distribution, hint, sources: [声明文件], imports: [import 名]}`。只在有时才进 `to_payload`（`plan_version` 不升）。
     not_pip_installable: tuple[dict, ...] = ()
+    #: 脚本（或它静态 import 的本地模块）会在运行时改 `sys.path`，而这些表外名字没有可信映射、静态又找不到：不在运行前拦下来问包名，
+    #: 先跑一次看（读不了 → 修复权限卡；真缺 → 现有的确认包名流程）。只列 import 名；有才进 `to_payload` 与检查项的来源事实。
+    deferred_unverified: tuple[str, ...] = ()
 
     @property
     def install_entries(self) -> tuple[dict, ...]:
@@ -824,6 +827,11 @@ class JointPlan:
             **(
                 {"not_pip_installable": [dict(n) for n in self.not_pip_installable]}
                 if self.not_pip_installable
+                else {}
+            ),
+            **(
+                {"deferred_unverified": list(self.deferred_unverified)}
+                if self.deferred_unverified
                 else {}
             ),
             **(
@@ -1498,11 +1506,17 @@ def plan(
         and c.module not in open_classes
         and _installed_index_satisfies(c, installed, states.get(c.module, ""), index_incomplete)
     }
+    # 在这个项目里撞过「读不了的项目外文件夹」的模块（`folderrepair.unreadable_modules`）：它在那个文件夹里、多半是用户自己的
+    # 模块，既不问包名也不送 pip——失败卡会直接给「修复权限」
+    unreadable_local = folderrepair.unreadable_modules(root_p)
     origin_classes = [
         c
         for c in scan.classes
-        if c.module in open_classes
-        or (c.module in plain_unknown and c.module not in index_satisfied)
+        if (
+            c.module in open_classes
+            or (c.module in plain_unknown and c.module not in index_satisfied)
+        )
+        and c.module not in unreadable_local
     ]
     # 脚本字面量加进 sys.path 的目录（`importscan` 的 `sys_path_literal` 搜索根）：那里没找到的 import 是「本地模块缺失」，
     # 不预填包名、不接受用户指定、绝不送 pip（ADR 0061 修订 2026-10-21）
@@ -1521,6 +1535,16 @@ def plan(
             index_incomplete,
         )
     }
+    # 脚本会在运行时改 `sys.path`（`importscan` 的 AST 判据 `sys_path_modified`）：表外、没有可信映射的未装模块静态上找不到不等于
+    # 没有——它可能就在脚本运行时才加进路径的目录里。不在运行前问包名，先跑一次（`deferred_unverified`）；运行时真的
+    # `ModuleNotFoundError` 点名它了（`extra_imports`）才走确认包名。用户已经指定过包名的不延后（他们已经答了）
+    deferred: tuple[str, ...] = ()
+    if any(w.get("code") == "sys_path_modified" for w in scan.warnings):
+        observed = set(extra_imports)
+        asked = set(user_specified or {})
+        deferred = tuple(sorted(m for m in specifiable if m not in observed and m not in asked))
+        origin_classes = [c for c in origin_classes if c.module not in deferred]
+        specifiable -= set(deferred)
     chosen: dict[str, tuple[depresolve.DependencyIntent, importscan.ImportClass]] = {}
     for imp, text in sorted((user_specified or {}).items()):
         cls = next((c for c in origin_classes if c.module == imp), None)
@@ -1839,6 +1863,7 @@ def plan(
         ),
         declared_gaps_total=gaps_total,
         not_pip_installable=tuple(not_pip_entries),
+        deferred_unverified=deferred,
         requirements=tuple(reqs),
         constraints=tuple(cons),
         hashes={k: tuple(v) for k, v in hashes.items()},

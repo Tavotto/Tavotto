@@ -954,6 +954,7 @@
       "install": "要先安装缺少的组件",
       "needsArgs": "脚本要运行参数",
       "fileOpsConfirm": "这个脚本要真的把文件写到磁盘上才能跑完",
+      "folderUnreadable": "脚本用到的文件夹“{{folder}}”读不了，需要修复它的权限",
       "fileOpsBlocked": "脚本改了项目里的文件又去读，安全运行不会真改，结果会不同，所以没有出图",
       "fileOpsBlockedSafeOnly": "这个项目设成了只用安全运行；脚本改了文件又去读，结果会不同，所以没有出图",
       "fileOpsBlockedOff": "原样运行被关掉了；脚本改了项目里的文件又去读，安全运行结果会不同，所以没有出图",
@@ -982,6 +983,7 @@
       "run": "运行",
       "openRun": "打开并运行",
       "allowRun": "允许并运行",
+      "repairFolder": "修复权限",
       "clearReuse": "不沿用",
       "runAnyway": "仍然运行",
       "runAgain": "再运行",
@@ -1344,6 +1346,7 @@
       }
     },
     "aiFix": {
+      "repairFolder": "脚本用到的项目外文件夹读不了，需要修复它的权限",
       "running": "AI 正在查找原因…",
       "cancel": "取消",
       "confirm": "修复",

@@ -22,8 +22,10 @@ import { Spinner } from '@/components/ui/Spinner'
 import { WorkdirChooseButton } from '@/components/WorkdirRow'
 import {
   backendCodeMsg,
+  backendErrorText,
   fetchDependencyOffer,
   isNativeTerminal,
+  repairImportFolder,
   type GuiDialogPayload,
   type PreparationAttempt,
   type PreparationReport,
@@ -669,7 +671,31 @@ function primaryLabel(p: PrepPrimary, workdir: WorkdirMode | null): string {
       return pt('btn.aiFix')
     case 'feedback':
       return pt('btn.send')
+    case 'repair_folder':
+      return pt('btn.repairFolder')
   }
+}
+
+/**
+ * 修复项目外文件夹的权限（Windows，ADR 0153 修订）并在成功后重跑一次——准备卡的主按钮与 AI 修复结果卡的按钮共用这一处。
+ * 只把令牌交给后端（弹一次 UAC）；取消 / 没拿到管理员权限 / 没修好都回后端那一句话（调用方放在卡片上），不重试、不再弹。
+ * 重跑沿用卡上「再试一次」同一个动作；挂起期间换了项目就什么都不做。
+ */
+async function repairFolderAndRerun(entry: PrepEntry, token: string): Promise<string | null> {
+  const guard = captureProjectEpoch()
+  try {
+    await repairImportFolder(token)
+  } catch (e) {
+    return guard.still() ? backendErrorText(e) : null
+  }
+  const report = entry.report
+  if (!guard.still() || !report) return null
+  const store = useProjectPreparationStore.getState()
+  const can = (kind: 'run_when_ready' | 'run') => report.actions.some((a) => a.kind === kind)
+  const rerun = can('run_when_ready') ? 'run_when_ready' : can('run') ? 'run' : null
+  if (rerun) await store.act(entry.key, rerun)
+  else await store.open(entry.target, { run: true, placeIn: entry.placeIn })
+  return null
 }
 
 /** 主按钮做的事（与 T09 面板同一组真实动作；卡片只换了呈现） */
@@ -776,6 +802,8 @@ function useRunPrimary(entry: PrepEntry, onMany: () => void) {
         // 打开发送问题反馈对话框（本机备包，逐次确认；源码复选框默认不勾——ADR 0118）
         useDiagSendStore.getState().setOpen(true)
         return null
+      case 'repair_folder':
+        return repairFolderAndRerun(entry, p.token)
     }
   }
 }
@@ -1385,7 +1413,7 @@ function SessionCard({ entry, view: baseView }: { entry: PrepEntry; view: PrepVi
     )
   }
   // AI 修复会话在跑 / 在等用户点 / 刚结束（ADR 0149）：同一张卡换内容——一句话 + 一个主按钮，其余折叠
-  const fixUi = fix ? aiFixFlow(entry.key, fix) : null
+  const fixUi = fix ? aiFixFlow(entry.key, fix, (token) => repairFolderAndRerun(entry, token)) : null
   if (fix && fixUi) {
     return (
       <Shell

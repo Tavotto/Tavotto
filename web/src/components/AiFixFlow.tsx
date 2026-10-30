@@ -164,8 +164,12 @@ const failureLine = (reason: string | undefined) => {
  * 会话起来之后（有 `fixId`）折叠的详情里多一行「执行记录」（ADR 0151）：修复的 Trace 以准备会话 id 为引用，
  * 跑着、等着、没修好（`done`）都读得到；修好（`fixed`）/ 取消 / 交接时条目会被清掉，那一行也随卡片消失。
  */
-export function aiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null {
-  const ui = buildAiFixFlow(fixKey, entry)
+export function aiFixFlow(
+  fixKey: string,
+  entry: AiFixEntry,
+  onRepair?: (token: string) => Promise<string | null>,
+): AiFixFlowUi | null {
+  const ui = buildAiFixFlow(fixKey, entry, onRepair)
   if (!ui || !entry.fixId || (entry.phase !== 'running' && entry.phase !== 'waiting' && entry.phase !== 'done')) return ui
   return {
     ...ui,
@@ -184,7 +188,11 @@ export function aiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null
   }
 }
 
-function buildAiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null {
+function buildAiFixFlow(
+  fixKey: string,
+  entry: AiFixEntry,
+  onRepair?: (token: string) => Promise<string | null>,
+): AiFixFlowUi | null {
   const store = useAiFixStore.getState()
   const busy = entry.answering === true
   const skip = (label: string, answer = 'skip') => (
@@ -223,6 +231,10 @@ function buildAiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null {
     }
   }
   if (entry.phase === 'done') {
+    // 没修好、而原因是项目外文件夹读不了（Windows）：AI 对权限无能为力，结果卡的主按钮就是「修复权限」，不是只有「知道了」
+    if (entry.repairToken && onRepair) {
+      return { title: ft('repairFolder'), primary: <RepairFolderButton fixKey={fixKey} token={entry.repairToken} onRepair={onRepair} /> }
+    }
     return {
       title: entry.outcome === 'not_fixed' ? entry.summary || ft('notFixed') : failureLine(entry.reason),
       primary: dismissButton(fixKey),
@@ -311,6 +323,46 @@ function buildAiFixFlow(fixKey: string, entry: AiFixEntry): AiFixFlowUi | null {
         ghost: skip(ft('sendNo'), 'no'),
       }
   }
+}
+
+/** 「修复权限」：成功后重跑由 `onRepair` 负责，这里收起结果卡；失败把后端那一句话放在按钮下面（不自动重试） */
+function RepairFolderButton({
+  fixKey,
+  token,
+  onRepair,
+}: {
+  fixKey: string
+  token: string
+  onRepair: (token: string) => Promise<string | null>
+}) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  return (
+    <>
+      <Button
+        variant="primary"
+        size="md"
+        data-ai-fix-repair-folder
+        loading={busy}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true)
+          setError(null)
+          const err = await onRepair(token)
+          setBusy(false)
+          if (err) setError(err)
+          else useAiFixStore.getState().clear(fixKey)
+        }}
+      >
+        {translate('prep.btn.repairFolder', { ns: 'workspace' })}
+      </Button>
+      {error ? (
+        <span role="alert" data-ai-fix-repair-error className="text-sm text-danger">
+          {error}
+        </span>
+      ) : null}
+    </>
+  )
 }
 
 const dismissButton = (fixKey: string) => (

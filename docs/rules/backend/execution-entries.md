@@ -101,8 +101,14 @@ order: 180
 - **残余失败先走一键安装，兜底才是一句话**：`bridgeboot.unreadable_folder_fact`（项目外、脚本运行期间新加进 `sys.path`、不在解释器前缀 / 包目录下，且文件是查找器登记过的「命中但读不了」的模块文件——数据文件的权限错误不算）→ 错误带
   `unreadable_folder.{folder, module}`（只有名字）→ `pool.unreadable_folder_error`：模块能映射到 PyPI 包名（`depresolve` 现有的表）且这个项目里还没装过它（记账只在安装成功提交后，`deprepair._run_install` → `pool.note_unreadable_install`，按项目区分） →
   **现有的 `missing_dependency` 错误**（一键装进受管环境，下次运行查找器跳过读不了的那一处）；`app.py` 的可信解析给不出安装名、或装过一次后同一处仍读不了 →
-  稳定码 `import_folder_unreadable`（一句话卡；这条兜底暂无一键出路，候选：提权修复文件夹权限）。AI 修复提示词 3g：装进受管环境有效、换解释器无效、不改脚本不动文件夹。
+  稳定码 `import_folder_unreadable`（一句话卡；Windows 上主按钮是「修复权限」，见下）。AI 修复提示词 3g：装进受管环境有效、换解释器无效、不改脚本不动文件夹。
 - 看护 `tests/test_unreadable_import_skip.py`（含两条入口各一条真 worker 端到端、变异：删掉装配调用即红）。
+- **一键修复权限（Windows，ADR 0153 修订 2026-10-30）**：`engine/folderrepair.py`（Flask 侧，纯标准库）。完整路径只在失败事实的私有键
+  `unreadable_folder_private`（worker / bridge 同一份 `bridgeboot.unreadable_folder_facts`；敏感运行的白名单不放行），
+  `pool.unreadable_folder_error` 换成服务端令牌就地丢弃（**不进 `err.extra` / 公开投影 / 遥测 / 日志**）；`params.repair_token` 是前端按钮的唯一入口。
+  `POST /api/engine/folder-repair {token}`：只收令牌、要 `_page_authenticated()`、路径动手前 `validate_target` 对真实路径再验（每一条拒绝一个用例）、
+  提权前 `scan_for_links` 不跟随地拒绝子孙里的重解析点 / 超限，一次 UAC 提权跑 `icacls <目录> /setowner *S-1-5-32-544 /T /C /L /Q` + `icacls <目录> /reset /T /C /L /Q`（argv 由 `build_commands` 唯一给出；不用 takeown，其确认值随语言变；提权脚本内先以备份语义（SeBackupPrivilege + `FILE_FLAG_BACKUP_SEMANTICS | OPEN_REPARSE_POINT`，`folderrepair._WALK_SOURCE`）遍历整棵树再动手：201 链接 / 203 超限 / 202 遍历失败；Windows 真机手动用例 `scripts/dev/verify_folder_repair_windows.ps1`）、事后复核仍读不了算失败。
+  不放宽任何一条验证；加新的拒绝条件加在 `validate_target` 并配用例。 静态关卡：脚本会改 `sys.path`（`importscan` 的 `sys_path_modified`）时，表外无可信映射的未装模块不在运行前问包名，记入 `JointPlan.deferred_unverified` 先跑一次（`depplan.plan`）。看护 `tests/test_folder_repair.py`。
 
 ## 写入根绊线：MCP 来源的 safe 运行（#898，ADR 0141）
 

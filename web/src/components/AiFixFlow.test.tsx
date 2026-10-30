@@ -26,8 +26,10 @@ let root: Root
 const REF = { session_id: 's', script: 'plot.py', attemptId: null }
 const entry = (patch: Partial<AiFixEntry>): AiFixEntry => ({ phase: 'waiting', ref: REF, fixId: 'fx_1', ...patch })
 
+let onRepair: ((token: string) => Promise<string | null>) | undefined
+
 function Harness({ e }: { e: AiFixEntry }) {
-  const ui = aiFixFlow('script:plot.py', e)
+  const ui = aiFixFlow('script:plot.py', e, onRepair)
   return (
     <section data-card>
       <p data-title>{ui?.title}</p>
@@ -48,6 +50,7 @@ const click = async (sel: string) => {
 }
 
 beforeEach(() => {
+  onRepair = undefined
   host = document.createElement('div')
   document.body.appendChild(host)
   root = createRoot(host)
@@ -263,3 +266,46 @@ describe.each(['zh-CN', 'en-US'] as const)('run_command 的卡（%s）', (lang) 
     expect(card.querySelector('[data-title]')?.textContent).toBe(lang === 'zh-CN' ? '正在运行命令…' : 'Running a command…')
   })
 })
+
+describe('没修好、原因是项目外文件夹读不了：结果卡给「修复权限」（ADR 0153 修订）', () => {
+  const unreadable = () => entry({ phase: 'done', outcome: 'not_fixed', summary: '请为当前账户授予读取权限', repairToken: 'rt-9' })
+
+  it('有令牌：一句话 + 一个主按钮「修复权限」，不再是只有「知道了」，也不再转述让用户自己动手的话', async () => {
+    onRepair = vi.fn().mockResolvedValue(null)
+    const card = await render(unreadable())
+    expect(card.querySelector('[data-title]')?.textContent).toBe('脚本用到的项目外文件夹读不了，需要修复它的权限')
+    expect(card.textContent).not.toContain('授予')
+    expect(card.querySelector('[data-ai-fix-dismiss]')).toBeNull()
+    const btn = card.querySelector('[data-ai-fix-repair-folder]') as HTMLButtonElement
+    expect(btn.textContent).toBe('修复权限')
+    expect(visiblePrimaryButtons(card as HTMLElement)).toBe(1)
+  })
+
+  it('点一次：只交令牌；成功后收起结果卡', async () => {
+    onRepair = vi.fn().mockResolvedValue(null)
+    useAiFixStore.setState({ entries: { 'script:plot.py': unreadable() } })
+    await render(unreadable())
+    await click('[data-ai-fix-repair-folder]')
+    expect(onRepair).toHaveBeenCalledWith('rt-9')
+    expect(useAiFixStore.getState().entries['script:plot.py']).toBeUndefined()
+  })
+
+  it('取消 / 没修成：后端那一句话放在按钮下面，结果卡留着，不自动重试', async () => {
+    onRepair = vi.fn().mockResolvedValue('你取消了管理员确认，权限没有改动。')
+    useAiFixStore.setState({ entries: { 'script:plot.py': unreadable() } })
+    const card = await render(unreadable())
+    await click('[data-ai-fix-repair-folder]')
+    expect(card.querySelector('[data-ai-fix-repair-error]')?.textContent).toBe('你取消了管理员确认，权限没有改动。')
+    expect(onRepair).toHaveBeenCalledTimes(1)
+    expect(useAiFixStore.getState().entries['script:plot.py']).toBeDefined()
+  })
+
+  it('没有令牌（非 Windows / 其它失败）：保持原来的「知道了」', async () => {
+    onRepair = vi.fn()
+    const card = await render(entry({ phase: 'done', outcome: 'not_fixed', summary: '装不上这个包。' }))
+    expect(card.querySelector('[data-ai-fix-repair-folder]')).toBeNull()
+    expect(card.querySelector('[data-ai-fix-dismiss]')).not.toBeNull()
+    expect(card.querySelector('[data-title]')?.textContent).toBe('装不上这个包。')
+  })
+})
+
