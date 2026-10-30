@@ -5839,7 +5839,9 @@ def _run_body(
     if task.kind == "corpus":
         return run_corpus_task(lab, run_dir, env, (pkg or {}).get("mode") or "smoke")
     if task.kind == "page-shot":
-        return run_page_shot_task(lab, run_dir, env, (pkg or {}).get("mode") or tuple(SHOT_PAGES)[0])
+        return run_page_shot_task(
+            lab, run_dir, env, (pkg or {}).get("mode") or tuple(SHOT_PAGES)[0]
+        )
     if task.kind == "desktop-window":
         return run_desktop_window_task(
             lab, run_dir.name, run_dir, env, (pkg or {}).get("package", "")

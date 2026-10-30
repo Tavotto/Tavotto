@@ -3388,7 +3388,9 @@ def test_page_shot_without_edge_is_environment_unavailable_not_passed(tmp_path):
     (lab.repo / rel).write_text("<html></html>")
     run_dir = lab.runs / RUN
     (run_dir / "evidence").mkdir(parents=True)
-    rep = A.run_page_shot_task(lab, run_dir, {"PROGRAMFILES": str(tmp_path / "none")}, "glance-fonts")
+    rep = A.run_page_shot_task(
+        lab, run_dir, {"PROGRAMFILES": str(tmp_path / "none")}, "glance-fonts"
+    )
     assert rep["result"] == "environment_unavailable"
     assert A.run_page_shot_task(lab, run_dir, {}, "nope")["result"] == "error"
 
