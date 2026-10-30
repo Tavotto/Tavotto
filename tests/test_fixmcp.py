@@ -325,6 +325,20 @@ def test_cli_exiting_without_finish_is_failed_with_a_closed_reason_code(box, cap
     assert (s2.outcome, s2.reason) == (fixsession.OUTCOME_FAILED, "cli_exit")
 
 
+def test_cli_stderr_is_classified_without_exporting_its_contents(box, caplog):
+    from tavotto.engine import exectrace_diag
+
+    code = "import sys; sys.stderr.write('authentication_error PRIVATE_CANARY /secret/path'); sys.exit(1)"
+    s, _ = start_session(box, [sys.executable, "-c", code])
+    wait_finished(s)
+    assert (s.outcome, s.reason, s.stderr_category) == ("failed", "cli_exit", "auth")
+    snap = s.trace.snapshot()
+    agent = next(span for span in snap["spans"] if span["name"] == "agent_run")
+    assert agent["attributes"]["failure_category"] == "auth"
+    exported = json.dumps(exectrace_diag.document(snap)) + caplog.text
+    assert "PRIVATE_CANARY" not in exported and "/secret/path" not in exported
+
+
 def test_a_cli_that_never_reached_the_repair_tools_says_so(box, caplog):
     """修复工具服务起不来（如 MCP 子进程加载到没有 fix-mcp 的旧 tavotto）：CLI 照样正常退出，但从没来取过工具清单、
     也没有任何回调。界面要能说出这一条（不是笼统的「没能修好」），日志与修复审计各留一条闭集码。"""

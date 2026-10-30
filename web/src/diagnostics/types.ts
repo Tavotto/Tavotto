@@ -23,10 +23,11 @@
  * 6 = project 段新增 `recent_runs` 最近脚本运行的结果分类；7 = 网址只留 origin；
  * 8 = 发送包新增 `detail-…` / `optional-…` 条目，manifest 加 `contains_detail` / `detail_files` / `detail_options` / `truncated`；
  * 9 = 新增 `exec-traces.json` 执行追踪，ADR 0151 PR4；
- * 10 = report.json 新增 `ai_probe` 与 agent 的 `readiness` / `readiness_detail` / `broken_path`）。
+ * 10 = report.json 新增 `ai_probe` 与 agent 的 `readiness` / `readiness_detail` / `broken_path`；
+ * 11 = project.managed_environment_jobs（受管环境安装与换代事实）。
  * 与 `engine/diagnostics.py` 的同名常量是严格同源对。
  */
-export const BUNDLE_SCHEMA_VERSION = 10
+export const BUNDLE_SCHEMA_VERSION = 11
 /**
  * frontend-state.json 的 schema。
  *

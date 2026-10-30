@@ -28,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import exectrace, fixtools, folderrepair, pool
+from . import cli_failure, exectrace, fixtools, folderrepair, pool
 from .agent_runner import loop
 from .agent_runner.redact import NO_REDACTION, Redactor
 from .agent_runner.tools import Limits, RunEnvelope, Tool
@@ -325,6 +325,7 @@ class FixSession:
     summary: str = ""
     #: 失败时 `done.reason` 的闭集码（`budget` / `auth` / `quota` / `network` / `max_turns` …）；成功为空
     reason: str = ""
+    stderr_category: str | None = None
     steps: int = 0
     seq: int = 0
     cancel: threading.Event = field(default_factory=threading.Event)
@@ -384,7 +385,12 @@ def _trace_settle(s: FixSession) -> None:
         code = None
         if status == "failed":
             code = "not_fixed" if s.outcome == "not_fixed" else (s.reason or "fix_failed")
-        s.trace.end_span(s.trace_agent, status, error_code=code)
+        s.trace.end_span(
+            s.trace_agent,
+            status,
+            error_code=code,
+            attributes={"failure_category": s.stderr_category} if s.stderr_category else None,
+        )
         s.trace.finish(status, error_code=code, attributes={"outcome": s.outcome})
     except Exception:  # noqa: BLE001 —— 观察失败不影响收尾
         pass
@@ -843,8 +849,13 @@ class FixSessions:
         sess: dict = {"exited": threading.Event()}
         try:
             launch = build(s.id, s.token, prompt)
-            proc = ai_bridge._popen(launch.argv, launch.cwd, launch.env, subprocess.DEVNULL)
-        except Exception:  # noqa: BLE001 - 起不来（没装 / 参数 / 权限）：按没修好算
+            proc = ai_bridge._popen(launch.argv, launch.cwd, launch.env, subprocess.PIPE)
+        except Exception as exc:  # noqa: BLE001 - 起不来（没装 / 参数 / 权限）：按没修好算
+            s.stderr_category = (
+                "not_installed"
+                if isinstance(exc, ai_bridge.AgentError) and exc.code == "ai_agent_not_installed"
+                else "other"
+            )
             LOG.warning("fix cli failed to start", exc_info=True)
             self._settle(s, "cli_start")
             return
@@ -853,6 +864,13 @@ class FixSessions:
             target=self._read_events, args=(s, proc, launch.parse), daemon=True
         )
         drain.start()
+        stderr_result = ["other"]
+
+        def drain_stderr() -> None:
+            stderr_result[0] = cli_failure.consume(proc.stderr)
+
+        stderr_drain = threading.Thread(target=drain_stderr, daemon=True)
+        stderr_drain.start()
         started = time.monotonic()
         finish_seen: float | None = None
         while proc.poll() is None:
@@ -878,9 +896,12 @@ class FixSessions:
             ai_bridge._terminate(sess)
         ai_bridge._await_exit(sess)
         drain.join(timeout=2)
+        stderr_drain.join(timeout=2)
         self._drain_inflight(s)
         if reason != "budget":
             reason = "cli_exit" if (code or 0) != 0 else "cli_no_finish"
+            if reason == "cli_exit":
+                s.stderr_category = stderr_result[0]
             if reason == "cli_no_finish" and not s.listed and not s.cbs:
                 reason = "cli_no_tools"
         if s.reported is None and not s.cancel.is_set():

@@ -471,6 +471,8 @@ def test_attributes_and_vocabularies_are_closed_sets():
         "refresh",
         "checks_failed",
         "unmet_checks",
+        "failure_category",
+        "runner_detail",
     }
     with pytest.raises(ValueError):
         xt.register_vocabulary("prompt", ["x"])

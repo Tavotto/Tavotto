@@ -26,6 +26,7 @@ from tavotto.engine import (
     depplan,
     deprepair,
     depresolve,
+    envdiag,
     envlease,
     managedenv,
     pool as engine_pool,
@@ -463,6 +464,15 @@ class TestJointTransaction:
         assert set(ledger) == {ALPHA[0], BETA[0], GAMMA[0]}
         assert ledger[BETA[0]]["resolved_version"] == "1.0"
         assert engine_pool.same_python(projectenv.remembered(project), python)
+        deadline = time.monotonic() + 5
+        while not envdiag.recent(project) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        (evidence,) = envdiag.recent(project)
+        assert {ALPHA[0], BETA[0], GAMMA[0]} <= set(evidence["requested"])
+        assert {r["name"] for r in evidence["installed"]} >= {ALPHA[0], BETA[0], GAMMA[0], WIDE[0]}
+        assert evidence["committed"] and evidence[
+            "generation"
+        ] == projectenv.environment_generation(python)
         # 计划文件留在项目的受管目录下（可审计），内容是重新序列化过的
         plans = managedenv.env_dir(project) / "plans" / gen
         assert (plans / "requirements.txt").read_text("utf-8").splitlines()[-3:] == list(

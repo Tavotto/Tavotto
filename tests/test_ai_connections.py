@@ -1186,6 +1186,14 @@ def test_builtin_bad_key_fails_cleanly_and_leaves_the_project_alone(chain):
     assert (chain["figs"] / "fig1.py").read_text(encoding="utf-8") == SCRIPT
     assert any("密钥无效" in d["text"] for n, d in events if n == "ai.delta")
     assert ai_history.get(sid)["outcome"] == "failed"
+    from tavotto.engine import exectrace_diag
+
+    snap = sess["trace"].snapshot()
+    run = next(span for span in snap["spans"] if span["name"] == "agent_run")
+    assert run["error_code"] == "agent_auth"
+    assert run["attributes"]["runner_detail"] == "http_401"
+    assert snap["first_failure"]["name"] == "agent_run"
+    assert KEY not in json.dumps(exectrace_diag.document(snap))
 
 
 def test_builtin_cancel_stops_the_subprocess_and_frees_the_script(chain):
