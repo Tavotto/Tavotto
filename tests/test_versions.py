@@ -423,14 +423,16 @@ def test_the_text_in_a_sketch_is_cut_to_the_length_the_caller_asked_for(client):
     assert "text" not in silent["versions"][0]["sketch"]["objects"][0]
 
 
-def test_a_sketch_text_carries_its_latex_format_so_the_thumb_can_read_it(client):
-    """缩略图要把 `\\textit{x}` 读成显示的字（ADR 0152）；旧写法的标注不带这个字段。"""
-    latex = {**_text(0, "a \\textit{b}"), "textFormat": "latex"}
-    client.post("/api/versions/d1", json={"doc": _doc_with([latex, _text(1, "旧")])})
+def test_a_latex_sketch_text_is_read_before_it_is_cut(client):
+    """缩略图画显示的字（ADR 0152）：LaTeX 写法先读再截，截断不会切出半个 `\\textit{`；旧写法原样截。"""
+    long = "\\textit{abcdefghijklmnopqrstuvwxyz}"
+    latex = {**_text(0, long), "textFormat": "latex"}
+    client.post("/api/versions/d1", json={"doc": _doc_with([latex, _text(1, "旧^{2}")])})
     got = client.get("/api/versions/d1?sketch=40&sketchText=24").get_json()
     new, old = got["versions"][0]["sketch"]["objects"]
-    assert new["textFormat"] == "latex"
-    assert "textFormat" not in old
+    assert new["text"] == "abcdefghijklmnopqrstuvwx"
+    assert "textFormat" not in new
+    assert old["text"] == "旧^{2}"
 
 
 def test_hidden_objects_are_dropped_before_the_cut_not_after(client):

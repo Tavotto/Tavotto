@@ -59,7 +59,7 @@ from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException
 from werkzeug.formparser import FormDataParser
 
-from . import pdfbackend, tiffprobe
+from . import pdfbackend, richtext, tiffprobe
 from .engine import (
     ai_bridge as engine_ai,
     ai_connections as engine_ai_connections,
@@ -15329,10 +15329,12 @@ def _version_sketch(v: dict, max_objects: int, max_text: int) -> dict | None:
             if isinstance(o.get("fileKind"), str):
                 item["fileKind"] = o["fileKind"]
         elif kind == "text" and max_text > 0 and isinstance(o.get("text"), str):
-            item["text"] = o["text"][:max_text]
-            # 写法跟着正文走：缩略图要把 LaTeX 命令读成显示的字（ADR 0152），不带它就把 `\textit{x}` 原样画出来
+            # LaTeX 写法先读成显示的字再截（ADR 0152）：先截后读会切掉右花括号，`\textit{…` 原样露出来；
+            # 读法与前端 `displayText` 同一份（`richtext` 同源对），草图里因此只放读好的字、不带写法
+            text = o["text"]
             if o.get("textFormat") == "latex":
-                item["textFormat"] = "latex"
+                text = richtext.plain_text(text, "latex")
+            item["text"] = text[:max_text]
         elif kind == "shape" and isinstance(o.get("shape"), str):
             item["shape"] = o["shape"]
         objects.append(item)
