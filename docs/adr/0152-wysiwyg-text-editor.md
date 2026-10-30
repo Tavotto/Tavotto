@@ -98,8 +98,10 @@ PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到�
 - 图内文字的公式块在编辑框里的样子见第九节（PR 6）。
 - **缩略图与导出预览**：导出对话框的整页预览把公式画成同一份轮廓（`<path>`，`ThumbMathLine`）：SVG 的 `<text>` 里放不下
   path，含公式的行拆成文字段与公式段，按 `getComputedTextLength()` 累计的宽度排（量不到时按字数估），对齐按整行总宽算；
-  没排好 / 排不出仍按源码。画布列表 / 版本列表的小缩略图不画轮廓（几十张缩略图各发排版请求不值），但画**显示的字**
-  （`displayText`：LaTeX 命令去掉、公式不带 `$`）；版本草图在后端先读成显示的字再截断（`richtext.plain_text`，先截后读会切掉右花括号）。
+  没排好 / 排不出仍按源码。画布列表 / 版本列表的小缩略图不画轮廓（几十张缩略图各发排版请求不值），但画**一眼读得懂的字**
+  （`glanceText` ↔ `richtext.glance_text`，同源对：LaTeX 命令去掉，公式读成近似 Unicode——`\frac{RT^2}{k}` → `RT²/k`、
+  `\alpha` → `α`、`T_{\max}` → `Tₘₐₓ`，换不成上下标字符的写 `^(…)`，读不懂的命令留名字）；版本草图在后端先读再截断
+  （先截后读会切掉右花括号）。读法与几张命令表由 `tests/golden/rich_text_vectors.json` 两侧各跑一遍看护。
 - 打包：`mathtext_child.py` 进 `packaging/tavotto.spec` 的外部解释器源码清单（第三个根，`test_runtime_build` 按 import
   闭包看护）。
 

@@ -69,12 +69,32 @@ CASES: list[tuple[str, str | None, str]] = [
     ("cjk-italic", "latex", r"温度 \textit{T}"),
     ("empty-command", "latex", r"a\textit{}b"),
     # —— 一眼读得懂的字（小缩略图）：公式读成近似 Unicode
-    ("glance-arrhenius", "latex", r"$E_a=\frac{RT^2}{k}\,\ln\frac{k_2}{k_1}$"),  # 分式、上下标换字符、函数名两边空格
-    ("glance-func-tight", "latex", r"$\sin(\theta)$ $\lim_{x\to 0}$"),  # 函数名紧跟括号 / 下标不留空格；下标换不了就 _(…)
-    ("glance-paren-frac", "latex", r"$\left(\frac{a+b}{c}\right)^2$"),  # 含运算符的一边加括号；\left \right 去掉
-    ("glance-sqrt-accent-unknown", "latex", r"$\sqrt[3]{x+1}$ $\hat{x}$ $\alpah$"),  # 读不懂的命令留名字
+    (
+        "glance-arrhenius",
+        "latex",
+        r"$E_a=\frac{RT^2}{k}\,\ln\frac{k_2}{k_1}$",
+    ),  # 分式、上下标换字符、函数名两边空格
+    (
+        "glance-func-tight",
+        "latex",
+        r"$\sin(\theta)$ $\lim_{x\to 0}$",
+    ),  # 函数名紧跟括号 / 下标不留空格；下标换不了就 _(…)
+    (
+        "glance-paren-frac",
+        "latex",
+        r"$\left(\frac{a+b}{c}\right)^2$",
+    ),  # 含运算符的一边加括号；\left \right 去掉
+    (
+        "glance-sqrt-accent-unknown",
+        "latex",
+        r"$\sqrt[3]{x+1}$ $\hat{x}$ $\alpah$",
+    ),  # 读不懂的命令留名字
     ("glance-degree-escape", "latex", r"$90^\circ$ $50\%$ $a\,b\!c$ $T_{\max}$"),
-    ("glance-script-text", "latex", r"T\textsubscript{eff} cm\textsuperscript{-1}"),  # 正文上下标换不了就原样
+    (
+        "glance-script-text",
+        "latex",
+        r"T\textsubscript{eff} cm\textsuperscript{-1}",
+    ),  # 正文上下标换不了就原样
     ("glance-unbalanced", "latex", r"$\frac{a}{$ x"),  # 缺右花括号：不崩、不吞字
 ]
 
