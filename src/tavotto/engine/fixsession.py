@@ -128,6 +128,13 @@ project's own build/install instructions (for example its README or setup.py), n
 no tool here can do that safely, call prepare_diagnostics if useful and finish `not_fixed` with the reason in plain words. \
 If the note says the folder is not a regular package (no `__init__.py`, or one that extends the package path), installing the real package can fix it as usual. \
 The same holds when the note says the project root is searched after installed packages (the project copy is only a fallback, used because nothing installed was found): then installing the distribution that provides `a` can fix it.
+3g. UNREADABLE FOLDER OUTSIDE THE PROJECT. If the report error code is `import_folder_unreadable` (or a PermissionError \
+[Errno 13] names a file inside a folder the script itself added to sys.path, outside the project): the script put a \
+folder on its import path that the current account is not allowed to read; Tavotto already skips unreadable import \
+locations when another location can serve the module, so this one had no alternative. Switching, creating or \
+repairing Python environments and installing packages cannot help: do NOT do any of that. Say in one plain sentence \
+which folder (its name is in the report) cannot be read and that the user must grant this account read access to it \
+(or move it away); never edit the script. Then call prepare_diagnostics only if useful and finish `not_fixed`.
 4. If you need something only the user knows, use ask_user (a multiple-choice question) or pick_file (the system file \
 chooser). Never ask for a password, key or token.
 5. If you cannot fix it, distinguish missing user inputs/environment failures from a product defect. If evidence \

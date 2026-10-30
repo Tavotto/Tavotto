@@ -744,6 +744,9 @@ def recovery_params(exc: "WorkerError") -> dict:
     if exc.code in texdiag.ERROR_CODES:
         # TeX 工具链（`texdiag`）：缺的命令 / 文件名（白名单清洗过）与 LaTeX 的那一行 `! …`
         return texdiag.params_of(extra.get("tex"))
+    if exc.code == IMPORT_FOLDER_UNREADABLE_CODE:
+        # 只有目录名（不是路径）；缺了就不发这个码（`unreadable_folder_error`）
+        return {"folder": str(extra["unreadable_folder"]["folder"])}
     if exc.code == figcapture.EXPORT_RASTER_TOO_LARGE_CODE:
         # 宽 / 高 / 上限都是整数事实，没有路径与内容；缺字段（旧 worker 之类）就不捏造
         return {k: int(extra[k]) for k in ("width", "height", "max_pixels") if k in extra}
@@ -1286,6 +1289,25 @@ def _tex_error(message: str, traceback_text: str, extra=None) -> "WorkerError | 
     return err
 
 
+def unreadable_folder_error(message: str, traceback_text: str, extra=None) -> "WorkerError | None":
+    """worker / bridge 报来的结构化事实 `unreadable_folder` → 稳定码 `import_folder_unreadable`；没有或畸形回 None。
+
+    **先于缺依赖判**：这类失败的 traceback 里常带 `import pandas` 之类，但装包 / 换环境都修不了它。
+    目录名必须是短的单段名字（不含分隔符 / 控制字符），否则不信这条事实。原始消息与 traceback 原样保留。"""
+    given = extra.get("unreadable_folder") if isinstance(extra, dict) else None
+    folder = given.get("folder") if isinstance(given, dict) else None
+    if (
+        not isinstance(folder, str)
+        or not folder
+        or len(folder) > 120
+        or any(c in folder for c in "/\\\r\n\0")
+    ):
+        return None
+    err = WorkerError(message, traceback_text, code=IMPORT_FOLDER_UNREADABLE_CODE)
+    err.extra = {"unreadable_folder": {"folder": folder}}
+    return err
+
+
 def _missing_dependency_error(mod: str, traceback_text: str) -> "WorkerError":
     if mod:
         route = stdlib_install_route(mod)
@@ -1803,6 +1825,9 @@ _project_python_lock = threading.Lock()
 #: Tavotto 自己的引擎文件缺了（安装副本不完整，issue #961）：与 `missing_dependency` 分开——缺的不是用户的包，
 #: 一键装包、换环境都救不了，该提示重装 / 修复安装。
 ENGINE_FILES_INCOMPLETE_CODE = "engine_files_incomplete"
+#: 脚本加进 `sys.path` 的项目外文件夹当前账户读不了，而 import 查找器跳过之后仍然失败（ADR 0153）。
+#: 换环境 / 重装依赖都无效：失败卡只说这一句事实，AI 修复也带同一条事实。
+IMPORT_FOLDER_UNREADABLE_CODE = "import_folder_unreadable"
 
 #: 显式为**这个项目**挑的解释器失效时的稳定 code（U03，FO15 / FO16）。与
 #: `EXPLICIT_UNUSABLE_CODE` 分开：那条是全局设置 / 环境变量，这条是项目级（用户在依赖修复
@@ -1813,6 +1838,7 @@ ERROR_CODES = (
     EXPLICIT_UNUSABLE_CODE,
     PROJECT_PYTHON_UNUSABLE_CODE,
     ENGINE_FILES_INCOMPLETE_CODE,
+    IMPORT_FOLDER_UNREADABLE_CODE,
     WRITE_OUTSIDE_ROOTS_CODE,
     # worker 直出位图超像素预算（`figcapture.check_export_raster`）：写回事务的 PNG 目标走到这里
     figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
@@ -2807,6 +2833,10 @@ class EngineWorker:
         if tex is not None:
             tex.script_name = self.script_name
             return tex
+        unreadable = unreadable_folder_error(msg, tb, err if isinstance(err, dict) else None)
+        if unreadable is not None:
+            unreadable.script_name = self.script_name
+            return unreadable
         mod = missing_module(f"{msg}\n{tb}")
         structured, structured_mod = structured_missing_dependency(err)
         mod = mod or structured_mod
@@ -3298,6 +3328,9 @@ def _worker_error(
     tex = _tex_error(message, traceback_text, extra)
     if tex is not None:
         return tex
+    unreadable = unreadable_folder_error(message, traceback_text, extra)
+    if unreadable is not None:
+        return unreadable
     mod = missing_module(f"{message}\n{traceback_text}")
     structured, structured_mod = structured_missing_dependency(extra)
     mod = mod or structured_mod

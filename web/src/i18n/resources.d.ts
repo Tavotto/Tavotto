@@ -3085,6 +3085,7 @@ export default interface Resources {
       "figure_name_exhausted": "同名的图太多了，没能给新图找到可用的名字。",
       "file_locked": "文件被其他程序占用，请关闭正在打开它的程序后重试。",
       "format_failed": "无法导出该格式：{{error}}。",
+      "import_folder_unreadable": "脚本加载的项目外文件夹“{{folder}}”读不了（当前账户没有读取权限）。给这个账户开放读取权限，或把它移出脚本的加载路径后重试；换 Python 环境没有用。",
       "input_remap_changed": "数据位置刚刚改过，这次结果按旧位置产出，已丢弃。请重试。",
       "input_remap_chosen_invalid": "这个位置用不了：{{path}}。请选一个存在的文件或文件夹。",
       "input_remap_not_found_in_dir": "文件夹 {{path}} 里没有 {{name}}。请选它所在的那个文件夹，或直接选这个文件。",
