@@ -3870,7 +3870,7 @@ def _after_ai_change(ctx: "ProjectCtx", script: str) -> dict:
     return result
 
 
-def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
+def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str, selection=None) -> dict:
     """TAF 改图（ADR 0138 Phase 3b）提交前后的渲染层事实，注入给 AI 桥；**只在实验开关打开时**被调用。
 
     * `before`：池里**已经 build 过**的那个 safe 会话（`pool.peek`，不建、不执行）按**无 override** 重放出的 manifest；没有 → None
@@ -3882,9 +3882,14 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
       判据是「执行了哪一版源码」：会话自报的 `last_build_source_sha256` 必须等于刚提交字节的 sha256，否则抛
       `StaleSession`（去重回旧会话、watcher 时序、启动采样 A→B→A 都落在这里）。
 
-    两边都按这个脚本此刻登记的全部 stem 读 `<out_dir>/<stem>.json`。"""
+    两边都按这个脚本此刻登记的全部 stem 读 `<out_dir>/<stem>.json`。
+
+    `selection`：runtime 面板传入它**当初那份**运行配置（`runtimeasset.run_selection`，None = 无参数），校验与画布
+    渲染同一份；不传 = 项目此刻的默认配置（磁盘面板）。"""
 
     def run_selection():
+        if selection is not None:
+            return selection()
         return engine_runconfig.default_selection(ctx.path, script)
 
     def manifests(worker) -> dict:
@@ -3984,7 +3989,9 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str) -> dict:
         # 提交后验证实际用的那一份运行配置引用（`rc_…` 或 None=无参数）：改名要报给前端，只让同配置的运行时面板跟着换身份
         "run_config": lambda: verified_run.get("config_id"),
         # 内置执行器的 `check`（`ai_figure_edit.agent_check`）：候选在用户同一路由下的校验运行 + 数据指纹基线
-        "runner": _convert_runner(ctx, script, with_manifests=True, entry=entry),
+        "runner": _convert_runner(
+            ctx, script, with_manifests=True, entry=entry, selection=selection
+        ),
         "check_before": check_before,
     }
 
@@ -12762,14 +12769,28 @@ def _ai_run_impl():
             return jsonify(
                 {"session": known["session"], "script": known.get("script") or "", "deduped": True}
             )
-    try:
-        path = safe_resolve(body.get("id", ""))
-    except NotFound:
-        # 画布上这张图的文件不在项目里了（移走 / 改名 / 删掉）：带码回，前端出「刷新项目」，不是一句光秃秃的 HTTP 404
-        return jsonify(
-            {"error": "这张图的文件找不到了", "code": "ai_panel_file_missing", "params": {}}
-        ), 404
-    disk_stem, info = _disk_panel(path)
+    panel_id = body.get("id", "")
+    if engine_runtimeasset.is_runtime_id(panel_id):
+        # runtime 面板（「运行脚本」捕获的图，ADR 0013）：fileId 是不透明的 asset id，不是磁盘路径——
+        # 按注册表正向重算出 (script, stem)，之后与磁盘面板同一条路
+        info = engine_runtimeasset.resolve(panel_id, current_registry())
+        if info is None:
+            return _runtime_asset_unknown(panel_id)
+        disk_stem = info["stem"]
+        # 这张图当初的运行配置（与 `_resolve_engine_worker` 画它用的同一份），不是项目此刻的默认配置；
+        # 本机没有就抛 RunConfigError → 409，不回落成别的参数
+        run = engine_runtimeasset.run_selection(str(require_project()), info)
+        selection = lambda: run  # noqa: E731
+    else:
+        selection = None
+        try:
+            path = safe_resolve(panel_id)
+        except NotFound:
+            # 画布上这张图的文件不在项目里了（移走 / 改名 / 删掉）：带码回，前端出「刷新项目」，不是一句光秃秃的 HTTP 404
+            return jsonify(
+                {"error": "这张图的文件找不到了", "code": "ai_panel_file_missing", "params": {}}
+            ), 404
+        disk_stem, info = _disk_panel(path)
     if info is None:
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
@@ -12808,7 +12829,7 @@ def _ai_run_impl():
             endpoint_id=endpoint_id,
             # 文件变了就接统一刷新（reason=ai），在 ai.done 之前做完（ADR 0041）
             on_changed=lambda script: _after_ai_change(ctx, script),
-            task_hooks=_ai_task_hooks(ctx, info["script"], info["entry"]),
+            task_hooks=_ai_task_hooks(ctx, info["script"], info["entry"], selection),
         )
     except engine_ai.DuplicateRequest as dup:
         # 同一条请求已经登记过：返回既有会话，不 spawn、不重复记遥测
@@ -12849,9 +12870,24 @@ def _convert_error(exc: "engine_ai_convert.ConvertError"):
 
 
 def _convert_runner(
-    ctx: "ProjectCtx", source_script: str, *, with_manifests: bool = False, entry: str | None = None
+    ctx: "ProjectCtx",
+    source_script: str,
+    *,
+    with_manifests: bool = False,
+    entry: str | None = None,
+    selection=None,
 ):
-    """校验运行（注入 `ai_convert`）：走现有 probe 路径，**用户同一解释器 / 同一路由**；返回前退役它起的 worker。"""
+    """校验运行（注入 `ai_convert`）：走现有 probe 路径，**用户同一解释器 / 同一路由**；返回前退役它起的 worker。
+
+    `selection` 同 `_ai_task_hooks`：给了就用它（runtime 面板当初那份运行配置），不给按项目默认配置。"""
+
+    def current_run():
+        if selection is not None:
+            return selection()
+        try:
+            return engine_runconfig.default_selection(ctx.path, source_script)
+        except Exception:  # noqa: BLE001 —— 配置读不出来就按不带参数跑
+            return None
 
     def runner(
         figures_dir: str,
@@ -12862,10 +12898,7 @@ def _convert_runner(
     ) -> dict:
         # `write_roots`：写入根绊线（ADR 0141 / 0143）——候选只许写候选目录（与 worker 基础设施目录），写项目文件在事件发生时失败
         roots_kw = {"write_roots": tuple(write_roots)} if write_roots else {}
-        try:
-            run = engine_runconfig.default_selection(ctx.path, source_script)
-        except Exception:  # noqa: BLE001 —— 配置读不出来就按不带参数跑
-            run = None
+        run = current_run()
         run_kw = {"run": run} if run is not None else {}
         # Validate the primary entry used by discovery/reopening. Generic probing
         # may try a helper after main fails; a helper's figure cannot certify the
@@ -12991,10 +13024,7 @@ def _convert_runner(
         figures_dir: str, rel: str, write_roots: tuple[str, ...] | None = None
     ) -> bool:
         """运行中取消：同键（同一份 run / write_roots）硬杀在跑的探测 worker，`runner` 里阻塞的 probe 随即读到 EOF 返回。"""
-        try:
-            run = engine_runconfig.default_selection(ctx.path, source_script)
-        except Exception:  # noqa: BLE001
-            run = None
+        run = current_run()
         run_kw = {"run": run} if run is not None else {}
         roots_kw = {"write_roots": tuple(write_roots)} if write_roots else {}
         return engine_pool.force_cancel(rel, figures_dir, **run_kw, **roots_kw)
