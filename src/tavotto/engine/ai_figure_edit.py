@@ -368,12 +368,11 @@ class FigureEditAdapter:
                 )
             )
             return checks
-        failure = cand.extras.get("missing_dependency_check")
-        if (
-            isinstance(failure, dict)
-            and cand.new_bytes is not None
-            and failure.get("sha256") == _sha256(cand.new_bytes)
-        ):
+        digest = _sha256(cand.new_bytes) if cand.new_bytes is not None else None
+        failure = (cand.extras.get("missing_dependency_checks") or {}).get(digest)
+        if isinstance(failure, dict):
+            # The current candidate may return to an earlier checked version.
+            cand.extras["missing_dependency_check"] = failure
             hook = cand.extras.get("dependency_plan")
             runner = cand.extras.get("runner")
             if hook is not None and runner is not None and failure.get("module"):
@@ -409,8 +408,23 @@ class FigureEditAdapter:
                             )
                         )
                         return checks
+                    checked, _ = agent_check(cand, lambda *_: result)
+                    if (
+                        not checked
+                        or cand.new_bytes is None
+                        or _sha256(cand.new_bytes) != failure["sha256"]
+                    ):
+                        checks.append(
+                            _check(
+                                "candidate.render",
+                                "precommit",
+                                "integrity",
+                                FAILED,
+                                "candidate_validation_failed",
+                            )
+                        )
+                        return checks
                     cand.extras["dependency_validated_sha256"] = failure["sha256"]
-                    cand.extras.pop("missing_dependency_check", None)
                     return checks
             checks.append(
                 _check("candidate.render", "precommit", "integrity", FAILED, "missing_dependency")
@@ -701,8 +715,8 @@ class BridgeExecutor:
     def commit(self, run, cand: Candidate) -> None:
         if cand.new_bytes is None or cand.new_bytes == cand.base_bytes:
             return  # 没改动：不写文件、不刷新（与旧路径 changed=False 相同）
-        failure = cand.extras.get("missing_dependency_check")
-        if isinstance(failure, dict) and failure.get("sha256") == _sha256(cand.new_bytes):
+        failure = (cand.extras.get("missing_dependency_checks") or {}).get(_sha256(cand.new_bytes))
+        if isinstance(failure, dict):
             # Even if a verifier itself raised, a known failing candidate may
             # not reach the irreversible write without successful revalidation.
             raise TaskError("missing_dependency", "candidate")
@@ -1078,7 +1092,6 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
 
     没有 `check` 的两家 CLI（Codex / Claude Code）看不到任何校验结果：它们改完就结束，被提交前检查拦下时才由 TAF 有界修正再跑一轮
     （`FigureEditAdapter.correction`）。内置执行器多这一步，是把同一套检查前移到 Agent 手里（≤ 3 次，见 `agent_runner.tools.MAX_CHECKS`）。"""
-    cand.extras.pop("missing_dependency_check", None)
     checks = ADAPTER._precommit(cand)
     failed, unknown = _l1_lines(checks)
     if failed:
@@ -1106,10 +1119,12 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
             except OSError:
                 same = False
             if same:
-                cand.extras["missing_dependency_check"] = {
+                failure = {
                     "sha256": _sha256(cand.new_bytes),
                     "module": res.get("module") if isinstance(res.get("module"), str) else "",
                 }
+                cand.extras.setdefault("missing_dependency_checks", {})[failure["sha256"]] = failure
+                cand.extras["missing_dependency_check"] = failure
         # 生产 runner 经探测把写入绊线折成 script_probe_failed，底层码在 `cause`
         if tripped_write_roots(code, res.get("cause")):
             notes.append(
@@ -1138,6 +1153,23 @@ def agent_check(cand: Candidate, run_validation) -> tuple[bool, str]:
             return False, "check failed: " + " ".join(bad)[:1400]
         notes.append("data unchanged")
         text_note = ". " + text_changes_note(after, baseline)
+    # A full successful check supersedes only evidence for the exact bytes it
+    # validated. A later failed check or a different candidate cannot erase it.
+    if cand.new_bytes is not None:
+        digest = _sha256(cand.new_bytes)
+        failures = cand.extras.get("missing_dependency_checks") or {}
+        if status == "ok" and digest in failures:
+            try:
+                same = not cand.target.is_symlink() and cand.target.read_bytes() == cand.new_bytes
+            except OSError:
+                same = False
+            if getattr(runner, "requires_source_identity", False):
+                same = same and res.get("source_sha256") == digest
+            if not same:
+                return False, "check failed: candidate changed during validation."
+            failures.pop(digest, None)
+            if (cand.extras.get("missing_dependency_check") or {}).get("sha256") == digest:
+                cand.extras.pop("missing_dependency_check", None)
     return True, f"check passed: {len(stems)} figure(s) rendered; " + "; ".join(notes) + text_note
 
 

@@ -1175,3 +1175,74 @@ def test_initial_install_committed_before_cancel_keeps_candidate(env):
         run, cand
     )
     assert cand.target.exists() and not cand.committed and _project_text(env) == SCRIPT
+
+
+def test_repeated_failed_check_retains_dependency_evidence_for_each_candidate(env):
+    root = env["figs"]
+    cand = ai_figure_edit.create_candidate("repeat", root / "fig1.py", root, "fig1.py")
+    first = SCRIPT.replace('"old"', '"first"')
+    second = SCRIPT.replace('"old"', '"second"')
+    cand.extras["runner"] = object()
+
+    def missing(*_):
+        return {"status": "error", "code": "missing_dependency", "module": "openpyxl"}
+
+    cand.target.write_text(first)
+    assert not ai_figure_edit.agent_check(cand, missing)[0]
+    assert not ai_figure_edit.agent_check(cand, lambda *_: {"status": "no_figure"})[0]
+    assert any(
+        c.reason_code == "missing_dependency"
+        for c in ai_figure_edit.ADAPTER.verify("precommit", None, cand)
+    )
+    cand.target.write_text(second)
+    assert not ai_figure_edit.agent_check(cand, missing)[0]
+    cand.target.write_text(first)
+    assert any(
+        c.reason_code == "missing_dependency"
+        for c in ai_figure_edit.ADAPTER.verify("precommit", None, cand)
+    )
+    assert _project_text(env) == SCRIPT
+
+
+def test_automatic_dependency_recheck_cannot_commit_changed_figure_data(env):
+    cand = _held_edit(env)
+    cand.hold = None
+    cand.extras["dependency_plan"] = lambda *_a, **_kw: {"status": "none"}
+    cand.extras["check_before"] = lambda: {"Fig1": _manifest("a" * 64)}
+    cand.extras["runner"] = lambda *_: {
+        "stems": ["Fig1"],
+        "manifests": {"Fig1": _manifest("b" * 64)},
+    }
+    run = ai_bridge.SESSIONS["held-edit"]["taf"]["run"]
+    checks = ai_figure_edit.ADAPTER.verify("precommit", run, cand)
+    assert not ai_tasks.precommit_admits(checks)
+    executor = ai_figure_edit.BridgeExecutor("test", cand, wait=lambda: None, refresh=lambda: None)
+    with pytest.raises(ai_tasks.TaskError):
+        executor.commit(run, cand)
+    assert not cand.committed and _project_text(env) == SCRIPT
+
+
+def test_full_successful_check_clears_only_the_matching_dependency_evidence(env):
+    root = env["figs"]
+    cand = ai_figure_edit.create_candidate("cleared", root / "fig1.py", root, "fig1.py")
+    first = SCRIPT.replace('"old"', '"first"')
+    second = SCRIPT.replace('"old"', '"second"')
+    cand.extras["runner"] = object()
+
+    def missing(*_):
+        return {"status": "error", "code": "missing_dependency", "module": "openpyxl"}
+
+    cand.target.write_text(first)
+    assert not ai_figure_edit.agent_check(cand, missing)[0]
+    cand.target.write_text(second)
+    assert not ai_figure_edit.agent_check(cand, missing)[0]
+    assert ai_figure_edit.agent_check(cand, lambda *_: {"status": "ok", "stems": ["Fig1"]})[0]
+    assert not any(
+        c.reason_code == "missing_dependency"
+        for c in ai_figure_edit.ADAPTER.verify("precommit", None, cand)
+    )
+    cand.target.write_text(first)
+    assert any(
+        c.reason_code == "missing_dependency"
+        for c in ai_figure_edit.ADAPTER.verify("precommit", None, cand)
+    )
