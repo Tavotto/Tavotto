@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { AiSession } from '@/store/aiStore'
 import { useAiStore } from '@/store/aiStore'
+import { setCurrentProjectId } from '@/lib/session'
 import { fetchAiSession, resumeAiEditDependencies, type ConvertDependencyCard } from '@/lib/api'
 import { EditDependencyNotice } from './EditDependencyNotice'
 
@@ -28,6 +29,7 @@ const session: AiSession = {
 let node: HTMLDivElement
 let root: Root
 beforeEach(() => {
+  setCurrentProjectId('pj')
   node = document.createElement('div'); document.body.append(node); root = createRoot(node)
   useAiStore.setState({ sessions: [session] })
   vi.mocked(resumeAiEditDependencies).mockReset()
@@ -64,4 +66,17 @@ it('a failed request leaves the authorization card available for retry', async (
   await act(async () => { node.querySelector<HTMLButtonElement>('[data-convert-deps-install]')!.click(); await new Promise((resolve) => setTimeout(resolve, 0)) })
   expect(node.querySelector('[data-convert-deps-install]')).toBeTruthy()
   expect(useAiStore.getState().sessions[0].id).toBe('old')
+})
+
+
+it('a response after switching projects cannot attach a session to the new project', async () => {
+  let resolve!: (value: { session: string }) => void
+  vi.mocked(resumeAiEditDependencies).mockReturnValue(new Promise((r) => { resolve = r }))
+  await act(async () => root.render(<EditDependencyNotice session={session} card={card} />))
+  await act(async () => { node.querySelector<HTMLButtonElement>('[data-convert-deps-install]')!.click() })
+  setCurrentProjectId('other')
+  useAiStore.getState().clear()
+  await act(async () => { resolve({ session: 'resumed' }); await new Promise((r) => setTimeout(r, 0)) })
+  expect(useAiStore.getState().sessions).toEqual([])
+  expect(fetchAiSession).not.toHaveBeenCalled()
 })

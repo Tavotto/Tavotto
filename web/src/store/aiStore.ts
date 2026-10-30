@@ -391,6 +391,45 @@ function settleSessionTo(sid: string, done: DonePayload, transcript: AiSessionDe
   if (get().finish(done)) settledNotifier?.(done)
 }
 
+/** Attach an authorized dependency resume before any snapshot can finalize it.
+ * SSE, reconciliation and the safety net then share the normal completion path. */
+export function adoptDependencyResume(previousId: string, sessionId: string, project: string | null, generation: number): boolean {
+  if (useAiStore.getState().generation !== generation || currentProjectId() !== project) return false
+  let adopted = false
+  useAiStore.setState((s) => {
+    const previous = s.sessions.find((x) => x.id === previousId && x.project === project)
+    if (!previous) return {}
+    const existing = s.sessions.find((x) => x.id === sessionId && x.project === project)
+    adopted = true
+    if (existing) {
+      // Reconciliation may already have settled and announced the new ID.
+      // Keep that terminal fact, but retain the originating panel and transcript.
+      const merged = {
+        ...previous, ...existing, panelId: previous.panelId, fileId: previous.fileId,
+        gid: previous.gid, scope: previous.scope, target: previous.target,
+        entries: mergeTranscript(previous.entries, existing.entries),
+      }
+      return { sessions: s.sessions.filter((x) => x !== previous).map((x) => x === existing ? merged : x) }
+    }
+    return { sessions: s.sessions.map((x) => x === previous ? {
+      ...x, id: sessionId, status: 'running' as const, finalized: false, provisional: false,
+      changed: false, diff: '', error: undefined, finishedAt: undefined,
+      task: { task_type: 'figure_edit', outcome: null },
+    } : x) }
+  })
+  if (!adopted) return false
+  const pending = early.get(sessionId)
+  early.delete(sessionId)
+  for (const ev of pending ?? []) {
+    if (ev.t === 'delta') useAiStore.getState().appendDelta(sessionId, ev.kind, ev.text)
+    else if (useAiStore.getState().finish(ev.p)) settledNotifier?.(ev.p)
+  }
+  // A completion may have arrived before the HTTP response and been dropped;
+  // an immediate snapshot closes that gap, and the existing safety net retries.
+  void useAiStore.getState().settleRunningSessions().catch(() => undefined)
+  return true
+}
+
 const supersedesFor = (project: string | null, fileId: string, script: string | null): string[] =>
   [...supersedeQueue.values()]
     .filter((o) => (o.project ?? null) === (project ?? null) && submissionBlocks(o, fileId, script))

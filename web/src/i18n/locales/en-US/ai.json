@@ -472,7 +472,6 @@
   "dependency": {
     "waiting": "Waiting for your dependency decision",
     "missing": "Validation needs {{names}}. After installation, the edit will be checked again and applied.",
-    "installing": "Preparing dependencies, then checking the edit again…",
-    "stop": "Stop"
+    "installing": "Preparing dependencies, then checking the edit again…"
   }
 }
