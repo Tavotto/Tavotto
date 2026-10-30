@@ -104,8 +104,21 @@
     "expand": "Show more",
     "resend": "Send again"
   },
+  "sessionError": {
+    "agent_auth": "The model credential is invalid or expired.",
+    "agent_quota": "The model service is out of quota or rate limited. Try again later.",
+    "agent_network": "Couldn’t reach the model service.",
+    "agent_html_response": "The connection address opens a web page, not an API.",
+    "agent_refused": "The model declined this edit.",
+    "agent_budget": "This edit hit its usage limit and stopped.",
+    "agent_output_truncated": "The model hit its reply limit before finishing.",
+    "agent_max_turns": "This edit took too many steps and stopped.",
+    "agent_tool_error_loop": "The AI kept failing and stopped.",
+    "agent_internal": "Something went wrong while the AI was running.",
+    "agent_exit_nonzero": "Something went wrong while the AI was running.",
+    "timeout": "This edit timed out and stopped."
+  },
   "notice": {
-    "htmlResponse": "The connection address opens a web page, not an API.",
     "checkConnection": "Check connection",
     "taskFailedChanged": "The edit is saved, but the checks found the data or output changed. If that’s wrong, revert to the previous version.",
     "taskPartial": "The edit is saved, but some checks couldn’t run, so the result isn’t fully verified.",
