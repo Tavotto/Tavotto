@@ -68,7 +68,9 @@ def _is_inside(child: Path, parent: Path) -> bool:
 
 
 def _walk(root: Path):
-    """目录树里要复制的 (相对目录, 条目) ；不跟随符号链接。读不了的子目录静默略过（由复制阶段计 skipped）。"""
+    """目录树里要复制的 `(所在目录, 条目, 种类)`；不跟随符号链接。种类：`"dir"` / `"file"` / `"unreadable"`。
+    列不了内容的子目录（权限 000 等）、判不了类型的条目产出 `"unreadable"`（条目是 `Path`）——由复制阶段计进
+    `skipped`，不能静默丢掉一整个目录（否则副本缺了输入数据，界面却当成完整副本直接打开）。"""
     stack = [root]
     while stack:
         cur = stack.pop()
@@ -76,6 +78,8 @@ def _walk(root: Path):
             with os.scandir(cur) as it:
                 entries = list(it)
         except OSError:
+            if cur != root:
+                yield cur.parent, cur, "unreadable"
             continue
         for entry in entries:
             if entry.name in _SKIP_NAMES:
@@ -85,18 +89,18 @@ def _walk(root: Path):
                     continue
                 if entry.is_dir(follow_symlinks=False):
                     stack.append(Path(entry.path))
-                    yield cur, entry, True
+                    yield cur, entry, "dir"
                 elif entry.is_file(follow_symlinks=False):
-                    yield cur, entry, False
+                    yield cur, entry, "file"
             except OSError:
-                continue
+                yield cur, Path(entry.path), "unreadable"
 
 
 def measure(src: Path) -> tuple[int, int]:
     """`(文件数, 总字节数)`；一旦超限立刻抛 `project_copy_too_large`（不把大目录走完）。"""
     files = total = 0
-    for _cur, entry, is_dir in _walk(src):
-        if is_dir:
+    for _cur, entry, kind in _walk(src):
+        if kind != "file":
             continue
         files += 1
         try:
@@ -155,9 +159,16 @@ def copy_project(src: Path, parent: Path) -> CopyResult:
     skipped_paths: list[str] = []
     try:
         # 先建全部目录再拷文件：_walk 对目录先于其内容产出
-        for cur, entry, is_dir in _walk(src):
-            target = dest / Path(entry.path).relative_to(src)
-            if is_dir:
+        for _cur, entry, kind in _walk(src):
+            rel = Path(entry if kind == "unreadable" else entry.path).relative_to(src)
+            if kind == "unreadable":
+                # 列不了的目录 / 判不了的条目：整块没复制进副本，如实计进 skipped
+                skipped += 1
+                if len(skipped_paths) < SKIPPED_SAMPLE:
+                    skipped_paths.append(rel.as_posix())
+                continue
+            target = dest / rel
+            if kind == "dir":
                 target.mkdir(exist_ok=True)
                 continue
             try:

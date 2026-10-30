@@ -293,6 +293,28 @@ def test_unreadable_single_file_is_skipped_and_counted(env):
         secret.chmod(0o644)
 
 
+@_no_chmod
+def test_unlistable_directory_is_counted_as_skipped_not_silently_dropped(env):
+    """列不了内容的子目录（000）整块没复制：必须计进 skipped，界面才会先说一句再打开（Codex #1515 P2）。"""
+    client, project, tmp = env
+    locked = project / "data" / "inputs"
+    locked.mkdir()
+    (locked / "input.csv").write_text("a,b\n1,2\n")
+    locked.chmod(0)
+    pj = _open(project)
+    parent = tmp / "mine"
+    parent.mkdir()
+    try:
+        r = _save_as(client, pj, parent)
+        assert r.status_code == 200
+        body = r.get_json()
+        assert body["skipped"] == 1
+        assert body["skipped_paths"] == ["data/inputs"]
+        assert not (Path(body["path"]) / "data" / "inputs" / "input.csv").exists()
+    finally:
+        locked.chmod(0o755)
+
+
 # ------------------------------------------- 2b. 从没打开过的只读文件夹
 
 
