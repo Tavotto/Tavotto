@@ -83,11 +83,13 @@ PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到�
   inline-block，导出里只算宽度）；公式后面的字另起一段从公式右边落笔。公式用文字颜色填充。
 - **排不出来**：两侧都按源码原样画（`$…$`，不吞字）；导出报 `math_unrenderable`（警告里带源码与原因），画布上带红色波浪线、
   悬停看原因。未接入问题面板（preflight 两侧是纯求值器，不起排版进程）。
-- **PDF 文本层**：公式本身仍是填充轮廓，但在公式位置排一个文本占位——两个空格字形（什么都不画，advance 之和 =
-  公式宽度，取整到字体单位）、run 级 ActualText = `$源码$`（`typography._math_text_piece`），所以 PDF 阅读器里选中 / 复制
-  拿到 `x $\frac{a}{b}$ y`；公式后面的字紧跟在占位后面，不再断成两段。用两个而不是一个字形，是因为 PDFium 会把只含一个
-  空白字符的 ActualText 整段丢掉（实测）。正文脸没有空格字形（gid 0）时不给文本层（不画 .notdef 方框）；排不出的公式
-  照旧按源码画。SVG 导出对纯空白的文字段不写 `<text>`、笔照常前进，不多画任何元素。
+- **PDF 文本层**：公式本身仍是填充轮廓；同一位置再放源码 `$…$` 本身的字形，**不画**（文字渲染模式 3，IR 的
+  `GlyphRun.invisible`），按自然字宽等比压到公式宽度（advance 之和 = 公式宽，取整到字体单位），外面包整段
+  ActualText = 同一串源码（`typography._math_text_piece`）。PDF 阅读器里选中 / 复制拿到 `x $\frac{a}{b}$ y`，粘回
+  Tavotto 也认得出公式；公式后面的字紧跟在这段后面，不再断成两段。两层都要（10-30 四家读取器实测）：macOS PDFKit
+  （「预览」）不读 ActualText、只认字形；字形压得很窄时（`\frac{a}{b}` 约 0.5 em）poppler 按位置把挤在一起的字重排，
+  它认 ActualText；PDFium / MuPDF 两层都读对。源码里有正文脸画不了的字（gid 0）时不给文本层；排不出的公式照旧按源码画。
+  SVG 导出与画面不画不可见段（笔照常前进）。
 - **已知限制**：图内文字的公式块在编辑框里仍显示源码（图上就是
   matplotlib 画的真身）；缩略图里的公式显示源码。
 - 打包：`mathtext_child.py` 进 `packaging/tavotto.spec` 的外部解释器源码清单（第三个根，`test_runtime_build` 按 import
