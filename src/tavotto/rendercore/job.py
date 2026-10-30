@@ -464,11 +464,15 @@ def plan_facts(rp: plan.RenderPlan) -> dict:
     for node, _path in ir.walk(page):
         oid = str(getattr(node, "object_id", "") or "")
         if isinstance(node, ir.ShapedText):
-            text = "".join(
-                r.actual_text if r.actual_text is not None else r.cluster_text for r in node.runs
-            )
-            if text.strip():
-                lines.append(text)
+            # 不画的段（标注公式的源码，ADR 0152 §七）只在 PDF 文本层里有、SVG 不写：在它那里断开，
+            # 期望的只是看得见的字——SVG 与 PDF 两个载体的文字层检查都按这些行找
+            parts: list[str] = [""]
+            for r in node.runs:
+                if r.invisible:
+                    parts.append("")
+                else:
+                    parts[-1] += r.actual_text if r.actual_text is not None else r.cluster_text
+            lines.extend(t for t in parts if t.strip())
             leaf = {"kind": "text"}
         elif isinstance(node, (ir.ImportedPage, ir.Image)):
             x, y, w, h = node.rect

@@ -155,9 +155,13 @@ class ShapedPiece:
     size: float
     rise: float
     logical: str = ""
+    #: 只进文本层、不画（`ir.GlyphRun.invisible`）：标注公式的源码（`_math_text_piece`）
+    invisible: bool = False
 
     @property
     def actual_text(self) -> str | None:
+        if self.invisible:
+            return self.logical or None
         return self.logical if self.logical and self.logical != self.text else None
 
     @property
@@ -206,9 +210,9 @@ class LaidOutLine:
     pieces: tuple[ShapedPiece, ...]
     #: 这一行**用户写的**原文（含 Unicode 上下标字符，不含 `^{}` 标记）——ActualText 的依据。
     logical: str
-    #: 这一行里排好的公式：(行内起点 x（pt，页面 y 向下空间）, 排版结果)。结果是 `engine.mathtypeset`
-    #: 的形状：em 单位、基线 y = 0、y 向上（ADR 0152 PR 4）
-    math: tuple[tuple[float, dict], ...] = ()
+    #: 这一行里排好的公式：(行内起点 x（pt，页面 y 向下空间）, 排版结果, 公式源码)。结果是
+    #: `engine.mathtypeset` 的形状：em 单位、基线 y = 0、y 向上（ADR 0152 PR 4）
+    math: tuple[tuple[float, dict, str], ...] = ()
     #: 每个 piece 的起点 x（同一空间）。没有公式时首尾相接（= 行起点 + 前面各段宽之和）；公式后面的
     #: 那一段从公式右边起——落笔时在这里断开另起一段文字，不然后面的字会压在公式上
     piece_x: tuple[float, ...] = ()
@@ -259,6 +263,8 @@ class MathSlots:
     def __init__(self, lookup):
         self._lookup = lookup
         self.boxes: dict[str, dict] = {}
+        #: 占位字符 → 公式源码（不含 `$`）：PDF 文本层的 ActualText 要它
+        self.sources: dict[str, str] = {}
         self.failed: list[tuple[str, str]] = []
 
     def slot(self, src: str) -> str | None:
@@ -270,6 +276,7 @@ class MathSlots:
             return None
         ch = chr(_MATH_BASE + len(self.boxes))
         self.boxes[ch] = box
+        self.sources[ch] = src
         return ch
 
     def width(self, seg: str, size: float) -> float:
@@ -429,6 +436,34 @@ def _same_run(a: ShapedPiece, b: ShapedPiece) -> bool:
     return a.face is b.face and a.size == b.size and a.rise == b.rise and a.layer == b.layer
 
 
+def _math_text_piece(face: Face, src: str, width_pt: float, size: float) -> ShapedPiece | None:
+    """公式在 PDF 文本层里的那段字（ADR 0152 §七）：源码 `$…$` 本身的字形，**不画**（文字渲染模式 3），
+    按比例压到公式的宽度，与填充轮廓叠在同一位置——阅读器里选中 / 复制拿到 LaTeX 源码。
+
+    两层都要（2026-10-30 实测，四家读取器）：
+    * **真字形**（ToUnicode 回源码）：macOS PDFKit（「预览」）根本不读 ActualText，只认字形；
+    * **整段 ActualText = 源码**：字形压得很窄时（`\\frac{a}{b}` 只有约 0.5 em），poppler 按位置把挤在
+      一起的字重排乱序；它认 ActualText，有了这层就对。PDFium / MuPDF 两层都读对。
+
+    这张脸画不了源码里的某个字（gid 0）时回 None：宁可不给文本层，也不在文本层里放 .notdef。"""
+    text = f"${src}$"
+    shaped = face.shape(text)
+    if not shaped or any(g.gid == 0 for g in shaped):
+        return None
+    total = max(round(width_pt * face.resource.units_per_em / size), 0)
+    natural = sum(g.x_advance for g in shaped)
+    if natural <= 0:
+        return None
+    glyphs: list[Glyph] = []
+    acc = 0
+    for i, g in enumerate(shaped):
+        # 按自然字宽等比压缩；最后一个字形补齐取整误差，整段 advance 之和正好是公式宽度
+        adv = total - acc if i == len(shaped) - 1 else round(g.x_advance * total / natural)
+        acc += adv
+        glyphs.append(Glyph(g.gid, g.text, adv, 0, 0))
+    return ShapedPiece(face, "primary", text, tuple(glyphs), size, 0.0, text, invisible=True)
+
+
 def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
     """画布文字对象（`text` / `size_pt` / `x_mm` … 与旧 facade 同一份字段）→ 已排版的块。
     空白文字回 None（什么都不画）。
@@ -468,14 +503,25 @@ def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock 
         )
         pieces: list[ShapedPiece] = []
         piece_x: list[float] = []
-        maths: list[tuple[float, dict]] = []
+        maths: list[tuple[float, dict, str]] = []
         cursor = 0.0  # 行内已落笔的宽度：公式与公式后面的字都按它落位
         after_math = False  # 公式之后的第一段不并进前一段（中间隔着公式的宽度）
         for seg_text, seg_script, seg_logical, seg_style in line:
             if seg_script == MATH and slots is not None:
                 for ch in seg_text:
-                    maths.append((x + cursor, slots.boxes[ch]))
-                    cursor += slots.width(ch, size)
+                    start = x + cursor
+                    maths.append((start, slots.boxes[ch], slots.sources[ch]))
+                    mp = _math_text_piece(
+                        faces.primary, slots.sources[ch], slots.width(ch, size), size
+                    )
+                    if mp is None:
+                        cursor += slots.width(ch, size)
+                    else:
+                        # 文本层占位（见 `_math_text_piece`）：按它取整后的宽度往前走，后面的字
+                        # 才与它首尾相接、不必再断开另起一段
+                        cursor += mp.width
+                        pieces.append(mp)
+                        piece_x.append(start)
                 after_math = True
                 continue
             seg_size, rise = richtext.run_metrics(seg_script, size)
