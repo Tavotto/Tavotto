@@ -112,11 +112,28 @@ def test_registered_savefig_edit_retains_source_output_identity(world, change_da
     assert ("data_changed" if change_data else "data unchanged") in report, report
 
 
-def test_relative_output_write_is_reported_as_not_measured_not_as_a_broken_script(world):
+def _writes_outside_project(figs):
+    outside = figs.parent / "outside"
+    outside.mkdir(exist_ok=True)
+    return SHOW_ONLY.replace(
+        "    plt.show()\n",
+        f"    open({str(outside / 'data.csv')!r}, 'w').write('x')\n    plt.show()\n",
+    )
+
+
+def test_project_output_write_is_redirected_and_measured(world):
+    """写进项目的输出被改道到候选暂存区：照常测量（不再是 not measured），项目里不出现该文件。"""
     m, figs = world
     ok, report = _check(m, figs, SHOW_ONLY, WRITES_CSV.replace("'old'", "'new'"))
+    assert ok and "not measured" not in report and "does not run" not in report, report
+    assert not (figs / "data.csv").exists(), "改道：项目里不出现该文件"
+
+
+def test_outside_project_write_is_reported_as_not_measured_not_as_a_broken_script(world):
+    m, figs = world
+    ok, report = _check(m, figs, SHOW_ONLY, _writes_outside_project(figs).replace("'old'", "'new'"))
     assert ok and "not measured" in report and "does not run" not in report, report
-    assert not (figs / "data.csv").exists(), "绊线挡住了写入"
+    assert not (figs.parent / "outside" / "data.csv").exists(), "绊线挡住了写入"
 
 
 def test_stage_prefix_mirrors_the_convert_module():
@@ -131,7 +148,7 @@ def test_convert_validation_gives_the_write_hint_for_a_relative_output_script(wo
     original_bytes = script.read_bytes()
     ctx = next(iter(m.PROJECTS.values()))
     cand = ai_figure_edit.create_candidate("c1", script, figs, "plot.py")
-    cand.new_bytes = WRITES_CSV.encode()
+    cand.new_bytes = _writes_outside_project(figs).encode()
     try:
         res = ai_convert.run_validation(cand, m._convert_runner(ctx, "plot.py"))
     finally:
@@ -139,9 +156,10 @@ def test_convert_validation_gives_the_write_hint_for_a_relative_output_script(wo
     assert res["status"] == "error" and res["code"] == ai_convert.WRITE_OUTSIDE_ROOTS_CODE, res
     hint, detail = res["message"].split("\nRejected write: ", 1)
     assert hint == ai_convert.WRITE_OUTSIDE_HINT
-    assert json.loads(detail) == {"path": "data.csv", "event": "open"}
+    violation = json.loads(detail)
+    assert violation["event"] == "open" and violation["path"].endswith("outside/data.csv")
     assert script.read_bytes() == original_bytes
-    assert not (figs / "data.csv").exists()
+    assert not (figs.parent / "outside" / "data.csv").exists()
 
 
 TWO_PLOTS = (
