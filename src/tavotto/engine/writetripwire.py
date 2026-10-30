@@ -34,6 +34,16 @@ pickle / `shutil.copyfile` / 根内符号链接指向根外 / 线程与 fork 子
 目录的删除 / 改名不改道（走绊线 → 失败）；`os.stat` 等未包装的查询仍会看到项目里的原件（同上面的限制）。
 `os.open` 不带 `O_CREAT` 打开项目里已有的文件（如 `O_WRONLY|O_TRUNC`）：先在改道区物化（截断 = 空文件，其余 = 复制）；原件不存在或已被白名单标记则保持 `FileNotFoundError`。
 
+**失败即关闭（Codex #1516 复核后的原则）**：改道层只改道它能**忠实模拟**的操作；其余碰项目路径的操作一律不改道，
+落回绊线 → `write_outside_roots`（与本机制出现之前的行为相同），校验失败也不批准一个采用后行为会不同的候选。
+模拟的：文件的创建 / 覆盖 / 追加（写时复制）/ 读回 / 删除与改名（白名单）/ `x` 与 `O_EXCL`（项目里有同名文件 → `FileExistsError`）/
+在项目目录里新建暂存子目录、删除**纯暂存**的目录或树；类型冲突按真实语义报错：往项目里的目录路径写文件 → `IsADirectoryError`，
+在项目里的文件上 `mkdir` → `FileExistsError`，文件改名 / `copyfile` 到项目目录上 → `IsADirectoryError`，`copytree` 到项目里已有的目标 → `FileExistsError`。
+**失败的（不改道，写入根绊线拒绝）**：项目里已有目录的 `rmdir` / `rmtree` / 目录改名（暂存副本删掉后原内容会重新露出来）、
+目录改名到项目里已有的目录 / 文件上、`copytree(dirs_exist_ok=True)` 合并进项目目录、`copymode` / `copystat` 到只存在于项目里的文件、
+在被删除的文件处 `mkdir`、`shutil.move` 进项目目录且同名项已在项目里、`copytree` 的源目录同时存在于项目与暂存区、`symlink|link|truncate`。
+未包装、所以看不到暂存区的**读**（只能文档化，没法失败）：`os.stat|listdir|scandir`、`glob`、`Path.exists|stat|iterdir`。
+
 纯标准库、**不 import 任何兄弟模块**：它装进 worker 的私有包（`worker._ENGINE_MODULES`）。
 """
 
@@ -480,6 +490,15 @@ def _cow(raw, target: str, *, empty: bool = False) -> None:
         _rtls.busy = prev
 
 
+def _eisdir(path) -> IsADirectoryError:
+    return IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), path)
+
+
+def _proj_dir(r) -> bool:
+    """项目里这个路径当前是不是目录（改道层不模拟目录级的改动：见模块头的“失败即关闭”）。"""
+    return bool(_ORIG["isdir"](r[0]))
+
+
 def _enoent(path) -> FileNotFoundError:
     return FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), path)
 
@@ -494,6 +513,10 @@ def _w_open(orig):
                 if r is not None:
                     white = _white(r[1])
                     creates = any(c in m for c in "wax")
+                    if _proj_dir(r) and not _real_exists(r[2]):
+                        raise _eisdir(
+                            file
+                        )  # 项目里这里是目录：真实语义就是 IsADirectoryError，不改道成普通文件
                     if "x" in m and not white and _real_exists(file):
                         raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), file)
                     if white and not creates:
@@ -525,6 +548,8 @@ def _w_os_open(orig):
                 if r is not None:
                     white = _white(r[1])
                     creates = bool(flags & os.O_CREAT)
+                    if _proj_dir(r) and not _real_exists(r[2]):
+                        raise _eisdir(path)
                     if creates and flags & os.O_EXCL and not white and _real_exists(path):
                         raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), path)
                     if white and not creates:
@@ -554,6 +579,7 @@ def _w_mkdir(orig):
                 r = _resolve(path)
                 if r is None or not _white(r[1]):
                     raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), path)
+                return orig(path, mode, dir_fd=dir_fd)  # 被“删掉”的文件处建目录：不模拟 → 走绊线
             target = _map(path, write=True)
             if target is not None:
                 path = target
@@ -592,14 +618,15 @@ def _w_remove(orig):
 
 
 def _w_rmdir(orig):
-    """rmdir：只在改道区里有同名目录时改道；项目里的目录不动（走绊线）。"""
+    """rmdir：只删**纯暂存**的目录（项目里没有同名目录）；项目里有目录就不改道（走绊线 → 失败），
+    否则删掉暂存目录后，项目里的原目录会重新露出来。"""
 
     @functools.wraps(orig)
     def fn(path, *, dir_fd=None):
         if dir_fd is None and _redirect_on():
-            target = _map(path, write=False)
-            if target is not None:
-                path = target
+            r = _resolve(path)
+            if r is not None and not _proj_dir(r) and _real_exists(r[2]):
+                path = r[2]
         return orig(path, dir_fd=dir_fd)
 
     return fn
@@ -611,6 +638,24 @@ def _w_rename(orig):
         if src_dir_fd is None and dst_dir_fd is None and _redirect_on():
             rs = _resolve(src)
             rd = _resolve(dst)
+            if rd is not None and _proj_dir(rd):
+                # 目的地在项目里是目录：文件改名到目录上是 IsADirectoryError；目录对目录要合并 / 替换，不模拟 → 走绊线
+                src_is_dir = (rs is not None and _ORIG["isdir"](rs[2])) or (
+                    rs is None and _ORIG["isdir"](os.fsdecode(os.fspath(src)))
+                )
+                if not src_is_dir:
+                    raise _eisdir(dst)
+                return orig(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+            if (
+                rd is not None
+                and _real_exists(rd[0])
+                and (
+                    (rs is not None and _ORIG["isdir"](rs[2]))
+                    or (rs is None and _ORIG["isdir"](os.fsdecode(os.fspath(src))))
+                )
+            ):
+                # 目录改名到项目里已有的文件上：不模拟 → 走绊线
+                return orig(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
             if rd is not None:
                 _prepare_write(rd)
             d = rd[2] if rd is not None else dst
@@ -680,8 +725,8 @@ def _w_getsize(orig):
     return getsize
 
 
-def _w_shutil_pair(orig):
-    """copyfile / copymode / copystat：src 读时看改道区，dst 是写。"""
+def _w_copyfile(orig):
+    """copyfile：src 读时看改道区，dst 是写（项目里 dst 是目录 → IsADirectoryError）。"""
 
     @functools.wraps(orig)
     def fn(src, dst, *args, **kwargs):
@@ -691,8 +736,27 @@ def _w_shutil_pair(orig):
                 src = s
             rd = _resolve(dst)
             if rd is not None:
+                if _proj_dir(rd) and not _real_exists(rd[2]):
+                    raise _eisdir(dst)
                 _prepare_write(rd)
                 _state["whiteouts"].discard(rd[1])
+                dst = rd[2]
+        return orig(src, dst, *args, **kwargs)
+
+    return fn
+
+
+def _w_copyattr(orig):
+    """copymode / copystat：dst 必须是已有对象。改道区里有它就改它；只存在于项目里就不改道（走绊线 → 失败）。"""
+
+    @functools.wraps(orig)
+    def fn(src, dst, *args, **kwargs):
+        if _redirect_on():
+            s = _map(src, write=False)
+            if s is not None:
+                src = s
+            rd = _resolve(dst)
+            if rd is not None and not _proj_dir(rd) and _real_exists(rd[2]):
                 dst = rd[2]
         return orig(src, dst, *args, **kwargs)
 
@@ -703,21 +767,36 @@ def _w_copytree(orig):
     @functools.wraps(orig)
     def copytree(src, dst, *args, **kwargs):
         if _redirect_on():
-            d = _map(dst, write=True)
-            if d is not None:
-                dst = d
+            rsrc = _resolve(src)
+            if rsrc is not None and _real_exists(rsrc[2]):
+                if _real_exists(rsrc[0]):
+                    # 源目录一半在项目里、一半在暂存区：合并视图不模拟 → 失败即关闭
+                    _violation("shutil.copytree", rsrc[0])
+                src = rsrc[2]
+            rd = _resolve(dst)
+            if rd is not None:
+                if _real_exists(rd[0]) and not _white(rd[1]):
+                    if kwargs.get("dirs_exist_ok") or (len(args) >= 5 and args[4]):
+                        return orig(
+                            src, dst, *args, **kwargs
+                        )  # 合并进项目里已有的目录：不模拟 → 走绊线
+                    raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), dst)
+                dst = _map(dst, write=True)
         return orig(src, dst, *args, **kwargs)
 
     return copytree
 
 
 def _w_rmtree(orig):
+    """rmtree：只删纯暂存的树；项目里有这个路径（目录或文件）就不改道（走绊线 → 失败），
+    否则删掉暂存副本后项目里的原内容会重新露出来。"""
+
     @functools.wraps(orig)
     def rmtree(path, *args, **kwargs):
         if _redirect_on():
-            target = _map(path, write=False)
-            if target is not None:
-                path = target
+            r = _resolve(path)
+            if r is not None and not _real_exists(r[0]) and _real_exists(r[2]):
+                path = r[2]
         return orig(path, *args, **kwargs)
 
     return rmtree
@@ -740,6 +819,13 @@ def _w_move(orig):
             _prepare_write(rd)
             # 项目里的 dst 是已有目录时 shutil.move 是「移进去」：改道区里补出同名目录，语义保持
             if _real_exists(dst) and _ORIG["isdir"](os.fsdecode(os.fspath(dst))):
+                inner = os.path.join(
+                    os.fsdecode(os.fspath(dst)), os.path.basename(os.fsdecode(os.fspath(src)))
+                )
+                if _real_exists(inner):
+                    return orig(
+                        src, dst, *args, **kwargs
+                    )  # 移进目录时同名项已在项目里：不模拟 → 走绊线
                 _ORIG["makedirs"](rd[2], exist_ok=True)
             dst = rd[2]
         result = orig(src, dst, *args, **kwargs)
@@ -778,9 +864,9 @@ def _install_redirect() -> None:
     for name in ("exists", "isfile", "isdir"):
         setattr(path, name, _w_exists(getattr(path, name)))
     path.getsize = _w_getsize(path.getsize)
-    shutil.copyfile = _w_shutil_pair(shutil.copyfile)
-    shutil.copymode = _w_shutil_pair(shutil.copymode)
-    shutil.copystat = _w_shutil_pair(shutil.copystat)
+    shutil.copyfile = _w_copyfile(shutil.copyfile)
+    shutil.copymode = _w_copyattr(shutil.copymode)
+    shutil.copystat = _w_copyattr(shutil.copystat)
     shutil.copytree = _w_copytree(shutil.copytree)
     shutil.rmtree = _w_rmtree(shutil.rmtree)
     shutil.move = _w_move(shutil.move)

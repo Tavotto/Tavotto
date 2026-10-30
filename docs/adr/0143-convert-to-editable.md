@@ -378,3 +378,9 @@ savefig 收到已打开的流时再处理。已识别的构造调用同样在运
 * **白名单（Codex #1516 复核）**：通过改道层删除 / 改名走的项目路径（含只存在于项目里的用户文件，原件不动）记进 worker 内存里的白名单集合，之后被包装的读 / 查询都当不存在、
   再创建 / 写会清掉标记；改名的目的地进改道区、源路径进白名单。集合随 `install` 清空，校验 worker 每次运行后退役，所以每次执行从空开始。
   `os.open` 不带 `O_CREAT` 打开项目里已有的文件（`O_WRONLY|O_TRUNC`）先在改道区物化；原件不存在或已被白名单则仍 `FileNotFoundError`。
+* **失败即关闭（Codex #1516 第四轮后的原则）**：改道层只改道能忠实模拟的操作；其余碰项目路径的操作落回写入根绊线 → `write_outside_roots`（与本修订之前相同），
+  不去模拟更多语义。逐项审计（`writetripwire` 头注有同一份清单）：
+  * 模拟：文件创建 / 覆盖 / 追加 / 读回 / 写时复制；删除与改名（白名单，仅文件）；`x` / `O_EXCL` 遇项目里同名文件 `FileExistsError`；被删文件处追加 = 新建；在项目目录里建暂存子目录并删除**纯暂存**目录 / 树。
+  * 真实语义报错：往项目目录路径 `open/os.open` 写 → `IsADirectoryError`；项目文件上 `mkdir` → `FileExistsError`；文件 `rename/replace/copyfile` 到项目目录上 → `IsADirectoryError`；`copytree` 到已有目标 → `FileExistsError`。
+  * 失败（绊线）：项目已有目录的 `rmdir/rmtree/目录改名`；目录改名到已有目录 / 文件上；`copytree(dirs_exist_ok=True)`；`copymode/copystat` 到仅在项目里的文件；白名单文件处 `mkdir`；`shutil.move` 进项目目录且同名项已存在；`copytree` 源目录项目与暂存区各一半；`symlink/link/truncate`。
+  * 无法失败只能文档化的未包装读：`os.stat|listdir|scandir`、`glob`、`Path.exists|stat|iterdir` 看不到暂存区。目录没有白名单（目录删除一律走上面的失败）。

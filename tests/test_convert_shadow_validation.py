@@ -384,6 +384,123 @@ def test_os_open_without_creat_on_a_missing_file_still_fails(world):
     assert not _redirected(cand, "sub/nope.csv").exists()
 
 
+def _project_dir(world):
+    out = world[0] / "sub" / "out"
+    out.mkdir(exist_ok=True)
+    (out / "old.csv").write_text("old")
+    return out
+
+
+def _tripped(result):
+    return result["status"] == "error" and result["code"] == "write_outside_roots", result
+
+
+def test_rmtree_of_an_existing_project_dir_trips(world):
+    out = _project_dir(world)
+    result, _ = _validate(
+        world,
+        "o = os.path.join(here, 'out')\nopen(os.path.join(o, 'new.csv'), 'w').write('n')\n"
+        "import shutil\nshutil.rmtree(o)\n",
+    )
+    assert _tripped(result)
+    assert (out / "old.csv").read_text() == "old" and not (out / "new.csv").exists()
+
+
+def test_rmdir_of_a_project_dir_trips_but_a_purely_staged_dir_can_be_removed(world):
+    _project_dir(world)
+    result, _ = _validate(world, "os.rmdir(os.path.join(here, 'out'))\n")
+    assert _tripped(result)
+    result, _ = _validate(
+        world,
+        "import shutil\nn = os.path.join(here, 'staged', 'deep')\nos.makedirs(n)\n"
+        "assert os.path.isdir(n)\nopen(os.path.join(n, 'f.csv'), 'w').write('x')\n"
+        "shutil.rmtree(os.path.join(here, 'staged'))\nassert not os.path.exists(n)\n",
+    )
+    assert result["status"] == "ok", result
+
+
+def test_writing_a_file_over_a_project_directory_is_is_a_directory_error(world):
+    _project_dir(world)
+    result, cand = _validate(
+        world,
+        "o = os.path.join(here, 'out')\n"
+        "for fn in (lambda: open(o, 'w'), lambda: open(o, 'a'),\n"
+        "           lambda: os.open(o, os.O_WRONLY | os.O_CREAT)):\n"
+        "    try:\n        fn()\n        raise SystemExit('created a file over a dir')\n"
+        "    except IsADirectoryError:\n        pass\n"
+        "assert os.path.isdir(o) and not os.path.isfile(o)\n",
+    )
+    assert result["status"] == "ok", result
+    assert not _redirected(cand, "sub/out").exists()
+
+
+def test_mkdir_over_project_file_raises_and_over_a_whited_out_file_trips(world):
+    result, _ = _validate(
+        world,
+        "try:\n    os.mkdir(data)\n    raise SystemExit('mkdir over file')\n"
+        "except FileExistsError:\n    pass\n",
+    )
+    assert result["status"] == "ok", result
+    result, _ = _validate(world, "os.remove(data)\nos.mkdir(data)\n")
+    assert _tripped(result)
+
+
+def test_rename_onto_a_project_directory(world):
+    _project_dir(world)
+    result, _ = _validate(
+        world,
+        "open(data, 'w').write('n')\n"
+        "try:\n    os.replace(data, os.path.join(here, 'out'))\n    raise SystemExit('replaced dir')\n"
+        "except IsADirectoryError:\n    pass\n",
+    )
+    assert result["status"] == "ok", result
+    result, _ = _validate(
+        world,
+        "os.makedirs(os.path.join(here, 'stg'))\nos.rename(os.path.join(here, 'stg'), os.path.join(here, 'out'))\n",
+    )
+    assert _tripped(result)
+
+
+def test_copy_destinations_colliding_with_project_entries(world):
+    _project_dir(world)
+    result, _ = _validate(
+        world,
+        "import shutil\nsrc = os.path.join(here, 'srcdir')\nos.makedirs(src)\n"
+        "open(os.path.join(src, 'a.csv'), 'w').write('a')\n"
+        "o = os.path.join(here, 'out')\n"
+        "try:\n    shutil.copyfile(os.path.join(src, 'a.csv'), o)\n    raise SystemExit('copyfile over dir')\n"
+        "except IsADirectoryError:\n    pass\n"
+        "try:\n    shutil.copytree(src, o)\n    raise SystemExit('copytree over dir')\n"
+        "except FileExistsError:\n    pass\n"
+        "shutil.copytree(src, os.path.join(here, 'fresh'))\nassert os.path.isfile(os.path.join(here, 'fresh', 'a.csv'))\n",
+    )
+    assert result["status"] == "ok", result
+    result, _ = _validate(
+        world,
+        "import shutil\nos.makedirs(os.path.join(here, 'srcdir'))\n"
+        "shutil.copytree(os.path.join(here, 'srcdir'), os.path.join(here, 'out'), dirs_exist_ok=True)\n",
+    )
+    assert _tripped(result)
+    result, _ = _validate(
+        world, "import shutil\nshutil.copymode(os.path.join(here, 'data.csv'), data)\n"
+    )
+    assert _tripped(result)
+
+
+def test_exclusive_create_against_project_file_and_append_to_whited_out_file(world):
+    result, cand = _validate(
+        world,
+        "for fn in (lambda: open(data, 'x'),\n"
+        "           lambda: os.open(data, os.O_WRONLY | os.O_CREAT | os.O_EXCL)):\n"
+        "    try:\n        fn()\n        raise SystemExit('x over existing')\n"
+        "    except FileExistsError:\n        pass\n"
+        "os.remove(data)\nopen(data, 'a').write('tail')\n"
+        "assert open(data).read() == 'tail'\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/data.csv").read_text() == "tail"
+
+
 def test_writes_outside_project_and_allowed_roots_still_trip(world):
     root, cand, runner = world
     workdir.set_mode(root, workdir.MODE_PROJECT)
