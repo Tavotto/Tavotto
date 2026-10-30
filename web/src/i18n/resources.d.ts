@@ -5981,6 +5981,7 @@ export default interface Resources {
       "aria": "准备 {{script}}",
       "btn": {
         "aiFix": "使用你的 AI 来修复",
+        "allowRun": "允许并运行",
         "answer": "回答",
         "background": "放到后台",
         "cancelScan": "取消检查",
@@ -6142,6 +6143,7 @@ export default interface Resources {
           "attempt": "第 {{n}} 次",
           "declined": {
             "already_fell_back": "这次运行已经换过一次，没有再换",
+            "attempt_cap": "这次运行已经试过多次，没有再试",
             "cancelled": "已停止，没有换",
             "fallback_disabled": "原样运行已关闭，没有换",
             "interpreter_changed": "解释器变了，没有换",
@@ -6275,6 +6277,7 @@ export default interface Resources {
         "fileOpsBlocked": "脚本改了项目里的文件又去读，安全运行不会真改，结果会不同，所以没有出图",
         "fileOpsBlockedOff": "原样运行被关掉了；脚本改了项目里的文件又去读，安全运行结果会不同，所以没有出图",
         "fileOpsBlockedSafeOnly": "这个项目设成了只用安全运行；脚本改了文件又去读，结果会不同，所以没有出图",
+        "fileOpsConfirm": "这个脚本要真的把文件写到磁盘上才能跑完",
         "input": "脚本在等你回答",
         "inputSecret": "脚本要一个口令",
         "inputUnanswered": "脚本中途要你回答，再运行一次就能答",

@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hmac
 import json
 import logging
+import secrets
 import threading
 import time
 import uuid
@@ -135,7 +137,18 @@ ACTION_PREPARE = "prepare_dependencies"
 #: 「打开并运行」（P05b）：用户明确授权一次有界的持续意图——把用户代码**首次执行之前**的准备（授权范围内的受管安装、
 #: 必要的目录 / 环境回答之后的重核）连续推进，然后执行恰一次。认领它必须回显 `InstallGrant` 的摘要。
 ACTION_ARM = "run_when_ready"
-ACTION_KINDS = (ACTION_RUN, ACTION_CANCEL, ACTION_RECHECK, ACTION_PREPARE, ACTION_ARM)
+#: 浏览器模式的显式确认（ADR 0127 修订 2026-10-30，#1500）：safe 被自己的守卫拦下、而这次运行不是桌面窗口发起的（没有静默回退）
+#: 之后，失败卡上的「允许并运行」。认领 = **用户在页面上点了一次**，授权**这一次**以 native 重跑。只有同时满足两件服务端核得到的事
+#: 才生效：请求靠**会话 cookie** 认证（本机凭据头不算）、请求回显的 `confirm_token` 对得上服务端为那次失败尝试签发的那一枚。
+ACTION_CONFIRM_NATIVE = "confirm_native_run"
+ACTION_KINDS = (
+    ACTION_RUN,
+    ACTION_CANCEL,
+    ACTION_RECHECK,
+    ACTION_PREPARE,
+    ACTION_ARM,
+    ACTION_CONFIRM_NATIVE,
+)
 
 # 稳定错误码（协议契约：code 不许改，文案随便改）
 ERROR_NOT_FOUND = "preparation_session_not_found"
@@ -151,6 +164,10 @@ ERROR_BAD_REQUEST = "bad_request"
 #: 显式要 native 的动作 / 会话不是桌面窗口发起的（ADR 0127 D1：native 的授权边界是桌面用户）。路由选的 native 在同一来源判据下
 #: 静默降 safe（路由只是偏好）；显式 native 是客户端明确的要求，换语义会误导，所以拒绝
 ERROR_NATIVE_REQUIRES_DESKTOP = "native_requires_desktop"
+#: 确认「允许并运行」的请求不是页面（会话 cookie）发来的——本机凭据头、MCP、CLI、AI 修复工具链都过不了这一关
+ERROR_CONFIRM_REQUIRES_PAGE = "native_confirm_requires_page"
+#: 确认 token 缺失 / 对不上 / 已用过：零副作用
+ERROR_CONFIRM_INVALID = "native_confirm_invalid"
 #: 同一脚本在本项目里已有另一个在等的运行意图（别的运行配置）：两条意图并存会让合计多跑一次，要显式 `transfer_from`
 ERROR_INTENT_CONFLICT = "preparation_run_intent_conflict"
 #: 想转移的旧意图不在「还没认领任何执行」的状态（已执行 / 在执行 / 已取消 / 已撤销 / 不存在）：零副作用
@@ -757,6 +774,9 @@ class _Action:
     module: str = ""
     target_kind: str = ""
     scope_policy: str = ""
+    #: confirm_native_run：服务端为「那一次」失败尝试签发的一次性确认 token（私有；只经页面 cookie 认证的报告读得到）与它绑定的尝试
+    confirm_token: str = ""
+    bound_attempt: str = ""
 
 
 @dataclasses.dataclass
@@ -986,6 +1006,8 @@ class Session:
     cancel_requested: bool = False
     #: 最近一次自动换 Python 版本（`pyversionfix`）；None = 没发生过
     python_change: _PyChange | None = None
+    #: 已经在 safe 下换过入口的那次运行（`ledger.run`）：每次运行至多换一次入口（ADR 0127 修订 2026-10-30）
+    entry_retry_run: int = 0
     #: 已经自动换过版本的那次运行（`ledger.run`）：每次运行至多换一次，防循环
     python_change_run: int = 0
     #: 本次运行的「换 Python」取消事件：**会话建立 / 每次新运行时就挂好**，早于规划（规划要探测系统解释器，可能很慢）。
@@ -1305,6 +1327,8 @@ class SessionService:
         prepare: Callable[..., dict] | None = None,
         transfer_from: str | None = None,
         desktop_initiated: bool = False,
+        page_confirmed: bool = False,
+        confirm_token: str | None = None,
     ) -> tuple[Session, bool, str]:
         """认领一个动作。回 `(会话, claimed, 动作 kind)`：`claimed=False` = 这个动作早已被认领（重复点击 / 另一个
         标签页），返回的是当初那次尝试，**没有任何新副作用**。
@@ -1322,6 +1346,9 @@ class SessionService:
         `desktop_initiated`（ADR 0127）：调用方（app）**服务端验证过**的事实——这次动作来自桌面窗口，而不是浏览器 / 本机凭据
         的 API 客户端 / 无认证入口。只有它为真，这次运行里 safe 被拦下后才可能回退 native；默认 False（fail closed）。
         `run_when_ready` 在创建意图时记下它，之后自动推进的执行沿用。
+        `page_confirmed` / `confirm_token`（只对 `confirm_native_run` 有意义，ADR 0127 修订 2026-10-30）：前者是调用方（app）
+        **服务端验证过**的事实——这个请求靠会话 cookie 认证（不是本机凭据头）；后者是请求回显的、服务端为那次失败尝试签发的
+        一次性 token。两者缺一不可；别的动作忽略它们。
         `transfer_from`（只许跟 `run_when_ready` 一起给）：另一个运行配置（argv 换了）的旧会话 id——把它**还没认领
         任何执行**的意图原子地转移过来；旧意图及其未认领动作当场退役，已认领的一切保留。
         """
@@ -1397,6 +1424,21 @@ class SessionService:
                     desktop=desktop_initiated,
                 )
                 claimed = arming = True
+            elif action.kind == ACTION_CONFIRM_NATIVE:
+                if action.attempt_id is not None:
+                    return (
+                        sess,
+                        False,
+                        action.kind,
+                    )  # 幂等认领：同一个确认 → 同一次 native 尝试，没有新副作用
+                claimed = self._claim_confirm_native(
+                    sess,
+                    action,
+                    page_confirmed=page_confirmed,
+                    token=confirm_token,
+                    launch=launch,
+                    finalize=finalize,
+                )
             elif action.kind == ACTION_CANCEL:
                 # 取消先撤销持续意图（吸收态：之后到的 done / ready 复活不了它），再只退役**这次会话拥有的**工作；
                 # 共享 worker / 别人起的会话的所有权判断在 `PreparationService.cancel` 与 `pool.build_owned` 的
@@ -1669,6 +1711,111 @@ class SessionService:
         )
         return info
 
+    def _native_confirm_offered(self, sess: Session) -> bool:
+        """此刻该不该在失败卡上给「允许并运行」。只读判据，报告与认领共用：
+
+        * 最近一次尝试是 safe、脚本目标，已收尾，以 `blocked`（safe 自己的守卫）收场；
+        * 账本记的「没回退」理由**恰是** `not_desktop_initiated`——桌面来源的 safe_only / 开关 / 取消等否决不在此列；
+        * 把「这一步已经由用户确认」代入 `decide_fallback`，其余闸门（开关 / 策略 / 账本）全部放行——
+          所以「只用安全运行」、运维开关、本次运行已经回退过一次，都不给按钮。"""
+        if not sess.attempts or sess.stale or sess.cancel_requested:
+            return False
+        last = sess.attempts[-1]
+        if not last.finalized or self._has_active_attempt(sess):
+            return False
+        cur = sess.ledger.current()
+        rec = cur[-1] if cur else None
+        if (
+            rec is None
+            or rec.attempt_id != last.attempt_id
+            or rec.spec.profile != execspec.PROFILE_SAFE
+            or rec.outcome != execpolicy.OUTCOME_BLOCKED
+            or rec.declined != execpolicy.REASON_NOT_DESKTOP
+            or sess.plan.target != TARGET_SCRIPT
+        ):
+            return False
+        return bool(
+            execpolicy.decide_fallback(
+                mode=execpolicy.mode_for(sess.project_root),
+                enabled=execpolicy.fallback_enabled(),
+                ledger=sess.ledger,
+                cause_code=rec.code,
+                nxt=execpolicy.SpecKey(execpolicy.PROFILE_NATIVE, rec.spec.interpreter, ""),
+                user_confirmed=True,
+            )
+        )
+
+    def _claim_confirm_native(
+        self,
+        sess: Session,
+        action: _Action,
+        *,
+        page_confirmed: bool,
+        token: str | None,
+        launch,
+        finalize,
+    ) -> bool:
+        """会话锁内：用户在失败卡上确认「这一次用 native 重跑」（ADR 0127 修订 2026-10-30）。
+
+        顺序即防线：来源（只认页面 cookie）→ token（绑定那次失败尝试、常量时间比较、验证过一次就废，成败都不再可用）→
+        状态（失败尝试仍是最新、闸门仍放行）→ 与桌面回退**同一套**规划与最后一刻复核（`_plan_fallback` / `_start_fallback`，
+        同一本账，一次运行至多一次）。任何一环不过都是零执行。"""
+        if not page_confirmed:
+            raise SessionError(
+                ERROR_CONFIRM_REQUIRES_PAGE, "这个确认只能在页面上由用户点击完成", 403
+            )
+        expected = action.confirm_token
+        if not expected or not isinstance(token, str) or not hmac.compare_digest(expected, token):
+            raise SessionError(ERROR_CONFIRM_INVALID, "确认已失效，请重新查看再确认", 403)
+        action.confirm_token = ""  # 用过即废：无论后面成不成都不能再拿这一枚试
+        last = sess.attempts[-1] if sess.attempts else None
+        if last is None or last.attempt_id != action.bound_attempt:
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_CONFIRM_INVALID, "确认已失效，请重新查看再确认", 403)
+        if self._has_active_attempt(sess):
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_NOT_RUNNABLE, "这个会话已经有一次尝试在进行", 409)
+        if not self._native_confirm_offered(sess):
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_NOT_RUNNABLE, "现在不能这样运行", 409, {"executed": False})
+        found = self._prep.get(last.attempt_id, sess.project_id)
+        if found is None:
+            sess.actions.pop(action.id, None)
+            raise SessionError(ERROR_NOT_RUNNABLE, "现在不能这样运行", 409, {"executed": False})
+        done_plan, done_result = found
+        code = str(sess.ledger.current()[-1].code)
+        fallback = self._plan_fallback(
+            sess, last, done_plan, done_result, code, desktop=False, confirmed=True
+        )
+        if fallback is None:
+            sess.actions.pop(action.id, None)
+            raise SessionError(
+                ERROR_NOT_RUNNABLE,
+                "现在不能这样运行",
+                409,
+                {"reason": sess.ledger.current()[-1].declined, "executed": False},
+            )
+        self._start_fallback(
+            sess,
+            last,
+            fallback,
+            code,
+            launch=launch,
+            finalize=finalize,
+            desktop=False,
+            confirmed=True,
+        )
+        if sess.attempts[-1] is last:
+            sess.actions.pop(action.id, None)
+            raise SessionError(
+                ERROR_NOT_RUNNABLE,
+                "现在不能这样运行",
+                409,
+                {"reason": sess.ledger.current()[-1].declined, "executed": False},
+            )
+        action.attempt_id = sess.attempts[-1].attempt_id
+        return True
+
     def _claim_run(
         self, sess: Session, action: _Action, *, launch, finalize, desktop: bool = False
     ) -> bool:
@@ -1825,8 +1972,14 @@ class SessionService:
                     LOG.exception("运行后重新检查失败 %s", done_plan.script)
             outcome, code = _outcome_of(done_result, fin)
             fallback = None
+            entry_retry = None
             try:
-                fallback = self._plan_fallback(sess, attempt, done_plan, done_result, code, desktop)
+                # 先在 safe 下换一个静态可解析的出图入口再跑一次；换入口也被拦才走 native 回退 / 确认卡
+                entry_retry = self._plan_entry_retry(sess, attempt, done_plan, done_result, code)
+                if entry_retry is None:
+                    fallback = self._plan_fallback(
+                        sess, attempt, done_plan, done_result, code, desktop
+                    )
             except Exception:  # noqa: BLE001 — 回退的判断出错不能改写这次尝试已经发生的终局
                 LOG.exception("执行回退的判断失败 %s", done_plan.script)
             # 版本不合（ADR 0114 修订 2026-10-23）：不问，直接另建合适版本的受管环境并重跑一次。调用点只有这一处——
@@ -1854,6 +2007,17 @@ class SessionService:
                     sess.fingerprint = _fingerprint(done_plan)
                 attempt.finalize = fin
                 attempt.missing = missing
+                if entry_retry is not None:
+                    self._start_fallback(
+                        sess,
+                        attempt,
+                        entry_retry,
+                        code,
+                        launch=launch,
+                        finalize=finalize,
+                        desktop=desktop,
+                        entry_change=True,
+                    )
                 if fallback is not None:
                     self._start_fallback(
                         sess,
@@ -1901,6 +2065,7 @@ class SessionService:
         done_result,
         code: str,
         desktop: bool = False,
+        confirmed: bool = False,
     ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
         """锁外：safe 尝试以 `code` 收场后，要不要接一次 native。回 `(native 计划, 它的执行身份)`；不回退回 None。
 
@@ -1919,6 +2084,7 @@ class SessionService:
             nxt=provisional,
             cancelled=sess.cancel_requested or done_result.cancel_requested_at is not None,
             desktop_initiated=desktop,
+            user_confirmed=confirmed,
         )
         if not decision:
             self._decline(sess, attempt, decision.reason)
@@ -1958,6 +2124,7 @@ class SessionService:
             nxt=key,
             cancelled=sess.cancel_requested or done_result.cancel_requested_at is not None,
             desktop_initiated=desktop,
+            user_confirmed=confirmed,
         )
         if not again:
             self._decline(sess, attempt, again.reason)
@@ -1973,6 +2140,75 @@ class SessionService:
         )
         return nplan, key
 
+    def _plan_entry_retry(
+        self, sess: Session, attempt: _Attempt, done_plan, done_result, code: str
+    ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
+        """锁外：safe 尝试以 `blocked` 收场后，先**留在 safe** 里换一个入口再跑一次（ADR 0127 修订 2026-10-30）。
+
+        被拦的操作可能只在某个入口函数里（`main()` 里 `savefig` 又读回），而另一个只建图的出图函数在 safe 下就能出图——
+        旧的素材栏探测（`probe.entry_candidates` / `entry_retry_allowed`）早有这一步，准备会话补上。候选与「值不值得换」
+        的判据只复用 probe 那一份；**只取静态能解析出的出图函数**（`static_only`，不盲试），去掉已试过的，取第一个；
+        每次运行至多换一次，与 native 回退共用 `RetryGuard` 账本和总次数上限。"""
+        if done_plan.execution != execspec.PROFILE_SAFE or done_plan.target != TARGET_SCRIPT:
+            return None
+        if done_result.status != preparation.STATUS_ERROR or not execpolicy.may_fall_back(code):
+            return None
+        if sess.entry_retry_run == sess.ledger.run or sess.cancel_requested:
+            return None
+        if done_result.cancel_requested_at is not None or not done_plan.script:
+            return None
+        from . import probe  # 延迟：probe 依赖面大，只在需要换入口时才拉
+
+        if not probe.entry_retry_allowed(pool.WorkerError(code, code=code)):
+            return None
+        tried = {done_plan.entry}
+        for rec in sess.ledger.current():  # 只算本次运行已经试过的入口
+            found = self._prep.get(rec.attempt_id, sess.project_id)
+            if found is not None:
+                tried.add(found[0].entry)
+        try:
+            cands = [
+                e
+                for e in probe.entry_candidates(
+                    sess.project_root, done_plan.script, static_only=True
+                )
+                if e not in tried
+            ]
+        except Exception:  # noqa: BLE001 — 候选算不出来 = 不换，走原分支
+            LOG.exception("换入口候选失败 %s", done_plan.script)
+            return None
+        if not cands:
+            return None
+        try:
+            nplan = self._plan_of(
+                sess.project_id, sess.project_root, {**sess.target, "entry": cands[0]}
+            )
+        except Exception:  # noqa: BLE001
+            LOG.exception("换入口计划失败 %s", done_plan.script)
+            return None
+        if (
+            nplan.execution != execspec.PROFILE_SAFE
+            or nplan.script != done_plan.script
+            or nplan.interpreter != done_plan.interpreter
+            or nplan.script_revision != done_plan.script_revision
+            or nplan.required_input
+            or any(c["status"] != CHECK_OK for c in checks_of(nplan))
+            or preparation.stale_reason(nplan) is not None
+        ):
+            return None
+        key = spec_key_of(nplan)
+        if not execpolicy.RetryGuard.admit(sess.ledger, key, code):
+            return None
+        nplan = dataclasses.replace(
+            nplan,
+            plan_id=f"prep-{uuid.uuid4().hex}",
+            created_at=self._clock(),
+            retry_of=done_plan.plan_id,
+            retry_cause=code,
+            retry_changed=execpolicy.changed_between(spec_key_of(done_plan), key),
+        )
+        return nplan, key
+
     def _start_fallback(
         self,
         sess: Session,
@@ -1983,8 +2219,10 @@ class SessionService:
         launch,
         finalize,
         desktop: bool = False,
+        confirmed: bool = False,
+        entry_change: bool = False,
     ) -> None:
-        """会话锁内：把 native 回退作为**同一会话的第二个 attempt** 交出去。最后一刻再核一次取消 / 失效 / 闸门
+        """会话锁内：把 native 回退（`entry_change=True` 时是 safe 下换入口的重跑，同一套最后一刻复核）作为**同一会话的第二个 attempt** 交出去。最后一刻再核一次取消 / 失效 / 闸门
         （锁外规划期间用户可能点了取消）；任何一项不成立就保持原结局，一行用户代码都不再跑。"""
         nplan, key = fallback
         if sess.attempts[-1] is not attempt:
@@ -2004,15 +2242,22 @@ class SessionService:
         if attempt.epoch != nativesession.REGISTRY.project_epoch(sess.project_root):
             self._decline(sess, attempt, execpolicy.REASON_PROJECT_REOPENED)
             return
-        decision = execpolicy.decide_fallback(
-            mode=execpolicy.mode_for(sess.project_root),
-            enabled=execpolicy.fallback_enabled(),
-            ledger=sess.ledger,
-            cause_code=code,
-            nxt=key,
-            cancelled=False,
-            desktop_initiated=desktop,
-        )
+        if entry_change:
+            # 留在 safe：不受「只用安全运行」/ 运维回退开关 / 来源约束（没换执行语义），只过通用闸门（含总次数上限）
+            decision = execpolicy.RetryGuard.admit(sess.ledger, key, code)
+            if decision and sess.entry_retry_run == sess.ledger.run:
+                decision = execpolicy.Decision(False, execpolicy.REASON_NO_NEW_ROOT_CAUSE)
+        else:
+            decision = execpolicy.decide_fallback(
+                mode=execpolicy.mode_for(sess.project_root),
+                enabled=execpolicy.fallback_enabled(),
+                ledger=sess.ledger,
+                cause_code=code,
+                nxt=key,
+                cancelled=False,
+                desktop_initiated=desktop,
+                user_confirmed=confirmed,
+            )
         if not decision:
             self._decline(sess, attempt, decision.reason)
             return
@@ -2044,6 +2289,8 @@ class SessionService:
             return
         sess.attempts.append(second)
         done = self._done_callback(sess, second, launch=launch, finalize=finalize, desktop=desktop)
+        if entry_change:
+            sess.entry_retry_run = sess.ledger.run
         found = self._prep.get(nplan.plan_id, sess.project_id)
         try:
             if found is None or found[1].status != preparation.STATUS_PENDING:
@@ -2524,7 +2771,12 @@ class SessionService:
 
     # ---- 报告 ----
     def report(
-        self, sess: Session, *, awaiting_input: bool = False, runtime_input: dict | None = None
+        self,
+        sess: Session,
+        *,
+        awaiting_input: bool = False,
+        runtime_input: dict | None = None,
+        expose_confirm: bool = False,
     ) -> dict:
         """会话的投影：目标 / 修订 / 观察序号 / phase / outcome / checks / requirements / actions / provider
         引用。读它会补齐当前该有的动作，并在可观察状态变了时推进 `observation_seq`。"""
@@ -2603,7 +2855,9 @@ class SessionService:
                     ),
                 ),
                 "actions": [
-                    self._action_payload(a) for a in sess.actions.values() if self._open(a)
+                    self._action_payload(a)
+                    for a in sess.actions.values()
+                    if self._open(a) and (expose_confirm or a.kind != ACTION_CONFIRM_NATIVE)
                 ],
                 "provider": {
                     "plan_id": sess.plan.plan_id,
@@ -2823,6 +3077,7 @@ class SessionService:
                 and execpolicy.mode_for(sess.project_root) != execpolicy.MODE_SAFE_ONLY
                 and not declined
             ),
+            confirm_native=self._native_confirm_offered(sess),
             missing_installable=installable,
             packages=packages,
             auto_install_allowed=auto_ok,
@@ -3183,6 +3438,7 @@ class SessionService:
             ACTION_RECHECK: not attempt_active and not dependency_busy,
             ACTION_PREPARE: prep is not None,
             ACTION_ARM: armable,
+            ACTION_CONFIRM_NATIVE: self._native_confirm_offered(sess),
         }
         for kind, wanted in want.items():
             open_ones = [a for a in sess.actions.values() if a.kind == kind and self._open(a)]
@@ -3192,6 +3448,13 @@ class SessionService:
                     if a.attempt_id != current:
                         sess.actions.pop(a.id, None)
                 open_ones = [a for a in open_ones if a.attempt_id == current]
+            if kind == ACTION_CONFIRM_NATIVE:
+                # 确认绑那一次失败尝试：尝试换了（重跑 / 重新检查），旧的确认连同它的 token 一起作废
+                last_id = sess.attempts[-1].attempt_id if sess.attempts else ""
+                for a in open_ones:
+                    if a.bound_attempt != last_id:
+                        sess.actions.pop(a.id, None)
+                open_ones = [a for a in open_ones if a.bound_attempt == last_id]
             if kind == ACTION_PREPARE and prep is not None:
                 # 影响摘要变了：旧的未认领动作不再是用户看到的那一份，作废重发（认领时本也会被拒）
                 for a in open_ones:
@@ -3213,6 +3476,10 @@ class SessionService:
                 )
                 if kind == ACTION_ARM:
                     action.impact_digest = GRANT.digest()
+                if kind == ACTION_CONFIRM_NATIVE:
+                    # 服务端为这一次失败尝试签发的一次性 token：不可猜、不落盘、不进诊断，只随页面 cookie 认证的报告交出
+                    action.confirm_token = secrets.token_urlsafe(32)
+                    action.bound_attempt = sess.attempts[-1].attempt_id
                 if kind == ACTION_PREPARE and prep is not None:
                     action.impact_digest = prep["impact_digest"]
                     action.impact_core = dict(prep["impact"])
@@ -3223,7 +3490,8 @@ class SessionService:
         consumed = [
             a
             for a in sess.actions.values()
-            if a.kind in (ACTION_RUN, ACTION_PREPARE, ACTION_ARM) and a.attempt_id
+            if a.kind in (ACTION_RUN, ACTION_PREPARE, ACTION_ARM, ACTION_CONFIRM_NATIVE)
+            and a.attempt_id
         ]
         for stale_action in consumed[:-_MAX_CONSUMED_ACTIONS]:
             sess.actions.pop(stale_action.id, None)
@@ -3305,7 +3573,7 @@ class SessionService:
                 "run_intent": GRANT.contract(),
                 "impact_digest": GRANT.digest(),
             }
-        if kind == ACTION_RUN:
+        if kind in (ACTION_RUN, ACTION_CONFIRM_NATIVE):
             return {
                 "executes_user_script": True,
                 "installs_packages": False,
@@ -3347,6 +3615,12 @@ class SessionService:
             "kind": action.kind,
             "config_revision": action.config_revision,
             "impact": dict(action.impact),
+            # 确认 token 只在这一份载荷里出现，且只对页面 cookie 认证的读者交出（`report(expose_confirm=True)`）
+            **(
+                {"confirm_token": action.confirm_token}
+                if action.kind == ACTION_CONFIRM_NATIVE
+                else {}
+            ),
         }
 
     def _notify(self, sess: Session) -> None:

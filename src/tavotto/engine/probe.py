@@ -312,7 +312,11 @@ def _attach_workdir_hint(out: dict, exc: pool.WorkerError) -> None:
 
 
 def entry_candidates(
-    figures_dir: str | Path, script: str, *, source: str | Path | None = None
+    figures_dir: str | Path,
+    script: str,
+    *,
+    source: str | Path | None = None,
+    static_only: bool = False,
 ) -> list[str]:
     """该脚本值得一试的 entry 列表（静态推断优先，去重保序）。
 
@@ -320,6 +324,9 @@ def entry_candidates(
     的入口最优先；`discover.probe_entry_candidates`（绘图宽口径，show-only
     也解得出）补齐其余。脚本解析不了时退回盲试 FALLBACK_ENTRIES——运行期
     会给出真正的报错（语法错误的 traceback 比静态猜测有解释力）。
+
+    `static_only`（准备会话的「换入口」，ADR 0127 修订 2026-10-30）：只要**能静态解析出**的出图入口，解析不了就空表，
+    绝不退回盲试——换入口是一次真执行，不拿不存在的入口去试。候选的算法仍只此一份。
     """
     # 脚本钉在项目根之内的 realpath 才读；在外面就是「解析不了」那一档，退回盲试列表
     # `source`（影子脚本，ADR 0143 修订）：项目里没有这个文件，字节在候选目录；静态分析钉在它自己的目录里读，
@@ -329,12 +336,12 @@ def entry_candidates(
         root = path.parent
         real = projectenv.contained_path(root, path.name)
         if real is None:
-            return list(FALLBACK_ENTRIES)
+            return [] if static_only else list(FALLBACK_ENTRIES)
         path = Path(real)
     else:
         real = projectenv.contained_path(figures_dir, script)
         if real is None:
-            return list(FALLBACK_ENTRIES)
+            return [] if static_only else list(FALLBACK_ENTRIES)
         path = Path(real)
         root = Path(figures_dir)
     info = discover.analyze_script(path, root)
@@ -342,9 +349,13 @@ def entry_candidates(
     out: list[str] = []
     if info:
         out.append(info["entry"])
+    if static is None and static_only:
+        return out  # 只有存图口径的入口（可能为空）；不盲试
     for e in static if static is not None else FALLBACK_ENTRIES:
         if e not in out:
             out.append(e)
+    if not out and static_only:
+        return out
     if not out:
         out.append(registry.INLINE_ENTRY)
     return out

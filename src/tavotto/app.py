@@ -10707,6 +10707,25 @@ def _desktop_initiated() -> bool:
     return state.valid_cookie(request.cookies.get(security.COOKIE_NAME))
 
 
+def _page_authenticated() -> bool:
+    """这个请求是不是**用户在页面上发出的**（ADR 0127 修订 2026-10-30：浏览器模式失败卡「允许并运行」的授权来源）。
+    服务端可验证，不信请求体里任何自报字段：
+
+    * 有会话状态（测试 / `--insecure-no-auth` 没有 → False，fail closed）；
+    * 请求带着由启动 nonce 兑换的**会话 cookie**（HttpOnly，页面脚本与本机凭据客户端都读不到它的值）；
+    * 请求**不带**本机凭据头（`engine_session_client.AUTH_HEADER`）——MCP / CLI / Agent / AI 修复工具链用的就是它，
+      浏览器页面从不发。两样都带的请求按「非页面」处理。
+
+    威胁模型见 ADR 0127 修订 2026-10-30：能读本机凭据文件的同用户进程可以经 relaunch 换到 cookie，它本来就有同用户权限；
+    这道闸防的是模型给的参数 / MCP / AI 工具链，不是同用户本地进程。"""
+    state = app.config.get(security.STATE_KEY)
+    if state is None:
+        return False
+    if request.headers.get(engine_session_client.AUTH_HEADER):
+        return False
+    return state.valid_cookie(request.cookies.get(security.COOKIE_NAME))
+
+
 def _launch_session_attempt(ctx: "ProjectCtx", plan, on_done=None) -> None:
     """会话 `run` 认领出来的尝试交给执行线程。safe 尝试开始前，同一脚本上一次桌面 native 会话 / 计划票据先让位
     （P2）：回退成功后 native 进程停在屏障上占着环境租约，用户重跑 safe 不让位就会一直 `environment_in_use_by_native_session`。
@@ -10985,7 +11004,11 @@ def _session_report(ctx: "ProjectCtx", sess) -> dict:
     # Keep the report and its run-scoped evidence on the same explicit run.
     with sess.lock:
         payload = engine_prepsession.SESSIONS.report(
-            sess, awaiting_input=waiting is not None, runtime_input=waiting
+            sess,
+            awaiting_input=waiting is not None,
+            runtime_input=waiting,
+            # 「允许并运行」的一次性 token 只交给页面 cookie 认证的读者（本机凭据头 / MCP / 无请求上下文一律拿不到）
+            expose_confirm=has_request_context() and _page_authenticated(),
         )
         payload.update(_preparation_execution_result(ctx, sess))
         return payload
@@ -11212,17 +11235,26 @@ def api_engine_preparation_session_action(session_id: str):
     ctx = current_ctx()
     body = request.get_json(force=True) or {}
     extra = sorted(
-        set(body) - {"action_id", "expected_config_revision", "impact_digest", "transfer_from"}
+        set(body)
+        - {
+            "action_id",
+            "expected_config_revision",
+            "impact_digest",
+            "transfer_from",
+            "confirm_token",
+        }
     )
     revision = body.get("expected_config_revision")
     echoed = body.get("impact_digest")
     transfer_from = body.get("transfer_from")
+    confirm_token = body.get("confirm_token")
     if (
         extra
         or not isinstance(body.get("action_id"), str)
         or (revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)))
         or (echoed is not None and not isinstance(echoed, str))
         or (transfer_from is not None and not isinstance(transfer_from, str))
+        or (confirm_token is not None and not isinstance(confirm_token, str))
     ):
         return jsonify(
             {
@@ -11243,6 +11275,9 @@ def api_engine_preparation_session_action(session_id: str):
             impact_digest=echoed,
             prepare=_session_dependency_starter(ctx),
             transfer_from=transfer_from,
+            # 只认页面（会话 cookie）；请求体里没有任何「我是用户」字段可言——token 只是绑定那次失败尝试的一次性标识
+            page_confirmed=_page_authenticated(),
+            confirm_token=confirm_token,
         )
     except engine_prepsession.SessionError as exc:
         return _session_error(exc)
@@ -11257,6 +11292,7 @@ def api_engine_preparation_session_action(session_id: str):
             engine_prepsession.ACTION_RUN,
             engine_prepsession.ACTION_PREPARE,
             engine_prepsession.ACTION_ARM,
+            engine_prepsession.ACTION_CONFIRM_NATIVE,
         )
         else 200
     )

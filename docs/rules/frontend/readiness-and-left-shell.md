@@ -356,6 +356,7 @@ order: 240
   无参数重跑的可恢复提示；开关关闭时委派旧状态机、零会话请求）、`RegistryDialog.test.tsx`。旧路径的 e2e（`asset-library` /
   `dependency-one-click` / `missing-input*` / `script-input`）在开关关闭下跑。
 
+- **浏览器模式被拦下的确认卡（ADR 0127 修订 2026-10-30，#1500）**：报告里有后端发的 `confirm_native_run` 动作时，`file_ops_blocked` 换成 `file_ops_confirm`：一句话「这个脚本要真的把文件写到磁盘上才能跑完」+ 唯一主按钮「允许并运行」（认领该动作，并把动作上的一次性 `confirm_token` 原样回显；token 只随页面 cookie 认证的报告来，前端不造不存）。remedy 是 `switch_native{silent:false}`，所以不摆 AI 次按钮；文案不出现 safe / native / 执行器 / 沙盒。没有该动作（只用安全运行 / 开关关）仍是原来的无按钮句子。看护 `PreparationCard.test.tsx`「浏览器模式：被拦下后给一次确认」。
 - **准备卡的智能修复（ADR 0148 提议）**：`prepView` 只读报告的 `remedy`（`lib/fixRemedy.ts`，与后端 `fixrouter` 同源对）画主按钮；每张失败卡（`switch_native` 静默 / 运行中 / 教程层激活除外）都有显眼的次按钮「使用你的 AI 来修复」（Sparkles 图标 + 蓝色描边走语义 token，每次失败都出，不因 `ai_fix_available === false` 隐藏）。点它：没连 AI 开设置 AI 页、连好自动接着修（`store/aiFixStore.ts`）；已连调 `POST /api/ai/fix`，`ai_fix_unavailable` 落成「AI 暂时还不会修」+「发送」（反馈卡，0118 规矩不变）。界面只说「AI」，不出现「执行器」「CLI」「agent」。
 
 ## 速查表原要点（2026-09-25 迁入，#608）

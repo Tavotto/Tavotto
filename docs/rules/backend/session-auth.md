@@ -39,3 +39,7 @@ smoke_app 的「未认证必须 401」硬断言——**别再让任何新端点�
 - nonce → bootstrap → HttpOnly cookie
 - **用户可控的路径**（请求 / 注册表 / 设置里来的）碰文件系统或子进程之前只经两个净化器——`app.safe_resolve`（面板 id）与 `projectenv.contained_path`（项目内任意候选，realpath + `startswith(root + sep)`），sink 用的必须是它们**回的那一条**
 - 守卫要写成静态分析认得的 barrier 形状（`== root` 与 `not startswith` 分开两段），否则 CodeQL `py/path-injection` 照报
+
+- **「人在页面上点了」只认会话 cookie（ADR 0127 修订 2026-10-30）**：本机凭据头（`X-Tavotto-Auth`）能过 guard，但**不等于用户在页面上点了**。
+  需要「用户确认」的动作（目前只有准备会话的 `confirm_native_run`）用 `app._page_authenticated()` 区分：cookie 有效且请求不带本机凭据头；
+  无会话状态（测试 / `--insecure-no-auth`）fail closed。持有凭据文件的同用户进程可经 relaunch 换 cookie——它本来就有同用户权限，这道闸防的是 MCP / AI 工具链，不是它。

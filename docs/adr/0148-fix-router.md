@@ -43,6 +43,11 @@ type Remedy =
 4. 位图脚本（`no_figure_hint.kind == 'raster_script'`）或 R / MATLAB 来源 → `convert_to_matplotlib`（复用现有「生成可编辑版本」）。
 5. 其余：AI 修复轮数用完 → `feedback`；已连 AI（`ai_bridge.capabilities()` 里有 `usable` 的 agent，与设置页同一判据）→ `ai_fix`；否则 `connect_ai`。
 
+   **修订 2026-10-30（#1500）**：`switch_native` 多一个布尔 `silent`——桌面静默回退为 `true`；浏览器模式（没有静默回退，
+   [0127 修订 2026-10-30](0127-execution-policy-and-unified-retry-guard.md)）失败卡给「允许并运行」、用户点一次才换，此时为 `silent: false`，
+   **优先于** `ai_fix` / `connect_ai`（不把这类失败送进 AI 修复）。字段表不变（仍是 `silent`），只多一条 golden 向量；
+   「给不给按钮」的事实由 `prepsession._native_confirm_offered` 量好放进 `Ctx.confirm_native`，路由本身不判来源。
+
 **一次「运行」最多走 3 种修法**：读 `attempt_history` 里本次 run 的 `changed`（换了执行语义 = `switch_native`，换了解释器 =
 `change_python`）加本次 run 里装过包（`install_packages`），已满 3 种再失败就是 `feedback`；同一种修法一次运行只走一回。
 

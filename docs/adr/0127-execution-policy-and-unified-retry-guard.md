@@ -85,3 +85,59 @@ CLI 与 MCP 的确认合同**不变**：`tavotto run` 仍由用户亲手敲，�
 ## 修订（显式 native 的来源闸门）
 
 D1 的授权边界（桌面用户发起）原本只拦「路由选的 native」与「回退到 native」，请求体显式写 `execution: "native"` 的会话在任何已认证来源都能认领 `run`。修订：显式 native 与路由 native 走同一道 `_desktop_initiated()` 判据，非桌面来源**拒绝**（403 `native_requires_desktop`）而不降级——显式请求是客户端的明确意图，静默换成 safe 会误导；路由 native 仍按原样降 safe。拒绝点在创建会话端点（最早）与 `prepsession._claim_run`（认领时再核，含 `run_when_ready` 推进）。前端永不发 `execution`，CLI `tavotto run` 走 nativeperm，均不受影响。
+
+## 修订 2026-10-30：浏览器模式的显式确认（#1500）
+
+**起因**：反馈包 TVD-PEK5（pip + 浏览器模式）。论文脚本在 safe 下 `savefig` 并没有真正写盘，随后又 `Image.open(png_path)` 读回那个路径，safe 的守卫拦下（`safe_file_operation_blocked`，worker 文案「做了安全模式不会真正执行的文件操作，随后又读取了受影响的路径」）；D1 的授权边界只认桌面窗口，浏览器模式恒 `not_desktop_initiated`，不回退——
+`fixrouter` 随后把用户送进 AI 修复，用户批准 5 次、绕了 6 分钟没修好，而这个脚本换成 native 一次就能跑。浏览器版用户成了「失败卡 → AI 修复」的稳定客户。
+
+**裁决（维护者 2026-10-30，A + B）**：
+
+* **A**：非桌面来源下 safe 被自身守卫拦下时，失败卡一句话说清原因（脚本要真的把文件写到磁盘上才能跑完），**不路由进 AI 修复**（`fixrouter` 里这条优先于 `ai_fix` / `connect_ai`）。
+* **B**：同一张卡给一个主按钮「允许并运行」。用户在页面上点一次 = 授权**这一次**运行改以 native 重跑。每次确认、不记住（不写 `nativeperm`、不改项目 `execution_policy`）、至多一次，与桌面 D1 回退共用 `RetryGuard` 账本。
+  项目设了「只用安全运行」(`safe_only`)、运维开关 `TAVOTTO_EXECUTION_FALLBACK=0`、本次运行已经回退过一次——都不给按钮，点也不执行。
+
+**授权来源（服务端核得到的「人在页面上点了」）**：D1 的「桌面窗口」是核得到的事实；浏览器模式的对应事实是**会话 cookie**（由启动 nonce 兑换、HttpOnly，页面脚本与本机凭据客户端都读不到它的值）。
+动作 `confirm_native_run` 的认领同时要求两件事，缺一个都是零执行的 403：
+
+1. 请求靠**会话 cookie** 认证，且**不带**本机凭据头（`session_client.AUTH_HEADER`）——`app._page_authenticated()`，无会话状态（测试 / `--insecure-no-auth`）一律 False（fail closed）。
+   错误码 `native_confirm_requires_page`。MCP、`tavotto run`、AI 修复工具链（`engine/fixtools/`）用的都是后者，过不了这一关。
+2. 请求回显的 `confirm_token` 对得上服务端为**那一次失败尝试**签发的那一枚：`secrets.token_urlsafe(32)`，随 `confirm_native_run` 动作一起在失败尝试收尾后生成，绑定尝试 id（`bound_attempt`），
+   常量时间比较（`hmac.compare_digest`）；**只随页面 cookie 认证的报告交出**（本机凭据头读到的报告里既没有这个动作也没有 token；不进诊断包、不进 SSE 提示）；验证通过的那一刻即作废（成败都不能再用，重放同一动作 = 幂等的 200 `claimed:false`，无新执行）；
+   猜错 token 不烧掉真 token（否则任何人能让用户的按钮失效）；用户重跑出了新的失败尝试，旧动作连同 token 作废（新 token）。
+   不信请求体里任何自报的「我是用户」字段（请求体白名单之外的键 400）。
+
+通过之后走**与桌面回退同一套**规划与最后一刻复核（`prepsession._plan_fallback` / `_start_fallback`，参数 `confirmed=True`）：`execpolicy.decide_fallback(user_confirmed=True)` **只顶替第一道来源判据**
+（`not_desktop_initiated`），开关 / 策略 / 取消 / 过期 / 原因 / 账本闸门一道不少。native 尝试是同一会话的第二个 attempt，与 D1 一样：解释器沿用 safe 当时那一个、单向、同一次运行至多一次（`already_fell_back`）。
+给不给按钮（`_native_confirm_offered`）的判据是账本里该尝试的「没回退」理由**恰是** `not_desktop_initiated`——桌面来源的其它否决理由（`policy_safe_only` / `fallback_disabled` / `cancelled`…）不在此列。
+
+**威胁模型**：这道闸防的是**模型给的参数 / MCP / AI 修复工具链**，不是同用户的本地进程。持有本机凭据文件（0600，浏览器模式）的进程本来就有同用户权限，可以经 `POST /api/session/relaunch` 换一枚 nonce、
+兑换出 cookie 再点按钮；它读用户任何文件、起任何进程都不需要 Tavotto 的许可。这一点与 ADR 0008 的威胁模型一致（「能读这份文件的进程本来就能读用户的任何文件」），不在本修订要防的范围里。
+
+**不变的**：
+
+* 显式 `execution: "native"` 的非桌面来源仍 403 `native_requires_desktop`（上一节修订）；本修订是**唯一的例外**，且只在有效确认之后、经 `confirm_native_run` 一条路径。
+* CLI `tavotto run`（终端拥有进程，确认合同不变）、MCP 工具（无 `native_run`、无 `execution` 参数）、旧的 `/api/engine/preparation` 端点不触发回退也走不到这个确认；AI 修复的 `switch_execution` 只改项目策略、不运行、不替用户确认（有看护用例）。
+* 不写 `nativeperm`（「记住此项目和此 Python」）、不改 `execution_policy`：每次运行被拦都要再点一次。
+* 桌面来源仍是静默回退（D1），卡片不变。
+
+**界面**：失败卡一句话「这个脚本要真的把文件写到磁盘上才能跑完」+ 一个主按钮「允许并运行」，不出现 safe / native / 执行器 / 沙盒这些词，不摆 AI 次按钮。remedy 复用 `switch_native`，把 `silent` 从恒 `true` 放宽为布尔：
+`silent: false` = 「等用户点一次」。不新增 kind，同源对（`fixrouter.REMEDY_KINDS` ↔ `lib/fixRemedy.ts`）字段表不变，只多一条 golden 向量。
+
+**看护**：`tests/test_native_confirm_browser.py`（来源 / token / 一次性 / 绑定尝试 / 闸门 / 其它入口走不到）、`tests/golden/fix_remedy_vectors.json`、`web/src/components/PreparationCard.test.tsx`「浏览器模式：被拦下后给一次确认」。
+
+### 同一修订：先在 safe 下换入口，再谈 native（#1500 追加）
+
+**现象**：同一个脚本走旧 `POST /api/registry/probe`（素材栏）时，`entry=__main__` 被 `safe_file_operation_blocked` 拦下后，`probe.entry_retry_allowed` 允许换入口，`entry=draw_figure`（只建图、不进 `save()`）在 safe 下就出图；
+准备会话（「打开并运行」）没有这一步，直接失败，把本不需要 native 的脚本推向 native / 确认卡。
+
+**决定**：准备会话里 safe 尝试以 `safe_file_operation_blocked` 收场后，**先留在 safe**，按 `probe.entry_candidates(..., static_only=True)` 换入口再跑一次（`prepsession._plan_entry_retry`）：
+
+* 候选与「值不值得换」只复用 probe 那一份（`entry_candidates` / `entry_retry_allowed`）；`static_only` 是同一函数的一个开关：只取**静态能解析出**的出图入口，脚本解析不了就空表，**绝不盲试**（`FALLBACK_ENTRIES` 只留给素材栏的旧行为）。去掉本次运行已试过的入口，取第一个。
+* 换入口成功就是这次运行成功：照常 `finalize` 登记、上画布，与正常成功同一条路。
+* 换入口仍失败，才走原来的分支：桌面窗口发起 → D1 静默回退 native；浏览器 → 本修订上一节的确认卡（给不给按钮看的是**最后一次**尝试）。
+* 每次运行至多换一次入口（`Session.entry_retry_run`），与 native 回退共用 `RetryGuard` 账本；新增总上限 `execpolicy.MAX_ATTEMPTS_PER_RUN = 3`（首次 safe + 至多一次换入口 + 至多一次 native），超了记 `attempt_cap`。换入口不改变执行语义，故不受「只用安全运行」/ 运维回退开关 / 来源约束；
+  账本 `changed` 里是 `launch_context`（入口进启动上下文摘要），计划带 `retry_of` / `retry_cause` / `retry_changed`，exec trace 与任务诊断由此看得出「换入口后成功」。
+* **代价**：脚本在一次运行里最多被执行 3 次（原来是 2 次）；safe 档在被拦之前的外部副作用会重复，沿用 D1「场景 17」的裁决与说明。
+
+**看护**：`tests/test_entry_retry_session.py`（浏览器 / 桌面 / 无认证三种来源换入口成功、换入口仍被拦后桌面 native 与浏览器确认卡、没有静态可解析入口时走原分支且不盲试、总次数上限）。
