@@ -150,8 +150,8 @@ export function TypographyControls({
               ...fallbackNames.map((o) => ({ value: o, label: fontFamilyOptionLabel(o, fallback.option_labels, fallbackNames) })),
             ]}
           />
-          {adapter.fontFallbackShadowed && <Tip label={<span className="block max-w-40 whitespace-normal">{tb('cjkFallbackShadowed')}</span>} side="left">
-            <button type="button" className="shrink-0 text-xs text-ink-3" aria-label={tb('cjkFallbackShadowed')}>ⓘ</button>
+          {adapter.fontFallbackShadowed && <Tip label={<span data-font-fallback-tooltip className="block max-w-40 whitespace-normal">{tb('cjkFallbackShadowed')}</span>} side="left">
+            <button data-font-fallback-hint type="button" className="shrink-0 text-xs text-ink-3" aria-label={tb('cjkFallbackShadowed')}>ⓘ</button>
           </Tip>}
         </Row></Anchor>
       )}

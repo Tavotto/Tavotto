@@ -51,6 +51,7 @@ export function Select<T extends string>({
   return (
     <RS.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
       <RS.Trigger
+        data-select-trigger
         aria-label={ariaLabel}
         title={title}
         className={cn(
@@ -106,6 +107,7 @@ export function Select<T extends string>({
               const items = g.items.map((opt) => (
                 <RS.Item
                   key={opt.value}
+                  data-select-option={opt.value}
                   value={opt.value}
                   className={cn(
                     'relative flex h-7 cursor-default select-none items-center gap-2 rounded-md',
