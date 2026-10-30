@@ -3,7 +3,7 @@
  * 勾上透明背景后画布范围的缩略图页面画成棋盘格。语言无关写法（chromium 与 chromium-en 各跑一遍）。
  */
 import type { Page } from '@playwright/test'
-import { addSecondFigure, expect, test } from './fixtures'
+import { addSecondFigure, expect, test, waitForDocumentReady } from './fixtures'
 
 const CARD = '[data-card="Fig1_kinetics.pdf"]'
 
@@ -94,5 +94,59 @@ test(
     await expect.poll(scale).toBeGreaterThan(1.3)
     await stage.locator('[data-export-preview-reset]').click()
     await expect.poll(scale).toBe(1)
+  },
+)
+
+test(
+  '导出预览：标注里的公式画成排好的轮廓，落在前后文字之间（ADR 0152）',
+  { tag: ['@feature:text.rich-editor'] },
+  async ({ app, page }) => {
+    test.setTimeout(180_000)
+    const a = await app()
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto(a.baseURL)
+    await expect(page.locator('[data-canvas-stage]')).toBeVisible({ timeout: 30_000 })
+    await waitForDocumentReady(page)
+    await page.keyboard.press('ControlOrMeta+k')
+    await page.keyboard.type('text')
+    await page.locator('[data-cmd-id="add-text"]').click()
+    const objects = page.locator('[data-canvas-stage] [data-object-id]')
+    await expect(objects).toHaveCount(1)
+    const field = page.locator('[data-text-content]')
+    await field.locator('[data-rich-action="mode"]').click()
+    await field.locator('[data-rich-source]').fill('k = $\\frac{a}{b}$ mol')
+    await field.locator('[data-rich-action="mode"]').click()
+    await expect(objects.first().locator('[data-math-state="ok"]')).toHaveCount(1, { timeout: 60_000 })
+
+    await page.locator('[data-canvas-stage]').click({ position: { x: 5, y: 5 } })
+    await page.keyboard.press('ControlOrMeta+e')
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toBeVisible()
+    const line = dialog.locator('[data-export-preview-stage] [data-thumb-math-line]')
+    await expect(line).toHaveCount(1, { timeout: 30_000 })
+    const formula = line.locator('[data-thumb-math]')
+    await expect(formula).toHaveCount(1)
+    await expect(line).not.toContainText('frac')
+    const texts = line.locator('text')
+    await expect(texts).toHaveCount(2)
+    // 在 SVG 自己的坐标里量（WebKit 对缩放过的 SVG <text> 报的屏幕盒不可靠，画面本身是对的）
+    const g = await line.evaluate((el) => {
+      const [t0, t1] = Array.from(el.querySelectorAll('text')).map((t) => (t as SVGGraphicsElement).getBBox())
+      const p = el.querySelector('path') as SVGPathElement
+      const b = p.getBBox()
+      const m = /translate\(([-\d.e]+) ([-\d.e]+)\) scale\(([-\d.e]+)\)/.exec(p.getAttribute('transform') ?? '')!
+      const [tx, ty, k] = [Number(m[1]), Number(m[2]), Number(m[3])]
+      const f = { x: tx + b.x * k, y: ty + b.y * k, width: b.width * k, height: b.height * k }
+      return { before: { x: t0.x, y: t0.y, width: t0.width, height: t0.height }, f, after: { x: t1.x, width: t1.width } }
+    })
+    const tol = 0.05 // mm
+    // 公式在「k = 」之后、「 mol」之前，不压字（量出来的字宽，不是估的）
+    expect(g.f.x).toBeGreaterThanOrEqual(g.before.x + g.before.width - tol)
+    expect(g.after.x + tol).toBeGreaterThanOrEqual(g.f.x + g.f.width)
+    // 竖直上与文字同一行：公式中心落在文字盒的竖直范围里
+    const fc = g.f.y + g.f.height / 2
+    expect(fc).toBeGreaterThan(g.before.y)
+    expect(fc).toBeLessThan(g.before.y + g.before.height)
+    await dialog.locator('[data-export-preview-stage]').screenshot({ path: test.info().outputPath('preview.png') })
   },
 )
