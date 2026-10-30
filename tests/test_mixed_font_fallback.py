@@ -57,6 +57,8 @@ assert text.get_math_fontfamily() == baseline_math
     result = subprocess.run(
         [worker, "-c", probe, str(ROOT / "src" / "tavotto" / "engine")],
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         env=os.environ.copy(),
         timeout=90,
@@ -113,6 +115,8 @@ assert 'TavottoTestLatinOnly' not in manifest.installed_latin_only_families()
     result = subprocess.run(
         [worker, "-c", probe, str(ROOT / "src" / "tavotto" / "engine"), str(tmp_path)],
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         env=os.environ.copy(),
         timeout=120,
@@ -164,6 +168,8 @@ else:
     result = subprocess.run(
         [worker, "-c", probe, str(ROOT / "src" / "tavotto" / "engine"), str(tmp_path)],
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         env=os.environ.copy(),
         timeout=120,
