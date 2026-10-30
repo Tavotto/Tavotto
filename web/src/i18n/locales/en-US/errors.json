@@ -306,6 +306,8 @@
     "repair_cancelled": "You cancelled the administrator prompt, so nothing was changed.",
     "repair_not_elevated": "This computer didn’t grant administrator rights, so nothing was changed. An administrator account is needed to repair this.",
     "repair_failed": "The repair didn’t work; the folder still can’t be read.",
+    "repair_has_links": "This folder contains links to other places; to avoid changing anything outside it, Tavotto left it alone.",
+    "repair_too_large": "This folder has too many items for Tavotto to repair in one go. Nothing was changed.",
     "write_outside_roots": "The script tried to write outside the authorized workspace, so this run didn’t finish. Make it write inside the project, or run the script yourself in the Tavotto window.",
     "project_copy_too_large": "The project folder is over {{limit_mb}} MB, so it wasn’t copied.",
     "project_copy_dest_invalid": "This location can’t be used for the copy. Pick another folder.",

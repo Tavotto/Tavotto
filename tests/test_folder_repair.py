@@ -329,29 +329,21 @@ def test_run_repair_validates_before_elevating(world):
 # --------------------------------------------------------------------------- 命令
 def test_commands_are_exact_down_to_every_argument():
     env = {"SystemRoot": "C:\\Windows"}
-    assert folderrepair.build_commands("D:\\deps\\.work_deps_20261030", env) == [
-        [
-            "C:\\Windows\\System32\\takeown.exe",
-            "/f",
-            "D:\\deps\\.work_deps_20261030",
-            "/r",
-            "/d",
-            "y",
-        ],
-        [
-            "C:\\Windows\\System32\\icacls.exe",
-            "D:\\deps\\.work_deps_20261030",
-            "/reset",
-            "/t",
-            "/c",
-            "/q",
-        ],
+    icacls = "C:\\Windows\\System32\\icacls.exe"
+    d = "D:\\deps\\.work_deps_20261030"
+    cmds = folderrepair.build_commands(d, env)
+    assert cmds == [
+        [icacls, d, "/setowner", "*S-1-5-32-544", "/T", "/C", "/L", "/Q"],
+        [icacls, d, "/reset", "/T", "/C", "/L", "/Q"],
     ]
+    # 不再用 takeown（它的确认值随系统语言变）；两条都不跟随链接
+    assert not any("takeown" in part.lower() for c in cmds for part in c)
+    assert all("/L" in c for c in cmds)
 
 
 def test_commands_fall_back_to_the_default_windows_dir():
     cmds = folderrepair.build_commands("D:\\x", {})
-    assert cmds[0][0] == "C:\\Windows\\System32\\takeown.exe"
+    assert cmds[0][0] == "C:\\Windows\\System32\\icacls.exe"
 
 
 def test_the_runner_receives_exactly_those_commands_for_the_real_path(world):
@@ -359,7 +351,7 @@ def test_the_runner_receives_exactly_those_commands_for_the_real_path(world):
     _run(world, token, _ok_runner(calls))
     real = os.path.realpath(world.dep)
     assert calls == [folderrepair.build_commands(real, world.env)]
-    assert len(calls[0]) == 2 and calls[0][0][2] == real and calls[0][1][1] == real
+    assert len(calls[0]) == 2 and calls[0][0][1] == real and calls[0][1][1] == real
 
 
 def _decode(params: str) -> str:
@@ -377,13 +369,82 @@ def test_elevated_launch_is_one_powershell_with_literal_arguments():
     assert exe == "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
     script = _decode(params).split("\n")
     q = "'D:\\it''s 100% & ^odd\\deps'"
+    icacls = "'C:\\Windows\\System32\\icacls.exe'"
     assert script == [
-        f"& 'C:\\Windows\\System32\\takeown.exe' '/f' {q} '/r' '/d' 'y' | Out-Null",
+        f"try {{ $l = Get-ChildItem -LiteralPath {q} -Recurse -Force -Attributes ReparsePoint "
+        "-ErrorAction Stop | Select-Object -First 1 } catch { exit 202 }",
+        "if ($l) { exit 201 }",
+        f"& {icacls} {q} '/setowner' '*S-1-5-32-544' '/T' '/C' '/L' '/Q' | Out-Null",
         "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
-        f"& 'C:\\Windows\\System32\\icacls.exe' {q} '/reset' '/t' '/c' '/q' | Out-Null",
+        f"& {icacls} {q} '/reset' '/T' '/C' '/L' '/Q' | Out-Null",
         "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
         "exit 0",
     ]
+    # 复查在任何改动之前；且不跟随链接
+    first_icacls = next(i for i, ln in enumerate(script) if "icacls" in ln)
+    assert max(i for i, ln in enumerate(script) if "ReparsePoint" in ln) < first_icacls
+    assert "FollowSymlink" not in "\n".join(script)
+
+
+# --------------------------------------------------------------------------- 子孙里的链接
+def test_a_link_inside_the_folder_is_refused_without_elevating(world):
+    outside = world.home / "precious"
+    outside.mkdir()
+    os.symlink(outside, world.dep / "tzdata" / "escape")
+    token, calls = _issue(world), []
+    with pytest.raises(folderrepair.RepairError) as e:
+        _run(world, token, _ok_runner(calls))
+    assert e.value.code == folderrepair.ERROR_HAS_LINKS
+    assert calls == []
+    with pytest.raises(folderrepair.RepairError) as e:  # 令牌已作废
+        _run(world, token, _ok_runner(calls))
+    assert e.value.code == folderrepair.ERROR_TOKEN_INVALID
+
+
+def test_a_file_symlink_and_a_deeply_nested_link_are_refused_too(world):
+    deep = world.dep / "a" / "b" / "c"
+    deep.mkdir(parents=True)
+    os.symlink(world.blocked, deep / "f")
+    with pytest.raises(folderrepair.RepairError) as e:
+        folderrepair.scan_for_links(str(world.dep))
+    assert e.value.code == folderrepair.ERROR_HAS_LINKS
+
+
+def test_a_folder_without_links_passes_the_scan(world):
+    folderrepair.scan_for_links(str(world.dep))
+
+
+def test_too_many_entries_are_refused(world):
+    for i in range(6):
+        (world.dep / f"f{i}").write_text("x")
+    with pytest.raises(folderrepair.RepairError) as e:
+        folderrepair.scan_for_links(str(world.dep), limit=5)
+    assert e.value.code == folderrepair.ERROR_TOO_LARGE
+    folderrepair.scan_for_links(str(world.dep), limit=100)
+
+
+def test_unlistable_subfolders_are_skipped_by_the_scan(world, monkeypatch):
+    """当前账户读不了的子目录（正是要修的）预检列不出来：跳过，由提权脚本以管理员身份复查。"""
+    real = os.scandir
+    sub = str(world.dep / "tzdata")
+
+    def fake(path):
+        if str(path) == sub:
+            raise PermissionError(13, "denied", sub)
+        return real(path)
+
+    monkeypatch.setattr(os, "scandir", fake)
+    folderrepair.scan_for_links(str(world.dep))
+
+
+def test_the_elevated_script_finding_a_link_is_reported_as_has_links(world):
+    token = _issue(world)
+    with pytest.raises(folderrepair.RepairError) as e:
+        _run(world, token, lambda c: folderrepair.RunOutcome("done", folderrepair.EXIT_LINKS))
+    assert e.value.code == folderrepair.ERROR_HAS_LINKS
+    with pytest.raises(folderrepair.RepairError) as e:
+        _run(world, token, _ok_runner([]))
+    assert e.value.code == folderrepair.ERROR_TOKEN_INVALID
 
 
 # --------------------------------------------------------------------------- 路径不外泄

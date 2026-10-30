@@ -2,7 +2,7 @@
 
 场景：脚本把项目外的文件夹插进 `sys.path`，那个文件夹是别的账户（Codex 的 Windows 沙箱账户）经 `pip --target` 建的，
 属主是对方、不继承父目录权限，当前账户读不了。用户点一下「修复权限」，经 **一次 UAC 提权**对**这一个目录**做
-`takeown /f <目录> /r /d y`，再 `icacls <目录> /reset /t /c /q` 让它重新继承父目录的权限。不改父目录，不碰目录外任何东西。
+`icacls <目录> /setowner *S-1-5-32-544 /T /C /L /Q`（属主设成 Administrators，SID 不依赖语言），再 `icacls <目录> /reset /T /C /L /Q` 让它重新继承父目录的权限；两条都带 `/L`、不跟随链接，目录里有链接则整个拒绝。不改父目录，不碰目录外任何东西。
 
 三道结构性防线：
 
@@ -36,6 +36,12 @@ TOKEN_TTL = 900.0
 MAX_RECORDS = 32
 #: 等提权进程跑完的上限（秒）：大目录 `takeown /r` 与 `icacls /t` 可能要一会儿。
 RUN_TIMEOUT = 600.0
+#: 提权前预检遍历的条目上限：超了就拒绝（递归命令要在时限内跑完，也不替用户处理一棵巨树）。
+MAX_ENTRIES = 20000
+#: 提权脚本自己的退出码：动手前复查发现重解析点 / 复查本身没跑成（与 icacls 的 0、1 区分开）。
+EXIT_LINKS = 201
+EXIT_CHECK_FAILED = 202
+_REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT
 
 #: 稳定错误码（协议契约；`tests/test_error_codes.py` 读 `ERROR_CODES`）。
 ERROR_UNSUPPORTED = "repair_unsupported"
@@ -46,6 +52,8 @@ ERROR_NOT_CONFIRMED = "repair_not_confirmed"
 ERROR_CANCELLED = "repair_cancelled"
 ERROR_NOT_ELEVATED = "repair_not_elevated"
 ERROR_FAILED = "repair_failed"
+ERROR_HAS_LINKS = "repair_has_links"
+ERROR_TOO_LARGE = "repair_too_large"
 ERROR_CODES = (
     ERROR_UNSUPPORTED,
     ERROR_TOKEN_INVALID,
@@ -55,6 +63,8 @@ ERROR_CODES = (
     ERROR_CANCELLED,
     ERROR_NOT_ELEVATED,
     ERROR_FAILED,
+    ERROR_HAS_LINKS,
+    ERROR_TOO_LARGE,
 )
 
 #: `validate_target` 的拒绝原因（闭集；只进服务端日志与测试，不进响应——响应统一 `repair_target_rejected`）。
@@ -312,12 +322,49 @@ def _system32(env) -> str:
     return ntpath.join(root, "System32")  # Windows 的系统工具，路径永远是 Windows 写法
 
 
+def _is_reparse(entry) -> bool:
+    """符号链接 / 联接点 / 其它重解析点（不跟随：只看 lstat 与 `is_symlink`）。"""
+    try:
+        if entry.is_symlink():
+            return True
+        attrs = getattr(entry.stat(follow_symlinks=False), "st_file_attributes", 0)
+    except OSError:
+        return True  # 看不清就当有：宁可拒绝
+    return bool(attrs & _REPARSE_POINT)
+
+
+def scan_for_links(folder: str, limit: int | None = None) -> None:
+    """提权**之前**遍历目录（不跟随任何链接）：发现重解析点抛 `repair_has_links`，条目超限抛 `repair_too_large`。
+
+    递归的属主 / ACL 命令若碰到指向目录外的链接会连目标一起改，所以链接一律拒绝。当前账户读不了的子目录
+    （正是要修的）这里列不出来，跳过——提权脚本在动手前会以管理员身份再复查一遍整棵树。"""
+    cap = MAX_ENTRIES if limit is None else limit
+    seen = 0
+    stack = [folder]
+    while stack:
+        try:
+            with os.scandir(stack.pop()) as it:
+                for entry in it:
+                    seen += 1
+                    if seen > cap:
+                        raise RepairError(ERROR_TOO_LARGE)
+                    if _is_reparse(entry):
+                        raise RepairError(ERROR_HAS_LINKS)
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+        except PermissionError:
+            continue
+
+
 def build_commands(folder: str, env=None) -> list[list[str]]:
-    """提权后依次执行的两条命令，argv 精确：只对 `folder` 这一个目录；系统工具用绝对路径（不吃 PATH）。"""
-    sys32 = _system32(os.environ if env is None else env)
+    """提权后依次执行的两条命令，argv 精确：只对 `folder` 这一个目录；系统工具用绝对路径（不吃 PATH）。
+
+    `/setowner *S-1-5-32-544`：属主设成 Administrators（SID，不依赖系统语言；提权令牌的 SeRestorePrivilege 由 icacls 自己启用），
+    随后 `/reset` 恢复继承。两条都带 `/L`：对链接本身操作、不跟随目标。"""
+    icacls = ntpath.join(_system32(os.environ if env is None else env), "icacls.exe")
     return [
-        [ntpath.join(sys32, "takeown.exe"), "/f", folder, "/r", "/d", "y"],
-        [ntpath.join(sys32, "icacls.exe"), folder, "/reset", "/t", "/c", "/q"],
+        [icacls, folder, "/setowner", "*S-1-5-32-544", "/T", "/C", "/L", "/Q"],
+        [icacls, folder, "/reset", "/T", "/C", "/L", "/Q"],
     ]
 
 
@@ -329,8 +376,16 @@ def build_elevated_launch(commands: list[list[str]], env=None) -> tuple[str, str
     """把命令列表包成**一次**提权启动：`(exe, parameters)`。
 
     PowerShell 脚本里每个参数都是单引号字面量（不经 cmd 的 `%` / `&` / `^` 展开），经 `-EncodedCommand`（UTF-16LE base64）
-    交给 `powershell.exe`；这样两条命令只弹一次 UAC。任何一条退出码非 0 立即以它收场。"""
-    lines = []
+    交给 `powershell.exe`；这样两条命令只弹一次 UAC。脚本**先**以管理员身份递归查一遍目录里有没有重解析点
+    （`Get-ChildItem -Recurse -Force -Attributes ReparsePoint`，不加 `-FollowSymlink`）：有就以 `EXIT_LINKS` 收场、什么都不改，
+    防止预检与执行之间被换成链接。之后任何一条退出码非 0 立即以它收场。"""
+    folder = commands[0][1]
+    lines = [
+        "try { $l = Get-ChildItem -LiteralPath "
+        + _ps_quote(folder)
+        + f" -Recurse -Force -Attributes ReparsePoint -ErrorAction Stop | Select-Object -First 1 }} catch {{ exit {EXIT_CHECK_FAILED} }}",
+        f"if ($l) {{ exit {EXIT_LINKS} }}",
+    ]
     for argv in commands:
         lines.append("& " + " ".join(_ps_quote(a) for a in argv) + " | Out-Null")
         lines.append("if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
@@ -458,12 +513,19 @@ def run_repair(
             # 已经读得了（别处修过 / 文件没了）：不弹 UAC，不动任何权限；令牌用完即废
             consumed = True
             return {"repaired": False}
+        try:
+            scan_for_links(real)
+        except RepairError:
+            consumed = True  # 链接 / 超限不会自己变好：重新运行取新令牌
+            raise
         outcome = (runner or shell_execute_runner)(build_commands(real, env))
         if outcome.status == "cancelled":
             raise RepairError(ERROR_CANCELLED)
         if outcome.status != "done":
             raise RepairError(ERROR_NOT_ELEVATED)
         consumed = True  # 命令已经跑过：成功与失败都是终局，要再来就重新运行取新令牌
+        if outcome.exit_code == EXIT_LINKS:
+            raise RepairError(ERROR_HAS_LINKS)  # 提权脚本动手前复查发现了链接，什么都没改
         if outcome.exit_code != 0 or (record.file and unreadable(record.file)):
             raise RepairError(ERROR_FAILED)
         return {"repaired": True}

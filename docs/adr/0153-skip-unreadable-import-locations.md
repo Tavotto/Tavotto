@@ -76,11 +76,13 @@ AI 修复：`fixsession.SYSTEM_PROMPT` 的 3g 写明——装进 Tavotto 受管�
 
 **这是在用户点击确认之后，修改项目外一个文件夹的权限**——Tavotto 此前从不改项目外的任何东西，所以把边界写死在这里：
 
-* **为什么可以接受**：① 只改**这一个**目录（失败卡点名的那个依赖夹），不改它的父目录，不碰目录外任何东西；② 只做「恢复继承」：
-  `takeown /f <目录> /r /d y` 把属主换成当前管理员组，再 `icacls <目录> /reset /t /c /q` 让它重新继承父目录的权限——不加任何特殊授权、
-  不放开给 Everyone；③ 用户亲手点按钮，再亲手过一次 UAC（`ShellExecuteEx runas`）；取消 / 不是管理员就什么都不改，卡片如实说一句，
-  不重复弹窗；④ 目录本来就是脚本自己放进 `sys.path` 的、用户的 Codex 沙箱账户创建的依赖夹（`pip --target` 先装进不继承权限的
-  `mkdtemp` 再 move 进去，所以属主是沙箱账户）。
+* **为什么可以接受**：① 只改**这一个**目录（失败卡点名的那个依赖夹），不改它的父目录，不碰目录外任何东西——**不跟随链接**：
+  目录里只要有符号链接 / 联接点（重解析点）就整个拒绝（`repair_has_links`），条目超过 20000 也拒绝（`repair_too_large`），
+  两条命令都带 `/L`（对链接本身操作）；② 只做「恢复继承」：`icacls <目录> /setowner *S-1-5-32-544 /T /C /L /Q`
+  把属主设成 Administrators（用 SID，**不依赖系统语言**；不再用 `takeown`，它的确认值 `/D Y` 随语言变，德文要 `J`），再
+  `icacls <目录> /reset /T /C /L /Q` 让它重新继承父目录的权限——不加任何特殊授权、不放开给 Everyone；③ 用户亲手点按钮，再亲手过一次 UAC
+  （`ShellExecuteEx runas`）；取消 / 不是管理员就什么都不改，卡片如实说一句，不重复弹窗；④ 目录本来就是脚本自己放进 `sys.path` 的、
+  用户的 Codex 沙箱账户创建的依赖夹（`pip --target` 先装进不继承权限的 `mkdtemp` 再 move 进去，所以属主是沙箱账户）。
 * **令牌，不是路径**：worker / bridge 在失败事实里另带私有键 `unreadable_folder_private.{path, file}`（敏感运行的白名单不放行它）；
   父进程 `pool.unreadable_folder_error` 把它换成 `folderrepair.issue()` 的服务端令牌就地丢弃——完整路径只活在 `folderrepair` 的进程内存里，
   不进 `err.extra`、公开投影、遥测与日志。令牌不透明、一次性、绑定（项目、目录真实路径）、15 分钟过期；非 Windows 不发。
@@ -88,14 +90,14 @@ AI 修复：`fixsession.SYSTEM_PROMPT` 的 3g 写明——装进 Tavotto 受管�
 * **接口只收令牌**：`POST /api/engine/folder-repair {token}`；要「用户在页面上点了」（`_page_authenticated`，本机凭据头 / MCP / 无会话状态 fail closed）。
   动手前 `folderrepair.validate_target` 对**真实路径**再验一遍：本地绝对路径、是目录、不是盘符根、不是用户主目录本身 / 主目录的祖先 /
   主目录下的标准文件夹（Desktop、Documents……）、不是系统目录（Windows、Program Files、ProgramData）、仍在项目之外且不包住项目、
-  与登记那刻的真实路径一致（挡住登记后换成联接点）。命令只对验过的真实路径动手；还要登记的那个文件此刻**确实仍读不了**，
+  与登记那刻的真实路径一致（挡住登记后换成联接点）；通过后 `scan_for_links` 不跟随地遍历整棵树查重解析点（当前账户列不出的子目录跳过，交给下一条）。命令只对验过的真实路径动手；还要登记的那个文件此刻**确实仍读不了**，
   读得了就不弹 UAC。
 * **提权在 sidecar 发起**（Flask 父进程，纯标准库 `ctypes`），不放桌面壳：浏览器模式同样能用，不新增 `#[tauri::command]` 与 ACL。
-  两条命令包进**一个** `powershell.exe -EncodedCommand`（每个参数是单引号字面量，不经 cmd 的 `%` / `&` / `^` 展开），只弹一次 UAC；
+  两条命令包进**一个** `powershell.exe -EncodedCommand`，脚本在任何改动之前先以管理员身份再递归复查一遍重解析点（`Get-ChildItem -Recurse -Force -Attributes ReparsePoint`，不加 `-FollowSymlink`；有就 `exit 201`、什么都不改，防预检与执行之间被换成链接；复查自己失败 `exit 202`）（每个参数是单引号字面量，不经 cmd 的 `%` / `&` / `^` 展开），只弹一次 UAC；
   系统工具与 PowerShell 都用 `SystemRoot\System32` 下的绝对路径，不吃 PATH。跑完再复核那个文件是否读得了：退出码 0 但仍读不了也算失败。
 * **结局**（稳定码，文案固定、不带参数）：`repair_cancelled`（UAC 取消）、`repair_not_elevated`（没拿到管理员权限）、`repair_failed`
-  （命令失败 / 仍读不了）、`repair_token_invalid`、`repair_target_rejected`、`repair_not_confirmed`、`repair_in_progress`、`repair_unsupported`。
-  取消与没拿到提权不作废令牌（可自己再点一次，每次点击至多一次 UAC）；跑过命令（成败）或目标被拒就作废。
+  （命令失败 / 仍读不了）、`repair_has_links`、`repair_too_large`、`repair_token_invalid`、`repair_target_rejected`、`repair_not_confirmed`、`repair_in_progress`、`repair_unsupported`。
+  取消与没拿到提权不作废令牌（可自己再点一次，每次点击至多一次 UAC）；跑过命令（成败）、目标被拒、发现链接 / 超限就作废。
 * **前端**：准备卡 `folder_unreadable` 态——一句话点名文件夹 + 主按钮「修复权限」（没有令牌 = 原来的通用失败卡）；成功后沿用卡上
   「再试一次」同一个动作重跑一次；失败 / 取消的一句话放在卡片标题上，不自动重试。
 

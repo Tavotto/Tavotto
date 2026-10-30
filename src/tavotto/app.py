@@ -10129,6 +10129,8 @@ _FOLDER_REPAIR_STATUS = {
     engine_folderrepair.ERROR_CANCELLED: 409,
     engine_folderrepair.ERROR_NOT_ELEVATED: 409,
     engine_folderrepair.ERROR_FAILED: 500,
+    engine_folderrepair.ERROR_HAS_LINKS: 409,
+    engine_folderrepair.ERROR_TOO_LARGE: 409,
 }
 
 

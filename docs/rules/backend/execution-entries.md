@@ -107,7 +107,7 @@ order: 180
   `unreadable_folder_private`（worker / bridge 同一份 `bridgeboot.unreadable_folder_facts`；敏感运行的白名单不放行），
   `pool.unreadable_folder_error` 换成服务端令牌就地丢弃（**不进 `err.extra` / 公开投影 / 遥测 / 日志**）；`params.repair_token` 是前端按钮的唯一入口。
   `POST /api/engine/folder-repair {token}`：只收令牌、要 `_page_authenticated()`、路径动手前 `validate_target` 对真实路径再验（每一条拒绝一个用例）、
-  一次 UAC 提权跑 `takeown /f <目录> /r /d y` + `icacls <目录> /reset /t /c /q`（argv 由 `build_commands` 唯一给出）、事后复核仍读不了算失败。
+  提权前 `scan_for_links` 不跟随地拒绝子孙里的重解析点 / 超限，一次 UAC 提权跑 `icacls <目录> /setowner *S-1-5-32-544 /T /C /L /Q` + `icacls <目录> /reset /T /C /L /Q`（argv 由 `build_commands` 唯一给出；不用 takeown，其确认值随语言变；脚本内动手前再复查链接）、事后复核仍读不了算失败。
   不放宽任何一条验证；加新的拒绝条件加在 `validate_target` 并配用例。看护 `tests/test_folder_repair.py`。
 
 ## 写入根绊线：MCP 来源的 safe 运行（#898，ADR 0141）

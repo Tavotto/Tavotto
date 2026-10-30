@@ -306,6 +306,8 @@
     "repair_cancelled": "你取消了管理员确认，权限没有改动。",
     "repair_not_elevated": "这台电脑没能获得管理员权限，权限没有改动；需要用管理员账户来修复。",
     "repair_failed": "修复没有成功，文件夹仍然读不了。",
+    "repair_has_links": "这个文件夹里有指向别处的链接，为避免改到别的地方，Tavotto 没有动它。",
+    "repair_too_large": "这个文件夹里的内容太多，Tavotto 不能一次修复它，没有做任何改动。",
     "write_outside_roots": "脚本想写已授权工作区之外的位置，所以这次没有运行完。请改成写到项目内，或在 Tavotto 窗口里自己运行这个脚本。",
     "project_copy_too_large": "项目文件夹超过 {{limit_mb}} MB，没有另存。",
     "project_copy_dest_invalid": "这个位置不能用来另存，请换一个文件夹。",
