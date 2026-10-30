@@ -39,6 +39,7 @@ from . import (
     ai_history,
     ai_oauth,
     ai_providers,
+    cli_failure,
     config,
     exectrace,
     managedcli,
@@ -213,8 +214,20 @@ def _trace_agent_exit(trace, span, sess: dict, proc) -> None:
             trace.end_span(
                 span,
                 exectrace.STATUS_FAILED,
-                error_code="agent_exit_nonzero",
-                attributes={"exit_ok": False},
+                error_code=sess.get("runner_error") or "agent_exit_nonzero",
+                attributes={
+                    "exit_ok": False,
+                    **(
+                        {"runner_detail": sess["runner_detail"]}
+                        if sess.get("runner_detail")
+                        else {}
+                    ),
+                    **(
+                        {"failure_category": sess["failure_category"]}
+                        if sess.get("failure_category")
+                        else {}
+                    ),
+                },
             )
     except Exception:  # noqa: BLE001
         pass
@@ -1786,7 +1799,7 @@ def run(
         LOG.exception("入内存后检查取消意图失败（session %s）", sid)
     emit = on_event or (lambda *_: None)
 
-    log_state = {"log": stderr_log}
+    log_state = {"log": stderr_log, "start": 0}
     convert_checks = 0
 
     def _answer_check() -> None:
@@ -1827,6 +1840,8 @@ def run(
     def _consume():
         st: dict = {}
         sess.pop("runner_error", None)
+        sess.pop("runner_detail", None)
+        sess.pop("failure_category", None)
         proc = sess["proc"]
         complete = threading.Event()
         agent_runs[0] += 1
@@ -1867,10 +1882,22 @@ def run(
             _await_exit(sess)
             if agent == ai_agents.BUILTIN_ID and st.get("runner_error"):
                 sess["runner_error"] = st["runner_error"]
+                sess["runner_detail"] = st.get("runner_detail")
         finally:
             complete.set()
             timer.cancel()
             log_state["log"].close()
+            if agent != ai_agents.BUILTIN_ID and proc.returncode:
+                try:
+                    with (SNAP_DIR / f"{sid}.stderr.log").open(
+                        encoding="utf-8", errors="replace"
+                    ) as err:
+                        err.seek(0, os.SEEK_END)
+                        end = err.tell()
+                        err.seek(max(log_state["start"], end - 65536))
+                        sess["failure_category"] = cli_failure.consume(err)
+                except (OSError, ValueError):
+                    sess["failure_category"] = "other"
             _trace_agent_exit(trace, run_span, sess, proc)
 
     def _respawn(note: str) -> None:
@@ -1905,6 +1932,7 @@ def run(
             "AI 任务修正命令: %s", " ".join("<prompt>" if part == again else part for part in cmd2)
         )
         log_state["log"] = open(SNAP_DIR / f"{sid}.stderr.log", "ab", buffering=0)
+        log_state["start"] = log_state["log"].tell()
         sess["exited"].clear()
         try:
             sess["proc"] = _popen(

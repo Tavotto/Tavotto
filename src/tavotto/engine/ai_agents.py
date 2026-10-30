@@ -1332,6 +1332,13 @@ class BuiltinAgent(AgentDefinition):
                     if reason == "budget" and ev.get("detail") == "output_truncated"
                     else "agent_" + reason
                 )
+                # The trace vocabulary is a closed set; never retain arbitrary
+                # provider output or exception text from the child.
+                detail = ev.get("detail")
+                from . import exectrace
+
+                if isinstance(detail, str) and detail in exectrace._VOCABULARIES["runner_detail"]:
+                    state["runner_detail"] = detail
             return [("message", self._FAILURES.get(str(ev["reason"]), "出错"))]
         return []
 
