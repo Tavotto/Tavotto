@@ -19,21 +19,22 @@ New-Item -ItemType Directory $root | Out-Null
 
 $setup = @"
 `$root = '$root'
-function Mk(`$name, [bool]`$restricted) {
+function Mk(`$name, [bool]`$restricted, [string]`$junctionTo = '') {
   `$d = Join-Path `$root `$name
   New-Item -ItemType Directory (Join-Path `$d 'tzdata') -Force | Out-Null
   Set-Content (Join-Path `$d 'tzdata\__init__.py') 'X = 1'
+  # 联接点必须在收紧 DACL 之前建：收紧后连管理员也写不进去（10-30 真机实测，旧顺序建不出联接点、场景 2 什么都没测到）
+  if (`$junctionTo) { New-Item -ItemType Junction -Path (Join-Path `$d 'tzdata\escape') -Target `$junctionTo -ErrorAction Stop | Out-Null }
   if (`$restricted) {
     & icacls `$d /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' /T /C /Q | Out-Null
     & icacls `$d /setowner '*S-1-5-18' /T /C /Q | Out-Null
   }
   return `$d
 }
-Mk 'restricted' `$true | Out-Null
-Mk 'restricted_link' `$true | Out-Null
-Mk 'plain' `$false | Out-Null
 New-Item -ItemType Directory (Join-Path `$root 'precious') | Out-Null
-New-Item -ItemType Junction -Path (Join-Path `$root 'restricted_link\tzdata\escape') -Target (Join-Path `$root 'precious') | Out-Null
+Mk 'restricted' `$true | Out-Null
+Mk 'restricted_link' `$true (Join-Path `$root 'precious') | Out-Null
+Mk 'plain' `$false | Out-Null
 "@
 $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($setup))
 Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile', '-EncodedCommand', $enc
@@ -47,6 +48,13 @@ def readable(p):
         open(p, "rb").close(); return True
     except OSError:
         return False
+import subprocess
+def acl(p):
+    return subprocess.run(["icacls", p], capture_output=True, text=True).stdout.strip()
+precious = os.path.join(root, "precious")
+precious_before = acl(precious)
+escape = os.path.join(root, "restricted_link", "tzdata", "escape")
+print(f"junction present before repair: {os.path.lexists(escape)}")
 cases = [("restricted", 0), ("restricted_link", f.EXIT_LINKS), ("plain", 0)]
 bad = 0
 for name, want in cases:
@@ -56,6 +64,9 @@ for name, want in cases:
     print(f"{name:16s} status={out.status} exit={out.exit_code} (want {want}) "
           f"readable_after={readable(os.path.join(d, 'tzdata', '__init__.py'))} -> {'OK' if ok else 'FAIL'}")
     bad += 0 if ok else 1
+same = acl(precious) == precious_before
+print(f"precious ACL unchanged: {same} -> {'OK' if same else 'FAIL'}")
+bad += 0 if same else 1
 sys.exit(1 if bad else 0)
 '@
 $env:PYTHONPATH = (Join-Path (Split-Path $PSScriptRoot -Parent | Split-Path -Parent) 'src')
