@@ -207,6 +207,33 @@ def typeset_many(
     return out
 
 
+def cached_failures(text: object, text_format: object, family: object) -> list[dict]:
+    """一段文字里**已知排不出来**的公式 → `[{"src", "why"}]`，供预检 spec 的 `math_errors`。
+
+    **只读缓存（进程内 + 磁盘），绝不起子进程**：没排过的、环境问题（没解释器等，不落缓存）一律不算——
+    「还不知道」与「排不出」是两个答案。预检求值器是纯函数，事实由这里带进去（ADR 0152 §七）。
+    """
+    if text_format != "latex":
+        return []
+    fam = family_of(family)
+    out: list[dict] = []
+    seen: set[str] = set()
+    for run in richtext.parse_runs(str(text or ""), "latex"):
+        if not run.math or run.text in seen:
+            continue
+        seen.add(run.text)
+        key = key_of(run.text, fam)
+        hit = _memory.get(key)
+        if hit is None:
+            try:
+                hit = json.loads(_cache_path(key).read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+        if isinstance(hit, dict) and hit.get("ok") is False:
+            out.append({"src": run.text, "why": str(hit.get("error") or "")})
+    return out
+
+
 def math_items(objects: list[dict]) -> list[tuple[str, str]]:
     """画布对象（导出载荷的形状）里所有 LaTeX 写法标注的公式段 → [(源码, 族)]。"""
     items: list[tuple[str, str]] = []

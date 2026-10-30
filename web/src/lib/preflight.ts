@@ -12,8 +12,10 @@ import {
 } from './profile'
 import { effectiveCanvasFamily } from './typography'
 import { textDiagnostics } from './glyphPlan'
+import { mathBoxOf } from './mathtext'
+import { parseRuns } from './richText'
 import { embedsDiskBitmap, type ExportRoute, type ExportRouteScope } from './exportRoute'
-import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
+import type { CanvasObject, FigureDocument, PanelObject, TextObject } from '@/types/document'
 import { panelFullSize } from '@/types/document'
 import type { Manifest, ManifestElement } from './api'
 
@@ -171,6 +173,12 @@ export interface PreflightTextSpec {
   interpretation?: 'auto' | 'scientific'
   /** 文字写法（缺席 = 旧标记）。缺字形判据按它拆标记（ADR 0152） */
   text_format?: 'latex'
+  /**
+   * 这段文字里**已知排不出来**的公式（ADR 0152 §七）。求值器是纯函数、不起排版进程，
+   * 事实由调用方带进来：前端读 `lib/mathtext` 缓存里 `ok: false` 的，排版还没回来的不算。
+   * 缺席 = 没有已知失败。
+   */
+  math_errors?: { src: string; why: string }[]
   rect_mm: [number, number, number, number]
   hidden: boolean
 }
@@ -944,7 +952,37 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
         objectIds: [t.id],
       })
     }
+    // 排不出来的公式：导出时按源码原样画（不吞字）并给 `math_unrenderable` 警告；这里让它
+    // 进问题面板。事实（哪些公式失败）由 spec 带进来——求值器不起排版进程。
+    const bad = (t.math_errors ?? []).filter((e) => e && typeof e.src === 'string')
+    if (bad.length) {
+      sink.add(
+        'math-unrenderable',
+        pf('textMathUnrenderable', {
+          count: String(bad.length),
+          src: mathShown(bad[0].src),
+          why: mathWhy(bad[0].why),
+        }),
+        {
+          objectIds: [t.id],
+          detail: { formulas: bad.map((e) => ({ src: e.src, why: mathWhy(e.why) })) },
+          worse: bad.length,
+        },
+      )
+    }
   }
+}
+
+/** 公式源码在文案里的样子：`$…$`，过长截断（与 Python 侧 `_math_shown` 同源） */
+const mathShown = (src: string): string => {
+  const one = src.replace(/\s+/g, ' ').trim()
+  return `$${one.length > 40 ? one.slice(0, 40) + '…' : one}$`
+}
+
+/** 排不出的原因：折成单行、截到 80 字（与 Python 侧 `_math_why` 同源） */
+const mathWhy = (why: string): string => {
+  const one = String(why ?? '').replace(/\s+/g, ' ').trim()
+  return one.length > 80 ? one.slice(0, 80) + '…' : one
 }
 
 /**
@@ -1144,6 +1182,28 @@ function panelSpec(
   }
 }
 
+/**
+ * 一段标注文字里**已知排不出来**的公式（缓存里 `ok: false`）。还在排 / 没问过的不算——
+ * 「还不知道」与「排不出」是两个答案。读缓存会顺手把没问过的排进下一次请求，
+ * 结果回来时 `subscribeMath` 通知问题面板重算（`validationStore.startValidation`）。
+ * 键与 `MathFormula` 画公式时用的同一个：(生效族, 源码)。
+ */
+export function mathErrorsOf(
+  o: TextObject,
+): { src: string; why: string }[] | undefined {
+  if (o.textFormat !== 'latex' || o.hidden) return undefined
+  const family = effectiveCanvasFamily(o)
+  const seen = new Set<string>()
+  const out: { src: string; why: string }[] = []
+  for (const run of parseRuns(o.text, o.textFormat)) {
+    if (!run.math || seen.has(run.text)) continue
+    seen.add(run.text)
+    const box = mathBoxOf(run.text, family)
+    if (box && !box.ok) out.push({ src: run.text, why: box.error ?? '' })
+  }
+  return out.length ? out : undefined
+}
+
 export function buildSpec(
   doc: FigureDocument,
   assets: Record<string, PanelInfo>,
@@ -1187,6 +1247,7 @@ export function buildSpec(
         font_family: o.type === 'text' ? effectiveCanvasFamily(o) : '',
         interpretation: o.type === 'text' ? o.interpretation : undefined,
         text_format: o.type === 'text' ? o.textFormat : undefined,
+        math_errors: o.type === 'text' ? mathErrorsOf(o) : undefined,
         rect_mm: rect(o),
         hidden: !!o.hidden,
       })),

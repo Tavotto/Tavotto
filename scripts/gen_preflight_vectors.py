@@ -552,6 +552,47 @@ def cases() -> list[dict]:
         }
     )
 
+    # 13e'. 排不出来的公式（ADR 0152 §七）：事实由 spec 的 `math_errors` 带进来——
+    #       ① 失败的公式 → math-unrenderable（warn）；② 空列表 / 缺席 → 不报；
+    #       ③ 隐藏的文字 → 不报；④ 两条失败 → 一条问题、count 2。
+    out.append(
+        {
+            "name": "canvas-text-math-unrenderable",
+            "profile_id": "lab-publication-v1",
+            "spec": _spec(
+                [_panel("p1", manifest=_clean_manifest())],
+                texts=[
+                    _text(
+                        "t-bad",
+                        9.0,
+                        "$\\notacommand{x}$ and $\\alpha$",
+                        text_format="latex",
+                        math_errors=[{"src": "\\notacommand{x}", "why": "unknown symbol"}],
+                    ),
+                    _text("t-ok", 9.0, "$\\alpha$", text_format="latex", math_errors=[]),
+                    _text(
+                        "t-hidden",
+                        9.0,
+                        "$\\bad$",
+                        text_format="latex",
+                        hidden=True,
+                        math_errors=[{"src": "\\bad", "why": "x"}],
+                    ),
+                    _text(
+                        "t-two",
+                        9.0,
+                        "$a_$ $\\frac{1}$",
+                        text_format="latex",
+                        math_errors=[
+                            {"src": "a_", "why": "Expected end of text\nline two"},
+                            {"src": "\\frac{1}", "why": "x" * 100},
+                        ],
+                    ),
+                ],
+            ),
+        }
+    )
+
     # 13f. 字形覆盖（Prompt 14）。四条各盯一个具体的错法：
     #      ① 画布文字里有谁都画不出的字符 → glyph-missing（导出上是方框）；
     #      ② 画布文字里的 `⁵`：U10 之前它退到 PyMuPDF 自己挑的回退脸 → glyph-substituted；批准字体集合
