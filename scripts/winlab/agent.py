@@ -146,7 +146,7 @@ _PROXY_KEYS = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"})
 @dataclass(frozen=True)
 class Task:
     id: str
-    kind: str  # network | pytest | hosts
+    kind: str  # network | pytest | hosts | page-shot | …
     summary: str
     timeout_s: int
     claim: str
@@ -179,6 +179,13 @@ _RENDER_ROUNDTRIP = (
     "tests/test_modified_after_save.py",
     "tests/test_mcp_roundtrip.py",
 )
+
+#: page-shot 能截的页面：`--mode` 只收这里的名字，页面是仓库里经评审的静态 HTML（不联网、不跑脚本以外的东西）。
+#: 加一页 = 在 `tests/winlab_pages/` 放文件 + 在这里登记一行，走 PR。
+SHOT_PAGES: dict[str, str] = {
+    "glance-fonts": "tests/winlab_pages/glance-fonts.html",
+}
+
 
 TASKS: dict[str, Task] = {
     t.id: t
@@ -375,6 +382,20 @@ TASKS: dict[str, Task] = {
             unverified=(
                 "只跑仓库里经评审的语料，不跑用户提交的脚本（那要一次性隔离环境）",
                 "--no-fidelity：不比像素基线",
+            ),
+        ),
+        Task(
+            id="page-shot",
+            kind="page-shot",
+            summary="页面截图：用 Lab 自带的 Edge（与 WebView2 同一 Chromium 内核）无头打开仓库里登记的静态页并截图（--mode 选页）",
+            timeout_s=300,
+            needs_venv=False,
+            modes=tuple(SHOT_PAGES),
+            claim="这一页在 Lab 的 Windows 字体与 Edge 文字回退下画出来的样子（evidence\\page.png，用 `winlab.py shot` 取回）",
+            unverified=(
+                "Edge 浏览器不是 WebView2：内核与字体回退相同，但版本号可能不同",
+                "只是一张静态页，不是 Tavotto 真窗口；页面里的字体栈要与产品保持一致（tests/test_winlab.py 看护）",
+                "Server 2025 的字体集不等于 Windows 10 / 11 客户端",
             ),
         ),
         Task(
@@ -5742,6 +5763,58 @@ def run_corpus_task(lab: Lab, run_dir: Path, env: dict, mode: str) -> dict:
     }
 
 
+def find_edge(env: dict) -> Path | None:
+    """系统装的 Edge 浏览器（Server 2025 自带）；只看两个 Program Files 下的固定位置。"""
+    for var in ("PROGRAMFILES(X86)", "PROGRAMFILES"):
+        base = next((v for k, v in env.items() if k.upper() == var), None)
+        if base:
+            p = Path(base) / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+            if p.is_file():
+                return p
+    return None
+
+
+def run_page_shot_task(lab: Lab, run_dir: Path, env: dict, mode: str) -> dict:
+    """无头 Edge 打开登记页、截一张 PNG 进 evidence\\page.png。页面只能是 SHOT_PAGES 里、仓库内的文件。"""
+    rel = SHOT_PAGES.get(mode)
+    if rel is None:
+        return {"result": "error", "summary": f"unknown page {mode!r}"}
+    page = (lab.repo / rel).resolve()
+    if not page.is_file() or lab.repo.resolve() not in page.parents:
+        return {"result": "error", "summary": f"{rel} not in the prepared checkout"}
+    edge = find_edge(env)
+    if edge is None:
+        return {"result": "environment_unavailable", "summary": "msedge.exe not found"}
+    ev = run_dir / "evidence"
+    shot = ev / "page.png"
+    argv = [
+        str(edge),
+        "--headless=new",
+        "--disable-gpu",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-background-networking",
+        "--disable-extensions",
+        "--hide-scrollbars",
+        f"--user-data-dir={run_dir / 'work' / 'edge'}",
+        "--window-size=1200,1600",
+        f"--screenshot={shot}",
+        page.as_uri(),
+    ]
+    step = _run_logged(argv, run_dir, env, ev / "edge", 240)
+    ok = shot.is_file() and shot.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    if step.get("spawn_error"):
+        return {"result": "environment_unavailable", "summary": step["spawn_error"], "step": step}
+    return {
+        "result": "passed" if ok else "error",
+        "summary": f"{mode}: {'page.png' if ok else 'no screenshot'} (edge exit={step.get('exit_code')})",
+        "mode": mode,
+        "shot": "page.png" if ok else None,
+        "sha256": hashlib.sha256(shot.read_bytes()).hexdigest() if ok else None,
+        "step": step,
+    }
+
+
 def _run_body(
     lab: Lab,
     task: Task,
@@ -5765,6 +5838,8 @@ def _run_body(
         return run_env_matrix_task(lab, run_dir, env, (pkg or {}).get("package", ""))
     if task.kind == "corpus":
         return run_corpus_task(lab, run_dir, env, (pkg or {}).get("mode") or "smoke")
+    if task.kind == "page-shot":
+        return run_page_shot_task(lab, run_dir, env, (pkg or {}).get("mode") or tuple(SHOT_PAGES)[0])
     if task.kind == "desktop-window":
         return run_desktop_window_task(
             lab, run_dir.name, run_dir, env, (pkg or {}).get("package", "")

@@ -3349,3 +3349,71 @@ def test_connect_install_fails_closed_on_a_bad_installer_exit(monkeypatch, tmp_p
     monkeypatch.setattr(A.subprocess, "run", lambda *a, **k: P())
     ctx, early = A.install_tavotto_for_connect(tmp_path / "Tavotto-0.19.0-Windows-Setup.exe", {})
     assert ctx is None and early["result"] == "error"
+
+
+# --------------------------------------------------------------------------- 页面截图
+def test_page_shot_pages_are_a_closed_set_of_repo_files():
+    for name, rel in A.SHOT_PAGES.items():
+        assert re.fullmatch(r"[a-z0-9][a-z0-9-]*", name), name
+        assert rel.startswith("tests/winlab_pages/") and (ROOT / rel).is_file(), rel
+    task = A.TASKS["page-shot"]
+    assert task.modes == tuple(A.SHOT_PAGES) and task.networks == ("direct",)
+    assert A.validate_test_args(task, [], None, "direct", mode="glance-fonts") is None
+    assert "does not accept --mode" in A.validate_test_args(
+        task, [], None, "direct", mode="../../Windows/win.ini"
+    )
+
+
+def test_glance_page_first_stack_is_the_product_ui_font_stack():
+    """登记页 A 行要画的就是产品界面字体栈；index.css 改了栈而页面没跟，截图就证明了别的东西。"""
+    css = (ROOT / "web" / "src" / "index.css").read_text(encoding="utf-8")
+    sans = " ".join(re.search(r"--font-sans:\s*(.*?);", css, re.S).group(1).split())
+    page = (ROOT / A.SHOT_PAGES["glance-fonts"]).read_text(encoding="utf-8")
+    assert re.findall(r"<code data-stack>(.*?)</code>", page)[0] == sans
+
+
+def test_find_edge_only_looks_in_program_files(tmp_path):
+    assert A.find_edge({"PROGRAMFILES": str(tmp_path)}) is None
+    exe = tmp_path / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    assert A.find_edge({"ProgramFiles(x86)": str(tmp_path)}) == exe
+    assert A.find_edge({"PATH": str(exe.parent)}) is None
+
+
+def test_page_shot_without_edge_is_environment_unavailable_not_passed(tmp_path):
+    lab = A.Lab(tmp_path)
+    rel = A.SHOT_PAGES["glance-fonts"]
+    (lab.repo / rel).parent.mkdir(parents=True)
+    (lab.repo / rel).write_text("<html></html>")
+    run_dir = lab.runs / RUN
+    (run_dir / "evidence").mkdir(parents=True)
+    rep = A.run_page_shot_task(lab, run_dir, {"PROGRAMFILES": str(tmp_path / "none")}, "glance-fonts")
+    assert rep["result"] == "environment_unavailable"
+    assert A.run_page_shot_task(lab, run_dir, {}, "nope")["result"] == "error"
+
+
+def test_page_shot_without_a_png_is_not_passed(tmp_path, monkeypatch):
+    """Edge 正常退出但没写出 PNG（或写出的不是 PNG）不算截到了。"""
+    lab = A.Lab(tmp_path)
+    rel = A.SHOT_PAGES["glance-fonts"]
+    (lab.repo / rel).parent.mkdir(parents=True)
+    (lab.repo / rel).write_text("<html></html>")
+    run_dir = lab.runs / RUN
+    (run_dir / "evidence").mkdir(parents=True)
+    monkeypatch.setattr(A, "find_edge", lambda env: tmp_path / "msedge.exe")
+    seen = {}
+
+    def fake(argv, cwd, env, prefix, timeout, stdin_data=None):
+        seen["argv"] = argv
+        shot = next(a for a in argv if a.startswith("--screenshot="))[len("--screenshot=") :]
+        Path(shot).write_bytes(seen.get("bytes", b"not a png"))
+        return {"exit_code": 0, "timed_out": False, "duration_s": 0.1}
+
+    monkeypatch.setattr(A, "_run_logged", fake)
+    assert A.run_page_shot_task(lab, run_dir, {}, "glance-fonts")["result"] == "error"
+    seen["bytes"] = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+    rep = A.run_page_shot_task(lab, run_dir, {}, "glance-fonts")
+    assert rep["result"] == "passed" and rep["shot"] == "page.png"
+    assert seen["argv"][-1] == (lab.repo / rel).resolve().as_uri()
+    assert "--headless=new" in seen["argv"]
