@@ -13155,7 +13155,7 @@ def api_ai_convert_discard(sid):
 @app.post("/api/ai/convert/<sid>/dependencies")
 def api_ai_convert_dependencies(sid):
     """用户在依赖卡片上点了主按钮：body `{action: "install", impact_digest}`；或换了环境后 `{action: "replan"}`（按此刻的项目解释器重新判定同一个候选）。`impact_digest` 是**前端回显它看到的**卡片摘要
-    （服务端不自回显，ADR 0143 修订）。后端起一个作业：装（现有 deprepair 入口，可取消）→ 接着校验**同一个候选**（不重跑 Agent）
+    （服务端不自回显，ADR 0143 修订）。后端起一个作业：装（现有 deprepair 入口，可取消）→ 接着校验**同一个候选**（装依赖不重跑 Agent；校验暴露的可修正失败由原会话 Agent 修正一次）
     → 对照 / 留存待采用；前端轮询 `GET /api/ai/convert/<sid>` 看 `state`。「不装」= 前端直接 `discard`。"""
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
@@ -13185,6 +13185,8 @@ def api_ai_convert_dependencies(sid):
             args=(sid, project, cdir, meta, cancel),
             kwargs={
                 "runner": _convert_runner(ctx, str(meta["script_rel"])),
+                # 装好依赖后才暴露出的可修正失败：让原会话的 Agent 修正一次（ADR 0143 修订）
+                "correct": engine_ai.correct_convert,
                 **resume_kwargs,
             },
             name="convert-resume",

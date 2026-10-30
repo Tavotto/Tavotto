@@ -343,3 +343,14 @@ savefig 收到已打开的流时再处理。已识别的构造调用同样在运
 ## 修订（2026-10-30）：失败候选为诊断包保留 6 小时
 
 维护者要诊断包「附带源码」带上 AI 写出来却没通过检查的那份脚本（TVD-82B9），而此前失败 / 超时收尾（`ConvertExecutor.discard` 与 `release`）立刻删候选目录。改为：**失败 / 超时（含 `needs_input`）且候选文件已写出时**，`keep_failed` 把 `meta.json` 写成 `state: failed_kept`（带 `failed_kept_at`）并保留 `FAILED_KEEP_S`（= `taskdiag.RETENTION_S`，6 小时）；**用户取消照旧立即删**，Agent 什么都没写出来的也照旧删。保留的目的只有一个：诊断包。它不是候选——`_load_meta` 对 `failed_kept` 一律 404，所以状态查询 / 采用 / 续跑 / 丢弃 / 预览都够不到，前端历史也不会露出。过期由 `prune_expired`（新建候选时与应用启动时各调一次）按 `failed_kept_at` 清；诊断包侧 `_candidate_file` 对已过期未清扫的也不收。看护：`tests/test_ai_convert.py` 的 `test_failed_candidate_is_kept_*` / `test_cancelled_candidate_*` / `test_failed_kept_expires_*`。
+
+## 修订（2026-10-30）：装依赖后的续跑里，可修正失败修正一次
+
+真机端到端（R → matplotlib，`read_excel` 后在数据旁写 CSV）暴露：首跑校验卡在缺 openpyxl，Agent 没跑到写 CSV 那行；用户点装依赖后，续跑第一次真正跑到它，写入根绊线正确拦下（`write_outside_roots`），而「续跑不重跑 Agent」让转换直接 `failed`——同一个失败在常规路径本来会走任务内修正。
+裁决（维护者批准）：**装依赖这一步仍不重跑 Agent；但装好后的校验若暴露出可修正失败，与首跑一样让原会话的 Agent 修正一次再校验。**
+* 「可修正」= `ai_convert.correction_prompt` 给出修正指令（与 `ConvertAdapter.correction` 同一函数、同一份文字）：写入根绊线 / 语法 / 无 matplotlib 图等；`dependency_*` / `missing_dependency`、取消、项目被动了、又要新卡片：不修正，行为不变。
+* 预算语义同任务内修正：至多一轮、不循环。实现是新起一个 Task Core 会话（`ai_bridge.correct_convert` → `run(convert={"resume": …})`），**复用续跑里已有的候选**，执行 = 带修正指令的一次 Agent 运行，随后走原有提交前检查 / `stage`（预算 `max_agent_runs=1, max_corrections=0, max_renders=1`，`parent_task_id` = 原任务）。账本里它是一条指回原任务的 convert 任务，Agent / 模型 / 强度 / 接口取自原会话（`meta.json` 的 `ai`，老候选回退历史库的 provider / model / effort）。
+* 修正通过 → `ready`（暂存 / 对照 / 预览与首跑同一份代码）；修正后仍失败 → `failed`（候选与原因照旧可读，不再修正）；修正期间取消 → 与续跑取消同一语义（候选删、`cancelled`），取消传到修正会话并结束 Agent 进程组；Agent 起不来（未安装 / 脚本忙 / 登记失败）→ 保留修正前那条失败。
+* 前端沿用 `resuming`，无新状态与文案。
+回归：`tests/test_ai_convert_resume_correction.py`。
+
