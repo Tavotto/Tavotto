@@ -510,7 +510,7 @@ def test_pool_swaps_the_private_path_for_a_token(world, monkeypatch):
     assert str(world.home) not in blob
 
 
-def test_a_mappable_module_gets_the_install_card_and_still_carries_the_token(world, monkeypatch):
+def test_a_trusted_module_gets_the_install_card_and_still_carries_the_token(world, monkeypatch):
     monkeypatch.setattr(folderrepair, "supported", lambda platform=None: True)
     err = engine_pool.unreadable_folder_error(
         "m", "tb", _fact(world, module="tzdata"), project=world.project
@@ -518,6 +518,54 @@ def test_a_mappable_module_gets_the_install_card_and_still_carries_the_token(wor
     assert err.code == "missing_dependency"
     assert "repair_token" in err.extra["unreadable_folder"]
     assert str(world.dep) not in json.dumps(err.extra)
+
+
+@pytest.mark.parametrize("module", ["fangsensor_utils", "my_helpers", "utils"])
+def test_a_users_own_module_goes_straight_to_the_repair_card(world, monkeypatch, module):
+    """表外的名字（只有同名预填、没有可信来源）：文件就在那个文件夹里，多半是用户自己的模块——不出缺依赖卡、不问包名。"""
+    monkeypatch.setattr(folderrepair, "supported", lambda platform=None: True)
+    err = engine_pool.unreadable_folder_error(
+        "m", "tb", _fact(world, module=module), project=world.project
+    )
+    assert err.code == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+    assert engine_pool.recovery_params(err)["repair_token"]
+
+
+def test_a_trusted_name_stays_an_install_even_if_it_is_not_in_the_old_prefill_rule(world):
+    for module in ("tzdata", "pandas", "numpy"):
+        err = engine_pool.unreadable_folder_error(
+            "m",
+            "tb",
+            {"unreadable_folder": {"folder": "d", "module": module}},
+            project=world.project,
+        )
+        assert err.code == "missing_dependency", module
+
+
+def test_the_joint_plan_does_not_ask_for_the_package_name_of_an_unreadable_local_module(
+    world, monkeypatch
+):
+    """联合计划（准备卡的「有 N 个库要你确认包名」）：撞过读不了文件夹的模块不再被当表外依赖列出。"""
+    from tavotto.engine import depplan
+
+    proj = world.home / "work" / "paper"
+    (proj / "plot.py").write_text("import fangsensor_utils\nimport matplotlib\n", encoding="utf-8")
+
+    def unknown(project):
+        plan = depplan.plan(
+            str(proj),
+            "plot.py",
+            facts=None,
+            target_kind=depplan.TARGET_MANAGED,
+            dists=None,
+        )
+        return [o["import_name"] for o in plan.origins]
+
+    assert "fangsensor_utils" in unknown(str(proj))  # 基线：不知道它读不了时，照旧被当表外依赖
+    engine_pool.unreadable_folder_error(
+        "m", "tb", _fact(world, module="fangsensor_utils"), project=str(proj)
+    )
+    assert "fangsensor_utils" not in unknown(str(proj))
 
 
 def test_no_token_off_windows(world, monkeypatch):

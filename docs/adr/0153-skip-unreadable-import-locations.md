@@ -53,7 +53,7 @@ worker / bridge 在脚本失败时判一次（`bridgeboot.unreadable_folder_fact
 
 父进程在错误收口（`pool._error_of` / `pool._worker_error`，native 在 `app.py` 的脚本错误出口，同一个 `pool.unreadable_folder_error`）：
 
-1. **`module` 能映射到 PyPI 包名**（`depresolve` 现有的 curated 表或同名预填，装不了的如 ROOT 除外），且这个 (模块, 文件夹) 第一次出现 →
+1. **`module` 能被可信地映射到 PyPI 包名**（只认 `depresolve` 的 curated 表 `CURATED` + `SAME_NAME`，装不了的如 ROOT 除外；`suggest_distribution` 的同名预填**不算**——它没有来源核实，文件就在那个文件夹里，表外的名字多半是用户自己的模块，装一个同名猜测的包基本肯定是错的，会陷入「核对包名」死循环。2026-10-30 真机修订：`tzdata` 补进 `SAME_NAME`），且这个 (模块, 文件夹) 第一次出现 →
    产出**现有的 `missing_dependency` 错误**（带模块名），用户看到现有的「安装」卡，一键装进受管环境。`app.py` 再用可信解析核一次：
    给不出安装名（没有 `requirement`）就不出「换环境」的缺依赖卡，改落到第 2 条。
 2. **映射不到、或同一 (模块, 文件夹) 已送去安装过仍然失败**（记账只在依赖安装**真正成功提交**之后——`deprepair._run_install` 的两个成功终态调 `pool.note_unreadable_install`——并按项目区分；给错误分类从不记账，用户重试渲染仍有安装出路；不循环出安装卡）→ 稳定码 `import_folder_unreadable`：
@@ -103,3 +103,6 @@ AI 修复：`fixsession.SYSTEM_PROMPT` 的 3g 写明——装进 Tavotto 受管�
 
 后果：新增一个会改项目外权限的端点，但被令牌、页面点击、路径再验、一次 UAC 四道门夹着；回滚 = 删 `folderrepair` 与卡片的一个主按钮，
 失败卡退回一句话。看护 `tests/test_folder_repair.py`（含 argv 精确断言与路径验证每一条的拒绝用例）。
+
+撞过这条一句话卡的模块名会记在进程内（`folderrepair.note_unreadable_module`，只有模块名）：之后的联合计划（`depplan.plan`）不再把它列成「要你确认包名」的表外依赖，
+失败卡直接给「修复权限」。

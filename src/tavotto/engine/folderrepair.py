@@ -287,9 +287,28 @@ def issue(
 
 
 def reset() -> None:
-    """清空全部令牌（测试之间）。"""
+    """清空全部令牌与「读不了的模块」记账（测试之间）。"""
     with _LOCK:
         _RECORDS.clear()
+        _UNREADABLE_MODULES.clear()
+
+
+#: 项目 → 在那里撞过「读不了的项目外文件夹」的顶层模块名。联合计划据此不把它们当表外依赖去问包名
+#: （文件就在那个文件夹里，多半是用户自己的模块）。进程内、只有模块名，不落盘、不含路径。
+_UNREADABLE_MODULES: dict[str, set[str]] = {}
+
+
+def note_unreadable_module(project, module: str) -> None:
+    if project and isinstance(module, str) and module:
+        with _LOCK:
+            _UNREADABLE_MODULES.setdefault(_project_key(project), set()).add(module)
+
+
+def unreadable_modules(project) -> frozenset[str]:
+    if not project:
+        return frozenset()
+    with _LOCK:
+        return frozenset(_UNREADABLE_MODULES.get(_project_key(project), ()))
 
 
 def _claim(token, project, now: float) -> _Record:

@@ -58,7 +58,7 @@ import threading
 from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
-from . import config, depresolve, distmeta, importscan, launcher, projectenv, runtime
+from . import config, depresolve, distmeta, folderrepair, importscan, launcher, projectenv, runtime
 
 LOG = logging.getLogger("tavotto.depplan")
 
@@ -1498,11 +1498,17 @@ def plan(
         and c.module not in open_classes
         and _installed_index_satisfies(c, installed, states.get(c.module, ""), index_incomplete)
     }
+    # 在这个项目里撞过「读不了的项目外文件夹」的模块（`folderrepair.unreadable_modules`）：它在那个文件夹里、多半是用户自己的
+    # 模块，既不问包名也不送 pip——失败卡会直接给「修复权限」
+    unreadable_local = folderrepair.unreadable_modules(root_p)
     origin_classes = [
         c
         for c in scan.classes
-        if c.module in open_classes
-        or (c.module in plain_unknown and c.module not in index_satisfied)
+        if (
+            c.module in open_classes
+            or (c.module in plain_unknown and c.module not in index_satisfied)
+        )
+        and c.module not in unreadable_local
     ]
     # 脚本字面量加进 sys.path 的目录（`importscan` 的 `sys_path_literal` 搜索根）：那里没找到的 import 是「本地模块缺失」，
     # 不预填包名、不接受用户指定、绝不送 pip（ADR 0061 修订 2026-10-21）

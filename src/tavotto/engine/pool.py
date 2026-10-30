@@ -1373,18 +1373,24 @@ def unreadable_folder_error(
             err = _missing_dependency_error(module, traceback_text)
             err.extra = {"unreadable_folder": {**fact, "module": module}}
             return err
+    if module:
+        # 这个模块在这个项目里是「读不了的本地模块」：之后的联合计划不再把它当表外依赖去问包名（`depplan.plan`）
+        folderrepair.note_unreadable_module(project, module)
     err = WorkerError(message, traceback_text, code=IMPORT_FOLDER_UNREADABLE_CODE)
     err.extra = {"unreadable_folder": fact}
     return err
 
 
 def _mappable_to_distribution(module: str) -> bool:
-    """模块名能不能映射到 PyPI 包名：只用 `depresolve` 现有的两张表（curated / 同名预填），不另建表。"""
+    """模块名能不能**可信地**映射到 PyPI 包名：只认 `depresolve` 的 curated 表（`CURATED` + `SAME_NAME`），不另建表。
+
+    `suggest_distribution` 的同名预填**不算**：它只是确认界面的初始值，没有任何来源核实。读不了的文件就在那个文件夹里，
+    表外的名字多半是用户自己的模块，去 PyPI 装一个同名猜测的包基本肯定是错的（装不到 → 核对包名 → 又回来，死循环）。"""
     from . import depresolve
 
     if depresolve.not_pip_installable(module) is not None:
         return False
-    return bool(depresolve.curated_distribution(module) or depresolve.suggest_distribution(module))
+    return bool(depresolve.curated_distribution(module))
 
 
 def _missing_dependency_error(mod: str, traceback_text: str) -> "WorkerError":
