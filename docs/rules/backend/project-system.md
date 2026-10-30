@@ -173,4 +173,5 @@ order: 220
   （EROFS，或 EACCES / EPERM 且父文件夹 `W_OK` 为假、目标存在则须可读）归成 `output_folder_read_only`
   （`worker._write_denied_by_folder`；判据主语是**文件夹**，读不了某个文件仍是 `script_error`）。
   默认沙盒档里 Tavotto 的写守卫本来就不让项目内的写落盘，所以这个码只在脚本目录档 / 项目根档 / native 档出现。
+* **从没打开过的只读文件夹**也能打开：`_open_project` 写不进注册表（无 `W_OK` 或 EROFS/EACCES/EPERM）时，静态扫描草稿只留在内存（`Registry.load_data(..., "<memory>")`），一个字节都不写进去；之后的刷新写不了走已有的 write_failed 路径。另存出的副本里注册表照常落盘。
 * 看护用例：`tests/test_readonly_project_save_as.py`、`tests/test_error_codes.py`。

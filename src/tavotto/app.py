@@ -4069,8 +4069,19 @@ def _open_project(path: Path, make_default: bool) -> dict:
         reg = engine_registry.open_registry(path)
     except FileNotFoundError:
         cfg, rep = engine_discover.build_draft(path)
-        engine_discover.write_config(path, cfg, static_discovery=True)
-        reg = engine_registry.open_registry(path)
+        try:
+            if not os.access(path, os.W_OK):
+                raise PermissionError(errno.EACCES, "项目文件夹没有写入权限")
+            engine_discover.write_config(path, cfg, static_discovery=True)
+            reg = engine_registry.open_registry(path)
+        except (OSError, engine_atomicio.AtomicWriteError) as exc:
+            cause = exc if isinstance(exc, OSError) else exc.__cause__
+            if not (isinstance(cause, OSError) and cause.errno in _READ_ONLY_ERRNOS):
+                raise
+            # 从没打开过、又没有写入权限的文件夹（共享盘 / 只读卷）：照样打开，静态扫描的草稿只留在内存里，
+            # 一个字节都不写进去。前端据 `writable=false` 问一次要不要另存一份；另存出来的副本里注册表照常落盘
+            reg = engine_registry.Registry()
+            reg.load_data(cfg, source="<memory>")
         drafted, conflicts = True, sorted(rep["conflicts"])
     ctx = ProjectCtx(path, pid, reg)
     # 刷新基线：现在的素材长什么样、注册表是哪一份。没有它，打开项目后的

@@ -227,6 +227,55 @@ def test_unreadable_single_file_is_skipped_and_counted(env):
         secret.chmod(0o644)
 
 
+# ------------------------------------------- 2b. 从没打开过的只读文件夹
+
+
+FIG = "import matplotlib.pyplot as plt\nfig, ax = plt.subplots()\nfig.savefig('out.png')\n"
+
+
+def _snapshot(root: Path) -> list:
+    return sorted((str(p.relative_to(root)), p.stat().st_mtime_ns) for p in root.rglob("*"))
+
+
+@_no_chmod
+def test_first_open_of_an_unwritable_folder_succeeds_and_writes_nothing(env):
+    """共享盘 / 只读卷上从没打开过的文件夹（还没有 tavotto_registry.json）：照样打开，草稿留在内存里。"""
+    _client, project, _ = env
+    (project / "fig.py").write_text(FIG)
+    assert not (project / "tavotto_registry.json").exists()
+    _lock_tree(project)
+    before = _snapshot(project)
+    try:
+        status = m.open_project(str(project))
+        assert status["writable"] is False and status["drafted"] is True
+        assert status["scripts"] >= 1  # 静态扫描的草稿在内存里，界面照常有脚本
+        assert _snapshot(project) == before, "只读文件夹里一个字节都不许写"
+        assert not (project / "tavotto_registry.json").exists()
+    finally:
+        _unlock_tree(project)
+
+
+@_no_chmod
+def test_save_as_from_a_first_open_read_only_folder_gives_a_writable_registered_copy(env):
+    client, project, tmp = env
+    (project / "fig.py").write_text(FIG)
+    _lock_tree(project)
+    parent = tmp / "mine"
+    parent.mkdir()
+    try:
+        status = m.open_project(str(project))
+        r = _save_as(client, status["id"], parent)
+        assert r.status_code == 200, r.get_json()
+        copy = Path(r.get_json()["path"])
+        assert not (copy / "tavotto_registry.json").exists()  # 源里本来就没有，不凭空带
+        opened = m.open_project(str(copy))
+        assert opened["writable"] is True and opened["drafted"] is True
+        assert (copy / "tavotto_registry.json").is_file(), "副本里注册表照常落盘"
+        assert not (project / "tavotto_registry.json").exists()
+    finally:
+        _unlock_tree(project)
+
+
 # ---------------------------------------------------------------- 3. 记住「继续只读」
 
 
