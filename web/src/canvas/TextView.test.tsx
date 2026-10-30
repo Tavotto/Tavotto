@@ -10,6 +10,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useDocumentStore } from '@/store/documentStore'
+import { finishActiveGesture } from '@/store/gestureCoordinator'
 import { useUiStore } from '@/store/uiStore'
 import { emptyProject, type TextObject } from '@/types/document'
 import { CANVAS_TEXT_FAMILIES, canvasFontStack } from '@/lib/typography'
@@ -94,6 +95,22 @@ describe('TextView 编辑提交（所见即所得就地编辑，ADR 0152）', ()
       root.render(<TextView obj={useDocumentStore.getState().doc.objects[0] as TextObject} />)
     })
   const editor = () => container.querySelector<HTMLElement>('[data-rich-text="inline"]')!
+
+  it('离散动作收尾时先提交仍在编辑的文字，且只产生一条撤销历史', async () => {
+    useDocumentStore.getState().silent((d) => { d.objects.push(textObj({ text: '旧文字' })) })
+    render()
+    await act(async () => useUiStore.getState().setEditingText('t1'))
+    const view = richViewOf(editor())!
+    await act(async () => {
+      editor().focus()
+      view.dispatch(view.state.tr.insertText('新文字', 0, view.state.doc.content.size))
+      finishActiveGesture()
+    })
+    expect(useDocumentStore.getState().doc.objects[0]).toMatchObject({ text: '新文字' })
+    expect(useUiStore.getState().editingTextId).toBeNull()
+    act(() => { useDocumentStore.getState().undo() })
+    expect(useDocumentStore.getState().doc.objects[0]).toMatchObject({ text: '旧文字' })
+  })
 
   it('打字后失焦：一条历史写回 LaTeX 子集，退出后正文只显示一遍', async () => {
     useDocumentStore.getState().silent((d) => {
