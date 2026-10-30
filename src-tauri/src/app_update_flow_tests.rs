@@ -710,6 +710,121 @@ async fn an_install_that_names_another_version_than_the_candidate_is_refused_bef
     assert_eq!(e.code, "busy");
 }
 
+/* --------------------- 救援页「重新安装」：允许同版本 ------------------- */
+
+/// 当前版本 ± 1 的补丁号（mock 应用是 0.x.y 形态，补丁号一定能加减）
+fn bump(v: &str, delta: i64) -> String {
+    let mut p: Vec<i64> = v.split('.').map(|x| x.parse().unwrap()).collect();
+    p[2] += delta;
+    format!("{}.{}.{}", p[0], p[1], p[2])
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_plain_check_refuses_the_installed_version_but_the_reinstall_check_takes_it() {
+    let keys = Keys::new();
+    let probe = app(&keys);
+    let cur = probe.package_info().version.to_string();
+    drop(probe);
+    let pkg_path: &'static str = Box::leak(format!("/releases/{cur}/pkg").into_boxed_str());
+    let mk = |cur: String| move |b: &str, k: &Keys| healthy(b, &cur, &k.sign_b64(PKG), PKG);
+    let rig = Rig::new(keys, mk(cur.clone()), mk(cur.clone())).await;
+    let make = rig.make();
+    let ep = rig.endpoints();
+
+    // 普通更新路径：同版本 = 没有更新（语义不变）
+    let state = UpdateState::default();
+    assert!(run_check(&make, &ep, &state, &CN, &limits())
+        .await
+        .unwrap()
+        .is_none());
+    assert!(state.pending.try_lock().unwrap().is_none());
+
+    // 重新安装：同版本可装，留下候选句柄，且能下载并验签（不 apply）
+    let c = run_reinstall_check(&make, &ep, &state, &CN, &limits())
+        .await
+        .unwrap();
+    assert_eq!(
+        (c.version.as_str(), c.source),
+        (cur.as_str(), Source::Mirror)
+    );
+    let pending = state.pending.try_lock().unwrap().clone().unwrap();
+    let reinstall_make = reinstall_builder(&make);
+    let bytes = fetch(
+        &reinstall_make,
+        &ep,
+        &limits(),
+        &pending,
+        &|_| {},
+        &Cooldown::default(),
+    )
+    .await
+    .unwrap_or_else(|e| panic!("同版本包应能下载并验签：{e:?}"));
+    assert_eq!(bytes.bytes, PKG);
+    assert_eq!(rig.mirror.hits(pkg_path), 1);
+
+    // 同版本放行不外溢：普通 check 之后仍然是「无更新」
+    assert!(run_check(&make, &ep, &state, &CN, &limits())
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_newer_manifest_is_fine_for_reinstall_and_an_older_one_is_an_honest_failure() {
+    let keys = Keys::new();
+    let probe = app(&keys);
+    let cur = probe.package_info().version.to_string();
+    drop(probe);
+
+    // 清单比当前新：装更新版本同样能修好
+    let newer = bump(&cur, 1);
+    let n2 = newer.clone();
+    let rig = Rig::new(
+        keys,
+        move |b, k| healthy(b, &n2, &k.sign_b64(PKG), PKG),
+        |_, _| vec![],
+    )
+    .await;
+    let state = UpdateState::default();
+    let c = run_reinstall_check(&rig.make(), &rig.endpoints(), &state, &CN, &limits())
+        .await
+        .unwrap();
+    assert_eq!(c.version, newer);
+
+    // 清单比当前旧：不降级，稳定码 reinstall_unavailable；第一个答上来的来源即终局，GitHub 不被问
+    let keys = Keys::new();
+    let older = bump(&cur, -1);
+    if older.split('.').any(|p| p.starts_with('-')) {
+        return; // mock 版本是 0.0.0 一类时无法造出更旧的版本
+    }
+    let o2 = older.clone();
+    let rig = Rig::new(
+        keys,
+        move |b, k| healthy(b, &o2, &k.sign_b64(PKG), PKG),
+        |b, k| healthy(b, "99.0.0", &k.sign_b64(PKG), PKG),
+    )
+    .await;
+    let state = UpdateState::default();
+    let e = run_reinstall_check(&rig.make(), &rig.endpoints(), &state, &CN, &limits())
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(e.code, "reinstall_unavailable");
+    assert_eq!(rig.github.hits("/latest.json"), 0, "首个来源说无可装即终局");
+
+    // 来源全答不上来：如实失败（all_sources_failed），不是 reinstall_unavailable
+    let dead = Endpoints {
+        mirror: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+        mirror_root: "http://127.0.0.1:9".into(),
+        github: Url::parse("http://127.0.0.1:9/latest.json").unwrap(),
+    };
+    let e = run_reinstall_check(&rig.make(), &dead, &state, &CN, &limits())
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(e.code, "all_sources_failed");
+}
+
 /* --------------------- infra 契约 §6.2（镜像清单的取舍） ------------------- */
 
 #[tokio::test(flavor = "multi_thread")]

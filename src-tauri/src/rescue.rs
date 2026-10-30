@@ -62,13 +62,25 @@ pub mod stage {
     pub const NAVIGATE: &str = "navigate";
 }
 
-/// 启动失败的结构化事实：阶段 + 稳定码 + 退出码。**不含任何文本**——人读的报错原文走 error.html 的 `msg`，
+/// locate 阶段失败时安装目录里三样东西在不在（只有布尔值：不含路径、不含文本）。
+/// 用来区分「杀软隔离了 exe」（目录在、`exe` 为假）和「安装不完整」（`sidecar_dir` 或 `internal_dir` 为假）。
+/// 资源目录本身拿不到时整体记 `None`（报告里是 `null`），与「三项都为假」区分开。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct InstallFiles {
+    pub sidecar_dir: bool,
+    pub internal_dir: bool,
+    pub exe: bool,
+}
+
+/// 启动失败的结构化事实：阶段 + 稳定码 + 退出码 + 安装文件事实。**不含任何文本**——人读的报错原文走 error.html 的 `msg`，
 /// 那是另一条链路，不进 shell 报告。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct FailureInfo {
     pub stage: &'static str,
     pub code: &'static str,
     pub exit_code: Option<i32>,
+    /// 只在 locate 阶段失败时有值；其余阶段（文件都找到了）为 `None`。
+    pub install_files: Option<InstallFiles>,
 }
 
 impl FailureInfo {
@@ -77,7 +89,13 @@ impl FailureInfo {
             stage,
             code,
             exit_code: None,
+            install_files: None,
         }
+    }
+
+    pub fn with_install_files(mut self, files: Option<InstallFiles>) -> Self {
+        self.install_files = files;
+        self
     }
 }
 
@@ -154,6 +172,40 @@ fn gate(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(), &'s
     )
 }
 
+/// 「重新安装」（允许同版本）适用的失败码——只有文件丢失一种。别的失败（握手超时、启动崩溃……）
+/// 重装同一个版本修不好，也就不放行同版本安装。
+pub const REINSTALL_DENY_NOT_APPLICABLE: &str = "reinstall_not_applicable";
+
+pub fn reinstall_applies(code: &str) -> bool {
+    code == code::SIDECAR_NOT_FOUND
+}
+
+/// 纯判据：在 [`decide`]（可信页面 + 从未进入编辑态）之上再要求当前失败码确实是 `sidecar_not_found`。
+/// 同版本安装的放行点只有这一处。
+pub fn decide_reinstall(
+    label: &str,
+    url: Option<&url::Url>,
+    entered: bool,
+    failure_code: Option<&str>,
+) -> Result<(), &'static str> {
+    decide(label, url, entered)?;
+    if failure_code.is_some_and(reinstall_applies) {
+        Ok(())
+    } else {
+        Err(REINSTALL_DENY_NOT_APPLICABLE)
+    }
+}
+
+fn gate_reinstall(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+) -> Result<(), &'static str> {
+    let url = window.url().ok();
+    let state = app.state::<RescueState>();
+    let code = state.failure().map(|f| f.code);
+    decide_reinstall(window.label(), url.as_ref(), state.entered(), code)
+}
+
 /* -------------------------------------------------------------------------- */
 /*  命令                                                                        */
 /* -------------------------------------------------------------------------- */
@@ -171,6 +223,9 @@ pub struct Status {
     update: bool,
     /// 启动诊断可发送（环境变量只能关闭它，不能改地址）。
     upload: bool,
+    /// 页面主按钮该是「重新安装」：可用 + 更新通道已配置 + 失败码是 `sidecar_not_found`（文件丢失，
+    /// 重启修不好）。判据只有 [`reinstall_applies`] 这一个出处，页面不自己猜。
+    reinstall: bool,
 }
 
 fn update_configured(app: &tauri::AppHandle) -> bool {
@@ -209,6 +264,7 @@ pub fn rescue_status(
         exit_code: info.exit_code,
         update: eligible && update_configured(&app),
         upload: eligible && shell_report::upload_enabled(),
+        reinstall: eligible && reinstall_applies(info.code) && update_configured(&app),
     })
 }
 
@@ -256,6 +312,20 @@ pub async fn rescue_update_install(
     crate::update_install(&app, &state, Some(&expected_version), &|_| {}).await
 }
 
+/// 重新安装当前版本（文件丢失时的出路）：走同一个协调器——同一把锁、内置公钥验签、`run_install_expecting`
+/// 核对版本——但允许**同版本**。同版本放行只在这条命令里（`app_update::reinstall_builder`），且先过
+/// [`gate_reinstall`]：可信页面 + 从未进入编辑态 + 失败码是 `sidecar_not_found`。装完由页面调 `rescue_retry` 重启。
+#[tauri::command]
+pub async fn rescue_reinstall(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, app_update::UpdateState>,
+    ui_lang: Option<String>,
+) -> Result<app_update::Source, Failure> {
+    gate_reinstall(&app, &window).map_err(Failure::code)?;
+    crate::update_reinstall(&app, &state, ui_lang.as_deref()).await
+}
+
 #[derive(Debug, Serialize)]
 pub struct EntryView {
     name: &'static str,
@@ -296,6 +366,7 @@ fn ensure_prepared(app: &tauri::AppHandle, state: &RescueState) -> Prepared {
         stage: info.stage.to_string(),
         code: info.code.to_string(),
         exit_code: info.exit_code,
+        install_files: info.install_files,
         created_at: now_iso(),
     });
     *slot = Some(p.clone());
@@ -452,6 +523,81 @@ mod tests {
     }
 
     #[test]
+    fn same_version_reinstall_needs_the_trusted_page_a_clean_window_and_the_missing_files_code() {
+        let page = u("tauri://localhost/error.html");
+        let missing = Some(code::SIDECAR_NOT_FOUND);
+        assert_eq!(
+            decide_reinstall("main", Some(&page), false, missing),
+            Ok(())
+        );
+        // 失败码不是 sidecar_not_found：重装同一个版本修不好，不放行（闭集里每一个别的码都拒）
+        for c in CODES.iter().filter(|c| **c != code::SIDECAR_NOT_FOUND) {
+            assert_eq!(
+                decide_reinstall("main", Some(&page), false, Some(c)),
+                Err(REINSTALL_DENY_NOT_APPLICABLE),
+                "{c}"
+            );
+        }
+        // 还没有失败事实（不该发生）也不放行
+        assert_eq!(
+            decide_reinstall("main", Some(&page), false, None),
+            Err(REINSTALL_DENY_NOT_APPLICABLE)
+        );
+        // 进过编辑态：即使失败码对也拒（救援门禁在前）
+        assert_eq!(
+            decide_reinstall("main", Some(&page), true, missing),
+            Err(DENY_EDITING_UNKNOWN)
+        );
+        // 不可信调用方：先于一切
+        assert_eq!(
+            decide_reinstall("remote", Some(&page), false, missing),
+            Err(DENY_NOT_TRUSTED)
+        );
+        assert_eq!(
+            decide_reinstall("main", None, false, missing),
+            Err(DENY_NOT_TRUSTED)
+        );
+    }
+
+    #[test]
+    fn the_same_version_comparator_exists_only_in_the_reinstall_builder() {
+        // 普通更新路径的「只装更新版本」语义不能变：放宽版本判据的 `version_comparator(` 在整个壳的生产源码里
+        // 只许出现一次，且在 `reinstall_builder` 里；rescue_reinstall 以外没有人调用 reinstall 入口
+        let sources = [
+            ("app_update.rs", include_str!("app_update.rs")),
+            ("main.rs", include_str!("main.rs")),
+            ("rescue.rs", include_str!("rescue.rs")),
+            ("sidecar.rs", include_str!("sidecar.rs")),
+        ];
+        let total: usize = sources
+            .iter()
+            .map(|(_, s)| prod(s).matches(".version_comparator(").count())
+            .sum();
+        assert_eq!(total, 1);
+        let au = prod(include_str!("app_update.rs"));
+        let at = au.find("fn reinstall_builder<").expect("reinstall_builder");
+        assert!(au[at..].find(".version_comparator(").unwrap() < 400);
+        // 协调器入口 `run_reinstall` 的调用点：只有 main.rs 的 update_reinstall 一处
+        for (name, src) in sources {
+            let n = prod(src).matches("app_update::run_reinstall(").count();
+            assert_eq!(n, usize::from(name == "main.rs"), "{name}");
+        }
+        // main.rs 里只有 `update_reinstall` 的定义，唯一的调用点是 rescue_reinstall（先过 gate_reinstall）
+        assert_eq!(
+            prod(include_str!("main.rs"))
+                .matches("update_reinstall(")
+                .count(),
+            1
+        );
+        assert_eq!(
+            prod(include_str!("rescue.rs"))
+                .matches("crate::update_reinstall(")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn the_entered_flag_only_ever_goes_one_way() {
         let s = RescueState::default();
         assert!(!s.entered());
@@ -472,6 +618,7 @@ mod tests {
             stage: "handshake".into(),
             code: "sidecar_timeout".into(),
             exit_code: None,
+            install_files: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }));
         s.set_failure(FailureInfo::new("launch", "sidecar_spawn_failed"));
@@ -498,11 +645,12 @@ mod tests {
     }
 
     // ---- 结构：命令三处同步 + 每条命令先过闸 + 远程窗口拿不到 ----
-    const RESCUE_COMMANDS: [&str; 7] = [
+    const RESCUE_COMMANDS: [&str; 8] = [
         "rescue_status",
         "rescue_retry",
         "rescue_update_check",
         "rescue_update_install",
+        "rescue_reinstall",
         "rescue_diag_preview",
         "rescue_diag_send",
         "rescue_diag_save",
@@ -530,8 +678,14 @@ mod tests {
                 assert!(body.contains("trusted_page("), "{name}");
                 continue;
             }
+            // 重新安装多一道失败码判据（`gate_reinstall` = `gate` 的超集）
+            let gate_call = if name == "rescue_reinstall" {
+                "gate_reinstall(&app, &window)"
+            } else {
+                "gate(&app, &window)"
+            };
             let g = body
-                .find("gate(&app, &window)")
+                .find(gate_call)
                 .unwrap_or_else(|| panic!("{name} 没有先过 gate"));
             for side_effect in [
                 "shutdown_sidecar",
@@ -539,6 +693,7 @@ mod tests {
                 "restart()",
                 "crate::update_check(",
                 "crate::update_install(",
+                "crate::update_reinstall(",
                 "ensure_prepared(",
                 "shell_report::send(",
                 "blocking_save_file",

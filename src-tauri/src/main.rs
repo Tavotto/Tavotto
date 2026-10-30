@@ -1888,6 +1888,26 @@ async fn update_install(
     .await
 }
 
+/// 救援页「重新安装」的实现：查 + 装一气呵成，允许同版本（`app_update::run_reinstall`）。
+/// 只有 `rescue::rescue_reinstall` 调它（先过 `gate_reinstall`）。
+async fn update_reinstall(
+    app: &tauri::AppHandle,
+    state: &app_update::UpdateState,
+    ui_lang: Option<&str>,
+) -> Result<app_update::Source, app_update::Failure> {
+    let endpoints = app_update::endpoints(app)?;
+    let order = app_update::detect_order(ui_lang);
+    app_update::run_reinstall(
+        &|| updater_builder(app),
+        &endpoints,
+        state,
+        &order,
+        &app_update::Limits::default(),
+        &|_| {},
+    )
+    .await
+}
+
 /// 应用内更新·查（前端 `checkDesktopUpdate` 的唯一入口，ADR 0121）。来源顺序由本机时区 / 系统语言 /
 /// 界面语言决定（`app_update::source_order`）；第一个答上来的来源说了算。绝不静默下载。
 /// 只许主窗口调（远程实例窗口的 capability 里本来就没有它，这里再查一道）。
@@ -2003,6 +2023,7 @@ fn main() {
             rescue::rescue_retry,
             rescue::rescue_update_check,
             rescue::rescue_update_install,
+            rescue::rescue_reinstall,
             rescue::rescue_diag_preview,
             rescue::rescue_diag_send,
             rescue::rescue_diag_save

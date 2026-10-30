@@ -760,6 +760,72 @@ where
     apply(fetch(make, endpoints, limits, &pending, emit, &state.cooldown).await?)
 }
 
+/// 救援页「重新安装」专用的 `UpdaterBuilder` 工厂：在 `make` 之上换一个版本判据——**同版本也算可装**
+/// （`>=`，而不是插件默认的 `>`）。只由 [`run_reinstall`] 用；普通更新路径（`run_check` / `desktop_update_*`）
+/// 传进来的永远是不带这个判据的 `make`，「只装更新版本」的语义因此一点不变。
+/// 清单比当前版本旧（含镜像滞后）仍然判「不可装」——不降级。
+pub fn reinstall_builder<F>(make: &F) -> impl Fn() -> UpdaterBuilder + '_
+where
+    F: Fn() -> UpdaterBuilder,
+{
+    move || make().version_comparator(|current, remote| remote.version >= current)
+}
+
+/// 重新安装的「查」：同 [`run_check`]（同一把锁、同一个候选句柄、同一套来源编排），但允许同版本。
+/// 第一个答上来的来源说「没有可装的包」（清单比当前版本旧）即终局，回稳定码 `reinstall_unavailable`。
+pub async fn run_reinstall_check<F>(
+    make: &F,
+    endpoints: &Endpoints,
+    state: &UpdateState,
+    order: &[Source],
+    limits: &Limits,
+) -> Result<CheckedUpdate, Failure>
+where
+    F: Fn() -> UpdaterBuilder,
+{
+    let same_ok = reinstall_builder(make);
+    run_check(&same_ok, endpoints, state, order, limits)
+        .await?
+        .ok_or_else(|| Failure::code("reinstall_unavailable"))
+}
+
+/// 重新安装 = 允许同版本的 check，再装刚查到的那一版（`run_install_expecting` 核对版本）。
+/// 回退来源重新 check 时用的也是同一个放宽过的工厂，且仍必须报同一个版本。
+/// 无论成败，结束时清掉候选句柄：这个「同版本候选」不能留给普通的救援更新命令去装。
+pub async fn run_reinstall<F>(
+    make: &F,
+    endpoints: &Endpoints,
+    state: &UpdateState,
+    order: &[Source],
+    limits: &Limits,
+    emit: Emit<'_>,
+) -> Result<Source, Failure>
+where
+    F: Fn() -> UpdaterBuilder,
+{
+    let same_ok = reinstall_builder(make);
+    let result = async {
+        let found = run_reinstall_check(make, endpoints, state, order, limits).await?;
+        run_install_expecting(
+            &same_ok,
+            endpoints,
+            state,
+            limits,
+            Some(&found.version),
+            emit,
+        )
+        .await
+    }
+    .await;
+    // 撞上别人在跑（`busy`）时那把锁与句柄不是我们的，不动
+    if !matches!(&result, Err(f) if f.code == "busy") {
+        if let Ok(mut slot) = state.pending.try_lock() {
+            *slot = None;
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
