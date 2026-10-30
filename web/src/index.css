@@ -256,6 +256,10 @@
   --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
   /* 画布内文字对象专用：与 UI 字体严格分离，模拟论文排版 */
   --font-doc: 'Times New Roman', 'Songti SC', 'Source Han Serif SC', serif;
+  /* 小缩略图的字（画布列表 / 版本列表，`glanceText` 读出来的 Unicode 上下标）：Windows 上界面栈落到微软雅黑，
+     它缺全部下标与一半上标，`Eₐ`、`Tₘₐₓ` 会逐字回退到衬线字体、与正文不搭（Windows Lab page-shot glance-fonts 实测）。
+     Segoe UI 上下标齐全，排在最前；Mac 没有它，照旧走界面栈。中文仍回退到界面栈里的中文字体 */
+  --font-glance: 'Segoe UI', var(--font-sans);
 
   /* --------------------------------------------------------------------------
      动效 token —— 时长与缓动的唯一出处，组件里不写字面量。
