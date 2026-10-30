@@ -53,6 +53,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import re
 
 from . import execspec, executionfact, figcapture
 
@@ -114,6 +115,33 @@ _FIDELITY_ROW_SCHEMA = {
 _FIDELITY_UNOBSERVED = tuple(figcapture.INPUT_OBSERVER_UNOBSERVED)
 _FIDELITY_MAX_ROWS = 32
 _FIDELITY_MAX_COUNT = 9999
+
+
+#: 跳过记录里模块名的形状（点分标识符）与条数上限；不合形状的行整行丢弃
+_IMPORT_SKIP_MODULE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*){0,8}\Z")
+_IMPORT_SKIP_MAX_ROWS = 64
+
+
+def project_import_skips(raw, *, include_private: bool = False) -> list[dict]:
+    """worker 自报的 `import_skips`（ADR 0153：查找器跳过「找到了但读不了」的 import 位置）→ 投影。
+
+    公开面只有 `module`（点分标识符）与 `error`（闭集：`PermissionError`）；被跳过的位置是机器路径，
+    只在 `include_private`（诊断包）里带，且限长。自报是不可信输入：非 list / 非 dict 行 / 畸形模块名一律丢，不抛。"""
+    out: list[dict] = []
+    if not isinstance(raw, list):
+        return out
+    for row in raw[:_IMPORT_SKIP_MAX_ROWS]:
+        if not isinstance(row, dict):
+            continue
+        module = row.get("module")
+        if not isinstance(module, str) or not _IMPORT_SKIP_MODULE.match(module):
+            continue
+        item = {"module": module, "error": "PermissionError"}
+        entry = row.get("entry")
+        if include_private and isinstance(entry, str):
+            item["entry"] = entry[:1024]
+        out.append(item)
+    return out
 
 
 def project_fidelity(raw) -> dict | None:
@@ -378,6 +406,13 @@ class ExecutionReceipt:
         rt = self.runtime
         if rt is not None and "fidelity" in rt:
             rt = {**rt, "fidelity": self.fidelity}  # 自报的原样段不外泄：只出过滤后的闭集
+        if rt is not None and "import_skips" in rt:
+            rt = {
+                **rt,
+                "import_skips": project_import_skips(
+                    rt["import_skips"], include_private=include_private
+                ),
+            }
         if rt is not None and not include_private:
             rt = {
                 k: v

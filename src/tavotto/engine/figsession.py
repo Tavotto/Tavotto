@@ -446,6 +446,7 @@ def runtime_report(
     origin: str = REPORT_ORIGIN_BUILD,
     inputs: dict | None = None,
     fidelity: dict | None = None,
+    import_skips: list | None = None,
 ) -> dict:
     """执行侧**自报**的运行时事实（ExecutionReceipt 的 worker 半边，ADR 0053）。
 
@@ -463,6 +464,10 @@ def runtime_report(
     `fidelity`（V2 PR3a，`figcapture.BlockedFileOps.summary()`）：safe 守卫造成的语义偏差证据——`level`
     （`deviated` / `suspect` / `none_observed`）、拦下的操作类别与次数、弱信号计数；全是闭集枚举，没有路径。
     native 进程没有这本账，不报。
+
+    `import_skips`（ADR 0153）：`bridgeboot` 的查找器跳过的「找到了但读不了」的 import 位置，每条
+    `{module, entry, error}`；`entry` 是机器路径，只在私有回执里出现（`receipt.import_skips` 投影成模块名）。
+    safe 与 native 同一份；没发生过就是空表。
     """
     if origin not in REPORT_ORIGINS:
         raise ValueError(f"report origin 非法: {origin!r}")
@@ -495,6 +500,7 @@ def runtime_report(
         "ppid": os.getppid(),
         "inputs": dict(inputs) if isinstance(inputs, dict) else None,
         "fidelity": dict(fidelity) if isinstance(fidelity, dict) else None,
+        "import_skips": [dict(e) for e in (import_skips or []) if isinstance(e, dict)],
     }
 
 

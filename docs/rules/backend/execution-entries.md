@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「两条执行入口：safe worker 与 native bridge（ADR 0014 / 0020）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_roundtrip.py`、`tests/test_install_dir_bytecode_free.py`、`tests/bridge/test_bridge_namespace.py`、`tests/bridge/test_bridge_thread_model.py`、`tests/test_import_architecture.py`、`tests/test_foundation_first_open.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_roundtrip.py`、`tests/test_install_dir_bytecode_free.py`、`tests/bridge/test_bridge_namespace.py`、`tests/bridge/test_bridge_thread_model.py`、`tests/test_import_architecture.py`、`tests/test_foundation_first_open.py`、`tests/test_unreadable_import_skip.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -84,6 +84,23 @@ order: 180
 - **spike 不是产品**：`python -m tavotto.engine.bridge_spike` 没有稳定契约、
   没有接进 `tavotto` CLI，别在文档 / 官网 / release notes 里提它。
   **产品入口是 `tavotto run`**（`docs/rules/backend/tavotto-run-control-plane.md`）。
+
+## 跳过读不了的 import 位置（ADR 0153）
+
+**safe 与 native 同装一个查找器，这是对 native「与 `python fig.py` 一致」的有意偏离**（用户 2026-10-30 裁决，反馈包 TVD-HZ0A）：
+`sys.path` 里某处「找到了模块、origin 打开却抛 `PermissionError`」时，CPython 就地失败、不往后找；用户脚本往 `sys.path` 塞了当前账户读不了的
+项目外目录（别的账户建的依赖夹）时，整个 `import pandas` 就挂在上面。
+
+- **唯一装配点** `bridgeboot.install_unreadable_import_skipper()`：`worker.py`（装好 `bridgeboot` 之后，传回调写 worker.log）与 `bridge_runner.py`
+  （不写 stderr）各调一次，别另写第二份。查找器 `bridgeboot.UnreadableImportSkipper` 挂在 `sys.meta_path` **紧挨 `PathFinder` 之前**，
+  不抢内置 / 冻结模块；常规路径与 `PathFinder` 那一次查找逐字相同，只多一次 `open(origin)`。
+- **只在读不了时生效**：文件加载器 + origin 抛 `PermissionError` + 缓存字节码也读不了；去掉候选只在副本上做，`sys.path` / `__path__` 不动；
+  全部读不了 → 返回最初的 spec，由 loader 原样抛最初的 `PermissionError`；不吞别的异常、不改写 `ImportError`。
+- **留痕**：worker.log 的 `[import-skip] {json}`（safe）+ 回执 `runtime.import_skips`（两条入口；公开面只有模块名，路径只在诊断包的私有回执里，
+  唯一投影 `receipt.project_import_skips`）。
+- **残余失败说成一句话**：`bridgeboot.unreadable_folder_fact`（项目外、脚本运行期间新加进 `sys.path`、不在解释器前缀 / 包目录下）→ 错误带
+  `unreadable_folder.folder`（只有名字）→ `pool.unreadable_folder_error` 转稳定码 `import_folder_unreadable`（先于缺依赖判）；AI 修复提示词 3g 禁止换环境 / 装包。
+- 看护 `tests/test_unreadable_import_skip.py`（含两条入口各一条真 worker 端到端、变异：删掉装配调用即红）。
 
 ## 写入根绊线：MCP 来源的 safe 运行（#898，ADR 0141）
 
