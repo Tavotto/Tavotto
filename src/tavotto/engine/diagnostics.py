@@ -1946,6 +1946,7 @@ def _readme_detail(detail: DetailPayload) -> str:
         "项目文件夹名、文件名、图里的文字不再被抹掉；家目录统一写成 ~，系统用户名写成 <user>，\n"
         "凭证 / cookie / API key / token / 代理账号密码一律去掉。\n"
         f"你在确认框里勾选了的额外内容 / Extras you ticked: {on_zh}。\n"
+        "「脚本源码」包括 Python / R / MATLAB 脚本，以及「生成可编辑版本」任务留在本机缓存里、没被采用的 AI 候选脚本。\n"
         "没有勾选「脚本源码」时，包里没有任何脚本源码（日志里 traceback 的源码行也已去掉）。\n"
         "\n"
         "This package carries more in its detail-… / optional-… entries so maintainers can diagnose in depth: error messages with full stack\n"
@@ -1956,7 +1957,8 @@ def _readme_detail(detail: DetailPayload) -> str:
         "written as ~, the system user name as <user>, and credentials / cookies / API keys / tokens / proxy\n"
         "passwords are removed. Extras you ticked: "
         + on_en
-        + '. Without "script source" ticked, the package contains\n'
+        + '. "Script source" covers Python, R and MATLAB scripts and the unadopted AI candidate scripts that\n'
+        '"generate editable version" tasks left in the local cache. Without "script source" ticked, the package contains\n'
         "no script source at all (source lines inside log tracebacks are removed too).\n"
         "\n"
         "manifest.json 的 detail_files 列出了每个 detail-… / optional-… 条目与大小；truncated 记录因体积上限被截短的类别。\n"

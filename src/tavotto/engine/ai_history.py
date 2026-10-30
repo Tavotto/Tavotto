@@ -906,6 +906,24 @@ def list_sessions(
     return {"total": total, "sessions": [_row_to_dict(r) for r in rows]}
 
 
+def recent_task_rows(
+    project: str,
+    task_type: str,
+    since_ms: int,
+    limit: int = 24,
+    db_path: Path | None = None,
+) -> list[dict]:
+    """本项目、某一类任务、`since_ms` 之后开始的会话，新的在前，只取轻量列（不带提示词 / 转录 / diff）。
+    诊断包挑「最近涉及哪些脚本」用：只读，不改库。"""
+    with _connect(db_path) as con:
+        rows = con.execute(
+            "SELECT id, script, status, outcome, started_ms FROM sessions "
+            "WHERE project=? AND task_type=? AND started_ms>=? ORDER BY started_ms DESC LIMIT ?",
+            (project, task_type, since_ms, limit),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def find_by_request(
     project: str, client_request_id: str, db_path: Path | None = None
 ) -> dict | None:
