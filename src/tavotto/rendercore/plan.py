@@ -280,7 +280,7 @@ def _text_node(
         if runs:
             children.append(ShapedText(run_x, page_h - line.baseline, tuple(runs), color, oid))
         # 公式（ADR 0152 PR 4）：matplotlib mathtext 排出的轮廓，用文字颜色填充；画布预览读同一份结果
-        for mx, box in line.math:
+        for mx, box, _src in line.math:
             segs = _math_segments(box, mx, page_h - line.baseline, block.size)
             if segs:
                 children.append(Path(segs, fill=color, object_id=oid))

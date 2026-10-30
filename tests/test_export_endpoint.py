@@ -432,7 +432,8 @@ def test_export_latex_math_is_drawn_as_vector_outlines(client, tmp_path, monkeyp
     page = doc[0]
     text = page.get_text()
     assert "k =" in text and "end" in text
-    assert "$" not in text and "x^2" not in text
+    # 文本层里公式处是它的 LaTeX 源码（ActualText，ADR 0152 §七；MuPDF 会在 `$` 旁多带空白，故去空白比）
+    assert "k=$x^2$end" in "".join(text.split())
     filled = [d for d in page.get_drawings() if d.get("fill") is not None]
     assert filled, "公式应当是填充的矢量轮廓"
 

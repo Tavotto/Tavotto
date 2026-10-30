@@ -364,7 +364,11 @@ class SvgWriter:
         pen_x = node.x
         for run in node.runs:
             layout = self._text_layout(run) if self.text_policy == TEXT_POLICY_TEXT else None
-            if layout is not None:
+            if layout is not None and not layout[0].strip():
+                # 纯空白的段（公式在 PDF 文本层里的占位字形，ADR 0152 §七）：什么都不画，也不留一个
+                # 空 <text>；笔照常前进，后面的字落位不变
+                pass
+            elif layout is not None:
                 self._text_element(group, node, run, pen_x, layout)
                 self.facts.text_runs += 1
             else:

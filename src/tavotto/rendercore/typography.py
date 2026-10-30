@@ -206,9 +206,9 @@ class LaidOutLine:
     pieces: tuple[ShapedPiece, ...]
     #: 这一行**用户写的**原文（含 Unicode 上下标字符，不含 `^{}` 标记）——ActualText 的依据。
     logical: str
-    #: 这一行里排好的公式：(行内起点 x（pt，页面 y 向下空间）, 排版结果)。结果是 `engine.mathtypeset`
-    #: 的形状：em 单位、基线 y = 0、y 向上（ADR 0152 PR 4）
-    math: tuple[tuple[float, dict], ...] = ()
+    #: 这一行里排好的公式：(行内起点 x（pt，页面 y 向下空间）, 排版结果, 公式源码)。结果是
+    #: `engine.mathtypeset` 的形状：em 单位、基线 y = 0、y 向上（ADR 0152 PR 4）
+    math: tuple[tuple[float, dict, str], ...] = ()
     #: 每个 piece 的起点 x（同一空间）。没有公式时首尾相接（= 行起点 + 前面各段宽之和）；公式后面的
     #: 那一段从公式右边起——落笔时在这里断开另起一段文字，不然后面的字会压在公式上
     piece_x: tuple[float, ...] = ()
@@ -259,6 +259,8 @@ class MathSlots:
     def __init__(self, lookup):
         self._lookup = lookup
         self.boxes: dict[str, dict] = {}
+        #: 占位字符 → 公式源码（不含 `$`）：PDF 文本层的 ActualText 要它
+        self.sources: dict[str, str] = {}
         self.failed: list[tuple[str, str]] = []
 
     def slot(self, src: str) -> str | None:
@@ -270,6 +272,7 @@ class MathSlots:
             return None
         ch = chr(_MATH_BASE + len(self.boxes))
         self.boxes[ch] = box
+        self.sources[ch] = src
         return ch
 
     def width(self, seg: str, size: float) -> float:
@@ -429,6 +432,30 @@ def _same_run(a: ShapedPiece, b: ShapedPiece) -> bool:
     return a.face is b.face and a.size == b.size and a.rise == b.rise and a.layer == b.layer
 
 
+def _math_text_piece(face: Face, src: str, width_pt: float, size: float) -> ShapedPiece | None:
+    """公式在 PDF 文本层里的占位（ADR 0152 §七）：**两个**空格字形（什么都不画），advance 之和撑到
+    公式的宽度，整段 `actual_text` = `$源码$`——PDF 阅读器里选中 / 复制拿到公式的 LaTeX 源码。公式本身
+    仍是另画的填充轮廓。这张脸没有空格字形（gid 0）时回 None：宁可不给文本层，也不画 .notdef 方框。
+
+    为什么是两个：实测 PDFium 对「只含一个空白字符」的 ActualText 段整段丢掉（抽回来公式处什么都没有），
+    两个字符就保留；poppler / pdfminer 两种写法都对。"""
+    glyphs = face.shape(" ")
+    if len(glyphs) != 1 or glyphs[0].gid == 0:
+        return None
+    gid = glyphs[0].gid
+    total = max(round(width_pt * face.resource.units_per_em / size), 0)
+    first = total // 2
+    return ShapedPiece(
+        face,
+        "primary",
+        "  ",
+        (Glyph(gid, " ", first), Glyph(gid, " ", total - first)),
+        size,
+        0.0,
+        f"${src}$",
+    )
+
+
 def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:
     """画布文字对象（`text` / `size_pt` / `x_mm` … 与旧 facade 同一份字段）→ 已排版的块。
     空白文字回 None（什么都不画）。
@@ -468,14 +495,25 @@ def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock 
         )
         pieces: list[ShapedPiece] = []
         piece_x: list[float] = []
-        maths: list[tuple[float, dict]] = []
+        maths: list[tuple[float, dict, str]] = []
         cursor = 0.0  # 行内已落笔的宽度：公式与公式后面的字都按它落位
         after_math = False  # 公式之后的第一段不并进前一段（中间隔着公式的宽度）
         for seg_text, seg_script, seg_logical, seg_style in line:
             if seg_script == MATH and slots is not None:
                 for ch in seg_text:
-                    maths.append((x + cursor, slots.boxes[ch]))
-                    cursor += slots.width(ch, size)
+                    start = x + cursor
+                    maths.append((start, slots.boxes[ch], slots.sources[ch]))
+                    mp = _math_text_piece(
+                        faces.primary, slots.sources[ch], slots.width(ch, size), size
+                    )
+                    if mp is None:
+                        cursor += slots.width(ch, size)
+                    else:
+                        # 文本层占位（见 `_math_text_piece`）：按它取整后的宽度往前走，后面的字
+                        # 才与它首尾相接、不必再断开另起一段
+                        cursor += mp.width
+                        pieces.append(mp)
+                        piece_x.append(start)
                 after_math = True
                 continue
             seg_size, rise = richtext.run_metrics(seg_script, size)
