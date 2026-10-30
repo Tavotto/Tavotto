@@ -119,3 +119,54 @@ assert 'TavottoTestLatinOnly' not in manifest.installed_latin_only_families()
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_collection_faces_are_checked_by_registered_index(tmp_path):
+    """A CJK face after a Latin-only face must never inherit face 0's verdict."""
+    try:
+        worker = pool.find_worker_python()
+    except pool.WorkerError:
+        pytest.skip("no matplotlib worker")
+    probe = r"""
+import inspect, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from fontTools.ttLib import TTCollection, TTFont
+from matplotlib import font_manager
+import manifest
+
+src = font_manager.findfont('DejaVu Sans')
+def make_face(family, chinese):
+    font = TTFont(src)
+    for name in font['name'].names:
+        if name.nameID in (1, 4, 6, 16):
+            name.string = family.encode(name.getEncoding(), errors='replace')
+    if chinese:
+        for table in font['cmap'].tables:
+            if table.isUnicode() and table.format != 14:
+                table.cmap[0x4E2D] = table.cmap[ord('A')]
+    return font
+
+collection = TTCollection()
+collection.fonts = [make_face('TavottoTtcLatin', False), make_face('TavottoTtcChinese', True)]
+path = Path(sys.argv[2]) / 'mixed.ttc'
+collection.save(path)
+font_manager.fontManager.addfont(str(path))
+entries = [e for e in font_manager.fontManager.ttflist if str(e.fname) == str(path)]
+assert any(e.name == 'TavottoTtcLatin' for e in entries)
+assert 'TavottoTtcLatin' in manifest.installed_latin_only_families()
+if 'index' in inspect.signature(font_manager.FontEntry).parameters:
+    assert any(e.name == 'TavottoTtcChinese' and e.index == 1 for e in entries)
+    assert 'TavottoTtcChinese' not in manifest.installed_latin_only_families()
+else:
+    assert not any(e.name == 'TavottoTtcChinese' for e in entries)
+"""
+    result = subprocess.run(
+        [worker, "-c", probe, str(ROOT / "src" / "tavotto" / "engine"), str(tmp_path)],
+        text=True,
+        capture_output=True,
+        env=os.environ.copy(),
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

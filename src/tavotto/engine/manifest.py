@@ -108,6 +108,7 @@ from overrides import (
     collection_sizes,
     color_mapping_is_live,
     colorbar_mapping_is_live,
+    entry_face_index,
     font_display_names,
     font_face_index,
     font_file_key,
@@ -1603,7 +1604,10 @@ def installed_latin_only_families() -> tuple[str, ...]:
     """
     installed_font_families()
     chains = tuple(tuple(mpl.rcParams[f"font.{g}"]) for g in _GENERIC_FAMILIES)
-    faces = tuple((str(e.name), font_file_key(e.fname)) for e in font_manager.fontManager.ttflist)
+    faces = tuple(
+        (str(e.name), font_file_key(e.fname, entry_face_index(e)))
+        for e in font_manager.fontManager.ttflist
+    )
     return _installed_latin_only_families(sync_font_caches(), chains, faces)
 
 
