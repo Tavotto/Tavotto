@@ -106,6 +106,7 @@ python3 scripts/winlab/winlab.py test hosts-live --mode <宿主>         # L3–
 python3 scripts/winlab/winlab.py test desktop-window --package <包>    # 交互会话里的真窗口用例
 python3 scripts/winlab/winlab.py test env-matrix --package <包>        # 内置 / CPython 3.13 / uv 3.10·3.12·3.14 / conda -p·-n / 中文空格路径
 python3 scripts/winlab/winlab.py test corpus --mode smoke|all         # CompatBench 语料（smoke 与 CI 同口径）
+python3 scripts/winlab/winlab.py test page-shot --mode glance-fonts   # 无头 Edge 截登记页（tests/winlab_pages/），再用 shot --name page.png 取回
 python3 scripts/winlab/winlab.py status | reports [--id RUN] | clean --keep 20 | stop
 ```
 

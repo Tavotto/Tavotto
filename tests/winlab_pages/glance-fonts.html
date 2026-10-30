@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- Windows Lab page-shot 登记页（scripts/winlab/agent.py 的 SHOT_PAGES）：小缩略图里 glance 读法写出的字，
+     在几种字体栈下怎么画。A 行的字体栈必须与 web/src/index.css 的 --font-sans 逐字相同（tests/test_winlab.py 看护）。
+     静态页：不联网、不跑脚本。 -->
+<html lang="zh-CN"><head><meta charset="utf-8"><title>glance fonts</title>
+<style>
+body{margin:16px;background:#fff;color:#1b2230;font:13px/1.4 'Segoe UI',sans-serif}
+section{border-top:1px solid #ccd;padding:8px 0}
+h2{font-size:14px;margin:0 0 2px}
+code{display:block;font:11px Consolas,monospace;color:#556;margin-bottom:4px}
+.pair{display:flex;gap:16px;align-items:flex-start}
+svg{background:#fafbfc;border:1px solid #e3e6ea}
+text{fill:#1b2230}
+</style></head><body>
+<section>
+<h2>A · 现在：界面字体 --font-sans</h2>
+<code data-stack>-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif</code>
+<div class="pair">
+<svg width="620" height="220" style="font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"><text x="8" y="34" font-size="28">Eₐ=RT²/k ln k₂/k₁</text><text x="8" y="74" font-size="28">σ=F/A，温度 Tₘₐₓ (K)</text><text x="8" y="114" font-size="28">cm⁻¹ 10⁻⁶ x² H₂O</text><text x="8" y="154" font-size="28">((a+b)/c)² √(x+1) x̂ 90°</text><text x="8" y="194" font-size="28">∇·E=ρ/ε₀ ∀x∈A ⟨ψ⟩ ℏω</text></svg>
+<svg width="300" height="92" style="font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"><text x="8" y="16" font-size="11">Eₐ=RT²/k ln k₂/k₁</text><text x="8" y="32" font-size="11">σ=F/A，温度 Tₘₐₓ (K)</text><text x="8" y="48" font-size="11">cm⁻¹ 10⁻⁶ x² H₂O</text><text x="8" y="64" font-size="11">((a+b)/c)² √(x+1) x̂ 90°</text><text x="8" y="80" font-size="11">∇·E=ρ/ε₀ ∀x∈A ⟨ψ⟩ ℏω</text></svg>
+</div>
+</section><section>
+<h2>B · Segoe UI 在前</h2>
+<code data-stack>'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif</code>
+<div class="pair">
+<svg width="620" height="220" style="font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"><text x="8" y="34" font-size="28">Eₐ=RT²/k ln k₂/k₁</text><text x="8" y="74" font-size="28">σ=F/A，温度 Tₘₐₓ (K)</text><text x="8" y="114" font-size="28">cm⁻¹ 10⁻⁶ x² H₂O</text><text x="8" y="154" font-size="28">((a+b)/c)² √(x+1) x̂ 90°</text><text x="8" y="194" font-size="28">∇·E=ρ/ε₀ ∀x∈A ⟨ψ⟩ ℏω</text></svg>
+<svg width="300" height="92" style="font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"><text x="8" y="16" font-size="11">Eₐ=RT²/k ln k₂/k₁</text><text x="8" y="32" font-size="11">σ=F/A，温度 Tₘₐₓ (K)</text><text x="8" y="48" font-size="11">cm⁻¹ 10⁻⁶ x² H₂O</text><text x="8" y="64" font-size="11">((a+b)/c)² √(x+1) x̂ 90°</text><text x="8" y="80" font-size="11">∇·E=ρ/ε₀ ∀x∈A ⟨ψ⟩ ℏω</text></svg>
+</div>
+</section><section>
+<h2>C · Cambria Math 在前</h2>
+<code data-stack>'Cambria Math', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif</code>
+<div class="pair">
+<svg width="620" height="220" style="font-family: 'Cambria Math', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"><text x="8" y="34" font-size="28">Eₐ=RT²/k ln k₂/k₁</text><text x="8" y="74" font-size="28">σ=F/A，温度 Tₘₐₓ (K)</text><text x="8" y="114" font-size="28">cm⁻¹ 10⁻⁶ x² H₂O</text><text x="8" y="154" font-size="28">((a+b)/c)² √(x+1) x̂ 90°</text><text x="8" y="194" font-size="28">∇·E=ρ/ε₀ ∀x∈A ⟨ψ⟩ ℏω</text></svg>
+<svg width="300" height="92" style="font-family: 'Cambria Math', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', system-ui, sans-serif"><text x="8" y="16" font-size="11">Eₐ=RT²/k ln k₂/k₁</text><text x="8" y="32" font-size="11">σ=F/A，温度 Tₘₐₓ (K)</text><text x="8" y="48" font-size="11">cm⁻¹ 10⁻⁶ x² H₂O</text><text x="8" y="64" font-size="11">((a+b)/c)² √(x+1) x̂ 90°</text><text x="8" y="80" font-size="11">∇·E=ρ/ε₀ ∀x∈A ⟨ψ⟩ ℏω</text></svg>
+</div>
+</section>
+</body></html>
