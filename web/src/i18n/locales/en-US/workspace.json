@@ -947,6 +947,9 @@
     "zoomValueInput": "Zoom (%)",
     "zoomSelection": "Zoom to selection"
   },
+  "tutorialChip": {
+    "label": "Tutorial"
+  },
   "update": {
     "banner": "Tavotto has been updated. Reload to use the new version.",
     "chip": "Reload needed"

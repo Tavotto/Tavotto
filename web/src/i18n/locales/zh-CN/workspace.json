@@ -895,6 +895,9 @@
     "zoomValueInput": "缩放比例（%）",
     "zoomSelection": "缩放到选中对象"
   },
+  "tutorialChip": {
+    "label": "新手教程"
+  },
   "update": {
     "banner": "工具已更新，刷新后使用新版本",
     "chip": "界面需要刷新"

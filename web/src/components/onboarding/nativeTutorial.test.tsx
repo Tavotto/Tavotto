@@ -164,15 +164,43 @@ describe('什么时候自己出现', () => {
     await mount()
     expect(layer()?.dataset.surface).toBe('welcome')
     expect(q('[data-tutorial-view="welcome"]')).not.toBeNull()
-    expect(ob().welcomeSeenAt).toBeTypeOf('number')
-    // 收起之后同一会话不再弹；下次启动也不弹（welcomeSeenAt 记下了）
+    // 仅显示不记「看过」（2026-10-30）：此刻退出应用，下次启动仍会弹
+    expect(ob().welcomeSeenAt).toBeNull()
+    // 明确点「直接进入工作台」才算选择：同一会话不再弹；下次启动也不弹（welcomeSeenAt 记下了）
     await click(q('[data-tutorial-open-workspace]'))
     expect(layer()).toBeNull()
+    expect(ob().welcomeSeenAt).toBeTypeOf('number')
     resetTutorialAutoOpenForTest()
     act(() => root.unmount())
     root = createRoot(host)
     await mount()
     expect(layer()).toBeNull()
+    expect(ob().status).toBe('not_started')
+  })
+
+  it('弹出后没做选择就退出应用：下次启动停在主页仍弹；点「开始」选择后才不再弹', async () => {
+    await mount()
+    expect(layer()?.dataset.surface).toBe('welcome')
+    for (const round of [1, 2]) {
+      // 重启：同一份持久化状态（welcomeSeenAt 仍空），重新挂载
+      act(() => root.unmount())
+      root = createRoot(host)
+      resetTutorialAutoOpenForTest()
+      useOnboardingStore.setState({ surface: 'none' })
+      await mount()
+      expect(layer()?.dataset.surface, `round ${round}`).toBe('welcome')
+    }
+    await click(q('[data-tutorial-begin]'))
+    expect(ob().status).toBe('active')
+    expect(ob().welcomeSeenAt).toBeTypeOf('number')
+  })
+
+  it('启动时项目就开着（phase !== none）：不弹整页欢迎，也不记「看过」——顶栏胶囊接手', async () => {
+    useProjectStore.setState({ phase: 'open' } as never)
+    await mount()
+    expect(layer()).toBeNull()
+    expect(ob().surface).toBe('none')
+    expect(ob().welcomeSeenAt).toBeNull()
     expect(ob().status).toBe('not_started')
   })
 

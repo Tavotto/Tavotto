@@ -109,7 +109,7 @@ export interface OnboardingPersisted {
   tutorialDocumentId: string | null
   /** 暂停是用户按的（关掉 coachmark / Esc）还是系统按的（切走了项目） */
   pausedBy: 'user' | 'system' | null
-  /** 欢迎页第一次出现的时间：首启自动弹欢迎页只弹这一次（之后从入口进） */
+  /** 用户第一次对新手引导做出选择的时间（开始教程 / 直接进入工作台 / 关掉顶栏胶囊）；仅显示欢迎页不记。空 = 还会自动弹一次 */
   welcomeSeenAt: number | null
   /** 教程演示图上的改动（模型坐标，pt）；重新开始清掉 */
   demo: DemoEdits
@@ -360,8 +360,16 @@ interface OnboardingState extends OnboardingPersisted {
   surface: OnboardingSurface
   /** 从头开始一轮教程：第一步、清进度与演示改动。提示看过的记录不动 */
   start: () => void
-  /** 打开欢迎页（记下它出现过：首启自动弹只弹这一次） */
+  /**
+   * 打开欢迎页。**只显示，不记「看过」**（2026-10-30 用户裁决，ADR 0136 修订）：随手关窗 / 退出应用
+   * 不算用户做过选择，下次停在主页仍自动弹一次。「看过」只在用户做了选择时记（见 `markWelcomeSeen`）。
+   */
   openWelcome: () => void
+  /**
+   * 记下用户对新手引导做过选择（点了「开始」/ 进了教程、点「直接进入工作台」、关掉顶栏「新手教程」胶囊）：
+   * 之后不再自动弹欢迎页、不再出胶囊。已记过不覆盖时间。
+   */
+  markWelcomeSeen: () => void
   /**
    * 进教程：进行中 / 暂停的接着上次那一步，其余从头开始。回 `started` / `resumed`
    * 让入口决定记不记 `tutorial_started`（继续不是开始）。
@@ -418,10 +426,12 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   ...readPersisted(),
   surface: 'none',
 
-  start: () => commitState(freshRun()),
+  // 开始一轮教程就是选择：欢迎页「开始」、各入口、顶栏胶囊都经这里
+  start: () => commitState({ ...freshRun(), welcomeSeenAt: get().welcomeSeenAt ?? Date.now() }),
 
-  openWelcome: () => {
-    set({ surface: 'welcome' })
+  openWelcome: () => set({ surface: 'welcome' }),
+
+  markWelcomeSeen: () => {
     if (get().welcomeSeenAt === null) commitState({ welcomeSeenAt: Date.now() })
   },
 

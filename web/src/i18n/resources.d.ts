@@ -6908,6 +6908,9 @@ export default interface Resources {
       "zoomValue": "缩放 {{percent}}%",
       "zoomValueInput": "缩放比例（%）"
     },
+    "tutorialChip": {
+      "label": "新手教程"
+    },
     "unexpectedError": {
       "body": "发一份诊断给我们，能帮我们更快找到原因、修好它。",
       "text": "Tavotto 出了点意外"
