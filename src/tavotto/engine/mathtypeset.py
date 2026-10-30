@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -55,6 +56,28 @@ key_of = math_key
 def family_of(name: object) -> str:
     """任意取值 → 三族之一（与 `typography.latin_family` 同一条合同）。"""
     return name if name in FAMILIES else FAMILIES[0]
+
+
+#: 图内文字的公式用「图上那张脸」排：`face:<族名>`（ADR 0152 后续）。族名只是名字、不是路径——
+#: 由子进程经 matplotlib `font_manager` 解析；字符集收窄，免得名字里的 `:` `,` `=` 污染 fontconfig 模式
+FACE_PREFIX = "face:"
+_FACE_NAME = re.compile(r"[\w .()+&'-]{1,80}")
+
+
+def face_of(name: object) -> str | None:
+    """`face:<族名>` 且族名合法 → 原样返回；其余 None。"""
+    if not isinstance(name, str) or not name.startswith(FACE_PREFIX):
+        return None
+    return name if _FACE_NAME.fullmatch(name[len(FACE_PREFIX) :].strip()) else None
+
+
+def request_family(name: object) -> str:
+    """画布预览端点（`/api/mathtext`）的族：三族之一或合法的 `face:`；其余落到 serif。
+
+    导出与标注只走 `family_of`（严格三族）——`face:` 只属于图内文字的预览，RenderCore 不认。"""
+    if isinstance(name, str) and face_of(name):
+        return name.strip()
+    return family_of(name)
 
 
 def _cache_path(key: str) -> Path:
@@ -170,7 +193,7 @@ def typeset_many(
     out: dict[str, dict] = {}
     todo: list[tuple[str, str]] = []
     for src, fam in items:
-        fam = family_of(fam)
+        fam = request_family(fam)
         key = key_of(src, fam)
         if key in out:
             continue

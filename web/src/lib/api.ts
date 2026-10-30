@@ -2471,6 +2471,13 @@ export interface ManifestElement {
   glyphs_missing?: string[]
   /** 画出来了、但不是用它自己的字体画的（matplotlib 逐字形回退）。 */
   glyphs_fallback?: string[]
+  /** 正文真正由哪张脸画出来（族名）。产生者只有 `engine/manifest.font_faces`。 */
+  face?: string
+  /**
+   * 文字里有 `$…$` 时，公式真正由哪张脸画出来（族名；内置公式字体集报它那张脸，`custom` 报 `mathtext.rm` 解析到的族）。
+   * 编辑框里的公式预览按它排（`lib/figureMathFont.figureMathFamily`）。无公式的文字缺席。
+   */
+  math_face?: string
   /**
    * 这段文字里的汉字由回退链上哪张脸画出来的（ADR 0045）。正文族自己画得
    * 出汉字、或文字里没有汉字时缺席。预检拿它对出版规范的中日韩白名单。

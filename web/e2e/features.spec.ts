@@ -619,6 +619,41 @@ test(
 )
 
 test(
+  '功能：图内标题的源码模式下方预览公式，切回所见即所得公式块按图上的脸排好',
+  { tag: ['@feature:text.rich-editor'] },
+  async ({ app, page }) => {
+    const a = await app()
+    await openFigure(page, a.baseURL)
+    const h0 = (await gidBox(page, 'axes_0.title'))!
+    expect(h0, '样例图应当有标题').not.toBeNull()
+    await page.mouse.click(h0.x + h0.w / 2, h0.y + h0.h / 2)
+
+    const box = page.locator('[data-prop="text"]')
+    const field = box.locator('[data-rich-text="field"]')
+    await expect(field).toHaveCount(1, { timeout: 15_000 })
+    const title = ((await field.textContent()) ?? '').trim()
+
+    // 源码模式：写一个公式，下方预览条排出它（还没写公式时整条不出现）
+    await box.locator('[data-rich-action="mode"]').click()
+    const source = box.locator('[data-rich-source]')
+    const strip = box.locator('[data-math-preview]')
+    await expect(strip).toHaveCount(0)
+    await source.fill('$\\alpha^2$ ' + title)
+    await expect(strip.locator('[data-math-preview-item="ok"] path')).toHaveCount(1, { timeout: 60_000 })
+    // 写错：预览条给出原因，不是空白
+    await source.fill('$\\nosuchcmd$ ' + title)
+    await expect(strip.locator('[data-math-preview-item="error"]')).toHaveCount(1, { timeout: 60_000 })
+    await source.fill('$\\alpha^2$ ' + title)
+
+    // 切回：公式块是排好的公式，不是源码
+    await box.locator('[data-rich-action="mode"]').click()
+    await expect(source).toHaveCount(0)
+    await expect(field.locator('[data-rt-math] [data-math-state="ok"] svg path')).toHaveCount(1, { timeout: 60_000 })
+    await expect(field).not.toContainText('alpha')
+  },
+)
+
+test(
   '功能：画布标注里写公式，画布上显示 matplotlib 排出的轮廓（与导出同一份），切回所见即所得是公式块',
   { tag: ['@feature:text.rich-editor'] },
   async ({ app, page }) => {

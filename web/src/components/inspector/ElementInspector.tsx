@@ -173,7 +173,7 @@ import { useInspectorPrefs } from '@/store/inspectorPrefs'
 import { useLocateReveal } from './useLocateReveal'
 import { TextCaseMenu } from './TextActions'
 import { figureTextCodec } from '@/lib/richEditor'
-import { mathFontFollow } from '@/lib/figureMathFont'
+import { figureMathFamily, mathFontFollow } from '@/lib/figureMathFont'
 import { hasTextStyleBar, TextStyleBar, TEXT_BAR_PROPS } from './TextStyleBar'
 import { LEGEND_CARD_PROPS, LegendCard } from './LegendCard'
 import { LEGEND_SPACING_PROPS, LegendSpacingCard } from './controls/LegendSpacingCard'
@@ -2506,6 +2506,9 @@ function FieldRow({
             maxRows={4}
             value={text}
             codec={figureTextCodec}
+            // 公式块按图上画它的那张脸排（含这次编辑会让公式跟正文的情形）；源码模式下方出预览条
+            mathFamily={figureMathFamily(panel, element, text)}
+            sizePx={13}
             onFocus={beginTxn}
             onBlur={endTxn}
             onChange={(next) => {

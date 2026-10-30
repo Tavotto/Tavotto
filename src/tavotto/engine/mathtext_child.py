@@ -23,6 +23,20 @@ import sys
 
 FALLBACK = {"serif": "stix", "sans-serif": "stixsans", "monospace": "stix"}
 
+#: 图内文字的 `face:<族名>`：族名若是 matplotlib 内置公式字体集用的那张脸，就直接用那个字体集
+#: （与 `engine/manifest._MATHTEXT_SET_FACES` 同一张表，小写比较）；其余走 custom 指向这个族
+FACE_SETS = {
+    "dejavu sans": "dejavusans",
+    "dejavu serif": "dejavuserif",
+    "stixgeneral": "stix",
+    "stix": "stix",
+    "stix sans": "stixsans",
+    "stixsans": "stixsans",
+    "computer modern": "cm",
+    "cmr10": "cm",
+    "cm": "cm",
+}
+
 
 def _setup(fonts: dict) -> dict:
     """注册批准字体，回 {族: 字体族名}。"""
@@ -71,17 +85,10 @@ def typeset(src: str, family: str, names: dict) -> dict:
     from matplotlib.font_manager import FontProperties
     from matplotlib.textpath import TextPath, TextToPath
 
-    name = names.get(family) or names.get("serif")
-    rc = {
-        "mathtext.fontset": "custom",
-        "mathtext.rm": name,
-        "mathtext.it": f"{name}:italic",
-        "mathtext.bf": f"{name}:bold",
-        "mathtext.bfit": f"{name}:italic:bold",
-        "mathtext.sf": names.get("sans-serif", name),
-        "mathtext.tt": names.get("monospace", name),
-        "mathtext.fallback": FALLBACK.get(family, "stix"),
-    }
+    if family.startswith("face:"):
+        rc, name = _face_rc(family[5:].strip())
+    else:
+        rc, name = _canvas_rc(family, names)
     text = f"${src}$"
     try:
         with mpl.rc_context({k: v for k, v in rc.items() if k in mpl.rcParams}):
@@ -99,6 +106,45 @@ def typeset(src: str, family: str, names: dict) -> dict:
         "descent": float(d),
         "segments": segs,
     }
+
+
+def _face_rc(face: str) -> tuple[dict, str]:
+    """`face:` 的族名 → (rcParams, 正文族)。族名只是名字，经 font_manager 解析，不收文件路径。"""
+    from matplotlib import font_manager
+
+    fontset = FACE_SETS.get(face.lower())
+    if fontset:
+        return {"mathtext.fontset": fontset}, "DejaVu Sans"
+    try:
+        font_manager.findfont(face, fallback_to_default=False)
+    except ValueError:
+        # 这台机器上没有这个族：matplotlib 自己也会退到默认的 DejaVu Sans，预览同样退
+        return {"mathtext.fontset": "dejavusans"}, "DejaVu Sans"
+    return {
+        "mathtext.fontset": "custom",
+        "mathtext.rm": face,
+        "mathtext.it": f"{face}:italic",
+        "mathtext.bf": f"{face}:bold",
+        "mathtext.bfit": f"{face}:italic:bold",
+        "mathtext.sf": face,
+        "mathtext.tt": face,
+        "mathtext.fallback": "stix",
+    }, face
+
+
+def _canvas_rc(family: str, names: dict) -> tuple[dict, str]:
+    name = names.get(family) or names.get("serif")
+    rc = {
+        "mathtext.fontset": "custom",
+        "mathtext.rm": name,
+        "mathtext.it": f"{name}:italic",
+        "mathtext.bf": f"{name}:bold",
+        "mathtext.bfit": f"{name}:italic:bold",
+        "mathtext.sf": names.get("sans-serif", name),
+        "mathtext.tt": names.get("monospace", name),
+        "mathtext.fallback": FALLBACK.get(family, "stix"),
+    }
+    return rc, name
 
 
 def main() -> int:

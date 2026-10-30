@@ -3318,7 +3318,8 @@ MATHTEXT_MAX_SRC = 2000
 def api_mathtext():
     """标注公式的排版结果（ADR 0152 PR 4）：画布预览与导出读同一份（`engine/mathtypeset.py`，按内容缓存）。
 
-    body `{"items": [{"src": "A e^{-E}", "family": "serif"}]}` → `{"ok": true, "results": [...]}`，
+    body `{"items": [{"src": "A e^{-E}", "family": "serif"}]}`（`family` 也可以是 `face:<族名>`：图内文字
+    的公式按图上那张脸排）→ `{"ok": true, "results": [...]}`，
     结果是 em 单位、基线 y = 0、y 向上的路径段与盒子，或 `{"ok": false, "error": "…"}`。"""
     body = request.get_json(force=True, silent=True) or {}
     items = body.get("items")
@@ -3329,7 +3330,12 @@ def api_mathtext():
         src = it.get("src") if isinstance(it, dict) else None
         if not isinstance(src, str) or len(src) > MATHTEXT_MAX_SRC:
             return jsonify({"ok": False, "error": "bad_items"}), 400
-        pairs.append((src, engine_mathtypeset.family_of(it.get("family"))))
+        fam = it.get("family")
+        # `face:<族名>`（图内文字预览）只收名字合法的；写错的是调用方的错，不悄悄退成 serif
+        if isinstance(fam, str) and fam.startswith(engine_mathtypeset.FACE_PREFIX):
+            if not engine_mathtypeset.face_of(fam):
+                return jsonify({"ok": False, "error": "bad_items"}), 400
+        pairs.append((src, engine_mathtypeset.request_family(fam)))
     got = engine_mathtypeset.typeset_many(pairs, _mathtext_project())
     return jsonify(
         {"ok": True, "results": [got[engine_mathtypeset.key_of(s_, f)] for s_, f in pairs]}

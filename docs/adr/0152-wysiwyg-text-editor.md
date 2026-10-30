@@ -1,6 +1,6 @@
 # ADR 0152：所见即所得文字编辑框——字符串仍是权威，编辑框只是视图；标注加 LaTeX 子集写法
 
-日期：2026-10-29 · 状态：**Accepted（PR 1：片段模型、两种写法、导出按片段换脸；PR 2：编辑框；PR 3：LaTeX 模式与粘贴；PR 4：标注公式排版；PR 5：图内公式字体跟正文）**。
+日期：2026-10-29 · 状态：**Accepted（PR 1：片段模型、两种写法、导出按片段换脸；PR 2：编辑框；PR 3：LaTeX 模式与粘贴；PR 4：标注公式排版；PR 5：图内公式字体跟正文；PR 6：图内公式预览与源码预览条）**。
 相关：[0032 排版能力层](0032-typography-capability-layer.md)、[0033 科学文本与字体回退](0033-scientific-text-and-font-fallback.md)
 （本 ADR 修订其「画布文字没有 math 档」的边界：公式改由 PR 4 的 worker 排版兑现）、[0060 批准字体集合](0060-font-policy-and-allowlist.md)；
 规则全文 `docs/rules/backend/richtext.md`；看护 `tests/test_rich_text_vectors.py`、`web/src/lib/richText.golden.test.ts`、
@@ -95,8 +95,7 @@ PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到�
   （「预览」）不读 ActualText、只认字形；字形压得很窄时（`\frac{a}{b}` 约 0.5 em）poppler 按位置把挤在一起的字重排，
   它认 ActualText；PDFium / MuPDF 两层都读对。源码里有正文脸画不了的字（gid 0）时不给文本层；排不出的公式照旧按源码画。
   SVG 导出与画面不画不可见段（笔照常前进）。
-- **已知限制**：图内文字的公式块在编辑框里仍显示源码（图上就是
-  matplotlib 画的真身）。
+- 图内文字的公式块在编辑框里的样子见第九节（PR 6）。
 - **缩略图与导出预览**：导出对话框的整页预览把公式画成同一份轮廓（`<path>`，`ThumbMathLine`）：SVG 的 `<text>` 里放不下
   path，含公式的行拆成文字段与公式段，按 `getComputedTextLength()` 累计的宽度排（量不到时按字数估），对齐按整行总宽算；
   没排好 / 排不出仍按源码。画布列表 / 版本列表的小缩略图不画轮廓（几十张缩略图各发排版请求不值），但画**显示的字**
@@ -113,6 +112,24 @@ PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到�
   （`lib/figureMathFont.ts`）。写回与重放走字体族那条已有的路。实测：加上之后斜体 T 是 `TimesNewRomanPS-ItalicMT`。
 - 代价：字体族那一行显示「已修改」（确实改了：公式的字体集）；rcParams 进程级的 custom 集边界照旧（多段文字各选不同
   字体时后改的赢，见 `_apply_mathtext_custom_set`）。
+
+### 九、PR 6：图内文字的公式预览与源码预览条
+
+起因（用户 10-30）：「图内文字的公式块在编辑框里显示源码……专业编辑应该显示源码，但要能在编辑框预览公式的样子」。
+
+- **A. 图内公式块排成真公式**：`/api/mathtext` 的 `family` 除三个画布族外还收 `face:<族名>`（`mathtypeset.request_family`；
+  标注与导出仍只走严格三族的 `family_of`，RenderCore 不认 `face:`）。族名取 manifest 的 `math_face`（图上画公式的那张脸），
+  `mathtext_child._face_rc` 映射：DejaVu Sans / DejaVu Serif / STIXGeneral(STIX) / STIX Sans / Computer Modern(cmr10) →
+  matplotlib 同名内置字体集（`dejavusans` / `dejavuserif` / `stix` / `stixsans` / `cm`，与 `manifest._MATHTEXT_SET_FACES` 同表）；
+  其余族 → `custom`（rm / it / bf / bfit / sf / tt 都指向这个族，经 `font_manager` 按**名字**解析）；这台机器上没有该族 → 与
+  matplotlib 一样退 DejaVu Sans。客户端不送文件路径；族名限 `[\w .()+&'-]{1,80}`（挡掉 `:` `,` `=` `/`），写错的 400，不悄悄退成 serif。
+  缓存键仍是 (族, 源码)。
+- **前端选族**（`figureMathFamily`）：这次编辑会让公式跟正文（PR 5 `mathFontFollow`）→ 将要写下的正文族；否则字体族 override → 它；
+  否则 `math_face`；都没有 → DejaVu Sans（matplotlib 默认）。属性页与右键快捷编辑两处宿主都传。族变了，已挂着的公式块就地重画（不重建编辑器，
+  焦点不丢）。预览是近似：用同一个字体集的轮廓，不是 matplotlib 整行排版的逐像素复刻。
+- **B. LaTeX 源码模式的预览条**（标注与图内文字都有）：源码框下方画**光标所在行**的公式（去重，最多 4 个），停手 250 ms 后才去排
+  （复用 `useMathBox` 与按内容缓存；隐藏的所见即所得文档在源码模式下不排版，免得每个键一个请求）。排不出来：红色波浪线的源码 + matplotlib 的原话；
+  没有公式整条不出现；条上没有任何说明文字。
 
 ## 不做
 

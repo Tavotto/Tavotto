@@ -29,7 +29,7 @@ import { useQuickEdit } from './quickEditStore'
 import { TextCaseMenu } from '@/components/inspector/TextActions'
 import { RichTextField, richViewOf } from '@/components/ui/RichTextField'
 import { figureTextCodec } from '@/lib/richEditor'
-import { mathFontFollow } from '@/lib/figureMathFont'
+import { figureMathFamily, mathFontFollow } from '@/lib/figureMathFont'
 import { TextSelection } from 'prosemirror-state'
 import { hasTextStyleBar, TextStyleBar } from '@/components/inspector/TextStyleBar'
 import { Button } from '@/components/ui/Button'
@@ -352,6 +352,7 @@ function ElementQuick({
       {field('text') && (
         <TextContentRow
           read={read}
+          mathFamily={figureMathFamily(panel, el, String(read('text') ?? ''))}
           write={(prop, value, immediate) => {
             // 用了样式 / 公式而字体族没改过：同一次编辑里让公式字体跟正文（ADR 0152 PR 5）。
             // 两条 override **一次 commit**：快捷编辑没有聚焦事务，分两次写会是两条历史，
@@ -405,10 +406,13 @@ function ElementQuick({
  */
 function TextContentRow({
   read,
+  mathFamily,
   write,
   close,
 }: {
   read: (prop: string) => unknown
+  /** 公式块与源码预览按它排（`figureMathFamily`：图上画公式的那张脸） */
+  mathFamily: string
   write: (prop: string, value: unknown, immediate?: boolean) => void
   close: () => void
 }) {
@@ -422,6 +426,8 @@ function TextContentRow({
         maxRows={3}
         value={text}
         codec={figureTextCodec}
+        mathFamily={mathFamily}
+        sizePx={13}
         onChange={(next) => write('text', next, false)}
         onEnter={() => {
           close()
