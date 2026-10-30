@@ -968,6 +968,77 @@ def test_a_runtime_panel_runs_on_its_registered_script(client, tmp_path, cli, mo
     _wait_idle()
 
 
+def test_a_runtime_panel_validates_with_its_own_run_config(client, tmp_path, cli, monkeypatch):
+    """runtime 面板当初是带参数（运行配置 A）跑出来的：AI 校验（task hooks 与 `runner`）用的是 A，不是项目此刻的默认配置
+    （Codex #1514 P2：否则 `check` 拿 B 跑改后的脚本，画布却还在按 A 画）。"""
+    _, counter = cli
+    figs = _project(tmp_path)
+    _open(client, figs)
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    picked = object()
+    seen: dict = {}
+    monkeypatch.setattr(
+        m.engine_runtimeasset,
+        "run_selection",
+        lambda root, info: picked if info.get("run_config") == "rc_0123456789ab" else None,
+    )
+
+    def no_default(*_a, **_k):
+        raise AssertionError("runtime 面板不该读项目默认配置")
+
+    monkeypatch.setattr(m.engine_runconfig, "default_selection", no_default)
+    real_hooks = m._ai_task_hooks
+
+    def spy(ctx, script, entry, selection=None):
+        seen["selection"] = selection
+        return real_hooks(ctx, script, entry, selection)
+
+    monkeypatch.setattr(m, "_ai_task_hooks", spy)
+    rid = (
+        figcapture.runtime_asset_id("fig1.py", "Fig1")
+        + figcapture.RUN_CONFIG_SEP
+        + "rc_0123456789ab"
+    )
+    r = client.post(
+        "/api/ai/run", json={"agent": "codex", "id": rid, "prompt": "p", "client_request_id": RID}
+    )
+    assert r.status_code == 200, r.data
+    assert seen["selection"]() is picked
+    # 校验运行器（内置执行器的 `check`）同一份：取消路径上拿到的 run 就是 A
+    captured: dict = {}
+    monkeypatch.setattr(
+        m.engine_pool, "force_cancel", lambda rel, d, **kw: captured.update(kw) or True
+    )
+    with m.app.test_request_context():
+        runner = m._convert_runner(m.current_ctx(), "fig1.py", selection=seen["selection"])
+    runner.force_cancel(str(figs), "fig1.py")
+    assert captured["run"] is picked
+    _wait_for(lambda: _spawned(counter) == 1)
+    _wait_idle()
+
+
+def test_a_runtime_panel_whose_run_config_is_gone_is_refused_not_run_bare(
+    client, tmp_path, cli, monkeypatch
+):
+    """runtime 面板引用的运行配置本机已经没有：显式 409 拒绝（稳定码），不 spawn、不回落成无参数去跑，待确认行由后端删掉。"""
+    _, counter = cli
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    assert _put_pending(client, RID).status_code == 200
+    rid = (
+        figcapture.runtime_asset_id("fig1.py", "Fig1")
+        + figcapture.RUN_CONFIG_SEP
+        + "rc_0123456789ab"
+    )
+    r = client.post(
+        "/api/ai/run", json={"agent": "codex", "id": rid, "prompt": "p", "client_request_id": RID}
+    )
+    assert r.status_code == 409, r.data
+    assert r.get_json()["code"]
+    assert RID not in _pending_rids(client)
+    assert _spawned(counter) == 0
+
+
 def test_an_unregistered_runtime_panel_is_runtime_asset_unknown(client, tmp_path, cli, monkeypatch):
     """注册表里解析不到的 runtime id：与其它 runtime 端点同一个 `runtime_asset_unknown`（不是「文件找不到 · 刷新项目」），
     不 spawn，待确认行由后端删掉。"""
