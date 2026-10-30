@@ -5356,6 +5356,8 @@ export default interface Resources {
     },
     "readOnlyPrompt": {
       "continue": "继续只读打开",
+      "openCopy": "打开副本",
+      "partial_other": "有 {{count}} 个文件读不了，没有复制进副本。",
       "pickTitle": "选择另存到哪个文件夹",
       "save": "另存为…",
       "title": "{{product}} 没有这个文件夹的写入权限。另存一份到你自己的文件夹再编辑？"

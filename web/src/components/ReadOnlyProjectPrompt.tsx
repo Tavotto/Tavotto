@@ -34,6 +34,8 @@ export function ReadOnlyProjectPrompt() {
   const [browsing, setBrowsing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** 副本已经建好、但有文件读不了没复制进去：先让用户看见这句，点「打开副本」才切过去 */
+  const [incomplete, setIncomplete] = useState<{ path: string; count: number; paths: string[] } | null>(null)
   // 保存期间项目被换掉：别把旧项目的副本打开成新项目
   const shownRef = useRef<string | null>(null)
   shownRef.current = shown
@@ -56,11 +58,18 @@ export function ReadOnlyProjectPrompt() {
 
   // 项目换了（或已经可写 / 已记住选择）：弹窗跟着收
   useEffect(() => {
-    if (shown && (!needsPrompt || root !== shown)) setShown(null)
+    if (shown && (!needsPrompt || root !== shown)) {
+      setShown(null)
+      setIncomplete(null)
+    }
   }, [shown, needsPrompt, root])
 
   const close = () => {
-    if (!busy) setShown(null)
+    // 不确认就关：副本留在磁盘上，但不切过去
+    if (!busy) {
+      setShown(null)
+      setIncomplete(null)
+    }
   }
 
   const saveTo = async (parent: string) => {
@@ -70,6 +79,10 @@ export function ReadOnlyProjectPrompt() {
     try {
       const copy = await saveProjectAs(parent)
       if (shownRef.current !== from) return
+      if (copy.skipped > 0) {
+        setIncomplete({ path: copy.path, count: copy.skipped, paths: copy.skipped_paths ?? [] })
+        return
+      }
       setShown(null)
       await open(copy.path)
     } catch (e) {
@@ -85,6 +98,21 @@ export function ReadOnlyProjectPrompt() {
       if (picked) await saveTo(picked) // 取消不是错误，弹窗留着
     } else {
       setBrowsing(true)
+    }
+  }
+
+  const openCopy = async () => {
+    if (!incomplete) return
+    setBusy(true)
+    try {
+      const path = incomplete.path
+      setShown(null)
+      setIncomplete(null)
+      await open(path)
+    } catch (e) {
+      setError(backendErrorText(e))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -110,7 +138,11 @@ export function ReadOnlyProjectPrompt() {
         }}
         // Esc = 这次先不决定：不写记忆，下次打开还会问
         onEscape={close}
-        title={t('readOnlyPrompt.title', { product: PRODUCT_NAME })}
+        title={
+          incomplete
+            ? t('readOnlyPrompt.partial', { count: incomplete.count })
+            : t('readOnlyPrompt.title', { product: PRODUCT_NAME })
+        }
         size="sm"
         busy={busy}
         anchor="readonly-project"
@@ -121,32 +153,56 @@ export function ReadOnlyProjectPrompt() {
             </Notice>
           ) : undefined
         }
-        footer={{
-          secondary: (
-            <Button
-              variant="secondary"
-              size="lg"
-              data-readonly-project-continue
-              disabled={busy}
-              onClick={() => void keepReadOnly()}
-            >
-              {t('readOnlyPrompt.continue')}
-            </Button>
-          ),
-          primary: (
-            <Button
-              variant="primary"
-              size="lg"
-              data-readonly-project-save
-              loading={busy}
-              onClick={() => void startSave()}
-            >
-              {t('readOnlyPrompt.save')}
-            </Button>
-          ),
-        }}
+        footer={
+          incomplete
+            ? {
+                primary: (
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    data-readonly-project-open-copy
+                    loading={busy}
+                    onClick={() => void openCopy()}
+                  >
+                    {t('readOnlyPrompt.openCopy')}
+                  </Button>
+                ),
+              }
+            : {
+                secondary: (
+                  <Button
+                    variant="secondary"
+                    size="lg"
+                    data-readonly-project-continue
+                    disabled={busy}
+                    onClick={() => void keepReadOnly()}
+                  >
+                    {t('readOnlyPrompt.continue')}
+                  </Button>
+                ),
+                primary: (
+                  <Button
+                    variant="primary"
+                    size="lg"
+                    data-readonly-project-save
+                    loading={busy}
+                    onClick={() => void startSave()}
+                  >
+                    {t('readOnlyPrompt.save')}
+                  </Button>
+                ),
+              }
+        }
       >
-        {null}
+        {incomplete && incomplete.paths.length > 0 ? (
+          <ul data-readonly-project-skipped className="m-0 list-none p-0 text-sm text-ink-3">
+            {incomplete.paths.map((rel) => (
+              <li key={rel} className="truncate font-mono">
+                {rel}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </Dialog>
       {browsing && (
         <DirBrowser

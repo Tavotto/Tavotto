@@ -27,6 +27,7 @@ from pathlib import Path
 #: 总字节数上限（2 GiB）与文件数上限：科研项目文件夹（脚本 + 数据 + 导出）远小于此；超了多半是选错了文件夹。
 MAX_BYTES = 2 * 1024**3
 MAX_FILES = 50_000
+SKIPPED_SAMPLE = 5
 
 #: 不复制的目录名 / 文件名（解释器缓存与系统噪音；副本里用不上）。
 _SKIP_NAMES = frozenset({"__pycache__", ".DS_Store", "Thumbs.db"})
@@ -54,6 +55,8 @@ class CopyResult:
     files: int
     bytes: int
     skipped: int
+    #: 被跳过的文件（相对项目根、正斜杠），至多 `SKIPPED_SAMPLE` 个，给界面一句话后面的小清单；总数看 `skipped`
+    skipped_paths: tuple[str, ...] = ()
 
 
 def _is_inside(child: Path, parent: Path) -> bool:
@@ -149,6 +152,7 @@ def copy_project(src: Path, parent: Path) -> CopyResult:
     files, total = measure(src)
     dest = _reserve_destination(parent, src.name or "project")  # 此后 dest 是本次调用创建的
     copied = skipped = 0
+    skipped_paths: list[str] = []
     try:
         # 先建全部目录再拷文件：_walk 对目录先于其内容产出
         for cur, entry, is_dir in _walk(src):
@@ -159,17 +163,18 @@ def copy_project(src: Path, parent: Path) -> CopyResult:
             try:
                 _copy_file(entry.path, target)
                 copied += 1
-            except PermissionError:
-                skipped += 1  # 单个文件读不了：跳过，不拖垮整次另存
-            except FileNotFoundError:
-                skipped += 1  # 复制期间被外部删了
+            except (PermissionError, FileNotFoundError):
+                # 单个文件读不了 / 复制期间被外部删了：跳过，不拖垮整次另存；记下来让界面如实说
+                skipped += 1
+                if len(skipped_paths) < SKIPPED_SAMPLE:
+                    skipped_paths.append(Path(entry.path).relative_to(src).as_posix())
     except CopyError:
         _discard(dest)
         raise
     except OSError as exc:
         _discard(dest)
         raise CopyError(CODE_FAILED, f"另存失败: {exc}", {"reason": str(exc)}) from exc
-    return CopyResult(dest, copied, total, skipped)
+    return CopyResult(dest, copied, total, skipped, tuple(skipped_paths))
 
 
 def _discard(dest: Path) -> None:

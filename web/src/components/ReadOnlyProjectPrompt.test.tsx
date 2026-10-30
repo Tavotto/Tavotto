@@ -121,12 +121,50 @@ describe('ReadOnlyProjectPrompt', () => {
 
   it('save as: picks a folder, saves a copy and opens it', async () => {
     pickMock.mockResolvedValue('/home/me/mine')
-    saveMock.mockResolvedValue({ path: '/home/me/mine/ro-project', files: 3, bytes: 10, skipped: 0 })
+    saveMock.mockResolvedValue({ path: '/home/me/mine/ro-project', files: 3, bytes: 10, skipped: 0, skipped_paths: [] })
     openMock.mockResolvedValue(status({ figures_dir: '/home/me/mine/ro-project', writable: true }))
     await setProject(status())
     await click('[data-readonly-project-save]')
     expect(saveMock).toHaveBeenCalledWith('/home/me/mine')
     expect(openMock).toHaveBeenCalledWith('/home/me/mine/ro-project')
+    expect(q('[data-dialog="readonly-project"]')).toBeNull()
+  })
+
+  it('copy with unreadable files is not opened until the user acknowledges it', async () => {
+    pickMock.mockResolvedValue('/home/me/mine')
+    saveMock.mockResolvedValue({
+      path: '/home/me/mine/ro-project',
+      files: 3,
+      bytes: 10,
+      skipped: 2,
+      skipped_paths: ['data/a.bin', 'b.bin'],
+    })
+    await setProject(status())
+    await click('[data-readonly-project-save]')
+    expect(openMock).not.toHaveBeenCalled()
+    const dialog = q('[data-dialog="readonly-project"]')!
+    expect(dialog.textContent).toContain(t('readOnlyPrompt.partial', { ns: 'project', count: 2 }))
+    expect(dialog.textContent).not.toContain('{{')
+    expect(q('[data-readonly-project-skipped]')!.textContent).toContain('data/a.bin')
+    expect(q('[data-readonly-project-save]')).toBeNull() // 一句话 + 一颗按钮
+    expect(q('[data-readonly-project-continue]')).toBeNull()
+    await click('[data-readonly-project-open-copy]')
+    expect(openMock).toHaveBeenCalledWith('/home/me/mine/ro-project')
+    expect(q('[data-dialog="readonly-project"]')).toBeNull()
+  })
+
+  it('dismissing the incomplete-copy notice does not switch projects', async () => {
+    pickMock.mockResolvedValue('/home/me/mine')
+    saveMock.mockResolvedValue({ path: '/home/me/mine/p', files: 1, bytes: 1, skipped: 1 })
+    await setProject(status())
+    await click('[data-readonly-project-save]')
+    await act(async () => {
+      q('[data-dialog="readonly-project"]')!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      )
+    })
+    await flush()
+    expect(openMock).not.toHaveBeenCalled()
     expect(q('[data-dialog="readonly-project"]')).toBeNull()
   })
 

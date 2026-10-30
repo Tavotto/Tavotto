@@ -791,7 +791,14 @@ export const patchProjectSettings = (patch: {
  * 打开副本是调用方的事（`useProjectStore.open`）；体量超限等失败是带 code 的 `ApiError`。
  */
 export const saveProjectAs = (parent: string) =>
-  jsonFetch<{ path: string; files: number; bytes: number; skipped: number }>(
+  jsonFetch<{
+    path: string
+    files: number
+    bytes: number
+    skipped: number
+    /** 被跳过的文件（相对项目根），至多 5 个；总数看 `skipped` */
+    skipped_paths?: string[]
+  }>(
     '/api/project/save-as',
     {
       method: 'POST',

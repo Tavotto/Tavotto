@@ -287,6 +287,7 @@ def test_unreadable_single_file_is_skipped_and_counted(env):
         assert r.status_code == 200
         body = r.get_json()
         assert body["skipped"] == 1
+        assert body["skipped_paths"] == ["data/locked.bin"]
         assert not (Path(body["path"]) / "data" / "locked.bin").exists()
     finally:
         secret.chmod(0o644)
@@ -454,6 +455,60 @@ def test_reading_an_unreadable_file_in_a_read_only_folder_is_still_a_read_failur
     finally:
         locked.chmod(0o755)
         (locked / "secret.txt").chmod(0o644)
+
+
+@_no_chmod
+@needs_worker
+def test_reading_an_input_inside_an_untraversable_folder_is_not_an_output_failure(safe_project):
+    """另一个账户的 0700 目录里的输入文件：读它是 EACCES，且 `lexists` 看不见它（进不去目录）。
+    没有写意图，不许说成「输出文件没生成」。"""
+    locked = safe_project / "locked"
+    locked.mkdir()
+    (locked / "in.csv").write_text("a,b\n")
+    locked.chmod(0)
+    try:
+        with pytest.raises(engine_pool.WorkerError) as err:
+            _run(safe_project, "open('locked/in.csv').read()")
+        assert err.value.code == "script_error"
+    finally:
+        locked.chmod(0o755)
+
+
+@_no_chmod
+@needs_worker
+def test_write_intent_is_captured_for_os_open_flags_too(safe_project):
+    out = safe_project / "out"
+    out.mkdir()
+    out.chmod(0o555)
+    try:
+        with pytest.raises(engine_pool.WorkerError) as err:
+            _run(
+                safe_project,
+                "import os\nos.close(os.open('out/t.bin', os.O_WRONLY | os.O_CREAT))",
+            )
+        assert err.value.code == engine_pool.OUTPUT_FOLDER_READ_ONLY_CODE
+    finally:
+        out.chmod(0o755)
+
+
+def test_eacces_needs_a_recorded_write_attempt_for_that_exact_path(tmp_path):
+    import errno
+
+    from tavotto.engine import worker
+
+    locked = tmp_path / "ro"
+    locked.mkdir()
+    if sys.platform != "win32" and not (hasattr(os, "geteuid") and os.geteuid() == 0):
+        locked.chmod(0o555)
+    target = str(locked / "x.csv")
+    exc = PermissionError(errno.EACCES, "denied", target)
+    try:
+        if not os.access(locked, os.W_OK):
+            assert worker._write_denied_by_folder(exc) is False  # 没记过写意图：读失败的脸
+            assert worker._write_denied_by_folder(exc, {target: None}) is True
+            assert worker._write_denied_by_folder(exc, {target + "2": None}) is False
+    finally:
+        locked.chmod(0o755)
 
 
 @needs_worker

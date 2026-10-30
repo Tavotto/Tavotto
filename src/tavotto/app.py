@@ -6622,6 +6622,7 @@ def api_project_save_as():
             "files": result.files,
             "bytes": result.bytes,
             "skipped": result.skipped,
+            "skipped_paths": list(result.skipped_paths),
         }
     )
 
