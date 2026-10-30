@@ -82,8 +82,14 @@ describe('zero edits show the pixels on disk', () => {
     expect(visibleImg()!.getAttribute('src')).toMatch(/\/api\/file\?.*plot\.png/)
     expect(preview).not.toHaveBeenCalled()
     await act(async () => useUiStore.getState().setElementPanel('p'))
+    await act(async () => {
+      el.querySelector('img[src*="ENGINE"]')!.dispatchEvent(new Event('load'))
+    })
     await vi.waitFor(() => expect(visibleImg()!.getAttribute('src')).toContain('ENGINE'))
     await act(async () => useUiStore.getState().setElementPanel(null))
+    await act(async () => {
+      el.querySelector('img[src*="/api/file"]')!.dispatchEvent(new Event('load'))
+    })
     expect(visibleImg()!.getAttribute('src')).toMatch(/\/api\/file\?.*plot\.png/)
   })
 })

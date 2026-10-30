@@ -63,6 +63,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   act(() => root.unmount())
   container.remove()
+  vi.useRealTimers()
 })
 
 function seed(p: PanelObject, rev: number) {
@@ -78,14 +79,98 @@ function seed(p: PanelObject, rev: number) {
 const imgs = () => [...container.querySelectorAll('img')]
 const live = () => container.querySelector('img:not([aria-hidden])') as HTMLImageElement
 const fading = () => container.querySelector('img[aria-hidden]') as HTMLImageElement | null
+const load = async (src: string) => {
+  const img = imgs().find((el) => el.getAttribute('src') === src)!
+  await act(async () => img.dispatchEvent(new Event('load')))
+}
 
 describe('CrossfadeImage', () => {
+  it('新位图未加载时，旧位图持续可见，不能在淡出计时结束后露空白', async () => {
+    vi.useFakeTimers()
+    const p = panel()
+    seed(p, 1)
+    await act(async () => root.render(<PanelView obj={p} />))
+    await load('blob:mock/1')
+    const old = live()
+    seed(p, 2)
+    await act(async () => root.render(<PanelView obj={p} />))
+    await act(async () => vi.advanceTimersByTime(1000))
+    expect(old.style.opacity).not.toBe('0')
+    expect(old.className).not.toContain('animate-crossfade-out')
+    await load('blob:mock/2')
+    expect(live().getAttribute('src')).toBe('blob:mock/2')
+  })
+
+  it('解码未完成时保留旧图，迟到的旧解码不会覆盖最新图', async () => {
+    const decodes: (() => void)[] = []
+    Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+      configurable: true,
+      value: () => new Promise<void>((resolve) => decodes.push(resolve)),
+    })
+    try {
+      const p = panel()
+      seed(p, 1)
+      await act(async () => root.render(<PanelView obj={p} />))
+      await load('blob:mock/1')
+      await act(async () => decodes.shift()!())
+      const old = live()
+      seed(p, 2)
+      await act(async () => root.render(<PanelView obj={p} />))
+      await load('blob:mock/2')
+      seed(p, 3)
+      await act(async () => root.render(<PanelView obj={p} />))
+      await load('blob:mock/3')
+      await act(async () => decodes.shift()!())
+      expect(live()).toBe(old)
+      expect(old.style.opacity).not.toBe('0')
+      await act(async () => decodes.shift()!())
+      expect(live().getAttribute('src')).toBe('blob:mock/3')
+    } finally {
+      delete (HTMLImageElement.prototype as { decode?: unknown }).decode
+    }
+  })
+
+  it('新图加载失败时保留旧图', async () => {
+    const p = panel()
+    seed(p, 1)
+    await act(async () => root.render(<PanelView obj={p} />))
+    await load('blob:mock/1')
+    const old = live()
+    seed(p, 2)
+    await act(async () => root.render(<PanelView obj={p} />))
+    const pending = imgs().find((el) => el.getAttribute('src') === 'blob:mock/2')!
+    await act(async () => pending.dispatchEvent(new Event('error')))
+    expect(live()).toBe(old)
+    expect(old.style.opacity).not.toBe('0')
+  })
+
+  it('新图加载后解码失败时仍保留旧图', async () => {
+    const p = panel()
+    seed(p, 1)
+    await act(async () => root.render(<PanelView obj={p} />))
+    await load('blob:mock/1')
+    const old = live()
+    Object.defineProperty(HTMLImageElement.prototype, 'decode', {
+      configurable: true,
+      value: () => Promise.reject(new Error('decode failed')),
+    })
+    try {
+      seed(p, 2)
+      await act(async () => root.render(<PanelView obj={p} />))
+      await load('blob:mock/2')
+      expect(live()).toBe(old)
+      expect(old.style.opacity).not.toBe('0')
+    } finally {
+      delete (HTMLImageElement.prototype as { decode?: unknown }).decode
+    }
+  })
   it('换图时旧图留一层做淡出，真实 alt 始终只有一张图带着', async () => {
     const p = panel()
     seed(p, 1)
     await act(async () => {
       root.render(<PanelView obj={p} />)
     })
+    await load('blob:mock/1')
 
     // 初始是磁盘图，引擎位图到位后换成 blob —— 旧的那张变成装饰层
     expect(live().getAttribute('src')).toBe('blob:mock/1')
@@ -106,6 +191,7 @@ describe('CrossfadeImage', () => {
     await act(async () => {
       root.render(<PanelView obj={p} />)
     })
+    await load('blob:mock/1')
     const first = live()
     expect(first.getAttribute('src')).toBe('blob:mock/1')
 
@@ -114,6 +200,7 @@ describe('CrossfadeImage', () => {
     await act(async () => {
       root.render(<PanelView obj={p} />)
     })
+    await load('blob:mock/2')
 
     expect(live().getAttribute('src')).toBe('blob:mock/2')
     // 关键：刚才那个已经解码过的节点原地变成淡出层，没有被卸载重建
@@ -121,7 +208,7 @@ describe('CrossfadeImage', () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock/1')
   })
 
-  it('reduced-motion：不挂淡出层，行为与从前一致', async () => {
+  it('reduced-motion：等新图就绪，但不做淡出动画', async () => {
     vi.stubGlobal('matchMedia', (q: string) => ({
       matches: q.includes('prefers-reduced-motion'),
       media: q,
@@ -133,6 +220,10 @@ describe('CrossfadeImage', () => {
     await act(async () => {
       root.render(<PanelView obj={p} />)
     })
+    const old = live()
+    expect(old.getAttribute('src')).not.toBe('blob:mock/1')
+    expect(old.style.opacity).not.toBe('0')
+    await load('blob:mock/1')
     expect(live().getAttribute('src')).toBe('blob:mock/1')
     expect(fading()?.className ?? '').not.toContain('animate-crossfade-out')
   })

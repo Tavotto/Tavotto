@@ -495,13 +495,11 @@ function useEnginePngBlob(
  *    `revokeObjectURL` 掉了旧的——这时候现建一个 `<img>` 指过去只会加载失败、
  *    露出一块空白，比不做淡入淡出更糟。而**已经解码过**的那个 `<img>` 节点
  *    即使 URL 已失效照样画得出来，所以旧图层必须还是原来那个节点。
- * 2. **当前图层的 src 永远直接跟着最新值走，不等加载。**
- *    浏览器换 src 时会一直画着旧的一帧直到新图解码完成，底下这张不会空白；
- *    也因此这里不需要任何「等 onLoad 再切」的状态机——那种写法在图加载失败、
- *    或 jsdom 这类根本不加载图片的环境里会永久卡在旧图上。
+ * 2. 新图先在另一层加载；加载并解码完成后才切换、开始淡出旧图。
+ *    失败或被更新的请求取代时，旧图继续显示，迟到的结果不能覆盖新图。
  *
  * 淡出层 `alt=""` + `aria-hidden`：任何时刻都只有一张图带真实 alt。
- * reduced-motion 下不进入淡出态，行为与从前逐字节一致。
+ * reduced-motion 下同样等待新图就绪，但不进入淡出态。
  */
 function CrossfadeImage({
   src,
@@ -520,24 +518,57 @@ function CrossfadeImage({
   className?: string
   style?: React.CSSProperties
 }) {
-  const [layers, setLayers] = useState<{ a?: string; b?: string; cur: 'a' | 'b' }>({
+  const [layers, setLayers] = useState<{ a?: string; b?: string; cur: 'a' | 'b'; pending?: 'a' | 'b' }>({
     a: src,
     cur: 'a',
   })
   const [fading, setFading] = useState(false)
-  const seen = useRef(src)
+  const [landed, setLanded] = useState<string | null>(null)
+  const reported = useRef<string | null>(null)
+  const latestSrc = useRef(src)
+  latestSrc.current = src
+  const layersRef = useRef(layers)
+  layersRef.current = layers
 
-  // 依赖只有 src。带上 layers / cur 的话它们自己的 setState 会让 effect 重跑，
-  // 重跑的 cleanup 会把定时器清掉，淡出态就再也退不出来
   useEffect(() => {
-    if (src === seen.current) return
-    seen.current = src
-    setLayers((l) => (l.cur === 'a' ? { ...l, b: src, cur: 'b' } : { ...l, a: src, cur: 'a' }))
-    if (prefersReducedMotion()) return
-    setFading(true)
+    setFading(false)
+    setLayers((l) => {
+      if (l[l.cur] === src) return { ...l, pending: undefined }
+      const pending = l.cur === 'a' ? 'b' : 'a'
+      return { ...l, [pending]: src, pending }
+    })
+  }, [src])
+
+  useEffect(() => {
+    if (!fading) return
     const t = setTimeout(() => setFading(false), DURATION.slow)
     return () => clearTimeout(t)
-  }, [src])
+  }, [fading])
+
+  // 几何权威只能在新图真正切入 DOM 后登记，不能在排队更新时提前开放命中。
+  useLayoutEffect(() => {
+    if (landed && layers[layers.cur] === landed && src === landed && reported.current !== landed) {
+      reported.current = landed
+      onLoad?.(landed)
+    }
+  }, [landed, layers, src, onLoad])
+
+  const loaded = (k: 'a' | 'b', layerSrc: string, img: HTMLImageElement) => {
+    if (layersRef.current.cur === k && layersRef.current[k] === layerSrc) {
+      if (latestSrc.current === layerSrc) onLoad?.(layerSrc)
+      return
+    }
+    const ready = typeof img.decode === 'function' ? img.decode() : Promise.resolve()
+    void ready.then(() => {
+      const current = layersRef.current
+      if (latestSrc.current !== layerSrc || current.pending !== k || current[k] !== layerSrc) return
+      setLayers({ ...current, cur: k, pending: undefined })
+      setFading(!prefersReducedMotion())
+      setLanded(layerSrc)
+    }).catch(() => {
+      if (latestSrc.current === layerSrc && layersRef.current.pending === k) onError?.()
+    })
+  }
 
   // 非当前层排在后面 = 画在上面（同层同栈时 DOM 顺序决定叠放）。
   // key 固定为 'a'/'b'，重排只是移动节点，不重挂、不丢已解码的那一帧
@@ -550,21 +581,24 @@ function CrossfadeImage({
         // 还没用过的那一层不渲染：<img> 不给 src 会去请求当前页面地址
         if (!layerSrc) return null
         const isCur = k === layers.cur
+        const isPending = k === layers.pending
         return (
           <img
             key={k}
             src={layerSrc}
             alt={isCur ? alt : ''}
             aria-hidden={isCur ? undefined : true}
-            onError={isCur ? onError : undefined}
-            onLoad={isCur ? () => onLoad?.(layerSrc) : undefined}
+            onError={isCur || isPending ? () => {
+              if (latestSrc.current === layerSrc) onError?.()
+            } : undefined}
+            onLoad={(event) => loaded(k, layerSrc, event.currentTarget)}
             draggable={false}
             className={cn(
               className,
               !isCur && 'pointer-events-none',
-              !isCur && fading && 'animate-crossfade-out',
+              !isCur && !isPending && fading && 'animate-crossfade-out',
             )}
-            style={isCur || fading ? style : { ...style, opacity: 0 }}
+            style={isCur || (!isPending && fading) ? style : { ...style, opacity: 0 }}
           />
         )
       })}
