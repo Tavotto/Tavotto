@@ -736,3 +736,38 @@ def test_tavotto_open_names_the_folder_instead_of_the_own_environment_sentence()
         assert ".deps" in str(err) and "自己的 Python 环境" not in str(err)
     plain = handoff._probe_error({"code": "missing_dependency", "params": {"module": "scipy"}})
     assert plain.code == "native_run_required"
+
+
+# --------------------------------------------------------------------------- 联合准备的成功终态也记账
+def test_joint_install_endings_record_every_import_name_of_the_plan(tmp_path):
+    """联合安装（原地）与受管环境换代事务的成功终态各调一次 `_note_unreadable_installs`，按账里每个 import 名记一笔；
+    用户指定的包（没有 import 名）跳过。是源码形状 + 行为检查，没有真跑一次 joint 安装。"""
+    import ast
+    import inspect
+    import textwrap
+
+    from tavotto.engine import deprepair
+
+    for fn in (deprepair._run_joint_in_place, deprepair._run_generation_locked):
+        names = {
+            n.func.id
+            for n in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(fn))))
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        }
+        assert "_note_unreadable_installs" in names, fn.__name__
+    proj = str(tmp_path / "p")
+    mods = [_name(), _name()]
+    deprepair._note_unreadable_installs(
+        proj,
+        (
+            {"import_name": mods[0], "distribution": "a"},
+            {"import_name": mods[1], "distribution": "b"},
+            {"import_name": "", "distribution": "user"},
+        ),
+    )
+    for m in mods:
+        fact = {"unreadable_folder": {"folder": ".deps", "module": m}}
+        assert (
+            engine_pool.unreadable_folder_error("m", "t", fact, project=proj).code
+            == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+        )
