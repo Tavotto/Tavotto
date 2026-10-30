@@ -77,6 +77,9 @@ _MUTATION_EVENTS: dict[str, tuple[tuple[int, int | None], ...]] = {
     "os.symlink": ((1, 2),),
     "os.link": ((0, 2), (1, 3)),
     "shutil.copyfile": ((1, None),),
+    # Windows、CPython 3.12+：`shutil.copy2` 直接调 `_winapi.CopyFile2(src, dst, flags)`，不发 `shutil.copyfile` 事件。
+    # 该事件是否存在、参数顺序是否 (src, dst, ...) 凭 CPython 源码记忆，**未在 Windows 上验证**；事件不存在则这一行无副作用。
+    "_winapi.CopyFile2": ((1, None),),
     "shutil.copymode": ((1, None),),
     "shutil.copystat": ((1, None),),
     "shutil.copytree": ((1, None),),
@@ -773,6 +776,25 @@ def _w_copyfile(orig):
     return fn
 
 
+def _w_copy2(orig):
+    """copy2：CPython 3.12+ 在 Windows 上直接调 `_winapi.CopyFile2`（shutil.py 的 `copy2` 里 `hasattr(_winapi, "CopyFile2")`
+    分支），不经过 `shutil.copyfile` / `shutil.copystat`，改道和同文件检查都会被绕过、直接写进项目文件。
+    改道期间改走 `copy2` 的 Python 回退路径（POSIX 上本来就是它）：目录目的地展开 → `shutil.copyfile`（已包装）→
+    `shutil.copystat`（已包装）。Windows 上真实的 `copy2(x, x)` 抛共享冲突之类的 OSError，这里抛 `SameFileError`（也是 OSError）。"""
+
+    @functools.wraps(orig)
+    def copy2(src, dst, *, follow_symlinks=True):
+        if not _redirect_on():
+            return orig(src, dst, follow_symlinks=follow_symlinks)
+        if os.path.isdir(dst):
+            dst = os.path.join(dst, os.path.basename(src))
+        shutil.copyfile(src, dst, follow_symlinks=follow_symlinks)
+        shutil.copystat(src, dst, follow_symlinks=follow_symlinks)
+        return dst
+
+    return copy2
+
+
 def _w_copyattr(orig):
     """copymode / copystat：dst 必须是已有对象。改道区里有它就改它；只存在于项目里就不改道（走绊线 → 失败）。"""
 
@@ -898,6 +920,7 @@ def _install_redirect() -> None:
         setattr(path, name, _w_exists(getattr(path, name)))
     path.getsize = _w_getsize(path.getsize)
     shutil.copyfile = _w_copyfile(shutil.copyfile)
+    shutil.copy2 = _w_copy2(shutil.copy2)
     shutil.copymode = _w_copyattr(shutil.copymode)
     shutil.copystat = _w_copyattr(shutil.copystat)
     shutil.copytree = _w_copytree(shutil.copytree)

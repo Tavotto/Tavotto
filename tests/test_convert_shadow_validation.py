@@ -447,10 +447,50 @@ def test_copying_a_project_file_onto_itself_is_still_a_same_file_error(world):
         "import shutil\nd = os.path.join(here, 'data.csv')\n"
         "for fn in (shutil.copyfile, shutil.copy, shutil.copy2):\n"
         "    try:\n        fn(d, d)\n        raise SystemExit('copied onto itself')\n"
-        "    except shutil.SameFileError:\n        pass\n",
+        "    except OSError:\n        pass\n",  # SameFileError 是 OSError；Windows 3.12+ 真实 copy2(x, x) 抛共享冲突（WinError 32）
     )
     assert result["status"] == "ok", result
     assert not _redirected(cand, "sub/data.csv").exists()
+
+
+def test_same_file_error_is_what_copyfile_and_copy_raise(world):
+    result, _ = _validate(
+        world,
+        "import shutil\nd = os.path.join(here, 'data.csv')\n"
+        "for fn in (shutil.copyfile, shutil.copy):\n"
+        "    try:\n        fn(d, d)\n        raise SystemExit('copied onto itself')\n"
+        "    except shutil.SameFileError:\n        pass\n",
+    )
+    assert result["status"] == "ok", result
+
+
+def test_copy2_copy_copyfile_into_an_existing_project_file_land_in_the_overlay(world):
+    """每个平台：copy2 / copy / copyfile 到项目里已有文件上，项目那份不动，结果在改道区（Windows 的 CopyFile2 不能绕过）。"""
+    root = world[0]
+    (root / "sub" / "src.csv").write_text("from-src")
+    for i, call in enumerate(("copy2", "copy", "copyfile")):
+        result, cand = _validate(
+            world,
+            "import shutil\n"
+            f"shutil.{call}(os.path.join(here, 'src.csv'), data)\n"
+            "assert open(data).read() == 'from-src'\n",
+        )
+        assert result["status"] == "ok", (call, result)
+        assert _redirected(cand, "sub/data.csv").read_text() == "from-src", call
+    assert (root / "sub" / "src.csv").read_text() == "from-src"
+
+
+def test_copy2_into_a_project_directory_goes_to_the_overlay(world):
+    _project_dir(world)
+    (world[0] / "sub" / "src.csv").write_text("from-src")
+    result, cand = _validate(
+        world,
+        "import shutil\nshutil.copy2(os.path.join(here, 'src.csv'), os.path.join(here, 'out'))\n"
+        "assert open(os.path.join(here, 'out', 'src.csv')).read() == 'from-src'\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/out/src.csv").read_text() == "from-src"
+    assert not (world[0] / "sub" / "out" / "src.csv").exists()
 
 
 def test_rmdir_of_a_project_dir_trips_but_a_purely_staged_dir_can_be_removed(world):
@@ -873,3 +913,19 @@ def test_edit_check_runner_sees_the_candidate_data_not_the_original(edit_world):
         assert original["manifests"] != changed["manifests"]
     finally:
         ai_figure_edit.remove_candidate(cand.dir)
+
+
+def test_copy2_never_reaches_winapi_copyfile2_during_validation(world):
+    """在 POSIX 上模拟 Windows 3.12+ 的 `shutil._winapi.CopyFile2` 分支：改道期间 copy2 不得走到它。"""
+    (world[0] / "sub" / "src.csv").write_text("from-src")
+    result, cand = _validate(
+        world,
+        "import shutil, types\n"
+        "def boom(*a, **k):\n    raise RuntimeError('CopyFile2 reached')\n"
+        "shutil._winapi = types.SimpleNamespace(CopyFile2=boom, COPY_FILE_ALLOW_DECRYPTED_DESTINATION=0,\n"
+        "                                        COPY_FILE_COPY_SYMLINK=0, ERROR_PRIVILEGE_NOT_HELD=1314, ERROR_ACCESS_DENIED=5)\n"
+        "shutil.copy2(os.path.join(here, 'src.csv'), data)\n"
+        "assert open(data).read() == 'from-src'\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/data.csv").read_text() == "from-src"
