@@ -42,16 +42,26 @@ native bridge（`bridge_runner.py` 同位置）各调用一次；`worker.py` 另
 * 回执 `runtime.import_skips`（safe 与 native，经 `figsession.runtime_report(import_skips=…)`）。`receipt.project_import_skips` 是它进入
   公开面的唯一一处：公开只有模块名（点分标识符）与 `PermissionError`；被跳过的位置（机器路径）只在 `include_private`（诊断包）里。
 
-### B. 跳过之后仍失败：失败卡点名，AI 修复不再换环境
+### B. 跳过之后仍失败：先走「缺包」一键安装，兜底才是一句话
+
+用户硬性要求（2026-10-30）：失败卡必须带一个点了就能解决的主按钮，不出难题。查找器跳完所有位置仍没有可读的模块时，对当前解释器来说
+这个模块就等于「缺包」：装进受管环境后，下次运行时查找器跳过读不了的那一处，就能找到新装的这份（Windows 11 真机已验证）。
 
 worker / bridge 在脚本失败时判一次（`bridgeboot.unreadable_folder_fact`）：异常链里有带文件名的 `PermissionError`（errno 13）、
-文件落在某个**脚本运行期间新加进 `sys.path`** 的目录下、该目录在项目根之外（且不包住项目）、也不在解释器自己的前缀 / 包目录里
-（那种读不了换环境才可能有用）。成立则随错误带 `unreadable_folder: {folder: 目录名}`（只有名字，不带路径；敏感运行里这个键过不了白名单）。
+文件落在某个**脚本运行期间新加进 `sys.path`** 的目录下、该目录在项目根之外（且不包住项目）、也不在解释器自己的前缀 / 包目录里。
+成立则随错误带 `unreadable_folder: {folder: 目录名, module: 读不了的顶层模块名?}`（只有名字，不带路径；敏感运行里这个键过不了白名单）。
 
-父进程在错误收口（`pool._error_of` / `pool._worker_error`，native 在 `app.py` 的脚本错误出口，同一个 `pool.unreadable_folder_error`）
-把它转成稳定码 `import_folder_unreadable`，**先于缺依赖判**；失败卡走既有的 `errors:backend.<code>`：默认只露一句话
-（「脚本加载的项目外文件夹“X”读不了」+ 该做什么），主按钮沿用现有的。AI 修复：`fixsession.SYSTEM_PROMPT` 的 3g 一条写明这类失败
-换环境 / 装包无效，运行报告的 `error` 带上 `code` 与 `params`。
+父进程在错误收口（`pool._error_of` / `pool._worker_error`，native 在 `app.py` 的脚本错误出口，同一个 `pool.unreadable_folder_error`）：
+
+1. **`module` 能映射到 PyPI 包名**（`depresolve` 现有的 curated 表或同名预填，装不了的如 ROOT 除外），且这个 (模块, 文件夹) 第一次出现 →
+   产出**现有的 `missing_dependency` 错误**（带模块名），用户看到现有的「安装」卡，一键装进受管环境。`app.py` 再用可信解析核一次：
+   给不出安装名（没有 `requirement`）就不出「换环境」的缺依赖卡，改落到第 2 条。
+2. **映射不到、或同一 (模块, 文件夹) 已送去安装过仍然失败**（进程内带过期的记录，不循环出安装卡）→ 稳定码 `import_folder_unreadable`：
+   默认只露一句话（「脚本加载的项目外文件夹“X”读不了」+ 该做什么），主按钮沿用现有的。**这条兜底目前没有能一键解决的出路**；
+   候选：提权一次修复那个文件夹的权限（另开 PR）。
+
+AI 修复：`fixsession.SYSTEM_PROMPT` 的 3g 写明——装进 Tavotto 受管环境有效（读不了的那一处会被跳过）；单纯换解释器无效；
+不改用户脚本，不动那个文件夹。
 
 ## 后果
 

@@ -1289,10 +1289,32 @@ def _tex_error(message: str, traceback_text: str, extra=None) -> "WorkerError | 
     return err
 
 
-def unreadable_folder_error(message: str, traceback_text: str, extra=None) -> "WorkerError | None":
-    """worker / bridge 报来的结构化事实 `unreadable_folder` → 稳定码 `import_folder_unreadable`；没有或畸形回 None。
+#: 已经送去「装进受管环境」的 (模块, 文件夹)：同一处读不了装完仍然失败，第二次起落到 `import_folder_unreadable`，
+#: 不再循环出安装卡。进程内、带过期，不落盘（装好后重跑成功不会再走到这里）。
+_UNREADABLE_ROUTED: dict[tuple[str, str], float] = {}
+_UNREADABLE_ROUTED_TTL = 1800.0
+_UNREADABLE_ROUTED_LOCK = threading.Lock()
 
-    **先于缺依赖判**：这类失败的 traceback 里常带 `import pandas` 之类，但装包 / 换环境都修不了它。
+
+def _claim_unreadable_install(module: str, folder: str) -> bool:
+    """第一次见到这个 (模块, 文件夹) 回 True（并记下）；已送去安装过、还没过期回 False。"""
+    now = time.monotonic()
+    with _UNREADABLE_ROUTED_LOCK:
+        for key, at in list(_UNREADABLE_ROUTED.items()):
+            if now - at > _UNREADABLE_ROUTED_TTL:
+                del _UNREADABLE_ROUTED[key]
+        if (module, folder) in _UNREADABLE_ROUTED:
+            return False
+        _UNREADABLE_ROUTED[(module, folder)] = now
+        return True
+
+
+def unreadable_folder_error(message: str, traceback_text: str, extra=None) -> "WorkerError | None":
+    """worker / bridge 报来的结构化事实 `unreadable_folder` → 错误；没有或畸形回 None（ADR 0153 B）。
+
+    读不了的那个模块若能映射到 PyPI 包名（`depresolve` 现有的 curated 表 / 同名预填），对当前解释器它就等于「缺包」：
+    产出**现有的缺依赖错误**（带模块名），用户点一下装进受管环境，下次运行时查找器跳过读不了的那一处、用新装的这份。
+    只有映射不到、或同一 (模块, 文件夹) 已送去安装过仍然失败，才落到一句话的 `import_folder_unreadable`。
     目录名必须是短的单段名字（不含分隔符 / 控制字符），否则不信这条事实。原始消息与 traceback 原样保留。"""
     given = extra.get("unreadable_folder") if isinstance(extra, dict) else None
     folder = given.get("folder") if isinstance(given, dict) else None
@@ -1303,9 +1325,25 @@ def unreadable_folder_error(message: str, traceback_text: str, extra=None) -> "W
         or any(c in folder for c in "/\\\r\n\0")
     ):
         return None
+    fact = {"folder": folder}
+    module = structured_missing_module(given.get("module"))
+    if module and "." not in module and _mappable_to_distribution(module):
+        if _claim_unreadable_install(module, folder):
+            err = _missing_dependency_error(module, traceback_text)
+            err.extra = {"unreadable_folder": {**fact, "module": module}}
+            return err
     err = WorkerError(message, traceback_text, code=IMPORT_FOLDER_UNREADABLE_CODE)
-    err.extra = {"unreadable_folder": {"folder": folder}}
+    err.extra = {"unreadable_folder": fact}
     return err
+
+
+def _mappable_to_distribution(module: str) -> bool:
+    """模块名能不能映射到 PyPI 包名：只用 `depresolve` 现有的两张表（curated / 同名预填），不另建表。"""
+    from . import depresolve
+
+    if depresolve.not_pip_installable(module) is not None:
+        return False
+    return bool(depresolve.curated_distribution(module) or depresolve.suggest_distribution(module))
 
 
 def _missing_dependency_error(mod: str, traceback_text: str) -> "WorkerError":
@@ -2836,6 +2874,7 @@ class EngineWorker:
         unreadable = unreadable_folder_error(msg, tb, err if isinstance(err, dict) else None)
         if unreadable is not None:
             unreadable.script_name = self.script_name
+            unreadable.python_source = getattr(self, "python_source", "") or ""
             return unreadable
         mod = missing_module(f"{msg}\n{tb}")
         structured, structured_mod = structured_missing_dependency(err)

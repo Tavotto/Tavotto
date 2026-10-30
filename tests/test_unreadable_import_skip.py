@@ -333,7 +333,7 @@ def test_unreadable_folder_fact_names_the_script_added_outside_folder(tmp_path, 
     wrapped = ImportError("boom")
     wrapped.__cause__ = err
     fact = bridgeboot.unreadable_folder_fact(wrapped, baseline, [str(proj)], [sys.prefix])
-    assert fact == {"folder": ".work_deps"}
+    assert fact == {"folder": ".work_deps", "module": "tzdata"}
 
 
 def test_unreadable_folder_fact_rejects_what_it_should(tmp_path, monkeypatch):
@@ -361,21 +361,59 @@ def test_unreadable_folder_fact_rejects_what_it_should(tmp_path, monkeypatch):
     assert (
         bridgeboot.unreadable_folder_fact(PermissionError(13, "x"), base_without, [str(proj)]) == {}
     )
-    assert bridgeboot.unreadable_folder_fact(err, base_without, [str(proj)]) == {"folder": "dep"}
+    assert bridgeboot.unreadable_folder_fact(err, base_without, [str(proj)]) == {
+        "folder": "dep",
+        "module": "m",
+    }
 
 
-def test_pool_turns_the_fact_into_a_stable_code_before_missing_dependency():
-    fact = {"unreadable_folder": {"folder": ".deps"}}
+def test_unmappable_module_falls_back_to_the_one_sentence_code():
+    fact = {"unreadable_folder": {"folder": ".deps", "module": "ROOT"}}  # ROOT：装不了（不在 PyPI）
     exc = engine_pool.unreadable_folder_error("m", "ModuleNotFoundError: No module named 'x'", fact)
     assert exc.code == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
     assert engine_pool.recovery_params(exc) == {"folder": ".deps"}
-    resp = {"error": {"code": "script_error", "message": "m", "traceback": "t", **fact}}
+    no_module = {"unreadable_folder": {"folder": ".deps"}}
+    assert (
+        engine_pool.unreadable_folder_error("m", "t", no_module).code
+        == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+    )
     worker = engine_pool.EngineWorker.__new__(engine_pool.EngineWorker)
     worker.script_name = "fig.py"
+    resp = {"error": {"code": "script_error", "message": "m", "traceback": "t", **no_module}}
     assert worker._error_of(resp).code == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
-    assert engine_pool._worker_error("m", "script_error", "t", fact).code == (
+    assert engine_pool._worker_error("m", "script_error", "t", no_module).code == (
         engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
     )
+
+
+def test_mappable_module_is_routed_to_the_existing_missing_dependency_flow():
+    mod = _name()
+    fact = {"unreadable_folder": {"folder": ".deps", "module": mod}}
+    exc = engine_pool.unreadable_folder_error("m", "t", fact)
+    assert exc.code == "missing_dependency" and exc.module == mod
+    worker = engine_pool.EngineWorker.__new__(engine_pool.EngineWorker)
+    worker.script_name = "fig.py"
+    mod2 = _name()
+    resp = {
+        "error": {
+            "code": "script_error",
+            "message": "m",
+            "traceback": "t",
+            "unreadable_folder": {"folder": ".deps", "module": mod2},
+        }
+    }
+    got = worker._error_of(resp)
+    assert got.code == "missing_dependency" and got.module == mod2
+    # 同一处装完仍然读不了：第二次起落到一句话的卡，不再循环出安装卡
+    again = engine_pool.unreadable_folder_error("m", "t", fact)
+    assert again.code == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+
+
+def test_mutation_without_the_routing_the_routing_test_goes_red(monkeypatch):
+    """变异：路由判据恒假时，上面那条的断言（缺依赖码）必须不成立——它不是恒真。"""
+    monkeypatch.setattr(engine_pool, "_mappable_to_distribution", lambda module: False)
+    fact = {"unreadable_folder": {"folder": ".deps", "module": _name()}}
+    assert engine_pool.unreadable_folder_error("m", "t", fact).code != "missing_dependency"
 
 
 @pytest.mark.parametrize("folder", ["", "a/b", "a\\b", "x\ny", "z" * 200, 3, None])
@@ -473,8 +511,32 @@ def test_safe_worker_end_to_end_skips_and_leaves_a_trace(tmp_path, safe_project)
 
 
 @needs_worker
-def test_safe_worker_end_to_end_names_the_folder_when_nothing_else_serves(tmp_path, safe_project):
+def test_safe_worker_end_to_end_fail_then_install_then_succeed(tmp_path, safe_project):
+    """现场形状：依赖夹里的包读不了、没有别的位置 → 先是「缺依赖」卡（带模块名）；用户一键装进可读位置后重跑成功并留痕。"""
     mod = _name()
+    bad, good = _dep_dirs(tmp_path, mod, with_good=False)
+    (safe_project / "fig.py").write_text(
+        SCRIPT.format(bad=str(bad), good=str(good), mod=mod, show="")
+    )
+    workdir.set_mode(safe_project, workdir.MODE_SANDBOX)
+    try:
+        with pytest.raises(engine_pool.WorkerError) as err:
+            engine_pool.build("fig.py", str(safe_project), "__main__")
+        assert err.value.code == "missing_dependency" and err.value.module == mod
+        assert "PermissionError" in err.value.traceback_text  # 最初的 PermissionError 原样在
+        engine_pool.shutdown_all(str(safe_project), wait=True)
+        # 模拟「装进受管环境」：后面出现一份可读的
+        (good / mod).mkdir()
+        (good / mod / "__init__.py").write_text("Y = 1")
+        worker, resp = engine_pool.build("fig.py", str(safe_project), "__main__")
+        assert [e["module"] for e in resp["runtime"]["import_skips"]] == [mod]
+    finally:
+        _unlock(bad, good)
+
+
+@needs_worker
+def test_safe_worker_end_to_end_unmappable_module_names_the_folder(tmp_path, safe_project):
+    mod = "ROOT"  # 装不了的名字：落到一句话的卡
     bad, good = _dep_dirs(tmp_path, mod, with_good=False)
     (safe_project / "fig.py").write_text(
         SCRIPT.format(bad=str(bad), good=str(good), mod=mod, show="")
@@ -485,7 +547,6 @@ def test_safe_worker_end_to_end_names_the_folder_when_nothing_else_serves(tmp_pa
             engine_pool.build("fig.py", str(safe_project), "__main__")
         assert err.value.code == engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
         assert engine_pool.recovery_params(err.value) == {"folder": ".work_deps_bad"}
-        assert "PermissionError" in err.value.traceback_text  # 最初的 PermissionError 原样在
     finally:
         _unlock(bad, good)
 

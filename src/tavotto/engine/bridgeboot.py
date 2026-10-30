@@ -498,6 +498,13 @@ def skip_events() -> list[dict]:
     return list(_SKIPPER.events) if _SKIPPER is not None else []
 
 
+def _top_module(rel: str) -> str:
+    """`sys.path` 目录之下的相对路径（`/tzdata/__init__.py`、`six.py`）→ 顶层 import 名；不是标识符形状回空串。"""
+    first = rel.replace("\\", "/").strip("/").split("/")[0]
+    name = first.split(".")[0]
+    return name if name.isidentifier() and name.isascii() else ""
+
+
 def unreadable_folder_fact(
     exc: BaseException, baseline, project_roots, interpreter_dirs=()
 ) -> dict:
@@ -505,7 +512,8 @@ def unreadable_folder_fact(
 
     判据（全部成立才算）：异常链里有 `PermissionError`（errno 13）且带文件名；文件落在某个 `sys.path` 目录下；
     该目录是脚本运行期间新加的（不在 `baseline` 里——启动时的 `sys.path` 快照）；它不在任何项目根之下，
-    也不在解释器自己的包目录 / 前缀下（那种读不了换环境才可能有用）。只给目录**名**，不带路径。"""
+    也不在解释器自己的包目录 / 前缀下（那种读不了换环境才可能有用）。给目录**名**与读不了的顶层模块名（`module`，
+    认得出才有），不带路径。"""
     import errno
 
     base = {_norm(p) for p in baseline}
@@ -526,7 +534,11 @@ def unreadable_folder_fact(
                         continue
                     if any(under(norm, r) or under(r, norm) for r in roots + skip_under):
                         continue
-                    return {"folder": os.path.basename(os.path.abspath(entry)) or norm}
+                    fact = {"folder": os.path.basename(os.path.abspath(entry)) or norm}
+                    module = _top_module(os.path.abspath(cur.filename)[len(norm) :])
+                    if module:
+                        fact["module"] = module
+                    return fact
         cur = cur.__cause__ or cur.__context__
         seen += 1
     return {}

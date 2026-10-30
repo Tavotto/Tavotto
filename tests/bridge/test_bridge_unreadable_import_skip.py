@@ -52,7 +52,7 @@ def test_native_bridge_end_to_end_reports_the_unreadable_folder(
     try:
         with bridge_session(script, cwd=str(proj)) as sess:
             err = sess.wait_event("barrier")["script_error"]
-            assert err["unreadable_folder"] == {"folder": ".work_deps_bad"}
+            assert err["unreadable_folder"] == {"folder": ".work_deps_bad", "module": mod}
             assert "PermissionError" in err["traceback"]
     finally:
         _unlock(bad, good)

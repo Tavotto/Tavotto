@@ -839,6 +839,15 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
             if engine_pool.install_offer_blocked(route)
             else _dependency_repair_offer(exc, detail)
         )
+        folder = ((getattr(exc, "extra", None) or {}).get("unreadable_folder") or {}).get("folder")
+        if folder and not (repair and repair.get("requirement")):
+            # 读不了的是项目外文件夹里的包（ADR 0153 B），可信解析又给不出安装名：不出「换环境」的缺依赖卡，
+            # 落到一句话的 import_folder_unreadable
+            body["code"] = engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+            body["params"] = {"folder": folder}
+            body.pop("module", None)
+            repair = None
+            route = ""
         if repair is not None:
             body["dependency_repair"] = repair
             # 能经可信解析映射到 distribution = 可安装；映射不到（ROOT）= 装不了，主文案不能再说「一键装上」
