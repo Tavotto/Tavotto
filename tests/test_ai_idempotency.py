@@ -949,6 +949,27 @@ def test_a_rejected_run_deletes_its_pending_row_for_every_kind_of_rejection(
     _wait_idle()
 
 
+def test_a_panel_whose_file_is_gone_is_a_coded_404_and_drops_its_pending_row(
+    client, tmp_path, cli, monkeypatch
+):
+    """画布上那张图的文件不在项目里了：带 `ai_panel_file_missing` 的 404（前端据此给「刷新项目」，不是光秃秃的 HTTP 404），
+    不 spawn，这个 rid 的待确认行照样由后端删掉。"""
+    _, counter = cli
+    figs = _project(tmp_path)
+    _open(client, figs)
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    assert _put_pending(client, RID).status_code == 200
+    (figs / "Fig1.pdf").unlink()
+    r = _post(client, rid=RID)
+    assert r.status_code == 404
+    assert r.get_json()["code"] == "ai_panel_file_missing"
+    assert RID not in _pending_rids(client)
+    assert _spawned(counter) == 0
+    # 越出项目目录仍是 403，不被当成「文件不见了」
+    r = client.post("/api/ai/run", json={"agent": "codex", "id": "../x.pdf", "prompt": "p"})
+    assert r.status_code == 403
+
+
 # ---------------------------------------------------------------------------
 # supersedes 的墓碑预留；spawn 之前 / 之后的异常（Codex #1098 P1 r4289529467 / r4289529472）
 # ---------------------------------------------------------------------------

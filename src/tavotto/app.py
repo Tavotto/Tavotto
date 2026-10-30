@@ -56,7 +56,7 @@ from flask import (
     send_from_directory,
 )
 from flask.json.provider import DefaultJSONProvider
-from werkzeug.exceptions import HTTPException
+from werkzeug.exceptions import HTTPException, NotFound
 from werkzeug.formparser import FormDataParser
 
 from . import pdfbackend, richtext, tiffprobe
@@ -12731,7 +12731,13 @@ def _ai_run_impl():
             return jsonify(
                 {"session": known["session"], "script": known.get("script") or "", "deduped": True}
             )
-    path = safe_resolve(body.get("id", ""))
+    try:
+        path = safe_resolve(body.get("id", ""))
+    except NotFound:
+        # 画布上这张图的文件不在项目里了（移走 / 改名 / 删掉）：带码回，前端出「刷新项目」，不是一句光秃秃的 HTTP 404
+        return jsonify(
+            {"error": "这张图的文件找不到了", "code": "ai_panel_file_missing", "params": {}}
+        ), 404
     disk_stem, info = _disk_panel(path)
     if info is None:
         return jsonify(

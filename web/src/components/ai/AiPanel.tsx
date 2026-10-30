@@ -34,6 +34,7 @@ import { msg, t as translate } from '@/i18n'
 import { DURATION, usePresence } from '@/lib/motion'
 import { engineLabel } from '@/components/inspector/roles/registry'
 import { ApiError } from '@/lib/api'
+import { refreshProjectNow } from '@/store/liveSync'
 import { AiLedgerError, connectionInfo, effortsForModel, isDataFigureSession, isOpenSession, isSessionOf, modelDetail, resolveEffort, ProjectChangedError, submissionBlocks, useAiStore, type AiScope, type AiSession } from '@/store/aiStore'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
@@ -72,7 +73,8 @@ const ai = (key: string, values?: Record<string, unknown>) =>
 /** 发送失败 → 「一句原因」+「详情」（HTTP 状态 / 后端 detail / 诊断引用折叠在说明条的详情里） */
 const sendFailure = (e: unknown) => {
   const { reason, detail } = describeRequestFailure(e, ai('panel.sendFailedReason'))
-  return { text: reason, detail }
+  const code = e instanceof ApiError && typeof e.body?.code === 'string' ? e.body.code : null
+  return { text: reason, detail, code }
 }
 
 /**
@@ -290,6 +292,8 @@ function AssistantPanelBody() {
     text: string
     /** 读得懂的原因之外的技术细节（进「详情」折叠，`describeRequestFailure`） */
     detail: string | null
+    /** 后端的稳定 code：`ai_panel_file_missing` 时主按钮换成「刷新项目」（重发只会再 404 一次） */
+    code?: string | null
     prompt: string
     target: SendTarget
     panelId: string
@@ -589,6 +593,12 @@ function AssistantPanelBody() {
    * 被接受后草稿才清得掉）；输入框已被改过 / 原本就来自历史会话 → 按失败的那段原文走 history 来源（不碰草稿，
    * 免得把用户新写的草稿当成「已发送」清掉）。
    */
+  // 文件找不到：刷新项目让画布与磁盘对齐，卡随之收起；文件真没了，画布上这张图自己会显示缺失
+  const refreshMissingFile = () => {
+    setError(null)
+    void refreshProjectNow()
+  }
+
   const retryFailed = () => {
     if (!error) return
     if (error.source === 'composer' && draftSeq() === error.draftSeq) void send({ source: 'composer', pinned: error.target })
@@ -735,9 +745,15 @@ function AssistantPanelBody() {
               title={ai('panel.sendFailed')}
               detail={error.detail}
               action={
-                <Button data-ai-retry size="sm" disabled={!canSend || (error.source === 'composer' && tooLarge)} onClick={retryFailed}>
-                  {ai('panel.retry')}
-                </Button>
+                error.code === 'ai_panel_file_missing' ? (
+                  <Button data-ai-refresh-project size="sm" onClick={refreshMissingFile}>
+                    {translate('topbar.refreshProject', { ns: 'workspace' })}
+                  </Button>
+                ) : (
+                  <Button data-ai-retry size="sm" disabled={!canSend || (error.source === 'composer' && tooLarge)} onClick={retryFailed}>
+                    {ai('panel.retry')}
+                  </Button>
+                )
               }
             >
               {error.text}

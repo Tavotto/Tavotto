@@ -2992,6 +2992,7 @@ export default interface Resources {
       "ai_draft_too_large": "指令过长（超过 {{limit_kb}} KB），没有保存为草稿。",
       "ai_endpoint_incompatible": "“{{endpoint}}”用的接口协议，Codex 已不再支持。到设置里改由 Claude Code 接入，或把地址换成支持 Responses 协议的。",
       "ai_endpoint_needs_login": "“{{endpoint}}”的账号登录已失效。到设置里重新登录。",
+      "ai_panel_file_missing": "这张图的文件找不到了，可能被移动、改名或删掉了。",
       "ai_pending_limit": "这张图还有 {{count}} 条已发出的指令没确认，先等它们有结果（或点「查询结果」），再发新的。",
       "ai_pending_unresolved": "这份脚本还有已发出的指令没确认，先看它的结果再发新的。",
       "ai_request_not_found": "后端没有收到这条请求。",
