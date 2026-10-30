@@ -658,6 +658,9 @@ def _w_rename(orig):
     def rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
         if src_dir_fd is None and dst_dir_fd is None and _redirect_on():
             _trip_if_project_link("os.rename", src)
+            _trip_if_project_link(
+                "os.rename", dst
+            )  # 目标是链接时 rename 替换的是链接本身，不是它指向的文件
             rs = _resolve(src)
             rd = _resolve(dst)
             if rd is not None and _proj_dir(rd):
@@ -831,6 +834,7 @@ def _w_move(orig):
         if not _redirect_on():
             return orig(src, dst, *args, **kwargs)
         _trip_if_project_link("shutil.move", src)
+        _trip_if_project_link("shutil.move", dst)
         rs = _resolve(src)
         rd = _resolve(dst)
         overlay_src = False

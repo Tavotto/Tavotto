@@ -430,6 +430,10 @@ def test_unlinking_or_moving_a_project_symlink_trips_instead_of_whiting_out_its_
         "os.unlink(os.path.join(here, 'alias.csv'))",
         "os.rename(os.path.join(here, 'alias.csv'), os.path.join(here, 'b.csv'))",
         "import shutil\nshutil.move(os.path.join(here, 'alias.csv'), os.path.join(here, 'b.csv'))",
+        # 目标是链接：真实执行只替换链接本身，data.csv 不变
+        "n = os.path.join(here, 'new.csv')\nopen(n, 'w').write('z')\nos.replace(n, os.path.join(here, 'alias.csv'))",
+        "import shutil\nn = os.path.join(here, 'new.csv')\nopen(n, 'w').write('z')\n"
+        "shutil.move(n, os.path.join(here, 'alias.csv'))",
     ):
         result, _ = _validate(world, op + "\n")
         assert _tripped(result)
