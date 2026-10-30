@@ -14,7 +14,15 @@ from pathlib import Path
 
 import pytest
 
-from tavotto.engine import ai_bridge, ai_figure_edit, ai_history, ai_tasks, config, scriptlock
+from tavotto.engine import (
+    ai_bridge,
+    ai_convert,
+    ai_figure_edit,
+    ai_history,
+    ai_tasks,
+    config,
+    scriptlock,
+)
 
 SCRIPT = """import matplotlib.pyplot as plt
 
@@ -823,6 +831,8 @@ def test_missing_dependency_check_is_bound_to_the_checked_candidate(env):
 def _held_edit(env):
     root = env["figs"]
     cand = ai_figure_edit.create_candidate("held-edit", root / "fig1.py", root, "fig1.py")
+    cand.extras["dependency_validation"] = ai_convert.run_validation
+    cand.extras["dependency_installed_stopped"] = ai_convert.DEPS_INSTALLED_STOPPED
     cand.target.write_text(SCRIPT.replace('"old"', '"new"'), encoding="utf-8")
     cand.extras["runner"] = lambda *_: {"stems": ["Fig1"], "manifests": {}}
     ok, _ = ai_figure_edit.agent_check(

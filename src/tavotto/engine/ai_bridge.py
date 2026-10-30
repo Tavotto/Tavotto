@@ -1574,12 +1574,16 @@ def run(
         elif taf:
             # TAF：Agent 在候选工作区里改副本，过了提交前检查才写回（`ai_figure_edit` 模块说明）。候选建不起来就整条
             # 拒绝（还没 spawn、没登记），不静默退回原地修改——开关打开时用户要的就是隔离
-            from . import ai_figure_edit
+            from . import ai_convert, ai_figure_edit
 
             try:
                 ai_figure_edit.ensure_registered()
                 cand = ai_figure_edit.create_candidate(sid, script_path, Path(figures_dir), script)
                 cand.extras.update(task_hooks or {})
+                # Bridge owns the dependency between conversion validation and
+                # figure editing; the adapter itself must not import conversion.
+                cand.extras["dependency_validation"] = ai_convert.run_validation
+                cand.extras["dependency_installed_stopped"] = ai_convert.DEPS_INSTALLED_STOPPED
                 # 目标范围（`figureverify.changes_outside_target`）：缺省按整张图（没选中东西 = 没有可核的范围）
                 _ctx = context or {}
                 cand.extras["target"] = {

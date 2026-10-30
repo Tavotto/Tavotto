@@ -375,17 +375,22 @@ class FigureEditAdapter:
             cand.extras["missing_dependency_check"] = failure
             hook = cand.extras.get("dependency_plan")
             runner = cand.extras.get("runner")
-            if hook is not None and runner is not None and failure.get("module"):
-                from . import ai_convert
-
+            validate = cand.extras.get("dependency_validation")
+            if (
+                hook is not None
+                and runner is not None
+                and validate is not None
+                and failure.get("module")
+            ):
                 cand.extras["deps"] = hook
                 cand.extras["runtime_modules"] = [failure["module"]]
                 cand.extras["cancel"] = getattr(run, "cancel_event", None)
                 try:
-                    result = ai_convert.run_validation(cand, runner)
+                    result = validate(cand, runner)
                 finally:
                     cand.extras.pop("deps", None)
-                if result.get("status") == ai_convert.DEPS_INSTALLED_STOPPED:
+                stopped = cand.extras.get("dependency_installed_stopped")
+                if stopped is not None and result.get("status") == stopped:
                     # Installation committed before cancellation; keep the exact
                     # candidate until the user explicitly resumes validation.
                     cand.hold = {
