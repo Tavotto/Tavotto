@@ -83,7 +83,7 @@ python3 scripts/prefs.py --json
 5. **可复现**：固定随机种子，不 `plt.show()`。
 6. **只用 Matplotlib 出图、不弹窗不等输入**：tkinter / Qt 对话框、`input()`、Pillow 直接画图
    在 Tavotto 里跑不起来。依赖：处处可用的只有 numpy / matplotlib / pillow；默认环境没有的包
-   （如 ROOT）与改用户已有脚本的做法，细则见 `references/figure-contract.md` 第 6 节。
+   （如 ROOT）与改用户已有脚本的做法，细则见 `references/figure-contract.md` 第 6 节。缺包不要 `pip install --target` / `sys.path.insert` 自建依赖文件夹，走 Tavotto 的依赖准备。
 
 ## 图画完之后：MCP 工具顺序
 
