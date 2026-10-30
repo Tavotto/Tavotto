@@ -274,6 +274,7 @@ def _text_node(
                     glyphs=tuple(piece.glyphs),
                     rise=piece.rise,
                     actual_text=piece.actual_text,
+                    invisible=piece.invisible,
                 )
             )
             end_x = px + piece.width

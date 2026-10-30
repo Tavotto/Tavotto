@@ -456,17 +456,19 @@ def test_math_is_drawn_as_filled_paths_at_its_place_in_the_line(project: Path):
     assert path.segments[0] == pytest.approx(("M", mx, st.y - 0.2 * 10.0))
     assert path.segments[2] == pytest.approx(("L", mx + 20.0, st.y + 8.0))
     assert path.fill == ir.Paint(ir.hex2rgb("#336699"))
-    # 公式处在文本层里有一个占位 run（ActualText = `$x$`，advance = 公式宽），后面的字紧跟在它后面——
-    # 不必再断成两段（早先断开是因为公式的宽度没有字形占着）
+    # 公式处在文本层里有一段不画的源码（`$x$`，ActualText 同文，advance 之和 = 公式宽），后面的字
+    # 紧跟在它后面——不必再断成两段（早先断开是因为公式的宽度没有字形占着）
     texts = [n for n in grp.children if isinstance(n, ir.ShapedText)]
     assert len(texts) == 1
-    mid = [r for r in st.runs if r.actual_text == "$x$"]
-    assert len(mid) == 1
+    mid = [r for r in st.runs if r.invisible]
+    assert len(mid) == 1 and mid[0].actual_text == "$x$"
+    assert "".join(g.text for g in mid[0].glyphs) == "$x$"
     assert sum(g.x_advance for g in mid[0].glyphs) * mid[0].size / 1000 == pytest.approx(
         20.0, abs=0.01
     )
-    # 文本层里没有占位字符，公式只以 `$x$` 出现
-    assert "".join(g.text for r in st.runs for g in r.glyphs).replace(" ", "") == "ab"
+    # 看得见的字只有 a、b；没有占位字符
+    visible = "".join(g.text for r in st.runs if not r.invisible for g in r.glyphs)
+    assert visible.replace(" ", "") == "ab"
     assert list(compiled.problems) == []
 
 

@@ -155,9 +155,13 @@ class ShapedPiece:
     size: float
     rise: float
     logical: str = ""
+    #: 只进文本层、不画（`ir.GlyphRun.invisible`）：标注公式的源码（`_math_text_piece`）
+    invisible: bool = False
 
     @property
     def actual_text(self) -> str | None:
+        if self.invisible:
+            return self.logical or None
         return self.logical if self.logical and self.logical != self.text else None
 
     @property
@@ -433,27 +437,31 @@ def _same_run(a: ShapedPiece, b: ShapedPiece) -> bool:
 
 
 def _math_text_piece(face: Face, src: str, width_pt: float, size: float) -> ShapedPiece | None:
-    """公式在 PDF 文本层里的占位（ADR 0152 §七）：**两个**空格字形（什么都不画），advance 之和撑到
-    公式的宽度，整段 `actual_text` = `$源码$`——PDF 阅读器里选中 / 复制拿到公式的 LaTeX 源码。公式本身
-    仍是另画的填充轮廓。这张脸没有空格字形（gid 0）时回 None：宁可不给文本层，也不画 .notdef 方框。
+    """公式在 PDF 文本层里的那段字（ADR 0152 §七）：源码 `$…$` 本身的字形，**不画**（文字渲染模式 3），
+    按比例压到公式的宽度，与填充轮廓叠在同一位置——阅读器里选中 / 复制拿到 LaTeX 源码。
 
-    为什么是两个：实测 PDFium 对「只含一个空白字符」的 ActualText 段整段丢掉（抽回来公式处什么都没有），
-    两个字符就保留；poppler / pdfminer 两种写法都对。"""
-    glyphs = face.shape(" ")
-    if len(glyphs) != 1 or glyphs[0].gid == 0:
+    两层都要（2026-10-30 实测，四家读取器）：
+    * **真字形**（ToUnicode 回源码）：macOS PDFKit（「预览」）根本不读 ActualText，只认字形；
+    * **整段 ActualText = 源码**：字形压得很窄时（`\\frac{a}{b}` 只有约 0.5 em），poppler 按位置把挤在
+      一起的字重排乱序；它认 ActualText，有了这层就对。PDFium / MuPDF 两层都读对。
+
+    这张脸画不了源码里的某个字（gid 0）时回 None：宁可不给文本层，也不在文本层里放 .notdef。"""
+    text = f"${src}$"
+    shaped = face.shape(text)
+    if not shaped or any(g.gid == 0 for g in shaped):
         return None
-    gid = glyphs[0].gid
     total = max(round(width_pt * face.resource.units_per_em / size), 0)
-    first = total // 2
-    return ShapedPiece(
-        face,
-        "primary",
-        "  ",
-        (Glyph(gid, " ", first), Glyph(gid, " ", total - first)),
-        size,
-        0.0,
-        f"${src}$",
-    )
+    natural = sum(g.x_advance for g in shaped)
+    if natural <= 0:
+        return None
+    glyphs: list[Glyph] = []
+    acc = 0
+    for i, g in enumerate(shaped):
+        # 按自然字宽等比压缩；最后一个字形补齐取整误差，整段 advance 之和正好是公式宽度
+        adv = total - acc if i == len(shaped) - 1 else round(g.x_advance * total / natural)
+        acc += adv
+        glyphs.append(Glyph(g.gid, g.text, adv, 0, 0))
+    return ShapedPiece(face, "primary", text, tuple(glyphs), size, 0.0, text, invisible=True)
 
 
 def layout_text(t: dict, faces: FaceSet, math: dict | None = None) -> TextBlock | None:

@@ -1,7 +1,11 @@
-"""标注公式的 PDF 文本层（ADR 0152 §七）：公式仍是填充轮廓，但文本层里在公式位置有一个空格字形占位，
-整段 ActualText = `$源码$`，PDF 阅读器里选中 / 复制拿到 LaTeX 源码；SVG 不多画任何可见元素。
+"""标注公式的 PDF 文本层（ADR 0152 §七）：公式仍是填充轮廓；文本层里在公式位置放源码 `$…$` 本身的字形，
+**不画**（文字渲染模式 3）、压到公式宽度，外面再包一层整段 ActualText——PDF 阅读器里选中 / 复制拿到
+LaTeX 源码；SVG 与画面不多画任何东西。
 
-尺子：文本由 pypdfium2（PDFium，独立读取器）抽回；公式盒是本文件手写的合成排版结果。
+两层各自要被证明：字形层（macOS PDFKit 不读 ActualText，只认字形）用「剥掉 ActualText 后仍抽得回源码」量；
+ActualText 层（poppler 对挤在一起的窄字形会按位置重排）用它出现在内容流里量。
+
+尺子：文本由 pypdfium2（PDFium，独立读取器）抽回、画面由它渲染；公式盒是本文件手写的合成排版结果。
 跑的前提：`tavotto[rendercore]` 候选包 + 批准字体，缺则 skip（not_run）。"""
 
 from __future__ import annotations
@@ -117,7 +121,62 @@ def test_text_after_the_formula_starts_where_the_outline_ends(provider, tmp_path
     assert pen == pytest.approx(fx, abs=1e-6)
     after = pen + sum(g.x_advance for g in mid.glyphs) * mid.size / face.resource.units_per_em
     assert after == pytest.approx(fx + 20.0, abs=0.01)  # 2 em × 10 pt，取整到字体单位
-    assert {g.gid for g in mid.glyphs} == {face.shape(" ")[0].gid}
+    assert mid.invisible
+    assert "".join(g.text for g in mid.glyphs) == f"${_SRC}$"
+
+
+def test_the_glyph_layer_alone_carries_the_source_and_draws_nothing(provider, tmp_path):
+    """macOS PDFKit 不读 ActualText：剥掉 ActualText 之后字形本身仍抽得回源码；渲染模式 3，画面上一个像素都不多。"""
+    import dataclasses
+
+    import pikepdf
+    import pypdfium2 as pdfium
+
+    math = {typography.math_key(_SRC, "serif"): _BOX}
+    compiled = _compile(provider, tmp_path, f"x ${_SRC}$ y", math)
+    out = tmp_path / "o.pdf"
+    pdfwriter.write_pdf(compiled.page, out, provider)
+    with pikepdf.open(out) as pdf:
+        page = pdf.pages[0]
+        data = page.Contents.read_bytes()
+        assert b"3 Tr" in data and b"/ActualText" in data
+        page.Contents = pdf.make_stream(
+            re.sub(rb"/Span <</ActualText <[0-9A-F]+>>> BDC|EMC", b"", data)
+        )
+        bare = tmp_path / "bare.pdf"
+        pdf.save(bare)
+    assert _norm(_pdf_text(bare)) == f"x ${_SRC}$ y"
+
+    # 同一页把不可见那段换成一个等宽的空格字形（什么都不画、后面的字落位不变）：画面逐像素相同
+    space = provider.face_for("serif", False, False).shape(" ")[0].gid
+
+    def blank(run):
+        if not run.invisible:
+            return run
+        total = sum(g.x_advance for g in run.glyphs)
+        return ir.GlyphRun(run.font, run.size, (ir.Glyph(space, " ", total),), run.rise)
+
+    def swap(node):
+        if isinstance(node, ir.ShapedText):
+            return dataclasses.replace(node, runs=tuple(blank(r) for r in node.runs))
+        if isinstance(node, ir.Group):
+            return dataclasses.replace(node, children=tuple(swap(c) for c in node.children))
+        return node
+
+    blanked = dataclasses.replace(
+        compiled.page, children=tuple(swap(c) for c in compiled.page.children)
+    )
+    out2 = tmp_path / "s.pdf"
+    pdfwriter.write_pdf(blanked, out2, provider)
+
+    def pixels(path):
+        doc = pdfium.PdfDocument(str(path))
+        try:
+            return doc[0].render(scale=4).to_pil().convert("L").tobytes()
+        finally:
+            doc.close()
+
+    assert pixels(out) == pixels(out2)
 
 
 def test_svg_draws_nothing_new_for_the_text_layer_placeholder(provider, tmp_path):
@@ -126,23 +185,32 @@ def test_svg_draws_nothing_new_for_the_text_layer_placeholder(provider, tmp_path
     svg = tmp_path / "o.svg"
     svgwriter.write_svg(with_math.page, svg, provider)
     body = svg.read_text(encoding="utf-8")
-    # 文字里不出现 `$` 与源码；占位不留空 <text>；公式只有那一条填充路径
+    # 文字里不出现 `$` 与源码；不可见那段不留 <text>；公式只有那一条填充路径
     assert "$" not in body and "frac" not in body
     texts = re.findall(r"<text\b[^>]*>([^<]*)</text>", body)
     assert texts == ["x ", " y"]
     assert body.count("<path") == 1 and "<use" not in body
-    # 轮廓策略：占位是空轮廓的空格字形——没有 .notdef 方框
+    # 轮廓策略：不可见那段一个字形都不描（只描 x、空格、y 这些看得见的段）
     outline = svgwriter.write_svg(
         with_math.page, tmp_path / "w.svg", provider, text_policy=svgwriter.TEXT_POLICY_OUTLINES
     )
+    grp = with_math.page.children[0]
+    visible = sum(
+        len(r.glyphs)
+        for n in grp.children
+        if isinstance(n, ir.ShapedText)
+        for r in n.runs
+        if not r.invisible
+    )
+    assert outline.outlined_glyphs == visible
     assert outline.notdef_codes == 0
 
 
-def test_no_space_glyph_falls_back_to_no_text_layer(provider, tmp_path):
-    """这张脸没有空格字形（gid 0）：不画 .notdef 方框，文字层照旧没有这个公式。"""
+def test_a_face_that_cannot_draw_the_source_gives_no_text_layer(provider, tmp_path):
+    """源码里有这张脸画不了的字（gid 0）：文本层不给这个公式，不在里面放 .notdef。"""
     face = provider.face_for("serif", False, False)
 
-    class NoSpace:
+    class NoBackslash:
         def __init__(self, inner):
             self._i = inner
 
@@ -150,11 +218,11 @@ def test_no_space_glyph_falls_back_to_no_text_layer(provider, tmp_path):
             return getattr(self._i, k)
 
         def shape(self, text):
-            if text == " ":
-                from tavotto.rendercore.ir import Glyph
+            from tavotto.rendercore.ir import Glyph
 
-                return (Glyph(0, " ", 300),)
-            return self._i.shape(text)
+            return tuple(
+                Glyph(0, g.text, g.x_advance) if g.text == "\\" else g for g in self._i.shape(text)
+            )
 
-    assert typography._math_text_piece(NoSpace(face), _SRC, 20.0, 10.0) is None
+    assert typography._math_text_piece(NoBackslash(face), _SRC, 20.0, 10.0) is None
     assert typography._math_text_piece(face, _SRC, 20.0, 10.0) is not None
