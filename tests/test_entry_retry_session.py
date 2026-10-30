@@ -13,7 +13,7 @@ import time
 import pytest
 
 from tavotto import security
-from tavotto.engine import execpolicy, pool as engine_pool, probe
+from tavotto.engine import execpolicy, pool as engine_pool, prepsession, probe
 from test_execution_fallback import BLOCKED, _history  # noqa: F401
 from test_execution_fallback_origin import (  # noqa: F401
     NONCE,
@@ -328,3 +328,42 @@ def test_a_first_attempt_that_is_not_blocked_never_swaps_and_is_unaffected(
     assert entries["seen"] == ["__main__"] and native["calls"] == []
     assert KIND not in [a["kind"] for a in final["actions"]]
     assert final["outcome"]["code"] == "script_error"
+
+
+# ---- 白名单：只有「执行了用户代码、入口不对」的失败才沿用原 blocked 原因（Codex #1504 P1）
+STALE = engine_pool.WorkerError("stale", code="preparation_plan_stale")
+CANCELLED = engine_pool.WorkerError("cancelled", code="cancelled")
+
+
+@pytest.mark.parametrize("err", [STALE, CANCELLED], ids=["stale", "cancelled"])
+def test_desktop_swap_that_is_stale_or_cancelled_never_falls_back(
+    client, tmp_path, fake_pool, entries, native, sessions, err
+):
+    entries["blocked"] = {"__main__"}
+    entries["errors"] = {"draw_figure": err}
+    _setup(client, tmp_path, "d.py", MAIN_FIRST)
+    _desktop(client)
+    final = _go(client, "d.py")
+    assert entries["seen"] == ["__main__", "draw_figure"] and native["calls"] == []
+    assert [h["profile"] for h in _history(final)] == ["safe", "safe"]
+    assert final["outcome"]["code"] == err.code  # 报告是它自己的那张，不是被盖成 blocked
+    assert KIND not in [a["kind"] for a in final["actions"]]
+
+
+@pytest.mark.parametrize("err", [STALE, CANCELLED], ids=["stale", "cancelled"])
+def test_browser_swap_that_is_stale_or_cancelled_gives_no_confirmation(
+    client, tmp_path, fake_pool, entries, native, sessions, err
+):
+    entries["blocked"] = {"__main__"}
+    entries["errors"] = {"draw_figure": err}
+    _setup(client, tmp_path, "d.py", MAIN_FIRST)
+    _browser(client)
+    final = _go(client, "d.py")
+    assert native["calls"] == []
+    assert KIND not in [a["kind"] for a in final["actions"]]
+    assert final["outcome"]["code"] == err.code
+    assert final["remedy"] != {"kind": "switch_native", "silent": False}
+    # 即便手里有此前签发的确认（这里伪造一个），点击也零执行
+    svc = prepsession.SESSIONS
+    sess = svc._by_id[final["session_id"]]
+    assert svc._native_confirm_offered(sess) is False  # 点击认领前的再核也是这一道 → 409 零执行

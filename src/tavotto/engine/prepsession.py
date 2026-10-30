@@ -1178,6 +1178,24 @@ def spec_key_of(plan: preparation.PreparationPlan) -> execpolicy.SpecKey:
     )
 
 
+#: 换入口那次「入口不对」一类的脚本级失败码：脚本代码真的跑过、因为入口选得不对而坏（函数单独调用缺全局变量 / 没出图）。
+#: 只有这些才让原来的 blocked 原因继续作数；过期 / 取消 / 超时 / 缺依赖 / 要用户先答的门 / 没执行的失败都不在内，
+#: 按它们自己的码收场（不回退、不出确认卡）。这是「换入口失败覆盖原因」的唯一判据，`_done` 算一次、落在 `cause_override`，
+#: `_native_confirm_offered` / `_claim_confirm_native` / `_shown_attempt` 都只读那一个字段。
+_WRONG_ENTRY_CODES = frozenset(
+    {pool.SCRIPT_ERROR_CODE, pool.NO_FIGURES_CODE, pool.NO_FIGURES_SILENT_CODE}
+)
+
+
+def _wrong_entry_failure(result: preparation.PreparationResult) -> bool:
+    """换入口那次是不是「真的执行了用户代码、以入口不对的脚本级失败收场」。"""
+    if result.status != preparation.STATUS_ERROR or not result.error:
+        return False
+    if result.error.get("executed") is False:
+        return False
+    return str(result.error.get("code") or "") in _WRONG_ENTRY_CODES
+
+
 def _outcome_of(result: preparation.PreparationResult, fin: dict | None) -> tuple[str, str]:
     """一次尝试的终局 → `(账本结局, 稳定码)`。只用已有的稳定码。"""
     status = result.status
@@ -1990,7 +2008,8 @@ class SessionService:
             # 换入口那次失败（不论它自己的码是什么）：回退的判断按原来的 blocked 原因、用原来被拦的入口
             cause = code
             origin_entry = None
-            if attempt.entry_origin and done_result.status == preparation.STATUS_ERROR:
+            override = bool(attempt.entry_origin) and _wrong_entry_failure(done_result)
+            if override:
                 cause = attempt.entry_origin_code
                 origin_entry = self._origin_entry(sess, attempt)
             try:
@@ -2027,7 +2046,7 @@ class SessionService:
                     sess.fingerprint = _fingerprint(done_plan)
                 attempt.finalize = fin
                 attempt.missing = missing
-                if attempt.entry_origin and done_result.status == preparation.STATUS_ERROR:
+                if override:
                     attempt.cause_override = cause  # 账本里 `close` 记的仍是它自己的码
                 if entry_retry is not None:
                     self._start_fallback(
