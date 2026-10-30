@@ -128,7 +128,11 @@ def fake_repair(monkeypatch, store, tmp_path):
         source=pool.SOURCE_PROJECT_VENV,
         python=str(tmp_path / "proj" / ".venv" / "bin" / "python"),
         bound=_bound(),
-        prepare_result={"state": deprepair.STATE_DONE},
+        prepare_result={
+            "ok": True,
+            "python": "/managed/bin/python",
+            "installed": {"pandas": "3.0.5"},
+        },
         prepare_error=None,
         calls=[],
         discarded=[],
@@ -480,7 +484,7 @@ def test_unresolvable_interpreter_is_skipped(monkeypatch, fake_repair):
 @pytest.mark.parametrize(
     "result",
     [
-        {"state": deprepair.STATE_FAILED, "code": "dependency_network_unavailable"},
+        {"ok": False, "code": "dependency_network_unavailable"},
         None,
     ],
 )
@@ -489,6 +493,23 @@ def test_install_failure_is_reported_with_the_repair_code(fake_repair, result):
     got = convertdeps.ensure("/proj", SCRIPT)
     assert got["status"] == "failed" and got["missing"] == ["pandas", "statsmodels"]
     assert got["code"] == ((result or {}).get("code") or deprepair.ERROR_FAILED)
+
+
+def test_prepare_success_is_read_from_ok_not_from_a_state_key(fake_repair):
+    """`deprepair.prepare` 成功只回 `{"ok": True, …}`（`_run_generation` / `_run_joint_in_place` 的 result），没有 `state` 键。
+    曾按 `state == done` 判，装好了也回 failed（2026-10-29 端到端：受管环境已换代、任务却 dependency_install_failed）。"""
+    fake_repair.prepare_result = {
+        "ok": True,
+        "python": "/managed/bin/python",
+        "target_kind": deprepair.TARGET_MANAGED,
+        "generation": "g1",
+        "activated": True,
+        "installed": {"pandas": "3.0.5", "statsmodels": "0.15.0"},
+        "providers": [],
+        "retired": [],
+    }
+    got = convertdeps.ensure("/proj", SCRIPT)
+    assert got["status"] == "installed" and got["installed"] == ["pandas", "statsmodels"]
 
 
 def test_a_raising_prepare_is_a_failure_not_a_crash(fake_repair):
@@ -537,9 +558,9 @@ def test_cancel_reaches_a_slow_prepare_and_nothing_is_written_afterwards(fake_re
         started.set()
         seen["got_signal"] = ev.wait(10)
         if ev.is_set():
-            return {"state": deprepair.STATE_CANCELLED, "code": deprepair.ERROR_CANCELLED}
+            return {"ok": False, "code": deprepair.ERROR_CANCELLED}
         writes.append("pip install")  # 没收到取消才会走到这里：真 prepare 在这一步之后写环境
-        return {"state": deprepair.STATE_DONE}
+        return {"ok": True, "python": "/managed/bin/python", "installed": {}}
 
     monkeypatch.setattr(deprepair, "prepare", slow_prepare)
     cancel = threading.Event()
@@ -563,9 +584,9 @@ def test_cancel_set_before_the_install_starts_never_calls_a_write(fake_repair, m
         ev = deprepair._register_cancel(plan_id)
         called.append(ev.is_set())
         return (
-            {"state": deprepair.STATE_CANCELLED, "code": deprepair.ERROR_CANCELLED}
+            {"ok": False, "code": deprepair.ERROR_CANCELLED}
             if ev.is_set()
-            else {"state": deprepair.STATE_DONE}
+            else {"ok": True, "python": "/managed/bin/python", "installed": {}}
         )
 
     monkeypatch.setattr(deprepair, "prepare", prepare)
@@ -580,7 +601,7 @@ def test_a_cancel_that_arrives_after_the_commit_point_reports_the_truth(fake_rep
 
     def prepare(plan_id, on_event=None, *, claimed=False, confirmed_impact=None):
         deprepair._register_cancel(plan_id)
-        return {"state": deprepair.STATE_DONE}
+        return {"ok": True, "python": "/managed/bin/python", "installed": {}}
 
     monkeypatch.setattr(deprepair, "prepare", prepare)
     cancel = threading.Event()

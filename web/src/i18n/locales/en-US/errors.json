@@ -822,6 +822,7 @@
     "textFontFamilySubstitutedKnown": "Canvas text uses {{family}}; the profile requires {{want}}. That font is a common substitute.",
     "textGlyphMissing": "{{count}} character(s) in this canvas text can’t be drawn — they export as boxes: {{chars}}",
     "textGlyphSubstituted": "{{count}} character(s) in this canvas text fall back to a different font: {{chars}}",
+    "textMathUnrenderable": "{{count}} formula(s) in this canvas text can’t be typeset — they export as plain source: {{src}} ({{why}})",
     "textOverAxes": "{{a}} runs {{w}} × {{h}} mm into the plotting area of {{b}}",
     "textOverlap": "Text overlaps other text by {{w}} × {{h}} mm ({{a}} and {{b}})",
     "textTooSmall": "Canvas text at {{size}} pt is below the profile's {{min}} pt",

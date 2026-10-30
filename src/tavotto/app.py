@@ -59,7 +59,7 @@ from flask.json.provider import DefaultJSONProvider
 from werkzeug.exceptions import HTTPException
 from werkzeug.formparser import FormDataParser
 
-from . import pdfbackend, tiffprobe
+from . import pdfbackend, richtext, tiffprobe
 from .engine import (
     ai_bridge as engine_ai,
     ai_connections as engine_ai_connections,
@@ -4857,6 +4857,26 @@ def _diagnostics_project_status() -> dict:
     return status
 
 
+def _diagnostics_convert_attempts(
+    figures_dir: str | None,
+) -> "list[engine_diagdetail.ConvertAttempt]":
+    """本项目最近的「生成可编辑版本」任务（附带源码用）：原脚本可能是 R / MATLAB，不在 `taskdiag` 里。
+    与 `attempted_scripts` 同一保留期（`taskdiag.RETENTION_S`）。读不到就当没有，不拖垮备包。"""
+    if not figures_dir:
+        return []
+    try:
+        rows = engine_ai_convert.recent_attempts(
+            str(Path(figures_dir).resolve()), engine_taskdiag.RETENTION_S
+        )
+    except Exception:  # noqa: BLE001 —— 历史库 / 候选目录读不出来只让这一路少一块
+        LOG.warning("诊断包: 读转换任务记录失败", exc_info=True)
+        return []
+    return [
+        engine_diagdetail.ConvertAttempt(r["sid"], r["script"], r["failed"], r["candidate"])
+        for r in rows
+    ]
+
+
 def _build_diagnostics_bundle(
     frontend: dict | None = None,
     frontend_dropped: bool = False,
@@ -4883,6 +4903,7 @@ def _build_diagnostics_bundle(
         project=status,
         scripts=ctx.registry.all_scripts() if ctx is not None else [],
         attempted=engine_taskdiag.STORE.attempted_scripts(pid) if pid else [],
+        converts=_diagnostics_convert_attempts((status or {}).get("figures_dir")),
         baked=load_baked(ctx) if ctx is not None else None,
         task_section=(
             engine_taskdiag.bundle_section(engine_taskdiag.STORE, pid, limit=24) if pid else None
@@ -10713,6 +10734,25 @@ def _desktop_initiated() -> bool:
     return state.valid_cookie(request.cookies.get(security.COOKIE_NAME))
 
 
+def _page_authenticated() -> bool:
+    """这个请求是不是**用户在页面上发出的**（ADR 0127 修订 2026-10-30：浏览器模式失败卡「允许并运行」的授权来源）。
+    服务端可验证，不信请求体里任何自报字段：
+
+    * 有会话状态（测试 / `--insecure-no-auth` 没有 → False，fail closed）；
+    * 请求带着由启动 nonce 兑换的**会话 cookie**（HttpOnly，页面脚本与本机凭据客户端都读不到它的值）；
+    * 请求**不带**本机凭据头（`engine_session_client.AUTH_HEADER`）——MCP / CLI / Agent / AI 修复工具链用的就是它，
+      浏览器页面从不发。两样都带的请求按「非页面」处理。
+
+    威胁模型见 ADR 0127 修订 2026-10-30：能读本机凭据文件的同用户进程可以经 relaunch 换到 cookie，它本来就有同用户权限；
+    这道闸防的是模型给的参数 / MCP / AI 工具链，不是同用户本地进程。"""
+    state = app.config.get(security.STATE_KEY)
+    if state is None:
+        return False
+    if request.headers.get(engine_session_client.AUTH_HEADER):
+        return False
+    return state.valid_cookie(request.cookies.get(security.COOKIE_NAME))
+
+
 def _launch_session_attempt(ctx: "ProjectCtx", plan, on_done=None) -> None:
     """会话 `run` 认领出来的尝试交给执行线程。safe 尝试开始前，同一脚本上一次桌面 native 会话 / 计划票据先让位
     （P2）：回退成功后 native 进程停在屏障上占着环境租约，用户重跑 safe 不让位就会一直 `environment_in_use_by_native_session`。
@@ -10991,7 +11031,11 @@ def _session_report(ctx: "ProjectCtx", sess) -> dict:
     # Keep the report and its run-scoped evidence on the same explicit run.
     with sess.lock:
         payload = engine_prepsession.SESSIONS.report(
-            sess, awaiting_input=waiting is not None, runtime_input=waiting
+            sess,
+            awaiting_input=waiting is not None,
+            runtime_input=waiting,
+            # 「允许并运行」的一次性 token 只交给页面 cookie 认证的读者（本机凭据头 / MCP / 无请求上下文一律拿不到）
+            expose_confirm=has_request_context() and _page_authenticated(),
         )
         payload.update(_preparation_execution_result(ctx, sess))
         return payload
@@ -11218,17 +11262,26 @@ def api_engine_preparation_session_action(session_id: str):
     ctx = current_ctx()
     body = request.get_json(force=True) or {}
     extra = sorted(
-        set(body) - {"action_id", "expected_config_revision", "impact_digest", "transfer_from"}
+        set(body)
+        - {
+            "action_id",
+            "expected_config_revision",
+            "impact_digest",
+            "transfer_from",
+            "confirm_token",
+        }
     )
     revision = body.get("expected_config_revision")
     echoed = body.get("impact_digest")
     transfer_from = body.get("transfer_from")
+    confirm_token = body.get("confirm_token")
     if (
         extra
         or not isinstance(body.get("action_id"), str)
         or (revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)))
         or (echoed is not None and not isinstance(echoed, str))
         or (transfer_from is not None and not isinstance(transfer_from, str))
+        or (confirm_token is not None and not isinstance(confirm_token, str))
     ):
         return jsonify(
             {
@@ -11249,6 +11302,9 @@ def api_engine_preparation_session_action(session_id: str):
             impact_digest=echoed,
             prepare=_session_dependency_starter(ctx),
             transfer_from=transfer_from,
+            # 只认页面（会话 cookie）；请求体里没有任何「我是用户」字段可言——token 只是绑定那次失败尝试的一次性标识
+            page_confirmed=_page_authenticated(),
+            confirm_token=confirm_token,
         )
     except engine_prepsession.SessionError as exc:
         return _session_error(exc)
@@ -11263,6 +11319,7 @@ def api_engine_preparation_session_action(session_id: str):
             engine_prepsession.ACTION_RUN,
             engine_prepsession.ACTION_PREPARE,
             engine_prepsession.ACTION_ARM,
+            engine_prepsession.ACTION_CONFIRM_NATIVE,
         )
         else 200
     )
@@ -15335,7 +15392,12 @@ def _version_sketch(v: dict, max_objects: int, max_text: int) -> dict | None:
             if isinstance(o.get("fileKind"), str):
                 item["fileKind"] = o["fileKind"]
         elif kind == "text" and max_text > 0 and isinstance(o.get("text"), str):
-            item["text"] = o["text"][:max_text]
+            # LaTeX 写法先读成显示的字再截（ADR 0152）：先截后读会切掉右花括号，`\textit{…` 原样露出来；
+            # 读法与前端 `displayText` 同一份（`richtext` 同源对），草图里因此只放读好的字、不带写法
+            text = o["text"]
+            if o.get("textFormat") == "latex":
+                text = richtext.plain_text(text, "latex")
+            item["text"] = text[:max_text]
         elif kind == "shape" and isinstance(o.get("shape"), str):
             item["shape"] = o["shape"]
         objects.append(item)
@@ -16175,6 +16237,10 @@ def main():
     engine_ai_history.purge(keep_days=180)
     engine_ai_history.purge_requests()
     engine_ai_history.purge_drafts()
+    try:  # 转换候选目录：失败后留给诊断包的（6 小时）与超龄的
+        engine_ai_convert.prune_expired()
+    except Exception:  # noqa: BLE001 —— 清扫失败不挡启动
+        LOG.warning("清理转换候选目录失败", exc_info=True)
     # 执行追踪（ADR 0151）：属主已不在的运行中记录收成 interrupted、过期的清掉；永不抛、不挡启动
     engine_exectrace.recover_on_startup()
     # 选中的 PDF 后端在起服务前装载好（契约层是惰性装载的）：第一次 probe 不再多付一次

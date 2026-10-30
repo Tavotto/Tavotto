@@ -3032,6 +3032,61 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
     })
   })
 
+  describe('浏览器模式：被拦下后给一次确认（ADR 0127 修订 2026-10-30，#1500）', () => {
+    const confirmReport = () =>
+      report({
+        ...STATES.fileOpsBlocked,
+        actions: [
+          action('run'),
+          { ...action('confirm_native_run'), id: 'act-confirm', confirm_token: 'tok-1' },
+          action('recheck'),
+        ],
+        remedy: { kind: 'switch_native', silent: false },
+        attempt_history: [HIST_BLOCKED({ declined: 'not_desktop_initiated' })],
+      })
+
+    it('一句话 + 一个主按钮「允许并运行」；没有 AI 次按钮，也没有 safe / native / 执行器之类的词', async () => {
+      await mount()
+      await openWith(confirmReport())
+      expect(panel().dataset.prepState).toBe('file_ops_confirm')
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe('这个脚本要真的把文件写到磁盘上才能跑完')
+      expect(line + (primary()?.textContent ?? '')).not.toMatch(/safe|native|沙盒|执行器|安全运行|原样运行/i)
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      expect(primary()?.textContent).toBe('允许并运行')
+      expect(panel().querySelector('[data-prep-ai-fix]')).toBeNull()
+    })
+
+    it('点一次：认领报告里的 confirm_native_run，并原样回显它带的一次性 token', async () => {
+      await mount()
+      await openWith(confirmReport())
+      mockAct.mockResolvedValueOnce({ claimed: true, report: report({ phase: 'running', observation_seq: 2, actions: [action('cancel')] }) })
+      await act(async () => primary()!.click())
+      expect(mockAct.mock.calls[0][1]).toEqual({
+        action_id: 'act-confirm',
+        expected_config_revision: 1,
+        confirm_token: 'tok-1',
+      })
+    })
+
+    it('英文界面同样一句话、没有泄漏中文', async () => {
+      await i18n.changeLanguage('en-US')
+      await mount()
+      await openWith(confirmReport())
+      const line = panel().querySelector('[data-prep-line]')!.textContent ?? ''
+      expect(line).toBe('This script needs to really write files to disk to finish')
+      expect(primary()?.textContent).toBe('Allow and run')
+      expect(line + primary()?.textContent).not.toMatch(/[一-鿿]/)
+    })
+
+    it('报告里没有确认动作（只用安全运行 / 开关关了 / 非页面读者）：不画按钮，回到原来的一句话', async () => {
+      await mount()
+      await openWith(report({ ...STATES.fileOpsBlocked, remedy: { kind: 'switch_native', silent: false } }))
+      expect(panel().dataset.prepState).toBe('file_ops_blocked')
+      expect(primary()).toBeNull()
+    })
+  })
+
   describe('回退也失败了', () => {
     it('一句话说明已经换过 + 一个主按钮（再试一次）；运行记录两条在详情里，原因码不进可见区', async () => {
       await mount()

@@ -3,7 +3,9 @@
 一个纯函数 `choose(failure, ctx) -> Remedy`，输出是闭集（`REMEDY_KINDS`），写进准备会话报告的 `remedy` 字段，
 前端 `prepView` 只按它画主按钮。本模块**不执行**任何修法：
 
-* `switch_native`：只是标注——真正的 safe→native 静默回退仍由 `execpolicy.decide_fallback` 做（ADR 0127，不改）；
+* `switch_native`：只是标注——真正的 safe→native 回退仍由 `execpolicy.decide_fallback` 做（ADR 0127）。`silent: true` = 桌面
+  用户发起的运行里静默回退；`silent: false` = 浏览器模式（ADR 0127 修订 2026-10-30，#1500）：失败卡给「允许并运行」，用户点一次才换，
+  且此时**不路由进 AI 修复**（优先于 `ai_fix` / `connect_ai`）；
 * `install_packages`：装包仍走 `deprepair` / `convertdeps` 的既有授权（本模块只说装什么、要不要用户点）；
 * `change_python`：本版只产出 remedy（执行在后续 PR），前端此时走现有「选择运行环境」入口；
 * `convert_to_matplotlib`：复用现有「生成可编辑版本」（ADR 0143）；
@@ -67,6 +69,9 @@ class Ctx:
     ai_rounds_exhausted: bool = False
     #: 允许 native 回退（项目没设「只用安全运行」、运维开关没关）——只影响是否标注，执行仍由 execpolicy 裁
     native_allowed: bool = False
+    #: 浏览器模式：safe 守卫拦下后失败卡正给「允许并运行」（`prepsession._native_confirm_offered`：来源是 not_desktop_initiated，
+    #: 且在「用户已确认」的假设下闸门全放行）。只影响是否标注 `silent: false`，执行仍由用户点击 + execpolicy 裁
+    confirm_native: bool = False
     #: 缺的包能不能在会话里装（`prepsession._observe_missing` 的 `installable`）与它们的发行包名（已规范，非空才算）
     missing_installable: bool = False
     packages: tuple[str, ...] = ()
@@ -118,6 +123,8 @@ def choose(failure: str, ctx: Ctx) -> dict:
         return {"kind": KIND_FEEDBACK, "tried": list(tried)}
     if code == CODE_BLOCKED and ctx.native_allowed and KIND_SWITCH_NATIVE not in tried:
         return {"kind": KIND_SWITCH_NATIVE, "silent": True}
+    if code == CODE_BLOCKED and ctx.confirm_native and KIND_SWITCH_NATIVE not in tried:
+        return {"kind": KIND_SWITCH_NATIVE, "silent": False}
     if (
         code == CODE_MISSING_DEPENDENCY
         and ctx.missing_installable

@@ -1004,6 +1004,7 @@
       "depsRuntime": "{{module}} is missing",
       "install": "Install missing components first",
       "needsArgs": "The script needs arguments",
+      "fileOpsConfirm": "This script needs to really write files to disk to finish",
       "fileOpsBlocked": "The script changes project files, then reads them; safe mode doesn't change them, so the result would differ and no figure was made",
       "fileOpsBlockedSafeOnly": "This project is set to safe mode only; the script changes files, then reads them, so the result would differ and no figure was made",
       "fileOpsBlockedOff": "Running as-is is turned off; the script changes project files, then reads them, so safe mode's result would differ and no figure was made",
@@ -1034,6 +1035,7 @@
       "later": "Later",
       "run": "Run",
       "openRun": "Open and run",
+      "allowRun": "Allow and run",
       "clearReuse": "Don't reuse",
       "runAnyway": "Run anyway",
       "runAgain": "Run again",
@@ -1182,7 +1184,8 @@
           "not_runnable": "Running as-is needs an answer first; not switched",
           "interpreter_changed": "The interpreter changed; not switched",
           "plan_unavailable": "Couldn't work out running as-is; not switched",
-          "launch_failed": "Couldn't start running as-is"
+          "launch_failed": "Couldn't start running as-is",
+          "attempt_cap": "Already tried several times in this run; not trying again"
         }
       },
       "nativeFallback": "Safe mode blocked the script's file operations, so it was run on your real files instead.",

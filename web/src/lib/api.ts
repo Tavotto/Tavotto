@@ -6772,7 +6772,14 @@ export type PreparationRequirement =
       payload: { schema: ScriptArgsSchema; argv_count: number; run_config: string | null }
     }
 
-export type PreparationActionKind = 'run' | 'cancel' | 'recheck' | 'prepare_dependencies' | 'run_when_ready'
+export type PreparationActionKind =
+  | 'run'
+  | 'cancel'
+  | 'recheck'
+  | 'prepare_dependencies'
+  | 'run_when_ready'
+  /** 浏览器模式：被拦下的脚本经用户在页面上点一次，这一次改用原样运行（ADR 0127 修订 2026-10-30，#1500） */
+  | 'confirm_native_run'
 
 /**
  * 「打开并运行」授权的安装范围合同（P05b，ADR 0124；动作 `run_when_ready` 的 `impact.run_intent`）。
@@ -6830,6 +6837,8 @@ export interface PreparationAction {
   kind: PreparationActionKind
   config_revision: number
   impact: PreparationImpact
+  /** 仅 `confirm_native_run`：服务端为那次失败尝试签发的一次性标识，认领时原样回显（只随页面 cookie 认证的报告来） */
+  confirm_token?: string
 }
 
 /**
@@ -7103,6 +7112,8 @@ export const actOnPreparationSession = (
     action_id: string
     expected_config_revision: number
     impact_digest?: string
+    /** 只跟 `confirm_native_run` 一起给：报告里那个动作带的一次性 token */
+    confirm_token?: string
     /** 只跟 `run_when_ready` 一起给：argv 换了，把旧运行配置会话里还没认领任何执行的意图原子转移过来 */
     transfer_from?: string
   },

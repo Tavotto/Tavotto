@@ -80,6 +80,7 @@ REASON_NOT_RUNNABLE = "not_runnable"  # native 计划本身还有要用户答的
 REASON_INTERPRETER_CHANGED = "interpreter_changed"  # native 计划解出的解释器不是 safe 当时那一个
 REASON_PLAN_UNAVAILABLE = "plan_unavailable"  # native 计划算不出来
 REASON_LAUNCH_FAILED = "launch_failed"  # 交给执行线程时失败
+REASON_ATTEMPT_CAP = "attempt_cap"  # 这次运行的真实执行次数已到上限（换入口 + native 回退合计）
 REASONS = (
     REASON_PROJECT_REOPENED,
     REASON_SUPERSEDED,
@@ -96,6 +97,7 @@ REASONS = (
     REASON_INTERPRETER_CHANGED,
     REASON_PLAN_UNAVAILABLE,
     REASON_LAUNCH_FAILED,
+    REASON_ATTEMPT_CAP,
 )
 
 # ---------------------------------------------------------------- 「与上次相比变了什么」（执行三维，闭集）
@@ -111,6 +113,10 @@ OUTCOME_FAILED = "failed"
 OUTCOME_BLOCKED = "blocked"
 OUTCOME_CANCELLED = "cancelled"
 OUTCOMES = (OUTCOME_PENDING, OUTCOME_SUCCEEDED, OUTCOME_FAILED, OUTCOME_BLOCKED, OUTCOME_CANCELLED)
+
+#: 一次用户发起的运行里真实执行尝试的总上限（ADR 0127 修订 2026-10-30）：首次 safe + 至多一次 safe 换入口 +
+#: 至多一次 native 回退 = 3。脚本最多被执行 3 次，沿用 D1「外部副作用会重复」的说明。
+MAX_ATTEMPTS_PER_RUN = 3
 
 #: 账本容量（所有 run 合计）。
 MAX_RECORDS = 16
@@ -410,6 +416,8 @@ class RetryGuard:
         * 同一份执行身份、同一个根因已经试过 → 没有新根因，不重复。
         """
         seen = ledger.current()
+        if len(seen) >= MAX_ATTEMPTS_PER_RUN:
+            return Decision(False, REASON_ATTEMPT_CAP)
         if seen and seen[-1].spec.profile == PROFILE_NATIVE and nxt.profile != PROFILE_NATIVE:
             return Decision(False, REASON_NATIVE_TO_SAFE)
         if nxt.profile == PROFILE_NATIVE and any(r.spec.profile == PROFILE_NATIVE for r in seen):
@@ -430,11 +438,17 @@ def decide_fallback(
     cancelled: bool = False,
     stale: bool = False,
     desktop_initiated: bool = False,
+    user_confirmed: bool = False,
 ) -> Decision:
     """safe 尝试以 `cause_code` 收场之后，要不要立刻用 `nxt`（native）再来一次。纯函数（读账本快照）。
 
-    顺序即优先级：先看是不是桌面用户主动发起的（调用方须传服务端验证过的事实，默认 False），再看用户 / 运维有没有关掉，再看有没有被取消 / 过期，再看原因本身该不该回退，最后过通用闸门。"""
-    if not desktop_initiated:
+    顺序即优先级：先看是不是桌面用户主动发起的（调用方须传服务端验证过的事实，默认 False），再看用户 / 运维有没有关掉，再看有没有被取消 / 过期，再看原因本身该不该回退，最后过通用闸门。
+
+    `user_confirmed`（ADR 0127 修订 2026-10-30）：浏览器模式里用户在失败卡上点了「允许并运行」——调用方（prepsession）
+    只在服务端核到「会话 cookie 认证 + 一次性确认 token 对得上」之后才传 True。它**只**顶替第一道来源判据，
+    其余（开关 / 策略 / 取消 / 过期 / 原因 / 账本闸门）一道不少：「只用安全运行」与运维开关照样否决，
+    与桌面回退共用同一本账，所以一次运行里 native 回退至多一次。"""
+    if not (desktop_initiated or user_confirmed):
         return Decision(
             False, REASON_NOT_DESKTOP
         )  # D1 只授权桌面用户主动发起的运行：默认 fail closed

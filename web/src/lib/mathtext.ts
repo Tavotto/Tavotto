@@ -77,6 +77,12 @@ export function useMathBox(src: string, family: string): MathBox | undefined {
   return mathBoxOf(src, family)
 }
 
+/** React：一批公式（同一个族）的结果，按入参顺序；订阅只一次——缩略图的一行里公式个数不定，不能逐个调 hook */
+export function useMathBoxes(srcs: readonly string[], family: string): (MathBox | undefined)[] {
+  useSyncExternalStore(subscribeMath, () => version)
+  return srcs.map((s) => mathBoxOf(s, family))
+}
+
 /**
  * 轮廓段 → SVG path 的 `d`（单位 em，**y 向下**：SVG 的 y = −公式的 y）。
  * 视口取 `0 −ascent width (ascent + descent)`，基线就在视口里 y = 0 处。

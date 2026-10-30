@@ -819,6 +819,7 @@
     "textFontFamilySubstitutedKnown": "画布文字用的是{{family}}，规范要求 {{want}}。该字体是常见替代品。",
     "textGlyphMissing": "画布文字里有 {{count}} 个字符画不出来，导出后是方框：{{chars}}",
     "textGlyphSubstituted": "画布文字里有 {{count}} 个字符自动回退到了别的字体：{{chars}}",
+    "textMathUnrenderable": "画布文字里有 {{count}} 个公式排不出来，导出时按源码原样画：{{src}}（{{why}}）",
     "textOverAxes": "{{a}} 压进了 {{b}} 的绘图区 {{w}} × {{h}} mm",
     "textOverlap": "文字互相重叠 {{w}} × {{h}} mm（{{a}} 与 {{b}}）",
     "textTooSmall": "画布文字 {{size}} pt 低于规范下限 {{min}} pt",
