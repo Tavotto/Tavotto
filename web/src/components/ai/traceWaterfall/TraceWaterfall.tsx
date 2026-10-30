@@ -45,6 +45,7 @@ import {
   rowUnchangedBetween,
   settledAt,
   spanFigure,
+  subtreeExtent,
   subtreeOpen,
   ticksFor,
   traceDomain,
@@ -584,10 +585,17 @@ interface RowProps {
  */
 const Row = memo(RowImpl, (a, b) => {
   for (const k of Object.keys(b) as (keyof RowProps)[]) {
-    if (k === 'now') continue
+    if (k === 'now' || k === 'model') continue
     if (a[k] !== b[k]) return false
   }
-  if (a.now === b.now) return true
+  // 回放起止只换 replay 标记；快照或运行状态变化仍必须重画。
+  if (a.model.spans !== b.model.spans || a.model.duration !== b.model.duration || a.model.running !== b.model.running) return false
+  if (a.model === b.model && a.now === b.now) return true
+  if (!!a.model.replay !== !!b.model.replay) {
+    // 两边都已结束才与完整视图一致；未开始的行不能用同一判断。
+    const { to } = subtreeExtent(b.node)
+    return a.now >= to && b.now >= to
+  }
   // 回放：这一格对这一行有没有影响，看它（含子孙）的时间范围
   return b.model.replay ? rowUnchangedBetween(b.node, a.now, b.now) : !subtreeOpen(b.node)
 })

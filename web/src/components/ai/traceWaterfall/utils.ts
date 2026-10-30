@@ -108,7 +108,8 @@ export function subtreeExtent(node: TraceNode): { from: number; to: number } {
   let v = extentCache.get(node)
   if (!v) {
     const { span } = node
-    let to = span.end ?? (hasInterval(span) ? Infinity : span.start)
+    // 无结束时刻的虚线框也会随 now 延长；只有点的画面不依赖结束时刻。
+    let to = span.end ?? (span.timing === 'point' ? span.start : Infinity)
     let from = span.start
     for (const c of node.children) {
       const e = subtreeExtent(c)
