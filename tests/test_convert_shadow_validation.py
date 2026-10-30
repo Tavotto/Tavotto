@@ -293,6 +293,97 @@ def test_keep_failed_removes_read_only_redirected_data_then_retains(world):
     assert not (cand.dir / ai_convert.REDIRECT_DIRNAME).exists()
 
 
+PRELUDE = (
+    "import os\nimport matplotlib.pyplot as plt\n"
+    "here = os.path.dirname(os.path.abspath(__file__))\n"
+    "data = os.path.join(here, 'data.csv')\n"
+    "ORIG = 'x,y\\n1,2\\n'\n"
+    "assert os.path.exists(data) and open(data).read() == ORIG\n"
+)
+EPILOGUE = "plt.plot([1])\nplt.savefig('o.png')\n"
+
+
+def _validate(world, body, twice=False):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = (PRELUDE + body + EPILOGUE).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    result = ai_convert.run_validation(cand, runner)
+    if twice:  # 白名单随 worker 走：第二次校验的 worker 是新的，原文件重新可见（PRELUDE 会断言）
+        assert result["status"] == "ok", result
+        result = ai_convert.run_validation(cand, runner)
+    assert (root / "sub" / "data.csv").read_text() == "x,y\n1,2\n"  # 项目里的原件始终没动
+    return result, cand
+
+
+def test_replace_of_a_redirected_output_does_not_resurrect_the_project_file(world):
+    result, cand = _validate(
+        world,
+        "open(data, 'w').write('new')\n"
+        "arch = os.path.join(here, 'archive.csv')\n"
+        "os.replace(data, arch)\n"
+        "assert not os.path.exists(data) and not os.path.isfile(data)\n"
+        "try:\n    open(data)\n    raise SystemExit('stale data visible')\nexcept FileNotFoundError:\n    pass\n"
+        "assert open(arch).read() == 'new'\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/archive.csv").read_text() == "new"
+
+
+def test_remove_after_write_and_remove_of_a_project_only_file_are_whiteouts(world):
+    result, cand = _validate(
+        world,
+        "open(data, 'w').write('new')\nos.remove(data)\n"
+        "assert not os.path.exists(data)\n"
+        "try:\n    open(data)\n    raise SystemExit('visible')\nexcept FileNotFoundError:\n    pass\n",
+        twice=True,
+    )
+    assert result["status"] == "ok", result
+    result, _ = _validate(
+        world,
+        "os.remove(data)\nassert not os.path.exists(data)\n"
+        "try:\n    os.path.getsize(data)\n    raise SystemExit('visible')\n"
+        "except FileNotFoundError:\n    pass\n"
+        "try:\n    os.remove(data)\n    raise SystemExit('twice')\nexcept FileNotFoundError:\n    pass\n",
+    )
+    assert result["status"] == "ok", result
+
+
+def test_write_again_after_a_whiteout_works(world):
+    result, cand = _validate(
+        world,
+        "os.remove(data)\nassert not os.path.exists(data)\n"
+        "open(data, 'w').write('again')\n"
+        "assert os.path.exists(data) and open(data).read() == 'again'\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/data.csv").read_text() == "again"
+
+
+def test_os_open_without_creat_on_an_existing_project_file(world):
+    result, cand = _validate(
+        world,
+        "fd = os.open(data, os.O_WRONLY | os.O_TRUNC)\nos.write(fd, b'z')\nos.close(fd)\n"
+        "assert open(data).read() == 'z'\n"
+        "fd = os.open(os.path.join(here, 'data.csv'), os.O_WRONLY)\nos.close(fd)\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/data.csv").read_text() == "z"
+
+
+def test_os_open_without_creat_on_a_missing_file_still_fails(world):
+    result, cand = _validate(
+        world,
+        "try:\n    os.open(os.path.join(here, 'nope.csv'), os.O_WRONLY)\n"
+        "    raise SystemExit('created')\nexcept FileNotFoundError:\n    pass\n"
+        "os.remove(data)\n"
+        "try:\n    os.open(data, os.O_WRONLY | os.O_TRUNC)\n"
+        "    raise SystemExit('whited-out file opened')\nexcept FileNotFoundError:\n    pass\n",
+    )
+    assert result["status"] == "ok", result
+    assert not _redirected(cand, "sub/nope.csv").exists()
+
+
 def test_writes_outside_project_and_allowed_roots_still_trip(world):
     root, cand, runner = world
     workdir.set_mode(root, workdir.MODE_PROJECT)

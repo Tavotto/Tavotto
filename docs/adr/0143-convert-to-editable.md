@@ -370,8 +370,11 @@ savefig 收到已打开的流时再处理。已识别的构造调用同样在运
 * **读回**：打开读取 / `exists|isfile|isdir|getsize` 时项目内路径若在改道区有同名文件就读改道区的。**写时复制**：以追加 / 读写模式改一个已存在的项目文件，先把原文件复制进改道区再改，项目里的那份不动。
   `x` 模式 / `O_EXCL` 遇项目里已有同名文件照常 `FileExistsError`；`mkdir` 遇项目里已有目录照常 `FileExistsError`（`exist_ok=True` 无副作用）。
 * **限制**（不是缺陷，写进 `writetripwire` 头注）：`os.stat` / `listdir` / `scandir` / `glob` / `Path.exists|stat|iterdir` 看不到改道区的文件；`os.symlink|link|truncate` 不改道（仍走绊线 → 失败）；
-  只存在于项目里的用户文件的删除 / 改名不改道（走绊线 → 失败）；C 层 / 子进程写看不见，由校验后的项目指纹复核（`_project_untouched`）兜住 → 仍判失败；Windows 未实测。
+  目录的删除 / 改名不改道（走绊线 → 失败）；C 层 / 子进程写看不见，由校验后的项目指纹复核（`_project_untouched`）兜住 → 仍判失败；Windows 未实测。
 * 候选目录指纹（`ai_figure_edit._tree`）不看根下的 `redirected/`；`keep_failed` 留诊断用的候选时先删改道区（里面可能有用户数据的衍生文件）。
 * **范围**：转换与改图（`figure_edit`）的候选校验共用 `run_validation`，一起生效；改图里“写项目文件”不再落到 `not measured`，照常测量（项目外的写仍是）。
 * **提示词**：转换提示词（`rule_keep_data` / `rule_foreign_steps`）明说“原脚本写出的数据 / CSV / 图片输出原样保留，不要删除，也不要改成只放内存”；`WRITE_OUTSIDE_HINT` 不再教 Agent 去掉写入。
 * 回归：`tests/test_convert_shadow_validation.py`（真 worker：绝对 / chdir 后相对路径写入、读回、写时复制、项目外仍绊线、C 层写由指纹兜住、改图同样改道）、`tests/test_write_redirect.py`、`tests/test_mcp_write_tripwire.py`（MCP 语义不变）。
+* **白名单（Codex #1516 复核）**：通过改道层删除 / 改名走的项目路径（含只存在于项目里的用户文件，原件不动）记进 worker 内存里的白名单集合，之后被包装的读 / 查询都当不存在、
+  再创建 / 写会清掉标记；改名的目的地进改道区、源路径进白名单。集合随 `install` 清空，校验 worker 每次运行后退役，所以每次执行从空开始。
+  `os.open` 不带 `O_CREAT` 打开项目里已有的文件（`O_WRONLY|O_TRUNC`）先在改道区物化；原件不存在或已被白名单则仍 `FileNotFoundError`。

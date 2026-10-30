@@ -28,7 +28,11 @@ pickle / `shutil.copyfile` / 根内符号链接指向根外 / 线程与 fork 子
 改道**不**覆盖（限制，不是缺陷）：`os.stat` / `os.listdir` / `os.scandir` / `glob` / `Path.exists|stat|iterdir`（读不到改道区的文件），
 `os.symlink|link|truncate`（仍走绊线 → 失败），C 层写（同下面的盲区：绊线看不见，由校验后的项目指纹复核兜住 → 失败）。
 改动已存在的项目文件（追加 / 读写模式）：先把原文件复制进改道区再改（写时复制），项目里的那份不动；
-删除 / 改名一个**只存在于项目里**的用户文件不改道（走绊线 → 失败）。
+**白名单（whiteout）**：脚本通过改道层删除 / 改名走一个项目路径（含只存在于项目里的用户文件——项目里的原件不动），该路径记进
+本窗口的白名单集合（worker 内存里，`install` 时清空；校验 worker 每次运行后退役，所以每次执行都从空集合开始），之后所有被包装的读 / 查询
+（`open` 读、`os.open`、`os.path.exists|isfile|isdir|getsize`、`shutil.copyfile` 的 src）都把它当不存在；再次创建 / 写该路径会清掉标记。
+目录的删除 / 改名不改道（走绊线 → 失败）；`os.stat` 等未包装的查询仍会看到项目里的原件（同上面的限制）。
+`os.open` 不带 `O_CREAT` 打开项目里已有的文件（如 `O_WRONLY|O_TRUNC`）：先在改道区物化（截断 = 空文件，其余 = 复制）；原件不存在或已被白名单标记则保持 `FileNotFoundError`。
 
 纯标准库、**不 import 任何兄弟模块**：它装进 worker 的私有包（`worker._ENGINE_MODULES`）。
 """
@@ -83,6 +87,7 @@ REDIRECT_DIR_PREFIX = "redirect-dir:"
 _state: dict = {
     "redirect": None,  # (项目真实路径, 项目 normcase 路径, 改道区真实路径, 改道区 normcase 路径)
     "redirect_installed": False,
+    "whiteouts": set(),  # 本窗口里被删除 / 改名走的项目路径（键 = normcase 的项目相对路径）
     "roots": (),
     "display_base": "",
     "armed": False,
@@ -306,6 +311,7 @@ def install(roots, *, display_base: str = "", redirect: tuple[str, str] | None =
     _state["display_base"] = _real(display_base) if display_base else ""
     _state["violations"] = []
     _state["redirected"] = []
+    _state["whiteouts"] = set()
     if redirect is None:
         _state["redirect"] = None
     else:
@@ -370,11 +376,8 @@ def _redirect_on() -> bool:
     return _state["armed"] and _state["redirect"] is not None and not getattr(_rtls, "busy", False)
 
 
-def _map(raw, *, write: bool) -> str | None:
-    """项目内的路径 → 改道区里的对应路径；不在项目内 / 本来就在改道区 / 路径无法解释 → None。
-
-    `write=True` 返回无条件的改道路径，并在「项目里的父目录真实存在」时补建改道区里的父目录（保住
-    `FileNotFoundError` 的原有语义：项目里没有的目录不会因为改道而凭空出现）；`write=False` 只在改道区已有该文件时返回。"""
+def _resolve(raw):
+    """项目内的路径 → `(真实路径, 白名单键, 改道区里的对应路径)`；不在项目内 / 本来就在改道区 / 路径无法解释 → None。无副作用。"""
     if isinstance(raw, int) or not isinstance(raw, (str, bytes, os.PathLike)):
         return None
     prev = getattr(_rtls, "busy", False)
@@ -390,17 +393,53 @@ def _map(raw, *, write: bool) -> str | None:
         if rel == os.pardir or rel.startswith(os.pardir + os.sep):
             return None
         target = rdir if rel == "." else os.path.join(rdir, rel)
-        if write:
-            parent = os.path.dirname(target)
-            if not _ORIG["isdir"](parent) and _ORIG["isdir"](os.path.dirname(rp)):
-                _ORIG["makedirs"](parent, exist_ok=True)
-            items = _state.setdefault("redirected", [])
-            if len(items) < _MAX_REDIRECTED and rel not in items:
-                items.append(rel.replace(os.sep, "/"))
-            return target
-        return target if _ORIG["lexists"](target) else None
+        return rp, os.path.normcase(rel), target
     except (OSError, ValueError):
         return None
+    finally:
+        _rtls.busy = prev
+
+
+def _white(key: str) -> bool:
+    return key in _state["whiteouts"]
+
+
+def _prepare_write(r) -> None:
+    """改道写之前：项目里的父目录真实存在时，补建改道区里的父目录（保住 `FileNotFoundError` 的原有语义）。"""
+    rp, key, target = r
+    prev = getattr(_rtls, "busy", False)
+    _rtls.busy = True
+    try:
+        parent = os.path.dirname(target)
+        if not _ORIG["isdir"](parent) and _ORIG["isdir"](os.path.dirname(rp)):
+            _ORIG["makedirs"](parent, exist_ok=True)
+        items = _state.setdefault("redirected", [])
+        rel = os.path.relpath(rp, _state["redirect"][0]).replace(os.sep, "/")
+        if len(items) < _MAX_REDIRECTED and rel not in items:
+            items.append(rel)
+    except OSError:
+        pass
+    finally:
+        _rtls.busy = prev
+
+
+def _map(raw, *, write: bool) -> str | None:
+    """项目内的路径 → 改道区里的对应路径；不在项目内 / 本来就在改道区 / 路径无法解释 → None。
+
+    `write=True` 返回无条件的改道路径（并补建父目录）；`write=False`（读 / 查询）：改道区已有该文件、或该路径已被
+    白名单标成“删除过”时返回改道路径（后者在改道区里不存在，所以读它得到 `FileNotFoundError` / `exists → False`），否则 None。"""
+    r = _resolve(raw)
+    if r is None:
+        return None
+    if write:
+        _prepare_write(r)
+        return r[2]
+    if _white(r[1]):
+        return r[2]
+    prev = getattr(_rtls, "busy", False)
+    _rtls.busy = True
+    try:
+        return r[2] if _ORIG["lexists"](r[2]) else None
     finally:
         _rtls.busy = prev
 
@@ -408,6 +447,11 @@ def _map(raw, *, write: bool) -> str | None:
 def redirected() -> list[str]:
     """本窗口里被改道的项目相对路径（至多 `_MAX_REDIRECTED` 条，诊断 / 用例用）。"""
     return list(_state.get("redirected", ()))
+
+
+def whiteouts() -> list[str]:
+    """本窗口里被“删除 / 改名走”的项目相对路径（用例用）。"""
+    return sorted(_state["whiteouts"])
 
 
 def _real_exists(raw) -> bool:
@@ -421,15 +465,23 @@ def _real_exists(raw) -> bool:
         _rtls.busy = prev
 
 
-def _cow(raw, target: str) -> None:
-    """改动已存在的项目文件前，把原文件复制进改道区（项目里的那份不动）。"""
+def _cow(raw, target: str, *, empty: bool = False) -> None:
+    """改动已存在的项目文件前，把原文件复制进改道区（项目里的那份不动）；`empty=True` 只物化一个空文件（O_TRUNC）。"""
     prev = getattr(_rtls, "busy", False)
     _rtls.busy = True
     try:
         if not _ORIG["lexists"](target) and _ORIG["isfile"](os.fsdecode(os.fspath(raw))):
-            _ORIG["copyfile"](os.fsdecode(os.fspath(raw)), target)
+            if empty:
+                with _ORIG["open"](target, "wb"):
+                    pass
+            else:
+                _ORIG["copyfile"](os.fsdecode(os.fspath(raw)), target)
     finally:
         _rtls.busy = prev
+
+
+def _enoent(path) -> FileNotFoundError:
+    return FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), path)
 
 
 def _w_open(orig):
@@ -438,13 +490,23 @@ def _w_open(orig):
         if _redirect_on():
             m = mode if isinstance(mode, str) else "r"
             if any(c in m for c in "wax+"):
-                target = _map(file, write=True)
-                if target is not None:
-                    if "x" in m and _real_exists(file):
+                r = _resolve(file)
+                if r is not None:
+                    white = _white(r[1])
+                    creates = any(c in m for c in "wax")
+                    if "x" in m and not white and _real_exists(file):
                         raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), file)
-                    if "w" not in m and "x" not in m:
-                        _cow(file, target)
-                    file = target
+                    if white and not creates:
+                        file = r[
+                            2
+                        ]  # 已删除的文件不能读写打开（r+）：改道区里没有它 → FileNotFoundError
+                    else:
+                        _prepare_write(r)
+                        if "w" not in m and "x" not in m and not white:
+                            _cow(file, r[2])
+                        if creates:
+                            _state["whiteouts"].discard(r[1])
+                        file = r[2]
             else:
                 target = _map(file, write=False)
                 if target is not None:
@@ -459,13 +521,22 @@ def _w_os_open(orig):
     def os_open(path, flags, mode=0o777, *, dir_fd=None):
         if dir_fd is None and _redirect_on():
             if flags & _WRITE_FLAGS:
-                target = _map(path, write=True)
-                if target is not None:
-                    if flags & os.O_CREAT and flags & os.O_EXCL and _real_exists(path):
+                r = _resolve(path)
+                if r is not None:
+                    white = _white(r[1])
+                    creates = bool(flags & os.O_CREAT)
+                    if creates and flags & os.O_EXCL and not white and _real_exists(path):
                         raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), path)
-                    if not flags & os.O_TRUNC:
-                        _cow(path, target)
-                    path = target
+                    if white and not creates:
+                        path = r[2]  # 已删除：没有 O_CREAT 就打不开
+                    else:
+                        _prepare_write(r)
+                        if not white:
+                            # 项目里有而改道区没有：先物化（O_TRUNC 只要空文件，其余写时复制），没有 O_CREAT 也能打开
+                            _cow(path, r[2], empty=bool(flags & os.O_TRUNC))
+                        if creates:
+                            _state["whiteouts"].discard(r[1])
+                        path = r[2]
             else:
                 target = _map(path, write=False)
                 if target is not None:
@@ -480,7 +551,9 @@ def _w_mkdir(orig):
     def mkdir(path, mode=0o777, *, dir_fd=None):
         if dir_fd is None and _redirect_on():
             if _real_exists(path):
-                raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), path)
+                r = _resolve(path)
+                if r is None or not _white(r[1]):
+                    raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), path)
             target = _map(path, write=True)
             if target is not None:
                 path = target
@@ -489,8 +562,37 @@ def _w_mkdir(orig):
     return mkdir
 
 
-def _w_unary(orig):
-    """remove / unlink / rmdir：只在改道区里有同名对象时改道；只存在于项目里的用户文件不动（走绊线）。"""
+def _w_remove(orig):
+    """remove / unlink：项目里的文件“删掉”= 删改道区里的副本 + 白名单标记，项目里的那份不动（之后读它 / 查它都当不存在）。"""
+
+    @functools.wraps(orig)
+    def fn(path, *, dir_fd=None):
+        if dir_fd is None and _redirect_on():
+            r = _resolve(path)
+            if r is not None:
+                rp, key, target = r
+                if _white(key):
+                    raise _enoent(path)
+                over = _real_exists(target)
+                real = _real_exists(rp)
+                if real and _ORIG["isdir"](rp) and not over:
+                    return orig(path, dir_fd=dir_fd)  # 目录：不改道（走绊线）
+                if over:
+                    orig(target)
+                    if real:
+                        _state["whiteouts"].add(key)
+                    return None
+                if real:
+                    _state["whiteouts"].add(key)
+                    return None
+                raise _enoent(path)
+        return orig(path, dir_fd=dir_fd)
+
+    return fn
+
+
+def _w_rmdir(orig):
+    """rmdir：只在改道区里有同名目录时改道；项目里的目录不动（走绊线）。"""
 
     @functools.wraps(orig)
     def fn(path, *, dir_fd=None):
@@ -507,12 +609,42 @@ def _w_rename(orig):
     @functools.wraps(orig)
     def rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
         if src_dir_fd is None and dst_dir_fd is None and _redirect_on():
-            s = _map(src, write=False)
-            if s is not None:
-                src = s
-            d = _map(dst, write=True)
-            if d is not None:
-                dst = d
+            rs = _resolve(src)
+            rd = _resolve(dst)
+            if rd is not None:
+                _prepare_write(rd)
+            d = rd[2] if rd is not None else dst
+            done = False
+            if rs is not None:
+                rp, key, target = rs
+                if _white(key):
+                    raise _enoent(src)
+                over = _real_exists(target)
+                real = _real_exists(rp)
+                if real and _ORIG["isdir"](rp) and not over:
+                    pass  # 目录：src 不改道（走绊线）
+                elif over:
+                    orig(target, d)
+                    if real:
+                        _state["whiteouts"].add(key)
+                    done = True
+                elif real:
+                    # 只存在于项目里的文件被改名走：内容复制到目的地，项目里的原件不动，源路径标成已删除
+                    prev = getattr(_rtls, "busy", False)
+                    _rtls.busy = True
+                    try:
+                        _ORIG["copyfile"](rp, d)
+                    finally:
+                        _rtls.busy = prev
+                    _state["whiteouts"].add(key)
+                    done = True
+                else:
+                    raise _enoent(src)
+            if not done:
+                orig(src, d)
+            if rd is not None:
+                _state["whiteouts"].discard(rd[1])
+            return None
         return orig(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
 
     return rename
@@ -522,7 +654,13 @@ def _w_exists(orig):
     @functools.wraps(orig)
     def fn(path, *args, **kwargs):
         result = orig(path, *args, **kwargs)
-        if result or not _redirect_on():
+        if not _redirect_on():
+            return result
+        if result:
+            if _state["whiteouts"]:
+                r = _resolve(path)
+                if r is not None and _white(r[1]):
+                    return False
             return result
         target = _map(path, write=False)
         return orig(target, *args, **kwargs) if target is not None else result
@@ -551,9 +689,11 @@ def _w_shutil_pair(orig):
             s = _map(src, write=False)
             if s is not None:
                 src = s
-            d = _map(dst, write=True)
-            if d is not None:
-                dst = d
+            rd = _resolve(dst)
+            if rd is not None:
+                _prepare_write(rd)
+                _state["whiteouts"].discard(rd[1])
+                dst = rd[2]
         return orig(src, dst, *args, **kwargs)
 
     return fn
@@ -586,17 +726,28 @@ def _w_rmtree(orig):
 def _w_move(orig):
     @functools.wraps(orig)
     def move(src, dst, *args, **kwargs):
-        if _redirect_on():
-            s = _map(src, write=False)
-            if s is not None:
-                src = s
-            d = _map(dst, write=True)
-            if d is not None:
-                # 项目里的 dst 是已有目录时 shutil.move 是「移进去」：改道区里补出同名目录，语义保持
-                if _real_exists(dst) and _ORIG["isdir"](os.fsdecode(os.fspath(dst))):
-                    _ORIG["makedirs"](d, exist_ok=True)
-                dst = d
-        return orig(src, dst, *args, **kwargs)
+        if not _redirect_on():
+            return orig(src, dst, *args, **kwargs)
+        rs = _resolve(src)
+        rd = _resolve(dst)
+        overlay_src = False
+        if rs is not None:
+            if _white(rs[1]):
+                raise _enoent(src)
+            if _real_exists(rs[2]):
+                src, overlay_src = rs[2], True
+        if rd is not None:
+            _prepare_write(rd)
+            # 项目里的 dst 是已有目录时 shutil.move 是「移进去」：改道区里补出同名目录，语义保持
+            if _real_exists(dst) and _ORIG["isdir"](os.fsdecode(os.fspath(dst))):
+                _ORIG["makedirs"](rd[2], exist_ok=True)
+            dst = rd[2]
+        result = orig(src, dst, *args, **kwargs)
+        if overlay_src and _real_exists(rs[0]):
+            _state["whiteouts"].add(rs[1])  # 改道区里的副本被移走了，项目里的原件不能重新露出来
+        if rd is not None:
+            _state["whiteouts"].discard(rd[1])
+        return result
 
     return move
 
@@ -607,6 +758,7 @@ def _install_redirect() -> None:
         return
     path = os.path
     _ORIG.update(
+        open=builtins.open,
         isdir=path.isdir,
         isfile=path.isfile,
         lexists=path.lexists,
@@ -618,9 +770,9 @@ def _install_redirect() -> None:
     io.open = wrapped_open
     os.open = _w_os_open(os.open)
     os.mkdir = _w_mkdir(os.mkdir)
-    os.remove = _w_unary(os.remove)
-    os.unlink = _w_unary(os.unlink)
-    os.rmdir = _w_unary(os.rmdir)
+    os.remove = _w_remove(os.remove)
+    os.unlink = _w_remove(os.unlink)
+    os.rmdir = _w_rmdir(os.rmdir)
     os.rename = _w_rename(os.rename)
     os.replace = _w_rename(os.replace)
     for name in ("exists", "isfile", "isdir"):
