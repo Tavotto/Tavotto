@@ -10,6 +10,7 @@
  * 只作用于用了样式 / 公式的那段文字（规范段里的斜体 / 粗体 / 上下标）；字体族已经改过的不再写。
  */
 import { effectiveOverride } from './effectiveOverride'
+import { figureFontChoice } from './figureFontChoice'
 import { parseMathtext } from './mathtextCodec'
 import type { ManifestElement } from './api'
 import type { PanelObject } from '@/types/document'
@@ -18,7 +19,8 @@ import type { PanelObject } from '@/types/document'
 export function mathFontFollow(panel: PanelObject, el: ManifestElement, nextText: string): string | null {
   const field = el.editable.find((f) => f.prop === 'fontfamily')
   if (!field || typeof field.value !== 'string' || !field.value) return null
-  if (effectiveOverride(panel.overrides, el.gid, 'fontfamily')) return null
+  const existing = effectiveOverride(panel.overrides, el.gid, 'fontfamily')
+  if (existing && (!figureFontChoice(existing.value) || figureFontChoice(existing.value)?.primary !== null)) return null
   const styled = parseMathtext(nextText).some((r) => !r.math && (r.italic || r.bold || r.script !== ''))
   return styled ? field.value : null
 }
@@ -47,7 +49,8 @@ export const DEFAULT_MATH_FACE = 'DejaVu Sans'
 export function figureMathFamily(panel: PanelObject, el: ManifestElement, text: string): string {
   const follow = mathFontFollow(panel, el, text)
   const override = effectiveOverride(panel.overrides, el.gid, 'fontfamily')?.value
+  const selected = figureFontChoice(override)?.primary ?? override
   const face =
-    follow ?? (typeof override === 'string' && override ? override : null) ?? el.math_face ?? DEFAULT_MATH_FACE
+    follow ?? (typeof selected === 'string' && selected ? selected : null) ?? el.math_face ?? DEFAULT_MATH_FACE
   return `face:${faceName(face)}`
 }

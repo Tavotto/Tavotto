@@ -238,6 +238,7 @@ export function FontMissingHint({ className }: { className?: string } = {}) {
 }
 
 function FontFamilyRowView({
+  labelText,
   value,
   options,
   onChange,
@@ -252,6 +253,7 @@ function FontFamilyRowView({
 }: {
   /** 只用来让语言切换时重画（选项标签随语言变）；memo 比较它，组件体不读 */
   lang?: string
+  labelText?: string
   value: string
   options: string[]
   onChange: (v: string) => void
@@ -281,7 +283,7 @@ function FontFamilyRowView({
 }) {
   // 性能探针（ADR 0075）：它下面挂着本机字体并表的几百个选项，重画一次很贵
   perfCount('render.FontFamilyRow')
-  const label = tc('font')
+  const label = labelText ?? tc('font')
   const missing = new Set(unavailable)
   // Aa 预览：选项文字用它自己的字体栈显示；写入值仍是原始选项串
   const fm = fontFamilySelectModel({
@@ -346,6 +348,7 @@ const FontFamilyRowMemo = memo(
   FontFamilyRowView,
   (a, b) =>
     a.value === b.value &&
+    a.labelText === b.labelText &&
     a.mixed === b.mixed &&
     a.overridden === b.overridden &&
     a.labelWidth === b.labelWidth &&

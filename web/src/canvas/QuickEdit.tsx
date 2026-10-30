@@ -37,6 +37,7 @@ import { MenuButton } from '@/components/ui/Menu'
 import { NumberField } from '@/components/ui/Input'
 import { LegendPositionPicker } from '@/components/inspector/controls/LegendPositionPicker'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { figurePrimaryValue } from '@/lib/figureFontChoice'
 import { BOTTOM_SAFE } from './context-bar/position'
 import { trapTab } from '@/lib/focusTrap'
 import { usePresence } from '@/lib/motion'
@@ -315,7 +316,8 @@ function ElementQuick({
   /** 当前值：用户改过的 override 优先于渲染时的初值 */
   const read = (prop: string, from: ManifestElement = el) => {
     const ov = effectiveOverride(panel.overrides, from.gid, prop)
-    return lens.toPage(prop, ov ? ov.value : from.editable.find((f) => f.prop === prop)?.value)
+    const original = from.editable.find((f) => f.prop === prop)?.value
+    return lens.toPage(prop, ov ? prop === 'fontfamily' ? figurePrimaryValue(ov.value, original) : ov.value : original)
   }
   const field = (prop: string, from: ManifestElement = el): EditableField | undefined =>
     lens.field(from.editable.find((f) => f.prop === prop))

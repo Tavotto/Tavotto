@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 import { Row, type RowLabelWidth } from '../../ui/Field'
+import { Select } from '../../ui/Select'
+import { Tip } from '../../ui/Tooltip'
 import { useTranslation } from 'react-i18next'
 import { Bold, Italic } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
@@ -18,6 +20,7 @@ import {
   AlignmentRow,
   FontFamilyRow,
   FontSizeRow,
+  FontMissingHint,
   StyleToggle,
   TextColorRow,
 } from './textRows'
@@ -61,6 +64,7 @@ export function TypographyControls({
 }) {
   useTranslation('inspector')
   const family = adapter.fieldOf('fontFamily')
+  const fallback = adapter.fieldOf('fontFallback')
   const size = adapter.fieldOf('sizePt')
   const weight = adapter.fieldOf('weight')
   const style = adapter.fieldOf('style')
@@ -68,6 +72,10 @@ export function TypographyControls({
   const align = adapter.fieldOf('halign')
 
   const familyVal = adapter.valueOf('fontFamily')
+  const fallbackVal = adapter.valueOf('fontFallback')
+  const fallbackCurrent = fallbackVal.kind === 'mixed' ? '' : String(displayValueOf(fallbackVal) || '')
+  const fallbackOptions = fallback?.options ?? []
+  const fallbackNames = fallbackCurrent && !fallbackOptions.includes(fallbackCurrent) ? [fallbackCurrent, ...fallbackOptions] : fallbackOptions
   const sizeVal = adapter.valueOf('sizePt')
   const colorVal = adapter.valueOf('color')
   const alignVal = adapter.valueOf('halign')
@@ -129,9 +137,29 @@ export function TypographyControls({
 
   return (
     <div className={cn('flex flex-col gap-1.5', className)}>
+      {fallback && (
+        <Anchor adapter={adapter} prop="fontFallback"><Row label={tb('cjkFallback')} labelWidth={labelWidth}>
+          <Select
+            className="min-w-0 flex-1"
+            ariaLabel={tb('cjkFallback')}
+            value={fallbackVal.kind === 'mixed' ? '' : fallbackCurrent || '__auto__'}
+            placeholder={translate('element.mixedValues', { ns: 'inspector' })}
+            onChange={(v) => adapter.writeOnce('fontFallback', v === '__auto__' ? null : v)}
+            options={[
+              { value: '__auto__', label: tb('cjkFallbackAuto') },
+              ...fallbackNames.map((o) => ({ value: o, label: fontFamilyOptionLabel(o, fallback.option_labels, fallbackNames) })),
+            ]}
+          />
+          {adapter.fontFallbackShadowed && <Tip label={<span className="block max-w-40 whitespace-normal">{tb('cjkFallbackShadowed')}</span>} side="left">
+            <button type="button" className="shrink-0 text-xs text-ink-3" aria-label={tb('cjkFallbackShadowed')}>ⓘ</button>
+          </Tip>}
+        </Row></Anchor>
+      )}
+      {fallback && fallbackCurrent && adapter.unavailableOptions('fontFallback').includes(fallbackCurrent) && <FontMissingHint />}
       {family && (
         <Anchor adapter={adapter} prop="fontFamily">
           <FontFamilyRow
+            labelText={fallback ? tb('latinFont') : undefined}
             labelWidth={labelWidth}
             value={String(displayValueOf(familyVal) ?? '')}
             mixed={familyVal.kind === 'mixed'}

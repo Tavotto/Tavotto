@@ -45,6 +45,7 @@ import type { TextObject } from '@/types/document'
  */
 export const TYPOGRAPHY_PROPS = [
   'fontFamily',
+  'fontFallback',
   'sizePt',
   'weight',
   'style',
@@ -184,6 +185,7 @@ export const canvasFontStack = (family: CanvasTextFamily): string => {
 const SUPPORT: Record<TypographyKind, ReadonlySet<TypographyProp>> = {
   figureText: new Set<TypographyProp>([
     'fontFamily',
+    'fontFallback',
     'sizePt',
     'weight',
     'style',
@@ -245,6 +247,7 @@ export function commonSupport(kinds: readonly TypographyKind[]): Set<TypographyP
 const PATHS: Record<TypographyKind, Partial<Record<TypographyProp, string>>> = {
   figureText: {
     fontFamily: 'fontfamily',
+    fontFallback: 'fontfamily.fallback',
     sizePt: 'fontsize',
     weight: 'weight',
     style: 'style',

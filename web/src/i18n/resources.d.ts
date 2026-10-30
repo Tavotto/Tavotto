@@ -5087,9 +5087,13 @@ export default interface Resources {
       "background": "背景",
       "bold": "加粗",
       "boldWeight": "字重 · {{value}}",
+      "cjkFallback": "中文字体",
+      "cjkFallbackAuto": "自动",
+      "cjkFallbackShadowed": "请改选不含中文字符的英文字体。",
       "color": "文字颜色",
       "italic": "斜体",
       "italicStyle": "字形 · {{value}}",
+      "latinFont": "英文字体",
       "layout": "文字样式与层级",
       "prop": {
         "alpha": "不透明度",

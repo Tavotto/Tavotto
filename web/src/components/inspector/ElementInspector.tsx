@@ -64,6 +64,7 @@ import {
   setColormapOverrides,
   setOverride,
   setOverrides,
+  setFigureFontChoice,
   unhideElement,
 } from '@/store/actions'
 import { readAxesTickModel, type SidePlan } from '@/lib/tickSides'
@@ -99,6 +100,7 @@ import {
   groupLabel,
   groupRank,
   optionLabel,
+  fontFamilyOptionLabel,
   propLabel,
   roleName,
   unsupportedOf,
@@ -190,6 +192,7 @@ import {
 } from '@/lib/legendModel'
 import { mergeUnsupported, UnsupportedProps } from './UnsupportedProps'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { figureFontChoice, figurePrimaryValue } from '@/lib/figureFontChoice'
 import { patchBoundsOf } from '@/lib/patchResize'
 import { PatchSizeControls } from './PatchSizeControls'
 import { useRenderProgress } from '@/hooks/useRenderProgress'
@@ -895,7 +898,9 @@ function PairRow({
     panel.overrides.some((o) => o.gid === element.gid && o.prop === prop)
   const byProp = (prop: string) => (a.prop === prop ? a : b)
   const cell = (field: EditableField, prefix: string) => {
-    const label = propLabel(field.prop, element.role)
+    const label = field.prop === 'fontfamily' && field.font_fallback_selection
+    ? translate('textBar.latinFont', { ns: 'inspector' })
+    : propLabel(field.prop, element.role)
     return (
       <div key={field.prop} data-prop={field.prop} className={cn('flex min-w-0 items-center', INSPECTOR_HALF)}>
         <NumberField
@@ -2109,7 +2114,7 @@ function BatchFieldRow({
 /** 当前值：优先取尚未渲染回来的 override，保证输入即时反馈 */
 function currentValue(panel: PanelObject, gid: string, field: EditableField): unknown {
   const ov = effectiveOverride(panel.overrides, gid, field.prop)
-  return ov ? ov.value : field.value
+  return ov ? (field.prop === 'fontfamily' ? figurePrimaryValue(ov.value, field.value) : ov.value) : field.value
 }
 
 /**
@@ -2419,32 +2424,41 @@ function FieldRow({
           ariaLabel={label}
         />,
       )
-    case 'font':
-      // 本机字体族接在首选项后面（唯一的并表出处 `withMachineFamilies`）
-      {
-        const merged = withMachineFamilies(
-          field,
-          rowManifest?.font_families,
-          rowManifest?.font_family_names,
-        )
-        const fontOpts = merged?.options ?? enumOptions
-        const fm = fontFamilySelectModel({
-          value: enumValue,
-          options: fontOpts,
-          labels: merged?.option_labels,
-          faces: merged?.option_faces,
-          onChange: writeOnce,
-        })
-        return wrap(
+    case 'font': {
+      const merged = withMachineFamilies(field, rowManifest?.font_families, rowManifest?.font_family_names)
+      const fontOpts = merged?.options ?? enumOptions
+      const selection = figureFontChoice(effectiveOverride(panel.overrides, element.gid, 'fontfamily')?.value)
+      const latinOnly = new Set(rowManifest?.font_latin_only_families ?? [])
+      const allowedOptions = selection ? fontOpts.filter((o) => latinOnly.has(o) || o === enumValue) : fontOpts
+      const fm = fontFamilySelectModel({
+        value: enumValue,
+        options: allowedOptions,
+        labels: merged?.option_labels,
+        faces: merged?.option_faces,
+        onChange: (v) => {
+          if (selection && !latinOnly.has(v)) return
+          setFigureFontChoice(panel.id, [element.gid], 'primary', v, elMsg('editProp', { label }))
+        },
+      })
+      const fallbackNames = selection && !fontOpts.includes(selection.fallback) ? [selection.fallback, ...fontOpts] : fontOpts
+      return <>
+        {field.font_fallback_selection && <Row label={translate('textBar.cjkFallback', { ns: 'inspector' })} labelWidth={LABEL_W}>
           <Select
-            value={fm.value}
-            onChange={fm.onChange}
-            options={fm.options}
-            title={fm.title}
-            ariaLabel={label}
-          />,
-        )
-      }
+            ariaLabel={translate('textBar.cjkFallback', { ns: 'inspector' })}
+            value={selection?.fallback ?? '__auto__'}
+            onChange={(v) => setFigureFontChoice(panel.id, [element.gid], 'fallback', v === '__auto__' ? null : v, elMsg('editProp', { label: translate('textBar.cjkFallback', { ns: 'inspector' }) }))}
+            options={[
+              { value: '__auto__', label: translate('textBar.cjkFallbackAuto', { ns: 'inspector' }) },
+              ...fallbackNames.map((v) => ({ value: v, label: fontFamilyOptionLabel(v, merged?.option_labels, fallbackNames) })),
+            ]}
+          />
+          {selection && !latinOnly.has(enumValue) && <Tip label={<span className="block max-w-40 whitespace-normal">{translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })}</span>} side="left">
+            <button type="button" className="shrink-0 text-xs text-ink-3" aria-label={translate('textBar.cjkFallbackShadowed', { ns: 'inspector' })}>ⓘ</button>
+          </Tip>}
+        </Row>}
+        {wrap(<Select value={fm.value} onChange={fm.onChange} options={fm.options} title={fm.title} ariaLabel={label} />)}
+      </>
+    }
     case 'aspect':
       // 纵横比：自动 / 等比例 / 自定义比例——绝不落进下面 text 那一支的富文本编辑器。
       // 自定义档是两行（分段控件 + 数字框），标签对齐第一行，不悬在两行中间

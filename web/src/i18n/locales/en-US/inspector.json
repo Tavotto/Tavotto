@@ -1062,6 +1062,10 @@
     "upper": "UPPERCASE"
   },
   "textBar": {
+    "cjkFallback": "Chinese font",
+    "cjkFallbackAuto": "Automatic",
+    "cjkFallbackShadowed": "Choose an English font without Chinese characters.",
+    "latinFont": "English font",
     "alignCenter": "Center",
     "alignLeft": "Align left",
     "alignRight": "Align right",
