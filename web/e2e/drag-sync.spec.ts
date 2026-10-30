@@ -289,7 +289,9 @@ test('legend, font and figure size survive saving and reopening', async ({ app, 
   const open = page.getByRole('dialog')
   await open.getByRole('button', { name: '拖动同步回归' }).click()
   await expect(open).toBeHidden()
-  if (!(await page.locator('[data-element-svg] > svg').count())) {
+  // SVG can also be displayed outside figure editing; the hit layer is the
+  // actual indicator that the reopened panel is ready for in-figure editing.
+  if (!(await page.locator('[data-authority]').count())) {
     await page.locator('[data-object-id]').dblclick()
   }
   await expect(page.locator('[data-element-svg] > svg')).toBeVisible({ timeout: 90_000 })
