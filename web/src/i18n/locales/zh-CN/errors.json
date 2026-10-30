@@ -303,7 +303,7 @@
     "project_copy_dest_invalid": "这个位置不能用来另存，请换一个文件夹。",
     "project_copy_dest_unwritable": "这个文件夹也没有写入权限，请换一个。",
     "project_copy_failed": "另存没有完成：{{reason}}",
-    "output_folder_read_only": "因为 Tavotto 没有该文件夹的写入权限，因此某些输出文件未生成。",
+    "output_folder_read_only": "因为 {{product}} 没有该文件夹的写入权限，因此某些输出文件未生成。",
     "export_raster_too_large": "这张图按当前设置要生成 {{width}} × {{height}} 像素的位图，超过了上限（{{max_pixels}} 像素），为避免内存耗尽没有导出，原文件也没有改动。建议降低导出分辨率，或缩小图幅后再试；Tavotto 不会自动替你降低。",
     "script_input_stream_gone": "事件流已经断开，正在重新连接。",
     "script_input_transcript_failed": "脚本输入的执行记录读写失败，这次操作没有完成（答案和运行都没有改动），请稍后重试。",

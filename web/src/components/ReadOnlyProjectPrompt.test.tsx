@@ -22,11 +22,12 @@ vi.mock('@/lib/desktop', async (importOriginal) => ({
   pickDirectory: vi.fn(),
 }))
 
-import { ApiError, patchProjectSettings, saveProjectAs, type ProjectStatus } from '@/lib/api'
+import { ApiError, backendErrorText, EngineError, engineErrorMsg, patchProjectSettings, saveProjectAs, type ProjectStatus } from '@/lib/api'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
 import { ReadOnlyProjectPrompt } from '@/components/ReadOnlyProjectPrompt'
 import { resetReadOnlyPromptMemory } from '@/lib/readOnlyPromptMemory'
-import { t } from '@/i18n'
+import { formatMessage, t } from '@/i18n'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { useProjectStore } from '@/store/projectStore'
 
 declare global {
@@ -95,7 +96,10 @@ describe('ReadOnlyProjectPrompt', () => {
     await flush()
     const dialog = q('[data-dialog="readonly-project"]')!
     expect(dialog).toBeTruthy()
-    expect(dialog.textContent).toContain(t('readOnlyPrompt.title', { ns: 'project' }))
+    expect(dialog.textContent).toContain(t('readOnlyPrompt.title', { ns: 'project', product: PRODUCT_NAME }))
+    // 品牌名经插值进来，没有残留的占位符
+    expect(dialog.textContent).toContain(PRODUCT_NAME)
+    expect(dialog.textContent).not.toContain('{{')
     expect(q('[data-readonly-project-save]')!.textContent).toBe(t('readOnlyPrompt.save', { ns: 'project' }))
     expect(q('[data-readonly-project-continue]')!.textContent).toBe(
       t('readOnlyPrompt.continue', { ns: 'project' }),
@@ -189,5 +193,16 @@ describe('ReadOnlyProjectPrompt', () => {
     await setProject(status({ id: 'p2', figures_dir: '/data/other-ro' }))
     await flush()
     expect(q('[data-dialog="readonly-project"]')).toBeTruthy()
+  })
+})
+
+describe('output_folder_read_only 的渲染路径都带品牌名', () => {
+  it('backendErrorText / engineErrorMsg 渲染出产品名，没有残留 {{product}}', () => {
+    const viaBackend = backendErrorText(new ApiError('x', 500, { code: 'output_folder_read_only' }))
+    const viaEngine = formatMessage(engineErrorMsg(new EngineError('x', '', 'output_folder_read_only')))
+    for (const text of [viaBackend, viaEngine]) {
+      expect(text).toContain(PRODUCT_NAME)
+      expect(text).not.toContain('{{')
+    }
   })
 })

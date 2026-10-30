@@ -303,7 +303,7 @@
     "project_copy_dest_invalid": "This location can’t be used for the copy. Pick another folder.",
     "project_copy_dest_unwritable": "Tavotto can’t write to this folder either. Pick another one.",
     "project_copy_failed": "The copy didn’t finish: {{reason}}",
-    "output_folder_read_only": "Some output files weren’t created because Tavotto doesn’t have write permission for that folder.",
+    "output_folder_read_only": "Some output files weren’t created because {{product}} doesn’t have write permission for that folder.",
     "export_raster_too_large": "At the current settings this figure would need a {{width}} × {{height}}-pixel bitmap, over the {{max_pixels}}-pixel limit. To avoid running out of memory nothing was exported, and your original files are unchanged. Try a lower export resolution or a smaller figure size; Tavotto does not lower it for you.",
     "script_input_stream_gone": "The event stream disconnected; reconnecting.",
     "script_input_transcript_failed": "The script-input run record could not be read or written, so this action did not complete (nothing was changed or run). Please try again.",

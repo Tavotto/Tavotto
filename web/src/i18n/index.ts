@@ -33,6 +33,7 @@ import enDialogs from './locales/en-US/dialogs.json'
 import enErrors from './locales/en-US/errors.json'
 import enAi from './locales/en-US/ai.json'
 import enShortcuts from './locales/en-US/shortcuts.json'
+import { PRODUCT_NAME } from '@/lib/brand'
 
 export const NAMESPACES = [
   'common',
@@ -90,7 +91,9 @@ export function initI18n(locale?: Locale): typeof i18n {
     defaultNS: DEFAULT_NS,
     // 中文没有 XSS 意义上的转义需求，且 React 本身已经转义；开着只会把
     // 用户的文件名里的引号显示成 &#39;
-    interpolation: { escapeValue: false },
+    // `{{product}}` 在每一条渲染路径上都有值（错误码文案经 backendErrorText / engineErrorMsg / toast 等许多路径渲染，
+    // 逐处传参漏一处就是界面上一个原样的 {{product}}）；调用处显式传 `product` 仍然优先。品牌唯一出处 lib/brand.ts
+    interpolation: { escapeValue: false, defaultVariables: { product: PRODUCT_NAME } },
     returnNull: false,
     // 缺 key 时回退到 key 本身而不是空串：漏翻至少还看得见是哪一条。
     //

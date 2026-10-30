@@ -3155,7 +3155,7 @@ export default interface Resources {
       "oauth_start_failed": "无法连接登录服务，请检查网络后再试。",
       "oauth_unavailable": "这个服务暂不支持账号登录。",
       "open_project_failed": "无法打开该项目：{{reason}}",
-      "output_folder_read_only": "因为 Tavotto 没有该文件夹的写入权限，因此某些输出文件未生成。",
+      "output_folder_read_only": "因为 {{product}} 没有该文件夹的写入权限，因此某些输出文件未生成。",
       "package_file_missing": "缺少上传文件",
       "package_invalid": "不是有效的项目包：{{reason}}",
       "package_schema_unsupported": "项目包里的排版既不是 schema 2 也不是 schema 3",
@@ -5358,7 +5358,7 @@ export default interface Resources {
       "continue": "继续只读打开",
       "pickTitle": "选择另存到哪个文件夹",
       "save": "另存为…",
-      "title": "Tavotto 没有这个文件夹的写入权限。另存一份到你自己的文件夹再编辑？"
+      "title": "{{product}} 没有这个文件夹的写入权限。另存一份到你自己的文件夹再编辑？"
     },
     "switcher": {
       "home": "回到项目列表",

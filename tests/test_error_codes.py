@@ -483,8 +483,8 @@ USER_VISIBLE_CODES = {
     "project_copy_dest_invalid": set(),
     "project_copy_dest_unwritable": set(),
     "project_copy_failed": {"reason"},
-    # --- 只读项目里脚本写不出输出文件（worker 把 EACCES/EROFS 的写失败归成这个码；文案固定、不带路径）---
-    "output_folder_read_only": set(),
+    # --- 只读项目里脚本写不出输出文件（worker 把 EACCES/EROFS 的写失败归成这个码；文案只有 {{product}} 一个占位，由前端填，不带路径）---
+    "output_folder_read_only": {"product"},
     # 写回只重写 .pdf / .png：画布上是 JPEG / TIFF 时如实拒绝
     "write_back_format_unsupported": {"format"},
     # 同一 stem 下另一张图写的文件（`app.WriteBackForeignFileError`）：写回拒绝覆盖

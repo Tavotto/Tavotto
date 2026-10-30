@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { backendErrorText, saveProjectAs } from '@/lib/api'
+import { PRODUCT_NAME } from '@/lib/brand'
 import { isDesktop, pickDirectory } from '@/lib/desktop'
 import { applyProjectSettingsPatch } from '@/lib/projectSettingsPatch'
 import { markAsked, wasAsked } from '@/lib/readOnlyPromptMemory'
@@ -109,7 +110,7 @@ export function ReadOnlyProjectPrompt() {
         }}
         // Esc = 这次先不决定：不写记忆，下次打开还会问
         onEscape={close}
-        title={t('readOnlyPrompt.title')}
+        title={t('readOnlyPrompt.title', { product: PRODUCT_NAME })}
         size="sm"
         busy={busy}
         anchor="readonly-project"
