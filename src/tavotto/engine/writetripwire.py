@@ -54,6 +54,7 @@ import errno
 import functools
 import io
 import os
+import pathlib
 import re
 import shutil
 import sys
@@ -926,4 +927,18 @@ def _install_redirect() -> None:
     shutil.copytree = _w_copytree(shutil.copytree)
     shutil.rmtree = _w_rmtree(shutil.rmtree)
     shutil.move = _w_move(shutil.move)
+    # Python < 3.11：pathlib 的 `_NormalAccessor` 在 import 时把 `io.open` / `os.mkdir|unlink|rmdir|rename|replace` 绑成类属性，
+    # 上面对模块属性的替换到不了它们（Path.write_bytes / rename 会绕过改道，被绊线拦下）；3.11+ 的 pathlib 调用时才查 `os.*`。
+    accessor = getattr(pathlib, "_NormalAccessor", None)
+    if accessor is not None:
+        for name, fn in (
+            ("open", wrapped_open),
+            ("mkdir", os.mkdir),
+            ("unlink", os.unlink),
+            ("rmdir", os.rmdir),
+            ("rename", os.rename),
+            ("replace", os.replace),
+        ):
+            if hasattr(accessor, name):
+                setattr(accessor, name, staticmethod(fn))
     _state["redirect_installed"] = True

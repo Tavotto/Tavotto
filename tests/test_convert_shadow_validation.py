@@ -929,3 +929,23 @@ def test_copy2_never_reaches_winapi_copyfile2_during_validation(world):
     )
     assert result["status"] == "ok", result
     assert _redirected(cand, "sub/data.csv").read_text() == "from-src"
+
+
+def test_pathlib_write_unlink_rename_are_redirected_too(world):
+    """Python 3.10 的 pathlib 在 import 时就绑定了 io.open / os.*：改道必须也盖住 Path 的写 / 删 / 改名。"""
+    result, cand = _validate(
+        world,
+        "from pathlib import Path\n"
+        "p = Path(here) / 'p.csv'\np.write_bytes(b'bytes')\nassert p.read_bytes() == b'bytes'\n"
+        "p.write_bytes(b'text')\nassert p.read_bytes() == b'text'\n"
+        "q = Path(here) / 'q.csv'\np.rename(q)\nassert q.read_bytes() == b'text' and not os.path.exists(p)\n"
+        "r = Path(here) / 'r.csv'\nq.replace(r)\n"
+        "(Path(here) / 'newdir').mkdir()\n(Path(here) / 'newdir').rmdir()\n"
+        "assert r.read_bytes() == b'text'\n"
+        "Path(here, 'kept.csv').write_bytes(b'kept')\n"
+        "Path(here, 't.csv').touch()\n",
+    )
+    assert result["status"] == "ok", result
+    assert _redirected(cand, "sub/kept.csv").read_text() == "kept"
+    assert _redirected(cand, "sub/t.csv").exists()
+    assert not (world[0] / "sub" / "kept.csv").exists()
