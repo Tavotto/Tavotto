@@ -462,3 +462,26 @@ def test_router_without_the_offer_is_unchanged():
 
 def test_engine_pool_still_reports_the_blocked_code():
     assert engine_pool.FILE_OPERATION_BLOCKED_CODE == "safe_file_operation_blocked"
+
+
+def test_a_desktop_run_declined_for_another_reason_gets_no_button(
+    client, tmp_path, fake_pool, native, sessions, monkeypatch
+):
+    """只有「不是桌面发起」这一种没回退可以靠点击顶替：桌面窗口里 native 计划算不出来（plan_unavailable）时不出确认卡。"""
+    import dataclasses
+
+    _open(client, _project(tmp_path, "p"))
+    state = _mode(desktop=True, secret=None)
+    client.set_cookie(security.COOKIE_NAME, state.redeem(NONCE))
+    real = prepsession.SessionService._plan_of
+
+    def plan_of(project_id, project_root, target):
+        plan = real(project_id, project_root, target)
+        if target.get("execution") == "native":
+            plan = dataclasses.replace(plan, native_spec=None)
+        return plan
+
+    monkeypatch.setattr(prepsession.SessionService, "_plan_of", staticmethod(plan_of))
+    final = _run(client, tmp_path, fake_pool)
+    assert _history(final)[0]["declined"] == "plan_unavailable"
+    assert KIND not in _kinds(final) and native["calls"] == []
