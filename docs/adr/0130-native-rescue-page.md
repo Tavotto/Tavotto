@@ -42,7 +42,7 @@ ACL 之外 Rust 端再查一道（`rescue::decide`）：窗口 label 必须是 `
 「重新安装 Tavotto」（`rescue_status.reinstall`，判据只有 `rescue::reinstall_applies`），「重新启动」退到「其他选项」。
 `rescue_reinstall` 走同一个协调器（同一把锁、内置公钥、`run_install_expecting`），区别只有一处：**允许同版本**——`app_update::reinstall_builder`
 在 `UpdaterBuilder` 上设 `version_comparator(remote >= current)`，仅 `run_reinstall` 使用（回退来源重新 check 用的也是这个放宽过的工厂，仍须报同一版本）；
-普通更新路径传进去的 `make` 没有这个判据，「只装更新版本」不变，结构测试钉死 `.version_comparator(` 在生产源码里只有一处。
+普通更新路径传进去的 `make` 没有这个判据，「只装更新版本」不变，`reinstall_guard_tests.rs` 用 `syn` AST 钉死：`.version_comparator(..)` 在全部生产源码里只有一处，`run_reinstall` / `update_reinstall` / `reinstall_builder` 的任何引用（含 `use … as` 改名）只许出现在规定的外层 fn。
 放行门禁 `rescue::decide_reinstall` = `decide`（可信页面 + 从未进入编辑态）+ 当前失败码是 `sidecar_not_found`（否则 `reinstall_not_applicable`）。
 清单比当前旧或拿不到：`reinstall_unavailable` / `all_sources_failed`，不降级；清单比当前新则装新版（同样修好）。无论成败，结束时清掉候选句柄，
 同版本候选不会留给 `rescue_update_install`。正文一句话：「Tavotto 的部分文件丢失，重新安装即可恢复。若反复出现，请把 Tavotto 加入杀毒软件的信任列表。」

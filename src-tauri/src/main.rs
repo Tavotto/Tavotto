@@ -18,6 +18,8 @@ mod fullscreen_observer;
 mod i18n;
 #[cfg(target_os = "macos")]
 mod native_drop;
+#[cfg(test)]
+mod reinstall_guard_tests;
 mod remote;
 mod rescue;
 mod shell_report;

@@ -560,44 +560,6 @@ mod tests {
     }
 
     #[test]
-    fn the_same_version_comparator_exists_only_in_the_reinstall_builder() {
-        // 普通更新路径的「只装更新版本」语义不能变：放宽版本判据的 `version_comparator(` 在整个壳的生产源码里
-        // 只许出现一次，且在 `reinstall_builder` 里；rescue_reinstall 以外没有人调用 reinstall 入口
-        let sources = [
-            ("app_update.rs", include_str!("app_update.rs")),
-            ("main.rs", include_str!("main.rs")),
-            ("rescue.rs", include_str!("rescue.rs")),
-            ("sidecar.rs", include_str!("sidecar.rs")),
-        ];
-        let total: usize = sources
-            .iter()
-            .map(|(_, s)| prod(s).matches(".version_comparator(").count())
-            .sum();
-        assert_eq!(total, 1);
-        let au = prod(include_str!("app_update.rs"));
-        let at = au.find("fn reinstall_builder<").expect("reinstall_builder");
-        assert!(au[at..].find(".version_comparator(").unwrap() < 400);
-        // 协调器入口 `run_reinstall` 的调用点：只有 main.rs 的 update_reinstall 一处
-        for (name, src) in sources {
-            let n = prod(src).matches("app_update::run_reinstall(").count();
-            assert_eq!(n, usize::from(name == "main.rs"), "{name}");
-        }
-        // main.rs 里只有 `update_reinstall` 的定义，唯一的调用点是 rescue_reinstall（先过 gate_reinstall）
-        assert_eq!(
-            prod(include_str!("main.rs"))
-                .matches("update_reinstall(")
-                .count(),
-            1
-        );
-        assert_eq!(
-            prod(include_str!("rescue.rs"))
-                .matches("crate::update_reinstall(")
-                .count(),
-            1
-        );
-    }
-
-    #[test]
     fn the_entered_flag_only_ever_goes_one_way() {
         let s = RescueState::default();
         assert!(!s.entered());
