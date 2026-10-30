@@ -5374,7 +5374,9 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
     installed = {
         name: str(inv[name].get("version") or "")
         for rec in job.record
-        if inv and (name := depresolve.normalize_distribution(str(rec["distribution"]))) in inv
+        if inv
+        and (name := depresolve.normalize_distribution(str(rec["distribution"]))) in inv
+        and inv[name]
     }
     if inv is not None:
         job.diagnostic["installed"] = [
