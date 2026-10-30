@@ -1531,7 +1531,9 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             inputs_digest=wide.inputs_digest if wide else "",
             requested=req if wide else None,
         )
-        outcome = _run_generation_locked(job, cancel_ev, env_key)
+        outcome = _observe_generation(
+            job, lambda observed: _run_generation_locked(observed, cancel_ev, env_key)
+        )
         if not outcome.get("ok"):
             return outcome
         version = outcome["installed"].get(depresolve.normalize_distribution(req.distribution), "")
@@ -3811,7 +3813,9 @@ def _run_package_job(job: PackageJob, env_key: str, on_event, cancel_ev: threadi
             provision_private=job.private_python is not None,
             private_plan=job.private_python,
         )
-        outcome = _run_generation_locked(gen_job, cancel_ev, env_key)
+        outcome = _observe_generation(
+            gen_job, lambda observed: _run_generation_locked(observed, cancel_ev, env_key)
+        )
         if not outcome.get("ok"):
             return outcome
         version = outcome["installed"].get(depresolve.normalize_distribution(job.distribution), "")
@@ -5135,10 +5139,9 @@ def _note_unreadable_installs(project: str, record, python: str = "") -> None:
             pool.note_unreadable_install(project, name, python)
 
 
-def _run_generation(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
+def _observe_generation(job: _GenerationJob, run) -> dict:
+    """Record terminal facts once, including for callers that already hold the lease."""
     project = job.project
-    key = _env_key(TARGET_MANAGED, "", project)
-    active_python = managedenv.python_of(project) or ""
     facts = job.diagnostic
     facts["started_at"] = time.time()
     recorded = False
@@ -5165,23 +5168,33 @@ def _run_generation(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
 
     job = dataclasses.replace(job, emit=emit_observed)
     try:
-        # 锁：合成 key（序列化同一项目的两次换代）+ active 那一代的解释器（挡住包管理的原地
-        # 作业同时改它——两者的账要一致）。**不收掉旧代上的 worker**（`shutdown=False`）：
-        # 旧代目录不动，它们跑完自然作废；native 会话同理不杀（有就拒绝开始）。
-        with pool.mutating_environment(key, active_python, shutdown=False):
-            if job.refuse_pinned:
-                _refuse_if_pinned()
-            result = _run_generation_locked(job, cancel_ev, key)
-            record_terminal("done" if result.get("ok") else result.get("state", "unknown"))
-            return result
-    except pool.EnvironmentBusy as exc:
-        record_terminal("failed", ERROR_BUSY)
-        raise _busy_error(exc) from exc
+        result = run(job)
+        record_terminal("done" if result.get("ok") else result.get("state", "unknown"))
+        return result
     except Exception as exc:
         record_terminal("failed", getattr(exc, "code", None))
         raise
     finally:
         record_terminal("unknown")
+
+
+def _run_generation(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
+    project = job.project
+    key = _env_key(TARGET_MANAGED, "", project)
+    active_python = managedenv.python_of(project) or ""
+
+    def under_lease(observed):
+        try:
+            # Existing callers of _run_generation_locked already hold this
+            # lease; only the top-level generation path acquires it here.
+            with pool.mutating_environment(key, active_python, shutdown=False):
+                if observed.refuse_pinned:
+                    _refuse_if_pinned()
+                return _run_generation_locked(observed, cancel_ev, key)
+        except pool.EnvironmentBusy as exc:
+            raise _busy_error(exc) from exc
+
+    return _observe_generation(job, under_lease)
 
 
 def _require_record_sources(record) -> None:

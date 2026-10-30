@@ -258,3 +258,86 @@ def test_render_observation_failure_never_changes_render_result(monkeypatch, cap
         _, _, result = app._engine_attempt("id", worker, "stem", run, observe_worker=observe)
         assert result == {"result": "ok"}
     assert "private path or output must not be logged" not in caplog.text
+
+
+@pytest.mark.parametrize("entry", ["repair", "package"])
+@pytest.mark.parametrize("outcome", ["done", "failed", "cancelled"])
+def test_already_locked_generation_callers_record_terminal_jobs(
+    tmp_path, monkeypatch, entry, outcome
+):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(envdiag.config, "data_dir", lambda: tmp_path / "data")
+    monkeypatch.setattr(deprepair, "_emit", lambda *a, **kw: None)
+    monkeypatch.setattr(deprepair, "_emit_job", lambda *a, **kw: None)
+    monkeypatch.setattr(deprepair, "_emit_repair_step", lambda *a, **kw: None)
+    monkeypatch.setattr(deprepair, "_emit_generation_step", lambda *a, **kw: None)
+    monkeypatch.setattr(deprepair.pool, "note_unreadable_install", lambda *a, **kw: None)
+    monkeypatch.setattr(deprepair.managedenv, "read_manifest", lambda *a: {})
+    monkeypatch.setattr(
+        deprepair.pool,
+        "mutating_environment",
+        lambda *a, **kw: pytest.fail("already-locked caller must not reacquire the lease"),
+    )
+    project = str(tmp_path / "project")
+    requirement = deprepair.depresolve.DependencyRequirement("openpyxl", "openpyxl")
+    plan = SimpleNamespace(
+        plan_id="repair",
+        project=project,
+        project_id="pj",
+        script="plot.py",
+        python="",
+        target_kind=deprepair.TARGET_MANAGED,
+        requirement=requirement,
+        widened=None,
+        pip_inputs=deprepair.PipInputs(("openpyxl",), (), {}, False, ()),
+        private_python=None,
+        impact={},
+    )
+    job = SimpleNamespace(
+        job_id="package",
+        project=project,
+        op="install",
+        distribution="openpyxl",
+        requirement="openpyxl",
+        python="",
+        creates_environment=True,
+        private_python=None,
+    )
+
+    def generation(generation_job, _cancel, _key):
+        generation_job.diagnostic.update(
+            requested=["openpyxl"],
+            installed=[{"name": "openpyxl", "version": "3.1.5"}],
+            committed=outcome == "done",
+        )
+        generation_job.emit(outcome)
+        if outcome == "failed":
+            raise deprepair.RepairError(deprepair.ERROR_FAILED, "private pip output")
+        if outcome == "cancelled":
+            return {"ok": False, "state": "cancelled"}
+        return {
+            "ok": True,
+            "installed": {"openpyxl": "3.1.5"},
+            "python": "python",
+            "generation": "a" * 16,
+        }
+
+    monkeypatch.setattr(deprepair, "_run_generation_locked", generation)
+
+    def invoke():
+        if entry == "repair":
+            return deprepair._run_install(plan, "held", None, None)
+        return deprepair._run_package_job(job, "held", None, None)
+
+    if outcome == "failed":
+        with pytest.raises(deprepair.RepairError):
+            invoke()
+    else:
+        invoke()
+    rows = envdiag.recent(project)
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == outcome
+    assert rows[0]["requested"] == ["openpyxl"]
+    assert rows[0]["installed"] == [{"name": "openpyxl", "version": "3.1.5"}]
+    assert "private pip output" not in json.dumps(rows)
