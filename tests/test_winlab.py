@@ -3369,7 +3369,14 @@ def test_glance_page_first_stack_is_the_product_ui_font_stack():
     css = (ROOT / "web" / "src" / "index.css").read_text(encoding="utf-8")
     sans = " ".join(re.search(r"--font-sans:\s*(.*?);", css, re.S).group(1).split())
     page = (ROOT / A.SHOT_PAGES["glance-fonts"]).read_text(encoding="utf-8")
-    assert re.findall(r"<code data-stack>(.*?)</code>", page)[0] == sans
+    sections = re.findall(r"<section>(.*?)</section>", page, re.S)
+    assert sections
+    for sec in sections:
+        # 画字的是 SVG 上的 font-family，`<code>` 只是说明：每张 SVG 都要与本节写出来的栈逐字相同
+        label = re.search(r"<code data-stack>(.*?)</code>", sec).group(1)
+        drawn = re.findall(r'<svg [^>]*style="font-family: ([^"]*)"', sec)
+        assert len(drawn) == 2 and all(d == label for d in drawn), (label, drawn)
+    assert re.search(r"<code data-stack>(.*?)</code>", sections[0]).group(1) == sans
 
 
 def test_find_edge_only_looks_in_program_files(tmp_path):
