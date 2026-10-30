@@ -3155,6 +3155,7 @@ export default interface Resources {
       "oauth_start_failed": "无法连接登录服务，请检查网络后再试。",
       "oauth_unavailable": "这个服务暂不支持账号登录。",
       "open_project_failed": "无法打开该项目：{{reason}}",
+      "output_folder_read_only": "因为 {{product}} 没有该文件夹的写入权限，因此某些输出文件未生成。",
       "package_file_missing": "缺少上传文件",
       "package_invalid": "不是有效的项目包：{{reason}}",
       "package_schema_unsupported": "项目包里的排版既不是 schema 2 也不是 schema 3",
@@ -3184,6 +3185,10 @@ export default interface Resources {
       "profile_store_unsupported_schema": "该配置由更高版本的 Tavotto 写入。本版本只读，升级后再修改。",
       "profile_too_large": "导入的文件太大",
       "project_closed": "项目已关闭，AI 修改后的刷新已跳过。下次打开项目时会读到新脚本。",
+      "project_copy_dest_invalid": "这个位置不能用来另存，请换一个文件夹。",
+      "project_copy_dest_unwritable": "这个文件夹也没有写入权限，请换一个。",
+      "project_copy_failed": "另存没有完成：{{reason}}",
+      "project_copy_too_large": "项目文件夹超过 {{limit_mb}} MB，没有另存。",
       "project_env_already_attempted": "本轮已自动换过一次环境。请手动重试。",
       "project_env_module_missing": "项目环境里也没有该包。",
       "project_env_no_matplotlib": "项目环境无法导入 matplotlib。",
@@ -5348,6 +5353,14 @@ export default interface Resources {
       "tutorialLabel": "新手教程",
       "tutorialOpening": "准备中…",
       "tutorialUnavailable": "教程资源不完整。请重新安装 Tavotto。"
+    },
+    "readOnlyPrompt": {
+      "continue": "继续只读打开",
+      "openCopy": "打开副本",
+      "partial_other": "有 {{count}} 个文件读不了，没有复制进副本。",
+      "pickTitle": "选择另存到哪个文件夹",
+      "save": "另存为…",
+      "title": "{{product}} 没有这个文件夹的写入权限。另存一份到你自己的文件夹再编辑？"
     },
     "switcher": {
       "home": "回到项目列表",

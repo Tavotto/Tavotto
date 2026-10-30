@@ -39,6 +39,7 @@ from __future__ import annotations
 import argparse
 import ast
 import contextlib
+import errno
 import faulthandler
 import hashlib
 import importlib
@@ -775,6 +776,141 @@ FILE_OPERATION_BLOCKED = "safe_file_operation_blocked"
 #: MCP 来源的 safe 运行里，脚本想写授权根之外（写入根绊线，#898）。**绊线不是沙盒**，盲区见 `writetripwire`。
 #: 不属于 `execpolicy.BLOCKED_CODES`：它不会触发「换 native 重跑」的回退（native 没有绊线，换过去等于放行）。
 WRITE_OUTSIDE_ROOTS = writetripwire.CODE
+#: 脚本想写的文件夹没有写入权限（只读项目 / 只读卷），脚本因此没能写出它的输出文件。与父进程
+#: `pool.OUTPUT_FOLDER_READ_ONLY_CODE` 同值（本模块不 import 兄弟模块）。
+OUTPUT_FOLDER_READ_ONLY = "output_folder_read_only"
+_WRITE_DENIED_ERRNOS = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
+
+
+#: 脚本 build 期间**带写意图**的文件系统操作所碰的路径（原样字符串，与 `OSError.filename` 同一个写法）。
+#: `OSError` 不带“是读还是写”：另一个账户 0700 目录里的输入 CSV，`open(..., "r")` 也是 EACCES，且
+#: `lexists` 看不见它（目录进不去）。所以写意图在**失败现场**由审计钩子记下，分类时只认记过的路径。
+#: 与 `writetripwire` 无关（那是 MCP 的越界绊线，另一个模块、另一套判据），这里只记、不拦。
+#: 值是**事件发生那一刻**解成的绝对路径（`os.path.abspath`，用当时的 cwd）：脚本 `chdir` 进只读目录写、
+#: 异常展开时又 `chdir` 回来，分类时再按现在的 cwd 解相对路径就指到了别处。
+_WRITE_ATTEMPTS: dict[str, str] = {}
+_WRITE_ATTEMPTS_CAP = 512
+_write_recording = False
+_write_hook_installed = False
+_WRITE_OPEN_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
+#: 非 `open` 的变更事件 → 带路径的参数下标
+_WRITE_MUTATION_EVENTS = {
+    "os.mkdir": (0,),
+    "os.rename": (0, 1),
+    "os.remove": (0,),
+    "os.rmdir": (0,),
+    "os.truncate": (0,),
+    "os.symlink": (1,),
+    "os.link": (0, 1),
+    "shutil.copyfile": (1,),
+    "shutil.move": (0, 1),
+    "shutil.rmtree": (0,),
+}
+
+
+def _note_write_path(value) -> None:
+    if isinstance(value, bytes):
+        try:
+            value = os.fsdecode(value)
+        except (UnicodeError, ValueError):
+            return
+    elif isinstance(value, os.PathLike):
+        try:
+            value = os.fspath(value)
+        except TypeError:
+            return
+        if isinstance(value, bytes):
+            return
+    if not isinstance(value, str) or not value:
+        return
+    try:
+        absolute = os.path.abspath(value)
+    except (OSError, ValueError):
+        return
+    if len(_WRITE_ATTEMPTS) >= _WRITE_ATTEMPTS_CAP:
+        _WRITE_ATTEMPTS.pop(next(iter(_WRITE_ATTEMPTS)), None)
+    _WRITE_ATTEMPTS[value] = absolute
+
+
+def _write_attempt_hook(event, args):
+    if not _write_recording:
+        return
+    try:
+        if event == "open":
+            path, mode, flags = args[0], args[1], args[2]
+            write = (isinstance(mode, str) and any(c in mode for c in "wax+")) or (
+                isinstance(flags, int) and bool(flags & _WRITE_OPEN_FLAGS)
+            )
+            if write:
+                _note_write_path(path)
+        elif event in _WRITE_MUTATION_EVENTS:
+            for i in _WRITE_MUTATION_EVENTS[event]:
+                if i < len(args):
+                    _note_write_path(args[i])
+    except Exception:  # noqa: BLE001 — 审计钩子里的任何异常都不许影响脚本
+        return
+
+
+def _record_write_attempts(on: bool) -> None:
+    """脚本 build 的括号：`True` 清空旧记录并开始记，`False` 停止（记录留到分类用）。钩子装上摘不掉（PEP 578），关着时零开销。"""
+    global _write_recording, _write_hook_installed
+    if on:
+        _WRITE_ATTEMPTS.clear()
+        if not _write_hook_installed:
+            sys.addaudithook(_write_attempt_hook)
+            _write_hook_installed = True
+    _write_recording = on
+
+
+def _write_denied_by_folder(
+    exc: BaseException, write_attempts: "dict[str, str] | frozenset[str]" = frozenset()
+) -> bool:
+    """异常链里有没有一次「文件夹不让写」：`OSError`（EROFS / EACCES / EPERM）带文件名，
+    且**接收这个文件的文件夹**此刻确实没有写入权限。
+
+    判据的主语是**文件夹**，不是异常类型：`PermissionError` 也是「读不了某个文件」的脸（那是
+    `import_folder_unreadable` / 用户自己的权限问题，换环境没用也不是只读项目）。所以：
+
+    * `EROFS` 本身就是只读卷，直接算；
+    * `EACCES` / `EPERM` 先要有**写意图**：这个文件名在 `write_attempts`（失败现场由审计钩子记下的带写意图的
+      操作）里；没有就不声称是输出失败（读不了另一个账户目录里的输入文件也是 EACCES）。然后要求父文件夹对当前账户
+      `W_OK` 为假，**并且**目标若已存在则必须是可读的——存在却读不了 = 读失败；
+    * 没有文件名（C 扩展里丢了）判不了，不算。
+    """
+    seen = 0
+    cur: BaseException | None = exc
+    while cur is not None and seen < 16:
+        if isinstance(cur, OSError) and cur.errno in _WRITE_DENIED_ERRNOS:
+            # `os.replace(可写临时文件, 只读目录/x)`：filename 是源、filename2 才是被拒的目标——两个都要看
+            for raw in (cur.filename, getattr(cur, "filename2", None)):
+                name = raw
+                if isinstance(name, bytes):
+                    try:
+                        name = os.fsdecode(name)
+                    except (UnicodeError, ValueError):
+                        name = None
+                if not (isinstance(name, str) and name):
+                    continue
+                if cur.errno == errno.EROFS:
+                    return True
+                if name not in write_attempts:
+                    continue
+                # 用记录写意图那一刻解出的绝对路径，不在分类时再按（可能已恢复的）cwd 解
+                recorded = write_attempts[name] if isinstance(write_attempts, dict) else name
+                path = Path(recorded)
+                parent = path.parent if str(path.parent) else Path(".")
+                try:
+                    exists = os.path.lexists(path)
+                    readable = (not exists) or os.access(path, os.R_OK)
+                    if readable and not os.access(parent, os.W_OK | os.X_OK):
+                        return True
+                except OSError:
+                    pass
+        cur = cur.__cause__ or cur.__context__
+        seen += 1
+    return False
+
+
 #: 载荷里的「该走哪条执行路径」：保留文件语义（native bridge / `tavotto run`）。字符串是桌面侧
 #: 接入依据；`adapter_available` 只说「这个 build 失败之后，桌面界面是否已经会自动换那条路径重跑」——
 #: 终端里的 `tavotto run` 一直可用，但自动回退没接通之前这个值保持 false（不承诺没接通的东西）。
@@ -1581,6 +1717,7 @@ class Worker(wireproto.V1Handler):
             contextlib.redirect_stdout(stdout_tail),
             executionfact.on_user_entry(self.script, self._execution_entered),
         ):
+            _record_write_attempts(True)
             if self.write_roots is not None:
                 writetripwire.arm(True)
             try:
@@ -1643,6 +1780,7 @@ class Worker(wireproto.V1Handler):
             finally:
                 # 脚本跑完了：之后再有谁读 stdin 一律 EOF，绝不再发问（也绝不再碰协议管道）
                 channel.closed = True
+                _record_write_attempts(False)
                 ledger.stop()
                 restore_spawn()
                 # 无论正常结束 / SystemExit / 异常都在这里收括号（finally 不改变原有异常传播）
@@ -1924,6 +2062,15 @@ class Worker(wireproto.V1Handler):
                     retryable=False,
                     traceback_text=traceback.format_exc(),
                     extra={"missing_input": missing},
+                ) from exc
+            if _write_denied_by_folder(exc, _WRITE_ATTEMPTS):
+                # 脚本想写的文件夹没有写入权限（只读项目）：用户的下一步是另存一份到自己的文件夹，
+                # 不是读 traceback，更不是换环境 / 让 AI 改脚本。traceback 仍随错误带出，供诊断
+                raise ProtocolError(
+                    OUTPUT_FOLDER_READ_ONLY,
+                    f"脚本想写的文件夹没有写入权限，因此某些输出文件未生成: {type(exc).__name__}",
+                    retryable=False,
+                    traceback_text=traceback.format_exc(),
                 ) from exc
             # 不是一次落空的只读打开、但异常链里确实有「文件不存在」（C++ 读取器）：码仍是
             # script_error，只多带一份事实；对不对得上脚本里哪串常量由父进程判（ADR 0110 §一）

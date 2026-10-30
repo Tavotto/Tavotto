@@ -166,5 +166,14 @@
     "scriptCount_other": "{{count}} linked scripts",
     "unpin": "Remove bookmark",
     "unpinLabel": "Remove bookmark for {{name}}"
+  },
+  "readOnlyPrompt": {
+    "title": "{{product}} can’t write to this folder. Save a copy to a folder of your own to edit it?",
+    "save": "Save a copy…",
+    "continue": "Open read-only",
+    "pickTitle": "Choose where to save the copy",
+    "partial_one": "{{count}} file couldn’t be read, so it wasn’t copied.",
+    "partial_other": "{{count}} files couldn’t be read, so they weren’t copied.",
+    "openCopy": "Open the copy"
   }
 }

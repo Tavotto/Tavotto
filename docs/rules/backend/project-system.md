@@ -159,3 +159,19 @@ order: 220
 - readiness 六态十码闭集、只报告不动手、「没测量」不压成零
 - `originalspec` 先量后猜
 - TIFF 范围只在 `tiffprobe`（候选后端静态源不经 `safe_resolve`，单独补闸）
+
+## 没有写入权限的项目（2026-10-30，维护者拍板）
+
+* **事实**：`project_status().writable`（`os.access(项目, W_OK)`，与 readiness 同一判据）。Windows 上目录 ACL
+  不一定反映在 `os.access` 里——判不出时前端不弹，失败时走下面第三条的稳定码。
+* **出口是另存一份**：`POST /api/project/save-as {parent}` → `engine/projectcopy.copy_project`，复制到
+  `parent/<项目名>`（重名加序号）。只拷普通文件内容（**不带只读权限位**，否则副本出生就只读）、不跟随符号链接、
+  体量护栏 `MAX_BYTES` / `MAX_FILES` 在写第一个字节前拒绝（`project_copy_too_large`）、中途失败清掉半成品。
+  项目级设置按路径存在用户配置里，**不随副本走**。打开副本是前端的事（`projectStore.open`）。
+* **用户坚决不另存**：`PATCH /api/project/settings {readonly_save_as_declined: true}` 按项目路径记住，之后不再问；
+  项目照常只读运行。脚本因此没写出的输出文件：worker 把「接收文件的文件夹没有写入权限」的 `OSError`
+  （EROFS，或 EACCES / EPERM 且父文件夹 `W_OK` 为假、目标存在则须可读）归成 `output_folder_read_only`
+  （`worker._write_denied_by_folder`；判据主语是**文件夹**，读不了某个文件仍是 `script_error`）。
+  默认沙盒档里 Tavotto 的写守卫本来就不让项目内的写落盘，所以这个码只在脚本目录档 / 项目根档 / native 档出现。
+* **从没打开过的只读文件夹**也能打开：`_open_project` 写不进注册表（无 `W_OK` 或 EROFS/EACCES/EPERM）时，静态扫描草稿只留在内存（`Registry.load_data(..., "<memory>")`），一个字节都不写进去；之后的刷新写不了走已有的 write_failed 路径。另存出的副本里注册表照常落盘。
+* 看护用例：`tests/test_readonly_project_save_as.py`、`tests/test_error_codes.py`。

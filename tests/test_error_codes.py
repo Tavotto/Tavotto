@@ -86,6 +86,8 @@ _CODE_REGISTRIES = (
     "tavotto.tiffprobe",
     # TeX 工具链失败（`texdiag`）：pool 的错误收口按 matplotlib 的模板把 script_error 换成这四个码
     "tavotto.engine.texdiag",
+    # 没有写入权限的项目另存一份（`projectcopy.CopyError`，由 app 的 `/api/project/save-as` 转出）
+    "tavotto.engine.projectcopy",
 )
 
 
@@ -476,6 +478,13 @@ USER_VISIBLE_CODES = {
     # --- issue #534：TIFF 素材。范围之外的 TIFF 在 `/api/panels` 的 `unsupported`、`safe_resolve`
     #     的 422 与导出作业里都报同一个 code，params 只有文件名 ---
     **{code: {"file"} for code in tiffprobe.ERROR_CODES},
+    # --- 只读项目另存一份（`engine/projectcopy`）：体量护栏 / 目标不可用 / 复制中途失败 ---
+    "project_copy_too_large": {"limit_mb"},
+    "project_copy_dest_invalid": set(),
+    "project_copy_dest_unwritable": set(),
+    "project_copy_failed": {"reason"},
+    # --- 只读项目里脚本写不出输出文件（worker 把 EACCES/EROFS 的写失败归成这个码；文案只有 {{product}} 一个占位，由前端填，不带路径）---
+    "output_folder_read_only": {"product"},
     # 写回只重写 .pdf / .png：画布上是 JPEG / TIFF 时如实拒绝
     "write_back_format_unsupported": {"format"},
     # 同一 stem 下另一张图写的文件（`app.WriteBackForeignFileError`）：写回拒绝覆盖

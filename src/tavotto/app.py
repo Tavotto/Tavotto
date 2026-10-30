@@ -134,6 +134,7 @@ from .engine import (
     profilestore as engine_profilestore,
     project_refresh as engine_refresh,
     project_watch as engine_watch,
+    projectcopy as engine_projectcopy,
     projectenv as engine_projectenv,
     projscan as engine_projscan,
     rasterhint as engine_rasterhint,
@@ -4075,8 +4076,19 @@ def _open_project(path: Path, make_default: bool) -> dict:
         reg = engine_registry.open_registry(path)
     except FileNotFoundError:
         cfg, rep = engine_discover.build_draft(path)
-        engine_discover.write_config(path, cfg, static_discovery=True)
-        reg = engine_registry.open_registry(path)
+        try:
+            if not os.access(path, os.W_OK):
+                raise PermissionError(errno.EACCES, "项目文件夹没有写入权限")
+            engine_discover.write_config(path, cfg, static_discovery=True)
+            reg = engine_registry.open_registry(path)
+        except (OSError, engine_atomicio.AtomicWriteError) as exc:
+            cause = exc if isinstance(exc, OSError) else exc.__cause__
+            if not (isinstance(cause, OSError) and cause.errno in _READ_ONLY_ERRNOS):
+                raise
+            # 从没打开过、又没有写入权限的文件夹（共享盘 / 只读卷）：照样打开，静态扫描的草稿只留在内存里，
+            # 一个字节都不写进去。前端据 `writable=false` 问一次要不要另存一份；另存出来的副本里注册表照常落盘
+            reg = engine_registry.Registry()
+            reg.load_data(cfg, source="<memory>")
         drafted, conflicts = True, sorted(rep["conflicts"])
     ctx = ProjectCtx(path, pid, reg)
     # 刷新基线：现在的素材长什么样、注册表是哪一份。没有它，打开项目后的
@@ -6578,6 +6590,10 @@ def api_project_settings():
                 patch[key] = None
     if "allow_write_back" in body:
         patch["allow_write_back"] = bool(body["allow_write_back"])
+    if "readonly_save_as_declined" in body:
+        # 「没有写入权限的项目要不要另存一份」用户选了继续只读：按项目路径记住，之后打开不再问。
+        # 置 false = 清除这条记忆（下次打开重新问）；存的是用户的选择，不是文件夹此刻的权限
+        patch["readonly_save_as_declined"] = True if body["readonly_save_as_declined"] else None
     merged = engine_config.set_project_settings(str(root), patch)
     return jsonify(
         {
@@ -6586,6 +6602,34 @@ def api_project_settings():
                 "export_dir": str(project_export_dir()),
                 "backup_dir": str(project_backup_dir()),
             },
+        }
+    )
+
+
+@app.post("/api/project/save-as")
+def api_project_save_as():
+    """把当前项目文件夹另存为一份副本（`engine/projectcopy`），返回副本路径；打开副本是前端的事。
+
+    只在 Tavotto 对项目文件夹没有写入权限时才有意义，但端点本身不设这道门：用户随时可以
+    把一个项目复制到自己的文件夹。体量护栏在 `projectcopy.MAX_BYTES / MAX_FILES`。
+    """
+    root = require_project()
+    body = request.get_json(force=True)
+    parent = str(body.get("parent") or "").strip()
+    if not parent:
+        return jsonify({"error": "缺少目标文件夹", "code": "missing_path"}), 400
+    try:
+        result = engine_projectcopy.copy_project(root, Path(parent))
+    except engine_projectcopy.CopyError as exc:
+        status = 413 if exc.code == engine_projectcopy.CODE_TOO_LARGE else 400
+        return jsonify({"error": str(exc), "code": exc.code, "params": exc.params}), status
+    return jsonify(
+        {
+            "path": str(result.path),
+            "files": result.files,
+            "bytes": result.bytes,
+            "skipped": result.skipped,
+            "skipped_paths": list(result.skipped_paths),
         }
     )
 
