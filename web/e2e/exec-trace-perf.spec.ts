@@ -9,6 +9,9 @@ import { expect, test, waitForFigureEdit } from './fixtures'
  * `exec-trace.spec.ts` 走真后端），量：展开到画完的耗时、运行中 5 秒实时刷新期间的长任务（>50ms）。数字写进 test-results。
  */
 test.skip(process.platform === 'win32', '假 CLI 是 shell 脚本，只在 posix-e2e 腿执行')
+// Playwright trace 的 DOM 快照也在被测页面主线程执行，会被 Long Tasks API 算进产品预算。
+// 性能用例关 trace，失败截图和录像仍由 perf 配置保留；功能用例继续录 trace。
+test.use({ trace: 'off' })
 
 function bigTrace(startedAt: number, finished = false) {
   const spans: Record<string, unknown>[] = []
@@ -149,9 +152,15 @@ test('大 Trace：已结束的回放（自动播放约 4 秒）期间的长任�
   await expect(page.locator('[data-trace-waterfall]')).toHaveAttribute('data-replay', 'true')
   const t0 = Date.now()
   // 自动播放跑完（整段压缩到约 4 秒）：回放结束的那一刻画完整结果
-  await expect(page.locator('[data-trace-waterfall]')).not.toHaveAttribute('data-replay', /.*/, { timeout: 15_000 })
+  // 断言轮询会反复生成整棵无障碍树，把测试框架的长任务算成回放开销。
+  await page.waitForFunction(() => {
+    const waterfall = document.querySelector('[data-trace-waterfall]')
+    return !!waterfall && !waterfall.hasAttribute('data-replay')
+  }, null, { timeout: 15_000 })
   const replayMs = Date.now() - t0
   const long = await page.evaluate(() => (window as unknown as { __long: number[] }).__long)
+  // 防止空树或提前结束让性能预算空转：终态必须画出全部 489 个 Span 和 200 个观察点。
+  await expect(page.locator('[data-trace-row]')).toHaveCount(689)
   const result = {
     replayMs,
     longTasks: long.length,
