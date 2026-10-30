@@ -6,7 +6,8 @@
  * `fixRemedy.test.ts` 读 `tests/golden/fix_remedy_vectors.json` 钉住。
  */
 export type Remedy =
-  | { kind: 'switch_native'; silent: true }
+  /** `silent: true` = 桌面静默回退；`false` = 浏览器模式，失败卡上等用户点一次「允许并运行」（ADR 0127 修订 2026-10-30） */
+  | { kind: 'switch_native'; silent: boolean }
   | { kind: 'install_packages'; packages: string[]; ask: boolean }
   | { kind: 'change_python'; from: string; to: string | null }
   | { kind: 'convert_to_matplotlib'; source: string }

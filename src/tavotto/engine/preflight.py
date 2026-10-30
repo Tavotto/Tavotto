@@ -45,6 +45,7 @@ figure spec（两侧同源的规范化输入）：
                "font_family": str,      # 生效的族（没设过 = 默认族，不是空串）
                "interpretation": str,   # 科学文本解释档（没设过 = auto，不是空串）
                "text_format": str,      # 文字写法（缺席 = 旧标记；"latex" = ADR 0152）
+               "math_errors": [{"src": str, "why": str}],  # 已知排不出来的公式（缺席 = 无）
                "rect_mm": [x,y,w,h], "hidden": bool}],
   "objects": [{"id": str, "type": str, "rect_mm": [x,y,w,h], "hidden": bool}]
 }
@@ -984,6 +985,41 @@ def _check_texts(spec: dict, profile: dict, sink: _Sink) -> None:
                 message=("textCjkFallbackMissing", {}),
                 object_ids=[tid],
             )
+        # 排不出来的公式：导出按源码原样画并给 `math_unrenderable` 警告；这里让它进问题清单。
+        # 事实由 spec 带进来（求值器纯函数、不起排版进程）；与 TS 侧同源。
+        bad = [e for e in (t.get("math_errors") or []) if isinstance(e, dict) and "src" in e]
+        if bad:
+            sink.add(
+                "math-unrenderable",
+                f"画布文字里有 {len(bad)} 个公式排不出来，导出时按源码原样画：{_math_shown(bad[0]['src'])}",
+                message=(
+                    "textMathUnrenderable",
+                    {
+                        "count": str(len(bad)),
+                        "src": _math_shown(bad[0]["src"]),
+                        "why": _math_why(bad[0].get("why")),
+                    },
+                ),
+                object_ids=[tid],
+                detail={
+                    "formulas": [
+                        {"src": str(e["src"]), "why": _math_why(e.get("why"))} for e in bad
+                    ]
+                },
+                worse=len(bad),
+            )
+
+
+def _math_shown(src: object) -> str:
+    """公式源码在文案里的样子：`$…$`，过长截断（与 TS 侧 `mathShown` 同源）。"""
+    one = " ".join(str(src).split())
+    return f"${one[:40] + '…' if len(one) > 40 else one}$"
+
+
+def _math_why(why: object) -> str:
+    """排不出的原因：折成单行、截到 80 字（与 TS 侧 `mathWhy` 同源）。"""
+    one = " ".join(str(why or "").split())
+    return one[:80] + "…" if len(one) > 80 else one
 
 
 def _clip_rect(el: dict) -> tuple[float, float, float, float] | None:

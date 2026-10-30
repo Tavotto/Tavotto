@@ -1525,7 +1525,7 @@
           "corrupt_sessions": "Contents of corrupted session copies"
         },
         "extraHint": {
-          "source": "The script that failed (even if it is not registered in the project), the scripts registered in the project, and the requirements / constraints / pyproject files used for dependency installs are attached as they are. We try to remove secrets we can recognise, but cannot guarantee it; if these files contain secrets, do not tick this.",
+          "source": "The script that failed (even if it is not registered in the project; R and MATLAB scripts count too, together with the candidate script the AI left behind when making an editable version), the scripts registered in the project, and the requirements / constraints / pyproject files used for dependency installs are attached as they are. We try to remove secrets we can recognise, but cannot guarantee it; if these files contain secrets, do not tick this.",
           "crash_reports": "Tavotto system crash reports from the last 7 days. Windows crash dumps are snapshots of the program's memory and may contain the contents and paths of files that were open; they cannot be redacted.",
           "corrupt_sessions": "By default only the names and sizes of corrupted copies; tick to attach their contents."
         },

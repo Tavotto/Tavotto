@@ -298,7 +298,9 @@ Offering the option uploads nothing; sending does:
   tokens and proxy passwords are removed from every one of them.
 * **Three extras, off by default and never remembered.** The dialog has three
   checkboxes that start unticked every time it opens: *script source* (the scripts
-  registered in the open project, attached as they are — **secret removal in scripts is best
+  registered in the open project, the scripts of recent test runs and of recent "generate editable
+  version" conversions — including R and MATLAB scripts — and the unadopted candidate script such
+  a conversion left in Tavotto's local cache, attached as they are — **secret removal in scripts is best
   effort and cannot be guaranteed, so do not tick it if your scripts contain secrets**;
   without it the bundle contains no script source at all, including the source lines normally
   printed inside tracebacks), *system crash

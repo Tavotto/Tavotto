@@ -339,3 +339,7 @@ savefig 收到已打开的流时再处理。已识别的构造调用同样在运
 这是一条针对已复现假成功的负证据，不替代原生数值、几何、颜色及逐页视觉验收。
 长脚本的单响应预算增为 32768 token（包括隐藏思考），6000 字符的文件分块与总预算不变；
 响应截断、网络、额度和会话期限分别以稳定原因码展示，不再统一成为未知失败。
+
+## 修订（2026-10-30）：失败候选为诊断包保留 6 小时
+
+维护者要诊断包「附带源码」带上 AI 写出来却没通过检查的那份脚本（TVD-82B9），而此前失败 / 超时收尾（`ConvertExecutor.discard` 与 `release`）立刻删候选目录。改为：**失败 / 超时（含 `needs_input`）且候选文件已写出时**，`keep_failed` 把 `meta.json` 写成 `state: failed_kept`（带 `failed_kept_at`）并保留 `FAILED_KEEP_S`（= `taskdiag.RETENTION_S`，6 小时）；**用户取消照旧立即删**，Agent 什么都没写出来的也照旧删。保留的目的只有一个：诊断包。它不是候选——`_load_meta` 对 `failed_kept` 一律 404，所以状态查询 / 采用 / 续跑 / 丢弃 / 预览都够不到，前端历史也不会露出。过期由 `prune_expired`（新建候选时与应用启动时各调一次）按 `failed_kept_at` 清；诊断包侧 `_candidate_file` 对已过期未清扫的也不收。看护：`tests/test_ai_convert.py` 的 `test_failed_candidate_is_kept_*` / `test_cancelled_candidate_*` / `test_failed_kept_expires_*`。

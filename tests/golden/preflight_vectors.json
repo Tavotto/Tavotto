@@ -8785,6 +8785,478 @@
    ]
   },
   {
+   "name": "canvas-text-math-unrenderable",
+   "profile_id": "lab-publication-v1",
+   "spec": {
+    "page": {
+     "w_mm": 80.0,
+     "h_mm": 60.0,
+     "margin_mm": 0.0
+    },
+    "panels": [
+     {
+      "id": "p1",
+      "name": "p1",
+      "kind": "pdf",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "scale": 1.0,
+      "manifest": {
+       "stem": "Fig1",
+       "size_mm": [
+        80.0,
+        60.0
+       ],
+       "elements": [
+        {
+         "gid": "axes_0",
+         "role": "axes",
+         "label": "axes_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "spine_top",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_right",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_bottom",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_left",
+           "type": "number",
+           "value": true
+          },
+          {
+           "prop": "spine_linewidth",
+           "type": "number",
+           "value": 0.75
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xticks",
+         "role": "ticks",
+         "label": "axes_0.xticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.yticks",
+         "role": "ticks",
+         "label": "axes_0.yticks",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "direction",
+           "type": "number",
+           "value": "in"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.xlabel",
+         "role": "axis_label",
+         "label": "axes_0.xlabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Temperature (K)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.ylabel",
+         "role": "axis_label",
+         "label": "axes_0.ylabel",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "text",
+           "type": "number",
+           "value": "Removal rate (mg/h)"
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          },
+          {
+           "prop": "fontfamily",
+           "type": "number",
+           "value": "Times New Roman"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend",
+         "role": "legend",
+         "label": "axes_0.legend",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "frameon",
+           "type": "number",
+           "value": false
+          },
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_0",
+         "role": "line",
+         "label": "axes_0.lines_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "o"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample A"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.lines_1",
+         "role": "line",
+         "label": "axes_0.lines_1",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "linewidth",
+           "type": "number",
+           "value": 1.0
+          },
+          {
+           "prop": "marker",
+           "type": "number",
+           "value": "s"
+          },
+          {
+           "prop": "label",
+           "type": "number",
+           "value": "Sample B"
+          }
+         ]
+        },
+        {
+         "gid": "axes_0.legend.texts_0",
+         "role": "legend_text",
+         "label": "axes_0.legend.texts_0",
+         "draggable": false,
+         "bbox": [
+          0.1,
+          0.1,
+          0.2,
+          0.2
+         ],
+         "editable": [
+          {
+           "prop": "fontsize",
+           "type": "number",
+           "value": 9.0
+          }
+         ]
+        }
+       ]
+      },
+      "px_w": null,
+      "missing": false,
+      "stale": false,
+      "render_error": null,
+      "unapplied_overrides": 0,
+      "hidden": false
+     }
+    ],
+    "texts": [
+     {
+      "id": "t-bad",
+      "text": "$\\notacommand{x}$ and $\\alpha$",
+      "size_pt": 9.0,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false,
+      "text_format": "latex",
+      "math_errors": [
+       {
+        "src": "\\notacommand{x}",
+        "why": "unknown symbol"
+       }
+      ]
+     },
+     {
+      "id": "t-ok",
+      "text": "$\\alpha$",
+      "size_pt": 9.0,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false,
+      "text_format": "latex",
+      "math_errors": []
+     },
+     {
+      "id": "t-hidden",
+      "text": "$\\bad$",
+      "size_pt": 9.0,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": true,
+      "text_format": "latex",
+      "math_errors": [
+       {
+        "src": "\\bad",
+        "why": "x"
+       }
+      ]
+     },
+     {
+      "id": "t-two",
+      "text": "$a_$ $\\frac{1}$",
+      "size_pt": 9.0,
+      "bold": false,
+      "font_family": "serif",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false,
+      "text_format": "latex",
+      "math_errors": [
+       {
+        "src": "a_",
+        "why": "Expected end of text\nline two"
+       },
+       {
+        "src": "\\frac{1}",
+        "why": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+       }
+      ]
+     }
+    ],
+    "objects": [
+     {
+      "id": "p1",
+      "type": "panel",
+      "rect_mm": [
+       0,
+       0,
+       80.0,
+       60.0
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-bad",
+      "type": "text",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-ok",
+      "type": "text",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     },
+     {
+      "id": "t-hidden",
+      "type": "text",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": true
+     },
+     {
+      "id": "t-two",
+      "type": "text",
+      "rect_mm": [
+       1.0,
+       1.0,
+       10.0,
+       5.0
+      ],
+      "hidden": false
+     }
+    ]
+   },
+   "expected": [
+    {
+     "id": "math-unrenderable",
+     "severity": "warn",
+     "message": {
+      "key": "textMathUnrenderable",
+      "params": {
+       "count": "2",
+       "src": "$a_$",
+       "why": "Expected end of text line two"
+      }
+     },
+     "object_ids": [
+      "t-bad",
+      "t-two"
+     ],
+     "gids": [],
+     "detail": {
+      "formulas": [
+       {
+        "src": "a_",
+        "why": "Expected end of text line two"
+       },
+       {
+        "src": "\\frac{1}",
+        "why": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+       }
+      ]
+     }
+    },
+    {
+     "id": "hidden",
+     "severity": "warn",
+     "message": {
+      "key": "hidden",
+      "params": {}
+     },
+     "object_ids": [
+      "t-hidden"
+     ],
+     "gids": [],
+     "detail": {}
+    }
+   ]
+  },
+  {
    "name": "canvas-text-glyph-missing",
    "profile_id": "lab-publication-v1",
    "spec": {

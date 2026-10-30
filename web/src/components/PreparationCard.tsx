@@ -1774,6 +1774,7 @@ const HISTORY_DECLINED = [
   'interpreter_changed',
   'plan_unavailable',
   'launch_failed',
+  'attempt_cap',
 ]
 
 /** 闭集码翻成人话；后端以后新增的码（旧前端不认识）原样显示，不丢也不猜 */

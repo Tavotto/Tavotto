@@ -14,6 +14,7 @@
  *    死循环（`UX_CONTRACTS.md` §1a）。
  */
 import { create } from 'zustand'
+import { subscribeMath } from '@/lib/mathtext'
 import { resolveDocumentSpec } from '@/lib/specBinding'
 import {
   filterIssues,
@@ -262,8 +263,13 @@ export function startValidation(): () => void {
     schedule()
   })
 
+  // 公式排版结果到了（ADR 0152 §七）：排不出来的公式要进问题面板，而「排不出」这个事实
+  // 只有排版回来才知道——求值器是纯函数，所以结果一到就重算一遍
+  const stopMath = subscribeMath(() => schedule())
+
   return () => {
     cancelScheduled()
+    stopMath()
     stopDoc()
     stopRender()
     stopAssets()

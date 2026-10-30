@@ -8,7 +8,7 @@ import pytest
 
 from tavotto import app as app_module
 from tavotto.engine import ai_convert, discover
-from test_ai_convert import _project, _run, _wait, env  # noqa: F401
+from test_ai_convert import _assert_only_kept_for_diagnostics, _run, _wait, env  # noqa: F401
 
 
 @pytest.fixture
@@ -47,9 +47,7 @@ def test_precommit_partial_capture_cannot_be_adopted(env):
     sid = _run(env)
     result = _wait(sid)
     assert result["task"]["outcome"] == "failed"
-    assert not (ai_convert.CONVERT_DIR / sid).exists()
-    with pytest.raises(ai_convert.ConvertError):
-        ai_convert.adopt(sid, _project(env))
+    _assert_only_kept_for_diagnostics(env, sid)
 
 
 def test_application_adapter_preserves_partial_capture_evidence(tmp_path, monkeypatch):

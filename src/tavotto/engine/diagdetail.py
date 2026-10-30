@@ -34,6 +34,7 @@ import platform
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -171,6 +172,18 @@ def parse_options(raw: object) -> DetailOptions:
     return DetailOptions(**{k: raw.get(k) is True for k in OPTION_KEYS})
 
 
+@dataclasses.dataclass(frozen=True)
+class ConvertAttempt:
+    """一次「生成可编辑版本」任务（`ai_history` 里 `task_type=convert_to_editable` 的会话）涉及的东西：原脚本（项目相对写法，
+    可能是 `.R` / `.m`）、这次有没有失败，以及候选目录里**还留着**的候选脚本（`ai_convert.recent_attempts` 已按项目 / 任务
+    校验过；这里收之前再核一遍是普通文件而不是符号链接）。"""
+
+    sid: str
+    script: str
+    failed: bool
+    candidate: Path | None = None
+
+
 @dataclasses.dataclass
 class Sources:
     """app 层递进来的、本模块不该自己去找的东西（保持本模块不依赖 Flask 与「当前项目」）。"""
@@ -180,6 +193,9 @@ class Sources:
     #: 最近尝试过的脚本 `[(脚本, 是否有失败的尝试)]`（`taskdiag.Store.attempted_scripts`：运行 / 依赖准备 / 依赖修复），
     #: 不要求在登记表里——出错的那个脚本常常没登记（桌面当项目、直接拖进来的脚本）
     attempted: list[tuple[str, bool]] = dataclasses.field(default_factory=list)
+    #: 本项目最近的转换任务（`ai_convert.recent_attempts`）：原脚本（R / MATLAB 不会出现在 `attempted`，那里只有 Tavotto 跑过的
+    #: Python）与候选目录里留着的候选脚本（在项目外，只此一条途径进包）
+    converts: list[ConvertAttempt] = dataclasses.field(default_factory=list)
     baked: dict | None = None  # `load_baked(ctx)`：{stem: {"versions": [...]}}
     task_section: dict | None = None  # `taskdiag.bundle_section(..., limit=24)`
     frontend: dict | None = None  # 经 `diagnostics_frontend.sanitize_detail` 的前端 detail 子对象
@@ -287,6 +303,17 @@ _KV_SECRET = re.compile(
     (?<![\w.\-\\])\\*["']?(?P<key>[\w.\-]+)\\*["']?
     (?P<sep>{_SEP_SPACE}*[:=：＝]{_SEP_SPACE}*)
     """
+)
+#: R 源码的赋值：`password <- "…"` / `key <<- "…"`。只给 R 源码附件用（`scrub_script`），不进通用日志 / 结构化脱敏的分隔符集合
+_KV_SECRET_R = re.compile(
+    rf"""(?x)
+    (?<![\w.\-\\])\\*["']?(?P<key>[\w.\-]+)\\*["']?
+    (?P<sep>{_SEP_SPACE}*(?:<<?-|[:=：＝]){_SEP_SPACE}*)
+    """
+)
+#: R 的右向赋值 `"value" -> password` / `->>`：值在左、键在右
+_R_RIGHT_ASSIGN = re.compile(
+    rf"""(?P<val>"[^"\n]{{4,}}"|'[^'\n]{{4,}}'){_SEP_SPACE}*->>?{_SEP_SPACE}*(?P<key>[A-Za-z_.][\w.]*)"""
 )
 # Cookie / Authorization / Proxy-Authorization 头行不再另走行正则：它们的键名在 `_SECRET_WORDS` 里，值同样交给 `_scan_value`
 # （值可以是跨行的三引号串，行正则只抹第一行）
@@ -706,13 +733,13 @@ class Scrubber:
             return self.text(text)
         return json.dumps(self.obj(parsed), ensure_ascii=False, indent=1)
 
-    def _kv_all(self, text: str) -> str:
+    def _kv_all(self, text: str, pattern: re.Pattern[str] = _KV_SECRET) -> str:
         """`_KV_SECRET`（秘密键 + 分隔符）命中之后的值替换。默认收集的自由文本一律 **fail-closed**：替换单位是
         「从值起点到行尾」，行尾时括号 / 引号还没配平就继续抹（`_scan_value`）；确定无信息的值（短数字、布尔、null、
         `<redacted>`、全是数字的括号段）原样保留。源码模式（代码区）只换带引号的字面量 / Bearer 形状 / 带引号的括号段。"""
         out: list[str] = []
         pos = 0
-        for m in _KV_SECRET.finditer(text):
+        for m in pattern.finditer(text):
             if m.start() < pos:
                 continue  # 落在前一个已换掉的区间里
             vs = m.end()
@@ -2484,6 +2511,11 @@ def collect_network(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[
 SOURCE_REASON_FAILING = "failing_attempt"
 SOURCE_REASON_PANEL = "panel"
 SOURCE_REASON_RECENT = "recent"
+#: 转换任务留在候选目录里的候选脚本（AI 写的、没被采用的那份）
+SOURCE_REASON_CANDIDATE = "convert_candidate"
+#: 转换入口接受的来源脚本后缀（`sourcelang`：`.py` / `.R` / `.r` / `.m`）；会话记录里的 `script` 不信，再按它过滤一遍
+CONVERT_SOURCE_EXTS = (".py", ".r", ".m")
+CONVERT_CANDIDATE_DIR = "convert-candidate"
 #: 声明文件（参与依赖计划的 requirements / constraints / pyproject）最多收几份
 DECLARED_FILES = 20
 #: 用来定「从哪个脚本所在目录往上找声明文件」的脚本数上限
@@ -2512,8 +2544,13 @@ def source_candidates(
         for p in ((src.frontend or {}).get("overrides") or [])
         if p.get("script")
     ]
-    failing = [s for s, bad in src.attempted if bad]
-    attempted_ok = [s for s, bad in src.attempted if not bad]
+    # 转换任务的原脚本（R / MATLAB 走这里进来）与 Tavotto 跑过的脚本同一套路径规则：解析后必须仍在项目目录内
+    converts = [c for c in src.converts if c.script.lower().endswith(CONVERT_SOURCE_EXTS)]
+    failing = [*(s for s, bad in src.attempted if bad), *(c.script for c in converts if c.failed)]
+    attempted_ok = [
+        *(s for s, bad in src.attempted if not bad),
+        *(c.script for c in converts if not c.failed),
+    ]
     seen: dict[str, Path] = {}
     fids: dict[str, FileId] = {}
     tried: set[str] = set()
@@ -2545,6 +2582,30 @@ def source_candidates(
         alias[raw] = rel
         seen[rel] = path
 
+    # 候选脚本在项目外（`cache/ai_convert/<sid>/`），不走项目目录的包含判据：路径由 `ai_convert.recent_attempts` 按
+    # 「该项目、该任务自己的候选目录里的常规文件」给出，这里只再拒符号链接 / 非常规文件，成员名用不带绝对路径的虚拟写法
+    cand_failing: list[str] = []
+    cand_ok: list[str] = []
+    cand_rels: set[str] = set()
+    for c in src.converts:
+        if c.candidate is None:
+            continue
+        rel = f"{CONVERT_CANDIDATE_DIR}/{c.sid}/{c.candidate.name}"
+        if rel in seen:
+            continue
+        try:
+            st = c.candidate.lstat()
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            fids[rel] = FileId.of(st)
+        except OSError:
+            if failed is not None:
+                failed.append(rel)
+            continue
+        seen[rel] = c.candidate
+        cand_rels.add(rel)
+        (cand_failing if c.failed else cand_ok).append(rel)
+
     def canon(names) -> list[str]:
         return list(dict.fromkeys(alias[r] for r in names if r in alias and alias[r] in seen))
 
@@ -2553,7 +2614,9 @@ def source_candidates(
     ordered_focus = [r for r in canon(focus) if r not in ordered_failing + ordered_attempted]
     ordered = [
         *ordered_failing,
+        *cand_failing,
         *ordered_attempted,
+        *cand_ok,
         *ordered_focus,
     ]  # 多张面板同一脚本：按首次出现去重
     rest = [r for r in seen if r not in ordered]
@@ -2567,7 +2630,9 @@ def source_candidates(
         panel_set = set(canon(focus))
         for r in chosen:
             reasons[r] = (
-                SOURCE_REASON_FAILING
+                SOURCE_REASON_CANDIDATE
+                if r in cand_rels
+                else SOURCE_REASON_FAILING
                 if r in ordered_failing
                 else SOURCE_REASON_PANEL
                 if r in panel_set
@@ -2806,12 +2871,37 @@ def _secret_string_spans(text: str) -> list[tuple[int, int, str]]:
     return spans
 
 
+#: R / MATLAB 源码里的邮箱 `local@domain.tld`（`.R` / `.r` / `.m` 专用；Python 不做，装饰器 `@app.route` 之类要原样）。
+#: 线性：起点不许紧跟在本地部分字符后（逐词只试一次），本地部分 ≤ 64、域名至多 9 段、每段 ≤ 64；域名必须含点、
+#: 末段是 2–24 个字母。R 的 `obj@slot` / MATLAB 的 `@(x) x.^2`、`@myfun` 没有「本地部分 + 带点域名」，不命中
+_EMAIL = re.compile(
+    r"(?<![A-Za-z0-9._%+\-])[A-Za-z0-9][A-Za-z0-9._%+\-]{0,63}@"
+    r"(?:[A-Za-z0-9](?:[A-Za-z0-9\-]{0,62}[A-Za-z0-9])?\.){1,8}[A-Za-z]{2,24}(?![A-Za-z0-9@\-])"
+)
+_EMAIL_EXTS = (".r", ".m")
+
+
+_R_EXTS = (".r",)
+
+
 def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
     """脚本源码的脱敏。可执行代码用 `code`（源码模式：`token = self._next()` 原样）；**注释和字符串字面量里**
     的 `key=value` 是明文，必须用 `full`（完整 KV 替换）——`# api_key=REAL_SECRET` 不带引号，源码模式会放过它。
-    非 .py 一律 `full`；tokenize 失败（语法坏的 .py、未闭合的字符串）时整份按 `full` 处理。"""
+    非 .py 一律 `full`（`.R` / `.r` / `.m` 先把邮箱换成 `<email>`）；tokenize 失败（语法坏的 .py、未闭合的字符串）时整份按 `full` 处理。"""
     text = _nl(text)
     if not rel.lower().endswith(".py"):
+        if rel.lower().endswith(_EMAIL_EXTS):
+            text = _EMAIL.sub("<email>", text)  # 先于完整模式：`<user>@host` 不能留下
+        if rel.lower().endswith(_R_EXTS):
+            text = _R_RIGHT_ASSIGN.sub(
+                lambda m: (
+                    f'"{_REDACTED}" -> {m.group("key")}'
+                    if is_secret_key(m.group("key"))
+                    else m.group(0)
+                ),
+                text,
+            )
+            text = full._kv_all(text, _KV_SECRET_R)  # `password <- "…"`：完整模式只认 `:` / `=`
         return full.text(text)
     text = _redact_pem(text)  # 多行的块先整体换掉：注释里的 PEM 每行是一个独立的 COMMENT token
     spans = _prose_spans(text)
@@ -2956,7 +3046,9 @@ def collect_source(src: Sources, opts: DetailOptions, scrub: Scrubber) -> list[I
                     "criterion": "scripts from recent failed / attempted runs first (even if not registered in the "
                     "project; only files inside the project folder), then scripts registered in the open project "
                     "(panel scripts first, then newest first); each script carries a reason "
-                    "(failing_attempt / panel / recent). `declarations` are the dependency declaration files "
+                    "(failing_attempt / panel / recent / convert_candidate). Scripts of recent 'generate editable "
+                    "version' (R / MATLAB / Python) conversion tasks are included, together with the candidate "
+                    "script such a task left in its own candidate folder (convert_candidate). `declarations` are the dependency declaration files "
                     "(requirements*.txt / constraints.txt / pyproject.toml) the dependency planner reads",
                     "scripts": index,
                     "declarations": declarations,

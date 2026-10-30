@@ -2203,7 +2203,7 @@ export default interface Resources {
           "extraHint": {
             "corrupt_sessions": "默认只有损坏副本的名字和大小；勾选后附上内容。",
             "crash_reports": "最近 7 天属于 Tavotto 的系统崩溃报告。Windows 崩溃转储是程序内存快照，可能含正在打开的文件内容与路径，无法脱敏。",
-            "source": "出错的脚本（即使它没在项目里登记）、项目里登记的脚本，以及参与依赖安装的 requirements / constraints / pyproject 文件会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；这些文件里有密钥请不要勾。"
+            "source": "出错的脚本（即使它没在项目里登记；R / MATLAB 脚本也算，含「生成可编辑版本」时 AI 留下的候选脚本）、项目里登记的脚本，以及参与依赖安装的 requirements / constraints / pyproject 文件会原样附上，我们会尽量抹掉能认出的密钥，但不能保证；这些文件里有密钥请不要勾。"
           },
           "extrasSelectAll": "全选",
           "extrasSelectNone": "全不选",
@@ -3769,6 +3769,7 @@ export default interface Resources {
       "textFontFamilySubstitutedKnown": "画布文字用的是{{family}}，规范要求 {{want}}。该字体是常见替代品。",
       "textGlyphMissing": "画布文字里有 {{count}} 个字符画不出来，导出后是方框：{{chars}}",
       "textGlyphSubstituted": "画布文字里有 {{count}} 个字符自动回退到了别的字体：{{chars}}",
+      "textMathUnrenderable": "画布文字里有 {{count}} 个公式排不出来，导出时按源码原样画：{{src}}（{{why}}）",
       "textOverAxes": "{{a}} 压进了 {{b}} 的绘图区 {{w}} × {{h}} mm",
       "textOverlap": "文字互相重叠 {{w}} × {{h}} mm（{{a}} 与 {{b}}）",
       "textTooSmall": "画布文字 {{size}} pt 低于规范下限 {{min}} pt",
@@ -5981,6 +5982,7 @@ export default interface Resources {
       "aria": "准备 {{script}}",
       "btn": {
         "aiFix": "使用你的 AI 来修复",
+        "allowRun": "允许并运行",
         "answer": "回答",
         "background": "放到后台",
         "cancelScan": "取消检查",
@@ -6142,6 +6144,7 @@ export default interface Resources {
           "attempt": "第 {{n}} 次",
           "declined": {
             "already_fell_back": "这次运行已经换过一次，没有再换",
+            "attempt_cap": "这次运行已经试过多次，没有再试",
             "cancelled": "已停止，没有换",
             "fallback_disabled": "原样运行已关闭，没有换",
             "interpreter_changed": "解释器变了，没有换",
@@ -6275,6 +6278,7 @@ export default interface Resources {
         "fileOpsBlocked": "脚本改了项目里的文件又去读，安全运行不会真改，结果会不同，所以没有出图",
         "fileOpsBlockedOff": "原样运行被关掉了；脚本改了项目里的文件又去读，安全运行结果会不同，所以没有出图",
         "fileOpsBlockedSafeOnly": "这个项目设成了只用安全运行；脚本改了文件又去读，结果会不同，所以没有出图",
+        "fileOpsConfirm": "这个脚本要真的把文件写到磁盘上才能跑完",
         "input": "脚本在等你回答",
         "inputSecret": "脚本要一个口令",
         "inputUnanswered": "脚本中途要你回答，再运行一次就能答",

@@ -80,9 +80,14 @@ PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到�
   `math=` 交给 `plan.compile_page` → `typography.layout_text`——**RenderCore 仍是纯标准库、不起进程**；画布预览经
   `/api/mathtext`（会话认证内）取同一份，`MathFormula` 画 SVG。所以画布与 PDF 逐点相同。
 - **排版规则**：一个公式在换行单元里占一个占位字符（补充专用区 B），不可拆；只占宽度、不撑行距（画布上零高的
-  inline-block，导出里只算宽度）；公式后面的字另起一段从公式右边落笔。公式用文字颜色填充。
+  inline-block，导出里只算宽度）；公式后面的字从公式右边落笔（见下文「PDF 文本层」）。公式用文字颜色填充。
 - **排不出来**：两侧都按源码原样画（`$…$`，不吞字）；导出报 `math_unrenderable`（警告里带源码与原因），画布上带红色波浪线、
-  悬停看原因。未接入问题面板（preflight 两侧是纯求值器，不起排版进程）。
+  悬停看原因。**也进问题面板**：preflight 两侧仍是纯求值器、不起排版进程，事实经规范化 spec 带进来——
+  `PreflightTextSpec.math_errors: [{src, why}]`（与面板的 `render_error` / `stale` 同一种喂法），求值器对每条有失败公式的
+  可见文字出一条 `math-unrenderable`（两档 profile 都是 `warn`，与导出的 `math_unrenderable` 警告同级；点击选中那条文字）。
+  前端 `buildSpec` 读 `lib/mathtext` 缓存里 `ok: false` 的（排版还没回来的不算：「不知道」不是「排不出」），
+  `validationStore.startValidation` 订阅 `subscribeMath`，结果一到就重排一轮检查。Python 侧
+  求值器同样认这个字段（金向量两侧对齐）；MCP 的 spec 现在不带画布文字，没有要填它的地方。
 - **PDF 文本层**：公式本身仍是填充轮廓；同一位置再放源码 `$…$` 本身的字形，**不画**（文字渲染模式 3，IR 的
   `GlyphRun.invisible`），按自然字宽等比压到公式宽度（advance 之和 = 公式宽，取整到字体单位），外面包整段
   ActualText = 同一串源码（`typography._math_text_piece`）。PDF 阅读器里选中 / 复制拿到 `x $\frac{a}{b}$ y`，粘回
@@ -91,7 +96,11 @@ PR 1 不提供任何能写出 `textFormat: 'latex'` 的界面，用户看不到�
   它认 ActualText；PDFium / MuPDF 两层都读对。源码里有正文脸画不了的字（gid 0）时不给文本层；排不出的公式照旧按源码画。
   SVG 导出与画面不画不可见段（笔照常前进）。
 - **已知限制**：图内文字的公式块在编辑框里仍显示源码（图上就是
-  matplotlib 画的真身）；缩略图里的公式显示源码。
+  matplotlib 画的真身）。
+- **缩略图与导出预览**：导出对话框的整页预览把公式画成同一份轮廓（`<path>`，`ThumbMathLine`）：SVG 的 `<text>` 里放不下
+  path，含公式的行拆成文字段与公式段，按 `getComputedTextLength()` 累计的宽度排（量不到时按字数估），对齐按整行总宽算；
+  没排好 / 排不出仍按源码。画布列表 / 版本列表的小缩略图不画轮廓（几十张缩略图各发排版请求不值），但画**显示的字**
+  （`displayText`：LaTeX 命令去掉、公式不带 `$`）；版本草图在后端先读成显示的字再截断（`richtext.plain_text`，先截后读会切掉右花括号）。
 - 打包：`mathtext_child.py` 进 `packaging/tavotto.spec` 的外部解释器源码清单（第三个根，`test_runtime_build` 按 import
   闭包看护）。
 
