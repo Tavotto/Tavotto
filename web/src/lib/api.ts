@@ -2277,6 +2277,8 @@ export type MarkerShape =
 /** manifest 里一个可编辑字段；ElementInspector 完全由它驱动，前端不硬编码属性名 */
 export interface EditableField {
   prop: string
+  /** Worker supports an explicit glyph fallback in the fontfamily override. */
+  font_fallback_selection?: boolean
   /**
    * order：可重排列表（图例条目顺序），value 为原始序号排列，options 为显示文字。
    * number_list：一串数（固定刻度位置），value 为 number[]。
@@ -2680,6 +2682,8 @@ export interface Manifest {
    * 字体下拉把它并在首选项（`options`）之后；老引擎不发它，下拉照旧只有首选项。
    */
   font_families?: string[]
+  /** Families proven not to cover the Chinese-font character ranges. */
+  font_latin_only_families?: string[]
   /**
    * `font_families` 里有中文名的那些：{族名: 中文名}（引擎读 name 表，`Songti SC` →
    * `宋体-简`）。只给下拉显示用，值仍是族名；老引擎不发它，下拉照旧显示族名。

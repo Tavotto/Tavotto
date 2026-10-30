@@ -108,6 +108,7 @@ from overrides import (
     collection_sizes,
     color_mapping_is_live,
     colorbar_mapping_is_live,
+    entry_face_index,
     font_display_names,
     font_face_index,
     font_file_key,
@@ -1555,6 +1556,80 @@ def _installed_font_families(_generation: tuple) -> tuple[str, ...]:
     return tuple(sorted(names, key=lambda n: (n.casefold(), n)))
 
 
+# Script ranges for the explicit Chinese-font choice. Fullwidth ASCII letters and
+# digits are deliberately excluded; they follow the primary face when present.
+_CHINESE_FONT_RANGES = (
+    (0x2E80, 0x2FFF),
+    (0x3000, 0x303F),
+    (0x3100, 0x312F),
+    (0x31A0, 0x31EF),
+    (0x3400, 0x4DBF),
+    (0x4E00, 0x9FFF),
+    (0xF900, 0xFAFF),
+    (0xFE30, 0xFE4F),
+    (0xFF01, 0xFF0F),
+    (0xFF1A, 0xFF20),
+    (0xFF3B, 0xFF40),
+    (0xFF5B, 0xFF60),
+    (0xFFE0, 0xFFE6),
+    (0x20000, 0x2EE5F),
+    (0x2F800, 0x2FA1F),
+    (0x30000, 0x3347F),
+)
+
+
+def _chinese_font_codepoint(codepoint: int) -> bool:
+    return any(start <= codepoint <= end for start, end in _CHINESE_FONT_RANGES)
+
+
+@lru_cache(maxsize=4096)
+def _face_is_latin_only(key: tuple) -> bool:
+    try:
+        # Coverage scans touch every installed face; do not retain FT2Font objects
+        # in the rendering cache. Only the boolean result is cached here.
+        face = open_font_face(key[0], key[-1])
+        # Common CJK fonts can be rejected before allocating their huge cmaps.
+        if any(face.get_char_index(cp) for cp in (0x4E2D, 0x6587, 0x3001, 0x3002, 0xFF0C, 0x20000)):
+            return False
+        return not any(_chinese_font_codepoint(codepoint) for codepoint in face.get_charmap())
+    except (RuntimeError, ValueError, OSError):
+        return False
+
+
+def installed_latin_only_families() -> tuple[str, ...]:
+    """Families whose registered faces cannot preempt selected Chinese glyphs.
+
+    Be conservative across styles and weights, and never treat an unreadable face
+    as proof of absence. Generic names depend on the current rcParams chains.
+    """
+    installed_font_families()
+    chains = tuple(tuple(mpl.rcParams[f"font.{g}"]) for g in _GENERIC_FAMILIES)
+    faces = tuple(
+        (str(e.name), font_file_key(e.fname, entry_face_index(e)))
+        for e in font_manager.fontManager.ttflist
+    )
+    return _installed_latin_only_families(sync_font_caches(), chains, faces)
+
+
+@lru_cache(maxsize=8)
+def _installed_latin_only_families(
+    _generation: tuple, chains: tuple, faces: tuple
+) -> tuple[str, ...]:
+    grouped: dict[str, list] = {}
+    for family, key in faces:
+        grouped.setdefault(family, []).append(key)
+    safe = set()
+    for family, entries in grouped.items():
+        if all(_face_is_latin_only(key) for key in entries):
+            safe.add(family)
+    for generic, chain in zip(_GENERIC_FAMILIES, chains):
+        # A generic can resolve to any registered member as style/weight changes.
+        existing = [family for family in chain if family in grouped]
+        if existing and all(family in safe for family in existing):
+            safe.add(generic)
+    return tuple(sorted(safe, key=lambda name: (name.casefold(), name)))
+
+
 def installed_font_display_names() -> dict[str, str]:
     """本机字体族里有中文名的那些：{族名: 中文名}（`overrides.font_display_names`）。
 
@@ -1669,6 +1744,8 @@ def _text_fields(t) -> list[dict]:
         {
             "prop": "fontfamily",
             "type": "enum",
+            "font_fallback_selection": not t.get_usetex()
+            and t.get_fontproperties().get_file() is None,
             "value": str(fam),
             "options": fam_opts,
             **({"options_unavailable": fam_missing} if fam_missing else {}),
@@ -3403,6 +3480,10 @@ def _tick_family_field(ts: TickSet) -> dict:
     return {
         "prop": "fontfamily",
         "type": "enum",
+        "font_fallback_selection": all(
+            not t.get_usetex() and t.get_fontproperties().get_file() is None for t in ts.labels
+        )
+        and not mpl.rcParams["text.usetex"],
         "value": str(fam),
         "options": fam_opts,
         **({"options_unavailable": fam_missing} if fam_missing else {}),
@@ -5743,6 +5824,7 @@ def _measure_manifest(
         # 本机字体族，整份 manifest 只发一次（理由见 `_family_options`）。
         # 加字段协议：老前端不认识它会原样忽略，字体下拉照旧只有首选项。
         "font_families": list(installed_font_families()),
+        "font_latin_only_families": list(installed_latin_only_families()),
         # 其中有中文名的：{族名: 中文名}，只给下拉显示用（值仍是族名）。
         # 加字段协议：老前端原样忽略，照旧显示族名。
         "font_family_names": dict(installed_font_display_names()),

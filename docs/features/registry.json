@@ -1247,6 +1247,22 @@
       "desktop_manual": [
         "桌面版主页与编辑器右上角各点一次「联系作者」，确认按钮可点、拖入截图可加为附件、窗口拖动区不受影响。"
       ]
+    },
+    {
+      "id": "figure.mixed-script-fonts",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "图内文字可选择中文字体与兼容的英文字体",
+        "en-US": "Choose a Chinese font and a compatible English font for figure text"
+      },
+      "entry": "图内文字属性 → 中文字体 / 英文字体；设置 → 样式",
+      "e2e": [
+        {
+          "spec": "mixed-font-fallback.spec.ts",
+          "title": "中文回退字体：编辑、撤销、保存、重开和导出"
+        }
+      ]
     }
   ]
 }

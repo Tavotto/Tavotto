@@ -258,10 +258,22 @@ describe('高频样式是带可见标签的行', () => {
     // （平铺那一份是有 `data-prop` 的），工具条却没有补上锚点。表现是
     // 「问题面板上点定位，焦点没落到字段上」——而界面并不报错。
     for (const prop of FIGURE_TEXT_SINGLE_PROPS) {
+      if (prop === 'fontFallback') continue // 旧引擎没声明此能力
       const path = propertyPathOf('figureText', prop)
       expect(path, prop).toBeTruthy()
       expect(host.querySelector(`[data-prop="${path}"]`), prop).not.toBeNull()
     }
+  })
+
+  it('新引擎声明中文字体能力时也有独立锚点', async () => {
+    const upgraded = { ...titleEl, editable: titleEl.editable.map((field) =>
+      field.prop === 'fontfamily' ? { ...field, font_fallback_selection: true } : field,
+    ) }
+    useRenderStore.getState().patch(renderKeyOf(livePanel()), {
+      manifest: { ...manifest, elements: [manifest.elements[0], upgraded, legendEl] },
+    })
+    await mount('axes_0.title')
+    expect(host.querySelector('[data-prop="fontfamily.fallback"]')).not.toBeNull()
   })
 
   it('工具条摘走的那几条 = 规范表算出来的那几条（不许手抄第二份）', () => {

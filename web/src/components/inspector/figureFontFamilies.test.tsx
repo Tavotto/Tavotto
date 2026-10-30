@@ -190,6 +190,29 @@ describe('useFigureTypography：属性页的「未安装」与本机表同一口
 })
 
 describe('useFigureTypography：字体下拉与写入校验拿同一份表', () => {
+  it('中文回退与主字体独立修改并可恢复自动，旧引擎不显示入口', async () => {
+    const el = { ...titleEl, editable: titleEl.editable.map((x) =>
+      x.prop === 'fontfamily' ? { ...x, font_fallback_selection: true } : x,
+    ) } as ManifestElement
+    selected = [el]
+    await mount({ ...manifestOf(MACHINE), font_latin_only_families: ['Arial', 'Avenir'], elements: [el] } as Manifest)
+    expect(adapter.valueOf('fontFallback')).toEqual({ kind: 'uniform', value: '' })
+    await act(async () => adapter.writeOnce('fontFallback', '思源黑体'))
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual({ primary: null, fallback: '思源黑体' })
+    expect(adapter.fontFallbackShadowed).toBe(true)
+    expect(adapter.fieldOf('fontFamily')?.options).toContain('Arial')
+    expect(adapter.fieldOf('fontFamily')?.options).not.toContain('思源黑体')
+    await act(async () => adapter.writeOnce('fontFamily', '思源黑体'))
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual({ primary: null, fallback: '思源黑体' })
+    await act(async () => adapter.writeOnce('fontFamily', 'Arial'))
+    expect(overrideOf(el.gid, 'fontfamily')).toEqual({ primary: 'Arial', fallback: '思源黑体' })
+    expect(adapter.fontFallbackShadowed).toBe(false)
+    await act(async () => adapter.writeOnce('fontFallback', null))
+    expect(overrideOf(el.gid, 'fontfamily')).toBe('Arial')
+    await act(async () => adapter.reset('fontFamily'))
+    expect(overrideOf(el.gid, 'fontfamily')).toBeUndefined()
+  })
+
   it('下拉里能看到本机字体，选一个本机才有的字体真的写得下去', async () => {
     await mount(manifestOf(MACHINE))
     const field = adapter.fieldOf('fontFamily')!

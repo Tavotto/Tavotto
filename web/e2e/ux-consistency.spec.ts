@@ -92,7 +92,7 @@ test('流程 A：图标题 + X/Y 轴标题一起改字体 / 字号 / 加粗，�
   await expect(bold).toHaveAttribute('aria-pressed', 'true', { timeout: 15_000 })
 
   // --- 字体：选一个新字体 ---
-  await panel.getByRole('combobox', { name: '字体' }).click()
+  await panel.getByRole('combobox', { name: '英文字体' }).click()
   await page.getByRole('option', { name: /无衬线|sans/i }).first().click()
   await page.waitForTimeout(600)
 

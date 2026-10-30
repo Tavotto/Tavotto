@@ -5,6 +5,7 @@ import { sameRules } from './specBinding'
 import { effectiveCanvasFamily, type CanvasTextFamily } from './typography'
 import type { FigureDocument, PanelObject, PanelOverride, TextObject } from '@/types/document'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { figureFontChoice } from '@/lib/figureFontChoice'
 
 /**
  * 论文样式预设：一组可复用的排版规格（字号/线宽/刻度/图例/配色/页面）。
@@ -418,7 +419,7 @@ export function planStyle(
       for (const el of els) {
         for (const [prop, value] of Object.entries(props)) {
           const field = el.editable.find((f) => f.prop === prop)
-          if (!field) {
+          if (!field || (prop === 'fontfamily' && figureFontChoice(value) && !field.font_fallback_selection)) {
             unmappable.push(
               t('style.unmappableEntry', { ns: 'dialogs', label: el.label, prop }),
             )

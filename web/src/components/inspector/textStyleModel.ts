@@ -1,6 +1,7 @@
 import type { EditableField, ManifestElement } from '@/lib/api'
 import type { PanelObject } from '@/types/document'
 import { effectiveOverride } from '@/lib/effectiveOverride'
+import { figurePrimaryValue } from '@/lib/figureFontChoice'
 
 /**
  * 一个控件当前该显示什么。**三态必须分开**：
@@ -118,7 +119,7 @@ export function commonTextFields(
 /** 当前值：用户改过的 override 优先于渲染时的初值（与 ElementWriter 同一口径） */
 export function currentOf(panel: PanelObject, el: ManifestElement, prop: string): unknown {
   const ov = effectiveOverride(panel.overrides, el.gid, prop)
-  if (ov) return ov.value
+  if (ov) return prop === 'fontfamily' ? figurePrimaryValue(ov.value, el.editable.find((f) => f.prop === prop)?.value) : ov.value
   return el.editable.find((f) => f.prop === prop)?.value
 }
 

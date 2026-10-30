@@ -225,6 +225,41 @@ def test_pdf_text_layer_reads_back_the_chinese_and_embeds_a_cjk_face(rendered, i
     assert any("DejaVu" not in f for f in fonts), fonts
 
 
+def test_selected_fallback_reaches_worker_pdf_and_editable_svg(library, tmp_path, installed_cjk):
+    if not installed_cjk:
+        pytest.skip("no installed CJK font in worker")
+    fallback = installed_cjk[0]
+    patches = [
+        {"gid": "axes_0.title", "prop": "text", "value": "中文 Test 123"},
+        {
+            "gid": "axes_0.title",
+            "prop": "fontfamily",
+            "value": {"primary": "DejaVu Serif", "fallback": fallback},
+        },
+    ]
+    w = pool.one_shot(SCRIPT_NAME, str(library), ENTRY)
+    try:
+        w.ensure_built()
+        result = w.override(STEM, patches)
+        assert not result.get("warnings"), result
+        title = _el(result["manifest"], "axes_0.title")
+        assert title.get("cjk_family"), title
+        assert not title.get("glyphs_missing"), title
+        pdf, svg = tmp_path / "mixed.pdf", tmp_path / "mixed.svg"
+        w.export(STEM, patches, str(pdf), "pdf")
+        w.export(STEM, patches, str(svg), "svg", svg_fonttype="none")
+        with pymupdf.open(pdf) as doc:
+            assert "中文 Test 123" in " ".join(p.get_text() for p in doc)
+            fonts = {f[3] for page in doc for f in page.get_fonts()}
+        assert any("DejaVuSerif" in f for f in fonts), fonts
+        assert any("DejaVu" not in f for f in fonts), fonts
+        svg_text = svg.read_text(encoding="utf-8")
+        assert "<text" in svg_text and "中文 Test 123" in svg_text
+        assert fallback in svg_text
+    finally:
+        pool.discard(w)
+
+
 def test_png_draws_two_different_chinese_glyphs_not_the_same_box(rendered, installed_cjk):
     _require_chain(rendered["manifest"], installed_cjk)
     assert rendered["png_zhong"] != rendered["png_wen"]
