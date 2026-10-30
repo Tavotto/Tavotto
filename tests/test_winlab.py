@@ -3378,7 +3378,7 @@ def test_find_edge_only_looks_in_program_files(tmp_path):
     exe.parent.mkdir(parents=True)
     exe.write_text("")
     assert A.find_edge({"ProgramFiles(x86)": str(tmp_path)}) == exe
-    assert A.find_edge({"PATH": str(exe.parent)}) is None
+    assert A.find_edge({"PATH": str(tmp_path), "LOCALAPPDATA": str(tmp_path)}) is None
 
 
 def test_page_shot_without_edge_is_environment_unavailable_not_passed(tmp_path):
