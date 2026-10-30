@@ -24,7 +24,7 @@
       "total": "Attachments can't exceed {{size}} in total."
     },
     "diagLabel": "Attach diagnostic info",
-    "diagHint": "Logs may contain text your script printed. Your script and data files are not included.",
+    "diagHint": "Logs may contain text your script printed. The bundle also includes managed-environment Python package names and versions, but not your script or data files.",
     "diagPreparing": "Preparing the diagnostics bundle...",
     "diagReady": "Diagnostics bundle · {{size}}",
     "diagFailedPrepare": "The diagnostics bundle isn't ready. Untick this or try again later.",
@@ -1506,7 +1506,7 @@
           "internal": "An internal error occurred and nothing was sent. Save the bundle and report it."
         },
         "packageGone": "This bundle is no longer held by the engine (the app may have restarted). Prepare it again before sending, or use Export diagnostics in Settings to save one locally.",
-        "sentence": "A diagnostic bundle will be sent, with error details and logs (the logs may contain output printed by your script), but without your script files or data files.",
+        "sentence": "A diagnostic bundle will be sent, with error details, logs (which may contain output printed by your script), and managed-environment Python package names and versions, but without your script or data files.",
         "details": "Show contents",
         "bestEffort": "Redaction is best-effort and not guaranteed; you can save and inspect the bundle before sending.",
         "errorSummaryNote": "If you have agreed to anonymous statistics, a content-free error summary (the internal area that failed and a fixed error code) is attached as well. Sending does not consent to automatic reporting later.",
@@ -1550,7 +1550,7 @@
           "corrupt_sessions": "corrupted copies"
         },
         "optionsLost": "The extras were too large, so they could not be attached this time.",
-        "sentenceExtras": "A diagnostic bundle will be sent, with error details and logs (the logs may contain output printed by your script), plus what you ticked: {{items}}.",
+        "sentenceExtras": "A diagnostic bundle will be sent, with error details, logs (which may contain output printed by your script), managed-environment Python package names and versions, plus what you ticked: {{items}}.",
         "sentenceItem": {
           "source": "script source and dependency declaration files",
           "crash_reports": "system crash reports (may contain the contents of open files)",

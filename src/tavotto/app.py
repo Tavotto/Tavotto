@@ -95,6 +95,7 @@ from .engine import (
     documents as engine_documents,
     enginesession as engine_enginesession,
     envadvice as engine_envadvice,
+    envdiag as engine_envdiag,
     envlease as engine_envlease,
     epsfile as engine_epsfile,
     execspec as engine_execspec,
@@ -4884,6 +4885,7 @@ def _diagnostics_project_status() -> dict:
         # 最近几次缺依赖的现场（缺哪个包、当时谁在渲染、体检过哪些系统解释器、修复目标可不可用）。
         # 这里交原值，换形与脱敏在 `diagnostics._project_section`（bundle schema 4）。
         status["missing_dependencies"] = engine_deprepair.recent_missing_dependencies(str(ctx.path))
+        status["managed_environment_jobs"] = engine_envdiag.recent(ctx.path)
         # 最近几次脚本运行 / 准备的结果分类（成功 / 失败 / 取消 + 稳定错误码计数）：试运行与准备把失败接在自己里面
         # （200 + `error` / 会话终局），不进 recent_errors，这里补上「失败过、什么类别」（bundle schema 6）。
         status["recent_runs"] = engine_taskdiag.run_summary(engine_taskdiag.STORE, ctx.id)
@@ -7426,6 +7428,7 @@ def _engine_attempt(
     safe_only: bool = False,
     artifact_source=None,
     progress_pj: str | None = None,
+    observe_worker=None,
 ):
     """Run on the admitted source; a dependency retry carries the identical context.
 
@@ -7440,6 +7443,8 @@ def _engine_attempt(
                 if progress_pj is not None
                 else contextlib.nullcontext()
             ):
+                if observe_worker is not None:
+                    observe_worker(worker)
                 _admit_artifact(worker, stem, artifact_source)
                 result = action(worker, stem)
             _assert_artifact_current(artifact_source)
@@ -7774,6 +7779,13 @@ def api_engine_render():
     try:
         # 冷启动的第一次 build 就发生在这里（lazy 语义：打开面板不预跑脚本）。
         # 内置环境缺依赖时自动改用项目自己的 .venv 重试一次（ADR 0018）。
+        def observe_render_worker(wk):
+            engine_envdiag.record_render(
+                current_ctx().path,
+                getattr(wk, "python_source", ""),
+                getattr(wk, "python_generation", ""),
+            )
+
         worker, stem, resp = _engine_attempt(
             rel_id,
             worker,
@@ -7783,6 +7795,7 @@ def api_engine_render():
             ),
             artifact_source=artifact_source,
             progress_pj=pj,
+            observe_worker=observe_render_worker,
         )
     except engine_pool.WorkerError as exc:
         LOG.error("引擎渲染失败: %s: %s", stem, exc)

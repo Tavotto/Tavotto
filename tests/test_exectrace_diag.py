@@ -148,7 +148,7 @@ def test_the_bundle_carries_this_projects_exec_traces_failures_first_and_nothing
     other.finish("failed", error_code="agent_exit_nonzero")
     files = _bundle(client, pa)
     manifest = json.loads(files["manifest.json"])
-    assert manifest["schema_version"] == 10
+    assert manifest["schema_version"] == 11
     section = json.loads(files["exec-traces.json"])
     ids = [d["trace"]["trace_id"] for d in section["traces"]]
     assert bad.trace_id in ids and ok.trace_id in ids and other.trace_id not in ids
