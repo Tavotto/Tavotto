@@ -1346,6 +1346,7 @@
       }
     },
     "aiFix": {
+      "repairFolder": "脚本用到的项目外文件夹读不了，需要修复它的权限",
       "running": "AI 正在查找原因…",
       "cancel": "取消",
       "confirm": "修复",

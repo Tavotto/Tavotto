@@ -28,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import exectrace, fixtools
+from . import exectrace, fixtools, folderrepair, pool
 from .agent_runner import loop
 from .agent_runner.redact import NO_REDACTION, Redactor
 from .agent_runner.tools import Limits, RunEnvelope, Tool
@@ -134,9 +134,11 @@ itself added to sys.path, outside the project): the script put a folder on its i
 allowed to read. Tavotto skips unreadable import locations when another location can serve the module, so installing the \
 package into Tavotto's managed environment WORKS (the unreadable folder is skipped and the new copy is found); merely \
 switching to another interpreter does not. Install the missing package with install_packages (propose_fix first) into the \
-managed environment, then try_run. Never edit the script and never touch that folder or its permissions. If it still \
-fails for the same folder, say in one plain sentence which folder (its name is in the report) cannot be read and that the \
-user must grant this account read access to it, then finish `not_fixed`.
+managed environment, then try_run. If the module is not a published package (it is the user's own module inside that folder), \
+install nothing. Never edit the script and never touch that folder or its permissions. If it still \
+fails for the same folder, say in one plain sentence which folder (its name is in the report) cannot be read, then \
+finish `not_fixed`. Do not tell the user to change permissions themselves: the application shows a "Repair \
+permissions" button on the result for exactly this case.
 4. If you need something only the user knows, use ask_user (a multiple-choice question) or pick_file (the system file \
 chooser). Never ask for a password, key or token.
 5. If you cannot fix it, distinguish missing user inputs/environment failures from a product defect. If evidence \
@@ -345,6 +347,8 @@ class FixSession:
     stalled: dict | None = None
     stall_since: float | None = None
     stall_code: str = ""  # 自动取消时记下的原因码；收尾时据此判 failed
+    #: 没修好、而最后的错误是「项目外文件夹读不了」（Windows）时，结果卡上「修复权限」的一次性令牌（`folderrepair`，不透明；收尾时签发一次）
+    repair_token: str = ""
     last_progress: float = field(default_factory=time.monotonic)
     inflight: int = 0
     tool_started: float | None = None
@@ -476,6 +480,7 @@ class FixSessions:
             "outcome": s.outcome,
             "summary": s.summary,
             "reason": s.reason,
+            **({"repair_token": s.repair_token} if s.repair_token else {}),
             #: 仅 outcome == convert：交给「生成可编辑版本」的 `{kind, script, library, path}`（项目相对路径；path = 报告里原输出图，可为 None）；其余结局没有这个键
             **(
                 {
@@ -651,11 +656,27 @@ class FixSessions:
                 s.outcome = OUTCOME_FAILED
                 s.reason = failed_reason[:24]
             s.state, s.card, s.pending, s.stalled = STATE_FINISHED, None, None, None
+            if s.outcome in (OUTCOME_NOT_FIXED, OUTCOME_FAILED):
+                s.repair_token = self._repair_token(s)
             s.done.set()
         _trace_settle(s)
         if s.ctx is not None:
             s.ctx.release_leases()  # change_python 持的旧代租约：会话结束才放（之后旧代才可能被清理）
         self._notify(s)
+
+    @staticmethod
+    def _repair_token(s: FixSession) -> str:
+        """没修好、而准备报告里最后的错误码是 `import_folder_unreadable`：给结果卡一个新的「修复权限」令牌（旧的可能已过期）。
+        任何意外都当没有——这只是多一颗按钮，绝不影响收尾。"""
+        try:
+            report = s.ctx.report() if s.ctx is not None and s.ctx.report is not None else None
+            result_error = ((report or {}).get("result") or {}).get("error") or {}
+            code = result_error.get("code") or ((report or {}).get("outcome") or {}).get("code")
+            if code != pool.IMPORT_FOLDER_UNREADABLE_CODE:
+                return ""
+            return folderrepair.issue_latest(s.ctx.project_root) or ""
+        except Exception:  # noqa: BLE001
+            return ""
 
     # ---- 进度与卡住（D3） -------------------------------------------------
     def _activity(self, s: FixSession, tool: str, phase: str, detail: str = "") -> None:

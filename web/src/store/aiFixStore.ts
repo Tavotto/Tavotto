@@ -67,6 +67,8 @@ export interface AiFixEntry {
   outcome?: 'not_fixed' | 'failed'
   summary?: string
   reason?: string
+  /** `done` 且没修好、最后的错误是项目外文件夹读不了（Windows）：结果卡「修复权限」的令牌 */
+  repairToken?: string
   /** 「发送」卡：用户点过「查看并发送」那一刻的发送计数；之后计数增加 = 真的发出去了 */
   sendBase?: number
   /** 回答请求在途（按钮置忙，防连点） */
@@ -170,6 +172,7 @@ export const useAiFixStore = create<AiFixStoreState>((set, get) => {
       outcome: st.outcome === 'not_fixed' ? 'not_fixed' : 'failed',
       summary: st.summary,
       reason: st.reason,
+      repairToken: st.repair_token || undefined,
     }))
   }
 

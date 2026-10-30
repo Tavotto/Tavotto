@@ -3597,6 +3597,8 @@ export interface AiFixState {
   /** 仅 `outcome === 'convert'`：要生成可编辑版本的脚本（项目相对路径）、画图用的位图库与报告里的原输出图（项目相对，可缺；ADR 0143 / 0149 §七） */
   handoff?: { kind: 'convert'; script: string; library: string; path: string | null }
   summary: string
+  /** 没修好、而最后的错误是「项目外文件夹读不了」（仅 Windows）：结果卡上「修复权限」的一次性不透明令牌（ADR 0153 修订）；没有就不出 */
+  repair_token?: string
   /** `failed` 时 runner 的闭集原因码（`budget` / `auth` / `quota` / `network` …） */
   reason: string
   steps: number

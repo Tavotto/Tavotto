@@ -3126,6 +3126,16 @@ describe('打开并运行 + 后端会话内回退的呈现（V2 PR4）', () => {
       expect(line + primary()?.textContent).not.toMatch(/[一-鿿]/)
     })
 
+    it('有令牌时不摆「使用你的 AI 来修复」（AI 对权限无能为力）；没有令牌时保持原状（仍摆）', async () => {
+      await mount()
+      await openWith({ ...unreadable(), remedy: { kind: 'ai_fix' } })
+      expect(panel().dataset.prepState).toBe('folder_unreadable')
+      expect(panel().querySelector('[data-prep-ai-fix]')).toBeNull()
+      expect(visiblePrimaryButtons(panel())).toBe(1)
+      await openWith({ ...unreadable({ folder: '.work_deps' }), remedy: { kind: 'ai_fix' } })
+      expect(panel().querySelector('[data-prep-ai-fix], [data-prep-primary="ai_fix"]')).not.toBeNull()
+    })
+
     it('没有令牌（非 Windows / 老后端 / 敏感运行）：保持原来的通用失败卡，不画「修复权限」', async () => {
       await mount()
       await openWith(unreadable({ folder: '.work_deps' }))

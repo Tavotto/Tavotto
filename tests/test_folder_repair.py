@@ -815,3 +815,69 @@ def test_the_deferral_leaves_a_trace_in_the_dependency_check_facts(tmp_path):
     offer = {"plan": _joint(tmp_path).to_payload()}
     assert prepsession.origin_facts(offer) == {"deferred_unverified": ["fangsensor_utils"]}
     assert prepsession.origin_facts({"plan": {"origins": []}}) == {}
+
+
+# --------------------------------------------------------------------------- AI 修复以这类失败收场：结果里带新令牌
+def _settled(world, outcome, code="import_folder_unreadable", *, with_report=True):
+    from pathlib import Path
+
+    from tavotto.engine import fixsession
+
+    ctx = SimpleNamespace(
+        project_root=Path(world.project),
+        report=(lambda: {"result": {"error": {"code": code}}}) if with_report else None,
+        release_leases=lambda: None,
+    )
+    s = fixsession.FixSession(id="fx1", scope="pj", script="plot.py", prep_session_id="ps1")
+    s.ctx = ctx
+    s.reported = (outcome, "x")
+    sessions = fixsession.FixSessions()
+    sessions._settle(s, "internal")
+    return fixsession.FixSessions.public(s)
+
+
+def _fresh_fact(world, monkeypatch):
+    monkeypatch.setattr(folderrepair, "supported", lambda platform=None: True)
+    engine_pool.unreadable_folder_error(
+        "m", "tb", _fact(world, module="ROOT"), project=world.project
+    )
+
+
+@pytest.mark.parametrize("outcome", ["not_fixed"])
+def test_ai_fix_that_ends_on_an_unreadable_folder_carries_a_fresh_repair_token(
+    world, monkeypatch, outcome
+):
+    _fresh_fact(world, monkeypatch)
+    old = next(iter(folderrepair._RECORDS))
+    folderrepair._RECORDS.clear()  # 原令牌已过期 / 被清掉：结果卡的是新签发的
+    pub = _settled(world, outcome)
+    token = pub["repair_token"]
+    assert token and token != old
+    # 新令牌真的能兑现（同一条私有通道、同样的验证）
+    calls = []
+    assert _run(world, token, _ok_runner(calls)) == {"repaired": True}
+    assert str(world.dep) not in json.dumps(pub)
+
+
+def test_ai_fix_result_has_no_token_for_other_failures_or_outcomes(world, monkeypatch):
+    _fresh_fact(world, monkeypatch)
+    assert "repair_token" not in _settled(world, "not_fixed", code="script_error")
+    assert "repair_token" not in _settled(world, "fixed")
+    assert "repair_token" not in _settled(world, "not_fixed", with_report=False)
+
+
+def test_ai_fix_result_has_no_token_off_windows_or_without_a_recorded_failure(world, monkeypatch):
+    assert "repair_token" not in _settled(world, "not_fixed")  # 这个项目没有登记过读不了的文件夹
+    monkeypatch.setattr(folderrepair, "supported", lambda platform=None: True)
+    engine_pool.unreadable_folder_error(
+        "m", "tb", _fact(world, module="ROOT"), project=world.project
+    )
+    monkeypatch.setattr(folderrepair, "supported", lambda platform=None: False)
+    assert "repair_token" not in _settled(world, "not_fixed")
+
+
+def test_the_fix_prompt_no_longer_tells_the_user_to_grant_permissions_by_hand():
+    from tavotto.engine import fixsession
+
+    assert "must grant this account read access" not in fixsession.SYSTEM_PROMPT
+    assert "Repair permissions" in fixsession.SYSTEM_PROMPT

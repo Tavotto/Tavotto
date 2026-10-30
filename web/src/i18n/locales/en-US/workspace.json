@@ -1412,6 +1412,7 @@
       }
     },
     "aiFix": {
+      "repairFolder": "The script uses a folder outside the project that this account can’t read; its permissions need repairing",
       "running": "AI is looking for the cause…",
       "cancel": "Cancel",
       "confirm": "Fix",

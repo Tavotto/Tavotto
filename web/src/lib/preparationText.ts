@@ -253,6 +253,8 @@ const AI_PRIMARY_STATES = new Set(['failed', 'deps_failed', 'blocked', 'no_figur
 function withRemedy(view: PrepView, report: PreparationReport | null | undefined, ctx: PrepContext): PrepView {
   const remedy = report && isRemedy(report.remedy) ? report.remedy : null
   if (!ctx.tutorial && AI_SECONDARY_ONLY_STATES.has(view.state)) return { ...view, remedy, aiFix: true }
+  // 带修复令牌的「文件夹读不了」卡：AI 对权限无能为力（fixsession 3g 也不许它动文件夹）——只留「修复权限」一个主按钮 + 稍后，不摆 AI 入口
+  if (view.state === 'folder_unreadable') return { ...view, remedy, aiFix: false }
   if (ctx.tutorial || !FAILURE_STATES.has(view.state)) return { ...view, remedy }
   let out: PrepView = { ...view, remedy }
   if (remedy && (remedy.kind === 'ai_fix' || remedy.kind === 'connect_ai') && AI_PRIMARY_STATES.has(view.state)) {

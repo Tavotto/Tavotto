@@ -282,6 +282,7 @@ def issue(
         ]:
             del _RECORDS[old]
         _RECORDS[token] = _Record(project_key, path, real, file, t + TOKEN_TTL)
+        _LATEST[project_key] = (path, file, t)
         _purge(t)
     return token
 
@@ -291,6 +292,26 @@ def reset() -> None:
     with _LOCK:
         _RECORDS.clear()
         _UNREADABLE_MODULES.clear()
+        _LATEST.clear()
+
+
+#: 项目 → 最近一次登记的 (路径, 文件, 时刻)。AI 修复以「读不了的文件夹」收场时据此给结果卡**签一个新令牌**
+#: （`issue_latest`）：原来的令牌可能已过期，而路径只活在本进程里、AI 会话与前端都拿不到。
+_LATEST: dict[str, tuple[str, str, float]] = {}
+#: `_LATEST` 的有效期（秒）：一次 AI 修复会话的上限远小于它；过期不再签发。
+LATEST_TTL = 3600.0
+
+
+def issue_latest(project, *, platform: str | None = None, now: float | None = None) -> str | None:
+    """给 `project` 最近一次「读不了的文件夹」失败再签一个新令牌；没有 / 过期 / 非 Windows 回 `None`。同样的私有通道，路径不外泄。"""
+    if not project or not supported(platform):
+        return None
+    t = time.monotonic() if now is None else now
+    with _LOCK:
+        latest = _LATEST.get(_project_key(project))
+    if latest is None or t - latest[2] > LATEST_TTL:
+        return None
+    return issue(project, latest[0], latest[1], platform=platform, now=t)
 
 
 #: 项目 → 在那里撞过「读不了的项目外文件夹」的顶层模块名。联合计划据此不把它们当表外依赖去问包名

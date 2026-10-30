@@ -5987,6 +5987,7 @@ export default interface Resources {
         "pickFile": "选择文件…",
         "readTitle": "AI 查看过",
         "reasonLabel": "AI 的理由：{{reason}}",
+        "repairFolder": "脚本用到的项目外文件夹读不了，需要修复它的权限",
         "running": "AI 正在查找原因…",
         "sendNo": "不发送",
         "sendNote": "AI 写的说明",
