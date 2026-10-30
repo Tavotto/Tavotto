@@ -99,17 +99,14 @@ describe('PanelView：引擎位图按自己的 overrides 取', () => {
     expect(previewPng).toHaveBeenCalledTimes(2)
     expect(previewPng.mock.calls.map((c) => c[1])).toEqual([a.overrides, b.overrides])
 
-    // 排除 aria-hidden 的那层：换图交叉淡入期间每个面板会多挂一张**旧图**做淡出
-    // （CrossfadeImage），它带 alt="" + aria-hidden，不是「这个面板显示的图」
-    const srcs = [...container.querySelectorAll('img:not([aria-hidden])')].map((el) =>
-      el.getAttribute('src'),
-    )
+    // 两张新图先各自在隐藏层加载，旧图仍显示；各自加载后才能获得自己的几何权威。
+    const imgs = [...container.querySelectorAll('img[src^="blob:"]')]
+    const srcs = imgs.map((el) => el.getAttribute('src'))
     expect(srcs).toHaveLength(2)
     expect(new Set(srcs).size).toBe(2)          // 不是同一张图
     expect(srcs.every((s) => s?.startsWith('blob:'))).toBe(true)
     expect(exactPanelManifest(useRenderStore.getState(), a)).toBeNull()
     expect(exactPanelManifest(useRenderStore.getState(), b)).toBeNull()
-    const imgs = [...container.querySelectorAll('img:not([aria-hidden])')]
     await act(async () => { imgs[0].dispatchEvent(new Event('load')) })
     expect(exactPanelManifest(useRenderStore.getState(), a)?.stem).toBe(JSON.stringify(a.overrides))
     expect(exactPanelManifest(useRenderStore.getState(), b)).toBeNull()

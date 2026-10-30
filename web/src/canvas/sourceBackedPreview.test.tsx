@@ -80,10 +80,25 @@ describe('zero edits show the pixels on disk', () => {
     preview.mockResolvedValue({ url: 'data:image/png;base64,ENGINE', manifest })
     await act(async () => root.render(<PanelView obj={zero} />))
     expect(visibleImg()!.getAttribute('src')).toMatch(/\/api\/file\?.*plot\.png/)
+    const original = visibleImg()!
+    // jsdom does not load images; model a previously loaded original. Returning
+    // to the same src must not require a second synthetic load event.
+    Object.defineProperties(original, {
+      complete: { configurable: true, value: true },
+      naturalWidth: { configurable: true, value: 100 },
+    })
     expect(preview).not.toHaveBeenCalled()
     await act(async () => useUiStore.getState().setElementPanel('p'))
+    await act(async () => {
+      el.querySelector('img[src*="ENGINE"]')!.dispatchEvent(new Event('load'))
+    })
     await vi.waitFor(() => expect(visibleImg()!.getAttribute('src')).toContain('ENGINE'))
+    let finishDecode!: () => void
+    original.decode = () => new Promise<void>((resolve) => { finishDecode = resolve })
     await act(async () => useUiStore.getState().setElementPanel(null))
+    expect(visibleImg()!.getAttribute('src')).toContain('ENGINE')
+    await act(async () => finishDecode())
+    expect(visibleImg()).toBe(original)
     expect(visibleImg()!.getAttribute('src')).toMatch(/\/api\/file\?.*plot\.png/)
   })
 })
