@@ -533,6 +533,7 @@ function BufferedImage({
   latestSrc.current = src
   const layersRef = useRef(layers)
   layersRef.current = layers
+  const imageRefs = useRef<{ a: HTMLImageElement | null; b: HTMLImageElement | null }>({ a: null, b: null })
 
   useEffect(() => {
     setLayers((l) => {
@@ -566,6 +567,18 @@ function BufferedImage({
     })
   }
 
+  // A → B → A can reuse the existing hidden node without changing its src.
+  // Browsers then emit no second load event, so explicitly decode that loaded
+  // node before promoting it. A failed/incomplete image still waits for events.
+  useEffect(() => {
+    const k = layers.pending
+    const img = k && imageRefs.current[k]
+    const layerSrc = k && layers[k]
+    if (k && img && layerSrc && img.complete && img.naturalWidth > 0) loaded(k, layerSrc, img)
+    // The layer state identifies the requested node; callbacks are refreshed on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layers.pending, layers.a, layers.b])
+
   // key 固定为 'a'/'b'，重排只是移动节点，不重挂、不丢已解码的那一帧。
   const order: ('a' | 'b')[] = layers.cur === 'a' ? ['a', 'b'] : ['b', 'a']
 
@@ -580,6 +593,7 @@ function BufferedImage({
         return (
           <img
             key={k}
+            ref={(node) => { imageRefs.current[k] = node }}
             src={layerSrc}
             alt={isCur ? alt : ''}
             aria-hidden={isCur ? undefined : true}

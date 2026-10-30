@@ -60,13 +60,14 @@ test('raster 参数编辑：新图加载期间保留已显示的图', async ({ a
     const authority = page.locator('[data-authority="ready"]')
     await expect(authority).toHaveCount(1, { timeout: 120_000 })
     await openElementsTab(page)
-    await expect(page.locator('[role="treeitem"]').first()).toBeVisible({ timeout: 30_000 })
-    for (let i = 0; i < 8; i++) {
-      const collapsed = page.locator('[role="treeitem"][aria-expanded="false"]')
-      if (await collapsed.count() === 0) break
-      await collapsed.first().click()
+    const tree = page.locator('[data-tree="elements"]')
+    await expect(tree).toHaveCount(1, { timeout: 30_000 })
+    const axes = tree.locator('[data-el="axes_0"]')
+    if (await axes.getAttribute('aria-expanded') === 'false') {
+      await axes.focus()
+      await axes.press('ArrowRight')
     }
-    const title = page.getByRole('treeitem', { name: /^标题/ })
+    const title = tree.locator('[data-el="axes_0.title"]')
     await expect(title).toHaveCount(1)
     await title.click()
     const size = page.locator('[data-inspector-prop="fontsize"]')
