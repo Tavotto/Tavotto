@@ -93,11 +93,11 @@ AI 修复：`fixsession.SYSTEM_PROMPT` 的 3g 写明——装进 Tavotto 受管�
   与登记那刻的真实路径一致（挡住登记后换成联接点）；通过后 `scan_for_links` 不跟随地遍历整棵树查重解析点（当前账户列不出的子目录跳过，交给下一条）。命令只对验过的真实路径动手；还要登记的那个文件此刻**确实仍读不了**，
   读得了就不弹 UAC。
 * **提权在 sidecar 发起**（Flask 父进程，纯标准库 `ctypes`），不放桌面壳：浏览器模式同样能用，不新增 `#[tauri::command]` 与 ACL。
-  两条命令包进**一个** `powershell.exe -EncodedCommand`，脚本在任何改动之前先以管理员身份再递归复查一遍重解析点（`Get-ChildItem -Recurse -Force -Attributes ReparsePoint`，不加 `-FollowSymlink`；有就 `exit 201`、什么都不改，防预检与执行之间被换成链接；复查自己失败 `exit 202`）（每个参数是单引号字面量，不经 cmd 的 `%` / `&` / `^` 展开），只弹一次 UAC；
+  两条命令包进**一个** `powershell.exe -EncodedCommand`，脚本在任何 ACL 改动之前先以**备份语义**把整棵树遍历检查完（内联 C#，`Add-Type`，无外部依赖：启用 SeBackupPrivilege，`CreateFileW(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)` 逐层打开、`GetFileInformationByHandleEx` 取属性与列子项——提权本身不授予列目录的权限，DACL 连 Administrators 都排除的目录靠备份特权才列得出；不跟随链接）：有重解析点 `exit 201`、条目超限 `exit 203`、遍历自己失败 `exit 202`，都什么也不改；通过后才跑两条 icacls（每个参数是单引号字面量，不经 cmd 的 `%` / `&` / `^` 展开），只弹一次 UAC；
   系统工具与 PowerShell 都用 `SystemRoot\System32` 下的绝对路径，不吃 PATH。跑完再复核那个文件是否读得了：退出码 0 但仍读不了也算失败。
 * **结局**（稳定码，文案固定、不带参数）：`repair_cancelled`（UAC 取消）、`repair_not_elevated`（没拿到管理员权限）、`repair_failed`
   （命令失败 / 仍读不了）、`repair_has_links`、`repair_too_large`、`repair_token_invalid`、`repair_target_rejected`、`repair_not_confirmed`、`repair_in_progress`、`repair_unsupported`。
-  取消与没拿到提权不作废令牌（可自己再点一次，每次点击至多一次 UAC）；跑过命令（成败）、目标被拒、发现链接 / 超限就作废。
+  取消与没拿到提权不作废令牌（可自己再点一次，每次点击至多一次 UAC）；跑过命令（成败）、目标被拒、发现链接 / 超限就作废；脚本遍历失败（202）按 `repair_failed` 处理并作废。
 * **前端**：准备卡 `folder_unreadable` 态——一句话点名文件夹 + 主按钮「修复权限」（没有令牌 = 原来的通用失败卡）；成功后沿用卡上
   「再试一次」同一个动作重跑一次；失败 / 取消的一句话放在卡片标题上，不自动重试。
 

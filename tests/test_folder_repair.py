@@ -367,23 +367,59 @@ def test_elevated_launch_is_one_powershell_with_literal_arguments():
     path = "D:\\it's 100% & ^odd\\deps"
     exe, params = folderrepair.build_elevated_launch(folderrepair.build_commands(path, env), env)
     assert exe == "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
-    script = _decode(params).split("\n")
+    text = _decode(params)
+    script = text.split("\n")
     q = "'D:\\it''s 100% & ^odd\\deps'"
     icacls = "'C:\\Windows\\System32\\icacls.exe'"
-    assert script == [
-        f"try {{ $l = Get-ChildItem -LiteralPath {q} -Recurse -Force -Attributes ReparsePoint "
-        "-ErrorAction Stop | Select-Object -First 1 } catch { exit 202 }",
-        "if ($l) { exit 201 }",
+    # 头：编译遍历器；尾：遍历结果非 0 就收场，然后才是两条 icacls
+    assert script[0] == "try { Add-Type -TypeDefinition @'"
+    end = script.index("'@ } catch { exit 202 }")
+    assert script[end + 1 :] == [
+        f"$r = [RepairWalk]::Run({q}, {folderrepair.MAX_ENTRIES})",
+        "if ($r -ne 0) { exit $r }",
         f"& {icacls} {q} '/setowner' '*S-1-5-32-544' '/T' '/C' '/L' '/Q' | Out-Null",
         "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
         f"& {icacls} {q} '/reset' '/T' '/C' '/L' '/Q' | Out-Null",
         "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
         "exit 0",
     ]
-    # 复查在任何改动之前；且不跟随链接
-    first_icacls = next(i for i, ln in enumerate(script) if "icacls" in ln)
-    assert max(i for i, ln in enumerate(script) if "ReparsePoint" in ln) < first_icacls
-    assert "FollowSymlink" not in "\n".join(script)
+    # 遍历在任何 icacls 之前，且不跟随链接
+    assert text.index("[RepairWalk]::Run") < text.index("icacls")
+    assert "FollowSymlink" not in text and "Get-ChildItem" not in text
+
+
+def test_the_walker_uses_backup_semantics_and_never_follows_links():
+    """提权不授予列目录的权限：遍历必须先启用 SeBackupPrivilege、用备份语义 + 不跟随重解析点打开每一层（文本级断言，
+    真行为见 `scripts/dev/verify_folder_repair_windows.ps1`）。"""
+    src = folderrepair._WALK_SOURCE
+    assert 'Enable("SeBackupPrivilege")' in src
+    assert src.index('Enable("SeBackupPrivilege")') < src.index("CreateFileW(@")
+    assert (
+        "return 202" in src.split('Enable("SeBackupPrivilege")')[1].split("\n")[0]
+    )  # 启用失败不往下走
+    # FILE_FLAG_BACKUP_SEMANTICS (0x02000000) | FILE_FLAG_OPEN_REPARSE_POINT (0x00200000)
+    assert "0x02200000" in src
+    flags = 0x02000000 | 0x00200000
+    assert f"0x{flags:08X}" in src
+    # 本层看属性标记（FileAttributeTagInfo=9），子项用 FileIdBothDirectoryInfo=10 / Restart=11
+    assert "GetFileInformationByHandleEx(h, 9," in src and "cls = 11" in src and "cls = 10" in src
+    assert "(self & 0x400) != 0) return 201" in src and "(attr & 0x400) != 0) return 201" in src
+    assert "count > limit) return 203" in src
+
+
+def test_walker_exit_codes_map_to_stable_errors(world):
+    for code, expected in (
+        (folderrepair.EXIT_LINKS, folderrepair.ERROR_HAS_LINKS),
+        (folderrepair.EXIT_TOO_MANY, folderrepair.ERROR_TOO_LARGE),
+        (folderrepair.EXIT_CHECK_FAILED, folderrepair.ERROR_FAILED),
+    ):
+        token = _issue(world)
+        with pytest.raises(folderrepair.RepairError) as e:
+            _run(world, token, lambda c, x=code: folderrepair.RunOutcome("done", x))
+        assert e.value.code == expected
+        with pytest.raises(folderrepair.RepairError) as e:
+            _run(world, token, _ok_runner([]))
+        assert e.value.code == folderrepair.ERROR_TOKEN_INVALID
 
 
 # --------------------------------------------------------------------------- 子孙里的链接

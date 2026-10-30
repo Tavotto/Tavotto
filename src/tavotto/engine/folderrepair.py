@@ -41,6 +41,7 @@ MAX_ENTRIES = 20000
 #: 提权脚本自己的退出码：动手前复查发现重解析点 / 复查本身没跑成（与 icacls 的 0、1 区分开）。
 EXIT_LINKS = 201
 EXIT_CHECK_FAILED = 202
+EXIT_TOO_MANY = 203
 _REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT
 
 #: 稳定错误码（协议契约；`tests/test_error_codes.py` 读 `ERROR_CODES`）。
@@ -372,19 +373,114 @@ def _ps_quote(arg: str) -> str:
     return "'" + arg.replace("'", "''") + "'"
 
 
+#: 提权脚本里内联编译的 C# 遍历器（Windows PowerShell 5.1 自带 `Add-Type`，无外部依赖；比让提权进程去找一个 Python 稳）。
+#: **备份语义**：先启用 SeBackupPrivilege（提权令牌持有、默认未启用），再用
+#: `CreateFileW(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)` 打开每一层目录——绕过 DACL 的访问检查，所以连
+#: Administrators 都被排除在 DACL 之外的受限目录也能列；`OPEN_REPARSE_POINT` 保证不跟随链接。用
+#: `GetFileInformationByHandleEx(FileAttributeTagInfo)` 看本层属性，`FileIdBothDirectoryInfo` 列子项（子项属性里就带重解析标记，
+#: 不必再逐个打开）。遍历不改任何 ACL；返回 0 干净、201 有重解析点、203 条目超限、202 遍历本身失败。
+_WALK_SOURCE = r"""
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+public static class RepairWalk {
+  [StructLayout(LayoutKind.Sequential, Pack = 4)]
+  struct LuidAndAttributes { public long Luid; public uint Attributes; }
+  [StructLayout(LayoutKind.Sequential, Pack = 4)]
+  struct TokenPrivileges { public uint Count; public LuidAndAttributes P; }
+
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("advapi32.dll", SetLastError = true)]
+  static extern bool OpenProcessToken(IntPtr proc, uint access, out IntPtr token);
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern bool LookupPrivilegeValue(string system, string name, out long luid);
+  [DllImport("advapi32.dll", SetLastError = true)]
+  static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TokenPrivileges state, uint len, IntPtr prev, IntPtr retLen);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sec, uint disp, uint flags, IntPtr tmpl);
+  [DllImport("kernel32.dll", SetLastError = true)]
+  static extern bool GetFileInformationByHandleEx(SafeFileHandle h, int cls, IntPtr buf, uint size);
+
+  static bool Enable(string name) {
+    IntPtr token;
+    if (!OpenProcessToken(GetCurrentProcess(), 0x28, out token)) return false;
+    try {
+      TokenPrivileges tp = new TokenPrivileges();
+      tp.Count = 1;
+      tp.P.Attributes = 2;
+      if (!LookupPrivilegeValue(null, name, out tp.P.Luid)) return false;
+      if (!AdjustTokenPrivileges(token, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero)) return false;
+      return Marshal.GetLastWin32Error() == 0;
+    } finally { CloseHandle(token); }
+  }
+
+  public static int Run(string root, int limit) {
+    try {
+      if (!Enable("SeBackupPrivilege")) return 202;
+      Enable("SeRestorePrivilege");
+      int count = 0;
+      Stack<string> stack = new Stack<string>();
+      stack.Push(root);
+      IntPtr buf = Marshal.AllocHGlobal(65536);
+      try {
+        while (stack.Count > 0) {
+          string dir = stack.Pop();
+          using (SafeFileHandle h = CreateFileW(@"\\?\" + dir, 0x81, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero)) {
+            if (h.IsInvalid) return 202;
+            if (!GetFileInformationByHandleEx(h, 9, buf, 8)) return 202;
+            uint self = (uint)Marshal.ReadInt32(buf);
+            if ((self & 0x400) != 0) return 201;
+            if ((self & 0x10) == 0) return 202;
+            int cls = 11;
+            while (true) {
+              if (!GetFileInformationByHandleEx(h, cls, buf, 65536)) {
+                if (Marshal.GetLastWin32Error() == 18) break;
+                return 202;
+              }
+              cls = 10;
+              int off = 0;
+              while (true) {
+                int next = Marshal.ReadInt32(buf, off);
+                uint attr = (uint)Marshal.ReadInt32(buf, off + 56);
+                int nlen = Marshal.ReadInt32(buf, off + 60);
+                string name = Marshal.PtrToStringUni(IntPtr.Add(buf, off + 104), nlen / 2);
+                if (name != "." && name != "..") {
+                  count++;
+                  if (count > limit) return 203;
+                  if ((attr & 0x400) != 0) return 201;
+                  if ((attr & 0x10) != 0) stack.Push(dir.TrimEnd('\\') + "\\" + name);
+                }
+                if (next == 0) break;
+                off += next;
+              }
+            }
+          }
+        }
+      } finally { Marshal.FreeHGlobal(buf); }
+      return 0;
+    } catch (Exception) { return 202; }
+  }
+}
+"""
+
+
 def build_elevated_launch(commands: list[list[str]], env=None) -> tuple[str, str]:
     """把命令列表包成**一次**提权启动：`(exe, parameters)`。
 
     PowerShell 脚本里每个参数都是单引号字面量（不经 cmd 的 `%` / `&` / `^` 展开），经 `-EncodedCommand`（UTF-16LE base64）
-    交给 `powershell.exe`；这样两条命令只弹一次 UAC。脚本**先**以管理员身份递归查一遍目录里有没有重解析点
-    （`Get-ChildItem -Recurse -Force -Attributes ReparsePoint`，不加 `-FollowSymlink`）：有就以 `EXIT_LINKS` 收场、什么都不改，
-    防止预检与执行之间被换成链接。之后任何一条退出码非 0 立即以它收场。"""
+    交给 `powershell.exe`；这样两条命令只弹一次 UAC。**先**用 `_WALK_SOURCE` 以备份语义把整棵树遍历检查完
+    （任何 ACL 都还没动）：有重解析点 `exit 201`、条目超限 `exit 203`、遍历自己失败 `exit 202`，都什么也不改；
+    遍历全部通过后才执行 icacls，任何一条退出码非 0 立即以它收场。"""
     folder = commands[0][1]
     lines = [
-        "try { $l = Get-ChildItem -LiteralPath "
-        + _ps_quote(folder)
-        + f" -Recurse -Force -Attributes ReparsePoint -ErrorAction Stop | Select-Object -First 1 }} catch {{ exit {EXIT_CHECK_FAILED} }}",
-        f"if ($l) {{ exit {EXIT_LINKS} }}",
+        "try { Add-Type -TypeDefinition @'",
+        *_WALK_SOURCE.strip("\n").split("\n"),
+        f"'@ }} catch {{ exit {EXIT_CHECK_FAILED} }}",
+        f"$r = [RepairWalk]::Run({_ps_quote(folder)}, {MAX_ENTRIES})",
+        "if ($r -ne 0) { exit $r }",
     ]
     for argv in commands:
         lines.append("& " + " ".join(_ps_quote(a) for a in argv) + " | Out-Null")
@@ -526,6 +622,8 @@ def run_repair(
         consumed = True  # 命令已经跑过：成功与失败都是终局，要再来就重新运行取新令牌
         if outcome.exit_code == EXIT_LINKS:
             raise RepairError(ERROR_HAS_LINKS)  # 提权脚本动手前复查发现了链接，什么都没改
+        if outcome.exit_code == EXIT_TOO_MANY:
+            raise RepairError(ERROR_TOO_LARGE)  # 同上：条目超限，什么都没改
         if outcome.exit_code != 0 or (record.file and unreadable(record.file)):
             raise RepairError(ERROR_FAILED)
         return {"repaired": True}
