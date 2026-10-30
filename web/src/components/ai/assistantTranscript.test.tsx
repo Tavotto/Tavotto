@@ -33,6 +33,12 @@ import { setCurrentProjectId } from '@/lib/session'
 import { Markdown } from './Markdown'
 import { formatDuration, parseUnifiedDiff, type LineRow } from './transcriptModel'
 
+const refreshProjectNow = vi.hoisted(() => vi.fn(async () => {}))
+vi.mock('@/store/liveSync', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/store/liveSync')>()),
+  refreshProjectNow,
+}))
+
 vi.mock('@/lib/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api')>()),
   aiRevert: vi.fn(async () => ({ ok: true })),
@@ -357,6 +363,30 @@ describe('发送失败（§6.7）', () => {
     expect(detail).toContain('HTTP 500')
     expect(detail).toContain('upstream_timeout')
     expect(detail).toContain('ref ref-3f9a')
+  })
+
+  it('图的文件找不到了（ai_panel_file_missing）：一句话 + 主按钮「刷新项目」，不给只会再 404 的「重试」', async () => {
+    start.mockImplementationOnce(async () => {
+      throw new ApiError('HTTP 404', 404, { code: 'ai_panel_file_missing', params: {} })
+    })
+    await mount([])
+    const box = q<HTMLTextAreaElement>('[data-ai-input]')!
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+    await act(async () => {
+      setter.call(box, '加粗线条')
+      box.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => q<HTMLButtonElement>('[data-ai-send]')!.click())
+    const notice = q('[data-ai-error="send"]')!
+    expect(notice.textContent).toContain(t('backend.ai_panel_file_missing', { ns: 'errors' }))
+    expect(notice.textContent).not.toContain('HTTP 404')
+    expect(notice.querySelector('[data-ai-retry]')).toBeNull()
+    const refresh = notice.querySelector<HTMLButtonElement>('[data-ai-refresh-project]')!
+    expect(refresh.textContent).toBe(t('topbar.refreshProject', { ns: 'workspace' }))
+    await act(async () => refresh.click())
+    expect(refreshProjectNow).toHaveBeenCalledTimes(1)
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(q('[data-ai-error="send"]')).toBeNull()
   })
 
   it('发送失败钉在那一张图上：换到别的图就不摆它的重试，回来照常重试原处（Codex #827 P1）', async () => {

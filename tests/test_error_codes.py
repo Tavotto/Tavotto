@@ -340,6 +340,8 @@ USER_VISIBLE_CODES = {
     "figure_name_exhausted": set(),
     # 拒绝之后清待确认行也失败了：状态不确定（503），客户端保持同一个 rid
     "ai_request_unresolved": set(),
+    # 改图请求里那张图的文件不在项目里了（前端给「刷新项目」）
+    "ai_panel_file_missing": set(),
     # ADR 0132：助手草稿单稿超过 20 KB（413，不截断）
     "ai_draft_too_large": {"limit_kb"},
     # 同一面板未解决的待确认提交已满（409，拒绝新的、不淘汰旧的）
