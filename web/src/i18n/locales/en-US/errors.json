@@ -296,6 +296,7 @@
     "script_input_timeout": "The script waited 10 minutes for an answer to “{{prompt}}”, got none, and failed after being told the input had ended. Run it again and answer.",
     "script_needs_input": "The script is asking for input: “{{prompt}}”. Run it once in the Tavotto window and answer; the answer is remembered for this project.",
     "engine_files_incomplete": "Tavotto’s program files are incomplete, so it can’t render. Please reinstall Tavotto.",
+    "import_folder_unreadable": "The script loads a folder outside the project, “{{folder}}”, that this account can’t read. Grant this account read access to it, or take it off the script’s search path, then try again; switching Python environments won’t help.",
     "write_outside_roots": "The script tried to write outside the authorized workspace, so this run didn’t finish. Make it write inside the project, or run the script yourself in the Tavotto window.",
     "export_raster_too_large": "At the current settings this figure would need a {{width}} × {{height}}-pixel bitmap, over the {{max_pixels}}-pixel limit. To avoid running out of memory nothing was exported, and your original files are unchanged. Try a lower export resolution or a smaller figure size; Tavotto does not lower it for you.",
     "script_input_stream_gone": "The event stream disconnected; reconnecting.",

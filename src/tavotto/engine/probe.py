@@ -141,6 +141,10 @@ def _error_from_worker(
     reason = _short(str(exc), exc.traceback_text)
     if exc.code == "missing_dependency":
         params = {"module": exc.module}
+        # 读不了的项目外文件夹里的包（ADR 0153）：文件夹名随参数带出，`tavotto open` 据此说清原因
+        folder = ((getattr(exc, "extra", None) or {}).get("unreadable_folder") or {}).get("folder")
+        if folder:
+            params["folder"] = folder
         # 项目环境自动接手为什么没成（ADR 0018）：找不到 venv / venv 里也没这个
         # 包 / 那个环境没有 matplotlib / Python 版本不支持。四种情况用户要做的
         # 事完全不同，只报「缺少依赖包」等于把可执行的出路藏起来。
@@ -240,8 +244,8 @@ def _error_from_worker(
         out = _err(exc.code, str(exc))
         out["dependency_preparation"] = dependency
         return out
-    if exc.code in texdiag.ERROR_CODES:
-        # TeX 工具链（缺命令 / 缺宏包或字体 / 编译错误）：码与参数原样带出，与渲染端点同一份
+    if exc.code in (*texdiag.ERROR_CODES, pool.IMPORT_FOLDER_UNREADABLE_CODE):
+        # TeX / 项目外文件夹读不了（ADR 0153） 工具链（缺命令 / 缺宏包或字体 / 编译错误）：码与参数原样带出，与渲染端点同一份
         # （`pool.recovery_params`）——素材库这条入口不能退化成一句「试运行失败」，更不能落成缺 Python 包
         return _err(
             exc.code, str(exc), params=pool.recovery_params(exc), traceback_text=exc.traceback_text

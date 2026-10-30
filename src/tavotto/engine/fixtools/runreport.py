@@ -74,7 +74,7 @@ def project_run_report(report: dict | None, ctx: FixContext) -> ToolResult:
         picked = {"project_package_shadow": note, **picked}
     if isinstance(error, dict):
         picked["error"] = {
-            k: _precis(error[k]) for k in ("code", "message", "module") if error.get(k)
+            k: _precis(error[k]) for k in ("code", "message", "module", "params") if error.get(k)
         }
     elif error:
         picked["error"] = _precis(error)

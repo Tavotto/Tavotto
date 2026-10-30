@@ -89,6 +89,12 @@ try:
 finally:
     sys.dont_write_bytecode = _dont_write_bytecode
 
+#: 与 safe worker 同一个装配点（ADR 0153）：用户脚本往 `sys.path` 里塞了当前账户读不了的项目外目录时，
+#: 换下一个位置继续找。native 的契约本来是「与 `python fig.py` 一致」，这是有意偏离，只在读不了时生效；
+#: 不写 stderr（那是用户的终端），记录随回执的 `runtime.import_skips` 回去。
+bridgeboot.install_unreadable_import_skipper()
+_PATH_BASELINE = list(sys.path)
+
 #: 第一阶段只装纯标准库（捕获策略 + patch 规范化 + 执行事实）。**绝不在这里装
 #: manifest / overrides**——它们在模块层 import matplotlib 与 numpy，而
 #: `import matplotlib` 会当场读 cwd 下的 matplotlibrc、钉死 rcParams，
@@ -1081,7 +1087,7 @@ class BridgeRun:
         )
         # 与 safe worker 同一份自报（ADR 0053）：native 的 prefix / cwd 正是
         # 「用户自己的解释器、用户自己的 cwd」这两条承诺的可核对证据。
-        out["runtime"] = _PKG.figsession.runtime_report()
+        out["runtime"] = _PKG.figsession.runtime_report(import_skips=bridgeboot.skip_events())
         if self.inputs_report is not None:
             # 桌面拥有的运行在脚本结束后的屏障上才有（#1047）：父进程据此给 native 成功记录补上 helper / 数据依据。
             # 不放进 `runtime`：那一段进回执身份，同一会话前后两次 build 不该因为「跑没跑完」换身份
@@ -1431,6 +1437,30 @@ def _derive_target_facts(args) -> None:
     args.rel_target = rel.replace("\\", "/")
 
 
+def _unreadable_folder_extra(exc: BaseException, args) -> dict:
+    """脚本失败是不是「它加进 `sys.path` 的项目外目录读不了」（ADR 0153）：是则 `{"unreadable_folder": {"folder": 名}}`。
+    判据在 `bridgeboot.unreadable_folder_fact`（与 safe worker 同一份）；任何意外都当没有，绝不盖掉原来的脚本错误。"""
+    try:
+        import sysconfig
+
+        roots = [args.project_root or os.getcwd(), os.path.dirname(args.source_path or "")]
+        interp = [
+            sys.prefix,
+            sys.base_prefix,
+            sys.exec_prefix,
+            *(
+                sysconfig.get_paths().get(k, "")
+                for k in ("stdlib", "platstdlib", "purelib", "platlib")
+            ),
+        ]
+        fact = bridgeboot.unreadable_folder_fact(
+            exc, _PATH_BASELINE, [r for r in roots if r], [p for p in interp if p]
+        )
+    except Exception:  # noqa: BLE001
+        return {}
+    return {"unreadable_folder": fact} if fact else {}
+
+
 def main(argv: list | None = None) -> int:
     global _INPUTS
     args = _parse_args(list(sys.argv[1:] if argv is None else argv))
@@ -1484,6 +1514,8 @@ def main(argv: list | None = None) -> int:
             "code": "script_error",
             "message": f"{type(exc).__name__}: {exc}",
             "traceback": traceback.format_exc(),
+            # 跳过之后仍失败、而失败是脚本加进 sys.path 的项目外目录读不了（ADR 0153）：只带目录名
+            **_unreadable_folder_extra(exc, args),
         }
         traceback.print_exc()
     finally:

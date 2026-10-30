@@ -403,9 +403,11 @@ def reset_state(project: str | Path | None = None) -> None:
             _cancels.clear()
             _rounds.clear()
             _attempted.clear()
+            pool.reset_unreadable_installs()
             _base_python, _base_python_known = None, False
             _base_epoch += 1
             return
+        pool.reset_unreadable_installs(project)
         pid = managedenv.project_fingerprint(project)
         for key in [k for k, p in _plans.items() if p.project_id == pid]:
             _plans.pop(key, None)
@@ -1543,6 +1545,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             # 代事务生成的回执原样带到对外终态（它自己的 `done` 被 `_emit_repair_step` 吞了）
             "providers": outcome.get("providers", []),
         }
+        pool.note_unreadable_install(plan.project, req.import_name, result.get("python", ""))
         _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
         LOG.info(
             "依赖修复成功: %s %s → %s",
@@ -1661,6 +1664,7 @@ def _run_install(plan: RepairPlan, env_key: str, on_event, cancel_ev: threading.
             "",
         ),
     }
+    pool.note_unreadable_install(plan.project, req.import_name, result.get("python", ""))
     _emit(plan.plan_id, STATE_DONE, on_event, plan=plan, result=result)
     LOG.info(
         "依赖修复成功: %s %s → %s",
@@ -5013,6 +5017,7 @@ def _run_joint_in_place(plan: JointRepairPlan, on_event, cancel_ev: threading.Ev
         "installed": installed,
         "providers": _provider_receipt(plan.record, provided, installed, ""),
     }
+    _note_unreadable_installs(plan.project, plan.record, python)
     _emit(plan.plan_id, STATE_DONE, on_event, joint=plan, result=result)
     return result
 
@@ -5116,6 +5121,15 @@ def _name_of(requirement: str) -> str:
         if ch in "[<>=!~ @":
             return text[:i]
     return text
+
+
+def _note_unreadable_installs(project: str, record, python: str = "") -> None:
+    """联合安装 / 换代事务成功提交之后，按账里每一条的 import 名记一笔「装过了」（`pool.note_unreadable_install`，ADR 0153）：
+    装好后读不了的项目外文件夹里同一个模块仍然失败时，不再弹第二次安装卡。没有 import 名的条目（用户指定的包）跳过。"""
+    for entry in record or ():
+        name = entry.get("import_name") if isinstance(entry, dict) else ""
+        if name:
+            pool.note_unreadable_install(project, name, python)
 
 
 def _run_generation(job: _GenerationJob, cancel_ev: threading.Event) -> dict:
@@ -5390,6 +5404,7 @@ def _run_generation_locked(job: _GenerationJob, cancel_ev: threading.Event, key:
         "providers": _provider_receipt(job.record, provided, installed, generation),
         "retired": retired,
     }
+    _note_unreadable_installs(project, job.record, python)
     job.emit(STATE_DONE, result=result)
     LOG.info("受管环境换代: %s → %s（装 %d 条）", project, generation, len(requirements))
     return result

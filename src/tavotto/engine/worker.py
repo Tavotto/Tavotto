@@ -266,6 +266,16 @@ try:
 finally:
     sys.dont_write_bytecode = _dont_write_bytecode
 
+
+def _log_import_skip(event: dict) -> None:
+    """跳过「找到了但读不了」的 import 位置时在 worker.log 留一行结构化记录（ADR 0153）；路径由诊断包统一脱敏。"""
+    print(f"[import-skip] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr)
+
+
+#: 与 native bridge 同一个装配点（`bridgeboot.install_unreadable_import_skipper`）：用户脚本往 `sys.path` 里塞了
+#: 当前账户读不了的项目外目录时，换下一个位置继续找，而不是让整次 import 挂在 `PermissionError` 上。
+bridgeboot.install_unreadable_import_skipper(_log_import_skip)
+
 import matplotlib  # noqa: E402 —— safe 档由 Tavotto 挑解释器，backend 在装引擎之前钉死
 
 matplotlib.use("Agg")
@@ -1329,6 +1339,8 @@ class Worker(wireproto.V1Handler):
         # 静态侧同一个模型：`importscan._search_roots`（project_root 排在标准库 / site 之后）与
         # `importshadow.detect(late_roots=…)`；改这里要一起改（tests/test_syspath_order.py 锁住三者一致）。
         _put_project_on_path(self.script.parent, self.figures_dir)
+        #: 脚本运行前的 `sys.path`：之后新加进来的项目外目录读不了时，失败卡点名它（`_unreadable_folder_fact`）
+        self._path_baseline = list(sys.path)
         # 项目目录里的源码（脚本本身按模块 import 时、它 import 的本地模块）不写 .pyc——
         # 必须在第一次 import 用户代码（paper_style / 脚本）之前装好。
         _suppress_project_bytecode((self.figures_dir, self.script.parent))
@@ -1921,6 +1933,7 @@ class Worker(wireproto.V1Handler):
             # 缺依赖的结构化事实：敏感运行会丢掉自由文本（父进程本来从消息 / traceback 里认出缺哪个包），
             # 在丢之前先把「顶层模块名」这一个安全事实带上，依赖修复 / 环境交接才不会丢
             facts.update(self._missing_module_fact(exc))
+            facts.update(self._unreadable_folder_fact(exc))
             raise ProtocolError(
                 "script_error",
                 f"脚本执行失败: {exc}",
@@ -1938,6 +1951,17 @@ class Worker(wireproto.V1Handler):
     def probe_miss_facts(self) -> dict:
         """协议层（`wireproto`）的钩子：`unknown_stem` 之类「没出图」的错误也带上同一份事实。"""
         return self._probe_miss_facts()
+
+    def _unreadable_folder_fact(self, exc: BaseException) -> dict:
+        """跳过之后仍失败、而失败是「脚本加进 `sys.path` 的项目外目录读不了」：`{"unreadable_folder": {"folder": 目录名}}`。
+        判据与目录名清洗在 `bridgeboot.unreadable_folder_fact`（native 同一份）；只给目录名，不带路径。"""
+        fact = bridgeboot.unreadable_folder_fact(
+            exc,
+            getattr(self, "_path_baseline", ()),
+            (self.figures_dir, self.script.parent),
+            (sys.prefix, sys.base_prefix, sys.exec_prefix, *_INTERPRETER_PACKAGE_DIRS),
+        )
+        return {"unreadable_folder": fact} if fact else {}
 
     def _missing_module_fact(self, exc: BaseException) -> dict:
         """缺依赖的结构化事实：`{"missing_dependency": True, "missing_module": 顶层包名?}`；不是缺依赖回 `{}`。
@@ -2018,7 +2042,9 @@ class Worker(wireproto.V1Handler):
                 else {}
             ),
             "runtime": figsession.runtime_report(
-                inputs=self._inputs_report, fidelity=self._fidelity_summary()
+                inputs=self._inputs_report,
+                fidelity=self._fidelity_summary(),
+                import_skips=bridgeboot.skip_events(),
             ),
             # 沙盒里落空的相对探路调用（#1254）：只在有记录时才有这个字段，响应形状不变
             **self._probe_miss_facts(),

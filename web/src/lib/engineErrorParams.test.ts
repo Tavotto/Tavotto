@@ -26,4 +26,12 @@ describe('engineErrorMsg 带结构化 params', () => {
     expect(text).toContain('ValueError: real last line')
     expect(text).not.toContain('from-params')
   })
+
+  it('项目外文件夹读不了：点名文件夹，不露占位符', () => {
+    const text = formatMessage(
+      engineErrorMsg(TEX('import_folder_unreadable', { folder: '.work_deps' }, 'PermissionError: [Errno 13]')),
+    )
+    expect(text).toContain('.work_deps')
+    expect(text).not.toContain('{{')
+  })
 })

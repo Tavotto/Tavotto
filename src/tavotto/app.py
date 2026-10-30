@@ -773,6 +773,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         *engine_pool.INPUT_ERROR_CODES,
         engine_pool.ARGUMENTS_ERROR_CODE,
         *engine_texdiag.ERROR_CODES,
+        engine_pool.IMPORT_FOLDER_UNREADABLE_CODE,
         engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
@@ -838,6 +839,15 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
             if engine_pool.install_offer_blocked(route)
             else _dependency_repair_offer(exc, detail)
         )
+        folder = ((getattr(exc, "extra", None) or {}).get("unreadable_folder") or {}).get("folder")
+        if folder and not (repair and repair.get("requirement")):
+            # 读不了的是项目外文件夹里的包（ADR 0153 B），可信解析又给不出安装名：不出「换环境」的缺依赖卡，
+            # 落到一句话的 import_folder_unreadable
+            body["code"] = engine_pool.IMPORT_FOLDER_UNREADABLE_CODE
+            body["params"] = {"folder": folder}
+            body.pop("module", None)
+            repair = None
+            route = ""
         if repair is not None:
             body["dependency_repair"] = repair
             # 能经可信解析映射到 distribution = 可安装；映射不到（ROOT）= 装不了，主文案不能再说「一键装上」
@@ -10630,6 +10640,20 @@ def _native_preparation_runner(pl, before_retry=None):
         # 脚本自己炸了：不吞（AC-21）。让进程把退出走完（它在 script_end 屏障上），再按真实异常收场
         error = dict(session.script_error)
         _end_native_session(session)
+        # 脚本加进 sys.path 的项目外目录读不了（ADR 0153）：桥带来的结构化事实 → 稳定码，与 safe 同一个出口
+        try:
+            native_project = str(require_project())
+        except NoProjectError:
+            native_project = ""
+        unreadable = engine_pool.unreadable_folder_error(
+            str(error.get("message") or "脚本运行出错"),
+            str(error.get("traceback") or ""),
+            error,
+            project=native_project,
+            python=getattr(session, "interpreter", ""),
+        )
+        if unreadable is not None:
+            raise unreadable
         raise engine_pool.WorkerError(
             str(error.get("message") or "脚本运行出错"),
             traceback_text=str(error.get("traceback") or ""),
@@ -11660,6 +11684,7 @@ def _set_project_environment(
             )
         except engine_envlease.EnvironmentBusy as exc:
             return _environment_busy(exc)
+        engine_pool.reset_unreadable_installs(root)
         engine_pool.reset_worker_python()
         engine_pool.shutdown_all(root)
         return jsonify({"ok": True, "project": _project_environment_state()})

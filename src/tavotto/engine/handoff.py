@@ -415,6 +415,19 @@ def _probe_error(err) -> HandoffError:
     params = err.get("params") or {}
     if params.get("module"):
         extra["module"] = params["module"]
+    folder = params.get("folder")
+    if (
+        isinstance(folder, str)
+        and folder
+        and code in ("missing_dependency", "import_folder_unreadable")
+    ):
+        # 脚本加载的项目外文件夹读不了（ADR 0153）：说清是哪个文件夹，不落进「项目要它自己的环境」那句话
+        extra["folder"] = folder
+        message = (
+            f"脚本加载的项目外文件夹“{folder}”读不了（当前账户没有读取权限）。"
+            "在 Tavotto 界面里打开这张图并按提示安装缺少的依赖，或给这个账户开放该文件夹的读取权限"
+        )
+        return HandoffError(message, "import_folder_unreadable", **{**extra, "probe_code": code})
     tb = err.get("traceback")
     if tb:
         extra["traceback"] = str(tb)[-2000:]

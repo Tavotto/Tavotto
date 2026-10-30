@@ -744,6 +744,9 @@ def recovery_params(exc: "WorkerError") -> dict:
     if exc.code in texdiag.ERROR_CODES:
         # TeX 工具链（`texdiag`）：缺的命令 / 文件名（白名单清洗过）与 LaTeX 的那一行 `! …`
         return texdiag.params_of(extra.get("tex"))
+    if exc.code == IMPORT_FOLDER_UNREADABLE_CODE:
+        # 只有目录名（不是路径）；缺了就不发这个码（`unreadable_folder_error`）
+        return {"folder": str(extra["unreadable_folder"]["folder"])}
     if exc.code == figcapture.EXPORT_RASTER_TOO_LARGE_CODE:
         # 宽 / 高 / 上限都是整数事实，没有路径与内容；缺字段（旧 worker 之类）就不捏造
         return {k: int(extra[k]) for k in ("width", "height", "max_pixels") if k in extra}
@@ -1286,6 +1289,91 @@ def _tex_error(message: str, traceback_text: str, extra=None) -> "WorkerError | 
     return err
 
 
+#: 依赖安装**真正成功提交过**的 (项目, 解释器, 模块)：之后同一个解释器里这个模块仍然读不了，说明装包没有用，落到
+#: `import_folder_unreadable`，不再循环出安装卡。只在安装成功时记（`deprepair` 的成功终态调 `note_unreadable_install`，
+#: 带安装落地的那个环境的解释器），给错误分类从不记账。键里有解释器：项目切到另一个环境后，在旧环境里装过
+#: 不挡新环境里本来可行的修复；项目切换环境（`reset_worker_python` / `deprepair.reset_state`）时清掉。进程内，不落盘。
+_UNREADABLE_INSTALLED: set[tuple[str, str, str]] = set()
+_UNREADABLE_INSTALLED_LOCK = threading.Lock()
+
+
+def _unreadable_project_key(project) -> str:
+    return projectenv._key(project) if project else ""
+
+
+def _unreadable_env_key(python) -> str:
+    """环境身份：解释器的规范化绝对路径（不 realpath：两个 venv 的解释器常同指向一个基础解释器）。"""
+    return os.path.normcase(os.path.abspath(str(python))) if python else ""
+
+
+def note_unreadable_install(project, module: str, python="") -> None:
+    """一次依赖安装成功提交到 `project` 的 `python` 环境后调用：记下 `module` 在这个环境里装过了。"""
+    if module:
+        with _UNREADABLE_INSTALLED_LOCK:
+            _UNREADABLE_INSTALLED.add(
+                (_unreadable_project_key(project), _unreadable_env_key(python), module)
+            )
+
+
+def reset_unreadable_installs(project=None) -> None:
+    """清掉记账：给了 `project` 只清它的，否则全清（项目切换环境 / 测试之间）。"""
+    with _UNREADABLE_INSTALLED_LOCK:
+        if project is None:
+            _UNREADABLE_INSTALLED.clear()
+        else:
+            key = _unreadable_project_key(project)
+            for item in [i for i in _UNREADABLE_INSTALLED if i[0] == key]:
+                _UNREADABLE_INSTALLED.discard(item)
+
+
+def _unreadable_install_done(project, python, module: str) -> bool:
+    with _UNREADABLE_INSTALLED_LOCK:
+        return (
+            _unreadable_project_key(project),
+            _unreadable_env_key(python),
+            module,
+        ) in _UNREADABLE_INSTALLED
+
+
+def unreadable_folder_error(
+    message: str, traceback_text: str, extra=None, *, project="", python=""
+) -> "WorkerError | None":
+    """worker / bridge 报来的结构化事实 `unreadable_folder` → 错误；没有或畸形回 None（ADR 0153 B）。
+
+    读不了的那个模块若能映射到 PyPI 包名（`depresolve` 现有的 curated 表 / 同名预填），对当前解释器它就等于「缺包」：
+    产出**现有的缺依赖错误**（带模块名），用户点一下装进受管环境，下次运行时查找器跳过读不了的那一处、用新装的这份。
+    只有映射不到、或同一 (模块, 文件夹) 已装过仍然失败，才落到一句话的 `import_folder_unreadable`。
+    目录名必须是短的单段名字（不含分隔符 / 控制字符），否则不信这条事实。原始消息与 traceback 原样保留。"""
+    given = extra.get("unreadable_folder") if isinstance(extra, dict) else None
+    folder = given.get("folder") if isinstance(given, dict) else None
+    if (
+        not isinstance(folder, str)
+        or not folder
+        or len(folder) > 120
+        or any(c in folder for c in "/\\\r\n\0")
+    ):
+        return None
+    fact = {"folder": folder}
+    module = structured_missing_module(given.get("module"))
+    if module and "." not in module and _mappable_to_distribution(module):
+        if not _unreadable_install_done(project, python, module):
+            err = _missing_dependency_error(module, traceback_text)
+            err.extra = {"unreadable_folder": {**fact, "module": module}}
+            return err
+    err = WorkerError(message, traceback_text, code=IMPORT_FOLDER_UNREADABLE_CODE)
+    err.extra = {"unreadable_folder": fact}
+    return err
+
+
+def _mappable_to_distribution(module: str) -> bool:
+    """模块名能不能映射到 PyPI 包名：只用 `depresolve` 现有的两张表（curated / 同名预填），不另建表。"""
+    from . import depresolve
+
+    if depresolve.not_pip_installable(module) is not None:
+        return False
+    return bool(depresolve.curated_distribution(module) or depresolve.suggest_distribution(module))
+
+
 def _missing_dependency_error(mod: str, traceback_text: str) -> "WorkerError":
     if mod:
         route = stdlib_install_route(mod)
@@ -1803,6 +1891,9 @@ _project_python_lock = threading.Lock()
 #: Tavotto 自己的引擎文件缺了（安装副本不完整，issue #961）：与 `missing_dependency` 分开——缺的不是用户的包，
 #: 一键装包、换环境都救不了，该提示重装 / 修复安装。
 ENGINE_FILES_INCOMPLETE_CODE = "engine_files_incomplete"
+#: 脚本加进 `sys.path` 的项目外文件夹当前账户读不了，而 import 查找器跳过之后仍然失败（ADR 0153）。
+#: 换环境 / 重装依赖都无效：失败卡只说这一句事实，AI 修复也带同一条事实。
+IMPORT_FOLDER_UNREADABLE_CODE = "import_folder_unreadable"
 
 #: 显式为**这个项目**挑的解释器失效时的稳定 code（U03，FO15 / FO16）。与
 #: `EXPLICIT_UNUSABLE_CODE` 分开：那条是全局设置 / 环境变量，这条是项目级（用户在依赖修复
@@ -1813,6 +1904,7 @@ ERROR_CODES = (
     EXPLICIT_UNUSABLE_CODE,
     PROJECT_PYTHON_UNUSABLE_CODE,
     ENGINE_FILES_INCOMPLETE_CODE,
+    IMPORT_FOLDER_UNREADABLE_CODE,
     WRITE_OUTSIDE_ROOTS_CODE,
     # worker 直出位图超像素预算（`figcapture.check_export_raster`）：写回事务的 PNG 目标走到这里
     figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
@@ -2193,6 +2285,7 @@ def reset_worker_python() -> None:
     用户刚把设置里的解释器改掉，项目侧还端着上一轮的结论就是两套答案。
     """
     global _worker_python, _worker_source
+    reset_unreadable_installs()  # 换了环境：旧环境里「装过」的记账不再作数
     with _lock:
         _worker_python = None
         _worker_source = ""
@@ -2807,6 +2900,17 @@ class EngineWorker:
         if tex is not None:
             tex.script_name = self.script_name
             return tex
+        unreadable = unreadable_folder_error(
+            msg,
+            tb,
+            err if isinstance(err, dict) else None,
+            project=getattr(self, "figures_dir", ""),
+            python=getattr(self, "python", ""),
+        )
+        if unreadable is not None:
+            unreadable.script_name = self.script_name
+            unreadable.python_source = getattr(self, "python_source", "") or ""
+            return unreadable
         mod = missing_module(f"{msg}\n{tb}")
         structured, structured_mod = structured_missing_dependency(err)
         mod = mod or structured_mod
@@ -3283,7 +3387,13 @@ def _spawn_spec(
 
 
 def _worker_error(
-    message: str, code: str, traceback_text: str, extra: dict | None = None
+    message: str,
+    code: str,
+    traceback_text: str,
+    extra: dict | None = None,
+    *,
+    project="",
+    python="",
 ) -> WorkerError:
     """错误三元组 → `WorkerError`，**`missing_dependency` 优先于协议 code**。
 
@@ -3298,6 +3408,11 @@ def _worker_error(
     tex = _tex_error(message, traceback_text, extra)
     if tex is not None:
         return tex
+    unreadable = unreadable_folder_error(
+        message, traceback_text, extra, project=project, python=python
+    )
+    if unreadable is not None:
+        return unreadable
     mod = missing_module(f"{message}\n{traceback_text}")
     structured, structured_mod = structured_missing_dependency(extra)
     mod = mod or structured_mod
@@ -3529,7 +3644,14 @@ class WorkerdWorker:
             # workerd 只如实报退出状态（`ExitReport`），怎么解释、日志空不空要不要
             # 说，都归这边——与 Python 池的 EOF 路径同一句话（`session_dead_message`）。
             message = session_dead_message(exc.extra.get("exit"), tb, self.log_path)
-        err = _worker_error(message, code, tb, exc.extra)
+        err = _worker_error(
+            message,
+            code,
+            tb,
+            exc.extra,
+            project=getattr(self, "figures_dir", ""),
+            python=getattr(self, "python", ""),
+        )
         # 两条控制面在「缺包时上层拿得到哪些事实」上必须给同一个答案
         err.script_name = self.script_name
         err.python_source = getattr(self, "python_source", "") or ""
