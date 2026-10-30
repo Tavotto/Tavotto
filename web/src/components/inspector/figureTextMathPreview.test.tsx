@@ -10,7 +10,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MATPLOTLIB_SVG } from '@/lib/__fixtures__/matplotlibSvg'
 import type { EditableField, EngineRenderOptions, Manifest, ManifestElement } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/Tooltip'
-import { useDocumentStore } from '@/store/documentStore'
+import { richViewOf } from '@/components/ui/RichTextField'
+import { useKeyboard } from '@/hooks/useKeyboard'
+import { runMenuAction } from '@/hooks/menuActions'
+import { setCurrentProjectId } from '@/lib/session'
+import { setProjectFile, startAutosave, useDocumentStore } from '@/store/documentStore'
+import { useProjectStore } from '@/store/projectStore'
 import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
 import { useUiStore } from '@/store/uiStore'
@@ -137,7 +142,63 @@ afterEach(async () => {
 
 const chip = () => host.querySelector('[data-testid="figure-text-content"] [data-rt-math] [data-math-state]')
 
+function KeyboardHost() {
+  useKeyboard()
+  return null
+}
+
 describe('属性页图内文字的公式块', () => {
+  it.each(['keyboard', 'menu', 'keyboard-save-as', 'menu-save-as'] as const)('组字中的属性栏文字经 %s 保存时先冲刷', async (entry) => {
+    const oldProjectState = useProjectStore.getState()
+    useUiStore.setState({ layoutOpen: false })
+    setCurrentProjectId('pj-compose')
+    await mount(titleEl())
+    await act(async () => root.render(<><Harness /><KeyboardHost /></>))
+    setProjectFile({ projectId: 'pj-compose', name: '排版', file: 'tavottofile/排版.json', revision: null, dirty: true })
+    const stop = startAutosave()
+    const saved: string[] = []
+    globalThis.fetch = (async (url: unknown, init?: RequestInit) => {
+      const path = String(url)
+      if (path.includes('/api/layouts/') && init?.method === 'POST') {
+        saved.push(String(init.body))
+        return new Response(JSON.stringify({ ok: true, revision: 'r1', name: '排版', file: 'tavottofile/排版.json' }))
+      }
+      if (path.includes('/api/autosave/')) {
+        if (init?.method !== 'PUT') return new Response('{}', { status: 404 })
+        return new Response(JSON.stringify({ ok: true, saved_at: 1, revision: 'local-r1' }))
+      }
+      return new Response('{}', { status: 200 })
+    }) as typeof fetch
+    const editor = host.querySelector<HTMLElement>('[data-testid="figure-text-content"] [data-rich-text="field"]')!
+    const view = richViewOf(editor)!
+    try {
+      await act(async () => {
+        editor.focus()
+        editor.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+        expect(view.composing).toBe(true)
+        view.dispatch(view.state.tr.insertText('组字新值', 0, view.state.doc.content.size))
+        expect(livePanel().overrides.some((o) => o.prop === 'text')).toBe(false)
+        if (entry.startsWith('keyboard')) {
+          editor.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, shiftKey: entry === 'keyboard-save-as', bubbles: true, cancelable: true }))
+        } else {
+          useProjectStore.setState({ phase: 'open' })
+          runMenuAction(entry === 'menu-save-as' ? 'menu-save-layout' : 'menu-save')
+        }
+        if (entry.endsWith('save-as')) {
+          expect(useUiStore.getState().layoutOpen).toBe(true)
+          saved.push(JSON.stringify(useDocumentStore.getState().buildProject()))
+        } else await vi.waitFor(() => expect(saved).toHaveLength(1))
+      })
+      const doc = JSON.parse(saved[0]) as { canvases: { objects: PanelObject[] }[] }
+      expect(doc.canvases[0].objects[0].overrides).toContainEqual(expect.objectContaining({ prop: 'text', value: '组字新值' }))
+    } finally {
+      stop()
+      setCurrentProjectId(null)
+      useProjectStore.setState(oldProjectState)
+      useUiStore.setState({ layoutOpen: false })
+    }
+  })
+
   it('按 manifest 的 math_face 排：math_face = STIXGeneral → face:STIXGeneral，画成轮廓', async () => {
     await mount(titleEl({ math_face: 'STIXGeneral' }))
     expect(families).toEqual(['face:STIXGeneral'])

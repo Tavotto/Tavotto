@@ -22,6 +22,7 @@ import { useDocumentStore } from '@/store/documentStore'
 import {
   cancelActivePointerGesture,
   finishActiveGesture,
+  finishFocusedRichText,
   yieldsCanvasShortcuts,
 } from '@/store/gestureCoordinator'
 import { useInteractionStore } from '@/store/interactionStore'
@@ -167,6 +168,18 @@ export function runUndoRedo(redo: boolean) {
 
 export function useKeyboard() {
   useEffect(() => {
+    // 保存是应用级动作：富文本编辑器会截住冒泡阶段的键，必须在捕获阶段认领。
+    const onSaveKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.key.toLowerCase() !== 's') return
+      e.preventDefault()
+      e.stopPropagation()
+      finishNudge()
+      if (e.shiftKey) {
+        finishFocusedRichText()
+        finishActiveGesture()
+        useUiStore.getState().setLayoutOpen(true, 'save')
+      } else void runManualSave()
+    }
     const onKeyDown = (e: KeyboardEvent) => {
       const ui = useUiStore.getState()
 
@@ -192,14 +205,9 @@ export function useKeyboard() {
 
       const mod = e.metaKey || e.ctrlKey
 
-      // ⌘S 在**输入框和对话框里也要拦**：那才是用户最想按它的时刻（刚给
-      // 画布改完名、刚在对话框里填完东西）。不拦的话浏览器弹出「保存网页」
-      // 另存对话框——用户以为自己存了文档，存下来的是一张 HTML。
-      // 这是 inEditableTarget 之前**唯一**的例外：其余快捷键在输入框里都该
-      // 让位给原生编辑行为。
       // ⌥⌘S = 把现在存为命名节点（ADR 0101）。按 `code` 判：⌥ 会把 macOS 上的
-      // `key` 变成 ß；必须排在 ⌘S 前面——Windows 上 Ctrl+Alt+S 的 `key` 仍是 s，
-      // 落进下一条就成了「保存」。它**不是**上面那个例外：在输入框 / 对话框里与
+      // `key` 变成 ß；捕获阶段的保存处理器明确排除 Alt，避免 Windows 上 Ctrl+Alt+S
+      // 落进「保存」。它不是应用级保存：在输入框 / 对话框里与
       // 其余快捷键一样让位，这里只是提前认领这组按键、让位时落空而不是落进 ⌘S。
       // Windows 上 AltGr 报成 Ctrl+Alt（波兰语 AltGr+S = ś）：那是在打字，同样落空
       if (mod && e.altKey && !e.shiftKey && e.code === 'KeyS') {
@@ -208,16 +216,6 @@ export function useKeyboard() {
         startNamedNode()
         return
       }
-      // 带 ⌥ 的不认（`lib/keymap` 的 save / saveAs 都登记 `alt: false`）：⌥⇧⌘S 不是「另存为」，Windows 上
-      // Ctrl+Alt+Shift+S 还是 AltGr+⇧S（波兰语 Ś），这一条排在输入框让位之前，认了就是吞掉用户在打的字
-      if (mod && !e.altKey && e.key.toLowerCase() === 's') {
-        e.preventDefault()
-        // ⇧⌘S = 另存为一份命名的画布文件；⌘S = 真的保存当前文档
-        if (e.shiftKey) useUiStore.getState().setLayoutOpen(true, 'save')
-        else void runManualSave()
-        return
-      }
-
       if (inEditableTarget(e)) return
       const doc = useDocumentStore.getState()
 
@@ -390,12 +388,14 @@ export function useKeyboard() {
     const onCopy = (e: ClipboardEvent) => void handleCopyEvent(e)
     const onPaste = (e: ClipboardEvent) => void handlePasteEvent(e)
 
+    window.addEventListener('keydown', onSaveKey, true)
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onBlur)
     document.addEventListener('copy', onCopy)
     document.addEventListener('paste', onPaste)
     return () => {
+      window.removeEventListener('keydown', onSaveKey, true)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)

@@ -363,6 +363,7 @@ export function LayoutDialog() {
             <FormRow label={t('dialogs:layout.nameLabel')}>
               <TextInput
                 id="layout-save-name"
+                data-layout-save-name
                 ref={nameRef}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
