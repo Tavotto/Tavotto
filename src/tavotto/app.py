@@ -7453,6 +7453,14 @@ def _engine_attempt(
     build 进度监听：带 artifact_source 的冷渲染，build 恰恰发生在 `_admit_artifact` 里。
     换环境重试拿到的新 worker 在下一轮循环里重新登记。其它调用方没有 SSE 关联键，不传。
     """
+
+    def observe(wk):
+        if observe_worker is not None:
+            try:
+                observe_worker(wk)
+            except Exception as exc:  # noqa: BLE001 - diagnostics must never change rendering
+                LOG.warning("环境诊断记录失败: %s", type(exc).__name__)
+
     for attempt in range(2):
         try:
             with (
@@ -7463,8 +7471,7 @@ def _engine_attempt(
                 _admit_artifact(worker, stem, artifact_source)
                 result = action(worker, stem)
             _assert_artifact_current(artifact_source)
-            if observe_worker is not None:
-                observe_worker(worker)
+            observe(worker)
             execution = _svg_execution_result(worker)
             if isinstance(result, dict):
                 result.update(execution)
@@ -7478,7 +7485,7 @@ def _engine_attempt(
                 and isinstance(exc, engine_pool.WorkerError)
                 and exc.code in _OBSERVED_RENDER_ERRORS
             ):
-                observe_worker(worker)
+                observe(worker)
             fact = _svg_execution_result(worker)
             if isinstance(exc, engine_pool.WorkerError):
                 exc.extra.update(fact)

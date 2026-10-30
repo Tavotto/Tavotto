@@ -233,3 +233,28 @@ def test_stale_artifact_does_not_mask_the_next_admitted_render(monkeypatch):
         app._engine_attempt("id", old_worker, "stem", lambda *args: {}, observe_worker=seen.append)
     app._engine_attempt("id", new_worker, "stem", lambda *args: {}, observe_worker=seen.append)
     assert seen == [new_worker]
+
+
+@pytest.mark.parametrize("failed_build", [False, True])
+def test_render_observation_failure_never_changes_render_result(monkeypatch, caplog, failed_build):
+    worker = object()
+    monkeypatch.setattr(app, "_admit_artifact", lambda *_: None)
+    monkeypatch.setattr(app, "_svg_execution_result", lambda _worker: {})
+    monkeypatch.setattr(app, "_switched_to_project_env", lambda _worker, _error: False)
+
+    def observe(_worker):
+        raise RuntimeError("private path or output must not be logged")
+
+    def run(*_args):
+        if failed_build:
+            raise app.engine_pool.WorkerError("missing", code="missing_dependency")
+        return {"result": "ok"}
+
+    if failed_build:
+        with pytest.raises(app.engine_pool.WorkerError) as exc:
+            app._engine_attempt("id", worker, "stem", run, observe_worker=observe)
+        assert exc.value.code == "missing_dependency"
+    else:
+        _, _, result = app._engine_attempt("id", worker, "stem", run, observe_worker=observe)
+        assert result == {"result": "ok"}
+    assert "private path or output must not be logged" not in caplog.text
