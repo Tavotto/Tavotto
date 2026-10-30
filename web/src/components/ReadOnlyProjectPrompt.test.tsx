@@ -237,6 +237,19 @@ describe('ReadOnlyProjectPrompt', () => {
     expect(q('[data-dialog="readonly-project"]')).toBeNull()
   })
 
+  it('a decline for A that completes after switching to read-only B does not close B', async () => {
+    let finish: (v: Awaited<ReturnType<typeof patchProjectSettings>>) => void = () => {}
+    patchMock.mockImplementation(() => new Promise((r) => (finish = r)))
+    await setProject(status())
+    await click('[data-readonly-project-continue]')
+    await setProject(status({ id: 'p2', figures_dir: '/data/other-ro', name: 'other-ro' }))
+    await flush()
+    expect(q('[data-dialog="readonly-project"]')).toBeTruthy()
+    await act(async () => finish({ settings: { readonly_save_as_declined: true }, export_dir: '', backup_dir: '' }))
+    await flush()
+    expect(q('[data-dialog="readonly-project"]')).toBeTruthy()
+  })
+
   it('a different read-only project asks on its own', async () => {
     await setProject(status())
     await click('[data-readonly-project-continue]').catch(() => {})

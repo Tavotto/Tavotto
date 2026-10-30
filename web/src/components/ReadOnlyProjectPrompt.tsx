@@ -113,13 +113,16 @@ export function ReadOnlyProjectPrompt() {
   }
 
   const keepReadOnly = async () => {
+    // 请求在飞时项目可能被换掉（桌面 tavotto:open 直接切到另一个只读项目）：完成回来只收**发起时那个**项目的弹窗，
+    // 不能把新项目刚弹出、用户还没回答的那个一起收掉
+    const asked = shown
     setBusy(true)
     setError(null)
     try {
       await applyProjectSettingsPatch({ readonly_save_as_declined: true })
-      setShown(null)
+      setShown((cur) => (cur === asked ? null : cur))
     } catch (e) {
-      setError(backendErrorText(e))
+      if (shownRef.current === asked) setError(backendErrorText(e))
     } finally {
       setBusy(false)
     }
