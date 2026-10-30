@@ -16,27 +16,3 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
-
-## Claude Code can be installed from inside Tavotto
-
-If Claude Code is not installed, signing in with a Claude subscription under
-"Connect AI" now offers "Install and sign in" instead of a greyed-out card.
-Tavotto downloads the official Claude Code binary only after you click it
-(from the npmmirror registry, falling back to Anthropic's own download
-server), checks it against a pinned size and SHA-256, and keeps it in
-Tavotto's data folder without modifying it; a Claude Code you installed
-yourself is left alone. The installed copy does not update itself; Tavotto
-moves it to a new version in a later release. Sign-in runs Claude Code's own
-`claude auth login` in your browser and returns to Tavotto when it finishes;
-Tavotto never sees or stores your credentials. Install errors (offline,
-checksum mismatch, disk full…) now name the tool being installed. (#1491)
-
-## "Connect AI editors" adds Google Antigravity
-
-Settings → Connect AI editors lists Antigravity. Connecting writes a
-`tavotto` entry under `mcpServers` in both `~/.gemini/config/mcp_config.json`
-and `~/.gemini/antigravity/mcp_config.json` (merged, with a backup, never
-overwriting other servers); disconnecting removes it from both. The row
-shows "not installed" unless one of those Antigravity folders exists — a
-`~/.gemini` folder from Gemini CLI alone does not count. Start a new
-Antigravity session after connecting. (#1490)
