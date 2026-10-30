@@ -49,6 +49,8 @@
     "ai_revert_conflict": "{{script}} has changed since this AI edit. Reverting would overwrite those later changes, so nothing was reverted.",
     "ai_revert_failed": "Couldn’t revert the AI changes: {{reason}}",
     "ai_script_busy": "An AI task is already running on {{script}}. Wait for it to finish or stop it before sending another.",
+    "ai_candidate_changed": "The script or pending edit changed after it was checked. Send the edit request again.",
+    "ai_candidate_unavailable": "This pending edit is no longer available. Send the edit request again.",
     "ai_revert_not_applicable": "This was a “make editable version” run. The original script was never changed, so there is nothing to undo.",
     "convert_disabled": "“Make editable version” is turned off.",
     "convert_not_found": "That new version can’t be found (it may have been discarded, expired, or belong to another project).",

@@ -13828,8 +13828,8 @@ def api_ai_edit_dependencies(sid):
         )
     except engine_ai.AgentError as exc:
         return _agent_error(exc)
-    except engine_ai_history.ScriptBusy:
-        return jsonify({"code": "ai_script_busy"}), 409
+    except engine_ai_history.ScriptBusy as exc:
+        return _agent_error(engine_ai.AgentError("ai_script_busy", {"script": exc.script}))
     return jsonify({"session": resumed}), 202
 
 

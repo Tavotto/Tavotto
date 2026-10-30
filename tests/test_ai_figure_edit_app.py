@@ -446,3 +446,19 @@ def test_reverting_a_session_without_rename_has_no_renamed_key(project):
     sid, _ = _ai(client)
     res = client.post(f"/api/ai/sessions/{sid}/revert")
     assert res.status_code == 200 and "renamed" not in res.get_json()
+
+
+def test_dependency_resume_reports_cross_process_script_busy(project, monkeypatch):
+    m, client, _figs, _runs, _state = project
+
+    def busy(*_args, **_kwargs):
+        raise ai_history.ScriptBusy("fig1.py")
+
+    monkeypatch.setattr(ai_bridge, "resume_figure_edit", busy)
+    response = client.post("/api/ai/sessions/held/dependencies", json={"action": "replan"})
+    assert response.status_code == 409
+    assert response.get_json() == {
+        "error": "ai_script_busy",
+        "code": "ai_script_busy",
+        "params": {"script": "fig1.py"},
+    }
