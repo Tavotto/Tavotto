@@ -275,3 +275,57 @@ def test_correction_budget_is_exactly_one_agent_run_and_no_further_correction(en
         agent="codex", project_key="/p", cand=cand, prompt="x", rid=None
     )
     assert (first.budget.max_agent_runs, first.budget.max_corrections) == (2, 1)
+
+
+def test_correction_that_pauses_for_a_new_dependency_card_persists_the_corrected_candidate(
+    env,  # noqa: F811
+    conn,
+):
+    """Codex #1509 P2：修正改了候选字节，修正后的校验又停住等依赖决定——meta 的 candidate_sha256 必须是**修正后**的字节，
+    否则点新卡片的安装后 `_rebuild` 判 convert_candidate_changed。"""
+    sid = _held(env)
+    env["codes"] = [WRITE_FIXED]
+    asks = []
+
+    def ensure(project, rel, cancel=None, **kw):
+        asks.append(rel)
+        if len(asks) == 1:  # 续跑第一遍校验：不缺包，暴露写项目目录的失败
+            return {"status": "none"}
+        return {
+            "status": "hold",
+            "card": dict(CARD),
+            "missing": ["openpyxl"],
+        }  # 修正后的校验：又要装
+
+    cdir, meta, cancel = ai_convert.prepare_resume(sid, _project(env))
+    out = ai_convert.run_resume(
+        sid,
+        _project(env),
+        cdir,
+        meta,
+        cancel,
+        runner=_seq_runner([OUTSIDE]),
+        ensure=ensure,
+        correct=ai_bridge.correct_convert,
+    )
+    assert out["state"] == ai_convert.STATE_AWAITING, out
+    assert len(env["prompts"]) == 2
+    saved = json.loads((cdir / ai_convert.META_NAME).read_text(encoding="utf-8"))
+    on_disk = (cdir / "fig_matplotlib.py").read_bytes()
+    assert b"ax.plot([3, 4])" in on_disk
+    assert saved["state"] == ai_convert.STATE_AWAITING and saved["dependency_card"] == CARD
+    assert saved["candidate_sha256"] == ai_convert._sha256(on_disk), "meta 里是修正后字节的哈希"
+    # 用户点新卡片的安装：同一个候选，不再是 convert_candidate_changed，装好后 ready
+    cdir, meta, cancel = ai_convert.prepare_resume(sid, _project(env))
+    res = ai_convert.run_resume(
+        sid,
+        _project(env),
+        cdir,
+        meta,
+        cancel,
+        runner=ok_runner,
+        ensure=NO_DEPS,
+        correct=ai_bridge.correct_convert,
+    )
+    assert res["state"] == "ready", res
+    assert len(env["prompts"]) == 2, "第二次续跑不再叫 Agent"

@@ -1833,11 +1833,21 @@ def _correct_once(
             remove_dir(cdir)
             return {"state": "cancelled"}
         return {"state": "ready"}
+    # 修正改了候选字节：停住态的 meta 要按**修正后**的候选重写（哈希 / 卡片），不能拿续跑开始时那份旧 meta 覆盖回去——
+    # 否则下一次续跑的 `_rebuild` 判 `convert_candidate_changed`
     if cand.late_installed:
-        _set_state(cdir, meta, STATE_INSTALLED, installed=list(cand.installed))
+        try:
+            stage_installed(cand)
+        except TaskError:
+            _set_state(cdir, meta, STATE_FAILED, failure={"reason": "stage_failed"})
+            return {"state": STATE_FAILED, "reason": "stage_failed"}
         return {"state": STATE_INSTALLED, "installed": list(cand.installed)}
     if cand.hold is not None:
-        _set_state(cdir, meta, STATE_AWAITING, dependency_card=cand.hold)
+        try:
+            stage_hold(cand)
+        except TaskError:
+            _set_state(cdir, meta, STATE_FAILED, failure={"reason": "stage_failed"})
+            return {"state": STATE_FAILED, "reason": "stage_failed"}
         return {"state": STATE_AWAITING}
     if cancel.is_set():
         remove_dir(cdir)
