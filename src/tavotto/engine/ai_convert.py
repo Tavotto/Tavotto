@@ -368,8 +368,15 @@ def keep_failed(cand: ConvertCandidate) -> bool:
     """失败 / 超时（**不含用户取消**）而没有可采用的结果时，把候选目录留 `FAILED_KEEP_S`，只为诊断包「附带源码」
     能带上 AI 写出来却没通过的那份脚本。meta 标 `failed_kept`：`_load_meta` 对它一律 404，所以采用 / 续跑 / 丢弃 / 预览
     都够不到。没有候选文件（Agent 什么都没写出来）或写 meta 失败就不留（回 False，由调用方照旧删）。"""
-    if cand.new_bytes is None or not cand.target.is_file():
+    if cand.target.is_symlink() or not cand.target.is_file():
         return False
+    if cand.new_bytes is None:
+        # Agent 非零退出 / 超时 / 报告需要补充输入时提前退出，没走到提交前检查（那里才填 new_bytes）：
+        # 直接认磁盘上写出来的那份
+        try:
+            cand.new_bytes = cand.target.read_bytes()
+        except OSError:
+            return False
     meta = {**_hold_meta(cand, STATE_FAILED_KEPT), "failed_kept_at": time.time()}
     meta.pop("context", None)
     meta.pop("project_before", None)
@@ -1125,8 +1132,15 @@ class ConvertExecutor(ai_figure_edit.BridgeExecutor):
             raise NeedsInput(reason)
 
     def execute(self, run) -> ConvertCandidate:
-        cand = super().execute(run)
-        self._stop_if_needs_input(cand)
+        try:
+            cand = super().execute(run)
+            self._stop_if_needs_input(cand)
+        except Exception:
+            # 非零退出 / 超时 / TAVOTTO_NEEDS_INPUT：`execute` 抛出时任务核心还没拿到候选，不会调 `discard`，
+            # 桥收尾的 `release` 会把已写出的草稿删掉。这里先留（用户取消与没写出文件的不留）
+            if not run.cancelled():
+                keep_failed(self.cand)
+            raise
         return cand
 
     def correct(self, run, cand: ConvertCandidate, feedback: dict) -> ConvertCandidate:

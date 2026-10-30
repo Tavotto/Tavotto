@@ -304,6 +304,17 @@ _KV_SECRET = re.compile(
     (?P<sep>{_SEP_SPACE}*[:=：＝]{_SEP_SPACE}*)
     """
 )
+#: R 源码的赋值：`password <- "…"` / `key <<- "…"`。只给 R 源码附件用（`scrub_script`），不进通用日志 / 结构化脱敏的分隔符集合
+_KV_SECRET_R = re.compile(
+    rf"""(?x)
+    (?<![\w.\-\\])\\*["']?(?P<key>[\w.\-]+)\\*["']?
+    (?P<sep>{_SEP_SPACE}*(?:<<?-|[:=：＝]){_SEP_SPACE}*)
+    """
+)
+#: R 的右向赋值 `"value" -> password` / `->>`：值在左、键在右
+_R_RIGHT_ASSIGN = re.compile(
+    rf"""(?P<val>"[^"\n]{{4,}}"|'[^'\n]{{4,}}'){_SEP_SPACE}*->>?{_SEP_SPACE}*(?P<key>[A-Za-z_.][\w.]*)"""
+)
 # Cookie / Authorization / Proxy-Authorization 头行不再另走行正则：它们的键名在 `_SECRET_WORDS` 里，值同样交给 `_scan_value`
 # （值可以是跨行的三引号串，行正则只抹第一行）
 _BEARER = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}")
@@ -722,13 +733,13 @@ class Scrubber:
             return self.text(text)
         return json.dumps(self.obj(parsed), ensure_ascii=False, indent=1)
 
-    def _kv_all(self, text: str) -> str:
+    def _kv_all(self, text: str, pattern: re.Pattern[str] = _KV_SECRET) -> str:
         """`_KV_SECRET`（秘密键 + 分隔符）命中之后的值替换。默认收集的自由文本一律 **fail-closed**：替换单位是
         「从值起点到行尾」，行尾时括号 / 引号还没配平就继续抹（`_scan_value`）；确定无信息的值（短数字、布尔、null、
         `<redacted>`、全是数字的括号段）原样保留。源码模式（代码区）只换带引号的字面量 / Bearer 形状 / 带引号的括号段。"""
         out: list[str] = []
         pos = 0
-        for m in _KV_SECRET.finditer(text):
+        for m in pattern.finditer(text):
             if m.start() < pos:
                 continue  # 落在前一个已换掉的区间里
             vs = m.end()
@@ -2870,6 +2881,9 @@ _EMAIL = re.compile(
 _EMAIL_EXTS = (".r", ".m")
 
 
+_R_EXTS = (".r",)
+
+
 def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
     """脚本源码的脱敏。可执行代码用 `code`（源码模式：`token = self._next()` 原样）；**注释和字符串字面量里**
     的 `key=value` 是明文，必须用 `full`（完整 KV 替换）——`# api_key=REAL_SECRET` 不带引号，源码模式会放过它。
@@ -2878,6 +2892,16 @@ def scrub_script(text: str, rel: str, full: Scrubber, code: Scrubber) -> str:
     if not rel.lower().endswith(".py"):
         if rel.lower().endswith(_EMAIL_EXTS):
             text = _EMAIL.sub("<email>", text)  # 先于完整模式：`<user>@host` 不能留下
+        if rel.lower().endswith(_R_EXTS):
+            text = _R_RIGHT_ASSIGN.sub(
+                lambda m: (
+                    f'"{_REDACTED}" -> {m.group("key")}'
+                    if is_secret_key(m.group("key"))
+                    else m.group(0)
+                ),
+                text,
+            )
+            text = full._kv_all(text, _KV_SECRET_R)  # `password <- "…"`：完整模式只认 `:` / `=`
         return full.text(text)
     text = _redact_pem(text)  # 多行的块先整体换掉：注释里的 PEM 每行是一个独立的 COMMENT token
     spans = _prose_spans(text)

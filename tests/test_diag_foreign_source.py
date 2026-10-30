@@ -286,6 +286,40 @@ class TestForeignScriptsAreScrubbed:
         assert ("library(ggplot2)" in out) or ("readtable" in out)
 
 
+class TestRAssignmentSecrets:
+    """Codex P2：R 用 `<-` / `<<-` / `->` 赋值，没有服务商前缀的口令也要抹掉；Python / MATLAB 行为不变。"""
+
+    @staticmethod
+    def _scrub(text, name):
+        return diagdetail.scrub_script(
+            text, name, diagdetail.Scrubber(), diagdetail.Scrubber(source_mode=True)
+        )
+
+    @pytest.mark.parametrize("name", ["a.R", "a.r"])
+    def test_r_assign_operators_redact_unprefixed_secrets(self, name, home):
+        text = (
+            'password <- "CANARY_R_PASSWORD"\n'
+            "api_key <- 'CANARY_R_KEY'\n"
+            'db.token <<- "CANARY_R_SUPER"\n'
+            '"CANARY_R_RIGHT" -> secret\n'
+            "x <- 5\nmax_tokens <- 4096\nlibrary(ggplot2)\n"
+        )
+        out = self._scrub(text, name)
+        for canary in ("CANARY_R_PASSWORD", "CANARY_R_KEY", "CANARY_R_SUPER", "CANARY_R_RIGHT"):
+            assert canary not in out, canary
+        assert "password <- " in out and "<redacted>" in out  # 保留赋值结构
+        assert "x <- 5" in out and "max_tokens <- 4096" in out and "library(ggplot2)" in out
+
+    def test_python_and_matlab_are_unchanged(self, home):
+        py = 'password <- "CANARY_PY"\n'  # 不是合法 Python：按完整模式处理，但 `<-` 不被当赋值
+        assert diagdetail.Scrubber()._kv_all(py) == py  # 通用分隔符集合没变
+        m = "password = 'CANARY_M_PASSWORD';\nz = 1;\n"
+        out = self._scrub(m, "a.m")
+        assert "CANARY_M_PASSWORD" not in out and "z = 1;" in out
+        m2 = 'password <- "x_stays_in_matlab"\n'
+        assert self._scrub(m2, "a.m") == m2
+
+
 class TestEmailOnlyForRAndMatlab:
     def test_python_sources_keep_email_like_text(self, home):
         text = "# me@example.com\n@app.route('/x')\nx = 'a@b.com'\n"

@@ -740,6 +740,76 @@ def test_cancelled_candidate_is_removed_immediately(env):
     assert not cand.dir.exists()
 
 
+_WRITE_THEN_EXIT = "(d / 'fig_matplotlib.py').write_text('import matplotlib\\nprint(1)\\n', encoding='utf-8'); sys.exit(1)"
+
+
+def test_agent_nonzero_exit_after_writing_a_candidate_keeps_it_for_diagnostics(env):
+    """Codex P2：Agent 写了候选再非零退出，`execute` 抛出时任务核心还没拿到候选，`discard` 不会被调；
+    桥收尾的 `release` 不能把它删掉，诊断包要能收到。"""
+    env["code"] = _WRITE_THEN_EXIT
+    sid = _run(env)
+    sess = _wait(sid)
+    assert sess["status"] == "failed"
+    d = ai_convert.CONVERT_DIR / sid
+    assert (d / "fig_matplotlib.py").read_text(encoding="utf-8").startswith("import matplotlib")
+    meta = json.loads((d / ai_convert.META_NAME).read_text(encoding="utf-8"))
+    assert meta["state"] == ai_convert.STATE_FAILED_KEPT
+    _assert_only_kept_for_diagnostics(env, sid)
+
+
+def test_agent_needs_input_after_writing_a_candidate_keeps_it_for_diagnostics(env):
+    """needs_input 与 failed 同属「没有可采用的结果」：写了草稿就留给诊断包。"""
+    say = (
+        "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', "
+        "'text': 'TAVOTTO_NEEDS_INPUT: cannot reproduce the image filter'}}))"
+    )
+    env["code"] = (
+        "import json; (d / 'fig_matplotlib.py').write_text('print(2)\\n', encoding='utf-8'); " + say
+    )
+    sid = _run(env)
+    _wait(sid)
+    d = ai_convert.CONVERT_DIR / sid
+    meta = json.loads((d / ai_convert.META_NAME).read_text(encoding="utf-8"))
+    assert meta["state"] == ai_convert.STATE_FAILED_KEPT
+    _assert_only_kept_for_diagnostics(env, sid)
+
+
+def _early_exit(cand, *, cancelled, exc):
+    def wait():
+        raise exc
+
+    ex = ai_convert.ConvertExecutor("codex", cand, wait=wait, refresh=lambda: {})
+    with pytest.raises(type(exc)):
+        ex.execute(_Run(cancelled))
+    ai_convert.release(cand)  # 桥收尾
+
+
+def test_early_exit_with_a_written_candidate_is_kept_but_cancel_is_not(env):
+    from tavotto.engine.ai_tasks import TaskError
+
+    cand = _unit_candidate(env)
+    cand.new_bytes = None  # 提前退出：没走到提交前检查
+    _early_exit(cand, cancelled=False, exc=TaskError("ai_failed", "exit 1"))
+    assert cand.dir.exists() and cand.kept_failed
+    meta = json.loads((cand.dir / ai_convert.META_NAME).read_text(encoding="utf-8"))
+    assert meta["state"] == ai_convert.STATE_FAILED_KEPT
+
+    cancelled = _unit_candidate(env, sid="abcdefabcdef")
+    cancelled.new_bytes = None
+    _early_exit(cancelled, cancelled=True, exc=TaskError("cancelled", ""))
+    assert not cancelled.dir.exists()
+
+
+def test_early_exit_without_a_written_file_is_not_kept(env):
+    from tavotto.engine.ai_tasks import TaskError
+
+    cand = _unit_candidate(env)
+    cand.new_bytes = None
+    cand.target.unlink()
+    _early_exit(cand, cancelled=False, exc=TaskError("ai_failed", "exit 1"))
+    assert not cand.dir.exists()
+
+
 def test_failed_candidate_without_a_written_file_is_not_kept(env):
     cand = _unit_candidate(env)
     cand.target.unlink()
