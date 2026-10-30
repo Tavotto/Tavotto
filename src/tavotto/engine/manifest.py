@@ -1583,10 +1583,13 @@ def _chinese_font_codepoint(codepoint: int) -> bool:
 
 @lru_cache(maxsize=4096)
 def _face_is_latin_only(key: tuple) -> bool:
-    face = _ft_font(key[0], key[-1])
-    if face is None:
-        return False
     try:
+        # Coverage scans touch every installed face; do not retain FT2Font objects
+        # in the rendering cache. Only the boolean result is cached here.
+        face = open_font_face(key[0], key[-1])
+        # Common CJK fonts can be rejected before allocating their huge cmaps.
+        if any(face.get_char_index(cp) for cp in (0x4E2D, 0x6587, 0x3001, 0x3002, 0xFF0C, 0x20000)):
+            return False
         return not any(_chinese_font_codepoint(codepoint) for codepoint in face.get_charmap())
     except (RuntimeError, ValueError, OSError):
         return False
