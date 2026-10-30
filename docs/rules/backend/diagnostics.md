@@ -1,16 +1,5 @@
 # 诊断包
 
-## 受管环境作业的披露例外（2026-10-31 用户授权）
-
-`report.json` 的 `project.managed_environment_jobs` 为定位安装与换代故障，包含受管环境作业请求的
-Python 发行包名、实际观察到的已安装包名与版本、能点名的失败包、作业结局、包源类别、激活 / 采用时间，
-以及之后实际渲染会话的来源和环境代。包名与版本只出现在这一节，`task-diagnostics.json` 仍不带包名。
-不收集路径、包源网址、凭据、版本约束和 pip 原文；字段按结构白名单选取，未知事实保持未知。
-这段记录保存在应用数据目录的有界缓存（每项目最近 16 次、最多 64 个项目）；每条超过 7 天后不再导出，
-并在下次访问该项目记录时从磁盘清除。应用没有运行或项目未访问时，过期数据会暂留到下一次清理。
-写盘失败不影响安装或渲染；重启前尚未完成的异步写入可能丢失。
-诊断包 README 和发送前说明必须明确披露包名与版本。此例外由用户在 2026-10-31 明确授权，见 ADR 0016 修订。
-
 > 原文出自 `src/tavotto/AGENTS.md`「诊断与排障」（2026-09-17 指导文档治理时按主题拆出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
 > 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_diagnostics_bundle.py`、`test_diag_send.py`、`test_diag_send_api.py`、`test_diagnostics_worker_evidence.py`、`test_diagnostics_worker_structure.py`、`test_diagnostics_log_privacy.py`、`test_task_diagnostics.py`
@@ -23,6 +12,17 @@ order: 280
 主题: 诊断包与任务绑定诊断 → `diagnostics.md`
 必守要点: 先脱敏再交出；report.json 换形必升 bundle schema；不写盘不进 telemetry；不自动上传（唯一例外是用户逐次确认）
 -->
+
+## 受管环境作业的披露例外（2026-10-31 用户授权）
+
+`report.json` 的 `project.managed_environment_jobs` 为定位安装与换代故障，包含受管环境作业请求的
+Python 发行包名、实际观察到的已安装包名与版本、能点名的失败包、作业结局、包源类别、激活 / 采用时间，
+以及之后实际渲染会话的来源和环境代。包名与版本只出现在这一节，`task-diagnostics.json` 仍不带包名。
+不收集路径、包源网址、凭据、版本约束和 pip 原文；字段按结构白名单选取，未知事实保持未知。
+这段记录保存在应用数据目录的有界缓存（每项目最近 16 次、最多 64 个项目）；每条超过 7 天后不再导出，
+并在下次访问该项目记录时从磁盘清除。应用没有运行或项目未访问时，过期数据会暂留到下一次清理。
+写盘失败不影响安装或渲染；重启前尚未完成的异步写入可能丢失。
+诊断包 README 和发送前说明必须明确披露包名与版本。此例外由用户在 2026-10-31 明确授权，见 ADR 0016 修订。
 
 - 文本脱敏的唯一实现下沉在 `engine/diagnostictext.py`；`diagnostics.redact_text` 保留公开入口，
   `fixtools.readscope.scrub` 共用同一实现，避免转换上下文反向依赖整份诊断采集器。
