@@ -227,6 +227,7 @@ def test_revert_of_a_convert_session_is_refused(env):
     [
         ("budget", "output_truncated", "agent_output_truncated"),
         ("network", "provider echoed private source", "agent_network"),
+        ("network", "html_response", "agent_html_response"),
         ("unknown-secret", "secret", "agent_exit_nonzero"),
     ],
 )
@@ -250,6 +251,27 @@ def test_builtin_terminal_reason_survives_task_failure_without_provider_text(
     assert sess["status"] == "failed" and sess["error"] == expected
     assert "provider echoed" not in str(sess) and "unknown-secret" not in str(sess)
     assert not (env["figs"] / "fig_matplotlib.py").exists()
+
+
+def test_a_key_connection_has_its_address_checked_before_spawn(env, monkeypatch):
+    """第三方 Key 接口：spawn **之前**核一次地址少没少 `/v1`（`ai_providers.ensure_api_root`，TVD-J5QG），之后才起进程。"""
+    rec = {
+        "id": "relay",
+        "label": "relay",
+        "agent": "codex",
+        "base_url": "https://relay.example",
+        "api_key": "k",
+    }
+    seen: list[tuple[str, int]] = []
+    monkeypatch.setattr(ai_bridge.ai_providers, "resolve", lambda agent, endpoint_id: rec)
+    monkeypatch.setattr(
+        ai_bridge.ai_providers,
+        "ensure_api_root",
+        lambda r: seen.append((r["id"], len(env["cwd"]))) or r,
+    )
+    sid = _run(env)
+    _wait(sid)
+    assert seen and seen[0] == ("relay", 0), seen  # 第一次核的时候还一个进程都没起
 
 
 # --------------------------------------------------------------------------- 检查失败路径

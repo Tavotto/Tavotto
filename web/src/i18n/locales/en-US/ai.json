@@ -105,6 +105,8 @@
     "resend": "Send again"
   },
   "notice": {
+    "htmlResponse": "The connection address opens a web page, not an API.",
+    "checkConnection": "Check connection",
     "taskFailedChanged": "The edit is saved, but the checks found the data or output changed. If that’s wrong, revert to the previous version.",
     "taskPartial": "The edit is saved, but some checks couldn’t run, so the result isn’t fully verified.",
     "taskRejected": "The edit didn’t pass the pre-write checks and wasn’t written to your project.",

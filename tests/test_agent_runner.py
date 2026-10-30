@@ -716,6 +716,12 @@ class TestWires:
         _, res, _ = http_run(cand, serve, "anthropic", [(200, {}, b"not json")])
         assert (res.reason, res.detail) == ("network", "bad_response")
 
+    def test_web_page_body_is_html_response(self, cand, serve):
+        """2xx 回的是网页（地址指到网站首页，TVD-J5QG）：单独的 detail，界面据此给「检查连接」。"""
+        page = b"\n  <!doctype html><html><body>relay</body></html>"
+        _, res, _ = http_run(cand, serve, "openai-responses", [(200, {}, page)])
+        assert (res.reason, res.detail) == ("network", "html_response")
+
     def test_oversized_response_is_refused(self, cand, serve, monkeypatch):
         monkeypatch.setattr(wires, "MAX_RESPONSE_BYTES", 64)
         _, res, _ = http_run(cand, serve, "anthropic", [(200, {}, b"x" * 500)])

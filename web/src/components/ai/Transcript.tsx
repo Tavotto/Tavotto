@@ -8,6 +8,7 @@ import { formatTime } from '@/i18n/format'
 import { splitNoticeText } from '@/lib/noticeText'
 import { cn } from '@/lib/utils'
 import { DATA_FIGURE_TASK, sessionAgentLabel, useAiStore, type AiSession } from '@/store/aiStore'
+import { requestCheckConnection } from '@/store/connectAiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Reveal } from '../ui/Field'
 import { Notice } from '../ui/Notice'
@@ -118,7 +119,10 @@ export function Turn({
       : session.status === 'done' && outcome === 'failed' && session.changed
         ? 'failed'
         : null
-  const rejected = session.status === 'failed' && outcome === 'failed' && !session.changed && !dataFigureTurn
+  // 内置执行器报接口地址打开的是网页（`agent_html_response`）：这句与「检查连接」优先于通用的「没通过写回前检查」
+  const htmlResponse = session.error === 'agent_html_response'
+  const rejected =
+    !htmlResponse && session.status === 'failed' && outcome === 'failed' && !session.changed && !dataFigureTurn
   const unmetIds = (session.task?.unmet ?? []).map((u) => u.constraint_id)
   const unmetDetail = unmetIds.length ? [ai('notice.unmetHeading'), ...unmetIds].join('\n') : null
   // 从数据出图：没有 diff、没有回滚；partial / needs_input 各一张 warn 卡，failed 走下面通用的失败卡（正文 = error）
@@ -245,14 +249,23 @@ export function Turn({
               : splitNoticeText(session.error).detail
           }
           action={
-            canRetry ? (
+            htmlResponse ? (
+              // 地址指到了网页（中转站少写 `/v1` 之类）：重试只会再失败一次，主按钮去改连接
+              <Button data-ai-check-connection size="sm" onClick={() => requestCheckConnection()}>
+                {ai('notice.checkConnection')}
+              </Button>
+            ) : canRetry ? (
               <Button data-ai-retry size="sm" onClick={() => onRetry(session)}>
                 {ai('panel.retry')}
               </Button>
             ) : undefined
           }
         >
-          {rejected ? ai('notice.taskRejected') : splitNoticeText(session.error).inline}
+          {htmlResponse
+            ? ai('notice.htmlResponse')
+            : rejected
+              ? ai('notice.taskRejected')
+              : splitNoticeText(session.error).inline}
         </Notice>
       )}
 

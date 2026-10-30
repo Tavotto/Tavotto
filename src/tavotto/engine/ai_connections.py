@@ -488,6 +488,9 @@ def first_key_connection(*, refresh: bool = False) -> dict | None:
                 rec = ai_oauth.ensure_fresh(rec) or rec
             except ai_oauth.NeedsLogin:
                 continue
+        elif refresh:
+            # 真要开跑：地址少写了 `/v1` 的先改正（`ai_providers.ensure_api_root`，每个地址只联网一次）
+            rec = ai_providers.ensure_api_root(rec) or rec
         conn = ai_providers.builtin_conn(rec)
         if conn is not None:
             return conn
@@ -626,9 +629,12 @@ def add_connection(body: object) -> tuple[str, str | None]:
     if existing is not None:
         rec["id"] = existing["id"]
         ai_providers.save(rec)
-        return existing["id"], reason
-    created = ai_providers.create({**rec, "id": vid})
-    return created["id"], reason
+        cid = existing["id"]
+    else:
+        cid = ai_providers.create({**rec, "id": vid})["id"]
+    # 型号清单会自己补 `/v1`，拿得到不等于地址对：保存时就核一次，少写了 `/v1` 直接存成改正后的（TVD-J5QG）
+    ai_providers.ensure_api_root(ai_providers.get(cid))
+    return cid, reason
 
 
 def delete_connection(cid: str) -> None:

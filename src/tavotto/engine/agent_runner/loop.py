@@ -220,7 +220,9 @@ class HttpModel:
                     try:
                         body = json.loads(data.decode("utf-8"))
                     except (ValueError, UnicodeDecodeError):
-                        raise RunnerFailure("network", "bad_response") from None
+                        # 2xx 回的是网页：地址指到了网站而不是接口（中转站少写 `/v1`，TVD-J5QG）——单独一个 detail，界面据此给「检查连接」
+                        detail = "html_response" if data.lstrip()[:1] == b"<" else "bad_response"
+                        raise RunnerFailure("network", detail) from None
                     if not isinstance(body, dict):
                         raise RunnerFailure("network", "bad_response")
                     return self.wire.parse(body)

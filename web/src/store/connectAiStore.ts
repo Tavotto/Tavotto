@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { hasConnectionView } from '@/lib/api'
+import { effectiveConnection, hasConnectionView } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { useUiStore } from '@/store/uiStore'
 
@@ -21,6 +21,9 @@ interface ConnectAiState {
   name: string | null
   openDialog: (opts?: { reason?: ConnectAiReason; onConnected?: () => void; name?: string }) => void
   close: () => void
+  /** 正在编辑的已存 Key 连接 id（「检查连接」打开它的地址 / 密钥 / 型号表单）；null = 没在编辑 */
+  editing: string | null
+  closeEditor: () => void
 }
 
 export const useConnectAiStore = create<ConnectAiState>((set) => ({
@@ -31,6 +34,8 @@ export const useConnectAiStore = create<ConnectAiState>((set) => ({
   openDialog: (opts) =>
     set({ open: true, reason: opts?.reason ?? 'general', onConnected: opts?.onConnected ?? null, name: opts?.name ?? null }),
   close: () => set({ open: false, onConnected: null, name: null }),
+  editing: null,
+  closeEditor: () => set({ editing: null }),
 }))
 
 /**
@@ -40,4 +45,20 @@ export const useConnectAiStore = create<ConnectAiState>((set) => ({
 export function requestConnectAi(opts?: { reason?: ConnectAiReason; onConnected?: () => void; name?: string }): void {
   if (hasConnectionView(useAiStore.getState().caps)) useConnectAiStore.getState().openDialog(opts)
   else useUiStore.getState().setSettingsOpen(true, 'ai')
+}
+
+/**
+ * 失败卡的「检查连接」：打开**刚才派活用的那条连接**（`effectiveConnection`，与 `aiStore` 发送时同一个判据）的编辑表单，
+ * 地址已填好——自定义中转站不在厂商列表里（`listedVendors` 排除了 custom），通用的「连接 AI」弹窗只能再新建一条，
+ * 看不到也改不了出错的地址（Codex #1523 P2）。那条连接不是 Key 类（没有接口记录）→ 退回通用弹窗。
+ */
+export function requestCheckConnection(): void {
+  const { caps, connection } = useAiStore.getState()
+  // 用户选中的那条优先（即使它此刻不算 ready——凭据被拒的就是要改它的那条），否则与发送同一个 `effectiveConnection`
+  const conn = hasConnectionView(caps)
+    ? (caps?.connections?.find((c) => c.id === connection) ?? effectiveConnection(connection, caps))
+    : null
+  const endpoint = conn ? caps?.endpoints?.find((e) => e.id === conn.id) : undefined
+  if (endpoint) useConnectAiStore.setState({ editing: endpoint.id })
+  else requestConnectAi()
 }
