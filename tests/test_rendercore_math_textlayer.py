@@ -226,3 +226,24 @@ def test_a_face_that_cannot_draw_the_source_gives_no_text_layer(provider, tmp_pa
 
     assert typography._math_text_piece(NoBackslash(face), _SRC, 20.0, 10.0) is None
     assert typography._math_text_piece(face, _SRC, 20.0, 10.0) is not None
+
+
+def test_both_carriers_verify_their_text_layer_against_the_plan(provider, tmp_path):
+    """计划里期望的文字行只算看得见的字（Codex #1505）：SVG 不写不画的那段，PDF 写；两个载体的文字层
+    检查都 verified，不因公式源码只在 PDF 里而把正确的 SVG 判成 failed。"""
+    import types
+
+    from tavotto.rendercore import inspector, job
+
+    math = {typography.math_key(_SRC, "serif"): _BOX}
+    compiled = _compile(provider, tmp_path, f"x ${_SRC}$ y", math)
+    rp = types.SimpleNamespace(page=compiled.page, sources={}, unsupported={}, plan_identity="t")
+    facts = job.plan_facts(rp)
+    assert [s.strip() for s in facts["text"]] == ["x", "y"]
+    pdf = tmp_path / "o.pdf"
+    svg = tmp_path / "o.svg"
+    pdfwriter.write_pdf(compiled.page, pdf, provider)
+    svgwriter.write_svg(compiled.page, svg, provider)
+    for path, kind in ((pdf, "pdf"), (svg, "svg")):
+        m = inspector.inspect(path, kind, plan=facts)
+        assert m["checks"]["text_layer"] == "verified", (kind, m["checks"], m.get("notes"))
