@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { backendErrorText, saveAiEndpoint } from '@/lib/api'
+import { backendErrorText, saveAiEndpoint, type AiEndpoint } from '@/lib/api'
 import { useAiStore } from '@/store/aiStore'
 import { Button } from '../../ui/Button'
 import { Dialog } from '../../ui/Dialog'
@@ -14,7 +14,16 @@ import { cx } from './copy'
  * 两种失败分开说：**保存失败**——表单里写一句原因，用户改了再存；**保存成功但刷新失败**——记住「已经存了」，
  * 换成「已保存，没能刷新」+「重试刷新」，重试只重读、绝不再发一次（无 id 的）新建。
  */
-export function CompatibleEndpoint({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+export function CompatibleEndpoint({
+  onClose,
+  onSaved,
+  existing = null,
+}: {
+  onClose: () => void
+  onSaved: () => void
+  /** 编辑一条已存的连接（失败卡「检查连接」）：表单预填它的地址 / 型号，保存带它的 id；不给 = 新建 */
+  existing?: AiEndpoint | null
+}) {
   useTranslation('dialogs')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -86,10 +95,10 @@ export function CompatibleEndpoint({ onClose, onSaved }: { onClose: () => void; 
 
   return (
     <EndpointDialog
-      agent="codex"
+      agent={existing?.agent ?? 'codex'}
       agentLabel=""
       wireApi
-      existing={null}
+      existing={existing}
       presets={[]}
       saveError={saveError}
       onClose={onClose}

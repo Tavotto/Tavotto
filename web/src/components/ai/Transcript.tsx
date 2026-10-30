@@ -8,7 +8,7 @@ import { formatTime } from '@/i18n/format'
 import { splitNoticeText } from '@/lib/noticeText'
 import { cn } from '@/lib/utils'
 import { DATA_FIGURE_TASK, sessionAgentLabel, useAiStore, type AiSession } from '@/store/aiStore'
-import { requestConnectAi } from '@/store/connectAiStore'
+import { requestCheckConnection } from '@/store/connectAiStore'
 import { Button, IconButton } from '../ui/Button'
 import { Reveal } from '../ui/Field'
 import { Notice } from '../ui/Notice'
@@ -251,7 +251,7 @@ export function Turn({
           action={
             htmlResponse ? (
               // 地址指到了网页（中转站少写 `/v1` 之类）：重试只会再失败一次，主按钮去改连接
-              <Button data-ai-check-connection size="sm" onClick={() => requestConnectAi()}>
+              <Button data-ai-check-connection size="sm" onClick={() => requestCheckConnection()}>
                 {ai('notice.checkConnection')}
               </Button>
             ) : canRetry ? (
