@@ -407,6 +407,19 @@ def test_rmtree_of_an_existing_project_dir_trips(world):
     assert (out / "old.csv").read_text() == "old" and not (out / "new.csv").exists()
 
 
+def test_moving_a_partially_written_project_dir_trips(world):
+    """项目目录里写了新文件再整体 shutil.move 走：只移暂存副本会让 old.csv 留在原处（Codex #1516 P1）。"""
+    out = _project_dir(world)
+    result, _ = _validate(
+        world,
+        "o = os.path.join(here, 'out')\nopen(os.path.join(o, 'new.csv'), 'w').write('n')\n"
+        "import shutil\nshutil.move(o, os.path.join(here, 'archive'))\n",
+    )
+    assert _tripped(result)
+    assert (out / "old.csv").read_text() == "old" and not (out / "new.csv").exists()
+    assert not (world[0] / "sub" / "archive").exists()
+
+
 def test_rmdir_of_a_project_dir_trips_but_a_purely_staged_dir_can_be_removed(world):
     _project_dir(world)
     result, _ = _validate(world, "os.rmdir(os.path.join(here, 'out'))\n")

@@ -816,6 +816,10 @@ def _w_move(orig):
         if rs is not None:
             if _white(rs[1]):
                 raise _enoent(src)
+            if _real_exists(rs[0]) and _ORIG["isdir"](rs[0]):
+                # 项目里已有的目录被整个移走：改道区只有它的一部分（新写的文件），只移暂存副本会让
+                # 原有文件留在原处、目标里缺一块——不模拟，与 rename / rmtree 同一条失败即关闭
+                _violation("shutil.move", rs[0])
             if _real_exists(rs[2]):
                 src, overlay_src = rs[2], True
         if rd is not None:
