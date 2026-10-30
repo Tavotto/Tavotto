@@ -187,15 +187,14 @@ def test_exported_bundle_discloses_only_the_allowed_job_fields(tmp_path, monkeyp
         assert secret not in contents
 
 
-def test_worker_is_observed_even_when_cold_admission_fails(monkeypatch):
+@pytest.mark.parametrize("code", ["missing_dependency", "script_error", "missing_input"])
+def test_worker_is_observed_even_when_cold_admission_fails(monkeypatch, code):
     worker = object()
     seen = []
     monkeypatch.setattr(
         app,
         "_admit_artifact",
-        lambda *args: (_ for _ in ()).throw(
-            app.engine_pool.WorkerError("missing", code="missing_dependency")
-        ),
+        lambda *args: (_ for _ in ()).throw(app.engine_pool.WorkerError("failed build", code=code)),
     )
     monkeypatch.setattr(app, "_svg_execution_result", lambda worker: {})
     monkeypatch.setattr(app, "_switched_to_project_env", lambda worker, error: False)

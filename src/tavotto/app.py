@@ -7419,6 +7419,23 @@ def _origin_display(worker, context):
     }
 
 
+# Worker codes produced by a script/build attempt, rather than admission,
+# queue or process-start failures. Unknown codes stay unobserved.
+_OBSERVED_RENDER_ERRORS = frozenset(
+    {
+        "missing_dependency",
+        "script_error",
+        "missing_input",
+        "script_exited",
+        "script_needs_arguments",
+        "script_needs_input",
+        "script_input_timeout",
+        "output_folder_read_only",
+        "safe_file_operation_blocked",
+    }
+)
+
+
 def _engine_attempt(
     rel_id: str,
     worker,
@@ -7453,13 +7470,13 @@ def _engine_attempt(
                 result.update(execution)
             return worker, stem, result
         except (engine_pool.WorkerError, engine_artifactcontext.ArtifactContextError) as exc:
-            # A missing import proves the worker actually executed the script,
-            # even if a cold build failed before override could return. A stale
-            # artifact or a superseded queue entry does not prove execution.
+            # These worker outcomes identify an attempted script/build, even
+            # when a cold build failed before override returned. A stale
+            # artifact or a superseded queue entry does not establish that.
             if (
                 observe_worker is not None
                 and isinstance(exc, engine_pool.WorkerError)
-                and exc.code == "missing_dependency"
+                and exc.code in _OBSERVED_RENDER_ERRORS
             ):
                 observe_worker(worker)
             fact = _svg_execution_result(worker)
