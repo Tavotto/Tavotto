@@ -132,6 +132,7 @@
         logLabel: '日志文件（反馈问题时请附上）：',
         hint: 'Tavotto 完全在本机运行；只有你点击“重新安装”“检查修复版本”或“发送”时，这个页面才会联网。',
         bodyMissing: 'Tavotto 的部分文件丢失，重新安装即可恢复。若反复出现，请把 Tavotto 加入杀毒软件的信任列表。',
+        bodyBlocked: 'Tavotto 的渲染服务被系统阻止运行，重新安装通常可以恢复。若反复出现，请把 Tavotto 加入杀毒软件的信任列表。',
         reinstall: '重新安装 Tavotto',
         retry: '重新启动 Tavotto',
         retrying: '正在重新启动…',
@@ -170,6 +171,7 @@
         logLabel: 'Log file (please attach it when reporting the problem):',
         hint: 'Tavotto runs entirely on this machine; this page only goes online when you click Reinstall, Check for a fix or Send.',
         bodyMissing: 'Some Tavotto files are missing. Reinstalling will restore them. If this keeps happening, add Tavotto to your antivirus trust list.',
+        bodyBlocked: 'Your system blocked the Tavotto render service from running. Reinstalling usually fixes it. If this keeps happening, add Tavotto to your antivirus trust list.',
         reinstall: 'Reinstall Tavotto',
         retry: 'Restart Tavotto',
         retrying: 'Restarting...',
@@ -295,8 +297,9 @@
       $('retryRow').hidden = false
       $('more').hidden = false
       if (status.reinstall) {
-        // 文件丢失（sidecar_not_found）：重启修不好，主按钮换成「重新安装」；重启退到「其他选项」
-        say('body', s.bodyMissing)
+        // 文件丢失（sidecar_not_found）/ 系统拒绝运行（sidecar_spawn_failed）：重启修不好，主按钮换成「重新安装」；
+        // 重启退到「其他选项」。能不能重装由壳回答（status.reinstall），这里只按码挑正文
+        say('body', status.code === 'sidecar_spawn_failed' ? s.bodyBlocked : s.bodyMissing)
         $('reinstall').hidden = false
         $('retry').classList.remove('primary')
         $('moreRow').prepend($('retry'))
