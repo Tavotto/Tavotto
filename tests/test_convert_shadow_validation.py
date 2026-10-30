@@ -143,19 +143,103 @@ def test_module_entry_also_gets_the_display_file(world):
     assert result["status"] == "ok", result
 
 
-def test_candidate_writing_into_the_project_still_trips_the_write_roots(world):
+def _redirected(cand, rel):
+    return cand.dir / ai_convert.REDIRECT_DIRNAME / rel
+
+
+def test_candidate_writing_into_the_project_is_redirected_not_failed(world):
+    """相对路径（chdir 到脚本目录后）与绝对路径写 CSV：校验通过、项目逐字节不变、文件落在候选的改道区。"""
     root, cand, runner = world
-    workdir.set_mode(
-        root, workdir.MODE_PROJECT
-    )  # cwd 就是原脚本所在目录：相对路径的写会落进用户项目
+    workdir.set_mode(root, workdir.MODE_PROJECT)  # cwd 就是原脚本所在目录
+    before = ai_figure_edit.project_fingerprint(root)
     cand.new_bytes = (
-        b"import matplotlib.pyplot as plt\nopen('sneaky.txt', 'w').write('x')\n"
-        b"plt.plot([1])\nplt.savefig('o.png')\n"
+        "import os\nimport matplotlib.pyplot as plt\n"
+        "here = os.path.dirname(os.path.abspath(__file__))\n"
+        "open('rel.csv', 'w').write('rel')\n"
+        "os.makedirs(os.path.join(here, 'out', 'deep'), exist_ok=True)\n"
+        "open(os.path.join(here, 'out', 'deep', 'abs.csv'), 'w').write('abs')\n"
+        "plt.plot([1])\nplt.savefig('o.png')\n"
+    ).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    with DirWatcher(root) as watcher:
+        result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "ok", result
+    assert watcher.seen == {"sub/fig.R", "sub/data.csv"}, watcher.seen
+    assert (
+        ai_figure_edit.fingerprint_changes(before, ai_figure_edit.project_fingerprint(root)) == []
     )
+    assert _redirected(cand, "sub/rel.csv").read_text() == "rel"
+    assert _redirected(cand, "sub/out/deep/abs.csv").read_text() == "abs"
+    assert not (root / "sub" / "out").exists()
+    # 影子 / 指纹复核仍然通过
+    assert all(
+        c.verdict == ai_convert.VERIFIED
+        for c in ai_convert.ADAPTER._project_untouched(cand, "precommit")
+    )
+
+
+def test_redirected_write_can_be_read_back_and_originals_are_copy_on_write(world):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = (
+        "import os\nimport pandas_free as _x\n".replace("import pandas_free as _x\n", "")
+        + "import matplotlib.pyplot as plt\n"
+        "here = os.path.dirname(os.path.abspath(__file__))\n"
+        "p = os.path.join(here, 'made.csv')\n"
+        "open(p, 'w').write('a,b\\n1,2\\n')\n"
+        "assert os.path.exists(p) and os.path.isfile(p)\n"
+        "assert open(p).read() == 'a,b\\n1,2\\n'\n"
+        "d = os.path.join(here, 'data.csv')\n"
+        "open(d, 'a').write('9,9\\n')\n"
+        "assert open(d).read() == 'x,y\\n1,2\\n9,9\\n', open(d).read()\n"
+        "plt.plot([1])\nplt.savefig('o.png')\n"
+    ).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    result = ai_convert.run_validation(cand, runner)
+    assert result["status"] == "ok", result
+    assert (root / "sub" / "data.csv").read_text() == "x,y\n1,2\n"  # 用户的原文件没动
+    assert _redirected(cand, "sub/data.csv").read_text() == "x,y\n1,2\n9,9\n"
+
+
+def test_writes_outside_project_and_allowed_roots_still_trip(world):
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    elsewhere = root.parent / "elsewhere"
+    elsewhere.mkdir()
+    cand.new_bytes = (
+        "import matplotlib.pyplot as plt\n"
+        f"open({str(elsewhere / 'x.txt')!r}, 'w').write('x')\n"
+        "plt.plot([1])\nplt.savefig('o.png')\n"
+    ).encode()
     cand.target.write_bytes(cand.new_bytes)
     result = ai_convert.run_validation(cand, runner)
     assert result["status"] == "error" and result["code"] == "write_outside_roots", result
-    assert not (root / "sub" / "sneaky.txt").exists()
+    assert not (elsewhere / "x.txt").exists()
+
+
+def test_c_level_write_into_the_project_is_still_caught_by_the_fingerprint(world):
+    """改道的盲区（C 层 / 子进程写）：绊线与改道都看不见，指纹复核照旧判失败。"""
+    root, cand, runner = world
+    workdir.set_mode(root, workdir.MODE_PROJECT)
+    cand.new_bytes = (
+        "import os\nimport matplotlib.pyplot as plt\n"
+        "here = os.path.dirname(os.path.abspath(__file__))\n"
+        "import subprocess, sys\n"
+        "subprocess.run([sys.executable, '-c', 'open(%r, \"w\").write(\"c\")' % "
+        "os.path.join(here, 'c_level.txt')], check=True)\n"
+        "plt.plot([1])\nplt.savefig('o.png')\n"
+    ).encode()
+    cand.target.write_bytes(cand.new_bytes)
+    ai_convert.run_validation(cand, runner)
+    try:
+        failed = [
+            c
+            for c in ai_convert.ADAPTER._project_untouched(cand, "precommit")
+            if c.verdict != ai_convert.VERIFIED
+        ]
+        assert failed, "指纹复核应判出项目被改动"
+    finally:
+        (root / "sub" / "c_level.txt").unlink(missing_ok=True)
 
 
 def test_registration_is_scoped_and_isolated_per_write_roots(tmp_path):
@@ -251,7 +335,7 @@ def test_edit_validation_runs_the_candidate_bytes_not_the_original(edit_world):
         ai_figure_edit.remove_candidate(cand.dir)
 
 
-def test_edit_candidate_writing_into_the_project_is_still_stopped(edit_world):
+def test_edit_candidate_writing_into_the_project_is_redirected(edit_world):
     m, figs = edit_world
     workdir.set_mode(figs, workdir.MODE_PROJECT)
     try:
@@ -263,8 +347,11 @@ def test_edit_candidate_writing_into_the_project_is_still_stopped(edit_world):
             ),
         )
         result = ai_convert.run_validation(cand, runner)
-        assert result["status"] == "error" and result["code"] == "write_outside_roots", result
+        assert result["status"] == "ok", result
         assert not (figs / "sneaky.csv").exists()
+        assert (cand.dir / ai_convert.REDIRECT_DIRNAME / "sneaky.csv").read_text() == "x"
+        # 改道区不算“候选里多出来的文件”
+        assert not any(k.startswith("redirected/") for k in ai_figure_edit._tree(cand.dir))
     finally:
         workdir.forget(figs)
         ai_figure_edit.remove_candidate(cand.dir)

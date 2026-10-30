@@ -354,3 +354,24 @@ savefig 收到已打开的流时再处理。已识别的构造调用同样在运
 * 前端沿用 `resuming`，无新状态与文案。
 回归：`tests/test_ai_convert_resume_correction.py`。
 
+
+## 修订（2026-10-30）：校验运行里写进项目的文件改道到候选暂存区，不再当失败
+
+真模型端到端（R → matplotlib）：原脚本读 `data/fake_smd.xlsx`，并用由 xlsx 路径推出的绝对路径把 `data/eFigureS2_loveplot_absSMD_values.csv` 写在数据旁。
+校验运行的写入根只有候选目录，这次写入以 `write_outside_roots` 失败；Codex 为“让校验过”把 CSV 写入整段删掉、只在内存里建——采用之后新脚本不再产出原脚本产出的 CSV（项目目录明明可写）。静默的行为丢失。
+
+裁决（用户批准）：**校验运行中，候选写进项目的文件被改道到候选自己的暂存区，不当失败**；Agent 没有理由为过校验而删输出写入，采用后的脚本照旧写它的输出。
+
+* **改道区**：`<候选目录>/redirected/<相对项目根的路径>`。`ai_convert.validation_roots(cand)` 是校验运行 `write_roots` 的唯一出处：`(候选目录, redirect-project:<项目>, redirect-dir:<改道区>)`。
+  改道条目随 `write_roots` 现有通道走（spec / `--write-roots` argv / 池键 / 影子脚本键），不加新字段；MCP 来源的 `write_roots` 不含改道条目，行为逐字节不变。
+* **机制**（`writetripwire` 的改道模式，worker 里 `install(redirect=)`）：包装 Python 层写入口——`builtins.open` / `io.open` / `os.open` / `os.mkdir|remove|unlink|rmdir|rename|replace` /
+  `shutil.copyfile|copymode|copystat|copytree|rmtree|move` / `os.path.exists|isfile|isdir|getsize`；只在 `arm(True)` 窗口里、只对落在项目内的路径生效，换完路径再调原函数，所以审计钩子看到的已是候选目录里的路径。
+  项目外且不在白名单的写仍是 `write_outside_roots`（改道只认项目这一个前缀）。
+* **读回**：打开读取 / `exists|isfile|isdir|getsize` 时项目内路径若在改道区有同名文件就读改道区的。**写时复制**：以追加 / 读写模式改一个已存在的项目文件，先把原文件复制进改道区再改，项目里的那份不动。
+  `x` 模式 / `O_EXCL` 遇项目里已有同名文件照常 `FileExistsError`；`mkdir` 遇项目里已有目录照常 `FileExistsError`（`exist_ok=True` 无副作用）。
+* **限制**（不是缺陷，写进 `writetripwire` 头注）：`os.stat` / `listdir` / `scandir` / `glob` / `Path.exists|stat|iterdir` 看不到改道区的文件；`os.symlink|link|truncate` 不改道（仍走绊线 → 失败）；
+  只存在于项目里的用户文件的删除 / 改名不改道（走绊线 → 失败）；C 层 / 子进程写看不见，由校验后的项目指纹复核（`_project_untouched`）兜住 → 仍判失败；Windows 未实测。
+* 候选目录指纹（`ai_figure_edit._tree`）不看根下的 `redirected/`；`keep_failed` 留诊断用的候选时先删改道区（里面可能有用户数据的衍生文件）。
+* **范围**：转换与改图（`figure_edit`）的候选校验共用 `run_validation`，一起生效；改图里“写项目文件”不再落到 `not measured`，照常测量（项目外的写仍是）。
+* **提示词**：转换提示词（`rule_keep_data` / `rule_foreign_steps`）明说“原脚本写出的数据 / CSV / 图片输出原样保留，不要删除，也不要改成只放内存”；`WRITE_OUTSIDE_HINT` 不再教 Agent 去掉写入。
+* 回归：`tests/test_convert_shadow_validation.py`（真 worker：绝对 / chdir 后相对路径写入、读回、写时复制、项目外仍绊线、C 层写由指纹兜住、改图同样改道）、`tests/test_write_redirect.py`、`tests/test_mcp_write_tripwire.py`（MCP 语义不变）。

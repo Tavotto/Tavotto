@@ -18,14 +18,30 @@ pickle / `shutil.copyfile` / 根内符号链接指向根外 / 线程与 fork 子
   不能拦）；
 * `os.chmod|utime|setxattr` 这类改属性的事件没纳入。
 
+**改道模式（ADR 0143 修订 2026-10-30，只属于 AI 转换 / 改图的校验运行）**：`write_roots` 里带一对 `redirect-project:` /
+`redirect-dir:` 条目（`redirect_entries`）时，同一个窗口里**落在项目内的写**不再失败，而是被换到 `<redirect-dir>/<相对项目路径>`——
+候选脚本保留「在数据旁写 CSV / 图」的原样行为，校验照样通过，用户项目文件逐字节不变。机制是在 `install` 时包装 Python 层入口
+（`builtins.open` / `io.open` / `os.open` / `os.mkdir|rmdir|remove|unlink|rename|replace` / `shutil.copyfile|copymode|copystat|copytree|rmtree|move` /
+`os.path.exists|isfile|isdir|getsize`），**只在 `arm(True)` 窗口里、只对落在项目内的路径**生效：换完路径再交给原函数，
+审计钩子看到的已经是候选目录里的路径。项目外、也不在白名单的写照旧是 `write_outside_roots`（改道只认项目这一个前缀）。
+读：打开读取时，项目内路径若在改道区有同名文件就读改道区的（写完再读回来可行）；`os.path.exists|isfile|isdir|getsize` 同理。
+改道**不**覆盖（限制，不是缺陷）：`os.stat` / `os.listdir` / `os.scandir` / `glob` / `Path.exists|stat|iterdir`（读不到改道区的文件），
+`os.symlink|link|truncate`（仍走绊线 → 失败），C 层写（同下面的盲区：绊线看不见，由校验后的项目指纹复核兜住 → 失败）。
+改动已存在的项目文件（追加 / 读写模式）：先把原文件复制进改道区再改（写时复制），项目里的那份不动；
+删除 / 改名一个**只存在于项目里**的用户文件不改道（走绊线 → 失败）。
+
 纯标准库、**不 import 任何兄弟模块**：它装进 worker 的私有包（`worker._ENGINE_MODULES`）。
 """
 
 from __future__ import annotations
 
+import builtins
 import errno
+import functools
+import io
 import os
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -60,7 +76,13 @@ _PYC_NAME = re.compile(r"\.pyc(\.\d+)?$")
 #: 记下的违规条数上限（只为报告；超出的丢弃，不无限增长）。
 _MAX_RECORDED = 8
 
+#: 改道模式的两个条目前缀（放进 `write_roots` 元组里随现有通道走：spec / argv / 池键 / 影子脚本键都不用改）。
+REDIRECT_PROJECT_PREFIX = "redirect-project:"
+REDIRECT_DIR_PREFIX = "redirect-dir:"
+
 _state: dict = {
+    "redirect": None,  # (项目真实路径, 项目 normcase 路径, 改道区真实路径, 改道区 normcase 路径)
+    "redirect_installed": False,
     "roots": (),
     "display_base": "",
     "armed": False,
@@ -274,13 +296,28 @@ def _hook(event: str, args: tuple) -> None:
         _tls.busy = False
 
 
-def install(roots, *, display_base: str = "") -> None:
-    """装钩子并设白名单。钩子装上就摘不掉（PEP 578）；`arm()` 决定它此刻管不管。"""
+def install(roots, *, display_base: str = "", redirect: tuple[str, str] | None = None) -> None:
+    """装钩子并设白名单。钩子装上就摘不掉（PEP 578）；`arm()` 决定它此刻管不管。
+
+    `redirect=(项目, 改道区)`：开改道模式（见模块头）；改道区必须在 `roots` 之内（否则改道后的写又被绊线拦下）。"""
     _state["roots"] = tuple(sorted({_real(r) for r in roots if r}))
     for r in _state["roots"]:
         folds_case(r)  # 在钩子装上、窗口打开之前探测并缓存（钩子里不做文件系统探测）
     _state["display_base"] = _real(display_base) if display_base else ""
     _state["violations"] = []
+    _state["redirected"] = []
+    if redirect is None:
+        _state["redirect"] = None
+    else:
+        project, directory = redirect
+        if not _under(_real(directory), _state["roots"]):
+            raise ValueError("改道区必须在授权根之内")
+        os.makedirs(directory, exist_ok=True)
+        rd = os.path.realpath(directory)
+        pr = os.path.realpath(project)
+        _state["redirect"] = (pr, os.path.normcase(pr), rd, os.path.normcase(rd))
+        folds_case(os.path.normcase(pr))
+        _install_redirect()
     if not _state["installed"]:
         sys.addaudithook(_hook)
         _state["installed"] = True
@@ -298,3 +335,301 @@ def violations() -> list[dict]:
 
 def reset() -> None:
     _state["violations"] = []
+
+
+# --------------------------------------------------------------------------- 改道模式（校验运行）
+def redirect_entries(project: str, directory: str) -> tuple[str, str]:
+    """改道模式的两个 `write_roots` 条目：项目目录 → 改道区目录（改道区应在某个授权根之内）。"""
+    return (REDIRECT_PROJECT_PREFIX + str(project), REDIRECT_DIR_PREFIX + str(directory))
+
+
+def split_roots(entries) -> tuple[list[str], tuple[str, str] | None]:
+    """`write_roots` → (真正的授权根, (项目, 改道区) | None)。只给一半是配置错误（ValueError）。"""
+    roots: list[str] = []
+    project = directory = None
+    for e in entries:
+        if e.startswith(REDIRECT_PROJECT_PREFIX):
+            project = e[len(REDIRECT_PROJECT_PREFIX) :]
+        elif e.startswith(REDIRECT_DIR_PREFIX):
+            directory = e[len(REDIRECT_DIR_PREFIX) :]
+        else:
+            roots.append(e)
+    if (project is None) != (directory is None) or (
+        project is not None and not (project and directory)
+    ):
+        raise ValueError("改道模式需要成对的 redirect-project / redirect-dir 条目")
+    return roots, (None if project is None else (project, directory))
+
+
+_ORIG: dict = {}
+_rtls = threading.local()
+_MAX_REDIRECTED = 64
+
+
+def _redirect_on() -> bool:
+    return _state["armed"] and _state["redirect"] is not None and not getattr(_rtls, "busy", False)
+
+
+def _map(raw, *, write: bool) -> str | None:
+    """项目内的路径 → 改道区里的对应路径；不在项目内 / 本来就在改道区 / 路径无法解释 → None。
+
+    `write=True` 返回无条件的改道路径，并在「项目里的父目录真实存在」时补建改道区里的父目录（保住
+    `FileNotFoundError` 的原有语义：项目里没有的目录不会因为改道而凭空出现）；`write=False` 只在改道区已有该文件时返回。"""
+    if isinstance(raw, int) or not isinstance(raw, (str, bytes, os.PathLike)):
+        return None
+    prev = getattr(_rtls, "busy", False)
+    _rtls.busy = True
+    try:
+        text = os.fsdecode(os.fspath(raw))
+        project, project_n, rdir, rdir_n = _state["redirect"]
+        rp = os.path.realpath(text)
+        rn = os.path.normcase(rp)
+        if _under(rn, [rdir_n]) or not _under(rn, [project_n]):
+            return None
+        rel = os.path.relpath(rp, project)
+        if rel == os.pardir or rel.startswith(os.pardir + os.sep):
+            return None
+        target = rdir if rel == "." else os.path.join(rdir, rel)
+        if write:
+            parent = os.path.dirname(target)
+            if not _ORIG["isdir"](parent) and _ORIG["isdir"](os.path.dirname(rp)):
+                _ORIG["makedirs"](parent, exist_ok=True)
+            items = _state.setdefault("redirected", [])
+            if len(items) < _MAX_REDIRECTED and rel not in items:
+                items.append(rel.replace(os.sep, "/"))
+            return target
+        return target if _ORIG["lexists"](target) else None
+    except (OSError, ValueError):
+        return None
+    finally:
+        _rtls.busy = prev
+
+
+def redirected() -> list[str]:
+    """本窗口里被改道的项目相对路径（至多 `_MAX_REDIRECTED` 条，诊断 / 用例用）。"""
+    return list(_state.get("redirected", ()))
+
+
+def _real_exists(raw) -> bool:
+    prev = getattr(_rtls, "busy", False)
+    _rtls.busy = True
+    try:
+        return _ORIG["lexists"](os.fsdecode(os.fspath(raw)))
+    except (OSError, ValueError, TypeError):
+        return False
+    finally:
+        _rtls.busy = prev
+
+
+def _cow(raw, target: str) -> None:
+    """改动已存在的项目文件前，把原文件复制进改道区（项目里的那份不动）。"""
+    prev = getattr(_rtls, "busy", False)
+    _rtls.busy = True
+    try:
+        if not _ORIG["lexists"](target) and _ORIG["isfile"](os.fsdecode(os.fspath(raw))):
+            _ORIG["copyfile"](os.fsdecode(os.fspath(raw)), target)
+    finally:
+        _rtls.busy = prev
+
+
+def _w_open(orig):
+    @functools.wraps(orig)
+    def open_(file, mode="r", *args, **kwargs):
+        if _redirect_on():
+            m = mode if isinstance(mode, str) else "r"
+            if any(c in m for c in "wax+"):
+                target = _map(file, write=True)
+                if target is not None:
+                    if "x" in m and _real_exists(file):
+                        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), file)
+                    if "w" not in m and "x" not in m:
+                        _cow(file, target)
+                    file = target
+            else:
+                target = _map(file, write=False)
+                if target is not None:
+                    file = target
+        return orig(file, mode, *args, **kwargs)
+
+    return open_
+
+
+def _w_os_open(orig):
+    @functools.wraps(orig)
+    def os_open(path, flags, mode=0o777, *, dir_fd=None):
+        if dir_fd is None and _redirect_on():
+            if flags & _WRITE_FLAGS:
+                target = _map(path, write=True)
+                if target is not None:
+                    if flags & os.O_CREAT and flags & os.O_EXCL and _real_exists(path):
+                        raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), path)
+                    if not flags & os.O_TRUNC:
+                        _cow(path, target)
+                    path = target
+            else:
+                target = _map(path, write=False)
+                if target is not None:
+                    path = target
+        return orig(path, flags, mode, dir_fd=dir_fd)
+
+    return os_open
+
+
+def _w_mkdir(orig):
+    @functools.wraps(orig)
+    def mkdir(path, mode=0o777, *, dir_fd=None):
+        if dir_fd is None and _redirect_on():
+            if _real_exists(path):
+                raise FileExistsError(errno.EEXIST, os.strerror(errno.EEXIST), path)
+            target = _map(path, write=True)
+            if target is not None:
+                path = target
+        return orig(path, mode, dir_fd=dir_fd)
+
+    return mkdir
+
+
+def _w_unary(orig):
+    """remove / unlink / rmdir：只在改道区里有同名对象时改道；只存在于项目里的用户文件不动（走绊线）。"""
+
+    @functools.wraps(orig)
+    def fn(path, *, dir_fd=None):
+        if dir_fd is None and _redirect_on():
+            target = _map(path, write=False)
+            if target is not None:
+                path = target
+        return orig(path, dir_fd=dir_fd)
+
+    return fn
+
+
+def _w_rename(orig):
+    @functools.wraps(orig)
+    def rename(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
+        if src_dir_fd is None and dst_dir_fd is None and _redirect_on():
+            s = _map(src, write=False)
+            if s is not None:
+                src = s
+            d = _map(dst, write=True)
+            if d is not None:
+                dst = d
+        return orig(src, dst, src_dir_fd=src_dir_fd, dst_dir_fd=dst_dir_fd)
+
+    return rename
+
+
+def _w_exists(orig):
+    @functools.wraps(orig)
+    def fn(path, *args, **kwargs):
+        result = orig(path, *args, **kwargs)
+        if result or not _redirect_on():
+            return result
+        target = _map(path, write=False)
+        return orig(target, *args, **kwargs) if target is not None else result
+
+    return fn
+
+
+def _w_getsize(orig):
+    @functools.wraps(orig)
+    def getsize(path):
+        if _redirect_on():
+            target = _map(path, write=False)
+            if target is not None:
+                path = target
+        return orig(path)
+
+    return getsize
+
+
+def _w_shutil_pair(orig):
+    """copyfile / copymode / copystat：src 读时看改道区，dst 是写。"""
+
+    @functools.wraps(orig)
+    def fn(src, dst, *args, **kwargs):
+        if _redirect_on():
+            s = _map(src, write=False)
+            if s is not None:
+                src = s
+            d = _map(dst, write=True)
+            if d is not None:
+                dst = d
+        return orig(src, dst, *args, **kwargs)
+
+    return fn
+
+
+def _w_copytree(orig):
+    @functools.wraps(orig)
+    def copytree(src, dst, *args, **kwargs):
+        if _redirect_on():
+            d = _map(dst, write=True)
+            if d is not None:
+                dst = d
+        return orig(src, dst, *args, **kwargs)
+
+    return copytree
+
+
+def _w_rmtree(orig):
+    @functools.wraps(orig)
+    def rmtree(path, *args, **kwargs):
+        if _redirect_on():
+            target = _map(path, write=False)
+            if target is not None:
+                path = target
+        return orig(path, *args, **kwargs)
+
+    return rmtree
+
+
+def _w_move(orig):
+    @functools.wraps(orig)
+    def move(src, dst, *args, **kwargs):
+        if _redirect_on():
+            s = _map(src, write=False)
+            if s is not None:
+                src = s
+            d = _map(dst, write=True)
+            if d is not None:
+                # 项目里的 dst 是已有目录时 shutil.move 是「移进去」：改道区里补出同名目录，语义保持
+                if _real_exists(dst) and _ORIG["isdir"](os.fsdecode(os.fspath(dst))):
+                    _ORIG["makedirs"](d, exist_ok=True)
+                dst = d
+        return orig(src, dst, *args, **kwargs)
+
+    return move
+
+
+def _install_redirect() -> None:
+    """包装 Python 层写入口（只装一次；窗口外 / 没配改道区时每个包装都是直通）。"""
+    if _state["redirect_installed"]:
+        return
+    path = os.path
+    _ORIG.update(
+        isdir=path.isdir,
+        isfile=path.isfile,
+        lexists=path.lexists,
+        makedirs=os.makedirs,
+        copyfile=shutil.copyfile,
+    )
+    wrapped_open = _w_open(builtins.open)
+    builtins.open = wrapped_open
+    io.open = wrapped_open
+    os.open = _w_os_open(os.open)
+    os.mkdir = _w_mkdir(os.mkdir)
+    os.remove = _w_unary(os.remove)
+    os.unlink = _w_unary(os.unlink)
+    os.rmdir = _w_unary(os.rmdir)
+    os.rename = _w_rename(os.rename)
+    os.replace = _w_rename(os.replace)
+    for name in ("exists", "isfile", "isdir"):
+        setattr(path, name, _w_exists(getattr(path, name)))
+    path.getsize = _w_getsize(path.getsize)
+    shutil.copyfile = _w_shutil_pair(shutil.copyfile)
+    shutil.copymode = _w_shutil_pair(shutil.copymode)
+    shutil.copystat = _w_shutil_pair(shutil.copystat)
+    shutil.copytree = _w_copytree(shutil.copytree)
+    shutil.rmtree = _w_rmtree(shutil.rmtree)
+    shutil.move = _w_move(shutil.move)
+    _state["redirect_installed"] = True

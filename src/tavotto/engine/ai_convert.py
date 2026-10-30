@@ -54,6 +54,7 @@ from . import (
     sourcelang,
     syncnoise,
     taskdiag,
+    writetripwire,
 )
 from .ai_tasks import FAILED, UNKNOWN, VERIFIED, CheckResult, NeedsInput, TaskError
 from .imageheader import image_dimensions
@@ -117,11 +118,15 @@ FAILED_KEEP_S = taskdiag.RETENTION_S
 NO_FIGURE_CODES = frozenset(
     {"script_no_figure", "no_figures_captured", "no_figures_captured_silent"}
 )
+#: 候选目录里的改道区目录名（校验运行里写进项目的文件落在这里）；候选目录指纹（`ai_figure_edit._tree`）不看它
+REDIRECT_DIRNAME = ai_figure_edit.REDIRECT_DIRNAME
 #: 绊线拦下候选写项目文件的稳定码（`writetripwire.CODE` 的镜像）与写给 Agent 的一句
 WRITE_OUTSIDE_ROOTS_CODE = "write_outside_roots"
 WRITE_OUTSIDE_HINT = (
-    "转换校验只允许写候选目录和运行时临时目录，不能写原项目。"
-    "根据下面的实际错误定位写入；删除仅为输出准备的 mkdir / makedirs，额外文件写入和中间数据改用内存或 tempfile。"
+    "转换校验只允许写候选目录和运行时临时目录；写进原项目的文件会被自动改道到候选的暂存区（原项目不动），"
+    "所以保留原脚本的数据 / CSV / 图片输出写入，不要删除或改成只放内存。"
+    "这次被拒的写入落在项目之外的位置：根据下面的实际错误定位它；"
+    "删除仅为输出准备的项目外 mkdir / makedirs，项目外的额外文件写入和中间数据改用 tempfile。"
     "保留 Matplotlib savefig 调用，Tavotto 会捕获图像，不需要预建输出目录；"
     "不要把写入改到项目的其他位置。"
 )
@@ -379,6 +384,8 @@ def keep_failed(cand: ConvertCandidate) -> bool:
             cand.new_bytes = cand.target.read_bytes()
         except OSError:
             return False
+    # 改道区里可能有用户数据的衍生文件（CSV…）：诊断只要脚本，这里不留
+    shutil.rmtree(cand.dir / REDIRECT_DIRNAME, ignore_errors=True)
     meta = {**_hold_meta(cand, STATE_FAILED_KEPT), "failed_kept_at": time.time()}
     meta.pop("context", None)
     meta.pop("project_before", None)
@@ -502,6 +509,18 @@ def normalize_outputs(cand: ConvertCandidate) -> dict | None:
     return None
 
 
+def validation_roots(cand) -> tuple[str, ...]:
+    """校验运行的 `write_roots`（唯一出处：登记键、探测、硬杀三处必须同一份）。
+
+    授权根只有候选目录；另带**改道条目**（`writetripwire.redirect_entries`）：候选写进**项目**的文件（`data.csv` 写在数据旁，
+    绝对路径或 chdir 后的相对路径）被 worker 换到 `<候选目录>/redirected/<项目相对路径>`——校验照样通过、用户项目零改动、
+    Agent 没有理由为了过校验而删掉原脚本的输出写入。项目外且不在白名单的写仍是 `write_outside_roots`。"""
+    return (
+        str(cand.dir),
+        *writetripwire.redirect_entries(str(cand.project_root), str(cand.dir / REDIRECT_DIRNAME)),
+    )
+
+
 def run_validation(
     cand: ConvertCandidate | ai_figure_edit.Candidate, runner, *, evidence: list | None = None
 ) -> dict:
@@ -530,7 +549,7 @@ def run_validation(
     except OSError as exc:
         code = "exists" if isinstance(exc, FileExistsError) else "write_failed"
         return {"status": "error", "code": f"stage_{code}", "message": str(exc)}
-    roots_key = execspec.write_roots_key((str(cand.dir),))
+    roots_key = execspec.write_roots_key(validation_roots(cand))
     with shadowscript.shadow(cand.project_root, rel, cand.target, roots_key):
         deps = _ensure_dependencies(cand, rel)
         if deps is not None:
@@ -667,7 +686,7 @@ def agent_check(cand: ConvertCandidate, *, evidence: list | None = None) -> tupl
 def _run_with_cancel(runner, cand: ConvertCandidate, rel: str, cancel) -> tuple[dict, bool]:
     """跑校验运行；运行中取消到来时，若 runner 带 `force_cancel(figures_dir, rel, write_roots)`（app 注入，= `pool.force_cancel`
     的同键硬杀）就当场结束在跑的探测。回 `(输出, 是否因取消被硬杀)`。runner 没有该入口（纯引擎单测）则等同直接调用。"""
-    figures_dir, roots = str(cand.project_root), (str(cand.dir),)
+    figures_dir, roots = str(cand.project_root), validation_roots(cand)
     killer = getattr(runner, "force_cancel", None)
     if cancel is None or killer is None:
         return runner(figures_dir, rel, roots) or {}, False

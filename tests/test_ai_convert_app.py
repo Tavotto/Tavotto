@@ -465,12 +465,10 @@ def test_conversion_cannot_replace_failed_primary_entry_with_a_working_helper(
     assert sorted(p.name for p in figs.iterdir() if p.is_file()) == state["initial"]
 
 
-def test_candidate_that_writes_a_project_file_is_stopped_by_the_write_tripwire(
-    project, monkeypatch
-):
-    """P1（Codex #1277）：真 worker——候选在校验运行里写用户的 `out.png`（绝对路径，与 cwd 无关）在写发生时就失败，字节不变。"""
+def test_candidate_that_writes_a_project_file_is_redirected_not_written(project, monkeypatch):
+    """真 worker——候选在校验运行里写用户的 `out.png`（绝对路径，与 cwd 无关）被改道到候选暂存区：
+    转换成功，用户字节不变，原脚本的输出写入保留（ADR 0143 修订 2026-10-30）。"""
     m, client, figs, state = project
-    # pytest 的 tmp_path 在系统临时目录之下，而绊线白名单放行系统临时目录：把 worker 的临时目录挪走（同 test_mcp_write_tripwire）
     worker_tmp = figs.parent / "worker-tmp"
     worker_tmp.mkdir()
     for var in ("TMPDIR", "TEMP", "TMP"):
@@ -484,10 +482,12 @@ def test_candidate_that_writes_a_project_file_is_stopped_by_the_write_tripwire(
     state["code"] = f"(d / 'fig_matplotlib.py').write_text({bad!r}, encoding='utf-8')"
     sid = _start(client).get_json()["session"]
     sess = _wait_final(client, sid)
-    assert sess["task"]["outcome"] == "failed"
+    assert sess["task"]["outcome"] == "completed", sess["task"]
     assert (figs / "out.png").read_bytes() == before
-    assert any(u["reason_code"] == "run_failed" for u in sess["task"]["unmet"])
     assert sorted(p.name for p in figs.iterdir() if p.is_file()) == state["initial"]
+    assert (
+        ai_convert.CONVERT_DIR / sid / ai_convert.REDIRECT_DIRNAME / "out.png"
+    ).read_bytes() == (b"clobbered")
 
 
 def test_existing_output_directories_do_not_block_conversion_validation(project, monkeypatch):
@@ -530,7 +530,9 @@ def test_output_write_failure_keeps_its_actual_cause_for_the_next_correction(
     for var in ("TMPDIR", "TEMP", "TMP"):
         monkeypatch.setenv(var, str(worker_tmp))
     monkeypatch.setenv("LOCALAPPDATA", str(figs.parent / "localappdata"))
-    bad = f"from pathlib import Path\nPath({str(figs / name)!r}).{operation}\n" + GOOD
+    outside = figs.parent / "outside"  # 项目外：写项目内的文件会被改道，只有项目外的写才失败
+    outside.mkdir()
+    bad = f"from pathlib import Path\nPath({str(outside / name)!r}).{operation}\n" + GOOD
     state["code"] = (
         "p = d / 'fig_matplotlib.py'; "
         f"p.write_text({GOOD!r} if p.exists() else {bad!r}, encoding='utf-8')"
@@ -545,8 +547,7 @@ def test_output_write_failure_keeps_its_actual_cause_for_the_next_correction(
     assert "改成写到项目内" not in state["prompts"][1]
     assert name in state["prompts"][1], "The model must see which write actually failed"
     assert session["task"]["outcome"] == "completed", session
-    if name != "out.png":
-        assert not (figs / name).exists()
+    assert not (outside / name).exists()
     assert (figs / "out.png").read_bytes() == before
     assert (figs / "fig.py").read_bytes() == ORIGINAL.encode()
     assert client.post(f"/api/ai/convert/{sid}/adopt").status_code == 200

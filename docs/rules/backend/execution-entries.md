@@ -120,6 +120,14 @@ worker 在脚本 build 期间用 `sys.addaudithook` 的 `open` 事件（及 `os.
 - **回滚**：引擎能力 `write-root-tripwire`（`capabilities.FEATURES`）；去掉它桥就不传参。`write_outside_roots` **不在** `execpolicy.BLOCKED_CODES`，不触发换 native 重跑。
 - 新增引擎模块 `writetripwire` 在 `worker._ENGINE_MODULES`（私有包闭包）与 `packaging/tavotto.spec`、`tests/import_architecture_baseline.json` 登记。看护 `tests/test_mcp_write_tripwire.py`。
 
+### 改道模式：AI 转换 / 改图的校验运行（ADR 0143 修订 2026-10-30）
+
+校验运行的 `write_roots` 由 `ai_convert.validation_roots(cand)` 给（唯一出处：登记键、探测、硬杀同一份）：候选目录 + 成对的 `redirect-project:` / `redirect-dir:` 条目
+（`writetripwire.redirect_entries` / `split_roots`）。worker 见到它就在 `install(redirect=)` 里包装 Python 层写入口，**落在项目内的写**换到 `<候选目录>/redirected/<项目相对路径>`，
+项目外且不在白名单的写仍 `write_outside_roots`。**MCP 来源的 `write_roots` 不含改道条目，绊线语义不变**——不要把改道扩到 MCP（那里绊线就是要失败）。
+读回（打开读取与 `exists|isfile|isdir|getsize`）看改道区，追加 / 读写模式写时复制；限制与盲区（`stat|listdir|glob|Path.exists`、C 层写由校验后的项目指纹兜住）见 `writetripwire` 头注与 ADR 0143 同日修订。
+候选目录指纹 `ai_figure_edit._tree` 不看根下 `redirected/`。看护 `tests/test_convert_shadow_validation.py`（真 worker）、`tests/test_write_redirect.py`。
+
 ## 速查表原要点（2026-09-25 迁入，#608）
 
 `src/tavotto/AGENTS.md` 那一行的「必守要点」从这天起只留索引（Codex 自动拼接的 32 KiB 上限，#608）。

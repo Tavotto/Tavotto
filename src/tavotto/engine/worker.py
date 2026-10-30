@@ -1307,9 +1307,15 @@ class Worker(wireproto.V1Handler):
                 extra.append(getattr(matplotlib, getter)())
             except Exception:  # noqa: BLE001 — 取不到就少一项白名单，不让绊线的装配挡住渲染
                 pass
+        # 改道模式（ADR 0143 修订 2026-10-30）：`--write-roots` 里成对的 redirect-* 条目 = 项目内的写换到候选的改道区
+        try:
+            roots, redirect = writetripwire.split_roots(self.write_roots)
+        except ValueError as exc:
+            raise SystemExit(f"--write-roots: {exc}") from exc
         writetripwire.install(
-            [*self.write_roots, *writetripwire.infrastructure_roots(extra=extra)],
+            [*roots, *writetripwire.infrastructure_roots(extra=extra)],
             display_base=str(self.figures_dir),
+            redirect=redirect,
         )
 
     def build(self, timings: dict | None = None) -> dict:
