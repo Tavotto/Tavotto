@@ -14,7 +14,8 @@ order: 240
 -->
 
 - `POST /api/ai/run` → spawn 本机的编码 Agent CLI（`codex exec` / `claude -p`），
-  cwd=figures 目录；修改前快照到 `cache/ai_snapshots/`，结束后 diff 经 SSE
+  cwd=figures 目录；面板 id 是 runtime asset id（ADR 0013）时经 `runtimeasset.resolve` 正向解析到脚本，解析不到回 `runtime_asset_unknown`，
+  不走 `safe_resolve`（磁盘文件找不到才是 `ai_panel_file_missing`）；修改前快照到 `cache/ai_snapshots/`，结束后 diff 经 SSE
   `ai.done` 推送（`ai.*` 事件由 app 层补上发起项目的 `pj`，#589）；revert 恢复快照——**只回滚这次 AI 改完的那一版**：会话结束时
   记下 `after_sha256`（内存会话 + sidecar），脚本此后又变过（人工 / 另一次 AI /
   删除）就 409 `ai_revert_conflict`、原件零改动；没有记录（中断会话、老 sidecar）

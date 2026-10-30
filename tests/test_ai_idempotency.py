@@ -25,7 +25,7 @@ import pytest
 
 from support.registrystub import stem_registry
 from tavotto import app as m
-from tavotto.engine import ai_bridge, ai_history, project_watch as engine_watch
+from tavotto.engine import ai_bridge, ai_history, figcapture, project_watch as engine_watch
 
 RID = "11111111-2222-4333-8444-555555555555"
 RID2 = "99999999-2222-4333-8444-555555555555"
@@ -947,6 +947,47 @@ def test_a_rejected_run_deletes_its_pending_row_for_every_kind_of_rejection(
     assert _post(client, rid=rid3).status_code == 200
     assert rid3 in _pending_rids(client)
     _wait_idle()
+
+
+def test_a_runtime_panel_runs_on_its_registered_script(client, tmp_path, cli, monkeypatch):
+    """「运行脚本」捕获的图（runtime 面板，ADR 0013）：fileId 是 asset id 不是磁盘路径——按注册表正向解析到脚本，
+    照常 spawn（TVD-KHV4：以前一律 404，改图助手对这类图完全用不了）。"""
+    _, counter = cli
+    figs = _project(tmp_path)
+    (figs / "Fig1.pdf").unlink()  # runtime 图不依赖磁盘原件
+    _open(client, figs)
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    rid = figcapture.runtime_asset_id("fig1.py", "Fig1")
+    r = client.post(
+        "/api/ai/run",
+        json={"agent": "codex", "id": rid, "prompt": "把图例挪到右上角", "client_request_id": RID},
+    )
+    assert r.status_code == 200, r.data
+    assert r.get_json()["script"] == "fig1.py"
+    _wait_for(lambda: _spawned(counter) == 1)
+    _wait_idle()
+
+
+def test_an_unregistered_runtime_panel_is_runtime_asset_unknown(client, tmp_path, cli, monkeypatch):
+    """注册表里解析不到的 runtime id：与其它 runtime 端点同一个 `runtime_asset_unknown`（不是「文件找不到 · 刷新项目」），
+    不 spawn，待确认行由后端删掉。"""
+    _, counter = cli
+    _open(client, _project(tmp_path))
+    monkeypatch.setattr(m, "sse_publish", lambda *a: None)
+    assert _put_pending(client, RID).status_code == 200
+    r = client.post(
+        "/api/ai/run",
+        json={
+            "agent": "codex",
+            "id": figcapture.runtime_asset_id("gone.py", "Gone"),
+            "prompt": "p",
+            "client_request_id": RID,
+        },
+    )
+    assert r.status_code == 404
+    assert r.get_json()["code"] == "runtime_asset_unknown"
+    assert RID not in _pending_rids(client)
+    assert _spawned(counter) == 0
 
 
 def test_a_panel_whose_file_is_gone_is_a_coded_404_and_drops_its_pending_row(

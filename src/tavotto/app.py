@@ -12756,14 +12756,23 @@ def _ai_run_impl():
             return jsonify(
                 {"session": known["session"], "script": known.get("script") or "", "deduped": True}
             )
-    try:
-        path = safe_resolve(body.get("id", ""))
-    except NotFound:
-        # 画布上这张图的文件不在项目里了（移走 / 改名 / 删掉）：带码回，前端出「刷新项目」，不是一句光秃秃的 HTTP 404
-        return jsonify(
-            {"error": "这张图的文件找不到了", "code": "ai_panel_file_missing", "params": {}}
-        ), 404
-    disk_stem, info = _disk_panel(path)
+    panel_id = body.get("id", "")
+    if engine_runtimeasset.is_runtime_id(panel_id):
+        # runtime 面板（「运行脚本」捕获的图，ADR 0013）：fileId 是不透明的 asset id，不是磁盘路径——
+        # 按注册表正向重算出 (script, stem)，之后与磁盘面板同一条路
+        info = engine_runtimeasset.resolve(panel_id, current_registry())
+        if info is None:
+            return _runtime_asset_unknown(panel_id)
+        disk_stem = info["stem"]
+    else:
+        try:
+            path = safe_resolve(panel_id)
+        except NotFound:
+            # 画布上这张图的文件不在项目里了（移走 / 改名 / 删掉）：带码回，前端出「刷新项目」，不是一句光秃秃的 HTTP 404
+            return jsonify(
+                {"error": "这张图的文件找不到了", "code": "ai_panel_file_missing", "params": {}}
+            ), 404
+        disk_stem, info = _disk_panel(path)
     if info is None:
         return jsonify(
             {"error": "该面板不可参数化（没有对应脚本）", "code": "not_parameterizable"}
