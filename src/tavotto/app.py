@@ -3997,6 +3997,7 @@ def _ai_task_hooks(ctx: "ProjectCtx", script: str, entry: str, selection=None) -
         "runner": _convert_runner(
             ctx, script, with_manifests=True, entry=entry, selection=selection
         ),
+        "dependency_plan": engine_convertdeps.ensure,
         "check_before": check_before,
     }
 
@@ -13090,6 +13091,7 @@ def _convert_runner(
                 "dropped_figures": result.get("dropped_figures", 0),
             }
             if with_manifests and worker is not None:
+                out["source_sha256"] = getattr(worker, "last_build_source_sha256", None)
                 mans = {}
                 for stem in stems:
                     try:
@@ -13120,6 +13122,7 @@ def _convert_runner(
         return engine_pool.force_cancel(rel, figures_dir, **run_kw, **roots_kw)
 
     runner.force_cancel = force_cancel  # type: ignore[attr-defined]
+    runner.requires_source_identity = with_manifests  # type: ignore[attr-defined]
 
     def with_images(figures_dir, rel, write_roots):
         return runner(figures_dir, rel, write_roots, with_images=True)
@@ -13793,6 +13796,50 @@ def api_ai_revert(sid):
         return jsonify(
             {"error": str(exc), "code": "ai_revert_failed", "params": {"reason": str(exc)}}
         ), 400
+
+
+@app.post("/api/ai/sessions/<sid>/dependencies")
+def api_ai_edit_dependencies(sid):
+    """Resume a held edit after explicit dependency authorization."""
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        abort(400)
+    action = body.get("action")
+    if action == "install" and isinstance(body.get("impact_digest"), str) and body["impact_digest"]:
+        resolver = engine_convertdeps.resolve
+        impact = body["impact_digest"]
+    elif action == "replan":
+
+        def resolver(project, rel, *, confirmed_impact, cancel, **kwargs):
+            return engine_convertdeps.ensure(project, rel, cancel, **kwargs)
+
+        impact = ""
+    else:
+        abort(400)
+    ctx = current_ctx()
+    try:
+        resumed = engine_ai.resume_figure_edit(
+            sid,
+            str(ctx.path),
+            impact,
+            resolve=resolver,
+            on_changed=lambda script: _after_ai_change(ctx, script),
+            on_event=lambda event, data: sse_publish(event, {**data, "pj": ctx.id}),
+        )
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
+    except engine_ai_history.ScriptBusy:
+        return jsonify({"code": "ai_script_busy"}), 409
+    return jsonify({"session": resumed}), 202
+
+
+@app.post("/api/ai/sessions/<sid>/dependencies/discard")
+def api_ai_edit_dependencies_discard(sid):
+    try:
+        engine_ai.discard_held_figure_edit(sid, str(require_project()))
+    except engine_ai.AgentError as exc:
+        return _agent_error(exc)
+    return jsonify({"ok": True})
 
 
 @app.post("/api/ai/sessions/<sid>/cancel")

@@ -42,6 +42,12 @@ export default interface Resources {
       "truncated": "文件太多，只列出前一部分",
       "unconfirmedHint": "上一次的结果还没确认，请先在对话里查询结果。"
     },
+    "dependency": {
+      "installing": "正在准备依赖，完成后会重新检查…",
+      "missing": "校验时缺少 {{names}}；安装后会重新检查并应用修改。",
+      "stop": "停止",
+      "waiting": "等你决定安装缺少的依赖"
+    },
     "diff": {
       "copyPatch": "复制补丁",
       "edited": "已修改",

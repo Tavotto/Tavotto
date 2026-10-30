@@ -4144,6 +4144,15 @@ export const aiRevert = (sid: string, pj: string | null) =>
 export const aiCancel = (sid: string, pj: string | null) =>
   jsonFetch<{ ok: boolean }>(`/api/ai/sessions/${sid}/cancel`, { method: 'POST' }, pj)
 
+export const resumeAiEditDependencies = (sid: string, pj: string | null, action: 'install' | 'replan', impactDigest?: string) =>
+  jsonFetch<{ session: string }>(`/api/ai/sessions/${encodeURIComponent(sid)}/dependencies`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action, ...(impactDigest ? { impact_digest: impactDigest } : {}) }),
+  }, pj)
+
+export const discardAiEditDependencies = (sid: string, pj: string | null) =>
+  jsonFetch<{ ok: boolean }>(`/api/ai/sessions/${encodeURIComponent(sid)}/dependencies/discard`, { method: 'POST' }, pj)
+
 /* ----------------- 生成可编辑版本（ADR 0143，`/api/ai/convert*`） ----------------- */
 
 /** 对照数据（`ai_convert.comparison_of`）：不含像素差（`pixel_diff` 恒 null——位图与矢量重画没有可辩护的逐像素差） */

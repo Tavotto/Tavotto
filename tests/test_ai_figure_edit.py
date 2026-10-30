@@ -800,3 +800,378 @@ def test_renamed_without_run_config_has_no_run_config_key(env):
     _wait(sid)
     renamed = ai_figure_edit.renamed_from_verification(ai_history.get(sid)["verification"])
     assert len(renamed) == 1 and "run_config" not in renamed[0]
+
+
+def test_missing_dependency_check_is_bound_to_the_checked_candidate(env):
+    root = env["figs"]
+    cand = ai_figure_edit.create_candidate("dependency-check", root / "fig1.py", root, "fig1.py")
+    cand.target.write_text(SCRIPT.replace('"old"', '"new"'), encoding="utf-8")
+    cand.extras["runner"] = object()
+    ok, _ = ai_figure_edit.agent_check(
+        cand, lambda *_: {"status": "error", "code": "missing_dependency", "module": "openpyxl"}
+    )
+    assert not ok
+    assert cand.extras["missing_dependency_check"]["module"] == "openpyxl"
+    checks = ai_figure_edit.ADAPTER.verify("precommit", None, cand)
+    assert any(c.reason_code == "missing_dependency" and c.verdict == "failed" for c in checks)
+    cand.target.write_text(SCRIPT.replace('"old"', '"different"'), encoding="utf-8")
+    checks = ai_figure_edit.ADAPTER.verify("precommit", None, cand)
+    assert not any(c.reason_code == "missing_dependency" for c in checks)
+    assert (root / "fig1.py").read_text(encoding="utf-8") == SCRIPT
+
+
+def _held_edit(env):
+    root = env["figs"]
+    cand = ai_figure_edit.create_candidate("held-edit", root / "fig1.py", root, "fig1.py")
+    cand.target.write_text(SCRIPT.replace('"old"', '"new"'), encoding="utf-8")
+    cand.extras["runner"] = lambda *_: {"stems": ["Fig1"], "manifests": {}}
+    ok, _ = ai_figure_edit.agent_check(
+        cand, lambda *_: {"status": "error", "code": "missing_dependency", "module": "openpyxl"}
+    )
+    assert not ok
+    card = {
+        "kind": "ask_once",
+        "packages": ["openpyxl"],
+        "runtime_modules": ["openpyxl"],
+        "impact_digest": "shown",
+    }
+    cand.extras["dependency_plan"] = lambda *_a, **_kw: {"status": "hold", "card": card}
+    envelope = ai_figure_edit.envelope_for(
+        agent="codex",
+        project_key=str(root.resolve()),
+        script_rel="fig1.py",
+        prompt="edit",
+        rid=None,
+        base_sha256=cand.base_sha256,
+    )
+    ai_figure_edit.ensure_registered()
+    run = ai_tasks.TaskRun("held-edit", envelope, ai_tasks.Plan(steps=()))
+    checks = ai_figure_edit.ADAPTER.verify("precommit", run, cand)
+    assert not ai_tasks.precommit_admits(checks) and cand.hold == card
+    ai_history.record_start(
+        {
+            "id": "held-edit",
+            "project": str(root.resolve()),
+            "provider": "codex",
+            "script": "fig1.py",
+            "prompt": "edit",
+        }
+    )
+    ai_history.record_end("held-edit", "done")
+    ai_bridge.SESSIONS["held-edit"] = {
+        "id": "held-edit",
+        "agent": "codex",
+        "script": "fig1.py",
+        "prompt": "edit",
+        "project": str(root.resolve()),
+        "status": "done",
+        "final": True,
+        "script_path": str(root / "fig1.py"),
+        "taf": {"cand": cand, "run": run},
+    }
+    return cand
+
+
+def test_dependency_authorization_resumes_and_writes_only_after_validation(env):
+    cand = _held_edit(env)
+    seen = []
+
+    def resolve(project, rel, *, confirmed_impact, cancel, **kwargs):
+        seen.append((confirmed_impact, kwargs.get("runtime_modules")))
+        assert _project_text(env) == SCRIPT
+        return {"status": "installed", "installed": ["openpyxl"]}
+
+    sid = ai_bridge.resume_figure_edit(
+        "held-edit",
+        str(env["figs"]),
+        "shown",
+        resolve=resolve,
+        on_changed=lambda script: {},
+        on_event=lambda *_: None,
+    )
+    assert ai_bridge.SESSIONS[sid]["exited"].wait(20)
+    assert seen == [("shown", ("openpyxl",))]
+    assert cand.committed and '"new"' in _project_text(env)
+    assert ai_bridge.SESSIONS[sid]["final"] and ai_bridge.SESSIONS[sid]["changed"] is True
+
+
+def test_dependency_resume_refuses_changed_candidate(env):
+    cand = _held_edit(env)
+    cand.target.write_text(SCRIPT.replace('"old"', '"other"'), encoding="utf-8")
+    with pytest.raises(ai_bridge.AgentError) as exc:
+        ai_bridge.resume_figure_edit(
+            "held-edit",
+            str(env["figs"]),
+            "shown",
+            resolve=lambda *_a, **_kw: None,
+            on_changed=lambda script: {},
+            on_event=lambda *_: None,
+        )
+    assert exc.value.code == "ai_candidate_changed"
+    assert _project_text(env) == SCRIPT
+
+
+def test_dependency_resume_rejects_candidate_changed_during_validation(env):
+    cand = _held_edit(env)
+
+    def runner(*_args):
+        cand.target.write_text(SCRIPT.replace('"old"', '"attacker"'), encoding="utf-8")
+        return {"stems": ["Fig1"], "manifests": {}}
+
+    cand.extras["runner"] = runner
+    sid = ai_bridge.resume_figure_edit(
+        "held-edit",
+        str(env["figs"]),
+        "shown",
+        resolve=lambda *_a, **_kw: {"status": "installed", "installed": ["openpyxl"]},
+        on_changed=lambda script: {},
+        on_event=lambda *_: None,
+    )
+    assert ai_bridge.SESSIONS[sid]["exited"].wait(20)
+    assert not cand.committed and _project_text(env) == SCRIPT
+    assert ai_bridge.SESSIONS[sid]["status"] == "failed"
+
+
+def test_dependency_resume_returns_new_card_if_impact_changed(env):
+    cand = _held_edit(env)
+    new_card = {**cand.hold, "impact_digest": "new-digest"}
+
+    def resolve(*_a, **_kw):
+        return {"status": "hold", "card": new_card, "code": "dependency_impact_changed"}
+
+    sid = ai_bridge.resume_figure_edit(
+        "held-edit",
+        str(env["figs"]),
+        "shown",
+        resolve=resolve,
+        on_changed=lambda script: {},
+        on_event=lambda *_: None,
+    )
+    assert ai_bridge.SESSIONS[sid]["exited"].wait(20)
+    session = ai_bridge.SESSIONS[sid]
+    assert session["task"]["outcome"] == "needs_input"
+    assert session["task"]["unmet"][0]["data"]["impact_digest"] == "new-digest"
+    assert cand.target.exists() and not cand.committed and _project_text(env) == SCRIPT
+
+
+def test_dependency_resume_is_idempotent_and_project_scoped(env, tmp_path):
+    _held_edit(env)
+    entered, release = threading.Event(), threading.Event()
+
+    def resolve(*_a, **_kw):
+        entered.set()
+        assert release.wait(10)
+        return {"status": "installed", "installed": ["openpyxl"]}
+
+    sid = ai_bridge.resume_figure_edit(
+        "held-edit",
+        str(env["figs"]),
+        "shown",
+        resolve=resolve,
+        on_changed=lambda script: {},
+        on_event=lambda *_: None,
+    )
+    assert entered.wait(10)
+    assert (
+        ai_bridge.resume_figure_edit(
+            "held-edit",
+            str(env["figs"]),
+            "shown",
+            resolve=resolve,
+            on_changed=lambda script: {},
+            on_event=lambda *_: None,
+        )
+        == sid
+    )
+    with pytest.raises(ai_bridge.AgentError):
+        ai_bridge.resume_figure_edit(
+            "held-edit",
+            str(tmp_path / "other"),
+            "shown",
+            resolve=resolve,
+            on_changed=lambda script: {},
+            on_event=lambda *_: None,
+        )
+    release.set()
+    assert ai_bridge.SESSIONS[sid]["exited"].wait(20)
+    assert ai_bridge.SESSIONS[sid]["changed"] is True
+    assert (
+        ai_bridge.resume_figure_edit(
+            "held-edit",
+            str(env["figs"]),
+            "shown",
+            resolve=resolve,
+            on_changed=lambda script: {},
+            on_event=lambda *_: None,
+        )
+        == sid
+    )
+
+
+def test_cancel_during_dependency_install_never_writes_the_edit(env):
+    cand = _held_edit(env)
+    entered = threading.Event()
+
+    def resolve(*_a, cancel, **_kw):
+        entered.set()
+        assert cancel.wait(10)
+        return {"status": "cancelled"}
+
+    sid = ai_bridge.resume_figure_edit(
+        "held-edit",
+        str(env["figs"]),
+        "shown",
+        resolve=resolve,
+        on_changed=lambda script: {},
+        on_event=lambda *_: None,
+    )
+    assert entered.wait(10)
+    assert ai_bridge.cancel_detailed(sid, str(env["figs"].resolve()))["ok"]
+    assert ai_bridge.SESSIONS[sid]["exited"].wait(20)
+    assert not cand.committed and _project_text(env) == SCRIPT
+    assert ai_bridge.SESSIONS[sid]["status"] == "cancelled"
+
+
+def test_dependency_resume_rejects_worker_that_executed_different_bytes(env):
+    cand = _held_edit(env)
+
+    def runner(*_args):
+        return {"stems": ["Fig1"], "manifests": {}, "source_sha256": "0" * 64}
+
+    runner.requires_source_identity = True
+    cand.extras["runner"] = runner
+    sid = ai_bridge.resume_figure_edit(
+        "held-edit",
+        str(env["figs"]),
+        "shown",
+        resolve=lambda *_a, **_kw: {"status": "installed", "installed": ["openpyxl"]},
+        on_changed=lambda script: {},
+        on_event=lambda *_: None,
+    )
+    assert ai_bridge.SESSIONS[sid]["exited"].wait(20)
+    assert not cand.committed and _project_text(env) == SCRIPT
+    assert ai_bridge.SESSIONS[sid]["status"] == "failed"
+
+
+def test_external_edit_during_install_is_not_attributed_to_ai_or_revertible(env):
+    _held_edit(env)
+    edited = SCRIPT.replace('"old"', '"user-edit"')
+
+    def resolve(*_a, **_kw):
+        (env["figs"] / "fig1.py").write_text(edited, encoding="utf-8")
+        return {"status": "installed", "installed": ["openpyxl"]}
+
+    sid = ai_bridge.resume_figure_edit(
+        "held-edit",
+        str(env["figs"]),
+        "shown",
+        resolve=resolve,
+        on_changed=lambda script: {},
+        on_event=lambda *_: None,
+    )
+    assert ai_bridge.SESSIONS[sid]["exited"].wait(20)
+    session = ai_bridge.SESSIONS[sid]
+    assert session["status"] == "failed" and session["changed"] is False
+    assert _project_text(env) == edited
+    with pytest.raises(RuntimeError):
+        ai_bridge.revert(sid)
+    assert _project_text(env) == edited
+
+
+def test_external_edit_after_commit_is_not_claimed_by_resume_or_reverted(env):
+    _held_edit(env)
+    later = SCRIPT.replace('"old"', '"later-user-edit"')
+
+    def after(_script):
+        (env["figs"] / "fig1.py").write_text(later, encoding="utf-8")
+        return {}
+
+    sid = ai_bridge.resume_figure_edit(
+        "held-edit",
+        str(env["figs"]),
+        "shown",
+        resolve=lambda *_a, **_kw: {"status": "installed", "installed": ["openpyxl"]},
+        on_changed=after,
+        on_event=lambda *_: None,
+    )
+    assert ai_bridge.SESSIONS[sid]["exited"].wait(20)
+    session = ai_bridge.SESSIONS[sid]
+    assert session["changed"] is True and "later-user-edit" not in session["diff"]
+    assert _project_text(env) == later
+    with pytest.raises(ai_bridge.AgentError) as exc:
+        ai_bridge.revert(sid)
+    assert exc.value.code == "ai_revert_conflict" and _project_text(env) == later
+
+
+def test_late_cancel_preserves_installed_candidate_for_explicit_continue(env):
+    cand = _held_edit(env)
+    entered = threading.Event()
+
+    def resolve(*_a, cancel, **_kw):
+        entered.set()
+        assert cancel.wait(10)
+        return {"status": "installed", "installed": ["openpyxl"]}
+
+    sid = ai_bridge.resume_figure_edit(
+        "held-edit",
+        str(env["figs"]),
+        "shown",
+        resolve=resolve,
+        on_changed=lambda script: {},
+        on_event=lambda *_: None,
+    )
+    assert entered.wait(10)
+    assert ai_bridge.cancel_detailed(sid, str(env["figs"].resolve()))["ok"]
+    assert ai_bridge.SESSIONS[sid]["exited"].wait(20)
+    session = ai_bridge.SESSIONS[sid]
+    assert session["task"]["outcome"] == "needs_input"
+    assert session["task"]["unmet"][0]["data"]["notice"] == "dependency_installed_late"
+    assert cand.target.exists() and not cand.committed and _project_text(env) == SCRIPT
+
+
+def test_resume_thread_start_failure_releases_the_script_reservation(env, monkeypatch):
+    cand = _held_edit(env)
+    monkeypatch.setattr(ai_bridge, "ensure_owner_loop", lambda: None)
+    monkeypatch.setattr(
+        threading.Thread,
+        "start",
+        lambda self: (_ for _ in ()).throw(RuntimeError("thread unavailable")),
+    )
+    with pytest.raises(RuntimeError):
+        ai_bridge.resume_figure_edit(
+            "held-edit",
+            str(env["figs"]),
+            "shown",
+            resolve=lambda *_a, **_kw: None,
+            on_changed=lambda script: {},
+            on_event=lambda *_: None,
+        )
+    assert cand.target.exists() and cand.hold and not cand.extras.get("resume_sid")
+    assert ai_bridge.busy_session(env["figs"] / "fig1.py") is None
+    sessions = [
+        s
+        for s in ai_bridge.SESSIONS.values()
+        if s.get("project") == str(env["figs"].resolve()) and s.get("id") != "held-edit"
+    ]
+    assert sessions[-1]["final"] and sessions[-1]["status"] == "failed"
+
+
+def test_initial_install_committed_before_cancel_keeps_candidate(env):
+    cand = _held_edit(env)
+    run = ai_bridge.SESSIONS["held-edit"]["taf"]["run"]
+    cand.hold = None
+
+    def install(*_a, **_kw):
+        run.cancel_event.set()
+        return {"status": "installed", "installed": ["openpyxl"]}
+
+    cand.extras["dependency_plan"] = install
+    with pytest.raises(ai_tasks.NeedsInput) as exc:
+        ai_tasks._verify_precommit(ai_figure_edit.ADAPTER, run, cand)
+    assert exc.value.reason_code == "dependency_decision"
+    assert cand.hold["notice"] == "dependency_installed_late"
+    assert cand.hold["runtime_modules"] == ["openpyxl"]
+    ai_figure_edit.BridgeExecutor("test", cand, wait=lambda: None, refresh=lambda: None).discard(
+        run, cand
+    )
+    assert cand.target.exists() and not cand.committed and _project_text(env) == SCRIPT
