@@ -29,7 +29,7 @@ import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { bucketFor } from '@/lib/previewBuckets'
 import { layerOf } from '@/lib/glyphPlan'
 import { DEFAULT_INTERPRETATION, displayText, interpretRuns, runLines } from '@/lib/richText'
-import { runNode, ThumbMathLine } from '@/components/ThumbMathLine'
+import { ThumbMathLine, ThumbRun } from '@/components/ThumbMathLine'
 import { canvasFontStack, effectiveCanvasFamily } from '@/lib/typography'
 import { MM_PER_PT } from '@/lib/units'
 import type { PanelObject, TextObject } from '@/types/document'
@@ -300,7 +300,9 @@ function ExportedText({ obj }: { obj: TextObject }) {
         <text {...textProps} x={x} textAnchor={anchor} dominantBaseline="central">
           {plainLines.map(([runs, i]) => (
             <tspan key={i} x={x} y={mid(i)}>
-              {runs.map((r, j) => runNode(r, j, size))}
+              {runs.map((r, j) => (
+                <ThumbRun key={j} r={r} size={size} />
+              ))}
             </tspan>
           ))}
         </text>

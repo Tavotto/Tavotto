@@ -20,12 +20,11 @@ import { SCRIPT_SIZE, SUB_DROP, SUP_RISE, type TextRun } from '@/lib/richText'
 const BASELINE_BELOW_MID = 0.34
 
 /** 一段文字片段 → tspan（上下标 / 斜体 / 粗体）；纯文字原样 */
-export function runNode(r: TextRun, j: number, size: number): ReactNode {
+export function ThumbRun({ r, size }: { r: TextRun; size: number }): ReactNode {
   return r.script === '' && !r.italic && !r.bold ? (
     r.text
   ) : (
     <tspan
-      key={j}
       fontStyle={r.italic ? 'italic' : undefined}
       fontWeight={r.bold ? 700 : undefined}
       fontSize={r.script ? size * SCRIPT_SIZE : undefined}
@@ -150,7 +149,9 @@ export function ThumbMathLine({
               else refs.current.delete(i)
             }}
           >
-            {s.runs.map((r, j) => runNode(r, j, size))}
+            {s.runs.map((r, j) => (
+              <ThumbRun key={j} r={r} size={size} />
+            ))}
           </text>
         )
       })}
