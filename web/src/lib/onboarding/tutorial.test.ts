@@ -194,9 +194,11 @@ describe('三步原生教程的入口（ADR 0136）', () => {
 
   it('跳过不是完成；欢迎页「直接进入工作台」：没开始的只收起，退回欢迎页的进行中教程记成跳过', () => {
     useOnboardingStore.getState().openWelcome()
+    expect(useOnboardingStore.getState().welcomeSeenAt).toBeNull() // 仅显示不记
     leaveFromWelcome()
     expect(useOnboardingStore.getState().status).toBe('not_started')
     expect(useOnboardingStore.getState().surface).toBe('none')
+    expect(useOnboardingStore.getState().welcomeSeenAt).toBeTypeOf('number') // 明确点了「直接进入工作台」
     runTutorialEntry('picker')
     useOnboardingStore.getState().openWelcome()
     leaveFromWelcome()

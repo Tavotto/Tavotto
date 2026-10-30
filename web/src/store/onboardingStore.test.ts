@@ -114,15 +114,38 @@ describe('状态机', () => {
     expect(s().currentStep).toBe('demo_import')
   })
 
-  it('openWelcome 记下欢迎页出现过（只第一次写时间），不改教程状态', () => {
+  it('openWelcome 只显示、不记「看过」：关窗 / 退出应用后下次仍自动弹一次（2026-10-30 裁决）', () => {
     s().openWelcome()
     expect(s().surface).toBe('welcome')
+    expect(s().welcomeSeenAt).toBeNull()
+    expect(stored()?.welcomeSeenAt ?? null).toBeNull()
+    s().closeSurface() // 关窗 / Esc 一类：不是选择
+    expect(s().welcomeSeenAt).toBeNull()
+    // 模拟退出应用后重启：重读落盘的那一格，仍是「没看过」
+    configureOnboardingPersistence({
+      read: () => localStorage.getItem(ONBOARDING_KEY),
+      write: (raw) => localStorage.setItem(ONBOARDING_KEY, raw),
+      remove: () => localStorage.removeItem(ONBOARDING_KEY),
+    })
+    expect(s().welcomeSeenAt).toBeNull()
+    expect(s().status).toBe('not_started')
+  })
+
+  it('用户做了选择才记「看过」：开始教程 / markWelcomeSeen 记且只写第一次的时间', () => {
+    s().markWelcomeSeen()
     const at = s().welcomeSeenAt
     expect(at).toBeTypeOf('number')
     expect(stored().welcomeSeenAt).toBe(at)
-    s().openWelcome()
+    s().markWelcomeSeen()
     expect(s().welcomeSeenAt).toBe(at)
     expect(s().status).toBe('not_started')
+    // 开始教程（欢迎页「开始」、各入口、顶栏胶囊都经 openTutorial → start）
+    s().resetOnboarding()
+    expect(s().welcomeSeenAt).toBeNull()
+    s().openTutorial()
+    expect(s().status).toBe('active')
+    expect(s().welcomeSeenAt).toBeTypeOf('number')
+    expect(stored().welcomeSeenAt).toBe(s().welcomeSeenAt)
   })
 
   it('skip / complete 是终态并收起教程层；跳过不记完成时间', () => {

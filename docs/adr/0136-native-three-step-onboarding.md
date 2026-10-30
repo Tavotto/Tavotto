@@ -153,3 +153,21 @@ macOS 先不做（拖进废纸篓没有钩子）。
 * **不碰**：EBWebView、用户的项目 / 配置 / 最近项目；只有 onboarding 一格回到新手态。勾了「删除应用数据」的卸载本来就清掉
   localStorage，记号随之多余但无害。
 * **局限**：记号在卸载时写；若用户手动删安装目录而没跑卸载器（无钩子），不触发。
+
+## 修订 2026-10-30：「看过」按用户的选择记；启动即进项目给顶栏胶囊（用户裁决）
+
+起因：有用户下载 0.19.1 后不知道怎么用。两处缺口——`openWelcome()` 一显示就写 `welcomeSeenAt`，随手关窗 / 退出应用也算
+「看过」，以后永不自动弹；启动时项目已开着（Codex 插件直接开图、拖脚本启动）则完全不弹，新手什么提示都没有。
+覆盖上文「欢迎页弹出即记 `welcomeSeenAt`」与「启动时项目就开着不弹」（后者改为不弹整页、给胶囊）。
+
+* **只有选择才记 `welcomeSeenAt`**（新增 `markWelcomeSeen()`，已记过不覆盖时间）：开始教程（`start()`：欢迎页「开始」、
+  帮助菜单 / 命令面板 / 设置 / 主页 / 画布空态各入口、顶栏胶囊，都经 `openTutorial`）；欢迎页「直接进入工作台」
+  （`leaveFromWelcome`）；关掉顶栏「新手教程」胶囊的 ×。**不算选择**：欢迎页仅显示（`openWelcome` 不再写）、
+  关窗（欢迎页没有 Esc / 关闭钮，两个出口都是上面的选择）、退出应用、第一步「返回」回到欢迎页（此前已因开始而记过）。
+  这些下次停在主页仍自动弹一次。
+* **新手态启动即进项目**（`not_started` 且 `welcomeSeenAt` 空、`phase !== 'none'`）：`useAutoOpen` 仍不弹整页欢迎，
+  顶栏右侧出一颗状态胶囊 `TutorialChip`（与 `BuildMismatchChip` 同款，不进文档流、不用横条）：文字「新手教程」
+  （i18n `workspace:tutorialChip.label`），点它 = `runTutorialEntry('canvas')` 进教程（与其它入口同一动作），点 × 关掉；
+  两者都记 `welcomeSeenAt`，以后不再出现。胶囊的显示条件只读 store（`status` / `welcomeSeenAt` / `surface`），
+  不新增持久化字段，`schemaVersion` / `migratePersisted` / `PERSISTED_KEYS` 不变。
+* 迁移（升级 / 卸载重装）清空 `welcomeSeenAt` 的语义不变：清空即回到「会再提示一次」。

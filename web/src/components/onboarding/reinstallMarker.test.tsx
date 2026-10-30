@@ -75,8 +75,7 @@ describe('卸载后重装的记号', () => {
     fetchMarker.mockResolvedValue({ reinstalled: true })
     await mount()
     expect(ob().status).toBe('not_started')
-    expect(ob().welcomeSeenAt).toBeTypeOf('number') // 清空后欢迎页弹出又记了新的一次
-    expect(ob().welcomeSeenAt).not.toBe(111)
+    expect(ob().welcomeSeenAt).toBeNull() // 清空；欢迎页只显示不记（2026-10-30），用户选了才记
     expect(ob().completedSteps).toEqual([])
     expect(ob().hintSeen).toEqual({ layout_page_bounds: 5 })
     expect(ob().surface).toBe('welcome')

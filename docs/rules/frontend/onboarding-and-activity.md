@@ -75,6 +75,7 @@ order: 150
   不冒泡到 window（工作台快捷键不在看不见的画布上生效）；系统拖进来的文件拒收（`dropEffect = 'none'`，不读
   `DataTransfer.files`）只说一句，主页的 `onNativeFileDrop` 在教程层开着时也不认（第二道闸）。新手态（没开始过、
   `welcomeSeenAt` 空）且启动后停在主页才自己弹欢迎页，只一次——**不再看有没有自己的项目**（升级的老用户被迁回新手态后走同一条路径）；上次停在教程中途的接着那一步。
+  **`welcomeSeenAt` 只在用户做了选择时写**（开始教程 / 欢迎页「直接进入工作台」/ 关掉顶栏「新手教程」胶囊 `TutorialChip`），`openWelcome()` 只显示不写——关窗、退出应用不算选择（2026-10-30，ADR 0136 修订）；启动即进项目的新手态不弹整页，顶栏出 `TutorialChip`（看护 `tutorialChip.test.tsx`）。
   e2e 的 `noProject` 用例由 fixture 默认记成「欢迎页已出现过」，测教程的 spec `test.use({ firstRunWelcome: true })`。
 * **锚点是稳定的 `data-*`**：`data-onboarding-anchor="export | export-scope
   | tutorial-entry | help-tutorial | settings-tutorial"`、`data-object-id`、`data-card`、`data-rail`、

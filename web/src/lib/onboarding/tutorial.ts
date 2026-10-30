@@ -464,6 +464,8 @@ export function leaveFromWelcome(): void {
   const ob = useOnboardingStore.getState()
   if (ob.status === 'active' || ob.status === 'paused') ob.skip()
   else ob.closeSurface()
+  // 明确点了「直接进入工作台」是一次选择：以后不再自动弹（关窗 / Esc / 退出应用不走这里）
+  ob.markWelcomeSeen()
 }
 
 /** 主页老手版「使用示例脚本试试看」：打开示例项目，不带引导、不改 onboarding 状态 */
