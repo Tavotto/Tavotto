@@ -12,7 +12,7 @@
 * 来源语言（ADR 0143 修订，2026-10-23）：原脚本可以是 `.py`（Python，位图库出的图）或 `.R` / `.r`（R）、`.m`（MATLAB）纯文本脚本。
   R / MATLAB **从不被运行**：对照只用脚本旁已有的原图，没有原图就如实标“未对照验证”（`verification: "unknown"`）；
   Python 里没有逐一对应的统计方法时 Agent 停下说明（结局 `needs_input`，不生成新脚本）；新脚本要的包缺失时按
-  `convertdeps` 的规则自动装 / 停住等用户在依赖卡片上决定（候选不删，点主按钮后 `run_resume` 接着走同一个候选，不重跑 Agent）；
+  `convertdeps` 的规则自动装 / 停住等用户在依赖卡片上决定（候选不删，点主按钮后 `run_resume` 接着走同一个候选，装依赖不重跑 Agent；装好后才暴露的可修正失败修正一次，见 `run_resume`）；
 * 校验：在用户同一解释器 / 同一路由下真的跑一遍候选脚本（`run_validation`，由 app 注入的 `runner` 走现有 probe 路径），
   必须捕获到 Matplotlib 图，否则判失败并给一句原因。跑的是紧挨着原脚本的一个**临时文件**（相对路径的数据与 cwd 判据
   与原脚本一致），由后端用 O_EXCL 建、跑完即删（几秒内的存在期里文件监视器可能看见它，删除后登记不变）——Agent 没有写它的路径。
@@ -360,6 +360,8 @@ def _own_files(script_rel: str) -> frozenset[str]:
 
 def release(cand: ConvertCandidate) -> None:
     """会话收尾：通过检查、留存待采用的候选（含停住等用户决定 / 已装好等继续的）保留；其余（失败 / 取消 / 超时）删掉。"""
+    if cand.extras.get("resume"):
+        return  # 续跑里的候选：去留归 `run_resume`（它按结局落 ready / failed / 删除）
     if not cand.ready and cand.hold is None and not cand.late_installed and not cand.kept_failed:
         remove_dir(cand.dir)
 
@@ -1035,16 +1037,9 @@ class ConvertAdapter:
         return False
 
     def correction(self, run, failed: list[CheckResult]) -> dict | None:
-        lines = []
         target = run.envelope.allowed_writes[0] if run.envelope.allowed_writes else "新文件"
-        for c in failed:
-            text = convert_fix_text((c.id, c.reason_code), {**c.observed, "target": target})
-            if text is None:
-                return None
-            lines.append(text)
-        if not lines:
-            return None
-        return {"prompt": ai_prompt_pack.correction_prompt(ai_prompt_pack.DEFAULT, lines)}
+        prompt = correction_prompt(target, failed)
+        return None if prompt is None else {"prompt": prompt}
 
     def explain(self, outcome: str, unmet: list[dict]) -> dict:
         params: dict = {"unmet": [u["constraint_id"] for u in unmet]}
@@ -1053,6 +1048,20 @@ class ConvertAdapter:
             reasons = [str(u.get("detail") or "") for u in unmet if u.get("detail")]
             params["reason"] = reasons[0] if reasons else ""
         return {"message_key": f"task.{TASK_TYPE}.{outcome}", "params": params}
+
+
+def correction_prompt(target: str, failed: list[CheckResult]) -> str | None:
+    """可修正失败 → 写给 Agent 的修正指令；有任何一条不在闭集里（或没有失败）回 None（= 不可修）。
+    任务内的修正（`ConvertAdapter.correction`）与装依赖后的续跑修正（`run_resume`）共用这一处，文字不会分叉。"""
+    lines = []
+    for c in failed:
+        text = convert_fix_text((c.id, c.reason_code), {**c.observed, "target": target})
+        if text is None:
+            return None
+        lines.append(text)
+    if not lines:
+        return None
+    return ai_prompt_pack.correction_prompt(ai_prompt_pack.DEFAULT, lines)
 
 
 def convert_fix_text(key: tuple[str, str | None], observed: dict) -> str | None:
@@ -1138,7 +1147,7 @@ class ConvertExecutor(ai_figure_edit.BridgeExecutor):
         except Exception:
             # 非零退出 / 超时 / TAVOTTO_NEEDS_INPUT：`execute` 抛出时任务核心还没拿到候选，不会调 `discard`，
             # 桥收尾的 `release` 会把已写出的草稿删掉。这里先留（用户取消与没写出文件的不留）
-            if not run.cancelled():
+            if not run.cancelled() and not self.cand.extras.get("resume"):
                 keep_failed(self.cand)
             raise
         return cand
@@ -1154,6 +1163,8 @@ class ConvertExecutor(ai_figure_edit.BridgeExecutor):
     def discard(self, run, cand: ConvertCandidate) -> None:
         if cand.hold is not None or cand.late_installed:
             return  # 停住等用户决定的候选要留着（`resume` 接着走它）；取消 / 超时等其余结局不会设 hold
+        if cand.extras.get("resume") and not run.cancelled():
+            return  # 续跑里的修正没过：候选留给 `run_resume` 落成 failed（状态可读、不是 failed_kept）
         if not run.cancelled() and keep_failed(cand):
             return  # 失败 / 超时：留给诊断包（不可采用 / 续跑）；用户取消照旧立即删
         remove_dir(cand.dir)
@@ -1206,6 +1217,8 @@ def _hold_meta(cand: ConvertCandidate, state: str) -> dict:
         "installed": list(cand.installed),
         "original_rel": cand.original_rel,
         "reference_name": cand.reference_name,
+        # 原会话的连接（Agent / 模型 / 强度 / 接口）：续跑里若要让同一个 Agent 修正一次，用的就是它
+        **({"ai": cand.extras["ai"]} if isinstance(cand.extras.get("ai"), dict) else {}),
         # 起跑时拍下的项目指纹：续跑的复核基线只能是它（不能用“此刻”的项目重建，否则停住期间的改动被洗白）
         "project_before": cand.project_before,
         "created": time.time(),
@@ -1234,7 +1247,13 @@ def stage_installed(cand: ConvertCandidate) -> None:
 
 
 def envelope_for(
-    *, agent: str, project_key: str, cand: ConvertCandidate, prompt: str, rid: str | None
+    *,
+    agent: str,
+    project_key: str,
+    cand: ConvertCandidate,
+    prompt: str,
+    rid: str | None,
+    correction_round: bool = False,
 ) -> ai_tasks.TaskEnvelope:
     refs = [{"kind": "script", "path_rel": cand.script_rel, "sha256": cand.base_sha256}]
     if cand.original_rel:
@@ -1245,12 +1264,19 @@ def envelope_for(
             "task_type": TASK_TYPE,
             "project_ref": {"project_key": project_key},
             "client_request_id": rid,
+            # 续跑后的修正是原转换任务的后续：账本里指回它
+            **({"parent_task_id": cand.sid} if correction_round else {}),
             "user_intent": prompt,
             "input_refs": refs,
             "output_contract": {"allowed_writes": [cand.target_name], "new_figures": True},
             "execution_policy": {"executor": agent},
-            # Agent ≤ 1 + 修正 ≤ 1；每轮提交前各跑一次校验
-            "budget": {"max_agent_runs": 2, "max_corrections": 1, "max_renders": 3},
+            # Agent ≤ 1 + 修正 ≤ 1；每轮提交前各跑一次校验。
+            # 装依赖后续跑的那一次修正（`correction_round`）本身就是那“一次修正”：只有这一轮 Agent、这一次校验，不再修正
+            "budget": (
+                {"max_agent_runs": 1, "max_corrections": 0, "max_renders": 1}
+                if correction_round
+                else {"max_agent_runs": 2, "max_corrections": 1, "max_renders": 3}
+            ),
         }
     )
 
@@ -1641,12 +1667,17 @@ def run_resume(
     resolve=None,
     confirmed_impact: str = "",
     ensure=None,
+    correct=None,
 ) -> dict:
-    """接着走**同一个候选**（不重跑 Agent）：装依赖（注入的 `resolve` = `convertdeps.resolve`，用户点击回显的摘要）→ 校验运行 → 对照 → 留存待采用。
+    """接着走**同一个候选**（装依赖这一步不重跑 Agent）：装依赖（注入的 `resolve` = `convertdeps.resolve`，用户点击回显的摘要）→ 校验运行 → 对照 → 留存待采用。
     `ensure`（= `convertdeps.ensure`）给「按当前环境重新判定」：不带点击摘要，按**此刻**的项目解释器走自动路径的同一棵决定树
     （能直接装的装 / 要问一次或名单外或仍是系统 Python 的回新卡 / 已不缺的直接续跑）。二者给一个。
     结局 `{"state": ready | awaiting_dependencies | failed | cancelled | deps_installed}`；`cancelled` 时候选目录已删。
     `deps_installed`：取消来得太晚（依赖步骤已过提交点、返回 installed）——候选保留，不再自动校验，等用户点「继续」。
+    `correct`（app 注入 = `ai_bridge.correct_convert`，签名 `(cand, note, project, cancel) -> dict`）：装好依赖后这一遍校验才暴露出
+    **可修正**的失败（脚本跑到了此前被缺包挡住的代码，如写项目目录被绊线拦下）时，与首跑一样让原会话的 Agent 修正**一次**——
+    修正指令与预算语义同任务内修正（`correction_prompt`、至多一轮、不循环），修正后的候选由那次会话的 Task Core 提交前检查校验并
+    提交（`ready` 的暂存 / 对照 / 预览与首跑同一份代码）。不可修正的失败、取消、仍缺依赖 / 新卡、Agent 起不来：行为不变。
     只在 `prepare_resume` 之后调用（它登记了 `cancel`），返回前一定摘掉登记。"""
     root = Path(project)
     try:
@@ -1665,6 +1696,8 @@ def run_resume(
         cand.extras["runner"] = runner
         cand.extras["cancel"] = cancel
         cand.extras["resume"] = True
+        if isinstance(meta.get("ai"), dict):
+            cand.extras["ai"] = meta["ai"]
         # 上一轮因运行时缺包而停住时，卡片带着那些模块名：续跑的依赖决定要带上它们重算计划（摘要才对得上）
         card = meta.get("dependency_card")
         held = card.get("runtime_modules") if isinstance(card, dict) else None
@@ -1735,14 +1768,13 @@ def run_resume(
             _drop_candidate_files(cdir, meta)
         else:
             check = _failure_check(result, "precommit")
-            failure = {
-                "reason": check.reason_code,
-                **{
-                    k: v
-                    for k, v in (check.observed or {}).items()
-                    if k in ("installer_code", "packages", "code")
-                },
-            }
+            failure = _failure_of(check)
+            if correct is not None:
+                corrected = _correct_once(
+                    sid, project, cdir, meta, cand, check, cancel, correct, failure
+                )
+                if corrected is not None:
+                    return corrected
         _set_state(cdir, meta, STATE_FAILED, failure=failure)
         return {"state": STATE_FAILED, **failure}
     except Exception:  # noqa: BLE001 —— 续跑作业的未预期异常：落成 failed，不让轮询永远等
@@ -1751,6 +1783,86 @@ def run_resume(
     finally:
         with _RESUMES_LOCK:
             _RESUMES.pop(sid, None)
+
+
+def _failure_of(check: CheckResult) -> dict:
+    return {
+        "reason": check.reason_code,
+        **{
+            k: v
+            for k, v in (check.observed or {}).items()
+            if k in ("installer_code", "packages", "code")
+        },
+    }
+
+
+def _correct_once(
+    sid: str,
+    project: str,
+    cdir: Path,
+    meta: dict,
+    cand: ConvertCandidate,
+    check: CheckResult,
+    cancel: threading.Event,
+    correct,
+    original_failure: dict,
+) -> dict | None:
+    """续跑校验没过且失败可修正：让 Agent 修正**一次**（`correct` 起一个 Task Core 会话，同一候选），按结局落状态。
+    回 None = 没有修正（失败不在可修正闭集 / 项目已被动 / Agent 起不来）——调用方照旧落 `failed`。
+    回 dict = 已经修正过，这就是续跑的结局（`ready` / `failed` / `awaiting_dependencies` / `deps_installed` / `cancelled`），登记由调用方的 finally 摘。"""
+    if check.verdict != FAILED or cancel.is_set():
+        return None
+    if any(c.verdict != VERIFIED for c in ADAPTER._project_untouched(cand, "precommit")):
+        return None  # 用户文件被动了：这不是让 Agent 改脚本能修的失败，也不该再让它动手
+    note = correction_prompt(cand.target_name, [check])
+    if note is None:
+        return None
+    try:
+        correct(cand, note, project, cancel)
+    except Exception:  # noqa: BLE001 —— 修正没起来（Agent 不可用 / 脚本忙 / 登记失败）：保留原失败，不把它变成新的错误
+        return None
+    if cand.ready:
+        # 与首跑的“落 ready”同一把锁：其后到达的取消看到已 ready 的候选（照常删），之前到达的在这里被看见（删候选、不 ready）
+        with _RESUMES_LOCK:
+            if cancel.is_set():
+                cancelled = True
+            else:
+                cancelled = False
+                _RESUMES.pop(sid, None)
+        if cancelled:
+            remove_dir(cdir)
+            return {"state": "cancelled"}
+        return {"state": "ready"}
+    # 修正改了候选字节：停住态的 meta 要按**修正后**的候选重写（哈希 / 卡片），不能拿续跑开始时那份旧 meta 覆盖回去——
+    # 否则下一次续跑的 `_rebuild` 判 `convert_candidate_changed`
+    if cand.late_installed:
+        try:
+            stage_installed(cand)
+        except TaskError:
+            _set_state(cdir, meta, STATE_FAILED, failure={"reason": "stage_failed"})
+            return {"state": STATE_FAILED, "reason": "stage_failed"}
+        return {"state": STATE_INSTALLED, "installed": list(cand.installed)}
+    if cand.hold is not None:
+        try:
+            stage_hold(cand)
+        except TaskError:
+            _set_state(cdir, meta, STATE_FAILED, failure={"reason": "stage_failed"})
+            return {"state": STATE_FAILED, "reason": "stage_failed"}
+        return {"state": STATE_AWAITING}
+    if cancel.is_set():
+        remove_dir(cdir)
+        return {"state": "cancelled"}
+    untouched = [c for c in ADAPTER._project_untouched(cand, "precommit") if c.verdict != VERIFIED]
+    validation = cand.extras.get("validation")
+    if untouched:
+        failure = {"reason": PROJECT_CHANGED_REASON}
+        _drop_candidate_files(cdir, meta)
+    elif isinstance(validation, dict) and validation.get("status") != "ok":
+        failure = _failure_of(_failure_check(validation, "precommit"))
+    else:
+        failure = original_failure  # 修正后没走到校验运行（语法 / 目标缺失 / Agent 异常退出）：原因沿用修正前那条
+    _set_state(cdir, meta, STATE_FAILED, failure=failure)
+    return {"state": STATE_FAILED, **failure}
 
 
 def cancel_registration(sid: str) -> None:

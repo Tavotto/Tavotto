@@ -1497,7 +1497,31 @@ def run(
 
         cand = envelope = None
         convert_prompt = None
-        if convert is not None:
+        #: 续跑后的一次修正（`correct_convert`）：候选是 `run_resume` 手里**已有**的那个，不是本会话建的——
+        #: 本会话任何失败路径都不许删它（它的去留归 `run_resume`），所以下面清理一律用 `own`
+        resumed = (convert or {}).get("resume")
+        if resumed is not None:
+            from . import ai_convert
+
+            try:
+                ai_convert.ensure_registered()
+                cand = resumed["cand"]
+                convert_prompt = ai_convert.prompt_for(cand) + "\n\n" + resumed["note"]
+                envelope = ai_convert.envelope_for(
+                    agent=agent,
+                    project_key=project_key,
+                    cand=cand,
+                    prompt=user_prompt,
+                    rid=client_request_id,
+                    correction_round=True,
+                )
+                problems = ai_convert.ADAPTER.validate(envelope)
+                if problems:
+                    raise RuntimeError(f"转换任务契约不合格: {','.join(problems)}")
+            except BaseException:
+                _drop_attempt_files(sid, snap)
+                raise
+        elif convert is not None:
             # 转换任务：候选 = 原脚本只读副本 + 将被新建的那一个文件；原脚本此后一个字节也不会被本会话改写
             from . import ai_convert
 
@@ -1522,6 +1546,13 @@ def run(
                     reference_files=convert.get("reference_files") or (),
                 )
                 cand.extras.update(task_hooks or {})
+                # 续跑后若要修正，要用与这次完全相同的连接（`_hold_meta` 把它存进候选 meta）
+                cand.extras["ai"] = {
+                    "agent": agent,
+                    "model": model,
+                    "effort": effort,
+                    "endpoint_id": endpoint_id,
+                }
                 convert_prompt = ai_convert.prompt_for(cand)
                 envelope = ai_convert.envelope_for(
                     agent=agent,
@@ -1569,6 +1600,7 @@ def run(
             except BaseException:
                 _drop_attempt_files(sid, snap, cand)
                 raise
+        own = cand if resumed is None else None  # 清理 / 收尾时才可以删的候选
         agent_cwd = str(cand.dir) if cand is not None else figures_dir
         if convert_prompt is not None:
             prompt = convert_prompt
@@ -1592,6 +1624,12 @@ def run(
                 "target": Path(script).name,
                 "task": "convert_to_editable",
                 "output": cand.target_name,
+                # 续跑后的修正：候选文件已经在，内置执行器要接着改它（与 `_respawn` 同一做法）
+                **(
+                    {"resume_output_sha256": hashlib.sha256(cand.new_bytes or b"").hexdigest()}
+                    if resumed is not None and cand.new_bytes is not None
+                    else {}
+                ),
             }
         else:
             cmd_kw = {"target": cand.target_name if cand is not None else script} if builtin else {}
@@ -1644,6 +1682,7 @@ def run(
                             "task_type": envelope.task_type,
                             "phase": "executing",
                             "envelope": envelope.to_dict(include_intent=False),
+                            "parent_task_id": envelope.parent_task_id,
                         }
                         if envelope is not None
                         else {}
@@ -1653,24 +1692,24 @@ def run(
         except ai_history.ScriptBusy:
             # 另一个服务进程里同一脚本上有属主还活着的 running 会话（进程内的 `script_busy` 看不到它）
             stderr_log.close()
-            _drop_attempt_files(sid, snap, cand)
+            _drop_attempt_files(sid, snap, own)
             raise AgentError("ai_script_busy", {"script": script}) from None
         except BaseException:
             # record_start 抛了（SQLite 锁住 / 磁盘满）：什么都没登记、也不 spawn——为这次尝试备好的快照 / sidecar / 日志
             # 一并清掉，不留半成品去挤占 `_prune_snapshots` 的保留名额
             stderr_log.close()
-            _drop_attempt_files(sid, snap, cand)
+            _drop_attempt_files(sid, snap, own)
             raise
         if isinstance(started, tuple) and not started[0] and started[1] == ai_history.SUPERSEDED:
             # 并发里被新指令取代的 rid：不 spawn（与上面的快速路径同一个结局）
             stderr_log.close()
-            _drop_attempt_files(sid, snap, cand)
+            _drop_attempt_files(sid, snap, own)
             raise AgentError("ai_request_superseded")
         if isinstance(started, tuple) and not started[0]:
             # 别的调用者（可能是另一个共用数据目录的 Tavotto 进程）已经原子预留了这个 (项目, 请求 id)：
             # 不 spawn，清掉这次为它准备的快照 / sidecar / 日志，按去重语义回既有会话
             stderr_log.close()
-            _drop_attempt_files(sid, snap, cand)
+            _drop_attempt_files(sid, snap, own)
             raise DuplicateRequest(started[1])
         # 执行追踪（ADR 0151）：账本原子预留成功之后才开——重复请求走上面的去重，不会生出第二份执行，也就没有第二份 Trace
         trace = exectrace.begin(
@@ -1703,8 +1742,8 @@ def run(
             trace.finish(exectrace.STATUS_FAILED, error_code="agent_spawn_failed")
             ai_history.record_end(sid, "failed", error=str(exc))
             ai_history.record_cancel_result(sid, "failed")  # 窗口里到的取消意图随终态收尾，不悬挂
-            if cand is not None:
-                _remove_cand(cand)
+            if own is not None:
+                _remove_cand(own)
             raise
         sess = {
             "id": sid,
@@ -1967,6 +2006,50 @@ def run(
 
     threading.Thread(target=_pump, daemon=True, name=f"ai-{sid}").start()
     return sid
+
+
+def correct_convert(cand, note: str, project: str, cancel: threading.Event) -> dict:
+    """转换候选在「装完依赖后的续跑」里校验没过、而失败属于可修正的闭集（`ai_convert.run_resume`）：跟原转换会话同一个连接
+    （Agent / 模型 / 强度 / 接口，`cand.extras["ai"]`，缺则取历史库那一行）再起**一次**会话，在**同一个候选**上带着修正指令改，
+    走 Task Core（执行 → 提交前检查 → 提交 / 丢弃），预算只有这一轮（`envelope_for(correction_round=True)`）。
+    阻塞到会话终态；`cancel`（续跑的取消标记）置位 = 取消这个会话（先问 Task Core、再杀进程组，与用户在界面点停止同一条路）。
+    起不来（Agent 不可用 / 脚本忙 / 登记失败）抛 `AgentError` / `RuntimeError`，由调用方保留原失败。
+    回 `{"session": sid, "status": 会话终态, "outcome": 任务结局 | None}`；候选的去留（ready / hold / 失败）看 `cand` 本身。"""
+    conn = dict(cand.extras.get("ai") or {})
+    row = ai_history.get(cand.sid) or {}
+    agent = conn.get("agent") or row.get("provider")
+    if not agent:
+        raise RuntimeError("原转换会话的连接已不可考")
+    sid = run(
+        str(agent),
+        cand.script_rel,
+        str(row.get("prompt") or ""),
+        project,
+        model=conn.get("model", row.get("model")) or None,
+        effort=conn.get("effort", row.get("effort")) or None,
+        endpoint_id=conn.get("endpoint_id"),
+        convert={"resume": {"cand": cand, "note": note}},
+    )
+    asked = False
+    while True:
+        sess = SESSIONS.get(sid)
+        if sess is None or sess.get("final"):
+            break
+        if cancel.is_set() and not asked:
+            asked = (
+                cancel_detailed(sid, project)["ok"] or asked
+            )  # 已进入提交则不被接受：照常等它收尾
+        time.sleep(CORRECTION_POLL_S)
+    sess = sess or {}
+    return {
+        "session": sid,
+        "status": sess.get("status"),
+        "outcome": (sess.get("task") or {}).get("outcome"),
+    }
+
+
+#: `correct_convert` 等会话终态的轮询间隔（秒）
+CORRECTION_POLL_S = 0.05
 
 
 def _drive_task(sess: dict, task_run, cand, consume, on_changed, script: str, respawn=None) -> dict:
