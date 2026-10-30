@@ -135,9 +135,12 @@ D1 的授权边界（桌面用户发起）原本只拦「路由选的 native」�
 
 * 候选与「值不值得换」只复用 probe 那一份（`entry_candidates` / `entry_retry_allowed`）；`static_only` 是同一函数的一个开关：只取**静态能解析出**的出图入口，脚本解析不了就空表，**绝不盲试**（`FALLBACK_ENTRIES` 只留给素材栏的旧行为）。去掉本次运行已试过的入口，取第一个。
 * 换入口成功就是这次运行成功：照常 `finalize` 登记、上画布，与正常成功同一条路。
-* 换入口仍失败，才走原来的分支：桌面窗口发起 → D1 静默回退 native；浏览器 → 本修订上一节的确认卡（给不给按钮看的是**最后一次**尝试）。
+* 换入口仍失败，才走原来的分支：桌面窗口发起 → D1 静默回退 native；浏览器 → 本修订上一节的确认卡。
+  **换入口那次失败时不论它自己的错误码是什么**（例如全局变量只在 `__main__` 块里初始化，函数单独调用报 `NameError`），回退与确认卡的判断都按**原来的 blocked 原因**走：
+  尝试上记 `entry_origin` / `entry_origin_code`，失败收场后落 `cause_override`；`_plan_fallback`、`_native_confirm_offered`、`_claim_confirm_native` 都读它；
+  native 回退用**原来被拦的入口**（`entry=`），失败卡展示原来的 blocked（`_shown_attempt`），换入口那次的真实失败码仍如实留在账本与 exec trace 里。
 * 每次运行至多换一次入口（`Session.entry_retry_run`），与 native 回退共用 `RetryGuard` 账本；新增总上限 `execpolicy.MAX_ATTEMPTS_PER_RUN = 3`（首次 safe + 至多一次换入口 + 至多一次 native），超了记 `attempt_cap`。换入口不改变执行语义，故不受「只用安全运行」/ 运维回退开关 / 来源约束；
   账本 `changed` 里是 `launch_context`（入口进启动上下文摘要），计划带 `retry_of` / `retry_cause` / `retry_changed`，exec trace 与任务诊断由此看得出「换入口后成功」。
 * **代价**：脚本在一次运行里最多被执行 3 次（原来是 2 次）；safe 档在被拦之前的外部副作用会重复，沿用 D1「场景 17」的裁决与说明。
 
-**看护**：`tests/test_entry_retry_session.py`（浏览器 / 桌面 / 无认证三种来源换入口成功、换入口仍被拦后桌面 native 与浏览器确认卡、没有静态可解析入口时走原分支且不盲试、总次数上限）。
+**看护**：`tests/test_entry_retry_session.py`（浏览器 / 桌面 / 无认证三种来源换入口成功、换入口仍被拦后桌面 native 与浏览器确认卡、没有静态可解析入口时走原分支且不盲试、总次数上限、换入口失败仍按原 blocked 回退且用 `__main__`）。

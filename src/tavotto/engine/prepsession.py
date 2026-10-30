@@ -854,6 +854,12 @@ class _Attempt:
     #: 这次运行开始（认领）那一刻项目的关闭代次（`nativesession.REGISTRY.project_epoch`）。回退的最后一刻与此刻比：
     #: 关闭再重开会升代次，关闭之前开始的运行不得在重开后的项目里起 native 进程（#1022 的代次合同延伸到回退）
     epoch: int | None = None
+    #: 这是 safe 下「换入口」重跑时：被换掉的那次尝试（`blocked`）的 attempt_id 与它的稳定码。换入口失败时，
+    #: 后续 native 回退 / 确认卡 / 失败卡都按**原来的 blocked 原因**走，不被换入口自己的新错误顶替（Codex #1504 P2）
+    entry_origin: str = ""
+    entry_origin_code: str = ""
+    #: 换入口那次**失败收场**后落定：等于 `entry_origin_code`（账本里它自己的码照实保留）；空 = 不适用
+    cause_override: str = ""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1729,7 +1735,8 @@ class SessionService:
             rec is None
             or rec.attempt_id != last.attempt_id
             or rec.spec.profile != execspec.PROFILE_SAFE
-            or rec.outcome != execpolicy.OUTCOME_BLOCKED
+            # 换入口那次失败时按原来的 blocked 原因算（`cause_override`），不看它自己的新错误码
+            or (rec.outcome != execpolicy.OUTCOME_BLOCKED and not last.cause_override)
             or rec.declined != execpolicy.REASON_NOT_DESKTOP
             or sess.plan.target != TARGET_SCRIPT
         ):
@@ -1739,7 +1746,7 @@ class SessionService:
                 mode=execpolicy.mode_for(sess.project_root),
                 enabled=execpolicy.fallback_enabled(),
                 ledger=sess.ledger,
-                cause_code=rec.code,
+                cause_code=last.cause_override or rec.code,
                 nxt=execpolicy.SpecKey(execpolicy.PROFILE_NATIVE, rec.spec.interpreter, ""),
                 user_confirmed=True,
             )
@@ -1783,9 +1790,16 @@ class SessionService:
             sess.actions.pop(action.id, None)
             raise SessionError(ERROR_NOT_RUNNABLE, "现在不能这样运行", 409, {"executed": False})
         done_plan, done_result = found
-        code = str(sess.ledger.current()[-1].code)
+        code = last.cause_override or str(sess.ledger.current()[-1].code)
         fallback = self._plan_fallback(
-            sess, last, done_plan, done_result, code, desktop=False, confirmed=True
+            sess,
+            last,
+            done_plan,
+            done_result,
+            code,
+            desktop=False,
+            confirmed=True,
+            entry=self._origin_entry(sess, last),
         )
         if fallback is None:
             sess.actions.pop(action.id, None)
@@ -1973,12 +1987,18 @@ class SessionService:
             outcome, code = _outcome_of(done_result, fin)
             fallback = None
             entry_retry = None
+            # 换入口那次失败（不论它自己的码是什么）：回退的判断按原来的 blocked 原因、用原来被拦的入口
+            cause = code
+            origin_entry = None
+            if attempt.entry_origin and done_result.status == preparation.STATUS_ERROR:
+                cause = attempt.entry_origin_code
+                origin_entry = self._origin_entry(sess, attempt)
             try:
                 # 先在 safe 下换一个静态可解析的出图入口再跑一次；换入口也被拦才走 native 回退 / 确认卡
                 entry_retry = self._plan_entry_retry(sess, attempt, done_plan, done_result, code)
                 if entry_retry is None:
                     fallback = self._plan_fallback(
-                        sess, attempt, done_plan, done_result, code, desktop
+                        sess, attempt, done_plan, done_result, cause, desktop, entry=origin_entry
                     )
             except Exception:  # noqa: BLE001 — 回退的判断出错不能改写这次尝试已经发生的终局
                 LOG.exception("执行回退的判断失败 %s", done_plan.script)
@@ -2007,6 +2027,8 @@ class SessionService:
                     sess.fingerprint = _fingerprint(done_plan)
                 attempt.finalize = fin
                 attempt.missing = missing
+                if attempt.entry_origin and done_result.status == preparation.STATUS_ERROR:
+                    attempt.cause_override = cause  # 账本里 `close` 记的仍是它自己的码
                 if entry_retry is not None:
                     self._start_fallback(
                         sess,
@@ -2023,7 +2045,7 @@ class SessionService:
                         sess,
                         attempt,
                         fallback,
-                        code,
+                        cause,
                         launch=launch,
                         finalize=finalize,
                         desktop=desktop,
@@ -2066,8 +2088,10 @@ class SessionService:
         code: str,
         desktop: bool = False,
         confirmed: bool = False,
+        entry: str | None = None,
     ) -> "tuple[preparation.PreparationPlan, execpolicy.SpecKey] | None":
         """锁外：safe 尝试以 `code` 收场后，要不要接一次 native。回 `(native 计划, 它的执行身份)`；不回退回 None。
+        `entry`：换入口失败后回退时，native 用**原来被拦的那个入口**（不是换过的函数入口）。
 
         只有 `blocked` 类原因才会走到重新规划（便宜的否决先做）；规划只读，不执行用户代码。"""
         if done_plan.execution != execspec.PROFILE_SAFE or done_plan.target != TARGET_SCRIPT:
@@ -2090,11 +2114,10 @@ class SessionService:
             self._decline(sess, attempt, decision.reason)
             return None
         try:
-            nplan = self._plan_of(
-                sess.project_id,
-                sess.project_root,
-                {**sess.target, "execution": execspec.PROFILE_NATIVE},
-            )
+            target = {**sess.target, "execution": execspec.PROFILE_NATIVE}
+            if entry:
+                target["entry"] = entry
+            nplan = self._plan_of(sess.project_id, sess.project_root, target)
         except Exception:  # noqa: BLE001 — 规划失败 = 这次不回退，原结局保留
             LOG.exception("native 回退计划失败 %s", done_plan.script)
             self._decline(sess, attempt, execpolicy.REASON_PLAN_UNAVAILABLE)
@@ -2139,6 +2162,13 @@ class SessionService:
             retry_changed=changed,
         )
         return nplan, key
+
+    def _origin_entry(self, sess: Session, attempt: _Attempt) -> str | None:
+        """换入口那次尝试所替换的、原来被拦的入口；不是换入口的尝试回 None。"""
+        if not attempt.entry_origin:
+            return None
+        found = self._prep.get(attempt.entry_origin, sess.project_id)
+        return found[0].entry if found is not None else None
 
     def _plan_entry_retry(
         self, sess: Session, attempt: _Attempt, done_plan, done_result, code: str
@@ -2269,6 +2299,8 @@ class SessionService:
             created_at=self._clock(),
             profile=nplan.execution,
             epoch=attempt.epoch,
+            entry_origin=attempt.attempt_id if entry_change else "",
+            entry_origin_code=code if entry_change else "",
         )
         sess.ledger.record(nplan.plan_id, key, cause=code)
         self._prep.register(nplan, project_epoch=attempt.epoch)
@@ -2928,7 +2960,7 @@ class SessionService:
     def _observe_locked(self, sess: Session, *, awaiting_input: bool = False) -> "_Observation":
         """会话锁内：读出此刻的事实 → 派生 phase → 补齐 / 撤掉未认领动作。`report` 与意图的推进共用这一份，
         所以意图看到的世界与用户在报告里看到的是同一个。"""
-        found = self._current_attempt(sess)
+        found = self._shown_attempt(sess, self._current_attempt(sess))
         checks = checks_of(sess.plan)
         # 只有**当前修订**的尝试决定 phase：重新检查之后配置变了，上一修订的 `completed` 不能冒充这份新配置的结果
         # （它仍在 provider 引用与历史里）
@@ -3197,6 +3229,18 @@ class SessionService:
                 {"id": session_id, "reason": "unknown_or_restarted"},
             )
         return sess
+
+    def _shown_attempt(self, sess: Session, found):
+        """报告给用户看的那次尝试：换入口那次失败收场（`cause_override` 落定）时，用户看到的是原来被拦的那次
+        （「这个脚本要真的把文件写到磁盘上才能跑完」+「允许并运行」），不是换入口自己的新错误；
+        那次失败如实留在账本与执行记录里。"""
+        if found is None or not sess.attempts:
+            return found
+        last = sess.attempts[-1]
+        if not (last.entry_origin and last.cause_override and last.finalized):
+            return found
+        origin = self._prep.get(last.entry_origin, sess.project_id)
+        return origin if origin is not None else found
 
     def _current_attempt(self, sess: Session):
         if not sess.attempts:

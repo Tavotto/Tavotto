@@ -27,9 +27,10 @@ from test_preparation_api import (  # noqa: F401
     client,
     fake_pool,
 )
-from test_preparation_session import SESSIONS, _action, sessions  # noqa: F401
+from test_preparation_session import SESSIONS, _action, _settle, sessions  # noqa: F401
 
 KIND = "confirm_native_run"
+NAME_ERROR = engine_pool.WorkerError("NameError: name 'cfg' is not defined", code="script_error")
 MAIN_FIRST = """\
 import matplotlib.pyplot as plt
 
@@ -55,13 +56,15 @@ fig.savefig("out.png")
 @pytest.fixture
 def entries(monkeypatch, fake_pool):
     """记录每次 build 用的入口；`blocked_entries` 里的入口按 safe 守卫拦下，其余照 fake_pool 成功。"""
-    box = {"seen": [], "blocked": {"__main__"}}
+    box = {"seen": [], "blocked": {"__main__"}, "errors": {}}
     inner = engine_pool.build_owned
 
     def build_owned(script, root, entry, **kw):
         box["seen"].append(entry)
         if entry in box["blocked"]:
             raise BLOCKED
+        if entry in box["errors"]:
+            raise box["errors"][entry]
         return inner(script, root, entry, **kw)
 
     monkeypatch.setattr(engine_pool, "build_owned", build_owned)
@@ -260,3 +263,68 @@ def test_the_entry_swap_is_once_per_run_and_total_executions_are_capped():
         execpolicy.REASON_NO_NEW_ROOT_CAUSE
     )
     assert admit(fresh, mk("safe", "l2"), "safe_file_operation_blocked").ok
+
+
+# ---- 换入口那次失败（别的错误码）不能顶替原来的 blocked 原因（Codex #1504 P2）
+def _swap_fails(entries):
+    entries["blocked"] = {"__main__"}
+    entries["errors"] = {
+        "draw_figure": NAME_ERROR
+    }  # 函数单独调用：全局变量在 __main__ 块里才初始化
+
+
+def test_desktop_swap_fails_with_name_error_still_falls_back_to_native_on_main(
+    client, tmp_path, fake_pool, entries, native, sessions
+):
+    _swap_fails(entries)
+    _setup(client, tmp_path, "d.py", MAIN_FIRST)
+    _desktop(client)
+    final = _go(client, "d.py")
+    assert entries["seen"] == ["__main__", "draw_figure"]
+    hist = _history(final)
+    assert [h["profile"] for h in hist] == ["safe", "safe", "native"]
+    assert (
+        hist[1]["outcome"] == "failed" and hist[1]["code"] == "script_error"
+    )  # 换入口那次如实留账
+    assert hist[2]["cause"] == "safe_file_operation_blocked"  # 回退的原因是原来的 blocked
+    assert len(native["calls"]) == 1 and native["calls"][0].entry == "__main__"
+    assert final["result"]["status"] == "ready"
+
+
+def test_browser_swap_fails_with_name_error_still_offers_confirmation_then_native_on_main(
+    client, tmp_path, fake_pool, entries, native, sessions
+):
+    from test_native_confirm_browser import _confirm
+
+    _swap_fails(entries)
+    _setup(client, tmp_path, "d.py", MAIN_FIRST)
+    _browser(client)
+    final = _go(client, "d.py")
+    assert entries["seen"] == ["__main__", "draw_figure"] and native["calls"] == []
+    assert KIND in [a["kind"] for a in final["actions"]]
+    # 用户看到的是原来 blocked 那句，不是换入口那次的 NameError
+    assert final["outcome"]["code"] == "safe_file_operation_blocked"
+    assert final["result"]["error"]["code"] == "safe_file_operation_blocked"
+    assert final["remedy"] == {"kind": "switch_native", "silent": False}
+    assert [h["profile"] for h in _history(final)] == ["safe", "safe"]
+    assert _history(final)[1]["code"] == "script_error"
+    assert _confirm(client, final).status_code == 202
+    after = _settle(client, final["session_id"])
+    assert len(native["calls"]) == 1 and native["calls"][0].entry == "__main__"
+    assert [h["profile"] for h in _history(after)] == ["safe", "safe", "native"]
+    assert execpolicy.MAX_ATTEMPTS_PER_RUN == 3 and len(_history(after)) == 3
+    assert KIND not in [a["kind"] for a in after["actions"]]
+
+
+def test_a_first_attempt_that_is_not_blocked_never_swaps_and_is_unaffected(
+    client, tmp_path, fake_pool, entries, native, sessions
+):
+    """首次就是别的失败（缺包 / 脚本错误）：不换入口、不回退、不出确认卡；失败原样展示。"""
+    entries["blocked"] = set()
+    entries["errors"] = {"__main__": NAME_ERROR}
+    _setup(client, tmp_path, "d.py", MAIN_FIRST)
+    _browser(client)
+    final = _go(client, "d.py")
+    assert entries["seen"] == ["__main__"] and native["calls"] == []
+    assert KIND not in [a["kind"] for a in final["actions"]]
+    assert final["outcome"]["code"] == "script_error"
