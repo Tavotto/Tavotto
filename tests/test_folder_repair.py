@@ -725,3 +725,93 @@ def test_endpoint_off_windows(client, world, monkeypatch):
     monkeypatch.setattr(folderrepair.sys, "platform", "darwin")
     resp = client.post("/api/engine/folder-repair", json={"token": "x"})
     assert resp.status_code == 400 and resp.get_json()["code"] == folderrepair.ERROR_UNSUPPORTED
+
+
+# --------------------------------------------------------------------------- 静态计划：会改 sys.path 的脚本先跑一次
+def _joint(proj, extra_imports=(), user_specified=None):
+    from tavotto.engine import depplan
+
+    return depplan.plan(
+        str(proj),
+        "plot.py",
+        facts=None,
+        target_kind=depplan.TARGET_MANAGED,
+        dists=None,
+        extra_imports=extra_imports,
+        user_specified=user_specified,
+    )
+
+
+_SYSPATH = (
+    "import sys, os\n"
+    "here = os.path.dirname(os.path.abspath(__file__))\n"
+    "sys.path.insert(0, os.path.join(here, '..', '.work_deps'))\n"
+)
+
+
+def _names(plan):
+    return [o["import_name"] for o in plan.origins]
+
+
+def test_a_script_that_edits_sys_path_runs_first_instead_of_asking_for_a_package_name(tmp_path):
+    (tmp_path / "plot.py").write_text(_SYSPATH + "import fangsensor_utils\n", encoding="utf-8")
+    plan = _joint(tmp_path)
+    assert "fangsensor_utils" not in _names(plan)
+    assert plan.deferred_unverified == ("fangsensor_utils",)
+    assert plan.to_payload()["deferred_unverified"] == ["fangsensor_utils"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "sys.path.append('/x')",
+        "sys.path.extend(['/x'])",
+        "sys.path[0:0] = ['/x']",
+        "import site\nsite.addsitedir('/x')",
+    ],
+)
+def test_every_ast_visible_path_mutation_defers(tmp_path, mutation):
+    (tmp_path / "plot.py").write_text(
+        f"import sys\n{mutation}\nimport fangsensor_utils\n", encoding="utf-8"
+    )
+    assert _joint(tmp_path).deferred_unverified == ("fangsensor_utils",)
+
+
+def test_a_path_edit_in_a_local_module_the_script_imports_also_defers(tmp_path):
+    (tmp_path / "plot.py").write_text("import cfg\nimport fangsensor_utils\n", encoding="utf-8")
+    (tmp_path / "cfg.py").write_text(_SYSPATH, encoding="utf-8")
+    assert _joint(tmp_path).deferred_unverified == ("fangsensor_utils",)
+
+
+def test_without_a_path_edit_the_package_name_is_still_asked_first(tmp_path):
+    (tmp_path / "plot.py").write_text("import fangsensor_utils\n", encoding="utf-8")
+    plan = _joint(tmp_path)
+    assert "fangsensor_utils" in _names(plan)
+    assert plan.deferred_unverified == ()
+    assert "deferred_unverified" not in plan.to_payload()
+
+
+def test_a_trusted_module_is_still_prompted_before_running_even_if_the_script_edits_sys_path(
+    tmp_path,
+):
+    (tmp_path / "plot.py").write_text(_SYSPATH + "import pandas\n", encoding="utf-8")
+    plan = _joint(tmp_path)
+    assert "pandas" in [m["import_name"] for m in plan.missing]
+    assert plan.deferred_unverified == ()
+
+
+def test_once_the_run_really_misses_the_module_it_goes_to_the_confirm_flow(tmp_path):
+    """运行时 `ModuleNotFoundError` 点名了它（`extra_imports`）→ 不再延后，进现有的确认包名流程。"""
+    (tmp_path / "plot.py").write_text(_SYSPATH + "import fangsensor_utils\n", encoding="utf-8")
+    plan = _joint(tmp_path, extra_imports=("fangsensor_utils",))
+    assert "fangsensor_utils" in _names(plan)
+    assert plan.deferred_unverified == ()
+
+
+def test_the_deferral_leaves_a_trace_in_the_dependency_check_facts(tmp_path):
+    from tavotto.engine import prepsession
+
+    (tmp_path / "plot.py").write_text(_SYSPATH + "import fangsensor_utils\n", encoding="utf-8")
+    offer = {"plan": _joint(tmp_path).to_payload()}
+    assert prepsession.origin_facts(offer) == {"deferred_unverified": ["fangsensor_utils"]}
+    assert prepsession.origin_facts({"plan": {"origins": []}}) == {}

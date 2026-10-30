@@ -108,7 +108,7 @@ order: 180
   `pool.unreadable_folder_error` 换成服务端令牌就地丢弃（**不进 `err.extra` / 公开投影 / 遥测 / 日志**）；`params.repair_token` 是前端按钮的唯一入口。
   `POST /api/engine/folder-repair {token}`：只收令牌、要 `_page_authenticated()`、路径动手前 `validate_target` 对真实路径再验（每一条拒绝一个用例）、
   提权前 `scan_for_links` 不跟随地拒绝子孙里的重解析点 / 超限，一次 UAC 提权跑 `icacls <目录> /setowner *S-1-5-32-544 /T /C /L /Q` + `icacls <目录> /reset /T /C /L /Q`（argv 由 `build_commands` 唯一给出；不用 takeown，其确认值随语言变；提权脚本内先以备份语义（SeBackupPrivilege + `FILE_FLAG_BACKUP_SEMANTICS | OPEN_REPARSE_POINT`，`folderrepair._WALK_SOURCE`）遍历整棵树再动手：201 链接 / 203 超限 / 202 遍历失败；Windows 真机手动用例 `scripts/dev/verify_folder_repair_windows.ps1`）、事后复核仍读不了算失败。
-  不放宽任何一条验证；加新的拒绝条件加在 `validate_target` 并配用例。看护 `tests/test_folder_repair.py`。
+  不放宽任何一条验证；加新的拒绝条件加在 `validate_target` 并配用例。 静态关卡：脚本会改 `sys.path`（`importscan` 的 `sys_path_modified`）时，表外无可信映射的未装模块不在运行前问包名，记入 `JointPlan.deferred_unverified` 先跑一次（`depplan.plan`）。看护 `tests/test_folder_repair.py`。
 
 ## 写入根绊线：MCP 来源的 safe 运行（#898，ADR 0141）
 

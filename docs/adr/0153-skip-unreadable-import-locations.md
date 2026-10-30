@@ -106,3 +106,13 @@ AI 修复：`fixsession.SYSTEM_PROMPT` 的 3g 写明——装进 Tavotto 受管�
 
 撞过这条一句话卡的模块名会记在进程内（`folderrepair.note_unreadable_module`，只有模块名）：之后的联合计划（`depplan.plan`）不再把它列成「要你确认包名」的表外依赖，
 失败卡直接给「修复权限」。
+
+### 修订 2026-10-30（真机）：会改 `sys.path` 的脚本，表外模块先跑一次再问包名
+
+真机上静态依赖关卡在**脚本运行之前**就拦下了：依赖夹是脚本运行时才加进 `sys.path` 的，静态扫描找不到 `fangsensor_utils` →
+「有 1 个库要你确认包名」，脚本从头到尾没被运行，「修复权限」没有机会出现。现在 `depplan.plan` 对这类名字**延后**：
+`importscan` 的 AST 判据（脚本或它静态 import 的同项目本地模块里有 `sys.path.insert/append/extend/[...]=`、`site.addsitedir`，
+即 `sys_path_modified` 警告；复用，不另写一份）成立，且这个名字**没有可信映射**（curated 之外、只有同名预填）→ 不列进 `origins`，记入
+`JointPlan.deferred_unverified`（检查项的来源事实里也有，诊断可见），先跑一次：成功 → 没有卡；读不了 → 修复权限卡；运行时真的
+`ModuleNotFoundError`（`extra_imports`）→ 不再延后，走原来的确认包名。curated 里的模块（pandas、tzdata）与不改 `sys.path` 的脚本一字不变。
+

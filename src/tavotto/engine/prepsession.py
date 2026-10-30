@@ -269,7 +269,10 @@ def origin_facts(offer: dict | None) -> dict:
     只带计数与闭集原因码（`depplan.ORIGIN_REASONS`）：不出包名、不出路径、不出源码——名字在计划载荷里，展示归前端
     （PR6），诊断白名单另算。来源事实**不改检查项的状态**：它们不让计划不完整（不新增 `blocked` 理由），只说明
     「这几个 import 装不了 / 不该猜」。"""
-    rows = ((offer or {}).get("plan") or {}).get("origins") or ()
+    plan_ = (offer or {}).get("plan") or {}
+    rows = plan_.get("origins") or ()
+    # 脚本会改 `sys.path`、表外名字先跑一次再说（`depplan.JointPlan.deferred_unverified`）：只列 import 名，留痕给诊断
+    deferred = [str(n) for n in plan_.get("deferred_unverified") or () if str(n).isidentifier()]
     by_reason: dict[str, int] = {}
     confirmable = 0
     for row in rows:
@@ -279,13 +282,13 @@ def origin_facts(offer: dict | None) -> dict:
             if row.get("suggested_distribution"):
                 confirmable += 1
     if not by_reason:
-        return {}
+        return {"deferred_unverified": deferred} if deferred else {}
     origins = {"count": sum(by_reason.values()), "by_reason": dict(sorted(by_reason.items()))}
     if confirmable:
         # 其中带预填（`suggested_distribution`）、可以由用户指定包名的个数（PR6）：界面据此区分「需要确认」与「尚无法确定」，
         # 不必为了一个计数再取一遍整份计划。没有就不出这个键（检查项的形状与以前一字不差）
         origins["confirmable"] = confirmable
-    return {"origins": origins}
+    return {"origins": origins, **({"deferred_unverified": deferred} if deferred else {})}
 
 
 def checks_of(plan: preparation.PreparationPlan) -> list[dict]:

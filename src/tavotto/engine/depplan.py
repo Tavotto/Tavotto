@@ -784,6 +784,9 @@ class JointPlan:
     #: 计划里点名、**不送 pip** 的已知装不了的包（`depresolve.NOT_PIP_INSTALLABLE`；ADR 0061 修订 2026-10-21）：
     #: `{name, distribution, hint, sources: [声明文件], imports: [import 名]}`。只在有时才进 `to_payload`（`plan_version` 不升）。
     not_pip_installable: tuple[dict, ...] = ()
+    #: 脚本（或它静态 import 的本地模块）会在运行时改 `sys.path`，而这些表外名字没有可信映射、静态又找不到：不在运行前拦下来问包名，
+    #: 先跑一次看（读不了 → 修复权限卡；真缺 → 现有的确认包名流程）。只列 import 名；有才进 `to_payload` 与检查项的来源事实。
+    deferred_unverified: tuple[str, ...] = ()
 
     @property
     def install_entries(self) -> tuple[dict, ...]:
@@ -824,6 +827,11 @@ class JointPlan:
             **(
                 {"not_pip_installable": [dict(n) for n in self.not_pip_installable]}
                 if self.not_pip_installable
+                else {}
+            ),
+            **(
+                {"deferred_unverified": list(self.deferred_unverified)}
+                if self.deferred_unverified
                 else {}
             ),
             **(
@@ -1527,6 +1535,16 @@ def plan(
             index_incomplete,
         )
     }
+    # 脚本会在运行时改 `sys.path`（`importscan` 的 AST 判据 `sys_path_modified`）：表外、没有可信映射的未装模块静态上找不到不等于
+    # 没有——它可能就在脚本运行时才加进路径的目录里。不在运行前问包名，先跑一次（`deferred_unverified`）；运行时真的
+    # `ModuleNotFoundError` 点名它了（`extra_imports`）才走确认包名。用户已经指定过包名的不延后（他们已经答了）
+    deferred: tuple[str, ...] = ()
+    if any(w.get("code") == "sys_path_modified" for w in scan.warnings):
+        observed = set(extra_imports)
+        asked = set(user_specified or {})
+        deferred = tuple(sorted(m for m in specifiable if m not in observed and m not in asked))
+        origin_classes = [c for c in origin_classes if c.module not in deferred]
+        specifiable -= set(deferred)
     chosen: dict[str, tuple[depresolve.DependencyIntent, importscan.ImportClass]] = {}
     for imp, text in sorted((user_specified or {}).items()):
         cls = next((c for c in origin_classes if c.module == imp), None)
@@ -1845,6 +1863,7 @@ def plan(
         ),
         declared_gaps_total=gaps_total,
         not_pip_installable=tuple(not_pip_entries),
+        deferred_unverified=deferred,
         requirements=tuple(reqs),
         constraints=tuple(cons),
         hashes={k: tuple(v) for k, v in hashes.items()},
