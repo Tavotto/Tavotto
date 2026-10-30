@@ -440,6 +440,19 @@ def test_unlinking_or_moving_a_project_symlink_trips_instead_of_whiting_out_its_
         assert (sub / "data.csv").read_text() == "x,y\n1,2\n" and (sub / "alias.csv").is_symlink()
 
 
+def test_copying_a_project_file_onto_itself_is_still_a_same_file_error(world):
+    """`shutil.copyfile(data, data)`：真实执行抛 SameFileError，改道不能让它悄悄成功（Codex #1516 P2）。"""
+    result, cand = _validate(
+        world,
+        "import shutil\nd = os.path.join(here, 'data.csv')\n"
+        "for fn in (shutil.copyfile, shutil.copy, shutil.copy2):\n"
+        "    try:\n        fn(d, d)\n        raise SystemExit('copied onto itself')\n"
+        "    except shutil.SameFileError:\n        pass\n",
+    )
+    assert result["status"] == "ok", result
+    assert not _redirected(cand, "sub/data.csv").exists()
+
+
 def test_rmdir_of_a_project_dir_trips_but_a_purely_staged_dir_can_be_removed(world):
     _project_dir(world)
     result, _ = _validate(world, "os.rmdir(os.path.join(here, 'out'))\n")

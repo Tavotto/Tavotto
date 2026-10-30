@@ -755,10 +755,13 @@ def _w_copyfile(orig):
     @functools.wraps(orig)
     def fn(src, dst, *args, **kwargs):
         if _redirect_on():
+            rs, rd = _resolve(src), _resolve(dst)
+            if rs is not None and rd is not None and rs[1] == rd[1]:
+                # 源与目标是同一个项目文件：改道后两边成了不同路径，会绕过 copyfile 的同文件检查
+                raise shutil.SameFileError(f"{src!r} and {dst!r} are the same file")
             s = _map(src, write=False)
             if s is not None:
                 src = s
-            rd = _resolve(dst)
             if rd is not None:
                 if _proj_dir(rd) and not _real_exists(rd[2]):
                     raise _eisdir(dst)
