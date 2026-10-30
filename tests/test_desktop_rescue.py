@@ -39,6 +39,7 @@ RESCUE = [
     "rescue_retry",
     "rescue_update_check",
     "rescue_update_install",
+    "rescue_reinstall",
     "rescue_diag_preview",
     "rescue_diag_send",
     "rescue_diag_save",

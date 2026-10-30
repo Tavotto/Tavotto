@@ -11,6 +11,7 @@
     "allow-rescue-retry",
     "allow-rescue-update-check",
     "allow-rescue-update-install",
+    "allow-rescue-reinstall",
     "allow-rescue-diag-preview",
     "allow-rescue-diag-send",
     "allow-rescue-diag-save"
