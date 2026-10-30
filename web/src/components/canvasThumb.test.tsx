@@ -392,7 +392,7 @@ describe('标注里的公式（ADR 0152 §七）：缩略图 / 导出预览不�
   })
 
   it('排不出来：照源码画（$…$），与画布同一个退路', async () => {
-    stub({ ok: false, error: 'bad' })
+    stub({ ok: false, error: 'bad', width: 2, segments: [['M', 0, 0], ['Z']] })
     await teardown()
     const svg = await render(<CanvasThumb page={PAGE} objects={[formula]} exportedText={asText} />)
     await act(async () => {
