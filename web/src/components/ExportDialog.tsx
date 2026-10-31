@@ -980,7 +980,9 @@ export function ExportDialog() {
           : { ok: false as const, name, reason: failure(res.reason) },
       );
     }
-    recordBatchFrozen(items);
+    // 冻结时的导出目录跟着每张一起记下：撞名确认之后目录变了，确认就不再成立（QA-WIN-18）
+    const dirAtFreeze = useProjectStore.getState().project?.export_dir ?? null;
+    recordBatchFrozen(items.map((it) => (it.ok ? { ...it, input: { ...it.input, exportDir: dirAtFreeze } } : it)));
   };
 
   /* -------------------------------- 动作 --------------------------------- */
@@ -1180,7 +1182,13 @@ export function ExportDialog() {
   }, [batch, running, storeJob, startError]);
   /** 单张撞名确认挂着，而表单里的输出目标已不是触发撞名的那一个 */
   const conflictTargetChanged = (): boolean => {
-    if (batch || storeJob?.status !== "conflict") return false;
+    if (storeJob?.status !== "conflict") return false;
+    if (batch) {
+      // 批：每张的输入在点「导出」那一刻就冻结了，表单里的名字 / 格式不再算数；
+      // 唯一还会在确认之后变的目标是导出目录（项目设置，不在载荷里）
+      const cur = batch.done || batch.phase !== "send" ? null : batch.prepared[batch.index];
+      return !!cur && (cur.input.exportDir ?? null) !== exportDirNow;
+    }
     const last = useExportStore.getState().lastInput;
     return !!last && exportTargetKey(last) !== exportTargetKey(inputOf());
   };
@@ -1194,8 +1202,8 @@ export function ExportDialog() {
   const restart = (overwrite: OverwritePolicy) => {
     // 位置写入在飞时覆盖 / 另存一份也不许发：会按旧目录写（批的分支直接 runExport，不经 canStart）
     if (locationUpdating) return;
-    // 单张：确认问的是上一次的输出目标；表单目标已改（QA-WIN-18）就作废确认，绝不按新目标覆盖
-    if (!batch && conflictTargetChanged()) {
+    // 确认问的是触发撞名那一次的输出目标（单张：文件名 / 格式 / 范围 / 目录；批：目录）；已改（QA-WIN-18）就作废确认，绝不按新目标覆盖
+    if (conflictTargetChanged()) {
       resetExportState();
       return;
     }

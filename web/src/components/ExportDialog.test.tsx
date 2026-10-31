@@ -2775,8 +2775,9 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(useExportStore.getState().batch?.aggregate?.status).toBe('done')
   })
 
-  it('撞名停下后位置写入在飞：覆盖 / 另存一份都不发（会按旧目录写），落地后才放行', async () => {
+  it('撞名停下后位置写入在飞：覆盖 / 另存一份都不发；落地后确认作废（目录换了，确认框列的不再是会被覆盖的文件，QA-WIN-18）', async () => {
     jobStatusSeq = ['conflict', 'done', 'done']
+    useProjectStore.setState({ project: { settings: {}, export_dir: '/out', backup_dir: '/b' } as never })
     await setupTwo({ select: [] })
     await click(originalRadio())
     await start()
@@ -2794,10 +2795,8 @@ describe('每张图单独导出：依次发多个作业（后端协议不变）'
     expect(exportBodies, '写入在飞：一个请求都不许发').toHaveLength(1)
     await act(async () => { release(); await done })
     settingsGate = null
-    expect(button('覆盖')!.hasAttribute('disabled')).toBe(false)
-    await click(button('覆盖')!)
-    await batchDone()
-    expect(exportBodies[1].overwrite).toBe('replace')
+    expect(button('覆盖'), '目录换了：旧确认作废，不再能按新目录覆盖').toBeFalsy()
+    expect(exportBodies, '作废后也没有任何 replace / rename 请求').toHaveLength(1)
   })
 
   it('撞名停下后位置写入在飞：Esc（安全答案 = 另存一份）也不发请求', async () => {
