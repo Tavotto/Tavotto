@@ -357,6 +357,34 @@ class TestPreviewByState:
         files = list(runtimeasset.cache_dir(figs, aid).glob("preview-*.svg"))
         assert len(files) == runtimeasset.MAX_VARIANTS  # 淘汰的变体文件也删了，不留孤儿
 
+    def test_rebuild_with_changed_script_or_fresh_execution_voids_old_variants(
+        self, figs, tmp_path
+    ):
+        """Codex #1547 P1：脚本 / 输入变了并显式重跑后，旧执行画的变体不能再以 exact 返回。"""
+        script = write(figs, "show_only.py", SHOW_ONLY)
+        desc = _descriptor()
+        aid = desc["asset_id"]
+        h = patchspec.patch_hash([{"gid": "g", "prop": "p", "value": 1}])
+        base = patchspec.patch_hash([])
+        runtimeasset.materialize(figs, desc, self._svg(tmp_path, "o.svg", "OLD"), patch_hash=h)
+        assert runtimeasset.preview_for_state(figs, aid, h)[1] is True
+        # 同执行的再渲染不清变体
+        runtimeasset.materialize(figs, desc, self._svg(tmp_path, "o2.svg", "OLD2"), patch_hash=base)
+        assert runtimeasset.preview_for_state(figs, aid, h)[1] is True
+        # 脚本改了、重跑（只物化 base）：旧 overrides 的变体作废
+        script.write_text(SHOW_ONLY + "# edited\n", encoding="utf-8")
+        runtimeasset.materialize(figs, desc, self._svg(tmp_path, "n.svg", "NEW"), patch_hash=base)
+        path, exact = runtimeasset.preview_for_state(figs, aid, h)
+        assert exact is False and runtimeasset.variant_path(figs, aid, h) is None
+        assert not list(runtimeasset.cache_dir(figs, aid).glob("preview-*.svg"))[1:]
+        # 脚本与描述符都没变、但这是一次全新执行（输入数据可能变了）：同样作废
+        runtimeasset.materialize(figs, desc, self._svg(tmp_path, "m.svg", "M"), patch_hash=h)
+        assert runtimeasset.preview_for_state(figs, aid, h)[1] is True
+        runtimeasset.materialize(
+            figs, desc, self._svg(tmp_path, "f.svg", "F"), patch_hash=base, fresh_execution=True
+        )
+        assert runtimeasset.preview_for_state(figs, aid, h)[1] is False
+
     def test_rematerialize_without_a_hash_keeps_the_variant_table(self, figs, tmp_path):
         """其他 stem / 说不清状态的物化不能把已有变体表洗掉。"""
         write(figs, "show_only.py", SHOW_ONLY)

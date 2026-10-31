@@ -515,6 +515,7 @@ def _local_probe(project: str, script: str) -> dict:
                             worker.svg_path(desc["stem"]),
                             # probe 的 build 没有 overrides：这是脚本原样的预览
                             patch_hash=engine_patchspec.patch_hash([]),
+                            fresh_execution=True,
                         )
             except engine_pool.WorkerError:
                 pass  # cache 是派生物：物化不了只影响首帧占位

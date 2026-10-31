@@ -226,6 +226,16 @@ def _variant_table(meta: object) -> list[tuple[str, str]]:
     ]
 
 
+def _execution_of(target: Path) -> str | None:
+    """现有 metadata 记下的「变体是哪次执行画的」指纹；没有（旧 cache / 读不出）→ None。"""
+    try:
+        meta = json.loads((target / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    value = meta.get("variants_execution") if isinstance(meta, dict) else None
+    return value if isinstance(value, str) else None
+
+
 def _read_variants(target: Path) -> dict[str, str]:
     """现有 metadata 里仍在磁盘上的变体（patch_hash → 文件名，旧→新）；读不出 / 坏了 → 空（变体是可重建的派生物）。"""
     try:
@@ -245,8 +255,12 @@ def materialize(
     svg_source: Path,
     *,
     patch_hash: str | None = None,
+    fresh_execution: bool = False,
 ) -> Path | None:
     """把一张捕获 Figure 的预览物化进 cache；返回 cache 目录（失败 None）。
+
+    `fresh_execution`：这份 SVG 来自一次全新的执行（显式运行 / probe / native 交接，不是对热会话的
+    再渲染）——已有变体全部作废，哪怕脚本哈希等指纹没变（输入数据可能变了）。
 
     `patch_hash`：这份 SVG 是按哪组 overrides 画的（`patchspec.patch_hash`）。给了就**另存一份
     按它寻址的变体**并记进变体表——`preview.svg` 仍是「最近一次」；不给 = 调用方说不清这份 SVG
@@ -275,7 +289,27 @@ def materialize(
         target.mkdir(parents=True, exist_ok=True)
         data = svg_source.read_bytes()
         _atomic_write(target / "preview.svg", data)
+        # 变体的身份 = (overrides 内容, 生成它的那次执行)。执行指纹覆盖决定图内容的全部 metadata 字段
+        # （脚本哈希、改指表指纹、描述符）；它变了、或调用方说这是一次全新执行（显式运行 / probe /
+        # native 交接：同脚本同输入文件路径但数据可能已变），旧执行画的变体一律作废——否则用旧
+        # overrides 重开会以 exact 拿到过时数据的图（Codex #1547 P1）。
+        execution = hashlib.sha256(
+            json.dumps(
+                [
+                    script_sha256(project_root, script),
+                    inputremap.fingerprint(project_root),
+                    dict(descriptor),
+                ],
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
         variants = _read_variants(target)
+        if fresh_execution or _execution_of(target) != execution:
+            for dead in variants.values():
+                (target / dead).unlink(missing_ok=True)
+            variants = {}
         if patch_hash:
             name = _variant_name(patch_hash)
             _atomic_write(target / name, data)
@@ -298,6 +332,7 @@ def materialize(
             "input_remap": inputremap.fingerprint(project_root),
             "preview": "preview.svg",
             "variants": [[h, name] for h, name in variants.items()],
+            "variants_execution": execution,
         }
         _atomic_write(
             target / "metadata.json",

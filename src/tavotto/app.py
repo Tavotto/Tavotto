@@ -7104,7 +7104,11 @@ def _materialize_native(session, skip=()) -> None:
             continue
         _capture_svg_snapshot(session, desc)
         engine_runtimeasset.materialize(
-            root, desc, session.svg_path(stem), patch_hash=_variant_hash([])
+            root,
+            desc,
+            session.svg_path(stem),
+            patch_hash=_variant_hash([]),
+            fresh_execution=True,
         )
 
 
@@ -7166,6 +7170,8 @@ def _materialize_runtime(
                     desc,
                     worker.svg_path(stem),
                     patch_hash=_variant_hash(state),
+                    # 没有 patches_by_stem = 一次 build（显式运行 / 准备）：新的执行，旧变体作废
+                    fresh_execution=patches_by_stem is None,
                 )
     except engine_inputremap.RemapChanged as exc:
         LOG.info("runtime 物化作废（%s）: %s", exc, script)
