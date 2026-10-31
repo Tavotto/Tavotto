@@ -17,6 +17,10 @@ v0.18.0 的五条用户可见说明已迁入 v0.18.0.md。渠道启用在 v0.18.
 英文写，与 release notes 一致：**按症状和触发条件写，不要按提交写**。
 -->
 
+## Larger Chinese text in the properties panel, clearer element tree, adaptive style panel
+
+The properties panel text goes from 12 to 13 px and its label column is wider. In the element tree the actual content rows read darker than the group rows (the old black/grey colouring is kept, with group names bold) and stray curly quotes around names are gone. The style panel adapts to the panel width, the Problems panel lists items in the same row style, an empty canvas offers cards to pick a figure to edit, and asset cards and script rows are clearer. (#1552)
+
 ## Single-figure export now includes canvas annotations (#1551)
 
 When the canvas held a single figure, text, arrows and shapes you added on the canvas were missing from both the export preview and the exported files. They are now drawn into PDF, PNG, TIFF, SVG and EPS, clipped to the figure frame, with their stacking relative to the figure preserved (annotations moved below the figure in the layer tree stay below it). The export still follows the original-figure rules: PNG / TIFF keep the source image's pixel size and DPI, and exports without annotations are byte-for-byte unchanged. EPS keeps matplotlib's original EPS and lays the annotations over it as vector outlines; if an annotation uses transparency, which EPS cannot express, only the EPS item fails with a stated reason and the other formats are delivered.
