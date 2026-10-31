@@ -77,7 +77,7 @@ export const ICON_MOTION: Partial<Record<IconName, IconMotion>> = {
 
   // ───────── 悬停播 ─────────
   // 左轨（选中的那颗是实心孪生，所以都写 sel）
-  Folder: { on: 'hover', ms: 760, parts: { s: ['r', 'r', 'u', 'p', 'q'] }, sel: { f: ['r', 'u', 'p'], k: ['r', 'u'] } },
+  Folder: { on: 'hover', ms: 720, parts: { s: ['r', 'r', 'u', 'p', 'q'] }, sel: { f: ['r', 'u', 'p'], k: ['r', 'u'] } },
   SquareMousePointer: { on: 'hover', ms: 480, parts: { s: ['q'], f: ['p'] }, sel: { f: ['q'], k: ['p'], o: ['p'] } },
   Paintbrush: { on: 'hover', ms: 600, sel: 'all' },
   ListChecks: { on: 'hover', ms: 560, parts: { s: ['d', 'e', 't', 't'] }, sel: { f: ['q', 'q'], k: ['d', 'e'], s: ['t', 't'] } },
