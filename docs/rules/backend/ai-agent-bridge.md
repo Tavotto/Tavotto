@@ -543,7 +543,7 @@ MATLAB 特征不足一律 None）复核文件与声明一致，对不上 400 `co
 
 ### D2a：「改」组（`change.py` / `snapshots.py` / `executors.py`，ADR 0149 §七）
 
-工具：`install_packages`（`listed`）、`switch_execution` / `switch_workdir` / `change_python` / `convert_script` / `rollback`（`tavotto`）、`select_environment`（`user_env`）。`run_command` 见下面专节。
+工具：`install_packages`（`listed`）、`switch_execution` / `switch_workdir` / `fix_entry`（登记的入口已不在脚本里：同 `entryfresh.reconcile`，只改注册表一个字段，不弹卡不打快照、幂等，TVD-CHR5）/ `change_python` / `convert_script` / `rollback`（`tavotto`）、`select_environment`（`user_env`）。`run_command` 见下面专节。
 看护 `tests/test_fixtools_change.py`。`FIX_SESSION_TIERS` 放行 observe / run / tavotto / listed / user_env / outward，**放行 ≠ 不问**：要不要问用户由各工具自己经 `FixContext.ask` 把关
 （`change.approve`：没有 `ask`、回答不是 `yes`、`ask` 抛了、超时，一律 `needs_approval` 且审计记 `blocked`；通过则审计记 `approved_by=user`）。
 

@@ -3270,6 +3270,7 @@ export default interface Resources {
       "script_edit_self_check_failed": "改写后的自检没有通过，脚本没有被修改。",
       "script_edit_token_invalid": "这次确认已失效，脚本没有被修改。请重新预览。",
       "script_edit_unreadable": "这份脚本的编码或语法读不准，Tavotto 不改它。",
+      "script_entry_missing": "这个脚本被改写过，登记的入口函数已经不在了。",
       "script_error": "脚本执行失败：{{error}}",
       "script_exited": "脚本调用 sys.exit() 提前结束了（{{error}}）。Tavotto 要的是脚本跑完后留在内存里的图：去掉那句 exit，或只在出错时 exit。",
       "script_hardlinked": "脚本有另一个硬链接名字（{{script}}），替换会把两者断开，Tavotto 不改它。",
