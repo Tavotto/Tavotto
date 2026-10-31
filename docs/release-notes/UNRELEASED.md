@@ -52,3 +52,7 @@ When Tavotto ran a script for the very first time on a machine (matplotlib build
 ## AI repair can now see and run in the environment your project is using
 
 The repair assistant's environment list only showed external Python installs and left out the environment the project was actually running in (including Tavotto's built-in Python), so its "run the script to verify" step was refused with "select that environment first". The list now starts with the environment currently in use, marked as current, and verification runs in it.
+
+## Export dialog is shorter and easier to scan; Contact dialog is tidier
+
+The export dialog now shows only the figure name and size under the title; a sub-millimetre difference from the original file is tucked into an info icon instead of a second line. The save location reads "project / relative path" instead of being cut off from the left. "Strict verification" and "Style check report" moved into a collapsed "Advanced" section (it opens by itself when either one is on). The preview no longer leaves large grey bands above and below, and only figures with something that needs changing get a red dot. In the Contact dialog, "Your message" comes first, the WeCom link is a quiet line under the title, and attachments use an "Add screenshot/file" button (dragging files in still works). (#1555)
