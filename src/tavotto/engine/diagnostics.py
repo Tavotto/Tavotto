@@ -42,6 +42,7 @@ from . import (
     depresolve,
     diagnostics_frontend,
     logsafe,
+    msixbreakaway,
     pool,
     projectenv,
     runtime,
@@ -90,7 +91,9 @@ WORKER_LOG_SENSITIVE_SCAN_BYTES = 16 * 1024 * 1024
 #: `broken_path`（托管 Codex 安装 PR）；旧读法忽略这些键即可，但换形必升号。
 #: 11 = project.managed_environment_jobs: requested and observed installed package names and
 #: versions, job outcomes and environment generation observations (user-authorized disclosure).
-BUNDLE_SCHEMA_VERSION = 11
+#: 12 = report.json 的 `system.has_package_identity`、`system.msix_breakaway`（闭集字符串）与 `paths.data_dir_under_packages` /
+#: `paths.config_dir_under_packages`（三个 bool，MSIX 宿主下数据被重定向的分诊，#1574；不带用户名与包名）。
+BUNDLE_SCHEMA_VERSION = 12
 #: 两个子 schema 各自独立演进（ADR 0016 §20）。读取方**忽略不认识的字段**。
 FRONTEND_SNAPSHOT_SCHEMA = 1
 TRACE_SCHEMA = 1
@@ -1555,6 +1558,11 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             "machine": platform.machine(),
             "python": sys.version.split()[0],
             "os_name": os.name,
+            # MSIX 包身份（#1574）：从 Codex 桌面版等 MSIX 宿主拉起时为 true，数据会被重定向进包私有区。
+            # 只回 bool，不带包名。
+            "has_package_identity": msixbreakaway.has_package_identity(),
+            # 桌面壳兜底（重新拉起到包外）的结果，闭集：none / relaunched / still_packaged / failed
+            "msix_breakaway": msixbreakaway.shell_breakaway_outcome(),
             "encoding": {
                 "stdout": getattr(sys.stdout, "encoding", None),
                 "filesystem": sys.getfilesystemencoding(),
@@ -1565,6 +1573,10 @@ def build_report(project: dict | None = None, port: int | None = None) -> dict:
             "data_dir": str(config.data_dir()),
             "config_dir": str(config.config_dir()),
             "log": str(_app_log_path()),
+            # realpath 是否落在 `\\Packages\\` 段下（#1574）：true = 数据在 MSIX 宿主的私有区，
+            # 与直接启动的那套分叉。只回 bool。
+            "data_dir_under_packages": msixbreakaway.path_under_packages(config.data_dir()),
+            "config_dir_under_packages": msixbreakaway.path_under_packages(config.config_dir()),
         },
         "render": {
             "worker_python": worker_python,
