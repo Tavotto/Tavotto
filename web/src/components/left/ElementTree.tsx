@@ -828,7 +828,7 @@ const ElementRow = memo(function ElementRow({
   const menu = useRowMenu()
   const labelRef = useBoldTrackingLock<HTMLSpanElement>(selected, name)
   const { prefix, name: restRaw } = splitTypePrefix(name)
-  // 类型词已经单独成了 ink-3 前缀，内容不再包中文弯引号（可达名 / title 仍用原串）
+  // 类型词与内容同一种灰（前缀自带一个空格分隔），内容不再包中文弯引号（可达名 / title 仍用原串）
   const rest = prefix ? restRaw.replace(/^[“"‘']/, '').replace(/[”"’']$/, '') : restRaw
 
   return (
@@ -898,7 +898,7 @@ const ElementRow = memo(function ElementRow({
       <TreeIcon icon={roleIcon(role)} />
 
       <span ref={labelRef} data-tree-label className="min-w-0 flex-1 truncate" title={`${shown} · ${roleName(role)} · ${gid}`}>
-        {prefix && <span className={cn('font-normal', selected ? 'text-ink-2' : 'text-ink-3')}>{prefix}</span>}
+        {prefix}
         {rest}
       </span>
 
