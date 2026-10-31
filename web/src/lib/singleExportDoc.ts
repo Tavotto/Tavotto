@@ -63,3 +63,14 @@ export function singleAnnotatedDocument(
 export function annotationsOf(annotated: FigureDocument): CanvasObject[] {
   return annotated.objects.filter((o) => o.type !== 'panel' && !o.hidden)
 }
+
+/** `annotationsOf` 里有几个在图的**下面**（z 序里排在面板前面）：请求的 `original.objects_below` */
+export function annotationsBelow(annotated: FigureDocument): number {
+  let below = 0
+  for (const o of annotated.objects) {
+    if (o.hidden) continue
+    if (o.type === 'panel') break
+    below += 1
+  }
+  return below
+}

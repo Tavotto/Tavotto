@@ -296,6 +296,8 @@ class OriginalSource:
     #: 且只含可见对象；图幅之外的部分由页面裁掉。为空 = 纯原图导出（请求与输出与从前逐字节相同）。
     #: 不带 x/y/w/h 之外的版面字段——页面就是图幅（`w_mm` × `h_mm`，非空时必填）。
     objects: tuple[dict, ...] = ()
+    #: `objects` 里前几个画在图的**下面**（图层树里放到图之下的标注）；其余在图上。`objects` 本身按 z 序（底 → 顶）。
+    objects_below: int = 0
 
 
 #: 多页 PDF 一次最多合几页。上限不是审美：每页各走一次单页导出，几百页的作业是在卡住 worker。
@@ -472,6 +474,11 @@ def render_plan_ref(req: ExportRequest, resources: list[dict]) -> dict:
             "source_kind": req.original.source_kind,
             **({"objects": list(req.original.objects)} if req.original.objects else {}),
             **(
+                {"objects_below": req.original.objects_below}
+                if req.original.objects and req.original.objects_below
+                else {}
+            ),
+            **(
                 {"expected_source": req.original.expected_source}
                 if req.original.expected_source is not None
                 else {}
@@ -626,6 +633,15 @@ def _original_objects(source: dict) -> tuple[dict, ...]:
     return tuple(objects)
 
 
+def _objects_below(source: dict, count: int) -> int:
+    raw = source.get("objects_below")
+    if raw is None:
+        return 0
+    if isinstance(raw, bool) or not isinstance(raw, int) or not 0 <= raw <= count:
+        raise ExportRequestError("bad_objects", "objects_below 必须是 0 到标注个数之间的整数", {})
+    return raw
+
+
 def _original_source(source: Any) -> OriginalSource:
     """`original` 段（以及多页 PDF 里每一页的来源）→ `OriginalSource`。**一份解析，两处用**。"""
     if not isinstance(source, dict):
@@ -639,6 +655,7 @@ def _original_source(source: Any) -> OriginalSource:
     objects = _original_objects(source)
     return OriginalSource(
         objects=objects,
+        objects_below=_objects_below(source, len(objects)),
         figure_id=figure_id,
         source_policy=source.get("source_policy"),
         expected_source=_source_basis(source, overrides),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { type CanvasObject, type FigureDocument, type PanelObject } from '@/types/document'
-import { annotationsOf, singleAnnotatedDocument } from './singleExportDoc'
+import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from './singleExportDoc'
 import type { OriginalOutputSpec } from './originalSpec'
 
 const panel: PanelObject = {
@@ -72,6 +72,14 @@ describe('singleAnnotatedDocument（QA-WIN-20）', () => {
     expect(singleAnnotatedDocument(docOf([panel, text()]), panel, null)).toBeNull()
     const out = singleAnnotatedDocument(docOf([panel, text()]), panel, spec(10, 10, true))!
     expect([out.page.w, out.page.h]).toEqual([10, 10])
+  })
+
+  it('annotationsBelow：z 序里排在面板前面的标注（图层树里放在图之下）', () => {
+    const doc = docOf([text({ id: 'u1' }), panel, text({ id: 't2' })])
+    const out = singleAnnotatedDocument(doc, panel, spec())!
+    expect(annotationsOf(out).map((o) => o.id)).toEqual(['u1', 't2'])
+    expect(annotationsBelow(out)).toBe(1)
+    expect(annotationsBelow(singleAnnotatedDocument(docOf([panel, text()]), panel, spec())!)).toBe(0)
   })
 
   it('annotationsOf：只取可见的非面板对象', () => {

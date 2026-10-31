@@ -86,7 +86,8 @@ _JOINS = {"miter": 0, "round": 1, "bevel": 2}
 
 
 class OverlayWriter:
-    def __init__(self, page: ir.Page, provider: HbFaceProvider) -> None:
+    def __init__(self, page: ir.Page, provider: HbFaceProvider, prefix: str = "tvg") -> None:
+        self.prefix = prefix
         self.page = ir.validate(page)
         self.provider = provider
         self.facts = OverlayFacts()
@@ -194,7 +195,7 @@ class OverlayWriter:
             raise OverlayError(
                 "font_format", "Glyph outline is unavailable", {"font": key, "gid": gid}
             ) from exc
-        name = f"tvg{len(self._glyphs)}"
+        name = f"{self.prefix}{len(self._glyphs)}"
         self._defs.append(f"/{name} {{ newpath " + " ".join(ops) + " } bind def")
         self._glyphs[(key, gid)] = name
         return name
@@ -225,9 +226,13 @@ class OverlayWriter:
 
 
 def overlay_ps(
-    page: ir.Page, provider: HbFaceProvider, files: Mapping[str, bytes] | None = None
+    page: ir.Page,
+    provider: HbFaceProvider,
+    files: Mapping[str, bytes] | None = None,
+    *,
+    prefix: str = "tvg",
 ) -> tuple[str, OverlayFacts]:
     """`page`（只含标注的 IR）→ (PostScript 叠加层, 事实)。含 PS 表达不了的东西时抛 `UnsupportedCapability`。"""
-    writer = OverlayWriter(page, provider)
+    writer = OverlayWriter(page, provider, prefix)
     text = writer.render()
     return text, writer.facts

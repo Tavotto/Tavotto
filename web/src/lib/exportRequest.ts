@@ -225,6 +225,8 @@ export interface ExportRequestInput {
   spec?: OriginalOutputSpec | null
   /** 单图带标注（QA-WIN-20）：已换算到原图图幅的标注对象（`lib/singleExportDoc.annotationsOf`）；进 `original.objects` */
   annotations?: readonly CanvasObject[]
+  /** `annotations` 里前几个在图的下面（保留图层次序） */
+  annotationsBelow?: number
   /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
   route?: ExportRoute | null
   /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
@@ -310,7 +312,11 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
     } else {
       request.original = sourceOf(input.figureId ?? '', input.panel ?? null, input.spec ?? null)
       const objects = input.annotations?.length ? toExportObjects([...input.annotations]) : []
-      if (objects.length) request.original.objects = objects
+      if (objects.length) {
+        request.original.objects = objects
+        const below = Math.min(Math.max(input.annotationsBelow ?? 0, 0), objects.length)
+        if (below > 0) request.original.objects_below = below
+      }
     }
   }
   if (input.report) request.style_check_report = input.report

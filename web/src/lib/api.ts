@@ -1931,6 +1931,8 @@ export type ExportOriginalSource = ArtifactRequestFields & {
    * 那条合成路径画在原图上。缺省 / 空 = 纯原图导出（载荷与从前逐字节相同）；非空时 `w_mm` / `h_mm` 必填。
    */
   objects?: ExportObject[]
+  /** `objects` 里前几个画在图的下面（图层树里放在图之下的标注）；缺省 0 = 都在图上 */
+  objects_below?: number
 }
 
 export interface ExportRequest {

@@ -60,6 +60,9 @@ order: 210
     放进外层 EPS（BoundingBox = 图幅），再叠 `rendercore/epswriter.overlay_ps` 把 `plan.compile_page` 为同一组标注编出的 IR 写成的 PostScript 运算符（路径 / 填充 / 描边 / 线型 / 裁剪 / 变换；
     文字是批准字体的字形轮廓路径）。PostScript 没有透明：标注含 alpha<1、透明组、位图、外来页时这一项逐项失败 `eps_annotations_unsupported`（params `operation`），
     其余格式照常交付，**不静默丢标注**；原图 EPS 本身给不出（没有脚本等）沿用 `eps_needs_script` 等原码。没有标注（缺键 / 空）时走旧分支，请求语义与输出逐字节不变。
+    **单一来源 / 图层次序 / 横纵密度**（#1551 评审）：要 EPS 且不要 SVG 时（`exportroute.original_rerender`），有脚本的磁盘图在合成路径里也由 worker 现画（`_export_produce_rendercore(rerender_ids=…)`），PDF / PNG / TIFF 与 EPS 内层出自同一次运行，
+    与无标注的 `_resolve_panel_source(rerender=True)` 同一判定；`original.objects_below` = `objects` 里前几个画在图下面（z 序保留；EPS 里写在嵌入段之前）；位图源横纵密度不同（逻辑 mm 宽高比 ≠ 像素宽高比）时，
+    PNG / TIFF 的合成页面按像素宽高比取、标注纵向换算，输出恰为 `px_w × px_h`（不重采样；PDF / SVG 仍按逻辑 mm）。
     看护 `tests/test_export_original_annotations.py`。
     「谁来渲染」在导出路上的唯一调用点是 `_serialize_figure()`。
   * **SVG（X03，2026-10-15）**：追加为 `FORMATS = (pdf, png, eps, tiff, svg)`，前后端请求闭集同步；

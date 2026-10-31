@@ -126,7 +126,7 @@ import { apiUrl } from "@/lib/session";
 import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
-import { singleAnnotatedDocument, annotationsOf } from "@/lib/singleExportDoc";
+import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
 import { useVariantPng } from "@/hooks/useVariantPng";
 import { isJustBakedBaseline } from "@/store/actions";
@@ -473,6 +473,7 @@ export function ExportDialog() {
     [single, scope, availability.ok, availability.spec, doc, panel],
   );
   const annotations = useMemo(() => (annotatedDoc ? annotationsOf(annotatedDoc) : undefined), [annotatedDoc]);
+  const annotationsUnder = useMemo(() => (annotatedDoc ? annotationsBelow(annotatedDoc) : 0), [annotatedDoc]);
   /** 单图退路导出的区域 = 可见对象并集包围盒（`lib/exportCrop`）；预览与尺寸读它，与请求同一份 */
   const fallbackCrop = useMemo(
     () =>
@@ -858,6 +859,7 @@ export function ExportDialog() {
       panel,
       spec: availability.spec,
       annotations,
+      annotationsBelow: annotationsUnder,
       route,
       ...over,
     };

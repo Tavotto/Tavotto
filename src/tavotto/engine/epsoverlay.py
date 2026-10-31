@@ -73,9 +73,16 @@ def _n(v: float) -> str:
 
 
 def compose(
-    inner: bytes, overlay: str, width_pt: float, height_pt: float, *, name: str = "figure.eps"
+    inner: bytes,
+    overlay: str,
+    width_pt: float,
+    height_pt: float,
+    *,
+    underlay: str = "",
+    name: str = "figure.eps",
 ) -> bytes:
-    """原图 EPS + 叠加层 → 外层 EPS 字节。外层 BoundingBox = 图幅（向上取整），原图按其包围盒左下角对齐图幅左下角。"""
+    """原图 EPS + 叠加层 → 外层 EPS 字节。外层 BoundingBox = 图幅（向上取整），原图按其包围盒左下角对齐图幅左下角。
+    `underlay` = 图层树里放在图**下面**的标注，写在嵌入段之前；`overlay` 在嵌入段之后（图上面）。"""
     if not inner.startswith(b"%!PS-Adobe"):
         raise EpsOverlayError("embedded file is not a DSC EPS")
     embedded_bbox(inner)  # 没有可用的包围盒就拒绝
@@ -95,6 +102,7 @@ def compose(
     body = inner if inner.endswith(b"\n") else inner + b"\n"
     out = [
         head.encode("ascii"),
+        underlay.encode("ascii"),
         place.encode("ascii"),
         BEGIN_EPSF.encode("ascii"),
         f"%%BeginDocument: {name}\n".encode("ascii"),

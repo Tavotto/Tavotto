@@ -378,3 +378,142 @@ def test_request_parsing_rules():
     assert e.value.code == "bad_objects"
     with pytest.raises(exportreq.ExportRequestError):
         exportreq._original_source({"figure_id": "p1.pdf", "objects": [_label()]})  # 缺图幅
+
+
+# ---------------------------------------------------------------------------
+# Codex 评审（#1551）：单一来源 / 图层次序 / 横纵密度不同
+# ---------------------------------------------------------------------------
+def _pixel(path: Path, x_mm: float, y_mm: float, ppi: float):
+    pix = pymupdf.Pixmap(str(path))
+    x, y = int(x_mm / 25.4 * ppi), int(y_mm / 25.4 * ppi)
+    off = y * pix.stride + x * pix.n
+    return tuple(pix.samples[off : off + 3])
+
+
+def test_all_formats_come_from_one_source_when_eps_is_requested(
+    env, inner_eps, tmp_path, monkeypatch
+):
+    """要 EPS 时 EPS 的内层是活 Figure 现画的；PDF 不许取磁盘旧文件——两者必须出自同一个来源（与无标注的原图导出同一判定）。"""
+    import hashlib
+
+    from tavotto.engine import figcapture
+    from tavotto.rendercore import sources as rc_sources
+
+    live = tmp_path / "live.pdf"
+    doc = pymupdf.open()
+    doc.new_page(width=200, height=150).insert_text((20, 120), "LivePanel", fontsize=11)
+    doc.save(live)
+    doc.close()
+    calls = []
+
+    def fake_execution_source(obj, dpi, sink, out_dir, **kw):
+        calls.append(obj["id"])
+        data = live.read_bytes()
+        art = figcapture.SourceArtifact(
+            source_id=obj["id"],
+            origin=figcapture.ORIGIN_EXECUTION,
+            kind="pdf",
+            bytes_sha256=hashlib.sha256(data).hexdigest(),
+            size_bytes=len(data),
+            receipt_id="r1",
+            receipt_identity="i1",
+        )
+        return rc_sources.FrozenSource(art, live)
+
+    monkeypatch.setattr(m, "_execution_source", fake_execution_source)
+    monkeypatch.setattr(m, "_has_runnable_script", lambda rel: True)
+    client, _ = env
+    status, body = _post(client, _vector(["pdf", "eps"], [_label()]))
+    assert status == 200, body
+    assert _out(body, "pdf")["status"] == "done", body
+    assert "LivePanel" in _pdf_text(_path(body, "pdf")) and "PanelText" not in _pdf_text(
+        _path(body, "pdf")
+    )
+    assert calls
+    # 不要 EPS：照旧取磁盘文件，不去跑脚本
+    calls.clear()
+    _, plain = _post(client, _vector(["pdf"], [_label()], filename="disk"))
+    assert "PanelText" in _pdf_text(_path(plain, "pdf")) and not calls
+
+
+def _under_red_rect():
+    return {
+        "type": "shape",
+        "id": "s1",
+        "shape": "rect",
+        "x_mm": 10,
+        "y_mm": 10,
+        "w_mm": 10,
+        "h_mm": 10,
+        "fill": "#ff0000",
+        "stroke_pt": 0.05,
+    }
+
+
+def test_annotation_below_the_figure_is_drawn_under_it(env):
+    client, _ = env
+    spots = {}
+    for below in (0, 1):
+        spec = _vector(["png"], [_under_red_rect()], ppi=100, filename=f"b{below}")
+        if below:
+            spec["original"]["objects_below"] = below
+        _, body = _post(client, spec)
+        spots[below] = _pixel(_path(body, "png"), 15, 15, 100)
+    assert spots[0][0] > 200 and spots[0][2] < 80  # 在图上：红盖住蓝
+    assert spots[1][2] > 150 and spots[1][0] < 80  # 在图下：蓝盖住红
+
+
+def test_eps_writes_below_annotations_before_the_embedded_figure(env, inner_eps):
+    client, _ = env
+    under, over = _under_red_rect(), {**_under_red_rect(), "id": "s2", "fill": "#00ff00"}
+    spec = _vector(["eps"], [under, over])
+    spec["original"]["objects_below"] = 1
+    _, body = _post(client, spec)
+    data = _path(body, "eps").read_bytes()
+    begin, end = data.index(b"%%BeginDocument"), data.index(b"%%EndDocument")
+    assert data.index(b"1 0 0 setrgbcolor") < begin  # 红：图下
+    assert data.index(b"0 1 0 setrgbcolor") > end  # 绿：图上
+
+
+def test_objects_below_is_validated():
+    base = {"figure_id": "p1.pdf", "w_mm": 10, "h_mm": 5, "objects": [_label()]}
+    assert exportreq._original_source({**base, "objects_below": 1}).objects_below == 1
+    for bad in (2, -1, True, "1"):
+        with pytest.raises(exportreq.ExportRequestError):
+            exportreq._original_source({**base, "objects_below": bad})
+
+
+def test_unequal_axis_densities_keep_both_source_dimensions(env):
+    """300 × 150 px、300 × 150 dpi 的位图 = 25.4 × 25.4 mm：带标注导出的 PNG / TIFF 仍是 300 × 150。"""
+    client, figs = env
+    pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 300, 150), False)
+    pix.set_rect(pix.irect, (255, 255, 255))
+    pix.save(figs / "wide.png")
+    spec = {
+        "scope": "original",
+        "filename": "W",
+        "formats": ["png", "tiff", "pdf"],
+        "original": {
+            "figure_id": "wide.png",
+            "w_mm": 25.4,
+            "h_mm": 25.4,
+            "px_w": 300,
+            "px_h": 150,
+            "source_kind": "raster",
+            "objects": [_label(2, 10)],
+        },
+    }
+    status, body = _post(client, spec)
+    assert status == 200, body
+    for fmt in ("png", "tiff"):
+        p = pymupdf.Pixmap(str(_path(body, fmt)))
+        assert (p.width, p.height) == (300, 150), fmt
+        assert _out(body, fmt)["dimensions"]["px"] == [300, 150]
+    # 标注（纵向位置按像素宽高比换算）确实画进了 PNG
+    ink = [
+        pymupdf.Pixmap(str(_path(body, "png"))).pixel(x, y)[0] < 128
+        for y in range(0, 150)
+        for x in range(0, 300)
+    ]
+    assert any(ink)
+    assert _pdf_text(_path(body, "pdf")).strip() == "Label QA"  # 逻辑 mm 的 PDF 不受影响

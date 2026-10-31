@@ -646,6 +646,18 @@ describe('单图档带入画布上的标注（QA-WIN-20）', () => {
     expect([original.objects![0].x_mm, original.objects![0].y_mm], '文字坐标映射到原图坐标系').toEqual([10, 10])
   })
 
+  it('图下面的标注：objects_below 带上图层次序；都在图上时没有这个键', async () => {
+    await setup(9, { w: 180, h: 120 })
+    useDocumentStore.getState().commit(literal('图下加字'), (d) => {
+      d.objects = [textAt(40, 30, { id: 'under' }), { ...d.objects[0], x: 30, y: 20 }, textAt(41, 31, { id: 'over' })]
+    })
+    await openSingle()
+    await click(button('开始导出')!)
+    const original = exportBodies[0].original as { objects: { text?: string }[]; objects_below?: number }
+    expect(original.objects).toHaveLength(2)
+    expect(original.objects_below).toBe(1)
+  })
+
   it('没有标注时仍是纯原图请求（original 里没有 objects 键）', async () => {
     await setup(9)
     await openSingle()

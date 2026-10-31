@@ -123,7 +123,7 @@ cancelCurrentExport()  取消（清临时文件；最终目录一个字节没动
   * **单图带标注 = `original.objects`**（2026-10-31，QA-WIN-20）：`scope=original` 的请求原本只有图自己，画布上的文字 / 箭头 / 形状进不去。
     原图口径可用且画布上有**可见**标注（非面板对象）时，`lib/singleExportDoc.singleAnnotatedDocument` 把「图 + 标注」合成一份**页面 = 原图图幅**的文档
     （面板落 (0,0)、不套用画布缩放 / 裁剪 / 旋转 / 翻转 / 透明度；标注 x/y/w/h 以图内容原点平移、按 图幅 / 画布显示尺寸 缩放，字号 / 线宽不缩）。
-    **预览画这份；请求仍是 `scope=original`，`original.objects` 取这份里的标注（`annotationsOf`）**——同一个来源，后端用整版导出那条 RenderCore 合成路径画
+    **预览画这份；请求仍是 `scope=original`，`original.objects` 取这份里的标注（`annotationsOf`，z 序；排在图下面的个数进 `objects_below`）**——同一个来源，后端用整版导出那条 RenderCore 合成路径画
     （没有第二套标注绘制，细则见 `docs/rules/backend/export-pipeline.md`）。图幅之外的标注被页面裁掉，不扩大页面。**所有格式照常可选**：EPS 在后端把原图 EPS 嵌进外层 EPS 再叠标注 PostScript，
     标注含半透明等 PS 画不出的效果时该项逐项失败 `eps_annotations_unsupported`（不在前端禁用）。没有可见标注时请求与从前逐字节相同。
     看护 `lib/singleExportDoc.test.ts`、`ExportDialog.test.tsx`「单图档带入画布上的标注」、`tests/test_export_original_annotations.py`。

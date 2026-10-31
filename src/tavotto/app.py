@@ -2351,33 +2351,73 @@ def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=N
             else {}
         ),
     }
-    canvas = engine_exportreq.CanvasSource(
-        page_w_mm=float(src.w_mm), page_h_mm=float(src.h_mm), objects=[panel, *src.objects]
-    )
-    ppi = req.ppi
-    if src.source_kind == "raster" and src.px_w:
-        # 位图源保持源像素网格：页面 w_mm 对应 px_w 个像素 → 有效 dpi = px_w / (w_mm / 25.4)
-        ppi = float(src.px_w) * 25.4 / float(src.w_mm)
+
+    def stacked(objs, panel_obj):
+        """保留图层次序：前 `objects_below` 个标注在图下面，其余在图上面。"""
+        n = src.objects_below
+        return [*objs[:n], panel_obj, *objs[n:]]
+
     wants_eps = engine_exportreq.FORMAT_EPS in req.formats
     formats = tuple(f for f in req.formats if f != engine_exportreq.FORMAT_EPS)
+    raster_formats = tuple(f for f in formats if f in engine_exportreq.RASTER_FORMATS)
+    vector_formats = tuple(f for f in formats if f not in raster_formats)
+    # 同一张图所有格式出自同一个来源（与无标注的原图导出同一个判定）：要 EPS（且不要 SVG）时，有脚本的磁盘图
+    # 也由 worker 现画，PDF / PNG / TIFF 与 EPS 的内层就出自同一次运行；没有脚本的图仍取磁盘文件（EPS 自己报 eps_needs_script）
+    rerender_ids = frozenset(
+        {src.figure_id}
+        if engine_exportroute.original_rerender(req.formats)
+        and Path(src.figure_id).suffix.lower() not in SVG_EXT
+        and _has_runnable_script(src.figure_id)
+        else ()
+    )
     produced: list = []
     dir_arg = {"artifact_sources": artifact_sources} if artifact_sources else {}
-    if formats:
+    if rerender_ids:
+        dir_arg["rerender_ids"] = rerender_ids
+
+    def run(fmts, objects, w_mm, h_mm, ppi, sub):
+        # 各自的子目录：两次合成都写 out.pdf，同目录会互相覆盖
+        work = tmp_dir / sub
+        work.mkdir(parents=True, exist_ok=True)
+        canvas = engine_exportreq.CanvasSource(page_w_mm=w_mm, page_h_mm=h_mm, objects=objects)
         canvas_req = dataclasses.replace(
             req,
             scope=engine_exportreq.SCOPE_CANVAS,
-            formats=formats,
+            formats=fmts,
             ppi=ppi,
             canvas=canvas,
             original=None,
         )
-        produced = _export_produce_rendercore(_PageJob(job, canvas_req), tmp_dir, **dir_arg)
+        return _export_produce_rendercore(_PageJob(job, canvas_req), work, **dir_arg)
+
+    w_mm, h_mm = float(src.w_mm), float(src.h_mm)
+    if vector_formats:
+        produced += run(
+            vector_formats, stacked(list(src.objects), panel), w_mm, h_mm, req.ppi, "ann_vec"
+        )
+    if raster_formats:
+        ppi = req.ppi
+        objs, pnl, page_h = list(src.objects), panel, h_mm
+        if src.source_kind == "raster" and src.px_w:
+            # 位图源保持源像素网格：页面 w_mm 对应 px_w 个像素 → 有效 dpi = px_w / (w_mm / 25.4)
+            ppi = float(src.px_w) * 25.4 / w_mm
+            if src.px_h and abs(src.px_h / src.px_w - h_mm / w_mm) > 0.005 * (h_mm / w_mm):
+                # 横纵密度不同（逻辑 mm 的宽高比 ≠ 像素的宽高比）：位图输出的页面按像素宽高比取，
+                # 标注的纵向位置 / 盒高按同一比例换算；不重采样，输出恰为 px_w × px_h
+                k = (src.px_h / src.px_w) * (w_mm / h_mm)
+                page_h = h_mm * k
+                pnl = {**panel, "h_mm": page_h}
+                objs = [
+                    {**o, "y_mm": float(o.get("y_mm", 0)) * k, "h_mm": float(o.get("h_mm", 0)) * k}
+                    for o in objs
+                ]
+        produced += run(raster_formats, stacked(objs, pnl), w_mm, page_h, ppi, "ann_ras")
     if wants_eps:
-        produced.append(_produce_annotated_eps(job, req, canvas, tmp_dir, artifact_sources))
+        produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
     return produced
 
 
-def _produce_annotated_eps(job, req, canvas, tmp_dir: Path, artifact_sources=None):
+def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
     """带标注的 EPS（自写叠加，ADR 0046 补记）：worker 的 matplotlib 照旧出原图 EPS，再由 `engine/epsoverlay`
     把它原样嵌进外层 EPS，叠上 RenderCore 为**同一组标注**编出的 IR（`rendercore/epswriter` 写成 PostScript 运算符）。
     PostScript 没有透明：标注含 alpha<1 / 位图等 PS 表达不了的东西时，这一项逐项失败（`eps_annotations_unsupported`），
@@ -2401,42 +2441,55 @@ def _produce_annotated_eps(job, req, canvas, tmp_dir: Path, artifact_sources=Non
         )
     if inner.tmp_path is None or not Path(inner.tmp_path).is_file():
         return inner  # 原图 EPS 本身给不出（没有脚本 / 冷 worker …）：沿用那一档的稳定码
-    objects = list(src.objects)
-    math = engine_mathtypeset.layouts_for(objects, _mathtext_project())
     provider = rc_facade.provider()
 
     class _NoPanels:
         def resolve(self, obj):  # 标注里没有面板；到这里说明请求被篡改
             raise engine_exportreq.ExportRequestError("bad_objects", "标注里不能有面板", {})
 
-    compiled = rc_plan.compile_page(
-        float(src.w_mm),
-        float(src.h_mm),
-        objects,
-        sources=_NoPanels(),
-        faces=provider,
-        background=None,
-        math=math,
-    )
-    for p in compiled.problems:
-        msg = f"{p['object_id']}: {p['code']} {''.join(p.get('chars', []))}".rstrip()
-        if msg not in job.warnings:
-            job.warnings.append(msg)
-    try:
-        overlay, _facts = epswriter.overlay_ps(compiled.page, provider)
-    except epswriter.UnsupportedCapability as exc:
-        return engine_exportjob.Produced(
-            format=fmt,
-            error_code="eps_annotations_unsupported",
-            error_params={"operation": exc.operation, "object_id": exc.params.get("object_id", "")},
+    n = src.objects_below
+    parts = {}
+    for key, objs, prefix in (
+        ("below", list(src.objects[:n]), "tvu"),
+        ("above", list(src.objects[n:]), "tvg"),
+    ):
+        if not objs:
+            parts[key] = ("", None)
+            continue
+        compiled = rc_plan.compile_page(
+            float(src.w_mm),
+            float(src.h_mm),
+            objs,
+            sources=_NoPanels(),
+            faces=provider,
+            background=None,
+            math=engine_mathtypeset.layouts_for(objs, _mathtext_project()),
         )
+        for p in compiled.problems:
+            msg = f"{p['object_id']}: {p['code']} {''.join(p.get('chars', []))}".rstrip()
+            if msg not in job.warnings:
+                job.warnings.append(msg)
+        try:
+            text, _facts = epswriter.overlay_ps(compiled.page, provider, prefix=prefix)
+        except epswriter.UnsupportedCapability as exc:
+            return engine_exportjob.Produced(
+                format=fmt,
+                error_code="eps_annotations_unsupported",
+                error_params={
+                    "operation": exc.operation,
+                    "object_id": exc.params.get("object_id", ""),
+                },
+            )
+        parts[key] = (text, compiled.page)
+    page = parts["above"][1] or parts["below"][1]
     out = tmp_dir / "out_annotated.eps"
     out.write_bytes(
         engine_epsoverlay.compose(
             Path(inner.tmp_path).read_bytes(),
-            overlay,
-            compiled.page.width_pt,
-            compiled.page.height_pt,
+            parts["above"][0],
+            page.width_pt,
+            page.height_pt,
+            underlay=parts["below"][0],
         )
     )
     bbox = engine_epsfile.bounding_box_pt(out)
@@ -2905,7 +2958,9 @@ def _produce_svg_asset_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source
     return result
 
 
-def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+def _export_produce_rendercore(
+    job, tmp_dir: Path, *, artifact_sources=None, rerender_ids=frozenset()
+) -> list:
     """`scope=canvas` 的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08 候选、U10 起默认，ADR 0067 / 0072）。
 
     **忠实于画布**——页面尺寸、布局、裁切照搬；多格式出自同一份 Canonical PDF，所以 PDF 与 PNG 不可能
@@ -2958,7 +3013,23 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
                     )
             return fs
 
-    resolver = rc_sources.ExecutionSourceResolver(
+    class _Resolver(rc_sources.ExecutionSourceResolver):
+        """`rerender_ids`：这几张磁盘图即使没有 override 也由 worker 现画（原图导出要 EPS 时的单一来源，
+        与 `_resolve_panel_source(rerender=True)` 同一判定）。"""
+
+        def resolve(self, obj: dict):
+            if str(obj.get("id", "")) in rerender_ids:
+                fs = self.execute(obj)
+                if fs.artifact.origin != engine_figcapture.ORIGIN_EXECUTION:
+                    raise rc_sources.SourceError(
+                        "source_needs_execution",
+                        f"{obj.get('id', '')}：execute 回调交回的不是执行产物",
+                        {"figure": str(obj.get("id", ""))},
+                    )
+                return fs
+            return super().resolve(obj)
+
+    resolver = _Resolver(
         static=_StaticInProject(),
         execute=lambda obj: _execution_source(
             obj,
