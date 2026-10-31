@@ -6,7 +6,6 @@ import { PRODUCT_NAME } from '@/lib/brand'
 import { dragRegionProps } from '@/lib/desktop'
 import { DEMO_FIGURE } from '@/lib/onboarding/demoFigure'
 import { leaveFromWelcome, runTutorialEntry } from '@/lib/onboarding/tutorial'
-import { cn } from '@/lib/utils'
 import { DEMO_EDITS_EMPTY } from '@/store/onboardingStore'
 import { BrandMark } from '../ui/BrandMark'
 import { Button } from '../ui/Button'
@@ -16,7 +15,7 @@ import { CALLOUT_LEAD, estimateTextBox, placeCallouts } from './tutorialGeometry
 import { FigureStage } from './tutorialLayout'
 
 /**
- * 欢迎页（不是步骤）：一句「直接在图上改 :)」+ 「脚本 → 图」的对照 + 两个出口。
+ * 欢迎页（不是步骤）：一句「直接在图上改」+ 「脚本 → 图」的对照 + 两个出口。
  *
  * 左边的代码是内置示例 `fig1_kinetics.py` 里**逐字存在**的几行（`demoFigure.json` 的
  * `snippet`，`tests/test_tutorial_demo_figure.py` 逐行核对），组与组之间是省略线，不冒充连续代码；
@@ -42,19 +41,10 @@ export function TutorialWelcome() {
           </span>
         </div>
         <h1 ref={heading} id="tutorial-welcome-title" tabIndex={-1} className="type-hero mt-5 mb-2.5 outline-none">
-          {t('onboarding.welcome.title')} <span className="whitespace-nowrap font-medium text-warn">{t('onboarding.welcome.smile')}</span>
+          {t('onboarding.welcome.title')}
         </h1>
         <p className="type-heading font-normal text-ink-3">{t('onboarding.welcome.subtitle')}</p>
-        <ul
-          aria-label={t('onboarding.welcome.featuresLabel')}
-          className="mt-4 flex flex-wrap items-center justify-center text-lg text-ink-3"
-        >
-          {FEATURES.map((f, i) => (
-            <li key={f} className={cn('px-4 whitespace-nowrap', i > 0 && 'border-l border-border-strong')}>
-              {t(`onboarding.welcome.feature.${f}`)}
-            </li>
-          ))}
-        </ul>
+        <p data-welcome-features className="mt-4 text-lg text-ink-3">{t('onboarding.welcome.features')}</p>
 
         <div
           role="group"
@@ -92,9 +82,6 @@ export function TutorialWelcome() {
     </div>
   )
 }
-
-/** 能在图上直接改的东西（原型的那一行；最后一项是「还有更多」） */
-const FEATURES = ['legend', 'axes', 'colorbar', 'text', 'align', 'layout', 'more'] as const
 
 /* -------------------------------- 脚本卡 -------------------------------- */
 
