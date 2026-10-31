@@ -5544,6 +5544,17 @@ export const repairImportFolder = (token: string) =>
     body: JSON.stringify({ token }),
   })
 
+/**
+ * 「跳过这个文件夹」（ADR 0154）：失败卡 `import_folder_abi_mismatch` 的 `params.ignore_token` 是服务端的不透明令牌，
+ * 接口只收它，路径不出后端。后端记住「这个项目别让脚本去那个文件夹 import」并关掉这个项目的会话；成功后调用方负责重跑脚本。
+ */
+export const ignoreImportFolder = (token: string) =>
+  jsonFetch<{ ok: boolean; path_ignore: { paths: string[] } }>('/api/engine/path-ignore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  })
+
 // ---------------------------------------------------------------------------
 // 受控依赖修复（ADR 0019）
 //
@@ -7094,6 +7105,10 @@ export interface PreparationResultError {
     /** `import_folder_unreadable`：目录名（不是路径）+ 仅 Windows 才有的一次性修复令牌（不透明，推不出路径） */
     folder?: string
     repair_token?: string
+    /** `import_folder_abi_mismatch`（`folder` 同上，是显示名）：目录里扩展的 Python 版本、当前版本，与「跳过这个文件夹」的一次性令牌 */
+    abi?: string
+    current?: string
+    ignore_token?: string
   }
   /** 脚本的完整 traceback（保尾部）；敏感运行没有 */
   traceback?: string

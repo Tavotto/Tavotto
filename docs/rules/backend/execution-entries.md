@@ -2,7 +2,7 @@
 
 > 原文出自 `src/tavotto/AGENTS.md`「两条执行入口：safe worker 与 native bridge（ADR 0014 / 0020）」（2026-09-17 指导文档治理时迁出，正文逐字未改）。
 > 这里是这一主题规则的**唯一全文**；`src/tavotto/AGENTS.md` 只留速查行。改规则改这里，并同步那一行。
-> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_roundtrip.py`、`tests/test_install_dir_bytecode_free.py`、`tests/bridge/test_bridge_namespace.py`、`tests/bridge/test_bridge_thread_model.py`、`tests/test_import_architecture.py`、`tests/test_foundation_first_open.py`、`tests/test_unreadable_import_skip.py`
+> 看护用例（`src/tavotto/AGENTS.md` 那一行原「看护」格，2026-10-23 迁入；速查表不再列用例，加用例改这里）：`tests/test_worker_roundtrip.py`、`tests/test_install_dir_bytecode_free.py`、`tests/bridge/test_bridge_namespace.py`、`tests/bridge/test_bridge_thread_model.py`、`tests/test_import_architecture.py`、`tests/test_foundation_first_open.py`、`tests/test_unreadable_import_skip.py`、`tests/test_foreign_abi_path.py`
 
 <!-- agents-route
 sheet: src/tavotto/AGENTS.md
@@ -109,6 +109,19 @@ order: 180
   `POST /api/engine/folder-repair {token}`：只收令牌、要 `_page_authenticated()`、路径动手前 `validate_target` 对真实路径再验（每一条拒绝一个用例）、
   提权前 `scan_for_links` 不跟随地拒绝子孙里的重解析点 / 超限，一次 UAC 提权跑 `icacls <目录> /setowner *S-1-5-32-544 /T /C /L /Q` + `icacls <目录> /reset /T /C /L /Q`（argv 由 `build_commands` 唯一给出；不用 takeown，其确认值随语言变；提权脚本内先以备份语义（SeBackupPrivilege + `FILE_FLAG_BACKUP_SEMANTICS | OPEN_REPARSE_POINT`，`folderrepair._WALK_SOURCE`）遍历整棵树再动手：201 链接 / 203 超限 / 202 遍历失败；Windows 真机手动用例 `scripts/dev/verify_folder_repair_windows.ps1`）、事后复核仍读不了算失败。
   不放宽任何一条验证；加新的拒绝条件加在 `validate_target` 并配用例。 静态关卡：脚本会改 `sys.path`（`importscan` 的 `sys_path_modified`）时，表外无可信映射的未装模块不在运行前问包名，记入 `JointPlan.deferred_unverified` 先跑一次（`depplan.plan`）。看护 `tests/test_folder_repair.py`。
+
+## 跳过外来 ABI 的私有依赖文件夹（ADR 0154）
+
+脚本把 `pip install --target` 出来的私有目录插到 `sys.path` 最前，里面的编译扩展是为**别的** Python 小版本编的（TVD-ZCR4：cp312 的 `.kegg_python` 对 3.14 的环境）。
+换 Python 版本救不了；让那个目录对这个项目不生效，**脚本与目录都不动**。
+
+- **识别**只有一处 `bridgeboot.foreign_abi_facts`（worker `_foreign_abi_fact` 与 bridge `_foreign_abi_extra` 共用）：异常链里有 `ImportError`、证据文件（`ImportError.path` / traceback 帧）
+  落在 `sys.path` 目录 D 下、D 不在解释器包目录 / 脚本目录 / 项目根（或其祖先）之下、D 下该顶层包里有 ABI 标签不符的扩展（`abi3` 与无标签算兼容）。不解析报错文字。
+  `pool.foreign_abi_error` → 稳定码 `import_folder_abi_mismatch`（先于缺依赖与读不了判）；路径只在私有键，换成 `pathignore` 令牌就地丢弃。
+- **补救**：名单存项目设置 `ignored_import_paths`（`engine/pathignore`，唯一出处；项目根与祖先永不收）；`ExecutionSpec.ignored_paths` → `--ignore-paths`（`worker_argv` / `bridge_argv` 同一个参数，
+  三条 spawn 路径从 `pathignore.paths_for` 取，进 argv 所以会话身份随之变）；`bridgeboot.IgnoredImportPaths` 装在读不了查找器 / `PathFinder` 之前，只管顶层导入，**只对名单里的目录生效**，
+  用户的同名模块照旧赢，`sys.path` 不动。改名单 = `app.remember_ignored_import_folder`（令牌端点 `POST /api/engine/path-ignore` 与 AI 修复的 `ignore_import_folder` 工具共用）+ 关这个项目的会话。
+- 看护 `tests/test_foreign_abi_path.py`（识别的误判面、过滤器、名单与令牌、argv 同源、两条真入口端到端；变异：不装过滤器端到端必须红）。
 
 ## 写入根绊线：MCP 来源的 safe 运行（#898，ADR 0141）
 

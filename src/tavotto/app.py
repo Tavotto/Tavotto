@@ -129,6 +129,7 @@ from .engine import (
     originalspec as engine_originalspec,
     originrecord as engine_originrecord,
     patchspec as engine_patchspec,
+    pathignore as engine_pathignore,
     perfprobe as engine_perfprobe,
     pool as engine_pool,
     preparation as engine_preparation,
@@ -779,6 +780,7 @@ def _worker_error_payload(exc, stage: str = "", *, figure_snapshot_invalidation=
         engine_pool.ARGUMENTS_ERROR_CODE,
         *engine_texdiag.ERROR_CODES,
         engine_pool.IMPORT_FOLDER_UNREADABLE_CODE,
+        engine_pool.IMPORT_FOLDER_ABI_CODE,
         engine_figcapture.EXPORT_RASTER_TOO_LARGE_CODE,
     ):
         # 脚本要输入（ADR 0099：提示原文 + 为什么没人能答，T08）/ 参数解析器退出（T03：个数与类别）：
@@ -10492,6 +10494,47 @@ def api_engine_folder_repair():
     return jsonify({"ok": True, **result})
 
 
+#: 「跳过这个文件夹」接口的 HTTP 状态：令牌失效 410，被拒的目标 403
+_PATH_IGNORE_STATUS = {
+    engine_pathignore.ERROR_TOKEN_INVALID: 410,
+    engine_pathignore.ERROR_REJECTED: 403,
+}
+
+
+def remember_ignored_import_folder(root: str, path: str) -> dict:
+    """记住「这个项目别让脚本去 `path` 这个目录 import」并关掉这个项目的会话（`--ignore-paths` 是 spawn 时交给 worker 的）。
+
+    令牌端点与 AI 修复的 `ignore_import_folder` 工具共用这一处（ADR 0154），没有第二份逻辑。已经记过的不重复关会话。"""
+    before = engine_pathignore.paths_for(root)
+    state = engine_pathignore.ignore_folder(root, path)
+    if engine_pathignore.paths_for(root) != before:
+        engine_pool.shutdown_all(root)
+        LOG.info("项目的导入忽略目录: %d 个（%s）", len(state["paths"]), root)
+    return state
+
+
+@app.post("/api/engine/path-ignore")
+def api_engine_path_ignore():
+    """「跳过这个文件夹」（ADR 0154）：只收失败卡上的不透明令牌，不收路径。
+
+    要「用户在页面上点了」（`_page_authenticated`，fail closed：MCP / CLI 的本机凭据头不算）；令牌绑项目、
+    一次性、会过期。成功 `{ok: true, path_ignore: {paths}}`，调用方随后重跑脚本。"""
+    root = str(require_project())
+    body = request.get_json(silent=True) or {}
+    token = body.get("token") if isinstance(body, dict) else None
+    try:
+        if not _page_authenticated():
+            raise engine_pathignore.IgnoreError(engine_pathignore.ERROR_REJECTED)
+        path = engine_pathignore.path_of_token(token, root)
+        state = remember_ignored_import_folder(root, path)
+        engine_pathignore.consume_token(token)
+    except engine_pathignore.IgnoreError as exc:
+        return jsonify(
+            {"error": f"跳过文件夹未完成: {exc.code}", "code": exc.code, "params": {}}
+        ), _PATH_IGNORE_STATUS.get(exc.code, 500)
+    return jsonify({"ok": True, "path_ignore": state})
+
+
 def _input_remap_error(exc):
     return jsonify({"error": str(exc), "code": exc.code, "params": dict(exc.params)}), 400
 
@@ -11079,6 +11122,14 @@ def _native_preparation_runner(pl, before_retry=None):
             native_project = str(require_project())
         except NoProjectError:
             native_project = ""
+        foreign = engine_pool.foreign_abi_error(
+            str(error.get("message") or "脚本运行出错"),
+            str(error.get("traceback") or ""),
+            error,
+            project=native_project,
+        )
+        if foreign is not None:
+            raise foreign
         unreadable = engine_pool.unreadable_folder_error(
             str(error.get("message") or "脚本运行出错"),
             str(error.get("traceback") or ""),

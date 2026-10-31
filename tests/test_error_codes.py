@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from tavotto import tiffprobe
-from tavotto.engine import folderrepair
+from tavotto.engine import folderrepair, pathignore
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = ROOT / "src" / "tavotto" / "app.py"
@@ -91,6 +91,8 @@ _CODE_REGISTRIES = (
     "tavotto.engine.projectcopy",
     # 「修复权限」（ADR 0153 修订 2026-10-30）：`RepairError.code` 由 `/api/engine/folder-repair` 转成 JSON
     "tavotto.engine.folderrepair",
+    # 「跳过这个文件夹」（ADR 0154）：`IgnoreError.code` 由 `/api/engine/path-ignore` 转成 JSON
+    "tavotto.engine.pathignore",
 )
 
 
@@ -190,6 +192,10 @@ USER_VISIBLE_CODES = {
     "write_outside_roots": set(),
     # ADR 0153：脚本加进 sys.path 的项目外文件夹读不了、跳过之后仍失败；参数来自 `pool.recovery_params`（只有目录名）
     "import_folder_unreadable": {"folder"},
+    # ADR 0154：私有依赖目录里的编译扩展是为别的 Python 小版本编的；参数来自 `pool.recovery_params`（显示名 + 两个版本）
+    "import_folder_abi_mismatch": {"folder", "abi", "current"},
+    # 「跳过这个文件夹」（ADR 0154，`engine/pathignore`）：固定文案、不带参数——路径不进响应
+    **{code: set() for code in pathignore.ERROR_CODES},
     # 「修复权限」（ADR 0153 修订 2026-10-30，`engine/folderrepair`）：全是固定文案、不带参数——路径不进响应
     **{code: set() for code in folderrepair.ERROR_CODES},
     # worker 直出位图超像素预算（`figcapture.check_export_raster`）；参数来自 `pool.recovery_params`
