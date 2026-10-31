@@ -9,6 +9,7 @@ import { IconProvider } from './components/ui/Icon'
 import { installIconMotion } from './components/ui/iconMotion'
 import { bootstrapDesktopSession, dragRegionProps, setDesktopMenuLocale, windowChrome } from './lib/desktop'
 import { currentLocale, i18n, initI18n, t } from './i18n'
+import { installInputModality } from './lib/inputModality'
 import { applyTheme } from './lib/theme'
 import { useUiStore } from './store/uiStore'
 import './index.css'
@@ -28,6 +29,8 @@ document.documentElement.lang = currentLocale()
 // 跑到这里时浏览器可能已经画过一帧）；这里是对账——以 uiStore 读出的偏好为准再落一次。
 // 下面那个不经 React 的「会话建立失败」页也读同一套 CSS 变量（宪法第二十八节）
 applyTheme(useUiStore.getState().theme)
+// 输入方式：指针操作之后程序化挪焦点不画键盘焦点环（`lib/inputModality`、index.css）
+installInputModality()
 
 // 原生菜单的文案在壳里另有一份（Rust 在 webview 起来之前就要建菜单）。
 // 这条通知**放在这儿而不是放进 `@/i18n`**：i18n 模块被 store / lib / 单测到处
