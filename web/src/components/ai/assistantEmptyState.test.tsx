@@ -46,9 +46,13 @@ let root: Root
 let host: HTMLDivElement
 
 /** 有没有选中一张可编辑的图，是两条完全不同的路径 */
-async function mount({ withPanel }: { withPanel: boolean }) {
+async function mount({ withPanel, extra = [] }: { withPanel: boolean; extra?: PanelObject[] }) {
   await useDocumentStore.getState().switchDocument(emptyProject(), 'd_assistant')
-  if (withPanel) {
+  if (!withPanel && extra.length) {
+    // 什么都没选，画布上有 extra 里这几张可编辑的图
+    useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: extra } }) as never)
+    useSelectionStore.setState({ ids: [] } as never)
+  } else if (withPanel) {
     useDocumentStore.setState((s) => ({ doc: { ...s.doc, objects: [panel()] } }) as never)
     useSelectionStore.setState({ ids: ['p1'] } as never)
   } else {
@@ -129,6 +133,34 @@ describe('还没发过任务时的信息布局', () => {
     expect(q('[data-ai-scroller]')!.textContent).toContain(ai('panel.noPanelTitle'))
     expect(q('[data-ai-example]')).toBeNull()
     expect(q('[data-ai-context]'), '没有目标时没有上下文带').toBeNull()
+  })
+})
+
+describe('没选中对象时的目标（UI 审计 C5）', () => {
+  const second = (): PanelObject => ({ ...panel(), id: 'p2', name: 'Fig2', fileId: 'Fig2.pdf', script: '/tmp/figs/fig2.py' }) as PanelObject
+
+  it('画布上恰好一张可编辑的图、什么都没选：它自动是目标，输入框有占位，选区不动', async () => {
+    await mount({ withPanel: false, extra: [panel()] })
+    expect(q('[data-ai-target]')!.textContent).toContain('Fig1')
+    expect(q('[data-ai-target]')!.textContent).toContain(ai('scope.figure'))
+    const box = q<HTMLTextAreaElement>('[data-ai-input]')!
+    expect(box.disabled).toBe(false)
+    expect(box.placeholder).toBe(ai('panel.placeholder'))
+    expect(useSelectionStore.getState().ids).toEqual([])
+  })
+
+  it('多张可编辑的图：空态列出名字，点一下选中那张', async () => {
+    await mount({ withPanel: false, extra: [panel(), second()] })
+    expect(q('[data-ai-context]')).toBeNull()
+    expect(qa('[data-ai-pick-panel]').map((b) => b.textContent)).toEqual(['Fig1', 'Fig2'])
+    await act(async () => qa('[data-ai-pick-panel]')[1].click())
+    expect(useSelectionStore.getState().ids).toEqual(['p2'])
+  })
+
+  it('选中了别的东西（非面板）时不回退到那张图', async () => {
+    await mount({ withPanel: false, extra: [panel()] })
+    await act(async () => useSelectionStore.setState({ ids: ['t1'] } as never))
+    expect(q('[data-ai-target]')).toBeNull()
   })
 })
 

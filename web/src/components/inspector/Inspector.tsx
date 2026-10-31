@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import { tryRegisterPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
-import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, useUiStore, type RightTab } from '@/store/uiStore'
+import { RIGHT_DEFAULT, RIGHT_MAX, RIGHT_MIN, isRightPinned, useUiStore, type RightTab } from '@/store/uiStore'
 import type { ArrowObject, PanelObject, ShapeObject, TextObject } from '@/types/document'
 import { useAiStore } from '@/store/aiStore'
 import { TimelinePanel } from '../VersionDialog'
@@ -66,7 +66,7 @@ export function Inspector({
   const tab = useUiStore((s) => s.rightTab)
   const setTab = useUiStore((s) => s.setRightTab)
   const width = useUiStore((s) => s.rightWidth)
-  const pinned = useUiStore((s) => s.rightPinned)
+  const pinned = useUiStore(isRightPinned)
   const layout = useUiStore((s) => s.layout)
   const runningAi = useAiStore((s) => s.sessions.some((x) => x.status === 'running'))
 

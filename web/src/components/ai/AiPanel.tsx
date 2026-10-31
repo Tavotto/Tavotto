@@ -193,15 +193,29 @@ function chipsFor(scope: AiScope, element: ManifestElement | null, hasAxes: bool
   }
 }
 
-/** 当前作用的目标面板：优先图内编辑中的，其次单选的 script 面板 */
+/** 画布上可交给助手改的图（有脚本来源的面板） */
+function useEditablePanels(): PanelObject[] {
+  const objects = useDocumentStore((s) => s.doc.objects)
+  return useMemo(
+    () => objects.filter((o): o is PanelObject => o.type === 'panel' && !!(o as PanelObject).script),
+    [objects],
+  )
+}
+
+/**
+ * 当前作用的目标面板：优先图内编辑中的，其次单选的 script 面板；
+ * 什么都没选、画布上又恰好只有一张可编辑的图（单图编辑）时，它就是目标（只定助手的目标，不动画布选区）。
+ */
 function useTargetPanel(): PanelObject | null {
   const objects = useDocumentStore((s) => s.doc.objects)
+  const editable = useEditablePanels()
   const elementPanelId = useUiStore((s) => s.elementPanelId)
   const ids = useSelectionStore((s) => s.ids)
   const byId = (id: string | null) =>
     objects.find((o) => o.id === id && o.type === 'panel') as PanelObject | undefined
   const target = byId(elementPanelId) ?? (ids.length === 1 ? byId(ids[0]) : undefined)
-  return target?.script ? target : null
+  if (target) return target.script ? target : null
+  return ids.length === 0 && elementPanelId == null && editable.length === 1 ? editable[0] : null
 }
 
 /**
@@ -260,6 +274,37 @@ function useAgentChoice() {
 export function AssistantPanel() {
   const generation = useAiStore((s) => s.generation)
   return <AssistantPanelBody key={generation} />
+}
+
+/** 没有目标时的空态；画布上有多张可编辑的图就列出名字，点一下选中那张 */
+function NoPanelState() {
+  useTranslation('ai')
+  const editable = useEditablePanels()
+  if (editable.length < 2) return <EmptyState art="select" title={ai('panel.noPanelTitle')} />
+  return (
+    <div data-ai-no-panel className="flex min-h-full flex-col items-center justify-center pb-4">
+      <div className="w-full">
+        <EmptyState art="select" title={ai('panel.noPanelTitle')} />
+      </div>
+      <div className="-mt-4 flex w-full max-w-[17rem] flex-col gap-1.5">
+        {editable.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            data-ai-pick-panel={p.id}
+            onClick={() => useSelectionStore.getState().set([p.id])}
+            className={cn(
+              'flex min-h-8 items-center rounded-md bg-surface px-3 py-1.5 text-left text-base text-ink-2',
+              'inset-ring inset-ring-border outline-none transition-colors duration-fast',
+              'hover:bg-surface-hover hover:text-ink focus-visible:focus-ring',
+            )}
+          >
+            <span className="min-w-0 truncate">{p.name ?? p.fileId}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function AssistantPanelBody() {
@@ -642,7 +687,7 @@ function AssistantPanelBody() {
         >
           {!panel && dataTurns.length === 0 ? (
             /* 「这里没有可干的活」是真正的空状态，留在中间 */
-            <EmptyState art="select" title={ai('panel.noPanelTitle')} />
+            <NoPanelState />
           ) : turns.length > 0 ? (
             // 节奏由列表容器统一管（§6.1）：轮与轮 16、轮内各块 8；子组件不带外边距
             <div
