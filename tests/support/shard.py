@@ -293,10 +293,24 @@ def median_weights_of_runs(runs: Sequence[Sequence[Path]], root: Path) -> dict[s
     return out
 
 
+def max_of_tables(tables: Sequence[Mapping[str, float]]) -> dict[str, float]:
+    """多张权重表 → 逐文件取**最大值**（秒，保留两位）。某张表里没有的文件只看有它的那几张。
+
+    用途：两个 lane 共用一张表但各自的逐文件耗时并不一致（Ubuntu 上跑、Windows 上 skip 的文件，
+    Windows 表里近似 0）。只按一边算，另一边的最慢片就失衡；取最大值保证任何一边都不会把
+    重文件低估成 0。
+    """
+    if not tables:
+        raise ShardError("一张表都没有")
+    files = sorted(set().union(*tables))
+    return {f: round(max(t[f] for t in tables if f in t), 2) for f in files}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """`python tests/support/shard.py --from-junit a.xml b.xml --source … --measured … > shard_weights.json`
 
     多次运行取中位：`--from-junit-runs RUN_DIR …`，每个目录是一次运行（其下所有 `junit.xml` 算同一次）。
+    多个 lane 合一张：各 lane 先各出一张中位表，再 `--max-of A.json B.json …` 逐文件取最大值。
     """
     # Windows 上 stdout 被重定向成管道 / 文件时退回系统区域编码（cp1252 / cp936），而这个
     # 入口打的是 `ensure_ascii=False` 的中文 JSON——第一行就 UnicodeEncodeError，退出码 1。
@@ -308,11 +322,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     src = ap.add_mutually_exclusive_group(required=True)
     src.add_argument("--from-junit", nargs="+", type=Path, metavar="XML")
     src.add_argument("--from-junit-runs", nargs="+", type=Path, metavar="RUN_DIR")
+    src.add_argument(
+        "--max-of",
+        nargs="+",
+        type=Path,
+        metavar="TABLE_JSON",
+        help="把若干张已生成的权重表逐文件取最大值（各 lane 各算一张中位表，再合并）",
+    )
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
     ap.add_argument("--source", required=True, help="这些 junit 从哪来（run id / job / 本机命令）")
     ap.add_argument("--measured", required=True, help="哪天、哪台机器、哪个 HEAD 量的")
     args = ap.parse_args(argv)
-    if args.from_junit_runs:
+    if args.max_of:
+        table = max_of_tables([load_weights(p) for p in args.max_of])
+        unit = "seconds (setup+call+teardown per testcase, summed per file; per-file max across lane tables)"
+    elif args.from_junit_runs:
         runs = [sorted(d.rglob("junit.xml")) for d in args.from_junit_runs]
         empty = [str(d) for d, xmls in zip(args.from_junit_runs, runs, strict=True) if not xmls]
         if empty:

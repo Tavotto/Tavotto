@@ -44,6 +44,11 @@ order: 50
   （3.10：61 → 54）。macOS 与 Windows 共用一个片数（合同与基线解析器按「一个 job 一个 N」写）；公开仓库 + Enterprise，
   并发不是约束。同一 PR 里 **`backend-fast` 由 4 片改 6 片**（`--shard=K/6`）：platforms 压下去之后它是合并组最长腿
   （4 片实测 62–63 分钟），新表模拟 6 片最重片 3.10 28–38、3.14 34–38，与 Windows 8 片持平；8 片会被 Windows 那条腿盖住。
+  **2026-10-31 权重表改「Ubuntu 与 Windows 两张中位表逐文件取最大值」**（`--from-junit-runs` 各出一张，再
+  `python tests/support/shard.py --max-of WIN.json UBU.json …`）：10-24 那版只按 Windows 算，而 backend-fast 跑在 Ubuntu 上，
+  同一文件两边能差一个数量级（`tests/test_conda_launch_context.py`：Ubuntu 1587 秒、Windows 124 秒、旧表 3.69 秒），
+  旧表下 backend-fast 最慢片（第 6 片）实测 54–69 分钟、其余片 30–45 分钟。一张表同时喂 6 片（Ubuntu）和 8 片（Windows / macOS），
+  取最大值保证任何一边都不会把某个重文件低估成近似 0。以后重算也要两个 lane 一起量，别再只按一个 OS。
   改任一个 job 的片数
   要同步改：`tests/test_merge_queue_workflows.py::test_pytest_shards_agree_between_the_matrix_and_the_command`
   按 job_id 各自的期望片数、`tests/test_ci_baseline.py` 里对 `live_workflow[...]["matrix"]`
