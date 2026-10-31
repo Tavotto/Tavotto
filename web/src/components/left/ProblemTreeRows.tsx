@@ -345,7 +345,7 @@ export function IssueRow({
           valueText ? (
             <span
               data-issue-values
-              className={cn(rowMetaClass(current), 'shrink-0 whitespace-nowrap')}
+              className={cn(rowMetaClass(current), 'min-w-0 truncate')}
               title={values.expectedAll ? `${values.current} → ${values.expectedAll}` : valueText}
             >
               {values.current}

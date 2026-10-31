@@ -13,7 +13,7 @@ import { addFigureToLayout } from '@/store/workspace'
 /** 空画布上最多摆几张 */
 export const PICK_LIMIT = 4
 /** 一张卡的宽（px）：要完整放下「PDF · 7.3 × 5.8 cm」 */
-const CARD_W = 136
+export const CARD_W = 136
 const GAP = 10
 /** 提示面板的内边距（px） */
 const PAD = 16
@@ -98,7 +98,12 @@ function PickCard({
   const src = panelSrc(panel.id, panel.kind, 400, panel.mtime)
   const hint = (on: boolean) => abnormal && onHint(on)
   return (
-    <div className="motion-safe:animate-rise-in" style={{ animationDelay: `${index * 70}ms`, animationFillMode: 'both' }}>
+    // 宽度与 pickColumns 的版面计算同一个 CARD_W：长文件名 / 大缩略图撑不开卡，名字交给 MiddleEllipsis 按这个宽截断
+    <div
+      data-pick-slot
+      className="min-w-0 shrink-0 motion-safe:animate-rise-in"
+      style={{ width: CARD_W, animationDelay: `${index * 70}ms`, animationFillMode: 'both' }}
+    >
       <Card
         appearance="raised"
         padding="sm"

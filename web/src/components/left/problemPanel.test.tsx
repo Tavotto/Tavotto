@@ -307,7 +307,34 @@ describe('普通界面不出现内部标识', () => {
     // 行内只留要求本身：「显示已四舍五入」这类补一句的整句不在行里（在 title / ⓘ），否则 112px 的尾随格又要截断
     const values = container.querySelector<HTMLElement>('[data-issue-values]')!
     expect(values.className, '值用等宽数字').toContain('tabular-nums')
-    expect(values.className, '数值列永不截断').not.toContain('truncate')
+    // 短数值整段显示；溢出时才在尾随格内省略（见下一条）
+    expect(values.textContent).toContain('6.00 pt')
+  })
+
+  it('长文本当前值在尾随格内截断省略，不向左盖住对象名；完整值在 title 里', async () => {
+    await seed()
+    const long = 'Fig. 3 - normalized intensity (a.u.)' // 30 字符量级的 axis-label-format 当前值
+    const st = useValidationStore.getState()
+    useValidationStore.setState({
+      issues: st.issues.map((it, i) =>
+        i === 0
+          ? {
+              ...it,
+              ruleCode: 'axis-label-format',
+              message: { key: 'preflight.axisLabelFormat', ns: 'errors', values: { label: long, want: 'Name (unit)' } },
+            }
+          : it,
+      ),
+    })
+    await mount(<ProblemPanel />)
+    await openCard()
+    const el = [...container.querySelectorAll<HTMLElement>('[data-issue-values]')].find((e) => e.textContent?.includes(long))!
+    expect(el, '长当前值应出现在行尾').toBeTruthy()
+    expect(el.className).toContain('truncate')
+    expect(el.className).toContain('min-w-0')
+    expect(el.className).not.toContain('shrink-0')
+    expect(el.closest('[data-problem-trail-rest]'), '值在 112px 尾随格之内').toBeTruthy()
+    expect(el.title).toContain(long)
   })
 
   it('组头只有一颗 6px 圆点带色，图标与数字不染红 / 琥珀；等级字留给读屏', async () => {

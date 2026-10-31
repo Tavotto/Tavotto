@@ -15,7 +15,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CanvasStage } from '@/canvas/CanvasStage'
-import { pickColumns, pickRows } from '@/canvas/EmptyPickCards'
+import { CARD_W, EmptyPickCards, pickColumns, pickRows } from '@/canvas/EmptyPickCards'
 import { LayerTree } from '@/components/left/LayerTree'
 import { TooltipProvider } from '@/components/ui/Tooltip'
 import { t } from '@/i18n'
@@ -181,6 +181,15 @@ describe('选图卡的版面', () => {
     expect(pickColumns(200, 4)).toBe(1)
     expect(pickRows(317)).toBe(1)
     expect(pickRows(600)).toBe(3)
+  })
+
+  it('每张卡的包装宽度就是版面计算用的卡宽，长文件名不把卡撑开', async () => {
+    const long = `${'a-very-long-figure-file-name-'.repeat(4)}.pdf`
+    const list = [asset(long), asset('b.pdf')]
+    await mount(<EmptyPickCards panels={list} paperW={700} paperH={600} />)
+    const slots = [...document.querySelectorAll<HTMLElement>('[data-pick-slot]')]
+    expect(slots).toHaveLength(2)
+    for (const el of slots) expect(el.style.width).toBe(`${CARD_W}px`)
   })
 })
 
