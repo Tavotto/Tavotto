@@ -1263,6 +1263,22 @@
           "title": "中文回退字体：编辑、撤销、保存、重开和导出"
         }
       ]
+    },
+    {
+      "id": "edit.timeline-scrubber",
+      "status": "active",
+      "platform": "both",
+      "summary": {
+        "zh-CN": "时间线顶上的版本竖线条：划过看存好的缩略图，点下去开对比卡片",
+        "en-US": "Version strip atop the timeline: hover to see each saved thumbnail, click to open the compare card"
+      },
+      "entry": "右栏「时间线」页签顶部",
+      "e2e": [
+        {
+          "spec": "timeline-scrubber.spec.ts",
+          "title": "版本竖线条：划过出浮卡、点下去开对比卡片、键盘也能用"
+        }
+      ]
     }
   ]
 }

@@ -122,7 +122,8 @@ function fakeCtx(el: HTMLCanvasElement): unknown {
     // 画在面板层上的是图（记下是哪个面板）；层合成到主画布是 canvas
     drawImage(src: unknown) {
       if (src instanceof FakeImage) el.dataset.tag = src.tag
-      else if (src instanceof HTMLCanvasElement) events.push(`draw:${src.dataset.tag ?? ''}`)
+      // 最后「从主画布裁出内容区域」那一下（只拍内容，`contentBox`）不是叠放：主画布从不带 tag，不记
+      else if (src instanceof HTMLCanvasElement && src.dataset.tag !== undefined) events.push(`draw:${src.dataset.tag}`)
     },
     fillText(t: string) {
       fillTextCalls.push(t)
@@ -300,5 +301,28 @@ describe('composeTimelineThumb：写回标注跟着所属面板叠放（Codex #6
       await compose(objects, sources, new Map([['tA', 'pA']]))
       expect(events).toEqual(['draw:pA', 'draw:pB'])
     }
+  })
+})
+
+describe('composeTimelineThumb：只拍页面上有内容的那块（beta 0.19.3b4 反馈：单图编辑没有「页面」）', () => {
+  it('面板只占页面一角：结果带上拍的是哪一块（mm），后端据此记下、显示据此摆放', async () => {
+    const doc = { ...emptyDocument(), objects: [panel('pA', 0)] }
+    const out = await composeTimelineThumb(doc, new Map([['pA', { svg: VALID_SVG }]]))
+    expect(out?.box).toBeDefined()
+    const b = out!.box!
+    expect(b.x).toBeLessThanOrEqual(0)
+    expect(b.x + b.w).toBeGreaterThanOrEqual(80)
+    expect(b.w).toBeLessThan(doc.page.w)
+  })
+
+  it('面板铺满页面：整页，不带 box（与只拍整页时一样）', async () => {
+    const base = emptyDocument()
+    const doc = {
+      ...base,
+      objects: [panel('pA', 0, { w: base.page.w, h: base.page.h })],
+    }
+    const out = await composeTimelineThumb(doc, new Map([['pA', { svg: VALID_SVG }]]))
+    expect(out).not.toBeNull()
+    expect(out!.box).toBeUndefined()
   })
 })

@@ -489,6 +489,8 @@ USER_VISIBLE_CODES = {
     "version_name_too_long": {"max"},
     "version_moment_invalid": {"moment"},
     "version_thumb_invalid": set(),
+    # 只拍内容区域的缩略图：图写上了、裁切框写不上 → 撤掉这张图（500，文案固定）
+    "version_thumb_write_failed": set(),
     # --- issue #534：TIFF 素材。范围之外的 TIFF 在 `/api/panels` 的 `unsupported`、`safe_resolve`
     #     的 422 与导出作业里都报同一个 code，params 只有文件名 ---
     **{code: {"file"} for code in tiffprobe.ERROR_CODES},
