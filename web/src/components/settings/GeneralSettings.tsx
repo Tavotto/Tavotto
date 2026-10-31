@@ -56,7 +56,7 @@ export function GeneralSettings({ close }: { close: () => void }) {
     <>
       <LanguageAndLayout />
       <Sidebars />
-      <CanvasGroup close={close} />
+      <CanvasGroup />
       <Learning close={close} />
     </>
   )
@@ -170,7 +170,7 @@ function Sidebars() {
   )
 }
 
-function CanvasGroup({ close }: { close: () => void }) {
+function CanvasGroup() {
   const withCompanions = useUiStore((s) => s.dragAxesWithCompanions)
   return (
     <FormSection title={st('general.groupCanvas')}>
@@ -191,18 +191,6 @@ function CanvasGroup({ close }: { close: () => void }) {
             checked={withCompanions}
             onChange={(v) => useUiStore.getState().setCanvasPref({ dragAxesWithCompanions: v })}
           />
-        </SettingRow>
-        <SettingRow label={st('canvas.more')} data-settings-anchor="general.canvas">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              close()
-              useUiStore.getState().setRightTab('canvas')
-            }}
-          >
-            {st('canvas.openCanvasSettings')}
-          </Button>
         </SettingRow>
       </FieldGroup>
     </FormSection>

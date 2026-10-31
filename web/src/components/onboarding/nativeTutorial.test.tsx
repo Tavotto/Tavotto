@@ -164,6 +164,10 @@ describe('什么时候自己出现', () => {
     await mount()
     expect(layer()?.dataset.surface).toBe('welcome')
     expect(q('[data-tutorial-view="welcome"]')).not.toBeNull()
+    // 标题不带 :)；标题下是一句不可点的话，不是一排带竖线的「导航」
+    expect(q('#tutorial-welcome-title')!.textContent).not.toContain(':)')
+    expect(q('[data-tutorial-view="welcome"] ul')).toBeNull()
+    expect(q('[data-tutorial-view="welcome"] main > p:nth-of-type(2)')!.textContent).toContain('都能直接改')
     // 仅显示不记「看过」（2026-10-30）：此刻退出应用，下次启动仍会弹
     expect(ob().welcomeSeenAt).toBeNull()
     // 明确点「直接进入工作台」才算选择：同一会话不再弹；下次启动也不弹（welcomeSeenAt 记下了）
@@ -358,6 +362,10 @@ describe('第一步：拖入示例脚本', () => {
   it('没做之前「下一步」不能点；卡片真的落进投放框才完成', async () => {
     await openAt('demo_import')
     expect(q<HTMLButtonElement>('[data-tutorial-next]')!.disabled).toBe(true)
+    // 禁用时钮上写还要做什么；进度只在顶部一处（底部不再有第二排圆点）
+    expect(q('[data-tutorial-next]')!.textContent).toContain('拖入脚本后继续')
+    expect(q('[data-tutorial-back]')!.textContent).toContain('返回欢迎页')
+    expect(document.querySelectorAll('[data-tutorial-view="steps"] i.rounded-full')).toHaveLength(3)
     const card = q('[data-tutorial-file-card]')!
     await pointer(card, 'pointerdown', 100, 100)
     await pointer(card, 'pointermove', 400, 420)
@@ -373,6 +381,7 @@ describe('第一步：拖入示例脚本', () => {
     expect(q('[data-tutorial-rendering]')).toBeNull()
     expect(ob().completedSteps).toContain('demo_import')
     expect(q<HTMLButtonElement>('[data-tutorial-next]')!.disabled).toBe(false)
+    expect(q('[data-tutorial-next]')!.textContent).toContain('下一步')
     expect(q('[data-tutorial-feedback]')!.dataset.tutorialFeedback).toBe('success')
     expect(q('[data-demo-figure]')).not.toBeNull()
     await click(q('[data-tutorial-next]'))

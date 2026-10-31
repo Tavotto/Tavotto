@@ -36,9 +36,20 @@ export function Kbd({
  * 一串键位画成一个个键帽（`⇧⌘S` → ⇧ ⌘ S；` / ` 隔开的「或」之间留一个斜杠）。
  * 命令面板与快捷键速查表共用；文本照旧是键位表里那一串，拆法在 `lib/keyCaps`。
  */
-export function KeyCaps({ keys, className }: { keys: string; className?: string }) {
+export function KeyCaps({
+  keys,
+  className,
+  joined = false,
+}: {
+  keys: string
+  className?: string
+  /** 一组键位画成**一颗**键帽（`⌘A` 是一个胶囊，不拆成 ⌘ 与 A）：命令面板用，写法与菜单里的快捷键一致 */
+  joined?: boolean
+}) {
   const { t } = useTranslation('shortcuts')
   const groups = keyCaps(keys)
+  // 整体键帽直接写键位表里那一串（与菜单里的写法逐字一致），不按拆出来的键重新拼
+  const texts = keys.split(' / ').map((g) => g.trim())
   return (
     <span className={cn('inline-flex flex-wrap items-center justify-end gap-x-1 gap-y-1', className)}>
       {groups.map((caps, gi) => (
@@ -53,11 +64,15 @@ export function KeyCaps({ keys, className }: { keys: string; className?: string 
             </>
           )}
           <span className="inline-flex items-center gap-0.5">
-            {caps.map((k, ki) => (
-              <Kbd key={ki} size="md">
-                {k}
-              </Kbd>
-            ))}
+            {joined ? (
+              <Kbd size="md">{texts[gi]}</Kbd>
+            ) : (
+              caps.map((k, ki) => (
+                <Kbd key={ki} size="md">
+                  {k}
+                </Kbd>
+              ))
+            )}
           </span>
         </Fragment>
       ))}

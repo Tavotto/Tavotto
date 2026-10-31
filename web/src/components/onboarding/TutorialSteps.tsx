@@ -30,6 +30,13 @@ const SUCCESS_KEY = {
   demo_change_title: 'onboarding.title.success',
 } as const satisfies Record<Exclude<StepId, 'done'>, string>
 
+/** 这一步没做完时「下一步」钮上写的是还要做什么（禁用钮不说原因，用户不知道卡在哪） */
+const WAIT_KEY = {
+  demo_import: 'onboarding.shell.waitImport',
+  demo_move_legend: 'onboarding.shell.waitLegend',
+  demo_change_title: 'onboarding.shell.waitTitle',
+} as const satisfies Record<Exclude<StepId, 'done'>, string>
+
 export function TutorialSteps() {
   const { t } = useTranslation('dialogs')
   const step = useOnboardingStore((s) => s.currentStep) ?? REAL_STEP_IDS[0]
@@ -113,7 +120,7 @@ export function TutorialSteps() {
           }}
         >
           <ArrowLeft size={ICON_SIZE.sm} />
-          {t('onboarding.shell.back')}
+          {t(index === 0 ? 'onboarding.shell.backToWelcome' : 'onboarding.shell.back')}
         </Button>
         <StepFeedbackContext.Provider value={feedback}>
           <div key={step} className="flex min-h-0 flex-1 animate-fade-in flex-col">
@@ -143,7 +150,6 @@ export function TutorialSteps() {
             <span className="sr-only" aria-live="polite" data-tutorial-announcer="">
               {announcement}
             </span>
-            <Dots current={index} className="my-2" />
             <Button
               ref={next}
               variant="primary"
@@ -153,7 +159,13 @@ export function TutorialSteps() {
               className="h-11 min-w-[260px] gap-3 text-lg"
               onClick={() => ob().next()}
             >
-              {t(step === 'demo_change_title' ? 'onboarding.shell.finish' : 'onboarding.shell.next')}
+              {t(
+                !completed
+                  ? WAIT_KEY[step]
+                  : step === 'demo_change_title'
+                    ? 'onboarding.shell.finish'
+                    : 'onboarding.shell.next',
+              )}
               <ArrowRight size={ICON_SIZE.md} />
             </Button>
           </footer>
@@ -177,9 +189,9 @@ function StepBody({ step }: { step: StepId }): ReactNode {
 }
 
 /** 三颗进度点：当前那颗实心墨色，其余淡（形状不变，靠读屏的「第 n 步，共 3 步」说清） */
-function Dots({ current, className }: { current: number; className?: string }) {
+function Dots({ current }: { current: number }) {
   return (
-    <span aria-hidden="true" className={cn('inline-flex items-center gap-3', className)}>
+    <span aria-hidden="true" className="inline-flex items-center gap-3">
       {REAL_STEP_IDS.map((id, i) => (
         <i key={id} className={cn('block h-2 w-2 rounded-full', i === current ? 'bg-ink' : 'bg-selected')} />
       ))}

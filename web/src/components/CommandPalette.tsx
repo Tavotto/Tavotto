@@ -476,7 +476,7 @@ export function CommandPalette() {
                   <span data-cmd-label className="min-w-0 flex-1 truncate">
                     {c.label}
                   </span>
-                  {c.shortcut && <KeyCaps keys={c.shortcut} className="shrink-0 flex-nowrap" />}
+                  {c.shortcut && <KeyCaps joined keys={c.shortcut} className="shrink-0 flex-nowrap" />}
                 </li>
               )
             }),

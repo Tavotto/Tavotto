@@ -3,7 +3,7 @@
  * 与关键词、项目命令只在项目打开时出现、动作复用真实 helper。
  */
 import { act } from 'react'
-import { MOD } from '@/lib/utils'
+import { keyOf } from '@/lib/keymap'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -688,10 +688,10 @@ describe('空查询时的顺序（审计 T50）', () => {
 })
 
 describe('外观：图标与键帽（2026-10-01）', () => {
-  it('有快捷键的命令画成一个个键帽，图标只来自图标集（没有 emoji / 手写 svg）', () => {
+  it('有快捷键的命令画成一颗整体键帽，图标只来自图标集（没有 emoji / 手写 svg）', () => {
     mount()
     const exp = document.querySelector('[data-cmd-id="export"]')!
-    expect([...exp.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual([MOD, 'E'])
+    expect([...exp.querySelectorAll('kbd')].map((k) => k.textContent)).toEqual([keyOf('export')])
     expect(exp.querySelector('svg'), '导出有图标').not.toBeNull()
     // 没有合适图标的命令不硬凑：行仍在、图标槽留空对齐
     const all = document.querySelector('[data-cmd-id="select-all"]')!
