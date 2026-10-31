@@ -5317,6 +5317,7 @@ def invalidate(
     *,
     only_run: bool = False,
     force: bool = False,
+    spare_unbuilt: bool = False,
     targets: tuple[WorkerTarget, ...] | None = None,
     preserve: tuple[WorkerTarget, ...] = (),
     write_roots=None,
@@ -5334,6 +5335,11 @@ def invalidate(
     another acquisition can reuse workerd's spawn hash. An unconfirmed supervisor
     close refuses the rerun and retains its handle for a later retirement retry.
 
+    `spare_unbuilt=True`（试运行用）：**还没跑完第一次 build 的活会话不退役**——它是另一个调用方刚取到
+    （或正在 build）的会话，还没有任何「旧结果」可言；此刻杀掉，对方的第一条请求就会撞上 `unknown_session`
+    （首次运行字体缓存要现建、worker 起得慢时，这个窗口长达十来秒，且调用方是持池锁排队后才进到这里的）。
+    调用方随后经 `get()` 拿到同一条会话，等它那次 build 的结果（`owned is False` 的共享会话规则）。
+    已 build 完的、build 失败的、已死的仍照常退役——那才是「重跑」要换掉的东西。
     """
     with _lock:
         if figures_dir is None:
@@ -5360,6 +5366,8 @@ def invalidate(
                 for key in keys
                 if not any(_target_matches(target, key, _workers[key]) for target in preserve)
             ]
+        if spare_unbuilt:
+            keys = [key for key in keys if not _awaiting_first_build(_workers[key])]
         if force:
             for key in keys:
                 worker = _workers[key]
@@ -5382,6 +5390,17 @@ def invalidate(
         _remember_retirements(victims)
     for key, worker in victims:
         threading.Thread(target=_shutdown_retired, args=(key, worker), daemon=True).start()
+
+
+def _awaiting_first_build(worker) -> bool:
+    """活着、还没有任何一次 build 完成（含正在 build）：它的主人是取到它的那个调用方，不是「旧会话」。"""
+    return (
+        worker.alive()
+        and getattr(worker, "built", True) is False
+        and getattr(worker, "build_failed", False) is False
+        and not is_fenced(worker)
+        and getattr(worker, "_closing", False) is not True
+    )
 
 
 def invalidate_project(
