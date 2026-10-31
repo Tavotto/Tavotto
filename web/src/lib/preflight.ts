@@ -5,6 +5,7 @@ import { PROOF_KIND } from './brand'
 import {
   FALLBACK_MIN_FONT_SIZE_PT,
   FONT_FLOOR_TOL_PT,
+  derivePageColumns,
   profileStamp,
   severityOf,
   type PublicationProfile,
@@ -321,20 +322,23 @@ function checkPage(spec: PreflightSpec, profile: PublicationProfile, sink: Sink)
   const w = num(spec.page.w_mm) ?? 0
   const h = num(spec.page.h_mm) ?? 0
   const { single, double, tolerance_mm: tol } = profile.widths_mm
-  let matched: string | null = null
-  for (const [name, target] of [
-    ['single', single],
-    ['double', double],
-  ] as const) {
-    if (target != null && Math.abs(w - target) <= tol) {
-      matched = name
-      break
-    }
-  }
-  if (matched == null && (single != null || double != null)) {
-    const want = [single, double].filter((v) => v != null).map(g).join('/')
-    sink.add('page-width', pf('pageWidth', { actual: g(w), want }), {
-      detail: { page_w_mm: r2(w), single_mm: single, double_mm: double, column: null },
+  // 栏位只有一种读法：`page_columns`（期刊自有栏位），没写就由 widths_mm 派生单栏 / 双栏。
+  // 只有 exact 的栏位参与判据（max / typical / range 的宽度不是「等于」）。
+  const columns = derivePageColumns(profile).filter(
+    (c) => (c.qualifier ?? 'exact') === 'exact' && num(c.width_mm) != null,
+  )
+  const matched = columns.some((c) => Math.abs(w - c.width_mm) <= tol)
+  if (columns.length && !matched) {
+    const want = columns.map((c) => g(c.width_mm)).join('/')
+    const both = columns.map((c) => `${c.label.zh} (${c.label.en}) ${g(c.width_mm)}`).join(' / ')
+    sink.add('page-width', pf('pageWidth', { actual: g(w), want, columns: both }), {
+      detail: {
+        page_w_mm: r2(w),
+        single_mm: single,
+        double_mm: double,
+        column: null,
+        columns: columns.map((c) => ({ id: c.id, width_mm: c.width_mm })),
+      },
       prop: 'page.w',
     })
   }
@@ -483,6 +487,49 @@ function* fontElements(
   }
 }
 
+/**
+ * 有效字号低于期刊「说明」的最小字号时给 suggestion：带期刊名与原话。上下标求值器分不出，
+ * 所以按正文建议值（没有就按上下标值）统一提示。同源对：`preflight.py` 的 `_advise_font`。
+ */
+function adviseFont(
+  profile: PublicationProfile,
+  eff: number,
+  sink: Sink,
+  ids: { objectIds: string[]; gids?: string[] },
+  prop: string,
+): void {
+  const adv = (profile.advisories ?? []).filter((a) => a.check === 'font-size-recommended')
+  const body = adv.find((a) => a.role === 'body_min')
+  const script = adv.find((a) => a.role === 'script_min')
+  const lead = body ?? script
+  if (!lead) return
+  if (!(eff < lead.value_pt - FONT_FLOOR_TOL_PT)) return
+  const quote = [body, script]
+    .filter((a) => !!a)
+    .map((a) => a!.quote)
+    .join(' … ')
+  const key = body && script ? 'fontSizeAdvisedBoth' : body ? 'fontSizeAdvisedBody' : 'fontSizeAdvisedScript'
+  sink.add(
+    'font-size-recommended',
+    pf(key, {
+      journal: lead.journal,
+      body: body ? g(body.value_pt) : '',
+      script: script ? g(script.value_pt) : '',
+      quote,
+    }),
+    {
+      ...ids,
+      detail: {
+        effective_pt: r2(eff),
+        body_min_pt: body ? body.value_pt : null,
+        script_min_pt: script ? script.value_pt : null,
+      },
+      worse: -eff,
+      prop,
+    },
+  )
+}
+
 function checkPanelFonts(
   panel: PreflightPanelSpec,
   profile: PublicationProfile,
@@ -526,6 +573,7 @@ function checkPanelFonts(
         { objectIds: [pid], gids: [gid], detail: { effective_pt: r2(eff), max_pt: biggest }, worse: eff, prop: sizeProp },
       )
     }
+    adviseFont(profile, eff, sink, { objectIds: [pid], gids: [gid] }, sizeProp)
   }
 
   for (const el of manifest.elements ?? []) {
@@ -915,6 +963,7 @@ function checkTexts(spec: PreflightSpec, profile: PublicationProfile, sink: Sink
         prop: 'sizePt',
       })
     }
+    adviseFont(profile, size, sink, { objectIds: [t.id] }, 'sizePt')
     // 字体族：画布文字现在也能各设各的，规范里那条族约束必须看得见它们
     // ——**新增一条能违反规则的路，就要同时把检查的范围扩到那条路上**。
     const family = String(t.font_family ?? '')

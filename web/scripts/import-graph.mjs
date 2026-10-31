@@ -8,7 +8,7 @@
  *          dynamic（`import('…')`，字面量才解析得出目标；非字面量进 unknownDynamic）
  *          type（`import type` / 全部 specifier 都是 `type` 的 / `export type … from`——
  *                 编译后不存在，不是运行时边，不参与环）
- *   asset  `?raw` / `.css` / `.json` / `.py` / `.svg` 与 `@profiles` / `@glyphcoverage`
+ *   asset  `?raw` / `.css` / `.json` / `.py` / `.svg` 与 `@profiles` / `@journals` / `@glyphcoverage`
  *          这类不是 TS 模块的目标，只记数不进图
  *
  * 只扫生产代码：`*.test.ts(x)`、`src/test/**`、`*.d.ts` 不进图（测试当然可以随便 import）。
@@ -26,7 +26,7 @@ const SRC = path.join(WEB, 'src')
 export const BASELINE = path.join(WEB, 'import-architecture-baseline.json')
 
 const ASSET_EXT = new Set(['.css', '.json', '.py', '.svg', '.png', '.webp', '.jpg', '.gif', '.md', '.txt', '.html', '.woff', '.woff2'])
-const ASSET_ALIASES = new Set(['@profiles', '@glyphcoverage'])
+const ASSET_ALIASES = new Set(['@profiles', '@journals', '@glyphcoverage'])
 
 function isProduction(rel) {
   if (rel.endsWith('.d.ts')) return false
