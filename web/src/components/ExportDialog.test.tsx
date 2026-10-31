@@ -3429,7 +3429,9 @@ describe('预览信息完善（PR3）：缩略图说真话', () => {
   it('预览角上只有尺寸，不带「示意 · 非最终文件」之类的说明（两种范围都没有）', async () => {
     await setup(9)
     expect(document.body.textContent).not.toContain('仅为示意')
-    expect(stage().querySelector('[data-export-preview-size]')).toBeTruthy()
+    // 尺寸标在预览框外（不叠在图上），仍在预览列里
+    expect(stage().querySelector('[data-export-preview-size]')).toBeNull()
+    expect(document.body.querySelector('[data-export-preview] > div > [data-export-preview-size]')).toBeTruthy()
     useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
     await act(async () => useUiStore.getState().setExportOpen(false))
     await act(async () => useUiStore.getState().setExportOpen(true))

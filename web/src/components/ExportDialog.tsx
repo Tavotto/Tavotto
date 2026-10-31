@@ -37,6 +37,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -2231,6 +2232,7 @@ function ExportPreviewPane({
     // 直角：容器不给圆角（overflow-hidden 会把图的四角裁圆），图本身也不带圆角
     // 整列都是预览区：灰底面板从上到下铺满本列，图在里面按比例 contain、不留边距（上下或左右顶满）
     <div data-export-preview className="relative min-h-[320px] min-w-0 md:min-h-0">
+     <div className="md:sticky md:top-0">
       {/* 缩略卡直接放在对话框白面上（无底带、无分隔线），与下方预览左缘对齐；放不下横向滚动 + 两端渐隐 */}
         {!single && (
           <div
@@ -2239,7 +2241,7 @@ function ExportPreviewPane({
             data-export-preview-tabs
             ref={strip}
             style={scrollFadeStyle(fade, "x")}
-            className="-mx-1 flex max-w-full shrink-0 gap-2 overflow-x-auto p-1"
+            className="-mx-1 mb-2 flex max-w-full shrink-0 gap-2 overflow-x-auto p-1"
           >
             <PreviewTab
               id="page"
@@ -2248,10 +2250,12 @@ function ExportPreviewPane({
               flagged={pageFlagged}
               onShow={onShow}
             >
+              {/* flush：不画页框与内边距（卡片自己有边），页面在缩略图区里 contain 铺满 */}
               <CanvasThumb
                 page={doc.page}
                 objects={doc.objects}
                 className="h-full w-full"
+                flush
                 editedPanel={editedPanelOf}
                 exportedText={exportedTextOf}
               />
@@ -2272,7 +2276,7 @@ function ExportPreviewPane({
         )}
       <div
         className={cn(
-          "flex flex-col overflow-hidden bg-surface-2 md:sticky md:top-0",
+          "flex flex-col overflow-hidden bg-surface-2",
           !fitted && "h-full max-h-[calc(86vh-13rem)] min-h-[320px]",
         )}
       >
@@ -2311,15 +2315,58 @@ function ExportPreviewPane({
               <ImageOff size={ICON_SIZE.md} className="text-ink-3" aria-hidden />
             </div>
           )}
-          {/* 左下角一枚小标：这块预览的尺寸。不加「示意」之类的说明（用户 10-24：别加字） */}
-          <div className="pointer-events-none absolute bottom-2 left-2 flex max-w-[calc(100%-4rem)] items-center gap-1.5 rounded-full bg-surface/80 px-2.5 py-1 backdrop-blur">
-            <span data-export-preview-size className="type-meta truncate tabular-nums">
-              {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
-            </span>
-          </div>
         </div>
       </div>
+      {/* 尺寸标在预览框外、左对齐的灰色小字：不叠在图上（不加「示意」之类的说明，用户 10-24：别加字） */}
+      <p data-export-preview-size className="type-meta mt-1.5 truncate tabular-nums text-ink-3">
+        {sizeMm ? ex("mmSize", { w: round1(sizeMm[0]), h: round1(sizeMm[1]) }) : ex("sizeUnknownShort")}
+      </p>
+     </div>
     </div>
+  );
+}
+
+/**
+ * 中间省略（保留结尾）：按真实字宽量出「头部 + … + 尾部」刚好放下的头长，省略号两侧不留空隙
+ * （CSS 的 text-overflow 会在被截掉的半个字处留下空隙：`Fig2_c… ation`）。
+ * 量不了（无 canvas / 没有宽度）时退回 `TruncateMiddle`。
+ */
+function MiddleEllipsis({ text, tail, className }: { text: string; tail: number; className?: string }) {
+  const box = useRef<HTMLSpanElement>(null);
+  const [shown, setShown] = useState<string | null>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const fit = () => {
+      const width = el.clientWidth;
+      const ctx = document.createElement("canvas").getContext?.("2d") ?? null;
+      if (!ctx || width <= 0) return setShown(null);
+      const cs = getComputedStyle(el);
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      if (ctx.measureText(text).width <= width) return setShown(text);
+      const t = text.slice(-tail);
+      let lo = 0;
+      let hi = Math.max(0, text.length - tail);
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (ctx.measureText(text.slice(0, mid) + "…" + t).width <= width) lo = mid;
+        else hi = mid - 1;
+      }
+      setShown(text.slice(0, lo) + "…" + t);
+    };
+    fit();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text, tail, className]);
+  if (shown === null && typeof ResizeObserver === "undefined") {
+    return <TruncateMiddle text={text} tail={tail} className={className} />;
+  }
+  return (
+    <span ref={box} className={cn("block overflow-hidden whitespace-pre", className)}>
+      {shown ?? text}
+    </span>
   );
 }
 
@@ -2359,7 +2406,7 @@ function PreviewTab({
       <span className="flex h-12 w-full items-center justify-center overflow-hidden rounded-xs bg-paper">
         {children}
       </span>
-      <TruncateMiddle
+      <MiddleEllipsis
         text={label}
         tail={5}
         className={cn("px-0.5 text-xs", selected ? "font-medium text-ink" : "text-ink-2")}
@@ -2369,7 +2416,7 @@ function PreviewTab({
           data-export-flag
           role="img"
           aria-label={translate("export.previewFlagged", { ns: "dialogs" })}
-          className="absolute right-2 top-2 h-2 w-2 rounded-full bg-warn ring-2 ring-surface"
+          className="absolute right-[6px] top-[6px] h-[7px] w-[7px] rounded-full bg-warn ring-[1.5px] ring-surface"
         />
       )}
     </button>
