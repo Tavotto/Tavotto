@@ -2125,11 +2125,20 @@ describe('每张图各有自己的时间线：同一张画布上先后放过几�
     expect(nodeIds()).toEqual(['x1', 'x0'])
   })
 
-  it('多图排版（没有「当前这张图」）：不出这个开关，显示排版级的全部节点', async () => {
+  it('多图排版（没有「当前这张图」，beta 0.19.3b3 反馈）：开关写「这个排版 / 全部图」，默认只显示排版的版本', async () => {
     await withFigures('a', 'b')
     await mount(list())
-    expect($('[data-timeline-scope]')).toBeNull()
+    expect($('[data-timeline-scope]')!.textContent).toContain('这个排版')
+    expect(nodeIds()).toEqual(['vAB'])
+    await showAll()
     expect(nodeIds()).toHaveLength(5)
+  })
+
+  it('排版里只有排版的版本：不出开关、不过滤', async () => {
+    await withFigures('a', 'b')
+    await mount([meta({ id: 'l1', ts: NOW, figures: ['a', 'b'] }), meta({ id: 'l0', ts: NOW - 60_000, figures: ['b', 'c'] })])
+    expect($('[data-timeline-scope]')).toBeNull()
+    expect(nodeIds()).toEqual(['l1', 'l0'])
   })
 
   // 恢复别的图（用户 2026-10-31 问：当前这张会不会丢、新旧图会不会混）
@@ -2211,6 +2220,43 @@ describe('每张图各有自己的时间线：同一张画布上先后放过几�
     expect(confirmText()).toContain('换成图「Fig11_xps_chemistry」')
     expect(confirmText()).not.toContain('runtime')
     await act(async () => useUiStore.getState().confirm!.resolve(false))
+  })
+
+  // 用户 2026-10-31 实测：卡片上点「恢复到这里」，锁用的模态预览先开、确认框叠在它上面，两层弹窗卡住
+  it('卡片上的恢复要换图：只弹确认框，不先开模态预览；继续后才上锁取正文、写进去', async () => {
+    await act(async () => useUiStore.getState().setConfirm(null))
+    await withFigures('a')
+    await mount(list())
+    mockDoc.mockResolvedValue({ doc: docWithMany('a', 'b') } as never)
+    await openCard('vAB')
+    const fetchesBefore = mockDoc.mock.calls.length
+    await act(async () => cardRestoreBtn()!.click())
+    await flush()
+    expect(confirmText()).toContain('恢复成 2 张图的排版')
+    expect($('[data-dialog="timeline-preview"]')).toBeNull()
+    expect(mockDoc.mock.calls.length).toBe(fetchesBefore)
+    await act(async () => useUiStore.getState().confirm!.resolve(true))
+    await flush()
+    await flush()
+    expect(useDocumentStore.getState().doc.objects.map((o) => (o as { fileId?: string }).fileId)).toEqual(['a', 'b'])
+    expect(useTimelineStore.getState().restoring).toBeNull()
+    expect($('[data-dialog="timeline-preview"]')).toBeNull()
+  })
+
+  it('卡片上的恢复点了取消：什么都不动，也不开预览', async () => {
+    await act(async () => useUiStore.getState().setConfirm(null))
+    await withFigures('a')
+    await mount(list())
+    mockDoc.mockResolvedValue({ doc: docWithMany('a', 'b') } as never)
+    await openCard('vAB')
+    const creates = mockCreate.mock.calls.length
+    await act(async () => cardRestoreBtn()!.click())
+    await flush()
+    await act(async () => useUiStore.getState().confirm!.resolve(false))
+    await flush()
+    expect(mockCreate.mock.calls.length).toBe(creates)
+    expect(useDocumentStore.getState().doc.objects.map((o) => (o as { fileId?: string }).fileId)).toEqual(['a'])
+    expect($('[data-dialog="timeline-preview"]')).toBeNull()
   })
 
   it('同一张图的版本：不多问，照旧直接恢复', async () => {

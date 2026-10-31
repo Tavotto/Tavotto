@@ -92,6 +92,10 @@ import { isAdoptedPanel, adoptionGuardOf } from '@/lib/artifactValidation'
 const vd = (key: string, values?: Record<string, unknown>) =>
   translate(`versions.${key}`, { ns: 'dialogs', ...(values ?? {}) })
 
+/** 范围下拉两档的说法：按「这张图 / 这个排版 / 这张画布」分 */
+const SCOPE_CURRENT = { figure: 'scopeFigure', layout: 'scopeLayout', canvas: 'scopeCanvas' } as const
+const SCOPE_ALL = { figure: 'scopeAllFigures', layout: 'scopeAllFigures', canvas: 'scopeAll' } as const
+
 export function TimelinePanel() {
   useTranslation(['dialogs', 'common'])
   // 挂载 = 页签亮着（`Inspector` 只在「时间线」页签下渲染它；ADR 0101 2026-10-21 修订）
@@ -205,11 +209,30 @@ export function TimelinePanel() {
     if (panels.length === 1) return panels[0].fileId
     return panels.find((p) => p.id === elementPanelId)?.fileId ?? null
   }, [docObjects, elementPanelId])
-  // 只在确实有别的图的版本时出现；没有开关时一律不过滤
+  // 排版（画布上几张图、没在哪一张里编辑）：「这个排版」= 和它有共同图的排版版本，单图编辑的版本归「全部图」
+  // （beta 0.19.3b3 反馈：排版打开时范围下拉不见了，单图的版本和排版的混在一起）
+  const layoutFigures = useMemo(() => {
+    if (currentFigure != null) return null
+    const ids = [...new Set(docObjects.filter((o): o is PanelObject => o.type === 'panel').map((o) => o.fileId))]
+    return ids.length > 1 ? ids : null
+  }, [docObjects, currentFigure])
+  const inScope = useCallback(
+    (v: LayoutVersionMeta) =>
+      currentFigure != null
+        ? !!v.figures?.includes(currentFigure)
+        : !!layoutFigures && (v.figures?.length ?? 0) > 1 && v.figures!.some((f) => layoutFigures.includes(f)),
+    [currentFigure, layoutFigures],
+  )
+  // 只在确实有分得出去的版本时出现；没有开关时一律不过滤
   const figureScope =
-    currentFigure != null &&
-    versions.some((v) => !!v.figures?.length && !v.figures.includes(currentFigure))
-  const scopeKind: 'figure' | 'canvas' | null = figureScope ? 'figure' : multiCanvas ? 'canvas' : null
+    (currentFigure != null || layoutFigures != null) && versions.some((v) => !!v.figures?.length && !inScope(v))
+  const scopeKind: 'figure' | 'layout' | 'canvas' | null = figureScope
+    ? currentFigure != null
+      ? 'figure'
+      : 'layout'
+    : multiCanvas
+      ? 'canvas'
+      : null
   const scopeActive = scopeKind !== null && scope === 'current'
   // 单击行 = 在该行旁弹出对比小卡片（那一刻 vs 当前，一句话 + 一个主按钮「恢复到这里」）。
   // 卡片只读：不开模态、不占预览槽，所以双击的第二下仍落在这一行上（双击改名，Codex #679）。
@@ -363,11 +386,22 @@ export function TimelinePanel() {
       const cur = useTimelineStore.getState().preview
       if (cur?.docId === docId && cur.meta.id === meta.id) useTimelineStore.getState().setPreview(null)
     }
+    // 先问、问完再上锁开预览（beta 0.19.3b3 反馈：锁用的模态预览先开、确认框叠在上面，两层弹窗卡住）。
+    // 确认框本身是模态的，问的那段画布改不了；已有一次在飞就不问
+    if (useTimelineStore.getState().restoring === ctx) return
+    const ok = await confirmRestoreTarget(meta)
+    if (!afterAwait(ctx)(() => ok)) return
     try {
-      const done = await restoreUnderLock(ctx, docId, meta, async () => {
-        const v = await fetchVersionDoc(docId, meta.id)
-        return v.doc as FigureDocument
-      })
+      const done = await restoreUnderLock(
+        ctx,
+        docId,
+        meta,
+        async () => {
+          const v = await fetchVersionDoc(docId, meta.id)
+          return v.doc as FigureDocument
+        },
+        { confirmed: true },
+      )
       if (done === null) return
       if (!done) closeOurs()
     } catch (e) {
@@ -381,10 +415,10 @@ export function TimelinePanel() {
     () =>
       !scopeActive
         ? versions
-        : scopeKind === 'figure'
-          ? versions.filter((v) => !!currentFigure && !!v.figures?.includes(currentFigure))
-          : versions.filter((v) => v.canvasId === activeCanvasId),
-    [scopeActive, scopeKind, currentFigure, versions, activeCanvasId],
+        : scopeKind === 'canvas'
+          ? versions.filter((v) => v.canvasId === activeCanvasId)
+          : versions.filter(inScope),
+    [scopeActive, scopeKind, inScope, versions, activeCanvasId],
   )
   const groups = useMemo(
     () => groupTimeline(scoped, { namedOnly: filter === 'named', now: Date.now() }),
@@ -498,25 +532,17 @@ export function TimelinePanel() {
             width={160}
             trigger={
               <Button variant="ghost" size="sm" data-timeline-scope={scope}>
-                {vd(
-                  scope === 'current'
-                    ? scopeKind === 'figure'
-                      ? 'scopeFigure'
-                      : 'scopeCanvas'
-                    : scopeKind === 'figure'
-                      ? 'scopeAllFigures'
-                      : 'scopeAll',
-                )}
+                {vd(scope === 'current' ? SCOPE_CURRENT[scopeKind] : SCOPE_ALL[scopeKind])}
                 <ChevronDown size={ICON_SIZE.xs} className="text-ink-3" />
               </Button>
             }
           >
             <MenuRadioGroup value={scope} onValueChange={(v) => setScope(v === 'all' ? 'all' : 'current')}>
               <MenuRadioItem value="current" data-timeline-scope-option="current">
-                {vd(scopeKind === 'figure' ? 'scopeFigure' : 'scopeCanvas')}
+                {vd(SCOPE_CURRENT[scopeKind])}
               </MenuRadioItem>
               <MenuRadioItem value="all" data-timeline-scope-option="all">
-                {vd(scopeKind === 'figure' ? 'scopeAllFigures' : 'scopeAll')}
+                {vd(SCOPE_ALL[scopeKind])}
               </MenuRadioItem>
             </MenuRadioGroup>
           </Menu>
@@ -575,8 +601,8 @@ export function TimelinePanel() {
         ) : scoped.length === 0 ? (
           <EmptyState
             art="versions"
-            title={vd(scopeKind === 'figure' ? 'noneHereFigure' : 'noneHere')}
-            hint={scopeKind === 'figure' ? undefined : vd('noneHereHint', { n: versions.length })}
+            title={vd(scopeKind === 'figure' ? 'noneHereFigure' : scopeKind === 'layout' ? 'noneHereLayout' : 'noneHere')}
+            hint={scopeKind === 'canvas' ? vd('noneHereHint', { n: versions.length }) : undefined}
           />
         ) : groups.length === 0 ? (
           <EmptyState art="versions" title={vd('noNamed')} />
@@ -1214,11 +1240,13 @@ async function confirmRestoreTarget(meta: LayoutVersionMeta): Promise<boolean> {
 export async function restoreNode(
   meta: LayoutVersionMeta,
   versionDoc: FigureDocument,
+  /** 调用方已经问过了（行 / 卡片入口在上锁开预览**之前**问，见 `restoreFromRow`） */
+  opts?: { confirmed?: boolean },
 ): Promise<boolean> {
   finishActiveGesture()
   // 确认框与「恢复前」节点之间都可能换了项目 / 排版：那时再写，A 的节点会被写进 B
   const after = afterAwait()
-  const confirmed = await confirmRestoreTarget(meta)
+  const confirmed = opts?.confirmed || (await confirmRestoreTarget(meta))
   if (!after(() => confirmed)) return false
   // 原画布还在 → 切过去再写（「恢复前」拍的因此是**即将被覆盖的那张**）；
   // 已删除 / 没有身份 → 用户刚点头同意写进当前画布
@@ -1336,6 +1364,7 @@ async function restoreUnderLock(
   docId: string,
   meta: LayoutVersionMeta,
   doc: FigureDocument | (() => Promise<FigureDocument>),
+  opts?: { confirmed?: boolean },
 ): Promise<boolean | null> {
   const token = useTimelineStore.getState().beginRestore(ctx)
   if (token === null) return null
@@ -1361,7 +1390,7 @@ async function restoreUnderLock(
     if (!(cur?.docId === docId && cur.meta.id === meta.id && cur.doc)) {
       tl.setPreview({ docId, meta, doc: body })
     }
-    return await restoreNode(meta, body)
+    return await restoreNode(meta, body, opts)
   } finally {
     useTimelineStore.getState().endRestore(token)
   }
