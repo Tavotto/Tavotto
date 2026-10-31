@@ -26,6 +26,7 @@ safe worker 的 `sys.stdin` 就是协议管道：脚本一 `input()` 就阻塞�
 from __future__ import annotations
 
 import builtins
+import codecs
 import contextlib
 import hashlib
 import hmac
@@ -164,11 +165,45 @@ class ScriptNeedsInput(BaseException):
         self.kind = kind
 
 
+class _TailBuffer(io.BufferedIOBase):
+    """`StdoutTail.buffer`：脚本往 `sys.stdout.buffer` 写的字节按 UTF-8 解回文字，走同一条转发。
+
+    `io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")` 是 Windows 脚本的常见写法；字节绕开
+    `StdoutTail` 直写 worker.log 的话，编号清单就到不了界面。增量解码：一个汉字被拆在两次 write 里也不乱。
+    """
+
+    def __init__(self, owner: StdoutTail):
+        self._owner = owner
+        self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, data) -> int:
+        raw = bytes(data)
+        self._owner.write(self._decoder.decode(raw))
+        return len(raw)
+
+    def flush(self) -> None:
+        self._owner.flush()
+
+    def close(self) -> None:
+        # 包它的 TextIOWrapper 被回收时会 close 它；真 stdout 也不该因此被关，同一次 build 里还要用
+        self.flush()
+
+    def fileno(self) -> int:
+        return self._owner.fileno()
+
+
 class StdoutTail(io.TextIOBase):
     """脚本 stdout 的转发器：原样写进 `target`（worker.log），同时留最近一段给界面看。
 
     编号清单（`1. xxx  2. yyy`）就是脚本 print 出来的——用户要看到它才能选。有界：
     `TAIL_LINES` 行 / `TAIL_CHARS` 字符，超出从头丢。
+
+    脚本眼里它就是 `sys.stdout`，所以真 stdout 上常被调用的接口都得在：
+    `sys.stdout.reconfigure(encoding="utf-8")`、`sys.stdout.buffer`、`sys.stdout.detach()`
+    （TVD-E03P：少了 `reconfigure`，脚本第一行就 AttributeError）。
     """
 
     def __init__(self, target):
@@ -176,6 +211,7 @@ class StdoutTail(io.TextIOBase):
         self._buf = ""
         #: 上一问之后打印的那段（有界）：上下文摘要用它，编号清单就在这里
         self._since = ""
+        self._buffer = _TailBuffer(self)
 
     def writable(self) -> bool:
         return True
@@ -196,6 +232,41 @@ class StdoutTail(io.TextIOBase):
     @property
     def encoding(self):  # noqa: D401 — 有些库会问 sys.stdout.encoding
         return getattr(self._target, "encoding", "utf-8")
+
+    @property
+    def errors(self):
+        return getattr(self._target, "errors", "replace")
+
+    @property
+    def line_buffering(self) -> bool:
+        return False
+
+    @property
+    def buffer(self) -> _TailBuffer:
+        return self._buffer
+
+    def detach(self) -> _TailBuffer:
+        # `io.TextIOWrapper(sys.stdout.detach(), ...)`：交出字节层。转发器本身照常可用——
+        # build 结束时 worker 还要从它取最后一段输出
+        return self._buffer
+
+    def reconfigure(
+        self,
+        *,
+        encoding=None,
+        errors=None,
+        newline=None,
+        line_buffering=None,
+        write_through=None,
+    ) -> None:
+        """接受、不改：worker.log 已是 UTF-8 + replace（`worker.main`），脚本要的就是这个效果。
+
+        编码名照真 stdout 的规矩查一次：写错的编码一样报 LookupError，不悄悄吞掉。
+        """
+        if encoding is not None:
+            codecs.lookup(encoding)
+        if errors is not None:
+            codecs.lookup_error(errors)
 
     def isatty(self) -> bool:
         return False
