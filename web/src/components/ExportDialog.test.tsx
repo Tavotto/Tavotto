@@ -2040,6 +2040,38 @@ describe('T33 · 导出对象头部：名字 · 范围 · 尺寸只出现一次'
     // 页签缩略图 + 大预览各自按新版本重出一次（至少两处）；版本号不进缓存键时只剩单图预览那一处
     expect(vi.mocked(enginePreviewPng).mock.calls.length - before).toBeGreaterThanOrEqual(2)
   })
+
+  it('单图大预览量到舞台尺寸（px > 0）时仍挂按 overrides 出的那张，不换档回「最近一次渲染」（QA-WIN-21）', async () => {
+    clearVariantPngCache()
+    URL.createObjectURL = vi.fn(() => 'blob:edited-rt')
+    URL.revokeObjectURL = vi.fn()
+    const RT = 'runtime:fig.py#F'
+    const edited: PanelObject = {
+      ...panel,
+      fileId: RT,
+      fileKind: 'runtime',
+      overrides: [{ gid: 'legend_0', prop: 'fontsize', value: 8.8 }],
+    } as PanelObject
+    // jsdom 的 clientWidth 恒为 0（舞台给 px = 0、走默认档，测不到换档那条分支）：量出一块真实舞台
+    const w = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(600)
+    const h = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(400)
+    try {
+      await stage({ panels: [edited], renders: { [RT]: manifestWithTicks(1, 9) } })
+      useWorkspaceStore.setState({ mode: 'fast_edit', activePanelId: 'p1' })
+      await mountDialogs()
+      await openDialog()
+      await act(async () => {
+        await new Promise<void>((r) => setTimeout(r, 30))
+      })
+      const img = document.body.querySelector<HTMLImageElement>(
+        '[data-export-preview-stage] [data-export-thumb="file"]',
+      )
+      expect(img?.getAttribute('src')).toBe('blob:edited-rt')
+    } finally {
+      w.mockRestore()
+      h.mockRestore()
+    }
+  })
 })
 
 describe('P02 · 检查的是哪份产物（对象头不再复述文件名清单）', () => {
