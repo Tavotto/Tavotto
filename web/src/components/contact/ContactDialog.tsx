@@ -174,7 +174,7 @@ function WeComEntry() {
         trigger={
           <button
             type="button"
-            className="mx-0.5 rounded-sm text-accent hover:underline focus-visible:outline-2 focus-visible:outline-accent"
+            className="mx-0.5 rounded-xs text-ink-2 underline underline-offset-2 outline-none hover:text-ink focus-visible:focus-ring"
             data-contact-wecom
           >
             {cs('wecomLink')}
