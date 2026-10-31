@@ -162,6 +162,18 @@ def test_the_bundle_carries_this_projects_exec_traces_failures_first_and_nothing
     assert bad.trace_id not in files_text(_bundle(client, pb))
 
 
+def test_the_send_dialog_names_the_exec_traces_entry_instead_of_other(client, tmp_path):
+    """发送前「将发送的内容」按 `diagsend.kind_of` 逐项给类别：`exec-traces.json` 没登记就落进「其他诊断文件」
+    （TVD-E03P 的包即如此）。"""
+    from tavotto.engine import diagsend
+
+    pj = _open(client, _project(tmp_path, "p"))
+    xt.begin("export", task_ref="jobK", scope=xt.scope_for(pj)).finish("ok")
+    kinds = {n: diagsend.kind_of(n) for n in _bundle(client, pj)}
+    assert kinds["exec-traces.json"] == "exec_traces"
+    assert "other" not in kinds.values(), kinds
+
+
 def files_text(files: dict) -> str:
     return "".join(v.decode("utf-8", "replace") for v in files.values())
 

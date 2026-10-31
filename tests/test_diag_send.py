@@ -1204,6 +1204,43 @@ class TestBundle:
         assert all(e["kind"] != "other" for e in prep["entries"]), prep["entries"]
         assert diagsend.bundle_bytes(prep["id"]) == data
 
+    def test_every_top_level_entry_the_writers_can_emit_is_registered(self):
+        """判据的主语：**源码里写得出来的每个顶层条目名**，不是某一份包碰巧带了哪些。
+
+        上面那条真包往返只看到无项目时的几个基础文件；按条件才写的（`exec-traces.json` 只在有追踪时）
+        它看不见——TVD-E03P 的包里它就落进了「其他诊断文件」，infra 也打了 unknown_entry。
+        这里按 AST 收：`build_bundle` 里 `writestr` 的字面名 + diagdetail 里一切 `detail-*` / `optional-*` 字面名。
+        加了条目这里红 → 同时登记 `ENTRY_KINDS`、界面文案，并同步 infra 的 `KNOWN_BUNDLE_FILES`。
+        """
+        top = re.compile(r"^(detail|optional)-[A-Za-z0-9._-]+\.(json|txt|zip)$")
+        names: set[str] = set()
+        tree = ast.parse((SRC / "engine" / "diagnostics.py").read_text(encoding="utf-8"))
+        build = next(
+            n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "build_bundle"
+        )
+        for node in ast.walk(build):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "writestr"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                names.add(node.args[0].value)
+        detail = ast.parse((SRC / "engine" / "diagdetail.py").read_text(encoding="utf-8"))
+        for node in ast.walk(detail):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and top.match(node.value)
+            ):
+                names.add(node.value)
+        # 反证落点：两处各至少收到已知的那几个，收不到说明 AST 走错了地方
+        assert {"report.json", "manifest.json", "README.txt", "exec-traces.json"} <= names
+        assert {"detail-errors.json", "optional-source.zip"} <= names
+        assert names - set(diagsend.ENTRY_KINDS) == set()
+
     def test_preparing_again_replaces_the_previous_prepared_bundle(self, on):
         a = diagsend.prepare(make_bundle())
         b = diagsend.prepare(make_bundle(pad=10))
