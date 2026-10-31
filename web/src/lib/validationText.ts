@@ -141,12 +141,18 @@ export function issueValues(issue: ValidationIssue): IssueValues {
   let expected = withUnit(expectedRaw)
   let expectedAll: string | undefined
   if (issue.ruleCode === 'line-width-off-preset' && expectedRaw?.includes('/') && currentRaw != null) {
-    // 档位表（「0.5/0.75/1」）：行内只写就近的那一档，整张表给 tooltip
+    // 档位表（「0.5/0.75/1」）：行内只写修复会吸到的那一档（`specfix._plan_line_width`），整张表给 tooltip
+    // 与后端 `specfix._plan_line_width` 同一把尺：`min(presets, key=(|p − eff|, p))`——就近、等距取更细的一档。
+    // 但这里拿到的 `effective` 只有两位小数（预检的 `toFixed(2)`），离两档几乎等距时（差 < 0.011）
+    // 取哪档由被舍掉的那一位决定、前端算不准：这种行不猜，要求留空（行内只写当前值），整张表在 tooltip
     const cur = Number(currentRaw)
-    const steps = expectedRaw.split('/')
-    const near = steps.reduce((best, v) => (Math.abs(Number(v) - cur) < Math.abs(Number(best) - cur) ? v : best))
+    const ranked = expectedRaw
+      .split('/')
+      .map((v) => ({ v, d: Math.abs(Number(v) - cur) }))
+      .sort((a, b) => a.d - b.d || Number(a.v) - Number(b.v))
+    const ambiguous = ranked.length > 1 && ranked[1].d - ranked[0].d < 0.011
+    expected = ambiguous ? null : withUnit(ranked[0].v)
     expectedAll = withUnit(expectedRaw) ?? undefined
-    expected = withUnit(near)
   }
   return {
     expectedAll,

@@ -30,7 +30,7 @@ import { FixButton, runBatchFix, useBatchable } from './IssueFixButton'
 const isHollow = (s: Severity) => s === 'suggestion' || s === 'not_verifiable'
 const markClass = (s: Severity) =>
   isHollow(s)
-    ? 'box-border size-1.5 rounded-[1px] border-[1.5px] border-ink-3'
+    ? 'box-border size-1.5 rounded-xs border-[1.5px] border-ink-3'
     : cn('size-1.5 rounded-full', s === 'error' ? 'bg-danger' : 'bg-warn')
 
 /** 组头的尾随格只放一个数字 / 「修复 N」，比对象行的窄，名字多得 48px */
@@ -346,7 +346,7 @@ export function IssueRow({
             <span
               data-issue-values
               className={cn(rowMetaClass(current), 'shrink-0 whitespace-nowrap')}
-              title={values.expectedAll && expected ? `${values.current} → ${values.expectedAll}` : valueText}
+              title={values.expectedAll ? `${values.current} → ${values.expectedAll}` : valueText}
             >
               {values.current}
               {expected && (

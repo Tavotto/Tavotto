@@ -35,6 +35,21 @@ describe('线宽档位表：行内只写就近的那一档', () => {
     expect(v.expected).toBe('0.5 pt')
     expect(v.expectedAll).toBe('0.5/0.75/1 pt')
   })
+  it('与 specfix._plan_line_width 同一把尺（下列期望值由后端函数对同样输入算出，与档位表排列顺序无关）', () => {
+    expect(issueValues(lw('0.70', '0.5/0.75/1')).expected).toBe('0.75 pt')
+    expect(issueValues(lw('0.70', '1/0.75/0.5')).expected).toBe('0.75 pt')
+    expect(issueValues(lw('0.90', '1/0.5/0.75')).expected).toBe('1 pt')
+    expect(issueValues(lw('0.50', '1/0.25')).expected, '0.50 距 0.25 比距 1 近').toBe('0.25 pt')
+  })
+  it('离两档几乎等距（两位小数分不出取哪档）：不猜，要求留空，整张表在 expectedAll', () => {
+    for (const eff of ['0.63', '0.62', '0.625']) {
+      const v = issueValues(lw(eff, '1/0.75/0.5'))
+      expect(v.expected, eff).toBeNull()
+      expect(v.expectedHead).toBeNull()
+      expect(v.expectedAll).toBe('1/0.75/0.5 pt')
+    }
+    expect(sharedTarget([lw('0.63', '1/0.75/0.5'), lw('0.30', '1/0.75/0.5')])).toBeNull()
+  })
   it('每个对象各取各的档', () => {
     expect(issueValues(lw('0.90', '0.5/0.75/1')).expected).toBe('1 pt')
   })
