@@ -19,6 +19,9 @@ import math
 import re
 
 _BBOX = re.compile(rb"^%%BoundingBox:\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)", re.M)
+_HIRES = re.compile(
+    rb"^%%HiResBoundingBox:\s*(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)\s+(-?[\d.]+)", re.M
+)
 _HEAD = 8192
 
 BEGIN_EPSF = """\
@@ -52,13 +55,31 @@ def embedded_bbox(eps: bytes) -> tuple[int, int, int, int]:
     return x0, y0, x1, y1
 
 
+def embedded_hires_bbox(eps: bytes) -> tuple[float, float, float, float]:
+    """内层 EPS 的精确包围盒：优先 `%%HiResBoundingBox`（matplotlib 会写），没有才退回整数 `%%BoundingBox`。"""
+    m = _HIRES.search(eps[:_HEAD]) or _HIRES.search(eps)
+    if m:
+        try:
+            x0, y0, x1, y1 = (float(v) for v in m.groups())
+        except ValueError:
+            x0 = y0 = x1 = y1 = 0.0
+        if x1 > x0 and y1 > y0:
+            return x0, y0, x1, y1
+    return tuple(float(v) for v in embedded_bbox(eps))  # type: ignore[return-value]
+
+
+def _n(v: float) -> str:
+    return f"{v:.6f}".rstrip("0").rstrip(".") or "0"
+
+
 def compose(
     inner: bytes, overlay: str, width_pt: float, height_pt: float, *, name: str = "figure.eps"
 ) -> bytes:
     """原图 EPS + 叠加层 → 外层 EPS 字节。外层 BoundingBox = 图幅（向上取整），原图按其包围盒左下角对齐图幅左下角。"""
     if not inner.startswith(b"%!PS-Adobe"):
         raise EpsOverlayError("embedded file is not a DSC EPS")
-    x0, y0, ix1, iy1 = embedded_bbox(inner)
+    embedded_bbox(inner)  # 没有可用的包围盒就拒绝
+    x0, y0, ix1, iy1 = embedded_hires_bbox(inner)
     w_i, h_i = math.ceil(width_pt - 1e-6), math.ceil(height_pt - 1e-6)
     head = (
         "%!PS-Adobe-3.0 EPSF-3.0\n"
@@ -67,7 +88,10 @@ def compose(
         "%%Creator: Tavotto\n%%Pages: 1\n%%LanguageLevel: 2\n%%EndComments\n"
         "%%BeginProlog\n%%EndProlog\n%%Page: 1 1\n"
     )
-    place = f"gsave {-x0} {-y0} translate newpath {x0} {y0} {ix1 - x0} {iy1 - y0} rectclip\n"
+    place = (
+        f"gsave {_n(-x0)} {_n(-y0)} translate newpath "
+        f"{_n(x0)} {_n(y0)} {_n(ix1 - x0)} {_n(iy1 - y0)} rectclip\n"
+    )
     body = inner if inner.endswith(b"\n") else inner + b"\n"
     out = [
         head.encode("ascii"),

@@ -240,6 +240,26 @@ def test_eps_is_an_outer_eps_embedding_the_worker_eps_verbatim(env, inner_eps):
     assert "Label QA" in _pdf_text(_path(body, "pdf"))  # 其余格式照常
 
 
+def test_eps_alignment_prefers_the_embedded_hires_bounding_box(env, tmp_path, monkeypatch):
+    """图幅非整数 pt 时，叠加层原点 = 内层 `%%HiResBoundingBox` 的左下角（不是取整后的 BoundingBox）。"""
+    inner = (
+        b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 201 151\n"
+        b"%%HiResBoundingBox: 0.5 0.25 200.5 150.25\n%%EndComments\nnewpath 0 0 moveto 1 1 lineto stroke\nshowpage\n%%EOF\n"
+    )
+
+    def fake(job, src, dpi, tmp_dir, **kw):
+        out = tmp_dir / "inner_copy.eps"
+        out.write_bytes(inner)
+        return exportjob.Produced(format="eps", tmp_path=out, vector=True)
+
+    monkeypatch.setattr(m, "_produce_original_eps", fake)
+    client, _ = env
+    _, body = _post(client, _vector(["eps"], [_label()]))
+    data = _path(body, "eps").read_bytes()
+    assert b"gsave -0.5 -0.25 translate newpath 0.5 0.25 200 150 rectclip" in data
+    assert b"%%HiResBoundingBox: 0 0 200.000000 150.000000" in data[:300]
+
+
 def test_eps_with_translucent_annotation_fails_only_that_item(env, inner_eps):
     client, _ = env
     glass = {
