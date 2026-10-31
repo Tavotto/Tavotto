@@ -369,8 +369,6 @@
     "showObjects": "Show {{count}} objects"
   },
   "layerTree": {
-    "count_one": "{{count}} object",
-    "count_other": "{{count}} objects",
     "collapseGroup": "Collapse group",
     "emptyTitle": "No objects on the canvas yet",
     "expandGroup": "Expand group",
