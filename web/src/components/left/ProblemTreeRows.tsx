@@ -16,6 +16,7 @@ import {
   issueTitle,
   issueValues,
   severityLabel,
+  sharedTarget,
   subjectName,
   technicalDetailLines,
 } from '@/lib/validationText'
@@ -25,13 +26,12 @@ import { Button, IconButton } from '../ui/Button'
 import { Popover } from '../ui/Popover'
 import { FixButton, runBatchFix, useBatchable } from './IssueFixButton'
 
-/** 组头的 6px 圆点：只有「要改」「留意」带色，其余灰（与导出检查的计数芯片同一语言） */
-const DOT_BG: Record<Severity, string> = {
-  error: 'bg-danger',
-  warn: 'bg-warn',
-  not_verifiable: 'bg-ink-faint',
-  suggestion: 'bg-ink-faint',
-}
+/** 组头的 6px 等级记号：要改 / 留意 = 带色实心圆，建议 / 无法核验 = 灰色空心方块——形状也说出等级（与导出检查的计数芯片同一语言） */
+const isHollow = (s: Severity) => s === 'suggestion' || s === 'not_verifiable'
+const markClass = (s: Severity) =>
+  isHollow(s)
+    ? 'box-border size-1.5 rounded-[1px] border-[1.5px] border-ink-3'
+    : cn('size-1.5 rounded-full', s === 'error' ? 'bg-danger' : 'bg-warn')
 
 /** 本组文案在 errors:problems.* 下 */
 const pr = (key: string, values?: Record<string, unknown>) =>
@@ -142,6 +142,8 @@ export function GroupNode({
   onLocate: (issue: ValidationIssue) => void
 }) {
   const title = issueTitle(group.issues[0])
+  // 同组要求一致：组头说一次，对象行只剩当前值
+  const target = sharedTarget(group.issues)
   // 组的「修复 N」是用户点名这一组：建议档的组也照修（顶上的「全部修复」才不带建议档）
   const fixable = useBatchable(group.issues, activeCanvasId, { includeSuggestions: true })
   const { hot, bind } = useHot()
@@ -161,6 +163,7 @@ export function GroupNode({
           type="button"
           {...bind}
           data-issue-group-toggle
+          title={target ? `${title} → ${target}` : title}
           onClick={onToggle}
           aria-expanded={open}
           aria-label={pr('groupAria', {
@@ -172,11 +175,21 @@ export function GroupNode({
           className={cn(listRowClass({ size: 'sm' }), TRAIL_PAD, 'w-[calc(100%-0.5rem)] text-left')}
         >
           <TreeChevron expanded={open} />
-          {/* 组头只有一颗 6px 圆点带色（要改 = danger、留意 = warn、其余灰）；形状与等级字在可达名与下面的 sr-only 里 */}
-          <span aria-hidden className="flex w-4 shrink-0 justify-center">
-            <span className={cn('size-1.5 rounded-full', DOT_BG[group.severity])} />
+          {/* 等级记号：要改 / 留意 = 实心圆（danger / warn），建议 / 无法核验 = 空心方块（灰）；等级字在 title、可达名与下面的 sr-only 里 */}
+          <span aria-hidden title={severityLabel(group.severity)} className="flex w-4 shrink-0 justify-center">
+            <span data-issue-group-mark={isHollow(group.severity) ? 'hollow' : 'solid'} className={markClass(group.severity)} />
           </span>
-          <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
+          <span className={cn('min-w-0 truncate font-medium', !target && 'flex-1')}>{title}</span>
+          {/* 要求整段保留（最多占六成行宽）、名字让位：要求恰恰是不能被截掉的那半 */}
+          {target && (
+            <span data-issue-group-target className="max-w-[60%] shrink-0 truncate font-normal tabular-nums text-ink-2">
+              <span aria-hidden className="text-ink-faint">
+                {'→ '}
+              </span>
+              {target}
+            </span>
+          )}
+          {target && <span aria-hidden className="flex-1" />}
         </button>
         <TrailCell
           hot={hot}
@@ -199,6 +212,7 @@ export function GroupNode({
               issue={issue}
               depth={depth + 1}
               current={issue.issueId === currentId}
+              targetShared={target != null}
               onLocate={() => onLocate(issue)}
               activeCanvasId={activeCanvasId}
             />
@@ -234,12 +248,15 @@ export function IssueRow({
   issue,
   depth,
   current,
+  targetShared = false,
   onLocate,
   activeCanvasId,
 }: {
   issue: ValidationIssue
   depth: number
   current: boolean
+  /** 同组要求一致、已在组头说过：这一行只写当前值 */
+  targetShared?: boolean
   onLocate: () => void
   activeCanvasId: string
 }) {
@@ -275,9 +292,10 @@ export function IssueRow({
       point(false)
     },
   }
+  const expected = targetShared ? null : values.expected
   const valueText = values.current
-    ? values.expected
-      ? pr('valueArrow', { current: values.current, expected: values.expected })
+    ? expected
+      ? pr('valueArrow', { current: values.current, expected })
       : values.current
     : null
   return (
@@ -311,13 +329,13 @@ export function IssueRow({
           valueText ? (
             <span data-issue-values className={cn(rowMetaClass(current), 'truncate font-mono')} title={valueText}>
               {values.current}
-              {values.expected && (
+              {expected && (
                 <>
                   <span aria-hidden className="text-ink-faint">
                     {' → '}
                   </span>
                   {/* 行内只留要求本身（「≥ 8 pt」）；「显示已四舍五入」这类补一句的整句在 title / ⓘ 里 */}
-                  <span className={current ? 'text-ink' : 'text-ink-2'}>{values.expectedHead ?? values.expected}</span>
+                  <span className={current ? 'text-ink' : 'text-ink-2'}>{values.expectedHead ?? expected}</span>
                 </>
               )}
             </span>

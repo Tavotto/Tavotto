@@ -301,8 +301,9 @@ describe('普通界面不出现内部标识', () => {
     await mount(<ProblemPanel />)
     await openCard()
     expect(text()).toContain('字号低于绝对下限')
-    // 当前值 → 要求：两个数字都摆出来，用户不必点开才知道差多少
-    expect(text()).toMatch(/6\.00 pt\s*→\s*≥ 8 pt/)
+    // 同组要求一致：要求在组头说一次（「→ ≥ 8 pt」），对象行只剩当前值
+    expect(container.querySelector('[data-issue-group-target]')!.textContent).toMatch(/→\s*≥ 8 pt/)
+    expect(text()).toContain('6.00 pt')
     // 行内只留要求本身：「显示已四舍五入」这类补一句的整句不在行里（在 title / ⓘ），否则 112px 的尾随格又要截断
     const values = container.querySelector<HTMLElement>('[data-issue-values]')!
     expect(values.className, '值用等宽数字').toContain('font-mono')
@@ -770,8 +771,11 @@ describe('按规则聚合（审计 T09）', () => {
     expect(text().split('字号低于绝对下限').length - 1, '标题逐行重复').toBe(1)
     expect(text()).toContain('2 个对象')
     expect(rows().length).toBe(2)
-    expect(text()).toMatch(/6\.00 pt\s*→\s*≥ 8 pt/)
-    expect(text()).toMatch(/7\.00 pt\s*→\s*≥ 8 pt/)
+    // 要求（≥ 8 pt）只在组头说一次，两行各说各的当前值
+    expect(groups[0].querySelectorAll('[data-issue-group-target]').length).toBe(1)
+    expect(text().split('≥ 8 pt').length - 1, '要求逐行重复').toBe(1)
+    expect(text()).toContain('6.00 pt')
+    expect(text()).toContain('7.00 pt')
     // 等级不只靠颜色：组头写着等级文字
     expect(groups[0].textContent).toContain('阻断')
   })
@@ -1334,7 +1338,7 @@ const groupRows = (rule: string) =>
   container.querySelectorAll(`[data-issue-group="${rule}"] [data-issue-row]`).length
 
 describe('长列表：一组默认只展开前几行', () => {
-  it('八条同类问题默认只列前 5 条，其余收进「显示其余 3 项」；点开后全在', async () => {
+  it('八条同类问题默认只列前 3 条，其余收进「还有 5 个」；点开后全在', async () => {
     await seedMany()
     await mount(<ProblemPanel />)
     await openCard()
@@ -1349,13 +1353,13 @@ describe('长列表：一组默认只展开前几行', () => {
       `${MANY} 个对象`,
     )
     const more = showRest()
-    expect(more?.textContent).toContain(`显示其余 ${MANY - PREVIEW_ROWS} 项`)
+    expect(more?.textContent).toContain(`还有 ${MANY - PREVIEW_ROWS} 个`)
     await click(more!)
     expect(groupRows(rule)).toBe(MANY)
     expect(showRest()).toBeNull()
   })
 
-  it('「显示其余 N 项」随现场作废：换分组方式再换回来，组又只列前几行（Codex #832）', async () => {
+  it('「还有 N 个」随现场作废：换分组方式再换回来，组又只列前几行（Codex #832）', async () => {
     await seedMany()
     await mount(<ProblemPanel />)
     await openCard()
@@ -1369,21 +1373,20 @@ describe('长列表：一组默认只展开前几行', () => {
     expect(showRest()).toBeTruthy()
   })
 
-  it('只差一两条就不折：省下的那一行不值得多一次点击', async () => {
-    // 6 条：折了只剩「显示其余 1 项」，比直接列出来更啰嗦
-    const six = { ...manifestMany, elements: manifestMany.elements.slice(0, PREVIEW_ROWS + 1) }
-    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_six')
+  it('只多出一条也折：每组最多露 3 行，其余收成「还有 1 个」', async () => {
+    const four = { ...manifestMany, elements: manifestMany.elements.slice(0, PREVIEW_ROWS + 1) }
+    await useDocumentStore.getState().switchDocument(emptyProject(), 'd_four')
     useDocumentStore.getState().commit(literal('准备'), (d) => {
       d.page = { w: 80, h: 60 }
       d.objects = [{ ...panel }]
     })
     useAssetStore.setState({ byId: { 'Fig1.pdf': { id: 'Fig1.pdf', mtime: 1 } } } as never)
-    seedExactRender(panel, six as never)
+    seedExactRender(panel, four as never)
     runValidation()
     await mount(<ProblemPanel />)
     await openCard()
-    expect(groupRows('font-below-absolute-floor')).toBe(PREVIEW_ROWS + 1)
-    expect(showRest()).toBeNull()
+    expect(groupRows('font-below-absolute-floor')).toBe(PREVIEW_ROWS)
+    expect(showRest()?.textContent).toContain('还有 1 个')
   })
 
   it('「下一项」走进折起的那部分时整组自动展开，当前行看得见', async () => {
