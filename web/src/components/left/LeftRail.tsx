@@ -1,4 +1,4 @@
-import { Fragment } from 'react'
+import { Fragment, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ClipboardList,
@@ -14,7 +14,7 @@ import { ICON_SIZE } from '@/components/ui/Icon'
 import { EditableFigureIcon } from '@/components/ui/semanticIcons'
 import { cn } from '@/lib/utils'
 import { useProjectReadinessStore } from '@/store/projectReadinessStore'
-import { RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
+import { RAIL_ICON_ONLY, RAIL_W, useUiStore, type LeftTab } from '@/store/uiStore'
 import { useValidationStore } from '@/store/validationStore'
 import { Tip } from '../ui/Tooltip'
 
@@ -49,9 +49,21 @@ const ITEMS: { id: LeftTab; icon: typeof Images }[] = [
  */
 const RAIL_BUTTON =
   'relative flex w-14 flex-col items-center gap-1 rounded-md pb-1.5 pt-2 outline-none transition-colors focus-visible:focus-ring'
+/** 只留图标时的竖向内距：图标上下对称 */
+const RAIL_BUTTON_ICON = 'py-2'
 const RAIL_IDLE = 'text-ink-2 hover:bg-surface-hover hover:text-ink'
 /** 选中：白底 + 1px border 轮廓（outline，几何不变）——不靠投影 */
 const RAIL_ACTIVE = 'bg-surface text-ink outline-1 -outline-offset-1 outline-border'
+
+/** 窗口窄于 `RAIL_ICON_ONLY` 时轨钮只留图标：1093×614 这类窗口里省出的竖向空间给 7 个入口 + 两个底部入口 */
+function subscribeWidth(cb: () => void) {
+  window.addEventListener('resize', cb)
+  return () => window.removeEventListener('resize', cb)
+}
+const iconOnlyNow = () => window.innerWidth < RAIL_ICON_ONLY
+function useRailIconOnly(): boolean {
+  return useSyncExternalStore(subscribeWidth, iconOnlyNow, () => false)
+}
 
 /**
  * 常驻图标轨道：每个上下文各占一格，点击打开对应抽屉，再点一次收起。
@@ -66,6 +78,7 @@ export function LeftRail() {
   const open = useUiStore((s) => s.leftOpen)
   const railClick = useUiStore((s) => s.railClick)
   const problems = useValidationStore((s) => s.issues.length)
+  const iconOnly = useRailIconOnly()
   const blocking = useValidationStore((s) => s.issues.reduce((n, i) => n + (i.severity === 'error' ? 1 : 0), 0))
 
   return (
@@ -93,12 +106,14 @@ export function LeftRail() {
             data-rail={id}
             aria-label={label}
             aria-expanded={active}
-            className={cn(RAIL_BUTTON, active ? RAIL_ACTIVE : RAIL_IDLE)}
+            className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, active ? RAIL_ACTIVE : RAIL_IDLE)}
           >
             <Icon size={ICON_SIZE.md} filled={active} />
-            <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
-              {t(`rail.short.${id}`)}
-            </span>
+            {!iconOnly && (
+              <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
+                {t(`rail.short.${id}`)}
+              </span>
+            )}
             {id === 'problems' && blocking > 0 && (
               /* 折叠时唯一的提示，而且**只为阻断项亮**（2026-09-28 用户反馈：红底数字
                  角标一直在余光里报警，数字随每次编辑跳，却不说该做什么）。一颗 6px 的点，
@@ -119,7 +134,7 @@ export function LeftRail() {
         )
         // 抽屉开着时不出气泡：它会落在抽屉第二行上、盖住内容，而面板头已经写着这个名字
         // （左栏审计 L15）；开合状态由 aria-expanded 说，可达名不变（e2e 按它找这颗钮）
-        return active ? (
+        return active && !iconOnly ? (
           <Fragment key={id}>{button}</Fragment>
         ) : (
           <Tip key={id} label={label} side="right">
@@ -141,12 +156,14 @@ export function LeftRail() {
           data-rail="readiness"
           onClick={() => useProjectReadinessStore.getState().openCenter({ source: 'panel' })}
           aria-label={t('rail.readiness')}
-          className={cn(RAIL_BUTTON, RAIL_IDLE, 'mt-auto')}
+          className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, RAIL_IDLE, 'mt-auto')}
         >
           <ClipboardList size={ICON_SIZE.md} />
-          <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
-            {t('rail.short.readiness')}
-          </span>
+          {!iconOnly && (
+            <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
+              {t('rail.short.readiness')}
+            </span>
+          )}
         </button>
       </Tip>
       <Tip label={t('rail.settings')} side="right">
@@ -154,12 +171,14 @@ export function LeftRail() {
           data-rail="settings"
           onClick={() => useUiStore.getState().setSettingsOpen(true)}
           aria-label={t('rail.settings')}
-          className={cn(RAIL_BUTTON, RAIL_IDLE)}
+          className={cn(RAIL_BUTTON, iconOnly && RAIL_BUTTON_ICON, RAIL_IDLE)}
         >
           <Settings size={ICON_SIZE.md} />
-          <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
-            {t('rail.short.settings')}
-          </span>
+          {!iconOnly && (
+            <span aria-hidden className="max-w-full truncate px-0.5 text-xs leading-none">
+              {t('rail.short.settings')}
+            </span>
+          )}
         </button>
       </Tip>
     </nav>

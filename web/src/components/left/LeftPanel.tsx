@@ -10,7 +10,7 @@ import { tryRegisterPointerCancel } from '@/store/gestureCoordinator'
 import { useDocumentStore } from '@/store/documentStore'
 import { usePanelDisplayManifest } from '@/store/renderStore'
 import { useSelectionStore } from '@/store/selectionStore'
-import { LEFT_DEFAULT, LEFT_MAX, LEFT_MIN, RAIL_W, useUiStore } from '@/store/uiStore'
+import { LEFT_DEFAULT, LEFT_MAX, LEFT_MIN, RAIL_W, isLeftPinned, useUiStore } from '@/store/uiStore'
 import { IconButton } from '../ui/Button'
 import { DESK_FIELD_SCOPE } from '../ui/fieldBox'
 import { AssetBrowser } from './AssetBrowser'
@@ -39,7 +39,7 @@ export function LeftPanel({
   const { t } = useTranslation('workspace')
   const tab = useUiStore((s) => s.leftTab)
   const width = useUiStore((s) => s.leftWidth)
-  const pinned = useUiStore((s) => s.leftPinned)
+  const pinned = useUiStore(isLeftPinned)
   const wide = useUiStore((s) => s.layout === 'wide')
   const objectCount = useDocumentStore((s) => s.doc.objects.length)
   // 标题行的两个槽（`DrawerHeader`）：节点进 state，抽屉在下一帧把自己的动作 portal 进来

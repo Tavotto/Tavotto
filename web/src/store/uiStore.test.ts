@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
  * uiStore 在模块加载那一刻就把 persisted 偏好读进来了，所以每个用例都得
@@ -11,6 +11,12 @@ async function freshStore() {
 
 const LS_KEY = 'tavotto.ui'
 
+// jsdom 默认视口 1024 落在 medium：那里没固定的右栏是覆盖层、开机不开（G1）。
+// 这个文件的默认假设是宽屏工作台，窄屏的用例自己改 innerWidth（见 layoutPinning.test.ts）。
+const realWidth = window.innerWidth
+beforeEach(() => Object.defineProperty(window, 'innerWidth', { value: 1440, configurable: true }))
+afterEach(() => Object.defineProperty(window, 'innerWidth', { value: realWidth, configurable: true }))
+
 describe('右栏默认常驻', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -19,14 +25,14 @@ describe('右栏默认常驻', () => {
   it('全新安装：右栏默认开着且钉住', async () => {
     const s = await freshStore()
     expect(s.rightOpen).toBe(true)
-    expect(s.rightPinned).toBe(true)
+    expect(s.rightPinned).toBeNull() // 没表过态：宽屏按默认算固定（isRightPinned）
   })
 
   it('老用户（没有 prefsVersion）补一次新默认', async () => {
     localStorage.setItem(LS_KEY, JSON.stringify({ rightOpen: false, rightPinned: false }))
     const s = await freshStore()
     expect(s.rightOpen).toBe(true)
-    expect(s.rightPinned).toBe(true)
+    expect(s.rightPinned).toBe(true) // v0 迁移把老 blob 的 false 补成 true；v3 只重置 blob 里原样存着的 true
   })
 
   it('补过之后用户自己关掉的就一直是关的', async () => {
@@ -44,7 +50,7 @@ describe('右栏默认常驻', () => {
     const s = await freshStore()
     s.toggleRight()
     const saved = JSON.parse(localStorage.getItem(LS_KEY) ?? '{}')
-    expect(saved.prefsVersion).toBe(2)
+    expect(saved.prefsVersion).toBe(3)
     expect(saved.rightOpen).toBe(false)
   })
 
@@ -55,7 +61,7 @@ describe('右栏默认常驻', () => {
       const s = await freshStore()
       expect(s.layout).toBe('narrow')
       expect(s.rightOpen).toBe(false)
-      expect(s.rightPinned).toBe(true)
+      expect(s.rightPinned).toBeNull()
     } finally {
       Object.defineProperty(window, 'innerWidth', { value: w, configurable: true })
     }

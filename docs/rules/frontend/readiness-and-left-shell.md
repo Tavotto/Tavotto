@@ -61,6 +61,16 @@ order: 240
   本机偏好**。写反了的表现是"把窗口拖窄一次，常驻左栏就再也回不来了"，
   而用户从没关过它。判据只求值一次（`autoShowProperties` 的 `assetsYield`），
   写状态与写偏好共用它。
+- **钉住是三态，属性栏 < 1280 默认是覆盖层**（2026-10 UI 审计 B4 / G1）：`leftPinned` / `rightPinned` 是
+  `boolean | null`，`null` = 用户没表过态；判据只有 `uiStore` 的 `isLeftPinned`（仅 wide 成立，未表态 ≥1280 默认固定）/
+  `isRightPinned`（未表态仅 wide 固定）/ `isRightOverlay`（narrow 一律是；medium 只在没固定时是）——设置页开关、面板头图钉、
+  `autoShowProperties` / `autoHideProperties`、开机裁剪、`App` 的 `overlay` 都读它们，不各算一遍。显式值（含旧 blob 里
+  不等于旧默认的值）永远优先；v3 迁移只把 blob 里等于旧默认的 `rightPinned:true` 当「没表过态」，`leftPinned:false` 不动
+  （分不出是不是亲手关的，宁可只让新装享受新默认）。覆盖层属性栏开机不开、选中即出现、取消选择即收回，不挤占画布；
+  遮罩（`data-scrim`）与左抽屉的覆盖仍只在 narrow。窗口 < `RAIL_ICON_ONLY`（1180）左轨只留图标（可达名与气泡仍是 `rail.<id>`）。
+  素材抽屉（未固定、挑完即让位）在**指针还在抽屉里**时不收（`autoShowProperties({ holdAssets })`；互斥断点整个推迟），
+  指针离开后 `useSelectionRouting` 补一次让位。看护 `store/layoutPinning.test.ts`、`hooks/useSelectionRouting.test.tsx`、
+  `e2e/narrow-window-layout.spec.ts`。
 - **首开的那一次确认（U03，ADR 0057 §三）**：渲染以 `workdir_confirmation_required` 回来时
   它不是错误块，是缺一个决定——`renderStore` 把 `EngineError.confirmation` 交给
   `envStore.requestWorkdirConfirmation`，`WorkdirConfirmDialog`（md，三档是可选的 `Card`，推荐项是 ok 的 `Badge`，写出文件的后果是
