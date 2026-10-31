@@ -80,6 +80,10 @@ When Tavotto ran a script for the very first time on a machine (matplotlib build
 
 The repair assistant's environment list only showed external Python installs and left out the environment the project was actually running in (including Tavotto's built-in Python), so its "run the script to verify" step was refused with "select that environment first". The list now starts with the environment currently in use, marked as current, and verification runs in it.
 
+## Figures removed by a run no longer come back in the project file
+
+When you ran a script again with different arguments and the run no longer produced a figure that the previous run had (for example `Extra_map` after dropping `--extra`), Tavotto correctly reported that figure as unlinked, but the project's script registry could quietly add it back a moment later. This happened when the project folder watcher noticed Tavotto's own registry write before the run had finished updating the project, mostly on slower Windows machines. The watcher now recognises that write as Tavotto's own, so the registry keeps exactly the figures the run reported.
+
 ## Interface icons now respond with small motions
 
 Icons in buttons, the left rail, the toolbar, menus and the command palette play a short one-shot motion when you hover, click or move the highlight to them with the keyboard (the export arrow drops into its tray, undo swings back, the folder opens, the layout grid tiles pulse…). Status icons in notices and toasts animate once when they appear, and copy buttons draw their check mark after copying. Every motion is under 0.75 s and returns to the static icon; nothing loops except the loading spinner. With the system's "Reduce motion" setting on, icons do not move.
