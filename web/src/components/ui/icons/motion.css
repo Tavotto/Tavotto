@@ -160,8 +160,9 @@
 .icon-sliders-horizontal[data-play] [data-m='x'] { animation: icon-track-short var(--icon-ms) cubic-bezier(0.6, 0, 0.3, 1); }
 .icon-sliders-horizontal[data-play] [data-m='v'],
 .icon-sliders-horizontal[data-play] [data-m='w'] { animation: icon-track-long var(--icon-ms) cubic-bezier(0.6, 0, 0.3, 1); }
-@keyframes icon-track-short { 0%, 100% { stroke-dasharray: 8.75 30; } 50% { stroke-dasharray: 2.25 30; } }
-@keyframes icon-track-long { 0%, 100% { stroke-dasharray: 1.75 30; stroke-opacity: 1; } 50% { stroke-dasharray: 8.25 30; stroke-opacity: 1; } }
+/* 长度按吸附到像素网格之后的几何（ADR 0155）：长段 8.25、短段 1.5，旋钮挪 6.5 */
+@keyframes icon-track-short { 0%, 100% { stroke-dasharray: 8.25 30; } 50% { stroke-dasharray: 1.75 30; } }
+@keyframes icon-track-long { 0%, 100% { stroke-dasharray: 1.5 30; stroke-opacity: 1; } 50% { stroke-dasharray: 8 30; stroke-opacity: 1; } }
 
 .icon-search[data-play] [data-m] { animation: icon-look var(--icon-ms) ease-in-out; }
 @keyframes icon-look { 0%, 100% { transform: none; } 25% { transform: translate(-1.2px, -0.8px); } 55% { transform: translate(1.2px, -0.8px); } 80% { transform: translate(0, 0.6px); } }
