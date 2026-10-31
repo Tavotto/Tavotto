@@ -53,8 +53,8 @@ const TYPE_ICON = {
  * 两种对象（画布对象 / 图内元素）**同一副右侧簇**：状态 chip（已修改 / 已锁定 / 已隐藏；问题的入口只在左栏「问题」）在路径行右端，
  * 命令收进名字行右端的 ⋯。头部下面不再画分隔线——一屏的发丝线只留节与节之间那一条。
  *
- * 图内编辑态的头上**没有退出按钮**：返回排版的唯一入口是画布页签下面状态条的
- * 退出钮（`CanvasStatusStrip`，Esc 同一个动作，它还顺手选中该面板）。
+ * 图内编辑态的头上**没有退出按钮**：返回排版的唯一入口是画布上方上下文栏的
+ * 「返回画布 Esc」（`WorkspaceContextBar`，它还顺手选中该面板）。
  */
 export function IdentityHeader({ objs = [], panel }: { objs?: CanvasObject[]; panel?: PanelObject }) {
   return panel ? <ElementIdentity panel={panel} /> : <ObjectIdentity objs={objs} />
