@@ -31,7 +31,7 @@ import { getOriginalOutputSpec, type OriginalOutputSpec } from './originalSpec'
 import { useAssetStore } from '@/store/assetStore'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
 import { toExportObjects } from './exportPayload'
-import type { FigureDocument, PanelObject } from '@/types/document'
+import type { CanvasObject, FigureDocument, PanelObject } from '@/types/document'
 import type { WorkspaceMode } from '@/store/workspace'
 
 export type ExportScope = 'original' | 'canvas'
@@ -223,8 +223,17 @@ export interface ExportRequestInput {
   mergePages?: readonly { figureId: string; panel: PanelObject | null; spec: OriginalOutputSpec | null }[]
   panel?: PanelObject | null
   spec?: OriginalOutputSpec | null
+  /** 单图带标注（QA-WIN-20）：已换算到原图图幅的标注对象（`lib/singleExportDoc.annotationsOf`）；进 `original.objects` */
+  annotations?: readonly CanvasObject[]
+  /** `annotations` 里前几个在图的下面（保留图层次序） */
+  annotationsBelow?: number
   /** 后端 validate 发布的 route（`lib/exportRoute`）；缺省走前端退路 */
   route?: ExportRoute | null
+  /**
+   * 此刻生效的导出目录（`project.export_dir`）。**不进载荷**（后端自己读项目设置），只参与 `exportTargetKey`：
+   * 撞名确认问的是「这个目录里的这几个文件」，目录换了确认就不再成立（QA-WIN-18）。
+   */
+  exportDir?: string | null
   /** 样式检查报告的前半份（检查结果）；服务端补上版本、时间与产物事实 */
   report?: Record<string, unknown>
   /**
@@ -307,6 +316,12 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
       request.merge_pdf = { pages: input.mergePages.map((p) => sourceOf(p.figureId, p.panel, p.spec)) }
     } else {
       request.original = sourceOf(input.figureId ?? '', input.panel ?? null, input.spec ?? null)
+      const objects = input.annotations?.length ? toExportObjects([...input.annotations]) : []
+      if (objects.length) {
+        request.original.objects = objects
+        const below = Math.min(Math.max(input.annotationsBelow ?? 0, 0), objects.length)
+        if (below > 0) request.original.objects_below = below
+      }
     }
   }
   if (input.report) request.style_check_report = input.report
@@ -317,6 +332,24 @@ export function buildExportRequest(input: ExportRequestInput): BuiltRequest {
   const revision = snapshotRevision(request)
   request.document_revision = revision
   return { request, names: formats.map((f) => `${filename}.${f}`), revision }
+}
+
+/**
+ * 这次导出会写到哪些文件的身份（范围 / 对象 / 文件名主干 / 格式 / 导出目录），QA-WIN-18。
+ * 撞名确认问的是「这几个文件已存在，覆盖吗」——之后表单里任何一项变了，那句确认就不再是在问现在这次导出，
+ * 「覆盖」也就不许发。只量会改变输出目标的字段，不量画布内容 / 报告（那些随「覆盖」取最新）。
+ */
+export function exportTargetKey(input: ExportRequestInput): string {
+  const epsOk = epsAvailability(input.scope, input.figureId ?? null, input.route).ok
+  const formats = FORMATS.filter((f) => input.formats.includes(f) && (f !== 'eps' || epsOk))
+  return JSON.stringify([
+    input.documentId,
+    input.scope,
+    input.scope === 'original' ? (input.mergePages?.map((p) => p.figureId) ?? input.figureId ?? null) : null,
+    stripOutputExtension(input.filename, formats),
+    formats,
+    input.exportDir ?? null,
+  ])
 }
 
 function clampPpi(ppi: number): number {

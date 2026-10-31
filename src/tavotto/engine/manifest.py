@@ -5171,6 +5171,32 @@ def build_manifest(state: FigState, stem: str, *, timings: dict | None = None) -
         return _build_manifest(state, stem, arm, timings=timings)
 
 
+def prepare_preview(state: FigState, *, timings: dict | None = None) -> None:
+    """Prepare the same layout prerequisites without measuring a discarded manifest.
+
+    The final preview manifest is measured from the SVG renderer by
+    ``capture_preview_manifest``. The preliminary draw still has to establish
+    layout, legend offsets, hidden 3D projections, and the live tick registry.
+    """
+    start = time.perf_counter() if timings is not None else 0.0
+    fig = state.fig
+    with ticklabel_memo(), vector_text_metrics() as arm:
+        renderer = _ensure_agg_canvas(fig)
+        with pathgeom.in_frame(fig, renderer) as frame:
+            if frame.active:
+                with fig._cm_set(layout_engine="none"), image_pixels_skipped(fig):  # noqa: SLF001
+                    fig.canvas.draw()
+                renderer = fig.canvas.get_renderer()
+            measured = time.perf_counter() if timings is not None else 0.0
+            arm(renderer)
+            _layout_legends_for_measure(state, fig)
+            _refresh_hidden_3d_projections(state)
+            sync_tick_elements(state)
+            if timings is not None:
+                timings["manifest_layout_ms"] = round((measured - start) * 1000, 3)
+                timings["manifest_measure_ms"] = round((time.perf_counter() - measured) * 1000, 3)
+
+
 def _build_manifest(state: FigState, stem: str, arm, *, timings: dict | None = None) -> dict:
     t_start = time.perf_counter() if timings is not None else 0.0
     fig = state.fig

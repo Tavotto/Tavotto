@@ -23,7 +23,7 @@ import { CanvasStage } from './CanvasStage'
 import { startFigureEdgeResize } from './figureEdgeDrag'
 import { seedExactRender } from '@/test/renderFixtures'
 import { useSelectionStore } from '@/store/selectionStore'
-import { useRenderStore } from '@/store/renderStore'
+import { renderKeyOf, useRenderStore } from '@/store/renderStore'
 import type { Manifest } from '@/lib/api'
 
 /** 会滚的数字换成探针：只关心传下去的 duration（0 = 即时换，undefined = 默认时长会滚） */
@@ -304,6 +304,31 @@ describe('松手后新图回来之前：只留虚线占位', () => {
     expect(useInteractionStore.getState().figureFramePending).not.toBeNull()
     act(() => void useDocumentStore.getState().undo())
     await act(async () => {})
+    expect(useInteractionStore.getState().figureFramePending).toBeNull()
+  })
+
+  it('只在当前图幅变体失败时立即撤掉占位，其他变体的失败不影响它', async () => {
+    await mount()
+    act(() => startFigureEdgeResize(down(0, 0), 'r', 'a'))
+    fire('pointermove', dx(10), 0)
+    act(() => fire('pointerup', dx(10), 0))
+    const current = renderKeyOf(fig() as PanelObject)
+    act(() => useRenderStore.getState().patch('other-variant', { status: 'error' }))
+    expect(useInteractionStore.getState().figureFramePending).not.toBeNull()
+    act(() => useRenderStore.getState().patch(current, { status: 'error' }))
+    expect(useInteractionStore.getState().figureFramePending).toBeNull()
+  })
+
+  it('曾经失败过的同一尺寸重新渲染时，不能把旧错误当作新失败', async () => {
+    await mount()
+    const candidate = { ...(fig() as PanelObject), overrides: [{ gid: 'figure', prop: 'size_mm', value: [90, 55] }] }
+    const key = renderKeyOf(candidate)
+    act(() => useRenderStore.getState().patch(key, { status: 'error', error: literal('old failure') }))
+    act(() => startFigureEdgeResize(down(0, 0), 'r', 'a'))
+    fire('pointermove', dx(10), 0)
+    act(() => fire('pointerup', dx(10), 0))
+    expect(useInteractionStore.getState().figureFramePending).not.toBeNull()
+    act(() => useRenderStore.getState().patch(key, { status: 'error', error: literal('new failure') }))
     expect(useInteractionStore.getState().figureFramePending).toBeNull()
   })
 })

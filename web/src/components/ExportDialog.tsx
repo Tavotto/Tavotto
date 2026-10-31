@@ -104,6 +104,7 @@ import {
   pixelPreview,
   PPI_DEFAULT,
   hasRaster,
+  exportTargetKey,
   type ExportFormat,
   type ExportScope,
   type ExportRequestInput,
@@ -126,7 +127,10 @@ import { apiUrl } from "@/lib/session";
 import { boundedCount, captureTelemetry } from "@/lib/telemetry";
 import { cn } from "@/lib/utils";
 import { canRevealInFileManager, isDesktop, revealExportedFile } from "@/lib/desktop";
+import { annotationsBelow, annotationsOf, singleAnnotatedDocument } from "@/lib/singleExportDoc";
 import { useOriginalAvailability } from "@/hooks/useOriginalSpec";
+import { useRuntimePreview } from "@/hooks/useRuntimePreview";
+import { engineTransport } from "@/lib/engineTransport";
 import { useVariantPng } from "@/hooks/useVariantPng";
 import { isJustBakedBaseline } from "@/store/actions";
 import { useAssetStore } from "@/store/assetStore";
@@ -143,6 +147,7 @@ import {
   requestBatchCancel,
   prepareExport,
   runExport,
+  resetExportState,
   useExportStore,
   type ExportBatch,
 } from "@/store/exportStore";
@@ -459,10 +464,29 @@ export function ExportDialog() {
       : "canvas"
     : scopeState;
   const singleFallback = single && scope === "canvas";
+  /**
+   * 单图档、原图口径、画布上有可见标注（QA-WIN-20）：`lib/singleExportDoc` 把「图 + 标注」合成一份以原图图幅为页面的
+   * 文档。**预览画这份；请求里的 `original.objects` 取这份里的标注部分**——预览与文件同一个来源。后端用整版导出那条
+   * RenderCore 路径把标注画在原图上（PDF / SVG / PNG / TIFF / EPS 都带）。没有标注 = null，请求与从前逐字节相同。
+   */
+  const annotatedDoc = useMemo(
+    () =>
+      single && scope === "original" && availability.ok
+        ? singleAnnotatedDocument(doc, panel, availability.spec)
+        : null,
+    [single, scope, availability.ok, availability.spec, doc, panel],
+  );
+  const annotations = useMemo(() => (annotatedDoc ? annotationsOf(annotatedDoc) : undefined), [annotatedDoc]);
+  const annotationsUnder = useMemo(() => (annotatedDoc ? annotationsBelow(annotatedDoc) : 0), [annotatedDoc]);
   /** 单图退路导出的区域 = 可见对象并集包围盒（`lib/exportCrop`）；预览与尺寸读它，与请求同一份 */
   const fallbackCrop = useMemo(
-    () => (singleFallback ? cropToVisibleContent(doc.page, doc.objects) : null),
-    [singleFallback, doc.page, doc.objects],
+    () =>
+      annotatedDoc
+        ? { page: annotatedDoc.page, objects: annotatedDoc.objects }
+        : singleFallback
+          ? cropToVisibleContent(doc.page, doc.objects)
+          : null,
+    [annotatedDoc, singleFallback, doc.page, doc.objects],
   );
   /**
    * 这次导出的文档：单图退路 = 裁后的文档（只算一次），检查、proof report、请求、预览全吃它；
@@ -838,7 +862,10 @@ export function ExportDialog() {
       figureId,
       panel,
       spec: availability.spec,
+      annotations,
+      annotationsBelow: annotationsUnder,
       route,
+      exportDir: exportDirNow,
       ...over,
     };
   }
@@ -853,6 +880,8 @@ export function ExportDialog() {
    */
   // 导出位置的写入还在飞：导出键灰着，免得写到旧目录
   const locationUpdating = useProjectSettingsPending();
+  // 此刻生效的导出目录：撞名确认的一部分（改了位置，旧确认列的文件就不在这里了）
+  const exportDirNow = useProjectStore((s) => s.project?.export_dir ?? null);
   const prepared = prepareExport(inputOf());
   const filenameIssue = prepared.filenameProblem;
   const names = prepared.names;
@@ -975,7 +1004,9 @@ export function ExportDialog() {
           : { ok: false as const, name, reason: failure(res.reason) },
       );
     }
-    recordBatchFrozen(items);
+    // 冻结时的导出目录跟着每张一起记下：撞名确认之后目录变了，确认就不再成立（QA-WIN-18）
+    const dirAtFreeze = useProjectStore.getState().project?.export_dir ?? null;
+    recordBatchFrozen(items.map((it) => (it.ok ? { ...it, input: { ...it.input, exportDir: dirAtFreeze } } : it)));
   };
 
   /* -------------------------------- 动作 --------------------------------- */
@@ -1173,10 +1204,33 @@ export function ExportDialog() {
     lastRecorded.current = storeJob;
     recordBatchJob(storeJob);
   }, [batch, running, storeJob, startError]);
+  /** 单张撞名确认挂着，而表单里的输出目标已不是触发撞名的那一个 */
+  const conflictTargetChanged = (): boolean => {
+    if (storeJob?.status !== "conflict") return false;
+    if (batch) {
+      // 批：每张的输入在点「导出」那一刻就冻结了，表单里的名字 / 格式不再算数；
+      // 唯一还会在确认之后变的目标是导出目录（项目设置，不在载荷里）
+      const cur = batch.done || batch.phase !== "send" ? null : batch.prepared[batch.index];
+      return !!cur && (cur.input.exportDir ?? null) !== exportDirNow;
+    }
+    const last = useExportStore.getState().lastInput;
+    return !!last && exportTargetKey(last) !== exportTargetKey(inputOf());
+  };
+  // 目标一变就收回撞名确认（回到未确认态，需重新「开始导出」重新检测），确认框与实际覆盖对象才不会分叉
+  const targetKeyNow = exportTargetKey(inputOf());
+  useEffect(() => {
+    if (conflictTargetChanged()) resetExportState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetKeyNow]);
   /** 撞名后的「覆盖 / 另存一份」：一批里重发的是这一张**冻结的**输入，不读活的表单 */
   const restart = (overwrite: OverwritePolicy) => {
     // 位置写入在飞时覆盖 / 另存一份也不许发：会按旧目录写（批的分支直接 runExport，不经 canStart）
     if (locationUpdating) return;
+    // 确认问的是触发撞名那一次的输出目标（单张：文件名 / 格式 / 范围 / 目录；批：目录）；已改（QA-WIN-18）就作废确认，绝不按新目标覆盖
+    if (conflictTargetChanged()) {
+      resetExportState();
+      return;
+    }
     if (batch && !batch.done && batch.phase === "send") {
       const cur = batch.prepared[batch.index];
       if (!cur) return;
@@ -1617,7 +1671,7 @@ export function ExportDialog() {
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,500px)]">
       <ExportPreviewPane
         single={single}
-        fallbackPage={singleFallback}
+        fallbackPage={singleFallback || annotatedDoc !== null}
         fallbackCrop={fallbackCrop}
         doc={doc}
         figures={single ? figures : canvasFigures}
@@ -1706,6 +1760,7 @@ export function ExportDialog() {
               <FormRow label={<label htmlFor="export-filename">{ex("filenameLabel")}</label>}>
                 <TextInput
                   id="export-filename"
+                  data-export-filename
                   value={filename}
                   onChange={(e) => {
                     setFilenameTouched(true);
@@ -1994,7 +2049,22 @@ function useFigureThumbSource(
     figure.stamp ?? 0,
     panel ? adoptionGuardOf(panel) : undefined,
   );
-  const src = variant.url ?? figureThumbSrc(figure, bucket);
+  // runtime 图的退路是 cache 预览：后端 GET 版给的是「最近一次渲染」，撤销回一个前端已画过的变体时它停在
+  // 撤销前（QA-WIN-21）。按此刻的 overrides 取，不是这个状态的图就不挂（预览只是示意，空着比旧图诚实）
+  const runtimeByState = figure.kind === "runtime" && !!panel && !!figure.cached && !engineTransport();
+  const runtimePreview = useRuntimePreview(
+    figure.figureId,
+    panel?.overrides ?? NO_OVERRIDES,
+    runtimeByState,
+    figure.stamp ?? 0,
+  );
+  const src =
+    variant.url ??
+    (runtimeByState
+      ? runtimePreview.exact === true
+        ? runtimePreview.url
+        : null
+      : figureThumbSrc(figure, bucket));
   const sizeMm = render?.manifest?.size_mm ?? figure.sizeMm;
   const ratio =
     sizeMm && sizeMm[0] > 0 && sizeMm[1] > 0 ? sizeMm[0] / sizeMm[1] : 4 / 3;

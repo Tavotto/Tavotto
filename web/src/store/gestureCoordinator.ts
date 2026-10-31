@@ -21,6 +21,17 @@ let active: (() => void) | null = null
 
 /** 收尾进行中——回调内部大多会走 endTxn → commit，绝不能再递归收一次 */
 let finishing = false
+const listeners = new Set<() => void>()
+
+/** 异步工作等手势收尾时订阅同一份登记，不用轮询或自行猜测焦点状态。 */
+export function subscribeGestureCoordinator(listener: () => void): () => void {
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+
+function changed(): void {
+  for (const listener of listeners) listener()
+}
 
 /**
  * 登记「我这一轮开始了」，返回注销函数。
@@ -31,8 +42,12 @@ let finishing = false
 export function registerGesture(finish: () => void): () => void {
   if (active && active !== finish) finishActiveGesture()
   active = finish
+  changed()
   return () => {
-    if (active === finish) active = null
+    if (active === finish) {
+      active = null
+      changed()
+    }
   }
 }
 
@@ -60,6 +75,7 @@ export function finishActiveGesture(): void {
     finish()
   } finally {
     finishing = false
+    changed()
   }
 }
 
@@ -79,8 +95,12 @@ let pointerCancel: (() => void) | null = null
 /** 登记这一次指针追踪的取消出口，返回注销函数（只注销自己那一份）。 */
 export function registerPointerCancel(cancel: () => void): () => void {
   pointerCancel = cancel
+  changed()
   return () => {
-    if (pointerCancel === cancel) pointerCancel = null
+    if (pointerCancel === cancel) {
+      pointerCancel = null
+      changed()
+    }
   }
 }
 
@@ -115,6 +135,7 @@ export const hasActiveGesture = (): boolean => active != null
 export function resetGestureCoordinator(): void {
   active = null
   finishing = false
+  changed()
 }
 
 /**

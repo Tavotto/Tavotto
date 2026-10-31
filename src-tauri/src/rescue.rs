@@ -119,6 +119,9 @@ pub struct FailureInfo {
     pub install_files: Option<InstallFiles>,
     /// 只在 launch 阶段 spawn 失败时有值（[`SPAWN_ERRORS`] 之一）；其余为 `None`。
     pub spawn_error: Option<&'static str>,
+    /// 只在握手超时（`sidecar_timeout`）时有值：sidecar 卡在启动的哪一步（[`crate::sidecar::startup_phase`] 的
+    /// 闭集阶段名，或 `none` = 本次启动没留下任何标记）；其余为 `None`。
+    pub startup_phase: Option<&'static str>,
 }
 
 impl FailureInfo {
@@ -129,6 +132,7 @@ impl FailureInfo {
             exit_code: None,
             install_files: None,
             spawn_error: None,
+            startup_phase: None,
         }
     }
 
@@ -139,6 +143,11 @@ impl FailureInfo {
 
     pub fn with_spawn_error(mut self, kind: &'static str) -> Self {
         self.spawn_error = Some(kind);
+        self
+    }
+
+    pub fn with_startup_phase(mut self, phase: &'static str) -> Self {
+        self.startup_phase = Some(phase);
         self
     }
 }
@@ -223,6 +232,13 @@ pub const REINSTALL_DENY_NOT_APPLICABLE: &str = "reinstall_not_applicable";
 
 pub fn reinstall_applies(code: &str) -> bool {
     code == code::SIDECAR_NOT_FOUND || code == code::SIDECAR_SPAWN_FAILED
+}
+
+/// 「重新启动」要走安全启动（这一次不恢复上次项目，TVD-DT76）的失败码。判据只有这一个出处，页面不自己猜。
+/// 目前只有握手超时：sidecar 起来了却没在 60 秒内写 ready，最常见的原因是恢复上次项目时卡在挂住的系统调用
+/// （离线网络盘、OneDrive 按需下载、超大目录），重启再恢复同一个项目就是死路。别的失败码和项目无关。
+pub fn safe_start_applies(code: &str) -> bool {
+    code == code::SIDECAR_TIMEOUT
 }
 
 /// 纯判据：在 [`decide`]（可信页面 + 从未进入编辑态）之上再要求当前失败码满足 [`reinstall_applies`]。
@@ -324,6 +340,13 @@ pub async fn rescue_retry(
     if state.retrying.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
+    // 握手超时后的「重新启动」：给下一次启动留一次性标记，让它不恢复上次项目（sidecar/safe_start.rs）。
+    // 在收 sidecar 之前做、且只在第一次点击（上面的幂等闸之后）做；写不进去就照常重启
+    if state.failure().is_some_and(|f| safe_start_applies(f.code)) {
+        let config_dir = app.path().app_config_dir().ok();
+        let marker = crate::sidecar::safe_start::path(config_dir.as_deref());
+        crate::sidecar::safe_start::arm(marker.as_deref(), crate::sidecar::safe_start::now_secs());
+    }
     let worker = app.clone();
     // 收 sidecar 最长等 10 s，不占 async 运行时线程
     let _ = tauri::async_runtime::spawn_blocking(move || {
@@ -413,6 +436,7 @@ fn ensure_prepared(app: &tauri::AppHandle, state: &RescueState) -> Prepared {
         exit_code: info.exit_code,
         install_files: info.install_files,
         spawn_error: info.spawn_error,
+        startup_phase: info.startup_phase,
         created_at: now_iso(),
     });
     *slot = Some(p.clone());
@@ -638,6 +662,175 @@ mod tests {
     }
 
     #[test]
+    fn only_a_handshake_timeout_restarts_into_safe_start() {
+        for c in CODES {
+            assert_eq!(safe_start_applies(c), *c == "sidecar_timeout", "{c}");
+        }
+        assert!(!safe_start_applies(""));
+        // 与「重新安装」互不相交：安全启动和重装是两种不同的出路
+        assert!(CODES
+            .iter()
+            .all(|c| !(safe_start_applies(c) && reinstall_applies(c))));
+    }
+
+    /// 一段语句里的真实调用（AST，不是子串）：路径调用记「倒数两段」（`safe_start::arm`），方法调用记方法名。
+    #[derive(Default)]
+    struct Calls {
+        paths: Vec<String>,
+        methods: Vec<String>,
+    }
+
+    impl<'ast> syn::visit::Visit<'ast> for Calls {
+        fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
+            if let syn::Expr::Path(p) = &*c.func {
+                let segs: Vec<String> = p
+                    .path
+                    .segments
+                    .iter()
+                    .map(|s| s.ident.to_string())
+                    .collect();
+                let n = segs.len();
+                self.paths.push(segs[n.saturating_sub(2)..].join("::"));
+            }
+            syn::visit::visit_expr_call(self, c);
+        }
+
+        fn visit_expr_method_call(&mut self, m: &'ast syn::ExprMethodCall) {
+            self.methods.push(m.method.to_string());
+            syn::visit::visit_expr_method_call(self, m);
+        }
+    }
+
+    fn calls_of_expr(e: &syn::Expr) -> Calls {
+        let mut c = Calls::default();
+        syn::visit::Visit::visit_expr(&mut c, e);
+        c
+    }
+
+    fn calls_of_stmt(s: &syn::Stmt) -> Calls {
+        let mut c = Calls::default();
+        syn::visit::Visit::visit_stmt(&mut c, s);
+        c
+    }
+
+    fn calls_of_block(b: &syn::Block) -> Calls {
+        let mut c = Calls::default();
+        syn::visit::Visit::visit_block(&mut c, b);
+        c
+    }
+
+    /// 解析 `rescue_retry` 的函数体语句（AST）；`src` 是 `rescue.rs` 全文。
+    fn retry_stmts(src: &str) -> Vec<syn::Stmt> {
+        let file = syn::parse_file(src).expect("rescue.rs 解析失败");
+        file.items
+            .into_iter()
+            .find_map(|i| match i {
+                syn::Item::Fn(f) if f.sig.ident == "rescue_retry" => Some(f.block.stmts),
+                _ => None,
+            })
+            .expect("找不到 rescue_retry")
+    }
+
+    /// 结构判据：返回违反项（空 = 通过）。
+    /// 恰好一处 `safe_start::arm(..)` 真实调用，且在顶层 `if safe_start_applies(..)` 的 then 分支里；
+    /// 顶层语句顺序上在 `retrying.swap` 幂等闸之后、`shutdown_sidecar` 与 `.restart()` 之前。
+    fn retry_arm_violations(src: &str) -> Vec<String> {
+        let stmts = retry_stmts(src);
+        let mut bad = Vec::new();
+        let total: usize = stmts
+            .iter()
+            .map(|s| {
+                calls_of_stmt(s)
+                    .paths
+                    .iter()
+                    .filter(|p| *p == "safe_start::arm")
+                    .count()
+            })
+            .sum();
+        if total != 1 {
+            bad.push(format!("safe_start::arm 调用应恰好 1 处，实际 {total}"));
+        }
+        let idx = |f: &dyn Fn(&Calls) -> bool| stmts.iter().position(|s| f(&calls_of_stmt(s)));
+        let swap = idx(&|c| c.methods.iter().any(|m| m == "swap"));
+        let shutdown = idx(&|c| c.methods.iter().any(|m| m == "shutdown_sidecar"));
+        let restart = idx(&|c| c.methods.iter().any(|m| m == "restart"));
+        let arm = idx(&|c| c.paths.iter().any(|p| p == "safe_start::arm"));
+        match (swap, arm, shutdown, restart) {
+            (Some(w), Some(a), Some(d), Some(r)) => {
+                if w >= a {
+                    bad.push("arm 必须在 retrying.swap 幂等闸之后".into());
+                }
+                if !(a < d && a < r) {
+                    bad.push("arm 必须在 shutdown_sidecar 与 restart 之前".into());
+                }
+                match &stmts[a] {
+                    syn::Stmt::Expr(syn::Expr::If(i), _) => {
+                        if !calls_of_expr(&i.cond)
+                            .paths
+                            .iter()
+                            .any(|p| p.ends_with("safe_start_applies"))
+                        {
+                            bad.push("arm 外层 if 的条件必须调用 safe_start_applies".into());
+                        }
+                        let in_then = calls_of_block(&i.then_branch)
+                            .paths
+                            .iter()
+                            .any(|p| p == "safe_start::arm");
+                        let in_else = i.else_branch.as_ref().is_some_and(|(_, e)| {
+                            calls_of_expr(e)
+                                .paths
+                                .iter()
+                                .any(|p| p == "safe_start::arm")
+                        });
+                        if !in_then || in_else {
+                            bad.push("arm 必须只在 if 的 then 分支里".into());
+                        }
+                    }
+                    _ => bad.push("arm 必须直接位于顶层 `if safe_start_applies(..)` 里".into()),
+                }
+            }
+            other => bad.push(format!(
+                "找不到 swap/arm/shutdown_sidecar/restart 之一：{other:?}"
+            )),
+        }
+        bad
+    }
+
+    #[test]
+    fn the_retry_command_arms_the_safe_start_marker_exactly_once_before_restarting() {
+        let bad = retry_arm_violations(include_str!("rescue.rs"));
+        assert!(bad.is_empty(), "{bad:?}");
+    }
+
+    #[test]
+    fn the_retry_arm_check_rejects_commented_unguarded_and_misordered_variants() {
+        let good = "async fn rescue_retry() { if s.retrying.swap(true, O) { return Ok(()); } \
+            if s.failure().is_some_and(|f| safe_start_applies(f.code)) { crate::sidecar::safe_start::arm(m, 1); } \
+            let _ = spawn(move || { w.shutdown_sidecar(); }).await; app.restart() }";
+        assert!(retry_arm_violations(good).is_empty());
+        let variants = [
+            good.replace("crate::sidecar::safe_start::arm(m, 1);", "/* safe_start::arm(m, 1); */"),
+            good.replace("crate::sidecar::safe_start::arm(m, 1);", "let _ = \"safe_start::arm(\";"),
+            good.replace("if s.failure().is_some_and(|f| safe_start_applies(f.code))", "if true"),
+            good.replace(
+                "if s.failure().is_some_and(|f| safe_start_applies(f.code)) { crate::sidecar::safe_start::arm(m, 1); }",
+                "crate::sidecar::safe_start::arm(m, 1);",
+            ),
+            good.replace("{ crate::sidecar::safe_start::arm(m, 1); }", "{ } else { crate::sidecar::safe_start::arm(m, 1); }"),
+            good.replace("app.restart() }", "crate::sidecar::safe_start::arm(m, 1); app.restart() }"),
+            good.replace("crate::sidecar::safe_start::arm(m, 1); }", "crate::sidecar::safe_start::arm(m, 1); crate::sidecar::safe_start::arm(m, 2); }"),
+        ];
+        for (i, v) in variants.iter().enumerate() {
+            assert!(!retry_arm_violations(v).is_empty(), "变体 {i} 应被拒绝");
+        }
+        // arm 挪到 restart 之后
+        let after = "async fn rescue_retry() { if s.retrying.swap(true, O) { return Ok(()); } \
+            let _ = spawn(move || { w.shutdown_sidecar(); }).await; \
+            if safe_start_applies(c) { safe_start::arm(m, 1); } app.restart() }";
+        assert!(!retry_arm_violations(after).is_empty());
+    }
+
+    #[test]
     fn the_entered_flag_only_ever_goes_one_way() {
         let s = RescueState::default();
         assert!(!s.entered());
@@ -660,6 +853,7 @@ mod tests {
             exit_code: None,
             install_files: None,
             spawn_error: None,
+            startup_phase: None,
             created_at: "2026-01-01T00:00:00Z".into(),
         }));
         s.set_failure(FailureInfo::new("launch", "sidecar_spawn_failed"));

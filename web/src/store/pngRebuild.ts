@@ -87,6 +87,8 @@ export async function rebuildEditableFromScript(panelId: string): Promise<Rebuil
     { epoch: () => useScriptRunStore.getState().epoch, note: () => {}, stillWanted: () => origin.still(), beside: true },
     matches[0],
   )
+  // 成功提示只在真的于发起重建的画布上有了可编辑面板时出现：中途被切走画布 / 进到别处，不报成功
+  if (outcome === 'entered' && !origin.still()) return abandon()
   if (outcome === 'entered') {
     useUiStore.getState().setStatus(msg('artifact.rebuilt', undefined, 'errors'), 'done')
     return 'rebuilt'

@@ -495,7 +495,12 @@ def _local_probe(project: str, script: str) -> dict:
     就要退出/唤起界面，orphan worker 一个都不许留（交接后的渲染由目标进程
     自己按 lazy 语义重建，registry + cache 都在磁盘上）。
     """
-    from . import pool as engine_pool, probe as engine_probe, runtimeasset as engine_runtimeasset
+    from . import (
+        patchspec as engine_patchspec,
+        pool as engine_pool,
+        probe as engine_probe,
+        runtimeasset as engine_runtimeasset,
+    )
 
     try:
         result = engine_probe.probe_and_register(project, script)
@@ -505,7 +510,12 @@ def _local_probe(project: str, script: str) -> dict:
                 for desc in result.get("descriptors") or []:
                     if isinstance(desc, dict) and desc.get("stem"):
                         engine_runtimeasset.materialize(
-                            project, desc, worker.svg_path(desc["stem"])
+                            project,
+                            desc,
+                            worker.svg_path(desc["stem"]),
+                            # probe 的 build 没有 overrides：这是脚本原样的预览
+                            patch_hash=engine_patchspec.patch_hash([]),
+                            fresh_execution=True,
                         )
             except engine_pool.WorkerError:
                 pass  # cache 是派生物：物化不了只影响首帧占位

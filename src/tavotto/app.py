@@ -98,6 +98,7 @@ from .engine import (
     envdiag as engine_envdiag,
     envlease as engine_envlease,
     epsfile as engine_epsfile,
+    epsoverlay as engine_epsoverlay,
     execspec as engine_execspec,
     exectrace as engine_exectrace,
     exectrace_diag as engine_exectrace_diag,
@@ -157,6 +158,7 @@ from .engine import (
     shadowscript as engine_shadowscript,
     sourcelang as engine_sourcelang,
     specfix as engine_specfix,
+    startupphase as engine_startupphase,
     svgexecution as engine_svgexecution,
     taskdiag as engine_taskdiag,
     telemetry as engine_telemetry,
@@ -2320,6 +2322,187 @@ def _original_svg_result(path, artifact, receipt):
     )
 
 
+def _export_produce_original_annotated(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+    """`scope=original` 且带画布标注（QA-WIN-20）：图 + 标注由**整版导出那条 RenderCore 合成路径**画。
+
+    构造一份「页面 = 原图图幅、面板在 (0,0)、再叠标注」的画布请求，交给 `_export_produce_rendercore`——标注怎么画
+    只有那一份实现。坐标由前端换算到原图图幅，图幅之外的部分被页面裁掉。PDF / SVG / PNG / TIFF 直接出自这份合成；
+    位图源的 ppi 取「页面像素数 = 源像素网格」，尺寸与不带标注的原图导出一致。
+    EPS：RenderCore 没有完整的 PostScript 写入器，由 `_produce_annotated_eps` 把 worker 的原图 EPS 嵌进外层 EPS 再叠同一份标注 IR；
+    PostScript 表达不了的标注（alpha<1 等）这一项逐项失败（`eps_annotations_unsupported`），其余格式照常交付，不静默丢标注。
+    """
+    import dataclasses
+
+    req = job.request
+    src = req.original
+    panel = {
+        "type": "panel",
+        "id": src.figure_id,
+        "x_mm": 0,
+        "y_mm": 0,
+        "w_mm": src.w_mm,
+        "h_mm": src.h_mm,
+        **({"overrides": src.overrides} if src.overrides else {}),
+        **({"figure_snapshot": src.figure_snapshot} if src.figure_snapshot is not None else {}),
+        **({"source_policy": src.source_policy} if src.source_policy is not None else {}),
+        **({"expected_source": src.expected_source} if src.expected_source is not None else {}),
+        **(
+            {"confirmed_reconstruction_sha256": src.confirmed_reconstruction_sha256}
+            if src.confirmed_reconstruction_sha256 is not None
+            else {}
+        ),
+    }
+
+    def stacked(objs, panel_obj):
+        """保留图层次序：前 `objects_below` 个标注在图下面，其余在图上面。"""
+        n = src.objects_below
+        return [*objs[:n], panel_obj, *objs[n:]]
+
+    wants_eps = engine_exportreq.FORMAT_EPS in req.formats
+    formats = tuple(f for f in req.formats if f != engine_exportreq.FORMAT_EPS)
+    raster_formats = tuple(f for f in formats if f in engine_exportreq.RASTER_FORMATS)
+    vector_formats = tuple(f for f in formats if f not in raster_formats)
+    # 同一张图所有格式出自同一个来源（与无标注的原图导出同一个判定）：要 EPS（且不要 SVG）时，有脚本的磁盘图
+    # 也由 worker 现画，PDF / PNG / TIFF 与 EPS 的内层就出自同一次运行；没有脚本的图仍取磁盘文件（EPS 自己报 eps_needs_script）
+    rerender_ids = frozenset(
+        {src.figure_id}
+        if engine_exportroute.original_rerender(req.formats)
+        and Path(src.figure_id).suffix.lower() not in SVG_EXT
+        and _has_runnable_script(src.figure_id)
+        else ()
+    )
+    produced: list = []
+    dir_arg = {"artifact_sources": artifact_sources} if artifact_sources else {}
+    if rerender_ids:
+        dir_arg["rerender_ids"] = rerender_ids
+
+    def run(fmts, objects, w_mm, h_mm, ppi, sub, target=None):
+        # 各自的子目录：两次合成都写 out.pdf，同目录会互相覆盖
+        work = tmp_dir / sub
+        work.mkdir(parents=True, exist_ok=True)
+        canvas = engine_exportreq.CanvasSource(page_w_mm=w_mm, page_h_mm=h_mm, objects=objects)
+        canvas_req = dataclasses.replace(
+            req,
+            scope=engine_exportreq.SCOPE_CANVAS,
+            formats=fmts,
+            ppi=ppi,
+            canvas=canvas,
+            original=None,
+        )
+        extra = {"raster_target": target} if target else {}
+        return _export_produce_rendercore(_PageJob(job, canvas_req), work, **dir_arg, **extra)
+
+    w_mm, h_mm = float(src.w_mm), float(src.h_mm)
+    if vector_formats:
+        produced += run(
+            vector_formats, stacked(list(src.objects), panel), w_mm, h_mm, req.ppi, "ann_vec"
+        )
+    if raster_formats:
+        ppi = req.ppi
+        target = None
+        if src.source_kind == "raster" and src.px_w:
+            dpi_x = float(src.px_w) * 25.4 / w_mm
+            ppi = dpi_x  # 页面 w_mm 对应 px_w 个像素
+            if src.px_h:
+                dpi_y = float(src.px_h) * 25.4 / h_mm
+                if abs(dpi_y - dpi_x) > 0.005 * dpi_x:
+                    # 横纵密度不同：先按逻辑图幅各向同性画对（取两轴中较大的密度，两轴都不小于源像素），
+                    # 再整张面积平均缩到恰好 px_w × px_h；元数据写源的 x / y 密度
+                    ppi = max(dpi_x, dpi_y)
+                    target = (int(src.px_w), int(src.px_h), dpi_x, dpi_y)
+        produced += run(
+            raster_formats, stacked(list(src.objects), panel), w_mm, h_mm, ppi, "ann_ras", target
+        )
+    if wants_eps:
+        produced.append(_produce_annotated_eps(job, req, tmp_dir, artifact_sources))
+    return produced
+
+
+def _produce_annotated_eps(job, req, tmp_dir: Path, artifact_sources=None):
+    """带标注的 EPS（自写叠加，ADR 0046 补记）：worker 的 matplotlib 照旧出原图 EPS，再由 `engine/epsoverlay`
+    把它原样嵌进外层 EPS，叠上 RenderCore 为**同一组标注**编出的 IR（`rendercore/epswriter` 写成 PostScript 运算符）。
+    PostScript 没有透明：标注含 alpha<1 / 位图等 PS 表达不了的东西时，这一项逐项失败（`eps_annotations_unsupported`），
+    其余格式照常交付，不静默丢标注。"""
+    from .rendercore import epswriter, facade as rc_facade, plan as rc_plan
+
+    src = req.original
+    fmt = engine_exportreq.FORMAT_EPS
+    dpi = req.ppi or engine_exportreq.PPI_DEFAULT
+    source_ctx = (artifact_sources or {}).get(src.figure_id)
+    if Path(src.figure_id).suffix.lower() in SVG_EXT and not src.overrides:
+        inner = _produce_svg_asset_eps(job, src, dpi, tmp_dir, artifact_source=source_ctx)
+    else:
+        inner = _produce_original_eps(
+            job,
+            src,
+            dpi,
+            tmp_dir,
+            artifact_source=source_ctx,
+            **({"existing_only": True} if engine_exportreq.FORMAT_SVG in req.formats else {}),
+        )
+    if inner.tmp_path is None or not Path(inner.tmp_path).is_file():
+        return inner  # 原图 EPS 本身给不出（没有脚本 / 冷 worker …）：沿用那一档的稳定码
+    provider = rc_facade.provider()
+
+    class _NoPanels:
+        def resolve(self, obj):  # 标注里没有面板；到这里说明请求被篡改
+            raise engine_exportreq.ExportRequestError("bad_objects", "标注里不能有面板", {})
+
+    n = src.objects_below
+    parts = {}
+    for key, objs, prefix in (
+        ("below", list(src.objects[:n]), "tvu"),
+        ("above", list(src.objects[n:]), "tvg"),
+    ):
+        if not objs:
+            parts[key] = ("", None)
+            continue
+        compiled = rc_plan.compile_page(
+            float(src.w_mm),
+            float(src.h_mm),
+            objs,
+            sources=_NoPanels(),
+            faces=provider,
+            background=None,
+            math=engine_mathtypeset.layouts_for(objs, _mathtext_project()),
+        )
+        for p in compiled.problems:
+            msg = f"{p['object_id']}: {p['code']} {''.join(p.get('chars', []))}".rstrip()
+            if msg not in job.warnings:
+                job.warnings.append(msg)
+        try:
+            text, _facts = epswriter.overlay_ps(compiled.page, provider, prefix=prefix)
+        except epswriter.UnsupportedCapability as exc:
+            return engine_exportjob.Produced(
+                format=fmt,
+                error_code="eps_annotations_unsupported",
+                error_params={
+                    "operation": exc.operation,
+                    "object_id": exc.params.get("object_id", ""),
+                },
+            )
+        parts[key] = (text, compiled.page)
+    page = parts["above"][1] or parts["below"][1]
+    out = tmp_dir / "out_annotated.eps"
+    out.write_bytes(
+        engine_epsoverlay.compose(
+            Path(inner.tmp_path).read_bytes(),
+            parts["above"][0],
+            page.width_pt,
+            page.height_pt,
+            underlay=parts["below"][0],
+        )
+    )
+    bbox = engine_epsfile.bounding_box_pt(out)
+    return engine_exportjob.Produced(
+        format=fmt,
+        tmp_path=out,
+        width_mm=round(bbox[0] * 25.4 / 72.0, 3) if bbox else None,
+        height_mm=round(bbox[1] * 25.4 / 72.0, 3) if bbox else None,
+        vector=True,
+    )
+
+
 def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> list:
     """`scope=original`：这张图**按它自己的尺寸**出。
 
@@ -2332,6 +2515,8 @@ def _export_produce_original(job, tmp_dir: Path, *, artifact_sources=None) -> li
     """
     req = job.request
     src = req.original
+    if src.objects:
+        return _export_produce_original_annotated(job, tmp_dir, artifact_sources=artifact_sources)
     if (
         Path(src.figure_id).suffix.lower() in SVG_EXT
         and not src.overrides
@@ -2774,7 +2959,9 @@ def _produce_svg_asset_eps(job, src, dpi: int, tmp_dir: Path, *, artifact_source
     return result
 
 
-def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> list:
+def _export_produce_rendercore(
+    job, tmp_dir: Path, *, artifact_sources=None, rerender_ids=frozenset(), raster_target=None
+) -> list:
     """`scope=canvas` 的 `produce`：RenderPlan → Canonical PDF → child 栅格（U08 候选、U10 起默认，ADR 0067 / 0072）。
 
     **忠实于画布**——页面尺寸、布局、裁切照搬；多格式出自同一份 Canonical PDF，所以 PDF 与 PNG 不可能
@@ -2827,7 +3014,23 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
                     )
             return fs
 
-    resolver = rc_sources.ExecutionSourceResolver(
+    class _Resolver(rc_sources.ExecutionSourceResolver):
+        """`rerender_ids`：这几张磁盘图即使没有 override 也由 worker 现画（原图导出要 EPS 时的单一来源，
+        与 `_resolve_panel_source(rerender=True)` 同一判定）。"""
+
+        def resolve(self, obj: dict):
+            if str(obj.get("id", "")) in rerender_ids:
+                fs = self.execute(obj)
+                if fs.artifact.origin != engine_figcapture.ORIGIN_EXECUTION:
+                    raise rc_sources.SourceError(
+                        "source_needs_execution",
+                        f"{obj.get('id', '')}：execute 回调交回的不是执行产物",
+                        {"figure": str(obj.get("id", ""))},
+                    )
+                return fs
+            return super().resolve(obj)
+
+    resolver = _Resolver(
         static=_StaticInProject(),
         execute=lambda obj: _execution_source(
             obj,
@@ -2858,6 +3061,7 @@ def _export_produce_rendercore(job, tmp_dir: Path, *, artifact_sources=None) -> 
         provider=rc_facade.provider(),
         host=rc_facade.host(),
         math=math,
+        **({"raster_target": raster_target} if raster_target else {}),
     )
 
 
@@ -6466,6 +6670,54 @@ def api_runtime_preview():
     return resp
 
 
+@app.post("/api/runtime/preview")
+def api_runtime_preview_for_state():
+    """**这个文档状态**的预览 SVG（重开文档的首帧占位 / 导出预览的退路）。
+
+    请求体 `{id, patches}`，`patches` 是面板此刻的 overrides。GET 版给的是「最近一次渲染」，
+    不是任何特定状态的预览——前端撤销回一个它自己已有的变体时不会再发渲染请求，「最近一次」
+    就停在撤销前（QA-WIN-21）。这里按 patches 的内容哈希取变体：
+
+    * 命中 → 200，`X-Tavotto-Preview-Exact: 1`，就是这个状态画出来的那份；
+    * 没命中但有「最近一次」→ 200，`X-Tavotto-Preview-Exact: 0`：**画面不是这个状态**，
+      调用方必须标「近似预览」，不得当成当前状态的图（变体被淘汰、旧 cache 配有 overrides 的状态
+      都落这里；判据全在 `runtimeasset.preview_for_state`）；
+    * cache 不存在 → 404 `runtime_cache_missing`，与 GET 同一语义。
+
+    只读，绝不执行脚本。
+    """
+    ctx = current_ctx()
+    body = request.get_json(force=True, silent=True) or {}
+    rel_id = str(body.get("id") or "")
+    if not engine_runtimeasset.is_runtime_id(rel_id):
+        return jsonify(
+            {
+                "error": f"不是 runtime 素材 id: {rel_id}",
+                "code": "runtime_asset_unknown",
+                "params": {"id": rel_id},
+            }
+        ), 400
+    patches = body.get("patches", [])
+    if not isinstance(patches, list):
+        return jsonify({"error": "patches 必须是数组", "code": "invalid_patches"}), 400
+    digest = _variant_hash(patches)
+    if digest is None:
+        return jsonify({"error": "patches 不合法", "code": "invalid_patches"}), 400
+    path, exact = engine_runtimeasset.preview_for_state(ctx.path, rel_id, digest)
+    if path is None:
+        return jsonify(
+            {
+                "error": "该运行时素材尚未物化预览（重新运行后生成）",
+                "code": "runtime_cache_missing",
+                "params": {"id": rel_id},
+            }
+        ), 404
+    resp = send_file(path, mimetype="image/svg+xml")
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["X-Tavotto-Preview-Exact"] = "1" if exact else "0"
+    return resp
+
+
 @app.post("/api/runtime/remove")
 def api_runtime_remove():
     """素材库「从素材中移除」：脚本已不在磁盘上的 runtime 素材，摘掉它的登记与物化 cache。
@@ -7030,6 +7282,16 @@ def _note_native_inputs(session) -> None:
         LOG.info("native 记录补依据失败: %s", session.session_id, exc_info=True)
 
 
+def _variant_hash(patches) -> str | None:
+    """预览变体的寻址键：patches 的内容哈希；`None`（说不清是哪个状态）或脏数据 → None（不记变体）。"""
+    if patches is None:
+        return None
+    try:
+        return engine_patchspec.patch_hash(patches)
+    except (TypeError, ValueError):
+        return None
+
+
 def _materialize_native(session, skip=()) -> None:
     """把 native 会话这一轮的预览物化进 runtime cache（**last known preview**）。
 
@@ -7045,7 +7307,13 @@ def _materialize_native(session, skip=()) -> None:
         if not stem or stem in skip:
             continue
         _capture_svg_snapshot(session, desc)
-        engine_runtimeasset.materialize(root, desc, session.svg_path(stem))
+        engine_runtimeasset.materialize(
+            root,
+            desc,
+            session.svg_path(stem),
+            patch_hash=_variant_hash([]),
+            fresh_execution=True,
+        )
 
 
 def _materialize_runtime(
@@ -7056,8 +7324,14 @@ def _materialize_runtime(
     remap_generation: int | None,
     run=None,
     pinned=None,
+    patches_by_stem: dict | None = None,
 ) -> None:
     """把一次成功 build 捕获的每张图物化进 runtime cache（失败只记日志）。
+
+    `patches_by_stem`：这次物化的 SVG 是按哪组 overrides 画的（stem → patches）。**None = 一次 build，
+    每张图都是脚本原样（空 patches）**；给了字典（渲染端点：只有被渲染的那张图带着 patches）就只给
+    字典里的 stem 记「这个状态的预览」变体，别的 stem 的 SVG 属于哪个状态说不清，不记（QA-WIN-21：
+    预览缓存按状态内容寻址，读端才能分辨「这个状态的预览」与「最近一次」）。
 
     SVG 从热 worker 的 out 目录拿——build 阶段本来就写好了，这里只是复制，
     **绝不触发第二次执行**（probe 的 execution-count 纪律，Session 3 约束）。
@@ -7094,7 +7368,15 @@ def _materialize_runtime(
                 # The capture helper is generation-aware: even an edit's first
                 # build freezes the base once; subsequent gestures never recapture.
                 _capture_svg_snapshot(worker, desc)
-                engine_runtimeasset.materialize(root, desc, worker.svg_path(stem))
+                state = [] if patches_by_stem is None else patches_by_stem.get(stem)
+                engine_runtimeasset.materialize(
+                    root,
+                    desc,
+                    worker.svg_path(stem),
+                    patch_hash=_variant_hash(state),
+                    # 没有 patches_by_stem = 一次 build（显式运行 / 准备）：新的执行，旧变体作废
+                    fresh_execution=patches_by_stem is None,
+                )
     except engine_inputremap.RemapChanged as exc:
         LOG.info("runtime 物化作废（%s）: %s", exc, script)
 
@@ -7901,6 +8183,8 @@ def api_engine_render():
             worker.last_build_descriptors,
             remap_generation=getattr(worker, "remap_generation", None),
             run=getattr(worker, "run", None),
+            # 这张 SVG 是按请求里的 patches 画的：按它的内容记一份变体（读端按状态取，不取「最近一次」）
+            patches_by_stem={stem: body.get("patches", [])},
         )
     out = {
         "rev": worker.rev,
@@ -16404,6 +16688,12 @@ def main():
         "仅供开发调试（vite dev proxy / 手工 curl），生产环境不要用",
     )
     args = ap.parse_args()
+    if args.desktop_sidecar:
+        engine_startupphase.mark("imports_done")
+    # 壳的 hello（stdin 首行）要在恢复项目之前看一眼：超时后「重新启动」带 safe_start，这一次不恢复上次项目
+    # （TVD-DT76）。读到的字典原样交给 desktop_mode.run，首行只读这一次。
+    hello = desktop_mode.read_hello() if args.desktop_sidecar else None
+    safe_start = desktop_mode.parse_safe_start((hello or {}).get(desktop_mode.SAFE_START_FIELD))
 
     setup_logging()
     # 安装清单刷成「这套 Tavotto 现在在这儿」。安装器只写得了装的那一刻，
@@ -16464,6 +16754,8 @@ def main():
             webbrowser.open(url)
             return
 
+    if args.desktop_sidecar:
+        engine_startupphase.mark("housekeeping")
     threading.Thread(
         target=prune_render_cache, daemon=True, name="mm-cache-prune"
     ).start()  # 启动清一次历史存量
@@ -16492,6 +16784,8 @@ def main():
     engine_exectrace.recover_on_startup()
     # 选中的 PDF 后端在起服务前装载好（契约层是惰性装载的）：第一次 probe 不再多付一次
     # import 的延迟；选了装不上的后端在这里就报出来，不静默回退（ADR 0067 / 0072）
+    if args.desktop_sidecar:
+        engine_startupphase.mark("pdf_backend")
     LOG.info("PDF 后端: %s", engine_logsafe.known(pdfbackend.warm(), pdfbackend.BACKENDS))
     if not args.desktop_sidecar:
         # 桌面模式的升级由 Tauri 层负责，Python updater 连后台检查都不跑
@@ -16501,7 +16795,10 @@ def main():
     # --figures 最高优先；否则恢复最近项目；都没有（或无效）→ 界面里的
     # Project Picker 接手，进程不再直接退出。
     where = "窗口" if args.desktop_sidecar else "浏览器"
-    candidate = args.figures or engine_config.last_project()
+    if args.desktop_sidecar:
+        engine_startupphase.mark("project_open")
+    # 安全启动（上次握手超时后的「重新启动」）：不恢复上次项目，直接进项目选择页；`--figures` 显式参数照常
+    candidate = args.figures or (None if safe_start else engine_config.last_project())
     if candidate:
         try:
             st = open_project(candidate)
@@ -16527,7 +16824,7 @@ def main():
         # telemetry.set_consent 补发（同一次会话只发一条）。
         engine_telemetry.note_app_started("desktop")
         try:
-            sys.exit(desktop_mode.run(app))
+            sys.exit(desktop_mode.run(app, hello=hello))
         finally:
             from .rendercore import renderhost as rc_renderhost
 

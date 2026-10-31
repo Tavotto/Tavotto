@@ -19,9 +19,11 @@
  * 回答「那一版长什么样」——后者是版本详情里的 `LayoutSnapshot`，它会在出不来
  * 时明确标「近似预览」。
  */
+import { useRuntimePreview } from '@/hooks/useRuntimePreview'
 import { useVariantPng } from '@/hooks/useVariantPng'
 import { renderUrl, runtimePreviewUrl } from '@/lib/api'
 import { adoptionGuardOf } from '@/lib/artifactValidation'
+import { engineTransport } from '@/lib/engineTransport'
 import { useRetryingSrc } from '@/lib/imgRetry'
 import { cn } from '@/lib/utils'
 import { useAssetStore } from '@/store/assetStore'
@@ -348,7 +350,13 @@ function EditedThumbImage({
   height: number
 }) {
   const variant = useVariantPng(panel.fileId, panel.overrides, bucket, true, rev, adoptionGuardOf(panel))
-  return <ThumbImage fileId={panel.fileId} href={variant.url ?? fallbackHref} {...box} />
+  // runtime 面板的退路是 cache 预览，而后端 GET 版给的是「最近一次渲染」、不是这组 overrides 的图
+  // （撤销回一个前端已画过的变体时它停在撤销前，QA-WIN-21）：按此刻的 overrides 取，**不是这个状态的图就不挂**
+  // ——缩略图没有「近似预览」的位置，空着比挂一张撤销前的旧图诚实
+  const byState = panel.fileKind === 'runtime' && !engineTransport()
+  const runtimePreview = useRuntimePreview(panel.fileId, panel.overrides, byState, rev)
+  const fallback = byState ? (runtimePreview.exact === true ? runtimePreview.url : null) : fallbackHref
+  return <ThumbImage fileId={panel.fileId} href={variant.url ?? fallback} {...box} />
 }
 
 /** 缩略图里的一张面板图：`/api/render` 的一次失败按 `lib/imgRetry` 有界重试（候选后端的背压） */
@@ -361,13 +369,14 @@ function ThumbImage({
   height,
 }: {
   fileId: string
-  href: string
+  href: string | null
   x: number
   y: number
   width: number
   height: number
 }) {
-  const retry = useRetryingSrc(href)
+  const retry = useRetryingSrc(href ?? '')
+  if (!href) return null
   return (
     <image
       data-thumb-panel={fileId}

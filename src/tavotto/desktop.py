@@ -53,6 +53,7 @@ from .engine import (
     pool as engine_pool,
     project_watch as engine_watch,
     session_client as engine_session_client,
+    startupphase,
 )
 
 LOG = logging.getLogger("tavotto.desktop")
@@ -72,6 +73,9 @@ PREFERRED_PORT_MAX = 65535
 #: 所以只给两三秒，再占不到就本次换端口（壳那边记一次落空，ADR 0108）。
 PREFERRED_PORT_RETRY_SECONDS = 2.5
 PREFERRED_PORT_RETRY_INTERVAL = 0.1
+#: stdin 首行 JSON 里壳的「安全启动」字段（TVD-DT76）：只有字面 `true` 生效，别的取值一律当没有。
+#: 与生产方 `src-tauri/src/sidecar/safe_start.rs` 严格同源：两侧各读 `tests/golden/desktop_safe_start.json`。
+SAFE_START_FIELD = "safe_start"
 
 
 # ---------------------------------------------------------------------------
@@ -111,8 +115,34 @@ def parse_preferred_port(value: object) -> int | None:
     return value if PREFERRED_PORT_MIN <= value <= PREFERRED_PORT_MAX else None
 
 
+def parse_safe_start(value: object) -> bool:
+    """stdin 里的安全启动标志 → bool；只有 JSON `true` 算，`1` / `"true"` / 缺席都是 False。"""
+    return value is True
+
+
+def read_hello(stdin=None, environ=None) -> dict | None:
+    """读掉 stdin 首行 JSON（壳的 hello）。给 `app.main` 在恢复项目**之前**取安全启动标志用，
+    读到的字典再原样交给 `run(hello=…)`，首行只读这一次。
+
+    环境变量里已有 nonce（调试用）/ stdin 是 tty / 没有 stdin → None（没读）；读了但内容坏 → 空字典（已消费）：与
+    `read_launch_credentials` 同一条「不读」的边界，调试时 stdin 不会无限等一行永远不来的输入。
+    """
+    env = environ if environ is not None else os.environ
+    stream = stdin if stdin is not None else sys.stdin
+    if env.get("TAVOTTO_DESKTOP_NONCE") is not None or stream is None:
+        return None
+    try:
+        if stream.isatty():
+            return None
+        line = stream.readline()
+        msg = json.loads(line) if line.strip() else {}
+    except (OSError, ValueError):
+        return {}  # 首行已被读走（或读坏）：给 run 一个空 hello，别让它再去等下一行
+    return msg if isinstance(msg, dict) else {}
+
+
 def read_launch_credentials(
-    stdin=None, environ=None
+    stdin=None, environ=None, hello: dict | None = None
 ) -> tuple[str | None, int | None, int | None, object]:
     """取启动 nonce、父 PID 与建议端口。
 
@@ -133,9 +163,12 @@ def read_launch_credentials(
 
     if nonce is None and stream is not None:
         try:
-            if not stream.isatty():
-                line = stream.readline()
-                msg = json.loads(line) if line.strip() else {}
+            if hello is not None or not stream.isatty():
+                if hello is not None:
+                    msg = hello  # 已由 read_hello 提前读掉
+                else:
+                    line = stream.readline()
+                    msg = json.loads(line) if line.strip() else {}
                 if isinstance(msg, dict):
                     n = msg.get("nonce")
                     if isinstance(n, str) and n:
@@ -351,12 +384,12 @@ class SidecarServer:
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
-def run(flask_app) -> int:
+def run(flask_app, hello: dict | None = None) -> int:
     """`tavotto --desktop-sidecar` 的主体。项目打开逻辑仍在 app.main（与浏览器
     模式同一套），这里只负责认证、server 生命周期与父进程跟随。"""
     # Finder / Dock 启动只带 GUI 的最小 PATH：补上终端会有的 /etc/paths(.d)（MacTeX 等），所有子进程继承
     loginpath.apply_to_environ()
-    nonce, parent_pid, preferred_port, stdin_stream = read_launch_credentials()
+    nonce, parent_pid, preferred_port, stdin_stream = read_launch_credentials(hello=hello)
     handshake_raw = os.environ.pop("TAVOTTO_DESKTOP_HANDSHAKE", None)
     handshake = Path(handshake_raw) if handshake_raw else None
 
@@ -372,6 +405,7 @@ def run(flask_app) -> int:
         return 2
 
     state = DesktopState(nonce)
+    startupphase.mark("serving")
     try:
         srv = SidecarServer(flask_app, state, handshake, preferred_port=preferred_port)
     except OSError as exc:

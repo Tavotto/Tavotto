@@ -62,6 +62,8 @@ export default defineConfig({
       // tests/test_merge_queue_workflows.py::TestPlaywrightShards 对拍，加 / 删 / 改名
       // 一个 project 就要回去改那张 matrix）。
       testMatch: [
+        // Delayed renders exercise pointer routing and resize status in WKWebView as well as Chromium.
+        'drag-sync.spec.ts',
         'golden-paths.spec.ts',
         'dark-draft-arrow.spec.ts',
         'a11y.spec.ts',

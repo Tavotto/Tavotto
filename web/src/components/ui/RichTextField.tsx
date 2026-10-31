@@ -232,6 +232,8 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
   useLayoutEffect(() => {
     if (!host.current) return
     let pending = false
+    /** 此刻是否持有焦点：带着焦点被卸载时浏览器的 blur 不一定来得及触发（见下方 cleanup） */
+    let focused = false
     const flush = (view: EditorView) => {
       pending = false
       const runs = docToRuns(view.state.doc)
@@ -302,10 +304,12 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
           return false
         },
         focus: () => {
+          focused = true
           cb.current.onFocus?.()
           return false
         },
         blur: (v) => {
+          focused = false
           if (pending) flush(v)
           cb.current.onBlur?.()
           return false
@@ -327,6 +331,14 @@ export const RichTextField = forwardRef<RichTextFieldHandle, RichTextFieldProps>
     }
     if (autoFocus || selectAllOnMount) view.focus()
     return () => {
+      // 带着焦点被卸载（点画布空白取消选择 / 退出就地编辑：宿主先于浏览器移焦把我们摘掉）时，
+      // 浏览器不保证再给一次 blur。宿主在 onFocus 开的事务、画布就地编辑待写的内容都靠 onBlur 收尾——
+      // 这里补上，保证「任何卸载路径之前，打开的文字编辑事务先提交关闭」（QA-WIN-14 / QA-WIN-28）
+      if (focused) {
+        focused = false
+        if (pending) flush(view)
+        cb.current.onBlur?.()
+      }
       viewRef.current = null
       view.destroy()
     }

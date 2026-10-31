@@ -92,6 +92,23 @@ def test_export_panel_flip_h(client, tmp_path, monkeypatch):
     assert r1 > l1 * 3, (l1, r1)  # 翻转后墨在右
 
 
+def test_export_single_figure_frame_with_annotation(client, tmp_path):
+    """QA-WIN-20：单图档带标注时前端发的是「页面 = 原图图幅、面板在 (0,0) + 标注」的画布请求
+    （`web/src/lib/singleExportDoc.ts`）。这条路径得把图和标注一起写进同一个矢量 PDF，页面就是图幅。"""
+    m.open_project(str(_asym_panel_dir(tmp_path)))
+    panel = {"type": "panel", "id": "asym.pdf", "x_mm": 0, "y_mm": 0, "w_mm": 100, "h_mm": 50}
+    doc = _export(
+        client,
+        tmp_path,
+        {"stem": "annot", "objects": [panel, _text_obj("Label QA", x_mm=55, y_mm=5)]},
+    )
+    page = doc[0]
+    assert "Label QA" in page.get_text()
+    assert (round(page.rect.width * 25.4 / 72), round(page.rect.height * 25.4 / 72)) == (100, 50)
+    left, right = _ink_halves(doc)
+    assert left > right * 2, (left, right)  # 图（左半的方块）仍在
+
+
 def test_export_panel_flip_v_keeps_horizontal(client, tmp_path, monkeypatch):
     """垂直翻转不影响左右分布（内容仍在左半）。"""
     m.open_project(str(_asym_panel_dir(tmp_path)))

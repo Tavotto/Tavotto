@@ -833,6 +833,29 @@ export const runtimePreviewUrl = (id: string, nonce?: number) =>
   apiUrl(`/api/runtime/preview?id=${encodeURIComponent(id)}${nonce ? `&t=${nonce}` : ''}`)
 
 /**
+ * **这个文档状态**的 runtime 预览（QA-WIN-21）。`runtimePreviewUrl` 给的是后端「最近一次渲染」的
+ * 预览——撤销回一个前端自己已画过的变体时不会再发渲染请求，「最近一次」停在撤销前，
+ * 重开文档 / 导出预览读它就是旧图。这里带着面板此刻的 overrides 去问：
+ * `exact` = 后端有按这组 overrides 画的那一份；`false` = 只有别的状态的图，调用方必须标「近似预览」。
+ * cache 不存在（404）回 `null`（占位语义，同 GET 版）；别的失败抛出。
+ */
+export async function fetchRuntimePreviewForState(
+  id: string,
+  patches: unknown[],
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; exact: boolean } | null> {
+  const res = await fetch(apiUrl('/api/runtime/preview'), withProject({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, patches }),
+    signal,
+  }))
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`runtime preview ${res.status}`)
+  return { blob: await res.blob(), exact: res.headers.get('X-Tavotto-Preview-Exact') === '1' }
+}
+
+/**
  * 浏览器 `<img>` 在所有桌面壳里都解得开的位图扩展名（小写、不带点）。**这是浏览器的
  * 能力清单，不是素材清单**：素材边界的唯一出处是后端 `engine/project_refresh.IMG_EXT`，
  * 那里多出来的格式（TIFF：Chromium / WebView2 不认）不在这张表里，就走下面的分档渲染
@@ -1926,6 +1949,13 @@ export type ExportOriginalSource = ArtifactRequestFields & {
   source_kind?: string
   /** 画布上设了、原图导出**不套用**的变换（说出来，不静默忽略） */
   ignored?: string[]
+  /**
+   * 画布上的标注（text / arrow / shape，QA-WIN-20）：坐标已换算到原图图幅（图左上角为原点、mm），后端用整版导出
+   * 那条合成路径画在原图上。缺省 / 空 = 纯原图导出（载荷与从前逐字节相同）；非空时 `w_mm` / `h_mm` 必填。
+   */
+  objects?: ExportObject[]
+  /** `objects` 里前几个画在图的下面（图层树里放在图之下的标注）；缺省 0 = 都在图上 */
+  objects_below?: number
 }
 
 export interface ExportRequest {

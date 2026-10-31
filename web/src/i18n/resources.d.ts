@@ -2277,6 +2277,7 @@ export default interface Resources {
             "detail_state": "会话状态文件（含损坏副本清单）",
             "detail_storage": "存储环境（剩余空间、可写、是否在同步目录）",
             "environment": "运行环境与版本信息（用户名、路径已脱敏）",
+            "exec_traces": "最近几次任务的执行步骤与耗时（只有阶段、状态与错误码，不含提示词、脚本、文件名、路径）",
             "log": "应用日志（只留事件类型与数字，不含报错原文、脚本名、路径）",
             "manifest": "包的版本说明",
             "other": "其他诊断文件",
@@ -3094,6 +3095,7 @@ export default interface Resources {
       "environment_locked": "全局指定的 Python 正在生效，项目里的选择不会被使用。请先解除全局指定",
       "environment_mutating": "该 Python 环境正在安装依赖，请稍候再试。",
       "environment_save_failed": "没能把这个环境保存到项目设置里（设置文件只读或磁盘已满），本次没有采用",
+      "eps_annotations_unsupported": "这张图的标注里有半透明等 EPS 画不出的效果（EPS 不支持透明），所以这一项没有导出，标注不会被悄悄丢掉。想要 EPS，请先把标注改成不透明。其余格式已照常导出。",
       "eps_needs_live_figure": "要导出 {{figure}} 的 EPS，请先在画布上打开并运行这张图。其余格式已照常导出。",
       "eps_needs_script": "{{figure}} 没有可重新运行的脚本，无法生成 EPS。其余格式已照常导出。",
       "eps_not_for_canvas": "无法按画布导出 EPS。要 EPS，请按「原图尺寸」导出单张有脚本的图；其余格式已照常导出。",
@@ -6770,6 +6772,7 @@ export default interface Resources {
         "ticks": "刻度文字跟着刻度走，不能单独拖；刻度的位置与方向在属性页修改",
         "unsupported": "暂不支持拖动「{{label}}」这类对象"
       },
+      "dragSyncCancelled": "图形未能同步，后续拖动没有应用，请重试。",
       "elementCycled": "已选中「{{label}}」（此处第 {{index}}/{{total}} 个重叠元素）",
       "elementHidden": "已隐藏「{{label}}」，可在「已隐藏元素」里恢复",
       "elementLocked": "已锁定「{{label}}」，画布点击将跳过它",
@@ -6857,6 +6860,9 @@ export default interface Resources {
       "mixedHint": "这几处的值不一样；输入一个值会统一它们",
       "needRender": "要读出这张图的样式，需要渲染一次。",
       "noManifest": "这张图还没有可读的图内元素。",
+      "pendingSizeCancelled": "字号调整未应用：图形状态已变化或渲染失败，请重试。",
+      "previewFailed": "图形预览更新失败，画面可能不是最新状态。",
+      "previewPending": "图形预览正在同步，画面可能尚未更新。",
       "restoreWaiting": "还有图在渲染，渲染完才能恢复",
       "restore_other": "恢复原样 · {{count}} 项",
       "row": {

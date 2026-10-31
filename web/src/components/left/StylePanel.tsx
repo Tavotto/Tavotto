@@ -2,7 +2,7 @@ import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRe
 import { useTranslation } from 'react-i18next'
 import { Bold, ChevronRight, Italic, RotateCcw } from '@/components/ui/icons'
 import { ICON_SIZE } from '@/components/ui/Icon'
-import { t as translate } from '@/i18n'
+import { msg, t as translate } from '@/i18n'
 import { cn } from '@/lib/utils'
 import type { EditableField, Manifest, ManifestElement } from '@/lib/api'
 import { profileName } from '@/lib/profileText'
@@ -26,8 +26,10 @@ import {
   styleMismatchCount,
 } from '@/store/styleBinding'
 import { useDocumentStore } from '@/store/documentStore'
+import { queueFontSize } from './queuedFontSize'
 import { useProfileStore } from '@/store/profileStore'
 import {
+  exactPanelManifest,
   panelRender,
   useExactPanelManifest,
   usePanelDisplayManifest,
@@ -117,7 +119,8 @@ function StylePanelBody() {
   })
   const manifest = usePanelDisplayManifest(panel)
   const exact = useExactPanelManifest(panel)
-  const rendering = usePanelRender(panel)?.status === 'rendering'
+  const render = usePanelRender(panel)
+  const rendering = render?.status === 'rendering'
   const figureKey = useDocumentStore((s) => (panel ? figureScope(s, panel) : ''))
 
   if (!panel) {
@@ -138,10 +141,16 @@ function StylePanelBody() {
       <p className="shrink-0 truncate px-3 text-sm text-ink" data-style-figure title={figure.name ?? ''}>
         {figure.name}
       </p>
+      {manifest && !exact && (
+        <p data-style-sync-status={render?.status === 'error' ? 'error' : 'pending'} role="status"
+          className="shrink-0 px-3 py-1 text-xs text-ink-2">
+          {sp(render?.status === 'error' ? 'previewFailed' : 'previewPending')}
+        </p>
+      )}
       {/* 「跟随样式」是滚动区里最后一节（可折叠），不再是钉在底部的约 150px 页脚（2026-10-07 设计审计 §10.3） */}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {manifest ? (
-          <FigureStyle key={figureKey} panel={panel} manifest={exact ?? manifest} exact={!!exact} />
+          <FigureStyle key={figureKey} panel={panel} manifest={exact ?? manifest} exact={!!exact} canQueueSize={render?.status !== 'error'} />
         ) : panel.script ? (
           /* 可编辑、但这一会话还没渲染过：值要引擎读出来。**不自动跑脚本**（「只带基线、
              还没动过」的面板不渲染，heavy 脚本要几分钟——`useEngineSync.renderTargets`），
@@ -166,7 +175,7 @@ function StylePanelBody() {
   )
 }
 
-function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest: Manifest; exact: boolean }) {
+function FigureStyle({ panel, manifest, exact, canQueueSize }: { panel: PanelObject; manifest: Manifest; exact: boolean; canQueueSize: boolean }) {
   const bound = useDocumentStore((s) => !!s.doc.style && !s.doc.style.detached)
   const locked = !bound && !exact
   const texts = useDocumentStore((s) => s.doc.objects)
@@ -189,6 +198,7 @@ function FigureStyle({ panel, manifest, exact }: { panel: PanelObject; manifest:
             faceRole={row.faceRole}
             bound={bound}
             locked={locked}
+            canQueueSize={canQueueSize}
           />
         ))}
         {annotations.length > 0 && (
@@ -448,7 +458,7 @@ interface FigureRowProps {
    * 没绑样式时直接往这张图上写 override，gid 取自显示用的 manifest——那可能是**上一版**（脚本 /
    * override 刚变、这一版还在渲染）。拿过期的 gid 写 override 会写到已经不存在的元素上
    * （Codex #547 P1，与 styleBinding 只认 `exactPanelManifest` 同一条纪律），所以这一版没回来之前
-   * 控件置灰、说原因。绑着样式时写的是样式本身，不经这里的 gid，不锁。
+   * 普通控件置灰；字号可排队，等精确清单到达后重新按角色取目标。绑着样式时写的是样式本身，不经这里的 gid。
    */
   locked: boolean
   panel: PanelObject
@@ -469,7 +479,8 @@ const FigureTextRow = memo(function FigureTextRow({
   faceRole,
   bound,
   locked,
-}: FigureRowProps & { id: string; sizeRole: string; familyRole: string; faceRole: string | null }) {
+  canQueueSize,
+}: FigureRowProps & { id: string; sizeRole: string; familyRole: string; faceRole: string | null; canQueueSize: boolean }) {
   // memo 的行 props 不随语言变：自己订阅，切语言时行名 / 选项名跟着换（Codex #547）
   useTranslation(['workspace', 'inspector'])
   const sizeEls = useMemo(() => elementsWith(manifest, sizeRole, 'fontsize'), [manifest, sizeRole])
@@ -490,6 +501,7 @@ const FigureTextRow = memo(function FigureTextRow({
   const weight = useTextStyleAdapter(panel, weightEls, WEIGHT_PROPS)
   const style = useTextStyleAdapter(panel, styleEls, STYLE_PROPS)
   const pw = usePendingWrites()
+  const ownerScope = figureScope(useDocumentStore.getState(), panel)
   if (!sizeEls.length && !familyEls.length) return null
 
   const label = ROW_LABEL[id]()
@@ -507,6 +519,21 @@ const FigureTextRow = memo(function FigureTextRow({
         ? editBoundStyle({ kind: 'element', role: faceRole, prop, value: v })
         : (prop === 'weight' ? weight : style).writeOnce(prop, v),
     )
+  const writeSize = (v: number) => {
+    if (bound) return editBoundStyle({ kind: 'element', role: sizeRole, prop: 'fontsize', value: v })
+    const ds = useDocumentStore.getState()
+    const live = ds.doc.objects.find((o) => o.id === panel.id)
+    if (live?.type !== 'panel' || figureScope(ds, live) !== ownerScope) {
+      useUiStore.getState().setStatus(msg('stylePanel.pendingSizeCancelled', undefined, 'workspace'), 'error')
+      return
+    }
+    // 捕获阶段的别的动作可能刚改了文档，React 还没来得及把这一行重画成同步态。
+    // 此时不能用闭包里的旧元素；连已经缓存好新清单的情形也重新按角色取目标。
+    if (live.overrides !== panel.overrides || !exactPanelManifest(useRenderStore.getState(), live)) {
+      return queueFontSize(live, sizeRole, v)
+    }
+    size.writeOnce('fontsize', v)
+  }
 
   return (
     <StyleRow id={id}>
@@ -539,14 +566,8 @@ const FigureTextRow = memo(function FigureTextRow({
                 value={pw.shown('fontsize', size.valueOf('fontsize'))}
                 field={sizeField}
                 step={0.5}
-                locked={locked}
-                onChange={(v) =>
-                  pw.write('fontsize', v, () =>
-                    bound
-                      ? editBoundStyle({ kind: 'element', role: sizeRole, prop: 'fontsize', value: v })
-                      : size.writeOnce('fontsize', v),
-                  )
-                }
+                locked={locked && !canQueueSize}
+                onChange={(v) => pw.write('fontsize', v, () => writeSize(v))}
               />
             </div>
           )}

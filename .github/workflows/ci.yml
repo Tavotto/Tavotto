@@ -412,6 +412,100 @@ jobs:
           python3 -I "$TRUSTED/scripts/ci/cla_gate.py" "${ARGS[@]}"
 
   # ────────────────────────────────────────────────────────────────
+  # 发行说明闸：用户可见的 PR 必须往 docs/release-notes/UNRELEASED.md 新增一个
+  # `## ` 待发条目，内部 PR 打 `no-release-note` 标签豁免（约定与理由见
+  # docs/RELEASING.md；判定逻辑与「用户可见路径」清单在
+  # scripts/ci/release_note_gate.py，看护在 tests/test_release_note_gate.py）。
+  #
+  # 为什么存在：发行说明以前是发版当天回头补的，补一个纯文档 PR 要跑满整条 CI
+  # 加合并队列（v0.19.2 两个，约 3 小时）。
+  #
+  # * **merge_group 上必须跑并且成功，不能 skipped。** fast gate 把 skipped 一律
+  #   当失败，这一格在队列候选上被跳过 = `CI fast gate` 永久红。脚本在
+  #   merge_group 上直接判 not_applicable 退出 0，理由：判据的输入是 PR 的文件列表
+  #   与标签，候选提交上两样都没有，PR 阶段已验过。
+  # * 判定器取自默认分支（与 cla-check / 两个 Gate 同一条纪律：PR 不能改写审判
+  #   自己的尺子）。默认分支上还没有这份脚本时（bootstrap 空窗，只存在于引入它的
+  #   PR 合并之前）才 sparse checkout 本次 revision 的那一份脚本作后备并 notice。
+  # * 只读元数据：不装依赖、几秒跑完。权限 contents: read + pull-requests: read。
+  # * push main 上不跑（与其它快线一致；Gate 也只在 PR / merge_group 上有意义）。
+  # * 标签取自事件 payload；`labeled` / `unlabeled` 本来就在 pull_request 的 types
+  #   里，打上 `no-release-note` 会起新 run，这一格重判。
+  # ────────────────────────────────────────────────────────────────
+  release-note-gate:
+    name: Release note (UNRELEASED)
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: 取默认分支上的可信判定器
+        id: trusted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          TRUSTED="$RUNNER_TEMP/trusted-release-note/scripts/ci"
+          mkdir -p "$TRUSTED"
+          if gh api "repos/$REPO/contents/scripts/ci/release_note_gate.py?ref=$REF" \
+               --jq .content 2>/dev/null | base64 -d > "$TRUSTED/release_note_gate.py" \
+             && [ -s "$TRUSTED/release_note_gate.py" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "判定器取自默认分支"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::默认分支上还没有 release_note_gate.py（bootstrap 空窗）——退回本仓库副本"
+          fi
+          echo "TRUSTED=$RUNNER_TEMP/trusted-release-note" >> "$GITHUB_ENV"
+
+      # bootstrap 空窗的后备：只 sparse checkout 判定器这一个文件（"判定"步里复制）。
+      - if: steps.trusted.outputs.found != 'true'
+        uses: actions/checkout@v5
+        with:
+          sparse-checkout: scripts/ci/release_note_gate.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      # 文件列表：`pulls/{n}/files` 逐页取全（封顶 3000 个文件），条数用 PR 自己
+      # 声明的 changed_files 对账——列表不全就红，绝不拿不完整的列表判通过。
+      - name: 收集这个 PR 的改动文件
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pr-files.json"
+          want=$(gh api "repos/$REPO/pulls/$PR" --jq .changed_files)
+          gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" \
+            --jq '[.[] | {filename, status, previous_filename, patch}]' > "$out"
+          test -s "$out"
+          echo "RN_EXPECTED_FILES=$want" >> "$GITHUB_ENV"
+
+      - name: 判定
+        env:
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.trusted.outputs.found }}" != "true" ]; then
+            cp scripts/ci/release_note_gate.py "$TRUSTED/scripts/ci/release_note_gate.py"
+          fi
+          ARGS=(--event "${{ github.event_name }}")
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ARGS+=(--pr-author "$PR_AUTHOR"
+                   --labels-json "$PR_LABELS"
+                   --files-json "$RUNNER_TEMP/pr-files.json"
+                   --expected-files "$RN_EXPECTED_FILES")
+          fi
+          python3 -I "$TRUSTED/scripts/ci/release_note_gate.py" "${ARGS[@]}"
+
+  # ────────────────────────────────────────────────────────────────
   # 第 1 层最靠前的一格：引擎的**结构性不变式**（tests/test_invariants_engine.py
   # + 与它同一族的 artist family / patchspec / preflight 契约）。
   #
@@ -2282,7 +2376,7 @@ jobs:
     # always() 让它在上游失败后照跑并且红；事件条件与快线一致——push main
     # 上快线不跑，Gate 也不跑（required contexts 只在 PR / merge_group 上有意义）。
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') }}
-    needs: [python-lint, cla-check, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
+    needs: [python-lint, cla-check, release-note-gate, invariants, backend-fast, frontend, plugin-candidate, workerd, desktop-shell, compat-smoke]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -2319,7 +2413,7 @@ jobs:
           python3 -I "$RUNNER_TEMP/trusted-gate/aggregate_gate.py" \
             --mode fast \
             --event "${{ github.event_name }}" \
-            --required python-lint,cla-check,invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke \
+            --required python-lint,cla-check,release-note-gate,invariants,backend-fast,frontend,plugin-candidate,workerd,desktop-shell,compat-smoke \
             --needs-json "$NEEDS_JSON"
 
   ci-integration-gate:

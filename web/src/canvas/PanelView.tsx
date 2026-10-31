@@ -2,7 +2,7 @@ import { adoptionGuardOf, artifactRequestFields, artifactValidationIssue, Artifa
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { perfCount, perfRenderPainted } from '@/perf/core'
-import { formatMessage, t as translate } from '@/i18n'
+import { formatMessage, msg, t as translate } from '@/i18n'
 import { listJoin } from '@/i18n/format'
 import { enginePreviewPngSnapshot, EngineError, panelSrc, type Manifest, type ManifestElement } from '@/lib/api'
 import { useDecodedSvg } from '@/lib/useDecodedSvg'
@@ -55,6 +55,7 @@ import {
 } from '@/store/renderStore'
 import { frameSwitchAvailable, frameSwitchPatch } from '@/lib/figureFrame'
 import { useRuntimeAssetStore } from '@/store/runtimeAssetStore'
+import { useRuntimePreview } from '@/hooks/useRuntimePreview'
 import { useDisplayedExactManifest, useMountedSvgStore } from '@/store/mountedSvgStore'
 import { useMountedPngStore } from '@/store/mountedPngStore'
 import { reattachPreview, settleFailedAuthority, settleUnbackedCommit } from '@/store/svgPreviewStore'
@@ -74,7 +75,9 @@ import {
   pickElement,
   explainBlockedGroupDrag,
   startElementGroupMove,
+  startDeferredInFigureDrag,
   startInFigureDrag,
+  resumeDeferredInFigureDrag,
   trackPointer,
 } from './interactions'
 import { openQuickEdit } from './quickEditStore'
@@ -215,6 +218,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
       : null
   // runtime 面板的 stale / cache 状态（只查询，绝不触发脚本执行）
   const runtimeState = useRuntimeAssetStore((s) => (runtime ? s.byId[obj.fileId] : undefined))
+  const previewNonce = useRuntimeAssetStore((s) => (runtime ? (s.previewNonce[obj.fileId] ?? 0) : 0))
   useEffect(() => {
     if (runtime) useRuntimeAssetStore.getState().ensure(obj)
     // ensure 幂等且只认 fileId/source；obj 每次 commit 都是新引用，不能进依赖
@@ -234,12 +238,18 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // runtime 面板只有 cache 里确有预览才给 URL（404 的碎图标比占位符糟）；
   // 未知形态（更新版本文档里的新 fileKind）fail closed：不发任何请求。
   const transport = engineTransport()
+  // runtime 面板的 cache 预览**按此刻的 overrides 取**（QA-WIN-21）：后端 GET 版给的是「最近一次渲染」，
+  // 撤销回一个前端已画过的变体时它停在撤销前，冷画布就会显示撤销前的图。内嵌画布（transport）没有
+  // 这条 HTTP 路，照旧。取到之前 / 没命中这个状态时见 `approxPreview`。
+  const runtimePreview = useRuntimePreview(obj.fileId, obj.overrides, runtime && !transport && !!runtimeState?.cached, previewNonce)
   const fileSrc =
     kind === 'unknown' || (runtime && !runtimeState?.cached)
       ? null
       : transport
         ? transport.panelSrc(obj.fileId, kind, bucket, mtime)
-        : panelSrc(obj.fileId, kind, bucket, mtime)
+        : runtime
+          ? (runtimePreview.url ?? (runtimePreview.failed ? panelSrc(obj.fileId, kind, bucket, mtime) : null))
+          : panelSrc(obj.fileId, kind, bucket, mtime)
   const src = (useEnginePng && enginePng) || fileSrc || ''
   // `/api/render` 在候选后端下会以 503 表达背压（child 队列满）；<img> 只看得到「失败」，
   // 有界重试同一地址（`lib/imgRetry`），blob / 磁盘原件失败不在此列
@@ -315,6 +325,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     const st = useRenderStore.getState()
     const cur = activeRenderKey(st, obj)
     reattachPreview(panelId, cur)
+    resumeDeferredInFigureDrag(panelId)
     // 性能探针（ADR 0075）：这一版 SVG 已经进了 DOM
     perfRenderPainted(cur)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -324,9 +335,13 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   // 原图——这一格必须与「近似预览」同级地诚实说出来（web/AGENTS.md：不许无
   // 提示地拿磁盘原图冒充当前视觉状态）。渲染中 / 失败由既有角标压过本条；
   // runtime 面板另有自己的 stale 语义角标，不在此重复。
+  // runtime 例外：挂的若是 cache 里**别的状态**的预览（变体被淘汰 / 旧 cache 配有 overrides / 取预览失败退回
+  // 「最近一次」），同样要说出来——否则就是 QA-WIN-21 的无提示旧图。
   const approxPreview =
     (!showSvg && imageLoadFailed) ||
-    (!runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc)
+    (!runtime && needsEngine && !showSvg && !(useEnginePng && enginePng) && !!fileSrc) ||
+    (runtime && !transport && !showSvg && !(useEnginePng && enginePng) && !!fileSrc &&
+      runtimePreview.exact !== true)
 
   const figureFramePending = useInteractionStore((s) => s.figureFramePending?.id === panelId)
   // The canvas feedback portal consumes this same transform/opacity chain.
@@ -342,8 +357,6 @@ export function PanelView({ obj }: { obj: PanelObject }) {
   return (
     <div
       className="absolute inset-0 overflow-hidden"
-      // 拖图边改图幅松手后、新图回来之前：旧图收起（按旧尺寸画在新位置上会错位），虚线框占位在 `FigureEdgeHandles`
-      style={figureFramePending ? { opacity: 0 } : undefined}
       // 此刻画布挂的是哪一版、是不是这一版自己的精确图。
       // exact = 图与文档同源；fallback = 暂时挂着上一张（几何交互已停摆）。
       // key 过短 hash：变体键里带文件名与 overrides 原文，不落进 DOM。
@@ -352,7 +365,8 @@ export function PanelView({ obj }: { obj: PanelObject }) {
     >
       <div
         className="absolute overflow-hidden"
-        style={contentStyle}
+        // 只收起旧图，角标必须留在外面：尺寸渲染失败也要能看见错误。
+        style={figureFramePending ? { ...contentStyle, opacity: 0, pointerEvents: 'none' } : contentStyle}
       >
         {showSvg ? (
           <div
@@ -395,7 +409,7 @@ export function PanelView({ obj }: { obj: PanelObject }) {
         {editing && <ElementHitLayer obj={obj} layout={layout} rot={rot} contentStyle={contentStyle} />}
       </div>
 
-      <RenderStatusBadge obj={obj} approx={approxPreview} retainedAfterFailure={imageLoadFailed} />
+      <RenderStatusBadge obj={obj} approx={approxPreview} framePending={figureFramePending} retainedAfterFailure={imageLoadFailed} />
     </div>
   )
 }
@@ -651,8 +665,8 @@ function RuntimePlaceholder({ obj, layout }: { obj: PanelObject; layout: Layout 
  * **命中必须打在几何权威上**（issue #131）。命中不是只读的：命中完就是拖动、
  * 就是整组平移、就是框选出一个待对齐的选区——全都以那份 bbox 起算。退回来的
  * 上一版 manifest 会让「点到的」和「看到的」是两个元素，拖出来的位移也以旧
- * 锚点起算。权威没就位时这一层整个停摆（不 hover、不命中、不框选），画布
- * 照常显示上一张图，属性页给出「正在同步」的说明。
+ * 锚点起算。权威没就位时不 hover、不按旧清单命中或框选；刚拖过的同一元素
+ * 可以继续收相对位移意图，等当前权威到达才重算并提交。
  */
 function ElementHitLayer({
   obj,
@@ -892,14 +906,22 @@ function ElementHitLayer({
     if (hit) startInFigureDrag(e, obj, manifest, hit, layout)
   })
 
-  // 权威没就位：留着这一层占位（布局不跳），但不接任何指针事件。
-  // 选区不动——等精确 manifest 回来，框会自己回到正确位置。
+  // 权威没就位：绝不透传到整图。已选元素的连续拖动只记意图，落笔等精确几何。
   if (!manifest) {
     return (
       <div
-        className="pointer-events-none absolute"
+        className="absolute"
         style={{ ...layout, cursor: 'progress' }}
         data-authority="syncing"
+        onPointerDown={(e) => {
+          if (e.button !== 0) return
+          e.stopPropagation()
+          if (!startDeferredInFigureDrag(e, obj, layout)) {
+            useUiStore.getState().setStatus(msg('stylePanel.waitingRender', undefined, 'workspace'), 'progress')
+          }
+        }}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation() }}
+        onDoubleClick={(e) => e.stopPropagation()}
       />
     )
   }
@@ -1210,7 +1232,7 @@ function useElapsed(on: boolean, ms: number): boolean {
   return on && elapsed
 }
 
-function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }: { obj: PanelObject; approx?: boolean; retainedAfterFailure?: boolean }) {
+function RenderStatusBadge({ obj, approx = false, framePending = false, retainedAfterFailure = false }: { obj: PanelObject; approx?: boolean; framePending?: boolean; retainedAfterFailure?: boolean }) {
   const render = usePanelRender(obj)
   // 冷启动/构建中是**文件级**的事实（一个 stem 一份 live figure），由 SSE 写；
   // 「这一份变体正在渲染」才是变体级的
@@ -1252,6 +1274,13 @@ function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }
   const slowBusy = useElapsed(quietBusy, BUSY_BADGE_DELAY_MS)
   const info = useMemo((): BadgeInfo | null => {
     if (!relevant) return null
+    const failure: BadgeInfo | null = render?.status === 'error'
+      ? { tone: 'error', cold: false, text: badge('error'),
+          hint: render.code === 'artifact_source_unavailable' && render.error ? formatMessage(render.error) : undefined }
+      : null
+    if (framePending && failure) return failure
+    // 图幅占位没有画面，不能像普通重绘一样等 700ms 才解释空白。
+    if (framePending) return { tone: 'busy', cold: false, text: badge('rendering') }
     if (quietBusy && !slowBusy) return null
     if (render?.status === 'rendering' || building) {
       return {
@@ -1266,10 +1295,7 @@ function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }
         ),
       }
     }
-    if (render?.status === 'error') {
-      return { tone: 'error', cold: false, text: badge('error'),
-        hint: render.code === 'artifact_source_unavailable' && render.error ? formatMessage(render.error) : undefined }
-    }
+    if (failure) return failure
     // **阻塞性的压过信息性的。** native 的两句说的是「现在不能编辑」，而
     // `stale`（脚本已更新）/ runtime 的 stale 语义说的是「内容可能不是最新」
     // ——后者不妨碍用户动手，前者妨碍。把 `stale` 排在前面的表现是：native
@@ -1325,7 +1351,7 @@ function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }
       }
     }
     return null
-  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked])
+  }, [render, relevant, building, runtimeBadge, nativeState, rasterEditing, approx, retainedAfterFailure, quietBusy, slowBusy, frameLegacy, frameBlocked, framePending])
 
   // 退场那 90ms 里 info 已经是 null 了，留住最后一版才播得完
   const last = useRef(info)
@@ -1335,9 +1361,16 @@ function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }
   const { mounted, state } = usePresence(!!info, DURATION.exit)
   const shown = info ?? last.current
 
-  if (!mounted || !shown) return null
+  const live = (
+    <span data-panel-render-live aria-live="polite" className="sr-only">
+      {info?.tone === 'busy' || info?.tone === 'error' ? info.text : ''}
+    </span>
+  )
+  if (!mounted || !shown) return live
 
   return (
+    <>
+    {live}
     <div
       data-state={state}
       className={cn(
@@ -1398,5 +1431,6 @@ function RenderStatusBadge({ obj, approx = false, retainedAfterFailure = false }
         )}
       </span>
     </div>
+    </>
   )
 }

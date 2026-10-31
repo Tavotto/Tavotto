@@ -1,0 +1,7 @@
+{
+  "_comment": "桌面 sidecar 的启动阶段标记（TVD-DT76）。sidecar 在 fd 2 写一行 <marker_prefix><阶段>，壳在握手超时后只读本次新增的 sidecar.log、取最后一个合法标记写进最小诊断包 failure.startup_phase；一个都没有记 none_value。严格同源对：生产方 src/tavotto/engine/startupphase.py（tests/test_startup_phase.py）与消费方 src-tauri/src/sidecar/startup_phase.rs（phases_are_the_golden_pair）各读这份，不读对方源码。phases 按启动先后排列。",
+  "marker_prefix": "TAVOTTO_STARTUP_PHASE=",
+  "none_value": "none",
+  "tail_max_bytes": 65536,
+  "phases": ["interpreter", "imports_done", "housekeeping", "pdf_backend", "project_open", "serving"]
+}
